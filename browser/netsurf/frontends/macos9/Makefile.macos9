@@ -26,17 +26,17 @@ CFLAGS += -DNO_IPV6
 # Source file setup
 # ----------------------------------------------------------------------------
 
-S_FRONTEND :=		\
-	main.c		\
-	window.c	\
-	bitmap.c	\
-	plotters.c	\
-	font.c		\
-	fetch.c		\
-	clipboard.c	\
-	utf8.c		\
-	download.c	\
-	misc.c		\
+S_FRONTEND :=			\
+	main.c			\
+	window.c		\
+	macos9_bitmap.c		\
+	plotters.c		\
+	font.c			\
+	macos9_fetch.c		\
+	clipboard.c		\
+	macos9_utf8.c		\
+	macos9_download.c	\
+	misc.c			\
 	schedule.c
 
 # Final source build list

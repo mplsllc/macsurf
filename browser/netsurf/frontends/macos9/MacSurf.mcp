@@ -474,7 +474,7 @@
 
     <FILE>
         <PATHTYPE>Project</PATHTYPE>
-        <PATH>bitmap.c</PATH>
+        <PATH>macos9_bitmap.c</PATH>
         <FILEKIND>Text</FILEKIND>
         <FILEFLAGS>compile</FILEFLAGS>
     </FILE>
@@ -495,7 +495,7 @@
 
     <FILE>
         <PATHTYPE>Project</PATHTYPE>
-        <PATH>fetch.c</PATH>
+        <PATH>macos9_fetch.c</PATH>
         <FILEKIND>Text</FILEKIND>
         <FILEFLAGS>compile</FILEFLAGS>
     </FILE>
@@ -509,14 +509,14 @@
 
     <FILE>
         <PATHTYPE>Project</PATHTYPE>
-        <PATH>utf8.c</PATH>
+        <PATH>macos9_utf8.c</PATH>
         <FILEKIND>Text</FILEKIND>
         <FILEFLAGS>compile</FILEFLAGS>
     </FILE>
 
     <FILE>
         <PATHTYPE>Project</PATHTYPE>
-        <PATH>download.c</PATH>
+        <PATH>macos9_download.c</PATH>
         <FILEKIND>Text</FILEKIND>
         <FILEFLAGS>compile</FILEFLAGS>
     </FILE>
@@ -648,13 +648,13 @@
     <!-- MacSurf Frontend -->
     <FILEREF><PATH>main.c</PATH></FILEREF>
     <FILEREF><PATH>window.c</PATH></FILEREF>
-    <FILEREF><PATH>bitmap.c</PATH></FILEREF>
+    <FILEREF><PATH>macos9_bitmap.c</PATH></FILEREF>
     <FILEREF><PATH>plotters.c</PATH></FILEREF>
     <FILEREF><PATH>font.c</PATH></FILEREF>
-    <FILEREF><PATH>fetch.c</PATH></FILEREF>
+    <FILEREF><PATH>macos9_fetch.c</PATH></FILEREF>
     <FILEREF><PATH>clipboard.c</PATH></FILEREF>
-    <FILEREF><PATH>utf8.c</PATH></FILEREF>
-    <FILEREF><PATH>download.c</PATH></FILEREF>
+    <FILEREF><PATH>macos9_utf8.c</PATH></FILEREF>
+    <FILEREF><PATH>macos9_download.c</PATH></FILEREF>
     <FILEREF><PATH>misc.c</PATH></FILEREF>
     <FILEREF><PATH>schedule.c</PATH></FILEREF>
 
@@ -721,13 +721,13 @@
         <NAME>MacSurf Frontend</NAME>
         <FILEREF><PATH>main.c</PATH></FILEREF>
         <FILEREF><PATH>window.c</PATH></FILEREF>
-        <FILEREF><PATH>bitmap.c</PATH></FILEREF>
+        <FILEREF><PATH>macos9_bitmap.c</PATH></FILEREF>
         <FILEREF><PATH>plotters.c</PATH></FILEREF>
         <FILEREF><PATH>font.c</PATH></FILEREF>
-        <FILEREF><PATH>fetch.c</PATH></FILEREF>
+        <FILEREF><PATH>macos9_fetch.c</PATH></FILEREF>
         <FILEREF><PATH>clipboard.c</PATH></FILEREF>
-        <FILEREF><PATH>utf8.c</PATH></FILEREF>
-        <FILEREF><PATH>download.c</PATH></FILEREF>
+        <FILEREF><PATH>macos9_utf8.c</PATH></FILEREF>
+        <FILEREF><PATH>macos9_download.c</PATH></FILEREF>
         <FILEREF><PATH>misc.c</PATH></FILEREF>
         <FILEREF><PATH>schedule.c</PATH></FILEREF>
     </GROUP>

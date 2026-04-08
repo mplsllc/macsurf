@@ -1,6 +1,6 @@
 /*
  * MacSurf — Mac OS 9 frontend for NetSurf
- * download.c — All gui_download_table callbacks
+ * macos9_download.c — All gui_download_table callbacks
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.

@@ -40,7 +40,7 @@ Defines `struct gui_window`, `struct gui_download_window`, and scheduler functio
 | `drag_save_selection` | `(struct gui_window *gw, const char *selection)` | void |
 | `console_log` | `(struct gui_window *gw, browser_window_console_source src, const char *msg, size_t msglen, browser_window_console_flags flags)` | void |
 
-### bitmap.c — gui_bitmap_table (10 callbacks)
+### macos9_bitmap.c — gui_bitmap_table (10 callbacks)
 
 | Function | Return |
 |---|---|
@@ -81,7 +81,7 @@ Defines `struct gui_window`, `struct gui_download_window`, and scheduler functio
 | `position` | `NSERROR_OK` (stub: 8px per char) |
 | `split` | `NSERROR_OK` (stub: 8px per char, walks back to space) |
 
-### fetch.c — gui_fetch_table (3 callbacks)
+### macos9_fetch.c — gui_fetch_table (3 callbacks)
 
 | Function | Return |
 |---|---|
@@ -96,14 +96,14 @@ Defines `struct gui_window`, `struct gui_download_window`, and scheduler functio
 | `get` | void (sets buffer=NULL, length=0) |
 | `set` | void (no-op) |
 
-### utf8.c — gui_utf8_table (2 callbacks)
+### macos9_utf8.c — gui_utf8_table (2 callbacks)
 
 | Function | Return |
 |---|---|
 | `utf8_to_local` | `NSERROR_OK` (stub: copies input unchanged) |
 | `local_to_utf8` | `NSERROR_OK` (stub: copies input unchanged) |
 
-### download.c — gui_download_table (4 callbacks)
+### macos9_download.c — gui_download_table (4 callbacks)
 
 | Function | Return |
 |---|---|
@@ -144,13 +144,13 @@ All 11 `.c` files pass `gcc -fsyntax-only -std=c99` against the NetSurf include 
 ```
 === main.c ===       ✓ clean
 === window.c ===     ✓ clean
-=== bitmap.c ===     ✓ clean
+=== macos9_bitmap.c ===     ✓ clean
 === plotters.c ===   ✓ clean
 === font.c ===       ✓ clean
-=== fetch.c ===      ✓ clean
+=== macos9_fetch.c ===      ✓ clean
 === clipboard.c ===  ✓ clean
-=== utf8.c ===       ✓ clean
-=== download.c ===   ✓ clean
+=== macos9_utf8.c ===       ✓ clean
+=== macos9_download.c ===   ✓ clean
 === misc.c ===       ✓ clean
 === schedule.c ===   ✓ clean
 ```

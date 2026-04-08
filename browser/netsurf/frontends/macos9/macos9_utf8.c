@@ -1,6 +1,6 @@
 /*
  * MacSurf — Mac OS 9 frontend for NetSurf
- * utf8.c — All gui_utf8_table callbacks
+ * macos9_utf8.c — All gui_utf8_table callbacks
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.

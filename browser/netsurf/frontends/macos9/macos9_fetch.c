@@ -1,6 +1,6 @@
 /*
  * MacSurf — Mac OS 9 frontend for NetSurf
- * fetch.c — All gui_fetch_table callbacks
+ * macos9_fetch.c — All gui_fetch_table callbacks
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.

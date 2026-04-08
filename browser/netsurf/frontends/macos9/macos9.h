@@ -9,12 +9,14 @@
 #ifndef MACOS9_MACOS9_H
 #define MACOS9_MACOS9_H
 
-#include <stdbool.h>
-
 #ifdef __MACOS9__
+/* Mac Toolbox headers first — MacTypes.h enum { false, true }
+ * must be parsed before bool/true/false are #define'd. */
 #include <MacWindows.h>
 #include <Controls.h>
+#include "shims/mac_types.h"	/* bool block comes after Mac headers */
 #else
+#include <stdbool.h>
 /* Linux build: stub types for struct gui_window */
 typedef void *WindowRef;
 typedef void *ControlRef;

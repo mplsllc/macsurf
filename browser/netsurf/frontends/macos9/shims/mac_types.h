@@ -156,4 +156,16 @@ long		mac_mktime(struct mac_tm *tm);
 size_t		mac_strftime(char *s, size_t max, const char *fmt,
 			     const struct mac_tm *tm);
 
+/* --- bool / true / false ---
+ * Must appear AFTER Mac Toolbox headers.  MacTypes.h defines
+ *   enum { false = 0, true = 1 };
+ * If true/false are already #define'd, the preprocessor turns
+ * those enum member names into literals → illegal C.
+ */
+#ifndef bool
+  typedef unsigned char bool;
+  #define true  1
+  #define false 0
+#endif
+
 #endif /* MAC_TYPES_H */

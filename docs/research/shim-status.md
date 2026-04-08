@@ -136,6 +136,20 @@ Verified with `gcc -fsyntax-only -std=c99` from the NetSurf root.
 
 ---
 
+## bool / true / false ordering fix
+
+**Problem:** `MacTypes.h` (Mac Toolbox) defines `enum { false = 0, true = 1 };`. If `<stdbool.h>` is included first, `true` and `false` become preprocessor macros. The preprocessor then expands the enum member names to `enum { 0, 1 };` — illegal C that CodeWarrior rejects at MacTypes.h line 301-303.
+
+**Fix (2 files changed):**
+
+1. **`shims/mac_types.h`** — Added a `bool` / `true` / `false` block at the bottom of the file, guarded by `#ifndef bool`. Uses `typedef unsigned char bool;` plus `#define true 1` / `#define false 0`. Positioned after all other definitions so that on Mac OS 9 it comes after Mac Toolbox headers have been included.
+
+2. **`macos9.h`** — Removed top-level `#include <stdbool.h>`. Under `__MACOS9__`, Mac Toolbox headers (`<MacWindows.h>`, `<Controls.h>`) are included first, then `shims/mac_types.h` provides `bool`. Under the Linux `#else` path, `<stdbool.h>` is retained.
+
+**Verification:** `gcc -fsyntax-only -std=c99` passes clean on both `mac_types.h` and `macos9.h` (Linux build). The `#ifndef bool` guard ensures the block is skipped when `<stdbool.h>` is already included.
+
+---
+
 ## What's Not Here Yet
 
 - `mac_mmap.c` — NewPtr-based mmap shim (Phase 1)
