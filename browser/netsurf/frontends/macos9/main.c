@@ -11,9 +11,6 @@
  * responsive), macos9_get_next_delay() otherwise.
  */
 
-#ifndef __MACTYPES__
-#include <stdbool.h>
-#endif
 #include <stdlib.h>
 #include <string.h>
 
@@ -95,7 +92,7 @@ typedef void *MenuHandle;
 
 typedef struct { short top, left, bottom, right; } Rect;
 typedef void *GrafPtr;
-static struct { void *thePort; Rect screenBits_bounds; } qd;
+static struct { void *thePort; struct { Rect bounds; } screenBits; } qd;
 
 static void MaxApplZone(void) {}
 static void MoreMasters(void) {}
@@ -422,7 +419,7 @@ macos9_handle_mouse_down(const EventRecord *event)
 		/* TODO: route to browser_window content handler */
 		break;
 	case inDrag:
-		DragWindow(win, event->where, &qd.screenBits_bounds);
+		DragWindow(win, event->where, &qd.screenBits.bounds);
 		break;
 	case inGrow:
 		ResizeWindow(win, event->where, NULL, NULL);

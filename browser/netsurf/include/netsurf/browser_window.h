@@ -43,7 +43,16 @@ struct nsurl;
 struct rect;
 struct redraw_context;
 struct cert_chain;
-enum content_debug;
+enum content_debug {
+	/** Debug the contents rendering. */
+	CONTENT_DEBUG_RENDER,
+
+	/** Debug the contents Document Object. */
+	CONTENT_DEBUG_DOM,
+
+	/** Debug redraw operations. */
+	CONTENT_DEBUG_REDRAW
+};
 
 /**
  * type of browser window drag in progess
