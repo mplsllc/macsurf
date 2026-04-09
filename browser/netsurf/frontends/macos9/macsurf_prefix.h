@@ -9,6 +9,18 @@
 #ifndef MACSURF_PREFIX_H
 #define MACSURF_PREFIX_H
 
+/* Globally block MSL's stdint.h and cstdint from ever loading.
+ * Our shims/stdint.h provides C89-compatible typedefs instead. */
+#ifndef _MSL_STDINT_H
+#define _MSL_STDINT_H
+#endif
+#ifndef _STDINT_H
+#define _STDINT_H
+#endif
+#ifndef __STDINT_H__
+#define __STDINT_H__
+#endif
+
 /*
  * Fix 1 — NSLOG variadic macro.
  *

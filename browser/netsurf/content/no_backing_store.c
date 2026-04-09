@@ -75,12 +75,12 @@ static nserror release(nsurl *url, enum backing_store_flags flags)
 }
 
 static struct gui_llcache_table llcache_table = {
-	.initialise = initialise,
-	.finalise = finalise,
-	.store = store,
-	.fetch = fetch,
-	.invalidate = invalidate,
-	.release = release,
+	initialise,
+	finalise,
+	store,
+	fetch,
+	invalidate,
+	release
 };
 
 struct gui_llcache_table *null_llcache_table = &llcache_table;

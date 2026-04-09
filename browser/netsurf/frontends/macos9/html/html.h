@@ -8,10 +8,10 @@
 #define NETSURF_HTML_HTML_H
 
 #include "utils/errors.h"
+#include <libwapcaplet/libwapcaplet.h>
 
 struct hlcache_handle;
 struct form_control;
-struct lwc_string;
 struct box;
 struct dom_node;
 
@@ -38,7 +38,7 @@ struct content_html_object {
 
 nserror html_init(void);
 int html_get_id_offset(struct hlcache_handle *h,
-		struct lwc_string *frag_id, int *x, int *y);
+		lwc_string *frag_id, int *x, int *y);
 void html_set_file_gadget_filename(struct hlcache_handle *hl,
 		struct form_control *gadget, const char *fn);
 struct content_html_object *html_get_objects(struct hlcache_handle *h,

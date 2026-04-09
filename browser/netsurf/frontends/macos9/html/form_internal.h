@@ -7,7 +7,6 @@
 #ifndef NETSURF_HTML_FORM_INTERNAL_H
 #define NETSURF_HTML_FORM_INTERNAL_H
 
-struct form_control;
 struct form;
 struct box;
 
@@ -25,5 +24,14 @@ typedef enum {
 	GADGET_FILE,
 	GADGET_BUTTON
 } form_control_type;
+
+/* Minimal struct definition — only fields accessed by browser_window.c */
+struct form_control {
+	void *node;
+	form_control_type type;
+	struct form *form;
+	char *name;
+	char *value;
+};
 
 #endif
