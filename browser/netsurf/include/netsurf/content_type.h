@@ -27,16 +27,14 @@
 #define NETSURF_CONTENT_TYPE_H
 
 /** Debugging dump operations */
+#ifndef MACSURF_CONTENT_DEBUG_ENUM
+#define MACSURF_CONTENT_DEBUG_ENUM
 enum content_debug {
-	/** Debug the contents rendering. */
 	CONTENT_DEBUG_RENDER,
-
-	/** Debug the contents Document Object. */
 	CONTENT_DEBUG_DOM,
-
-	/** Debug redraw operations. */
 	CONTENT_DEBUG_REDRAW
 };
+#endif
 
 
 /** Content encoding information types */

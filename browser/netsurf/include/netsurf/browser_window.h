@@ -43,9 +43,9 @@ struct nsurl;
 struct rect;
 struct redraw_context;
 struct cert_chain;
-/* content_debug enum — defined in content_type.h, guard against
- * duplicate definition for CW8 which rejects enum redeclaration. */
-#ifndef NETSURF_CONTENT_TYPE_H
+/* content_debug enum — guard against duplicate definition */
+#ifndef MACSURF_CONTENT_DEBUG_ENUM
+#define MACSURF_CONTENT_DEBUG_ENUM
 enum content_debug {
 	CONTENT_DEBUG_RENDER,
 	CONTENT_DEBUG_DOM,

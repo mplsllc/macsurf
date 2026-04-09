@@ -25,7 +25,25 @@
  * \brief Implementation of time operations.
  */
 
-#include <time.h>
+/*
+ * On Mac OS 9, utils/time.h shadows MSL's <time.h>, so gmtime and
+ * struct tm are never defined via includes.  Declare them locally.
+ */
+#ifndef _TIME_H
+struct tm {
+    int tm_sec;
+    int tm_min;
+    int tm_hour;
+    int tm_mday;
+    int tm_mon;
+    int tm_year;
+    int tm_wday;
+    int tm_yday;
+    int tm_isdst;
+};
+struct tm *gmtime(const long *timer);
+#endif
+
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
