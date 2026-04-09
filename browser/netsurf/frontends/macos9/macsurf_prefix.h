@@ -24,6 +24,11 @@
 
 #include <stdio.h>
 
+#ifdef __MWERKS__
+#include <MacTypes.h>
+#endif
+#include "mac_types.h"
+
 extern unsigned char verbose_log;
 
 enum nslog_level {

@@ -19,7 +19,6 @@
  * strndup is POSIX.1-2008, not available in CW8 C89.
  * Provide a local implementation for the Mac build.
  */
-#ifdef __MACOS9__
 static char *
 macos9_strndup(const char *s, size_t n)
 {
@@ -37,7 +36,6 @@ macos9_strndup(const char *s, size_t n)
 	return copy;
 }
 #define strndup macos9_strndup
-#endif
 
 static nserror
 macos9_utf8_to_local(const char *string, size_t len, char **result)
