@@ -2623,6 +2623,7 @@ get_netscape_cookie(struct cookie_internal_data **matched_cookies, int count)
 {
 	int ret_alloc = 4096, ret_used = 1;
 	char *ret;
+	char *temp;
 	int midx; /* index into matched cookies */
 
 	ret = malloc(ret_alloc);
@@ -2649,7 +2650,7 @@ get_netscape_cookie(struct cookie_internal_data **matched_cookies, int count)
 	ret_used -= 2;
 
 	/* shrink the output buffer to the required size */
-	char *temp = realloc(ret, ret_used);
+	temp = realloc(ret, ret_used);
 	if (temp != NULL) {
 		ret = temp;
 	}
@@ -2669,6 +2670,7 @@ get_rfc2965_cookie(struct cookie_internal_data **matched_cookies,
 	int ret_alloc = 4096; /* return string allocation */
 	int ret_used = 1; /* return sting buffer used */
 	char *ret; /* return string buffer */
+	char *temp;
 	int midx; /* index into matched cookies */
 	int outl;
 
@@ -2695,7 +2697,7 @@ get_rfc2965_cookie(struct cookie_internal_data **matched_cookies,
 	}
 
 	/* shrink the output buffer to the required size */
-	char *temp = realloc(ret, ret_used);
+	temp = realloc(ret, ret_used);
 	if (temp != NULL) {
 		ret = temp;
 	}

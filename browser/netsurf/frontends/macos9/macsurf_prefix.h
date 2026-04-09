@@ -81,6 +81,11 @@ extern void nslog_log(const char *file, const char *func,
  */
 typedef unsigned char (nslog_ensure_t)(FILE *fptr);
 
+/* C99 restrict keyword — not supported by CW8 C89 */
+#ifndef restrict
+#define restrict
+#endif
+
 /* --- Additional build defines --- */
 
 #ifndef __MACOS9__

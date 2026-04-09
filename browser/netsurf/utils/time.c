@@ -25,10 +25,10 @@
  * \brief Implementation of time operations.
  */
 
+#include <time.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include <time.h>
 
 #ifdef WITH_CURL
 #include <curl/curl.h>
