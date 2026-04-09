@@ -24,7 +24,7 @@
 
 #include <stdio.h>
 
-extern bool verbose_log;
+extern unsigned char verbose_log;
 
 enum nslog_level {
 	NSLOG_LEVEL_DEEPDEBUG = 0,

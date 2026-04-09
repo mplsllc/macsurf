@@ -234,7 +234,7 @@ enum plot_colour_component {
  * \param[in] dark  Whether col is a dark colour.
  * \param[in] comp  Colour component to engorge.
  */
-static inline colour colour_engorge_component(
+static colour colour_engorge_component(
 		colour col,
 		bool dark,
 		enum plot_colour_component comp)

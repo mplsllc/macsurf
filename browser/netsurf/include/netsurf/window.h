@@ -26,6 +26,7 @@
 #ifndef NETSURF_WINDOW_H
 #define NETSURF_WINDOW_H
 
+#include "netsurf/mouse.h"
 #include "netsurf/console.h"
 
 struct browser_window;
@@ -33,28 +34,6 @@ struct form_control;
 struct rect;
 struct hlcache_handle;
 struct nsurl;
-
-typedef enum gui_pointer_shape {
-	GUI_POINTER_DEFAULT,
-	GUI_POINTER_POINT,
-	GUI_POINTER_CARET,
-	GUI_POINTER_MENU,
-	GUI_POINTER_UP,
-	GUI_POINTER_DOWN,
-	GUI_POINTER_LEFT,
-	GUI_POINTER_RIGHT,
-	GUI_POINTER_RU,
-	GUI_POINTER_LD,
-	GUI_POINTER_LU,
-	GUI_POINTER_RD,
-	GUI_POINTER_CROSS,
-	GUI_POINTER_MOVE,
-	GUI_POINTER_WAIT,
-	GUI_POINTER_HELP,
-	GUI_POINTER_NO_DROP,
-	GUI_POINTER_NOT_ALLOWED,
-	GUI_POINTER_PROGRESS
-} gui_pointer_shape;
 
 typedef enum gui_save_type {
 	GUI_SAVE_SOURCE,
