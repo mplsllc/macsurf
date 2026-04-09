@@ -76,3 +76,56 @@ void dom_namespace_finalise(void) {}
 
 /* lwc iteration */
 void lwc_iterate_strings(void (*cb)(void *str, void *pw), void *pw) {}
+
+/* Page info */
+nserror page_info_init(void) { return NSERROR_OK; }
+
+/* Certificate chain */
+unsigned long cert_chain_size(const struct cert_chain *chain)
+{
+	(void)chain;
+	return 0;
+}
+
+nserror cert_chain_dup(const struct cert_chain *src,
+		struct cert_chain **dst_out)
+{
+	(void)src;
+	*dst_out = NULL;
+	return NSERROR_OK;
+}
+
+/* Fetch */
+void fetch_abort(void *f) { (void)f; }
+nserror fetcher_init(void) { return NSERROR_OK; }
+
+/* Content handler init stubs */
+nserror textplain_init(void) { return NSERROR_OK; }
+nserror image_init(void) { return NSERROR_OK; }
+nserror html_init(void) { return NSERROR_OK; }
+nserror nscss_init(void) { return NSERROR_OK; }
+
+/* System colours */
+nserror nscolour_update(void) { return NSERROR_OK; }
+
+/* IDNA */
+nserror idna_encode(const char *host, unsigned long len,
+		char **ace_host, unsigned long *ace_len)
+{
+	(void)host; (void)len;
+	*ace_host = NULL;
+	if (ace_len) *ace_len = 0;
+	return NSERROR_NOT_FOUND;
+}
+
+/* PDF save */
+nserror save_pdf(const char *path) { (void)path; return NSERROR_OK; }
+
+/* html_get_id_offset — declared in html/html.h */
+int html_get_id_offset(void *h, void *frag_id, int *x, int *y)
+{
+	(void)h; (void)frag_id;
+	if (x) *x = 0;
+	if (y) *y = 0;
+	return 0;
+}

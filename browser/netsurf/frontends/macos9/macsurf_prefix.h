@@ -131,6 +131,11 @@ typedef unsigned char (nslog_ensure_t)(FILE *fptr);
 #define restrict
 #endif
 
+/* isascii — not in MSL */
+#ifndef isascii
+#define isascii(c) ((unsigned)(c) <= 0x7F)
+#endif
+
 /* --- Additional build defines --- */
 
 #ifndef __MACOS9__

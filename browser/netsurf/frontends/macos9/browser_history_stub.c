@@ -90,4 +90,6 @@ nserror browser_window_create_frameset(struct browser_window *bw)
 
 void browser_window_recalculate_frameset(struct browser_window *bw) {}
 
+void browser_window_destroy_iframes(struct browser_window *bw) {}
+
 void browser_window_handle_scrollbars(struct browser_window *bw) {}

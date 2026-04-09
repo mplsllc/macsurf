@@ -67,3 +67,13 @@ nserror http_parse_strict_transport_security(const char *header,
 
 void http_strict_transport_security_destroy(
 		struct http_strict_transport_security *sts) {}
+
+/* Cache-Control accessors */
+unsigned char http_cache_control_max_age(void *cc) { (void)cc; return 0; }
+unsigned char http_cache_control_has_max_age(void *cc) { (void)cc; return 0; }
+unsigned char http_cache_control_no_store(void *cc) { (void)cc; return 0; }
+unsigned char http_cache_control_no_cache(void *cc) { (void)cc; return 0; }
+
+/* Strict-Transport-Security accessors */
+unsigned long http_strict_transport_security_max_age(void *sts) { (void)sts; return 0; }
+unsigned char http_strict_transport_security_include_subdomains(void *sts) { (void)sts; return 0; }

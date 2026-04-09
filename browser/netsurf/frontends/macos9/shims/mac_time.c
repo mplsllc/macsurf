@@ -321,3 +321,22 @@ size_t mac_strftime(char *s, size_t max, const char *fmt,
 	s[pos] = '\0';
 	return pos;
 }
+
+/*
+ * gettimeofday — POSIX wrapper expected by NetSurf core.
+ * Delegates to mac_gettimeofday internally.
+ */
+struct timeval;
+
+int gettimeofday(struct timeval *tv, void *tz)
+{
+	struct mac_timeval mtv;
+	int ret;
+
+	ret = mac_gettimeofday(&mtv, tz);
+	if (tv != NULL) {
+		((long *)tv)[0] = mtv.tv_sec;
+		((long *)tv)[1] = mtv.tv_usec;
+	}
+	return ret;
+}
