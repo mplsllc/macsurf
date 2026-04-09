@@ -14,6 +14,23 @@
 #ifdef __MACOS9__
 #include <TextEncodingConverter.h>
 #include <TextCommon.h>
+
+/*
+ * TEC status/error constants — may not be in all versions of
+ * TextEncodingConverter.h.  Define fallbacks if missing.
+ */
+#ifndef kTECUsedFallbacksStatus
+#define kTECUsedFallbacksStatus    1
+#endif
+#ifndef kTECPartialCharErr
+#define kTECPartialCharErr         (-8783)
+#endif
+#ifndef kTECOutputBufferFullStatus
+#define kTECOutputBufferFullStatus (-8785)
+#endif
+#ifndef kTECUnmappableElementErr
+#define kTECUnmappableElementErr   (-8784)
+#endif
 #endif
 
 #define ICONV_CACHE_MAX 16

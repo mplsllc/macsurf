@@ -822,9 +822,9 @@ static nserror get_referer_header(nsurl *url, nsurl *referer, char **header_out)
 	nserror res = NSERROR_INVALID;
 	lwc_string *ref_scheme;
 	lwc_string *scheme;
-	bool match;
-	bool match1;
-	bool match2;
+	unsigned char match;
+	unsigned char match1;
+	unsigned char match2;
 	char *header;
 
 	/* Determine whether to send the Referer header */
@@ -1792,7 +1792,7 @@ static inline bool llcache__scheme_is_persistable(const nsurl *url)
 {
 	lwc_string *scheme = nsurl_get_component(url, NSURL_SCHEME);
 	bool persistable = false;
-	bool match;
+	unsigned char match;
 
 	/* nsurl ensures lower case schemes, and corestrings are lower
 	 * case, so it's safe to use case-sensitive comparison. */
@@ -1820,7 +1820,7 @@ static inline bool llcache__scheme_is_cachable(const nsurl *url)
 {
 	lwc_string *scheme = nsurl_get_component(url, NSURL_SCHEME);
 	bool cachable = false;
-	bool match;
+	unsigned char match;
 
 	/* nsurl ensures lower case schemes, and corestrings are lower
 	 * case, so it's safe to use case-sensitive comparison. */
@@ -2215,7 +2215,7 @@ static nserror llcache_hsts_transform_url(nsurl *url, nsurl **result,
 		bool *hsts_in_use)
 {
 	lwc_string *scheme = NULL;
-	bool match;
+	unsigned char match;
 	nserror error = NSERROR_OK;
 
 	scheme = nsurl_get_component(url, NSURL_SCHEME);
@@ -2261,7 +2261,7 @@ static nserror llcache_hsts_update_policy(llcache_object *object)
 {
 	size_t i;
 	lwc_string *scheme = NULL;
-	bool match = false;
+	unsigned char match = 0;
 
 	scheme = nsurl_get_component(object->url, NSURL_SCHEME);
 	if (lwc_string_caseless_isequal(scheme, corestring_lwc_https,
@@ -2305,7 +2305,7 @@ static nserror check_redirect_safety(nsurl *src_url, nsurl *dst_url)
 {
 	lwc_string *scheme;
 	lwc_string *object_scheme;
-	bool match;
+	unsigned char match;
 
 	object_scheme = nsurl_get_component(src_url, NSURL_SCHEME);
 	scheme = nsurl_get_component(dst_url, NSURL_SCHEME);

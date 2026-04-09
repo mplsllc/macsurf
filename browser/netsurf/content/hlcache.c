@@ -193,9 +193,10 @@ static void hlcache_content_callback(struct content *c, content_msg msg,
 {
 	hlcache_handle *handle = pw;
 	nserror error = NSERROR_OK;
-	hlcache_event event = {
-		.type = msg,
-	};
+	hlcache_event event;
+
+	memset(&event, 0, sizeof(event));
+	event.type = msg;
 
 	if (data != NULL) {
 		event.data = *data;

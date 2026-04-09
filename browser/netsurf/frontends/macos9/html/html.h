@@ -31,6 +31,11 @@ struct content_html_object {
 	unsigned char background;
 };
 
+/* Index of first non-base stylesheet in html_get_stylesheets() array */
+#ifndef STYLESHEET_START
+#define STYLESHEET_START 0
+#endif
+
 nserror html_init(void);
 int html_get_id_offset(struct hlcache_handle *h,
 		struct lwc_string *frag_id, int *x, int *y);

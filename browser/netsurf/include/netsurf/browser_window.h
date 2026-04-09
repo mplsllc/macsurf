@@ -43,16 +43,15 @@ struct nsurl;
 struct rect;
 struct redraw_context;
 struct cert_chain;
+/* content_debug enum — defined in content_type.h, guard against
+ * duplicate definition for CW8 which rejects enum redeclaration. */
+#ifndef NETSURF_CONTENT_TYPE_H
 enum content_debug {
-	/** Debug the contents rendering. */
 	CONTENT_DEBUG_RENDER,
-
-	/** Debug the contents Document Object. */
 	CONTENT_DEBUG_DOM,
-
-	/** Debug redraw operations. */
 	CONTENT_DEBUG_REDRAW
 };
+#endif
 
 /**
  * type of browser window drag in progess

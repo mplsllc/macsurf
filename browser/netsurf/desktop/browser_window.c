@@ -544,7 +544,7 @@ browser_window_update_favicon(hlcache_handle *c,
 	if (link == NULL) {
 		lwc_string *scheme;
 		bool speculative_default = false;
-		bool match;
+		unsigned char match;
 
 		nsurl = hlcache_handle_get_url(c);
 
@@ -1578,7 +1578,7 @@ browser_window_callback(hlcache_handle *c, const hlcache_event *event, void *pw)
 
 	case CONTENT_MSG_LINK: /* content has an rfc5988 link element */
 		{
-			bool match;
+			unsigned char match;
 
 			/* Handle "icon" and "shortcut icon" */
 			if ((lwc_string_caseless_isequal(
@@ -4654,7 +4654,7 @@ browser_window_page_info_state browser_window_get_page_info_state(
 		const struct browser_window *bw)
 {
 	lwc_string *scheme;
-	bool match;
+	unsigned char match;
 
 	assert(bw != NULL);
 
@@ -4739,9 +4739,12 @@ int browser_window_get_cookie_count(
 		return 0;
 	}
 
-	for (char *c = cookies; *c != '\0'; c++) {
-		if (*c == ';')
-			count++;
+	{
+		char *c;
+		for (c = cookies; *c != '\0'; c++) {
+			if (*c == ';')
+				count++;
+		}
 	}
 
 	free(cookies);

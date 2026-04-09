@@ -9,6 +9,14 @@
 #include "mac_stat.h"
 #include <string.h>
 
+/*
+ * Ensure struct stat is available — MSL's stat.h provides it on CW8.
+ * The prefix file should also include it, but belt-and-suspenders.
+ */
+#ifdef __MWERKS__
+#include <stat.h>
+#endif
+
 #ifdef __MACOS9__
 #include <Files.h>
 #include <DateTimeUtils.h>
