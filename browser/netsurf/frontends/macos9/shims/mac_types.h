@@ -11,24 +11,36 @@
 
 #include <stddef.h>
 
-/* --- sys/types.h replacements --- */
+/* --- sys/types.h replacements ---
+ * Always define these types so the header is self-contained.
+ * On Mac OS 9 these replace the missing POSIX headers;
+ * on a Linux cross-check they shadow the system types harmlessly.
+ */
 
-#ifdef __MACOS9__
+#ifndef _MAC_OFF_T
+#define _MAC_OFF_T
 typedef long long	off_t;
+#endif
+
+#ifndef _MAC_SSIZE_T
+#define _MAC_SSIZE_T
 typedef long		ssize_t;
+#endif
+
+#ifndef _MAC_MODE_T
+#define _MAC_MODE_T
 typedef unsigned short	mode_t;
+#endif
+
+#ifndef _MAC_TIME_T
+#define _MAC_TIME_T
 typedef long		time_t;
+#endif
 
 /* FSIORefNum — provided by Files.h in Carbon, but we may be parsed
  * before Files.h is included.  Use short (== SInt16 on PPC). */
 #ifndef __FILES__
 typedef short		FSIORefNum;
-#endif
-
-#else
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <time.h>
 #endif
 
 /* --- fcntl.h constants --- */
@@ -93,7 +105,8 @@ typedef short		FSIORefNum;
 
 /* --- struct stat (minimal) --- */
 
-#ifdef __MACOS9__
+#ifndef _MAC_STRUCT_STAT
+#define _MAC_STRUCT_STAT
 struct stat {
 	mode_t	st_mode;
 	off_t	st_size;
@@ -163,16 +176,31 @@ long		mac_mktime(struct mac_tm *tm);
 size_t		mac_strftime(char *s, size_t max, const char *fmt,
 			     const struct mac_tm *tm);
 
-/* --- bool / true / false ---
- * Must appear AFTER Mac Toolbox headers.  MacTypes.h defines
- *   enum { false = 0, true = 1 };
- * If true/false are already #define'd, the preprocessor turns
- * those enum member names into literals → illegal C.
+/* --- bool compatibility ---
+ * MacTypes.h provides:  enum { false = 0, true = 1 };
+ * We must NOT #define true/false as macros or the enum breaks.
+ * Force-include MacTypes.h first so true/false are already
+ * available as enum constants, then only typedef bool.
  */
+#ifdef __MWERKS__
+#ifndef __MACTYPES__
+#include <MacTypes.h>
+#endif
+#endif
+
 #ifndef bool
-  typedef unsigned char bool;
-  #define true  1
-  #define false 0
+typedef unsigned char bool;
+#endif
+
+/* On non-Mac hosts (Linux cross-check), provide true/false if
+ * MacTypes.h was not pulled in. */
+#ifndef __MACTYPES__
+#ifndef true
+#define true  1
+#endif
+#ifndef false
+#define false 0
+#endif
 #endif
 
 #endif /* MAC_TYPES_H */

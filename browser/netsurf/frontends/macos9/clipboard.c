@@ -6,9 +6,6 @@
  * Licensed under GPL v2.
  */
 
-#ifndef __MACTYPES__
-#include <stdbool.h>
-#endif
 #include <stdlib.h>
 #include <string.h>
 

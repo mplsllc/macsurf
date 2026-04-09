@@ -54,3 +54,61 @@ Standard HTTP proxy protocol — no custom protocol. The Mac sends a normal HTTP
 - Do not use preemptive threads anywhere in the browser
 - Do not add external dependencies to the proxy
 - Do not target OS X only — Carbon must run on OS 9
+
+## Build Environment
+
+### Compiler
+- CodeWarrior 8 Pro (with 8.3 update) running on Mac OS 9
+- CW8 compiles in C89 mode — no C99, no C++ features
+- CW8 defines `__MWERKS__` — use this to detect the compiler
+- The project defines `__MACOS9__ 1` via the prefix file `macsurf_prefix.h`
+- CW8 does NOT support: `inline`, `//` comments, variadic macros, forward enum declarations, C99 designated initializers, `for (int i...)`
+
+### Prefix File
+`browser/netsurf/frontends/macos9/macsurf_prefix.h` is injected before every compilation unit. It currently defines:
+- `__MACOS9__ 1`
+- `WITHOUT_DUKTAPE 1`
+- `NO_IPV6 1`
+- `TARGET_API_MAC_CARBON 1`
+- `#include <MacTypes.h>` (first line — must stay first to prevent bool/true/false conflict)
+
+### Shims Layer
+POSIX functionality is provided by stubs in `browser/netsurf/frontends/macos9/shims/`. These must be C89 compatible. Mac Toolbox headers must always be included before any bool/true/false definitions.
+
+### Stub Headers
+External dependencies not available on OS 9 are stubbed in `browser/netsurf/frontends/macos9/`:
+- `libwapcaplet/libwapcaplet.h`
+- `dom/dom.h`
+- `libcss/libcss.h`
+- `nsutils/endian.h`, `nsutils/time.h`, `nsutils/base64.h`, `nsutils/unistd.h`
+- `sys/time.h`, `sys/types.h`
+- `shims/iconv.h`, `shims/zlib.h`, `shims/stat.h`
+- `css/utils.h`
+- `parserutils/charset/utf8.h`
+
+### Access Paths (CodeWarrior)
+All non-recursive. User paths:
+- `{Project}::patrick:macsurf-source Folder:`
+- `{Project}::patrick:macsurf-source Folder:browser:netsurf:`
+- `{Project}::patrick:macsurf-source Folder:browser:netsurf:frontends:`
+- `{Project}::patrick:macsurf-source Folder:browser:netsurf:frontends:macos9:`
+- `{Project}::patrick:macsurf-source Folder:browser:netsurf:frontends:macos9:shims:`
+- `{Project}::patrick:macsurf-source Folder:browser:netsurf:frontends:macos9:parserutils:`
+- `{Project}::patrick:macsurf-source Folder:browser:netsurf:frontends:macos9:parserutils:charset:`
+- `{Project}::patrick:macsurf-source Folder:browser:netsurf:include:`
+- `{Project}::patrick:macsurf-source Folder:browser:netsurf:content:`
+- `{Project}::patrick:macsurf-source Folder:browser:netsurf:desktop:`
+- `{Project}::patrick:macsurf-source Folder:browser:netsurf:utils:`
+
+System paths:
+- `{Compiler}:MacOS Support:Universal:Interfaces:CIncludes:`
+- `{Compiler}:MacOS Support:MacHeaders:`
+- `{Compiler}:MSL:MSL_C:MSL_Common:Include:`
+- `{Compiler}:MSL:MSL_Extras:MSL_Common:Include:`
+- `{Compiler}:MSL:MSL_C:MSL_MacOS:Include:`
+
+### Linux Cross-Check
+Use `gcc -fsyntax-only -std=c89 -pedantic -Dinline= -Ibrowser/netsurf/frontends/macos9/shims -Ibrowser/netsurf/frontends -Ibrowser/netsurf/include -Ibrowser/netsurf -include stdbool.h` to syntax-check frontend files on Linux before copying to Mac.
+
+### Project File List (39 .c files)
+Added to MacSurf.mcp — see macsurf-project.md for full list.

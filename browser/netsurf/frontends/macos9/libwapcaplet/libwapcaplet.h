@@ -18,11 +18,12 @@
 
 #include <stddef.h>
 
-/* --- bool compatibility (C89) --- */
+/* --- bool compatibility (C89) ---
+ * true/false come from MacTypes.h as enum constants;
+ * do NOT redefine them as macros.
+ */
 #ifndef bool
 typedef unsigned char bool;
-#define true  1
-#define false 0
 #endif
 
 typedef unsigned long lwc_refcounter;

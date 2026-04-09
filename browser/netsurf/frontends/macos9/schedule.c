@@ -10,9 +10,6 @@
  * (1 tick = 1/60th second). Follows the RISC OS frontend pattern.
  */
 
-#ifndef __MACTYPES__
-#include <stdbool.h>
-#endif
 #include <stdlib.h>
 
 #include "utils/errors.h"

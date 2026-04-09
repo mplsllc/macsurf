@@ -9,10 +9,9 @@
 #ifndef NSUTILS_ENDIAN_H
 #define NSUTILS_ENDIAN_H
 
+/* true/false come from MacTypes.h as enum constants */
 #ifndef bool
 typedef unsigned char bool;
-#define true  1
-#define false 0
 #endif
 
 /*
