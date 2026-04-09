@@ -24,6 +24,34 @@
 #ifndef _NETSURF_UTILS_STRING_H_
 #define _NETSURF_UTILS_STRING_H_
 
+/*
+ * On CW8, #include <string.h> finds THIS file instead of MSL's.
+ * Declare the standard C string functions that callers expect
+ * from <string.h> so they don't get implicit-int returns.
+ */
+#ifdef __MWERKS__
+#ifndef _MSL_STRING_H
+char *strchr(const char *s, int c);
+char *strrchr(const char *s, int c);
+char *strstr(const char *haystack, const char *needle);
+char *strdup(const char *s);
+char *strndup(const char *s, unsigned long n);
+int   strcmp(const char *s1, const char *s2);
+int   strncmp(const char *s1, const char *s2, unsigned long n);
+int   strcasecmp(const char *s1, const char *s2);
+int   strncasecmp(const char *s1, const char *s2, unsigned long n);
+char *strcpy(char *dst, const char *src);
+char *strncpy(char *dst, const char *src, unsigned long n);
+char *strcat(char *dst, const char *src);
+char *strncat(char *dst, const char *src, unsigned long n);
+unsigned long strlen(const char *s);
+void *memset(void *s, int c, unsigned long n);
+void *memcpy(void *dst, const void *src, unsigned long n);
+void *memmove(void *dst, const void *src, unsigned long n);
+int   memcmp(const void *s1, const void *s2, unsigned long n);
+#endif
+#endif
+
 #include <stdlib.h>
 #include <stdarg.h>
 
