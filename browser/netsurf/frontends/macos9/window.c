@@ -456,7 +456,7 @@ static struct gui_window_table window_table = {
 	macos9_window_create,
 	macos9_window_destroy,
 	macos9_window_invalidate,
-	(bool (*)(struct gui_window *, int *, int *))
+	(unsigned char (*)(struct gui_window *, int *, int *))
 		macos9_window_get_scroll,
 	macos9_window_set_scroll,
 	macos9_window_get_dimensions,
@@ -467,7 +467,7 @@ static struct gui_window_table window_table = {
 	macos9_window_set_status,
 	macos9_window_set_pointer,
 	macos9_window_place_caret,
-	(bool (*)(struct gui_window *, gui_drag_type, const struct rect *))
+	(unsigned char (*)(struct gui_window *, gui_drag_type, const struct rect *))
 		macos9_window_drag_start,
 	macos9_window_save_link,
 	macos9_window_create_form_select_menu,

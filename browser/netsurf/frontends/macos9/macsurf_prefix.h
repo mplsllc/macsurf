@@ -9,16 +9,27 @@
 #ifndef MACSURF_PREFIX_H
 #define MACSURF_PREFIX_H
 
-/* Globally block MSL's stdint.h and cstdint from ever loading.
- * Our shims/stdint.h provides C89-compatible typedefs instead. */
-#ifndef _MSL_STDINT_H
-#define _MSL_STDINT_H
-#endif
-#ifndef _STDINT_H
+/* Globally block MSL's C++ inttypes from ruining the C build */
 #define _STDINT_H
-#endif
-#ifndef __STDINT_H__
-#define __STDINT_H__
+#define _CSTDINT
+#define _INTTYPES_H
+#define _CINTTYPES
+
+/* Provide intrinsic types globally */
+typedef signed char int8_t;
+typedef unsigned char uint8_t;
+typedef short int16_t;
+typedef unsigned short uint16_t;
+typedef long int32_t;
+typedef unsigned long uint32_t;
+typedef long long int64_t;
+typedef unsigned long long uint64_t;
+typedef unsigned long uintptr_t;
+typedef long intptr_t;
+
+/* Map C99 _Bool to CodeWarrior */
+#ifndef _Bool
+#define _Bool unsigned char
 #endif
 
 /*
