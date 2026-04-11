@@ -193,7 +193,19 @@
         <VALUE>{Project}/../../../../libparserutils/src</VALUE>
     </SETTING>
 
-    <!-- 7. Mac OS Universal Headers -->
+    <!-- 7. libhubbub public headers -->
+    <SETTING>
+        <NAME>UserSearchPath</NAME>
+        <VALUE>{Project}/../../../../libhubbub/include</VALUE>
+    </SETTING>
+
+    <!-- 8. libhubbub internal headers (relative #include "tokeniser/tokeniser.h") -->
+    <SETTING>
+        <NAME>UserSearchPath</NAME>
+        <VALUE>{Project}/../../../../libhubbub/src</VALUE>
+    </SETTING>
+
+    <!-- 9. Mac OS Universal Headers -->
     <SETTING>
         <NAME>SystemSearchPath</NAME>
         <VALUE>{Compiler}/MacOS Support/Headers/Universal Headers</VALUE>
@@ -720,6 +732,220 @@
         <FILEFLAGS>compile</FILEFLAGS>
     </FILE>
 
+    <!-- ============================================================== -->
+    <!--  libhubbub — 30 .c files in tier order                          -->
+    <!-- ============================================================== -->
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/utils/errors.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/utils/string.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/charset/detect.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/tokeniser/entities.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/element-type.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/tokeniser/tokeniser.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/initial.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/before_html.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/before_head.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/in_head.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/in_head_noscript.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/after_head.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/in_body.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/generic_rcdata.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/in_table.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/in_table_body.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/in_caption.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/in_column_group.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/in_row.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/in_cell.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/in_select.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/in_select_in_table.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/in_foreign_content.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/in_frameset.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/after_body.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/after_frameset.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/after_after_body.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/after_after_frameset.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/treebuilder/treebuilder.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libhubbub/src/parser.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
 </FILELIST>
 
 <!-- ================================================================== -->
@@ -754,6 +980,38 @@
     <FILEREF><PATH>../../../../libparserutils/src/charset/codec.c</PATH></FILEREF>
     <FILEREF><PATH>../../../../libparserutils/src/input/filter.c</PATH></FILEREF>
     <FILEREF><PATH>../../../../libparserutils/src/input/inputstream.c</PATH></FILEREF>
+
+    <!-- libhubbub (tier order: utils → encodings/codegen → tokeniser → 22 insertion modes → treebuilder → parser) -->
+    <FILEREF><PATH>../../../../libhubbub/src/utils/errors.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/utils/string.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/charset/detect.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/tokeniser/entities.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/element-type.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/tokeniser/tokeniser.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/initial.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/before_html.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/before_head.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/in_head.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/in_head_noscript.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/after_head.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/in_body.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/generic_rcdata.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/in_table.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/in_table_body.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/in_caption.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/in_column_group.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/in_row.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/in_cell.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/in_select.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/in_select_in_table.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/in_foreign_content.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/in_frameset.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/after_body.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/after_frameset.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/after_after_body.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/after_after_frameset.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/treebuilder/treebuilder.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libhubbub/src/parser.c</PATH></FILEREF>
 
     <!-- NetSurf Core Utils -->
     <FILEREF><PATH>../../../utils/utils.c</PATH></FILEREF>
