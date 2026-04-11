@@ -473,6 +473,13 @@
         <FILEFLAGS>compile</FILEFLAGS>
     </FILE>
 
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../utils/talloc.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
 
     <!-- ============================================================== -->
     <!--  NetSurf Content                                                -->
@@ -4376,6 +4383,7 @@
     <FILEREF><PATH>../../../utils/idna.c</PATH></FILEREF>
     <FILEREF><PATH>../../../utils/punycode.c</PATH></FILEREF>
     <FILEREF><PATH>../../../utils/ssl_certs.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../utils/talloc.c</PATH></FILEREF>
 
     <!-- NetSurf Content -->
     <FILEREF><PATH>../../../content/llcache.c</PATH></FILEREF>
@@ -4460,6 +4468,7 @@
         <FILEREF><PATH>../../../utils/idna.c</PATH></FILEREF>
         <FILEREF><PATH>../../../utils/punycode.c</PATH></FILEREF>
         <FILEREF><PATH>../../../utils/ssl_certs.c</PATH></FILEREF>
+        <FILEREF><PATH>../../../utils/talloc.c</PATH></FILEREF>
     </GROUP>
 
     <GROUP>

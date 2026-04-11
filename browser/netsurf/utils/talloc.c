@@ -55,10 +55,15 @@
 #include "replace.h"
 #else
 #include <stdarg.h>
+/* MacSurf: include string.h and stdlib.h unconditionally rather than
+ * gating on __GNUC__ > 2. CW8 doesn't define __GNUC__ at all, so the
+ * upstream gate would skip these and rely on the prefix file pulling
+ * them in transitively. Explicit is safer. */
+#include <string.h>
+#include <stdlib.h>
 #if !defined(__BEOS__) && __GNUC__ > 2
 /* Assume we've got va_copy */
 #define HAVE_VA_COPY
-#include <string.h>
 #endif
 #endif
 #include "talloc.h"
