@@ -97,7 +97,8 @@ nserror cert_chain_dup(const struct cert_chain *src,
 
 /* Fetch */
 void fetch_abort(void *f) { (void)f; }
-nserror fetcher_init(void) { return NSERROR_OK; }
+/* fetcher_init() now provided by macos9_fetcher_init.c — registers
+ * the real OT-backed HTTP fetcher. Stub removed. */
 
 /* Content handler init stubs */
 nserror textplain_init(void) { return NSERROR_OK; }

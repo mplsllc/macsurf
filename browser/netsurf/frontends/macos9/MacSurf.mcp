@@ -550,6 +550,20 @@
 
     <FILE>
         <PATHTYPE>Project</PATHTYPE>
+        <PATH>macos9_http_fetcher.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>macos9_fetcher_init.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
         <PATH>clipboard.c</PATH>
         <FILEKIND>Text</FILEKIND>
         <FILEFLAGS>compile</FILEFLAGS>
@@ -4269,6 +4283,8 @@
     <FILEREF><PATH>plotters.c</PATH></FILEREF>
     <FILEREF><PATH>font.c</PATH></FILEREF>
     <FILEREF><PATH>macos9_fetch.c</PATH></FILEREF>
+    <FILEREF><PATH>macos9_http_fetcher.c</PATH></FILEREF>
+    <FILEREF><PATH>macos9_fetcher_init.c</PATH></FILEREF>
     <FILEREF><PATH>clipboard.c</PATH></FILEREF>
     <FILEREF><PATH>macos9_utf8.c</PATH></FILEREF>
     <FILEREF><PATH>macos9_download.c</PATH></FILEREF>
@@ -4342,6 +4358,8 @@
         <FILEREF><PATH>plotters.c</PATH></FILEREF>
         <FILEREF><PATH>font.c</PATH></FILEREF>
         <FILEREF><PATH>macos9_fetch.c</PATH></FILEREF>
+        <FILEREF><PATH>macos9_http_fetcher.c</PATH></FILEREF>
+        <FILEREF><PATH>macos9_fetcher_init.c</PATH></FILEREF>
         <FILEREF><PATH>clipboard.c</PATH></FILEREF>
         <FILEREF><PATH>macos9_utf8.c</PATH></FILEREF>
         <FILEREF><PATH>macos9_download.c</PATH></FILEREF>
