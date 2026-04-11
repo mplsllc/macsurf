@@ -1,97 +1,1 @@
-/*
- * MacSurf — Mac OS 9 frontend for NetSurf
- * font.c — All gui_layout_table callbacks (font measurement)
- *
- * This file is part of MacSurf, built on the NetSurf engine.
- * Licensed under GPL v2.
- */
-
-#include <stdlib.h>
-#include <string.h>
-
-#include "utils/errors.h"
-#include "utils/log.h"
-#include "utils/utf8.h"
-#include "netsurf/plot_style.h"
-#include "netsurf/layout.h"
-
-#include "macos9/macos9.h"
-
-static nserror
-macos9_font_width(const struct plot_font_style *fstyle,
-		  const char *string,
-		  size_t length,
-		  int *width)
-{
-	/* TODO: TextFont() + TextSize() + TextWidth() */
-	/* Stub: estimate 8px per character */
-	*width = (int)length * 8;
-	return NSERROR_OK;
-}
-
-static nserror
-macos9_font_position(const struct plot_font_style *fstyle,
-		     const char *string,
-		     size_t length,
-		     int x,
-		     size_t *char_offset,
-		     int *actual_x)
-{
-	/* TODO: binary search with TextWidth() */
-	/* Stub: assume 8px per character */
-	size_t idx = (size_t)(x / 8);
-
-	if (idx > length) {
-		idx = length;
-	}
-	*char_offset = idx;
-	*actual_x = (int)idx * 8;
-	return NSERROR_OK;
-}
-
-static nserror
-macos9_font_split(const struct plot_font_style *fstyle,
-		  const char *string,
-		  size_t length,
-		  int x,
-		  size_t *char_offset,
-		  int *actual_x)
-{
-	/* TODO: TextWidth() + walk back to nearest space */
-	/* Stub: find split point, walk back to space */
-	size_t idx = (size_t)(x / 8);
-
-	if (idx > length) {
-		idx = length;
-	}
-
-	/* Walk back to find a space */
-	while (idx > 0 && string[idx - 1] != ' ') {
-		idx--;
-	}
-
-	if (idx == 0) {
-		/* No space found, split at full width */
-		idx = (size_t)(x / 8);
-		if (idx > length) {
-			idx = length;
-		}
-	}
-
-	if (idx == 0 && length > 0) {
-		idx = 1; /* Never return 0 */
-	}
-
-	*char_offset = idx;
-	*actual_x = (int)idx * 8;
-	return NSERROR_OK;
-}
-
-/* Field order: width, position, split (see include/netsurf/layout.h) */
-static struct gui_layout_table layout_table = {
-	macos9_font_width,
-	macos9_font_position,
-	macos9_font_split
-};
-
-struct gui_layout_table *macos9_layout_table = &layout_table;
+/* * MacSurf — Mac OS 9 frontend for NetSurf * font.c — All gui_layout_table callbacks (font measurement) * * Phase 5: real measurements via QuickDraw TextWidth / CharWidth. * NetSurf calls these from layout to size text boxes; getting the * numbers right (or at least proportional to what plot_text will * actually draw) is what makes the page lay out correctly. * * This file is part of MacSurf, built on the NetSurf engine. * Licensed under GPL v2. */#include <stdlib.h>#include <string.h>#include "utils/errors.h"#include "utils/log.h"#include "utils/utf8.h"#include "netsurf/plot_style.h"#include "netsurf/layout.h"#include "macos9/macos9.h"#ifdef __MACOS9__#include <Quickdraw.h>#include <QuickdrawText.h>#include <Fonts.h>#include <TextUtils.h>#else/* Linux cross-check stubs. */static short TextWidth(const void *b, short s, short l)	{ (void)b; (void)s; return (short)(l * 6); }static short CharWidth(short c) { (void)c; return 6; }static void TextFont(short f) { (void)f; }static void TextSize(short s) { (void)s; }static void TextFace(short f) { (void)f; }#define kFontIDMonaco       4#define kFontIDGeneva       3#define kFontIDTimes        20#define kFontIDCourier      22#define kFontIDHelvetica    21#define normal              0#define bold                1#define italic              2#endif/* ---- helpers (mirrors plotters.c font selection) ---- */static shortmac_font_id_from_style(const struct plot_font_style *fstyle){	if (fstyle == NULL)		return kFontIDGeneva;	switch (fstyle->family) {	case PLOT_FONT_FAMILY_SERIF:      return kFontIDTimes;	case PLOT_FONT_FAMILY_MONOSPACE:  return kFontIDMonaco;	case PLOT_FONT_FAMILY_SANS_SERIF: return kFontIDHelvetica;	default:                          return kFontIDGeneva;	}}static shortmac_face_from_style(const struct plot_font_style *fstyle){	short face = 0;	if (fstyle == NULL) return 0;	if (fstyle->weight >= 600) face |= bold;	if (fstyle->flags & FONTF_ITALIC) face |= italic;	if (fstyle->flags & FONTF_OBLIQUE) face |= italic;	return face;}static shortmac_size_from_style(const struct plot_font_style *fstyle){	short size;	if (fstyle == NULL) return 12;	size = (short)(fstyle->size >> PLOT_STYLE_RADIX);	if (size <= 0) size = 12;	return size;}static voidmac_apply_style(const struct plot_font_style *fstyle){	TextFont(mac_font_id_from_style(fstyle));	TextSize(mac_size_from_style(fstyle));	TextFace(mac_face_from_style(fstyle));}/* ---- gui_layout_table callbacks ---- */static nserrormacos9_font_width(const struct plot_font_style *fstyle,		  const char *string,		  size_t length,		  int *width){	if (string == NULL || length == 0) {		*width = 0;		return NSERROR_OK;	}	mac_apply_style(fstyle);	*width = (int)TextWidth(string, 0, (short)length);	return NSERROR_OK;}/* * Walk forward accumulating per-character widths until the running sum * exceeds the target x. Returns the offset of the first character whose * leading edge passes x, plus the actual pixel position at that edge. */static nserrormacos9_font_position(const struct plot_font_style *fstyle,		     const char *string,		     size_t length,		     int x,		     size_t *char_offset,		     int *actual_x){	int sum;	size_t i;	if (string == NULL || length == 0) {		*char_offset = 0;		*actual_x = 0;		return NSERROR_OK;	}	mac_apply_style(fstyle);	sum = 0;	for (i = 0; i < length; i++) {		int w = (int)CharWidth((short)(unsigned char)string[i]);		if (sum + w > x) {			*char_offset = i;			*actual_x = sum;			return NSERROR_OK;		}		sum += w;	}	*char_offset = length;	*actual_x = sum;	return NSERROR_OK;}/* * Find the last word boundary (space) at or before the x pixel limit. * If no space is found, returns the longest run of characters that fits. * Never returns 0 for non-empty input — NetSurf gets stuck in an infinite * layout loop if a single forced split returns zero progress. */static nserrormacos9_font_split(const struct plot_font_style *fstyle,		  const char *string,		  size_t length,		  int x,		  size_t *char_offset,		  int *actual_x){	int sum;	int last_space_x;	size_t i;	size_t last_space;	bool have_space;	if (string == NULL || length == 0) {		*char_offset = 0;		*actual_x = 0;		return NSERROR_OK;	}	mac_apply_style(fstyle);	sum = 0;	last_space = 0;	last_space_x = 0;	have_space = false;	for (i = 0; i < length; i++) {		int w = (int)CharWidth((short)(unsigned char)string[i]);		if (string[i] == ' ') {			if (sum > x) break;			last_space = i;			last_space_x = sum;			have_space = true;		}		sum += w;		if (sum > x && have_space) break;	}	if (have_space) {		*char_offset = last_space;		*actual_x = last_space_x;	} else {		/* No break opportunity — take everything up to the limit		 * but force at least one character of progress. */		size_t fit;		int s2 = 0;		for (fit = 0; fit < length; fit++) {			int w = (int)CharWidth(				(short)(unsigned char)string[fit]);			if (s2 + w > x && fit > 0) break;			s2 += w;		}		if (fit == 0) fit = 1;		*char_offset = fit;		*actual_x = s2;	}	return NSERROR_OK;}/* Field order: width, position, split (see include/netsurf/layout.h) */static struct gui_layout_table layout_table = {	macos9_font_width,	macos9_font_position,	macos9_font_split};struct gui_layout_table *macos9_layout_table = &layout_table;

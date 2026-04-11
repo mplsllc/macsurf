@@ -1,123 +1,1 @@
-/*
- * MacSurf — Mac OS 9 frontend for NetSurf
- * plotters.c — All plotter_table callbacks
- *
- * This file is part of MacSurf, built on the NetSurf engine.
- * Licensed under GPL v2.
- */
-
-#include <stdlib.h>
-
-#include "utils/errors.h"
-#include "utils/log.h"
-#include "netsurf/types.h"
-#include "netsurf/plot_style.h"
-#include "netsurf/plotters.h"
-
-#include "macos9/macos9.h"
-
-static nserror
-macos9_plot_clip(const struct redraw_context *ctx, const struct rect *clip)
-{
-	/* TODO: ClipRect() */
-	return NSERROR_OK;
-}
-
-static nserror
-macos9_plot_arc(const struct redraw_context *ctx,
-		const plot_style_t *pstyle,
-		int x, int y, int radius, int angle1, int angle2)
-{
-	/* TODO: FrameArc() */
-	return NSERROR_OK;
-}
-
-static nserror
-macos9_plot_disc(const struct redraw_context *ctx,
-		 const plot_style_t *pstyle,
-		 int x, int y, int radius)
-{
-	/* TODO: PaintOval() / FrameOval() */
-	return NSERROR_OK;
-}
-
-static nserror
-macos9_plot_line(const struct redraw_context *ctx,
-		 const plot_style_t *pstyle,
-		 const struct rect *line)
-{
-	/* TODO: MoveTo() + LineTo() */
-	return NSERROR_OK;
-}
-
-static nserror
-macos9_plot_rectangle(const struct redraw_context *ctx,
-		      const plot_style_t *pstyle,
-		      const struct rect *rectangle)
-{
-	/* TODO: PaintRect() / FrameRect() */
-	return NSERROR_OK;
-}
-
-static nserror
-macos9_plot_polygon(const struct redraw_context *ctx,
-		    const plot_style_t *pstyle,
-		    const int *p,
-		    unsigned int n)
-{
-	/* TODO: OpenPoly() + LineTo() + ClosePoly() + PaintPoly() */
-	return NSERROR_OK;
-}
-
-static nserror
-macos9_plot_path(const struct redraw_context *ctx,
-		 const plot_style_t *pstyle,
-		 const float *p,
-		 unsigned int n,
-		 const float transform[6])
-{
-	/* TODO: bezier flattening via de Casteljau subdivision */
-	return NSERROR_OK;
-}
-
-static nserror
-macos9_plot_bitmap(const struct redraw_context *ctx,
-		   struct bitmap *bitmap,
-		   int x, int y,
-		   int width, int height,
-		   colour bg,
-		   bitmap_flags_t flags)
-{
-	/* TODO: CopyBits() from GWorld, manual alpha compositing */
-	return NSERROR_OK;
-}
-
-static nserror
-macos9_plot_text(const struct redraw_context *ctx,
-		 const plot_font_style_t *fstyle,
-		 int x, int y,
-		 const char *text,
-		 size_t length)
-{
-	/* TODO: TextFont() + TextSize() + DrawText() */
-	return NSERROR_OK;
-}
-
-/* Field order: clip, arc, disc, line, rectangle, polygon, path,
- * bitmap, text, group_start, group_end, flush, option_knockout
- * (see include/netsurf/plotters.h) */
-const struct plotter_table macos9_plotters = {
-	macos9_plot_clip,
-	macos9_plot_arc,
-	macos9_plot_disc,
-	macos9_plot_line,
-	macos9_plot_rectangle,
-	macos9_plot_polygon,
-	macos9_plot_path,
-	macos9_plot_bitmap,
-	macos9_plot_text,
-	NULL,				/* group_start */
-	NULL,				/* group_end */
-	NULL,				/* flush */
-	true				/* option_knockout */
-};
+/* * MacSurf — Mac OS 9 frontend for NetSurf * plotters.c — All plotter_table callbacks * * Phase 5: implement clip, rectangle, text against QuickDraw. * Other plotters remain stubs and will be filled in incrementally. * * This file is part of MacSurf, built on the NetSurf engine. * Licensed under GPL v2. */#include <stdlib.h>#include <string.h>#include "utils/errors.h"#include "utils/log.h"#include "netsurf/types.h"#include "netsurf/plot_style.h"#include "netsurf/plotters.h"#include "macos9/macos9.h"#ifdef __MACOS9__#include <Quickdraw.h>#include <QuickdrawText.h>#include <Fonts.h>#include <TextUtils.h>#else/* Linux cross-check stubs — match Mac toolbox shapes loosely. */typedef struct { short top, left, bottom, right; } MacRect;typedef struct { unsigned short red, green, blue; } RGBColor;#define Rect MacRect#define noErr 0static void ClipRect(const Rect *r) { (void)r; }static void PaintRect(const Rect *r) { (void)r; }static void FrameRect(const Rect *r) { (void)r; }static void RGBForeColor(const RGBColor *c) { (void)c; }static void TextFont(short f) { (void)f; }static void TextSize(short s) { (void)s; }static void TextFace(short f) { (void)f; }static void MoveTo(short h, short v) { (void)h; (void)v; }static void DrawText(const void *b, short s, short l) { (void)b;(void)s;(void)l; }#define kFontIDMonaco       4#define kFontIDGeneva       3#define kFontIDTimes        20#define kFontIDCourier      22#define kFontIDHelvetica    21#define normal              0#define bold                1#define italic              2#endif/* ---- helpers ---- *//* * NetSurf packs colours as 0xBBGGRR<flags>: *   bits  0-7  : red    (per netsurf/types.h, the BYTE-aligned form) * In practice the macros in plot_style.h treat the layout as * 0xRRGGBBxx with red in the low byte. We match the existing * NetSurf macros: red_from_colour, green_from_colour, blue_from_colour * which return the byte value. Replicate locally to avoid pulling * in extra headers. */static voidmacos9_colour_to_rgb(colour c, RGBColor *out){	unsigned int r = (unsigned int)((c >>  0) & 0xff);	unsigned int g = (unsigned int)((c >>  8) & 0xff);	unsigned int b = (unsigned int)((c >> 16) & 0xff);	/* 8-bit -> 16-bit by replicating the byte (0xAB -> 0xABAB).	 * Standard QuickDraw idiom — same trick CopyBits / Picture	 * recording uses. */	out->red   = (unsigned short)((r << 8) | r);	out->green = (unsigned short)((g << 8) | g);	out->blue  = (unsigned short)((b << 8) | b);}static voidmacos9_rect_from_ns(const struct rect *src, Rect *dst){	dst->left   = (short)src->x0;	dst->top    = (short)src->y0;	dst->right  = (short)src->x1;	dst->bottom = (short)src->y1;}static shortmacos9_font_id_from_style(const plot_font_style_t *fstyle){	if (fstyle == NULL)		return kFontIDGeneva;	switch (fstyle->family) {	case PLOT_FONT_FAMILY_SERIF:      return kFontIDTimes;	case PLOT_FONT_FAMILY_MONOSPACE:  return kFontIDMonaco;	case PLOT_FONT_FAMILY_SANS_SERIF: return kFontIDHelvetica;	default:                          return kFontIDGeneva;	}}static shortmacos9_face_from_style(const plot_font_style_t *fstyle){	short face = 0;	if (fstyle == NULL)		return 0;	if (fstyle->weight >= 600) face |= bold;	if (fstyle->flags & FONTF_ITALIC) face |= italic;	if (fstyle->flags & FONTF_OBLIQUE) face |= italic;	return face;}/* ---- plotters ---- */static nserrormacos9_plot_clip(const struct redraw_context *ctx, const struct rect *clip){	Rect r;	(void)ctx;	if (clip == NULL) return NSERROR_OK;	macos9_rect_from_ns(clip, &r);	ClipRect(&r);	return NSERROR_OK;}static nserrormacos9_plot_arc(const struct redraw_context *ctx,		const plot_style_t *pstyle,		int x, int y, int radius, int angle1, int angle2){	(void)ctx; (void)pstyle;	(void)x; (void)y; (void)radius; (void)angle1; (void)angle2;	/* TODO: FrameArc() */	return NSERROR_OK;}static nserrormacos9_plot_disc(const struct redraw_context *ctx,		 const plot_style_t *pstyle,		 int x, int y, int radius){	(void)ctx; (void)pstyle;	(void)x; (void)y; (void)radius;	/* TODO: PaintOval() / FrameOval() */	return NSERROR_OK;}static nserrormacos9_plot_line(const struct redraw_context *ctx,		 const plot_style_t *pstyle,		 const struct rect *line){	(void)ctx; (void)pstyle; (void)line;	/* TODO: MoveTo() + LineTo() */	return NSERROR_OK;}static nserrormacos9_plot_rectangle(const struct redraw_context *ctx,		      const plot_style_t *pstyle,		      const struct rect *rectangle){	Rect r;	RGBColor rgb;	(void)ctx;	if (pstyle == NULL || rectangle == NULL)		return NSERROR_OK;	macos9_rect_from_ns(rectangle, &r);	if (pstyle->fill_type != PLOT_OP_TYPE_NONE) {		macos9_colour_to_rgb(pstyle->fill_colour, &rgb);		RGBForeColor(&rgb);		PaintRect(&r);	}	if (pstyle->stroke_type != PLOT_OP_TYPE_NONE) {		macos9_colour_to_rgb(pstyle->stroke_colour, &rgb);		RGBForeColor(&rgb);		FrameRect(&r);	}	return NSERROR_OK;}static nserrormacos9_plot_polygon(const struct redraw_context *ctx,		    const plot_style_t *pstyle,		    const int *p,		    unsigned int n){	(void)ctx; (void)pstyle; (void)p; (void)n;	/* TODO: OpenPoly() + LineTo() + ClosePoly() + PaintPoly() */	return NSERROR_OK;}static nserrormacos9_plot_path(const struct redraw_context *ctx,		 const plot_style_t *pstyle,		 const float *p,		 unsigned int n,		 const float transform[6]){	(void)ctx; (void)pstyle; (void)p; (void)n; (void)transform;	/* TODO: bezier flattening via de Casteljau subdivision */	return NSERROR_OK;}static nserrormacos9_plot_bitmap(const struct redraw_context *ctx,		   struct bitmap *bitmap,		   int x, int y,		   int width, int height,		   colour bg,		   bitmap_flags_t flags){	(void)ctx; (void)bitmap;	(void)x; (void)y; (void)width; (void)height; (void)bg; (void)flags;	/* TODO: CopyBits() from GWorld, manual alpha compositing */	return NSERROR_OK;}static nserrormacos9_plot_text(const struct redraw_context *ctx,		 const plot_font_style_t *fstyle,		 int x, int y,		 const char *text,		 size_t length){	RGBColor rgb;	short font_id;	short face;	short size;	(void)ctx;	if (fstyle == NULL || text == NULL || length == 0)		return NSERROR_OK;	font_id = macos9_font_id_from_style(fstyle);	face    = macos9_face_from_style(fstyle);	/* plot_style_fixed is a 22.10 fixed-point pt size; shift down. */	size = (short)(fstyle->size >> PLOT_STYLE_RADIX);	if (size <= 0) size = 12;	TextFont(font_id);	TextSize(size);	TextFace(face);	macos9_colour_to_rgb(fstyle->foreground, &rgb);	RGBForeColor(&rgb);	MoveTo((short)x, (short)y);	DrawText(text, 0, (short)length);	return NSERROR_OK;}/* Field order: clip, arc, disc, line, rectangle, polygon, path, * bitmap, text, group_start, group_end, flush, option_knockout * (see include/netsurf/plotters.h) */const struct plotter_table macos9_plotters = {	macos9_plot_clip,	macos9_plot_arc,	macos9_plot_disc,	macos9_plot_line,	macos9_plot_rectangle,	macos9_plot_polygon,	macos9_plot_path,	macos9_plot_bitmap,	macos9_plot_text,	NULL,				/* group_start */	NULL,				/* group_end */	NULL,				/* flush */	true				/* option_knockout */};
