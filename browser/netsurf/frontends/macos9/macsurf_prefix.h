@@ -146,6 +146,16 @@ typedef unsigned char (nslog_ensure_t)(FILE *fptr);
 #define WITHOUT_DUKTAPE 1
 #endif
 
+/* libparserutils: disable iconv-based input filter (no iconv on OS 9).
+ * Keeps the library's own UTF/8859/ASCII codecs active. */
+#ifndef WITHOUT_ICONV_FILTER
+#define WITHOUT_ICONV_FILTER 1
+#endif
+
+/* libparserutils uses `static inline` in headers and several .c files.
+ * CW8 C89 has no `inline` — neutralize it everywhere. */
+#define inline
+
 #ifndef NO_IPV6
 #define NO_IPV6 1
 #endif

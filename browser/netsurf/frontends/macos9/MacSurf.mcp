@@ -181,7 +181,19 @@
         <VALUE>{Project}/shims</VALUE>
     </SETTING>
 
-    <!-- 5. Mac OS Universal Headers -->
+    <!-- 5. libparserutils public headers -->
+    <SETTING>
+        <NAME>UserSearchPath</NAME>
+        <VALUE>{Project}/../../../../libparserutils/include</VALUE>
+    </SETTING>
+
+    <!-- 6. libparserutils internal headers (relative #include "input/filter.h") -->
+    <SETTING>
+        <NAME>UserSearchPath</NAME>
+        <VALUE>{Project}/../../../../libparserutils/src</VALUE>
+    </SETTING>
+
+    <!-- 7. Mac OS Universal Headers -->
     <SETTING>
         <NAME>SystemSearchPath</NAME>
         <VALUE>{Compiler}/MacOS Support/Headers/Universal Headers</VALUE>
@@ -599,6 +611,115 @@
         <FILEFLAGS>link</FILEFLAGS>
     </FILE>
 
+    <!-- ============================================================== -->
+    <!--  libparserutils — 15 .c files in tier order                     -->
+    <!-- ============================================================== -->
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libparserutils/src/utils/errors.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libparserutils/src/utils/buffer.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libparserutils/src/utils/stack.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libparserutils/src/utils/vector.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libparserutils/src/charset/encodings/utf8.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libparserutils/src/charset/encodings/utf16.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libparserutils/src/charset/codecs/codec_ascii.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libparserutils/src/charset/codecs/codec_8859.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libparserutils/src/charset/codecs/codec_ext8.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libparserutils/src/charset/codecs/codec_utf8.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libparserutils/src/charset/codecs/codec_utf16.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libparserutils/src/charset/aliases.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libparserutils/src/charset/codec.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libparserutils/src/input/filter.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../../libparserutils/src/input/inputstream.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
 </FILELIST>
 
 <!-- ================================================================== -->
@@ -616,6 +737,23 @@
     <FILEREF><PATH>shims/mac_stat.c</PATH></FILEREF>
     <FILEREF><PATH>shims/mac_dirent.c</PATH></FILEREF>
     <FILEREF><PATH>shims/mac_time.c</PATH></FILEREF>
+
+    <!-- libparserutils (tier order: leaf utilities → encodings → codecs → factory → filter → inputstream) -->
+    <FILEREF><PATH>../../../../libparserutils/src/utils/errors.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libparserutils/src/utils/buffer.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libparserutils/src/utils/stack.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libparserutils/src/utils/vector.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libparserutils/src/charset/encodings/utf8.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libparserutils/src/charset/encodings/utf16.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libparserutils/src/charset/codecs/codec_ascii.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libparserutils/src/charset/codecs/codec_8859.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libparserutils/src/charset/codecs/codec_ext8.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libparserutils/src/charset/codecs/codec_utf8.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libparserutils/src/charset/codecs/codec_utf16.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libparserutils/src/charset/aliases.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libparserutils/src/charset/codec.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libparserutils/src/input/filter.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../../libparserutils/src/input/inputstream.c</PATH></FILEREF>
 
     <!-- NetSurf Core Utils -->
     <FILEREF><PATH>../../../utils/utils.c</PATH></FILEREF>

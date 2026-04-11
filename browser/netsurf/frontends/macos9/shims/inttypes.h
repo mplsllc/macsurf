@@ -1,8 +1,12 @@
 #ifndef MACSURF_INTTYPES_H
 #define MACSURF_INTTYPES_H
 
-/* Do NOT #include <stdint.h> — the prefix file provides types globally.
- * MSL's stdint.h pulls in C++ cstdint which breaks the C89 build. */
+/* On CW8 the prefix file provides the integer types globally and predefines
+ * _STDINT_H to block MSL's C++ cstdint chain. On Linux (gcc cross-check) the
+ * prefix isn't injected, so we pull in our own stdint shim, which provides
+ * the same int8_t..uint64_t types via plain C. Either way the types are
+ * defined by the time libparserutils' headers get to use them. */
+#include "stdint.h"
 
 /* printf format macros — guarded to avoid redefinition */
 #ifndef PRId16
