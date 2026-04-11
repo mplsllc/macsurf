@@ -380,8 +380,8 @@ void html_finish_conversion(html_content *htmlc)
 	 * object, but with its target set to the Document object (and
 	 * the currentTarget set to the Window object)
 	 */
-	if (htmlc->jsthread != NULL) {
-		js_fire_event(htmlc->jsthread, "load", htmlc->document, NULL);
+	if (htmlc->js_thread != NULL) {
+		js_fire_event(htmlc->js_thread, "load", htmlc->document, NULL);
 	}
 
 	/* convert dom tree to box tree */
@@ -497,7 +497,7 @@ html_create_html_data(html_content *c, const http_parameter *params)
 	c->focus_owner.self = true;
 	c->scripts_count = 0;
 	c->scripts = NULL;
-	c->jsthread = NULL;
+	c->js_thread = NULL;
 
 	c->enable_scripting = nsoption_bool(enable_javascript);
 	c->base.active = 1; /* The html content itself is active */
@@ -1016,9 +1016,9 @@ static void html_stop(struct content *c)
 		/* Still loading; simply flag that we've been aborted
 		 * html_convert/html_finish_conversion will do the rest */
 		htmlc->aborted = true;
-		if (htmlc->jsthread != NULL) {
+		if (htmlc->js_thread != NULL) {
 			/* Close the JS thread to cancel out any callbacks */
-			js_closethread(htmlc->jsthread);
+			js_closethread(htmlc->js_thread);
 		}
 		break;
 
@@ -1232,9 +1232,9 @@ static void html_destroy(struct content *c)
 	/* At this point we can be moderately confident the JS is offline
 	 * so we destroy the JS thread.
 	 */
-	if (html->jsthread != NULL) {
-		js_destroythread(html->jsthread);
-		html->jsthread = NULL;
+	if (html->js_thread != NULL) {
+		js_destroythread(html->js_thread);
+		html->js_thread = NULL;
 	}
 
 	if (html->parser != NULL) {
@@ -1362,9 +1362,9 @@ static nserror html_close(struct content *c)
 	/* remove all object references from the html content */
 	html_object_close_objects(htmlc);
 
-	if (htmlc->jsthread != NULL) {
+	if (htmlc->js_thread != NULL) {
 		/* Close, but do not destroy (yet) the JS thread */
-		ret = js_closethread(htmlc->jsthread);
+		ret = js_closethread(htmlc->js_thread);
 	}
 
 	return ret;

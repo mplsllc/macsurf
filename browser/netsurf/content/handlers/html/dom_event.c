@@ -639,20 +639,20 @@ dom_default_action_DOMNodeInserted_cb(struct dom_event *evt, void *pw)
 
 		if (htmlc->enable_scripting) {
 			/* ensure javascript context is available */
-			if (htmlc->jsthread == NULL) {
+			if (htmlc->js_thread == NULL) {
 				union content_msg_data msg_data;
 
-				msg_data.jsthread = &htmlc->jsthread;
+				msg_data.jsthread = &htmlc->js_thread;
 				content_broadcast(&htmlc->base,
 						  CONTENT_MSG_GETTHREAD,
 						  &msg_data);
 				NSLOG(netsurf, INFO,
 				      "javascript context: %p (htmlc: %p)",
-				      htmlc->jsthread,
+				      htmlc->js_thread,
 				      htmlc);
 			}
-			if (htmlc->jsthread != NULL) {
-				js_handle_new_element(htmlc->jsthread,
+			if (htmlc->js_thread != NULL) {
+				js_handle_new_element(htmlc->js_thread,
 						      (dom_element *) node);
 			}
 		}
@@ -756,8 +756,8 @@ dom_default_action_finished_cb(struct dom_event *evt, void *pw)
 {
 	html_content *htmlc = pw;
 
-	if (htmlc->jsthread != NULL)
-		js_event_cleanup(htmlc->jsthread, evt);
+	if (htmlc->js_thread != NULL)
+		js_event_cleanup(htmlc->js_thread, evt);
 }
 
 

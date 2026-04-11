@@ -149,7 +149,7 @@ typedef struct html_content {
 	/** Scripts */
 	struct html_script *scripts;
 	/** javascript thread in use */
-	struct jsthread *jsthread;
+	struct jsthread *js_thread;
 
 	/** Number of entries in stylesheet_content. */
 	unsigned int stylesheet_count;
