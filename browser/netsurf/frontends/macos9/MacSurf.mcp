@@ -229,6 +229,12 @@
         <VALUE>{Project}/../../../../libcss/src</VALUE>
     </SETTING>
 
+    <!-- 12b. NetSurf content handlers (Phase 3+: <css/utils.h>, <html/...>) -->
+    <SETTING>
+        <NAME>UserSearchPath</NAME>
+        <VALUE>{Project}/../../../content/handlers</VALUE>
+    </SETTING>
+
     <!-- 13. Mac OS Universal Headers -->
     <SETTING>
         <NAME>SystemSearchPath</NAME>
@@ -544,6 +550,46 @@
     <FILE>
         <PATHTYPE>Project</PATHTYPE>
         <PATH>../../../content/textsearch.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+
+    <!-- ============================================================== -->
+    <!--  NetSurf CSS Content Handler (Phase 3)                          -->
+    <!-- ============================================================== -->
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../content/handlers/css/css.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../content/handlers/css/hints.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../content/handlers/css/internal.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../content/handlers/css/select.c</PATH>
+        <FILEKIND>Text</FILEKIND>
+        <FILEFLAGS>compile</FILEFLAGS>
+    </FILE>
+
+    <FILE>
+        <PATHTYPE>Project</PATHTYPE>
+        <PATH>../../../content/handlers/css/dump.c</PATH>
         <FILEKIND>Text</FILEKIND>
         <FILEFLAGS>compile</FILEFLAGS>
     </FILE>
@@ -4396,6 +4442,13 @@
     <FILEREF><PATH>../../../content/content_factory.c</PATH></FILEREF>
     <FILEREF><PATH>../../../content/textsearch.c</PATH></FILEREF>
 
+    <!-- NetSurf CSS Content Handler (Phase 3) -->
+    <FILEREF><PATH>../../../content/handlers/css/css.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../content/handlers/css/hints.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../content/handlers/css/internal.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../content/handlers/css/select.c</PATH></FILEREF>
+    <FILEREF><PATH>../../../content/handlers/css/dump.c</PATH></FILEREF>
+
     <!-- NetSurf Desktop -->
     <FILEREF><PATH>../../../desktop/browser.c</PATH></FILEREF>
     <FILEREF><PATH>../../../desktop/browser_window.c</PATH></FILEREF>
@@ -4482,6 +4535,15 @@
         <FILEREF><PATH>../../../content/urldb.c</PATH></FILEREF>
         <FILEREF><PATH>../../../content/content_factory.c</PATH></FILEREF>
         <FILEREF><PATH>../../../content/textsearch.c</PATH></FILEREF>
+    </GROUP>
+
+    <GROUP>
+        <NAME>NetSurf CSS Handler</NAME>
+        <FILEREF><PATH>../../../content/handlers/css/css.c</PATH></FILEREF>
+        <FILEREF><PATH>../../../content/handlers/css/hints.c</PATH></FILEREF>
+        <FILEREF><PATH>../../../content/handlers/css/internal.c</PATH></FILEREF>
+        <FILEREF><PATH>../../../content/handlers/css/select.c</PATH></FILEREF>
+        <FILEREF><PATH>../../../content/handlers/css/dump.c</PATH></FILEREF>
     </GROUP>
 
     <GROUP>

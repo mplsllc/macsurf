@@ -74,7 +74,7 @@ void fetch_abort(void *f) { (void)f; }
 nserror textplain_init(void) { return NSERROR_OK; }
 nserror image_init(void) { return NSERROR_OK; }
 nserror html_init(void) { return NSERROR_OK; }
-nserror nscss_init(void) { return NSERROR_OK; }
+/* nscss_init — Phase 3: provided by content/handlers/css/css.c */
 
 /* nscolour_update — Phase 2: provided by utils/nscolour.c */
 

@@ -798,22 +798,25 @@ static void nscss_fini(void)
 	css_hint_fini();
 }
 
-static const content_handler css_content_handler = {
-	.fini = nscss_fini,
-	.create = nscss_create,
-	.process_data = nscss_process_data,
-	.data_complete = nscss_convert,
-	.destroy = nscss_destroy,
-	.clone = nscss_clone,
-	.matches_quirks = nscss_matches_quirks,
-	.type = nscss_content_type,
-	.no_share = false,
-};
+/* MacSurf: was a static const designated initializer; CW8 C89 has
+ * neither, so populate the vtable at runtime in nscss_init(). */
+static content_handler css_content_handler;
 
 /* exported interface documented in netsurf/css.h */
 nserror nscss_init(void)
 {
 	nserror error;
+
+	memset(&css_content_handler, 0, sizeof(css_content_handler));
+	css_content_handler.fini = nscss_fini;
+	css_content_handler.create = nscss_create;
+	css_content_handler.process_data = nscss_process_data;
+	css_content_handler.data_complete = nscss_convert;
+	css_content_handler.destroy = nscss_destroy;
+	css_content_handler.clone = nscss_clone;
+	css_content_handler.matches_quirks = nscss_matches_quirks;
+	css_content_handler.type = nscss_content_type;
+	css_content_handler.no_share = false;
 
 	error = content_factory_register_handler("text/css",
 			&css_content_handler);
