@@ -8,6 +8,8 @@
 #ifndef css_css__parse_propstrings_h_
 #define css_css__parse_propstrings_h_
 
+#include <libwapcaplet/libwapcaplet.h>
+#include <libcss/errors.h>
 #include "utils/utils.h"
 
 enum {
