@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include <parserutils/charset/mibenum.h>
+#include <libcss/types.h>
 
 #include "charset/detect.h"
 #include "utils/utils.h"

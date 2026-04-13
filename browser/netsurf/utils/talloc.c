@@ -1178,10 +1178,12 @@ char *talloc_strndup(const void *t, const char *p, size_t n)
 }
 
 #ifndef HAVE_VA_COPY
+#ifndef va_copy
 #ifdef HAVE___VA_COPY
 #define va_copy(dest, src) __va_copy(dest, src)
 #else
 #define va_copy(dest, src) (dest) = (src)
+#endif
 #endif
 #endif
 

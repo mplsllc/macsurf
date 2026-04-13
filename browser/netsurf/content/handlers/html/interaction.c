@@ -1189,6 +1189,8 @@ default_mouse_action(html_content *html,
 		  struct mouse_action_state *mas)
 {
 	struct content *c = (struct content *)html;
+	union html_selection_owner sel_owner;
+	bool click;
 
 	/* frame resizing */
 	if (browser_window_frame_resize_start(bw, mouse, x, y, &mas->result.pointer)) {
@@ -1200,8 +1202,6 @@ default_mouse_action(html_content *html,
 
 	/* clicking in the main page removes the selection from any text areas.
 	 */
-	union html_selection_owner sel_owner;
-	bool click;
 	click = mouse & (BROWSER_MOUSE_PRESS_1 | BROWSER_MOUSE_PRESS_2 |
 			 BROWSER_MOUSE_CLICK_1 | BROWSER_MOUSE_CLICK_2 |
 			 BROWSER_MOUSE_DRAG_1 | BROWSER_MOUSE_DRAG_2);

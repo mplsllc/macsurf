@@ -45,6 +45,10 @@ typedef unsigned long mode_t;
 #define MACOS9_SHIMS_STDINT_H
 #define MACSURF_INTTYPES_H
 
+/* NetSurf error type — needed by almost every header. Include early
+ * so nserror is defined before any NetSurf header is processed. */
+#include "utils/errors.h"
+
 /* Map C99 _Bool to CodeWarrior */
 #ifndef _Bool
 #define _Bool unsigned char
