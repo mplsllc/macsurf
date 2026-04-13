@@ -26,6 +26,8 @@
 
 #include <stdbool.h>
 
+#include "utils/errors.h"
+
 struct hash_table;
 
 /**

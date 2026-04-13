@@ -9,6 +9,8 @@
 #ifndef css_select_arena_h_
 #define css_select_arena_h_
 
+#include <libcss/errors.h>
+
 struct css_computed_style;
 
 /*
