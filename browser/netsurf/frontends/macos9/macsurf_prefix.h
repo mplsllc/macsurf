@@ -9,9 +9,11 @@
 #ifndef MACSURF_PREFIX_H
 #define MACSURF_PREFIX_H
 
-/* MSL core types — stddef.h, string.h, stdlib.h are safe */
+/* MSL core types — stddef.h and stdlib.h are safe.
+ * Do NOT include <string.h> here: CW8 finds libhubbub's internal
+ * string.h instead of MSL's. MSL string.h is pulled in later via
+ * MacTypes.h → MacMemory.h → string.h transitively. */
 #include <stddef.h>
-#include <string.h>
 #include <stdlib.h>
 
 /* Bulletproof POSIX type foundation (bypassing MSL/local shadowing).
@@ -65,12 +67,9 @@ typedef unsigned long mode_t;
 
 #ifdef __MWERKS__
 #include <MacTypes.h>
-/*
- * Force MSL's string.h — the non-MWERKS #include <string.h> above
- * may find NetSurf's utils/string.h instead of MSL's on CW8.
- * Also include stat.h, fcntl.h, and mac_dirent.h for POSIX types.
- */
-#include <string.h>
+/* stat.h, fcntl.h, mac_dirent.h for POSIX types.
+ * Do NOT include <string.h> here — CW8 finds libhubbub's internal
+ * string.h. MSL's string.h is already pulled in by MacTypes.h. */
 #include <stat.h>
 #include <fcntl.h>
 #include "mac_dirent.h"

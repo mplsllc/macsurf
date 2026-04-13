@@ -21,56 +21,68 @@
 #define __STDINT_H__
 #define _STDINT
 
-/* Exact-width signed integer types */
-#ifndef _INT8_T
+/* Exact-width signed integer types.
+ * Guard against both our own guards and CW8/MSL/MacTypes.h
+ * alternatives to prevent "illegal name overloading" errors. */
+#if !defined(_INT8_T) && !defined(__int8_t_defined)
 #define _INT8_T
+#define __int8_t_defined
 typedef signed char        int8_t;
 #endif
 
-#ifndef _INT16_T
+#if !defined(_INT16_T) && !defined(__int16_t_defined)
 #define _INT16_T
+#define __int16_t_defined
 typedef short              int16_t;
 #endif
 
-#ifndef _INT32_T
+#if !defined(_INT32_T) && !defined(__int32_t_defined)
 #define _INT32_T
+#define __int32_t_defined
 typedef long               int32_t;
 #endif
 
-#ifndef _INT64_T
+#if !defined(_INT64_T) && !defined(__int64_t_defined)
 #define _INT64_T
+#define __int64_t_defined
 typedef long long          int64_t;
 #endif
 
 /* Exact-width unsigned integer types */
-#ifndef _UINT8_T
+#if !defined(_UINT8_T) && !defined(__uint8_t_defined)
 #define _UINT8_T
+#define __uint8_t_defined
 typedef unsigned char      uint8_t;
 #endif
 
-#ifndef _UINT16_T
+#if !defined(_UINT16_T) && !defined(__uint16_t_defined)
 #define _UINT16_T
+#define __uint16_t_defined
 typedef unsigned short     uint16_t;
 #endif
 
-#ifndef _UINT32_T
+#if !defined(_UINT32_T) && !defined(__uint32_t_defined)
 #define _UINT32_T
+#define __uint32_t_defined
 typedef unsigned long      uint32_t;
 #endif
 
-#ifndef _UINT64_T
+#if !defined(_UINT64_T) && !defined(__uint64_t_defined)
 #define _UINT64_T
+#define __uint64_t_defined
 typedef unsigned long long uint64_t;
 #endif
 
 /* Pointer-sized integer types */
-#ifndef _UINTPTR_T
+#if !defined(_UINTPTR_T) && !defined(__uintptr_t_defined)
 #define _UINTPTR_T
+#define __uintptr_t_defined
 typedef unsigned long      uintptr_t;
 #endif
 
-#ifndef _INTPTR_T
+#if !defined(_INTPTR_T) && !defined(__intptr_t_defined)
 #define _INTPTR_T
+#define __intptr_t_defined
 typedef long               intptr_t;
 #endif
 
