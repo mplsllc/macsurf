@@ -1,3 +1,63 @@
+Error   : declaration syntax error
+(included from:
+ urldb.h:29
+ browser_history.c:38)
+url_db.h line 39   time_t last_visit; /**< Last visit time */
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:29
+ browser_history.c:38)
+url_db.h line 41   };
+
+Error   : ';' expected
+(included from:
+ urldb.h:30
+ browser_history.c:38)
+cookie_db.h line 58   const time_t expires;      /**< Expiry timestamp, or 1 for session */
+
+Error   : ';' expected
+(included from:
+ urldb.h:30
+ browser_history.c:38)
+cookie_db.h line 59   const time_t last_used;      /**< Last used time */
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:30
+ browser_history.c:38)
+cookie_db.h line 66   };
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:29
+ browser_window.c:48)
+url_db.h line 39   time_t last_visit; /**< Last visit time */
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:29
+ browser_window.c:48)
+url_db.h line 41   };
+
+Error   : ';' expected
+(included from:
+ urldb.h:30
+ browser_window.c:48)
+cookie_db.h line 58   const time_t expires;      /**< Expiry timestamp, or 1 for session */
+
+Error   : ';' expected
+(included from:
+ urldb.h:30
+ browser_window.c:48)
+cookie_db.h line 59   const time_t last_used;      /**< Last used time */
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:30
+ browser_window.c:48)
+cookie_db.h line 66   };
+
 Error   : illegal implicit conversion from 'int' to
 'const char *'
 browser_window.c line 1043   tmp = strchr(userpass, ':');
@@ -31,9 +91,145 @@ Could not find or load the file �content-disposition.c� for target �MacSur
 
 Could not find or load the file �content-type.c� for target �MacSurf� for project �MacSurf�.
 
-Error   : illegal implicit conversion from 'int' to
-'struct tm *'
+Error   : declaration syntax error
+(included from:
+ urldb.h:29
+ cookie_manager.c:41)
+url_db.h line 39   time_t last_visit; /**< Last visit time */
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:29
+ cookie_manager.c:41)
+url_db.h line 41   };
+
+Error   : ';' expected
+(included from:
+ urldb.h:30
+ cookie_manager.c:41)
+cookie_db.h line 58   const time_t expires;      /**< Expiry timestamp, or 1 for session */
+
+Error   : ';' expected
+(included from:
+ urldb.h:30
+ cookie_manager.c:41)
+cookie_db.h line 59   const time_t last_used;      /**< Last used time */
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:30
+ cookie_manager.c:41)
+cookie_db.h line 66   };
+
+Error   : ')' expected
+cookie_manager.c line 243   const time_t *value)
+
+Error   : declaration syntax error
+cookie_manager.c line 244   {
+
+Error   : declaration syntax error
+cookie_manager.c line 247   fdata->field = cm_ctx.fields[field].field;
+
+Error   : declaration syntax error
+cookie_manager.c line 248   fdata->value = NULL;
+
+Error   : declaration syntax error
+cookie_manager.c line 249   fdata->value_len = 0;
+
+Error   : declaration syntax error
 cookie_manager.c line 251   if ((ftime = localtime(value)) != NULL) {
+
+Error   : identifier 'value' redeclared
+was declared as: 'int'
+now declared as: 'char *'
+cookie_manager.c line 253   char *value = malloc(vsize);
+
+Error   : declaration syntax error
+cookie_manager.c line 254   if (value != NULL) {
+
+Error   : declaration syntax error
+cookie_manager.c line 255   fdata->value = value;
+
+Error   : declaration syntax error
+cookie_manager.c line 256   fdata->value_len = strftime(value, vsize,
+
+Error   : illegal constant expression
+cookie_manager.c line 257   "%a %b %e %H:%M:%S %Y", ftime);
+
+Error   : declaration syntax error
+cookie_manager.c line 258   }
+
+Error   : declaration syntax error
+cookie_manager.c line 259   }
+
+Error   : declaration syntax error
+cookie_manager.c line 261   return NSERROR_OK;
+
+Error   : declaration syntax error
+cookie_manager.c line 262   }
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 281   &e->data[COOKIE_M_NAME], strdup(data->name));
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 283   &e->data[COOKIE_M_CONTENT], strdup(data->value));
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 285   &e->data[COOKIE_M_DOMAIN], strdup(data->domain));
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 287   &e->data[COOKIE_M_PATH], strdup(data->path));
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 290   if (data->expires == -1) {
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 296   &e->data[COOKIE_M_EXPIRES], &data->expires);
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 301   &e->data[COOKIE_M_LAST_USED], &data->last_used);
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 304   if (data->secure && data->http_only) {
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 306   } else if (data->secure) {
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 308   } else if (data->http_only) {
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 315   switch (data->version) {
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 445   f->data.value = strdup(data->domain);
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 447   strlen(data->domain) : 0;
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 479   err = cookie_manager_find_folder(NULL, data->domain,
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 480   strlen(data->domain), &parent);
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 493   err = cookie_manager_find_entry(parent->folder, data->name,
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 494   strlen(data->name), &cookie);
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 523   err = cookie_manager_find_folder(NULL, data->domain,
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 524   strlen(data->domain), &parent);
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 530   err = cookie_manager_find_entry(parent->folder, data->name,
+
+Error   : illegal use of incomplete struct/union/class 'struct cookie_data'
+cookie_manager.c line 531   strlen(data->name), &cookie);
 
 Error   : undefined identifier 'css__charset_extract'
 css_parse.c line 425   css__charset_extract, &p->stream);
@@ -95,587 +291,495 @@ Could not find or load the file �cssh_css.c� for target �MacSurf� for pr
 
 Could not find or load the file �cssh_select.c� for target �MacSurf� for project �MacSurf�.
 
-Error   : ';' expected
-dom_hashtable.c line 30   const dom_hash_vtable *vtable; /**< Vtable */
-
-Error   : declaration syntax error
-dom_hashtable.c line 35   };
-
-Error   : declaration syntax error
-dom_hashtable.c line 50   dom_hash_table *_dom_hash_create(unsigned int chains, 
-
-Error   : ')' expected
-dom_hashtable.c line 51   const dom_hash_vtable *vtable, void *pw)
-
-Error   : declaration syntax error
-dom_hashtable.c line 52   {
-
-Error   : declaration syntax error
-dom_hashtable.c line 53   dom_hash_table *r = malloc(sizeof(struct dom_hash_table));
-
-Error   : declaration syntax error
-dom_hashtable.c line 54   if (r == NULL) {
-
-Error   : declaration syntax error
-dom_hashtable.c line 55   return NULL;
-
-Error   : declaration syntax error
-dom_hashtable.c line 56   }
-
-Error   : declaration syntax error
-dom_hashtable.c line 58   r->vtable = vtable;
-
-Error   : declaration syntax error
-dom_hashtable.c line 59   r->pw = pw;
-
-Error   : declaration syntax error
-dom_hashtable.c line 60   r->nentries = 0;
-
-Error   : declaration syntax error
-dom_hashtable.c line 61   r->nchains = chains;
-
-Error   : declaration syntax error
-dom_hashtable.c line 62   r->chain = calloc(chains, sizeof(struct _dom_hash_entry *));
-
-Error   : declaration syntax error
-dom_hashtable.c line 63   if (r->chain == NULL) {
-
-Error   : identifier 'free(void *)' redeclared
-was declared as: 'void (void *)'
-now declared as: 'int (...)'
-dom_hashtable.c line 64   free(r);
-
-Error   : identifier expected
-dom_hashtable.c line 65   return NULL;
-
-Error   : identifier expected
-dom_hashtable.c line 66   }
-
-Error   : identifier expected
-dom_hashtable.c line 69   }
-
-Error   : ')' expected
-dom_hashtable.c line 78   dom_hash_table *_dom_hash_clone(dom_hash_table *ht)
-
-Error   : ';' expected
-dom_hashtable.c line 79   {
-
-Error   : illegal function definition
-dom_hashtable.c line 80   void *key = NULL, *nkey = NULL;
-
-Error   : illegal function definition
-dom_hashtable.c line 81   void *value = NULL, *nvalue = NULL;
-
-Error   : illegal function definition
-dom_hashtable.c line 82   uintptr_t c1, *c2 = NULL;
-
-Error   : illegal function definition
-dom_hashtable.c line 83   struct dom_hash_table *ret;
-
-Error   : illegal function definition
-dom_hashtable.c line 85   ret = _dom_hash_create(ht->nchains, ht->vtable, ht->pw);
-
-Error   : identifier expected
-dom_hashtable.c line 86   if (ret == NULL)
-
-Error   : ';' expected
-dom_hashtable.c line 87   return NULL;
-
-Error   : identifier expected
-dom_hashtable.c line 89   while ( (key = _dom_hash_iterate(ht, &c1, &c2)) != NULL) {
-
-Error   : illegal function definition
-dom_hashtable.c line 90   nkey = ht->vtable->clone_key(key, ht->pw);
-
-Error   : identifier expected
-dom_hashtable.c line 91   if (nkey == NULL) {
-
-Error   : illegal function definition
-dom_hashtable.c line 92   _dom_hash_destroy(ret);
-
-Error   : identifier expected
-dom_hashtable.c line 93   return NULL;
-
-Error   : identifier expected
-dom_hashtable.c line 94   }
-
-Error   : identifier expected
-dom_hashtable.c line 96   value = _dom_hash_get(ht, key);
-
-Error   : illegal function definition
-dom_hashtable.c line 97   nvalue = ht->vtable->clone_value(value, ht->pw);
-
-Error   : identifier expected
-dom_hashtable.c line 98   if (nvalue == NULL) {
-
-Error   : illegal function definition
-dom_hashtable.c line 99   ht->vtable->destroy_key(nkey, ht->pw);
-
-Error   : illegal function definition
-dom_hashtable.c line 100   _dom_hash_destroy(ret);
-
-Error   : identifier expected
-dom_hashtable.c line 101   return NULL;
-
-Error   : identifier expected
-dom_hashtable.c line 102   }
-
-Error   : declaration syntax error
-dom_hashtable.c line 104   0
-
-Error   : illegal function definition
-dom_hashtable.c line 105   _dom_hash_destroy(ret);
-
-Error   : identifier expected
-dom_hashtable.c line 106   return NULL;
-
-Error   : identifier expected
-dom_hashtable.c line 107   }
-
-Error   : identifier expected
-dom_hashtable.c line 108   }
-
-Error   : illegal function definition
-dom_hashtable.c line 110   return ret;
-
-Error   : identifier expected
-dom_hashtable.c line 111   }
-
-Error   : ')' expected
-dom_hashtable.c line 119   void _dom_hash_destroy(dom_hash_table *ht) 
-
-Error   : ';' expected
-dom_hashtable.c line 120   {
-
-Error   : illegal function definition
-dom_hashtable.c line 121   unsigned int i;
-
-Error   : identifier expected
-dom_hashtable.c line 123   if (ht == NULL)
-
-Error   : ';' expected
-dom_hashtable.c line 124   return;
-
-Error   : identifier expected
-dom_hashtable.c line 126   for (i = 0; i < ht->nchains; i++) {
-
-Error   : identifier expected
-dom_hashtable.c line 127   if (ht->chain[i] != NULL) {
-
-Error   : illegal function definition
-dom_hashtable.c line 128   struct _dom_hash_entry *e = ht->chain[i];
-
-Error   : identifier expected
-dom_hashtable.c line 129   while (e) {
-
-Error   : illegal function definition
-dom_hashtable.c line 130   struct _dom_hash_entry *n = e->next;
-
-Error   : illegal function definition
-dom_hashtable.c line 131   ht->vtable->destroy_key(e->key, ht->pw);
-
-Error   : illegal function definition
-dom_hashtable.c line 132   ht->vtable->destroy_value(e->value, ht->pw);
-
-Error   : illegal function definition
-dom_hashtable.c line 133   free(e);
-
-Error   : illegal function definition
-dom_hashtable.c line 134   e = n;
-
-Error   : identifier expected
-dom_hashtable.c line 135   }
-
-Error   : identifier expected
-dom_hashtable.c line 136   }
-
-Error   : identifier expected
-dom_hashtable.c line 137   }
-
-Error   : ')' expected
-dom_hashtable.c line 139   free(ht->chain);
-
-Error   : illegal function definition
-dom_hashtable.c line 140   free(ht);
-
-Error   : identifier expected
-dom_hashtable.c line 141   }
-
-Error   : ')' expected
-dom_hashtable.c line 152   bool _dom_hash_add(dom_hash_table *ht, void *key, void *value, 
-
-Error   : identifier expected
-dom_hashtable.c line 153    unsigned char
-
-Error   : illegal function definition
-dom_hashtable.c line 155   unsigned int h, c;
-
-Error   : illegal function definition
-dom_hashtable.c line 156   struct _dom_hash_entry *e;
-
-Error   : identifier expected
-dom_hashtable.c line 158   if (ht == NULL || key == NULL || value == NULL)
-
-Error   : ';' expected
-dom_hashtable.c line 159   return false;
-
-Error   : illegal function definition
-dom_hashtable.c line 161   h = ht->vtable->hash(key, ht->pw);
-
-Error   : illegal function definition
-dom_hashtable.c line 162   c = h % ht->nchains;
-
-Error   : identifier expected
-dom_hashtable.c line 164   for (e = ht->chain[c]; e; e = e->next) {
-
-Error   : identifier expected
-dom_hashtable.c line 165   if (ht->vtable->key_isequal(key, e->key, ht->pw)) {
-
-Error   : identifier expected
-dom_hashtable.c line 166   if (replace == true) {
-
-Error   : illegal function definition
-dom_hashtable.c line 167   e->value = value;
-
-Error   : identifier expected
-dom_hashtable.c line 168   return true;
-
-Error   : identifier expected
-dom_hashtable.c line 169   } else {
-
-Error   : illegal return value in void/constructor/destructor function
-dom_hashtable.c line 170   0
-
-Error   : declaration syntax error
-dom_hashtable.c line 172   }
-
-Error   : declaration syntax error
-dom_hashtable.c line 173   }
-
-Error   : declaration syntax error
-dom_hashtable.c line 175   e = malloc(sizeof(struct _dom_hash_entry));
-
-Error   : declaration syntax error
-dom_hashtable.c line 176   if (e == NULL) {
-
-Error   : declaration syntax error
-dom_hashtable.c line 177   return false;
-
-Error   : declaration syntax error
-dom_hashtable.c line 178   }
-
-Error   : declaration syntax error
-dom_hashtable.c line 180   e->key = key;
-
-Error   : declaration syntax error
-dom_hashtable.c line 181   e->value = value;
-
-Error   : declaration syntax error
-dom_hashtable.c line 183   e->next = ht->chain[c];
-
-Error   : declaration syntax error
-dom_hashtable.c line 184   ht->chain[c] = e;
-
-Error   : declaration syntax error
-dom_hashtable.c line 185   ht->nentries++;
-
-Error   : declaration syntax error
-dom_hashtable.c line 187   return true;
-
-Error   : declaration syntax error
-dom_hashtable.c line 188   }
-
-Error   : illegal use of incomplete struct/union/class 'struct dom_hash_table'
-dom_hashtable.c line 205   h = ht->vtable->hash(key, ht->pw);
-
-Error   : illegal use of incomplete struct/union/class 'struct dom_hash_table'
-dom_hashtable.c line 206   c = h % ht->nchains;
-
-Error   : illegal use of incomplete struct/union/class 'struct dom_hash_table'
-dom_hashtable.c line 208   for (e = ht->chain[c]; e; e = e->next) {
-
-Error   : illegal use of incomplete struct/union/class 'struct dom_hash_table'
-dom_hashtable.c line 209   if (ht->vtable->key_isequal(key, e->key, ht->pw))
-
 Error   : expression syntax error
-dt_bitmap.c line 155   for (int y = 0; y < height; y++) {
+dt_bitmap.c line 243   for (int y = 0; y < height; y++) {
 
 Error   : undefined identifier 'y'
-dt_bitmap.c line 155   for (int y = 0; y < height; y++) {
+dt_bitmap.c line 243   for (int y = 0; y < height; y++) {
 
 Error   : undefined identifier 'y'
-dt_bitmap.c line 155   for (int y = 0; y < height; y++) {
+dt_bitmap.c line 243   for (int y = 0; y < height; y++) {
 
 Error   : ';' expected
-dt_bitmap.c line 156   uint8_t *row = buffer;
+dt_bitmap.c line 244   uint8_t *row = buffer;
 
 Error   : expression syntax error
-dt_bitmap.c line 158   for (int x = 0; x < width; x++) {
+dt_bitmap.c line 246   for (int x = 0; x < width; x++) {
 
 Error   : undefined identifier 'x'
-dt_bitmap.c line 158   for (int x = 0; x < width; x++) {
+dt_bitmap.c line 246   for (int x = 0; x < width; x++) {
 
 Error   : undefined identifier 'x'
-dt_bitmap.c line 158   for (int x = 0; x < width; x++) {
+dt_bitmap.c line 246   for (int x = 0; x < width; x++) {
 
 Error   : ';' expected
-dt_bitmap.c line 159   const uint32_t px = *((uint32_t *)(void *) row);
-
-Error   : undefined identifier 'row'
-dt_bitmap.c line 161   row[to.r] = ((const uint8_t *) &px)[from.r];
-
-Error   : undefined identifier 'row'
-dt_bitmap.c line 162   row[to.g] = ((const uint8_t *) &px)[from.g];
-
-Error   : undefined identifier 'row'
-dt_bitmap.c line 163   row[to.b] = ((const uint8_t *) &px)[from.b];
-
-Error   : undefined identifier 'row'
-dt_bitmap.c line 164   row[to.a] = ((const uint8_t *) &px)[from.a];
-
-Error   : undefined identifier 'row'
-dt_bitmap.c line 166   row += sizeof(uint32_t);
-
-Error   : declaration syntax error
-dt_bitmap.c line 169   buffer += rowstride;
-
-Error   : declaration syntax error
-dt_bitmap.c line 170   }
-
-Error   : declaration syntax error
-dt_bitmap.c line 171   }
+dt_bitmap.c line 247   const uint32_t px = *((uint32_t *)(void *) row);
 
 Error   : expression syntax error
-dt_bitmap.c line 191   for (int y = 0; y < height; y++) {
-
-Error   : undefined identifier 'y'
-dt_bitmap.c line 191   for (int y = 0; y < height; y++) {
-
-Error   : undefined identifier 'y'
-dt_bitmap.c line 191   for (int y = 0; y < height; y++) {
-
-Error   : ';' expected
-dt_bitmap.c line 192   uint8_t *row = buffer;
-
-Error   : expression syntax error
-dt_bitmap.c line 194   for (int x = 0; x < width; x++) {
-
-Error   : undefined identifier 'x'
-dt_bitmap.c line 194   for (int x = 0; x < width; x++) {
-
-Error   : undefined identifier 'x'
-dt_bitmap.c line 194   for (int x = 0; x < width; x++) {
-
-Error   : ';' expected
-dt_bitmap.c line 195   const uint32_t px = *((uint32_t *)(void *) row);
-
-Error   : expression syntax error
-dt_bitmap.c line 196   uint32_t a, r, g, b;
+dt_bitmap.c line 248   uint32_t a, r, g, b;
 
 Error   : undefined identifier 'r'
-dt_bitmap.c line 198   r = ((const uint8_t *) &px)[from.r];
+dt_bitmap.c line 250   r = ((const uint8_t *) &px)[from.r];
 
 Error   : undefined identifier 'g'
-dt_bitmap.c line 199   g = ((const uint8_t *) &px)[from.g];
+dt_bitmap.c line 251   g = ((const uint8_t *) &px)[from.g];
 
 Error   : undefined identifier 'b'
-dt_bitmap.c line 200   b = ((const uint8_t *) &px)[from.b];
+dt_bitmap.c line 252   b = ((const uint8_t *) &px)[from.b];
 
 Error   : undefined identifier 'a'
-dt_bitmap.c line 201   a = ((const uint8_t *) &px)[from.a];
+dt_bitmap.c line 253   a = ((const uint8_t *) &px)[from.a];
 
 Error   : undefined identifier 'a'
-dt_bitmap.c line 203   if (a != 0) {
+dt_bitmap.c line 255   if (a != 0) {
 
 Error   : undefined identifier 'r'
-dt_bitmap.c line 204   r = ((r * (a + 1)) >> 8) & 0xff;
+dt_bitmap.c line 256   r = (r << 8) / a;
 
 Error   : undefined identifier 'g'
-dt_bitmap.c line 205   g = ((g * (a + 1)) >> 8) & 0xff;
+dt_bitmap.c line 257   g = (g << 8) / a;
 
 Error   : undefined identifier 'b'
-dt_bitmap.c line 206   b = ((b * (a + 1)) >> 8) & 0xff;
+dt_bitmap.c line 258   b = (b << 8) / a;
 
 Error   : undefined identifier 'r'
-dt_bitmap.c line 208   r = g = b = 0;
-
-Error   : undefined identifier 'row'
-dt_bitmap.c line 211   row[to.r] = r;
-
-Error   : undefined identifier 'row'
-dt_bitmap.c line 212   row[to.g] = g;
-
-Error   : undefined identifier 'row'
-dt_bitmap.c line 213   row[to.b] = b;
-
-Error   : undefined identifier 'row'
-dt_bitmap.c line 214   row[to.a] = a;
-
-Error   : undefined identifier 'row'
-dt_bitmap.c line 216   row += sizeof(uint32_t);
-
-Error   : declaration syntax error
-dt_bitmap.c line 219   buffer += rowstride;
-
-Error   : declaration syntax error
-dt_bitmap.c line 220   }
-
-Error   : declaration syntax error
-dt_bitmap.c line 221   }
-
-Error   : expression syntax error
-dt_bitmap.c line 241   for (int y = 0; y < height; y++) {
-
-Error   : undefined identifier 'y'
-dt_bitmap.c line 241   for (int y = 0; y < height; y++) {
-
-Error   : undefined identifier 'y'
-dt_bitmap.c line 241   for (int y = 0; y < height; y++) {
-
-Error   : ';' expected
-dt_bitmap.c line 242   uint8_t *row = buffer;
-
-Error   : expression syntax error
-dt_bitmap.c line 244   for (int x = 0; x < width; x++) {
-
-Error   : undefined identifier 'x'
-dt_bitmap.c line 244   for (int x = 0; x < width; x++) {
-
-Error   : undefined identifier 'x'
-dt_bitmap.c line 244   for (int x = 0; x < width; x++) {
-
-Error   : ';' expected
-dt_bitmap.c line 245   const uint32_t px = *((uint32_t *)(void *) row);
-
-Error   : expression syntax error
-dt_bitmap.c line 246   uint32_t a, r, g, b;
-
-Error   : undefined identifier 'r'
-dt_bitmap.c line 248   r = ((const uint8_t *) &px)[from.r];
+dt_bitmap.c line 260   r = (r > 255) ? 255 : r;
 
 Error   : undefined identifier 'g'
-dt_bitmap.c line 249   g = ((const uint8_t *) &px)[from.g];
+dt_bitmap.c line 261   g = (g > 255) ? 255 : g;
 
 Error   : undefined identifier 'b'
-dt_bitmap.c line 250   b = ((const uint8_t *) &px)[from.b];
-
-Error   : undefined identifier 'a'
-dt_bitmap.c line 251   a = ((const uint8_t *) &px)[from.a];
-
-Error   : undefined identifier 'a'
-dt_bitmap.c line 253   if (a != 0) {
+dt_bitmap.c line 262   b = (b > 255) ? 255 : b;
 
 Error   : undefined identifier 'r'
-dt_bitmap.c line 254   r = (r << 8) / a;
-
-Error   : undefined identifier 'g'
-dt_bitmap.c line 255   g = (g << 8) / a;
-
-Error   : undefined identifier 'b'
-dt_bitmap.c line 256   b = (b << 8) / a;
-
-Error   : undefined identifier 'r'
-dt_bitmap.c line 258   r = (r > 255) ? 255 : r;
-
-Error   : undefined identifier 'g'
-dt_bitmap.c line 259   g = (g > 255) ? 255 : g;
-
-Error   : undefined identifier 'b'
-dt_bitmap.c line 260   b = (b > 255) ? 255 : b;
-
-Error   : undefined identifier 'r'
-dt_bitmap.c line 262   r = g = b = 0;
+dt_bitmap.c line 264   r = g = b = 0;
 
 Error   : undefined identifier 'row'
-dt_bitmap.c line 265   row[to.r] = r;
+dt_bitmap.c line 267   row[to.r] = r;
 
 Error   : undefined identifier 'row'
-dt_bitmap.c line 266   row[to.g] = g;
+dt_bitmap.c line 268   row[to.g] = g;
 
 Error   : undefined identifier 'row'
-dt_bitmap.c line 267   row[to.b] = b;
+dt_bitmap.c line 269   row[to.b] = b;
 
 Error   : undefined identifier 'row'
-dt_bitmap.c line 268   row[to.a] = a;
+dt_bitmap.c line 270   row[to.a] = a;
 
 Error   : undefined identifier 'row'
-dt_bitmap.c line 270   row += sizeof(uint32_t);
+dt_bitmap.c line 272   row += sizeof(uint32_t);
 
 Error   : declaration syntax error
-dt_bitmap.c line 273   buffer += rowstride;
+dt_bitmap.c line 275   buffer += rowstride;
 
 Error   : declaration syntax error
-dt_bitmap.c line 274   }
+dt_bitmap.c line 276   }
 
 Error   : declaration syntax error
-dt_bitmap.c line 275   }
+dt_bitmap.c line 277   }
 
 Error   : expression syntax error
-dt_bitmap.c line 325   for (int y = 0; y < height; y++) {
+dt_bitmap.c line 327   for (int y = 0; y < height; y++) {
 
 Error   : undefined identifier 'y'
-dt_bitmap.c line 325   for (int y = 0; y < height; y++) {
+dt_bitmap.c line 327   for (int y = 0; y < height; y++) {
 
 Error   : undefined identifier 'y'
-dt_bitmap.c line 325   for (int y = 0; y < height; y++) {
+dt_bitmap.c line 327   for (int y = 0; y < height; y++) {
 
 Error   : ';' expected
-dt_bitmap.c line 326   const uint8_t *row = buffer;
+dt_bitmap.c line 328   const uint8_t *row = buffer;
 
 Error   : expression syntax error
-dt_bitmap.c line 328   for (int x = bitmap_layout.a; x < width; x += 4) {
+dt_bitmap.c line 330   for (int x = bitmap_layout.a; x < width; x += 4) {
 
 Error   : undefined identifier 'x'
-dt_bitmap.c line 328   for (int x = bitmap_layout.a; x < width; x += 4) {
+dt_bitmap.c line 330   for (int x = bitmap_layout.a; x < width; x += 4) {
 
 Error   : undefined identifier 'x'
-dt_bitmap.c line 328   for (int x = bitmap_layout.a; x < width; x += 4) {
+dt_bitmap.c line 330   for (int x = bitmap_layout.a; x < width; x += 4) {
 
 Error   : ';' expected
-dt_bitmap.c line 329   if (row[x] != 0xff) {
+dt_bitmap.c line 331   if (row[x] != 0xff) {
 
 Error   : declaration syntax error
-dt_bitmap.c line 332   }
+dt_bitmap.c line 334   }
 
 Error   : declaration syntax error
-dt_bitmap.c line 334   buffer += rowstride;
+dt_bitmap.c line 336   buffer += rowstride;
 
 Error   : declaration syntax error
-dt_bitmap.c line 335   }
+dt_bitmap.c line 337   }
 
 Error   : declaration syntax error
-dt_bitmap.c line 337   return true;
+dt_bitmap.c line 339   return true;
 
 Error   : declaration syntax error
-dt_bitmap.c line 338   }
+dt_bitmap.c line 340   }
 
 Error   : illegal implicit conversion from 'int' to
 'const char *'
 dt_download.c line 59   const char *slash = strrchr(filename, '/');
 
-Error   : illegal implicit conversion from 'int' to
-'struct tm *'
+Error   : declaration syntax error
+(included from:
+ urldb.h:29
+ dt_global_history.c:30)
+url_db.h line 39   time_t last_visit; /**< Last visit time */
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:29
+ dt_global_history.c:30)
+url_db.h line 41   };
+
+Error   : ';' expected
+(included from:
+ urldb.h:30
+ dt_global_history.c:30)
+cookie_db.h line 58   const time_t expires;      /**< Expiry timestamp, or 1 for session */
+
+Error   : ';' expected
+(included from:
+ urldb.h:30
+ dt_global_history.c:30)
+cookie_db.h line 59   const time_t last_used;      /**< Last used time */
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:30
+ dt_global_history.c:30)
+cookie_db.h line 66   };
+
+Error   : declaration syntax error
+dt_global_history.c line 71   time_t today;
+
+Error   : declaration syntax error
+dt_global_history.c line 74   };
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_ctx'
+dt_global_history.c line 75   struct global_history_ctx gh_ctx;
+
+Error   : declaration syntax error
+dt_global_history.c line 82   time_t t;
+
+Error   : declaration syntax error
+dt_global_history.c line 88   };
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 107   if (nsurl_compare(e->url, url,
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 112   e = e->next;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_ctx'
+dt_global_history.c line 184   if (gh_ctx.folders[i].folder != NULL) {
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_ctx'
+dt_global_history.c line 185   relation = gh_ctx.folders[i].folder;
+
+Error   : declaration syntax error
+dt_global_history.c line 191   gh_ctx.folders[f].data.field = gh_ctx.fields[N_FIELDS - 1].field;
+
+Error   : declaration syntax error
+dt_global_history.c line 192   gh_ctx.folders[f].data.value = label;
+
+Error   : declaration syntax error
+dt_global_history.c line 193   gh_ctx.folders[f].data.value_len = strlen(label);
+
+Error   : declaration syntax error
+dt_global_history.c line 194   err = treeview_create_node_folder(gh_ctx.tree,
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_ctx'
+dt_global_history.c line 195   &gh_ctx.folders[f].folder,
+
+Error   : illegal constant expression
+dt_global_history.c line 196   relation, rel,
+
+Error   : declaration syntax error
+dt_global_history.c line 197   &gh_ctx.folders[f].data,
+
+Error   : declaration syntax error
+dt_global_history.c line 198   &gh_ctx.folders[f],
+
+Error   : declaration syntax error
+dt_global_history.c line 199   gh_ctx.built ? TREE_OPTION_NONE :
+
+Error   : ';' expected
+dt_global_history.c line 201   TREE_OPTION_SUPPRESS_REDRAW);
+
+Error   : declaration syntax error
+dt_global_history.c line 203   return err;
+
+Error   : declaration syntax error
+dt_global_history.c line 204   }
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_ctx'
+dt_global_history.c line 239   f = &(gh_ctx.folders[folder_index]);
+
+Error   : illegal use of incomplete struct/union/class 'struct url_data'
+dt_global_history.c line 266   const char *title = (data->title != NULL) ?
+
+Error   : illegal use of incomplete struct/union/class 'struct url_data'
+dt_global_history.c line 267   data->title : messages_get("NoTitle");
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 273   e->data[GH_TITLE].field = gh_ctx.fields[GH_TITLE].field;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 274   e->data[GH_TITLE].value = strdup(title);
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 275   e->data[GH_TITLE].value_len = (e->data[GH_TITLE].value != NULL) ?
+
+Error   : ';' expected
+dt_global_history.c line 276   strlen(title) : 0;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 278   e->data[GH_URL].field = gh_ctx.fields[GH_URL].field;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 279   e->data[GH_URL].value = nsurl_access(e->url);
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 280   e->data[GH_URL].value_len = nsurl_length(e->url);
+
+Error   : illegal use of incomplete struct/union/class 'struct url_data'
 dt_global_history.c line 282   if ((lvtime = localtime(&data->last_visit)) != NULL) {
 
-Error   : illegal implicit conversion from 'int' to
-'struct tm *'
-dt_global_history.c line 607   full_time = localtime(&t);
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 291   e->data[GH_LAST_VISIT].field = gh_ctx.fields[GH_LAST_VISIT].field;
 
-Error   : illegal use of incomplete struct/union/class 'struct tm'
-dt_global_history.c line 608   full_time->tm_sec = 0;
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 292   e->data[GH_LAST_VISIT].value = last_visited;
 
-Error   : illegal use of incomplete struct/union/class 'struct tm'
-dt_global_history.c line 609   full_time->tm_min = 0;
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 293   e->data[GH_LAST_VISIT].value_len = len;
 
-Error   : illegal use of incomplete struct/union/class 'struct tm'
-dt_global_history.c line 610   full_time->tm_hour = 0;
+Error   : illegal use of incomplete struct/union/class 'struct url_data'
+dt_global_history.c line 295   len = snprintf(buffer, 16, "%u", data->visits);
 
-Error   : illegal use of incomplete struct/union/class 'struct tm'
-dt_global_history.c line 618   gh_ctx.weekday = full_time->tm_wday;
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 301   e->data[GH_VISITS].field = gh_ctx.fields[GH_VISITS].field;
 
-Error   : illegal implicit conversion from 'int' to
-'struct tm *'
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 302   e->data[GH_VISITS].value = strdup(buffer);
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 303   e->data[GH_VISITS].value_len = len;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_ctx'
+dt_global_history.c line 329   err = treeview_create_node_entry(gh_ctx.tree, &(e->entry),
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 330   parent, TREE_REL_FIRST_CHILD, e->data, e,
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_ctx'
+dt_global_history.c line 331   gh_ctx.built ? TREE_OPTION_NONE :
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 364   e = malloc(sizeof(struct global_history_entry));
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 369   e->user_delete = false;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 370   e->slot = slot;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 371   e->url = nsurl_ref(url);
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 372   e->t = data->last_visit;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 373   e->entry = NULL;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 374   e->next = NULL;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 375   e->prev = NULL;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 386   } else if (gh_list[slot]->t < e->t) {
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 388   e->next = gh_list[slot];
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 389   gh_list[slot]->prev = e;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 393   struct global_history_entry *curr = prev->next;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 395   if (curr->t < e->t) {
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 399   curr = curr->next;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 403   e->next = curr;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 404   e->prev = prev;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 405   prev->next = e;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 408   curr->prev = e;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 434   assert(e->entry == NULL);
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 437   if (gh_list[e->slot] == e) {
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 439   gh_list[e->slot] = e->next;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 441   if (e->next != NULL)
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 442   e->next->prev = NULL;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 444   } else if (e->next == NULL) {
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 446   e->prev->next = NULL;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 450   e->prev->next = e->next;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 451   e->next->prev = e->prev;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 454   if (e->user_delete) {
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 456   urldb_reset_url_visit_data(e->url);
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 460   free((void *)e->data[GH_TITLE].value); /* Eww */
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 461   free((void *)e->data[GH_LAST_VISIT].value); /* Eww */
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 462   free((void *)e->data[GH_VISITS].value); /* Eww */
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_entry'
+dt_global_history.c line 463   nsurl_unref(e->url);
+
+Error   : ';' expected
+dt_global_history.c line 480   time_t visit_date;
+
+Error   : ';' expected
+dt_global_history.c line 481   time_t earliest_date = gh_ctx.today - (N_DAYS - 1) * N_SEC_PER_DAY;
+
+Error   : expression syntax error
+dt_global_history.c line 482    unsigned char
+
+Error   : undefined identifier 'visit_date'
+dt_global_history.c line 486   visit_date = data->last_visit;
+
+Error   : undefined identifier 'visit_date'
+dt_global_history.c line 489   if (visit_date >= gh_ctx.today) {
+
+Error   : undefined identifier 'visit_date'
+dt_global_history.c line 491   } else if (visit_date >= earliest_date) {
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_ctx'
+dt_global_history.c line 492   slot = (gh_ctx.today - visit_date) / N_SEC_PER_DAY + 1;
+
+Error   : undefined identifier 'got_treeview'
+dt_global_history.c line 498   if (got_treeview == true) {
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_ctx'
+dt_global_history.c line 505   treeview_delete_node(gh_ctx.tree, e->entry,
+
+Error   : undefined identifier 'got_treeview'
+dt_global_history.c line 512   got_treeview) != NSERROR_OK) {
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_ctx'
+dt_global_history.c line 530   gh_ctx.fields[i].field = NULL;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_ctx'
+dt_global_history.c line 532   gh_ctx.fields[GH_TITLE].flags = TREE_FLAG_DEFAULT;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_ctx'
+dt_global_history.c line 536   &gh_ctx.fields[GH_TITLE].field) !=
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_ctx'
+dt_global_history.c line 541   gh_ctx.fields[GH_URL].flags =
+
+Error   : ';' expected
+dt_global_history.c line 542   TREE_FLAG_COPY_TEXT |
+
+Error   : ';' expected
+dt_global_history.c line 543   TREE_FLAG_SEARCHABLE;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_ctx'
+dt_global_history.c line 547   &gh_ctx.fields[GH_URL].field) !=
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_ctx'
+dt_global_history.c line 552   gh_ctx.fields[GH_LAST_VISIT].flags = TREE_FLAG_SHOW_NAME;
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_ctx'
+dt_global_history.c line 556   &gh_ctx.fields[GH_LAST_VISIT].field) !=
+
+Error   : illegal use of incomplete struct/union/class 'struct global_history_ctx'
+dt_global_history.c line 561   gh_ctx.fields[GH_VISITS].flags = TREE_FLAG_SHOW_NAME;
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:29
+ dt_hotlist.c:35)
+url_db.h line 39   time_t last_visit; /**< Last visit time */
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:29
+ dt_hotlist.c:35)
+url_db.h line 41   };
+
+Error   : ';' expected
+(included from:
+ urldb.h:30
+ dt_hotlist.c:35)
+cookie_db.h line 58   const time_t expires;      /**< Expiry timestamp, or 1 for session */
+
+Error   : ';' expected
+(included from:
+ urldb.h:30
+ dt_hotlist.c:35)
+cookie_db.h line 59   const time_t last_used;      /**< Last used time */
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:30
+ dt_hotlist.c:35)
+cookie_db.h line 66   };
+
+Error   : illegal use of incomplete struct/union/class 'struct url_data'
+dt_hotlist.c line 200   if (data->visits != 0) {
+
+Error   : illegal use of incomplete struct/union/class 'struct url_data'
 dt_hotlist.c line 204   if ((lvtime = localtime(&data->last_visit)) != NULL) {
+
+Error   : illegal use of incomplete struct/union/class 'struct url_data'
+dt_hotlist.c line 225   len = snprintf(buffer, 16, "%u", data->visits);
+
+Error   : illegal use of incomplete struct/union/class 'struct url_data'
+dt_hotlist.c line 265   title = (data->title != NULL) ?
+
+Error   : illegal use of incomplete struct/union/class 'struct url_data'
+dt_hotlist.c line 266   data->title : nsurl_access(e->url);
 
 Error   : illegal implicit conversion from 'int' to
 'char *'
@@ -1010,10 +1114,37 @@ dt_treeview.c line 2401   0L
 Error   : declaration syntax error
 dt_treeview.c line 2404   treeview_node_contract_cb(node, &data, false);
 
-Error   : the file 'testament.h' cannot be opened
-dt_version.c line 19   #include "testament.h"
-
 Could not find or load the file �dump.c� for target �MacSurf� for project �MacSurf�.
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:29
+ fetch.c:61)
+url_db.h line 39   time_t last_visit; /**< Last visit time */
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:29
+ fetch.c:61)
+url_db.h line 41   };
+
+Error   : ';' expected
+(included from:
+ urldb.h:30
+ fetch.c:61)
+cookie_db.h line 58   const time_t expires;      /**< Expiry timestamp, or 1 for session */
+
+Error   : ';' expected
+(included from:
+ urldb.h:30
+ fetch.c:61)
+cookie_db.h line 59   const time_t last_used;      /**< Last used time */
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:30
+ fetch.c:61)
+cookie_db.h line 66   };
 
 Error   : expression syntax error
 flex.c line 152   css_fixed grow_num = short_auto ? INTTOFIX(1) : 0;
@@ -1095,6 +1226,539 @@ Could not find or load the file �internal.c� for target �MacSurf� for pr
 
 Error   : undefined identifier 'strncmp'
 libwapcaplet.c line 148   strncmp, (lwc_memcpy)memcpy);
+
+Error   : illegal function definition
+ns_time.h line 39   int nsc_sntimet(char *str, size_t size, time_t *timep);
+
+Error   : illegal function definition
+ns_time.h line 51   nserror nsc_snptimet(const char *str, size_t size, time_t *timep);
+
+Error   : illegal function definition
+ns_time.h line 73   nserror nsc_strntimet(const char *str, size_t size, time_t *timep);
+
+Error   : ')' expected
+ns_time.h line 81   const char *rfc1123_date(time_t t);
+
+Error   : illegal function definition
+(included from:
+ http.h:30
+ llcache.c:49)
+cache-control.h line 24   typedef struct http_cache_control http_cache_control;
+
+Error   : illegal function definition
+(included from:
+ http.h:30
+ llcache.c:49)
+cache-control.h line 36   http_cache_control **result);
+
+Error   : ')' expected
+(included from:
+ http.h:30
+ llcache.c:49)
+cache-control.h line 43   void http_cache_control_destroy(http_cache_control *victim);
+
+Error   : ')' expected
+(included from:
+ http.h:30
+ llcache.c:49)
+cache-control.h line 51   bool http_cache_control_has_max_age(http_cache_control *cc);
+
+Error   : ')' expected
+(included from:
+ http.h:30
+ llcache.c:49)
+cache-control.h line 59   uint32_t http_cache_control_max_age(http_cache_control *cc);
+
+Error   : ')' expected
+(included from:
+ http.h:30
+ llcache.c:49)
+cache-control.h line 67   bool http_cache_control_no_cache(http_cache_control *cc);
+
+Error   : ')' expected
+(included from:
+ http.h:30
+ llcache.c:49)
+cache-control.h line 75   bool http_cache_control_no_store(http_cache_control *cc);
+
+Error   : illegal function definition
+(included from:
+ content-disposition.h:24
+ http.h:31
+ llcache.c:49)
+parameter.h line 26   typedef struct http_parameter http_parameter;
+
+Error   : ')' expected
+(included from:
+ content-disposition.h:24
+ http.h:31
+ llcache.c:49)
+parameter.h line 37   nserror http_parameter_list_find_item(const http_parameter *list,
+
+Error   : ';' expected
+(included from:
+ content-disposition.h:24
+ http.h:31
+ llcache.c:49)
+parameter.h line 38   lwc_string *name, lwc_string **value);
+
+Error   : illegal function definition
+(included from:
+ content-disposition.h:24
+ http.h:31
+ llcache.c:49)
+parameter.h line 48   const http_parameter *http_parameter_list_iterate(const http_parameter *cur,
+
+Error   : ';' expected
+(included from:
+ content-disposition.h:24
+ http.h:31
+ llcache.c:49)
+parameter.h line 49   lwc_string **name, lwc_string **value);
+
+Error   : ')' expected
+(included from:
+ content-disposition.h:24
+ http.h:31
+ llcache.c:49)
+parameter.h line 56   void http_parameter_list_destroy(http_parameter *list);
+
+Error   : declaration syntax error
+(included from:
+ http.h:31
+ llcache.c:49)
+content-disposition.h line 28   http_parameter *parameters;
+
+Error   : identifier expected
+(included from:
+ http.h:31
+ llcache.c:49)
+content-disposition.h line 29   } http_content_disposition;
+
+Error   : illegal function definition
+(included from:
+ http.h:31
+ llcache.c:49)
+content-disposition.h line 40   http_content_disposition **result);
+
+Error   : ')' expected
+(included from:
+ http.h:31
+ llcache.c:49)
+content-disposition.h line 47   void http_content_disposition_destroy(http_content_disposition *victim);
+
+Error   : declaration syntax error
+(included from:
+ http.h:32
+ llcache.c:49)
+content-type.h line 28   http_parameter *parameters;
+
+Error   : identifier expected
+(included from:
+ http.h:32
+ llcache.c:49)
+content-type.h line 29   } http_content_type;
+
+Error   : illegal function definition
+(included from:
+ http.h:32
+ llcache.c:49)
+content-type.h line 40   http_content_type **result);
+
+Error   : ')' expected
+(included from:
+ http.h:32
+ llcache.c:49)
+content-type.h line 47   void http_content_type_destroy(http_content_type *victim);
+
+Error   : illegal function definition
+(included from:
+ http.h:33
+ llcache.c:49)
+strict-transport-security.h line 24   typedef struct http_strict_transport_security http_strict_transport_security;
+
+Error   : illegal function definition
+(included from:
+ http.h:33
+ llcache.c:49)
+strict-transport-security.h line 36   http_strict_transport_security **result);
+
+Error   : ')' expected
+(included from:
+ http.h:33
+ llcache.c:49)
+strict-transport-security.h line 44   http_strict_transport_security *victim);
+
+Error   : ')' expected
+(included from:
+ http.h:33
+ llcache.c:49)
+strict-transport-security.h line 53   http_strict_transport_security *sts);
+
+Error   : ')' expected
+(included from:
+ http.h:33
+ llcache.c:49)
+strict-transport-security.h line 62   http_strict_transport_security *sts);
+
+Error   : illegal function definition
+(included from:
+ www-authenticate.h:24
+ http.h:34
+ llcache.c:49)
+challenge.h line 26   typedef struct http_challenge http_challenge;
+
+Error   : illegal function definition
+(included from:
+ www-authenticate.h:24
+ http.h:34
+ llcache.c:49)
+challenge.h line 36   const http_challenge *http_challenge_list_iterate(const http_challenge *cur,
+
+Error   : ';' expected
+(included from:
+ www-authenticate.h:24
+ http.h:34
+ llcache.c:49)
+challenge.h line 37   lwc_string **scheme, http_parameter **parameters);
+
+Error   : ')' expected
+(included from:
+ www-authenticate.h:24
+ http.h:34
+ llcache.c:49)
+challenge.h line 44   void http_challenge_list_destroy(http_challenge *list);
+
+Error   : declaration syntax error
+(included from:
+ http.h:34
+ llcache.c:49)
+www-authenticate.h line 27   http_challenge *challenges;
+
+Error   : identifier expected
+(included from:
+ http.h:34
+ llcache.c:49)
+www-authenticate.h line 28   } http_www_authenticate;
+
+Error   : illegal function definition
+(included from:
+ http.h:34
+ llcache.c:49)
+www-authenticate.h line 39   http_www_authenticate **result);
+
+Error   : ')' expected
+(included from:
+ http.h:34
+ llcache.c:49)
+www-authenticate.h line 46   void http_www_authenticate_destroy(http_www_authenticate *victim);
+
+Error   : illegal function definition
+(included from:
+ options.h:34
+ nsoption.h:59
+ llcache.c:50)
+types.h line 37   typedef uint32_t colour;
+
+Error   : illegal function definition
+(included from:
+ options.h:34
+ nsoption.h:59
+ llcache.c:50)
+types.h line 45   } rect;
+
+Error   : identifier expected
+nsoption.h line 90   OPTION_HTTP_PROXY_AUTH_NTLM = 2 };
+
+Error   : identifier expected
+nsoption.h line 110   };
+
+Error   : declaration syntax error
+nsoption.h line 122   colour c;
+
+Error   : illegal function definition
+nsoption.h line 123   } value;
+
+Error   : identifier expected
+nsoption.h line 124   };
+
+Error   : identifier expected
+nsoption.h line 155   };
+
+Error   : illegal function definition
+nsoption.h line 166   extern struct nsoption_s *nsoptions;
+
+Error   : illegal function definition
+nsoption.h line 172   extern struct nsoption_s *nsoptions_default;
+
+Error   : illegal function definition
+nsoption.h line 178   typedef nserror(nsoption_set_default_t)(struct nsoption_s *defaults);
+
+Error   : illegal function definition
+nsoption.h line 184   typedef size_t(nsoption_generate_cb)(struct nsoption_s *option, void *ctx);
+
+Error   : identifier expected
+nsoption.h line 195   };
+
+Error   : ')' expected
+nsoption.h line 207   nserror nsoption_init(nsoption_set_default_t *set_default, struct nsoption_s **popts, struct nsoption_s **pdefs);
+
+Error   : illegal function definition
+nsoption.h line 219   nserror nsoption_finalise(struct nsoption_s *opts, struct nsoption_s *defs);
+
+Error   : illegal function definition
+nsoption.h line 229   nserror nsoption_read(const char *path, struct nsoption_s *opts);
+
+Error   : ')' expected
+nsoption.h line 244   nserror nsoption_generate(nsoption_generate_cb *cb, void *ctx, enum nsoption_generate_flags flags, struct nsoption_s *opts, st
+
+Error   : illegal function definition
+nsoption.h line 258   ption_write(const char *path, struct nsoption_s *opts, struct nsoption_s *defs);
+
+Error   : illegal function definition
+nsoption.h line 268   nserror nsoption_dump(FILE *outf, struct nsoption_s *opts);
+
+Error   : illegal function definition
+nsoption.h line 279   nserror nsoption_commandline(int *pargc, char **argv, struct nsoption_s *opts);
+
+Error   : illegal function definition
+nsoption.h line 299   n_snoptionf(char *string, size_t size, enum nsoption_e option, const char *fmt);
+
+Error   : illegal function definition
+nsoption.h line 373   ion_set_tbl_charp(struct nsoption_s *opts, enum nsoption_e option_idx, char *s);
+
+Error   : identifier expected
+misc.h line 28   struct form_control;
+
+Error   : identifier expected
+misc.h line 29   struct gui_window;
+
+Error   : identifier expected
+misc.h line 30   struct cert_chain;
+
+Error   : identifier expected
+misc.h line 31   struct nsurl;
+
+Error   : identifier expected
+misc.h line 127   };
+
+Error   : identifier expected
+(included from:
+ gui_internal.h:30
+ llcache.c:52)
+gui_table.h line 30   struct gui_misc_table;
+
+Error   : identifier expected
+(included from:
+ gui_internal.h:30
+ llcache.c:52)
+gui_table.h line 31   struct gui_window_table;
+
+Error   : identifier expected
+(included from:
+ gui_internal.h:30
+ llcache.c:52)
+gui_table.h line 32   struct gui_download_table;
+
+Error   : identifier expected
+(included from:
+ gui_internal.h:30
+ llcache.c:52)
+gui_table.h line 33   struct gui_clipboard_table;
+
+Error   : identifier expected
+(included from:
+ gui_internal.h:30
+ llcache.c:52)
+gui_table.h line 34   struct gui_fetch_table;
+
+Error   : identifier expected
+(included from:
+ gui_internal.h:30
+ llcache.c:52)
+gui_table.h line 35   struct gui_file_table;
+
+Error   : identifier expected
+(included from:
+ gui_internal.h:30
+ llcache.c:52)
+gui_table.h line 36   struct gui_utf8_table;
+
+Error   : identifier expected
+(included from:
+ gui_internal.h:30
+ llcache.c:52)
+gui_table.h line 37   struct gui_search_table;
+
+Error   : identifier expected
+(included from:
+ gui_internal.h:30
+ llcache.c:52)
+gui_table.h line 38   struct gui_search_web_table;
+
+Error   : identifier expected
+(included from:
+ gui_internal.h:30
+ llcache.c:52)
+gui_table.h line 39   struct gui_llcache_table;
+
+Error   : identifier expected
+(included from:
+ gui_internal.h:30
+ llcache.c:52)
+gui_table.h line 40   struct gui_bitmap_table;
+
+Error   : identifier expected
+(included from:
+ gui_internal.h:30
+ llcache.c:52)
+gui_table.h line 41   struct gui_layout_table;
+
+Error   : identifier expected
+(included from:
+ gui_internal.h:30
+ llcache.c:52)
+gui_table.h line 164   };
+
+Error   : illegal function definition
+gui_internal.h line 35   extern struct netsurf_table *guit;
+
+Error   : illegal function definition
+(included from:
+ cerrno:18
+ errno.h:17
+ mac_inet.h:13
+ inet.h:54
+ fetch.h:30
+ llcache.c:54)
+cerrno.mac.h line 82   _MSL_IMP_EXP_C _MSL_TLS extern short __MacOSErrNo;  /*- mm 010411 -*/ /*- mm 010412 -*/ /*- mm 010621 -*/ /*- cc 011128 -*/
+
+Error   : illegal function definition
+(included from:
+ errno.h:17
+ mac_inet.h:13
+ inet.h:54
+ fetch.h:30
+ llcache.c:54)
+cerrno line 91   _MSL_IMP_EXP_C _MSL_TLS extern int errno; /*- cc 011128 -*/
+
+Error   : illegal function definition
+(included from:
+ inet.h:54
+ fetch.h:30
+ llcache.c:54)
+mac_inet.h line 38   typedef uint32_t in_addr_t;
+
+Error   : declaration syntax error
+(included from:
+ inet.h:54
+ fetch.h:30
+ llcache.c:54)
+mac_inet.h line 42   in_addr_t s_addr;
+
+Error   : identifier expected
+(included from:
+ inet.h:54
+ fetch.h:30
+ llcache.c:54)
+mac_inet.h line 43   };
+
+Error   : illegal use of incomplete struct/union/class 'struct in_addr'
+(included from:
+ inet.h:54
+ fetch.h:30
+ llcache.c:54)
+mac_inet.h line 50   struct in_addr sin_addr;
+
+Error   : identifier expected
+(included from:
+ inet.h:54
+ fetch.h:30
+ llcache.c:54)
+mac_inet.h line 52   };
+
+Error   : identifier expected
+(included from:
+ inet.h:54
+ fetch.h:30
+ llcache.c:54)
+mac_inet.h line 59   };
+
+Error   : illegal function definition
+(included from:
+ inet.h:54
+ fetch.h:30
+ llcache.c:54)
+mac_inet.h line 61   typedef uint32_t socklen_t;
+
+Error   : illegal function definition
+(included from:
+ inet.h:54
+ fetch.h:30
+ llcache.c:54)
+mac_inet.h line 105   } fd_set;
+
+Error   : illegal function definition
+(included from:
+ inet.h:54
+ fetch.h:30
+ llcache.c:54)
+mac_inet.h line 117   static int socket(int domain, int type, int protocol)
+
+Error   : illegal function definition
+(included from:
+ inet.h:54
+ fetch.h:30
+ llcache.c:54)
+mac_inet.h line 118   {
+
+Error   : identifier expected
+(included from:
+ inet.h:54
+ fetch.h:30
+ llcache.c:54)
+mac_inet.h line 119   (void)domain; (void)type; (void)protocol;
+
+Error   : identifier expected
+(included from:
+ inet.h:54
+ fetch.h:30
+ llcache.c:54)
+mac_inet.h line 120   return -1;
+
+Error   : identifier expected
+(included from:
+ inet.h:54
+ fetch.h:30
+ llcache.c:54)
+mac_inet.h line 121   }
+
+Error   : illegal function definition
+(included from:
+ fetch.h:30
+ llcache.c:54)
+inet.h line 73   int inet_aton(const char *cp, struct in_addr *inp);
+
+Error   : illegal function definition
+(included from:
+ fetch.h:30
+ llcache.c:54)
+inet.h line 77   int inet_pton(int af, const char *src, void *dst);
+
+Error   : illegal function definition
+(included from:
+ fetch.h:31
+ llcache.c:54)
+response-codes.h line 73   } http_response_code;
+
+Error   : identifier expected
+fetch.h line 35   struct content;
+
+Error   : identifier expected
+fetch.h line 36   struct fetch;
+
+Error   : identifier expected
+fetch.h line 37   struct ssl_cert_info;
 
 Error   : illegal implicit conversion from 'int' to
 'const char *'
@@ -1207,6 +1871,66 @@ Error   : illegal function definition
  macos9.h:10
  misc.c:16)
 MacWindows.h line 3875   AliasHandle *  alias);
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:29
+ netsurf.c:44)
+url_db.h line 39   time_t last_visit; /**< Last visit time */
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:29
+ netsurf.c:44)
+url_db.h line 41   };
+
+Error   : ';' expected
+(included from:
+ urldb.h:30
+ netsurf.c:44)
+cookie_db.h line 58   const time_t expires;      /**< Expiry timestamp, or 1 for session */
+
+Error   : ';' expected
+(included from:
+ urldb.h:30
+ netsurf.c:44)
+cookie_db.h line 59   const time_t last_used;      /**< Last used time */
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:30
+ netsurf.c:44)
+cookie_db.h line 66   };
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:29
+ ns_content.c:42)
+url_db.h line 39   time_t last_visit; /**< Last visit time */
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:29
+ ns_content.c:42)
+url_db.h line 41   };
+
+Error   : ';' expected
+(included from:
+ urldb.h:30
+ ns_content.c:42)
+cookie_db.h line 58   const time_t expires;      /**< Expiry timestamp, or 1 for session */
+
+Error   : ';' expected
+(included from:
+ urldb.h:30
+ ns_content.c:42)
+cookie_db.h line 59   const time_t last_used;      /**< Last used time */
+
+Error   : declaration syntax error
+(included from:
+ urldb.h:30
+ ns_content.c:42)
+cookie_db.h line 66   };
 
 Error   : ',' expected
 nsoption.c line 118   if (sscanf(value, "%"SCNx32"", &rgbcolour) == 1) {
@@ -1794,57 +2518,307 @@ MacWindows.h line 3875   AliasHandle *  alias);
 
 Could not find or load the file �strict-transport-security.c� for target �MacSurf� for project �MacSurf�.
 
-Error   : illegal implicit conversion from 'int' to
-'const char *'
-urldb.c line 676   slash = strchr(host, '/');
+Could not find or load the file �time.c� for target �MacSurf� for project �MacSurf�.
 
-Error   : illegal implicit conversion from 'int' to
-'const char *'
-urldb.c line 760   dot = strchr(b, '.');
+Error   : illegal function definition
+ns_time.h line 39   int nsc_sntimet(char *str, size_t size, time_t *timep);
 
-Error   : illegal implicit conversion from 'int' to
-'const char *'
-urldb.c line 913   slash = strchr(prefix, '/');
+Error   : illegal function definition
+ns_time.h line 51   nserror nsc_snptimet(const char *str, size_t size, time_t *timep);
 
-Error   : illegal implicit conversion from 'int' to
-'const char *'
-urldb.c line 1218   dot = strchr(b, '.');
+Error   : illegal function definition
+ns_time.h line 73   nserror nsc_strntimet(const char *str, size_t size, time_t *timep);
 
-Error   : illegal implicit conversion from 'int' to
-'const char *'
-urldb.c line 1323   slash = strchr(path + 1, '/');
+Error   : ')' expected
+ns_time.h line 81   const char *rfc1123_date(time_t t);
 
-Error   : illegal implicit conversion from 'int' to
-'const char *'
-urldb.c line 1974   const char *semi = strchr(cur + 1, ';');
+Error   : illegal function definition
+nsurl.h line 32   typedef struct nsurl nsurl;
 
-Error   : illegal implicit conversion from 'int' to
-'char *'
-urldb.c line 2038   slash = strrchr(path_data, '/');
+Error   : identifier expected
+nsurl.h line 43   };
 
-Error   : illegal implicit conversion from 'int' to
-'char *'
-urldb.c line 2107   slash = strchr(segment, '/');
+Error   : illegal function definition
+nsurl.h line 59   } nsurl_component;
 
-Error   : illegal implicit conversion from 'int' to
-'char *'
-urldb.c line 2200   part = strrchr(buf, '.');
+Error   : illegal function definition
+nsurl.h line 74   nserror nsurl_create(const char * const url_s, nsurl **url);
 
-Error   : illegal implicit conversion from 'int' to
-'const char *'
-urldb.c line 3818   scheme_sep = strstr(prefix, "://");
+Error   : illegal function definition
+nsurl.h line 85   nsurl *nsurl_ref(nsurl *url);
 
-Error   : illegal implicit conversion from 'int' to
-'const char *'
-urldb.c line 3822   slash = strchr(prefix, '/');
+Error   : ')' expected
+nsurl.h line 95   void nsurl_unref(nsurl *url);
 
-Error   : illegal implicit conversion from 'int' to
-'const char *'
-urldb.c line 4008   (dot = strchr(hptr + 1, '.')) == NULL ||
+Error   : ')' expected
+nsurl.h line 107   bool nsurl_compare(const nsurl *url1, const nsurl *url2, nsurl_component parts);
 
-Error   : illegal implicit conversion from 'int' to
-'char *'
-urldb.c line 4065   dot = strchr(c->domain + 1, '.');
+Error   : ')' expected
+nsurl.h line 132   nserror nsurl_get(const nsurl *url, nsurl_component parts,
+
+Error   : identifier expected
+nsurl.h line 133   char **url_s, size_t *url_l);
+
+Error   : ')' expected
+nsurl.h line 156   lwc_string *nsurl_get_component(const nsurl *url, nsurl_component part);
+
+Error   : ')' expected
+nsurl.h line 165   enum nsurl_scheme_type nsurl_get_scheme_type(const nsurl *url);
+
+Error   : ')' expected
+nsurl.h line 186   bool nsurl_has_component(const nsurl *url, nsurl_component part);
+
+Error   : ')' expected
+nsurl.h line 200   const char *nsurl_access(const nsurl *url);
+
+Error   : ')' expected
+nsurl.h line 218   const char *nsurl_access_log(const nsurl *url);
+
+Error   : ')' expected
+nsurl.h line 236   nserror nsurl_get_utf8(const nsurl *url, char **url_s, size_t *url_l);
+
+Error   : ')' expected
+nsurl.h line 250   const char *nsurl_access_leaf(const nsurl *url);
+
+Error   : ')' expected
+nsurl.h line 261   size_t nsurl_length(const nsurl *url);
+
+Error   : ')' expected
+nsurl.h line 270   uint32_t nsurl_hash(const nsurl *url);
+
+Error   : ')' expected
+nsurl.h line 286   nserror nsurl_join(const nsurl *base, const char *rel, nsurl **joined);
+
+Error   : ')' expected
+nsurl.h line 301   nserror nsurl_defragment(const nsurl *url, nsurl **no_frag);
+
+Error   : ')' expected
+nsurl.h line 319   nserror nsurl_refragment(const nsurl *url, lwc_string *frag, nsurl **new_url);
+
+Error   : ')' expected
+nsurl.h line 340   nserror nsurl_replace_query(const nsurl *url, const char *query,
+
+Error   : illegal function definition
+nsurl.h line 341   nsurl **new_url);
+
+Error   : ')' expected
+nsurl.h line 359   nserror nsurl_replace_scheme(const nsurl *url, lwc_string *scheme,
+
+Error   : illegal function definition
+nsurl.h line 360   nsurl **new_url);
+
+Error   : ')' expected
+nsurl.h line 373   nserror nsurl_nice(const nsurl *url, char **result, bool remove_extensions);
+
+Error   : ')' expected
+nsurl.h line 390   nserror nsurl_parent(const nsurl *url, nsurl **new_url);
+
+Error   : ')' expected
+nsurl.h line 400   void nsurl_dump(const nsurl *url);
+
+Error   : illegal function definition
+ascii.h line 40   static inline bool ascii_is_space(char c)
+
+Error   : illegal function definition
+ascii.h line 41   {
+
+Error   : identifier expected
+ascii.h line 42   return (c == ' '  || c == '\t' ||
+
+Error   : illegal function definition
+ascii.h line 43   c == '\n' || c == '\v' ||
+
+Error   : illegal function definition
+ascii.h line 44   c == '\f' || c == '\r');
+
+Error   : identifier expected
+ascii.h line 45   }
+
+Error   : illegal function definition
+ascii.h line 54   {
+
+Error   : identifier expected
+ascii.h line 55   return (c >= 'a' && c <= 'z');
+
+Error   : identifier expected
+ascii.h line 56   }
+
+Error   : illegal function definition
+ascii.h line 65   {
+
+Error   : identifier expected
+ascii.h line 66   return (c >= 'A' && c <= 'Z');
+
+Error   : identifier expected
+ascii.h line 67   }
+
+Error   : illegal function definition
+ascii.h line 76   {
+
+Error   : identifier expected
+ascii.h line 77   return (ascii_is_alpha_lower(c) || ascii_is_alpha_upper(c));
+
+Error   : identifier expected
+ascii.h line 78   }
+
+Error   : illegal function definition
+ascii.h line 87   {
+
+Error   : identifier expected
+ascii.h line 88   return (c >= '0' && c <= '9');
+
+Error   : identifier expected
+ascii.h line 89   }
+
+Error   : illegal function definition
+ascii.h line 98   {
+
+Error   : identifier expected
+ascii.h line 99   return (c == '-' || c == '+');
+
+Error   : identifier expected
+ascii.h line 100   }
+
+Error   : illegal function definition
+ascii.h line 109   {
+
+Error   : identifier expected
+ascii.h line 110   return (ascii_is_alpha(c) || ascii_is_digit(c));
+
+Error   : identifier expected
+ascii.h line 111   }
+
+Error   : illegal function definition
+ascii.h line 120   {
+
+Error   : identifier expected
+ascii.h line 121   return (c >= 'a' && c <= 'f');
+
+Error   : identifier expected
+ascii.h line 122   }
+
+Error   : illegal function definition
+ascii.h line 131   {
+
+Error   : identifier expected
+ascii.h line 132   return (ascii_is_digit(c) || ascii_is_af_lower(c));
+
+Error   : identifier expected
+ascii.h line 133   }
+
+Error   : illegal function definition
+ascii.h line 142   {
+
+Error   : identifier expected
+ascii.h line 143   return (c >= 'A' && c <= 'F');
+
+Error   : identifier expected
+ascii.h line 144   }
+
+Error   : illegal function definition
+ascii.h line 153   {
+
+Error   : identifier expected
+ascii.h line 154   return (ascii_is_digit(c) || ascii_is_af_upper(c));
+
+Error   : identifier expected
+ascii.h line 155   }
+
+Error   : illegal function definition
+ascii.h line 164   {
+
+Error   : identifier expected
+ascii.h line 165   return (ascii_is_digit(c) ||
+
+Error   : illegal function definition
+ascii.h line 166   ascii_is_af_upper(c) ||
+
+Error   : illegal function definition
+ascii.h line 167   ascii_is_af_lower(c));
+
+Error   : identifier expected
+ascii.h line 168   }
+
+Error   : illegal function definition
+ascii.h line 177   {
+
+Error   : identifier expected
+ascii.h line 178   if (ascii_is_digit(c)) {
+
+Error   : identifier expected
+ascii.h line 179   return c - '0';
+
+Error   : identifier expected
+ascii.h line 180   } else if (ascii_is_af_lower(c)) {
+
+Error   : identifier expected
+ascii.h line 181   return c - 'a' + 10;
+
+Error   : identifier expected
+ascii.h line 182   } else if (ascii_is_af_upper(c)) {
+
+Error   : identifier expected
+ascii.h line 183   return c - 'A' + 10;
+
+Error   : identifier expected
+ascii.h line 184   }
+
+Error   : identifier expected
+ascii.h line 187   return -256;
+
+Error   : identifier expected
+ascii.h line 188   }
+
+Error   : illegal function definition
+ascii.h line 199   {
+
+Error   : identifier expected
+ascii.h line 200   return 16 * ascii_hex_to_value(c1) + ascii_hex_to_value(c2);
+
+Error   : identifier expected
+ascii.h line 201   }
+
+Error   : illegal function definition
+ascii.h line 213   {
+
+Error   : identifier expected
+ascii.h line 214   return (ascii_is_alpha_upper(c)) ? (c + 'a' - 'A') : c;
+
+Error   : identifier expected
+ascii.h line 215   }
+
+Error   : illegal function definition
+ascii.h line 227   {
+
+Error   : identifier expected
+ascii.h line 228   return (ascii_is_alpha_lower(c)) ? (c + 'A' - 'a') : c;
+
+Error   : identifier expected
+ascii.h line 229   }
+
+Error   : illegal function definition
+ascii.h line 238   {
+
+Error   : illegal function definition
+ascii.h line 239   size_t count = 0;
+
+Error   : identifier expected
+ascii.h line 240   while (ascii_is_alpha_lower(*(str++))) {
+
+Error   : illegal function definition
+ascii.h line 241   count++;
+
+Error   : identifier expected
+ascii.h line 242   }
+
+Error   : illegal function definition
+ascii.h line 243   return count;
+
+Error   : identifier expected
+ascii.h line 244   }
+
+Error   : illegal function definition
+ascii.h line 253   {
 
 Error   : illegal function definition
 (included from:

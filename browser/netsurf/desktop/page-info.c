@@ -331,8 +331,9 @@ static nserror page_info__measure_text(
 		struct page_info *pi)
 {
 	nserror err;
+	unsigned i;
 
-	for (unsigned i = 0; i < PI_ENTRY__COUNT; i++) {
+	for (i = 0; i < PI_ENTRY__COUNT; i++) {
 		struct page_info_entry *entry = pi->entries + i;
 		int padding;
 
@@ -493,9 +494,10 @@ static nserror page_info__layout(
 {
 	int cur_y = 0;
 	int max_x = 0;
+	unsigned i;
 
 	cur_y += pi->window_padding;
-	for (unsigned i = 0; i < PI_ENTRY__COUNT; i++) {
+	for (i = 0; i < PI_ENTRY__COUNT; i++) {
 		struct page_info_entry *entry = pi->entries + i;
 
 		if (page_info__hide_entry(i, pi->scheme)) {
@@ -621,14 +623,14 @@ nserror page_info_redraw(
 		const struct redraw_context *ctx)
 {
 	struct redraw_context new_ctx = *ctx;
-	struct rect r = {
-		.x0 = clip->x0 + x,
-		.y0 = clip->y0 + y,
-		.x1 = clip->x1 + x,
-		.y1 = clip->y1 + y,
-	};
+	struct rect r;
 	int cur_y = y;
 	nserror err;
+	unsigned i;
+	r.x0 = clip->x0 + x;
+	r.y0 = clip->y0 + y;
+	r.x1 = clip->x1 + x;
+	r.y1 = clip->y1 + y;
 
 	/* Start knockout rendering if it's available for this plotter. */
 	if (ctx->plot->option_knockout) {
@@ -643,7 +645,7 @@ nserror page_info_redraw(
 	new_ctx.plot->rectangle(&new_ctx, &pi__bg, &r);
 
 	cur_y += pi->window_padding;
-	for (unsigned i = 0; i < PI_ENTRY__COUNT; i++) {
+	for (i = 0; i < PI_ENTRY__COUNT; i++) {
 		const struct page_info_entry *entry = pi->entries + i;
 		int cur_x = x + pi->window_padding;
 
@@ -755,9 +757,10 @@ nserror page_info_mouse_action(
 {
 	int cur_y = 0;
 	nserror err;
+	unsigned i;
 
 	cur_y += pi->window_padding;
-	for (unsigned i = 0; i < PI_ENTRY__COUNT; i++) {
+	for (i = 0; i < PI_ENTRY__COUNT; i++) {
 		struct page_info_entry *entry = pi->entries + i;
 		bool hovering = false;
 		int height;

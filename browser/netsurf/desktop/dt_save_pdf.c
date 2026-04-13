@@ -839,10 +839,11 @@ static void error_handler(HPDF_STATUS error_no, HPDF_STATUS detail_no,
 #ifdef PDF_DEBUG_DUMPGRID
 void pdf_plot_grid(int x_dist, int y_dist, unsigned int colour)
 {
-	for (int i = x_dist ; i < page_width ; i += x_dist)
+	int i;
+	for (i = x_dist ; i < page_width ; i += x_dist)
 		pdf_plot_line(i, 0, i, page_height, 1, colour, false, false);
 
-	for (int i = y_dist ; i < page_height ; i += x_dist)
+	for (i = y_dist ; i < page_height ; i += x_dist)
 		pdf_plot_line(0, i, page_width, i, 1, colour, false, false);
 }
 #endif

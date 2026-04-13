@@ -816,6 +816,9 @@ static nserror treeview__search_walk_cb(
 		bool *end)
 {
 	struct treeview_search_walk_data *sw = ctx;
+	struct treeview_node_entry *entry;
+	bool matched;
+	int i;
 
 	/* only entry nodes can be searched */
 	if (n->type != TREE_NODE_ENTRY) {
@@ -828,10 +831,10 @@ static nserror treeview__search_walk_cb(
 		return NSERROR_OK;
 	}
 
-	struct treeview_node_entry *entry = (struct treeview_node_entry *)n;
-	bool matched = false;
+	entry = (struct treeview_node_entry *)n;
+	matched = false;
 
-	for (int i = 0; i < sw->tree->n_fields; i++) {
+	for (i = 0; i < sw->tree->n_fields; i++) {
 		struct treeview_field *ef = &(sw->tree->fields[i + 1]);
 		if (ef->flags & TREE_FLAG_SEARCHABLE) {
 			if (strcasestr(entry->fields[i].value.data,

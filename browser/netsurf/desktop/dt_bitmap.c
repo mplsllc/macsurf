@@ -240,10 +240,11 @@ static inline void bitmap__format_convert_from_pma(
 		struct bitmap_colour_layout to,
 		struct bitmap_colour_layout from)
 {
-	for (int y = 0; y < height; y++) {
+	int x, y;
+	for (y = 0; y < height; y++) {
 		uint8_t *row = buffer;
 
-		for (int x = 0; x < width; x++) {
+		for (x = 0; x < width; x++) {
 			const uint32_t px = *((uint32_t *)(void *) row);
 			uint32_t a, r, g, b;
 
@@ -321,13 +322,14 @@ bool bitmap_test_opaque(void *bitmap)
 	int height = guit->bitmap->get_height(bitmap);
 	size_t rowstride = guit->bitmap->get_rowstride(bitmap);
 	const uint8_t *buffer = guit->bitmap->get_buffer(bitmap);
+	int x, y;
 
 	width *= sizeof(uint32_t);
 
-	for (int y = 0; y < height; y++) {
+	for (y = 0; y < height; y++) {
 		const uint8_t *row = buffer;
 
-		for (int x = bitmap_layout.a; x < width; x += 4) {
+		for (x = bitmap_layout.a; x < width; x += 4) {
 			if (row[x] != 0xff) {
 				return false;
 			}
