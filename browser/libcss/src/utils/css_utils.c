@@ -5,6 +5,13 @@
  * Copyright 2007-9 John-Mark Bell <jmb@netsurf-browser.org>
  */
 
+#include <stdbool.h>
+#include <stddef.h>
+
+#include <libwapcaplet/libwapcaplet.h>
+#include <libcss/errors.h>
+#include <libcss/fpmath.h>
+
 #include "utils/utils.h"
 
 css_fixed css__number_from_lwc_string(lwc_string *string,
