@@ -1040,6 +1040,8 @@ html_redraw_text_decoration_block(struct box *box,
 				  const struct redraw_context *ctx)
 {
 	struct box *c;
+	nserror res;
+	struct rect rect;
 	/* MacSurf: positional init (CW8 C89). plot_style_t order:
 	 * stroke_type, stroke_width, stroke_colour, fill_type, fill_colour. */
 	plot_style_t plot_style_box = {
@@ -1047,8 +1049,6 @@ html_redraw_text_decoration_block(struct box *box,
 		PLOT_OP_TYPE_NONE, 0
 	};
 	plot_style_box.stroke_colour = colour;
-	nserror res;
-	struct rect rect;
 
 	/* draw through text descendants */
 	for (c = box->children; c; c = c->next) {

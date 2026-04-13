@@ -1,1 +1,1781 @@
-Error   : undefined identifier 'css_error'arena.h line 24   enum css_error css__arena_intern_style(struct css_computed_style **style);Error   : undefined identifier 'css_error'arena.h line 32   enum css_error css__arena_remove_style(struct css_computed_style *style);Error   : identifier 'css__arena_intern_style(struct css_computed_style **)' redeclaredwas declared as: 'int (struct css_computed_style **)'now declared as: 'css_error (struct css_computed_style **)'arena.c line 150   {Error   : identifier 'css__arena_remove_style(struct css_computed_style *)' redeclaredwas declared as: 'int (struct css_computed_style *)'now declared as: 'css_error (struct css_computed_style *)'arena.c line 199   {Error   : declaration syntax error(included from: document.h:31 attr.c:20)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 attr.c:20)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 attr.c:20)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Could not find or load the file Òbackground.cÓ for target ÒMacSurfÓ for project ÒMacSurfÓ.Error   : ')' expectedbox_textarea.c line 174   "Drag type %d not handled.",Error   : ';' expectedbox_textarea.c line 175   msg->data.drag);Error   : declaration syntax errorlayout.h line 49   nserror (*width)(const struct plot_font_style *fstyle, const char *string, size_t length, int *width);Error   : declaration syntax errorlayout.h line 63   nserror (*position)(const struct plot_font_style *fstyle, const char *string, size_t length, int x, size_t *char_offset, int *Error   : declaration syntax errorlayout.h line 88   nserror (*split)(const struct plot_font_style *fstyle, const char *string, size_t length, int x, size_t *char_offset, int *actError   : declaration syntax errorlayout.h line 89   };Error   : declaration syntax errorwindow.h line 193   nserror (*invalidate)(struct gui_window *gw, const struct rect *rect);Error   : declaration syntax errorwindow.h line 223   nserror (*set_scroll)(struct gui_window *gw, const struct rect *rect);Error   : declaration syntax errorwindow.h line 240   nserror (*get_dimensions)(struct gui_window *gw, int *width, int *height);Error   : declaration syntax errorwindow.h line 253   nserror (*event)(struct gui_window *gw, enum gui_window_event event);Error   : declaration syntax errorwindow.h line 271   nserror (*set_url)(struct gui_window *gw, struct nsurl *url);Error   : declaration syntax errorwindow.h line 326   nserror (*save_link)(struct gui_window *g, struct nsurl *url, const char *title);Error   : declaration syntax errorwindow.h line 378   };Error   : illegal name overloading(included from: browser_window.h:31 browser_history.c:36)errors.h line 68   } nserror;Error   : declaration syntax errorbrowser_window.h line 195   nserror browser_window_create(enum browser_window_create_flags flags,Error   : declaration syntax errorbrowser_window.h line 198   struct browser_window **bw);Error   : declaration syntax errorbrowser_window.h line 217   nserror browser_window_navigate(struct browser_window *bw,Error   : declaration syntax errorbrowser_window.h line 223   struct hlcache_handle *parent);Error   : declaration syntax errorbrowser_window.h line 239   nserror browser_window_navigate_up(struct browser_window *bw, bool new_window);Error   : declaration syntax errorbrowser_window.h line 259   nserror browser_window_get_url(Error   : declaration syntax errorbrowser_window.h line 262   struct nsurl** url_out);Error   : declaration syntax errorbrowser_window.h line 290   nserror browser_window_get_extents(struct browser_window *bw, bool scaled,Error   : declaration syntax errorbrowser_window.h line 291   int *width, int *height);Error   : declaration syntax errorbrowser_window.h line 333   nserror browser_window_reload(struct browser_window *bw, bool all);Error   : declaration syntax errorbrowser_window.h line 370   nserror browser_window_set_scale(struct browser_window *bw, float scale, bool absolute);Error   : declaration syntax errorbrowser_window.h line 397   nserror browser_window_get_features(struct browser_window *bw,Error   : declaration syntax errorbrowser_window.h line 398   int x, int y, struct browser_window_features *data);Error   : declaration syntax errorbrowser_window.h line 447   nserror browser_window_refresh_url_bar(struct browser_window *bw);Error   : declaration syntax errorbrowser_window.h line 500   nserror browser_window_schedule_reformat(struct browser_window *bw);Error   : declaration syntax errorbrowser_window.h line 688   nserror browser_window_get_scrollbar_type(struct browser_window *bw,Error   : declaration syntax errorbrowser_window.h line 689   browser_scrolling *h, browser_scrolling *v);Error   : declaration syntax errorbrowser_window.h line 700   nserror browser_window_debug_dump(struct browser_window *bw, FILE *f, enum content_debug op);Error   : declaration syntax errorbrowser_window.h line 709   nserror browser_window_debug(struct browser_window *bw, enum content_debug op);Error   : declaration syntax errorbrowser_window.h line 723   nserror browser_window_get_name(struct browser_window *bw, const char **name);Error   : declaration syntax errorbrowser_window.h line 736   nserror browser_window_set_name(struct browser_window *bw, const char *name);Error   : declaration syntax errorbrowser_window.h line 763   nserror browser_window_console_log(struct browser_window *bw,Error   : declaration syntax errorbrowser_window.h line 767   browser_window_console_flags flags);Error   : declaration syntax errorbrowser_window.h line 796   nserror browser_window_get_ssl_chain(struct browser_window *bw, struct cert_chain **chain);Error   : declaration syntax errorbrowser_window.h line 813   nserror browser_window_show_cookies(Error   : declaration syntax errorbrowser_window.h line 814   const struct browser_window *bw);Error   : declaration syntax errorbrowser_window.h line 824   nserror browser_window_show_certificates(Error   : declaration syntax errorbrowser_window.h line 825   struct browser_window *bw);Error   : declaration syntax error(included from: hlcache.h:28 browser_history.c:37)nsurl.h line 74   nserror nsurl_create(const char * const url_s, nsurl **url);Error   : declaration syntax error(included from: hlcache.h:28 browser_history.c:37)nsurl.h line 132   nserror nsurl_get(const nsurl *url, nsurl_component parts,Error   : declaration syntax error(included from: hlcache.h:28 browser_history.c:37)nsurl.h line 133   char **url_s, size_t *url_l);Error   : declaration syntax error(included from: hlcache.h:28 browser_history.c:37)nsurl.h line 236   nserror nsurl_get_utf8(const nsurl *url, char **url_s, size_t *url_l);Error   : declaration syntax error(included from: hlcache.h:28 browser_history.c:37)nsurl.h line 286   nserror nsurl_join(const nsurl *base, const char *rel, nsurl **joined);Error   : declaration syntax error(included from: hlcache.h:28 browser_history.c:37)nsurl.h line 301   nserror nsurl_defragment(const nsurl *url, nsurl **no_frag);Error   : declaration syntax error(included from: hlcache.h:28 browser_history.c:37)nsurl.h line 319   nserror nsurl_refragment(const nsurl *url, lwc_string *frag, nsurl **new_url);Error   : declaration syntax error(included from: hlcache.h:28 browser_history.c:37)nsurl.h line 340   nserror nsurl_replace_query(const nsurl *url, const char *query,Error   : declaration syntax error(included from: hlcache.h:28 browser_history.c:37)nsurl.h line 341   nsurl **new_url);Error   : declaration syntax error(included from: hlcache.h:28 browser_history.c:37)nsurl.h line 359   nserror nsurl_replace_scheme(const nsurl *url, lwc_string *scheme,Error   : declaration syntax error(included from: hlcache.h:28 browser_history.c:37)nsurl.h line 360   nsurl **new_url);Error   : declaration syntax error(included from: hlcache.h:28 browser_history.c:37)nsurl.h line 373   nserror nsurl_nice(const nsurl *url, char **result, bool remove_extensions);Error   : declaration syntax error(included from: hlcache.h:28 browser_history.c:37)nsurl.h line 390   nserror nsurl_parent(const nsurl *url, nsurl **new_url);Error   : declaration syntax error(included from: hlcache.h:30 browser_history.c:37)content.h line 88   nserror errorcode;Error   : declaration syntax error(included from: hlcache.h:30 browser_history.c:37)content.h line 288   };Error   : declaration syntax error(included from: hlcache.h:30 browser_history.c:37)content.h line 370   nserror content_open(struct hlcache_handle *h, struct browser_window *bw,Error   : declaration syntax error(included from: hlcache.h:30 browser_history.c:37)content.h line 371   struct content *page, struct object_params *params);Error   : declaration syntax error(included from: hlcache.h:30 browser_history.c:37)content.h line 378   nserror content_close(struct hlcache_handle *h);Error   : declaration syntax error(included from: hlcache.h:30 browser_history.c:37)content.h line 400   nserror content_get_contextual_content(struct hlcache_handle *h,Error   : declaration syntax error(included from: hlcache.h:30 browser_history.c:37)content.h line 401   int x, int y, struct browser_window_features *data);Error   : declaration syntax error(included from: hlcache.h:30 browser_history.c:37)content.h line 430   nserror content_debug(struct hlcache_handle *h, enum content_debug op);Error   : declaration syntax error(included from: hlcache.h:31 browser_history.c:37)llcache.h line 93   nserror code;       /**< The error code */Error   : declaration syntax error(included from: hlcache.h:31 browser_history.c:37)llcache.h line 103   } llcache_event;Error   : declaration syntax error(included from: hlcache.h:31 browser_history.c:37)llcache.h line 113   typedef nserror (*llcache_handle_callback)(llcache_handle *handle,Error   : identifier 'llcache_event' redeclaredwas declared as: 'int'now declared as: 'const int'(included from: hlcache.h:31 browser_history.c:37)llcache.h line 114   const llcache_event *event, void *pw);Error   : declaration syntax error(included from: hlcache.h:31 browser_history.c:37)llcache.h line 162   nserror llcache_initialise(const struct llcache_parameters *parameters);Error   : declaration syntax error(included from: hlcache.h:31 browser_history.c:37)llcache.h line 192   nserror llcache_handle_retrieve(nsurl *url, uint32_t flags,Error   : illegal name overloading(included from: hlcache.h:31 browser_history.c:37)llcache.h line 193   nsurl *referer, const llcache_post_data *post,Error   : ';' expected(included from: hlcache.h:31 browser_history.c:37)llcache.h line 194   llcache_handle_callback cb, void *pw,Error   : illegal name overloading(included from: hlcache.h:31 browser_history.c:37)llcache.h line 195   llcache_handle **result);Error   : declaration syntax error(included from: hlcache.h:31 browser_history.c:37)llcache.h line 205   nserror llcache_handle_change_callback(llcache_handle *handle,Error   : declaration syntax error(included from: hlcache.h:31 browser_history.c:37)llcache.h line 206   llcache_handle_callback cb, void *pw);Error   : declaration syntax error(included from: hlcache.h:31 browser_history.c:37)llcache.h line 214   nserror llcache_handle_release(llcache_handle *handle);Error   : declaration syntax error(included from: hlcache.h:31 browser_history.c:37)llcache.h line 224   nserror llcache_handle_clone(llcache_handle *handle, llcache_handle **result);Error   : declaration syntax error(included from: hlcache.h:31 browser_history.c:37)llcache.h line 232   nserror llcache_handle_abort(llcache_handle *handle);Error   : declaration syntax error(included from: hlcache.h:31 browser_history.c:37)llcache.h line 240   nserror llcache_handle_force_stream(llcache_handle *handle);Error   : declaration syntax error(included from: hlcache.h:31 browser_history.c:37)llcache.h line 248   nserror llcache_handle_invalidate_cache_data(llcache_handle *handle);Error   : declaration syntax errorhlcache.h line 63   typedef nserror (*hlcache_handle_callback)(hlcache_handle *handle,Error   : identifier 'event' redeclaredwas declared as: 'int'now declared as: 'const struct hlcache_event *'hlcache.h line 64   const hlcache_event *event, void *pw);Error   : declaration syntax errorhlcache.h line 84   nserror hlcache_initialise(const struct hlcache_parameters *hlcache_parameters);Error   : declaration syntax errorhlcache.h line 119   nserror hlcache_handle_retrieve(nsurl *url, uint32_t flags,Error   : illegal name overloadinghlcache.h line 120   nsurl *referer, llcache_post_data *post,Error   : declaration syntax errorhlcache.h line 121   hlcache_handle_callback cb, void *pw,Error   : illegal name overloadinghlcache.h line 122   hlcache_child_context *child,Error   : declaration syntax errorhlcache.h line 123   content_type accepted_types, hlcache_handle **result);Error   : declaration syntax errorhlcache.h line 131   nserror hlcache_handle_release(hlcache_handle *handle);Error   : declaration syntax errorhlcache.h line 139   nserror hlcache_handle_abort(hlcache_handle *handle);Error   : declaration syntax errorhlcache.h line 149   nserror hlcache_handle_replace_callback(hlcache_handle *handle,Error   : declaration syntax errorhlcache.h line 150   hlcache_handle_callback cb, void *pw);Error   : declaration syntax errorhlcache.h line 177   nserror hlcache_handle_clone(hlcache_handle *handle, hlcache_handle **result);Error   : declaration syntax error(included from: urldb.h:29 browser_history.c:38)url_db.h line 49   nserror urldb_load(const char *filename);Error   : declaration syntax error(included from: urldb.h:29 browser_history.c:38)url_db.h line 57   nserror urldb_save(const char *filename);Error   : declaration syntax error(included from: urldb.h:30 browser_history.c:38)cookie_db.h line 89   nserror urldb_load_cookies(const char *filename);Error   : declaration syntax error(included from: urldb.h:30 browser_history.c:38)cookie_db.h line 97   nserror urldb_save_cookies(const char *filename);Error   : declaration syntax errorurldb.h line 45   nserror urldb_set_url_persistence(struct nsurl *url, bool persist);Error   : declaration syntax errorurldb.h line 64   nserror urldb_set_url_title(struct nsurl *url, const char *title);Error   : declaration syntax errorurldb.h line 74   nserror urldb_set_url_content_type(struct nsurl *url, content_type type);Error   : declaration syntax errorurldb.h line 104   nserror urldb_update_url_visit_data(struct nsurl *url);Error   : declaration syntax errorbitmap.h line 208   nserror (*render)(struct bitmap *bitmap, struct hlcache_handle *content);Error   : declaration syntax errorbitmap.h line 209   };Error   : illegal implicit conversion from 'int' to'const char *'browser_window.c line 1043   tmp = strchr(userpass, ':');Could not find or load the file Òcache-control.cÓ for target ÒMacSurfÓ for project ÒMacSurfÓ.Error   : declaration syntax error(included from: document.h:31 cdatasection.c:12)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 cdatasection.c:12)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 cdatasection.c:12)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Could not find or load the file Òchallenge.cÓ for target ÒMacSurfÓ for project ÒMacSurfÓ.Error   : declaration syntax error(included from: document.h:31 characterdata.c:17)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 characterdata.c:17)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 characterdata.c:17)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : the file 'exec/types.h' cannot be opened(included from: MacWindows.h:37 macos9.h:10 clipboard.c:16)drag.h line 23   #include <exec/types.h>Error   : declaration syntax error(included from: MacWindows.h:37 macos9.h:10 clipboard.c:16)drag.h line 36   BOOL ami_drag_in_progress(void);Error   : ';' expected(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 22   extern wimp_menu *image_quality_menu, *proxy_type_menu, *languages_menu, *search_provider_menu;Error   : ';' expected(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 24   extern wimp_menu *current_menu;Error   : declaration syntax error(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 156   wimp_w *sub_window;  /**< sub-window if any */Error   : declaration syntax error(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 157   };Error   : illegal use of incomplete struct/union/class 'struct ns_menu_entry'(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 161   struct ns_menu_entry entries[];Error   : ')' expected(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 166   void ro_gui_menu_create(wimp_menu* menu, int x, int y, wimp_w w);Error   : illegal function definition(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 167   void ro_gui_menu_destroy(void);Error   : ')' expected(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 168   void ro_gui_popup_menu(wimp_menu *menu, wimp_w w, wimp_i i);Error   : ')' expected(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 169   void ro_gui_menu_window_changed(wimp_w from, wimp_w to);Error   : ')' expected(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 170   void ro_gui_menu_selection(wimp_selection* selection);Error   : ')' expected(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 171   void ro_gui_menu_warning(wimp_message_menu_warning *warning);Error   : ')' expected(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 172   void ro_gui_menu_message_deleted(wimp_message_menus_deleted *deleted);Error   : ')' expected(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 173   void ro_gui_menu_refresh(wimp_menu *menu);Error   : ')' expected(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 174   void ro_gui_menu_init_structure(wimp_menu *menu, int entries);Error   : ')' expected(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 175   const char *ro_gui_menu_find_menu_entry_key(wimp_menu *menu,Error   : ';' expected(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 176   const char *translated);Error   : ';' expected(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 177   wimp_menu *ro_gui_menu_define_menu(const struct ns_menu *menu);Error   : ')' expected(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 178   void ro_gui_menu_set_entry_shaded(wimp_menu *menu, menu_action action,Error   : identifier expected(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 179    unsigned charError   : ')' expected(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 180   void ro_gui_menu_set_entry_ticked(wimp_menu *menu, menu_action action,Error   : identifier expected(included from: MacWindows.h:45 macos9.h:10 clipboard.c:16)menus.h line 181    unsigned charError   : identifier expected(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 69   };Error   : identifier expected(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 90   };Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 92   typedef unsigned long                   GWorldFlags;Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 94   typedef CGrafPtr                        GWorldPtr;Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 104   NewGWorld(Error   : ')' expected(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 105   GWorldPtr *   offscreenGWorld,Error   : ';' expected(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 106   short         PixelDepth,Error   : identifier expected(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 107   const Rect *  boundsRect,Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 108   CTabHandle    cTable,                /* can be NULL */Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 109   GDHandle      aGDevice,              /* can be NULL */Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 110   GWorldFlags   flags)                                        FOURWORDINLINE(0x203C, 0x0016, 0x0000, 0xAB1D);Error   : identifier expected(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 124   };Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 184   NewGWorldFromPtr(Error   : ')' expected(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 185   GWorldPtr *     offscreenGWorld,Error   : ';' expected(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 186   unsigned long   PixelFormat,Error   : identifier expected(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 187   const Rect *    boundsRect,Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 188   CTabHandle      cTable,Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 189   GDHandle        aGDevice,Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 190   GWorldFlags     flags,Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 191   Ptr             newBuffer,Error   : identifier expected(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 192   long            rowBytes);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 204   LockPixels(PixMapHandle pm)                                   FOURWORDINLINE(0x203C, 0x0004, 0x0001, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 216   UnlockPixels(PixMapHandle pm)                                 FOURWORDINLINE(0x203C, 0x0004, 0x0002, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 227   extern pascal __declspec(dllimport) GWorldFlagsError   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 228   UpdateGWorld(Error   : ')' expected(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 229   GWorldPtr *   offscreenGWorld,Error   : ';' expected(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 230   short         pixelDepth,Error   : identifier expected(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 231   const Rect *  boundsRect,Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 232   CTabHandle    cTable,Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 233   GDHandle      aGDevice,              /* can be NULL */Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 234   GWorldFlags   flags)                                        FOURWORDINLINE(0x203C, 0x0016, 0x0003, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 246   DisposeGWorld(GWorldPtr offscreenGWorld)                      FOURWORDINLINE(0x203C, 0x0004, 0x0004, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 258   GetGWorld(Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 260   FOURWORDINLINE(0x203C, 0x0008, 0x0005, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 272   SetGWorld(Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 274   FOURWORDINLINE(0x203C, 0x0008, 0x0006, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 286   CTabChanged(CTabHandle ctab)                                  FOURWORDINLINE(0x203C, 0x0004, 0x0007, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 298   PixPatChanged(PixPatHandle ppat)                              FOURWORDINLINE(0x203C, 0x0004, 0x0008, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 310   PortChanged(GrafPtr port)                                     FOURWORDINLINE(0x203C, 0x0004, 0x0009, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 322   GDeviceChanged(GDHandle gdh)                                  FOURWORDINLINE(0x203C, 0x0004, 0x000A, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 334   AllowPurgePixels(PixMapHandle pm)                             FOURWORDINLINE(0x203C, 0x0004, 0x000B, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 346   NoPurgePixels(PixMapHandle pm)                                FOURWORDINLINE(0x203C, 0x0004, 0x000C, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 357   extern pascal __declspec(dllimport) GWorldFlagsError   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 358   GetPixelsState(PixMapHandle pm)                               FOURWORDINLINE(0x203C, 0x0004, 0x000D, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 370   SetPixelsState(Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 372   GWorldFlags    state)                                       FOURWORDINLINE(0x203C, 0x0008, 0x000E, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 384   GetPixBaseAddr(PixMapHandle pm)                               FOURWORDINLINE(0x203C, 0x0004, 0x000F, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 396   GetPixRowBytes(PixMapHandle pm)                               FOURWORDINLINE(0x203C, 0x0004, 0x0018, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 408   NewScreenBuffer(Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 412   xMap)                            FOURWORDINLINE(0x203C, 0x000E, 0x0010, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 424   DisposeScreenBuffer(PixMapHandle offscreenPixMap)             FOURWORDINLINE(0x203C, 0x0004, 0x0011, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 436   GetGWorldDevice(GWorldPtr offscreenGWorld)                    FOURWORDINLINE(0x203C, 0x0004, 0x0012, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 448   QDDone(GrafPtr port)                                          FOURWORDINLINE(0x203C, 0x0004, 0x0013, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 460   OffscreenVersion(void)                                        TWOWORDINLINE(0x7014, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 472   NewTempScreenBuffer(Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 476   xMap)                            FOURWORDINLINE(0x203C, 0x000E, 0x0015, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 488   PixMap32Bit(PixMapHandle pmHandle)                            FOURWORDINLINE(0x203C, 0x0004, 0x0016, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 clipboard.c:16)QDOffscreen.h line 500   GetGWorldPixMap(GWorldPtr offscreenGWorld)                    FOURWORDINLINE(0x203C, 0x0004, 0x0017, 0xAB1D);Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 clipboard.c:16)CFBundle.h line 63   typedef struct __CFBundle*              CFBundleRef;Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 clipboard.c:16)CFBundle.h line 64   typedef struct __CFBundle*              CFPlugInRef;Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 clipboard.c:16)CFBundle.h line 74   extern const CFStringRef kCFBundleInfoDictionaryVersionKey;Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 clipboard.c:16)CFBundle.h line 84   extern const CFStringRef kCFBundleExecutableKey;Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 clipboard.c:16)CFBundle.h line 94   extern const CFStringRef kCFBundleIdentifierKey;Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 clipboard.c:16)CFBundle.h line 104   extern const CFStringRef kCFBundleVersionKey;Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 clipboard.c:16)CFBundle.h line 115   extern const CFStringRef kCFBundleDevelopmentRegionKey;Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 clipboard.c:16)CFBundle.h line 125   extern const CFStringRef kCFBundleNameKey;Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 clipboard.c:16)CFBundle.h line 136   extern __declspec(dllimport) CFBundleRefError   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 clipboard.c:16)CFBundle.h line 137   CFBundleGetMainBundle(void);Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 clipboard.c:16)CFBundle.h line 148   extern __declspec(dllimport) CFBundleRefError   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 clipboard.c:16)CFBundle.h line 149   CFBundleGetBundleWithIdentifier(CFStringRef bundleID);Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 clipboard.c:16)CFBundle.h line 165   CFBundleGetAllBundles(void);Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 clipboard.c:16)CFBundle.h line 179   CFBundleGetTypeID(void);Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 clipboard.c:16)CFBundle.h line 190   extern __declspec(dllimport) CFBundleRefError   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 clipboard.c:16)CFBundle.h line 191   CFBundleCreate(Error   : ')' expected(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 clipboard.c:16)CFBundle.h line 192   CFAllocatorRef   allocator,Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 clipboard.c:16)CFBundle.h line 193   CFURLRef         bundleURL);Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 clipboard.c:16)CFBundle.h line 206   CFBundleCreateBundlesFromDirectory(Error   : declaration syntax error(included from: document.h:31 comment.c:13)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 comment.c:13)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 comment.c:13)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : undefined identifier 'css_error'arena.h line 24   enum css_error css__arena_intern_style(struct css_computed_style **style);Error   : undefined identifier 'css_error'arena.h line 32   enum css_error css__arena_remove_style(struct css_computed_style *style);Error   : expression syntax errorcomputed.c line 760   uint8_t ret = get_width(style, &length_, unit);Error   : undefined identifier 'ret'computed.c line 761   if (ret == CSS_WIDTH_SET) {Error   : undefined identifier 'ret'computed.c line 767   return ret;Could not find or load the file Òcontent-disposition.cÓ for target ÒMacSurfÓ for project ÒMacSurfÓ.Could not find or load the file Òcontent-type.cÓ for target ÒMacSurfÓ for project ÒMacSurfÓ.Error   : illegal implicit conversion from 'int' to'struct tm *'cookie_manager.c line 251   if ((ftime = localtime(value)) != NULL) {Error   : ')' expectedcss.c line 114   NSLOG(netsurf, INFO, "done stylesheet slot %d '%s'", i,Error   : ';' expectedcss.c line 115   nsurl_access(hlcache_handle_get_url(css)));Error   : ')' expectedcss.c line 117   NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);Error   : ';' expectedcss.c line 117   NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);Error   : ')' expectedcss.c line 121   NSLOG(netsurf, INFO, "stylesheet %s failed: %s",Error   : ';' expectedcss.c line 123   event->data.errordata.errormsg);Error   : ')' expectedcss.c line 128   NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);Error   : ';' expectedcss.c line 128   NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);Error   : ')' expectedcss.c line 196   NSLOG(netsurf, INFO, "%d fetches active", c->base.active);Error   : ';' expectedcss.c line 196   NSLOG(netsurf, INFO, "%d fetches active", c->base.active);Error   : ')' expectedcss.c line 275   NSLOG(netsurf, INFO, "Updating sheet %p with %p", s->sheet,Error   : ';' expectedcss.c line 276   sheet);Error   : ')' expectedcss.c line 285   NSLOG(netsurf, INFO, "%d fetches active",Error   : ';' expectedcss.c line 286   c->base.active);Error   : ')' expectedcss.c line 338   "Could not find or create inline stylesheet for %p",Error   : ';' expectedcss.c line 339   style);Error   : ')' expectedcss.c line 451   NSLOG(netsurf, INFO, "linked stylesheet %i '%s'",Error   : ';' expectedcss.c line 452   htmlc->stylesheet_count, nsurl_access(joined));Error   : ')' expectedcss.c line 487   NSLOG(netsurf, INFO, "%d fetches active", htmlc->base.active);Error   : ';' expectedcss.c line 487   NSLOG(netsurf, INFO, "%d fetches active", htmlc->base.active);Error   : ')' expectedcss.c line 573   NSLOG(netsurf, INFO, "%d fetches active", c->base.active);Error   : ';' expectedcss.c line 573   NSLOG(netsurf, INFO, "%d fetches active", c->base.active);Error   : ')' expectedcss.c line 618   NSLOG(netsurf, INFO, "%d fetches active", c->base.active);Error   : ';' expectedcss.c line 618   NSLOG(netsurf, INFO, "%d fetches active", c->base.active);Error   : ')' expectedcss.c line 632   NSLOG(netsurf, INFO, "%d fetches active", c->base.active);Error   : ';' expectedcss.c line 632   NSLOG(netsurf, INFO, "%d fetches active", c->base.active);Error   : ')' expectedcss.c line 645   NSLOG(netsurf, INFO, "%d fetches active", c->base.active);Error   : ';' expectedcss.c line 645   NSLOG(netsurf, INFO, "%d fetches active", c->base.active);Error   : undefined identifier 'CSS_CHARSET_DICTATED'css_detect.c line 48   if (*source == CSS_CHARSET_DICTATED)Error   : undefined identifier 'CSS_CHARSET_DOCUMENT'css_detect.c line 58   *source = CSS_CHARSET_DOCUMENT;Error   : undefined identifier 'CSS_CHARSET_DEFAULT'css_detect.c line 65   if (*source != CSS_CHARSET_DEFAULT)Error   : undefined identifier 'CSS_CHARSET_DEFAULT'css_detect.c line 72   *source = CSS_CHARSET_DEFAULT;Error   : ')' expectedcss_fetcher.c line 70   NSLOG(netsurf, INFO, "html_css_fetcher_initialise called for %s",Error   : ';' expectedcss_fetcher.c line 71   lwc_string_data(scheme));Error   : ')' expectedcss_fetcher.c line 77   NSLOG(netsurf, INFO, "html_css_fetcher_finalise called for %s",Error   : ';' expectedcss_fetcher.c line 78   lwc_string_data(scheme));Error   : ')' expectedcss_fetcher.c line 262   NSLOG(netsurf, INFO, "Processing of %s failed!",Error   : ';' expectedcss_fetcher.c line 263   nsurl_access(c->url));Error   : declaration syntax errorcss_utils.c line 10   css_fixed css__number_from_lwc_string(lwc_string *string,Error   : illegal name overloadingcss_utils.c line 11   bool int_only, size_t *consumed)Error   : declaration syntax errorcss_utils.c line 12   {Error   : declaration syntax errorcss_utils.c line 13   if (string == NULL || lwc_string_length(string) == 0 ||Error   : illegal function definitioncss_utils.c line 14   consumed == NULL)Error   : identifier expectedcss_utils.c line 15   return 0;Error   : identifier expectedcss_utils.c line 17   return css__number_from_string(Error   : declaration syntax errorcss_utils.c line 18   (uint8_t *)lwc_string_data(string),Error   : illegal function definitioncss_utils.c line 19   lwc_string_length(string),Error   : illegal function definitioncss_utils.c line 20   int_only,Error   : illegal function definitioncss_utils.c line 21   consumed);Error   : identifier expectedcss_utils.c line 22   }Error   : illegal function definitioncss_utils.c line 26   {Error   : illegal function definitioncss_utils.c line 27   const uint8_t *ptr = data;Error   : illegal function definitioncss_utils.c line 28   int sign = 1;Error   : illegal function definitioncss_utils.c line 29   int32_t intpart = 0;Error   : illegal function definitioncss_utils.c line 30   int32_t fracpart = 0;Error   : illegal function definitioncss_utils.c line 31   int32_t pwr = 1;Error   : identifier expectedcss_utils.c line 33   if (data == NULL || len == 0 || consumed == NULL)Error   : ';' expectedcss_utils.c line 34   return 0;Error   : identifier expectedcss_utils.c line 39   if (ptr[0] == '-') {Error   : illegal function definitioncss_utils.c line 40   sign = -1;Error   : illegal function definitioncss_utils.c line 41   len--;Error   : illegal function definitioncss_utils.c line 42   ptr++;Error   : identifier expectedcss_utils.c line 43   } else if (ptr[0] == '+') {Error   : illegal function definitioncss_utils.c line 44   len--;Error   : illegal function definitioncss_utils.c line 45   ptr++;Error   : identifier expectedcss_utils.c line 46   }Error   : ')' expectedcss_utils.c line 49   if (len == 0) {Error   : illegal function definitioncss_utils.c line 50   *consumed = 0;Error   : identifier expectedcss_utils.c line 51   return 0;Error   : identifier expectedcss_utils.c line 52   } else {Error   : undefined identifier 'ptr'css_utils.c line 53   if (ptr[0] == '.') {Error   : undefined identifier 'len'css_utils.c line 54   if (len == 1 || ptr[1] < '0' || '9' < ptr[1]) {Error   : pointer/array requiredcss_utils.c line 55   *consumed = 0;Error   : undefined identifier 'ptr'css_utils.c line 58   } else if (ptr[0] < '0' || '9' < ptr[0]) {Error   : pointer/array requiredcss_utils.c line 59   *consumed = 0;Error   : declaration syntax errorcss_utils.c line 65   while (len > 0) {Error   : declaration syntax errorcss_utils.c line 67   if (ptr[0] < '0' || '9' < ptr[0])Error   : declaration syntax errorcss_utils.c line 68   break;Error   : declaration syntax errorcss_utils.c line 71   if (intpart < (1 << 22)) {Error   : declaration syntax errorcss_utils.c line 72   intpart *= 10;Error   : declaration syntax errorcss_utils.c line 73   intpart += ptr[0] - '0';Error   : declaration syntax errorcss_utils.c line 74   }Error   : declaration syntax errorcss_utils.c line 75   ptr++;Error   : declaration syntax errorcss_utils.c line 76   len--;Error   : declaration syntax errorcss_utils.c line 77   }Error   : declaration syntax errorcss_utils.c line 80   if (int_only == false && len > 1 && ptr[0] == '.' &&Error   : ')' expectedcss_utils.c line 81   ('0' <= ptr[1] && ptr[1] <= '9')) {Error   : declaration syntax errorcss_utils.c line 82   ptr++;Error   : declaration syntax errorcss_utils.c line 83   len--;Error   : declaration syntax errorcss_utils.c line 85   while (len > 0) {Error   : declaration syntax errorcss_utils.c line 86   if (ptr[0] < '0' || '9' < ptr[0])Error   : declaration syntax errorcss_utils.c line 87   break;Error   : declaration syntax errorcss_utils.c line 89   if (pwr < 1000000) {Error   : declaration syntax errorcss_utils.c line 90   pwr *= 10;Error   : declaration syntax errorcss_utils.c line 91   fracpart *= 10;Error   : declaration syntax errorcss_utils.c line 92   fracpart += ptr[0] - '0';Error   : declaration syntax errorcss_utils.c line 93   }Error   : declaration syntax errorcss_utils.c line 94   ptr++;Error   : declaration syntax errorcss_utils.c line 95   len--;Error   : declaration syntax errorcss_utils.c line 96   }Error   : declaration syntax errorcss_utils.c line 97   fracpart = ((1 << 10) * fracpart + pwr/2) / pwr;Error   : declaration syntax errorcss_utils.c line 98   if (fracpart >= (1 << 10)) {Error   : declaration syntax errorcss_utils.c line 99   intpart++;Error   : declaration syntax errorcss_utils.c line 100   fracpart &= (1 << 10) - 1;Error   : declaration syntax errorcss_utils.c line 101   }Error   : declaration syntax errorcss_utils.c line 102   }Error   : declaration syntax errorcss_utils.c line 104   *consumed = ptr - data;Error   : declaration syntax errorcss_utils.c line 106   if (sign > 0) {Error   : declaration syntax errorcss_utils.c line 109   if (intpart >= (1 << 21)) {Error   : declaration syntax errorcss_utils.c line 110   intpart = (1 << 21) - 1;Error   : declaration syntax errorcss_utils.c line 111   fracpart = (1 << 10) - 1;Error   : declaration syntax errorcss_utils.c line 112   }Error   : declaration syntax errorcss_utils.c line 113   }Error   : declaration syntax errorcss_utils.c line 114   else {Error   : declaration syntax errorcss_utils.c line 117   if (intpart >= (1 << 21)) {Error   : declaration syntax errorcss_utils.c line 118   intpart = -(1 << 21);Error   : declaration syntax errorcss_utils.c line 119   fracpart = 0;Error   : declaration syntax errorcss_utils.c line 120   }Error   : declaration syntax errorcss_utils.c line 121   else {Error   : declaration syntax errorcss_utils.c line 122   intpart = -intpart;Error   : declaration syntax errorcss_utils.c line 123   if (fracpart) {Error   : declaration syntax errorcss_utils.c line 124   fracpart = (1 << 10) - fracpart;Error   : declaration syntax errorcss_utils.c line 125   intpart--;Error   : declaration syntax errorcss_utils.c line 126   }Error   : declaration syntax errorcss_utils.c line 127   }Error   : declaration syntax errorcss_utils.c line 128   }Error   : declaration syntax errorcss_utils.c line 130   return ((uint32_t)intpart << 10) | fracpart;Error   : declaration syntax errorcss_utils.c line 131   }Error   : declaration syntax error(included from: document.h:31 custom_event.c:12)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 custom_event.c:12)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 custom_event.c:12)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 doc_fragment.c:13)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 doc_fragment.c:13)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 doc_fragment.c:13)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 document.c:22)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 document.c:22)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 document.c:22)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 document_event.c:15)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 document_event.c:15)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 document_event.c:15)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 dom_dispatch.c:10)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 dom_dispatch.c:10)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 dom_dispatch.c:10)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : ')' expecteddom_event.c line 266   NSLOG(netsurf, DEEPDEBUG, "Encountered a script, node %p showed up", script);Error   : ')' expecteddom_event.c line 650   "javascript context: %p (htmlc: %p)",Error   : ';' expecteddom_event.c line 652   htmlc);Error   : ')' expecteddom_event.c line 771   "phase:%d type:%s", phase, dom_string_data(type));Error   : declaration syntax error(included from: document.h:31 dom_string.c:18)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 dom_string.c:18)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 dom_string.c:18)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : the file 'proto/wb.h' cannot be openeddownload.c line 21   #include <proto/wb.h>Error   : the file 'proto/asl.h' cannot be openeddownload.c line 22   #include <proto/asl.h>Error   : the file 'proto/exec.h' cannot be openeddownload.c line 23   #include <proto/exec.h>Error   : the file 'proto/dos.h' cannot be openeddownload.c line 24   #include <proto/dos.h>Error   : the file 'proto/intuition.h' cannot be openeddownload.c line 25   #include <proto/intuition.h>Error   : the file 'proto/utility.h' cannot be openeddownload.c line 26   #include <proto/utility.h>Error   : the file 'proto/icon.h' cannot be openeddownload.c line 27   #include <proto/icon.h>Error   : the file 'workbench/icon.h' cannot be openeddownload.c line 32   #include <workbench/icon.h>Error   : the file 'proto/window.h' cannot be openeddownload.c line 34   #include <proto/window.h>Error   : the file 'proto/layout.h' cannot be openeddownload.c line 35   #include <proto/layout.h>Error   : the file 'proto/fuelgauge.h' cannot be openeddownload.c line 37   #include <proto/fuelgauge.h>Error   : the file 'classes/window.h' cannot be openeddownload.c line 38   #include <classes/window.h>Error   : the file 'gadgets/fuelgauge.h' cannot be openeddownload.c line 39   #include <gadgets/fuelgauge.h>Error   : the file 'gadgets/layout.h' cannot be openeddownload.c line 40   #include <gadgets/layout.h>Error   : the file 'reaction/reaction_macros.h' cannot be openeddownload.c line 42   #include <reaction/reaction_macros.h>Error   : the file 'graphics/rastport.h' cannot be openedgui.h line 23   #include <graphics/rastport.h>Error   : the file 'intuition/classusr.h' cannot be openedgui.h line 24   #include <intuition/classusr.h>Error   : the file 'dos/dos.h' cannot be openedgui.h line 25   #include <dos/dos.h>Error   : the file 'devices/inputevent.h' cannot be openedgui.h line 26   #include <devices/inputevent.h>Error   : declaration syntax error(included from: gui.h:31 download.c:59)gui_menu.h line 114   ULONG ami_gui_menu_number(int item);Error   : the file 'exec/lists.h' cannot be opened(included from: gui.h:32 download.c:59)object.h line 22   #include <exec/lists.h>Error   : illegal use of incomplete struct/union/class 'struct Node'(included from: gui.h:32 download.c:59)object.h line 44   struct Node dtz_Node;Error   : declaration syntax error(included from: gui.h:32 download.c:59)object.h line 45   ULONG Type;Error   : declaration syntax error(included from: gui.h:32 download.c:59)object.h line 47   ULONG objstruct_size;Error   : declaration syntax error(included from: gui.h:32 download.c:59)object.h line 49   };Error   : illegal function definition(included from: gui.h:32 download.c:59)object.h line 53   struct nsObject *AddObject(struct MinList *objlist, ULONG otype);Error   : the file 'proto/exec.h' cannot be opened(included from: gui.h:33 download.c:59)os3support.h line 32   #include <proto/exec.h>Error   : the file 'proto/dos.h' cannot be opened(included from: gui.h:33 download.c:59)os3support.h line 33   #include <proto/dos.h>Error   : the file 'clib/alib_protos.h' cannot be opened(included from: gui.h:33 download.c:59)os3support.h line 36   #include <clib/alib_protos.h>Error   : the file 'exec/memory.h' cannot be opened(included from: gui.h:33 download.c:59)os3support.h line 39   #include <exec/memory.h>Error   : illegal use of incomplete struct/union/class 'struct IORequest'(included from: gui.h:33 download.c:59)os3support.h line 196   struct IORequest Request;Error   : declaration syntax error(included from: gui.h:33 download.c:59)os3support.h line 204   STRPTR OTagPath;Error   : declaration syntax error(included from: gui.h:33 download.c:59)os3support.h line 206   };Error   : illegal use of incomplete struct/union/class 'struct Rectangle'(included from: gui.h:33 download.c:59)os3support.h line 211   struct Rectangle Bounds;Error   : declaration syntax error(included from: gui.h:33 download.c:59)os3support.h line 212   LONG OffsetX;Error   : declaration syntax error(included from: gui.h:33 download.c:59)os3support.h line 213   LONG OffsetY;Error   : declaration syntax error(included from: gui.h:33 download.c:59)os3support.h line 214   };Error   : ')' expected(included from: gui.h:33 download.c:59)os3support.h line 239   struct OutlineFont *OpenOutlineFont(STRPTR fileName, struct List *list, ULONG flags);Error   : ')' expected(included from: gui.h:33 download.c:59)os3support.h line 242   int64 GetFileSize(BPTR fh);Error   : ')' expected(included from: gui.h:33 download.c:59)os3support.h line 243   void FreeSysObject(ULONG type, APTR obj);Error   : illegal function definition(included from: gui.h:33 download.c:59)os3support.h line 246   struct Node *GetHead(struct List *list);Error   : illegal function definition(included from: gui.h:33 download.c:59)os3support.h line 247   struct Node *GetPred(struct Node *node);Error   : illegal function definition(included from: gui.h:33 download.c:59)os3support.h line 248   struct Node *GetSucc(struct Node *node);Error   : ')' expected(included from: gui.h:33 download.c:59)os3support.h line 251   uint32 GetAttrs(Object *obj, Tag tag1, ...);Error   : illegal function definition(included from: gui.h:33 download.c:59)os3support.h line 252   ULONG RefreshSetGadgetAttrs(struct Gadget *g, struct Window *w, struct Requester *r, Tag tag1, ...);Error   : illegal function definition(included from: gui.h:33 download.c:59)os3support.h line 253   ULONG RefreshSetGadgetAttrsA(struct Gadget *g, struct Window *w, struct Requester *r, struct TagItem *tags);Error   : illegal function definition(included from: gui.h:33 download.c:59)os3support.h line 254   APTR NewObject(struct IClass * classPtr, CONST_STRPTR classID, ULONG tagList, ...);Error   : illegal function definition(included from: gui.h:33 download.c:59)os3support.h line 257   char *ASPrintf(const char *fmt, ...);Error   : illegal function definition(included from: gui.h:33 download.c:59)os3support.h line 260   char *strlwr(char *str);Error   : illegal function definition(included from: gui.h:33 download.c:59)os3support.h line 261   int alphasort(const struct dirent **d1, const struct dirent **d2);Error   : illegal function definition(included from: gui.h:33 download.c:59)os3support.h line 264   int (*compar)(const struct dirent **, const struct dirent **));Error   : identifier expectedgui.h line 48   };Error   : identifier expectedgui.h line 50   struct find_window;Error   : identifier expectedgui.h line 51   struct ami_history_local_window;Error   : identifier expectedgui.h line 52   struct ami_menu_data;Error   : identifier expectedgui.h line 53   struct gui_window;Error   : identifier expectedgui.h line 54   struct gui_window_2;Error   : identifier expectedgui.h line 55   struct IBox;Error   : declaration syntax errorgui.h line 65   BOOL (*event)(void *w);Error   : illegal function definitiongui.h line 70   void (*close)(void *w);Error   : identifier expectedgui.h line 71   };Error   : identifier expectedgui.h line 76   };Error   : ';' expectedgui.h line 81   STRPTR ami_locale_langs(int *codeset);Error   : illegal function definitiongui.h line 82   char *ami_gui_get_cache_favicon_name(struct nsurl *url, bool only_if_avail);Error   : illegal function definitiongui.h line 85   void ami_get_msg(void);Error   : illegal function definitiongui.h line 86   void ami_try_quit(void);Error   : illegal function definitiongui.h line 87   void ami_quit_netsurf(void);Error   : illegal function definitiongui.h line 88   void ami_schedule_redraw(struct gui_window_2 *gwin, bool full_redraw);Error   : ')' expectedgui.h line 89   int ami_key_to_nskey(ULONG keycode, struct InputEvent *ie);Error   : illegal function definitiongui.h line 90   bool ami_text_box_at_point(struct gui_window_2 *gwin, ULONG *restrict x, ULONG *restrict y);Error   : illegal function definitiongui.h line 92   int mouse_x, int mouse_y);Error   : illegal function definitiongui.h line 93   BOOL ami_gadget_hit(Object *obj, int x, int y);Error   : illegal function definitiongui.h line 94   void ami_gui_history(struct gui_window_2 *gwin, bool back);Error   : illegal function definitiongui.h line 95   void ami_gui_hotlist_update_all(void);Error   : illegal function definitiongui.h line 96   void ami_gui_tabs_toggle_all(void);Error   : illegal function definitiongui.h line 97   bool ami_locate_resource(char *fullpath, const char *file);Error   : illegal function definitiongui.h line 98   void ami_gui_update_hotlist_button(struct gui_window_2 *gwin);Error   : illegal function definitiongui.h line 99   nserror ami_gui_new_blank_tab(struct gui_window_2 *gwin);Error   : illegal function definitiongui.h line 100   int ami_gui_count_windows(int window, int *tabs);Error   : illegal function definitiongui.h line 101   void ami_gui_set_scale(struct gui_window *gw, float scale);Error   : illegal function definitiongui.h line 102   mi_set_pointer(struct gui_window_2 *gwin, gui_pointer_shape shape, bool update);Error   : illegal function definitiongui.h line 103   void ami_reset_pointer(struct gui_window_2 *gwin);Error   : illegal function definitiongui.h line 104   void *ami_window_at_pointer(int type);Error   : illegal function definitiongui.h line 109   void ami_gui_beep(void);Error   : illegal function definitiongui.h line 116   void ami_gui_close_window(void *w);Error   : illegal function definitiongui.h line 123   void ami_gui_close_inactive_tabs(struct gui_window_2 *gwin);Error   : ')' expectedgui.h line 132   nserror ami_gui_get_space_box(Object *obj, struct IBox **bbox);Error   : illegal function definitiongui.h line 139   void ami_gui_free_space_box(struct IBox *bbox);Error   : illegal function definitiongui.h line 146   struct MsgPort *ami_gui_get_shared_msgport(void);Error   : illegal function definitiongui.h line 153   uint32 ami_gui_get_app_id(void);Error   : illegal function definitiongui.h line 160   struct Screen *ami_gui_get_screen(void);Error   : object 'STRPTR' redefinedgui.h line 167   STRPTR ami_gui_get_screen_title(void);Error   : illegal function definitiongui.h line 172   _gui_win_list_add(void *win, int type, const struct ami_win_event_table *table);Error   : illegal function definitiongui.h line 177   void ami_gui_win_list_remove(void *win);Error   : illegal function definitiongui.h line 186   struct MinList *ami_gui_get_window_list(void);Error   : ')' expectedgui.h line 191   int ami_gui_get_quals(Object *win_obj);Error   : illegal function definitiongui.h line 197   const struct rect *restrict new_rect, APTR mempool);Error   : illegal function definitiongui.h line 202   void ami_gui_adjust_scale(struct gui_window *gw, float adjustment);Error   : illegal function definitiongui.h line 208   struct gui_window *ami_gui_get_active_gw(void);Error   : illegal function definitiongui.h line 213   struct browser_window *ami_gui_get_browser_window(struct gui_window *gw);Could not find or load the file Òdump.cÓ for target ÒMacSurfÓ for project ÒMacSurfÓ.Error   : declaration syntax error(included from: document.h:31 element.c:25)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 element.c:25)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 element.c:25)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 entity_ref.c:11)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 entity_ref.c:11)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 entity_ref.c:11)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 event.c:17)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 event.c:17)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 event.c:17)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 event_listener.c:11)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 event_listener.c:11)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 event_listener.c:11)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 event_target.c:15)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 event_target.c:15)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 event_target.c:15)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : ')' expectedfetch.c line 68   NSLOG(netsurf, INFO, "unix path %s", unix_path);Error   : expression syntax errorflex.c line 152   css_fixed grow_num = short_auto ? INTTOFIX(1) : 0;Error   : undefined identifier 'grow_num'flex.c line 153   error = css__stylesheet_style_append(grow_style, grow_num);Error   : expression syntax errorflex.c line 164   css_fixed shrink_num = short_none ? 0 : INTTOFIX(1);Error   : undefined identifier 'shrink_num'flex.c line 165   error = css__stylesheet_style_append(shrink_style, shrink_num);Error   : the file 'exec/types.h' cannot be opened(included from: MacWindows.h:37 macos9.h:10 font.c:23)drag.h line 23   #include <exec/types.h>Error   : declaration syntax error(included from: MacWindows.h:37 macos9.h:10 font.c:23)drag.h line 36   BOOL ami_drag_in_progress(void);Error   : ';' expected(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 22   extern wimp_menu *image_quality_menu, *proxy_type_menu, *languages_menu, *search_provider_menu;Error   : ';' expected(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 24   extern wimp_menu *current_menu;Error   : declaration syntax error(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 156   wimp_w *sub_window;  /**< sub-window if any */Error   : declaration syntax error(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 157   };Error   : illegal use of incomplete struct/union/class 'struct ns_menu_entry'(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 161   struct ns_menu_entry entries[];Error   : ')' expected(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 166   void ro_gui_menu_create(wimp_menu* menu, int x, int y, wimp_w w);Error   : illegal function definition(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 167   void ro_gui_menu_destroy(void);Error   : ')' expected(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 168   void ro_gui_popup_menu(wimp_menu *menu, wimp_w w, wimp_i i);Error   : ')' expected(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 169   void ro_gui_menu_window_changed(wimp_w from, wimp_w to);Error   : ')' expected(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 170   void ro_gui_menu_selection(wimp_selection* selection);Error   : ')' expected(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 171   void ro_gui_menu_warning(wimp_message_menu_warning *warning);Error   : ')' expected(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 172   void ro_gui_menu_message_deleted(wimp_message_menus_deleted *deleted);Error   : ')' expected(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 173   void ro_gui_menu_refresh(wimp_menu *menu);Error   : ')' expected(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 174   void ro_gui_menu_init_structure(wimp_menu *menu, int entries);Error   : ')' expected(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 175   const char *ro_gui_menu_find_menu_entry_key(wimp_menu *menu,Error   : ';' expected(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 176   const char *translated);Error   : ';' expected(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 177   wimp_menu *ro_gui_menu_define_menu(const struct ns_menu *menu);Error   : ')' expected(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 178   void ro_gui_menu_set_entry_shaded(wimp_menu *menu, menu_action action,Error   : identifier expected(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 179    unsigned charError   : ')' expected(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 180   void ro_gui_menu_set_entry_ticked(wimp_menu *menu, menu_action action,Error   : identifier expected(included from: MacWindows.h:45 macos9.h:10 font.c:23)menus.h line 181    unsigned charError   : identifier expected(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 69   };Error   : identifier expected(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 90   };Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 92   typedef unsigned long                   GWorldFlags;Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 94   typedef CGrafPtr                        GWorldPtr;Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 104   NewGWorld(Error   : ')' expected(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 105   GWorldPtr *   offscreenGWorld,Error   : ';' expected(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 106   short         PixelDepth,Error   : identifier expected(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 107   const Rect *  boundsRect,Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 108   CTabHandle    cTable,                /* can be NULL */Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 109   GDHandle      aGDevice,              /* can be NULL */Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 110   GWorldFlags   flags)                                        FOURWORDINLINE(0x203C, 0x0016, 0x0000, 0xAB1D);Error   : identifier expected(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 124   };Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 184   NewGWorldFromPtr(Error   : ')' expected(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 185   GWorldPtr *     offscreenGWorld,Error   : ';' expected(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 186   unsigned long   PixelFormat,Error   : identifier expected(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 187   const Rect *    boundsRect,Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 188   CTabHandle      cTable,Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 189   GDHandle        aGDevice,Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 190   GWorldFlags     flags,Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 191   Ptr             newBuffer,Error   : identifier expected(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 192   long            rowBytes);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 204   LockPixels(PixMapHandle pm)                                   FOURWORDINLINE(0x203C, 0x0004, 0x0001, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 216   UnlockPixels(PixMapHandle pm)                                 FOURWORDINLINE(0x203C, 0x0004, 0x0002, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 227   extern pascal __declspec(dllimport) GWorldFlagsError   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 228   UpdateGWorld(Error   : ')' expected(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 229   GWorldPtr *   offscreenGWorld,Error   : ';' expected(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 230   short         pixelDepth,Error   : identifier expected(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 231   const Rect *  boundsRect,Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 232   CTabHandle    cTable,Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 233   GDHandle      aGDevice,              /* can be NULL */Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 234   GWorldFlags   flags)                                        FOURWORDINLINE(0x203C, 0x0016, 0x0003, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 246   DisposeGWorld(GWorldPtr offscreenGWorld)                      FOURWORDINLINE(0x203C, 0x0004, 0x0004, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 258   GetGWorld(Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 260   FOURWORDINLINE(0x203C, 0x0008, 0x0005, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 272   SetGWorld(Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 274   FOURWORDINLINE(0x203C, 0x0008, 0x0006, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 286   CTabChanged(CTabHandle ctab)                                  FOURWORDINLINE(0x203C, 0x0004, 0x0007, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 298   PixPatChanged(PixPatHandle ppat)                              FOURWORDINLINE(0x203C, 0x0004, 0x0008, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 310   PortChanged(GrafPtr port)                                     FOURWORDINLINE(0x203C, 0x0004, 0x0009, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 322   GDeviceChanged(GDHandle gdh)                                  FOURWORDINLINE(0x203C, 0x0004, 0x000A, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 334   AllowPurgePixels(PixMapHandle pm)                             FOURWORDINLINE(0x203C, 0x0004, 0x000B, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 346   NoPurgePixels(PixMapHandle pm)                                FOURWORDINLINE(0x203C, 0x0004, 0x000C, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 357   extern pascal __declspec(dllimport) GWorldFlagsError   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 358   GetPixelsState(PixMapHandle pm)                               FOURWORDINLINE(0x203C, 0x0004, 0x000D, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 370   SetPixelsState(Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 372   GWorldFlags    state)                                       FOURWORDINLINE(0x203C, 0x0008, 0x000E, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 384   GetPixBaseAddr(PixMapHandle pm)                               FOURWORDINLINE(0x203C, 0x0004, 0x000F, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 396   GetPixRowBytes(PixMapHandle pm)                               FOURWORDINLINE(0x203C, 0x0004, 0x0018, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 408   NewScreenBuffer(Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 412   xMap)                            FOURWORDINLINE(0x203C, 0x000E, 0x0010, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 424   DisposeScreenBuffer(PixMapHandle offscreenPixMap)             FOURWORDINLINE(0x203C, 0x0004, 0x0011, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 436   GetGWorldDevice(GWorldPtr offscreenGWorld)                    FOURWORDINLINE(0x203C, 0x0004, 0x0012, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 448   QDDone(GrafPtr port)                                          FOURWORDINLINE(0x203C, 0x0004, 0x0013, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 460   OffscreenVersion(void)                                        TWOWORDINLINE(0x7014, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 472   NewTempScreenBuffer(Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 476   xMap)                            FOURWORDINLINE(0x203C, 0x000E, 0x0015, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 488   PixMap32Bit(PixMapHandle pmHandle)                            FOURWORDINLINE(0x203C, 0x0004, 0x0016, 0xAB1D);Error   : illegal function definition(included from: MacWindows.h:53 macos9.h:10 font.c:23)QDOffscreen.h line 500   GetGWorldPixMap(GWorldPtr offscreenGWorld)                    FOURWORDINLINE(0x203C, 0x0004, 0x0017, 0xAB1D);Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 font.c:23)CFBundle.h line 63   typedef struct __CFBundle*              CFBundleRef;Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 font.c:23)CFBundle.h line 64   typedef struct __CFBundle*              CFPlugInRef;Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 font.c:23)CFBundle.h line 74   extern const CFStringRef kCFBundleInfoDictionaryVersionKey;Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 font.c:23)CFBundle.h line 84   extern const CFStringRef kCFBundleExecutableKey;Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 font.c:23)CFBundle.h line 94   extern const CFStringRef kCFBundleIdentifierKey;Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 font.c:23)CFBundle.h line 104   extern const CFStringRef kCFBundleVersionKey;Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 font.c:23)CFBundle.h line 115   extern const CFStringRef kCFBundleDevelopmentRegionKey;Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 font.c:23)CFBundle.h line 125   extern const CFStringRef kCFBundleNameKey;Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 font.c:23)CFBundle.h line 136   extern __declspec(dllimport) CFBundleRefError   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 font.c:23)CFBundle.h line 137   CFBundleGetMainBundle(void);Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 font.c:23)CFBundle.h line 148   extern __declspec(dllimport) CFBundleRefError   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 font.c:23)CFBundle.h line 149   CFBundleGetBundleWithIdentifier(CFStringRef bundleID);Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 font.c:23)CFBundle.h line 165   CFBundleGetAllBundles(void);Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 font.c:23)CFBundle.h line 179   CFBundleGetTypeID(void);Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 font.c:23)CFBundle.h line 190   extern __declspec(dllimport) CFBundleRefError   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 font.c:23)CFBundle.h line 191   CFBundleCreate(Error   : ')' expected(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 font.c:23)CFBundle.h line 192   CFAllocatorRef   allocator,Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 font.c:23)CFBundle.h line 193   CFURLRef         bundleURL);Error   : illegal function definition(included from: CodeFragments.h:34 Icons.h:33 MacWindows.h:65 macos9.h:10 font.c:23)CFBundle.h line 206   CFBundleCreateBundlesFromDirectory(Error   : ')' expectedform.c line 204   "keyname allocation failure for %s%s", name, ksfx);Error   : ';' expectedform.c line 204   "keyname allocation failure for %s%s", name, ksfx);Error   : ')' expectedform.c line 329   "Could not get text area disabled property. exp %d", exp);Error   : ')' expectedform.c line 343   "Could not get text area name property. exp %d", exp);Error   : ')' expectedform.c line 357   "Could not get text area content. exp %d", exp);Error   : ')' expectedform.c line 449   "Could not get select disabled property. exp %d", exp);Error   : ')' expectedform.c line 462   "Could not get select name property. exp %d", exp);Error   : ')' expectedform.c line 497   "Could not get options item %"PRId32, option_index);Error   : ')' expectedform.c line 774   "Could not get input disabled property. exp %d", exp);Error   : ')' expectedform.c line 787   "Could not get input name property. exp %d", exp);Error   : ')' expectedform.c line 900   "Unable to get disabled property. exp %d", exp);Error   : ')' expectedform.c line 946   "Could not get button name property. exp %d", exp);Error   : illegal implicit conversion from 'int' to'char *'form.c line 1009   c = strstr(temp, "UTF-8");Error   : ')' expectedform.c line 1111   "retrieving form element %"PRIu32" failed with %d",Error   : ';' expectedform.c line 1112   element_idx, exp);Error   : ')' expectedform.c line 1121   "getting element node name %"PRIu32" failed with %d",Error   : ';' expectedform.c line 1122   element_idx, exp);Error   : ')' expectedform.c line 1165   "Unhandled element type: %*s",Error   : ';' expectedform.c line 1167   dom_string_data(nodename));Error   : ')' expectedform.c line 1466   NSLOG(netsurf, INFO, "Control:%p name:%p value:%p initial:%p",Error   : ';' expectedform.c line 1467   control, control->name, control->value, control->initial_value);Error   : ')' expectedform.c line 1482   "select option:%p text:%p value:%p", option,Error   : ';' expectedform.c line 1483   option->text, option->value);Error   : illegal constant expressionframes.c line 334   int widths[bw->cols][bw->rows];Error   : illegal constant expressionframes.c line 335   int heights[bw->cols][bw->rows];Error   : ')' expectedframes.c line 633   NSLOG(netsurf, INFO, "Created frame '%s'",Error   : ';' expectedframes.c line 634   window->name);Error   : expression syntax errorframes.c line 635   elseError   : ';' expectedframes.c line 637   do { if (NSLOG_LEVEL_INFO >=    NSLOG_LEVEL_INFO) { nslog_log( "frames.c", "",  637, "Created frame (unnamed)"); } } while(0)Could not find or load the file Ògenerics.cÓ for target ÒMacSurfÓ for project ÒMacSurfÓ.Error   : the file 'oslib/wimp.h' cannot be openedglobal_history.c line 27   #include <oslib/wimp.h>Error   : declaration syntax errordialog.h line 26   wimp_w ro_gui_dialog_create(const char *template_name);Error   : declaration syntax errordialog.h line 27   wimp_window * ro_gui_dialog_load_template(const char *template_name);Error   : ')' expecteddialog.h line 29   void ro_gui_dialog_open(wimp_w w);Error   : ')' expecteddialog.h line 30   void ro_gui_dialog_close(wimp_w close);Error   : ')' expecteddialog.h line 32   bool ro_gui_dialog_open_top(wimp_w w, struct toolbar *toolbar,Error   : identifier expecteddialog.h line 33   int width, int height);Error   : ')' expecteddialog.h line 34   void ro_gui_dialog_open_at_pointer(wimp_w w);Error   : declaration syntax errordialog.h line 35   void ro_gui_dialog_open_xy(wimp_w, int x, int y);Error   : ')' expecteddialog.h line 37   void ro_gui_dialog_open_persistent(wimp_w parent, wimp_w w, bool pointer);Error   : ')' expecteddialog.h line 38   void ro_gui_dialog_add_persistent(wimp_w parent, wimp_w w);Error   : ')' expecteddialog.h line 39   void ro_gui_dialog_close_persistent(wimp_w parent);Error   : ')' expecteddialog.h line 44   void ro_gui_dialog_click(wimp_pointer *pointer);Error   : illegal function definitiondialog.h line 45   void ro_gui_dialog_prepare_zoom(struct gui_window *g);Error   : illegal function definitiondialog.h line 46   void ro_gui_dialog_update_zoom(struct gui_window *g);Error   : illegal function definitiondialog.h line 47   void ro_gui_dialog_prepare_open_url(void);Error   : illegal function definitiondialog.h line 48   void ro_gui_save_options(void);Error   : illegal function definitiondialog.h line 49   void ro_gui_dialog_open_config(void);Error   : illegal function definitiondialog.h line 50   void ro_gui_dialog_proxyauth_menu_selection(int item);Error   : illegal function definitiondialog.h line 51   void ro_gui_dialog_image_menu_selection(int item);Error   : illegal function definitiondialog.h line 52   void ro_gui_dialog_languages_menu_selection(const char *lang);Error   : illegal function definitiondialog.h line 53   void ro_gui_dialog_font_menu_selection(int item);Error   : the file 'oslib/wimp.h' cannot be openedgui.h line 24   #include <oslib/wimp.h>Error   : illegal function definitiongui.h line 35   extern int os_version;Error   : illegal function definitiongui.h line 37   extern bool os_alpha_sprite_supported;Error   : illegal function definitiongui.h line 39   extern const char * NETSURF_DIR;Error   : identifier expectedgui.h line 41   struct toolbar;Error   : identifier expectedgui.h line 42   struct status_bar;Error   : identifier expectedgui.h line 43   struct plotter_table;Error   : identifier expectedgui.h line 44   struct gui_window;Error   : identifier expectedgui.h line 45   struct tree;Error   : identifier expectedgui.h line 46   struct node;Error   : identifier expectedgui.h line 47   struct history;Error   : identifier expectedgui.h line 48   struct css_style;Error   : identifier expectedgui.h line 49   struct nsurl;Error   : identifier expectedgui.h line 50   struct hlcache_handle;Error   : identifier expectedgui.h line 52   enum gui_pointer_shape;Error   : illegal function definitiongui.h line 54   extern wimp_t task_handle; /**< RISC OS wimp task handle. */Error   : illegal function definitiongui.h line 56   extern wimp_w dialog_info, dialog_saveas, dialog_zoom, dialog_pageinfo,Error   : identifier expectedgui.h line 57   dialog_objinfo, dialog_tooltip, dialog_warning, dialog_openurl,Error   : ';' expectedgui.h line 58   dialog_folder, dialog_entry, dialog_url_complete,Error   : ';' expectedgui.h line 59   dialog_search, dialog_print, dialog_theme_install;Error   : illegal function definitiongui.h line 60   extern wimp_w current_menu_window;Error   : illegal function definitiongui.h line 61   extern bool current_menu_open;Error   : illegal function definitiongui.h line 62   extern wimp_menu *recent_search_menu; /* search.c */Error   : illegal function definitiongui.h line 63   extern bool gui_redraw_debug;Error   : illegal function definitiongui.h line 64   extern osspriteop_area *gui_sprites;Error   : illegal function definitiongui.h line 65   extern bool dialog_folder_add, dialog_entry_add, hotlist_insert;Error   : illegal function definitiongui.h line 66   extern bool print_active, print_text_black;Error   : illegal function definitiongui.h line 67   extern bool no_font_blending;Error   : illegal function definitiongui.h line 70   ro_gui_drag_type;Error   : illegal function definitiongui.h line 72   extern ro_gui_drag_type gui_current_drag_type;Error   : illegal function definitiongui.h line 74   extern bool riscos_done;Error   : declaration syntax errorgui.h line 84   wimp_w window;  /**< RISC OS window handle. */Error   : illegal function definitiongui.h line 86   int old_width;  /**< Width when last opened / os units. */Error   : illegal function definitiongui.h line 87   int old_height;  /**< Height when last opened / os units. */Error   : illegal function definitiongui.h line 88   bool update_extent; /**< Update the extent on next opening */Error   : illegal function definitiongui.h line 89   bool active;  /**< Whether the throbber should be active */Error   : illegal function definitiongui.h line 91   char title[256]; /**< Buffer for window title. */Error   : illegal function definitiongui.h line 93   int iconise_icon; /**< ID number of icon when window is iconised */Error   : illegal function definitiongui.h line 95   char validation[12]; /**< Validation string for colours */Error   : illegal function definitiongui.h line 101   } option;Error   : illegal function definitiongui.h line 103   struct gui_window *prev; /**< Previous in linked list. */Error   : illegal function definitiongui.h line 104   struct gui_window *next; /**< Next in linked list. */Error   : identifier expectedgui.h line 105   };Error   : illegal function definitiongui.h line 108   extern struct gui_window *ro_gui_current_redraw_gui;Error   : ')' expectedgui.h line 112   void ro_gui_open_window_request(wimp_open *open);Error   : illegal function definitiongui.h line 113   void ro_gui_screen_size(int *width, int *height);Error   : illegal function definitiongui.h line 114   void ro_gui_view_source(struct hlcache_handle *c);Error   : illegal function definitiongui.h line 115   void ro_gui_dump_browser_window(struct browser_window *bw);Error   : ')' expectedgui.h line 116   void ro_gui_drag_box_start(wimp_pointer *pointer);Error   : illegal function definitiongui.h line 117   bool ro_gui_prequit(void);Error   : illegal function definitiongui.h line 118   const char *ro_gui_default_language(void);Error   : illegal function definitiongui.h line 119   nserror ro_warn_user(const char *warning, const char *detail);Error   : illegal function definitiongui.h line 128   void die(const char * const error) __attribute__ ((noreturn));Error   : illegal function definitiongui.h line 131   void ro_gui_download_init(void);Error   : ')' expectedgui.h line 132   void ro_gui_download_datasave_ack(wimp_message *message);Error   : illegal function definitiongui.h line 133   bool ro_gui_download_prequit(void);Error   : illegal function definitiongui.h line 134   extern struct gui_download_table *riscos_download_table;Error   : illegal function definitiongui.h line 137   extern bool sched_active;Error   : illegal function definitiongui.h line 138   extern os_t sched_time;Error   : illegal function definitiongui.h line 143   bool schedule_run(void);Error   : illegal function definitiongui.h line 155   nserror riscos_schedule(int t, void (*callback)(void *p), void *p);Error   : illegal function definitiongui.h line 158   void ro_gui_search_init(void);Error   : illegal function definitiongui.h line 159   void ro_gui_search_prepare(struct browser_window *g);Error   : illegal function definitiongui.h line 160   extern struct gui_search_table *riscos_search_table;Error   : illegal function definitiongui.h line 163   void ro_gui_print_init(void);Error   : illegal function definitiongui.h line 164   void ro_gui_print_prepare(struct gui_window *g);Error   : illegal function definitiongui.h line 167   extern const struct plotter_table ro_plotters;Error   : illegal function definitiongui.h line 168   extern int ro_plot_origin_x;Error   : illegal function definitiongui.h line 169   extern int ro_plot_origin_y;Error   : illegal function definitiongui.h line 170   extern struct rect ro_plot_clip_rect;Error   : ')' expectedgui.h line 173   bool ro_gui_theme_install_apply(wimp_w w);Error   : illegal function definitionmenus.h line 22   extern wimp_menu *image_quality_menu, *proxy_type_menu, *languages_menu, *search_provider_menu;Error   : illegal function definitionmenus.h line 24   extern wimp_menu *current_menu;Error   : illegal function definitionmenus.h line 148   } menu_action;Error   : declaration syntax errormenus.h line 155   menu_action action;  /**< associated action */Error   : object 'wimp_w' redefinedmenus.h line 156   wimp_w *sub_window;  /**< sub-window if any */Error   : identifier expectedmenus.h line 157   };Error   : illegal use of incomplete struct/union/class 'struct ns_menu_entry'menus.h line 161   struct ns_menu_entry entries[];Error   : expression syntax errorhashmap.c line 235   for (uint32_t bucket = 0;Error   : undefined identifier 'bucket'hashmap.c line 236   bucket < hashmap->bucket_count;Error   : undefined identifier 'bucket'hashmap.c line 237   bucket++) {Error   : expression syntax errorhashmap.c line 238   for (hashmap_entry_t *entry = hashmap->buckets[bucket];Error   : undefined identifier 'entry'hashmap.c line 239   entry != NULL;Error   : undefined identifier 'entry'hashmap.c line 240   entry = entry->next) {Error   : ';' expectedhashmap.c line 242   if (cb(entry->key, entry->value, ctx))Error   : declaration syntax errorhashmap.c line 247   return false;Error   : declaration syntax errorhashmap.c line 248   }Error   : declaration syntax errorhashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax errorhashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax errorhashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : ';' expectedhashtable.c line 30   const dom_hash_vtable *vtable; /**< Vtable */Error   : declaration syntax errorhashtable.c line 35   };Error   : declaration syntax errorhashtable.c line 50   dom_hash_table *_dom_hash_create(unsigned int chains, Error   : ')' expectedhashtable.c line 51   const dom_hash_vtable *vtable, void *pw)Error   : declaration syntax errorhashtable.c line 52   {Error   : declaration syntax errorhashtable.c line 53   dom_hash_table *r = malloc(sizeof(struct dom_hash_table));Error   : declaration syntax errorhashtable.c line 54   if (r == NULL) {Error   : declaration syntax errorhashtable.c line 55   return NULL;Error   : declaration syntax errorhashtable.c line 56   }Error   : declaration syntax errorhashtable.c line 58   r->vtable = vtable;Error   : declaration syntax errorhashtable.c line 59   r->pw = pw;Error   : declaration syntax errorhashtable.c line 60   r->nentries = 0;Error   : declaration syntax errorhashtable.c line 61   r->nchains = chains;Error   : declaration syntax errorhashtable.c line 62   r->chain = calloc(chains, sizeof(struct _dom_hash_entry *));Error   : declaration syntax errorhashtable.c line 63   if (r->chain == NULL) {Error   : identifier 'free(void *)' redeclaredwas declared as: 'void (void *)'now declared as: 'int (...)'hashtable.c line 64   free(r);Error   : identifier expectedhashtable.c line 65   return NULL;Error   : identifier expectedhashtable.c line 66   }Error   : identifier expectedhashtable.c line 69   }Error   : ')' expectedhashtable.c line 78   dom_hash_table *_dom_hash_clone(dom_hash_table *ht)Error   : ';' expectedhashtable.c line 79   {Error   : illegal function definitionhashtable.c line 80   void *key = NULL, *nkey = NULL;Error   : illegal function definitionhashtable.c line 81   void *value = NULL, *nvalue = NULL;Error   : illegal function definitionhashtable.c line 82   uintptr_t c1, *c2 = NULL;Error   : illegal function definitionhashtable.c line 83   struct dom_hash_table *ret;Error   : illegal function definitionhashtable.c line 85   ret = _dom_hash_create(ht->nchains, ht->vtable, ht->pw);Error   : identifier expectedhashtable.c line 86   if (ret == NULL)Error   : ';' expectedhashtable.c line 87   return NULL;Error   : identifier expectedhashtable.c line 89   while ( (key = _dom_hash_iterate(ht, &c1, &c2)) != NULL) {Error   : illegal function definitionhashtable.c line 90   nkey = ht->vtable->clone_key(key, ht->pw);Error   : identifier expectedhashtable.c line 91   if (nkey == NULL) {Error   : illegal function definitionhashtable.c line 92   _dom_hash_destroy(ret);Error   : identifier expectedhashtable.c line 93   return NULL;Error   : identifier expectedhashtable.c line 94   }Error   : identifier expectedhashtable.c line 96   value = _dom_hash_get(ht, key);Error   : illegal function definitionhashtable.c line 97   nvalue = ht->vtable->clone_value(value, ht->pw);Error   : identifier expectedhashtable.c line 98   if (nvalue == NULL) {Error   : illegal function definitionhashtable.c line 99   ht->vtable->destroy_key(nkey, ht->pw);Error   : illegal function definitionhashtable.c line 100   _dom_hash_destroy(ret);Error   : identifier expectedhashtable.c line 101   return NULL;Error   : identifier expectedhashtable.c line 102   }Error   : declaration syntax errorhashtable.c line 104   0Error   : illegal function definitionhashtable.c line 105   _dom_hash_destroy(ret);Error   : identifier expectedhashtable.c line 106   return NULL;Error   : identifier expectedhashtable.c line 107   }Error   : identifier expectedhashtable.c line 108   }Error   : illegal function definitionhashtable.c line 110   return ret;Error   : identifier expectedhashtable.c line 111   }Error   : ')' expectedhashtable.c line 119   void _dom_hash_destroy(dom_hash_table *ht) Error   : ';' expectedhashtable.c line 120   {Error   : illegal function definitionhashtable.c line 121   unsigned int i;Error   : identifier expectedhashtable.c line 123   if (ht == NULL)Error   : ';' expectedhashtable.c line 124   return;Error   : identifier expectedhashtable.c line 126   for (i = 0; i < ht->nchains; i++) {Error   : identifier expectedhashtable.c line 127   if (ht->chain[i] != NULL) {Error   : illegal function definitionhashtable.c line 128   struct _dom_hash_entry *e = ht->chain[i];Error   : identifier expectedhashtable.c line 129   while (e) {Error   : illegal function definitionhashtable.c line 130   struct _dom_hash_entry *n = e->next;Error   : illegal function definitionhashtable.c line 131   ht->vtable->destroy_key(e->key, ht->pw);Error   : illegal function definitionhashtable.c line 132   ht->vtable->destroy_value(e->value, ht->pw);Error   : illegal function definitionhashtable.c line 133   free(e);Error   : illegal function definitionhashtable.c line 134   e = n;Error   : identifier expectedhashtable.c line 135   }Error   : identifier expectedhashtable.c line 136   }Error   : identifier expectedhashtable.c line 137   }Error   : ')' expectedhashtable.c line 139   free(ht->chain);Error   : illegal function definitionhashtable.c line 140   free(ht);Error   : identifier expectedhashtable.c line 141   }Error   : ')' expectedhashtable.c line 152   bool _dom_hash_add(dom_hash_table *ht, void *key, void *value, Error   : identifier expectedhashtable.c line 153    unsigned charError   : illegal function definitionhashtable.c line 155   unsigned int h, c;Error   : illegal function definitionhashtable.c line 156   struct _dom_hash_entry *e;Error   : identifier expectedhashtable.c line 158   if (ht == NULL || key == NULL || value == NULL)Error   : ';' expectedhashtable.c line 159   return false;Error   : illegal function definitionhashtable.c line 161   h = ht->vtable->hash(key, ht->pw);Error   : illegal function definitionhashtable.c line 162   c = h % ht->nchains;Error   : identifier expectedhashtable.c line 164   for (e = ht->chain[c]; e; e = e->next) {Error   : identifier expectedhashtable.c line 165   if (ht->vtable->key_isequal(key, e->key, ht->pw)) {Error   : identifier expectedhashtable.c line 166   if (replace == true) {Error   : illegal function definitionhashtable.c line 167   e->value = value;Error   : identifier expectedhashtable.c line 168   return true;Error   : identifier expectedhashtable.c line 169   } else {Error   : illegal return value in void/constructor/destructor functionhashtable.c line 170   0Error   : declaration syntax errorhashtable.c line 172   }Error   : declaration syntax errorhashtable.c line 173   }Error   : declaration syntax errorhashtable.c line 175   e = malloc(sizeof(struct _dom_hash_entry));Error   : declaration syntax errorhashtable.c line 176   if (e == NULL) {Error   : declaration syntax errorhashtable.c line 177   return false;Error   : declaration syntax errorhashtable.c line 178   }Error   : declaration syntax errorhashtable.c line 180   e->key = key;Error   : declaration syntax errorhashtable.c line 181   e->value = value;Error   : declaration syntax errorhashtable.c line 183   e->next = ht->chain[c];Error   : declaration syntax errorhashtable.c line 184   ht->chain[c] = e;Error   : declaration syntax errorhashtable.c line 185   ht->nentries++;Error   : declaration syntax errorhashtable.c line 187   return true;Error   : declaration syntax errorhashtable.c line 188   }Error   : illegal use of incomplete struct/union/class 'struct dom_hash_table'hashtable.c line 205   h = ht->vtable->hash(key, ht->pw);Could not find or load the file Òhints.cÓ for target ÒMacSurfÓ for project ÒMacSurfÓ.Error   : the file 'proto/asl.h' cannot be openedhotlist.c line 29   #include <proto/asl.h>Error   : the file 'proto/dos.h' cannot be openedhotlist.c line 30   #include <proto/dos.h>Error   : the file 'proto/intuition.h' cannot be openedhotlist.c line 31   #include <proto/intuition.h>Error   : the file 'classes/window.h' cannot be openedhotlist.c line 33   #include <classes/window.h>Error   : the file 'gadgets/layout.h' cannot be openedhotlist.c line 34   #include <gadgets/layout.h>Error   : the file 'gadgets/space.h' cannot be openedhotlist.c line 35   #include <gadgets/space.h>Error   : the file 'reaction/reaction_macros.h' cannot be openedhotlist.c line 37   #include <reaction/reaction_macros.h>Error   : the file 'graphics/rastport.h' cannot be opened(included from: corewindow.h:24 hotlist.c:47)gui.h line 23   #include <graphics/rastport.h>Error   : the file 'intuition/classusr.h' cannot be opened(included from: corewindow.h:24 hotlist.c:47)gui.h line 24   #include <intuition/classusr.h>Error   : the file 'dos/dos.h' cannot be opened(included from: corewindow.h:24 hotlist.c:47)gui.h line 25   #include <dos/dos.h>Error   : the file 'devices/inputevent.h' cannot be opened(included from: corewindow.h:24 hotlist.c:47)gui.h line 26   #include <devices/inputevent.h>Error   : declaration syntax error(included from: gui.h:31 corewindow.h:24 hotlist.c:47)gui_menu.h line 114   ULONG ami_gui_menu_number(int item);Error   : the file 'exec/lists.h' cannot be opened(included from: gui.h:32 corewindow.h:24 hotlist.c:47)object.h line 22   #include <exec/lists.h>Error   : illegal use of incomplete struct/union/class 'struct Node'(included from: gui.h:32 corewindow.h:24 hotlist.c:47)object.h line 44   struct Node dtz_Node;Error   : declaration syntax error(included from: gui.h:32 corewindow.h:24 hotlist.c:47)object.h line 45   ULONG Type;Error   : declaration syntax error(included from: gui.h:32 corewindow.h:24 hotlist.c:47)object.h line 47   ULONG objstruct_size;Error   : declaration syntax error(included from: gui.h:32 corewindow.h:24 hotlist.c:47)object.h line 49   };Error   : illegal function definition(included from: gui.h:32 corewindow.h:24 hotlist.c:47)object.h line 53   struct nsObject *AddObject(struct MinList *objlist, ULONG otype);Error   : the file 'proto/exec.h' cannot be opened(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 32   #include <proto/exec.h>Error   : the file 'proto/dos.h' cannot be opened(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 33   #include <proto/dos.h>Error   : the file 'clib/alib_protos.h' cannot be opened(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 36   #include <clib/alib_protos.h>Error   : the file 'exec/memory.h' cannot be opened(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 39   #include <exec/memory.h>Error   : illegal use of incomplete struct/union/class 'struct IORequest'(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 196   struct IORequest Request;Error   : declaration syntax error(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 204   STRPTR OTagPath;Error   : declaration syntax error(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 206   };Error   : illegal use of incomplete struct/union/class 'struct Rectangle'(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 211   struct Rectangle Bounds;Error   : declaration syntax error(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 212   LONG OffsetX;Error   : declaration syntax error(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 213   LONG OffsetY;Error   : declaration syntax error(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 214   };Error   : ')' expected(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 239   struct OutlineFont *OpenOutlineFont(STRPTR fileName, struct List *list, ULONG flags);Error   : ')' expected(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 242   int64 GetFileSize(BPTR fh);Error   : ')' expected(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 243   void FreeSysObject(ULONG type, APTR obj);Error   : illegal function definition(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 246   struct Node *GetHead(struct List *list);Error   : illegal function definition(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 247   struct Node *GetPred(struct Node *node);Error   : illegal function definition(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 248   struct Node *GetSucc(struct Node *node);Error   : ')' expected(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 251   uint32 GetAttrs(Object *obj, Tag tag1, ...);Error   : illegal function definition(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 252   ULONG RefreshSetGadgetAttrs(struct Gadget *g, struct Window *w, struct Requester *r, Tag tag1, ...);Error   : illegal function definition(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 253   ULONG RefreshSetGadgetAttrsA(struct Gadget *g, struct Window *w, struct Requester *r, struct TagItem *tags);Error   : illegal function definition(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 254   APTR NewObject(struct IClass * classPtr, CONST_STRPTR classID, ULONG tagList, ...);Error   : illegal function definition(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 257   char *ASPrintf(const char *fmt, ...);Error   : illegal function definition(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 260   char *strlwr(char *str);Error   : illegal function definition(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 261   int alphasort(const struct dirent **d1, const struct dirent **d2);Error   : illegal function definition(included from: gui.h:33 corewindow.h:24 hotlist.c:47)os3support.h line 264   int (*compar)(const struct dirent **, const struct dirent **));Error   : identifier expected(included from: corewindow.h:24 hotlist.c:47)gui.h line 48   };Error   : identifier expected(included from: corewindow.h:24 hotlist.c:47)gui.h line 50   struct find_window;Error   : identifier expected(included from: corewindow.h:24 hotlist.c:47)gui.h line 51   struct ami_history_local_window;Error   : identifier expected(included from: corewindow.h:24 hotlist.c:47)gui.h line 52   struct ami_menu_data;Error   : identifier expected(included from: corewindow.h:24 hotlist.c:47)gui.h line 53   struct gui_window;Error   : identifier expected(included from: corewindow.h:24 hotlist.c:47)gui.h line 54   struct gui_window_2;Error   : identifier expected(included from: corewindow.h:24 hotlist.c:47)gui.h line 55   struct IBox;Error   : declaration syntax error(included from: corewindow.h:24 hotlist.c:47)gui.h line 65   BOOL (*event)(void *w);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 70   void (*close)(void *w);Error   : identifier expected(included from: corewindow.h:24 hotlist.c:47)gui.h line 71   };Error   : identifier expected(included from: corewindow.h:24 hotlist.c:47)gui.h line 76   };Error   : ';' expected(included from: corewindow.h:24 hotlist.c:47)gui.h line 81   STRPTR ami_locale_langs(int *codeset);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 82   char *ami_gui_get_cache_favicon_name(struct nsurl *url, bool only_if_avail);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 85   void ami_get_msg(void);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 86   void ami_try_quit(void);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 87   void ami_quit_netsurf(void);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 88   void ami_schedule_redraw(struct gui_window_2 *gwin, bool full_redraw);Error   : ')' expected(included from: corewindow.h:24 hotlist.c:47)gui.h line 89   int ami_key_to_nskey(ULONG keycode, struct InputEvent *ie);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 90   bool ami_text_box_at_point(struct gui_window_2 *gwin, ULONG *restrict x, ULONG *restrict y);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 92   int mouse_x, int mouse_y);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 93   BOOL ami_gadget_hit(Object *obj, int x, int y);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 94   void ami_gui_history(struct gui_window_2 *gwin, bool back);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 95   void ami_gui_hotlist_update_all(void);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 96   void ami_gui_tabs_toggle_all(void);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 97   bool ami_locate_resource(char *fullpath, const char *file);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 98   void ami_gui_update_hotlist_button(struct gui_window_2 *gwin);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 99   nserror ami_gui_new_blank_tab(struct gui_window_2 *gwin);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 100   int ami_gui_count_windows(int window, int *tabs);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 101   void ami_gui_set_scale(struct gui_window *gw, float scale);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 102   mi_set_pointer(struct gui_window_2 *gwin, gui_pointer_shape shape, bool update);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 103   void ami_reset_pointer(struct gui_window_2 *gwin);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 104   void *ami_window_at_pointer(int type);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 109   void ami_gui_beep(void);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 116   void ami_gui_close_window(void *w);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 123   void ami_gui_close_inactive_tabs(struct gui_window_2 *gwin);Error   : ')' expected(included from: corewindow.h:24 hotlist.c:47)gui.h line 132   nserror ami_gui_get_space_box(Object *obj, struct IBox **bbox);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 139   void ami_gui_free_space_box(struct IBox *bbox);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 146   struct MsgPort *ami_gui_get_shared_msgport(void);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 153   uint32 ami_gui_get_app_id(void);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 160   struct Screen *ami_gui_get_screen(void);Error   : object 'STRPTR' redefined(included from: corewindow.h:24 hotlist.c:47)gui.h line 167   STRPTR ami_gui_get_screen_title(void);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 172   _gui_win_list_add(void *win, int type, const struct ami_win_event_table *table);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 177   void ami_gui_win_list_remove(void *win);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 186   struct MinList *ami_gui_get_window_list(void);Error   : ')' expected(included from: corewindow.h:24 hotlist.c:47)gui.h line 191   int ami_gui_get_quals(Object *win_obj);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 197   const struct rect *restrict new_rect, APTR mempool);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 202   void ami_gui_adjust_scale(struct gui_window *gw, float adjustment);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 208   struct gui_window *ami_gui_get_active_gw(void);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 213   struct browser_window *ami_gui_get_browser_window(struct gui_window *gw);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 218   struct browser_window *ami_gui2_get_browser_window(struct gui_window_2 *gwin);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 223   struct gui_window_2 *ami_gui_get_gui_window_2(struct gui_window *gw);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 228   struct gui_window *ami_gui2_get_gui_window(struct gui_window_2 *gwin);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 233   struct List *ami_gui_get_download_list(struct gui_window *gw);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 238   const char *ami_gui_get_tab_title(struct gui_window *gw);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 243   const char *ami_gui_get_win_title(struct gui_window *gw);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 248   struct Node *ami_gui_get_tab_node(struct gui_window *gw);Error   : illegal function definition(included from: corewindow.h:24 hotlist.c:47)gui.h line 253   ULONG ami_gui2_get_tabs(struct gui_window_2 *gwin);Error   : the file '../../../../bindings/hubbub/errors.h' cannot be opened(included from: libdom.h:33 html.c:36)errors.h line 7   #include "../../../../bindings/hubbub/errors.h"Error   : ')' expectedhtml.c line 125   NSLOG(netsurf, INFO, "Dispatching '%*s' against %p",Error   : ';' expectedhtml.c line 126   (int)dom_string_length(type), dom_string_data(type), target);Error   : ')' expectedhtml.c line 202   NSLOG(netsurf, INFO, "Dispatching '%*s' against %p",Error   : ';' expectedhtml.c line 203   (int)dom_string_length(type), dom_string_data(type), target);Error   : ')' expectedhtml.c line 222   NSLOG(netsurf, INFO, "DOM to box conversion complete (content %p)", c);Error   : ')' expectedhtml.c line 388   NSLOG(netsurf, INFO, "DOM to box (%p)", htmlc);Error   : ')' expectedhtml.c line 793   NSLOG(netsurf, INFO, "quirks set to %d", htmlc->quirks);Error   : ';' expectedhtml.c line 793   NSLOG(netsurf, INFO, "quirks set to %d", htmlc->quirks);Error   : ')' expectedhtml.c line 797   NSLOG(netsurf, INFO, "%d fetches active (%p)", htmlc->base.active, c);Error   : ';' expectedhtml.c line 797   NSLOG(netsurf, INFO, "%d fetches active (%p)", htmlc->base.active, c);Error   : ')' expectedhtml.c line 853   NSLOG(netsurf, INFO, "Completing parse (%p)", htmlc);Error   : ')' expectedhtml.c line 876   NSLOG(netsurf, INFO, "Can't begin conversion (%p)", htmlc);Error   : ')' expectedhtml.c line 883   NSLOG(netsurf, INFO, "Conversion aborted (%p) (active: %u)",Error   : ';' expectedhtml.c line 884   htmlc, htmlc->base.active);Error   : ')' expectedhtml.c line 1041   NSLOG(netsurf, INFO, "Unexpected status %d (%p)", c->status,Error   : ';' expectedhtml.c line 1042   c);Error   : ')' expectedhtml.c line 1206   NSLOG(netsurf, INFO, "content %p", c);Error   : illegal return value in void/constructor/destructor functionhtml.c line 1667   return html__set_file_gadget_filename(hlcache_handle_get_content(hl),Error   : ')' expectedhtml.c line 1803   "local to utf8 encoding failed (%s)",Error   : ';' expectedhtml.c line 1804   messages_get_errorcode(ret));Error   : ')' expectedhtml.c line 1882   NSLOG(netsurf, INFO, "DOM structure dump returning %d", ret);Error   : ';' expectedhtml.c line 1882   NSLOG(netsurf, INFO, "DOM structure dump returning %d", ret);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_anchor_element.c:14)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_anchor_element.c:14)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_anchor_element.c:14)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_applet_element.c:14)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_applet_element.c:14)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_applet_element.c:14)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_area_element.c:13)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_area_element.c:13)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_area_element.c:13)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_base_element.c:10)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_base_element.c:10)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_base_element.c:10)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_basefont_element.c:13)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_basefont_element.c:13)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_basefont_element.c:13)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_body_element.c:13)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_body_element.c:13)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_body_element.c:13)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_br_element.c:13)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_br_element.c:13)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_br_element.c:13)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_button_element.c:13)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_button_element.c:13)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_button_element.c:13)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_canvas_element.c:13)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_canvas_element.c:13)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_canvas_element.c:13)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_collection.c:14)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_collection.c:14)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_collection.c:14)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_directory_element.c:13)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_directory_element.c:13)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_directory_element.c:13)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_div_element.c:13)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_div_element.c:13)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_div_element.c:13)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_dlist_element.c:13)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_dlist_element.c:13)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_dlist_element.c:13)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_document.c:13)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_document.c:13)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_document.c:13)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_element.c:13)hashtable.h line 70   nserror hash_add(struct hash_table *ht, const char *key, const char *value);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_element.c:13)hashtable.h line 95   nserror hash_add_file(struct hash_table *ht, const char *path);Error   : declaration syntax error(included from: document.h:31 html_document.h:14 html_element.c:13)hashtable.h line 109   nserror hash_add_inline(struct hash_table *ht, const uint8_t *data, size_t size);
+Could not find or load the file ï¿½background.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Error   : ')' expected
+box_textarea.c line 174   "Drag type %d not handled.",
+
+Error   : ';' expected
+box_textarea.c line 175   msg->data.drag);
+
+Error   : ')' expected
+browser_history.c line 383   "Creating thumbnail for %s", nsurl_access(entry->page.url));
+
+Error   : ';' expected
+browser_history.c line 383   "Creating thumbnail for %s", nsurl_access(entry->page.url));
+
+Error   : ')' expected
+browser_history.c line 445   NSLOG(netsurf, INFO, "Updating history entry for %s", title);
+
+Error   : ')' expected
+browser_history.c line 469   NSLOG(netsurf, INFO, "Updated scroll offsets to %g by %g",
+
+Error   : ';' expected
+browser_history.c line 471   history->current->page.scroll_y);
+
+Error   : illegal implicit conversion from 'int' to
+'const char *'
+browser_window.c line 1043   tmp = strchr(userpass, ':');
+
+Could not find or load the file ï¿½cache-control.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½challenge.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Error   : illegal function definition
+(included from:
+ macos9.h:10
+ clipboard.c:16)
+MacWindows.h line 3861   AliasHandle   alias);
+
+Error   : illegal function definition
+(included from:
+ macos9.h:10
+ clipboard.c:16)
+MacWindows.h line 3875   AliasHandle *  alias);
+
+Error   : expression syntax error
+computed.c line 760   uint8_t ret = get_width(style, &length_, unit);
+
+Error   : undefined identifier 'ret'
+computed.c line 761   if (ret == CSS_WIDTH_SET) {
+
+Error   : undefined identifier 'ret'
+computed.c line 767   return ret;
+
+Could not find or load the file ï¿½content-disposition.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½content-type.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Error   : illegal implicit conversion from 'int' to
+'struct tm *'
+cookie_manager.c line 251   if ((ftime = localtime(value)) != NULL) {
+
+Error   : ')' expected
+css_fetcher.c line 70   NSLOG(netsurf, INFO, "html_css_fetcher_initialise called for %s",
+
+Error   : ';' expected
+css_fetcher.c line 71   lwc_string_data(scheme));
+
+Error   : ')' expected
+css_fetcher.c line 77   NSLOG(netsurf, INFO, "html_css_fetcher_finalise called for %s",
+
+Error   : ';' expected
+css_fetcher.c line 78   lwc_string_data(scheme));
+
+Error   : ')' expected
+css_fetcher.c line 262   NSLOG(netsurf, INFO, "Processing of %s failed!",
+
+Error   : ';' expected
+css_fetcher.c line 263   nsurl_access(c->url));
+
+Could not find or load the file ï¿½css_parse.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½css_select.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Error   : identifier 'css__number_from_string(...)' redeclared
+was declared as: 'int (...)'
+now declared as: 'int (const unsigned char *, unsigned long, unsigned char, unsigned long *)'
+css_utils.c line 33   {
+
+Error   : undefined identifier 'data'
+css_utils.c line 34   const uint8_t *ptr = data;
+
+Error   : undefined identifier 'data'
+css_utils.c line 40   if (data == NULL || len == 0 || consumed == NULL)
+
+Error   : undefined identifier 'len'
+css_utils.c line 48   len--;
+
+Error   : undefined identifier 'len'
+css_utils.c line 51   len--;
+
+Error   : undefined identifier 'len'
+css_utils.c line 56   if (len == 0) {
+
+Error   : undefined identifier 'consumed'
+css_utils.c line 57   *consumed = 0;
+
+Error   : undefined identifier 'len'
+css_utils.c line 61   if (len == 1 || ptr[1] < '0' || '9' < ptr[1]) {
+
+Error   : undefined identifier 'consumed'
+css_utils.c line 62   *consumed = 0;
+
+Error   : undefined identifier 'consumed'
+css_utils.c line 66   *consumed = 0;
+
+Error   : undefined identifier 'len'
+css_utils.c line 72   while (len > 0) {
+
+Error   : undefined identifier 'len'
+css_utils.c line 83   len--;
+
+Error   : undefined identifier 'int_only'
+css_utils.c line 87   if (int_only == false && len > 1 && ptr[0] == '.' &&
+
+Error   : undefined identifier 'len'
+css_utils.c line 90   len--;
+
+Error   : undefined identifier 'len'
+css_utils.c line 92   while (len > 0) {
+
+Error   : undefined identifier 'len'
+css_utils.c line 102   len--;
+
+Error   : undefined identifier 'consumed'
+css_utils.c line 111   *consumed = ptr - data;
+
+Could not find or load the file ï¿½cssh_css.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½cssh_select.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Error   : ')' expected
+dom_event.c line 266   NSLOG(netsurf, DEEPDEBUG, "Encountered a script, node %p showed up", script);
+
+Error   : ')' expected
+dom_event.c line 650   "javascript context: %p (htmlc: %p)",
+
+Error   : ';' expected
+dom_event.c line 652   htmlc);
+
+Error   : ')' expected
+dom_event.c line 771   "phase:%d type:%s", phase, dom_string_data(type));
+
+Could not find or load the file ï¿½dom_hashtable.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½dt_bitmap.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½dt_browser.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½dt_download.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½dt_global_history.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½dt_hotlist.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½dt_local_history.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½dt_mouse.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½dt_print.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½dt_save_pdf.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½dt_search.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½dt_searchweb.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½dt_selection.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½dt_textarea.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½dt_treeview.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½dt_version.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½dump.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Error   : ')' expected
+fetch.c line 152   "Attempting to start fetch %p, fetcher %p, url %s", fetch,
+
+Error   : ';' expected
+fetch.c line 154   nsurl_access(fetch->url));
+
+Error   : ')' expected
+fetch.c line 211   NSLOG(fetch, DEBUG, "queue_ring: %s",
+
+Error   : ';' expected
+fetch.c line 212   nsurl_access(q->url));
+
+Error   : ')' expected
+fetch.c line 219   NSLOG(fetch, DEBUG, "fetch_ring: %s",
+
+Error   : ';' expected
+fetch.c line 220   nsurl_access(f->url));
+
+Error   : ')' expected
+fetch.c line 240   "queue_ring %i, fetch_ring %i",
+
+Error   : ';' expected
+fetch.c line 242   all_active);
+
+Error   : ')' expected
+fetch.c line 251   "%d queued, %d fetching",
+
+Error   : ';' expected
+fetch.c line 253   all_active);
+
+Error   : ')' expected
+fetch.c line 256   NSLOG(fetch, DEBUG, "Fetch ring is now %d elements.", all_active);
+
+Error   : ')' expected
+fetch.c line 257   NSLOG(fetch, DEBUG, "Queue ring is now %d elements.", all_queued);
+
+Error   : ';' expected
+fetch.c line 257   NSLOG(fetch, DEBUG, "Queue ring is now %d elements.", all_queued);
+
+Error   : ')' expected
+fetch.c line 342   "Fetcher for scheme %s still has %d active users at quit.",
+
+Error   : ';' expected
+fetch.c line 344   fetchers[fetcherd].refcount);
+
+Error   : ')' expected
+fetch.c line 481   NSLOG(fetch, DEBUG, "fetch %p, url '%s'", fetch, nsurl_access(url));
+
+Error   : ')' expected
+fetch.c line 540   "fetch %p, fetcher %p, url '%s'", f, f->fetcher_handle,
+
+Error   : ';' expected
+fetch.c line 541   nsurl_access(f->url));
+
+Error   : ')' expected
+fetch.c line 556   "During the fetch of %s, the fetcher did not finish.",
+
+Error   : ';' expected
+fetch.c line 557   nsurl_access(f->url));
+
+Error   : ')' expected
+fetch.c line 563   "Freeing fetch %p, fetcher %p",
+
+Error   : ';' expected
+fetch.c line 565   f->fetcher_handle);
+
+Error   : ')' expected
+fetch.c line 707   "Freeing rawfile: %s", list->rawfile);
+
+Error   : ')' expected
+fetch.c line 769   "Fetch %p, fetcher %p can be freed",
+
+Error   : ';' expected
+fetch.c line 771   fetch->fetcher_handle);
+
+Error   : ')' expected
+fetch.c line 784   NSLOG(fetch, DEBUG, "Fetch ring is now %d elements.", all_active);
+
+Error   : ';' expected
+fetch.c line 784   NSLOG(fetch, DEBUG, "Fetch ring is now %d elements.", all_active);
+
+Error   : ')' expected
+fetch.c line 785   NSLOG(fetch, DEBUG, "Queue ring is now %d elements.", all_queued);
+
+Error   : ';' expected
+fetch.c line 785   NSLOG(fetch, DEBUG, "Queue ring is now %d elements.", all_queued);
+
+Error   : ')' expected
+fetch.c line 792   NSLOG(fetch, DEBUG, "Setting HTTP code to %d", http_code);
+
+Error   : expression syntax error
+flex.c line 152   css_fixed grow_num = short_auto ? INTTOFIX(1) : 0;
+
+Error   : undefined identifier 'grow_num'
+flex.c line 153   error = css__stylesheet_style_append(grow_style, grow_num);
+
+Error   : expression syntax error
+flex.c line 164   css_fixed shrink_num = short_none ? 0 : INTTOFIX(1);
+
+Error   : undefined identifier 'shrink_num'
+flex.c line 165   error = css__stylesheet_style_append(shrink_style, shrink_num);
+
+Error   : ')' expected
+form.c line 204   "keyname allocation failure for %s%s", name, ksfx);
+
+Error   : ';' expected
+form.c line 204   "keyname allocation failure for %s%s", name, ksfx);
+
+Error   : ')' expected
+form.c line 329   "Could not get text area disabled property. exp %d", exp);
+
+Error   : ')' expected
+form.c line 343   "Could not get text area name property. exp %d", exp);
+
+Error   : ')' expected
+form.c line 357   "Could not get text area content. exp %d", exp);
+
+Error   : ')' expected
+form.c line 449   "Could not get select disabled property. exp %d", exp);
+
+Error   : ')' expected
+form.c line 462   "Could not get select name property. exp %d", exp);
+
+Error   : ')' expected
+form.c line 497   "Could not get options item %"PRId32, option_index);
+
+Error   : ')' expected
+form.c line 774   "Could not get input disabled property. exp %d", exp);
+
+Error   : ')' expected
+form.c line 787   "Could not get input name property. exp %d", exp);
+
+Error   : ')' expected
+form.c line 900   "Unable to get disabled property. exp %d", exp);
+
+Error   : ')' expected
+form.c line 946   "Could not get button name property. exp %d", exp);
+
+Error   : illegal implicit conversion from 'int' to
+'char *'
+form.c line 1009   c = strstr(temp, "UTF-8");
+
+Error   : ')' expected
+form.c line 1111   "retrieving form element %"PRIu32" failed with %d",
+
+Error   : ';' expected
+form.c line 1112   element_idx, exp);
+
+Error   : ')' expected
+form.c line 1121   "getting element node name %"PRIu32" failed with %d",
+
+Error   : ';' expected
+form.c line 1122   element_idx, exp);
+
+Error   : ')' expected
+form.c line 1165   "Unhandled element type: %*s",
+
+Error   : ';' expected
+form.c line 1167   dom_string_data(nodename));
+
+Error   : ')' expected
+form.c line 1466   NSLOG(netsurf, INFO, "Control:%p name:%p value:%p initial:%p",
+
+Error   : ';' expected
+form.c line 1467   control, control->name, control->value, control->initial_value);
+
+Error   : ')' expected
+form.c line 1482   "select option:%p text:%p value:%p", option,
+
+Error   : ';' expected
+form.c line 1483   option->text, option->value);
+
+Error   : illegal constant expression
+frames.c line 334   int widths[bw->cols][bw->rows];
+
+Error   : illegal constant expression
+frames.c line 335   int heights[bw->cols][bw->rows];
+
+Error   : ')' expected
+frames.c line 633   NSLOG(netsurf, INFO, "Created frame '%s'",
+
+Error   : ';' expected
+frames.c line 634   window->name);
+
+Error   : expression syntax error
+frames.c line 635   else
+
+Error   : ';' expected
+frames.c line 637   do { if (NSLOG_LEVEL_INFO >=    NSLOG_LEVEL_INFO) { nslog_log( "frames.c", "",  637, "Created frame (unnamed)"); } } while(0)
+
+Could not find or load the file ï¿½generics.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Error   : expression syntax error
+hashmap.c line 235   for (uint32_t bucket = 0;
+
+Error   : undefined identifier 'bucket'
+hashmap.c line 236   bucket < hashmap->bucket_count;
+
+Error   : undefined identifier 'bucket'
+hashmap.c line 237   bucket++) {
+
+Error   : expression syntax error
+hashmap.c line 238   for (hashmap_entry_t *entry = hashmap->buckets[bucket];
+
+Error   : undefined identifier 'entry'
+hashmap.c line 239   entry != NULL;
+
+Error   : undefined identifier 'entry'
+hashmap.c line 240   entry = entry->next) {
+
+Error   : ';' expected
+hashmap.c line 242   if (cb(entry->key, entry->value, ctx))
+
+Error   : declaration syntax error
+hashmap.c line 247   return false;
+
+Error   : declaration syntax error
+hashmap.c line 248   }
+
+Could not find or load the file ï¿½hints.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Error   : ')' expected
+html.c line 125   NSLOG(netsurf, INFO, "Dispatching '%*s' against %p",
+
+Error   : ';' expected
+html.c line 126   (int)dom_string_length(type), dom_string_data(type), target);
+
+Error   : ')' expected
+html.c line 202   NSLOG(netsurf, INFO, "Dispatching '%*s' against %p",
+
+Error   : ';' expected
+html.c line 203   (int)dom_string_length(type), dom_string_data(type), target);
+
+Error   : ')' expected
+html.c line 222   NSLOG(netsurf, INFO, "DOM to box conversion complete (content %p)", c);
+
+Error   : ')' expected
+html.c line 388   NSLOG(netsurf, INFO, "DOM to box (%p)", htmlc);
+
+Error   : ')' expected
+html.c line 793   NSLOG(netsurf, INFO, "quirks set to %d", htmlc->quirks);
+
+Error   : ';' expected
+html.c line 793   NSLOG(netsurf, INFO, "quirks set to %d", htmlc->quirks);
+
+Error   : ')' expected
+html.c line 797   NSLOG(netsurf, INFO, "%d fetches active (%p)", htmlc->base.active, c);
+
+Error   : ';' expected
+html.c line 797   NSLOG(netsurf, INFO, "%d fetches active (%p)", htmlc->base.active, c);
+
+Error   : ')' expected
+html.c line 853   NSLOG(netsurf, INFO, "Completing parse (%p)", htmlc);
+
+Error   : ')' expected
+html.c line 876   NSLOG(netsurf, INFO, "Can't begin conversion (%p)", htmlc);
+
+Error   : ')' expected
+html.c line 883   NSLOG(netsurf, INFO, "Conversion aborted (%p) (active: %u)",
+
+Error   : ';' expected
+html.c line 884   htmlc, htmlc->base.active);
+
+Error   : ')' expected
+html.c line 1041   NSLOG(netsurf, INFO, "Unexpected status %d (%p)", c->status,
+
+Error   : ';' expected
+html.c line 1042   c);
+
+Error   : ')' expected
+html.c line 1206   NSLOG(netsurf, INFO, "content %p", c);
+
+Error   : illegal return value in void/constructor/destructor function
+html.c line 1667   return html__set_file_gadget_filename(hlcache_handle_get_content(hl),
+
+Error   : ')' expected
+html.c line 1803   "local to utf8 encoding failed (%s)",
+
+Error   : ';' expected
+html.c line 1804   messages_get_errorcode(ret));
+
+Error   : ')' expected
+html.c line 1882   NSLOG(netsurf, INFO, "DOM structure dump returning %d", ret);
+
+Error   : ';' expected
+html.c line 1882   NSLOG(netsurf, INFO, "DOM structure dump returning %d", ret);
+
+Could not find or load the file ï¿½html_css.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½html_font.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½hub_parser.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Error   : ')' expected
+idna.c line 756   "Cannot verify ACE label %s", host);
+
+Error   : ')' expected
+imagemap.c line 248   NSLOG(netsurf, INFO, "Imagemap: %s", map->key);
+
+Error   : ')' expected
+imagemap.c line 253   NSLOG(netsurf, INFO, "\tDefault: %s",
+
+Error   : ';' expected
+imagemap.c line 254   nsurl_access(entry->url));
+
+Error   : ')' expected
+imagemap.c line 258   "\tRectangle: %s: [(%d,%d),(%d,%d)]",
+
+Error   : ';' expected
+imagemap.c line 263   entry->bounds.rect.y1);
+
+Error   : ')' expected
+imagemap.c line 267   "\tCircle: %s: [(%d,%d),%d]",
+
+Error   : ';' expected
+imagemap.c line 271   entry->bounds.circle.r);
+
+Error   : ')' expected
+imagemap.c line 275   "\tPolygon: %s:",
+
+Error   : ';' expected
+imagemap.c line 276   nsurl_access(entry->url));
+
+Error   : illegal implicit conversion from 'int' to
+'char *'
+imagemap.c line 396   char *val = strtok((char *)dom_string_data(coords), ",");
+
+Error   : illegal implicit conversion from 'int' to
+'char *'
+imagemap.c line 419   val = strtok(NULL, ",");
+
+Error   : illegal implicit conversion from 'int' to
+'char *'
+imagemap.c line 438   val = strtok(NULL, ",");
+
+Error   : illegal implicit conversion from 'int' to
+'char *'
+imagemap.c line 448   val = strtok(NULL, ",");
+
+Error   : illegal implicit conversion from 'int' to
+'char *'
+imagemap.c line 472   val = strtok(NULL, ",");
+
+Error   : ')' expected
+interaction.c line 853   NSLOG(netsurf, ERROR, "%s",
+
+Error   : ';' expected
+interaction.c line 854   messages_get_errorcode(res));
+
+Error   : ')' expected
+interaction.c line 1516   NSLOG(netsurf, ERROR, "%s", messages_get_errorcode(res));
+
+Could not find or load the file ï¿½internal.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Error   : ')' expected
+layout.c line 501   NSLOG(layout, DEBUG, "%p: min %i, max %i", b, min, max);
+
+Error   : ';' expected
+layout.c line 501   NSLOG(layout, DEBUG, "%p: min %i, max %i", b, min, max);
+
+Error   : ')' expected
+layout.c line 792   NSLOG(layout, DEBUG,  "line_min %i, line_max %i", min, max);
+
+Error   : ';' expected
+layout.c line 792   NSLOG(layout, DEBUG,  "line_min %i, line_max %i", min, max);
+
+Error   : ')' expected
+layout.c line 1293   NSLOG(layout, DEBUG, "y0 %i, y1 %i, x0 %i, x1 %i", y0, y1, *x0, *x1);
+
+Error   : ')' expected
+layout.c line 1322   NSLOG(layout, DEBUG,  "x0 %i, x1 %i, left %p, right %p", *x0, *x1,
+
+Error   : ';' expected
+layout.c line 1323   *left, *right);
+
+Error   : ')' expected
+layout.c line 1783   "table %p, column %u: type %s, width %i, min %i, max %i",
+
+Error   : ';' expected
+layout.c line 1795   col[i].max);
+
+Error   : ')' expected
+layout.c line 1814   NSLOG(layout, DEBUG,  "required_width %i", required_width);
+
+Error   : ';' expected
+layout.c line 1814   NSLOG(layout, DEBUG,  "required_width %i", required_width);
+
+Error   : ')' expected
+layout.c line 1820   "width %i, min %i, max %i, auto %i, required %i", table_width,
+
+Error   : ';' expected
+layout.c line 1821   table->min_width, table->max_width, auto_width, required_width);
+
+Error   : ')' expected
+layout.c line 2282   NSLOG(layout, DEBUG,  "block %p, object %p, width %i", block,
+
+Error   : ';' expected
+layout.c line 2283   hlcache_handle_get_url(block->object), block->width);
+
+Error   : ')' expected
+layout.c line 2403   "split_box %p len: %" PRIsizet " \"%.*s\"",
+
+Error   : ';' expected
+layout.c line 2407   split_box->text);
+
+Error   : ')' expected
+layout.c line 2409   "  new_box %p len: %" PRIsizet " \"%.*s\"",
+
+Error   : ';' expected
+layout.c line 2413   c2->text);
+
+Error   : ')' expected
+layout.c line 2620   "c %p, width %i, cx %i, y %i, cont %p", c,
+
+Error   : ';' expected
+layout.c line 2621   width, cx, y, cont);
+
+Error   : ')' expected
+layout.c line 2738   "first %p, first->text '%.*s', width %i, y %i, cx %i, cy %i",
+
+Error   : ';' expected
+layout.c line 2745   cy);
+
+Error   : ')' expected
+layout.c line 2776   NSLOG(layout, DEBUG,  "x0 %i, x1 %i, x1 - x0 %i", x0, x1, x1 - x0);
+
+Error   : ';' expected
+layout.c line 2776   NSLOG(layout, DEBUG,  "x0 %i, x1 %i, x1 - x0 %i", x0, x1, x1 - x0);
+
+Error   : ')' expected
+layout.c line 2784   NSLOG(layout, DEBUG,  "pass 1: b %p, x %i", b, x);
+
+Error   : ';' expected
+layout.c line 2784   NSLOG(layout, DEBUG,  "pass 1: b %p, x %i", b, x);
+
+Error   : ')' expected
+layout.c line 3003   NSLOG(layout, DEBUG,  "x0 %i, x1 %i, x1 - x0 %i", x0, x1, x1 - x0);
+
+Error   : ';' expected
+layout.c line 3003   NSLOG(layout, DEBUG,  "x0 %i, x1 %i, x1 - x0 %i", x0, x1, x1 - x0);
+
+Error   : ')' expected
+layout.c line 3007   NSLOG(layout, DEBUG,  "pass 2: b %p, x %i", b, x);
+
+Error   : ')' expected
+layout.c line 3074   NSLOG(layout, DEBUG,  "float %p", b);
+
+Error   : ')' expected
+layout.c line 3085   "%p : %d %d",
+
+Error   : ';' expected
+layout.c line 3088   d->border[TOP].width);
+
+Error   : ')' expected
+layout.c line 3223   ", w %i, left %p, right %p, inline_count %u",
+
+Error   : ';' expected
+layout.c line 3231   inline_count);
+
+Error   : ')' expected
+layout.c line 3261   "cy %i, left->y %i, left->height %i",
+
+Error   : ';' expected
+layout.c line 3264   left->height);
+
+Error   : ')' expected
+layout.c line 3268   NSLOG(layout, DEBUG,  "used_height %i",
+
+Error   : ';' expected
+layout.c line 3269   used_height);
+
+Error   : ')' expected
+layout.c line 3295   "'%.*s' %i %"PRIsizet" %i",
+
+Error   : ';' expected
+layout.c line 3297   x1 - x0, split, w);
+
+Error   : ')' expected
+layout.c line 3455   "inline_container %p, width %i, cont %p, cx %i, cy %i",
+
+Error   : ';' expected
+layout.c line 3460   cy);
+
+Error   : ')' expected
+layout.c line 3489   NSLOG(layout, DEBUG, "c %p", c);
+
+Error   : ')' expected
+layout.c line 3796   NSLOG(layout, DEBUG,  "box %p, cx %i, cy %i, width %i",
+
+Error   : ';' expected
+layout.c line 3797   box, cx, cy, box->width);
+
+Error   : ')' expected
+layout.c line 4610   "%i + %i + %i + %i + %i + %i + %i + %i + %i = %i",
+
+Error   : ';' expected
+layout.c line 4613   containing_block->width);
+
+Error   : ')' expected
+layout.c line 4778   "%i + %i + %i + %i + %i + %i + %i + %i + %i = %i",
+
+Error   : ';' expected
+layout.c line 4781   containing_block->width);
+
+Error   : ')' expected
+layout.c line 4821   "%i + %i + %i + %i + %i + %i + %i + %i + %i = %i",
+
+Error   : ';' expected
+layout.c line 4824   containing_block->height);
+
+Error   : ')' expected
+layout.c line 4911   "%i + %i + %i + %i + %i + %i + %i + %i + %i = %i",
+
+Error   : ';' expected
+layout.c line 4914   containing_block->height);
+
+Error   : ')' expected
+layout.c line 5069   NSLOG(layout, DEBUG,  "left %i, right %i, top %i, bottom %i", left,
+
+Error   : ';' expected
+layout.c line 5070   right, top, bottom);
+
+Error   : ')' expected
+layout.c line 5402   NSLOG(layout, DEBUG, "Doing layout to %ix%i of %s",
+
+Error   : ';' expected
+layout.c line 5404   &content->base)));
+
+Error   : ')' expected
+layout_flex.c line 246   NSLOG(flex, ERROR, "box %p: layout failed", b);
+
+Error   : ')' expected
+layout_flex.c line 270   NSLOG(flex, DEEPDEBUG, "box %p: delta_outer_main: %i",
+
+Error   : ';' expected
+layout_flex.c line 271   b, delta_outer_main);
+
+Error   : ')' expected
+layout_flex.c line 330   NSLOG(flex, DEEPDEBUG, "flex-item box: %p: base_size: %i, main_size %i",
+
+Error   : ';' expected
+layout_flex.c line 331   b, item->base_size, item->main_size);
+
+Error   : ')' expected
+layout_flex.c line 365   NSLOG(flex, DEEPDEBUG, "flex-item box: %p: width: %i",
+
+Error   : ';' expected
+layout_flex.c line 366   b, b->width);
+
+Error   : ')' expected
+layout_flex.c line 429   NSLOG(flex, DEEPDEBUG, "flex container %p: available main: %i",
+
+Error   : ';' expected
+layout_flex.c line 430   ctx->flex, ctx->available_main);
+
+Error   : ')' expected
+layout_flex.c line 493   "Frozen at target_main_size: %i",
+
+Error   : ';' expected
+layout_flex.c line 494   item->box, item->target_main_size);
+
+Error   : ')' expected
+layout_flex.c line 544   NSLOG(flex, DEEPDEBUG, "Remaining free space: %i",
+
+Error   : ';' expected
+layout_flex.c line 545   remaining_free_main);
+
+Error   : ')' expected
+layout_flex.c line 570   NSLOG(flex, DEEPDEBUG, "item %p: target_main_size: %i",
+
+Error   : ';' expected
+layout_flex.c line 571   item->box, target_main_size);
+
+Error   : ')' expected
+layout_flex.c line 581   NSLOG(flex, DEEPDEBUG, "Violation: max_main: %i",
+
+Error   : ';' expected
+layout_flex.c line 582   item->max_main);
+
+Error   : ')' expected
+layout_flex.c line 588   NSLOG(flex, DEEPDEBUG, "Violation: min_main: %i",
+
+Error   : ';' expected
+layout_flex.c line 589   item->min_main);
+
+Error   : ')' expected
+layout_flex.c line 595   NSLOG(flex, DEEPDEBUG, "Violation: box min_width: %i",
+
+Error   : ';' expected
+layout_flex.c line 596   item->box->min_width);
+
+Error   : ')' expected
+layout_flex.c line 609   NSLOG(flex, DEEPDEBUG, "Total violation: %i", total_violation);
+
+Error   : ')' expected
+layout_flex.c line 727   NSLOG(flex, DEEPDEBUG, "box %p: line %zu: first: %zu, count: %zu",
+
+Error   : ';' expected
+layout_flex.c line 729   line->first, line->count);
+
+Error   : ')' expected
+layout_flex.c line 730   NSLOG(flex, DEEPDEBUG, "Line main_size: %i, available_main: %i",
+
+Error   : ';' expected
+layout_flex.c line 731   line->main_size, available_main);
+
+Error   : ')' expected
+layout_flex.c line 765   NSLOG(flex, DEEPDEBUG, "flex-container: %p: Resolver pass",
+
+Error   : ';' expected
+layout_flex.c line 766   ctx->flex);
+
+Error   : ')' expected
+layout_flex.c line 920   "fitted: %zu (total: %zu/%zu)",
+
+Error   : ';' expected
+layout_flex.c line 922   pos, ctx->item.count);
+
+Error   : ')' expected
+layout_flex.c line 1066   NSLOG(flex, DEEPDEBUG, "box %p: %s, available_width %i, width: %i",
+
+Error   : ';' expected
+layout_flex.c line 1068   available_width, flex->width);
+
+Error   : ')' expected
+layout_flex.c line 1086   NSLOG(flex, DEEPDEBUG, "box %p: available_main: %i",
+
+Error   : ';' expected
+layout_flex.c line 1087   flex, ctx->available_main);
+
+Error   : ')' expected
+layout_flex.c line 1088   NSLOG(flex, DEEPDEBUG, "box %p: available_cross: %i",
+
+Error   : ';' expected
+layout_flex.c line 1089   flex, ctx->available_cross);
+
+Error   : ')' expected
+layout_flex.c line 1121   NSLOG(flex, DEEPDEBUG, "box %p: %s: w: %i, h: %i", flex,
+
+Error   : ';' expected
+layout_flex.c line 1123   flex->width, flex->height);
+
+Error   : undefined identifier 'strncmp'
+libwapcaplet.c line 148   strncmp, (lwc_memcpy)memcpy);
+
+Could not find or load the file ï¿½list_style.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Error   : illegal implicit conversion from 'int' to
+'const char *'
+mac_file_io.c line 77   slash = strrchr(parent, '/');
+
+Error   : illegal function definition
+(included from:
+ macos9.h:10
+ macos9_bitmap.c:17)
+MacWindows.h line 3861   AliasHandle   alias);
+
+Error   : illegal function definition
+(included from:
+ macos9.h:10
+ macos9_bitmap.c:17)
+MacWindows.h line 3875   AliasHandle *  alias);
+
+Error   : illegal function definition
+(included from:
+ macos9.h:10
+ macos9_download.c:16)
+MacWindows.h line 3861   AliasHandle   alias);
+
+Error   : illegal function definition
+(included from:
+ macos9.h:10
+ macos9_download.c:16)
+MacWindows.h line 3875   AliasHandle *  alias);
+
+Error   : illegal function definition
+(included from:
+ macos9.h:10
+ macos9_fetch.c:24)
+MacWindows.h line 3861   AliasHandle   alias);
+
+Error   : illegal function definition
+(included from:
+ macos9.h:10
+ macos9_fetch.c:24)
+MacWindows.h line 3875   AliasHandle *  alias);
+
+Error   : illegal implicit conversion from 'int' to
+'const char *'
+macos9_fetch.c line 40   ext = strrchr(unix_path, '.');
+
+Error   : illegal implicit conversion from 'int' to
+'char *'
+macos9_fetch.c line 170   sep = strstr(buf, "\r\n\r\n");
+
+Could not find or load the file ï¿½macos9_font.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Error   : declaration syntax error
+(included from:
+ OpenTptInternet.h:21
+ macos9_http_fetcher.c:46)
+OpenTransportProviders.h line 2333   FSSpec      modemScript;
+
+Error   : declaration syntax error
+(included from:
+ OpenTptInternet.h:21
+ macos9_http_fetcher.c:46)
+OpenTransportProviders.h line 2338   } RAConfigModem;
+
+Error   : illegal implicit conversion from 'int' to
+'char *'
+macos9_http_fetcher.c line 270   sep = strstr(c->buf, "\r\n\r\n");
+
+Error   : illegal function definition
+(included from:
+ macos9.h:10
+ macos9_utf8.c:16)
+MacWindows.h line 3861   AliasHandle   alias);
+
+Error   : illegal function definition
+(included from:
+ macos9.h:10
+ macos9_utf8.c:16)
+MacWindows.h line 3875   AliasHandle *  alias);
+
+Error   : illegal function definition
+(included from:
+ macos9.h:10
+ main.c:31)
+MacWindows.h line 3861   AliasHandle   alias);
+
+Error   : illegal function definition
+(included from:
+ macos9.h:10
+ main.c:31)
+MacWindows.h line 3875   AliasHandle *  alias);
+
+Error   : illegal function definition
+(included from:
+ macos9.h:10
+ misc.c:16)
+MacWindows.h line 3861   AliasHandle   alias);
+
+Error   : illegal function definition
+(included from:
+ macos9.h:10
+ misc.c:16)
+MacWindows.h line 3875   AliasHandle *  alias);
+
+Could not find or load the file ï¿½ns_content.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½ns_file.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½ns_hashtable.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½ns_utf8.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Error   : ',' expected
+nsoption.c line 118   if (sscanf(value, "%"SCNx32"", &rgbcolour) == 1) {
+
+Error   : illegal use of keyword
+nsoption.c line 123   break;
+
+Error   : illegal use of keyword
+nsoption.c line 125   case OPTION_STRING:
+
+Error   : illegal use of keyword
+nsoption.c line 136   break;
+
+Error   : illegal use of keyword
+nsoption.c line 138   default:
+
+Error   : ';' expected
+nsoption.c line 139   ret = false;
+
+Error   : illegal use of keyword
+nsoption.c line 140   break;
+
+Error   : declaration syntax error
+nsoption.c line 143   return ret;
+
+Error   : declaration syntax error
+nsoption.c line 144   }
+
+Error   : ',' expected
+nsoption.c line 372   "#%06"PRIX32
+
+Error   : ')' expected
+nsoption.c line 373   "</span> "
+
+Error   : ';' expected
+nsoption.c line 381   colour_to_bw_furthest(rgbcolour));
+
+Error   : illegal implicit conversion from 'int' to
+'char *'
+nsoption.c line 889   val = strchr(arg, '=');
+
+Could not find or load the file ï¿½nsurl.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½nsurl_parse.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Error   : ')' expected
+object.c line 198   NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
+
+Error   : ';' expected
+object.c line 198   NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
+
+Error   : ')' expected
+object.c line 230   NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
+
+Error   : ';' expected
+object.c line 230   NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
+
+Error   : ')' expected
+object.c line 542   NSLOG(netsurf, INFO, "%d fetches active",
+
+Error   : ';' expected
+object.c line 543   c->base.active);
+
+Error   : ')' expected
+object.c line 564   NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
+
+Error   : ';' expected
+object.c line 564   NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
+
+Error   : ')' expected
+object.c line 650   NSLOG(netsurf, INFO, "%d fetches active",
+
+Error   : ';' expected
+object.c line 651   htmlc->base.active);
+
+Error   : ')' expected
+object.c line 693   NSLOG(netsurf, INFO, "object %p", victim->content);
+
+Error   : ')' expected
+object.c line 767   NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
+
+Error   : ';' expected
+object.c line 767   NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
+
+Could not find or load the file ï¿½p_font.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Error   : expression syntax error
+page-info.c line 335   for (unsigned i = 0; i < PI_ENTRY__COUNT; i++) {
+
+Error   : undefined identifier 'i'
+page-info.c line 335   for (unsigned i = 0; i < PI_ENTRY__COUNT; i++) {
+
+Error   : undefined identifier 'i'
+page-info.c line 335   for (unsigned i = 0; i < PI_ENTRY__COUNT; i++) {
+
+Error   : ';' expected
+page-info.c line 336   struct page_info_entry *entry = pi->entries + i;
+
+Error   : expression syntax error
+page-info.c line 337   int padding;
+
+Error   : undefined identifier 'entry'
+page-info.c line 339   switch (entry->type) {
+
+Error   : ';' expected
+page-info.c line 340   case PAGE_INFO_ENTRY_TYPE_TEXT:
+
+Error   : undefined identifier 'entry'
+page-info.c line 342   &entry->u.text);
+
+Error   : undefined identifier 'i'
+page-info.c line 346   if (i == PI_ENTRY_DOMAIN) {
+
+Error   : undefined identifier 'entry'
+page-info.c line 347   entry->u.text.padding_bottom =
+
+Error   : ';' expected
+page-info.c line 348   entry->u.text.height * 3 / 2;
+
+Error   : illegal use of keyword
+page-info.c line 350   break;
+
+Error   : illegal use of keyword
+page-info.c line 352   case PAGE_INFO_ENTRY_TYPE_ITEM:
+
+Error   : undefined identifier 'entry'
+page-info.c line 354   &entry->u.item.item);
+
+Error   : undefined identifier 'entry'
+page-info.c line 359   &entry->u.item.detail);
+
+Error   : undefined identifier 'padding'
+page-info.c line 363   padding = entry->u.item.item.height / 4;
+
+Error   : undefined identifier 'entry'
+page-info.c line 364   entry->u.item.padding_top = padding;
+
+Error   : undefined identifier 'entry'
+page-info.c line 365   entry->u.item.padding_bottom = padding;
+
+Error   : illegal use of keyword
+page-info.c line 367   break;
+
+Error   : declaration syntax error
+page-info.c line 369   }
+
+Error   : declaration syntax error
+page-info.c line 371   pi->window_padding = pi->entries[PI_ENTRY_DOMAIN]
+
+Error   : declaration syntax error
+page-info.c line 372   .u.item.item.height / 2;
+
+Error   : declaration syntax error
+page-info.c line 374   return NSERROR_OK;
+
+Error   : declaration syntax error
+page-info.c line 375   }
+
+Error   : expression syntax error
+page-info.c line 498   for (unsigned i = 0; i < PI_ENTRY__COUNT; i++) {
+
+Error   : undefined identifier 'i'
+page-info.c line 498   for (unsigned i = 0; i < PI_ENTRY__COUNT; i++) {
+
+Error   : undefined identifier 'i'
+page-info.c line 498   for (unsigned i = 0; i < PI_ENTRY__COUNT; i++) {
+
+Error   : ';' expected
+page-info.c line 499   struct page_info_entry *entry = pi->entries + i;
+
+Error   : undefined identifier 'i'
+page-info.c line 501   if (page_info__hide_entry(i, pi->scheme)) {
+
+Error   : illegal use of keyword
+page-info.c line 502   continue;
+
+Error   : undefined identifier 'entry'
+page-info.c line 505   switch (entry->type) {
+
+Error   : ';' expected
+page-info.c line 506   case PAGE_INFO_ENTRY_TYPE_TEXT:
+
+Error   : undefined identifier 'entry'
+page-info.c line 507   cur_y += entry->u.text.height;
+
+Error   : undefined identifier 'entry'
+page-info.c line 508   if (max_x < entry->u.text.width) {
+
+Error   : ';' expected
+page-info.c line 509   max_x = entry->u.text.width;
+
+Error   : declaration syntax error
+page-info.c line 511   cur_y += entry->u.text.padding_bottom;
+
+Error   : declaration syntax error
+page-info.c line 512   break;
+
+Error   : declaration syntax error
+page-info.c line 514   case PAGE_INFO_ENTRY_TYPE_ITEM:
+
+Error   : expression syntax error
+page-info.c line 515   {
+
+Error   : ';' expected
+page-info.c line 516   int full_width = entry->u.item.item.width +
+
+Error   : declaration syntax error
+page-info.c line 517   entry->u.item.detail.width;
+
+Error   : declaration syntax error
+page-info.c line 518   cur_y += entry->u.item.padding_top;
+
+Error   : declaration syntax error
+page-info.c line 519   cur_y += entry->u.item.item.height;
+
+Error   : declaration syntax error
+page-info.c line 520   if (max_x < full_width) {
+
+Error   : declaration syntax error
+page-info.c line 521   max_x = full_width;
+
+Error   : declaration syntax error
+page-info.c line 522   }
+
+Error   : declaration syntax error
+page-info.c line 523   cur_y += entry->u.item.padding_bottom;
+
+Error   : declaration syntax error
+page-info.c line 524   }
+
+Error   : declaration syntax error
+page-info.c line 525   break;
+
+Error   : declaration syntax error
+page-info.c line 526   }
+
+Error   : declaration syntax error
+page-info.c line 527   }
+
+Error   : declaration syntax error
+page-info.c line 528   cur_y += pi->window_padding;
+
+Error   : declaration syntax error
+page-info.c line 529   max_x += pi->window_padding * 2;
+
+Error   : declaration syntax error
+page-info.c line 531   pi->width = max_x;
+
+Error   : declaration syntax error
+page-info.c line 532   pi->height = cur_y;
+
+Error   : declaration syntax error
+page-info.c line 533   return guit->corewindow->set_extent(pi->cw_h, max_x, cur_y);
+
+Error   : identifier expected
+page-info.c line 534   }
+
+Error   : illegal function definition
+page-info.c line 540   {
+
+Error   : illegal function definition
+page-info.c line 542   nserror err;
+
+Error   : object 'pi' redefined
+page-info.c line 544   pi = calloc(1, sizeof(*pi));
+
+Error   : identifier expected
+page-info.c line 545   if (pi == NULL) {
+
+Error   : identifier expected
+page-info.c line 546   return NSERROR_NOMEM;
+
+Error   : identifier expected
+page-info.c line 547   }
+
+Error   : identifier expected
+page-info.c line 549   pi->cw_h = cw_h;
+
+Error   : ')' expected
+page-info.c line 551   memcpy(pi->entries, pi__entries, sizeof(pi__entries));
+
+Error   : illegal function definition
+page-info.c line 553   err = page_info__create_from_bw(pi, bw);
+
+Error   : identifier expected
+page-info.c line 554   if (err != NSERROR_OK) {
+
+Error   : illegal function definition
+page-info.c line 555   page_info_destroy(pi);
+
+Error   : identifier expected
+page-info.c line 556   return err;
+
+Error   : identifier expected
+page-info.c line 557   }
+
+Error   : identifier expected
+page-info.c line 559   err = page_info__layout(pi);
+
+Error   : identifier expected
+page-info.c line 560   if (err != NSERROR_OK) {
+
+Error   : illegal function definition
+page-info.c line 561   page_info_destroy(pi);
+
+Error   : identifier expected
+page-info.c line 562   return err;
+
+Error   : identifier expected
+page-info.c line 563   }
+
+Error   : illegal function definition
+page-info.c line 565   *pi_out = pi;
+
+Error   : identifier expected
+page-info.c line 566   return NSERROR_OK;
+
+Error   : identifier expected
+page-info.c line 567   }
+
+Error   : illegal function definition
+page-info.c line 571   {
+
+Error   : identifier expected
+page-info.c line 572   do { lwc_string *_lwc_s = (pi->domain); if (_lwc_s !=  0L) { _lwc_s->refcnt--; if ((_lwc_s->refcnt == 0) || ((_lwc_s->refcnt =
+
+Error   : declaration syntax error
+page-info.c line 572   cnt == 1) && (_lwc_s->insensitive == _lwc_s))) lwc_string_destroy(_lwc_s); } } while (0)
+
+Error   : identifier 'free(void *)' redeclared
+was declared as: 'void (void *)'
+now declared as: 'int (...)'
+page-info.c line 573   free(pi);
+
+Error   : identifier expected
+page-info.c line 574   return NSERROR_OK;
+
+Error   : identifier expected
+page-info.c line 575   }
+
+Error   : illegal function definition
+page-info.c line 579   {
+
+Error   : illegal function definition
+page-info.c line 580   nserror res;
+
+Error   : identifier expected
+page-info.c line 582   do { lwc_string *_lwc_s = (pgi->domain); if (_lwc_s !=  0L) { _lwc_s->refcnt--; if ((_lwc_s->refcnt == 0) || ((_lwc_s->refcnt 
+
+Error   : declaration syntax error
+page-info.c line 582   cnt == 1) && (_lwc_s->insensitive == _lwc_s))) lwc_string_destroy(_lwc_s); } } while (0)
+
+Error   : declaration syntax error
+page-info.c line 584   res = page_info__create_from_bw(pgi, bw);
+
+Error   : declaration syntax error
+page-info.c line 585   if (res == NSERROR_OK) {
+
+Error   : declaration syntax error
+page-info.c line 586   res = page_info__layout(pgi);
+
+Error   : declaration syntax error
+page-info.c line 587   }
+
+Error   : declaration syntax error
+page-info.c line 589   return res;
+
+Error   : declaration syntax error
+page-info.c line 590   }
+
+Error   : expression syntax error
+page-info.c line 646   for (unsigned i = 0; i < PI_ENTRY__COUNT; i++) {
+
+Error   : undefined identifier 'i'
+page-info.c line 646   for (unsigned i = 0; i < PI_ENTRY__COUNT; i++) {
+
+Error   : undefined identifier 'i'
+page-info.c line 646   for (unsigned i = 0; i < PI_ENTRY__COUNT; i++) {
+
+Error   : ';' expected
+page-info.c line 647   const struct page_info_entry *entry = pi->entries + i;
+
+Error   : expression syntax error
+page-info.c line 648   int cur_x = x + pi->window_padding;
+
+Error   : undefined identifier 'i'
+page-info.c line 650   if (page_info__hide_entry(i, pi->scheme)) {
+
+Could not find or load the file ï¿½parameter.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Error   : illegal function definition
+(included from:
+ macos9.h:10
+ plotters.c:21)
+MacWindows.h line 3861   AliasHandle   alias);
+
+Error   : illegal function definition
+(included from:
+ macos9.h:10
+ plotters.c:21)
+MacWindows.h line 3875   AliasHandle *  alias);
+
+Could not find or load the file ï¿½primitives.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Could not find or load the file ï¿½pu_utf8.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Error   : expression syntax error
+redraw.c line 999   nserror res;
+
+Error   : expression syntax error
+redraw.c line 1000   struct rect rect;
+
+Error   : ';' expected
+redraw.c line 1002   for (c = box->next;
+
+Error   : ';' expected
+redraw.c line 1004   c = c->next) {
+
+Error   : ';' expected
+redraw.c line 1005   if (c->type != BOX_TEXT) {
+
+Error   : illegal use of keyword
+redraw.c line 1006   continue;
+
+Error   : declaration syntax error
+redraw.c line 1008   rect.x0 = (x + c->x) * scale;
+
+Error   : declaration syntax error
+redraw.c line 1009   rect.y0 = (y + c->y + c->height * ratio) * scale;
+
+Error   : declaration syntax error
+redraw.c line 1010   rect.x1 = (x + c->x + c->width) * scale;
+
+Error   : declaration syntax error
+redraw.c line 1011   rect.y1 = (y + c->y + c->height * ratio) * scale;
+
+Error   : declaration syntax error
+redraw.c line 1012   res = ctx->plot->line(ctx, &plot_style_box, &rect);
+
+Error   : identifier expected
+redraw.c line 1013   if (res != NSERROR_OK) {
+
+Error   : identifier expected
+redraw.c line 1014   return false;
+
+Error   : identifier expected
+redraw.c line 1015   }
+
+Error   : identifier expected
+redraw.c line 1016   }
+
+Error   : identifier expected
+redraw.c line 1017   1
+
+Error   : identifier expected
+redraw.c line 1018   }
+
+Error   : illegal function definition
+redraw.c line 1041   {
+
+Error   : illegal function definition
+redraw.c line 1042   struct box *c;
+
+Error   : illegal function definition
+redraw.c line 1045   plot_style_t plot_style_box = {
+
+Error   : ';' expected
+redraw.c line 1048   };
+
+Error   : declaration syntax error
+redraw.c line 1049   plot_style_box.stroke_colour = colour;
+
+Error   : ';' expected
+redraw.c line 1050   nserror res;
+
+Error   : illegal name overloading
+redraw.c line 1051   struct rect rect;
+
+Error   : declaration syntax error
+redraw.c line 1054   for (c = box->children; c; c = c->next) {
+
+Error   : declaration syntax error
+redraw.c line 1055   if (c->type == BOX_TEXT) {
+
+Error   : declaration syntax error
+redraw.c line 1056   rect.x0 = (x + c->x) * scale;
+
+Error   : declaration syntax error
+redraw.c line 1057   rect.y0 = (y + c->y + c->height * ratio) * scale;
+
+Error   : declaration syntax error
+redraw.c line 1058   rect.x1 = (x + c->x + c->width) * scale;
+
+Error   : declaration syntax error
+redraw.c line 1059   rect.y1 = (y + c->y + c->height * ratio) * scale;
+
+Error   : declaration syntax error
+redraw.c line 1060   res = ctx->plot->line(ctx, &plot_style_box, &rect);
+
+Error   : identifier expected
+redraw.c line 1061   if (res != NSERROR_OK) {
+
+Error   : identifier expected
+redraw.c line 1062   return false;
+
+Error   : identifier expected
+redraw.c line 1063   }
+
+Error   : identifier expected
+redraw.c line 1064   } else if ((c->type == BOX_INLINE_CONTAINER) || (c->type == BOX_BLOCK)) {
+
+Error   : identifier expected
+redraw.c line 1065   if (!html_redraw_text_decoration_block(c,
+
+Error   : illegal function definition
+redraw.c line 1066   x + c->x, y + c->y,
+
+Error   : illegal function definition
+redraw.c line 1067   scale, colour, ratio, ctx))
+
+Error   : ';' expected
+redraw.c line 1068   return false;
+
+Error   : identifier expected
+redraw.c line 1069   }
+
+Error   : identifier expected
+redraw.c line 1070   }
+
+Error   : identifier expected
+redraw.c line 1071   1
+
+Error   : identifier expected
+redraw.c line 1072   }
+
+Error   : illegal function definition
+redraw.c line 1090   {
+
+Error   : illegal function definition
+redraw.c line 1091   static const enum css_text_decoration_e decoration[] = {
+
+Error   : ';' expected
+redraw.c line 1093   CSS_TEXT_DECORATION_LINE_THROUGH };
+
+Error   : ')' expected
+redraw.c line 1099   css_computed_color(box->style, &col);
+
+Error   : illegal function definition
+redraw.c line 1100   fgcol = nscss_color_to_ns(col);
+
+Error   : identifier expected
+redraw.c line 1103   if (html_redraw_printing == false)
+
+Error   : ';' expected
+redraw.c line 1104   fgcol = blend_colour(background_colour, fgcol);
+
+Error   : identifier expected
+redraw.c line 1106   if (box->type == BOX_INLINE) {
+
+Error   : identifier expected
+redraw.c line 1107   if (!box->inline_end)
+
+Error   : ';' expected
+redraw.c line 1108   return true;
+
+Error   : identifier expected
+redraw.c line 1109   for (i = 0; i != NOF_ELEMENTS(decoration); i++)
+
+Error   : ';' expected
+redraw.c line 1110   if (css_computed_text_decoration(box->style) &
+
+Error   : illegal constant expression
+redraw.c line 1111   decoration[i])
+
+Error   : ')' expected
+redraw.c line 1112   if (!html_redraw_text_decoration_inline(box,
+
+Error   : illegal function definition
+redraw.c line 1113   x_parent, y_parent, scale,
+
+Error   : illegal function definition
+redraw.c line 1114   fgcol, line_ratio[i], ctx))
+
+Error   : ';' expected
+redraw.c line 1115   return false;
+
+Error   : identifier expected
+redraw.c line 1116   } else {
+
+Error   : undefined identifier 'decoration'
+redraw.c line 1117   (sizeof(decoration)/sizeof(*(decoration)))
+
+Error   : pointer/array required
+redraw.c line 1118   if (css_computed_text_decoration(box->style) &
+
+Error   : undefined identifier 'decoration'
+redraw.c line 1119   decoration[i])
+
+Error   : undefined identifier 'x_parent'
+redraw.c line 1121   x_parent + box->x,
+
+Error   : ')' expected
+redraw.c line 1122   y_parent + box->y,
+
+Error   : undefined identifier 'ctx'
+redraw.c line 1124   fgcol, line_ratio[i], ctx))
+
+Error   : ';' expected
+redraw.c line 1125   0
+
+Error   : declaration syntax error
+redraw.c line 1128   return true;
+
+Error   : declaration syntax error
+redraw.c line 1129   }
+
+Error   : ')' expected
+redraw.c line 1919   NSLOG(netsurf, INFO, "%s", messages_get_errorcode(res));
+
+Error   : ')' expected
+save_complete.c line 178   NSLOG(netsurf, INFO, "fopen(): %s", strerror(errno));
+
+Error   : ';' expected
+save_complete.c line 178   NSLOG(netsurf, INFO, "fopen(): %s", strerror(errno));
+
+Error   : ')' expected
+save_complete.c line 1131   NSLOG(netsurf, INFO, "Unhandled node type: %d", type);
+
+Error   : ')' expected
+save_complete.c line 1163   NSLOG(netsurf, INFO, "fopen(): %s", strerror(errno));
+
+Error   : ';' expected
+save_complete.c line 1163   NSLOG(netsurf, INFO, "fopen(): %s", strerror(errno));
+
+Error   : ')' expected
+save_complete.c line 1252   NSLOG(netsurf, INFO, "fopen(): %s", strerror(errno));
+
+Error   : ')' expected
+save_complete.c line 1280   NSLOG(netsurf, INFO, "Failed to compile regexp '%s': %s\n",
+
+Error   : ';' expected
+save_complete.c line 1281   regex, errbuf);
+
+Error   : ')' expected
+save_text.c line 79   "failed to convert to local encoding, return %d", ret);
+
+Error   : illegal function definition
+(included from:
+ macos9.h:10
+ schedule.c:18)
+MacWindows.h line 3861   AliasHandle   alias);
+
+Error   : illegal function definition
+(included from:
+ macos9.h:10
+ schedule.c:18)
+MacWindows.h line 3875   AliasHandle *  alias);
+
+Error   : ')' expected
+script.c line 183   NSLOG(netsurf, INFO, "script %d done '%s'", i,
+
+Error   : ';' expected
+script.c line 184   nsurl_access(hlcache_handle_get_url(script)));
+
+Error   : ')' expected
+script.c line 186   NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
+
+Error   : ';' expected
+script.c line 186   NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
+
+Error   : ')' expected
+script.c line 191   NSLOG(netsurf, INFO, "script %s failed: %s",
+
+Error   : ';' expected
+script.c line 193   event->data.errordata.errormsg);
+
+Error   : ')' expected
+script.c line 198   NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
+
+Error   : ';' expected
+script.c line 198   NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
+
+Error   : ')' expected
+script.c line 246   NSLOG(netsurf, INFO, "script %d done '%s'", i,
+
+Error   : ';' expected
+script.c line 247   nsurl_access(hlcache_handle_get_url(script)));
+
+Error   : ')' expected
+script.c line 249   NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
+
+Error   : ';' expected
+script.c line 249   NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
+
+Error   : ')' expected
+script.c line 254   NSLOG(netsurf, INFO, "script %s failed: %s",
+
+Error   : ';' expected
+script.c line 256   event->data.errordata.errormsg);
+
+Error   : ')' expected
+script.c line 261   NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
+
+Error   : ';' expected
+script.c line 261   NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
+
+Error   : ')' expected
+script.c line 312   NSLOG(netsurf, INFO, "script %d done '%s'", i,
+
+Error   : ';' expected
+script.c line 313   nsurl_access(hlcache_handle_get_url(script)));
+
+Error   : ')' expected
+script.c line 315   NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
+
+Error   : ';' expected
+script.c line 315   NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
+
+Error   : ')' expected
+script.c line 334   NSLOG(netsurf, INFO, "unpause returned 0x%x", err);
+
+Error   : ')' expected
+script.c line 341   NSLOG(netsurf, INFO, "script %s failed: %s",
+
+Error   : ';' expected
+script.c line 343   event->data.errordata.errormsg);
+
+Error   : ')' expected
+script.c line 349   NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
+
+Error   : ';' expected
+script.c line 349   NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
+
+Error   : ')' expected
+script.c line 357   NSLOG(netsurf, INFO, "unpause returned 0x%x", err);
+
+Error   : ')' expected
+script.c line 404   NSLOG(netsurf, INFO, "script %i '%s'", c->scripts_count,
+
+Error   : ';' expected
+script.c line 405   nsurl_access(joined));
+
+Error   : ')' expected
+script.c line 489   NSLOG(netsurf, INFO, "Fetch failed with error %d", ns_error);
+
+Error   : ';' expected
+script.c line 489   NSLOG(netsurf, INFO, "Fetch failed with error %d", ns_error);
+
+Error   : ')' expected
+script.c line 493   NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
+
+Error   : ';' expected
+script.c line 493   NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
+
+Error   : ')' expected
+script.c line 582   NSLOG(netsurf, INFO, "javascript context %p ", c->js_thread);
+
+Error   : ';' expected
+script.c line 582   NSLOG(netsurf, INFO, "javascript context %p ", c->js_thread);
+
+Error   : ')' expected
+script.c line 589   NSLOG(netsurf, INFO, "content %p parser %p node %p", c, c->parser,
+
+Error   : ';' expected
+script.c line 590   node);
+
+Could not find or load the file ï¿½strict-transport-security.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+
+Error   : illegal implicit conversion from 'int' to
+'const char *'
+urldb.c line 676   slash = strchr(host, '/');
+
+Error   : illegal implicit conversion from 'int' to
+'const char *'
+urldb.c line 760   dot = strchr(b, '.');
+
+Error   : illegal implicit conversion from 'int' to
+'const char *'
+urldb.c line 913   slash = strchr(prefix, '/');
+
+Error   : illegal implicit conversion from 'int' to
+'const char *'
+urldb.c line 1218   dot = strchr(b, '.');
+
+Error   : illegal implicit conversion from 'int' to
+'const char *'
+urldb.c line 1323   slash = strchr(path + 1, '/');
+
+Error   : illegal implicit conversion from 'int' to
+'const char *'
+urldb.c line 1974   const char *semi = strchr(cur + 1, ';');
+
+Error   : illegal implicit conversion from 'int' to
+'char *'
+urldb.c line 2038   slash = strrchr(path_data, '/');
+
+Error   : illegal implicit conversion from 'int' to
+'char *'
+urldb.c line 2107   slash = strchr(segment, '/');
+
+Error   : illegal implicit conversion from 'int' to
+'char *'
+urldb.c line 2200   part = strrchr(buf, '.');
+
+Error   : illegal implicit conversion from 'int' to
+'const char *'
+urldb.c line 3818   scheme_sep = strstr(prefix, "://");
+
+Error   : illegal implicit conversion from 'int' to
+'const char *'
+urldb.c line 3822   slash = strchr(prefix, '/');
+
+Error   : illegal implicit conversion from 'int' to
+'const char *'
+urldb.c line 4008   (dot = strchr(hptr + 1, '.')) == NULL ||
+
+Error   : illegal implicit conversion from 'int' to
+'char *'
+urldb.c line 4065   dot = strchr(c->domain + 1, '.');
+
+Error   : ')' expected
+useragent.c line 73   NSLOG(netsurf, INFO, "Built user agent \"%s\"",
+
+Error   : ';' expected
+useragent.c line 74   core_user_agent_string);
+
+Error   : illegal function definition
+(included from:
+ macos9.h:10
+ window.c:21)
+MacWindows.h line 3861   AliasHandle   alias);
+
+Error   : illegal function definition
+(included from:
+ macos9.h:10
+ window.c:21)
+MacWindows.h line 3875   AliasHandle *  alias);
+
+Could not find or load the file ï¿½www-authenticate.cï¿½ for target ï¿½MacSurfï¿½ for project ï¿½MacSurfï¿½.
+

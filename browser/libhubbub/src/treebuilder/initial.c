@@ -13,7 +13,7 @@
 #include "treebuilder/internal.h"
 #include "treebuilder/treebuilder.h"
 #include "utils/utils.h"
-#include "utils/string.h"
+#include "utils/hub_string.h"
 
 
 #define S(s)	{ s, sizeof s - 1 }

@@ -17,7 +17,7 @@
 #include "charset/detect.h"
 
 #include "utils/utils.h"
-#include "utils/string.h"
+#include "utils/hub_string.h"
 
 
 /**

@@ -71,9 +71,10 @@ typedef unsigned long mode_t;
 
 #ifdef __MWERKS__
 #include <MacTypes.h>
-/* stat.h, fcntl.h, mac_dirent.h for POSIX types.
- * Do NOT include <string.h> here — CW8 finds libhubbub's internal
- * string.h. MSL's string.h is already pulled in by MacTypes.h. */
+/* stat.h, fcntl.h, string.h, mac_dirent.h for POSIX types.
+ * string.h is safe now that libhubbub's internal string.h was
+ * renamed to hub_string.h to avoid shadowing MSL's version. */
+#include <string.h>
 #include <stat.h>
 #include <fcntl.h>
 #include "mac_dirent.h"
@@ -109,15 +110,14 @@ extern void nslog_log(const char *file, const char *func,
 		int ln, const char *format, ...);
 
 /*
- * C89-compatible NSLOG — three fixed arguments, no variadic macro.
- * Calls with extra printf arguments must call nslog_log() directly.
+ * NSLOG — variadic logging macro.
+ *
+ * CW8 8.3 may support C99 __VA_ARGS__ as an extension even in C89
+ * mode. If it does, this macro correctly forwards all arguments
+ * to nslog_log. If CW8 rejects ..., we'll need a different approach.
  */
-#define NSLOG(catname, level, logmsg) \
-	do { \
-		if (NSLOG_LEVEL_##level >= NSLOG_COMPILED_MIN_LEVEL) { \
-			nslog_log(__FILE__, "", __LINE__, logmsg); \
-		} \
-	} while(0)
+#define NSLOG(catname, level, ...) \
+	nslog_log(__FILE__, "", __LINE__, __VA_ARGS__)
 
 /*
  * nslog_ensure_t — defined in log.h which we block above.

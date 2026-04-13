@@ -9,7 +9,7 @@
 #include <inttypes.h>
 #include <stdbool.h>
 #include <string.h>
-#include "utils/string.h"
+#include "utils/hub_string.h"
 
 
 /**
