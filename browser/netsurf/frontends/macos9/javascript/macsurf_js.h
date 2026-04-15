@@ -41,9 +41,28 @@ bool macsurf_js_exec(struct jscontext *ctx, const char *src, size_t srclen);
 void macsurf_js_pump(struct jscontext *ctx);
 bool macsurf_js_smoketest(struct jscontext *ctx);
 
+/* Evaluate src and write the toString'd result into `out` (truncated to
+ * outlen-1 chars + NUL).  Returns true on success.  Convenience for
+ * surfaces that need to display a JS-computed value. */
+bool macsurf_js_eval_string(struct jscontext *ctx, const char *src,
+		char *out, size_t outlen);
+
 /* Pump every live jsheap once.  Called from the main event loop after
  * WaitNextEvent so timer callbacks fire even when no script is running. */
 void macsurf_js_pump_all(void);
+
+/* console.log capture buffer.  Every console.log/warn/info/error call
+ * appends one line to this buffer (alongside the existing NSLOG path).
+ * Read with macsurf_js_console_get(); reset between fetches with
+ * macsurf_js_console_reset(). */
+const char *macsurf_js_console_get(void);
+void        macsurf_js_console_reset(void);
+
+/* Scan src for <script>...</script> blocks and pcall each via the
+ * supplied jscontext.  Output (return values + console.log lines)
+ * collects in the console buffer.  Returns the number of scripts run. */
+int macsurf_js_run_scripts_in_html(struct jscontext *ctx,
+		const char *src, size_t srclen);
 
 /* Fatal handler — passed to duk_create_heap; never calls exit/abort. */
 void macsurf_js_fatal(void *udata, const char *msg);

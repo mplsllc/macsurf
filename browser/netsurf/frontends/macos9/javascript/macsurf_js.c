@@ -122,6 +122,165 @@ macsurf_js_pump(struct jscontext *ctx)
 	/* TODO stage 9: drain queued DOM events here. */
 }
 
+/* ----------------------------------------------------------------- */
+/* console.log capture buffer                                         */
+/* ----------------------------------------------------------------- */
+
+#define MACSURF_JS_CONSOLE_CAP 8192
+static char macsurf_js_console_buf[MACSURF_JS_CONSOLE_CAP];
+static size_t macsurf_js_console_len = 0;
+
+const char *
+macsurf_js_console_get(void)
+{
+	macsurf_js_console_buf[macsurf_js_console_len] = 0;
+	return macsurf_js_console_buf;
+}
+
+void
+macsurf_js_console_reset(void)
+{
+	macsurf_js_console_len = 0;
+	macsurf_js_console_buf[0] = 0;
+}
+
+void
+macsurf_js_console_append(const char *line)
+{
+	size_t n;
+	if (line == NULL) return;
+	n = strlen(line);
+	if (macsurf_js_console_len + n + 1 >= MACSURF_JS_CONSOLE_CAP) {
+		/* Truncate if we'd overflow.  Leave 1 byte for newline. */
+		n = MACSURF_JS_CONSOLE_CAP - macsurf_js_console_len - 2;
+		if (n <= 0) return;
+	}
+	memcpy(macsurf_js_console_buf + macsurf_js_console_len, line, n);
+	macsurf_js_console_len += n;
+	macsurf_js_console_buf[macsurf_js_console_len++] = '\n';
+	macsurf_js_console_buf[macsurf_js_console_len] = 0;
+}
+
+/* ----------------------------------------------------------------- */
+/* HTML <script> extractor                                            */
+/* ----------------------------------------------------------------- */
+
+static int
+ci_match(const char *p, const char *end, const char *needle)
+{
+	size_t i;
+	for (i = 0; needle[i] != 0; i++) {
+		char c;
+		if (p + i >= end) return 0;
+		c = p[i];
+		if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+		if (c != needle[i]) return 0;
+	}
+	return 1;
+}
+
+int
+macsurf_js_run_scripts_in_html(struct jscontext *ctx,
+		const char *src, size_t srclen)
+{
+	const char *p   = src;
+	const char *end = src + srclen;
+	int count = 0;
+
+	if (ctx == NULL || ctx->duk == NULL || src == NULL || srclen == 0) {
+		return 0;
+	}
+
+	while (p < end) {
+		const char *tag_start;
+		const char *body_start;
+		const char *body_end;
+
+		/* Find next <script (case-insensitive). */
+		while (p < end && *p != '<') p++;
+		if (p >= end) break;
+		tag_start = p;
+		if (!ci_match(p + 1, end, "script")) { p++; continue; }
+		/* Find end of opening tag. */
+		while (p < end && *p != '>') p++;
+		if (p >= end) break;
+		body_start = ++p;
+		/* Find </script>. */
+		body_end = NULL;
+		while (p + 8 < end) {
+			if (p[0] == '<' && p[1] == '/' &&
+			    ci_match(p + 2, end, "script")) {
+				body_end = p;
+				break;
+			}
+			p++;
+		}
+		if (body_end == NULL) break;
+
+		/* Eval the script body. */
+		if (duk_peval_lstring(ctx->duk, body_start,
+				(duk_size_t)(body_end - body_start)) != 0) {
+			const char *err = duk_safe_to_string(ctx->duk, -1);
+			char line[256];
+			line[0] = 0;
+			if (err != NULL) {
+				size_t en = strlen(err);
+				if (en > 240) en = 240;
+				memcpy(line, "ERR: ", 5);
+				memcpy(line + 5, err, en);
+				line[5 + en] = 0;
+			}
+			macsurf_js_console_append(line);
+		}
+		duk_pop(ctx->duk);
+
+		count++;
+		(void)tag_start;
+		/* Advance past </script> closing tag. */
+		while (p < end && *p != '>') p++;
+		if (p < end) p++;
+	}
+	return count;
+}
+
+/*
+ * macsurf_js_eval_string — eval src and write the toString'd result
+ * into out (NUL-terminated, truncated to outlen-1).  Caller-friendly
+ * surface for showing JS-computed values in the UI.
+ */
+bool
+macsurf_js_eval_string(struct jscontext *ctx, const char *src,
+		char *out, size_t outlen)
+{
+	const char *s;
+	size_t n;
+
+	if (out == NULL || outlen == 0) return false;
+	out[0] = 0;
+	if (ctx == NULL || ctx->duk == NULL || src == NULL) return false;
+
+	if (duk_peval_string(ctx->duk, src) != 0) {
+		s = duk_safe_to_string(ctx->duk, -1);
+		if (s != NULL) {
+			n = strlen(s);
+			if (n >= outlen) n = outlen - 1;
+			memcpy(out, s, n);
+			out[n] = 0;
+		}
+		duk_pop(ctx->duk);
+		return false;
+	}
+	s = duk_safe_to_string(ctx->duk, -1);
+	if (s != NULL) {
+		n = strlen(s);
+		if (n >= outlen) n = outlen - 1;
+		memcpy(out, s, n);
+		out[n] = 0;
+	}
+	duk_pop(ctx->duk);
+	return true;
+}
+
 /*
  * macsurf_js_smoketest — Milestone 1 proof of life.  Evaluates "1+1"
  * and returns true iff the result is 2.  Also evaluates "typeof window"

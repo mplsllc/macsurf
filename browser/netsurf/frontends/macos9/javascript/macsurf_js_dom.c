@@ -443,16 +443,28 @@ macsurf_document_set_title(duk_context *duk)
 /* console.log — routes to NSLOG.                                     */
 /* ----------------------------------------------------------------- */
 
+extern void macsurf_js_console_append(const char *line);
+
 static duk_ret_t
 macsurf_console_log(duk_context *duk)
 {
 	duk_idx_t n = duk_get_top(duk);
 	duk_idx_t i;
-	for (i = 0; i < n; i++) {
-		const char *s = duk_safe_to_string(duk, i);
-		nslog_log(__FILE__, "", __LINE__,
-				"console.log: %s", s != NULL ? s : "(null)");
+	/* Concatenate args with spaces — closest to console.log semantics. */
+	if (n == 0) {
+		macsurf_js_console_append("");
+		return 0;
 	}
+	duk_push_string(duk, " ");
+	duk_insert(duk, 0);
+	duk_join(duk, n);
+	{
+		const char *line = duk_safe_to_string(duk, -1);
+		nslog_log(__FILE__, "", __LINE__,
+				"console.log: %s", line != NULL ? line : "(null)");
+		macsurf_js_console_append(line);
+	}
+	duk_pop(duk);
 	return 0;
 }
 
