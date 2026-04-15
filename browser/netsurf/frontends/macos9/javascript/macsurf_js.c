@@ -16,6 +16,17 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
+
+/* cbrt — C99 cube root, not in MSL.  Duktape's Math.cbrt calls it
+ * via duk__cbrt.  Lives in this always-linked TU so its presence
+ * isn't dependent on macos9_extra_stubs.c being in the project. */
+double cbrt(double x)
+{
+	if (x == 0.0) return 0.0;
+	if (x < 0.0)  return -pow(-x, 1.0 / 3.0);
+	return pow(x, 1.0 / 3.0);
+}
 
 #include "utils/errors.h"
 #include "utils/log.h"
