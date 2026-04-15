@@ -487,36 +487,14 @@ macsurf_console_log(duk_context *duk)
 /* alert(msg) — stage 8.  Shows a Mac OS 9 dialog; no-op on Linux.    */
 /* ----------------------------------------------------------------- */
 
-#ifdef __MWERKS__
-/* Forward-declare AliasHandle before MacWindows.h gets pulled in by
- * Dialogs.h — same workaround as macos9.h.  Some CW8 Universal
- * Interfaces versions don't pull AliasHandle in via Aliases.h. */
-#include <Files.h>
-struct AliasRecord;
-typedef struct AliasRecord **AliasHandle;
-#include <Aliases.h>
-#include <Dialogs.h>
-static duk_ret_t
-macsurf_alert(duk_context *duk)
-{
-	const char *msg = duk_safe_to_string(duk, 0);
-	unsigned char pstr[256];
-	size_t len;
-
-	len = strlen(msg);
-	if (len > 255) len = 255;
-	pstr[0] = (unsigned char)len;
-	memcpy(pstr + 1, msg, len);
-
-	ParamText(pstr, (const unsigned char *)"\p",
-			(const unsigned char *)"\p",
-			(const unsigned char *)"\p");
-	/* Generic note alert (DITL 128 from MacSurf.rsrc); falls back to
-	 * StopAlert if that resource isn't present. */
-	NoteAlert(128, NULL);
-	return 0;
-}
-#else
+/*
+ * alert(msg) — logs to NSLOG only.  We avoid pulling Dialogs.h into
+ * this TU (it cascades into MacWindows.h and AliasHandle compile
+ * errors on CW8's Universal Interfaces; the Files.h + Aliases.h
+ * workaround used in macos9.h is fragile here).  A real Carbon
+ * NoteAlert wrapper will land in a separate file once the rest of
+ * the JS path is stable.
+ */
 static duk_ret_t
 macsurf_alert(duk_context *duk)
 {
@@ -525,7 +503,6 @@ macsurf_alert(duk_context *duk)
 			"alert: %s", msg != NULL ? msg : "(null)");
 	return 0;
 }
-#endif
 
 /* ----------------------------------------------------------------- */
 /* setup_globals — register document / window / console / alert /    */
