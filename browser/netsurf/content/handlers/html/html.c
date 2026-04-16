@@ -735,11 +735,11 @@ html_process_encoding_change(struct content *c,
 static bool
 html_process_data(struct content *c, const char *data, unsigned int size)
 {
-	MS_LOG("html process data");
 	html_content *html = (html_content *) c;
 	dom_hubbub_error dom_ret;
 	nserror err = NSERROR_OK; /* assume its all going to be ok */
 
+	MS_LOG("html process data");
 	dom_ret = dom_hubbub_parser_parse_chunk(html->parser,
 					      (const uint8_t *) data,
 					      size);
@@ -777,7 +777,6 @@ html_process_data(struct content *c, const char *data, unsigned int size)
 
 static bool html_convert(struct content *c)
 {
-	MS_LOG("html convert");
 	html_content *htmlc = (html_content *) c;
 	dom_exception exc; /* returned by libdom functions */
 
@@ -790,6 +789,7 @@ static bool html_convert(struct content *c)
 	 * render and it would annoy the user to fail the entire
 	 * render for want of a quirks stylesheet.
 	 */
+	MS_LOG("html convert");
 	exc = dom_document_get_quirks_mode(htmlc->document, &htmlc->quirks);
 	if (exc == DOM_NO_ERR) {
 		html_css_quirks_stylesheets(htmlc);
