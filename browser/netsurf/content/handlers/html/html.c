@@ -844,6 +844,7 @@ html_begin_conversion(html_content *htmlc)
 	dom_string *node_name = NULL;
 	dom_hubbub_error error;
 
+	MS_LOG("html begin conversion");
 	/* The act of completing the parse can result in additional data
 	 * being flushed through the parser. This may result in new style or
 	 * script nodes, upon which the conversion depends. Thus, once we
