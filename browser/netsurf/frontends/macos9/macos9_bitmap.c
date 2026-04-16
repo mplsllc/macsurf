@@ -78,7 +78,7 @@ macos9_bitmap_get_opaque(void *bitmap)
 	return false;
 }
 
-static unsigned char *
+unsigned char *
 macos9_bitmap_get_buffer(void *bitmap)
 {
 	struct macos9_bitmap *bm = bitmap;
@@ -89,7 +89,7 @@ macos9_bitmap_get_buffer(void *bitmap)
 	return NULL;
 }
 
-static size_t
+size_t
 macos9_bitmap_get_rowstride(void *bitmap)
 {
 	struct macos9_bitmap *bm = bitmap;
@@ -100,7 +100,7 @@ macos9_bitmap_get_rowstride(void *bitmap)
 	return 0;
 }
 
-static int
+int
 macos9_bitmap_get_width(void *bitmap)
 {
 	struct macos9_bitmap *bm = bitmap;
@@ -111,7 +111,7 @@ macos9_bitmap_get_width(void *bitmap)
 	return 0;
 }
 
-static int
+int
 macos9_bitmap_get_height(void *bitmap)
 {
 	struct macos9_bitmap *bm = bitmap;
