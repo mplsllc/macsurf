@@ -1,0 +1,234 @@
+name: "Build"
+
+on: [push]
+
+jobs:
+  # Native linux builds
+  linux:
+    name: 'Linux: ${{ matrix.os }}: ${{ matrix.compiler.vendor }}'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - ubuntu-24.04
+        compiler:
+          # The NetSurf build system can't find LLVM AR (it looks for it
+          # in /usr/lib instead of /usr/bin:
+          #     `make: /usr/lib/llvm-ar: No such file or directory`).
+          # So we need to make it explicit for llvm.
+          - { vendor: gnu,  CC: gcc,   AR: ar }
+          - { vendor: llvm, CC: clang, AR: llvm-ar }
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 1
+
+    - name: apt-get install packages
+      run: sudo apt-get update -qq &&
+           sudo apt-get install --no-install-recommends -y
+               bison
+               build-essential
+               check
+               clang
+               flex
+               git
+               gperf
+               llvm
+               pkg-config
+
+    - name: Get env.sh
+      run: |
+           mkdir projects
+           wget -O projects/env.sh https://raw.githubusercontent.com/netsurf-browser/netsurf/refs/heads/master/docs/env.sh
+
+    - name: Build and install project deps
+      env:
+        CC: ${{ matrix.compiler.CC }}
+        AR: ${{ matrix.compiler.AR }}
+        TARGET: ${{ github.event.repository.name }}
+      run: |
+          export TARGET_WORKSPACE="$(pwd)/projects"
+          source projects/env.sh
+          ns-clone -d -s -b ${GITHUB_REF_NAME}
+          ns-make-libs install
+
+    - name: Build Library
+      env:
+        CC: ${{ matrix.compiler.CC }}
+        AR: ${{ matrix.compiler.AR }}
+        TARGET: ${{ github.event.repository.name }}
+      run: |
+          export TARGET_WORKSPACE="$(pwd)/projects"
+          source projects/env.sh
+          make -j"$(nproc)"
+
+    - name: Unit Tests
+      env:
+        CC: ${{ matrix.compiler.CC }}
+        AR: ${{ matrix.compiler.AR }}
+        TARGET: ${{ github.event.repository.name }}
+      run: |
+          export TARGET_WORKSPACE="$(pwd)/projects"
+          source projects/env.sh
+          make test
+
+  # Cross compile using toolchains built in the toolchains repo.
+  cross:
+    name: 'Cross: ${{ matrix.toolchain }}' # ATM toolchain unique across builds
+    runs-on: ubuntu-24.04 # Matches toolchains workflow
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain:
+          - arm-riscos-gnueabi
+          - arm-unknown-riscos
+          - i686-w64-mingw32
+          - m5475-atari-mint
+          - m68k-atari-mint
+          - m68k-unknown-amigaos
+          - ppc-amigaos
+          - x86_64-w64-mingw32
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 1
+
+    - name: apt-get install packages
+      run: sudo apt-get update -qq &&
+           sudo apt-get install --no-install-recommends -y
+               bison
+               build-essential
+               ccache
+               check
+               clang
+               flex
+               git
+               gperf
+               jlha-utils
+               libcurl4-openssl-dev
+               libhtml-parser-perl
+               libjpeg-dev
+               libpng-dev
+               librsvg2-dev
+               llvm
+               nsis
+               pkg-config
+
+    - name: Get env.sh
+      run: |
+           mkdir projects
+           wget -O projects/env.sh https://raw.githubusercontent.com/netsurf-browser/netsurf/refs/heads/master/docs/env.sh
+
+
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: ${{ github.job }}-${{ matrix.toolchain }}
+        max-size: 128M
+
+    # look for toolchain for this branch name first, then default to master
+    - name: Download toolchain
+      run: |
+        set -e
+        
+        TOOLCHAIN_NAME="${{ matrix.toolchain }}"
+        BRANCH_NAME="${{ github.ref_name }}"
+        
+        # Function to try downloading toolchain from a specific tag
+        download_toolchain() {
+          local ref="$1"
+          local download_url="https://github.com/netsurf-browser/toolchains/releases/download/${ref}/${TOOLCHAIN_NAME}.tar.gz"
+          
+          echo "Trying to download toolchain from ref: $ref"
+          echo "URL: $download_url"
+          
+          if curl -f -L -o "${TOOLCHAIN_NAME}.tar.gz" "$download_url"; then
+            echo "Got toolchain with ref: $ref"
+            return 0
+          else
+            echo "Failed to download toolchain with ref: $ref"
+            return 1
+          fi
+        }
+        
+        # Try branch-specific toolchain first
+        safe_branch=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9._-]/-/g')
+        branch_tag="gh-${safe_branch}-unstable"
+        
+        if download_toolchain "$branch_tag"; then
+          echo "Downloaded branch-specific toolchain"
+        elif download_toolchain "gh-master-unstable"; then
+          echo "Downloaded fallback master toolchain"
+        else
+          echo "Failed to download any toolchain variant"
+          exit 1
+        fi
+
+    - name: Install toolchain
+      run: |
+        echo "Installing toolchain: ${{ matrix.toolchain }}"
+        sudo tar -xzf "${{ matrix.toolchain }}.tar.gz" -C /
+        rm "${{ matrix.toolchain }}.tar.gz"
+        echo "Toolchain testament:"
+        cat /opt/netsurf/${{ matrix.toolchain }}/BUILD_INFO.txt
+
+    - name: Build and install project libs
+      env:
+        HOST: "${{ matrix.toolchain }}"
+        TARGET_WORKSPACE: "${{ github.workspace }}/projects" # Same as "$(pwd)/projects"
+        TARGET: ${{ github.event.repository.name }}
+        Q:
+      run: |
+        echo "HOST=$HOST"
+        echo "TARGET_WORKSPACE=$TARGET_WORKSPACE"
+        
+        echo "Looking for cross-compiler tools..."
+        echo "Expected path: /opt/netsurf/${HOST}/cross/bin/"
+        if [ -f "/opt/netsurf/${HOST}/cross/bin/${HOST}-gcc" ]; then
+          echo "Found: /opt/netsurf/${HOST}/cross/bin/${HOST}-gcc"
+          echo "Testing if it's executable:"
+          /opt/netsurf/${HOST}/cross/bin/${HOST}-gcc --version || echo "Failed to execute gcc --version"
+          echo "Testing dumpmachine output:"
+          /opt/netsurf/${HOST}/cross/bin/${HOST}-gcc -dumpmachine || echo "Failed to execute gcc -dumpmachine"
+        else
+          echo "NOT FOUND: /opt/netsurf/${HOST}/cross/bin/${HOST}-gcc"
+        fi
+        
+        echo "Sourcing env.sh with error checking..."
+        set -e  # Exit on any error
+        if ! source projects/env.sh; then
+          echo "env.sh failed with exit code $?"
+          exit 1
+        fi
+        echo "env.sh sourced successfully"
+        echo "BUILD=$BUILD"
+        echo "HOST=$HOST"
+        echo "TARGET_WORKSPACE=$TARGET_WORKSPACE"
+        echo "USE_CPUS=$USE_CPUS"
+
+        echo "Cloning libs..."
+        ns-clone -d -s -b ${GITHUB_REF_NAME}
+        echo "Building and installing tools..."
+        ns-make-tools install
+        echo "Building and installing libs..."
+        ns-make-libs install
+
+    - name: Build Library
+      env:
+        HOST: "${{ matrix.toolchain }}"
+        TARGET_WORKSPACE: "${{ github.workspace }}/projects" # Same as "$(pwd)/projects"
+        Q:
+      run: |
+        echo "Sourcing env.sh with error checking..."
+        set -e  # Exit on any error
+        if ! source projects/env.sh; then
+          echo "env.sh failed with exit code $?"
+          exit 1
+        fi
+        make -j"$(nproc)"

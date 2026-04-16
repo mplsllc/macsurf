@@ -1,0 +1,76 @@
+name: "Linux Build"
+
+on: [push]
+
+jobs:
+  linux:
+    name: '${{ matrix.os }}: ${{ matrix.compiler.vendor }}'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - ubuntu-24.04
+        compiler:
+          # The NetSurf build system can't find LLVM AR (it looks for it
+          # in /usr/lib instead of /usr/bin:
+          #     `make: /usr/lib/llvm-ar: No such file or directory`).
+          # So we need to make it explicit for llvm.
+          - { vendor: gnu,  CC: gcc,   AR: ar }
+          - { vendor: llvm, CC: clang, AR: llvm-ar }
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 1
+
+    - name: apt-get install packages
+      run: sudo apt-get update -qq &&
+           sudo apt-get install --no-install-recommends -y
+               bison
+               build-essential
+               check
+               clang
+               flex
+               git
+               gperf
+               llvm
+               pkg-config
+
+    - name: Get env.sh
+      run: |
+           mkdir projects
+           wget -O projects/env.sh https://raw.githubusercontent.com/netsurf-browser/netsurf/refs/heads/master/docs/env.sh
+
+    - name: Build and install project deps
+      env:
+        CC: ${{ matrix.compiler.CC }}
+        AR: ${{ matrix.compiler.AR }}
+        TARGET: ${{ github.event.repository.name }}
+      run: |
+          export TARGET_WORKSPACE="$(pwd)/projects"
+          source projects/env.sh
+          ns-clone -d -s
+          ns-make-libs install
+
+    - name: Build Library
+      env:
+        CC: ${{ matrix.compiler.CC }}
+        AR: ${{ matrix.compiler.AR }}
+        TARGET: ${{ github.event.repository.name }}
+      run: |
+          export TARGET_WORKSPACE="$(pwd)/projects"
+          source projects/env.sh
+          make -j"$(nproc)"
+
+    - name: Unit Tests
+      env:
+        CC: ${{ matrix.compiler.CC }}
+        AR: ${{ matrix.compiler.AR }}
+        TARGET: ${{ github.event.repository.name }}
+      run: |
+          export TARGET_WORKSPACE="$(pwd)/projects"
+          source projects/env.sh
+          make test

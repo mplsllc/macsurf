@@ -15,7 +15,7 @@
 #ifndef  dom_utils_valid_h_
 #define  dom_utils_valid_h_
 
-#include <stdbool.h>
+/* stdbool removed for CW8 -- prefix provides bool */
 #include <dom/core/string.h>
 
 bool _dom_validate_name(dom_string *name);

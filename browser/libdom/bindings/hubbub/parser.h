@@ -1,8 +1,13 @@
 /*
- * This file is part of libdom.
- * Licensed under the MIT License,
- *                http://www.opensource.org/licenses/mit-license.php
- * Copyright 2007 John-Mark Bell <jmb@netsurf-browser.org>
+ * MacSurf wrapper — dom/bindings/hubbub/parser.h
+ *
+ * Inlined copy of browser/libdom/bindings/hubbub/parser.h.
+ * The original wrapper used #include "../../../../bindings/hubbub/parser.h"
+ * which CW8 can't resolve. This file IS the content now.
+ *
+ * Note: the "errors.h" include below resolves via the
+ * libdom:bindings:hubbub: access path to the real errors.h
+ * at browser/libdom/bindings/hubbub/errors.h.
  */
 
 #ifndef dom_hubbub_parser_h_
@@ -11,11 +16,46 @@
 #include <stddef.h>
 #include <inttypes.h>
 
-#include <hubbub/errors.h>
-
 #include <dom/dom.h>
 
-#include "errors.h"
+/* Inlined dom_hubbub_error (normally from "errors.h" in this dir)
+ * and HUBBUB constants. Self-contained so CW8 access-path quirks
+ * don't break the cascade. */
+#ifndef dom_hubbub_errors_h_
+#define dom_hubbub_errors_h_
+#ifndef hubbub_errors_h_
+#define hubbub_errors_h_
+typedef enum hubbub_error {
+	HUBBUB_OK             = 0,
+	HUBBUB_REPROCESS      = 1,
+	HUBBUB_ENCODINGCHANGE = 2,
+	HUBBUB_PAUSED         = 3,
+	HUBBUB_NOMEM          = 5,
+	HUBBUB_BADPARM        = 6,
+	HUBBUB_INVALID        = 7,
+	HUBBUB_FILENOTFOUND   = 8,
+	HUBBUB_NEEDDATA       = 9,
+	HUBBUB_BADENCODING    = 10,
+	HUBBUB_UNKNOWN        = 11
+} hubbub_error;
+#endif
+typedef enum {
+	DOM_HUBBUB_OK           = 0,
+	DOM_HUBBUB_NOMEM        = 1,
+	DOM_HUBBUB_BADPARM      = 2,
+	DOM_HUBBUB_DOM          = 3,
+	DOM_HUBBUB_HUBBUB_ERR   = (1<<16),
+	DOM_HUBBUB_HUBBUB_ERR_PAUSED = (DOM_HUBBUB_HUBBUB_ERR | HUBBUB_PAUSED),
+	DOM_HUBBUB_HUBBUB_ERR_ENCODINGCHANGE = (DOM_HUBBUB_HUBBUB_ERR | HUBBUB_ENCODINGCHANGE),
+	DOM_HUBBUB_HUBBUB_ERR_NOMEM = (DOM_HUBBUB_HUBBUB_ERR | HUBBUB_NOMEM),
+	DOM_HUBBUB_HUBBUB_ERR_BADPARM = (DOM_HUBBUB_HUBBUB_ERR | HUBBUB_BADPARM),
+	DOM_HUBBUB_HUBBUB_ERR_INVALID = (DOM_HUBBUB_HUBBUB_ERR | HUBBUB_INVALID),
+	DOM_HUBBUB_HUBBUB_ERR_FILENOTFOUND = (DOM_HUBBUB_HUBBUB_ERR | HUBBUB_FILENOTFOUND),
+	DOM_HUBBUB_HUBBUB_ERR_NEEDDATA = (DOM_HUBBUB_HUBBUB_ERR | HUBBUB_NEEDDATA),
+	DOM_HUBBUB_HUBBUB_ERR_BADENCODING = (DOM_HUBBUB_HUBBUB_ERR | HUBBUB_BADENCODING),
+	DOM_HUBBUB_HUBBUB_ERR_UNKNOWN = (DOM_HUBBUB_HUBBUB_ERR | HUBBUB_UNKNOWN)
+} dom_hubbub_error;
+#endif
 
 /**
  * Type of script completion function
@@ -31,77 +71,38 @@ typedef enum dom_hubbub_encoding_source {
 	DOM_HUBBUB_ENCODING_SOURCE_META
 } dom_hubbub_encoding_source;
 
-/* The recommended way to use the parser is:
- *
- * dom_hubbub_parser_create(...);
- * dom_hubbub_parser_parse_chunk(...);
- * call _parse_chunk for all chunks of data
- *
- * After you have parsed the data,
- *
- * dom_hubbub_parser_completed(...);
- * dom_hubbub_parser_destroy(...);
- *
- * Clients must ensure that these function calls above are called in
- * the order shown. dom_hubbub_parser_create() will pass the ownership
- * of the document to the client. After that, the parser should be destroyed.
- * The client must not call any method of this parser after destruction.
- */
-
-/**
- * Parameter block for dom_hubbub_parser_create
- */
 typedef struct dom_hubbub_parser_params {
-	const char *enc; /**< Source charset, or NULL */
-	bool fix_enc; /**< Whether fix the encoding */
-
-	bool enable_script; /**< Whether scripting should be enabled. */
-	dom_script script; /**< Script callback function */
-
-	dom_msg msg; /**< Informational message function */
-	void *ctx; /**< Pointer to client-specific private data */
-
-	/** default action fetcher function */
+	const char *enc;
+	bool fix_enc;
+	bool enable_script;
+	dom_script script;
+	dom_msg msg;
+	void *ctx;
 	dom_events_default_action_fetcher daf;
 } dom_hubbub_parser_params;
 
-/* Create a Hubbub parser instance */
 dom_hubbub_error dom_hubbub_parser_create(dom_hubbub_parser_params *params,
 		dom_hubbub_parser **parser,
 		dom_document **document);
 
-/* Create a Hubbub parser instance for a document fragment */
 dom_hubbub_error dom_hubbub_fragment_parser_create(dom_hubbub_parser_params *params,
 		dom_document *document,
 		dom_hubbub_parser **parser,
 		dom_document_fragment **fragment);
 
-/* Destroy a Hubbub parser instance */
 void dom_hubbub_parser_destroy(dom_hubbub_parser *parser);
 
-/* Parse a chunk of data */
 dom_hubbub_error dom_hubbub_parser_parse_chunk(dom_hubbub_parser *parser,
 		const uint8_t *data, size_t len);
 
-/* insert data into the parse stream but do not parse it */
 dom_hubbub_error dom_hubbub_parser_insert_chunk(dom_hubbub_parser *parser,
 		const uint8_t *data, size_t length);
 
-/* Notify parser that datastream is empty */
 dom_hubbub_error dom_hubbub_parser_completed(dom_hubbub_parser *parser);
 
-/* Retrieve the document's encoding */
 const char *dom_hubbub_parser_get_encoding(dom_hubbub_parser *parser,
 		dom_hubbub_encoding_source *source);
 
-/**
- * Set the Parse pause state.
- *
- * \param parser  The parser object
- * \param pause   The pause state to set.
- * \return DOM_HUBBUB_OK on success,
- *         DOM_HUBBUB_HUBBUB_ERR | <hubbub_error> on failure
- */
 dom_hubbub_error dom_hubbub_parser_pause(dom_hubbub_parser *parser, bool pause);
 
 #endif

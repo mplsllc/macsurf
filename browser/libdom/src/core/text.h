@@ -8,7 +8,7 @@
 #ifndef dom_internal_core_text_h_
 #define dom_internal_core_text_h_
 
-#include <stdbool.h>
+/* stdbool removed for CW8 -- prefix provides bool */
 
 #include <dom/core/exceptions.h>
 #include <dom/core/text.h>

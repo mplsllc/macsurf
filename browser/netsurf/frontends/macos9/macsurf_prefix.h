@@ -182,11 +182,24 @@ typedef unsigned char (nslog_ensure_t)(FILE *fptr);
 #define __ASSERT_H__
 #define assert(x) ((void)0)
 
-/* Block system stdbool.h — MacTypes.h already provides bool/true/false
- * and libdom internal headers had #include <stdbool.h> which we've
- * removed, but other code may still try to include it. */
+/* Block system stdbool.h and provide bool/true/false directly.
+ * MacTypes.h gives us Boolean (unsigned char) but not the C99
+ * bool/true/false names.  Define them here so every TU has them
+ * regardless of whether stdbool.h is included. */
 #ifndef _STDBOOL_H
 #define _STDBOOL_H
+#endif
+#ifndef __bool_true_false_are_defined
+#define __bool_true_false_are_defined 1
+#ifndef bool
+#define bool unsigned char
+#endif
+#ifndef true
+#define true 1
+#endif
+#ifndef false
+#define false 0
+#endif
 #endif
 
 /* isascii — not in MSL */

@@ -9,7 +9,7 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <stdbool.h>
+/* stdbool removed for CW8 -- prefix provides bool */
 #include <assert.h>
 #ifdef TEST_RIG
 #include <stdio.h>

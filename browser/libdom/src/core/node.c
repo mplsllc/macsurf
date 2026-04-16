@@ -7,7 +7,7 @@
  */
 
 #include <assert.h>
-#include <stdbool.h>
+/* stdbool removed for CW8 -- prefix provides bool */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

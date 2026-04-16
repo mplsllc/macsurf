@@ -1,0 +1,60 @@
+name: "Static Analysis"
+
+on: [push]
+
+jobs:
+  codeql:
+    name: codeql
+    runs-on: ubuntu-22.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['cpp']
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+      with:
+        fetch-depth: 1
+
+    - name: apt-get install packages
+      run: sudo apt-get update -qq &&
+           sudo apt-get install --no-install-recommends -y
+               bison
+               build-essential
+               check
+               clang
+               flex
+               git
+               gperf
+               llvm
+               pkg-config
+
+    - name: Get env.sh
+      run: |
+           mkdir projects
+           wget -O projects/env.sh https://raw.githubusercontent.com/netsurf-browser/netsurf/refs/heads/master/docs/env.sh
+
+    - name: Build and install project deps
+      env:
+        TARGET: ${{ github.event.repository.name }}
+      run: |
+          export TARGET_WORKSPACE="$(pwd)/projects"
+          source projects/env.sh
+          ns-clone -d -s
+          ns-make-libs install
+
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v4
+      with:
+        languages: ${{ matrix.language }}
+
+    - name: Build Library
+      run: |
+          export TARGET_WORKSPACE="$(pwd)/projects"
+          source projects/env.sh
+          make -j"$(nproc)"
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v4
