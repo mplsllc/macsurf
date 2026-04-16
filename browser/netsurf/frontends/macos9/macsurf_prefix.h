@@ -218,6 +218,15 @@ extern char *strcat(char *, const char *);
 extern char *strncat(char *, const char *, size_t);
 extern char *strdup(const char *);
 
+/* --- Debug instrumentation --- */
+#ifdef MACSURF_RELEASE
+#undef MACSURF_DEBUG
+#else
+#ifndef MACSURF_DEBUG
+#define MACSURF_DEBUG
+#endif
+#endif
+
 /* --- Additional build defines --- */
 
 #ifndef __MACOS9__

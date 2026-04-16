@@ -57,7 +57,7 @@
 #include "javascript/js.h"
 #include "desktop/gui_internal.h"
 
-#include "html/html.h"
+#include "html/html.h"#include "macsurf_debug.h"
 #include "html/private.h"
 #include "html/dom_event.h"
 #include "html/css.h"

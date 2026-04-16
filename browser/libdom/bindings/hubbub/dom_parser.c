@@ -1,3 +1,4 @@
+#include "macsurf_debug.h"
 /*
  * This file is part of libdom.
  * Licensed under the MIT License,
@@ -753,6 +754,7 @@ dom_hubbub_parser_create(dom_hubbub_parser_params *params,
 			 dom_hubbub_parser **parser,
 			 dom_document **document)
 {
+	MS_LOG("dom parser create");
 	dom_hubbub_parser *binding;
 	hubbub_parser_optparams optparams;
 	hubbub_error error;

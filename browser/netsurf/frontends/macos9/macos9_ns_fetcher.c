@@ -21,7 +21,7 @@
 #include "utils/nsurl.h"
 #include "utils/log.h"
 #include "content/fetch.h"
-#include "content/fetchers.h"
+#include "content/fetchers.h"#include "macsurf_debug.h"
 
 #ifdef __MACOS9__
 #include <Files.h>
@@ -327,7 +327,7 @@ fetch_macos9_poll(lwc_string *scheme)
 			continue;
 		}
 
-		if (ctx->http_status == 0) {
+		MS_ASSERT(ctx->response_buf != NULL, "fetch poll: no response data");		if (ctx->http_status == 0) {
 			/* Fetch failed — send error. */
 			msg.type = FETCH_ERROR;
 			msg.data.error = "OT fetch failed";
