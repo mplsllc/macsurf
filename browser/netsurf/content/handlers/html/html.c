@@ -818,6 +818,7 @@ bool html_can_begin_conversion(html_content *htmlc)
 	unsigned int i;
 
 	/* Cannot begin conversion if we're still fetching stuff */
+	macsurf_debug_log_int("active fetches", (long)htmlc->base.active);
 	if (htmlc->base.active != 0)
 		return false;
 
