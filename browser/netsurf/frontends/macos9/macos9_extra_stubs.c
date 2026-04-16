@@ -239,15 +239,9 @@ float strtof(const char *s, char **endp)
 	return (float)strtod(s, endp);
 }
 
-/* cbrt — C99 cube root, not in MSL.  Duktape calls it from Math.cbrt
- * implementation.  Standard formula: cbrt(x) = sign(x) * pow(|x|, 1/3). */
-#include <math.h>
-double cbrt(double x)
-{
-	if (x == 0.0) return 0.0;
-	if (x < 0.0)  return -pow(-x, 1.0/3.0);
-	return pow(x, 1.0/3.0);
-}
+/* cbrt now lives in javascript/macsurf_js.c so it's tied to the
+ * always-linked JS glue TU and not dependent on this file being
+ * in the project or its link order. */
 
 /* mkdir / stat — no filesystem write paths exercised on OS 9 yet.
  * Provide failure stubs so ns_file.c links. */
