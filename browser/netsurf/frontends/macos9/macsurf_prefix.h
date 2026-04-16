@@ -223,6 +223,14 @@ extern char *strdup(const char *);
 #define WITH_DUKTAPE 1
 #endif
 
+/* Image decoders — libnsbmp and libnsgif are in the source tree. */
+#ifndef WITH_BMP
+#define WITH_BMP 1
+#endif
+#ifndef WITH_GIF
+#define WITH_GIF 1
+#endif
+
 /* libparserutils: disable iconv-based input filter (no iconv on OS 9).
  * Keeps the library's own UTF/8859/ASCII codecs active. */
 #ifndef WITHOUT_ICONV_FILTER
