@@ -623,6 +623,7 @@ html_create(const content_handler *handler,
 		return error;
 	}
 
+	MS_LOG("html create");
 	error = html_create_html_data(html, params);
 	if (error != NSERROR_OK) {
 		content_broadcast_error(&html->base, error, NULL);
@@ -734,6 +735,7 @@ html_process_encoding_change(struct content *c,
 static bool
 html_process_data(struct content *c, const char *data, unsigned int size)
 {
+	MS_LOG("html process data");
 	html_content *html = (html_content *) c;
 	dom_hubbub_error dom_ret;
 	nserror err = NSERROR_OK; /* assume its all going to be ok */
@@ -775,6 +777,7 @@ html_process_data(struct content *c, const char *data, unsigned int size)
 
 static bool html_convert(struct content *c)
 {
+	MS_LOG("html convert");
 	html_content *htmlc = (html_content *) c;
 	dom_exception exc; /* returned by libdom functions */
 
