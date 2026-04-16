@@ -136,14 +136,29 @@ stub_poll(lwc_string *scheme)
 	do {
 		next = ctx->r_next;
 		if (ctx->started && !ctx->aborted) {
-			/* Send a minimal successful response:
-			 * 1. FETCH_FINISHED immediately.
-			 * The content handler sees an empty body and
-			 * proceeds without blocking. */
+			/* Send a minimal successful response with
+			 * Content-Type header so the content handler
+			 * knows what to do with it. */
+			{
+				static const char ct[] =
+					"Content-Type: text/css";
+				msg.type = FETCH_HEADER;
+				msg.data.header_or_data.buf =
+					(const uint8_t *)ct;
+				msg.data.header_or_data.len =
+					sizeof(ct) - 1;
+				fetch_send_callback(&msg, ctx->parent);
+			}
+			/* Empty body. */
+			{
+				static const unsigned char empty = 0;
+				msg.type = FETCH_DATA;
+				msg.data.header_or_data.buf = &empty;
+				msg.data.header_or_data.len = 0;
+				fetch_send_callback(&msg, ctx->parent);
+			}
 			msg.type = FETCH_FINISHED;
 			fetch_send_callback(&msg, ctx->parent);
-			/* After callback, the fetch system may have
-			 * freed us — stop iterating. */
 			return;
 		}
 		ctx = next;
