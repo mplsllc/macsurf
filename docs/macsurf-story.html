@@ -26,7 +26,7 @@ footer { margin-top: 3em; padding-top: 1em; border-top: 1px solid #ddd; font-siz
 
 <h1>MacSurf: The First ES5 JavaScript Engine on Classic Macintosh</h1>
 
-<p><strong>April 15-16, 2026</strong> &mdash; A Power Macintosh G3 from 1998, running Mac OS 9.1, executed JavaScript inside a web browser and rendered an ASCII Mandelbrot fractal. It had never been done before.</p>
+<p><strong>April 15-16, 2026</strong> &mdash; a Power Macintosh G3 from 1998, running Mac OS 9.1, executed JavaScript inside a web browser and rendered an ASCII Mandelbrot fractal. It had never been done before.</p>
 
 <div class="hero">
 <img src="/screenshots/MacSurfer%20%201.jpg" alt="MacSurf showing first JavaScript output on Mac OS 9">
@@ -35,17 +35,17 @@ footer { margin-top: 3em; padding-top: 1em; border-top: 1px solid #ddd; font-siz
 
 <h2>What Is This?</h2>
 
-<p>MacSurf is a web browser for Mac OS 9 PowerPC. It is built on the <a href="https://www.netsurf-browser.org/">NetSurf</a> engine, compiled with Metrowerks CodeWarrior 8, and runs on real Classic Macintosh hardware &mdash; no emulation.</p>
+<p>MacSurf is a web browser for Mac OS 9 PowerPC. It is built on the <a href="https://www.netsurf-browser.org/">NetSurf</a> engine, compiled with Metrowerks CodeWarrior 8, and runs on real Classic Macintosh hardware, with no emulation.</p>
 
-<p>On April 15, 2026, MacSurf became the first browser to run a modern JavaScript engine (ES5-compliant) on Classic Mac OS. The engine is <a href="https://duktape.org/">Duktape 2.7.0</a>, a portable ECMAScript interpreter written in C89 by Sami Vaarala. It compiled on CodeWarrior 8 with <strong>zero patches</strong> to the engine source &mdash; only configuration changes.</p>
+<p>On April 15, 2026, MacSurf became the first browser to run a modern JavaScript engine (ES5-compliant) on Classic Mac OS. The engine is <a href="https://duktape.org/">Duktape 2.7.0</a>, a portable ECMAScript interpreter written in C89 by Sami Vaarala. It compiled on CodeWarrior 8 with <strong>zero patches</strong> to the engine source. Only configuration changes.</p>
 
 <h2>The Machine</h2>
 
-<p>Every line of code was compiled on a <strong>Power Macintosh G3 Minitower</strong> (Beige, 1998, Machine ID 510) with an aftermarket <strong>Sonnet G4 processor upgrade at 400 MHz</strong> &mdash; the beige G3 never shipped with a G4. 192 MB RAM (32+32+128 MB), 6 MB VRAM, Mac OS 9.1, CarbonLib 1.6, startup drive "Back40" on internal ATA. The Sonnet Processor Upgrade 1.4.5 extension is active in the System Folder. The machine belonged to <strong>Gary Hansen</strong>, who passed away. His G3 &mdash; with Gary's own Sonnet upgrade still installed &mdash; is still compiling code and rendering fractals in 2026. This project is dedicated to his memory.</p>
+<p>Every line of code was compiled on a <strong>Power Macintosh G3 Minitower</strong> (Beige, 1998, Machine ID 510) with an aftermarket <strong>Sonnet G4 processor upgrade at 400 MHz</strong>. The beige G3 never shipped with a G4. 192 MB RAM (32+32+128 MB), 6 MB VRAM, Mac OS 9.1, CarbonLib 1.6, startup drive "Back40" on internal ATA. The Sonnet Processor Upgrade 1.4.5 extension is active in the System Folder. The machine belonged to <strong>Gary Hansen</strong>, who passed away. His G3, with Gary's own Sonnet upgrade still installed, is still compiling code and rendering fractals in 2026. This project is dedicated to his memory.</p>
 
 <h2>What JavaScript Can It Run?</h2>
 
-<p>Full ES5.1. Not a subset, not a toy &mdash; the complete language specification:</p>
+<p>Full ES5.1. Not a subset, not a toy. The complete language specification:</p>
 
 <div class="hero">
 <img src="/screenshots/MacSurfer%20%202.jpg" alt="Advanced ES5 features running on Mac OS 9">
@@ -94,12 +94,12 @@ footer { margin-top: 3em; padding-top: 1em; border-top: 1px solid #ddd; font-siz
 <p>MacSurf has three layers:</p>
 
 <ol>
-<li><strong>The Browser</strong> (C, Carbon API, CodeWarrior 8) &mdash; window management, URL bar, scrolling, text rendering via QuickDraw. Links against NetSurf's five core libraries (libparserutils, libhubbub, libdom, libcss, libwapcaplet &mdash; 443 source files, ~125,000 lines of C).</li>
-<li><strong>The JS Engine</strong> (Duktape 2.7.0) &mdash; ES5.1 interpreter embedded as a single 3.6 MB C file. Configured for PPC big-endian, 128-frame recursion limit, no threading, no file I/O. Console.log output is captured and appended to the rendered page.</li>
-<li><strong>The Proxy</strong> (Go, runs on a VPS) &mdash; strips TLS. The Mac sends plain HTTP; the proxy fetches HTTPS and returns plain HTTP. No config, no dependencies, single binary.</li>
+<li><strong>The Browser</strong> (C, Carbon API, CodeWarrior 8). Handles window management, URL bar, scrolling, text rendering via QuickDraw. Links against NetSurf's five core libraries (libparserutils, libhubbub, libdom, libcss, libwapcaplet, totaling 443 source files, ~125,000 lines of C).</li>
+<li><strong>The JS Engine</strong> (Duktape 2.7.0). An ES5.1 interpreter embedded as a single 3.6 MB C file. Configured for PPC big-endian, 128-frame recursion limit, no threading, no file I/O. Console.log output is captured and appended to the rendered page.</li>
+<li><strong>The Proxy</strong> (Go, runs on a VPS). Strips TLS. The Mac sends plain HTTP; the proxy fetches HTTPS and returns plain HTTP. No config, no dependencies, single binary.</li>
 </ol>
 
-<p>When MacSurf loads a page, it fetches the HTML through the proxy, strips tags for display, scans for <code>&lt;script&gt;</code> blocks, evaluates each through Duktape, captures console.log output, and appends it to the rendered content. The JavaScript runs on the Mac &mdash; not on the proxy, not in the cloud. On the PowerPC. On Mac OS 9.</p>
+<p>When MacSurf loads a page, it fetches the HTML through the proxy, strips tags for display, scans for <code>&lt;script&gt;</code> blocks, evaluates each through Duktape, captures console.log output, and appends it to the rendered content. The JavaScript runs on the Mac. Not on the proxy, not in the cloud. On the PowerPC. On Mac OS 9.</p>
 
 <h2>Why?</h2>
 
@@ -107,22 +107,22 @@ footer { margin-top: 3em; padding-top: 1em; border-top: 1px solid #ddd; font-siz
 <p>"If we can't load regular sites there is no point to this app really."</p>
 </blockquote>
 
-<p>That was the moment the project pivoted from "strip HTML to text" to "run real JavaScript on a 1998 machine." The moonshot branch was created, Duktape was downloaded, configured, compiled, and producing results &mdash; all in a single overnight session.</p>
+<p>That was the moment the project pivoted from "strip HTML to text" to "run real JavaScript on a 1998 machine." The moonshot branch was created, Duktape was downloaded, configured, compiled, and producing results, all in a single overnight session.</p>
 
 <p>No consumer browser has ever run ES5 JavaScript on Classic Mac OS. IE 5 shipped JScript 5 (pre-ES5) on Mac OS X. Classilla attempted SpiderMonkey on OS 9 but JavaScript was its primary crash source. MacSurf is the first stable, fully-functional ES5 engine on this platform.</p>
 
 <div class="hero">
 <img src="/screenshots/MacSurfer%20%204.jpg" alt="Fibonacci, performance benchmarks, and ES5 strict mode">
-<p class="caption">fib(20) = 6765, 100K math ops in 3 seconds, ES5 strict mode &mdash; all on a 1998 Power Mac</p>
+<p class="caption">fib(20) = 6765, 100K math ops in 3 seconds, ES5 strict mode, all on a 1998 Power Mac</p>
 </div>
 
 <div class="credits">
 <h3>Credits</h3>
-<p><strong>Patrick Britton</strong> &mdash; Creator. Hardware, builds, testing, and the belief that a 1998 Mac could run JavaScript in 2026.</p>
-<p><strong>Claude (Anthropic)</strong> &mdash; Development partner. Wrote the C code, diagnosed CW8 errors from transcribed logs, debugged crashes from photographs of a CRT monitor.</p>
-<p><strong>Sami Vaarala</strong> &mdash; Creator of Duktape. A C89 ES5 engine with a single-file amalgamation is what made this possible.</p>
-<p><strong>NetSurf contributors</strong> &mdash; The browser engine's clean C architecture and cooperative-multitasking design gave MacSurf a real engine to build on.</p>
-<p><strong>Macintosh Garden</strong> &mdash; The software archive that preserved CodeWarrior, ResEdit, and everything else needed to develop for Classic Mac OS in 2026.</p>
+<p><strong>Patrick Britton</strong>. Creator. Hardware, builds, testing, and the belief that a 1998 Mac could run JavaScript in 2026.</p>
+<p><strong>Claude (Anthropic)</strong>. Development partner. Wrote the C code, diagnosed CW8 errors from transcribed logs, debugged crashes from photographs of a CRT monitor.</p>
+<p><strong>Sami Vaarala</strong>. Creator of Duktape. A C89 ES5 engine with a single-file amalgamation is what made this possible.</p>
+<p><strong>NetSurf contributors</strong>. The browser engine's clean C architecture and cooperative-multitasking design gave MacSurf a real engine to build on.</p>
+<p><strong>Macintosh Garden</strong>. The software archive that preserved CodeWarrior, ResEdit, and everything else needed to develop for Classic Mac OS in 2026.</p>
 <h3>Gary Hansen (1947&ndash;2002)</h3>
 
 <div style="display:flex;flex-wrap:wrap;gap:1em;margin:1em 0;">
@@ -130,18 +130,18 @@ footer { margin-top: 3em; padding-top: 1em; border-top: 1px solid #ddd; font-siz
 <img src="/screenshots/garykaija.jpeg" alt="Gary and his daughter Kaija" style="max-width:48%;border-radius:4px;">
 </div>
 
-<p>Gary Hansen was a communications lifer who rode every wave the industry threw at him. He started shooting photos and filing stories for the <em>New Ulm Daily Journal</em> at thirteen, landed at the Associated Press by twenty-one &mdash; covering Nixon, Bobby Kennedy, and McGovern out of the Pierre, SD bureau &mdash; and by the mid-&rsquo;80s had pivoted hard into the desktop publishing revolution, training thousands of employees at shops like 3M, Honeywell, and General Mills on the Mac tools that were rewriting the rules of print. He called himself &ldquo;the quintessential Renaissance Man of communications,&rdquo; and the r&eacute;sum&eacute; backed it up.</p>
+<p>Gary Hansen was a communications lifer who rode every wave the industry threw at him. He started shooting photos and filing stories for the <em>New Ulm Daily Journal</em> at thirteen, landed at the Associated Press by twenty-one, covering Nixon, Bobby Kennedy, and McGovern out of the Pierre, SD bureau. By the mid-&rsquo;80s had pivoted hard into the desktop publishing revolution, training thousands of employees at shops like 3M, Honeywell, and General Mills on the Mac tools that were rewriting the rules of print. He called himself &ldquo;the quintessential Renaissance Man of communications,&rdquo; and the r&eacute;sum&eacute; backed it up.</p>
 
 <div style="display:flex;flex-wrap:wrap;gap:1em;margin:1em 0;">
 <img src="/screenshots/gary-mechanic.jpg" alt="Gary the mechanic, next to his custom motorcycle" style="max-width:48%;border-radius:4px;">
 <img src="/screenshots/gary-reflection.jpg" alt="Gary's reflection in motorcycle chrome" style="max-width:48%;border-radius:4px;">
 </div>
 
-<p>By the mid-&rsquo;90s Gary had founded Digital Concepts Corporation out of his home in Edina, Minnesota, building websites, managing hosting, and doing print design and photography for a stable of clients. He ran four browsers simultaneously for cross-browser testing, kept nearly 1,700 bookmarks organized across them, and was an early adopter of everything from PageMaker to cable internet to Napster. His Power Mac G3 &mdash; upgraded with a Sonnet Encore G4 processor because stock specs were never quite enough &mdash; was the nerve center for all of it.</p>
+<p>By the mid-&rsquo;90s Gary had founded Digital Concepts Corporation out of his home in Edina, Minnesota, building websites, managing hosting, and doing print design and photography for a stable of clients. He ran four browsers simultaneously for cross-browser testing, kept nearly 1,700 bookmarks organized across them, and was an early adopter of everything from PageMaker to cable internet to Napster. His Power Mac G3, upgraded with a Sonnet Encore G4 processor because stock specs were never quite enough, was the nerve center for all of it.</p>
 
-<p>Outside the screen, Gary was a private pilot, a certified SCUBA diver, a chess tactician, and a deeply committed motorcycle guy. He served on the board of the Minnesota Motorcycle Riders Association, designed their <em>Freedom Review</em> newsletter in PageMaker, lobbied for rider legislation, and eventually signed on as General Manager at Easyriders of Minneapolis &mdash; submitting a brutally honest five-page application that noted, among his weaknesses, &ldquo;no tattoos.&rdquo;</p>
+<p>Outside the screen, Gary was a private pilot, a certified SCUBA diver, a chess tactician, and a deeply committed motorcycle guy. He served on the board of the Minnesota Motorcycle Riders Association, designed their <em>Freedom Review</em> newsletter in PageMaker, lobbied for rider legislation, and eventually signed on as General Manager at Easyriders of Minneapolis, submitting a brutally honest five-page application that noted, among his weaknesses, &ldquo;no tattoos.&rdquo;</p>
 
-<p>He was a father who named every password after his daughter Kaija, a husband to Deb, and a guy who helped everyone around him get online, get a r&eacute;sum&eacute; typed, or get a computer set up. He was 55 when he died in September 2002. The G3 that powers this browser was part of his world &mdash; and this project is a small way of keeping that machine, and the curiosity behind it, running.</p>
+<p>He was a father who named every password after his daughter Kaija, a husband to Deb, and a guy who helped everyone around him get online, get a r&eacute;sum&eacute; typed, or get a computer set up. He was 55 when he died in September 2002. The G3 that powers this browser was part of his world, and this project is a small way of keeping that machine, and the curiosity behind it, running.</p>
 </div>
 
 <footer>
