@@ -42,6 +42,7 @@
  * the macos9 shim branch — don't try to include the unavailable Mac
  * Toolbox headers). */
 #ifdef __MWERKS__
+#include <Files.h>
 #include <OpenTransport.h>
 #include <OpenTptInternet.h>
 #include <Threads.h>

@@ -136,7 +136,7 @@ extern lwc_error lwc_string_tolower(lwc_string *str, lwc_string **ret);
 #if defined(STMTEXPR)
 #define lwc_string_ref(str) ({lwc_string *__lwc_s = (str); assert(__lwc_s != NULL); __lwc_s->refcnt++; __lwc_s;})
 #else
-static inline lwc_string *
+static lwc_string *
 lwc_string_ref(lwc_string *str)
 {
 	assert(str != NULL);
@@ -239,7 +239,7 @@ lwc__intern_caseless_string(lwc_string *str);
  * @return Result of operation, if not ok then value pointed to by \a ret will
  *         not be valid.
  */
-static inline lwc_error
+static lwc_error
 lwc_string_caseless_isequal(lwc_string *str1, lwc_string *str2, bool *ret)
 {
        lwc_error err = lwc_error_ok;
@@ -305,19 +305,7 @@ lwc_string_caseless_isequal(lwc_string *str1, lwc_string *str2, bool *ret)
  * @return Result of operation, if not ok then value pointed to by \a ret will
  *      not be valid.
  */
-static inline lwc_error lwc_string_caseless_hash_value(
-	lwc_string *str, lwc_hash *hash)
-{
-	if (str->insensitive == NULL) {
-		lwc_error err = lwc__intern_caseless_string(str);
-		if (err != lwc_error_ok) {
-			return err;
-		}
-	}
-
-	*hash = str->insensitive->hash;
-	return lwc_error_ok;
-}
+extern lwc_error lwc_string_caseless_hash_value(lwc_string *str, lwc_hash *hash);
 
 
 /**

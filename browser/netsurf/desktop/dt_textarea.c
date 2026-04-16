@@ -2460,8 +2460,8 @@ bool textarea_keypress(struct textarea *ta, uint32_t key)
 	int x, y;
 	bool redraw = false;
 	bool readonly;
-	bool bar_x = ta->bar_x;
-	bool bar_y = ta->bar_y;
+	bool bar_x = (ta->bar_x != NULL);
+	bool bar_y = (ta->bar_y != NULL);
 
 	/* Word separators */
 	static const char *sep = " .\n";

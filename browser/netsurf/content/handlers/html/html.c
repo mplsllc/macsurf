@@ -1664,7 +1664,7 @@ static void html__set_file_gadget_filename(struct content *c,
 void html_set_file_gadget_filename(struct hlcache_handle *hl,
 	struct form_control *gadget, const char *fn)
 {
-	return html__set_file_gadget_filename(hlcache_handle_get_content(hl),
+	html__set_file_gadget_filename(hlcache_handle_get_content(hl),
 		gadget, fn);
 }
 

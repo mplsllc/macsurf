@@ -16,6 +16,10 @@
 #include <parserutils/utils/vector.h>
 
 #include "charset/detect.h"
+/* MacSurf: CW8 access paths may resolve "charset/detect.h" to libhubbub's
+ * homonymous header first; forward-declare explicitly so css_parse.c links. */
+extern parserutils_error css__charset_extract(const uint8_t *data, size_t len,
+		uint16_t *mibenum, uint32_t *source);
 #include "lex/lex.h"
 #include "parse/parse.h"
 #include "utils/parserutilserror.h"

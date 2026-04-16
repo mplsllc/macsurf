@@ -39,42 +39,10 @@ css_fixed css__number_from_lwc_string(lwc_string *string, bool int_only,
 css_fixed css__number_from_string(const uint8_t *data, size_t len,
 		bool int_only, size_t *consumed);
 
-static inline bool isDigit(uint8_t c)
-{
-	return '0' <= c && c <= '9';
-}
-
-static inline bool isHex(uint8_t c)
-{
-	return isDigit(c) || ('a' <= c && c <= 'f') || ('A' <= c && c <= 'F');
-}
-
-static inline uint32_t charToHex(uint8_t c)
-{
-	c -= '0';
-
-	if (c > 9)
-		c -= 'A' - '9' - 1;
-
-	if (c > 15)
-		c -= 'a' - 'A';
-
-	return c;
-}
-
-static inline css_error css_error_from_lwc_error(lwc_error err)
-{
-        switch (err) {
-        case lwc_error_ok:
-                return CSS_OK;
-        case lwc_error_oom:
-                return CSS_NOMEM;
-        case lwc_error_range:
-                return CSS_BADPARM;
-        default:
-                break;
-        }
-        return CSS_INVALID;
-}
+/* MacSurf: out-of-line. Defined in macos9_extra_stubs.c. */
+extern bool isDigit(uint8_t c);
+extern bool isHex(uint8_t c);
+extern uint32_t charToHex(uint8_t c);
+extern css_error css_error_from_lwc_error(lwc_error err);
 
 #endif

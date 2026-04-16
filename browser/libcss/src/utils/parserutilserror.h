@@ -18,12 +18,8 @@
  * \param error  The ParserUtils error to convert
  * \return The corresponding LibCSS error
  */
-static inline css_error css_error_from_parserutils_error(
-		parserutils_error error)
-{
-	/* Currently, there's a 1:1 mapping, so we've nothing to do */
-	return (css_error) error;
-}
+/* MacSurf: out-of-line. Defined in macos9_extra_stubs.c. */
+extern css_error css_error_from_parserutils_error(parserutils_error error);
 
 #endif
 

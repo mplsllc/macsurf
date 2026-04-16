@@ -144,4 +144,20 @@ typedef long               intptr_t;
 #define PRIx64  "llx"
 #endif
 
+#ifndef PRIX32
+#define PRIX32  "lX"
+#endif
+
+#ifndef SCNx32
+#define SCNx32  "lx"
+#endif
+
+#ifndef SCNd32
+#define SCNd32  "ld"
+#endif
+
+#ifndef SCNu32
+#define SCNu32  "lu"
+#endif
+
 #endif /* MACOS9_SHIMS_STDINT_H */

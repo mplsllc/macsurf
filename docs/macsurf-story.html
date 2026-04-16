@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MacSurf: JavaScript on Mac OS 9</title>
+<style>
+body { max-width: 800px; margin: 2em auto; padding: 0 1em; font-family: Georgia, serif; line-height: 1.7; color: #222; }
+h1 { font-size: 2em; border-bottom: 3px solid #333; padding-bottom: 0.3em; }
+h2 { margin-top: 2em; color: #444; }
+img { max-width: 100%; border: 1px solid #ccc; margin: 1em 0; }
+.hero { text-align: center; margin: 2em 0; }
+.hero img { border: 2px solid #333; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+th, td { border: 1px solid #ccc; padding: 0.5em 0.8em; text-align: left; }
+th { background: #f5f5f5; }
+.caption { font-size: 0.9em; color: #666; text-align: center; font-style: italic; margin-top: -0.5em; }
+blockquote { border-left: 4px solid #999; margin-left: 0; padding-left: 1em; color: #555; }
+code { background: #f4f4f4; padding: 0.15em 0.3em; font-size: 0.95em; }
+.credits { background: #f9f9f9; padding: 1.5em; border-radius: 8px; margin-top: 2em; }
+.credits h3 { margin-top: 0; }
+footer { margin-top: 3em; padding-top: 1em; border-top: 1px solid #ddd; font-size: 0.85em; color: #888; }
+</style>
+</head>
+<body>
+
+<h1>MacSurf: The First ES5 JavaScript Engine on Classic Macintosh</h1>
+
+<p><strong>April 15-16, 2026</strong> &mdash; A Power Macintosh G3 from 1998, running Mac OS 9.1, executed JavaScript inside a web browser and rendered an ASCII Mandelbrot fractal. It had never been done before.</p>
+
+<div class="hero">
+<img src="/screenshots/MacSurfer%20%201.jpg" alt="MacSurf showing first JavaScript output on Mac OS 9">
+<p class="caption">The first JavaScript output on Mac OS 9: "Hello from Duktape on Mac OS 9!"</p>
+</div>
+
+<h2>What Is This?</h2>
+
+<p>MacSurf is a web browser for Mac OS 9 PowerPC. It is built on the <a href="https://www.netsurf-browser.org/">NetSurf</a> engine, compiled with Metrowerks CodeWarrior 8, and runs on real Classic Macintosh hardware &mdash; no emulation.</p>
+
+<p>On April 15, 2026, MacSurf became the first browser to run a modern JavaScript engine (ES5-compliant) on Classic Mac OS. The engine is <a href="https://duktape.org/">Duktape 2.7.0</a>, a portable ECMAScript interpreter written in C89 by Sami Vaarala. It compiled on CodeWarrior 8 with <strong>zero patches</strong> to the engine source &mdash; only configuration changes.</p>
+
+<h2>The Machine</h2>
+
+<p>Every line of code was compiled on a <strong>Power Macintosh G3 Minitower</strong> (Beige, 1998). PowerPC 750 processor, 192 MB RAM, Mac OS 9.1. The machine belonged to <strong>Gary Hansen</strong>, who passed away. His G3 is still compiling code and rendering fractals in 2026. This project is dedicated to his memory.</p>
+
+<h2>What JavaScript Can It Run?</h2>
+
+<p>Full ES5.1. Not a subset, not a toy &mdash; the complete language specification:</p>
+
+<div class="hero">
+<img src="/screenshots/MacSurfer%20%202.jpg" alt="Advanced ES5 features running on Mac OS 9">
+<p class="caption">Closures, prototype chains, Array.map/filter/reduce, regex with capture groups</p>
+</div>
+
+<ul>
+<li>Closures and higher-order functions</li>
+<li>Constructor functions with prototype inheritance (<code>instanceof</code> works correctly through the chain)</li>
+<li>Array.prototype.map, filter, reduce</li>
+<li>Regular expressions with capture groups, flags, and global replace</li>
+<li>try/catch/throw with custom Error objects</li>
+<li>JSON.parse and JSON.stringify with nested structures</li>
+<li>Date arithmetic (Mac epoch converted to Unix epoch via GetDateTime)</li>
+<li>ES5 strict mode, Object.keys, Array.isArray</li>
+<li>Promise polyfill (synchronous resolution)</li>
+<li>setTimeout / setInterval (cooperative, event-loop driven)</li>
+</ul>
+
+<h2>Stress Test Results</h2>
+
+<p>All benchmarks measured on the physical G3 hardware:</p>
+
+<table>
+<tr><th>Test</th><th>Result</th><th>Time</th></tr>
+<tr><td>10,000-node linked list reversal</td><td>Correct</td><td>&lt;1 ms</td></tr>
+<tr><td>Regex email extraction</td><td>4/4 correct</td><td>&lt;1 ms</td></tr>
+<tr><td>Binary search tree (15 nodes)</td><td>Correct in-order</td><td>&lt;1 ms</td></tr>
+<tr><td>30&times;30 matrix multiply</td><td>Correct</td><td>&lt;1 ms</td></tr>
+<tr><td>Promise polyfill chain</td><td>Correct</td><td>&lt;1 ms</td></tr>
+<tr><td>Quicksort 5,000 elements</td><td>Verified sorted</td><td>1 sec</td></tr>
+<tr><td>10,000-entry hash table</td><td>10,000/10,000</td><td>1 sec</td></tr>
+<tr><td>100K string builder (array+join)</td><td>100,000 chars</td><td>2 sec</td></tr>
+<tr><td>100K Math.sqrt+sin loop</td><td>Completed</td><td>3 sec</td></tr>
+<tr><td>Ackermann(3,7)</td><td><strong>1,021</strong> (correct)</td><td>6 sec</td></tr>
+<tr><td>ASCII Mandelbrot 40&times;20</td><td>Renders correctly</td><td>~2 sec</td></tr>
+</table>
+
+<div class="hero">
+<img src="/screenshots/MacSurf7.jpg" alt="ASCII Mandelbrot fractal computed by JavaScript on Mac OS 9">
+<p class="caption">An ASCII Mandelbrot set, computed entirely in JavaScript by Duktape on a PowerPC G3 running Mac OS 9</p>
+</div>
+
+<h2>How It Works</h2>
+
+<p>MacSurf has three layers:</p>
+
+<ol>
+<li><strong>The Browser</strong> (C, Carbon API, CodeWarrior 8) &mdash; window management, URL bar, scrolling, text rendering via QuickDraw. Links against NetSurf's five core libraries (libparserutils, libhubbub, libdom, libcss, libwapcaplet &mdash; 443 source files, ~125,000 lines of C).</li>
+<li><strong>The JS Engine</strong> (Duktape 2.7.0) &mdash; ES5.1 interpreter embedded as a single 3.6 MB C file. Configured for PPC big-endian, 128-frame recursion limit, no threading, no file I/O. Console.log output is captured and appended to the rendered page.</li>
+<li><strong>The Proxy</strong> (Go, runs on a VPS) &mdash; strips TLS. The Mac sends plain HTTP; the proxy fetches HTTPS and returns plain HTTP. No config, no dependencies, single binary.</li>
+</ol>
+
+<p>When MacSurf loads a page, it fetches the HTML through the proxy, strips tags for display, scans for <code>&lt;script&gt;</code> blocks, evaluates each through Duktape, captures console.log output, and appends it to the rendered content. The JavaScript runs on the Mac &mdash; not on the proxy, not in the cloud. On the PowerPC. On Mac OS 9.</p>
+
+<h2>Why?</h2>
+
+<blockquote>
+<p>"If we can't load regular sites there is no point to this app really."</p>
+</blockquote>
+
+<p>That was the moment the project pivoted from "strip HTML to text" to "run real JavaScript on a 1998 machine." The moonshot branch was created, Duktape was downloaded, configured, compiled, and producing results &mdash; all in a single overnight session.</p>
+
+<p>No consumer browser has ever run ES5 JavaScript on Classic Mac OS. IE 5 shipped JScript 5 (pre-ES5) on Mac OS X. Classilla attempted SpiderMonkey on OS 9 but JavaScript was its primary crash source. MacSurf is the first stable, fully-functional ES5 engine on this platform.</p>
+
+<div class="hero">
+<img src="/screenshots/MacSurfer%20%204.jpg" alt="Fibonacci, performance benchmarks, and ES5 strict mode">
+<p class="caption">fib(20) = 6765, 100K math ops in 3 seconds, ES5 strict mode &mdash; all on a 1998 Power Mac</p>
+</div>
+
+<div class="credits">
+<h3>Credits</h3>
+<p><strong>Patrick Britton</strong> &mdash; Creator. Hardware, builds, testing, and the belief that a 1998 Mac could run JavaScript in 2026.</p>
+<p><strong>Claude (Anthropic)</strong> &mdash; Development partner. Wrote the C code, diagnosed CW8 errors from transcribed logs, debugged crashes from photographs of a CRT monitor.</p>
+<p><strong>Sami Vaarala</strong> &mdash; Creator of Duktape. A C89 ES5 engine with a single-file amalgamation is what made this possible.</p>
+<p><strong>NetSurf contributors</strong> &mdash; The browser engine's clean C architecture and cooperative-multitasking design gave MacSurf a real engine to build on.</p>
+<p><strong>Macintosh Garden</strong> &mdash; The software archive that preserved CodeWarrior, ResEdit, and everything else needed to develop for Classic Mac OS in 2026.</p>
+<p><strong>Gary Hansen (RIP)</strong> &mdash; This is Gary's Power Mac G3. It outlived its owner and it's still making history.</p>
+</div>
+
+<footer>
+<p>MacSurf is open source. No emulators were used. No shortcuts were taken. Gary's Power Macintosh G3 from 1998 runs JavaScript in 2026.</p>
+</footer>
+
+</body>
+</html>

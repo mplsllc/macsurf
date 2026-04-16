@@ -27,7 +27,10 @@ A single Go binary that strips TLS — receives plain HTTP from the Mac, fetches
 - Compiler: CodeWarrior 8 (on-machine) or cross-compile GCC PPC from Linux
 - No threading — OS 9 is cooperative multitasking, use WaitNextEvent loop
 - No HTTPS in browser — all TLS handled by proxy
-- No JavaScript — by design, keeps memory footprint low
+- JavaScript is handled in tiers, not banned:
+  - **Base tier (G3 / 64MB floor):** no JS in-app. Pages that need JS are served via the proxy's render-and-flatten path.
+  - **Enthusiast tier (G4 500+ / 256MB+):** optional Duktape build flag (`WITH_DUKTAPE`) for small inline scripts. Compiled out by default.
+  - **Proxy tier:** headless Chromium/Playwright executes JS upstream and returns pre-rendered flat HTML. This is where real modern-site JS support lives.
 - Carbon API for UI — works on OS 9 and early OS X
 
 ## Coding Conventions
@@ -80,10 +83,10 @@ Standard HTTP proxy protocol — no custom protocol. The Mac sends a normal HTTP
 
 ## Do Not
 
-- Do not add JavaScript support
+- Do not enable JavaScript in the base-tier build. Base-tier compiles with `WITHOUT_DUKTAPE`; JS in-app is opt-in at build time only on the enthusiast tier. Real-site JS support is the proxy's job (render-and-flatten), not the browser's.
 - Do not enable tabs by default
 - Do not use preemptive threads anywhere in the browser
-- Do not add external dependencies to the proxy
+- Do not add external dependencies to the proxy stdlib core. The render-and-flatten subsystem is an optional separate service (can use Chromium/Playwright); the base HTTP-proxy binary stays stdlib-only.
 - Do not target OS X only — Carbon must run on OS 9
 
 ## Build Environment

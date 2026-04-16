@@ -14,6 +14,9 @@
 
 #include "utils/utils.h"
 
+css_fixed css__number_from_string(const uint8_t *data, size_t len,
+		bool int_only, size_t *consumed);
+
 css_fixed css__number_from_lwc_string(lwc_string *string,
 		bool int_only, size_t *consumed)
 {
