@@ -70,6 +70,13 @@ bool html_redraw_debug = false;
 /* Diagnostic counters */
 long macos9_html_redraw_text_box_calls = 0;
 long macos9_text_redraw_plot_calls = 0;
+long macos9_hrb_visits = 0;
+long macos9_hrb_block = 0;
+long macos9_hrb_inlinec = 0;
+long macos9_hrb_inline = 0;
+long macos9_hrb_text = 0;
+long macos9_hrb_other = 0;
+long macos9_hrb_clip_skips = 0;
 
 /**
  * Determine if a box has a background that needs drawing
@@ -1270,6 +1277,14 @@ bool html_redraw_box(const html_content *html, struct box *box,
 	dom_exception exc;
 	dom_html_element_type tag_type;
 
+	macos9_hrb_visits++;
+	switch (box->type) {
+	case BOX_BLOCK: macos9_hrb_block++; break;
+	case BOX_INLINE_CONTAINER: macos9_hrb_inlinec++; break;
+	case BOX_INLINE: macos9_hrb_inline++; break;
+	case BOX_TEXT: macos9_hrb_text++; break;
+	default: macos9_hrb_other++; break;
+	}
 
 	if (html_redraw_printing && (box->flags & PRINTED))
 		return true;
@@ -1385,8 +1400,10 @@ bool html_redraw_box(const html_content *html, struct box *box,
 
 	/* return if the rectangle is completely outside the clip rectangle */
 	if (clip->y1 < r.y0 || r.y1 < clip->y0 ||
-			clip->x1 < r.x0 || r.x1 < clip->x0)
+			clip->x1 < r.x0 || r.x1 < clip->x0) {
+		macos9_hrb_clip_skips++;
 		return true;
+	}
 
 	/*if the rectangle is under the page bottom but it can fit in a page,
 	don't print it now*/
