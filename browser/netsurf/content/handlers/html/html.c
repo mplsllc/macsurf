@@ -60,6 +60,8 @@
 #include "html/html.h"#include "macsurf_debug.h"
 
 long macos9_html_bytes_processed = 0;
+char macos9_html_head[64];
+unsigned int macos9_html_head_len = 0;
 
 #include "html/private.h"
 #include "html/dom_event.h"
@@ -744,6 +746,18 @@ html_process_data(struct content *c, const char *data, unsigned int size)
 
 	MS_LOG("html process data");
 	macos9_html_bytes_processed += size;
+	if (macos9_html_head_len == 0 && data != NULL && size > 0) {
+		unsigned int copy = size;
+		unsigned int i;
+		if (copy > 63) copy = 63;
+		for (i = 0; i < copy; i++) {
+			unsigned char ch = (unsigned char)data[i];
+			if (ch < 0x20 || ch >= 0x7f) ch = '.';
+			macos9_html_head[i] = (char)ch;
+		}
+		macos9_html_head[copy] = '\0';
+		macos9_html_head_len = copy;
+	}
 	dom_ret = dom_hubbub_parser_parse_chunk(html->parser,
 					      (const uint8_t *) data,
 					      size);
