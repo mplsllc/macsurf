@@ -28,8 +28,8 @@ A single Go binary that strips TLS — receives plain HTTP from the Mac, fetches
 - No threading — OS 9 is cooperative multitasking, use WaitNextEvent loop
 - No HTTPS in browser — all TLS handled by proxy
 - JavaScript is handled in tiers, not banned:
-  - **Base tier (G3 / 64MB floor):** no JS in-app. Pages that need JS are served via the proxy's render-and-flatten path.
-  - **Enthusiast tier (G4 500+ / 256MB+):** optional Duktape build flag (`WITH_DUKTAPE`) for small inline scripts. Compiled out by default.
+  - **Base tier (G3 / 64MB floor):** Duktape 2.7.0 ES5 evaluator is linked into the base build and operational. Heavy / modern JS pages still go through the proxy render-and-flatten path.
+  - **Enthusiast tier (G4 500+ / 256MB+):** same Duktape core as base tier, more ambitious inline-script scenarios enabled.
   - **Proxy tier:** headless Chromium/Playwright executes JS upstream and returns pre-rendered flat HTML. This is where real modern-site JS support lives.
 - Carbon API for UI — works on OS 9 and early OS X
 
@@ -83,7 +83,7 @@ Standard HTTP proxy protocol — no custom protocol. The Mac sends a normal HTTP
 
 ## Do Not
 
-- Do not enable JavaScript in the base-tier build. Base-tier compiles with `WITHOUT_DUKTAPE`; JS in-app is opt-in at build time only on the enthusiast tier. Real-site JS support is the proxy's job (render-and-flatten), not the browser's.
+- Do not rely on in-app JS for heavy/modern sites — Duktape is ES5-only and intended for small inline scripts. Real-site JS support is still the proxy's job (render-and-flatten).
 - Do not enable tabs by default
 - Do not use preemptive threads anywhere in the browser
 - Do not add external dependencies to the proxy stdlib core. The render-and-flatten subsystem is an optional separate service (can use Chromium/Playwright); the base HTTP-proxy binary stays stdlib-only.
@@ -101,10 +101,11 @@ Standard HTTP proxy protocol — no custom protocol. The Mac sends a normal HTTP
 ### Prefix File
 `browser/netsurf/frontends/macos9/macsurf_prefix.h` is injected before every compilation unit. It currently defines:
 - `__MACOS9__ 1`
-- `WITHOUT_DUKTAPE 1`
 - `NO_IPV6 1`
 - `TARGET_API_MAC_CARBON 1`
 - `#include <MacTypes.h>` (first line — must stay first to prevent bool/true/false conflict)
+
+`WITHOUT_DUKTAPE` is **no longer defined** — Duktape is linked into the base build. See [JavaScript Engine](#javascript-engine) below.
 
 ### Shims Layer
 POSIX functionality is provided by stubs in `browser/netsurf/frontends/macos9/shims/`. These must be C89 compatible. Mac Toolbox headers must always be included before any bool/true/false definitions.
@@ -209,6 +210,41 @@ When auditing a new C99 library for CW8 / strict C89, grep for:
 - **Union initializers using designated syntax** — `{.field = value}` for a typedef'd union looks identical to a struct designated init in grep output. C89 union initializers must use `{value}` (positional, first member only).
 - Build-time codegen (`gperf`, perl scripts, `.inc` files included from `.c` files)
 - Existing MacSurf stubs in `frontends/macos9/<libname>/` that will conflict with the real headers
+
+## JavaScript Engine
+
+- Duktape 2.7.0 is fully linked and operational in the base build.
+- ES5 evaluator confirmed working — stress tests pass including closures, prototypes, regex, JSON, promises, recursion, matrix multiply, Mandelbrot.
+- `js_newheap` / `js_destroyheap` / `js_exec` lifecycle working.
+- `WITHOUT_DUKTAPE` has been removed from `macsurf_prefix.h`.
+- Duktape source files live in [browser/libduktape/](browser/libduktape/).
+- `duk_config.h` is hand-crafted for Mac OS 9 PPC CW8: `DUK_USE_BYTEORDER=3`, `DUK_USE_PACKED_TVAL`, `DUK_USE_ALIGN_BY=8`, `DUK_USE_NATIVE_CALL_RECLIMIT=128`.
+- JS glue files live in [browser/netsurf/frontends/macos9/javascript/](browser/netsurf/frontends/macos9/javascript/).
+
+## Rendering Pipeline (v0.3 in progress)
+
+- HTTP fetcher registered for `http:` and `https:` schemes via OT proxy at `116.202.231.103:8765`.
+- Current blocker: `htmlc->base.active` stays at 2 — the stylesheet loading chain is not completing.
+- Root causes identified:
+  - Resource fetcher serves empty CSS.
+  - Scheduler pump is not called frequently enough.
+  - `no_backing_store` returns `NSERROR_OK` on store operations, corrupting llcache state.
+- Fix plan documented in [docs/macsurf-v03-render-plan.md](docs/macsurf-v03-render-plan.md).
+- v0.3 target: real HTML rendering with styled text, colors, fonts, and layout via the full NetSurf pipeline.
+
+## Build State
+
+- MacSurf v0.2 is stable — loads plain text pages, JS executes, OT networking works.
+- CW8 project file is [browser/netsurf/frontends/macos9/MacSurf.mcp](browser/netsurf/frontends/macos9/MacSurf.mcp).
+- Flat-folder build approach — all `.c` files in one folder, one search path.
+- Remove Object Code is required before every rebuild after file changes.
+- MacsBug is installed on the G4 for pipeline debugging — `MS_LOG` checkpoints are active throughout the pipeline.
+
+## Known Issues
+
+- `no_backing_store.c` must return `NSERROR_NOT_IMPLEMENTED` from both store and fetch — currently returns `NSERROR_OK`, which corrupts llcache.
+- Resource fetcher must serve real content for `resource:default.css`, `resource:internal.css`, and `resource:quirks.css`.
+- Scheduler pump must call `fetch_poll()` on every event-loop pass when fetches are pending, not only when Mac events are present.
 
 ## Docs
 
