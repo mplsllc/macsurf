@@ -3382,9 +3382,6 @@ static nserror llcache_object_notify_users(llcache_object *object)
 	llcache_event event;
 	bool emitted_notify = false;
 
-	MS_LOG("llcache notify users");
-	macsurf_debug_log_int("llc obj", (long)object->fetch.state);
-
 	/**
 	 * State transitions and event emission for users.
 	 * Rows: user state. Cols: object state.
@@ -3747,8 +3744,6 @@ static void llcache_catch_up_all_users(void *ignored)
 {
 	llcache_object *object;
 
-	MS_LOG("llcache catch up all users");
-
 	/* Assume after this we'll be all caught up.  If any user of a handle
 	 * defers then we'll invalidate all_caught_up and reschedule via
 	 * llcache_users_not_caught_up()
@@ -3773,7 +3768,6 @@ static void llcache_catch_up_all_users(void *ignored)
  */
 static void llcache_users_not_caught_up(void)
 {
-	MS_LOG("llcache users not caught up");
 	if (llcache->all_caught_up) {
 		llcache->all_caught_up = false;
 		guit->misc->schedule(0, llcache_catch_up_all_users, NULL);
