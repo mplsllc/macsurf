@@ -77,6 +77,8 @@ long macos9_hrb_inline = 0;
 long macos9_hrb_text = 0;
 long macos9_hrb_other = 0;
 long macos9_hrb_clip_skips = 0;
+char macos9_skipbox_info[160] = {0};
+#include <stdio.h>
 
 /**
  * Determine if a box has a background that needs drawing
@@ -1402,6 +1404,13 @@ bool html_redraw_box(const html_content *html, struct box *box,
 	if (clip->y1 < r.y0 || r.y1 < clip->y0 ||
 			clip->x1 < r.x0 || r.x1 < clip->x0) {
 		macos9_hrb_clip_skips++;
+		sprintf(macos9_skipbox_info,
+			"T=%d V=%ld xy=%d,%d WH=%d,%d dx=%d,%d dy=%d,%d clip=%d,%d,%d,%d",
+			(int)box->type, macos9_hrb_visits,
+			x, y, width, height,
+			(int)box->descendant_x0, (int)box->descendant_x1,
+			(int)box->descendant_y0, (int)box->descendant_y1,
+			clip->x0, clip->y0, clip->x1, clip->y1);
 		return true;
 	}
 
