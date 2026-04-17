@@ -1411,7 +1411,9 @@ bool html_redraw_box(const html_content *html, struct box *box,
 			(int)box->descendant_x0, (int)box->descendant_x1,
 			(int)box->descendant_y0, (int)box->descendant_y1,
 			clip->x0, clip->y0, clip->x1, clip->y1);
-		return true;
+		/* DIAG: do NOT return - force walker to recurse so we can
+		 * see if text renders when clip-skip is bypassed. */
+		/* return true; */
 	}
 
 	/*if the rectangle is under the page bottom but it can fit in a page,
