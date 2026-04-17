@@ -3129,6 +3129,7 @@ static void llcache_fetch_callback(const fetch_msg *msg, void *p)
 	switch (msg->type) {
 	case FETCH_HEADER:
 		/* Received a fetch header */
+		MS_LOG("fetch HEADER");
 		object->fetch.state = LLCACHE_FETCH_HEADERS;
 
 		error = llcache_fetch_process_header(object,
@@ -3164,6 +3165,7 @@ static void llcache_fetch_callback(const fetch_msg *msg, void *p)
 	/* Normal 2xx state machine */
 	case FETCH_DATA:
 		/* Received some data */
+		MS_LOG("fetch DATA");
 		error = llcache_fetch_process_data(object,
 				msg->data.header_or_data.buf,
 				msg->data.header_or_data.len);
@@ -3174,6 +3176,7 @@ static void llcache_fetch_callback(const fetch_msg *msg, void *p)
 	{
 		uint8_t *temp;
 
+		MS_LOG("fetch FINISHED");
 		object->fetch.state = LLCACHE_FETCH_COMPLETE;
 		object->fetch.fetch = NULL;
 
@@ -3380,6 +3383,7 @@ static nserror llcache_object_notify_users(llcache_object *object)
 	bool emitted_notify = false;
 
 	MS_LOG("llcache notify users");
+	macsurf_debug_log_int("llc obj", (long)object->fetch.state);
 
 	/**
 	 * State transitions and event emission for users.
