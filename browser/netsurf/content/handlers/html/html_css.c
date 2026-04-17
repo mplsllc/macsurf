@@ -44,6 +44,8 @@
 #include "html/private.h"
 #include "html/css.h"
 
+#include "macsurf_debug.h"
+
 static nsurl *html_default_stylesheet_url;
 static nsurl *html_adblock_stylesheet_url;
 static nsurl *html_quirks_stylesheet_url;
@@ -98,6 +100,8 @@ html_convert_css_callback(hlcache_handle *css,
 	unsigned int i;
 	struct html_stylesheet *s;
 
+	MS_LOG("html stylesheet cb");
+
 	/* Find sheet */
 	for (i = 0, s = parent->stylesheets;
 	     i != parent->stylesheet_count;
@@ -113,6 +117,7 @@ html_convert_css_callback(hlcache_handle *css,
 	case CONTENT_MSG_DONE:
 		NSLOG(netsurf, INFO, "done stylesheet slot %d '%s'", i,
 		      nsurl_access(hlcache_handle_get_url(css)));
+		MS_LOG("html active decrement");
 		parent->base.active--;
 		NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
 		break;
@@ -124,6 +129,7 @@ html_convert_css_callback(hlcache_handle *css,
 
 		hlcache_handle_release(css);
 		s->sheet = NULL;
+		MS_LOG("html active decrement");
 		parent->base.active--;
 		NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
 		break;
@@ -137,6 +143,7 @@ html_convert_css_callback(hlcache_handle *css,
 	}
 
 	if (html_can_begin_conversion(parent)) {
+		MS_LOG("html active zero -- scheduling convert");
 		html_begin_conversion(parent);
 	}
 

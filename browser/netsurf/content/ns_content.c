@@ -41,6 +41,8 @@
 #include "content/hlcache.h"
 #include "content/urldb.h"
 
+#include "macsurf_debug.h"
+
 #define URL_FMT_SPC "%.140s"
 
 const char * const content_status_name[] = {
@@ -766,6 +768,11 @@ void content_broadcast(struct content *c, content_msg msg,
 {
 	struct content_user *user, *next;
 	assert(c);
+
+	MS_LOG("content broadcast");
+	if (msg == CONTENT_MSG_READY) {
+		MS_LOG("content broadcast READY");
+	}
 
 	nslog_log(__FILE__, "", __LINE__, "%p -> msg:%d", c, msg);
 	for (user = c->user_list->next; user != 0; user = next) {

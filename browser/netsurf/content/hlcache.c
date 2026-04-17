@@ -41,6 +41,8 @@
 #include "content/content_protected.h"
 #include "content/content_factory.h"
 
+#include "macsurf_debug.h"
+
 typedef struct hlcache_entry hlcache_entry;
 typedef struct hlcache_retrieval_ctx hlcache_retrieval_ctx;
 
@@ -195,6 +197,8 @@ static void hlcache_content_callback(struct content *c, content_msg msg,
 	nserror error = NSERROR_OK;
 	hlcache_event event;
 
+	MS_LOG("hlcache notifying html handler");
+
 	memset(&event, 0, sizeof(event));
 	event.type = msg;
 
@@ -267,12 +271,16 @@ static nserror hlcache_find_content(hlcache_retrieval_ctx *ctx,
 			return NSERROR_NOMEM;
 
 		/* Create content using llhandle */
+		MS_LOG("hlcache creating content");
 		entry->content = content_factory_create_content(ctx->llcache,
 				ctx->child.charset, ctx->child.quirks,
 				effective_type);
 		if (entry->content == NULL) {
+			MS_LOG("hlcache content create FAILED");
 			free(entry);
 			return NSERROR_NOMEM;
+		} else {
+			MS_LOG("hlcache content created OK");
 		}
 
 		/* Insert into cache */
@@ -434,6 +442,8 @@ hlcache_llcache_callback(llcache_handle *handle,
 	hlcache_retrieval_ctx *ctx = pw;
 	lwc_string *effective_type = NULL;
 	nserror error;
+
+	MS_LOG("hlcache llcache cb");
 
 	assert(ctx->llcache == handle);
 

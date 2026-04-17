@@ -55,6 +55,8 @@
 #include "content/backing_store.h"
 #include "content/urldb.h"
 
+#include "macsurf_debug.h"
+
 /**
  * State of a low-level cache object fetch.
  */
@@ -3377,6 +3379,8 @@ static nserror llcache_object_notify_users(llcache_object *object)
 	llcache_event event;
 	bool emitted_notify = false;
 
+	MS_LOG("llcache notify users");
+
 	/**
 	 * State transitions and event emission for users.
 	 * Rows: user state. Cols: object state.
@@ -3585,6 +3589,7 @@ static nserror llcache_object_notify_users(llcache_object *object)
 			/* Emit DONE event */
 			event.type = LLCACHE_EVENT_DONE;
 
+			MS_LOG("llcache event done sent");
 			error = handle->cb(handle, &event, handle->pw);
 			if (user->queued_for_delete) {
 				next_user = user->next;
@@ -3738,6 +3743,8 @@ static void llcache_catch_up_all_users(void *ignored)
 {
 	llcache_object *object;
 
+	MS_LOG("llcache catch up all users");
+
 	/* Assume after this we'll be all caught up.  If any user of a handle
 	 * defers then we'll invalidate all_caught_up and reschedule via
 	 * llcache_users_not_caught_up()
@@ -3762,6 +3769,7 @@ static void llcache_catch_up_all_users(void *ignored)
  */
 static void llcache_users_not_caught_up(void)
 {
+	MS_LOG("llcache users not caught up");
 	if (llcache->all_caught_up) {
 		llcache->all_caught_up = false;
 		guit->misc->schedule(0, llcache_catch_up_all_users, NULL);

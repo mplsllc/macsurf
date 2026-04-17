@@ -37,6 +37,8 @@
 #include "css/hints.h"
 #include "css/internal.h"
 
+#include "macsurf_debug.h"
+
 /* Define to trace import fetches */
 #undef NSCSS_IMPORT_TRACE
 
@@ -141,6 +143,8 @@ nscss_create(const content_handler *handler,
 	const char *xnsbase = NULL;
 	lwc_string *charset_value = NULL;
 	nserror error;
+
+	MS_LOG("nscss create");
 
 	result = calloc(1, sizeof(nscss_content));
 	if (result == NULL)
@@ -253,6 +257,8 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	nscss_content *css = (nscss_content *) c;
 	css_error error;
 
+	MS_LOG("nscss process data");
+
 	error = nscss_process_css_data(&css->data, data, size);
 	if (error != CSS_OK && error != CSS_NEEDDATA) {
 		content_broadcast_error(c, NSERROR_CSS, NULL);
@@ -286,6 +292,8 @@ bool nscss_convert(struct content *c)
 {
 	nscss_content *css = (nscss_content *) c;
 	css_error error;
+
+	MS_LOG("nscss convert");
 
 	error = nscss_convert_css_data(&css->data);
 	if (error != CSS_OK) {
@@ -504,6 +512,7 @@ void nscss_content_done(struct content_css_data *css, void *pw)
 
 	/* Finally, catch the content's users up with reality */
 	content_set_ready(c);
+	MS_LOG("nscss firing CONTENT_MSG_DONE");
 	content_set_done(c);
 }
 

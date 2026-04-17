@@ -50,6 +50,7 @@
 #include "text/textplain.h"
 
 #include "netsurf/browser_window.h"
+#include "macsurf_debug.h"
 #include "desktop/system_colour.h"
 #include "desktop/page-info.h"
 #include "desktop/searchweb.h"
@@ -184,7 +185,15 @@ nserror netsurf_init(const char *store_path)
 		return ret;
 
 	/* content handler initialisation */
-	ret = nscss_init();
+	{
+		nserror css_init_err = nscss_init();
+		if (css_init_err != NSERROR_OK) {
+			MS_LOG("FATAL: nscss_init failed");
+		} else {
+			MS_LOG("nscss_init OK");
+		}
+		ret = css_init_err;
+	}
 	if (ret != NSERROR_OK)
 		return ret;
 
