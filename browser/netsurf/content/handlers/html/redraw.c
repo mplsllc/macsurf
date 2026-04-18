@@ -1304,10 +1304,10 @@ bool html_redraw_box(const html_content *html, struct box *box,
 	 * function's clip test and cause the walker to skip real content.
 	 * See box->x = 30728, box->descendant_y0 = -39845888 on macos9. */
 	{
-		if (box->x < -10000 || box->x > 100000) box->x = 0;
-		if (box->y < -10000 || box->y > 100000) box->y = 0;
-		if (box->width < 0 || box->width > 100000) box->width = 0;
-		if (box->height < 0 || box->height > 100000) box->height = 0;
+		if (box->x < -10000 || box->x > 10000) box->x = 0;
+		if (box->y < -10000 || box->y > 10000) box->y = 0;
+		if (box->width < 0 || box->width > 10000) box->width = 0;
+		if (box->height < 0 || box->height > 10000) box->height = 0;
 		if (box->padding[LEFT] < 0 || box->padding[LEFT] > 10000) box->padding[LEFT] = 0;
 		if (box->padding[TOP] < 0 || box->padding[TOP] > 10000) box->padding[TOP] = 0;
 		if (box->padding[RIGHT] < 0 || box->padding[RIGHT] > 10000) box->padding[RIGHT] = 0;
@@ -1316,10 +1316,10 @@ bool html_redraw_box(const html_content *html, struct box *box,
 		if (box->border[TOP].width < 0 || box->border[TOP].width > 1000) box->border[TOP].width = 0;
 		if (box->border[RIGHT].width < 0 || box->border[RIGHT].width > 1000) box->border[RIGHT].width = 0;
 		if (box->border[BOTTOM].width < 0 || box->border[BOTTOM].width > 1000) box->border[BOTTOM].width = 0;
-		if (box->descendant_x0 < -10000 || box->descendant_x0 > 100000) box->descendant_x0 = 0;
-		if (box->descendant_y0 < -10000 || box->descendant_y0 > 100000) box->descendant_y0 = 0;
-		if (box->descendant_x1 < -10000 || box->descendant_x1 > 100000) box->descendant_x1 = box->width;
-		if (box->descendant_y1 < -10000 || box->descendant_y1 > 100000) box->descendant_y1 = box->height;
+		if (box->descendant_x0 < -10000 || box->descendant_x0 > 10000) box->descendant_x0 = 0;
+		if (box->descendant_y0 < -10000 || box->descendant_y0 > 10000) box->descendant_y0 = 0;
+		if (box->descendant_x1 < -10000 || box->descendant_x1 > 10000) box->descendant_x1 = box->width;
+		if (box->descendant_y1 < -10000 || box->descendant_y1 > 10000) box->descendant_y1 = box->height;
 	}
 
 	/* avoid trivial FP maths */
