@@ -162,4 +162,15 @@ void font_plot_style_from_css(
 	css_computed_color(css, &col);
 	fstyle->foreground = nscss_color_to_ns(col);
 	fstyle->background = 0;
+	/* Safety: when the CSS cascade produces a suspicious colour (white,
+	 * transparent, or otherwise garbage from an incomplete computed
+	 * style), force foreground to opaque black so text is always
+	 * legible. This is a diagnostic fallback; real CSS text colour
+	 * support lands once the cascade is sound. NetSurf colour is XBGR
+	 * so 0x00000000 = opaque black. */
+	{
+		uint32_t rgb = fstyle->foreground & 0x00ffffff;
+		if (rgb == 0x00000000 || rgb == 0x00ffffff)
+			fstyle->foreground = 0x00000000;
+	}
 }

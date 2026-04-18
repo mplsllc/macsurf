@@ -2683,7 +2683,16 @@ static int line_height(
 				lhvalue, lhunit);
 	}
 
-	return FIXTOINT(line_height);
+	{
+		int lh_px = FIXTOINT(line_height);
+		/* Floor at 16px and ceiling at 1000px: incomplete CSS
+		 * cascade can produce 0 (all lines stack) or absurdly
+		 * huge values. 16px is a sane default line-height for
+		 * body text. */
+		if (lh_px < 16 || lh_px > 1000)
+			lh_px = 16;
+		return lh_px;
+	}
 }
 
 
