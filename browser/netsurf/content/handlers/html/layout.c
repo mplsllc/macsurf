@@ -5219,6 +5219,15 @@ layout_get_box_bbox(
 		text_height = css_unit_len2device_px(box->style, unit_len_ctx,
 				font_size, font_unit);
 		text_height = FIXTOINT(text_height * 3 / 4);
+		/* Sanity clamp: if a computed style is incompletely
+		 * initialised (e.g. uninitialised fields inside the
+		 * css_computed_style struct feed back through
+		 * css_computed_font_size/css_unit_len2device_px), text_height
+		 * can come out absurdly large and make *desc_y0 a huge
+		 * negative number, which the redraw walker then treats as a
+		 * non-empty bbox and skips children. Clamp to a sane range. */
+		if (text_height < 0 || text_height > 1000)
+			text_height = 0;
 		*desc_y0 = (*desc_y0 < -text_height) ? *desc_y0 : -text_height;
 	}
 }
