@@ -699,10 +699,21 @@ static inline void layout_find_dimensions(
 					bstyle == CSS_BORDER_STYLE_NONE)
 				/* spec unclear: following Mozilla */
 				border[i].width = 0;
-			else
+			else {
 				border[i].width = FIXTOINT(css_unit_len2device_px(
 						style, unit_len_ctx,
 						value, unit));
+				/* Sanity clamp: if computed style / unit ctx is
+				 * incompletely initialised, css_unit_len2device_px
+				 * can return a huge garbage value and border width
+				 * then feeds back into layout_get_box_bbox as
+				 * *desc_y0 = -border[TOP].width, producing things
+				 * like desc_y0 = -39845888 that trick the render
+				 * walker's clip test. Clamp to a sane range. */
+				if (border[i].width < 0 ||
+						border[i].width > 1000)
+					border[i].width = 0;
+			}
 
 			/* Special case for border-collapse: make all borders
 			 * on table/table-row-group/table-row zero width. */
