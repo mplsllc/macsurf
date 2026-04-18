@@ -1320,6 +1320,14 @@ bool html_redraw_box(const html_content *html, struct box *box,
 		if (box->descendant_y0 < -10000 || box->descendant_y0 > 10000) box->descendant_y0 = 0;
 		if (box->descendant_x1 < -10000 || box->descendant_x1 > 10000) box->descendant_x1 = box->width;
 		if (box->descendant_y1 < -10000 || box->descendant_y1 > 10000) box->descendant_y1 = box->height;
+		/* If descendants are tiny relative to box content, expand so
+		 * the clip intersection doesn't collapse to zero pixels.
+		 * This happens when layout doesn't run fully (body->height=0,
+		 * descendant_y1=0) but the box still has real text children. */
+		if (box->descendant_x1 <= box->descendant_x0)
+			box->descendant_x1 = box->descendant_x0 + 10000;
+		if (box->descendant_y1 <= box->descendant_y0)
+			box->descendant_y1 = box->descendant_y0 + 10000;
 	}
 
 	/* avoid trivial FP maths */
