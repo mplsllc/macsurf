@@ -1323,13 +1323,19 @@ static void convert_xml_to_box(struct box_construct_ctx *ctx)
 		assert(ctx->n != NULL);
 
 		if (box_construct_element(ctx, &convert_children) == false) {
-			/* PROBE X1: bce failed - element + waypoint + bgs_step. */
+			/* PROBE X1: bce failed - el + waypoint + bgs + ngs. */
+			extern long macsurf_ngs_step;
+			extern long macsurf_ngs_last_error;
 			macsurf_debug_probe_append(" X1 el=");
 			macsurf_debug_probe_append_int("", macsurf_bce_call_count);
 			macsurf_debug_probe_append(" way=");
 			macsurf_debug_probe_append_int("", macsurf_bce_waypoint);
 			macsurf_debug_probe_append(" bgs=");
 			macsurf_debug_probe_append_int("", macsurf_bgs_step);
+			macsurf_debug_probe_append(" ngs=");
+			macsurf_debug_probe_append_int("", macsurf_ngs_step);
+			macsurf_debug_probe_append(" err=");
+			macsurf_debug_probe_append_int("", macsurf_ngs_last_error);
 			ctx->cb(ctx->content, false);
 			dom_node_unref(ctx->n);
 			free(ctx);

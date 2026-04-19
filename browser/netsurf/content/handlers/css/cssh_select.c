@@ -32,6 +32,13 @@
 #include "css/hints.h"
 #include "css/select.h"
 
+#include "macsurf_debug.h"
+
+/* Sub-step tracker for nscss_get_style. Readable via macsurf_ngs_step
+ * from the box_get_style wrapper when it sees NULL return. */
+long macsurf_ngs_step = 0;
+long macsurf_ngs_last_error = 0;
+
 static css_error node_name(void *pw, void *node, css_qname *qname);
 static css_error node_classes(void *pw, void *node,
 		lwc_string ***classes, uint32_t *n_classes);
@@ -260,14 +267,20 @@ css_select_results *nscss_get_style(nscss_select_ctx *ctx, dom_node *n,
 	int pseudo_element;
 	css_error error;
 
+	macsurf_ngs_step = 1;
+
 	/* Select style for node */
 	error = css_select_style(ctx->ctx, n, unit_len_ctx, media, inline_style,
 			&selection_handler, ctx, &styles);
 
 	if (error != CSS_OK || styles == NULL) {
 		/* Failed selecting partial style -- bail out */
+		macsurf_ngs_step = 2; /* css_select_style failed */
+		macsurf_ngs_last_error = (long)error;
 		return NULL;
 	}
+
+	macsurf_ngs_step = 3;
 
 	/* If there's a parent style, compose with partial to obtain
 	 * complete computed style for element */
@@ -278,6 +291,8 @@ css_select_results *nscss_get_style(nscss_select_ctx *ctx, dom_node *n,
 				styles->styles[CSS_PSEUDO_ELEMENT_NONE],
 				unit_len_ctx, &composed);
 		if (error != CSS_OK) {
+			macsurf_ngs_step = 4; /* parent compose failed */
+			macsurf_ngs_last_error = (long)error;
 			css_select_results_destroy(styles);
 			return NULL;
 		}
@@ -287,6 +302,8 @@ css_select_results *nscss_get_style(nscss_select_ctx *ctx, dom_node *n,
 				styles->styles[CSS_PSEUDO_ELEMENT_NONE]);
 		styles->styles[CSS_PSEUDO_ELEMENT_NONE] = composed;
 	}
+
+	macsurf_ngs_step = 5;
 
 	for (pseudo_element = CSS_PSEUDO_ELEMENT_NONE + 1;
 			pseudo_element < CSS_PSEUDO_ELEMENT_COUNT;
@@ -311,6 +328,8 @@ css_select_results *nscss_get_style(nscss_select_ctx *ctx, dom_node *n,
 		if (error != CSS_OK) {
 			/* TODO: perhaps this shouldn't be quite so
 			 * catastrophic? */
+			macsurf_ngs_step = 6; /* pseudo compose failed */
+			macsurf_ngs_last_error = (long)error;
 			css_select_results_destroy(styles);
 			return NULL;
 		}
