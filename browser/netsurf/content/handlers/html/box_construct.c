@@ -49,7 +49,6 @@
 #include "html/box_normalise.h"
 #include "html/form_internal.h"
 
-#include "macsurf_debug.h"
 
 /* Diagnostic: count text boxes constructed during DOM->box conversion. */
 long macos9_box_text_created = 0;
@@ -545,31 +544,6 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 			ctx->bctx);
 	if (box == NULL)
 		return false;
-
-	/* Diagnostic probes 1 + 2: fire once on the root element only. Uses
-	 * sticky _force variants so downstream MS_LOG calls (e.g. redraw
-	 * counter) cannot overwrite the probe output. The last _force call
-	 * wins and stays on the title bar. */
-	{
-		static int probe_fired = 0;
-		if (probe_fired == 0 && props.node_is_root) {
-			probe_fired = 1;
-			if (box->style == NULL) {
-				macsurf_debug_probe_append("p1:NULL");
-			} else {
-				css_color probe_col;
-				uint8_t probe_rc;
-				probe_col = 0;
-				probe_rc = css_computed_color(box->style,
-						&probe_col);
-				macsurf_debug_probe_append("p1:OK");
-				macsurf_debug_probe_append_int("p2rc",
-						(long)probe_rc);
-				macsurf_debug_probe_append_int("p2col",
-						(long)probe_col);
-			}
-		}
-	}
 
 	/* If this is the root box, add it to the context */
 	if (props.node_is_root)
