@@ -318,11 +318,35 @@ static void html_get_dimensions(html_content *htmlc)
 	/* MacSurf: C89 unions can't use designated initializers — populate
 	 * the .getdims branch via assignment. */
 	union content_msg_data msg_data;
+
+	/* Probe F: single-fire diagnostic for the font_size_default =
+	 * INT_MAX mystery. Fcalled proves entry; Fret proves the function
+	 * ran to completion; intermediate F* values localise the step
+	 * where 128 becomes INT_MAX (if it does). Buffer-reset so only F
+	 * shows. */
+	static int f_probe_fired = 0;
+	int f_ns_fs;
+	css_fixed f_i1;
+	css_fixed f_d1;
+	css_fixed f_m1;
+	css_fixed f_ff;
+	int do_probe = 0;
+	if (f_probe_fired == 0) {
+		f_probe_fired = 1;
+		do_probe = 1;
+		macsurf_debug_probe_reset();
+		macsurf_debug_probe_append_int("Fcalled", 1L);
+	}
+
 	msg_data.getdims.viewport_width = &w;
 	msg_data.getdims.viewport_height = &h;
 
 	content_broadcast(&htmlc->base, CONTENT_MSG_GETDIMS, &msg_data);
 
+	if (do_probe) {
+		macsurf_debug_probe_append_int("Fw", (long)w);
+		macsurf_debug_probe_append_int("Fh", (long)h);
+	}
 
 	w = css_unit_device2css_px(INTTOFIX(w), device_dpi);
 	h = css_unit_device2css_px(INTTOFIX(h), device_dpi);
@@ -334,11 +358,31 @@ static void html_get_dimensions(html_content *htmlc)
 	htmlc->unit_len_ctx.device_dpi = device_dpi;
 
 	/** \todo Change nsoption font sizes to px. */
-	f_size = FDIV(FMUL(F_96, FDIV(INTTOFIX(nsoption_int(font_size)), F_10)), F_72);
+	if (do_probe) {
+		f_ns_fs = nsoption_int(font_size);
+		f_i1 = INTTOFIX(f_ns_fs);
+		f_d1 = FDIV(f_i1, F_10);
+		f_m1 = FMUL(F_96, f_d1);
+		f_ff = FDIV(f_m1, F_72);
+		macsurf_debug_probe_append_int("Fns", (long)f_ns_fs);
+		macsurf_debug_probe_append_int("Fi1", (long)f_i1);
+		macsurf_debug_probe_append_int("Fd1", (long)f_d1);
+		macsurf_debug_probe_append_int("Fm1", (long)f_m1);
+		macsurf_debug_probe_append_int("Fff", (long)f_ff);
+		f_size = f_ff;
+	} else {
+		f_size = FDIV(FMUL(F_96, FDIV(INTTOFIX(nsoption_int(font_size)), F_10)), F_72);
+	}
 	f_min  = FDIV(FMUL(F_96, FDIV(INTTOFIX(nsoption_int(font_min_size)), F_10)), F_72);
 
 	htmlc->unit_len_ctx.font_size_default = f_size;
 	htmlc->unit_len_ctx.font_size_minimum = f_min;
+
+	if (do_probe) {
+		macsurf_debug_probe_append_int("Ffsd",
+			(long)htmlc->unit_len_ctx.font_size_default);
+		macsurf_debug_probe_append_int("Fret", 1L);
+	}
 }
 
 /* exported function documented in html/html_internal.h */

@@ -2690,7 +2690,12 @@ static int line_height(
 		 * B/C dropped: compiler arithmetic is already proven by
 		 * A's sane dpi value. Title buffer is 256 bytes. */
 		{
-			static int probes_fired = 0;
+			/* Disabled for fixes111: probe F runs inside
+			 * html_get_dimensions (fires earlier than this
+			 * block) and we don't want A/D/E's probe_reset to
+			 * wipe F's title output. Re-enable by setting
+			 * initial value back to 0. */
+			static int probes_fired = 1;
 			if (probes_fired == 0) {
 				probes_fired = 1;
 
