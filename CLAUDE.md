@@ -255,7 +255,7 @@ When auditing a new C99 library for CW8 / strict C89, grep for:
 - Flat-folder build approach — all `.c` files in one folder, one search path.
 - Remove Object Code is required before every rebuild after file changes.
 - MacsBug is installed on the G4 for pipeline debugging — `MS_LOG` checkpoints are active throughout the pipeline.
-- Last shipped fix zip: **fixes115** (strip fpmath A/D/E/p1/p2 probes from `layout.c` and `box_construct.c` now that the CW8 PPC long-long investigation is closed and the title bar needs to show real page titles).
+- Last shipped fix zip: **fixes115** (strip fpmath A/D/E/p1/p2 probes from `layout.c` and `box_construct.c` now that the CW8 PPC long-long investigation is closed and the title bar needs to show real page titles). **Next fix zip ships as fixes133** — numbering is monotonic per user convention; always confirm the number with the user before shipping.
 
 ## Docs
 
