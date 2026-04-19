@@ -473,6 +473,14 @@ static inline bool box__containing_block_is_flex(
  * \param convert_children  Whether to convert children
  * \return  true on success, false on memory exhaustion
  */
+/* File-static waypoint for localizing box_construct_element failures.
+ * Set at each major section; read by convert_xml_to_box's X1 probe when
+ * box_construct_element returns false. */
+long macsurf_bce_waypoint = 0;
+long macsurf_bce_call_count = 0;
+
+#define BCE_WAY(n) do { macsurf_bce_waypoint = (n); } while (0)
+
 static bool
 box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 {
@@ -485,14 +493,9 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	dom_exception err;
 	struct box_construct_props props;
 	const css_computed_style *root_style = NULL;
-	static long bce_call_count = 0;
 
-	bce_call_count++;
-	/* PROBE E1: first 6 box_construct_element entries (root + first 5 kids). */
-	if (bce_call_count <= 6) {
-		macsurf_debug_probe_append(" E1 n=");
-		macsurf_debug_probe_append_int("", bce_call_count);
-	}
+	macsurf_bce_call_count++;
+	macsurf_bce_waypoint = 1;
 
 	assert(ctx->n != NULL);
 
@@ -509,11 +512,13 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		root_style = ctx->root_box->style;
 	}
 
+	BCE_WAY(2);
 	styles = box_get_style(ctx->content, props.parent_style, root_style,
 			ctx->n);
 	if (styles == NULL)
 		return false;
 
+	BCE_WAY(3);
 	/* Extract title attribute, if present */
 	err = dom_element_get_attribute(ctx->n, corestring_dom_title, &title0);
 	if (err != DOM_NO_ERR)
@@ -535,6 +540,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 			return false;
 	}
 
+	BCE_WAY(4);
 	/* Extract id attribute, if present */
 	err = dom_element_get_attribute(ctx->n, corestring_dom_id, &s);
 	if (err != DOM_NO_ERR)
@@ -548,6 +554,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		dom_string_unref(s);
 	}
 
+	BCE_WAY(5);
 	box = box_create(styles, styles->styles[CSS_PSEUDO_ELEMENT_NONE], false,
 			props.href, props.target, props.title, id,
 			ctx->bctx);
@@ -583,6 +590,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	if (props.node_is_root)
 		ctx->root_box = box;
 
+	BCE_WAY(6);
 	/* Deal with colspan/rowspan */
 	err = dom_element_get_attribute(ctx->n, corestring_dom_colspan, &s);
 	if (err != DOM_NO_ERR)
@@ -612,6 +620,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		dom_string_unref(s);
 	}
 
+	BCE_WAY(7);
 	css_display = ns_computed_display_static(box->style);
 
 	/* Set box type from computed display */
@@ -651,6 +660,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		}
 	}
 
+	BCE_WAY(8);
 	if (convert_special_elements(ctx->n,
 				     ctx->content,
 				     box,
@@ -658,6 +668,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		return false;
 	}
 
+	BCE_WAY(9);
 	/* Handle the :before pseudo element */
 	if (!(box->flags & IS_REPLACED)) {
 		box_construct_generate(ctx->n, ctx->content, box,
@@ -687,6 +698,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		return true;
 	}
 
+	BCE_WAY(10);
 	/* Attach DOM node to box */
 	err = dom_node_set_user_data(ctx->n,
 			corestring_dom___ns_key_box_node_data, box, NULL,
@@ -721,6 +733,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		box_add_child(props.containing_block, props.inline_container);
 	}
 
+	BCE_WAY(11);
 	/* Kick off fetch for any background image */
 	if (css_computed_background_image(box->style, &bgimage_uri) ==
 			CSS_BACKGROUND_IMAGE_IMAGE && bgimage_uri != NULL &&
@@ -750,6 +763,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	if (*convert_children)
 		box->flags |= CONVERT_CHILDREN;
 
+	BCE_WAY(12);
 	if (box->type == BOX_INLINE || box->type == BOX_BR ||
 			box->type == BOX_INLINE_FLEX ||
 			box->type == BOX_INLINE_BLOCK) {
@@ -1288,6 +1302,11 @@ static void convert_xml_to_box(struct box_construct_ctx *ctx)
 		assert(ctx->n != NULL);
 
 		if (box_construct_element(ctx, &convert_children) == false) {
+			/* PROBE X1: bce failed - element number + last waypoint reached. */
+			macsurf_debug_probe_append(" X1 el=");
+			macsurf_debug_probe_append_int("", macsurf_bce_call_count);
+			macsurf_debug_probe_append(" way=");
+			macsurf_debug_probe_append_int("", macsurf_bce_waypoint);
 			ctx->cb(ctx->content, false);
 			dom_node_unref(ctx->n);
 			free(ctx);
@@ -1302,6 +1321,8 @@ static void convert_xml_to_box(struct box_construct_ctx *ctx)
 
 			err = dom_node_get_node_type(next, &type);
 			if (err != DOM_NO_ERR) {
+				/* PROBE X2: dom_node_get_node_type failed. */
+				macsurf_debug_probe_append(" X2_dom_node_type_fail");
 				ctx->cb(ctx->content, false);
 				dom_node_unref(next);
 				free(ctx);
@@ -1314,6 +1335,8 @@ static void convert_xml_to_box(struct box_construct_ctx *ctx)
 			if (type == DOM_TEXT_NODE) {
 				ctx->n = next;
 				if (box_construct_text(ctx) == false) {
+					/* PROBE X3: box_construct_text failed. */
+					macsurf_debug_probe_append(" X3_text_fail");
 					ctx->cb(ctx->content, false);
 					dom_node_unref(ctx->n);
 					free(ctx);
