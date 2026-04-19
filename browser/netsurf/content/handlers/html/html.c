@@ -335,7 +335,7 @@ static void html_get_dimensions(html_content *htmlc)
 		f_probe_fired = 1;
 		do_probe = 1;
 		macsurf_debug_probe_reset();
-		macsurf_debug_probe_append_int("Fcalled", 1L);
+		macsurf_debug_probe_append_int("Fc", 1L);
 	}
 
 	msg_data.getdims.viewport_width = &w;
@@ -344,8 +344,8 @@ static void html_get_dimensions(html_content *htmlc)
 	content_broadcast(&htmlc->base, CONTENT_MSG_GETDIMS, &msg_data);
 
 	if (do_probe) {
-		macsurf_debug_probe_append_int("Fw", (long)w);
-		macsurf_debug_probe_append_int("Fh", (long)h);
+		macsurf_debug_probe_append_int("w", (long)w);
+		macsurf_debug_probe_append_int("h", (long)h);
 	}
 
 	w = css_unit_device2css_px(INTTOFIX(w), device_dpi);
@@ -364,11 +364,11 @@ static void html_get_dimensions(html_content *htmlc)
 		f_d1 = FDIV(f_i1, F_10);
 		f_m1 = FMUL(F_96, f_d1);
 		f_ff = FDIV(f_m1, F_72);
-		macsurf_debug_probe_append_int("Fns", (long)f_ns_fs);
-		macsurf_debug_probe_append_int("Fi1", (long)f_i1);
-		macsurf_debug_probe_append_int("Fd1", (long)f_d1);
-		macsurf_debug_probe_append_int("Fm1", (long)f_m1);
-		macsurf_debug_probe_append_int("Fff", (long)f_ff);
+		macsurf_debug_probe_append_int("n", (long)f_ns_fs);
+		macsurf_debug_probe_append_int("i", (long)f_i1);
+		macsurf_debug_probe_append_int("d", (long)f_d1);
+		macsurf_debug_probe_append_int("m", (long)f_m1);
+		macsurf_debug_probe_append_int("f", (long)f_ff);
 		f_size = f_ff;
 	} else {
 		f_size = FDIV(FMUL(F_96, FDIV(INTTOFIX(nsoption_int(font_size)), F_10)), F_72);
@@ -379,9 +379,9 @@ static void html_get_dimensions(html_content *htmlc)
 	htmlc->unit_len_ctx.font_size_minimum = f_min;
 
 	if (do_probe) {
-		macsurf_debug_probe_append_int("Ffsd",
+		macsurf_debug_probe_append_int("s",
 			(long)htmlc->unit_len_ctx.font_size_default);
-		macsurf_debug_probe_append_int("Fret", 1L);
+		macsurf_debug_probe_append_int("Fr", 1L);
 	}
 }
 
