@@ -70,6 +70,8 @@
 #include "html/layout_internal.h"
 #include "html/table.h"
 
+#include "macsurf_debug.h"
+
 /** Array of per-side access functions for computed style margins. */
 const css_len_func margin_funcs[4] = {
 	[TOP]    = css_computed_margin_top,
@@ -2671,8 +2673,33 @@ static int line_height(
 
 	if (lhtype == CSS_LINE_HEIGHT_NUMBER ||
 			lhunit == CSS_UNIT_PCT) {
-		line_height = css_unit_len2device_px(style, unit_len_ctx,
-				lhvalue, CSS_UNIT_EM);
+		/* Probe 3: fire once, log fixed-point input and output of
+		 * css_unit_len2device_px to localise PPC fixed-point math
+		 * failures (matches Classilla's documented OS 9 layout
+		 * breakage class). */
+		{
+			static int probe3_fired = 0;
+			if (probe3_fired == 0) {
+				probe3_fired = 1;
+				MS_LOG("probe3:unit convert in");
+				macsurf_debug_log_int("p3 in lhvalue",
+						(long)lhvalue);
+				macsurf_debug_log_int("p3 in unit",
+						(long)CSS_UNIT_EM);
+				line_height = css_unit_len2device_px(style,
+						unit_len_ctx, lhvalue,
+						CSS_UNIT_EM);
+				MS_LOG("probe3:unit convert out");
+				macsurf_debug_log_int("p3 out raw",
+						(long)line_height);
+				macsurf_debug_log_int("p3 out px",
+						(long)FIXTOINT(line_height));
+			} else {
+				line_height = css_unit_len2device_px(style,
+						unit_len_ctx, lhvalue,
+						CSS_UNIT_EM);
+			}
+		}
 
 		if (lhtype != CSS_LINE_HEIGHT_NUMBER)
 			line_height = FDIV(line_height, F_100);
