@@ -79,6 +79,13 @@ probe_buf_append_long(long v)
 }
 
 void
+macsurf_debug_probe_reset(void)
+{
+	g_probe_buf[0] = '\0';
+	g_probe_len = 0;
+}
+
+void
 macsurf_debug_probe_append(const char *msg)
 {
 	if (g_probe_len > 0) probe_buf_append_char(' ');

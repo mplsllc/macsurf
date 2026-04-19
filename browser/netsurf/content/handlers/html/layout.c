@@ -2694,6 +2694,11 @@ static int line_height(
 			if (probes_fired == 0) {
 				probes_fired = 1;
 
+				/* Reset the shared probe buffer so upstream
+				 * probes (p1/p2/dpi/fsd/ppuA/ppuB/s64*) don't
+				 * eat our visible title budget. */
+				macsurf_debug_probe_reset();
+
 				/* Probe A: input sanity (viewport dropped). */
 				macsurf_debug_probe_append_int("Adpi",
 					(long)unit_len_ctx->device_dpi);

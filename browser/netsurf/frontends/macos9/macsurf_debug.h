@@ -39,6 +39,7 @@ int  macsurf_debug_title_is_locked(void);
  * title string, rather than overwriting each other. */
 void macsurf_debug_probe_append(const char *msg);
 void macsurf_debug_probe_append_int(const char *label, long value);
+void macsurf_debug_probe_reset(void);
 
 #define MS_LOG_STICKY(msg)   macsurf_debug_set_title_force(msg)
 
@@ -53,6 +54,7 @@ void macsurf_debug_probe_append_int(const char *label, long value);
 #define macsurf_debug_log_int_force(label, value)
 #define macsurf_debug_probe_append(msg)
 #define macsurf_debug_probe_append_int(label, value)
+#define macsurf_debug_probe_reset()
 #define macsurf_debug_title_is_locked() 0
 #define MS_LOG_STICKY(msg)
 
