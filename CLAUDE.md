@@ -2,6 +2,10 @@
 
 A lightweight web browser for Mac OS 9 PowerPC, built on the NetSurf engine, paired with a simple TLS proxy.
 
+## CLAUDE.md Maintenance
+
+This file must be kept current. It falls out of date fast when not actively maintained, and stale context causes agents to repeat solved problems. Update as part of every round that changes project state — when a blocker is resolved, when a new subsystem lands, when the architecture shifts. The goal is that any new agent reading CLAUDE.md at the start of a session has an accurate picture of where the project actually stands. Detailed update protocol at the bottom of this file.
+
 ## Project Structure
 
 ```
@@ -235,24 +239,56 @@ When auditing a new C99 library for CW8 / strict C89, grep for:
 - `MACSURF_HOME_URL` defined in `macsurf_config.h`.
 - v0.1 fallback path (`strip_html` + direct `DrawText`) has been removed. Full NetSurf pipeline is the only rendering path.
 
-## Rendering Pipeline (v0.3 — first real page rendered)
+## Rendering Pipeline (v0.3 — native CSS)
 
 - HTTP fetcher registered for `http:` and `https:` schemes via OT proxy at `116.202.231.103:8765`.
 - Resource fetcher serves real CSS content for `resource:default.css`, `resource:internal.css`, `resource:quirks.css` (`macos9_fetcher_stubs.c`).
 - `no_backing_store.c` returns `NSERROR_NOT_IMPLEMENTED` from store and fetch.
-- Event-loop sleep shortens to 1 tick while any fetcher is active (`macos9_fetching || macos9_stub_fetcher_active() || macos9_http_fetcher_active()`) so NetSurf's fetcher ring progresses via `fetch_send_callback` continuations every pass. There is **no** explicit `fetch_poll()` call — an earlier CLAUDE.md draft misdescribed this.
-- Full NetSurf pipeline executes: fetch → parse → CSS cascade → layout → plot.
-- **CSS custom properties (`var()`) resolve natively as of fixes133 + fixes139.** `--name:` definitions are captured into each stylesheet's custom-property table at parse time; declarations whose value references `var()` are kept as raw value tokens on the rule's `css_style` and resolved inside `cascade_style` against the select_ctx-wide aggregate table (last-write-wins over sheet source order, matching author cascade). Fallback forms, nested `var()`, and cross-stylesheet references all work. Circular refs are cut at depth 10. See [browser/libcss/src/parse/custom_properties.c](browser/libcss/src/parse/custom_properties.c).
-  - **fixes139 was the keystone.** fixes133's capture path couldn't fire because libcss's CSS 2.1-era lexer tokenized `--foo` as `CHAR('-') + IDENT('-foo')` (the second `-` was consumed looking for the CDC `-->` terminator, then rewound to CHAR when `>` didn't follow). fixes135 tried to detect the split pair in `handleDeclaration` — that detection never matched on real input. fixes139 fixed it at the lexer layer: in [lex.c](browser/libcss/src/lex/lex.c) `CDCOrIdentOrFunctionOrNPD`, when `--` is followed by nmstart, the token continues as a single `IDENT('--foo')` instead of rewinding. After fixes139, MacTrove body renders grey (`--platinum-bg: #dddddd` resolves), links blue (`--platinum-link`), card chrome visible — confirmed on G3 hardware 2026-04-20.
-- **First live web page rendered on G3 hardware (2026-04-19)**: `http://mac.mp.ls/` (MacTrove) loaded end-to-end — toolbar + URL bar + real HTML (headings, body text, navigation items, image placeholder boxes). Layout still rough (text overlap, odd positioning) but fetch/parse/cascade/layout/plot chain confirmed on real content.
-- **v0.3 design-fidelity milestone (2026-04-20)**: after fixes139 the Platinum theme renders — grey body (`--platinum-bg`), blue links (`--platinum-link`), card chrome, Download/Details buttons with backgrounds. MacSurf crossed from "renders something" to "renders the author's design" on 25-year-old hardware. Verification signal: title bar shows `cp res OK` (custom-property capture **and** resolution both firing). Screenshot canonical location: `screenshots/v0.3-mactrove-fixes139.png` (user to save from the 2026-04-20 session).
-- **Architectural foundation:** [docs/research/state-survey-2026-04-18.md](docs/research/state-survey-2026-04-18.md) and [state-survey-2026-04-19.md](docs/research/state-survey-2026-04-19.md) are the documents that made fixes139 possible. The 2026-04-19 survey in particular (§A7) explicitly scoped three paths for var() support — native libcss, proxy preprocessor, browser preprocessor — and chose native. Without that scoping, the fast-looking proxy shortcut would have blocked the real fix. Treat both surveys as load-bearing architectural refs for any future CSS-layer work (`gap`, `justify-content`, `border-radius`, images).
-- CSS_NOMEM blocker resolved by raising Carbon partition (`MWProject_PPC_size` 4096 → 16384, `MWProject_PPC_minsize` 2048 → 8192). Root cause was real heap exhaustion — libcss calls `malloc`/`calloc` directly with no NetSurf wrapper, so "OOM in libcss" meant the OS heap was actually exhausted. See [docs/research/state-survey-2026-04-18.md](docs/research/state-survey-2026-04-18.md) §2 and §7.
-- v0.3 remaining: verify the seven chrome acceptance criteria against real pages (URL input on initial window, navigation, resize, scroll, Back/Forward, status bar, title bar), test apple.com as second real-page target, tune layout quality (text overlap, positioning), implement `plot_bitmap` for real images.
+- Event-loop sleep shortens to 1 tick while any fetcher is active (`macos9_fetching || macos9_stub_fetcher_active() || macos9_http_fetcher_active()`) so NetSurf's fetcher ring progresses via `fetch_send_callback` continuations every pass. There is **no** explicit `fetch_poll()` call.
+- **Full NetSurf pipeline executes: fetch → parse → CSS cascade with native var() resolution → layout → plot.**
+- **Real HTML rendering with styled text, colours, fonts, layout all working natively.** MacTrove (Drupal 11 site) loads with body background, card chrome, link colours, and theme fonts resolving correctly from CSS custom properties. Verified signal: title bar shows `cp res OK`.
+- **Architectural foundation:** [docs/research/state-survey-2026-04-18.md](docs/research/state-survey-2026-04-18.md) and [state-survey-2026-04-19.md](docs/research/state-survey-2026-04-19.md). The 2026-04-19 survey in particular (§A7) explicitly scoped three paths for var() support — native libcss, proxy preprocessor, browser preprocessor — and chose native. Without that scoping, the fast-looking proxy shortcut would have blocked the real fix. Treat both surveys as load-bearing architectural refs for any future CSS-layer work.
+- Screenshot canonical location: `screenshots/v0.3-mactrove-fixes139.png` (user-saved from the 2026-04-20 session).
+- Carbon partition bumped to 16 MB preferred / 8 MB minimum to accommodate libcss allocation footprint on real pages (CSS_NOMEM blocker long resolved; see Gotchas).
+
+### Current blockers — feature gaps, not pipeline bugs
+
+- **`gap` / `row-gap` not parsed** — 76 uses in MacTrove drop silently. Queued fixes141.
+- **Flex `justify-content` / `align-content` / `order` computed by libcss but unread by `layout_flex.c`** — layout ignores them. Queued fixes142.
+- **`border-radius`, `box-shadow`, gradients, transforms not parsed** — cosmetic loss. Queued fixes143 (border-radius first via QuickDraw `PaintRoundRect`).
+- **Image content handlers not linked** — every `<img>` renders as placeholder box. Queued fixes144.
+- **Mouse wheel event handler crashes the system (fixes134 regression)** — currently under investigation for fixes140; `kEventMouseWheelMoved` handler is installed but crashes with illegal-instruction at a heap-looking address (signature: `19DBDEB8`), suggesting the `EventHandlerUPP` returned from `NewEventHandlerUPP` is garbage (CW8 Universal Interfaces likely missing the real prototype, implicit-int declaration truncates the UPP pointer). Fallback plan: `#if 0` the install if not fixable in one round.
+- **URL field input fails on the initial window, works on File → New Window** — queued with mouse wheel in fixes140. Hypothesis in 2026-04-18 survey: content redraw during `browser_window_create` overdraws the URL rect visually while TextEdit is still functional internally.
+
+## Native CSS Custom Properties
+
+Shipped incrementally across fixes133-139. Native libcss implementation, not a proxy preprocessor. Per-document scope, tokens preserved through cascade, resolved at selection time (option c from the 2026-04-19 architecture decision).
+
+- **Scope.** Custom property definitions captured from any rule with `--name: value` syntax (simplified from the full CSS spec which restricts to `:root`, `html`, `*` — treated as globally scoped within document for this implementation, which matches observed behaviour of every real stylesheet we've looked at).
+- **Capture.** Each stylesheet keeps a `custom_properties` linked list of `css_cp_entry { lwc_string *name; css_cp_token *tokens; uint32_t n_tokens; next; }`. Populated from `handleDeclaration` when the first token is an `IDENT` whose idata starts with `--`. See [browser/libcss/src/parse/language.c](browser/libcss/src/parse/language.c) and [browser/libcss/src/parse/custom_properties.c](browser/libcss/src/parse/custom_properties.c).
+- **Resolution.** `var(--name)` is resolved at cascade time via token substitution before the property-specific parsers run. The select-ctx-wide aggregate table combines all sheets' tables with last-write-wins over source order, matching author cascade. Nested `var()` is resolved recursively with a depth-10 cap to prevent infinite recursion on circular references.
+- **Fallbacks.** `var(--name, fallback)` supported. Fallback can itself contain `var()`.
+- **!important.** Preserved through substitution.
+- **Keystone fix (fixes139).** `lex.c` `CDCOrIdentOrFunctionOrNPD` — when `--` is followed by `startNMStart(c)`, append and continue into `IdentOrFunction` rather than emitting `CHAR('-') + IDENT('-foo')`. Without this, libcss's CSS 2.1-era lexer splits `--foo` into two tokens that the declaration parser rejects. fixes133's capture logic was sound; it never had a chance to run until fixes139 landed the lexer branch. See [browser/libcss/src/lex/lex.c](browser/libcss/src/lex/lex.c).
+
+## Native CSS3 Strategy
+
+MacSurf handles modern CSS natively in libcss and the layout engine rather than preprocessing via the proxy. This preserves the "real web browser running natively on Mac OS 9" value proposition. The proxy strips TLS and optionally renders-and-flattens JavaScript-heavy sites; it does **not** preprocess CSS for browser limitations.
+
+Native support landed or in progress:
+
+- CSS custom properties (`var()`) — **fixes133-139, shipped.**
+- `gap` / `row-gap` — queued fixes141.
+- Flex alignment (`justify-content`, `align-content`, `order`) reads — queued fixes142.
+- `border-radius` via QuickDraw `PaintRoundRect` / `FrameRoundRect` — queued fixes143.
+- Image content handlers (GIF/PNG/JPEG) — queued fixes144.
+
+Features that remain unsupported and degrade gracefully to block layout or flat rendering: CSS Grid (collapses to block), `box-shadow`, `transform`, `transition`, `animation`, gradients, `clip-path`, `mask`. These are cosmetic in most cases and their absence does not prevent page comprehension.
 
 ## Build State
 
-- MacSurf v0.3 renders real live web pages on G3 hardware. First confirmed page: MacTrove (`http://mac.mp.ls/`), 2026-04-19, via the full NetSurf pipeline.
+- MacSurf v0.3 renders real live web pages on G3 hardware with native CSS custom property support.
+- First confirmed page: MacTrove (`http://mac.mp.ls/`), 2026-04-19, via the full NetSurf pipeline.
 - v0.2 baseline (plain text, JS, OT networking) remains stable.
 - CW8 project file is [browser/netsurf/frontends/macos9/MacSurf.mcp](browser/netsurf/frontends/macos9/MacSurf.mcp).
 - Carbon partition: **16 MB preferred / 8 MB minimum** (`MWProject_PPC_size` / `MWProject_PPC_minsize`). Anything smaller starves libcss and triggers CSS_NOMEM mid-cascade on real pages.
@@ -260,6 +296,14 @@ When auditing a new C99 library for CW8 / strict C89, grep for:
 - Remove Object Code is required before every rebuild after file changes.
 - MacsBug is installed on the G4 for pipeline debugging — `MS_LOG` checkpoints are active throughout the pipeline.
 - Last shipped fix zip: **fixes139** (lexer-layer fix for `--foo` tokenization — the keystone that made fixes133's var() pipeline actually fire on real pages). **Next fix zip ships as fixes140** — numbering is monotonic per user convention; always confirm the number with the user before shipping.
+
+### Next work queue
+
+- **fixes140 — usability, not CSS.** Mouse wheel crash and initial-window URL bar input. Users cannot adopt a browser that crashes on scroll or refuses URL entry, no matter how well MacTrove renders. CSS feature work defers one round.
+- **fixes141 — `gap` / `row-gap` parsing and layout consumption.** 76 uses in MacTrove currently silent. Fixes text-overlap complaints.
+- **fixes142 — flex alignment reads in `layout_flex.c`.** libcss computes `justify-content` / `align-content` / `order` / `column-gap`; layout ignores them. Follow the `lh__box_align_self` pattern.
+- **fixes143 — `border-radius` via `PaintRoundRect` / `FrameRoundRect`.** 30 uses in MacTrove. Plumb `corner_radius` through `plot_style_t`.
+- **fixes144 — image content handlers (GIF/PNG/JPEG).** Every `<img>` becomes a real image. Bottleneck: talloc on CW8.
 
 ## Docs
 
@@ -282,6 +326,9 @@ When auditing a new C99 library for CW8 / strict C89, grep for:
 - **`kWindowStandardHandlerAttribute`** intercepts update events and leaves windows blank. Do not pass it to `CreateNewWindow`.
 - **Synchronous `browser_window_schedule_reformat` during resize causes infinite layout loops.** Never call reformat directly from the grow box handler. Instead set a `needs_reformat` flag on `struct macsurf_window` and handle it in the next `nullEvent` pass. Add a `reformat_in_progress` re-entrancy guard that logs and returns if a reformat call arrives while one is already running.
 - **TextEdit field activation requires explicit `TEActivate` on window activation and `TEIdle` on every `nullEvent` pass** for the caret to blink and the field to accept keystrokes. `TEKey` must be gated by a `url_field_active` flag so Return and Escape don't accidentally route as typed characters.
+- **libcss lexer tokenizes `--foo` as two tokens without the keystone fix.** The original CSS 2.1 grammar allowed one leading dash for vendor prefixes. Custom properties use two. libcss's `CDCOrIdentOrFunctionOrNPD` state needs a branch where `--` followed by `startNMStart(c)` appends and continues into `IdentOrFunction` rather than rewinding to emit CHAR. Without this, the 19 `:root` definitions and 219 `var()` references in a typical modern theme drop at tokenization before any parser logic runs. Fixed in fixes139 ([browser/libcss/src/lex/lex.c](browser/libcss/src/lex/lex.c)).
+- **Force-sticky title bar probes clobber each other, last writer wins.** If multiple rounds of code add `macsurf_debug_set_title_force` or `log_int_force` probes without stripping predecessors, the latest writer overwrites everything earlier in the same reformat cycle. Non-force `MS_LOG` cycling through different labels (e.g. `plot rect ↔ plot clip`) indicates no sticky is latched, which usually means the expected code path is dead. Strip upstream stickies before adding new diagnostics.
+- **Fix zips only refresh the files they ship.** If a diagnostic probe was added to file X in an earlier round and subsequent zips don't ship X, the probe persists on the Mac across rounds even after removal from the Linux tree. Phantom output with no Linux-grep hit means the Mac copy of the file is out of sync with Linux. Ship the affected file explicitly to resync (fixes137 did this for `html.c` / `layout.c` / `box_construct.c`).
 
 ## CLAUDE.md Maintenance
 
