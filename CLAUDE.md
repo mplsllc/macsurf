@@ -301,15 +301,15 @@ Features that remain unsupported and degrade gracefully to block layout or flat 
 - Flat-folder build approach — all `.c` files in one folder, one search path.
 - Remove Object Code is required before every rebuild after file changes.
 - MacsBug is installed on the G4 for pipeline debugging — `MS_LOG` checkpoints are active throughout the pipeline.
-- Last shipped fix: **fixes141** (interim defensive disable — narrowed `WaitNextEvent` mask + dispatch whitelist guard to make MacSurf immune to unknown event classes; main.c snippet round, no zip). Predecessor: **fixes140** (disabled the CarbonLib-unavailable `kEventMouseWheelMoved` handler from fixes134). **Next fix ships as fixes142** — numbering is monotonic per user convention; always confirm the number with the user before shipping.
+- Last shipped fix: **fixes142** (scroll-bar hardening on `window.c`: `SetPortWindowPort` at top of `macos9_window_update_scrollbars` so Control Manager internal redraws land in the right port; explicit `Draw1Control(vscroll)` / `Draw1Control(hscroll)` after value/max/hilite updates; one-shot `sbar h=N vh=M max=K` probe in `update_extents` to confirm `browser_window_get_extents` reports non-zero heights from `GW_EVENT_NEW_CONTENT`). Predecessors: fixes141 (event-class whitelist), fixes140 (wheel handler disable). **Next fix ships as fixes143** — numbering is monotonic per user convention; always confirm the number with the user before shipping.
 
 ### Next work queue
 
-- **fixes142 — `gap` / `row-gap` parsing and layout consumption.** 76 uses in MacTrove currently silent. Fixes text-overlap complaints. (Reordered from fixes141 — fixes141 consumed by the wheel-crash defensive work.)
-- **fixes143 — flex alignment reads in `layout_flex.c`.** libcss computes `justify-content` / `align-content` / `order` / `column-gap`; layout ignores them. Follow the `lh__box_align_self` pattern.
-- **fixes144 — `border-radius` via `PaintRoundRect` / `FrameRoundRect`.** 30 uses in MacTrove. Plumb `corner_radius` through `plot_style_t`.
-- **fixes145 — image content handlers (GIF/PNG/JPEG).** Every `<img>` becomes a real image. Bottleneck: talloc on CW8.
-- **Wheel-crash proper diagnosis — deferred pending ADB keyboard.** User needs the keyboard to capture a real MacsBug stack before we can root-cause the `Undefined A-Trap at 1BDC54E0` crash. Until then fixes141's defensive disable is the state.
+- **fixes143 — `gap` / `row-gap` parsing and layout consumption.** 76 uses in MacTrove currently silent. Fixes text-overlap complaints. (Reordered from fixes142 — fixes142 consumed by the scroll-bar hardening work.)
+- **fixes144 — flex alignment reads in `layout_flex.c`.** libcss computes `justify-content` / `align-content` / `order` / `column-gap`; layout ignores them. Follow the `lh__box_align_self` pattern.
+- **fixes145 — `border-radius` via `PaintRoundRect` / `FrameRoundRect`.** 30 uses in MacTrove. Plumb `corner_radius` through `plot_style_t`.
+- **fixes146 — image content handlers (GIF/PNG/JPEG).** Every `<img>` becomes a real image. Bottleneck: talloc on CW8.
+- **Wheel-crash proper diagnosis — deferred pending ADB keyboard.** User needs the keyboard to capture a real MacsBug stack before we can root-cause the `Undefined A-Trap at 1BDC54E0` crash. fixes142 may resolve it as a side effect if the wheel path depended on scroll-bar state; otherwise fixes141's defensive disable remains the state.
 - **URL field on initial window — dedicated probe round.** Add a one-shot probe in `plot_clip` / `plot_rectangle` logging coordinates that intersect `gw->url_rect` to confirm the content-redraw-overdraws-URL hypothesis from the 2026-04-18 survey §1.
 
 ## Docs
