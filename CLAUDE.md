@@ -242,8 +242,9 @@ When auditing a new C99 library for CW8 / strict C89, grep for:
 ## Mouse Wheel / Input Devices
 
 - **No Carbon wheel handler.** `kEventMouseWheelMoved` is **not available in CarbonLib** on OS 9 — Apple's own `CarbonEvents.h` marks the event class as `Mac OS X: 10.0+ in Carbon.framework; CarbonLib: not available`. fixes134 attempted to install a handler and the Mac crashed with illegal-instruction at `19DBDEB8` because CarbonLib's dispatcher destabilizes when asked about events whose class was never back-ported. Root-caused and disabled in fixes140. See [browser/netsurf/frontends/macos9/macos9_wheel.c](browser/netsurf/frontends/macos9/macos9_wheel.c) — `macos9_wheel_install()` is retained as a visible no-op for ABI stability (Mac-side main.c may still reference it).
-- **USB Overdrive is the OS 9 wheel path.** Users configure USB Overdrive's Scroll Wheel action to **"Up Arrow / Down Arrow"** (or Page Up / Page Down). The synthetic keyDowns flow through `macos9_handle_key_down` and hit the existing arrow-key / page-key scroll path. No browser-side wheel code required. See [docs/usb-overdrive.md](docs/usb-overdrive.md) for the user-facing writeup.
-- **Complete scroll-input set on OS 9:** scroll-bar drag, keyboard arrows, Page Up/Down, Home/End, and USB-Overdrive arrow-key wheel mode (via the keyboard path). Carbon-native wheel events are architecturally out of reach on this platform.
+- **fixes141 — interim defensive hardening.** Even with the Carbon wheel handler disabled, spinning the wheel under MacSurf still dropped into MacsBug with `Undefined A-Trap at 1BDC54E0` (no procedure name — execution in garbage memory). fixes141 narrowed the `WaitNextEvent` mask to an explicit whitelist of classic event kinds and added a matching whitelist guard at the top of `macos9_dispatch_event` so any unknown event class is silently dropped before touching any Toolbox or browser-core code. This is hardening, not diagnosis — the underlying crash is likely inside CarbonLib or USB Overdrive's trap patches and cannot be debugged further without capturing a real MacsBug stack, which requires an ADB keyboard the user does not currently have. **Proper wheel-crash diagnosis deferred until ADB hardware is available.**
+- **USB Overdrive — current recommendation: "Do Nothing" on the Scroll Wheel action** until the wheel-crash root cause is understood. Users should configure USB Overdrive's Scroll Wheel setting to "Do Nothing" (or not install a wheel binding at all) when MacSurf is frontmost. Scrolling works via scroll bar, keyboard arrows, Page Up/Down, and Home/End. The previous recommendation (Up/Down arrow keys) is valid in principle — it flows through `macos9_handle_key_down` — but may still trigger the underlying crash if USB Overdrive's trap patches touch state before the synthesized key event reaches us. See [docs/usb-overdrive.md](docs/usb-overdrive.md).
+- **Complete scroll-input set on OS 9 without the wheel:** scroll-bar drag, keyboard arrows, Page Up/Down, Home/End. All keyboard-sourced paths are tested and working. Carbon-native wheel events are architecturally out of reach on this platform regardless of the fixes141 defensive work.
 
 ## Rendering Pipeline (v0.3 — native CSS)
 
@@ -300,14 +301,15 @@ Features that remain unsupported and degrade gracefully to block layout or flat 
 - Flat-folder build approach — all `.c` files in one folder, one search path.
 - Remove Object Code is required before every rebuild after file changes.
 - MacsBug is installed on the G4 for pipeline debugging — `MS_LOG` checkpoints are active throughout the pipeline.
-- Last shipped fix zip: **fixes140** (disabled the CarbonLib-unavailable `kEventMouseWheelMoved` handler from fixes134; USB Overdrive arrow-key mode is the OS 9 wheel path). **Next fix zip ships as fixes141** — numbering is monotonic per user convention; always confirm the number with the user before shipping.
+- Last shipped fix: **fixes141** (interim defensive disable — narrowed `WaitNextEvent` mask + dispatch whitelist guard to make MacSurf immune to unknown event classes; main.c snippet round, no zip). Predecessor: **fixes140** (disabled the CarbonLib-unavailable `kEventMouseWheelMoved` handler from fixes134). **Next fix ships as fixes142** — numbering is monotonic per user convention; always confirm the number with the user before shipping.
 
 ### Next work queue
 
-- **fixes141 — `gap` / `row-gap` parsing and layout consumption.** 76 uses in MacTrove currently silent. Fixes text-overlap complaints.
-- **fixes142 — flex alignment reads in `layout_flex.c`.** libcss computes `justify-content` / `align-content` / `order` / `column-gap`; layout ignores them. Follow the `lh__box_align_self` pattern.
-- **fixes143 — `border-radius` via `PaintRoundRect` / `FrameRoundRect`.** 30 uses in MacTrove. Plumb `corner_radius` through `plot_style_t`.
-- **fixes144 — image content handlers (GIF/PNG/JPEG).** Every `<img>` becomes a real image. Bottleneck: talloc on CW8.
+- **fixes142 — `gap` / `row-gap` parsing and layout consumption.** 76 uses in MacTrove currently silent. Fixes text-overlap complaints. (Reordered from fixes141 — fixes141 consumed by the wheel-crash defensive work.)
+- **fixes143 — flex alignment reads in `layout_flex.c`.** libcss computes `justify-content` / `align-content` / `order` / `column-gap`; layout ignores them. Follow the `lh__box_align_self` pattern.
+- **fixes144 — `border-radius` via `PaintRoundRect` / `FrameRoundRect`.** 30 uses in MacTrove. Plumb `corner_radius` through `plot_style_t`.
+- **fixes145 — image content handlers (GIF/PNG/JPEG).** Every `<img>` becomes a real image. Bottleneck: talloc on CW8.
+- **Wheel-crash proper diagnosis — deferred pending ADB keyboard.** User needs the keyboard to capture a real MacsBug stack before we can root-cause the `Undefined A-Trap at 1BDC54E0` crash. Until then fixes141's defensive disable is the state.
 - **URL field on initial window — dedicated probe round.** Add a one-shot probe in `plot_clip` / `plot_rectangle` logging coordinates that intersect `gw->url_rect` to confirm the content-redraw-overdraws-URL hypothesis from the 2026-04-18 survey §1.
 
 ## Docs
