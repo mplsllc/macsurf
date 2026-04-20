@@ -24,7 +24,61 @@
 #include "select/dispatch.h"
 #include "select/select.h"
 
+/* MacSurf-only debug title-bar logging. Header provides no-op macros
+ * when MACSURF_DEBUG is undefined, so the instrumentation costs
+ * nothing on non-debug builds and does not pull in the frontend. */
+#include "macsurf_debug.h"
+
 #define MAX_VAR_DEPTH 10
+
+/* One-shot probe gates: confirm that the two sides of the var()
+ * pipeline reach execution at least once per process lifetime. */
+static int g_cp_def_logged = 0;
+static int g_cp_res_logged = 0;
+
+/* Compare two custom-property names ignoring their leading dashes.
+ * libcss's lexer tokenizes "--foo" as CHAR('-') + IDENT('-foo'), so
+ * definitions and var() references both end up carrying names with a
+ * single leading '-' today. A future lexer fix would produce single
+ * IDENT('--foo') tokens; normalizing up to two leading dashes on each
+ * side keeps the pipeline correct for either tokenization. */
+static bool cp_name_equal(lwc_string *a, lwc_string *b)
+{
+	const char *ad;
+	const char *bd;
+	size_t al;
+	size_t bl;
+
+	if (a == NULL || b == NULL)
+		return false;
+
+	ad = lwc_string_data(a);
+	al = lwc_string_length(a);
+	bd = lwc_string_data(b);
+	bl = lwc_string_length(b);
+
+	if (al >= 2 && ad[0] == '-' && ad[1] == '-') {
+		ad += 2;
+		al -= 2;
+	} else if (al >= 1 && ad[0] == '-') {
+		ad += 1;
+		al -= 1;
+	}
+
+	if (bl >= 2 && bd[0] == '-' && bd[1] == '-') {
+		bd += 2;
+		bl -= 2;
+	} else if (bl >= 1 && bd[0] == '-') {
+		bd += 1;
+		bl -= 1;
+	}
+
+	if (al != bl)
+		return false;
+	if (al == 0)
+		return true;
+	return memcmp(ad, bd, al) == 0;
+}
 
 
 /* ------------------------------------------------------------------ */
@@ -101,8 +155,6 @@ css_error css__sheet_add_custom_property(css_stylesheet *sheet,
 {
 	css_cp_entry *entry;
 	css_cp_entry *cur;
-	bool match;
-	lwc_error lerr;
 
 	if (sheet == NULL || name == NULL) {
 		if (tokens != NULL)
@@ -112,15 +164,18 @@ css_error css__sheet_add_custom_property(css_stylesheet *sheet,
 		return CSS_BADPARM;
 	}
 
-	/* Replace if an earlier entry has the same name. */
+	/* Replace if an earlier entry has the same name (normalized
+	 * dash-count comparison). */
 	for (cur = sheet->custom_properties; cur != NULL; cur = cur->next) {
-		match = false;
-		lerr = lwc_string_isequal(cur->name, name, &match);
-		if (lerr == lwc_error_ok && match) {
+		if (cp_name_equal(cur->name, name)) {
 			css__cp_tokens_destroy(cur->tokens, cur->n_tokens);
 			cur->tokens = tokens;
 			cur->n_tokens = n;
 			lwc_string_unref(name);
+			if (!g_cp_def_logged) {
+				g_cp_def_logged = 1;
+				MS_LOG_STICKY("cp def OK");
+			}
 			return CSS_OK;
 		}
 	}
@@ -147,6 +202,10 @@ css_error css__sheet_add_custom_property(css_stylesheet *sheet,
 		cur->next = entry;
 	}
 
+	if (!g_cp_def_logged) {
+		g_cp_def_logged = 1;
+		MS_LOG_STICKY("cp def OK");
+	}
 	return CSS_OK;
 }
 
@@ -154,16 +213,12 @@ const css_cp_entry *css__sheet_find_custom_property(
 		const css_stylesheet *sheet, lwc_string *name)
 {
 	const css_cp_entry *cur;
-	bool match;
-	lwc_error lerr;
 
 	if (sheet == NULL || name == NULL)
 		return NULL;
 
 	for (cur = sheet->custom_properties; cur != NULL; cur = cur->next) {
-		match = false;
-		lerr = lwc_string_isequal(cur->name, name, &match);
-		if (lerr == lwc_error_ok && match)
+		if (cp_name_equal(cur->name, name))
 			return cur;
 	}
 	return NULL;
@@ -423,18 +478,33 @@ static bool parse_var_body(const css_cp_token *arr,
 	if (j >= body_end)
 		return false;
 
-	/* Name */
-	if (arr[j].type != CSS_TOKEN_IDENT || arr[j].idata == NULL)
-		return false;
-	if (lwc_string_length(arr[j].idata) < 2)
-		return false;
-	{
-		const char *s = lwc_string_data(arr[j].idata);
-		if (s[0] != '-' || s[1] != '-')
+	/* Name: accept either the CSS-3-style single IDENT('--foo')
+	 * (which libcss's current lexer does not emit but which a future
+	 * lexer update would), or the CSS-2.1 lexer split sequence
+	 * CHAR('-') + IDENT('-foo'). */
+	if (arr[j].type == CSS_TOKEN_CHAR &&
+			arr[j].idata != NULL &&
+			lwc_string_length(arr[j].idata) == 1 &&
+			lwc_string_data(arr[j].idata)[0] == '-') {
+		if (j + 1 >= body_end)
 			return false;
+		if (arr[j + 1].type != CSS_TOKEN_IDENT ||
+				arr[j + 1].idata == NULL ||
+				lwc_string_length(arr[j + 1].idata) < 1 ||
+				lwc_string_data(arr[j + 1].idata)[0] != '-')
+			return false;
+		name = &arr[j + 1];
+		j += 2;
+	} else if (arr[j].type == CSS_TOKEN_IDENT &&
+			arr[j].idata != NULL &&
+			lwc_string_length(arr[j].idata) >= 2 &&
+			lwc_string_data(arr[j].idata)[0] == '-' &&
+			lwc_string_data(arr[j].idata)[1] == '-') {
+		name = &arr[j];
+		j++;
+	} else {
+		return false;
 	}
-	name = &arr[j];
-	j++;
 
 	/* Skip whitespace */
 	while (j < body_end && arr[j].type == CSS_TOKEN_S)
@@ -761,6 +831,11 @@ css_error css__deferred_decl_resolve(const css_deferred_decl *dd,
 
 	css__stylesheet_style_destroy(scratch_style);
 	parserutils_vector_destroy(replay);
+
+	if (!g_cp_res_logged) {
+		g_cp_res_logged = 1;
+		MS_LOG_STICKY("cp res OK");
+	}
 
 	return CSS_OK;
 }

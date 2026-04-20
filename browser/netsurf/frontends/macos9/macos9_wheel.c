@@ -74,6 +74,13 @@
 typedef short macos9_wheel_axis;
 
 
+/* One-shot: the first time the Carbon wheel handler actually gets
+ * called, latch the title so the user sees it survived install. If
+ * they spin the wheel and the title stays whatever layout probes set,
+ * the handler is not firing — wheel events are arriving via a
+ * different path (likely classic osEvt). */
+static int g_whl_fire_logged = 0;
+
 static pascal OSStatus
 macos9_wheel_handler(EventHandlerCallRef next_handler,
                      EventRef event,
@@ -89,6 +96,11 @@ macos9_wheel_handler(EventHandlerCallRef next_handler,
 
 	(void)next_handler;
 	(void)user_data;
+
+	if (!g_whl_fire_logged) {
+		g_whl_fire_logged = 1;
+		MS_LOG_STICKY("whl fire");
+	}
 
 	axis = kEventMouseWheelAxisY;
 	delta = 0;
@@ -155,7 +167,10 @@ macos9_wheel_install(void)
 		return;
 
 	err = InstallApplicationEventHandler(upp, 1, &spec, NULL, NULL);
-	(void)err;
+	/* Log install result. noErr (== 0) is success. Any non-zero
+	 * means CarbonLib rejected the registration — wheel events will
+	 * still go to the default (crashing) handler chain. */
+	macsurf_debug_log_int("whl_i", (long)err);
 }
 
 #else /* !__MACOS9__ */
