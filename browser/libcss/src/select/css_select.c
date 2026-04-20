@@ -15,6 +15,7 @@
 #include "bytecode/bytecode.h"
 #include "bytecode/opcodes.h"
 #include "stylesheet.h"
+#include "parse/custom_properties.h"
 #include "select/arena.h"
 #include "select/calc.h"
 #include "select/computed.h"
@@ -1285,6 +1286,10 @@ css_error css_select_style(css_select_ctx *ctx, void *node,
 			&state, node, parent, media, unit_ctx, handler, pw);
 	if (error != CSS_OK)
 		return error;
+
+	/* So that cascade_style can resolve deferred (var()) declarations
+	 * against custom-property tables in sibling stylesheets. */
+	state.select_ctx = ctx;
 
 	/* Fetch presentational hints */
 	error = handler->node_presentational_hint(pw, node, &nhints, &hints);
@@ -2748,6 +2753,7 @@ css_error match_detail(css_select_ctx *ctx, void *node,
 css_error cascade_style(const css_style *style, css_select_state *state)
 {
 	css_style s = *style;
+	css_deferred_decl *dd;
 
 	while (s.used > 0) {
 		opcode_t op;
@@ -2763,7 +2769,42 @@ css_error cascade_style(const css_style *style, css_select_state *state)
 			return error;
 	}
 
+	/* Any declarations that were deferred at parse time due to var()
+	 * references get resolved now against the select_ctx-wide custom
+	 * property table and applied through the same prop_dispatch. */
+	for (dd = style->deferred; dd != NULL; dd = dd->next) {
+		css_error error;
+
+		error = css__deferred_decl_resolve(dd, style->sheet,
+				state->select_ctx, state);
+		if (error != CSS_OK)
+			return error;
+	}
+
 	return CSS_OK;
+}
+
+/* ------------------------------------------------------------------ */
+/* Public accessors for custom-property resolution.                   */
+/*                                                                    */
+/* struct css_select_ctx is defined in this file (private layout), so */
+/* code outside the select module reaches it via these hooks rather   */
+/* than by including a private header.                                */
+/* ------------------------------------------------------------------ */
+
+uint32_t css__select_ctx_count_sheets(const css_select_ctx *ctx)
+{
+	if (ctx == NULL)
+		return 0;
+	return ctx->n_sheets;
+}
+
+const css_stylesheet *css__select_ctx_sheet_at(const css_select_ctx *ctx,
+		uint32_t index)
+{
+	if (ctx == NULL || index >= ctx->n_sheets)
+		return NULL;
+	return ctx->sheets[index].sheet;
 }
 
 bool css__outranks_existing(uint16_t op, bool important, css_select_state *state,

@@ -18,6 +18,7 @@
 #include "parse/mq.h"
 #include "parse/parse.h"
 #include "parse/propstrings.h"
+#include "parse/custom_properties.h"
 #include "parse/properties/properties.h"
 #include "parse/properties/utils.h"
 
@@ -1850,6 +1851,32 @@ css_error parseProperty(css_language *c, const css_token *property,
 	css_style *style = NULL;
 	const css_token *token;
 
+	/* CSS Custom Properties: if the property name begins with "--",
+	 * capture the raw value tokens and store them on the stylesheet's
+	 * custom-property table. We do not dispatch to any property
+	 * handler — the value is opaque until var() resolution time. */
+	if (css__is_custom_property_ident(property)) {
+		css_cp_token *cp_tokens = NULL;
+		uint32_t cp_n = 0;
+		int32_t start_ctx;
+		lwc_string *name_ref;
+
+		start_ctx = *ctx;
+		/* Advance to end of vector to compute token range and keep
+		 * the caller's trailing-junk check happy. */
+		while (parserutils_vector_iterate(vector, ctx) != NULL)
+			;
+
+		error = css__cp_tokens_from_vector(vector, start_ctx, *ctx,
+				&cp_tokens, &cp_n);
+		if (error != CSS_OK)
+			return error;
+
+		name_ref = lwc_string_ref(property->idata);
+		return css__sheet_add_custom_property(c->sheet, name_ref,
+				cp_tokens, cp_n);
+	}
+
 	/* Find property index */
 	/** \todo improve on this linear search */
 	for (i = FIRST_PROP; i <= LAST_PROP; i++) {
@@ -1861,6 +1888,50 @@ css_error parseProperty(css_language *c, const css_token *property,
 	}
 	if (i == LAST_PROP + 1)
 		return CSS_INVALID;
+
+	/* If the value references var(), we cannot compile to bytecode now
+	 * (the referenced custom property may live in a later stylesheet,
+	 * or be overridden at the select-context level). Capture the raw
+	 * value tokens and defer resolution until cascade_style. */
+	if (css__value_contains_var(vector, *ctx)) {
+		css_cp_token *dv_tokens = NULL;
+		uint32_t dv_n = 0;
+		css_deferred_decl *dd = NULL;
+		int32_t start_ctx;
+		lwc_string *prop_ref;
+
+		start_ctx = *ctx;
+		while (parserutils_vector_iterate(vector, ctx) != NULL)
+			;
+
+		error = css__cp_tokens_from_vector(vector, start_ctx, *ctx,
+				&dv_tokens, &dv_n);
+		if (error != CSS_OK)
+			return error;
+
+		prop_ref = lwc_string_ref(property->idata);
+		error = css__deferred_decl_create(prop_ref, dv_tokens, dv_n,
+				false, &dd);
+		if (error != CSS_OK)
+			return error;
+
+		/* Allocate a style carrier for the deferred decl so it hangs
+		 * off the rule via the normal rule_append_style path. */
+		error = css__stylesheet_style_create(c->sheet, &style);
+		if (error != CSS_OK) {
+			css__deferred_decl_list_destroy(dd);
+			return error;
+		}
+		css__deferred_decl_attach(style, dd);
+
+		error = css__stylesheet_rule_append_style(c->sheet, rule,
+				style);
+		if (error != CSS_OK) {
+			css__stylesheet_style_destroy(style);
+			return error;
+		}
+		return CSS_OK;
+	}
 
 	/* Get handler */
 	handler = property_handlers[i - FIRST_PROP];

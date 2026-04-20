@@ -26,11 +26,20 @@
 typedef struct css_rule css_rule;
 typedef struct css_selector css_selector;
 
+/* Forward struct tags for custom-property ("var()") support.
+ * Full definitions and typedefs live in parse/custom_properties.h. */
+struct css_deferred_decl;
+struct css_cp_entry;
+
 typedef struct css_style {
 	css_code_t *bytecode;	      /**< Pointer to bytecode */
 	uint32_t used;		      /**< number of code entries used */
 	uint32_t allocated;	      /**< number of allocated code entries */
 	struct css_stylesheet *sheet; /**< containing sheet */
+	struct css_deferred_decl *deferred; /**< Declarations deferred until
+					* select time because they reference
+					* var(). NULL when the style has no
+					* var() dependencies. */
 } css_style;
 
 typedef enum css_selector_type {
@@ -214,6 +223,11 @@ struct css_stylesheet {
 						 * length in entries */
 	uint32_t string_vector_c;               /**< The number of string
 						 * vector entries used */
+
+	struct css_cp_entry *custom_properties; /**< Head of this sheet's
+						 * --name:value-tokens list;
+						 * NULL when the sheet defines
+						 * no custom properties. */
 };
 
 css_error css__stylesheet_style_create(css_stylesheet *sheet,

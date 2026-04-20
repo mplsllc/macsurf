@@ -71,6 +71,10 @@ typedef struct css_select_state {
 	const css_media *media;		/* Currently active media spec */
 	const css_unit_ctx *unit_ctx;	/* Unit conversion context. */
 	css_select_results *results;	/* Result set to populate */
+	struct css_select_ctx *select_ctx; /* Owning select context —
+					    * needed by deferred (var())
+					    * resolution to reach other
+					    * sheets. Set at state init. */
 
 	/** UA and user styles for handling revert property value. */
 	struct revert_data *revert; /* Length: CSS_ORIGIN_AUTHOR */
