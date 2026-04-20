@@ -301,24 +301,22 @@ Features that remain unsupported and degrade gracefully to block layout or flat 
 - Flat-folder build approach — all `.c` files in one folder, one search path.
 - Remove Object Code is required before every rebuild after file changes.
 - MacsBug is installed on the G4 for pipeline debugging — `MS_LOG` checkpoints are active throughout the pipeline.
-- Last shipped fix: **fixes144** (probe-only, no behavior change — supersedes fixes143). fixes143 latched on distinct event kinds only and saturated during startup (`disp w=8 w=15 w=23 w=6 w=1`), so wheel-spin events never refreshed the title. fixes144 replaces the distinct-kinds probe with a simple "latch on every non-null event" variant and adds a second **`wne`** probe in `macos9_poll` immediately after `WaitNextEvent` returns. Title shows `wne w=<N>` briefly, then overwritten by `disp w=<N>` when dispatch reaches. If wheel spin leaves the title stuck with `wne w=<N>` but no matching `disp`, the crash is between WNE return and dispatch entry. If title never updates during wheel spin, WNE itself crashed — upstream of MacSurf. Predecessors: fixes143 (v1 probe), fixes142 (scroll-bar hardening + sbar probe), fixes141 (event-class whitelist), fixes140 (wheel handler disable). **Next fix ships as fixes145** — numbering is monotonic per user convention; always confirm the number with the user before shipping.
+- Last shipped fix: **fixes145** (probe-removal round — probe work done per user direction). fixes144's `wne` / `disp` probes confirmed `event->what = 6` (updateEvt) is the crashing dispatch — the wheel spin triggers an update event that enters our update handler, and somewhere inside `macos9_handle_update` a Toolbox call internally invokes `_RelString` on a `DEADBEF0` pointer. Exhaustive audit of MacSurf's own update-handler code found no uninitialized Pascal-string pointer: every struct is `calloc`'d, every Pascal-string write is bounded, every buffer is checked. **Hypothesis for fixes145 probe removal:** fixes143/144's probes called `macsurf_debug_set_title_force` → `SetWTitle(FrontWindow(), pstr)` on every non-null event — dozens of Memory Manager allocations per second. That churn may have been exhausting the title-handle region, leaving stale `DEADBEF0`-marked pointers in CarbonLib's cached state that the update handler's Toolbox calls (DrawControls' CDEFs, TEUpdate's Script Manager, DrawText's font cache) then dereferenced. Removing the probes removes the churn. Predecessors: fixes144 (wne/disp probes), fixes143 (distinct-kinds probe), fixes142 (scroll-bar hardening + one-shot sbar probe — kept, harmless), fixes141 (event-class whitelist — kept), fixes140 (wheel handler disable — kept). **Next fix ships as fixes146** — numbering is monotonic per user convention; always confirm the number with the user before shipping.
 
-**fixes144 decision tree (post-hardware-test):**
+**fixes145 possible outcomes post-hardware-test:**
 
-- **Title shows new `disp w=<N>` during wheel spin, then crash** — wheel event kind `N` reached dispatch, crash is downstream in MacSurf's handler for `N`. Next round audits that specific path.
-- **Title shows `wne w=<N>` but no matching `disp w=<N>`, then crash** — event arrived at WNE return, but crashed before dispatch entry. Suspect MacSurf's pre-dispatch code (there isn't much between them — the `wne` probe itself, then the dispatch call).
-- **Title stays frozen on pre-wheel value, crash anyway** — `WaitNextEvent` itself didn't return. Crash is inside the Event Manager, USB Overdrive trap patches, or CarbonLib's event translation. MacSurf cannot fix without MacsBug access; document as platform limitation, stop chasing.
-- **No crash, both probes show normal event sequence** — the bug went away under the new probe timing. Investigate why but don't block CSS work.
+- **Wheel no longer crashes** — probe spam was the trigger. Ship CSS queue with confidence.
+- **Wheel still crashes** — probes weren't the cause. Need MacsBug stack capture (ADB keyboard) to make further progress. Meanwhile CSS queue proceeds.
 
-Regardless of outcome, next round is **fixes145 (`gap` / `row-gap`)** — CSS momentum does not wait on a platform-bug investigation.
+Either way, next round is **fixes146 (`gap` / `row-gap`)** — CSS momentum does not wait on a platform-bug investigation.
 
 ### Next work queue
 
-- **fixes145 — `gap` / `row-gap` parsing and layout consumption.** 76 uses in MacTrove currently silent. Fixes text-overlap complaints.
-- **fixes146 — flex alignment reads in `layout_flex.c`.** libcss computes `justify-content` / `align-content` / `order` / `column-gap`; layout ignores them. Follow the `lh__box_align_self` pattern.
-- **fixes147 — `border-radius` via `PaintRoundRect` / `FrameRoundRect`.** 30 uses in MacTrove. Plumb `corner_radius` through `plot_style_t`.
-- **fixes148 — image content handlers (GIF/PNG/JPEG).** Every `<img>` becomes a real image. Bottleneck: talloc on CW8.
-- **Wheel-crash proper diagnosis — deferred pending ADB keyboard OR fixes144 result.** User needs MacsBug access to capture a proper stack for a `_RelString` / DEADBEF0 crash that fixes141's event-mask narrowing did not block. fixes144's paired `wne` / `disp` probes will localize the crash to one of three regions (inside WNE / between WNE and dispatch / inside dispatch); whichever it is, the next action is informed.
+- **fixes146 — `gap` / `row-gap` parsing and layout consumption.** 76 uses in MacTrove currently silent. Fixes text-overlap complaints.
+- **fixes147 — flex alignment reads in `layout_flex.c`.** libcss computes `justify-content` / `align-content` / `order` / `column-gap`; layout ignores them. Follow the `lh__box_align_self` pattern.
+- **fixes148 — `border-radius` via `PaintRoundRect` / `FrameRoundRect`.** 30 uses in MacTrove. Plumb `corner_radius` through `plot_style_t`.
+- **fixes149 — image content handlers (GIF/PNG/JPEG).** Every `<img>` becomes a real image. Bottleneck: talloc on CW8.
+- **Wheel-crash proper diagnosis — deferred pending ADB keyboard OR fixes145 result.** User needs MacsBug stack capture to root-cause a `_RelString` / `DEADBEF0` crash that the fixes141 event-mask narrowing did not block. fixes144's probes confirmed the crash is inside MacSurf's updateEvt handler, but Linux-source audit cannot pinpoint the uninitialized field without the stack trace. fixes145 removes the probe pressure as a candidate fix.
 - **URL field on initial window — dedicated probe round.** Add a one-shot probe in `plot_clip` / `plot_rectangle` logging coordinates that intersect `gw->url_rect` to confirm the content-redraw-overdraws-URL hypothesis from the 2026-04-18 survey §1.
 
 ## Docs
