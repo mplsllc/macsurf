@@ -104,6 +104,13 @@ struct flex_ctx {
 	bool main_reversed;
 	enum css_flex_wrap_e wrap;
 
+	/* fixes148 -- gap between flex items on the main axis and between
+	 * wrapped flex lines on the cross axis. Both currently read the
+	 * same computed field (column-gap), since MacSurf's libcss does
+	 * not yet have independent row-gap storage. See gap.c. */
+	int main_gap;
+	int cross_gap;
+
 	struct flex_items {
 		size_t count;
 		struct flex_item_data *data;
@@ -170,6 +177,29 @@ static struct flex_ctx *layout_flex_ctx__create(
 	ctx->wrap = css_computed_flex_wrap(flex->style);
 	ctx->horizontal = lh__flex_main_is_horizontal(flex);
 	ctx->main_reversed = lh__flex_direction_reversed(flex);
+
+	/* fixes148 -- resolve column-gap to device pixels once per
+	 * container. CSS_COLUMN_GAP_NORMAL => 0 for flex (per spec).
+	 * main_gap and cross_gap are equal for now because row-gap
+	 * shares storage with column-gap; when row-gap lands as its
+	 * own property, split this into two independent reads. */
+	{
+		css_fixed gap_len = 0;
+		css_unit gap_unit = CSS_UNIT_PX;
+		uint8_t gap_type = css_computed_column_gap(flex->style,
+				&gap_len, &gap_unit);
+		if (gap_type == CSS_COLUMN_GAP_SET) {
+			ctx->main_gap = FIXTOINT(css_unit_len2device_px(
+					flex->style, ctx->unit_len_ctx,
+					gap_len, gap_unit));
+			if (ctx->main_gap < 0) {
+				ctx->main_gap = 0;
+			}
+		} else {
+			ctx->main_gap = 0;
+		}
+		ctx->cross_gap = ctx->main_gap;
+	}
 
 	return ctx;
 }
@@ -438,29 +468,43 @@ static struct flex_line_data *layout_flex__build_line(struct flex_ctx *ctx,
 				item->main_size :
 				b->height + lh__delta_outer_main(ctx->flex, b);
 
-		if (ctx->wrap == CSS_FLEX_WRAP_NOWRAP ||
-		    pos_main + used_main <= ctx->available_main ||
-		    lh__box_is_absolute(item->box) ||
-		    ctx->available_main == AUTO ||
-		    line->count == 0 ||
-		    pos_main == 0) {
-			if (lh__box_is_absolute(item->box) == false) {
-				line->main_size += item->main_size;
-				used_main += pos_main;
-
-				if (b->margin[start_side] == AUTO) {
-					line->main_auto_margin_count++;
-				}
-				if (b->margin[end_side] == AUTO) {
-					line->main_auto_margin_count++;
-				}
+		/* fixes148 -- include the gap contributed by this item
+		 * (only for items that aren't the first on the line) when
+		 * deciding whether it fits. */
+		{
+			int item_main_with_gap = pos_main;
+			if (line->count > 0 &&
+			    lh__box_is_absolute(item->box) == false) {
+				item_main_with_gap += ctx->main_gap;
 			}
-			item->line = ctx->line.count;
-			line->count++;
-			item_index++;
-		} else {
-			break;
+			if (!(ctx->wrap == CSS_FLEX_WRAP_NOWRAP ||
+			    item_main_with_gap + used_main <= ctx->available_main ||
+			    lh__box_is_absolute(item->box) ||
+			    ctx->available_main == AUTO ||
+			    line->count == 0 ||
+			    pos_main == 0)) {
+				break;
+			}
 		}
+
+		if (lh__box_is_absolute(item->box) == false) {
+			if (line->count > 0) {
+				line->main_size += ctx->main_gap;
+				used_main += ctx->main_gap;
+			}
+			line->main_size += item->main_size;
+			used_main += pos_main;
+
+			if (b->margin[start_side] == AUTO) {
+				line->main_auto_margin_count++;
+			}
+			if (b->margin[end_side] == AUTO) {
+				line->main_auto_margin_count++;
+			}
+		}
+		item->line = ctx->line.count;
+		line->count++;
+		item_index++;
 	}
 
 	if (line->count > 0) {
@@ -884,6 +928,18 @@ static bool layout_flex__place_line_items_main(
 					(extra_total + box_size_main +
 					 lh__delta_outer_main(ctx->flex, b));
 
+			/* fixes148 -- add main-axis gap between consecutive
+			 * items. Direction-aware: reversed lines walk
+			 * main_pos backwards, so the gap flips sign. Skip
+			 * the gap after the last item on the line. */
+			if (i + 1 < item_count) {
+				if (ctx->main_reversed) {
+					main_pos -= ctx->main_gap;
+				} else {
+					main_pos += ctx->main_gap;
+				}
+			}
+
 			cross_size = box_size_cross + lh__delta_outer_cross(
 					ctx->flex, b);
 			if (line->cross_size < cross_size) {
@@ -927,6 +983,14 @@ static bool layout_flex__collect_items_into_lines(
 
 		if (!layout_flex__place_line_items_main(ctx, line)) {
 			return false;
+		}
+
+		/* fixes148 -- include cross-axis gap between wrapped lines
+		 * in the total cross size so available_cross math is
+		 * accurate. The actual line positioning adds the same
+		 * gap in layout_flex__place_lines below. */
+		if (ctx->line.count > 1) {
+			ctx->cross_size += ctx->cross_gap;
 		}
 
 		ctx->cross_size += line->cross_size;
@@ -1033,6 +1097,17 @@ static void layout_flex__place_lines(struct flex_ctx *ctx)
 		line->pos = line_pos;
 		line_pos += post_multiplier * line->cross_size +
 				extra + extra_remainder;
+
+		/* fixes148 -- insert cross-axis gap between wrapped lines.
+		 * Skip after the last line. Reversed-wrap decrements
+		 * line_pos, so flip sign. */
+		if (i + 1 < ctx->line.count) {
+			if (reversed) {
+				line_pos -= ctx->cross_gap;
+			} else {
+				line_pos += ctx->cross_gap;
+			}
+		}
 
 		layout_flex__place_line_items_cross(ctx, line,
 				extra + extra_remainder);

@@ -253,6 +253,9 @@ css_error css__parse_font_variant(css_language *c,
 css_error css__parse_font_weight(css_language *c,
 		const parserutils_vector *vector, int32_t *ctx,
 		css_style *result);
+css_error css__parse_gap(css_language *c,
+		const parserutils_vector *vector, int32_t *ctx,
+		css_style *result);
 css_error css__parse_height(css_language *c,
 		const parserutils_vector *vector, int32_t *ctx,
 		css_style *result);
@@ -389,6 +392,9 @@ css_error css__parse_richness(css_language *c,
 		const parserutils_vector *vector, int32_t *ctx,
 		css_style *result);
 css_error css__parse_right(css_language *c,
+		const parserutils_vector *vector, int32_t *ctx,
+		css_style *result);
+css_error css__parse_row_gap(css_language *c,
 		const parserutils_vector *vector, int32_t *ctx,
 		css_style *result);
 css_error css__parse_speak_header(css_language *c,
