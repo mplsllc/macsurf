@@ -38,6 +38,8 @@
 #include <Files.h>
 #include <Folders.h>
 #include <Script.h>
+#include <DateTimeUtils.h>
+#include <OSUtils.h>
 
 /*
  * CW8's Folders.h generally defines these, but be defensive -- the
@@ -256,7 +258,19 @@ macsurf_debug_log_init(void)
 
 	(void)SetFPos(g_log_ref, fsFromLEOF, 0);
 
-	macsurf_debug_log_write("---- macsurf_debug_log_init ----");
+	macsurf_debug_log_write("");
+	macsurf_debug_log_write("========================================");
+	{
+		unsigned long secs = 0;
+		DateTimeRec dtr;
+		GetDateTime(&secs);
+		SecondsToDate(secs, &dtr);
+		macsurf_debug_log_writef(
+			"=== MacSurf session %d-%d-%d %d:%d:%d ===",
+			(int)dtr.year, (int)dtr.month, (int)dtr.day,
+			(int)dtr.hour, (int)dtr.minute, (int)dtr.second);
+	}
+	macsurf_debug_log_write("========================================");
 	macsurf_debug_log_writef("log init OK vref=%d dirID=%ld fsref=%d",
 		(int)vRefNum, (long)dirID, (int)g_log_ref);
 	macsurf_debug_set_title("log OK");
