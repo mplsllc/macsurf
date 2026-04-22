@@ -11,11 +11,19 @@
 
 #ifdef MACSURF_DEBUG
 
+#include "macsurf_debug_log.h"
+
 void macsurf_debug_set_title(const char *msg);
 
-#define MS_LOG(msg)          macsurf_debug_set_title(msg)
-#define MS_BREAK(msg)        macsurf_debug_set_title(msg)
-#define MS_ASSERT(cond, msg) do { if (!(cond)) macsurf_debug_set_title(msg); } while(0)
+/*
+ * fixes149 -- MS_LOG now writes to both the title bar (live feedback,
+ * easy to read while interacting) AND the file channel (durable post-
+ * crash record). File write comes first so the crash survives the
+ * title bar update even if SetWTitle faults.
+ */
+#define MS_LOG(msg)          do { macsurf_debug_log_write(msg); macsurf_debug_set_title(msg); } while(0)
+#define MS_BREAK(msg)        do { macsurf_debug_log_write(msg); macsurf_debug_set_title(msg); } while(0)
+#define MS_ASSERT(cond, msg) do { if (!(cond)) { macsurf_debug_log_write(msg); macsurf_debug_set_title(msg); } } while(0)
 
 void macsurf_debug_log_int(const char *label, long value);
 void macsurf_debug_log_str(const char *label, const char *value);

@@ -301,11 +301,12 @@ Features that remain unsupported and degrade gracefully to block layout or flat 
 - Flat-folder build approach — all `.c` files in one folder, one search path.
 - Remove Object Code is required before every rebuild after file changes.
 - MacsBug is installed on the G4 for pipeline debugging — `MS_LOG` checkpoints are active throughout the pipeline.
-- Last shipped fix: **fixes148** — `gap` and `row-gap` native parsing + `layout_flex.c` consumption (single-value fidelity). See "Native CSS3 Strategy" above and the "`row-gap` shares storage" entry in Known Gotchas.
-- Predecessor: **fixes147** — two commits in one zip:
+- Last shipped fix: **fixes149** — file-backed diagnostic channel (`MacSurf Debug.log` on Desktop), heavy scroll-bar-click and URL-field instrumentation, defensive `SetPortWindowPort` at scroll-handler entry. Ships the crash back-trace we could never get from hardware without ADB-keyboard MacsBug. See "File-Backed Diagnostic Channel" below.
+- Predecessor: **fixes148** — `gap` and `row-gap` native parsing + `layout_flex.c` consumption (single-value fidelity). See "Native CSS3 Strategy" above and the "`row-gap` shares storage" entry in Known Gotchas.
+- Older predecessor: **fixes147** — two commits in one zip:
   - **Commit A (scroll-bar click crash — partial, hypothesis addressed, real-hardware result pending):** Clicking anywhere in a scroll bar crashed on the G3 at `PowerPC illegal instruction at 00000008, LR=00000004` with CurApName `CodeWarrio...`. Hypothesis: the UPP macro override in [window.c](browser/netsurf/frontends/macos9/window.c) — `#define NewControlActionUPP(proc) ((ControlActionUPP)(proc))` — was passing a raw PPC function pointer where CarbonLib's `TrackControl` expects a MixedMode-compatible routine descriptor. Fix: drop the action UPP entirely. `TrackControl(ctrl, pt, NULL)` — no UPP dispatch. CDEF live-tracks the thumb; `GetControlValue` on return holds the final drag position. Arrow/page clicks scroll by one step per click based on the `ControlPartCode` the caller captured from `FindControl`. Trade-off: no auto-repeat on arrow-hold (keyboard arrows still repeat). **Verified in SheepShaver** (no crash on any scroll-bar click — vertical track, up/down arrows, page regions, thumb drag). **Real-hardware result still pending** — if G3/G4 still crashes, the UPP hypothesis was wrong and this joins the wheel crash in the "hardware-specific, needs MacsBug" bucket. See the new "UPP macro override on CarbonLib" entry in Known Gotchas regardless — it was a latent bug whether or not it was the crash root cause.
   - **Commit B (docs + probe strip):** Preserves the 2026-04-19 survey and MacTrove CSS samples. Strips the stale `sbar h=... vh=... max=...` one-shot probe from `macos9_window_update_extents` (its diagnostic purpose is closed — extents confirmed flowing correctly from `browser_window_get_extents`).
-  - Predecessors: fixes146 (shutdown ordering + update-handler hardening), fixes145 (probe removal), fixes144 (wne/disp probes), fixes143 (distinct-kinds probe), fixes142 (scroll-bar hardening + one-shot sbar probe), fixes141 (event-class whitelist), fixes140 (wheel handler disable). **Next fix ships as fixes148** — numbering is monotonic per user convention; always confirm the number with the user before shipping.
+  - Predecessors: fixes146 (shutdown ordering + update-handler hardening), fixes145 (probe removal), fixes144 (wne/disp probes), fixes143 (distinct-kinds probe), fixes142 (scroll-bar hardening + one-shot sbar probe), fixes141 (event-class whitelist), fixes140 (wheel handler disable). **Next fix ships as fixes150** — numbering is monotonic per user convention; always confirm the number with the user before shipping.
 
 **fixes146 outcomes (hardware-tested during fixes147 prep):**
 
@@ -315,9 +316,14 @@ Features that remain unsupported and degrade gracefully to block layout or flat 
 
 ### Next work queue
 
-- **fixes149 — flex alignment reads in `layout_flex.c`.** libcss computes `justify-content` / `align-content` / `order`; layout ignores them. Follow the `lh__box_align_self` pattern. (column-gap is now consumed as of fixes148.)
-- **fixes150 — `border-radius` via `PaintRoundRect` / `FrameRoundRect`.** 30 uses in MacTrove. Plumb `corner_radius` through `plot_style_t`.
-- **fixes151 — image content handlers (GIF/PNG/JPEG).** Every `<img>` becomes a real image. Bottleneck: talloc on CW8.
+- **Read the fixes149 log file first.** Tester runs the seven-criterion chrome gauntlet from the fixes149 brief; `MacSurf Debug.log` on Desktop is the deliverable. Scroll-bar crash hypothesis tree narrows as follows from log output:
+  - `sb_handler` logged but `sb_ctrl_state` missing → ControlRef is stale (dangling handle); fix is lifetime-tracking the control pointers (fixes146 already nulls them on destroy; possible next step is version-token validation).
+  - `sb_call_track` logged but `sb_post_track` missing → `TrackControl` itself crashes on the live-tracking CDEF. Likely Appearance Manager state corruption; next step is disabling the live CDEF (drop procID 386 → 16 classic scroll bar) as a workaround.
+  - All pre-TrackControl logs AND `sb_post_track` present but no `sb_dispatch` → post-TrackControl branch dispatch crashes (unlikely given the code is pure int math, but possible if GetControlValue returns garbage).
+  - Clean run with no crash on real hardware → fixes147's drop-the-UPP fix was correct all along, just needed the defensive SetPortWindowPort in fixes149 to close it fully.
+- **fixes150 — flex alignment reads in `layout_flex.c`.** libcss computes `justify-content` / `align-content` / `order`; layout ignores them. Follow the `lh__box_align_self` pattern. (column-gap is now consumed as of fixes148.) Ship after fixes149 closes the chrome verification loop.
+- **fixes151 — `border-radius` via `PaintRoundRect` / `FrameRoundRect`.** 30 uses in MacTrove. Plumb `corner_radius` through `plot_style_t`.
+- **fixes152 — image content handlers (GIF/PNG/JPEG).** Every `<img>` becomes a real image. Bottleneck: talloc on CW8.
 - **Full-fidelity `row-gap` (deferred).** Split row-gap from column-gap storage — new `CSS_PROP_ROW_GAP` enum entry, new field in `css_computed_style_i`, new bit slot in `autogenerated_computed.h` (word 14 has free bits), new propset/propget macros, new parse + select files, `css_computed_row_gap` accessor, wire `layout_flex.c` to read both independently. Currently fixes148 parses both properties into `column-gap` storage; two-value `gap: A B` loses the first value. Only worth doing if real-world pages exercise the two-value form enough to notice.
 - **Wheel crash diagnostic exhaustion — Linux-source audit is DONE, further progress requires MacsBug access.** Evidence summary (do not redo this audit from Linux):
   - `sbar h=<real> vh=<real> max=<real>` probe fires cleanly after MacTrove loads — extents flow through `browser_window_get_extents` correctly.
@@ -329,6 +335,24 @@ Features that remain unsupported and degrade gracefully to block layout or flat 
   - Every struct is `calloc`'d; every Pascal-string write is bounded; every Str255 local is written by set_pstring before Toolbox call.
   - fixes141 narrowed `WaitNextEvent` mask + whitelist guard at dispatch; fixes142 added `SetPortWindowPort` + `Draw1Control` to scroll-bar updates; fixes145 removed probe-SetWTitle Memory Manager pressure; fixes146 adds quitting-flag and null-before-DisposeWindow hardening; fixes147 removes the scroll_action UPP entirely (which was structurally malformed but probably not the wheel-crash path since wheel spin doesn't route through TrackControl). **None of these hardenings conclusively fixed the wheel crash — if it persists, the remaining hypothesis (Control Manager state corrupted somewhere we can't inspect) can only be confirmed with a MacsBug `wh` stack capture.** Next step: get ADB keyboard, reproduce, `wh`, `sc`, `ip`, `dm sp` — then we have a caller chain to fix.
 - **URL field on initial window — dedicated probe round.** Add a one-shot probe in `plot_clip` / `plot_rectangle` logging coordinates that intersect `gw->url_rect` to confirm the content-redraw-overdraws-URL hypothesis from the 2026-04-18 survey §1.
+
+## File-Backed Diagnostic Channel
+
+Shipped in fixes149. Writes one CR-terminated line per log call to
+**`MacSurf Debug.log`** on the Desktop, flushing after every write
+(`FlushVol` + `SetFPos` pair) so the file survives illegal-instruction
+crashes, frozen Macs, and forced restarts. This is the **primary
+post-crash back trace channel for MacSurf** on hardware we can't
+attach MacsBug to.
+
+- API: [browser/netsurf/frontends/macos9/macsurf_debug_log.h](browser/netsurf/frontends/macos9/macsurf_debug_log.h). `macsurf_debug_log_init()` at startup, `_close()` at shutdown, `_write(str)` for literal strings, `_writef(fmt, ...)` for minimal printf (`%d`, `%ld`, `%p`, `%s`, `%%`).
+- `MS_LOG(msg)` now dual-channels: title bar (live feedback) **and** log file (durable record). File write comes first so a SetWTitle-adjacent crash still leaves the log entry on disk.
+- `_writef` uses a hand-rolled formatter, NOT MSL's `vsnprintf` (unreliable on CW8 Carbon MSL). Supports only the format specifiers used by MacSurf instrumentation. Output is hard-capped at 255 bytes.
+- Log file location: Desktop (via `FindFolder(kOnSystemDisk, kDesktopFolderType, ...)`). If FindFolder fails the log is silently inert — init does not crash, subsequent calls no-op.
+- Reading the log: open `MacSurf Debug.log` in SimpleText. Each line is one log call. Crash forensics = "the last N lines before the log ends show the code path that was executing when the Mac died."
+- **Release builds (`MACSURF_RELEASE` set) compile the channel to empty stubs** — symbols stay exported for link compatibility, but no file operations happen.
+- **Gotcha:** the channel depends on HFS actually committing writes. `FlushVol` forces this, but if a volume is full / dismounted / read-only the write silently fails. If the log file exists but is truncated or stale after a crash, the HFS journal didn't catch up — retry the crash with a different volume or add an extra tick of delay after each write.
+- Don't replace existing `MS_LOG` call sites with `macsurf_debug_log_writef` unless you need format arguments. `MS_LOG(literal)` is ergonomically equivalent and keeps the title bar updated for free.
 
 ## Docs
 
