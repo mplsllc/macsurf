@@ -36,32 +36,20 @@ typedef struct dom_string   dom_string;
 typedef int dom_exception;
 #define DOM_NO_ERR 0
 
-dom_exception
-dom_string_create(const unsigned char *ptr, size_t len, dom_string **str)
-{
-	(void)ptr; (void)len;
-	if (str != NULL) *str = NULL;
-	return DOM_NO_ERR;
-}
+/* dom_string_create, dom_string_data, dom_string_length are NOT stubbed
+ * here. The real libdom dom_string.c is in MacSurf.mcp and provides
+ * those as external symbols; a stub version collides (multiply-defined
+ * link errors). dom_string_unref, by contrast, is only a static-inline
+ * vtable dispatcher in dom/core/string.h and never emits an external
+ * symbol, so it still needs a stub. Every call site in macsurf_js_dom.c
+ * that uses dom_string_data / dom_string_length is guarded by a
+ * preceding NULL check, so real libdom's behavior with a NULL from our
+ * other stubs is never reached. */
 
 void
 dom_string_unref(dom_string *str)
 {
 	(void)str;
-}
-
-const char *
-dom_string_data(const dom_string *str)
-{
-	(void)str;
-	return "";
-}
-
-size_t
-dom_string_length(const dom_string *str)
-{
-	(void)str;
-	return 0;
 }
 
 void
