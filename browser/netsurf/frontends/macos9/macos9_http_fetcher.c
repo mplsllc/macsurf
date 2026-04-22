@@ -434,7 +434,6 @@ static void macos9_http_run(struct macos9_fetch_ctx *c)
 static void macos9_http_poll(lwc_string *scheme)
 {
 	struct macos9_fetch_ctx *c, *save_ring = NULL;
-	fetch_msg msg;
 
 	(void)scheme;
 
@@ -459,8 +458,6 @@ static void macos9_http_poll(lwc_string *scheme)
 
 		fetch_remove_from_queues(c->parent_fetch);
 		fetch_free(c->parent_fetch);
-
-		(void)msg;
 	}
 
 	macos9_fetch_ring = save_ring;
