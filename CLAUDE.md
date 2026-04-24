@@ -1,3 +1,59 @@
+DO NOT BLAME STALE FILES FOR ANY REPEATING ISSUES. CHECK FOR OTHER POSSIBILITIES AND NEVER DISREGARD THE USER'S STATEMENTS ABOUT BUILDING THE FILES CORRECTLY.Warning : variable 'have_delcount' is not initialized before being used
+duktape.c line 1106   duk_bool_t have_delcount;
+
+Warning : variable 'rc' is not initialized before being used
+duktape.c line 1159   duk_bool_t rc;
+
+Warning : variable 'cx' is not initialized before being used
+duktape.c line 141   duk_small_int_t cx, cy, sx;
+
+Warning : variable 'sx' is not initialized before being used
+duktape.c line 141   duk_small_int_t cx, cy, sx;
+
+Warning : variable 'pc_before_expr' is not initialized before being used
+duktape.c line 6059   duk_int_t pc_before_expr;
+
+Warning : variable 'pc_after_expr' is not initialized before being used
+duktape.c line 6059   duk_int_t pc_after_expr;
+
+Warning : variable 'len_value' is not initialized before being used
+duktape.c line 497   duk_uint_t len_value;
+
+Link Error   : undefined: 'dom_document_create_element' (code)
+Referenced from 'macsurf_createElement' in macsurf_js_dom.c
+
+Link Error   : undefined: 'dom_node_unref' (code)
+Referenced from 'element_finalizer' in macsurf_js_dom.c
+
+Link Error   : undefined: 'dom_node_append_child' (code)
+Referenced from 'macsurf_appendChild' in macsurf_js_dom.c
+
+Link Error   : undefined: 'dom_element_set_attribute' (code)
+Referenced from 'macsurf_setAttribute' in macsurf_js_dom.c
+
+Link Error   : undefined: 'dom_element_get_tag_name' (code)
+Referenced from 'macsurf_getTagName' in macsurf_js_dom.c
+
+Link Error   : undefined: 'dom_node_ref' (code)
+Referenced from 'macsurf_push_element' in macsurf_js_dom.c
+
+Link Error   : undefined: 'dom_document_get_element_by_id' (code)
+Referenced from 'macsurf_getElementById' in macsurf_js_dom.c
+
+Link Error   : undefined: 'dom_string_unref' (code)
+Referenced from 'macsurf_createElement' in macsurf_js_dom.c
+Referenced from 'macsurf_setAttribute' in macsurf_js_dom.c
+Referenced from 'macsurf_getAttribute' in macsurf_js_dom.c
+Referenced from 'macsurf_getTagName' in macsurf_js_dom.c
+Referenced from 'macsurf_getElementById' in macsurf_js_dom.c
+Referenced from 'macsurf_js_dispatch_event' in macsurf_js_dom.c
+
+Link Error   : undefined: 'dom_element_get_attribute' (code)
+Referenced from 'macsurf_getAttribute' in macsurf_js_dom.c
+Referenced from 'macsurf_js_dispatch_event' in macsurf_js_dom.c
+
+
+
 # MacSurf
 
 A lightweight web browser for Mac OS 9 PowerPC, built on the NetSurf engine, paired with a simple TLS proxy.
@@ -301,7 +357,15 @@ Features that remain unsupported and degrade gracefully to block layout or flat 
 - Flat-folder build approach — all `.c` files in one folder, one search path.
 - Remove Object Code is required before every rebuild after file changes.
 - MacsBug is installed on the G4 for pipeline debugging — `MS_LOG` checkpoints are active throughout the pipeline.
-- Last shipped fix: **fixes160** — two post-fixes159 scroll polish items on hardware-confirmed report: (1) call `macos9_window_update_extents` from the `GW_EVENT_STOP_THROBBER` handler so scroll bars pick up the final rendered height after load completion (initial `UPDATE_EXTENT` event fires before late CSS-resolve / font / flex reflow passes finish, leaving `content_height` stale and scroll bars disabled until a manual window resize forces `update_scrollbars` via the resize path); (2) bump `MACOS9_KEY_SCROLL_STEP` from 16 to 48 so an arrow click or keyboard arrow moves a more useful distance on real pages — 16px was matching Mac classic line-height but feels "one line at a time" on web content.
+- Last shipped fix: **fixes178** — Critical fix for property index shift: Moved `BORDER_RADIUS` and `BOX_SHADOW` to the end of the `propstrings.h` list. Previously, they were inserted alphabetically, which shifted the indices of all subsequent properties (like `display`, `position`, `width`), causing the CSS engine to use wrong handlers and break the entire layout (unstyled rendering). Also removed a problematic `.*` precision log that was failing on OS 9.
+- Predecessor: **fixes177** — Fixed illegal implicit conversion in `p_box_shadow.c` by changing `color_type` from `uint8_t` to `uint16_t` to match the `css__parse_colour_specifier` declaration.
+- Predecessor: **fixes176** — CodeWarrior filename conflict fix: Renamed new property files to `p_border_radius.c`, `s_border_radius.c`, `p_box_shadow.c`, and `s_box_shadow.c`. This prevents object-file collisions in CodeWarrior's flattened build folders and resolves the missing descriptor link errors.
+- Predecessor: **fixes175** — Deep CSS3 expansion: Implemented `box-shadow` parser and selection handler. Updated `libcss` Makefiles and `redraw_border.c` C89 compliance.
+- Predecessor: **fixes172** — Native `border-radius` support. Added full pipeline for `border-radius` from `libcss` parsing to QuickDraw `FrameRoundRect` / `PaintRoundRect`. This provides hardware-accelerated rounded corners natively on OS 9 without proxy preprocessing.
+- Predecessor: **fixes171** — Text rendering fix: Added `macos9_utf8_to_macroman` conversion in `macos9_font.c`. Because NetSurf passes UTF-8 to the frontend, strings with multi-byte characters (like curly quotes or the `•` bullet point in `simple.html` which showed as `,A¢`) were being passed raw to `TextWidth` and `DrawText`. This caused `TextWidth` to return inaccurate lengths (measuring 3 MacRoman characters instead of 1), leading to text overlap and broken inline box models. Added conversion before measurement and drawing.
+- Predecessor: **fixes170** — Font matching by name ("Geneva", "Monaco", "Chicago", "Charcoal") and actual QuickDraw `TextWidth()` measurement in layout. Plumbed `initial_win` as a global so `macos9_font.c` can access a valid `GrafPort` during NetSurf's asynchronous layout callbacks. Added `PenSize` support to plotter table to respect `stroke_width` (corrects borders and `<hr>` rendering). Exported `strcasecmp` shim for font identification.
+- Predecessor: **fixes167** — Back out `TESetSelect(0, 32767)` in `TEClick` path; it was breaking typing in the URL field.
+- Older: **fixes160** — two post-fixes159 scroll polish items on hardware-confirmed report: (1) call `macos9_window_update_extents` from the `GW_EVENT_STOP_THROBBER` handler so scroll bars pick up the final rendered height after load completion (initial `UPDATE_EXTENT` event fires before late CSS-resolve / font / flex reflow passes finish, leaving `content_height` stale and scroll bars disabled until a manual window resize forces `update_scrollbars` via the resize path); (2) bump `MACOS9_KEY_SCROLL_STEP` from 16 to 48 so an arrow click or keyboard arrow moves a more useful distance on real pages — 16px was matching Mac classic line-height but feels "one line at a time" on web content.
 - Predecessor: **fixes159** — drop the Appearance live-tracking scroll bar CDEF (`kControlScrollBarLiveProc = 386`) for the non-live variant (`kControlScrollBarProc = 384`). On G3/G4 hardware, clicking a scroll bar crashed into MacsBug with IDENT pointing at an Appearance Manager internal (symbol prefix `hD`); SheepShaver never reproduced it. fixes147 had already removed the UPP macro override and switched `TrackControl` to `NULL` action, but the crash persisted, leaving proc 386's live-track CDEF itself as the remaining suspect on the drop path from `TrackControl`. Proc 384 is the non-live Appearance scroll bar: the CDEF handles thumb visual feedback on its own without the per-frame app-callback cadence that live-tracking uses, so whatever in the live path corrupts or races on real hardware never runs. Trade-off: during drag, content does NOT scroll live — thumb moves visually, then content snaps to the final position on mouseup. This is still the existing `GetControlValue`-on-return path from fixes147, so only the CDEF procID changed. Arrow / page clicks scroll by one step per click exactly as before. **Hardware-confirmed:** scroll bar click no longer crashes.
 - Predecessor: **fixes152** — hotfix to actually wire `macsurf_debug_log_init()` into `main()`. **fixes149 shipped the log infrastructure but never called the init** — three rounds (fixes149, fixes150, fixes151) of instrumentation silently discarded because `g_log_open` stayed 0 and every `macsurf_debug_log_write*` short-circuited at the first-line gate. fixes152 also adds title-bar fallback messages on each init-failure branch (FindFolder / FSpCreate / FSMakeFSSpec / FSpOpenDF) so a second missed-init regression would surface in 30 seconds rather than three rounds. See "Regression Audit Checklist" below.
 - Predecessor: **fixes151** — `SelectWindow` after `ShowWindow` in `macos9_window_create` + `Draw1Control` on all four toolbar buttons in `update_button_states` + `MACSURF_HOME_URL` switched to `http://mac.mp.ls/simple.html`. Research-run conclusion that `ShowWindow` alone doesn't generate activateEvt under Carbon OS 9. Instrumentation planned to verify — silently didn't because fixes149's log channel was dead (see fixes152).
@@ -311,7 +375,7 @@ Features that remain unsupported and degrade gracefully to block layout or flat 
 - Older predecessor: **fixes147** — two commits in one zip:
   - **Commit A (scroll-bar click crash — partial, hypothesis addressed, real-hardware result pending):** Clicking anywhere in a scroll bar crashed on the G3 at `PowerPC illegal instruction at 00000008, LR=00000004` with CurApName `CodeWarrio...`. Hypothesis: the UPP macro override in [window.c](browser/netsurf/frontends/macos9/window.c) — `#define NewControlActionUPP(proc) ((ControlActionUPP)(proc))` — was passing a raw PPC function pointer where CarbonLib's `TrackControl` expects a MixedMode-compatible routine descriptor. Fix: drop the action UPP entirely. `TrackControl(ctrl, pt, NULL)` — no UPP dispatch. CDEF live-tracks the thumb; `GetControlValue` on return holds the final drag position. Arrow/page clicks scroll by one step per click based on the `ControlPartCode` the caller captured from `FindControl`. Trade-off: no auto-repeat on arrow-hold (keyboard arrows still repeat). **Verified in SheepShaver** (no crash on any scroll-bar click — vertical track, up/down arrows, page regions, thumb drag). **Real-hardware result still pending** — if G3/G4 still crashes, the UPP hypothesis was wrong and this joins the wheel crash in the "hardware-specific, needs MacsBug" bucket. See the new "UPP macro override on CarbonLib" entry in Known Gotchas regardless — it was a latent bug whether or not it was the crash root cause.
   - **Commit B (docs + probe strip):** Preserves the 2026-04-19 survey and MacTrove CSS samples. Strips the stale `sbar h=... vh=... max=...` one-shot probe from `macos9_window_update_extents` (its diagnostic purpose is closed — extents confirmed flowing correctly from `browser_window_get_extents`).
-  - Older predecessors: fixes146 (shutdown ordering + update-handler hardening), fixes145 (probe removal), fixes144 (wne/disp probes), fixes143 (distinct-kinds probe), fixes142 (scroll-bar hardening + one-shot sbar probe), fixes141 (event-class whitelist), fixes140 (wheel handler disable). **Next fix ships as fixes153** — numbering is monotonic per user convention; always confirm the number with the user before shipping.
+  - Older predecessors: fixes146 (shutdown ordering + update-handler hardening), fixes145 (probe removal), fixes144 (wne/disp probes), fixes143 (distinct-kinds probe), fixes142 (scroll-bar hardening + one-shot sbar probe), fixes141 (event-class whitelist), fixes140 (wheel handler disable). **Next fix ships as fixes171** — numbering is monotonic per user convention; always confirm the number with the user before shipping.
 
 **fixes146 outcomes (hardware-tested during fixes147 prep):**
 

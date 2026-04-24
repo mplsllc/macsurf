@@ -1,71 +1,1 @@
-/*
- * MacSurf - macos9_wheel.c
- * Intentional no-op. See the long comment below before touching.
- *
- * History:
- *   fixes134 shipped a pascal OSStatus handler on
- *   kEventClassMouse / kEventMouseWheelMoved, installed with
- *   NewEventHandlerUPP + InstallApplicationEventHandler. The handler
- *   code itself is correct (pascal calling convention, UPP created
- *   properly, EventTypeSpec fully initialized, all return paths
- *   explicit). It still caused an illegal-instruction crash at a
- *   heap-looking PPC address (19DBDEB8) the moment a USB wheel mouse
- *   was spun over a MacSurf window on real hardware.
- *
- *   fixes140 root-caused the bug: kEventMouseWheelMoved is
- *   **not available in CarbonLib.** Apple's own CarbonEvents.h header
- *   marks the event class as
- *       Mac OS X:  in version 10.0 and later in Carbon.framework
- *       CarbonLib: not available
- *   CarbonLib on OS 9 predates the event class, so registering a
- *   handler for it registers against a dispatch path CarbonLib does
- *   not know about. The registration call returns noErr, but there is
- *   no real event plumbing behind it, and CarbonLib's dispatcher
- *   destabilizes when asked to dispatch events whose class was never
- *   backported — which is how fixes134's crash manifested.
- *
- * USB Overdrive on OS 9:
- *   USB Overdrive (the de-facto USB HID driver on OS 9) does not
- *   emit Carbon wheel events — that event class does not exist on the
- *   platform. USB Overdrive's wheel modes synthesize either classic
- *   keyDown events (Up/Down arrow, Page Up/Down) or direct scrollbar
- *   manipulation. Users should configure USB Overdrive's Scroll Wheel
- *   setting to "Up Arrow / Down Arrow" to get wheel scrolling in
- *   MacSurf — that maps onto the existing WaitNextEvent keyDown
- *   handler, which already scrolls the active window (arrow keys,
- *   Page Up/Down, Home/End all wired in main.c / window.c). See
- *   docs/usb-overdrive.md for the user-facing writeup.
- *
- * Why keep this translation unit at all:
- *   The Mac-side CW8 project may still list macos9_wheel.c and main.c
- *   may still call macos9_wheel_install(). Keeping the function as a
- *   visible no-op with this comment is strictly safer than deleting
- *   the file — the next agent that sees a wheel-related ticket will
- *   read this and not re-attempt a Carbon wheel handler.
- */
-
-#include "utils/errors.h"
-#include "macos9/macos9.h"
-
-#ifdef __MACOS9__
-
-/* Deliberately no Carbon event headers. There is nothing to install. */
-
-void
-macos9_wheel_install(void)
-{
-	/* Intentional no-op. kEventMouseWheelMoved is CarbonLib-unavailable
-	 * (Carbon.framework 10.0+ only). Wheel input on OS 9 requires
-	 * USB Overdrive configured in "Up Arrow / Down Arrow" mode; the
-	 * synthetic keyDowns flow through macos9_handle_key_down and hit
-	 * the existing arrow-key scroll path. */
-}
-
-#else /* !__MACOS9__ */
-
-/* Linux cross-check stub. */
-void macos9_wheel_install(void)
-{
-}
-
-#endif /* __MACOS9__ */
+/* * MacSurf - macos9_wheel.c * Intentional no-op. See the long comment below before touching. * * History: *   fixes134 shipped a pascal OSStatus handler on *   kEventClassMouse / kEventMouseWheelMoved, installed with *   NewEventHandlerUPP + InstallApplicationEventHandler. The handler *   code itself is correct (pascal calling convention, UPP created *   properly, EventTypeSpec fully initialized, all return paths *   explicit). It still caused an illegal-instruction crash at a *   heap-looking PPC address (19DBDEB8) the moment a USB wheel mouse *   was spun over a MacSurf window on real hardware. * *   fixes140 root-caused the bug: kEventMouseWheelMoved is *   **not available in CarbonLib.** Apple's own CarbonEvents.h header *   marks the event class as *       Mac OS X:  in version 10.0 and later in Carbon.framework *       CarbonLib: not available *   CarbonLib on OS 9 predates the event class, so registering a *   handler for it registers against a dispatch path CarbonLib does *   not know about. The registration call returns noErr, but there is *   no real event plumbing behind it, and CarbonLib's dispatcher *   destabilizes when asked to dispatch events whose class was never *   backported — which is how fixes134's crash manifested. * * USB Overdrive on OS 9: *   USB Overdrive (the de-facto USB HID driver on OS 9) does not *   emit Carbon wheel events — that event class does not exist on the *   platform. USB Overdrive's wheel modes synthesize either classic *   keyDown events (Up/Down arrow, Page Up/Down) or direct scrollbar *   manipulation. Users should configure USB Overdrive's Scroll Wheel *   setting to "Up Arrow / Down Arrow" to get wheel scrolling in *   MacSurf — that maps onto the existing WaitNextEvent keyDown *   handler, which already scrolls the active window (arrow keys, *   Page Up/Down, Home/End all wired in main.c / window.c). See *   docs/usb-overdrive.md for the user-facing writeup. * * Why keep this translation unit at all: *   The Mac-side CW8 project may still list macos9_wheel.c and main.c *   may still call macos9_wheel_install(). Keeping the function as a *   visible no-op with this comment is strictly safer than deleting *   the file — the next agent that sees a wheel-related ticket will *   read this and not re-attempt a Carbon wheel handler. */#include "utils/errors.h"#include "macos9/macos9.h"#ifdef __MACOS9__/* Deliberately no Carbon event headers. There is nothing to install. */voidmacos9_wheel_install(void){	/* Intentional no-op. kEventMouseWheelMoved is CarbonLib-unavailable	 * (Carbon.framework 10.0+ only). Wheel input on OS 9 requires	 * USB Overdrive configured in "Up Arrow / Down Arrow" mode; the	 * synthetic keyDowns flow through macos9_handle_key_down and hit	 * the existing arrow-key scroll path. */}#else /* !__MACOS9__ *//* Linux cross-check stub. */void macos9_wheel_install(void){}#endif /* __MACOS9__ */

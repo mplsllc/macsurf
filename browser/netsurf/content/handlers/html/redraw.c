@@ -629,13 +629,36 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	 * plot_style_t order: stroke_type, stroke_width, stroke_colour,
 	 *                     fill_type, fill_colour. */
 	plot_style_t pstyle_fill_bg = {
-		PLOT_OP_TYPE_NONE, 0, 0,
-		PLOT_OP_TYPE_SOLID, 0
+	        PLOT_OP_TYPE_NONE, 0, 0,
+	        PLOT_OP_TYPE_SOLID, 0,
+	        0, 0
 	};
 	nserror res;
+	css_fixed br_len = 0;
+	css_unit br_unit = CSS_UNIT_PX;
+
 	pstyle_fill_bg.fill_colour = *background_colour;
 
-	if (ctx->background_images == false)
+	if (background && background->style && css_computed_border_radius(background->style, &br_len, &br_unit) == CSS_BORDER_RADIUS_SET) {
+	        pstyle_fill_bg.border_radius = br_len * scale;
+	        if (pstyle_fill_bg.border_radius > 0) {
+	                css_color bcol;
+	                css_fixed bw_len = 0;
+	                css_unit bw_unit = CSS_UNIT_PX;
+	                if (css_computed_border_top_style(background->style) != CSS_BORDER_STYLE_NONE) {
+	                        css_computed_border_top_color(background->style, &bcol);
+	                        pstyle_fill_bg.stroke_type = PLOT_OP_TYPE_SOLID; /* simplify */
+	                        pstyle_fill_bg.stroke_colour = nscss_color_to_ns(bcol);
+	                        pstyle_fill_bg.stroke_width = bw_len * scale;
+	                }
+	        }
+	}
+	if (background && background->style) {
+	        int32_t bsh;
+	        if (css_computed_box_shadow(background->style, &bsh) == CSS_BOX_SHADOW_SET) {
+	                pstyle_fill_bg.box_shadow = bsh * scale;
+	        }
+	}	if (ctx->background_images == false)
 		return true;
 
 	plot_content = (background->background != NULL);
@@ -857,14 +880,36 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	 * plot_style_t order: stroke_type, stroke_width, stroke_colour,
 	 *                     fill_type, fill_colour. */
 	plot_style_t pstyle_fill_bg = {
-		PLOT_OP_TYPE_NONE, 0, 0,
-		PLOT_OP_TYPE_SOLID, 0
+	        PLOT_OP_TYPE_NONE, 0, 0,
+	        PLOT_OP_TYPE_SOLID, 0,
+	        0, 0
 	};
 	nserror res;
+	css_fixed br_len = 0;
+	css_unit br_unit = CSS_UNIT_PX;
+
 	pstyle_fill_bg.fill_colour = *background_colour;
 
-	plot_content = (box->background != NULL);
-
+	if (box && box->style && css_computed_border_radius(box->style, &br_len, &br_unit) == CSS_BORDER_RADIUS_SET) {
+	        pstyle_fill_bg.border_radius = br_len * scale;
+	        if (pstyle_fill_bg.border_radius > 0) {
+	                css_color bcol;
+	                css_fixed bw_len = 0;
+	                css_unit bw_unit = CSS_UNIT_PX;
+	                if (css_computed_border_top_style(box->style) != CSS_BORDER_STYLE_NONE) {
+	                        css_computed_border_top_color(box->style, &bcol);
+	                        pstyle_fill_bg.stroke_type = PLOT_OP_TYPE_SOLID;
+	                        pstyle_fill_bg.stroke_colour = nscss_color_to_ns(bcol);
+	                        pstyle_fill_bg.stroke_width = bw_len * scale;
+	                }
+	        }
+	}
+	if (box && box->style) {
+	        int32_t bsh;
+	        if (css_computed_box_shadow(box->style, &bsh) == CSS_BOX_SHADOW_SET) {
+	                pstyle_fill_bg.box_shadow = bsh * scale;
+	        }
+	}	plot_content = (box->background != NULL);
 	if (html_redraw_printing && nsoption_bool(remove_backgrounds))
 		return true;
 

@@ -21,6 +21,7 @@
 /* set_border_left_color(style, 0, 0, CSS_UNIT_PX); */
 /* set_border_left_style(style, 0, 0, CSS_UNIT_PX); */
 /* set_border_left_width(style, 0, 0, CSS_UNIT_PX); */
+/* set_border_radius(style, 0, 0, CSS_UNIT_PX); */
 /* set_border_right_color(style, 0, 0, CSS_UNIT_PX); */
 /* set_border_right_style(style, 0, 0, CSS_UNIT_PX); */
 /* set_border_right_width(style, 0, 0, CSS_UNIT_PX); */
@@ -29,6 +30,7 @@
 /* set_border_top_style(style, 0, 0, CSS_UNIT_PX); */
 /* set_border_top_width(style, 0, 0, CSS_UNIT_PX); */
 /* set_bottom(style, 0, 0, CSS_UNIT_PX); */
+/* set_box_shadow(style, 0, 0, CSS_UNIT_PX); */
 /* set_box_sizing(style, 0, 0, CSS_UNIT_PX); */
 /* set_break_after(style, 0, 0, CSS_UNIT_PX); */
 /* set_break_before(style, 0, 0, CSS_UNIT_PX); */
@@ -72,6 +74,7 @@
 /* set_list_style_image(style, 0, 0, CSS_UNIT_PX); */
 /* set_list_style_position(style, 0, 0, CSS_UNIT_PX); */
 /* set_list_style_type(style, 0, 0, CSS_UNIT_PX); */
+/* set_macsurf_gradient(style, 0, 0, CSS_UNIT_PX); */
 /* set_margin_bottom(style, 0, 0, CSS_UNIT_PX); */
 /* set_margin_left(style, 0, 0, CSS_UNIT_PX); */
 /* set_margin_right(style, 0, 0, CSS_UNIT_PX); */
@@ -110,7 +113,7 @@
 /* set_visibility(style, 0, 0, CSS_UNIT_PX); */
 /* set_white_space(style, 0, 0, CSS_UNIT_PX); */
 /* set_widows(style, 0, 0, CSS_UNIT_PX); */
-{ css_fixed_or_calc _zero; _zero.value = 0; set_width(style, 0, _zero, CSS_UNIT_PX); }
+set_width(style, 0, (css_fixed_or_calc)0, CSS_UNIT_PX);
 /* set_word_spacing(style, 0, 0, CSS_UNIT_PX); */
 /* set_writing_mode(style, 0, 0, CSS_UNIT_PX); */
 /* set_z_index(style, 0, 0, CSS_UNIT_PX); */

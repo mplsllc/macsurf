@@ -160,10 +160,11 @@ const css_prop_handler property_handlers[LAST_PROP + 1 - FIRST_PROP] =
 	css__parse_width,
 	css__parse_word_spacing,
 	css__parse_writing_mode,
-	css__parse_z_index
-};
-
-/** Mapping from property bytecode index to bytecode unit class mask. */
+	css__parse_z_index,
+	css__parse_border_radius,
+	css__parse_box_shadow,
+	css__parse_macsurf_gradient
+	};/** Mapping from property bytecode index to bytecode unit class mask. */
 const uint32_t property_unit_mask[CSS_N_PROPERTIES] = {
 	[CSS_PROP_AZIMUTH]               = UNIT_MASK_AZIMUTH,
 	[CSS_PROP_BACKGROUND_ATTACHMENT] = UNIT_MASK_BACKGROUND_ATTACHMENT,
@@ -267,8 +268,10 @@ const uint32_t property_unit_mask[CSS_N_PROPERTIES] = {
 	[CSS_PROP_OPACITY]               = UNIT_MASK_OPACITY,
 	[CSS_PROP_FILL_OPACITY]          = UNIT_MASK_FILL_OPACITY,
 	[CSS_PROP_STROKE_OPACITY]        = UNIT_MASK_STROKE_OPACITY,
-	[CSS_PROP_BREAK_AFTER]           = UNIT_MASK_BREAK_AFTER,
-	[CSS_PROP_BREAK_BEFORE]          = UNIT_MASK_BREAK_BEFORE,
+	[CSS_PROP_BORDER_RADIUS]         = UNIT_MASK_BORDER_RADIUS,
+	[CSS_PROP_BOX_SHADOW]            = 0,
+	[CSS_PROP_MACSURF_GRADIENT]      = 0,
+	[CSS_PROP_BREAK_AFTER]           = UNIT_MASK_BREAK_AFTER,	[CSS_PROP_BREAK_BEFORE]          = UNIT_MASK_BREAK_BEFORE,
 	[CSS_PROP_BREAK_INSIDE]          = UNIT_MASK_BREAK_INSIDE,
 	[CSS_PROP_COLUMN_COUNT]          = UNIT_MASK_COLUMN_COUNT,
 	[CSS_PROP_COLUMN_FILL]           = UNIT_MASK_COLUMN_FILL,

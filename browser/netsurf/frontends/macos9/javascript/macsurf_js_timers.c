@@ -1,259 +1,1 @@
-/*
- * MacSurf — macsurf_js_timers.c
- *
- * setTimeout / setInterval / clearTimeout implementation.  Timers are
- * held in a static sorted singly-linked list (sorted by expiry_ms
- * ascending) so run_timers can stop scanning at the first non-due
- * entry.  A fixed-capacity arena avoids malloc churn on OS 9.
- *
- * Hard cap: 64 simultaneous timers.  Overflow silently drops the
- * oldest entry to make room — matches the behaviour of classic
- * browsers that cap timer count per page.
- *
- * Callback references are stored in the Duktape heap stash keyed by
- * timer id.  This is the canonical way to hold strong refs to JS
- * functions across C returns without leaking.
- */
-
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdlib.h>
-
-#include "duktape.h"
-#include "macsurf_js.h"
-
-#define MACSURF_JS_MAX_TIMERS 64
-#define MACSURF_JS_TIMER_STASH "macsurf_timers"
-
-struct macsurf_timer {
-	int          id;
-	duk_double_t expiry_ms;
-	bool         repeating;
-	duk_double_t interval_ms;
-	bool         live;
-	struct macsurf_timer *next;
-};
-
-static struct macsurf_timer macsurf_timer_arena[MACSURF_JS_MAX_TIMERS];
-static struct macsurf_timer *macsurf_timer_head = NULL;
-static int macsurf_timer_next_id = 1;
-
-static struct macsurf_timer *
-timer_alloc(void)
-{
-	int i;
-	struct macsurf_timer *oldest;
-	duk_double_t oldest_expiry;
-
-	for (i = 0; i < MACSURF_JS_MAX_TIMERS; i++) {
-		if (!macsurf_timer_arena[i].live) {
-			return &macsurf_timer_arena[i];
-		}
-	}
-
-	/* All slots in use: drop the one that expires soonest (the
-	 * "oldest" in the sense that it's been waiting the longest or
-	 * will fire first).  This keeps newly-registered timers alive. */
-	oldest = &macsurf_timer_arena[0];
-	oldest_expiry = oldest->expiry_ms;
-	for (i = 1; i < MACSURF_JS_MAX_TIMERS; i++) {
-		if (macsurf_timer_arena[i].expiry_ms < oldest_expiry) {
-			oldest = &macsurf_timer_arena[i];
-			oldest_expiry = oldest->expiry_ms;
-		}
-	}
-	return oldest;
-}
-
-static void
-timer_list_insert(struct macsurf_timer *t)
-{
-	struct macsurf_timer **pp;
-
-	/* Unlink if already in list (for reschedule path). */
-	pp = &macsurf_timer_head;
-	while (*pp != NULL) {
-		if (*pp == t) { *pp = t->next; break; }
-		pp = &(*pp)->next;
-	}
-	t->next = NULL;
-
-	/* Insert in expiry-ascending order. */
-	pp = &macsurf_timer_head;
-	while (*pp != NULL && (*pp)->expiry_ms <= t->expiry_ms) {
-		pp = &(*pp)->next;
-	}
-	t->next = *pp;
-	*pp = t;
-}
-
-static void
-timer_list_remove(struct macsurf_timer *t)
-{
-	struct macsurf_timer **pp = &macsurf_timer_head;
-	while (*pp != NULL) {
-		if (*pp == t) { *pp = t->next; break; }
-		pp = &(*pp)->next;
-	}
-	t->next = NULL;
-}
-
-static void
-timer_stash_put(duk_context *duk, int id, duk_idx_t fn_idx)
-{
-	duk_push_global_stash(duk);
-	if (duk_get_prop_string(duk, -1, MACSURF_JS_TIMER_STASH) == 0) {
-		duk_pop(duk);
-		duk_push_object(duk);
-		duk_dup_top(duk);
-		duk_put_prop_string(duk, -3, MACSURF_JS_TIMER_STASH);
-	}
-	/* stash_obj on top */
-	duk_dup(duk, fn_idx);
-	duk_put_prop_index(duk, -2, (duk_uarridx_t)id);
-	duk_pop_2(duk);
-}
-
-static bool
-timer_stash_push(duk_context *duk, int id)
-{
-	duk_push_global_stash(duk);
-	if (duk_get_prop_string(duk, -1, MACSURF_JS_TIMER_STASH) == 0) {
-		duk_pop_2(duk);
-		return false;
-	}
-	if (duk_get_prop_index(duk, -1, (duk_uarridx_t)id) == 0) {
-		duk_pop_3(duk);
-		return false;
-	}
-	/* Leave callback on top, unwind intermediates. */
-	duk_remove(duk, -2); /* the timers-stash object */
-	duk_remove(duk, -2); /* the global stash */
-	return true;
-}
-
-static void
-timer_stash_del(duk_context *duk, int id)
-{
-	duk_push_global_stash(duk);
-	if (duk_get_prop_string(duk, -1, MACSURF_JS_TIMER_STASH) != 0) {
-		duk_del_prop_index(duk, -1, (duk_uarridx_t)id);
-	}
-	duk_pop_2(duk);
-}
-
-/* ----------------------------------------------------------------- */
-/* Public bindings                                                    */
-/* ----------------------------------------------------------------- */
-
-static duk_ret_t
-timer_create(duk_context *duk, bool repeating)
-{
-	struct macsurf_timer *t;
-	duk_double_t delay_ms;
-
-	if (!duk_is_function(duk, 0)) {
-		duk_push_int(duk, 0);
-		return 1;
-	}
-	delay_ms = duk_to_number(duk, 1);
-	if (delay_ms < 0.0 || delay_ms != delay_ms /* NaN */) {
-		delay_ms = 0.0;
-	}
-
-	t = timer_alloc();
-	if (t == NULL) {
-		duk_push_int(duk, 0);
-		return 1;
-	}
-
-	if (t->live) {
-		timer_list_remove(t);
-		timer_stash_del(duk, t->id);
-	}
-
-	t->id          = macsurf_timer_next_id++;
-	t->expiry_ms   = macsurf_js_get_now() + delay_ms;
-	t->repeating   = repeating;
-	t->interval_ms = delay_ms;
-	t->live        = true;
-
-	timer_stash_put(duk, t->id, 0);
-	timer_list_insert(t);
-
-	duk_push_int(duk, t->id);
-	return 1;
-}
-
-duk_ret_t
-macsurf_js_settimeout(duk_context *duk)
-{
-	return timer_create(duk, false);
-}
-
-duk_ret_t
-macsurf_js_setinterval(duk_context *duk)
-{
-	return timer_create(duk, true);
-}
-
-duk_ret_t
-macsurf_js_cleartimeout(duk_context *duk)
-{
-	int id = duk_to_int(duk, 0);
-	int i;
-
-	for (i = 0; i < MACSURF_JS_MAX_TIMERS; i++) {
-		if (macsurf_timer_arena[i].live &&
-		    macsurf_timer_arena[i].id == id) {
-			timer_list_remove(&macsurf_timer_arena[i]);
-			timer_stash_del(duk, id);
-			macsurf_timer_arena[i].live = false;
-			break;
-		}
-	}
-	return 0;
-}
-
-/* ----------------------------------------------------------------- */
-/* Pump — fire all due timers.                                        */
-/* ----------------------------------------------------------------- */
-
-void
-macsurf_js_run_timers(struct jscontext *ctx)
-{
-	duk_double_t now;
-	struct macsurf_timer *t;
-
-	if (ctx == NULL || ctx->duk == NULL) return;
-
-	now = macsurf_js_get_now();
-	while (macsurf_timer_head != NULL &&
-	       macsurf_timer_head->expiry_ms <= now) {
-
-		t = macsurf_timer_head;
-		timer_list_remove(t);
-
-		if (timer_stash_push(ctx->duk, t->id)) {
-			/* duk_pcall for safe error containment. */
-			if (duk_pcall(ctx->duk, 0) != 0) {
-				/* Callback threw — log and continue. */
-			}
-			duk_pop(ctx->duk);
-		}
-
-		if (t->repeating && t->live) {
-			t->expiry_ms = now + t->interval_ms;
-			timer_list_insert(t);
-		} else {
-			timer_stash_del(ctx->duk, t->id);
-			t->live = false;
-		}
-
-		/* Safety: bail if the clock doesn't advance — avoids a
-		 * pathological 0ms setInterval locking the event loop. */
-		if (macsurf_js_get_now() <= now) {
-			break;
-		}
-	}
-}
+/* * MacSurf — macsurf_js_timers.c * * setTimeout / setInterval / clearTimeout implementation.  Timers are * held in a static sorted singly-linked list (sorted by expiry_ms * ascending) so run_timers can stop scanning at the first non-due * entry.  A fixed-capacity arena avoids malloc churn on OS 9. * * Hard cap: 64 simultaneous timers.  Overflow silently drops the * oldest entry to make room — matches the behaviour of classic * browsers that cap timer count per page. * * Callback references are stored in the Duktape heap stash keyed by * timer id.  This is the canonical way to hold strong refs to JS * functions across C returns without leaking. */#include <stdbool.h>#include <stddef.h>#include <stdlib.h>#include "duktape.h"#include "macsurf_js.h"#define MACSURF_JS_MAX_TIMERS 64#define MACSURF_JS_TIMER_STASH "macsurf_timers"struct macsurf_timer {	int          id;	duk_double_t expiry_ms;	bool         repeating;	duk_double_t interval_ms;	bool         live;	struct macsurf_timer *next;};static struct macsurf_timer macsurf_timer_arena[MACSURF_JS_MAX_TIMERS];static struct macsurf_timer *macsurf_timer_head = NULL;static int macsurf_timer_next_id = 1;static struct macsurf_timer *timer_alloc(void){	int i;	struct macsurf_timer *oldest;	duk_double_t oldest_expiry;	for (i = 0; i < MACSURF_JS_MAX_TIMERS; i++) {		if (!macsurf_timer_arena[i].live) {			return &macsurf_timer_arena[i];		}	}	/* All slots in use: drop the one that expires soonest (the	 * "oldest" in the sense that it's been waiting the longest or	 * will fire first).  This keeps newly-registered timers alive. */	oldest = &macsurf_timer_arena[0];	oldest_expiry = oldest->expiry_ms;	for (i = 1; i < MACSURF_JS_MAX_TIMERS; i++) {		if (macsurf_timer_arena[i].expiry_ms < oldest_expiry) {			oldest = &macsurf_timer_arena[i];			oldest_expiry = oldest->expiry_ms;		}	}	return oldest;}static voidtimer_list_insert(struct macsurf_timer *t){	struct macsurf_timer **pp;	/* Unlink if already in list (for reschedule path). */	pp = &macsurf_timer_head;	while (*pp != NULL) {		if (*pp == t) { *pp = t->next; break; }		pp = &(*pp)->next;	}	t->next = NULL;	/* Insert in expiry-ascending order. */	pp = &macsurf_timer_head;	while (*pp != NULL && (*pp)->expiry_ms <= t->expiry_ms) {		pp = &(*pp)->next;	}	t->next = *pp;	*pp = t;}static voidtimer_list_remove(struct macsurf_timer *t){	struct macsurf_timer **pp = &macsurf_timer_head;	while (*pp != NULL) {		if (*pp == t) { *pp = t->next; break; }		pp = &(*pp)->next;	}	t->next = NULL;}static voidtimer_stash_put(duk_context *duk, int id, duk_idx_t fn_idx){	duk_push_global_stash(duk);	if (duk_get_prop_string(duk, -1, MACSURF_JS_TIMER_STASH) == 0) {		duk_pop(duk);		duk_push_object(duk);		duk_dup_top(duk);		duk_put_prop_string(duk, -3, MACSURF_JS_TIMER_STASH);	}	/* stash_obj on top */	duk_dup(duk, fn_idx);	duk_put_prop_index(duk, -2, (duk_uarridx_t)id);	duk_pop_2(duk);}static booltimer_stash_push(duk_context *duk, int id){	duk_push_global_stash(duk);	if (duk_get_prop_string(duk, -1, MACSURF_JS_TIMER_STASH) == 0) {		duk_pop_2(duk);		return false;	}	if (duk_get_prop_index(duk, -1, (duk_uarridx_t)id) == 0) {		duk_pop_3(duk);		return false;	}	/* Leave callback on top, unwind intermediates. */	duk_remove(duk, -2); /* the timers-stash object */	duk_remove(duk, -2); /* the global stash */	return true;}static voidtimer_stash_del(duk_context *duk, int id){	duk_push_global_stash(duk);	if (duk_get_prop_string(duk, -1, MACSURF_JS_TIMER_STASH) != 0) {		duk_del_prop_index(duk, -1, (duk_uarridx_t)id);	}	duk_pop_2(duk);}/* ----------------------------------------------------------------- *//* Public bindings                                                    *//* ----------------------------------------------------------------- */static duk_ret_ttimer_create(duk_context *duk, bool repeating){	struct macsurf_timer *t;	duk_double_t delay_ms;	if (!duk_is_function(duk, 0)) {		duk_push_int(duk, 0);		return 1;	}	delay_ms = duk_to_number(duk, 1);	if (delay_ms < 0.0 || delay_ms != delay_ms /* NaN */) {		delay_ms = 0.0;	}	t = timer_alloc();	if (t == NULL) {		duk_push_int(duk, 0);		return 1;	}	if (t->live) {		timer_list_remove(t);		timer_stash_del(duk, t->id);	}	t->id          = macsurf_timer_next_id++;	t->expiry_ms   = macsurf_js_get_now() + delay_ms;	t->repeating   = repeating;	t->interval_ms = delay_ms;	t->live        = true;	timer_stash_put(duk, t->id, 0);	timer_list_insert(t);	duk_push_int(duk, t->id);	return 1;}duk_ret_tmacsurf_js_settimeout(duk_context *duk){	return timer_create(duk, false);}duk_ret_tmacsurf_js_setinterval(duk_context *duk){	return timer_create(duk, true);}duk_ret_tmacsurf_js_cleartimeout(duk_context *duk){	int id = duk_to_int(duk, 0);	int i;	for (i = 0; i < MACSURF_JS_MAX_TIMERS; i++) {		if (macsurf_timer_arena[i].live &&		    macsurf_timer_arena[i].id == id) {			timer_list_remove(&macsurf_timer_arena[i]);			timer_stash_del(duk, id);			macsurf_timer_arena[i].live = false;			break;		}	}	return 0;}/* ----------------------------------------------------------------- *//* Pump — fire all due timers.                                        *//* ----------------------------------------------------------------- */voidmacsurf_js_run_timers(struct jscontext *ctx){	duk_double_t now;	struct macsurf_timer *t;	if (ctx == NULL || ctx->duk == NULL) return;	now = macsurf_js_get_now();	while (macsurf_timer_head != NULL &&	       macsurf_timer_head->expiry_ms <= now) {		t = macsurf_timer_head;		timer_list_remove(t);		if (timer_stash_push(ctx->duk, t->id)) {			/* duk_pcall for safe error containment. */			if (duk_pcall(ctx->duk, 0) != 0) {				/* Callback threw — log and continue. */			}			duk_pop(ctx->duk);		}		if (t->repeating && t->live) {			t->expiry_ms = now + t->interval_ms;			timer_list_insert(t);		} else {			timer_stash_del(ctx->duk, t->id);			t->live = false;		}		/* Safety: bail if the clock doesn't advance — avoids a		 * pathological 0ms setInterval locking the event loop. */		if (macsurf_js_get_now() <= now) {			break;		}	}}

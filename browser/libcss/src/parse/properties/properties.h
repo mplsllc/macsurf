@@ -83,10 +83,18 @@ css_error css__parse_border_left_style(css_language *c,
 		const parserutils_vector *vector, int32_t *ctx,
 		css_style *result);
 css_error css__parse_border_left_width(css_language *c,
-		const parserutils_vector *vector, int32_t *ctx,
-		css_style *result);
-css_error css__parse_border_right(css_language *c,
-		const parserutils_vector *vector, int32_t *ctx,
+                const parserutils_vector *vector, int32_t *ctx,
+                css_style *result);
+css_error css__parse_border_radius(css_language *c,
+                const parserutils_vector *vector, int32_t *ctx,
+                css_style *result);
+css_error css__parse_box_shadow(css_language *c,
+                const parserutils_vector *vector, int32_t *ctx,
+                css_style *result);
+css_error css__parse_macsurf_gradient(css_language *c,
+                const parserutils_vector *vector, int32_t *ctx,
+                css_style *result);
+css_error css__parse_border_right(css_language *c,		const parserutils_vector *vector, int32_t *ctx,
 		css_style *result);
 css_error css__parse_border_right_color(css_language *c,
 		const parserutils_vector *vector, int32_t *ctx,
@@ -584,5 +592,6 @@ extern const uint32_t property_unit_mask[CSS_N_PROPERTIES];
 #define UNIT_MASK_FLEX_WRAP             (0)
 #define UNIT_MASK_JUSTIFY_CONTENT       (0)
 #define UNIT_MASK_ORDER                 (0)
+#define UNIT_MASK_BORDER_RADIUS         UNIT_MASK_MARGIN_SIDE
 
 #endif

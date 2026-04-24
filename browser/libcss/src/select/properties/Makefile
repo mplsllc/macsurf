@@ -16,6 +16,7 @@ border_collapse.c \
 border_left_color.c \
 border_left_style.c \
 border_left_width.c \
+s_border_radius.c \
 border_right_color.c \
 border_right_style.c \
 border_right_width.c \
@@ -24,6 +25,7 @@ border_top_color.c \
 border_top_style.c \
 border_top_width.c \
 bottom.c \
+s_box_shadow.c \
 box_sizing.c \
 break_after.c \
 break_before.c \

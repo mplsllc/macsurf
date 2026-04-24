@@ -107,6 +107,11 @@ enum op_border_color {
 	BORDER_COLOR_SET		= 0x0080
 };
 
+enum op_border_radius {
+	BORDER_RADIUS_CALC		= VALUE_IS_CALC,
+	BORDER_RADIUS_SET		= 0x0080
+};
+
 enum op_border_style {
 	BORDER_STYLE_NONE		= 0x0000,
 	BORDER_STYLE_HIDDEN		= 0x0001,
@@ -137,6 +142,11 @@ enum op_bottom {
 enum op_box_sizing {
 	BOX_SIZING_CONTENT_BOX		= 0x0000,
 	BOX_SIZING_BORDER_BOX		= 0x0001
+};
+
+enum op_box_shadow {
+	BOX_SHADOW_NONE			= 0x0000,
+	BOX_SHADOW_SET			= 0x0080
 };
 
 enum op_break_after {

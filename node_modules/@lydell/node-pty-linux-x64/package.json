@@ -1,0 +1,16 @@
+{
+  "name": "@lydell/node-pty-linux-x64",
+  "version": "1.1.0",
+  "description": "Prebuilt linux-x64 binaries for node-pty.",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/lydell/node-pty.git"
+  },
+  "license": "MIT",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ]
+}

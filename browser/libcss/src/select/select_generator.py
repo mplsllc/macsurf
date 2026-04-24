@@ -534,11 +534,27 @@ class CSSGroup:
             t.append('{')
             t.indent(1)
 
-            # Ensure any existing calc() values are freed
+            # C89: Gather all declarations at the top
             if p.has_calc:
                 t.append('uint32_t orig_bits = (style->i.bits[{name}_INDEX] & {name}_MASK) >> {name}_SHIFT;'.format(name=p.name.upper()))
-                t.append()
 
+            t.append('uint32_t *bits = &style->i.bits[{}_INDEX];'.format(p.name.upper()))
+
+            for v in p.values:
+                old_n = 'old_' + v.name + v.suffix
+                old_t, old_n_shift = shift_star(v.type, old_n)
+
+                if v.name == 'string':
+                    t.append('{} {};'.format(old_t, old_n_shift))
+                elif v.name == 'string_arr' or v.name == 'counter_arr':
+                    t.append('{} {};'.format(old_t, old_n_shift))
+                    iter_var = 's' if v.name == 'string_arr' else 'c'
+                    t.append('{} {};'.format(old_t, shift_star(v.type, iter_var)[1]))
+
+            t.append()
+
+            # Ensure any existing calc() values are freed
+            if p.has_calc:
                 type_mask, shift_list, bits_comment = p.get_bits()
                 t.append(bits_comment)
                 t.append('if ((orig_bits & {}) == {}) {{'.format(type_mask, p.condition))
@@ -553,11 +569,10 @@ class CSSGroup:
                 t.append('}')
                 t.append()
 
-            t.append('uint32_t *bits = &style->i.bits[{}_INDEX];'.format(p.name.upper()))
-            t.append()
-
             type_mask, shift_list, bits_comment = p.get_bits()
-            t.append(bits_comment)
+            if not p.has_calc: # already appended if has_calc
+                t.append(bits_comment)
+            
             type_mask = '((uint32_t)type & {})'.format(type_mask)
             val_list = [ '({} << {})'.format(x[0], x[1]) for x in shift_list ]
             ops_str = ' | '.join([ type_mask ] + val_list)
@@ -571,11 +586,9 @@ class CSSGroup:
             t.append()
             for v in p.values:
                 old_n = 'old_' + v.name + v.suffix
-                old_t, old_n_shift = shift_star(v.type, old_n)
 
                 if v.name == 'string':
-                    t.append('{} {} = style->i.{};'.format(
-                        old_t, old_n_shift, p.name + v.suffix))
+                    t.append('{} = style->i.{};'.format(old_n, p.name + v.suffix))
                     t.append()
                     t.append('if ({} != NULL) {{'.format(v.name + v.suffix))
                     t.indent(1)
@@ -593,11 +606,8 @@ class CSSGroup:
                 elif v.name == 'string_arr' or v.name == 'counter_arr':
                     iter_var = 's' if v.name == 'string_arr' else 'c'
                     iter_deref = '*s' if v.name == 'string_arr' else 'c->name'
-                    t.append('{} {} = style->{};'.format(
-                        old_t, old_n_shift,
-                        p.name + v.suffix))
-                    t.append('{} {};'.format(old_t,
-                                             shift_star(v.type, iter_var)[1]))
+                    
+                    t.append('{} = style->{};'.format(old_n, p.name + v.suffix))
                     t.append()
                     t.append('for ({0} = {2}; {0} != NULL && '
                              '{1} != NULL; {0}++)'.format(iter_var, iter_deref,
@@ -647,6 +657,7 @@ class CSSGroup:
             t.append(undefs)
 
         return t.to_string()
+
 
     def print_propget(self, t, p, only_bits=False):
         vals = [] if only_bits else p.get_param_values(pointer=True)

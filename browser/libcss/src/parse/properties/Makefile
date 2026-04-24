@@ -35,9 +35,11 @@ DIR_SOURCES :=				\
 	background_position.c		\
 	border.c			\
 	border_color.c			\
+	p_border_radius.c		\
 	border_spacing.c		\
 	border_style.c			\
 	border_width.c			\
+	p_box_shadow.c			\
 	clip.c				\
 	columns.c			\
 	column_rule.c			\

@@ -235,6 +235,9 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("word-spacing"),
 	SMAP("writing-mode"),
 	SMAP("z-index"),
+	SMAP("border-radius"),
+	SMAP("box-shadow"),
+	SMAP("-macsurf-gradient"),
 
 	SMAP("inherit"),
 	SMAP("unset"),
@@ -495,6 +498,11 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("inline-grid"),
 	SMAP("sticky"),
 	SMAP("calc"),
+	SMAP("linear-gradient"),
+	SMAP("radial-gradient"),
+	SMAP("repeating-linear-gradient"),
+	SMAP("repeating-radial-gradient"),
+	SMAP("to"),
 
 	/* Named colours */
 	SMAP("aliceblue"),

@@ -440,6 +440,24 @@ uint8_t css_computed_border_left_width(const css_computed_style *style,
 	return get_border_left_width(style, length, unit);
 }
 
+uint8_t css_computed_border_radius(const css_computed_style *style,
+		css_fixed *length, css_unit *unit)
+{
+	return get_border_radius(style, length, unit);
+}
+
+uint8_t css_computed_box_shadow(const css_computed_style *style,
+		int32_t *integer)
+{
+	return get_box_shadow(style, integer);
+}
+
+uint8_t css_computed_macsurf_gradient(const css_computed_style *style,
+		int32_t *color)
+{
+	return get_macsurf_gradient(style, color);
+}
+
 uint8_t css_computed_background_image(const css_computed_style *style,
 		lwc_string **url)
 {

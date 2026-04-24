@@ -74,13 +74,14 @@ typedef enum {
  * Plot style for stroke/fill plotters
  */
 typedef struct plot_style_s {
-	plot_operation_type_t stroke_type; /**< Stroke plot type */
-	plot_style_fixed stroke_width; /**< Width of stroke, in pixels */
-	colour stroke_colour; /**< Colour of stroke */
-	plot_operation_type_t fill_type; /**< Fill plot type */
-	colour fill_colour; /**< Colour of fill */
+        plot_operation_type_t stroke_type; /**< Stroke plot type */
+        plot_style_fixed stroke_width; /**< Width of stroke, in pixels */
+        colour stroke_colour; /**< Colour of stroke */
+        plot_operation_type_t fill_type; /**< Fill plot type */
+        colour fill_colour; /**< Colour of fill */
+        plot_style_fixed border_radius; /**< Corner radius */
+        plot_style_fixed box_shadow; /**< Box shadow (simplified) */
 } plot_style_t;
-
 
 /**
  * Generic font family type

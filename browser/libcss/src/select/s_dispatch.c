@@ -520,7 +520,19 @@ struct prop_table prop_dispatch[CSS_N_PROPERTIES] = {
 		1,
 	},
 	{
-		PROPERTY_FUNCS(stroke_opacity),
-		1,
+	        PROPERTY_FUNCS(stroke_opacity),
+	        1,
+	},
+	{
+	        PROPERTY_FUNCS(border_radius),
+	        0,
+	},
+	{
+	        PROPERTY_FUNCS(box_shadow),
+	        0,
+	},
+	{
+	        PROPERTY_FUNCS(macsurf_gradient),
+	        0,
 	}
-};
+	};

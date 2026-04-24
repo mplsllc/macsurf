@@ -140,8 +140,28 @@ enum css_properties_e {
 	CSS_PROP_ORDER				= 0x07b,
 	CSS_PROP_FILL_OPACITY			= 0x07c,
 	CSS_PROP_STROKE_OPACITY			= 0x07d,
+	CSS_PROP_BORDER_RADIUS			= 0x07e,
+	CSS_PROP_BOX_SHADOW			= 0x07f,
+	CSS_PROP_MACSURF_GRADIENT		= 0x080,
 
 	CSS_N_PROPERTIES
+};
+
+enum css_border_radius_e {
+	CSS_BORDER_RADIUS_INHERIT		= 0x0,
+	CSS_BORDER_RADIUS_SET			= 0x1
+};
+
+enum css_box_shadow_e {
+	CSS_BOX_SHADOW_INHERIT			= 0x0,
+	CSS_BOX_SHADOW_NONE			= 0x1,
+	CSS_BOX_SHADOW_SET			= 0x2
+};
+
+enum css_macsurf_gradient_e {
+	CSS_MACSURF_GRADIENT_INHERIT		= 0x0,
+	CSS_MACSURF_GRADIENT_NONE		= 0x1,
+	CSS_MACSURF_GRADIENT_SET		= 0x2
 };
 
 enum css_align_content_e {

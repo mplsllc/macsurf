@@ -463,8 +463,15 @@ html_redraw_borders(struct box *box,
 	int p[8]; /* Box border vertices */
 	int z[8]; /* Border vertices */
 	bool square_end_1 = false;
-	bool square_end_2 = false;
-	nserror res;
+        bool square_end_2 = false;
+        nserror res;
+        css_fixed br_len = 0;
+        css_unit br_unit = CSS_UNIT_PX;
+
+        /* MacSurf: If border_radius is present, html_redraw_background handles the border frame. */
+        if (box && box->style && css_computed_border_radius(box->style, &br_len, &br_unit) == CSS_BORDER_RADIUS_SET && br_len > 0) {
+                return true;
+        }
 
 	x = x_parent + box->x;
 	y = y_parent + box->y;
@@ -725,6 +732,13 @@ html_redraw_inline_borders(struct box *box,
 	bool square_end_1;
 	bool square_end_2;
 	nserror res;
+        css_fixed br_len = 0;
+        css_unit br_unit = CSS_UNIT_PX;
+
+        /* MacSurf: If border_radius is present, html_redraw_inline_background handles the border frame. */
+        if (box && box->style && css_computed_border_radius(box->style, &br_len, &br_unit) == CSS_BORDER_RADIUS_SET && br_len > 0) {
+                return true;
+        }
 
 	if (scale != 1.0) {
 		top *= scale;
