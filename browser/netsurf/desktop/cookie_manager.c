@@ -34,6 +34,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "utils/messages.h"
 #include "utils/utils.h"

@@ -26,6 +26,7 @@
 #ifndef NETSURF_WINDOW_H
 #define NETSURF_WINDOW_H
 
+#include "utils/errors.h"
 #include "netsurf/mouse.h"
 #include "netsurf/console.h"
 

@@ -8,7 +8,7 @@
 #ifndef CSS_COMPUTED_COMPUTED_H_
 #define CSS_COMPUTED_COMPUTED_H_
 
-#include "select/calc.h"
+#include "calc.h"
 
 typedef union {
 	css_fixed value;
