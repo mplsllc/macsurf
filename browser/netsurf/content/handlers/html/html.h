@@ -63,15 +63,19 @@ struct html_stylesheet {
 };
 
 
+/** Type of script — hoisted before struct for C89 compatibility. */
+enum html_script_type {
+	HTML_SCRIPT_INLINE,
+	HTML_SCRIPT_SYNC,
+	HTML_SCRIPT_DEFER,
+	HTML_SCRIPT_ASYNC
+};
+
 /**
  * Container for scripts used by an HTML document
  */
 struct html_script {
-	/** Type of script */
-	enum html_script_type { HTML_SCRIPT_INLINE,
-				HTML_SCRIPT_SYNC,
-				HTML_SCRIPT_DEFER,
-				HTML_SCRIPT_ASYNC } type;
+	enum html_script_type type;
 	union {
 		struct hlcache_handle *handle;
 		struct dom_string *string;

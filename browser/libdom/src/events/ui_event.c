@@ -6,6 +6,7 @@
  */
 
 #include <stdlib.h>
+#include "events/event.h"
 
 #include "events/ui_event.h"
 
