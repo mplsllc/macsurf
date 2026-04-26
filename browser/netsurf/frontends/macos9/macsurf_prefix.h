@@ -61,33 +61,9 @@
 
 #define NETSURF_LOG_H
 
-/* CW8 C89: no variadic macros; use a real varargs function to absorb any arg count. */
-static void macsurf_nslog_noop_(const void *c, long l, const char *f, ...)
-{ (void)c; (void)l; (void)f; }
-#define NSLOG macsurf_nslog_noop_
-/* Safe category stubs (fetch/plot/layout/flex NOT defined — conflict with struct tags/vars). */
-#define netsurf  0
-#define llcache  0
-#define schedule 0
-#define fbtk     0
-#define dukky    0
-#define jserrors 0
-/* NSLOG level stubs. */
-#ifndef INFO
-#define INFO 3
-#endif
-#ifndef WARNING
-#define WARNING 4
-#endif
-#ifndef VERBOSE
-#define VERBOSE 2
-#endif
-#ifndef CRITICAL
-#define CRITICAL 6
-#endif
-#ifndef DEEPDEBUG
-#define DEEPDEBUG 0
-#endif
+/* CW8 C89: use __VA_ARGS__ (CW8 extension, pre-C99). Category and level tokens
+ * are consumed as macro params and never evaluated as expressions. */
+#define NSLOG(cat, level, ...) do {} while(0)
 
 #ifdef __MWERKS__
 #include <stat.h>
