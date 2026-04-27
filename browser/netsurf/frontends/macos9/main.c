@@ -189,45 +189,12 @@ void macos9_poll(void) {
 
 int main(void) {
 #ifdef __MACOS__
-	/* MINIMAL DIAGNOSTIC: beep, run an event loop until clicked.
-	 * If no beep, binary is rejected before main() runs. */
-	SysBeep(20);
-	{
-		EventRecord ev;
-		while (1) {
-			WaitNextEvent(everyEvent, &ev, 60, NULL);
-			if (ev.what == mouseDown) break;
-		}
-	}
-	SysBeep(20);
-	return 0;
-}
-
-int macsurf_full_main_disabled_for_diagnostic(void) {
-	FlushEvents(everyEvent, 0);
-	InitCursor();
-#endif
-	macsurf_debug_log_init();
-	MS_LOG("MacSurf Start");
-#ifdef __MACOS__
-	{
-		long appearResp;
-		if (Gestalt(gestaltAppearanceAttr, &appearResp) == noErr) {
-			RegisterAppearanceClient();
-			MS_LOG("Appearance registered");
-		} else {
-			MS_LOG("Appearance NOT present");
-		}
-	}
 #ifndef kInitOTForApplicationMask
 #define kInitOTForApplicationMask 0x00000002
 #endif
-	if (InitOpenTransportInContext(kInitOTForApplicationMask, &macos9_ot_context) != noErr) {
-		MS_LOG("InitOT FAIL");
-		macos9_ot_context = NULL;
-	} else {
-		MS_LOG("InitOT OK");
-	}
+	InitCursor();
+	if (InitOpenTransportInContext(kInitOTForApplicationMask, &macos9_ot_context) != noErr) macos9_ot_context = NULL;
+	RegisterAppearanceClient();
 #endif
 	memset(&macos9_table, 0, sizeof(macos9_table));
 	macos9_table.window = macos9_window_table;
@@ -243,21 +210,13 @@ int macsurf_full_main_disabled_for_diagnostic(void) {
 		macos9_table.llcache = null_llcache_table;
 		macos9_table.fetch = &macos9_fetch_table;
 	}
-	MS_LOG("table set");
 	netsurf_register(&macos9_table);
-	MS_LOG("register done");
 	nsoption_init(NULL, NULL, NULL);
-	MS_LOG("nsoption done");
 	netsurf_init(NULL);
-	MS_LOG("netsurf_init done");
 	{ extern nserror macos9_http_fetcher_register(void); macos9_http_fetcher_register(); }
-	MS_LOG("fetcher_register done");
 	macos9_create_initial_window();
-	MS_LOG("initial_window done");
 	while (!macos9_done) macos9_poll();
 	macos9_quitting = (bool)1; netsurf_exit();
-#ifdef __MACOS__
 	if (macos9_ot_context) CloseOpenTransportInContext(macos9_ot_context);
-#endif
 	return 0;
 }

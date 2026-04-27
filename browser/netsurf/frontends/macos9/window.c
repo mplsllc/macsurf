@@ -156,7 +156,7 @@ static nserror macos9_gw_set_url(struct gui_window *g, struct nsurl *u) { const 
 static void macos9_gw_set_status(struct gui_window *g, const char *t) { if(g&&t) { strncpy(g->status,t,127); g->status[127]=0; if(g->window) InvalWindowRect(g->window,&g->status_rect); } }
 
 static struct gui_window_table wt = {
-	macos9_window_create, macos9_window_destroy, macos9_gw_invalidate, (unsigned char (*)(struct gui_window *, int *, int *))macos9_gw_get_scroll,
+	macos9_window_create, macos9_window_destroy, macos9_gw_invalidate, macos9_gw_get_scroll,
 	macos9_gw_set_scroll, macos9_gw_get_dimensions, macos9_gw_event, macos9_gw_set_title,
 	macos9_gw_set_url, (void*)0, macos9_gw_set_status, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0
 };
