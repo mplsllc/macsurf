@@ -27,6 +27,14 @@ struct rect;
 	#define __bool_true_false_are_defined 1
 	#endif
 	
+	/* Carbon.h pulls MacWindows.h before Aliases.h, so AliasHandle is
+	 * undefined when MacWindows.h declares functions that use it — CW8
+	 * reports "illegal function definition". Pre-declare it here so it
+	 * is already defined when MacWindows.h is processed. Mirrors the
+	 * same workaround in macsurf_debug.c. */
+	struct AliasRecord;
+	typedef struct AliasRecord **AliasHandle;
+
 	#include <Carbon.h>
 	#include <Quickdraw.h>
 	#include <TextEdit.h>
