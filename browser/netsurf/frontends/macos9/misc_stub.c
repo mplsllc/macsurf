@@ -16,9 +16,9 @@ struct gui_download_window;
 struct llcache_handle;
 struct image_cache_parameters;
 
-/* Hotlist / global history — no replacement yet, defer */
-nserror hotlist_update_url(struct nsurl *url) { return NSERROR_OK; }
-nserror global_history_add(struct nsurl *url) { return NSERROR_OK; }
+/* Hotlist / global history — real implementations now linked
+ * (hotlist.c provides hotlist_update_url; global_history.c provides
+ * global_history_add). Stubs removed. */
 
 /* content_textsearch_destroy — Phase 2: provided by content/textsearch.c */
 /* image_cache_init / image_cache_fini — Phase 4 (image content handler is
@@ -30,8 +30,8 @@ nserror image_cache_init(const struct image_cache_parameters *p)
 
 nserror image_cache_fini(void) { return NSERROR_OK; }
 
-/* Page info */
-nserror page_info_fini(void) { return NSERROR_OK; }
+/* Page info — real implementation provided by desktop/page-info.c.
+ * Stubs removed. */
 
 /* ns_system_colour_init / ns_system_colour_finalize — Phase 2: provided by
  * desktop/system_colour.c */
@@ -45,14 +45,8 @@ void search_web_finalise(void) {}
 /* cert_chain_alloc / cert_chain_free / cert_chain_to_query / cert_chain_size /
  * cert_chain_dup — Phase 2: provided by utils/ssl_certs.c */
 
-/* Download context */
-nserror download_context_create(struct llcache_handle *llcache,
-		struct gui_download_window *window)
-{
-	return NSERROR_OK;
-}
-
-void download_context_destroy(void *ctx) {}
+/* Download context — real implementation provided by desktop/download.c.
+ * Stubs removed. */
 
 /* DOM namespace — libdom only provides _dom_namespace_initialise (private),
  * NetSurf core calls dom_namespace_initialise (public). Keep stub. */
@@ -61,9 +55,6 @@ void dom_namespace_finalise(void) {}
 
 /* lwc iteration — libwapcaplet doesn't provide an iterator in our shim layer */
 void lwc_iterate_strings(void (*cb)(void *str, void *pw), void *pw) {}
-
-/* Page info */
-nserror page_info_init(void) { return NSERROR_OK; }
 
 /* Fetch */
 void fetch_abort(void *f) { (void)f; }
@@ -82,5 +73,16 @@ nserror image_init(void) { return NSERROR_OK; }
 
 /* PDF save */
 nserror save_pdf(const char *path) { (void)path; return NSERROR_OK; }
+
+/* nsutils base64 — used only by ssl_certs.c for cert query strings;
+ * MacSurf doesn't fetch HTTPS in-browser (proxy strips TLS), so the
+ * cert chain query never fires. Stub returns BAD_INPUT. */
+typedef int nsuerror_t_;
+int nsu_base64_encode_url(const unsigned char *input, unsigned long input_length,
+		unsigned char **output, unsigned long *output_length)
+{
+	(void)input; (void)input_length; (void)output; (void)output_length;
+	return 2; /* NSUERROR_BAD_INPUT */
+}
 
 /* html_get_id_offset — Phase 4: provided by content/handlers/html/html.c */

@@ -66,6 +66,112 @@ static void macos9_handle_update(const EventRecord *event) {
 #endif
 }
 
+void macos9_handle_mouse_down(const EventRecord *event) {
+#ifdef __MACOS__
+	WindowRef win;
+	short part = FindWindow(event->where, &win);
+	struct gui_window *gw;
+	switch (part) {
+		case inMenuBar:
+			MenuSelect(event->where);
+			HiliteMenu(0);
+			break;
+		case inDrag:
+			if (win) {
+				Rect bounds;
+				bounds.left = -32000; bounds.top = -32000;
+				bounds.right = 32000; bounds.bottom = 32000;
+				DragWindow(win, event->where, &bounds);
+			}
+			break;
+		case inGoAway:
+			if (win && TrackGoAway(win, event->where)) {
+				macos9_done = (bool)1;
+			}
+			break;
+		case inGrow:
+			if (win) {
+				Rect lim;
+				long sz;
+				lim.left = 200; lim.top = 100;
+				lim.right = 32000; lim.bottom = 32000;
+				sz = GrowWindow(win, event->where, &lim);
+				if (sz != 0) {
+					SizeWindow(win, (short)(sz & 0xFFFF), (short)((sz >> 16) & 0xFFFF), (Boolean)1);
+					gw = macos9_find_window(win);
+					if (gw) macos9_window_resize(gw);
+				}
+			}
+			break;
+		case inContent:
+			if (win) {
+				if (win != FrontWindow()) {
+					SelectWindow(win);
+				} else {
+					Point p = event->where;
+					ControlRef ctrl;
+					short cpart;
+					gw = macos9_find_window(win);
+					if (gw) {
+						SetPortWindowPort(win);
+						GlobalToLocal(&p);
+						cpart = FindControl(p, win, &ctrl);
+						if (cpart != 0 && ctrl != NULL) {
+							if (ctrl == gw->vscroll || ctrl == gw->hscroll) {
+								macos9_window_handle_scrollbar_click(gw, ctrl, cpart, NULL);
+							} else if (ctrl == gw->back_btn && TrackControl(ctrl, p, NULL)) {
+								macos9_window_back(gw);
+							} else if (ctrl == gw->forward_btn && TrackControl(ctrl, p, NULL)) {
+								macos9_window_forward(gw);
+							} else if (ctrl == gw->reload_btn && TrackControl(ctrl, p, NULL)) {
+								macos9_window_reload(gw);
+							} else if (ctrl == gw->home_btn && TrackControl(ctrl, p, NULL)) {
+								macos9_window_home(gw);
+							}
+						} else if (PtInRect(p, &gw->url_rect)) {
+							macos9_window_te_activate_url(gw);
+							if (gw->url_te) TEClick(p, (event->modifiers & shiftKey) != 0, gw->url_te);
+						} else {
+							macos9_window_te_deactivate_url(gw);
+						}
+					}
+				}
+			}
+			break;
+	}
+#endif
+}
+
+void macos9_handle_key_down(const EventRecord *event) {
+#ifdef __MACOS__
+	WindowRef win = FrontWindow();
+	struct gui_window *gw = win ? macos9_find_window(win) : NULL;
+	char ch = (char)(event->message & charCodeMask);
+	if (!gw) return;
+	if (gw->url_field_active && gw->url_te) {
+		if (ch == 0x0D || ch == 0x03) {
+			macos9_window_address_bar_submit(gw);
+		} else if (ch == 0x1B) {
+			macos9_window_te_deactivate_url(gw);
+		} else {
+			TEKey(ch, gw->url_te);
+		}
+	} else {
+		switch (ch) {
+			case 0x1E: macos9_window_scroll_by(gw, 0, -48); break; /* up */
+			case 0x1F: macos9_window_scroll_by(gw, 0,  48); break; /* down */
+			case 0x1C: macos9_window_scroll_by(gw, -48, 0); break; /* left */
+			case 0x1D: macos9_window_scroll_by(gw,  48, 0); break; /* right */
+			case 0x0B: macos9_window_scroll_by(gw, 0, -gw->content_rect.bottom + gw->content_rect.top); break; /* page up */
+			case 0x0C: macos9_window_scroll_by(gw, 0,  gw->content_rect.bottom - gw->content_rect.top); break; /* page down */
+			case 0x01: macos9_window_scroll_to(gw, 0, 0); break; /* home */
+			case 0x04: macos9_window_scroll_to(gw, 0, 0x7FFFFFFF); break; /* end */
+			default: break;
+		}
+	}
+#endif
+}
+
 void macos9_poll(void) {
 	EventRecord ev;
 	if (WaitNextEvent(everyEvent, &ev, 1, NULL)) {
