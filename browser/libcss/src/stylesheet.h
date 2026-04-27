@@ -8,6 +8,13 @@
 #ifndef css_stylesheet_h_
 #define css_stylesheet_h_
 
+/* Defensive empty define — make _ALIGNED harmless if it appears in
+ * any libcss header as a struct close tag. Otherwise CW8 reads it as
+ * a global variable and every TU emits a duplicate symbol at link. */
+#ifndef _ALIGNED
+#define _ALIGNED
+#endif
+
 #include <inttypes.h>
 #include <stdio.h>
 

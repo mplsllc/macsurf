@@ -8,6 +8,12 @@
 #ifndef css_css__parse_propstrings_h_
 #define css_css__parse_propstrings_h_
 
+/* Defensive empty define for CW8: prevent stray _ALIGNED tokens from
+ * being read as global variable declarations. */
+#ifndef _ALIGNED
+#define _ALIGNED
+#endif
+
 #include <libwapcaplet/libwapcaplet.h>
 #include <libcss/errors.h>
 #include "utils/utils.h"

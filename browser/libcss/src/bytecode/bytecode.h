@@ -8,6 +8,11 @@
 #ifndef css_bytecode_bytecode_h_
 #define css_bytecode_bytecode_h_
 
+/* Defensive empty define for CW8 — see notes in stylesheet.h. */
+#ifndef _ALIGNED
+#define _ALIGNED
+#endif
+
 #include <inttypes.h>
 #include <stdio.h>
 
