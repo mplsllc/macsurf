@@ -16,7 +16,13 @@
 #define NAME_MAX 255
 #endif
 
-/* Standard POSIX dirent */
+/* macsurf_prefix.h includes mac_dirent.h for every TU on CW8, which defines
+ * struct dirent and MAC_DIR under guard MAC_DIRENT_H.  Skip our own copies
+ * if mac_dirent.h already ran; also claim MAC_DIRENT_H if we run first so
+ * mac_dirent.h will skip itself and avoid the redefinition. */
+#ifndef MAC_DIRENT_H
+#define MAC_DIRENT_H
+
 struct dirent {
     char d_name[NAME_MAX + 1];
 };
@@ -29,6 +35,8 @@ MAC_DIR       *opendir(const char *path);
 struct dirent *readdir(MAC_DIR *dir);
 int            closedir(MAC_DIR *dir);
 void           rewinddir(MAC_DIR *dir);
+
+#endif /* MAC_DIRENT_H */
 
 int alphasort(const struct dirent **d1, const struct dirent **d2);
 int scandir(const char *dirp, struct dirent ***namelist,

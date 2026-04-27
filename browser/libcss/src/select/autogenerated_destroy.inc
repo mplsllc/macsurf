@@ -113,7 +113,7 @@
 /* set_visibility(style, 0, 0, CSS_UNIT_PX); */
 /* set_white_space(style, 0, 0, CSS_UNIT_PX); */
 /* set_widows(style, 0, 0, CSS_UNIT_PX); */
-set_width(style, 0, (css_fixed_or_calc)0, CSS_UNIT_PX);
+{ css_fixed_or_calc foc_zero_; foc_zero_.value = 0; set_width(style, 0, foc_zero_, CSS_UNIT_PX); }
 /* set_word_spacing(style, 0, 0, CSS_UNIT_PX); */
 /* set_writing_mode(style, 0, 0, CSS_UNIT_PX); */
 /* set_z_index(style, 0, 0, CSS_UNIT_PX); */

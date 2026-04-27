@@ -34,10 +34,13 @@ struct rect;
 	 * incomplete struct, then include Aliases.h to complete AliasRecord
 	 * before Carbon.h processes any header that needs these types.
 	 * Mirrors the pattern in macsurf_debug.c. */
-	#include <Files.h>
-	struct AliasRecord;
-	typedef struct AliasRecord **AliasHandle;
-	#include <Aliases.h>
+	/* Suppress InternetConfig.h before Carbon.h includes it (line 130).
+	 * InternetConfig.h:271 uses AliasRecord by value, but its own header
+	 * never arrives before Carbon.h chains to it.  MacSurf does not use
+	 * Internet Config Manager, so skipping the header is safe. */
+	#ifndef __INTERNETCONFIG__
+	#define __INTERNETCONFIG__
+	#endif
 
 	#include <Carbon.h>
 	#include <Quickdraw.h>

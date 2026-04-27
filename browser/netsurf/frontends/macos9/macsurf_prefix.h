@@ -65,6 +65,10 @@
  * are consumed as macro params and never evaluated as expressions. */
 #define NSLOG(cat, level, ...) do {} while(0)
 
+/* log.h is suppressed by NETSURF_LOG_H above (it has GNU __attribute__ and
+ * GCC-varargs NSLOG).  Provide the typedef log.c needs so it can compile. */
+typedef bool(nslog_ensure_t)(FILE *fptr);
+
 #ifdef __MWERKS__
 #include <stat.h>
 #include <fcntl.h>
@@ -82,7 +86,6 @@
 
 #define inline
 #define __MACOS9__ 1
-#define WITHOUT_DUKTAPE 1
 #define WITHOUT_ICONV_FILTER 1
 #define NO_IPV6 1
 #define PATH_MAX 256
