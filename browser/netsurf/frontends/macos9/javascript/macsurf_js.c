@@ -1,1 +1,39 @@
-#include <stdio.h>#include <time.h>#include <string.h>#include "macos9/macos9.h"#include "duktape.h"#include "macsurf_debug.h"#include "macsurf_js.h"#ifdef WITH_DUKTAPEstatic struct jsheap *global_heap = NULL;static duk_ret_t native_console_log(duk_context *ctx) {	int n = duk_get_top(ctx), i; char log_buf[512]; size_t pos = 0; log_buf[0] = '\0';	for (i = 0; i < n; i++) {		const char *s = duk_safe_to_string(ctx, i); size_t slen = strlen(s);		if (pos + slen + 2 < 512) { if (pos > 0) log_buf[pos++] = ' '; memcpy(log_buf + pos, s, slen); pos += slen; }	}	log_buf[pos] = '\0'; MS_LOG(log_buf); return 0;}struct jsheap *js_new_heap(void) {	struct jsheap *heap = (struct jsheap *)calloc(1, sizeof(*heap)); if (!heap) return NULL;	heap->ctx = duk_create_heap_default(); if (!heap->ctx) { free(heap); return NULL; }	duk_push_global_object(heap->ctx); duk_push_object(heap->ctx);	duk_push_c_function(heap->ctx, native_console_log, DUK_VARARGS);	duk_put_prop_string(heap->ctx, -2, "log"); duk_put_prop_string(heap->ctx, -2, "console");	duk_pop(heap->ctx); global_heap = heap; return heap;}void js_destroy_heap(struct jsheap *heap) { if (!heap) return; if (heap->ctx) duk_destroy_heap(heap->ctx); if (global_heap == heap) global_heap = NULL; free(heap); }struct jsthread *js_new_thread(struct jsheap *heap) {	struct jsthread *thread = (struct jsthread *)calloc(1, sizeof(*thread)); if (!thread) return NULL;	thread->heap = heap; thread->ctx = heap->ctx; return thread;}void js_destroy_thread(struct jsthread *thread) { free(thread); }bool js_exec(struct jsthread *thread, const char *txt, size_t len, const char *fn) {	if (!thread || !txt) return (bool)0;	duk_push_lstring(thread->ctx, txt, len);	if (duk_peval(thread->ctx) != 0) { MS_LOG(duk_safe_to_string(thread->ctx, -1)); duk_pop(thread->ctx); return (bool)0; }	duk_pop(thread->ctx); return (bool)1;}#endif
+#include <stdio.h>
+#include <time.h>
+#include <string.h>
+#include "macos9/macos9.h"
+#include "duktape.h"
+#include "macsurf_debug.h"
+#include "macsurf_js.h"
+
+#ifdef WITH_DUKTAPE
+static struct jsheap *global_heap = NULL;
+static duk_ret_t native_console_log(duk_context *ctx) {
+	int n = duk_get_top(ctx), i; char log_buf[512]; size_t pos = 0; log_buf[0] = '\0';
+	for (i = 0; i < n; i++) {
+		const char *s = duk_safe_to_string(ctx, i); size_t slen = strlen(s);
+		if (pos + slen + 2 < 512) { if (pos > 0) log_buf[pos++] = ' '; memcpy(log_buf + pos, s, slen); pos += slen; }
+	}
+	log_buf[pos] = '\0'; MS_LOG(log_buf); return 0;
+}
+struct jsheap *js_new_heap(void) {
+	struct jsheap *heap = (struct jsheap *)calloc(1, sizeof(*heap)); if (!heap) return NULL;
+	heap->ctx = duk_create_heap_default(); if (!heap->ctx) { free(heap); return NULL; }
+	duk_push_global_object(heap->ctx); duk_push_object(heap->ctx);
+	duk_push_c_function(heap->ctx, native_console_log, DUK_VARARGS);
+	duk_put_prop_string(heap->ctx, -2, "log"); duk_put_prop_string(heap->ctx, -2, "console");
+	duk_pop(heap->ctx); global_heap = heap; return heap;
+}
+void js_destroy_heap(struct jsheap *heap) { if (!heap) return; if (heap->ctx) duk_destroy_heap(heap->ctx); if (global_heap == heap) global_heap = NULL; free(heap); }
+struct jsthread *js_new_thread(struct jsheap *heap) {
+	struct jsthread *thread = (struct jsthread *)calloc(1, sizeof(*thread)); if (!thread) return NULL;
+	thread->heap = heap; thread->ctx = heap->ctx; return thread;
+}
+void js_destroy_thread(struct jsthread *thread) { free(thread); }
+bool js_exec(struct jsthread *thread, const char *txt, size_t len, const char *fn) {
+	if (!thread || !txt) return (bool)0;
+	duk_push_lstring(thread->ctx, txt, len);
+	if (duk_peval(thread->ctx) != 0) { MS_LOG(duk_safe_to_string(thread->ctx, -1)); duk_pop(thread->ctx); return (bool)0; }
+	duk_pop(thread->ctx); return (bool)1;
+}
+#endif

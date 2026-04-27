@@ -1,0 +1,12 @@
+<html>
+<head>
+<link rel="stylesheet" type="text/css" href="tst.css">
+<title>DOM childElementCount reference</title>
+</head>
+<body>
+<h1>DOM childElementCount reference</h1>
+<noscript><p>Javascript is disabled</p></noscript>
+<p><b>head.childElementCount:</b> <script>document.write(document.head.childElementCount);</script></p>
+<p><b>body.childElementCount:</b> <script>document.write(document.body.childElementCount);</script></p>
+</body>
+</html>

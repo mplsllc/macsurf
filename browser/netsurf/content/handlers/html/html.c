@@ -57,7 +57,8 @@
 #include "javascript/js.h"
 #include "desktop/gui_internal.h"
 
-#include "html/html.h"#include "macsurf_debug.h"
+#include "html/html.h"
+#include "macsurf_debug.h"
 
 long macos9_html_bytes_processed = 0;
 char macos9_html_head[64];

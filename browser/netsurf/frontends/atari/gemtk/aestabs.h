@@ -1,5 +1,7 @@
 #ifndef AESTABS_H_INCLUDED
+
 #define AESTABS_H_INCLUDED
+
 
 struct aes_tab_s;
 struct aes_tablist_s;
@@ -53,4 +55,6 @@ AES_TAB * tablist_find(AES_TABLIST * tablist, OBJECT *page, short tab);
 
 #define AES_TAB_IS_ACTIVE(l, x) (tablist_get_active(l) == x)
 
+
 #endif // AESTABS_H_INCLUDED
+

@@ -1,1 +1,71 @@
-#include "macos9/macos9.h"#include <stdlib.h>#include <string.h>#include "utils/errors.h"#include "utils/log.h"#include "utils/utf8.h"#include "netsurf/plot_style.h"#include "netsurf/layout.h"#include "macsurf_debug.h"size_t macos9_utf8_to_macroman(const char *u, size_t l, char *m, size_t mx) {	size_t ol=0, i=0; while(i<l && ol<mx) {		size_t cl=utf8_char_byte_length(u+i); uint32_t c;		if(cl==0||i+cl>l) { m[ol++]='?'; i++; continue; }		c=utf8_to_ucs4(u+i,cl); i+=cl;		if(c<128) m[ol++]=(char)c; else switch(c) {			case 0x00A0: m[ol++]=(char)0xCA; break; case 0x2022: m[ol++]=(char)0xA5; break;			case 0x201C: m[ol++]=(char)0xD2; break; case 0x201D: m[ol++]=(char)0xD3; break;			default: m[ol++]='?'; break;		}	} return ol;}#ifdef __MACOS9__static int macos9_font_measure(const struct plot_font_style *f, const char *s, size_t l) {	char ms[4096]; size_t ml; int w; GrafPtr op; WindowRef fw;	if(!s||l==0) return 0; ml=macos9_utf8_to_macroman(s,l,ms,4095); ms[ml]=0;	GetPort(&op); fw = FrontWindow();	if(fw) SetPortWindowPort(fw);	TextFont(macos9_font_id_from_style(f)); TextSize((short)(f->size>>10));	TextFace(macos9_face_from_style(f)); w=TextWidth(ms,0,(short)ml);	SetPort(op); return w;}#endifstatic nserror macos9_font_width(const struct plot_font_style *f, const char *s, size_t l, int *w) {#ifdef __MACOS9__	*w=macos9_font_measure(f,s,l);#else	*w=(int)l*8;#endif	return NSERROR_OK;}static nserror macos9_font_position(const struct plot_font_style *f, const char *s, size_t l, int x, size_t *co, int *ax) {	size_t i=0, ni; int cw=0, lw=0; if(!s||l==0||x<=0) { *co=0; *ax=0; return 0; }#ifdef __MACOS9__	while(i<l) {		ni=utf8_next(s,l,i); if(ni==i) break;		cw=macos9_font_measure(f,s,ni); if(cw>x) break;		lw=cw; i=ni;	}#endif	*co=i; *ax=lw; return NSERROR_OK;}static nserror macos9_font_split(const struct plot_font_style *f, const char *s, size_t l, int x, size_t *co, int *ax) {	size_t fo=0, ls=0, i; int fx=0; macos9_font_position(f,s,l,x,&fo,&fx);	if(fo>=l) { *co=l; *ax=fx; return 0; }	for(i=0;i<fo;i++) if(s[i]==' ') ls=i;	if(ls>0) { *co=ls+1; macos9_font_width(f,s,ls,ax); }	else { if(fo==0) fo=utf8_next(s,l,0); *co=fo; macos9_font_width(f,s,fo,ax); }	return NSERROR_OK;}static struct gui_layout_table macos9_layout_table_instance = {	macos9_font_width,	macos9_font_position,	macos9_font_split};struct gui_layout_table *macos9_layout_table = &macos9_layout_table_instance;
+#include "macos9/macos9.h"
+#include <stdlib.h>
+#include <string.h>
+#include "utils/errors.h"
+#include "utils/log.h"
+#include "utils/utf8.h"
+#include "netsurf/plot_style.h"
+#include "netsurf/layout.h"
+#include "macsurf_debug.h"
+
+size_t macos9_utf8_to_macroman(const char *u, size_t l, char *m, size_t mx) {
+	size_t ol=0, i=0; while(i<l && ol<mx) {
+		size_t cl=utf8_char_byte_length(u+i); uint32_t c;
+		if(cl==0||i+cl>l) { m[ol++]='?'; i++; continue; }
+		c=utf8_to_ucs4(u+i,cl); i+=cl;
+		if(c<128) m[ol++]=(char)c; else switch(c) {
+			case 0x00A0: m[ol++]=(char)0xCA; break; case 0x2022: m[ol++]=(char)0xA5; break;
+			case 0x201C: m[ol++]=(char)0xD2; break; case 0x201D: m[ol++]=(char)0xD3; break;
+			default: m[ol++]='?'; break;
+		}
+	} return ol;
+}
+
+#ifdef __MACOS9__
+static int macos9_font_measure(const struct plot_font_style *f, const char *s, size_t l) {
+	char ms[4096]; size_t ml; int w; GrafPtr op; WindowRef fw;
+	if(!s||l==0) return 0; ml=macos9_utf8_to_macroman(s,l,ms,4095); ms[ml]=0;
+	GetPort(&op); fw = FrontWindow();
+	if(fw) SetPortWindowPort(fw);
+	TextFont(macos9_font_id_from_style(f)); TextSize((short)(f->size>>10));
+	TextFace(macos9_face_from_style(f)); w=TextWidth(ms,0,(short)ml);
+	SetPort(op); return w;
+}
+#endif
+
+static nserror macos9_font_width(const struct plot_font_style *f, const char *s, size_t l, int *w) {
+#ifdef __MACOS9__
+	*w=macos9_font_measure(f,s,l);
+#else
+	*w=(int)l*8;
+#endif
+	return NSERROR_OK;
+}
+
+static nserror macos9_font_position(const struct plot_font_style *f, const char *s, size_t l, int x, size_t *co, int *ax) {
+	size_t i=0, ni; int cw=0, lw=0; if(!s||l==0||x<=0) { *co=0; *ax=0; return 0; }
+#ifdef __MACOS9__
+	while(i<l) {
+		ni=utf8_next(s,l,i); if(ni==i) break;
+		cw=macos9_font_measure(f,s,ni); if(cw>x) break;
+		lw=cw; i=ni;
+	}
+#endif
+	*co=i; *ax=lw; return NSERROR_OK;
+}
+
+static nserror macos9_font_split(const struct plot_font_style *f, const char *s, size_t l, int x, size_t *co, int *ax) {
+	size_t fo=0, ls=0, i; int fx=0; macos9_font_position(f,s,l,x,&fo,&fx);
+	if(fo>=l) { *co=l; *ax=fx; return 0; }
+	for(i=0;i<fo;i++) if(s[i]==' ') ls=i;
+	if(ls>0) { *co=ls+1; macos9_font_width(f,s,ls,ax); }
+	else { if(fo==0) fo=utf8_next(s,l,0); *co=fo; macos9_font_width(f,s,fo,ax); }
+	return NSERROR_OK;
+}
+
+static struct gui_layout_table macos9_layout_table_instance = {
+	macos9_font_width,
+	macos9_font_position,
+	macos9_font_split
+};
+struct gui_layout_table *macos9_layout_table = &macos9_layout_table_instance;

@@ -9,7 +9,16 @@
 #ifndef MAC_TYPES_H
 #define MAC_TYPES_H
 
+#ifdef __RETRO68__
+#include <sys/types.h>
+#endif
+
 #include <stddef.h>
+#ifdef __RETRO68__
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <time.h>
+#endif
 
 /* --- sys/types.h replacements ---
  * Always define these types so the header is self-contained.
@@ -171,13 +180,6 @@ typedef unsigned char bool;
 
 /* On non-Mac hosts (Linux cross-check), provide true/false if
  * MacTypes.h was not pulled in. */
-#ifndef __MACTYPES__
-#ifndef true
-#define true  1
-#endif
-#ifndef false
-#define false 0
-#endif
-#endif
+/* true/false provided by MacTypes.h enum or stdbool.h shim */
 
 #endif /* MAC_TYPES_H */

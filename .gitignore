@@ -1,1 +1,30 @@
 *.zip
+
+# macOS resource-fork metadata
+._*
+.DS_Store
+
+# Build error logs / scratch text
+errors
+errors*.txt
+errrors*.txt
+newerrors*.txt
+newerrors*txt
+text.txt
+test_ending.txt
+test_pragma.c
+
+# Scratch / parallel build trees
+clean_macsurf/
+flat_macsurf_sources/
+tree_macsurf/
+build/
+builds/
+for-gemini/
+node_modules/
+
+# Legacy archives
+*.sit
+
+# Old fix archives (already preserved separately)
+Old Zips/

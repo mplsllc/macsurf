@@ -105,7 +105,7 @@ typedef enum browser_mouse_state {
 	BROWSER_MOUSE_MOD_4 = (1 << 20),
 
 	/** pointer leaving window */
-	BROWSER_MOUSE_LEAVE = (1 << 21),
+	BROWSER_MOUSE_LEAVE = (1 << 21)
 } browser_mouse_state;
 
 

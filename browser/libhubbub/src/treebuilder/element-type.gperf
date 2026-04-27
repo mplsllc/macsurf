@@ -49,7 +49,7 @@ dd,                  DD
 desc,                DESC
 details,             DETAILS
 dialog,              DIALOG
-dir,                 DIR
+dir,                 HUBBUB_DIR
 div,                 DIV
 dl,                  DL
 dt,                  DT

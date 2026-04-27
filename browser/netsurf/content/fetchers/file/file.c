@@ -166,7 +166,7 @@ fetch_file_setup(struct fetch *fetchh,
 		}
 
 		/* If-None-Match: "12345678" */
-		const char *d = headers[i] + SLEN("If-None-Match:");
+		const char *d; d = headers[i] + SLEN(\"If-None-Match:\");
 
 		/* Scan to first digit, if any */
 		while (*d != '\0' && (*d < '0' || '9' < *d))

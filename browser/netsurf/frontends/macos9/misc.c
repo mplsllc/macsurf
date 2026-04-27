@@ -1,1 +1,68 @@
-/* * MacSurf — Mac OS 9 frontend for NetSurf * misc.c — All gui_misc_table callbacks * * This file is part of MacSurf, built on the NetSurf engine. * Licensed under GPL v2. */#include <stdlib.h>#include <string.h>#include "utils/errors.h"#include "utils/log.h"#include "netsurf/misc.h"#include "macos9/macos9.h"static voidmacos9_quit(void){	/* TODO: save preferences, cookies, URL database */	macos9_done = true;}static nserrormacos9_launch_url(struct nsurl *url){	/* TODO: ICLaunchURL() via Internet Config */	return NSERROR_OK;}static nserrormacos9_login(struct nsurl *url, const char *realm,	     const char *username, const char *password,	     nserror (*cb)(struct nsurl *url,			   const char *realm,			   const char *username,			   const char *password,			   void *pw),	     void *cbpw){	/* TODO: modal dialog with username/password fields */	return NSERROR_NOT_IMPLEMENTED;}static voidmacos9_pdf_password(char **owner_pass, char **user_pass, char *path){	/* Not needed — no PDF export */}static nserrormacos9_present_cookies(const char *search_term){	/* TODO: cookie manager window */	return NSERROR_NOT_IMPLEMENTED;}/* Field order: schedule, quit, launch_url, login, pdf_password, * present_cookies (see include/netsurf/misc.h) */struct gui_misc_table macos9_misc_table = {	macos9_schedule,	macos9_quit,	macos9_launch_url,	macos9_login,	macos9_pdf_password,	macos9_present_cookies};
+/*
+ * MacSurf — Mac OS 9 frontend for NetSurf
+ * misc.c — All gui_misc_table callbacks
+ *
+ * This file is part of MacSurf, built on the NetSurf engine.
+ * Licensed under GPL v2.
+ */
+
+#include <stdlib.h>
+#include <string.h>
+
+#include "utils/errors.h"
+#include "utils/log.h"
+#include "netsurf/misc.h"
+
+#include "macos9/macos9.h"
+
+static void
+macos9_quit(void)
+{
+	/* TODO: save preferences, cookies, URL database */
+	macos9_done = true;
+}
+
+static nserror
+macos9_launch_url(struct nsurl *url)
+{
+	/* TODO: ICLaunchURL() via Internet Config */
+	return NSERROR_OK;
+}
+
+static nserror
+macos9_login(struct nsurl *url, const char *realm,
+	     const char *username, const char *password,
+	     nserror (*cb)(struct nsurl *url,
+			   const char *realm,
+			   const char *username,
+			   const char *password,
+			   void *pw),
+	     void *cbpw)
+{
+	/* TODO: modal dialog with username/password fields */
+	return NSERROR_NOT_IMPLEMENTED;
+}
+
+static void
+macos9_pdf_password(char **owner_pass, char **user_pass, char *path)
+{
+	/* Not needed — no PDF export */
+}
+
+static nserror
+macos9_present_cookies(const char *search_term)
+{
+	/* TODO: cookie manager window */
+	return NSERROR_NOT_IMPLEMENTED;
+}
+
+/* Field order: schedule, quit, launch_url, login, pdf_password,
+ * present_cookies (see include/netsurf/misc.h) */
+struct gui_misc_table macos9_misc_table = {
+	macos9_schedule,
+	macos9_quit,
+	macos9_launch_url,
+	macos9_login,
+	macos9_pdf_password,
+	macos9_present_cookies
+};

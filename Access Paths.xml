@@ -1,591 +1,1 @@
-<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
-<?codewarrior exportversion="1.0" ideversion="5.0" ?>
-<!DOCTYPE EXPORTEDPANEL [
-<!ELEMENT EXPORTEDPANEL (NAME, (SETTINGLIST|VALUE))>
-<!ELEMENT SETTINGLIST (SETTING+)>
-<!ELEMENT SETTING (NAME?, (VALUE|(SETTING+)))>
-<!ELEMENT NAME (#PCDATA)>
-<!ELEMENT VALUE (#PCDATA)>
-]>
-<EXPORTEDPANEL>
-    <NAME>Access Paths</NAME>
-    <SETTINGLIST>
-        <SETTING><NAME>AlwaysSearchUserPaths</NAME><VALUE>true</VALUE></SETTING>
-        <SETTING><NAME>InterpretDOSAndUnixPaths</NAME><VALUE>true</VALUE></SETTING>
-        <SETTING><NAME>RequireFrameworkStyleIncludes</NAME><VALUE>false</VALUE></SETTING>
-        <SETTING><NAME>UserSearchPaths</NAME>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:frontends:macos9:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:frontends:macos9:shims:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:frontends:macos9:sys:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:frontends:macos9:arpa:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:frontends:macos9:netinet:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:frontends:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:include:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:utils:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:utils:http:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:utils:nsurl:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:desktop:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:content:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:content:handlers:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:content:handlers:html:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:content:handlers:css:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libparserutils:include:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libparserutils:src:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libparserutils:src:charset:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libparserutils:src:charset:codecs:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libparserutils:src:charset:encodings:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libparserutils:src:input:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libparserutils:src:utils:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libhubbub:include:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libhubbub:include:hubbub:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libhubbub:src:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libhubbub:src:charset:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libhubbub:src:tokeniser:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libhubbub:src:treebuilder:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libhubbub:src:utils:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libdom:include:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libdom:include:dom:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libdom:src:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libdom:src:core:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libdom:src:events:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libdom:src:html:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libdom:src:utils:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libdom:bindings:hubbub:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libcss:include:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libcss:include:libcss:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libcss:src:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libcss:src:charset:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libcss:src:lex:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libcss:src:parse:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libcss:src:parse:properties:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libcss:src:select:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libcss:src:select:properties:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libcss:src:utils:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libduktape:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:frontends:macos9:javascript:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-        </SETTING>
-        <SETTING><NAME>SystemSearchPaths</NAME>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>:MacOS Support:Universal:Interfaces:CIncludes:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>CodeWarrior</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>:MacOS Support:MacHeaders:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>CodeWarrior</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>:MSL:MSL_C:MSL_Common:Include:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>CodeWarrior</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>:MSL:MSL_Extras:MSL_Common:Include:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>CodeWarrior</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>:MSL:MSL_C:MSL_MacOS:Include:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>CodeWarrior</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>:MacOS Support:Libraries:Runtime:Libs:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>CodeWarrior</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-            <SETTING>
-                <SETTING><NAME>SearchPath</NAME>
-                    <SETTING><NAME>Path</NAME><VALUE>:MacOS Support:Universal:Libraries:StubLibraries:</VALUE></SETTING>
-                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
-                    <SETTING><NAME>PathRoot</NAME><VALUE>CodeWarrior</VALUE></SETTING>
-                </SETTING>
-                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
-                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
-            </SETTING>
-        </SETTING>
-    </SETTINGLIST>
-</EXPORTEDPANEL>
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?><?codewarrior exportversion="1.0" ideversion="5.0" ?><!DOCTYPE EXPORTEDPANEL [<!ELEMENT EXPORTEDPANEL (NAME, (SETTINGLIST|VALUE))><!ELEMENT SETTINGLIST (SETTING+)><!ELEMENT SETTING (NAME?, (VALUE|(SETTING+)))><!ELEMENT NAME (#PCDATA)><!ELEMENT VALUE (#PCDATA)>]><EXPORTEDPANEL>    <NAME>Access Paths</NAME>    <SETTINGLIST>        <SETTING><NAME>AlwaysSearchUserPaths</NAME><VALUE>true</VALUE></SETTING>        <SETTING><NAME>InterpretDOSAndUnixPaths</NAME><VALUE>true</VALUE></SETTING>        <SETTING><NAME>RequireFrameworkStyleIncludes</NAME><VALUE>false</VALUE></SETTING>        <SETTING><NAME>UserSearchPaths</NAME>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Project</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libnsbmp:include:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libnsgif:include:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libnsgif:src:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libduktape:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:frontends:macos9:javascript:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:frontends:macos9:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libwapcaplet:src:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:frontends:macos9:shims:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:frontends:macos9:sys:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:frontends:macos9:arpa:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:frontends:macos9:netinet:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:frontends:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:include:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:utils:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:utils:http:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:utils:nsurl:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:desktop:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:content:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:content:handlers:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:content:handlers:html:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:netsurf:content:handlers:css:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libparserutils:include:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libparserutils:src:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libparserutils:src:charset:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libparserutils:src:charset:codecs:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libparserutils:src:charset:encodings:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libparserutils:src:input:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libparserutils:src:utils:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libhubbub:include:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libhubbub:src:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libhubbub:src:charset:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libhubbub:src:tokeniser:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libhubbub:src:treebuilder:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libhubbub:src:utils:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libdom:include:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libdom:src:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libdom:src:core:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libdom:src:events:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libdom:src:html:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libdom:src:utils:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libdom:bindings:hubbub:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libcss:include:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libcss:src:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libcss:src:charset:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libcss:src:lex:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libcss:src:parse:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libcss:src:parse:properties:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libcss:src:select:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libcss:src:select:properties:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libcss:src:utils:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>:MSL:MSL_C:MSL_MacOS:Lib:PPC:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>CodeWarrior</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>:MacOS Support:Universal:Libraries:PPCLibraries:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>CodeWarrior</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>::patrick:macsurf-source Folder:browser:libnsbmp:src:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>Project</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>        </SETTING>        <SETTING><NAME>SystemSearchPaths</NAME>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>:MacOS Support:MacHeaders:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>CodeWarrior</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>CodeWarrior</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>:MacOS Support:Universal:Interfaces:CIncludes:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>CodeWarrior</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>:MSL:MSL_C:MSL_Common:Include:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>CodeWarrior</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>:MSL:MSL_Extras:MSL_Common:Include:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>CodeWarrior</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>:MSL:MSL_C:MSL_MacOS:Include:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>CodeWarrior</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>:MacOS Support:Libraries:Runtime:Libs:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>CodeWarrior</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>            <SETTING>                <SETTING><NAME>SearchPath</NAME>                    <SETTING><NAME>Path</NAME><VALUE>:MacOS Support:Universal:Libraries:StubLibraries:</VALUE></SETTING>                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>                    <SETTING><NAME>PathRoot</NAME><VALUE>CodeWarrior</VALUE></SETTING>                </SETTING>                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>            </SETTING>        </SETTING>    </SETTINGLIST></EXPORTEDPANEL>

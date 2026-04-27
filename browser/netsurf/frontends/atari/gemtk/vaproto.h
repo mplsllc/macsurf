@@ -1,5 +1,8 @@
 #ifndef VAPROTO_H_INCLUDED
+
 #define VAPROTO_H_INCLUDED
+
+
 
 
 #define VAPRO 1
@@ -118,4 +121,7 @@ typedef enum
 #define VA_ACC_QUOTING(a)    ((a) & VV_ACC_QUOTING)
 #define VA_SERVER_QUOTING(a) ((a) & AA_SRV_QUOTING)
 
+
+
 #endif // VAPROTO_H_INCLUDED
+
