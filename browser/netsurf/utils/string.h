@@ -58,7 +58,54 @@ char *strsep(char **stringp, const char *delim);
 #include <stdlib.h>
 #include <stdarg.h>
 
-#include "errors.h"
+/* CW8 cannot resolve includes from headers loaded via access path
+ * (any include style — bare or path-prefixed silently fails to open
+ * once we're inside this file). Inline the nserror enum directly,
+ * guarded by the same guard utils/errors.h uses, so a later real
+ * #include "utils/errors.h" from a primary .c source short-circuits. */
+#ifndef NETSURF_UTILS_ERRORS_H_
+#define NETSURF_UTILS_ERRORS_H_
+typedef enum {
+	NSERROR_OK,
+	NSERROR_UNKNOWN,
+	NSERROR_NOMEM,
+	NSERROR_NO_FETCH_HANDLER,
+	NSERROR_NOT_FOUND,
+	NSERROR_NOT_DIRECTORY,
+	NSERROR_SAVE_FAILED,
+	NSERROR_CLONE_FAILED,
+	NSERROR_INIT_FAILED,
+	NSERROR_BMP_ERROR,
+	NSERROR_GIF_ERROR,
+	NSERROR_ICO_ERROR,
+	NSERROR_PNG_ERROR,
+	NSERROR_SPRITE_ERROR,
+	NSERROR_SVG_ERROR,
+	NSERROR_BAD_ENCODING,
+	NSERROR_NEED_DATA,
+	NSERROR_ENCODING_CHANGE,
+	NSERROR_BAD_PARAMETER,
+	NSERROR_INVALID,
+	NSERROR_BOX_CONVERT,
+	NSERROR_STOPPED,
+	NSERROR_DOM,
+	NSERROR_CSS,
+	NSERROR_CSS_BASE,
+	NSERROR_BAD_URL,
+	NSERROR_BAD_CONTENT,
+	NSERROR_FRAME_DEPTH,
+	NSERROR_PERMISSION,
+	NSERROR_NOSPACE,
+	NSERROR_BAD_SIZE,
+	NSERROR_NOT_IMPLEMENTED,
+	NSERROR_BAD_REDIRECT,
+	NSERROR_CYCLIC_REDIRECT,
+	NSERROR_UNSAFE_REDIRECT,
+	NSERROR_BAD_AUTH,
+	NSERROR_BAD_CERTS,
+	NSERROR_TIMEOUT
+} nserror;
+#endif
 
 
 /**
