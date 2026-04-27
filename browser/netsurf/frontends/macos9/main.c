@@ -189,14 +189,23 @@ void macos9_poll(void) {
 
 int main(void) {
 #ifdef __MACOS__
-	/* Audible beep BEFORE any init — proves main() ran at all.
-	 * If nothing is heard, the binary is being rejected by CFM
-	 * before main is entered (missing 'carb' resource, missing
-	 * library, etc.). */
+	/* MINIMAL DIAGNOSTIC: beep, run an event loop until clicked.
+	 * If no beep, binary is rejected before main() runs. */
 	SysBeep(20);
+	{
+		EventRecord ev;
+		while (1) {
+			WaitNextEvent(everyEvent, &ev, 60, NULL);
+			if (ev.what == mouseDown) break;
+		}
+	}
+	SysBeep(20);
+	return 0;
+}
+
+int macsurf_full_main_disabled_for_diagnostic(void) {
 	FlushEvents(everyEvent, 0);
 	InitCursor();
-	SysBeep(20); /* second beep: passed InitCursor */
 #endif
 	macsurf_debug_log_init();
 	MS_LOG("MacSurf Start");
