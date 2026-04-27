@@ -98,6 +98,17 @@ typedef bool(nslog_ensure_t)(FILE *fptr);
 #define NO_IPV6 1
 #define PATH_MAX 256
 
+/* libhubbub/libcss/libparserutils source files include "utils/utils.h",
+ * but the access path resolves to NetSurf's utils.h first, which lacks
+ * N_ELEMENTS / UNUSED. Provide them globally to avoid undefined-symbol
+ * cascades from the lib internals. */
+#ifndef N_ELEMENTS
+#define N_ELEMENTS(x) (sizeof((x)) / sizeof((x)[0]))
+#endif
+#ifndef UNUSED
+#define UNUSED(x) ((void)(x))
+#endif
+
 /* libcss stylesheet.h once tagged a struct close with `} _ALIGNED;`.
  * If any header is still found with that token undefined, CW8 reads
  * it as a global variable declaration and every TU emits a duplicate
