@@ -188,12 +188,19 @@ void macos9_poll(void) {
 }
 
 int main(void) {
+#ifdef __MACOS__
+	/* Audible beep BEFORE any init — proves main() ran at all.
+	 * If nothing is heard, the binary is being rejected by CFM
+	 * before main is entered (missing 'carb' resource, missing
+	 * library, etc.). */
+	SysBeep(20);
+	FlushEvents(everyEvent, 0);
+	InitCursor();
+	SysBeep(20); /* second beep: passed InitCursor */
+#endif
 	macsurf_debug_log_init();
 	MS_LOG("MacSurf Start");
 #ifdef __MACOS__
-	FlushEvents(everyEvent, 0);
-	InitCursor();
-	MS_LOG("InitCursor done");
 	{
 		long appearResp;
 		if (Gestalt(gestaltAppearanceAttr, &appearResp) == noErr) {
