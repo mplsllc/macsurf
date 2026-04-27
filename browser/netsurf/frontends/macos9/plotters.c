@@ -100,7 +100,7 @@ macos9_rect_from_ns(const struct rect *src, Rect *dst)
 	dst->bottom = (short)src->y1;
 }
 
-static short
+short
 macos9_font_id_from_style(const plot_font_style_t *fstyle)
 {
 	if (fstyle == NULL)
@@ -114,7 +114,7 @@ macos9_font_id_from_style(const plot_font_style_t *fstyle)
 	}
 }
 
-static short
+short
 macos9_face_from_style(const plot_font_style_t *fstyle)
 {
 	short face = 0;
