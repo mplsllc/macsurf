@@ -8,6 +8,11 @@
 #ifndef css_css__parse_important_h_
 #define css_css__parse_important_h_
 
+/* Defensive empty define for CW8 — see notes in stylesheet.h. */
+#ifndef _ALIGNED
+#define _ALIGNED
+#endif
+
 #include "stylesheet.h"
 #include "parse/language.h"
 

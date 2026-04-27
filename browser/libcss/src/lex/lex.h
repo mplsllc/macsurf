@@ -8,6 +8,11 @@
 #ifndef css_lex_lex_h_
 #define css_lex_lex_h_
 
+/* Defensive empty define for CW8 — see notes in stylesheet.h. */
+#ifndef _ALIGNED
+#define _ALIGNED
+#endif
+
 #include <libwapcaplet/libwapcaplet.h>
 
 #include <libcss/errors.h>
