@@ -196,22 +196,4 @@ unsigned char get_macsurf_gradient(const void *style, int *integer)
 	return 0;
 }
 
-/* css__number_from_lwc_string — convert lwc_string contents to a fixed
- * via the byte-buffer helper that DOES exist (css__number_from_string). */
-struct lwc_string_s_;
-extern int css__number_from_string(const unsigned char *data, unsigned long len,
-		int int_only, int *consumed);
-int css__number_from_lwc_string(struct lwc_string_s_ *s, int int_only, int *consumed)
-{
-	const unsigned char *data; unsigned long len;
-	if (!s) { if (consumed) *consumed = 0; return 0; }
-	/* lwc_string layout: void *(refcnt), const char *data, size_t len, ...
-	 * Be conservative — read via shim funcs. */
-	{
-		extern const char *lwc_string_data(struct lwc_string_s_ *);
-		extern unsigned long lwc_string_length(struct lwc_string_s_ *);
-		data = (const unsigned char *)lwc_string_data(s);
-		len  = lwc_string_length(s);
-	}
-	return css__number_from_string(data, len, int_only, consumed);
-}
+/* css__number_from_lwc_string — provided by libcss/src/utils/css_utils.c. */
