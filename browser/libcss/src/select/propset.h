@@ -8,6 +8,11 @@
 #ifndef css_select_propset_h_
 #define css_select_propset_h_
 
+/* Defensive empty define for CW8 — see notes in stylesheet.h. */
+#ifndef _ALIGNED
+#define _ALIGNED
+#endif
+
 #include <string.h>
 
 #include <libcss/computed.h>

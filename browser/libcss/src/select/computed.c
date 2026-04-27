@@ -1,3 +1,6 @@
+#ifndef _ALIGNED
+#define _ALIGNED
+#endif
 /*
  * This file is part of LibCSS
  * Licensed under the MIT License,
