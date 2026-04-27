@@ -58,7 +58,7 @@ char *strsep(char **stringp, const char *delim);
 #include <stdlib.h>
 #include <stdarg.h>
 
-#include "utils/errors.h"
+#include "errors.h"
 
 
 /**
