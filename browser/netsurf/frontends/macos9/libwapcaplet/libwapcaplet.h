@@ -13,8 +13,8 @@
  *           lwc_string_length, lwc_string_hash_value
  */
 
-#ifndef LIBWAPCAPLET_LIBWAPCAPLET_H
-#define LIBWAPCAPLET_LIBWAPCAPLET_H
+#ifndef libwapcaplet_h_
+#define libwapcaplet_h_
 
 #include <stddef.h>
 
@@ -104,4 +104,4 @@ lwc_string_caseless_isequal(lwc_string *str1, lwc_string *str2,
 /* --- lwc_string_hash_value --- */
 #define lwc_string_hash_value(str) ((str)->hash)
 
-#endif /* LIBWAPCAPLET_LIBWAPCAPLET_H */
+#endif /* libwapcaplet_h_ */
