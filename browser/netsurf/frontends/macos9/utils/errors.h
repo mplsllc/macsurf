@@ -1,5 +1,5 @@
 /*
- * MacSurf stub — utils/errors.h
+ * MacSurf stub - utils/errors.h
  *
  * Mirror of browser/netsurf/utils/errors.h for files whose CW8 access
  * path does not include the root browser:netsurf: path (e.g. macos9_wheel.c,

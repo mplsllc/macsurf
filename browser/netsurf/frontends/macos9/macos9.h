@@ -51,9 +51,14 @@ struct rect;
 	typedef struct AliasRecord *AliasPtr;
 	typedef AliasPtr *AliasHandle;
 	#endif
-	/* MacSurf does not use the Keychain — suppress to avoid its C++ headers. */
+	/* MacSurf does not use the Keychain — suppress KeychainCore.h AND
+	 * KeychainHI.h (Carbon.h:210 chain) to avoid their C89-incompatible
+	 * function prototypes (KCRef by value, etc.). */
 	#ifndef __KEYCHAINCORE__
 	#define __KEYCHAINCORE__
+	#endif
+	#ifndef __KEYCHAINHI__
+	#define __KEYCHAINHI__
 	#endif
 	/* ATSLayoutTypes.h uses C11 anonymous struct/union members which CW8 rejects.
 	 * MacSurf uses QuickDraw, not ATS text layout. */
