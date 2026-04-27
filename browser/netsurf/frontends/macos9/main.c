@@ -204,6 +204,10 @@ int main(void) {
 	macos9_table.misc = &macos9_misc_table;
 	macos9_table.download = macos9_download_table;
 	macos9_table.clipboard = macos9_clipboard_table;
+	{
+		extern struct gui_llcache_table *null_llcache_table;
+		macos9_table.llcache = null_llcache_table;
+	}
 	netsurf_register(&macos9_table);
 	nsoption_init(NULL, NULL, NULL);
 	netsurf_init(NULL);
