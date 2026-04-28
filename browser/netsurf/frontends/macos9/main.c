@@ -182,7 +182,7 @@ void macos9_poll(void) {
 		}
 	}
 	if (!macos9_quitting) {
-		netsurf_poll(); fetch_poll(NULL);
+		{ extern bool macos9_schedule_run(void); macos9_schedule_run(); }
 		macos9_windows_te_idle(); macos9_windows_process_deferred();
 	}
 }
