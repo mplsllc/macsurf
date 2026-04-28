@@ -85,9 +85,9 @@ void macos9_window_home(struct gui_window *g) { macos9_window_navigate(g, MACSUR
 void macos9_window_update_button_states(struct gui_window *g) {
 #ifdef __MACOS9__
 	if(!g) return; SetPortWindowPort(g->window);
-	if(g->back_btn) { HiliteControl(g->back_btn, (short)(browser_window_history_back_available(g->bw)?0:255)); Draw1Control(g->back_btn); }
-	if(g->forward_btn) { HiliteControl(g->forward_btn, (short)(browser_window_history_forward_available(g->bw)?0:255)); Draw1Control(g->forward_btn); }
-	if(g->reload_btn) { HiliteControl(g->reload_btn, (short)(browser_window_has_content(g->bw)?0:255)); Draw1Control(g->reload_btn); }
+	if(g->back_btn) { HiliteControl(g->back_btn, (short)(g->bw && browser_window_history_back_available(g->bw)?0:255)); Draw1Control(g->back_btn); }
+	if(g->forward_btn) { HiliteControl(g->forward_btn, (short)(g->bw && browser_window_history_forward_available(g->bw)?0:255)); Draw1Control(g->forward_btn); }
+	if(g->reload_btn) { HiliteControl(g->reload_btn, (short)(g->bw && browser_window_has_content(g->bw)?0:255)); Draw1Control(g->reload_btn); }
 	if(g->home_btn) Draw1Control(g->home_btn);
 #endif
 }
