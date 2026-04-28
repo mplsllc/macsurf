@@ -27,14 +27,11 @@ void fetch_poll(void *unused) { (void)unused; }
  * cooperative event loop drives reformat / scheduler directly. */
 void netsurf_poll(void) {}
 
-/* MSL Carbon Console support — InstallConsole / RemoveConsole /
- * WriteCharsToConsole / ReadCharsFromConsole are normally provided
- * by the MSL "Console" support file. We stub them — MacSurf has no
- * stdio terminal; printf is silently dropped. */
-short InstallConsole(short fd) { (void)fd; return 0; }
-void  RemoveConsole(void) {}
-long  WriteCharsToConsole(char *buf, long n) { (void)buf; return n; }
-long  ReadCharsFromConsole(char *buf, long n) { (void)buf; (void)n; return 0; }
+/* MSL Console support — InstallConsole / RemoveConsole /
+ * WriteCharsToConsole / ReadCharsFromConsole are provided by
+ * MSL_All_Carbon.Lib. Do not stub them — our stubs would shadow
+ * MSL's real implementations and break __start's stdio init,
+ * preventing main() from ever running. */
 
 /* image_cache_init / image_cache_fini — image content handler files
  * not yet linked. */
@@ -111,57 +108,13 @@ int css_error_from_parserutils_error(int err) {
 		default: return 3; }
 }
 
-/* POSIX functions MSL Carbon doesn't ship. Implementations are
- * minimal but functional. */
-#include <string.h>
+/* MSL_All_Carbon.Lib provides strdup, strcasecmp, strncasecmp,
+ * mkdir, stat, uname — DO NOT shadow them here.
+ * Only strtof is genuinely missing. */
 #include <stdlib.h>
-#include <ctype.h>
-
-char *strdup(const char *s) {
-	size_t n; char *r;
-	if (!s) return NULL;
-	n = strlen(s) + 1;
-	r = malloc(n);
-	if (r) memcpy(r, s, n);
-	return r;
-}
-
-int strcasecmp(const char *s1, const char *s2) {
-	while (*s1 && *s2) {
-		int c1 = tolower((unsigned char)*s1);
-		int c2 = tolower((unsigned char)*s2);
-		if (c1 != c2) return c1 - c2;
-		s1++; s2++;
-	}
-	return (unsigned char)*s1 - (unsigned char)*s2;
-}
-
-int strncasecmp(const char *s1, const char *s2, unsigned long n) {
-	while (n-- > 0 && *s1 && *s2) {
-		int c1 = tolower((unsigned char)*s1);
-		int c2 = tolower((unsigned char)*s2);
-		if (c1 != c2) return c1 - c2;
-		s1++; s2++;
-	}
-	if (n == (unsigned long)-1) return 0;
-	return (unsigned char)*s1 - (unsigned char)*s2;
-}
 
 float strtof(const char *str, char **endptr) {
 	return (float)strtod(str, endptr);
-}
-
-/* mkdir / stat — file-system helpers used by ns_file.c posix paths.
- * MacSurf relies on a backing store cap of zero plus no-disk-cache;
- * stub returns non-existent so callers fall through. */
-int mkdir(const char *path, unsigned long mode) {
-	(void)path; (void)mode;
-	return -1;
-}
-struct stat;
-int stat(const char *path, struct stat *buf) {
-	(void)path; (void)buf;
-	return -1; /* always "doesn't exist" */
 }
 
 /* CW8 strips `inline` (macsurf_prefix.h #define inline), leaving

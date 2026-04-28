@@ -98,6 +98,15 @@ typedef bool(nslog_ensure_t)(FILE *fptr);
 #define NO_IPV6 1
 #define PATH_MAX 256
 
+/* MSL_All_Carbon.Lib provides uname/realpath/etc. — tell utils.c not
+ * to compile its in-tree stubs that would shadow MSL's implementations
+ * and break __start's stdio init. */
+#define HAVE_UTSNAME 1
+#define HAVE_REALPATH 1
+#define HAVE_STRDUP 1
+#define HAVE_STRCASECMP 1
+#define HAVE_STRNCASECMP 1
+
 /* libhubbub/libcss/libparserutils source files include "utils/utils.h",
  * but the access path resolves to NetSurf's utils.h first, which lacks
  * N_ELEMENTS / UNUSED. Provide them globally to avoid undefined-symbol
