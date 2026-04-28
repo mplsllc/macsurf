@@ -49,6 +49,7 @@ static void mfs_close(struct macos9_fetch_ctx *c) {
 }
 
 static int mfs_open(struct macos9_fetch_ctx *c) {
+	MS_LOG("mfs_open called");
 #ifdef __MACOS9__
 	OSStatus e; OTConfigurationRef cfg; DNSAddress dns; TCall call;
 	char pstr[64], req[2048]; const char *u; OTResult r;
@@ -136,6 +137,7 @@ static bool macos9_http_initialise(lwc_string *s) { (void)s; return true; }
 static void macos9_http_finalise(lwc_string *s) { (void)s; }
 static bool macos9_http_acceptable(const struct nsurl *u) { (void)u; return true; }
 static void *macos9_http_setup(struct fetch *p, struct nsurl *u, bool o, bool d, const char *pu, const struct fetch_multipart_data *pm, const char **h) {
+	MS_LOG("http_setup called");
 	int i; (void)o;(void)d;(void)pu;(void)pm;(void)h;
 	for(i=0;i<MAX_F;i++) if(f_slots[i].state==MFS_IDLE) { memset(&f_slots[i],0,sizeof(f_slots[0])); f_slots[i].parent=p; f_slots[i].url=nsurl_ref(u); f_slots[i].state=MFS_INIT; return &f_slots[i]; }
 	return NULL;

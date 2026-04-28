@@ -68,14 +68,30 @@ static void set_url_te_text(struct gui_window *g, const char *u) {
 }
 
 void macos9_window_navigate(struct gui_window *g, const char *u) {
-	nsurl *n; if(!g||!u||!u[0]) return; set_url_te_text(g,u); set_status_text(g,"Loading..."); if(g->window) InvalWindowRect(g->window, &g->status_rect);
-	if(g->bw && nsurl_create(u, &n)==NSERROR_OK) { browser_window_navigate(g->bw, n, NULL, BW_NAVIGATE_HISTORY, NULL, NULL, NULL); nsurl_unref(n); }
+	struct nsurl *n;
+	MS_LOG("navigate:");
+	MS_LOG(u ? u : "(null)");
+	if(!g||!u||!u[0]) { MS_LOG("nav: no g or empty u"); return; }
+	if(!g->bw) { MS_LOG("nav: no bw"); return; }
+	set_url_te_text(g,u);
+	set_status_text(g,"Loading...");
+	if(g->window) InvalWindowRect(g->window, &g->status_rect);
+	if(nsurl_create(u,&n)!=NSERROR_OK) { MS_LOG("nav: nsurl_create FAIL"); return; }
+	MS_LOG("nav: calling browser_window_navigate");
+	browser_window_navigate(g->bw, n, NULL, BW_NAVIGATE_HISTORY, NULL, NULL, NULL);
+	nsurl_unref(n);
+	MS_LOG("nav: done");
 }
 
 void macos9_window_address_bar_submit(struct gui_window *g) {
-	CharsHandle h; long l; char r[1024], f[1024]; if(!g||!g->url_te) return; h=TEGetText(g->url_te); if(!h) return;
-	l=GetHandleSize((Handle)h); if(l<=0) return; if(l>1023) l=1023; HLock((Handle)h); memcpy(r,*h,(size_t)l); HUnlock((Handle)h); r[l]=0;
-	if(!strstr(r,"://")) sprintf(f,"http://%s",r); else strcpy(f,r); macos9_window_navigate(g,f);
+	CharsHandle h; long l; char r[1024], f[1024];
+	MS_LOG("URL submit fired");
+	if(!g||!g->url_te) { MS_LOG("submit: no g or url_te"); return; }
+	h=TEGetText(g->url_te); if(!h) { MS_LOG("submit: TEGetText null"); return; }
+	l=GetHandleSize((Handle)h); if(l<=0) { MS_LOG("submit: empty"); return; }
+	if(l>1023) l=1023; HLock((Handle)h); memcpy(r,*h,(size_t)l); HUnlock((Handle)h); r[l]=0;
+	if(!strstr(r,"://")) sprintf(f,"http://%s",r); else strcpy(f,r);
+	macos9_window_navigate(g,f);
 }
 
 void macos9_window_back(struct gui_window *g) { if(g&&g->bw&&browser_window_history_back_available(g->bw)) { browser_window_history_back(g->bw, false); macos9_window_update_button_states(g); } }

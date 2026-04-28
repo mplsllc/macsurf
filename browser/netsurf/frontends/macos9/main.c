@@ -188,13 +188,21 @@ void macos9_poll(void) {
 }
 
 int main(void) {
+	macsurf_debug_log_init();
+	MS_LOG("== MacSurf start ==");
 #ifdef __MACOS__
 #ifndef kInitOTForApplicationMask
 #define kInitOTForApplicationMask 0x00000002
 #endif
 	InitCursor();
-	if (InitOpenTransportInContext(kInitOTForApplicationMask, &macos9_ot_context) != noErr) macos9_ot_context = NULL;
+	if (InitOpenTransportInContext(kInitOTForApplicationMask, &macos9_ot_context) != noErr) {
+		MS_LOG("InitOT FAIL");
+		macos9_ot_context = NULL;
+	} else {
+		MS_LOG("InitOT OK");
+	}
 	RegisterAppearanceClient();
+	MS_LOG("Appearance OK");
 #endif
 	memset(&macos9_table, 0, sizeof(macos9_table));
 	macos9_table.window = macos9_window_table;
@@ -211,11 +219,20 @@ int main(void) {
 		macos9_table.fetch = &macos9_fetch_table;
 	}
 	netsurf_register(&macos9_table);
+	MS_LOG("netsurf_register done");
 	nsoption_init(NULL, NULL, NULL);
+	MS_LOG("nsoption_init done");
 	netsurf_init(NULL);
-	{ extern nserror macos9_http_fetcher_register(void); macos9_http_fetcher_register(); }
+	MS_LOG("netsurf_init done");
+	{
+		extern nserror macos9_http_fetcher_register(void);
+		macos9_http_fetcher_register();
+		MS_LOG("http_fetcher registered");
+	}
 	macos9_create_initial_window();
+	MS_LOG("initial window created");
 	while (!macos9_done) macos9_poll();
+	MS_LOG("event loop exited");
 	macos9_quitting = (bool)1; netsurf_exit();
 	if (macos9_ot_context) CloseOpenTransportInContext(macos9_ot_context);
 	return 0;
