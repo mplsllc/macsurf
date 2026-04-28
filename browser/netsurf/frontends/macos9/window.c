@@ -8,6 +8,7 @@
 #include "netsurf/browser_window.h"
 #include "desktop/browser_history.h"
 #include "macos9/macos9.h"
+#include "macsurf_config.h"
 #include "macsurf_debug.h"
 
 #ifdef __MACOS9__

@@ -151,7 +151,8 @@ short macos9_font_id_from_style(const struct plot_font_style *fstyle);
 short macos9_face_from_style(const struct plot_font_style *fstyle);
 size_t macos9_utf8_to_macroman(const char *u, size_t l, char *m, size_t mx);
 
-#define MACSURF_HOME_URL "http://frogfind.com"
+/* MACSURF_HOME_URL canonical definition is in macsurf_config.h.
+ * Old frogfind default removed per fixes301. */
 #define MACSURF_URL_MAX 1024
 #define MACSURF_CONTENT_MAX (256 * 1024)
 
