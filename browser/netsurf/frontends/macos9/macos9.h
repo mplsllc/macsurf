@@ -120,6 +120,23 @@ extern struct gui_clipboard_table *macos9_clipboard_table;
 extern bool macos9_done;
 extern bool macos9_quitting;
 
+/* Menu IDs and item numbers — restored fixes307. */
+#define MENU_APPLE  128
+#define MENU_FILE   129
+#define MENU_EDIT   130
+#define MENU_GO     131
+
+#define ITEM_FILE_NEW       1
+#define ITEM_FILE_LOCATION  2
+#define ITEM_FILE_CLOSE     3
+#define ITEM_FILE_QUIT      5
+
+#define ITEM_GO_BACK        1
+#define ITEM_GO_FORWARD     2
+#define ITEM_GO_STOP        3
+#define ITEM_GO_RELOAD      4
+#define ITEM_GO_HOME        6
+
 struct gui_window *macos9_find_window(WindowRef w);
 void macos9_window_layout(struct gui_window *g);
 void macos9_window_invalidate_all(struct gui_window *g);

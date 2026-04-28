@@ -9,6 +9,7 @@ extern OTClientContextPtr macos9_ot_context;
 #include "netsurf/browser_window.h"
 #include "netsurf/plotters.h"
 #include "desktop/gui_table.h"
+#include "macsurf_config.h"
 #include "macsurf_debug.h"
 
 #ifdef __MACOS__
@@ -47,6 +48,88 @@ static void draw_status_bar(struct gui_window *gw) {
 #endif
 }
 
+static void macos9_init_menus(void) {
+#ifdef __MACOS__
+	MenuHandle apple_menu, file_menu, edit_menu, go_menu;
+	apple_menu = NewMenu(MENU_APPLE, "\p\024");
+	AppendMenu(apple_menu, "\pAbout MacSurf...");
+	AppendMenu(apple_menu, "\p(-");
+	AppendResMenu(apple_menu, 'DRVR');
+	InsertMenu(apple_menu, 0);
+
+	file_menu = NewMenu(MENU_FILE, "\pFile");
+	AppendMenu(file_menu, "\pNew Window/N");
+	AppendMenu(file_menu, "\pOpen Location.../L");
+	AppendMenu(file_menu, "\pClose/W");
+	AppendMenu(file_menu, "\p(-");
+	AppendMenu(file_menu, "\pQuit/Q");
+	InsertMenu(file_menu, 0);
+
+	edit_menu = NewMenu(MENU_EDIT, "\pEdit");
+	AppendMenu(edit_menu, "\pUndo/Z");
+	AppendMenu(edit_menu, "\p(-");
+	AppendMenu(edit_menu, "\pCut/X");
+	AppendMenu(edit_menu, "\pCopy/C");
+	AppendMenu(edit_menu, "\pPaste/V");
+	InsertMenu(edit_menu, 0);
+
+	go_menu = NewMenu(MENU_GO, "\pGo");
+	AppendMenu(go_menu, "\pBack/[");
+	AppendMenu(go_menu, "\pForward/]");
+	AppendMenu(go_menu, "\pStop/.");
+	AppendMenu(go_menu, "\pReload/R");
+	AppendMenu(go_menu, "\p(-");
+	AppendMenu(go_menu, "\pHome/H");
+	InsertMenu(go_menu, 0);
+
+	DrawMenuBar();
+#endif
+}
+
+static void macos9_handle_menu(short menu_id, short item) {
+#ifdef __MACOS__
+	WindowRef front;
+	struct gui_window *gw;
+	switch (menu_id) {
+	case MENU_APPLE:
+		break;
+	case MENU_FILE:
+		switch (item) {
+		case ITEM_FILE_NEW: {
+			struct browser_window *bw = NULL;
+			nsurl *home = NULL;
+			if (nsurl_create(MACSURF_HOME_URL, &home) == NSERROR_OK) {
+				browser_window_create(BW_CREATE_HISTORY | BW_CREATE_FOREGROUND,
+					home, NULL, NULL, &bw);
+				nsurl_unref(home);
+			}
+		} break;
+		case ITEM_FILE_QUIT:
+			macos9_done = (bool)1;
+			break;
+		default: break;
+		}
+		break;
+	case MENU_GO:
+		front = FrontWindow();
+		gw = front ? macos9_find_window(front) : NULL;
+		if (!gw) break;
+		switch (item) {
+		case ITEM_GO_BACK:    macos9_window_back(gw); break;
+		case ITEM_GO_FORWARD: macos9_window_forward(gw); break;
+		case ITEM_GO_RELOAD:  macos9_window_reload(gw); break;
+		case ITEM_GO_HOME:    macos9_window_home(gw); break;
+		default: break;
+		}
+		break;
+	default: break;
+	}
+	HiliteMenu(0);
+#else
+	(void)menu_id; (void)item;
+#endif
+}
+
 static void macos9_handle_update(const EventRecord *event) {
 #ifdef __MACOS__
 	WindowRef win = (WindowRef)(unsigned long)event->message;
@@ -72,10 +155,12 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 	short part = FindWindow(event->where, &win);
 	struct gui_window *gw;
 	switch (part) {
-		case inMenuBar:
-			MenuSelect(event->where);
+		case inMenuBar: {
+			long sel = MenuSelect(event->where);
+			if (sel != 0) macos9_handle_menu((short)((sel >> 16) & 0xFFFF),
+				(short)(sel & 0xFFFF));
 			HiliteMenu(0);
-			break;
+		} break;
 		case inDrag:
 			if (win) {
 				Rect bounds;
@@ -147,6 +232,14 @@ void macos9_handle_key_down(const EventRecord *event) {
 	WindowRef win = FrontWindow();
 	struct gui_window *gw = win ? macos9_find_window(win) : NULL;
 	char ch = (char)(event->message & charCodeMask);
+	if (event->modifiers & cmdKey) {
+		long sel = MenuKey(ch);
+		if (sel != 0) {
+			macos9_handle_menu((short)((sel >> 16) & 0xFFFF),
+				(short)(sel & 0xFFFF));
+			return;
+		}
+	}
 	if (!gw) return;
 	if (gw->url_field_active && gw->url_te) {
 		if (ch == 0x0D || ch == 0x03) {
@@ -203,6 +296,8 @@ int main(void) {
 	}
 	RegisterAppearanceClient();
 	MS_LOG("Appearance OK");
+	macos9_init_menus();
+	MS_LOG("menus installed");
 #endif
 	memset(&macos9_table, 0, sizeof(macos9_table));
 	macos9_table.window = macos9_window_table;
@@ -229,7 +324,21 @@ int main(void) {
 		macos9_http_fetcher_register();
 		MS_LOG("http_fetcher registered");
 	}
-	macos9_create_initial_window();
+	{
+		struct browser_window *bw = NULL;
+		nsurl *home = NULL;
+		if (macos9_ot_context != NULL &&
+		    nsurl_create(MACSURF_HOME_URL, &home) == NSERROR_OK) {
+			MS_LOG("launch: browser_window_create with home url");
+			browser_window_create(BW_CREATE_HISTORY | BW_CREATE_FOREGROUND,
+				home, NULL, NULL, &bw);
+			nsurl_unref(home);
+		}
+		if (bw == NULL) {
+			MS_LOG("launch: fallback create_initial_window");
+			macos9_create_initial_window();
+		}
+	}
 	MS_LOG("initial window created");
 	while (!macos9_done) macos9_poll();
 	MS_LOG("event loop exited");
