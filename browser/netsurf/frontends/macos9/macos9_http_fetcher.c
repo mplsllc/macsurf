@@ -30,6 +30,7 @@ struct macos9_fetch_ctx {
 #endif
 	char *h_buf; long h_len; long h_cap;
 	int status; char mime[128]; const char *err;
+	long body_bytes; /* fixes310a: total bytes delivered as FETCH_DATA after headers */
 };
 static struct macos9_fetch_ctx f_slots[MAX_F];
 
@@ -90,9 +91,11 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 	}
 	c->state=MFS_BODY;
 	if(sep+4 < c->h_buf+c->h_len) {
+		long initial_body = (long)((c->h_buf+c->h_len)-(sep+4));
 		msg.type=FETCH_DATA; msg.data.header_or_data.buf=(const uint8_t*)(sep+4);
-		msg.data.header_or_data.len=(size_t)((c->h_buf+c->h_len)-(sep+4));
+		msg.data.header_or_data.len=(size_t)initial_body;
 		fetch_send_callback(&msg,c->parent);
+		c->body_bytes += initial_body; /* fixes310a */
 	}
 	free(c->h_buf); c->h_buf=NULL;
 }
@@ -119,6 +122,7 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 	} else {
 		m.type=FETCH_DATA; m.data.header_or_data.buf=(const uint8_t*)b;
 		m.data.header_or_data.len=(size_t)n; fetch_send_callback(&m,c->parent);
+		c->body_bytes += (long)n; /* fixes310a */
 	}
 #endif
 }
@@ -128,8 +132,8 @@ static void macos9_http_poll(lwc_string *s) {
 	for(i=0;i<MAX_F;i++) {
 		struct macos9_fetch_ctx *c = &f_slots[i]; if(c->state==MFS_IDLE || c->state==MFS_NOTIFIED) continue;
 		mfs_poll_one(c);
-		if(c->state==MFS_FAIL) { fetch_msg m; m.type=FETCH_ERROR; m.data.error=c->err; c->state=MFS_NOTIFIED; fetch_send_callback(&m,c->parent); }
-		else if(c->state==MFS_DONE) { fetch_msg m; m.type=FETCH_FINISHED; c->state=MFS_NOTIFIED; fetch_send_callback(&m,c->parent); }
+		if(c->state==MFS_FAIL) { fetch_msg m; m.type=FETCH_ERROR; m.data.error=c->err; c->state=MFS_NOTIFIED; fetch_send_callback(&m,c->parent); macsurf_debug_log_writef("http: fail body_bytes=%ld status=%d", c->body_bytes, c->status); }
+		else if(c->state==MFS_DONE) { fetch_msg m; m.type=FETCH_FINISHED; c->state=MFS_NOTIFIED; fetch_send_callback(&m,c->parent); macsurf_debug_log_writef("http: done body_bytes=%ld status=%d", c->body_bytes, c->status); }
 	}
 }
 

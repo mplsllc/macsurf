@@ -252,6 +252,37 @@ static void html_box_convert_done(html_content *c, bool success)
 		html_dump_frameset(c->frameset, 0);
 #endif
 
+	/* fixes310a -- box tree counters at convert-success boundary.
+	 * Walks the layout via children/next/parent without recursion so
+	 * arbitrarily deep trees do not blow the stack on real hardware. */
+	{
+		long total = 0, blk = 0, ic = 0, in_ = 0, txt = 0, oth = 0;
+		struct box *b = c->layout;
+		struct box *root_parent = b ? b->parent : NULL;
+		while (b != NULL) {
+			total++;
+			switch (b->type) {
+			case BOX_BLOCK: blk++; break;
+			case BOX_INLINE_CONTAINER: ic++; break;
+			case BOX_INLINE: in_++; break;
+			case BOX_TEXT: txt++; break;
+			default: oth++; break;
+			}
+			if (b->children != NULL) {
+				b = b->children;
+				continue;
+			}
+			while (b != NULL && b->next == NULL) {
+				if (b->parent == root_parent) { b = NULL; break; }
+				b = b->parent;
+			}
+			if (b != NULL) b = b->next;
+		}
+		macsurf_debug_log_writef(
+			"box convert: layout=%p total=%ld blk=%ld ic=%ld in=%ld txt=%ld oth=%ld",
+			(void *)c->layout, total, blk, ic, in_, txt, oth);
+	}
+
 	exc = dom_document_get_document_element(c->document, (void *) &html);
 	if ((exc != DOM_NO_ERR) || (html == NULL)) {
 		/** @todo should this call html_object_free_objects(c);
@@ -349,6 +380,13 @@ void html_finish_conversion(html_content *htmlc)
 	dom_exception exc; /* returned by libdom functions */
 	dom_node *html;
 	nserror error;
+
+	/* fixes310a -- byte-in count crosses parser-boundary here. Lets us
+	 * cross-check the http fetcher's body_bytes summary. */
+	macsurf_debug_log_writef(
+		"finish_conversion: parser_bytes=%ld head=%s",
+		macos9_html_bytes_processed,
+		macos9_html_head_len > 0 ? macos9_html_head : "(none)");
 
 	/* Bail out if we've been aborted */
 	if (htmlc->aborted) {
@@ -1107,6 +1145,14 @@ static void html_reformat(struct content *c, int width, int height)
 		c->width = layout->x + layout->descendant_x1;
 	if (c->height < layout->y + layout->descendant_y1)
 		c->height = layout->y + layout->descendant_y1;
+
+	/* fixes310a -- post-layout dimensions probe. */
+	macsurf_debug_log_writef(
+		"reformat: in_w=%d in_h=%d c_w=%d c_h=%d desc_x1=%d desc_y1=%d lyt_xy=%d,%d lyt_wh=%d,%d",
+		width, height, (int)c->width, (int)c->height,
+		(int)layout->descendant_x1, (int)layout->descendant_y1,
+		(int)layout->x, (int)layout->y,
+		(int)layout->width, (int)layout->height);
 
 	selection_reinit(htmlc->sel);
 
