@@ -140,10 +140,20 @@ static void macos9_handle_update(const EventRecord *event) {
 	draw_url_bar(gw); DrawControls(win); draw_status_bar(gw);
 	if (gw->bw && browser_window_redraw_ready(gw->bw)) {
 		struct rect clip; struct redraw_context ctx;
+		MS_LOG("update: redraw_ready, calling bw_redraw");
 		clip.x0 = gw->content_rect.left; clip.y0 = gw->content_rect.top;
 		clip.x1 = gw->content_rect.right; clip.y1 = gw->content_rect.bottom;
-		memset(&ctx, 0, sizeof(ctx)); ctx.interactive = (bool)1; ctx.plot = &macos9_plotters;
-		browser_window_redraw(gw->bw, gw->scroll_x, gw->scroll_y, &clip, &ctx);
+		memset(&ctx, 0, sizeof(ctx));
+		ctx.interactive = (bool)1;
+		ctx.background_images = (bool)1;
+		ctx.plot = &macos9_plotters;
+		browser_window_redraw(gw->bw,
+			gw->content_rect.left - gw->scroll_x,
+			gw->content_rect.top  - gw->scroll_y,
+			&clip, &ctx);
+		MS_LOG("update: bw_redraw returned");
+	} else if (gw->bw) {
+		MS_LOG("update: bw not ready, skip");
 	}
 	EndUpdate(win);
 #endif
