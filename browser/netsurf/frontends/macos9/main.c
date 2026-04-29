@@ -140,7 +140,24 @@ static void macos9_handle_update(const EventRecord *event) {
 	draw_url_bar(gw); DrawControls(win); draw_status_bar(gw);
 	if (gw->bw && browser_window_redraw_ready(gw->bw)) {
 		struct rect clip; struct redraw_context ctx;
-		MS_LOG("update: redraw_ready, calling bw_redraw");
+		extern long macos9_plot_text_count, macos9_plot_rect_count;
+		extern long macos9_hrb_visits, macos9_hrb_block, macos9_hrb_inlinec,
+			    macos9_hrb_inline, macos9_hrb_text, macos9_hrb_other,
+			    macos9_hrb_clip_skips;
+		macos9_plot_text_count = 0;
+		macos9_plot_rect_count = 0;
+		macos9_hrb_visits = 0;
+		macos9_hrb_block = 0;
+		macos9_hrb_inlinec = 0;
+		macos9_hrb_inline = 0;
+		macos9_hrb_text = 0;
+		macos9_hrb_other = 0;
+		macos9_hrb_clip_skips = 0;
+		macsurf_debug_log_writef(
+			"update: redraw_ready, bw=%p scroll=(%d,%d) crect=(%d,%d,%d,%d)",
+			gw->bw, gw->scroll_x, gw->scroll_y,
+			(int)gw->content_rect.left, (int)gw->content_rect.top,
+			(int)gw->content_rect.right, (int)gw->content_rect.bottom);
 		clip.x0 = gw->content_rect.left; clip.y0 = gw->content_rect.top;
 		clip.x1 = gw->content_rect.right; clip.y1 = gw->content_rect.bottom;
 		memset(&ctx, 0, sizeof(ctx));
@@ -151,7 +168,12 @@ static void macos9_handle_update(const EventRecord *event) {
 			gw->content_rect.left - gw->scroll_x,
 			gw->content_rect.top  - gw->scroll_y,
 			&clip, &ctx);
-		MS_LOG("update: bw_redraw returned");
+		macsurf_debug_log_writef(
+			"update: bw_redraw done visits=%ld block=%ld inlinec=%ld inline=%ld text=%ld other=%ld skips=%ld plot_text=%ld plot_rect=%ld",
+			macos9_hrb_visits, macos9_hrb_block, macos9_hrb_inlinec,
+			macos9_hrb_inline, macos9_hrb_text, macos9_hrb_other,
+			macos9_hrb_clip_skips,
+			macos9_plot_text_count, macos9_plot_rect_count);
 	} else if (gw->bw) {
 		MS_LOG("update: bw not ready, skip");
 	}
