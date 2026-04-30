@@ -109,6 +109,16 @@ typedef bool(nslog_ensure_t)(FILE *fptr);
 #define UNUSED(x) ((void)(x))
 #endif
 
+/* Duktape JS engine. WITH_DUKTAPE enables the real Duktape engine.
+ * The MacSurf.mcp may have WITHOUT_DUKTAPE defined as a CW8 language
+ * preprocessor override — if so that will suppress the WITH_DUKTAPE block
+ * via the #ifndef guard below, keeping both control points in sync. */
+#ifndef WITHOUT_DUKTAPE
+#ifndef WITH_DUKTAPE
+#define WITH_DUKTAPE 1
+#endif
+#endif
+
 /* fixes305a: enable the file-backed diagnostic log channel by default.
  * macsurf_debug_log.c and macsurf_debug.c gate their real bodies on
  * MACSURF_DEBUG; without this define, macsurf_debug_log_init() is the

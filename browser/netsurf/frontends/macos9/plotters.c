@@ -302,6 +302,26 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	macos9_plot_rect_count++;
 	macos9_rect_from_ns(rectangle, &r);
 
+#ifdef __MACOS9__
+	/* Use RoundRect when border_radius is set (fixes172). */
+	if (pstyle->border_radius > 0) {
+		short ovalSize = (short)(pstyle->border_radius >> PLOT_STYLE_RADIX);
+		if (ovalSize < 1) ovalSize = 1;
+		if (ovalSize > 32767) ovalSize = 32767;
+		if (pstyle->fill_type != PLOT_OP_TYPE_NONE) {
+			macos9_colour_to_rgb(pstyle->fill_colour, &rgb);
+			RGBForeColor(&rgb);
+			PaintRoundRect(&r, ovalSize, ovalSize);
+		}
+		if (pstyle->stroke_type != PLOT_OP_TYPE_NONE) {
+			macos9_colour_to_rgb(pstyle->stroke_colour, &rgb);
+			RGBForeColor(&rgb);
+			FrameRoundRect(&r, ovalSize, ovalSize);
+		}
+		return NSERROR_OK;
+	}
+#endif
+
 	if (pstyle->fill_type != PLOT_OP_TYPE_NONE) {
 		macos9_colour_to_rgb(pstyle->fill_colour, &rgb);
 		RGBForeColor(&rgb);

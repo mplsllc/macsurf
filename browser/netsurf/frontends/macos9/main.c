@@ -1,6 +1,4 @@
 #include "macos9/macos9.h"
-#include <OpenTransport.h>
-extern OTClientContextPtr macos9_ot_context;
 #include <stdio.h>
 #include <string.h>
 #include "utils/log.h"
@@ -12,10 +10,29 @@ extern OTClientContextPtr macos9_ot_context;
 #include "macsurf_config.h"
 #include "macsurf_debug.h"
 
-#ifdef __MACOS__
+#ifdef __MACOS9__
 #include <OpenTransport.h>
 #include <OpenTptInternet.h>
 OTClientContextPtr macos9_ot_context = NULL;
+#ifdef WITH_DUKTAPE
+#include "javascript/macsurf_js.h"
+#include "content/handlers/javascript/js.h"
+#endif
+#ifndef kInitOTForApplicationMask
+#define kInitOTForApplicationMask 0x00000002
+#endif
+#ifndef activeFlag
+#define activeFlag 0x0001
+#endif
+/* fixes141 — defensive event-class whitelist.
+ * mUpMask: required for TrackControl on push buttons and scroll bars.
+ * activMask: needed for activateEvt (URL field + button hilite on focus change).
+ * Wheel events are NOT in the mask — CarbonLib on OS 9 crashes when
+ * it attempts to dispatch kEventMouseWheelMoved (CarbonLib: not available). */
+#define MACOS9_EVENT_MASK (mDownMask | mUpMask | keyDownMask | autoKeyMask | \
+	updateMask | activMask | osMask | highLevelEventMask)
+#else
+#define MACOS9_EVENT_MASK everyEvent
 #endif
 
 bool macos9_done = (bool)0;
@@ -297,13 +314,34 @@ void macos9_handle_key_down(const EventRecord *event) {
 #endif
 }
 
+static void macos9_handle_activate(const EventRecord *event) {
+#ifdef __MACOS9__
+	WindowRef win = (WindowRef)(unsigned long)event->message;
+	struct gui_window *gw = win ? macos9_find_window(win) : NULL;
+	bool becoming_active = (event->modifiers & activeFlag) != 0;
+	if (!gw) return;
+	SetPortWindowPort(win);
+	if (becoming_active) {
+		if (gw->url_field_active && gw->url_te) TEActivate(gw->url_te);
+	} else {
+		if (gw->url_te) TEDeactivate(gw->url_te);
+	}
+	macos9_window_update_button_states(gw);
+	macos9_window_invalidate_all(gw);
+#else
+	(void)event;
+#endif
+}
+
 void macos9_poll(void) {
 	EventRecord ev;
-	if (WaitNextEvent(everyEvent, &ev, 1, NULL)) {
+	if (WaitNextEvent(MACOS9_EVENT_MASK, &ev, 1, NULL)) {
 		switch (ev.what) {
-			case updateEvt: macos9_handle_update(&ev); break;
-			case mouseDown: macos9_handle_mouse_down(&ev); break;
+			case updateEvt:   macos9_handle_update(&ev); break;
+			case mouseDown:   macos9_handle_mouse_down(&ev); break;
 			case keyDown: case autoKey: macos9_handle_key_down(&ev); break;
+			case activateEvt: macos9_handle_activate(&ev); break;
+			default: break;
 		}
 	}
 	if (!macos9_quitting) {
@@ -351,6 +389,10 @@ int main(void) {
 	MS_LOG("nsoption_init done");
 	netsurf_init(NULL);
 	MS_LOG("netsurf_init done");
+#ifdef WITH_DUKTAPE
+	js_initialise();
+	MS_LOG("js_initialise done");
+#endif
 	{
 		extern nserror macos9_http_fetcher_register(void);
 		macos9_http_fetcher_register();
@@ -375,6 +417,9 @@ int main(void) {
 	while (!macos9_done) macos9_poll();
 	MS_LOG("event loop exited");
 	macos9_quitting = (bool)1; netsurf_exit();
+#ifdef WITH_DUKTAPE
+	js_finalise();
+#endif
 	if (macos9_ot_context) CloseOpenTransportInContext(macos9_ot_context);
 	return 0;
 }
