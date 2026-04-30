@@ -34,7 +34,7 @@ long macos9_plot_rect_count = 0;
 #include "macos9/macos9.h"
 #include "macsurf_debug.h"
 
-#ifdef __MACOS9__
+#ifdef __MACOS9__extern const BitMap *GetPortBitMapForCopyBits(CGrafPtr port);
 #include <Quickdraw.h>
 #include <QuickdrawText.h>
 #include <Fonts.h>
@@ -529,8 +529,8 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 		RgnHandle saved_clip;
 		GetPort(&save_port);
 		saved_clip = macos9_push_clip();
-		CopyBits((BitMap *)*pm,
-			&((GrafPtr)save_port)->portBits,
+		CopyBits(GetPortBitMapForCopyBits(gw),
+			GetPortBitMapForCopyBits((CGrafPtr)save_port),
 			&src_rect, &dst_rect, srcCopy, NULL);
 		macos9_pop_clip(saved_clip);
 	}
