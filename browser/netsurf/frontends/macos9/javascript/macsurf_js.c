@@ -40,7 +40,12 @@ struct jsthread *js_new_thread(struct jsheap *heap) {
 	thread->heap = heap; thread->ctx = heap->ctx; return thread;
 }
 void js_destroy_thread(struct jsthread *thread) { free(thread); }
-bool js_exec(struct jsthread *thread, const char *txt, size_t len, const char *fn) {
+
+/* js_exec is provided by js_stub.c (NetSurf-compatible no-op stub) regardless
+ * of WITH_DUKTAPE.  Real Duktape evaluation goes through macsurf_js_exec()
+ * declared in macsurf_js.h, which has the correct internal signature. */
+
+bool macsurf_js_exec_script(struct jsthread *thread, const char *txt, size_t len) {
 	if (!thread || !txt) return (bool)0;
 	duk_push_lstring(thread->ctx, txt, len);
 	if (duk_peval(thread->ctx) != 0) { MS_LOG(duk_safe_to_string(thread->ctx, -1)); duk_pop(thread->ctx); return (bool)0; }
