@@ -2684,7 +2684,14 @@ static int line_height(
 				lhvalue, lhunit);
 	}
 
-	return FIXTOINT(line_height);
+	{
+		int lh_px = FIXTOINT(line_height);
+		/* Floor at 16px: incomplete CSS cascade can produce 0 (all
+		 * lines stack) or absurdly large values on CW8 PPC. */
+		if (lh_px < 16 || lh_px > 1000)
+			lh_px = 16;
+		return lh_px;
+	}
 }
 
 
@@ -5205,6 +5212,12 @@ layout_get_box_bbox(
 			box->border[RIGHT].width;
 	*desc_y1 = box->padding[TOP] + box->height + box->padding[BOTTOM] +
 			box->border[BOTTOM].width;
+	if (*desc_x0 < -10000) *desc_x0 = 0;
+	if (*desc_y0 < -10000) *desc_y0 = 0;
+	if (*desc_x1 > 10000) *desc_x1 = (box->width > 0) ? box->width : 10000;
+	if (*desc_y1 > 10000) *desc_y1 = (box->height > 0) ? box->height : 10000;
+	if (*desc_x1 <= *desc_x0) *desc_x1 = *desc_x0 + ((box->width > 0) ? box->width : 1);
+	if (*desc_y1 <= *desc_y0) *desc_y1 = *desc_y0 + ((box->height > 0) ? box->height : 1);
 
 	/* To stop the top of text getting clipped when css line-height is
 	 * reduced, we increase the top of the descendant bbox. */
@@ -5220,6 +5233,7 @@ layout_get_box_bbox(
 		text_height = css_unit_len2device_px(box->style, unit_len_ctx,
 				font_size, font_unit);
 		text_height = FIXTOINT(text_height * 3 / 4);
+		if (text_height < 0 || text_height > 1000) text_height = 0;
 		*desc_y0 = (*desc_y0 < -text_height) ? *desc_y0 : -text_height;
 	}
 }

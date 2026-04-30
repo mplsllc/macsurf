@@ -281,8 +281,16 @@ macos9_plot_line(const struct redraw_context *ctx,
 	if (pstyle == NULL || line == NULL) return NSERROR_OK;
 	macos9_colour_to_rgb(pstyle->stroke_colour, &rgb);
 	RGBForeColor(&rgb);
+#ifdef __MACOS9__
+	{
+		RgnHandle saved_clip = macos9_push_clip();
+#endif
 	MoveTo((short)line->x0, (short)line->y0);
 	LineTo((short)line->x1, (short)line->y1);
+#ifdef __MACOS9__
+		macos9_pop_clip(saved_clip);
+	}
+#endif
 	return NSERROR_OK;
 }
 
@@ -306,8 +314,10 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	/* Use RoundRect when border_radius is set (fixes172). */
 	if (pstyle->border_radius > 0) {
 		short ovalSize = (short)(pstyle->border_radius >> PLOT_STYLE_RADIX);
+		RgnHandle saved_clip;
 		if (ovalSize < 1) ovalSize = 1;
 		if (ovalSize > 32767) ovalSize = 32767;
+		saved_clip = macos9_push_clip();
 		if (pstyle->fill_type != PLOT_OP_TYPE_NONE) {
 			macos9_colour_to_rgb(pstyle->fill_colour, &rgb);
 			RGBForeColor(&rgb);
@@ -318,6 +328,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 			RGBForeColor(&rgb);
 			FrameRoundRect(&r, ovalSize, ovalSize);
 		}
+		macos9_pop_clip(saved_clip);
 		return NSERROR_OK;
 	}
 #endif
@@ -325,13 +336,29 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	if (pstyle->fill_type != PLOT_OP_TYPE_NONE) {
 		macos9_colour_to_rgb(pstyle->fill_colour, &rgb);
 		RGBForeColor(&rgb);
+#ifdef __MACOS9__
+		{
+			RgnHandle saved_clip = macos9_push_clip();
+#endif
 		PaintRect(&r);
+#ifdef __MACOS9__
+			macos9_pop_clip(saved_clip);
+		}
+#endif
 	}
 
 	if (pstyle->stroke_type != PLOT_OP_TYPE_NONE) {
 		macos9_colour_to_rgb(pstyle->stroke_colour, &rgb);
 		RGBForeColor(&rgb);
+#ifdef __MACOS9__
+		{
+			RgnHandle saved_clip = macos9_push_clip();
+#endif
 		FrameRect(&r);
+#ifdef __MACOS9__
+			macos9_pop_clip(saved_clip);
+		}
+#endif
 	}
 
 	return NSERROR_OK;
@@ -499,10 +526,13 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 
 	{
 		GrafPtr save_port;
+		RgnHandle saved_clip;
 		GetPort(&save_port);
+		saved_clip = macos9_push_clip();
 		CopyBits((BitMap *)*pm,
 			&((GrafPtr)save_port)->portBits,
 			&src_rect, &dst_rect, srcCopy, NULL);
+		macos9_pop_clip(saved_clip);
 	}
 
 	UnlockPixels(pm);
