@@ -151,7 +151,7 @@ static void macos9_handle_update(const EventRecord *event) {
 #ifdef __MACOS__
 	WindowRef win = (WindowRef)(unsigned long)event->message;
 	struct gui_window *gw = macos9_find_window(win);
-	if (!gw || macos9_quitting) return;
+	if (!gw || macos9_quitting) { BeginUpdate(win); EndUpdate(win); return; }
 	SetPortWindowPort(win); BeginUpdate(win);
 	EraseRect(&gw->content_rect);
 	draw_url_bar(gw); DrawControls(win); draw_status_bar(gw);
