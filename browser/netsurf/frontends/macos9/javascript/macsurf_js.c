@@ -32,6 +32,7 @@ double cbrt(double x)
 }
 
 #include "utils/errors.h"
+#include "content/handlers/javascript/js.h"
 #include "duktape.h"
 #include "macsurf_js.h"
 #include "macsurf_debug.h"
