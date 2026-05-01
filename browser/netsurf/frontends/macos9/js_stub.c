@@ -11,6 +11,8 @@
  * prefix doesn't require an .mcp edit.
  */
 
+#include "macsurf_prefix.h"
+
 #ifndef WITH_DUKTAPE
 
 #include <stddef.h>
