@@ -10,4 +10,23 @@
 
 #define MACSURF_HOME_URL "http://mac.mp.ls/simple.html"
 
+#define MENU_APPLE 128
+#define MENU_FILE  129
+#define MENU_EDIT  130
+#define MENU_GO    131
+
+#define ITEM_FILE_NEW  1
+#define ITEM_FILE_OPEN_LOCATION 2
+#define ITEM_FILE_QUIT 5
+
+#define ITEM_EDIT_UNDO  1
+#define ITEM_EDIT_CUT   3
+#define ITEM_EDIT_COPY  4
+#define ITEM_EDIT_PASTE 5
+
+#define ITEM_GO_BACK    1
+#define ITEM_GO_FORWARD 2
+#define ITEM_GO_RELOAD  4
+#define ITEM_GO_HOME    6
+
 #endif /* MACSURF_CONFIG_H */
