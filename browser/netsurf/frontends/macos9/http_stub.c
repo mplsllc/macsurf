@@ -1,79 +1,1 @@
-/*
- * MacSurf — http_stub.c
- * Stub implementations for NetSurf HTTP header parsing.
- * Licensed under GPL v2.
- */
-
-#include <stddef.h>
-#include "utils/errors.h"
-
-struct http_cache_control;
-struct http_content_type;
-struct http_content_disposition;
-struct http_www_authenticate;
-struct http_strict_transport_security;
-struct http_challenge;
-struct http_parameter;
-
-/* Content-Type */
-nserror http_parse_content_type(const char *header,
-		struct http_content_type **result)
-{
-	*result = NULL;
-	return NSERROR_NOT_FOUND;
-}
-
-void http_content_type_destroy(struct http_content_type *ct) {}
-
-/* Cache-Control */
-nserror http_parse_cache_control(const char *header,
-		struct http_cache_control **result)
-{
-	*result = NULL;
-	return NSERROR_NOT_FOUND;
-}
-
-void http_cache_control_destroy(struct http_cache_control *cc) {}
-
-/* Content-Disposition */
-nserror http_parse_content_disposition(const char *header,
-		struct http_content_disposition **result)
-{
-	*result = NULL;
-	return NSERROR_NOT_FOUND;
-}
-
-void http_content_disposition_destroy(
-		struct http_content_disposition *cd) {}
-
-/* WWW-Authenticate */
-nserror http_parse_www_authenticate(const char *header,
-		struct http_www_authenticate **result)
-{
-	*result = NULL;
-	return NSERROR_NOT_FOUND;
-}
-
-void http_www_authenticate_destroy(
-		struct http_www_authenticate *wa) {}
-
-/* Strict-Transport-Security */
-nserror http_parse_strict_transport_security(const char *header,
-		struct http_strict_transport_security **result)
-{
-	*result = NULL;
-	return NSERROR_NOT_FOUND;
-}
-
-void http_strict_transport_security_destroy(
-		struct http_strict_transport_security *sts) {}
-
-/* Cache-Control accessors */
-unsigned char http_cache_control_max_age(void *cc) { (void)cc; return 0; }
-unsigned char http_cache_control_has_max_age(void *cc) { (void)cc; return 0; }
-unsigned char http_cache_control_no_store(void *cc) { (void)cc; return 0; }
-unsigned char http_cache_control_no_cache(void *cc) { (void)cc; return 0; }
-
-/* Strict-Transport-Security accessors */
-unsigned long http_strict_transport_security_max_age(void *sts) { (void)sts; return 0; }
-unsigned char http_strict_transport_security_include_subdomains(void *sts) { (void)sts; return 0; }
+/* * MacSurf — http_stub.c * Stub implementations for NetSurf HTTP header parsing. * Licensed under GPL v2. */#include <stddef.h>#include <stdlib.h>#include <string.h>#include <libwapcaplet/libwapcaplet.h>#include "utils/errors.h"struct http_cache_control;struct http_content_disposition;struct http_www_authenticate;struct http_strict_transport_security;struct http_challenge;struct http_parameter;/* The internal layout of http_content_type as defined in utils/http/content-type.h */struct http_content_type {        lwc_string *media_type;        struct http_parameter *parameters;};/* Content-Type */nserror http_parse_content_type(const char *header,		struct http_content_type **result){	struct http_content_type *res;	char mime[128];	const char *semi;	size_t len;	if (header == NULL || result == NULL) return NSERROR_BAD_PARAMETER;	/* Skip "Content-Type:" if it's there (though usually it's just the value) */	if (strncasecmp(header, "Content-Type:", 13) == 0) {		header += 13;	}	while (*header == ' ' || *header == '\t') header++;	semi = strchr(header, ';');	if (semi) {		len = (size_t)(semi - header);	} else {		len = strlen(header);	}	if (len > 127) len = 127;	memcpy(mime, header, len);	mime[len] = '\0';	/* Trim trailing whitespace */	while (len > 0 && (mime[len-1] == ' ' || mime[len-1] == '\t')) {		mime[--len] = '\0';	}	res = calloc(1, sizeof(*res));	if (!res) return NSERROR_NOMEM;	if (lwc_intern_string(mime, len, &res->media_type) != lwc_error_ok) {		free(res);		return NSERROR_NOMEM;	}	res->parameters = NULL; /* charset ignored in the stub, rely on fallback */	*result = res;	return NSERROR_OK;}void http_content_type_destroy(struct http_content_type *ct) {	if (ct) {		if (ct->media_type) lwc_string_unref(ct->media_type);		free(ct);	}}/* Cache-Control */nserror http_parse_cache_control(const char *header,		struct http_cache_control **result){	*result = NULL;	return NSERROR_NOT_FOUND;}void http_cache_control_destroy(struct http_cache_control *cc) {}/* Content-Disposition */nserror http_parse_content_disposition(const char *header,		struct http_content_disposition **result){	*result = NULL;	return NSERROR_NOT_FOUND;}void http_content_disposition_destroy(		struct http_content_disposition *cd) {}/* WWW-Authenticate */nserror http_parse_www_authenticate(const char *header,		struct http_www_authenticate **result){	*result = NULL;	return NSERROR_NOT_FOUND;}void http_www_authenticate_destroy(		struct http_www_authenticate *wa) {}/* Strict-Transport-Security */nserror http_parse_strict_transport_security(const char *header,		struct http_strict_transport_security **result){	*result = NULL;	return NSERROR_NOT_FOUND;}void http_strict_transport_security_destroy(		struct http_strict_transport_security *sts) {}/* Cache-Control accessors */unsigned char http_cache_control_max_age(void *cc) { (void)cc; return 0; }unsigned char http_cache_control_has_max_age(void *cc) { (void)cc; return 0; }unsigned char http_cache_control_no_store(void *cc) { (void)cc; return 0; }unsigned char http_cache_control_no_cache(void *cc) { (void)cc; return 0; }/* Strict-Transport-Security accessors */unsigned long http_strict_transport_security_max_age(void *sts) { (void)sts; return 0; }unsigned char http_strict_transport_security_include_subdomains(void *sts) { (void)sts; return 0; }
