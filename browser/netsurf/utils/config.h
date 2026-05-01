@@ -136,8 +136,10 @@ char *strchrnul(const char *s, int c);
 #undef HAVE_INETPTON
 #endif
 
+#ifndef HAVE_UTSNAME
 #define HAVE_UTSNAME
-#if (defined(_WIN32) || defined(__MACOS9__))
+#endif
+#if defined(_WIN32)
 #undef HAVE_UTSNAME
 #endif
 
