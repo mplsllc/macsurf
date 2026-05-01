@@ -38,6 +38,7 @@
 #include "content/content_protected.h"
 #include "content/textsearch.h"
 #include "content/content_debug.h"
+#include "macsurf_debug.h"
 #include "content/hlcache.h"
 #include "content/urldb.h"
 
@@ -580,6 +581,8 @@ content_redraw(hlcache_handle *h,
 		return true;
 	}
 
+	macsurf_debug_log_writef("content_redraw: handler=%p redraw=%p",
+		(void*)c->handler, c->handler ? (void*)c->handler->redraw : NULL);
 	return c->handler->redraw(c, data, clip, ctx);
 }
 

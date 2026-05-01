@@ -57,6 +57,7 @@
 #include "desktop/gui_internal.h"
 
 #include "html/box.h"
+#include "macsurf_debug.h"
 #include "html/box_inspect.h"
 #include "html/box_manipulate.h"
 #include "html/font.h"
@@ -2101,6 +2102,7 @@ bool html_redraw(struct content *c, struct content_redraw_data *data,
 	pstyle_fill_bg.fill_colour = data->background_colour;
 
 	box = html->layout;
+	macsurf_debug_log_writef("html_redraw: layout=%p", (void*)html->layout);
 	assert(box);
 
 	/* The select menu needs special treating because, when opened, it

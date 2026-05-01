@@ -783,7 +783,7 @@ html_process_data(struct content *c, const char *data, unsigned int size)
 	dom_hubbub_error dom_ret;
 	nserror err = NSERROR_OK; /* assume its all going to be ok */
 
-	MS_LOG("html process data");
+	macsurf_debug_log_writef("html_process_data: size=%u", size);
 	macos9_html_bytes_processed += size;
 	if (macos9_html_head_len == 0 && data != NULL && size > 0) {
 		unsigned int copy = size;
