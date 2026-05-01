@@ -59,6 +59,8 @@
 #include "desktop/scrollbar.h"
 #include "desktop/textarea.h"
 
+#include "macsurf_debug.h"
+
 #include "html/html.h"
 #include "html/html_save.h"
 #include "html/private.h"
@@ -5420,8 +5422,22 @@ bool layout_document(html_content *content, int width, int height)
 
 	layout_minmax_block(doc, font_func, content);
 
+	/* fixes313 probe A: CSS computed width for root block before layout */
+	{
+		int css_w;
+		uint8_t css_wtype;
+		css_w = 0;
+		css_wtype = css_computed_width_px(doc->style, &content->unit_len_ctx, width, &css_w);
+		macsurf_debug_log_writef("ld_pre: wtype=%d cssw=%d avail=%d", (int)css_wtype, css_w, width);
+	}
 	layout_block_find_dimensions(&content->unit_len_ctx,
 			width, height, 0, 0, doc);
+	/* fixes313 probe B: resolved margins/borders/width after layout_block_find_dimensions */
+	macsurf_debug_log_writef("ld_post: w=%d ml=%d mr=%d mt=%d mb=%d bl=%d br=%d bt=%d pl=%d pr=%d",
+		doc->width, doc->margin[LEFT], doc->margin[RIGHT],
+		doc->margin[TOP], doc->margin[BOTTOM],
+		doc->border[LEFT].width, doc->border[RIGHT].width, doc->border[TOP].width,
+		doc->padding[LEFT], doc->padding[RIGHT]);
 	doc->x = doc->margin[LEFT] + doc->border[LEFT].width;
 	doc->y = doc->margin[TOP] + doc->border[TOP].width;
 	width -= doc->margin[LEFT] + doc->border[LEFT].width +
