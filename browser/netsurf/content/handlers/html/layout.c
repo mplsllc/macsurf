@@ -1352,11 +1352,13 @@ layout_solve_width(struct box *box,
 		   int rm,
 		   int max_width,
 		   int min_width)
-{
-	bool auto_width = false;
+		   {
+		   bool auto_width = false;
 
-	/* Increase specified left/right margins */
-	if (box->margin[LEFT] != AUTO && box->margin[LEFT] < lm &&
+		   macsurf_debug_log_writef("lsw: avail=%d w=%d max=%d min=%d lm=%d rm=%d",
+		        available_width, width, max_width, min_width, lm, rm);
+
+		   /* Increase specified left/right margins */	if (box->margin[LEFT] != AUTO && box->margin[LEFT] < lm &&
 			box->margin[LEFT] >= 0)
 		box->margin[LEFT] = lm;
 	if (box->margin[RIGHT] != AUTO && box->margin[RIGHT] < rm &&
@@ -1501,7 +1503,29 @@ layout_block_find_dimensions(const css_unit_ctx *unit_len_ctx,
 			style, &width, &height, &max_width, &min_width,
 			&max_height, &min_height, margin, padding, border);
 
-	if (box->object && !(box->flags & REPLACE_DIM) &&
+	/* fixes318: restore sanity clamps for Mac OS 9.
+	 * Even with fpmath workaround, incompletely initialised styles
+	 * or unit ctx can cause huge garbage results from unit2px.
+	 * Clamp to sane ranges. */
+	if (width != AUTO) {
+		if (width < 0 || width > 10000) width = 0;
+	}
+	if (height != AUTO) {
+		if (height < 0 || height > 10000) height = 0;
+	}
+	if (max_width != -1) {
+		if (max_width < 0 || max_width > 10000) max_width = 10000;
+	}
+	if (min_width > 0) {
+		if (min_width > 10000) min_width = 0;
+	}
+	for (i = 0; i < 4; i++) {
+		if (margin[i] != AUTO) {
+			if (margin[i] < -10000 || margin[i] > 10000) margin[i] = 0;
+		}
+		if (padding[i] < 0 || padding[i] > 10000) padding[i] = 0;
+		if (border[i].width < 0 || border[i].width > 1000) border[i].width = 0;
+	}	if (box->object && !(box->flags & REPLACE_DIM) &&
 			content_get_type(box->object) != CONTENT_HTML) {
 		/* block-level replaced element, see 10.3.4 and 10.6.2 */
 		layout_get_object_dimensions(box, &width, &height,

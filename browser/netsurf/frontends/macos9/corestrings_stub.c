@@ -1,68 +1,9 @@
-/*
- * MacSurf — corestrings.c
- * Real implementation of corestring initialization.
- * Licensed under GPL v2.
- */
-
-#include <string.h>
-#include <libwapcaplet/libwapcaplet.h>
-#include <dom/core/string.h>
-#include "utils/errors.h"
-#include "utils/nsurl.h"
-
-/* The globals are declared here to match NetSurf core expectations. */
-
-#define CORESTRING_LWC_STRING(n) lwc_string *corestring_lwc_##n = NULL;
-#define CORESTRING_LWC_VALUE(n, v) lwc_string *corestring_lwc_##n = NULL;
-#define CORESTRING_DOM_STRING(n) struct dom_string *corestring_dom_##n = NULL;
-#define CORESTRING_DOM_VALUE(n, v) struct dom_string *corestring_dom_##n = NULL;
-#define CORESTRING_NSURL(n, v) struct nsurl *corestring_nsurl_##n = NULL;
-
-#include "utils/corestringlist.h"
-
-#undef CORESTRING_LWC_STRING
-#undef CORESTRING_LWC_VALUE
-#undef CORESTRING_DOM_STRING
-#undef CORESTRING_DOM_VALUE
-#undef CORESTRING_NSURL
-
-nserror corestrings_init(void)
-{
-    nserror res;
-
-#define CORESTRING_LWC_STRING(n) \
-    if (lwc_intern_string(#n, strlen(#n), &corestring_lwc_##n) != lwc_error_ok) \
-        return NSERROR_NOMEM;
-
-#define CORESTRING_LWC_VALUE(n, v) \
-    if (lwc_intern_string(v, strlen(v), &corestring_lwc_##n) != lwc_error_ok) \
-        return NSERROR_NOMEM;
-
-#define CORESTRING_DOM_STRING(n) \
-    if (dom_string_create((const unsigned char *)#n, strlen(#n), \
+/* * MacSurf — corestrings.c * Real implementation of corestring initialization. * Licensed under GPL v2. */#include <string.h>#include <libwapcaplet/libwapcaplet.h>#include <dom/core/string.h>#include "utils/errors.h"#include "utils/nsurl.h"/* The globals are declared here to match NetSurf core expectations. */#define CORESTRING_LWC_STRING(n) lwc_string *corestring_lwc_##n = NULL;#define CORESTRING_LWC_VALUE(n, v) lwc_string *corestring_lwc_##n = NULL;#define CORESTRING_DOM_STRING(n) struct dom_string *corestring_dom_##n = NULL;#define CORESTRING_DOM_VALUE(n, v) struct dom_string *corestring_dom_##n = NULL;#define CORESTRING_NSURL(n, v) struct nsurl *corestring_nsurl_##n = NULL;#include "utils/corestringlist.h"#undef CORESTRING_LWC_STRING#undef CORESTRING_LWC_VALUE#undef CORESTRING_DOM_STRING#undef CORESTRING_DOM_VALUE#undef CORESTRING_NSURLnserror corestrings_init(void){    nserror res;#define CORESTRING_LWC_STRING(n) \    if (lwc_intern_string(#n, strlen(#n), &corestring_lwc_##n) != lwc_error_ok) \        return NSERROR_NOMEM;#define CORESTRING_LWC_VALUE(n, v) \    if (lwc_intern_string(v, strlen(v), &corestring_lwc_##n) != lwc_error_ok) \        return NSERROR_NOMEM;#define CORESTRING_DOM_STRING(n) \
+    if (dom_string_create_interned((const unsigned char *)#n, strlen(#n), \
                           &corestring_dom_##n) != DOM_NO_ERR) \
         return NSERROR_NOMEM;
 
 #define CORESTRING_DOM_VALUE(n, v) \
-    if (dom_string_create((const unsigned char *)v, strlen(v), \
+    if (dom_string_create_interned((const unsigned char *)v, strlen(v), \
                           &corestring_dom_##n) != DOM_NO_ERR) \
-        return NSERROR_NOMEM;
-
-#define CORESTRING_NSURL(n, v) \
-    res = nsurl_create(v, &corestring_nsurl_##n); \
-    if (res != NSERROR_OK) return res;
-
-#include "utils/corestringlist.h"
-
-#undef CORESTRING_LWC_STRING
-#undef CORESTRING_LWC_VALUE
-#undef CORESTRING_DOM_STRING
-#undef CORESTRING_DOM_VALUE
-#undef CORESTRING_NSURL
-
-    return NSERROR_OK;
-}
-
-void corestrings_fini(void)
-{
-}
+        return NSERROR_NOMEM;#define CORESTRING_NSURL(n, v) \    res = nsurl_create(v, &corestring_nsurl_##n); \    if (res != NSERROR_OK) return res;#include "utils/corestringlist.h"#undef CORESTRING_LWC_STRING#undef CORESTRING_LWC_VALUE#undef CORESTRING_DOM_STRING#undef CORESTRING_DOM_VALUE#undef CORESTRING_NSURL    return NSERROR_OK;}void corestrings_fini(void){}

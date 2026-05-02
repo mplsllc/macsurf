@@ -7,11 +7,13 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <string.h>
 
 #include <libwapcaplet/libwapcaplet.h>
 #include <libcss/errors.h>
 #include <libcss/fpmath.h>
 
+#include "macsurf_debug.h"
 #include "utils/utils.h"
 
 css_fixed css__number_from_string(const uint8_t *data, size_t len,
@@ -112,6 +114,15 @@ css_fixed css__number_from_string(const uint8_t *data, size_t len,
 	}
 
 	*consumed = ptr - data;
+
+    {
+        char buf[64];
+        if (*consumed < 63) {
+            memcpy(buf, data, *consumed);
+            buf[*consumed] = '\0';
+            macsurf_debug_log_writef("css_num: s='%s' res=%ld", buf, (long)(((uint32_t)intpart << 10) | fracpart));
+        }
+    }
 
 	if (sign > 0) {
 		/* If the result is larger than we can represent,
