@@ -396,6 +396,16 @@
             </SETTING>
             <SETTING>
                 <SETTING><NAME>SearchPath</NAME>
+                    <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libwapcaplet:include:</VALUE></SETTING>
+                    <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
+                    <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
+                </SETTING>
+                <SETTING><NAME>Recursive</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>FrameworkPath</NAME><VALUE>false</VALUE></SETTING>
+                <SETTING><NAME>HostFlags</NAME><VALUE>All</VALUE></SETTING>
+            </SETTING>
+            <SETTING>
+                <SETTING><NAME>SearchPath</NAME>
                     <SETTING><NAME>Path</NAME><VALUE>Back40:Desktop Folder:patrick:macsurf-source Folder:browser:libcss:include:</VALUE></SETTING>
                     <SETTING><NAME>PathFormat</NAME><VALUE>MacOS</VALUE></SETTING>
                     <SETTING><NAME>PathRoot</NAME><VALUE>Absolute</VALUE></SETTING>
