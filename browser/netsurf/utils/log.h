@@ -113,12 +113,14 @@ extern void nslog_log(const char *file, const char *func, int ln, const char *fo
 #    define LOG_LN __LINE__
 #  endif
 
-#define NSLOG(catname, level, logmsg, args...)				\
+#ifndef NSLOG
+#define NSLOG(catname, level, logmsg, ...)				\
 	do {								\
 		if (NSLOG_LEVEL_##level >= NSLOG_COMPILED_MIN_LEVEL) {	\
-			nslog_log(__FILE__, LOG_FN, LOG_LN, logmsg , ##args); \
+			nslog_log(__FILE__, LOG_FN, LOG_LN, logmsg , ##__VA_ARGS__); \
 		}							\
 	} while(0)
+#endif
 
 #endif  /* WITH_NSLOG */
 
