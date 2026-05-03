@@ -13,6 +13,14 @@
 #include "parse/language.h"
 #include "parse/propstrings.h"
 
+/* Forward typedef. The internal libcss/src/stylesheet.h holds the full
+ * definition, but on CW8 the access path search reaches the public
+ * libcss/include/libcss/stylesheet.h first - which doesn't declare
+ * css_style. The prototypes below take css_style only by pointer, so a
+ * forward typedef is sufficient and harmless when the full definition
+ * later arrives in TUs that pull in the internal header. */
+typedef struct css_style css_style;
+
 /**
  * Type of property handler function
  */
