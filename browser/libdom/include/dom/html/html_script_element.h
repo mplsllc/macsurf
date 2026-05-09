@@ -21,7 +21,7 @@ typedef enum {
 	DOM_HTML_SCRIPT_ELEMENT_FLAG_PARSER_INSERTED             = 1 << 1,
 	DOM_HTML_SCRIPT_ELEMENT_FLAG_NON_BLOCKING                = 1 << 2,
 	DOM_HTML_SCRIPT_ELEMENT_FLAG_READY_TO_BE_PARSER_EXECUTED = 1 << 3,
-	DOM_HTML_SCRIPT_ELEMENT_FLAG_FROM_EXTERNAL               = 1 << 4,
+	DOM_HTML_SCRIPT_ELEMENT_FLAG_FROM_EXTERNAL               = 1 << 4
 } dom_html_script_element_flags;
 
 dom_exception dom_html_script_element_get_flags(
