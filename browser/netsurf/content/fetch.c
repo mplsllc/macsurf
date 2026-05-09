@@ -281,7 +281,14 @@ static void fetcher_poll(void *unused)
  * Public API								      *
  ******************************************************************************/
 
-/* exported interface documented in content/fetch.h */
+/* exported interface documented in content/fetch.h
+ *
+ * On MacSurf the frontend provides its own fetcher_init in
+ * macos9_fetcher_init.c, which registers the OT-backed http/https
+ * fetcher alongside the data/file/resource/about/javascript shims.
+ * Skip this default to avoid a multiply-defined link error.
+ */
+#ifndef __MACOS9__
 nserror fetcher_init(void)
 {
 	nserror ret;
@@ -317,6 +324,7 @@ nserror fetcher_init(void)
 
 	return ret;
 }
+#endif
 
 /* exported interface documented in content/fetchers.h */
 void fetcher_quit(void)
