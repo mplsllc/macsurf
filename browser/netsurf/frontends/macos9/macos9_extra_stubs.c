@@ -231,6 +231,16 @@ int mkdir(const char *path, unsigned long mode)
 	return -1;
 }
 
+/* nsmkdir is supposed to be a macro from netsurf/utils/utils.h, but if
+ * a TU doesn't see that header CW8 treats the call as an external
+ * function. Provide a real out-of-line function so the linker resolves
+ * it either way. The prefix macro takes precedence in TUs that include
+ * the prefix, so this body is only used when the macro is invisible. */
+int nsmkdir(const char *path, unsigned long mode)
+{
+	return mkdir(path, mode);
+}
+
 struct stat;
 int stat(const char *path, struct stat *st)
 {
