@@ -60,7 +60,8 @@ nserror dom_namespace_initialise(void) { return NSERROR_OK; }
 void dom_namespace_finalise(void) {}
 
 /* lwc iteration — libwapcaplet doesn't provide an iterator in our shim layer */
-void lwc_iterate_strings(void (*cb)(void *str, void *pw), void *pw) {}
+void lwc_iterate_strings(void (*cb)(struct lwc_string_s *str, void *pw),
+		void *pw) { (void)cb; (void)pw; }
 
 /* Page info */
 nserror page_info_init(void) { return NSERROR_OK; }
