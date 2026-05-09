@@ -10,7 +10,7 @@
 
 #include <dom/events/mouse_wheel_event.h>
 
-#include "events/mouse_event.h"
+#include "./mouse_event.h"
 
 /**
  * The MouseWheelEvent
@@ -35,4 +35,3 @@ dom_exception _dom_mouse_wheel_event_initialise(
 #define _dom_mouse_wheel_event_finalise _dom_mouse_event_finalise
 
 #endif
-

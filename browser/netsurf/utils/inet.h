@@ -49,7 +49,7 @@
 #define ns_close_socket CloseSocket
 #endif
 
-#elif defined(__MACOS9__)
+#elif defined(__MACOS9__) || defined(MACSURF_USE_MAC_INET_SHIM)
 
 #include "frontends/macos9/shims/mac_inet.h"
 

@@ -10,7 +10,7 @@
 
 #include <dom/events/event_listener.h>
 
-#include "utils/list.h"
+#include "../utils/list.h"
 
 /**
  * The EventListener class
@@ -25,4 +25,3 @@ struct dom_event_listener {
 };
 
 #endif
-

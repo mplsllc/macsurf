@@ -1,23 +1,41 @@
 /*
  * MacSurf - macos9_fetcher_init.c
  *
- * Replaces the misc_stub.c::fetcher_init() no-op with a real init that
- * registers our HTTP fetcher and nothing else. v0.2 ships as a
- * 1-fetcher build (HTTP only via Open Transport). Other URL schemes
- * (data:, file:, about:) return "no fetcher" errors at hlcache time —
- * fine for v0.2.
+ * Mac OS 9 fetcher initialisation.
  *
- * NetSurf core's content/fetch.c::fetcher_init() upstream tries to
- * register data/file/about/curl fetchers; we replace it entirely with
- * this thin shim. The corresponding stub function in misc_stub.c is
- * removed so the linker picks up this real symbol.
+ * The NetSurf core expects fetcher_init() to register every scheme the
+ * browser needs before the first browser_window is created. MacSurf cannot
+ * use curl/file/resource fetchers from the desktop build, so this shim wires
+ * the local stubs plus the Open Transport HTTP/HTTPS fetcher.
  */
 
 #include "utils/errors.h"
 
-extern nserror macos9_http_fetcher_register(void);
+extern nserror fetch_data_register(void);
+extern nserror fetch_file_register(void);
+extern nserror fetch_resource_register(void);
+extern nserror fetch_about_register(void);
+extern nserror fetch_javascript_register(void);
+extern nserror macos9_fetcher_register(void);
 
 nserror fetcher_init(void)
 {
-	return macos9_http_fetcher_register();
+	nserror ret;
+
+	ret = fetch_data_register();
+	if (ret != NSERROR_OK) return ret;
+
+	ret = fetch_file_register();
+	if (ret != NSERROR_OK) return ret;
+
+	ret = fetch_resource_register();
+	if (ret != NSERROR_OK) return ret;
+
+	ret = fetch_about_register();
+	if (ret != NSERROR_OK) return ret;
+
+	ret = fetch_javascript_register();
+	if (ret != NSERROR_OK) return ret;
+
+	return macos9_fetcher_register();
 }

@@ -7,8 +7,8 @@
 
 #include <stdlib.h>
 
-#include "events/text_event.h"
-#include "core/document.h"
+#include "./text_event.h"
+#include "../core/document.h"
 
 static void _virtual_dom_text_event_destroy(struct dom_event *evt);
 

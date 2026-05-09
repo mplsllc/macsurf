@@ -32,7 +32,7 @@
 
 #include "desktop/gui_internal.h"
 
-#include "utils/utils.h"
+#include "utils.h"
 #include "utils/corestrings.h"
 #include "utils/url.h"
 #include "utils/nsurl.h"

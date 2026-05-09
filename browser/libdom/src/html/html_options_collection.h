@@ -10,7 +10,7 @@
 
 #include <dom/html/html_options_collection.h>
 
-#include "html/html_collection.h"
+#include "./html_collection.h"
 
 struct dom_node_internal;
 

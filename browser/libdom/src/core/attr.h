@@ -13,6 +13,8 @@
 struct dom_document;
 struct dom_type_info;
 
+#include "./node.h"
+
 dom_exception _dom_attr_create(struct dom_document *doc,
 		dom_string *name, dom_string *namespace,
 		dom_string *prefix, bool specified,

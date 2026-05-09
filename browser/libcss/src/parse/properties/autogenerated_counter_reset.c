@@ -17,6 +17,7 @@
 #include "bytecode/opcodes.h"
 #include "parse/properties/properties.h"
 #include "parse/properties/utils.h"
+#include "../../stylesheet.h"
 
 /**
  * Parse counter_reset
@@ -150,4 +151,3 @@ css_error css__parse_counter_reset(css_language *c,
 	
 	return error;
 }
-

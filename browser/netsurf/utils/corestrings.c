@@ -25,7 +25,7 @@
 
 #include "utils/corestrings.h"
 #include "utils/nsurl.h"
-#include "utils/utils.h"
+#include "utils.h"
 
 /* define corestrings */
 #define CORESTRING_LWC_VALUE(NAME,VALUE) lwc_string *corestring_lwc_##NAME

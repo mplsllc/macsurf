@@ -9,11 +9,11 @@
 #include <string.h>
 #include <strings.h>
 
-#include "stylesheet.h"
 #include "bytecode/bytecode.h"
 #include "bytecode/opcodes.h"
 #include "parse/properties/properties.h"
 #include "parse/properties/utils.h"
+#include "../../stylesheet.h"
 #include "utils/parserutilserror.h"
 
 

@@ -7,9 +7,9 @@
 
 #include <stdlib.h>
 
-#include "events/mouse_wheel_event.h"
-#include "events/keyboard_event.h"
-#include "core/document.h"
+#include "./mouse_wheel_event.h"
+#include "./keyboard_event.h"
+#include "../core/document.h"
 
 #include "utils/utils.h"
 

@@ -18,7 +18,7 @@
 #include "utils/utils.h"
 
 /* Bring in the aliases tables */
-#include "aliases.inc"
+#include "charset/aliases.inc"
 
 typedef struct {
         size_t slen;

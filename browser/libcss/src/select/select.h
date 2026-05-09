@@ -13,7 +13,14 @@
 
 #include <libcss/select.h>
 
-#include "stylesheet.h"
+#ifdef __MWERKS__
+#ifndef inline
+#define inline
+#endif
+#endif
+
+#include "../stylesheet.h"
+#include "bloom.h"
 
 /**
  * Item in the reject cache (only class and id types are valid)
@@ -113,4 +120,3 @@ bool css__outranks_existing(uint16_t op, bool important,
 		css_select_state *state, enum flag_value explicit_default);
 
 #endif
-

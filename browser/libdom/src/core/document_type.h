@@ -12,6 +12,8 @@
 
 struct dom_namednodemap;
 
+#include "./node.h"
+
 /* Create a DOM document type */
 dom_exception _dom_document_type_create(dom_string *qname,
 		dom_string *public_id, 

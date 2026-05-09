@@ -10,7 +10,7 @@
 #define dom_internal_html_table_row_element_h_
 
 #include <dom/html/html_tablerow_element.h>
-#include "html/html_element.h"
+#include "./html_element.h"
 
 struct dom_html_table_row_element {
 	struct dom_html_element base;

@@ -10,7 +10,7 @@
 
 #include <dom/html/html_text_area_element.h>
 
-#include "html/html_element.h"
+#include "./html_element.h"
 
 struct dom_html_text_area_element {
 	struct dom_html_element base;

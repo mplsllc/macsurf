@@ -10,12 +10,12 @@
 #include <string.h>
 #include <stdio.h>
 
-#include "html/html_document.h"
-#include "html/html_element.h"
+#include "./html_document.h"
+#include "./html_element.h"
 
-#include "core/node.h"
-#include "core/attr.h"
-#include "core/document.h"
+#include "../core/node.h"
+#include "../core/attr.h"
+#include "../core/document.h"
 #include "utils/utils.h"
 
 const struct dom_html_element_vtable _dom_html_element_vtable = {

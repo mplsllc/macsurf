@@ -11,8 +11,8 @@
 #include <libcss/errors.h>
 #include <libcss/computed.h>
 
-#include "stylesheet.h"
-#include "select/select.h"
+#include "../../stylesheet.h"
+#include "../select.h"
 
 #define PROPERTY_FUNCS(pname)                                           \
   css_error css__cascade_##pname (uint32_t opv, css_style *style, css_select_state *state); \

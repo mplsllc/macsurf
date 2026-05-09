@@ -7,8 +7,8 @@
 
 #include <stdlib.h>
 
-#include "events/mutation_name_event.h"
-#include "core/document.h"
+#include "./mutation_name_event.h"
+#include "../core/document.h"
 
 #include "utils/utils.h"
 

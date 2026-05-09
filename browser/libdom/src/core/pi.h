@@ -11,6 +11,8 @@
 #include <dom/core/exceptions.h>
 #include <dom/core/pi.h>
 
+#include "./node.h"
+
 dom_exception _dom_processing_instruction_create(dom_document *doc,
 		dom_string *name, dom_string *value,
 		dom_processing_instruction **result);

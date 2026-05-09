@@ -64,7 +64,8 @@
 #define nsmkdir(dir, mode) mkdir((dir), (mode))
 #endif
 
-#if defined(__GNUC__) && (__GNUC__ < 3)
+#if defined(__MWERKS__) || defined(__MACOS9__) || \
+		(defined(__GNUC__) && (__GNUC__ < 3))
 #define FLEX_ARRAY_LEN_DECL 0
 #else
 #define FLEX_ARRAY_LEN_DECL 

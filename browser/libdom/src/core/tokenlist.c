@@ -18,8 +18,8 @@
 #include <dom/events/event_listener.h>
 #include <dom/events/mutation_event.h>
 
-#include "core/element.h"
-#include "core/document.h"
+#include "./element.h"
+#include "./document.h"
 
 #include "utils/utils.h"
 

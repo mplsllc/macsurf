@@ -23,6 +23,12 @@
 #include "parse/mq.h"
 #include "select/hash.h"
 
+#ifdef __MWERKS__
+#ifndef inline
+#define inline
+#endif
+#endif
+
 typedef struct css_rule css_rule;
 typedef struct css_selector css_selector;
 
@@ -344,4 +350,3 @@ css_error css__stylesheet_string_add(css_stylesheet *sheet,
 		lwc_string *string, uint32_t *string_number);
 
 #endif
-

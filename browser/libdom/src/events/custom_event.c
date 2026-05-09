@@ -7,9 +7,9 @@
 
 #include <stdlib.h>
 
-#include "events/custom_event.h"
+#include "./custom_event.h"
 
-#include "core/document.h"
+#include "../core/document.h"
 
 static void _virtual_dom_custom_event_destroy(struct dom_event *evt);
 

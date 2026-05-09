@@ -13,7 +13,7 @@
 #include <dom/core/exceptions.h>
 #include <dom/core/text.h>
 
-#include "core/characterdata.h"
+#include "./characterdata.h"
 
 struct dom_document;
 

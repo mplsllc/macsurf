@@ -10,7 +10,7 @@
 
 #include <dom/events/mutation_name_event.h>
 
-#include "events/mutation_event.h"
+#include "./mutation_event.h"
 
 /**
  * The MutationName event 
@@ -37,4 +37,3 @@ dom_exception _dom_mutation_name_event_initialise(
 void _dom_mutation_name_event_finalise(struct dom_mutation_name_event *evt);
 
 #endif
-

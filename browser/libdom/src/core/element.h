@@ -12,7 +12,7 @@
 
 #include <dom/core/element.h>
 
-#include "core/node.h"
+#include "./node.h"
 
 struct dom_document;
 struct dom_element;

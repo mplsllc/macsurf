@@ -10,7 +10,7 @@
 
 #include <dom/events/ui_event.h>
 
-#include "events/event.h"
+#include "./event.h"
 
 /**
  * The modifier key state

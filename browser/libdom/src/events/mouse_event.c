@@ -8,8 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "events/mouse_event.h"
-#include "core/document.h"
+#include "./mouse_event.h"
+#include "../core/document.h"
 
 #include "utils/utils.h"
 

@@ -14,8 +14,8 @@
 
 #include <parserutils/charset/utf8.h>
 
-#include "core/string.h"
-#include "core/document.h"
+#include "./string.h"
+#include "./document.h"
 #include "utils/utils.h"
 
 /**

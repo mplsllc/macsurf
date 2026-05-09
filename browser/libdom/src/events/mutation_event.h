@@ -10,7 +10,7 @@
 
 #include <dom/events/mutation_event.h>
 
-#include "events/event.h"
+#include "./event.h"
 
 /**
  * The MutationEvent
@@ -38,4 +38,3 @@ dom_exception _dom_mutation_event_initialise(struct dom_mutation_event *evt);
 void _dom_mutation_event_finalise(struct dom_mutation_event *evt);
 
 #endif
-

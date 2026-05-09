@@ -17,9 +17,9 @@
 #include <stddef.h>
 
 #include "utils/list.h"
-#include "core/node.h"
-#include "core/element.h"
-#include "events/event.h"
+#include "../core/node.h"
+#include "../core/element.h"
+#include "../events/event.h"
 
 /* ---- list.h functions ---- */
 

@@ -10,7 +10,7 @@
 
 #include <libcss/hint.h>
 
-#include "stylesheet.h"
+#include "../stylesheet.h"
 #include "select/hash.h"
 #include "select/mq.h"
 #include "utils/utils.h"
@@ -1113,4 +1113,3 @@ css_error _iterate_universal(
 
 	return CSS_OK;
 }
-

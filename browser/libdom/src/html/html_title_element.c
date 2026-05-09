@@ -11,10 +11,10 @@
 #include <dom/core/characterdata.h>
 #include <dom/core/text.h>
 
-#include "html/html_document.h"
-#include "html/html_title_element.h"
+#include "./html_document.h"
+#include "./html_title_element.h"
 
-#include "core/node.h"
+#include "../core/node.h"
 #include "utils/utils.h"
 
 static const struct dom_element_protected_vtable _protect_vtable = {

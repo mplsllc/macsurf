@@ -22,8 +22,8 @@
  */
 
 #include <stdlib.h>
-#include "utils/bloom.h"
-#include "utils/utils.h"
+#include "bloom.h"
+#include "utils.h"
 
 /**
  * Hash a string, returning a 32bit value.  The hash algorithm used is
@@ -108,4 +108,3 @@ uint32_t bloom_items(struct bloom_filter *b)
 {
 	return b->items;
 }
-

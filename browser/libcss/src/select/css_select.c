@@ -14,7 +14,7 @@
 
 #include "bytecode/bytecode.h"
 #include "bytecode/opcodes.h"
-#include "stylesheet.h"
+#include "../stylesheet.h"
 #include "parse/custom_properties.h"
 #include "select/arena.h"
 #include "select/calc.h"
@@ -3017,4 +3017,3 @@ void dump_chain(const css_selector *selector)
 	} while (detail);
 }
 #endif
-

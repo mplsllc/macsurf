@@ -10,9 +10,9 @@
 
 #include <dom/core/node.h>
 
-#include "core/document.h"
-#include "core/doc_fragment.h"
-#include "core/node.h"
+#include "./document.h"
+#include "./doc_fragment.h"
+#include "./node.h"
 #include "utils/utils.h"
 
 /**

@@ -21,22 +21,22 @@
 #include <dom/core/document_type.h>
 #include <dom/events/events.h>
 
-#include "core/string.h"
-#include "core/namednodemap.h"
-#include "core/attr.h"
-#include "core/cdatasection.h"
-#include "core/comment.h"
-#include "core/document.h"
-#include "core/document_type.h"
-#include "core/doc_fragment.h"
-#include "core/element.h"
-#include "core/entity_ref.h"
-#include "core/node.h"
-#include "core/pi.h"
-#include "core/text.h"
+#include "./string.h"
+#include "./namednodemap.h"
+#include "./attr.h"
+#include "./cdatasection.h"
+#include "./comment.h"
+#include "./document.h"
+#include "./document_type.h"
+#include "./doc_fragment.h"
+#include "./element.h"
+#include "./entity_ref.h"
+#include "./node.h"
+#include "./pi.h"
+#include "./text.h"
 #include "utils/utils.h"
 #include "utils/validate.h"
-#include "events/mutation_event.h"
+#include "../events/mutation_event.h"
 
 static bool _dom_node_permitted_child(const dom_node_internal *parent, 
 		const dom_node_internal *child);

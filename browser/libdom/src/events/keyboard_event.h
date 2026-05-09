@@ -10,7 +10,7 @@
 
 #include <dom/events/keyboard_event.h>
 
-#include "events/ui_event.h"
+#include "./ui_event.h"
 
 /**
  * The keyboard event

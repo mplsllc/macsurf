@@ -10,8 +10,8 @@
 
 #include <dom/html/html_select_element.h>
 
-#include "html/html_element.h"
-#include "html/html_options_collection.h"
+#include "./html_element.h"
+#include "./html_options_collection.h"
 
 struct dom_html_select_element {
 	struct dom_html_element base;

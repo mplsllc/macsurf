@@ -10,7 +10,7 @@
 
 #include <dom/html/html_form_element.h>
 
-#include "html/html_element.h"
+#include "./html_element.h"
 
 struct dom_html_collection;
 

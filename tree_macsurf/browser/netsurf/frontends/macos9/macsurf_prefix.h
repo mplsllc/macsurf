@@ -1,0 +1,28 @@
+#ifndef MACSURF_PREFIX_H
+#define MACSURF_PREFIX_H
+
+/* 
+ * 1. MANDATORY: System headers must be at the absolute start
+ * of the translation unit to prevent macro conflicts.
+ */
+#ifdef __MACOS9__
+	#ifndef TARGET_API_MAC_CARBON
+		#define TARGET_API_MAC_CARBON 1
+	#endif
+	#include <Carbon.h>
+#endif
+
+/* 
+ * 2. C89 Shims
+ * CW8 does not support these C99 keywords.
+ */
+#define inline
+#define restrict
+
+/* 
+ * 3. Standard Types
+ */
+#include <stddef.h>
+#include <stdlib.h>
+
+#endif

@@ -14,9 +14,9 @@
 #include <dom/events/event_target.h>
 #include <dom/events/event_listener.h>
 
-#include "events/dispatch.h"
+#include "./dispatch.h"
 
-#include "utils/list.h"
+#include "../utils/list.h"
 
 /**
  * Listener Entry

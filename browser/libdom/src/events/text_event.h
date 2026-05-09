@@ -10,7 +10,7 @@
 
 #include <dom/events/text_event.h>
 
-#include "events/ui_event.h"
+#include "./ui_event.h"
 
 /**
  * The TextEvent
@@ -33,4 +33,3 @@ dom_exception _dom_text_event_initialise(struct dom_text_event *evt);
 void _dom_text_event_finalise(struct dom_text_event *evt);
 
 #endif
-

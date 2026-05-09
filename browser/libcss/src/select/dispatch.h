@@ -13,7 +13,7 @@
 #include <libcss/errors.h>
 #include <libcss/computed.h>
 
-#include "stylesheet.h"
+#include "../stylesheet.h"
 #include "bytecode/bytecode.h"
 #include "select/select.h"
 

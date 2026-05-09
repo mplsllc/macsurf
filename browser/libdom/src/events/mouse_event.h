@@ -10,7 +10,7 @@
 
 #include <dom/events/mouse_event.h>
 
-#include "events/ui_event.h"
+#include "./ui_event.h"
 
 /**
  * The mouse event
@@ -43,4 +43,3 @@ dom_exception _dom_mouse_event_initialise(struct dom_mouse_event *evt);
 
 
 #endif
-

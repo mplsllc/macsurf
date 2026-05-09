@@ -7,10 +7,10 @@
 
 #include <stdlib.h>
 
-#include "html/html_style_element.h"
-#include "html/html_document.h"
+#include "./html_style_element.h"
+#include "./html_document.h"
 
-#include "core/node.h"
+#include "../core/node.h"
 #include "utils/utils.h"
 
 static const struct dom_element_protected_vtable _protect_vtable = {

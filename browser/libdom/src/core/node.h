@@ -13,8 +13,8 @@
 #include <dom/core/node.h>
 #include <dom/functypes.h>
 
-#include "events/event_target.h"
-#include "events/mutation_event.h"
+#include "../events/event_target.h"
+#include "../events/mutation_event.h"
 
 #include "utils/list.h"
 

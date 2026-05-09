@@ -14,7 +14,7 @@
 #include <dom/events/event_target.h>
 #include <dom/events/event.h>
 
-#include "utils/list.h"
+#include "../utils/list.h"
 
 /* The private virtual table */
 struct dom_event_private_vtable {
@@ -67,4 +67,3 @@ extern void dom_event_destroy_impl(dom_event *evt);
 #define dom_event_destroy(e) dom_event_destroy_impl((dom_event *) (e))
 
 #endif
-

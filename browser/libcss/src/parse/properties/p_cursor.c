@@ -11,6 +11,7 @@
 #include "bytecode/opcodes.h"
 #include "parse/properties/properties.h"
 #include "parse/properties/utils.h"
+#include "../../stylesheet.h"
 
 /**
  * Parse cursor
@@ -200,4 +201,3 @@ css_error css__parse_cursor(css_language *c,
 
 	return error;
 }
-

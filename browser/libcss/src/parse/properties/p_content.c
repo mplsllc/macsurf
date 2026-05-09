@@ -12,6 +12,7 @@
 #include "bytecode/opcodes.h"
 #include "parse/properties/properties.h"
 #include "parse/properties/utils.h"
+#include "../../stylesheet.h"
 
 
 /**
@@ -422,4 +423,3 @@ css_error css__parse_content(css_language *c,
 
 	return error;
 }
-

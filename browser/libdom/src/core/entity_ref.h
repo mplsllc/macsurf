@@ -11,6 +11,8 @@
 #include <dom/core/exceptions.h>
 #include <dom/core/entity_ref.h>
 
+#include "./node.h"
+
 dom_exception _dom_entity_reference_create(dom_document *doc,
 		dom_string *name, dom_string *value,
 		dom_entity_reference **result);

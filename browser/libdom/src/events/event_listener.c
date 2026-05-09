@@ -7,8 +7,8 @@
 
 #include <stdlib.h>
 
-#include "events/event_listener.h"
-#include "core/document.h"
+#include "./event_listener.h"
+#include "../core/document.h"
 
 /**
  * Create an EventListener

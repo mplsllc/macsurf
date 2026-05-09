@@ -13,6 +13,8 @@
 #include <dom/core/namednodemap.h>
 #include <dom/core/node.h>
 
+#include "./node.h"
+
 struct dom_document;
 struct dom_node;
 struct dom_namednodemap;

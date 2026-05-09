@@ -11,7 +11,7 @@
 #include <dom/html/html_document.h>
 #include <dom/html/html_element.h>
 
-#include "core/document.h"
+#include "../core/document.h"
 
 /**
  * The dom_html_document class
@@ -32,7 +32,7 @@ struct dom_html_document {
 	dom_string **elements;
 };
 
-#include "html_document_strings.h"
+#include "./html_document_strings.h"
 
 /* Create a HTMLDocument */
 dom_exception _dom_html_document_create(

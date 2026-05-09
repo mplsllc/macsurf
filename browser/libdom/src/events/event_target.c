@@ -8,13 +8,13 @@
 #include <assert.h>
 #include <stdlib.h>
 
-#include "events/event.h"
-#include "events/event_listener.h"
-#include "events/event_target.h"
+#include "./event.h"
+#include "./event_listener.h"
+#include "./event_target.h"
 
-#include "core/document.h"
-#include "core/node.h"
-#include "core/string.h"
+#include "../core/document.h"
+#include "../core/node.h"
+#include "../core/string.h"
 
 #include "utils/utils.h"
 #include "utils/validate.h"
@@ -252,4 +252,3 @@ dom_exception _dom_event_target_dispatch(dom_event_target *et,
 
 	return DOM_NO_ERR;
 }
-

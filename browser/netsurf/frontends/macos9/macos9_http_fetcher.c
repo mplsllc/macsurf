@@ -154,7 +154,7 @@ static int macos9_fetch_open(struct macos9_fetch_ctx *c)
 		return 0;
 	}
 
-	c->ep = OTOpenEndpointInContext(cfg, 0, NULL, &err, macos9_ot_context);
+	c->ep = OTOpenEndpoint(cfg, 0, NULL, &err);
 	if (err != noErr || c->ep == NULL) {
 		c->err_msg = "OT open failed";
 		return 0;

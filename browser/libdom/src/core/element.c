@@ -21,16 +21,16 @@
 #include <dom/core/document.h>
 #include <dom/events/events.h>
 
-#include "core/attr.h"
-#include "core/document.h"
-#include "core/element.h"
-#include "core/node.h"
-#include "core/namednodemap.h"
+#include "./attr.h"
+#include "./document.h"
+#include "./element.h"
+#include "./node.h"
+#include "./namednodemap.h"
 #include "utils/validate.h"
 #include "utils/namespace.h"
 #include "utils/utils.h"
 #include "utils/list.h"
-#include "events/mutation_event.h"
+#include "../events/mutation_event.h"
 
 const struct dom_element_vtable _dom_element_vtable = {
 	{

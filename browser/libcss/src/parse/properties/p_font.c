@@ -12,6 +12,7 @@
 #include "bytecode/opcodes.h"
 #include "parse/properties/properties.h"
 #include "parse/properties/utils.h"
+#include "../../stylesheet.h"
 
 /**
  * Convert css_unit to a bytecode unit.
@@ -511,7 +512,6 @@ css__parse_font_cleanup:
 
 	return error;
 }
-
 
 
 

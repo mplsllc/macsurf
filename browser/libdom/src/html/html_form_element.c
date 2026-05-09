@@ -10,16 +10,16 @@
 
 #include <dom/html/html_form_element.h>
 
-#include "html/html_form_element.h"
-#include "html/html_input_element.h"
-#include "html/html_select_element.h"
-#include "html/html_text_area_element.h"
-#include "html/html_button_element.h"
+#include "./html_form_element.h"
+#include "./html_input_element.h"
+#include "./html_select_element.h"
+#include "./html_text_area_element.h"
+#include "./html_button_element.h"
 
-#include "html/html_collection.h"
-#include "html/html_document.h"
+#include "./html_collection.h"
+#include "./html_document.h"
 
-#include "core/node.h"
+#include "../core/node.h"
 #include "utils/utils.h"
 
 static const struct dom_element_protected_vtable _protect_vtable = {

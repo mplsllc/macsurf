@@ -11,6 +11,8 @@
 #include <dom/core/exceptions.h>
 #include <dom/core/doc_fragment.h>
 
+#include "./node.h"
+
 dom_exception _dom_document_fragment_create(dom_document *doc,
 		dom_string *name, dom_string *value,
 		dom_document_fragment **result);

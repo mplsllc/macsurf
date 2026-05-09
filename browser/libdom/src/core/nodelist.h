@@ -12,6 +12,8 @@
 
 #include <dom/core/nodelist.h>
 
+#include "./node.h"
+
 struct dom_document;
 struct dom_node;
 struct dom_nodelist;

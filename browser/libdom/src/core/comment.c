@@ -8,9 +8,9 @@
 
 #include <stdlib.h>
 
-#include "core/characterdata.h"
-#include "core/comment.h"
-#include "core/document.h"
+#include "./characterdata.h"
+#include "./comment.h"
+#include "./document.h"
 
 #include "utils/utils.h"
 

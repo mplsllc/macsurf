@@ -36,7 +36,7 @@
 #include "netsurf/plot_style.h"
 #include "utils/errors.h"
 #include "utils/log.h"
-#include "utils/utils.h"
+#include "utils.h"
 #include "utils/nsoption.h"
 
 /** Length of buffer used to read lines from input file */

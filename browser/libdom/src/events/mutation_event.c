@@ -7,7 +7,7 @@
 
 #include <stdlib.h>
 
-#include "events/mutation_event.h"
+#include "./mutation_event.h"
 
 static void _virtual_dom_mutation_event_destroy(struct dom_event *evt);
 

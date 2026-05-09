@@ -10,7 +10,7 @@
 
 #include <dom/core/characterdata.h>
 
-#include "core/node.h"
+#include "./node.h"
 
 /**
  * DOM character data node

@@ -34,6 +34,12 @@
 #include <stdint.h>
 #include <string.h>
 
+#ifdef __MWERKS__
+#ifndef inline
+#define inline
+#endif
+#endif
+
 /* Size of bloom filter as multiple of 32 bits.
  * Has to be 4, 8, or 16.
  * Larger increases optimisation of style selection engine but uses more memory.

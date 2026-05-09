@@ -13,10 +13,10 @@
 #include <dom/core/node.h>
 #include <dom/core/string.h>
 
-#include "core/document.h"
-#include "core/element.h"
-#include "core/namednodemap.h"
-#include "core/node.h"
+#include "./document.h"
+#include "./element.h"
+#include "./namednodemap.h"
+#include "./node.h"
 
 #include "utils/utils.h"
 

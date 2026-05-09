@@ -10,7 +10,7 @@
 
 #include <dom/events/custom_event.h>
 
-#include "events/event.h"
+#include "./event.h"
 
 struct dom_custom_event {
 	struct dom_event base;

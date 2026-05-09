@@ -12,11 +12,11 @@
 #include <dom/html/html_option_element.h>
 #include <dom/html/html_select_element.h>
 
-#include "html/html_document.h"
-#include "html/html_option_element.h"
+#include "./html_document.h"
+#include "./html_option_element.h"
 
-#include "core/node.h"
-#include "core/attr.h"
+#include "../core/node.h"
+#include "../core/attr.h"
 #include "utils/utils.h"
 
 static struct dom_element_protected_vtable _protect_vtable = {

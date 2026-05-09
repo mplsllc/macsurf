@@ -36,7 +36,7 @@
 
 #include "utils/log.h"
 #include "utils/messages.h"
-#include "utils/utils.h"
+#include "utils.h"
 #include "utils/hashtable.h"
 
 /** Messages are stored in a fixed-size hash table. */
