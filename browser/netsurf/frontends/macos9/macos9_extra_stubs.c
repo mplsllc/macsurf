@@ -103,52 +103,9 @@ struct lwc_string_s;
 void lwc_iterate_strings(void (*cb)(struct lwc_string_s *str, void *pw),
 		void *pw) { (void)cb; (void)pw; }
 
-/* History helpers declared in desktop/browser_private.h with no
- * upstream definition. */
-struct browser_window;
-struct hlcache_handle;
-struct nsurl;
-
-nserror browser_window_history_add(struct browser_window *bw,
-		struct hlcache_handle *content, struct nsurl *frag_id)
-{
-	(void)bw; (void)content; (void)frag_id;
-	return NSERROR_OK;
-}
-
-nserror browser_window_history_get_scroll(struct browser_window *bw,
-		float *sx, float *sy)
-{
-	(void)bw;
-	if (sx) *sx = 0;
-	if (sy) *sy = 0;
-	return NSERROR_OK;
-}
-
-/* Mac OS 9 uses Toolbox scroll-bar controls directly; desktop/scrollbar.c
- * is not in the project. Provide harmless no-ops for the API. */
-struct scrollbar;
-
-nserror scrollbar_create(int horizontal, int length, int full_size,
-		int visible_size, void *pw,
-		void (*cb)(void *pw, int msg, void *data),
-		struct scrollbar **bar)
-{
-	(void)horizontal; (void)length; (void)full_size; (void)visible_size;
-	(void)pw; (void)cb;
-	if (bar) *bar = NULL;
-	return NSERROR_OK;
-}
-
-void scrollbar_destroy(struct scrollbar *s) { (void)s; }
-
-nserror scrollbar_set(struct scrollbar *s, int value, int bar_full)
-{
-	(void)s; (void)value; (void)bar_full;
-	return NSERROR_OK;
-}
-
-int scrollbar_get_offset(struct scrollbar *s) { (void)s; return 0; }
+/* browser_window_history_add / browser_window_history_get_scroll and
+ * the scrollbar_* family are now provided by the real desktop/
+ * browser_history.c and desktop/scrollbar.c that are in the project. */
 
 /* HTTP Content-Disposition / WWW-Authenticate parsing — real impls
  * exist at utils/http/content-disposition.c and www-authenticate.c
