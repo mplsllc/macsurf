@@ -43,8 +43,8 @@ typedef enum walk_operation {
 	DELETE
 } walk_operation;
 typedef enum walk_order {
-	LEFT,
-	RIGHT
+	WALK_LEFT,
+	WALK_RIGHT
 } walk_order;
 
 /* Walk the logic-adjacent text in document order */
@@ -386,7 +386,7 @@ dom_exception walk_logic_adjacent_text_in_order(
 					return err;
 
 				tmp = *ret;
-				if (order == LEFT) {
+				if (order == WALK_LEFT) {
 					if (tmp != NULL) {
 						err = dom_string_concat(data, tmp, ret);
 						if (err != DOM_NO_ERR)
@@ -395,7 +395,7 @@ dom_exception walk_logic_adjacent_text_in_order(
 						dom_string_ref(data);
 						*ret = data;
 					}
-				} else if (order == RIGHT) {
+				} else if (order == WALK_RIGHT) {
 					if (tmp != NULL) {
 						err = dom_string_concat(tmp, data, ret);
 						if (err != DOM_NO_ERR)
@@ -428,7 +428,7 @@ dom_exception walk_logic_adjacent_text_in_order(
 		}
 
 		p = dom_node_get_parent(node);
-		if (order == LEFT) {
+		if (order == WALK_LEFT) {
 			if (node->last_child != NULL) {
 				node = node->last_child;
 			} else if (node->previous != NULL) {
@@ -485,7 +485,7 @@ dom_exception walk_logic_adjacent_text(dom_text *text,
 	*ret = NULL;
 
 	/* Firstly, we look our left */
-	err = walk_logic_adjacent_text_in_order(left, opt, LEFT, ret, &cont);
+	err = walk_logic_adjacent_text_in_order(left, opt, WALK_LEFT, ret, &cont);
 	if (err != DOM_NO_ERR) {
 		if (opt == COLLECT) {
 			dom_string_unref(*ret);
@@ -525,7 +525,7 @@ dom_exception walk_logic_adjacent_text(dom_text *text,
 	}
 
 	/* Now, look right */
-	err = walk_logic_adjacent_text_in_order(right, opt, RIGHT, ret, &cont);
+	err = walk_logic_adjacent_text_in_order(right, opt, WALK_RIGHT, ret, &cont);
 	if (err != DOM_NO_ERR) {
 		if (opt == COLLECT) {
 			dom_string_unref(*ret);

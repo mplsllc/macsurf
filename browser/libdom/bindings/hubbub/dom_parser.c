@@ -20,15 +20,15 @@
 #include "parser.h"
 #include "utils.h"
 
-#include "core/document.h"
-#include "core/string.h"
-#include "core/node.h"
+#include "../../src/core/document.h"
+#include "../../src/core/string.h"
+#include "../../src/core/node.h"
 
-#include "html/html_document.h"
-#include "html/html_button_element.h"
-#include "html/html_input_element.h"
-#include "html/html_select_element.h"
-#include "html/html_text_area_element.h"
+#include "../../src/html/html_document.h"
+#include "../../src/html/html_button_element.h"
+#include "../../src/html/html_input_element.h"
+#include "../../src/html/html_select_element.h"
+#include "../../src/html/html_text_area_element.h"
 
 #include <libwapcaplet/libwapcaplet.h>
 

@@ -25,7 +25,7 @@ enum flag_value {
 	FLAG_VALUE_INHERIT = 1,
 	FLAG_VALUE_INITIAL = 2,
 	FLAG_VALUE_REVERT  = 3,
-	FLAG_VALUE_UNSET   = 4,
+	FLAG_VALUE_UNSET   = 4
 };
 
 enum flag {
@@ -33,7 +33,7 @@ enum flag {
 	FLAG_INHERIT   = (FLAG_VALUE_INHERIT << 1),
 	FLAG_INITIAL   = (FLAG_VALUE_INITIAL << 1),
 	FLAG_REVERT    = (FLAG_VALUE_REVERT  << 1),
-	FLAG_UNSET     = (FLAG_VALUE_UNSET   << 1),
+	FLAG_UNSET     = (FLAG_VALUE_UNSET   << 1)
 };
 
 enum calc_opcodes {
@@ -43,7 +43,7 @@ enum calc_opcodes {
 	CALC_SUBTRACT    = '-',
 	CALC_MULTIPLY    = '*',
 	CALC_DIVIDE      = '/',
-	CALC_FINISH      = '=',
+	CALC_FINISH      = '='
 };
 
 typedef enum unit {
@@ -90,7 +90,7 @@ typedef enum unit {
 
 	/* These are special only to the CALC bytecodes */
 	UNIT_CALC_ANY = (1 << 20),
-	UNIT_CALC_NUMBER = (1 << 20) + 1,
+	UNIT_CALC_NUMBER = (1 << 20) + 1
 } unit;
 
 typedef uint32_t colour;

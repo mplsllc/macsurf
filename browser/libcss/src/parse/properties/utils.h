@@ -8,6 +8,8 @@
 #ifndef css_css__parse_properties_utils_h_
 #define css_css__parse_properties_utils_h_
 
+#include "bytecode/bytecode.h"
+#include "stylesheet.h"
 #include "parse/language.h"
 
 static inline bool is_css_inherit(css_language *c, const css_token *token)
