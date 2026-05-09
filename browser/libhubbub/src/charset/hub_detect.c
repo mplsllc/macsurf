@@ -18,6 +18,13 @@
 
 #include "detect.h"
 
+/* Forward decls in case detect.h is shadowed by libcss/src/charset/detect.h
+ * on the CW8 access-path search (which declares only css__charset_extract).
+ * Without these prototypes the calls below at lines 99 and 335 default-int
+ * and conflict with the definitions at 369/682. */
+uint16_t hubbub_charset_parse_content(const uint8_t *value, uint32_t valuelen);
+void hubbub_charset_fix_charset(uint16_t *charset);
+
 static uint16_t hubbub_charset_read_bom(const uint8_t *data, size_t len);
 static uint16_t hubbub_charset_scan_meta(const uint8_t *data, size_t len);
 static uint16_t hubbub_charset_parse_attributes(const uint8_t **pos,

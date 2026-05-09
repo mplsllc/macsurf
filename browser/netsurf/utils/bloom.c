@@ -25,6 +25,17 @@
 #include "bloom.h"
 #include "utils.h"
 
+/* Forward declarations: bloom_insert_str / bloom_search_str call into
+ * bloom_insert_hash / bloom_search_hash before they are defined below.
+ * The declarations in bloom.h should be enough, but in this codebase
+ * those headers are sometimes shadowed by libcss/src/select/bloom.h on
+ * the CW8 access-path search, leaving the call sites with no visible
+ * prototype and CW8 falls back to the C89 default-int. Re-stating the
+ * prototypes here is a no-op when bloom.h was found correctly and a
+ * rescue when it was not. */
+void bloom_insert_hash(struct bloom_filter *b, uint32_t hash);
+bool bloom_search_hash(struct bloom_filter *b, uint32_t hash);
+
 /**
  * Hash a string, returning a 32bit value.  The hash algorithm used is
  * Fowler Noll Vo - a very fast and simple hash, ideal for short strings.
