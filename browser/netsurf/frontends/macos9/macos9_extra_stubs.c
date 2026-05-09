@@ -231,11 +231,14 @@ int mkdir(const char *path, unsigned long mode)
 	return -1;
 }
 
-/* nsmkdir is supposed to be a macro from netsurf/utils/utils.h, but if
- * a TU doesn't see that header CW8 treats the call as an external
- * function. Provide a real out-of-line function so the linker resolves
- * it either way. The prefix macro takes precedence in TUs that include
- * the prefix, so this body is only used when the macro is invisible. */
+/* nsmkdir is supposed to be a macro from netsurf/utils/utils.h. The
+ * prefix also defines it so most TUs get the macro expansion -- but
+ * the macro eats the name when defining a real function with the same
+ * identifier, so #undef here so the body parses, then redefine the
+ * real function. The prefix macro is still visible in every other TU. */
+#ifdef nsmkdir
+#undef nsmkdir
+#endif
 int nsmkdir(const char *path, unsigned long mode)
 {
 	return mkdir(path, mode);
