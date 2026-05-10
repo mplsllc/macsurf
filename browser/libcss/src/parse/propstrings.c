@@ -6,7 +6,7 @@
  */
 
 #include "parse/propstrings.h"
-#include "stylesheet.h"
+#include "css_internal_stylesheet.h"
 
 #include <assert.h>
 

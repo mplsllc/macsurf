@@ -12,7 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "stylesheet.h"
+#include "css_internal_stylesheet.h"
 #include "bytecode/bytecode.h"
 #include "bytecode/opcodes.h"
 #include "lex/lex.h"

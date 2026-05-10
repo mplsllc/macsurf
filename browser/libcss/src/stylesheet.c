@@ -9,7 +9,7 @@
 #include <string.h>
 #include <stdarg.h>
 
-#include "stylesheet.h"
+#include "css_internal_stylesheet.h"
 #include "bytecode/bytecode.h"
 #include "parse/language.h"
 #include "parse/mq.h"
@@ -17,7 +17,7 @@
 #include "utils/parserutilserror.h"
 #include "utils/utils.h"
 #include "select/dispatch.h"
-#include "select/font_face.h"
+#include "css_internal_select_font_face.h"
 
 static css_error _add_selectors(css_stylesheet *sheet, css_rule *rule);
 static css_error _remove_selectors(css_stylesheet *sheet, css_rule *rule);

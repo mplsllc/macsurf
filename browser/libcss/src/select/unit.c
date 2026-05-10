@@ -11,7 +11,7 @@
 #include "utils/utils.h"
 
 #include "propget.h"
-#include "unit.h"
+#include "css_internal_unit.h"
 
 #include "macsurf_debug.h"
 

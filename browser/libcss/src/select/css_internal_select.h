@@ -18,7 +18,7 @@
 
 #include <libcss/select.h>
 
-#include "stylesheet.h"
+#include "css_internal_stylesheet.h"
 
 /**
  * Item in the reject cache (only class and id types are valid)

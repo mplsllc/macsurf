@@ -13,7 +13,7 @@
 #define _ALIGNED
 #endif
 
-#include "stylesheet.h"
+#include "css_internal_stylesheet.h"
 #include "parse/language.h"
 
 css_error css__parse_important(css_language *c,

@@ -6,14 +6,14 @@
  * Written by James Montgomerie <jamie@th.ingsmadeoutofotherthin.gs>
  */
 
-#include "parse/font_face.h"
+#include "css_internal_parse_font_face.h"
 
 #include <assert.h>
 #include <string.h>
 
 #include "parse/propstrings.h"
 #include "parse/properties/utils.h"
-#include "select/font_face.h"
+#include "css_internal_select_font_face.h"
 
 static bool font_rule_font_family_reserved(css_language *c,
 		const css_token *ident)

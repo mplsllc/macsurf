@@ -16,7 +16,7 @@
 
 #include <parserutils/utils/vector.h>
 
-#include "stylesheet.h"
+#include "css_internal_stylesheet.h"
 #include "lex/lex.h"
 #include "parse/language.h"
 

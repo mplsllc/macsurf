@@ -9,7 +9,7 @@
 #include <string.h>
 #include <strings.h>
 
-#include "stylesheet.h"
+#include "css_internal_stylesheet.h"
 #include "bytecode/bytecode.h"
 #include "bytecode/opcodes.h"
 #include "parse/properties/properties.h"

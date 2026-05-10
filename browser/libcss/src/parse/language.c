@@ -10,9 +10,9 @@
 
 #include <parserutils/utils/stack.h>
 
-#include "stylesheet.h"
+#include "css_internal_stylesheet.h"
 #include "lex/lex.h"
-#include "parse/font_face.h"
+#include "css_internal_parse_font_face.h"
 #include "parse/important.h"
 #include "parse/language.h"
 #include "parse/mq.h"

@@ -14,7 +14,7 @@
 
 #include "bytecode/bytecode.h"
 #include "bytecode/opcodes.h"
-#include "stylesheet.h"
+#include "css_internal_stylesheet.h"
 #include "select/arena.h"
 #include "select/calc.h"
 #include "select/computed.h"
@@ -22,7 +22,7 @@
 #include "select/hash.h"
 #include "select/mq.h"
 #include "select/propset.h"
-#include "select/font_face.h"
+#include "css_internal_select_font_face.h"
 #include "select/select.h"
 #include "select/strings.h"
 #include "select/unit.h"

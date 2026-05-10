@@ -8,7 +8,7 @@
 
 #include <string.h>
 
-#include "select/font_face.h"
+#include "css_internal_select_font_face.h"
 
 static void font_faces_srcs_destroy(css_font_face *font_face)
 {

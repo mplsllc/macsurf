@@ -10,7 +10,7 @@
 
 #include <libcss/hint.h>
 
-#include "stylesheet.h"
+#include "css_internal_stylesheet.h"
 #include "select/hash.h"
 #include "select/mq.h"
 #include "utils/utils.h"
