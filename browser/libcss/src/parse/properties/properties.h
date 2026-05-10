@@ -13,7 +13,11 @@
 #define _ALIGNED
 #endif
 
-#include "stylesheet.h"
+#include <inttypes.h>
+#include <libcss/errors.h>
+#include <libcss/types.h>
+
+#include "css_internal_stylesheet.h"
 #include "lex/lex.h"
 #include "parse/language.h"
 #include "parse/propstrings.h"

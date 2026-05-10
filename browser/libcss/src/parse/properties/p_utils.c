@@ -12,7 +12,7 @@
 #include <string.h>
 #include <strings.h>
 
-#include "stylesheet.h"
+#include "css_internal_stylesheet.h"
 #include "bytecode/bytecode.h"
 #include "bytecode/opcodes.h"
 #include "parse/properties/properties.h"
@@ -432,9 +432,13 @@ static bool parse_rgb(
 	const css_token *token;
 	css_token_type valid = CSS_TOKEN_NUMBER;
 	uint8_t r = 0, g = 0, b = 0, a = 0xff;
-	uint8_t *components[4] = { &r, &g, &b, &a };
+	uint8_t *components[4];
 	bool legacy = false;
 	bool had_none = false;
+	components[0] = &r;
+	components[1] = &g;
+	components[2] = &b;
+	components[3] = &a;
 
 	{ int i;
 	for (i = 0; i < 4; i++) {
