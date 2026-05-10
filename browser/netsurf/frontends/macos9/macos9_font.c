@@ -17,7 +17,7 @@
 #include "netsurf/plot_style.h"
 #include "netsurf/layout.h"
 
-#include "macos9/macos9.h"
+#include "macos9.h"
 #include <libwapcaplet/libwapcaplet.h>
 
 /* Heuristic constants for non-Mac builds */

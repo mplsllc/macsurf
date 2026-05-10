@@ -21,7 +21,7 @@
 #include "utils/errors.h"
 #include "utils/log.h"
 #include "netsurf/fetch.h"
-#include "macos9/macos9.h"
+#include "macos9.h"
 
 #ifdef __MACOS9__
 #include <OpenTransport.h>

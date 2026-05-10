@@ -45,7 +45,7 @@
  */
 
 #include "utils/errors.h"
-#include "macos9/macos9.h"
+#include "macos9.h"
 
 #ifdef __MACOS9__
 

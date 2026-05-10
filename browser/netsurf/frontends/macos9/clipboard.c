@@ -13,7 +13,7 @@
 #include "utils/log.h"
 #include "netsurf/clipboard.h"
 
-#include "macos9/macos9.h"
+#include "macos9.h"
 
 static void
 macos9_clipboard_get(char **buffer, size_t *length)

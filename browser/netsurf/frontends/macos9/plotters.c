@@ -31,7 +31,7 @@ extern size_t macos9_bitmap_get_rowstride(void *bitmap);
 long macos9_plot_text_count = 0;
 long macos9_plot_rect_count = 0;
 
-#include "macos9/macos9.h"
+#include "macos9.h"
 #include "macsurf_debug.h"
 
 #ifdef __MACOS9__

@@ -15,7 +15,7 @@
 #include "netsurf/plot_style.h"
 #include "netsurf/layout.h"
 
-#include "macos9/macos9.h"
+#include "macos9.h"
 
 static nserror
 macos9_font_width(const struct plot_font_style *fstyle,

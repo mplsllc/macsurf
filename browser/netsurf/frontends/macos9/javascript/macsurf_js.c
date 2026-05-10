@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <string.h>
-#include "macos9/macos9.h"
+#include "macos9.h"
 #include "duktape.h"
 #include "macsurf_debug.h"
 #include "macsurf_js.h"

@@ -13,7 +13,7 @@
 #include "utils/log.h"
 #include "netsurf/utf8.h"
 
-#include "macos9/macos9.h"
+#include "macos9.h"
 
 /*
  * strndup is POSIX.1-2008, not available in CW8 C89.

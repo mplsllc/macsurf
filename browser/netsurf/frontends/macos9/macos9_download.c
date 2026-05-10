@@ -13,7 +13,7 @@
 #include "utils/log.h"
 #include "netsurf/download.h"
 
-#include "macos9/macos9.h"
+#include "macos9.h"
 
 static struct gui_download_window *
 macos9_download_create(struct download_context *ctx,

@@ -13,7 +13,7 @@
 #include "utils/log.h"
 #include "netsurf/misc.h"
 
-#include "macos9/macos9.h"
+#include "macos9.h"
 
 static void
 macos9_quit(void)

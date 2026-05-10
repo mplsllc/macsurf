@@ -14,7 +14,7 @@
 #include "netsurf/bitmap.h"
 #include "netsurf/content.h"
 
-#include "macos9/macos9.h"
+#include "macos9.h"
 
 struct macos9_bitmap {
 	int width;

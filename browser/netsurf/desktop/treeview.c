@@ -830,8 +830,9 @@ static nserror treeview__search_walk_cb(
 
 	struct treeview_node_entry *entry = (struct treeview_node_entry *)n;
 	bool matched = false;
+	int i;
 
-	for (int i = 0; i < sw->tree->n_fields; i++) {
+	for (i = 0; i < sw->tree->n_fields; i++) {
 		struct treeview_field *ef = &(sw->tree->fields[i + 1]);
 		if (ef->flags & TREE_FLAG_SEARCHABLE) {
 			if (strcasestr(entry->fields[i].value.data,
@@ -2266,11 +2267,14 @@ treeview_node_expand_internal(treeview *tree, treeview_node *node)
 	node->flags |= TV_NFLAGS_EXPANDED;
 
 	/* And node heights */
-	for (struct treeview_node *n = node;
+	{
+	struct treeview_node *n;
+	for (n = node;
 			(n != NULL) && (n->flags & TV_NFLAGS_EXPANDED);
 			n = n->parent) {
 		n->height += additional_height_entries +
 				additional_height_folders;
+	}
 	}
 
 	if (tree->search.search &&
@@ -2356,10 +2360,13 @@ static nserror treeview_node_contract_cb(treeview_node *n, void *ctx, bool *end)
 
 
 	assert(h_reduction_folder + h_reduction_entry >= 0);
-	for (struct treeview_node *node = n;
+	{
+	struct treeview_node *node;
+	for (node = n;
 			(node != NULL) && (node->flags & TV_NFLAGS_EXPANDED);
 			node = node->parent) {
 		node->height -= h_reduction_folder + h_reduction_entry;
+	}
 	}
 
 	if (data->tree->search.search) {

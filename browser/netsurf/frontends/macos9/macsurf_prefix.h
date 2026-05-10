@@ -92,6 +92,19 @@ typedef bool(nslog_ensure_t)(FILE *fptr);
 #define isascii(c) ((unsigned)(c) <= 0x7F)
 #endif
 
+/* MSL <string.h> is sometimes shadowed by internal lib string.h on the
+ * user access paths. Forward-declare the standard string routines so
+ * callers don't default them to int(). */
+extern char *strtok(char *, const char *);
+extern char *strchr(const char *, int);
+extern char *strrchr(const char *, int);
+extern char *strstr(const char *, const char *);
+extern char *strcpy(char *, const char *);
+extern char *strncpy(char *, const char *, size_t);
+extern char *strcat(char *, const char *);
+extern char *strncat(char *, const char *, size_t);
+extern char *strdup(const char *);
+
 #define inline
 #define __MACOS9__ 1
 #define WITHOUT_ICONV_FILTER 1
@@ -107,6 +120,20 @@ typedef bool(nslog_ensure_t)(FILE *fptr);
 #endif
 #ifndef UNUSED
 #define UNUSED(x) ((void)(x))
+#endif
+
+/* FLEX_ARRAY_LEN_DECL — defined in netsurf/utils/utils.h, but if a
+ * libcss/libdom/libhubbub utils.h wins on the access path it won't
+ * be visible. CW8 accepts an empty flex array length. */
+#ifndef FLEX_ARRAY_LEN_DECL
+#define FLEX_ARRAY_LEN_DECL
+#endif
+
+/* fallthrough — defined in netsurf/utils/utils.h with C++/C2x detection,
+ * but on CW8 the wrong utils.h often wins and fallthrough stays undefined.
+ * Make it a harmless no-op globally. */
+#ifndef fallthrough
+#define fallthrough do {} while(0)
 #endif
 
 /* Duktape JS engine. WITH_DUKTAPE enables the real Duktape engine.

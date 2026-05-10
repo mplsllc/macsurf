@@ -15,7 +15,7 @@
 #include "utils/errors.h"
 #include "utils/log.h"
 
-#include "macos9/macos9.h"
+#include "macos9.h"
 
 #ifdef __MACOS9__
 #include <Timer.h>
