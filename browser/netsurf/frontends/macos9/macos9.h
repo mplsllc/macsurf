@@ -160,6 +160,7 @@ void macos9_window_resize(struct gui_window *g);
 void macos9_windows_te_idle(void);
 void macos9_windows_process_deferred(void);
 struct gui_window *macos9_create_initial_window(void);
+extern struct gui_window *initial_win;
 void macos9_handle_mouse_down(const EventRecord *event);
 void macos9_handle_key_down(const EventRecord *event);
 void macos9_poll(void);

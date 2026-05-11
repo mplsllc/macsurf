@@ -47,6 +47,8 @@
  * compile, link, and gracefully return null when no document is set.
  */
 
+#include <dom/core/exceptions.h>
+
 struct dom_document;
 struct dom_element;
 struct dom_node;
@@ -56,14 +58,12 @@ typedef struct dom_document dom_document;
 typedef struct dom_node     dom_node;
 typedef struct dom_string   dom_string;
 
-typedef int dom_exception;
-#define DOM_NO_ERR 0
-
-/* Real out-of-line functions from libdom src/core/string.c */
-extern dom_exception dom_string_create(const unsigned char *ptr, size_t len,
+/* Real out-of-line functions from libdom src/core/string.c.
+ * Signatures match libdom/include/dom/core/string.h. */
+extern dom_exception dom_string_create(const uint8_t *ptr, size_t len,
 		dom_string **str);
 extern const char   *dom_string_data(const dom_string *str);
-extern size_t        dom_string_length(const dom_string *str);
+extern uint32_t      dom_string_length(dom_string *str);
 
 /* macsurf_dom_dispatch.c — wrappers for libdom static-inline functions.
  * Static inlines have no out-of-line symbol; the dispatch .c creates one. */

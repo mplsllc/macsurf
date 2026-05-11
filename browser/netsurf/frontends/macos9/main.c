@@ -41,7 +41,7 @@ struct netsurf_table macos9_table;
 extern const struct plotter_table macos9_plotters;
 
 static void draw_url_bar(struct gui_window *gw) {
-#ifdef __MACOS__
+#ifdef __MACOS9__
 	RGBColor black = {0,0,0}, white = {0xFFFF, 0xFFFF, 0xFFFF};
 	RGBForeColor(&black); RGBBackColor(&white);
 	TextFont(kFontIDMonaco); TextSize(10); TextFace(0);
@@ -51,7 +51,7 @@ static void draw_url_bar(struct gui_window *gw) {
 }
 
 static void draw_status_bar(struct gui_window *gw) {
-#ifdef __MACOS__
+#ifdef __MACOS9__
 	RGBColor black = {0,0,0}, white = {0xFFFF, 0xFFFF, 0xFFFF};
 	Rect r = gw->status_rect;
 	RGBForeColor(&black); RGBBackColor(&white);
@@ -66,7 +66,7 @@ static void draw_status_bar(struct gui_window *gw) {
 }
 
 static void macos9_init_menus(void) {
-#ifdef __MACOS__
+#ifdef __MACOS9__
 	MenuHandle apple_menu, file_menu, edit_menu, go_menu;
 	apple_menu = NewMenu(MENU_APPLE, "\p\024");
 	AppendMenu(apple_menu, "\pAbout MacSurf...");
@@ -104,7 +104,7 @@ static void macos9_init_menus(void) {
 }
 
 static void macos9_handle_menu(short menu_id, short item) {
-#ifdef __MACOS__
+#ifdef __MACOS9__
 	WindowRef front;
 	struct gui_window *gw;
 	switch (menu_id) {
@@ -148,7 +148,7 @@ static void macos9_handle_menu(short menu_id, short item) {
 }
 
 static void macos9_handle_update(const EventRecord *event) {
-#ifdef __MACOS__
+#ifdef __MACOS9__
 	WindowRef win = (WindowRef)(unsigned long)event->message;
 	struct gui_window *gw = macos9_find_window(win);
 	if (!gw || macos9_quitting) return;
@@ -199,7 +199,7 @@ static void macos9_handle_update(const EventRecord *event) {
 }
 
 void macos9_handle_mouse_down(const EventRecord *event) {
-#ifdef __MACOS__
+#ifdef __MACOS9__
 	WindowRef win;
 	short part = FindWindow(event->where, &win);
 	struct gui_window *gw;
@@ -252,7 +252,7 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 						cpart = FindControl(p, win, &ctrl);
 						if (cpart != 0 && ctrl != NULL) {
 							if (ctrl == gw->vscroll || ctrl == gw->hscroll) {
-								macos9_window_handle_scrollbar_click(gw, ctrl, cpart, NULL);
+								macos9_window_handle_scrollbar_click(gw, ctrl, cpart, &p);
 							} else if (ctrl == gw->back_btn && TrackControl(ctrl, p, NULL)) {
 								macos9_window_back(gw);
 							} else if (ctrl == gw->forward_btn && TrackControl(ctrl, p, NULL)) {
@@ -277,7 +277,7 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 }
 
 void macos9_handle_key_down(const EventRecord *event) {
-#ifdef __MACOS__
+#ifdef __MACOS9__
 	WindowRef win = FrontWindow();
 	struct gui_window *gw = win ? macos9_find_window(win) : NULL;
 	char ch = (char)(event->message & charCodeMask);
@@ -296,7 +296,9 @@ void macos9_handle_key_down(const EventRecord *event) {
 		} else if (ch == 0x1B) {
 			macos9_window_te_deactivate_url(gw);
 		} else {
+			SetPortWindowPort(gw->window);
 			TEKey(ch, gw->url_te);
+			InvalWindowRect(gw->window, &gw->url_rect);
 		}
 	} else {
 		switch (ch) {
@@ -353,7 +355,7 @@ void macos9_poll(void) {
 int main(void) {
 	macsurf_debug_log_init();
 	MS_LOG("== MacSurf start ==");
-#ifdef __MACOS__
+#ifdef __MACOS9__
 #ifndef kInitOTForApplicationMask
 #define kInitOTForApplicationMask 0x00000002
 #endif

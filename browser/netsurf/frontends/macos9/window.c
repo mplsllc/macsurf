@@ -54,8 +54,32 @@ void macos9_window_scroll_by(struct gui_window *g, int dx, int dy) { if(g) macos
 
 void macos9_window_handle_scrollbar_click(struct gui_window *g, ControlRef c, short p, void *lp) {
 #ifdef __MACOS9__
-	Point pt; if(!g || !c) return; pt=*(Point*)lp; SetPortWindowPort(g->window); TrackControl(c, pt, NULL);
-	if(c==g->vscroll) macos9_window_scroll_to(g, g->scroll_x, GetControlValue(c)); else macos9_window_scroll_to(g, GetControlValue(c), g->scroll_y);
+	Point pt;
+	short step = 48, page = 200;
+	int cur, mx;
+	if(!g || !c || !lp) return;
+	pt = *(Point*)lp;
+	SetPortWindowPort(g->window);
+	cur = (c == g->vscroll) ? g->scroll_y : g->scroll_x;
+	mx  = (c == g->vscroll) ? GetControlMaximum(g->vscroll) : GetControlMaximum(g->hscroll);
+	switch (p) {
+	case 20: cur -= step; break;          /* up/left arrow */
+	case 21: cur += step; break;          /* down/right arrow */
+	case 22: cur -= page; break;          /* page up/left */
+	case 23: cur += page; break;          /* page down/right */
+	case 129:                              /* thumb drag */
+		TrackControl(c, pt, NULL);
+		cur = GetControlValue(c);
+		break;
+	default:
+		TrackControl(c, pt, NULL);
+		cur = GetControlValue(c);
+		break;
+	}
+	if (cur < 0) cur = 0;
+	if (cur > mx) cur = mx;
+	if (c == g->vscroll) macos9_window_scroll_to(g, g->scroll_x, cur);
+	else                 macos9_window_scroll_to(g, cur, g->scroll_y);
 #endif
 }
 
@@ -131,6 +155,8 @@ void macos9_windows_process_deferred(void) {
 	}
 }
 
+struct gui_window *initial_win = NULL;
+
 struct gui_window *macos9_create_initial_window(void) {
 	struct browser_window *bw = NULL;
 	nserror e;
@@ -138,6 +164,7 @@ struct gui_window *macos9_create_initial_window(void) {
 	e = browser_window_create(BW_CREATE_HISTORY, NULL, NULL, NULL, &bw);
 	if (e != NSERROR_OK) { MS_LOG("create_initial: browser_window_create FAIL"); return NULL; }
 	MS_LOG("create_initial: bw attached");
+	initial_win = window_list;
 	return window_list;
 }
 
