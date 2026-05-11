@@ -495,20 +495,13 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		dom_string *tag_name = NULL;
 		if (dom_element_get_tag_name(ctx->n, &tag_name) == DOM_NO_ERR &&
 				tag_name != NULL) {
-			bool m;
 			bool skip = false;
-			if (dom_string_caseless_lwc_isequal(tag_name,
-					corestring_lwc_style, &m) == DOM_NO_ERR && m) skip = true;
-			else if (dom_string_caseless_lwc_isequal(tag_name,
-					corestring_lwc_title, &m) == DOM_NO_ERR && m) skip = true;
-			else if (dom_string_caseless_lwc_isequal(tag_name,
-					corestring_lwc_meta, &m) == DOM_NO_ERR && m) skip = true;
-			else if (dom_string_caseless_lwc_isequal(tag_name,
-					corestring_lwc_link, &m) == DOM_NO_ERR && m) skip = true;
-			else if (dom_string_caseless_lwc_isequal(tag_name,
-					corestring_lwc_base, &m) == DOM_NO_ERR && m) skip = true;
-			else if (dom_string_caseless_lwc_isequal(tag_name,
-					corestring_lwc_head, &m) == DOM_NO_ERR && m) skip = true;
+			if (dom_string_caseless_lwc_isequal(tag_name, corestring_lwc_style)) skip = true;
+			else if (dom_string_caseless_lwc_isequal(tag_name, corestring_lwc_title)) skip = true;
+			else if (dom_string_caseless_lwc_isequal(tag_name, corestring_lwc_meta)) skip = true;
+			else if (dom_string_caseless_lwc_isequal(tag_name, corestring_lwc_link)) skip = true;
+			else if (dom_string_caseless_lwc_isequal(tag_name, corestring_lwc_base)) skip = true;
+			else if (dom_string_caseless_lwc_isequal(tag_name, corestring_lwc_head)) skip = true;
 			dom_string_unref(tag_name);
 			if (skip) {
 				*convert_children = false;
