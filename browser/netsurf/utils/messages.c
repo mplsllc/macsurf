@@ -37,7 +37,7 @@
 #include "utils/log.h"
 #include "utils/messages.h"
 #include "utils/utils.h"
-#include "utils/hashtable.h"
+#include "utils/ns_hashtable.h"
 
 /** Messages are stored in a fixed-size hash table. */
 #define HASH_SIZE 101

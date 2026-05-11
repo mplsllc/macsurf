@@ -15,6 +15,8 @@
 #define _ALIGNED
 #endif
 
+#include "bytecode/bytecode.h"
+#include "css_internal_stylesheet.h"
 #include "parse/language.h"
 
 static inline bool is_css_inherit(css_language *c, const css_token *token)

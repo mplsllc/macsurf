@@ -27,6 +27,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+#include "utils/errors.h"
 #include "netsurf/plot_style.h"
 
 struct bitmap;

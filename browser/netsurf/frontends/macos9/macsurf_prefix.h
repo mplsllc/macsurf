@@ -41,6 +41,32 @@
     #define _MODE_T
     typedef unsigned long mode_t;
   #endif
+  /* Lock struct tm definition here so MSL <time.h> and our sys/time.h
+   * shim can't both define it (they use different guards otherwise). */
+  #ifndef _STRUCT_TM
+  #define _STRUCT_TM
+  struct tm {
+      int tm_sec;
+      int tm_min;
+      int tm_hour;
+      int tm_mday;
+      int tm_mon;
+      int tm_year;
+      int tm_wday;
+      int tm_yday;
+      int tm_isdst;
+  };
+  extern struct tm *localtime(const time_t *);
+  extern struct tm *gmtime(const time_t *);
+  extern time_t mktime(struct tm *);
+  extern time_t time(time_t *);
+  extern char *ctime(const time_t *);
+  extern size_t strftime(char *, size_t, const char *, const struct tm *);
+  #endif
+  /* Block MSL <time.h> entirely — its struct tm conflicts. */
+  #ifndef _TIME_H
+  #define _TIME_H
+  #endif
 #else
   #include <sys/types.h>
   #include <sys/stat.h>
@@ -78,7 +104,23 @@ typedef bool(nslog_ensure_t)(FILE *fptr);
 #endif
 
 #ifdef __MWERKS__
-#include <stat.h>
+/* Block MSL's stat.h variants — our shim defines struct stat. */
+#ifndef _STAT_H
+#define _STAT_H
+#endif
+#ifndef _STAT_H_
+#define _STAT_H_
+#endif
+#ifndef __STAT_H__
+#define __STAT_H__
+#endif
+#ifndef _SYS_STAT_H
+#define _SYS_STAT_H
+#endif
+#ifndef _SYS_STAT_H_
+#define _SYS_STAT_H_
+#endif
+#include "stat.h"
 #include <fcntl.h>
 #include "mac_dirent.h"
 #endif
@@ -104,6 +146,15 @@ extern char *strncpy(char *, const char *, size_t);
 extern char *strcat(char *, const char *);
 extern char *strncat(char *, const char *, size_t);
 extern char *strdup(const char *);
+extern int   strcmp(const char *, const char *);
+extern int   strncmp(const char *, const char *, size_t);
+extern int   strcasecmp(const char *, const char *);
+extern int   strncasecmp(const char *, const char *, size_t);
+extern size_t strlen(const char *);
+extern void *memcpy(void *, const void *, size_t);
+extern void *memmove(void *, const void *, size_t);
+extern void *memset(void *, int, size_t);
+extern int   memcmp(const void *, const void *, size_t);
 
 #define inline
 #define __MACOS9__ 1
@@ -117,6 +168,9 @@ extern char *strdup(const char *);
  * cascades from the lib internals. */
 #ifndef N_ELEMENTS
 #define N_ELEMENTS(x) (sizeof((x)) / sizeof((x)[0]))
+#endif
+#ifndef NOF_ELEMENTS
+#define NOF_ELEMENTS(x) (sizeof((x)) / sizeof((x)[0]))
 #endif
 #ifndef UNUSED
 #define UNUSED(x) ((void)(x))
@@ -134,6 +188,40 @@ extern char *strdup(const char *);
  * Make it a harmless no-op globally. */
 #ifndef fallthrough
 #define fallthrough do {} while(0)
+#endif
+
+/* netsurf/inttypes.h's PRI* macros sometimes don't reach every TU.
+ * Provide CW8-compatible fallbacks (no z/Z modifiers — CW8 MSL printf
+ * doesn't accept them; use long-equivalents). */
+#ifndef PRIsizet
+#define PRIsizet "lu"
+#endif
+#ifndef PRIssizet
+#define PRIssizet "ld"
+#endif
+#ifndef PRId32
+#define PRId32 "ld"
+#endif
+#ifndef PRIu32
+#define PRIu32 "lu"
+#endif
+#ifndef PRIx32
+#define PRIx32 "lx"
+#endif
+#ifndef PRIu16
+#define PRIu16 "u"
+#endif
+#ifndef PRId16
+#define PRId16 "d"
+#endif
+#ifndef PRId64
+#define PRId64 "lld"
+#endif
+#ifndef PRIu64
+#define PRIu64 "llu"
+#endif
+#ifndef PRIxPTR
+#define PRIxPTR "lx"
 #endif
 
 /* Duktape JS engine. WITH_DUKTAPE enables the real Duktape engine.

@@ -36,7 +36,8 @@
 #include <errno.h>
 
 #include "utils/log.h"
-#include "utils/hashtable.h"
+#include "utils/errors.h"
+#include "utils/ns_hashtable.h"
 
 
 struct hash_entry {

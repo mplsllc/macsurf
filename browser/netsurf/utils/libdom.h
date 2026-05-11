@@ -27,6 +27,8 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+#include "utils/errors.h"
+
 #include <dom/dom.h>
 
 #include <dom/bindings/hubbub/parser.h>

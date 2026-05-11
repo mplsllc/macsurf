@@ -1,18 +1,23 @@
+/*
+ * MacSurf shim — sys/stat.h
+ * Inlined copy of shims/stat.h so MSL's <sys/stat.h> isn't pulled in
+ * (which chains to time.h with a conflicting struct tm).
+ */
+#ifndef MACSURF_SYS_STAT_H
+#define MACSURF_SYS_STAT_H
+
 #ifndef MACSURF_STAT_H
 #define MACSURF_STAT_H
 
-#ifdef __RETRO68__
-#include <sys/stat.h>
-#else
-/* Original shim content */
 #include <stddef.h>
-#include "mac_types.h"
-typedef long off_t;
+
+typedef long off_t_;
 struct stat {
-    off_t st_size;
+    off_t_ st_size;
     long st_mtime;
     unsigned long st_mode;
 };
+
 #ifndef S_IFMT
 #define S_IFMT  0xF000
 #endif
@@ -40,8 +45,10 @@ struct stat {
 #ifndef S_IRWXU
 #define S_IRWXU (S_IRUSR|S_IWUSR|S_IXUSR)
 #endif
+
 int stat(const char *path, struct stat *buf);
 int fstat(int fd, struct stat *buf);
-#endif
 
-#endif
+#endif /* MACSURF_STAT_H */
+
+#endif /* MACSURF_SYS_STAT_H */
