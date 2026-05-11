@@ -43,7 +43,7 @@ static const char css_default[] =
 	"dir,hr,menu,pre,header,footer,nav,section,article,aside,"
 	"main,figure,figcaption{display:block}"
 	"li{display:list-item}"
-	"head{display:none}"
+	"head,style,script,title,meta,link,base,template{display:none}"
 	/* Tables */
 	"table{display:table;border-spacing:2px}"
 	"tr{display:table-row}"
