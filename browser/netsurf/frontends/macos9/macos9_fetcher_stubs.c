@@ -63,7 +63,7 @@ static const char css_default[] =
 	"caption{display:table-caption;text-align:center}"
 	"th{font-weight:bolder;text-align:center}"
 	/* Body + headings */
-	"body{margin:8px;line-height:1.12;color:#000;background-color:#FF0000}"
+	"body{margin:8px;line-height:1.12;color:#000;background-color:#fff}"
 	"h1{font-size:2em;margin:.67em 0;font-weight:bolder}"
 	"h2{font-size:1.5em;margin:.75em 0;font-weight:bolder}"
 	"h3{font-size:1.17em;margin:.83em 0;font-weight:bolder}"
@@ -417,6 +417,8 @@ stub_send_for(struct stub_fetch_ctx *ctx)
 	char header[96];
 	int hlen;
 
+	MS_LOG("stub snd");
+	fetch_set_http_code(ctx->parent, 200);
 	stub_body_for(ctx, &body, &body_len, &mime);
 
 	hlen = 0;
@@ -447,8 +449,9 @@ stub_send_for(struct stub_fetch_ctx *ctx)
 	}
 
 	msg.type = FETCH_FINISHED;
-	fetch_send_callback(&msg, ctx->parent);
 	ctx->done = true;
+	fetch_send_callback(&msg, ctx->parent);
+	MS_LOG("stub fin");
 }
 
 static void
