@@ -271,6 +271,7 @@ html_css_process_modified_style(html_content *c, struct html_stylesheet *s)
 	hlcache_handle *sheet = NULL;
 	nserror error;
 
+	MS_LOG("html_css inline style: process_modified");
 	error = html_stylesheet_from_domnode(c, s->node, &sheet);
 	if (error != NSERROR_OK) {
 		NSLOG(netsurf, INFO, "Failed to update sheet");
@@ -332,12 +333,14 @@ bool html_css_update_style(html_content *c, dom_node *style)
 	unsigned int i;
 	struct html_stylesheet *s;
 
+	MS_LOG("html_css inline style: update");
 	/* Find sheet */
 	for (i = 0, s = c->stylesheets;	i != c->stylesheet_count; i++, s++) {
 		if (s->node == style)
 			break;
 	}
 	if (i == c->stylesheet_count) {
+		MS_LOG("html_css inline style: create new");
 		s = html_create_style_element(c, style);
 	}
 	if (s == NULL) {
