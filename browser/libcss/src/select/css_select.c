@@ -23,6 +23,8 @@
 #include "select/hash.h"
 #include "select/mq.h"
 #include "select/propset.h"
+
+#include "macsurf_debug.h"
 #include "css_internal_select_font_face.h"
 #include "select/select.h"
 #include "select/strings.h"
@@ -2029,6 +2031,23 @@ css_error match_selectors_in_sheet(css_select_ctx *ctx,
 	css_select_rule_source src = { CSS_SELECT_RULE_SRC_ELEMENT, 0 };
 	struct css_hash_selection_requirments req;
 	css_error error;
+
+	/* Diagnostic (css_select.c variant -- tagged "msis_cs"
+	 * so the log distinguishes which of select.c vs css_select.c
+	 * is the file actually compiled in the project). */
+	{
+		static long msis_count = 0;
+		if (msis_count < 20) {
+			macsurf_debug_log_writef(
+				"msis_cs[%ld] sheet=%p selectors=%p rule_list=%p disabled=%d",
+				msis_count,
+				(void *)sheet,
+				(void *)sheet->selectors,
+				(void *)sheet->rule_list,
+				(int)sheet->disabled);
+			msis_count++;
+		}
+	}
 
 	/* Set up general selector chain requirments */
 	req.media = state->media;
