@@ -7,6 +7,7 @@
 #include "netsurf/browser_window.h"
 #include "netsurf/plotters.h"
 #include "desktop/gui_table.h"
+#include "utils/nsoption.h"
 #include "macsurf_config.h"
 #include "macsurf_debug.h"
 
