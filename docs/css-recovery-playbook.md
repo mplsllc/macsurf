@@ -115,6 +115,75 @@ fixes23 cleared `html_css.c`. fixes30 confirmed `css_select.c` was the compiled 
 
 **Recommendation:** in a quiet round, delete the remaining obsolete siblings (`select.c`, `parse.c`, `font_face.c`) once we're sure the build is stable on the current canonical files. The trap will keep biting otherwise.
 
+## The box-tree shape invariant — fixes37 / fixes38 / fixes39
+
+A second-class trap that swallowed three rounds while trying to land `::before` / `::after` generated content. Two stacked bugs, only the first of which the obvious-looking patch catches.
+
+### Bug A: `c_item` is only initialised when `css_computed_content` returns SET
+
+`css_computed_content(style, &c_item)` returns one of four states:
+
+| Value | Name | `c_item` valid? |
+|---|---|---|
+| 0 | `CSS_CONTENT_INHERIT` | **No** (libcss does not write to it) |
+| 1 | `CSS_CONTENT_NONE`    | **No** |
+| 2 | `CSS_CONTENT_NORMAL`  | **No** |
+| 3 | `CSS_CONTENT_SET`     | **Yes** — points to a `CSS_COMPUTED_CONTENT_NONE`-terminated array |
+
+The pre-fixes37 stub only checked `== CSS_CONTENT_NORMAL` to bail out. fixes37 then started walking `c_item` to extract the content text — but on INHERIT or NONE the pointer was uninitialised stack memory, and the walk found no `CONTENT_NONE` terminator. Effective infinite loop; fixes38 traced the hang to this and switched the check to `!= CSS_CONTENT_SET || c_item == NULL`.
+
+**Rule:** always gate iteration of `c_item` on `css_computed_content(...) == CSS_CONTENT_SET` AND a `c_item != NULL` belt-and-braces test, in that order so short-circuit evaluation never even reads `c_item` on the non-SET paths.
+
+### Bug B: text under a block must live inside an INLINE_CONTAINER
+
+This is the one that crashed the browser even after Bug A was fixed. NetSurf's box tree has a strict shape contract that `box_normalise` enforces during the post-construction cleanup pass:
+
+- A `BOX_BLOCK` can have `BOX_BLOCK` children, or
+- A `BOX_BLOCK` can have `BOX_INLINE_CONTAINER` children, which contain `BOX_INLINE` and `BOX_TEXT` children
+- A `BOX_BLOCK` **may NOT have a `BOX_TEXT` directly as a child**
+
+The fixes37 generated-content code created a `BOX_BLOCK` for the pseudo-element and attached a `BOX_TEXT` directly under it. The element built fine. The cascade selected fine. `dom_to_box` walked the DOM, called `box_construct_element`, called `box_construct_generate` for the `:before` pseudo — but the moment `box_normalise` walked the result post-construction, it found the bare `BOX_TEXT` under `BOX_BLOCK` and crashed. The debug log truncated immediately after `css_select_ctx: appended=...` with no `box convert` line.
+
+**Symptom signature:**
+- Log ends right at `css_select_ctx` (cascade built, OK)
+- No `box convert: layout=... total=...` line
+- No crash trap in the log file
+- App exits silently on launch, or hangs hard if there's also a loop
+
+**Rule:** when synthesising boxes in `box_construct_generate` or any similar pseudo-element / generated-content path, the only safe pattern for text content is:
+
+```
+BOX_INLINE  (the pseudo-element itself; text fields set directly on it)
+  └── (no separate BOX_TEXT child)
+```
+
+Where this inline box gets inserted INTO an `BOX_INLINE_CONTAINER` that either already exists at the insertion point or is auto-created at the same time. Do **not** create:
+
+```
+BOX_BLOCK
+  └── BOX_TEXT   ❌  box_normalise crash
+```
+
+or
+
+```
+BOX_BLOCK
+  └── BOX_INLINE  ❌  same problem, missing INLINE_CONTAINER wrapper
+```
+
+The list-marker code (`box_construct_marker`) shows the safe pattern: the marker is a `BOX_BLOCK` with `marker->text` set **directly on the marker box itself** — no separate `BOX_TEXT` child — and the marker is then attached as `box->list_marker` (a SIDE pointer, not a regular child). The block-with-text-field-set pattern works only because `list_marker` is treated specially throughout layout.
+
+### Recovery if generated content support is attempted again
+
+The right approach (untried as of fixes39):
+1. Generate the pseudo-element as a `BOX_INLINE`, not `BOX_BLOCK` / `BOX_TABLE`
+2. Concatenate the content-item strings into a buffer (the fixes37 walk loop was correct here)
+3. Set `gen->text = concat; gen->length = total;` directly on the inline box
+4. Find or auto-create a `BOX_INLINE_CONTAINER` at the insertion point in the parent's child list
+5. Add the inline box as a child of that container
+
+If the test page exercises generated content and the browser silently doesn't open after applying — Bug B is back. Check the box tree shape first, before adding diagnostic probes.
+
 ## How CSS flows end-to-end in MacSurf
 
 When CSS works (current state, post-fixes33), the path is:
