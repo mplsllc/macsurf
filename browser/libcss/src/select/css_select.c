@@ -2096,10 +2096,33 @@ css_error match_selectors_in_sheet(css_select_ctx *ctx,
 	if (error != CSS_OK)
 		goto cleanup;
 
+	/* Diagnostic: dump iterator-head pointers and the first
+	 * pending check.  All NULL pointers (= &empty_selector
+	 * deref) mean the hash returned no candidates for this
+	 * element on this sheet. */
+	{
+		static long iter_count = 0;
+		if (iter_count < 20) {
+			bool pending = _selectors_pending(node_selectors,
+					id_selectors, class_selectors,
+					n_classes, univ_selectors);
+			macsurf_debug_log_writef(
+				"iter[%ld] node_sel=%p *node=%p univ=%p *univ=%p pending=%d",
+				iter_count,
+				(void *)node_selectors,
+				(void *)(node_selectors ? *node_selectors : NULL),
+				(void *)univ_selectors,
+				(void *)(univ_selectors ? *univ_selectors : NULL),
+				(int)pending);
+			iter_count++;
+		}
+	}
+
 	/* Process matching selectors, if any */
 	while (_selectors_pending(node_selectors, id_selectors,
 			class_selectors, n_classes, univ_selectors)) {
 		const css_selector *selector;
+		static long chain_count = 0;
 
 		/* Selectors must be matched in ascending order of specificity
 		 * and rule index. (c.f. css__outranks_existing())
@@ -2113,6 +2136,14 @@ css_error match_selectors_in_sheet(css_select_ctx *ctx,
 		/* We know there are selectors pending, so should have a
 		 * selector here */
 		assert(selector != NULL);
+
+		if (chain_count < 20) {
+			macsurf_debug_log_writef(
+				"chain[%ld] selector=%p src=%d",
+				chain_count, (void *)selector,
+				(int)src.source);
+			chain_count++;
+		}
 
 		/* Match and handle the selector chain */
 		error = match_selector_chain(ctx, selector, state);
