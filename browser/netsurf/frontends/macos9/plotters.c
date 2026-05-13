@@ -310,6 +310,24 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	macos9_plot_rect_count++;
 	macos9_rect_from_ns(rectangle, &r);
 
+	/* Diagnostic: dump fill / stroke colour + rect for the first few
+	 * rectangles each redraw so we can compare what libcss decided
+	 * vs. what UA default would produce. */
+	if (macos9_plot_rect_count <= 8) {
+		unsigned int fr = (unsigned int)((pstyle->fill_colour >>  0) & 0xff);
+		unsigned int fg = (unsigned int)((pstyle->fill_colour >>  8) & 0xff);
+		unsigned int fb = (unsigned int)((pstyle->fill_colour >> 16) & 0xff);
+		unsigned int sr = (unsigned int)((pstyle->stroke_colour >>  0) & 0xff);
+		unsigned int sg = (unsigned int)((pstyle->stroke_colour >>  8) & 0xff);
+		unsigned int sb = (unsigned int)((pstyle->stroke_colour >> 16) & 0xff);
+		macsurf_debug_log_writef(
+			"plot_rect[%d] fill=%d/%d/%d ft=%d stroke=%d/%d/%d st=%d at (%d,%d,%d,%d)",
+			(int)macos9_plot_rect_count,
+			(int)fr, (int)fg, (int)fb, (int)pstyle->fill_type,
+			(int)sr, (int)sg, (int)sb, (int)pstyle->stroke_type,
+			(int)r.left, (int)r.top, (int)r.right, (int)r.bottom);
+	}
+
 #ifdef __MACOS9__
 	/* Use RoundRect when border_radius is set (fixes172). */
 	if (pstyle->border_radius > 0) {
@@ -574,6 +592,31 @@ macos9_plot_text(const struct redraw_context *ctx,
 
 	macos9_colour_to_rgb(fstyle->foreground, &rgb);
 	RGBForeColor(&rgb);
+
+	/* Diagnostic: dump foreground colour + first 16 chars of the
+	 * string for the first ~12 text plots each redraw, so we can
+	 * see whether libcss applied <style> rules (e.g. h1 colour
+	 * navy, body text colour, etc.) or whether everything stayed
+	 * UA default black. */
+	if (macos9_plot_text_count <= 12) {
+		unsigned int fr = (unsigned int)((fstyle->foreground >>  0) & 0xff);
+		unsigned int fg = (unsigned int)((fstyle->foreground >>  8) & 0xff);
+		unsigned int fb = (unsigned int)((fstyle->foreground >> 16) & 0xff);
+		char snippet[20];
+		size_t copy = length < 16 ? length : 16;
+		size_t i;
+		for (i = 0; i < copy; i++) {
+			char ch = text[i];
+			snippet[i] = (ch >= 32 && ch < 127) ? ch : '.';
+		}
+		snippet[copy] = '\0';
+		macsurf_debug_log_writef(
+			"plot_text[%d] fg=%d/%d/%d sz=%d face=%d at (%d,%d) \"%s\"",
+			(int)macos9_plot_text_count,
+			(int)fr, (int)fg, (int)fb,
+			(int)size, (int)face, (int)x, (int)y,
+			snippet);
+	}
 
 #ifdef __MACOS9__
 	{
