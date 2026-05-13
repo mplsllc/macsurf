@@ -26,6 +26,7 @@ css_error css__parse_macsurf_gradient(css_language *c,
 	css_color color1 = 0, color2 = 0;
 	uint16_t type1 = 0, type2 = 0;
 	enum flag_value flag_value;
+	bool match = false;
 
 	token = parserutils_vector_peek(vector, *ctx);
 	if (token == NULL) return CSS_INVALID;
@@ -36,11 +37,22 @@ css_error css__parse_macsurf_gradient(css_language *c,
 		return css_stylesheet_style_flag_value(result, flag_value, CSS_PROP_MACSURF_GRADIENT);
 	}
 
-	/* Look for linear-gradient(...) */
+	/* Look for linear-gradient(...).
+	 *
+	 * fixes44 — lwc_string_caseless_isequal returns an lwc_error
+	 * (0 = OK) and writes the match result to its third arg. The
+	 * fixes37 implementation passed NULL for that arg and treated
+	 * the return value as a bool, which is inverted: 0 == success
+	 * read as FALSE always sent the parser into the else branch
+	 * below, dropping every -macsurf-gradient declaration with
+	 * CSS_INVALID. Use the canonical pattern (bool match;
+	 * call; check err==OK && match). */
 	if (token->type == CSS_TOKEN_FUNCTION &&
-	    lwc_string_caseless_isequal(token->idata, c->strings[LINEAR_GRADIENT], NULL)) {
+	    lwc_string_caseless_isequal(token->idata,
+	        c->strings[LINEAR_GRADIENT], &match) == lwc_error_ok &&
+	    match) {
 		parserutils_vector_iterate(vector, ctx);
-		
+
 		/* Parse first color */
 		error = css__parse_colour_specifier(c, vector, ctx, &type1, &color1);
 		if (error != CSS_OK) { *ctx = orig_ctx; return error; }
