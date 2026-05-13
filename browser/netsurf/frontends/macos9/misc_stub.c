@@ -117,18 +117,14 @@ float strtof(const char *str, char **endptr) {
 	return (float)strtod(str, endptr);
 }
 
-/* MSL_All_Carbon.Lib's strtold.o reports as Invalid object code on at
- * least one CW8 install. Provide our own so the linker doesn't pull the
- * bad version in. We don't actually use long double anywhere; this just
- * needs to satisfy the symbol. */
-long double strtold(const char *str, char **endptr) {
-	return (long double)strtod(str, endptr);
-}
+/* strtold lives in MSL_C_Carbon.Lib — do not stub it here or the
+ * linker raises a "previously defined" warning and ignores the lib
+ * copy. (Earlier rounds stubbed strtold when MSL_All_Carbon.Lib's
+ * strtold.o reported as Invalid object code; after swapping to
+ * MSL_C_Carbon.Lib the stub became redundant and conflicts.) */
 
-/* If MSL_All_Carbon.Lib has to be dropped (its strtold.o is corrupted),
- * swap to MSL_C_Carbon.Lib in the project library list. MSL_C_Carbon
- * doesn't ship strdup / strcasecmp / strncasecmp — stub them here so
- * the swap is drop-in. */
+/* MSL_C_Carbon.Lib doesn't ship strdup / strcasecmp / strncasecmp —
+ * stub them here so the swap from MSL_All_Carbon is drop-in. */
 char *strdup(const char *s) {
 	size_t n;
 	char *r;
