@@ -71,7 +71,10 @@ typedef enum {
 	 * the top/start colour, fill_colour2 is the bottom/end colour.
 	 * The rectangle plotter is responsible for interpolating row
 	 * by row. */
-	PLOT_OP_TYPE_LINEAR_GRADIENT
+	PLOT_OP_TYPE_LINEAR_GRADIENT,
+	/* fixes48: two-stop horizontal linear gradient. fill_colour is
+	 * the left/start colour, fill_colour2 is the right/end colour. */
+	PLOT_OP_TYPE_LINEAR_GRADIENT_H
 } plot_operation_type_t;
 
 
@@ -85,9 +88,13 @@ typedef struct plot_style_s {
         plot_operation_type_t fill_type; /**< Fill plot type */
         colour fill_colour; /**< Colour of fill */
         plot_style_fixed border_radius; /**< Corner radius */
-        plot_style_fixed box_shadow; /**< Box shadow (simplified) */
+        plot_style_fixed box_shadow; /**< Box shadow h-offset, fixed-point */
         /* fixes47: second endpoint colour for PLOT_OP_TYPE_LINEAR_GRADIENT */
         colour fill_colour2;
+        /* fixes48: box-shadow v-offset (fixed-point) and shadow colour.
+         * box_shadow_color of 0 means use the default 40% grey. */
+        plot_style_fixed box_shadow_y;
+        colour box_shadow_color;
 } plot_style_t;
 
 /**

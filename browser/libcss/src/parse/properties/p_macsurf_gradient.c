@@ -39,19 +39,64 @@ css_error css__parse_macsurf_gradient(css_language *c,
 
 	/* Look for linear-gradient(...).
 	 *
-	 * fixes44 — lwc_string_caseless_isequal returns an lwc_error
-	 * (0 = OK) and writes the match result to its third arg. The
-	 * fixes37 implementation passed NULL for that arg and treated
-	 * the return value as a bool, which is inverted: 0 == success
-	 * read as FALSE always sent the parser into the else branch
-	 * below, dropping every -macsurf-gradient declaration with
-	 * CSS_INVALID. Use the canonical pattern (bool match;
-	 * call; check err==OK && match). */
+	 * fixes44 -- inverted-predicate fix (see git log).
+	 * fixes48 -- detect optional `to <side>` direction prefix.
+	 *   linear-gradient(to right, c1, c2)  -> horizontal
+	 *   linear-gradient(to left, c1, c2)   -> horizontal (renderer
+	 *                                          treats as right; cheap
+	 *                                          first-cut)
+	 *   linear-gradient(to top|bottom, c1, c2) -> vertical
+	 *   linear-gradient(c1, c2)            -> vertical (default).
+	 * Direction is encoded in the emitted OPV value:
+	 *   0x0080 = SET vertical (default, matches fixes37)
+	 *   0x00C0 = SET horizontal
+	 */
 	if (token->type == CSS_TOKEN_FUNCTION &&
 	    lwc_string_caseless_isequal(token->idata,
 	        c->strings[LINEAR_GRADIENT], &match) == lwc_error_ok &&
 	    match) {
+		bool horizontal = false;
+		uint16_t set_value = 0x0080;
 		parserutils_vector_iterate(vector, ctx);
+
+		/* Optional `to <side>` direction prefix. */
+		token = parserutils_vector_peek(vector, *ctx);
+		if (token != NULL && token->type == CSS_TOKEN_IDENT) {
+			bool to_match = false;
+			if (lwc_string_caseless_isequal(token->idata,
+					c->strings[TO], &to_match)
+					== lwc_error_ok && to_match) {
+				parserutils_vector_iterate(vector, ctx);
+				/* Next ident: right|left|top|bottom */
+				token = parserutils_vector_peek(vector, *ctx);
+				if (token != NULL &&
+				    token->type == CSS_TOKEN_IDENT) {
+					bool side_match = false;
+					if ((lwc_string_caseless_isequal(
+					        token->idata,
+					        c->strings[LIBCSS_RIGHT],
+					        &side_match) == lwc_error_ok
+					     && side_match) ||
+					    (lwc_string_caseless_isequal(
+					        token->idata,
+					        c->strings[LIBCSS_LEFT],
+					        &side_match) == lwc_error_ok
+					     && side_match)) {
+						horizontal = true;
+					}
+					parserutils_vector_iterate(vector, ctx);
+				}
+				/* Optional comma after direction. */
+				token = parserutils_vector_peek(vector, *ctx);
+				if (token != NULL && token->type == CSS_TOKEN_CHAR &&
+				    lwc_string_data(token->idata)[0] == ',')
+					parserutils_vector_iterate(vector, ctx);
+			}
+		}
+
+		if (horizontal) {
+			set_value = 0x00C0;
+		}
 
 		/* Parse first color */
 		error = css__parse_colour_specifier(c, vector, ctx, &type1, &color1);
@@ -70,12 +115,14 @@ css_error css__parse_macsurf_gradient(css_language *c,
 		token = parserutils_vector_peek(vector, *ctx);
 		if (token != NULL && token->type == CSS_TOKEN_CHAR && lwc_string_data(token->idata)[0] == ')')
 			parserutils_vector_iterate(vector, ctx);
-	} else {
-		return CSS_INVALID;
+
+		error = css__stylesheet_style_appendOPV(result,
+				CSS_PROP_MACSURF_GRADIENT, 0, set_value);
+		if (error != CSS_OK) return error;
+
+		return css__stylesheet_style_vappend(result, 2,
+				color1, color2);
 	}
 
-	error = css__stylesheet_style_appendOPV(result, CSS_PROP_MACSURF_GRADIENT, 0, 0x0080 /* SET */);
-	if (error != CSS_OK) return error;
-
-	return css__stylesheet_style_vappend(result, 2, color1, color2);
+	return CSS_INVALID;
 }

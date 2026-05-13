@@ -358,18 +358,32 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	 * solid offset rect at 50% grey -- the recognisable Mac OS
 	 * floating-window shadow look. */
 #ifdef __MACOS9__
-	if (pstyle->box_shadow != 0 && pstyle->fill_type != PLOT_OP_TYPE_NONE) {
-		short off = (short)(pstyle->box_shadow >> PLOT_STYLE_RADIX);
-		if (off > 0 && off < 16) {
+	if ((pstyle->box_shadow != 0 || pstyle->box_shadow_y != 0) &&
+	    pstyle->fill_type != PLOT_OP_TYPE_NONE) {
+		short hoff = (short)(pstyle->box_shadow   >> PLOT_STYLE_RADIX);
+		short voff = (short)(pstyle->box_shadow_y >> PLOT_STYLE_RADIX);
+		/* fixes48 -- defensive clamp; pages with absurd offsets
+		 * (e.g. inset shadows we don't render specially) still
+		 * shouldn't blow past the visible window. */
+		if (hoff < -16) hoff = -16;
+		if (hoff >  16) hoff =  16;
+		if (voff < -16) voff = -16;
+		if (voff >  16) voff =  16;
+		if (hoff != 0 || voff != 0) {
 			RGBColor sh;
 			Rect s;
 			RgnHandle saved_clip;
-			sh.red = sh.green = sh.blue = 0x6666;
+			if (pstyle->box_shadow_color != 0) {
+				macos9_colour_to_rgb(
+					pstyle->box_shadow_color, &sh);
+			} else {
+				sh.red = sh.green = sh.blue = 0x6666;
+			}
 			s = r;
-			s.left  = (short)(s.left  + off);
-			s.top   = (short)(s.top   + off);
-			s.right = (short)(s.right + off);
-			s.bottom = (short)(s.bottom + off);
+			s.left  = (short)(s.left  + hoff);
+			s.right = (short)(s.right + hoff);
+			s.top    = (short)(s.top    + voff);
+			s.bottom = (short)(s.bottom + voff);
 			RGBForeColor(&sh);
 			saved_clip = macos9_push_clip();
 			PaintRect(&s);
@@ -378,27 +392,30 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	}
 #endif
 
-	/* fixes47 -- real vertical linear gradient. fill_colour is the
-	 * top stop, fill_colour2 is the bottom stop. Interpolate row by
-	 * row in 16-bit RGB space (RGBColor is 16-bit per channel),
-	 * using a 1.8 fixed-point t parameter to keep the loop on
-	 * 32-bit integer math (CW8 PPC's long-long codegen is unsafe). */
+	/* fixes47 -- real vertical linear gradient (top stop -> bottom).
+	 * fixes48 -- horizontal variant fills left-to-right.
+	 * Both interpolate in 16-bit RGB with 1.8 fixed-point t, all
+	 * 32-bit long math (CW8 PPC long-long codegen is unsafe). */
 #ifdef __MACOS9__
-	if (pstyle->fill_type == PLOT_OP_TYPE_LINEAR_GRADIENT) {
+	if (pstyle->fill_type == PLOT_OP_TYPE_LINEAR_GRADIENT ||
+	    pstyle->fill_type == PLOT_OP_TYPE_LINEAR_GRADIENT_H) {
+		bool horiz = (pstyle->fill_type ==
+				PLOT_OP_TYPE_LINEAR_GRADIENT_H);
 		RGBColor c1;
 		RGBColor c2;
 		RGBColor cur;
-		long h;
-		long y;
+		long span;
+		long i;
 		long denom;
 		RgnHandle saved_clip;
 		macos9_colour_to_rgb(pstyle->fill_colour,  &c1);
 		macos9_colour_to_rgb(pstyle->fill_colour2, &c2);
 		saved_clip = macos9_push_clip();
-		h = (long)(r.bottom - r.top);
-		denom = (h > 1) ? (h - 1) : 1;
-		for (y = 0; y < h; y++) {
-			long t = (y * 256L) / denom;        /* 0..256 */
+		span = horiz ? (long)(r.right - r.left)
+			     : (long)(r.bottom - r.top);
+		denom = (span > 1) ? (span - 1) : 1;
+		for (i = 0; i < span; i++) {
+			long t = (i * 256L) / denom;        /* 0..256 */
 			long inv = 256L - t;
 			cur.red   = (unsigned short)
 				(((long)c1.red   * inv + (long)c2.red   * t) >> 8);
@@ -407,12 +424,17 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 			cur.blue  = (unsigned short)
 				(((long)c1.blue  * inv + (long)c2.blue  * t) >> 8);
 			RGBForeColor(&cur);
-			MoveTo(r.left, (short)(r.top + y));
-			LineTo((short)(r.right - 1), (short)(r.top + y));
+			if (horiz) {
+				MoveTo((short)(r.left + i), r.top);
+				LineTo((short)(r.left + i),
+						(short)(r.bottom - 1));
+			} else {
+				MoveTo(r.left, (short)(r.top + i));
+				LineTo((short)(r.right - 1),
+						(short)(r.top + i));
+			}
 		}
 		macos9_pop_clip(saved_clip);
-		/* still emit the stroke (border) below for symmetry with the
-		 * solid-fill path. */
 		if (pstyle->stroke_type != PLOT_OP_TYPE_NONE) {
 			macos9_colour_to_rgb(pstyle->stroke_colour, &rgb);
 			RGBForeColor(&rgb);
@@ -425,7 +447,8 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 #endif
 
 	if (pstyle->fill_type != PLOT_OP_TYPE_NONE &&
-	    pstyle->fill_type != PLOT_OP_TYPE_LINEAR_GRADIENT) {
+	    pstyle->fill_type != PLOT_OP_TYPE_LINEAR_GRADIENT &&
+	    pstyle->fill_type != PLOT_OP_TYPE_LINEAR_GRADIENT_H) {
 		macos9_colour_to_rgb(pstyle->fill_colour, &rgb);
 		RGBForeColor(&rgb);
 #ifdef __MACOS9__

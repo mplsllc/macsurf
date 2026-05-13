@@ -39,10 +39,19 @@ css_error css__parse_box_shadow(css_language *c,
 		return css_stylesheet_style_flag_value(result, flag_value, CSS_PROP_BOX_SHADOW);
 	}
 
-	/* Optional inset */
-	if (token->type == CSS_TOKEN_IDENT && lwc_string_caseless_isequal(token->idata, c->strings[INSET], NULL)) {
-		inset = true;
-		parserutils_vector_iterate(vector, ctx);
+	/* Optional inset. fixes48 -- same class of bug as fixes44's
+	 * macsurf-gradient: lwc_string_caseless_isequal returns lwc_error
+	 * (0 = OK) and writes match into its third arg. Passing NULL
+	 * dereferenced a null pointer and the bool-return interpretation
+	 * was inverted. */
+	if (token->type == CSS_TOKEN_IDENT) {
+		bool inset_match = false;
+		if (lwc_string_caseless_isequal(token->idata,
+				c->strings[INSET], &inset_match)
+				== lwc_error_ok && inset_match) {
+			inset = true;
+			parserutils_vector_iterate(vector, ctx);
+		}
 	}
 
 	/* h-offset v-offset */
