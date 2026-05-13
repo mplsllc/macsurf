@@ -662,11 +662,16 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	        /* macsurf_gradient: simplified gradient → single solid colour.
 	         * If the parsed gradient produced a representative colour,
 	         * override the fill so linear/radial gradients at least show
-	         * SOME colour instead of falling back to transparent. */
+	         * SOME colour instead of falling back to transparent.
+	         * fixes45 -- css_computed_macsurf_gradient returns css_color
+	         * (ARGB / R-low byte order). plot fill_colour expects the
+	         * NetSurf colour format (BGR / R-low after the swap). Route
+	         * through nscss_color_to_ns same as background-color. */
 	        if (css_computed_macsurf_gradient(background->style, &grad_col) ==
 	                        CSS_MACSURF_GRADIENT_SET) {
 	                pstyle_fill_bg.fill_type = PLOT_OP_TYPE_SOLID;
-	                pstyle_fill_bg.fill_colour = (colour)grad_col;
+	                pstyle_fill_bg.fill_colour =
+	                        nscss_color_to_ns((css_color)grad_col);
 	        }
 	}	if (ctx->background_images == false)
 		return true;
@@ -820,7 +825,8 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 #endif
 			if (grad_status == CSS_MACSURF_GRADIENT_SET) {
 				pstyle_fill_bg.fill_type = PLOT_OP_TYPE_SOLID;
-				pstyle_fill_bg.fill_colour = (colour)grad_col_late;
+				pstyle_fill_bg.fill_colour =
+					nscss_color_to_ns((css_color)grad_col_late);
 #ifdef __MWERKS__
 				{
 					extern void macsurf_debug_log_write(const char *);
@@ -845,7 +851,7 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 			    css_computed_macsurf_gradient(background->style,
 			        &grad_col_late) == CSS_MACSURF_GRADIENT_SET) {
 				pstyle_fill_bg.fill_type = PLOT_OP_TYPE_SOLID;
-				pstyle_fill_bg.fill_colour = (colour)grad_col_late;
+				pstyle_fill_bg.fill_colour = nscss_color_to_ns((css_color)grad_col_late);
 				res = ctx->plot->rectangle(ctx, &pstyle_fill_bg, &r);
 				if (res != NSERROR_OK) {
 					return false;
@@ -972,7 +978,7 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	        if (css_computed_macsurf_gradient(box->style, &grad_col_inline) ==
 	                        CSS_MACSURF_GRADIENT_SET) {
 	                pstyle_fill_bg.fill_type = PLOT_OP_TYPE_SOLID;
-	                pstyle_fill_bg.fill_colour = (colour)grad_col_inline;
+	                pstyle_fill_bg.fill_colour = nscss_color_to_ns((css_color)grad_col_inline);
 	        }
 	}	plot_content = (box->background != NULL);
 	if (html_redraw_printing && nsoption_bool(remove_backgrounds))
@@ -1045,7 +1051,7 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 		    css_computed_macsurf_gradient(box->style,
 		        &grad_col_late) == CSS_MACSURF_GRADIENT_SET) {
 			pstyle_fill_bg.fill_type = PLOT_OP_TYPE_SOLID;
-			pstyle_fill_bg.fill_colour = (colour)grad_col_late;
+			pstyle_fill_bg.fill_colour = nscss_color_to_ns((css_color)grad_col_late);
 		}
 
 		if (plot_colour) {
@@ -1061,7 +1067,7 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 		    css_computed_macsurf_gradient(box->style,
 		        &grad_col_late) == CSS_MACSURF_GRADIENT_SET) {
 			pstyle_fill_bg.fill_type = PLOT_OP_TYPE_SOLID;
-			pstyle_fill_bg.fill_colour = (colour)grad_col_late;
+			pstyle_fill_bg.fill_colour = nscss_color_to_ns((css_color)grad_col_late);
 			res = ctx->plot->rectangle(ctx, &pstyle_fill_bg, &r);
 			if (res != NSERROR_OK) {
 				return false;
