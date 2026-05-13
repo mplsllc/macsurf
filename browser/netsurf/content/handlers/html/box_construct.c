@@ -367,8 +367,9 @@ box_construct_generate(dom_node *n,
 	/* create box for this element */
 	computed_display = ns_computed_display(style, box_is_root(n));
 	if (computed_display == CSS_DISPLAY_BLOCK ||
-			computed_display == CSS_DISPLAY_TABLE) {
-		/* currently only support block level boxes */
+			computed_display == CSS_DISPLAY_TABLE ||
+			computed_display == CSS_DISPLAY_INLINE ||
+			computed_display == CSS_DISPLAY_INLINE_BLOCK) {
 
 		/** \todo Not wise to drop const from the computed style */
 		gen = box_create(NULL, (css_computed_style *) style,
@@ -378,8 +379,65 @@ box_construct_generate(dom_node *n,
 		}
 
 		/* set box type from computed display */
-		gen->type = box_map[ns_computed_display(
-				style, box_is_root(n))];
+		gen->type = box_map[computed_display];
+
+		/* Walk the content-item list and concatenate every
+		 * static string into a single text run for this box.
+		 * Counter / attr / uri / open-quote items are intentionally
+		 * skipped for now -- they need a deeper hookup to libdom
+		 * (attr()) or the counter stack.  Plain string content
+		 * (the bulk of real-world ::before / ::after usage) is
+		 * what shipped at this round. */
+		{
+			char *concat = NULL;
+			size_t total = 0;
+			const css_computed_content_item *iter = c_item;
+			while (iter != NULL &&
+					iter->type != CSS_COMPUTED_CONTENT_NONE) {
+				if (iter->type == CSS_COMPUTED_CONTENT_STRING &&
+				    iter->data.string != NULL) {
+					const char *s = lwc_string_data(iter->data.string);
+					size_t l = lwc_string_length(iter->data.string);
+					char *grown = talloc_realloc(content->bctx,
+							concat, char, total + l + 1);
+					if (grown != NULL) {
+						memcpy(grown + total, s, l);
+						total += l;
+						grown[total] = '\0';
+						concat = grown;
+					}
+				} else if (iter->type ==
+						CSS_COMPUTED_CONTENT_OPEN_QUOTE ||
+				           iter->type ==
+						CSS_COMPUTED_CONTENT_CLOSE_QUOTE) {
+					/* Fall back to ASCII " for any quote
+					 * item — the real CSS quotes property
+					 * isn't fully consulted here. */
+					char *grown = talloc_realloc(content->bctx,
+							concat, char, total + 2);
+					if (grown != NULL) {
+						grown[total++] = '"';
+						grown[total] = '\0';
+						concat = grown;
+					}
+				}
+				iter++;
+			}
+
+			if (concat != NULL && total > 0) {
+				struct box *text;
+				text = box_create(NULL,
+						(css_computed_style *) style,
+						false, NULL, NULL, NULL, NULL,
+						content->bctx);
+				if (text != NULL) {
+					text->type = BOX_TEXT;
+					text->text = concat;
+					text->length = (unsigned int)total;
+					box_add_child(gen, text);
+				}
+			}
+		}
 
 		box_add_child(box, gen);
 	}

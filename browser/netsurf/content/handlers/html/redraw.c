@@ -655,8 +655,18 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	}
 	if (background && background->style) {
 	        int32_t bsh;
+	        int32_t grad_col;
 	        if (css_computed_box_shadow(background->style, &bsh) == CSS_BOX_SHADOW_SET) {
 	                pstyle_fill_bg.box_shadow = bsh * scale;
+	        }
+	        /* macsurf_gradient: simplified gradient → single solid colour.
+	         * If the parsed gradient produced a representative colour,
+	         * override the fill so linear/radial gradients at least show
+	         * SOME colour instead of falling back to transparent. */
+	        if (css_computed_macsurf_gradient(background->style, &grad_col) ==
+	                        CSS_MACSURF_GRADIENT_SET) {
+	                pstyle_fill_bg.fill_type = PLOT_OP_TYPE_SOLID;
+	                pstyle_fill_bg.fill_colour = (colour)grad_col;
 	        }
 	}	if (ctx->background_images == false)
 		return true;

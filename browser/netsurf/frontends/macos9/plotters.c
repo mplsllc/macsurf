@@ -351,6 +351,33 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	}
 #endif
 
+	/* box-shadow: paint a slightly-offset grey rect BEHIND the fill.
+	 * The shadow size comes from css_computed_box_shadow simplified
+	 * to a single fixed-point integer (see plot_style_s.box_shadow).
+	 * QuickDraw has no blur primitive, so we approximate with a
+	 * solid offset rect at 50% grey -- the recognisable Mac OS
+	 * floating-window shadow look. */
+#ifdef __MACOS9__
+	if (pstyle->box_shadow != 0 && pstyle->fill_type != PLOT_OP_TYPE_NONE) {
+		short off = (short)(pstyle->box_shadow >> PLOT_STYLE_RADIX);
+		if (off > 0 && off < 16) {
+			RGBColor sh;
+			Rect s;
+			RgnHandle saved_clip;
+			sh.red = sh.green = sh.blue = 0x6666;
+			s = r;
+			s.left  = (short)(s.left  + off);
+			s.top   = (short)(s.top   + off);
+			s.right = (short)(s.right + off);
+			s.bottom = (short)(s.bottom + off);
+			RGBForeColor(&sh);
+			saved_clip = macos9_push_clip();
+			PaintRect(&s);
+			macos9_pop_clip(saved_clip);
+		}
+	}
+#endif
+
 	if (pstyle->fill_type != PLOT_OP_TYPE_NONE) {
 		macos9_colour_to_rgb(pstyle->fill_colour, &rgb);
 		RGBForeColor(&rgb);
