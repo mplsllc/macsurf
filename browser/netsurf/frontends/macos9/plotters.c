@@ -312,8 +312,9 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 
 	/* Diagnostic: dump fill / stroke colour + rect for the first few
 	 * rectangles each redraw so we can compare what libcss decided
-	 * vs. what UA default would produce. */
-	if (macos9_plot_rect_count <= 8) {
+	 * vs. what UA default would produce. fixes43 bump to 60 so the
+	 * PROBE A bars are captured. */
+	if (macos9_plot_rect_count <= 60) {
 		unsigned int fr = (unsigned int)((pstyle->fill_colour >>  0) & 0xff);
 		unsigned int fg = (unsigned int)((pstyle->fill_colour >>  8) & 0xff);
 		unsigned int fb = (unsigned int)((pstyle->fill_colour >> 16) & 0xff);
