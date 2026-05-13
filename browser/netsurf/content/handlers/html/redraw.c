@@ -796,9 +796,39 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 		css_computed_background_color(background->style, &bgcol);
 
 		if (nscss_color_is_transparent(bgcol) == false) {
+			int32_t grad_col_late;
 			*background_colour = nscss_color_to_ns(bgcol);
 			pstyle_fill_bg.fill_colour = *background_colour;
+			/* MacSurf: -macsurf-gradient takes precedence over
+			 * background-color when the rule also carries a real
+			 * `background: linear-gradient(...)` shorthand. The
+			 * shorthand parse leaves background-color intact (or
+			 * inherited), so we override fill_colour again here
+			 * just before the rect goes out. fixes40. */
+			if (background && background->style &&
+			    css_computed_macsurf_gradient(background->style,
+			        &grad_col_late) == CSS_MACSURF_GRADIENT_SET) {
+				pstyle_fill_bg.fill_type = PLOT_OP_TYPE_SOLID;
+				pstyle_fill_bg.fill_colour = (colour)grad_col_late;
+			}
 			if (plot_colour) {
+				res = ctx->plot->rectangle(ctx, &pstyle_fill_bg, &r);
+				if (res != NSERROR_OK) {
+					return false;
+				}
+			}
+		} else {
+			int32_t grad_col_late;
+			/* MacSurf: even when background-color is transparent,
+			 * a -macsurf-gradient: SET should still paint. Without
+			 * this, gradients on transparent-bg elements (the spec
+			 * case where `background: linear-gradient(...)` resets
+			 * background-color to transparent) render nothing. */
+			if (background && background->style &&
+			    css_computed_macsurf_gradient(background->style,
+			        &grad_col_late) == CSS_MACSURF_GRADIENT_SET) {
+				pstyle_fill_bg.fill_type = PLOT_OP_TYPE_SOLID;
+				pstyle_fill_bg.fill_colour = (colour)grad_col_late;
 				res = ctx->plot->rectangle(ctx, &pstyle_fill_bg, &r);
 				if (res != NSERROR_OK) {
 					return false;
@@ -916,8 +946,16 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	}
 	if (box && box->style) {
 	        int32_t bsh;
+	        int32_t grad_col_inline;
 	        if (css_computed_box_shadow(box->style, &bsh) == CSS_BOX_SHADOW_SET) {
 	                pstyle_fill_bg.box_shadow = bsh * scale;
+	        }
+	        /* MacSurf: mirror the html_redraw_background gradient override
+	         * for the inline-background path. fixes40. */
+	        if (css_computed_macsurf_gradient(box->style, &grad_col_inline) ==
+	                        CSS_MACSURF_GRADIENT_SET) {
+	                pstyle_fill_bg.fill_type = PLOT_OP_TYPE_SOLID;
+	                pstyle_fill_bg.fill_colour = (colour)grad_col_inline;
 	        }
 	}	plot_content = (box->background != NULL);
 	if (html_redraw_printing && nsoption_bool(remove_backgrounds))
@@ -982,10 +1020,31 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	css_computed_background_color(box->style, &bgcol);
 
 	if (nscss_color_is_transparent(bgcol) == false) {
+		int32_t grad_col_late;
 		*background_colour = nscss_color_to_ns(bgcol);
 		pstyle_fill_bg.fill_colour = *background_colour;
+		/* MacSurf: -macsurf-gradient takes precedence (fixes40). */
+		if (box && box->style &&
+		    css_computed_macsurf_gradient(box->style,
+		        &grad_col_late) == CSS_MACSURF_GRADIENT_SET) {
+			pstyle_fill_bg.fill_type = PLOT_OP_TYPE_SOLID;
+			pstyle_fill_bg.fill_colour = (colour)grad_col_late;
+		}
 
 		if (plot_colour) {
+			res = ctx->plot->rectangle(ctx, &pstyle_fill_bg, &r);
+			if (res != NSERROR_OK) {
+				return false;
+			}
+		}
+	} else {
+		int32_t grad_col_late;
+		/* MacSurf: transparent bg + -macsurf-gradient SET still paints. */
+		if (box && box->style &&
+		    css_computed_macsurf_gradient(box->style,
+		        &grad_col_late) == CSS_MACSURF_GRADIENT_SET) {
+			pstyle_fill_bg.fill_type = PLOT_OP_TYPE_SOLID;
+			pstyle_fill_bg.fill_colour = (colour)grad_col_late;
 			res = ctx->plot->rectangle(ctx, &pstyle_fill_bg, &r);
 			if (res != NSERROR_OK) {
 				return false;
@@ -1791,6 +1850,52 @@ bool html_redraw_box(const html_content *html, struct box *box,
 				ctx))
 			return false;
 
+	}
+
+	/* MacSurf: native CSS outline rendering. libcss exposes
+	 * outline-color/outline-style/outline-width; NetSurf core never
+	 * wired them. We FrameRect just outside the border box. The
+	 * stroke_width path goes through QuickDraw PenSize (fixes170)
+	 * so widths > 1px render correctly. fixes40. */
+	if (box->style != NULL) {
+		uint8_t ostyle_v = css_computed_outline_style(box->style);
+		if (ostyle_v != CSS_OUTLINE_STYLE_NONE &&
+		    ostyle_v != CSS_OUTLINE_STYLE_INHERIT) {
+			css_color ocol;
+			css_fixed olen = 0;
+			css_unit ounit = CSS_UNIT_PX;
+			int owidth_px;
+			plot_style_t plot_style_outline = {
+				PLOT_OP_TYPE_SOLID, 0, 0,
+				PLOT_OP_TYPE_NONE, 0,
+				0, 0
+			};
+			struct rect orect;
+			uint8_t ocol_status;
+			ocol_status = css_computed_outline_color(box->style, &ocol);
+			if (ocol_status == CSS_OUTLINE_COLOR_INVERT ||
+			    ocol_status == CSS_OUTLINE_COLOR_CURRENT_COLOR) {
+				css_computed_color(box->style, &ocol);
+			}
+			css_computed_outline_width(box->style, &olen, &ounit);
+			owidth_px = (int)FIXTOINT(css_unit_len2device_px(
+					box->style, &html->unit_len_ctx,
+					olen, ounit));
+			if (owidth_px < 1) owidth_px = 1;
+			if (owidth_px > 16) owidth_px = 16;
+			plot_style_outline.stroke_width =
+					(owidth_px << PLOT_STYLE_RADIX);
+			plot_style_outline.stroke_colour = nscss_color_to_ns(ocol);
+			orect.x0 = (x - border_left - owidth_px) * scale;
+			orect.y0 = (y - border_top - owidth_px) * scale;
+			orect.x1 = (x + padding_width + border_right + owidth_px)
+					* scale;
+			orect.y1 = (y + padding_height + border_bottom +
+					owidth_px) * scale;
+			if (ctx->plot->rectangle(ctx, &plot_style_outline,
+					&orect) != NSERROR_OK)
+				return false;
+		}
 	}
 
 	/* Debug outlines */
