@@ -49,6 +49,8 @@
 #include "html/box_normalise.h"
 #include "html/form_internal.h"
 
+#include "macsurf_debug.h"
+
 
 /* Diagnostic: count text boxes constructed during DOM->box conversion. */
 long macos9_box_text_created = 0;
@@ -289,6 +291,31 @@ box_get_style(html_content *c,
 	ctx.universal = c->universal;
 	ctx.root_style = root_style;
 	ctx.parent_style = parent_style;
+
+	/* Diagnostic: log tag-name for the first several elements
+	 * being selected, plus the cascade ctx pointer.  If we
+	 * never see a tag we recognise (h1, p, body) on this list,
+	 * the selection path isn't reaching the elements we expect. */
+	{
+		static long bgs_count = 0;
+		if (bgs_count < 20) {
+			dom_string *tn = NULL;
+			if (dom_node_get_node_name(n, &tn) == DOM_NO_ERR &&
+			    tn != NULL) {
+				macsurf_debug_log_writef(
+					"box_get_style[%ld] tag=%s ctx=%p inline=%p",
+					bgs_count,
+					dom_string_data(tn),
+					ctx.ctx, inline_style);
+				dom_string_unref(tn);
+			} else {
+				macsurf_debug_log_writef(
+					"box_get_style[%ld] tag=? ctx=%p inline=%p",
+					bgs_count, ctx.ctx, inline_style);
+			}
+			bgs_count++;
+		}
+	}
 
 	/* Select style for element */
 	styles = nscss_get_style(&ctx, n, &c->media, &c->unit_len_ctx,

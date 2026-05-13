@@ -711,6 +711,18 @@ html_css_new_selection_context(html_content *c, css_select_ctx **ret_select_ctx)
 		}
 
 		if (sheet != NULL) {
+			/* Probe: how big is this sheet?  If 0 rules parsed,
+			 * the byte size will be roughly the bare-struct
+			 * minimum and no rules will ever match anything.
+			 * (C89: declarations at block top.) */
+			{
+				size_t sz = 0;
+				css_error sz_err = css_stylesheet_size(sheet, &sz);
+				macsurf_debug_log_writef(
+					"slot[%d] sheet_size=%ld bytes (err=%d)",
+					(int)i, (long)sz, (int)sz_err);
+			}
+
 			/* TODO: Pass the sheet's full media query, instead of
 			 *       "screen".
 			 */
@@ -719,6 +731,9 @@ html_css_new_selection_context(html_content *c, css_select_ctx **ret_select_ctx)
 							      origin,
 							      "screen");
 			if (css_ret != CSS_OK) {
+				macsurf_debug_log_writef(
+					"slot[%d] append_sheet FAIL css_ret=%d",
+					(int)i, (int)css_ret);
 				css_select_ctx_destroy(select_ctx);
 				return css_error_to_nserror(css_ret);
 			}
