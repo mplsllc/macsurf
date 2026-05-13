@@ -1571,24 +1571,12 @@ css_error css__stylesheet_remove_rule(css_stylesheet *sheet, css_rule *rule)
 css_error _add_selectors(css_stylesheet *sheet, css_rule *rule)
 {
 	css_error error;
-	static long adds_count = 0;
 
 	if (sheet == NULL || rule == NULL)
 		return CSS_BADPARM;
 
 	/* Rule must not be in sheet */
 	assert(rule->parent == NULL);
-
-	if (adds_count < 30) {
-		macsurf_debug_log_writef(
-			"add_sel[%ld] sheet=%p rule=%p type=%d items=%d",
-			adds_count,
-			(void *)sheet,
-			(void *)rule,
-			(int)rule->type,
-			(int)rule->items);
-		adds_count++;
-	}
 
 	switch (rule->type) {
 	case CSS_RULE_SELECTOR:
@@ -1598,17 +1586,6 @@ css_error _add_selectors(css_stylesheet *sheet, css_rule *rule)
 
 		for (i = 0; i < rule->items; i++) {
 			css_selector *sel = s->selectors[i];
-			static long ins_count = 0;
-
-			if (ins_count < 30) {
-				macsurf_debug_log_writef(
-					"hash_ins[%ld] sheet=%p sel=%p hash=%p",
-					ins_count,
-					(void *)sheet,
-					(void *)sel,
-					(void *)sheet->selectors);
-				ins_count++;
-			}
 
 			error = css__selector_hash_insert(
 					sheet->selectors, sel);

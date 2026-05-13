@@ -292,31 +292,6 @@ box_get_style(html_content *c,
 	ctx.root_style = root_style;
 	ctx.parent_style = parent_style;
 
-	/* Diagnostic: log tag-name for the first several elements
-	 * being selected, plus the cascade ctx pointer.  If we
-	 * never see a tag we recognise (h1, p, body) on this list,
-	 * the selection path isn't reaching the elements we expect. */
-	{
-		static long bgs_count = 0;
-		if (bgs_count < 20) {
-			dom_string *tn = NULL;
-			if (dom_node_get_node_name(n, &tn) == DOM_NO_ERR &&
-			    tn != NULL) {
-				macsurf_debug_log_writef(
-					"box_get_style[%ld] tag=%s ctx=%p inline=%p",
-					bgs_count,
-					dom_string_data(tn),
-					ctx.ctx, inline_style);
-				dom_string_unref(tn);
-			} else {
-				macsurf_debug_log_writef(
-					"box_get_style[%ld] tag=? ctx=%p inline=%p",
-					bgs_count, ctx.ctx, inline_style);
-			}
-			bgs_count++;
-		}
-	}
-
 	/* Select style for element */
 	styles = nscss_get_style(&ctx, n, &c->media, &c->unit_len_ctx,
 			inline_style);
@@ -355,12 +330,16 @@ box_construct_generate(dom_node *n,
 		return;
 
 	/* To determine if an element has a pseudo element, we select
-	 * for it and test to see if the returned style's content
-	 * property is set to normal. */
+	 * for it and check whether content is explicitly SET. If the
+	 * value is INHERIT, NONE, or NORMAL, c_item is not initialised
+	 * by libcss and iterating it walks off into garbage memory
+	 * (this hung the browser on advanced.html in fixes37 -- the
+	 * stub version dodged it by never walking c_item). */
 	if (style == NULL ||
-			css_computed_content(style, &c_item) ==
-			CSS_CONTENT_NORMAL) {
-		/* No pseudo element */
+			css_computed_content(style, &c_item) !=
+			CSS_CONTENT_SET ||
+			c_item == NULL) {
+		/* No pseudo element to generate */
 		return;
 	}
 
@@ -613,45 +592,9 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	if (styles == NULL)
 		return false;
 
-	/* Diagnostic: probe the computed style produced by selection
-	 * for the first several elements. If colour/size are libcss
-	 * "initial values" (color=0xff000000 opaque black, font-size
-	 * = default medium) for elements that SHOULD have rules
-	 * (BODY, H1, P from our UA + inline <style>), the cascade
-	 * isn't matching anything despite sheets being populated
-	 * and node names being case-insensitive. That points the
-	 * bug at the libcss select-or-compose stage. */
-	{
-		static long pst = 0;
-		if (pst < 8 && styles->styles[CSS_PSEUDO_ELEMENT_NONE] != NULL) {
-			const css_computed_style *cs =
-				styles->styles[CSS_PSEUDO_ELEMENT_NONE];
-			css_color col = 0;
-			css_fixed fsz = 0;
-			css_unit fu = CSS_UNIT_PX;
-			uint8_t color_type;
-			uint8_t fwt;
-			dom_string *tn = NULL;
-			const char *tnp = "?";
-
-			color_type = css_computed_color(cs, &col);
-			css_computed_font_size(cs, &fsz, &fu);
-			fwt = css_computed_font_weight(cs);
-
-			if (dom_node_get_node_name(ctx->n, &tn) == DOM_NO_ERR &&
-			    tn != NULL) {
-				tnp = dom_string_data(tn);
-			}
-
-			macsurf_debug_log_writef(
-				"post_select[%ld] tag=%s color_type=%d color=%p fsz=%ld unit=%d weight=%d",
-				pst, tnp, (int)color_type,
-				(void *)(unsigned long)col,
-				(long)fsz, (int)fu, (int)fwt);
-			if (tn != NULL) dom_string_unref(tn);
-			pst++;
-		}
-	}
+	/* fixes24-33 diagnostic probes removed; cascade is healthy
+	 * and any future investigation should re-add probes scoped
+	 * to the specific question, not blanket-log everything. */
 
 	/* Extract title attribute, if present */
 	err = dom_element_get_attribute(ctx->n, corestring_dom_title, &title0);
