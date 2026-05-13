@@ -67,6 +67,11 @@ typedef enum {
 	PLOT_OP_TYPE_SOLID, /**< Solid colour */
 	PLOT_OP_TYPE_DOT, /**< Dotted plot */
 	PLOT_OP_TYPE_DASH, /**< Dashed plot */
+	/* fixes47: two-stop vertical linear gradient. fill_colour is
+	 * the top/start colour, fill_colour2 is the bottom/end colour.
+	 * The rectangle plotter is responsible for interpolating row
+	 * by row. */
+	PLOT_OP_TYPE_LINEAR_GRADIENT
 } plot_operation_type_t;
 
 
@@ -81,6 +86,8 @@ typedef struct plot_style_s {
         colour fill_colour; /**< Colour of fill */
         plot_style_fixed border_radius; /**< Corner radius */
         plot_style_fixed box_shadow; /**< Box shadow (simplified) */
+        /* fixes47: second endpoint colour for PLOT_OP_TYPE_LINEAR_GRADIENT */
+        colour fill_colour2;
 } plot_style_t;
 
 /**

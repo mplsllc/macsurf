@@ -378,7 +378,54 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	}
 #endif
 
-	if (pstyle->fill_type != PLOT_OP_TYPE_NONE) {
+	/* fixes47 -- real vertical linear gradient. fill_colour is the
+	 * top stop, fill_colour2 is the bottom stop. Interpolate row by
+	 * row in 16-bit RGB space (RGBColor is 16-bit per channel),
+	 * using a 1.8 fixed-point t parameter to keep the loop on
+	 * 32-bit integer math (CW8 PPC's long-long codegen is unsafe). */
+#ifdef __MACOS9__
+	if (pstyle->fill_type == PLOT_OP_TYPE_LINEAR_GRADIENT) {
+		RGBColor c1;
+		RGBColor c2;
+		RGBColor cur;
+		long h;
+		long y;
+		long denom;
+		RgnHandle saved_clip;
+		macos9_colour_to_rgb(pstyle->fill_colour,  &c1);
+		macos9_colour_to_rgb(pstyle->fill_colour2, &c2);
+		saved_clip = macos9_push_clip();
+		h = (long)(r.bottom - r.top);
+		denom = (h > 1) ? (h - 1) : 1;
+		for (y = 0; y < h; y++) {
+			long t = (y * 256L) / denom;        /* 0..256 */
+			long inv = 256L - t;
+			cur.red   = (unsigned short)
+				(((long)c1.red   * inv + (long)c2.red   * t) >> 8);
+			cur.green = (unsigned short)
+				(((long)c1.green * inv + (long)c2.green * t) >> 8);
+			cur.blue  = (unsigned short)
+				(((long)c1.blue  * inv + (long)c2.blue  * t) >> 8);
+			RGBForeColor(&cur);
+			MoveTo(r.left, (short)(r.top + y));
+			LineTo((short)(r.right - 1), (short)(r.top + y));
+		}
+		macos9_pop_clip(saved_clip);
+		/* still emit the stroke (border) below for symmetry with the
+		 * solid-fill path. */
+		if (pstyle->stroke_type != PLOT_OP_TYPE_NONE) {
+			macos9_colour_to_rgb(pstyle->stroke_colour, &rgb);
+			RGBForeColor(&rgb);
+			saved_clip = macos9_push_clip();
+			FrameRect(&r);
+			macos9_pop_clip(saved_clip);
+		}
+		return NSERROR_OK;
+	}
+#endif
+
+	if (pstyle->fill_type != PLOT_OP_TYPE_NONE &&
+	    pstyle->fill_type != PLOT_OP_TYPE_LINEAR_GRADIENT) {
 		macos9_colour_to_rgb(pstyle->fill_colour, &rgb);
 		RGBForeColor(&rgb);
 #ifdef __MACOS9__
