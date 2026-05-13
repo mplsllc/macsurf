@@ -702,6 +702,15 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	if (background && background->style) {
 	        int32_t bsh;
 	        int32_t grad_col;
+	        css_fixed op_fixed = 0;
+	        /* fixes49 -- opacity passes through to the rectangle plotter
+	         * so it can switch to a stipple pattern when < ~0.85. */
+	        if (css_computed_opacity(background->style, &op_fixed) ==
+	                        CSS_OPACITY_SET) {
+	                pstyle_fill_bg.opacity = (plot_style_fixed)op_fixed;
+	        } else {
+	                pstyle_fill_bg.opacity = (plot_style_fixed)PLOT_STYLE_SCALE;
+	        }
 	        if (css_computed_box_shadow(background->style, &bsh) == CSS_BOX_SHADOW_SET) {
 	                /* MacSurf fixes48 -- bsh is now a packed value:
 	                 *   bits 31..24 h-offset px (int8_t signed)
@@ -1038,6 +1047,14 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	if (box && box->style) {
 	        int32_t bsh;
 	        int32_t grad_col_inline;
+	        css_fixed op_fixed = 0;
+	        /* fixes49 -- opacity mirror for inline path. */
+	        if (css_computed_opacity(box->style, &op_fixed) ==
+	                        CSS_OPACITY_SET) {
+	                pstyle_fill_bg.opacity = (plot_style_fixed)op_fixed;
+	        } else {
+	                pstyle_fill_bg.opacity = (plot_style_fixed)PLOT_STYLE_SCALE;
+	        }
 	        if (css_computed_box_shadow(box->style, &bsh) == CSS_BOX_SHADOW_SET) {
 	                /* MacSurf fixes48 -- mirror the html_redraw_background
 	                 * unpack: h-offset / v-offset / RGB565 colour. */

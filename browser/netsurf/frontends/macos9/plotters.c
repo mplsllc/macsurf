@@ -449,17 +449,61 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	if (pstyle->fill_type != PLOT_OP_TYPE_NONE &&
 	    pstyle->fill_type != PLOT_OP_TYPE_LINEAR_GRADIENT &&
 	    pstyle->fill_type != PLOT_OP_TYPE_LINEAR_GRADIENT_H) {
+		/* fixes49 -- opacity bucket. plot_style_fixed value with
+		 * PLOT_STYLE_SCALE (=1024) for opaque. Below ~5% don't
+		 * paint at all. Between 5% and ~85% paint with a stipple
+		 * pattern that approximates alpha on 8-bit displays:
+		 *   < 5%      skip
+		 *   5..35%    ltGray (sparse foreground)
+		 *   35..60%   gray  (50/50)
+		 *   60..85%   dkGray (dense foreground)
+		 *   > 85%     full solid
+		 * Patterns paint foreground bits where the pattern is 1
+		 * and background bits where the pattern is 0. */
+		plot_style_fixed op = pstyle->opacity;
+		bool stipple = false;
+#ifdef __MACOS9__
+		Pattern stipple_pat;
+#endif
+		if (op == 0) op = (plot_style_fixed)PLOT_STYLE_SCALE; /* uninit -> opaque */
+		if (op < (plot_style_fixed)(PLOT_STYLE_SCALE / 20)) {
+			/* < 5% -- skip painting entirely. */
+			goto opacity_done;
+		}
+#ifdef __MACOS9__
+		if (op < (plot_style_fixed)((PLOT_STYLE_SCALE * 35) / 100)) {
+			GetIndPattern(&stipple_pat, sysPatListID, 2);
+			/* ltGray approx; if GetIndPattern fails the pattern
+			 * is already zero-initialised which means solid bg. */
+			stipple = true;
+		} else if (op < (plot_style_fixed)((PLOT_STYLE_SCALE * 60) / 100)) {
+			GetIndPattern(&stipple_pat, sysPatListID, 3);
+			stipple = true;
+		} else if (op < (plot_style_fixed)((PLOT_STYLE_SCALE * 85) / 100)) {
+			GetIndPattern(&stipple_pat, sysPatListID, 4);
+			stipple = true;
+		}
+#endif
 		macos9_colour_to_rgb(pstyle->fill_colour, &rgb);
 		RGBForeColor(&rgb);
 #ifdef __MACOS9__
-		{
+		if (stipple) {
+			/* Backcolor stays at whatever the port has — usually
+			 * white for body content. The pattern mixes fg + bg
+			 * at the dot level. */
 			RgnHandle saved_clip = macos9_push_clip();
-#endif
-		PaintRect(&r);
-#ifdef __MACOS9__
+			FillRect(&r, &stipple_pat);
+			macos9_pop_clip(saved_clip);
+		} else {
+			RgnHandle saved_clip = macos9_push_clip();
+			PaintRect(&r);
 			macos9_pop_clip(saved_clip);
 		}
+#else
+		PaintRect(&r);
 #endif
+opacity_done:
+		;
 	}
 
 	if (pstyle->stroke_type != PLOT_OP_TYPE_NONE) {

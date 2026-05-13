@@ -95,6 +95,11 @@ typedef struct plot_style_s {
          * box_shadow_color of 0 means use the default 40% grey. */
         plot_style_fixed box_shadow_y;
         colour box_shadow_color;
+        /* fixes49: element opacity, plot_style_fixed (PLOT_STYLE_SCALE
+         * = 1.0 opaque, 0 = transparent). When < ~0.85 the rectangle
+         * plotter switches to a QuickDraw stipple pattern to approximate
+         * alpha blend on 8/16-bit displays. */
+        plot_style_fixed opacity;
 } plot_style_t;
 
 /**
