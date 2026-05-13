@@ -65,6 +65,13 @@ struct rect;
 	#ifndef __ATSLayoutTypes__
 	#define __ATSLayoutTypes__
 	#endif
+	/* Power.h (via CoreServices.h:247) reports as corrupted on at least one
+	 * CW8 install — TWOWORDINLINE lines and TARGET_CPU_68K conditionals show
+	 * up with garbage bytes / unterminated comments. MacSurf doesn't touch
+	 * the Power Manager, so suppress the whole header. */
+	#ifndef __POWER__
+	#define __POWER__
+	#endif
 
 	#include <Carbon.h>
 	#include <Quickdraw.h>
