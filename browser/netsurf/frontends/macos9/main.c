@@ -274,6 +274,39 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 						} else if (PtInRect(p, &gw->url_rect)) {
 							macos9_window_te_activate_url(gw);
 							if (gw->url_te) TEClick(p, (event->modifiers & shiftKey) != 0, gw->url_te);
+						} else if (PtInRect(p, &gw->content_rect) && gw->bw) {
+							/* Click in content area — dispatch to NetSurf so
+							 * links navigate, forms submit, etc.  Coordinates
+							 * are translated from window-local to NetSurf
+							 * content space (= local - content origin + scroll). */
+							int x_ns, y_ns, rx_ns, ry_ns;
+							browser_mouse_state mods = 0;
+							Point relp;
+							macos9_window_te_deactivate_url(gw);
+							if (event->modifiers & shiftKey)
+								mods |= BROWSER_MOUSE_MOD_1;
+							if (event->modifiers & controlKey)
+								mods |= BROWSER_MOUSE_MOD_2;
+							if (event->modifiers & optionKey)
+								mods |= BROWSER_MOUSE_MOD_3;
+							x_ns = (int)p.h - gw->content_rect.left + gw->scroll_x;
+							y_ns = (int)p.v - gw->content_rect.top  + gw->scroll_y;
+							MS_LOG("content: PRESS_1");
+							browser_window_mouse_click(gw->bw,
+								BROWSER_MOUSE_PRESS_1 | mods,
+								x_ns, y_ns);
+							/* Wait for the mouse-up that ends this click.
+							 * StillDown blocks until the user releases the
+							 * button; safe under cooperative MT because
+							 * Toolbox yields ticks while polling. */
+							while (StillDown()) { /* spin */ }
+							GetMouse(&relp);
+							rx_ns = (int)relp.h - gw->content_rect.left + gw->scroll_x;
+							ry_ns = (int)relp.v - gw->content_rect.top  + gw->scroll_y;
+							MS_LOG("content: CLICK_1");
+							browser_window_mouse_click(gw->bw,
+								BROWSER_MOUSE_CLICK_1 | mods,
+								rx_ns, ry_ns);
 						} else {
 							macos9_window_te_deactivate_url(gw);
 						}
@@ -358,7 +391,38 @@ void macos9_poll(void) {
 	if (!macos9_quitting) {
 		{ extern bool macos9_schedule_run(void); macos9_schedule_run(); }
 		macos9_windows_te_idle(); macos9_windows_process_deferred();
+		macos9_poll_mouse_hover();
 	}
+}
+
+/*
+ * macos9_poll_mouse_hover -- poll mouse position once per event-loop
+ * pass and dispatch HOVER to NetSurf if the cursor sits inside the
+ * front window's content rect. Lets NetSurf's status-bar / link-
+ * highlight code update without us having to install a Carbon
+ * mouse-moved handler (which CarbonLib doesn't reliably support on
+ * OS 9 anyway).
+ */
+void macos9_poll_mouse_hover(void) {
+#ifdef __MACOS9__
+	static Point last_pt = {-1, -1};
+	WindowRef win;
+	struct gui_window *gw;
+	Point p;
+	int x_ns, y_ns;
+	if (macos9_quitting) return;
+	win = FrontWindow();
+	gw = win ? macos9_find_window(win) : NULL;
+	if (!gw || !gw->bw) return;
+	SetPortWindowPort(win);
+	GetMouse(&p);
+	if (p.h == last_pt.h && p.v == last_pt.v) return;
+	last_pt = p;
+	if (!PtInRect(p, &gw->content_rect)) return;
+	x_ns = (int)p.h - gw->content_rect.left + gw->scroll_x;
+	y_ns = (int)p.v - gw->content_rect.top  + gw->scroll_y;
+	browser_window_mouse_track(gw->bw, BROWSER_MOUSE_HOVER, x_ns, y_ns);
+#endif
 }
 
 int main(void) {
@@ -398,6 +462,15 @@ int main(void) {
 	MS_LOG("netsurf_register done");
 	nsoption_init(NULL, NULL, NULL);
 	MS_LOG("nsoption_init done");
+	/* No image content handlers registered yet (libnsgif/libnsbmp not in
+	 * project file list). Disable foreground image fetches so <img> boxes
+	 * render as their alt-text fallback rather than spawning hung fetches
+	 * that block html_can_begin_conversion. Sites still parse and render. */
+	nsoption_set_bool(foreground_images, false);
+	nsoption_set_bool(background_images, false);
+	/* Enable author CSS so inline <style>/<link> rules apply. */
+	nsoption_set_bool(author_level_css, true);
+	MS_LOG("images disabled, author_css on");
 	netsurf_init(NULL);
 	MS_LOG("netsurf_init done");
 #ifdef WITH_DUKTAPE

@@ -170,6 +170,7 @@ struct gui_window *macos9_create_initial_window(void);
 extern struct gui_window *initial_win;
 void macos9_handle_mouse_down(const EventRecord *event);
 void macos9_handle_key_down(const EventRecord *event);
+void macos9_poll_mouse_hover(void);
 void macos9_poll(void);
 extern nserror macos9_schedule(int t, void (*callback)(void *p), void *p);
 short macos9_font_id_from_style(const struct plot_font_style *fstyle);

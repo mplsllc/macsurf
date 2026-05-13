@@ -181,9 +181,19 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 	g->hscroll=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,0,384,(long)g);
 	macos9_window_layout(g);
 #ifdef __MACOS9__
-	compute_url_te_rect(&g->url_rect,&b); g->url_te=TENew(&b,&b);
-	if(g->url_te) { TESetText(MACSURF_HOME_URL,(long)strlen(MACSURF_HOME_URL),g->url_te); TECalText(g->url_te); TEActivate(g->url_te); }
+	/* Show + select the window FIRST so subsequent Toolbox calls
+	 * run in a fully realized port/state. The previous order
+	 * (create TE before show) is the suspected cause of the
+	 * "URL field unresponsive on initial window" regression. */
 	ShowWindow(g->window); SelectWindow(g->window);
+	SetPortWindowPort(g->window);
+	compute_url_te_rect(&g->url_rect,&b); g->url_te=TENew(&b,&b);
+	if(g->url_te) {
+		TESetText(MACSURF_HOME_URL,(long)strlen(MACSURF_HOME_URL),g->url_te);
+		TECalText(g->url_te);
+		TEActivate(g->url_te);
+		TESetSelect(0, 32767, g->url_te);  /* select-all so first keystroke replaces */
+	}
 	GetWindowPortBounds(g->window,&b); b.right=(short)(b.right-b.left); b.bottom=(short)(b.bottom-b.top); b.left=0; b.top=0;
 	InvalWindowRect(g->window,&b);
 #endif

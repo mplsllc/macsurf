@@ -44,6 +44,8 @@
 #include "html/private.h"
 #include "html/css.h"
 
+#include "macsurf_debug.h"
+
 static nsurl *html_default_stylesheet_url;
 static nsurl *html_adblock_stylesheet_url;
 static nsurl *html_quirks_stylesheet_url;
@@ -653,11 +655,15 @@ nserror
 html_css_new_selection_context(html_content *c, css_select_ctx **ret_select_ctx)
 {
 	uint32_t i;
+	long appended = 0;
+	long skipped_unused = 0;
+	long skipped_null = 0;
 	css_error css_ret;
 	css_select_ctx *select_ctx;
 
 	/* check that the base stylesheet loaded; layout fails without it */
 	if (c->stylesheets[STYLESHEET_BASE].sheet == NULL) {
+		MS_LOG("css_select_ctx: BASE sheet NULL");
 		return NSERROR_CSS_BASE;
 	}
 
@@ -678,6 +684,7 @@ html_css_new_selection_context(html_content *c, css_select_ctx **ret_select_ctx)
 		 *       libcss handle the filtering.
 		 */
 		if (hsheet->unused) {
+			skipped_unused++;
 			continue;
 		}
 
@@ -703,8 +710,16 @@ html_css_new_selection_context(html_content *c, css_select_ctx **ret_select_ctx)
 				css_select_ctx_destroy(select_ctx);
 				return css_error_to_nserror(css_ret);
 			}
+			appended++;
+		} else {
+			skipped_null++;
 		}
 	}
+
+	macsurf_debug_log_writef(
+		"css_select_ctx: appended=%ld unused=%ld null=%ld total_slots=%ld",
+		appended, skipped_unused, skipped_null,
+		(long)c->stylesheet_count);
 
 	/* return new selection context to caller */
 	*ret_select_ctx = select_ctx;
