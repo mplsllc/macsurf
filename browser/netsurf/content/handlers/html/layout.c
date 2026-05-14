@@ -3415,20 +3415,7 @@ layout_line(struct box *first,
 				break;
 			default:
 			case CSS_VERTICAL_ALIGN_BASELINE:
-				/* MacSurf fixes51b -- NetSurf's "0.75 * height
-				 * delta" heuristic was a baseline-align kludge
-				 * for frontends that don't expose font ascent/
-				 * descent. On the macos9 frontend it produces
-				 * subpixel offsets that the layout floor at 16
-				 * px then turns into visible 2-4 px drift
-				 * between adjacent inline children of mixed
-				 * fonts (e.g. body text and <code>). All
-				 * inline boxes on a line already share *y at
-				 * line 3370; QuickDraw will place all glyphs
-				 * at that baseline regardless of font, which
-				 * is the same answer real baseline alignment
-				 * would give for fonts with similar ascent
-				 * ratios. Skip the shift. */
+				d->y += 0.75 * (used_height - d->height);
 				break;
 			}
 		}
