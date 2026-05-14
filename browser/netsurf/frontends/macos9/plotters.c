@@ -120,58 +120,22 @@ static int macos9_name_match(const char *s, size_t n, const char *name)
 short
 macos9_font_id_from_style(const plot_font_style_t *fstyle)
 {
-	/* fixes51 -- walk the CSS font-family list and match each name
-	 * against the four fonts installed in every Mac OS 9 system
-	 * (Geneva, Helvetica, Times, Monaco) plus the common Windows
-	 * names CSS authors throw at us ("Arial", "Times New Roman",
-	 * "Courier New", "Courier"). The first hit wins; the loop
-	 * ends if the families array is exhausted, at which point we
-	 * fall back to the generic-family bucket below.
-	 *
-	 * Helvetica and Times both ship with TrueType outlines on
-	 * Mac OS 9, so the SetOutlinePreferred call at startup makes
-	 * them render smoothly at any size. Geneva and Monaco are
-	 * bitmap-only and will still look rough at non-installed
-	 * sizes — but at least named CSS authors get what they asked
-	 * for. */
-	if (fstyle != NULL && fstyle->families != NULL) {
-		lwc_string * const *fp = fstyle->families;
-		while (*fp != NULL) {
-			const char *fname = lwc_string_data(*fp);
-			size_t flen = lwc_string_length(*fp);
-			if (macos9_name_match(fname, flen, "Helvetica") ||
-			    macos9_name_match(fname, flen, "Arial") ||
-			    macos9_name_match(fname, flen, "Helvetica Neue") ||
-			    macos9_name_match(fname, flen, "sans-serif"))
-				return kFontIDHelvetica;
-			if (macos9_name_match(fname, flen, "Times") ||
-			    macos9_name_match(fname, flen, "Times New Roman") ||
-			    macos9_name_match(fname, flen, "Georgia") ||
-			    macos9_name_match(fname, flen, "serif"))
-				return kFontIDTimes;
-			if (macos9_name_match(fname, flen, "Monaco") ||
-			    macos9_name_match(fname, flen, "Courier") ||
-			    macos9_name_match(fname, flen, "Courier New") ||
-			    macos9_name_match(fname, flen, "monospace"))
-				return kFontIDMonaco;
-			if (macos9_name_match(fname, flen, "Geneva"))
-				return kFontIDGeneva;
-			fp++;
-		}
-	}
-
-	if (fstyle == NULL)
-		return kFontIDHelvetica;
-
-	switch (fstyle->family) {
-	case PLOT_FONT_FAMILY_SERIF:      return kFontIDTimes;
-	case PLOT_FONT_FAMILY_MONOSPACE:  return kFontIDMonaco;
-	case PLOT_FONT_FAMILY_SANS_SERIF: return kFontIDHelvetica;
-	/* fixes51 -- unmatched fallback was Geneva (bitmap-only,
-	 * stretches at most sizes). Helvetica has TrueType so it
-	 * renders at any size cleanly. */
-	default:                          return kFontIDHelvetica;
-	}
+	/* fixes52 -- force Helvetica for every CSS font-family. NetSurf's
+	 * inline layout has a baseline-drift bug whenever a single line
+	 * mixes fonts with different installed metrics (e.g. body text
+	 * + <code>); lines stack 2-4 px on top of each other and become
+	 * unreadable. The proper fix is real per-font ascent/descent
+	 * through gui_layout_table (deferred — needs NetSurf-core work).
+	 * Until then we sidestep the bug by collapsing every CSS family
+	 * to a single font, and pick Helvetica because it ships with a
+	 * full TrueType outline on every Mac OS 9 system (so the
+	 * SetOutlinePreferred call from fixes51 renders it smoothly at
+	 * any pt size). Cost: <code>/<kbd>/<samp> blocks lose their
+	 * monospace look — they stay readable, just not visually
+	 * distinct from body text. Bold/italic face variants still
+	 * apply via macos9_face_from_style, so emphasis is preserved. */
+	(void)fstyle;
+	return kFontIDHelvetica;
 }
 
 short
