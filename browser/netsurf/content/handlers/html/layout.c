@@ -3393,45 +3393,22 @@ layout_line(struct box *first,
 	assert(b != first || (move_y && 0 < used_height && (left || right)));
 
 #ifdef __MWERKS__
-	/* fixes52a -- diagnostic: log every inline child on the line just
-	 * before vertical-align runs. We need to see the actual b->height /
-	 * b->y / used_height divergence per box to pinpoint where mixed
-	 * inline styles drift apart. Capped to the first ~30 lines per page
-	 * so the log doesn't explode. */
 	{
 		extern void macsurf_debug_log_writef(const char *, ...);
-		static long macos9_ll_count = 0;
+		static long ll_n = 0;
 		struct box *dd;
 		int idx = 0;
-		if (macos9_ll_count < 30) {
-			macsurf_debug_log_writef(
-				"ll[%d] *y=%d uh=%d line_top=%d",
-				(int)macos9_ll_count, (int)*y,
-				(int)used_height, (int)cy);
+		if (ll_n < 20) {
+			macsurf_debug_log_writef("ll y=%d uh=%d",
+				(int)*y, (int)used_height);
 			for (dd = first; dd != b; dd = dd->next) {
-				if (dd->type != BOX_TEXT &&
-				    dd->type != BOX_INLINE &&
-				    dd->type != BOX_INLINE_END)
-					continue;
-				if (idx >= 8) break;
-				macsurf_debug_log_writef(
-					"  ch[%d] t=%d y=%d h=%d ptop=%d "
-					"len=%d txt=\"%c%c%c%c%c%c%c%c\"",
-					idx, (int)dd->type, (int)dd->y,
-					(int)dd->height,
-					(int)dd->padding[TOP],
-					(int)(dd->text ? dd->length : 0),
-					(dd->text && dd->length>0)?dd->text[0]:'.',
-					(dd->text && dd->length>1)?dd->text[1]:'.',
-					(dd->text && dd->length>2)?dd->text[2]:'.',
-					(dd->text && dd->length>3)?dd->text[3]:'.',
-					(dd->text && dd->length>4)?dd->text[4]:'.',
-					(dd->text && dd->length>5)?dd->text[5]:'.',
-					(dd->text && dd->length>6)?dd->text[6]:'.',
-					(dd->text && dd->length>7)?dd->text[7]:'.');
+				if (idx >= 6) break;
+				macsurf_debug_log_writef("c t=%d y=%d h=%d",
+					(int)dd->type, (int)dd->y,
+					(int)dd->height);
 				idx++;
 			}
-			macos9_ll_count++;
+			ll_n++;
 		}
 	}
 #endif
