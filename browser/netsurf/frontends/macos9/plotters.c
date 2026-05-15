@@ -318,49 +318,100 @@ macos9_plot_line(const struct redraw_context *ctx,
 	return NSERROR_OK;
 }
 
-/* fixes71: unpack -macsurf-transform packed value.
+/* fixes72: sin/cos lookup table for arbitrary angle rotation.
+ *
+ * 91-entry sin table at 1° steps (0° to 90°, inclusive) in Q15 fixed-point.
+ * Range -32768..+32767. cos is recovered via cos(a) = sin(90 - a).
+ *
+ * Full-circle access uses quadrant symmetry:
+ *   sin(  0..90 ) =  table[a]
+ *   sin( 90..180) =  table[180 - a]
+ *   sin(180..270) = -table[a - 180]
+ *   sin(270..360) = -table[360 - a]
+ *
+ * Generated once, embedded as a const array (182 bytes).
+ */
+static const int16_t macos9_sin_q15_table[91] = {
+	    0,   572,  1144,  1715,  2286,  2856,  3425,  3993,  4560,  5126,
+	 5690,  6252,  6813,  7371,  7927,  8481,  9032,  9580, 10126, 10668,
+	11207, 11743, 12275, 12803, 13328, 13848, 14365, 14876, 15384, 15886,
+	16384, 16877, 17364, 17847, 18324, 18795, 19261, 19720, 20174, 20622,
+	21063, 21498, 21926, 22348, 22763, 23170, 23571, 23965, 24351, 24730,
+	25102, 25466, 25822, 26170, 26510, 26842, 27166, 27482, 27789, 28088,
+	28378, 28660, 28932, 29197, 29452, 29698, 29935, 30163, 30382, 30592,
+	30792, 30983, 31164, 31336, 31499, 31651, 31795, 31928, 32052, 32166,
+	32270, 32365, 32449, 32524, 32588, 32643, 32688, 32723, 32748, 32763,
+	32767
+};
+
+static int macos9_sin_q15(int deg)
+{
+	while (deg < 0) deg += 360;
+	while (deg >= 360) deg -= 360;
+	if (deg <=  90) return  macos9_sin_q15_table[deg];
+	if (deg <= 180) return  macos9_sin_q15_table[180 - deg];
+	if (deg <= 270) return -macos9_sin_q15_table[deg - 180];
+	                return -macos9_sin_q15_table[360 - deg];
+}
+
+static int macos9_cos_q15(int deg)
+{
+	return macos9_sin_q15(deg + 90);
+}
+
+/* fixes71/72: unpack -macsurf-transform packed value.
  *   bits 31..16 rotation Q10.6 deg (signed)
  *   bits 15..8  translate-x int8 px
  *   bits 7..0   translate-y int8 px
- * Returns the nearest-90°-snapped rotation step (0=0°, 1=90°, 2=180°, 3=270°)
- * and translation pixels. */
+ * Returns rotation in integer degrees (0..359) and translation pixels.
+ * Sub-degree precision is dropped — V2 accuracy is 1° per step which is
+ * imperceptible for typical CSS rotations. */
 static void
 macos9_transform_unpack(int transform,
-			int *rot_step, int *tx, int *ty)
+			int *rot_deg, int *tx, int *ty)
 {
 	int rot_q106;
-	int rot_deg64;
-	int step;
+	int deg;
 	int8_t tx_px = (int8_t)((((uint32_t)transform) >> 8) & 0xff);
 	int8_t ty_px = (int8_t)( ((uint32_t)transform)       & 0xff);
 
 	rot_q106 = (int)((int16_t)((((uint32_t)transform) >> 16) & 0xffff));
-	rot_deg64 = rot_q106;
-	while (rot_deg64 < 0) rot_deg64 += 360 * 64;
-	while (rot_deg64 >= 360 * 64) rot_deg64 -= 360 * 64;
-	step = (rot_deg64 + 45 * 64) / (90 * 64);
-	step = step & 0x3;
+	deg = rot_q106 / 64;
+	while (deg < 0)   deg += 360;
+	while (deg >= 360) deg -= 360;
 
-	*rot_step = step;
+	*rot_deg = deg;
 	*tx = (int)tx_px;
 	*ty = (int)ty_px;
 }
 
-/* Rotate a single point around (cx, cy) by step * 90 degrees. */
+/* Rotate a single point around (cx, cy) by rot_deg degrees, then translate.
+ * Q15 sin/cos lookup; integer-arithmetic only, no FPU dependency. */
 static void
 macos9_transform_point(int *px, int *py,
-		       int cx, int cy, int rot_step,
+		       int cx, int cy, int rot_deg,
 		       int tx, int ty)
 {
 	int dx = *px - cx;
 	int dy = *py - cy;
-	int nx = dx, ny = dy;
+	int s = macos9_sin_q15(rot_deg);
+	int c = macos9_cos_q15(rot_deg);
+	int nx, ny;
 
-	switch (rot_step & 3) {
-	case 0: nx = dx;  ny = dy;  break;
-	case 1: nx = -dy; ny = dx;  break;
-	case 2: nx = -dx; ny = -dy; break;
-	case 3: nx = dy;  ny = -dx; break;
+	/* Fast exact path for the four cardinal rotations — avoids
+	 * accumulating Q15 rounding error on what should be pixel-perfect
+	 * corners. */
+	switch (rot_deg) {
+	case 0:    nx = dx;  ny = dy;  break;
+	case 90:   nx = -dy; ny = dx;  break;
+	case 180:  nx = -dx; ny = -dy; break;
+	case 270:  nx = dy;  ny = -dx; break;
+	default:
+		/* Q15 affine: new_x = dx*cos - dy*sin, scaled down by 2^15.
+		 * +16384 rounds half-to-nearest. */
+		nx = (dx * c - dy * s + 16384) >> 15;
+		ny = (dx * s + dy * c + 16384) >> 15;
+		break;
 	}
 	*px = cx + nx + tx;
 	*py = cy + ny + ty;
@@ -389,16 +440,16 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	 * Skipped for identity (transform == 0) so the fast path stays
 	 * untouched for the 99% case. */
 	if (pstyle->transform != 0) {
-		int rot_step, tx, ty;
+		int rot_deg, tx, ty;
 		int cx, cy;
 		int x[4], y[4];
 		PolyHandle poly;
 		RgnHandle saved_clip;
 		int i;
 
-		macos9_transform_unpack(pstyle->transform, &rot_step, &tx, &ty);
+		macos9_transform_unpack(pstyle->transform, &rot_deg, &tx, &ty);
 
-		if (rot_step != 0 || tx != 0 || ty != 0) {
+		if (rot_deg != 0 || tx != 0 || ty != 0) {
 			cx = (r.left + r.right) / 2;
 			cy = (r.top  + r.bottom) / 2;
 			x[0] = r.left;  y[0] = r.top;
@@ -407,7 +458,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 			x[3] = r.left;  y[3] = r.bottom;
 			for (i = 0; i < 4; i++) {
 				macos9_transform_point(&x[i], &y[i],
-					cx, cy, rot_step, tx, ty);
+					cx, cy, rot_deg, tx, ty);
 			}
 
 			saved_clip = macos9_push_clip();
@@ -906,17 +957,18 @@ macos9_plot_text(const struct redraw_context *ctx,
 		sx = (fstyle != NULL) ? fstyle->shadow_x : 0;
 		sy = (fstyle != NULL) ? fstyle->shadow_y : 0;
 
-		/* fixes71 -- text-side transform. V1 supports translate
-		 * only; the glyph orientation stays upright regardless of
-		 * the rotation component. Author CSS like
-		 *   transform: rotate(90deg) translate(10px, 0)
-		 * applies the translate to the text origin but leaves
-		 * letters readable. True glyph rotation needs GWorld
-		 * offscreen rendering + manual pixel rotate (V2). */
+		/* fixes71/72 -- text-side transform.
+		 *
+		 * V2 (fixes72): the translate component still moves the
+		 * text origin, but the glyphs themselves continue to
+		 * render upright regardless of rotation. True glyph
+		 * rotation (letters tilted, not just origin shifted)
+		 * needs an offscreen GWorld with per-pixel rotation,
+		 * which is queued for V3. */
 		if (fstyle != NULL && fstyle->transform != 0) {
-			int rot_step, tx, ty;
+			int rot_deg, tx, ty;
 			macos9_transform_unpack(fstyle->transform,
-				&rot_step, &tx, &ty);
+				&rot_deg, &tx, &ty);
 			x += tx;
 			y += ty;
 		}
