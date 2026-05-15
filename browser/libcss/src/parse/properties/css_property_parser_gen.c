@@ -3,7 +3,17 @@
  * Licensed under the MIT License,
  *		  http://www.opensource.org/licenses/mit-license.php
  * Copyright 2010 Vincent Sanders <vince@netsurf-browser.org>
+ *
+ * NOTE: this is a HOST-SIDE code generator. It is NOT part of the runtime
+ * library. The Mac build does not need to compile it — remove from
+ * MacSurf.mcp. Compile guard below makes the file a no-op under CodeWarrior
+ * so an accidental inclusion still links.
  */
+
+#ifdef __MWERKS__
+/* No-op under CW8 — see header note above. */
+int css_property_parser_gen_unused_(void) { return 0; }
+#else
 
 #include <stdio.h>
 #include <string.h>
@@ -734,3 +744,4 @@ cleanup:
 
 	return ret;
 }
+#endif /* __MWERKS__ */
