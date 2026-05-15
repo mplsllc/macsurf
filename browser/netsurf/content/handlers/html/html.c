@@ -656,6 +656,12 @@ html_create(const content_handler *handler,
 	html_content *html;
 	nserror error;
 
+#ifdef __MACOS9__
+	{
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		macsurf_debug_log_writef("html_create: entered");
+	}
+#endif
 	html = calloc(1, sizeof(html_content));
 	if (html == NULL)
 		return NSERROR_NOMEM;
@@ -836,6 +842,13 @@ static bool html_convert(struct content *c)
 {
 	html_content *htmlc = (html_content *) c;
 	dom_exception exc; /* returned by libdom functions */
+
+#ifdef __MACOS9__
+	{
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		macsurf_debug_log_writef("html_convert: entered");
+	}
+#endif
 
 	/* The quirk check and associated stylesheet fetch is "safe"
 	 * once the root node has been inserted into the document
@@ -2436,6 +2449,12 @@ nserror html_init(void)
 	uint32_t i;
 	nserror error;
 
+#ifdef __MACOS9__
+	extern void macsurf_debug_log_writef(const char *fmt, ...);
+	macsurf_debug_log_writef("html_init: entered, types=%lu",
+		(unsigned long)NOF_ELEMENTS(html_types));
+#endif
+
 	memset(&html_content_handler, 0, sizeof(html_content_handler));
 	html_content_handler.fini = html_fini;
 	html_content_handler.create = html_create;
@@ -2476,10 +2495,17 @@ nserror html_init(void)
 	for (i = 0; i < NOF_ELEMENTS(html_types); i++) {
 		error = content_factory_register_handler(html_types[i],
 				&html_content_handler);
+#ifdef __MACOS9__
+		macsurf_debug_log_writef("html_init: reg[%lu] err=%d",
+			(unsigned long)i, (int)error);
+#endif
 		if (error != NSERROR_OK)
 			goto error;
 	}
 
+#ifdef __MACOS9__
+	macsurf_debug_log_writef("html_init: done OK");
+#endif
 	return NSERROR_OK;
 
 error:
