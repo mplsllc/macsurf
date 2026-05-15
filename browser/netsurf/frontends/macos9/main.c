@@ -465,8 +465,14 @@ int main(void) {
 		extern pascal void SetOutlinePreferred(Boolean);
 		extern OSStatus SetAntiAliasedTextEnabled(Boolean, SInt16);
 		SetOutlinePreferred(true);
-		(void)SetAntiAliasedTextEnabled(true, 8);
-		MS_LOG("font quality: outline+AA on (fract off)");
+		/* fixes68: AA floor raised from 8 to 12. AA at body sizes (8-10pt)
+		 * produces sub-pixel fuzz because there aren't enough pixels per
+		 * glyph for the antialiasing to look clean — net effect is blurry
+		 * body text. Floor at 12 keeps body bitmap-crisp; larger sizes
+		 * (headings, page titles) still get smooth AA edges. Dial up to
+		 * 14 or 16 if body still looks fuzzy on the target hardware. */
+		(void)SetAntiAliasedTextEnabled(true, 12);
+		MS_LOG("font quality: outline on, AA floor=12pt, fract off");
 	}
 
 	macos9_init_menus();
