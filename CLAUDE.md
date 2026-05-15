@@ -371,6 +371,16 @@ Features that remain unsupported and degrade gracefully to block layout or flat 
 
 ## Build State
 
+- **v0.4.2 CSS TRANSFORM on G4 / OS 9.2.2 (2026-05-16).** Reached at fixes73e. `-macsurf-transform` parses and renders natively:
+  - **rotate()**: any angle. Cardinal angles (0/90/180/270) use exact integer rotation; arbitrary angles use a 91-entry Q15 sin/cos lookup table with quadrant symmetry (182 bytes const). Integer math only, no FPU dependency.
+  - **translate(x, y)**: signed int8 px range (±127), one-value and two-value forms both supported.
+  - **scale(s)** / **scale(sx, sy)** / **scaleX(s)** / **scaleY(s)**: bare CSS numbers parsed via `css__number_from_lwc_string` (not unit-specifier — that incorrectly treated them as percentages). Stored in Q8.8 in a companion `macsurf_transform_b` storage slot.
+  - **Composition**: rotate + translate, scale + rotate, all combinations. Scale applies pre-rotation around the box centre.
+  - **Storage**: `macsurf_transform` int32 packs rotation Q10.6 (bits 31..16), tx int8 px (15..8), ty int8 px (7..0). `macsurf_transform_b` int32 packs sx_q88 (31..16), sy_q88 (15..0). Identity sentinel for transform_b is 0x01000100.
+  - **Paint-don't-relayout semantics**: layout box stays the original size, the painted rectangle paints scaled/rotated around the box centre. Borders remain at the layout slot (intentional — full border transform is V4).
+  - **Plotter clip**: transformed paint uses the wide `content_rect` clip rather than the tight per-box clip, so scale > 1 actually escapes the layout slot edges. Non-transform paint paths keep their tight clip.
+  - **Test page**: PROBE T1–T7 in `advanced.html` cover cardinal rotation, arbitrary rotation, translate, rotate+translate, uniform scale, scaleX/scaleY/non-uniform scale, and scale+rotate composition. All seven probes render cleanly.
+  - **Cascade**: `css__copy_macsurf_transform` and `css__compose_macsurf_transform` propagate BOTH the rotation/translate field AND the scale field — without this, scale dropped to identity after every cascade compose pass (the bug behind fixes73d).
 - **v0.4.1 FULL CSS3 RENDERING on G4 / OS 9.2.2 (2026-05-15).** Reached at fixes70. advanced.html renders cleanly with:
   - **Text styling**: bold + italic inline on the same line (no fusion, no diagonal stair-step), `face=1` (bold), `face=2` (italic), `face=0` (regular) all distinct.
   - **Colours**: navy headings (`#003366`), grey body, light-grey de-emphasised lines — author CSS resolving through libcss cascade.
