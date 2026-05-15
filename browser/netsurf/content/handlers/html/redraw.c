@@ -1238,11 +1238,13 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 		        &grad_col_late) == CSS_MACSURF_GRADIENT_SET) {
 			colour gc1, gc2;
 			bool grad_h = false;
+			bool grad_r = false;
 			macsurf_gradient_unpack(grad_col_late,
-					&gc1, &gc2, &grad_h);
-			pstyle_fill_bg.fill_type = grad_h ?
-					PLOT_OP_TYPE_LINEAR_GRADIENT_H :
-					PLOT_OP_TYPE_LINEAR_GRADIENT;
+					&gc1, &gc2, &grad_h, &grad_r);
+			pstyle_fill_bg.fill_type = grad_r ?
+					PLOT_OP_TYPE_RADIAL_GRADIENT :
+					(grad_h ? PLOT_OP_TYPE_LINEAR_GRADIENT_H :
+						  PLOT_OP_TYPE_LINEAR_GRADIENT);
 			pstyle_fill_bg.fill_colour  = gc1;
 			pstyle_fill_bg.fill_colour2 = gc2;
 			res = ctx->plot->rectangle(ctx, &pstyle_fill_bg, &r);
