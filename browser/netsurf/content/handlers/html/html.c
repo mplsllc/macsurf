@@ -675,6 +675,12 @@ html_create(const content_handler *handler,
 
 	MS_LOG("html create");
 	error = html_create_html_data(html, params);
+#ifdef __MACOS9__
+	{
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		macsurf_debug_log_writef("html_create: html_data err=%d", (int)error);
+	}
+#endif
 	if (error != NSERROR_OK) {
 		content_broadcast_error(&html->base, error, NULL);
 		free(html);
@@ -682,6 +688,12 @@ html_create(const content_handler *handler,
 	}
 
 	error = html_css_new_stylesheets(html);
+#ifdef __MACOS9__
+	{
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		macsurf_debug_log_writef("html_create: css_new_sheets err=%d", (int)error);
+	}
+#endif
 	if (error != NSERROR_OK) {
 		content_broadcast_error(&html->base, error, NULL);
 		free(html);
@@ -690,6 +702,12 @@ html_create(const content_handler *handler,
 
 	*c = (struct content *) html;
 
+#ifdef __MACOS9__
+	{
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		macsurf_debug_log_writef("html_create: returning OK content=%p", (void*)html);
+	}
+#endif
 	return NSERROR_OK;
 }
 
@@ -2451,8 +2469,8 @@ nserror html_init(void)
 
 #ifdef __MACOS9__
 	extern void macsurf_debug_log_writef(const char *fmt, ...);
-	macsurf_debug_log_writef("html_init: entered, types=%lu",
-		(unsigned long)NOF_ELEMENTS(html_types));
+	macsurf_debug_log_writef("html_init: entered, types=%ld",
+		(long)NOF_ELEMENTS(html_types));
 #endif
 
 	memset(&html_content_handler, 0, sizeof(html_content_handler));
@@ -2496,8 +2514,8 @@ nserror html_init(void)
 		error = content_factory_register_handler(html_types[i],
 				&html_content_handler);
 #ifdef __MACOS9__
-		macsurf_debug_log_writef("html_init: reg[%lu] err=%d",
-			(unsigned long)i, (int)error);
+		macsurf_debug_log_writef("html_init: reg[%ld] err=%d",
+			(long)i, (int)error);
 #endif
 		if (error != NSERROR_OK)
 			goto error;
