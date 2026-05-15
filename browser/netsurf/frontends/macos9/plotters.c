@@ -451,15 +451,15 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 
 		macos9_transform_unpack(pstyle->transform, &rot_deg, &tx, &ty);
 
-		/* fixes73: unpack scale from transform_b. Identity sentinel
-		 * 0x01000100 = (1.0, 1.0); zero = scale(0) author choice. */
+		/* fixes73 / fixes73b: unpack scale from transform_b. Identity
+		 * sentinel is 0x01000100 = (1.0, 1.0). If transform_b is zero
+		 * (uninitialised plot_style_t struct from a code path that
+		 * predates fixes73), treat it as identity — earlier code did
+		 * an early-return here which killed every transformed draw
+		 * whose plot_style went through the zero-fill struct init. */
 		sx_q88 = (int)((((uint32_t)pstyle->transform_b) >> 16) & 0xffff);
 		sy_q88 = (int)( ((uint32_t)pstyle->transform_b)        & 0xffff);
-		if (pstyle->transform_b == 0) {
-			/* author wrote scale(0) — skip drawing entirely */
-			return NSERROR_OK;
-		}
-		if (sx_q88 == 0) sx_q88 = 256;   /* defensive: treat 0 as identity */
+		if (sx_q88 == 0) sx_q88 = 256;
 		if (sy_q88 == 0) sy_q88 = 256;
 
 		if (rot_deg != 0 || tx != 0 || ty != 0 ||
