@@ -208,27 +208,22 @@ css_error css__parse_macsurf_transform(css_language *c,
 				token = parserutils_vector_iterate(vector, ctx);
 			}
 		} else if (is_scale) {
-			css_fixed sv1 = 0, sv2 = 0;
+			/* fixes73c: scale() arguments are bare CSS numbers, not
+			 * lengths or percentages. css__parse_unit_specifier with
+			 * UNIT_PCT was treating them as percentages and dividing
+			 * by 100 — turning scale(1.5) into scale(0.015) which
+			 * collapsed everything to ~0. Read the NUMBER token
+			 * directly via css__number_from_lwc_string. */
+			css_fixed sv1 = (css_fixed)(1 << 10);  /* default 1.0 Q22.10 */
+			css_fixed sv2 = (css_fixed)(1 << 10);
+			size_t consumed = 0;
 			consumeWhitespace(vector, ctx);
-			/* scale arg is a number (no unit). Read via the
-			 * unit_specifier path; on a bare number CSS gives
-			 * a unitless integer multiplied by 1024 (Q22.10),
-			 * which matches our scale_x / scale_y format. */
-			error = css__parse_unit_specifier(c, vector, ctx,
-					UNIT_PCT, &sv1, &unit);
-			if (error == CSS_OK) {
-				/* Bare number → arrives as Q22.10 with unit
-				 * set to NUMBER. PCT path returns Q22.10 in
-				 * 0..100 range, so we'd need to divide. Easiest
-				 * compromise: treat the parsed value as Q22.10
-				 * directly. CSS scale(1.5) parsed as a number
-				 * comes through as 1.5 * 1024 = 1536 — correct.
-				 * scale(150%) would arrive as 150 * 1024;
-				 * divide by 100 to get the proportional form. */
-				if ((unit & 0xff) == UNIT_PCT) {
-					sv1 = sv1 / 100;
-				}
-				sv2 = sv1;  /* default uniform */
+			token = parserutils_vector_iterate(vector, ctx);
+			if (token != NULL && token->type == CSS_TOKEN_NUMBER &&
+					token->idata != NULL) {
+				sv1 = css__number_from_lwc_string(token->idata,
+						false, &consumed);
+				sv2 = sv1;
 				consumeWhitespace(vector, ctx);
 				token = parserutils_vector_peek(vector, *ctx);
 				if (token != NULL && token->type == CSS_TOKEN_CHAR &&
@@ -237,16 +232,13 @@ css_error css__parse_macsurf_transform(css_language *c,
 					if (s != NULL && s[0] == ',') {
 						parserutils_vector_iterate(vector, ctx);
 						consumeWhitespace(vector, ctx);
-						error = css__parse_unit_specifier(
-								c, vector, ctx,
-								UNIT_PCT, &sv2,
-								&unit);
-						if (error == CSS_OK) {
-							if ((unit & 0xff) == UNIT_PCT) {
-								sv2 = sv2 / 100;
-							}
-						} else {
-							sv2 = sv1;
+						token = parserutils_vector_iterate(vector, ctx);
+						if (token != NULL &&
+								token->type == CSS_TOKEN_NUMBER &&
+								token->idata != NULL) {
+							sv2 = css__number_from_lwc_string(
+								token->idata, false,
+								&consumed);
 						}
 					}
 				}
