@@ -42,20 +42,15 @@ struct rect;
 	#define __INTERNETCONFIG__
 	#endif
 
-	/* MacWindows.h (via LowMem.h→Carbon.h) uses AliasHandle before Aliases.h
-	 * has been processed. Pre-declare the minimal types and suppress the full
-	 * Aliases.h inclusion — MacSurf does not use the Alias Manager.
-	 *
-	 * fixes58: simplified to void-based opaque typedefs. The previous
-	 * struct-based forward decl tripped CW8 with "illegal function definition"
-	 * inside MacWindows.h around SetWindowProxyAlias / GetWindowProxyAlias.
-	 * void-based opaque pointers parse cleanly in any function-parameter
-	 * position. MacSurf never dereferences these types so the opacity is fine. */
-	#ifndef __ALIASES__
-	#define __ALIASES__
-	typedef void *AliasPtr;
-	typedef void **AliasHandle;
-	#endif
+	/* fixes59: don't suppress Aliases.h — let Apple's own header provide the
+	 * full AliasRecord/AliasPtr/AliasHandle definitions before Carbon.h chains
+	 * into MacWindows.h. Previous fixes (263-266, 58) pre-declared AliasHandle
+	 * to avoid Aliases.h, but every variant tripped CW8 inside MacWindows.h on
+	 * SetWindowProxyAlias / GetWindowProxyAlias prototypes. Including Aliases.h
+	 * explicitly now resolves AliasRecord cleanly. With __INTERNETCONFIG__ still
+	 * suppressed (fixes265), the original "AliasRecord incomplete in
+	 * InternetConfig.h" cascade can't re-emerge. */
+	#include <Aliases.h>
 	/* MacSurf does not use the Keychain — suppress KeychainCore.h AND
 	 * KeychainHI.h (Carbon.h:210 chain) to avoid their C89-incompatible
 	 * function prototypes (KCRef by value, etc.). */
