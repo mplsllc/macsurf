@@ -628,15 +628,15 @@ int main(void) {
 	MS_LOG("netsurf_register done");
 	nsoption_init(NULL, NULL, NULL);
 	MS_LOG("nsoption_init done");
-	/* No image content handlers registered yet (libnsgif/libnsbmp not in
-	 * project file list). Disable foreground image fetches so <img> boxes
-	 * render as their alt-text fallback rather than spawning hung fetches
-	 * that block html_can_begin_conversion. Sites still parse and render. */
-	nsoption_set_bool(foreground_images, false);
-	nsoption_set_bool(background_images, false);
+	/* fixes78: image content handler (QuickTime Graphics Importers) is
+	 * now registered in macos9_image.c. Enable image fetches so <img>
+	 * elements actually trigger network fetches and decode through the
+	 * QT importer pipeline. */
+	nsoption_set_bool(foreground_images, true);
+	nsoption_set_bool(background_images, true);
 	/* Enable author CSS so inline <style>/<link> rules apply. */
 	nsoption_set_bool(author_level_css, true);
-	MS_LOG("images disabled, author_css on");
+	MS_LOG("images enabled, author_css on");
 	netsurf_init(NULL);
 	MS_LOG("netsurf_init done");
 #ifdef WITH_DUKTAPE
