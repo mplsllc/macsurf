@@ -158,67 +158,18 @@ static void macos9_handle_update(const EventRecord *event) {
 #ifdef __MACOS9__
 	WindowRef win = (WindowRef)(unsigned long)event->message;
 	struct gui_window *gw = macos9_find_window(win);
-	CGrafPtr  saved_port = NULL;
-	GDHandle  saved_gdh  = NULL;
-	PixMapHandle gwpm    = NULL;
-	RgnHandle vis_save   = NULL;
-	Boolean   gworld_active = (Boolean)0;
-	Rect      off_bounds;
-	int       off_w, off_h;
 	if (!gw || macos9_quitting) return;
 	SetPortWindowPort(win); BeginUpdate(win);
-	/* fixes77c -- back-buffer the content paint through an offscreen
-	 * GWorld. Single-buffered QuickDraw shows the EraseRect-then-paint
-	 * gap as a visible white flash during slow rotated PaintRect calls
-	 * (the fixes77 rotation animations). Drawing into a GWorld first,
-	 * then CopyBits-ing to the window, makes the transition atomic from
-	 * the user's perspective: the old frame stays on screen until the
-	 * new frame is fully rendered, then both swap in one blit.
-	 *
-	 * Chrome (URL bar, controls, status bar) still paints directly to
-	 * the window port -- those are static and don't flicker, and Carbon
-	 * Controls expect the window port as their drawing target. */
-	off_bounds = gw->content_rect;
-	off_w = off_bounds.right - off_bounds.left;
-	off_h = off_bounds.bottom - off_bounds.top;
-	if (gw->content_gworld != NULL &&
-	    (gw->content_gworld_rect.right  - gw->content_gworld_rect.left  != off_w ||
-	     gw->content_gworld_rect.bottom - gw->content_gworld_rect.top  != off_h)) {
-		DisposeGWorld(gw->content_gworld);
-		gw->content_gworld = NULL;
-	}
-	if (gw->content_gworld == NULL && off_w > 0 && off_h > 0) {
-		Rect r; r.left = 0; r.top = 0;
-		r.right = (short)off_w; r.bottom = (short)off_h;
-		if (NewGWorld(&gw->content_gworld, 0, &r, NULL, NULL, 0) != noErr) {
-			gw->content_gworld = NULL;
-		} else {
-			gw->content_gworld_rect = off_bounds;
-		}
-	}
-	if (gw->content_gworld != NULL) {
-		gwpm = GetGWorldPixMap(gw->content_gworld);
-		if (gwpm != NULL && LockPixels(gwpm)) {
-			GetGWorld(&saved_port, &saved_gdh);
-			vis_save = NewRgn();
-			if (vis_save != NULL)
-				GetPortVisibleRegion(GetWindowPort(win), vis_save);
-			SetGWorld(gw->content_gworld, NULL);
-			/* Make the GWorld port address pixels in window
-			 * coordinates so NetSurf's plotters, which paint at
-			 * window-relative offsets, land at the right offsets
-			 * inside the GWorld pixmap. */
-			SetOrigin(off_bounds.left, off_bounds.top);
-			if (vis_save != NULL) SetClip(vis_save);
-			gworld_active = (Boolean)1;
-		} else {
-			gwpm = NULL;
-		}
-	}
+	/* fixes77e -- revert fixes77c's offscreen-GWorld back buffer. The
+	 * GWorld-+-SetClip+CopyBits path interacted badly with plotters.c's
+	 * plot_clip bookkeeping (effective clip resolved to (0,0,0,0) on
+	 * real hardware, so PaintRect/DrawText calls were issued but never
+	 * landed pixels on screen -- the page "rendered" but stayed blank).
+	 * Restore direct-paint to the window port; flash returns but the
+	 * page displays. content_gworld stays NULL and the dispose stub in
+	 * window_destroy is a no-op. */
 	EraseRect(&gw->content_rect);
-	if (!gworld_active) {
-		draw_url_bar(gw); DrawControls(win); draw_status_bar(gw);
-	}
+	draw_url_bar(gw); DrawControls(win); draw_status_bar(gw);
 	if (gw->bw && browser_window_redraw_ready(gw->bw)) {
 		struct rect clip; struct redraw_context ctx;
 		extern long macos9_plot_text_count, macos9_plot_rect_count;
@@ -275,39 +226,12 @@ static void macos9_handle_update(const EventRecord *event) {
 		 * controls / status bar visually torn. Addresses the
 		 * 2026-04-18 survey hypothesis about URL field visual
 		 * blanking on the initial window. */
-		if (gworld_active) {
-			const BitMap *src_bm;
-			const BitMap *dst_bm;
-			RGBColor blk; RGBColor wht;
-			blk.red = 0; blk.green = 0; blk.blue = 0;
-			wht.red = 0xFFFF; wht.green = 0xFFFF; wht.blue = 0xFFFF;
-			if (vis_save != NULL) { DisposeRgn(vis_save); vis_save = NULL; }
-			SetGWorld(saved_port, saved_gdh);
-			src_bm = GetPortBitMapForCopyBits(
-				(CGrafPtr)gw->content_gworld);
-			dst_bm = GetPortBitMapForCopyBits(GetWindowPort(win));
-			RGBForeColor(&blk); RGBBackColor(&wht);
-			/* dst port visRgn is the BeginUpdate update region, so
-			 * CopyBits paints only the changed pixels to screen. */
-			CopyBits(src_bm, dst_bm, &off_bounds, &off_bounds,
-			         srcCopy, NULL);
-			if (gwpm != NULL) UnlockPixels(gwpm);
-			gworld_active = (Boolean)0;
-		}
 		draw_url_bar(gw);
 		DrawControls(win);
 		draw_status_bar(gw);
 		if (gw->url_field_active && gw->url_te) TEActivate(gw->url_te);
 	} else if (gw->bw) {
 		MS_LOG("update: bw not ready, skip");
-	}
-	if (gworld_active) {
-		/* Defensive: bw branch didn't run (no bw or not ready). Tear
-		 * down GWorld now to leave port state clean. */
-		if (vis_save != NULL) { DisposeRgn(vis_save); vis_save = NULL; }
-		SetGWorld(saved_port, saved_gdh);
-		if (gwpm != NULL) UnlockPixels(gwpm);
-		gworld_active = (Boolean)0;
 	}
 	EndUpdate(win);
 #endif
