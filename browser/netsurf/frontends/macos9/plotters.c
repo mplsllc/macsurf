@@ -160,17 +160,30 @@ macos9_face_from_style(const plot_font_style_t *fstyle)
 /* ---- plotters ---- */
 
 #ifdef __MACOS9__
-static RgnHandle macos9_push_clip(void)
+extern struct gui_window *macos9_paint_gw;
+/* fixes77g -- prefer macos9_paint_gw over GetPort+GetWRefCon. The old
+ * pattern assumed the current port was the window and read gw from the
+ * window's WRefCon. When fixes77f's offscreen GWorld back-buffer makes
+ * the GWorld the current port mid-redraw, casting it to WindowRef and
+ * calling GetWRefCon reads garbage memory and effective clips resolve
+ * to (0,0,0,0). main.c sets macos9_paint_gw around browser_window_redraw
+ * so the right gw is always available regardless of which port owns the
+ * draw operations. */
+static struct gui_window *macos9_find_gw_for_plot(void)
 {
 	GrafPtr port;
-	WindowRef win;
+	if (macos9_paint_gw != NULL) return macos9_paint_gw;
+	GetPort(&port);
+	return (struct gui_window *)GetWRefCon((WindowRef)port);
+}
+
+static RgnHandle macos9_push_clip(void)
+{
 	struct gui_window *gw;
 	RgnHandle saved_clip;
 	RgnHandle content_rgn;
 
-	GetPort(&port);
-	win = (WindowRef)port;
-	gw = (struct gui_window *)GetWRefCon(win);
+	gw = macos9_find_gw_for_plot();
 	if (gw == NULL) return NULL;
 
 	saved_clip = NewRgn();
@@ -198,8 +211,6 @@ macos9_plot_clip(const struct redraw_context *ctx, const struct rect *clip)
 {
 	Rect r;
 #ifdef __MACOS9__
-	GrafPtr port;
-	WindowRef win;
 	struct gui_window *gw;
 	RgnHandle new_clip;
 	RgnHandle content_rgn;
@@ -211,9 +222,7 @@ macos9_plot_clip(const struct redraw_context *ctx, const struct rect *clip)
 	macos9_rect_from_ns(clip, &r);
 
 #ifdef __MACOS9__
-	GetPort(&port);
-	win = (WindowRef)port;
-	gw = (struct gui_window *)GetWRefCon(win);
+	gw = macos9_find_gw_for_plot();
 	if (gw == NULL) {
 		ClipRect(&r);
 		return NSERROR_OK;
@@ -502,14 +511,10 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 			 * keep using the tight clip -- only the transform branch
 			 * needs the wider scope. */
 			{
-				GrafPtr port;
-				WindowRef win;
 				struct gui_window *gw;
 				RgnHandle wide_clip;
 
-				GetPort(&port);
-				win = (WindowRef)port;
-				gw = (struct gui_window *)GetWRefCon(win);
+				gw = macos9_find_gw_for_plot();
 
 				saved_clip = NewRgn();
 				GetClip(saved_clip);
