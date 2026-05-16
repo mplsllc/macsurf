@@ -193,11 +193,18 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 	dst.bottom = (short)(data->y + data->height);
 
 	GetGWorld(&save_port, &save_gdh);
-
-	GraphicsImportSetGWorld(qti->gi, save_port, save_gdh);
-	GraphicsImportSetBoundsRect(qti->gi, &dst);
-	GraphicsImportDraw(qti->gi);
-	MS_LOG("img redraw drew");
+	{
+		ComponentResult cr_sg, cr_sb, cr_d;
+		macsurf_debug_log_writef("img dst=(%d,%d,%d,%d) port=%p",
+			(int)dst.left, (int)dst.top,
+			(int)dst.right, (int)dst.bottom,
+			(void *)save_port);
+		cr_sg = GraphicsImportSetGWorld(qti->gi, save_port, save_gdh);
+		cr_sb = GraphicsImportSetBoundsRect(qti->gi, &dst);
+		cr_d = GraphicsImportDraw(qti->gi);
+		macsurf_debug_log_writef("img sg=%ld sb=%ld d=%ld",
+			(long)cr_sg, (long)cr_sb, (long)cr_d);
+	}
 
 	SetGWorld(save_port, save_gdh);
 	return true;
