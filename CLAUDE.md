@@ -367,10 +367,17 @@ Native support landed or in progress:
 - `border-radius` via QuickDraw `PaintRoundRect` / `FrameRoundRect` — queued fixes143.
 - Image content handlers (GIF/PNG/JPEG) — queued fixes144.
 
-Features that remain unsupported and degrade gracefully to block layout or flat rendering: CSS Grid (collapses to block), `box-shadow`, `transform`, `transition`, `animation`, gradients, `clip-path`, `mask`. These are cosmetic in most cases and their absence does not prevent page comprehension.
+Features that remain unsupported and degrade gracefully to block layout or flat rendering: `transition`, `animation` (queued v0.4.5 — biggest remaining ambition), `clip-path`, `mask`. These are cosmetic in most cases and their absence does not prevent page comprehension.
 
 ## Build State
 
+- **v0.4.4 CSS GRID V1 on G4 / OS 9.2.2 (2026-05-16).** Reached at fixes75e. Native CSS Grid layout — `display: grid` + `-macsurf-grid: N` syntax for an N-column equal-width grid with row-major auto-placement:
+  - **Lite syntax**: `display: grid; -macsurf-grid: N` (or `-macsurf-grid: N M` for N cols × M rows; rows=0 = auto-rows). Pages saying `display: grid; grid-template-columns: repeat(3, 1fr)` can use `-macsurf-grid: 3` to opt in.
+  - **Layout** ([browser/netsurf/content/handlers/html/layout_grid.c](browser/netsurf/content/handlers/html/layout_grid.c)): walks children in DOM order, places row-major into N equal-width columns. Row height tracks the tallest child in each row. Reuses `column-gap` storage (fixes148) for inter-cell spacing on both axes.
+  - **Storage**: word 14 bit 4 in `style->i.bits`; packed value `(cols<<16)|rows` in `style->i.macsurf_grid`.
+  - **Five-fix bug chain converged in this round**: fixes75 added the property and box-tree plumbing → fixes75b added `BOX_GRID` to `layout_block_find_dimensions` dispatch → fixes75c removed the `ns_computed_display` downgrade that was turning `CSS_DISPLAY_GRID` into `CSS_DISPLAY_BLOCK` before box-construct ever saw it → fixes75d added `BOX_GRID` to four flex-only assertions in `layout_block_context` and `layout_absolute` → fixes75e passed `&item->height` (not `&dummy_h`) to `layout_find_dimensions` so `layout_block_context` would see `AUTO` and finalise the real height — without this fix, row height tracked only padding/border, never the tallest item's content.
+  - **Test page**: PROBE G1-G7 in `advanced.html` cover 2-col, 3-col, 4-col with partial last row, 6-col tight grid, variable-height row, nested grid (grid-within-grid), and grid + radial-gradient combined. All seven probes render cleanly.
+  - **Out of V1 scope (deferred to V2+)**: `grid-template-columns` / `-rows` full grammar (fr, repeat, minmax, auto), explicit placement (`grid-area`, `grid-row`, `grid-column`), `grid-auto-flow: column | dense`, full-fidelity row-gap independent of column-gap, subgrid, per-cell `align-items` / `justify-items`. V1 covers the most common real-world pattern — "N equal columns, auto rows, children in DOM order" — which is `display: grid; grid-template-columns: repeat(N, 1fr)`.
 - **v0.4.3 RADIAL-GRADIENT on G4 / OS 9.2.2 (2026-05-16).** Reached at fixes74d. `-macsurf-gradient: radial-gradient(...)` parses and renders natively as a 24-ring concentric `PaintOval` stack:
   - **Parser**: accepts `radial-gradient(c1, c2)` plus optional shape/position prefix (`circle`, `ellipse`, `circle at center`, `closest-side`, etc.). Save-try-rewind colour probe distinguishes "prefix present" vs "first token is a colour".
   - **Storage**: shares the linear-gradient int32 slot via a new radial flag in bit 14. c2's red channel drops from R5 to R4 (16 levels, smeared on decode) — visually indistinguishable on 8-bit displays.
