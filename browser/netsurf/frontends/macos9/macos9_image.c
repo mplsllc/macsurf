@@ -37,6 +37,8 @@
 #include "content/content_protected.h"
 #include "content/content_factory.h"
 
+#include "macsurf_debug.h"
+
 typedef struct macos9_qt_image_content {
 	struct content base;     /* MUST be first -- NetSurf casts to this */
 	Handle compressed;       /* raw bytes, grown by process_data */
@@ -161,6 +163,7 @@ macos9_qt_image_convert(struct content *c)
 	c->width = (int)(bounds.right - bounds.left);
 	c->height = (int)(bounds.bottom - bounds.top);
 
+	MS_LOG("img convert OK");
 	content_set_ready(c);
 	content_set_done(c);
 	content_set_status(c, "");
@@ -180,6 +183,7 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 	(void)ctx;
 
 	if (qti->gi == NULL) {
+		MS_LOG("img redraw: gi NULL");
 		return true;
 	}
 
@@ -193,6 +197,7 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 	GraphicsImportSetGWorld(qti->gi, save_port, save_gdh);
 	GraphicsImportSetBoundsRect(qti->gi, &dst);
 	GraphicsImportDraw(qti->gi);
+	MS_LOG("img redraw drew");
 
 	SetGWorld(save_port, save_gdh);
 	return true;

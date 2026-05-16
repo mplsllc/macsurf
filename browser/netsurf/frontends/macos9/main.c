@@ -14,6 +14,7 @@
 #ifdef __MACOS9__
 #include <OpenTransport.h>
 #include <OpenTptInternet.h>
+#include <Movies.h>
 OTClientContextPtr macos9_ot_context = NULL;
 #ifdef WITH_DUKTAPE
 #include "javascript/macsurf_js.h"
@@ -574,6 +575,20 @@ int main(void) {
 	}
 	RegisterAppearanceClient();
 	MS_LOG("Appearance OK");
+
+	/* fixes78: QuickTime startup. Required before any
+	 * GraphicsImportComponent / Movies.h API call. Without this,
+	 * GetGraphicsImporterForDataRef may still return a valid component
+	 * for the format-identification phase but GraphicsImportDraw silently
+	 * no-ops because the QT drawing subsystem isn't online. */
+	{
+		OSErr qt_err = EnterMovies();
+		if (qt_err == noErr) {
+			MS_LOG("EnterMovies OK");
+		} else {
+			MS_LOG("EnterMovies FAIL");
+		}
+	}
 
 	/* fixes51 -- font quality upgrades, system-wide.
 	 *
