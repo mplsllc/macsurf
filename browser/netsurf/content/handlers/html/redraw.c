@@ -105,9 +105,6 @@ static void macsurf_gradient_unpack(int32_t packed_signed,
 		bool *radial_out)
 {
 	uint32_t packed = (uint32_t)packed_signed;
-	macos9_grad_set_count++;
-	if (packed & 0x4000U) macos9_grad_radial_unpack_count++;
-	else macos9_grad_linear_unpack_count++;
 	uint16_t p1 = (uint16_t)((packed >> 16) & 0xffff);
 	uint16_t p2 = (uint16_t)(packed & 0x3fff);
 	uint8_t r1 = (uint8_t)(((p1 >> 11) & 0x1f) << 3);
@@ -116,6 +113,9 @@ static void macsurf_gradient_unpack(int32_t packed_signed,
 	uint8_t r2 = (uint8_t)(((p2 >> 10) & 0x0f) << 4);
 	uint8_t g2 = (uint8_t)(((p2 >>  4) & 0x3f) << 2);
 	uint8_t b2 = (uint8_t)(((p2      ) & 0x0f) << 4);
+	macos9_grad_set_count++;
+	if (packed & 0x4000U) macos9_grad_radial_unpack_count++;
+	else macos9_grad_linear_unpack_count++;
 	if (horizontal_out != NULL) {
 		*horizontal_out = (packed & 0x8000U) ? 1 : 0;
 	}
