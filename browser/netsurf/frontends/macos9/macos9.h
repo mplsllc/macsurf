@@ -75,6 +75,7 @@ struct rect;
 
 	#include <Carbon.h>
 	#include <Quickdraw.h>
+	#include <QDOffscreen.h>
 	#include <TextEdit.h>
 	#include <Controls.h>
 	#include <Appearance.h>
@@ -110,6 +111,12 @@ struct gui_window {
 	bool needs_reformat;
 	bool reformat_in_progress;
 	char status[128];
+	/* fixes77c -- offscreen GWorld used as a back buffer for the
+	 * content paint. NULL before first allocation. content_gworld_rect
+	 * tracks the window-space bounds the GWorld was sized for so the
+	 * update handler can detect resize and reallocate. */
+	GWorldPtr content_gworld;
+	Rect content_gworld_rect;
 	struct gui_window *next;
 };
 

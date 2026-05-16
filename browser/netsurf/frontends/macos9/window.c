@@ -235,7 +235,11 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 	return g;
 }
 
-void macos9_window_destroy(struct gui_window *g) { struct gui_window **p; for(p=&window_list;*p;p=&(*p)->next) if(*p==g) { *p=g->next; break; } if(g->window) DisposeWindow(g->window); free(g); }
+void macos9_window_destroy(struct gui_window *g) { struct gui_window **p; for(p=&window_list;*p;p=&(*p)->next) if(*p==g) { *p=g->next; break; }
+#ifdef __MACOS9__
+	if(g->content_gworld) { DisposeGWorld(g->content_gworld); g->content_gworld = NULL; }
+#endif
+	if(g->window) DisposeWindow(g->window); free(g); }
 static nserror macos9_gw_invalidate(struct gui_window *g, const struct rect *r) { if(!g||!g->window)return 0; InvalWindowRect(g->window, &g->content_rect); return 0; }
 static bool macos9_gw_get_scroll(struct gui_window *g, int *x, int *y) { if(x) *x=g->scroll_x; if(y) *y=g->scroll_y; return 1; }
 static nserror macos9_gw_set_scroll(struct gui_window *g, const struct rect *r) { if(r) macos9_window_scroll_to(g,r->x0,r->y0); return 0; }
