@@ -2091,6 +2091,38 @@ static inline uint8_t get_macsurf_grid(const css_computed_style *style,
 #undef MACSURF_GRID_SHIFT
 #undef MACSURF_GRID_MASK
 
+/* fixes76: -macsurf-animation-opacity.
+ * 1-bit state at bit 0 of word 15 (new word). Integer field packs
+ * duration_ms (bits 31..16), to (bits 15..8), from (bits 7..0). */
+#define MACSURF_ANIMATION_OPACITY_INDEX 15
+#define MACSURF_ANIMATION_OPACITY_SHIFT 0
+#define MACSURF_ANIMATION_OPACITY_MASK 0x1
+static inline uint8_t get_macsurf_animation_opacity_bits(
+		const css_computed_style *style)
+{
+	uint32_t bits = style->i.bits[MACSURF_ANIMATION_OPACITY_INDEX];
+	bits &= MACSURF_ANIMATION_OPACITY_MASK;
+	bits >>= MACSURF_ANIMATION_OPACITY_SHIFT;
+
+	return (bits & 0x1);
+}
+static inline uint8_t get_macsurf_animation_opacity(
+		const css_computed_style *style, int32_t *integer)
+{
+	uint32_t bits = style->i.bits[MACSURF_ANIMATION_OPACITY_INDEX];
+	bits &= MACSURF_ANIMATION_OPACITY_MASK;
+	bits >>= MACSURF_ANIMATION_OPACITY_SHIFT;
+
+	if ((bits & 0x1) == CSS_MACSURF_ANIMATION_OPACITY_SET) {
+		*integer = style->i.macsurf_animation_opacity;
+	}
+
+	return (bits & 0x1);
+}
+#undef MACSURF_ANIMATION_OPACITY_INDEX
+#undef MACSURF_ANIMATION_OPACITY_SHIFT
+#undef MACSURF_ANIMATION_OPACITY_MASK
+
 #define MARGIN_BOTTOM_INDEX 5
 #define MARGIN_BOTTOM_SHIFT 11
 #define MARGIN_BOTTOM_MASK 0x3f800

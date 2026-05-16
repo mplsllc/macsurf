@@ -1629,6 +1629,30 @@ static inline css_error set_macsurf_grid(css_computed_style *style,
 #undef MACSURF_GRID_SHIFT
 #undef MACSURF_GRID_MASK
 
+/* fixes76: -macsurf-animation-opacity uses bit 0 of word 15.
+ * Integer storage packs duration_ms (bits 31..16), to (bits 15..8),
+ * from (bits 7..0). */
+#define MACSURF_ANIMATION_OPACITY_INDEX 15
+#define MACSURF_ANIMATION_OPACITY_SHIFT 0
+#define MACSURF_ANIMATION_OPACITY_MASK 0x1
+
+static inline css_error set_macsurf_animation_opacity(
+		css_computed_style *style, uint8_t type, int32_t integer)
+{
+	uint32_t *bits = &style->i.bits[MACSURF_ANIMATION_OPACITY_INDEX];
+
+	*bits = (*bits & ~MACSURF_ANIMATION_OPACITY_MASK) |
+			(((uint32_t)type & 0x1) <<
+				MACSURF_ANIMATION_OPACITY_SHIFT);
+
+	style->i.macsurf_animation_opacity = integer;
+
+	return CSS_OK;
+}
+#undef MACSURF_ANIMATION_OPACITY_INDEX
+#undef MACSURF_ANIMATION_OPACITY_SHIFT
+#undef MACSURF_ANIMATION_OPACITY_MASK
+
 #define MARGIN_BOTTOM_INDEX 5
 #define MARGIN_BOTTOM_SHIFT 11
 #define MARGIN_BOTTOM_MASK 0x3f800

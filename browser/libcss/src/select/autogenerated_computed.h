@@ -218,7 +218,7 @@ struct css_computed_style_i {
  * flex_shrink; flex_grow; fill_opacity; counter_reset; counter_increment;
  * color; background_image
  */
-	uint32_t bits[15];
+	uint32_t bits[16];
 	
 	css_color background_color;
 	lwc_string *background_image;
@@ -267,6 +267,11 @@ struct css_computed_style_i {
 	/* fixes75: -macsurf-grid: cols (bits 31..16) and rows (bits 15..0).
 	 * rows == 0 means auto-rows. */
 	int32_t macsurf_grid;
+	/* fixes76: -macsurf-animation-opacity.
+	 * bits 31..16: duration_ms (uint16, full from->to->from cycle).
+	 * bits 15..8:  to_opacity (uint8 0..255).
+	 * bits 7..0:   from_opacity (uint8 0..255). */
+	int32_t macsurf_animation_opacity;
 	css_fixed margin_bottom;
 	css_fixed margin_left;
 	css_fixed margin_right;

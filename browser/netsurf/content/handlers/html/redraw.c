@@ -67,6 +67,57 @@
 
 bool html_redraw_debug = false;
 
+/* fixes76: animation hook implemented in frontends/macos9/macos9_animation.c.
+ * Returns ticks (Mac OS 9 60Hz units). Stubbed elsewhere. */
+extern uint32_t macos9_animation_now_ticks(void);
+extern void macos9_animation_register(void);
+
+/*
+ * fixes76: resolve current opacity for a box that has
+ * -macsurf-animation-opacity SET. packed = (duration_ms << 16) |
+ * (to << 8) | from, where from / to are 0..255. Returns PLOT_STYLE_SCALE
+ * units (Q0.10, 1024 = fully opaque).
+ *
+ * V1 timing: linear ping-pong from -> to -> from over (2 * duration_ms)
+ * with one shared clock (TickCount) for all animated elements on the
+ * page. No per-element start offset in this round.
+ */
+static int32_t macsurf_anim_opacity_resolve_plot_fixed(int32_t packed)
+{
+	int32_t from_v = packed & 0xff;
+	int32_t to_v = (packed >> 8) & 0xff;
+	int32_t duration_ms = (packed >> 16) & 0xffff;
+	uint32_t now_ticks;
+	uint32_t elapsed_ms;
+	uint32_t period_ms;
+	uint32_t t;
+	int32_t cur_byte;
+	int32_t result;
+
+	if (duration_ms < 1) duration_ms = 1;
+	macos9_animation_register();
+	now_ticks = macos9_animation_now_ticks();
+	elapsed_ms = (now_ticks * 1000u) / 60u;
+	period_ms = (uint32_t)duration_ms * 2u;
+	t = elapsed_ms % period_ms;
+
+	if ((int32_t)t < duration_ms) {
+		/* from -> to. */
+		cur_byte = from_v + (((to_v - from_v) * (int32_t)t) /
+				duration_ms);
+	} else {
+		/* to -> from. */
+		int32_t back_t = (int32_t)t - duration_ms;
+		cur_byte = to_v + (((from_v - to_v) * back_t) / duration_ms);
+	}
+
+	if (cur_byte < 0) cur_byte = 0;
+	if (cur_byte > 255) cur_byte = 255;
+	/* Map 0..255 to PLOT_STYLE_SCALE (0..1024). */
+	result = (cur_byte * PLOT_STYLE_SCALE) / 255;
+	return result;
+}
+
 /* Diagnostic counters */
 long macos9_html_redraw_text_box_calls = 0;
 long macos9_text_redraw_plot_calls = 0;
@@ -729,12 +780,24 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	        int32_t grad_col;
 	        css_fixed op_fixed = 0;
 	        /* fixes49 -- opacity passes through to the rectangle plotter
-	         * so it can switch to a stipple pattern when < ~0.85. */
+	         * so it can switch to a stipple pattern when < ~0.85.
+	         * fixes76 -- if -macsurf-animation-opacity is SET, the
+	         * animated value overrides the static one. */
 	        if (css_computed_opacity(background->style, &op_fixed) ==
 	                        CSS_OPACITY_SET) {
 	                pstyle_fill_bg.opacity = (plot_style_fixed)op_fixed;
 	        } else {
 	                pstyle_fill_bg.opacity = (plot_style_fixed)PLOT_STYLE_SCALE;
+	        }
+	        {
+	                int32_t anim_packed = 0;
+	                if (css_computed_macsurf_animation_opacity(
+	                                background->style, &anim_packed) ==
+	                                CSS_MACSURF_ANIMATION_OPACITY_SET) {
+	                        pstyle_fill_bg.opacity = (plot_style_fixed)
+	                                macsurf_anim_opacity_resolve_plot_fixed(
+	                                        anim_packed);
+	                }
 	        }
 	        /* fixes71 -- -macsurf-transform packed value to the plotter.
 	         * fixes73 -- scale companion in transform_b. */
@@ -1095,12 +1158,23 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	        int32_t bsh;
 	        int32_t grad_col_inline;
 	        css_fixed op_fixed = 0;
-	        /* fixes49 -- opacity mirror for inline path. */
+	        /* fixes49 -- opacity mirror for inline path.
+	         * fixes76 -- animation override (inline path). */
 	        if (css_computed_opacity(box->style, &op_fixed) ==
 	                        CSS_OPACITY_SET) {
 	                pstyle_fill_bg.opacity = (plot_style_fixed)op_fixed;
 	        } else {
 	                pstyle_fill_bg.opacity = (plot_style_fixed)PLOT_STYLE_SCALE;
+	        }
+	        {
+	                int32_t anim_packed_il = 0;
+	                if (css_computed_macsurf_animation_opacity(
+	                                box->style, &anim_packed_il) ==
+	                                CSS_MACSURF_ANIMATION_OPACITY_SET) {
+	                        pstyle_fill_bg.opacity = (plot_style_fixed)
+	                                macsurf_anim_opacity_resolve_plot_fixed(
+	                                        anim_packed_il);
+	                }
 	        }
 	        /* fixes71 -- -macsurf-transform mirror for inline path.
 	         * fixes73 -- scale companion in transform_b. */

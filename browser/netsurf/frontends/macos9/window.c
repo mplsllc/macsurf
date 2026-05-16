@@ -23,6 +23,7 @@ static struct gui_window *window_list = NULL;
 static struct gui_window *macos9_window_create(struct browser_window *bw, struct gui_window *ex, gui_window_create_flags f);
 
 struct gui_window *macos9_find_window(WindowRef w) { struct gui_window *g; for(g=window_list;g;g=g->next) if(g->window==w) return g; return NULL; }
+struct gui_window *macos9_window_list_head(void) { return window_list; }
 static void set_status_text(struct gui_window *g, const char *m) { if(!m) g->status[0]=0; else { strncpy(g->status,m,127); g->status[127]=0; } }
 static void compute_url_te_rect(const Rect *u, Rect *o) { o->left=(short)(u->left+4); o->top=(short)(u->top+2); o->right=(short)(u->right-4); o->bottom=(short)(u->bottom-2); }
 

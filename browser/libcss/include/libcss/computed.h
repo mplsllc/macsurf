@@ -209,6 +209,14 @@ uint8_t css_computed_macsurf_grid(
 		const css_computed_style *style,
 		int32_t *packed);
 
+/* fixes76: -macsurf-animation-opacity: <from> <to> <duration_ms>.
+ * from, to: opacity 0..255 (255 = opaque).
+ * duration_ms: full cycle in ms (1..65535). Cycle is from -> to -> from.
+ * packed: bits 0..7 from, bits 8..15 to, bits 16..31 duration_ms. */
+uint8_t css_computed_macsurf_animation_opacity(
+		const css_computed_style *style,
+		int32_t *packed);
+
 uint8_t css_computed_background_image(
 		const css_computed_style *style,
 		lwc_string **url);

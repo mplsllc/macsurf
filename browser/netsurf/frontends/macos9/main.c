@@ -404,6 +404,8 @@ void macos9_poll(void) {
 		{ extern bool macos9_schedule_run(void); macos9_schedule_run(); }
 		macos9_windows_te_idle(); macos9_windows_process_deferred();
 		macos9_poll_mouse_hover();
+		{ extern void macos9_animation_tick(void);
+		  macos9_animation_tick(); }
 	}
 }
 

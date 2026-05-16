@@ -57,6 +57,7 @@ PROPERTY_FUNCS(macsurf_gradient);
 PROPERTY_FUNCS(macsurf_text_shadow);
 PROPERTY_FUNCS(macsurf_transform);
 PROPERTY_FUNCS(macsurf_grid);
+PROPERTY_FUNCS(macsurf_animation_opacity);
 PROPERTY_FUNCS(bottom);
 PROPERTY_FUNCS(box_sizing);
 PROPERTY_FUNCS(break_after);

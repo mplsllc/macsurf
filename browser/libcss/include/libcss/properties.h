@@ -146,6 +146,7 @@ enum css_properties_e {
 	CSS_PROP_MACSURF_TEXT_SHADOW		= 0x081,
 	CSS_PROP_MACSURF_TRANSFORM		= 0x082,
 	CSS_PROP_MACSURF_GRID			= 0x083,
+	CSS_PROP_MACSURF_ANIMATION_OPACITY	= 0x084,
 
 	CSS_N_PROPERTIES
 };
@@ -185,6 +186,14 @@ enum css_macsurf_grid_e {
 	CSS_MACSURF_GRID_INHERIT		= 0x0,
 	CSS_MACSURF_GRID_NONE			= 0x0,
 	CSS_MACSURF_GRID_SET			= 0x1
+};
+
+enum css_macsurf_animation_opacity_e {
+	/* 1-bit storage at bit 0 of word 15 (newly added word).
+	 * Companion int32 packs from(8) | to(8) | duration_ms(16). */
+	CSS_MACSURF_ANIMATION_OPACITY_INHERIT	= 0x0,
+	CSS_MACSURF_ANIMATION_OPACITY_NONE	= 0x0,
+	CSS_MACSURF_ANIMATION_OPACITY_SET	= 0x1
 };
 
 enum css_align_content_e {
