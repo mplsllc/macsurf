@@ -264,6 +264,9 @@ struct css_computed_style_i {
 	 * and scale_y_q88 (bits 15..0). Identity = 0x01000100 (1.0, 1.0).
 	 * Zero = author wrote scale(0). */
 	int32_t macsurf_transform_b;
+	/* fixes75: -macsurf-grid: cols (bits 31..16) and rows (bits 15..0).
+	 * rows == 0 means auto-rows. */
+	int32_t macsurf_grid;
 	css_fixed margin_bottom;
 	css_fixed margin_left;
 	css_fixed margin_right;

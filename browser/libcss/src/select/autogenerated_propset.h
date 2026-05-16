@@ -1607,6 +1607,28 @@ static inline void set_macsurf_transform_b_raw(css_computed_style *style,
 	style->i.macsurf_transform_b = integer;
 }
 
+/* fixes75: -macsurf-grid uses bit 4 of word 14 (1 bit: SET=1, else 0).
+ * Integer storage packs cols (bits 31..16) and rows (bits 15..0). */
+#define MACSURF_GRID_INDEX 14
+#define MACSURF_GRID_SHIFT 4
+#define MACSURF_GRID_MASK 0x10
+
+static inline css_error set_macsurf_grid(css_computed_style *style,
+		uint8_t type, int32_t integer)
+{
+	uint32_t *bits = &style->i.bits[MACSURF_GRID_INDEX];
+
+	*bits = (*bits & ~MACSURF_GRID_MASK) |
+			(((uint32_t)type & 0x1) << MACSURF_GRID_SHIFT);
+
+	style->i.macsurf_grid = integer;
+
+	return CSS_OK;
+}
+#undef MACSURF_GRID_INDEX
+#undef MACSURF_GRID_SHIFT
+#undef MACSURF_GRID_MASK
+
 #define MARGIN_BOTTOM_INDEX 5
 #define MARGIN_BOTTOM_SHIFT 11
 #define MARGIN_BOTTOM_MASK 0x3f800

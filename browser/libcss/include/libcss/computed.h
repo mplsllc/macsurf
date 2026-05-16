@@ -202,6 +202,13 @@ uint8_t css_computed_macsurf_transform(
 int32_t css_computed_macsurf_transform_b(
 		const css_computed_style *style);
 
+/* fixes75: -macsurf-grid: <cols> [<rows>]. packed = (cols << 16) | rows.
+ * cols = number of columns in the grid (1..255 reasonable).
+ * rows = 0 means auto-rows (size to content). */
+uint8_t css_computed_macsurf_grid(
+		const css_computed_style *style,
+		int32_t *packed);
+
 uint8_t css_computed_background_image(
 		const css_computed_style *style,
 		lwc_string **url);

@@ -145,6 +145,7 @@ enum css_properties_e {
 	CSS_PROP_MACSURF_GRADIENT		= 0x080,
 	CSS_PROP_MACSURF_TEXT_SHADOW		= 0x081,
 	CSS_PROP_MACSURF_TRANSFORM		= 0x082,
+	CSS_PROP_MACSURF_GRID			= 0x083,
 
 	CSS_N_PROPERTIES
 };
@@ -176,6 +177,14 @@ enum css_macsurf_transform_e {
 	CSS_MACSURF_TRANSFORM_INHERIT		= 0x0,
 	CSS_MACSURF_TRANSFORM_NONE		= 0x1,
 	CSS_MACSURF_TRANSFORM_SET		= 0x2
+};
+
+enum css_macsurf_grid_e {
+	/* 1-bit storage at bit 4 of word 14. NONE and INHERIT collapse to
+	 * 0 since author-side inheritance of grid layout isn't useful. */
+	CSS_MACSURF_GRID_INHERIT		= 0x0,
+	CSS_MACSURF_GRID_NONE			= 0x0,
+	CSS_MACSURF_GRID_SET			= 0x1
 };
 
 enum css_align_content_e {

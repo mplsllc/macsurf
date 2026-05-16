@@ -261,6 +261,7 @@ struct css_computed_style_i {
 	int32_t macsurf_text_shadow;
 	int32_t macsurf_transform;
 	int32_t macsurf_transform_b;
+	int32_t macsurf_grid;
 	css_fixed margin_bottom;
 	css_fixed margin_left;
 	css_fixed margin_right;

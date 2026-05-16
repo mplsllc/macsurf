@@ -478,6 +478,12 @@ int32_t css_computed_macsurf_transform_b(const css_computed_style *style)
 	return get_macsurf_transform_b_raw(style);
 }
 
+uint8_t css_computed_macsurf_grid(const css_computed_style *style,
+		int32_t *packed)
+{
+	return get_macsurf_grid(style, packed);
+}
+
 uint8_t css_computed_background_image(const css_computed_style *style,
 		lwc_string **url)
 {

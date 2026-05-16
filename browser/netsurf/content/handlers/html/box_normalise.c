@@ -178,6 +178,7 @@ box_normalise_table_row(struct box *row,
 			cell = child;
 			break;
 		case BOX_FLEX:
+		case BOX_GRID:
 		case BOX_BLOCK:
 		case BOX_INLINE_CONTAINER:
 		case BOX_TABLE:
@@ -318,6 +319,7 @@ box_normalise_table_row_group(struct box *row_group,
 				return false;
 			break;
 		case BOX_FLEX:
+		case BOX_GRID:
 		case BOX_BLOCK:
 		case BOX_INLINE_CONTAINER:
 		case BOX_TABLE:
@@ -655,6 +657,7 @@ box_normalise_table(struct box *table, const struct box *root, html_content * c)
 			}
 			break;
 		case BOX_FLEX:
+		case BOX_GRID:
 		case BOX_BLOCK:
 		case BOX_INLINE_CONTAINER:
 		case BOX_TABLE:
@@ -837,7 +840,9 @@ static bool box_normalise_flex(
 #endif
 
 	assert(flex_container->type == BOX_FLEX ||
-	       flex_container->type == BOX_INLINE_FLEX);
+	       flex_container->type == BOX_INLINE_FLEX ||
+	       flex_container->type == BOX_GRID ||
+	       flex_container->type == BOX_INLINE_GRID);
 
 	for (child = flex_container->children; child != NULL; child = next_child) {
 #ifdef BOX_NORMALISE_DEBUG
@@ -849,6 +854,8 @@ static bool box_normalise_flex(
 
 		switch (child->type) {
 		case BOX_FLEX:
+		case BOX_GRID:
+		case BOX_INLINE_GRID:
 			/* ok */
 			if (box_normalise_flex(child, root, c) == false)
 				return false;
@@ -1042,6 +1049,8 @@ box_normalise_inline_container(struct box *cont,
 					return false;
 				break;
 			case BOX_FLEX:
+			case BOX_GRID:
+			case BOX_INLINE_GRID:
 				if (box_normalise_flex(child->children, root,
 						c) == false)
 					return false;
@@ -1065,6 +1074,7 @@ box_normalise_inline_container(struct box *cont,
 			}
 			break;
 		case BOX_FLEX:
+		case BOX_GRID:
 		case BOX_BLOCK:
 		case BOX_INLINE_CONTAINER:
 		case BOX_TABLE:
@@ -1115,6 +1125,8 @@ box_normalise_block(struct box *block, const struct box *root, html_content *c)
 
 		switch (child->type) {
 		case BOX_FLEX:
+		case BOX_GRID:
+		case BOX_INLINE_GRID:
 			/* ok */
 			if (box_normalise_flex(child, root, c) == false)
 				return false;

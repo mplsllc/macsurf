@@ -68,6 +68,23 @@ bool layout_flex(
 		int available_width,
 		html_content *content);
 
+/**
+ * fixes75: layout a CSS Grid container.
+ *
+ * V1 reads -macsurf-grid: <cols> [<rows>]. Lays out children row-major
+ * in <cols> equal-width columns. Row heights track tallest child in
+ * each row. <rows> is currently ignored (auto-rows behaviour).
+ *
+ * \param[in] grid             grid container to lay out
+ * \param[in] available_width  width of containing block
+ * \param[in] content          memory pool for any new boxes
+ * \return true on success, false on memory exhaustion
+ */
+bool layout_grid(
+		struct box *grid,
+		int available_width,
+		html_content *content);
+
 typedef uint8_t (*css_len_func)(
 		const css_computed_style *style,
 		css_fixed *length, css_unit *unit);

@@ -115,8 +115,8 @@ static const box_type box_map[] = {
 	BOX_NONE,            /* CSS_DISPLAY_NONE */
 	BOX_FLEX,            /* CSS_DISPLAY_FLEX */
 	BOX_INLINE_FLEX,     /* CSS_DISPLAY_INLINE_FLEX */
-	BOX_BLOCK,           /* CSS_DISPLAY_GRID */
-	BOX_INLINE_BLOCK,    /* CSS_DISPLAY_INLINE_GRID */
+	BOX_GRID,            /* CSS_DISPLAY_GRID -- fixes75 */
+	BOX_INLINE_GRID,     /* CSS_DISPLAY_INLINE_GRID -- fixes75 */
 };
 
 
@@ -651,6 +651,24 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		    props.containing_block->type == BOX_INLINE_FLEX) {
 			/* Blockification */
 			switch (box->type) {
+			case BOX_INLINE_FLEX:
+				box->type = BOX_FLEX;
+				break;
+			case BOX_INLINE_BLOCK:
+				box->type = BOX_BLOCK;
+				break;
+			default:
+				break;
+			}
+		}
+		/* fixes75: grid items behave like flex items -- inline-level
+		 * children are blockified inside a grid container. */
+		if (props.containing_block->type == BOX_GRID ||
+		    props.containing_block->type == BOX_INLINE_GRID) {
+			switch (box->type) {
+			case BOX_INLINE_GRID:
+				box->type = BOX_GRID;
+				break;
 			case BOX_INLINE_FLEX:
 				box->type = BOX_FLEX;
 				break;

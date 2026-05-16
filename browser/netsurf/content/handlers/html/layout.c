@@ -959,6 +959,7 @@ static void layout_minmax_block(
 		for (child = block->children; child; child = child->next) {
 			switch (child->type) {
 			case BOX_FLEX:
+			case BOX_GRID:
 			case BOX_BLOCK:
 				layout_minmax_block(child, font_func,
 						content);
@@ -2572,14 +2573,21 @@ static bool layout_float(struct box *b, int width, html_content *content)
 	       b->type == BOX_BLOCK ||
 	       b->type == BOX_INLINE_BLOCK ||
 	       b->type == BOX_FLEX ||
-	       b->type == BOX_INLINE_FLEX);
+	       b->type == BOX_INLINE_FLEX ||
+	       b->type == BOX_GRID ||
+	       b->type == BOX_INLINE_GRID);
 	layout_float_find_dimensions(&content->unit_len_ctx, width, b->style, b);
-	if (b->type == BOX_TABLE || b->type == BOX_INLINE_FLEX) {
+	if (b->type == BOX_TABLE || b->type == BOX_INLINE_FLEX ||
+	    b->type == BOX_INLINE_GRID) {
 		if (b->type == BOX_TABLE) {
 			if (!layout_table(b, width, content))
 				return false;
-		} else {
+		} else if (b->type == BOX_INLINE_FLEX) {
 			if (!layout_flex(b, width, content))
+				return false;
+		} else {
+			/* BOX_INLINE_GRID -- fixes75 */
+			if (!layout_grid(b, width, content))
 				return false;
 		}
 		if (b->margin[LEFT] == AUTO)
@@ -3768,13 +3776,18 @@ bool layout_block_context(
 
 		/* Unless the box has an overflow style of visible, the box
 		 * establishes a new block context. */
-		if (box->type == BOX_FLEX ||
+		if (box->type == BOX_FLEX || box->type == BOX_GRID ||
 				(box->type == BOX_BLOCK && box->style &&
 				 (overflow_x != CSS_OVERFLOW_VISIBLE ||
 				  overflow_y != CSS_OVERFLOW_VISIBLE))) {
 
 			if (box->type == BOX_FLEX) {
 				if (!layout_flex(box, box->width, content)) {
+					return false;
+				}
+			} else if (box->type == BOX_GRID) {
+				/* fixes75 -- CSS Grid container. */
+				if (!layout_grid(box, box->width, content)) {
 					return false;
 				}
 			} else {
@@ -4820,6 +4833,13 @@ layout_absolute(struct box *box,
 		 * stored in the float_container field */
 		box->float_container = containing_block;
 		if (!layout_flex(box, width, content))
+			return false;
+		box->float_container = NULL;
+	} else if (box->type == BOX_GRID || box->type == BOX_INLINE_GRID) {
+		/* fixes75 -- grid container, mirror flex's float-container
+		 * dance. */
+		box->float_container = containing_block;
+		if (!layout_grid(box, width, content))
 			return false;
 		box->float_container = NULL;
 	}

@@ -2061,6 +2061,36 @@ static inline int32_t get_macsurf_transform_b_raw(const css_computed_style *styl
 	return style->i.macsurf_transform_b;
 }
 
+/* fixes75: -macsurf-grid getter. 1-bit type stored at bit 4 of word 14.
+ * Integer field packs cols<<16 | rows. */
+#define MACSURF_GRID_INDEX 14
+#define MACSURF_GRID_SHIFT 4
+#define MACSURF_GRID_MASK 0x10
+static inline uint8_t get_macsurf_grid_bits(const css_computed_style *style)
+{
+	uint32_t bits = style->i.bits[MACSURF_GRID_INDEX];
+	bits &= MACSURF_GRID_MASK;
+	bits >>= MACSURF_GRID_SHIFT;
+
+	return (bits & 0x1);
+}
+static inline uint8_t get_macsurf_grid(const css_computed_style *style,
+		int32_t *integer)
+{
+	uint32_t bits = style->i.bits[MACSURF_GRID_INDEX];
+	bits &= MACSURF_GRID_MASK;
+	bits >>= MACSURF_GRID_SHIFT;
+
+	if ((bits & 0x1) == CSS_MACSURF_GRID_SET) {
+		*integer = style->i.macsurf_grid;
+	}
+
+	return (bits & 0x1);
+}
+#undef MACSURF_GRID_INDEX
+#undef MACSURF_GRID_SHIFT
+#undef MACSURF_GRID_MASK
+
 #define MARGIN_BOTTOM_INDEX 5
 #define MARGIN_BOTTOM_SHIFT 11
 #define MARGIN_BOTTOM_MASK 0x3f800
