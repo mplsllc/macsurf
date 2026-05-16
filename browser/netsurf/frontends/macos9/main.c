@@ -41,6 +41,12 @@ bool macos9_quitting = (bool)0;
 struct netsurf_table macos9_table;
 extern const struct plotter_table macos9_plotters;
 
+#ifdef __MACOS9__
+/* fixes77c -- CW8's Quickdraw.h omits the Carbon accessor prototype. The
+ * symbol is in CarbonLib 1.0+, so an explicit declaration is enough. */
+extern const BitMap *GetPortBitMapForCopyBits(CGrafPtr port);
+#endif
+
 static void draw_url_bar(struct gui_window *gw) {
 #ifdef __MACOS9__
 	RGBColor black = {0,0,0}, white = {0xFFFF, 0xFFFF, 0xFFFF};
