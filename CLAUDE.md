@@ -371,6 +371,12 @@ Features that remain unsupported and degrade gracefully to block layout or flat 
 
 ## Build State
 
+- **v0.4.3 RADIAL-GRADIENT on G4 / OS 9.2.2 (2026-05-16).** Reached at fixes74d. `-macsurf-gradient: radial-gradient(...)` parses and renders natively as a 24-ring concentric `PaintOval` stack:
+  - **Parser**: accepts `radial-gradient(c1, c2)` plus optional shape/position prefix (`circle`, `ellipse`, `circle at center`, `closest-side`, etc.). Save-try-rewind colour probe distinguishes "prefix present" vs "first token is a colour".
+  - **Storage**: shares the linear-gradient int32 slot via a new radial flag in bit 14. c2's red channel drops from R5 to R4 (16 levels, smeared on decode) — visually indistinguishable on 8-bit displays.
+  - **Plotter**: `PLOT_OP_TYPE_RADIAL_GRADIENT` paints the box with edge colour then stacks 24 progressively smaller `PaintOval` ellipses converging on the centre colour. Ellipse fits box bounds → non-square boxes get an elliptical gradient automatically (CSS's default `ellipse farthest-corner`).
+  - **Latent bug fixed in flight**: `html_redraw_box_has_background` didn't know about `-macsurf-gradient` and was returning false for any element without an explicit `background-color`, dropping the gradient on the floor. Latent since fixes47 because every prior gradient probe happened to also set `background:`. fixes74d adds the SET check.
+  - **Test page**: PROBE R1-R4 in `advanced.html` cover bare 2-stop, shape/position prefix, aspect ratio (wide ellipse vs tall), and linear-gradient sanity check (proves the R5→R4 bit-pack shuffle didn't regress linear).
 - **v0.4.2 CSS TRANSFORM on G4 / OS 9.2.2 (2026-05-16).** Reached at fixes73e. `-macsurf-transform` parses and renders natively:
   - **rotate()**: any angle. Cardinal angles (0/90/180/270) use exact integer rotation; arbitrary angles use a 91-entry Q15 sin/cos lookup table with quadrant symmetry (182 bytes const). Integer math only, no FPU dependency.
   - **translate(x, y)**: signed int8 px range (±127), one-value and two-value forms both supported.
