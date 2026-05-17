@@ -571,6 +571,7 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 	 * we're closing the socket — pool reuse on a 3xx isn't worth the
 	 * decoder complexity. */
 	if (c->status >= 300 && c->status < 400 && c->redirect_url[0] != '\0') {
+		struct fetch *parent_save;
 		msg.type = FETCH_REDIRECT;
 		msg.data.redirect = c->redirect_url;
 		fetch_send_callback(&msg, c->parent);
@@ -578,7 +579,11 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 			c->status, c->redirect_url);
 		c->state = MFS_NOTIFIED;
 		c->keep_alive_ok = 0;
-		free(c->h_buf); c->h_buf = NULL;
+		/* fixes102 — release the slot (matches curl.c). h_buf will
+		 * be freed by macos9_http_free, so don't double-free here.
+		 * Save parent before fetch_free clears c via ops.free. */
+		parent_save = c->parent;
+		fetch_free(parent_save);
 		return;
 	}
 	/* fixes98 — keep-alive is now compatible with chunked (the decoder
@@ -683,21 +688,15 @@ static void macos9_http_poll(lwc_string *s) {
 			fetch_msg m; m.type=FETCH_ERROR; m.data.error=c->err;
 			c->state=MFS_NOTIFIED; fetch_send_callback(&m,c->parent);
 			macsurf_debug_log_writef("http: fail body_bytes=%ld status=%d", c->body_bytes, c->status);
+			/* fixes102 — fetcher self-frees, matching curl.c. */
+			fetch_free(c->parent);
 		}
 		else if(c->state==MFS_DONE) {
 			fetch_msg m; m.type=FETCH_FINISHED;
 			c->state=MFS_NOTIFIED; fetch_send_callback(&m,c->parent);
 			macsurf_debug_log_writef("http: done body=%ld len=%ld status=%d ka=%d", c->body_bytes, c->content_length, c->status, c->keep_alive_ok);
 			/* fixes99 — pool the endpoint right now, while it is
-			 * known idle and the next fetch may already be queued.
-			 * Waiting for macos9_http_free (which NetSurf calls
-			 * lazily — slots routinely linger in MFS_NOTIFIED
-			 * across several subsequent http_setup calls) means
-			 * the pool is always empty when a new fetch wants it
-			 * and every sub-resource pays a fresh TCP setup. By
-			 * returning here, the very next mfs_open against the
-			 * same host can REUSE. mfs_close still runs at free
-			 * time but sees c->ep==NULL and skips the close. */
+			 * known idle and the next fetch may already be queued. */
 #ifdef __MACOS9__
 			if (c->keep_alive_ok && !c->aborted &&
 			    c->ep != NULL && c->pool_key[0] != '\0') {
@@ -705,6 +704,19 @@ static void macos9_http_poll(lwc_string *s) {
 				c->ep = NULL;
 			}
 #endif
+			/* fixes102 — release the fetcher slot. NetSurf core
+			 * does NOT call ops.free on its own — every reference
+			 * fetcher (curl.c, file.c, data.c, resource.c,
+			 * css_fetcher.c, javascript/fetcher.c, about.c) self-
+			 * invokes fetch_free after the terminal callback.
+			 * Without this, our slot stays in MFS_NOTIFIED forever,
+			 * the slot table walks linearly through 0..MAX_F, and
+			 * NetSurf's internal per-content / per-bw active-fetch
+			 * caps trip after a handful of pages — observed as
+			 * "stuck after about three pages." fetch_free calls
+			 * macos9_http_free which sets state=MFS_IDLE; don't
+			 * touch c after this point. */
+			fetch_free(c->parent);
 		}
 	}
 }
