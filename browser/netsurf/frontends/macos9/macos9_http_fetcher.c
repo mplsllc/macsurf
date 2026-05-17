@@ -19,8 +19,14 @@ extern OTClientContextPtr macos9_ot_context;
 #define PROXY_H "116.202.231.103"
 #define PROXY_P 8765
 #define MAX_F 64
-#define RECV_B 8192
-#define POOL_SIZE 8
+/* fixes92 — bigger OTRcv buffer cuts the syscall count for large bodies.
+ * 32 KB picks ~1 OTRcv per typical sub-resource response and ~3-4 per
+ * the main HTML on MacTrove. Mac OS 9 stack frames are fine with this. */
+#define RECV_B 32768
+/* fixes92 — pool 16 simultaneous keep-alive sockets to the proxy.
+ * NetSurf may have up to 16 fetches per host in flight after fixes91's
+ * max_fetchers_per_host bump; 16 here matches. */
+#define POOL_SIZE 16
 
 /* fixes91 — new state MFS_QUEUED:
  * NetSurf core's fetch_dispatch_jobs() gates on max_fetchers / per-host
@@ -128,7 +134,14 @@ static char *mfs_find_line(char **buf, long *len) {
 static void mfs_close(struct macos9_fetch_ctx *c) {
 #ifdef __MACOS9__
 	if (c->ep) {
-		if (c->state == MFS_DONE && c->keep_alive_ok) {
+		/* fixes92 — fixes91's keep-alive was DOA. mfs_close runs from
+		 * macos9_http_free, by which time macos9_http_poll has already
+		 * transitioned state MFS_DONE → MFS_NOTIFIED, so the old check
+		 * `state == MFS_DONE` always failed and every endpoint got
+		 * closed regardless of keep_alive_ok. That means fixes91 paid
+		 * 44 fresh OTConnects per MacTrove page (~the dial-up feel).
+		 * The real eligibility test is just keep_alive_ok && !aborted. */
+		if (c->keep_alive_ok && !c->aborted) {
 			ep_pool_return(c->ep);
 		} else {
 			OTSndOrderlyDisconnect(c->ep);
@@ -284,7 +297,12 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 
 static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 #ifdef __MACOS9__
-	char b[RECV_B]; OTResult n; fetch_msg m;
+	/* fixes92 — static so we can afford a 32 KB buffer without stack
+	 * pressure. macos9_http_poll calls mfs_poll_one sequentially in a
+	 * single-threaded loop, and OTRcv in non-blocking mode never yields,
+	 * so this is reentrancy-safe under MacSurf's cooperative model. */
+	static char b[RECV_B];
+	OTResult n; fetch_msg m;
 	/* fixes91 — MFS_QUEUED means NetSurf hasn't dispatched yet (ops.start
 	 * unfired); don't open OT until then. */
 	if(c->state==MFS_IDLE || c->state==MFS_QUEUED || c->state==MFS_NOTIFIED) return;
