@@ -338,11 +338,19 @@ When auditing a new C99 library for CW8 / strict C89, grep for:
 
 ### Current blockers — feature gaps, not pipeline bugs
 
-- **`gap` / `row-gap` — parsed, single-value fidelity only (fixes148).** `gap: N` and `row-gap: N` both emit column-gap bytecode; `layout_flex.c` reads `css_computed_column_gap` and applies it as main-axis gap between items and cross-axis gap between wrapped lines. Two-value `gap: A B` loses one value (column-gap = B wins). Full-fidelity row-gap (independent storage, bit-packing extension) deferred. MacTrove usage audit: 74 single-value + 2 two-value, so the 97% case is covered.
-- **Flex `justify-content` / `align-content` / `order` computed by libcss but unread by `layout_flex.c`** — layout ignores them. Queued fixes149.
-- **`border-radius`, `box-shadow`, gradients, transforms not parsed** — cosmetic loss. Queued fixes150 (border-radius first via QuickDraw `PaintRoundRect`).
-- **Image content handlers not linked** — every `<img>` renders as placeholder box. Queued fixes151.
-- **URL field input fails on the initial window, works on File → New Window** — queued for a dedicated probe round. Hypothesis in 2026-04-18 survey: content redraw during `browser_window_create` overdraws the URL rect visually while TextEdit is still functional internally.
+- **`gap: A B` two-value form loses the first value (fixes148).** `gap: N` and standalone `row-gap: N` work as expected because single-value sets both axes via the column-gap storage. Two-value `gap: A B` collapses to column-gap = B. Full-fidelity split requires bit-packing surgery — adding `CSS_PROP_ROW_GAP` as an independent property, allocating a new bit in `css_computed_style_i.bits[14]` (~16 free), wiring parse + select + accessor, and reading independent values in `layout_flex.c`. Worth doing only if real-world MacTrove pages exercise the two-value form enough to notice. MacTrove usage audit: 74 single-value + 2 two-value, so the 97% case is covered.
+- **URL field input fails on the initial window, works on File → New Window** — queued for a dedicated probe round. Hypothesis in 2026-04-18 survey: content redraw during `browser_window_create` overdraws the URL rect visually while TextEdit is still functional internally. *(fixes77g may have already closed this — see Build State note that URL bar input started working on initial window after the offscreen-composite root-cause fix. Verify on real hardware before declaring closed.)*
+- **JPEG photo plot is slow when scrolling.** 1600×1200 native JPEG plots through `CopyBits` with downscaling to layout-slot size on every redraw. Acceptable for now; pre-scale at decode time if it becomes the bottleneck.
+
+**Previously listed here, now shipped — do not re-implement:**
+
+- **Flex `justify-content` / `align-content` / `order`** — fully wired at **fixes41**. `layout_flex.c:929-958` reads `css_computed_justify_content` and handles flex-start / flex-end / center / space-between / space-around / space-evenly. `layout_flex.c:1170-1222` does the same for `align-content`. Stable bubble-sort by `css_computed_order` before items hit lines.
+- **`border-radius`** — fully wired at **fixes172**. `plotters.c:599-614` dispatches to `PaintRoundRect` / `FrameRoundRect` when `pstyle->border_radius > 0`.
+- **`box-shadow`** — fully wired at **fixes175/178**. Independent h/v offsets + custom colour.
+- **Linear + radial gradients** — fully wired at **fixes47-74**. `linear-gradient(...)` and `-macsurf-gradient: radial-gradient(...)`.
+- **CSS transforms** — fully wired at **fixes73**. `-macsurf-transform: rotate() translate() scale()` with sin/cos LUT, paint-don't-relayout semantics.
+- **CSS Grid V1** — fully wired at **fixes75**. `display: grid; -macsurf-grid: N` for N-column row-major auto-placement.
+- **Image content handlers** — fully wired at **fixes78-79b**. PNG / GIF / BMP / TIFF / JPEG all decode and render. PNG has real per-pixel alpha via lodepng + CopyMask.
 
 ## Native CSS Custom Properties
 
