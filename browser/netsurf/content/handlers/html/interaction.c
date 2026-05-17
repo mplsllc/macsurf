@@ -1567,6 +1567,10 @@ bool html_keypress(struct content *c, uint32_t key)
 		fire_dom_keyboard_event(corestring_dom_keydown,
 				html->layout->node, true, true, key);
 	}
+#ifdef __MACOS9__
+	{ extern void macsurf_debug_log_writef(const char *fmt, ...);
+	  macsurf_debug_log_writef("html_keypress: focus_type=%d key=0x%lx", (int)html->focus_type, (unsigned long)key); }
+#endif
 
 	switch (html->focus_type) {
 	case HTML_FOCUS_CONTENT:
@@ -1724,6 +1728,11 @@ void html_set_focus(html_content *html, html_focus_type focus_type,
 
 	html->focus_type = focus_type;
 	html->focus_owner = focus_owner;
+
+#ifdef __MACOS9__
+	{ extern void macsurf_debug_log_writef(const char *fmt, ...);
+	  macsurf_debug_log_writef("html_set_focus: type=%d (0=SELF,1=CONTENT,2=TEXTAREA)", (int)focus_type); }
+#endif
 
 	if (textarea_lost_focus) {
 		msg_data.caret.type = CONTENT_CARET_REMOVE;
