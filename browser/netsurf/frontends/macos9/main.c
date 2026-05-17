@@ -488,7 +488,15 @@ void macos9_handle_key_down(const EventRecord *event) {
 			extern bool browser_window_key_press(struct browser_window *, unsigned long);
 			if (browser_window_key_press(gw->bw, (unsigned long)uc)) {
 				macsurf_debug_log_writef("page key: 0x%02x consumed", (int)uc);
-				InvalWindowRect(gw->window, &gw->content_rect);
+				/* fixes101 — do NOT invalidate the whole content area here.
+				 * NetSurf calls gw_invalidate during browser_window_key_press
+				 * with the exact dirty rects (textarea field bbox + caret).
+				 * fixes100 made gw_invalidate honour those rects; this
+				 * trailing whole-content InvalRect was overriding them
+				 * with a 585x351 region, forcing ~170 DrawText calls per
+				 * keystroke on the duck-duck search results page. If
+				 * NetSurf returned true but didn't invalidate, nothing
+				 * visually changed and there is nothing to repaint. */
 				return;
 			}
 		}
