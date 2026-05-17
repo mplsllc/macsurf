@@ -116,17 +116,15 @@ macos9_qt_image_process(struct content *c, const char *data,
 
 /* Sniff the compressed bytes for an alpha-capable format.
  *   PNG  -> 89 50 4E 47 0D 0A 1A 0A
- *   GIF  -> 47 49 46 38 (7|9) 61
  *   TIFF -> 49 49 2A 00 (LE) or 4D 4D 00 2A (BE)
- * 24-bit BMP and JPEG have no alpha; render opaque. */
+ * GIF is excluded: QT's GIF importer doesn't respect
+ * graphicsModeStraightAlpha and produces useless output through that
+ * path. JPEG / 24-bit BMP have no alpha at file level. */
 static bool
 macos9_qt_format_has_alpha(const unsigned char *p, long n)
 {
 	if (n < 4) return false;
 	if (p[0] == 0x89 && p[1] == 0x50 && p[2] == 0x4E && p[3] == 0x47) {
-		return true;
-	}
-	if (p[0] == 'G' && p[1] == 'I' && p[2] == 'F' && p[3] == '8') {
 		return true;
 	}
 	if ((p[0] == 'I' && p[1] == 'I' && p[2] == 0x2A && p[3] == 0x00) ||
@@ -136,6 +134,14 @@ macos9_qt_format_has_alpha(const unsigned char *p, long n)
 	}
 	return false;
 }
+
+/* Sentinel for color-key transparency. PNG/TIFF transparent pixels
+ * (alpha < 128) get rewritten to this RGB at decode time; the bitmap
+ * plotter blits with `transparent` transfer mode + magenta bgColor so
+ * matching pixels skip and the destination (card background) shows. */
+#define MACOS9_IMG_TRANSPARENT_R 0xFF
+#define MACOS9_IMG_TRANSPARENT_G 0x00
+#define MACOS9_IMG_TRANSPARENT_B 0xFF
 
 /* Decode the importer into a freshly-allocated NetSurf bitmap.
  * Returns NSERROR_OK on success. On failure the bitmap is freed and
@@ -187,11 +193,21 @@ macos9_qt_decode_to_bitmap(GraphicsImportComponent gi,
 	tmp_bounds.bottom = (short)bh;
 
 	temp_gw = NULL;
-	err = NewGWorld(&temp_gw, 32, &tmp_bounds, NULL, NULL, 0);
+	/* useTempMem (= 4) routes the GWorld into the system temp memory
+	 * pool instead of the app heap. The app partition fills quickly on
+	 * larger photos (e.g. a 286KB JPEG with native dimensions wants
+	 * several MB of contiguous 32-bit GWorld); temp pool typically has
+	 * more headroom on OS 9. */
+	err = NewGWorld(&temp_gw, 32, &tmp_bounds, NULL, NULL,
+			(GWorldFlags)4);
 	if (err != noErr || temp_gw == NULL) {
-		MS_LOG("img decode: NewGWorld FAIL");
-		guit->bitmap->destroy(bm);
-		return NSERROR_NOMEM;
+		MS_LOG("img decode: NewGWorld FAIL (try without tempmem)");
+		err = NewGWorld(&temp_gw, 32, &tmp_bounds, NULL, NULL, 0);
+		if (err != noErr || temp_gw == NULL) {
+			MS_LOG("img decode: NewGWorld FAIL");
+			guit->bitmap->destroy(bm);
+			return NSERROR_NOMEM;
+		}
 	}
 
 	tmp_pm = GetGWorldPixMap(temp_gw);
@@ -234,23 +250,36 @@ macos9_qt_decode_to_bitmap(GraphicsImportComponent gi,
 	SetGWorld(save_port, save_gdh);
 
 	/* GWorld pixels are 32-bit ARGB on PPC (byte 0 = A, 1 = R, 2 = G,
-	 * 3 = B). NetSurf bitmap is RGBA (byte 0 = R, 1 = G, 2 = B,
-	 * 3 = A). When the source has alpha, copy it through; otherwise
-	 * force 0xFF (opaque). */
+	 * 3 = B). NetSurf bitmap is RGBA. For alpha-capable formats, any
+	 * pixel whose source alpha < 128 is rewritten as magenta; the
+	 * bitmap plotter color-keys magenta to skip those pixels through
+	 * CopyBits' transparent transfer mode (the destination -- typically
+	 * the element's background -- shows through). For opaque formats
+	 * the alpha byte is forced to 0xFF and the original RGB stands. */
 	src_rowbytes = (*tmp_pm)->rowBytes & 0x3FFF;
 	src_base = (unsigned char *)GetPixBaseAddr(tmp_pm);
 	for (row = 0; row < bh; row++) {
 		src_row = src_base + row * src_rowbytes;
 		dst_row = dst_buf + row * row_bytes;
 		for (col = 0; col < bw; col++) {
-			dst_row[col * 4 + 0] = src_row[col * 4 + 1]; /* R */
-			dst_row[col * 4 + 1] = src_row[col * 4 + 2]; /* G */
-			dst_row[col * 4 + 2] = src_row[col * 4 + 3]; /* B */
+			unsigned char a;
 			if (wants_alpha) {
-				dst_row[col * 4 + 3] = src_row[col * 4 + 0];
-			} else {
-				dst_row[col * 4 + 3] = 0xFF;
+				a = src_row[col * 4 + 0];
+				if (a < 128) {
+					dst_row[col * 4 + 0] =
+						MACOS9_IMG_TRANSPARENT_R;
+					dst_row[col * 4 + 1] =
+						MACOS9_IMG_TRANSPARENT_G;
+					dst_row[col * 4 + 2] =
+						MACOS9_IMG_TRANSPARENT_B;
+					dst_row[col * 4 + 3] = 0;
+					continue;
+				}
 			}
+			dst_row[col * 4 + 0] = src_row[col * 4 + 1];
+			dst_row[col * 4 + 1] = src_row[col * 4 + 2];
+			dst_row[col * 4 + 2] = src_row[col * 4 + 3];
+			dst_row[col * 4 + 3] = 0xFF;
 		}
 	}
 
@@ -335,7 +364,8 @@ macos9_qt_image_convert(struct content *c)
 		content_broadcast_error(c, NSERROR_INVALID, NULL);
 		return false;
 	}
-	MS_LOG("img convert: bounds OK, decoding");
+	macsurf_debug_log_writef("img convert: %dx%d %s, decoding",
+			bw, bh, wants_alpha ? "alpha" : "opaque");
 
 	err = macos9_qt_decode_to_bitmap(importer, bw, bh, wants_alpha,
 			&qti->bitmap);

@@ -26,6 +26,7 @@ extern unsigned char *macos9_bitmap_get_buffer(void *bitmap);
 extern int macos9_bitmap_get_width(void *bitmap);
 extern int macos9_bitmap_get_height(void *bitmap);
 extern size_t macos9_bitmap_get_rowstride(void *bitmap);
+extern bool macos9_bitmap_get_opaque(void *bitmap);
 
 /* Diagnostic counters - read from main.c after redraw. */
 long macos9_plot_text_count = 0;
@@ -1018,11 +1019,33 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 	{
 		GrafPtr save_port;
 		RgnHandle saved_clip;
+		bool is_opaque;
+		short xfer_mode;
+		RGBColor save_bg;
 		GetPort(&save_port);
 		saved_clip = macos9_push_clip();
+		is_opaque = macos9_bitmap_get_opaque((void *)bitmap);
+		if (is_opaque) {
+			xfer_mode = srcCopy;
+		} else {
+			/* Non-opaque bitmap uses transparent transfer mode
+			 * keyed on the magenta sentinel (0xFF, 0x00, 0xFF)
+			 * written by macos9_image.c at decode time for any
+			 * pixel whose source alpha < 128. */
+			RGBColor magenta;
+			GetBackColor(&save_bg);
+			magenta.red = 0xFFFF;
+			magenta.green = 0;
+			magenta.blue = 0xFFFF;
+			RGBBackColor(&magenta);
+			xfer_mode = transparent;
+		}
 		CopyBits((BitMap *)*pm,
 			&((GrafPtr)save_port)->portBits,
-			&src_rect, &dst_rect, srcCopy, NULL);
+			&src_rect, &dst_rect, xfer_mode, NULL);
+		if (!is_opaque) {
+			RGBBackColor(&save_bg);
+		}
 		macos9_pop_clip(saved_clip);
 	}
 

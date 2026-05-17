@@ -67,7 +67,7 @@ macos9_bitmap_set_opaque(void *bitmap, bool opaque)
 	}
 }
 
-static bool
+bool
 macos9_bitmap_get_opaque(void *bitmap)
 {
 	struct macos9_bitmap *bm = bitmap;
