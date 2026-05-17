@@ -108,7 +108,13 @@ static const char css_default[] =
 	/* Forms */
 	"form{display:block;margin:0 0 1em}"
 	"button,textarea,input,select{display:inline-block;"
+	"background:#fff;color:#000;border:1px solid #777;padding:1px 3px;"
 	"font-family:sans-serif;font-size:13px}"
+	"input[type=submit],input[type=reset],input[type=button],"
+	"button{background:#ddd;border:1px outset #ccc;padding:1px 6px;"
+	"text-align:center}"
+	"input[type=hidden]{display:none}"
+	"input[type=checkbox],input[type=radio]{border:0;padding:0}"
 	"textarea{font-family:monospace}"
 	"fieldset{display:block;border:1px solid #888;margin:1em 0;padding:.5em}"
 	"legend{padding:0 .5em}"

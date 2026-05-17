@@ -111,7 +111,7 @@ iframe { width: 19em; height: 10em; }
 
 form { display: block; }
 
-input, button { background-color: #fff; color: #000; text-align: left;
+input, button { display: inline-block; background-color: #fff; color: #000; text-align: left;
 	font-family: sans-serif; width: auto; height: auto; overflow: hidden;
 	border: 1px solid #444; padding: 2px 3px; line-height: 1.33;
 	margin: 1px; box-sizing: border-box; }
