@@ -366,9 +366,22 @@ macos9_qt_decode_to_bitmap(GraphicsImportComponent gi,
 }
 
 /* Decode a PNG buffer via lodepng straight into a NetSurf bitmap with
- * real per-pixel alpha. lodepng outputs RGBA so no byte-swap needed.
- * Alpha < 128 becomes the magenta sentinel so the existing plotter's
- * transparent-mode CopyBits path renders transparency. */
+ * real per-pixel alpha. lodepng outputs RGBA so no byte-swap is needed.
+ *
+ * Per-pixel alpha is exposed to the plotter as a 1-bit mask built
+ * alongside the RGBA bitmap: mask bit = 1 where alpha >= 128, = 0
+ * where alpha < 128. The plotter uses CopyMask (a known-working classic
+ * Mac transparency API) when a mask is attached -- this is more robust
+ * than the magenta-keyed transparent-mode CopyBits path which never
+ * worked reliably on 32-bit pixmaps in our testing.
+ *
+ * The actual RGB values for source-transparent pixels are preserved
+ * (not overwritten with a sentinel) -- if a future round wants 8-bit
+ * mask compositing via CopyDeepMask for anti-aliased edges, those RGB
+ * values will be ready. */
+extern void macos9_bitmap_set_mask(void *bitmap, unsigned char *mask,
+		int mask_rowbytes);
+
 static nserror
 macos9_png_decode_to_bitmap(const unsigned char *data, size_t size,
 		void **out_bitmap, int *out_w, int *out_h)
@@ -378,10 +391,13 @@ macos9_png_decode_to_bitmap(const unsigned char *data, size_t size,
 	unsigned lerr;
 	void *bm;
 	unsigned char *dst_buf;
+	unsigned char *mask;
 	long row_bytes;
+	int mask_rowbytes;
 	unsigned row, col;
 	unsigned char *src_row;
 	unsigned char *dst_row;
+	unsigned char *mask_row;
 
 	*out_bitmap = NULL;
 
@@ -415,33 +431,41 @@ macos9_png_decode_to_bitmap(const unsigned char *data, size_t size,
 		return NSERROR_NOMEM;
 	}
 
+	/* 1-bit mask: ceil(w / 8) bytes per row, h rows. Round-up to
+	 * even bytes for QuickDraw BitMap word-alignment requirements. */
+	mask_rowbytes = (int)((w + 15) / 16) * 2;
+	mask = calloc((size_t)mask_rowbytes * (size_t)h, 1);
+	if (mask == NULL) {
+		free(rgba);
+		guit->bitmap->destroy(bm);
+		return NSERROR_NOMEM;
+	}
+
 	for (row = 0; row < h; row++) {
 		src_row = rgba + (long)row * (long)w * 4;
 		dst_row = dst_buf + (long)row * row_bytes;
+		mask_row = mask + (long)row * mask_rowbytes;
 		for (col = 0; col < w; col++) {
 			unsigned char a = src_row[col * 4 + 3];
-			if (a < 128) {
-				dst_row[col * 4 + 0] =
-					MACOS9_IMG_TRANSPARENT_R;
-				dst_row[col * 4 + 1] =
-					MACOS9_IMG_TRANSPARENT_G;
-				dst_row[col * 4 + 2] =
-					MACOS9_IMG_TRANSPARENT_B;
-				dst_row[col * 4 + 3] = 0xFF;
-			} else {
-				dst_row[col * 4 + 0] = src_row[col * 4 + 0];
-				dst_row[col * 4 + 1] = src_row[col * 4 + 1];
-				dst_row[col * 4 + 2] = src_row[col * 4 + 2];
-				dst_row[col * 4 + 3] = 0xFF;
+			dst_row[col * 4 + 0] = src_row[col * 4 + 0];
+			dst_row[col * 4 + 1] = src_row[col * 4 + 1];
+			dst_row[col * 4 + 2] = src_row[col * 4 + 2];
+			dst_row[col * 4 + 3] = 0xFF;
+			if (a >= 128) {
+				/* QuickDraw BitMap convention: MSB of each
+				 * byte is leftmost pixel. mask bit set = 1
+				 * means opaque (copy through). */
+				mask_row[col >> 3] |=
+					(unsigned char)(0x80 >> (col & 7));
 			}
 		}
 	}
 
 	free(rgba);
 
+	macos9_bitmap_set_mask(bm, mask, mask_rowbytes);
+
 	if (guit->bitmap->set_opaque != NULL) {
-		/* Non-opaque so the plotter takes the transparent-mode
-		 * path and keys out magenta. */
 		guit->bitmap->set_opaque(bm, false);
 	}
 	if (guit->bitmap->modified != NULL) {

@@ -27,6 +27,8 @@ extern int macos9_bitmap_get_width(void *bitmap);
 extern int macos9_bitmap_get_height(void *bitmap);
 extern size_t macos9_bitmap_get_rowstride(void *bitmap);
 extern bool macos9_bitmap_get_opaque(void *bitmap);
+extern unsigned char *macos9_bitmap_get_mask(void *bitmap);
+extern int macos9_bitmap_get_mask_rowbytes(void *bitmap);
 
 /* Diagnostic counters - read from main.c after redraw. */
 long macos9_plot_text_count = 0;
@@ -1029,43 +1031,38 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 		GrafPtr save_port;
 		RgnHandle saved_clip;
 		bool is_opaque;
-		short xfer_mode;
-		RGBColor save_dst_bg;
-		CGrafPtr save_gworld;
-		GDHandle save_gdh;
+		unsigned char *mask_data;
+		int mask_rowbytes;
 		GetPort(&save_port);
 		saved_clip = macos9_push_clip();
 		is_opaque = macos9_bitmap_get_opaque((void *)bitmap);
-		if (is_opaque) {
-			xfer_mode = srcCopy;
-			MS_LOG("plot_bitmap: opaque srcCopy");
+		mask_data = is_opaque ? NULL :
+				macos9_bitmap_get_mask((void *)bitmap);
+		mask_rowbytes = is_opaque ? 0 :
+				macos9_bitmap_get_mask_rowbytes((void *)bitmap);
+
+		if (mask_data != NULL && mask_rowbytes > 0) {
+			/* Path Alpha-Light: 1-bit mask via CopyMask.
+			 * Mask bit = 1 (opaque) -> copy source pixel.
+			 * Mask bit = 0 (transparent) -> leave destination
+			 * untouched. Anti-aliased PNG edges become a
+			 * binary threshold; upgrade to CopyDeepMask with
+			 * an 8-bit mask is queued. */
+			BitMap mask_bm;
+			mask_bm.baseAddr = (Ptr)mask_data;
+			mask_bm.rowBytes = (short)mask_rowbytes;
+			mask_bm.bounds = src_rect;
+			MS_LOG("plot_bitmap: alpha CopyMask");
+			CopyMask((BitMap *)*pm,
+				&mask_bm,
+				&((GrafPtr)save_port)->portBits,
+				&src_rect, &src_rect, &dst_rect);
 		} else {
-			/* Non-opaque bitmap: pixels whose source alpha was
-			 * < 128 at decode time were rewritten to magenta
-			 * (0xFF, 0x00, 0xFF). CopyBits with the transparent
-			 * transfer mode compares each source pixel against
-			 * the source port's bgColor and skips matches. Set
-			 * magenta on BOTH the source GWorld and the dest
-			 * port -- different QuickDraw paths differ on which
-			 * is read, and writing both is cheap. */
-			RGBColor magenta;
-			magenta.red = 0xFFFF;
-			magenta.green = 0;
-			magenta.blue = 0xFFFF;
-			GetGWorld(&save_gworld, &save_gdh);
-			SetGWorld(gw, NULL);
-			RGBBackColor(&magenta);
-			SetGWorld(save_gworld, save_gdh);
-			GetBackColor(&save_dst_bg);
-			RGBBackColor(&magenta);
-			xfer_mode = transparent;
-			MS_LOG("plot_bitmap: alpha transparent");
-		}
-		CopyBits((BitMap *)*pm,
-			&((GrafPtr)save_port)->portBits,
-			&src_rect, &dst_rect, xfer_mode, NULL);
-		if (!is_opaque) {
-			RGBBackColor(&save_dst_bg);
+			MS_LOG(is_opaque ? "plot_bitmap: opaque srcCopy" :
+					"plot_bitmap: nonopaque no-mask srcCopy");
+			CopyBits((BitMap *)*pm,
+				&((GrafPtr)save_port)->portBits,
+				&src_rect, &dst_rect, srcCopy, NULL);
 		}
 		macos9_pop_clip(saved_clip);
 	}

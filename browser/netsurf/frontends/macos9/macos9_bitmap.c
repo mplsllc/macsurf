@@ -21,7 +21,42 @@ struct macos9_bitmap {
 	int height;
 	bool opaque;
 	unsigned char *data;
+	/* Optional 1-bit alpha mask, packed MSB-first per byte, rounded up
+	 * to whole bytes per row. NULL when the bitmap is opaque or when
+	 * the decoder didn't supply one. Plotter checks this pointer to
+	 * decide between srcCopy and CopyMask. */
+	unsigned char *mask;
+	int mask_rowbytes;
 };
+
+unsigned char *
+macos9_bitmap_get_mask(void *bitmap)
+{
+	struct macos9_bitmap *bm = bitmap;
+	if (bm != NULL) return bm->mask;
+	return NULL;
+}
+
+int
+macos9_bitmap_get_mask_rowbytes(void *bitmap)
+{
+	struct macos9_bitmap *bm = bitmap;
+	if (bm != NULL) return bm->mask_rowbytes;
+	return 0;
+}
+
+/* Decoders that have real per-pixel alpha call this to attach a 1-bit
+ * mask to the bitmap. The mask buffer is owned by the bitmap thereafter
+ * and freed at destroy time. */
+void
+macos9_bitmap_set_mask(void *bitmap, unsigned char *mask, int mask_rowbytes)
+{
+	struct macos9_bitmap *bm = bitmap;
+	if (bm == NULL) return;
+	if (bm->mask != NULL) free(bm->mask);
+	bm->mask = mask;
+	bm->mask_rowbytes = mask_rowbytes;
+}
 
 static void *
 macos9_bitmap_create(int width, int height, enum gui_bitmap_flags flags)
@@ -52,6 +87,7 @@ macos9_bitmap_destroy(void *bitmap)
 	struct macos9_bitmap *bm = bitmap;
 
 	if (bm != NULL) {
+		if (bm->mask != NULL) free(bm->mask);
 		free(bm->data);
 		free(bm);
 	}
