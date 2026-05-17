@@ -53,18 +53,67 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 #ifdef __MACOS9__
 	OSStatus e; OTConfigurationRef cfg; DNSAddress dns; TCall call;
 	char pstr[64], req[2048]; const char *u; OTResult r;
-	MS_LOG("mfs_open called");
-	cfg = OTCreateConfiguration("tcp"); if(!cfg) return 0;
+	lwc_string *host_lwc;
+	const char *host_str;
+	size_t host_len;
+	MS_LOG("mfs_open: enter");
+	cfg = OTCreateConfiguration("tcp");
+	if(!cfg) { MS_LOG("mfs_open: OTCreateConfig FAIL"); return 0; }
 	c->ep = OTOpenEndpointInContext(cfg, 0, NULL, &e, macos9_ot_context);
-	if(e!=noErr||!c->ep) return 0;
+	if(e!=noErr||!c->ep) {
+		macsurf_debug_log_writef("mfs_open: OTOpenEndpoint err=%d",
+				(int)e);
+		return 0;
+	}
 	OTSetSynchronous(c->ep); OTSetBlocking(c->ep);
-	if(OTBind(c->ep,NULL,NULL)!=noErr) return 0;
+	if(OTBind(c->ep,NULL,NULL)!=noErr) {
+		MS_LOG("mfs_open: OTBind FAIL");
+		return 0;
+	}
 	sprintf(pstr,"%s:%d",PROXY_H,PROXY_P); OTMemzero(&call,sizeof(TCall));
 	call.addr.buf=(UInt8*)&dns; call.addr.len = (short)OTInitDNSAddress(&dns,pstr);
-	if(OTConnect(c->ep,&call,NULL)!=noErr) return 0;
+	MS_LOG("mfs_open: OTConnect start");
+	if(OTConnect(c->ep,&call,NULL)!=noErr) {
+		MS_LOG("mfs_open: OTConnect FAIL");
+		return 0;
+	}
+	MS_LOG("mfs_open: OTConnect OK");
+
 	u=nsurl_access(c->url);
-	sprintf(req,"GET %s HTTP/1.0\r\nUser-Agent: MacSurf/0.2\r\nAccept: */*\r\nConnection: close\r\n\r\n",u);
-	r=OTSnd(c->ep,req,(long)strlen(req),0); if(r<0) return 0;
+	macsurf_debug_log_writef("mfs_open: GET %s", u ? u : "(null)");
+
+	/* Extract Host: header value from the URL. Required by HTTP/1.1
+	 * origin servers and increasingly by HTTP/1.0 ones too -- many
+	 * proxies forward without injecting it, so the absence used to
+	 * silently kill requests to virtual-hosted sites. */
+	host_str = "";
+	host_len = 0;
+	host_lwc = nsurl_get_component(c->url, NSURL_HOST);
+	if (host_lwc != NULL) {
+		host_str = lwc_string_data(host_lwc);
+		host_len = lwc_string_length(host_lwc);
+	}
+
+	sprintf(req,
+		"GET %s HTTP/1.0\r\n"
+		"Host: %.*s\r\n"
+		"User-Agent: MacSurf/0.2\r\n"
+		"Accept: */*\r\n"
+		"Connection: close\r\n\r\n",
+		u,
+		(int)host_len, host_str);
+
+	if (host_lwc != NULL) lwc_string_unref(host_lwc);
+
+	MS_LOG("mfs_open: OTSnd start");
+	r=OTSnd(c->ep,req,(long)strlen(req),0);
+	if(r<0) {
+		macsurf_debug_log_writef("mfs_open: OTSnd err=%ld",
+				(long)r);
+		return 0;
+	}
+	macsurf_debug_log_writef("mfs_open: OTSnd OK (%ld bytes)",
+			(long)r);
 	OTSetNonBlocking(c->ep); return 1;
 #else
 	return 0;
