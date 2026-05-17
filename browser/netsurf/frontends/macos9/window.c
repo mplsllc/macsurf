@@ -127,27 +127,55 @@ static void set_url_te_text(struct gui_window *g, const char *u) {
 
 void macos9_window_navigate(struct gui_window *g, const char *u) {
 	struct nsurl *n;
+	nserror nav_e;
+	long uu_len;
+	int i;
 	MS_LOG("navigate:");
 	MS_LOG(u ? u : "(null)");
 	if(!g||!u||!u[0]) { MS_LOG("nav: no g or empty u"); return; }
 	if(!g->bw) { MS_LOG("nav: no bw"); return; }
+	uu_len = (long)strlen(u);
+	macsurf_debug_log_writef("nav: url len=%ld bytes", uu_len);
+	for(i = 0; u[i] != 0; i++) {
+		unsigned char c = (unsigned char)u[i];
+		if (c < 0x20 || c == 0x7F) {
+			macsurf_debug_log_writef("nav: ctrl-char at %d = 0x%02x", i, (int)c);
+		}
+	}
 	set_url_te_text(g,u);
 	set_status_text(g,"Loading...");
 	if(g->window) InvalWindowRect(g->window, &g->status_rect);
 	if(nsurl_create(u,&n)!=NSERROR_OK) { MS_LOG("nav: nsurl_create FAIL"); return; }
 	MS_LOG("nav: calling browser_window_navigate");
-	browser_window_navigate(g->bw, n, NULL, BW_NAVIGATE_HISTORY, NULL, NULL, NULL);
+	nav_e = browser_window_navigate(g->bw, n, NULL, BW_NAVIGATE_HISTORY, NULL, NULL, NULL);
+	macsurf_debug_log_writef("nav: bw_navigate returned %d", (int)nav_e);
 	nsurl_unref(n);
 	MS_LOG("nav: done");
 }
 
 void macos9_window_address_bar_submit(struct gui_window *g) {
 	CharsHandle h; long l; char r[1024], f[1024];
+	long i, j;
 	MS_LOG("URL submit fired");
 	if(!g||!g->url_te) { MS_LOG("submit: no g or url_te"); return; }
 	h=TEGetText(g->url_te); if(!h) { MS_LOG("submit: TEGetText null"); return; }
 	l=GetHandleSize((Handle)h); if(l<=0) { MS_LOG("submit: empty"); return; }
 	if(l>1023) l=1023; HLock((Handle)h); memcpy(r,*h,(size_t)l); HUnlock((Handle)h); r[l]=0;
+	/* Strip control chars (CR/LF/tab/embedded NUL) and leading whitespace. */
+	j = 0;
+	for (i = 0; i < l; i++) {
+		unsigned char c = (unsigned char)r[i];
+		if (c >= 0x20 && c != 0x7F) {
+			r[j++] = (char)c;
+		}
+	}
+	r[j] = 0;
+	/* Trim trailing spaces. */
+	while (j > 0 && r[j-1] == ' ') { j--; r[j] = 0; }
+	/* Trim leading spaces. */
+	{ long k = 0; while (r[k] == ' ') k++; if (k > 0) memmove(r, r+k, (size_t)(j - k + 1)); }
+	macsurf_debug_log_writef("submit: cleaned url='%s'", r);
+	if (r[0] == 0) { MS_LOG("submit: empty after clean"); return; }
 	if(!strstr(r,"://")) sprintf(f,"http://%s",r); else strcpy(f,r);
 	macos9_window_navigate(g,f);
 }
