@@ -676,7 +676,18 @@ int main(void) {
 	nsoption_set_bool(background_images, true);
 	/* Enable author CSS so inline <style>/<link> rules apply. */
 	nsoption_set_bool(author_level_css, true);
-	MS_LOG("images enabled, author_css on");
+	/* fixes91: raise concurrent-fetch caps. NetSurf defaults are
+	 * max_fetchers=24 / max_fetchers_per_host=5. With our HTTP fetcher's
+	 * MFS_INIT-at-setup state-machine, slots stay non-IDLE past the
+	 * point NetSurf's fetch_ring drains, so by the third user navigation
+	 * fetch_ring saturates and `fetch_dispatch_jobs` refuses to call
+	 * ops.start on new fetches. The HTTP fetcher fires anyway (poll
+	 * doesn't gate on start) but the stub fetcher needs ctx->started
+	 * and so hangs. Raise the caps so the gate never bites; the proper
+	 * fix (start-gated mfs_open) lives in macos9_http_fetcher.c. */
+	nsoption_set_int(max_fetchers, 128);
+	nsoption_set_int(max_fetchers_per_host, 16);
+	MS_LOG("images enabled, author_css on, fetcher caps 128/16");
 	netsurf_init(NULL);
 	MS_LOG("netsurf_init done");
 #ifdef WITH_DUKTAPE

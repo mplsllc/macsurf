@@ -240,10 +240,15 @@ macos9_plot_clip(const struct redraw_context *ctx, const struct rect *clip)
 	SectRgn(new_clip, content_rgn, new_clip);
 	effective = (**new_clip).rgnBBox;
 
+	/* fixes91: gated — see macsurf_prefix.h MACSURF_VERBOSE_PLOTLOG. */
+#ifdef MACSURF_VERBOSE_PLOTLOG
 	macsurf_debug_log_writef("plot_clip in=(%d,%d,%d,%d) content=(%d,%d,%d,%d) effective=(%d,%d,%d,%d)",
 	       r.left, r.top, r.right, r.bottom,
 	       gw->content_rect.left, gw->content_rect.top, gw->content_rect.right, gw->content_rect.bottom,
 	       effective.left, effective.top, effective.right, effective.bottom);
+#else
+	(void)effective;
+#endif
 
 	SetClip(new_clip);
 

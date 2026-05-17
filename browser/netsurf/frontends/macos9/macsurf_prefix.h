@@ -252,6 +252,13 @@ extern int   memcmp(const void *, const void *, size_t);
 #endif
 #endif
 
+/* fixes91: verbose per-paint plotter logs. The plot_clip writef at
+ * plotters.c:243 fires for every QuickDraw clip operation, which on a
+ * real Drupal page emits ~30,000 log lines per redraw — every line
+ * forces an HFS FlushVol, costing 5-15% of session time. Off by default;
+ * define MACSURF_VERBOSE_PLOTLOG only for layout debugging. */
+/* #define MACSURF_VERBOSE_PLOTLOG 1 */
+
 /* libcss stylesheet.h once tagged a struct close with `} _ALIGNED;`.
  * If any header is still found with that token undefined, CW8 reads
  * it as a global variable declaration and every TU emits a duplicate
