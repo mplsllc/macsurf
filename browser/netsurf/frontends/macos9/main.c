@@ -5,7 +5,6 @@
 #include "utils/nsurl.h"
 #include "netsurf/netsurf.h"
 #include "netsurf/browser_window.h"
-#include "netsurf/keypress.h"
 #include "netsurf/plotters.h"
 #include "desktop/gui_table.h"
 #include "utils/nsoption.h"
@@ -481,28 +480,16 @@ void macos9_handle_key_down(const EventRecord *event) {
 			InvalWindowRect(gw->window, &gw->url_rect);
 		}
 	} else {
-		/* Route to focused page content first (form inputs, contenteditable).
-		 * browser_window_key_press returns false if nothing in the bw has
-		 * focus -- in that case fall through to viewport scroll keys. */
-		uint32_t nskey = (unsigned char)ch;
-		if (ch == 0x08) nskey = 0x08;           /* Backspace */
-		else if (ch == 0x7F) nskey = 0x7F;      /* Delete forward */
-		else if (ch == 0x0D) nskey = 0x0D;      /* Enter / Return */
-		if (gw->bw && browser_window_key_press(gw->bw, nskey)) {
-			macsurf_debug_log_writef("key: consumed by bw 0x%02x", (int)(unsigned char)ch);
-			InvalWindowRect(gw->window, &gw->content_rect);
-		} else {
-			switch (ch) {
-				case 0x1E: macos9_window_scroll_by(gw, 0, -48); break; /* up */
-				case 0x1F: macos9_window_scroll_by(gw, 0,  48); break; /* down */
-				case 0x1C: macos9_window_scroll_by(gw, -48, 0); break; /* left */
-				case 0x1D: macos9_window_scroll_by(gw,  48, 0); break; /* right */
-				case 0x0B: macos9_window_scroll_by(gw, 0, -gw->content_rect.bottom + gw->content_rect.top); break; /* page up */
-				case 0x0C: macos9_window_scroll_by(gw, 0,  gw->content_rect.bottom - gw->content_rect.top); break; /* page down */
-				case 0x01: macos9_window_scroll_to(gw, 0, 0); break; /* home */
-				case 0x04: macos9_window_scroll_to(gw, 0, 0x7FFFFFFF); break; /* end */
-				default: break;
-			}
+		switch (ch) {
+			case 0x1E: macos9_window_scroll_by(gw, 0, -48); break; /* up */
+			case 0x1F: macos9_window_scroll_by(gw, 0,  48); break; /* down */
+			case 0x1C: macos9_window_scroll_by(gw, -48, 0); break; /* left */
+			case 0x1D: macos9_window_scroll_by(gw,  48, 0); break; /* right */
+			case 0x0B: macos9_window_scroll_by(gw, 0, -gw->content_rect.bottom + gw->content_rect.top); break; /* page up */
+			case 0x0C: macos9_window_scroll_by(gw, 0,  gw->content_rect.bottom - gw->content_rect.top); break; /* page down */
+			case 0x01: macos9_window_scroll_to(gw, 0, 0); break; /* home */
+			case 0x04: macos9_window_scroll_to(gw, 0, 0x7FFFFFFF); break; /* end */
+			default: break;
 		}
 	}
 #endif
