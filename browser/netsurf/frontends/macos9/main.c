@@ -480,6 +480,18 @@ void macos9_handle_key_down(const EventRecord *event) {
 			InvalWindowRect(gw->window, &gw->url_rect);
 		}
 	} else {
+		unsigned char uc;
+		int is_printable;
+		uc = (unsigned char)ch;
+		is_printable = (uc >= 0x20 && uc < 0x7F) || uc == 0x08 || uc == 0x7F || uc == 0x0D;
+		if (is_printable && gw->bw) {
+			extern bool browser_window_key_press(struct browser_window *, unsigned long);
+			if (browser_window_key_press(gw->bw, (unsigned long)uc)) {
+				macsurf_debug_log_writef("page key: 0x%02x consumed", (int)uc);
+				InvalWindowRect(gw->window, &gw->content_rect);
+				return;
+			}
+		}
 		switch (ch) {
 			case 0x1E: macos9_window_scroll_by(gw, 0, -48); break; /* up */
 			case 0x1F: macos9_window_scroll_by(gw, 0,  48); break; /* down */
