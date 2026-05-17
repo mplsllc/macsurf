@@ -688,6 +688,23 @@ static void macos9_http_poll(lwc_string *s) {
 			fetch_msg m; m.type=FETCH_FINISHED;
 			c->state=MFS_NOTIFIED; fetch_send_callback(&m,c->parent);
 			macsurf_debug_log_writef("http: done body=%ld len=%ld status=%d ka=%d", c->body_bytes, c->content_length, c->status, c->keep_alive_ok);
+			/* fixes99 — pool the endpoint right now, while it is
+			 * known idle and the next fetch may already be queued.
+			 * Waiting for macos9_http_free (which NetSurf calls
+			 * lazily — slots routinely linger in MFS_NOTIFIED
+			 * across several subsequent http_setup calls) means
+			 * the pool is always empty when a new fetch wants it
+			 * and every sub-resource pays a fresh TCP setup. By
+			 * returning here, the very next mfs_open against the
+			 * same host can REUSE. mfs_close still runs at free
+			 * time but sees c->ep==NULL and skips the close. */
+#ifdef __MACOS9__
+			if (c->keep_alive_ok && !c->aborted &&
+			    c->ep != NULL && c->pool_key[0] != '\0') {
+				ep_pool_return(c->pool_key, c->ep);
+				c->ep = NULL;
+			}
+#endif
 		}
 	}
 }
