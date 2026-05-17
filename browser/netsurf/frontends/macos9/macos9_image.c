@@ -209,18 +209,42 @@ macos9_qt_decode_to_bitmap(GraphicsImportComponent gi,
 
 	temp_gw = NULL;
 	if (wants_alpha) {
-		/* QTNewGWorld with k32ARGBPixelFormat asks for a pixmap
-		 * with a real alpha component. QT importers honor it. */
-		err = QTNewGWorld(&temp_gw, k32ARGBPixelFormat,
+		OSErr qt_err1 = 0, qt_err2 = 0;
+		/* Path B probe: QTNewGWorld with k32ARGBPixelFormat asks
+		 * for a pixmap with a real alpha component. If this
+		 * environment's QT supports it, the importer will write
+		 * meaningful alpha. */
+		qt_err1 = QTNewGWorld(&temp_gw, k32ARGBPixelFormat,
 				&tmp_bounds, NULL, NULL, (GWorldFlags)4);
-		if (err != noErr || temp_gw == NULL) {
-			err = QTNewGWorld(&temp_gw, k32ARGBPixelFormat,
+		if (qt_err1 != noErr || temp_gw == NULL) {
+			qt_err2 = QTNewGWorld(&temp_gw, k32ARGBPixelFormat,
 					&tmp_bounds, NULL, NULL, 0);
 		}
-		if (err != noErr || temp_gw == NULL) {
-			MS_LOG("img decode: QTNewGWorld ARGB FAIL");
-			guit->bitmap->destroy(bm);
-			return NSERROR_NOMEM;
+		if (qt_err1 != noErr && qt_err2 != noErr) {
+			/* Graceful degradation: QT rejected the ARGB
+			 * pixel format request. Fall back to a vanilla
+			 * 32-bit GWorld and render this image as opaque
+			 * (the file's stored RGB for source-transparent
+			 * pixels will show, but at least the image is
+			 * visible). Real alpha will arrive when Path A
+			 * (NetSurf core image handlers + libpng/etc.)
+			 * lands. */
+			macsurf_debug_log_writef(
+				"img decode: QTNewGWorld ARGB FAIL "
+				"err1=%d err2=%d, falling back to opaque",
+				(int)qt_err1, (int)qt_err2);
+			wants_alpha = false;
+			err = NewGWorld(&temp_gw, 32, &tmp_bounds,
+					NULL, NULL, (GWorldFlags)4);
+			if (err != noErr || temp_gw == NULL) {
+				err = NewGWorld(&temp_gw, 32, &tmp_bounds,
+						NULL, NULL, 0);
+			}
+			if (err != noErr || temp_gw == NULL) {
+				MS_LOG("img decode: fallback NewGWorld FAIL");
+				guit->bitmap->destroy(bm);
+				return NSERROR_NOMEM;
+			}
 		}
 	} else {
 		err = NewGWorld(&temp_gw, 32, &tmp_bounds, NULL, NULL,
