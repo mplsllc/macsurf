@@ -162,6 +162,12 @@ extern int   memcmp(const void *, const void *, size_t);
 #define NO_IPV6 1
 #define PATH_MAX 256
 
+/* lodepng config: we only need the in-memory PNG decoder. Strip
+ * encoder, disk I/O and C++ bindings to keep the binary small. */
+#define LODEPNG_NO_COMPILE_ENCODER 1
+#define LODEPNG_NO_COMPILE_DISK 1
+#define LODEPNG_NO_COMPILE_CPP 1
+
 /* libhubbub/libcss/libparserutils source files include "utils/utils.h",
  * but the access path resolves to NetSurf's utils.h first, which lacks
  * N_ELEMENTS / UNUSED. Provide them globally to avoid undefined-symbol

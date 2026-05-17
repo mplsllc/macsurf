@@ -38,6 +38,8 @@
 
 #include "macsurf_debug.h"
 
+#include "lodepng.h"
+
 #ifndef graphicsModeStraightAlpha
 #define graphicsModeStraightAlpha 256
 #endif
@@ -363,6 +365,95 @@ macos9_qt_decode_to_bitmap(GraphicsImportComponent gi,
 	return NSERROR_OK;
 }
 
+/* Decode a PNG buffer via lodepng straight into a NetSurf bitmap with
+ * real per-pixel alpha. lodepng outputs RGBA so no byte-swap needed.
+ * Alpha < 128 becomes the magenta sentinel so the existing plotter's
+ * transparent-mode CopyBits path renders transparency. */
+static nserror
+macos9_png_decode_to_bitmap(const unsigned char *data, size_t size,
+		void **out_bitmap, int *out_w, int *out_h)
+{
+	unsigned char *rgba;
+	unsigned w, h;
+	unsigned lerr;
+	void *bm;
+	unsigned char *dst_buf;
+	long row_bytes;
+	unsigned row, col;
+	unsigned char *src_row;
+	unsigned char *dst_row;
+
+	*out_bitmap = NULL;
+
+	rgba = NULL;
+	w = 0;
+	h = 0;
+	lerr = lodepng_decode32(&rgba, &w, &h, data, size);
+	if (lerr != 0 || rgba == NULL) {
+		macsurf_debug_log_writef("png decode: lodepng err=%u",
+				(unsigned)lerr);
+		if (rgba != NULL) free(rgba);
+		return NSERROR_INVALID;
+	}
+
+	if (w == 0 || h == 0) {
+		free(rgba);
+		return NSERROR_INVALID;
+	}
+
+	bm = guit->bitmap->create((int)w, (int)h, BITMAP_CLEAR);
+	if (bm == NULL) {
+		free(rgba);
+		return NSERROR_NOMEM;
+	}
+
+	dst_buf = (unsigned char *)guit->bitmap->get_buffer(bm);
+	row_bytes = (long)guit->bitmap->get_rowstride(bm);
+	if (dst_buf == NULL || row_bytes <= 0) {
+		free(rgba);
+		guit->bitmap->destroy(bm);
+		return NSERROR_NOMEM;
+	}
+
+	for (row = 0; row < h; row++) {
+		src_row = rgba + (long)row * (long)w * 4;
+		dst_row = dst_buf + (long)row * row_bytes;
+		for (col = 0; col < w; col++) {
+			unsigned char a = src_row[col * 4 + 3];
+			if (a < 128) {
+				dst_row[col * 4 + 0] =
+					MACOS9_IMG_TRANSPARENT_R;
+				dst_row[col * 4 + 1] =
+					MACOS9_IMG_TRANSPARENT_G;
+				dst_row[col * 4 + 2] =
+					MACOS9_IMG_TRANSPARENT_B;
+				dst_row[col * 4 + 3] = 0xFF;
+			} else {
+				dst_row[col * 4 + 0] = src_row[col * 4 + 0];
+				dst_row[col * 4 + 1] = src_row[col * 4 + 1];
+				dst_row[col * 4 + 2] = src_row[col * 4 + 2];
+				dst_row[col * 4 + 3] = 0xFF;
+			}
+		}
+	}
+
+	free(rgba);
+
+	if (guit->bitmap->set_opaque != NULL) {
+		/* Non-opaque so the plotter takes the transparent-mode
+		 * path and keys out magenta. */
+		guit->bitmap->set_opaque(bm, false);
+	}
+	if (guit->bitmap->modified != NULL) {
+		guit->bitmap->modified(bm);
+	}
+
+	*out_bitmap = bm;
+	*out_w = (int)w;
+	*out_h = (int)h;
+	return NSERROR_OK;
+}
+
 static bool
 macos9_qt_image_convert(struct content *c)
 {
@@ -376,6 +467,7 @@ macos9_qt_image_convert(struct content *c)
 	long src_size;
 	bool wants_alpha;
 	nserror err;
+	const unsigned char *src_bytes;
 
 	if (qti->compressed == NULL ||
 			GetHandleSize(qti->compressed) == 0) {
@@ -386,8 +478,36 @@ macos9_qt_image_convert(struct content *c)
 
 	src_size = GetHandleSize(qti->compressed);
 	HLock(qti->compressed);
-	wants_alpha = macos9_qt_format_has_alpha(
-			(const unsigned char *)*qti->compressed, src_size);
+	src_bytes = (const unsigned char *)*qti->compressed;
+
+	/* PNG magic: 89 50 4E 47 0D 0A 1A 0A. If this is a PNG, dispatch
+	 * to lodepng for real per-pixel alpha -- Path A for PNG only. */
+	if (src_size >= 8 &&
+			src_bytes[0] == 0x89 && src_bytes[1] == 0x50 &&
+			src_bytes[2] == 0x4E && src_bytes[3] == 0x47) {
+		bw = 0;
+		bh = 0;
+		err = macos9_png_decode_to_bitmap(src_bytes,
+				(size_t)src_size, &qti->bitmap, &bw, &bh);
+		HUnlock(qti->compressed);
+		DisposeHandle(qti->compressed);
+		qti->compressed = NULL;
+		if (err != NSERROR_OK || qti->bitmap == NULL) {
+			MS_LOG("img convert: lodepng FAIL");
+			content_broadcast_error(c, err, NULL);
+			return false;
+		}
+		c->width = bw;
+		c->height = bh;
+		macsurf_debug_log_writef("img decoded via lodepng %dx%d",
+				bw, bh);
+		content_set_ready(c);
+		content_set_done(c);
+		content_set_status(c, "");
+		return true;
+	}
+
+	wants_alpha = macos9_qt_format_has_alpha(src_bytes, src_size);
 	HUnlock(qti->compressed);
 	MS_LOG(wants_alpha ? "img convert: alpha format" :
 			"img convert: opaque format");
