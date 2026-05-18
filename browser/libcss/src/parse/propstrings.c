@@ -243,6 +243,7 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("-macsurf-grid"),
 	SMAP("-macsurf-animation-opacity"),
 	SMAP("-macsurf-animation-rotate"),
+	SMAP("object-fit"),
 
 	SMAP("inherit"),
 	SMAP("unset"),
@@ -508,6 +509,10 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("repeating-linear-gradient"),
 	SMAP("repeating-radial-gradient"),
 	SMAP("to"),
+	SMAP("contain"),
+	SMAP("cover"),
+	SMAP("fill"),
+	SMAP("scale-down"),
 
 	/* Named colours */
 	SMAP("aliceblue"),

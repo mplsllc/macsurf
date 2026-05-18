@@ -1677,6 +1677,26 @@ static inline css_error set_macsurf_animation_rotate(
 #undef MACSURF_ANIMATION_ROTATE_SHIFT
 #undef MACSURF_ANIMATION_ROTATE_MASK
 
+/* fixes116: object-fit uses bits 2..4 of word 15. 3-bit type value.
+ * No companion integer storage -- the value enum (FILL/CONTAIN/COVER/
+ * NONE/SCALE_DOWN, plus INHERIT=0) fits entirely in the bit slot. */
+#define OBJECT_FIT_INDEX 15
+#define OBJECT_FIT_SHIFT 2
+#define OBJECT_FIT_MASK 0x1c
+
+static inline css_error set_object_fit(css_computed_style *style, uint8_t type)
+{
+	uint32_t *bits = &style->i.bits[OBJECT_FIT_INDEX];
+
+	*bits = (*bits & ~OBJECT_FIT_MASK) |
+			(((uint32_t)type & 0x7) << OBJECT_FIT_SHIFT);
+
+	return CSS_OK;
+}
+#undef OBJECT_FIT_INDEX
+#undef OBJECT_FIT_SHIFT
+#undef OBJECT_FIT_MASK
+
 #define MARGIN_BOTTOM_INDEX 5
 #define MARGIN_BOTTOM_SHIFT 11
 #define MARGIN_BOTTOM_MASK 0x3f800

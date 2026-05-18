@@ -235,6 +235,129 @@ static void macsurf_gradient_unpack(int32_t packed_signed,
  * \param box  Box to consider
  * \return True if box has a background, false otherwise.
  */
+/**
+ * fixes116 — apply CSS `object-fit` to the replaced-element draw rect.
+ *
+ * Called after the cell's content_redraw_data has been populated with the
+ * raw layout dimensions (cell width/height at obj_data->width/height,
+ * top-left at obj_data->x/y). Mutates the rect so the image is sized
+ * according to its `object-fit` value:
+ *
+ *   FILL       — leave the rect as-is (default; stretches to cell).
+ *   CONTAIN    — scale the image down to fit the cell, preserving
+ *                aspect ratio; centre within the cell.
+ *   COVER      — scale the image up to cover the cell, preserving
+ *                aspect ratio; centre and let it overflow. QuickDraw's
+ *                clipRgn — already set to the cell rect by html_redraw_box
+ *                before content_redraw fires — clips the overflow.
+ *   NONE       — render at intrinsic size, centred in the cell.
+ *   SCALE_DOWN — `none` or `contain`, whichever yields a smaller image.
+ *
+ * Integer math throughout: int64_t intermediates ARE NOT used (CW8 PPC
+ * miscompiles them — see CLAUDE.md Known Gotchas). The 32-bit products
+ * here (e.g. nat_w * cell_h) cap at ~16k*16k = 256M, which fits.
+ */
+static void html_redraw_apply_object_fit(struct box *box,
+		struct content_redraw_data *obj)
+{
+	uint8_t fit;
+	int nat_w, nat_h;
+	int cell_w, cell_h;
+	int cell_x, cell_y;
+	int new_w, new_h;
+
+	if (box == NULL || box->style == NULL || box->object == NULL)
+		return;
+
+	fit = css_computed_object_fit(box->style);
+	if (fit == CSS_OBJECT_FIT_INHERIT || fit == CSS_OBJECT_FIT_FILL) {
+		/* No work: layout already sized rect = cell = fill. */
+		return;
+	}
+
+	nat_w = content_get_width(box->object);
+	nat_h = content_get_height(box->object);
+	if (nat_w <= 0 || nat_h <= 0) {
+		return;
+	}
+
+	cell_w = obj->width;
+	cell_h = obj->height;
+	cell_x = obj->x;
+	cell_y = obj->y;
+	if (cell_w <= 0 || cell_h <= 0) {
+		return;
+	}
+
+	switch (fit) {
+	case CSS_OBJECT_FIT_CONTAIN:
+		/* min(cell_w/nat_w, cell_h/nat_h). Compare ratios via
+		 * cross-multiplication to stay in int32 range. */
+		if (nat_w * cell_h < nat_h * cell_w) {
+			/* Height is the limiting axis. */
+			new_h = cell_h;
+			new_w = (nat_w * cell_h) / nat_h;
+		} else {
+			new_w = cell_w;
+			new_h = (nat_h * cell_w) / nat_w;
+		}
+		obj->width = new_w;
+		obj->height = new_h;
+		obj->x = cell_x + (cell_w - new_w) / 2;
+		obj->y = cell_y + (cell_h - new_h) / 2;
+		break;
+
+	case CSS_OBJECT_FIT_COVER:
+		/* max(cell_w/nat_w, cell_h/nat_h). */
+		if (nat_w * cell_h > nat_h * cell_w) {
+			/* Height is the limiting axis when "covering". */
+			new_h = cell_h;
+			new_w = (nat_w * cell_h) / nat_h;
+		} else {
+			new_w = cell_w;
+			new_h = (nat_h * cell_w) / nat_w;
+		}
+		obj->width = new_w;
+		obj->height = new_h;
+		obj->x = cell_x + (cell_w - new_w) / 2;
+		obj->y = cell_y + (cell_h - new_h) / 2;
+		break;
+
+	case CSS_OBJECT_FIT_NONE:
+		obj->width = nat_w;
+		obj->height = nat_h;
+		obj->x = cell_x + (cell_w - nat_w) / 2;
+		obj->y = cell_y + (cell_h - nat_h) / 2;
+		break;
+
+	case CSS_OBJECT_FIT_SCALE_DOWN:
+		/* `none` if intrinsic fits inside the cell, else `contain`. */
+		if (nat_w <= cell_w && nat_h <= cell_h) {
+			obj->width = nat_w;
+			obj->height = nat_h;
+			obj->x = cell_x + (cell_w - nat_w) / 2;
+			obj->y = cell_y + (cell_h - nat_h) / 2;
+		} else {
+			if (nat_w * cell_h < nat_h * cell_w) {
+				new_h = cell_h;
+				new_w = (nat_w * cell_h) / nat_h;
+			} else {
+				new_w = cell_w;
+				new_h = (nat_h * cell_w) / nat_w;
+			}
+			obj->width = new_w;
+			obj->height = new_h;
+			obj->x = cell_x + (cell_w - new_w) / 2;
+			obj->y = cell_y + (cell_h - new_h) / 2;
+		}
+		break;
+
+	default:
+		break;
+	}
+}
+
+
 static bool html_redraw_box_has_background(struct box *box)
 {
 	if (box->background != NULL)
@@ -2433,6 +2556,11 @@ bool html_redraw_box(const html_content *html, struct box *box,
 			obj_data.x /= scale;
 			obj_data.y /= scale;
 		}
+
+		/* fixes116: apply CSS object-fit. The cell clip is already set
+		 * (line ~2393 above), so a `cover` rect that overflows the
+		 * cell is hardware-clipped by QuickDraw on draw. */
+		html_redraw_apply_object_fit(box, &obj_data);
 
 		if (!content_redraw(box->object, &obj_data, &r, ctx)) {
 			/* Show image fail */

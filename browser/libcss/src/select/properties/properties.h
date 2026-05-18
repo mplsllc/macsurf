@@ -59,6 +59,7 @@ PROPERTY_FUNCS(macsurf_transform);
 PROPERTY_FUNCS(macsurf_grid);
 PROPERTY_FUNCS(macsurf_animation_opacity);
 PROPERTY_FUNCS(macsurf_animation_rotate);
+PROPERTY_FUNCS(object_fit);
 PROPERTY_FUNCS(bottom);
 PROPERTY_FUNCS(box_sizing);
 PROPERTY_FUNCS(break_after);

@@ -554,5 +554,9 @@ struct prop_table prop_dispatch[CSS_N_PROPERTIES] = {
 	{
 	        PROPERTY_FUNCS(macsurf_animation_rotate),
 	        0,
+	},
+	{
+	        PROPERTY_FUNCS(object_fit),
+	        0,
 	}
 	};

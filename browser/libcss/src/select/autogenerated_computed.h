@@ -211,12 +211,19 @@ struct css_computed_style_i {
  * align_items; align_content; writing_mode; visibility; unicode_bidi;
  * table_layout; page_break_inside; quotes
  * 
- * 14 bboorrddeettaaccpOilfxyunCk.....
+ * 14 bboorrddeettaaccpOilfxyunCkGTTSS
  * box_shadow; border_top_color; border_right_color; border_left_color;
  * border_collapse; border_bottom_color; background_color;
  * background_attachment; orphans; order; opacity; list_style_image;
  * flex_shrink; flex_grow; fill_opacity; counter_reset; counter_increment;
- * color; background_image
+ * color; background_image;
+ * (bottom 5 bits, FULL): macsurf_grid (bit 4), macsurf_transform (bits 3-2),
+ * macsurf_text_shadow (bits 1-0)
+ *
+ * 15 ..........................OOORRA
+ * (fixes116) object_fit (bits 4-2);
+ * (fixes77)  macsurf_animation_rotate (bit 1);
+ * (fixes76)  macsurf_animation_opacity (bit 0)
  */
 	uint32_t bits[16];
 	

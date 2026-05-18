@@ -2155,6 +2155,30 @@ static inline uint8_t get_macsurf_animation_rotate(
 #undef MACSURF_ANIMATION_ROTATE_SHIFT
 #undef MACSURF_ANIMATION_ROTATE_MASK
 
+/* fixes116: object-fit at bits 2..4 of word 15. 3-bit type value. */
+#define OBJECT_FIT_INDEX 15
+#define OBJECT_FIT_SHIFT 2
+#define OBJECT_FIT_MASK 0x1c
+static inline uint8_t get_object_fit_bits(const css_computed_style *style)
+{
+	uint32_t bits = style->i.bits[OBJECT_FIT_INDEX];
+	bits &= OBJECT_FIT_MASK;
+	bits >>= OBJECT_FIT_SHIFT;
+
+	return (bits & 0x7);
+}
+static inline uint8_t get_object_fit(const css_computed_style *style)
+{
+	uint32_t bits = style->i.bits[OBJECT_FIT_INDEX];
+	bits &= OBJECT_FIT_MASK;
+	bits >>= OBJECT_FIT_SHIFT;
+
+	return (bits & 0x7);
+}
+#undef OBJECT_FIT_INDEX
+#undef OBJECT_FIT_SHIFT
+#undef OBJECT_FIT_MASK
+
 #define MARGIN_BOTTOM_INDEX 5
 #define MARGIN_BOTTOM_SHIFT 11
 #define MARGIN_BOTTOM_MASK 0x3f800

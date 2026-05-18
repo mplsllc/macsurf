@@ -168,7 +168,8 @@ const css_prop_handler property_handlers[LAST_PROP + 1 - FIRST_PROP] =
 	css__parse_macsurf_transform,
 	css__parse_macsurf_grid,
 	css__parse_macsurf_animation_opacity,
-	css__parse_macsurf_animation_rotate
+	css__parse_macsurf_animation_rotate,
+	css__parse_object_fit
 	};/** Mapping from property bytecode index to bytecode unit class mask. */
 const uint32_t property_unit_mask[CSS_N_PROPERTIES] = {
 	[CSS_PROP_AZIMUTH]               = UNIT_MASK_AZIMUTH,
@@ -281,6 +282,7 @@ const uint32_t property_unit_mask[CSS_N_PROPERTIES] = {
 	[CSS_PROP_MACSURF_GRID]          = 0,
 	[CSS_PROP_MACSURF_ANIMATION_OPACITY] = 0,
 	[CSS_PROP_MACSURF_ANIMATION_ROTATE]  = 0,
+	[CSS_PROP_OBJECT_FIT]            = 0,
 	[CSS_PROP_BREAK_AFTER]           = UNIT_MASK_BREAK_AFTER,	[CSS_PROP_BREAK_BEFORE]          = UNIT_MASK_BREAK_BEFORE,
 	[CSS_PROP_BREAK_INSIDE]          = UNIT_MASK_BREAK_INSIDE,
 	[CSS_PROP_COLUMN_COUNT]          = UNIT_MASK_COLUMN_COUNT,
