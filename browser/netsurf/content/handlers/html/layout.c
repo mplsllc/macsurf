@@ -64,6 +64,10 @@
 #include "html/private.h"
 #include "html/box.h"
 #include "html/box_inspect.h"
+
+/* fixes120: diagnostic instrumentation only. macsurf_debug.h compiles to
+ * stubs on non-Mac builds and to file-backed log on the Mac. */
+#include "macsurf_debug.h"
 #include "html/font.h"
 #include "html/form_internal.h"
 #include "html/layout.h"
@@ -3554,11 +3558,23 @@ bool layout_block_context(
 	/* special case if the block contains an object */
 	if (block->object) {
 		int temp_width = block->width;
+		macsurf_debug_log_writef(
+			"macsurf_diag: Entering object branch for box %p",
+			(void *)block);
+		macsurf_debug_log_writef(
+			"macsurf_diag: BEFORE - block->width: %d, block->height: %d",
+			block->width, block->height);
+		macsurf_debug_log_writef(
+			"macsurf_diag: BEFORE - temp_width: %d",
+			temp_width);
 		if (!layout_block_object(block))
 			return false;
 		layout_get_object_dimensions(block, &temp_width,
 				&block->height, INT_MIN, INT_MAX,
 				INT_MIN, INT_MAX);
+		macsurf_debug_log_writef(
+			"macsurf_diag: AFTER  - temp_width: %d, block->height: %d",
+			temp_width, block->height);
 		return true;
 	} else if (block->flags & REPLACE_DIM) {
 		return true;
