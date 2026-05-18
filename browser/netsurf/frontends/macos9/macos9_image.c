@@ -607,6 +607,10 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 {
 	macos9_qt_image_content *qti = (macos9_qt_image_content *)c;
 	bitmap_flags_t flags;
+	int dst_w;
+	int dst_h;
+	int nat_w;
+	int nat_h;
 
 	(void)clip;
 
@@ -615,13 +619,47 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 		return true;
 	}
 
+	dst_w = data->width;
+	dst_h = data->height;
+	nat_w = (int)c->width;
+	nat_h = (int)c->height;
+
+	/* fixes111 — aspect-ratio guard for the replaced-element layout
+	 * bug. NetSurf's layout has at least one path that fails to
+	 * proportionally rescale height when CSS height was originally
+	 * auto. The pattern we catch: dst_h == nat_h (height never moved
+	 * from intrinsic) while dst_w != nat_w (width was scaled by the
+	 * layout container — typically flex's target_main_size or a
+	 * max-width:100% on a wide canvas). Result on screen: mactrove's
+	 * 1058x245 logo at 1500x245 looks like a thin colored stripe,
+	 * 540x338 Dark Castle screenshot at 1700x338 looks horizontally
+	 * smeared. Detecting this exact "stuck-height" pattern and
+	 * rescaling proportionally fixes the visible glitch without
+	 * disturbing genuinely-distorted images. Audit also logs every
+	 * image-plot dimension so the layout path's actual outputs are
+	 * visible in MacSurf Debug.log for follow-up. */
+	if (nat_w > 0 && nat_h > 0 && dst_w > 0 && dst_h > 0) {
+		if (dst_h == nat_h && dst_w != nat_w) {
+			int new_h = (int)(((long)dst_w * (long)nat_h) /
+					(long)nat_w);
+			macsurf_debug_log_writef(
+				"img aspect-fix: nat=%dx%d req=%dx%d -> %dx%d",
+				nat_w, nat_h, dst_w, dst_h, dst_w, new_h);
+			dst_h = new_h;
+		} else if (dst_w != nat_w || dst_h != nat_h) {
+			macsurf_debug_log_writef(
+				"img plot: nat=%dx%d req=%dx%d (scaled)",
+				nat_w, nat_h, dst_w, dst_h);
+		}
+	}
+
 	flags = 0;
 	if (data->repeat_x) flags |= BITMAPF_REPEAT_X;
 	if (data->repeat_y) flags |= BITMAPF_REPEAT_Y;
 
 	return ctx->plot->bitmap(ctx, (struct bitmap *)qti->bitmap,
 			data->x, data->y,
-			data->width, data->height,
+			dst_w, dst_h,
 			data->background_colour,
 			flags) == NSERROR_OK;
 }
