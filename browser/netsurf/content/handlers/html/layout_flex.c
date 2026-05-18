@@ -1117,7 +1117,22 @@ static void layout_flex__place_line_items_cross(struct flex_ctx *ctx,
 		switch (lh__box_align_self(ctx->flex, b)) {
 		default:
 		case CSS_ALIGN_SELF_STRETCH:
-			if (lh__box_size_cross_is_auto(ctx->horizontal, b)) {
+			if (lh__box_size_cross_is_auto(ctx->horizontal, b) &&
+					b->object == NULL) {
+				/* fixes119 — CSS Sizing Level 3: replaced
+				 * elements with intrinsic aspect ratio are
+				 * NOT stretched on the cross axis even when
+				 * align-self defaults to stretch. Without
+				 * this guard, an <img> with CSS height: auto
+				 * inside a flex line gets its height forced
+				 * to the line height — visible on mactrove
+				 * as the 1058x245 logo crushed to 1058x28
+				 * because the flex header line is 28px tall
+				 * (cross_free_space = 28-245 = -217 added to
+				 * box_size_cross). Skipping the stretch
+				 * leaves the image at its intrinsic
+				 * aspect-preserving size; the FLEX_START
+				 * positioning below still places it. */
 				*box_size_cross += cross_free_space;
 
 				/* Relayout children for stretch. */
