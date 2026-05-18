@@ -501,39 +501,70 @@ stub_poll(lwc_string *scheme)
 {
 	struct stub_fetch_ctx *ctx;
 	struct stub_fetch_ctx *start;
+	struct stub_fetch_ctx *next;
 	int safety;
+	int did_work;
 
 	(void)scheme;
 	if (stub_ring == NULL) return;
 
-	/* Walk the ring once, dispatching every started-and-not-done
-	 * context. fetch_send_callback may free ctx via stub_free
-	 * (which mutates stub_ring), so we re-acquire the head
-	 * each loop pass. */
+	/* fixes105 — release every stub fetch through
+	 * fetch_remove_from_queues + fetch_free, mirroring every
+	 * reference fetcher in NetSurf core (curl.c, file.c, about.c,
+	 * data.c, resource.c, css_fetcher.c, javascript/fetcher.c).
+	 *
+	 * Pre-fixes105 the stub fetcher dispatched FETCH_FINISHED and
+	 * marked ctx->done=true but NEVER called fetch_remove_from_queues
+	 * or fetch_free. Every resource:/about:/data:/javascript: fetch
+	 * leaked into NetSurf's fetch_ring permanently. Visible in the
+	 * log as "stub setup; stub start; stub snd; FETCH FINISHED;
+	 * stub fin" pairs on every html_create — two leaks per page
+	 * (resource:default.css + resource:internal.css). Combined with
+	 * the aborted-while-queued stub leak (aborted contexts never get
+	 * past the !ctx->aborted gate in the old dispatch condition) this
+	 * was the second half of the "stops after about three pages"
+	 * wall, paralleling the HTTP fetcher's pre-fixes102 behaviour.
+	 *
+	 * Two cleanup branches now:
+	 * 1. ctx->aborted — caller (NetSurf) wants this fetch gone. No
+	 *    callbacks (matches curl ops.abort), just remove + free.
+	 * 2. ctx->started && !ctx->done — normal dispatch. stub_send_for
+	 *    emits HEADER/DATA/FINISHED, then remove + free.
+	 *
+	 * After fetch_free returns, ctx is freed memory (fetch_free
+	 * synchronously calls stub_free which removes from stub_ring
+	 * and free()s ctx). Break the inner do-loop after any cleanup
+	 * so the outer while re-reads stub_ring's head.
+	 */
 	safety = 0;
 	while (stub_ring != NULL && safety < 64) {
+		safety++;
 		ctx = stub_ring;
 		start = ctx;
-		safety++;
+		did_work = 0;
 
 		do {
-			struct stub_fetch_ctx *next = ctx->r_next;
-			if (ctx->started && !ctx->done && !ctx->aborted) {
-				stub_send_for(ctx);
-				/* stub_ring may have mutated. Break
-				 * inner loop so the outer while re-
-				 * reads the head. */
+			next = ctx->r_next;
+
+			if (ctx->aborted) {
+				fetch_remove_from_queues(ctx->parent);
+				fetch_free(ctx->parent);
+				did_work = 1;
 				break;
 			}
+
+			if (ctx->started && !ctx->done) {
+				stub_send_for(ctx);
+				fetch_remove_from_queues(ctx->parent);
+				fetch_free(ctx->parent);
+				did_work = 1;
+				break;
+			}
+
 			ctx = next;
 		} while (ctx != start);
 
-		/* If we walked the full ring without dispatching
-		 * anything, nothing more to do this pass. */
-		if (ctx == start) {
-			if (!ctx->started || ctx->done || ctx->aborted)
-				break;
-		}
+		if (!did_work) break;
 	}
 }
 
