@@ -1395,7 +1395,19 @@ static void convert_xml_to_box(struct box_construct_ctx *ctx)
  * For each box with a cached select-results, calls box_get_style with
  * the current html_content's dyn_*_node pointers and swaps in the new
  * style. Parent_style threads down the recursion using the NEWLY
- * cascaded parent style, so child cascades inherit correctly. */
+ * cascaded parent style, so child cascades inherit correctly.
+ *
+ * fixes130c: do NOT destroy the old css_select_results. Marker boxes
+ * and inline-end boxes are created with `style_owned=false` and share
+ * the parent's `box->style` pointer. Destroying the parent's old
+ * result frees those shared style pointers from under the children
+ * and crashes the layout walker. Leak for now (small bounded leak
+ * per re-cascade). Also fix up direct children that shared our old
+ * style pointer to point at the new one, as belt-and-suspenders. */
+extern void macsurf_debug_log_writef(const char *fmt, ...);
+
+static int macsurf_recascade_count_;
+
 static void
 html_recascade_subtree(html_content *c,
 		       struct box *box,
@@ -1404,18 +1416,31 @@ html_recascade_subtree(html_content *c,
 {
 	struct box *child;
 	const css_computed_style *style_for_children;
+	const css_computed_style *old_self_style;
 
 	if (box == NULL) return;
+	old_self_style = box->style;
 
 	if (box->node != NULL && box->styles != NULL) {
 		css_select_results *new_styles = box_get_style(c,
 				parent_style, root_style, box->node);
 		if (new_styles != NULL) {
-			css_select_results *old = box->styles;
 			box->styles = new_styles;
 			box->style = new_styles->styles[
 					CSS_PSEUDO_ELEMENT_NONE];
-			css_select_results_destroy(old);
+			macsurf_recascade_count_++;
+
+			/* Update direct children that share our old style
+			 * pointer (markers, inline-end boxes created with
+			 * style_owned=false) so they don't dangle. */
+			for (child = box->children; child != NULL;
+					child = child->next) {
+				if (child->styles == NULL &&
+						child->style ==
+						old_self_style) {
+					child->style = box->style;
+				}
+			}
 		}
 	}
 
@@ -1432,18 +1457,32 @@ html_recascade_tree(html_content *c)
 {
 	const css_computed_style *root_style;
 	struct box *child;
+	const css_computed_style *old_root_style;
 
 	if (c == NULL || c->layout == NULL) return NSERROR_OK;
+	old_root_style = c->layout->style;
+	macsurf_recascade_count_ = 0;
+
+	macsurf_debug_log_writef("recascade: enter layout=%p node=%p",
+			(void *)c->layout,
+			(void *)(c->layout ? c->layout->node : NULL));
 
 	if (c->layout->node != NULL && c->layout->styles != NULL) {
 		css_select_results *new_styles = box_get_style(c,
 				NULL, NULL, c->layout->node);
 		if (new_styles != NULL) {
-			css_select_results *old = c->layout->styles;
 			c->layout->styles = new_styles;
 			c->layout->style = new_styles->styles[
 					CSS_PSEUDO_ELEMENT_NONE];
-			css_select_results_destroy(old);
+			macsurf_recascade_count_++;
+			for (child = c->layout->children; child != NULL;
+					child = child->next) {
+				if (child->styles == NULL &&
+						child->style ==
+						old_root_style) {
+					child->style = c->layout->style;
+				}
+			}
 		}
 	}
 
@@ -1452,6 +1491,9 @@ html_recascade_tree(html_content *c)
 			child = child->next) {
 		html_recascade_subtree(c, child, root_style, root_style);
 	}
+
+	macsurf_debug_log_writef("recascade: done count=%d",
+			macsurf_recascade_count_);
 
 	return NSERROR_OK;
 }
