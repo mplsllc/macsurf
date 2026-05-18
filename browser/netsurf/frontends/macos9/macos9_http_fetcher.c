@@ -83,6 +83,13 @@ struct macos9_fetch_ctx {
 	int keep_alive_ok;   /* fixes91: 1 if endpoint can be reused after response */
 	int chunked;         /* fixes91: 1 if Transfer-Encoding: chunked */
 	char pool_key[POOL_KEY_LEN]; /* fixes94: host:port of this fetch's endpoint */
+	/* fixes107 — last activity TickCount for the no-progress timeout. Set
+	 * when ops.start transitions QUEUED→INIT, and reset whenever OTRcv
+	 * delivers bytes. If 900 ticks (15s at 60Hz) elapse without any
+	 * progress, the poll loop forces MFS_FAIL with a "Connection timed
+	 * out" error so a silently-stalled proxy/origin surfaces as a real
+	 * fetch failure rather than a frozen URL bar. */
+	unsigned long progress_ticks;
 	/* fixes98 — 3xx auto-follow. Location header captured during header
 	 * parsing; if status is 3xx we emit FETCH_REDIRECT instead of body
 	 * delivery and NetSurf's llcache opens a fresh fetch against this
@@ -664,6 +671,8 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 		c->err="OT error"; c->state=MFS_FAIL; return;
 	}
 	if(n==0) { c->keep_alive_ok=0; c->state=MFS_DONE; return; }
+	/* fixes107 — bytes received, reset no-progress timer. */
+	c->progress_ticks = (unsigned long)TickCount();
 	if(c->state==MFS_HEADERS) {
 		long nl=c->h_len+n;
 		if(nl>c->h_cap) { long nc=c->h_cap==0?4096:c->h_cap*2; while(nc<nl)nc*=2; c->h_buf=realloc(c->h_buf,nc); if(c->h_buf) c->h_cap=nc; }
@@ -696,6 +705,9 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 
 static void macos9_http_poll(lwc_string *s) {
 	int i; (void)s;
+#ifdef __MACOS9__
+	unsigned long now = (unsigned long)TickCount();
+#endif
 	for(i=0;i<MAX_F;i++) {
 		struct macos9_fetch_ctx *c = &f_slots[i];
 		/* fixes104 — only skip TRULY-inactive slots. MFS_QUEUED used
@@ -703,7 +715,30 @@ static void macos9_http_poll(lwc_string *s) {
 		 * fetches can transition to MFS_DONE and get cleaned up.
 		 * For non-aborted MFS_QUEUED, mfs_poll_one returns fast. */
 		if(c->state==MFS_IDLE || c->state==MFS_NOTIFIED) continue;
+#ifdef __MACOS9__
+		/* fixes107 — 15-second no-progress timeout. Only active in
+		 * MFS_HEADERS / MFS_BODY, i.e. after ops.start has dispatched
+		 * and we are waiting on OTRcv. Queued slots are correctly
+		 * idle (NetSurf hasn't dispatched yet); MFS_INIT only lasts
+		 * the one cycle that calls mfs_open and is impossible to see
+		 * between polls. If progress_ticks hasn't advanced in 900
+		 * ticks (15s at 60Hz), the proxy / origin has stalled — fail
+		 * the slot so the URL bar comes back alive and NetSurf core
+		 * hears about the failure rather than waiting silently. */
+		if ((c->state == MFS_HEADERS || c->state == MFS_BODY) &&
+		    (now - c->progress_ticks) > 900) {
+			macsurf_debug_log_writef(
+				"http: timeout slot=%d state=%d body=%ld",
+				i, (int)c->state, c->body_bytes);
+			c->err = "Connection timed out";
+			c->state = MFS_FAIL;
+			c->keep_alive_ok = 0;
+		} else {
+			mfs_poll_one(c);
+		}
+#else
 		mfs_poll_one(c);
+#endif
 		if(c->state==MFS_FAIL) {
 			fetch_msg m; m.type=FETCH_ERROR; m.data.error=c->err;
 			c->state=MFS_NOTIFIED; fetch_send_callback(&m,c->parent);
@@ -769,7 +804,15 @@ static void *macos9_http_setup(struct fetch *p, struct nsurl *u, bool o, bool d,
 static bool macos9_http_start(void *ctx) {
 	struct macos9_fetch_ctx *c = (struct macos9_fetch_ctx*)ctx;
 	/* fixes91 — transition QUEUED→INIT so mfs_poll_one will open OT. */
-	if (c != NULL && c->state == MFS_QUEUED) c->state = MFS_INIT;
+	if (c != NULL && c->state == MFS_QUEUED) {
+		c->state = MFS_INIT;
+#ifdef __MACOS9__
+		/* fixes107 — stamp baseline for no-progress timeout. Set here
+		 * (not at setup) so time spent queued waiting for NetSurf's
+		 * fetch_dispatch_jobs doesn't count against the 15s budget. */
+		c->progress_ticks = (unsigned long)TickCount();
+#endif
+	}
 	return true;
 }
 static void macos9_http_abort(void *ctx) { ((struct macos9_fetch_ctx*)ctx)->aborted=1; }
