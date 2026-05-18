@@ -168,10 +168,7 @@ const css_prop_handler property_handlers[LAST_PROP + 1 - FIRST_PROP] =
 	css__parse_macsurf_transform,
 	css__parse_macsurf_grid,
 	css__parse_macsurf_animation_opacity,
-	css__parse_macsurf_animation_rotate,
-	/* fixes112 — grid-template-columns is the LAST entry. Order
-	 * must match the GRID_TEMPLATE_COLUMNS slot in propstrings.h. */
-	css__parse_grid_template_columns
+	css__parse_macsurf_animation_rotate
 	};/** Mapping from property bytecode index to bytecode unit class mask. */
 const uint32_t property_unit_mask[CSS_N_PROPERTIES] = {
 	[CSS_PROP_AZIMUTH]               = UNIT_MASK_AZIMUTH,

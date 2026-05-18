@@ -79,13 +79,8 @@ enum {
 	BORDER_RADIUS, BOX_SHADOW, MACSURF_GRADIENT, MACSURF_TEXT_SHADOW,
 	MACSURF_TRANSFORM, MACSURF_GRID, MACSURF_ANIMATION_OPACITY,
 	MACSURF_ANIMATION_ROTATE,
-	/* fixes112 — grid-template-columns parses standard CSS Grid track
-	 * lists and folds the result onto MACSURF_GRID storage (column
-	 * count only for now). New entry placed at the end so existing
-	 * property indices stay stable. */
-	GRID_TEMPLATE_COLUMNS,
 
-	LAST_PROP = GRID_TEMPLATE_COLUMNS,
+	LAST_PROP = MACSURF_ANIMATION_ROTATE,
 
 	/* Other keywords */
 	INHERIT, UNSET, IMPORTANT, NONE, BOTH, FIXED, SCROLL, TRANSPARENT,

@@ -243,10 +243,6 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("-macsurf-grid"),
 	SMAP("-macsurf-animation-opacity"),
 	SMAP("-macsurf-animation-rotate"),
-	/* fixes112 — grid-template-columns, parsed and folded onto
-	 * -macsurf-grid storage (column count only for now). Position
-	 * must match GRID_TEMPLATE_COLUMNS in propstrings.h. */
-	SMAP("grid-template-columns"),
 
 	SMAP("inherit"),
 	SMAP("unset"),

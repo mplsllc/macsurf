@@ -109,9 +109,6 @@ css_error css__parse_macsurf_text_shadow(css_language *c,
 css_error css__parse_macsurf_transform(css_language *c,
                 const parserutils_vector *vector, int32_t *ctx,
                 css_style *result);
-css_error css__parse_grid_template_columns(css_language *c,
-		const parserutils_vector *vector, int32_t *ctx,
-		css_style *result);
 css_error css__parse_macsurf_grid(css_language *c,
                 const parserutils_vector *vector, int32_t *ctx,
                 css_style *result);
