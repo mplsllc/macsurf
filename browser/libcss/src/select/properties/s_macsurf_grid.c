@@ -2,7 +2,7 @@
  * This file is part of LibCSS
  * Licensed under the MIT License,
  *		  http://www.opensource.org/licenses/mit-license.php
- * Copyright 2026 MacSurf (fixes75)
+ * Copyright 2026 MacSurf (fixes75, fixes117)
  */
 
 #include "bytecode/bytecode.h"
@@ -14,11 +14,17 @@
 #include "select/properties/properties.h"
 #include "select/properties/helpers.h"
 
+#define MACSURF_GRID_TRACK_MAX 8
+
 css_error css__cascade_macsurf_grid(uint32_t opv, css_style *style,
 		css_select_state *state)
 {
 	uint16_t value = CSS_MACSURF_GRID_INHERIT;
 	int32_t packed = 0;
+	int32_t tracks[MACSURF_GRID_TRACK_MAX];
+	int i;
+
+	for (i = 0; i < MACSURF_GRID_TRACK_MAX; i++) tracks[i] = 0;
 
 	if (hasFlagValue(opv) == false) {
 		switch (getValue(opv)) {
@@ -29,13 +35,23 @@ css_error css__cascade_macsurf_grid(uint32_t opv, css_style *style,
 			value = CSS_MACSURF_GRID_SET;
 			packed = *((css_fixed *) style->bytecode);
 			advance_bytecode(style, sizeof(css_fixed));
+			/* fixes117: consume the 8 track ints. They always
+			 * follow the packed value when SET is emitted. */
+			for (i = 0; i < MACSURF_GRID_TRACK_MAX; i++) {
+				tracks[i] = *((css_fixed *) style->bytecode);
+				advance_bytecode(style, sizeof(css_fixed));
+			}
 			break;
 		}
 	}
 
 	if (css__outranks_existing(getOpcode(opv), isImportant(opv), state,
 			getFlagValue(opv))) {
-		return set_macsurf_grid(state->computed, value, packed);
+		css_error err = set_macsurf_grid(state->computed, value,
+				packed);
+		if (err != CSS_OK) return err;
+		return set_macsurf_grid_tracks(state->computed,
+				value == CSS_MACSURF_GRID_SET ? tracks : NULL);
 	}
 
 	return CSS_OK;
@@ -44,12 +60,18 @@ css_error css__cascade_macsurf_grid(uint32_t opv, css_style *style,
 css_error css__set_macsurf_grid_from_hint(const css_hint *hint,
 		css_computed_style *style)
 {
-	return set_macsurf_grid(style, hint->status, hint->data.integer);
+	css_error err = set_macsurf_grid(style, hint->status,
+			hint->data.integer);
+	if (err != CSS_OK) return err;
+	return set_macsurf_grid_tracks(style, NULL);
 }
 
 css_error css__initial_macsurf_grid(css_select_state *state)
 {
-	return set_macsurf_grid(state->computed, CSS_MACSURF_GRID_NONE, 0);
+	css_error err = set_macsurf_grid(state->computed,
+			CSS_MACSURF_GRID_NONE, 0);
+	if (err != CSS_OK) return err;
+	return set_macsurf_grid_tracks(state->computed, NULL);
 }
 
 css_error css__copy_macsurf_grid(
@@ -58,12 +80,18 @@ css_error css__copy_macsurf_grid(
 {
 	int32_t integer = 0;
 	uint8_t type = get_macsurf_grid(from, &integer);
+	const int32_t *src_tracks;
+	css_error err;
 
 	if (from == to) {
 		return CSS_OK;
 	}
 
-	return set_macsurf_grid(to, type, integer);
+	err = set_macsurf_grid(to, type, integer);
+	if (err != CSS_OK) return err;
+
+	src_tracks = get_macsurf_grid_tracks(from);
+	return set_macsurf_grid_tracks(to, src_tracks);
 }
 
 css_error css__compose_macsurf_grid(const css_computed_style *parent,

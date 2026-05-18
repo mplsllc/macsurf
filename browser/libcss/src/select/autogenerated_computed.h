@@ -274,6 +274,16 @@ struct css_computed_style_i {
 	/* fixes75: -macsurf-grid: cols (bits 31..16) and rows (bits 15..0).
 	 * rows == 0 means auto-rows. */
 	int32_t macsurf_grid;
+	/* fixes117: explicit track widths for grid-template-columns.
+	 * Each int32 packs:
+	 *   bits 31..28 = unit (0=NONE, 1=FR, 2=PX, 3=PERCENT)
+	 *   bits 27..0  = value (signed 28-bit)
+	 *     FR:      Q20.8 fixed-point (256 = 1fr)
+	 *     PX:      signed pixels (~ +/-134M)
+	 *     PERCENT: Q20.8 fixed-point (256 = 100%)
+	 * tracks[0] == 0 means "no explicit tracks, fall back to N
+	 * equal-width columns per macsurf_grid". Max 8 tracks. */
+	int32_t macsurf_grid_tracks[8];
 	/* fixes76: -macsurf-animation-opacity.
 	 * bits 31..16: duration_ms (uint16, full from->to->from cycle).
 	 * bits 15..8:  to_opacity (uint8 0..255).
