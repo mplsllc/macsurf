@@ -3583,6 +3583,24 @@ bool layout_block_context(
 		restore_width = false;
 		css_w_type = css_computed_width(block->style, &css_v_w, &css_u_w);
 		css_h_type = css_computed_height(block->style, &css_v_h, &css_u_h);
+		/* fixes127: diagnostic probe for big replaced elements.
+		 * Logs the cascade-delivered width/height status so we can
+		 * see whether HTML width/height attrs are making it into
+		 * the computed style for elements that visibly render at
+		 * the wrong size (mactrove logo at full natural instead
+		 * of 400 from HTML attr). Filter to nat_w > 500 to keep
+		 * the log focused. */
+		if (block->object != NULL &&
+				content_get_width(block->object) > 500) {
+			macsurf_debug_log_writef(
+				"img diag127: box=%p nat=%dx%d entry=%dx%d css_w_type=%d css_w_val=%ld css_w_unit=%d css_h_type=%d css_h_val=%ld css_h_unit=%d",
+				(void *)block,
+				(int)content_get_width(block->object),
+				(int)content_get_height(block->object),
+				block->width, block->height,
+				(int)css_w_type, (long)css_v_w, (int)css_u_w,
+				(int)css_h_type, (long)css_v_h, (int)css_u_h);
+		}
 		if (css_w_type != CSS_WIDTH_SET) {
 			temp_width = AUTO;
 			restore_width = true;
@@ -3597,6 +3615,12 @@ bool layout_block_context(
 				INT_MIN, INT_MAX);
 		if (restore_width) {
 			block->width = temp_width;
+		}
+		if (block->object != NULL &&
+				content_get_width(block->object) > 500) {
+			macsurf_debug_log_writef(
+				"img diag127: box=%p exit=%dx%d",
+				(void *)block, block->width, block->height);
 		}
 		return true;
 	} else if (block->flags & REPLACE_DIM) {
