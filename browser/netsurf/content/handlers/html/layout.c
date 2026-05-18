@@ -3557,24 +3557,47 @@ bool layout_block_context(
 
 	/* special case if the block contains an object */
 	if (block->object) {
-		int temp_width = block->width;
-		macsurf_debug_log_writef(
-			"macsurf_diag: Entering object branch for box %p",
-			(void *)block);
-		macsurf_debug_log_writef(
-			"macsurf_diag: BEFORE - block->width: %d, block->height: %d",
-			block->width, block->height);
-		macsurf_debug_log_writef(
-			"macsurf_diag: BEFORE - temp_width: %d",
-			temp_width);
+		/* fixes125: replaced-element aspect-ratio derivation per
+		 * Gecko/Tasman/Netscape 4 nsImageFrame::ComputeSize. If CSS
+		 * gave one dimension as auto and earlier layout has filled
+		 * it in (either from natural size or from an earlier aspect
+		 * computation that's now stale because flex grew the other
+		 * dim), force the auto dim back to AUTO so
+		 * layout_get_object_dimensions runs aspect against the final
+		 * allocated other dimension. Fixes mactrove logo rendering
+		 * as 1058x92 (width natural, height aspect-of-400) when
+		 * CSS says width:auto height:auto. */
+		int temp_width;
+		enum css_width_e css_w_type;
+		enum css_height_e css_h_type;
+		css_fixed css_v_w;
+		css_fixed css_v_h;
+		css_unit css_u_w;
+		css_unit css_u_h;
+		bool restore_width;
+		temp_width = block->width;
+		css_v_w = 0;
+		css_v_h = 0;
+		css_u_w = CSS_UNIT_PX;
+		css_u_h = CSS_UNIT_PX;
+		restore_width = false;
+		css_w_type = css_computed_width(block->style, &css_v_w, &css_u_w);
+		css_h_type = css_computed_height(block->style, &css_v_h, &css_u_h);
+		if (css_w_type != CSS_WIDTH_SET) {
+			temp_width = AUTO;
+			restore_width = true;
+		}
+		if (css_h_type != CSS_HEIGHT_SET) {
+			block->height = AUTO;
+		}
 		if (!layout_block_object(block))
 			return false;
 		layout_get_object_dimensions(block, &temp_width,
 				&block->height, INT_MIN, INT_MAX,
 				INT_MIN, INT_MAX);
-		macsurf_debug_log_writef(
-			"macsurf_diag: AFTER  - temp_width: %d, block->height: %d",
-			temp_width, block->height);
+		if (restore_width) {
+			block->width = temp_width;
+		}
 		return true;
 	} else if (block->flags & REPLACE_DIM) {
 		return true;
