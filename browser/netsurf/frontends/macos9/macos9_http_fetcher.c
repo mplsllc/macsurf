@@ -704,9 +704,13 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 }
 
 static void macos9_http_poll(lwc_string *s) {
-	int i; (void)s;
+	int i;
 #ifdef __MACOS9__
-	unsigned long now = (unsigned long)TickCount();
+	unsigned long now;
+#endif
+	(void)s;
+#ifdef __MACOS9__
+	now = (unsigned long)TickCount();
 #endif
 	for(i=0;i<MAX_F;i++) {
 		struct macos9_fetch_ctx *c = &f_slots[i];
