@@ -5,6 +5,7 @@
 #include "utils/nsurl.h"
 #include "netsurf/types.h"
 #include "netsurf/window.h"
+#include "netsurf/mouse.h"
 #include "netsurf/browser_window.h"
 #include "desktop/browser_history.h"
 #include "macos9.h"
@@ -411,9 +412,39 @@ static void macos9_gw_set_status(struct gui_window *g, const char *t) {
 	if (g->window) InvalWindowRect(g->window, &g->status_rect);
 }
 
+static void macos9_gw_set_pointer(struct gui_window *g, enum gui_pointer_shape shape)
+{
+#ifdef __MACOS9__
+	(void)g;
+	switch (shape) {
+	case GUI_POINTER_POINT:
+		SetThemeCursor(kThemePointingHandCursor);
+		break;
+	case GUI_POINTER_CARET:
+		SetThemeCursor(kThemeIBeamCursor);
+		break;
+	case GUI_POINTER_WAIT:
+	case GUI_POINTER_PROGRESS:
+		SetThemeCursor(kThemeWatchCursor);
+		break;
+	case GUI_POINTER_CROSS:
+		SetThemeCursor(kThemeCrossCursor);
+		break;
+	case GUI_POINTER_MOVE:
+		SetThemeCursor(kThemeOpenHandCursor);
+		break;
+	default:
+		SetThemeCursor(kThemeArrowCursor);
+		break;
+	}
+#else
+	(void)g; (void)shape;
+#endif
+}
+
 static struct gui_window_table wt = {
 	macos9_window_create, macos9_window_destroy, macos9_gw_invalidate, macos9_gw_get_scroll,
 	macos9_gw_set_scroll, macos9_gw_get_dimensions, macos9_gw_event, macos9_gw_set_title,
-	macos9_gw_set_url, (void*)0, macos9_gw_set_status, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0
+	macos9_gw_set_url, (void*)0, macos9_gw_set_status, macos9_gw_set_pointer, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0
 };
 struct gui_window_table *macos9_window_table = &wt;

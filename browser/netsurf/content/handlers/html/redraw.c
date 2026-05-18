@@ -2513,7 +2513,11 @@ bool html_redraw_box(const html_content *html, struct box *box,
 		if (need_clip &&
 		    (box->type == BOX_BLOCK ||
 		     box->type == BOX_INLINE_BLOCK ||
-		     box->type == BOX_TABLE_CELL || box->object)) {
+		     box->type == BOX_TABLE_CELL ||
+		     box->type == BOX_FLEX ||
+		     box->type == BOX_INLINE_FLEX ||
+		     box->type == BOX_GRID ||
+		     box->object)) {
 			if (ctx->plot->clip(ctx, &r) != NSERROR_OK)
 				return false;
 		}
@@ -2652,7 +2656,9 @@ bool html_redraw_box(const html_content *html, struct box *box,
 	}
 
 	if (box->type == BOX_BLOCK || box->type == BOX_INLINE_BLOCK ||
-			box->type == BOX_TABLE_CELL || box->type == BOX_INLINE)
+			box->type == BOX_TABLE_CELL || box->type == BOX_INLINE ||
+			box->type == BOX_FLEX || box->type == BOX_INLINE_FLEX ||
+			box->type == BOX_GRID)
 		if (ctx->plot->clip(ctx, clip) != NSERROR_OK)
 			return false;
 
