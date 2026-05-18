@@ -41,16 +41,6 @@ enum mfs_state {
 	MFS_IDLE,
 	MFS_QUEUED,
 	MFS_INIT,
-	/* fixes108 — async-connect state machine. After mfs_open issues a
-	 * non-blocking OTConnect, the slot sits in MFS_CONNECTING while
-	 * the TCP handshake completes; the poll loop watches OTLook for
-	 * T_CONNECT, runs OTRcvConnect, then moves to MFS_SENDING which
-	 * non-blocking-OTSnds the request bytes from pending_req. Pool
-	 * reuse skips MFS_CONNECTING and starts at MFS_SENDING (endpoint
-	 * already connected). Headers + body read uses MFS_HEADERS /
-	 * MFS_BODY as before. */
-	MFS_CONNECTING,
-	MFS_SENDING,
 	MFS_HEADERS,
 	MFS_BODY,
 	MFS_DONE,
@@ -111,14 +101,6 @@ struct macos9_fetch_ctx {
 	char chunk_size_buf[16];    /* hex line buffer */
 	int chunk_size_len;
 	int trailer_just_after_eol; /* tracks empty-line in CS_TRAILER */
-	/* fixes108 — request bytes pending non-blocking OTSnd. Allocated by
-	 * mfs_open and freed in MFS_SENDING once fully sent (or in
-	 * macos9_http_free if the fetch is aborted mid-send). The poll
-	 * loop advances pending_req_sent on each successful OTSnd and
-	 * transitions to MFS_HEADERS when sent == len. */
-	char *pending_req;
-	long pending_req_len;
-	long pending_req_sent;
 };
 static struct macos9_fetch_ctx f_slots[MAX_F];
 
@@ -307,11 +289,8 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 	pooled = ep_pool_take(c->pool_key);
 	if (pooled != NULL) {
 		c->ep = pooled;
-		/* fixes108 — pool endpoints come back non-blocking from
-		 * ep_pool_return; preserve that. Setting sync is harmless
-		 * (they were already sync). */
 		OTSetSynchronous(c->ep);
-		OTSetNonBlocking(c->ep);
+		OTSetBlocking(c->ep);
 	} else {
 		cfg = OTCreateConfiguration("tcp");
 		if (!cfg) {
@@ -326,31 +305,19 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 				(int)e, target);
 			goto fail_unref;
 		}
-		/* fixes108 — keep OTBind in sync+blocking (it's microseconds
-		 * for an ANY-address client bind) but flip to non-blocking
-		 * BEFORE OTConnect. With sync+nonblocking, OTConnect returns
-		 * kOTNoDataErr immediately; the main event loop pumps freely
-		 * while the TCP handshake settles, and the poll loop catches
-		 * T_CONNECT via OTLook. This is the architectural fix for
-		 * the sticky-URL-bar / frozen-UI problem: previously a slow
-		 * proxy ACK blocked the entire WaitNextEvent loop for the
-		 * full DNS+SYN+ACK round-trip. */
 		OTSetSynchronous(c->ep);
 		OTSetBlocking(c->ep);
 		if (OTBind(c->ep, NULL, NULL) != noErr) {
 			MS_LOG("mfs_open: OTBind FAIL");
 			goto fail_unref;
 		}
-		OTSetNonBlocking(c->ep);
 		OTMemzero(&call, sizeof(TCall));
 		call.addr.buf = (UInt8 *)&dns;
 		call.addr.len = (short)OTInitDNSAddress(&dns, target);
-		macsurf_debug_log_writef("mfs_open: OTConnect (async) %s", target);
-		r = OTConnect(c->ep, &call, NULL);
-		if (r != noErr && r != kOTNoDataErr) {
+		macsurf_debug_log_writef("mfs_open: OTConnect %s", target);
+		if (OTConnect(c->ep, &call, NULL) != noErr) {
 			macsurf_debug_log_writef(
-				"mfs_open: OTConnect FAIL err=%ld target=%s",
-				(long)r, target);
+				"mfs_open: OTConnect FAIL target=%s", target);
 			goto fail_unref;
 		}
 	}
@@ -429,31 +396,12 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 			path_buf, (int)host_len, host_str);
 	}
 
-	/* fixes108 — copy the built request into pending_req for async
-	 * send by the poll loop. We do NOT OTSnd here, so mfs_open
-	 * returns immediately and the main event loop stays responsive.
-	 * The MFS_SENDING handler in mfs_poll_one drains pending_req via
-	 * non-blocking OTSnd, advancing pending_req_sent on each pass. */
-	{
-		size_t rlen;
-		rlen = strlen(req);
-		c->pending_req = (char *)malloc(rlen + 1);
-		if (c->pending_req == NULL) {
-			MS_LOG("mfs_open: OOM pending_req");
-			goto fail_unref;
-		}
-		memcpy(c->pending_req, req, rlen);
-		c->pending_req[rlen] = '\0';
-		c->pending_req_len = (long)rlen;
-		c->pending_req_sent = 0;
+	r = OTSnd(c->ep, req, (long)strlen(req), 0);
+	if (r < 0) {
+		macsurf_debug_log_writef("mfs_open: OTSnd err=%ld", (long)r);
+		goto fail_unref;
 	}
-
-	/* fixes108 — pool path skips MFS_CONNECTING (endpoint is already
-	 * connected); new-conn path waits for T_CONNECT. progress_ticks
-	 * resets here so the no-progress timeout from fixes107 covers
-	 * the connect window too. */
-	c->state = (pooled != NULL) ? MFS_SENDING : MFS_CONNECTING;
-	c->progress_ticks = (unsigned long)TickCount();
+	OTSetNonBlocking(c->ep);
 
 	if (scheme_lwc != NULL) lwc_string_unref(scheme_lwc);
 	if (host_lwc != NULL) lwc_string_unref(host_lwc);
@@ -470,12 +418,6 @@ fail_unref:
 		OTSndOrderlyDisconnect(c->ep);
 		OTCloseProvider(c->ep);
 		c->ep = NULL;
-	}
-	/* fixes108 — release pending_req if we got far enough to
-	 * allocate it before the failure. */
-	if (c->pending_req != NULL) {
-		free(c->pending_req);
-		c->pending_req = NULL;
 	}
 	c->keep_alive_ok = 0;
 	if (scheme_lwc != NULL) lwc_string_unref(scheme_lwc);
@@ -713,93 +655,7 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 	/* fixes91 — MFS_QUEUED means NetSurf hasn't dispatched yet (ops.start
 	 * unfired); don't open OT until then. */
 	if(c->state==MFS_QUEUED) return;
-	if(c->state==MFS_INIT) {
-		/* fixes108 — mfs_open now sets c->state itself (MFS_CONNECTING
-		 * for new connections, MFS_SENDING for pool-reused endpoints)
-		 * on success. We just translate failure into MFS_FAIL. */
-		if (!mfs_open(c)) c->state = MFS_FAIL;
-		return;
-	}
-	if (c->state == MFS_CONNECTING) {
-		/* fixes108 — wait for the async OTConnect to complete. OTLook
-		 * returns 0 while the handshake is still in flight, T_CONNECT
-		 * when the SYN-ACK is in and the connection is established,
-		 * or T_DISCONNECT if the peer refused / RST'd. OTRcvConnect
-		 * consumes the T_CONNECT event; without that call, OT keeps
-		 * the endpoint in an indeterminate state and OTSnd would
-		 * fail. */
-		OTResult look;
-		OSStatus rc;
-		look = OTLook(c->ep);
-		if (look == 0) return;
-		if (look == T_CONNECT) {
-			rc = OTRcvConnect(c->ep, NULL);
-			if (rc != noErr) {
-				macsurf_debug_log_writef(
-					"mfs_poll: OTRcvConnect err=%ld",
-					(long)rc);
-				c->err = "OTRcvConnect failed";
-				c->state = MFS_FAIL;
-				return;
-			}
-			c->state = MFS_SENDING;
-			c->progress_ticks = (unsigned long)TickCount();
-			return;
-		}
-		if (look == T_DISCONNECT) {
-			OTRcvDisconnect(c->ep, NULL);
-			macsurf_debug_log_write("mfs_poll: connect refused (T_DISCONNECT)");
-			c->err = "Connection refused";
-			c->state = MFS_FAIL;
-			c->keep_alive_ok = 0;
-			return;
-		}
-		/* Any other OTLook value (T_LISTEN etc.) is unexpected on a
-		 * client connect. Don't consume it; let the timeout from
-		 * macos9_http_poll fire if we stay stuck here. */
-		return;
-	}
-	if (c->state == MFS_SENDING) {
-		/* fixes108 — drive non-blocking OTSnd until pending_req is
-		 * fully on the wire, then transition to MFS_HEADERS where
-		 * OTRcv waits for the response. Partial sends (kOTFlowErr or
-		 * 0 return) just stay in MFS_SENDING and retry next pass. */
-		OTResult sn;
-		long rem;
-		if (c->pending_req == NULL) {
-			c->state = MFS_HEADERS;
-			return;
-		}
-		rem = c->pending_req_len - c->pending_req_sent;
-		if (rem <= 0) {
-			free(c->pending_req);
-			c->pending_req = NULL;
-			c->state = MFS_HEADERS;
-			return;
-		}
-		sn = OTSnd(c->ep,
-			c->pending_req + c->pending_req_sent,
-			rem, 0);
-		if (sn == kOTFlowErr) return;
-		if (sn < 0) {
-			macsurf_debug_log_writef(
-				"mfs_poll: OTSnd err=%ld", (long)sn);
-			c->err = "OTSnd error";
-			c->state = MFS_FAIL;
-			c->keep_alive_ok = 0;
-			return;
-		}
-		if (sn > 0) {
-			c->pending_req_sent += sn;
-			c->progress_ticks = (unsigned long)TickCount();
-			if (c->pending_req_sent >= c->pending_req_len) {
-				free(c->pending_req);
-				c->pending_req = NULL;
-				c->state = MFS_HEADERS;
-			}
-		}
-		return;
-	}
+	if(c->state==MFS_INIT) { if(mfs_open(c)) c->state=MFS_HEADERS; else c->state=MFS_FAIL; return; }
 	n=OTRcv(c->ep,b,sizeof(b),NULL);
 	if(n==kOTNoDataErr) return;
 	if(n<0) {
@@ -873,10 +729,7 @@ static void macos9_http_poll(lwc_string *s) {
 		 * ticks (15s at 60Hz), the proxy / origin has stalled — fail
 		 * the slot so the URL bar comes back alive and NetSurf core
 		 * hears about the failure rather than waiting silently. */
-		if ((c->state == MFS_CONNECTING ||
-		     c->state == MFS_SENDING ||
-		     c->state == MFS_HEADERS ||
-		     c->state == MFS_BODY) &&
+		if ((c->state == MFS_HEADERS || c->state == MFS_BODY) &&
 		    (now - c->progress_ticks) > 900) {
 			macsurf_debug_log_writef(
 				"http: timeout slot=%d state=%d body=%ld",
@@ -969,13 +822,7 @@ static bool macos9_http_start(void *ctx) {
 static void macos9_http_abort(void *ctx) { ((struct macos9_fetch_ctx*)ctx)->aborted=1; }
 static void macos9_http_free(void *ctx) {
 	struct macos9_fetch_ctx *c = (struct macos9_fetch_ctx*)ctx;
-	mfs_close(c);
-	if(c->h_buf) free(c->h_buf);
-	/* fixes108 — release the async send buffer if abort/free hit while
-	 * the request was still draining out. */
-	if(c->pending_req) { free(c->pending_req); c->pending_req = NULL; }
-	if(c->url) nsurl_unref(c->url);
-	c->state=MFS_IDLE;
+	mfs_close(c); if(c->h_buf) free(c->h_buf); if(c->url) nsurl_unref(c->url); c->state=MFS_IDLE;
 }
 
 nserror macos9_http_fetcher_register(void) {
