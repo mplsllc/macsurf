@@ -1391,110 +1391,142 @@ static void convert_xml_to_box(struct box_construct_ctx *ctx)
 }
 
 
-/* fixes130b: re-cascade an existing box tree in place. Top-down walk.
- * For each box with a cached select-results, calls box_get_style with
- * the current html_content's dyn_*_node pointers and swaps in the new
- * style. Parent_style threads down the recursion using the NEWLY
- * cascaded parent style, so child cascades inherit correctly.
+/* fixes130b/c/d: re-cascade an existing box tree in place.
  *
- * fixes130c: do NOT destroy the old css_select_results. Marker boxes
- * and inline-end boxes are created with `style_owned=false` and share
- * the parent's `box->style` pointer. Destroying the parent's old
- * result frees those shared style pointers from under the children
- * and crashes the layout walker. Leak for now (small bounded leak
- * per re-cascade). Also fix up direct children that shared our old
- * style pointer to point at the new one, as belt-and-suspenders. */
+ * fixes130c: do NOT destroy old css_select_results. Marker / inline-
+ * end boxes share parent's style pointer (style_owned=false) and
+ * dangling would crash layout. Leak for now.
+ *
+ * fixes130d: convert recursion to iterative walk with a heap work
+ * queue. mactrove has ~2000 boxes; Carbon's 64K stack is too small
+ * for deep C recursion (NetSurf's own convert_xml_to_box is
+ * iterative for the same reason). Add per-box logging every 100
+ * boxes plus a per-call hard cap so a buggy walk can't run forever.
+ */
 extern void macsurf_debug_log_writef(const char *fmt, ...);
+extern void macsurf_debug_log_write(const char *s);
 
-static int macsurf_recascade_count_;
-
-static void
-html_recascade_subtree(html_content *c,
-		       struct box *box,
-		       const css_computed_style *parent_style,
-		       const css_computed_style *root_style)
-{
-	struct box *child;
-	const css_computed_style *style_for_children;
-	const css_computed_style *old_self_style;
-
-	if (box == NULL) return;
-	old_self_style = box->style;
-
-	if (box->node != NULL && box->styles != NULL) {
-		css_select_results *new_styles = box_get_style(c,
-				parent_style, root_style, box->node);
-		if (new_styles != NULL) {
-			box->styles = new_styles;
-			box->style = new_styles->styles[
-					CSS_PSEUDO_ELEMENT_NONE];
-			macsurf_recascade_count_++;
-
-			/* Update direct children that share our old style
-			 * pointer (markers, inline-end boxes created with
-			 * style_owned=false) so they don't dangle. */
-			for (child = box->children; child != NULL;
-					child = child->next) {
-				if (child->styles == NULL &&
-						child->style ==
-						old_self_style) {
-					child->style = box->style;
-				}
-			}
-		}
-	}
-
-	style_for_children = (box->style != NULL) ?
-			box->style : parent_style;
-	for (child = box->children; child != NULL; child = child->next) {
-		html_recascade_subtree(c, child,
-				style_for_children, root_style);
-	}
-}
+struct recascade_frame {
+	struct box *box;
+	const css_computed_style *parent_style;
+};
 
 nserror
 html_recascade_tree(html_content *c)
 {
+	struct recascade_frame *stack;
+	int stack_cap;
+	int stack_top;
 	const css_computed_style *root_style;
-	struct box *child;
-	const css_computed_style *old_root_style;
+	int processed;
+	int recascaded;
+	int hard_cap;
 
 	if (c == NULL || c->layout == NULL) return NSERROR_OK;
-	old_root_style = c->layout->style;
-	macsurf_recascade_count_ = 0;
 
 	macsurf_debug_log_writef("recascade: enter layout=%p node=%p",
 			(void *)c->layout,
-			(void *)(c->layout ? c->layout->node : NULL));
+			(void *)(c->layout->node));
 
-	if (c->layout->node != NULL && c->layout->styles != NULL) {
-		css_select_results *new_styles = box_get_style(c,
-				NULL, NULL, c->layout->node);
-		if (new_styles != NULL) {
-			c->layout->styles = new_styles;
-			c->layout->style = new_styles->styles[
-					CSS_PSEUDO_ELEMENT_NONE];
-			macsurf_recascade_count_++;
-			for (child = c->layout->children; child != NULL;
-					child = child->next) {
-				if (child->styles == NULL &&
-						child->style ==
-						old_root_style) {
-					child->style = c->layout->style;
+	stack_cap = 64;
+	stack = (struct recascade_frame *)malloc(
+			sizeof(struct recascade_frame) * stack_cap);
+	if (stack == NULL) {
+		macsurf_debug_log_write("recascade: malloc fail");
+		return NSERROR_NOMEM;
+	}
+	stack_top = 0;
+	processed = 0;
+	recascaded = 0;
+	hard_cap = 4000;
+
+	root_style = c->layout->style;
+	stack[stack_top].box = c->layout;
+	stack[stack_top].parent_style = NULL;
+	stack_top++;
+
+	while (stack_top > 0 && processed < hard_cap) {
+		struct recascade_frame frame;
+		struct box *box;
+		const css_computed_style *parent_style;
+		const css_computed_style *old_self_style;
+		const css_computed_style *style_for_children;
+		struct box *child;
+
+		stack_top--;
+		frame = stack[stack_top];
+		box = frame.box;
+		parent_style = frame.parent_style;
+
+		processed++;
+		if ((processed % 200) == 0) {
+			macsurf_debug_log_writef(
+				"recascade: processed=%d recascaded=%d top=%d",
+				processed, recascaded, stack_top);
+		}
+
+		if (box == NULL) continue;
+		old_self_style = box->style;
+
+		if (box->node != NULL && box->styles != NULL) {
+			const css_computed_style *use_root =
+				(box == c->layout) ? NULL : root_style;
+			const css_computed_style *use_parent =
+				(box == c->layout) ? NULL : parent_style;
+			css_select_results *new_styles = box_get_style(c,
+					use_parent, use_root, box->node);
+			if (new_styles != NULL) {
+				box->styles = new_styles;
+				box->style = new_styles->styles[
+						CSS_PSEUDO_ELEMENT_NONE];
+				recascaded++;
+				if (box == c->layout) {
+					root_style = box->style;
+				}
+
+				for (child = box->children; child != NULL;
+						child = child->next) {
+					if (child->styles == NULL &&
+							child->style ==
+							old_self_style) {
+						child->style = box->style;
+					}
 				}
 			}
 		}
+
+		style_for_children = (box->style != NULL) ?
+				box->style : parent_style;
+
+		for (child = box->children; child != NULL;
+				child = child->next) {
+			if (stack_top >= stack_cap) {
+				int new_cap = stack_cap * 2;
+				struct recascade_frame *new_stack;
+				new_stack = (struct recascade_frame *)realloc(
+					stack,
+					sizeof(struct recascade_frame) *
+					new_cap);
+				if (new_stack == NULL) {
+					macsurf_debug_log_write(
+						"recascade: realloc fail");
+					free(stack);
+					return NSERROR_NOMEM;
+				}
+				stack = new_stack;
+				stack_cap = new_cap;
+			}
+			stack[stack_top].box = child;
+			stack[stack_top].parent_style = style_for_children;
+			stack_top++;
+		}
 	}
 
-	root_style = c->layout->style;
-	for (child = c->layout->children; child != NULL;
-			child = child->next) {
-		html_recascade_subtree(c, child, root_style, root_style);
-	}
+	macsurf_debug_log_writef(
+			"recascade: done processed=%d recascaded=%d cap=%d",
+			processed, recascaded, hard_cap);
 
-	macsurf_debug_log_writef("recascade: done count=%d",
-			macsurf_recascade_count_);
-
+	free(stack);
 	return NSERROR_OK;
 }
 
