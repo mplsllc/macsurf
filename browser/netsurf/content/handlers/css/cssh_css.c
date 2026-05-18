@@ -395,236 +395,13 @@ macsurf__match_prop_name(const char *buf, size_t len, size_t pos,
 }
 
 
-/* fixes117 — extract up to MAX_TRACKS track-width tokens from a
- * grid-template-columns value, expanding repeat(N, ...) and collapsing
- * minmax()/fit-content()/calc() to a single token. Each emitted token
- * is appended to `out` followed by a single space; the total bytes
- * written is returned. Tracks beyond MAX_TRACKS are silently dropped.
- *
- * Token normalisation: each token is emitted verbatim from its source
- * substring (e.g. "210px", "1fr", "50%", "auto"). The libcss parser
- * (p_macsurf_grid.c V2 grammar) only recognises <length> / <flex> /
- * <percentage>; idents and minmax-results fall back to "1fr" so the
- * grid still has equal cells in those positions. */
-#define MACSURF_GRID_TRACK_MAX 8
-
-static int
-macsurf__emit_one_track(char *out, size_t cap,
-		const char *tok, size_t tok_len)
-{
-	const char *fr_fallback = "1fr";
-	const char *tok_to_emit = tok;
-	size_t emit_len = tok_len;
-	size_t i;
-	bool is_value = false;
-
-	/* Detect if the token looks like a value (starts with digit, '.',
-	 * '+' or '-'). Anything else (auto, min-content, max-content,
-	 * leftover minmax/calc) becomes "1fr". */
-	if (tok_len > 0) {
-		char c = tok[0];
-		if ((c >= '0' && c <= '9') || c == '.' || c == '+' ||
-				c == '-') {
-			is_value = true;
-		}
-	}
-	if (!is_value) {
-		tok_to_emit = fr_fallback;
-		emit_len = 3;
-	}
-
-	if (emit_len + 1 > cap) return -1;
-	for (i = 0; i < emit_len; i++) {
-		out[i] = tok_to_emit[i];
-	}
-	out[emit_len] = ' ';
-	return (int)(emit_len + 1);
-}
-
-/* Walk a flat (paren-free, repeat-free) chunk of track tokens, emitting
- * one normalised token per track up to `room` remaining slots. Returns
- * the number of tracks emitted; *out_pos advanced; *room decremented. */
-static void
-macsurf__emit_flat_tracks(const char *p, const char *end,
-		char *out, size_t cap, size_t *out_pos,
-		int *room, int *emitted)
-{
-	while (p < end && *room > 0) {
-		const char *tok_start;
-		size_t tok_len;
-		int n;
-
-		while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' ||
-				*p == '\r' || *p == ',')) p++;
-		if (p >= end) break;
-
-		tok_start = p;
-		while (p < end && *p != ' ' && *p != '\t' && *p != '\n' &&
-				*p != '\r' && *p != ',' && *p != '(' &&
-				*p != ')') {
-			p++;
-		}
-		tok_len = (size_t)(p - tok_start);
-		if (tok_len == 0) continue;
-
-		n = macsurf__emit_one_track(out + *out_pos,
-				cap - *out_pos, tok_start, tok_len);
-		if (n < 0) return;
-		*out_pos += (size_t)n;
-		(*room)--;
-		(*emitted)++;
-	}
-}
-
-/* fixes117 — emit a track-list rewrite for one grid-template-columns
- * declaration. Returns bytes written to `out` (excluding trailing NUL),
- * or 0 if the value couldn't be coerced into a usable track-list (in
- * which case the caller should fall back to the count-only rewrite). */
-static size_t
-macsurf__emit_grid_tracks(const char *p, const char *end,
-		char *out, size_t cap)
-{
-	size_t pos = 0;
-	int emitted = 0;
-	int room = MACSURF_GRID_TRACK_MAX;
-
-	while (p < end && room > 0) {
-		while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' ||
-				*p == '\r' || *p == ',')) p++;
-		if (p >= end) break;
-
-		/* repeat(N, T1 T2 ...) -> emit T1 T2 ... N times. */
-		if ((end - p) >= 7 &&
-				(p[0] == 'r' || p[0] == 'R') &&
-				(p[1] == 'e' || p[1] == 'E') &&
-				(p[2] == 'p' || p[2] == 'P') &&
-				(p[3] == 'e' || p[3] == 'E') &&
-				(p[4] == 'a' || p[4] == 'A') &&
-				(p[5] == 't' || p[5] == 'T') &&
-				p[6] == '(') {
-			int mult = 1;
-			const char *inner_start;
-			const char *inner_end;
-			int depth = 1;
-			int r;
-
-			p += 7;
-			while (p < end && (*p == ' ' || *p == '\t')) p++;
-			if (p < end && *p >= '0' && *p <= '9') {
-				int n = 0;
-				while (p < end && *p >= '0' && *p <= '9') {
-					n = n * 10 + (*p - '0');
-					p++;
-				}
-				if (n > 0 && n < 1000) mult = n;
-			} else {
-				mult = 3;
-				while (p < end && *p != ',' && *p != ')') p++;
-			}
-			while (p < end && (*p == ' ' || *p == '\t')) p++;
-			if (p < end && *p == ',') p++;
-
-			inner_start = p;
-			while (p < end && depth > 0) {
-				if (*p == '(') depth++;
-				else if (*p == ')') {
-					depth--;
-					if (depth == 0) break;
-				}
-				p++;
-			}
-			inner_end = p;
-			if (p < end && *p == ')') p++;
-
-			for (r = 0; r < mult && room > 0; r++) {
-				macsurf__emit_flat_tracks(inner_start,
-						inner_end, out, cap, &pos,
-						&room, &emitted);
-			}
-			continue;
-		}
-
-		/* minmax(A, B) / fit-content(N) / calc(...) -> single
-		 * "1fr"-equivalent token. */
-		if (p < end &&
-				(((end - p) >= 7 &&
-				  (p[0] == 'm' || p[0] == 'M') &&
-				  (p[1] == 'i' || p[1] == 'I') &&
-				  (p[2] == 'n' || p[2] == 'N') &&
-				  (p[3] == 'm' || p[3] == 'M') &&
-				  (p[4] == 'a' || p[4] == 'A') &&
-				  (p[5] == 'x' || p[5] == 'X') &&
-				  p[6] == '(') ||
-				 ((end - p) >= 12 &&
-				  (p[0] == 'f' || p[0] == 'F') &&
-				  (p[1] == 'i' || p[1] == 'I') &&
-				  (p[2] == 't' || p[2] == 'T') &&
-				  p[3] == '-' &&
-				  (p[4] == 'c' || p[4] == 'C') &&
-				  p[11] == '(') ||
-				 ((end - p) >= 5 &&
-				  (p[0] == 'c' || p[0] == 'C') &&
-				  (p[1] == 'a' || p[1] == 'A') &&
-				  (p[2] == 'l' || p[2] == 'L') &&
-				  (p[3] == 'c' || p[3] == 'C') &&
-				  p[4] == '('))) {
-			int depth = 0;
-			int n;
-			while (p < end) {
-				if (*p == '(') depth++;
-				else if (*p == ')') {
-					depth--;
-					if (depth == 0) { p++; break; }
-				}
-				p++;
-			}
-			n = macsurf__emit_one_track(out + pos, cap - pos,
-					"1fr", 3);
-			if (n < 0) break;
-			pos += (size_t)n;
-			room--;
-			emitted++;
-			continue;
-		}
-
-		/* Plain track token. */
-		{
-			const char *tok_start = p;
-			size_t tok_len;
-			int n;
-			while (p < end && *p != ' ' && *p != '\t' &&
-					*p != '\n' && *p != '\r' &&
-					*p != ',' && *p != '(' && *p != ')') {
-				p++;
-			}
-			tok_len = (size_t)(p - tok_start);
-			if (tok_len == 0) {
-				if (p < end) p++;
-				continue;
-			}
-			n = macsurf__emit_one_track(out + pos, cap - pos,
-					tok_start, tok_len);
-			if (n < 0) break;
-			pos += (size_t)n;
-			room--;
-			emitted++;
-		}
-	}
-
-	if (emitted == 0) return 0;
-	/* Trim the trailing space we appended after the last token. */
-	if (pos > 0 && out[pos - 1] == ' ') pos--;
-	return pos;
-}
-
-
-/* fixes115/117 — rewrite every `grid-template-columns: VALUE` declaration
- * inside the buffer to `-macsurf-grid: <tracks>` followed by enough
- * spaces to preserve the original byte count. The replacement is shorter
- * because the property name shrinks 22->14 chars; if track-list emission
- * fits we use it (fixes117), else fall back to the legacy column-count
- * rewrite (fixes115). The caller owns the returned malloc'd buffer and
- * must free it. Returns NULL on OOM. */
+/* fixes115 — rewrite every `grid-template-columns: VALUE` declaration
+ * inside the buffer to `-macsurf-grid: N` followed by enough spaces to
+ * preserve the original byte count. The replacement is always shorter
+ * (`-macsurf-grid:` is 14 chars vs `grid-template-columns:` at 22), so
+ * the padding always fits. The caller owns the returned malloc'd buffer
+ * and must free it after passing to libcss. Returns NULL on OOM; caller
+ * falls back to the original buffer. */
 static char *
 macsurf__rewrite_grid_template_columns(const char *data, size_t size)
 {
@@ -642,11 +419,10 @@ macsurf__rewrite_grid_template_columns(const char *data, size_t size)
 		size_t j;
 		size_t val_start;
 		size_t val_end;
+		int columns;
+		int n;
+		char buf[40];
 		size_t total_replace;
-		size_t prefix_len;
-		size_t tracks_room;
-		size_t tracks_written;
-		char buf[256];
 		int paren_depth = 0;
 
 		if (!macsurf__match_prop_name(out, size, i,
@@ -680,40 +456,14 @@ macsurf__rewrite_grid_template_columns(const char *data, size_t size)
 			val_end++;
 		}
 
+		columns = macsurf__count_grid_columns_text(
+				out + val_start, out + val_end);
+
+		n = sprintf(buf, "-macsurf-grid: %d", columns);
 		total_replace = val_end - i;
-		prefix_len = (size_t)sprintf(buf, "-macsurf-grid: ");
-		if (prefix_len >= total_replace) {
-			/* Can't even fit the prefix -- leave the source
-			 * declaration untouched. libcss will error on the
-			 * unknown property and skip it gracefully. */
-			i = val_end;
-			continue;
-		}
-
-		tracks_room = total_replace - prefix_len;
-		if (tracks_room > sizeof(buf) - prefix_len - 1) {
-			tracks_room = sizeof(buf) - prefix_len - 1;
-		}
-
-		tracks_written = macsurf__emit_grid_tracks(
-				out + val_start, out + val_end,
-				buf + prefix_len, tracks_room);
-
-		if (tracks_written == 0 ||
-				prefix_len + tracks_written > total_replace) {
-			/* Fall back to legacy count-only rewrite. */
-			int columns = macsurf__count_grid_columns_text(
-					out + val_start, out + val_end);
-			int n = sprintf(buf, "-macsurf-grid: %d", columns);
-			if (n > 0 && (size_t)n <= total_replace) {
-				memcpy(out + i, buf, (size_t)n);
-				memset(out + i + n, ' ',
-						total_replace - (size_t)n);
-			}
-		} else {
-			size_t total = prefix_len + tracks_written;
-			memcpy(out + i, buf, total);
-			memset(out + i + total, ' ', total_replace - total);
+		if (n > 0 && (size_t)n <= total_replace) {
+			memcpy(out + i, buf, (size_t)n);
+			memset(out + i + n, ' ', total_replace - (size_t)n);
 		}
 		i = val_end;
 	}

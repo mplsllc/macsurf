@@ -1629,24 +1629,6 @@ static inline css_error set_macsurf_grid(css_computed_style *style,
 #undef MACSURF_GRID_SHIFT
 #undef MACSURF_GRID_MASK
 
-/* fixes117: set the explicit track-width array for grid-template-columns.
- * Copies up to 8 int32 track descriptors. NULL clears the array. */
-static inline css_error set_macsurf_grid_tracks(css_computed_style *style,
-		const int32_t *tracks)
-{
-	int i;
-	if (tracks == NULL) {
-		for (i = 0; i < 8; i++) {
-			style->i.macsurf_grid_tracks[i] = 0;
-		}
-	} else {
-		for (i = 0; i < 8; i++) {
-			style->i.macsurf_grid_tracks[i] = tracks[i];
-		}
-	}
-	return CSS_OK;
-}
-
 /* fixes76: -macsurf-animation-opacity uses bit 0 of word 15.
  * Integer storage packs duration_ms (bits 31..16), to (bits 15..8),
  * from (bits 7..0). */

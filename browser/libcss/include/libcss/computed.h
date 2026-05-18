@@ -209,13 +209,6 @@ uint8_t css_computed_macsurf_grid(
 		const css_computed_style *style,
 		int32_t *packed);
 
-/* fixes117: returns pointer to inline 8-element track-width array.
- * Each int32 packs (unit << 28) | value. tracks[0] == 0 indicates no
- * explicit tracks (caller should fall back to equal-width N columns).
- * Pointer is valid for the lifetime of the computed style. */
-const int32_t *css_computed_macsurf_grid_tracks(
-		const css_computed_style *style);
-
 /* fixes76: -macsurf-animation-opacity: <from> <to> <duration_ms>.
  * from, to: opacity 0..255 (255 = opaque).
  * duration_ms: full cycle in ms (1..65535). Cycle is from -> to -> from.

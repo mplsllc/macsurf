@@ -2091,14 +2091,6 @@ static inline uint8_t get_macsurf_grid(const css_computed_style *style,
 #undef MACSURF_GRID_SHIFT
 #undef MACSURF_GRID_MASK
 
-/* fixes117: return pointer to inline 8-track array.
- * tracks[0] == 0 means no explicit tracks (use equal-width fallback). */
-static inline const int32_t *get_macsurf_grid_tracks(
-		const css_computed_style *style)
-{
-	return style->i.macsurf_grid_tracks;
-}
-
 /* fixes76: -macsurf-animation-opacity.
  * 1-bit state at bit 0 of word 15 (new word). Integer field packs
  * duration_ms (bits 31..16), to (bits 15..8), from (bits 7..0). */
