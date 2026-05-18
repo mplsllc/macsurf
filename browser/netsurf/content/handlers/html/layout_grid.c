@@ -91,10 +91,25 @@ static bool layout_grid_item(
 		item->float_container = NULL;
 	}
 
-	/* Force the cell width regardless of what CSS resolved to. V1 grid
-	 * always uses equal-width columns; CSS width overrides are ignored
-	 * (clamped below). */
-	item->width = cell_width;
+	/* fixes114 — only force cell_width if the child's CSS width is AUTO
+	 * (i.e. the child didn't set its own width). Replaced elements with
+	 * explicit widths — .featured-app__icon { width: 96px; height: 96px; }
+	 * being the canonical mactrove case — were getting their CSS width
+	 * clobbered by cell_width, which is the full container width when
+	 * our V1 grid degenerates to 1 column (because we don't yet parse
+	 * grid-template-columns). End result: a 96×96 app icon stretched to
+	 * 1771×94 across the whole content column. Preserving the explicit
+	 * width — and clamping it to cell_width if the CSS specifies more
+	 * than the cell can hold — fixes that without losing the equal-fill
+	 * behaviour for items that don't set their own width. */
+	if (dummy_w == AUTO) {
+		item->width = cell_width;
+	} else {
+		item->width = dummy_w;
+		if (item->width > cell_width) {
+			item->width = cell_width;
+		}
+	}
 
 	switch (item->type) {
 	case BOX_BLOCK:
