@@ -287,6 +287,12 @@ uint8_t css_computed_object_fit(
 uint8_t css_computed_text_overflow(
 		const css_computed_style *style);
 
+uint8_t css_computed_word_break(
+		const css_computed_style *style);
+
+uint8_t css_computed_overflow_wrap(
+		const css_computed_style *style);
+
 uint8_t css_computed_height(
 		const css_computed_style *style,
 		css_fixed *length, css_unit *unit);

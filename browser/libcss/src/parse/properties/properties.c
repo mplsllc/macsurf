@@ -170,7 +170,10 @@ const css_prop_handler property_handlers[LAST_PROP + 1 - FIRST_PROP] =
 	css__parse_macsurf_animation_opacity,
 	css__parse_macsurf_animation_rotate,
 	css__parse_object_fit,
-	css__parse_text_overflow
+	css__parse_text_overflow,
+	css__parse_word_break,
+	css__parse_overflow_wrap,
+	css__parse_overflow_wrap  /* word-wrap is a legacy alias for overflow-wrap */
 	};/** Mapping from property bytecode index to bytecode unit class mask. */
 const uint32_t property_unit_mask[CSS_N_PROPERTIES] = {
 	[CSS_PROP_AZIMUTH]               = UNIT_MASK_AZIMUTH,
@@ -285,6 +288,8 @@ const uint32_t property_unit_mask[CSS_N_PROPERTIES] = {
 	[CSS_PROP_MACSURF_ANIMATION_ROTATE]  = 0,
 	[CSS_PROP_OBJECT_FIT]            = 0,
 	[CSS_PROP_TEXT_OVERFLOW]         = 0,
+	[CSS_PROP_WORD_BREAK]            = 0,
+	[CSS_PROP_OVERFLOW_WRAP]         = 0,
 	[CSS_PROP_BREAK_AFTER]           = UNIT_MASK_BREAK_AFTER,	[CSS_PROP_BREAK_BEFORE]          = UNIT_MASK_BREAK_BEFORE,
 	[CSS_PROP_BREAK_INSIDE]          = UNIT_MASK_BREAK_INSIDE,
 	[CSS_PROP_COLUMN_COUNT]          = UNIT_MASK_COLUMN_COUNT,

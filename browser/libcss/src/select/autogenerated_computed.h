@@ -220,7 +220,9 @@ struct css_computed_style_i {
  * (bottom 5 bits, FULL): macsurf_grid (bit 4), macsurf_transform (bits 3-2),
  * macsurf_text_shadow (bits 1-0)
  *
- * 15 ........................XXOOORRA
+ * 15 ....................WWWWXXOOORRA
+ * (fixes136a) overflow_wrap (bits 10-9);
+ * (fixes136a) word_break (bits 8-7);
  * (fixes135a) text_overflow (bits 6-5);
  * (fixes116)  object_fit (bits 4-2);
  * (fixes77)   macsurf_animation_rotate (bit 1);

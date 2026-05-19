@@ -562,5 +562,13 @@ struct prop_table prop_dispatch[CSS_N_PROPERTIES] = {
 	{
 	        PROPERTY_FUNCS(text_overflow),
 	        0,
+	},
+	{
+	        PROPERTY_FUNCS(word_break),
+	        1,
+	},
+	{
+	        PROPERTY_FUNCS(overflow_wrap),
+	        1,
 	}
 	};

@@ -1686,6 +1686,12 @@ static inline css_error set_macsurf_animation_rotate(
 #define TEXT_OVERFLOW_INDEX 15
 #define TEXT_OVERFLOW_SHIFT 5
 #define TEXT_OVERFLOW_MASK 0x60
+#define WORD_BREAK_INDEX 15
+#define WORD_BREAK_SHIFT 7
+#define WORD_BREAK_MASK 0x180
+#define OVERFLOW_WRAP_INDEX 15
+#define OVERFLOW_WRAP_SHIFT 9
+#define OVERFLOW_WRAP_MASK 0x600
 
 static inline css_error set_object_fit(css_computed_style *style, uint8_t type)
 {
@@ -1713,6 +1719,34 @@ static inline css_error set_text_overflow(css_computed_style *style,
 #undef TEXT_OVERFLOW_INDEX
 #undef TEXT_OVERFLOW_SHIFT
 #undef TEXT_OVERFLOW_MASK
+
+static inline css_error set_word_break(css_computed_style *style,
+		uint8_t type)
+{
+	uint32_t *bits = &style->i.bits[WORD_BREAK_INDEX];
+
+	*bits = (*bits & ~WORD_BREAK_MASK) |
+			(((uint32_t)type & 0x3) << WORD_BREAK_SHIFT);
+
+	return CSS_OK;
+}
+#undef WORD_BREAK_INDEX
+#undef WORD_BREAK_SHIFT
+#undef WORD_BREAK_MASK
+
+static inline css_error set_overflow_wrap(css_computed_style *style,
+		uint8_t type)
+{
+	uint32_t *bits = &style->i.bits[OVERFLOW_WRAP_INDEX];
+
+	*bits = (*bits & ~OVERFLOW_WRAP_MASK) |
+			(((uint32_t)type & 0x3) << OVERFLOW_WRAP_SHIFT);
+
+	return CSS_OK;
+}
+#undef OVERFLOW_WRAP_INDEX
+#undef OVERFLOW_WRAP_SHIFT
+#undef OVERFLOW_WRAP_MASK
 
 #define MARGIN_BOTTOM_INDEX 5
 #define MARGIN_BOTTOM_SHIFT 11

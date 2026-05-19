@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MacSurf — fixes136 (word-break / overflow-wrap)</title>
+<style>
+  body {
+    font-family: Helvetica, sans-serif;
+    background: #f0f0f0;
+    color: #222;
+    margin: 16px;
+  }
+  h1 {
+    color: #003366;
+    font-size: 14pt;
+    margin: 0 0 4px 0;
+  }
+  .lede {
+    color: #666;
+    font-size: 8pt;
+    margin: 0 0 12px 0;
+  }
+  .card {
+    background: #fff;
+    border: 1px solid #ccc;
+    padding: 12px;
+    margin: 0 0 14px 0;
+  }
+  .card-title {
+    color: #003366;
+    font-size: 10pt;
+    font-weight: bold;
+    margin: 0 0 8px 0;
+  }
+  .expect {
+    color: #888;
+    font-style: italic;
+    font-size: 8pt;
+    margin: 8px 0 0 0;
+  }
+
+  /* fixes136 — word-break / overflow-wrap probes.
+   *
+   * Phase A (136a) ships parser + computed plumbing only. Layout
+   * integration arrives in phase B (136b). Until then every probe
+   * renders the same as the normal baseline (long URLs overflow). */
+  .box {
+    width: 180px;
+    border: 1px solid black;
+    padding: 4px;
+    margin: 4px 0;
+    font-size: 11pt;
+  }
+  .normal { word-break: normal; overflow-wrap: normal; }
+  .breakword { overflow-wrap: break-word; }
+  .anywhere { overflow-wrap: anywhere; }
+  .breakall { word-break: break-all; }
+  .keepall { word-break: keep-all; }
+  .nowrap { white-space: nowrap; overflow-wrap: break-word; }
+  .legacy { word-wrap: break-word; }
+</style>
+</head>
+<body>
+
+<h1>MacSurf — fixes136 (word-break / overflow-wrap)</h1>
+<p class="lede">Phase A (136a) plumbs the libcss properties only.
+Layout integration arrives in 136b. Probes below render identically
+to the normal baseline (long URLs overflow) until then.</p>
+
+<div class="card">
+  <p class="card-title">PROBE W1 — normal baseline</p>
+  <div class="box normal">https://example.com/this/is/a/really/really/really/long/path/with/no-natural-breakpoints-abcdef1234567890abcdef1234567890</div>
+  <p class="expect">EXPECT (136a and 136b): long URL overflows the
+  box; no character-level break. Baseline behaviour.</p>
+</div>
+
+<div class="card">
+  <p class="card-title">PROBE W2 — overflow-wrap: break-word</p>
+  <div class="box breakword">https://example.com/this/is/a/really/really/really/long/path/with/no-natural-breakpoints-abcdef1234567890abcdef1234567890</div>
+  <p class="expect">EXPECT (136a): looks identical to W1.
+  EXPECT (136b): URL wraps inside the long token when it would
+  otherwise overflow; box grows vertically to fit.</p>
+</div>
+
+<div class="card">
+  <p class="card-title">PROBE W3 — overflow-wrap: anywhere</p>
+  <div class="box anywhere">https://example.com/this/is/a/really/really/really/long/path/with/no-natural-breakpoints-abcdef1234567890abcdef1234567890</div>
+  <p class="expect">EXPECT (136a): looks identical to W1.
+  EXPECT (136b): same wrapping behaviour as W2 (first-pass aliases
+  to break-word; the spec difference is around min-content sizing).</p>
+</div>
+
+<div class="card">
+  <p class="card-title">PROBE W4 — word-break: break-all</p>
+  <div class="box breakall">https://example.com/this/is/a/really/really/really/long/path/with/no-natural-breakpoints-abcdef1234567890abcdef1234567890</div>
+  <p class="expect">EXPECT (136a): looks identical to W1.
+  EXPECT (136b): URL wraps aggressively at any character boundary,
+  not just at the end of a long unbreakable run.</p>
+</div>
+
+<div class="card">
+  <p class="card-title">PROBE W5 — word-break: keep-all</p>
+  <div class="box keepall">https://example.com/this/is/a/really/really/really/long/path/with/no-natural-breakpoints-abcdef1234567890abcdef1234567890</div>
+  <p class="expect">EXPECT (136a and 136b): identical to W1. keep-all
+  is parsed for forward-compat but inert without CJK segmentation.</p>
+</div>
+
+<div class="card">
+  <p class="card-title">PROBE W6 — white-space:nowrap + break-word</p>
+  <div class="box nowrap">https://example.com/this/is/a/really/really/really/long/path/with/no-natural-breakpoints-abcdef1234567890abcdef1234567890</div>
+  <p class="expect">EXPECT (136a and 136b): nowrap wins. No wrap,
+  no break; URL stays on one line and overflows.</p>
+</div>
+
+<div class="card">
+  <p class="card-title">PROBE W7 — legacy word-wrap: break-word</p>
+  <div class="box legacy">https://example.com/this/is/a/really/really/really/long/path/with/no-natural-breakpoints-abcdef1234567890abcdef1234567890</div>
+  <p class="expect">EXPECT (136a): looks identical to W1.
+  EXPECT (136b): same wrapping as W2 (word-wrap is a legacy alias
+  for overflow-wrap, both parsers emit the same bytecode).</p>
+</div>
+
+</body>
+</html>
