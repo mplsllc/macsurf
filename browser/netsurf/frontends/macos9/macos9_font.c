@@ -456,10 +456,6 @@ macos9_font_metric_probe_run(void)
         }
         has_run = 1;
 
-        if (initial_win == NULL || initial_win->window == NULL) {
-                return;
-        }
-
         n_fonts   = sizeof(macos9_metric_probe_fonts) /
                     sizeof(macos9_metric_probe_fonts[0]);
         n_sizes   = sizeof(macos9_metric_probe_sizes) /
@@ -469,10 +465,24 @@ macos9_font_metric_probe_run(void)
         n_strings = sizeof(macos9_metric_probe_strings) /
                     sizeof(macos9_metric_probe_strings[0]);
 
+        /* fixes144a2: initial_win is only set by macos9_create_initial_window
+         * (the fallback path); the normal BW_CREATE path leaves it NULL. Use
+         * FrontWindow() as the port source instead -- same pattern as
+         * macos9_font_measure. */
         GetPort(&old_port);
-        SetPortWindowPort(initial_win->window);
+        if (initial_win != NULL && initial_win->window != NULL) {
+                SetPortWindowPort(initial_win->window);
+        } else if (FrontWindow() != NULL) {
+                SetPortWindowPort(FrontWindow());
+        } else {
+                /* No window yet; can't measure. Drop the run silently;
+                 * has_run stays true so we don't try again. */
+                macsurf_debug_log_write(
+                    "FONT METRIC PROBE: no window available, skipping");
+                return;
+        }
 
-        macsurf_debug_log_write("=== FONT METRIC PROBE BEGIN (fixes144a) ===");
+        macsurf_debug_log_write("=== FONT METRIC PROBE BEGIN (fixes144a2) ===");
 
         for (fi = 0; fi < n_fonts; fi++) {
                 short font_id = macos9_metric_probe_fonts[fi].font_id;
