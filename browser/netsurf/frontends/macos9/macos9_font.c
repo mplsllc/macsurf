@@ -234,6 +234,25 @@ macos9_font_measure(const struct plot_font_style *fstyle,
                 width += (int)(mac_len - 1);
         }
 
+        /* fixes146: mirror plotters.c's MACSURF_SUBAA_DRAW_SPACING +1px
+         * between-glyph bump. The draw path adds +1 to ls when
+         * size < 12 && font_id != kFontIDMonaco && mac_len > 1, which
+         * makes the painted run wider than what plain TextWidth reports.
+         * If measurement isn't mirrored here, NetSurf's inline layout
+         * reserves the narrower width for the segment and the next inline
+         * segment starts before the painted text ends -- adjacent
+         * segments scramble into each other on any multi-segment line
+         * (body text + <code>, etc.). Same conditions as the draw bump
+         * so the two paths agree. fixes144b's original "measurement
+         * untouched" claim was wrong for multi-segment inline content;
+         * this is the real fix.
+         *
+         * Gate kept inline (no shared header for MACSURF_SUBAA_DRAW_SPACING
+         * yet); if either side is flipped, flip the other manually. */
+        if (size < 12 && font_id != kFontIDMonaco && mac_len > 1) {
+                width += (int)(mac_len - 1);
+        }
+
         if (changed_port)
                 SetPort(old_port);
         return width;
