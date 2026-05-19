@@ -1295,6 +1295,18 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		assert(props.inline_container != NULL);
 
 		box_add_child(props.inline_container, box);
+
+		/* fixes140g: ::before for inline parents fires AT
+		 * ELEMENT-OPEN TIME, right after the inline is wired
+		 * into its container. The earlier ::before call at line
+		 * ~1200 bailed because box->parent was NULL. Firing here
+		 * gives correct quote-depth nesting: outer ::before runs
+		 * before any child opens, so the inner ::before sees
+		 * depth=1 (set by outer ::before) instead of depth=0. */
+		if (!(box->flags & IS_REPLACED) && box->styles != NULL) {
+			box_construct_generate(ctx, ctx->n, ctx->content, box,
+				box->styles->styles[CSS_PSEUDO_ELEMENT_BEFORE]);
+		}
 	} else {
 		if (ns_computed_display(box->style, props.node_is_root) ==
 				CSS_DISPLAY_LIST_ITEM) {
@@ -1371,17 +1383,14 @@ static void box_construct_element_after(struct box_construct_ctx *ctx,
 			return;
 		}
 
-		/* fixes140f: inline ::before and ::after generated content.
-		 * The earlier ::before call in box_construct_element bailed
-		 * because box->parent was NULL (inline not yet attached to
-		 * its inline_container). Re-dispatch here -- box->parent is
-		 * now wired -- and also fire ::after for the first time.
-		 * Both calls run BEFORE BOX_INLINE_END is created so the
-		 * ::after content lands as the last sibling before
-		 * INLINE_END. */
+		/* fixes140g: inline ::after fires here, after all children
+		 * have been processed and added to the inline_container,
+		 * but BEFORE BOX_INLINE_END is created so the ::after
+		 * content lands as the last sibling before INLINE_END.
+		 * ::before fires earlier in box_construct_element (right
+		 * after the inline is wired to its container) so quote
+		 * depth nests correctly through the open-tag traversal. */
 		if (!(box->flags & IS_REPLACED) && box->styles != NULL) {
-			box_construct_generate(ctx, n, content, box,
-				box->styles->styles[CSS_PSEUDO_ELEMENT_BEFORE]);
 			box_construct_generate(ctx, n, content, box,
 				box->styles->styles[CSS_PSEUDO_ELEMENT_AFTER]);
 		}

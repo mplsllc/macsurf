@@ -44,7 +44,10 @@
    * Q1 works without any author CSS. The other probes exercise the
    * explicit quotes/open-quote/close-quote/no-* paths. */
 
-  .author-quotes {
+  /* Target q directly so the author rule beats the UA q rule;
+   * setting quotes on the wrapping div would lose to the UA's
+   * element-selector rule because quotes is direct-set on <q>. */
+  .author-quotes q {
     quotes: "<<" ">>" "<" ">";
   }
   .author-quotes q::before { content: open-quote; }
