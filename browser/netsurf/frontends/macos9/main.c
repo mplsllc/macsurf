@@ -765,6 +765,10 @@ int main(void) {
 		}
 	}
 	MS_LOG("initial window created");
+	/* fixes144a -- run the font-metric diagnostic probe once after the
+	 * initial window exists so TextWidth has a valid GrafPort. Writes to
+	 * MacSurf Debug.log; no behaviour change. */
+	macos9_font_metric_probe_run();
 	while (!macos9_done) macos9_poll();
 	MS_LOG("event loop exited");
 	macos9_quitting = (bool)1; netsurf_exit();

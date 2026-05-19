@@ -18,6 +18,7 @@
 #include "netsurf/layout.h"
 
 #include "macos9.h"
+#include "macsurf_debug_log.h"
 #include <libwapcaplet/libwapcaplet.h>
 
 /* Heuristic constants for non-Mac builds */
@@ -392,3 +393,138 @@ static struct gui_layout_table layout_table = {
 };
 
 struct gui_layout_table *macos9_layout_table = &layout_table;
+
+#ifdef __MACOS9__
+/* ============================================================
+ * fixes144a -- QuickDraw font-metric diagnostic probe.
+ *
+ * Fires once after window creation. Walks 4 fonts x 3 sizes x
+ * 2 faces x 9 probe strings, logging TextWidth(full string)
+ * vs sum-of-per-char-TextWidth to MacSurf Debug.log.
+ *
+ * Output line format:
+ *   [METRIC] font=NAME id=N size=S face=F str="X" tw=A sum=B delta=C
+ *
+ * Where delta = A - B. Positive delta means TextWidth(full)
+ * over-counts vs the per-char sum (rare). Negative delta means
+ * TextWidth(full) under-counts -- this is the symptom behind
+ * the "Di" overlap: full-string width is less than the sum of
+ * the individual glyphs' painted widths, so DrawText advances
+ * the pen into the next glyph's territory.
+ *
+ * Probe bypasses macos9_font_id_from_style entirely (which
+ * currently force-collapses every CSS family to Helvetica per
+ * fixes52). Real QuickDraw font selection is exercised here.
+ *
+ * NO BEHAVIOUR CHANGE. Diagnostic-only. */
+
+typedef struct {
+        short       font_id;
+        const char *font_name;
+} macos9_metric_probe_font;
+
+static const macos9_metric_probe_font macos9_metric_probe_fonts[] = {
+        {  3, "Geneva"    },
+        { 21, "Helvetica" },
+        {  0, "Chicago"   }, /* System font; Chicago on classic Mac OS. */
+        {  4, "Monaco"    }
+};
+
+static const short macos9_metric_probe_sizes[] = { 9, 10, 12 };
+
+static const short       macos9_metric_probe_faces[]      = { 0, 1 };
+static const char *const macos9_metric_probe_faces_name[] = { "plain", "bold" };
+
+static const char *const macos9_metric_probe_strings[] = {
+        "Di", "Da", "Do", "Dill", "Disc",
+        "The", "AV", "To", "fi"
+};
+
+void
+macos9_font_metric_probe_run(void)
+{
+        static int has_run = 0;
+        GrafPtr old_port;
+        size_t fi, si, ff, st;
+        size_t n_fonts;
+        size_t n_sizes;
+        size_t n_faces;
+        size_t n_strings;
+
+        if (has_run) {
+                return;
+        }
+        has_run = 1;
+
+        if (initial_win == NULL || initial_win->window == NULL) {
+                return;
+        }
+
+        n_fonts   = sizeof(macos9_metric_probe_fonts) /
+                    sizeof(macos9_metric_probe_fonts[0]);
+        n_sizes   = sizeof(macos9_metric_probe_sizes) /
+                    sizeof(macos9_metric_probe_sizes[0]);
+        n_faces   = sizeof(macos9_metric_probe_faces) /
+                    sizeof(macos9_metric_probe_faces[0]);
+        n_strings = sizeof(macos9_metric_probe_strings) /
+                    sizeof(macos9_metric_probe_strings[0]);
+
+        GetPort(&old_port);
+        SetPortWindowPort(initial_win->window);
+
+        macsurf_debug_log_write("=== FONT METRIC PROBE BEGIN (fixes144a) ===");
+
+        for (fi = 0; fi < n_fonts; fi++) {
+                short font_id = macos9_metric_probe_fonts[fi].font_id;
+                const char *font_name = macos9_metric_probe_fonts[fi].font_name;
+
+                for (si = 0; si < n_sizes; si++) {
+                        short sz = macos9_metric_probe_sizes[si];
+
+                        for (ff = 0; ff < n_faces; ff++) {
+                                short face = macos9_metric_probe_faces[ff];
+                                const char *face_name =
+                                    macos9_metric_probe_faces_name[ff];
+
+                                TextFont(font_id);
+                                TextSize(sz);
+                                TextFace(face);
+
+                                for (st = 0; st < n_strings; st++) {
+                                        const char *s =
+                                            macos9_metric_probe_strings[st];
+                                        size_t k;
+                                        size_t n;
+                                        int sum;
+                                        short tw_full;
+
+                                        n = strlen(s);
+                                        tw_full = TextWidth((char *)s, 0,
+                                                            (short)n);
+
+                                        sum = 0;
+                                        for (k = 0; k < n; k++) {
+                                                short cw;
+                                                cw = TextWidth((char *)s,
+                                                               (short)k, 1);
+                                                sum += (int)cw;
+                                        }
+
+                                        macsurf_debug_log_writef(
+                                            "[METRIC] font=%s id=%d size=%d "
+                                            "face=%s str=\"%s\" tw=%d sum=%d "
+                                            "delta=%d",
+                                            font_name, (int)font_id,
+                                            (int)sz, face_name, s,
+                                            (int)tw_full, sum,
+                                            (int)tw_full - sum);
+                                }
+                        }
+                }
+        }
+
+        macsurf_debug_log_write("=== FONT METRIC PROBE END ===");
+
+        SetPort(old_port);
+}
+#endif /* __MACOS9__ */
