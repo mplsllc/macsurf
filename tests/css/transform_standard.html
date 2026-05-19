@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>MacSurf — fixes141 (standard transform)</title>
+<title>MacSurf — fixes141 (standard transform, simplified)</title>
 <style>
   body {
     font-family: Helvetica, sans-serif;
@@ -38,8 +38,8 @@
     font-size: 8pt;
     margin: 8px 0 0 0;
   }
-  .pair { display: flex; gap: 24px; align-items: flex-start; }
   .box {
+    display: inline-block;
     width: 100px;
     height: 50px;
     background: #cde;
@@ -48,12 +48,12 @@
     text-align: center;
     line-height: 50px;
     font-weight: bold;
+    margin-right: 24px;
   }
 
-  /* fixes141 probes. Each pair has a vendor (-macsurf-transform)
-   * box and a standard (transform) box -- they should render
-   * identically because standard transform now aliases the
-   * vendor parser at the property-name level. */
+  /* fixes141 probes. Plain inline-block boxes, no flex container.
+   * Each pair has a vendor (-macsurf-transform) and a standard
+   * (transform) box that should render identically. */
 
   .vendor-rotate    { -macsurf-transform: rotate(10deg); }
   .standard-rotate  {          transform: rotate(10deg); }
@@ -67,10 +67,6 @@
   .chain { transform: translate(20px, 5px) rotate(8deg) scale(1.1); }
   .none  { transform: none; }
 
-  /* cascade tie-break: both properties target the same internal
-   * slot so the LATER declaration wins. With transform written
-   * second, transform's rotate(15deg) overrides the vendor
-   * rotate(5deg). */
   .both {
     -macsurf-transform: rotate(5deg);
              transform: rotate(15deg);
@@ -80,59 +76,50 @@
 <body>
 
 <h1>MacSurf — fixes141 (standard transform)</h1>
-<p class="lede">Standard CSS transform now bridges into the
-existing fixes73 -macsurf-transform engine. Each vendor box (left)
-and standard box (right) should render identically.</p>
+<p class="lede">Standard CSS transform bridges into the existing
+fixes73 -macsurf-transform engine. Vendor and standard boxes should
+render identically.</p>
 
 <div class="card">
   <p class="card-title">PROBE T1 — rotate(10deg)</p>
-  <div class="pair">
-    <div class="box vendor-rotate">vendor</div>
-    <div class="box standard-rotate">standard</div>
-  </div>
-  <p class="expect">EXPECT: identical 10-degree rotations.</p>
+  <div class="box vendor-rotate">vendor</div>
+  <div class="box standard-rotate">standard</div>
+  <p class="expect">EXPECT: both rotated 10 degrees identically.</p>
 </div>
 
 <div class="card">
   <p class="card-title">PROBE T2 — translate(30px, 10px)</p>
-  <div class="pair">
-    <div class="box vendor-translate">vendor</div>
-    <div class="box standard-translate">standard</div>
-  </div>
-  <p class="expect">EXPECT: identical 30px right + 10px down
-  translation.</p>
+  <div class="box vendor-translate">vendor</div>
+  <div class="box standard-translate">standard</div>
+  <p class="expect">EXPECT: both shifted 30px right + 10px down
+  identically.</p>
 </div>
 
 <div class="card">
   <p class="card-title">PROBE T3 — scale(1.2)</p>
-  <div class="pair">
-    <div class="box vendor-scale">vendor</div>
-    <div class="box standard-scale">standard</div>
-  </div>
-  <p class="expect">EXPECT: identical 1.2x scale on both.</p>
+  <div class="box vendor-scale">vendor</div>
+  <div class="box standard-scale">standard</div>
+  <p class="expect">EXPECT: both 1.2x scaled identically.</p>
 </div>
 
 <div class="card">
   <p class="card-title">PROBE T4 — chain (translate + rotate + scale)</p>
   <div class="box chain">chain</div>
   <p class="expect">EXPECT: visibly translated, rotated, and
-  scaled. All three components apply in one declaration.</p>
+  scaled.</p>
 </div>
 
 <div class="card">
   <p class="card-title">PROBE T5 — none</p>
   <div class="box none">none</div>
-  <p class="expect">EXPECT: untransformed box (no rotation,
-  translation, or scale).</p>
+  <p class="expect">EXPECT: untransformed.</p>
 </div>
 
 <div class="card">
   <p class="card-title">PROBE T6 — cascade (standard wins by source order)</p>
   <div class="box both">both</div>
-  <p class="expect">EXPECT: rotate(15deg) -- the standard
-  declaration wins because it comes later in source order. If
-  you saw rotate(5deg) the vendor rule incorrectly overrode the
-  standard one.</p>
+  <p class="expect">EXPECT: rotate(15deg) -- standard wins because
+  it comes later.</p>
 </div>
 
 </body>
