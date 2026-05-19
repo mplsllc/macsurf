@@ -1809,6 +1809,34 @@ static bool html_redraw_text_decoration(struct box *box,
  * \return true iff successful and redraw should proceed
  */
 
+/* fixes135b: locate the nearest styled ancestor and check whether it
+ * specifies text-overflow: ellipsis on a clipped (overflow != visible)
+ * inline axis. Returns true when truncation should fire.
+ *
+ * Synthetic INLINE_CONTAINER / BOX_TEXT nodes have NULL style; the walk
+ * skips them naturally. We stop at the first styled ancestor: the
+ * containing block carries the text-overflow declaration, and any
+ * intermediate inline ancestors are unlikely to override it. */
+static bool
+html_redraw_text_overflow_ellipsis_active(const struct box *box)
+{
+	const struct box *p;
+
+	for (p = box->parent; p != NULL; p = p->parent) {
+		if (p->style == NULL) continue;
+		if (css_computed_text_overflow(p->style) !=
+				CSS_TEXT_OVERFLOW_ELLIPSIS) {
+			return false;
+		}
+		if (css_computed_overflow_x(p->style) ==
+				CSS_OVERFLOW_VISIBLE) {
+			return false;
+		}
+		return true;
+	}
+	return false;
+}
+
 static bool html_redraw_text_box(const html_content *html, struct box *box,
 		int x, int y, const struct rect *clip, float scale,
 		colour current_background_color,
@@ -1816,14 +1844,86 @@ static bool html_redraw_text_box(const html_content *html, struct box *box,
 {
 	bool excluded = (box->object != NULL);
 	plot_font_style_t fstyle;
+	const char *eff_text = box->text;
+	size_t eff_length = box->length;
+	char trunc_buf[512];
+	size_t lo, hi, best;
 
 	macos9_html_redraw_text_box_calls++;
 
 	font_plot_style_from_css(&html->unit_len_ctx, box->style, &fstyle);
 	fstyle.background = current_background_color;
 
-	if (!text_redraw(box->text,
-			 box->length,
+	/* fixes135b: text-overflow: ellipsis truncation.
+	 *
+	 * Trigger when the text box would paint past the right edge of the
+	 * active clip rect AND a styled ancestor declares ellipsis on a
+	 * clipped inline axis. Binary search for the longest UTF-8 prefix
+	 * (byte-stepped; we accept the rare bad break -- a more elaborate
+	 * grapheme walk is V2) whose width plus the ellipsis marker fits.
+	 *
+	 * Ellipsis marker is UTF-8 U+2026; the macos9 plot_text path folds
+	 * it to MacRoman 0xC9 via macsurf_utf8_to_macroman, so the same
+	 * three bytes do the right thing on both platforms. If the marker
+	 * itself doesn't fit, fall back to a single dot, then to plain
+	 * clip (no override). */
+	if (eff_text != NULL && eff_length > 0 && box->width > 0 &&
+			(x + box->width > clip->x1) &&
+			html_redraw_text_overflow_ellipsis_active(box)) {
+		const char *marker = "\xE2\x80\xA6"; /* U+2026 */
+		size_t marker_len = 3;
+		int marker_w = 0;
+		int available = clip->x1 - x;
+		nserror res;
+		size_t mid;
+		int w;
+
+		if (available <= 0) {
+			eff_text = "";
+			eff_length = 0;
+		} else {
+			res = guit->layout->width(&fstyle, marker, marker_len,
+					&marker_w);
+			if (res != NSERROR_OK) {
+				marker = ".";
+				marker_len = 1;
+				marker_w = 0;
+				(void) guit->layout->width(&fstyle, marker,
+						marker_len, &marker_w);
+			}
+
+			lo = 0;
+			hi = eff_length;
+			best = 0;
+			while (lo <= hi) {
+				mid = (lo + hi) / 2;
+				w = 0;
+				if (guit->layout->width(&fstyle, eff_text, mid,
+						&w) != NSERROR_OK) {
+					break;
+				}
+				if (w + marker_w <= available) {
+					best = mid;
+					if (mid == hi) break;
+					lo = mid + 1;
+				} else {
+					if (mid == 0) break;
+					hi = mid - 1;
+				}
+			}
+
+			if (best + marker_len + 1 <= sizeof(trunc_buf)) {
+				memcpy(trunc_buf, eff_text, best);
+				memcpy(trunc_buf + best, marker, marker_len);
+				trunc_buf[best + marker_len] = '\0';
+				eff_text = trunc_buf;
+				eff_length = best + marker_len;
+			}
+		}
+	}
+
+	if (!text_redraw(eff_text,
+			 eff_length,
 			 box->byte_offset,
 			 box->space,
 			 &fstyle,
