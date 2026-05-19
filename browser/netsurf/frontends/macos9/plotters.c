@@ -34,6 +34,23 @@ extern int macos9_bitmap_get_mask_rowbytes(void *bitmap);
 long macos9_plot_text_count = 0;
 long macos9_plot_rect_count = 0;
 
+/* fixes144b: sub-AA draw-spacing experiment. QuickDraw bitmap text
+ * below the AA floor (set to 12pt in main.c via
+ * SetAntiAliasedTextEnabled) draws adjacent glyphs with no visible
+ * separator -- "Di"/"Disc"/"Dill" visually collide at 9-10pt
+ * Helvetica because the D's painted right edge and the i's left edge
+ * land in adjacent or shared pixel columns. fixes144a2's diagnostic
+ * probe captured 216 measurements and showed every delta=0; this is
+ * a paint-resolution artefact, not a metric error. The fix forces
+ * the per-char draw path and adds +1px between glyphs ONLY when
+ * size < AA floor and the font is proportional. Measurement (macos9_
+ * font_measure) is intentionally NOT touched -- layout, wrap, and
+ * text-overflow stay byte-stable, so MacTrove cards / nav labels /
+ * inputs don't reflow.
+ *
+ * Set to 0 to disable instantly. */
+#define MACSURF_SUBAA_DRAW_SPACING 1
+
 /* fixes74b: counters incremented by redraw.c when it detects
  * CSS_MACSURF_GRADIENT_SET. Lets us see whether the cascade returned
  * SET independently of whether the plotter painted a gradient. */
@@ -1305,6 +1322,23 @@ macos9_plot_text(const struct redraw_context *ctx,
 		if ((face & 1) && mac_len > 1) {
 			ls += 1;
 		}
+
+#if MACSURF_SUBAA_DRAW_SPACING
+		/* fixes144b: sub-AA bitmap glyph-overlap optical correction.
+		 * Below 12pt (the AA floor set in main.c) QuickDraw paints
+		 * raw bitmaps with no anti-aliased transition pixel between
+		 * adjacent glyphs, so Helvetica's "Di" pair has D's right
+		 * edge touching i's left edge with no visible gap. Adding
+		 * +1 to ls forces the per-char draw branch below and inserts
+		 * a real pixel between every glyph. Skipped for Monaco
+		 * (monospaced — every advance is already wider than the
+		 * painted glyph, no overlap possible). Measurement is left
+		 * untouched so layout / wrap / text-overflow stay stable.
+		 * See plotters.c top-of-file comment for full rationale. */
+		if (size < 12 && font_id != kFontIDMonaco && mac_len > 1) {
+			ls += 1;
+		}
+#endif
 
 		/* fixes50 -- text-shadow pass. Paint the same glyphs at
 		 * (x+sx, y+sy) in the shadow colour before the main
