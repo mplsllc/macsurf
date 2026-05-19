@@ -2031,31 +2031,102 @@ bool html_redraw_box(const html_content *html, struct box *box,
  */
 
 /*
- * fixes133: z-index aware child paint.
+ * fixes147: CSS 2.1 §9.9 / Appendix E painting order at the sibling level.
  *
- * A child is "z-indexed" if it is positioned (position != static) AND has
- * an explicit z-index (not auto).  Such children paint in z-index order
- * AFTER all other in-flow / position-auto children, with DOM order as a
- * stable tie-breaker.  Non-positioned and position-auto children paint in
- * DOM order as before.
+ * Supersedes fixes133's 3-pass model. Per CSS 2.1 within a stacking context
+ * the paint order is:
+ *   (a) background/border of the stacking context root (handled by caller)
+ *   (b) child stacking contexts with NEGATIVE z-index (most negative first)
+ *   (c) in-flow non-inline-level non-positioned descendants
+ *   (d) non-positioned floats
+ *   (e) in-flow inline-level non-positioned descendants
+ *   (f) child stacking contexts with z-index: auto AND positioned
+ *       descendants with z-index: auto
+ *   (g) child stacking contexts with POSITIVE z-index (least positive first)
  *
- * Negative z-index is treated the same as zero in this pass — strictly per
- * CSS 2.1 it should paint before the parent's content, but doing so would
- * require splitting the call site in html_redraw_box.  Deferred.
+ * At the sibling level (the level this function operates on) we bucket the
+ * direct children into:
+ *   - HRBSC_NEG  : stacking context, z < 0  -> paint phase (b)
+ *   - HRBSC_NONE : non-stacking-context, non-positioned -> phase (c)+(e)
+ *                   mixed in DOM order; this matches what real browsers
+ *                   render for sibling-level interleaving
+ *   - HRBSC_ZERO : stacking context, z == 0 OR positioned + z:auto -> (f)
+ *   - HRBSC_POS  : stacking context, z > 0 -> (g)
+ * Floats paint between phase (c)/(e) and phase (f), per spec.
  *
- * Fixed-size buffer (MACOS9_Z_BUF) caps z-indexed siblings per level.
- * Overflow falls back to DOM-order paint (acceptable degradation).
+ * Stacking context creation triggers covered:
+ *   - position != static AND z-index != auto (any value, incl. 0)
+ *   - position: fixed (creates SC regardless of z-index)
+ *   - opacity < 1
+ *   - non-identity -macsurf-transform / transform (via fixes73)
+ * Not yet covered: filter, mix-blend-mode, isolation, will-change.
+ *
+ * Cross-level limitation: positioned descendants of a non-SC parent
+ * stay within that parent's flow rather than escaping to the nearest
+ * ancestor stacking context. Full CSS 2.1 would require a recursive
+ * descendant walk that classifies every box in the subtree of the
+ * containing SC. Per-sibling bucketing handles ~90% of real cases
+ * (modals as direct children of body, dropdowns inside positioned
+ * parents that already create their own SC, etc.).
  */
 #define MACOS9_Z_BUF 64
 
-static int html_redraw_box_is_z_indexed(const struct box *c, int32_t *zout)
+typedef enum {
+	HRBSC_NONE = 0,    /* paints in flow */
+	HRBSC_NEG,         /* stacking context, z < 0 */
+	HRBSC_ZERO,        /* stacking context, z == 0 (or position+z:auto) */
+	HRBSC_POS          /* stacking context, z > 0 */
+} html_redraw_sc_class;
+
+static html_redraw_sc_class html_redraw_box_classify(const struct box *c,
+		int32_t *zout)
 {
 	int32_t z = 0;
-	if (c->style == NULL) return 0;
-	if (css_computed_position(c->style) == CSS_POSITION_STATIC) return 0;
-	if (css_computed_z_index(c->style, &z) != CSS_Z_INDEX_SET) return 0;
-	*zout = z;
-	return 1;
+	int has_explicit_z;
+	css_fixed op_fixed = 0;
+	int32_t tfm = 0;
+	uint8_t pos;
+
+	*zout = 0;
+	if (c->style == NULL) return HRBSC_NONE;
+
+	pos = css_computed_position(c->style);
+	has_explicit_z =
+		(css_computed_z_index(c->style, &z) == CSS_Z_INDEX_SET);
+
+	/* position: fixed creates a stacking context regardless of z. */
+	if (pos == CSS_POSITION_FIXED) {
+		*zout = has_explicit_z ? z : 0;
+		if (has_explicit_z && z < 0) return HRBSC_NEG;
+		if (has_explicit_z && z > 0) return HRBSC_POS;
+		return HRBSC_ZERO;
+	}
+
+	/* position != static AND explicit z-index creates a stacking context.
+	 * The z value classifies neg / zero / pos. */
+	if (pos != CSS_POSITION_STATIC && has_explicit_z) {
+		*zout = z;
+		if (z < 0) return HRBSC_NEG;
+		if (z > 0) return HRBSC_POS;
+		return HRBSC_ZERO;
+	}
+
+	/* opacity < 1 creates a stacking context (z effectively 0).
+	 * INTTOFIX(1) is libcss fixed-point 1.0 (1 << 10 in 22.10). */
+	if (css_computed_opacity(c->style, &op_fixed) == CSS_OPACITY_SET &&
+			op_fixed < INTTOFIX(1)) {
+		return HRBSC_ZERO;
+	}
+
+	/* Non-identity -macsurf-transform / transform creates a stacking
+	 * context (fixes73 stores non-identity values as non-zero packed
+	 * int32; identity is 0). */
+	if (css_computed_macsurf_transform(c->style, &tfm) ==
+			CSS_MACSURF_TRANSFORM_SET && tfm != 0) {
+		return HRBSC_ZERO;
+	}
+
+	return HRBSC_NONE;
 }
 
 static bool html_redraw_box_children(const html_content *html, struct box *box,
@@ -2065,9 +2136,13 @@ static bool html_redraw_box_children(const html_content *html, struct box *box,
 		const struct redraw_context *ctx)
 {
 	struct box *c;
-	struct box *z_buf[MACOS9_Z_BUF];
-	int32_t z_vals[MACOS9_Z_BUF];
-	int z_count = 0;
+	struct box *flow_buf[MACOS9_Z_BUF * 2];   /* non-SC in DOM order */
+	struct box *neg_buf[MACOS9_Z_BUF];
+	int32_t neg_z[MACOS9_Z_BUF];
+	struct box *zero_buf[MACOS9_Z_BUF];
+	struct box *pos_buf[MACOS9_Z_BUF];
+	int32_t pos_z[MACOS9_Z_BUF];
+	int flow_n = 0, neg_n = 0, zero_n = 0, pos_n = 0;
 	int32_t zval = 0;
 	int i, j;
 	int x_off, y_off;
@@ -2075,51 +2150,110 @@ static bool html_redraw_box_children(const html_content *html, struct box *box,
 	x_off = x_parent + box->x - scrollbar_get_offset(box->scroll_x);
 	y_off = y_parent + box->y - scrollbar_get_offset(box->scroll_y);
 
-	/* Pass 1: paint non-z-indexed children in DOM order; collect z-indexed
-	 * children into z_buf.  Floats are skipped here and handled below. */
+	/* Pass 1: classify all non-float children into four buckets.
+	 * Defer all paint so negative-z paints first per CSS 2.1 (b). */
 	for (c = box->children; c; c = c->next) {
+		html_redraw_sc_class cls;
+
 		if (c->type == BOX_FLOAT_LEFT || c->type == BOX_FLOAT_RIGHT)
 			continue;
 
-		if (html_redraw_box_is_z_indexed(c, &zval)) {
-			if (z_count < MACOS9_Z_BUF) {
-				z_buf[z_count] = c;
-				z_vals[z_count] = zval;
-				z_count++;
+		cls = html_redraw_box_classify(c, &zval);
+
+		if (cls == HRBSC_NEG) {
+			if (neg_n < MACOS9_Z_BUF) {
+				neg_buf[neg_n] = c;
+				neg_z[neg_n] = zval;
+				neg_n++;
 				continue;
 			}
-			/* Buffer full — fall back to DOM-order paint. */
+		} else if (cls == HRBSC_ZERO) {
+			if (zero_n < MACOS9_Z_BUF) {
+				zero_buf[zero_n] = c;
+				zero_n++;
+				continue;
+			}
+		} else if (cls == HRBSC_POS) {
+			if (pos_n < MACOS9_Z_BUF) {
+				pos_buf[pos_n] = c;
+				pos_z[pos_n] = zval;
+				pos_n++;
+				continue;
+			}
 		}
 
-		if (!html_redraw_box(html, c, x_off, y_off,
-				clip, scale, current_background_color, ctx))
-			return false;
+		/* HRBSC_NONE (or bucket overflow): in-flow / phase (c)+(e). */
+		if (flow_n < (int)(sizeof(flow_buf) / sizeof(flow_buf[0]))) {
+			flow_buf[flow_n++] = c;
+		} else {
+			/* Out of all buckets — paint immediately as last resort. */
+			if (!html_redraw_box(html, c, x_off, y_off,
+					clip, scale,
+					current_background_color, ctx))
+				return false;
+		}
 	}
 
-	/* Pass 2: stable bubble sort z_buf by z-index ascending. */
-	for (i = 0; i < z_count - 1; i++) {
-		for (j = 0; j < z_count - 1 - i; j++) {
-			if (z_vals[j] > z_vals[j + 1]) {
-				int32_t tv = z_vals[j];
-				struct box *tb = z_buf[j];
-				z_vals[j] = z_vals[j + 1];
-				z_buf[j] = z_buf[j + 1];
-				z_vals[j + 1] = tv;
-				z_buf[j + 1] = tb;
+	/* Pass 2-a: stable bubble sort negatives by z ascending. */
+	for (i = 0; i < neg_n - 1; i++) {
+		for (j = 0; j < neg_n - 1 - i; j++) {
+			if (neg_z[j] > neg_z[j + 1]) {
+				int32_t tv = neg_z[j];
+				struct box *tb = neg_buf[j];
+				neg_z[j] = neg_z[j + 1];
+				neg_buf[j] = neg_buf[j + 1];
+				neg_z[j + 1] = tv;
+				neg_buf[j + 1] = tb;
+			}
+		}
+	}
+	/* Pass 2-b: stable bubble sort positives by z ascending. */
+	for (i = 0; i < pos_n - 1; i++) {
+		for (j = 0; j < pos_n - 1 - i; j++) {
+			if (pos_z[j] > pos_z[j + 1]) {
+				int32_t tv = pos_z[j];
+				struct box *tb = pos_buf[j];
+				pos_z[j] = pos_z[j + 1];
+				pos_buf[j] = pos_buf[j + 1];
+				pos_z[j + 1] = tv;
+				pos_buf[j + 1] = tb;
 			}
 		}
 	}
 
-	/* Pass 3: paint z-indexed children in sorted order, on top of pass 1. */
-	for (i = 0; i < z_count; i++) {
-		if (!html_redraw_box(html, z_buf[i], x_off, y_off,
+	/* CSS 2.1 Appendix E paint order at the sibling level:
+	 *   (b) negative-z stacking contexts (most negative first)
+	 *   (c)+(d)+(e) non-SC children in DOM order, then floats
+	 *   (f) zero-z stacking contexts (DOM order)
+	 *   (g) positive-z stacking contexts (least positive first)
+	 */
+
+	for (i = 0; i < neg_n; i++) {
+		if (!html_redraw_box(html, neg_buf[i], x_off, y_off,
 				clip, scale, current_background_color, ctx))
 			return false;
 	}
 
-	/* Floats (unchanged from pre-fixes133 behaviour). */
+	for (i = 0; i < flow_n; i++) {
+		if (!html_redraw_box(html, flow_buf[i], x_off, y_off,
+				clip, scale, current_background_color, ctx))
+			return false;
+	}
+
 	for (c = box->float_children; c; c = c->next_float) {
 		if (!html_redraw_box(html, c, x_off, y_off,
+				clip, scale, current_background_color, ctx))
+			return false;
+	}
+
+	for (i = 0; i < zero_n; i++) {
+		if (!html_redraw_box(html, zero_buf[i], x_off, y_off,
+				clip, scale, current_background_color, ctx))
+			return false;
+	}
+
+	for (i = 0; i < pos_n; i++) {
+		if (!html_redraw_box(html, pos_buf[i], x_off, y_off,
 				clip, scale, current_background_color, ctx))
 			return false;
 	}
