@@ -1,8 +1,43 @@
 # MacSurf CSS Status Report
 
-Generated 2026-05-19. Last revised 2026-05-19 (fixes132 + fixes133 hardware-accepted).
+Generated 2026-05-19. Last revised 2026-05-19 (fixes146 hardware-accepted).
 
 This is a brutal, hedge-free audit of CSS support in MacSurf. The goal is to identify what works, what doesn't, and what to implement next.
+
+## Hardware-verified status (post fixes146)
+
+```text
+sub-AA glyph-pair overlap: ✓ Fixed
+- fixes144a2 diagnostic: 216 TextWidth comparisons across 4 fonts × 3 sizes
+  × 2 faces × 9 strings; every delta=0. Measurement is internally consistent;
+  the "Di" overlap is a bitmap-resolution artefact at sub-AA sizes.
+- fixes144b: paint-only +1px between glyphs in plotters.c when
+  size < 12 && font_id != kFontIDMonaco && mac_len > 1.
+- fixes146: same bump mirrored in macos9_font_measure so multi-segment
+  inline content (body + <code>) doesn't scramble. Mac body text reflows
+  ~chars-1 wider per segment at sub-12pt; trade-off accepted.
+- Gated by MACSURF_SUBAA_DRAW_SPACING at top of plotters.c.
+
+disc list marker: ✓ Fixed
+- fixes143a: U+2022 BULLET → U+00B7 MIDDLE DOT (MacRoman 0xE1 instead of 0xA5).
+  0xA5 in Helvetica TT on G3 rendered as a semicolon-looking glyph in
+  disc's specific size/face context (9pt face 0); square at 0xA5 renders
+  cleanly, so 0xA5 itself isn't broken — disc was a per-context font quirk.
+
+font-family aliases: ✗ Blocked on gui_layout_table family awareness
+- fixes145 attempted per-family dispatch (sans→Helvetica, serif→Times,
+  mono→Monaco). Hardware-rejected as fixes145b — adjacent inline segments
+  on the same line scrambled horizontally because NetSurf's inline layout
+  reserves widths from one-font measurement but the plotter paints each
+  segment with its own metrics.
+- The fixes52 bug class is wider than originally framed: same root cause
+  manifests as horizontal text scrambling, not just vertical line stacking.
+- Architectural gate: macos9_font_width/position/split need family-aware
+  metrics so layout reserves the correct width per inline segment.
+  Plotter-only dispatch is insufficient. Kill switch
+  MACSURF_FONT_FAMILY_ALIASES kept at 0 in plotters.c for the eventual
+  retry once the gui_layout_table work lands.
+```
 
 ## Hardware-verified status (post fixes134a)
 
@@ -228,7 +263,10 @@ Deferred to v0.4.5 (already noted in CLAUDE.md). MacSurf has a one-shot `-macsur
 - Path A1.5 (`CopyDeepMask` + 8-bit mask) is queued
 
 ### ~~List bullets render as `;`~~ — fixes143a (2026-05-19)
-Disc marker switched from U+2022 BULLET (MacRoman 0xA5) to U+00B7 MIDDLE DOT (MacRoman 0xE1). The bullet glyph slot at 0xA5 in Helvetica TT on the user's G3 was rendering as a semicolon-looking artefact; middle dot uses a different font slot (0xE1) that renders cleanly. Cause never fully diagnosed — could be font-corruption, font-substitution at small sizes, or a TrueType cmap quirk — but the workaround is robust because U+00B7 → MacRoman 0xE1 conversion was already in the table.
+Disc marker switched from U+2022 BULLET (MacRoman 0xA5) to U+00B7 MIDDLE DOT (MacRoman 0xE1). The bullet glyph slot at 0xA5 in Helvetica TT on the user's G3 was rendering as a semicolon-looking artefact; middle dot uses a different font slot (0xE1) that renders cleanly. Cause is specific to disc's size/face context (9pt face 0) — square uses 0xA5 and renders correctly, so 0xA5 itself isn't broken.
+
+### ~~"Di"-class glyph-pair overlap in Helvetica TT at body size~~ — fixes144b + fixes146 (2026-05-19)
+Sub-AA bitmap rendering at 9-10pt had no anti-aliased transition pixel between adjacent glyphs, so the D's painted right edge and the i's body landed in adjacent or shared pixel columns. fixes144b adds +1px between glyphs in the draw path (paint-only) when `size < 12 && font_id != kFontIDMonaco && mac_len > 1`. fixes146 mirrors the same bump in `macos9_font_measure` so multi-segment inline content doesn't scramble (the draw-vs-measure asymmetry from fixes144b alone caused horizontal overlap between adjacent inline segments). Trade-off accepted: MacTrove body text reflows ~chars-1 wider per segment at sub-12pt. Gated by `MACSURF_SUBAA_DRAW_SPACING` at top of plotters.c (sync the same flag manually in macos9_font.c if flipped).
 
 ### Inline boxes occasionally duplicate
 Known issue post-fixes33. Some inline-box runs render twice. Not blocking comprehension; cause unknown.
@@ -353,4 +391,23 @@ These are not CSS properties but affect whether pages "load properly":
 
 ## What I would ship next
 
-Top of remaining stack after fixes132–fixes140: **Q1 (standard `transform` bridge)** is the lowest-effort visible CSS3 win — route the standard `transform` property through fixes73's existing `-macsurf-transform` plotter. Real pages emit the standard name; nothing else needs to change. Everything else outstanding (caption-side, table-layout, multi-column, animations) carries structural-change risk and should wait for a contained-scope audit.
+After fixes132–fixes146, the remaining ranked top picks are:
+
+**Highest-impact structural work, three candidates:**
+
+1. **Stacking contexts / full CSS 2.1 painting order.** fixes133 shipped basic positioned numeric z-index but the 7-pass painting algorithm (negative z-index → block-bg → block-borders → block-children → floats → in-flow inlines → positioned children by z-index) is not implemented. Real-world cost today: modals, tooltips, dropdowns, and fixed headers all paint under content when they're authored to overlap. Single file ([redraw.c](browser/netsurf/content/handlers/html/redraw.c)), no library or layout changes. **Highest impact per sprint.**
+
+2. **Full CSS Grid V2.** Current V1 (`-macsurf-grid: N` from fixes75) only fires when authors opt in to our extension. Real `grid-template-columns: 1fr 200px repeat(3, minmax(100px, 1fr))`, `grid-template-rows`, `grid-template-areas`, explicit `grid-row` / `grid-column` / `grid-area`. Track-widths architecture is partially proved at fixes118 (outer-struct arena pattern); the remaining work is the grammar parser + auto-placement algorithm + named-area lookup. 2-3 sprints. **Biggest absolute transformation** of how modern sites render.
+
+3. **`gui_layout_table` family awareness.** Architectural prerequisite for retrying font-family aliases (fixes145) without the inline-scramble bug. `macos9_font_width` / `macos9_font_position` / `macos9_font_split` need to return widths consistent with whichever family the plotter would pick. Once shipped, fixes145 retry becomes safe and pages render with real serif/mono families. Doesn't directly fix any layout bug but unblocks every future font-related win.
+
+**Other structural items still queued:**
+
+- Q3 `caption-side` (high effort, structural change — new BOX_TABLE_CAPTION type)
+- Q4 `table-layout: fixed` (high effort, 1064-line table.c port)
+- Q5 multi-column (`column-count` family — high effort)
+- Q6 strict `word-break` (low impact, parked)
+- Q7 `transition` / `animation` (v0.4.5+ — large scope)
+- Q8 `clip-path` / `mask` / `filter` (deferred indefinitely)
+
+Q1 (standard `transform` bridge) is on hold pending the MS_LOG bisect against fixes141's pre-`reformat:` hang. Q2 (full-fidelity two-value `gap: A B`) is parked behind ~17-file cross-cutting plumbing for marginal real-world impact.
