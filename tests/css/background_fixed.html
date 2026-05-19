@@ -39,10 +39,14 @@
     margin: 8px 0 0 0;
   }
 
-  /* fixes137 -- background-attachment probes. The CSS gates whether
-   * the image is anchored to the viewport (fixed) or scrolls with
-   * the element box (scroll, default). We need scrollable height so
-   * the difference becomes visible. */
+  /* fixes137 -- background-attachment probes.
+   *
+   * Probes use background-repeat: repeat so the visual difference
+   * between "scrolls with box" and "anchored to viewport" is
+   * unambiguous: a tiled background under scroll attachment moves
+   * with the element; the same tiled background under fixed
+   * attachment stays in the same WINDOW position as the page
+   * scrolls. */
   .filler {
     height: 240px;
     background: #ddd;
@@ -57,8 +61,7 @@
     border: 2px solid black;
     padding: 10px;
     background-image: url(/themes/custom/platinum/images/logo.png);
-    background-repeat: no-repeat;
-    background-position: center center;
+    background-repeat: repeat;
     color: #fff;
     text-shadow: 1px 1px #000;
     font-weight: bold;
@@ -69,47 +72,63 @@
   .fixed {
     background-attachment: fixed;
   }
+  .fixed-tl {
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+    background-position: top left;
+  }
 </style>
 </head>
 <body>
 
 <h1>MacSurf — fixes137 (background-attachment: fixed)</h1>
-<p class="lede">Scroll the page. The image inside B2 should stay
-anchored to the visible window; the image in B1 should scroll with
-its element. Both use the same MPLS logo PNG so the visible
-difference is purely about anchoring.</p>
+<p class="lede">Three probes. B1 (scroll) tiles move with the box.
+B2 (fixed, repeat) tiles stay anchored to the viewport — as you
+scroll, B2 moves but the tile pattern stays put on screen. B3
+(fixed, no-repeat, top-left) shows a single logo anchored to the
+viewport top-left, visible inside B3 only when B3 overlaps that
+corner of the window.</p>
 
 <div class="filler">Filler 1 — scroll past this to see B1.</div>
 
 <div class="card">
-  <p class="card-title">PROBE B1 — background-attachment: scroll (default)</p>
-  <div class="bgbox scroll">SCROLL: image scrolls with the box.</div>
-  <p class="expect">EXPECT: image moves up the window as you scroll
-  the page. When the box scrolls off-screen, the image is gone with
-  it.</p>
+  <p class="card-title">PROBE B1 — scroll attachment (default), repeat</p>
+  <div class="bgbox scroll">SCROLL: tiles move WITH the box.</div>
+  <p class="expect">EXPECT: as you scroll the page, the tile
+  pattern moves up the screen together with the box. When B1 is
+  off-screen the image is gone.</p>
 </div>
 
 <div class="filler">Filler 2 — scroll past this to see B2.</div>
 
 <div class="card">
-  <p class="card-title">PROBE B2 — background-attachment: fixed</p>
-  <div class="bgbox fixed">FIXED: image anchored to the viewport.</div>
-  <p class="expect">EXPECT: image stays in roughly the same position
-  relative to the visible window as you scroll. When B2 is mostly
-  off-screen the image is clipped, but the part of the box that's
-  still visible shows the image at the viewport-anchored position.
-  </p>
+  <p class="card-title">PROBE B2 — fixed attachment, repeat</p>
+  <div class="bgbox fixed">FIXED: tiles stay in the same WINDOW
+  position as you scroll.</div>
+  <p class="expect">EXPECT: as you scroll the page, the tile
+  pattern stays in the same position relative to the visible
+  window. B2 moves on screen but the tile grid does not. This is
+  the classic "parallax" look.</p>
 </div>
 
-<div class="filler">Filler 3 — adds vertical space so the page is
-genuinely scrollable.</div>
+<div class="filler">Filler 3 — scroll past this to see B3.</div>
 
-<div class="filler">Filler 4.</div>
+<div class="card">
+  <p class="card-title">PROBE B3 — fixed attachment, no-repeat, top left</p>
+  <div class="bgbox fixed-tl">FIXED + top-left: one image at
+  viewport (0,0).</div>
+  <p class="expect">EXPECT: a single logo anchored to the top-left
+  of the visible window. It only shows inside B3 when B3's visible
+  area overlaps the viewport's top-left corner — so usually only
+  when B3 has scrolled past the top edge of the window.</p>
+</div>
+
+<div class="filler">Filler 4 — adds vertical space.</div>
 
 <div class="filler">Filler 5.</div>
 
-<div class="filler">Filler 6 — last filler. Scroll the page back up
-to compare B1 and B2 again.</div>
+<div class="filler">Filler 6 — last filler. Scroll the page back
+up to compare B1, B2, and B3 again.</p></div>
 
 </body>
 </html>

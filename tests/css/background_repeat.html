@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MacSurf — fixes138 (background-repeat)</title>
+<style>
+  body {
+    font-family: Helvetica, sans-serif;
+    background: #f0f0f0;
+    color: #222;
+    margin: 16px;
+  }
+  h1 {
+    color: #003366;
+    font-size: 14pt;
+    margin: 0 0 4px 0;
+  }
+  .lede {
+    color: #666;
+    font-size: 8pt;
+    margin: 0 0 12px 0;
+  }
+  .card {
+    background: #fff;
+    border: 1px solid #ccc;
+    padding: 12px;
+    margin: 0 0 14px 0;
+  }
+  .card-title {
+    color: #003366;
+    font-size: 10pt;
+    font-weight: bold;
+    margin: 0 0 8px 0;
+  }
+  .expect {
+    color: #888;
+    font-style: italic;
+    font-size: 8pt;
+    margin: 8px 0 0 0;
+  }
+
+  /* fixes138 -- background-repeat probes.
+   *
+   * Pre-138 the macos9 plot_bitmap discarded BITMAPF_REPEAT_X /
+   * BITMAPF_REPEAT_Y, so every probe below would paint the same
+   * single tile. After fixes138 they should differ: R1 tiles both
+   * axes, R2 tiles X only (one row, repeated horizontally), R3
+   * tiles Y only (one column, repeated vertically), R4 paints one
+   * tile, R5 tiles both axes AND anchors to the viewport (parallax
+   * demo from fixes137). */
+  .filler {
+    height: 240px;
+    background: #ddd;
+    border: 1px solid #999;
+    color: #555;
+    padding: 8px;
+    margin: 8px 0;
+  }
+  .bgbox {
+    width: 480px;
+    height: 220px;
+    border: 2px solid black;
+    padding: 10px;
+    background-image: url(/themes/custom/platinum/images/logo.png);
+    color: #fff;
+    text-shadow: 1px 1px #000;
+    font-weight: bold;
+  }
+  .repeat    { background-repeat: repeat; }
+  .repeat-x  { background-repeat: repeat-x; }
+  .repeat-y  { background-repeat: repeat-y; }
+  .no-repeat { background-repeat: no-repeat; }
+  .fixed-repeat {
+    background-repeat: repeat;
+    background-attachment: fixed;
+  }
+</style>
+</head>
+<body>
+
+<h1>MacSurf — fixes138 (background-repeat)</h1>
+<p class="lede">Five probes exercising the plot_bitmap tile loop.
+Pre-138 every box looked identical (single tile); post-138 they
+diverge along the four CSS axes plus the fixed-attachment combo.</p>
+
+<div class="card">
+  <p class="card-title">PROBE R1 — background-repeat: repeat</p>
+  <div class="bgbox repeat">R1: tiles both axes.</div>
+  <p class="expect">EXPECT: logo image tiled across the box on
+  both axes. Multiple visible copies of the MPLS logo, both
+  horizontally and vertically.</p>
+</div>
+
+<div class="card">
+  <p class="card-title">PROBE R2 — background-repeat: repeat-x</p>
+  <div class="bgbox repeat-x">R2: tiles horizontally only.</div>
+  <p class="expect">EXPECT: one row of horizontally-tiled logos
+  at the vertical-centre default position. No vertical
+  repetition.</p>
+</div>
+
+<div class="card">
+  <p class="card-title">PROBE R3 — background-repeat: repeat-y</p>
+  <div class="bgbox repeat-y">R3: tiles vertically only.</div>
+  <p class="expect">EXPECT: one column of vertically-tiled logos
+  at the horizontal-centre default position. No horizontal
+  repetition.</p>
+</div>
+
+<div class="card">
+  <p class="card-title">PROBE R4 — background-repeat: no-repeat</p>
+  <div class="bgbox no-repeat">R4: single tile.</div>
+  <p class="expect">EXPECT: exactly one logo, centred in the box.
+  Identical to pre-138 default behaviour.</p>
+</div>
+
+<div class="filler">Filler — scroll past this to see R5 (fixed +
+repeat).</div>
+
+<div class="card">
+  <p class="card-title">PROBE R5 — fixed attachment, repeat</p>
+  <div class="bgbox fixed-repeat">R5: parallax tiles.</div>
+  <p class="expect">EXPECT (fixes137 + fixes138 combined): tile
+  grid stays anchored to the viewport. Scroll the page and watch
+  R5 — the tile pattern stays in the same window position while
+  R5 moves through it.</p>
+</div>
+
+<div class="filler">Filler 2 — vertical space so the page is
+scrollable.</div>
+<div class="filler">Filler 3.</div>
+<div class="filler">Filler 4 — last filler.</div>
+
+</body>
+</html>

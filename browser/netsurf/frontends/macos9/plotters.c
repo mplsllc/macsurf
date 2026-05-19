@@ -1004,7 +1004,7 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 	long col;
 
 	MS_ASSERT(bitmap != NULL, "plot_bitmap: bitmap is NULL");
-	(void)ctx; (void)bg; (void)flags;
+	(void)ctx; (void)bg;
 	if (bitmap == NULL) return NSERROR_OK;
 
 	buf = macos9_bitmap_get_buffer((void *)bitmap);
@@ -1060,6 +1060,16 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 		bool is_opaque;
 		unsigned char *mask_data;
 		int mask_rowbytes;
+		bool repeat_x;
+		bool repeat_y;
+		int start_x, start_y, end_x, end_y;
+		int tile_x, tile_y;
+		Rect clip_bounds;
+		Rect tile_dst;
+		BitMap mask_bm;
+		long tile_count;
+		long tile_cap;
+
 		GetPort(&save_port);
 		saved_clip = macos9_push_clip();
 		is_opaque = macos9_bitmap_get_opaque((void *)bitmap);
@@ -1068,29 +1078,106 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 		mask_rowbytes = is_opaque ? 0 :
 				macos9_bitmap_get_mask_rowbytes((void *)bitmap);
 
+		/* fixes138: honour BITMAPF_REPEAT_X / BITMAPF_REPEAT_Y.
+		 * NetSurf's image content handler passes the tile size in
+		 * (width, height) and the anchor in (x, y); the plotter is
+		 * expected to tile across the active clip rect. Pre-138
+		 * MacSurf ignored the flags and painted one tile, which
+		 * looked correct for no-repeat but broke every
+		 * `background-repeat: repeat[-x|-y]` page including the
+		 * fixes137 background-attachment: fixed parallax demo. */
+		repeat_x = (flags & BITMAPF_REPEAT_X) != 0;
+		repeat_y = (flags & BITMAPF_REPEAT_Y) != 0;
+
+		if (repeat_x || repeat_y) {
+			RgnHandle cur_clip = NewRgn();
+			if (cur_clip != NULL) {
+				GetClip(cur_clip);
+				GetRegionBounds(cur_clip, &clip_bounds);
+				DisposeRgn(cur_clip);
+			} else {
+				SetRect(&clip_bounds, 0, 0, 0, 0);
+			}
+		} else {
+			SetRect(&clip_bounds, 0, 0, 0, 0);
+		}
+
+		if (repeat_x) {
+			/* Step back from x by `width` until the next step
+			 * would precede the clip's left edge, then fill
+			 * forward to the right edge. The anchor (x) is
+			 * guaranteed to land on a tile boundary, which is
+			 * what fixes137's viewport-anchored origin needs. */
+			start_x = x;
+			while (start_x - width >= (int)clip_bounds.left)
+				start_x -= width;
+			end_x = (int)clip_bounds.right;
+			if (end_x < x + width) end_x = x + width;
+		} else {
+			start_x = x;
+			end_x = x + width;
+		}
+		if (repeat_y) {
+			start_y = y;
+			while (start_y - height >= (int)clip_bounds.top)
+				start_y -= height;
+			end_y = (int)clip_bounds.bottom;
+			if (end_y < y + height) end_y = y + height;
+		} else {
+			start_y = y;
+			end_y = y + height;
+		}
+
+		/* Hard ceiling: 4096 tiles in a single blit. Anything beyond
+		 * is a layout bug, not a real page. QD itself will refuse
+		 * pathological coordinates but the cap keeps the redraw
+		 * predictable on degenerate input. */
+		tile_count = 0;
+		tile_cap = 4096;
+
 		if (mask_data != NULL && mask_rowbytes > 0) {
-			/* Path Alpha-Light: 1-bit mask via CopyMask.
-			 * Mask bit = 1 (opaque) -> copy source pixel.
-			 * Mask bit = 0 (transparent) -> leave destination
-			 * untouched. Anti-aliased PNG edges become a
-			 * binary threshold; upgrade to CopyDeepMask with
-			 * an 8-bit mask is queued. */
-			BitMap mask_bm;
 			mask_bm.baseAddr = (Ptr)mask_data;
 			mask_bm.rowBytes = (short)mask_rowbytes;
 			mask_bm.bounds = src_rect;
 			MS_LOG("plot_bitmap: alpha CopyMask");
-			CopyMask((BitMap *)*pm,
-				&mask_bm,
-				&((GrafPtr)save_port)->portBits,
-				&src_rect, &src_rect, &dst_rect);
+			for (tile_y = start_y; tile_y < end_y; tile_y += height) {
+				for (tile_x = start_x; tile_x < end_x;
+						tile_x += width) {
+					SetRect(&tile_dst,
+						(short)tile_x,
+						(short)tile_y,
+						(short)(tile_x + width),
+						(short)(tile_y + height));
+					CopyMask((BitMap *)*pm,
+						&mask_bm,
+						&((GrafPtr)save_port)->portBits,
+						&src_rect, &src_rect,
+						&tile_dst);
+					if (++tile_count >= tile_cap)
+						goto blit_done;
+				}
+			}
 		} else {
 			MS_LOG(is_opaque ? "plot_bitmap: opaque srcCopy" :
 					"plot_bitmap: nonopaque no-mask srcCopy");
-			CopyBits((BitMap *)*pm,
-				&((GrafPtr)save_port)->portBits,
-				&src_rect, &dst_rect, srcCopy, NULL);
+			for (tile_y = start_y; tile_y < end_y; tile_y += height) {
+				for (tile_x = start_x; tile_x < end_x;
+						tile_x += width) {
+					SetRect(&tile_dst,
+						(short)tile_x,
+						(short)tile_y,
+						(short)(tile_x + width),
+						(short)(tile_y + height));
+					CopyBits((BitMap *)*pm,
+						&((GrafPtr)save_port)->portBits,
+						&src_rect, &tile_dst,
+						srcCopy, NULL);
+					if (++tile_count >= tile_cap)
+						goto blit_done;
+				}
+			}
 		}
+blit_done:
 		macos9_pop_clip(saved_clip);
 	}
 
