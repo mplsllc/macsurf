@@ -1,8 +1,36 @@
 # MacSurf CSS Status Report
 
-Generated 2026-05-19. Last revised 2026-05-19 (fixes146 hardware-accepted).
+Generated 2026-05-19. Last revised 2026-05-19 (fixes147 hardware-verified).
 
 This is a brutal, hedge-free audit of CSS support in MacSurf. The goal is to identify what works, what doesn't, and what to implement next.
+
+## Hardware-verified status (post fixes147)
+
+```text
+CSS 2.1 stacking-context paint order: ✓ Sibling-level
+- fixes147 (2026-05-19): replaces fixes133's 3-pass z walker with
+  CSS 2.1 Appendix E painting order at the sibling level.
+- New html_redraw_box_classify() returns 4-way SC class:
+  NONE / NEG (z<0) / ZERO (z==0 or position:fixed/opacity/transform) /
+  POS (z>0).
+- html_redraw_box_children() does pass-1 classify-and-bucket-all,
+  pass-2 sort neg+pos by z ascending, pass-3 paint in CSS 2.1 order:
+  negative-z → flow → floats → zero-z → positive-z.
+- Stacking-context creation triggers detected:
+  position!=static && z-index!=auto, position:fixed, opacity<1,
+  non-identity -macsurf-transform / transform.
+- Test cards ZS1-ZS6 in advanced.html all rendering correctly on G3
+  iMac: positive-z sort, NEW negative-z, modal, NEW opacity-creates-SC,
+  NEW transform-creates-SC, z:0-vs-z:auto distinction.
+- MacTrove regression check passes (full home page renders with
+  navigation, logo, image decoders working).
+- KNOWN LIMITATION: cross-level descendant escape not implemented.
+  Positioned descendants of a non-SC parent stay within that parent's
+  flow rather than escaping to the nearest ancestor SC. Per-sibling
+  bucketing only. ~90% of real-world cases covered.
+- Not detected as SC triggers: filter, mix-blend-mode, isolation,
+  will-change. Deferred.
+```
 
 ## Hardware-verified status (post fixes146)
 
@@ -112,7 +140,7 @@ These have been verified on hardware or in screenshots and produce the correct v
 - `float: left | right | none`
 - `clear: left | right | both | none`
 - `visibility: visible | hidden`
-- `z-index: <integer>` (basic positioned stacking, two-pass paint — fixes133)
+- `z-index: <integer>` (CSS 2.1 sibling-level paint order with neg/zero/pos buckets, SC triggers for position+z/fixed/opacity/transform — fixes147)
 
 ### Flexbox
 - `flex-direction: row | row-reverse | column | column-reverse`
@@ -391,15 +419,17 @@ These are not CSS properties but affect whether pages "load properly":
 
 ## What I would ship next
 
-After fixes132–fixes146, the remaining ranked top picks are:
+After fixes132–fixes147, the remaining ranked top picks are:
 
-**Highest-impact structural work, three candidates:**
+**Stacking contexts (fixes147) shipped at sibling level — closed.** Cross-level descendant escape deferred until a structural paint pipeline rewrite. ~90% of real-page cases covered today.
 
-1. **Stacking contexts / full CSS 2.1 painting order.** fixes133 shipped basic positioned numeric z-index but the 7-pass painting algorithm (negative z-index → block-bg → block-borders → block-children → floats → in-flow inlines → positioned children by z-index) is not implemented. Real-world cost today: modals, tooltips, dropdowns, and fixed headers all paint under content when they're authored to overlap. Single file ([redraw.c](browser/netsurf/content/handlers/html/redraw.c)), no library or layout changes. **Highest impact per sprint.**
+**Highest-impact remaining structural work, two candidates:**
 
-2. **Full CSS Grid V2.** Current V1 (`-macsurf-grid: N` from fixes75) only fires when authors opt in to our extension. Real `grid-template-columns: 1fr 200px repeat(3, minmax(100px, 1fr))`, `grid-template-rows`, `grid-template-areas`, explicit `grid-row` / `grid-column` / `grid-area`. Track-widths architecture is partially proved at fixes118 (outer-struct arena pattern); the remaining work is the grammar parser + auto-placement algorithm + named-area lookup. 2-3 sprints. **Biggest absolute transformation** of how modern sites render.
+1. **Full CSS Grid V2.** Current V1 (`-macsurf-grid: N` from fixes75) only fires when authors opt in to our extension. Real `grid-template-columns: 1fr 200px repeat(3, minmax(100px, 1fr))`, `grid-template-rows`, `grid-template-areas`, explicit `grid-row` / `grid-column` / `grid-area`. Track-widths architecture is partially proved at fixes118 (outer-struct arena pattern); the remaining work is the grammar parser + auto-placement algorithm + named-area lookup. 2-3 sprints. **Biggest absolute transformation** of how modern sites render.
 
-3. **`gui_layout_table` family awareness.** Architectural prerequisite for retrying font-family aliases (fixes145) without the inline-scramble bug. `macos9_font_width` / `macos9_font_position` / `macos9_font_split` need to return widths consistent with whichever family the plotter would pick. Once shipped, fixes145 retry becomes safe and pages render with real serif/mono families. Doesn't directly fix any layout bug but unblocks every future font-related win.
+2. **`gui_layout_table` family awareness.** Architectural prerequisite for retrying font-family aliases (fixes145) without the inline-scramble bug. `macos9_font_width` / `macos9_font_position` / `macos9_font_split` need to return widths consistent with whichever family the plotter would pick. Once shipped, fixes145 retry becomes safe and pages render with real serif/mono families. Doesn't directly fix any layout bug but unblocks every future font-related win.
+
+**Stacking-context cross-level descendant walk** as a fixes147 follow-up is the third candidate but lower priority — the per-sibling model already covers the dominant real-page cases. Would require collecting all positioned descendants from a stacking-context root and partitioning them into the appropriate bucket regardless of intermediate non-SC ancestors. Structural rewrite of the `html_redraw_box` / `html_redraw_box_children` separation.
 
 **Other structural items still queued:**
 
