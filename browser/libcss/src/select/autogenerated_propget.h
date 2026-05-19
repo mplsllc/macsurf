@@ -2159,6 +2159,9 @@ static inline uint8_t get_macsurf_animation_rotate(
 #define OBJECT_FIT_INDEX 15
 #define OBJECT_FIT_SHIFT 2
 #define OBJECT_FIT_MASK 0x1c
+#define TEXT_OVERFLOW_INDEX 15
+#define TEXT_OVERFLOW_SHIFT 5
+#define TEXT_OVERFLOW_MASK 0x60
 static inline uint8_t get_object_fit_bits(const css_computed_style *style)
 {
 	uint32_t bits = style->i.bits[OBJECT_FIT_INDEX];
@@ -2178,6 +2181,26 @@ static inline uint8_t get_object_fit(const css_computed_style *style)
 #undef OBJECT_FIT_INDEX
 #undef OBJECT_FIT_SHIFT
 #undef OBJECT_FIT_MASK
+
+static inline uint8_t get_text_overflow_bits(const css_computed_style *style)
+{
+	uint32_t bits = style->i.bits[TEXT_OVERFLOW_INDEX];
+	bits &= TEXT_OVERFLOW_MASK;
+	bits >>= TEXT_OVERFLOW_SHIFT;
+
+	return (bits & 0x3);
+}
+static inline uint8_t get_text_overflow(const css_computed_style *style)
+{
+	uint32_t bits = style->i.bits[TEXT_OVERFLOW_INDEX];
+	bits &= TEXT_OVERFLOW_MASK;
+	bits >>= TEXT_OVERFLOW_SHIFT;
+
+	return (bits & 0x3);
+}
+#undef TEXT_OVERFLOW_INDEX
+#undef TEXT_OVERFLOW_SHIFT
+#undef TEXT_OVERFLOW_MASK
 
 #define MARGIN_BOTTOM_INDEX 5
 #define MARGIN_BOTTOM_SHIFT 11

@@ -244,6 +244,7 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("-macsurf-animation-opacity"),
 	SMAP("-macsurf-animation-rotate"),
 	SMAP("object-fit"),
+	SMAP("text-overflow"),
 
 	SMAP("inherit"),
 	SMAP("unset"),
@@ -513,6 +514,7 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("cover"),
 	SMAP("fill"),
 	SMAP("scale-down"),
+	SMAP("ellipsis"),
 
 	/* Named colours */
 	SMAP("aliceblue"),

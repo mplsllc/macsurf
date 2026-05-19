@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MacSurf — fixes135 (text-overflow)</title>
+<style>
+  body {
+    font-family: Helvetica, sans-serif;
+    background: #f0f0f0;
+    color: #222;
+    margin: 16px;
+  }
+  h1 {
+    color: #003366;
+    font-size: 14pt;
+    margin: 0 0 4px 0;
+  }
+  .lede {
+    color: #666;
+    font-size: 8pt;
+    margin: 0 0 12px 0;
+  }
+  .card {
+    background: #fff;
+    border: 1px solid #ccc;
+    padding: 12px;
+    margin: 0 0 14px 0;
+  }
+  .card-title {
+    color: #003366;
+    font-size: 10pt;
+    font-weight: bold;
+    margin: 0 0 8px 0;
+  }
+  .expect {
+    color: #888;
+    font-style: italic;
+    font-size: 8pt;
+    margin: 8px 0 0 0;
+  }
+
+  /* fixes135 — text-overflow probes.
+   *
+   * Phase A (135a) ships parser + computed plumbing only. Visual
+   * truncation arrives in phase B (135b). Until then E1/E5 render
+   * the same as the clip baseline. */
+  .box {
+    width: 180px;
+    border: 1px solid black;
+    white-space: nowrap;
+    overflow: hidden;
+    padding: 4px;
+    margin: 4px 0;
+    font-size: 11pt;
+  }
+  .clip { text-overflow: clip; }
+  .ellipsis { text-overflow: ellipsis; }
+  .invalid { text-overflow: banana; }
+  .vis { overflow: visible; text-overflow: ellipsis; }
+  .tiny { width: 8px; white-space: nowrap; overflow: hidden;
+          text-overflow: ellipsis; }
+</style>
+</head>
+<body>
+
+<h1>MacSurf — fixes135 (text-overflow)</h1>
+<p class="lede">Phase A (135a) plumbs the libcss property only. Computed
+style now stores `clip` / `ellipsis`; visual truncation arrives in
+phase B (135b). Probes below render identically to clip until then.</p>
+
+<div class="card">
+  <p class="card-title">PROBE E1 — text-overflow: clip baseline</p>
+  <div class="box clip">CLIP This is a very long line that should clip without ellipsis at the right edge of the box.</div>
+  <p class="expect">EXPECT (135a/b): one line, clipped flush at the
+  right edge. No ellipsis ever.</p>
+</div>
+
+<div class="card">
+  <p class="card-title">PROBE E2 — text-overflow: ellipsis</p>
+  <div class="box ellipsis">ELLIPSIS This is a very long line that should end with an ellipsis marker once 135b lands.</div>
+  <p class="expect">EXPECT (135a): looks identical to E1 (no ellipsis
+  yet). EXPECT (135b): one line ending in `…` flush with the right
+  edge.</p>
+</div>
+
+<div class="card">
+  <p class="card-title">PROBE E3 — invalid value</p>
+  <div class="box invalid">INVALID This should behave like clip; parser rejects "banana".</div>
+  <p class="expect">EXPECT: looks identical to E1. Parser rejects
+  invalid keyword, computed style falls back to clip initial.</p>
+</div>
+
+<div class="card">
+  <p class="card-title">PROBE E4 — overflow: visible (ellipsis no-op)</p>
+  <div class="box vis">VISIBLE This box has overflow: visible so the ellipsis path is inactive even with text-overflow: ellipsis.</div>
+  <p class="expect">EXPECT: text overflows the box bounds visually
+  (visible overflow); no clipping, no ellipsis. text-overflow only
+  applies when overflow is hidden/scroll/auto.</p>
+</div>
+
+<div class="card">
+  <p class="card-title">PROBE E5 — tiny width</p>
+  <div class="box tiny">TINY very narrow box</div>
+  <p class="expect">EXPECT (135b): no crash; either blank, a single
+  dot, or `…` if it fits. Pass criterion is "no crash", not exact
+  glyph.</p>
+</div>
+
+</body>
+</html>

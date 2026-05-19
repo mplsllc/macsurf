@@ -558,5 +558,9 @@ struct prop_table prop_dispatch[CSS_N_PROPERTIES] = {
 	{
 	        PROPERTY_FUNCS(object_fit),
 	        0,
+	},
+	{
+	        PROPERTY_FUNCS(text_overflow),
+	        0,
 	}
 	};

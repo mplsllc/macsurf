@@ -121,6 +121,9 @@ css_error css__parse_macsurf_animation_rotate(css_language *c,
 css_error css__parse_object_fit(css_language *c,
                 const parserutils_vector *vector, int32_t *ctx,
                 css_style *result);
+css_error css__parse_text_overflow(css_language *c,
+                const parserutils_vector *vector, int32_t *ctx,
+                css_style *result);
 css_error css__parse_border_right(css_language *c,		const parserutils_vector *vector, int32_t *ctx,
 		css_style *result);
 css_error css__parse_border_right_color(css_language *c,

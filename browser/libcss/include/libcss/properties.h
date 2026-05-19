@@ -149,6 +149,7 @@ enum css_properties_e {
 	CSS_PROP_MACSURF_ANIMATION_OPACITY	= 0x084,
 	CSS_PROP_MACSURF_ANIMATION_ROTATE	= 0x085,
 	CSS_PROP_OBJECT_FIT			= 0x086,
+	CSS_PROP_TEXT_OVERFLOW			= 0x087,
 
 	CSS_N_PROPERTIES
 };
@@ -327,6 +328,12 @@ enum css_object_fit_e {
 	CSS_OBJECT_FIT_COVER			= 0x3,
 	CSS_OBJECT_FIT_NONE			= 0x4,
 	CSS_OBJECT_FIT_SCALE_DOWN		= 0x5
+};
+
+enum css_text_overflow_e {
+	CSS_TEXT_OVERFLOW_INHERIT		= 0x0,
+	CSS_TEXT_OVERFLOW_CLIP			= 0x1,
+	CSS_TEXT_OVERFLOW_ELLIPSIS		= 0x2
 };
 
 enum css_break_after_e {

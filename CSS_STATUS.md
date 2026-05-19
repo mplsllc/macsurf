@@ -188,7 +188,7 @@ Currently only matches `Geneva`, `Monaco`, `Chicago`, `Charcoal` by name. Any ot
 Only `bold` (>= 600) vs `normal` (< 600). Numeric weights 100/200/300/400/500/600/700/800/900 all collapse to two values. Acceptable for QuickDraw which only has bold/non-bold.
 
 ### `text-overflow: ellipsis`
-Not implemented anywhere. Long text in narrow containers wraps or overflows; never truncates with `…`. Modern UI cards rely on this for clean truncation.
+**fixes135a (2026-05-19): parser + computed plumbing shipped, visual rendering still pending.** libcss now parses `text-overflow: clip` / `text-overflow: ellipsis` and `css_computed_text_overflow()` returns the right enum. Invalid values fall back to the initial `clip`. The actual visual truncation (find longest fitting prefix, append `…`) still needs the `layout_inline.c` integration in fixes135b. Until then, long text in narrow containers behaves as before (clip-or-overflow), and `text-overflow: ellipsis` is a no-op visually.
 
 ### `word-break` / `overflow-wrap`
 Not implemented. Long unbreakable strings (URLs, hashes) overflow their containers instead of breaking. Visible on URL-display pages.
