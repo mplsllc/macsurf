@@ -340,10 +340,10 @@ When auditing a new C99 library for CW8 / strict C89, grep for:
 
 The CSS pipeline parses 167 properties via libcss but layout/redraw only consumes 87 of them. The visible "pages don't load properly" symptoms map to specific silent-fail properties:
 
-- **P0 — `z-index` / stacking contexts (NOT consumed anywhere).** Modals paint UNDER content; dropdowns paint UNDER the rest of the page. Author CSS specifies z-index, libcss parses it, redraw walks DOM in document order and ignores the computed value. **Highest-impact single fix on the table.**
-- **P1 — `min-height` (NOT consumed in layout).** Hero sections (`min-height: 400px` or `100vh`) collapse to text height. Five-line fix mirroring the `min-width` logic at [layout.c:158-205](browser/netsurf/content/handlers/html/layout.c#L158).
+- ~~**P0 — `z-index` / stacking contexts.**~~ **Shipped at fixes147 (CSS 2.1 Appendix E painting order, 2026-05-19).** See "Last shipped fix" predecessor entries.
+- ~~**P1 — `min-height` (NOT consumed in layout).**~~ **Actually wired** (`layout_apply_minmax_height` at [layout.c:4028](browser/netsurf/content/handlers/html/layout.c#L4028), [layout_flex.c:1360](browser/netsurf/content/handlers/html/layout_flex.c#L1360), [layout_grid.c:434](browser/netsurf/content/handlers/html/layout_grid.c#L434)). Was a historical CSS_STATUS error; PROBE V1 verified green on G3 hardware 2026-05-19 (200px min-height block honours floor on auto-content). The original "Hero sections collapse" symptom was the vh/vw swap, fixed in fixes132. See CSS_STATUS.md §150 for history.
 - ~~**P2 — `text-overflow: ellipsis` (no parser).**~~ **Shipped at fixes135a + fixes135c (2026-05-19).** libcss parses `clip` / `ellipsis`; redraw paints an ellipsis overlay on the rightmost slice when a styled ancestor declares `text-overflow: ellipsis` + `overflow-x != visible` AND the text would paint past the active clip rect. See "Native CSS3 Strategy" / "Last shipped fix" below.
-- **P3 — Viewport units `vw` / `vh` (likely incomplete in unit conversion).** Author CSS `height: 100vh` evaluates incorrectly. One-site fix in `css_unit_len2px` or its caller.
+- ~~**P3 — Viewport units `vw` / `vh`.**~~ **Actually wired** ([libcss unit.c:107-113](browser/libcss/src/select/unit.c#L107) handles `CSS_UNIT_VH` / `CSS_UNIT_VW`; viewport_w/h plumbed via `browser_window_get_dimensions` → CONTENT_MSG_GETDIMS → `htmlc->unit_len_ctx.viewport_*`). PROBE V2/V3/V4 verified green on G3 hardware 2026-05-19 (100vh, 50vw, 30vh all evaluate correctly against viewport).
 - ~~**P4 — `counter-increment` / `counter-reset` (NOT consumed).**~~ **Shipped at fixes134d (2026-05-18).** Counter table populates from `counter-reset` / `counter-increment` rules at element NORMAL and `::before`/`::after` pseudo sites; `content: counter(name)` resolves to the current decimal value; named counters distinguish correctly (e.g. `d_section` and `d_chapter` independent). Flat document-scope table (nested CSS scopes deferred), decimal-only formatting, `counters()` (plural) deferred.
 
 **Other gaps documented in CSS_STATUS.md:**
@@ -584,19 +584,18 @@ Predecessor: **fixes107** — **15-second no-progress timeout on HTTP fetches.**
 
 Real-world impact ranked, lowest-effort first within each priority. Numbering reflects the fixes132+ ship order.
 
-- **fixes132 — `min-height` (P1, low effort, high impact).** Hero sections collapse without this. Five-line mirror of the existing `min-width` path in `layout_find_dimensions`. Read `css_computed_min_height`, apply via `if (min_height > 0 && min_height > *height) *height = min_height` in the same spot. Single file: `layout.c`.
+**Aspirational fixes132/133/134/135/137 items in this queue are all SHIPPED** (fixes132 = vh/vw swap; fixes133 = native CSS custom properties / superseded by fixes147 stacking contexts; fixes134d = counters; fixes135a/c = text-overflow; fixes136a/b = word-break/overflow-wrap; fixes147 = full CSS 2.1 painting order with z-index). The hardware-verified state confirmed 2026-05-19 by PROBE V1–V4 on advanced.html. CSS_STATUS.md ground truth.
 
-- **fixes133 — `z-index` and stacking contexts (P0, medium effort, highest impact).** Modals paint under content; dropdowns paint under page. Read `css_computed_z_index` in `redraw.c`; sort children by `(z-index, dom-order)` before paint for positioned elements that establish a stacking context. Full CSS 2.1 painting order is 7-pass — start with a simplified one-pass z-index sort for positioned elements, then expand if needed.
+Currently-open queue (real remaining work):
 
-- **fixes134 — viewport units `vw` / `vh` (P3, low effort, high impact on responsive).** `height: 100vh` used constantly for hero sections. Patch `css_unit_len2px` (or our shim) to resolve `CSS_UNIT_VW` and `CSS_UNIT_VH` against the viewport stored in `unit_len_ctx`. One file.
+- **`grid-template-rows` track grammar (V1)** — natural follow-up to fixes148. Needs new libcss property + cssh_css preprocessor + layout_grid row-height distribution. Multi-file structural lift comparable to fixes148; not a single-round drop-in.
+- **Explicit grid placement** (`grid-column`, `grid-row`, `grid-area`) — V2 follow-up after grid-template-rows lands.
+- **`font-family` aliases (sans/serif/monospace)** — fixes151 candidate. Blocked on `gui_layout_table` per-font ascent/descent because per-segment family dispatch reproduces the fixes52 horizontal-scramble bug (see fixes145/145b post-mortem). The layout-table work is the gate.
+- **`column-count` / `column-rule-*`** — multi-column text layout. New layout path (split inline content into N vertical columns). Real-world impact on news/blog pages.
+- **`aspect-ratio`** — modern CSS sizing primitive. Single property, narrow implementation site in layout when one of width/height is auto and the other is known.
+- **`outline` (separate from border)** — focus rings on accessible pages. Could be implemented as a draw-after-border pass in redraw.c.
 
-- ~~**fixes135 — `text-overflow: ellipsis` (P2, medium effort).**~~ **Done at fixes135a + fixes135c.** New files: `p_text_overflow.c`, `s_text_overflow.c`. Bit slot at word 15 shift 5 mask 0x60. Visual rendering took two attempts: fixes135b mutated `box->text` in place and produced corrupted output; fixes135c switched to a paint-after-clip architecture (original text draws clipped, then a background rect + ellipsis text overlay on the rightmost slice) and accepted on hardware.
-
-- **fixes136 — `word-break` / `overflow-wrap` (P5, low effort).** Long URLs in body text overflow containers. Allow mid-word breaks in `layout_inline.c` when a word exceeds the line width and the property allows it. Already parsed.
-
-- ~~**fixes137 — counters (P4, medium effort).**~~ **Done at fixes134d.** Native counter table in `box_construct.c` + one-line libcss fix in `helpers.c`. No separate `redraw_counters.c` helper needed; counters resolve at box-construct time when the content array is walked.
-
-- **Other gaps (deferred):** `background-attachment: fixed`, `column-count`, `column-rule-*`, `quotes`, `empty-cells`, `table-layout`, `unicode-bidi`, `writing-mode`, `transition`/`animation` (v0.4.5), `clip-path`, `mask`, `filter`, full `font-family` matching, multi-tier `font-weight`.
+- **Other parsed-but-silently-dropped gaps:** `unicode-bidi`, `writing-mode`, `break-*`, `page-break-*`, `orphans`, `widows`, `fill-opacity`, `stroke-opacity`, `transition`/`animation` (v0.4.5+ ambition), `clip-path`, `mask`, `filter`, multi-tier `font-weight` (platform limit — QuickDraw is bold/regular only).
 
 - **Full-fidelity `row-gap` (deferred).** Two-value `gap: A B` loses A. New `CSS_PROP_ROW_GAP` with its own bit slot in `css_computed_style_i.bits[]` (word 15 has 27 free bits). Only worth doing if real pages exercise two-value form enough to notice.
 - **Full-fidelity `row-gap` (deferred).** Split row-gap from column-gap storage — new `CSS_PROP_ROW_GAP` enum entry, new field in `css_computed_style_i`, new bit slot in `autogenerated_computed.h` (word 15 has 27 free bits as of fixes116; word 14 bottom 5 bits are full), new propset/propget macros, new parse + select files, `css_computed_row_gap` accessor, wire `layout_flex.c` to read both independently. Currently fixes148 parses both properties into `column-gap` storage; two-value `gap: A B` loses the first value. Only worth doing if real-world pages exercise the two-value form enough to notice.
