@@ -159,6 +159,11 @@ typedef struct plot_font_style {
 	 * 0 (the common case) keeps the fast-path text draw. Non-zero
 	 * routes through per-character draw + per-character width. */
 	int letter_spacing;
+	/* fixes139b: extra spacing inserted after each ASCII space (0x20)
+	 * in pixels. Same fast-path / per-char split as letter_spacing.
+	 * Distinct from letter_spacing: word_spacing only fires at word
+	 * boundaries, not between every glyph pair. */
+	int word_spacing;
 	/* fixes50: text-shadow offset (signed pixels) and colour.
 	 * shadow_x == 0 && shadow_y == 0 means no shadow. Colour is
 	 * already in NetSurf BGR byte order (R in low byte). */

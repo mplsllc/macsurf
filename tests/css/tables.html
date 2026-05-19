@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MacSurf — fixes139a (empty-cells)</title>
+<style>
+  body {
+    font-family: Helvetica, sans-serif;
+    background: #f0f0f0;
+    color: #222;
+    margin: 16px;
+  }
+  h1 {
+    color: #003366;
+    font-size: 14pt;
+    margin: 0 0 4px 0;
+  }
+  .lede {
+    color: #666;
+    font-size: 8pt;
+    margin: 0 0 12px 0;
+  }
+  .card {
+    background: #fff;
+    border: 1px solid #ccc;
+    padding: 12px;
+    margin: 0 0 14px 0;
+  }
+  .card-title {
+    color: #003366;
+    font-size: 10pt;
+    font-weight: bold;
+    margin: 0 0 8px 0;
+  }
+  .expect {
+    color: #888;
+    font-style: italic;
+    font-size: 8pt;
+    margin: 8px 0 0 0;
+  }
+
+  /* fixes139a — empty-cells probes. Each cell carries an explicit
+   * background and border so the difference between show and hide is
+   * unambiguous. The middle cell of each row is intentionally empty. */
+  table.probe {
+    border-collapse: separate;
+    border-spacing: 4px;
+  }
+  table.probe td {
+    background: #cde;
+    border: 2px solid #036;
+    width: 80px;
+    height: 32px;
+    text-align: center;
+    color: #003366;
+    font-weight: bold;
+  }
+  table.empty-show { empty-cells: show; }
+  table.empty-hide { empty-cells: hide; }
+</style>
+</head>
+<body>
+
+<h1>MacSurf — fixes139a (empty-cells)</h1>
+<p class="lede">Two tables, identical except for the empty-cells
+property. CSS 2.1 §17.6.1 says hide should suppress the border and
+background of cells with no visible content; show keeps them.</p>
+
+<div class="card">
+  <p class="card-title">PROBE E1 — empty-cells: show (default)</p>
+  <table class="probe empty-show">
+    <tr><td>A</td><td></td><td>C</td></tr>
+  </table>
+  <p class="expect">EXPECT: three cells all show a blue border and a
+  light-blue background. The middle cell is empty but still painted.</p>
+</div>
+
+<div class="card">
+  <p class="card-title">PROBE E2 — empty-cells: hide</p>
+  <table class="probe empty-hide">
+    <tr><td>A</td><td></td><td>C</td></tr>
+  </table>
+  <p class="expect">EXPECT: cells A and C show the blue border and
+  background. The middle cell is empty -- no border, no background --
+  but the cell still occupies its slot, so A and C stay at their
+  original horizontal positions.</p>
+</div>
+
+<div class="card">
+  <p class="card-title">PROBE E3 — empty-cells: hide with whitespace-only cell</p>
+  <table class="probe empty-hide">
+    <tr><td>A</td><td>&nbsp;&nbsp;&nbsp;</td><td>C</td></tr>
+  </table>
+  <p class="expect">EXPECT: middle cell contains only non-breaking
+  spaces, which CSS 2.1 still considers empty. Border and background
+  should be suppressed exactly as in E2.</p>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MacSurf — fixes139b (word-spacing)</title>
+<style>
+  body {
+    font-family: Helvetica, sans-serif;
+    background: #f0f0f0;
+    color: #222;
+    margin: 16px;
+  }
+  h1 {
+    color: #003366;
+    font-size: 14pt;
+    margin: 0 0 4px 0;
+  }
+  .lede {
+    color: #666;
+    font-size: 8pt;
+    margin: 0 0 12px 0;
+  }
+  .card {
+    background: #fff;
+    border: 1px solid #ccc;
+    padding: 12px;
+    margin: 0 0 14px 0;
+  }
+  .card-title {
+    color: #003366;
+    font-size: 10pt;
+    font-weight: bold;
+    margin: 0 0 8px 0;
+  }
+  .expect {
+    color: #888;
+    font-style: italic;
+    font-size: 8pt;
+    margin: 8px 0 0 0;
+  }
+
+  /* fixes139b -- word-spacing probes. Each paragraph contains the
+   * same six-word phrase; the only thing that varies is word-spacing.
+   * Layout measurement reads through the same css_computed_word_spacing
+   * accessor as paint, so the wrap point should also shift with the
+   * spacing. */
+  .normal { word-spacing: normal; }
+  .wide   { word-spacing: 10px; }
+  .wider  { word-spacing: 20px; }
+  .tight  { word-spacing: -2px; }
+
+  .row {
+    width: 320px;
+    border: 1px solid #888;
+    padding: 6px;
+    margin: 4px 0;
+    font-size: 11pt;
+    background: #fff;
+  }
+</style>
+</head>
+<body>
+
+<h1>MacSurf — fixes139b (word-spacing)</h1>
+<p class="lede">Four boxes with identical six-word text. Only
+word-spacing differs. The gap between words should grow with positive
+values and shrink with negative; layout wrap point should follow.</p>
+
+<div class="card">
+  <p class="card-title">PROBE W1 — word-spacing: normal (baseline)</p>
+  <div class="row normal">one two three four five six</div>
+  <p class="expect">EXPECT: ordinary word gaps. Wraps near the end of
+  the box.</p>
+</div>
+
+<div class="card">
+  <p class="card-title">PROBE W2 — word-spacing: 10px</p>
+  <div class="row wide">one two three four five six</div>
+  <p class="expect">EXPECT: gaps between every word are visibly wider
+  by ~10px. Letter-to-letter spacing inside each word is unchanged.
+  Wrap likely happens one or two words earlier than W1.</p>
+</div>
+
+<div class="card">
+  <p class="card-title">PROBE W3 — word-spacing: 20px</p>
+  <div class="row wider">one two three four five six</div>
+  <p class="expect">EXPECT: even wider word gaps; visibly more lines
+  than W1 because the wrap point shifts earlier.</p>
+</div>
+
+<div class="card">
+  <p class="card-title">PROBE W4 — word-spacing: -2px</p>
+  <div class="row tight">one two three four five six</div>
+  <p class="expect">EXPECT: words sit slightly closer together than
+  W1. Should not crash with negative spacing. If width would go
+  negative the engine clamps to 0.</p>
+</div>
+
+</body>
+</html>

@@ -107,6 +107,7 @@ These have been verified on hardware or in screenshots and produce the correct v
 - `text-transform: uppercase | lowercase | capitalize | none`
 - `line-height`
 - `letter-spacing`
+- `word-spacing` (length values; layout + paint in sync — fixes139b)
 - `white-space: normal | nowrap | pre`
 - `vertical-align`
 
@@ -150,19 +151,19 @@ These accept author CSS without complaint but have zero effect on rendering. Eve
 
 | Property | Parsed | Layout reads? | Redraw reads? | Impact |
 |---|---|---|---|---|
-| `background-attachment` | yes | no | **yes (fixes137)** | non-repeating bg-image: anchors to viewport. Repeat-fixed and gradient-fixed deferred. |
-| `caption-side` | yes | no | no | table caption position ignored |
-| `column-count` | yes | no | no | multi-column text layout broken |
-| `column-fill` | yes | no | no | |
-| `column-rule-*` | yes | no | no | rule between columns ignored |
-| `column-span` | yes | no | no | |
-| `column-width` | yes | no | no | |
+| `background-attachment` | yes | no | **yes (fixes137 + fixes138)** | viewport anchor + repeating tile parallax both shipped. Gradient-fixed deferred. |
+| `caption-side` | yes | no | no | **Audited fixes139: deferred.** `<caption>` maps to `BOX_INLINE` in `box_construct.c:139`; no `BOX_TABLE_CAPTION` type exists. Proper support requires new box type + normalise rewrite + table-layout sibling placement. Multi-file structural change, not a minimal round. |
+| `column-count` | yes | no | no | multi-column text layout broken. Deferred — text-balancing across columns is genuinely complex. |
+| `column-fill` | yes | no | no | depends on column-count |
+| `column-rule-*` | yes | no | no | depends on column-count |
+| `column-span` | yes | no | no | depends on column-count |
+| `column-width` | yes | no | no | depends on column-count |
 | `quotes` | yes | no | no | `q { quotes: ... }` ignored |
-| `empty-cells` | yes | no | no | empty table cell handling |
-| `table-layout` | yes | no | no | fixed vs auto table layout |
+| `empty-cells` | yes | no | **yes (fixes139a)** | show/hide both honored; hidden empty cells skip background + border paint while keeping their layout slot |
+| `table-layout` | yes | no | no | **Audited fixes139: deferred.** 1064 lines of dedicated table.c + table integration in layout.c. Too risky for one round per sprint rule "do not destabilize all table layout". |
 | `unicode-bidi` | yes | no | no | bidi text |
 | `writing-mode` | yes | no | no | vertical-writing pages broken |
-| `word-spacing` | yes | no | no | typography accuracy |
+| `word-spacing` | yes | **yes (fixes139b)** | **yes (fixes139b)** | length values shift word gaps; layout and paint both updated so wrap point follows |
 | `break-after`, `break-before`, `break-inside` | yes | no | no | print/column breaks |
 | `page-break-*` | yes | no | no | print breaks |
 | `orphans`, `widows` | yes | no | no | print typography |
@@ -170,8 +171,12 @@ These accept author CSS without complaint but have zero effect on rendering. Eve
 
 **Highest-impact silent fails on real pages, ranked:**
 
-1. ~~**`background-attachment: fixed`**~~ **Shipped at fixes137 (2026-05-19)** for non-repeating bg-image. Parallax bg images now anchor to the viewport during scroll. Repeating-tile fixed and gradient-fixed still deferred.
-2. **`column-count`** — Magazine-style multi-column text. Visible on news / blog reading layouts.
+1. ~~**`background-attachment: fixed`**~~ **Shipped at fixes137 + fixes138 (2026-05-19).** Viewport-anchored origin + repeating-tile parallax both work end-to-end. Gradient-fixed still deferred.
+2. ~~**`empty-cells`**~~ **Shipped at fixes139a (2026-05-19).** Hidden empty cells skip background + border paint; cell still occupies its layout slot. Whitespace-only counts as empty per spec.
+3. ~~**`word-spacing`**~~ **Shipped at fixes139b (2026-05-19).** Length values resolve through the same plot_font_style_t field as letter-spacing; macos9_font_measure counts ASCII spaces and updates the wrap point so layout and paint agree.
+4. **`column-count`** — Magazine-style multi-column text. Deferred — text-balancing across columns is genuinely complex.
+5. **`caption-side`** — Audited fixes139, **deferred**. Captions currently fall through as BOX_INLINE because no BOX_TABLE_CAPTION type exists in this fork. Real support needs box_construct + box_normalise + table-layout coordination.
+6. **`table-layout`** — Audited fixes139, **deferred**. 1064 lines of dedicated table layout code; the sprint rule "do not destabilize all table layout" forbids a one-round attempt.
 
 (`min-height` and viewport units were previously listed here. Both shipped in fixes132. `z-index` shipped in fixes133. `counter-increment` / `counter-reset` shipped in fixes134b — see "What actually works" section.)
 

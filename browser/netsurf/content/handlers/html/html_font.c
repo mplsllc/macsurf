@@ -177,6 +177,22 @@ void font_plot_style_from_css(
 			fstyle->letter_spacing = 0;
 		}
 	}
+	/* fixes139b: word-spacing. Resolves like letter-spacing but only
+	 * affects ASCII spaces (0x20) at paint and measure time. NORMAL or
+	 * INHERIT => 0. */
+	{
+		css_fixed ws_len = 0;
+		css_unit ws_unit = CSS_UNIT_PX;
+		uint8_t ws_status = css_computed_word_spacing(css,
+				&ws_len, &ws_unit);
+		if (ws_status == CSS_WORD_SPACING_SET) {
+			fstyle->word_spacing = (int)FIXTOINT(
+				css_unit_len2device_px(css, unit_len_ctx,
+					ws_len, ws_unit));
+		} else {
+			fstyle->word_spacing = 0;
+		}
+	}
 	/* fixes50: -macsurf-text-shadow packed value.
 	 *   bits 31..24 h-offset px (int8)
 	 *   bits 23..16 v-offset px (int8)

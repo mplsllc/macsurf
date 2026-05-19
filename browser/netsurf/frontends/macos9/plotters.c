@@ -1256,6 +1256,7 @@ macos9_plot_text(const struct redraw_context *ctx,
 		size_t mac_len;
 		RgnHandle saved_clip;
 		int ls;
+		int ws;
 		int sx;
 		int sy;
 
@@ -1263,6 +1264,11 @@ macos9_plot_text(const struct redraw_context *ctx,
 				sizeof(mac_buf));
 		saved_clip = macos9_push_clip();
 		ls = (fstyle != NULL) ? fstyle->letter_spacing : 0;
+		/* fixes139b: word-spacing pulled out so the per-char branch
+		 * below can add it whenever the just-drawn glyph is an ASCII
+		 * space. ws == 0 (the common case) keeps the fast DrawText
+		 * path eligible. */
+		ws = (fstyle != NULL) ? fstyle->word_spacing : 0;
 		sx = (fstyle != NULL) ? fstyle->shadow_x : 0;
 		sy = (fstyle != NULL) ? fstyle->shadow_y : 0;
 
@@ -1315,7 +1321,7 @@ macos9_plot_text(const struct redraw_context *ctx,
 			if (clamped_sy >  16) clamped_sy =  16;
 			macos9_colour_to_rgb(fstyle->shadow_color, &shadow_rgb);
 			RGBForeColor(&shadow_rgb);
-			if (ls == 0 || mac_len <= 1) {
+			if ((ls == 0 && ws == 0) || mac_len <= 1) {
 				MoveTo((short)(x + clamped_sx),
 				       (short)(y + clamped_sy));
 				DrawText(mac_buf, 0, (short)mac_len);
@@ -1323,36 +1329,41 @@ macos9_plot_text(const struct redraw_context *ctx,
 				size_t i;
 				short pen_x = (short)(x + clamped_sx);
 				short cw;
+				int gap;
 				for (i = 0; i < mac_len; i++) {
 					MoveTo(pen_x,
 					       (short)(y + clamped_sy));
 					DrawText(mac_buf, (short)i, 1);
 					cw = (short)CharWidth(mac_buf[i]);
-					pen_x = (short)(pen_x + cw + ls);
+					gap = ls;
+					if (mac_buf[i] == ' ') gap += ws;
+					pen_x = (short)(pen_x + cw + gap);
 				}
 			}
 			/* Restore foreground for the main pass. */
 			RGBForeColor(&rgb);
 		}
 
-		if (ls == 0 || mac_len <= 1) {
+		if ((ls == 0 && ws == 0) || mac_len <= 1) {
 			MoveTo((short)x, (short)y);
 			DrawText(mac_buf, 0, (short)mac_len);
 		} else {
-			/* fixes42: letter-spacing fast-fallback. QuickDraw
-			 * has no built-in CharExtra; draw one MacRoman
-			 * glyph at a time, advancing pen by the glyph width
-			 * plus letter-spacing pixels. Slower than the bulk
-			 * DrawText but exercised only when CSS specifies a
-			 * non-default letter-spacing. */
+			/* fixes42 + fixes139b: per-glyph paint path. ls
+			 * inserts after every glyph; ws additionally inserts
+			 * after each ASCII space. Slower than bulk DrawText
+			 * but exercised only when CSS specifies non-default
+			 * letter-spacing or word-spacing. */
 			size_t i;
 			short pen_x = (short)x;
 			short cw;
+			int gap;
 			for (i = 0; i < mac_len; i++) {
 				MoveTo(pen_x, (short)y);
 				DrawText(mac_buf, (short)i, 1);
 				cw = (short)CharWidth(mac_buf[i]);
-				pen_x = (short)(pen_x + cw + ls);
+				gap = ls;
+				if (mac_buf[i] == ' ') gap += ws;
+				pen_x = (short)(pen_x + cw + gap);
 			}
 		}
 		macos9_pop_clip(saved_clip);

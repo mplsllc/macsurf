@@ -358,6 +358,35 @@ static void html_redraw_apply_object_fit(struct box *box,
 }
 
 
+/* fixes139a: recursive emptiness test for table cells. A cell is empty
+ * (per CSS 2.1 §17.6.1) when it has no visible content -- whitespace
+ * counts as empty. Replaced objects, form gadgets, iframes, generated
+ * content (object on the box) all count as visible. Non-whitespace
+ * text in box->text counts as visible. The walker returns false the
+ * moment it sees any visible content. */
+static bool html_box_table_cell_is_empty(const struct box *box)
+{
+	const struct box *c;
+	if (box == NULL)
+		return true;
+	if (box->object != NULL || box->gadget != NULL || box->iframe != NULL)
+		return false;
+	if (box->text != NULL && box->length > 0) {
+		size_t i;
+		for (i = 0; i < box->length; i++) {
+			unsigned char ch = (unsigned char) box->text[i];
+			if (ch != ' ' && ch != '\t' && ch != '\n' &&
+					ch != '\r' && ch != '\f' && ch != 0xA0)
+				return false;
+		}
+	}
+	for (c = box->children; c != NULL; c = c->next) {
+		if (!html_box_table_cell_is_empty(c))
+			return false;
+	}
+	return true;
+}
+
 static bool html_redraw_box_has_background(struct box *box)
 {
 	if (box->background != NULL)
@@ -2410,11 +2439,24 @@ bool html_redraw_box(const html_content *html, struct box *box,
 
 	bg_box = html_redraw_find_bg_box(box);
 
+	/* fixes139a: CSS 2.1 empty-cells: hide -- a table cell with no
+	 * visible content should not paint its background or border. Both
+	 * paint blocks below short-circuit when this flag is true. Layout
+	 * is unaffected; the cell still occupies its allocated space. */
+	{
+		bool empty_cell_hide = false;
+		if (box->type == BOX_TABLE_CELL && box->style != NULL &&
+				css_computed_empty_cells(box->style) ==
+				CSS_EMPTY_CELLS_HIDE &&
+				html_box_table_cell_is_empty(box)) {
+			empty_cell_hide = true;
+		}
+
 	/* bg_box == NULL implies that this box should not have
 	* its background rendered. Otherwise filter out linebreaks,
 	* optimize away non-differing inlines, only plot background
 	* for BOX_TEXT it's in an inline */
-	if (bg_box && bg_box->type != BOX_BR &&
+	if (!empty_cell_hide && bg_box && bg_box->type != BOX_BR &&
 			bg_box->type != BOX_TEXT &&
 			bg_box->type != BOX_INLINE_END &&
 			(bg_box->type != BOX_INLINE || bg_box->object ||
@@ -2465,7 +2507,7 @@ bool html_redraw_box(const html_content *html, struct box *box,
 	}
 
 	/* borders for block level content and replaced inlines */
-	if (box->style &&
+	if (!empty_cell_hide && box->style &&
 	    box->type != BOX_TEXT &&
 	    box->type != BOX_INLINE_END &&
 	    (box->type != BOX_INLINE || box->object ||
@@ -2480,6 +2522,7 @@ bool html_redraw_box(const html_content *html, struct box *box,
 				scale, ctx))
 			return false;
 	}
+	}  /* end empty_cell_hide scope (fixes139a) */
 
 	/* backgrounds and borders for non-replaced inlines */
 	if (box->style && box->type == BOX_INLINE && box->inline_end &&

@@ -190,6 +190,23 @@ macos9_font_measure(const struct plot_font_style *fstyle,
                 if (width < 0) width = 0;
         }
 
+        /* fixes139b: word-spacing inserted after each ASCII space in
+         * the MacRoman string. CSS word-spacing only affects literal
+         * spaces; the per-space accounting here keeps measure and
+         * paint in lockstep so wrap decisions match the painted
+         * glyph positions. */
+        if (fstyle != NULL && fstyle->word_spacing != 0 && mac_len > 0) {
+                size_t k;
+                int sc = 0;
+                for (k = 0; k < (size_t) mac_len; k++) {
+                        if (mac_str[k] == ' ') sc++;
+                }
+                if (sc > 0) {
+                        width += sc * fstyle->word_spacing;
+                        if (width < 0) width = 0;
+                }
+        }
+
         /* fixes51a -- anti-aliased TrueType glyphs (fixes51) can paint
          * a fringe pixel past the integer-pixel TextWidth value. NetSurf's
          * inline layout uses font_width to choose line breaks, and any
