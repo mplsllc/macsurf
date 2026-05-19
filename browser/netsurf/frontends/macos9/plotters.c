@@ -51,6 +51,33 @@ long macos9_plot_rect_count = 0;
  * Set to 0 to disable instantly. */
 #define MACSURF_SUBAA_DRAW_SPACING 1
 
+/* fixes145: font-family alias dispatch. NetSurf core resolves the
+ * CSS font-family list ("Helvetica, Arial, sans-serif", etc.) into
+ * one of 5 generic categories before plot_font_style is built; we
+ * dispatch on that enum rather than string-matching individual
+ * names.
+ *
+ *   PLOT_FONT_FAMILY_MONOSPACE  -> Monaco
+ *   PLOT_FONT_FAMILY_SERIF      -> Times (kFontIDTimes = 20)
+ *   PLOT_FONT_FAMILY_SANS_SERIF -> Helvetica (current calibration target)
+ *   PLOT_FONT_FAMILY_CURSIVE    -> Helvetica (no Mac cursive system font)
+ *   PLOT_FONT_FAMILY_FANTASY    -> Helvetica (no Mac fantasy system font)
+ *
+ * Helvetica stays as the sans-serif target rather than Geneva: all
+ * the fixes51 / 68-70 / 144a/b font tuning was done against Helvetica
+ * TT metrics. Geneva is a viable secondary target but flipping the
+ * default would re-open all that calibration work.
+ *
+ * Baseline-drift risk: fixes52 force-collapsed every CSS family to
+ * Helvetica because NetSurf's inline layout had a bug where a single
+ * line mixing fonts with different installed metrics (body + inline
+ * <code>) stacked lines 2-4px on top of each other. The proper fix
+ * is real per-font ascent/descent through gui_layout_table (deferred
+ * -- needs NetSurf-core work). This flag is the experiment: ship the
+ * alias dispatch, hardware-probe for inline-mix drift, revert if it
+ * reproduces. Set to 0 to fall back to fixes52's behaviour. */
+#define MACSURF_FONT_FAMILY_ALIASES 1
+
 /* fixes74b: counters incremented by redraw.c when it detects
  * CSS_MACSURF_GRADIENT_SET. Lets us see whether the cascade returned
  * SET independently of whether the plotter painted a gradient. */
@@ -147,6 +174,24 @@ static int macos9_name_match(const char *s, size_t n, const char *name)
 short
 macos9_font_id_from_style(const plot_font_style_t *fstyle)
 {
+#if MACSURF_FONT_FAMILY_ALIASES
+	/* fixes145 -- dispatch on generic family. See top-of-file
+	 * comment for the alias table and the baseline-drift caveat. */
+	if (fstyle == NULL) {
+		return kFontIDHelvetica;
+	}
+	switch (fstyle->family) {
+	case PLOT_FONT_FAMILY_MONOSPACE:
+		return kFontIDMonaco;
+	case PLOT_FONT_FAMILY_SERIF:
+		return kFontIDTimes;
+	case PLOT_FONT_FAMILY_SANS_SERIF:
+	case PLOT_FONT_FAMILY_CURSIVE:
+	case PLOT_FONT_FAMILY_FANTASY:
+	default:
+		return kFontIDHelvetica;
+	}
+#else
 	/* fixes52 -- force Helvetica for every CSS font-family. NetSurf's
 	 * inline layout has a baseline-drift bug whenever a single line
 	 * mixes fonts with different installed metrics (e.g. body text
@@ -157,12 +202,10 @@ macos9_font_id_from_style(const plot_font_style_t *fstyle)
 	 * to a single font, and pick Helvetica because it ships with a
 	 * full TrueType outline on every Mac OS 9 system (so the
 	 * SetOutlinePreferred call from fixes51 renders it smoothly at
-	 * any pt size). Cost: <code>/<kbd>/<samp> blocks lose their
-	 * monospace look — they stay readable, just not visually
-	 * distinct from body text. Bold/italic face variants still
-	 * apply via macos9_face_from_style, so emphasis is preserved. */
+	 * any pt size). */
 	(void)fstyle;
 	return kFontIDHelvetica;
+#endif
 }
 
 short
