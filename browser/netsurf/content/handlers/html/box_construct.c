@@ -501,8 +501,18 @@ box_construct_generate(struct box_construct_ctx *ctx,
 	enum css_display_e computed_display;
 	const css_computed_content_item *c_item;
 
-	/* Nothing to generate if the parent box is not a block */
-	if (box->type != BOX_BLOCK)
+	/* fixes140: previously the function bailed unless box was
+	 * BOX_BLOCK, which silently killed every q::before /
+	 * q::after rule because <q> is BOX_INLINE by default. Now
+	 * inline-class parents (BOX_INLINE, BOX_INLINE_BLOCK,
+	 * BOX_INLINE_FLEX) are allowed; the text-attach site below
+	 * branches on the parent type and adds BOX_TEXT directly to
+	 * the inline parent rather than wrapping it in an
+	 * INLINE_CONTAINER (which only belongs inside a block). */
+	if (box->type != BOX_BLOCK &&
+			box->type != BOX_INLINE &&
+			box->type != BOX_INLINE_BLOCK &&
+			box->type != BOX_INLINE_FLEX)
 		return;
 
 	/* To determine if an element has a pseudo element, we select
@@ -597,11 +607,13 @@ box_construct_generate(struct box_construct_ctx *ctx,
 			}
 		}
 
-		/* Parent must accept inline-level children. BOX_BLOCK is
-		 * the only safe shape we ship in phase A. */
-		if (box->type != BOX_BLOCK) {
-			return;
-		}
+		/* Parent must accept inline-level children. Inline-class
+		 * parents (BOX_INLINE, BOX_INLINE_BLOCK, BOX_INLINE_FLEX)
+		 * are now allowed; the function-entry guard at the top
+		 * already rejected anything that wouldn't take inline
+		 * content. The attach site below uses parent type to pick
+		 * between an INLINE_CONTAINER wrapper (block parents) and
+		 * direct attachment (inline parents). */
 
 		/* If display is BLOCK/TABLE the existing `gen` empty-box
 		 * path above already fired; don't double-materialise the
@@ -774,20 +786,12 @@ box_construct_generate(struct box_construct_ctx *ctx,
 		 * SAME container (props.inline_container tracking is reset
 		 * across recursive descent, but the box-tree ordering puts
 		 * BEFORE text and element text within siblings that
-		 * box_normalise then merges visually on render). */
-		if (box->last != NULL &&
-				box->last->type == BOX_INLINE_CONTAINER) {
-			container = box->last;
-		} else {
-			container = box_create(NULL, NULL, false,
-					NULL, NULL, NULL, NULL,
-					content->bctx);
-			if (container == NULL) {
-				return;
-			}
-			container->type = BOX_INLINE_CONTAINER;
-			box_add_child(box, container);
-		}
+		 * box_normalise then merges visually on render).
+		 *
+		 * fixes140: inline parents (BOX_INLINE etc) take BOX_TEXT
+		 * children directly -- BOX_INLINE_CONTAINER only belongs
+		 * inside a block parent. The branch below picks the right
+		 * shape based on box->type. */
 
 		/* BOX_TEXT carries the pseudo style (font/colour cascade
 		 * from ::before or ::after). style_owned=false because the
@@ -802,7 +806,29 @@ box_construct_generate(struct box_construct_ctx *ctx,
 		text_box->text = text;
 		text_box->length = pos;
 
-		box_add_child(container, text_box);
+		if (box->type == BOX_INLINE ||
+				box->type == BOX_INLINE_BLOCK ||
+				box->type == BOX_INLINE_FLEX) {
+			/* Inline parent: attach BOX_TEXT directly. */
+			box_add_child(box, text_box);
+		} else {
+			/* Block parent: keep the INLINE_CONTAINER wrapper
+			 * pattern from fixes134a/fix1. */
+			if (box->last != NULL &&
+					box->last->type == BOX_INLINE_CONTAINER) {
+				container = box->last;
+			} else {
+				container = box_create(NULL, NULL, false,
+						NULL, NULL, NULL, NULL,
+						content->bctx);
+				if (container == NULL) {
+					return;
+				}
+				container->type = BOX_INLINE_CONTAINER;
+				box_add_child(box, container);
+			}
+			box_add_child(container, text_box);
+		}
 	}
 }
 
