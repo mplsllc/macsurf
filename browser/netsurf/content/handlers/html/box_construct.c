@@ -446,13 +446,34 @@ box_construct_generate(dom_node *n,
 		text[pos] = '\0';
 
 		/* INLINE_CONTAINER (no style) holds the text box. Matches
-		 * the canonical pattern at convert_xml_to_box_text. */
-		container = box_create(NULL, NULL, false,
-				NULL, NULL, NULL, NULL, content->bctx);
-		if (container == NULL) {
-			return;
+		 * the canonical pattern at convert_xml_to_box_text.
+		 *
+		 * fixes134a-fix1: if box already has an INLINE_CONTAINER as
+		 * its last child, reuse it instead of creating a sibling.
+		 * Two adjacent INLINE_CONTAINERs are block-level adjacent
+		 * and force a line break between them, which made ::after
+		 * content render on a new line below the element text. The
+		 * ::before path doesn't hit this because box has no
+		 * children when the BEFORE call runs at line 700 -- so the
+		 * synthetic container becomes box's only inline container
+		 * and convert_children's later text additions land in the
+		 * SAME container (props.inline_container tracking is reset
+		 * across recursive descent, but the box-tree ordering puts
+		 * BEFORE text and element text within siblings that
+		 * box_normalise then merges visually on render). */
+		if (box->last != NULL &&
+				box->last->type == BOX_INLINE_CONTAINER) {
+			container = box->last;
+		} else {
+			container = box_create(NULL, NULL, false,
+					NULL, NULL, NULL, NULL,
+					content->bctx);
+			if (container == NULL) {
+				return;
+			}
+			container->type = BOX_INLINE_CONTAINER;
+			box_add_child(box, container);
 		}
-		container->type = BOX_INLINE_CONTAINER;
 
 		/* BOX_TEXT carries the pseudo style (font/colour cascade
 		 * from ::before or ::after). style_owned=false because the
@@ -468,7 +489,6 @@ box_construct_generate(dom_node *n,
 		text_box->length = pos;
 
 		box_add_child(container, text_box);
-		box_add_child(box, container);
 	}
 }
 
