@@ -38,6 +38,7 @@ These have been verified on hardware or in screenshots and produce the correct v
 - `float: left | right | none`
 - `clear: left | right | both | none`
 - `visibility: visible | hidden`
+- `z-index: <integer>` (basic positioned stacking, two-pass paint — fixes133)
 
 ### Flexbox
 - `flex-direction: row | row-reverse | column | column-reverse`
@@ -124,7 +125,6 @@ These accept author CSS without complaint but have zero effect on rendering. Eve
 | `unicode-bidi` | yes | no | no | bidi text |
 | `writing-mode` | yes | no | no | vertical-writing pages broken |
 | `word-spacing` | yes | no | no | typography accuracy |
-| `z-index` | yes | no | no | **stacking order ignored — overlaps wrong** |
 | `break-after`, `break-before`, `break-inside` | yes | no | no | print/column breaks |
 | `page-break-*` | yes | no | no | print breaks |
 | `orphans`, `widows` | yes | no | no | print typography |
@@ -132,12 +132,11 @@ These accept author CSS without complaint but have zero effect on rendering. Eve
 
 **Highest-impact silent fails on real pages, ranked:**
 
-1. **`z-index`** — Modal dialogs, dropdowns, fixed nav bars, tooltips all rely on z-index to stack above page content. Without it, the cascade falls back to DOM tree order. Visible symptom: dropdowns paint UNDER the content below them; modals paint UNDER the page that called them.
-2. **`background-attachment: fixed`** — Parallax sites scroll their backgrounds. Visible only on specific sites.
-3. **`counter-increment` / `counter-reset`** — Auto-numbered lists, table-of-contents, footnotes. Visible on documentation sites.
-4. **`column-count`** — Magazine-style multi-column text. Visible on news / blog reading layouts.
+1. **`background-attachment: fixed`** — Parallax sites scroll their backgrounds. Visible only on specific sites.
+2. **`counter-increment` / `counter-reset`** — Auto-numbered lists, table-of-contents, footnotes. Visible on documentation sites.
+3. **`column-count`** — Magazine-style multi-column text. Visible on news / blog reading layouts.
 
-(`min-height` was previously listed here. It is fully consumed in layout — the symptom was a viewport-unit conversion bug fixed in fixes132.)
+(`min-height` and viewport units were previously listed here. Both shipped in fixes132. `z-index` shipped in fixes133 — see "What actually works" section.)
 
 ---
 
@@ -184,17 +183,9 @@ Probably fixed by fixes77g, needs verification. Workaround: File → New Window.
 
 Ranked by visual impact on real-world pages. Each priority is a discrete shippable round.
 
-### P0 — `z-index` and stacking contexts (HIGH impact, MEDIUM effort)
+### P0 — `z-index` basic positioned stacking — SHIPPED (fixes133)
 
-Modern pages cannot render correctly without z-index. Every dropdown, modal, tooltip, sticky header relies on this.
-
-**Scope:**
-- Add `css_computed_z_index` read in `redraw.c` `html_redraw_box`
-- Sort children by `(z-index, dom-order)` before paint when a box establishes a stacking context (any positioned element with `z-index != auto`, opacity < 1, transform != none)
-- The stacking context rules are involved — see CSS Painting Order spec for the full 7-level paint order
-
-**Files:** `redraw.c`, possibly a new `redraw_stacking.c` helper.
-**Estimated rounds:** 1-2 (one for `z-index: N` on positioned elements, second for stacking contexts proper).
+`html_redraw_box_children` in `redraw.c` now paints in two passes: pass 1 walks non-z-indexed children in DOM order; pass 2 stable-sorts positioned children with explicit `z-index` by ascending z-index and paints them on top. Fixed-size buffer (64) per level — overflow falls back to DOM order paint. Negative z-index treated same as zero in this pass (paints after parent's content, not before). Full CSS 2.1 painting order (negative-z-before-parent, opacity/transform stacking contexts, full 7-level paint order) is deferred to v2.
 
 ### P1 — `min-height` — SHIPPED (fixes132)
 

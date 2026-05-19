@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>z-index test (fixes133)</title>
+<style>
+body { font-family: Geneva; margin: 8px; background: #fff; color: #000; }
+.section { margin-bottom: 24px; }
+.label { font-size: 10pt; margin: 4px 0; }
+.frame { position: relative; height: 280px; border: 1px solid #888; background: #f4f4f4; }
+
+/* Section A: three overlapping absolute boxes.
+   DOM order is red, green, blue (back-to-front in default DOM-order paint).
+   With z-index: red=1, green=3, blue=2 — expected paint order from back
+   to front is red, blue, green.  Green must visually be on top. */
+.box {
+  position: absolute;
+  width: 180px;
+  height: 120px;
+  color: #fff;
+  font-size: 10pt;
+  padding: 8px;
+}
+.a-red   { background: #c33; top: 30px;  left: 30px;  z-index: 1; }
+.a-green { background: #393; top: 70px;  left: 80px;  z-index: 3; }
+.a-blue  { background: #339; top: 110px; left: 130px; z-index: 2; }
+
+/* Section B: dropdown menu.  Menu items should appear above content. */
+.menu-bar {
+  position: relative;
+  z-index: 10;
+  background: #cce;
+  padding: 6px;
+}
+.menu-item {
+  display: inline-block;
+  position: relative;
+  padding: 4px 12px;
+  background: #99c;
+}
+.dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 999;
+  background: #fff;
+  border: 1px solid #336;
+  width: 160px;
+  padding: 4px;
+}
+.b-content {
+  background: #ddd;
+  padding: 20px;
+  position: relative;
+  z-index: 1;
+}
+</style>
+</head>
+<body>
+
+<div class="section">
+  <div class="label">A: three overlapping absolute boxes (DOM: red, green, blue; z: 1, 3, 2). Green should be on top, blue middle, red bottom:</div>
+  <div class="frame">
+    <div class="box a-red">red z=1</div>
+    <div class="box a-green">green z=3</div>
+    <div class="box a-blue">blue z=2</div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">B: dropdown menu. The "FILE OPEN..." dropdown should overlap the grey content area below:</div>
+  <div class="menu-bar">
+    <div class="menu-item">
+      File
+      <div class="dropdown">
+        Open...<br>
+        Save<br>
+        Quit
+      </div>
+    </div>
+    <div class="menu-item">Edit</div>
+    <div class="menu-item">View</div>
+  </div>
+  <div class="b-content">
+    Body content here.<br>
+    More body content.<br>
+    The dropdown above should overlap this region cleanly.
+  </div>
+</div>
+
+</body>
+</html>

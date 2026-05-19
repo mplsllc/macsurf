@@ -1860,6 +1860,34 @@ bool html_redraw_box(const html_content *html, struct box *box,
  * \return true if successful, false otherwise
  */
 
+/*
+ * fixes133: z-index aware child paint.
+ *
+ * A child is "z-indexed" if it is positioned (position != static) AND has
+ * an explicit z-index (not auto).  Such children paint in z-index order
+ * AFTER all other in-flow / position-auto children, with DOM order as a
+ * stable tie-breaker.  Non-positioned and position-auto children paint in
+ * DOM order as before.
+ *
+ * Negative z-index is treated the same as zero in this pass — strictly per
+ * CSS 2.1 it should paint before the parent's content, but doing so would
+ * require splitting the call site in html_redraw_box.  Deferred.
+ *
+ * Fixed-size buffer (MACOS9_Z_BUF) caps z-indexed siblings per level.
+ * Overflow falls back to DOM-order paint (acceptable degradation).
+ */
+#define MACOS9_Z_BUF 64
+
+static int html_redraw_box_is_z_indexed(const struct box *c, int32_t *zout)
+{
+	int32_t z = 0;
+	if (c->style == NULL) return 0;
+	if (css_computed_position(c->style) == CSS_POSITION_STATIC) return 0;
+	if (css_computed_z_index(c->style, &z) != CSS_Z_INDEX_SET) return 0;
+	*zout = z;
+	return 1;
+}
+
 static bool html_redraw_box_children(const html_content *html, struct box *box,
 		int x_parent, int y_parent,
 		const struct rect *clip, float scale,
@@ -1867,28 +1895,64 @@ static bool html_redraw_box_children(const html_content *html, struct box *box,
 		const struct redraw_context *ctx)
 {
 	struct box *c;
+	struct box *z_buf[MACOS9_Z_BUF];
+	int32_t z_vals[MACOS9_Z_BUF];
+	int z_count = 0;
+	int32_t zval = 0;
+	int i, j;
+	int x_off, y_off;
 
+	x_off = x_parent + box->x - scrollbar_get_offset(box->scroll_x);
+	y_off = y_parent + box->y - scrollbar_get_offset(box->scroll_y);
+
+	/* Pass 1: paint non-z-indexed children in DOM order; collect z-indexed
+	 * children into z_buf.  Floats are skipped here and handled below. */
 	for (c = box->children; c; c = c->next) {
+		if (c->type == BOX_FLOAT_LEFT || c->type == BOX_FLOAT_RIGHT)
+			continue;
 
-		if (c->type != BOX_FLOAT_LEFT && c->type != BOX_FLOAT_RIGHT)
-			if (!html_redraw_box(html, c,
-					x_parent + box->x -
-					scrollbar_get_offset(box->scroll_x),
-					y_parent + box->y -
-					scrollbar_get_offset(box->scroll_y),
-					clip, scale, current_background_color,
-					ctx))
-				return false;
-	}
-	for (c = box->float_children; c; c = c->next_float)
-		if (!html_redraw_box(html, c,
-				x_parent + box->x -
-				scrollbar_get_offset(box->scroll_x),
-				y_parent + box->y -
-				scrollbar_get_offset(box->scroll_y),
-				clip, scale, current_background_color,
-				ctx))
+		if (html_redraw_box_is_z_indexed(c, &zval)) {
+			if (z_count < MACOS9_Z_BUF) {
+				z_buf[z_count] = c;
+				z_vals[z_count] = zval;
+				z_count++;
+				continue;
+			}
+			/* Buffer full — fall back to DOM-order paint. */
+		}
+
+		if (!html_redraw_box(html, c, x_off, y_off,
+				clip, scale, current_background_color, ctx))
 			return false;
+	}
+
+	/* Pass 2: stable bubble sort z_buf by z-index ascending. */
+	for (i = 0; i < z_count - 1; i++) {
+		for (j = 0; j < z_count - 1 - i; j++) {
+			if (z_vals[j] > z_vals[j + 1]) {
+				int32_t tv = z_vals[j];
+				struct box *tb = z_buf[j];
+				z_vals[j] = z_vals[j + 1];
+				z_buf[j] = z_buf[j + 1];
+				z_vals[j + 1] = tv;
+				z_buf[j + 1] = tb;
+			}
+		}
+	}
+
+	/* Pass 3: paint z-indexed children in sorted order, on top of pass 1. */
+	for (i = 0; i < z_count; i++) {
+		if (!html_redraw_box(html, z_buf[i], x_off, y_off,
+				clip, scale, current_background_color, ctx))
+			return false;
+	}
+
+	/* Floats (unchanged from pre-fixes133 behaviour). */
+	for (c = box->float_children; c; c = c->next_float) {
+		if (!html_redraw_box(html, c, x_off, y_off,
+				clip, scale, current_background_color, ctx))
+			return false;
+	}
 
 	return true;
 }
