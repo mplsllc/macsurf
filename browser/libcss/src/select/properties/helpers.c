@@ -513,9 +513,6 @@ css_error css__cascade_break_after_before_inside(uint32_t opv,
 	return CSS_OK;
 }
 
-/* fixes134c2 diagnostic. Same MS_LOG channel as box_construct.c. */
-extern void macsurf_debug_log_writef(const char *fmt, ...);
-
 css_error css__cascade_counter_increment_reset(uint32_t opv, css_style *style,
 		css_select_state *state,
 		css_error (*fun)(css_computed_style *, uint8_t,
@@ -524,12 +521,6 @@ css_error css__cascade_counter_increment_reset(uint32_t opv, css_style *style,
 	uint16_t value = CSS_COUNTER_INCREMENT_INHERIT;
 	css_computed_counter *counters = NULL;
 	uint32_t n_counters = 0;
-
-	macsurf_debug_log_writef(
-		"CTR cascade enter opv=%d getValue=%d hasFlag=%d",
-		(int)opv,
-		(int)getValue(opv),
-		(int)hasFlagValue(opv));
 
 	if (hasFlagValue(opv) == false) {
 		switch (getValue(opv)) {
@@ -568,6 +559,19 @@ css_error css__cascade_counter_increment_reset(uint32_t opv, css_style *style,
 				v = *((uint32_t *) style->bytecode);
 				advance_bytecode(style, sizeof(css_code_t));
 			}
+
+			/* fixes134d: upstream libcss bug. The NAMED branch
+			 * builds the counters array but never sets `value`,
+			 * leaving it at the default CSS_COUNTER_INCREMENT_
+			 * INHERIT (0). The setter then writes bit=0 to the
+			 * 1-bit type field even though counter_arr is non-
+			 * NULL. The compose pass at counter_increment.c:85
+			 * (and counter_reset.c:85) reads the bit, sees
+			 * INHERIT, copies from PARENT instead of child --
+			 * and parent has the initial (NULL) array. The
+			 * counter list the cascade just built is discarded.
+			 * One-line fix: declare the bit NAMED. */
+			value = CSS_COUNTER_INCREMENT_NAMED;
 		}
 			break;
 		case COUNTER_INCREMENT_NONE:
@@ -592,12 +596,6 @@ css_error css__cascade_counter_increment_reset(uint32_t opv, css_style *style,
 		counters[n_counters].name = NULL;
 		counters[n_counters].value = 0;
 	}
-
-	macsurf_debug_log_writef(
-		"CTR cascade pre-set value=%d n=%d counters=%p outranks=%d",
-		(int)value, (int)n_counters, (void *)counters,
-		(int)css__outranks_existing(getOpcode(opv), isImportant(opv),
-				state, getFlagValue(opv)));
 
 	if (css__outranks_existing(getOpcode(opv), isImportant(opv), state,
 			getFlagValue(opv))) {

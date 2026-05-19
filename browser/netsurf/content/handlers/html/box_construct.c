@@ -55,12 +55,6 @@
 /* Diagnostic: count text boxes constructed during DOM->box conversion. */
 long macos9_box_text_created = 0;
 
-/* fixes134c diagnostic: file-backed log channel forward decls so the
- * counter helpers below can call them. The same externs appear lower
- * in the file for the recascade code; harmless duplication. */
-extern void macsurf_debug_log_writef(const char *fmt, ...);
-extern void macsurf_debug_log_write(const char *s);
-
 /**
  * Context for box tree construction
  */
@@ -377,44 +371,17 @@ counter_lookup_or_create(struct box_construct_ctx *ctx, lwc_string *name)
 	return e;
 }
 
-/* fixes134c diagnostic: log entry point + each counter list entry.
- * The check `state != CSS_COUNTER_RESET_NAMED` is left in place so
- * behaviour is unchanged from 134b, but logging runs BEFORE the early
- * return so we can see arr/state truth even when the apply skips. */
 static void
 counter_apply_reset(struct box_construct_ctx *ctx,
-		const css_computed_style *style,
-		const char *site)
+		const css_computed_style *style)
 {
 	const css_computed_counter *arr;
 	struct macsurf_counter_entry *e;
 	uint8_t state;
 
-	if (style == NULL) {
-		macsurf_debug_log_writef(
-			"CTR reset site=%s style=NULL skip",
-			site);
-		return;
-	}
+	if (style == NULL) return;
 	arr = NULL;
 	state = css_computed_counter_reset(style, &arr);
-	macsurf_debug_log_writef(
-		"CTR reset site=%s style=%p state=%d arr=%p named=%d none=%d",
-		site, (void *)style, (int)state, (void *)arr,
-		(int)CSS_COUNTER_RESET_NAMED,
-		(int)CSS_COUNTER_RESET_NONE);
-	if (arr != NULL) {
-		const css_computed_counter *w = arr;
-		int i = 0;
-		while (w->name != NULL && i < 8) {
-			macsurf_debug_log_writef(
-				"CTR reset item[%d] name=%s val=%d",
-				i, lwc_string_data(w->name),
-				(int)FIXTOINT(w->value));
-			w++;
-			i++;
-		}
-	}
 	if (state != CSS_COUNTER_RESET_NAMED || arr == NULL) return;
 
 	while (arr->name != NULL) {
@@ -428,38 +395,15 @@ counter_apply_reset(struct box_construct_ctx *ctx,
 
 static void
 counter_apply_increment(struct box_construct_ctx *ctx,
-		const css_computed_style *style,
-		const char *site)
+		const css_computed_style *style)
 {
 	const css_computed_counter *arr;
 	struct macsurf_counter_entry *e;
 	uint8_t state;
 
-	if (style == NULL) {
-		macsurf_debug_log_writef(
-			"CTR inc   site=%s style=NULL skip",
-			site);
-		return;
-	}
+	if (style == NULL) return;
 	arr = NULL;
 	state = css_computed_counter_increment(style, &arr);
-	macsurf_debug_log_writef(
-		"CTR inc   site=%s style=%p state=%d arr=%p named=%d none=%d",
-		site, (void *)style, (int)state, (void *)arr,
-		(int)CSS_COUNTER_INCREMENT_NAMED,
-		(int)CSS_COUNTER_INCREMENT_NONE);
-	if (arr != NULL) {
-		const css_computed_counter *w = arr;
-		int i = 0;
-		while (w->name != NULL && i < 8) {
-			macsurf_debug_log_writef(
-				"CTR inc   item[%d] name=%s val=%d",
-				i, lwc_string_data(w->name),
-				(int)FIXTOINT(w->value));
-			w++;
-			i++;
-		}
-	}
 	if (state != CSS_COUNTER_INCREMENT_NAMED || arr == NULL) return;
 
 	while (arr->name != NULL) {
@@ -543,8 +487,7 @@ box_construct_generate(struct box_construct_ctx *ctx,
 		       dom_node *n,
 		       html_content *content,
 		       struct box *box,
-		       const css_computed_style *style,
-		       const char *which_pseudo)
+		       const css_computed_style *style)
 {
 	struct box *gen = NULL;
 	enum css_display_e computed_display;
@@ -642,8 +585,8 @@ box_construct_generate(struct box_construct_ctx *ctx,
 		 * This is the half of the ordering rule that fires inside
 		 * the pseudo's lifetime; the element's NORMAL style
 		 * mutations fired earlier in box_construct_element. */
-		counter_apply_reset(ctx, style, which_pseudo);
-		counter_apply_increment(ctx, style, which_pseudo);
+		counter_apply_reset(ctx, style);
+		counter_apply_increment(ctx, style);
 
 		/* Pass 1: total byte length across STRING and COUNTER
 		 * items. Loop terminates at CSS_COMPUTED_CONTENT_NONE
@@ -689,16 +632,10 @@ box_construct_generate(struct box_construct_ctx *ctx,
 					c_item[i].data.counter.name != NULL) {
 				char nbuf[16];
 				size_t nlen;
-				int32_t v = counter_get_value(ctx,
-					c_item[i].data.counter.name);
-				macsurf_debug_log_writef(
-					"CTR get   site=%s name=%s val=%d",
-					which_pseudo,
-					lwc_string_data(
+				nlen = counter_fmt_decimal(
+					counter_get_value(ctx,
 						c_item[i].data.counter.name),
-					(int)v);
-				nlen = counter_fmt_decimal(v, nbuf,
-						sizeof(nbuf));
+					nbuf, sizeof(nbuf));
 				memcpy(text + pos, nbuf, nlen);
 				pos += nlen;
 			}
@@ -1071,14 +1008,13 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	 * with each pseudo's own (rare) counter mutations applied
 	 * inside box_construct_generate just before its content
 	 * materialises. */
-	counter_apply_reset(ctx, box->style, "ELEM");
-	counter_apply_increment(ctx, box->style, "ELEM");
+	counter_apply_reset(ctx, box->style);
+	counter_apply_increment(ctx, box->style);
 
 	/* Handle the :before pseudo element */
 	if (!(box->flags & IS_REPLACED)) {
 		box_construct_generate(ctx, ctx->n, ctx->content, box,
-				box->styles->styles[CSS_PSEUDO_ELEMENT_BEFORE],
-				"BEF");
+				box->styles->styles[CSS_PSEUDO_ELEMENT_BEFORE]);
 	}
 
 	if (box->type == BOX_NONE || (ns_computed_display(box->style,
@@ -1283,8 +1219,7 @@ static void box_construct_element_after(struct box_construct_ctx *ctx,
 		 * through next_node so counter mutations from this pseudo
 		 * and counter() resolution can use the live counter table. */
 		box_construct_generate(ctx, n, content, box,
-				box->styles->styles[CSS_PSEUDO_ELEMENT_AFTER],
-				"AFT");
+				box->styles->styles[CSS_PSEUDO_ELEMENT_AFTER]);
 	}
 }
 
