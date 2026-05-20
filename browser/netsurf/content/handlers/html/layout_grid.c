@@ -72,6 +72,11 @@
 #include "utils/log.h"
 #include "utils/utils.h"
 
+/* fixes159c: forward declare diagnostic log function from the
+ * macos9 frontend. Defined in macsurf_debug_log.c; called only
+ * inside the bounded `if (count < N)` diagnostic blocks below. */
+extern void macsurf_debug_log_writef(const char *fmt, ...);
+
 #include "html/box.h"
 #include "html/html.h"
 #include "html/private.h"
@@ -840,6 +845,28 @@ bool layout_grid(struct box *grid, int available_width, html_content *content)
 			(void)last_h;
 		}
 
+		/* fixes159c: one-shot diagnostic per redraw. Records the
+		 * container's resolved justify-items / align-items so we
+		 * can verify the cascade is actually reaching layout. */
+		{
+			static int macsurf__ga_diag_count = 0;
+			if (macsurf__ga_diag_count < 12) {
+				int32_t cj_dbg = (grid->style != NULL) ?
+					css_computed_macsurf_justify(grid->style) : -1;
+				uint8_t ai_dbg = (grid->style != NULL) ?
+					css_computed_align_items(grid->style) : 0;
+				macsurf_debug_log_writef(
+					"GADIAG cont: cj_raw=%ld ji_low_nib=%d ai_libcss=%d -> cji=%d cai=%d n_kids=%d cols=%d",
+					(long)cj_dbg,
+					(int)((uint32_t)cj_dbg & 0xFu),
+					(int)ai_dbg,
+					container_justify_items,
+					container_align_items,
+					n_children, cols);
+				macsurf__ga_diag_count++;
+			}
+		}
+
 		/* --- Pass 3: position each child, applying alignment
 		 * offsets from fixes159's justify/align resolution. */
 		child = grid->children;
@@ -906,6 +933,31 @@ bool layout_grid(struct box *grid, int available_width, html_content *content)
 			eff_align = macsurf_grid_effective_align(
 					item_align_self,
 					container_align_items);
+
+			/* fixes159c: per-child diagnostic, first 8 kids
+			 * across the first few grid containers. */
+			{
+				static int macsurf__ga_kid_count = 0;
+				if (macsurf__ga_kid_count < 32) {
+					int32_t cj_kid = (child->style != NULL) ?
+						css_computed_macsurf_justify(child->style) : -1;
+					uint8_t as_kid = (child->style != NULL) ?
+						css_computed_align_self(child->style) : 0;
+					macsurf_debug_log_writef(
+						"GADIAG kid#%d: cj_raw=%ld js_hi_nib=%d as_libcss=%d -> ijs=%d ias=%d -> eff_j=%d eff_a=%d w=%d h=%d cell_w=%d cell_h=%d col=%d",
+						slot_index,
+						(long)cj_kid,
+						(int)(((uint32_t)cj_kid >> 4) & 0xFu),
+						(int)as_kid,
+						item_justify_self,
+						item_align_self,
+						eff_justify, eff_align,
+						child->width, child->height,
+						cell_w, cell_h,
+						slot_col);
+					macsurf__ga_kid_count++;
+				}
+			}
 
 			/* Horizontal offset. Only applied when the child is
 			 * narrower than the cell (i.e. has an explicit
