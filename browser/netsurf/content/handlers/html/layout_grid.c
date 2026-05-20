@@ -185,6 +185,45 @@ struct macsurf_grid_slot {
 	int row_span;
 };
 
+/* fixes158a: bit-packed per-row occupancy. One uint8 per row, bit (1 << col)
+ * set if that cell is occupied. cols caps at MACSURF_GRID_TRACK_MAX = 8, which
+ * fits exactly in 8 bits. Auto-flow skips occupied cells so explicit
+ * placements stay visible. */
+static int macsurf_grid_cell_free(const unsigned char *occ, int col, int row)
+{
+	if (row < 0 || row >= MACSURF_GRID_ROWS_MAX) return 0;
+	if (col < 0 || col >= MACSURF_GRID_TRACK_MAX) return 0;
+	return (occ[row] & (unsigned char)(1u << col)) == 0;
+}
+
+static int macsurf_grid_run_free(const unsigned char *occ, int col, int row,
+		int col_span, int cols)
+{
+	int c;
+	for (c = col; c < col + col_span && c < cols; c++) {
+		if (!macsurf_grid_cell_free(occ, c, row)) return 0;
+	}
+	return 1;
+}
+
+static void macsurf_grid_mark(unsigned char *occ, int col, int row,
+		int col_span, int row_span, int cols)
+{
+	int r;
+	int c;
+	int end_r = row + row_span;
+	int end_c = col + col_span;
+	if (end_r > MACSURF_GRID_ROWS_MAX) end_r = MACSURF_GRID_ROWS_MAX;
+	if (end_c > cols) end_c = cols;
+	for (r = row; r < end_r; r++) {
+		if (r < 0) continue;
+		for (c = col; c < end_c; c++) {
+			if (c < 0 || c >= MACSURF_GRID_TRACK_MAX) continue;
+			occ[r] |= (unsigned char)(1u << c);
+		}
+	}
+}
+
 bool layout_grid(struct box *grid, int available_width, html_content *content)
 {
 	int32_t packed = 0;
@@ -405,21 +444,28 @@ bool layout_grid(struct box *grid, int available_width, html_content *content)
 		has_row_tracks = (n_row_tracks > 0);
 	}
 
-	/* fixes158: two-pass placement.
+	/* fixes158: three-pass placement.
 	 *
-	 * Pass 1 — assign each child a (col, row, col_span, row_span)
-	 *          using its computed `-macsurf-grid-col-span` packed
-	 *          placement, then lay out the child into the cell width.
-	 *          Track per-row max heights.
-	 * Pass 2 — once row heights are known, position each child.
+	 * Pass 0 — pre-mark cells occupied by every child that has an
+	 *          explicit placement (col_start AND row_start both > 0).
+	 *          Pass 1's auto-flow then skips those cells so the
+	 *          explicit items stay visible.
+	 * Pass 1 — assign each child a (col, row, col_span, row_span).
+	 *          Auto-flow advances row-major through unoccupied cells.
+	 * Pass 2 — lay out each child into its cell width; track per-row
+	 *          max heights.
+	 * Pass 3 — compute row_y once heights are known; position each
+	 *          child.
 	 *
-	 * Backwards compat: a child with col_start=0 row_start=0 (the
-	 * fixes151 zero-state) falls into the auto-flow branch and
-	 * behaves exactly like the original single-pass walker. */
+	 * Backwards compat: a child with all-zero placement falls into
+	 * the auto-flow branch and behaves exactly like the original
+	 * fixes151 walker (modulo skipping cells now occupied by
+	 * explicit siblings). */
 	{
 		struct macsurf_grid_slot slots[MACSURF_GRID_CHILDREN_MAX];
 		int row_max_h[MACSURF_GRID_ROWS_MAX];
 		int row_y_arr[MACSURF_GRID_ROWS_MAX];
+		unsigned char occupancy[MACSURF_GRID_ROWS_MAX];
 		int n_children = 0;
 		int cur_col = 0;
 		int cur_row = 0;
@@ -428,38 +474,86 @@ bool layout_grid(struct box *grid, int available_width, html_content *content)
 
 		memset(row_max_h, 0, sizeof(row_max_h));
 		memset(row_y_arr, 0, sizeof(row_y_arr));
+		memset(occupancy, 0, sizeof(occupancy));
 
-		/* --- Pass 1a: placement only. We must finalise every
-		 * slot's (col,row) before any layout so we know which row
-		 * to credit each child's height to. Auto-flow cursor only
-		 * advances on auto-placed items; explicit placements do
-		 * NOT consume cursor space (collision allowed, last wins
-		 * visually). */
+		/* --- Pass 0: reserve cells for explicit-both placements.
+		 * We only pre-reserve when BOTH axes are explicit because
+		 * that's the only case whose cell is knowable without
+		 * walking auto-flow. col-only / row-only explicit items
+		 * are still cursor-dependent on the other axis and get
+		 * resolved during pass 1; their cells are marked there. */
 		child = grid->children;
-		while (child != NULL) {
+		while (child != NULL && n_children <
+				MACSURF_GRID_CHILDREN_MAX) {
 			int32_t packed = 0;
-			int col_start = 0;
-			int col_span = 1;
-			int row_start = 0;
-			int row_span = 1;
-			int slot_col;
-			int slot_row;
-
-			if (n_children >= MACSURF_GRID_CHILDREN_MAX) {
-				/* Too many children — stop placing here.
-				 * Remaining children stay where box_construct
-				 * left them. Documented V1 limit. */
-				break;
-			}
+			int col_start;
+			int row_start;
+			int col_span;
+			int row_span;
 
 			if (child->style != NULL) {
 				packed = css_computed_macsurf_grid_placement(
 						child->style);
 			}
-			col_span = (int)((uint32_t)packed & 0xff);
-			col_start = (int)(((uint32_t)packed >> 8) & 0xff);
+			col_span  = (int)((uint32_t)packed         & 0xff);
+			col_start = (int)(((uint32_t)packed >>  8) & 0xff);
 			row_start = (int)(((uint32_t)packed >> 16) & 0xff);
-			row_span = (int)(((uint32_t)packed >> 24) & 0xff);
+			row_span  = (int)(((uint32_t)packed >> 24) & 0xff);
+
+			if (col_start > 0 && row_start > 0) {
+				int sc = col_start - 1;
+				int sr = row_start - 1;
+				int span_c;
+				int span_r;
+				if (col_span == 0) col_span = 1;
+				if (col_span == 255) {
+					span_c = cols - sc;
+				} else {
+					span_c = col_span;
+				}
+				if (row_span == 0) row_span = 1;
+				span_r = (row_span == 255) ? 1 : row_span;
+				if (sc < 0) sc = 0;
+				if (sc >= cols) sc = cols - 1;
+				if (sc + span_c > cols) span_c = cols - sc;
+				if (span_c < 1) span_c = 1;
+				if (sr < 0) sr = 0;
+				if (sr >= MACSURF_GRID_ROWS_MAX)
+					sr = MACSURF_GRID_ROWS_MAX - 1;
+				if (sr + span_r > MACSURF_GRID_ROWS_MAX)
+					span_r = MACSURF_GRID_ROWS_MAX - sr;
+				if (span_r < 1) span_r = 1;
+				macsurf_grid_mark(occupancy, sc, sr,
+						span_c, span_r, cols);
+			}
+
+			n_children++;
+			child = child->next;
+		}
+
+		/* --- Pass 1: assign every child a slot. */
+		n_children = 0;
+		cur_col = 0;
+		cur_row = 0;
+		child = grid->children;
+		while (child != NULL && n_children <
+				MACSURF_GRID_CHILDREN_MAX) {
+			int32_t packed = 0;
+			int col_start;
+			int col_span;
+			int row_start;
+			int row_span;
+			int slot_col;
+			int slot_row;
+
+			if (child->style != NULL) {
+				packed = css_computed_macsurf_grid_placement(
+						child->style);
+			}
+			col_span  = (int)((uint32_t)packed         & 0xff);
+			col_start = (int)(((uint32_t)packed >>  8) & 0xff);
+			row_start = (int)(((uint32_t)packed >> 16) & 0xff);
+			row_span  = (int)(((uint32_t)packed >> 24) & 0xff);
 
 			/* Resolve span sentinels and zero defaults. */
 			if (col_span == 0) col_span = 1;
@@ -470,29 +564,76 @@ bool layout_grid(struct box *grid, int available_width, html_content *content)
 				if (col_span < 1) col_span = 1;
 			}
 			if (row_span == 0) row_span = 1;
-			if (row_span == 255) {
-				/* "Fill" sentinel on row: V1 degrades to 1. */
-				row_span = 1;
-			}
+			if (row_span == 255) row_span = 1; /* V1: degrade */
 
 			/* Resolve cell origin. */
 			if (col_start > 0 && row_start > 0) {
+				/* Both explicit — cells were marked in
+				 * pass 0. Auto-cursor unaffected. */
 				slot_col = col_start - 1;
 				slot_row = row_start - 1;
 			} else if (col_start > 0) {
+				/* Explicit col, auto row. Find first row
+				 * from cur_row where this col-run is free. */
+				int sr = cur_row;
 				slot_col = col_start - 1;
-				slot_row = cur_row;
+				if (slot_col < 0) slot_col = 0;
+				if (slot_col >= cols) slot_col = cols - 1;
+				while (sr < MACSURF_GRID_ROWS_MAX &&
+						!macsurf_grid_run_free(
+							occupancy, slot_col,
+							sr, col_span, cols)) {
+					sr++;
+				}
+				slot_row = sr;
+				macsurf_grid_mark(occupancy, slot_col,
+						slot_row, col_span, row_span,
+						cols);
 			} else if (row_start > 0) {
-				slot_col = cur_col;
+				/* Explicit row, auto col. Find first col
+				 * from cur_col in row_start-1 with a free
+				 * col-run. */
+				int sc = cur_col;
 				slot_row = row_start - 1;
+				if (slot_row < 0) slot_row = 0;
+				if (slot_row >= MACSURF_GRID_ROWS_MAX)
+					slot_row = MACSURF_GRID_ROWS_MAX - 1;
+				while (sc + col_span <= cols &&
+						!macsurf_grid_run_free(
+							occupancy, sc, slot_row,
+							col_span, cols)) {
+					sc++;
+				}
+				if (sc + col_span > cols) sc = 0;
+				slot_col = sc;
+				macsurf_grid_mark(occupancy, slot_col,
+						slot_row, col_span, row_span,
+						cols);
 			} else {
-				/* Auto-flow: wrap if span doesn't fit. */
-				if (cur_col + col_span > cols) {
-					cur_col = 0;
-					cur_row++;
+				/* Pure auto-flow. Advance cursor row-major
+				 * past any occupied cells until a free
+				 * col-run of col_span cells is found. */
+				int safety = MACSURF_GRID_ROWS_MAX *
+						MACSURF_GRID_TRACK_MAX + 4;
+				while (safety-- > 0) {
+					if (cur_col + col_span > cols) {
+						cur_col = 0;
+						cur_row++;
+					}
+					if (cur_row >= MACSURF_GRID_ROWS_MAX)
+						break;
+					if (macsurf_grid_run_free(occupancy,
+							cur_col, cur_row,
+							col_span, cols)) {
+						break;
+					}
+					cur_col++;
 				}
 				slot_col = cur_col;
 				slot_row = cur_row;
+				macsurf_grid_mark(occupancy, slot_col,
+						slot_row, col_span, row_span,
+						cols);
 				cur_col += col_span;
 				if (cur_col >= cols) {
 					cur_col = 0;
@@ -500,7 +641,8 @@ bool layout_grid(struct box *grid, int available_width, html_content *content)
 				}
 			}
 
-			/* Clamp into grid bounds. */
+			/* Final clamps (re-derive col_span / row_span in case
+			 * the chosen origin pushes us out of bounds). */
 			if (slot_col < 0) slot_col = 0;
 			if (slot_col >= cols) slot_col = cols - 1;
 			if (slot_col + col_span > cols)
