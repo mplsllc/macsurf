@@ -2150,6 +2150,36 @@ static bool html_redraw_box_children(const html_content *html, struct box *box,
 	x_off = x_parent + box->x - scrollbar_get_offset(box->scroll_x);
 	y_off = y_parent + box->y - scrollbar_get_offset(box->scroll_y);
 
+	/* fixes155 -- ONE line per html_redraw_box_children call: parent box
+	 * pointer + type + child-count + bbox/clip + first child pointer.
+	 * Caps at 16 calls per redraw so we get tree shape without flooding
+	 * the log. Resets per redraw via macos9_hrb_visits == 0 sentinel
+	 * (main.c zeroes it before each bw_redraw). */
+	{
+		extern long macos9_hrb_visits;
+		static long hrbc_call_count = 0;
+		if (macos9_hrb_visits <= 1) hrbc_call_count = 0;
+		if (hrbc_call_count < 16) {
+			int child_count = 0;
+			struct box *cc;
+			for (cc = box->children; cc; cc = cc->next) child_count++;
+			macsurf_debug_log_writef(
+			    "hrbc: box=%p type=%d children=%d "
+			    "x=%d y=%d w=%d h=%d "
+			    "dxy0=(%d,%d) dxy1=(%d,%d) "
+			    "clip=(%d,%d,%d,%d) first=%p",
+			    (void *)box, (int)box->type, child_count,
+			    (int)box->x, (int)box->y,
+			    (int)box->width, (int)box->height,
+			    (int)box->descendant_x0, (int)box->descendant_y0,
+			    (int)box->descendant_x1, (int)box->descendant_y1,
+			    (int)clip->x0, (int)clip->y0,
+			    (int)clip->x1, (int)clip->y1,
+			    (void *)box->children);
+			hrbc_call_count++;
+		}
+	}
+
 	/* Pass 1: classify all non-float children into four buckets.
 	 * Defer all paint so negative-z paints first per CSS 2.1 (b). */
 	for (c = box->children; c; c = c->next) {
