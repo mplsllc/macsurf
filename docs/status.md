@@ -1,240 +1,147 @@
 # MacSurf Status
 
-**Date:** 2026-04-10
-**Milestone:** App builds, links, and runs on Mac OS 9
+**Date:** 2026-05-20
+**Last shipped:** fixes159a — crash fix for fixes159's Grid V2 alignment round
+**Last hardware-accepted:** fixes158a — auto-flow occupancy bitmap (Grid V2 explicit placement, 6 of 6 probes passing on G3)
 
 ---
 
-## 1. What Works Today
+## What MacSurf is, today
 
-MacSurf builds with CodeWarrior 8 on Mac OS 9 and runs on a Power Macintosh G3 Minitower. The app:
+MacSurf is a working web browser for Mac OS 9.1+ on PowerPC, built on a NetSurf fork with a Carbon / QuickDraw / Open Transport frontend, paired with a Go TLS-stripping proxy and the sibling `macSSL` library for native HTTPS.
 
-- Launches successfully under Carbon on Mac OS 9.1
-- Displays a menu bar (Apple, File, Edit, Go, Help)
-- Opens a 640x480 document window titled "MacSurf" with scroll bars and a URL bar placeholder
-- Runs a cooperative `WaitNextEvent` event loop with proper idle sleep
-- Handles mouse, keyboard, update, activate, and high-level events
-- Responds to File > Quit (Cmd-Q) to exit cleanly
-- Passes all compile and link stages with zero errors
+It is hardware-verified on a Power Macintosh G3 iMac. The build target is CodeWarrior 8 Pro (8.3 update), strict C89, 16 MB application partition. The remote-fetch path is plain HTTP from the Mac → Go proxy → upstream HTTPS, fully streamed.
 
-### Libraries in the Project
+## What works on hardware today
 
-| Library | Source |
-|---------|--------|
-| `MSL_All_Carbon.Lib` | CodeWarrior MSL (C runtime, stdio, stdlib, string, math) |
-| `CarbonLib` | Carbon API (windows, menus, controls, events) |
-| `InterfaceLib` | Classic Toolbox compatibility (currently linked but may be removable) |
+### Rendering pipeline
+- Full NetSurf fetch → parse → cascade → layout → plot
+- libcss with native `var()` resolution, custom properties
+- libdom + libhubbub HTML5 parsing
+- libnsbmp / libnsgif / libjpeg / lodepng / libtiff for images
+- QuickDraw plotters with offscreen GWorld back buffer (fixes77g+)
+- Defensive-clamp threshold at ±200000 px in `redraw.c` (fixes156 — handles tall pages without zeroing legitimate boxes)
 
-### Source Files (53 .c files in MacSurf.mcp)
+### CSS — roughly 150 properties consumed by layout
+- Custom properties + `var()` resolution
+- Flexbox: `justify-content`, `align-content`, `align-items`, `align-self`, `order`, `flex-direction`, `flex-wrap`, `flex-basis`, `flex-grow`, `flex-shrink`
+- **CSS Grid (V1+V2):** `display: grid`, `grid-template-columns`, `grid-template-rows`, `gap` / `column-gap` / `row-gap`, explicit placement (`grid-column`, `grid-row`, `grid-column-start/-end`, `grid-row-start/-end`), span notation, full-row sentinel (`1 / -1`), auto-flow with occupancy avoidance, alignment (`justify-items`, `align-items`, `justify-self`, `align-self` — `start | end | center | stretch`)
+- `border-radius`, `box-shadow`, opacity, linear & radial gradients
+- `text-shadow` (vendor `-macsurf-text-shadow` from fixes50), `text-overflow: ellipsis`
+- `transform` (rotate / translate / scale via vendor `-macsurf-transform`)
+- z-index stacking contexts (CSS 2.1 painting order, fixes147)
+- CSS counters, viewport units (`vh`, `vw`), `aspect-ratio`
+- Font-family aliases (sans → Helvetica, serif → Times, mono → Monaco) — fixes157, no horizontal scrambling on mixed-family inline runs
+- See [css-status.md](css-status.md) for the full property-by-property audit
 
-**Frontend (18 files):**
-`main.c`, `window.c`, `macos9_bitmap.c`, `macos9_fetch.c`, `macos9_download.c`, `macos9_utf8.c`, `clipboard.c`, `font.c`, `misc.c`, `plotters.c`, `schedule.c`, `corestrings_stub.c`, `fetch_stub.c`, `http_stub.c`, `browser_history_stub.c`, `misc_stub.c`, `js_stub.c`, `lwc_stub.c`
+### JavaScript
+- Duktape 2.7.0, full ES5
+- Closures, prototypes, regex, JSON, promises (polyfill), recursion
+- Date arithmetic (Mac epoch 1904 → Unix epoch 1970 bridge)
+- Ackermann(3,7) in ~5–6 sec on a 233 MHz G3
+- Mandelbrot fractal in pure JS
 
-**Shims (5 files):**
-`mac_file_io.c`, `mac_stat.c`, `mac_time.c`, `mac_dirent.c`, `mac_iconv.c`
+### Networking
+- Open Transport TCP, `OTOpenEndpointInContext` synchronous calls yielding on `kOTSyncIdleEvent`
+- HTTP/1.1 with chunked transfer, keep-alive, 3xx redirect follow
+- Connection pooling (128 fetcher slots, 16 concurrent)
+- 15s no-progress timeout
+- HTTPS via Go proxy or native macSSL (sibling project)
 
-**NetSurf Core (30 files):**
-`browser.c`, `browser_window.c`, `gui_factory.c`, `netsurf.c`, `plot_style.c`, `content.c`, `content_factory.c`, `hlcache.c`, `llcache.c`, `fs_backing_store.c`, `no_backing_store.c`, `mimesniff.c`, `urldb.c`, `log.c`, `messages.c`, `nsoption.c`, `time.c`, `utf8.c`, `file.c`, `filepath.c`, `utils.c`, `hashtable.c`, `bloom.c`, `nsurl.c`, `parse.c`
-
----
-
-## 2. What Is Stubbed Out
-
-Every subsystem that isn't needed for the initial "show a window" milestone is stubbed with no-op implementations. These stubs link cleanly but do nothing.
-
-### `corestrings_stub.c` — Interned String Table
-- 136 `lwc_string *corestring_lwc_*` globals (all NULL)
-- 181 `struct dom_string *corestring_dom_*` globals (all NULL)
-- 5 `struct nsurl *corestring_nsurl_*` globals (all NULL)
-- `corestrings_init()` / `corestrings_fini()` — no-ops
-
-**To implement:** `corestrings_init` must call `lwc_intern_string` for every entry in `corestringlist.h`. This is required before any content can be processed — every MIME type check, HTML tag match, and URL scheme comparison uses these interned strings.
-
-### `fetch_stub.c` — Network Fetch Subsystem
-- `fetch_start` — returns NULL (no fetches)
-- `fetch_can_fetch` — returns 0
-- `fetch_http_code` — returns 0
-- `fetch_abort`, `fetch_quit`, `fetcher_quit` — no-ops
-- `fetch_multipart_data_*` — all no-ops
-
-**To implement:** This is the critical path. `fetch_start` must open a TCP connection via Open Transport to the MacSurf proxy, send an HTTP request, and deliver the response back to the llcache via callbacks. All OT calls must be async (no blocking the event loop).
-
-### `http_stub.c` — HTTP Header Parsing
-- `http_parse_content_type`, `http_parse_cache_control`, `http_parse_content_disposition`, `http_parse_www_authenticate`, `http_parse_strict_transport_security` — all return NSERROR_NOT_FOUND
-- All destroy functions — no-ops
-- Cache-control/STS accessor functions — return 0
-
-**To implement:** These parse HTTP response headers. Needed for content type detection. Can be implemented incrementally — `http_parse_content_type` is the most critical (determines how to render the response).
-
-### `browser_history_stub.c` — Navigation History & Frames
-- `browser_window_history_create/destroy/add/update/get_scroll` — no-ops
-- `scrollbar_create/destroy/set/get_offset` — no-ops
-- `browser_window_place_caret/remove_caret` — no-ops
-- `browser_window_create/destroy/recalculate/invalidate_iframes` — no-ops
-- `browser_window_create/recalculate_frameset` — no-ops
-- `browser_window_handle_scrollbars` — no-op
-
-**To implement:** History is needed for back/forward navigation. Scrollbars need to connect to the Carbon scroll bar controls in `window.c`. Frames/iframes are lower priority.
-
-### `misc_stub.c` — Miscellaneous Subsystems
-- Hotlist, global history — no-ops
-- Image cache init/fini — no-ops
-- Page info init/fini — no-ops
-- System colours — no-ops
-- Search web — no-ops
-- Certificate chain handling — no-ops
-- Download context — no-ops
-- DOM namespace — no-ops
-- Content handler inits (html, css, image, textplain) — no-ops
-- `nscolour_update`, `idna_encode`, `save_pdf` — no-ops
-- `html_get_id_offset` — returns 0
-
-**To implement:** `image_cache_init` and content handler inits are needed for rendering. Most others can stay as stubs indefinitely.
-
-### `js_stub.c` — JavaScript Engine
-- All functions are no-ops (JS is disabled by design via `WITHOUT_DUKTAPE`)
-
-**To implement:** Never. JavaScript is intentionally excluded to keep memory footprint low.
-
-### `lwc_stub.c` — libwapcaplet (Interned Strings)
-- `lwc_intern_string` — real implementation (malloc + copy)
-- `lwc_string_destroy` — real implementation (free)
-- `lwc__intern_caseless_string` — sets self-reference
-
-**Status:** This is a working minimal implementation, not a stub. It correctly allocates lwc_string objects with the string data stored after the struct. It does not implement deduplication (every intern creates a new allocation) — this is acceptable for the initial build but will need optimization for memory efficiency.
+### Chrome
+- Address bar, back / forward / reload / home
+- Status bar, page-info, multi-window
+- Smooth scrollbar, keyboard scrolling
+- Hover state recascade + reformat
 
 ---
 
-## 3. Next Steps (Priority Order)
+## Build target
 
-### Phase 1 — Display a Page from the Proxy
+- **Compiler:** Metrowerks CodeWarrior 8 Pro with the 8.3 update
+- **Output:** PEF / CFM, PowerPC-only
+- **Project file:** `MacSurf.mcp` (binary, not in this repo — see [`builds/MacSurf-BuildPack.sit`](../builds/MacSurf-BuildPack.sit))
+- **Target settings:** 16 MB application partition, 2 MB image cache, 128/16 fetcher pool
+- **Prerequisites:** Mac OS 9.1+, CarbonLib 1.5+, StuffIt Expander, a real Power Mac (G3/G4) or SheepShaver with caveats
+- **Cross-dev pre-flight:** Retro68 PowerPC GCC + `scripts/verify_macsurf.sh` for `-std=c89 -pedantic` syntax checks before each fix ships
 
-1. **Implement `corestrings_init`** — populate all interned string globals from `corestringlist.h`. Without this, no MIME type matching works.
-
-2. **Implement `macos9_fetch.c` fetch backend** — connect to the MacSurf proxy via Open Transport. The fetch must:
-   - Open an async TCP connection to the proxy (configurable host:port)
-   - Send `GET http://target-url HTTP/1.0\r\nHost: target\r\n\r\n`
-   - Receive the response and deliver it to the llcache callback
-   - All OT calls must use async notifiers — never block WaitNextEvent
-
-3. **Implement `http_parse_content_type`** — parse `Content-Type: text/html; charset=utf-8` from HTTP response headers. The hlcache uses this to decide which content handler to invoke.
-
-4. **Implement plotters** — `plotters.c` must draw to the window's GrafPort. Start with `plot_rectangle` (for backgrounds) and `plot_text` (for text runs). Use QuickDraw `PaintRect` and `DrawString`/`TextFace`/`TextSize`.
-
-5. **Implement font measurement** — `font.c` must measure text width and split positions. Use `TextWidth` and `CharWidth` from QuickDraw.
-
-### Phase 2 — Usable Browser
-
-6. **Wire up the URL bar** — let the user type a URL and navigate to it
-7. **Implement scroll** — connect Carbon scroll bars to `browser_window_set_scroll`
-8. **Implement history** — back/forward using the history stub
-9. **Implement bitmap rendering** — `macos9_bitmap.c` must create offscreen GWorlds and blit to the window
-
-### Phase 3 — Polish
-
-10. **Proxy preferences** — let user configure proxy host:port in a dialog
-11. **Error pages** — show connection errors in the window
-12. **Memory optimization** — lwc deduplication, cache limits tuning
-13. **Remove debug SysBeeps** — clean up diagnostic beeps from main.c
+See [codewarrior-setup.md](codewarrior-setup.md) for the full Mac-side build walkthrough and [cross-dev-from-linux.md](cross-dev-from-linux.md) for the Linux-side workflow.
 
 ---
 
-## 4. Architecture Notes
+## Current fix round
 
-### Fetch Proxy Integration
+**fixes159 / fixes159a — Grid V2 alignment.** Adds `justify-items`, `align-items`, `justify-self`, `align-self` for grid containers and items (values: `start | end | center | stretch`).
 
-```
-┌─────────────┐     HTTP      ┌──────────────┐     HTTPS     ┌──────────┐
-│  MacSurf    │ ──────────── │  MacSurf     │ ────────────── │  Web     │
-│  Browser    │  Open        │  Proxy       │   TLS via Go   │  Server  │
-│  (Mac OS 9) │  Transport   │  (VPS/LAN)   │                │          │
-└─────────────┘              └──────────────┘                └──────────┘
-```
+- `align-items` / `align-self` ride libcss's existing flexbox plumbing (no changes there)
+- `justify-items` / `justify-self` go through a new vendor libcss property `-macsurf-justify` (single packed int32, low nibble = justify-items, high nibble = justify-self)
+- `cssh_css.c` preprocessor adds a fourth pass that rewrites `justify-items: X; justify-self: Y` declarations into the packed property
+- `layout_grid.c` pass 3 reads container defaults + per-item overrides and applies horizontal / vertical offsets when the child is narrower / shorter than its cell
 
-The Mac sends a standard HTTP proxy request over plain TCP. The proxy (a single Go binary) fetches the actual page over HTTPS and returns the response as plain HTTP. This lets the Mac browse HTTPS sites without any TLS implementation on OS 9.
+fixes159 shipped with the new field inserted mid-struct in `css_computed_style_i`, which crashed on G3 because CW8 didn't rebuild libcss's internal .o files against the shifted field offsets (the [CW8 misses-header-recompile](https://github.com/mplsllc/macsurf/blob/master/.private/llm/CLAUDE.md) gotcha). fixes159a relocated the field to the end of the struct — no other field's offset shifts, so libcss .o files compiled against the old layout still see consistent offsets for everything else. Awaiting hardware verification.
 
-The proxy uses the standard HTTP proxy protocol — the Mac sends:
-```
-GET http://example.com/ HTTP/1.0
-Host: example.com
-```
-The proxy fetches `https://example.com/`, strips the TLS, and returns the response.
-
-### Event Loop / Scheduler Integration
-
-```
-main()
-  └── while (!macos9_done)
-        └── macos9_poll()
-              ├── WaitNextEvent(sleep_ticks)
-              ├── macos9_dispatch_event()
-              └── macos9_schedule_run()
-```
-
-NetSurf's core uses `guit->misc->schedule(ms, callback, pw)` to request timed callbacks. The Mac frontend implements this via `schedule.c`:
-
-- `macos9_schedule()` inserts callbacks into a sorted linked list keyed by TickCount
-- `macos9_get_next_delay()` returns ticks until the next callback (used as WaitNextEvent sleep)
-- `macos9_schedule_run()` fires all callbacks whose time has passed
-- When fetches are active (`macos9_fetching = true`), sleep is forced to 1 tick for network responsiveness
-
-This mirrors the RISC OS `riscos_poll()` pattern — the event loop is the scheduler.
-
-### Key Constraints
-
-- **No threads.** Mac OS 9 is cooperative multitasking. All work happens in the `WaitNextEvent` loop. Open Transport notifiers must queue work for the main loop, never call NetSurf core directly.
-- **C89 only.** CodeWarrior 8 compiles in strict C89 mode. No `inline`, no `//` comments, no variadic macros, no designated initializers, no `for(int i...)`, no `restrict`.
-- **No JavaScript.** `WITHOUT_DUKTAPE` is defined globally. All JS stubs return immediately.
-- **No HTTPS.** The browser never makes TLS connections. All HTTPS is handled by the proxy.
-- **64MB minimum RAM.** The target is Power Mac G3/G4 with 64MB+. The 8MB application heap partition should be sufficient for basic browsing.
-
-## Test Environment and Compatibility
-
-**Development and verified-working environment:**
-- Mac OS 9.1
-- Power Macintosh G3 Minitower (beige)
-- CodeWarrior 8 Pro on-machine build
-
-Every milestone in this project — including v0.1.0-first-fetch — has been
-built and exercised on that specific machine. Any claim that MacSurf "runs
-on 9.2" refers to external reference code (Classilla, SSHeven, Retro68 OT
-demo) used as research inputs, not to MacSurf itself.
-
-**Community compatibility target:**
-- Mac OS 9.2.2
-- Power Macintosh G4 (any supported model)
-
-9.2.2 on a G4 is the most common active vintage-Mac-OS-9 configuration
-among people who still use these machines, so it is the primary
-compatibility target for shipping binaries. **9.2.2 compatibility is not
-yet explicitly verified** — it is an open testing gap, tracked here until
-someone builds or runs MacSurf on a G4 / 9.2.2 setup and confirms the
-results. Differences we need to watch for include CarbonLib version
-(CarbonLib 1.0.4 ships with 9.1, 1.6 with 9.2.2), Appearance Manager
-behavior, and any Open Transport version differences between the two.
-- **Big-endian PPC.** All bitmap and network byte order operations must account for PowerPC big-endian architecture.
+### V1 limitations (documented, not bugs)
+- Items with `width: auto` still stretch horizontally even when `justify-*` requests a non-stretch alignment — without an intrinsic-content pass we can't size an item smaller than its cell at this layer. Use explicit widths.
+- Same applies to `height: auto` + `align-*`.
+- `place-items` / `place-self` shorthands deferred.
+- Baseline alignment, safe/unsafe modifiers, writing-mode interactions deferred.
+- Column AND row alignment for the same element must live in the same CSS rule (cascade collapses the merged storage at the property level — inherited from fixes158).
 
 ---
 
-## 5. Known Issues
+## Recently shipped
 
-### Linker Warning
-`MSL_All_Carbon.Lib` produces a warning about `uname` — MSL provides a stub that we also define in `utils/utsname.h`. This is harmless (our definition wins at link time).
+| Fix | Description | Status |
+|-----|-------------|--------|
+| **fixes159a** | Move `macsurf_justify` to end of `css_computed_style_i` struct to avoid the offset-shift CW8 stale-recompile crash from fixes159 | Awaiting G3 |
+| **fixes159** | Grid V2 alignment (justify/align items/self) | Crashed pre-159a |
+| **fixes158a** | Auto-flow occupancy bitmap so explicit grid items aren't overdrawn by auto-flow siblings | ✓ G3 accepted |
+| **fixes158** | Explicit CSS Grid placement V1 (`grid-column`, `grid-row`, longhand start/end) | ✓ via 158a |
+| **fixes157** | Font-family aliases (sans→Helvetica, serif→Times, mono→Monaco). Closes fixes52/fixes145 5-year sidestep | ✓ G3 accepted |
+| **fixes157a** | Silence FONTDIAG after acceptance (`MACSURF_FONT_ALIAS_DIAG = 0`) | ✓ G3 accepted |
+| **fixes156** | Raise defensive-clamp y/height thresholds from ±10000 to ±200000 in `redraw.c html_redraw_box`. Closes the post-fixes152 "empty render" saga — page-height growth past 10000 px from accumulated probe cards was nuking real content | ✓ G3 accepted |
+| **fixes152** | CSS `aspect-ratio` V1 | ✓ G3 accepted |
+| **fixes151** | Grid `grid-column` explicit column placement (V1, span + A/B + 1/-1) | ✓ G3 accepted |
+| **fixes150** | `grid-template-rows` (px row tracks; FR/percent degrade to tallest-child) | ✓ G3 accepted |
+| **fixes149** | Verified CSS_STATUS claims that `min-height` and `vw`/`vh` were broken — found them already wired (false alarm in status doc) | ✓ G3 accepted |
+| **fixes148** | CSS Grid V2 standard track grammar (`grid-template-columns: 1fr 1fr`, `repeat()`, `minmax()`, idents) | ✓ G3 accepted |
+| **fixes147** | CSS 2.1 stacking-context paint order (sibling-level z-index correct) | ✓ G3 accepted |
 
-### Memory Partition
-The application requires an 8MB heap partition. The default CW8 partition is too small. Set via Get Info on the built application, or in the project's SIZE resource.
+See [HISTORY.md](HISTORY.md) for the full version timeline going back to v0.1.
 
-### SysBeep Debug Checkpoints
-`main.c` currently contains SysBeep checkpoints (1 beep at entry, 2 after init, 3 before event loop, 4 at exit). These should be removed before release.
+---
 
-### Pre-Carbon Init Guard
-Classic Toolbox init calls (`MaxApplZone`, `InitGraf`, etc.) are guarded with `#ifndef TARGET_API_MAC_CARBON`. Under Carbon (our target), these are skipped — Carbon initializes automatically.
+## What's queued next
 
-### Header Shadowing
-CW8 finds NetSurf's `utils/time.h` and `utils/string.h` when `#include <time.h>` or `#include <string.h>` is used. The prefix file cannot use these includes. Standard C string functions are declared directly in `utils/string.h` under `#ifdef __MWERKS__` to work around this.
+Per the planning notes from the most recent feature round:
 
-### lwc_intern_string No Deduplication
-The current `lwc_stub.c` implementation allocates a new lwc_string for every `lwc_intern_string` call, even for duplicate strings. This works but wastes memory. A hash table for deduplication should be added before heavy browsing use.
+- **fixes160** — `grid-template-areas`. Named cell regions for explicit placement by name.
+- **fixes161** — `column-count` / `column-rule`. Multi-column layout outside Grid.
+- **fixes162** — `outline` / focus-ring accessibility polish.
 
-### corestrings Not Initialized
-All 322 corestring globals are NULL. Until `corestrings_init` is implemented, no MIME type matching or HTML tag recognition works. This is the first thing that needs to be built for page loading.
+The font-family work is intentionally cooling after fixes157 hardware acceptance — broader stacks and per-font metric integration are deferred.
+
+---
+
+## Known limitations
+
+- **No HTTPS in the browser core.** All TLS goes through the Go proxy (which fetches upstream HTTPS and serves plain HTTP to the Mac) or via macSSL (sibling library, not yet integrated into the MacSurf binary).
+- **No preemptive threading.** Cooperative `WaitNextEvent` event loop only — all networking yields via `kOTSyncIdleEvent`.
+- **No subgrid.** Grid V1+V2 only.
+- **16 MB application partition ceiling.** libcss allocates from the OS heap and runs out below ~12 MB free on heavy pages.
+- **8 grid tracks max** per row or column.
+- **Max 256 children per grid container.** Excess fall back to fixes151 auto-flow.
+- **No baseline alignment**, no `place-*` shorthands, no writing-mode logical alignment (fixes159 V1 scope).
+- **JavaScript Date arithmetic** anchored to a fixed 2026 baseline because Mac OS 9's `GetDateTime` returns 1904-epoch seconds with no DST handling.
+
+---
+
+## Documentation index
+
+- [architecture.md](architecture.md) — System architecture, module map, networking model
+- [HISTORY.md](HISTORY.md) — Milestone timeline from v0.1 forward
+- [css-status.md](css-status.md) — Property-by-property CSS audit
+- [codewarrior-setup.md](codewarrior-setup.md) — Mac-side build
+- [cross-dev-from-linux.md](cross-dev-from-linux.md) — Linux cross-dev workflow + Retro68 syntax pre-flight
+- [deploying-proxy.md](deploying-proxy.md) — Go proxy deploy guide
+- [story.html](story.html) — Narrative writeup with screenshots

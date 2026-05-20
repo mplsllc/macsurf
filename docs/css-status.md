@@ -1,8 +1,161 @@
 # MacSurf CSS Status Report
 
-Generated 2026-05-19. Last revised 2026-05-19 (fixes148 hardware-verified, G4 minmax follow-up queued).
+Generated 2026-05-19. Last revised 2026-05-20 (fixes159a in flight, fixes150-158a all hardware-verified).
 
 This is a brutal, hedge-free audit of CSS support in MacSurf. The goal is to identify what works, what doesn't, and what to implement next.
+
+## Hardware-verified status (post fixes158a)
+
+```text
+CSS Grid V2 — auto-flow occupancy avoidance: ✓
+- fixes158a (2026-05-20): per-row uint8 bitmap (256 bytes — bit
+  (1 << col) per row, max 8 cols × 256 rows) tracks which cells
+  are occupied by explicit-both placements.
+- Three-pass walker in layout_grid.c:
+  - Pass 0: pre-mark cells used by every child with both axes
+    explicit (grid-column + grid-row both set in the same rule).
+  - Pass 1: assign every child a (col, row, col_span, row_span).
+    Auto-flow cursor advances row-major past any occupied cell
+    so unplaced siblings flow predictably around explicit items.
+    col-only / row-only explicit items find the first free
+    row / col from cursor and mark cells on placement.
+  - Pass 2: lay out into cell width; track per-row max heights.
+  - Pass 3: compute row_y once heights are known; position each
+    child.
+- Wire format unchanged from fixes158: packed int32 in existing
+  `-macsurf-grid-col-span` storage, four 8-bit fields:
+  col_span (low) / col_start / row_start / row_span (high).
+- Test cards GP1-GP6 on G3, all 6 pass:
+  GP1: ✓ explicit GP1-1 spans cols 1-2 + auto GP1-2/GP1-3 at cols 3,4
+  GP2: ✓ three auto + one explicit at (col 2, row 2), no collision
+  GP3: ✓ three explicit items at distinct cells, none collapse
+  GP4: ✓ four auto in row 1, one explicit alone in row 2
+  GP5: ✓ longhand start/end pair (cs2 ce4 rs1 re2) spans cols 2-3,
+       auto GP5-3 advances past to col 4
+  GP6: ✓ fixes151 baseline (span 2 + 1/-1 fill) still works
+- V1 limitations: column + row placement must live in the SAME
+  CSS rule (cascade collapses storage at property level); no
+  grid-area shorthand; no named lines; no negative line numbers
+  beyond `-1` fill sentinel; no grid-template-areas; no dense
+  auto-flow; no subgrid. Max 256 children per grid; max 256
+  rows.
+```
+
+## Hardware-verified status (post fixes157)
+
+```text
+Font-family alias dispatch: ✓
+- fixes157 (2026-05-20): font-family aliases work per-family on
+  shared dispatch (macos9_font_id_from_style in plotters.c +
+  macos9_font.c). PLOT_FONT_FAMILY_SANS_SERIF/CURSIVE/FANTASY →
+  kFontIDHelvetica, SERIF → kFontIDTimes, MONOSPACE → kFontIDMonaco.
+  Both width measurement and paint use the same dispatch so width
+  and paint always agree per family.
+- Closes the fixes52/fixes145 "force Helvetica" five-year sidestep.
+  The fixes145 horizontal-scrambling hypothesis is now disproven
+  on real hardware — the actual cause was fixes156's clamp bug,
+  which appeared as "alias dispatch broke rendering" when in fact
+  the page just grew past 10000 px and the defensive clamp nuked
+  legitimate content.
+- Test cards FF1-FF5 on G3 (verified visually + log-confirmed
+  width=paint per family):
+  FF1 (sans-serif): ✓ Helvetica TT
+  FF2 (serif): ✓ Times TT, visibly serifed
+  FF3 (monospace): ✓ Monaco bitmap, all glyphs same width
+  FF4 (mixed Helvetica + Monaco inline, line-height 1.5): ✓
+       no horizontal scrambling, baselines aligned
+  FF5 (same as FF4 but line-height 1.0, the V1 edge case): ✓
+       Monaco glyphs may extend slightly above the Helvetica
+       baseline of the previous line; documented V1 limitation
+       requiring per-font line-height to fully resolve.
+- fixes157a kept the FONTDIAG probe block in source as a dormant
+  handle (MACSURF_FONT_ALIAS_DIAG = 0); flip to 1 in macos9.h to
+  re-enable per-call width/paint logging if a future regression
+  needs verification.
+```
+
+## Hardware-verified status (post fixes156)
+
+```text
+Defensive-clamp threshold scaling: ✓ (critical stability fix)
+- fixes156 (2026-05-20): raised y/height threshold in
+  redraw.c html_redraw_box from ±10000 to ±200000. Closes the
+  empty-render saga that fixes154/154b/154c/155 had chased
+  through the wrong cause for four rounds.
+- Root cause: the defensive clamp added years earlier (catching
+  CSS-engine garbage like box->x = 30728, descendant_y0 =
+  -39845888) used ±10000 thresholds. Safe when advanced.html
+  was shorter — but probe cards accumulated across fixes147→154
+  grew the page past 10000 px (c_h = 10035). The 10035 > 10000
+  check then fired on the LEGITIMATE root box every redraw,
+  zeroing box->height to 0, descendant_y1 to that new zero,
+  first-child clip intersection collapsed to inverted,
+  line-2557 early-return without recursing. Page rendered
+  empty.
+- New thresholds catch the original -39845888 garbage with 4
+  orders of magnitude headroom while allowing pages up to 200k
+  px tall. x-coords and widths stay at ±10000 (no real page
+  goes wider than that).
+- Symptom signature to recognise in future: redraw counters
+  show `visits=2 block=2 inlinec=0 inline=0 text=0` while
+  recascade walks the full tree (1041+ boxes). Tree intact,
+  redraw bails after html+body. Log the root box's h and
+  descendant_y1 — if zero but c_h in reformat isn't, the clamp
+  is nuking real content.
+```
+
+## Hardware-verified status (post fixes152)
+
+```text
+CSS aspect-ratio: ✓
+- fixes152 (2026-05-19): vendor-packed property storing
+  (numerator << 16) | denominator in a single int32. Layout
+  uses width = h * num / denom and height = w * denom / num
+  to derive the missing dimension when one is set and the
+  other is auto.
+- Cards A1-A4 on G3:
+  A1 (200x112 from 16/9): ✓
+  A2 (300x300 from 1): ✓
+  A3 (240x180 from 4/3): ✓
+  A4 (200x100 from 2/1, explicit height): ✓
+- Replaced-element images preserve the aspect-ratio from fixes119
+  when laid out in flex stretch contexts.
+```
+
+## Hardware-verified status (post fixes151)
+
+```text
+Grid `grid-column` explicit placement V1: ✓ (superseded by fixes158)
+- fixes151 (2026-05-19): preprocessor in cssh_css.c rewrites
+  standard CSS grid-column declarations to vendor
+  `-macsurf-grid-col-span: N` integer:
+    span N            -> col-span N
+    A / B (ints>0)    -> col-span (B-A)
+    A / span N        -> col-span N
+    A / -1            -> col-span 255 (sentinel "fill row")
+    1 / -1            -> col-span 255
+- Cards C1-C5 on G3 all pass.
+- Storage: uint8_t in style->i (later extended in fixes158 to a
+  full packed int32 carrying col_start/row_start/row_span too).
+```
+
+## Hardware-verified status (post fixes150)
+
+```text
+Grid `grid-template-rows` V1: ✓
+- fixes150 (2026-05-19): px row tracks force per-row heights
+  (overriding tallest-child sizing). fr / percent row tracks
+  degrade to tallest-child because the V1 doesn't have a
+  definite container height to distribute against in the auto
+  case.
+- Cards R1-R5 on G3:
+  R1 (80px 120px): ✓ exact heights
+  R2 (1fr 2fr in 240px-tall container): ✓ fr degraded to
+       tallest-child (documented guardrail)
+  R3 (repeat(3, 60px)): ✓ three 60px rows
+  R4 (60px 120px with 200px 1fr cols): ✓
+  R5 (50px 100px + row-gap 16px + column-gap 16px): ✓
+```
 
 ## Hardware-verified status (post fixes148)
 

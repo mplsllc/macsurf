@@ -82,6 +82,54 @@ The development partner. The MacSurf codebase — frontend, library ports, build
 - 12 stress tests executed: closures, prototypes, quicksort, regex, promises, Ackermann, hash tables, matrix multiply, BST, and ASCII Mandelbrot
 - All tests pass on real hardware
 
+### v0.3 — Real HTML rendering (April 18-19, 2026)
+- libdom hubbub binding ported to C89 / CW8
+- Full DOM tree construction from real HTML5
+- libcss cascade wired into computed-style lookups
+- `var()` custom-property resolution working
+- MacTrove.com homepage rendering on real hardware for the first time
+
+### v0.4 — CSS3 visible on hardware (May 13, 2026)
+- Defensive-clamp threshold first hit and worked around (precursor to fixes156)
+- QuickDraw plotters honour cascade-computed colour, fonts, borders, padding, margins, backgrounds
+- Box model fully wired
+- Lists (disc / circle / square / decimal) with bullet-glyph rendering correct
+- Flexbox `justify-content`, `order`, basic line-box flow
+- Block + inline + table layout all real
+
+### v0.4.x — CSS feature catch-up (May 14-19, 2026)
+- **fixes47** — real linear gradients via QuickDraw row-by-row painting
+- **fixes48-49** — `box-shadow` with custom colours + asymmetric offsets, opacity via QD stipple
+- **fixes50** — `text-shadow` via vendor `-macsurf-text-shadow`
+- **fixes73a-e** — `transform: rotate/scale/translate` via vendor packed property
+- **fixes74d** — radial gradients
+- **fixes75e** — CSS Grid V1 (cols+rows, equal tracks, span)
+- **fixes77g** — offscreen GWorld back buffer (no more flicker)
+- **fixes78** — image rendering (PNG/GIF/JPEG/BMP/TIFF via lodepng + libnsbmp + libnsgif + libjpeg + libtiff)
+- **fixes79b** — PNG transparency via lodepng + `CopyMask`
+- **fixes115** — `grid-template-columns` standard grammar (preprocessor route)
+- **fixes119** — replaced-element `aspect-ratio` preservation in flex stretch
+- **fixes128** — image scaling polish
+- **fixes134a** — CSS counters
+- **fixes143a** — disc-bullet glyph repair (U+00B7 over U+2022 in Helvetica TT)
+- **fixes146** — `text-overflow: ellipsis`
+- **fixes147** — CSS 2.1 stacking-context paint order (sibling-level z-index)
+- **fixes148** — Grid V2 standard track grammar (`1fr`, `repeat()`, `minmax()`, idents)
+- **fixes149** — viewport units, min-height verified working on hardware
+
+### v0.5 — Grid V2 + font dispatch (May 20, 2026)
+- **fixes150** — `grid-template-rows` (px row tracks; FR/percent degrade to tallest-child)
+- **fixes151** — `grid-column` placement V1 (`span N`, `A / B`, `1 / -1` fill sentinel)
+- **fixes152** — CSS `aspect-ratio` V1 (vendor packed property)
+- **fixes153** — `GetFontInfo` vmetric probe + audit of `gui_layout_table` for per-font ascent/descent
+- **fixes155** — `hrbc:` diagnostic probe at `html_redraw_box_children` entry; caught the smoking gun for fixes156
+- **fixes156** — major stability fix: raised defensive-clamp y/height threshold in `redraw.c html_redraw_box` from ±10000 to ±200000. Closed the "empty render" saga that had appeared after page-height growth past 10000 px from accumulated probe cards. Root cause was always a latent threshold, not the fixes154 alias retry it was initially blamed on.
+- **fixes157** — font-family aliases dispatch (sans → Helvetica, serif → Times, monospace → Monaco). Closes the fixes52/fixes145 five-year "force Helvetica" workaround. The fixes145 horizontal-scrambling hypothesis was disproven on real hardware once fixes156 was in place.
+- **fixes158** — explicit CSS Grid placement (V1). Packed `grid-column` + `grid-row` + `-start/-end` longhands into the existing `-macsurf-grid-col-span` int32 (four 8-bit fields). Three-pass walker in `layout_grid.c`.
+- **fixes158a** — auto-flow occupancy bitmap so explicit grid items don't get overdrawn by auto-flow siblings. Per-row uint8 bitmap, pre-marks explicit cells, auto cursor skips occupied cells row-major.
+- **fixes159** — Grid V2 alignment (`justify-items`, `align-items`, `justify-self`, `align-self` with `start | end | center | stretch`). Crashed on G3 due to mid-struct field insertion.
+- **fixes159a** — relocate `macsurf_justify` to end of `css_computed_style_i` struct. CW8 misses-header-recompile meant libcss .o files had pre-fixes159 field offsets while netsurf .c files had new offsets — silent crash mid-reformat.
+
 ---
 
 ## The Benchmarks
@@ -108,38 +156,35 @@ Duktape 2.7.0, DUK_USE_NATIVE_CALL_RECLIMIT 128.
 
 ## The Screenshots
 
-### First JavaScript output on Mac OS 9
-![MacSurf displaying the first JS test page](screenshots/MacSurfer%20%201.jpg)
+The curated milestone set in [`screenshots/`](../screenshots/) shows the project as it stands today:
 
-The moment: `Hello from Duktape on Mac OS 9!` followed by `Math.sqrt(2) = 1.4142135623730951`. Full IEEE 754 double-precision floating point, computed by an ES5 engine, displayed in a Carbon window via QuickDraw, on a Power Macintosh from 1998.
+### Running on real Mac OS 9
+![MacSurf running in real Mac OS 9 on a G3 iMac](../screenshots/01-running-on-os9.jpg)
 
-### Advanced ES5 features
-![Closures, prototypes, array methods, regex](screenshots/MacSurfer%20%202.jpg)
+The fixes50 text-shadow probe page, rendered on a real Power Macintosh G3 iMac running Mac OS 9.1 with CarbonLib. Platinum theme, beige hardware, modern CSS3 in 2026.
 
-Constructor functions with prototype chains (`rex instanceof Dog: true, rex instanceof Animal: true`), Array.prototype.map/filter/reduce, and regex capture groups — all executing correctly.
+### Real CSS typography on Mac OS 9
+![CSS typography, custom properties, nested lists](../screenshots/02-css-typography.jpg)
 
-### Exception handling, JSON, date arithmetic
-![Try/catch, JSON round-trip, Date](screenshots/MacSurfer%20%203.jpg)
+"MacSurf — pushing the cascade." Author CSS with custom properties (`var(--sans)`), nested unordered and ordered lists with the bullet-glyph repair from fixes143a, definition lists, mathematical inline elements — all driven by libcss + the QuickDraw plotters.
 
-Custom Error objects caught via try/catch, JSON.parse throwing SyntaxError on invalid input, JSON.stringify with nested arrays and mutation, and Date arithmetic using GetDateTime() converted from Mac epoch (1904) to Unix epoch (1970).
+### Linear gradients + flex layout
+![CSS linear gradients with flex justify-content](../screenshots/03-css-gradients-and-flex.jpg)
 
-### Fibonacci, benchmarks, strict mode
-![Recursion, performance, ES5 strict](screenshots/MacSurfer%20%204.jpg)
+fixes47's real per-row QuickDraw gradient painting plus flex-box `justify-content` distribution variants. Four gradient bars over `start / end / center / between / around / evenly` flex modes, all on real hardware.
 
-`fib(20) = 6765` via naive recursion. 100,000 sqrt+sin operations in 3,000 ms. ES5 strict mode, Array.isArray, Object.keys — all correct.
+### Cards, callouts, tables
+![Border-radius cards, accent-border callouts, styled tables](../screenshots/04-css-cards-and-tables.jpg)
 
-### Stress test v1: pushing the limits
-![Stress test showing OOM at 50K hash table](screenshots/MacSurf5.jpg)
+`border-radius` cards (via `FrameRoundRect` / `PaintRoundRect`), accent-left callouts for notes and warnings, and a real CSS feature-support matrix rendered as a styled HTML table.
 
-The first stress test run. Ackermann(3,7) = 1021 completed successfully despite the 128-frame native call recursion limit. The 50,000-entry hash table hit the Duktape heap ceiling — the first real constraint we found. Not CPU, not stack: memory.
+### Text-shadow + opacity
+![text-shadow + opacity stipple via QuickDraw](../screenshots/05-css-shadows-and-opacity.jpg)
 
-### Stress test v2: all 12 pass
-![All stress tests passing](screenshots/MacSurf6.jpg)
-
-After reducing hash table to 10K entries and switching string concatenation from += to array+join (20x speedup), all 12 stress tests complete successfully.
+fixes50's `-macsurf-text-shadow` paints drop shadows under DrawText, with QuickDraw stipple patterns providing the opacity steps from solid → invisible.
 
 ### The Mandelbrot
-![ASCII Mandelbrot fractal computed by Duktape](screenshots/MacSurf7.jpg)
+![ASCII Mandelbrot fractal computed by Duktape](../screenshots/06-javascript-mandelbrot.jpg)
 
 An ASCII Mandelbrot set, 40x20 characters, 80 iterations per pixel, computed entirely in JavaScript by Duktape on a PowerPC G3 running Mac OS 9. The fractal that proved a 1998 machine can run a modern scripting language.
 
@@ -147,11 +192,11 @@ An ASCII Mandelbrot set, 40x20 characters, 80 iterations per pixel, computed ent
 
 ## What's Next
 
-- **Image rendering**: BMP/GIF display via QuickDraw
-- **Real HTML rendering**: port libdom's hubbub binding (dom_parser.c) to C89 for full DOM tree construction
-- **CSS cascade**: wire libcss computed styles into the plotter pipeline
-- **Proxy render-and-flatten**: headless Chromium on the proxy server executes JavaScript-heavy pages and sends pre-rendered HTML to MacSurf
-- **Real-world site compatibility**: Hacker News, Wikipedia, DuckDuckGo
+- **Grid V2 alignment** — fixes159a awaiting hardware verification at time of writing
+- **fixes160 — `grid-template-areas`** — named cell regions for explicit placement by name
+- **fixes161 — `column-count` / `column-rule`** — multi-column layout outside Grid
+- **fixes162 — `outline`** — focus-ring accessibility polish
+- **macSSL integration** — pull the sibling project's TLS 1.2 library into the MacSurf binary so HTTPS can happen natively on the Mac, with the Go proxy as a fallback path
 
 ---
 
