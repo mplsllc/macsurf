@@ -202,7 +202,9 @@ There was nothing here before. The netsurf-dev list has a single 2017 "Port to O
 
 ## License
 
-MacSurf inherits NetSurf's **GPLv2** licence for the browser. The Go proxy and macSSL ship under permissive licences &mdash; see each subproject for details.
+MacSurf is a derivative work of [NetSurf](https://www.netsurf-browser.org/) and inherits its licensing terms: **GPLv2** with the OpenSSL linking exception, plus MIT for visual artwork. The complete text is in [LICENSE](LICENSE).
+
+The Go proxy and macSSL ship under permissive licences &mdash; see each subproject for details.
 
 ---
 
