@@ -35,22 +35,41 @@ It is, as far as we can find, the first serious [NetSurf](https://www.netsurf-br
 
 ## See it run
 
+<p align="center">
+  <img src="screenshots/01-running-on-os9.jpg" alt="MacSurf running in Mac OS 9 on a real G3" width="780"><br>
+  <em>MacSurf on real Mac OS 9 hardware &mdash; fixes50 test page with multi-stop linear gradients, flex layout, and a Platinum-themed window.</em>
+</p>
+
 <table>
 <tr>
-<td width="33%" align="center" valign="top">
-  <img src="screenshots/01-js-hello-world.jpg" alt="JavaScript Hello World on Mac OS 9"><br>
-  <strong>JavaScript, native</strong><br>
-  <em>Duktape ES5 evaluating live inside the page.</em>
+<td width="50%" align="center" valign="top">
+  <img src="screenshots/02-css-typography.jpg" alt="CSS typography and lists on Mac OS 9"><br>
+  <strong>Real CSS typography</strong><br>
+  <em>Author CSS, nested lists, definition lists, mathematical inline elements &mdash; all driven by the native libcss cascade.</em>
 </td>
-<td width="33%" align="center" valign="top">
-  <img src="screenshots/02-js-es5-stress-test.jpg" alt="ES5 stress test passing on PowerPC"><br>
-  <strong>ES5 stress test</strong><br>
-  <em>Closures, prototypes, regex, JSON, promises — all on PowerPC.</em>
+<td width="50%" align="center" valign="top">
+  <img src="screenshots/03-css-gradients-and-flex.jpg" alt="CSS linear gradients and flex justify-content"><br>
+  <strong>Linear gradients + flex</strong><br>
+  <em>Four-direction <code>linear-gradient()</code> over <code>flex justify-content</code> distribution variants. QuickDraw paints every pixel.</em>
 </td>
-<td width="33%" align="center" valign="top">
-  <img src="screenshots/03-js-mandelbrot.jpg" alt="Mandelbrot fractal computed by JavaScript"><br>
-  <strong>JS-rendered Mandelbrot</strong><br>
-  <em>40&times;20 ASCII fractal, computed by JavaScript on a G3.</em>
+</tr>
+<tr>
+<td width="50%" align="center" valign="top">
+  <img src="screenshots/04-css-cards-and-tables.jpg" alt="CSS cards, callouts, and tables"><br>
+  <strong>Cards, callouts, tables</strong><br>
+  <em><code>border-radius</code>, accent-left callouts, and a real CSS feature-support matrix rendered as a styled HTML table.</em>
+</td>
+<td width="50%" align="center" valign="top">
+  <img src="screenshots/05-css-shadows-and-opacity.jpg" alt="text-shadow and opacity stipple"><br>
+  <strong><code>text-shadow</code> + opacity</strong><br>
+  <em>Custom <code>-macsurf-text-shadow</code> property paints drop shadows under DrawText; opacity degrades through QuickDraw stipple patterns.</em>
+</td>
+</tr>
+<tr>
+<td colspan="2" align="center" valign="top">
+  <img src="screenshots/06-javascript-mandelbrot.jpg" alt="JavaScript-computed Mandelbrot fractal" width="640"><br>
+  <strong>JavaScript on Mac OS 9</strong><br>
+  <em>Duktape ES5 running live in the page &mdash; Mandelbrot computed by JS on a 233&nbsp;MHz G3.</em>
 </td>
 </tr>
 </table>
