@@ -33,46 +33,62 @@ It is, as far as we can find, the first serious [NetSurf](https://www.netsurf-br
 
 ---
 
-## See it run
+## The progression
 
-<p align="center">
-  <img src="screenshots/01-running-on-os9.jpg" alt="MacSurf running in Mac OS 9 on a real G3" width="780"><br>
-  <em>MacSurf on real Mac OS 9 hardware &mdash; fixes50 test page with multi-stop linear gradients, flex layout, and a Platinum-themed window.</em>
-</p>
+Each shot below is a real milestone, captured on a Power Macintosh G3 running Mac OS 9. The fix-number annotations match this repo's commit history.
 
 <table>
 <tr>
 <td width="50%" align="center" valign="top">
-  <img src="screenshots/02-css-typography.jpg" alt="CSS typography and lists on Mac OS 9"><br>
-  <strong>Real CSS typography</strong><br>
-  <em>Author CSS, nested lists, definition lists, mathematical inline elements &mdash; all driven by the native libcss cascade.</em>
+  <img src="screenshots/01-javascript-on-os9.jpg" alt="JavaScript Hello World on Mac OS 9"><br>
+  <strong>v0.2 &mdash; JavaScript on Mac OS 9</strong><br>
+  <em>First real-world JS-bearing page. Duktape 2.7.0 ES5 evaluating live: <code>Math.sqrt</code>, JSON, ES5 array methods.</em>
 </td>
 <td width="50%" align="center" valign="top">
-  <img src="screenshots/03-css-gradients-and-flex.jpg" alt="CSS linear gradients and flex justify-content"><br>
-  <strong>Linear gradients + flex</strong><br>
-  <em>Four-direction <code>linear-gradient()</code> over <code>flex justify-content</code> distribution variants. QuickDraw paints every pixel.</em>
+  <img src="screenshots/02-css-transforms.jpg" alt="CSS transform rotate, scale, translate"><br>
+  <strong>fixes73 &mdash; CSS transforms</strong><br>
+  <em>Native <code>transform: rotate() / scale() / translate()</code>. Integer Q15 sin/cos table, no FPU dependency &mdash; arbitrary angles on QuickDraw.</em>
 </td>
 </tr>
 <tr>
 <td width="50%" align="center" valign="top">
-  <img src="screenshots/04-css-cards-and-tables.jpg" alt="CSS cards, callouts, and tables"><br>
-  <strong>Cards, callouts, tables</strong><br>
-  <em><code>border-radius</code>, accent-left callouts, and a real CSS feature-support matrix rendered as a styled HTML table.</em>
+  <img src="screenshots/03-css-radial-gradients.jpg" alt="CSS radial gradients"><br>
+  <strong>fixes74d &mdash; radial gradients</strong><br>
+  <em>2-stop radial gradients via concentric <code>PaintOval</code> stack. 16 levels smeared on decode. Shape + position keywords parsed.</em>
 </td>
 <td width="50%" align="center" valign="top">
-  <img src="screenshots/05-css-shadows-and-opacity.jpg" alt="text-shadow and opacity stipple"><br>
-  <strong><code>text-shadow</code> + opacity</strong><br>
-  <em>Custom <code>-macsurf-text-shadow</code> property paints drop shadows under DrawText; opacity degrades through QuickDraw stipple patterns.</em>
+  <img src="screenshots/04-css-animations.jpg" alt="CSS animations: wiggle, swing, slow spin"><br>
+  <strong>fixes77 &mdash; CSS animations</strong><br>
+  <em>Linear ping-pong animation player on top of fixes73 rotation. Wiggle, swing, and full 0&deg;&rarr;359&deg; spin.</em>
 </td>
 </tr>
 <tr>
-<td colspan="2" align="center" valign="top">
-  <img src="screenshots/06-javascript-mandelbrot.jpg" alt="JavaScript-computed Mandelbrot fractal" width="640"><br>
-  <strong>JavaScript on Mac OS 9</strong><br>
-  <em>Duktape ES5 running live in the page &mdash; Mandelbrot computed by JS on a 233&nbsp;MHz G3.</em>
+<td width="50%" align="center" valign="top">
+  <img src="screenshots/05-png-transparency.jpg" alt="PNG image with transparency on Mac OS 9"><br>
+  <strong>fixes79b &mdash; PNG transparency</strong><br>
+  <em>QuickTime Graphics Importer feeding the NetSurf image content handler. PNG + GIF + BMP, all with real transparency.</em>
+</td>
+<td width="50%" align="center" valign="top">
+  <img src="screenshots/06-css-word-overflow.jpg" alt="CSS word-break and overflow-wrap"><br>
+  <strong>fixes136 &mdash; word-break / overflow-wrap</strong><br>
+  <em><code>word-break: break-all</code>, <code>keep-all</code>, <code>white-space: nowrap</code>, legacy <code>word-wrap: break-word</code>. URL-style aggressive wrapping.</em>
+</td>
+</tr>
+<tr>
+<td width="50%" align="center" valign="top">
+  <img src="screenshots/07-css-stacking-contexts.jpg" alt="CSS z-index stacking contexts"><br>
+  <strong>fixes147 &mdash; stacking contexts</strong><br>
+  <em>CSS 2.1 painting order. Opacity, transforms, and explicit <code>z-index</code> all create new stacking contexts &mdash; properly painted on real hardware.</em>
+</td>
+<td width="50%" align="center" valign="top">
+  <img src="screenshots/08-css-grid-placement.jpg" alt="CSS Grid column placement"><br>
+  <strong>fixes151 &mdash; CSS Grid column placement</strong><br>
+  <em><code>grid-column: span N</code>, <code>1 / -1</code> full-row hero, positional <code>start / end</code>, span + auto-wrap. Real Grid layout on OS 9.</em>
 </td>
 </tr>
 </table>
+
+---
 
 ---
 
