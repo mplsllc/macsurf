@@ -185,6 +185,15 @@ short macos9_font_id_from_style(const struct plot_font_style *fstyle);
 void  macos9_font_metric_probe_run(void); /* fixes144a -- diagnostic probe */
 void  macos9_font_vmetric_probe_run(void); /* fixes153 -- FontInfo dump */
 short macos9_face_from_style(const struct plot_font_style *fstyle);
+
+/* fixes154: when 1, every width/paint call logs one line to
+ * MacSurf Debug.log with op, fstyle->family, chosen font_id, size,
+ * face, letter/word spacing, the macroman-converted string length,
+ * and the width or paint x/y. Catches width-vs-paint font_id
+ * divergence if the fixes145 horizontal scrambling recurs. Default
+ * ON for the alias retry round; flip to 0 once the build is
+ * accepted (or if log volume becomes a problem). */
+#define MACSURF_FONT_ALIAS_DIAG 1
 size_t macos9_utf8_to_macroman(const char *u, size_t l, char *m, size_t mx);
 
 /* MACSURF_HOME_URL canonical definition is in macsurf_config.h.

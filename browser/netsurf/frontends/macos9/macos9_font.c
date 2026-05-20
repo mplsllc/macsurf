@@ -253,6 +253,30 @@ macos9_font_measure(const struct plot_font_style *fstyle,
                 width += (int)(mac_len - 1);
         }
 
+#if MACSURF_FONT_ALIAS_DIAG
+        /* fixes154: log every measure call. Format kept tight so the
+         * 255-byte cap on macsurf_debug_log_writef doesn't truncate;
+         * truncate the string preview to ~16 chars. */
+        {
+                char preview[24];
+                size_t pv = (mac_len < 16) ? mac_len : 16;
+                size_t k;
+                for (k = 0; k < pv; k++) {
+                        char c = mac_str[k];
+                        preview[k] = (c >= 0x20 && c < 0x7f) ? c : '.';
+                }
+                preview[pv] = '\0';
+                macsurf_debug_log_writef(
+                    "[FONTDIAG] op=measure fam=%d id=%d sz=%d face=%d "
+                    "ls=%d ws=%d mac=%d w=%d str=\"%s\"",
+                    (int)(fstyle ? fstyle->family : 0),
+                    (int)font_id, (int)size, (int)face,
+                    (int)(fstyle ? fstyle->letter_spacing : 0),
+                    (int)(fstyle ? fstyle->word_spacing : 0),
+                    (int)mac_len, width, preview);
+        }
+#endif
+
         if (changed_port)
                 SetPort(old_port);
         return width;

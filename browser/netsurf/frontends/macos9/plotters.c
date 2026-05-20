@@ -86,7 +86,26 @@ long macos9_plot_rect_count = 0;
  * individual segments paint with different fonts. The fix is real
  * per-font ascent/descent + gui_layout_table family awareness, which
  * is a NetSurf-core-side change beyond this round's scope. */
-#define MACSURF_FONT_FAMILY_ALIASES 0
+/* fixes154: re-enabled. The vmetric probe in fixes153 confirmed all
+ * candidate families (Helvetica, Times, Monaco, Geneva, Chicago,
+ * Palatino, Courier) have sensible per-font metrics; the data does
+ * NOT explain the fixes145 horizontal scrambling that motivated the
+ * 0-default. The retry ships with MACSURF_FONT_ALIAS_DIAG turned on so
+ * every width/paint call logs (op, family, font_id, size, face,
+ * letter/word spacing, mac string length, x/y or width). If
+ * scrambling recurs on hardware, the logs will show the exact width-
+ * vs-paint font_id divergence point. Set to 0 if a real regression
+ * lands and a quick rollback is needed.
+ *
+ * Old comment kept for reference:
+ *   "lines stack 2-4 px on top of each other" was the fixes52 symptom.
+ *   fixes145 saw horizontal text scrambling rather than vertical
+ *   stacking. The vmetric data showed mixed-family lines at CSS
+ *   line-height >= 1.3 (the normal default) accommodate all OS 9
+ *   families. The line-height: 1 edge case is rare on real pages. */
+#define MACSURF_FONT_FAMILY_ALIASES 1
+/* MACSURF_FONT_ALIAS_DIAG lives in macos9.h so macos9_font.c sees it
+ * too. Default ON for fixes154; set to 0 in macos9.h to silence. */
 
 /* fixes74b: counters incremented by redraw.c when it detects
  * CSS_MACSURF_GRADIENT_SET. Lets us see whether the cascade returned
@@ -1332,6 +1351,32 @@ macos9_plot_text(const struct redraw_context *ctx,
 
 		mac_len = macos9_utf8_to_macroman(text, length, mac_buf,
 				sizeof(mac_buf));
+
+#if MACSURF_FONT_ALIAS_DIAG
+		/* fixes154: mirror of the macos9_font_measure diagnostic at
+		 * the paint site. Same format so a side-by-side diff against
+		 * the measure logs will show any width-vs-paint font_id
+		 * divergence directly. */
+		{
+			char dpv[24];
+			size_t pn = (mac_len < 16) ? mac_len : 16;
+			size_t pk;
+			for (pk = 0; pk < pn; pk++) {
+				char c = mac_buf[pk];
+				dpv[pk] = (c >= 0x20 && c < 0x7f) ? c : '.';
+			}
+			dpv[pn] = '\0';
+			macsurf_debug_log_writef(
+			    "[FONTDIAG] op=paint   fam=%d id=%d sz=%d face=%d "
+			    "ls=%d ws=%d mac=%d xy=(%d,%d) str=\"%s\"",
+			    (int)(fstyle ? fstyle->family : 0),
+			    (int)font_id, (int)size, (int)face,
+			    (int)(fstyle ? fstyle->letter_spacing : 0),
+			    (int)(fstyle ? fstyle->word_spacing : 0),
+			    (int)mac_len, (int)x, (int)y, dpv);
+		}
+#endif
+
 		saved_clip = macos9_push_clip();
 		ls = (fstyle != NULL) ? fstyle->letter_spacing : 0;
 		/* fixes139b: word-spacing pulled out so the per-char branch
