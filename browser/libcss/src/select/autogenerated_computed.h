@@ -279,8 +279,18 @@ struct css_computed_style_i {
 	int32_t macsurf_grid;
 	/* fixes151: -macsurf-grid-col-span. 0 = unset (treat as 1 in
 	 * layout). 1..254 = literal span. 255 = sentinel "fill remainder
-	 * of row" (from `grid-column: 1 / -1` preprocessor rewrite). */
-	uint8_t macsurf_grid_col_span;
+	 * of row" (from `grid-column: 1 / -1` preprocessor rewrite).
+	 *
+	 * fixes151b: stored as int32_t (not uint8_t) to avoid the
+	 * struct-padding trap. A uint8_t between two int32_t fields
+	 * creates 3 padding bytes that aren't deterministic across all
+	 * cascade paths -- arena interning's memcmp(&a->i, &b->i, ...)
+	 * then flags logically-equal styles as different, the intern
+	 * table fills with duplicates, and css_computed_style_destroy
+	 * eventually walks a freed pointer (same failure mode as
+	 * fixes117's inline track array). Using int32_t makes the
+	 * field self-aligning. */
+	int32_t macsurf_grid_col_span;
 	/* fixes76: -macsurf-animation-opacity.
 	 * bits 31..16: duration_ms (uint16, full from->to->from cycle).
 	 * bits 15..8:  to_opacity (uint8 0..255).

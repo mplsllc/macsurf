@@ -40,7 +40,7 @@ css_error css__cascade_macsurf_grid_col_span(uint32_t opv,
 	if (css__outranks_existing(getOpcode(opv), isImportant(opv), state,
 			getFlagValue(opv))) {
 		state->computed->i.macsurf_grid_col_span =
-				is_set ? (uint8_t)span : 0;
+				is_set ? span : 0;
 	}
 
 	return CSS_OK;
@@ -77,7 +77,7 @@ css_error css__compose_macsurf_grid_col_span(
 	/* col-span is not inherited; child wins unless child is unset
 	 * (0) and parent is set, in which case fall back to parent.
 	 * Matches the pattern used by macsurf_grid_rows. */
-	uint8_t v = child->i.macsurf_grid_col_span;
+	int32_t v = child->i.macsurf_grid_col_span;
 	if (v == 0) v = parent->i.macsurf_grid_col_span;
 	result->i.macsurf_grid_col_span = v;
 	return CSS_OK;

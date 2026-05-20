@@ -511,7 +511,10 @@ const int32_t *css_computed_macsurf_grid_row_tracks(
 uint8_t css_computed_macsurf_grid_col_span(
 		const css_computed_style *style)
 {
-	return style->i.macsurf_grid_col_span;
+	int32_t v = style->i.macsurf_grid_col_span;
+	if (v < 0) v = 0;
+	if (v > 255) v = 255;
+	return (uint8_t)v;
 }
 
 uint8_t css_computed_macsurf_animation_opacity(
