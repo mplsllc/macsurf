@@ -64,6 +64,7 @@ static int32_t macsurf_justify__read_int(const parserutils_vector *vector,
  * doesn't, the crash is between parser-emits-bytecode and cascade.
  * Logger only supports %d/%ld/%p/%s — see project memory. */
 extern void macsurf_debug_log_writef(const char *fmt, ...);
+extern void macsurf_debug_log_flush(void);
 static int macsurf__justify_parse_count = 0;
 
 css_error css__parse_macsurf_justify(css_language *c,
@@ -85,30 +86,44 @@ css_error css__parse_macsurf_justify(css_language *c,
 			"JPARS[%d] enter ctx=%ld",
 			macsurf__justify_parse_count,
 			(long)*ctx);
+		/* fixes159g: explicit flush so the entry-log line is on
+		 * disk BEFORE we do anything else. The default log path
+		 * skips per-write flushes (fixes96 perf change) and the
+		 * previous JPARS rounds were lost in HFS cache when the
+		 * crash hit. The flush costs ~10-50ms but only fires up
+		 * to 16 times — acceptable for diagnostics. */
+		macsurf_debug_log_flush();
 		macsurf__justify_parse_count++;
 	}
 
 	token = parserutils_vector_peek(vector, *ctx);
 	if (token == NULL) {
-		if (log_this) macsurf_debug_log_writef(
-			"JPARS  early null-token");
+		if (log_this) {
+			macsurf_debug_log_writef("JPARS  early null-token");
+			macsurf_debug_log_flush();
+		}
 		return CSS_INVALID;
 	}
 
 	flag_value = get_css_flag_value(c, token);
 	if (flag_value != FLAG_VALUE__NONE) {
 		parserutils_vector_iterate(vector, ctx);
-		if (log_this) macsurf_debug_log_writef(
-			"JPARS  flag-value path flag=%d",
-			(int)flag_value);
+		if (log_this) {
+			macsurf_debug_log_writef(
+				"JPARS  flag-value path flag=%d",
+				(int)flag_value);
+			macsurf_debug_log_flush();
+		}
 		return css_stylesheet_style_flag_value(result, flag_value,
 				CSS_PROP_MACSURF_JUSTIFY);
 	}
 
 	justify_items = macsurf_justify__read_int(vector, ctx);
 	if (justify_items < 0) {
-		if (log_this) macsurf_debug_log_writef(
-			"JPARS  ji read failed");
+		if (log_this) {
+			macsurf_debug_log_writef("JPARS  ji read failed");
+			macsurf_debug_log_flush();
+		}
 		*ctx = orig_ctx;
 		return CSS_INVALID;
 	}
@@ -116,8 +131,10 @@ css_error css__parse_macsurf_justify(css_language *c,
 	if (justify_self < 0) justify_self = 0;
 
 	if (justify_items == 0 && justify_self == 0) {
-		if (log_this) macsurf_debug_log_writef(
-			"JPARS  both zero -> drop");
+		if (log_this) {
+			macsurf_debug_log_writef("JPARS  both zero -> drop");
+			macsurf_debug_log_flush();
+		}
 		*ctx = orig_ctx;
 		return CSS_INVALID;
 	}
@@ -125,34 +142,48 @@ css_error css__parse_macsurf_justify(css_language *c,
 	packed = ((int32_t)((uint32_t)justify_self  & 0xFu) << 4) |
 	         ((int32_t)((uint32_t)justify_items & 0xFu));
 
-	if (log_this) macsurf_debug_log_writef(
-		"JPARS  ji=%d js=%d packed=%d before appendOPV",
-		(int)justify_items, (int)justify_self, (int)packed);
+	if (log_this) {
+		macsurf_debug_log_writef(
+			"JPARS  ji=%d js=%d packed=%d before appendOPV",
+			(int)justify_items, (int)justify_self, (int)packed);
+		macsurf_debug_log_flush();
+	}
 
 	error = css__stylesheet_style_appendOPV(result,
 			CSS_PROP_MACSURF_JUSTIFY, 0, 0x0080 /* SET */);
 	if (error != CSS_OK) {
-		if (log_this) macsurf_debug_log_writef(
-			"JPARS  appendOPV err=%d",
-			(int)error);
+		if (log_this) {
+			macsurf_debug_log_writef(
+				"JPARS  appendOPV err=%d",
+				(int)error);
+			macsurf_debug_log_flush();
+		}
 		*ctx = orig_ctx;
 		return error;
 	}
 
-	if (log_this) macsurf_debug_log_writef(
-		"JPARS  after appendOPV before vappend");
+	if (log_this) {
+		macsurf_debug_log_writef(
+			"JPARS  after appendOPV before vappend");
+		macsurf_debug_log_flush();
+	}
 
 	error = css__stylesheet_style_vappend(result, 1, (css_fixed)packed);
 	if (error != CSS_OK) {
-		if (log_this) macsurf_debug_log_writef(
-			"JPARS  vappend err=%d",
-			(int)error);
+		if (log_this) {
+			macsurf_debug_log_writef(
+				"JPARS  vappend err=%d",
+				(int)error);
+			macsurf_debug_log_flush();
+		}
 		*ctx = orig_ctx;
 		return error;
 	}
 
-	if (log_this) macsurf_debug_log_writef(
-		"JPARS  done OK");
+	if (log_this) {
+		macsurf_debug_log_writef("JPARS  done OK");
+		macsurf_debug_log_flush();
+	}
 
 	return CSS_OK;
 }
