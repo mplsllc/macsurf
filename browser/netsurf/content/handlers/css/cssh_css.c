@@ -1639,6 +1639,10 @@ macsurf__justify_parse_keyword(const char **p, const char *end)
  * preprocessor lives outside the netsurf frontend module that owns the
  * implementation, so we declare the extern here. */
 extern void macsurf_debug_log_writef(const char *fmt, ...);
+/* fixes159h: explicit flush for the around-libcss probe — log path
+ * skips per-write FlushVol (fixes96 perf), so without this the
+ * trailing diagnostic lines vanish into HFS cache on the crash. */
+extern void macsurf_debug_log_flush(void);
 
 static bool
 macsurf__justify_emit(char **out_p, size_t *cap_p, size_t *pos_p,
@@ -1893,12 +1897,44 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		final_size = (unsigned int)justify_size;
 	}
 
-	error = nscss_process_css_data(&css->data, final_data, final_size);
+	/* fixes159h: triangulate the 159e/f/g crash. Three labelled,
+	 * force-flushed log points around the libcss handoff so we can
+	 * tell exactly where execution dies between preprocessor-done
+	 * and parser-called. Decision matrix in the ship message. */
+	{
+		static int macsurf__rw_probe_count = 0;
+		if (macsurf__rw_probe_count < 4) {
+			macsurf_debug_log_writef(
+				"POSTRW[%d] final_size=%d about to enter libcss",
+				macsurf__rw_probe_count,
+				(int)final_size);
+			macsurf_debug_log_flush();
+		}
 
-	if (rewritten_justify != NULL) free(rewritten_justify);
-	if (rewritten_col_span != NULL) free(rewritten_col_span);
-	if (rewritten_rows != NULL) free(rewritten_rows);
-	if (rewritten != NULL) free(rewritten);
+		error = nscss_process_css_data(&css->data,
+				final_data, final_size);
+
+		if (macsurf__rw_probe_count < 4) {
+			macsurf_debug_log_writef(
+				"POSTPARSE[%d] libcss returned err=%d",
+				macsurf__rw_probe_count,
+				(int)error);
+			macsurf_debug_log_flush();
+		}
+
+		if (rewritten_justify != NULL) free(rewritten_justify);
+		if (rewritten_col_span != NULL) free(rewritten_col_span);
+		if (rewritten_rows != NULL) free(rewritten_rows);
+		if (rewritten != NULL) free(rewritten);
+
+		if (macsurf__rw_probe_count < 4) {
+			macsurf_debug_log_writef(
+				"POSTFREE[%d] all rewrite buffers freed",
+				macsurf__rw_probe_count);
+			macsurf_debug_log_flush();
+			macsurf__rw_probe_count++;
+		}
+	}
 
 	if (error != CSS_OK && error != CSS_NEEDDATA) {
 		content_broadcast_error(c, NSERROR_CSS, NULL);
