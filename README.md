@@ -17,14 +17,17 @@
   </a>
 </div>
 <p align="center">
-  <a href="docs/release-notes/MacSurf-0.1a1.md"><img alt="version" src="https://img.shields.io/badge/version-0.1a1%20%E2%80%94%20alpha-orange"></a>
-  <a href="docs/status.md"><img alt="status" src="https://img.shields.io/badge/status-active%20development-brightgreen"></a>
-  <img alt="platform" src="https://img.shields.io/badge/platform-Mac%20OS%209.1%E2%80%939.2.2-blue">
-  <img alt="arch" src="https://img.shields.io/badge/arch-PowerPC%20G3%20%2F%20G4-orange">
-  <img alt="compiler" src="https://img.shields.io/badge/compiler-CodeWarrior%208%20Pro-yellow">
-  <a href="docs/css-status.md"><img alt="css" src="https://img.shields.io/badge/CSS-150%2B%20properties-9cf"></a>
-  <img alt="js" src="https://img.shields.io/badge/JavaScript-Duktape%20ES5-lightgrey">
-  <img alt="license" src="https://img.shields.io/badge/license-GPLv2-blue">
+  <a href="https://github.com/mplsllc/macsurf/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/mplsllc/macsurf?include_prereleases&label=release&color=ff8800"></a>
+  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/github/license/mplsllc/macsurf?color=blue"></a>
+  <a href="https://github.com/mplsllc/macsurf/issues"><img alt="Open issues" src="https://img.shields.io/github/issues/mplsllc/macsurf"></a>
+  <a href="https://github.com/mplsllc/macsurf/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/mplsllc/macsurf?style=flat"></a>
+  <a href="https://en.wikipedia.org/wiki/Mac_OS_9"><img alt="Mac OS 9" src="https://img.shields.io/badge/Mac%20OS-9.1%E2%80%939.2.2-silver?logo=apple&logoColor=white"></a>
+  <a href="https://en.wikipedia.org/wiki/PowerPC_G3"><img alt="PowerPC" src="https://img.shields.io/badge/CPU-PowerPC%20G3%2FG4-blue"></a>
+  <a href="https://en.wikipedia.org/wiki/CodeWarrior"><img alt="Built with CodeWarrior" src="https://img.shields.io/badge/built%20with-CodeWarrior%208-orange"></a>
+  <a href="https://en.wikipedia.org/wiki/Carbon_(API)"><img alt="Carbon API" src="https://img.shields.io/badge/API-Carbon-lightgrey"></a>
+  <a href="docs/css-status.md"><img alt="CSS coverage" src="https://img.shields.io/badge/CSS-150%2B%20properties-9cf"></a>
+  <img alt="JavaScript engine" src="https://img.shields.io/badge/JavaScript-Duktape%20ES5-lightgrey">
+  <a href="https://github.com/mplsllc/macsurf/discussions"><img alt="Discussions" src="https://img.shields.io/github/discussions/mplsllc/macsurf?color=purple"></a>
 </p>
 
 ---
