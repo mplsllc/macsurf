@@ -58,6 +58,57 @@ typedef struct macos9_qt_image_content {
 	void *bitmap;            /* struct macos9_bitmap (RGBA pixels) */
 } macos9_qt_image_content;
 
+/* fixes160b — pre-decode size gate. The Carbon 16 MB application
+ * partition cannot hold an arbitrarily large decoded RGBA buffer, and
+ * bitmap_create begins to fail intermittently above ~1 MB of decoded
+ * pixels on a 64-128 MB host. Modern sites routinely embed assets at
+ * 2000-3000 px on a side that decompress to 18-27 MB and take the
+ * whole process down. Gauntlet evidence:
+ *   github.com screenshots 2046x2226, 2931x2151, 3072x2304 -> all FAIL
+ *   huffpost decode storm fragments the heap before final layout
+ * Any image whose decoded pixel buffer would exceed the cap is skipped
+ * before the decoder is invoked. width/height are still set on the
+ * content node so layout reserves the right amount of space; the
+ * surrounding box renders as an empty/broken-image rect via NetSurf's
+ * existing failed-image plumbing. 1 MB = 512x512 RGBA. */
+#define MACOS9_IMG_MAX_DECODED_BYTES (1L * 1024L * 1024L)
+
+static bool
+macos9_img_is_oversize(int w, int h)
+{
+	long bytes;
+	if (w <= 0 || h <= 0) return false;
+	bytes = (long)w * (long)h * 4L;
+	return bytes > MACOS9_IMG_MAX_DECODED_BYTES;
+}
+
+/* Read IHDR width/height from a PNG buffer without invoking lodepng's
+ * full inflate. PNG layout is fixed: 8-byte signature, then a 4-byte
+ * chunk length, "IHDR" tag, width (big-endian u32) at offset 16, height
+ * at offset 20. Returns false if the bytes don't look like a PNG or
+ * the dimensions are absurd. */
+static bool
+macos9_png_read_dims(const unsigned char *data, size_t size,
+		int *out_w, int *out_h)
+{
+	unsigned long w, h;
+	if (size < 24) return false;
+	if (data[0] != 0x89 || data[1] != 0x50 ||
+			data[2] != 0x4E || data[3] != 0x47) return false;
+	w = ((unsigned long)data[16] << 24) |
+		((unsigned long)data[17] << 16) |
+		((unsigned long)data[18] << 8) |
+		(unsigned long)data[19];
+	h = ((unsigned long)data[20] << 24) |
+		((unsigned long)data[21] << 16) |
+		((unsigned long)data[22] << 8) |
+		(unsigned long)data[23];
+	if (w == 0 || h == 0 || w > 32768UL || h > 32768UL) return false;
+	*out_w = (int)w;
+	*out_h = (int)h;
+	return true;
+}
+
 static nserror
 macos9_qt_image_create(const struct content_handler *handler,
 		lwc_string *imime_type, const struct http_parameter *params,
@@ -406,8 +457,10 @@ macos9_png_decode_to_bitmap(const unsigned char *data, size_t size,
 	h = 0;
 	lerr = lodepng_decode32(&rgba, &w, &h, data, size);
 	if (lerr != 0 || rgba == NULL) {
-		macsurf_debug_log_writef("png decode: lodepng err=%u",
-				(unsigned)lerr);
+		/* fixes160b — was "%u"; minimal formatter prints %u
+		 * literally without consuming the va_arg. Use %ld. */
+		macsurf_debug_log_writef("png decode: lodepng err=%ld",
+				(long)lerr);
 		if (rgba != NULL) free(rgba);
 		return NSERROR_INVALID;
 	}
@@ -509,6 +562,33 @@ macos9_qt_image_convert(struct content *c)
 	if (src_size >= 8 &&
 			src_bytes[0] == 0x89 && src_bytes[1] == 0x50 &&
 			src_bytes[2] == 0x4E && src_bytes[3] == 0x47) {
+		int gate_w = 0;
+		int gate_h = 0;
+		/* fixes160b — size gate. Inspect IHDR first; if the
+		 * decoded pixel buffer would blow the partition, skip
+		 * the decode entirely and let the box layout reserve
+		 * the right amount of space for a broken-image rect. */
+		if (macos9_png_read_dims(src_bytes, (size_t)src_size,
+				&gate_w, &gate_h) &&
+				macos9_img_is_oversize(gate_w, gate_h)) {
+			long bytes = (long)gate_w * (long)gate_h * 4L;
+			macsurf_debug_log_writef(
+				"img skip: oversize png %dx%d "
+				"decoded=%ld cap=%ld",
+				gate_w, gate_h, bytes,
+				(long)MACOS9_IMG_MAX_DECODED_BYTES);
+			HUnlock(qti->compressed);
+			DisposeHandle(qti->compressed);
+			qti->compressed = NULL;
+			c->width = gate_w;
+			c->height = gate_h;
+			{
+				extern long macsurf__site_img_fail;
+				macsurf__site_img_fail++;
+			}
+			content_broadcast_error(c, NSERROR_NOMEM, NULL);
+			return false;
+		}
 		bw = 0;
 		bh = 0;
 		err = macos9_png_decode_to_bitmap(src_bytes,
@@ -576,6 +656,27 @@ macos9_qt_image_convert(struct content *c)
 		MS_LOG("img convert: bad bounds");
 		CloseComponent(importer);
 		content_broadcast_error(c, NSERROR_INVALID, NULL);
+		return false;
+	}
+	/* fixes160b — size gate (QT path). Skip the GWorld/decode dance
+	 * for any image whose decoded RGBA buffer would exceed the cap.
+	 * Set width/height on the content so layout reserves real space
+	 * for the broken-image placeholder; surrounding text and other
+	 * images keep their positions. */
+	if (macos9_img_is_oversize(bw, bh)) {
+		long bytes = (long)bw * (long)bh * 4L;
+		macsurf_debug_log_writef(
+			"img skip: oversize qt %dx%d decoded=%ld cap=%ld",
+			bw, bh, bytes,
+			(long)MACOS9_IMG_MAX_DECODED_BYTES);
+		CloseComponent(importer);
+		c->width = bw;
+		c->height = bh;
+		{
+			extern long macsurf__site_img_fail;
+			macsurf__site_img_fail++;
+		}
+		content_broadcast_error(c, NSERROR_NOMEM, NULL);
 		return false;
 	}
 	macsurf_debug_log_writef("img convert: %dx%d %s, decoding",

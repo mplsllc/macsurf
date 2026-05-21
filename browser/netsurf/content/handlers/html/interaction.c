@@ -1613,8 +1613,11 @@ bool html_keypress(struct content *c, uint32_t key)
 				html->layout->node, true, true, key);
 	}
 #ifdef __MACOS9__
+	/* fixes160b — was "key=0x%lx". The minimal formatter in
+	 * macsurf_debug_log only knows %d/%ld/%p/%s/%%; %lx printed
+	 * literally and ate later args' alignment. Switched to %ld. */
 	{ extern void macsurf_debug_log_writef(const char *fmt, ...);
-	  macsurf_debug_log_writef("html_keypress: focus_type=%d key=0x%lx", (int)html->focus_type, (unsigned long)key); }
+	  macsurf_debug_log_writef("html_keypress: focus_type=%d key=%ld", (int)html->focus_type, (long)key); }
 #endif
 
 	switch (html->focus_type) {
