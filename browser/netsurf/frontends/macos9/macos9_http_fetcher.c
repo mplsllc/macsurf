@@ -842,14 +842,19 @@ static bool macos9_http_acceptable(const struct nsurl *u) { (void)u; return true
  * Caller is responsible for handling the navigation-hint override before
  * calling this (the pending_document flag wins over suffix). Suffix is
  * inspected against the URL path portion only (everything before '?' or
- * '#'), with case-insensitive matching. Falls back to OTHER for anything
- * unrecognized; bare URLs ending in / classify as DOCUMENT so that
- * apple.com/, github.com/foo, /index.php-style URLs are treated as
- * top-level docs even when the navigation hint is missing (e.g. an
- * iframe load, a redirect target, a llcache re-fetch). */
+ * '#'), with case-insensitive matching.
+ *
+ * fixes161a2 — tightened DOC matching. Apple's /wss/fonts?families=...
+ * endpoint was being misclassified as DOCUMENT under the old no-dot
+ * fallback, which both gave it a DOC slot reservation and confused
+ * downstream layout-aware logic. DOC class now requires either an
+ * explicit document extension (.html/.htm/.php/.aspx/.jsp/.shtml) or
+ * a URL whose path is exactly "/" or empty (i.e. the bare domain root).
+ * Anything else without a recognized extension falls back to OTHER. */
 static int macos9_classify_url(struct nsurl *u) {
 	const char *s;
 	int n, i, last_slash;
+	int path_start;
 	char c4, c3, c2, c1;
 	if (u == NULL) return MACOS9_RC_OTHER;
 	s = nsurl_access(u);
@@ -915,21 +920,33 @@ static int macos9_classify_url(struct nsurl *u) {
 		if (c2=='j' && c1=='s') return MACOS9_RC_SCRIPT;
 	}
 
-	/* No recognized extension: treat URLs whose last path component is
-	 * empty (ends in /) or has no dot after the last slash as DOCUMENT.
-	 * Catches apple.com/, github.com/mplsllc/macsurf, /api/foo, etc. */
+	/* fixes161a2 — bare-domain-root → DOCUMENT, everything else → OTHER.
+	 * Find the start of the path (skip past "scheme://host"). If the
+	 * remaining path is empty or just "/", classify as DOC. Otherwise
+	 * the URL has a real path; without a recognized extension it falls
+	 * back to OTHER so endpoints like /wss/fonts, /api/x, /v3/info
+	 * don't grab DOC slots. The navigation-hint flag is the source of
+	 * truth for the real main document. */
+	path_start = -1;
 	last_slash = -1;
-	for (i = 0; i < n; i++) {
-		if (s[i] == '/') last_slash = i;
-	}
-	if (last_slash < 0) return MACOS9_RC_OTHER;
-	{
-		int has_dot = 0;
-		for (i = last_slash + 1; i < n; i++) {
-			if (s[i] == '.') { has_dot = 1; break; }
+	for (i = 0; i + 2 < n; i++) {
+		if (s[i] == ':' && s[i+1] == '/' && s[i+2] == '/') {
+			path_start = i + 3;
+			while (path_start < n && s[path_start] != '/') path_start++;
+			break;
 		}
-		if (!has_dot) return MACOS9_RC_DOCUMENT;
 	}
+	if (path_start < 0) {
+		/* No scheme://; treat as a relative URL. Use last-slash as
+		 * a coarse path-start. */
+		for (i = 0; i < n; i++) {
+			if (s[i] == '/') last_slash = i;
+		}
+		if (last_slash < 0) return MACOS9_RC_OTHER;
+		path_start = 0;
+	}
+	if (path_start >= n) return MACOS9_RC_DOCUMENT;
+	if (path_start == n - 1 && s[path_start] == '/') return MACOS9_RC_DOCUMENT;
 	return MACOS9_RC_OTHER;
 }
 
@@ -1001,22 +1018,37 @@ static void *macos9_http_setup(struct fetch *p, struct nsurl *u, bool o, bool d,
 		if (f_slots[i].rclass == rc) class_active++;
 	}
 
-	if (global_active >= MAX_GLOBAL_F) {
-		extern long macsurf__site_rgov_skip_other;
-		(void)macsurf__site_rgov_skip_other;
-		macos9_rgov_bump_skip(rc);
-		macsurf_debug_log_writef(
-			"RGOV class=%s action=defer reason=global active=%d cap=%d",
-			macos9_rclass_name(rc), global_active, MAX_GLOBAL_F);
-		return NULL;
-	}
-	if (class_active >= macos9_rclass_cap(rc)) {
-		macos9_rgov_bump_skip(rc);
-		macsurf_debug_log_writef(
-			"RGOV class=%s action=defer reason=class active=%d cap=%d",
-			macos9_rclass_name(rc),
-			class_active, macos9_rclass_cap(rc));
-		return NULL;
+	/* fixes161a2 — only IMAGE class is safe to refuse via NULL. Refusing
+	 * DOC/CSS/SCRIPT/FONT/OTHER setups causes NetSurf to treat the load
+	 * as a critical fetch failure and the browser_window switches to
+	 * about:query/fetcherror. For non-IMG classes we still log a
+	 * "throttle" advisory so the cap pressure is visible in the log,
+	 * but we let the setup go through and allocate a slot anyway.
+	 * Real queueing (proper deferral with retry) is a V2 follow-up.
+	 *
+	 * IMG refusal is fine: NetSurf handles a NULL image fetch as a
+	 * broken-image placeholder, no fetcherror escalation. */
+	if (rc == MACOS9_RC_IMAGE) {
+		if (global_active >= MAX_GLOBAL_F ||
+		    class_active >= MAX_IMG_F) {
+			macos9_rgov_bump_skip(rc);
+			macsurf_debug_log_writef(
+				"RGOV class=IMG action=defer "
+				"global=%d/%d class=%d/%d",
+				global_active, MAX_GLOBAL_F,
+				class_active, MAX_IMG_F);
+			return NULL;
+		}
+	} else {
+		int cap;
+		cap = macos9_rclass_cap(rc);
+		if (class_active >= cap) {
+			macsurf_debug_log_writef(
+				"RGOV class=%s action=throttle "
+				"active=%d cap=%d "
+				"(non-IMG classes never refused)",
+				macos9_rclass_name(rc), class_active, cap);
+		}
 	}
 
 	/* Cap checks passed — allocate a slot from the array. */
