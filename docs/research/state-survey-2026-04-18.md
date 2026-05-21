@@ -1,4 +1,4 @@
-# MacSurf State Survey — 2026-04-18
+# MacSurf State Survey, 2026-04-18
 
 Written after many incremental rounds. Goal: a single evidence-backed
 snapshot so the next round starts from ground truth instead of the
@@ -6,7 +6,7 @@ git-log rumor mill. No code changes in this round.
 
 All paths are relative to the repo root
 `/home/patrick/Webs/macsurf/`. All `.c` / `.h` files in the macos9
-frontend use Mac CR-only line endings — `wc -l` reports 0. Use Read /
+frontend use Mac CR-only line endings, `wc -l` reports 0. Use Read /
 Grep, not `wc` / `cat`.
 
 Current branch: `v0.3-rendering`. Most recent commit at time of
@@ -23,7 +23,7 @@ Uncommitted working-tree changes:
 
 ---
 
-## Section 1 — Chrome state: URL field divergence between initial and new windows
+## Section 1, Chrome state: URL field divergence between initial and new windows
 
 The user reports that `File → New Window` creates a window whose URL
 field accepts typing, but the window created at startup does not.
@@ -113,9 +113,9 @@ The divergence is what happens *before* and *after* the call.
 
 1. **Caller context.** The initial-window call is re-entered from
    inside `browser_window_create`, which then proceeds to do real
-   work — llcache lookup, fetcher setup, hlcache child-content
+   work, llcache lookup, fetcher setup, hlcache child-content
    kickoffs, and potentially synchronous fetcher callbacks
-   (`stub_start` for `resource:default.css` etc.) — all still inside
+   (`stub_start` for `resource:default.css` etc.), all still inside
    that single `browser_window_create` call. Any of these can call
    back into our gui_window callbacks:
    - `macos9_gw_set_url(gw, nsurl)` → `set_url_te_text` → `SetPortWindowPort(gw->window)` + `TESetText(url, len, gw->url_te)`.
@@ -160,7 +160,7 @@ The leading hypothesis is: during the remainder of
 `browser_window_create` (after `macos9_window_create` returns),
 NetSurf dispatches `GW_EVENT_NEW_CONTENT` or `GW_EVENT_UPDATE_EXTENT`
 via `macos9_gw_event`, which calls `macos9_window_invalidate_all(gw)`.
-The next `macos9_handle_update` pass redraws the whole window —
+The next `macos9_handle_update` pass redraws the whole window ,
 including calling `browser_window_redraw(bw, ...)`. That redraw runs
 the `macos9_plotters` table against whatever `bw`'s content has at
 that moment (likely still empty, but valid clip).
@@ -172,7 +172,7 @@ requires the click to be dispatched into the correct rect
 (url_rect)**, so if the visible URL bar has been painted black or
 white on top, the user may not see the caret and believe typing
 doesn't work. Also, `draw_url_bar` calls `TEUpdate(&gw->url_rect,
-gw->url_te)` only from inside `macos9_handle_update` — if content
+gw->url_te)` only from inside `macos9_handle_update`, if content
 redraw runs without `BeginUpdate`/`EndUpdate` or without clipping,
 QuickDraw will commit its output immediately and the URL bar stays
 overdrawn until the next full invalidate.
@@ -180,7 +180,7 @@ overdrawn until the next full invalidate.
 For the File → New path, `bw == NULL`, so the
 `browser_window_redraw` branch inside `macos9_handle_update` is
 skipped (`if (gw->bw != NULL && browser_window_redraw_ready(gw->bw))`)
-— the URL bar never has to compete with content plotting. That
+the URL bar never has to compete with content plotting. That
 matches the symptom exactly: works in the no-bw window, fails in the
 with-bw window.
 
@@ -199,7 +199,7 @@ startup.
 
 ---
 
-## Section 2 — CSS_NOMEM investigation readiness
+## Section 2, CSS_NOMEM investigation readiness
 
 ### 2.1 CSS_NOMEM return paths in libcss
 
@@ -226,9 +226,9 @@ libcss calls the C library directly. There is **no NetSurf wrapper,
 no allocator hook, no bump-arena.** Every `CSS_NOMEM` path bottoms out
 at MSL's `malloc` / `calloc` / `realloc`. Evidence:
 
-- `browser/libcss/src/select/css_select.c:151,248,582,636,1095,1325` — raw `malloc` / `calloc`.
-- `browser/libcss/src/select/hash.c:126` — raw `calloc`.
-- `browser/libcss/include/libcss/utils.h` — no alloc macros.
+- `browser/libcss/src/select/css_select.c:151,248,582,636,1095,1325`, raw `malloc` / `calloc`.
+- `browser/libcss/src/select/hash.c:126`, raw `calloc`.
+- `browser/libcss/include/libcss/utils.h`, no alloc macros.
 
 NetSurf's `content/handlers/css/cssh_select.c:264` calls
 `css_select_style(...)` without installing any allocator hook. So "out
@@ -256,20 +256,20 @@ allocates a `state.results` array sized to `CSS_ORIGIN_AUTHOR` × `css_propertie
 
 On a 4 MB partition, hitting the ceiling at element ~380 is exactly
 what the allocation pattern predicts. This is **not** a hardcoded
-limit in libcss — it's the heap running out.
+limit in libcss, it's the heap running out.
 
-There is no `SIZE` resource in [MacSurf.r](../../browser/netsurf/frontends/macos9/MacSurf.r) — only the `'carb'` resource is defined there. The partition values come entirely from the `.mcp` linker settings above.
+There is no `SIZE` resource in [MacSurf.r](../../browser/netsurf/frontends/macos9/MacSurf.r), only the `'carb'` resource is defined there. The partition values come entirely from the `.mcp` linker settings above.
 
 ### 2.4 `int64_t` / `long long` audit in libcss
 
 Grep found int64 math in six files. Allocation-related ones are
-zero — all sites are fixed-point math, not allocation size math:
+zero, all sites are fixed-point math, not allocation size math:
 
-- `browser/libcss/include/libcss/fpmath.h:57,69,81` — `css_divide_fixed`, `css_multiply_fixed`, `css_int_to_fixed`.
+- `browser/libcss/include/libcss/fpmath.h:57,69,81`, `css_divide_fixed`, `css_multiply_fixed`, `css_int_to_fixed`.
   **Guarded by `#ifdef __MWERKS__` gate; CW8 builds take the `double`-based path.** Verified in file.
-- `browser/libcss/src/parse/mq.c:887` — `uint64_t *result` in signature of `mq_parse_type`; not used in alloc paths.
-- `browser/libcss/src/select/unit.c:363,376` — `int64_t sanity = (int64_t)65536 * (int64_t)65536` inside a `#ifdef MACSURF_DEBUG` probe block. Not called during normal selection.
-- `browser/libcss/test/number.c:136` — test-only, not in MacSurf.mcp.
+- `browser/libcss/src/parse/mq.c:887`, `uint64_t *result` in signature of `mq_parse_type`; not used in alloc paths.
+- `browser/libcss/src/select/unit.c:363,376`, `int64_t sanity = (int64_t)65536 * (int64_t)65536` inside a `#ifdef MACSURF_DEBUG` probe block. Not called during normal selection.
+- `browser/libcss/test/number.c:136`, test-only, not in MacSurf.mcp.
 
 Conclusion: **no 64-bit miscompile risk in the allocation path.**
 CSS_NOMEM is a real heap-exhaustion condition.
@@ -291,14 +291,14 @@ partition ceiling.
 
 ---
 
-## Section 3 — Render pipeline ground truth vs CLAUDE.md
+## Section 3, Render pipeline ground truth vs CLAUDE.md
 
 ### 3.1 `no_backing_store.c`
 
 [browser/netsurf/content/no_backing_store.c](../../browser/netsurf/content/no_backing_store.c).
 
-- `store(url, flags, data, datalen)` — returns `NSERROR_NOT_IMPLEMENTED` (lines 35–41).
-- `fetch(url, flags, data_out, datalen_out)` — returns `NSERROR_NOT_IMPLEMENTED` (lines 43–52), also zeroes outputs.
+- `store(url, flags, data, datalen)`, returns `NSERROR_NOT_IMPLEMENTED` (lines 35-41).
+- `fetch(url, flags, data_out, datalen_out)`, returns `NSERROR_NOT_IMPLEMENTED` (lines 43-52), also zeroes outputs.
 - `initialise`, `finalise` return `NSERROR_OK`.
 - `invalidate`, `release` return `NSERROR_NOT_FOUND`.
 
@@ -311,10 +311,10 @@ The resource fetcher is implemented in
 (not upstream `content/fetchers/resource.c`).
 
 CSS bodies are concrete embedded C string literals:
-- `css_default[]` — ≈ 1 KB of block/flow display + table + headings + inline styling + forms rules.
-- `css_internal[]` — ≈ 300 bytes of input/textarea/button styling.
-- `css_quirks[]` — ≈ 150 bytes of table / img / form / body rules.
-- `favicon_ico[6]` — six zero bytes.
+- `css_default[]`, ≈ 1 KB of block/flow display + table + headings + inline styling + forms rules.
+- `css_internal[]`, ≈ 300 bytes of input/textarea/button styling.
+- `css_quirks[]`, ≈ 150 bytes of table / img / form / body rules.
+- `favicon_ico[6]`, six zero bytes.
 
 Registration via `fetch_resource_register()` and four sibling
 functions (`about`, `file`, `data`, `javascript`).
@@ -324,7 +324,7 @@ functions (`about`, `file`, `data`, `javascript`).
 `MacSurf.mcp` XML (grep the file for `fetcher_stubs`/`ns_fetcher` yields
 zero hits). Only `macos9_http_fetcher.c` and `macos9_fetcher_init.c`
 appear. This does not necessarily mean they are missing from the
-on-Mac build — CLAUDE.md explicitly says the user maintains the
+on-Mac build, CLAUDE.md explicitly says the user maintains the
 project file list on the Mac side through the CW8 IDE, and the
 Linux-side `.mcp` is out of date by design. But we **cannot confirm
 from Linux source alone** whether the resource fetcher is actually in
@@ -377,7 +377,7 @@ macos9_schedule_run();
 Fetcher progress is driven by `stub_poll` / `fetch_macos9_poll` being
 invoked by NetSurf core itself when `fetch_send_callback` triggers a
 continuation, not by an explicit `fetch_poll()` tick. The claim in
-CLAUDE.md is misleading — CLAUDE.md should be updated to describe
+CLAUDE.md is misleading, CLAUDE.md should be updated to describe
 what the code actually does. Concretely, the sleep is just shortened
 to 1 tick when any fetcher is active so the core gets cycles quickly.
 
@@ -400,7 +400,7 @@ defined in `macsurf_prefix.h`. CLAUDE.md does not currently claim the
 file exists.
 
 **Cleanup action:** since the user maintains the Mac-side `.mcp` in
-CW8, this is informational only — but the Linux-side `.mcp` is stale
+CW8, this is informational only, but the Linux-side `.mcp` is stale
 on this point and any tooling that regenerates from it will
 reintroduce a phantom file.
 
@@ -414,32 +414,32 @@ unconditionally every poll pass (`macsurf_js_pump_all` under
 
 ---
 
-## Section 4 — Stale probes and cruft
+## Section 4, Stale probes and cruft
 
 ### 4.1 MS_LOG distribution
 
 Total: **52 MS_LOG occurrences across 15 files.**
 
 Frontend (macos9):
-- `macsurf_debug.h` — 6 (macro definitions)
-- `macsurf_debug.c` — 4 (infrastructure)
-- `main.c` — 1 (event-loop heartbeat only)
-- `window.c` — 1 (resize trace)
-- `plotters.c` — 1 (per-plotter smoke)
-- `macos9_ns_fetcher.c` — 1
-- `macos9_fetcher_stubs.c` — 1 (plus 2 more in the uncommitted diff)
+- `macsurf_debug.h`, 6 (macro definitions)
+- `macsurf_debug.c`, 4 (infrastructure)
+- `main.c`, 1 (event-loop heartbeat only)
+- `window.c`, 1 (resize trace)
+- `plotters.c`, 1 (per-plotter smoke)
+- `macos9_ns_fetcher.c`, 1
+- `macos9_fetcher_stubs.c`, 1 (plus 2 more in the uncommitted diff)
 
 NetSurf core:
-- `desktop/netsurf.c` — 2
-- `content/hlcache.c` — 16
-- `content/llcache.c` — 4
-- `content/ns_content.c` — 2
-- `content/handlers/css/cssh_css.c` — 4
-- `content/handlers/html/html_css.c` — 4
-- `content/handlers/html/box_construct.c` — 1
-- `content/handlers/html/html.c` — 4
+- `desktop/netsurf.c`, 2
+- `content/hlcache.c`, 16
+- `content/llcache.c`, 4
+- `content/ns_content.c`, 2
+- `content/handlers/css/cssh_css.c`, 4
+- `content/handlers/html/html_css.c`, 4
+- `content/handlers/html/box_construct.c`, 1
+- `content/handlers/html/html.c`, 4
 
-**Most of these are permanent instrumentation** — cheap single-line
+**Most of these are permanent instrumentation**, cheap single-line
 title-bar writes, already gated at the macro level by
 `MACSURF_DEBUG`. They do not need to be ripped out. The concern is
 the **probe cluster**, not the MS_LOG baseline.
@@ -457,19 +457,19 @@ Both are left over from the fpmath investigation that was resolved in
 commit `4518c84` (fpmath double-based fix) and captured in the CW8
 PPC long-long gotcha section of CLAUDE.md. They are no longer
 serving an investigation and should be removed when convenient, but
-they are not currently breaking anything — they simply occupy the
+they are not currently breaking anything, they simply occupy the
 window title bar on first render.
 
 ### 4.3 Residual A/B/C/D/E/F/G probe code
 
 Yes, extensive probe code remains:
 
-- `browser/netsurf/content/handlers/html/layout.c:79` — `static html_content *macsurf_probe_html = NULL;` pointer stash.
-- `layout.c:2682–2775` — the big Adpi/Afsd/Afsm/Aroot/Alen/Aunit + Dout + Efs/Efm/Esc/Er0/Er4/Er8/Er12/Esc1k probe block.
-- `layout.c:5546` — `macsurf_probe_html = content;` — installs the pointer at layout entry.
-- `box_construct.c:549–572` — p1 / p2rc / p2col probes.
+- `browser/netsurf/content/handlers/html/layout.c:79`, `static html_content *macsurf_probe_html = NULL;` pointer stash.
+- `layout.c:2682-2775`, the big Adpi/Afsd/Afsm/Aroot/Alen/Aunit + Dout + Efs/Efm/Esc/Er0/Er4/Er8/Er12/Esc1k probe block.
+- `layout.c:5546`, `macsurf_probe_html = content;`, installs the pointer at layout entry.
+- `box_construct.c:549-572`, p1 / p2rc / p2col probes.
 
-The commit `3654281 feat: chrome polish — strip diagnostic probes` removed probes from frontend files; it did **not** touch `layout.c` or `box_construct.c`. The probe residue in the HTML handler remains.
+The commit `3654281 feat: chrome polish, strip diagnostic probes` removed probes from frontend files; it did **not** touch `layout.c` or `box_construct.c`. The probe residue in the HTML handler remains.
 
 ### 4.4 `#if 0` dead code in the macos9 frontend
 
@@ -478,10 +478,10 @@ None found. `grep -rn "#if 0" browser/netsurf/frontends/macos9/` returns zero ma
 ### 4.5 `macsurf_debug.h/c` summary
 
 - `MS_LOG(msg)`, `MS_BREAK(msg)`, `MS_ASSERT(cond, msg)` macros; all no-op when `MACSURF_DEBUG` is undefined.
-- `macsurf_debug_set_title_force()` / `macsurf_debug_log_int_force()` — sticky title-writing variants that set a `g_title_locked` flag so downstream non-force MS_LOG cannot clobber the probe output.
-- `macsurf_debug_probe_reset()`, `macsurf_debug_probe_append(label)`, `macsurf_debug_probe_append_int(label, n)` — accumulate into a 256-byte `g_probe_buf` and force-set the window title.
+- `macsurf_debug_set_title_force()` / `macsurf_debug_log_int_force()`, sticky title-writing variants that set a `g_title_locked` flag so downstream non-force MS_LOG cannot clobber the probe output.
+- `macsurf_debug_probe_reset()`, `macsurf_debug_probe_append(label)`, `macsurf_debug_probe_append_int(label, n)`, accumulate into a 256-byte `g_probe_buf` and force-set the window title.
 - On non-`__MACOS9__` (Linux cross-check), output is redirected to stderr.
-- `macsurf_debug_title_is_locked()` — checked from `macos9_gw_set_title` to avoid overwriting probe output.
+- `macsurf_debug_title_is_locked()`, checked from `macos9_gw_set_title` to avoid overwriting probe output.
 
 Everything in this file is currently used.
 
@@ -490,11 +490,11 @@ Everything in this file is currently used.
 `grep "_force" main.c window.c` → no matches. The `_force` suffix
 exists only in `macsurf_debug.h/c` as the infrastructure (`set_title_force`,
 `log_int_force`). Commit 593f2f0's ad-hoc _force probes were removed
-by commit `3654281` ("feat: chrome polish — strip diagnostic probes").
+by commit `3654281` ("feat: chrome polish, strip diagnostic probes").
 
 ---
 
-## Section 5 — Known working / known broken matrix
+## Section 5, Known working / known broken matrix
 
 Status legend: **W** = working (hardware-verified or trivially
 correct), **P** = partial (works but with caveats), **B** = broken
@@ -507,7 +507,7 @@ evidence either way).
 | Open Transport networking | W | `main.c:main()` uses `InitOpenTransportInContext(kInitOTForApplicationMask, &macos9_ot_context)`; commits confirm OT verified against frogfind.com on G3 |
 | HTTP fetcher | P | `macos9_http_fetcher.c` present; uses `OTOpenEndpointInContext` (InContext variant, which CLAUDE.md warns against but which has worked in practice now that `'carb'` is in place). Alternative `macos9_ns_fetcher.c` also present with larger buffer (256 KB vs 32 KB) but not confirmed in CW8 project file list |
 | HTTPS via proxy | P | `MACSURF_PROXY_HOST 116.202.231.103:8765` in both fetcher files; `macos9_fetcher_register()` in `ns_fetcher.c` registers both http+https, but that function is only called if the file is in the CW8 project |
-| Resource fetcher | P | `macos9_fetcher_stubs.c` serves `resource:default.css` / `internal.css` / `quirks.css` / `favicon.ico` — **only if included in CW8 project**, which cannot be verified from Linux |
+| Resource fetcher | P | `macos9_fetcher_stubs.c` serves `resource:default.css` / `internal.css` / `quirks.css` / `favicon.ico`, **only if included in CW8 project**, which cannot be verified from Linux |
 | llcache | U | NetSurf core; no MacSurf-specific instrumentation; `no_backing_store.c` returns `NSERROR_NOT_IMPLEMENTED` |
 | hlcache | U | NetSurf core; 16 MS_LOG calls inside `hlcache.c` will fire during fetch |
 | libhubbub HTML parser | W | 30 files ported and C89-clean per `docs/research/libhubbub-port.md`, commit fd8d915; reaches element ~380 before downstream CSS_NOMEM |
@@ -520,10 +520,10 @@ evidence either way).
 | `plot_clip` | U | Present but clip-respect on all downstream plots not verified |
 | `plot_path` | U | Implemented via bezier sampling per subagent summary; not exercised |
 | `plot_bitmap` | U | Implemented via GWorld per subagent summary; no images rendered yet |
-| Font metrics | P | Heuristic 0.6 em monospace / 0.52 em proportional — avoids QuickDraw GrafPort timing issues; not glyph-accurate |
+| Font metrics | P | Heuristic 0.6 em monospace / 0.52 em proportional, avoids QuickDraw GrafPort timing issues; not glyph-accurate |
 | Scheduler / event loop | W | `schedule.c` TickCount queue; `macos9_poll` pumps every pass |
-| Browser window creation — initial path | P | Creates window successfully, URL field visible but **typing appears not to work** per user |
-| Browser window creation — File > New path | W | Creates window, URL typing works |
+| Browser window creation, initial path | P | Creates window successfully, URL field visible but **typing appears not to work** per user |
+| Browser window creation, File > New path | W | Creates window, URL typing works |
 | Toolbar and buttons | W | 4 pushbuttons via `kControlPushButtonProc`; `macos9_window_update_button_states` gates on history/content availability |
 | URL field (TextEdit) | P | Working in File > New path; broken in initial path (see Section 1) |
 | Navigation history | W | `browser_window_history_back/forward/has_content` wired directly |
@@ -537,7 +537,7 @@ evidence either way).
 
 ---
 
-## Section 6 — Open questions with evidence-based answers
+## Section 6, Open questions with evidence-based answers
 
 **1. Does the initial window's TextEdit handle ever receive an
 activate event?**
@@ -579,7 +579,7 @@ Within libcss source: **no allocation-path sites.** Only fpmath
 parsing (`mq.c:887`), and `MACSURF_DEBUG`-gated sanity probes
 (`unit.c:363,376`). Outside libcss: not audited in this round.
 `utils/talloc.c` is the most likely remaining candidate per the
-"Most likely bottleneck" note in CLAUDE.md — if talloc is in the
+"Most likely bottleneck" note in CLAUDE.md, if talloc is in the
 project, audit it for 64-bit math.
 
 **5. Is the resize deferred-flag pattern actually being hit during
@@ -600,14 +600,14 @@ Cannot be determined without hardware test. Source inspection shows
 `schedule_reformat` in NetSurf core posts a scheduler entry; the
 actual reformat happens on the next scheduler tick. That tick is
 driven by `macos9_schedule_run`, which runs every pass. Whether an
-in-flight fetch competes with layout for partition memory — yes, by
+in-flight fetch competes with layout for partition memory, yes, by
 definition, since there is only one heap. Whether it triggers a
-different code path inside `browser_window_schedule_reformat` — no,
+different code path inside `browser_window_schedule_reformat`, no,
 the function is fetch-agnostic.
 
 ---
 
-## Section 7 — Recommended next round
+## Section 7, Recommended next round
 
 ### 7.1 Single most impactful fix
 
@@ -619,7 +619,7 @@ the function is fetch-agnostic.
 ### 7.2 Why this is highest leverage
 
 - The CSS_NOMEM blocker has no evidence of being a libcss bug or a
-  CW8 miscompile — Section 2 eliminated those. The allocator is raw
+  CW8 miscompile, Section 2 eliminated those. The allocator is raw
   `malloc` / `calloc`, the int64 paths in fpmath are fixed, and the
   numeric constants near 380 are not limits.
 - The Carbon partition is definitively 4 MB (Section 2.3, evidence
@@ -634,10 +634,10 @@ the function is fetch-agnostic.
 
 ### 7.3 Files to modify
 
-- `browser/netsurf/frontends/macos9/MacSurf.mcp` — change
+- `browser/netsurf/frontends/macos9/MacSurf.mcp`, change
   `MWProject_PPC_size` and `MWProject_PPC_minsize` in the Target
   Settings block. Per CLAUDE.md this file is user-maintained on the
-  Mac — but in this case the setting lives in CW8's UI, not in a
+  Mac, but in this case the setting lives in CW8's UI, not in a
   source file, so the user can edit it via **Edit → MacSurf Settings
   → PPC PEF** on the Mac. No `.mcp` ship from Linux needed.
 
@@ -657,7 +657,7 @@ longer fires on element 380.
 3. Layout reaches `plot_text` / `plot_rectangle` for real content on
    a real page.
 4. If OOM happens on a larger page (e.g. element 2000 on a heavy
-   site), that's a separate follow-up — the acceptance criterion is
+   site), that's a separate follow-up, the acceptance criterion is
    "the 380 wall moves substantially", not "OOM is gone forever".
 
 ### 7.6 Optional bundled cleanup (same round)
@@ -665,11 +665,11 @@ longer fires on element 380.
 If the partition-bump round is a quick flip, a few low-risk cleanups
 can ride along since they don't need a separate compile:
 
-- Strip the probe clusters in `layout.c:79,2682–2775,5546` and
-  `box_construct.c:549–572` — the fpmath investigation they served
+- Strip the probe clusters in `layout.c:79,2682-2775,5546` and
+  `box_construct.c:549-572`, the fpmath investigation they served
   is closed (commit `4518c84`). Keeps the title bar clear of stale
   probe output.
-- Fix CLAUDE.md's "Scheduler pump calls `fetch_poll()`" line — the
+- Fix CLAUDE.md's "Scheduler pump calls `fetch_poll()`" line, the
   function is not called; the behavior is "sleep shortened to 1 tick
   while fetchers are active, which lets NetSurf's own ring-poll
   progress".

@@ -3,7 +3,7 @@
 ## Purpose
 
 A snapshot of what currently exists in the MacSurf repo and on the production
-proxy host as of 2026-04-11. **No decisions, no recommendations, no plans —
+proxy host as of 2026-04-11. **No decisions, no recommendations, no plans ,
 only what is in place today.** Numbers, line counts, and code paths are taken
 directly from the working tree at HEAD (`master`, commit ahead of
 `v0.1.0-first-fetch`).
@@ -41,13 +41,13 @@ macsurf/
 | [`proxy/macsurf-proxy.service`](../../proxy/macsurf-proxy.service) | 27 | systemd unit |
 
 `go.mod` declares module `macsurf-proxy`, Go 1.25.4, **zero external
-dependencies** — stdlib only.
+dependencies**, stdlib only.
 
 ### 2.2 Entry point and request flow
 
 `main()` ([proxy/main.go:16](../../proxy/main.go#L16)):
 
-1. Parses two flags: `--port` (default `8765`) and `--auth` (default empty —
+1. Parses two flags: `--port` (default `8765`) and `--auth` (default empty ,
    no authentication)
 2. If `--auth` is set, calls `ParseCredentials("user:password")` and stores
    the result on `Proxy.Auth`
@@ -70,7 +70,7 @@ dependencies** — stdlib only.
 2. Build a new `http.Request` with the same method, body, and full URL
 3. Copy all headers via `copyHeaders`
 4. Strip `Proxy-Authorization` and `Proxy-Connection` from the outbound
-5. `http.DefaultTransport.RoundTrip(outReq)` — Go's stdlib transport handles
+5. `http.DefaultTransport.RoundTrip(outReq)`, Go's stdlib transport handles
    the upstream request, including TLS for `https://` URLs
 6. Copy response headers, status, and body back to the client
 
@@ -123,7 +123,7 @@ Verified directly from the host this repo is checked out on
   `MACSURF_PROXY_ARGS=--port 8765`
 - **Resource use:** PID 2348560, 13 tasks, 5.3 MB RSS (peak 8.4 MB), 3.5
   CPU-seconds total over 3 days
-- **Listening on:** `0.0.0.0:8765` (TCP, IPv4 + IPv6) — confirmed via
+- **Listening on:** `0.0.0.0:8765` (TCP, IPv4 + IPv6), confirmed via
   `ss -tlnp`
 - **Service hardening:** `NoNewPrivileges`, `ProtectSystem=strict`,
   `ProtectHome`, `PrivateTmp`, `PrivateDevices`
@@ -148,26 +148,26 @@ services on `127.0.0.1`.
 
 ### 3.1 What `macos9_fetch_url()` does, start to finish
 
-[browser/netsurf/frontends/macos9/macos9_fetch.c](../../browser/netsurf/frontends/macos9/macos9_fetch.c) —
+[browser/netsurf/frontends/macos9/macos9_fetch.c](../../browser/netsurf/frontends/macos9/macos9_fetch.c) ,
 the function called from `window.c` when the user enters a URL or clicks
 a navigation button. Reading top to bottom:
 
-1. **Includes** — `<OpenTransport.h>`, `<OpenTptInternet.h>`, `<Threads.h>`,
+1. **Includes**, `<OpenTransport.h>`, `<OpenTptInternet.h>`, `<Threads.h>`,
    `extern OTClientContextPtr macos9_ot_context` (defined in `main.c`)
-2. **Constants** — `MACSURF_PROXY_HOST = "116.202.231.103"`,
+2. **Constants**, `MACSURF_PROXY_HOST = "116.202.231.103"`,
    `MACSURF_PROXY_PORT = 8765`
-3. **`macos9_fetch_filetype()`** — extension-to-MIME-type sniffer used by
+3. **`macos9_fetch_filetype()`**, extension-to-MIME-type sniffer used by
    `macos9_fetch_table` (called by NetSurf's core for local files;
    irrelevant for HTTP)
-4. **`macos9_fetch_get_resource_url()`** — returns `NULL` (no resource:
+4. **`macos9_fetch_get_resource_url()`**, returns `NULL` (no resource:
    scheme support)
-5. **`macos9_fetch_mimetype()`** — `strdup` of the filetype lookup
-6. **`yield_notifier()`** — `pascal void` callback installed on the OT
+5. **`macos9_fetch_mimetype()`**, `strdup` of the filetype lookup
+6. **`yield_notifier()`**, `pascal void` callback installed on the OT
    endpoint. On `kOTSyncIdleEvent` calls `YieldToAnyThread()`. This is
    the cooperative-multitasking yield point during blocking OT calls.
 
-7. **`macos9_fetch_url(url, gw, callback)`** — the actual fetch:
-   - `OTCreateConfiguration("tcp")` — uses literal `"tcp"`, not the
+7. **`macos9_fetch_url(url, gw, callback)`**, the actual fetch:
+   - `OTCreateConfiguration("tcp")`, uses literal `"tcp"`, not the
      `kTCPName` macro
    - Bail with `"OT config failed"` callback if NULL
    - `OTOpenEndpointInContext(cfg, 0, NULL, &err, macos9_ot_context)`
@@ -177,14 +177,14 @@ a navigation button. Reading top to bottom:
    - `OTSetBlocking(ep)`
    - `OTInstallNotifier(ep, notifyUPP, NULL)`
    - `OTUseSyncIdleEvents(ep, true)`
-   - `OTBind(ep, NULL, NULL)` — both args NULL
+   - `OTBind(ep, NULL, NULL)`, both args NULL
    - `sprintf(proxy_addr, "%s:%d", host, port)` then
      `OTInitDNSAddress(&dns_addr, proxy_addr)`
-   - `OTConnect(ep, &snd_call, NULL)` — sync, blocks, yields via notifier
+   - `OTConnect(ep, &snd_call, NULL)`, sync, blocks, yields via notifier
    - Build a fixed `GET %s HTTP/1.0\r\nUser-Agent: MacSurf/0.1\r\nConnection: close\r\n\r\n`
      request
    - `OTSnd(ep, request, req_len, 0)`
-   - `NewPtr(MACSURF_CONTENT_MAX + 4)` — allocate receive buffer
+   - `NewPtr(MACSURF_CONTENT_MAX + 4)`, allocate receive buffer
    - Loop: `OTRcv(ep, ...)` until 0 bytes or buffer full
    - Find `\r\n\r\n` in the received bytes; treat everything after as the
      body
@@ -194,20 +194,20 @@ a navigation button. Reading top to bottom:
    - `OTCloseProvider(ep)`
    - `DisposeOTNotifyUPP(notifyUPP)`
 
-8. **`macos9_strip_html(src, src_len, dst, dst_cap)`** — regex-level tag
+8. **`macos9_strip_html(src, src_len, dst, dst_cap)`**, regex-level tag
    stripper. Tracks `in_tag` / `in_script` / `in_style`, decodes
    `&amp;`/`&lt;`/`&gt;`/`&quot;`/`&apos;`/`&nbsp;`, collapses whitespace,
    inserts `\n` at block-element close tags. Output is plain text.
 
 9. **`macos9_word_wrap(text, text_len, line_offsets, line_lengths, max_lines, max_chars_per_line)`**
-   — fixed-width word wrap. Honors existing `\n` as forced breaks. Breaks
+  , fixed-width word wrap. Honors existing `\n` as forced breaks. Breaks
    on space when possible, hard-breaks otherwise. Populates two parallel
    arrays of offsets and lengths into the source buffer.
 
-10. **`macos9_ot_init()` / `macos9_ot_get_error()`** — both vestigial
+10. **`macos9_ot_init()` / `macos9_ot_get_error()`**, both vestigial
     stubs returning 0 / NULL. Not called from anywhere.
 
-11. **`macos9_fetch_table`** — filled with the type sniffers from above.
+11. **`macos9_fetch_table`**, filled with the type sniffers from above.
     The HTTP-fetcher field is `NULL`. NetSurf core's fetch dispatch sees
     this table but cannot route through it for HTTP.
 
@@ -250,12 +250,12 @@ Seven `*_stub.c` files exist in [browser/netsurf/frontends/macos9/](../../browse
 | [`http_stub.c`](../../browser/netsurf/frontends/macos9/http_stub.c) | 16 | `http_parse_content_type` + destroy, `http_parse_cache_control` + destroy, `http_parse_content_disposition` + destroy, `http_parse_www_authenticate` + destroy, `http_parse_strict_transport_security` + destroy, plus 6 helpers |
 | [`js_stub.c`](../../browser/netsurf/frontends/macos9/js_stub.c) | 11 | `js_initialise`, `js_finalise`, `js_newheap`, `js_destroyheap`, `js_newthread`, `js_closethread`, `js_destroythread`, `js_handle_new_element`, `js_event_cleanup`, plus 2 |
 | [`browser_history_stub.c`](../../browser/netsurf/frontends/macos9/browser_history_stub.c) | 18 | `browser_window_history_create`/`destroy`/`add`/`update`/`get_scroll`, `scrollbar_create`/`destroy`/`set`/`get_offset`, `browser_window_place_caret`/`remove_caret`, `browser_window_create_iframes`, `browser_window_recalculate_iframes`, `browser_window_invalidate_iframe`, `browser_window_create_frameset`, `browser_window_recalculate_frameset`, `browser_window_destroy_iframes`, `browser_window_handle_scrollbars` |
-| [`corestrings_stub.c`](../../browser/netsurf/frontends/macos9/corestrings_stub.c) | 2 | **Not a real stub** — actually implements `corestrings_init` / `corestrings_fini` |
-| [`lwc_stub.c`](../../browser/netsurf/frontends/macos9/lwc_stub.c) | 3 | **Not a real stub** — actually implements `lwc_intern_string`, `lwc_string_destroy`, plus one helper |
+| [`corestrings_stub.c`](../../browser/netsurf/frontends/macos9/corestrings_stub.c) | 2 | **Not a real stub**, actually implements `corestrings_init` / `corestrings_fini` |
+| [`lwc_stub.c`](../../browser/netsurf/frontends/macos9/lwc_stub.c) | 3 | **Not a real stub**, actually implements `lwc_intern_string`, `lwc_string_destroy`, plus one helper |
 
 ### 4.2 Stub files in the CW8 project
 
-**None.** Verified by grepping `MacSurf.mcp` for `stub` — zero matches.
+**None.** Verified by grepping `MacSurf.mcp` for `stub`, zero matches.
 None of the seven `*_stub.c` files are referenced as `<FILEREF>` entries
 in the project. They exist on disk but are not part of the build.
 
@@ -263,18 +263,18 @@ This means symbols those stubs declare must be provided by some other
 file at link time (or the link fails). The likely candidates: the real
 NetSurf source files that **are** in the project (see §6.2 below), MSL,
 or CarbonLib. This inventory does not investigate which symbols actually
-resolve where — that is a separate question.
+resolve where, that is a separate question.
 
 ### 4.3 Header-only stubs (subdirectory shims)
 
 Stub headers exist in subdirectories under
 [browser/netsurf/frontends/macos9/](../../browser/netsurf/frontends/macos9/)
 to satisfy `#include` lines in core NetSurf source. These are header-only
-— no `.c` files for these libraries are in the tree:
+no `.c` files for these libraries are in the tree:
 
 | Directory | Header(s) | Defers |
 |---|---|---|
-| `libwapcaplet/` | `libwapcaplet.h` | The string-interning library — actual implementation is in `lwc_stub.c` |
+| `libwapcaplet/` | `libwapcaplet.h` | The string-interning library, actual implementation is in `lwc_stub.c` |
 | `libcss/` | `libcss.h` | Entire CSS parser/cascade |
 | `dom/` | `dom.h` | Entire DOM library |
 | `css/` | `css.h`, `utils.h` | NetSurf's CSS wrappers |
@@ -332,7 +332,7 @@ fragment.
 
 ### 5.2 The CW8 project file itself
 
-[`MacSurf.mcp`](../../browser/netsurf/frontends/macos9/MacSurf.mcp) — XML
+[`MacSurf.mcp`](../../browser/netsurf/frontends/macos9/MacSurf.mcp), XML
 text, 753 lines. This is the new XML format that ships with CW8 / CW9, not
 the binary `.mcp` of older CodeWarrior versions.
 
@@ -340,7 +340,7 @@ Project settings of note (from the XML):
 
 - Target type: PowerPC application (`MWProject_PPC_type`)
 - C++ disabled, C99 disabled (`MWFrontEnd_C_cplusplus`,
-  `MWFrontEnd_C_c99`) — strict C89
+  `MWFrontEnd_C_c99`), strict C89
 - Prefix file: [`macsurf_prefix.h`](../../browser/netsurf/frontends/macos9/macsurf_prefix.h)
 - Linker generates a map file
 - Pedantic warnings enabled
@@ -386,7 +386,7 @@ From `<FILEREF>` entries in [`MacSurf.mcp`](../../browser/netsurf/frontends/maco
 
 This is **27 source files total** in the build (5 shims + 12 frontend +
 22 NetSurf core). The `(39 .c files)` count in
-[CLAUDE.md](../../CLAUDE.md) does not match the current `.mcp` —
+[CLAUDE.md](../../CLAUDE.md) does not match the current `.mcp` ,
 inventory shows 27.
 
 ### 6.3 Libraries linked
@@ -399,7 +399,7 @@ Three `<PATH>` entries that are libraries, not source files:
 | `MSL C.Carbon.Lib` | `MacOS Support/Libraries/MSL/MSL_C/MSL_Common/Lib/MSL C.Carbon.Lib` |
 | `CarbonLib` | bare path (resolved against the access path) |
 
-(`MSL C.Carbon.Lib` appears twice — once from each MSL location. CW8
+(`MSL C.Carbon.Lib` appears twice, once from each MSL location. CW8
 resolves duplicates by access-path order.)
 
 ### 6.4 Access paths
@@ -445,13 +445,13 @@ defines:
 | [`docs/codewarrior-setup.md`](../codewarrior-setup.md) | Step-by-step guide for installing CodeWarrior 8 and building MacSurf on a real Power Mac |
 | [`docs/deploying-proxy.md`](../deploying-proxy.md) | How to deploy the Go proxy as a single binary on a VPS or local machine |
 | [`docs/proxy-test-results.md`](../proxy-test-results.md) | Snapshot of proxy curl tests after fixing `WriteTimeout` and Dockerfile issues (dated 2026-04-07) |
-| [`docs/status.md`](../status.md) | Current project status — milestone progress, what works, libraries linked, file inventory, test environment |
+| [`docs/status.md`](../status.md) | Current project status, milestone progress, what works, libraries linked, file inventory, test environment |
 
 ### 7.2 Research docs
 
 | File | One-line summary |
 |---|---|
-| [`carbonlib-ot-relationship.md`](carbonlib-ot-relationship.md) | Whether CarbonLib requires `RegisterAppearanceClient` before OT — answer: no, but related Carbon-app contract issues exist |
+| [`carbonlib-ot-relationship.md`](carbonlib-ot-relationship.md) | Whether CarbonLib requires `RegisterAppearanceClient` before OT, answer: no, but related Carbon-app contract issues exist |
 | [`classilla-carb-resource.md`](classilla-carb-resource.md) | Inspection of Classilla source for the `'carb'` Carbon-app marker resource |
 | [`classilla-startup-sequence.md`](classilla-startup-sequence.md) | Classilla's full startup sequence under Carbon, every Toolbox call before networking |
 | [`core-compile-attempt.md`](core-compile-attempt.md) | First syntax-check of NetSurf core `utils/` files with `__MACOS9__` defined |
@@ -461,18 +461,18 @@ defines:
 | [`netsurf-core-integration.md`](netsurf-core-integration.md) | Map of `netsurf_init` / `browser_window_create` / `hlcache_handle` integration paths and required stub replacements |
 | [`ot-carbon-prior-art.md`](ot-carbon-prior-art.md) | Prior art for HTTP-over-OT on OS 9: SSHeven, cy384/miscellany retro68 demo, Apple's `OTSimpleDownloadHTTP.c` |
 | [`posix-portability.md`](posix-portability.md) | Comprehensive analysis of every POSIX dependency in NetSurf with shim sizing and ordering |
-| [`scaffold-status.md`](scaffold-status.md) | Status of the initial frontend scaffold — files compile cleanly with no Toolbox calls |
+| [`scaffold-status.md`](scaffold-status.md) | Status of the initial frontend scaffold, files compile cleanly with no Toolbox calls |
 | [`scheduler-status.md`](scheduler-status.md) | Cooperative-multitasking scheduler and `WaitNextEvent` loop status |
 | [`shim-status.md`](shim-status.md) | Status of the POSIX shim layer in `frontends/macos9/shims/` |
 
 `docs/research/architecture-inventory.md` is this file.
 
-`docs/milestone-v0.1.0.md` does not exist — the v0.1.0 milestone report
+`docs/milestone-v0.1.0.md` does not exist, the v0.1.0 milestone report
 was written in a chat session but never committed as a file.
 
 ---
 
-## 8. Reference appendix — facts checked at inventory time
+## 8. Reference appendix, facts checked at inventory time
 
 - Repo: `/home/patrick/Webs/macsurf` on host `Ubuntu-2404-noble-amd64-base`
 - Public IP: `116.202.231.103` (this host is the proxy host)

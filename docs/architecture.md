@@ -10,7 +10,7 @@
 
 ## 1. Vision
 
-MacSurf is a web platform for Classic Mac OS 9. Not a toy, not a novelty — a real browser
+MacSurf is a web platform for Classic Mac OS 9. Not a toy, not a novelty, a real browser
 that loads real websites including Facebook and YouTube, on hardware from 1997 to 2002,
 in a way that is seamless to the user.
 
@@ -18,20 +18,20 @@ The user opens MacSurf, types facebook.com, and their feed loads. That is the ba
 
 To get there, MacSurf is three things working together:
 
-1. **A native Mac OS 9 browser** — a Carbon application built with CodeWarrior 8,
+1. **A native Mac OS 9 browser**, a Carbon application built with CodeWarrior 8,
    running on real hardware or SheepShaver, with a rendering pipeline tuned for
    cooperative multitasking and QuickDraw.
 
-2. **A smart proxy** — a Go server running on Hetzner that mediates between the
+2. **A smart proxy**, a Go server running on Hetzner that mediates between the
    Mac and the modern web. It strips TLS, rewrites content, executes JavaScript
    server-side, and streams rendered output back to the Mac in formats it can handle.
 
-3. **A template layer** — a community-maintained, Git-backed library of site-specific
+3. **A template layer**, a community-maintained, Git-backed library of site-specific
    rendering rules. When you load facebook.com, a Facebook template runs on the proxy,
    fetches your actual content, and delivers a MacSurf-native layout back to the Mac.
    Templates are versioned, open for contribution, and self-hostable.
 
-These three components are not alternatives — they work together on every page load.
+These three components are not alternatives, they work together on every page load.
 The rendering mode (Classic / Standard / Full) controls how much of the pipeline runs
 on the Mac vs. on the proxy.
 
@@ -71,7 +71,7 @@ the template quality.
 **How it works:**
 
 Same pipeline as Classic, but the proxy delivers a richer HTML payload. The Mac
-executes a limited subset of JavaScript natively via Duktape — enough to handle
+executes a limited subset of JavaScript natively via Duktape, enough to handle
 form interactions, basic DOM manipulation, and simple UI state without round-tripping
 to the proxy for every click.
 
@@ -166,7 +166,7 @@ the Mac to render (heavy CSS, canvas, WebGL), the mode can be switched to stream
 The Mac becomes a thin client. The page is always current. Facebook works. YouTube
 works via screenshot + audio stream (see §3.5).
 
-This mode is intentionally not the default — it requires more server resources and
+This mode is intentionally not the default, it requires more server resources and
 is slower to interact with. But it is the option that guarantees any page loads.
 
 ### 3.5 Video
@@ -192,7 +192,7 @@ Specific bitrate targets (to be tuned against real hardware):
 ## 4. The Template System
 
 Templates are the highest-leverage part of MacSurf. A well-written Facebook template
-means Facebook always works, looks intentional, and feels fast — not like a degraded
+means Facebook always works, looks intentional, and feels fast, not like a degraded
 accident.
 
 ### 4.1 What a template is
@@ -249,10 +249,10 @@ can handle. A template style guide (separate doc) will enumerate what's safe.
 The template repository lives at `github.com/mplsllc/macsurf-templates` (or
 `forgejo.mp.ls/mplsllc/macsurf-templates` for self-hosters). It is:
 
-- **Public** — anyone can read and clone
-- **Contribution-based** — pull requests accepted for new templates and updates
-- **Versioned** — each template has a `version` field and a `last-verified` date
-- **Self-hostable** — the `macsurf-template` service accepts a `--templates-repo`
+- **Public**, anyone can read and clone
+- **Contribution-based**, pull requests accepted for new templates and updates
+- **Versioned**, each template has a `version` field and a `last-verified` date
+- **Self-hostable**, the `macsurf-template` service accepts a `--templates-repo`
   flag pointing at any Git URL
 
 The proxy polls the template repo on a configurable interval (default: 1 hour) and
@@ -321,7 +321,7 @@ The libraries must be built for CodeWarrior 8 / C89 / PowerPC in this order
 This is the v0.2 milestone for the native browser. It is large. Each library
 is a separate porting effort with its own C89 compliance pass and shim layer.
 
-### 5.3 JavaScript — Duktape
+### 5.3 JavaScript, Duktape
 
 Duktape is the JavaScript engine for Standard and Full modes. It is written in C,
 designed to be embedded, and has been ported to constrained environments before.
@@ -329,7 +329,7 @@ designed to be embedded, and has been ported to constrained environments before.
 The porting target is the same as the rest of the native build: C89, CodeWarrior 8,
 PowerPC, no POSIX, cooperative multitasking.
 
-The Duktape build is gated on the library dependency chain above — JS execution
+The Duktape build is gated on the library dependency chain above, JS execution
 requires a working DOM to be useful. It is a v0.3 milestone.
 
 **JS tier implementation:**
@@ -356,7 +356,7 @@ Both are v0.2 scope alongside the core rendering pipeline.
 
 **Bookmarks:** Stored as a flat text file alongside the application (Mac HFS+ path).
 Accessible from a Bookmarks menu. Add/remove/organize via a standard list dialog.
-No folder hierarchy in v0.2 — that is v0.3.
+No folder hierarchy in v0.2, that is v0.3.
 
 **History:** In-memory during the session. Written to a flat file on quit, loaded
 on launch. Standard Back/Forward navigation via the existing toolbar buttons.
@@ -366,7 +366,7 @@ A History window (separate from the browser window) showing recent URLs is v0.3.
 
 ## 6. Milestones
 
-### v0.2 — Real rendering pipeline
+### v0.2, Real rendering pipeline
 - Port libwapcaplet (already done via lwc_stub.c), parserutils, libhubbub, libdom,
   libcss to C89 / CodeWarrior 8
 - Replace all rendering stubs with real implementations
@@ -377,7 +377,7 @@ A History window (separate from the browser window) showing recent URLs is v0.3.
 - Template: facebook.com v1, youtube.com v1 (Classic mode only)
 - Bookmarks and history (basic)
 
-### v0.3 — JavaScript and interactivity
+### v0.3, JavaScript and interactivity
 - Port Duktape to C89 / CodeWarrior 8
 - Standard mode JS tier (DOM events, form handling)
 - Full mode JS tier (OT-backed fetch/XHR bridge)
@@ -386,7 +386,7 @@ A History window (separate from the browser window) showing recent URLs is v0.3.
 - History window, bookmark folders
 - Template: reddit.com, google.com, gmail.com
 
-### v0.4 — Community and polish
+### v0.4, Community and polish
 - Template repository public launch
 - Self-hosting documentation
 - macsurf-templates contribution guide and style guide
@@ -448,7 +448,7 @@ These are not answered by this document and require decisions before implementat
 
 MacSurf is not trying to make OS 9 a general-purpose modern computing platform.
 It is a browser for people who love classic Mac hardware and want to use it. The proxy
-and template layer exist in service of that goal — they are infrastructure, not the
+and template layer exist in service of that goal, they are infrastructure, not the
 product. The product is the experience of opening MacSurf on a beige G3, going to
 Facebook, and seeing your actual feed.
 

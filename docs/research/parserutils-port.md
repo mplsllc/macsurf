@@ -2,13 +2,13 @@
 
 ## Status
 
-**Research only — no code changes.** This document is a complete inventory of
+**Research only, no code changes.** This document is a complete inventory of
 what is in the libparserutils source tree and exactly what stands between it
 and a clean CodeWarrior 8 / strict C89 / Mac OS 9 build.
 
 ## Where the source lives
 
-`browser/libparserutils/` — present in the repo, vendored alongside `browser/netsurf/`.
+`browser/libparserutils/`, present in the repo, vendored alongside `browser/netsurf/`.
 Not a submodule; the tree is checked in directly. License is **MIT**.
 
 Upstream is the NetSurf project's libparserutils:
@@ -21,18 +21,18 @@ upstream README verbatim.
 
 ## Scope
 
-- **35 source/header files** — 11 public headers in
+- **35 source/header files**, 11 public headers in
   `browser/libparserutils/include/parserutils/`, 24 implementation files in
   `browser/libparserutils/src/`.
 - **7,025 lines** total across the source tree (not counting tests, docs,
   build scripts).
-- **No tests in scope** — `browser/libparserutils/test/` is excluded; we don't
+- **No tests in scope**, `browser/libparserutils/test/` is excluded; we don't
   build the test harness on the Mac.
-- **No docs in scope** — `browser/libparserutils/docs/` is doxygen output config.
+- **No docs in scope**, `browser/libparserutils/docs/` is doxygen output config.
 
 ## File map
 
-### Public headers — `include/parserutils/`
+### Public headers, `include/parserutils/`
 
 | File | Purpose |
 |---|---|
@@ -49,19 +49,19 @@ upstream README verbatim.
 | `utils/stack.h` | Generic stack |
 | `utils/vector.h` | Generic vector |
 
-### Source files — `src/`
+### Source files, `src/`
 
 | Subdir | Files |
 |---|---|
 | `utils/` | `buffer.c`, `errors.c`, `stack.c`, `vector.c`, `endian.h`, `utils.h` |
 | `input/` | `inputstream.c`, `filter.c`, `filter.h` |
-| `charset/` | `aliases.c`, `aliases.h`, `codec.c` (+ `aliases.inc` — **generated, not in tree**) |
+| `charset/` | `aliases.c`, `aliases.h`, `codec.c` (+ `aliases.inc`, **generated, not in tree**) |
 | `charset/encodings/` | `utf8.c`, `utf16.c`, `utf8impl.h` |
 | `charset/codecs/` | `codec_impl.h`, `codec_ascii.c`, `codec_8859.c`, `codec_ext8.c`, `codec_utf8.c`, `codec_utf16.c`, `8859_tables.h`, `ext8_tables.h` |
 
 ## C99 / CW8 incompatibilities
 
-### 1. `inline` keyword — 9 files, all `static inline` helpers
+### 1. `inline` keyword, 9 files, all `static inline` helpers
 
 ```
 src/utils/endian.h
@@ -84,7 +84,7 @@ either be honored or neutralized.
 existing `-Dinline=` already in the Linux cross-check command in CLAUDE.md.
 The functions become regular `static` definitions and CW8 will accept them.
 
-### 2. `//` comments — 10+ files
+### 2. `//` comments, 10+ files
 
 ```
 src/utils/{vector,stack,buffer,errors}.c
@@ -99,7 +99,7 @@ is added to the CW8 project. A scripted `sed` pass on Linux can do this
 mechanically; the result has to be added to git so the Mac side never sees the
 unconverted form.
 
-### 3. `<stdint.h>` and `<stdbool.h>` — used pervasively
+### 3. `<stdint.h>` and `<stdbool.h>`, used pervasively
 
 Every header and almost every source file pulls in `<stdint.h>` (for
 `uint8_t`, `uint16_t`, `uint32_t`) and `<stdbool.h>` (for `bool`/`true`/`false`).
@@ -112,7 +112,7 @@ Every header and almost every source file pulls in `<stdint.h>` (for
 | `src/charset/codecs/*` | `uint8_t`/`uint32_t` arrays |
 
 **Existing infrastructure:** MacSurf already has both shims:
-- `frontends/macos9/shims/stdint.h` — provides `uint8_t`/`uint16_t`/`uint32_t`
+- `frontends/macos9/shims/stdint.h`, provides `uint8_t`/`uint16_t`/`uint32_t`
   via `MacTypes.h` `UInt8`/`UInt16`/`UInt32`
 - The MacSurf prefix file `macsurf_prefix.h` already includes `<MacTypes.h>`
   which gets us `enum { false, true }` for `bool`
@@ -121,18 +121,18 @@ These shims should cover libparserutils as long as the include path lists
 `frontends/macos9/shims` ahead of the system include path so `<stdint.h>` and
 `<stdbool.h>` resolve to our versions.
 
-### 4. `<inttypes.h>` — pulled in by `types.h`, `filter.h`, others
+### 4. `<inttypes.h>`, pulled in by `types.h`, `filter.h`, others
 
 `<inttypes.h>` is C99. CW8 has neither it nor the `PRIu32`-style format
 specifiers it provides. libparserutils does not actually use any `PRI*` macros
-in the audited code — only the type definitions, which already come from
+in the audited code, only the type definitions, which already come from
 `<stdint.h>`. A trivial `shims/inttypes.h` that does `#include <stdint.h>` and
 nothing else suffices.
 
 **Existing infrastructure:** `frontends/macos9/shims/inttypes.h` already
 exists. Audit pending: confirm it forwards to `stdint.h`.
 
-### 5. `%zu` format specifier — debug-only, dead code
+### 5. `%zu` format specifier, debug-only, dead code
 
 Two `fprintf(stdout, "...%zu...")` calls live in
 `include/parserutils/input/inputstream.h` (lines 105 and 158). Both are
@@ -155,7 +155,7 @@ code and CW8 never sees it. We just need to **not** define
 
 `filter.c` is the only file with a hard POSIX dependency. It uses `iconv_t`,
 `iconv_open`, `iconv`, `iconv_close`, and `<errno.h>`. **All of it is gated
-by `#ifndef WITHOUT_ICONV_FILTER`** — the upstream library has a documented
+by `#ifndef WITHOUT_ICONV_FILTER`**, the upstream library has a documented
 build-time off switch. The README explicitly notes:
 
 > For enhanced charset support, LibParserUtils requires an iconv()
@@ -178,7 +178,7 @@ The disable mechanism is `#define WITHOUT_ICONV_FILTER` (or
 library still handles every charset MacSurf cares about because the proxy
 delivers all upstream content as UTF-8 anyway.
 
-### 7. `aliases.inc` — generated, not in tree
+### 7. `aliases.inc`, generated, not in tree
 
 `src/charset/aliases.c` does:
 
@@ -198,7 +198,7 @@ before the source is shipped to the Mac. Either:
 - (b) Add the perl run to the Linux→Mac sync script.
 
 The generated file is text, deterministic, and only changes when the
-underlying Aliases table changes (which is rarely — character set IANA
+underlying Aliases table changes (which is rarely, character set IANA
 registrations are stable). Option (a) is the simplest path.
 
 The script itself is a few hundred lines of Perl that emits a C header full
@@ -264,7 +264,7 @@ I checked for and did not find:
 | `__attribute__` / `__builtin_*` | Not used |
 | `snprintf` / `vsnprintf` | Not used |
 
-This is unusually clean for a C99-claiming library — libparserutils sticks
+This is unusually clean for a C99-claiming library, libparserutils sticks
 very close to C89 in practice and only relies on the C99 type headers and
 `inline`/`//` syntax niceties. It is one of the easier libraries in the
 NetSurf dependency chain to port.
@@ -282,7 +282,7 @@ definition). The stub must be deleted as part of the wiring step, with the
 real header taking its place via the include path order.
 
 Same situation likely exists for any other `frontends/macos9/parserutils/*.h`
-shim — none others currently in the tree, but if more get added during
+shim, none others currently in the tree, but if more get added during
 adjacent work they need to be audited the same way.
 
 ## Dependency layering inside libparserutils
@@ -340,7 +340,7 @@ a separate change, no code in this document.
 3. **Strip `//` comments to `/* */`** across all 35 libparserutils files via
    a sed pass. Commit the converted files.
 
-4. **Neutralize `inline` keyword** — either via `-Dinline=` on the CW8 command
+4. **Neutralize `inline` keyword**, either via `-Dinline=` on the CW8 command
    line (the cleanest approach if CW8 supports it the way GCC does) or via
    `#define inline` in the prefix file. Already used in the Linux cross-check.
 
@@ -361,7 +361,7 @@ a separate change, no code in this document.
 Out of scope for this document, deferred to follow-ups:
 
 - Actually doing any of the seven steps above (this is research only).
-- Verifying that `frontends/macos9/shims/inttypes.h` is correct — need to
+- Verifying that `frontends/macos9/shims/inttypes.h` is correct, need to
   read its contents.
 - Verifying `<MacTypes.h>` actually provides every `uintN_t` width
   libparserutils needs (it provides `UInt8`/`UInt16`/`UInt32`/`UInt64`; the
@@ -369,7 +369,7 @@ Out of scope for this document, deferred to follow-ups:
 - Whether libhubbub and libcss need anything from libparserutils that this
   audit didn't trace (e.g. private internal APIs).
 - The `aliases.inc` regeneration process if the IANA charset table changes
-  upstream — long-term maintenance question.
+  upstream, long-term maintenance question.
 - Whether MacSurf's `nsutils` shim also overlaps with anything libparserutils
   needs.
 

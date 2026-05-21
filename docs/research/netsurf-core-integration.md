@@ -11,7 +11,7 @@ plain text) to the path we actually want: `netsurf_init` → `browser_window_cre
 **This document is research, not a plan.** No code decisions are made here; it catalogs
 API signatures, sequencing, and stub state so the design work can happen next.
 
-> Note: `docs/milestone-v0.1.0.md` does not exist in the repo — the v0.1.0 milestone
+> Note: `docs/milestone-v0.1.0.md` does not exist in the repo, the v0.1.0 milestone
 > report was written in a chat session but never committed as a file. This document
 > treats the current source tree and commit `b6e872a` as ground truth.
 
@@ -52,18 +52,18 @@ nserror netsurf_init(const char *store_path);
 
 `netsurf_init` itself calls, in order:
 
-1. `corestrings_init()` — string pool
-2. `nscolour_update()` — color table
-3. `image_cache_init()` — image cache parameters
-4. `nscss_init()` — CSS handler
-5. `html_init()` — HTML handler
-6. `image_init()` — image content handler
-7. `textplain_init()` — plain-text content handler
+1. `corestrings_init()`, string pool
+2. `nscolour_update()`, color table
+3. `image_cache_init()`, image cache parameters
+4. `nscss_init()`, CSS handler
+5. `html_init()`, HTML handler
+6. `image_init()`, image content handler
+7. `textplain_init()`, plain-text content handler
 8. `setlocale(LC_ALL, "")`
-9. `fetcher_init()` — initialize registered fetchers
-10. `hlcache_initialise()` — high-level cache (calls llcache_initialise)
+9. `fetcher_init()`, initialize registered fetchers
+10. `hlcache_initialise()`, high-level cache (calls llcache_initialise)
 11. `ns_system_colour_init()`
-12. `js_initialise()` — JS engine (stubbed in MacSurf)
+12. `js_initialise()`, JS engine (stubbed in MacSurf)
 13. `page_info_init()`
 
 ### Prerequisites that must run BEFORE `netsurf_init`
@@ -71,19 +71,19 @@ nserror netsurf_init(const char *store_path);
 Verified against [frontends/riscos/gui.c:2460-2515](../../browser/netsurf/frontends/riscos/gui.c#L2460)
 and [frontends/amiga/gui.c:6568-6662](../../browser/netsurf/frontends/amiga/gui.c#L6568):
 
-1. **`netsurf_register(&macos9_table)`** — populates the global `guit` pointer.
+1. **`netsurf_register(&macos9_table)`**, populates the global `guit` pointer.
    See [desktop/gui_factory.c:777](../../browser/netsurf/desktop/gui_factory.c#L777).
    MacSurf already does this at main.c:460.
-2. **`nsoption_init(set_defaults, &nsoptions, &nsoptions_default)`** — options system.
+2. **`nsoption_init(set_defaults, &nsoptions, &nsoptions_default)`**, options system.
    MacSurf does **not** call this today. There is a `// TODO: nsoption_init` comment at
    main.c around the fetch init.
-3. **`messages_add_from_file(path)`** — localized message table. Used by the init
+3. **`messages_add_from_file(path)`**, localized message table. Used by the init
    functions (`html_init`, `nscss_init`, etc.) to format status strings. MacSurf
    does not call this.
-4. (Optional but typical) **`nsoption_read("NetSurf:Choices", NULL)`** — load options file.
-5. (Optional) **`nsoption_commandline()`** — parse CLI args. MacSurf does not need this.
+4. (Optional but typical) **`nsoption_read("NetSurf:Choices", NULL)`**, load options file.
+5. (Optional) **`nsoption_commandline()`**, parse CLI args. MacSurf does not need this.
 
-### `struct netsurf_table` — required sub-tables
+### `struct netsurf_table`, required sub-tables
 
 From [desktop/gui_table.h:48-164](../../browser/netsurf/desktop/gui_table.h#L48) and the
 validation logic in [gui_factory.c:794-868](../../browser/netsurf/desktop/gui_factory.c#L794):
@@ -110,7 +110,7 @@ will succeed today.
 
 ### Does `netsurf_init` survive MacSurf's stubs?
 
-**Yes — but dangerously.** Every initializer it calls is stubbed to return
+**Yes, but dangerously.** Every initializer it calls is stubbed to return
 `NSERROR_OK` without doing anything real:
 
 - [frontends/macos9/misc_stub.c](../../browser/netsurf/frontends/macos9/misc_stub.c)
@@ -129,7 +129,7 @@ handlers. The first call to `hlcache_handle_retrieve` will fail with
 
 `corestrings_init` is **actually implemented** in
 [corestrings_stub.c](../../browser/netsurf/frontends/macos9/corestrings_stub.c) and
-[lwc_stub.c](../../browser/netsurf/frontends/macos9/lwc_stub.c) — despite the names,
+[lwc_stub.c](../../browser/netsurf/frontends/macos9/lwc_stub.c), despite the names,
 these files implement `lwc_intern_string` and friends. So core strings work.
 
 ---
@@ -192,7 +192,7 @@ If the `url` argument is non-NULL, `browser_window_create` immediately calls
 
 ---
 
-## 4. The fetcher system — the actual integration point
+## 4. The fetcher system, the actual integration point
 
 **Header:** [content/fetchers.h:49-113](../../browser/netsurf/content/fetchers.h#L49)
 **Fetch message types:** [content/fetch.h:42-56](../../browser/netsurf/content/fetch.h#L42)
@@ -253,25 +253,25 @@ typedef enum {
 
 The custom fetcher's `start()` / `poll()` functions feed these messages back to core via
 the parent_fetch pointer received in `setup()`. The fetcher doesn't invent its own
-transport contract — it just drives OT and translates the results into these messages.
+transport contract, it just drives OT and translates the results into these messages.
 
 ### Where RISC OS and Amiga put their HTTP fetcher
 
 **Not visible in the MacSurf source subset.** RISC OS and Amiga in the upstream tree use
 `content/fetchers/curl.c` (libcurl-based) and `content/fetchers/file.c` (file:// URLs)
 and `content/fetchers/about.c` (about: URLs). These are compile-time choices in the
-upstream makefiles. For MacSurf, neither libcurl nor POSIX file I/O is available — we
+upstream makefiles. For MacSurf, neither libcurl nor POSIX file I/O is available, we
 need a Mac-specific HTTP fetcher that wraps Open Transport.
 
 **Key design implication:** The existing `macos9_fetch.c` is not far from what a fetcher
-backend needs. Its guts — `OTOpenEndpointInContext`, `OTConnect`, `OTSnd`, `OTRcv`,
-`OTSndOrderlyDisconnect` — map onto the `setup`/`start`/`poll` callbacks. The body-parser
+backend needs. Its guts, `OTOpenEndpointInContext`, `OTConnect`, `OTSnd`, `OTRcv`,
+`OTSndOrderlyDisconnect`, map onto the `setup`/`start`/`poll` callbacks. The body-parser
 layer (HTTP header split, tag strip, word wrap) goes away because the core does all of
 that once we're feeding bytes in via `FETCH_DATA` messages.
 
 ---
 
-## 5. `hlcache_handle_retrieve` — bytes become content
+## 5. `hlcache_handle_retrieve`, bytes become content
 
 **Header:** [content/hlcache.h:119](../../browser/netsurf/content/hlcache.h#L119)
 
@@ -335,7 +335,7 @@ favicons, CSS assets inside an HTML page, iframe contents). For a top-level page
 
 ---
 
-## 6. Plotters — currently all stubs
+## 6. Plotters, currently all stubs
 
 **Header:** [include/netsurf/plotters.h:102](../../browser/netsurf/include/netsurf/plotters.h#L102)
 **MacSurf impl:** [frontends/macos9/plotters.c](../../browser/netsurf/frontends/macos9/plotters.c)
@@ -399,7 +399,7 @@ stubbed via header stubs in
 [frontends/macos9/parserutils/](../../browser/netsurf/frontends/macos9/). Those are
 **headers-only stubs**; the libraries themselves are not in the project. For HTML
 parsing and CSS layout to work, those libraries must be built as part of the CW8
-project — a large amount of work, potentially another milestone on its own.
+project, a large amount of work, potentially another milestone on its own.
 
 Without those libraries, `html_init` can only be a no-op, and the HTML handler cannot
 register. Without a registered HTML handler, `hlcache_handle_retrieve(http://..., HTML)`
@@ -409,7 +409,7 @@ fails with no content handler.
 
 ## 8. What RISC OS does, step by step
 
-[riscos/gui.c main() — lines 2440-2543](../../browser/netsurf/frontends/riscos/gui.c#L2440):
+[riscos/gui.c main(), lines 2440-2543](../../browser/netsurf/frontends/riscos/gui.c#L2440):
 
 ```
  1. netsurf_register(&riscos_table)
@@ -430,7 +430,7 @@ fails with no content handler.
 
 ## 9. What Amiga does, step by step
 
-[amiga/gui.c main() — lines 6540-6700+](../../browser/netsurf/frontends/amiga/gui.c#L6540):
+[amiga/gui.c main(), lines 6540-6700+](../../browser/netsurf/frontends/amiga/gui.c#L6540):
 
 ```
  1. netsurf_register(&amiga_table)
@@ -455,12 +455,12 @@ Common shape: **register → options → messages → netsurf_init → frontend-
 browser_window_create → event loop**. MacSurf's [main.c](../../browser/netsurf/frontends/macos9/main.c)
 currently has `netsurf_register` and `netsurf_init` but is missing steps 3 (nsoption_init)
 and 7 (messages_add_from_file). The Messages file itself isn't present in the CW8
-project — it needs to be either embedded, stored alongside the app, or stubbed at the
+project, it needs to be either embedded, stored alongside the app, or stubbed at the
 messages subsystem level.
 
 ---
 
-## 10. Integration cost — rough categories
+## 10. Integration cost, rough categories
 
 What will need to change in MacSurf to get from v0.1.0 to "real core" operational:
 
@@ -473,10 +473,10 @@ What will need to change in MacSurf to get from v0.1.0 to "real core" operationa
 - Wire `browser_window_create` into `macos9_handle_menu` File→New Window flow
 
 ### Medium (days to a week each)
-- Write `macos9_http_fetcher.c` — fetcher_operation_table backed by Open Transport.
+- Write `macos9_http_fetcher.c`, fetcher_operation_table backed by Open Transport.
   The network primitives from [macos9_fetch.c](../../browser/netsurf/frontends/macos9/macos9_fetch.c)
   move here; the header split and tag strip code is deleted (core does that now).
-- Implement Carbon font metrics properly in `macos9_layout_table` — currently stubbed.
+- Implement Carbon font metrics properly in `macos9_layout_table`, currently stubbed.
   NetSurf calls `layout->width` / `layout->position` / `layout->split` to measure text
   for layout; these must return real pixel widths from QuickDraw.
 - Event loop integration: the fetcher's `poll` needs to run every time through
@@ -489,12 +489,12 @@ What will need to change in MacSurf to get from v0.1.0 to "real core" operationa
   C89 with no POSIX. That is a milestone of its own. Without them `html_init` can't
   register a handler, so `hlcache_handle_retrieve` on text/html fails with
   "no content handler for type."
-- Image libraries (libnsgif, libnsbmp, libpng, libjpeg) — optional for first HTML render,
+- Image libraries (libnsgif, libnsbmp, libpng, libjpeg), optional for first HTML render,
   required for anything pretty.
 
 ### Deferred indefinitely
-- libjs / duktape — by design, MacSurf has no JavaScript
-- libssl / libcurl — proxy handles TLS
+- libjs / duktape, by design, MacSurf has no JavaScript
+- libssl / libcurl, proxy handles TLS
 
 ---
 
@@ -528,24 +528,24 @@ Things this document does **not** answer; they need decisions before implementat
 
 All paths are in this repo under [browser/netsurf/](../../browser/netsurf/):
 
-- `include/netsurf/netsurf.h` — `netsurf_register`, `netsurf_init`
-- `include/netsurf/browser_window.h` — `browser_window_create`, create flags
-- `include/netsurf/plotters.h` — `struct plotter_table`
-- `include/netsurf/content_type.h` — `content_msg` enum
-- `desktop/netsurf.c` — `netsurf_init` implementation
-- `desktop/browser_window.c` — `browser_window_create`, `browser_window_callback`
-- `desktop/gui_factory.c` — `netsurf_register` validation and defaults
-- `desktop/gui_table.h` — `struct netsurf_table`
-- `content/hlcache.h` — `hlcache_handle_retrieve`, callback type
-- `content/fetchers.h` — `fetcher_operation_table`, `fetcher_add`
-- `content/fetch.h` — `fetch_msg_type` enum
-- `frontends/riscos/gui.c` — reference `main()` sequence
-- `frontends/amiga/gui.c` — reference `main()` sequence
-- `frontends/macos9/main.c` — current MacSurf entry point
-- `frontends/macos9/macos9_fetch.c` — current OT fetch (bypasses core)
-- `frontends/macos9/misc_stub.c` — all-OK initializer stubs
-- `frontends/macos9/fetch_stub.c` — fetch subsystem stubs
-- `frontends/macos9/plotters.c` — plot_* stubs
+- `include/netsurf/netsurf.h`, `netsurf_register`, `netsurf_init`
+- `include/netsurf/browser_window.h`, `browser_window_create`, create flags
+- `include/netsurf/plotters.h`, `struct plotter_table`
+- `include/netsurf/content_type.h`, `content_msg` enum
+- `desktop/netsurf.c`, `netsurf_init` implementation
+- `desktop/browser_window.c`, `browser_window_create`, `browser_window_callback`
+- `desktop/gui_factory.c`, `netsurf_register` validation and defaults
+- `desktop/gui_table.h`, `struct netsurf_table`
+- `content/hlcache.h`, `hlcache_handle_retrieve`, callback type
+- `content/fetchers.h`, `fetcher_operation_table`, `fetcher_add`
+- `content/fetch.h`, `fetch_msg_type` enum
+- `frontends/riscos/gui.c`, reference `main()` sequence
+- `frontends/amiga/gui.c`, reference `main()` sequence
+- `frontends/macos9/main.c`, current MacSurf entry point
+- `frontends/macos9/macos9_fetch.c`, current OT fetch (bypasses core)
+- `frontends/macos9/misc_stub.c`, all-OK initializer stubs
+- `frontends/macos9/fetch_stub.c`, fetch subsystem stubs
+- `frontends/macos9/plotters.c`, plot_* stubs
 
 ## 13. What's next
 

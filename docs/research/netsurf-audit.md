@@ -82,7 +82,7 @@ Note: Networking in production frontends is typically delegated to cURL or platf
 
 | Header/Function | Where Used | Notes |
 |---|---|---|
-| `iconv_open()` / `iconv()` / `iconv_close()` | `utils/utf8.c`, `libparserutils/src/input/filter.c` | Charset conversion — **critical dependency** |
+| `iconv_open()` / `iconv()` / `iconv_close()` | `utils/utf8.c`, `libparserutils/src/input/filter.c` | Charset conversion, **critical dependency** |
 
 ### 2.6 Dynamic Loading
 
@@ -101,7 +101,7 @@ Note: Networking in production frontends is typically delegated to cURL or platf
 | **libparserutils** | Minimal | arpa/inet.h, netinet/in.h (tests); iconv (production) |
 | **libwapcaplet** | Minimal | signal.h, sys/types.h only |
 
-The five libraries are nearly platform-agnostic — POSIX usage is almost entirely in test code. The main `netsurf` codebase carries all the real POSIX weight, primarily in the file fetcher, backing store, and utility functions.
+The five libraries are nearly platform-agnostic, POSIX usage is almost entirely in test code. The main `netsurf` codebase carries all the real POSIX weight, primarily in the file fetcher, backing store, and utility functions.
 
 ---
 
@@ -126,7 +126,7 @@ This is the primary portability layer. All platform conditionals for feature ava
 
 ### 3.2 Frontend-Specific Ifdefs
 
-**AmigaOS frontend** (`frontends/amiga/`): Extensive `#ifdef __amigaos4__` throughout — nearly every file distinguishes OS4 vs OS3 APIs for:
+**AmigaOS frontend** (`frontends/amiga/`): Extensive `#ifdef __amigaos4__` throughout, nearly every file distinguishes OS4 vs OS3 APIs for:
 - Library opening/management
 - Memory allocation
 - Font engines (Bullet vs DiskFont)
@@ -462,19 +462,19 @@ void urldb_dump(void);
 
 ### 4.3 Type-Only Headers (No Functions)
 
-- **console.h** — `browser_window_console_source`, `browser_window_console_flags` enums
-- **content_type.h** — `content_type`, `content_status`, `content_msg` enums
-- **css.h** — Color conversion macros
-- **inttypes.h** — Integer format macros (with RISC OS special handling)
-- **mouse.h** — `browser_mouse_state`, `gui_pointer_shape`, `browser_pointer_shape` enums
-- **plot_style.h** — Plot styles, font styles, color macros
-- **types.h** — `colour`, `struct rect`
+- **console.h**, `browser_window_console_source`, `browser_window_console_flags` enums
+- **content_type.h**, `content_type`, `content_status`, `content_msg` enums
+- **css.h**, Color conversion macros
+- **inttypes.h**, Integer format macros (with RISC OS special handling)
+- **mouse.h**, `browser_mouse_state`, `gui_pointer_shape`, `browser_pointer_shape` enums
+- **plot_style.h**, Plot styles, font styles, color macros
+- **types.h**, `colour`, `struct rect`
 
 ---
 
 ## 5. RISC OS Frontend Structure
 
-`frontends/riscos/` — the closest analog to Mac OS 9. Cooperative multitasking via the WIMP event loop. All files listed below.
+`frontends/riscos/`, the closest analog to Mac OS 9. Cooperative multitasking via the WIMP event loop. All files listed below.
 
 ### Core
 
@@ -482,7 +482,7 @@ void urldb_dump(void);
 |---|---|
 | gui.c | Main GUI initialization, WIMP event loop, startup/shutdown |
 | gui.h | Main GUI interface and constants |
-| window.c | Browser window handling — create, destroy, redraw, scroll, events |
+| window.c | Browser window handling, create, destroy, redraw, scroll, events |
 | window.h | Browser window interface |
 | corewindow.c | Generic core window rendering adapter for WIMP |
 | corewindow.h | Core window interface |
@@ -495,7 +495,7 @@ void urldb_dump(void);
 
 | File | Description |
 |---|---|
-| plotters.c | Screen plotter — draws lines, rectangles, text, bitmaps via OS calls |
+| plotters.c | Screen plotter, draws lines, rectangles, text, bitmaps via OS calls |
 | bitmap.c | Bitmap operations using RISC OS sprites |
 | bitmap.h | Bitmap operations interface |
 | buffer.c | Screen buffering (double-buffer) implementation |
@@ -611,7 +611,7 @@ void urldb_dump(void);
 | textselection.h | Text selection interface |
 | ucstables.c | UCS conversion tables and UTF-8 handling |
 | ucstables.h | UCS conversion interface |
-| clipboard — | (handled via textselection) |
+| clipboard, | (handled via textselection) |
 
 ### System Integration
 
@@ -655,7 +655,7 @@ void urldb_dump(void);
 
 ## 6. AmigaOS Frontend Structure
 
-`frontends/amiga/` — also cooperative multitasking. Distinguishes OS3 and OS4 throughout with `#ifdef __amigaos4__`.
+`frontends/amiga/`, also cooperative multitasking. Distinguishes OS3 and OS4 throughout with `#ifdef __amigaos4__`.
 
 ### Core
 
@@ -766,11 +766,11 @@ void urldb_dump(void);
 
 ## Key Takeaways for MacSurf
 
-1. **C99 everywhere** — good fit for CodeWarrior 8 which supports most of C99
-2. **No threading** — the codebase already assumes cooperative multitasking. No pthread adaptation needed
-3. **Libraries are clean** — libhubbub/libcss/libdom/libparserutils/libwapcaplet have almost zero platform dependencies outside of test code
-4. **iconv is critical** — used in both netsurf core and libparserutils for charset conversion. Will need a Mac OS 9 replacement (TextEncoding Converter)
-5. **File I/O is the biggest POSIX surface** — mmap, opendir/readdir, fstatat all need Carbon/Toolbox replacements
-6. **RISC OS frontend is the template** — 65+ files, fully cooperative, WIMP event loop maps directly to WaitNextEvent
-7. **AmigaOS frontend validates the approach** — OS3/OS4 split proves the pattern works for old cooperative OSes
-8. **`utils/config.h` is the portability switch** — add `__MACOS9__` guards there alongside existing platform macros
+1. **C99 everywhere**, good fit for CodeWarrior 8 which supports most of C99
+2. **No threading**, the codebase already assumes cooperative multitasking. No pthread adaptation needed
+3. **Libraries are clean**, libhubbub/libcss/libdom/libparserutils/libwapcaplet have almost zero platform dependencies outside of test code
+4. **iconv is critical**, used in both netsurf core and libparserutils for charset conversion. Will need a Mac OS 9 replacement (TextEncoding Converter)
+5. **File I/O is the biggest POSIX surface**, mmap, opendir/readdir, fstatat all need Carbon/Toolbox replacements
+6. **RISC OS frontend is the template**, 65+ files, fully cooperative, WIMP event loop maps directly to WaitNextEvent
+7. **AmigaOS frontend validates the approach**, OS3/OS4 split proves the pattern works for old cooperative OSes
+8. **`utils/config.h` is the portability switch**, add `__MACOS9__` guards there alongside existing platform macros

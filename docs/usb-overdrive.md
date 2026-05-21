@@ -4,7 +4,7 @@
 Scroll Wheel action to **"Do Nothing"** when MacSurf is frontmost.
 Scrolling is fully available via the scroll bar, keyboard arrow keys,
 Page Up / Page Down, and Home / End. The wheel itself is not yet safe
-to use on MacSurf — see "Why" below.
+to use on MacSurf, see "Why" below.
 
 ## Recommended configuration (interim)
 
@@ -32,13 +32,13 @@ without the wheel.
 ## Why the wheel is disabled
 
 Apple's CarbonLib on Mac OS 9 does not carry the
-`kEventMouseWheelMoved` Carbon event class — that API was added in
+`kEventMouseWheelMoved` Carbon event class, that API was added in
 Mac OS X 10.0 and never back-ported (Apple's own `CarbonEvents.h`
 marks it `CarbonLib: not available`). MacSurf previously installed a
 handler for it (fixes134) which caused an illegal-instruction crash
 at `19DBDEB8`; fixes140 removed the handler. After that, spinning the
 wheel still occasionally dropped into MacsBug with `Undefined A-Trap
-at 1BDC54E0` — a crash in code that was executing from garbage
+at 1BDC54E0`, a crash in code that was executing from garbage
 memory, likely inside CarbonLib's event dispatch or USB Overdrive's
 trap patches, not in MacSurf itself. fixes141 added defensive event
 filtering (narrowed `WaitNextEvent` mask, whitelist guard in dispatch)
@@ -53,7 +53,7 @@ will update this doc.
 ## Earlier recommendation (now superseded)
 
 Prior to fixes141, this doc recommended configuring the wheel to
-send **Up Arrow / Down Arrow** key events — which in principle flows
+send **Up Arrow / Down Arrow** key events, which in principle flows
 through MacSurf's existing keyboard handler. That may work in
 practice but may also still trigger the underlying CarbonLib / USB
 Overdrive crash depending on where the bug actually lives. If you
@@ -64,9 +64,9 @@ longer the default recommendation.
 ## References
 
 - [browser/netsurf/frontends/macos9/macos9_wheel.c](../browser/netsurf/frontends/macos9/macos9_wheel.c)
-  — the disabled Carbon handler with full engineering history.
-- `CLAUDE.md` § "Mouse Wheel / Input Devices" — the authoritative
+ , the disabled Carbon handler with full engineering history.
+- `CLAUDE.md` § "Mouse Wheel / Input Devices", the authoritative
   internal notes.
-- [USB Overdrive](https://www.usboverdrive.com/) —
+- [USB Overdrive](https://www.usboverdrive.com/) ,
   Alessandro Levi Montalcini's USB HID driver for classic and modern
   Mac OS.

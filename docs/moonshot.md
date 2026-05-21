@@ -1,5 +1,5 @@
 # MacSurf JavaScript Implementation Plan
-# Duktape on Mac OS 9 PowerPC — Full Implementation Guide
+# Duktape on Mac OS 9 PowerPC, Full Implementation Guide
 
 ---
 
@@ -7,7 +7,7 @@
 
 No consumer browser has run a modern ECMAScript engine on Mac OS 9 PowerPC hardware.
 Classic IE 5.x shipped with Jscript 5 but it predates ES5. This would be the first
-ES5-capable JavaScript engine running on Mac OS 9 — on real hardware from 1998-2000.
+ES5-capable JavaScript engine running on Mac OS 9, on real hardware from 1998-2000.
 
 ---
 
@@ -15,16 +15,16 @@ ES5-capable JavaScript engine running on Mac OS 9 — on real hardware from 1998
 
 Duktape is the only viable candidate. Reasons:
 
-- **C89 clean** — compiles with CodeWarrior 8's strict C89 mode
-- **PPC big-endian supported** — `DUK_USE_BYTEORDER=3` is a first-class config
-- **Single-file amalgamation** — `duktape.c` + `duktape.h` + `duk_config.h`, no build system required
-- **Runs on 32KB RAM minimum** — 192MB on the G4 is effectively unlimited for our purposes
-- **~160-200KB code footprint** — fits comfortably in the CW8 build
-- **ES5 full support**, partial ES6 — covers virtually all pre-2015 web code
-- **NetSurf already has js_thread stubs** — the wiring points exist, they just need to be activated
-- **MIT licensed** — compatible with MPLS License
+- **C89 clean**, compiles with CodeWarrior 8's strict C89 mode
+- **PPC big-endian supported**, `DUK_USE_BYTEORDER=3` is a first-class config
+- **Single-file amalgamation**, `duktape.c` + `duktape.h` + `duk_config.h`, no build system required
+- **Runs on 32KB RAM minimum**, 192MB on the G4 is effectively unlimited for our purposes
+- **~160-200KB code footprint**, fits comfortably in the CW8 build
+- **ES5 full support**, partial ES6, covers virtually all pre-2015 web code
+- **NetSurf already has js_thread stubs**, the wiring points exist, they just need to be activated
+- **MIT licensed**, compatible with MPLS License
 
-Do NOT use QuickJS — it requires a modern C compiler (C99+). Do NOT attempt to port V8 or SpiderMonkey.
+Do NOT use QuickJS, it requires a modern C compiler (C99+). Do NOT attempt to port V8 or SpiderMonkey.
 
 ---
 
@@ -36,11 +36,11 @@ Full ES5.1:
 - XMLHttpRequest stub (routes through our OT fetcher)
 - setTimeout/setInterval (cooperative, not threaded)
 - JSON.parse / JSON.stringify
-- Array, Object, String, Math — full ES5 builtins
+- Array, Object, String, Math, full ES5 builtins
 - Regular expressions
 
 Not available without significant additional work:
-- ES6 Promises (partial — polyfillable)
+- ES6 Promises (partial, polyfillable)
 - Fetch API (needs custom binding)
 - WebSockets (OT can do TCP, binding needed)
 - CSS animations triggered by JS (possible but slow)
@@ -60,9 +60,9 @@ Not available without significant additional work:
 - Remaining for OS + other: ~170MB
 
 **Conclusion:** Memory is not a constraint. A 400MHz G4 is roughly equivalent
-to a 200MHz Pentium II in JS performance — slow by modern standards but fast
+to a 200MHz Pentium II in JS performance, slow by modern standards but fast
 enough for pre-2010 web code. Google Maps circa 2006 probably won't work.
-Wikipedia, GitHub (old), Hacker News, Reddit old, most forms — yes.
+Wikipedia, GitHub (old), Hacker News, Reddit old, most forms, yes.
 
 **Stack depth:** Mac OS 9 cooperative threads have limited stack. Set
 `DUK_USE_NATIVE_CALL_RECLIMIT` conservatively (128 or 256). Deep recursive
@@ -128,12 +128,12 @@ for known platforms. Mac OS 9 + CW8 is not a known platform, so we hand-craft it
 
 Duktape 2.x is C89 clean but has a few patterns CW8 may reject:
 
-1. **`volatile` in unexpected places** — CW8 is strict about volatile qualifiers
-2. **`__FILE__` and `__LINE__`** — fine, CW8 supports these
-3. **`va_list` / `va_copy`** — CW8's MSL defines `va_copy`; add `#ifndef va_copy` guard
-4. **`double` promotion rules** — CW8 may warn on implicit float/double mixing
-5. **`setjmp.h`** — available in MSL, should work as-is
-6. **`<string.h>`** naming collision — same issue we hit with NetSurf; prefix file
+1. **`volatile` in unexpected places**, CW8 is strict about volatile qualifiers
+2. **`__FILE__` and `__LINE__`**, fine, CW8 supports these
+3. **`va_list` / `va_copy`**, CW8's MSL defines `va_copy`; add `#ifndef va_copy` guard
+4. **`double` promotion rules**, CW8 may warn on implicit float/double mixing
+5. **`setjmp.h`**, available in MSL, should work as-is
+6. **`<string.h>`** naming collision, same issue we hit with NetSurf; prefix file
    must ensure MSL's string.h is found, not any internal one
 
 The agent should run `duktape.c` through the Linux C89 syntax check before
@@ -143,7 +143,7 @@ touching CW8. Most issues will be visible there.
 
 ## Phase 1: Port Duktape to the Build
 
-### Step 1.1 — Get Duktape 2.7.0 source
+### Step 1.1, Get Duktape 2.7.0 source
 
 ```bash
 # On Hetzner
@@ -154,12 +154,12 @@ cp duktape-2.7.0/src/duktape.h browser/libduktape/
 cp duktape-2.7.0/src/duk_config.h browser/libduktape/
 ```
 
-### Step 1.2 — Create hand-crafted duk_config.h
+### Step 1.2, Create hand-crafted duk_config.h
 
 Copy the base from `duktape-2.7.0/src/duk_config.h` and apply the Mac OS 9
 overrides described in Phase 0. Save as `browser/libduktape/duk_config.h`.
 
-### Step 1.3 — Linux C89 audit of duktape.c
+### Step 1.3, Linux C89 audit of duktape.c
 
 ```bash
 gcc -std=c89 -pedantic -Wall -Wno-long-long \
@@ -171,10 +171,10 @@ gcc -std=c89 -pedantic -Wall -Wno-long-long \
 Fix all hard errors. Warnings about `long long` are acceptable (we allow it
 in the prefix file via `#pragma`).
 
-### Step 1.4 — Add to CW8 project
+### Step 1.4, Add to CW8 project
 
 Add `duktape.c` to the file list. Add `browser:libduktape:` to access paths.
-`duktape.h` and `duk_config.h` are headers only — do not add to file list.
+`duktape.h` and `duk_config.h` are headers only, do not add to file list.
 
 ---
 
@@ -182,7 +182,7 @@ Add `duktape.c` to the file list. Add `browser:libduktape:` to access paths.
 
 Duktape needs a few platform hooks we must implement for Mac OS 9.
 
-### macos9_date.c — Date provider
+### macos9_date.c, Date provider
 
 ```c
 /* Called by Duktape for Date.now() */
@@ -195,7 +195,7 @@ duk_double_t macsurf_js_get_now(void) {
 }
 ```
 
-### macos9_js_fatal.c — Fatal error handler
+### macos9_js_fatal.c, Fatal error handler
 
 ```c
 void macsurf_js_fatal(void *udata, const char *msg) {
@@ -223,7 +223,7 @@ behind `#ifndef WITHOUT_DUKTAPE`. The js_stub.c file provides no-op stubs.
 Steps:
 1. Remove `#define WITHOUT_DUKTAPE` from `macsurf_prefix.h`
 2. Add `#include "duktape.h"` to `browser/netsurf/content/handlers/html/js.h`
-3. Implement `browser/netsurf/frontends/macos9/javascript/macsurf_js.c` —
+3. Implement `browser/netsurf/frontends/macos9/javascript/macsurf_js.c` ,
    this is the glue between NetSurf's js_thread API and Duktape
 
 ### macsurf_js.c skeleton
@@ -273,16 +273,16 @@ JS calls to NetSurf's libdom.
 
 ### Priority order (implement these first)
 
-1. **`document.getElementById(id)`** — needed by almost everything
-2. **`element.innerHTML` setter** — needed for dynamic content
-3. **`element.style` setter** — CSS manipulation
-4. **`element.addEventListener(event, fn)`** — event handling
-5. **`document.createElement(tag)`** — dynamic DOM
-6. **`element.appendChild(node)`** — DOM insertion
-7. **`window.location.href`** — navigation
-8. **`XMLHttpRequest`** — AJAX (routes through OT fetcher)
-9. **`document.querySelector(selector)`** — modern sites use this heavily
-10. **`console.log()`** — debugging, logs to MacSurf debug window
+1. **`document.getElementById(id)`**, needed by almost everything
+2. **`element.innerHTML` setter**, needed for dynamic content
+3. **`element.style` setter**, CSS manipulation
+4. **`element.addEventListener(event, fn)`**, event handling
+5. **`document.createElement(tag)`**, dynamic DOM
+6. **`element.appendChild(node)`**, DOM insertion
+7. **`window.location.href`**, navigation
+8. **`XMLHttpRequest`**, AJAX (routes through OT fetcher)
+9. **`document.querySelector(selector)`**, modern sites use this heavily
+10. **`console.log()`**, debugging, logs to MacSurf debug window
 
 ### Binding pattern
 
@@ -364,7 +364,7 @@ via the proxy transparently.
 | OOM on large JS-heavy pages | Low at 192MB | Monitor with MacsBug; add heap size cap |
 | `longjmp` interaction with CW8 C++ exception model | Medium | Use C-only setjmp, no C++ in Duktape path |
 | `double` precision on PPC | Low | PPC has full IEEE 754; no issues expected |
-| `va_copy` conflict with MSL | Known | Already solved — `#ifndef va_copy` guard |
+| `va_copy` conflict with MSL | Known | Already solved, `#ifndef va_copy` guard |
 | Performance too slow for modern JS | High for heavy sites | Expected; focus on pre-2015 sites |
 | DOM binding crashes on malformed pages | Medium | Null-check everything; wrap in `duk_safe_call` |
 
@@ -387,10 +387,10 @@ via the proxy transparently.
 - `addEventListener` fires on click
 
 ### Milestone 4: Real sites
-- Hacker News — upvote, collapse threads
-- Wikipedia — search autocomplete
-- Old Reddit — vote, expand comments
-- DuckDuckGo — search form submission
+- Hacker News, upvote, collapse threads
+- Wikipedia, search autocomplete
+- Old Reddit, vote, expand comments
+- DuckDuckGo, search form submission
 
 ---
 

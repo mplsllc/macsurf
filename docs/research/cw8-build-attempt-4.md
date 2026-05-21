@@ -1,4 +1,4 @@
-# CW8 Build Attempt 4 — Error Analysis
+# CW8 Build Attempt 4, Error Analysis
 
 ## Source
 
@@ -9,7 +9,7 @@ CR→LF, **2,857 distinct `Error :` lines**.
 
 **Net change: 3,088 → 2,857 (231 errors removed).** Two of the three
 attempt-3 fixes landed on the Mac and worked exactly as predicted.
-**The third fix (libdom headers zip) was not unpacked yet** — every
+**The third fix (libdom headers zip) was not unpacked yet**, every
 single libdom missing-header error from attempt 3 is still present,
 identical down to file/line. Errors are dominated by that one issue.
 
@@ -19,7 +19,7 @@ identical down to file/line. Errors are dominated by that one issue.
 | #2 propset.h decl hoists | ✓ landed | ~210 (27 `old_string_arr` + 18 `old_counter_arr` + 12 `__lwc_s` + ~150 cascade) |
 | #3 jsthread rename | ✓ landed | ~21 (3 name overloading + ~18 cascade) |
 
-Plus **8 brand-new errors** unmasked by the propset.h cleanup —
+Plus **8 brand-new errors** unmasked by the propset.h cleanup ,
 `fpmath.h` was previously hidden behind the propset.h cascade and
 now reaches the parser. Real fix needed.
 
@@ -62,10 +62,10 @@ Categories that **vanished** between attempt 3 and 4:
 | `undefined identifier 'old_counter_arr'` | 18 | propset.h fix |
 | `undefined identifier '__lwc_s'` | 12 | propset.h fix |
 | `illegal name overloading` (private.h:152) | 3 | jsthread fix |
-| `_dom_*_initialise(...) redeclared as int` | 3 | partial — see below |
+| `_dom_*_initialise(...) redeclared as int` | 3 | partial, see below |
 | **Cascade reduction** | ~165 | downstream of the above |
 
-## Root cause #1 — libdom headers (UNCHANGED — zip not unpacked)
+## Root cause #1, libdom headers (UNCHANGED, zip not unpacked)
 
 Every libdom-related error from attempt 3 is present unchanged in
 attempt 4:
@@ -89,7 +89,7 @@ Conclusion: **the user has not yet unpacked
 `macsurf-libdom-headers.zip` on the Mac.** Until that happens, the
 build can't make further progress. Fix is unchanged from attempt 3.
 
-## NEW root cause #4 — `fpmath.h` multi-line function declarations
+## NEW root cause #4, `fpmath.h` multi-line function declarations
 
 **Unmasked by the propset.h fix.** Previously hidden inside a parser
 recovery cascade, now visible. File:
@@ -107,7 +107,7 @@ css_add_fixed(const css_fixed x, const css_fixed y) {
 The return type `css_fixed` and function name `css_add_fixed` are on
 **separate lines**. This is legal C89, but CW8 misparses it as:
 
-1. `static [implicit-int] css_fixed;` — a top-level variable
+1. `static [implicit-int] css_fixed;`, a top-level variable
    declaration named `css_fixed` (storage class static, type
    implicit int because none specified).
 2. `css_add_fixed(...)` then becomes a stray function definition
@@ -123,8 +123,8 @@ The return type `css_fixed` and function name `css_add_fixed` are on
 Symptoms in errors.txt:
 
 - 4× `identifier 'css_fixed' redeclared` (one per function except
-  the last two — those probably abort the file early)
-- 4× `illegal use of type 'int (...)'` at `parser.h:84/88/91/105` —
+  the last two, those probably abort the file early)
+- 4× `illegal use of type 'int (...)'` at `parser.h:84/88/91/105` ,
   downstream of the same cascade reaching `dom/bindings/hubbub/parser.h`,
   where dom_hubbub_parser_* declarations get implicit-int treatment.
 - ~150 cascade errors throughout the file
@@ -157,29 +157,29 @@ parses correctly because the return type and function name are
 unambiguously together.
 
 This is a 6-line edit to one upstream header. Mechanical, no logic
-change. Same pattern as the propset.h hoist — add to the libcss port
+change. Same pattern as the propset.h hoist, add to the libcss port
 audit checklist for future scans: "look for two-line function
 signatures in headers."
 
 ## Other observations
 
-### `_dom_*_initialise(...) redeclared as int (...)` — DOWN from 3 to 0?
+### `_dom_*_initialise(...) redeclared as int (...)`, DOWN from 3 to 0?
 
-Wait — actually still present, I miscounted. The "object 'node'
+Wait, actually still present, I miscounted. The "object 'node'
 redefined" count of 7 may include these. Will resolve with libdom
 headers.
 
-### `va_copy` redefined — still 1×
+### `va_copy` redefined, still 1×
 
 Unchanged. Low-priority cleanup. The fix is a `#ifndef va_copy` guard
 around whichever definition we control (probably in `talloc.c` since
 talloc is famous for redefining va_copy).
 
-### `internal compiler error in CError.c line 861` — still 1×
+### `internal compiler error in CError.c line 861`, still 1×
 
 CW8 bug, will go away once the real errors clear.
 
-### `redraw.c:1006 continue;` and `libdom.c:56 break;` — still present
+### `redraw.c:1006 continue;` and `libdom.c:56 break;`, still present
 
 Cascade. Will resolve when libdom headers land.
 
@@ -214,7 +214,7 @@ headers land.
 If steps 1 and 2 both land cleanly, attempt 5 should drop to **under
 50 total errors**. The remaining cascade is approximately:
 
-- ~5 from `plot_style_bdr` redraw_border.c (already a cascade —
+- ~5 from `plot_style_bdr` redraw_border.c (already a cascade ,
   resolves with libdom)
 - 1 va_copy redefined
 - 1 internal compiler error (cosmetic)
@@ -222,6 +222,6 @@ If steps 1 and 2 both land cleanly, attempt 5 should drop to **under
   first time
 
 If attempt 5 reveals **another C89-in-an-upstream-header issue
-similar to fpmath.h**, that's diagnostic gold — it means the libcss
+similar to fpmath.h**, that's diagnostic gold, it means the libcss
 audit checklist needs a "scan upstream headers" pass that we never
 ran. But I'd expect at most one or two more of those.

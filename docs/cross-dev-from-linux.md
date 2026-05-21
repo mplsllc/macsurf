@@ -14,22 +14,22 @@ CodeWarrior 8 Pro (with 8.3 update) on Mac OS 9. **Strict C89.** Hard restrictio
 
 - No `inline` keyword (define it away: `-Dinline=`)
 - No `//` line comments
-- No variadic macros — but `__VA_ARGS__` is supported as a pre-C99 extension and is the safe path for NSLOG-style no-op macros
+- No variadic macros, but `__VA_ARGS__` is supported as a pre-C99 extension and is the safe path for NSLOG-style no-op macros
 - No forward enum declarations (`enum foo;` is illegal)
 - No C99 designated initializers (`{ .field = value }`)
 - No for-scope variable declarations (`for (int i = ...)`)
 - No compound literals
 - No `restrict`, `long long` is technically supported but **miscompiled** (see §3)
-- No GNU union casts (`(union_type)0`) — use a compound statement with a local variable
+- No GNU union casts (`(union_type)0`), use a compound statement with a local variable
 - All variables at the top of their enclosing block
 
-C89 also rejects named enums inside struct bodies — CW8 silently fails to complete the struct, leaving it incomplete and every member undefined. Hoist named enums above any struct that uses them.
+C89 also rejects named enums inside struct bodies, CW8 silently fails to complete the struct, leaving it incomplete and every member undefined. Hoist named enums above any struct that uses them.
 
 ### Bit-pack scalar fields, but watch padding
 
 `css_computed_style_i` (libcss inner struct) gets `memcmp`'d by arena interning to deduplicate styles. **Any new field's byte representation must be deterministic across every cascade path.** This means:
 
-- A `uint8_t` between two `int32_t` creates 3 padding bytes the compiler chooses; cascade code writes the byte but nobody writes the padding. Different code paths can leave the padding with different values → memcmp false-negatives → intern table fills with duplicates → use-after-free during style destroy. **Use `int32_t` for scalar fields in `_i` so they self-align.** This is fixes117 (inline track array crash) and fixes151b (uint8 field crash) — the same trap twice.
+- A `uint8_t` between two `int32_t` creates 3 padding bytes the compiler chooses; cascade code writes the byte but nobody writes the padding. Different code paths can leave the padding with different values → memcmp false-negatives → intern table fills with duplicates → use-after-free during style destroy. **Use `int32_t` for scalar fields in `_i` so they self-align.** This is fixes117 (inline track array crash) and fixes151b (uint8 field crash), the same trap twice.
 - Variable-size data (track arrays, content arrays, font-family lists) goes in the OUTER `css_computed_style`, not in `_i`. Add a dedicated `arena__compare_*` function for it. fixes118 documented this pattern; fixes150 reused it for row tracks.
 
 ### Carbon CFM app requirements
@@ -37,12 +37,12 @@ C89 also rejects named enums inside struct bodies — CW8 silently fails to comp
 - **`'carb'` resource is mandatory.** Without it, CarbonLib never loads, and any `*InContext` Open Transport call crashes inside OTClientLib at a fixed address. Ship `MacSurf.rsrc` (a pre-built binary resource fork; CW8 links `.rsrc` into the output with no Rez step) and list it in the project.
 - Skip `InitGraf` / `InitFonts` / `InitWindows` / `InitMenus` / `TEInit` / `InitDialogs` under Carbon. Keep `InitCursor()` and `FlushEvents(everyEvent, 0)`.
 - Call `RegisterAppearanceClient()` after `InitCursor()`, gated by a Gestalt check.
-- No `kWindowStandardHandlerAttribute` on `CreateNewWindow` — it intercepts updateEvts and leaves windows blank.
+- No `kWindowStandardHandlerAttribute` on `CreateNewWindow`, it intercepts updateEvts and leaves windows blank.
 
 ### Open Transport rules
 
 - Use plain `OTOpenEndpoint` / `InitOpenTransport`, **not** the `*InContext` variants. Every CarbonLib crash we've debugged has traced to InContext routing through OTClientLib in an uninitialized state.
-- `OTUseSyncIdleEvents(ep, true)` plus a notifier that calls `YieldToAnyThread()` on `kOTSyncIdleEvent` — this is how synchronous OT calls cooperate with the rest of the app.
+- `OTUseSyncIdleEvents(ep, true)` plus a notifier that calls `YieldToAnyThread()` on `kOTSyncIdleEvent`, this is how synchronous OT calls cooperate with the rest of the app.
 - Carbon CFM cannot do passive (listening) OT binds. The OS rejects it categorically; we verified across 14 rounds in macSSL before pivoting. Don't try to write a local server.
 
 ### No preemptive threads
@@ -51,7 +51,7 @@ OS 9 is cooperative multitasking. Run a `WaitNextEvent` UI loop. Long-running wo
 
 ### Memory partition
 
-Carbon partition must be **at least 16 MB preferred / 8 MB minimum**. libcss allocates via raw `malloc`/`calloc` with no NetSurf wrapper — a 4 MB partition (the CW8 default) starves the CSS cascade on real pages. Set via `MWProject_PPC_size` / `MWProject_PPC_minsize` in the `.mcp` XML.
+Carbon partition must be **at least 16 MB preferred / 8 MB minimum**. libcss allocates via raw `malloc`/`calloc` with no NetSurf wrapper, a 4 MB partition (the CW8 default) starves the CSS cascade on real pages. Set via `MWProject_PPC_size` / `MWProject_PPC_minsize` in the `.mcp` XML.
 
 ### CW8 PPC long-long codegen is broken
 
@@ -65,7 +65,7 @@ Pure int32 multiplies and divides are fine. The miscompile is specifically the 6
 
 Mac OS X Carbon events that were never back-ported to CarbonLib (e.g. `kEventMouseWheelMoved`) will register without error but never dispatch, and CarbonLib's dispatcher destabilizes when something downstream tries to deliver an event whose class it doesn't know. Symptoms: illegal-instruction crash at a fixed-looking address inside CarbonLib.
 
-Check Apple's `CarbonEvents.h` annotations before registering any handler. If `CarbonLib: not available`, the platform cannot deliver that event — don't install a handler, don't debug your handler, accept the platform constraint.
+Check Apple's `CarbonEvents.h` annotations before registering any handler. If `CarbonLib: not available`, the platform cannot deliver that event, don't install a handler, don't debug your handler, accept the platform constraint.
 
 ### Live-tracking scroll bar CDEF is hardware-specific
 
@@ -81,7 +81,7 @@ CarbonLib's `TrackControl` / `InstallEventHandler` expect MixedMode `RoutineDesc
 
 ### Suppress Carbon.h sub-headers by pre-defining their guards
 
-Carbon.h transitively pulls in InternetConfig.h, MacWindows.h, KeychainCore.h, ATSLayoutTypes.h, SFNTLayoutTypes.h — each of which has at least one C89 incompatibility or missing forward declaration. The clean workaround is to `#define __INTERNETCONFIG__` (or whatever Universal Interfaces guard) before `#include <Carbon.h>`. Carbon.h's own guard check sees the symbol defined and skips the include entirely.
+Carbon.h transitively pulls in InternetConfig.h, MacWindows.h, KeychainCore.h, ATSLayoutTypes.h, SFNTLayoutTypes.h, each of which has at least one C89 incompatibility or missing forward declaration. The clean workaround is to `#define __INTERNETCONFIG__` (or whatever Universal Interfaces guard) before `#include <Carbon.h>`. Carbon.h's own guard check sees the symbol defined and skips the include entirely.
 
 Per `macos9.h`:
 
@@ -118,8 +118,8 @@ The prefix file gets injected before every TU. It must:
 2. Define `__MACOS9__ 1`
 3. Define `NO_IPV6 1`
 4. Define `TARGET_API_MAC_CARBON 1`
-5. Define `MACSURF_DEBUG 1` (gated on `#ifndef MACSURF_RELEASE`) — this is what enables the file-backed debug log; without it the entire log channel compiles to empty stubs (fixes305a regression)
-6. Stub `NSLOG` via `#define NSLOG(cat, level, ...) do{}while(0)`. CW8 supports `__VA_ARGS__` as a pre-C99 extension. **Do not** use a varargs C function — it forces the category token (`fetch`, `llcache`, `layout`, etc.) to be evaluated as an expression and fails with `'fetch' undeclared` in TUs where those names are not in scope.
+5. Define `MACSURF_DEBUG 1` (gated on `#ifndef MACSURF_RELEASE`), this is what enables the file-backed debug log; without it the entire log channel compiles to empty stubs (fixes305a regression)
+6. Stub `NSLOG` via `#define NSLOG(cat, level, ...) do{}while(0)`. CW8 supports `__VA_ARGS__` as a pre-C99 extension. **Do not** use a varargs C function, it forces the category token (`fetch`, `llcache`, `layout`, etc.) to be evaluated as an expression and fails with `'fetch' undeclared` in TUs where those names are not in scope.
 
 ### Two-source dispatch.c gotcha
 
@@ -163,7 +163,7 @@ Any C99 header that uses `enum foo;` to forward-declare an enum will fail on CW8
      path/to/changed_file.c
    ```
 
-   Pre-existing errors from the libcss/lwc shim mismatch are OK and pass on CW8 — what matters is that no NEW errors appear at the edit sites.
+   Pre-existing errors from the libcss/lwc shim mismatch are OK and pass on CW8, what matters is that no NEW errors appear at the edit sites.
 
 3. **Bundle as a tar with the full path tree preserved**:
 
@@ -174,7 +174,7 @@ Any C99 header that uses `enum foo;` to forward-declare an enum will fail on CW8
      [other changed files...]
    ```
 
-   The tar contains *only the files changed in this round* — never a full source dump (that would clobber the user's local edits to MacSurf.mcp / Access Paths). After the initial bootstrap round, every tar is delta-only.
+   The tar contains *only the files changed in this round*, never a full source dump (that would clobber the user's local edits to MacSurf.mcp / Access Paths). After the initial bootstrap round, every tar is delta-only.
 
 4. **Ship via scp**:
 
@@ -186,7 +186,7 @@ Any C99 header that uses `enum foo;` to forward-declare an enum will fail on CW8
 
    The user's Mac is reachable via an SSH bridge on localhost port 2222.
 
-5. **Mention any new `.c` files for MacSurf.mcp**. Do not edit the `.mcp` file from Linux — the user maintains the project file list on the Mac via the CW8 IDE, and a Linux-edited `.mcp` would clobber their local state.
+5. **Mention any new `.c` files for MacSurf.mcp**. Do not edit the `.mcp` file from Linux, the user maintains the project file list on the Mac via the CW8 IDE, and a Linux-edited `.mcp` would clobber their local state.
 
 6. **Commit on Linux** with a substantive commit message that captures the architectural intent. Commits are local working memory and become CLAUDE.md material when the round closes.
 
@@ -198,15 +198,15 @@ Any C99 header that uses `enum foo;` to forward-declare an enum will fail on CW8
 
 ### What goes in the tar
 
-Source files only — never `.mcp`, never `Access Paths.xml`, never docs. The tar's footprint stays small (tens of KB up to ~300 KB for big rounds with autogenerated headers).
+Source files only, never `.mcp`, never `Access Paths.xml`, never docs. The tar's footprint stays small (tens of KB up to ~300 KB for big rounds with autogenerated headers).
 
 ### Numbering
 
-The user owns the fix number. If they say a round is `fixes149`, that's what it is — don't argue with the numbering, just adopt it. Letter suffixes (`fixes148b`, `fixes148b3`) are used within a single feature's iteration when the first shipped attempt needed follow-up.
+The user owns the fix number. If they say a round is `fixes149`, that's what it is, don't argue with the numbering, just adopt it. Letter suffixes (`fixes148b`, `fixes148b3`) are used within a single feature's iteration when the first shipped attempt needed follow-up.
 
 ### Don't blame stale files
 
-The user's build is what they say it is. If something looks like staleness, the answer is to find a real root cause in code — a missing include, a wrong field path, an autogen mismatch — not to lecture about CW8 caches or zip-extraction failures. If you genuinely think a previously-shipped file may need to be reshipped because symptoms continued, just include it in the next zip with no narration about why. **DIRECTIVE #1 in CLAUDE.md.**
+The user's build is what they say it is. If something looks like staleness, the answer is to find a real root cause in code, a missing include, a wrong field path, an autogen mismatch, not to lecture about CW8 caches or zip-extraction failures. If you genuinely think a previously-shipped file may need to be reshipped because symptoms continued, just include it in the next zip with no narration about why. **DIRECTIVE #1 in CLAUDE.md.**
 
 ---
 
@@ -217,7 +217,7 @@ The user's build is what they say it is. If something looks like staleness, the 
 `browser/netsurf/frontends/macos9/macsurf_debug_log.c` writes one CR-terminated line per `MS_LOG(msg)` or `macsurf_debug_log_writef(fmt, ...)` call to `MacSurf Debug.log` on the Desktop, flushing after every write (`FlushVol` + `SetFPos`). This is the **primary post-crash backtrace channel** since we can't attach MacsBug remotely.
 
 - Located via `FindFolder(kOnSystemDisk, kDesktopFolderType, ...)`. If FindFolder fails the channel is silently inert.
-- Format specifiers supported: `%d`, `%ld`, `%p`, `%s`, `%%` (and `%lx` is NOT supported — use `%ld` and decode hex by eye if you need it).
+- Format specifiers supported: `%d`, `%ld`, `%p`, `%s`, `%%` (and `%lx` is NOT supported, use `%ld` and decode hex by eye if you need it).
 - Output capped at 255 bytes per call.
 - Gated on `MACSURF_DEBUG` in macsurf_prefix.h. The `#ifdef MACSURF_DEBUG` test happens inside the implementation; if the define is missing, every call site compiles to nothing (fixes149/150/151 silent-instrumentation regression, then fixes305a same vector).
 
@@ -229,20 +229,20 @@ After fixes149's three rounds of silently-failing instrumentation, we adopted th
 2. Init function body **actually reachable**? `#ifdef MACSURF_DEBUG` and similar feature-macro gates can compile the body to an empty stub. `grep -rn "define MACSURF_DEBUG"` must turn up at least one site.
 3. Smoke-test confirming the subsystem produces its externally-visible artefact at startup (log file appears, title bar updates, menu item present).
 
-Step 2 is the new one — it catches the fixes305a vector where the init call is present but the macro is missing.
+Step 2 is the new one, it catches the fixes305a vector where the init call is present but the macro is missing.
 
 ### Verifying via hardware probes on advanced.html
 
-Most CSS feature work ships with **probe cards** added to `mactrove.com/advanced.html` (lives on the Drupal proxy, not on the Mac, so refreshing the URL is enough — no Mac-side ship). Each fix sprint adds a section with N labelled probe cards (R1-R5, C1-C5, V1-V4, G1-G6, etc.); the user refreshes on the G3 and reports green / red per card.
+Most CSS feature work ships with **probe cards** added to `mactrove.com/advanced.html` (lives on the Drupal proxy, not on the Mac, so refreshing the URL is enough, no Mac-side ship). Each fix sprint adds a section with N labelled probe cards (R1-R5, C1-C5, V1-V4, G1-G6, etc.); the user refreshes on the G3 and reports green / red per card.
 
-For positioning verification, the file-backed log captures `plot_rect` and `plot_text` calls with exact (x,y) coordinates. Math against expected positions confirms whether a CSS feature is correctly applied — e.g. "R1-3 at y=267, R1-1 at y=179 → diff=88px = 80 (row 0) + 8 (gap) ✓".
+For positioning verification, the file-backed log captures `plot_rect` and `plot_text` calls with exact (x,y) coordinates. Math against expected positions confirms whether a CSS feature is correctly applied, e.g. "R1-3 at y=267, R1-1 at y=179 → diff=88px = 80 (row 0) + 8 (gap) ✓".
 
 ### SheepShaver is a partial test
 
 `/home/patrick/Webs/MAC/sheepshaver/` runs OS 9.0.4 via SheepShaver on Linux, useful for:
 
-- Smoke testing — does the build launch at all, does Carbon init succeed
-- Rendering regression checks — does MacTrove render, does var() resolve
+- Smoke testing, does the build launch at all, does Carbon init succeed
+- Rendering regression checks, does MacTrove render, does var() resolve
 - Obvious logic bugs that escape Linux syntax check
 
 It is **not** a substitute for real hardware on:
@@ -263,7 +263,7 @@ The G3 dev machine has MacsBug installed but the user currently lacks an ADB key
 
 ### CLAUDE.md is load-bearing
 
-The "Known Gotchas" section is dense and growing — every non-obvious failure mode that ate more than ~30 min of debugging time gets a gotcha entry with the symptom, the root cause, and the reference fix. Examples:
+The "Known Gotchas" section is dense and growing, every non-obvious failure mode that ate more than ~30 min of debugging time gets a gotcha entry with the symptom, the root cause, and the reference fix. Examples:
 
 - Two-source `dispatch.c` / `s_dispatch.c` requiring synchronized updates (fixes116b)
 - `uint8_t` between `int32_t` fields creating non-deterministic padding (fixes117 / fixes151b)
@@ -281,11 +281,11 @@ Cross-cutting lessons (workflow preferences, naming conventions, repeated gotcha
 - "Never blame stale files" (DIRECTIVE #1 captured as a feedback memory)
 - "Fix delivery pipeline" workflow note
 - "libcss properties with secondary storage need copy/compose to propagate the companion field"
-- "Plotters.c port assumption" — the cast-current-port-to-WindowRef pattern that broke offscreen composite
+- "Plotters.c port assumption", the cast-current-port-to-WindowRef pattern that broke offscreen composite
 
 ### Be terse, don't explain to the wall
 
-The user already knows the codebase. End-of-turn summary is one or two sentences. No hedging, no preamble, no recapping what they just told you. State diagnoses directly. If you don't know, say "I don't know" — don't pad.
+The user already knows the codebase. End-of-turn summary is one or two sentences. No hedging, no preamble, no recapping what they just told you. State diagnoses directly. If you don't know, say "I don't know", don't pad.
 
 ### Auto mode means ship
 

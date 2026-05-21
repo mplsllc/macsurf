@@ -1,21 +1,21 @@
 # MacSurf Frontend Scaffold Status
 
-Scaffold created at `browser/netsurf/frontends/macos9/`. All files compile cleanly against NetSurf core headers (verified with `gcc -fsyntax-only -std=c99`). No Mac Toolbox calls — pure stubs returning sensible defaults.
+Scaffold created at `browser/netsurf/frontends/macos9/`. All files compile cleanly against NetSurf core headers (verified with `gcc -fsyntax-only -std=c99`). No Mac Toolbox calls, pure stubs returning sensible defaults.
 
 ---
 
 ## Files Created
 
-### macos9.h — Shared declarations
+### macos9.h, Shared declarations
 
 Defines `struct gui_window`, `struct gui_download_window`, and scheduler function prototypes shared across all frontend files.
 
-### main.c — Entry point and event loop
+### main.c, Entry point and event loop
 
-- `main()` — builds `struct netsurf_table`, calls `netsurf_register()`, `netsurf_init()`, runs event loop, calls `netsurf_exit()`
-- `macos9_poll()` — empty event loop stub (will become WaitNextEvent loop)
+- `main()`, builds `struct netsurf_table`, calls `netsurf_register()`, `netsurf_init()`, runs event loop, calls `netsurf_exit()`
+- `macos9_poll()`, empty event loop stub (will become WaitNextEvent loop)
 
-### window.c — gui_window_table (13 callbacks)
+### window.c, gui_window_table (13 callbacks)
 
 | Function | Signature | Return |
 |---|---|---|
@@ -40,7 +40,7 @@ Defines `struct gui_window`, `struct gui_download_window`, and scheduler functio
 | `drag_save_selection` | `(struct gui_window *gw, const char *selection)` | void |
 | `console_log` | `(struct gui_window *gw, browser_window_console_source src, const char *msg, size_t msglen, browser_window_console_flags flags)` | void |
 
-### macos9_bitmap.c — gui_bitmap_table (10 callbacks)
+### macos9_bitmap.c, gui_bitmap_table (10 callbacks)
 
 | Function | Return |
 |---|---|
@@ -55,7 +55,7 @@ Defines `struct gui_window`, `struct gui_download_window`, and scheduler functio
 | `modified` | void (no-op) |
 | `render` | `NSERROR_OK` |
 
-### plotters.c — plotter_table (9 mandatory + 3 optional)
+### plotters.c, plotter_table (9 mandatory + 3 optional)
 
 | Function | Return |
 |---|---|
@@ -73,7 +73,7 @@ Defines `struct gui_window`, `struct gui_download_window`, and scheduler functio
 | `flush` | NULL (optional, not implemented) |
 | `option_knockout` | `true` |
 
-### font.c — gui_layout_table (3 callbacks)
+### font.c, gui_layout_table (3 callbacks)
 
 | Function | Return |
 |---|---|
@@ -81,7 +81,7 @@ Defines `struct gui_window`, `struct gui_download_window`, and scheduler functio
 | `position` | `NSERROR_OK` (stub: 8px per char) |
 | `split` | `NSERROR_OK` (stub: 8px per char, walks back to space) |
 
-### macos9_fetch.c — gui_fetch_table (3 callbacks)
+### macos9_fetch.c, gui_fetch_table (3 callbacks)
 
 | Function | Return |
 |---|---|
@@ -89,21 +89,21 @@ Defines `struct gui_window`, `struct gui_download_window`, and scheduler functio
 | `get_resource_url` | `NULL` |
 | `mimetype` | `strdup()` of filetype result |
 
-### clipboard.c — gui_clipboard_table (2 callbacks)
+### clipboard.c, gui_clipboard_table (2 callbacks)
 
 | Function | Return |
 |---|---|
 | `get` | void (sets buffer=NULL, length=0) |
 | `set` | void (no-op) |
 
-### macos9_utf8.c — gui_utf8_table (2 callbacks)
+### macos9_utf8.c, gui_utf8_table (2 callbacks)
 
 | Function | Return |
 |---|---|
 | `utf8_to_local` | `NSERROR_OK` (stub: copies input unchanged) |
 | `local_to_utf8` | `NSERROR_OK` (stub: copies input unchanged) |
 
-### macos9_download.c — gui_download_table (4 callbacks)
+### macos9_download.c, gui_download_table (4 callbacks)
 
 | Function | Return |
 |---|---|
@@ -112,7 +112,7 @@ Defines `struct gui_window`, `struct gui_download_window`, and scheduler functio
 | `error` | void |
 | `done` | void (frees struct) |
 
-### misc.c — gui_misc_table (5 callbacks)
+### misc.c, gui_misc_table (5 callbacks)
 
 | Function | Return |
 |---|---|
@@ -123,13 +123,13 @@ Defines `struct gui_window`, `struct gui_download_window`, and scheduler functio
 | `pdf_password` | void (no-op) |
 | `present_cookies` | `NSERROR_NOT_IMPLEMENTED` |
 
-### schedule.c — Scheduler stub
+### schedule.c, Scheduler stub
 
-- `macos9_schedule()` — linked list insert/remove with ms-to-ticks conversion
-- `macos9_schedule_run()` — dispatches all due callbacks from queue head
-- `macos9_get_ticks()` — stub returning 0 (will become `TickCount()`)
+- `macos9_schedule()`, linked list insert/remove with ms-to-ticks conversion
+- `macos9_schedule_run()`, dispatches all due callbacks from queue head
+- `macos9_get_ticks()`, stub returning 0 (will become `TickCount()`)
 
-### Makefile.macos9 — Build configuration
+### Makefile.macos9, Build configuration
 
 - Sets `-std=c99 -D__MACOS9__ -DWITHOUT_DUKTAPE -DNO_IPV6`
 - Lists all 11 source files in `S_FRONTEND`
@@ -161,18 +161,18 @@ All 11 `.c` files pass `gcc -fsyntax-only -std=c99` against the NetSurf include 
 
 | Table | Header | Status |
 |---|---|---|
-| `core_window_table` | `core_window.h` | NULL — deferred (ancillary windows: cookies, history, bookmarks) |
-| `gui_file_table` | `file.h` | NULL — uses default POSIX impl (will need shims) |
-| `gui_search_table` | `search.h` | NULL — deferred (page text search UI) |
-| `gui_search_web_table` | `search_web.h` | NULL — deferred (web search provider) |
-| `gui_llcache_table` | `llcache.h` | NULL — uses default impl |
+| `core_window_table` | `core_window.h` | NULL, deferred (ancillary windows: cookies, history, bookmarks) |
+| `gui_file_table` | `file.h` | NULL, uses default POSIX impl (will need shims) |
+| `gui_search_table` | `search.h` | NULL, deferred (page text search UI) |
+| `gui_search_web_table` | `search_web.h` | NULL, deferred (web search provider) |
+| `gui_llcache_table` | `llcache.h` | NULL, uses default impl |
 
 ---
 
 ## What This Scaffold Does Not Include
 
-- No Mac Toolbox calls (Carbon, QuickDraw, Open Transport) — pure C stubs
-- No POSIX shim layer — those are separate files per posix-portability.md
-- No `utils/config.h` `__MACOS9__` block yet — needed before full compilation
+- No Mac Toolbox calls (Carbon, QuickDraw, Open Transport), pure C stubs
+- No POSIX shim layer, those are separate files per posix-portability.md
+- No `utils/config.h` `__MACOS9__` block yet, needed before full compilation
 - No resource files, icons, or application bundle structure
 - No actual rendering, font measurement, or networking

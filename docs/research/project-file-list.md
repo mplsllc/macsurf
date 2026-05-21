@@ -1,4 +1,4 @@
-# MacSurf — Project File List
+# MacSurf, Project File List
 
 ## Folders where ALL .c files go in (add every .c)
 

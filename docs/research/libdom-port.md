@@ -2,14 +2,14 @@
 
 ## Status
 
-**Research only — no code changes.** This document is a complete inventory of
+**Research only, no code changes.** This document is a complete inventory of
 what is in the libdom source tree and exactly what stands between it and a
 clean CodeWarrior 8 / strict C89 / Mac OS 9 build. Same structure as
 `docs/research/parserutils-port.md` and `docs/research/libhubbub-port.md`.
 
 ## Where the source lives
 
-`browser/libdom/` — present in the repo, vendored alongside the other
+`browser/libdom/`, present in the repo, vendored alongside the other
 NetSurf libraries. Not a submodule; the tree is checked in directly.
 License is **MIT**.
 
@@ -24,9 +24,9 @@ Upstream is the NetSurf project's libdom:
 - **287 source/header files** in scope after exclusions.
 - **~47,900 lines of code** in scope (≈ 7× libparserutils, ≈ 3× libhubbub).
   This is by far the biggest library in the chain.
-- **`browser/libdom/test/`, `examples/`, `docs/`, and `gdb/` excluded** —
+- **`browser/libdom/test/`, `examples/`, `docs/`, and `gdb/` excluded** ,
   not part of the build.
-- **`browser/libdom/bindings/xml/` EXCLUDED** — depends on libxml2 and/or
+- **`browser/libdom/bindings/xml/` EXCLUDED**, depends on libxml2 and/or
   expat, neither of which exists on Mac OS 9. Removes 5 files / ~1,800
   lines from scope.
 
@@ -42,12 +42,12 @@ Subdirectory line counts (in-scope only):
 | `bindings/hubbub/` | 4 (1 .c + 3 .h) | 1,267 |
 | **TOTAL** | **287** | **47,877** |
 
-`src/html/` is the bulk — 57 `.c` files, one per HTML element type
+`src/html/` is the bulk, 57 `.c` files, one per HTML element type
 (`html_anchor_element.c`, `html_table_element.c`, etc.). Each is small
 and structurally similar.
 
 `bindings/hubbub/parser.c` is the bridge from libhubbub events to libdom
-nodes — the layer that makes "fetched HTML bytes → DOM tree" actually
+nodes, the layer that makes "fetched HTML bytes → DOM tree" actually
 work end-to-end. This is the file that NetSurf core ultimately calls when
 it wants to parse a page. Critical.
 
@@ -70,7 +70,7 @@ it wants to parse a page. Critical.
 
 ## C99 / CW8 incompatibilities
 
-### 1. `inline` keyword — 21 files
+### 1. `inline` keyword, 21 files
 
 ```
 include/dom/core/{attr,characterdata,document,document_type,element,
@@ -84,7 +84,7 @@ src/utils/{hashtable.c,list.h,walk.c}
 ```
 
 Total: ~50 `static inline` definitions across 21 files. Same fix as the
-prior libraries — `#define inline` is already in `macsurf_prefix.h` from
+prior libraries, `#define inline` is already in `macsurf_prefix.h` from
 the parserutils port. **No prefix change needed.**
 
 Notable: many of these are `static inline` accessor wrappers in **public
@@ -95,7 +95,7 @@ definitions duplicated across compilation units. CW8's linker handles
 identical-static duplication fine; the only cost is a slight binary
 bloat.
 
-### 2. `//` comments — none
+### 2. `//` comments, none
 
 Same situation as the previous two libraries. Both
 `grep -E '^[[:space:]]*//'` and `grep -E ';[[:space:]]*//[^/]'` returned
@@ -105,7 +105,7 @@ license headers.
 
 **Step is a no-op.**
 
-### 3. C99 designated initializers — **REAL, 5 instances in 3 files**
+### 3. C99 designated initializers, **REAL, 5 instances in 3 files**
 
 This is the **first time** we have hit real C99 designated initializers
 in any of the NetSurf libraries we have audited. CW8 strict C89 will
@@ -144,7 +144,7 @@ Alternative if we ever feel paranoid: convert each to a temp `params`
 followed by member assignments (`params.type = X; params.doc = Y; ...`).
 More verbose but bulletproof against future struct reordering.
 
-### 4. `<stdint.h>` and `<stdbool.h>` — used pervasively
+### 4. `<stdint.h>` and `<stdbool.h>`, used pervasively
 
 - 78 files include `<stdbool.h>`
 - 2 files include `<stdint.h>` directly
@@ -153,14 +153,14 @@ More verbose but bulletproof against future struct reordering.
 
 Same situation as libparserutils and libhubbub. Already covered by:
 
-- `frontends/macos9/shims/stdint.h` — provides all the integer types
-- `frontends/macos9/shims/inttypes.h` — forwards to `stdint.h`
+- `frontends/macos9/shims/stdint.h`, provides all the integer types
+- `frontends/macos9/shims/inttypes.h`, forwards to `stdint.h`
 - The MacSurf prefix file's predefines block MSL's C++ stdint chain
 - `<MacTypes.h>` provides `bool`/`true`/`false`
 
 **No new shim work required.**
 
-### 5. `<inttypes.h>` — `PRIu32` macro IS used
+### 5. `<inttypes.h>`, `PRIu32` macro IS used
 
 Unlike libparserutils and libhubbub, libdom **does** use a `PRI*` macro.
 Two call sites in `src/html/html_element.c`:
@@ -174,10 +174,10 @@ Used to format a `uint32_t` (table column count, etc.) into a string.
 
 **Existing infrastructure:** `frontends/macos9/shims/inttypes.h` already
 defines `PRIu32` as `"lu"` (line 18), which is correct on CW8 PPC where
-`uint32_t` is `unsigned long`. **No fix needed** — the existing shim
+`uint32_t` is `unsigned long`. **No fix needed**, the existing shim
 handles it.
 
-### 6. `snprintf` — 1 in-scope file uses it
+### 6. `snprintf`, 1 in-scope file uses it
 
 ```
 src/html/html_element.c        2 calls (lines 521 and 610, see §5 above)
@@ -185,7 +185,7 @@ bindings/xml/libxml_xmlparser.c 2 calls (EXCLUDED with the xml binding)
 ```
 
 `snprintf` is C99. CW8's MSL **does** provide it as a non-standard
-extension — it ships in `MSL C.Carbon.Lib` and is declared in `<stdio.h>`.
+extension, it ships in `MSL C.Carbon.Lib` and is declared in `<stdio.h>`.
 Confirmed by the fact that other NetSurf core files in the existing
 build (`utils/log.c`, etc.) already use it without issue.
 
@@ -194,7 +194,7 @@ two integers via `sprintf` into a buffer that's known to be large enough
 (`uint32_t` max digit count is 10, plus null = 11, and the buffer is 32
 bytes). Trivial workaround.
 
-### 7. `<time.h>` — 1 file uses `time(NULL)`
+### 7. `<time.h>`, 1 file uses `time(NULL)`
 
 ```
 src/events/event.c:11         #include <time.h>
@@ -202,7 +202,7 @@ src/events/event.c:257        evt->timestamp = time(NULL);
 ```
 
 This is the only `<time.h>` use in libdom. Used to set the `timestamp`
-field on a freshly-created `dom_event`. The value is informational — DOM
+field on a freshly-created `dom_event`. The value is informational, DOM
 event listeners can read `event->timestamp` to see when the event was
 created.
 
@@ -220,7 +220,7 @@ either include MSL's time.h directly via a CW8-specific path, or replace
 `time(NULL)` with `clock()` (also C89, also in MSL), or stub it to
 return 0. Worth flagging.
 
-### 8. POSIX dependencies — none
+### 8. POSIX dependencies, none
 
 ```
 <unistd.h>      not used
@@ -303,15 +303,15 @@ I checked for and did not find:
 | `iconv` | Not used |
 | `<errno.h>` | Not used |
 | `<strings.h>` | Not used (no `strncasecmp` in libdom) |
-| Build-time codegen (`gperf`, perl scripts, `.inc` files) | **None — zero codegen anywhere in libdom** |
+| Build-time codegen (`gperf`, perl scripts, `.inc` files) | **None, zero codegen anywhere in libdom** |
 
-This is the cleanest library for build dependencies — **no codegen at
+This is the cleanest library for build dependencies, **no codegen at
 all**. The Makefile has no generation rules, no `.inc` includes, no
 gperf, no perl. Everything libdom builds from is in the tree.
 
 ## Existing MacSurf shims that conflict
 
-### `frontends/macos9/dom/dom.h` — **MAJOR conflict**
+### `frontends/macos9/dom/dom.h`, **MAJOR conflict**
 
 This is a **monolithic 1,638-line stub** that recreates ~942 typedefs,
 struct decls, and function declarations from libdom's API. It was built
@@ -334,7 +334,7 @@ Header sections (excerpted):
 
 **Once the real libdom headers are on the include path
 (`{Project}/../../../../libdom/include`), this stub will collide with
-them at every level** — duplicate `dom_string` typedef, duplicate
+them at every level**, duplicate `dom_string` typedef, duplicate
 `dom_node` typedef, duplicate every function prototype. Compile errors
 will be in the thousands.
 
@@ -349,7 +349,7 @@ path. Same playbook as the parserutils stub deletion.
 
 Same situation as during the libhubbub audit. These are
 **NetSurf-core HTML content handler stubs**, not libdom stubs. They
-define `struct html_stylesheet`, `struct content_html_object`, etc. —
+define `struct html_stylesheet`, `struct content_html_object`, etc. ,
 types used by `content/handlers/html/html.c`, which is a layer above
 both libhubbub and libdom.
 
@@ -448,13 +448,13 @@ The porting work breaks down into **eight** concrete steps.
    - `src/html/html_tablesection_element.c` (1 instance at line ~241)
    Mechanical edit; field order already matches struct layout. Total
    ~25 lines changed across the three files. Same edits should be done
-   on the upstream files in-place — these are vendored libraries and we
+   on the upstream files in-place, these are vendored libraries and we
    own them in this repo.
 
-2. **No `inline` work needed** — `#define inline` already in
+2. **No `inline` work needed**, `#define inline` already in
    `macsurf_prefix.h`.
 
-3. **No `//` comment work needed** — zero real line comments in libdom.
+3. **No `//` comment work needed**, zero real line comments in libdom.
 
 4. **No new shim required.** All `#include`d headers are already covered
    by the existing shim layer. (This is the first port that adds zero
@@ -470,7 +470,7 @@ The porting work breaks down into **eight** concrete steps.
    `utils/time.h` instead, swap to a `time(NULL)` → `clock()` fallback
    or stub the timestamp to 0.
 
-7. **No build-time codegen** — libdom has none.
+7. **No build-time codegen**, libdom has none.
 
 8. **Wire libdom into `MacSurf.mcp`:**
    - Add 3 user search paths:
@@ -518,18 +518,18 @@ checklist:
   front).
 - **Zero** new POSIX dependencies.
 - **Zero** new shims required.
-- **Five real C99 designated initializers** to convert by hand — first
+- **Five real C99 designated initializers** to convert by hand, first
   time we've hit this, but the conversion is mechanical and risk-free
   because field order already matches struct layout.
 - **One major stub deletion** (1,638 lines in
-  `frontends/macos9/dom/dom.h`) — the largest deletion in any port so
+  `frontends/macos9/dom/dom.h`), the largest deletion in any port so
   far, but the stub was always meant to be temporary.
-- **95 `.c` files to add** to `MacSurf.mcp` — the largest tier list yet,
+- **95 `.c` files to add** to `MacSurf.mcp`, the largest tier list yet,
   but per-file structure is repetitive (one file per HTML element type).
 
 Hardest parts will be:
 
-1. **The CW8 project file edit** — 95 `<FILE>` and 95 `<FILEREF>`
+1. **The CW8 project file edit**, 95 `<FILE>` and 95 `<FILEREF>`
    entries is a lot of XML. Probably easier to write once with a
    loop-and-template approach than to hand-edit, but the result is the
    same.
@@ -559,4 +559,4 @@ unknowns here.
 - Excluded subdirectory: `browser/libdom/bindings/xml/` (libxml2/expat,
   unavailable on OS 9)
 - Companion audits: `docs/research/parserutils-port.md`,
-  `docs/research/libhubbub-port.md` — same structure, same playbook.
+  `docs/research/libhubbub-port.md`, same structure, same playbook.

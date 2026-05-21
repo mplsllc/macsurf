@@ -6,7 +6,7 @@ MacSurf Proxy is a single binary. It listens for plain HTTP proxy requests, fetc
 macsurf-proxy [--port 8765] [--auth user:password]
 ```
 
-Default port is 8765. Auth is optional — if set, clients must send `Proxy-Authorization: Basic` headers.
+Default port is 8765. Auth is optional, if set, clients must send `Proxy-Authorization: Basic` headers.
 
 ---
 
@@ -157,9 +157,9 @@ Classilla supports HTTP Basic proxy auth. On first request, it will prompt for u
 
 ### Testing
 
-Browse to `http://example.com` — this goes through the proxy as plain HTTP and should load immediately.
+Browse to `http://example.com`, this goes through the proxy as plain HTTP and should load immediately.
 
-Browse to `https://macintoshgarden.org` — Classilla sends a CONNECT request, the proxy tunnels TLS end-to-end. The page should load normally with the lock icon.
+Browse to `https://macintoshgarden.org`, Classilla sends a CONNECT request, the proxy tunnels TLS end-to-end. The page should load normally with the lock icon.
 
 If pages don't load, verify:
 - The proxy is running and reachable from the Mac (`ping <proxy-ip>` from another machine on the same network)

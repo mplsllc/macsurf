@@ -4,9 +4,9 @@ Shim layer in `browser/netsurf/frontends/macos9/shims/`. Follows the implementat
 
 ---
 
-## Phase 0 — Library Dependencies
+## Phase 0, Library Dependencies
 
-### mac_iconv.h / mac_iconv.c — Character encoding shim
+### mac_iconv.h / mac_iconv.c, Character encoding shim
 
 Wraps the Mac OS 9 Text Encoding Converter API behind standard iconv signatures.
 
@@ -16,15 +16,15 @@ Wraps the Mac OS 9 Text Encoding Converter API behind standard iconv signatures.
 | `iconv(cd, inbuf, inleft, outbuf, outleft)` | `TECConvertText()`. Error mapping: `kTECPartialCharErr` → `EINVAL`, `kTECOutputBufferFullStatus` → `E2BIG`, `kTECUnmappableElementErr` → `EILSEQ`. Updates pointers in-place. | Returns `(size_t)-1` |
 | `iconv_close(cd)` | `TECDisposeConverter()`. Decrements refcount; frees and removes from cache when zero. | Returns `0` |
 
-Converter cache: up to 16 `TECObjectRef` instances, keyed by tocode/fromcode pair. Refcounted — same pair opened multiple times shares the converter.
+Converter cache: up to 16 `TECObjectRef` instances, keyed by tocode/fromcode pair. Refcounted, same pair opened multiple times shares the converter.
 
 All TEC calls gated with `#ifdef __MACOS9__`.
 
 ---
 
-## Phase 1 — Core POSIX Shims
+## Phase 1, Core POSIX Shims
 
-### mac_types.h — Type definitions and forward declarations
+### mac_types.h, Type definitions and forward declarations
 
 Provides POSIX type replacements and constants for Mac OS 9, plus forward declarations for all shim implementation files.
 
@@ -33,7 +33,7 @@ Provides POSIX type replacements and constants for Mac OS 9, plus forward declar
 | `sys/types.h` | `off_t` (SInt64), `ssize_t` (long), `mode_t` (unsigned short) |
 | `fcntl.h` | `O_RDONLY` (0), `O_WRONLY` (1), `O_RDWR` (2), `O_CREAT` (0x200), `O_TRUNC` (0x400) |
 | `sys/stat.h` | `S_IFDIR`, `S_IFREG`, `S_ISDIR()`, `S_ISREG()`, minimal `struct stat` |
-| `errno.h` | `EINVAL` (22), `E2BIG` (7), `EILSEQ` (84) — guarded with `#ifndef` |
+| `errno.h` | `EINVAL` (22), `E2BIG` (7), `EILSEQ` (84), guarded with `#ifndef` |
 | Forward decls | `mac_file_io.c`: `mac_open`, `mac_close`, `mac_read`, `mac_write`, `mac_unlink` |
 | | `mac_stat.c`: `mac_stat`, `mac_fstat`, `mac_access` |
 | | `mac_dirent.c`: `mac_DIR`, `mac_dirent`, `mac_opendir`, `mac_readdir`, `mac_closedir` |
@@ -55,9 +55,9 @@ Verified with `gcc -fsyntax-only -std=c99` from the NetSurf root.
 
 ---
 
-## Phase 1 — Core POSIX Shims (File I/O, Stat, Dirent, Time)
+## Phase 1, Core POSIX Shims (File I/O, Stat, Dirent, Time)
 
-### mac_file_io.h / mac_file_io.c — File I/O shim
+### mac_file_io.h / mac_file_io.c, File I/O shim
 
 Internal fd table: fixed array of 64 slots mapping `int fd` → `FSIORefNum` + `FSRef`.
 
@@ -72,15 +72,15 @@ Internal fd table: fixed array of 64 slots mapping `int fd` → `FSIORefNum` + `
 
 Permission mapping: `O_RDWR` → `fsRdWrPerm`, `O_WRONLY` → `fsWrPerm`, default → `fsRdPerm`.
 
-### mac_stat.h / mac_stat.c — stat/fstat/access shim
+### mac_stat.h / mac_stat.c, stat/fstat/access shim
 
 | Function | Mac OS 9 Implementation | Linux Stub |
 |---|---|---|
 | `mac_stat(path, buf)` | `FSPathMakeRef()` + `FSGetCatalogInfo(kFSCatInfoDataSizes \| kFSCatInfoContentMod \| kFSCatInfoNodeFlags)`. `st_size` from `dataLogicalSize`, `st_mtime` from `contentModDate` (subtract 2082844800 for Unix epoch), `st_mode` with `S_IFDIR`/0755 or `S_IFREG`/0644. | Returns `-1` |
 | `mac_fstat(fd, buf)` | Looks up `FSIORefNum` + `FSRef` via `mac_fd_get_refnum()`. `FSGetForkSize()` for `st_size`, `FSGetCatalogInfo()` for mtime and node flags. | Returns `-1` |
-| `mac_access(path, mode)` | `FSPathMakeRef()` existence check. Always returns 0 if exists — no Unix permissions on OS 9. | Returns `-1` |
+| `mac_access(path, mode)` | `FSPathMakeRef()` existence check. Always returns 0 if exists, no Unix permissions on OS 9. | Returns `-1` |
 
-### mac_dirent.h / mac_dirent.c — Directory iteration shim
+### mac_dirent.h / mac_dirent.c, Directory iteration shim
 
 `mac_DIR` wraps `FSIterator` + parent `FSRef` + one-entry `struct mac_dirent` buffer.
 
@@ -92,7 +92,7 @@ Permission mapping: `O_RDWR` → `fsRdWrPerm`, `O_WRONLY` → `fsWrPerm`, defaul
 
 `struct mac_dirent` has `d_name[256]` and `d_type` (`DT_DIR=4`, `DT_REG=8`).
 
-### mac_time.h / mac_time.c — Time function shim
+### mac_time.h / mac_time.c, Time function shim
 
 | Function | Mac OS 9 Implementation | Linux Stub |
 |---|---|---|
@@ -105,7 +105,7 @@ Permission mapping: `O_RDWR` → `fsRdWrPerm`, `O_WRONLY` → `fsWrPerm`, defaul
 
 Mac epoch offset: 2082844800 seconds (1904-01-01 → 1970-01-01).
 
-### mac_types.h — Updated
+### mac_types.h, Updated
 
 Added to existing file:
 - `time_t` typedef (long) under `__MACOS9__`
@@ -138,13 +138,13 @@ Verified with `gcc -fsyntax-only -std=c99` from the NetSurf root.
 
 ## bool / true / false ordering fix
 
-**Problem:** `MacTypes.h` (Mac Toolbox) defines `enum { false = 0, true = 1 };`. If `<stdbool.h>` is included first, `true` and `false` become preprocessor macros. The preprocessor then expands the enum member names to `enum { 0, 1 };` — illegal C that CodeWarrior rejects at MacTypes.h line 301-303.
+**Problem:** `MacTypes.h` (Mac Toolbox) defines `enum { false = 0, true = 1 };`. If `<stdbool.h>` is included first, `true` and `false` become preprocessor macros. The preprocessor then expands the enum member names to `enum { 0, 1 };`, illegal C that CodeWarrior rejects at MacTypes.h line 301-303.
 
 **Fix (2 files changed):**
 
-1. **`shims/mac_types.h`** — Added a `bool` / `true` / `false` block at the bottom of the file, guarded by `#ifndef bool`. Uses `typedef unsigned char bool;` plus `#define true 1` / `#define false 0`. Positioned after all other definitions so that on Mac OS 9 it comes after Mac Toolbox headers have been included.
+1. **`shims/mac_types.h`**, Added a `bool` / `true` / `false` block at the bottom of the file, guarded by `#ifndef bool`. Uses `typedef unsigned char bool;` plus `#define true 1` / `#define false 0`. Positioned after all other definitions so that on Mac OS 9 it comes after Mac Toolbox headers have been included.
 
-2. **`macos9.h`** — Removed top-level `#include <stdbool.h>`. Under `__MACOS9__`, Mac Toolbox headers (`<MacWindows.h>`, `<Controls.h>`) are included first, then `shims/mac_types.h` provides `bool`. Under the Linux `#else` path, `<stdbool.h>` is retained.
+2. **`macos9.h`**, Removed top-level `#include <stdbool.h>`. Under `__MACOS9__`, Mac Toolbox headers (`<MacWindows.h>`, `<Controls.h>`) are included first, then `shims/mac_types.h` provides `bool`. Under the Linux `#else` path, `<stdbool.h>` is retained.
 
 **Verification:** `gcc -fsyntax-only -std=c99` passes clean on both `mac_types.h` and `macos9.h` (Linux build). The `#ifndef bool` guard ensures the block is skipped when `<stdbool.h>` is already included.
 
@@ -208,7 +208,7 @@ Audit and fix pass across all frontend .c files and shim headers for CodeWarrior
 - **`macos9/macos9.h` path:** All files use `#include "macos9/macos9.h"` and the file exists at the expected location. No issues.
 - **`for(int i=...)` C99 declarations:** None found in frontend code.
 - **Compound literals `(struct foo){...}`:** None found in frontend code.
-- **`strndup` in shim files:** Not used in any shim file — only in `macos9_utf8.c`.
+- **`strndup` in shim files:** Not used in any shim file, only in `macos9_utf8.c`.
 
 ---
 
@@ -227,6 +227,6 @@ Verified with `gcc -fsyntax-only -std=c89 -pedantic` from the NetSurf root (Linu
 
 ## What's Not Here Yet
 
-- `mac_mmap.c` — NewPtr-based mmap shim (Phase 1)
-- `mac_inet.h` — Open Transport type mappings (Phase 2)
-- `mac_path.c` — FSSpec-based path operations (Phase 2)
+- `mac_mmap.c`, NewPtr-based mmap shim (Phase 1)
+- `mac_inet.h`, Open Transport type mappings (Phase 2)
+- `mac_path.c`, FSSpec-based path operations (Phase 2)

@@ -4,13 +4,13 @@ Tested 2026-04-07 after fixing WriteTimeout and Dockerfile issues.
 
 ## Changes Made
 
-1. **Removed `WriteTimeout` from server config** — the 60s WriteTimeout killed long-running CONNECT tunnels. Replaced with a 10-minute idle timeout in the `transfer()` function using `SetDeadline` on both connections, reset on each data transfer.
+1. **Removed `WriteTimeout` from server config**, the 60s WriteTimeout killed long-running CONNECT tunnels. Replaced with a 10-minute idle timeout in the `transfer()` function using `SetDeadline` on both connections, reset on each data transfer.
 
-2. **Updated Dockerfile** — `CGO_ENABLED=0 go build` for a fully static binary, final image changed from alpine to `scratch`. CA certificates copied from build stage for HTTPS upstream fetches.
+2. **Updated Dockerfile**, `CGO_ENABLED=0 go build` for a fully static binary, final image changed from alpine to `scratch`. CA certificates copied from build stage for HTTPS upstream fetches.
 
 ---
 
-## Test 1 — HTTP proxy (plain HTTP target)
+## Test 1, HTTP proxy (plain HTTP target)
 
 ```
 $ curl -v -x http://localhost:8765 http://example.com
@@ -41,11 +41,11 @@ $ curl -v -x http://localhost:8765 http://example.com
 * Connection #0 to host localhost left intact
 ```
 
-**Result: PASS** — HTTP 200, full HTML body returned.
+**Result: PASS**, HTTP 200, full HTML body returned.
 
 ---
 
-## Test 2 — HTTPS CONNECT tunnel (example.com)
+## Test 2, HTTPS CONNECT tunnel (example.com)
 
 ```
 $ curl -v -x http://localhost:8765 https://example.com
@@ -76,11 +76,11 @@ $ curl -v -x http://localhost:8765 https://example.com
 * Connection #0 to host localhost left intact
 ```
 
-**Result: PASS** — CONNECT tunnel established, TLS 1.3 negotiated end-to-end through proxy, HTTP/2 200 response.
+**Result: PASS**, CONNECT tunnel established, TLS 1.3 negotiated end-to-end through proxy, HTTP/2 200 response.
 
 ---
 
-## Test 3 — HTTPS CONNECT tunnel (macintoshgarden.org)
+## Test 3, HTTPS CONNECT tunnel (macintoshgarden.org)
 
 ```
 $ curl -v -x http://localhost:8765 https://macintoshgarden.org
@@ -112,11 +112,11 @@ $ curl -v -x http://localhost:8765 https://macintoshgarden.org
 * Connection #0 to host localhost left intact
 ```
 
-**Result: PASS** — CONNECT tunnel to real-world site, TLS 1.3, full page returned.
+**Result: PASS**, CONNECT tunnel to real-world site, TLS 1.3, full page returned.
 
 ---
 
-## Test 4 — Auth: unauthenticated request (expect 407)
+## Test 4, Auth: unauthenticated request (expect 407)
 
 ```
 $ curl -v -x http://localhost:8765 http://example.com
@@ -140,11 +140,11 @@ Proxy authentication required
 * Connection #0 to host localhost left intact
 ```
 
-**Result: PASS** — 407 with `Proxy-Authenticate` header, request blocked.
+**Result: PASS**, 407 with `Proxy-Authenticate` header, request blocked.
 
 ---
 
-## Test 5 — Auth: authenticated request (expect 200)
+## Test 5, Auth: authenticated request (expect 200)
 
 ```
 $ curl -v -x http://test:password@localhost:8765 http://example.com
@@ -174,7 +174,7 @@ $ curl -v -x http://test:password@localhost:8765 http://example.com
 * Connection #0 to host localhost left intact
 ```
 
-**Result: PASS** — Basic auth accepted, proxied request returned 200.
+**Result: PASS**, Basic auth accepted, proxied request returned 200.
 
 ---
 

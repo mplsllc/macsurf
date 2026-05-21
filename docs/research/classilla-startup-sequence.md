@@ -6,9 +6,9 @@
 - Does it call `FlushEvents` at startup?
 
 ## Sources read
-- `/tmp/classilla/mozsrc/mozilla/embedding/browser/powerplant/source/CBrowserApp.cp` — PPEmbed sample Mozilla Carbon browser
-- `/tmp/classilla/mozsrc/mozilla/lib/mac/NSStdLib/src/macstdlibextras.c` — the shared `InitializeMacToolbox()` used by all Classilla/Mozilla Mac builds
-- `/tmp/classilla/mozsrc/mozilla/widget/src/mac/nsAppShell.cpp` — the widget-layer app shell, Carbon-aware
+- `/tmp/classilla/mozsrc/mozilla/embedding/browser/powerplant/source/CBrowserApp.cp`, PPEmbed sample Mozilla Carbon browser
+- `/tmp/classilla/mozsrc/mozilla/lib/mac/NSStdLib/src/macstdlibextras.c`, the shared `InitializeMacToolbox()` used by all Classilla/Mozilla Mac builds
+- `/tmp/classilla/mozsrc/mozilla/widget/src/mac/nsAppShell.cpp`, the widget-layer app shell, Carbon-aware
 
 ## The full sequence
 
@@ -82,7 +82,7 @@ void InitializeMacToolbox(void)
 
 **`EnterMovies()` is the one call that runs under both.** It is called unconditionally (guarded only by CFM symbol availability). QuickTime needs explicit initialization even under Carbon.
 
-### 3. `CBrowserApp::CBrowserApp()` constructor — Carbon registration lives here
+### 3. `CBrowserApp::CBrowserApp()` constructor, Carbon registration lives here
 
 ```cpp
 CBrowserApp::CBrowserApp()
@@ -127,7 +127,7 @@ Same pattern: skip everything under Carbon, call `InitializeMacToolbox()` otherw
 
 ### "Does it call `RegisterAppearanceClient`?"
 
-**Yes, explicitly, in `CBrowserApp`'s constructor, guarded by a Gestalt check for `env_HasAppearance`.** The call is unconditional under Carbon (no `#if TARGET_CARBON` wrapper) — Classilla calls it on OS 9 and OS X alike.
+**Yes, explicitly, in `CBrowserApp`'s constructor, guarded by a Gestalt check for `env_HasAppearance`.** The call is unconditional under Carbon (no `#if TARGET_CARBON` wrapper), Classilla calls it on OS 9 and OS X alike.
 
 `grep -rln RegisterAppearanceClient /tmp/classilla/mozsrc/mozilla` found only `embedding/browser/powerplant/source/CBrowserApp.cp`. It is the single call site, but it is the main entry point for the browser application.
 
@@ -145,16 +145,16 @@ Summary table:
 
 | Call | Under Carbon | Under Classic | Notes |
 |---|---|---|---|
-| `InitializeHeap(3)` | ✓ | ✓ | PowerPlant memory manager — called unconditionally |
+| `InitializeHeap(3)` | ✓ | ✓ | PowerPlant memory manager, called unconditionally |
 | `InitGraf` / `InitFonts` / `InitWindows` / `InitMenus` / `TEInit` / `InitDialogs` / `InitCursor` | ✗ | ✓ | Skipped under Carbon |
 | `InitContextualMenus` | ✗ | ✓ (if available) | Skipped under Carbon |
 | `InitTSMAwareApplication` | ✗ | ✓ | Skipped under Carbon |
-| `LGrowZone(20000)` | ✗ | ✓ | PowerPlant low-memory handler — skipped under Carbon |
-| `EnterMovies()` | ✓ | ✓ | QuickTime — always called |
-| `InstallCarbonEventHandlers()` | ✓ | ✗ | Carbon Event Manager — only under Carbon |
+| `LGrowZone(20000)` | ✗ | ✓ | PowerPlant low-memory handler, skipped under Carbon |
+| `EnterMovies()` | ✓ | ✓ | QuickTime, always called |
+| `InstallCarbonEventHandlers()` | ✓ | ✗ | Carbon Event Manager, only under Carbon |
 | `RegisterAppearanceClient()` | ✓ | ✓ (if available) | Called unconditionally, gated only by Gestalt check |
 | `InitializeSIOUX(false)` | ✓ (DEBUG only) | ✓ (DEBUG only) | Stdio console under debug builds |
-| `FlushEvents(everyEvent, 0)` | — | — | **Not called at all** |
+| `FlushEvents(everyEvent, 0)` |, |, | **Not called at all** |
 
 ## Takeaway
 
@@ -169,4 +169,4 @@ Classilla's startup under Carbon on OS 9 is actually quite thin:
 
 Everything else (InitGraf, FlushEvents, LGrowZone) is deliberately skipped under Carbon.
 
-The steps MacSurf may be missing relative to Classilla are: `EnterMovies` (probably not needed for a browser without video), `InstallCarbonEventHandlers` (we use WaitNextEvent directly, so not applicable), and **`RegisterAppearanceClient()`** (Appearance Manager registration — not done in our `main.c` at all).
+The steps MacSurf may be missing relative to Classilla are: `EnterMovies` (probably not needed for a browser without video), `InstallCarbonEventHandlers` (we use WaitNextEvent directly, so not applicable), and **`RegisterAppearanceClient()`** (Appearance Manager registration, not done in our `main.c` at all).

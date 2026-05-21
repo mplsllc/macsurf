@@ -5,9 +5,9 @@
 
 ## Verdict legend
 
-- **✓ Works** — parsed AND read by layout/redraw AND has visible effect
-- **~ Inert** — parsed by libcss but no `css_computed_*` accessor in layout/redraw (or accessor exists but result discarded)
-- **✗ Absent** — no parser entry or selector handling
+- **✓ Works**, parsed AND read by layout/redraw AND has visible effect
+- **~ Inert**, parsed by libcss but no `css_computed_*` accessor in layout/redraw (or accessor exists but result discarded)
+- **✗ Absent**, no parser entry or selector handling
 
 ---
 
@@ -20,15 +20,15 @@
 | Combinators (descendant / child `>` / adjacent `+` / general sibling `~`) | ✓ | css/select.c:39-44 |
 | `:root`, `:empty`, `:link` | ✓ | css/select.c:73,76,77 |
 | `:first-child`, `:last-child`, `:nth-child(n)` | ✓ | libcss/src/select/css_select.c:2700+ |
-| `:visited` | ~ Inert | css/select.c:1520 — handler always returns false |
-| **`:hover`** | ~ Inert | css/select.c:1540 — handler always returns false |
-| **`:focus`** | ~ Inert | css/select.c:1578 — handler always returns false |
-| **`:active`** | ~ Inert | css/select.c:1559 — handler always returns false |
-| `:checked` | ~ Inert | css/select.c:1635 — handler always returns false |
+| `:visited` | ~ Inert | css/select.c:1520, handler always returns false |
+| **`:hover`** | ~ Inert | css/select.c:1540, handler always returns false |
+| **`:focus`** | ~ Inert | css/select.c:1578, handler always returns false |
+| **`:active`** | ~ Inert | css/select.c:1559, handler always returns false |
+| `:checked` | ~ Inert | css/select.c:1635, handler always returns false |
 | `:disabled` / `:enabled` | ~ Inert | css/select.c:1597, 1616 |
 | `:target`, `:lang()` | ~ Inert | css/select.c:1654, 85 |
 | `:not()`, `:is()`, `:where()`, `:focus-visible`, `:focus-within`, `:placeholder-shown` | ✗ | Not in pseudo-class list |
-| `::before`, `::after`, `::first-line`, `::first-letter` | ✓ (defined) | libcss/include/libcss/select.h:25-28 — but content generation needs check |
+| `::before`, `::after`, `::first-line`, `::first-letter` | ✓ (defined) | libcss/include/libcss/select.h:25-28, but content generation needs check |
 | `::placeholder`, `::selection`, `::marker` | ✗ | Not in enum |
 
 ## Box model
@@ -61,7 +61,7 @@
 |---|---|---|
 | `display: block / inline / inline-block / flex / inline-flex / grid / inline-grid / table* / list-item / none` | ✓ | layout.c:883-888 |
 | `display: contents` | ✗ | No BOX_CONTENTS |
-| `position: static / relative / absolute / fixed` | ✓ | layout.c:1001, 1158, 1160 — but **fixed degrades to absolute** (no viewport anchoring) |
+| `position: static / relative / absolute / fixed` | ✓ | layout.c:1001, 1158, 1160, but **fixed degrades to absolute** (no viewport anchoring) |
 | `position: sticky` | ✗ | No CSS_POSITION_STICKY |
 | `top` / `right` / `bottom` / `left` | ✓ | accessors used |
 | `z-index` | ~ Inert | parser exists; dump.c:1822 only; no stacking context |
@@ -123,7 +123,7 @@ All major features implemented (layout_flex.c is a dedicated engine):
 | `currentColor` | ~ Inert | recognized but not specially propagated |
 | **`calc()`** | ✓ | css__parse_calc in dimension parsers |
 | `min()`, `max()`, `clamp()` | ✗ | no comparison functions |
-| **CSS custom properties (`--name`)** | ✓ | fixes133-139 — verified in libcss/src/parse/custom_properties.h |
+| **CSS custom properties (`--name`)** | ✓ | fixes133-139, verified in libcss/src/parse/custom_properties.h |
 | **`var(--name, fallback)`** | ✓ | fixes139 lexer keystone + resolution in cascade |
 | Units: px, em, rem, %, pt, in, cm, mm | ✓ | core units |
 | `ch`, `ex` | ~ Inert | estimated as em equivalents |
@@ -192,29 +192,29 @@ All major features implemented (layout_flex.c is a dedicated engine):
 ## Headline numbers
 
 - **✓ Fully works:** ~68 properties / features
-- **~ Parsed but inert:** ~32 properties (these are the cheap wins — parser already done)
+- **~ Parsed but inert:** ~32 properties (these are the cheap wins, parser already done)
 - **✗ Absent entirely:** ~45 features (most are CSS3 polish or modern compositor-dependent)
 
-## The "inert" list — what's already half-built
+## The "inert" list, what's already half-built
 
 These have parsers but no consumer. Implementing each is mostly "add the `css_computed_*` read at the right spot in layout or redraw":
 
-1. **`:hover` / `:focus` / `:active` / `:checked` / `:disabled`** — all share the same fix (dynamic re-cascade infrastructure)
-2. **`cursor`** — `SetCursor()` call on hover-update
-3. **`font-family`, `font-weight`, `font-style`** — wire to QuickDraw font selection
-4. **`text-transform`, `letter-spacing`, `word-spacing`, `word-break`** — text-pass adjustments
-5. **`min-height`, `background-size`, `aspect-ratio`, `object-position`** — layout/paint reads
-6. **`@media (max-width)` evaluation** — wire viewport into media-query matcher
-7. **`z-index`** — paint order reorganization
-8. **`-macsurf-text-shadow`** — wire to text redraw
-9. **`background-image: url(...)`** — load + paint pipeline
-10. **`pointer-events`** — hit-test guard
+1. **`:hover` / `:focus` / `:active` / `:checked` / `:disabled`**, all share the same fix (dynamic re-cascade infrastructure)
+2. **`cursor`**, `SetCursor()` call on hover-update
+3. **`font-family`, `font-weight`, `font-style`**, wire to QuickDraw font selection
+4. **`text-transform`, `letter-spacing`, `word-spacing`, `word-break`**, text-pass adjustments
+5. **`min-height`, `background-size`, `aspect-ratio`, `object-position`**, layout/paint reads
+6. **`@media (max-width)` evaluation**, wire viewport into media-query matcher
+7. **`z-index`**, paint order reorganization
+8. **`-macsurf-text-shadow`**, wire to text redraw
+9. **`background-image: url(...)`**, load + paint pipeline
+10. **`pointer-events`**, hit-test guard
 
 ## What we can't reasonably build on OS 9
 
-- `filter: blur` — framebuffer convolution too slow on G3
-- 3D transforms — no perspective compositor
+- `filter: blur`, framebuffer convolution too slow on G3
+- 3D transforms, no perspective compositor
 - GPU-class compositing (`will-change` actually working, `transform: translateZ()`)
-- Container queries — heavy, not common
-- `lab()`/`lch()`/`color()` — modern color spaces, niche usage
+- Container queries, heavy, not common
+- `lab()`/`lch()`/`color()`, modern color spaces, niche usage
 - Smooth animations of layout-affecting properties (cooperative scheduler can't sustain 60fps relayout)

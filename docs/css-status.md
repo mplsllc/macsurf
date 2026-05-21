@@ -300,13 +300,13 @@ CSS counters: ✓ flat decimal
 
 ## fixes132 revision
 
-The original audit claimed `min-height` was "NOT consumed in layout". A direct source audit refuted this: `layout_apply_minmax_height` (layout.c:2165) calls `ns_computed_min_height` and applies it via two sites in `layout_block_context` (layout.c:4031, 4089). Flex (layout_flex.c:1360-1362), grid (layout_grid.c:432-434), tables (layout.c:2086), and replaced elements (layout.c:175-178) also honor it. The user-visible "min-height collapses" symptom was actually a **VH/VW swap in `css_unit__px_per_unit`** (unit.c:271-275): `CSS_UNIT_VH` was returning `viewport_width/100` and `CSS_UNIT_VW` was returning `viewport_height/100`. The same file's `css_unit__absolute_len2pt` (lines 107-113) had them correct, so the bug was internal inconsistency, not a missing case. Swapped back in fixes132. This also fixes `height: 100vh`, `width: 100vw`, `vmin`, `vmax`, and any other viewport-unit property — they all routed through the broken `px_per_unit` path.
+The original audit claimed `min-height` was "NOT consumed in layout". A direct source audit refuted this: `layout_apply_minmax_height` (layout.c:2165) calls `ns_computed_min_height` and applies it via two sites in `layout_block_context` (layout.c:4031, 4089). Flex (layout_flex.c:1360-1362), grid (layout_grid.c:432-434), tables (layout.c:2086), and replaced elements (layout.c:175-178) also honor it. The user-visible "min-height collapses" symptom was actually a **VH/VW swap in `css_unit__px_per_unit`** (unit.c:271-275): `CSS_UNIT_VH` was returning `viewport_width/100` and `CSS_UNIT_VW` was returning `viewport_height/100`. The same file's `css_unit__absolute_len2pt` (lines 107-113) had them correct, so the bug was internal inconsistency, not a missing case. Swapped back in fixes132. This also fixes `height: 100vh`, `width: 100vw`, `vmin`, `vmax`, and any other viewport-unit property, they all routed through the broken `px_per_unit` path.
 
 ---
 
 ## The honest summary
 
-MacSurf parses **167 CSS properties** via libcss. The layout/redraw pipeline only **reads 87 of them**. The gap between "parsed" and "consumed" is where modern pages fall apart visually — libcss correctly computes the cascade, but the layout engine never asks for the value, so the property does nothing.
+MacSurf parses **167 CSS properties** via libcss. The layout/redraw pipeline only **reads 87 of them**. The gap between "parsed" and "consumed" is where modern pages fall apart visually, libcss correctly computes the cascade, but the layout engine never asks for the value, so the property does nothing.
 
 Of the 87 consumed properties, **most work**, but a handful are partial (limits or accuracy gaps), and several depend on subsystems (font selection, color resolution) that have their own gaps.
 
@@ -321,9 +321,9 @@ These have been verified on hardware or in screenshots and produce the correct v
 - `margin` (all sides, `auto` centering)
 - `padding` (all sides)
 - `border-width`, `border-color`, `border-style` (all sides)
-- `border-radius` (rounded corners via `PaintRoundRect`/`FrameRoundRect` — fixes172)
+- `border-radius` (rounded corners via `PaintRoundRect`/`FrameRoundRect`, fixes172)
 - `box-sizing`
-- `box-shadow` (independent h/v offsets + custom colour — fixes175/178)
+- `box-shadow` (independent h/v offsets + custom colour, fixes175/178)
 
 ### Display & positioning
 - `display: block | inline | inline-block | none | flex | inline-flex | grid | table | table-cell | table-row | list-item`
@@ -332,7 +332,7 @@ These have been verified on hardware or in screenshots and produce the correct v
 - `float: left | right | none`
 - `clear: left | right | both | none`
 - `visibility: visible | hidden`
-- `z-index: <integer>` (CSS 2.1 sibling-level paint order with neg/zero/pos buckets, SC triggers for position+z/fixed/opacity/transform — fixes147)
+- `z-index: <integer>` (CSS 2.1 sibling-level paint order with neg/zero/pos buckets, SC triggers for position+z/fixed/opacity/transform, fixes147)
 
 ### Flexbox
 - `flex-direction: row | row-reverse | column | column-reverse`
@@ -345,10 +345,10 @@ These have been verified on hardware or in screenshots and produce the correct v
 - `gap: N` single-value (both axes get N)
 - `column-gap: N`
 
-### Grid (V1 — fixes75 + fixes118)
+### Grid (V1, fixes75 + fixes118)
 - `display: grid`
 - `-macsurf-grid: N` (MacSurf shorthand for N equal columns)
-- `grid-template-columns: <length-list>` (real track widths — fixes118)
+- `grid-template-columns: <length-list>` (real track widths, fixes118)
 
 ### Typography
 - `color`
@@ -362,18 +362,18 @@ These have been verified on hardware or in screenshots and produce the correct v
 - `text-transform: uppercase | lowercase | capitalize | none`
 - `line-height`
 - `letter-spacing`
-- `word-spacing` (length values; layout + paint in sync — fixes139b)
+- `word-spacing` (length values; layout + paint in sync, fixes139b)
 - `white-space: normal | nowrap | pre`
 - `vertical-align`
 
 ### Backgrounds
 - `background-color`
-- `background-image: url(...)` (PNG/GIF/BMP/TIFF/JPEG via lodepng + QT — fixes78-79b)
+- `background-image: url(...)` (PNG/GIF/BMP/TIFF/JPEG via lodepng + QT, fixes78-79b)
 - `background-position`
-- `background-repeat` (repeat / repeat-x / repeat-y / no-repeat all honored by macos9 plot_bitmap tile loop — fixes138)
-- `background-attachment: fixed` (viewport-anchored origin + tiles parallax-correct against fixes138 — fixes137 + fixes138)
-- `-macsurf-gradient: linear-gradient(...)` (multi-stop — fixes49)
-- `-macsurf-gradient: radial-gradient(...)` (24-ring oval stack — fixes74d)
+- `background-repeat` (repeat / repeat-x / repeat-y / no-repeat all honored by macos9 plot_bitmap tile loop, fixes138)
+- `background-attachment: fixed` (viewport-anchored origin + tiles parallax-correct against fixes138, fixes137 + fixes138)
+- `-macsurf-gradient: linear-gradient(...)` (multi-stop, fixes49)
+- `-macsurf-gradient: radial-gradient(...)` (24-ring oval stack, fixes74d)
 
 ### Lists & content
 - `list-style-type` (disc/circle/square/decimal). **fixes143a (2026-05-19):** disc marker switched from U+2022 BULLET (→ MacRoman 0xA5, which Helvetica TT on G3 rendered as a semicolon-looking glyph) to U+00B7 MIDDLE DOT (→ MacRoman 0xE1, a different font slot that renders as a clean small dot). Circle stays as ASCII 'o' (no hollow-circle glyph in MacRoman). Square still uses MacRoman 0xA5 and may show the same artefact; if so, swap to ASCII fallback in a follow-up.
@@ -385,7 +385,7 @@ These have been verified on hardware or in screenshots and produce the correct v
 - `quotes` list (fixes140b); UA defaults wrap `<q>` in curly typographic quotes via the macos9 resource CSS (fixes140c)
 
 ### Custom & visual
-- CSS Custom Properties / `var()` — full native resolution (fixes133-139)
+- CSS Custom Properties / `var()`, full native resolution (fixes133-139)
 - `opacity` (QuickDraw stipple pattern at 1.0/0.80/0.50/0.25)
 - `cursor` parsed; on hover, the cursor changes via `SetThemeCursor` (fixes131)
 - `outline`, `outline-color`, `outline-style`, `outline-width` (parsed and consumed in redraw)
@@ -393,7 +393,7 @@ These have been verified on hardware or in screenshots and produce the correct v
 - `-macsurf-transform: rotate() translate() scale()` (fixes73)
 - `-macsurf-text-shadow` (fixes50)
 - `object-fit: fill | contain | cover | none | scale-down` (fixes116)
-- `overflow: visible | hidden | scroll | auto` (clipping applies on block / inline-block / table-cell / flex / inline-flex / grid — fixes131 added flex/grid)
+- `overflow: visible | hidden | scroll | auto` (clipping applies on block / inline-block / table-cell / flex / inline-flex / grid, fixes131 added flex/grid)
 - `border-collapse`, `border-spacing` (tables)
 
 ### Pseudo-classes (fixes130 + fixes130e)
@@ -412,7 +412,7 @@ These accept author CSS without complaint but have zero effect on rendering. Eve
 |---|---|---|---|---|
 | `background-attachment` | yes | no | **yes (fixes137 + fixes138)** | viewport anchor + repeating tile parallax both shipped. Gradient-fixed deferred. |
 | `caption-side` | yes | no | no | **Audited fixes139: deferred.** `<caption>` maps to `BOX_INLINE` in `box_construct.c:139`; no `BOX_TABLE_CAPTION` type exists. Proper support requires new box type + normalise rewrite + table-layout sibling placement. Multi-file structural change, not a minimal round. |
-| `column-count` | yes | no | no | multi-column text layout broken. Deferred — text-balancing across columns is genuinely complex. |
+| `column-count` | yes | no | no | multi-column text layout broken. Deferred, text-balancing across columns is genuinely complex. |
 | `column-fill` | yes | no | no | depends on column-count |
 | `column-rule-*` | yes | no | no | depends on column-count |
 | `column-span` | yes | no | no | depends on column-count |
@@ -431,13 +431,13 @@ These accept author CSS without complaint but have zero effect on rendering. Eve
 **Highest-impact silent fails on real pages, ranked:**
 
 1. ~~**`background-attachment: fixed`**~~ **Shipped at fixes137 + fixes138 (2026-05-19).** Viewport-anchored origin + repeating-tile parallax both work end-to-end. Gradient-fixed still deferred.
-2. ~~**`empty-cells`**~~ **Shipped at fixes139a (2026-05-19).** Hidden empty cells skip background + border paint; cell still occupies its layout slot. Truly empty cells (no children, no text) and ASCII-whitespace-only cells are treated as empty. `&nbsp;` is treated as visible content matching Chrome/Firefox/Safari behavior (the test's `html_box_table_cell_is_empty` checks raw UTF-8 bytes and U+00A0 encodes as `0xC2 0xA0`, whose leading `0xC2` correctly disqualifies the cell from emptiness — spec phrasing is ambiguous on NBSP, but real-browser behavior is unanimous).
+2. ~~**`empty-cells`**~~ **Shipped at fixes139a (2026-05-19).** Hidden empty cells skip background + border paint; cell still occupies its layout slot. Truly empty cells (no children, no text) and ASCII-whitespace-only cells are treated as empty. `&nbsp;` is treated as visible content matching Chrome/Firefox/Safari behavior (the test's `html_box_table_cell_is_empty` checks raw UTF-8 bytes and U+00A0 encodes as `0xC2 0xA0`, whose leading `0xC2` correctly disqualifies the cell from emptiness, spec phrasing is ambiguous on NBSP, but real-browser behavior is unanimous).
 3. ~~**`word-spacing`**~~ **Shipped at fixes139b (2026-05-19).** Length values resolve through the same plot_font_style_t field as letter-spacing; macos9_font_measure counts ASCII spaces and updates the wrap point so layout and paint agree.
-4. **`column-count`** — Magazine-style multi-column text. Deferred — text-balancing across columns is genuinely complex.
-5. **`caption-side`** — Audited fixes139, **deferred**. Captions currently fall through as BOX_INLINE because no BOX_TABLE_CAPTION type exists in this fork. Real support needs box_construct + box_normalise + table-layout coordination.
-6. **`table-layout`** — Audited fixes139, **deferred**. 1064 lines of dedicated table layout code; the sprint rule "do not destabilize all table layout" forbids a one-round attempt.
+4. **`column-count`**, Magazine-style multi-column text. Deferred, text-balancing across columns is genuinely complex.
+5. **`caption-side`**, Audited fixes139, **deferred**. Captions currently fall through as BOX_INLINE because no BOX_TABLE_CAPTION type exists in this fork. Real support needs box_construct + box_normalise + table-layout coordination.
+6. **`table-layout`**, Audited fixes139, **deferred**. 1064 lines of dedicated table layout code; the sprint rule "do not destabilize all table layout" forbids a one-round attempt.
 
-(`min-height` and viewport units were previously listed here. Both shipped in fixes132. `z-index` shipped in fixes133. `counter-increment` / `counter-reset` shipped in fixes134b — see "What actually works" section.)
+(`min-height` and viewport units were previously listed here. Both shipped in fixes132. `z-index` shipped in fixes133. `counter-increment` / `counter-reset` shipped in fixes134b, see "What actually works" section.)
 
 ---
 
@@ -447,7 +447,7 @@ These accept author CSS without complaint but have zero effect on rendering. Eve
 Single-value `gap: N` works (both axes get N). Two-value `gap: A B` loses A and stores only B as column-gap. Fix requires adding `CSS_PROP_ROW_GAP` as an independent property with its own bit slot in `css_computed_style_i.bits[]`. Bit budget audit shows word 15 has 27 free bits, word 14 bottom 5 bits are full. ~17 files to touch. Real-world impact: 97% of MacTrove pages use single-value form, deferred.
 
 ### `font-family` matching
-Currently only matches `Geneva`, `Monaco`, `Chicago`, `Charcoal` by name. Any other family name falls through to the OS 9 default font for the resolved generic. Modern sites specifying `"Helvetica Neue", system-ui, sans-serif` get the system font, not their preferred. Not strictly broken — there are no other fonts installed by default — but the matching is narrow.
+Currently only matches `Geneva`, `Monaco`, `Chicago`, `Charcoal` by name. Any other family name falls through to the OS 9 default font for the resolved generic. Modern sites specifying `"Helvetica Neue", system-ui, sans-serif` get the system font, not their preferred. Not strictly broken, there are no other fonts installed by default, but the matching is narrow.
 
 ### `font-weight` granularity
 Only `bold` (>= 600) vs `normal` (< 600). Numeric weights 100/200/300/400/500/600/700/800/900 all collapse to two values. Acceptable for QuickDraw which only has bold/non-bold.
@@ -459,9 +459,9 @@ Only `bold` (>= 600) vs `normal` (< 600). Numeric weights 100/200/300/400/500/60
 **fixes136a (2026-05-19): plumbing accepted. fixes136b deferred.**
 
 Parsed/computed status:
-- `word-break: normal | break-all | keep-all` — parses, computes correctly.
-- `overflow-wrap: normal | break-word | anywhere` — parses, computes correctly.
-- `word-wrap: break-word` — parses as a legacy alias for `overflow-wrap`.
+- `word-break: normal | break-all | keep-all`, parses, computes correctly.
+- `overflow-wrap: normal | break-word | anywhere`, parses, computes correctly.
+- `word-wrap: break-word`, parses as a legacy alias for `overflow-wrap`.
 - Invalid values fall back to `normal`. `css_computed_word_break()` and `css_computed_overflow_wrap()` return the right enum.
 - `keep-all` is parsed for forward-compat but inert without CJK segmentation. `anywhere` aliases to `break-word` semantically.
 
@@ -482,10 +482,10 @@ Deferred to v0.4.5 (already noted in CLAUDE.md). MacSurf has a one-shot `-macsur
 - TIFF: opaque rendering only (`QTNewGWorld(k32ARGBPixelFormat)` returns `cDepthErr -157` on OS 9)
 - Path A1.5 (`CopyDeepMask` + 8-bit mask) is queued
 
-### ~~List bullets render as `;`~~ — fixes143a (2026-05-19)
-Disc marker switched from U+2022 BULLET (MacRoman 0xA5) to U+00B7 MIDDLE DOT (MacRoman 0xE1). The bullet glyph slot at 0xA5 in Helvetica TT on the user's G3 was rendering as a semicolon-looking artefact; middle dot uses a different font slot (0xE1) that renders cleanly. Cause is specific to disc's size/face context (9pt face 0) — square uses 0xA5 and renders correctly, so 0xA5 itself isn't broken.
+### ~~List bullets render as `;`~~, fixes143a (2026-05-19)
+Disc marker switched from U+2022 BULLET (MacRoman 0xA5) to U+00B7 MIDDLE DOT (MacRoman 0xE1). The bullet glyph slot at 0xA5 in Helvetica TT on the user's G3 was rendering as a semicolon-looking artefact; middle dot uses a different font slot (0xE1) that renders cleanly. Cause is specific to disc's size/face context (9pt face 0), square uses 0xA5 and renders correctly, so 0xA5 itself isn't broken.
 
-### ~~"Di"-class glyph-pair overlap in Helvetica TT at body size~~ — fixes144b + fixes146 (2026-05-19)
+### ~~"Di"-class glyph-pair overlap in Helvetica TT at body size~~, fixes144b + fixes146 (2026-05-19)
 Sub-AA bitmap rendering at 9-10pt had no anti-aliased transition pixel between adjacent glyphs, so the D's painted right edge and the i's body landed in adjacent or shared pixel columns. fixes144b adds +1px between glyphs in the draw path (paint-only) when `size < 12 && font_id != kFontIDMonaco && mac_len > 1`. fixes146 mirrors the same bump in `macos9_font_measure` so multi-segment inline content doesn't scramble (the draw-vs-measure asymmetry from fixes144b alone caused horizontal overlap between adjacent inline segments). Trade-off accepted: MacTrove body text reflows ~chars-1 wider per segment at sub-12pt. Gated by `MACSURF_SUBAA_DRAW_SPACING` at top of plotters.c (sync the same flag manually in macos9_font.c if flipped).
 
 ### Inline boxes occasionally duplicate
@@ -499,11 +499,11 @@ Probably fixed by fixes77g, needs verification. Workaround: File → New Window.
 ## Implementation priorities
 
 Ranked by current visual impact on real-world pages, after the
-fixes132–fixes140 sprint sequence. The shipped backlog is folded
+fixes132-fixes140 sprint sequence. The shipped backlog is folded
 into [What actually works on real pages](#what-actually-works-on-real-pages);
 this section only lists outstanding work.
 
-### Q1 — Standard `transform` property bridge (LOW–MEDIUM impact, LOW effort) — **fixes141 ATTEMPTED + REVERTED**
+### Q1, Standard `transform` property bridge (LOW-MEDIUM impact, LOW effort), **fixes141 ATTEMPTED + REVERTED**
 
 MacSurf consumes its private `-macsurf-transform`; modern pages emit
 the standard `transform: rotate() translate() scale()`. A small
@@ -525,7 +525,7 @@ Reverted in the same round.
 1. The parser is reentrant-unsafe when called for two different
    prop indices (TRANSFORM and MACSURF_TRANSFORM in the same
    ruleset).
-2. A select-side dispatch table indexed by FIRST_PROP–LAST_PROP
+2. A select-side dispatch table indexed by FIRST_PROP-LAST_PROP
    range is sized statically somewhere outside the explicit
    property_handlers/propstrings arrays.
 3. The bytecode emitted with `CSS_PROP_MACSURF_TRANSFORM` opcode
@@ -536,34 +536,34 @@ Next attempt should add MS_LOG instrumentation **before** shipping,
 and bisect against an even more minimal page (single inline `<span
 style="transform: rotate(10deg)">` against `<span style="-macsurf-transform: ...">`).
 
-### Q2 — Full-fidelity two-value `gap: A B` (LOW impact, MEDIUM effort)
+### Q2, Full-fidelity two-value `gap: A B` (LOW impact, MEDIUM effort)
 
 Currently single-value `gap: N` and standalone `row-gap: N` work;
 two-value `gap: A B` collapses A to column-gap. Splitting row-gap
 into its own bit slot is ~17 files of cross-cutting plumbing.
 Real-world impact is small.
 
-### Q3 — `caption-side: top | bottom` (MEDIUM impact, HIGH effort)
+### Q3, `caption-side: top | bottom` (MEDIUM impact, HIGH effort)
 
 Audited at fixes139. `<caption>` currently maps to `BOX_INLINE` in
 `box_construct.c:139`; no `BOX_TABLE_CAPTION` type exists. Real
 support needs a new box type, normalise rewrite, and table-layout
 sibling placement. Structural change, not a minimal round.
 
-### Q4 — `table-layout: fixed` (MEDIUM impact, HIGH effort)
+### Q4, `table-layout: fixed` (MEDIUM impact, HIGH effort)
 
 Audited at fixes139. 1064 lines of dedicated table layout in
 `table.c` plus table integration in `layout.c`. Per sprint rule
 "do not destabilize all table layout", deferred until a
 contained-scope follow-up audit finds a tractable seam.
 
-### Q5 — `column-count` / `column-rule-*` / `column-gap` (LOW–MEDIUM impact, HIGH effort)
+### Q5, `column-count` / `column-rule-*` / `column-gap` (LOW-MEDIUM impact, HIGH effort)
 
-Multi-column text layout. Genuinely complex — text balancing,
+Multi-column text layout. Genuinely complex, text balancing,
 column breaks, orphan/widow handling. Defer until proven needed
 on a real page.
 
-### Q6 — Strict `word-break: break-all` / `overflow-wrap: normal` (LOW impact)
+### Q6, Strict `word-break: break-all` / `overflow-wrap: normal` (LOW impact)
 
 Plumbing landed in fixes136a; layout currently always allows
 character-boundary breaks on long unbreakable runs because real
@@ -572,12 +572,12 @@ is parked behind "show me a real page where this matters" because
 flipping the default would regress every URL-heavy page that
 doesn't explicitly opt in.
 
-### Q7 — `transition` / `animation` (v0.4.5+)
+### Q7, `transition` / `animation` (v0.4.5+)
 
 Animation framework would touch event loop, paint scheduling, time
 tracking. Substantial scope. Defer to v0.4.5.
 
-### Q8 — `clip-path`, `mask`, `filter` (LOW impact, HIGH effort)
+### Q8, `clip-path`, `mask`, `filter` (LOW impact, HIGH effort)
 
 Decorative. Pages degrade to rectangular fallback which is
 acceptable. Defer indefinitely.
@@ -588,12 +588,12 @@ acceptable. Defer indefinitely.
 
 Without dedicated regression tests, every CSS round needs a real-page verification step. Suggested gauntlet:
 
-1. **`tests/css/z_index.html`** — three boxes with overlapping `position: absolute` and explicit z-index — paint order should match z-index, not DOM order.
-2. **`tests/css/min_height.html`** — a `div` with `min-height: 300px` containing one short line of text — should be 300px tall.
-3. **`tests/css/text_overflow.html`** — card with `width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap` and 500px of text — should show `Very long title…`
-4. **`tests/css/viewport_units.html`** — full-screen hero with `height: 100vh` — should fill the viewport.
-5. **`tests/css/counters.html`** — `<h2>` styled with `counter-increment` and `content: counter(...)` — should auto-number.
-6. **Real-page regression: MacTrove home, MacTrove app page, DuckDuckGo Lite, Wikipedia article** — visual diff against previous shipped state.
+1. **`tests/css/z_index.html`**, three boxes with overlapping `position: absolute` and explicit z-index, paint order should match z-index, not DOM order.
+2. **`tests/css/min_height.html`**, a `div` with `min-height: 300px` containing one short line of text, should be 300px tall.
+3. **`tests/css/text_overflow.html`**, card with `width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap` and 500px of text, should show `Very long title…`
+4. **`tests/css/viewport_units.html`**, full-screen hero with `height: 100vh`, should fill the viewport.
+5. **`tests/css/counters.html`**, `<h2>` styled with `counter-increment` and `content: counter(...)`, should auto-number.
+6. **Real-page regression: MacTrove home, MacTrove app page, DuckDuckGo Lite, Wikipedia article**, visual diff against previous shipped state.
 
 ---
 
@@ -601,19 +601,19 @@ Without dedicated regression tests, every CSS round needs a real-page verificati
 
 These are not CSS properties but affect whether pages "load properly":
 
-1. **HTTP fetcher reliability** — fixes98-105 closed the major leaks; current state is stable across many-page browsing.
-2. **TLS** — handled by proxy (out of scope for the browser).
-3. **JavaScript** — Duktape ES5 in base build; modern JS still needs proxy render-and-flatten.
-4. **Forms** — `<input>` rendering works; form submission path is wired. Style cascade reaches form controls.
-5. **Tables** — table layout works for simple tables; complex tables (colspan/rowspan with auto-layout) may have gaps.
+1. **HTTP fetcher reliability**, fixes98-105 closed the major leaks; current state is stable across many-page browsing.
+2. **TLS**, handled by proxy (out of scope for the browser).
+3. **JavaScript**, Duktape ES5 in base build; modern JS still needs proxy render-and-flatten.
+4. **Forms**, `<input>` rendering works; form submission path is wired. Style cascade reaches form controls.
+5. **Tables**, table layout works for simple tables; complex tables (colspan/rowspan with auto-layout) may have gaps.
 
 ---
 
 ## What I would ship next
 
-After fixes132–fixes147, the remaining ranked top picks are:
+After fixes132-fixes147, the remaining ranked top picks are:
 
-**Stacking contexts (fixes147) shipped at sibling level — closed.** Cross-level descendant escape deferred until a structural paint pipeline rewrite. ~90% of real-page cases covered today.
+**Stacking contexts (fixes147) shipped at sibling level, closed.** Cross-level descendant escape deferred until a structural paint pipeline rewrite. ~90% of real-page cases covered today.
 
 **Highest-impact remaining structural work, two candidates:**
 
@@ -621,15 +621,15 @@ After fixes132–fixes147, the remaining ranked top picks are:
 
 2. **`gui_layout_table` family awareness.** Architectural prerequisite for retrying font-family aliases (fixes145) without the inline-scramble bug. `macos9_font_width` / `macos9_font_position` / `macos9_font_split` need to return widths consistent with whichever family the plotter would pick. Once shipped, fixes145 retry becomes safe and pages render with real serif/mono families. Doesn't directly fix any layout bug but unblocks every future font-related win.
 
-**Stacking-context cross-level descendant walk** as a fixes147 follow-up is the third candidate but lower priority — the per-sibling model already covers the dominant real-page cases. Would require collecting all positioned descendants from a stacking-context root and partitioning them into the appropriate bucket regardless of intermediate non-SC ancestors. Structural rewrite of the `html_redraw_box` / `html_redraw_box_children` separation.
+**Stacking-context cross-level descendant walk** as a fixes147 follow-up is the third candidate but lower priority, the per-sibling model already covers the dominant real-page cases. Would require collecting all positioned descendants from a stacking-context root and partitioning them into the appropriate bucket regardless of intermediate non-SC ancestors. Structural rewrite of the `html_redraw_box` / `html_redraw_box_children` separation.
 
 **Other structural items still queued:**
 
-- Q3 `caption-side` (high effort, structural change — new BOX_TABLE_CAPTION type)
+- Q3 `caption-side` (high effort, structural change, new BOX_TABLE_CAPTION type)
 - Q4 `table-layout: fixed` (high effort, 1064-line table.c port)
-- Q5 multi-column (`column-count` family — high effort)
+- Q5 multi-column (`column-count` family, high effort)
 - Q6 strict `word-break` (low impact, parked)
-- Q7 `transition` / `animation` (v0.4.5+ — large scope)
+- Q7 `transition` / `animation` (v0.4.5+, large scope)
 - Q8 `clip-path` / `mask` / `filter` (deferred indefinitely)
 
 Q1 (standard `transform` bridge) is on hold pending the MS_LOG bisect against fixes141's pre-`reformat:` hang. Q2 (full-fidelity two-value `gap: A B`) is parked behind ~17-file cross-cutting plumbing for marginal real-world impact.

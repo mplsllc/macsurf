@@ -1,4 +1,4 @@
-# CSS rendering live on hardware — 2026-05-13 — fixes33
+# CSS rendering live on hardware, 2026-05-13, fixes33
 
 After ten diagnostic rounds the actual bug was identified and fixed in a single line of code. On real Power Mac G3 hardware running MacSurf, simple.html now renders with:
 
@@ -13,7 +13,7 @@ This is the first MacSurf session on hardware where the libcss cascade end-to-en
 
 ## The bug
 
-`libcss`'s selector hash uses two functions for hashing tag names — one on insert, one on find:
+`libcss`'s selector hash uses two functions for hashing tag names, one on insert, one on find:
 
 **Insert path** (`browser/libcss/src/select/hash.c`):
 
@@ -21,7 +21,7 @@ This is the first MacSurf session on hardware where the libcss cascade end-to-en
 #define _hash_name(name) lwc_string_hash_value(name->insensitive)
 ```
 
-Returns `name->insensitive->hash`. That hash was computed when `lwc__intern_caseless_string` interned the caseless form — using libwapcaplet's `lwc__calculate_lcase_hash` (FNV-1a with constants `0x811c9dc5` and `0x01000193`).
+Returns `name->insensitive->hash`. That hash was computed when `lwc__intern_caseless_string` interned the caseless form, using libwapcaplet's `lwc__calculate_lcase_hash` (FNV-1a with constants `0x811c9dc5` and `0x01000193`).
 
 **Find path** (`browser/libcss/src/select/hash.c css__selector_hash_find`):
 
@@ -61,18 +61,18 @@ After the change, insert and find compute identical hashes. The hashtable lookup
 
 One file changed. 14 lines net. Eleven rounds of diagnostic probing led to it.
 
-## How we got here — the diagnostic chain
+## How we got here, the diagnostic chain
 
 | Fix | Probe | Finding |
 |---|---|---|
 | 24 | per-slot cascade state | inline `<style>` slot has handle + nscss_get returns non-NULL |
-| 25 | RGB at plot_text / plot_rectangle | every text plot is `fg=0/0/0 sz=12 face=0` — cascade returns initial values |
+| 25 | RGB at plot_text / plot_rectangle | every text plot is `fg=0/0/0 sz=12 face=0`, cascade returns initial values |
 | 26 | sheet_size + tag names selected | sheets are 15KB / 6KB; HTML, BODY, H1, P, H2 all reach selection |
-| 27 | computed style after `css_select_style` | every element returns identical `color=FF000000 fsz=17476 weight=1` — no rule matched |
-| 28 | `node_has_name` callback | never fires — libcss isn't reaching the qname comparison |
+| 27 | computed style after `css_select_style` | every element returns identical `color=FF000000 fsz=17476 weight=1`, no rule matched |
+| 28 | `node_has_name` callback | never fires, libcss isn't reaching the qname comparison |
 | 29 | `match_selectors_in_sheet` entry | no probe fires; suspect duplicate-file issue |
-| 30 | same probe in `css_select.c` (sibling file) | `msis_cs[N]` fires — confirmed `css_select.c` is what's compiled, not `select.c` |
-| 31 | iterator results inside `msis_cs` | `*node=00000000 *univ=00000000 pending=0` — hash has no chains for any query |
+| 30 | same probe in `css_select.c` (sibling file) | `msis_cs[N]` fires, confirmed `css_select.c` is what's compiled, not `select.c` |
+| 31 | iterator results inside `msis_cs` | `*node=00000000 *univ=00000000 pending=0`, hash has no chains for any query |
 | 32 | `_add_selectors` + `css__selector_hash_insert` | 30 selectors inserted into the hash during parse |
 | 33 | **THE FIX** | insert vs find hash algorithm mismatch in `misc_stub.c` |
 
@@ -82,7 +82,7 @@ The screenshot also exposes the next set of bugs:
 
 - **List bullets render as `;`** instead of disc/circle/square. UA's `li { display: list-item; list-style-type: disc }` is applying display but the glyph rendering doesn't reach a real bullet character.
 - **Right-edge text spills outside content rect.** Words like "borders" overflow into "features" on the right margin; some text duplicates ("p" alone appears next to a paragraph). Line-break / shaping bug.
-- **Letter spacing is tight.** "MacSurf Test Page" reads as "MacSurf Test Pag" cut off — likely the snippet log truncating at 16 chars, but font metrics on Mac classic should be checked.
+- **Letter spacing is tight.** "MacSurf Test Page" reads as "MacSurf Test Pag" cut off, likely the snippet log truncating at 16 chars, but font metrics on Mac classic should be checked.
 
 These are now real next-fix candidates. Up to this point we've been chasing a single bug that pretended every element was unstyled.
 

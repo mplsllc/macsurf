@@ -9,14 +9,14 @@ Step-by-step guide to building MacSurf on a real Power Mac running Mac OS 9.
 **Requirements:** Power Mac G3 or G4, Mac OS 9.1 or later, 128MB RAM recommended, CD-ROM drive.
 
 1. Insert the CodeWarrior Pro 8 CD
-2. Double-click the installer — it will walk through license acceptance and destination selection
+2. Double-click the installer, it will walk through license acceptance and destination selection
 3. Install to the default location (`Macintosh HD:Metrowerks CodeWarrior:`)
 4. When prompted for components, ensure these are checked:
    - **MacOS PowerPC C/C++ Compiler**
    - **MacOS PowerPC Linker**
    - **MSL C Libraries** (Metrowerks Standard Library)
    - **Universal Headers** (Mac OS Universal Interfaces)
-5. Skip the Java, Windows, and Palm OS tools — they are not needed
+5. Skip the Java, Windows, and Palm OS tools, they are not needed
 6. After installation completes, open CodeWarrior IDE once to confirm it launches. It will create preferences in the System Folder
 7. Verify the Universal Headers are present at:
    ```
@@ -30,7 +30,7 @@ Step-by-step guide to building MacSurf on a real Power Mac running Mac OS 9.
 
 1. Copy the entire `macsurf/browser/netsurf/` directory tree to the Mac (see Section 6 for transfer method)
 2. Navigate to `netsurf:frontends:macos9:` in the Finder
-3. Double-click `MacSurf.mcp` — CodeWarrior will open it and display the project window
+3. Double-click `MacSurf.mcp`, CodeWarrior will open it and display the project window
 4. If CodeWarrior prompts "Cannot find file..." for any source file, the directory structure was not preserved during transfer. Verify that the `utils`, `content`, and `desktop` folders exist three levels up from the `macos9` folder
 5. The project window should show six groups in the left pane:
    - NetSurf Core Utils (10 files)
@@ -75,7 +75,7 @@ Step-by-step guide to building MacSurf on a real Power Mac running Mac OS 9.
   2. `{Compiler}/MacOS Support/Libraries/Runtime/Shared Support`
 
 **PPC Processor panel:**
-- Processor: 750 (G3) — works on G3 and G4
+- Processor: 750 (G3), works on G3 and G4
 - Struct Alignment: PowerPC
 
 3. Click OK to save
@@ -88,12 +88,12 @@ Press Cmd-M (Project > Make) to start the build. Here is what to expect:
 
 ### What will succeed
 
-The POSIX shim files and frontend files should compile without errors — these have been syntax-checked on Linux with equivalent flags. Files that compiled clean in our Linux syntax-check rounds:
+The POSIX shim files and frontend files should compile without errors, these have been syntax-checked on Linux with equivalent flags. Files that compiled clean in our Linux syntax-check rounds:
 
-- All 5 `utils/` files (Round 2 — zero errors, zero warnings)
-- All 3 `content/` files (Round 2 — zero errors)
-- All 5 `desktop/` files (Round 3 — zero errors)
-- All 11 frontend files (Round 4 — zero errors)
+- All 5 `utils/` files (Round 2, zero errors, zero warnings)
+- All 3 `content/` files (Round 2, zero errors)
+- All 5 `desktop/` files (Round 3, zero errors)
+- All 11 frontend files (Round 4, zero errors)
 
 ### What will likely fail
 
@@ -124,7 +124,7 @@ If any are missing, copy them from the corresponding `browser/lib*/include/` dir
 
 ### Expected error count
 
-On a clean first build with all headers in place: **zero compile errors for the 24 source files listed in the project.** The first real errors will come at link time — unresolved symbols from library code (libcss, libdom, etc.) that is not yet compiled as part of the project. This is expected. The next step is to add the dependency library source files to the project or build them as separate library projects.
+On a clean first build with all headers in place: **zero compile errors for the 24 source files listed in the project.** The first real errors will come at link time, unresolved symbols from library code (libcss, libdom, etc.) that is not yet compiled as part of the project. This is expected. The next step is to add the dependency library source files to the project or build them as separate library projects.
 
 ---
 
@@ -139,8 +139,8 @@ File "utils.c", line 477: warning: implicit declaration of 'strdup'
 ```
 
 - **Double-click** any error to jump to the exact line in the source editor
-- Errors are red (stop icon) — the file did not compile
-- Warnings are yellow (caution icon) — compiled but suspicious
+- Errors are red (stop icon), the file did not compile
+- Warnings are yellow (caution icon), compiled but suspicious
 
 ### Common error patterns and what they mean
 
@@ -148,7 +148,7 @@ File "utils.c", line 477: warning: implicit declaration of 'strdup'
 |---|---|---|
 | `file not found: "libwapcaplet/libwapcaplet.h"` | Missing dependency library headers | Copy headers into `netsurf/include/` (see Section 4) |
 | `undefined identifier 'PATH_MAX'` | `config.h` `__MACOS9__` block not active | Verify `__MACOS9__` is in the preprocessor prefix text (Section 3) |
-| `implicit declaration of 'strdup'` | POSIX function not declared | Should be in `utils/config.h` under `__MACOS9__` guard — check that the config.h edits from `core-compile-attempt.md` Round 2 are present |
+| `implicit declaration of 'strdup'` | POSIX function not declared | Should be in `utils/config.h` under `__MACOS9__` guard, check that the config.h edits from `core-compile-attempt.md` Round 2 are present |
 | `undefined identifier 'WindowRef'` | Mac Toolbox header not included | Ensure `#ifdef __MACOS9__` path includes `<MacWindows.h>` in the affected file |
 | `cannot convert 'void' to 'int'` | `ns_close_socket` macro issue | Verify `utils/inet.h` has `((void)(s), 0)` not `((void)(s))` for the `__MACOS9__` case (fix from Round 3) |
 | `link failed: unresolved 'lwc_intern_string'` | libwapcaplet object code not in project | Build libwapcaplet source or add its .c files to the project |
@@ -158,11 +158,11 @@ File "utils.c", line 477: warning: implicit declaration of 'strdup'
 
 The project is structured in compilation layers matching the research docs:
 
-1. **POSIX Shims** — if these fail, fix the shim code first. Refer to `posix-portability.md` Section 2 for the implementation plan for each shim
-2. **NetSurf Core Utils** — errors here usually mean a `config.h` macro is wrong or a shim header is missing. Refer to `core-compile-attempt.md` for the exact fixes applied in each round
-3. **NetSurf Content** — depends on Utils compiling clean. Content-layer errors are usually missing library headers (libwapcaplet, libcss, libdom)
-4. **NetSurf Desktop** — depends on Content and Utils. Desktop errors are usually missing library headers or POSIX function declarations
-5. **MacSurf Frontend** — depends on all of the above. Frontend errors are usually missing Toolbox headers or Mac-specific API issues
+1. **POSIX Shims**, if these fail, fix the shim code first. Refer to `posix-portability.md` Section 2 for the implementation plan for each shim
+2. **NetSurf Core Utils**, errors here usually mean a `config.h` macro is wrong or a shim header is missing. Refer to `core-compile-attempt.md` for the exact fixes applied in each round
+3. **NetSurf Content**, depends on Utils compiling clean. Content-layer errors are usually missing library headers (libwapcaplet, libcss, libdom)
+4. **NetSurf Desktop**, depends on Content and Utils. Desktop errors are usually missing library headers or POSIX function declarations
+5. **MacSurf Frontend**, depends on all of the above. Frontend errors are usually missing Toolbox headers or Mac-specific API issues
 
 Work bottom-up: fix shim errors first, then utils, then content, then desktop, then frontend.
 
@@ -201,10 +201,10 @@ This is the simplest and most reliable transfer method. Mac OS 9 reads FAT32 (ca
 
 1. Insert the thumb drive. It should appear on the desktop as a DOS volume (generic disk icon)
 2. If it does not mount, open **Control Panels > File Exchange** and ensure "Mount DOS disks" is checked
-3. Open the drive and drag the `netsurf` folder to your hard drive — placing it wherever you want the project to live
+3. Open the drive and drag the `netsurf` folder to your hard drive, placing it wherever you want the project to live
 4. The Finder will copy all files, preserving the directory structure. FAT32 does not preserve Mac resource forks, but all MacSurf source files are plain text data-fork files, so nothing is lost
 
-### After transfer — verify structure
+### After transfer, verify structure
 
 Open the `netsurf` folder on the Mac and confirm this structure exists:
 

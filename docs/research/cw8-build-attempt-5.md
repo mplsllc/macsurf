@@ -1,8 +1,8 @@
-# CW8 Build Attempt — Current Error Analysis
+# CW8 Build Attempt, Current Error Analysis
 
 **303 errors. 8 root causes.**
 
-## Root Cause 1 — `time_t` unknown (~150 cascade errors)
+## Root Cause 1, `time_t` unknown (~150 cascade errors)
 
 `url_db.h` line 28 does `#include <time.h>` but CW8 finds a wrong
 version. The old `browser:netsurf:utils:time.h` must still be on the
@@ -15,17 +15,17 @@ Cascades into: `dt_global_history.c` (48+), `cookie_manager.c` (21+),
 
 **Fix:** Delete `browser:netsurf:utils:time.h` from the Mac.
 
-## Root Cause 2 — `strchr`/`strstr`/`strrchr` return int (~15 errors)
+## Root Cause 2, `strchr`/`strstr`/`strrchr` return int (~15 errors)
 
-`dt_download.c`, `dt_searchweb.c`, `form.c` — `strchr` returning
+`dt_download.c`, `dt_searchweb.c`, `form.c`, `strchr` returning
 `int` instead of `char *`. This means `<string.h>` isn't being
-found. Same shadowing issue — check if any stale `string.h` exists
+found. Same shadowing issue, check if any stale `string.h` exists
 in user paths.
 
 **Fix:** Confirm libhubbub's old `string.h` was deleted from the Mac
 (renamed to `hub_string.h`).
 
-## Root Cause 3 — `dt_treeview.c` for-scope + NSLOG cascade (~50 errors)
+## Root Cause 3, `dt_treeview.c` for-scope + NSLOG cascade (~50 errors)
 
 Lines 2004 (designated init), 2272 and 2362 (`for (struct
 treeview_node *n = ...)`), plus NSLOG expansion issues at 2301,
@@ -35,7 +35,7 @@ with `;`.
 **Fix:** Hoist for-scope decls, fix designated init, check NSLOG
 expansion produces valid statements.
 
-## Root Cause 4 — `css_utils.c` function not parsed (~13 errors)
+## Root Cause 4, `css_utils.c` function not parsed (~13 errors)
 
 `css__number_from_string` parameters (`data`, `len`, `consumed`,
 `int_only`) all undefined. The function signature at line 31 uses
@@ -45,34 +45,34 @@ expansion produces valid statements.
 **Fix:** Confirm `css_utils.c` on the Mac has the added
 `#include <libcss/errors.h>` and `#include <libcss/fpmath.h>`.
 
-## Root Cause 5 — `hashmap.c` for-scope (~8 errors)
+## Root Cause 5, `hashmap.c` for-scope (~8 errors)
 
 Lines 235, 238: `for (uint32_t bucket = ...)` and
 `for (hashmap_entry_t *entry = ...)`.
 
 **Fix:** Hoist declarations.
 
-## Root Cause 6 — `frames.c` VLA (~2 errors)
+## Root Cause 6, `frames.c` VLA (~2 errors)
 
-Line 334-335: `int widths[bw->cols][bw->rows]` — variable-length
+Line 334-335: `int widths[bw->cols][bw->rows]`, variable-length
 array. C89 doesn't support VLAs.
 
 **Fix:** Replace with `malloc`/`free` or a fixed-size array.
 
-## Root Cause 7 — `flex.c` mixed declarations (~4 errors)
+## Root Cause 7, `flex.c` mixed declarations (~4 errors)
 
 Lines 152, 164: `css_fixed grow_num = ...` and
 `css_fixed shrink_num = ...` after statements.
 
 **Fix:** Hoist to function top.
 
-## Root Cause 8 — `computed.c` mixed declaration (~3 errors)
+## Root Cause 8, `computed.c` mixed declaration (~3 errors)
 
 Line 760: `uint8_t ret = get_width(...)` after statements.
 
 **Fix:** Hoist.
 
-## Root Cause 9 — 7 files still "could not find"
+## Root Cause 9, 7 files still "could not find"
 
 Same 7: `cache-control.c`, `challenge.c`, `content-disposition.c`,
 `content-type.c`, `cssh_css.c`, `cssh_select.c`, `dump.c`.

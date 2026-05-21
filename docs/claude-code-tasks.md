@@ -1,4 +1,4 @@
-# MacSurf — Claude Code Task List
+# MacSurf, Claude Code Task List
 
 Hand these to Claude Code one at a time. Each task is self-contained with clear inputs, outputs, and success criteria.
 
@@ -6,7 +6,7 @@ Hand these to Claude Code one at a time. Each task is self-contained with clear 
 
 ## Stage 1: Research & Setup
 
-### Task 1.1 — Clone and audit NetSurf
+### Task 1.1, Clone and audit NetSurf
 ```
 Clone the NetSurf repository from https://git.netsurf-browser.org/netsurf.git
 and the following dependency libraries:
@@ -28,7 +28,7 @@ Then produce a markdown report covering:
 Output: docs/research/netsurf-audit.md
 ```
 
-### Task 1.2 — Map NetSurf frontend API to Mac Toolbox
+### Task 1.2, Map NetSurf frontend API to Mac Toolbox
 ```
 Read docs/research/netsurf-audit.md and the NetSurf frontend header files.
 Read the RISC OS frontend source as reference.
@@ -49,7 +49,7 @@ custom solutions.
 Output: docs/research/frontend-api-mapping.md
 ```
 
-### Task 1.3 — Audit POSIX dependencies for portability
+### Task 1.3, Audit POSIX dependencies for portability
 ```
 Read docs/research/netsurf-audit.md.
 
@@ -63,7 +63,7 @@ Produce a portability report.
 Output: docs/research/posix-portability.md
 ```
 
-### Task 1.4 — Set up PPC cross-compilation toolchain
+### Task 1.4, Set up PPC cross-compilation toolchain
 ```
 Set up a cross-compilation toolchain on Linux that can compile C code
 targeting PowerPC (big-endian) as used in Mac OS 9 era machines.
@@ -80,7 +80,7 @@ Output:
 - docs/research/toolchain-setup.md
 ```
 
-### Task 1.5 — Compile NetSurf dependency libraries for PPC
+### Task 1.5, Compile NetSurf dependency libraries for PPC
 ```
 Using the toolchain from Task 1.4, attempt to compile each dependency
 library for PowerPC:
@@ -106,7 +106,7 @@ Output: docs/research/ppc-compile-results.md
 > Build the proxy before the browser. It's simpler, immediately useful,
 > and validates the core concept with Classilla today.
 
-### Task 2.1 — Scaffold MacSurf Proxy in Go
+### Task 2.1, Scaffold MacSurf Proxy in Go
 ```
 Create the initial Go project structure for the MacSurf Proxy.
 
@@ -131,7 +131,7 @@ Success criteria: can configure Classilla or curl to use it as a proxy
 and successfully fetch https://example.com
 ```
 
-### Task 2.2 — Test proxy against curl and document
+### Task 2.2, Test proxy against curl and document
 ```
 Using the proxy from Task 2.1:
 
@@ -145,7 +145,7 @@ Using the proxy from Task 2.1:
 Output: docs/proxy-test-results.md
 ```
 
-### Task 2.3 — Dockerfile and VPS deployment guide
+### Task 2.3, Dockerfile and VPS deployment guide
 ```
 Write a Dockerfile for the MacSurf Proxy that:
 - Produces a minimal single-binary image (use scratch or alpine base)
@@ -167,7 +167,7 @@ Output:
 
 ## Stage 3: Browser Skeleton
 
-### Task 3.1 — Create macos9 frontend scaffold
+### Task 3.1, Create macos9 frontend scaffold
 ```
 In the NetSurf source tree, create the scaffold for the macos9 frontend
 modeled on frontends/riscos/.
@@ -191,7 +191,7 @@ Success criteria: the scaffold compiles cleanly against the NetSurf
 core with no errors (warnings OK).
 ```
 
-### Task 3.2 — Implement WaitNextEvent scheduler
+### Task 3.2, Implement WaitNextEvent scheduler
 ```
 In frontends/macos9/main.c, implement the cooperative multitasking
 scheduler.
@@ -227,7 +227,7 @@ Output: updated frontends/macos9/main.c with documented scheduler
 
 - Always read CLAUDE.md before starting any task
 - Read the reference frontend source before writing any new code
-- If a task is blocked, document why in the output file and stop —
+- If a task is blocked, document why in the output file and stop ,
   don't invent solutions to blockers without flagging them
 - Prefer small focused commits over large changes
-- No external Go dependencies in the proxy — stdlib only
+- No external Go dependencies in the proxy, stdlib only

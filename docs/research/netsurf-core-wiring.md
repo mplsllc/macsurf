@@ -2,7 +2,7 @@
 
 ## Status
 
-**Research only — no code changes.** This document audits what's required
+**Research only, no code changes.** This document audits what's required
 to replace the stub implementations of `html_init`, `nscss_init`,
 `image_init`, `fetcher_init`, and `hlcache_initialise` with real calls
 into the now-ported NetSurf libraries (libparserutils, libhubbub,
@@ -38,7 +38,7 @@ URL entered
 
 **Location:** [`browser/netsurf/content/handlers/html/`](../../browser/netsurf/content/handlers/html/)
 
-**File counts:** 23 `.c` files, 21 `.h` files, **32,079 LOC** —
+**File counts:** 23 `.c` files, 21 `.h` files, **32,079 LOC** ,
 comparable in size to libdom.
 
 ### File list
@@ -97,11 +97,11 @@ nserror html_init(void)
 ```
 
 So `html_init`:
-1. Calls `html_css_init()` (in `html/css.c`) — initializes the CSS bridge for HTML
+1. Calls `html_css_init()` (in `html/css.c`), initializes the CSS bridge for HTML
 2. Registers the `html_content_handler` for each MIME type in `html_types[]` (text/html, application/xhtml+xml, etc.) via `content_factory_register_handler`
 
 For this to work, two prerequisites must be true:
-- **`content_factory_register_handler` must be available** — i.e.
+- **`content_factory_register_handler` must be available**, i.e.
   `content/content_factory.c` must be in the build (it is NOT today)
 - **The `html_content_handler` struct** at `html.c:2345-2360` must be a
   valid `content_handler` and all its function pointer targets
@@ -112,7 +112,7 @@ For this to work, two prerequisites must be true:
 
 **Location:** [`browser/netsurf/content/handlers/css/`](../../browser/netsurf/content/handlers/css/)
 
-**File counts:** 5 `.c` files, 6 `.h` files, **6,590 LOC** — much
+**File counts:** 5 `.c` files, 6 `.h` files, **6,590 LOC**, much
 smaller than the html handler.
 
 ### File list
@@ -150,7 +150,7 @@ nserror nscss_init(void)
 
 Same shape as `html_init`: register the css content handler, then call
 `css_hint_init()` (in `hints.c`) to set up the presentational-hint
-mapping. Same prerequisite — needs `content_factory_register_handler`.
+mapping. Same prerequisite, needs `content_factory_register_handler`.
 
 ## 3. C99 / CW8 audit of HTML + CSS handler files
 
@@ -160,7 +160,7 @@ in `content/handlers/html/` and `content/handlers/css/`:
 | Category | Count | Verdict |
 |---|---:|---|
 | `inline` keyword | **17 files** | Already covered by `#define inline` in prefix |
-| `//` line comments | **0 files** | Already clean — no fix needed |
+| `//` line comments | **0 files** | Already clean, no fix needed |
 | Designated initializers | **9 files** | Need converting (assignment-statement form) |
 | For-scope declarations | **1 file** (`layout_flex.c`) | Need converting to C89 |
 | `restrict` keyword | 0 | n/a |
@@ -170,10 +170,10 @@ in `content/handlers/html/` and `content/handlers/css/`:
 | `%zu` printf | 1 file | Probably gated; check on first build |
 | Compound literals | 0 | n/a |
 | `<strings.h>` | **7 files** | Already shimmed (libhubbub port) |
-| `<math.h>` | **1 file** (`layout_flex.c`) | New — CW8 MSL has it but check |
+| `<math.h>` | **1 file** (`layout_flex.c`) | New, CW8 MSL has it but check |
 | `<nsutils/time.h>` | 1 file (`html.c`) | Already stubbed in `frontends/macos9/nsutils/time.h` |
 
-**Designated initializers** (9 files) — these need fixing using the
+**Designated initializers** (9 files), these need fixing using the
 same assignment-statement playbook from libdom and libcss. Sample sites:
 
 ```
@@ -184,16 +184,16 @@ html/html.c:2345-2360            html_content_handler vtable initializer
                                   fields)
 ```
 
-The `html_content_handler` static const is the most important — it's a
+The `html_content_handler` static const is the most important, it's a
 file-scope `static const struct content_handler` initializer with
 designated `.field = func` syntax. C89 forbids this. **Same fix as
 libcss `format_list_style.c`:** convert to positional initializer in
 struct field order via a Python helper.
 
-**For-scope declaration** (1 file) — `layout_flex.c` has at least one
+**For-scope declaration** (1 file), `layout_flex.c` has at least one
 `for (size_t i = ...)` site. Trivial fix.
 
-### `<dom/bindings/hubbub/parser.h>` — path issue
+### `<dom/bindings/hubbub/parser.h>`, path issue
 
 Four files in NetSurf core do `#include <dom/bindings/hubbub/parser.h>`:
 
@@ -219,7 +219,7 @@ vendored sources where libdom isn't "installed" anywhere.
    `#include`s the real path via the libdom user-search-path. Works
    everywhere but adds a tracked file.
 3. **Add `browser/libdom` to the search path** so `dom/bindings/...`
-   resolves naturally — but only if the libdom dir contains a `dom/`
+   resolves naturally, but only if the libdom dir contains a `dom/`
    subdir, which it doesn't.
 
 **Recommended:** option 2 (wrapper header). One file, no symlink, works
@@ -230,8 +230,8 @@ on both Linux and CW8.
 ### `frontends/macos9/html/html.h` and `html/form_internal.h`
 
 Two files, **87 lines total**. These are stubs of the NetSurf-core HTML
-content handler types — they declare `struct html_stylesheet`,
-`struct content_html_object`, and a partial `struct form` — used by
+content handler types, they declare `struct html_stylesheet`,
+`struct content_html_object`, and a partial `struct form`, used by
 the existing build's compilation of `desktop/browser_window.c` etc.
 which forward-declare these types.
 
@@ -256,7 +256,7 @@ css/css.h     24 lines    (NetSurf core css/css.h stub)
 css/utils.h   115 lines   (NetSurf core css/utils.h stub)
 ```
 
-Same situation as the `html/` stubs — they shadow what would be the
+Same situation as the `html/` stubs, they shadow what would be the
 real `content/handlers/css/css.h` and `content/handlers/css/utils.h`.
 But because they live in `frontends/macos9/css/` which is not on the
 search path, they're orphaned today.
@@ -275,10 +275,10 @@ frontends/macos9/css/utils.h          115 lines
 ```
 
 Smaller deletion than libdom (1,638) or libcss (2,013), because these
-stubs were always thinner — they just typedef'd a few structs to keep
+stubs were always thinner, they just typedef'd a few structs to keep
 the existing 27-file build linking.
 
-## 5. Cascading dependencies — what else has to come into the build
+## 5. Cascading dependencies, what else has to come into the build
 
 `html_init` and `nscss_init` aren't standalone. The handlers transitively
 include and call into a lot of NetSurf core modules that aren't in the
@@ -292,7 +292,7 @@ NEW files needed in `MacSurf.mcp`:
 |---|---|
 | `content/content_factory.c` | Both `html_init` and `nscss_init` call `content_factory_register_handler`. **REQUIRED.** |
 | `content/textsearch.c` | Included by `html.c` via `content/textsearch.h`. Used for find-in-page. |
-| `content/no_backing_store.c` | Alternative to `fs_backing_store.c` — choose one based on whether we want llcache to disk. |
+| `content/no_backing_store.c` | Alternative to `fs_backing_store.c`, choose one based on whether we want llcache to disk. |
 
 ### Minimum utils/ closure
 
@@ -301,15 +301,15 @@ NEW files needed:
 | File | Used by |
 |---|---|
 | `utils/corestrings.c` | `html.c`, `css.c`, virtually every NetSurf core file |
-| `utils/libdom.c` | `html.c` (via `utils/libdom.h`) — provides libdom helpers like `libdom_iterate_child_elements` |
-| `utils/talloc.c` | `html.c` — talloc is a hierarchical memory pool used by the box tree |
+| `utils/libdom.c` | `html.c` (via `utils/libdom.h`), provides libdom helpers like `libdom_iterate_child_elements` |
+| `utils/talloc.c` | `html.c`, talloc is a hierarchical memory pool used by the box tree |
 | `utils/hashtable.c` | Used by various NetSurf modules indirectly |
 | `utils/bloom.c` | Bloom filter used by selector matching |
-| `utils/idna.c` | International Domain Name handling — used by URL parsing |
+| `utils/idna.c` | International Domain Name handling, used by URL parsing |
 | `utils/punycode.c` | Punycode for IDN |
 | `utils/useragent.c` | User-Agent string generation |
 | `utils/nscolour.c` | System colour palette |
-| `utils/ssl_certs.c` | Cert chain — may be stubbable if we don't do TLS in the browser |
+| `utils/ssl_certs.c` | Cert chain, may be stubbable if we don't do TLS in the browser |
 
 The current 10 utils/ files (`utils.c`, `file.c`, `filepath.c`, `log.c`,
 `time.c`, `nsurl.c`, `url.c`, `utf8.c`, `messages.c`, `nsoption.c`)
@@ -321,16 +321,16 @@ NEW files needed:
 
 | File | Used by |
 |---|---|
-| `desktop/selection.c` | `html.c` — text selection state |
-| `desktop/scrollbar.c` | `html.c` — scrollable region scroll bars |
-| `desktop/textarea.c` | `html.c` — `<textarea>` editing |
-| `desktop/system_colour.c` | `css/css.c` — system colour resolution |
+| `desktop/selection.c` | `html.c`, text selection state |
+| `desktop/scrollbar.c` | `html.c`, scrollable region scroll bars |
+| `desktop/textarea.c` | `html.c`, `<textarea>` editing |
+| `desktop/system_colour.c` | `css/css.c`, system colour resolution |
 
 Maybe more, depending on what `html_create` and friends pull in. The
 current 5 desktop files (`browser.c`, `browser_window.c`, `netsurf.c`,
 `gui_factory.c`, `plot_style.c`) stay.
 
-### Image handler — the gated escape hatch
+### Image handler, the gated escape hatch
 
 `image_init()` from `content/handlers/image/image.c`:
 
@@ -361,13 +361,13 @@ define `WITH_BMP`, `WITH_GIF`, `WITH_PNG`, etc., `image_init()` reduces
 to `return NSERROR_OK` and **not a single image library is needed**.
 The `image.c` file by itself compiles standalone.
 
-**Implication:** image support can be deferred indefinitely — we just
+**Implication:** image support can be deferred indefinitely, we just
 include `image.c` (a no-op stub equivalent) and skip the format-specific
 files. v0.2 ships with no image rendering and that's a deliberate
 scope decision, not a hack. v0.3 milestone adds libnsgif first
 (smallest, simplest format), then libnsbmp, then later libpng/libjpeg.
 
-## 6. The HTTP fetcher — `macos9_http_fetcher.c`
+## 6. The HTTP fetcher, `macos9_http_fetcher.c`
 
 The current [`macos9_fetch.c`](../../browser/netsurf/frontends/macos9/macos9_fetch.c)
 implements `macos9_fetch_url()` as a single synchronous function: open
@@ -428,23 +428,23 @@ nserror fetch_data_register(void)
 ```
 
 Note `data.c` uses **designated initializers** in the original
-upstream — they need positional conversion for CW8 in our build (same
+upstream, they need positional conversion for CW8 in our build (same
 treatment as the other ports).
 
 ### How the existing `macos9_fetch.c` maps onto fetcher_operation_table
 
 Current code is a single 250-line `macos9_fetch_url()` function. To
 become a proper fetcher backend, the OT primitives need to be split
-across the 9 callbacks. The OT calls themselves don't change — only
+across the 9 callbacks. The OT calls themselves don't change, only
 how they're sequenced and where they live.
 
 | Callback | What it does | Reused from current code |
 |---|---|---|
 | `initialise(scheme)` | Called once per scheme. Verify `corestring_lwc_http` matches. Return true. | (new, 5 lines) |
 | `acceptable(url)` | Return `nsurl_get_scheme_type(url) == NSURL_SCHEME_HTTP` (or similar). | (new, 3 lines) |
-| `setup(parent, url, ...)` | Allocate a `macos9_fetch_ctx` struct, store url + headers + state machine state. Return ctx pointer. | (new, ~40 lines — state struct definition) |
-| `start(ctx)` | Add ctx to a per-scheme ring (linked list of active fetches). Return true. | (new, ~10 lines — ring management) |
-| `poll(scheme)` | The work loop. For each fetch in the ring: <br/>• If state is INIT: open endpoint, bind, install yield notifier, switch to async, start OTConnect. State → CONNECTING. <br/>• If state is CONNECTING and notifier saw T_CONNECT: build HTTP request, OTSnd, state → SENDING. <br/>• If state is SENDING and OTSnd done: state → RECEIVING. <br/>• If state is RECEIVING: OTRcv non-blocking; for each byte chunk, parse headers if not yet seen, then call `fetch_send_callback(FETCH_DATA, ...)`. If kOTNoDataErr, return and try next poll. If done, send `FETCH_FINISHED` and remove from ring. | **all the existing OT primitives** from macos9_fetch.c — just split across states |
+| `setup(parent, url, ...)` | Allocate a `macos9_fetch_ctx` struct, store url + headers + state machine state. Return ctx pointer. | (new, ~40 lines, state struct definition) |
+| `start(ctx)` | Add ctx to a per-scheme ring (linked list of active fetches). Return true. | (new, ~10 lines, ring management) |
+| `poll(scheme)` | The work loop. For each fetch in the ring: <br/>• If state is INIT: open endpoint, bind, install yield notifier, switch to async, start OTConnect. State → CONNECTING. <br/>• If state is CONNECTING and notifier saw T_CONNECT: build HTTP request, OTSnd, state → SENDING. <br/>• If state is SENDING and OTSnd done: state → RECEIVING. <br/>• If state is RECEIVING: OTRcv non-blocking; for each byte chunk, parse headers if not yet seen, then call `fetch_send_callback(FETCH_DATA, ...)`. If kOTNoDataErr, return and try next poll. If done, send `FETCH_FINISHED` and remove from ring. | **all the existing OT primitives** from macos9_fetch.c, just split across states |
 | `abort(ctx)` | Set abort flag. The next `poll` cleans up. | (new, 5 lines) |
 | `free(ctx)` | Close endpoint, dispose UPP, free ctx struct. | reuse current cleanup code |
 | `fdset(...)` | Doesn't apply to OT. Return -1 (no fd). | (new, 1 line) |
@@ -454,7 +454,7 @@ how they're sequenced and where they live.
 
 The new fetcher needs explicit state. The current code blocks
 synchronously through CONNECT/SEND/RECV in one shot. The fetcher_op
-contract is poll-based — `poll()` is called periodically by NetSurf
+contract is poll-based, `poll()` is called periodically by NetSurf
 core's event loop and is expected to make progress, not block.
 
 Two ways to implement this:
@@ -469,7 +469,7 @@ is what the audit's first OT research said to use.
 
 **Option B: Sync OT with `OTUseSyncIdleEvents` + cooperative thread**
 
-Same approach as the current `macos9_fetch.c` — use sync+blocking
+Same approach as the current `macos9_fetch.c`, use sync+blocking
 OT calls but install a notifier that calls `YieldToAnyThread()` on
 `kOTSyncIdleEvent`, so the cooperative event loop keeps running during
 blocked calls. Simpler to implement than async, matches the current
@@ -478,7 +478,7 @@ working code.
 **Recommendation:** Option B for v0.2. Reuses the existing OT code
 verbatim and matches what we know works on real OS 9 hardware
 (verified against frogfind.com at v0.1.0). Trade-off is that one slow
-fetch can stall other fetches — acceptable for a browser that does
+fetch can stall other fetches, acceptable for a browser that does
 one page load at a time. Option A is the proper Carbon Event Manager
 pattern but is more complex and doesn't buy anything for our use case.
 
@@ -503,12 +503,12 @@ fetch_multipart_data_new_kv, fetch_multipart_data_find,
 fetch_multipart_data_clone, fetch_multipart_data_destroy
 ```
 
-**These are NOT replaced by `macos9_http_fetcher.c`** — they live in
+**These are NOT replaced by `macos9_http_fetcher.c`**, they live in
 NetSurf core's `content/fetch.c` which is **already in the build**.
 The stub conflicts with the real implementation today; once we delete
 `fetch_stub.c` from disk and let `content/fetch.c` provide them, the
 real `fetch_start` etc. get linked. The real `fetch_start` then routes
-to whatever fetcher is registered for the URL's scheme — which is
+to whatever fetcher is registered for the URL's scheme, which is
 where our `macos9_http_fetcher` plugs in.
 
 So the action is: **delete `fetch_stub.c`** and rely on the existing
@@ -516,12 +516,12 @@ So the action is: **delete `fetch_stub.c`** and rely on the existing
 is parallel to how the prior ports deleted `corestrings_stub.c`/`lwc_stub.c`
 mismatches.
 
-**Same with `misc_stub.c::fetcher_init()`** — that stub returns OK
+**Same with `misc_stub.c::fetcher_init()`**, that stub returns OK
 without doing anything. Replace with a real `fetcher_init()` that
 calls our `macos9_http_fetcher_register()`. Either delete the stub
 function from `misc_stub.c` and let `content/fetch.c::fetcher_init`
 take over (it iterates registered fetchers but also tries to register
-data/file/about/curl fetchers — those need to be either ported or
+data/file/about/curl fetchers, those need to be either ported or
 stubbed), or write a thin MacSurf-specific replacement.
 
 Cleanest: write a new `macos9_fetcher_init.c` that calls
@@ -534,7 +534,7 @@ a 1-fetcher build (HTTP only via OT). All other URL schemes return
 
 Already in the build (`content/hlcache.c` and `content/llcache.c` are
 both in MacSurf.mcp). The stub at `misc_stub.c::ns_system_colour_init`
-and others fire BEFORE these init calls — they're prerequisite
+and others fire BEFORE these init calls, they're prerequisite
 initializers that must succeed for hlcache to start.
 
 `hlcache_initialise(params)` takes a parameters struct with backing
@@ -561,7 +561,7 @@ hlcache_initialise(&hl_params);
 
 **The current `desktop/netsurf.c::netsurf_init()` calls
 `hlcache_initialise` itself** with a params struct it builds from the
-options. We don't need to call it from frontend code — `netsurf_init`
+options. We don't need to call it from frontend code, `netsurf_init`
 already does it. The thing we need to ensure is that the **misc_stub
 overrides for `image_cache_init`, `nscolour_update`, `dom_namespace_initialise`,
 etc. don't blow up.** They currently return OK without doing anything,
@@ -608,7 +608,7 @@ stub.
 - The `<dom/bindings/hubbub/parser.h>` path issue is the only build-system
   surprise, and the fix is a single wrapper header
 
-## 9. Sequencing — what has to land before what
+## 9. Sequencing, what has to land before what
 
 ### Phase 1: Minimal fetcher wiring (no real handlers)
 
@@ -626,7 +626,7 @@ real HTTP fetcher actually does work:
 
 **Outcome of Phase 1:** the fetcher works end-to-end through NetSurf
 core, but no content handler is registered yet, so the page doesn't
-render — `hlcache_handle_retrieve` will fail with "no content handler
+render, `hlcache_handle_retrieve` will fail with "no content handler
 for type text/html". The fetcher is no longer the bottleneck. Useful
 because it isolates the fetch path from the rendering path for
 debugging.
@@ -637,11 +637,11 @@ Add the required NetSurf core helpers BEFORE the handlers themselves:
 
 6. Add `content/content_factory.c` to the build
 7. Add the 9-10 utils/ files (`corestrings.c`, `libdom.c`, `talloc.c`,
-   etc.) — work through compile errors one at a time
+   etc.), work through compile errors one at a time
 8. Add the 4 desktop/ files (`selection.c`, `scrollbar.c`,
    `textarea.c`, `system_colour.c`)
 9. Delete the corresponding stubs from `misc_stub.c`
-10. Verify the build still compiles and links — we now have the
+10. Verify the build still compiles and links, we now have the
     plumbing for content handlers but no handlers registered
 
 ### Phase 3: CSS handler (small, low-risk)
@@ -692,39 +692,39 @@ on it transitively:
 | **Total** | **~44** | **~800 lines new + conversions** | |
 
 Combined with the 443 library files already in the project, MacSurf.mcp
-will have **~487 .c files** after this milestone — about double the
+will have **~487 .c files** after this milestone, about double the
 current count.
 
-## 11. Minimum viable v0.2 — one path through the system
+## 11. Minimum viable v0.2, one path through the system
 
 If the goal is "any HTML page renders end to end via the real NetSurf
 pipeline," the minimum work is:
 
-1. Ship the fetcher (Phase 1) — 2 files, ~400 lines
-2. Ship the content infrastructure (Phase 2) — ~14 files added
-3. Ship the CSS handler (Phase 3) — 5 files added
-4. Ship the HTML handler (Phase 4) — 23 files added + conversions
+1. Ship the fetcher (Phase 1), 2 files, ~400 lines
+2. Ship the content infrastructure (Phase 2), ~14 files added
+3. Ship the CSS handler (Phase 3), 5 files added
+4. Ship the HTML handler (Phase 4), 23 files added + conversions
 5. Implement `plot_text`, `plot_clip`, `plot_rectangle` in
-   plotters.c — 3 functions, ~150 lines of QuickDraw
+   plotters.c, 3 functions, ~150 lines of QuickDraw
 
 **That's it.** 44 new project files, ~800 lines of frontend glue, and
 the stub deletions. Image rendering deferred to v0.3. JavaScript
 deferred to v0.3. Tables/floats/flexbox layout will all WORK because
-the libdom + libcss + libhubbub layers handle them — the layout engine
+the libdom + libcss + libhubbub layers handle them, the layout engine
 is in NetSurf core's `content/handlers/html/layout.c` (one of the 23
 files we're adding).
 
 The most likely v0.2 first-build failure modes:
 
-1. **Designated initializer conversion in `html_content_handler`** —
+1. **Designated initializer conversion in `html_content_handler`** ,
    it's 16+ function pointer fields and easy to get the order wrong.
-2. **Missing utils/ helper** — a function from `utils/messages.c`,
+2. **Missing utils/ helper**, a function from `utils/messages.c`,
    `utils/talloc.c`, or `utils/libdom.c` that html.c needs but isn't
    in our build. Linker errors will tell us which.
-3. **`<dom/bindings/hubbub/parser.h>` wrapper** — if the wrapper
+3. **`<dom/bindings/hubbub/parser.h>` wrapper**, if the wrapper
    header isn't in the right place or doesn't forward correctly, we'll
    see "file not found" errors.
-4. **Plotters not actually called** — if the plotter chain is connected
+4. **Plotters not actually called**, if the plotter chain is connected
    wrong, we'll see no errors but a blank window. Hardest debug class.
 
 ## 12. What this audit does NOT cover
@@ -735,18 +735,18 @@ The most likely v0.2 first-build failure modes:
   intersection, color conversion to QuickDraw RGB) is its own task.
 - The bookmarks/history work from the architecture doc's v0.2 scope.
   That's frontend-only and orthogonal to the core wiring.
-- The JS bridge (Standard mode) — explicitly deferred to v0.3.
-- Image format libraries (libnsgif, libnsbmp, libpng, libjpeg) —
+- The JS bridge (Standard mode), explicitly deferred to v0.3.
+- Image format libraries (libnsgif, libnsbmp, libpng, libjpeg) ,
   deferred to v0.3 by leaving WITH_BMP/etc. undefined.
 - Whether NetSurf core's `desktop/browser_window.c` (already in the
   build) has any latent dependencies on the html/css handlers that
-  haven't manifested because the stubs were silent. Likely yes —
+  haven't manifested because the stubs were silent. Likely yes ,
   expect compile errors when html_init goes from stub to real and
   the linker realises browser_window.c has been silently using the
   stub function signatures.
 - The `talloc` library. `utils/talloc.c` is a Samba-derived hierarchical
   memory allocator. It's in NetSurf's tree but uses POSIX-y patterns.
-  May need its own port pass — worth a quick look before Phase 2.
+  May need its own port pass, worth a quick look before Phase 2.
 
 ## 13. Open questions
 
@@ -807,9 +807,9 @@ land.
 
 ## Files
 
-- HTML handler source: [`browser/netsurf/content/handlers/html/`](../../browser/netsurf/content/handlers/html/) — 23 .c, 21 .h, ~32K LOC
-- CSS handler source: [`browser/netsurf/content/handlers/css/`](../../browser/netsurf/content/handlers/css/) — 5 .c, 6 .h, ~6.6K LOC
-- Image handler source: [`browser/netsurf/content/handlers/image/`](../../browser/netsurf/content/handlers/image/) — DEFERRED, gated by `#ifdef WITH_*`
+- HTML handler source: [`browser/netsurf/content/handlers/html/`](../../browser/netsurf/content/handlers/html/), 23 .c, 21 .h, ~32K LOC
+- CSS handler source: [`browser/netsurf/content/handlers/css/`](../../browser/netsurf/content/handlers/css/), 5 .c, 6 .h, ~6.6K LOC
+- Image handler source: [`browser/netsurf/content/handlers/image/`](../../browser/netsurf/content/handlers/image/), DEFERRED, gated by `#ifdef WITH_*`
 - Existing fetcher reference: [`browser/netsurf/content/fetchers/data.c`](../../browser/netsurf/content/fetchers/data.c)
 - Existing OT primitives: [`browser/netsurf/frontends/macos9/macos9_fetch.c`](../../browser/netsurf/frontends/macos9/macos9_fetch.c)
 - Stubs to delete:

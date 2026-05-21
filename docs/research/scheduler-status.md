@@ -6,7 +6,7 @@ Cooperative multitasking scheduler, WaitNextEvent loop, and browser window imple
 
 ## Files Modified
 
-### schedule.c — Timed callback scheduler
+### schedule.c, Timed callback scheduler
 
 Linked list of pending callbacks sorted by absolute tick time. Follows the RISC OS `frontends/riscos/schedule.c` pattern.
 
@@ -17,35 +17,35 @@ Linked list of pending callbacks sorted by absolute tick time. Follows the RISC 
 | `macos9_get_next_delay()` | Returns ticks until next due callback, or 15 ticks if queue empty. Used as WaitNextEvent sleep parameter |
 | `macos9_get_ticks()` | Static. Returns `TickCount()` on Mac OS 9, stub value on Linux |
 
-Timing: `TickCount()` — 1 tick = 1/60th second, monotonic from boot. Conversion: `ticks = (ms * 60) / 1000`.
+Timing: `TickCount()`, 1 tick = 1/60th second, monotonic from boot. Conversion: `ticks = (ms * 60) / 1000`.
 
 Safety: callback+param dedup on insert (same as RISC OS). Queue is in consistent state before invoking any callback, since callbacks may re-enter `macos9_schedule()`.
 
-### main.c — WaitNextEvent event loop
+### main.c, WaitNextEvent event loop
 
 `macos9_poll()` is the per-iteration function called from `main()`:
 
 1. Determine sleep time:
    - `1` tick when `macos9_fetching` is true (keep network responsive)
    - `macos9_get_next_delay()` otherwise (sleep until next callback, max 15 ticks)
-2. `WaitNextEvent(everyEvent, &event, sleep_ticks, NULL)` — yields CPU
-3. `macos9_dispatch_event(&event)` — switch on `event.what`
-4. `macos9_schedule_run()` — always, after every event
+2. `WaitNextEvent(everyEvent, &event, sleep_ticks, NULL)`, yields CPU
+3. `macos9_dispatch_event(&event)`, switch on `event.what`
+4. `macos9_schedule_run()`, always, after every event
 
 Event handlers:
 
 | Event | Handler | Status |
 |---|---|---|
-| `nullEvent` | `macos9_handle_null_event` — idle processing placeholder | Stub |
-| `mouseDown` | `macos9_handle_mouse_down` — FindWindow dispatch | **Real** |
-| `mouseUp` | `macos9_handle_mouse_up` — logs coordinates | Stub |
-| `keyDown` / `autoKey` | `macos9_handle_key_down` — Cmd-key → MenuKey dispatch | Real |
-| `updateEvt` | `macos9_handle_update` — BeginUpdate/EraseRect/EndUpdate | **Real** |
-| `activateEvt` | `macos9_handle_activate` — ActivateControl/DeactivateControl on scroll bars | **Real** |
-| `osEvt` | `macos9_handle_os_event` — logs subtype byte | Stub |
-| `diskEvt` | `macos9_handle_disk` — logs message | Stub |
+| `nullEvent` | `macos9_handle_null_event`, idle processing placeholder | Stub |
+| `mouseDown` | `macos9_handle_mouse_down`, FindWindow dispatch | **Real** |
+| `mouseUp` | `macos9_handle_mouse_up`, logs coordinates | Stub |
+| `keyDown` / `autoKey` | `macos9_handle_key_down`, Cmd-key → MenuKey dispatch | Real |
+| `updateEvt` | `macos9_handle_update`, BeginUpdate/EraseRect/EndUpdate | **Real** |
+| `activateEvt` | `macos9_handle_activate`, ActivateControl/DeactivateControl on scroll bars | **Real** |
+| `osEvt` | `macos9_handle_os_event`, logs subtype byte | Stub |
+| `diskEvt` | `macos9_handle_disk`, logs message | Stub |
 
-### window.c — Browser window management
+### window.c, Browser window management
 
 Real Carbon window with scroll bars and URL bar. All gui_window_table callbacks implemented (some still stubs for optional features).
 
@@ -63,9 +63,9 @@ Real Carbon window with scroll bars and URL bar. All gui_window_table callbacks 
 | `macos9_find_window()` | **Real** | Walks linked list, matches by WindowRef |
 | `macos9_create_initial_window()` | **Real** | Public wrapper, called from `main()` after `netsurf_init()` |
 
-### macos9.h — Updated declarations
+### macos9.h, Updated declarations
 
-**struct gui_window** — real fields:
+**struct gui_window**, real fields:
 
 ```c
 struct gui_window {
@@ -116,7 +116,7 @@ Verified with `gcc -fsyntax-only -std=c99 -Wall -I include -I . -I frontends` fr
 
 ## Toolbox Initialization & Menu Bar
 
-### main() — Toolbox init sequence
+### main(), Toolbox init sequence
 
 Full Mac OS 9 Toolbox initialization before `netsurf_register()`:
 
@@ -126,11 +126,11 @@ InitWindows() → InitMenus() → TEInit() → InitDialogs(NULL) →
 InitCursor() → FlushEvents(everyEvent, 0)
 ```
 
-### main() — Initial window
+### main(), Initial window
 
 After `netsurf_init()`, calls `macos9_create_initial_window()` to create the first browser window. This creates a 640×480 document window with scroll bars and URL bar.
 
-### macos9_init_menus() — Application menu bar
+### macos9_init_menus(), Application menu bar
 
 | Menu | ID | Items |
 |---|---|---|
@@ -142,7 +142,7 @@ After `netsurf_init()`, calls `macos9_create_initial_window()` to create the fir
 
 Menu IDs and item constants defined in `macos9.h`.
 
-### macos9_handle_mouse_down() — FindWindow dispatch
+### macos9_handle_mouse_down(), FindWindow dispatch
 
 | Part | Action |
 |---|---|
@@ -152,15 +152,15 @@ Menu IDs and item constants defined in `macos9.h`.
 | `inGrow` | `ResizeWindow(win, event->where, NULL, NULL)` |
 | `inGoAway` | `TrackGoAway()` → `browser_window_destroy(bw)` or `macos9_window_destroy(gw)` |
 
-### macos9_handle_update() — Window redraw
+### macos9_handle_update(), Window redraw
 
 `BeginUpdate(win)` → `GetPortBounds(GetWindowPort(win))` → `EraseRect()` → `EndUpdate(win)`. Content drawing via plotters not yet wired.
 
-### macos9_handle_activate() — Scroll bar activation
+### macos9_handle_activate(), Scroll bar activation
 
 Finds `gui_window` via `macos9_find_window()`. Calls `ActivateControl()`/`DeactivateControl()` on both scroll bars based on active state.
 
-### macos9_handle_key_down() — Cmd-key shortcuts
+### macos9_handle_key_down(), Cmd-key shortcuts
 
 Checks `cmdKey` modifier → `MenuKey()` → dispatches to `macos9_handle_menu()`.
 
@@ -168,19 +168,19 @@ Checks `cmdKey` modifier → `MenuKey()` → dispatches to `macos9_handle_menu()
 
 ## Design Decisions
 
-1. **No sentinel node** — Unlike RISC OS which uses a sentinel `sched_queue` struct, we use a bare `NULL` head pointer. Simpler for our case; the RISC OS sentinel exists to avoid a special case in their loop but our double-pointer walk handles it naturally.
+1. **No sentinel node**, Unlike RISC OS which uses a sentinel `sched_queue` struct, we use a bare `NULL` head pointer. Simpler for our case; the RISC OS sentinel exists to avoid a special case in their loop but our double-pointer walk handles it naturally.
 
-2. **schedule_run after every event** — RISC OS only runs on null events (to avoid re-entrance from `gui_multitask`). We don't have a multitask yield function, so running after every WaitNextEvent return is safe and keeps latency low.
+2. **schedule_run after every event**, RISC OS only runs on null events (to avoid re-entrance from `gui_multitask`). We don't have a multitask yield function, so running after every WaitNextEvent return is safe and keeps latency low.
 
-3. **Separate dispatch function** — Event handlers are individual functions rather than inline cases, matching the convention in CLAUDE.md ("keep Mac Toolbox calls isolated"). When real Toolbox calls are added, each handler stays self-contained.
+3. **Separate dispatch function**, Event handlers are individual functions rather than inline cases, matching the convention in CLAUDE.md ("keep Mac Toolbox calls isolated"). When real Toolbox calls are added, each handler stays self-contained.
 
-4. **`macos9_fetching` flag** — Global bool set by fetch code (not yet implemented). When true, WaitNextEvent sleeps only 1 tick so OT notifier results are processed promptly.
+4. **`macos9_fetching` flag**, Global bool set by fetch code (not yet implemented). When true, WaitNextEvent sleeps only 1 tick so OT notifier results are processed promptly.
 
-5. **Window layout constants in header** — `MACOS9_SCROLLBAR_WIDTH` (15) and `MACOS9_URLBAR_HEIGHT` (22) defined in `macos9.h` so both `window.c` and future files can use them consistently.
+5. **Window layout constants in header**, `MACOS9_SCROLLBAR_WIDTH` (15) and `MACOS9_URLBAR_HEIGHT` (22) defined in `macos9.h` so both `window.c` and future files can use them consistently.
 
-6. **Public wrapper for initial window** — `macos9_create_initial_window()` wraps the static `macos9_window_create()` callback. Keeps the callback table function static while allowing `main()` to create the first window.
+6. **Public wrapper for initial window**, `macos9_create_initial_window()` wraps the static `macos9_window_create()` callback. Keeps the callback table function static while allowing `main()` to create the first window.
 
-7. **WindowRef lookup** — `macos9_find_window()` walks the linked list to map a Carbon `WindowRef` back to a `gui_window`. Used by event handlers in `main.c` that receive a `WindowRef` from the event record.
+7. **WindowRef lookup**, `macos9_find_window()` walks the linked list to map a Carbon `WindowRef` back to a `gui_window`. Used by event handlers in `main.c` that receive a `WindowRef` from the event record.
 
 ---
 

@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-09
 **Source:** `errors.txt` after Build 13 fixes
-**Total errors:** 3,900 (REGRESSION from ~269 — **+3,631**)
+**Total errors:** 3,900 (REGRESSION from ~269, **+3,631**)
 
 ---
 
@@ -10,10 +10,10 @@
 
 | Build | Errors | Delta | Key Fix |
 |-------|-------:|------:|---------|
-| 1 | 1,374 | — | Baseline |
+| 1 | 1,374 |, | Baseline |
 | ... | ... | ... | ... |
-| 6 | 269 | — | Previous low point |
-| 13 | **3,900** | **+3,631** | **REGRESSION — prefix file broke the entire build** |
+| 6 | 269 |, | Previous low point |
+| 13 | **3,900** | **+3,631** | **REGRESSION, prefix file broke the entire build** |
 
 ---
 
@@ -31,13 +31,13 @@ The prefix file (lines 14-17) added in this build broke everything:
 ### Issue 1: `#include <time.h>` Finds the Wrong Header (3,861 errors)
 
 CW8 searches system paths for `<time.h>`. The access path order is:
-1. CIncludes, MacHeaders (CW8 system) — MSL's `<time.h>` lives here
+1. CIncludes, MacHeaders (CW8 system), MSL's `<time.h>` lives here
 2. `frontends/macos9/` stubs (our system paths)
 3. MSL_C paths
 
 BUT `utils/` is on the **user** access path, and CW8's `AlwaysSearchUserPaths` may still be `true` (or `<time.h>` resolves to NetSurf's `utils/time.h` through another mechanism). The result is that `#include <time.h>` in the prefix finds **NetSurf's `utils/time.h`** which declares functions using `nserror`, `time_t`, and other types that don't exist yet at this point in the prefix.
 
-This causes `nsc_sntimet`, `rfc1123_date`, etc. to fail with `illegal function definition` — and since the prefix is injected before every compilation unit, **this breaks every single file** (39 compilation units × ~100 cascade errors each = ~3,861 errors).
+This causes `nsc_sntimet`, `rfc1123_date`, etc. to fail with `illegal function definition`, and since the prefix is injected before every compilation unit, **this breaks every single file** (39 compilation units × ~100 cascade errors each = ~3,861 errors).
 
 ### Issue 2: `#include <stat.h>` File Not Found (39 errors)
 
@@ -79,9 +79,9 @@ These two lines must be removed entirely. They cannot be used because:
 - `<stat.h>` doesn't exist as a standalone MSL header at that path
 
 The types they were supposed to provide (`time_t`, `struct stat`, `mode_t`) need to come from a different source:
-- `time_t` — typedef it directly in the prefix or in mac_types.h
-- `mode_t` — typedef it directly in the prefix or in mac_types.h  
-- `struct stat` — either recreate shims/stat.h or include `<sys/stat.h>` if MSL provides it
+- `time_t`, typedef it directly in the prefix or in mac_types.h
+- `mode_t`, typedef it directly in the prefix or in mac_types.h  
+- `struct stat`, either recreate shims/stat.h or include `<sys/stat.h>` if MSL provides it
 
 ### Fix B: Restore mode_t and time_t Typedefs
 
@@ -96,9 +96,9 @@ These should go either in mac_types.h (with guards) or directly in the prefix fi
 ### Fix C: Decide on stat.h Strategy
 
 Options:
-1. **Recreate shims/stat.h** — the simplest, we've done this before
-2. **Try `#include <sys/stat.h>`** — MSL may have stat in a `sys/` subdirectory
-3. **Define struct stat in the prefix file directly** — nuclear option
+1. **Recreate shims/stat.h**, the simplest, we've done this before
+2. **Try `#include <sys/stat.h>`**, MSL may have stat in a `sys/` subdirectory
+3. **Define struct stat in the prefix file directly**, nuclear option
 
 ---
 

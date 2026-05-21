@@ -24,7 +24,7 @@ Each completed reformat emits one line:
 SITE url="<url>" boxes=N blk=N inlinec=N inline=N text=N other=N in_w=W in_h=H c_w=W c_h=H img_ok=N img_fail=N
 ```
 
-HTTP status / body bytes / proxy live in the preceding `http: done body=... status=... ka=...` line for the matching URL — grep up from the SITE line.
+HTTP status / body bytes / proxy live in the preceding `http: done body=... status=... ka=...` line for the matching URL, grep up from the SITE line.
 
 ## Blocker categories
 
@@ -88,7 +88,7 @@ Notes:
 ### 4. DuckDuckGo HTML (form/input baseline)
 
 - **URL:** https://html.duckduckgo.com/html/
-- **Why:** Slightly richer than lite — tables, forms, navigation.
+- **Why:** Slightly richer than lite, tables, forms, navigation.
 
 | Run | Loaded | Above-fold readable | Search/input usable | Images usable | Scroll usable | First blocker | Screenshot |
 |---|---|---|---|---|---|---|---|
@@ -193,7 +193,7 @@ A green sprint result is one of:
 
 1. A previously-blocked page is now usable.
 2. Multiple pages improve in a measurable axis (img_ok up, boxes complete, readable=yes).
-3. SITE data points to a clear next target — e.g. "5 of 9 pages blocked by MEMORY_IMAGE, next sprint tackles image survival."
+3. SITE data points to a clear next target, e.g. "5 of 9 pages blocked by MEMORY_IMAGE, next sprint tackles image survival."
 
 A red sprint result is:
 
