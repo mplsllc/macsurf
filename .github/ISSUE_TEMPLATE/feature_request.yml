@@ -1,57 +1,53 @@
 name: Feature request
-description: Suggest an enhancement or new capability for MacSurf
-title: "[enhancement] "
+description: Suggest a new CSS property, JS API, browser chrome feature, or other enhancement
+title: "[feature] "
 labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for the suggestion. MacSurf is a hobby-grade port to a 25-year-old OS, so feasibility constraints are tight — but interesting ideas are always welcome.
+        macsurf has an enormous CSS / DOM / JS surface still to fill in. Feature requests help us prioritize.
 
+        Before filing, please check `docs/css-status.md` and the existing issues to see if it's already tracked.
   - type: textarea
-    id: summary
+    id: feature
     attributes:
-      label: Summary
-      description: One or two sentences describing the proposed change.
+      label: What feature would you like?
+      description: Describe the CSS property, JS API, UI element, or behavior you'd like macsurf to support.
     validations:
       required: true
-
   - type: textarea
     id: motivation
     attributes:
-      label: Motivation / use case
-      description: Why is this worth doing? What does it unlock? Cite a real site or workflow if possible.
-    validations:
-      required: true
-
-  - type: textarea
-    id: approach
-    attributes:
-      label: Proposed approach
-      description: How would you implement this? Pointers to NetSurf, libcss, Carbon, OpenTransport, etc. are welcome.
-    validations:
-      required: false
-
-  - type: textarea
-    id: acceptance
-    attributes:
-      label: Acceptance criteria
-      description: How do we know it's done? List concrete behaviors or test sites.
-    validations:
-      required: false
-
+      label: Why is this useful?
+      description: What sites or use cases does this enable? Is there a specific real-world site that needs this?
   - type: dropdown
     id: area
     attributes:
       label: Area
       multiple: true
       options:
-        - network
-        - rendering
-        - ui
-        - build
-        - js-engine
-        - css
-        - other
+        - "CSS"
+        - "Grid"
+        - "Flex"
+        - "JavaScript / DOM"
+        - "Networking / HTTP"
+        - "TLS / macSSL"
+        - "Rendering / QuickDraw"
+        - "Images"
+        - "Fonts"
+        - "Browser chrome / UI"
+        - "Build / dev experience"
+        - "Documentation"
     validations:
       required: true
+  - type: textarea
+    id: spec-link
+    attributes:
+      label: Spec or reference
+      description: Link to the relevant CSS/JS spec, MDN page, or NetSurf upstream implementation if applicable.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds you've tried, or other approaches that could solve the same problem.

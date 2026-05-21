@@ -1,48 +1,57 @@
 name: Bug report
-description: Report a crash, rendering error, or other defect in MacSurf
+description: Something in macsurf is broken, crashes, or behaves wrong
 title: "[bug] "
 labels: ["bug", "needs-repro"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to file a bug. The more reproducible the report, the faster it can be fixed.
+        Thanks for reporting a bug! macsurf is an early alpha — bug reports from real hardware are exactly what this project needs.
 
-        If your machine crashes when MacSurf does, **set the application partition to at least 96 MB** in the Finder's Get Info window before retrying — partition pressure is the #1 source of false-positive crash reports.
-
+        Please fill in as much as you can. The hardware and OS fields are especially important since macsurf targets a narrow platform window.
   - type: textarea
     id: what-happened
     attributes:
       label: What happened?
-      description: A clear, specific description of the failure. One symptom per issue, please.
-      placeholder: e.g. "Browser quietly quits after loading apple.com; no error dialog. Reproduces on every load."
+      description: A clear description of the bug. What did you do, what did you expect, what actually happened?
+      placeholder: I clicked X and macsurf did Y, but I expected Z.
     validations:
       required: true
-
   - type: textarea
-    id: steps
+    id: repro
     attributes:
       label: Steps to reproduce
-      description: Numbered steps that reliably trigger the issue.
+      description: Numbered steps that reliably trigger the bug.
       placeholder: |
-        1. Launch MacSurf from a 96 MB partition
-        2. Paste https://example.com/foo into the address bar
-        3. Press Enter
-        4. Wait ~10 seconds
+        1. Launch macsurf
+        2. Navigate to https://example.com
+        3. Click the menu
+        4. ...
     validations:
       required: true
-
-  - type: textarea
-    id: expected-vs-actual
+  - type: input
+    id: url
     attributes:
-      label: Expected vs actual behavior
-      description: What you expected, and what you saw instead.
-      placeholder: |
-        Expected: page renders with images and text.
-        Actual: browser quits silently after the layout pass completes.
+      label: URL or test case
+      description: If the bug involves a specific page, paste the URL or attach a minimal HTML file.
+      placeholder: https://example.com/page
+  - type: dropdown
+    id: macsurf-version
+    attributes:
+      label: macsurf version
+      description: Which build are you running? Check About box or release notes.
+      options:
+        - "0.1a1"
+        - "0.1a2"
+        - "Build from source (specify commit below)"
+        - "Other (specify below)"
     validations:
       required: true
-
+  - type: input
+    id: macsurf-commit
+    attributes:
+      label: Commit / build details (if building from source)
+      placeholder: e.g. fixes158a, commit dd118ad6
   - type: dropdown
     id: os-version
     attributes:
@@ -53,46 +62,49 @@ body:
         - "9.1"
         - "9.2.1"
         - "9.2.2"
-        - "Other (specify in Hardware)"
+        - "SheepShaver"
+        - "Other (specify below)"
     validations:
       required: true
-
   - type: input
     id: hardware
     attributes:
       label: Hardware
-      description: Model, CPU, RAM. Real hardware and emulator both welcome — say which.
-      placeholder: e.g. "iMac G3 (Bondi), 333 MHz PPC 750, 256 MB RAM" or "SheepShaver, host: macOS 14"
+      description: Mac model, CPU speed, RAM. Be specific — quirks are often hardware-tied.
+      placeholder: e.g. Beige Power Mac G3 desktop, 233 MHz, 96 MB RAM
     validations:
       required: true
-
   - type: input
-    id: build
+    id: carbonlib
     attributes:
-      label: MacSurf version / build
-      description: Either a release tag (e.g. v0.1a1) or the most recent fixesNN you applied.
-      placeholder: e.g. "v0.1a1 + fixes161b"
-    validations:
-      required: true
-
-  - type: input
-    id: url
+      label: CarbonLib version
+      placeholder: e.g. 1.5, 1.6
+  - type: dropdown
+    id: network-mode
     attributes:
-      label: URL or test case
-      description: If the bug only reproduces on a specific page, paste the URL.
-      placeholder: https://apple.com/
-    validations:
-      required: false
-
+      label: Network mode
+      description: How is macsurf reaching the web?
+      options:
+        - "Direct HTTP (no proxy)"
+        - "Go TLS-stripping proxy"
+        - "macSSL (native TLS)"
+        - "Not applicable (offline / local file)"
   - type: textarea
     id: logs
     attributes:
-      label: Logs / screenshots
-      description: |
-        Paste the relevant tail of `macsurf_debug.log` (or `MacSurf.log`) and/or attach screenshots.
-        Drag screenshots into the box; GitHub uploads them automatically.
-      placeholder: |
-        [http_setup] url=https://apple.com/ class=DOC active=0/2 ...
-        SITE host=apple.com img=12/4 css=8/2 ...
-    validations:
-      required: false
+      label: Logs, screenshots, crash info
+      description: Paste log output, attach screenshots (drag into the textarea), or describe any error dialogs.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Anything else that might be relevant — extensions loaded, system tweaks, when it started happening, etc.
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and this isn't a duplicate
+          required: true
+        - label: I'm running on real hardware or SheepShaver (not a guess at behavior)
+          required: false

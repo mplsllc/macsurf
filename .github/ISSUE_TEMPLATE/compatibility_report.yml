@@ -1,0 +1,89 @@
+name: Website compatibility report
+description: A specific website works, partially works, or is broken in macsurf
+title: "[compat] "
+labels: ["compatibility"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Compatibility reports — both successes and failures — are gold. They help us prioritize CSS, JS, and networking work, and they feed the community compatibility wiki.
+
+        If a real-world site works in macsurf, please tell us! Positive reports are just as valuable as negative ones.
+  - type: input
+    id: site-url
+    attributes:
+      label: Site URL
+      placeholder: https://example.com
+    validations:
+      required: true
+  - type: dropdown
+    id: status
+    attributes:
+      label: Overall status
+      options:
+        - "Works fully"
+        - "Works partially (most content readable)"
+        - "Severely degraded but loads"
+        - "Does not load / unusable"
+        - "Crashes macsurf"
+    validations:
+      required: true
+  - type: textarea
+    id: what-works
+    attributes:
+      label: What works
+      placeholder: e.g. Page loads, text and images render, navigation links work.
+  - type: textarea
+    id: what-breaks
+    attributes:
+      label: What's broken
+      placeholder: e.g. Login form doesn't submit, sidebar overlaps content, JS errors in console.
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Drag images here — screenshots from real hardware are especially appreciated.
+  - type: dropdown
+    id: macsurf-version
+    attributes:
+      label: macsurf version
+      options:
+        - "0.1a1"
+        - "0.1a2"
+        - "Build from source"
+    validations:
+      required: true
+  - type: dropdown
+    id: os-version
+    attributes:
+      label: Mac OS version
+      options:
+        - "9.0"
+        - "9.0.4"
+        - "9.1"
+        - "9.2.1"
+        - "9.2.2"
+        - "SheepShaver"
+        - "Other"
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware
+      placeholder: e.g. Beige G3 desktop, 233 MHz, 96 MB RAM
+    validations:
+      required: true
+  - type: dropdown
+    id: network-mode
+    attributes:
+      label: Network mode
+      options:
+        - "Direct HTTP"
+        - "Go proxy"
+        - "macSSL"
+  - type: input
+    id: test-date
+    attributes:
+      label: Date tested
+      placeholder: YYYY-MM-DD
