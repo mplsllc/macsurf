@@ -50,6 +50,22 @@ long macsurf__site_img_fail = 0;
  * dropped before libcss saw it. */
 long macsurf__site_css_ok = 0;
 long macsurf__site_css_skip = 0;
+/* fixes161a — resource governor counters. rgov_skip_* are bumped by
+ * macos9_http_setup whenever per-class or global active caps refuse a
+ * fetch (sub-resource skipped, never reaches libcss / image content
+ * handler). fetch_active_peak tracks high-water-mark of active slots
+ * across the page load. fetch_slot_fail counts old MAX_F=64 array
+ * exhaustion events (should stay 0 with caps in place). heavy is a
+ * latched 0/1 marker for fixes161f's heavy-site mode. */
+long macsurf__site_rgov_skip_doc = 0;
+long macsurf__site_rgov_skip_css = 0;
+long macsurf__site_rgov_skip_img = 0;
+long macsurf__site_rgov_skip_script = 0;
+long macsurf__site_rgov_skip_font = 0;
+long macsurf__site_rgov_skip_other = 0;
+long macsurf__site_fetch_active_peak = 0;
+long macsurf__site_fetch_slot_fail = 0;
+long macsurf__site_heavy = 0;
 
 #ifdef MACSURF_DEBUG
 

@@ -101,21 +101,55 @@ struct macos9_fetch_ctx {
 	char chunk_size_buf[16];    /* hex line buffer */
 	int chunk_size_len;
 	int trailer_just_after_eol; /* tracks empty-line in CS_TRAILER */
-	/* fixes160c — set at setup time when URL looks like an image. Used to
-	 * cap concurrent image fetches at MAX_IMG_F so document/CSS/script
-	 * fetches never lose slots to a hero-image flood. */
-	int is_image;
+	/* fixes160c/fixes161a — resource class assigned at setup time, used
+	 * by the resource governor to apply per-class active-fetch caps. */
+	int rclass;
 };
 static struct macos9_fetch_ctx f_slots[MAX_F];
 
-/* fixes160c — concurrent-image fetch cap. MAX_F (64) remains the hard slot
- * array size for all fetch types; once MAX_IMG_F image slots are in flight
- * new image setups are refused (NetSurf treats this like any other fetch
- * failure — image_fail counter increments, page survives). HTML, CSS,
- * scripts, and anything we can't cheaply classify as an image take the
- * fast lane and use the remaining slots. 8 picked to match the gauntlet's
- * yahoo MAX_F=64 storm: leaves 56 slots for documents/CSS/sub-resources. */
-#define MAX_IMG_F 8
+/* fixes161a — resource governor classes. Used by the URL classifier
+ * and the per-class active-fetch caps. Each new fetch is classified
+ * once at setup and the class is stored on the slot for cheap counting
+ * during subsequent setups. */
+#define MACOS9_RC_DOCUMENT 0
+#define MACOS9_RC_CSS      1
+#define MACOS9_RC_IMAGE    2
+#define MACOS9_RC_SCRIPT   3
+#define MACOS9_RC_FONT     4
+#define MACOS9_RC_OTHER    5
+#define MACOS9_RC__COUNT   6
+
+/* fixes161a — per-class concurrent-fetch caps. MAX_F=64 stays as the
+ * hard slot array size for all fetch types; the governor refuses new
+ * setups when either the class cap or the global active cap is hit,
+ * so the array is rarely full in practice. Documents (priority 0) get
+ * 2 active to allow back-to-back navigation. CSS gets 4 (Apple ships
+ * 8-12 sheets per page after the size gate). Images stay at 8 from
+ * fixes160c. Scripts get the same peer-class 4 active that CSS gets —
+ * Duktape is a capable engine and anything it can't run yet we'll fill
+ * in-house, so JS is not a deferable second-tier resource. Fonts get
+ * 2. OTHER gets 4 for XHR/manifest/etc. Global cap of 16 keeps total
+ * active fetch pressure bounded regardless of which classes are
+ * firing. Heavy-site mode (fixes161f) tightens caps proportionally
+ * across ALL classes; it does not single scripts out. */
+#define MAX_DOC_F     2
+#define MAX_CSS_F     4
+#define MAX_IMG_F     8
+#define MAX_SCRIPT_F  4
+#define MAX_FONT_F    2
+#define MAX_OTHER_F   4
+#define MAX_GLOBAL_F  16
+
+/* fixes161a — set by macos9_http_mark_next_as_document() before a top-
+ * level navigation. The next setup() call consumes the flag and
+ * classifies its URL as DOCUMENT regardless of suffix. Falls back to
+ * URL-suffix classification when the flag is clear. */
+static int macos9_http_pending_document = 0;
+
+void macos9_http_mark_next_as_document(void)
+{
+	macos9_http_pending_document = 1;
+}
 
 #ifdef __MACOS9__
 /* fixes94 — keyed endpoint pool. Previously all entries were assumed
@@ -804,85 +838,219 @@ static bool macos9_http_initialise(lwc_string *s) { (void)s; return true; }
 static void macos9_http_finalise(lwc_string *s) { (void)s; }
 static bool macos9_http_acceptable(const struct nsurl *u) { (void)u; return true; }
 
-/* fixes160c — cheap URL-suffix classifier. Looks at the path portion of
- * the URL (everything before '?' or '#') and returns 1 when the final
- * extension matches a known raster/vector image type. Misses query-only
- * URLs that serve images (e.g. ?fmt=jpeg) — that's fine, those just take
- * the unthrottled path. The cap is a safety net, not a strict accountant. */
-static int macos9_url_is_image(struct nsurl *u) {
+/* fixes161a — URL-suffix resource classifier. Returns a MACOS9_RC_* enum.
+ * Caller is responsible for handling the navigation-hint override before
+ * calling this (the pending_document flag wins over suffix). Suffix is
+ * inspected against the URL path portion only (everything before '?' or
+ * '#'), with case-insensitive matching. Falls back to OTHER for anything
+ * unrecognized; bare URLs ending in / classify as DOCUMENT so that
+ * apple.com/, github.com/foo, /index.php-style URLs are treated as
+ * top-level docs even when the navigation hint is missing (e.g. an
+ * iframe load, a redirect target, a llcache re-fetch). */
+static int macos9_classify_url(struct nsurl *u) {
 	const char *s;
-	int n, i;
+	int n, i, last_slash;
 	char c4, c3, c2, c1;
-	if (u == NULL) return 0;
+	if (u == NULL) return MACOS9_RC_OTHER;
 	s = nsurl_access(u);
-	if (s == NULL) return 0;
+	if (s == NULL) return MACOS9_RC_OTHER;
 	n = (int)strlen(s);
 	for (i = 0; i < n; i++) {
 		if (s[i] == '?' || s[i] == '#') { n = i; break; }
 	}
-	if (n < 4) return 0;
+	if (n < 1) return MACOS9_RC_OTHER;
+
+	/* 5-char suffixes (.jpeg / .webp / .tiff / .avif / .woff2) */
+	if (n >= 6 && s[n-6] == '.') {
+		char c5;
+		c5 = (char)(s[n-5] | 0x20);
+		c4 = (char)(s[n-4] | 0x20);
+		c3 = (char)(s[n-3] | 0x20);
+		c2 = (char)(s[n-2] | 0x20);
+		c1 = (char)(s[n-1] | 0x20);
+		if (c5=='w' && c4=='o' && c3=='f' && c2=='f' && c1=='2')
+			return MACOS9_RC_FONT;
+	}
 	if (n >= 5 && s[n-5] == '.') {
 		c4 = (char)(s[n-4] | 0x20);
 		c3 = (char)(s[n-3] | 0x20);
 		c2 = (char)(s[n-2] | 0x20);
 		c1 = (char)(s[n-1] | 0x20);
-		if (c4=='j' && c3=='p' && c2=='e' && c1=='g') return 1;
-		if (c4=='w' && c3=='e' && c2=='b' && c1=='p') return 1;
-		if (c4=='t' && c3=='i' && c2=='f' && c1=='f') return 1;
-		if (c4=='a' && c3=='v' && c2=='i' && c1=='f') return 1;
+		if (c4=='j' && c3=='p' && c2=='e' && c1=='g') return MACOS9_RC_IMAGE;
+		if (c4=='w' && c3=='e' && c2=='b' && c1=='p') return MACOS9_RC_IMAGE;
+		if (c4=='t' && c3=='i' && c2=='f' && c1=='f') return MACOS9_RC_IMAGE;
+		if (c4=='a' && c3=='v' && c2=='i' && c1=='f') return MACOS9_RC_IMAGE;
+		if (c4=='w' && c3=='o' && c2=='f' && c1=='f') return MACOS9_RC_FONT;
+		if (c4=='h' && c3=='t' && c2=='m' && c1=='l') return MACOS9_RC_DOCUMENT;
+		if (c4=='s' && c3=='h' && c2=='t' && c1=='m') return MACOS9_RC_DOCUMENT;
+		if (c4=='a' && c3=='s' && c2=='p' && c1=='x') return MACOS9_RC_DOCUMENT;
 	}
-	if (s[n-4] == '.') {
+
+	/* 4-char suffixes */
+	if (n >= 4 && s[n-4] == '.') {
 		c3 = (char)(s[n-3] | 0x20);
 		c2 = (char)(s[n-2] | 0x20);
 		c1 = (char)(s[n-1] | 0x20);
-		if (c3=='j' && c2=='p' && c1=='g') return 1;
-		if (c3=='p' && c2=='n' && c1=='g') return 1;
-		if (c3=='g' && c2=='i' && c1=='f') return 1;
-		if (c3=='b' && c2=='m' && c1=='p') return 1;
-		if (c3=='i' && c2=='c' && c1=='o') return 1;
-		if (c3=='s' && c2=='v' && c1=='g') return 1;
-		if (c3=='t' && c2=='i' && c1=='f') return 1;
+		if (c3=='j' && c2=='p' && c1=='g') return MACOS9_RC_IMAGE;
+		if (c3=='p' && c2=='n' && c1=='g') return MACOS9_RC_IMAGE;
+		if (c3=='g' && c2=='i' && c1=='f') return MACOS9_RC_IMAGE;
+		if (c3=='b' && c2=='m' && c1=='p') return MACOS9_RC_IMAGE;
+		if (c3=='i' && c2=='c' && c1=='o') return MACOS9_RC_IMAGE;
+		if (c3=='s' && c2=='v' && c1=='g') return MACOS9_RC_IMAGE;
+		if (c3=='t' && c2=='i' && c1=='f') return MACOS9_RC_IMAGE;
+		if (c3=='c' && c2=='s' && c1=='s') return MACOS9_RC_CSS;
+		if (c3=='m' && c2=='j' && c1=='s') return MACOS9_RC_SCRIPT;
+		if (c3=='t' && c2=='t' && c1=='f') return MACOS9_RC_FONT;
+		if (c3=='o' && c2=='t' && c1=='f') return MACOS9_RC_FONT;
+		if (c3=='e' && c2=='o' && c1=='t') return MACOS9_RC_FONT;
+		if (c3=='h' && c2=='t' && c1=='m') return MACOS9_RC_DOCUMENT;
+		if (c3=='p' && c2=='h' && c1=='p') return MACOS9_RC_DOCUMENT;
+		if (c3=='j' && c2=='s' && c1=='p') return MACOS9_RC_DOCUMENT;
 	}
-	return 0;
+
+	/* 3-char suffixes (.js) */
+	if (n >= 3 && s[n-3] == '.') {
+		c2 = (char)(s[n-2] | 0x20);
+		c1 = (char)(s[n-1] | 0x20);
+		if (c2=='j' && c1=='s') return MACOS9_RC_SCRIPT;
+	}
+
+	/* No recognized extension: treat URLs whose last path component is
+	 * empty (ends in /) or has no dot after the last slash as DOCUMENT.
+	 * Catches apple.com/, github.com/mplsllc/macsurf, /api/foo, etc. */
+	last_slash = -1;
+	for (i = 0; i < n; i++) {
+		if (s[i] == '/') last_slash = i;
+	}
+	if (last_slash < 0) return MACOS9_RC_OTHER;
+	{
+		int has_dot = 0;
+		for (i = last_slash + 1; i < n; i++) {
+			if (s[i] == '.') { has_dot = 1; break; }
+		}
+		if (!has_dot) return MACOS9_RC_DOCUMENT;
+	}
+	return MACOS9_RC_OTHER;
+}
+
+static const char *macos9_rclass_name(int rc) {
+	switch (rc) {
+		case MACOS9_RC_DOCUMENT: return "DOC";
+		case MACOS9_RC_CSS:      return "CSS";
+		case MACOS9_RC_IMAGE:    return "IMG";
+		case MACOS9_RC_SCRIPT:   return "SCR";
+		case MACOS9_RC_FONT:     return "FNT";
+		default:                 return "OTH";
+	}
+}
+
+static int macos9_rclass_cap(int rc) {
+	switch (rc) {
+		case MACOS9_RC_DOCUMENT: return MAX_DOC_F;
+		case MACOS9_RC_CSS:      return MAX_CSS_F;
+		case MACOS9_RC_IMAGE:    return MAX_IMG_F;
+		case MACOS9_RC_SCRIPT:   return MAX_SCRIPT_F;
+		case MACOS9_RC_FONT:     return MAX_FONT_F;
+		default:                 return MAX_OTHER_F;
+	}
+}
+
+static void macos9_rgov_bump_skip(int rc) {
+	extern long macsurf__site_rgov_skip_doc;
+	extern long macsurf__site_rgov_skip_css;
+	extern long macsurf__site_rgov_skip_img;
+	extern long macsurf__site_rgov_skip_script;
+	extern long macsurf__site_rgov_skip_font;
+	extern long macsurf__site_rgov_skip_other;
+	switch (rc) {
+		case MACOS9_RC_DOCUMENT: macsurf__site_rgov_skip_doc++; break;
+		case MACOS9_RC_CSS:      macsurf__site_rgov_skip_css++; break;
+		case MACOS9_RC_IMAGE:    macsurf__site_rgov_skip_img++; break;
+		case MACOS9_RC_SCRIPT:   macsurf__site_rgov_skip_script++; break;
+		case MACOS9_RC_FONT:     macsurf__site_rgov_skip_font++; break;
+		default:                 macsurf__site_rgov_skip_other++; break;
+	}
 }
 
 static void *macos9_http_setup(struct fetch *p, struct nsurl *u, bool o, bool d, const char *pu, const struct fetch_multipart_data *pm, const char **h) {
 	int i;
-	int is_img;
-	int img_active;
+	int rc;
+	int class_active;
+	int global_active;
+	int slot_index = -1;
 	(void)o;(void)d;(void)pu;(void)pm;(void)h;
-	/* fixes160c — classify first, then count concurrent image slots. If
-	 * this is an image and we're already at MAX_IMG_F, refuse the slot
-	 * before allocating so HTML/CSS/script fetches keep their lane. */
-	is_img = macos9_url_is_image(u);
-	if (is_img) {
-		img_active = 0;
-		for (i = 0; i < MAX_F; i++) {
-			if (f_slots[i].state != MFS_IDLE && f_slots[i].is_image) {
-				img_active++;
-			}
-		}
-		if (img_active >= MAX_IMG_F) {
-			macsurf_debug_log_writef(
-				"http_setup: img cap hit active=%d cap=%d - image fetch refused",
-				img_active, MAX_IMG_F);
-			return NULL;
+
+	/* fixes161a — classify. Navigation-hint flag wins over URL suffix
+	 * (top-level docs that look like /api/x or /foo.png still classify
+	 * as DOCUMENT). The flag is single-shot: consumed by the first
+	 * setup() call after the navigation. */
+	if (macos9_http_pending_document) {
+		rc = MACOS9_RC_DOCUMENT;
+		macos9_http_pending_document = 0;
+	} else {
+		rc = macos9_classify_url(u);
+	}
+
+	/* Count active slots for governor cap checks. One pass tallies both
+	 * the per-class active count and the global active count. */
+	class_active = 0;
+	global_active = 0;
+	for (i = 0; i < MAX_F; i++) {
+		if (f_slots[i].state == MFS_IDLE) continue;
+		global_active++;
+		if (f_slots[i].rclass == rc) class_active++;
+	}
+
+	if (global_active >= MAX_GLOBAL_F) {
+		extern long macsurf__site_rgov_skip_other;
+		(void)macsurf__site_rgov_skip_other;
+		macos9_rgov_bump_skip(rc);
+		macsurf_debug_log_writef(
+			"RGOV class=%s action=defer reason=global active=%d cap=%d",
+			macos9_rclass_name(rc), global_active, MAX_GLOBAL_F);
+		return NULL;
+	}
+	if (class_active >= macos9_rclass_cap(rc)) {
+		macos9_rgov_bump_skip(rc);
+		macsurf_debug_log_writef(
+			"RGOV class=%s action=defer reason=class active=%d cap=%d",
+			macos9_rclass_name(rc),
+			class_active, macos9_rclass_cap(rc));
+		return NULL;
+	}
+
+	/* Cap checks passed — allocate a slot from the array. */
+	for (i = 0; i < MAX_F; i++) {
+		if (f_slots[i].state == MFS_IDLE) { slot_index = i; break; }
+	}
+	if (slot_index < 0) {
+		extern long macsurf__site_fetch_slot_fail;
+		macsurf__site_fetch_slot_fail++;
+		macsurf_debug_log_writef(
+			"http_setup: NO FREE SLOTS (MAX_F=%d) - fetch will FAIL",
+			MAX_F);
+		return NULL;
+	}
+	memset(&f_slots[slot_index], 0, sizeof(f_slots[0]));
+	f_slots[slot_index].parent = p;
+	f_slots[slot_index].url = nsurl_ref(u);
+	f_slots[slot_index].state = MFS_QUEUED;
+	f_slots[slot_index].content_length = -1;
+	f_slots[slot_index].keep_alive_ok = 1;
+	f_slots[slot_index].rclass = rc;
+	/* fetch_active_peak: high-water-mark across the page load.
+	 * +1 because this allocation hasn't been counted yet. */
+	{
+		extern long macsurf__site_fetch_active_peak;
+		if ((long)(global_active + 1) > macsurf__site_fetch_active_peak) {
+			macsurf__site_fetch_active_peak = (long)(global_active + 1);
 		}
 	}
-	for(i=0;i<MAX_F;i++) if(f_slots[i].state==MFS_IDLE) {
-		memset(&f_slots[i],0,sizeof(f_slots[0]));
-		f_slots[i].parent=p; f_slots[i].url=nsurl_ref(u);
-		/* fixes91 — was MFS_INIT; defer OT until ops.start. */
-		f_slots[i].state=MFS_QUEUED;
-		f_slots[i].content_length=-1;
-		f_slots[i].keep_alive_ok=1;
-		f_slots[i].is_image = is_img;
-		macsurf_debug_log_writef("http_setup: slot=%d/%d img=%d",
-			i, MAX_F, is_img);
-		return &f_slots[i];
-	}
-	macsurf_debug_log_writef("http_setup: NO FREE SLOTS (MAX_F=%d) - fetch will FAIL", MAX_F);
-	return NULL;
+	macsurf_debug_log_writef(
+		"RGOV class=%s action=fetch slot=%d global=%d class=%d",
+		macos9_rclass_name(rc), slot_index,
+		global_active + 1, class_active + 1);
+	return &f_slots[slot_index];
 }
 static bool macos9_http_start(void *ctx) {
 	struct macos9_fetch_ctx *c = (struct macos9_fetch_ctx*)ctx;

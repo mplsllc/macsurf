@@ -171,6 +171,13 @@ void macos9_window_navigate(struct gui_window *g, const char *u) {
 	if(g->window) InvalWindowRect(g->window, &g->status_rect);
 	if(nsurl_create(u,&n)!=NSERROR_OK) { MS_LOG("nav: nsurl_create FAIL"); return; }
 	MS_LOG("nav: calling browser_window_navigate");
+	{
+		/* fixes161a — mark the next http_setup() as DOCUMENT so the
+		 * resource governor gives it document-class priority, regardless
+		 * of URL suffix. Single-shot: consumed by the first setup call. */
+		extern void macos9_http_mark_next_as_document(void);
+		macos9_http_mark_next_as_document();
+	}
 	nav_e = browser_window_navigate(g->bw, n, NULL, BW_NAVIGATE_HISTORY, NULL, NULL, NULL);
 	macsurf_debug_log_writef("nav: bw_navigate returned %d", (int)nav_e);
 	nsurl_unref(n);

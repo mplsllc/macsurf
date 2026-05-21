@@ -124,6 +124,9 @@ static void macos9_handle_menu(short menu_id, short item) {
 			struct browser_window *bw = NULL;
 			nsurl *home = NULL;
 			if (nsurl_create(MACSURF_HOME_URL, &home) == NSERROR_OK) {
+				/* fixes161a — mark next setup as DOCUMENT class. */
+				extern void macos9_http_mark_next_as_document(void);
+				macos9_http_mark_next_as_document();
 				browser_window_create(BW_CREATE_HISTORY | BW_CREATE_FOREGROUND,
 					home, NULL, NULL, &bw);
 				nsurl_unref(home);
@@ -741,7 +744,10 @@ int main(void) {
 		nsurl *home = NULL;
 		if (macos9_ot_context != NULL &&
 		    nsurl_create(MACSURF_HOME_URL, &home) == NSERROR_OK) {
+			/* fixes161a — mark next setup as DOCUMENT class. */
+			extern void macos9_http_mark_next_as_document(void);
 			MS_LOG("launch: browser_window_create with home url");
+			macos9_http_mark_next_as_document();
 			browser_window_create(BW_CREATE_HISTORY | BW_CREATE_FOREGROUND,
 				home, NULL, NULL, &bw);
 			nsurl_unref(home);
