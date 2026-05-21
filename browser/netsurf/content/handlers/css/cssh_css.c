@@ -1653,11 +1653,15 @@ macsurf__justify_emit(char **out_p, size_t *cap_p, size_t *pos_p,
 			(unsigned)acc->justify_items,
 			(unsigned)acc->justify_self);
 	if (macsurf__justify_emit_count < 16) {
+		/* fixes159e: only %d/%ld/%s/%p in this logger — see
+		 * project_macsurf_debug_log_specifiers memory. %u in 159d
+		 * printed literally without consuming the arg, scrambling
+		 * the trailing %s into a crash. */
 		macsurf_debug_log_writef(
-			"JEMIT[%d] ji=%u js=%u bytes=\"%s\"",
+			"JEMIT[%d] ji=%d js=%d bytes=\"%s\"",
 			macsurf__justify_emit_count,
-			(unsigned)acc->justify_items,
-			(unsigned)acc->justify_self,
+			(int)acc->justify_items,
+			(int)acc->justify_self,
 			tmp);
 		macsurf__justify_emit_count++;
 	}

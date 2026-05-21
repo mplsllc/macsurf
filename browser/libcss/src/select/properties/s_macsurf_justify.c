@@ -57,11 +57,13 @@ css_error css__cascade_macsurf_justify(uint32_t opv,
 	}
 
 	if (macsurf__justify_cascade_count < 16) {
+		/* fixes159e: only %d/%ld/%s/%p in this logger — %lx/%x in
+		 * 159d would have scrambled the va_list too. */
 		macsurf_debug_log_writef(
-			"JCASC[%d] opv=0x%lx val=0x%x flag=%d is_set=%d v=%ld outranks=%d field_after=%ld",
+			"JCASC[%d] opv=%ld val=%d flag=%d is_set=%d v=%ld outranks=%d field_after=%ld",
 			macsurf__justify_cascade_count,
-			(unsigned long)opv,
-			(unsigned)getValue(opv),
+			(long)opv,
+			(int)getValue(opv),
 			(int)hasFlagValue(opv),
 			(int)is_set,
 			(long)v,
