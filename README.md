@@ -11,6 +11,8 @@
   Real CSS3. Real ES5 JavaScript. Real PNGs with alpha. Running on a beige G3.
 </p>
 
+<script type="text/javascript" src="https://cdnjs.buymeacoffee.com/1.0.0/button.prod.min.js" data-name="bmc-button" data-slug="Ptricky" data-color="#5F7FFF" data-emoji=""  data-font="Lato" data-text="Buy me a coffee <3" data-outline-color="#000000" data-font-color="#ffffff" data-coffee-color="#FFDD00" ></script>
+
 <p align="center">
   <a href="docs/release-notes/MacSurf-0.1a1.md"><img alt="version" src="https://img.shields.io/badge/version-0.1a1%20%E2%80%94%20alpha-orange"></a>
   <a href="docs/status.md"><img alt="status" src="https://img.shields.io/badge/status-active%20development-brightgreen"></a>
