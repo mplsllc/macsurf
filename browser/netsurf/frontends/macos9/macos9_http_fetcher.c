@@ -101,8 +101,21 @@ struct macos9_fetch_ctx {
 	char chunk_size_buf[16];    /* hex line buffer */
 	int chunk_size_len;
 	int trailer_just_after_eol; /* tracks empty-line in CS_TRAILER */
+	/* fixes160c — set at setup time when URL looks like an image. Used to
+	 * cap concurrent image fetches at MAX_IMG_F so document/CSS/script
+	 * fetches never lose slots to a hero-image flood. */
+	int is_image;
 };
 static struct macos9_fetch_ctx f_slots[MAX_F];
+
+/* fixes160c — concurrent-image fetch cap. MAX_F (64) remains the hard slot
+ * array size for all fetch types; once MAX_IMG_F image slots are in flight
+ * new image setups are refused (NetSurf treats this like any other fetch
+ * failure — image_fail counter increments, page survives). HTML, CSS,
+ * scripts, and anything we can't cheaply classify as an image take the
+ * fast lane and use the remaining slots. 8 picked to match the gauntlet's
+ * yahoo MAX_F=64 storm: leaves 56 slots for documents/CSS/sub-resources. */
+#define MAX_IMG_F 8
 
 #ifdef __MACOS9__
 /* fixes94 — keyed endpoint pool. Previously all entries were assumed
@@ -790,8 +803,72 @@ static void macos9_http_poll(lwc_string *s) {
 static bool macos9_http_initialise(lwc_string *s) { (void)s; return true; }
 static void macos9_http_finalise(lwc_string *s) { (void)s; }
 static bool macos9_http_acceptable(const struct nsurl *u) { (void)u; return true; }
+
+/* fixes160c — cheap URL-suffix classifier. Looks at the path portion of
+ * the URL (everything before '?' or '#') and returns 1 when the final
+ * extension matches a known raster/vector image type. Misses query-only
+ * URLs that serve images (e.g. ?fmt=jpeg) — that's fine, those just take
+ * the unthrottled path. The cap is a safety net, not a strict accountant. */
+static int macos9_url_is_image(struct nsurl *u) {
+	const char *s;
+	int n, i;
+	char c4, c3, c2, c1;
+	if (u == NULL) return 0;
+	s = nsurl_access(u);
+	if (s == NULL) return 0;
+	n = (int)strlen(s);
+	for (i = 0; i < n; i++) {
+		if (s[i] == '?' || s[i] == '#') { n = i; break; }
+	}
+	if (n < 4) return 0;
+	if (n >= 5 && s[n-5] == '.') {
+		c4 = (char)(s[n-4] | 0x20);
+		c3 = (char)(s[n-3] | 0x20);
+		c2 = (char)(s[n-2] | 0x20);
+		c1 = (char)(s[n-1] | 0x20);
+		if (c4=='j' && c3=='p' && c2=='e' && c1=='g') return 1;
+		if (c4=='w' && c3=='e' && c2=='b' && c1=='p') return 1;
+		if (c4=='t' && c3=='i' && c2=='f' && c1=='f') return 1;
+		if (c4=='a' && c3=='v' && c2=='i' && c1=='f') return 1;
+	}
+	if (s[n-4] == '.') {
+		c3 = (char)(s[n-3] | 0x20);
+		c2 = (char)(s[n-2] | 0x20);
+		c1 = (char)(s[n-1] | 0x20);
+		if (c3=='j' && c2=='p' && c1=='g') return 1;
+		if (c3=='p' && c2=='n' && c1=='g') return 1;
+		if (c3=='g' && c2=='i' && c1=='f') return 1;
+		if (c3=='b' && c2=='m' && c1=='p') return 1;
+		if (c3=='i' && c2=='c' && c1=='o') return 1;
+		if (c3=='s' && c2=='v' && c1=='g') return 1;
+		if (c3=='t' && c2=='i' && c1=='f') return 1;
+	}
+	return 0;
+}
+
 static void *macos9_http_setup(struct fetch *p, struct nsurl *u, bool o, bool d, const char *pu, const struct fetch_multipart_data *pm, const char **h) {
-	int i; (void)o;(void)d;(void)pu;(void)pm;(void)h;
+	int i;
+	int is_img;
+	int img_active;
+	(void)o;(void)d;(void)pu;(void)pm;(void)h;
+	/* fixes160c — classify first, then count concurrent image slots. If
+	 * this is an image and we're already at MAX_IMG_F, refuse the slot
+	 * before allocating so HTML/CSS/script fetches keep their lane. */
+	is_img = macos9_url_is_image(u);
+	if (is_img) {
+		img_active = 0;
+		for (i = 0; i < MAX_F; i++) {
+			if (f_slots[i].state != MFS_IDLE && f_slots[i].is_image) {
+				img_active++;
+			}
+		}
+		if (img_active >= MAX_IMG_F) {
+			macsurf_debug_log_writef(
+				"http_setup: img cap hit active=%d cap=%d - image fetch refused",
+				img_active, MAX_IMG_F);
+			return NULL;
+		}
+	}
 	for(i=0;i<MAX_F;i++) if(f_slots[i].state==MFS_IDLE) {
 		memset(&f_slots[i],0,sizeof(f_slots[0]));
 		f_slots[i].parent=p; f_slots[i].url=nsurl_ref(u);
@@ -799,7 +876,9 @@ static void *macos9_http_setup(struct fetch *p, struct nsurl *u, bool o, bool d,
 		f_slots[i].state=MFS_QUEUED;
 		f_slots[i].content_length=-1;
 		f_slots[i].keep_alive_ok=1;
-		macsurf_debug_log_writef("http_setup: slot=%d/%d", i, MAX_F);
+		f_slots[i].is_image = is_img;
+		macsurf_debug_log_writef("http_setup: slot=%d/%d img=%d",
+			i, MAX_F, is_img);
 		return &f_slots[i];
 	}
 	macsurf_debug_log_writef("http_setup: NO FREE SLOTS (MAX_F=%d) - fetch will FAIL", MAX_F);
