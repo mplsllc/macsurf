@@ -11,8 +11,9 @@
   Real CSS3. Real ES5 JavaScript. Real PNGs with alpha. Running on a beige G3.
 </p>
 
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee%20%3C3-5F7FFF?style=for-the-badge&logo=buymeacoffee&logoColor=white)](https://www.buymeacoffee.com/Ptricky)
-
+<a href="https://www.buymeacoffee.com/Ptricky">
+  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-blue.png" alt="Buy Me A Coffee" height="48" width="217">
+</a>
 <p align="center">
   <a href="docs/release-notes/MacSurf-0.1a1.md"><img alt="version" src="https://img.shields.io/badge/version-0.1a1%20%E2%80%94%20alpha-orange"></a>
   <a href="docs/status.md"><img alt="status" src="https://img.shields.io/badge/status-active%20development-brightgreen"></a>
