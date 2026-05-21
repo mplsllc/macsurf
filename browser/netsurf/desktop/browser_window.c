@@ -53,6 +53,11 @@
 #include "javascript/js.h"
 
 #include "desktop/browser_private.h"
+
+/* fixes161c — Apple post-READY crash probes. MS_LOG comes from the
+ * macos9 frontend's debug header; included here so scheduled_reformat
+ * and browser_window_schedule_reformat can mark their entry points. */
+#include "macsurf_debug.h"
 #include "desktop/scrollbar.h"
 #include "desktop/gui_internal.h"
 #include "desktop/download.h"
@@ -1822,9 +1827,17 @@ static void scheduled_reformat(void *vbw)
 	int height;
 	nserror res;
 
+	MS_LOG("scheduled_reformat: entry");
 	res = guit->window->get_dimensions(bw->window, &width, &height);
 	if (res == NSERROR_OK) {
+		macsurf_debug_log_writef(
+			"scheduled_reformat: dims w=%d h=%d -> browser_window_reformat",
+			width, height);
 		browser_window_reformat(bw, false, width, height);
+		MS_LOG("scheduled_reformat: return from browser_window_reformat");
+	} else {
+		macsurf_debug_log_writef(
+			"scheduled_reformat: get_dimensions FAIL res=%d", (int)res);
 	}
 }
 
@@ -4245,6 +4258,7 @@ nserror browser_window_schedule_reformat(struct browser_window *bw)
 		return NSERROR_BAD_PARAMETER;
 	}
 
+	MS_LOG("browser_window_schedule_reformat: entry");
 	return guit->misc->schedule(0, scheduled_reformat, bw);
 }
 

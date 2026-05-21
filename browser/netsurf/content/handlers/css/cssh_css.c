@@ -96,8 +96,14 @@ typedef struct nscss_content
  * cascade context, selector matching across 1000+ boxes blows past
  * what the post-layout path survives even on a 194 MB Carbon partition.
  * 128 KB drops the four heaviest Apple sheets, halves the cascade
- * workload, and leaves the small utility sheets in place. */
-#define MACOS9_CSS_MAX_BYTES (128UL * 1024UL)
+ * workload, and leaves the small utility sheets in place.
+ *
+ * fixes161c — raised to 256 KB. The Apple post-READY crash log
+ * (2026-05-21) showed two ~149 KB Apple sheets being dropped, leaving
+ * the page in a half-styled cascade state that contributed to the
+ * downstream crash. 256 KB covers Apple's full theme bundle while
+ * still keeping out genuinely monster sheets. */
+#define MACOS9_CSS_MAX_BYTES (256UL * 1024UL)
 
 /**
  * Context for import fetches

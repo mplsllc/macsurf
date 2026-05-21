@@ -1240,6 +1240,14 @@ static void html_reformat(struct content *c, int width, int height)
 	uint64_t ms_before;
 	uint64_t ms_after;
 	uint64_t ms_interval;
+	/* fixes161c — arm the one-shot cascade probe in select.c so the
+	 * next nscss_get_style call (if reformat triggers a recascade or
+	 * dynamic style lookup) logs a stage marker. Defined in select.c. */
+	extern int macsurf__cascade_probe_armed;
+
+	macsurf_debug_log_writef(
+		"html_reformat: entry w=%d h=%d", width, height);
+	macsurf__cascade_probe_armed = 1;
 
 	nsu_getmonotonic_ms(&ms_before);
 
@@ -1251,7 +1259,9 @@ static void html_reformat(struct content *c, int width, int height)
 			INTTOFIX(height), htmlc->unit_len_ctx.device_dpi);
 	htmlc->unit_len_ctx.root_style = htmlc->layout->style;
 
+	MS_LOG("html_reformat: pre-layout_document");
 	layout_document(htmlc, width, height);
+	MS_LOG("html_reformat: post-layout_document");
 	layout = htmlc->layout;
 
 	/* width and height are at least margin box of document */
@@ -1349,6 +1359,8 @@ static void html_reformat(struct content *c, int width, int height)
 		ms_interval = nsoption_uint(min_reflow_period) * 10;
 	}
 	c->reformat_time = ms_after + ms_interval;
+
+	MS_LOG("html_reformat: exit");
 }
 
 

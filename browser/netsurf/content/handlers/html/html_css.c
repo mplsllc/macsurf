@@ -700,6 +700,23 @@ html_css_new_selection_context(html_content *c, css_select_ctx **ret_select_ctx)
 		}
 
 		if (hsheet->sheet != NULL) {
+			/* fixes161c — defensive: a slot whose content went
+			 * to ERROR state (truncated fetch, oversize-skip,
+			 * parse failure, 404 mid-stream) still has a
+			 * non-NULL handle pointer but no usable sheet
+			 * structure. Treat as absent. The Apple post-READY
+			 * crash log (2026-05-21) showed sheets in this
+			 * state being passed to css_select_ctx_append_sheet,
+			 * which would later trip during cascade. */
+			content_status st;
+			st = content_get_status(hsheet->sheet);
+			if (st == CONTENT_STATUS_ERROR) {
+				macsurf_debug_log_writef(
+					"slot[%d] sheet in ERROR state - treating as absent",
+					(int)i);
+				skipped_null++;
+				continue;
+			}
 			sheet = nscss_get_stylesheet(hsheet->sheet);
 			macsurf_debug_log_writef(
 				"slot[%d] nscss_get=%p origin=%d",

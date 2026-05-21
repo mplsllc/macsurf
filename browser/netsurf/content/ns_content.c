@@ -771,16 +771,42 @@ void content_broadcast(struct content *c, content_msg msg,
 
 	/* fixes97: per-broadcast MS_LOG dropped. The READY transition is
 	 * useful but fires once per content load — we log content_broadcast
-	 * READY only and let the rest be silent. */
+	 * READY only and let the rest be silent.
+	 *
+	 * fixes161c — expand READY broadcast logging into entry / per-user /
+	 * exit so we can localize a crash that lands somewhere inside the
+	 * notify loop. Apple's post-READY crash on 2026-05-21 truncated
+	 * the log right at "content broadcast READY" with no following
+	 * gw_event entry — telling us the loop never finished. Tagging the
+	 * loop bounds and each user callback gives the next log a stage
+	 * marker. The body of the loop is unchanged; only logging added. */
 	if (msg == CONTENT_MSG_READY) {
-		MS_LOG("content broadcast READY");
+		struct content_user *probe_u;
+		long n_users = 0;
+		MS_LOG("content broadcast READY: entry");
+		for (probe_u = c->user_list->next; probe_u != 0;
+				probe_u = probe_u->next) {
+			n_users++;
+		}
+		macsurf_debug_log_writef(
+			"content broadcast READY: users=%ld", n_users);
 	}
 
 	nslog_log(__FILE__, "", __LINE__, "%p -> msg:%d", c, msg);
 	for (user = c->user_list->next; user != 0; user = next) {
 		next = user->next;  /* user may be destroyed during callback */
-		if (user->callback != 0)
+		if (user->callback != 0) {
+			if (msg == CONTENT_MSG_READY) {
+				macsurf_debug_log_writef(
+					"content broadcast READY: -> user=%p cb=%p",
+					(void *)user, (void *)user->callback);
+			}
 			user->callback(c, msg, data, user->pw);
+		}
+	}
+
+	if (msg == CONTENT_MSG_READY) {
+		MS_LOG("content broadcast READY: exit");
 	}
 }
 
