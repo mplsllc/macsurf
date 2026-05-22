@@ -1568,6 +1568,81 @@ next_iter:
 }
 
 
+/* fixes175 — rewrite every author `text-shadow: VALUE` declaration to
+ * `-macsurf-text-shadow: VALUE` so the existing vendor parser
+ * (p_macsurf_text_shadow.c from fixes50) picks up standard CSS3
+ * text-shadow without touching libcss internals.
+ *
+ * Standard CSS3 text-shadow accepts an optional blur radius and lets the
+ * color appear first or last. The vendor parser is stricter and accepts
+ * only `<hoff> <voff> <color>`. This pass renames the declaration but
+ * does NOT normalise the value, so authors using a blur radius or
+ * color-first form will still see the declaration parse-fail at libcss.
+ * Closing that gap is a separate, narrower fix on the vendor parser.
+ *
+ * The grow-buffer scheme is the same one fixes151 uses for grid-column:
+ * malloc with worst-case headroom, copy bytes through, substitute
+ * property name on match.
+ *
+ * Property-level aliasing inside libcss (the fixes141 approach) hung the
+ * browser pre-reformat on real hardware; the preprocessor route is the
+ * safe pattern for vendor->standard bridges. */
+static char *
+macsurf__rewrite_text_shadow(const char *data, size_t in_size,
+		size_t *out_size_p)
+{
+	static const char NEEDLE[] = "text-shadow";
+	static const size_t NEEDLE_LEN = 11;
+	static const char REPLACE[] = "-macsurf-text-shadow";
+	static const size_t REPLACE_LEN = 20;
+	char *out;
+	size_t cap;
+	size_t pos = 0;
+	size_t i = 0;
+
+	/* Worst case: every NEEDLE_LEN-byte window is a match. Each match
+	 * grows by REPLACE_LEN - NEEDLE_LEN = 9 bytes. Plus 256 padding so
+	 * single-byte appends near the tail never reallocate. */
+	cap = in_size +
+		(in_size / NEEDLE_LEN + 1) * (REPLACE_LEN - NEEDLE_LEN) + 256;
+	out = (char *)malloc(cap);
+	if (out == NULL) return NULL;
+
+	while (i < in_size) {
+		if (macsurf__match_prop_name(data, in_size, i,
+				NEEDLE, NEEDLE_LEN)) {
+			/* Boundary check passed; confirm this is a real
+			 * declaration by looking for optional whitespace
+			 * then ':'. The boundary check already rejects
+			 * `-macsurf-text-shadow` (prev byte is '-'). */
+			size_t j = i + NEEDLE_LEN;
+			while (j < in_size && (data[j] == ' ' ||
+					data[j] == '\t' ||
+					data[j] == '\n' ||
+					data[j] == '\r')) j++;
+			if (j < in_size && data[j] == ':') {
+				if (pos + REPLACE_LEN >= cap) {
+					free(out);
+					return NULL;
+				}
+				memcpy(out + pos, REPLACE, REPLACE_LEN);
+				pos += REPLACE_LEN;
+				i += NEEDLE_LEN;
+				continue;
+			}
+		}
+		if (pos + 1 >= cap) {
+			free(out);
+			return NULL;
+		}
+		out[pos++] = data[i++];
+	}
+
+	*out_size_p = pos;
+	return out;
+}
+
+
 static bool
 nscss_process_data(struct content *c, const char *data, unsigned int size)
 {
@@ -1576,7 +1651,9 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	char *rewritten;
 	char *rewritten_rows;
 	char *rewritten_col_span = NULL;
+	char *rewritten_text_shadow = NULL;
 	size_t col_span_size = 0;
+	size_t text_shadow_size = 0;
 	const char *final_data;
 	unsigned int final_size;
 
@@ -1639,8 +1716,20 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		final_size = (unsigned int)col_span_size;
 	}
 
+	/* fixes175 — fourth pass: rewrite standard `text-shadow:` to the
+	 * vendor `-macsurf-text-shadow:` so author CSS uses the bound
+	 * paint path. Allocates a new growable buffer. */
+	rewritten_text_shadow = macsurf__rewrite_text_shadow(final_data,
+			(size_t)final_size, &text_shadow_size);
+	if (rewritten_text_shadow != NULL &&
+			text_shadow_size <= (size_t)0x7fffffff) {
+		final_data = (const char *)rewritten_text_shadow;
+		final_size = (unsigned int)text_shadow_size;
+	}
+
 	error = nscss_process_css_data(&css->data, final_data, final_size);
 
+	if (rewritten_text_shadow != NULL) free(rewritten_text_shadow);
 	if (rewritten_col_span != NULL) free(rewritten_col_span);
 	if (rewritten_rows != NULL) free(rewritten_rows);
 	if (rewritten != NULL) free(rewritten);
