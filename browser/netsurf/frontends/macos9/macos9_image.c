@@ -52,45 +52,177 @@
 
 typedef ComponentInstance GraphicsImportComponent;
 
-typedef struct macos9_qt_image_content {
+/* Forward declaration for LRU links. */
+struct macos9_qt_image_content;
+typedef struct macos9_qt_image_content macos9_qt_image_content;
+
+struct macos9_qt_image_content {
 	struct content base;     /* MUST be first */
-	Handle compressed;       /* raw bytes, grown by process_data */
+	Handle compressed;       /* raw bytes, kept alive for deferred decode */
 	void *bitmap;            /* struct macos9_bitmap (RGBA pixels) */
 	/* fixes161b — tracked decoded bytes for this content. Set when the
 	 * bitmap was successfully decoded; cleared on destroy. Used to
 	 * decrement macsurf__decoded_img_bytes_current symmetrically. */
 	long decoded_bytes;
-} macos9_qt_image_content;
+	/* fixes162 — display-size deferred decode + LRU cache.
+	 *
+	 * Previously: convert() decoded the QT importer at NATURAL pixel
+	 * size and stored the bitmap once. A 1262x580 hero JPEG consumed
+	 * 2.9 MB regardless of how small it was actually displayed. Modern
+	 * pages serve images at multiples of their display size; we paid
+	 * full natural cost for thumbnails. The 4 MB cache cap then made
+	 * us silently skip half the images on apple.com and huffpost.com.
+	 *
+	 * Now: convert() opens the QT importer and queries natural bounds
+	 * only — no pixel decode. importer + compressed bytes are kept
+	 * alive on the qti so the FIRST redraw (when display dims are
+	 * known via data->width/height after layout has placed the image)
+	 * can decode at display size via the existing
+	 * macos9_qt_decode_to_bitmap path. Subsequent redraws at the same
+	 * display size reuse the cached bitmap. A display-size change
+	 * (window resize, reflow) triggers a re-decode.
+	 *
+	 * lru_prev/lru_next link this entry into a global MRU-at-head /
+	 * LRU-at-tail list. On every successful redraw the entry is moved
+	 * to MRU. When admitting a new decode would exceed the cache cap
+	 * we walk from the tail, calling guit->bitmap->destroy on the
+	 * oldest unreferenced entries until the new one fits. Evicted
+	 * entries keep their importer + compressed bytes, so a subsequent
+	 * redraw re-decodes them transparently. */
+	GraphicsImportComponent importer; /* NULL = PNG / non-deferred */
+	int bitmap_w;                     /* display size of cached bitmap */
+	int bitmap_h;
+	bool wants_alpha;                 /* QT decode mode hint */
+	macos9_qt_image_content *lru_prev;
+	macos9_qt_image_content *lru_next;
+	bool in_lru;
+};
 
-/* fixes161b — global decoded image memory budget. Each successful
- * decode (lodepng or QT path) adds width*height*4 to a global running
- * counter; on bitmap destroy the count is decremented. Decode is
- * REFUSED before allocation when the running total + this image's
- * decoded bytes would exceed the cap, even if the per-image fixes160b
- * gate would have allowed it. This stops Apple-class pages with ~10
- * mid-sized images decoded at once from blowing past several MB of
- * RGBA buffers in aggregate.
+/* fixes162 — global decoded image memory cache.
  *
- * 4 MB total decoded image RAM is generous on a 194 MB partition
- * (gives room for ~5 large hero images or ~20 medium thumbnails) but
- * keeps the bitmap-cache from being the dominant memory consumer
- * during heavy modern-site loads. */
-#define MACOS9_DECODED_IMG_MAX_BYTES (4L * 1024L * 1024L)
+ * 32 MB ceiling on simultaneously-decoded RGBA pixels. Backed by an
+ * LRU list (macos9_qti_lru_*) that evicts the least-recently-redrawn
+ * entries when admitting a new decode would exceed the cap. Evicted
+ * entries drop their bitmap but keep importer + compressed bytes, so
+ * a later redraw re-decodes at whatever display size that paint
+ * needs. This replaces the fixes161b skip-on-full budget gate, which
+ * was a survival pattern (any new image past 4 MB total just got
+ * dropped on the floor). The new design is a real cache: every image
+ * gets a chance, recently-shown ones stay decoded, old ones evict.
+ *
+ * 32 MB requires the Carbon partition to be raised to 96 MB
+ * preferred / 32 MB minimum. The previous 16 MB partition cannot
+ * back a 32 MB cache; user must bump MacSurf.mcp partition before
+ * running this build. Documented in CLAUDE.md "Build State" section.
+ *
+ * Why 32 MB: maxed retro hardware (G4 with 512 MB-1.5 GB RAM) has
+ * the headroom. Smaller G3 / 64 MB systems can drop this to 16 MB
+ * by changing this one define; the LRU still evicts cleanly. */
+#define MACOS9_DECODED_IMG_MAX_BYTES (32L * 1024L * 1024L)
 
-/* fixes160b — pre-decode size gate. The Carbon 16 MB application
- * partition cannot hold an arbitrarily large decoded RGBA buffer, and
- * bitmap_create begins to fail intermittently above ~1 MB of decoded
- * pixels on a 64-128 MB host. Modern sites routinely embed assets at
- * 2000-3000 px on a side that decompress to 18-27 MB and take the
- * whole process down. Gauntlet evidence:
- *   github.com screenshots 2046x2226, 2931x2151, 3072x2304 -> all FAIL
- *   huffpost decode storm fragments the heap before final layout
- * Any image whose decoded pixel buffer would exceed the cap is skipped
- * before the decoder is invoked. width/height are still set on the
- * content node so layout reserves the right amount of space; the
- * surrounding box renders as an empty/broken-image rect via NetSurf's
- * existing failed-image plumbing. 1 MB = 512x512 RGBA. */
-#define MACOS9_IMG_MAX_DECODED_BYTES (1L * 1024L * 1024L)
+/* fixes162 — per-image hard ceiling. With display-size decode the
+ * worst case is a single image filling the entire viewport, e.g.
+ * 949x768 = 2.9 MB. 8 MB allows a 1448x1448 decode which is well
+ * beyond any reasonable single-element display size on this
+ * platform. Pages that try to decode a 4000x3000 hero at full
+ * resolution still trip this gate and degrade to broken-image
+ * rendering; pages that display the same image at typical content
+ * widths sail through. */
+#define MACOS9_IMG_MAX_DECODED_BYTES (8L * 1024L * 1024L)
+
+/* fixes162 — LRU list of all decoded macos9_qt_image_content
+ * entries. lru_head is MRU (most recently redrawn), lru_tail is LRU
+ * (oldest, eviction candidate). lru_total_bytes mirrors the sum of
+ * decoded_bytes across the list and is the value compared against
+ * MACOS9_DECODED_IMG_MAX_BYTES for admission decisions. */
+static macos9_qt_image_content *macos9_qti_lru_head = NULL;
+static macos9_qt_image_content *macos9_qti_lru_tail = NULL;
+static long macos9_qti_lru_total_bytes = 0;
+
+static void
+macos9_qti_lru_unlink(macos9_qt_image_content *q)
+{
+	if (!q->in_lru) return;
+	if (q->lru_prev != NULL) q->lru_prev->lru_next = q->lru_next;
+	else macos9_qti_lru_head = q->lru_next;
+	if (q->lru_next != NULL) q->lru_next->lru_prev = q->lru_prev;
+	else macos9_qti_lru_tail = q->lru_prev;
+	q->lru_prev = NULL;
+	q->lru_next = NULL;
+	q->in_lru = false;
+}
+
+static void
+macos9_qti_lru_insert_mru(macos9_qt_image_content *q)
+{
+	if (q->in_lru) macos9_qti_lru_unlink(q);
+	q->lru_prev = NULL;
+	q->lru_next = macos9_qti_lru_head;
+	if (macos9_qti_lru_head != NULL) macos9_qti_lru_head->lru_prev = q;
+	else macos9_qti_lru_tail = q;
+	macos9_qti_lru_head = q;
+	q->in_lru = true;
+}
+
+static void
+macos9_qti_lru_touch(macos9_qt_image_content *q)
+{
+	if (!q->in_lru || q->lru_prev == NULL) return; /* already MRU */
+	macos9_qti_lru_unlink(q);
+	macos9_qti_lru_insert_mru(q);
+}
+
+/* Drop bitmaps from the LRU tail until admitting need_bytes would
+ * leave the GLOBAL running total at or below the cap. Each evicted
+ * entry keeps its importer + compressed bytes; only the decoded
+ * bitmap is freed. A subsequent redraw re-decodes. PNG entries are
+ * not in the LRU (they're decoded once in convert at natural size)
+ * but their bytes are counted in macsurf__decoded_img_bytes_current,
+ * so the check is against the global counter — eviction only walks
+ * the QT-deferred LRU but the cap is enforced over both populations.
+ * Returns true if there is now room; false if even after evicting
+ * every LRU entry the cap is still exceeded (PNGs alone are full,
+ * or the request itself is bigger than the cap). */
+static bool
+macos9_qti_lru_make_room(long need_bytes)
+{
+	macos9_qt_image_content *victim;
+	extern long macsurf__decoded_img_bytes_current;
+	while (macsurf__decoded_img_bytes_current + need_bytes >
+			MACOS9_DECODED_IMG_MAX_BYTES &&
+			macos9_qti_lru_tail != NULL) {
+		victim = macos9_qti_lru_tail;
+		macsurf_debug_log_writef(
+			"img lru evict: qti=%p bytes=%ld global=%ld need=%ld",
+			(void *)victim,
+			(long)victim->decoded_bytes,
+			macsurf__decoded_img_bytes_current,
+			need_bytes);
+		macos9_qti_lru_unlink(victim);
+		macos9_qti_lru_total_bytes -= victim->decoded_bytes;
+		if (macos9_qti_lru_total_bytes < 0) {
+			macos9_qti_lru_total_bytes = 0;
+		}
+		if (macsurf__decoded_img_bytes_current >=
+				victim->decoded_bytes) {
+			macsurf__decoded_img_bytes_current -=
+				victim->decoded_bytes;
+		} else {
+			macsurf__decoded_img_bytes_current = 0;
+		}
+		if (victim->bitmap != NULL &&
+				guit != NULL && guit->bitmap != NULL &&
+				guit->bitmap->destroy != NULL) {
+			guit->bitmap->destroy(victim->bitmap);
+		}
+		victim->bitmap = NULL;
+		victim->bitmap_w = 0;
+		victim->bitmap_h = 0;
+		victim->decoded_bytes = 0;
+	}
+	return macsurf__decoded_img_bytes_current + need_bytes <=
+			MACOS9_DECODED_IMG_MAX_BYTES;
+}
 
 static bool
 macos9_img_is_oversize(int w, int h)
@@ -721,96 +853,38 @@ macos9_qt_image_convert(struct content *c)
 		content_broadcast_error(c, NSERROR_INVALID, NULL);
 		return false;
 	}
-	/* fixes160b — size gate (QT path). Skip the GWorld/decode dance
-	 * for any image whose decoded RGBA buffer would exceed the cap.
-	 * Set width/height on the content so layout reserves real space
-	 * for the broken-image placeholder; surrounding text and other
-	 * images keep their positions. */
-	if (macos9_img_is_oversize(bw, bh)) {
-		long bytes = (long)bw * (long)bh * 4L;
-		macsurf_debug_log_writef(
-			"img skip: oversize qt %dx%d decoded=%ld cap=%ld",
-			bw, bh, bytes,
-			(long)MACOS9_IMG_MAX_DECODED_BYTES);
-		CloseComponent(importer);
-		c->width = bw;
-		c->height = bh;
-		{
-			extern long macsurf__site_img_fail;
-			macsurf__site_img_fail++;
-		}
-		content_broadcast_error(c, NSERROR_NOMEM, NULL);
-		return false;
-	}
-	/* fixes161b — global decoded-budget gate (QT path). Same logic as
-	 * the PNG branch: refuse when this image's bytes would push the
-	 * running sum past MACOS9_DECODED_IMG_MAX_BYTES, regardless of
-	 * the per-image gate. */
-	{
-		extern long macsurf__decoded_img_bytes_current;
-		extern long macsurf__site_decoded_img_skip_budget;
-		long qt_bytes = (long)bw * (long)bh * 4L;
-		if (macsurf__decoded_img_bytes_current + qt_bytes >
-				MACOS9_DECODED_IMG_MAX_BYTES) {
-			macsurf_debug_log_writef(
-				"img skip: budget qt %dx%d "
-				"bytes=%ld cur=%ld cap=%ld",
-				bw, bh, qt_bytes,
-				macsurf__decoded_img_bytes_current,
-				(long)MACOS9_DECODED_IMG_MAX_BYTES);
-			CloseComponent(importer);
-			c->width = bw;
-			c->height = bh;
-			macsurf__site_decoded_img_skip_budget++;
-			{
-				extern long macsurf__site_img_fail;
-				macsurf__site_img_fail++;
-			}
-			content_broadcast_error(c, NSERROR_NOMEM, NULL);
-			return false;
-		}
-	}
-	macsurf_debug_log_writef("img convert: %dx%d %s, decoding",
-			bw, bh, wants_alpha ? "alpha" : "opaque");
 
-	err = macos9_qt_decode_to_bitmap(importer, bw, bh, wants_alpha,
-			&qti->bitmap);
-	CloseComponent(importer);
-	if (qti->compressed != NULL) {
-		DisposeHandle(qti->compressed);
-		qti->compressed = NULL;
-	}
-
-	if (err != NSERROR_OK || qti->bitmap == NULL) {
-		MS_LOG("img convert: decode FAIL");
-		{
-			extern long macsurf__site_img_fail;
-			macsurf__site_img_fail++;
-		}
-		content_broadcast_error(c, err, NULL);
-		return false;
-	}
-
+	/* fixes162 — deferred decode. QT path stops here: importer +
+	 * compressed bytes stay alive on the qti; the actual pixel
+	 * decode happens on the FIRST redraw, sized to that paint's
+	 * data->width/height. This means a 1262x580 hero JPEG displayed
+	 * at 320x180 decodes to 230 KB (display size) instead of 2.9 MB
+	 * (natural size), and pages like apple.com / huffpost.com that
+	 * previously hit the cache cap during decode now fit. The
+	 * NetSurf core only needs c->width/height set so layout can
+	 * place the image; pixel data is deferred until paint.
+	 *
+	 * Note: bw/bh on c->width/height are natural pixel dims, used
+	 * by layout for aspect-ratio and intrinsic sizing. The actual
+	 * bitmap stored in qti->bitmap (allocated later in redraw) is
+	 * at DISPLAY size; bitmap_w / bitmap_h record those. Don't
+	 * confuse the two — natural is for layout, display is for the
+	 * GPU-bound RGBA buffer. */
+	qti->importer = importer;
+	qti->wants_alpha = wants_alpha;
+	qti->bitmap_w = 0;
+	qti->bitmap_h = 0;
 	c->width = bw;
 	c->height = bh;
+	(void)err; /* unused on the deferred path */
 
-	MS_LOG("img decoded to bitmap");
-	/* fixes160a: tick the SITE summary counter for a successful decode. */
+	macsurf_debug_log_writef(
+		"img convert: %dx%d %s, deferred to redraw",
+		bw, bh, wants_alpha ? "alpha" : "opaque");
+
 	{
 		extern long macsurf__site_img_ok;
 		macsurf__site_img_ok++;
-	}
-	/* fixes161b — record decoded bytes for symmetric decrement on destroy. */
-	{
-		extern long macsurf__decoded_img_bytes_current;
-		extern long macsurf__site_decoded_img_bytes_peak;
-		qti->decoded_bytes = (long)bw * (long)bh * 4L;
-		macsurf__decoded_img_bytes_current += qti->decoded_bytes;
-		if (macsurf__decoded_img_bytes_current >
-				macsurf__site_decoded_img_bytes_peak) {
-			macsurf__site_decoded_img_bytes_peak =
-				macsurf__decoded_img_bytes_current;
-		}
 	}
 	content_set_ready(c);
 	content_set_done(c);
@@ -831,8 +905,7 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 
 	(void)clip;
 
-	if (qti->bitmap == NULL || ctx == NULL ||
-			ctx->plot == NULL || ctx->plot->bitmap == NULL) {
+	if (ctx == NULL || ctx->plot == NULL || ctx->plot->bitmap == NULL) {
 		return true;
 	}
 
@@ -893,6 +966,108 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 		}
 	}
 
+	/* fixes162 — display-size deferred decode for QT path. If this is
+	 * a QT-deferred entry (importer kept alive in convert) and we have
+	 * no bitmap at the right display size, decode now at (dst_w, dst_h)
+	 * directly. The existing macos9_qt_decode_to_bitmap parameterizes
+	 * by target dims and QT's GraphicsImportDraw scales the source
+	 * automatically to fit, so a 1262x580 hero JPEG decoded with
+	 * dst_w=320 dst_h=147 produces a 320x147 RGBA buffer (188 KB) not
+	 * the natural 2.9 MB.
+	 *
+	 * LRU is consulted to make room before allocation. If the new
+	 * decode wouldn't fit even with everything evicted (single
+	 * oversize image), we skip and the plot below no-ops on bitmap
+	 * NULL. */
+	if (qti->importer != NULL) {
+		bool needs_decode;
+		needs_decode = (qti->bitmap == NULL) ||
+				(qti->bitmap_w != dst_w) ||
+				(qti->bitmap_h != dst_h);
+		if (needs_decode && dst_w > 0 && dst_h > 0) {
+			nserror derr;
+			long need_bytes;
+			extern long macsurf__decoded_img_bytes_current;
+			extern long macsurf__site_decoded_img_bytes_peak;
+
+			/* Drop the existing bitmap if size mismatched. */
+			if (qti->bitmap != NULL) {
+				if (guit != NULL && guit->bitmap != NULL &&
+						guit->bitmap->destroy != NULL) {
+					guit->bitmap->destroy(qti->bitmap);
+				}
+				qti->bitmap = NULL;
+				if (macsurf__decoded_img_bytes_current >=
+						qti->decoded_bytes) {
+					macsurf__decoded_img_bytes_current -=
+						qti->decoded_bytes;
+				} else {
+					macsurf__decoded_img_bytes_current = 0;
+				}
+				macos9_qti_lru_total_bytes -=
+					qti->decoded_bytes;
+				if (macos9_qti_lru_total_bytes < 0) {
+					macos9_qti_lru_total_bytes = 0;
+				}
+				macos9_qti_lru_unlink(qti);
+				qti->decoded_bytes = 0;
+			}
+
+			need_bytes = (long)dst_w * (long)dst_h * 4L;
+
+			/* Per-image ceiling: still skip if even one
+			 * display-sized buffer is absurdly big. */
+			if (need_bytes > MACOS9_IMG_MAX_DECODED_BYTES) {
+				macsurf_debug_log_writef(
+					"img skip: per-image ceiling %dx%d "
+					"bytes=%ld cap=%ld",
+					dst_w, dst_h, need_bytes,
+					(long)MACOS9_IMG_MAX_DECODED_BYTES);
+				return true;
+			}
+
+			/* Evict LRU tail until this fits. */
+			if (!macos9_qti_lru_make_room(need_bytes)) {
+				macsurf_debug_log_writef(
+					"img skip: cache cap exceeded %dx%d",
+					dst_w, dst_h);
+				return true;
+			}
+
+			derr = macos9_qt_decode_to_bitmap(qti->importer,
+					dst_w, dst_h, qti->wants_alpha,
+					&qti->bitmap);
+			if (derr != NSERROR_OK || qti->bitmap == NULL) {
+				MS_LOG("img redraw: qt decode FAIL");
+				qti->bitmap = NULL;
+				return true;
+			}
+
+			qti->bitmap_w = dst_w;
+			qti->bitmap_h = dst_h;
+			qti->decoded_bytes = need_bytes;
+			macsurf__decoded_img_bytes_current += need_bytes;
+			macos9_qti_lru_total_bytes += need_bytes;
+			if (macsurf__decoded_img_bytes_current >
+					macsurf__site_decoded_img_bytes_peak) {
+				macsurf__site_decoded_img_bytes_peak =
+					macsurf__decoded_img_bytes_current;
+			}
+			macos9_qti_lru_insert_mru(qti);
+			macsurf_debug_log_writef(
+				"img decoded@display %dx%d -> %ld bytes "
+				"(lru_total=%ld)",
+				dst_w, dst_h, need_bytes,
+				macos9_qti_lru_total_bytes);
+		} else if (qti->bitmap != NULL) {
+			macos9_qti_lru_touch(qti);
+		}
+	}
+
+	if (qti->bitmap == NULL) {
+		return true;
+	}
+
 	flags = 0;
 	if (data->repeat_x) flags |= BITMAPF_REPEAT_X;
 	if (data->repeat_y) flags |= BITMAPF_REPEAT_Y;
@@ -908,6 +1083,17 @@ static void
 macos9_qt_image_destroy(struct content *c)
 {
 	macos9_qt_image_content *qti = (macos9_qt_image_content *)c;
+
+	/* fixes162 — symmetric LRU cleanup: unlink before freeing the
+	 * bitmap so the LRU walker can't see a stale node, then close
+	 * the kept-alive importer if the QT-deferred path was used. */
+	if (qti->in_lru) {
+		macos9_qti_lru_total_bytes -= qti->decoded_bytes;
+		if (macos9_qti_lru_total_bytes < 0) {
+			macos9_qti_lru_total_bytes = 0;
+		}
+		macos9_qti_lru_unlink(qti);
+	}
 
 	if (qti->bitmap != NULL) {
 		if (guit != NULL && guit->bitmap != NULL &&
@@ -927,6 +1113,12 @@ macos9_qt_image_destroy(struct content *c)
 			qti->decoded_bytes = 0;
 		}
 	}
+
+	if (qti->importer != NULL) {
+		CloseComponent(qti->importer);
+		qti->importer = NULL;
+	}
+
 	if (qti->compressed != NULL) {
 		DisposeHandle(qti->compressed);
 		qti->compressed = NULL;
