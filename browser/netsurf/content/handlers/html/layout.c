@@ -4626,19 +4626,44 @@ layout__list_item_is_numerical(
 
 /**
  * Layout list markers.
+ *
+ * fixes163 — degenerate-tree hardening for huffpost.
+ *
+ * Huffpost crashes inside this function when called on a doc that
+ * laid out to c_h=0 (the htmlbody-fill branch in layout_document
+ * then bumps it back to viewport height, but a sub-tree of list
+ * items has already been built with incomplete cascade state: large
+ * pages with 280 KB + 200 KB stylesheets and a partial cascade pass
+ * sometimes produce a list_marker whose `style` field is NULL).
+ * The original layout_lists assumes marker->style and child->style
+ * are non-NULL and dereferences them via
+ * css_computed_list_style_type, line_height, font_plot_style_from_css.
+ * On real modern pages those assumptions don't hold.
+ *
+ * Guards:
+ *  - layout__list_item_is_numerical(child) reads child->style without
+ *    checking; skip it when style is NULL.
+ *  - The marker-sizing branches all read marker->style; if it's NULL,
+ *    zero the marker dims and don't apply the -4 gap.
+ *  - Recursion always runs regardless of marker validity so we still
+ *    visit descendants.
  */
 static void
 layout_lists(const html_content *content, struct box *box)
 {
 	struct box *child;
 
+	if (box == NULL) {
+		return;
+	}
+
 	layout__ordered_list_count(box);
 
 	for (child = box->children; child; child = child->next) {
-		if (child->list_marker) {
-			struct box *marker = child->list_marker;
-
-			if (layout__list_item_is_numerical(child)) {
+		struct box *marker = child->list_marker;
+		if (marker != NULL && marker->style != NULL) {
+			if (child->style != NULL &&
+					layout__list_item_is_numerical(child)) {
 				if (marker->text == NULL) {
 					layout__set_numerical_marker_text(
 							content, child);
@@ -4680,6 +4705,14 @@ layout_lists(const html_content *content, struct box *box)
 			}
 			/* Gap between marker and content */
 			marker->x -= 4;
+		} else if (marker != NULL) {
+			/* Marker exists but cascade failed to give it a
+			 * style. Reset its dims so subsequent paint can't
+			 * read stale values; skip the -4 gap. */
+			marker->x = 0;
+			marker->y = 0;
+			marker->width = 0;
+			marker->height = 0;
 		}
 		layout_lists(content, child);
 	}
