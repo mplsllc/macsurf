@@ -11,9 +11,17 @@
 #ifdef __MACOS9__
 #include <Files.h>
 #include <Folders.h>
+#include <Script.h>
 #include <OpenTransport.h>
 #include <OpenTptInternet.h>
 #include <Threads.h>
+/* fixes172 — same fallback pattern macsurf_debug_log.c uses. Some
+ * CW8 SDK builds expose smSystemScript via <Script.h>, others via
+ * <Resources.h>; in the rare case it isn't defined at all, 0 is
+ * the documented Roman script code and FSpCreate accepts it. */
+#ifndef smSystemScript
+#define smSystemScript 0
+#endif
 extern OTClientContextPtr macos9_ot_context;
 #endif
 
