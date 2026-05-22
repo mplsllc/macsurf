@@ -5226,7 +5226,15 @@ layout_position_absolute(struct box *box,
 	struct box *c;
 
 	for (c = box->children; c; c = c->next) {
-		if ((c->type == BOX_BLOCK || c->type == BOX_TABLE ||
+		/* fixes163b — symmetric NULL-style guard. The else-if and
+		 * float branches below already gate on c->style; this first
+		 * branch was the lone holdout reading css_computed_position
+		 * unconditionally. Real modern pages can produce block / table
+		 * / flex / grid boxes whose cascade left style == NULL
+		 * (huffpost reproducer: dies here after fixes163 carried it
+		 * past layout_lists). Treat NULL style as "not positioned"
+		 * and fall through to the default-flow recursion. */
+		if (c->style && (c->type == BOX_BLOCK || c->type == BOX_TABLE ||
 				c->type == BOX_INLINE_BLOCK ||
 				c->type == BOX_FLEX ||
 				c->type == BOX_INLINE_FLEX ||
