@@ -979,6 +979,8 @@ static void macos9_rgov_bump_skip(int rc) {
 	extern long macsurf__site_rgov_skip_script;
 	extern long macsurf__site_rgov_skip_font;
 	extern long macsurf__site_rgov_skip_other;
+	extern long macsurf__site_heavy;
+	long total_skipped;
 	switch (rc) {
 		case MACOS9_RC_DOCUMENT: macsurf__site_rgov_skip_doc++; break;
 		case MACOS9_RC_CSS:      macsurf__site_rgov_skip_css++; break;
@@ -987,6 +989,47 @@ static void macos9_rgov_bump_skip(int rc) {
 		case MACOS9_RC_FONT:     macsurf__site_rgov_skip_font++; break;
 		default:                 macsurf__site_rgov_skip_other++; break;
 	}
+	/* fixes168f — heavy-mode latch. Trip once any one of the
+	 * thresholds is exceeded. Cleared at navigation start by
+	 * macsurf_site_navigation_reset(). Consumers read via the
+	 * accessor below; future reader-fallback and overlay-rescue
+	 * passes will gate on this. */
+	if (macsurf__site_rgov_skip_img > 20) macsurf__site_heavy = 1;
+	if (macsurf__site_rgov_skip_script > 10) macsurf__site_heavy = 1;
+	total_skipped = macsurf__site_rgov_skip_img
+		+ macsurf__site_rgov_skip_script
+		+ macsurf__site_rgov_skip_other
+		+ macsurf__site_rgov_skip_font;
+	if (total_skipped > 30) macsurf__site_heavy = 1;
+}
+
+/* fixes168f — public accessor. Returns 1 once the current page has
+ * tripped any heavy-mode threshold, 0 otherwise. Stable across calls;
+ * resets only when macsurf_site_navigation_reset() is invoked. */
+int macsurf_site_is_heavy(void) {
+	extern long macsurf__site_heavy;
+	return (macsurf__site_heavy != 0) ? 1 : 0;
+}
+
+/* fixes168f — navigation reset. Clears the per-page heavy latch and
+ * the resource-governor skip counters so the next page starts from a
+ * clean slate. Wire into the navigation entry point (window.c) so
+ * heavy mode is per-page, not process-cumulative. */
+void macsurf_site_navigation_reset(void) {
+	extern long macsurf__site_heavy;
+	extern long macsurf__site_rgov_skip_doc;
+	extern long macsurf__site_rgov_skip_css;
+	extern long macsurf__site_rgov_skip_img;
+	extern long macsurf__site_rgov_skip_script;
+	extern long macsurf__site_rgov_skip_font;
+	extern long macsurf__site_rgov_skip_other;
+	macsurf__site_heavy = 0;
+	macsurf__site_rgov_skip_doc = 0;
+	macsurf__site_rgov_skip_css = 0;
+	macsurf__site_rgov_skip_img = 0;
+	macsurf__site_rgov_skip_script = 0;
+	macsurf__site_rgov_skip_font = 0;
+	macsurf__site_rgov_skip_other = 0;
 }
 
 static void *macos9_http_setup(struct fetch *p, struct nsurl *u, bool o, bool d, const char *pu, const struct fetch_multipart_data *pm, const char **h) {

@@ -1143,6 +1143,179 @@ box_iframe(dom_node *n,
 }
 
 
+/* fixes168b — Lazy-image source resolver. Modern sites routinely ship
+ * <img src="placeholder"> or <img src=""> and store the real URL on
+ * data-src / data-original / data-lazy-src / srcset, expecting JS to
+ * promote it at runtime. MacSurf has no such JS, so we promote those
+ * URLs at box-construct time.
+ *
+ * Returns true if `*out` is a non-NULL char* talloc'd in content->bctx
+ * containing a usable URL string. Returns true with *out=NULL when no
+ * candidate exists (caller falls through to "no image"). Returns false
+ * only on hard allocation failure. */
+
+static bool
+box_image_src_looks_placeholder(const char *s)
+{
+	size_t n;
+	const char *p;
+
+	if (s == NULL) return true;
+	if (s[0] == '\0') return true;
+	/* data: URIs under ~256 bytes are usually 1x1 transparent
+	 * spacers; longer ones may be real inline images, which we
+	 * don't decode either way, but treat as "real" and fall
+	 * through to normal handling. */
+	if (s[0] == 'd' && s[1] == 'a' && s[2] == 't' && s[3] == 'a' &&
+	    s[4] == ':') {
+		n = strlen(s);
+		if (n < 256) return true;
+		return false;
+	}
+	/* "#" is sometimes used as a placeholder src; same for "about:blank". */
+	if (s[0] == '#' && s[1] == '\0') return true;
+	if (strcmp(s, "about:blank") == 0) return true;
+	/* Common lazy-load placeholder filenames. */
+	for (p = s; *p != '\0'; p++) {
+		if (p[0] == '/' || p == s) {
+			const char *q = (p == s) ? p : p + 1;
+			if (strncmp(q, "spacer.", 7) == 0) return true;
+			if (strncmp(q, "blank.", 6) == 0) return true;
+			if (strncmp(q, "placeholder.", 12) == 0)
+				return true;
+			if (strncmp(q, "1x1.", 4) == 0) return true;
+			if (strncmp(q, "pixel.", 6) == 0) return true;
+		}
+	}
+	return false;
+}
+
+/* Extract the first URL token from an srcset value. srcset syntax is
+ *   "url1 480w, url2 800w" or "url1 1x, url2 2x"
+ * Picking the first URL is good enough for survival rendering; we are
+ * not going to honour the descriptor anyway.
+ *
+ * Writes a freshly-talloc'd copy of the first URL into *out. Returns
+ * true even when no URL was found (then *out == NULL). False only on
+ * allocation failure. */
+static bool
+box_image_pick_srcset(const char *srcset, void *talloc_ctx, char **out)
+{
+	const char *p;
+	const char *url_start;
+	size_t url_len;
+	char *copy;
+
+	*out = NULL;
+	if (srcset == NULL) return true;
+
+	p = srcset;
+	while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' ||
+	       *p == ',')
+		p++;
+	if (*p == '\0') return true;
+
+	url_start = p;
+	while (*p != '\0' && *p != ' ' && *p != '\t' && *p != '\n' &&
+	       *p != '\r' && *p != ',')
+		p++;
+	url_len = (size_t)(p - url_start);
+	if (url_len == 0) return true;
+
+	copy = talloc_size(talloc_ctx, url_len + 1);
+	if (copy == NULL) return false;
+	memcpy(copy, url_start, url_len);
+	copy[url_len] = '\0';
+	*out = copy;
+	return true;
+}
+
+/* Choose the best image URL for the given <img>/<source>. Promotes
+ * data-src / data-original / data-lazy-src / data-srcset / srcset
+ * fallbacks when src is missing or looks like a placeholder. */
+static bool
+box_image_resolve_url(dom_node *n, html_content *content, nsurl **out_url)
+{
+	dom_string *s = NULL;
+	dom_exception err;
+	char *src_str = NULL;
+	char *fallback = NULL;
+	char *srcset_url = NULL;
+	bool ok;
+
+	*out_url = NULL;
+
+	err = dom_element_get_attribute(n, corestring_dom_src, &s);
+	if (err == DOM_NO_ERR && s != NULL) {
+		const char *raw = dom_string_data(s);
+		if (!box_image_src_looks_placeholder(raw)) {
+			ok = box_extract_link(content, s,
+					content->base_url, out_url);
+			dom_string_unref(s);
+			return ok;
+		}
+		dom_string_unref(s);
+		s = NULL;
+	}
+
+	/* src missing / empty / placeholder — try data-* attributes. */
+	if (!box_get_attribute(n, "data-src", content->bctx, &fallback))
+		return false;
+	if (fallback == NULL || fallback[0] == '\0' ||
+	    box_image_src_looks_placeholder(fallback)) {
+		fallback = NULL;
+		if (!box_get_attribute(n, "data-original",
+				content->bctx, &fallback))
+			return false;
+	}
+	if (fallback == NULL || fallback[0] == '\0' ||
+	    box_image_src_looks_placeholder(fallback)) {
+		fallback = NULL;
+		if (!box_get_attribute(n, "data-lazy-src",
+				content->bctx, &fallback))
+			return false;
+	}
+
+	if (fallback == NULL || fallback[0] == '\0') {
+		/* Try data-srcset, then srcset. */
+		char *srcset_raw = NULL;
+		if (!box_get_attribute(n, "data-srcset",
+				content->bctx, &srcset_raw))
+			return false;
+		if (srcset_raw == NULL || srcset_raw[0] == '\0') {
+			srcset_raw = NULL;
+			if (!box_get_attribute(n, "srcset",
+					content->bctx, &srcset_raw))
+				return false;
+		}
+		if (srcset_raw != NULL && srcset_raw[0] != '\0') {
+			if (!box_image_pick_srcset(srcset_raw,
+					content->bctx, &srcset_url))
+				return false;
+			fallback = srcset_url;
+		}
+	}
+
+	if (fallback == NULL || fallback[0] == '\0' ||
+	    box_image_src_looks_placeholder(fallback))
+		return true; /* no candidate; *out_url stays NULL */
+
+	src_str = fallback;
+	{
+		dom_string *promoted = NULL;
+		err = dom_string_create_interned(
+				(const uint8_t *)src_str,
+				strlen(src_str), &promoted);
+		if (err != DOM_NO_ERR || promoted == NULL)
+			return true;
+		ok = box_extract_link(content, promoted,
+				content->base_url, out_url);
+		dom_string_unref(promoted);
+		return ok;
+	}
+}
+
+
 /**
  * Embedded image [13.2].
  */
@@ -1190,17 +1363,11 @@ box_image(dom_node *n,
 	if (box->usemap && box->usemap[0] == '#')
 		box->usemap++;
 
-	/* get image URL */
-	err = dom_element_get_attribute(n, corestring_dom_src, &s);
-	if (err != DOM_NO_ERR || s == NULL)
-		return true;
-
-	if (box_extract_link(content, s, content->base_url, &url) == false) {
-		dom_string_unref(s);
+	/* fixes168b — resolve src with data-src / data-original /
+	 * data-lazy-src / data-srcset / srcset fallback chain so lazy-
+	 * loaded modern images become real URLs at box-construct time. */
+	if (box_image_resolve_url(n, content, &url) == false)
 		return false;
-	}
-
-	dom_string_unref(s);
 
 	if (url == NULL)
 		return true;

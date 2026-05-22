@@ -153,7 +153,43 @@ static const char css_internal[] =
 	"input[type=checkbox],input[type=radio]{border:0;padding:0}"
 	"progress,meter{display:inline-block;width:10em;height:1em;"
 	"background:#ccc;border:1px inset #999}"
-	"noscript{display:block}";
+	"noscript{display:block}"
+	/* fixes168c — Modern-web rescue rules. Targeted at JS-required
+	 * overlay patterns and content-hidden-until-hydration patterns.
+	 * Selectors are narrow enough that legitimate uses are extremely
+	 * rare; the rescue payload is unconditional. */
+	/* Cookie / consent banner suppression. */
+	"[class*=\"cookie-banner\"],[class*=\"cookie-consent\"],"
+	"[class*=\"cookie-modal\"],[class*=\"cookie-overlay\"],"
+	"[class*=\"cookie-wall\"],[class*=\"consent-banner\"],"
+	"[class*=\"consent-modal\"],[class*=\"consent-overlay\"],"
+	"[id*=\"cookie-banner\"],[id*=\"cookie-consent\"],"
+	"[id*=\"cookie-wall\"],[id*=\"consent-banner\"],"
+	"[id*=\"consent-modal\"]{display:none !important}"
+	/* Newsletter / subscribe / paywall overlay suppression. */
+	"[class*=\"newsletter-popup\"],[class*=\"newsletter-modal\"],"
+	"[class*=\"subscribe-modal\"],[class*=\"signup-modal\"],"
+	"[class*=\"paywall-modal\"],[class*=\"paywall-overlay\"],"
+	"[id*=\"newsletter-popup\"],[id*=\"subscribe-modal\"],"
+	"[id*=\"signup-modal\"]{display:none !important}"
+	/* Unhide content containers that JS would normally hydrate. */
+	"article[hidden],main[hidden],section[hidden]"
+	"{display:block !important}"
+	"[hidden][class*=\"article\"],[hidden][class*=\"content\"],"
+	"[hidden][class*=\"story\"],[hidden][class*=\"post\"],"
+	"[hidden][class*=\"entry\"]{display:block !important}"
+	/* Visibility/aria rescue for content containers only. */
+	"article[aria-hidden=\"true\"],main[aria-hidden=\"true\"],"
+	"section[aria-hidden=\"true\"]{visibility:visible !important}"
+	/* JS-state class rescues, scoped to content selectors only. */
+	"[class*=\"js-hidden\"][class*=\"article\"],"
+	"[class*=\"js-hidden\"][class*=\"content\"],"
+	"[class*=\"js-hidden\"][class*=\"main\"]"
+	"{display:block !important;visibility:visible !important}"
+	/* "noscript" content survives. We already display:block above; this
+	 * is the matching rescue for sites that gate real content behind
+	 * a noscript fallback. */
+	".no-js,html.no-js{display:block !important}";
 
 static const char css_quirks[] =
 	"table{font-size:inherit;font-weight:inherit;text-align:start;"

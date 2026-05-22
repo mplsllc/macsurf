@@ -176,7 +176,11 @@ void macos9_window_navigate(struct gui_window *g, const char *u) {
 		 * resource governor gives it document-class priority, regardless
 		 * of URL suffix. Single-shot: consumed by the first setup call. */
 		extern void macos9_http_mark_next_as_document(void);
+		extern void macsurf_site_navigation_reset(void);
 		macos9_http_mark_next_as_document();
+		/* fixes168f — clear per-page heavy latch + rgov skip counters
+		 * so the next page is assessed fresh. */
+		macsurf_site_navigation_reset();
 	}
 	nav_e = browser_window_navigate(g->bw, n, NULL, BW_NAVIGATE_HISTORY, NULL, NULL, NULL);
 	macsurf_debug_log_writef("nav: bw_navigate returned %d", (int)nav_e);
