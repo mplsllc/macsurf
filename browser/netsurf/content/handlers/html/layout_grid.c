@@ -974,27 +974,111 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 			(void)last_h;
 		}
 
-		/* --- Pass 3: position each child. */
-		child = grid->children;
-		slot_index = 0;
-		while (child != NULL && slot_index < n_children) {
-			int slot_col = slots[slot_index].col;
-			int slot_row = slots[slot_index].row;
-			int x_pos;
-
-			if (has_tracks) {
-				x_pos = track_x[slot_col];
-			} else {
-				x_pos = slot_col * (col_width + col_gap);
+		/* --- Pass 3: position each child.
+		 *
+		 * fixes178d: honour align-items on the grid container and
+		 * align-self per child (cross-axis = vertical). V1 supports
+		 * stretch (default — no offset), flex-start, flex-end,
+		 * center, baseline (treated as flex-start). justify-* is not
+		 * shipped in V1 because libcss in this vintage does not
+		 * expose justify-items / justify-self accessors (would
+		 * require new libcss properties, which is the trap zone). */
+		{
+			uint8_t grid_align_items =
+				CSS_ALIGN_ITEMS_STRETCH;
+			if (grid->style != NULL) {
+				grid_align_items =
+					css_computed_align_items(grid->style);
 			}
-			child->x = x_pos;
-			if (slot_row >= 0 && slot_row < MACSURF_GRID_ROWS_MAX)
-				child->y = row_y_arr[slot_row];
-			else
-				child->y = 0;
 
-			slot_index++;
-			child = child->next;
+			child = grid->children;
+			slot_index = 0;
+			while (child != NULL && slot_index < n_children) {
+				int slot_col = slots[slot_index].col;
+				int slot_row = slots[slot_index].row;
+				int slot_row_span = slots[slot_index].row_span;
+				int x_pos;
+				int y_pos;
+				int cell_h;
+				int r;
+				int end_row;
+				uint8_t self_align;
+				uint8_t effective;
+
+				if (has_tracks) {
+					x_pos = track_x[slot_col];
+				} else {
+					x_pos = slot_col * (col_width + col_gap);
+				}
+				child->x = x_pos;
+
+				if (slot_row < 0 ||
+				    slot_row >= MACSURF_GRID_ROWS_MAX) {
+					child->y = 0;
+					slot_index++;
+					child = child->next;
+					continue;
+				}
+
+				/* Cell height = sum of row heights covered +
+				 * inter-row gaps. */
+				cell_h = 0;
+				end_row = slot_row + slot_row_span;
+				if (end_row > MACSURF_GRID_ROWS_MAX)
+					end_row = MACSURF_GRID_ROWS_MAX;
+				for (r = slot_row; r < end_row; r++) {
+					int h = row_max_h[r];
+					if (has_row_tracks &&
+					    r < n_row_tracks &&
+					    row_track_h[r] > 0) {
+						h = row_track_h[r];
+					}
+					cell_h += h;
+					if (r + 1 < end_row)
+						cell_h += row_gap;
+				}
+
+				y_pos = row_y_arr[slot_row];
+
+				self_align = CSS_ALIGN_SELF_AUTO;
+				if (child->style != NULL) {
+					self_align =
+						css_computed_align_self(
+							child->style);
+				}
+				if (self_align == CSS_ALIGN_SELF_AUTO ||
+				    self_align == CSS_ALIGN_SELF_INHERIT) {
+					effective = grid_align_items;
+				} else {
+					effective = self_align;
+				}
+
+				switch (effective) {
+				case CSS_ALIGN_ITEMS_FLEX_END:
+					if (cell_h > child->height) {
+						y_pos += cell_h -
+							 child->height;
+					}
+					break;
+				case CSS_ALIGN_ITEMS_CENTER:
+					if (cell_h > child->height) {
+						y_pos += (cell_h -
+							 child->height) / 2;
+					}
+					break;
+				case CSS_ALIGN_ITEMS_STRETCH:
+				case CSS_ALIGN_ITEMS_FLEX_START:
+				case CSS_ALIGN_ITEMS_BASELINE:
+				default:
+					/* Top of cell — current behaviour. */
+					break;
+				}
+
+				child->y = y_pos;
+
+				slot_index++;
+				child = child->next;
+			}
 		}
 
 		/* Suppress unused-variable warnings from the legacy

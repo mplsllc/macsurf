@@ -35,17 +35,24 @@ Rules carried in from the standards directive:
 Tracks roughly correspond to fixes200..fixes208. Each is a sprint,
 not a single fix.
 
+**Numbering note:** the prior in-session doc commit landed with the
+label "fixes200" and the layout.c ship landed with the label
+"fixes202" — both wrong; monotonic counter from fixes176 means those
+were actually **fixes177 (docs)** and **fixes177 (tar = layout.c)**.
+The tar shipped to the Mac is `fixes177.tar`. Track labels below
+reflect the corrected counter; the commits in git stay as-is.
+
 | Track | Round | Focus | Risk |
 |---|---|---|---|
-| A | fixes200 | Standards map (this file + matrix + audit script + tests README) | none |
-| B | fixes201 | Flex intrinsic sizing | low |
-| C | fixes202 | Fast-lane parsed-not-consumed pack | low |
-| D | fixes203 | Grid completion (areas, alignment, named lines) | medium |
-| E | fixes204 | Multi-column layout | medium |
-| F | fixes205 | Selectors + at-rules pack | medium |
-| G | fixes206 | Tables completion | medium |
-| H | fixes207 | Paint / effects completion | medium |
-| I | fixes208 | Transitions / animations feasibility | high |
+| A | fixes177 (docs) | Standards map (this file + matrix + audit script + tests README) | none |
+| B | — | Flex intrinsic sizing — already shipped at fixes176 | low |
+| C | fixes177 (tar) | Fast-lane parsed-not-consumed pack | low |
+| D | fixes178 | Grid completion (areas, alignment, grid-row) | medium |
+| E | fixes179 | Multi-column layout | medium |
+| F | fixes180 | Selectors + at-rules pack | medium |
+| G | fixes181 | Tables completion | medium |
+| H | fixes182 | Paint / effects completion | medium |
+| I | fixes183 | Transitions / animations feasibility | high |
 
 ---
 

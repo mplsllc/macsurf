@@ -1384,8 +1384,9 @@ macsurf__rewrite_grid_placement(const char *data, size_t in_size,
 			static const char N_GCE[]  = "grid-column-end";
 			static const char N_GRS[]  = "grid-row-start";
 			static const char N_GRE[]  = "grid-row-end";
+			static const char N_GA[]   = "grid-area";
 			size_t name_len = 0;
-			int prop = 0; /* 1=GC 2=GR 3=GCS 4=GCE 5=GRS 6=GRE */
+			int prop = 0; /* 1=GC 2=GR 3=GCS 4=GCE 5=GRS 6=GRE 7=GA */
 
 			/* Check longer names first to avoid GC matching
 			 * the prefix of GCS/GCE. */
@@ -1404,6 +1405,9 @@ macsurf__rewrite_grid_placement(const char *data, size_t in_size,
 			} else if (macsurf__grid_match_name(data, in_size, i,
 					N_GC, sizeof(N_GC) - 1)) {
 				prop = 1; name_len = sizeof(N_GC) - 1;
+			} else if (macsurf__grid_match_name(data, in_size, i,
+					N_GA, sizeof(N_GA) - 1)) {
+				prop = 7; name_len = sizeof(N_GA) - 1;
 			} else if (macsurf__grid_match_name(data, in_size, i,
 					N_GR, sizeof(N_GR) - 1)) {
 				prop = 2; name_len = sizeof(N_GR) - 1;
@@ -1507,6 +1511,84 @@ macsurf__rewrite_grid_placement(const char *data, size_t in_size,
 						acc->row_span = (uint8_t)sp2;
 						acc->any = true;
 					}
+				} else if (prop == 7) {
+					/* fixes178c: grid-area shorthand.
+					 *
+					 * 4-value form:  rs / cs / re / ce
+					 * 2-value form:  rs / cs   (span 1)
+					 *
+					 * Named-area form (single ident) is
+					 * NOT supported in V1 — that needs
+					 * grid-template-areas resolution
+					 * which is deferred. A single-token
+					 * ident value falls through with no
+					 * placement emitted.
+					 *
+					 * Tokens are positive ints 1..254 or
+					 * -1 (the "fill row" sentinel encoded
+					 * as 255). */
+					int rs2 = 0, cs2 = 0, re2 = 0, ce2 = 0;
+					int slashes = 0;
+					const char *q = p;
+					/* Count `/` separators (excluding any
+					 * outside whitespace) so we can pick
+					 * which form to expect. */
+					{
+						const char *qq = p;
+						while (qq < end) {
+							if (*qq == '/') slashes++;
+							qq++;
+						}
+					}
+					rs2 = macsurf__grid_parse_int_or_minus1(
+							&q, end);
+					if (rs2 >= 1 && rs2 <= 254 && q < end &&
+							*q == '/') {
+						q++;
+						cs2 = macsurf__grid_parse_int_or_minus1(
+								&q, end);
+						if (slashes >= 3) {
+							if (q < end && *q == '/') q++;
+							re2 = macsurf__grid_parse_int_or_minus1(
+									&q, end);
+							if (q < end && *q == '/') q++;
+							ce2 = macsurf__grid_parse_int_or_minus1(
+									&q, end);
+						}
+					}
+					if (rs2 >= 1 && rs2 <= 254 &&
+							cs2 >= 1 && cs2 <= 254) {
+						acc->row_start = (uint8_t)rs2;
+						acc->col_start = (uint8_t)cs2;
+						if (slashes >= 3) {
+							/* row_end */
+							if (re2 == 255) {
+								acc->row_span = 255;
+							} else if (re2 > rs2 &&
+									re2 <= 254) {
+								int sp2 = re2 - rs2;
+								if (sp2 > 254) sp2 = 254;
+								acc->row_span = (uint8_t)sp2;
+							} else {
+								acc->row_span = 1;
+							}
+							/* col_end */
+							if (ce2 == 255) {
+								acc->col_span = 255;
+							} else if (ce2 > cs2 &&
+									ce2 <= 254) {
+								int sp2 = ce2 - cs2;
+								if (sp2 > 254) sp2 = 254;
+								acc->col_span = (uint8_t)sp2;
+							} else {
+								acc->col_span = 1;
+							}
+						} else {
+							acc->row_span = 1;
+							acc->col_span = 1;
+						}
+						acc->any = true;
+					}
 				}
 
 				/* Skip the declaration in the input (including
@@ -1587,6 +1669,316 @@ next_iter:
  * Property-level aliasing inside libcss (the fixes141 approach) hung the
  * browser pre-reformat on real hardware; the preprocessor route is the
  * safe pattern for vendor->standard bridges. */
+
+
+/* fixes178b: grid-template-areas + named grid-area resolution.
+ *
+ * Document-scope V1: scans the input for any
+ *   grid-template-areas: "a b c" "d d e" ...
+ * declarations and builds a flat name->bbox table. Then scans for any
+ *   grid-area: <ident>
+ * single-token declarations and rewrites them to numeric 4-value form
+ *   grid-area: rs / cs / re / ce
+ * which the existing prop==7 handler in the placement pass turns into a
+ * packed `-macsurf-grid-col-span` declaration.
+ *
+ * Limitations:
+ *  - 32 areas max, 32 char per name max, 8x8 grid max
+ *  - last-write-wins on name conflicts across multiple
+ *    grid-template-areas declarations
+ *  - cells named `.` are treated as empty / skipped
+ *  - the original grid-template-areas declaration stays in the output;
+ *    libcss does not have a parser for it, so it parse-fails silently.
+ *  - if the area parse hits any error, the pass returns NULL and the
+ *    caller falls back to the unmodified input.
+ */
+
+#define MACSURF_GTA_NAMES_MAX 32
+#define MACSURF_GTA_NAME_MAX  32
+
+struct macsurf_gta_area {
+	char  name[MACSURF_GTA_NAME_MAX];
+	uint8_t col_start; /* 1-indexed */
+	uint8_t row_start;
+	uint8_t col_end;   /* 1-indexed, inclusive */
+	uint8_t row_end;
+};
+
+struct macsurf_gta_table {
+	struct macsurf_gta_area entries[MACSURF_GTA_NAMES_MAX];
+	int n;
+};
+
+static int macsurf_gta__is_ident_char(char c)
+{
+	return (c >= 'a' && c <= 'z') ||
+	       (c >= 'A' && c <= 'Z') ||
+	       (c >= '0' && c <= '9') ||
+	       c == '-' || c == '_';
+}
+
+static int macsurf_gta__find(struct macsurf_gta_table *tbl,
+		const char *name, size_t name_len)
+{
+	int k;
+	for (k = 0; k < tbl->n; k++) {
+		size_t L = strlen(tbl->entries[k].name);
+		if (L == name_len &&
+		    memcmp(tbl->entries[k].name, name, L) == 0)
+			return k;
+	}
+	return -1;
+}
+
+/* Parse one `grid-template-areas: "..." "..." ...` declaration value
+ * starting at `p` (just past the `:`) and ending at `end`. Updates the
+ * shared table.
+ *
+ * Per CSS Grid spec each `"..."` is a row of whitespace-separated cell
+ * tokens. Each cell is either a single `.` (null cell) or an
+ * identifier. All cells in a contiguous rectangular bbox sharing the
+ * same name belong to the same area. We compute a bbox per unique
+ * name. Non-rectangular groupings (illegal per spec) end up with the
+ * minimum bbox containing all instances. */
+static void macsurf_gta__parse_decl(const char *p, const char *end,
+		struct macsurf_gta_table *tbl)
+{
+	int row = 0;
+	while (p < end) {
+		const char *str_start;
+		const char *str_end;
+		int col = 0;
+		/* Find next `"..."`. */
+		while (p < end && *p != '"') p++;
+		if (p >= end) return;
+		p++;
+		str_start = p;
+		while (p < end && *p != '"') p++;
+		if (p >= end) return;
+		str_end = p;
+		p++;
+		/* Walk cells inside the string. */
+		{
+			const char *q = str_start;
+			while (q < str_end) {
+				const char *cell_s;
+				const char *cell_e;
+				size_t L;
+				while (q < str_end &&
+				       (*q == ' ' || *q == '\t'))
+					q++;
+				if (q >= str_end) break;
+				cell_s = q;
+				while (q < str_end &&
+				       *q != ' ' && *q != '\t')
+					q++;
+				cell_e = q;
+				L = (size_t)(cell_e - cell_s);
+				if (L == 0) { col++; continue; }
+				if (L == 1 && cell_s[0] == '.') {
+					col++;
+					continue;
+				}
+				if (L < MACSURF_GTA_NAME_MAX) {
+					int idx = macsurf_gta__find(tbl,
+						cell_s, L);
+					if (idx < 0 &&
+					    tbl->n < MACSURF_GTA_NAMES_MAX) {
+						idx = tbl->n++;
+						memcpy(tbl->entries[idx].name,
+						       cell_s, L);
+						tbl->entries[idx].name[L] = 0;
+						tbl->entries[idx].col_start =
+							(uint8_t)(col + 1);
+						tbl->entries[idx].col_end =
+							(uint8_t)(col + 1);
+						tbl->entries[idx].row_start =
+							(uint8_t)(row + 1);
+						tbl->entries[idx].row_end =
+							(uint8_t)(row + 1);
+					} else if (idx >= 0) {
+						uint8_t cs1 = (uint8_t)(col + 1);
+						uint8_t rs1 = (uint8_t)(row + 1);
+						if (cs1 < tbl->entries[idx].col_start)
+							tbl->entries[idx].col_start = cs1;
+						if (cs1 > tbl->entries[idx].col_end)
+							tbl->entries[idx].col_end = cs1;
+						if (rs1 < tbl->entries[idx].row_start)
+							tbl->entries[idx].row_start = rs1;
+						if (rs1 > tbl->entries[idx].row_end)
+							tbl->entries[idx].row_end = rs1;
+					}
+				}
+				col++;
+			}
+		}
+		row++;
+		if (row > 254) return;
+	}
+}
+
+static char *
+macsurf__rewrite_grid_template_areas(const char *data, size_t in_size,
+		size_t *out_size_p)
+{
+	static const char N_GTA[] = "grid-template-areas";
+	static const size_t N_GTA_LEN = 19;
+	static const char N_GA[]  = "grid-area";
+	static const size_t N_GA_LEN  = 9;
+	struct macsurf_gta_table tbl;
+	size_t cap;
+	size_t pos = 0;
+	char *out;
+	size_t i = 0;
+
+	tbl.n = 0;
+	memset(&tbl.entries, 0, sizeof(tbl.entries));
+
+	/* --- Pass 1: collect area definitions. */
+	while (i + N_GTA_LEN <= in_size) {
+		if (data[i] == 'g' &&
+		    macsurf__match_prop_name(data, in_size, i,
+				N_GTA, N_GTA_LEN)) {
+			size_t j = i + N_GTA_LEN;
+			while (j < in_size && (data[j] == ' ' ||
+					data[j] == '\t' ||
+					data[j] == '\n' ||
+					data[j] == '\r')) j++;
+			if (j < in_size && data[j] == ':') {
+				size_t val_start = j + 1;
+				size_t val_end = val_start;
+				while (val_end < in_size) {
+					char vc = data[val_end];
+					if (vc == ';' || vc == '}') break;
+					val_end++;
+				}
+				macsurf_gta__parse_decl(data + val_start,
+						data + val_end, &tbl);
+				i = val_end;
+				continue;
+			}
+		}
+		i++;
+	}
+
+	if (tbl.n == 0) {
+		*out_size_p = in_size;
+		out = (char *)malloc(in_size + 1);
+		if (out == NULL) return NULL;
+		memcpy(out, data, in_size);
+		out[in_size] = 0;
+		return out;
+	}
+
+	/* --- Pass 2: rewrite `grid-area: <ident>` to numeric form. */
+	cap = in_size + 256;
+	if (cap < 1024) cap = 1024;
+	out = (char *)malloc(cap);
+	if (out == NULL) return NULL;
+	i = 0;
+	while (i < in_size) {
+		if (data[i] == 'g' && i + N_GA_LEN <= in_size &&
+		    macsurf__match_prop_name(data, in_size, i,
+				N_GA, N_GA_LEN)) {
+			size_t j = i + N_GA_LEN;
+			size_t val_start;
+			size_t val_end;
+			size_t name_s, name_e;
+			int idx;
+			while (j < in_size && (data[j] == ' ' ||
+					data[j] == '\t' ||
+					data[j] == '\n' ||
+					data[j] == '\r')) j++;
+			if (j >= in_size || data[j] != ':') goto emit_byte;
+			val_start = j + 1;
+			while (val_start < in_size &&
+				(data[val_start] == ' ' ||
+				 data[val_start] == '\t')) val_start++;
+			val_end = val_start;
+			while (val_end < in_size) {
+				char vc = data[val_end];
+				if (vc == ';' || vc == '}' ||
+						vc == '!') break;
+				val_end++;
+			}
+			/* Look at the value: only single-IDENT form is
+			 * the named-area shorthand. If it contains `/`
+			 * or a digit anywhere, leave it for the numeric
+			 * handler. */
+			{
+				const char *q;
+				int has_slash = 0;
+				for (q = data + val_start;
+						q < data + val_end; q++) {
+					if (*q == '/') { has_slash = 1; break; }
+				}
+				if (has_slash) goto emit_byte;
+			}
+			name_s = val_start;
+			while (name_s < val_end &&
+				(data[name_s] == ' ' ||
+				 data[name_s] == '\t')) name_s++;
+			name_e = name_s;
+			while (name_e < val_end &&
+				macsurf_gta__is_ident_char(data[name_e]))
+				name_e++;
+			if (name_e == name_s ||
+				(name_e - name_s) >= MACSURF_GTA_NAME_MAX)
+				goto emit_byte;
+			idx = macsurf_gta__find(&tbl, data + name_s,
+					(size_t)(name_e - name_s));
+			if (idx < 0) goto emit_byte;
+			{
+				/* Emit `grid-area: rs / cs / re / ce`. */
+				char tmp[80];
+				int n;
+				size_t need;
+				n = sprintf(tmp,
+					"grid-area: %u / %u / %u / %u",
+					(unsigned)tbl.entries[idx].row_start,
+					(unsigned)tbl.entries[idx].col_start,
+					(unsigned)(tbl.entries[idx].row_end + 1),
+					(unsigned)(tbl.entries[idx].col_end + 1));
+				if (n <= 0) goto emit_byte;
+				need = pos + (size_t)n + 1;
+				while (need >= cap) {
+					size_t newcap = cap * 2;
+					char *neu = (char *)realloc(out,
+							newcap);
+					if (neu == NULL) {
+						free(out);
+						return NULL;
+					}
+					out = neu;
+					cap = newcap;
+				}
+				memcpy(out + pos, tmp, (size_t)n);
+				pos += (size_t)n;
+				i = val_end;
+				continue;
+			}
+		}
+emit_byte:
+		{
+			size_t need = pos + 2;
+			while (need >= cap) {
+				size_t newcap = cap * 2;
+				char *neu = (char *)realloc(out, newcap);
+				if (neu == NULL) {
+					free(out);
+					return NULL;
+				}
+				out = neu;
+				cap = newcap;
+			}
+		}
+		out[pos++] = data[i++];
+	}
+	*out_size_p = pos;
+	return out;
+}
+
+
 static char *
 macsurf__rewrite_text_shadow(const char *data, size_t in_size,
 		size_t *out_size_p)
@@ -1705,6 +2097,32 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	final_data = rewritten_rows ? (const char *)rewritten_rows :
 			rewritten ? (const char *)rewritten : data;
 	final_size = size;
+
+	/* fixes178b — between rows and placement: resolve
+	 * grid-template-areas + named grid-area shorthand into the
+	 * numeric 4-value grid-area form that the placement pass below
+	 * already handles. Pass-through on no-op (no template-areas
+	 * declarations in the input). */
+	{
+		size_t gta_size = 0;
+		char *rewritten_gta = macsurf__rewrite_grid_template_areas(
+				final_data, (size_t)final_size, &gta_size);
+		if (rewritten_gta != NULL && gta_size <= (size_t)0x7fffffff) {
+			if (rewritten_rows != NULL) {
+				free(rewritten_rows);
+				rewritten_rows = NULL;
+			}
+			if (rewritten != NULL) {
+				free(rewritten);
+				rewritten = NULL;
+			}
+			rewritten_rows = rewritten_gta;
+			final_data = (const char *)rewritten_gta;
+			final_size = (unsigned int)gta_size;
+		} else if (rewritten_gta != NULL) {
+			free(rewritten_gta);
+		}
+	}
 
 	/* fixes151 — third pass for `grid-column: VALUE`. This pass needs
 	 * a growable output buffer (new property name is longer than the

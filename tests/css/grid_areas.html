@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>PROBE: grid-template-areas + grid-area (fixes178b/c)</title>
+<style>
+body { font-family: sans-serif; font-size: 12px; margin: 8px; }
+h2 { font-size: 13px; color: #003366; margin: 8px 0 2px 0; }
+p.exp { font-size: 11px; color: #555; margin: 2px 0; }
+
+.g1 {
+  display: grid;
+  grid-template-columns: 80px 1fr 80px;
+  grid-template-rows: 40px 80px 40px;
+  grid-template-areas:
+    "head head head"
+    "side main aside"
+    "foot foot foot";
+  gap: 4px;
+  border: 1px solid #888;
+  background: #f0f0f0;
+  padding: 4px;
+  width: 400px;
+  margin: 4px 0;
+}
+.g1 > div { background: #ffd; border: 1px solid #888; padding: 4px; font-size: 11px; }
+.g1 .h    { grid-area: head;  background: #cdf; }
+.g1 .s    { grid-area: side;  background: #cfd; }
+.g1 .m    { grid-area: main;  background: #fff; }
+.g1 .a    { grid-area: aside; background: #cfd; }
+.g1 .f    { grid-area: foot;  background: #ddd; }
+
+.g2 {
+  display: grid;
+  grid-template-columns: 60px 60px 60px 60px;
+  grid-template-rows: 40px 40px;
+  gap: 2px;
+  border: 1px solid #888;
+  padding: 2px;
+  width: 260px;
+  margin: 4px 0;
+}
+.g2 > div { background: #ffd; border: 1px solid #888; padding: 2px; font-size: 10px; }
+/* Numeric 4-value grid-area: row-start / col-start / row-end / col-end */
+.g2 .big  { grid-area: 1 / 2 / 3 / 4; background: #fdc; }
+
+.g3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: 30px 30px;
+  gap: 2px;
+  border: 1px solid #888;
+  padding: 2px;
+  width: 320px;
+  margin: 4px 0;
+}
+.g3 > div { background: #ffd; border: 1px solid #888; padding: 2px; font-size: 10px; }
+/* 2-value form (row / col) — span 1 in both directions. */
+.g3 .pinned { grid-area: 2 / 2; background: #fcc; }
+</style>
+</head>
+<body>
+
+<h2>PROBE GA1 — grid-template-areas + named grid-area</h2>
+<p class="exp">Expected layout (head spans top row, side+main+aside middle row, foot bottom):</p>
+<div class="g1">
+  <div class="h">head</div>
+  <div class="s">side</div>
+  <div class="m">main</div>
+  <div class="a">aside</div>
+  <div class="f">foot</div>
+</div>
+
+<h2>PROBE GA2 — numeric grid-area: 1 / 2 / 3 / 4</h2>
+<p class="exp">Expected: GA2 ".big" covers cols 2-3 across both rows; other cells fill around.</p>
+<div class="g2">
+  <div>a</div>
+  <div class="big">big</div>
+  <div>b</div>
+  <div>c</div>
+  <div>d</div>
+</div>
+
+<h2>PROBE GA3 — 2-value grid-area: 2 / 2</h2>
+<p class="exp">Expected: ".pinned" sits in row 2 col 2; spans 1x1.</p>
+<div class="g3">
+  <div>a</div>
+  <div>b</div>
+  <div>c</div>
+  <div class="pinned">PIN</div>
+  <div>d</div>
+</div>
+
+</body>
+</html>

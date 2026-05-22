@@ -1,4 +1,4 @@
-=== CSS audit: 2026-05-22T17:37:52Z ===
+=== CSS audit: 2026-05-22T17:52:31Z ===
 parsers:            192
 computed accessors: 131
 consumed:           112

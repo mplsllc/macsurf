@@ -107,7 +107,7 @@ All pseudos below are **parsed**. Column indicates dynamic/match behaviour.
 |---|---|
 | `display: block / inline / inline-block / none / list-item` | FULL |
 | `display: flex / inline-flex` | FULL |
-| `display: grid / inline-grid` | PARTIAL — V2 columns/rows/spans/placement; subgrid + `dense` deferred |
+| `display: grid / inline-grid` | PARTIAL — V2 columns/rows/spans/placement (fixes178); subgrid + `dense` deferred |
 | `display: table / table-row / table-cell / table-row-group / table-caption` | PARTIAL |
 | `display: contents` | NEEDS_LAYOUT |
 | `display: flow-root` | NEEDS_LAYOUT — treated as block; doesn't establish BFC |
@@ -277,11 +277,13 @@ INTENTIONALLY_UNSUPPORTED — visual browser only.
 | `display: grid` | FULL |
 | `grid-template-columns` (px, %, fr, repeat, minmax, fit-content) | PARTIAL — V2 (fixes148, fixes148b3) |
 | `grid-template-rows` | PARTIAL — V1 (fixes150) — PX honoured, FR falls back |
-| `grid-template-areas` | MISSING_PARSER. **Track C.** |
-| `grid-column` span/start/end, `grid-row` | PARTIAL — `grid-column` shipped fixes151; `grid-row` MISSING |
-| `grid-area` | MISSING_PARSER |
+| `grid-template-areas` | PARTIAL (fixes178b) — document-scope name table, 32 names max, 8x8 grid max, named `grid-area: <ident>` lookup; cross-stylesheet references not resolved |
+| `grid-column` span/start/end | FULL (fixes151) |
+| `grid-row` span/start/end | FULL (fixes158, probe added fixes178a) |
+| `grid-area` shorthand | PARTIAL (fixes178c) — 4-value numeric `rs/cs/re/ce` and 2-value `rs/cs` work; named-area form depends on fixes178b lookup |
 | `grid-auto-rows` / `-columns` / `-flow` | MISSING_PARSER |
-| `justify-items` / `align-items` / `-self` on grid | NEEDS_LAYOUT |
+| `align-items` / `align-self` on grid | FULL (fixes178d) — stretch (default), flex-start, flex-end, center; baseline -> flex-start |
+| `justify-items` / `justify-self` on grid | MISSING_PARSER — libcss vintage has no parser/accessor; new vendor property needed |
 | `gap` two-value on grid | PARTIAL — same as flex |
 | Subgrid | INTENTIONALLY_UNSUPPORTED (this libcss vintage) |
 
