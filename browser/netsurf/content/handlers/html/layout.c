@@ -5692,6 +5692,7 @@ bool layout_document(html_content *content, int width, int height)
 	bool ret;
 	struct box *doc = content->layout;
 	const struct gui_layout_table *font_func = content->font_func;
+	int doc_h_after_block;        /* fixes164 — see partial-layout gate below */
 
 	NSLOG(layout, DEBUG, "Doing layout to %ix%i of %s",
 			width, height, nsurl_access(content_get_url(
@@ -5732,10 +5733,31 @@ bool layout_document(html_content *content, int width, int height)
 		(int)ret, (void *)doc,
 		(int)doc->width, (int)doc->height);
 
-	/* fixes161f — tail-fixup pre/post markers. Huffpost's previous log
-	 * showed [doc post-block] firing then no [document exit], so the
-	 * crash is in one of the five tail steps below. Each is bracketed
-	 * so the next log identifies which step. */
+	/* fixes164 — partial-layout detection. layout_block_context can
+	 * return ret=true with doc->height == 0 when the box-tree contains
+	 * degenerate intermediates (huffpost: w=0 flex item inside a flex
+	 * container, layout collapses to zero overall doc height). The
+	 * htmlbody-fill block below then bumps doc->height up to viewport
+	 * height for paint sizing, but the underlying CSS containing-block
+	 * dimensions stay at zero. Running layout_position_absolute /
+	 * layout_position_relative against that state derefs through the
+	 * box tree looking for positioned descendants, and CSS 2.1
+	 * positional math (which all reads containing_block->width /
+	 * height) is undefined for zero containing blocks. Huffpost crashes
+	 * inside layout_position_absolute's recursion every time on this
+	 * tree.
+	 *
+	 * Capture the pre-fill height as the "did layout actually
+	 * complete" signal: if it's > 0 (or layout_block_context returned
+	 * false explicitly), positional passes are skipped and we go
+	 * straight to bbox computation. Lists pass is always safe via
+	 * fixes163 and runs regardless. The page renders at static
+	 * positions; absolute-positioned overlays (modals, dropdowns)
+	 * end up inline at their static x/y instead of overlapping
+	 * content. That's the right trade-off versus crashing. */
+	doc_h_after_block = (int)doc->height;
+
+	/* fixes161f — tail-fixup pre/post markers. */
 	macsurf_debug_log_writef(
 		"LAYOUTPHASE doc tail pre-htmlbody doc_h=%d height=%d children=%p",
 		(int)doc->height, height, (void *)doc->children);
@@ -5764,13 +5786,20 @@ bool layout_document(html_content *content, int width, int height)
 	layout_lists(content, doc);
 	macsurf_debug_log_writef("LAYOUTPHASE doc tail post-lists");
 
-	macsurf_debug_log_writef("LAYOUTPHASE doc tail pre-abs");
-	layout_position_absolute(doc, doc, 0, 0, content);
-	macsurf_debug_log_writef("LAYOUTPHASE doc tail post-abs");
+	if (ret && doc_h_after_block > 0) {
+		macsurf_debug_log_writef("LAYOUTPHASE doc tail pre-abs");
+		layout_position_absolute(doc, doc, 0, 0, content);
+		macsurf_debug_log_writef("LAYOUTPHASE doc tail post-abs");
 
-	macsurf_debug_log_writef("LAYOUTPHASE doc tail pre-rel");
-	layout_position_relative(&content->unit_len_ctx, doc, doc, 0, 0);
-	macsurf_debug_log_writef("LAYOUTPHASE doc tail post-rel");
+		macsurf_debug_log_writef("LAYOUTPHASE doc tail pre-rel");
+		layout_position_relative(&content->unit_len_ctx, doc, doc, 0, 0);
+		macsurf_debug_log_writef("LAYOUTPHASE doc tail post-rel");
+	} else {
+		macsurf_debug_log_writef(
+			"LAYOUTPHASE doc tail partial-layout: "
+			"ret=%d doc_h_pre_fill=%d - skipping abs/rel",
+			(int)ret, doc_h_after_block);
+	}
 
 	macsurf_debug_log_writef("LAYOUTPHASE doc tail pre-bbox");
 	layout_calculate_descendant_bboxes(&content->unit_len_ctx, doc);
