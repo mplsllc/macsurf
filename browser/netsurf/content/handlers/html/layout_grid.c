@@ -344,7 +344,25 @@ static void macsurf_grid_mark(unsigned char *occ, int col, int row,
 	}
 }
 
+/* fixes171 — Watchdog wrapper for layout_grid. */
+static bool layout_grid_inner(struct box *grid, int available_width,
+		html_content *content);
+
 bool layout_grid(struct box *grid, int available_width, html_content *content)
+{
+	bool ret;
+	if (grid == NULL) return false;
+	if (layout_watchdog_enter(grid)) {
+		grid->height = 0;
+		return true;
+	}
+	ret = layout_grid_inner(grid, available_width, content);
+	layout_watchdog_exit();
+	return ret;
+}
+
+static bool layout_grid_inner(struct box *grid, int available_width,
+		html_content *content)
 {
 	int32_t packed = 0;
 	int cols = 1;

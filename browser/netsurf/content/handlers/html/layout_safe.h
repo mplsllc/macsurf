@@ -130,4 +130,100 @@ static int layout_dim_clamp(int v)
 	return v;
 }
 
+/* ============================================================
+ * fixes171 — Layout Watchdog
+ *
+ * Real browsers solve "page X crashes the layout engine" with two
+ * pieces of universal infrastructure that don't depend on knowing
+ * which specific input triggers the crash:
+ *
+ *   1. A depth cap on the recursive box-tree walker, so genuinely
+ *      runaway recursion (circular tree, malformed nesting, hostile
+ *      input) cannot exhaust the stack.
+ *
+ *   2. An iteration budget on the total layout-function call count
+ *      for one html_reformat pass, so genuinely infinite loops
+ *      (cycles between layout_block_context / layout_flex /
+ *      layout_grid via odd input combinations) cannot hang the
+ *      browser.
+ *
+ * When either cap is exceeded, the offending subtree degrades
+ * locally to a zero-height block — same shape fixes167/170's
+ * fallbacks use — and a latched `macsurf_layout_aborted` flag is
+ * raised so post-layout code can flag the page as degraded if it
+ * cares to. Layout continues; the document tail runs; the rest of
+ * the page still renders.
+ *
+ * The watchdog is GLOBAL state. It is reset at the top of
+ * html_reformat (macsurf_layout_watchdog_reset). Every layout
+ * entry point pairs layout_watchdog_enter() with
+ * layout_watchdog_exit(); if enter returns 1 the caller must
+ * bail with the zero-height fallback BEFORE calling exit.
+ * ============================================================ */
+
+/* CW8 partition is 16MB; deeply-nested modern HTML (Apple, BBC)
+ * has been observed in the 60-80 range. 200 leaves comfortable
+ * head-room and still catches genuine pathology. */
+#define MACSURF_LAYOUT_MAX_DEPTH 200
+
+/* One html_reformat traversal of a typical modern page (mactrove,
+ * wikipedia) is in the 5_000-20_000 range. Apple is heavier but
+ * realistic measurements top out under 100k. 300_000 is well
+ * above that ceiling while still catching infinite cycles. */
+#define MACSURF_LAYOUT_MAX_CALLS 300000
+
+/* Globals defined in layout.c. Declared extern here so every
+ * layout_*.c file can read/write them without circular includes. */
+extern int macsurf_layout_depth;
+extern long macsurf_layout_calls;
+extern int macsurf_layout_aborted;
+
+/* macsurf_layout_watchdog_reset() and macsurf_layout_breadcrumb()
+ * are real functions (defined in layout.c) so they can do I/O and
+ * carry mutable state. The inline-static enter/exit helpers below
+ * are tiny enough to live in the header. */
+extern void macsurf_layout_watchdog_reset(void);
+extern void macsurf_layout_breadcrumb(const char *phase, const void *box);
+
+/**
+ * Watchdog gate at the entry of every recursive layout function.
+ *
+ * Returns 1 if either the depth cap or the iteration budget has
+ * been exceeded. Callers MUST bail out with the zero-height block
+ * fallback in that case (do NOT call layout_watchdog_exit). On a
+ * return of 0 the caller has been counted in and must pair with
+ * layout_watchdog_exit() before returning.
+ */
+static int layout_watchdog_enter(const void *box)
+{
+	(void)box;
+	macsurf_layout_calls++;
+	if (macsurf_layout_calls > MACSURF_LAYOUT_MAX_CALLS) {
+		if (macsurf_layout_aborted == 0) {
+			macsurf_layout_aborted = 1;
+			/* one-shot log; subsequent trips stay silent
+			 * so the log file isn't flooded. */
+			macsurf_layout_breadcrumb("WATCHDOG calls", box);
+		}
+		return 1;
+	}
+	macsurf_layout_depth++;
+	if (macsurf_layout_depth > MACSURF_LAYOUT_MAX_DEPTH) {
+		if (macsurf_layout_aborted == 0) {
+			macsurf_layout_aborted = 1;
+			macsurf_layout_breadcrumb("WATCHDOG depth", box);
+		}
+		/* don't leave depth elevated — pop ourselves */
+		macsurf_layout_depth--;
+		return 1;
+	}
+	return 0;
+}
+
+static void layout_watchdog_exit(void)
+{
+	if (macsurf_layout_depth > 0)
+		macsurf_layout_depth--;
+}
+
 #endif /* NETSURF_HTML_LAYOUT_SAFE_H */

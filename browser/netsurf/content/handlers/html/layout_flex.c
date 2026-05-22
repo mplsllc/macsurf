@@ -1560,7 +1560,27 @@ static bool layout_flex_fallback_block(struct box *flex, int available_width,
  * \param[in] content          memory pool for any new boxes
  * \return  true on success, false on memory exhaustion
  */
+/* fixes171 — Watchdog wrapper for layout_flex. The original body
+ * is renamed to layout_flex_inner; this wrapper applies the depth
+ * + iteration gate and pairs the exit. */
+static bool layout_flex_inner(struct box *flex, int available_width,
+		html_content *content);
+
 bool layout_flex(struct box *flex, int available_width,
+		html_content *content)
+{
+	bool ret;
+	if (flex == NULL) return false;
+	if (layout_watchdog_enter(flex)) {
+		flex->height = 0;
+		return true;
+	}
+	ret = layout_flex_inner(flex, available_width, content);
+	layout_watchdog_exit();
+	return ret;
+}
+
+static bool layout_flex_inner(struct box *flex, int available_width,
 		html_content *content)
 {
 	int max_height, min_height;

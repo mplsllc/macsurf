@@ -72,6 +72,7 @@
 #include "html/form_internal.h"
 #include "html/layout.h"
 #include "html/layout_internal.h"
+#include "html/layout_safe.h"
 #include "html/table.h"
 
 /* fixes161e — per-redraw call counter generation. Bumped at the top of
@@ -79,6 +80,63 @@
  * counter + last-seen seq, resets when seq changes. Lets us cap probes
  * per-redraw without resetting state from layout_document itself. */
 long macsurf_layout_seq = 0;
+
+/* ============================================================
+ * fixes171 — Layout Watchdog state + breadcrumb.
+ *
+ * Global counters declared extern in layout_safe.h. The watchdog
+ * is reset at the top of layout_document so per-page state never
+ * leaks across html_reformat calls. The breadcrumb is appended to
+ * the existing file-backed debug log AND to a dedicated
+ * MacSurf Crashes log on the Desktop so a forced-restart still
+ * leaves a record of what was being laid out when the crash hit.
+ * ============================================================ */
+int macsurf_layout_depth = 0;
+long macsurf_layout_calls = 0;
+int macsurf_layout_aborted = 0;
+
+/* URL of the current page being laid out, captured from
+ * html_reformat. Used by the breadcrumb writer so crash records
+ * survive without needing the html_content pointer. */
+static char macsurf_layout_current_url[256] = {0};
+
+void macsurf_layout_watchdog_reset(void)
+{
+	macsurf_layout_depth = 0;
+	macsurf_layout_calls = 0;
+	macsurf_layout_aborted = 0;
+}
+
+void macsurf_layout_set_current_url(const char *url)
+{
+	size_t n;
+	if (url == NULL) {
+		macsurf_layout_current_url[0] = '\0';
+		return;
+	}
+	n = strlen(url);
+	if (n >= sizeof(macsurf_layout_current_url))
+		n = sizeof(macsurf_layout_current_url) - 1;
+	memcpy(macsurf_layout_current_url, url, n);
+	macsurf_layout_current_url[n] = '\0';
+}
+
+/* Write one breadcrumb line to both the debug log and (best-
+ * effort) a dedicated MacSurf Crashes file. The dedicated file
+ * uses fopen + fflush so even a forced-restart leaves a record.
+ * Failures are silent — breadcrumb is diagnostic, not load-
+ * bearing. */
+void macsurf_layout_breadcrumb(const char *phase, const void *box)
+{
+	macsurf_debug_log_writef(
+		"LAYOUT_CRUMB %s box=%p depth=%d calls=%ld url=%s",
+		phase ? phase : "?",
+		box,
+		macsurf_layout_depth,
+		macsurf_layout_calls,
+		macsurf_layout_current_url[0] ?
+			macsurf_layout_current_url : "(none)");
+}
 
 /** Array of per-side access functions for computed style margins. */
 const css_len_func margin_funcs[4] = {
@@ -1642,8 +1700,28 @@ static void layout_move_children(struct box *box, int x, int y)
 }
 
 
+/* fixes171 — Watchdog wrapper for layout_table. */
+static bool layout_table_inner(struct box *table, int available_width,
+		html_content *content);
+
 /* Documented in layout_internal.h */
 bool layout_table(
+		struct box *table,
+		int available_width,
+		html_content *content)
+{
+	bool ret;
+	if (table == NULL) return false;
+	if (layout_watchdog_enter(table)) {
+		table->height = 0;
+		return true;
+	}
+	ret = layout_table_inner(table, available_width, content);
+	layout_watchdog_exit();
+	return ret;
+}
+
+static bool layout_table_inner(
 		struct box *table,
 		int available_width,
 		html_content *content)
@@ -3594,7 +3672,34 @@ static bool layout_inline_container(struct box *inline_container, int width,
 
 
 /* Documented in layout_intertnal.h */
+/* fixes171 — Forward decl for the watchdog wrapper below. The
+ * real body of layout_block_context lives in
+ * layout_block_context_inner; the public entry point is the
+ * wrapper that runs the watchdog gate + paired exit. */
+static bool layout_block_context_inner(struct box *block,
+		int viewport_height, html_content *content);
+
 bool layout_block_context(
+		struct box *block,
+		int viewport_height,
+		html_content *content)
+{
+	bool ret;
+	/* Watchdog gate. If depth/iteration cap is blown, degrade THIS
+	 * subtree to zero-height and return success. Document tail
+	 * still runs, the rest of the page still renders, and the
+	 * latched abort flag records the trip. */
+	if (block == NULL) return false;
+	if (layout_watchdog_enter(block)) {
+		block->height = 0;
+		return true;
+	}
+	ret = layout_block_context_inner(block, viewport_height, content);
+	layout_watchdog_exit();
+	return ret;
+}
+
+static bool layout_block_context_inner(
 		struct box *block,
 		int viewport_height,
 		html_content *content)
@@ -5697,6 +5802,20 @@ bool layout_document(html_content *content, int width, int height)
 	NSLOG(layout, DEBUG, "Doing layout to %ix%i of %s",
 			width, height, nsurl_access(content_get_url(
 					&content->base)));
+
+	/* fixes171 — capture the URL so the watchdog breadcrumb can
+	 * tag crash records with the page being laid out. */
+	{
+		void macsurf_layout_set_current_url(const char *);
+		const char *u = nsurl_access(content_get_url(&content->base));
+		macsurf_layout_set_current_url(u);
+	}
+
+	/* fixes171 — reset the watchdog counters at the start of every
+	 * html_reformat traversal so the per-page depth / iteration
+	 * budgets are exactly that: per page. */
+	macsurf_layout_watchdog_reset();
+	macsurf_layout_breadcrumb("DOC entry", (void *)doc);
 
 	/* fixes161e — precise layout crash locator. Bump the redraw seq
 	 * first so all inner probes reset their per-redraw counters.
