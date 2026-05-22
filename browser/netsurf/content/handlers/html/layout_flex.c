@@ -92,6 +92,57 @@ static int flex_safe_fallback_dim(int fallback)
 	return fallback;
 }
 
+/* fixes176 — intrinsic main-axis size for a flex item.
+ *
+ * Apple-style global navs (and many other real-world horizontal flex
+ * containers) reach the flex code with available_main == 0 because the
+ * container's own width resolves to 0 in an indefinite-width context.
+ * In that case layout_find_dimensions sizes every child to width 0,
+ * basis-auto reads b->width back as 0, and the row paints as a sliver.
+ *
+ * The minmax pass (layout_minmax_block at document scope) already
+ * populates b->max_width as the max-content intrinsic width and
+ * b->min_width as the min-content width. These are exactly the values
+ * the spec wants us to use as a flex-basis fallback when the container
+ * is indefinite. We reuse them here rather than walking the subtree
+ * again.
+ *
+ * Returns a positive intrinsic main size on success, 0 if there is
+ * nothing useful to read (caller should keep its current base_size).
+ *
+ * Horizontal containers: returns max_width (content-width of the item's
+ * subtree, sans outer delta). Caller adds delta_outer_main.
+ * Vertical containers: returns the item's resolved height if it has one,
+ * else 0 (column-direction intrinsic sizing is a separate spec branch
+ * that we don't attempt in V1; falls back to existing behaviour). */
+static int flex_item_intrinsic_main_size(struct box *b,
+		bool main_is_horizontal)
+{
+	int mw;
+
+	if (b == NULL) return 0;
+
+	if (main_is_horizontal) {
+		mw = b->max_width;
+		if (mw == UNKNOWN_MAX_WIDTH) return 0;
+		if (mw == AUTO) return 0;
+		if (mw < 0) return 0;
+		if (mw > FLEX_SAFE_MAX) return FLEX_SAFE_MAX;
+		return mw;
+	}
+
+	/* Vertical main axis. If the item already has a concrete height
+	 * (set by layout_find_dimensions from a non-auto height property,
+	 * or by a recursive layout_flex_item pass), use it. Otherwise
+	 * don't synthesise — column-direction intrinsic sizing is harder
+	 * and the existing AUTO->b->height path in the caller will pick
+	 * the right value after layout_flex_item runs. */
+	if (b->height == AUTO) return 0;
+	if (b->height < 0) return 0;
+	if (b->height > FLEX_SAFE_MAX) return FLEX_SAFE_MAX;
+	return b->height;
+}
+
 /**
  * Flex item data
  */
@@ -419,10 +470,33 @@ static inline bool layout_flex__base_and_main_sizes(
 		}
 	}
 
+	/* fixes176 — intrinsic main-size fallback. When the container
+	 * is indefinite (available_width <= 0), layout_find_dimensions
+	 * sized this item against zero and basis-auto read b->width back
+	 * as 0. The minmax pass already populated b->max_width with the
+	 * real max-content intrinsic width; use it before the outer
+	 * delta is added. Only fires when the current base_size is
+	 * non-positive so the spec path is preserved when it works. */
+	if (item->base_size == AUTO || item->base_size <= 0) {
+		int intrinsic = flex_item_intrinsic_main_size(b,
+				ctx->horizontal);
+		if (intrinsic > 0) {
+			item->base_size = intrinsic;
+		}
+	}
+
 	item->base_size += delta_outer_main;
 
 	if (ctx->horizontal) {
-		item->base_size = min(item->base_size, available_width);
+		/* fixes176 — only clamp to available_width when there
+		 * actually is one. With available_width <= 0 the legacy
+		 * min() would just zero the intrinsic fallback again,
+		 * defeating the whole point. content_min_width is still
+		 * honoured below. */
+		if (available_width > 0) {
+			item->base_size = min(item->base_size,
+					available_width);
+		}
 		item->base_size = max(item->base_size, content_min_width);
 	}
 
@@ -1664,7 +1738,55 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 			NULL, NULL, &max_height, &min_height,
 			flex->margin, flex->padding, flex->border);
 
-	available_width = min(available_width, flex->width);
+	{
+		/* fixes176 — containing-block-width fallback.
+		 *
+		 * Apple's global <nav> hits this point with both
+		 * available_width and flex->width resolving to 0 because
+		 * the chain of ancestor containers does not give a
+		 * definite width. The original min() then nukes
+		 * available_width to 0 and every child collapses to a
+		 * w=0 sliver. Walk the parent chain for a definite
+		 * width and use that as the containing-block fallback
+		 * before applying min(). The walk is bounded (max 16
+		 * ancestors) so a broken tree cannot loop. */
+		int orig_avail = available_width;
+		int paired = min(orig_avail, flex->width);
+		if (paired <= 0) {
+			struct box *anc = flex->parent;
+			int depth = 0;
+			int cand = 0;
+			while (anc != NULL && depth < 16) {
+				if (anc->width > 0 &&
+						anc->width <= FLEX_SAFE_MAX) {
+					cand = anc->width;
+					break;
+				}
+				anc = anc->parent;
+				depth++;
+			}
+			if (cand <= 0 && orig_avail > 0 &&
+					orig_avail <= FLEX_SAFE_MAX) {
+				cand = orig_avail;
+			}
+			if (cand > 0) {
+				available_width = cand;
+				if (flex->width == AUTO || flex->width <= 0 ||
+						flex->width > FLEX_SAFE_MAX) {
+					flex->width = cand;
+				} else {
+					/* Honour the container's own
+					 * explicit width if it's positive. */
+					available_width = min(cand,
+							flex->width);
+				}
+			} else {
+				available_width = paired;
+			}
+		} else {
+			available_width = paired;
+		}
+	}
 
 	if (ctx->horizontal) {
 		ctx->available_main = available_width;

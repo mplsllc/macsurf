@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>flex intrinsic sizing (fixes176)</title>
+<style>
+body { font-family: Geneva; margin: 16px; background: #fff; color: #000; }
+h1 { font-size: 14pt; margin: 0 0 12px 0; }
+.label { font-size: 10pt; margin: 12px 0 4px 0; font-weight: bold; }
+
+/* I1: row-direction flex on a nav, anchor-link items.
+   Mirrors apple.com's global nav. Each <a> has no explicit width.
+   Before fixes176 the items collapsed to w=0 because available_main
+   resolved to 0; after, items take their max-content width. */
+.nav { display: flex; gap: 16px; background: #eee; padding: 8px; }
+.nav a { display: block; padding: 4px 8px; background: #fff; }
+
+/* I2: row of buttons. Same intrinsic-width pattern. */
+.buttons { display: flex; gap: 8px; padding: 8px; background: #ddd; }
+.buttons button { padding: 4px 12px; }
+
+/* I3: nested flex. outer flex contains an inner flex container; the inner
+   one has no explicit width. The inner items still need real widths. */
+.nested { display: flex; background: #ddd; padding: 8px; }
+.inner { display: flex; gap: 12px; background: #fff; padding: 4px; }
+
+/* I4: flex on a parent that has a real width. Sanity check: regression
+   guard for the normal case that already worked. */
+.sized { display: flex; width: 400px; background: #cce; padding: 6px; }
+.sized .cell { background: #fff; padding: 4px 8px; margin-right: 8px; }
+</style>
+</head>
+<body>
+<h1>flex intrinsic sizing (fixes176)</h1>
+
+<div class="label">I1 nav links (no explicit width)</div>
+<nav class="nav">
+<a>Store</a><a>Mac</a><a>iPad</a><a>iPhone</a><a>Watch</a>
+</nav>
+
+<div class="label">I2 buttons</div>
+<div class="buttons">
+<button>Learn more</button><button>Buy</button>
+</div>
+
+<div class="label">I3 nested flex</div>
+<div class="nested"><div class="inner">
+<a>Apple TV+</a><a>Support</a>
+</div></div>
+
+<div class="label">I4 sized container (regression guard)</div>
+<div class="sized">
+<div class="cell">Alpha</div><div class="cell">Beta</div><div class="cell">Gamma</div>
+</div>
+
+</body>
+</html>
