@@ -10,11 +10,373 @@
 #include "macsurf_debug.h"
 #ifdef __MACOS9__
 #include <Files.h>
+#include <Folders.h>
 #include <OpenTransport.h>
 #include <OpenTptInternet.h>
 #include <Threads.h>
 extern OTClientContextPtr macos9_ot_context;
 #endif
+
+/* ============================================================
+ * fixes172 — Persistent HTTP body cache.
+ *
+ * Real browsers cache the bytes they fetch so that a re-attempt
+ * after a crash, a page refresh, or a back-button navigation
+ * does not redo the entire network + parse work. MacSurf has
+ * 16 MB of partition and the boot HD has gigabytes free — there
+ * is no good reason to re-download a page on every retry.
+ *
+ * Storage: a flat folder `MacSurf Cache:` on the boot volume's
+ * Desktop, one file per cached body. Filename is a 12-hex-char
+ * FNV-1a 32-bit hash of the absolute URL plus an 8-char prefix
+ * derived from the first chars of the URL for human readability:
+ *
+ *   "h_a1b2c3d4e5f6"  →  unambiguous, fits in HFS 31-char limit
+ *
+ * File format:
+ *   [8 bytes ] magic 'MSCACHE\x01'
+ *   [4 bytes ] big-endian uint32 status_code
+ *   [4 bytes ] big-endian uint32 mime_len
+ *   [4 bytes ] big-endian uint32 body_len
+ *   [4 bytes ] big-endian uint32 reserved (TTL placeholder = 0)
+ *   [mime_len] mime string (no NUL terminator on disk)
+ *   [body_len] body bytes
+ *
+ * Eligibility: HTTP 200 OK responses with mime starting with
+ * "text/html", "text/css", "text/plain", "application/xhtml",
+ * "application/javascript", "application/json". Cap per entry
+ * at 1 MB so the cache folder doesn't grow unbounded.
+ *
+ * Read-on-open: mfs_open looks up by URL hash. On hit, the
+ * fetch flips into MFS_CACHEHIT and serves the cached body
+ * directly without touching OT.
+ * ============================================================ */
+
+#define MACSURF_CACHE_MAGIC0 'M'
+#define MACSURF_CACHE_MAGIC1 'S'
+#define MACSURF_CACHE_MAGIC2 'C'
+#define MACSURF_CACHE_MAGIC3 'A'
+#define MACSURF_CACHE_MAGIC4 'C'
+#define MACSURF_CACHE_MAGIC5 'H'
+#define MACSURF_CACHE_MAGIC6 'E'
+#define MACSURF_CACHE_MAGIC7 0x01
+
+/* Cap any single cached body at 1 MB. Bigger responses are
+ * still served live, just not cached. */
+#define MACSURF_CACHE_MAX_BYTES (1L * 1024L * 1024L)
+
+/* ---- Cache helpers (Carbon File Manager) ---- */
+
+/* FNV-1a 32-bit hash. Cheap, well-distributed, no allocation. */
+static unsigned long cache_hash_url(const char *url)
+{
+	unsigned long h = 0x811c9dc5UL;
+	const unsigned char *p;
+	if (url == NULL) return h;
+	for (p = (const unsigned char *)url; *p != 0; p++) {
+		h ^= (unsigned long)(*p);
+		h = (h * 0x01000193UL) & 0xFFFFFFFFUL;
+	}
+	return h;
+}
+
+/* Build a Pascal string filename for the URL. fname is at least
+ * 32 bytes. Format: "h_xxxxxxxxxxxx" (12-hex chars). */
+static void cache_filename_for_url(const char *url, unsigned char *fname)
+{
+	unsigned long h = cache_hash_url(url);
+	const char *hex = "0123456789abcdef";
+	char tmp[16];
+	int i;
+	tmp[0] = 'h';
+	tmp[1] = '_';
+	for (i = 0; i < 8; i++) {
+		tmp[2 + i] = hex[(h >> (28 - i * 4)) & 0xF];
+	}
+	tmp[10] = '\0';
+	fname[0] = 10;
+	memcpy(fname + 1, tmp, 10);
+}
+
+/* Resolve the cache folder FSSpec. Creates "MacSurf Cache" on the
+ * boot Desktop if missing. Returns noErr on success. */
+#ifdef __MACOS9__
+static OSErr cache_dir_get(short *vRef, long *dirID)
+{
+	OSErr err;
+	short desk_vref;
+	long desk_dir;
+	FSSpec spec;
+	unsigned char fname[32];
+	const char *name = "MacSurf Cache";
+	size_t nlen;
+	long new_dir;
+
+	err = FindFolder(kOnSystemDisk, kDesktopFolderType,
+			kDontCreateFolder, &desk_vref, &desk_dir);
+	if (err != noErr) return err;
+
+	nlen = strlen(name);
+	if (nlen > 31) nlen = 31;
+	fname[0] = (unsigned char)nlen;
+	memcpy(fname + 1, name, nlen);
+
+	err = FSMakeFSSpec(desk_vref, desk_dir, fname, &spec);
+	if (err == fnfErr) {
+		err = FSpDirCreate(&spec, smSystemScript, &new_dir);
+		if (err != noErr) return err;
+		err = FSMakeFSSpec(desk_vref, desk_dir, fname, &spec);
+		if (err != noErr) return err;
+	} else if (err != noErr) {
+		return err;
+	}
+
+	/* Resolve the directory ID for the cache folder. We need a
+	 * second FSMakeFSSpec on a sentinel name to coerce it. The
+	 * canonical pattern: pass the directory's spec name to
+	 * FSpGetCatInfo. For simplicity we just open the directory
+	 * via FSpGetFInfo's parent route — actually easier: the
+	 * spec.parID we just got IS the parent (Desktop), and the
+	 * dir ID we want is the one FSpDirCreate returned or that
+	 * a directory's catalog info exposes. Use PBGetCatInfo. */
+	{
+		CInfoPBRec pb;
+		Str63 nm;
+		memcpy(nm, spec.name, spec.name[0] + 1);
+		memset(&pb, 0, sizeof(pb));
+		pb.dirInfo.ioNamePtr = nm;
+		pb.dirInfo.ioVRefNum = spec.vRefNum;
+		pb.dirInfo.ioDrDirID = spec.parID;
+		err = PBGetCatInfoSync(&pb);
+		if (err != noErr) return err;
+		*vRef = spec.vRefNum;
+		*dirID = pb.dirInfo.ioDrDirID;
+	}
+	return noErr;
+}
+#endif /* __MACOS9__ */
+
+/* Big-endian write helpers — keep the cache format portable. */
+static void cache_write_be32(unsigned char *p, unsigned long v)
+{
+	p[0] = (unsigned char)((v >> 24) & 0xFF);
+	p[1] = (unsigned char)((v >> 16) & 0xFF);
+	p[2] = (unsigned char)((v >>  8) & 0xFF);
+	p[3] = (unsigned char)( v        & 0xFF);
+}
+static unsigned long cache_read_be32(const unsigned char *p)
+{
+	return ((unsigned long)p[0] << 24) |
+	       ((unsigned long)p[1] << 16) |
+	       ((unsigned long)p[2] <<  8) |
+	       ((unsigned long)p[3]);
+}
+
+/* Decide whether a (status, mime) response is worth caching. */
+static int cache_mime_eligible(int status, const char *mime)
+{
+	if (status != 200) return 0;
+	if (mime == NULL || mime[0] == '\0') return 0;
+	if (strncmp(mime, "text/html", 9) == 0) return 1;
+	if (strncmp(mime, "text/css", 8) == 0) return 1;
+	if (strncmp(mime, "text/plain", 10) == 0) return 1;
+	if (strncmp(mime, "application/xhtml", 17) == 0) return 1;
+	if (strncmp(mime, "application/javascript", 22) == 0) return 1;
+	if (strncmp(mime, "application/json", 16) == 0) return 1;
+	return 0;
+}
+
+/* Store one response to disk. Body is body_len bytes pointed to
+ * by body_ptr (caller retains ownership). Errors are silent —
+ * cache write is best-effort. */
+static void cache_store(const char *url, int status, const char *mime,
+		const char *body_ptr, long body_len)
+{
+#ifdef __MACOS9__
+	OSErr err;
+	short vRef;
+	long dirID;
+	FSSpec spec;
+	unsigned char fname[32];
+	short ref = 0;
+	unsigned char hdr[24];
+	long count;
+	size_t mime_len;
+
+	if (url == NULL || body_ptr == NULL) return;
+	if (body_len <= 0 || body_len > MACSURF_CACHE_MAX_BYTES) return;
+	if (!cache_mime_eligible(status, mime)) return;
+
+	err = cache_dir_get(&vRef, &dirID);
+	if (err != noErr) return;
+
+	cache_filename_for_url(url, fname);
+	err = FSMakeFSSpec(vRef, dirID, fname, &spec);
+	if (err == fnfErr) {
+		err = FSpCreate(&spec, '????', '????', smSystemScript);
+		if (err != noErr) return;
+		err = FSMakeFSSpec(vRef, dirID, fname, &spec);
+	}
+	if (err != noErr) return;
+
+	if (FSpOpenDF(&spec, fsRdWrPerm, &ref) != noErr) return;
+	SetFPos(ref, fsFromStart, 0);
+
+	mime_len = strlen(mime);
+	if (mime_len > 127) mime_len = 127;
+
+	hdr[0] = MACSURF_CACHE_MAGIC0;
+	hdr[1] = MACSURF_CACHE_MAGIC1;
+	hdr[2] = MACSURF_CACHE_MAGIC2;
+	hdr[3] = MACSURF_CACHE_MAGIC3;
+	hdr[4] = MACSURF_CACHE_MAGIC4;
+	hdr[5] = MACSURF_CACHE_MAGIC5;
+	hdr[6] = MACSURF_CACHE_MAGIC6;
+	hdr[7] = MACSURF_CACHE_MAGIC7;
+	cache_write_be32(hdr + 8,  (unsigned long)status);
+	cache_write_be32(hdr + 12, (unsigned long)mime_len);
+	cache_write_be32(hdr + 16, (unsigned long)body_len);
+	cache_write_be32(hdr + 20, 0UL);
+
+	count = sizeof(hdr);
+	FSWrite(ref, &count, hdr);
+	if (mime_len > 0) {
+		count = (long)mime_len;
+		FSWrite(ref, &count, mime);
+	}
+	count = body_len;
+	FSWrite(ref, &count, body_ptr);
+	SetEOF(ref, (long)sizeof(hdr) + (long)mime_len + body_len);
+	FSClose(ref);
+	(void)FlushVol(NULL, vRef);
+
+	macsurf_debug_log_writef(
+		"CACHE store url=%s mime=%s len=%ld",
+		url, mime, body_len);
+#else
+	(void)url; (void)status; (void)mime; (void)body_ptr; (void)body_len;
+#endif
+}
+
+/* Append delivered body bytes to the per-fetch capture buffer.
+ * Grows the buffer geometrically up to MACSURF_CACHE_MAX_BYTES; if
+ * the body would exceed that, set cache_overflow and free the
+ * partial buffer (the cache write is then skipped at FINISHED).
+ *
+ * Forward declaration: definition needs the macos9_fetch_ctx
+ * struct which is below. We emit a forward decl here and put the
+ * body inline at the bottom of this header section. */
+struct macos9_fetch_ctx;
+static void cache_capture_append(struct macos9_fetch_ctx *c,
+		const char *buf, long len);
+
+/* Read a cached response if present. Returns 1 on hit, 0 on miss
+ * or any I/O error. On hit, *body_out is a malloc'd buffer the
+ * caller must free; *body_len_out is its length; mime_out (cap >=
+ * 128) receives the MIME string; *status_out is the HTTP status. */
+static int cache_lookup(const char *url, char **body_out,
+		long *body_len_out, char *mime_out, int mime_cap,
+		int *status_out)
+{
+#ifdef __MACOS9__
+	OSErr err;
+	short vRef;
+	long dirID;
+	FSSpec spec;
+	unsigned char fname[32];
+	short ref = 0;
+	unsigned char hdr[24];
+	long count;
+	unsigned long status_v;
+	unsigned long mime_len;
+	unsigned long body_len;
+	char mime_buf[128];
+	char *body;
+
+	*body_out = NULL;
+	*body_len_out = 0;
+	if (mime_out != NULL && mime_cap > 0) mime_out[0] = '\0';
+	*status_out = 0;
+
+	if (url == NULL) return 0;
+
+	err = cache_dir_get(&vRef, &dirID);
+	if (err != noErr) return 0;
+
+	cache_filename_for_url(url, fname);
+	err = FSMakeFSSpec(vRef, dirID, fname, &spec);
+	if (err != noErr) return 0;
+
+	if (FSpOpenDF(&spec, fsRdPerm, &ref) != noErr) return 0;
+
+	count = sizeof(hdr);
+	if (FSRead(ref, &count, hdr) != noErr || count != sizeof(hdr)) {
+		FSClose(ref);
+		return 0;
+	}
+	if (hdr[0] != MACSURF_CACHE_MAGIC0 ||
+	    hdr[1] != MACSURF_CACHE_MAGIC1 ||
+	    hdr[2] != MACSURF_CACHE_MAGIC2 ||
+	    hdr[3] != MACSURF_CACHE_MAGIC3 ||
+	    hdr[4] != MACSURF_CACHE_MAGIC4 ||
+	    hdr[5] != MACSURF_CACHE_MAGIC5 ||
+	    hdr[6] != MACSURF_CACHE_MAGIC6 ||
+	    hdr[7] != MACSURF_CACHE_MAGIC7) {
+		FSClose(ref);
+		return 0;
+	}
+	status_v = cache_read_be32(hdr + 8);
+	mime_len = cache_read_be32(hdr + 12);
+	body_len = cache_read_be32(hdr + 16);
+	if (mime_len > 127 || body_len == 0 ||
+			body_len > MACSURF_CACHE_MAX_BYTES) {
+		FSClose(ref);
+		return 0;
+	}
+
+	if (mime_len > 0) {
+		count = (long)mime_len;
+		if (FSRead(ref, &count, mime_buf) != noErr ||
+				count != (long)mime_len) {
+			FSClose(ref);
+			return 0;
+		}
+	}
+	mime_buf[mime_len] = '\0';
+
+	body = (char *)malloc(body_len);
+	if (body == NULL) {
+		FSClose(ref);
+		return 0;
+	}
+	count = (long)body_len;
+	if (FSRead(ref, &count, body) != noErr ||
+			count != (long)body_len) {
+		free(body);
+		FSClose(ref);
+		return 0;
+	}
+	FSClose(ref);
+
+	*body_out = body;
+	*body_len_out = (long)body_len;
+	*status_out = (int)status_v;
+	if (mime_out != NULL && mime_cap > 0) {
+		size_t n = mime_len;
+		if (n >= (size_t)mime_cap) n = (size_t)mime_cap - 1;
+		memcpy(mime_out, mime_buf, n);
+		mime_out[n] = '\0';
+	}
+	macsurf_debug_log_writef(
+		"CACHE hit url=%s mime=%s len=%ld status=%d",
+		url, mime_buf, (long)body_len, (int)status_v);
+	return 1;
+#else
+	(void)url; (void)body_out; (void)body_len_out;
+	(void)mime_out; (void)mime_cap; (void)status_out;
+	return 0;
+#endif
+}
 
 #define PROXY_H "116.202.231.103"
 #define PROXY_P 8765
@@ -104,8 +466,86 @@ struct macos9_fetch_ctx {
 	/* fixes160c/fixes161a — resource class assigned at setup time, used
 	 * by the resource governor to apply per-class active-fetch caps. */
 	int rclass;
+	/* fixes172 — disk cache state.
+	 *   cache_eligible : set to 1 by mfs_parse_headers when status 200
+	 *                    + mime is in the text/* / xhtml / json /
+	 *                    javascript whitelist.
+	 *   cache_capture  : accumulator buffer for the body bytes while
+	 *                    they stream in. Written to disk at FETCH_FINISHED.
+	 *   cache_cap_len  : bytes currently in cache_capture.
+	 *   cache_cap_cap  : allocated size of cache_capture.
+	 *   cache_overflow : 1 if body exceeded MACSURF_CACHE_MAX_BYTES;
+	 *                    when set we stop capturing and skip the write.
+	 *   cache_hit_*    : cache_hit==1 means we're serving from disk;
+	 *                    OT is never opened. The buffer + len are
+	 *                    delivered via fetch_send_callback in the poll
+	 *                    loop and the slot transitions straight to
+	 *                    MFS_DONE. */
+	int cache_eligible;
+	char *cache_capture;
+	long cache_cap_len;
+	long cache_cap_cap;
+	int cache_overflow;
+	int cache_hit;
+	char *cache_hit_body;
+	long cache_hit_len;
+	char cache_hit_mime[128];
+	int cache_hit_status;
 };
 static struct macos9_fetch_ctx f_slots[MAX_F];
+
+/* fixes172 — body capture appender. Called from the three places
+ * where FETCH_DATA fires (mfs_parse_headers initial-body branch,
+ * mfs_poll_one plain-body branch, process_chunked_bytes CS_DATA
+ * branch). Geometric growth from 4 KB up to MACSURF_CACHE_MAX_BYTES;
+ * overflow latches and frees the partial buffer. */
+static void cache_capture_append(struct macos9_fetch_ctx *c,
+		const char *buf, long len)
+{
+	long want;
+	long cap;
+	char *grown;
+
+	if (c == NULL || buf == NULL || len <= 0) return;
+	if (c->cache_overflow) return;
+	if (!c->cache_eligible) return;
+
+	want = c->cache_cap_len + len;
+	if (want > MACSURF_CACHE_MAX_BYTES) {
+		c->cache_overflow = 1;
+		if (c->cache_capture != NULL) {
+			free(c->cache_capture);
+			c->cache_capture = NULL;
+			c->cache_cap_len = 0;
+			c->cache_cap_cap = 0;
+		}
+		return;
+	}
+
+	if (want > c->cache_cap_cap) {
+		cap = c->cache_cap_cap == 0 ? 4096 : c->cache_cap_cap * 2;
+		while (cap < want) cap *= 2;
+		if (cap > MACSURF_CACHE_MAX_BYTES) cap = MACSURF_CACHE_MAX_BYTES;
+		grown = (char *)realloc(c->cache_capture, cap);
+		if (grown == NULL) {
+			/* realloc failed — abandon caching for this fetch
+			 * but don't disturb live delivery. */
+			c->cache_overflow = 1;
+			if (c->cache_capture != NULL) {
+				free(c->cache_capture);
+				c->cache_capture = NULL;
+				c->cache_cap_len = 0;
+				c->cache_cap_cap = 0;
+			}
+			return;
+		}
+		c->cache_capture = grown;
+		c->cache_cap_cap = cap;
+	}
+
+	memcpy(c->cache_capture + c->cache_cap_len, buf, (size_t)len);
+	c->cache_cap_len = want;
+}
 
 /* fixes161a — resource governor classes. Used by the URL classifier
  * and the per-class active-fetch caps. Each new fetch is classified
@@ -294,6 +734,32 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 	port_lwc = NULL;
 	path_lwc = NULL;
 	query_lwc = NULL;
+
+	/* fixes172 — disk-cache lookup BEFORE OT setup. If we have a
+	 * fresh body on disk for this URL, populate c->cache_hit_* and
+	 * skip everything below. mfs_poll_one's cache-hit fast path
+	 * delivers headers + body + finished in one cycle. */
+	{
+		const char *url_str = nsurl_access(c->url);
+		if (url_str != NULL && c->cache_hit == 0) {
+			if (cache_lookup(url_str, &c->cache_hit_body,
+					&c->cache_hit_len,
+					c->cache_hit_mime,
+					sizeof(c->cache_hit_mime),
+					&c->cache_hit_status)) {
+				c->cache_hit = 1;
+				/* Populate the mime field expected by the
+				 * existing finished-emit code. */
+				strncpy(c->mime, c->cache_hit_mime,
+						sizeof(c->mime) - 1);
+				c->mime[sizeof(c->mime) - 1] = '\0';
+				c->status = c->cache_hit_status;
+				c->content_length = c->cache_hit_len;
+				c->keep_alive_ok = 0;
+				return 1; /* mfs_poll_one drives the rest */
+			}
+		}
+	}
 
 	scheme_lwc = nsurl_get_component(c->url, NSURL_SCHEME);
 	host_lwc = nsurl_get_component(c->url, NSURL_HOST);
@@ -581,6 +1047,8 @@ process_chunked_bytes(struct macos9_fetch_ctx *c, const char *b, long len)
 				msg.data.header_or_data.buf = (const uint8_t *)(b + pos);
 				msg.data.header_or_data.len = (size_t)deliver;
 				fetch_send_callback(&msg, c->parent);
+				/* fixes172 — capture chunked-decoded body. */
+				cache_capture_append(c, b + pos, deliver);
 				c->body_bytes += deliver;
 				pos += deliver;
 				c->chunk_remaining -= deliver;
@@ -698,6 +1166,13 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 		c->chunk_size_len = 0;
 		c->chunk_remaining = 0;
 	}
+	/* fixes172 — decide cache eligibility based on the final
+	 * status + MIME. cache_capture is allocated lazily on the
+	 * first body byte; cache_overflow latches if the body
+	 * outgrows MACSURF_CACHE_MAX_BYTES. */
+	if (cache_mime_eligible(c->status, c->mime)) {
+		c->cache_eligible = 1;
+	}
 	c->state=MFS_BODY;
 	if(sep+4 < c->h_buf+c->h_len) {
 		long initial_body = (long)((c->h_buf+c->h_len)-(sep+4));
@@ -712,6 +1187,8 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 				msg.type=FETCH_DATA; msg.data.header_or_data.buf=(const uint8_t*)(sep+4);
 				msg.data.header_or_data.len=(size_t)deliver;
 				fetch_send_callback(&msg,c->parent);
+				/* fixes172 — also capture for the disk cache. */
+				cache_capture_append(c, sep+4, deliver);
 				c->body_bytes += deliver;
 			}
 			if (c->content_length >= 0 && c->body_bytes >= c->content_length) {
@@ -749,6 +1226,40 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 	 * unfired); don't open OT until then. */
 	if(c->state==MFS_QUEUED) return;
 	if(c->state==MFS_INIT) { if(mfs_open(c)) c->state=MFS_HEADERS; else c->state=MFS_FAIL; return; }
+	/* fixes172 — cache-hit fast path. mfs_open set cache_hit=1 and
+	 * populated the body buffer; we deliver headers, the body, and
+	 * finished, then transition straight to MFS_DONE without ever
+	 * touching OT. */
+	if (c->cache_hit && c->cache_hit_body != NULL &&
+			c->state == MFS_HEADERS) {
+		fetch_msg cm;
+		char hline[160];
+		long hlen;
+		/* Synthetic Content-Type header so NetSurf core sees the
+		 * MIME type the cached file was stored with. */
+		if (c->cache_hit_mime[0] != '\0') {
+			/* mime is capped at 127, "Content-Type: " is 14
+			 * chars; hline is 160; sprintf is bounded. */
+			sprintf(hline, "Content-Type: %s",
+					c->cache_hit_mime);
+			hlen = (long)strlen(hline);
+			cm.type = FETCH_HEADER;
+			cm.data.header_or_data.buf = (const uint8_t *)hline;
+			cm.data.header_or_data.len = (size_t)hlen;
+			fetch_send_callback(&cm, c->parent);
+		}
+		fetch_set_http_code(c->parent, c->cache_hit_status);
+		/* Deliver the body in one shot. NetSurf's llcache will
+		 * stream it onward; the fetch slot is single-pass. */
+		cm.type = FETCH_DATA;
+		cm.data.header_or_data.buf =
+				(const uint8_t *)c->cache_hit_body;
+		cm.data.header_or_data.len = (size_t)c->cache_hit_len;
+		fetch_send_callback(&cm, c->parent);
+		c->body_bytes = c->cache_hit_len;
+		c->state = MFS_DONE;
+		return;
+	}
 	n=OTRcv(c->ep,b,sizeof(b),NULL);
 	if(n==kOTNoDataErr) return;
 	if(n<0) {
@@ -791,6 +1302,8 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 				m.type=FETCH_DATA; m.data.header_or_data.buf=(const uint8_t*)b;
 				m.data.header_or_data.len=(size_t)deliver;
 				fetch_send_callback(&m,c->parent);
+				/* fixes172 — capture for disk cache. */
+				cache_capture_append(c, b, deliver);
 				c->body_bytes += deliver;
 			}
 			if (c->content_length >= 0 && c->body_bytes >= c->content_length) {
@@ -860,6 +1373,22 @@ static void macos9_http_poll(lwc_string *s) {
 			fetch_msg m; m.type=FETCH_FINISHED;
 			c->state=MFS_NOTIFIED; fetch_send_callback(&m,c->parent);
 			macsurf_debug_log_writef("http: done body=%ld len=%ld status=%d ka=%d", c->body_bytes, c->content_length, c->status, c->keep_alive_ok);
+			/* fixes172 — write captured body to the disk cache.
+			 * cache_eligible is set in mfs_parse_headers when
+			 * the response is a cacheable MIME type with
+			 * status 200; cache_overflow is set if the body
+			 * exceeded MACSURF_CACHE_MAX_BYTES. */
+			if (c->cache_eligible && !c->cache_overflow &&
+					!c->cache_hit &&
+					c->cache_capture != NULL &&
+					c->cache_cap_len > 0) {
+				const char *u = nsurl_access(c->url);
+				if (u != NULL) {
+					cache_store(u, c->status, c->mime,
+						c->cache_capture,
+						c->cache_cap_len);
+				}
+			}
 			/* fixes99 — pool the endpoint right now, while it is
 			 * known idle and the next fetch may already be queued. */
 #ifdef __MACOS9__
@@ -1195,7 +1724,21 @@ static bool macos9_http_start(void *ctx) {
 static void macos9_http_abort(void *ctx) { ((struct macos9_fetch_ctx*)ctx)->aborted=1; }
 static void macos9_http_free(void *ctx) {
 	struct macos9_fetch_ctx *c = (struct macos9_fetch_ctx*)ctx;
-	mfs_close(c); if(c->h_buf) free(c->h_buf); if(c->url) nsurl_unref(c->url); c->state=MFS_IDLE;
+	mfs_close(c);
+	if (c->h_buf) free(c->h_buf);
+	if (c->url) nsurl_unref(c->url);
+	/* fixes172 — release cache state. */
+	if (c->cache_capture) { free(c->cache_capture); c->cache_capture = NULL; }
+	c->cache_cap_len = 0;
+	c->cache_cap_cap = 0;
+	c->cache_overflow = 0;
+	c->cache_eligible = 0;
+	if (c->cache_hit_body) { free(c->cache_hit_body); c->cache_hit_body = NULL; }
+	c->cache_hit_len = 0;
+	c->cache_hit = 0;
+	c->cache_hit_mime[0] = '\0';
+	c->cache_hit_status = 0;
+	c->state = MFS_IDLE;
 }
 
 nserror macos9_http_fetcher_register(void) {
