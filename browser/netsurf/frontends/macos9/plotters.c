@@ -1146,7 +1146,18 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 		return NSERROR_OK;
 	}
 
-	/* Copy bitmap buffer (RGBA) to GWorld (ARGB on PPC). */
+	/* Copy bitmap buffer (RGBA) to GWorld (ARGB on PPC).
+	 *
+	 * fixes189: force the ARGB high byte to 0xFF (XRGB convention).
+	 * Classic QuickDraw 32-bit pixmaps are spec'd XRGB, but some
+	 * code paths (CopyMask, CopyBits depth-conversion) interpret
+	 * the high byte as a per-pixel alpha factor on color systems.
+	 * fixes188 propagated the actual alpha byte here, which made
+	 * partial-alpha pixels render at reduced opacity → image read
+	 * as "transparency lost" because the whole image looked
+	 * washed-out. The 1-bit mask plane handles the
+	 * transparent-vs-opaque distinction; the new composite path
+	 * reads alpha from `buf` directly. Keep pm strictly XRGB. */
 	dst_rowbytes = (*pm)->rowBytes & 0x3FFF;
 	for (row = 0; row < bh; row++) {
 		src_row = buf + row * rowstride;
@@ -1155,9 +1166,7 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 			unsigned char r = src_row[col * 4 + 0];
 			unsigned char g = src_row[col * 4 + 1];
 			unsigned char b = src_row[col * 4 + 2];
-			unsigned char a = src_row[col * 4 + 3];
-			/* ARGB big-endian */
-			dst_row[col * 4 + 0] = a;
+			dst_row[col * 4 + 0] = 0xFF;
 			dst_row[col * 4 + 1] = r;
 			dst_row[col * 4 + 2] = g;
 			dst_row[col * 4 + 3] = b;
