@@ -1254,155 +1254,19 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 		tile_count = 0;
 		tile_cap = 4096;
 
-		if (mask_data != NULL && mask_rowbytes > 0 &&
-				!repeat_x && !repeat_y &&
-				(width != bw || height != bh)) {
-			/* fixes188 — Composite path for SCALED alpha bitmaps.
-			 *
-			 * Two failure modes the 1-bit-mask CopyMask path
-			 * hit when src dims != dst dims:
-			 *   - mask sampling is nearest-neighbor 1:1 with the
-			 *     source bitmap, so non-integer scale ratios drop
-			 *     pixels in a checkerboard pattern visible as
-			 *     "fade" on icons.
-			 *   - anti-aliased edges in the source PNG (alpha
-			 *     1-127) have no way to blend with the destination
-			 *     under a binary mask; they render either fully
-			 *     opaque (looking harsh) or fully transparent
-			 *     (looking faded), depending on threshold.
-			 *
-			 * The fix: allocate a dest-sized temp GWorld, capture
-			 * the current destination pixels via CopyBits, then
-			 * walk the source via nearest-neighbor with a real
-			 * alpha-over composite per pixel, then opaque CopyBits
-			 * the result back. No mask in the final blit, so no
-			 * scale dropouts. Alpha composite is correct against
-			 * whatever's behind the bitmap (page background, other
-			 * content, gradients) because we just read it back. */
-			GWorldPtr tdst_gw = NULL;
-			PixMapHandle tdst_pm;
-			Rect tdst_local;
-			OSErr terr;
-			SetRect(&tile_dst,
-				(short)x, (short)y,
-				(short)(x + width),
-				(short)(y + height));
-			SetRect(&tdst_local, 0, 0,
-				(short)width, (short)height);
-			terr = NewGWorld(&tdst_gw, 32, &tdst_local,
-				NULL, NULL, (GWorldFlags)4);
-			if (terr != noErr || tdst_gw == NULL) {
-				terr = NewGWorld(&tdst_gw, 32, &tdst_local,
-					NULL, NULL, 0);
-			}
-			if (terr == noErr && tdst_gw != NULL) {
-				tdst_pm = GetGWorldPixMap(tdst_gw);
-				if (tdst_pm != NULL && LockPixels(tdst_pm)) {
-					long tdst_rowbytes;
-					unsigned char *tdst_base;
-					int dx, dy;
-					CopyBits(
-						&((GrafPtr)save_port)->portBits,
-						(BitMap *)*tdst_pm,
-						&tile_dst, &tdst_local,
-						srcCopy, NULL);
-					tdst_rowbytes =
-						(*tdst_pm)->rowBytes & 0x3FFF;
-					tdst_base =
-						(unsigned char *)
-						GetPixBaseAddr(tdst_pm);
-					for (dy = 0; dy < height; dy++) {
-						int sy = (int)(
-							((long)dy * (long)bh) /
-							(long)height);
-						unsigned char *sr =
-							buf +
-							(long)sy * rowstride;
-						unsigned char *tr =
-							tdst_base +
-							(long)dy *
-							tdst_rowbytes;
-						for (dx = 0; dx < width; dx++) {
-							int sx;
-							unsigned char a, r2, g2, b2;
-							unsigned int ia;
-							unsigned char dr, dg, db;
-							sx = (int)(
-								((long)dx *
-								(long)bw) /
-								(long)width);
-							r2 = sr[sx * 4 + 0];
-							g2 = sr[sx * 4 + 1];
-							b2 = sr[sx * 4 + 2];
-							a  = sr[sx * 4 + 3];
-							if (a == 0) continue;
-							if (a == 0xFF) {
-								tr[dx * 4 + 0] = 0xFF;
-								tr[dx * 4 + 1] = r2;
-								tr[dx * 4 + 2] = g2;
-								tr[dx * 4 + 3] = b2;
-								continue;
-							}
-							/* tdst is ARGB. */
-							dr = tr[dx * 4 + 1];
-							dg = tr[dx * 4 + 2];
-							db = tr[dx * 4 + 3];
-							ia = 255U -
-								(unsigned int)a;
-							tr[dx * 4 + 0] = 0xFF;
-							tr[dx * 4 + 1] =
-								(unsigned char)(
-								((unsigned int)r2 *
-								(unsigned int)a +
-								(unsigned int)dr *
-								ia) / 255U);
-							tr[dx * 4 + 2] =
-								(unsigned char)(
-								((unsigned int)g2 *
-								(unsigned int)a +
-								(unsigned int)dg *
-								ia) / 255U);
-							tr[dx * 4 + 3] =
-								(unsigned char)(
-								((unsigned int)b2 *
-								(unsigned int)a +
-								(unsigned int)db *
-								ia) / 255U);
-						}
-					}
-					CopyBits((BitMap *)*tdst_pm,
-						&((GrafPtr)save_port)->portBits,
-						&tdst_local, &tile_dst,
-						srcCopy, NULL);
-					UnlockPixels(tdst_pm);
-					MS_LOG("plot_bitmap: alpha composite");
-				}
-				DisposeGWorld(tdst_gw);
-				goto blit_done;
-			}
-			MS_LOG("plot_bitmap: composite alloc FAIL, CopyMask");
-			/* Fall through to CopyMask if temp alloc failed. */
-			mask_bm.baseAddr = (Ptr)mask_data;
-			mask_bm.rowBytes = (short)mask_rowbytes;
-			mask_bm.bounds = src_rect;
-			for (tile_y = start_y; tile_y < end_y; tile_y += height) {
-				for (tile_x = start_x; tile_x < end_x;
-						tile_x += width) {
-					SetRect(&tile_dst,
-						(short)tile_x,
-						(short)tile_y,
-						(short)(tile_x + width),
-						(short)(tile_y + height));
-					CopyMask((BitMap *)*pm,
-						&mask_bm,
-						&((GrafPtr)save_port)->portBits,
-						&src_rect, &src_rect,
-						&tile_dst);
-					if (++tile_count >= tile_cap)
-						goto blit_done;
-				}
-			}
-		} else if (mask_data != NULL && mask_rowbytes > 0) {
+		/* fixes190 — Revert fixes188 composite branch. The
+		 * destination-readback CopyBits did not behave as
+		 * expected on hardware and consumed PNG transparency.
+		 * Back to the single CopyMask path for all alpha
+		 * bitmaps; scaled icons regain the fixes187 "sharper
+		 * but still faded" baseline. The macos9_image.c
+		 * non-premultiplied / threshold-8 mask state from
+		 * fixes188 stays in place; the buf->pm XRGB
+		 * enforcement from fixes189 also stays. A future
+		 * round can take a different shape (CopyDeepMask, or
+		 * pre-scale-and-bg-blend with no readback) once we
+		 * have a working hardware experiment. */
+		if (mask_data != NULL && mask_rowbytes > 0) {
 			mask_bm.baseAddr = (Ptr)mask_data;
 			mask_bm.rowBytes = (short)mask_rowbytes;
 			mask_bm.bounds = src_rect;
