@@ -2035,6 +2035,63 @@ macsurf__rewrite_text_shadow(const char *data, size_t in_size,
 }
 
 
+/* fixes183 — rewrite standard `transform:` → `-macsurf-transform:` so
+ * author CSS reaches the existing vendor transform paint path (sin/cos
+ * LUT rotation, translate, scale composition). Mirrors fixes175 text-shadow
+ * pattern. `transform-origin`, `transform-style`, `transform-box` are NOT
+ * matched because the post-NEEDLE scan requires `:` next (those longhands
+ * have `-` next so they fall through unchanged). fixes141 attempted this
+ * via property_handlers[] aliasing and hung pre-reformat; this preprocessor
+ * route bypasses libcss internals entirely. */
+static char *
+macsurf__rewrite_transform(const char *data, size_t in_size,
+		size_t *out_size_p)
+{
+	static const char NEEDLE[] = "transform";
+	static const size_t NEEDLE_LEN = 9;
+	static const char REPLACE[] = "-macsurf-transform";
+	static const size_t REPLACE_LEN = 18;
+	char *out;
+	size_t cap;
+	size_t pos = 0;
+	size_t i = 0;
+
+	cap = in_size +
+		(in_size / NEEDLE_LEN + 1) * (REPLACE_LEN - NEEDLE_LEN) + 256;
+	out = (char *)malloc(cap);
+	if (out == NULL) return NULL;
+
+	while (i < in_size) {
+		if (macsurf__match_prop_name(data, in_size, i,
+				NEEDLE, NEEDLE_LEN)) {
+			size_t j = i + NEEDLE_LEN;
+			while (j < in_size && (data[j] == ' ' ||
+					data[j] == '\t' ||
+					data[j] == '\n' ||
+					data[j] == '\r')) j++;
+			if (j < in_size && data[j] == ':') {
+				if (pos + REPLACE_LEN >= cap) {
+					free(out);
+					return NULL;
+				}
+				memcpy(out + pos, REPLACE, REPLACE_LEN);
+				pos += REPLACE_LEN;
+				i += NEEDLE_LEN;
+				continue;
+			}
+		}
+		if (pos + 1 >= cap) {
+			free(out);
+			return NULL;
+		}
+		out[pos++] = data[i++];
+	}
+
+	*out_size_p = pos;
+	return out;
+}
+
+
 static bool
 nscss_process_data(struct content *c, const char *data, unsigned int size)
 {
@@ -2044,8 +2101,10 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	char *rewritten_rows;
 	char *rewritten_col_span = NULL;
 	char *rewritten_text_shadow = NULL;
+	char *rewritten_transform = NULL;
 	size_t col_span_size = 0;
 	size_t text_shadow_size = 0;
+	size_t transform_size = 0;
 	const char *final_data;
 	unsigned int final_size;
 
@@ -2145,8 +2204,20 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		final_size = (unsigned int)text_shadow_size;
 	}
 
+	/* fixes183 — fifth pass: rewrite standard `transform:` to the
+	 * vendor `-macsurf-transform:` so author CSS reaches the existing
+	 * paint path. */
+	rewritten_transform = macsurf__rewrite_transform(final_data,
+			(size_t)final_size, &transform_size);
+	if (rewritten_transform != NULL &&
+			transform_size <= (size_t)0x7fffffff) {
+		final_data = (const char *)rewritten_transform;
+		final_size = (unsigned int)transform_size;
+	}
+
 	error = nscss_process_css_data(&css->data, final_data, final_size);
 
+	if (rewritten_transform != NULL) free(rewritten_transform);
 	if (rewritten_text_shadow != NULL) free(rewritten_text_shadow);
 	if (rewritten_col_span != NULL) free(rewritten_col_span);
 	if (rewritten_rows != NULL) free(rewritten_rows);

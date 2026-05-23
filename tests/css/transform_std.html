@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>fixes183 — standard CSS transform bridge</title>
+<style>
+  body { font-family: Helvetica, sans-serif; background: #f0f0f0; margin: 16px; }
+  h1 { color: #003366; font-size: 14pt; margin: 0 0 4px 0; }
+  .lede { color: #666; font-size: 8pt; margin: 0 0 12px 0; }
+  .expect { color: #888; font-style: italic; font-size: 8pt; margin: 8px 0 16px 0; }
+  .row { display: flex; gap: 24px; margin: 12px 0 24px 0; }
+  .card {
+    width: 96px; height: 96px;
+    background: #fffbe8; border: 1px solid #888;
+    padding: 4px; font-size: 9pt;
+  }
+</style>
+</head>
+<body>
+<h1>fixes183 — standard <code>transform</code> bridge</h1>
+<p class="lede">Author CSS using standard <code>transform: rotate/translate/scale(...)</code> should reach the existing <code>-macsurf-transform</code> paint path (fixes73). <code>transform-origin</code> stays unchanged (separate property).</p>
+
+<div class="row">
+  <div class="card" style="transform: rotate(45deg);">T1 rot45</div>
+  <div class="card" style="transform: rotate(90deg);">T2 rot90</div>
+  <div class="card" style="transform: translate(20px, 10px);">T3 trans</div>
+</div>
+<p class="expect">EXPECT T1: card rotated 45 degrees. T2: card rotated 90 degrees. T3: card offset 20px right, 10px down.</p>
+
+<div class="row">
+  <div class="card" style="transform: scale(1.5);">T4 scale1.5</div>
+  <div class="card" style="transform: scale(0.75);">T5 scale0.75</div>
+  <div class="card" style="transform: rotate(30deg) scale(1.25);">T6 rot+scale</div>
+</div>
+<p class="expect">EXPECT T4: card painted 1.5x. T5: card painted 0.75x. T6: rotated 30 deg AND scaled 1.25x.</p>
+
+<div class="row">
+  <div class="card" style="transform-style: preserve-3d;">T7 unrelated</div>
+  <div class="card" style="-macsurf-transform: rotate(60deg);">T8 vendor</div>
+</div>
+<p class="expect">EXPECT T7: no transform applied (transform-style is NOT bridged, correct). T8: card rotated 60 deg (vendor still works, regression guard).</p>
+
+</body>
+</html>
