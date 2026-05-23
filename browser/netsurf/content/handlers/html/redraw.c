@@ -64,6 +64,14 @@
 #include "html/private.h"
 #include "html/layout.h"
 
+/* fixes195 — inline SVG renderer lives in the macos9 frontend so it
+ * can use Mac-specific debugging hooks (it dispatches through the
+ * portable plotter table; nothing here is Mac-only by design and the
+ * file could move to content/handlers/html/ later). */
+#ifdef __MACOS9__
+#include "frontends/macos9/macos9_svg_inline.h"
+#endif
+
 
 bool html_redraw_debug = false;
 
@@ -3415,6 +3423,22 @@ bool html_redraw_box(const html_content *html, struct box *box,
 		if (!html_redraw_text_box(html, box, x, y, &r, scale,
 				current_background_color, ctx))
 			return false;
+
+	} else if (box->flags & SVG_INLINE) {
+		/* fixes195 — inline <svg> root. The SVG DOM children are
+		 * not in the box tree (skipped at box_construct time);
+		 * the macos9 SVG painter walks the DOM directly and
+		 * issues plotter calls for each shape. The padded
+		 * content rect (x + padding_left, y + padding_top,
+		 * width x height) is the viewBox target. */
+#ifdef __MACOS9__
+		(void)macos9_svg_paint_inline(box,
+				x + padding_left,
+				y + padding_top,
+				width,
+				height,
+				ctx);
+#endif
 
 	} else {
 		if (!html_redraw_box_children(html, box, x_parent, y_parent, &r,

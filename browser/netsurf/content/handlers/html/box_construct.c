@@ -1037,6 +1037,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		}
 	}
 
+
 	box_extract_properties(ctx->n, &props);
 
 	if (props.containing_block != NULL) {
@@ -1292,6 +1293,29 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 				return false;
 			}
 			nsurl_unref(url);
+		}
+	}
+
+	/* fixes195 — inline <svg> root detection.
+	 *
+	 * If this element is an SVG root, mark the box and tell the
+	 * caller not to descend into the DOM children. The shape
+	 * elements (path / rect / circle / line / etc.) stay attached
+	 * to the SVG node and are rendered at paint time by the
+	 * DOM-walker in macos9_svg_inline.c. They don't participate in
+	 * HTML layout, which matches SVG semantics (the root <svg>
+	 * draws its viewBox into a single box). */
+	{
+		dom_string *svg_name = NULL;
+		if (box != NULL &&
+				dom_element_get_tag_name(ctx->n, &svg_name) ==
+					DOM_NO_ERR && svg_name != NULL) {
+			if (dom_string_caseless_lwc_isequal(svg_name,
+					corestring_lwc_svg)) {
+				box->flags |= SVG_INLINE;
+				*convert_children = false;
+			}
+			dom_string_unref(svg_name);
 		}
 	}
 

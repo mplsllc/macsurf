@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MacSurf — fixes195 (inline SVG V1)</title>
+<style>
+  body {
+    font-family: Helvetica, sans-serif;
+    background: #f0f0f0;
+    color: #222;
+    margin: 16px;
+  }
+  h1 { color: #003366; font-size: 14pt; margin: 0 0 4px 0; }
+  .lede { color: #666; font-size: 8pt; margin: 0 0 12px 0; }
+  .card {
+    background: #fff;
+    border: 1px solid #ccc;
+    padding: 12px;
+    margin: 0 0 14px 0;
+  }
+  .card-title { color: #003366; font-size: 10pt; font-weight: bold; margin: 0 0 8px 0; }
+  .expect { color: #888; font-style: italic; font-size: 8pt; margin: 8px 0 0 0; }
+  .row svg { vertical-align: middle; margin-right: 12px; }
+</style>
+</head>
+<body>
+<h1>fixes195 — inline SVG V1</h1>
+<p class="lede">Inline &lt;svg&gt; root + shape children rendered through the NetSurf plotter table via DOM walk.</p>
+
+<div class="card">
+  <div class="card-title">S1 — &lt;rect&gt; with fill + stroke</div>
+  <div class="row">
+    <svg viewBox="0 0 100 60" width="100" height="60">
+      <rect x="5" y="5" width="90" height="50"
+            fill="#ccddff" stroke="#003366" stroke-width="2"/>
+    </svg>
+  </div>
+  <p class="expect">Light-blue rectangle, 2px navy stroke. Stroke and fill both honoured.</p>
+</div>
+
+<div class="card">
+  <div class="card-title">S2 — &lt;circle&gt;, &lt;ellipse&gt;</div>
+  <div class="row">
+    <svg viewBox="0 0 200 80" width="200" height="80">
+      <circle cx="30" cy="40" r="22" fill="#ffaa44" stroke="#882200" stroke-width="2"/>
+      <ellipse cx="100" cy="40" rx="40" ry="20" fill="#88dd66" stroke="#225500" stroke-width="2"/>
+      <circle cx="170" cy="40" r="20" fill="none" stroke="#5555aa" stroke-width="3"/>
+    </svg>
+  </div>
+  <p class="expect">Orange circle, green ellipse, hollow purple ring. Last one has fill="none" so only the stroke shows.</p>
+</div>
+
+<div class="card">
+  <div class="card-title">S3 — &lt;path d&gt; — M L H V C Q Z</div>
+  <div class="row">
+    <svg viewBox="0 0 200 80" width="200" height="80">
+      <!-- triangle via M L L Z -->
+      <path d="M 10 70 L 40 10 L 70 70 Z" fill="#dd3333" stroke="#000" stroke-width="1"/>
+      <!-- chevron via H V -->
+      <path d="M 90 10 H 110 V 30 H 130 V 50 H 110 V 70 H 90 V 50 H 70 V 30 H 90 Z"
+            fill="#3366cc"/>
+      <!-- cubic Bezier wave via C -->
+      <path d="M 140 60 C 145 20, 175 20, 190 60"
+            fill="none" stroke="#226622" stroke-width="3"/>
+    </svg>
+  </div>
+  <p class="expect">Red triangle, blue chevron, green wave. Three different path-command subsets.</p>
+</div>
+
+<div class="card">
+  <div class="card-title">S4 — &lt;line&gt;, &lt;polyline&gt;, &lt;polygon&gt;</div>
+  <div class="row">
+    <svg viewBox="0 0 240 80" width="240" height="80">
+      <line x1="10" y1="40" x2="60" y2="40"
+            stroke="#000" stroke-width="2"/>
+      <polyline points="80,70 100,20 120,50 140,30 160,60"
+                fill="none" stroke="#aa3300" stroke-width="2"/>
+      <polygon points="180,60 200,20 220,40 215,60"
+               fill="#ff99cc" stroke="#660033" stroke-width="2"/>
+    </svg>
+  </div>
+  <p class="expect">Black line, brown polyline (5 points, not closed), pink polygon (4 points, closed).</p>
+</div>
+
+<div class="card">
+  <div class="card-title">S5 — Mac OS apple logo (mactrove-style)</div>
+  <div class="row">
+    <svg viewBox="0 0 14 16" width="42" height="48">
+      <path fill="#5EB947" d="M11.4 8.3c0-1.9 1.6-2.8 1.7-2.8-0.9-1.3-2.3-1.5-2.8-1.5-1.2-0.1-2.3 0.7-2.9 0.7-0.6 0-1.5-0.7-2.5-0.7-1.3 0-2.5 0.8-3.1 1.9-1.3 2.3-0.3 5.7 1 7.5 0.6 0.9 1.3 1.9 2.3 1.9 0.9 0 1.3-0.6 2.4-0.6 1.1 0 1.4 0.6 2.4 0.6 1 0 1.6-0.9 2.2-1.8 0.7-1 1-2.1 1-2.1s-1.9-0.7-1.7-3.1zM9.4 2.5c0.5-0.6 0.9-1.5 0.8-2.4-0.8 0-1.7 0.5-2.2 1.2-0.5 0.6-0.9 1.5-0.8 2.3 0.8 0.1 1.7-0.4 2.2-1.1z"/>
+    </svg>
+    <em style="font-size:9pt;color:#666">↑ mactrove's apple logo, simplified to solid green (V1 has no linearGradient)</em>
+  </div>
+  <p class="expect">Recognisable apple silhouette in solid green. With linearGradient V2 the rainbow stripes come back.</p>
+</div>
+
+<div class="card">
+  <div class="card-title">S6 — &lt;g&gt; grouping with inherited fill</div>
+  <div class="row">
+    <svg viewBox="0 0 180 60" width="180" height="60">
+      <g fill="#cc6600">
+        <rect x="5" y="10" width="30" height="40"/>
+        <circle cx="60" cy="30" r="20"/>
+        <path d="M 100 50 L 130 10 L 160 50 Z"/>
+      </g>
+    </svg>
+  </div>
+  <p class="expect">Three orange shapes — rect, circle, triangle — inheriting fill from the &lt;g&gt;.</p>
+</div>
+</body>
+</html>

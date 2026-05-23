@@ -91,7 +91,8 @@ typedef enum {
 	IFRAME      = 1 << 10,	/* box contains an iframe */
 	CONVERT_CHILDREN = 1 << 11,  /* wanted children converting */
 	IS_REPLACED = 1 << 12,	/* box is a replaced element */
-	MULTICOL_HINT = 1 << 13	/* fixes182b: block declares CSS multi-col */
+	MULTICOL_HINT = 1 << 13,	/* fixes182b: block declares CSS multi-col */
+	SVG_INLINE = 1 << 14	/* fixes195: <svg> root; render via DOM walk */
 } box_flags;
 
 

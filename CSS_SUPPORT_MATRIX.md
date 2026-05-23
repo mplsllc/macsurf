@@ -402,8 +402,10 @@ INTENTIONALLY_UNSUPPORTED across the module — declared above.
 
 ### B.17 SVG presentation properties
 
-| `fill`, `stroke`, `fill-opacity`, `stroke-opacity` | INTENTIONALLY_UNSUPPORTED (fixes202) until SVG content handler exists — parsed by libcss for forward-compat but no SVG renderer to consume them |
-| Full SVG rendering | NEEDS_FRONTEND — depends on SVG content handler |
+| `fill`, `stroke`, `stroke-width` (on SVG elements) | PARTIAL (fixes195) — consumed by the inline SVG renderer via element attributes or `style="..."`. Solid colours only; `url(#id)` gradient refs fall back to black. |
+| `fill-opacity`, `stroke-opacity` | INTENTIONALLY_UNSUPPORTED. |
+| Inline `<svg>` rendering | PARTIAL (fixes195) — V1 DOM walker paints `<rect>`, `<circle>`, `<ellipse>`, `<line>`, `<polygon>`, `<polyline>`, `<path>` (M/L/H/V/C/Q/Z subset) + `<g>` group inheritance. viewBox + width/height resolve correctly. **Deferred to V2**: `<linearGradient>` / `<radialGradient>`, `<text>`, `<use>`, `<symbol>`, `<image>`, `transform=` attribute, arc (`A`) path command, stroke dash / cap / join, fill-rule, CSS selectors targeting SVG nodes. |
+| External SVG (`<img src=*.svg>`) | NOT SUPPORTED — no external SVG decoder. |
 
 ---
 

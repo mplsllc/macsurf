@@ -119,6 +119,16 @@ CORESTRING_LWC_STRING(search);
 CORESTRING_LWC_STRING(select);
 CORESTRING_LWC_STRING(src);
 CORESTRING_LWC_STRING(style);
+/* fixes195 — inline SVG corestrings (used by box_construct +
+ * macos9_svg_inline.c to identify <svg> roots and shape children). */
+CORESTRING_LWC_STRING(svg);
+CORESTRING_LWC_STRING(path);
+CORESTRING_LWC_STRING(ellipse);
+CORESTRING_LWC_STRING(polyline);
+CORESTRING_LWC_STRING(line);
+CORESTRING_LWC_STRING(defs);
+CORESTRING_LWC_STRING(g);
+CORESTRING_LWC_STRING(use);
 CORESTRING_LWC_STRING(submit);
 CORESTRING_LWC_STRING(table);
 CORESTRING_LWC_STRING(tbody);
