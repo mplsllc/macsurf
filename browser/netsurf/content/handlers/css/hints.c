@@ -1728,6 +1728,33 @@ css_error node_presentational_hint(void *pw, void *node,
 		break;
 	}
 
+	/* fixes196 — SVG dimension hints.
+	 *
+	 * <svg> is foreign-content per HTML5, so dom_html_element_get_tag_type
+	 * returns DOM_HTML_ELEMENT_TYPE__UNKNOWN and the HTML-element switch
+	 * above gives it nothing. Without a CSS width / height, the cascade
+	 * settles on `auto` and the layout pass sizes the box to 0x0, so
+	 * the SVG painter (fixes195) is invoked with empty rect and never
+	 * paints. Forward the `width=` / `height=` attributes the same way
+	 * IMG / EMBED / IFRAME / OBJECT do above, so authored SVG icons
+	 * (e.g. <svg width="13" height="15">) get real layout dimensions.
+	 *
+	 * Tag-name comparison rather than element-type so the foreign-content
+	 * fork still benefits even though libdom doesn't have a dedicated
+	 * DOM_HTML_ELEMENT_TYPE_SVG enumerator on this branch. */
+	if (tag_type == DOM_HTML_ELEMENT_TYPE__UNKNOWN) {
+		dom_string *svg_tag = NULL;
+		if (dom_element_get_tag_name(node, &svg_tag) == DOM_NO_ERR &&
+				svg_tag != NULL) {
+			if (dom_string_caseless_lwc_isequal(svg_tag,
+					corestring_lwc_svg)) {
+				css_hint_height(pw, node);
+				css_hint_width(pw, node);
+			}
+			dom_string_unref(svg_tag);
+		}
+	}
+
 	if (tag_type != DOM_HTML_ELEMENT_TYPE__UNKNOWN) {
 		css_hint_color(pw, node);
 		css_hint_bg_color(pw, node);
