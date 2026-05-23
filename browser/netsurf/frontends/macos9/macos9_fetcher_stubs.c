@@ -47,6 +47,18 @@ static const char css_default[] =
 	/* HTML5 sectioning */
 	"header,footer,nav,section,article,aside,main,figure,"
 	"figcaption,details,summary,hgroup,dialog,picture{display:block}"
+	/* fixes186 — collapse <details> by default. Specificity ordering:
+	 *   details > *           (0,0,0,1) base hide
+	 *   details > summary     (0,0,0,2) summary always visible
+	 *   details[open] > *     (0,0,1,1) opens override base hide
+	 * Without this, mactrove.com's sidebar / category / mobile-menu
+	 * <details> widgets paint all 57+ categories instead of the
+	 * intended 13 visible + collapsed "Show N more..." control. We do
+	 * not currently dispatch click → toggle [open], so users can't
+	 * expand; the trade-off is correct initial layout. */
+	"details > *{display:none}"
+	"details > summary{display:block}"
+	"details[open] > *{display:block}"
 	"li{display:list-item}"
 	"head,style,script,title,meta,link,base,template,"
 	"noembed,noscript,source,track{display:none}"
