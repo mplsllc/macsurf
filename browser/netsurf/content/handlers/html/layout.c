@@ -4540,9 +4540,37 @@ static bool layout_block_context_inner(
 			cy = y;
 		}
 
+		/* fixes182b — detect CSS multi-column. Plain BOX_BLOCK with
+		 * column-count or column-width set must establish a new
+		 * formatting context just like flex/grid, otherwise the
+		 * normal inline-flow path leaves children full-width. */
+		{
+			int32_t mc_count_v = 0;
+			css_fixed mc_w_v = 0;
+			css_unit mc_u_v = CSS_UNIT_PX;
+			uint8_t mc_ct = CSS_COLUMN_COUNT_AUTO;
+			uint8_t mc_wt = CSS_COLUMN_WIDTH_AUTO;
+			if (box->type == BOX_BLOCK && box->style) {
+				mc_ct = css_computed_column_count(
+						box->style, &mc_count_v);
+				mc_wt = css_computed_column_width(box->style,
+						&mc_w_v, &mc_u_v);
+			}
+			box->flags &= ~MULTICOL_HINT;
+			if ((mc_ct == CSS_COLUMN_COUNT_SET &&
+					mc_count_v > 1) ||
+					mc_wt == CSS_COLUMN_WIDTH_SET) {
+				box->flags |= MULTICOL_HINT;
+				macsurf_debug_log_writef(
+					"MCOL inline-detect box=%p w=%d",
+					(void *)box, box->width);
+			}
+		}
+
 		/* Unless the box has an overflow style of visible, the box
 		 * establishes a new block context. */
 		if (box->type == BOX_FLEX || box->type == BOX_GRID ||
+				(box->flags & MULTICOL_HINT) ||
 				(box->type == BOX_BLOCK && box->style &&
 				 (overflow_x != CSS_OVERFLOW_VISIBLE ||
 				  overflow_y != CSS_OVERFLOW_VISIBLE))) {
@@ -4555,6 +4583,14 @@ static bool layout_block_context_inner(
 				/* fixes75 -- CSS Grid container. */
 				if (!layout_grid(box, box->width, content)) {
 					return false;
+				}
+			} else if (box->flags & MULTICOL_HINT) {
+				if (!layout_multicol_context(box,
+						viewport_height, content)) {
+					/* fall back to plain block layout */
+					layout_block_context(box,
+							viewport_height,
+							content);
 				}
 			} else {
 				layout_block_context(box,
