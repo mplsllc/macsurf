@@ -2092,6 +2092,196 @@ macsurf__rewrite_transform(const char *data, size_t in_size,
 }
 
 
+/* fixes185 — modern-CSS compatibility preprocessor. Rewrites unsupported
+ * modern syntax into supported equivalents (or drops it) so author CSS
+ * keeps cascading instead of having rules silently dropped by libcss.
+ * In-place rewrites only (length-preserving): no new property names,
+ * no libcss internal changes. Mirrors the fixes175 text-shadow / fixes183
+ * transform preprocessor pattern.
+ *
+ * Rewrites:
+ *  - `:focus-visible` -> `:focus        ` (8 trailing spaces; same length)
+ *  - `:focus-within`  -> `:focus       ` (7 trailing spaces; same length)
+ *  - declarations dropped (name+value replaced with spaces, terminator kept):
+ *    -webkit-line-clamp, line-clamp, image-rendering,
+ *    font-variant-numeric, break-inside, outline-offset
+ *  - `repeating-linear-gradient(` -> `          linear-gradient(`
+ *    (10 leading spaces; first cycle still renders via fixes49)
+ *  - `repeating-radial-gradient(` -> `          radial-gradient(`
+ */
+static char *
+macsurf__rewrite_modern_compat(const char *data, size_t in_size,
+		size_t *out_size_p)
+{
+	static const char *const DROP_PROPS[] = {
+		"-webkit-line-clamp",
+		"line-clamp",
+		"image-rendering",
+		"font-variant-numeric",
+		"break-inside",
+		"outline-offset"
+	};
+	static const size_t N_DROP_PROPS = 6;
+	static const char REPEAT_LIN_FROM[] = "repeating-linear-gradient(";
+	static const char REPEAT_LIN_TO[]   = "          linear-gradient(";
+	static const char REPEAT_RAD_FROM[] = "repeating-radial-gradient(";
+	static const char REPEAT_RAD_TO[]   = "          radial-gradient(";
+	static const size_t REPEAT_LEN = 26;
+	static const char FV[] = ":focus-visible";
+	static const char FV_REP[] = ":focus        ";
+	static const size_t FV_LEN = 14;
+	static const char FW[] = ":focus-within";
+	static const char FW_REP[] = ":focus       ";
+	static const size_t FW_LEN = 13;
+	char *out;
+	size_t i, k;
+	int changed = 0;
+
+	out = (char *)malloc(in_size + 1);
+	if (out == NULL) return NULL;
+	memcpy(out, data, in_size);
+	out[in_size] = '\0';
+
+	/* Pass A — :focus-visible -> :focus + spaces */
+	i = 0;
+	while (i + FV_LEN <= in_size) {
+		size_t m;
+		int match = 1;
+		char next;
+		if (out[i] != ':') { i++; continue; }
+		for (m = 0; m < FV_LEN; m++) {
+			char a = out[i + m];
+			char b = FV[m];
+			if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+			if (a != b) { match = 0; break; }
+		}
+		if (!match) { i++; continue; }
+		next = (i + FV_LEN < in_size) ? out[i + FV_LEN] : '\0';
+		if ((next >= 'a' && next <= 'z') ||
+				(next >= 'A' && next <= 'Z') ||
+				(next >= '0' && next <= '9') ||
+				next == '-' || next == '_') {
+			i++;
+			continue;
+		}
+		memcpy(out + i, FV_REP, FV_LEN);
+		changed = 1;
+		i += FV_LEN;
+	}
+
+	/* Pass B — :focus-within -> :focus + spaces */
+	i = 0;
+	while (i + FW_LEN <= in_size) {
+		size_t m;
+		int match = 1;
+		char next;
+		if (out[i] != ':') { i++; continue; }
+		for (m = 0; m < FW_LEN; m++) {
+			char a = out[i + m];
+			char b = FW[m];
+			if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+			if (a != b) { match = 0; break; }
+		}
+		if (!match) { i++; continue; }
+		next = (i + FW_LEN < in_size) ? out[i + FW_LEN] : '\0';
+		if ((next >= 'a' && next <= 'z') ||
+				(next >= 'A' && next <= 'Z') ||
+				(next >= '0' && next <= '9') ||
+				next == '-' || next == '_') {
+			i++;
+			continue;
+		}
+		memcpy(out + i, FW_REP, FW_LEN);
+		changed = 1;
+		i += FW_LEN;
+	}
+
+	/* Pass C — declaration drops: replace `name<ws>:<value>` with spaces,
+	 * keeping the terminator (`;` or `}`) intact. */
+	for (k = 0; k < N_DROP_PROPS; k++) {
+		const char *name = DROP_PROPS[k];
+		size_t nlen = strlen(name);
+		i = 0;
+		while (i < in_size) {
+			size_t j;
+			size_t end;
+			size_t p;
+			if (!macsurf__match_prop_name(out, in_size, i,
+					name, nlen)) {
+				i++;
+				continue;
+			}
+			j = i + nlen;
+			while (j < in_size && (out[j] == ' ' ||
+					out[j] == '\t' ||
+					out[j] == '\n' ||
+					out[j] == '\r')) j++;
+			if (j >= in_size || out[j] != ':') {
+				i++;
+				continue;
+			}
+			end = j + 1;
+			while (end < in_size && out[end] != ';' &&
+					out[end] != '}') end++;
+			for (p = i; p < end; p++) {
+				if (out[p] != '\n' && out[p] != '\r') {
+					out[p] = ' ';
+				}
+			}
+			changed = 1;
+			i = end;
+		}
+	}
+
+	/* Pass D — repeating-*-gradient( -> linear-/radial-gradient( with
+	 * leading whitespace pad. Left word-boundary check identical to
+	 * macsurf__match_prop_name. */
+	i = 0;
+	while (i + REPEAT_LEN <= in_size) {
+		int hit_lin;
+		int hit_rad;
+		size_t m;
+		char prev;
+		hit_lin = 1;
+		hit_rad = 1;
+		for (m = 0; m < REPEAT_LEN; m++) {
+			char a = out[i + m];
+			char bl = REPEAT_LIN_FROM[m];
+			char br = REPEAT_RAD_FROM[m];
+			if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+			if (a != bl) hit_lin = 0;
+			if (a != br) hit_rad = 0;
+			if (!hit_lin && !hit_rad) break;
+		}
+		if (!hit_lin && !hit_rad) { i++; continue; }
+		if (i > 0) {
+			prev = out[i - 1];
+			if ((prev >= 'a' && prev <= 'z') ||
+					(prev >= 'A' && prev <= 'Z') ||
+					(prev >= '0' && prev <= '9') ||
+					prev == '-' || prev == '_') {
+				i++;
+				continue;
+			}
+		}
+		if (hit_lin) {
+			memcpy(out + i, REPEAT_LIN_TO, REPEAT_LEN);
+		} else {
+			memcpy(out + i, REPEAT_RAD_TO, REPEAT_LEN);
+		}
+		changed = 1;
+		i += REPEAT_LEN;
+	}
+
+	if (!changed) {
+		free(out);
+		return NULL;
+	}
+	*out_size_p = in_size;
+	return out;
+}
+
+
 static bool
 nscss_process_data(struct content *c, const char *data, unsigned int size)
 {
@@ -2102,9 +2292,11 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	char *rewritten_col_span = NULL;
 	char *rewritten_text_shadow = NULL;
 	char *rewritten_transform = NULL;
+	char *rewritten_modern_compat = NULL;
 	size_t col_span_size = 0;
 	size_t text_shadow_size = 0;
 	size_t transform_size = 0;
+	size_t modern_compat_size = 0;
 	const char *final_data;
 	unsigned int final_size;
 
@@ -2215,8 +2407,24 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		final_size = (unsigned int)transform_size;
 	}
 
+	/* fixes185 — sixth pass: modern-CSS compatibility. Rewrites
+	 * `:focus-visible` / `:focus-within` to `:focus`, drops unsupported
+	 * declarations (line-clamp, image-rendering, font-variant-numeric,
+	 * break-inside, outline-offset), and strips the `repeating-` prefix
+	 * from `repeating-linear/radial-gradient(` so the first cycle still
+	 * renders through the existing gradient handler. In-place,
+	 * length-preserving; returns NULL when no rewrites apply. */
+	rewritten_modern_compat = macsurf__rewrite_modern_compat(final_data,
+			(size_t)final_size, &modern_compat_size);
+	if (rewritten_modern_compat != NULL &&
+			modern_compat_size <= (size_t)0x7fffffff) {
+		final_data = (const char *)rewritten_modern_compat;
+		final_size = (unsigned int)modern_compat_size;
+	}
+
 	error = nscss_process_css_data(&css->data, final_data, final_size);
 
+	if (rewritten_modern_compat != NULL) free(rewritten_modern_compat);
 	if (rewritten_transform != NULL) free(rewritten_transform);
 	if (rewritten_text_shadow != NULL) free(rewritten_text_shadow);
 	if (rewritten_col_span != NULL) free(rewritten_col_span);
