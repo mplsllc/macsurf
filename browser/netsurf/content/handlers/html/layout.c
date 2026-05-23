@@ -1948,10 +1948,15 @@ static bool layout_multicol_context(
 	int base_y;
 	bool balance;
 
+	macsurf_debug_log_writef("MCOL try box=%p w=%d", (void*)block,
+			block->width);
 	if (!layout_multicol_resolve(block, &content->unit_len_ctx, &count,
 			&gap, &column_width, &balance)) {
+		macsurf_debug_log_writef("MCOL resolve=BAIL w=%d", block->width);
 		return false;
 	}
+	macsurf_debug_log_writef("MCOL resolved count=%d gap=%d cw=%d",
+			count, gap, column_width);
 
 	child_count = 0;
 	for (child = block->children; child != NULL; child = child->next) {
@@ -1962,10 +1967,14 @@ static bool layout_multicol_context(
 				CSS_POSITION_FIXED)) {
 			continue;
 		}
-		if (!layout_multicol_child_supported(child))
+		if (!layout_multicol_child_supported(child)) {
+			macsurf_debug_log_writef(
+				"MCOL child=BAIL type=%d", child->type);
 			return false;
+		}
 		child_count++;
 	}
+	macsurf_debug_log_writef("MCOL child_count=%d", child_count);
 
 	if (child_count < 2)
 		return false;
