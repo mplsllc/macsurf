@@ -29,6 +29,7 @@
 
 #include "frontends/macos9/macos9.h"
 #include "frontends/macos9/macos9_svg_inline.h"
+#include "frontends/macos9/macsurf_debug_log.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -925,6 +926,13 @@ static void svg__paint_subtree(dom_node *parent,
 			struct svg_paint_state child_st = st;
 			svg__update_style(child, &child_st);
 
+			macsurf_debug_log_writef(
+				"svg_shape: depth=%d tag=%s fill=0x%08x stroke=0x%08x",
+				depth,
+				(const char *)dom_string_data(tag),
+				(unsigned int)child_st.fill,
+				(unsigned int)child_st.stroke);
+
 			if (dom_string_caseless_lwc_isequal(tag,
 					corestring_lwc_g)) {
 				svg__paint_subtree(child, c, child_st,
@@ -1037,6 +1045,13 @@ nserror macos9_svg_paint_inline(struct box *box,
 
 	/* Read style attributes set on the <svg> itself. */
 	svg__update_style((dom_node *)box->node, &st);
+
+	macsurf_debug_log_writef(
+		"svg_walk_enter: vb=(%d,%d,%d,%d) box=(%d,%d,%d,%d) scale=(%d,%d) thousandths",
+		(int)(c.vb_x * 1000), (int)(c.vb_y * 1000),
+		(int)(c.vb_w * 1000), (int)(c.vb_h * 1000),
+		c.box_x, c.box_y, c.box_w, c.box_h,
+		(int)(c.scale_x * 1000), (int)(c.scale_y * 1000));
 
 	svg__paint_subtree((dom_node *)box->node, &c, st, 0);
 	return NSERROR_OK;

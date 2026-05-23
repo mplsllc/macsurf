@@ -70,6 +70,10 @@
  * file could move to content/handlers/html/ later). */
 #ifdef __MACOS9__
 #include "frontends/macos9/macos9_svg_inline.h"
+/* fixes197 — diagnostic logging hook. Declared extern here because
+ * the macsurf_debug.h header is in the macos9 frontend dir and the
+ * include path may not reach it from this point in the tree. */
+extern void macsurf_debug_log_writef(const char *fmt, ...);
 #endif
 
 
@@ -3432,6 +3436,12 @@ bool html_redraw_box(const html_content *html, struct box *box,
 		 * content rect (x + padding_left, y + padding_top,
 		 * width x height) is the viewBox target. */
 #ifdef __MACOS9__
+		macsurf_debug_log_writef(
+			"svg_paint: box=%p x=%d y=%d w=%d h=%d node=%p",
+			(void *)box, (int)(x + padding_left),
+			(int)(y + padding_top),
+			(int)width, (int)height,
+			(void *)(box ? box->node : NULL));
 		(void)macos9_svg_paint_inline(box,
 				x + padding_left,
 				y + padding_top,

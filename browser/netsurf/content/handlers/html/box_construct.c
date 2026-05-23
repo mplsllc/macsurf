@@ -1304,16 +1304,35 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	 * to the SVG node and are rendered at paint time by the
 	 * DOM-walker in macos9_svg_inline.c. They don't participate in
 	 * HTML layout, which matches SVG semantics (the root <svg>
-	 * draws its viewBox into a single box). */
+	 * draws its viewBox into a single box).
+	 *
+	 * fixes197 — diagnostic instrumentation: log every tag name
+	 * we see so we can confirm <svg> tags actually reach this
+	 * point (e.g. that Hubbub's foreign-content path isn't
+	 * stashing them in a different namespace that
+	 * dom_element_get_tag_name doesn't return as plain "svg"). */
 	{
 		dom_string *svg_name = NULL;
 		if (box != NULL &&
 				dom_element_get_tag_name(ctx->n, &svg_name) ==
 					DOM_NO_ERR && svg_name != NULL) {
-			if (dom_string_caseless_lwc_isequal(svg_name,
-					corestring_lwc_svg)) {
+			const char *tag = (const char *)
+					dom_string_data(svg_name);
+			size_t tlen = dom_string_length(svg_name);
+			int matched = dom_string_caseless_lwc_isequal(
+					svg_name, corestring_lwc_svg);
+			if (matched) {
 				box->flags |= SVG_INLINE;
 				*convert_children = false;
+			}
+			/* Only log s-prefixed tags to keep noise down; <svg>
+			 * always falls in this bucket. */
+			if (tlen >= 3 && tlen <= 32 &&
+					(tag[0] == 's' || tag[0] == 'S')) {
+				macsurf_debug_log_writef(
+					"svg_box: tag=%s len=%ld match=%d box=%p flags=0x%x",
+					tag, (long)tlen, matched,
+					(void *)box, (unsigned int)box->flags);
 			}
 			dom_string_unref(svg_name);
 		}
