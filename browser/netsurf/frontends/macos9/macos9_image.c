@@ -645,25 +645,14 @@ macos9_png_decode_to_bitmap(const unsigned char *data, size_t size,
 		return NSERROR_NOMEM;
 	}
 
-	/* fixes187 — Two changes to fight the "faded image" effect when
-	 * QuickDraw downscales (e.g., 1058x245 PNG → 96x96 icon slot)
-	 * via CopyMask:
-	 *
-	 *  1. Lower the mask threshold from 128 to 8 so every visible
-	 *     pixel (including anti-aliased edges with alpha 1-127) ends
-	 *     up with mask bit = 1. Pre-187 every edge pixel below 128
-	 *     was dropped at decode, then nearest-neighbor downscale of
-	 *     the 1-bit mask dropped further interior pixels at random
-	 *     wherever the scale ratio collided with the mask layout.
-	 *
-	 *  2. Premultiply RGB by alpha for partially-transparent pixels.
-	 *     CopyMask copies the source pixel as-is wherever mask=1, so
-	 *     a "50%-transparent red" pixel (r=255, a=128) needs to be
-	 *     stored as r=128 to render as half-intensity red on screen.
-	 *     Without premultiplication an alpha-128 edge would copy as
-	 *     full red, producing harsh aliasing instead of a soft edge.
-	 *     Premultiplied RGB also happens to be the correct format if
-	 *     we later upgrade to CopyDeepMask + 8-bit alpha mask. */
+	/* fixes188 — Store unpremultiplied RGBA with the actual alpha
+	 * byte preserved in the 4th slot. fixes187's premultiply was
+	 * mathematically correct for CopyMask-as-flat-blit but dimmed
+	 * anti-aliased edges to near-black, which read as "fade" on
+	 * light backgrounds. The real fix happens at plot time, where
+	 * scaled draws now sample the destination port and do a true
+	 * alpha-over composite (see macos9_plot_bitmap). The 1-bit
+	 * mask is still built for the unscaled CopyMask fast path. */
 	for (row = 0; row < h; row++) {
 		src_row = rgba + (long)row * (long)w * 4;
 		dst_row = dst_buf + (long)row * row_bytes;
@@ -673,18 +662,10 @@ macos9_png_decode_to_bitmap(const unsigned char *data, size_t size,
 			unsigned char g = src_row[col * 4 + 1];
 			unsigned char b = src_row[col * 4 + 2];
 			unsigned char a = src_row[col * 4 + 3];
-			if (a != 0xFF) {
-				r = (unsigned char)(
-					((unsigned int)r * (unsigned int)a) / 255U);
-				g = (unsigned char)(
-					((unsigned int)g * (unsigned int)a) / 255U);
-				b = (unsigned char)(
-					((unsigned int)b * (unsigned int)a) / 255U);
-			}
 			dst_row[col * 4 + 0] = r;
 			dst_row[col * 4 + 1] = g;
 			dst_row[col * 4 + 2] = b;
-			dst_row[col * 4 + 3] = 0xFF;
+			dst_row[col * 4 + 3] = a;
 			if (a >= 8) {
 				/* QuickDraw BitMap convention: MSB of each
 				 * byte is leftmost pixel. mask bit set = 1
