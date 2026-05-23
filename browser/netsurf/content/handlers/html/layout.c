@@ -1817,8 +1817,12 @@ static bool layout_multicol_resolve(
 			preferred_width = 0;
 	}
 
-	if (count_type == CSS_COLUMN_COUNT_SET && count_value > 1) {
-		count = (int) count_value;
+	/* fixes182d: libcss stores column-count as css_fixed (10-bit
+	 * fractional). Convert to integer count. */
+	if (count_type == CSS_COLUMN_COUNT_SET) {
+		int cv = (int) FIXTOINT(count_value);
+		if (cv > 1)
+			count = cv;
 	}
 
 	if (preferred_width > 0) {
