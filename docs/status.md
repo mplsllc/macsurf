@@ -143,4 +143,5 @@ The “modern site survival” work is now mostly about filling in specific miss
 - [codewarrior-setup.md](codewarrior-setup.md), Mac-side build
 - [cross-dev-from-linux.md](cross-dev-from-linux.md), Linux cross-dev workflow + Retro68 syntax pre-flight
 - [deploying-proxy.md](deploying-proxy.md), Go proxy deploy guide
+- [security-notes.md](security-notes.md), Reachable attack surface + record of dismissed external scanner reports
 - [story.html](story.html), Narrative writeup with screenshots
