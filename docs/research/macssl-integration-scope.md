@@ -35,6 +35,12 @@ Cipher path: TLS 1.2 with ECDHE-ECDSA + ChaCha20-Poly1305 preferred
 (Amazon, DigiCert G2/G3, Google GTS R1-R4, Let's Encrypt ISRG X1/X2,
 Starfield G2) valid through 2035-2038.
 
+**Entropy:** production gathering (mouse position + delta, microsecond
+jitter, TickCount, stack-address noise) into a continuously-accumulated
+32-byte pool, injected into BearSSL at every handshake. Shipped in
+macssl17. See §5.1 — the "preview HTTPS" disclaimer the earlier draft
+of this scope called for is **no longer required**.
+
 ---
 
 ## 2. Inventory
@@ -141,7 +147,9 @@ MFS_IDLE
    │                                                    └─→ MFS_CONNECTING
    │
    ├─ poll tick:
-   │     OSTLS_CollectEntropy()
+   │     OSTLS_CollectEntropy()      ← MUST run every tick (any fetcher;
+   │                                   keeps the global pool fresh
+   │                                   between handshakes)
    │     OSTLS_Pump(conn, 6, &ev)
    │     │
    │     ├─ ev == kOSTLSEventHandshakeDone:
@@ -250,27 +258,35 @@ explicitly disables it. Out of V1 scope.
 Three issues from the macSSL handoff need addressing before HTTPS can
 be advertised as user-facing secure:
 
-### 5.1 Stage A entropy stub — **BLOCKER for security claim**
+### 5.1 Entropy — **resolved as of macssl17**
 
-The current `ostls_entropy.c` Stage A entropy mixes TickCount,
-Microseconds, stack address, and a fixed tag into 32 bytes. This
-satisfies BearSSL's entropy gate but is **NOT cryptographically
-sound** — predictable, low-entropy seeds let an observer who captures
-the encrypted traffic decrypt it post-hoc.
+**Production entropy is shipped in macSSL.** [ostls_entropy.c](../../macSSL/os9/ostls_entropy.c)
+implements the v1.0 plan: a continuous 32-byte global pool accumulated
+via hash-mix from:
 
-The integration MUST NOT advertise HTTPS as production-secure until
-production entropy lands (mouse-delta hashing, key-press latency,
-notifier tick jitter, persisted seed). Mitigations during the V1
-phase:
+- `GetMouse()` position **and** movement deltas (deltas only mixed in
+  when the mouse actually moves, avoiding over-weighting static state).
+- `Microseconds()` jitter — wall-clock low bits change on every read.
+- `TickCount()` — coarse but free, mixed for cheap monotonicity bits.
+- Stack address from `&local_var` inside the injector itself.
 
-- **Disclaimer in title bar / about dialog** when an HTTPS fetch
-  succeeds against the Stage A entropy build.
-- **Title bar marker** ("MacSurf HTTPS (preview)") so users can tell
-  the build apart from a future shipping one.
-- **Documented limitation in README + ABOUT.txt**.
+The pool is injected into BearSSL's engine on every handshake via
+`OSTLS_InjectEntropy`, and the integration must call
+`OSTLS_CollectEntropy()` on every poll tick (see §3) to keep the pool
+fresh.
 
-Production entropy work tracked separately in the macSSL repo
-([os9/ostls_entropy.c](../../macSSL/os9/ostls_entropy.c) docstring).
+Result: **no "preview HTTPS" disclaimer is required from a
+cryptographic standpoint**. The "Stage A entropy" framing in earlier
+drafts of this scope was based on stale information; the production
+gathering landed in `macssl17.tar` before this integration started.
+
+A "beta feature" marker in About / first-run dialog may still be
+worthwhile while V1 stabilizes the rest of the stack (cert chain
+breadth, handshake performance, dialog UX), but the framing should
+be "new feature, please report issues" rather than "the crypto is
+insecure". That distinction matters: users who read the disclaimer
+and choose not to use HTTPS would be making a worse security choice
+(reverting to plaintext HTTP through the proxy).
 
 ### 5.2 Trust anchor coverage — **BLOCKER for breadth**
 
@@ -461,13 +477,15 @@ This document + the `macSSL` branch. No code changes.
 - [ ] CLAUDE.md "Last shipped fix" entry
 - [ ] README entry: "MacSurf v0.6 — Native HTTPS"
 - [ ] HARDWARE-VERIFIED log file from a G3 fetch of `https://mactrove.com/advanced.html`
-- [ ] Honest disclaimer in About / title bar: "Stage A entropy — preview HTTPS"
+- [ ] `OSTLS_CollectEntropy()` wired into the fetcher poll tick (every tick, not just per-handshake)
+- [ ] About box: "Native HTTPS via macSSL (BearSSL + production entropy)"
+- [ ] Optional first-run / beta marker in About box (NOT a "preview crypto" disclaimer — production entropy already shipped in macssl17)
 
 ---
 
 ## 9. Out of scope for V1
 
-- Production entropy gathering (lives in the macSSL repo)
+- ~~Production entropy gathering~~ — **already shipped in macssl17**; integration just calls `OSTLS_CollectEntropy` every poll tick and `OSTLS_InjectEntropy` is wired automatically through `OSTLS_Start`.
 - Mozilla CA bundle (V2)
 - Session resumption (V2)
 - HTTP/2 (BearSSL is TLS-only; OK as a permanent limit on this platform)
@@ -488,11 +506,12 @@ This document + the `macSSL` branch. No code changes.
    and add the bundle in V1.1 once the cert-not-trusted dialog is real
    so we can measure the failure rate.
 
-2. **Stage A entropy disclosure.** The library is honest that the
-   Stage A entropy is insecure. Where should the disclaimer appear:
-   - title bar marker ("https — preview")? Recommendation.
-   - one-shot dialog on first HTTPS load per session?
-   - About box only?
+2. ~~**Stage A entropy disclosure**~~ — **resolved.** Production entropy
+   shipped in macssl17 (see §5.1). No "preview crypto" disclaimer
+   required. A "beta feature" marker in the About box for V1 is still
+   reasonable while the stack stabilizes, but should be framed as a
+   new-feature note ("Native HTTPS — please report issues"), not a
+   security warning.
 
 3. **HTTPS fetcher cap.** `MAX_HTTPS_FETCHES = 4` per integration-
    handoff. Acceptable? Lower (2) would protect heap harder. Higher
