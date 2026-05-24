@@ -311,6 +311,10 @@ static void nsgif__record_frame(
 		return;
 	}
 
+	if (height == 0 || width > SIZE_MAX / pixel_bytes / height) {
+		return;
+	}
+
 	if (gif->prev_frame == NULL) {
 		prev_frame = realloc(gif->prev_frame,
 				width * height * pixel_bytes);
