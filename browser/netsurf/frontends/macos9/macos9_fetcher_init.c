@@ -24,8 +24,7 @@ extern nserror fetch_file_register(void);
 extern nserror fetch_data_register(void);
 extern nserror fetch_javascript_register(void);
 
-nserror fetcher_init(void)
-{
+nserror fetcher_init(void) {
 	nserror err;
 
 	err = macos9_http_fetcher_register();

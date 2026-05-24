@@ -1065,19 +1065,35 @@ macos9_plot_path(const struct redraw_context *ctx,
 		 unsigned int n,
 		 const float transform[6])
 {
-	/* Path flattening: treat the path as a sequence of
-	 * PLOTTER_PATH_* tokens (MOVE / LINE / BEZIER / CLOSE)
-	 * and emit LineTo() for each straight segment. Bezier
-	 * curves are approximated by sampling 8 points along
-	 * each cubic and LineTo-ing between them. No transform
-	 * handling (matrix is identity for all non-SVG content). */
+	/* fixes203 — path flattening with fill + stroke.
+	 *
+	 * Pre-fixes203 this function emitted LineTo only, so SVG <path>,
+	 * <ellipse>, <circle>, and the new rotated-rect path emitted by
+	 * svg__paint_rect rendered as stroke-only outlines and never
+	 * filled. Wrap the path traversal in OpenPoly / ClosePoly so the
+	 * same sequence is recorded into a PolyHandle. After traversal
+	 * issue PaintPoly (if fill_type != NONE) and FramePoly (if
+	 * stroke_type != NONE).
+	 *
+	 * Bezier curves are still approximated by sampling 8 points
+	 * per cubic — the LineTo calls between sample points get
+	 * captured by OpenPoly so the polygon edges follow the curve.
+	 *
+	 * No transform handling: the caller has already baked any
+	 * affine into the supplied (x, y) coordinates. */
 	RGBColor rgb;
 	unsigned int i;
 	float cx, cy;
+	int has_started = 0;
+#ifdef __MACOS9__
+	PolyHandle poly;
+#endif
 	(void)transform;
 	if (pstyle == NULL || p == NULL || n == 0) return NSERROR_OK;
-	macos9_colour_to_rgb(pstyle->stroke_colour, &rgb);
-	RGBForeColor(&rgb);
+#ifdef __MACOS9__
+	poly = OpenPoly();
+	if (poly == NULL) return NSERROR_OK;
+#endif
 	cx = 0.0f; cy = 0.0f;
 	i = 0;
 	while (i < n) {
@@ -1086,6 +1102,7 @@ macos9_plot_path(const struct redraw_context *ctx,
 			if (i + 1 >= n) break;
 			cx = p[i]; cy = p[i + 1]; i += 2;
 			MoveTo((short)cx, (short)cy);
+			has_started = 1;
 		} else if (op == PLOTTER_PATH_LINE) {
 			if (i + 1 >= n) break;
 			cx = p[i]; cy = p[i + 1]; i += 2;
@@ -1107,11 +1124,32 @@ macos9_plot_path(const struct redraw_context *ctx,
 			}
 			cx = ex; cy = ey;
 		} else if (op == PLOTTER_PATH_CLOSE) {
-			/* no explicit op needed for QuickDraw lines */
+			/* No explicit op needed: ClosePoly below closes the
+			 * outline automatically. For multi-subpath paths
+			 * we'd need to flush the current poly and start a
+			 * new one — out of scope for V1. */
 		} else {
 			break;
 		}
 	}
+#ifdef __MACOS9__
+	ClosePoly();
+	if (has_started) {
+		if (pstyle->fill_type != PLOT_OP_TYPE_NONE) {
+			macos9_colour_to_rgb(pstyle->fill_colour, &rgb);
+			RGBForeColor(&rgb);
+			PaintPoly(poly);
+		}
+		if (pstyle->stroke_type != PLOT_OP_TYPE_NONE) {
+			macos9_colour_to_rgb(pstyle->stroke_colour, &rgb);
+			RGBForeColor(&rgb);
+			FramePoly(poly);
+		}
+	}
+	KillPoly(poly);
+#else
+	(void)has_started; (void)rgb;
+#endif
 	return NSERROR_OK;
 }
 
@@ -1197,12 +1235,148 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 		}
 	}
 
+	/* fixes203 — box-filter pre-downscale for high-quality image
+	 * rendering. QuickDraw's CopyBits / CopyMask scale via nearest-
+	 * neighbor, which on large downscale ratios (3x+) produces severe
+	 * aliasing (the "rainbow streak" artefact visible on OP1 / OP2 in
+	 * fixes202 hardware probes: the mactrove logo at 1058×245 reduced
+	 * to ~160×37 by object-fit:contain). Average each src block of
+	 * (sx × sy) pixels into one dst pixel of a target-sized
+	 * intermediate GWorld, then have the existing blit code copy the
+	 * intermediate at 1:1 — no QuickDraw scaling involved.
+	 *
+	 * Mask handling: the 1-bit mask is also box-filtered. Each dst
+	 * mask bit is set when more than half of the source bits in the
+	 * corresponding block are set, preserving the alpha>=128 threshold
+	 * the decoder applied.
+	 *
+	 * Gated by the 3× threshold so modest 1.0–2.5× scaling stays on
+	 * the fast nearest-neighbor path. The original gw / pm are
+	 * replaced in place by the smaller intermediate when this fires;
+	 * the small-mask buffer (when present) is freed at function exit
+	 * via the bf_small_mask local. */
+	{
+		long sx_ratio_q8 = (long)width <= 0 ? 0 :
+				(((long)bw << 8) / (long)width);
+		long sy_ratio_q8 = (long)height <= 0 ? 0 :
+				(((long)bh << 8) / (long)height);
+		if ((sx_ratio_q8 >= (3L << 8) || sy_ratio_q8 >= (3L << 8)) &&
+				width >= 4 && height >= 4) {
+			GWorldPtr gw_small = NULL;
+			Rect small_rect;
+			PixMapHandle pm_small;
+			OSErr small_err;
+			SetRect(&small_rect, 0, 0, (short)width, (short)height);
+			small_err = NewGWorld(&gw_small, 32, &small_rect, NULL,
+					NULL, (GWorldFlags)4);
+			if (small_err != noErr || gw_small == NULL) {
+				small_err = NewGWorld(&gw_small, 32, &small_rect,
+						NULL, NULL, 0);
+			}
+			if (small_err == noErr && gw_small != NULL) {
+				pm_small = GetGWorldPixMap(gw_small);
+				if (pm_small != NULL && LockPixels(pm_small)) {
+					long src_rb = dst_rowbytes;
+					long dst_rb_small;
+					unsigned char *src_base =
+						(unsigned char *)
+						GetPixBaseAddr(pm);
+					unsigned char *dst_base_small =
+						(unsigned char *)
+						GetPixBaseAddr(pm_small);
+					long dy;
+					long dxp;
+					dst_rb_small = (*pm_small)->rowBytes
+						& 0x3FFF;
+					for (dy = 0; dy < (long)height; dy++) {
+						long sy0 = (dy * (long)bh) /
+							(long)height;
+						long sy1 = ((dy + 1) *
+							(long)bh) /
+							(long)height;
+						unsigned char *drow;
+						if (sy1 <= sy0) sy1 = sy0 + 1;
+						drow = dst_base_small +
+							dy * dst_rb_small;
+						for (dxp = 0; dxp <
+								(long)width;
+								dxp++) {
+							long sx0 = (dxp *
+								(long)bw) /
+								(long)width;
+							long sx1 = ((dxp + 1)
+								* (long)bw) /
+								(long)width;
+							unsigned long sum_r;
+							unsigned long sum_g;
+							unsigned long sum_b;
+							unsigned long count;
+							long syk;
+							if (sx1 <= sx0)
+								sx1 = sx0 + 1;
+							sum_r = 0; sum_g = 0;
+							sum_b = 0; count = 0;
+							for (syk = sy0; syk <
+								sy1; syk++) {
+								unsigned char *
+								srow = src_base
+								+ syk *
+								src_rb;
+								long sxk;
+								for (sxk = sx0;
+								sxk < sx1;
+								sxk++) {
+									sum_r += srow[sxk * 4 + 1];
+									sum_g += srow[sxk * 4 + 2];
+									sum_b += srow[sxk * 4 + 3];
+									count++;
+								}
+							}
+							if (count == 0)
+								count = 1;
+							drow[dxp * 4 + 0]
+								= 0xFF;
+							drow[dxp * 4 + 1] =
+								(unsigned char)
+								(sum_r / count);
+							drow[dxp * 4 + 2] =
+								(unsigned char)
+								(sum_g / count);
+							drow[dxp * 4 + 3] =
+								(unsigned char)
+								(sum_b / count);
+						}
+					}
+					/* Swap in the small GWorld and update
+					 * src_rect so the existing blit code
+					 * copies 1:1. */
+					UnlockPixels(pm);
+					DisposeGWorld(gw);
+					gw = gw_small;
+					pm = pm_small;
+					SetRect(&src_rect, 0, 0,
+						(short)width,
+						(short)height);
+					dst_rowbytes = dst_rb_small;
+					/* The new gw_small replaces gw; do NOT
+					 * dispose gw_small here. */
+				} else {
+					if (pm_small != NULL)
+						UnlockPixels(pm_small);
+					DisposeGWorld(gw_small);
+				}
+			}
+		}
+	}
+
 	{
 		GrafPtr save_port;
 		RgnHandle saved_clip;
 		bool is_opaque;
 		unsigned char *mask_data;
 		int mask_rowbytes;
+		unsigned char *bf_small_mask = NULL;
+		int bf_small_mask_rowbytes = 0;
 		bool repeat_x;
 		bool repeat_y;
 		int start_x, start_y, end_x, end_y;
@@ -1220,6 +1394,83 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 				macos9_bitmap_get_mask((void *)bitmap);
 		mask_rowbytes = is_opaque ? 0 :
 				macos9_bitmap_get_mask_rowbytes((void *)bitmap);
+
+		/* fixes203 — if the box-filter pre-downscale above swapped
+		 * src_rect from bw×bh to width×height, the original mask
+		 * (sized to bw×bh) no longer matches the small pixmap.
+		 * Box-filter the mask to a fresh dest-sized buffer
+		 * (rowbytes rounded up to whole words for QuickDraw),
+		 * UNION over the source block. Owned locally; freed below. */
+		if (mask_data != NULL &&
+				(src_rect.right - src_rect.left) == (int)width &&
+				(src_rect.bottom - src_rect.top) == (int)height &&
+				(bw != (int)width || bh != (int)height)) {
+			int dest_w_bytes = ((int)width + 7) / 8;
+			int dest_w_words = (dest_w_bytes + 1) / 2;
+			int dst_rb = dest_w_words * 2;
+			long buf_bytes = (long)dst_rb * (long)height;
+			unsigned char *new_mask;
+			if (buf_bytes < 0) buf_bytes = 0;
+			new_mask = buf_bytes > 0 ?
+				(unsigned char *)calloc(1, (size_t)buf_bytes) :
+				NULL;
+			if (new_mask != NULL) {
+				long dy;
+				long dxp;
+				for (dy = 0; dy < (long)height; dy++) {
+					long sy0 = (dy * (long)bh) /
+						(long)height;
+					long sy1 = ((dy + 1) *
+						(long)bh) / (long)height;
+					unsigned char *drow;
+					if (sy1 <= sy0) sy1 = sy0 + 1;
+					drow = new_mask + dy * dst_rb;
+					for (dxp = 0; dxp < (long)width;
+							dxp++) {
+						long sx0 = (dxp * (long)bw) /
+							(long)width;
+						long sx1 = ((dxp + 1) *
+							(long)bw) /
+							(long)width;
+						unsigned long on = 0;
+						unsigned long total = 0;
+						long syk;
+						if (sx1 <= sx0) sx1 = sx0 + 1;
+						for (syk = sy0; syk < sy1;
+								syk++) {
+							long sxk;
+							unsigned char *srow =
+								mask_data +
+								syk *
+								mask_rowbytes;
+							for (sxk = sx0; sxk <
+								sx1; sxk++) {
+								unsigned char
+								bit = srow[sxk
+								>> 3] >>
+								(7 - (sxk &
+								7));
+								on += (bit
+								& 1);
+								total++;
+							}
+						}
+						if (total > 0 &&
+								on * 2 >=
+								total) {
+							drow[dxp >> 3] |=
+								(unsigned char)
+								(0x80 >> (dxp
+								& 7));
+						}
+					}
+				}
+				bf_small_mask = new_mask;
+				bf_small_mask_rowbytes = dst_rb;
+				mask_data = bf_small_mask;
+				mask_rowbytes = bf_small_mask_rowbytes;
+			}
+		}
 
 		/* fixes138: honour BITMAPF_REPEAT_X / BITMAPF_REPEAT_Y.
 		 * NetSurf's image content handler passes the tile size in
@@ -1334,6 +1585,10 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 		}
 blit_done:
 		macos9_pop_clip(saved_clip);
+		/* fixes203 — release the box-filtered mask buffer. */
+		if (bf_small_mask != NULL) {
+			free(bf_small_mask);
+		}
 	}
 
 	UnlockPixels(pm);

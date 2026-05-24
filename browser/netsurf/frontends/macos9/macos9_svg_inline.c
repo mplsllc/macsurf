@@ -850,17 +850,60 @@ static void svg__paint_rect(dom_node *node,
 	float y = svg__attr_float(node, "y", 0.0f);
 	float w = svg__attr_float(node, "width", 0.0f);
 	float h = svg__attr_float(node, "height", 0.0f);
-	struct rect r;
+	int rotated_or_skewed;
 	plot_style_t pstyle;
 
 	if (w <= 0.0f || h <= 0.0f) return;
 
 	svg__init_plot_style(&pstyle, st, c);
-	r.x0 = (int)svg__map_x(c, x, y);
-	r.y0 = (int)svg__map_y(c, x, y);
-	r.x1 = (int)svg__map_x(c, x + w, y + h);
-	r.y1 = (int)svg__map_y(c, x + w, y + h);
-	c->plot_ctx->plot->rectangle(c->plot_ctx, &pstyle, &r);
+
+	/* fixes203 — detect rotation/skew in the affine matrix.
+	 * For an axis-aligned matrix the off-diagonal entries m[1] and m[2]
+	 * are both zero (pure scale + translate). Anything else means the
+	 * source rectangle becomes a rotated parallelogram in screen
+	 * space; struct rect / PaintRect cannot represent that, so emit
+	 * the rectangle as a 4-corner closed polygon via plot->path
+	 * instead. Use a small epsilon so floating-point noise from
+	 * compose-then-multiply doesn't kick the polygon path
+	 * unnecessarily. */
+	{
+		float ab = c->m[1] < 0.0f ? -c->m[1] : c->m[1];
+		float cd = c->m[2] < 0.0f ? -c->m[2] : c->m[2];
+		rotated_or_skewed = (ab > 0.0005f) || (cd > 0.0005f);
+	}
+
+	if (!rotated_or_skewed) {
+		struct rect r;
+		r.x0 = (int)svg__map_x(c, x, y);
+		r.y0 = (int)svg__map_y(c, x, y);
+		r.x1 = (int)svg__map_x(c, x + w, y + h);
+		r.y1 = (int)svg__map_y(c, x + w, y + h);
+		c->plot_ctx->plot->rectangle(c->plot_ctx, &pstyle, &r);
+		return;
+	}
+
+	/* Rotated / skewed rect — emit as a 4-point closed polygon.
+	 * Corner order: TL, TR, BR, BL. The matrix maps each corner
+	 * independently so the polygon honours the full affine. */
+	{
+		float buf[18];
+		int n = 0;
+		buf[n++] = (float)PLOTTER_PATH_MOVE;
+		buf[n++] = svg__map_x(c, x, y);
+		buf[n++] = svg__map_y(c, x, y);
+		buf[n++] = (float)PLOTTER_PATH_LINE;
+		buf[n++] = svg__map_x(c, x + w, y);
+		buf[n++] = svg__map_y(c, x + w, y);
+		buf[n++] = (float)PLOTTER_PATH_LINE;
+		buf[n++] = svg__map_x(c, x + w, y + h);
+		buf[n++] = svg__map_y(c, x + w, y + h);
+		buf[n++] = (float)PLOTTER_PATH_LINE;
+		buf[n++] = svg__map_x(c, x, y + h);
+		buf[n++] = svg__map_y(c, x, y + h);
+		buf[n++] = (float)PLOTTER_PATH_CLOSE;
+		c->plot_ctx->plot->path(c->plot_ctx, &pstyle, buf,
+				(unsigned int)n, NULL);
+	}
 }
 
 static void svg__paint_line(dom_node *node,
