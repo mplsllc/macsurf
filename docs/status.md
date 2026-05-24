@@ -3,7 +3,7 @@
 **Date:** 2026-05-24
 **Engine HEAD:** fixes199h
 **Current fix round:** fixes200 (CSS standards map docs/tools)
-**Last release:** MacSurf 0.1a1 (2026-05-20)
+**Last release:** MacSurf v0.5.0 (2026-05-24)
 **Last hardware-accepted (explicitly recorded in this file):** fixes158a (2026-05-20)
 
 ---
