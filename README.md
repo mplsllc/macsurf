@@ -39,7 +39,7 @@
 >
 > What you should *not* expect yet: smooth browsing of arbitrary modern sites, video, audio, WebGL, service workers, anything React-heavy. What you *can* expect: hand-built pages, retro-style sites, a respectable subset of the CSS Grid spec, native HTTPS with the full Mozilla CA bundle, and the surreal experience of running ES5 JavaScript on a 233 MHz PowerPC.
 >
-> Released **2026-05-20** as the first numbered version. Native HTTPS first-light **2026-05-25** (fixes208-225). Release notes: [docs/release-notes/MacSurf-0.1a1.md](docs/release-notes/MacSurf-0.1a1.md).
+> First numbered version: **0.1a1** (2026-05-20). Latest release: **[v0.5.0](https://github.com/mplsllc/macsurf/releases/latest)** (2026-05-24). Native HTTPS first-light **2026-05-25** (fixes208-225) — a 0.6 cut is pending after the load-time QOL round.
 
 ---
 
@@ -192,10 +192,10 @@ Each shot below is a real milestone, captured on a Power Macintosh G3 running Ma
 
 Latest release: **[MacSurf 0.1a1](https://github.com/mplsllc/macsurf/releases/tag/v0.1a1)** (alpha, 2026-05-20).
 
-- **[MacSurf.sit](https://github.com/mplsllc/macsurf/releases/download/v0.1a1/MacSurf.sit)** (581 KB), ready-to-run binary. Expand on Mac OS 9.1+ with CarbonLib 1.5+ and launch.
-- **[MacSurf-BuildPack.sit](https://github.com/mplsllc/macsurf/releases/download/v0.1a1/MacSurf-BuildPack.sit)** (4 MB), full source + CodeWarrior 8 project file. Expand, open `MacSurf.mcp` in CodeWarrior, choose Build.
+- **[MacSurf.sit](https://github.com/mplsllc/macsurf/releases/download/v0.5.0/MacSurf.sit)** (latest binary, v0.5.0), ready-to-run. Expand on Mac OS 9.1+ with CarbonLib 1.5+ and launch.
+- Building from source: clone this repo, then on the Mac side open `browser/netsurf/frontends/macos9/MacSurf.mcp` in CodeWarrior 8 and choose Build. The earliest release ships a [BuildPack.sit](https://github.com/mplsllc/macsurf/releases/download/v0.1a1/MacSurf-BuildPack.sit) snapshot with the CW8 project pre-wired; current builds work straight from the git clone.
 
-Full release notes: [docs/release-notes/MacSurf-0.1a1.md](docs/release-notes/MacSurf-0.1a1.md). All releases: [github.com/mplsllc/macsurf/releases](https://github.com/mplsllc/macsurf/releases).
+All releases (with full notes per version): [github.com/mplsllc/macsurf/releases](https://github.com/mplsllc/macsurf/releases). Earlier alpha release notes: [docs/release-notes/MacSurf-0.1a1.md](docs/release-notes/MacSurf-0.1a1.md).
 
 ---
 
