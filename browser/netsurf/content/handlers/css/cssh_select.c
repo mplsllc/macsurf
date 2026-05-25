@@ -218,6 +218,15 @@ css_stylesheet *nscss_create_inline_style(const uint8_t *data, size_t len,
 		return NULL;
 	}
 
+	/* fixes267 — register any custom-property declarations carried by
+	 * this inline style="..." attribute into the doc-global inline-
+	 * extras table. Lets a parent's `style="--header-tile: url(...)"`
+	 * resolve for descendant elements whose author CSS references
+	 * `var(--header-tile)`. Failure is non-fatal: the sheet still
+	 * works for the cascading element itself, only the cross-element
+	 * resolution is degraded. */
+	(void)css_inline_extras_register_sheet(sheet);
+
 	return sheet;
 }
 

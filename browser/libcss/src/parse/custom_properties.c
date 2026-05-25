@@ -12,6 +12,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <libcss/select.h>
+
 #include "css_internal_stylesheet.h"
 #include "bytecode/bytecode.h"
 #include "bytecode/opcodes.h"
@@ -238,6 +240,123 @@ void css__cp_entry_list_destroy(css_cp_entry *head)
 		free(cur);
 		cur = next;
 	}
+}
+
+
+/* ------------------------------------------------------------------ */
+/* fixes267 — Document-global inline-extras custom-property table     */
+/* ------------------------------------------------------------------ */
+/*
+ * Aggregates custom-property declarations harvested from EVERY inline
+ * style="..." attribute parsed by nscss_create_inline_style. This is the
+ * pragmatic V1 of element-scoped custom properties: when an element
+ * defines `style="--header-tile: url(...)"` and the property is
+ * referenced from author CSS that matches a DIFFERENT element (typically
+ * a descendant), libcss's per-sheet custom_properties lists don't see
+ * it. The CSS spec answer is inheritance, but our cascade implements
+ * custom props as parse-time-captured tokens, not computed style
+ * inheritance, so we route around the gap by aggregating all inline
+ * custom props into a doc-global table that lookup_var() consults.
+ *
+ * Trade-off (acknowledged): if two different elements declare the same
+ * `--name` inline with different values, the last writer wins for both.
+ * Spec-correct behaviour would scope per element. For mactrove's
+ * single-`--header-tile`-element case this works exactly right.
+ *
+ * Cleanup: TODO — clear on page navigation. Until then, entries
+ * accumulate across page loads; the impact is one entry per inline
+ * custom-prop per page, typically negligible. Last-writer-wins inside
+ * a single page is the intended semantics.
+ */
+static css_cp_entry *g_inline_extras_head = NULL;
+
+static css_error clone_cp_tokens(const css_cp_token *src, uint32_t n,
+		css_cp_token **out)
+{
+	css_cp_token *dst;
+	uint32_t i;
+
+	if (n == 0) {
+		*out = NULL;
+		return CSS_OK;
+	}
+	dst = (css_cp_token *)calloc(n, sizeof(css_cp_token));
+	if (dst == NULL)
+		return CSS_NOMEM;
+	for (i = 0; i < n; i++) {
+		dst[i] = src[i];
+		if (src[i].idata != NULL)
+			dst[i].idata = lwc_string_ref(src[i].idata);
+	}
+	*out = dst;
+	return CSS_OK;
+}
+
+css_error css_inline_extras_register_sheet(const css_stylesheet *sh)
+{
+	const css_cp_entry *src;
+	css_cp_entry *cur;
+	css_cp_entry *new_entry;
+	css_cp_token *cloned;
+	css_error err;
+
+	if (sh == NULL)
+		return CSS_BADPARM;
+
+	for (src = sh->custom_properties; src != NULL; src = src->next) {
+		/* Search for existing entry with same normalized name. */
+		for (cur = g_inline_extras_head; cur != NULL; cur = cur->next) {
+			if (cp_name_equal(cur->name, src->name))
+				break;
+		}
+		err = clone_cp_tokens(src->tokens, src->n_tokens, &cloned);
+		if (err != CSS_OK)
+			return err;
+
+		if (cur != NULL) {
+			/* Replace existing entry's tokens
+			 * (last-writer-wins). */
+			css__cp_tokens_destroy(cur->tokens, cur->n_tokens);
+			cur->tokens = cloned;
+			cur->n_tokens = src->n_tokens;
+		} else {
+			new_entry = (css_cp_entry *)calloc(1,
+					sizeof(css_cp_entry));
+			if (new_entry == NULL) {
+				css__cp_tokens_destroy(cloned, src->n_tokens);
+				return CSS_NOMEM;
+			}
+			new_entry->name = lwc_string_ref(src->name);
+			new_entry->tokens = cloned;
+			new_entry->n_tokens = src->n_tokens;
+			new_entry->next = NULL;
+			if (g_inline_extras_head == NULL) {
+				g_inline_extras_head = new_entry;
+			} else {
+				cur = g_inline_extras_head;
+				while (cur->next != NULL)
+					cur = cur->next;
+				cur->next = new_entry;
+			}
+		}
+	}
+	return CSS_OK;
+}
+
+void css_inline_extras_clear(void)
+{
+	css__cp_entry_list_destroy(g_inline_extras_head);
+	g_inline_extras_head = NULL;
+}
+
+static const css_cp_entry *find_inline_extras(lwc_string *name)
+{
+	const css_cp_entry *cur;
+	for (cur = g_inline_extras_head; cur != NULL; cur = cur->next) {
+		if (cp_name_equal(cur->name, name))
+			return cur;
+	}
+	return NULL;
 }
 
 
@@ -577,6 +696,16 @@ static const css_cp_entry *lookup_var(lwc_string *name,
 		if (hit != NULL)
 			found = hit;   /* inline wins over author cascade */
 	}
+
+	/* fixes267 — doc-global inline-extras table. Aggregates custom
+	 * properties from EVERY element's inline style="..." so a parent's
+	 * `style="--header-tile: url(...)"` resolves for child elements
+	 * whose author CSS references `var(--header-tile)`. Highest
+	 * priority overall (last write wins) to match CSS spec's
+	 * inline-style cascade level. */
+	hit = find_inline_extras(name);
+	if (hit != NULL)
+		found = hit;
 
 	return found;
 }

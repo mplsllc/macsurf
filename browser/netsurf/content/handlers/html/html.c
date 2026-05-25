@@ -740,6 +740,15 @@ html_create(const content_handler *handler,
 		macsurf__site_box_other = 0;
 	}
 #endif
+	/* fixes267 — clear the doc-global inline-extras custom-property
+	 * table at the start of every new HTML document so element-scoped
+	 * --custom-prop declarations from the previous page don't bleed
+	 * into the new one. */
+	{
+		extern void css_inline_extras_clear(void);
+		css_inline_extras_clear();
+	}
+
 	html = calloc(1, sizeof(html_content));
 	if (html == NULL)
 		return NSERROR_NOMEM;

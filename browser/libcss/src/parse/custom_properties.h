@@ -145,6 +145,11 @@ const css_cp_entry *css__sheet_find_custom_property(
 void css__cp_entry_list_destroy(css_cp_entry *head);
 
 
+/* fixes267 — doc-global inline-extras custom-property table.
+ * Public API declared in <libcss/select.h>: css_inline_extras_register_sheet()
+ * and css_inline_extras_clear(). */
+
+
 /* --- Deferred declaration list (per css_style) --- */
 
 /**
