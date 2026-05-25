@@ -32,6 +32,12 @@
 
 ---
 
+<p align="center">
+  <img src="img/mactls.png" alt="Mac OS 9, meet TLS — Native, no proxy needed." width="500">
+</p>
+
+---
+
 > [!WARNING]
 > **MacSurf is a very early alpha.** It runs, it renders real CSS3, it executes JavaScript on a beige G3, **and as of 2026-05-25 it speaks TLS 1.2 natively** against real modern HTTPS sites (`mactrove.com` is the canonical hardware test target). **Most websites in 2026 will still not work** in it — heavy SPAs, modern CSS features MacSurf doesn't ship yet, missing form interactions, slow JS on real hardware. A lot is still rough.
 >
@@ -39,7 +45,7 @@
 >
 > What you should *not* expect yet: smooth browsing of arbitrary modern sites, video, audio, WebGL, service workers, anything React-heavy. What you *can* expect: hand-built pages, retro-style sites, a respectable subset of the CSS Grid spec, native HTTPS with the full Mozilla CA bundle, and the surreal experience of running ES5 JavaScript on a 233 MHz PowerPC.
 >
-> First numbered version: **0.1a1** (2026-05-20). Latest release: **[v0.5.0](https://github.com/mplsllc/macsurf/releases/latest)** (2026-05-24). Native HTTPS first-light **2026-05-25** (fixes208-225) — a 0.6 cut is pending after the load-time QOL round.
+> First numbered version: **0.1a1** (2026-05-20). Latest release: **[v0.6 — Mac OS 9, meet TLS](https://github.com/mplsllc/macsurf/releases/latest)** (2026-05-25). Full notes: [docs/release-notes/MacSurf-0.6.md](docs/release-notes/MacSurf-0.6.md).
 
 ---
 
@@ -190,9 +196,9 @@ Each shot below is a real milestone, captured on a Power Macintosh G3 running Ma
 
 ## Download
 
-Latest release: **[MacSurf v0.5.0](https://github.com/mplsllc/macsurf/releases/tag/v0.5.0)** (2026-05-24). First numbered alpha was [v0.1a1](https://github.com/mplsllc/macsurf/releases/tag/v0.1a1) (2026-05-20).
+Latest release: **[MacSurf v0.6 — Mac OS 9, meet TLS](https://github.com/mplsllc/macsurf/releases/tag/v0.6)** (2026-05-25, native HTTPS). Previous: [v0.5.0](https://github.com/mplsllc/macsurf/releases/tag/v0.5.0), [v0.1a1](https://github.com/mplsllc/macsurf/releases/tag/v0.1a1).
 
-- **[MacSurf.sit](https://github.com/mplsllc/macsurf/releases/download/v0.5.0/MacSurf.sit)** (latest binary, v0.5.0), ready-to-run. Expand on Mac OS 9.1+ with CarbonLib 1.5+ and launch.
+- **[MacSurf.sit](https://github.com/mplsllc/macsurf/releases/download/v0.6/MacSurf.sit)** (latest binary, v0.6), ready-to-run. Expand on Mac OS 9.1+ with CarbonLib 1.5+ and launch.
 - Building from source: clone this repo, then on the Mac side open `browser/netsurf/frontends/macos9/MacSurf.mcp` in CodeWarrior 8 and choose Build. The earliest release ships a [BuildPack.sit](https://github.com/mplsllc/macsurf/releases/download/v0.1a1/MacSurf-BuildPack.sit) snapshot with the CW8 project pre-wired; current builds work straight from the git clone.
 
 All releases (with full notes per version): [github.com/mplsllc/macsurf/releases](https://github.com/mplsllc/macsurf/releases). Earlier alpha release notes: [docs/release-notes/MacSurf-0.1a1.md](docs/release-notes/MacSurf-0.1a1.md).

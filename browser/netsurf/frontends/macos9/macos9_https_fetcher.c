@@ -39,7 +39,7 @@
 #include "ostls_http.h"
 #include "macos9_disk_cache.h"
 
-#define MAX_HTTPS_F        16
+#define MAX_HTTPS_F        32   /* fixes226: was 16; mactrove hits ~21% NO FREE SLOTS at 16 */
 #define HDR_BUF_MAX        4096
 #define READ_CHUNK         1024
 #define NO_PROGRESS_TICKS  900   /* 15s at 60Hz */
@@ -105,7 +105,16 @@ struct macos9_https_ctx {
 	long             cache_hit_len;
 	char             cache_hit_mime[128];
 	int              cache_hit_status;
+
+	/* fixes228 — auto-retry on benign peer-close. CF and Google CDN
+	 * close TLS connections aggressively after handshake; one retry
+	 * with a fresh connection usually succeeds. retries counts attempts
+	 * BEYOND the first; capped at HTTPS_MAX_RETRIES so we don't loop
+	 * forever on a genuinely-dead host. */
+	int              retries;
 };
+
+#define HTTPS_MAX_RETRIES 2
 
 static struct macos9_https_ctx https_slots[MAX_HTTPS_F];
 
@@ -137,6 +146,40 @@ static void hctx_clear(struct macos9_https_ctx *c)
 	c->cache_hit_len = 0;
 	if (c->url) { nsurl_unref(c->url); c->url = NULL; }
 	c->state = HS_IDLE;
+}
+
+/* fixes228 — tear down JUST the TLS connection so the slot can be
+ * retried. Keeps c->parent, c->url, c->host, c->port, c->path so the
+ * next poll-loop pass can reopen with the same target. Resets header
+ * + body capture state so we don't mix data from the failed attempt. */
+static void hctx_reset_for_retry(struct macos9_https_ctx *c)
+{
+	if (c->conn) {
+		OSTLS_Close(c->conn);
+		OSTLS_Dispose(c->conn);
+		c->conn = NULL;
+	}
+	if (c->hdr_buf) { free(c->hdr_buf); c->hdr_buf = NULL; }
+	c->hdr_len = 0;
+	c->hdr_cap = 0;
+	if (c->cache_capture) { free(c->cache_capture); c->cache_capture = NULL; }
+	c->cache_cap_len = 0;
+	c->cache_cap_cap = 0;
+	c->cache_overflow = 0;
+	c->cache_eligible = 0;
+	c->req_len = 0;
+	c->req_sent = 0;
+	c->status = 0;
+	c->body_bytes = 0;
+	c->content_length = -1;
+	c->chunked = 0;
+	c->mime[0] = 0;
+	c->redirect_url[0] = 0;
+	c->state = HS_QUEUED;
+	/* Do NOT clear c->aborted: if NetSurf aborted during the first
+	 * attempt, we should NOT retry. The first thing the next poll
+	 * pass checks is c->aborted; it'll fail cleanly. */
+	c->progress_ticks = now_ticks();
 }
 
 /* fixes218 — append body bytes to the per-fetch capture buffer.
@@ -195,8 +238,49 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 
 	if (c->state == HS_FAIL || c->state == HS_DONE) return;
 
+	/* fixes226 — full diag dump on every fail. We need:
+	 *  - host being fetched (so we know WHICH sites fail)
+	 *  - BearSSL error code (br_err) on handshake fails
+	 *  - OT error code (ot_err) on TCP-level fails
+	 *  - cipher suite if handshake completed (0 if not)
+	 *  - pump_calls + ot_recv_bytes to see how far we got
+	 */
 	macsurf_debug_log_writef("https: FAIL state=%d status=%d body=%ld why=%s",
 		c->state, c->status, c->body_bytes, why ? why : "(null)");
+	macsurf_debug_log_writef("  FAIL host=%s port=%d path=%s",
+		c->host[0] ? c->host : "(unset)",
+		(int)c->port,
+		c->path[0] ? c->path : "(unset)");
+	if (c->conn != NULL) {
+		OSTLSDiagnostics diag;
+		memset(&diag, 0, sizeof diag);
+		OSTLS_GetDiagnostics(c->conn, &diag);
+		/* fixes227 — macsurf_debug_log_writef supports only %d %ld %p %s %%
+		 * (see project_macsurf_debug_log_specifiers memory). Cipher
+		 * gets printed as decimal; 0xCCA9 = 52393 (ChaCha20-Poly1305),
+		 * 0xC02B = 49195 (ECDHE-ECDSA-AES128-GCM-SHA256). */
+		macsurf_debug_log_writef(
+			"  FAIL diag os_err=%d ot_err=%ld br_err=%d state=%d cipher_dec=%d",
+			(int)diag.os_err, (long)diag.ot_err, (int)diag.br_err,
+			(int)diag.state, (int)diag.cipher_suite);
+		macsurf_debug_log_writef(
+			"  FAIL diag pumps=%ld br_state=%ld",
+			(long)diag.pump_calls,
+			(long)diag.br_state_last);
+		macsurf_debug_log_writef(
+			"  FAIL diag ot_send: calls=%ld bytes=%ld zero=%ld flow=%ld",
+			(long)diag.ot_send_calls,
+			(long)diag.ot_send_bytes,
+			(long)diag.ot_send_zero,
+			(long)diag.ot_send_flow);
+		macsurf_debug_log_writef(
+			"  FAIL diag ot_recv: calls=%ld bytes=%ld nodata=%ld",
+			(long)diag.ot_recv_calls,
+			(long)diag.ot_recv_bytes,
+			(long)diag.ot_recv_nodata);
+	} else {
+		macsurf_debug_log_writef("  FAIL diag conn=NULL (never opened)");
+	}
 
 	c->err = why;
 	c->state = HS_FAIL;
@@ -533,10 +617,44 @@ static void hctx_poll(struct macos9_https_ctx *c)
 	}
 
 	if (ev == kOSTLSEventFailed) {
+		/* fixes228 — retry once on early-stage handshake failure.
+		 * CF / Google CDN sometimes drop the first connection but
+		 * accept the second cleanly. Only retry if no app data yet. */
+		if (c->retries < HTTPS_MAX_RETRIES &&
+		    (c->state == HS_TLSING || c->state == HS_STARTING ||
+		     c->state == HS_QUEUED)) {
+			c->retries++;
+			macsurf_debug_log_writef(
+				"https: RETRY %d after Failed state=%d host=%s",
+				c->retries, c->state,
+				c->host[0] ? c->host : "(unset)");
+			hctx_reset_for_retry(c);
+			return;
+		}
 		hctx_fail(c, "https: handshake/transport failed");
 		return;
 	}
 	if (ev == kOSTLSEventClosed && c->state != HS_BODY) {
+		/* fixes228 — retry on "peer closed before complete" which
+		 * is what CF/Google CDN does when they close a freshly
+		 * handshaked connection before we get the response.
+		 *
+		 * fixes229 — allow retry while in HS_HEADERS too. fixes228's
+		 * condition `state != HS_HEADERS` was based on a stale enum
+		 * mental model: HS_CACHEHIT shifted HS_HEADERS to value 5
+		 * (= the state we saw in every Closed-before-body fail).
+		 * Since body_bytes is always 0 in HS_HEADERS by definition
+		 * (we only count body bytes after parse_headers succeeds),
+		 * retrying from HS_HEADERS can't duplicate data. */
+		if (c->retries < HTTPS_MAX_RETRIES) {
+			c->retries++;
+			macsurf_debug_log_writef(
+				"https: RETRY %d after Closed state=%d host=%s",
+				c->retries, c->state,
+				c->host[0] ? c->host : "(unset)");
+			hctx_reset_for_retry(c);
+			return;
+		}
 		hctx_fail(c, "https: peer closed before complete");
 		return;
 	}
@@ -742,7 +860,8 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 	 * cache STORE side stays on (cached bodies just go unused).
 	 */
 
-	MS_LOG("https_setup OK");
+	macsurf_debug_log_writef("https_setup OK host=%s port=%d path=%.40s",
+		c->host, (int)c->port, c->path);
 	return c;
 }
 

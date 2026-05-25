@@ -1,10 +1,10 @@
 # MacSurf Status
 
 **Date:** 2026-05-25
-**Engine HEAD:** fixes225
-**Current fix round:** fixes225 (inset box-shadow paint disabled — clears mactrove dark-grey wash)
-**Last release:** MacSurf v0.5.0 (2026-05-24); 0.6 cut pending after the load-time QOL round
-**Last hardware-accepted:** fixes225 (2026-05-25, mactrove.com native HTTPS on G3 iMac OS 9.1, screenshot at [../screenshots/mactrove-fixes225.jpg](../screenshots/mactrove-fixes225.jpg))
+**Engine HEAD:** fixes229
+**Current fix round:** fixes216–229 (native HTTPS + retry + dark-grey root cause)
+**Last release:** **MacSurf v0.6 "Mac OS 9, meet TLS"** (2026-05-25). Full notes: [release-notes/MacSurf-0.6.md](release-notes/MacSurf-0.6.md)
+**Last hardware-accepted:** fixes229 (2026-05-25, mactrove.com + advanced.php loading natively over TLS 1.2 on G3 iMac OS 9.1)
 
 ---
 
