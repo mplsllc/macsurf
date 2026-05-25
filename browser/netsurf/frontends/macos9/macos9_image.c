@@ -1096,6 +1096,49 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 	nat_w = (int)c->width;
 	nat_h = (int)c->height;
 
+	/* fixes265 — scale-fit-to-cap for top-level image navigation.
+	 * When a user types e.g. https://example.com/photo.jpg directly in
+	 * the URL bar, browser_window_redraw passes the content's natural
+	 * width/height (not a CSS-constrained box). For a 4000x3000 JPEG
+	 * that's 48 MB of RGBA at display size — exceeds the 16 MB per-image
+	 * cap and the redraw silently returns true at the cap-check below,
+	 * rendering blank. Pre-clamp dst dims proportionally to fit within
+	 * the decoded-bytes ceiling so direct-nav images render at the
+	 * largest size that fits instead of disappearing. Aspect ratio
+	 * preserved. */
+	if (dst_w > 0 && dst_h > 0) {
+		long want = (long)dst_w * (long)dst_h * 4L;
+		if (want > MACOS9_IMG_MAX_DECODED_BYTES) {
+			long cap_pixels;
+			long scale_num;
+			long scale_den;
+			int new_w;
+			int new_h;
+			cap_pixels = MACOS9_IMG_MAX_DECODED_BYTES / 4L;
+			/* want_pixels = dst_w * dst_h. Scale factor s satisfies
+			 * (dst_w*s)*(dst_h*s) = cap_pixels, so s^2 = cap/want.
+			 * Avoid float: use integer sqrt approximation via
+			 * iterative refinement of scale_num/scale_den. */
+			scale_num = 1000L;
+			scale_den = 1000L;
+			while ((long)dst_w * scale_num / scale_den *
+			       (long)dst_h * scale_num / scale_den >
+			       cap_pixels && scale_num > 0) {
+				scale_num -= 10L;
+			}
+			new_w = (int)((long)dst_w * scale_num / scale_den);
+			new_h = (int)((long)dst_h * scale_num / scale_den);
+			if (new_w < 1) new_w = 1;
+			if (new_h < 1) new_h = 1;
+			macsurf_debug_log_writef(
+				"img fit-to-cap: %dx%d -> %dx%d (cap=%ld)",
+				dst_w, dst_h, new_w, new_h,
+				(long)MACOS9_IMG_MAX_DECODED_BYTES);
+			dst_w = new_w;
+			dst_h = new_h;
+		}
+	}
+
 	/* fixes111 — aspect-ratio guard for the replaced-element layout
 	 * bug. NetSurf's layout has at least one path that fails to
 	 * proportionally rescale height when CSS height was originally
