@@ -43,7 +43,7 @@ C89 also rejects named enums inside struct bodies, CW8 silently fails to complet
 
 - Use plain `OTOpenEndpoint` / `InitOpenTransport`, **not** the `*InContext` variants. Every CarbonLib crash we've debugged has traced to InContext routing through OTClientLib in an uninitialized state.
 - `OTUseSyncIdleEvents(ep, true)` plus a notifier that calls `YieldToAnyThread()` on `kOTSyncIdleEvent`, this is how synchronous OT calls cooperate with the rest of the app.
-- Carbon CFM cannot do passive (listening) OT binds. The OS rejects it categorically; we verified across 14 rounds in macSSL before pivoting. Don't try to write a local server.
+- Carbon CFM cannot do passive (listening) OT binds. The OS rejects it categorically; we verified across 14 rounds in macTLS before pivoting. Don't try to write a local server.
 
 ### No preemptive threads
 

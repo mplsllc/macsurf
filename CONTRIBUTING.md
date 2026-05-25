@@ -80,7 +80,7 @@ Style matches existing history:
 ## Licensing
 
 - Browser code (everything inheriting from NetSurf) is licensed under **GPLv2**.
-- The proxy and macSSL components carry their own LICENSE files, refer to those for their terms.
+- The proxy and macTLS components carry their own LICENSE files, refer to those for their terms.
 - By submitting a PR you agree to license your contribution under the same terms as the file(s) you're modifying.
 
 ## Questions?

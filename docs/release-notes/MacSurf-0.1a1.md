@@ -58,7 +58,7 @@ This is the first numbered alpha, the build everything else has converged toward
 
 - **Transport:** Open Transport TCP, plain non-`InContext` calls. Connection pooling, keep-alive, 15-second no-progress timeout.
 - **HTTP/1.1:** chunked transfer, keep-alive, 3xx redirect follow.
-- **HTTPS:** via the bundled Go TLS-stripping proxy (the Mac speaks plain HTTP; the proxy fetches HTTPS upstream and returns plain). Optional native TLS 1.2 path via the **macSSL** sibling project (BearSSL-based, ChaCha20-Poly1305 default cipher), shipped separately.
+- **HTTPS:** via the bundled Go TLS-stripping proxy (the Mac speaks plain HTTP; the proxy fetches HTTPS upstream and returns plain). Optional native TLS 1.2 path via the **macTLS** sibling project (BearSSL-based, ChaCha20-Poly1305 default cipher), shipped separately.
 
 ### Chrome
 
@@ -77,7 +77,7 @@ This is the first numbered alpha, the build everything else has converged toward
 - **Cooperative multitasking only**, no preemptive threads anywhere. `WaitNextEvent` drives the UI; Open Transport synchronous calls yield via the Thread Manager on `kOTSyncIdleEvent`.
 - **Strict C89**, no `inline`, no `//`, no designated initializers, no variadic macros, no for-scope declarations. CW8 doesn't compile anything more modern.
 - **16 MB Carbon application partition**, libcss allocates from the OS heap and runs out below ~12 MB on real pages. Heavy SPAs may crash; lean docs are fine.
-- **No HTTPS in the browser itself** without macSSL, TLS is bridged through the proxy.
+- **No HTTPS in the browser itself** without macTLS, TLS is bridged through the proxy.
 - **CSS engine is grid-V1-aware but not yet grid-V2-aware**, stretch is the universal default; non-stretch alignment lands in 0.2.
 
 ---

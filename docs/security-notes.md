@@ -102,7 +102,7 @@ flagged them:
 - **HTTP fetching goes through a TLS-stripping proxy by default.**
   All traffic between the Mac and the proxy is plain HTTP. This is
   a known and accepted property of the platform; OS 9 has no modern
-  TLS stack in the base build. The `macSSL` sibling library is an
+  TLS stack in the base build. The `macTLS` sibling library is an
   optional native HTTPS path for users who don't want the proxy.
 - **The OT fetcher uses `*InContext` calls.** A `'carb'` resource is
   mandatory (see `docs/resources.md`) — without it, CFM treats the

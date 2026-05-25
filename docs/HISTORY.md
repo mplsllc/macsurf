@@ -196,7 +196,7 @@ An ASCII Mandelbrot set, 40x20 characters, 80 iterations per pixel, computed ent
 - **fixes160, `grid-template-areas`**, named cell regions for explicit placement by name
 - **fixes161, `column-count` / `column-rule`**, multi-column layout outside Grid
 - **fixes162, `outline`**, focus-ring accessibility polish
-- **macSSL integration**, pull the sibling project's TLS 1.2 library into the MacSurf binary so HTTPS can happen natively on the Mac, with the Go proxy as a fallback path
+- **macTLS integration**, pull the sibling project's TLS 1.2 library into the MacSurf binary so HTTPS can happen natively on the Mac, with the Go proxy as a fallback path
 
 ---
 

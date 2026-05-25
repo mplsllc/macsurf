@@ -9,11 +9,11 @@ Inspection only. No code changes were made.
 Reviewed areas:
 
 - `browser/netsurf/frontends/macos9/`
-- `macSSL/os9/`
+- `macTLS/os9/`
 - `proxy/`
 - top-level scripts and tracked docs related to deployment/secrets
 
-Third-party/vendor trees under `browser/` and `macSSL/bearssl/` were not exhaustively audited line-by-line unless they were directly wrapped or invoked by first-party code.
+Third-party/vendor trees under `browser/` and `macTLS/bearssl/` were not exhaustively audited line-by-line unless they were directly wrapped or invoked by first-party code.
 
 ## Executive Summary
 
@@ -25,7 +25,7 @@ There are, however, several serious security issues:
 2. The proxy can be memory-exhausted by large upstream responses.
 3. The Mac OS 9 HTTP fetcher has stack-buffer overflow paths from long URLs.
 4. The Mac OS 9 HTTP header parser reads past allocated buffers.
-5. `macSSL` still uses a deliberately insecure entropy stub in real TLS setup paths.
+5. `macTLS` still uses a deliberately insecure entropy stub in real TLS setup paths.
 
 There are also privacy and operational hygiene issues around logging and credential handling.
 
@@ -127,14 +127,14 @@ Recommendation:
 - Treat headers as length-delimited data, not C strings.
 - If string APIs are retained, over-allocate by one byte and maintain a terminator after every append.
 
-### 5. High: `macSSL` uses a deliberately insecure entropy stub in real TLS paths
+### 5. High: `macTLS` uses a deliberately insecure entropy stub in real TLS paths
 
 Evidence:
 
-- [macSSL/os9/ostls_entropy.c](/home/patrick/Webs/macsurf/macSSL/os9/ostls_entropy.c:2)
-- [macSSL/os9/ostls_entropy.c](/home/patrick/Webs/macsurf/macSSL/os9/ostls_entropy.c:57)
-- [macSSL/os9/ostls_fetch.c](/home/patrick/Webs/macsurf/macSSL/os9/ostls_fetch.c:203)
-- [macSSL/os9/ostls_async.c](/home/patrick/Webs/macsurf/macSSL/os9/ostls_async.c:516)
+- [macTLS/os9/ostls_entropy.c](/home/patrick/Webs/macsurf/macTLS/os9/ostls_entropy.c:2)
+- [macTLS/os9/ostls_entropy.c](/home/patrick/Webs/macsurf/macTLS/os9/ostls_entropy.c:57)
+- [macTLS/os9/ostls_fetch.c](/home/patrick/Webs/macsurf/macTLS/os9/ostls_fetch.c:203)
+- [macTLS/os9/ostls_async.c](/home/patrick/Webs/macsurf/macTLS/os9/ostls_async.c:516)
 
 Details:
 
@@ -216,7 +216,7 @@ Confirmed during this pass:
 
 ## Overall Assessment
 
-Current security posture is not production-safe if the proxy is Internet-reachable or if `macSSL` is relied on for real confidentiality.
+Current security posture is not production-safe if the proxy is Internet-reachable or if `macTLS` is relied on for real confidentiality.
 
 The most urgent fixes are:
 
