@@ -1903,6 +1903,90 @@ static void layout_move_children(struct box *box, int x, int y)
 static bool layout_inline_container(struct box *inline_container, int width,
 		struct box *cont, int cx, int cy, html_content *content);
 
+/* fixes268 (#17) — count how many columns the given items[start..end]
+ * would occupy if packed with the supplied target column height.
+ * Matches the greedy packing logic in layout_multicol_inner (move to
+ * next column when adding the next item would overflow target). */
+static int multicol_count_columns_at_target(
+		const int *outer_heights, int start, int end,
+		int target_height)
+{
+	int cols_used = 1;
+	int col_h = 0;
+	int i;
+
+	if (target_height < 1)
+		target_height = 1;
+	for (i = start; i <= end; i++) {
+		if (col_h > 0 && col_h + outer_heights[i] > target_height) {
+			cols_used++;
+			col_h = 0;
+		}
+		col_h += outer_heights[i];
+	}
+	return cols_used;
+}
+
+/* fixes268 (#17) — compute the per-segment column target height.
+ *
+ * Starting heuristic: max(tallest_item, ceil(total/count)). For
+ * column-fill:auto the viewport height becomes the target (fill first
+ * column to viewport, overflow into the rest). For column-fill:balance
+ * we then bisect downward to find the smallest target that still fits
+ * in `count` columns — gives tighter, more visually balanced output
+ * than the heuristic alone, especially for non-uniform item heights.
+ * Iteration cap (6) keeps PPC cost bounded. */
+static int multicol_compute_target_height(
+		const int *outer_heights, int start, int end,
+		int segment_height, int segment_tallest, int count,
+		bool balance, int viewport_height)
+{
+	int target_height;
+
+	if (count <= 0)
+		count = 1;
+
+	target_height = segment_tallest;
+	{
+		int average_height;
+		average_height = (segment_height + count - 1) / count;
+		if (average_height > target_height) {
+			target_height = average_height;
+		}
+	}
+	if (target_height < 1)
+		target_height = 1;
+
+	if (!balance) {
+		if (viewport_height > 0) {
+			target_height = viewport_height;
+		}
+		return target_height;
+	}
+
+	{
+		int lo = segment_tallest;
+		int hi = target_height;
+		int iter;
+
+		if (lo < 1)
+			lo = 1;
+		for (iter = 0; iter < 6 && hi - lo > 8; iter++) {
+			int mid = (lo + hi) / 2;
+			int cols = multicol_count_columns_at_target(
+					outer_heights, start, end, mid);
+			if (cols <= count) {
+				hi = mid;
+			} else {
+				lo = mid + 1;
+			}
+		}
+		target_height = hi;
+	}
+
+	return target_height;
+}
+
 static int layout_multicol_default_gap(
 		const struct box *block,
 		const css_unit_ctx *unit_len_ctx)
@@ -2237,18 +2321,13 @@ static bool layout_multicol_context(
 	for (item_index = 0; item_index < child_count; item_index++) {
 		if (span_all_flags[item_index] != 0) {
 			if (segment_items > 0) {
-				target_height = segment_tallest;
-				if (count > 0) {
-					int average_height;
-					average_height = (segment_height + count - 1) /
-							count;
-					if (average_height > target_height) {
-						target_height = average_height;
-					}
-				}
-				if (target_height < 1) {
-					target_height = 1;
-				}
+				/* fixes268 (#17) — bisection-refined target. */
+				target_height = multicol_compute_target_height(
+					outer_heights,
+					segment_starts[segment_count],
+					item_index - 1,
+					segment_height, segment_tallest,
+					count, balance, viewport_height);
 				segment_targets[segment_count] = target_height;
 				segment_ends[segment_count] = item_index - 1;
 				segment_count++;
@@ -2268,17 +2347,13 @@ static bool layout_multicol_context(
 		}
 	}
 	if (segment_items > 0) {
-		target_height = segment_tallest;
-		if (count > 0) {
-			int average_height;
-			average_height = (segment_height + count - 1) / count;
-			if (average_height > target_height) {
-				target_height = average_height;
-			}
-		}
-		if (target_height < 1) {
-			target_height = 1;
-		}
+		/* fixes268 (#17) — bisection-refined target. */
+		target_height = multicol_compute_target_height(
+			outer_heights,
+			segment_starts[segment_count],
+			child_count - 1,
+			segment_height, segment_tallest,
+			count, balance, viewport_height);
 		segment_targets[segment_count] = target_height;
 		segment_ends[segment_count] = child_count - 1;
 		segment_count++;
@@ -2405,7 +2480,6 @@ static bool layout_multicol_context(
 	free(segment_starts);
 	free(segment_ends);
 	free(segment_targets);
-	(void) balance;
 	return true;
 }
 

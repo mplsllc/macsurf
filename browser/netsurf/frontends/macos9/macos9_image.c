@@ -232,6 +232,51 @@ macos9_qti_lru_make_room(long need_bytes)
 			MACOS9_DECODED_IMG_MAX_BYTES;
 }
 
+/* fixes268 (#10) — evict every decoded bitmap in the QT-deferred LRU,
+ * resetting the global decoded-bytes counter as a side effect. Called
+ * from browser_window_content_ready after the old current_content has
+ * been released, so heavy-page → heavy-page navigation starts with
+ * fresh image-budget headroom. PNG-deferred entries are not in the
+ * LRU (their bitmaps die when their owning content's destroy fires,
+ * which already happened above the call site). */
+void
+macos9_purge_decoded_images(void)
+{
+	extern long macsurf__decoded_img_bytes_current;
+	macos9_qt_image_content *victim;
+	long evicted = 0;
+
+	while (macos9_qti_lru_tail != NULL) {
+		victim = macos9_qti_lru_tail;
+		macos9_qti_lru_unlink(victim);
+		macos9_qti_lru_total_bytes -= victim->decoded_bytes;
+		if (macos9_qti_lru_total_bytes < 0)
+			macos9_qti_lru_total_bytes = 0;
+		if (macsurf__decoded_img_bytes_current >=
+				victim->decoded_bytes) {
+			macsurf__decoded_img_bytes_current -=
+				victim->decoded_bytes;
+		} else {
+			macsurf__decoded_img_bytes_current = 0;
+		}
+		evicted += victim->decoded_bytes;
+		if (victim->bitmap != NULL &&
+				guit != NULL && guit->bitmap != NULL &&
+				guit->bitmap->destroy != NULL) {
+			guit->bitmap->destroy(victim->bitmap);
+		}
+		victim->bitmap = NULL;
+		victim->bitmap_w = 0;
+		victim->bitmap_h = 0;
+		victim->decoded_bytes = 0;
+	}
+	if (evicted > 0) {
+		macsurf_debug_log_writef(
+			"img purge: evicted=%ld remaining=%ld",
+			evicted, macsurf__decoded_img_bytes_current);
+	}
+}
+
 static bool
 macos9_img_is_oversize(int w, int h)
 {

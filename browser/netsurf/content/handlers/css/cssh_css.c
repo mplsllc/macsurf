@@ -2829,6 +2829,31 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		return false;
 	}
 
+	/* fixes268 (#9) — total CSS budget across all sheets per page.
+	 * The per-sheet cap above protects against a single oversize sheet;
+	 * this guard caps cumulative bytes so a stack of 20+ Drupal vendor
+	 * sheets doesn't exhaust libcss memory. Document order wins — the
+	 * site's first stylesheet (typically main) is fully processed and
+	 * later (vendor / module) sheets short-circuit immediately when
+	 * the global cap is hit. Counter is reset per page in html_create
+	 * via the existing fixes160a SITE-counters reset. */
+	{
+		extern unsigned long macsurf__site_css_total_bytes;
+		const unsigned long total_cap = 384UL * 1024UL;
+		macsurf__site_css_total_bytes += (unsigned long)size;
+		if (macsurf__site_css_total_bytes > total_cap) {
+			extern long macsurf__site_css_skip;
+			css->skipped = 1;
+			macsurf__site_css_skip++;
+			macsurf_debug_log_writef(
+				"css skip: total budget bytes=%ld cap=%ld - sheet dropped",
+				(long)macsurf__site_css_total_bytes,
+				(long)total_cap);
+			content_broadcast_error(c, NSERROR_CSS, NULL);
+			return false;
+		}
+	}
+
 	/* fixes115 — pre-process the CSS bytes to convert
 	 * `grid-template-columns: ...` declarations to `-macsurf-grid: N`
 	 * so the existing -macsurf-grid select/layout path picks up

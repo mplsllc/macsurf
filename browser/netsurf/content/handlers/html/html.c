@@ -708,6 +708,8 @@ html_create(const content_handler *handler,
 		extern long macsurf__site_box_inline;
 		extern long macsurf__site_box_text;
 		extern long macsurf__site_box_other;
+		extern unsigned long macsurf__site_css_total_bytes;
+		extern long macsurf__site_blocker;
 		macsurf_debug_log_writef("html_create: entered");
 		/* fixes160a: reset SITE per-page counters at the top of every
 		 * new HTML content so the summary line emitted at reformat
@@ -738,6 +740,9 @@ html_create(const content_handler *handler,
 		macsurf__site_box_inline = 0;
 		macsurf__site_box_text = 0;
 		macsurf__site_box_other = 0;
+		/* fixes268 (#9,#11) */
+		macsurf__site_css_total_bytes = 0;
+		macsurf__site_blocker = 0;
 	}
 #endif
 	/* fixes267 — clear the doc-global inline-extras custom-property
@@ -1327,17 +1332,53 @@ static void html_reformat(struct content *c, int width, int height)
 		extern long macsurf__decoded_img_bytes_current;
 		extern long macsurf__site_decoded_img_bytes_peak;
 		extern long macsurf__site_decoded_img_skip_budget;
+		extern unsigned long macsurf__site_css_total_bytes;
+		extern long macsurf__site_blocker;
 		nsurl *u = content_get_url(&htmlc->base);
 		const char *url = (u != NULL) ? nsurl_access(u) : "(null)";
+		const char *blocker_name;
+		const unsigned long css_total_cap = 384UL * 1024UL;
+
+		/* fixes268 (#11) — pick the dominant degradation source by
+		 * comparing skip counters. Highest-priority counter wins; ties
+		 * resolved in declaration order. heavy=1 latches when any
+		 * skip counter is non-zero (degradation actually happened). */
+		if (macsurf__site_decoded_img_skip_budget > 0 ||
+		    macsurf__site_rgov_skip_img > 0) {
+			macsurf__site_blocker = 1;   /* img_budget */
+			macsurf__site_heavy = 1;
+		} else if (macsurf__site_css_skip > 0) {
+			macsurf__site_blocker = 2;   /* css_budget */
+			macsurf__site_heavy = 1;
+		} else if (macsurf__site_fetch_slot_fail > 0 ||
+			   macsurf__site_rgov_skip_doc > 0 ||
+			   macsurf__site_rgov_skip_css > 0 ||
+			   macsurf__site_rgov_skip_script > 0 ||
+			   macsurf__site_rgov_skip_other > 0) {
+			macsurf__site_blocker = 3;   /* fetch_slots */
+			macsurf__site_heavy = 1;
+		} else if (macsurf__site_rgov_skip_font > 0) {
+			macsurf__site_blocker = 4;   /* fonts */
+			macsurf__site_heavy = 1;
+		}
+		switch ((int)macsurf__site_blocker) {
+		case 1: blocker_name = "img_budget"; break;
+		case 2: blocker_name = "css_budget"; break;
+		case 3: blocker_name = "fetch_slots"; break;
+		case 4: blocker_name = "fonts"; break;
+		default: blocker_name = "none"; break;
+		}
+
 		macsurf_debug_log_writef(
-			"SITE url=\"%s\" heavy=%ld "
+			"SITE url=\"%s\" heavy=%ld blocker=%s "
 			"boxes=%ld blk=%ld inlinec=%ld inline=%ld text=%ld other=%ld "
 			"in_w=%d in_h=%d c_w=%d c_h=%d "
 			"img_ok=%ld img_fail=%ld css_ok=%ld css_skip=%ld "
+			"css_total=%ld/%ld "
 			"rgov_skip=doc/%ld,css/%ld,img/%ld,scr/%ld,fnt/%ld,oth/%ld "
 			"fetch_peak=%ld fetch_slot_fail=%ld "
 			"decoded_img=cur/%ld,peak/%ld,skip/%ld",
-			url, macsurf__site_heavy,
+			url, macsurf__site_heavy, blocker_name,
 			macsurf__site_box_total,
 			macsurf__site_box_blk, macsurf__site_box_inlinec,
 			macsurf__site_box_inline, macsurf__site_box_text,
@@ -1345,6 +1386,7 @@ static void html_reformat(struct content *c, int width, int height)
 			width, height, (int)c->width, (int)c->height,
 			macsurf__site_img_ok, macsurf__site_img_fail,
 			macsurf__site_css_ok, macsurf__site_css_skip,
+			(long)macsurf__site_css_total_bytes, (long)css_total_cap,
 			macsurf__site_rgov_skip_doc, macsurf__site_rgov_skip_css,
 			macsurf__site_rgov_skip_img, macsurf__site_rgov_skip_script,
 			macsurf__site_rgov_skip_font, macsurf__site_rgov_skip_other,

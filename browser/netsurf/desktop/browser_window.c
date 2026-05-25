@@ -834,6 +834,24 @@ static nserror browser_window_content_ready(struct browser_window *bw)
 		hlcache_handle_release(bw->current_content);
 	}
 
+#ifdef __MACOS9__
+	/* fixes268 (#10) — on top-level non-frame navigation, evict the
+	 * decoded-image LRU and purge the low-level cache so heavy page →
+	 * heavy page transitions start with fresh budget headroom. The old
+	 * current_content has just been released above, so PNG-deferred
+	 * bitmaps owned by that content have already been destroyed via
+	 * the content_handler destroy chain. The LRU evict catches anything
+	 * the destroy chain didn't (long-lived QT entries) and zeroes the
+	 * global decoded-bytes counter. llcache_clean(true) drops cached
+	 * fetched bytes from the previous page. */
+	if (bw->parent == NULL) {
+		extern void macos9_purge_decoded_images(void);
+		extern void llcache_clean(bool purge);
+		macos9_purge_decoded_images();
+		llcache_clean(true);
+	}
+#endif
+
 	bw->current_content = bw->loading_content;
 	bw->loading_content = NULL;
 

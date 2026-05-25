@@ -50,6 +50,17 @@ long macsurf__site_img_fail = 0;
  * dropped before libcss saw it. */
 long macsurf__site_css_ok = 0;
 long macsurf__site_css_skip = 0;
+/* fixes268 (#9) — total CSS bytes seen across all sheets this page.
+ * Reset in html_create alongside the other site_ counters. Compared
+ * against a 384 KB cap in nscss_process_data so a stack of vendor
+ * sheets can't blow the libcss memory budget. */
+unsigned long macsurf__site_css_total_bytes = 0;
+/* fixes268 (#11) — blocker enum + heavy mode latch
+ * (heavy already exists as macsurf__site_heavy below).
+ * Blocker values: 0=none, 1=img_budget, 2=css_budget, 3=fetch_slots,
+ * 4=fonts, 5=cpu. Latched once when crossed; later overrides only if
+ * higher priority. */
+long macsurf__site_blocker = 0;
 /* fixes161a — resource governor counters. rgov_skip_* are bumped by
  * macos9_http_setup whenever per-class or global active caps refuse a
  * fetch (sub-resource skipped, never reaches libcss / image content
