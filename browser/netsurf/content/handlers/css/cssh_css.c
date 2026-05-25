@@ -2146,6 +2146,124 @@ macsurf__rewrite_object_position(const char *data, size_t in_size,
 }
 
 
+/* fixes266 — rewrite `background-image: linear-gradient(...)` to
+ * `-macsurf-gradient: linear-gradient(...)` so author CSS that uses the
+ * standard CSS3 syntax reaches the existing -macsurf-gradient paint path
+ * (fixes47/49 linear-gradient, fixes74 radial-gradient).
+ *
+ * Scope and limits:
+ *   - Matches only when the value (after optional whitespace) STARTS with
+ *     `linear-gradient(` or `radial-gradient(`. URLs and other functions
+ *     fall through untouched (libcss continues to drop them).
+ *   - Stacked layered backgrounds like `background-image: linear-gradient(a),
+ *     linear-gradient(b)` rename to `-macsurf-gradient: ...` but the parser
+ *     fails on the trailing `, linear-gradient(...)` — net result: stacked
+ *     gradients drop, same as pre-fix behaviour. Single-layer gradients
+ *     paint, which is the strict improvement.
+ *   - Does NOT touch `background:` shorthand. Authors who use shorthand for
+ *     gradients (rare) need to opt in with `background-image:`.
+ *   - REPLACE is one byte longer than NEEDLE (17 vs 16), so each match
+ *     grows the output by 1; pre-allocate accordingly. */
+static char *
+macsurf__rewrite_background_image_gradient(const char *data, size_t in_size,
+		size_t *out_size_p)
+{
+	static const char NEEDLE[] = "background-image";
+	static const size_t NEEDLE_LEN = 16;
+	static const char REPLACE[] = "-macsurf-gradient";
+	static const size_t REPLACE_LEN = 17;
+	char *out;
+	size_t cap;
+	size_t pos = 0;
+	size_t i = 0;
+
+	cap = in_size +
+		(in_size / NEEDLE_LEN + 1) * (REPLACE_LEN - NEEDLE_LEN) + 256;
+	out = (char *)malloc(cap);
+	if (out == NULL) return NULL;
+
+	while (i < in_size) {
+		if (macsurf__match_prop_name(data, in_size, i,
+				NEEDLE, NEEDLE_LEN)) {
+			size_t j = i + NEEDLE_LEN;
+			while (j < in_size && (data[j] == ' ' ||
+					data[j] == '\t' ||
+					data[j] == '\n' ||
+					data[j] == '\r')) j++;
+			if (j < in_size && data[j] == ':') {
+				size_t k = j + 1;
+				bool is_gradient = false;
+				while (k < in_size && (data[k] == ' ' ||
+						data[k] == '\t' ||
+						data[k] == '\n' ||
+						data[k] == '\r')) k++;
+				/* Test for `linear-gradient(` or `radial-gradient(`
+				 * (case-insensitive) at value start. */
+				if (k + 16 <= in_size) {
+					const char *p = data + k;
+					if ((p[0] == 'l' || p[0] == 'L') &&
+					    (p[1] == 'i' || p[1] == 'I') &&
+					    (p[2] == 'n' || p[2] == 'N') &&
+					    (p[3] == 'e' || p[3] == 'E') &&
+					    (p[4] == 'a' || p[4] == 'A') &&
+					    (p[5] == 'r' || p[5] == 'R') &&
+					     p[6] == '-' &&
+					    (p[7] == 'g' || p[7] == 'G') &&
+					    (p[8] == 'r' || p[8] == 'R') &&
+					    (p[9] == 'a' || p[9] == 'A') &&
+					    (p[10] == 'd' || p[10] == 'D') &&
+					    (p[11] == 'i' || p[11] == 'I') &&
+					    (p[12] == 'e' || p[12] == 'E') &&
+					    (p[13] == 'n' || p[13] == 'N') &&
+					    (p[14] == 't' || p[14] == 'T') &&
+					     p[15] == '(')
+						is_gradient = true;
+				}
+				if (k + 16 <= in_size && !is_gradient) {
+					const char *p = data + k;
+					if ((p[0] == 'r' || p[0] == 'R') &&
+					    (p[1] == 'a' || p[1] == 'A') &&
+					    (p[2] == 'd' || p[2] == 'D') &&
+					    (p[3] == 'i' || p[3] == 'I') &&
+					    (p[4] == 'a' || p[4] == 'A') &&
+					    (p[5] == 'l' || p[5] == 'L') &&
+					     p[6] == '-' &&
+					    (p[7] == 'g' || p[7] == 'G') &&
+					    (p[8] == 'r' || p[8] == 'R') &&
+					    (p[9] == 'a' || p[9] == 'A') &&
+					    (p[10] == 'd' || p[10] == 'D') &&
+					    (p[11] == 'i' || p[11] == 'I') &&
+					    (p[12] == 'e' || p[12] == 'E') &&
+					    (p[13] == 'n' || p[13] == 'N') &&
+					    (p[14] == 't' || p[14] == 'T') &&
+					     p[15] == '(')
+						is_gradient = true;
+				}
+				if (is_gradient) {
+					if (pos + REPLACE_LEN >= cap) {
+						free(out);
+						return NULL;
+					}
+					memcpy(out + pos, REPLACE, REPLACE_LEN);
+					pos += REPLACE_LEN;
+					i += NEEDLE_LEN;
+					continue;
+				}
+			}
+		}
+		if (pos + 1 >= cap) {
+			free(out);
+			return NULL;
+		}
+		out[pos++] = data[i++];
+	}
+
+	out[pos] = '\0';
+	if (out_size_p != NULL) *out_size_p = pos;
+	return out;
+}
+
+
 /* fixes185 — modern-CSS compatibility preprocessor. Rewrites unsupported
  * modern syntax into supported equivalents (or drops it) so author CSS
  * keeps cascading instead of having rules silently dropped by libcss.
@@ -2649,6 +2767,16 @@ char *macsurf__rewrite_inline_style(const char *data, size_t in_size,
 		src_size = cur_size;
 	}
 
+	next = macsurf__rewrite_background_image_gradient(src, src_size,
+			&next_size);
+	if (next != NULL) {
+		if (cur != NULL) free(cur);
+		cur = next;
+		cur_size = next_size;
+		src = (const char *)cur;
+		src_size = cur_size;
+	}
+
 	if (cur == NULL) {
 		return NULL;
 	}
@@ -2824,7 +2952,23 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		final_size = (unsigned int)inset_size;
 	}
 
-	error = nscss_process_css_data(&css->data, final_data, final_size);
+	/* fixes266 — background-image: linear-gradient(...) → -macsurf-gradient:
+	 * linear-gradient(...) so author CSS reaches the existing gradient
+	 * paint path. Net +1 byte per match. */
+	{
+		size_t bg_grad_size = 0;
+		char *rewritten_bg_grad = macsurf__rewrite_background_image_gradient(
+				final_data, (size_t)final_size, &bg_grad_size);
+		if (rewritten_bg_grad != NULL &&
+				bg_grad_size <= (size_t)0x7fffffff) {
+			final_data = (const char *)rewritten_bg_grad;
+			final_size = (unsigned int)bg_grad_size;
+		}
+
+		error = nscss_process_css_data(&css->data, final_data, final_size);
+
+		if (rewritten_bg_grad != NULL) free(rewritten_bg_grad);
+	}
 
 	if (rewritten_inset != NULL) free(rewritten_inset);
 	if (rewritten_modern_compat != NULL) free(rewritten_modern_compat);
