@@ -154,7 +154,24 @@ static const char css_default[] =
 	"mark{background:#ff0;color:#000}"
 	"br[clear=left]{clear:left}"
 	"br[clear=right]{clear:right}"
-	"br[clear=all]{clear:both}";
+	"br[clear=all]{clear:both}"
+	/* fixes272 — HTML5 dir="rtl" / dir="ltr" attribute wiring.
+	 * NetSurf core honours css_computed_direction(...) for inline
+	 * text alignment (layout.c:4326) and RTL positioning resolution
+	 * (layout.c:6340), but the HTML dir attribute doesn't auto-flow
+	 * to CSS direction without these UA selectors. With these rules,
+	 * <html dir="rtl">, <body dir="rtl">, or <div dir="rtl"> all
+	 * trigger right-to-left inline layout. Closes #49. */
+	"[dir=rtl]{direction:rtl;unicode-bidi:embed}"
+	"[dir=ltr]{direction:ltr;unicode-bidi:embed}"
+	"[dir=auto]{unicode-bidi:plaintext}"
+	/* fixes272 — writing-mode parsed but no visual effect in V1
+	 * (NetSurf's inline layout is horizontally hard-wired). Parser
+	 * accepts the property cleanly; future layout-direction work
+	 * will activate it. Documented in #35. */
+	"bdi{unicode-bidi:isolate}"
+	"bdo[dir=rtl]{direction:rtl;unicode-bidi:bidi-override}"
+	"bdo[dir=ltr]{direction:ltr;unicode-bidi:bidi-override}";
 
 static const char css_internal[] =
 	"input,textarea,button,select{background:#fff;color:#000;"
