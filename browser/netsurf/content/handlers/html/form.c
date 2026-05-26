@@ -32,7 +32,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <dom/dom.h>
-
+#include <regex.h>
 #include "utils/corestrings.h"
 #include "utils/log.h"
 #include "utils/messages.h"
@@ -2050,6 +2050,295 @@ void form_radio_set(struct form_control *radio)
 }
 
 
+static bool
+form_text_control_is_empty(struct form_control *control)
+{
+	dom_exception err;
+	dom_string *value = NULL;
+	bool empty = false;
+
+	if (control == NULL || control->node == NULL)
+		return false;
+
+	switch (control->type) {
+	case GADGET_TEXTBOX:
+	case GADGET_PASSWORD:
+		err = dom_html_input_element_get_value(
+			(dom_html_input_element *)control->node, &value);
+		break;
+
+	case GADGET_TEXTAREA:
+		err = dom_html_text_area_element_get_value(
+			(dom_html_text_area_element *)control->node, &value);
+		break;
+
+	default:
+		return false;
+	}
+
+	if (err != DOM_NO_ERR)
+		return false;
+
+	empty = (value == NULL || dom_string_byte_length(value) == 0);
+
+	if (value != NULL)
+		dom_string_unref(value);
+
+	return empty;
+}
+static bool
+form_pattern_matches(const char *value, const char *pattern)
+{
+	regex_t re;
+	char *anchored;
+	size_t len;
+	bool ok;
+	int rc;
+
+	if (value == NULL || pattern == NULL || pattern[0] == '\0') {
+		return true;
+	}
+
+	len = strlen(pattern) + 3; /* ^ + pattern + $ + '\0' */
+	anchored = malloc(len);
+	if (anchored == NULL) {
+		return false;
+	}
+
+	snprintf(anchored, len, "^%s$", pattern);
+
+	ok = false;
+	rc = regcomp(&re, anchored, REG_EXTENDED | REG_NOSUB);
+	if (rc == 0) {
+		ok = (regexec(&re, value, 0, NULL, 0) == 0);
+		regfree(&re);
+	}
+
+	free(anchored);
+	return ok;
+}
+
+static bool
+form_control_get_required(struct form_control *control, bool *required)
+{
+	dom_exception err;
+
+	*required = false;
+
+	if (control == NULL || control->node == NULL) {
+		return false;
+	}
+
+	switch (control->type) {
+	case GADGET_TEXTBOX:
+	case GADGET_PASSWORD:
+	case GADGET_FILE:
+	case GADGET_CHECKBOX:
+	case GADGET_RADIO:
+		err = dom_html_input_element_get_required(
+			(dom_html_input_element *)control->node, required);
+		break;
+
+	case GADGET_TEXTAREA:
+		err = dom_html_text_area_element_get_required(
+			(dom_html_text_area_element *)control->node, required);
+		break;
+
+	case GADGET_SELECT:
+		err = dom_html_select_element_get_required(
+			(dom_html_select_element *)control->node, required);
+		break;
+
+	default:
+		return true;
+	}
+
+	return (err == DOM_NO_ERR);
+}
+
+static bool
+form_control_value_is_empty(struct form_control *control, bool *ok)
+{
+	dom_exception err;
+	dom_string *value = NULL;
+	bool checked = false;
+	bool empty = false;
+
+	*ok = true;
+
+	if (control == NULL || control->node == NULL) {
+		*ok = false;
+		return true;
+	}
+
+	switch (control->type) {
+	case GADGET_TEXTBOX:
+	case GADGET_PASSWORD:
+	case GADGET_FILE:
+		err = dom_html_input_element_get_value(
+			(dom_html_input_element *)control->node, &value);
+		if (err != DOM_NO_ERR) {
+			*ok = false;
+			return true;
+		}
+
+		if (value == NULL) {
+			return true;
+		}
+
+		empty = (dom_string_byte_length(value) == 0);
+		dom_string_unref(value);
+		return empty;
+
+	case GADGET_TEXTAREA:
+		err = dom_html_text_area_element_get_value(
+			(dom_html_text_area_element *)control->node, &value);
+		if (err != DOM_NO_ERR) {
+			*ok = false;
+			return true;
+		}
+
+		if (value == NULL) {
+			return true;
+		}
+
+		empty = (dom_string_byte_length(value) == 0);
+		dom_string_unref(value);
+		return empty;
+
+	case GADGET_CHECKBOX:
+	case GADGET_RADIO:
+		err = dom_html_input_element_get_checked(
+			(dom_html_input_element *)control->node, &checked);
+		if (err != DOM_NO_ERR) {
+			*ok = false;
+			return true;
+		}
+		return !checked;
+
+	case GADGET_SELECT:
+		return (control->data.select.num_selected == 0);
+
+	default:
+		return false;
+	}
+}
+
+static bool
+form_control_pattern_valid(struct form_control *control, bool *ok)
+{
+	dom_exception err;
+	dom_string *pattern = NULL;
+	dom_string *value = NULL;
+	bool matched = true;
+
+	*ok = true;
+
+	if (control == NULL || control->node == NULL) {
+		*ok = false;
+		return true;
+	}
+
+	/* Pattern only applies to text-like inputs here. */
+	if (control->type != GADGET_TEXTBOX &&
+	    control->type != GADGET_PASSWORD) {
+		return true;
+	}
+
+	err = dom_html_input_element_get_pattern(
+		(dom_html_input_element *)control->node, &pattern);
+	if (err != DOM_NO_ERR) {
+		*ok = false;
+		return true;
+	}
+
+	if (pattern == NULL || dom_string_byte_length(pattern) == 0) {
+		if (pattern != NULL) {
+			dom_string_unref(pattern);
+		}
+		return true;
+	}
+
+	err = dom_html_input_element_get_value(
+		(dom_html_input_element *)control->node, &value);
+	if (err != DOM_NO_ERR) {
+		dom_string_unref(pattern);
+		*ok = false;
+		return true;
+	}
+
+	/* Empty value is allowed unless required also fails. */
+	if (value == NULL || dom_string_byte_length(value) == 0) {
+		if (value != NULL) {
+			dom_string_unref(value);
+		}
+		dom_string_unref(pattern);
+		return true;
+	}
+
+	matched = form_pattern_matches(dom_string_data(value),
+				       dom_string_data(pattern));
+
+	dom_string_unref(value);
+	dom_string_unref(pattern);
+
+	return matched;
+}
+
+static struct form_control *
+form_validate(struct form *form, const char **message_out)
+{
+	struct form_control *ctl;
+	bool required;
+	bool ok;
+	bool empty;
+	bool pattern_ok;
+
+	*message_out = NULL;
+
+	for (ctl = form->controls; ctl != NULL; ctl = ctl->next) {
+		if (ctl->node == NULL) {
+			continue;
+		}
+
+		if (!form_control_get_required(ctl, &required)) {
+			*message_out = "Unable to validate this field.";
+			return ctl;
+		}
+
+		empty = form_control_value_is_empty(ctl, &ok);
+		if (!ok) {
+			*message_out = "Unable to validate this field.";
+			return ctl;
+		}
+
+		if (required && empty) {
+			*message_out = "Please fill out this field.";
+			return ctl;
+		}
+
+		pattern_ok = form_control_pattern_valid(ctl, &ok);
+		if (!ok) {
+			*message_out = "Unable to validate this field.";
+			return ctl;
+		}
+
+		if (!pattern_ok) {
+			*message_out = "Please match the requested format.";
+			return ctl;
+		}
+	}
+
+	return NULL;
+}
+
+/* Safe placeholder until you wire the real UI focus function. */
+static void
+form_focus_control(struct form_control *control)
+{
+	(void) control;
+}
+
 /* private interface described in html/form_internal.h */
 nserror
 form_submit(nsurl *page_url,
@@ -2058,20 +2347,34 @@ form_submit(nsurl *page_url,
 	    struct form_control *submit_button)
 {
 	nserror res;
-	char *data = NULL; /* encoded form data */
-	struct fetch_multipart_data *success = NULL; /* gcc is incapable of correctly reasoning about use and generates "maybe used uninitialised" warnings */
-	nsurl *action_url;
-	nsurl *query_url;
+	char *data = NULL;
+	struct fetch_multipart_data *success = NULL;
+	nsurl *action_url = NULL;
+	nsurl *query_url = NULL;
+	struct form_control *invalid = NULL;
+	const char *validation_msg = NULL;
 
 	assert(form != NULL);
 
-	/* obtain list of controls from DOM */
+	invalid = form_validate(form, &validation_msg);
+	if (invalid != NULL) {
+		NSLOG(netsurf, INFO, "Form validation failed: %s",
+		      (validation_msg != NULL) ? validation_msg :
+		      "invalid form");
+
+		if (target != NULL && validation_msg != NULL) {
+			browser_window_set_status(target, validation_msg);
+		}
+
+		form_focus_control(invalid);
+		return NSERROR_OK;
+	}
+
 	res = form_dom_to_data(form, submit_button, &success);
 	if (res != NSERROR_OK) {
 		return res;
 	}
 
-	/* Decompose action */
 	res = nsurl_create(form->action, &action_url);
 	if (res != NSERROR_OK) {
 		fetch_multipart_data_destroy(success);
@@ -2082,7 +2385,6 @@ form_submit(nsurl *page_url,
 	case method_GET:
 		res = form_url_encode(form, success, &data);
 		if (res == NSERROR_OK) {
-			/* Replace query segment */
 			res = nsurl_replace_query(action_url, data, &query_url);
 			if (res == NSERROR_OK) {
 				res = browser_window_navigate(target,
@@ -2092,7 +2394,6 @@ form_submit(nsurl *page_url,
 							      NULL,
 							      NULL,
 							      NULL);
-
 				nsurl_unref(query_url);
 			}
 			free(data);
@@ -2121,17 +2422,18 @@ form_submit(nsurl *page_url,
 					      NULL,
 					      success,
 					      NULL);
-
 		break;
 	}
 
-	nsurl_unref(action_url);
+	if (action_url != NULL) {
+		nsurl_unref(action_url);
+	}
 	fetch_multipart_data_destroy(success);
 
 	return res;
 }
 
-
+	
 /* exported interface documented in html/form_internal.h */
 void form_gadget_update_value(struct form_control *control, char *value)
 {
