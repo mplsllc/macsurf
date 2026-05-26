@@ -3632,10 +3632,25 @@ static int line_height(
 
 	{
 		int lh_px = FIXTOINT(line_height);
-		/* Floor at 16px: incomplete CSS cascade can produce 0 (all
-		 * lines stack) or absurdly large values on CW8 PPC. */
-		if (lh_px < 16 || lh_px > 1000)
-			lh_px = 16;
+		/* fixes276 (#55): floor at the element's font-size, not a
+		 * hardcoded 16px. Cascade-correct unitless line-height (1.0,
+		 * 0.9, etc.) should produce lh_px <= font_size for tight
+		 * layouts. Falling back to font-size still protects against
+		 * cascade-zero (which manifests as font-size = 0 and lh = 0,
+		 * caught by the absolute floor below). Upper cap at 1000
+		 * preserved for CW8 PPC garbage-value guard. */
+		css_fixed fsize = 0;
+		css_unit funit = CSS_UNIT_PX;
+		int font_px = 12;
+		css_computed_font_size(style, &fsize, &funit);
+		if (fsize > 0) {
+			css_fixed fpx = css_unit_len2device_px(style,
+					unit_len_ctx, fsize, funit);
+			font_px = FIXTOINT(fpx);
+			if (font_px < 8) font_px = 8;
+		}
+		if (lh_px > 1000) lh_px = font_px;
+		if (lh_px < font_px) lh_px = font_px;
 		return lh_px;
 	}
 }
@@ -4391,15 +4406,27 @@ layout_line(struct box *first,
 			css_unit unit = CSS_UNIT_PX;
 			switch (css_computed_vertical_align(d->style, &value,
 					&unit)) {
-			case CSS_VERTICAL_ALIGN_SUPER:
 			case CSS_VERTICAL_ALIGN_TOP:
 			case CSS_VERTICAL_ALIGN_TEXT_TOP:
 				/* already at top */
 				break;
-			case CSS_VERTICAL_ALIGN_SUB:
 			case CSS_VERTICAL_ALIGN_BOTTOM:
 			case CSS_VERTICAL_ALIGN_TEXT_BOTTOM:
 				d->y += used_height - d->height;
+				break;
+			case CSS_VERTICAL_ALIGN_SUPER:
+				/* fixes276 (#59): shift baseline up by ~30%
+				 * of own font-size. Use parent's font-size
+				 * if the sup itself has no distinct size. */
+				d->y += (int)(0.75 * (used_height -
+						d->height)) -
+						d->height / 3;
+				break;
+			case CSS_VERTICAL_ALIGN_SUB:
+				/* fixes276 (#59): shift baseline down by ~30%. */
+				d->y += (int)(0.75 * (used_height -
+						d->height)) +
+						d->height / 3;
 				break;
 			default:
 			case CSS_VERTICAL_ALIGN_BASELINE:
