@@ -2970,6 +2970,370 @@ macsurf__rewrite_at_rules(const char *data, size_t in_size,
 }
 
 
+/* fixes274 (Bundle C, #25 + #64) — grid alignment shorthand expansion +
+ * justify-items / justify-self bridge.
+ *
+ * libcss in this vintage does not expose justify-items / justify-self
+ * accessors, and there's no `place-items` / `place-content` shorthand
+ * support. fixes270 wired the four properties libcss DOES expose
+ * (justify-content, align-content, align-items, align-self). This pass
+ * extends authoring-side support by:
+ *
+ *   1. Splitting `place-items: A B` into `align-items: A; justify-items: B`
+ *      (or both = A when only one value).
+ *   2. Splitting `place-content: A B` into `align-content: A;
+ *      justify-content: B`.
+ *   3. Shadowing `justify-items: VAL` declarations with an additional
+ *      `text-align: VAL` declaration. text-align inherits to grid cells'
+ *      inline content, producing visually-correct cell horizontal
+ *      alignment for the typical-case (cell content is text or inline
+ *      content that text-align governs).
+ *   4. Shadowing `justify-self: VAL` similarly with `text-align: VAL`.
+ *
+ * Spec-loose: real justify-items affects ONLY cell positioning within the
+ * track, not inline content alignment. For pure-text cells they look the
+ * same; for cells with mixed content (image + text) the visual may differ.
+ * Acceptable V1 — the alternative is libcss surgery, which is the trap
+ * zone documented in project memory.
+ *
+ * Each pass-through can grow the output. We malloc a working buffer and
+ * append. */
+
+/* CSS-keyword-safe match: confirm the position contains exactly the given
+ * property name, not as a substring of a longer identifier. */
+static bool
+macsurf__cc_prop_at(const char *buf, size_t len, size_t pos,
+		const char *name, size_t name_len)
+{
+	size_t i;
+	if (pos + name_len > len) return false;
+	if (pos > 0) {
+		char prev = buf[pos - 1];
+		if ((prev >= 'a' && prev <= 'z') ||
+				(prev >= 'A' && prev <= 'Z') ||
+				(prev >= '0' && prev <= '9') ||
+				prev == '-' || prev == '_') {
+			return false;
+		}
+	}
+	for (i = 0; i < name_len; i++) {
+		char b = buf[pos + i];
+		char n = name[i];
+		if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+		if (n >= 'A' && n <= 'Z') n = (char)(n - 'A' + 'a');
+		if (b != n) return false;
+	}
+	return true;
+}
+
+/* Find the byte index of the next ';' or '}' at brace-depth zero from
+ * position `start`. Skips chars inside parens / strings / comments to
+ * avoid confusing those with declaration boundaries. */
+static size_t
+macsurf__cc_find_decl_end(const char *buf, size_t len, size_t start)
+{
+	size_t k = start;
+	int paren = 0;
+	while (k < len) {
+		char c = buf[k];
+		if (c == '/' && k + 1 < len && buf[k + 1] == '*') {
+			k += 2;
+			while (k + 1 < len &&
+					!(buf[k] == '*' && buf[k + 1] == '/'))
+				k++;
+			if (k + 1 < len) k += 2;
+			continue;
+		}
+		if (c == '"' || c == '\'') {
+			char q = c;
+			k++;
+			while (k < len && buf[k] != q) {
+				if (buf[k] == '\\' && k + 1 < len) k += 2;
+				else k++;
+			}
+			if (k < len) k++;
+			continue;
+		}
+		if (c == '(') paren++;
+		else if (c == ')') paren--;
+		else if (paren == 0 && (c == ';' || c == '}'))
+			return k;
+		k++;
+	}
+	return len;
+}
+
+/* Trim whitespace inside [from, to). Returns the new bounds via outs. */
+static void
+macsurf__cc_trim(const char *buf, size_t from, size_t to,
+		size_t *out_from, size_t *out_to)
+{
+	while (from < to && (buf[from] == ' ' || buf[from] == '\t' ||
+			buf[from] == '\n' || buf[from] == '\r')) from++;
+	while (to > from && (buf[to - 1] == ' ' || buf[to - 1] == '\t' ||
+			buf[to - 1] == '\n' || buf[to - 1] == '\r')) to--;
+	*out_from = from;
+	*out_to = to;
+}
+
+static char *
+macsurf__rewrite_grid_alignment(const char *data, size_t in_size,
+		size_t *out_size_p)
+{
+	char *out;
+	size_t cap;
+	size_t out_pos = 0;
+	size_t i = 0;
+	int changed = 0;
+
+	cap = in_size * 2 + 256;   /* shadowed declarations can ~double size */
+	out = (char *)malloc(cap);
+	if (out == NULL) return NULL;
+
+	while (i < in_size) {
+		size_t colon;
+		size_t value_start;
+		size_t value_end;
+		size_t end;
+		size_t v1_start;
+		size_t v1_end;
+		size_t v2_start;
+		size_t v2_end;
+		size_t k;
+		const char *match_prop = NULL;
+		const char *align_axis = NULL;
+		const char *justify_axis = NULL;
+
+		/* Comment + string pass-through (same pattern as
+		 * macsurf__rewrite_at_rules). */
+		if (data[i] == '/' && i + 1 < in_size && data[i + 1] == '*') {
+			size_t kk = i + 2;
+			while (kk + 1 < in_size) {
+				if (data[kk] == '*' && data[kk + 1] == '/') {
+					kk += 2;
+					break;
+				}
+				kk++;
+			}
+			if (kk + 1 >= in_size) kk = in_size;
+			while (out_pos + (kk - i) + 1 >= cap) {
+				char *bigger;
+				cap = cap * 2 + (kk - i) + 64;
+				bigger = (char *)realloc(out, cap);
+				if (bigger == NULL) { free(out); return NULL; }
+				out = bigger;
+			}
+			memcpy(out + out_pos, data + i, kk - i);
+			out_pos += (kk - i);
+			i = kk;
+			continue;
+		}
+		if (data[i] == '"' || data[i] == '\'') {
+			char quote = data[i];
+			size_t kk = i + 1;
+			while (kk < in_size && data[kk] != quote) {
+				if (data[kk] == '\\' && kk + 1 < in_size) kk += 2;
+				else kk++;
+			}
+			if (kk < in_size) kk++;
+			while (out_pos + (kk - i) + 1 >= cap) {
+				char *bigger;
+				cap = cap * 2 + (kk - i) + 64;
+				bigger = (char *)realloc(out, cap);
+				if (bigger == NULL) { free(out); return NULL; }
+				out = bigger;
+			}
+			memcpy(out + out_pos, data + i, kk - i);
+			out_pos += (kk - i);
+			i = kk;
+			continue;
+		}
+
+		/* Detect one of the four shorthand / longhand patterns. */
+		if (macsurf__cc_prop_at(data, in_size, i, "place-items", 11)) {
+			match_prop = "place-items";
+			align_axis = "align-items";
+			justify_axis = "justify-items";
+			k = i + 11;
+		} else if (macsurf__cc_prop_at(data, in_size, i,
+				"place-content", 13)) {
+			match_prop = "place-content";
+			align_axis = "align-content";
+			justify_axis = "justify-content";
+			k = i + 13;
+		} else if (macsurf__cc_prop_at(data, in_size, i,
+				"justify-items", 13)) {
+			match_prop = "justify-items";
+			align_axis = NULL;
+			justify_axis = "justify-items";
+			k = i + 13;
+		} else if (macsurf__cc_prop_at(data, in_size, i,
+				"justify-self", 12)) {
+			match_prop = "justify-self";
+			align_axis = NULL;
+			justify_axis = "justify-self";
+			k = i + 12;
+		} else {
+			match_prop = NULL;
+		}
+
+		if (match_prop == NULL) {
+			if (out_pos + 1 >= cap) {
+				char *bigger;
+				cap = cap * 2 + 64;
+				bigger = (char *)realloc(out, cap);
+				if (bigger == NULL) { free(out); return NULL; }
+				out = bigger;
+			}
+			out[out_pos++] = data[i++];
+			continue;
+		}
+
+		/* Walk past whitespace, expect ':'. */
+		while (k < in_size && (data[k] == ' ' || data[k] == '\t' ||
+				data[k] == '\n' || data[k] == '\r')) k++;
+		if (k >= in_size || data[k] != ':') {
+			/* Not a real property declaration; emit char and skip. */
+			out[out_pos++] = data[i++];
+			continue;
+		}
+		colon = k;
+		value_start = k + 1;
+		end = macsurf__cc_find_decl_end(data, in_size, value_start);
+		value_end = end;
+
+		/* For place-* shorthand, split values; for justify-* longhand,
+		 * use the whole value verbatim. */
+		macsurf__cc_trim(data, value_start, value_end,
+				&value_start, &value_end);
+		if (align_axis != NULL) {
+			/* place-items or place-content. */
+			size_t split = value_start;
+			while (split < value_end && data[split] != ' ' &&
+					data[split] != '\t') split++;
+			if (split < value_end) {
+				v1_start = value_start;
+				v1_end = split;
+				v2_start = split;
+				while (v2_start < value_end &&
+						(data[v2_start] == ' ' ||
+						 data[v2_start] == '\t'))
+					v2_start++;
+				v2_end = value_end;
+			} else {
+				v1_start = value_start;
+				v1_end = value_end;
+				v2_start = value_start;
+				v2_end = value_end;
+			}
+		} else {
+			v1_start = v2_start = value_start;
+			v1_end = v2_end = value_end;
+		}
+
+		changed = 1;
+
+		/* Emit replacement. For shorthand: align-axis: V1; justify-axis: V2;
+		 * with text-align: V2 shadow when justify_axis is justify-items.
+		 * For longhand: keep original + text-align: V shadow. */
+		{
+			char tmp[256];
+			size_t tlen;
+			size_t need;
+
+			tlen = 0;
+			if (align_axis != NULL) {
+				/* place-* shorthand */
+				/* emit align-axis declaration */
+				memcpy(tmp + tlen, align_axis, strlen(align_axis));
+				tlen += strlen(align_axis);
+				tmp[tlen++] = ':';
+				tmp[tlen++] = ' ';
+				need = v1_end - v1_start;
+				if (tlen + need + 2 >= sizeof tmp) need = sizeof tmp - tlen - 2;
+				memcpy(tmp + tlen, data + v1_start, need);
+				tlen += need;
+				tmp[tlen++] = ';';
+				tmp[tlen++] = ' ';
+			}
+			/* emit justify-axis declaration */
+			memcpy(tmp + tlen, justify_axis, strlen(justify_axis));
+			tlen += strlen(justify_axis);
+			tmp[tlen++] = ':';
+			tmp[tlen++] = ' ';
+			need = v2_end - v2_start;
+			if (tlen + need + 2 >= sizeof tmp) need = sizeof tmp - tlen - 2;
+			memcpy(tmp + tlen, data + v2_start, need);
+			tlen += need;
+
+			/* Shadow with text-align for justify-items / justify-self
+			 * paths only (so visual cell-content alignment works).
+			 * fixes274e: libcss's text-align parser does not accept
+			 * CSS3 logical values (start / end). Map them to physical
+			 * keywords here (start/flex-start/self-start -> left,
+			 * end/flex-end/self-end -> right). Skip the shadow for
+			 * stretch / baseline / normal / auto where there's no
+			 * sensible text-align equivalent. */
+			if (justify_axis != NULL && (
+					strcmp(justify_axis, "justify-items") == 0 ||
+					strcmp(justify_axis, "justify-self") == 0)) {
+				size_t vlen = v2_end - v2_start;
+				const char *src = data + v2_start;
+				const char *out_kw = NULL;
+				size_t out_kw_len = 0;
+				if ((vlen == 6 && memcmp(src, "center", 6) == 0) ||
+						(vlen == 4 && memcmp(src, "left", 4) == 0) ||
+						(vlen == 5 && memcmp(src, "right", 5) == 0) ||
+						(vlen == 7 && memcmp(src, "justify", 7) == 0)) {
+					out_kw = src;
+					out_kw_len = vlen;
+				} else if ((vlen == 5 && memcmp(src, "start", 5) == 0) ||
+						(vlen == 10 && memcmp(src, "flex-start", 10) == 0) ||
+						(vlen == 10 && memcmp(src, "self-start", 10) == 0)) {
+					out_kw = "left";
+					out_kw_len = 4;
+				} else if ((vlen == 3 && memcmp(src, "end", 3) == 0) ||
+						(vlen == 8 && memcmp(src, "flex-end", 8) == 0) ||
+						(vlen == 8 && memcmp(src, "self-end", 8) == 0)) {
+					out_kw = "right";
+					out_kw_len = 5;
+				}
+				if (out_kw != NULL) {
+					tmp[tlen++] = ';';
+					tmp[tlen++] = ' ';
+					memcpy(tmp + tlen, "text-align: ", 12);
+					tlen += 12;
+					if (tlen + out_kw_len + 2 >= sizeof tmp)
+						out_kw_len = sizeof tmp - tlen - 2;
+					memcpy(tmp + tlen, out_kw, out_kw_len);
+					tlen += out_kw_len;
+				}
+			}
+
+			while (out_pos + tlen + 1 >= cap) {
+				char *bigger;
+				cap = cap * 2 + tlen + 64;
+				bigger = (char *)realloc(out, cap);
+				if (bigger == NULL) { free(out); return NULL; }
+				out = bigger;
+			}
+			memcpy(out + out_pos, tmp, tlen);
+			out_pos += tlen;
+		}
+
+		/* Skip past the original declaration up to the terminator. */
+		i = end;
+	}
+
+	if (!changed) {
+		free(out);
+		return NULL;
+	}
+	*out_size_p = out_pos;
+	return out;
+}
+
+
 /* fixes202 — inline-style preprocessor.
  *
  * External stylesheets and <style> blocks run through nscss_process_data
@@ -3069,6 +3433,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	char *rewritten_modern_compat = NULL;
 	char *rewritten_inset = NULL;
 	char *rewritten_at_rules = NULL;   /* fixes273 — @supports/@layer */
+	char *rewritten_grid_align = NULL; /* fixes274 grid alignment */
 	size_t col_span_size = 0;
 	size_t text_shadow_size = 0;
 	size_t transform_size = 0;
@@ -3137,6 +3502,23 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 				at_size <= (size_t)0x7fffffff) {
 			data = (const char *)rewritten_at_rules;
 			size = (unsigned int)at_size;
+		}
+	}
+
+	/* fixes274 (Bundle C) — grid alignment shorthand expansion +
+	 * justify-items / justify-self → text-align bridge. Splits
+	 * place-items / place-content shorthands and shadows the
+	 * justify-* longhands with text-align so cell content aligns
+	 * visually. Runs early so subsequent property-rewrite passes
+	 * see the expanded declarations. */
+	{
+		size_t ga_size = 0;
+		rewritten_grid_align = macsurf__rewrite_grid_alignment(data,
+				(size_t)size, &ga_size);
+		if (rewritten_grid_align != NULL &&
+				ga_size <= (size_t)0x7fffffff) {
+			data = (const char *)rewritten_grid_align;
+			size = (unsigned int)ga_size;
 		}
 	}
 
@@ -3290,6 +3672,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	if (rewritten_rows != NULL) free(rewritten_rows);
 	if (rewritten != NULL) free(rewritten);
 	if (rewritten_at_rules != NULL) free(rewritten_at_rules);   /* fixes273 */
+	if (rewritten_grid_align != NULL) free(rewritten_grid_align); /* fixes274 */
 
 	if (error != CSS_OK && error != CSS_NEEDDATA) {
 		content_broadcast_error(c, NSERROR_CSS, NULL);
