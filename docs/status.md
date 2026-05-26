@@ -1,10 +1,11 @@
 # MacSurf Status
 
-**Date:** 2026-05-25
-**Engine HEAD:** fixes263
-**Current fix round:** fixes231–263 — speed sprint (HTTPS keep-alive pool + persistent dead-host blocklist + cache HIT re-enable + reformat coalescing + deferred PNG decode + TLS session resumption + TCP_NODELAY + ~80% log reduction + HTTPS-default URL submit with HTTP fallback)
-**Last release:** **MacSurf v0.6.2 "Speed-Run"** (2026-05-25). Cold mactrove.com load 30+ s → ~2-3 s. Full notes: [release-notes/MacSurf-0.6.2.md](release-notes/MacSurf-0.6.2.md)
-**Last hardware-accepted:** fixes263 (2026-05-25, auto-upgrade FALLBACK to http:// for retro HTTP-only sites — classic.mactrove.com + macintoshgarden.org render correctly via fallback)
+**Date:** 2026-05-26
+**Engine HEAD:** fixes271b
+**Current fix round:** fixes264–271b — correctness + cleanup sprint ("Cleanup"): cross-element `var()` via doc-global inline-extras, CSS Grid V2 alignment (`justify-content`/`align-content`), `background-image: linear-gradient()` rewrite, image-purge on top-level nav, above-fold lazy decode, total CSS budget, heavy/blocker SITE diagnostic, multicol balancing via bisection, header audit cleanup
+**Last release:** **MacSurf v0.7 "Cleanup"** (2026-05-26). Twelve open issues closed in one sprint. Full notes: [release-notes/MacSurf-0.7.md](release-notes/MacSurf-0.7.md)
+**Last hardware-accepted:** fixes271b (2026-05-26, header audit cleanup — Linux/Mac `box.h` aligned, `_ns` suffix workaround retired, standard `box_multicol_data`/`box_multicol_segment` names restored)
+**Open issues on `mplsllc/macsurf`:** **0**
 
 ---
 
