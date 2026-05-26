@@ -97,7 +97,7 @@ int macsurf_layout_aborted = 0;
 
 struct box_multicol_entry {
 	struct box *box;
-	struct box_multicol_dat_ns *data;
+	struct box_multicol_data *data;
 	struct box_multicol_entry *next;
 };
 
@@ -108,7 +108,7 @@ static struct box_multicol_entry *macsurf_multicol_entries = NULL;
  * survive without needing the html_content pointer. */
 static char macsurf_layout_current_url[256] = {0};
 
-static int layout_multicol_data_destructor(struct box_multicol_dat_ns *data)
+static int layout_multicol_data_destructor(struct box_multicol_data *data)
 {
 	struct box_multicol_entry **link = &macsurf_multicol_entries;
 	struct box_multicol_entry *entry;
@@ -125,7 +125,7 @@ static int layout_multicol_data_destructor(struct box_multicol_dat_ns *data)
 	return 0;
 }
 
-static struct box_multicol_dat_ns *layout_multicol_data_for_box(
+static struct box_multicol_data *layout_multicol_data_for_box(
 		const struct box *box)
 {
 	struct box_multicol_entry *entry;
@@ -140,7 +140,7 @@ static struct box_multicol_dat_ns *layout_multicol_data_for_box(
 
 unsigned int layout_multicol_segment_count(const struct box *box)
 {
-	const struct box_multicol_dat_ns *data = layout_multicol_data_for_box(box);
+	const struct box_multicol_data *data = layout_multicol_data_for_box(box);
 
 	if (data == NULL)
 		return 0;
@@ -151,7 +151,7 @@ unsigned int layout_multicol_segment_count(const struct box *box)
 bool layout_multicol_segment_bounds(const struct box *box,
 		unsigned int index, int *top, int *bottom)
 {
-	const struct box_multicol_dat_ns *data = layout_multicol_data_for_box(box);
+	const struct box_multicol_data *data = layout_multicol_data_for_box(box);
 
 	if (data == NULL || data->segments == NULL || index >= data->segment_count)
 		return false;
@@ -179,23 +179,23 @@ static void layout_multicol_clear_data(struct box *box)
 	}
 }
 
-static struct box_multicol_dat_ns *layout_multicol_store_data(
+static struct box_multicol_data *layout_multicol_store_data(
 		struct box *box,
 		unsigned int segment_count)
 {
 	struct box_multicol_entry *entry;
-	struct box_multicol_dat_ns *data;
+	struct box_multicol_data *data;
 
 	layout_multicol_clear_data(box);
 	if (segment_count == 0)
 		return NULL;
 
-	data = talloc_zero(box, struct box_multicol_dat_ns);
+	data = talloc_zero(box, struct box_multicol_data);
 	if (data == NULL)
 		return NULL;
 	talloc_set_destructor(data, layout_multicol_data_destructor);
 
-	data->segments = talloc_array(data, struct box_multicol_seg_ns,
+	data->segments = talloc_array(data, struct box_multicol_segment,
 			segment_count);
 	if (data->segments == NULL) {
 		talloc_free(data);
@@ -2455,7 +2455,7 @@ static bool layout_multicol_context(
 
 			flow_y += band_height;
 			{
-				struct box_multicol_dat_ns *multicol_data;
+				struct box_multicol_data *multicol_data;
 
 				multicol_data = layout_multicol_data_for_box(block);
 				if (multicol_data != NULL &&

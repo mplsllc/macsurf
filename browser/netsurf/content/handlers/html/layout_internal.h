@@ -26,15 +26,10 @@
 
 #define AUTO INT_MIN
 
-struct box_multicol_seg_ns {
-	int top;
-	int bottom;
-};
-
-struct box_multicol_dat_ns {
-	unsigned int segment_count;
-	struct box_multicol_seg_ns *segments;
-};
+/* fixes271b — struct box_multicol_segment and struct box_multicol_data
+ * now live in box.h (single source of truth, matching the Mac-side
+ * vendored version that has carried them since fixes199h). The _ns
+ * suffix variants previously defined here are gone. */
 
 /**
  * Layout a block formatting context.

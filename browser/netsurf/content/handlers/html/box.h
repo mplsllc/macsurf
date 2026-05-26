@@ -175,6 +175,23 @@ struct object_params {
 };
 
 
+/* fixes271b — multicol redraw metadata. Defined here (not in
+ * layout_internal.h) so the single source of truth lives with the
+ * struct box that owns the multicol_data pointer below. The Mac-side
+ * box.h has had these definitions since fixes199h; aligning Linux to
+ * match closes the build-time redefinition error that the _ns suffix
+ * workaround had been papering over. */
+struct box_multicol_segment {
+	int top;
+	int bottom;
+};
+
+struct box_multicol_data {
+	unsigned int segment_count;
+	struct box_multicol_segment *segments;
+};
+
+
 /**
  * Node in box tree. All dimensions are in pixels.
  */
@@ -454,6 +471,13 @@ struct box {
 	 * Iframe's browser_window, or NULL if none
 	 */
 	struct browser_window *iframe;
+
+	/**
+	 * Multi-column redraw metadata, or NULL. fixes271b — defined
+	 * here to match the Mac-side box.h that has carried this since
+	 * fixes199h.
+	 */
+	struct box_multicol_data *multicol_data;
 
 };
 
