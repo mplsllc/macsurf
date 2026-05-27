@@ -189,7 +189,9 @@ static struct macos9_https_ctx https_slots[MAX_HTTPS_F];
  * we want to retry as plain http. The flow:
  *   1. Submit handler calls macsurf_auto_upgrade_mark(host_port).
  *   2. Fetch fires; if it fails (timeout / dead-host / peer-close),
- *      hctx_fail consults auto_upgrade_consume(c->pool_key).
+ *      hctx_fail consults auto_upgrade_check(c->pool_key).
+ *   3.5 fixes299: lookup is NON-destructive — every failed HTTPS fetch
+ *      for a marked host falls back to HTTP, not just the first.
  *   3. If marked, emit FETCH_REDIRECT to the http:// equivalent so
  *      NetSurf core re-issues via the HTTP fetcher.
  * Mark is consumed (single-shot) so we don't redirect-loop.
@@ -276,20 +278,25 @@ void macsurf_auto_upgrade_mark(const char *url)
 	auto_upgrade_count++;
 }
 
-/* Check + remove. Returns 1 if `key` was previously marked. */
-static int auto_upgrade_consume(const char *key)
+/* fixes299 / #141 — non-destructive lookup.  Returns 1 if `key` is in
+ * the mark list.  Previously this consumed the entry (single-shot), so
+ * sub-resource fetches (favicon, CSS, scripts) on the same host:port
+ * raced the main page through hctx_fail and the loser found nothing to
+ * consume → no fallback → about:fetcherror.  Now every failed HTTPS
+ * fetch for a marked host emits FETCH_REDIRECT to http://.
+ *
+ * Loop concern from the original fixes249b "single-shot" design:
+ * unfounded.  Our FETCH_REDIRECT changes the scheme to http://, which
+ * NetSurf's llcache then dispatches to the HTTP fetcher (different code
+ * path).  No path leads back into the HTTPS fetcher.  The only loop
+ * risk is a server-side http→https 301; for that NetSurf's own
+ * max_redirections counter kicks in and breaks the cycle. */
+static int auto_upgrade_check(const char *key)
 {
-	int i, j;
+	int i;
 	if (key == NULL || key[0] == '\0') return 0;
 	for (i = 0; i < auto_upgrade_count; i++) {
-		if (strcmp(auto_upgrade_list[i], key) != 0) continue;
-		for (j = i; j < auto_upgrade_count - 1; j++) {
-			strncpy(auto_upgrade_list[j],
-				auto_upgrade_list[j + 1],
-				HTTPS_POOL_KEY_LEN);
-		}
-		auto_upgrade_count--;
-		return 1;
+		if (strcmp(auto_upgrade_list[i], key) == 0) return 1;
 	}
 	return 0;
 }
@@ -745,7 +752,7 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	 * normalises bare-host URLs to add a trailing slash, but window.c's
 	 * mark used the raw form. */
 	if (c->url != NULL && c->pool_key[0] != '\0' &&
-	    auto_upgrade_consume(c->pool_key)) {
+	    auto_upgrade_check(c->pool_key)) {
 		const char *u = nsurl_access(c->url);
 		if (u != NULL && strncmp(u, "https://", 8) == 0) {
 			fetch_msg rm;
