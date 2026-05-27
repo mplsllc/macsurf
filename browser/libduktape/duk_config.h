@@ -3865,6 +3865,16 @@ typedef struct duk_hthread duk_context;
 #undef  DUK_USE_FILE_IO
 #undef  DUK_USE_DEBUG
 
+/* CW8 MSL ships pow/log/exp/sqrt but NOT the C99-only math.h additions
+ * cbrt / log2 / log10 / trunc.  Stock duk_config.h binds them when
+ * DUK_F_C99 is set, which we apparently are.  Undef the four C99-only
+ * names so Duktape uses its built-in fallback paths (pow / log / fcvt
+ * style) — all of which are C89-clean. */
+#undef DUK_CBRT
+#undef DUK_LOG2
+#undef DUK_LOG10
+#undef DUK_TRUNC
+
 /* duk_uint_least*_t etc. are typedef'd by stock duk_config.h around
  * line 1710 from the C99 stdint names we pre-supplied at the top of
  * this file. */
