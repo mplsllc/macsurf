@@ -298,6 +298,7 @@ static void nsgif__record_frame(
 	size_t pixel_bytes = sizeof(*bitmap);
 	size_t height = gif->info.height;
 	size_t width  = gif->info.width;
+	size_t frame_size;
 	uint32_t *prev_frame;
 
 	if (gif->decoded_frame == NSGIF_FRAME_INVALID ||
@@ -306,14 +307,20 @@ static void nsgif__record_frame(
 		return;
 	}
 
+	if (width == 0 || height == 0 ||
+	    height > SIZE_MAX / width ||
+	    width * height > SIZE_MAX / pixel_bytes) {
+		return;
+	}
+	frame_size = width * height * pixel_bytes;
+
 	bitmap = nsgif__bitmap_get(gif);
 	if (bitmap == NULL) {
 		return;
 	}
 
 	if (gif->prev_frame == NULL) {
-		prev_frame = realloc(gif->prev_frame,
-				width * height * pixel_bytes);
+		prev_frame = realloc(gif->prev_frame, frame_size);
 		if (prev_frame == NULL) {
 			return;
 		}
@@ -321,7 +328,7 @@ static void nsgif__record_frame(
 		prev_frame = gif->prev_frame;
 	}
 
-	memcpy(prev_frame, bitmap, width * height * pixel_bytes);
+	memcpy(prev_frame, bitmap, frame_size);
 
 	gif->prev_frame  = prev_frame;
 	gif->prev_index  = gif->decoded_frame;
