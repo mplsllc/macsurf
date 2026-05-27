@@ -269,7 +269,7 @@ static void macos9_handle_update(const EventRecord *event) {
 	} else {
 		/* Fallback path: paint directly into window. Flash returns. */
 		EraseRect(&gw->content_rect);
-		draw_url_bar(gw); DrawControls(win); draw_status_bar(gw);
+		draw_url_bar(gw); DrawControls(win); macos9_window_draw_toolbar_icons(gw); draw_status_bar(gw);
 	}
 	{ extern struct hlcache_handle *browser_window_get_content(struct browser_window *);
 	  struct hlcache_handle *cur = gw->bw ? browser_window_get_content(gw->bw) : NULL;
@@ -354,6 +354,7 @@ static void macos9_handle_update(const EventRecord *event) {
 		}
 		draw_url_bar(gw);
 		DrawControls(win);
+		macos9_window_draw_toolbar_icons(gw);    /* fixes297 */
 		draw_status_bar(gw);
 		if (gw->url_field_active && gw->url_te) TEActivate(gw->url_te);
 	} else if (gw->bw) {
@@ -712,6 +713,9 @@ int main(void) {
 	 * load failed. */
 	macos9_window_load_default_favicon();
 	MS_LOG("default favicon loaded");
+	/* fixes297 — toolbar button icons.  Best-effort; any failure
+	 * leaves the corresponding button text-only. */
+	macos9_window_load_toolbar_icons();
 #endif
 	memset(&macos9_table, 0, sizeof(macos9_table));
 	macos9_table.window = macos9_window_table;

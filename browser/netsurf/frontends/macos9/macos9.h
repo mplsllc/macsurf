@@ -162,6 +162,9 @@ void macos9_window_invalidate_url(struct gui_window *g);
  * startup; draw fn is called from main.c's draw_url_bar after TEUpdate. */
 void macos9_window_load_default_favicon(void);
 void macos9_window_draw_favicon(struct gui_window *g);
+/* fixes297 — toolbar button icon overlays */
+void macos9_window_load_toolbar_icons(void);
+void macos9_window_draw_toolbar_icons(struct gui_window *g);
 void macos9_window_update_scrollbars(struct gui_window *g);
 void macos9_window_scroll_to(struct gui_window *g, int nx, int ny);
 void macos9_window_scroll_by(struct gui_window *g, int dx, int dy);

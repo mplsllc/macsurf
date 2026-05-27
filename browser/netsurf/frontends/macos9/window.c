@@ -116,6 +116,41 @@ static GWorldPtr macos9_default_favicon_gworld = NULL;
 static Rect macos9_default_favicon_src_rect;
 static int  macos9_default_favicon_loaded = 0;
 
+/* fixes297 — toolbar button icons.  Four 16x16-ish PNGs baked as static
+ * arrays and decoded once at startup into a permanent app-heap GWorld
+ * each.  Painted over the existing platinum Carbon buttons after
+ * DrawControls so the click target stays the real ControlRef and we
+ * just add an icon on top of the platinum background.  Skip painting
+ * when the icon GWorld failed to load (graceful fallback to text-only
+ * button). */
+#include "toolbar_icons_data.h"
+static GWorldPtr macos9_btn_back_gworld = NULL;
+static GWorldPtr macos9_btn_forward_gworld = NULL;
+static GWorldPtr macos9_btn_refresh_gworld = NULL;
+static GWorldPtr macos9_btn_home_gworld = NULL;
+static Rect macos9_btn_back_src_rect;
+static Rect macos9_btn_forward_src_rect;
+static Rect macos9_btn_refresh_src_rect;
+static Rect macos9_btn_home_src_rect;
+/* fixes297d — disabled-state variants for back / forward (only ones with
+ * an "unavailable" state at the top of history).  refresh + home are
+ * always available so don't need greyed variants. */
+static GWorldPtr macos9_btn_back_g_gworld = NULL;
+static GWorldPtr macos9_btn_forward_g_gworld = NULL;
+static Rect macos9_btn_back_g_src_rect;
+static Rect macos9_btn_forward_g_src_rect;
+/* fixes297e — refresh's "alternate" state for loading animation.  Not a
+ * disabled-state variant (refresh is always actionable); used to toggle
+ * the reload icon during page loads. */
+static GWorldPtr macos9_btn_refresh_g_gworld = NULL;
+static Rect macos9_btn_refresh_g_src_rect;
+static int macos9_reload_animating = 0;
+static int macos9_reload_frame = 0;
+/* fixes297f — home dim variant when current page == home URL. */
+static GWorldPtr macos9_btn_home_g_gworld = NULL;
+static Rect macos9_btn_home_g_src_rect;
+static int  macos9_toolbar_icons_loaded = 0;
+
 /* fixes295 Phase 1b — active per-site favicon GWorld.  When NetSurf
  * resolves a page's <link rel=icon> or default /favicon.ico, set_icon
  * receives the hlcache_handle.  We pull the bitmap via
@@ -149,7 +184,9 @@ static void compute_favicon_rect(const Rect *u, Rect *o)
 void macos9_window_layout(struct gui_window *g) {
 	Rect c; short w, h, ux, ur, cb, ht; if(!g||!g->window) return;
 	GetWindowBounds(g->window, 33, &c); w=(short)(c.right-c.left); h=(short)(c.bottom-c.top);
-	ux=(short)(4+4*64); ur=(short)(w-4); SetRect(&g->url_rect, ux, 8, ur, 30);
+	/* fixes297a — toolbar buttons shrunk from 60w to 32w (icon-only),
+	 * 4px gap unchanged.  URL bar starts at x=4+4*36=148 (was 260). */
+	ux=(short)(4+4*36); ur=(short)(w-4); SetRect(&g->url_rect, ux, 8, ur, 30);
 	ht=(short)(h-15); cb=(short)(ht-16); SetRect(&g->content_rect, 0, 38, (short)(w-15), cb); SetRect(&g->status_rect, 0, cb, (short)(w-15), ht);
 	if(g->vscroll) { MoveControl(g->vscroll, (short)(w-15), 37); SizeControl(g->vscroll, 16, (short)(cb-36)); }
 	if(g->hscroll) { MoveControl(g->hscroll, -1, ht); SizeControl(g->hscroll, (short)(w-13), 16); }
@@ -368,6 +405,12 @@ void macos9_window_update_button_states(struct gui_window *g) {
 	if(g->forward_btn) { HiliteControl(g->forward_btn, (short)(g->bw && browser_window_history_forward_available(g->bw)?0:255)); Draw1Control(g->forward_btn); }
 	if(g->reload_btn) { HiliteControl(g->reload_btn, (short)(g->bw && browser_window_has_content(g->bw)?0:255)); Draw1Control(g->reload_btn); }
 	if(g->home_btn) Draw1Control(g->home_btn);
+	/* fixes297c — repaint icon overlay over every freshly-redrawn
+	 * platinum button.  Without this, every navigation / state-change
+	 * call from NetSurf core flashes the platinum chrome without the
+	 * icon on top.  Cheap (single CopyBits per button).  Same helper
+	 * we use after DrawControls in the update handler. */
+	macos9_window_draw_toolbar_icons(g);
 #endif
 }
 
@@ -449,10 +492,16 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 	g->bw=bw; if(CreateNewWindow(6, 0x1F, &b, &g->window)!=0) { free(g); return NULL; }
 	SetWRefCon(g->window,(long)g); SetPortWindowPort(g->window); SetWTitle(g->window,(const unsigned char*)"\pMacSurf");
 	g->next=window_list; window_list=g; 
-	x=4; SetRect(&b,x,8,(short)(x+60),30); g->back_btn=NewControl(g->window,&b,(const unsigned char*)"\pBack",1,0,0,1,368,(long)g); x=(short)(x+64);
-	SetRect(&b,x,8,(short)(x+60),30); g->forward_btn=NewControl(g->window,&b,(const unsigned char*)"\pFwd",1,0,0,1,368,(long)g); x=(short)(x+64);
-	SetRect(&b,x,8,(short)(x+60),30); g->reload_btn=NewControl(g->window,&b,(const unsigned char*)"\pReload",1,0,0,1,368,(long)g); x=(short)(x+64);
-	SetRect(&b,x,8,(short)(x+60),30); g->home_btn=NewControl(g->window,&b,(const unsigned char*)"\pHome",1,0,0,1,368,(long)g);
+	/* fixes297a — icon-only buttons.  Labels are empty Pascal strings so
+	 * the Carbon button paints platinum chrome only; macos9_window_draw_toolbar_icons
+	 * overlays the actual icon (back/fwd/refresh/home).  Button width
+	 * shrunk from 60 to 32 to match the 25x25 icon + a few pixels of
+	 * chrome margin.  URL bar now starts at x=4+4*36=148 (was 4+4*64=260),
+	 * gaining ~110px of address-bar width. */
+	x=4; SetRect(&b,x,8,(short)(x+32),30); g->back_btn=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,1,368,(long)g); x=(short)(x+36);
+	SetRect(&b,x,8,(short)(x+32),30); g->forward_btn=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,1,368,(long)g); x=(short)(x+36);
+	SetRect(&b,x,8,(short)(x+32),30); g->reload_btn=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,1,368,(long)g); x=(short)(x+36);
+	SetRect(&b,x,8,(short)(x+32),30); g->home_btn=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,1,368,(long)g);
 	SetRect(&b,0,0,16,16); g->vscroll=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,0,384,(long)g);
 	g->hscroll=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,0,384,(long)g);
 	macos9_window_layout(g);
@@ -529,9 +578,55 @@ static nserror macos9_gw_invalidate(struct gui_window *g, const struct rect *r) 
 static bool macos9_gw_get_scroll(struct gui_window *g, int *x, int *y) { if(x) *x=g->scroll_x; if(y) *y=g->scroll_y; return 1; }
 static nserror macos9_gw_set_scroll(struct gui_window *g, const struct rect *r) { if(r) macos9_window_scroll_to(g,r->x0,r->y0); return 0; }
 static nserror macos9_gw_get_dimensions(struct gui_window *g, int *w, int *h) { if(!g) return 0; if(w) *w=g->content_rect.right-g->content_rect.left; if(h) *h=g->content_rect.bottom-g->content_rect.top; return 0; }
+/* fixes297e — schedule callback that advances the refresh-icon animation
+ * frame and reschedules itself while the page is still loading.  Driven
+ * by macos9_schedule (NetSurf's timer registry).  Param is the
+ * gui_window* so we know which reload button to invalidate. */
+static void macos9_reload_anim_tick(void *p)
+{
+#ifdef __MACOS9__
+	struct gui_window *g = (struct gui_window *)p;
+	if (!macos9_reload_animating) return;
+	macos9_reload_frame++;
+	if (g != NULL && g->window != NULL && g->reload_btn != NULL) {
+		Rect r;
+		GetControlBounds(g->reload_btn, &r);
+		InvalWindowRect(g->window, &r);
+	}
+	if (macos9_reload_animating) {
+		macos9_schedule(200, macos9_reload_anim_tick, p);
+	}
+#else
+	(void)p;
+#endif
+}
+
 static nserror macos9_gw_event(struct gui_window *g, enum gui_window_event e) {
 	struct hlcache_handle *cur = (g && g->bw) ? browser_window_get_content(g->bw) : NULL;
 	macsurf_debug_log_writef("gw_event: e=%d current_content=%p", (int)e, cur);
+	/* fixes297e — refresh-icon loading animation hook. */
+	if (e == GW_EVENT_START_THROBBER) {
+		macos9_reload_animating = 1;
+		macos9_reload_frame = 0;
+		macos9_schedule(200, macos9_reload_anim_tick, g);
+#ifdef __MACOS9__
+		if (g != NULL && g->window != NULL && g->reload_btn != NULL) {
+			Rect r;
+			GetControlBounds(g->reload_btn, &r);
+			InvalWindowRect(g->window, &r);
+		}
+#endif
+	}
+	if (e == GW_EVENT_STOP_THROBBER) {
+		macos9_reload_animating = 0;
+#ifdef __MACOS9__
+		if (g != NULL && g->window != NULL && g->reload_btn != NULL) {
+			Rect r;
+			GetControlBounds(g->reload_btn, &r);
+			InvalWindowRect(g->window, &r);
+		}
+#endif
+	}
 	if(e==GW_EVENT_UPDATE_EXTENT||e==GW_EVENT_NEW_CONTENT||e==GW_EVENT_STOP_THROBBER) {
 		int w=0, h=0; if(g->bw && browser_window_get_extents(g->bw, false, &w, &h)==NSERROR_OK) { g->content_width=w; g->content_height=h; }
 		if(e==GW_EVENT_NEW_CONTENT) {
@@ -869,6 +964,262 @@ static void macos9_gw_set_icon(struct gui_window *g, struct hlcache_handle *icon
 	InvalWindowRect(g->window, &g->url_rect);
 #else
 	(void)g; (void)icon;
+#endif
+}
+
+/* fixes297 — decode a single PNG byte array into a permanent app-heap
+ * GWorld + populate the src rect.  Helper for macos9_window_load_toolbar_icons.
+ * Returns 1 on success, 0 on failure (out_gw stays NULL, caller skips paint
+ * for that button — graceful fallback to text-only). */
+static int macos9_decode_png_to_gworld(const unsigned char *png_bytes,
+		unsigned long png_len, GWorldPtr *out_gw, Rect *out_src_rect)
+{
+#ifdef __MACOS9__
+	extern unsigned lodepng_decode32(unsigned char **out, unsigned *w,
+			unsigned *h, const unsigned char *in,
+			unsigned long insize);
+	unsigned char *rgba = NULL;
+	unsigned w = 0, h = 0;
+	unsigned err;
+	OSErr oerr;
+	GWorldPtr saved_port;
+	GDHandle saved_gdh;
+	PixMapHandle pm;
+	long dst_rowbytes;
+	long row, col;
+	unsigned char *src_row, *dst_row;
+
+	*out_gw = NULL;
+	err = lodepng_decode32(&rgba, &w, &h, png_bytes, png_len);
+	if (err != 0 || rgba == NULL || w == 0 || h == 0) {
+		if (rgba != NULL) free(rgba);
+		return 0;
+	}
+	SetRect(out_src_rect, 0, 0, (short)w, (short)h);
+
+	GetGWorld(&saved_port, &saved_gdh);
+	oerr = NewGWorld(out_gw, 32, out_src_rect, NULL, NULL, 0);
+	if (oerr != noErr || *out_gw == NULL) {
+		free(rgba);
+		SetGWorld(saved_port, saved_gdh);
+		return 0;
+	}
+	pm = GetGWorldPixMap(*out_gw);
+	if (pm == NULL || !LockPixels(pm)) {
+		DisposeGWorld(*out_gw); *out_gw = NULL;
+		free(rgba);
+		SetGWorld(saved_port, saved_gdh);
+		return 0;
+	}
+	dst_rowbytes = (long)((*pm)->rowBytes & 0x3FFF);
+	for (row = 0; row < (long)h; row++) {
+		src_row = rgba + row * (long)w * 4L;
+		dst_row = (unsigned char *)GetPixBaseAddr(pm) + row * dst_rowbytes;
+		for (col = 0; col < (long)w; col++) {
+			unsigned char r = src_row[col * 4 + 0];
+			unsigned char gn = src_row[col * 4 + 1];
+			unsigned char b = src_row[col * 4 + 2];
+			dst_row[col * 4 + 0] = 0xFF;
+			dst_row[col * 4 + 1] = r;
+			dst_row[col * 4 + 2] = gn;
+			dst_row[col * 4 + 3] = b;
+		}
+	}
+	UnlockPixels(pm);
+	SetGWorld(saved_port, saved_gdh);
+	free(rgba);
+	return 1;
+#else
+	(void)png_bytes; (void)png_len; (void)out_gw; (void)out_src_rect;
+	return 0;
+#endif
+}
+
+/* fixes297 — decode all four toolbar icons.  Best-effort: any failure
+ * leaves its GWorld NULL and the corresponding button stays text-only. */
+void macos9_window_load_toolbar_icons(void)
+{
+#ifdef __MACOS9__
+	int ok = 0;
+	if (macos9_toolbar_icons_loaded) return;
+	ok += macos9_decode_png_to_gworld(macos9_btn_back_png,
+		macos9_btn_back_png_len,
+		&macos9_btn_back_gworld, &macos9_btn_back_src_rect);
+	ok += macos9_decode_png_to_gworld(macos9_btn_forward_png,
+		macos9_btn_forward_png_len,
+		&macos9_btn_forward_gworld, &macos9_btn_forward_src_rect);
+	ok += macos9_decode_png_to_gworld(macos9_btn_refresh_png,
+		macos9_btn_refresh_png_len,
+		&macos9_btn_refresh_gworld, &macos9_btn_refresh_src_rect);
+	ok += macos9_decode_png_to_gworld(macos9_btn_home_png,
+		macos9_btn_home_png_len,
+		&macos9_btn_home_gworld, &macos9_btn_home_src_rect);
+	/* fixes297d — disabled-state variants */
+	ok += macos9_decode_png_to_gworld(macos9_btn_back_g_png,
+		macos9_btn_back_g_png_len,
+		&macos9_btn_back_g_gworld, &macos9_btn_back_g_src_rect);
+	ok += macos9_decode_png_to_gworld(macos9_btn_forward_g_png,
+		macos9_btn_forward_g_png_len,
+		&macos9_btn_forward_g_gworld, &macos9_btn_forward_g_src_rect);
+	/* fixes297e — refresh loading-state variant */
+	ok += macos9_decode_png_to_gworld(macos9_btn_refresh_g_png,
+		macos9_btn_refresh_g_png_len,
+		&macos9_btn_refresh_g_gworld, &macos9_btn_refresh_g_src_rect);
+	/* fixes297f — home dim variant for at-home detection */
+	ok += macos9_decode_png_to_gworld(macos9_btn_home_g_png,
+		macos9_btn_home_g_png_len,
+		&macos9_btn_home_g_gworld, &macos9_btn_home_g_src_rect);
+	macos9_toolbar_icons_loaded = 1;
+	macsurf_debug_log_writef("toolbar icons loaded ok=%d/8", ok);
+#endif
+}
+
+/* fixes297 — paint a single icon GWorld over a control's left edge.
+ * The icon is centered vertically inside the control's bounds and
+ * inset 4px from the left.  Full GetGWorld/SetGWorld bracket. */
+static void paint_toolbar_icon(WindowRef window, ControlRef ctrl,
+		GWorldPtr src_gw, const Rect *src_rect)
+{
+#ifdef __MACOS9__
+	extern const BitMap *GetPortBitMapForCopyBits(CGrafPtr port);
+	Rect ctrl_bounds;
+	Rect dst_rect;
+	short icon_w, icon_h;
+	short cy;
+	GWorldPtr saved_port;
+	GDHandle saved_gdh;
+	const BitMap *src_bm;
+	const BitMap *dst_bm;
+	CGrafPtr win_port;
+
+	if (window == NULL || ctrl == NULL || src_gw == NULL || src_rect == NULL) return;
+
+	GetControlBounds(ctrl, &ctrl_bounds);
+	icon_w = (short)(src_rect->right - src_rect->left);
+	icon_h = (short)(src_rect->bottom - src_rect->top);
+	/* fixes297a — center icon both horizontally and vertically inside
+	 * the (now icon-only) control bounds. */
+	cy = (short)(ctrl_bounds.top + ((ctrl_bounds.bottom - ctrl_bounds.top) - icon_h) / 2);
+	dst_rect.left = (short)(ctrl_bounds.left + ((ctrl_bounds.right - ctrl_bounds.left) - icon_w) / 2);
+	dst_rect.top = cy;
+	dst_rect.right = (short)(dst_rect.left + icon_w);
+	dst_rect.bottom = (short)(cy + icon_h);
+
+	GetGWorld(&saved_port, &saved_gdh);
+	SetPortWindowPort(window);
+	win_port = GetWindowPort(window);
+	if (win_port == NULL) { SetGWorld(saved_port, saved_gdh); return; }
+
+	/* fixes297b — paint our own background over the platinum Carbon
+	 * button chrome.  Eliminates the platinum-visible-between-paints
+	 * flash that surfaces every time NetSurf triggers a redraw (which
+	 * happens on every dyn-hover over content links).  White fill for
+	 * classic clean look, light-grey frame for button definition. */
+	{
+		RGBColor saved_fg, saved_bg;
+		RGBColor white = {0xFFFF, 0xFFFF, 0xFFFF};
+		RGBColor frame = {0xAAAA, 0xAAAA, 0xAAAA};
+		GetForeColor(&saved_fg); GetBackColor(&saved_bg);
+		RGBForeColor(&frame); RGBBackColor(&white);
+		EraseRect(&ctrl_bounds);
+		FrameRect(&ctrl_bounds);
+		RGBForeColor(&saved_fg); RGBBackColor(&saved_bg);
+	}
+
+	dst_bm = GetPortBitMapForCopyBits(win_port);
+	src_bm = GetPortBitMapForCopyBits((CGrafPtr)src_gw);
+	if (src_bm != NULL && dst_bm != NULL) {
+		CopyBits(src_bm, dst_bm, src_rect, &dst_rect, srcCopy, NULL);
+	}
+	SetGWorld(saved_port, saved_gdh);
+#else
+	(void)window; (void)ctrl; (void)src_gw; (void)src_rect;
+#endif
+}
+
+/* fixes297 — paint all four toolbar icons over their buttons.  Called
+ * after DrawControls in the update handler, so the platinum button
+ * backgrounds and labels are already drawn underneath. */
+void macos9_window_draw_toolbar_icons(struct gui_window *g)
+{
+#ifdef __MACOS9__
+	GWorldPtr back_gw;
+	Rect *back_rect;
+	GWorldPtr fwd_gw;
+	Rect *fwd_rect;
+	int back_avail;
+	int fwd_avail;
+
+	if (g == NULL || g->window == NULL || !macos9_toolbar_icons_loaded) return;
+
+	/* fixes297d — pick coloured icon when history nav is available,
+	 * greyed icon when not.  Falls back to the coloured icon when the
+	 * grey variant failed to load. */
+	back_avail = (g->bw != NULL) &&
+		browser_window_history_back_available(g->bw);
+	fwd_avail = (g->bw != NULL) &&
+		browser_window_history_forward_available(g->bw);
+
+	if (back_avail || macos9_btn_back_g_gworld == NULL) {
+		back_gw = macos9_btn_back_gworld;
+		back_rect = &macos9_btn_back_src_rect;
+	} else {
+		back_gw = macos9_btn_back_g_gworld;
+		back_rect = &macos9_btn_back_g_src_rect;
+	}
+	if (fwd_avail || macos9_btn_forward_g_gworld == NULL) {
+		fwd_gw = macos9_btn_forward_gworld;
+		fwd_rect = &macos9_btn_forward_src_rect;
+	} else {
+		fwd_gw = macos9_btn_forward_g_gworld;
+		fwd_rect = &macos9_btn_forward_g_src_rect;
+	}
+
+	paint_toolbar_icon(g->window, g->back_btn, back_gw, back_rect);
+	paint_toolbar_icon(g->window, g->forward_btn, fwd_gw, fwd_rect);
+	/* fixes297e — toggle refresh icon between the two variants while a
+	 * page load is in progress.  macos9_reload_animating flips on
+	 * START_THROBBER and off on STOP_THROBBER; macos9_reload_frame is
+	 * advanced by the scheduled tick callback. */
+	if (macos9_reload_animating && (macos9_reload_frame & 1) &&
+	    macos9_btn_refresh_g_gworld != NULL) {
+		paint_toolbar_icon(g->window, g->reload_btn,
+			macos9_btn_refresh_g_gworld, &macos9_btn_refresh_g_src_rect);
+	} else {
+		paint_toolbar_icon(g->window, g->reload_btn,
+			macos9_btn_refresh_gworld, &macos9_btn_refresh_src_rect);
+	}
+	/* fixes297f — pick home_g when currently on the home URL.  Falls
+	 * back to coloured home on URL access failure or if home_g didn't
+	 * load.  MacSurf's nsurl_compare is the 3-arg bool-returning form,
+	 * not NetSurf upstream's 4-arg out-param form. */
+	{
+		int at_home = 0;
+		if (g->bw != NULL && macos9_btn_home_g_gworld != NULL) {
+			struct nsurl *cur = browser_window_access_url(g->bw);
+			struct nsurl *home = NULL;
+			if (cur != NULL &&
+			    nsurl_create(MACSURF_HOME_URL, &home) == NSERROR_OK &&
+			    home != NULL) {
+				if (nsurl_compare(cur, home,
+						NSURL_WITH_FRAGMENT)) {
+					at_home = 1;
+				}
+				nsurl_unref(home);
+			}
+		}
+		if (at_home) {
+			paint_toolbar_icon(g->window, g->home_btn,
+				macos9_btn_home_g_gworld,
+				&macos9_btn_home_g_src_rect);
+		} else {
+			paint_toolbar_icon(g->window, g->home_btn,
+				macos9_btn_home_gworld,
+				&macos9_btn_home_src_rect);
+		}
+	}
+#else
+	(void)g;
 #endif
 }
 
