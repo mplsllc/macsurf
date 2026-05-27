@@ -116,6 +116,19 @@ static GWorldPtr macos9_default_favicon_gworld = NULL;
 static Rect macos9_default_favicon_src_rect;
 static int  macos9_default_favicon_loaded = 0;
 
+/* fixes295 Phase 1b — active per-site favicon GWorld.  When NetSurf
+ * resolves a page's <link rel=icon> or default /favicon.ico, set_icon
+ * receives the hlcache_handle.  We pull the bitmap via
+ * content_get_bitmap (Phase 1a makes this work for PNG natural-size),
+ * build a fresh 16x16 GWorld from the source, and swap the active
+ * pointer.  draw_favicon prefers the active over the default.  On
+ * set_icon(NULL) or navigate-away, dispose active and revert.
+ *
+ * Single-window scope.  Multi-window distinct-favicons-per-window is a
+ * separate enhancement; today MacSurf typically runs one window. */
+static GWorldPtr macos9_active_favicon_gworld = NULL;
+static Rect macos9_active_favicon_src_rect;
+
 struct gui_window *macos9_find_window(WindowRef w) { struct gui_window *g; for(g=window_list;g;g=g->next) if(g->window==w) return g; return NULL; }
 struct gui_window *macos9_window_list_head(void) { return window_list; }
 static void set_status_text(struct gui_window *g, const char *m) { if(!m) g->status[0]=0; else { strncpy(g->status,m,127); g->status[127]=0; } }
@@ -703,11 +716,23 @@ void macos9_window_draw_favicon(struct gui_window *g)
 	const BitMap *src_bm;
 	const BitMap *dst_bm;
 	CGrafPtr win_port;
+	GWorldPtr src_gworld;
+	Rect *src_rect_ptr;
 	Rect dst_rect;
 
 	if (g == NULL || g->window == NULL) return;
-	if (!macos9_default_favicon_loaded ||
-	    macos9_default_favicon_gworld == NULL) return;
+
+	/* fixes295 Phase 1b — prefer active per-site favicon over default. */
+	if (macos9_active_favicon_gworld != NULL) {
+		src_gworld = macos9_active_favicon_gworld;
+		src_rect_ptr = &macos9_active_favicon_src_rect;
+	} else if (macos9_default_favicon_loaded &&
+		   macos9_default_favicon_gworld != NULL) {
+		src_gworld = macos9_default_favicon_gworld;
+		src_rect_ptr = &macos9_default_favicon_src_rect;
+	} else {
+		return;
+	}
 
 	compute_favicon_rect(&g->url_rect, &dst_rect);
 
@@ -717,16 +742,13 @@ void macos9_window_draw_favicon(struct gui_window *g)
 	if (win_port == NULL) { SetGWorld(saved_port, saved_gdh); return; }
 
 	dst_bm = GetPortBitMapForCopyBits(win_port);
-	src_bm = GetPortBitMapForCopyBits(
-		(CGrafPtr)macos9_default_favicon_gworld);
+	src_bm = GetPortBitMapForCopyBits((CGrafPtr)src_gworld);
 	if (src_bm == NULL || dst_bm == NULL) {
 		SetGWorld(saved_port, saved_gdh);
 		return;
 	}
 
-	CopyBits(src_bm, dst_bm,
-		&macos9_default_favicon_src_rect, &dst_rect,
-		srcCopy, NULL);
+	CopyBits(src_bm, dst_bm, src_rect_ptr, &dst_rect, srcCopy, NULL);
 
 	SetGWorld(saved_port, saved_gdh);
 #else
@@ -734,9 +756,125 @@ void macos9_window_draw_favicon(struct gui_window *g)
 #endif
 }
 
+/* fixes295 Phase 1b — release the active per-site favicon GWorld and
+ * revert to the default.  Called on set_icon(NULL), navigate-away, and
+ * window destroy. */
+static void active_favicon_release(void)
+{
+#ifdef __MACOS9__
+	if (macos9_active_favicon_gworld != NULL) {
+		DisposeGWorld(macos9_active_favicon_gworld);
+		macos9_active_favicon_gworld = NULL;
+	}
+	SetRect(&macos9_active_favicon_src_rect, 0, 0, 0, 0);
+#endif
+}
+
+/* fixes295 Phase 1b — pull the favicon bitmap from the hlcache_handle,
+ * bake it into a fresh GWorld at the bitmap's natural size, swap into
+ * macos9_active_favicon_gworld replacing any previous per-site icon. */
+static int active_favicon_build(struct hlcache_handle *icon)
+{
+#ifdef __MACOS9__
+	extern struct bitmap *content_get_bitmap(struct hlcache_handle *h);
+	extern unsigned char *macos9_bitmap_get_buffer(void *bitmap);
+	extern int macos9_bitmap_get_width(void *bitmap);
+	extern int macos9_bitmap_get_height(void *bitmap);
+	extern size_t macos9_bitmap_get_rowstride(void *bitmap);
+
+	struct bitmap *bm;
+	unsigned char *buf;
+	int bw, bh;
+	long rowstride;
+	GWorldPtr new_gw = NULL;
+	OSErr oerr;
+	GWorldPtr saved_port;
+	GDHandle saved_gdh;
+	PixMapHandle pm;
+	long dst_rowbytes;
+	long row, col;
+	unsigned char *src_row, *dst_row;
+	Rect new_src_rect;
+
+	if (icon == NULL) return 0;
+	bm = content_get_bitmap(icon);
+	if (bm == NULL) {
+		MS_LOG("active_favicon_build: content_get_bitmap=NULL");
+		return 0;
+	}
+	buf = macos9_bitmap_get_buffer((void *)bm);
+	bw = macos9_bitmap_get_width((void *)bm);
+	bh = macos9_bitmap_get_height((void *)bm);
+	rowstride = (long)macos9_bitmap_get_rowstride((void *)bm);
+	if (buf == NULL || bw <= 0 || bh <= 0) return 0;
+	if (bw > 256 || bh > 256) return 0;
+
+	SetRect(&new_src_rect, 0, 0, (short)bw, (short)bh);
+
+	GetGWorld(&saved_port, &saved_gdh);
+	oerr = NewGWorld(&new_gw, 32, &new_src_rect, NULL, NULL, 0);
+	if (oerr != noErr || new_gw == NULL) {
+		SetGWorld(saved_port, saved_gdh);
+		return 0;
+	}
+	pm = GetGWorldPixMap(new_gw);
+	if (pm == NULL || !LockPixels(pm)) {
+		DisposeGWorld(new_gw);
+		SetGWorld(saved_port, saved_gdh);
+		return 0;
+	}
+	dst_rowbytes = (long)((*pm)->rowBytes & 0x3FFF);
+	for (row = 0; row < bh; row++) {
+		src_row = buf + row * rowstride;
+		dst_row = (unsigned char *)GetPixBaseAddr(pm) + row * dst_rowbytes;
+		for (col = 0; col < bw; col++) {
+			unsigned char r = src_row[col * 4 + 0];
+			unsigned char gn = src_row[col * 4 + 1];
+			unsigned char b = src_row[col * 4 + 2];
+			dst_row[col * 4 + 0] = 0xFF;
+			dst_row[col * 4 + 1] = r;
+			dst_row[col * 4 + 2] = gn;
+			dst_row[col * 4 + 3] = b;
+		}
+	}
+	UnlockPixels(pm);
+	SetGWorld(saved_port, saved_gdh);
+
+	/* Swap atomically: dispose old active (if any), install new. */
+	active_favicon_release();
+	macos9_active_favicon_gworld = new_gw;
+	macos9_active_favicon_src_rect = new_src_rect;
+	macsurf_debug_log_writef(
+		"active_favicon_build: OK %dx%d gworld=%p",
+		bw, bh, (void *)new_gw);
+	return 1;
+#else
+	(void)icon;
+	return 0;
+#endif
+}
+
+/* fixes295 Phase 1b — NetSurf set_icon callback. */
+static void macos9_gw_set_icon(struct gui_window *g, struct hlcache_handle *icon)
+{
+#ifdef __MACOS9__
+	if (g == NULL || g->window == NULL) return;
+	macsurf_debug_log_writef("set_icon: icon=%p", (void *)icon);
+	if (icon == NULL) {
+		active_favicon_release();
+	} else if (!active_favicon_build(icon)) {
+		/* Build failed (bitmap not yet decoded, non-PNG, etc.) — keep
+		 * whatever active we had; will fall back to default if none. */
+	}
+	InvalWindowRect(g->window, &g->url_rect);
+#else
+	(void)g; (void)icon;
+#endif
+}
+
 static struct gui_window_table wt = {
 	macos9_window_create, macos9_window_destroy, macos9_gw_invalidate, macos9_gw_get_scroll,
 	macos9_gw_set_scroll, macos9_gw_get_dimensions, macos9_gw_event, macos9_gw_set_title,
-	macos9_gw_set_url, (void*)0, macos9_gw_set_status, macos9_gw_set_pointer, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0
+	macos9_gw_set_url, macos9_gw_set_icon, macos9_gw_set_status, macos9_gw_set_pointer, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0
 };
 struct gui_window_table *macos9_window_table = &wt;

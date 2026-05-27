@@ -914,6 +914,314 @@ macos9_png_decode_to_bitmap(const unsigned char *data, size_t size,
 	return NSERROR_OK;
 }
 
+/* fixes295f — BMP-DIB-inside-ICO direct decoder.
+ *
+ * Small ICO favicons (16x16, 32x32, 48x48) almost universally embed
+ * BMP-DIB, not PNG.  Vista+ added PNG-inside-ICO mainly for 256x256.
+ * Real-world web favicons are the small sizes, so we MUST handle
+ * BMP-DIB to make the favicon UI useful on more than mactrove and a
+ * handful of yahoo-style PNG-in-ICO sites.
+ *
+ * The DIB-in-ICO format:
+ *   BITMAPINFOHEADER (40 bytes): width, height (DOUBLED for XOR+AND),
+ *     planes, bpp, compression, image size, ppm x/y, used/important.
+ *   Palette (4 bytes per entry, BGRX): present if bpp <= 8.
+ *   XOR mask (image pixels), BOTTOM-UP.
+ *   AND mask (1-bit transparency).  Skipped when bpp == 32 (alpha
+ *     comes from the high byte of each pixel).
+ *
+ * Scope: 32bpp BGRA only.  16/8/4/1 bpp palette ICOs are legacy; if a
+ * site uses one, this decoder skips and the favicon falls back to the
+ * default.  Logged so we can quantify.
+ *
+ * Returns a NetSurf bitmap on success (caller assigns to qti->bitmap),
+ * or NULL.  Always reports dimensions via out_w/out_h. */
+static void *macos9_ico_decode_dib_32bpp(const unsigned char *data, long size,
+		int icon_w, int icon_h, int *out_w, int *out_h)
+{
+	long hdr_size;
+	long dib_w, dib_h;
+	int planes, bpp;
+	long compression;
+	int real_w, real_h;
+	void *bm;
+	unsigned char *dst_buf;
+	long dst_rowbytes;
+	long y, x;
+	const unsigned char *src_pixels;
+	long src_stride;
+
+	*out_w = 0;
+	*out_h = 0;
+
+	if (size < 40) return NULL;
+	hdr_size = (long)data[0] | ((long)data[1] << 8) |
+	           ((long)data[2] << 16) | ((long)data[3] << 24);
+	if (hdr_size != 40) {
+		macsurf_debug_log_writef("ico_dib: unsupported hdr_size=%ld",
+			hdr_size);
+		return NULL;
+	}
+	dib_w = (long)data[4] | ((long)data[5] << 8) |
+	        ((long)data[6] << 16) | ((long)data[7] << 24);
+	dib_h = (long)data[8] | ((long)data[9] << 8) |
+	        ((long)data[10] << 16) | ((long)data[11] << 24);
+	planes = (int)data[12] | ((int)data[13] << 8);
+	bpp = (int)data[14] | ((int)data[15] << 8);
+	compression = (long)data[16] | ((long)data[17] << 8) |
+	              ((long)data[18] << 16) | ((long)data[19] << 24);
+
+	if (dib_w <= 0 || dib_w > 256) return NULL;
+	if (dib_h <= 0 || dib_h > 512) return NULL;     /* doubled */
+	if (planes != 1) return NULL;
+	if (compression != 0) return NULL;              /* uncompressed only */
+
+	real_w = (int)dib_w;
+	/* ICO convention: DIB height is 2*icon_height (XOR mask + AND mask
+	 * planes concatenated).  Use icon directory's height when available,
+	 * else assume halved. */
+	if (icon_h > 0 && icon_h <= (int)(dib_h / 2)) {
+		real_h = icon_h;
+	} else {
+		real_h = (int)(dib_h / 2);
+	}
+	if (real_h <= 0) return NULL;
+	(void)icon_w;
+
+	if (bpp != 32 && bpp != 24) {
+		macsurf_debug_log_writef(
+			"ico_dib: skipping bpp=%d (Phase 1d/h: 32/24 only)", bpp);
+		return NULL;
+	}
+
+	/* Compute XOR-plane row stride (4-byte aligned) per format. */
+	if (bpp == 32) {
+		src_stride = (long)real_w * 4L;
+	} else {
+		/* 24bpp BGR, padded to 4-byte boundary */
+		src_stride = (((long)real_w * 3L) + 3L) & ~3L;
+	}
+
+	/* AND-mask is appended after XOR plane for non-32bpp.  1 bit per
+	 * pixel, rounded up to whole bytes, then to 4-byte boundary per row.
+	 * 32bpp ICO carries alpha in the high byte of each pixel — no AND
+	 * mask plane. */
+	{
+		long and_stride = 0;
+		long total;
+		if (bpp != 32) {
+			and_stride = (((long)real_w + 31L) / 32L) * 4L;
+		}
+		total = 40L + src_stride * (long)real_h
+		      + and_stride * (long)real_h;
+		if (total > size) {
+			macsurf_debug_log_writef(
+				"ico_dib: data short need=%ld have=%ld bpp=%d",
+				total, size, bpp);
+			return NULL;
+		}
+	}
+
+	if (guit == NULL || guit->bitmap == NULL ||
+	    guit->bitmap->create == NULL ||
+	    guit->bitmap->get_buffer == NULL ||
+	    guit->bitmap->get_rowstride == NULL ||
+	    guit->bitmap->destroy == NULL) {
+		return NULL;
+	}
+
+	bm = guit->bitmap->create(real_w, real_h, BITMAP_CLEAR);
+	if (bm == NULL) return NULL;
+
+	dst_buf = (unsigned char *)guit->bitmap->get_buffer(bm);
+	dst_rowbytes = (long)guit->bitmap->get_rowstride(bm);
+	if (dst_buf == NULL || dst_rowbytes <= 0) {
+		guit->bitmap->destroy(bm);
+		return NULL;
+	}
+
+	src_pixels = data + 40;
+
+	if (bpp == 32) {
+		/* 32bpp BGRA, bottom-up.  Alpha in high byte. */
+		for (y = 0; y < real_h; y++) {
+			long src_y = (long)real_h - 1L - y;
+			const unsigned char *src_row =
+				src_pixels + src_y * src_stride;
+			unsigned char *dst_row = dst_buf + y * dst_rowbytes;
+			for (x = 0; x < real_w; x++) {
+				unsigned char b = src_row[x * 4 + 0];
+				unsigned char g = src_row[x * 4 + 1];
+				unsigned char r = src_row[x * 4 + 2];
+				unsigned char a = src_row[x * 4 + 3];
+				dst_row[x * 4 + 0] = r;
+				dst_row[x * 4 + 1] = g;
+				dst_row[x * 4 + 2] = b;
+				dst_row[x * 4 + 3] = a;
+			}
+		}
+	} else {
+		/* 24bpp BGR, bottom-up, with separate 1-bit AND mask plane
+		 * (also bottom-up) for transparency.  AND bit 0 = opaque,
+		 * 1 = transparent.  fixes295h. */
+		const unsigned char *and_plane;
+		long and_stride;
+		and_stride = (((long)real_w + 31L) / 32L) * 4L;
+		and_plane = src_pixels + src_stride * (long)real_h;
+		for (y = 0; y < real_h; y++) {
+			long src_y = (long)real_h - 1L - y;
+			const unsigned char *src_row =
+				src_pixels + src_y * src_stride;
+			const unsigned char *and_row =
+				and_plane + src_y * and_stride;
+			unsigned char *dst_row = dst_buf + y * dst_rowbytes;
+			for (x = 0; x < real_w; x++) {
+				unsigned char b = src_row[x * 3 + 0];
+				unsigned char g = src_row[x * 3 + 1];
+				unsigned char r = src_row[x * 3 + 2];
+				unsigned char a;
+				/* AND mask bit; MSB-first within each byte. */
+				int and_byte = (int)(x / 8);
+				int and_bit = 7 - (int)(x & 7);
+				int and_val = (and_row[and_byte] >> and_bit) & 1;
+				a = and_val ? 0x00 : 0xFF;
+				dst_row[x * 4 + 0] = r;
+				dst_row[x * 4 + 1] = g;
+				dst_row[x * 4 + 2] = b;
+				dst_row[x * 4 + 3] = a;
+			}
+		}
+	}
+
+	if (guit->bitmap->set_opaque != NULL) {
+		guit->bitmap->set_opaque(bm, false);
+	}
+
+	*out_w = real_w;
+	*out_h = real_h;
+	macsurf_debug_log_writef("ico_dib: decoded %dbpp %dx%d",
+		bpp, real_w, real_h);
+	return bm;
+}
+
+/* fixes295d — minimal Microsoft ICO container parser.
+ *
+ * ICO format:
+ *   ICONDIR (6 bytes): reserved(2)=0, type(2)=1, count(2)
+ *   ICONDIRENTRY[count] (16 bytes each):
+ *     width(1), height(1), colours(1), reserved(1)=0,
+ *     planes(2), bpp(2), size(4), offset(4)
+ *   Image data: BMP-DIB (legacy) or PNG (Vista+).  Web favicons in 2026
+ *   are overwhelmingly PNG-inside-ICO.
+ *
+ * Strategy: detect ICONDIR magic, pick the entry closest to 16x16, check
+ * if its embedded data starts with PNG magic.  If so, replace
+ * qti->compressed in place with just the PNG bytes — the existing PNG
+ * handler downstream then treats it as plain PNG.  BMP-DIB-inside-ICO
+ * is not handled in Phase 1d (could be added later with a small DIB
+ * decoder).  Returns 1 on successful PNG extraction, 0 otherwise.
+ *
+ * Caller MUST HUnlock qti->compressed before calling and HLock after. */
+static int macos9_ico_extract_png(macos9_qt_image_content *qti)
+{
+	const unsigned char *src;
+	long src_size;
+	unsigned int count;
+	unsigned int i;
+	unsigned int best_idx = 0;
+	long best_score = -1;
+	unsigned long offset = 0;
+	unsigned long size = 0;
+	Handle new_handle;
+
+	src_size = GetHandleSize(qti->compressed);
+	if (src_size < 6 + 16 + 8) return 0;
+
+	HLock(qti->compressed);
+	src = (const unsigned char *)*qti->compressed;
+
+	/* ICONDIR magic: 00 00 01 00 (ICO type 1) */
+	if (src[0] != 0 || src[1] != 0 || src[2] != 1 || src[3] != 0) {
+		HUnlock(qti->compressed);
+		return 0;
+	}
+	count = (unsigned int)src[4] | ((unsigned int)src[5] << 8);
+	if (count == 0 || count > 64) {
+		HUnlock(qti->compressed);
+		return 0;
+	}
+	if (src_size < 6 + (long)count * 16) {
+		HUnlock(qti->compressed);
+		return 0;
+	}
+
+	/* Score each entry: prefer 16x16, then 32, 24, smallest deviation. */
+	for (i = 0; i < count; i++) {
+		const unsigned char *e = src + 6 + i * 16;
+		unsigned int ew = e[0] == 0 ? 256 : (unsigned int)e[0];
+		unsigned int eh = e[1] == 0 ? 256 : (unsigned int)e[1];
+		long score;
+		if (ew == 16 && eh == 16) score = 1000;
+		else if (ew == 32 && eh == 32) score = 900;
+		else if (ew == 24 && eh == 24) score = 800;
+		else if (ew == 48 && eh == 48) score = 700;
+		else if (ew == 64 && eh == 64) score = 600;
+		else score = 100 - (long)(ew > 16 ? ew - 16 : 16 - ew);
+		if (score > best_score) {
+			best_score = score;
+			best_idx = i;
+		}
+	}
+
+	{
+		const unsigned char *e = src + 6 + best_idx * 16;
+		size   = (unsigned long)e[ 8] | ((unsigned long)e[ 9] <<  8) |
+		         ((unsigned long)e[10] << 16) | ((unsigned long)e[11] << 24);
+		offset = (unsigned long)e[12] | ((unsigned long)e[13] <<  8) |
+		         ((unsigned long)e[14] << 16) | ((unsigned long)e[15] << 24);
+	}
+
+	if (size < 8 || offset + size > (unsigned long)src_size) {
+		HUnlock(qti->compressed);
+		return 0;
+	}
+
+	/* Check embedded data magic. */
+	{
+		const unsigned char *eb = src + offset;
+		if (eb[0] != 0x89 || eb[1] != 0x50 ||
+		    eb[2] != 0x4E || eb[3] != 0x47) {
+			/* Not PNG — BMP-DIB or other.  fixes295f: use %d
+			 * since the minimal formatter doesn't support %X. */
+			macsurf_debug_log_writef(
+				"img convert: ICO entry %d not PNG (bytes %d %d %d %d)",
+				(int)best_idx,
+				(int)eb[0], (int)eb[1], (int)eb[2], (int)eb[3]);
+			HUnlock(qti->compressed);
+			return 0;
+		}
+	}
+
+	/* Allocate replacement handle with just the embedded PNG. */
+	new_handle = NewHandle((Size)size);
+	if (new_handle == NULL) {
+		HUnlock(qti->compressed);
+		return 0;
+	}
+	HLock(new_handle);
+	BlockMoveData(src + offset, *new_handle, (Size)size);
+	HUnlock(new_handle);
+
+	HUnlock(qti->compressed);
+	DisposeHandle(qti->compressed);
+	qti->compressed = new_handle;
+
+	macsurf_debug_log_writef(
+		"img convert: ICO entry %d extracted PNG %lu bytes",
+		(int)best_idx, size);
+	return 1;
+}
+
 static bool
 macos9_qt_image_convert(struct content *c)
 {
@@ -934,6 +1242,99 @@ macos9_qt_image_convert(struct content *c)
 		MS_LOG("img convert: no bytes");
 		content_broadcast_error(c, NSERROR_INVALID, NULL);
 		return false;
+	}
+
+	/* fixes295d — ICO unwrap.  If the bytes are a Microsoft ICO with an
+	 * embedded PNG, replace qti->compressed in place with just the PNG;
+	 * the PNG handler below takes over.  fixes295f: if the ICO embeds
+	 * BMP-DIB (the common 16x16/32x32 case), decode directly into
+	 * qti->bitmap and short-circuit the rest of convert. */
+	if (!macos9_ico_extract_png(qti)) {
+		/* Try BMP-DIB-inside-ICO direct decode.  Walk the ICO
+		 * directory the same way; if entry is BMP-DIB (i.e. not PNG
+		 * magic at offset), feed bytes to the DIB decoder. */
+		long sz = GetHandleSize(qti->compressed);
+		HLock(qti->compressed);
+		{
+			const unsigned char *s = (const unsigned char *)*qti->compressed;
+			if (sz >= 22 && s[0] == 0 && s[1] == 0 &&
+			    s[2] == 1 && s[3] == 0) {
+				unsigned int cnt = (unsigned int)s[4] |
+					((unsigned int)s[5] << 8);
+				unsigned int j;
+				int picked_w = 0, picked_h = 0;
+				long picked_off = 0, picked_size = 0;
+				long picked_score = -1;
+				if (cnt > 0 && cnt <= 64 &&
+				    sz >= 6 + (long)cnt * 16) {
+					for (j = 0; j < cnt; j++) {
+						const unsigned char *e =
+							s + 6 + j * 16;
+						int ew = e[0] == 0 ? 256 : (int)e[0];
+						int eh = e[1] == 0 ? 256 : (int)e[1];
+						long esize = (long)e[8] |
+							((long)e[9] << 8) |
+							((long)e[10] << 16) |
+							((long)e[11] << 24);
+						long eoff = (long)e[12] |
+							((long)e[13] << 8) |
+							((long)e[14] << 16) |
+							((long)e[15] << 24);
+						long score;
+						if (ew == 16 && eh == 16) score = 1000;
+						else if (ew == 32 && eh == 32) score = 900;
+						else if (ew == 24 && eh == 24) score = 800;
+						else if (ew == 48 && eh == 48) score = 700;
+						else score = 100 - (ew > 16 ? ew - 16 : 16 - ew);
+						if (score > picked_score &&
+						    eoff + esize <= sz) {
+							picked_score = score;
+							picked_w = ew;
+							picked_h = eh;
+							picked_off = eoff;
+							picked_size = esize;
+						}
+					}
+				}
+				if (picked_size > 0) {
+					int dec_w = 0, dec_h = 0;
+					void *new_bm = macos9_ico_decode_dib_32bpp(
+						s + picked_off, picked_size,
+						picked_w, picked_h,
+						&dec_w, &dec_h);
+					if (new_bm != NULL && dec_w > 0 && dec_h > 0) {
+						HUnlock(qti->compressed);
+						/* Populate qti directly and short-circuit
+						 * the rest of convert.  fixes295g — also
+						 * call content_set_ready/done/status so
+						 * NetSurf core marks the content DONE and
+						 * fires the favicon set_icon callback.
+						 * Without these the content stays at
+						 * LOADING forever and set_icon never sees
+						 * the favicon handle. */
+						qti->bitmap = new_bm;
+						qti->bitmap_w = dec_w;
+						qti->bitmap_h = dec_h;
+						qti->is_png_deferred = false;
+						qti->wants_alpha = true;
+						c->width = dec_w;
+						c->height = dec_h;
+						macsurf_debug_log_writef(
+							"img convert: ICO/BMP-DIB %dx%d direct",
+							dec_w, dec_h);
+						{
+							extern long macsurf__site_img_ok;
+							macsurf__site_img_ok++;
+						}
+						content_set_ready(c);
+						content_set_done(c);
+						content_set_status(c, "");
+						return true;
+					}
+				}
+			}
+		}
+		HUnlock(qti->compressed);
 	}
 
 	src_size = GetHandleSize(qti->compressed);
@@ -1525,6 +1926,104 @@ macos9_qt_image_type(void)
 	return CONTENT_IMAGE;
 }
 
+/* fixes295 — Phase 1a: lazy-decode get_internal mirroring NetSurf's
+ * image_cache_get_bitmap (content/handlers/image/image_cache.c:346).
+ *
+ * Pre-fixes295 this slot was NULL because our QT image handler defers
+ * decode until an <img> redraw supplies display-size dimensions.
+ * content_get_bitmap (content/content.c:1287) returned NULL for every
+ * caller, which broke the favicon set_icon path: NetSurf can hand us an
+ * hlcache_handle whose content is "done" but whose bitmap hasn't yet
+ * been materialised — there's no <img> in the page that drove a redraw
+ * decode.
+ *
+ * The fix: if qti->bitmap is already set, return it (fast path).
+ * Otherwise, if we have the compressed bytes and we know it's a PNG
+ * (qti->is_png_deferred set by macos9_qt_image_convert), decode at
+ * NATURAL size right here, cache on qti, return.  Mirrors what
+ * image_cache_get_bitmap does for the standard NetSurf image handlers.
+ *
+ * Scope limit: PNG only.  QT-importer formats (JPEG/GIF/BMP/TIFF) still
+ * return NULL because the redraw path's needs_decode logic is tied to
+ * display dimensions that aren't available outside a redraw context.
+ * Real-world favicons are overwhelmingly PNG or ICO; ICO is a separate
+ * MIME-registration item.
+ *
+ * The const qualifier on c is part of the content_handler vtable; we
+ * cast away to mutate qti->bitmap.  NetSurf's image_cache_get_bitmap
+ * does the same thing for the same reason. */
+static void *
+macos9_qt_image_get_internal(const struct content *c, void *context)
+{
+	macos9_qt_image_content *qti;
+	nserror derr;
+	int nat_w, nat_h;
+	void *new_bitmap;
+	int new_w, new_h;
+
+	(void)context;
+	if (c == NULL) return NULL;
+	qti = (macos9_qt_image_content *)c;
+
+	if (qti->bitmap != NULL) return qti->bitmap;
+
+	nat_w = (int)c->width;
+	nat_h = (int)c->height;
+	if (nat_w <= 0 || nat_h <= 0) return NULL;
+
+	if (qti->is_png_deferred) {
+		/* PNG path — decode from compressed bytes at natural size. */
+		if (qti->compressed == NULL) return NULL;
+		new_bitmap = NULL;
+		new_w = 0;
+		new_h = 0;
+		HLock(qti->compressed);
+		derr = macos9_png_decode_to_bitmap(
+			(const unsigned char *)*qti->compressed,
+			(size_t)GetHandleSize(qti->compressed),
+			&new_bitmap, &new_w, &new_h);
+		HUnlock(qti->compressed);
+		if (derr != NSERROR_OK || new_bitmap == NULL) {
+			macsurf_debug_log_writef(
+				"get_internal: png natural decode FAIL nat=%dx%d",
+				nat_w, nat_h);
+			return NULL;
+		}
+		qti->bitmap = new_bitmap;
+		qti->bitmap_w = new_w;
+		qti->bitmap_h = new_h;
+		macsurf_debug_log_writef(
+			"get_internal: png natural decode OK %dx%d", new_w, new_h);
+		return new_bitmap;
+	}
+
+	/* fixes295c — QT-path lazy decode for JPEG/GIF/BMP/TIFF/ICO.
+	 * qti->importer was opened by macos9_qt_image_convert and stays
+	 * alive on the content; we decode at natural size into a fresh
+	 * bitmap.  No LRU integration here — favicons are tiny (16x16
+	 * = 1KB), the cache pressure is negligible. */
+	if (qti->importer != NULL) {
+		new_bitmap = NULL;
+		derr = macos9_qt_decode_to_bitmap(qti->importer,
+			nat_w, nat_h, qti->wants_alpha, &new_bitmap);
+		if (derr != NSERROR_OK || new_bitmap == NULL) {
+			macsurf_debug_log_writef(
+				"get_internal: qt natural decode FAIL nat=%dx%d",
+				nat_w, nat_h);
+			return NULL;
+		}
+		qti->bitmap = new_bitmap;
+		qti->bitmap_w = nat_w;
+		qti->bitmap_h = nat_h;
+		macsurf_debug_log_writef(
+			"get_internal: qt natural decode OK %dx%d",
+			nat_w, nat_h);
+		return new_bitmap;
+	}
+
+	return NULL;
+}
+
 static bool
 macos9_qt_image_is_opaque(struct content *c)
 {
@@ -1573,7 +2072,7 @@ static const struct content_handler macos9_qt_image_handler = {
 	NULL,                          /* textselection_redraw */
 	NULL,                          /* textselection_copy */
 	NULL,                          /* textselection_get_end */
-	NULL,                          /* get_internal */
+	macos9_qt_image_get_internal,  /* get_internal — fixes295 */
 	macos9_qt_image_is_opaque,     /* is_opaque */
 	false                          /* no_share */
 };
@@ -1589,7 +2088,17 @@ static const char *macos9_qt_image_mime[] = {
 	"image/x-bmp",
 	"image/x-ms-bmp",
 	"image/tiff",
-	"image/x-tiff"
+	"image/x-tiff",
+	/* fixes295c — Microsoft ICO container.  Required for legacy
+	 * /favicon.ico endpoints (macintoshgarden, frogfind, google,
+	 * etc.).  We rely on QuickTime's Graphics Importer to decode;
+	 * if QT doesn't have the importer, content_factory still creates
+	 * a content object, our convert path tries the QT importer, and
+	 * if it fails we just don't get a favicon (graceful fallback to
+	 * the default).  ICO native parsing is a follow-up if QT proves
+	 * unable. */
+	"image/x-icon",
+	"image/vnd.microsoft.icon"
 };
 
 nserror image_init(void)
