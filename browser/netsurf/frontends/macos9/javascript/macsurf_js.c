@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <string.h>
+#include "utils/errors.h"
 #include "macos9.h"
 #include "duktape.h"
 #include "macsurf_debug.h"
@@ -8,13 +9,22 @@
 
 #ifdef WITH_DUKTAPE
 
+struct dom_event;
+struct dom_document;
+struct dom_node;
+struct dom_element;
+struct dom_string;
+
 struct jsheap {
 	duk_context *ctx;
+	int timeout;
 };
 
 struct jsthread {
 	struct jsheap *heap;
 	duk_context *ctx;
+	void *win_priv;
+	void *doc_priv;
 };
 
 static struct jsheap *global_heap = NULL;
@@ -185,29 +195,115 @@ static void register_base64(duk_context *ctx)
 	duk_pop(ctx);
 }
 
-struct jsheap *js_new_heap(void) {
-	struct jsheap *heap = (struct jsheap *)calloc(1, sizeof(*heap)); if (!heap) return NULL;
-	heap->ctx = duk_create_heap_default(); if (!heap->ctx) { free(heap); return NULL; }
+/* fixes289: NetSurf-API surface.  These names are the actual symbols
+ * NetSurf core links against (desktop/browser_window.c, html/script.c,
+ * etc.).  Pre-fixes289 these were provided by js_stub.c as no-ops, so
+ * Duktape was linked into the binary but never reached by <script>
+ * tags.  js_stub.c body is now gated on !WITH_DUKTAPE; when Duktape
+ * is on these definitions own the names. */
+
+void js_initialise(void) { MS_LOG("js: initialise"); }
+void js_finalise(void) { MS_LOG("js: finalise"); }
+
+nserror js_newheap(int timeout, struct jsheap **out_heap)
+{
+	struct jsheap *heap;
+	if (out_heap == NULL) return NSERROR_BAD_PARAMETER;
+	*out_heap = NULL;
+	heap = (struct jsheap *)calloc(1, sizeof(*heap));
+	if (heap == NULL) return NSERROR_NOMEM;
+	heap->ctx = duk_create_heap_default();
+	if (heap->ctx == NULL) { free(heap); return NSERROR_NOMEM; }
+	heap->timeout = timeout;
 	register_console(heap->ctx);
 	register_navigator(heap->ctx);
 	register_base64(heap->ctx);
-	global_heap = heap; return heap;
+	global_heap = heap;
+	*out_heap = heap;
+	MS_LOG("js: heap created");
+	return NSERROR_OK;
 }
-void js_destroy_heap(struct jsheap *heap) { if (!heap) return; if (heap->ctx) duk_destroy_heap(heap->ctx); if (global_heap == heap) global_heap = NULL; free(heap); }
-struct jsthread *js_new_thread(struct jsheap *heap) {
-	struct jsthread *thread = (struct jsthread *)calloc(1, sizeof(*thread)); if (!thread) return NULL;
-	thread->heap = heap; thread->ctx = heap->ctx; return thread;
-}
-void js_destroy_thread(struct jsthread *thread) { free(thread); }
 
-/* js_exec is provided by js_stub.c (NetSurf-compatible no-op stub) regardless
- * of WITH_DUKTAPE.  Real Duktape evaluation goes through macsurf_js_exec()
- * declared in macsurf_js.h, which has the correct internal signature. */
-
-bool macsurf_js_exec_script(struct jsthread *thread, const char *txt, size_t len) {
-	if (!thread || !txt) return (bool)0;
-	duk_push_lstring(thread->ctx, txt, len);
-	if (duk_peval(thread->ctx) != 0) { MS_LOG(duk_safe_to_string(thread->ctx, -1)); duk_pop(thread->ctx); return (bool)0; }
-	duk_pop(thread->ctx); return (bool)1;
+void js_destroyheap(struct jsheap *heap)
+{
+	if (heap == NULL) return;
+	if (heap->ctx != NULL) duk_destroy_heap(heap->ctx);
+	if (global_heap == heap) global_heap = NULL;
+	free(heap);
 }
+
+nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
+		struct jsthread **out_thread)
+{
+	struct jsthread *thread;
+	if (out_thread == NULL) return NSERROR_BAD_PARAMETER;
+	*out_thread = NULL;
+	if (heap == NULL || heap->ctx == NULL) return NSERROR_BAD_PARAMETER;
+	thread = (struct jsthread *)calloc(1, sizeof(*thread));
+	if (thread == NULL) return NSERROR_NOMEM;
+	thread->heap = heap;
+	thread->ctx = heap->ctx;
+	thread->win_priv = win_priv;
+	thread->doc_priv = doc_priv;
+	*out_thread = thread;
+	return NSERROR_OK;
+}
+
+nserror js_closethread(struct jsthread *thread)
+{
+	(void)thread;
+	return NSERROR_OK;
+}
+
+void js_destroythread(struct jsthread *thread)
+{
+	free(thread);
+}
+
+/* NetSurf signature: bool js_exec(jsthread *, const uint8_t *, size_t, const char *).
+ * On CW8 PPC bool == unsigned char, uint8_t == unsigned char, size_t == unsigned long.
+ * Return 1 on success (script ran), 0 on parse/runtime error. */
+unsigned char js_exec(struct jsthread *thread, const unsigned char *txt,
+		unsigned long txtlen, const char *name)
+{
+	int rc;
+	(void)name;
+	if (thread == NULL || thread->ctx == NULL || txt == NULL) return 0;
+	if (txtlen == 0) return 1;
+	duk_push_lstring(thread->ctx, (const char *)txt, (duk_size_t)txtlen);
+	rc = duk_peval(thread->ctx);
+	if (rc != 0) {
+		MS_LOG(duk_safe_to_string(thread->ctx, -1));
+		duk_pop(thread->ctx);
+		return 0;
+	}
+	duk_pop(thread->ctx);
+	return 1;
+}
+
+unsigned char js_fire_event(struct jsthread *thread, const char *type,
+		struct dom_document *doc, struct dom_node *target)
+{
+	(void)thread; (void)type; (void)doc; (void)target;
+	return 0;
+}
+
+void js_handle_new_element(struct jsthread *thread, struct dom_element *node)
+{
+	(void)thread; (void)node;
+}
+
+void js_event_cleanup(struct jsthread *thread, struct dom_event *evt)
+{
+	(void)thread; (void)evt;
+}
+
+/* macsurf_js_exec_script — internal alias kept for any caller that
+ * still uses the pre-fixes289 internal name.  Forwards to js_exec. */
+bool macsurf_js_exec_script(struct jsthread *thread, const char *txt, size_t len)
+{
+	return (bool)js_exec(thread, (const unsigned char *)txt,
+			(unsigned long)len, NULL);
+}
+
 #endif
