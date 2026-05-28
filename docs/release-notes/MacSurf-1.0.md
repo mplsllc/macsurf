@@ -23,7 +23,7 @@ The standards expansion is the other story of the release: 25+ CSS-related issue
 
 ## Headline screenshot
 
-![MacSurf 1.0 rendering home.macsurf.org on G3 iMac, OS 9.1](../../screenshots/macsurf-1.0-home.jpg)
+![MacSurf 1.0 rendering home.macsurf.org on G3 iMac, OS 9.1](https://raw.githubusercontent.com/mplsllc/macsurf/master/screenshots/macsurf-1.0-home.jpg)
 
 `https://home.macsurf.org/`, served via `macTLS`, rendered with the fixes302–303 toolbar.
 
