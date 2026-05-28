@@ -29,18 +29,6 @@ The standards expansion is the other story of the release: 25+ CSS-related issue
 
 ---
 
-## What's *not* new
-
-To keep the change log honest:
-
-- **Native TLS 1.2 via macTLS** landed in **0.6**, not 1.0. Direct HTTPS to the origin, no proxy.
-- **121-anchor Mozilla CA bundle** also 0.6.
-- **The Carbon GWorld back-buffer**, image pipeline, libdom/libhubbub/libcss/libnsgif/lodepng integration, and the JS engine (Duktape ES5) all predate 1.0.
-
-1.0 is a polish, correctness, and standards-coverage release on top of the working browser that 0.7 already was. The promise that earned 1.0 is "you can hand this to someone and it feels like a real browser."
-
----
-
 ## What landed (by area)
 
 ### Image rendering — correctness end to end
