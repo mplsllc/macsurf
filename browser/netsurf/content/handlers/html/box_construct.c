@@ -1773,7 +1773,16 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 		enum css_white_space_e white_space =
 				css_computed_white_space(props.parent_style);
 
-		/* note: pre-wrap/pre-line are unimplemented */
+		/* fixes307 (#56): pre-wrap and pre-line now diverge from pre.
+		 *   pre       — preserve whitespace + newlines, no wrap.
+		 *   pre-wrap  — preserve whitespace + newlines, wrap (inline
+		 *               wrap dispatch at layout.c:667-670 already
+		 *               handles this — PRE_WRAP isn't in no_wrap).
+		 *   pre-line  — collapse runs of internal whitespace to a
+		 *               single space, but keep newlines, and wrap.
+		 * The text walk below splits on \r\n so newlines are kept
+		 * for all three; the new pre-line space-collapse pass below
+		 * is what differentiates pre-line from pre-wrap. */
 		assert(white_space == CSS_WHITE_SPACE_PRE ||
 				white_space == CSS_WHITE_SPACE_PRE_LINE ||
 				white_space == CSS_WHITE_SPACE_PRE_WRAP);
@@ -1791,6 +1800,30 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 		for (i = 0; i < text_len; i++)
 			if (text[i] == '\t')
 				text[i] = ' ';
+
+		/* fixes307 (#56) — pre-line collapses runs of horizontal
+		 * whitespace (spaces, tabs — already converted to spaces
+		 * above) to a single space. Newlines are preserved and
+		 * handled by the \r\n split below. The collapse happens in
+		 * place; text_len shrinks. */
+		if (white_space == CSS_WHITE_SPACE_PRE_LINE) {
+			size_t src_i = 0, dst_i = 0;
+			int prev_was_space = 0;
+			while (src_i < text_len) {
+				char c = text[src_i++];
+				if (c == ' ') {
+					if (!prev_was_space) {
+						text[dst_i++] = ' ';
+						prev_was_space = 1;
+					}
+				} else {
+					text[dst_i++] = c;
+					prev_was_space = 0;
+				}
+			}
+			text[dst_i] = '\0';
+			text_len = dst_i;
+		}
 
 		if (css_computed_text_transform(props.parent_style) !=
 				CSS_TEXT_TRANSFORM_NONE)
