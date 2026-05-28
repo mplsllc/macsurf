@@ -319,13 +319,9 @@ static void nsgif__record_frame(
 		return;
 	}
 
-	if (gif->prev_frame == NULL) {
-		prev_frame = realloc(gif->prev_frame, frame_size);
-		if (prev_frame == NULL) {
-			return;
-		}
-	} else {
-		prev_frame = gif->prev_frame;
+	prev_frame = realloc(gif->prev_frame, frame_size);
+	if (prev_frame == NULL) {
+		return;
 	}
 
 	memcpy(prev_frame, bitmap, frame_size);
