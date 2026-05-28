@@ -82,6 +82,14 @@ struct svg_paint_state {
 	 * none, per SVG. */
 	int fill_present;
 	int stroke_present;
+	/* fixes305 (#36) — fill-opacity / stroke-opacity. Range 0..1; 1.0
+	 * means fully opaque. Each shape applies whichever is relevant to
+	 * the active paint (fill vs stroke). The plotter has a single
+	 * pstyle->opacity bucket (fixes49 stipple), so when both fill and
+	 * stroke are present we use the MIN of the two so the least-opaque
+	 * side determines the apparent transparency. */
+	float fill_opacity;
+	float stroke_opacity;
 };
 
 /* fixes201 — SVG V2 gradient table.
@@ -744,6 +752,32 @@ static void svg__update_style(dom_node *node, struct svg_paint_state *st,
 		dom_string_unref(ds);
 	}
 
+	/* fixes305 (#36) — fill-opacity attribute */
+	v = svg__attr(node, "fill-opacity", &ds);
+	if (v != NULL) {
+		size_t consumed;
+		float o = svg__atof(v, &consumed);
+		if (consumed > 0) {
+			if (o < 0.0f) o = 0.0f;
+			if (o > 1.0f) o = 1.0f;
+			st->fill_opacity = o;
+		}
+		dom_string_unref(ds);
+	}
+
+	/* fixes305 (#36) — stroke-opacity attribute */
+	v = svg__attr(node, "stroke-opacity", &ds);
+	if (v != NULL) {
+		size_t consumed;
+		float o = svg__atof(v, &consumed);
+		if (consumed > 0) {
+			if (o < 0.0f) o = 0.0f;
+			if (o > 1.0f) o = 1.0f;
+			st->stroke_opacity = o;
+		}
+		dom_string_unref(ds);
+	}
+
 	/* style="fill:X; stroke:Y; stroke-width:Z" minimal parse */
 	v = svg__attr(node, "style", &ds);
 	if (v != NULL) {
@@ -798,6 +832,32 @@ static void svg__update_style(dom_node *node, struct svg_paint_state *st,
 					if (consumed > 0 && w > 0.0f) {
 						st->stroke_width = w;
 					}
+				} else if (kl == 12 &&
+						strncmp(key_start,
+							"fill-opacity",
+							12) == 0) {
+					/* fixes305 (#36) */
+					size_t consumed;
+					float o = svg__atof(val_start,
+							&consumed);
+					if (consumed > 0) {
+						if (o < 0.0f) o = 0.0f;
+						if (o > 1.0f) o = 1.0f;
+						st->fill_opacity = o;
+					}
+				} else if (kl == 14 &&
+						strncmp(key_start,
+							"stroke-opacity",
+							14) == 0) {
+					/* fixes305 (#36) */
+					size_t consumed;
+					float o = svg__atof(val_start,
+							&consumed);
+					if (consumed > 0) {
+						if (o < 0.0f) o = 0.0f;
+						if (o > 1.0f) o = 1.0f;
+						st->stroke_opacity = o;
+					}
 				}
 			}
 			(void)val_end;
@@ -832,7 +892,45 @@ static void svg__init_plot_style(plot_style_t *p,
 	} else {
 		p->stroke_type = PLOT_OP_TYPE_NONE;
 	}
-	p->opacity = (plot_style_fixed)1 << PLOT_STYLE_RADIX; /* opaque */
+	/* fixes305 (#36) — apply fill-opacity / stroke-opacity to the
+	 * single pstyle->opacity bucket the plotter honours (fixes49). When
+	 * fill is the only active paint, use fill_opacity. When stroke is
+	 * the only active paint, use stroke_opacity. When both are present
+	 * we pick the MIN so the least-opaque side wins (most visible
+	 * transparency reduction) — pragmatic V1 for the single-opacity
+	 * plotter API.
+	 *
+	 * fixes305a: when EITHER channel is fully transparent at 0.0, set
+	 * its paint type to NONE so the shape skips paint entirely. This
+	 * sidesteps the plotter's sentinel where pstyle->opacity == 0 is
+	 * interpreted as "unset → opaque" (fixes223 trade-off). Without
+	 * this, a literal fill-opacity="0.0" rendered as solid. */
+	{
+		int has_fill;
+		int has_stroke;
+		float eff = 1.0f;
+		if (st->fill_opacity <= 0.0f && p->fill_type != PLOT_OP_TYPE_NONE) {
+			p->fill_type = PLOT_OP_TYPE_NONE;
+		}
+		if (st->stroke_opacity <= 0.0f &&
+		    p->stroke_type != PLOT_OP_TYPE_NONE) {
+			p->stroke_type = PLOT_OP_TYPE_NONE;
+		}
+		has_fill   = (p->fill_type   != PLOT_OP_TYPE_NONE);
+		has_stroke = (p->stroke_type != PLOT_OP_TYPE_NONE);
+		if (has_fill && has_stroke) {
+			eff = (st->fill_opacity < st->stroke_opacity)
+				? st->fill_opacity : st->stroke_opacity;
+		} else if (has_fill) {
+			eff = st->fill_opacity;
+		} else if (has_stroke) {
+			eff = st->stroke_opacity;
+		}
+		if (eff < 0.0f) eff = 0.0f;
+		if (eff > 1.0f) eff = 1.0f;
+		p->opacity = (plot_style_fixed)(eff * (float)(
+			(plot_style_fixed)1 << PLOT_STYLE_RADIX));
+	}
 	/* transform_b identity, transform=0 (no transform). */
 	p->transform_b = 0x01000100;
 }
@@ -1999,6 +2097,8 @@ nserror macos9_svg_paint_inline(struct box *box,
 		st.fill_present = 1;
 		st.stroke_present = 0;
 		st.stroke_width = 1.0f;
+		st.fill_opacity = 1.0f;
+		st.stroke_opacity = 1.0f;
 
 		/* Read style attributes set on the <svg> itself. */
 		svg__update_style((dom_node *)box->node, &st, c.grads);
