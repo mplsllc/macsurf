@@ -1,11 +1,12 @@
 # MacSurf Status
 
-**Date:** 2026-05-26
-**Engine HEAD:** fixes271b
-**Current fix round:** fixes264–271b — a correctness and cleanup sprint that closed twelve issues in a single day. Cross-element `var()` via a doc-global inline-extras table, CSS Grid V2 alignment (`justify-content` / `align-content`), `background-image: linear-gradient()` rewriting, image purging on top-level nav, above-fold lazy decode, a total CSS budget, the `heavy`/`blocker` SITE diagnostic, multicol balancing via bisection, and a header audit cleanup.
-**Last release:** **MacSurf v0.7 "Cleanup"** (2026-05-26). Twelve open issues closed. Full notes: [release-notes/MacSurf-0.7.md](release-notes/MacSurf-0.7.md).
-**Last hardware-accepted:** fixes271b (2026-05-26). The header audit cleanup pass: Linux and Mac `box.h` are aligned, the `_ns` suffix workaround is retired, and the standard `box_multicol_data` / `box_multicol_segment` names are back.
-**Open issues on `mplsllc/macsurf`:** **0**
+**Date:** 2026-05-28
+**Engine HEAD:** fixes304
+**Current fix round:** fixes272–304 — the v1.0 "Showcase" sprint. CSS standards expansion across Bundles A–M (25+ closures including `direction: rtl`, `@media (orientation)`, `grid-auto-flow: dense`, place-items / place-self, Logical Properties Level 1, extended cursor mapping, stacked-gradient first-layer, narrow `calc()` preprocessor, repeating-gradient fallback). Per-site favicons via PNG / ICO (PNG-inside + 32-/24-bpp DIB). State-aware toolbar icons + Netscape-7 tool-belt redesign. HTTPS auto-upgrade fallback. The DPI 90→96 fix that unblocked macintoshgarden.org. The CopyBits-colorize fix that finally explained the long-running "faded mactrove images" and the macintoshgarden "blue tint" complaints in one mechanism. URL-bar Enter now bypasses the disk cache (one-shot, same flag Reload uses).
+**Last release:** **MacSurf v1.0 "Showcase"** (2026-05-28). 30+ open issues closed since v0.7. Full notes: [release-notes/MacSurf-1.0.md](release-notes/MacSurf-1.0.md).
+**Last hardware-accepted:** fixes304 (2026-05-28).
+**Companion site:** **[home.macsurf.org](https://home.macsurf.org/)** launched alongside the release — server-rendered PHP portal with search, weather, and four news feeds (Hacker News, Macintosh Garden, the project's own commits, classic Mac scene). No JS dependency, class-based CSS only, built specifically to render inside MacSurf as the showcase home page.
+**Open issues on `mplsllc/macsurf`:** the long tail (~60), the modern HTML5 / JS / CSS features the project intentionally tracks separately. Nothing blocking real-site rendering at 1.0.
 
 ---
 

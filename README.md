@@ -44,7 +44,7 @@
 >
 > What you can expect: hand-built pages, retro-style sites, a respectable chunk of CSS Grid, native HTTPS with the full Mozilla CA bundle, and the strange thrill of running ES5 JavaScript on a PowerPC. What you shouldn't expect yet: smooth browsing on arbitrary modern sites, video, audio, WebGL, service workers, anything heavy on React.
 >
-> First numbered release was **0.1a1** in May 2026. Latest is **[v0.7 — Cleanup](https://github.com/mplsllc/macsurf/releases/latest)**: twelve issues closed in a single sprint — cross-element `var()`, CSS Grid V2 alignment, image-purge on nav, standard-syntax gradients. Full notes in [docs/release-notes/MacSurf-0.7.md](docs/release-notes/MacSurf-0.7.md).
+> First numbered release was **0.1a1** in May 2026. Latest is **[v1.0 — Showcase](https://github.com/mplsllc/macsurf/releases/latest)**: 30+ issues closed, a CSS standards expansion across Bundles A–M, the toolbar redesign that finally makes it look like a real browser, end-to-end-correct image rendering (no more blue tint, no more faded mactrove logo), and a server-rendered showcase home page at **[home.macsurf.org](https://home.macsurf.org/)**. Full notes in [docs/release-notes/MacSurf-1.0.md](docs/release-notes/MacSurf-1.0.md).
 
 ---
 
@@ -109,6 +109,13 @@ Each shot below is a real milestone, captured on a Power Macintosh G3 running Ma
   <img src="screenshots/08-css-grid-placement.jpg" alt="CSS Grid column placement"><br>
   <strong>fixes151: CSS Grid column placement</strong><br>
   <em><code>grid-column: span N</code>, <code>1 / -1</code> full-row hero, positional <code>start / end</code>, span + auto-wrap. Real Grid layout on OS 9.</em>
+</td>
+</tr>
+<tr>
+<td width="100%" colspan="2" align="center" valign="top">
+  <img src="screenshots/macsurf-1.0-home.jpg" alt="MacSurf 1.0 rendering home.macsurf.org"><br>
+  <strong>v1.0: Showcase</strong><br>
+  <em>The new tool-belt toolbar, razor-sharp URL field, and matted icons rendering <a href="https://home.macsurf.org/">home.macsurf.org</a> on a G3 iMac running OS 9.1. Native HTTPS via macTLS direct to the origin, server-rendered portal, true-colour images end to end.</em>
 </td>
 </tr>
 </table>

@@ -1,11 +1,14 @@
 # Private archive folder (intermediate ship zips, dev snapshots, etc.)
 .private/
 
-# Per-user assistant state and prompts — local to the working copy.
-# The public-facing AI-collaboration docs are CLAUDE.md and GEMINI.md
-# at the repo root, which ARE tracked and version-controlled.
+# Per-user assistant state, prompts, and project-context briefs — local
+# to the working copy and not published in the repo.
 .claude/
 .gemini/
+CLAUDE.md
+GEMINI.md
+AGENTS.md
+COPILOT.md
 
 # Build archives & fix tars (these go to .private/archives/)
 *.zip
