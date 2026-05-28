@@ -145,6 +145,10 @@ struct macos9_fetch_ctx {
 	long cache_hit_len;
 	char cache_hit_mime[128];
 	int cache_hit_status;
+	/* fixes312 (#144) — POST body. NULL → GET. Copy is heap-owned and
+	 * freed in mfs_close (slot-recycle path). */
+	char *post_body;
+	long post_body_len;
 };
 static struct macos9_fetch_ctx f_slots[MAX_F];
 
@@ -395,7 +399,10 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 	 * delivers headers + body + finished in one cycle. */
 	{
 		const char *url_str = nsurl_access(c->url);
+		/* fixes312 (#144) — POSTs are non-idempotent; never serve
+		 * from cache and never cache the response. */
 		if (url_str != NULL && c->cache_hit == 0 &&
+				c->post_body == NULL &&
 				macsurf_http_skip_next_cache == 0) {
 			if (macos9_cache_lookup(url_str, &c->cache_hit_body,
 					&c->cache_hit_len,
@@ -520,8 +527,14 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 	 * stack. CW8's MSL has no snprintf, so we size-check first and
 	 * keep sprintf for the actual format. */
 	{
-		/* Length of the constant template (without %-substitutions). */
-		size_t TEMPLATE_LEN = 86;
+		/* Length of the constant template (without %-substitutions).
+		 * fixes312 raises this 60→86 reservation when a Content-Length
+		 * and Content-Type are also emitted. */
+		size_t TEMPLATE_LEN = (c->post_body != NULL) ? 160 : 86;
+		const char *method = (c->post_body != NULL) ? "POST" : "GET";
+		const char *post_extra_hdrs = (c->post_body != NULL) ?
+			"Content-Type: application/x-www-form-urlencoded\r\n" :
+			"";
 		if (use_proxy) {
 			size_t u_len;
 			u_full = nsurl_access(c->url);
@@ -540,15 +553,28 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 				c->err = "URL too long";
 				goto fail_unref;
 			}
-			macsurf_debug_log_writef("mfs_open: GET (proxy) %s",
-					u_full);
-			sprintf(req,
-				"GET %s HTTP/1.1\r\n"
-				"Host: %.*s\r\n"
-				"User-Agent: MacSurf/0.2\r\n"
-				"Accept: */*\r\n"
-				"Connection: keep-alive\r\n\r\n",
-				u_full, (int)host_len, host_str);
+			macsurf_debug_log_writef("mfs_open: %s (proxy) %s",
+					method, u_full);
+			if (c->post_body != NULL) {
+				sprintf(req,
+					"POST %s HTTP/1.1\r\n"
+					"Host: %.*s\r\n"
+					"User-Agent: MacSurf/0.2\r\n"
+					"Accept: */*\r\n"
+					"%s"
+					"Content-Length: %ld\r\n"
+					"Connection: close\r\n\r\n",
+					u_full, (int)host_len, host_str,
+					post_extra_hdrs, c->post_body_len);
+			} else {
+				sprintf(req,
+					"GET %s HTTP/1.1\r\n"
+					"Host: %.*s\r\n"
+					"User-Agent: MacSurf/0.2\r\n"
+					"Accept: */*\r\n"
+					"Connection: keep-alive\r\n\r\n",
+					u_full, (int)host_len, host_str);
+			}
 		} else {
 			size_t pb_used;
 			path_lwc = nsurl_get_component(c->url, NSURL_PATH);
@@ -601,27 +627,58 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 				c->err = "URL too long";
 				goto fail_unref;
 			}
-			macsurf_debug_log_writef("mfs_open: GET (direct) %s %s",
-					target, path_buf);
+			macsurf_debug_log_writef("mfs_open: %s (direct) %s %s",
+					method, target, path_buf);
 			/* fixes98: direct requests now use keep-alive — the chunked
 			 * decoder in mfs_poll_one / process_chunked_bytes frames
 			 * Transfer-Encoding: chunked responses correctly so we don't
 			 * need the server to close after each. Pool reuse on direct
-			 * origins eliminates per-fetch TCP setup latency. */
-			sprintf(req,
-				"GET %s HTTP/1.1\r\n"
-				"Host: %.*s\r\n"
-				"User-Agent: MacSurf/0.2\r\n"
-				"Accept: */*\r\n"
-				"Connection: keep-alive\r\n\r\n",
-				path_buf, (int)host_len, host_str);
+			 * origins eliminates per-fetch TCP setup latency.
+			 * fixes312: POST closes the connection (no keep-alive). */
+			if (c->post_body != NULL) {
+				sprintf(req,
+					"POST %s HTTP/1.1\r\n"
+					"Host: %.*s\r\n"
+					"User-Agent: MacSurf/0.2\r\n"
+					"Accept: */*\r\n"
+					"%s"
+					"Content-Length: %ld\r\n"
+					"Connection: close\r\n\r\n",
+					path_buf, (int)host_len, host_str,
+					post_extra_hdrs, c->post_body_len);
+			} else {
+				sprintf(req,
+					"GET %s HTTP/1.1\r\n"
+					"Host: %.*s\r\n"
+					"User-Agent: MacSurf/0.2\r\n"
+					"Accept: */*\r\n"
+					"Connection: keep-alive\r\n\r\n",
+					path_buf, (int)host_len, host_str);
+			}
 		}
 	}
 
 	r = OTSnd(c->ep, req, (long)strlen(req), 0);
 	if (r < 0) {
-		macsurf_debug_log_writef("mfs_open: OTSnd err=%ld", (long)r);
+		macsurf_debug_log_writef("mfs_open: OTSnd hdr err=%ld",
+				(long)r);
 		goto fail_unref;
+	}
+	/* fixes312 (#144) — send POST body after headers. OTSnd is in
+	 * blocking mode here (OTSetNonBlocking happens below), so this is
+	 * a clean single-shot send for typical form-size payloads. Returns
+	 * bytes sent on success; we treat anything < post_body_len as a
+	 * fatal failure rather than implementing partial-resend, since a
+	 * short blocking write almost always means the endpoint is dead. */
+	if (c->post_body != NULL && c->post_body_len > 0) {
+		r = OTSnd(c->ep, c->post_body,
+				(long)c->post_body_len, 0);
+		if (r < 0 || r != (long)c->post_body_len) {
+			macsurf_debug_log_writef(
+				"mfs_open: OTSnd body err=%ld want=%ld",
+				(long)r, (long)c->post_body_len);
+			goto fail_unref;
+		}
 	}
 	OTSetNonBlocking(c->ep);
 
@@ -832,8 +889,10 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 	/* fixes172 — decide cache eligibility based on the final
 	 * status + MIME. cache_capture is allocated lazily on the
 	 * first body byte; cache_overflow latches if the body
-	 * outgrows MACSURF_CACHE_MAX_BYTES. */
-	if (macos9_cache_mime_eligible(c->status, c->mime)) {
+	 * outgrows MACSURF_CACHE_MAX_BYTES.
+	 * fixes312 (#144) — POST responses are NEVER cached. */
+	if (c->post_body == NULL &&
+	    macos9_cache_mime_eligible(c->status, c->mime)) {
 		c->cache_eligible = 1;
 	}
 	c->state=MFS_BODY;
@@ -1285,7 +1344,7 @@ static void *macos9_http_setup(struct fetch *p, struct nsurl *u, bool o, bool d,
 	int class_active;
 	int global_active;
 	int slot_index = -1;
-	(void)o;(void)d;(void)pu;(void)pm;(void)h;
+	(void)o;(void)d;(void)pm;(void)h;
 
 	/* fixes161a — classify. Navigation-hint flag wins over URL suffix
 	 * (top-level docs that look like /api/x or /foo.png still classify
@@ -1360,6 +1419,22 @@ static void *macos9_http_setup(struct fetch *p, struct nsurl *u, bool o, bool d,
 	f_slots[slot_index].content_length = -1;
 	f_slots[slot_index].keep_alive_ok = 1;
 	f_slots[slot_index].rclass = rc;
+	/* fixes312 (#144) — capture POST body. NULL → GET (default). POST
+	 * forces keep-alive off (origin commonly closes after a POST). */
+	if (pu != NULL) {
+		size_t pu_len = strlen(pu);
+		f_slots[slot_index].post_body = (char *)malloc(pu_len);
+		if (f_slots[slot_index].post_body == NULL) {
+			MS_LOG("http_setup: post_body alloc failed");
+			nsurl_unref(f_slots[slot_index].url);
+			f_slots[slot_index].url = NULL;
+			f_slots[slot_index].state = MFS_IDLE;
+			return NULL;
+		}
+		memcpy(f_slots[slot_index].post_body, pu, pu_len);
+		f_slots[slot_index].post_body_len = (long)pu_len;
+		f_slots[slot_index].keep_alive_ok = 0;
+	}
 	/* fetch_active_peak: high-water-mark across the page load.
 	 * +1 because this allocation hasn't been counted yet. */
 	{
@@ -1405,6 +1480,9 @@ static void macos9_http_free(void *ctx) {
 	c->cache_hit = 0;
 	c->cache_hit_mime[0] = '\0';
 	c->cache_hit_status = 0;
+	/* fixes312 (#144) — release captured POST body. */
+	if (c->post_body) { free(c->post_body); c->post_body = NULL; }
+	c->post_body_len = 0;
 	c->state = MFS_IDLE;
 }
 

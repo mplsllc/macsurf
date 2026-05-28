@@ -176,6 +176,16 @@ struct macos9_https_ctx {
 	 * `started` is set in macos9_https_start; hctx_poll gates HS_QUEUED
 	 * entry on it. Survives hctx_reset_for_retry. */
 	int              started;
+
+	/* fixes312 (#144) — POST body.
+	 *   post_body / post_body_len: heap-owned copy of the urlencoded
+	 *     form payload captured at setup time. NULL → GET.
+	 *   post_body_sent: bytes written across one or more OSTLS_Write
+	 *     calls during HS_SEND_REQ (after the header buffer is fully
+	 *     written). */
+	char            *post_body;
+	UInt32           post_body_len;
+	UInt32           post_body_sent;
 };
 
 #define HTTPS_MAX_RETRIES 2
@@ -599,6 +609,10 @@ static void hctx_clear(struct macos9_https_ctx *c)
 	c->cache_cap_cap = 0;
 	if (c->cache_hit_body) { free(c->cache_hit_body); c->cache_hit_body = NULL; }
 	c->cache_hit_len = 0;
+	/* fixes312 (#144) — release captured POST body. */
+	if (c->post_body) { free(c->post_body); c->post_body = NULL; }
+	c->post_body_len = 0;
+	c->post_body_sent = 0;
 	if (c->url) { nsurl_unref(c->url); c->url = NULL; }
 	c->state = HS_IDLE;
 }
@@ -624,6 +638,9 @@ static void hctx_reset_for_retry(struct macos9_https_ctx *c)
 	c->cache_eligible = 0;
 	c->req_len = 0;
 	c->req_sent = 0;
+	/* fixes312 (#144) — keep post_body intact so the retry sends the
+	 * same payload; just rewind the send counter. */
+	c->post_body_sent = 0;
 	c->status = 0;
 	c->body_bytes = 0;
 	c->content_length = -1;
@@ -967,8 +984,13 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		return 2;	/* terminal */
 	}
 
-	/* fixes218 — cache eligibility decided once mime has been parsed. */
-	if (macos9_cache_mime_eligible(c->status, c->mime)) {
+	/* fixes218 — cache eligibility decided once mime has been parsed.
+	 * fixes312 (#144) — POST responses are not cacheable: the URL alone
+	 * doesn't identify the response (different bodies → different
+	 * results), so caching would serve stale or wrong data on subsequent
+	 * GETs for the same URL. */
+	if (c->post_body == NULL &&
+	    macos9_cache_mime_eligible(c->status, c->mime)) {
 		c->cache_eligible = 1;
 	}
 
@@ -1039,19 +1061,40 @@ static int feed_body(struct macos9_https_ctx *c, const char *buf, long n)
  * path (HS_QUEUED hit → HS_SEND_REQ direct). */
 static int build_request(struct macos9_https_ctx *c)
 {
-	int rn = sprintf(c->req_buf,
-		"GET %s HTTP/1.1\r\n"
-		"Host: %s\r\n"
-		"User-Agent: MacSurf/0.2 (Macintosh; PPC Mac OS 9)\r\n"
-		"Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
-		"Accept-Language: en-US,en;q=0.5\r\n"
-		"Accept-Encoding: identity\r\n"
-		"Connection: keep-alive\r\n"
-		"\r\n",
-		c->path, c->host);
+	int rn;
+	if (c->post_body != NULL) {
+		/* fixes312 (#144) — POST. Body goes out in a second
+		 * OSTLS_Write after these headers; req_buf carries
+		 * headers only. */
+		rn = sprintf(c->req_buf,
+			"POST %s HTTP/1.1\r\n"
+			"Host: %s\r\n"
+			"User-Agent: MacSurf/0.2 (Macintosh; PPC Mac OS 9)\r\n"
+			"Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
+			"Accept-Language: en-US,en;q=0.5\r\n"
+			"Accept-Encoding: identity\r\n"
+			"Content-Type: application/x-www-form-urlencoded\r\n"
+			"Content-Length: %lu\r\n"
+			"Connection: keep-alive\r\n"
+			"\r\n",
+			c->path, c->host,
+			(unsigned long)c->post_body_len);
+	} else {
+		rn = sprintf(c->req_buf,
+			"GET %s HTTP/1.1\r\n"
+			"Host: %s\r\n"
+			"User-Agent: MacSurf/0.2 (Macintosh; PPC Mac OS 9)\r\n"
+			"Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
+			"Accept-Language: en-US,en;q=0.5\r\n"
+			"Accept-Encoding: identity\r\n"
+			"Connection: keep-alive\r\n"
+			"\r\n",
+			c->path, c->host);
+	}
 	if (rn <= 0 || (unsigned long)rn >= sizeof c->req_buf) return -1;
 	c->req_len = (unsigned long)rn;
 	c->req_sent = 0;
+	c->post_body_sent = 0;
 	return 0;
 }
 
@@ -1283,7 +1326,29 @@ static void hctx_poll(struct macos9_https_ctx *c)
 				c->progress_ticks = now_ticks();
 			}
 		}
-		if (c->req_sent >= c->req_len) {
+		/* fixes312 (#144) — POST body. After the header block is
+		 * fully written, stream the captured post_body before
+		 * transitioning to HS_HEADERS. */
+		if (c->req_sent >= c->req_len &&
+		    c->post_body != NULL &&
+		    c->post_body_sent < c->post_body_len) {
+			written = 0;
+			e = OSTLS_Write(c->conn,
+				c->post_body + c->post_body_sent,
+				c->post_body_len - c->post_body_sent,
+				&written);
+			if (e != kOSTLSAsync_OK) {
+				hctx_fail(c, "https: post body write failed");
+				return;
+			}
+			if (written > 0) {
+				c->post_body_sent += written;
+				c->progress_ticks = now_ticks();
+			}
+		}
+		if (c->req_sent >= c->req_len &&
+		    (c->post_body == NULL ||
+		     c->post_body_sent >= c->post_body_len)) {
 			c->state = HS_HEADERS;
 			MS_LOG("https: request sent");
 		}
@@ -1435,7 +1500,7 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 	size_t hs_n, ps_n;
 	struct macos9_https_ctx *c;
 
-	(void)o; (void)d; (void)pu; (void)pm; (void)h;
+	(void)o; (void)d; (void)pm; (void)h;
 
 	for (i = 0; i < MAX_HTTPS_F; i++) {
 		if (https_slots[i].state == HS_IDLE) { slot = i; break; }
@@ -1454,6 +1519,26 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 	c->port = 443;
 	c->keep_alive_ok = 1;   /* fixes231 — default eligible; cleared on
 	                         * "Connection: close" response or any error */
+
+	/* fixes312 (#144) — capture POST body. NetSurf core owns `pu` only
+	 * for the lifetime of the fetch_start call; copy so the fetcher
+	 * can stream it later when the TLS handshake completes. */
+	if (pu != NULL) {
+		size_t pu_len = strlen(pu);
+		c->post_body = (char *)malloc(pu_len);
+		if (c->post_body == NULL) {
+			MS_LOG("https_setup: post_body alloc failed");
+			c->state = HS_IDLE;
+			nsurl_unref(c->url); c->url = NULL;
+			return NULL;
+		}
+		memcpy(c->post_body, pu, pu_len);
+		c->post_body_len = (UInt32)pu_len;
+		c->post_body_sent = 0;
+		/* POST responses are not safely poolable in the keep-alive
+		 * pool — many servers close the connection after a POST. */
+		c->keep_alive_ok = 0;
+	}
 
 	host_lwc = nsurl_get_component(u, NSURL_HOST);
 	path_lwc = nsurl_get_component(u, NSURL_PATH);
@@ -1522,7 +1607,11 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 	 * on a warm reload. */
 	{
 		const char *url_str = nsurl_access(u);
-		if (url_str != NULL &&
+		/* fixes312 (#144) — POST responses are not cacheable
+		 * (non-idempotent). Skip the lookup so search forms etc.
+		 * always go to network. */
+		if (c->post_body == NULL &&
+		    url_str != NULL &&
 		    macos9_cache_lookup(url_str, &c->cache_hit_body,
 				&c->cache_hit_len,
 				c->cache_hit_mime,
