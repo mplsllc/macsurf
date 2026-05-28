@@ -938,37 +938,84 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 	macsurf_debug_log_writef("https: status=%d mime='%s' clen=%ld chunked=%d",
 		c->status, c->mime, c->content_length, c->chunked);
 
-	while ((p = find_line(&cur, &cur_len)) != NULL) {
-		if (p[0] == 0) break;
-		if (strncasecmp(p, "Content-Type:", 13) == 0) {
-			char *v = p + 13; while (*v == ' ') v++;
-			strncpy(c->mime, v, 127); c->mime[127] = 0;
+	/* fixes313b — defer header forwarding so we can override Content-Type
+	 * when Content-Disposition: attachment is present. NetSurf's
+	 * llcache_handle_get_header returns the FIRST matching header, so
+	 * inserting our synthetic Content-Type AFTER the server's wouldn't
+	 * stick. Collect the lines, parse them locally, then replay with
+	 * substitution. Cap at 64 lines (typical response is 10–20). */
+	{
+		char *header_lines[64];
+		int   n_header_lines = 0;
+		int   force_download = 0;
+		int   i;
+		static const char forced_ct[] =
+			"Content-Type: application/octet-stream";
+
+		while ((p = find_line(&cur, &cur_len)) != NULL) {
+			if (p[0] == 0) break;
+			if (n_header_lines < 64) {
+				header_lines[n_header_lines++] = p;
+			}
+			if (strncasecmp(p, "Content-Type:", 13) == 0) {
+				char *v = p + 13; while (*v == ' ') v++;
+				strncpy(c->mime, v, 127); c->mime[127] = 0;
+			}
+			if (strncasecmp(p, "Content-Length:", 15) == 0) {
+				char *v = p + 15; while (*v == ' ') v++;
+				c->content_length = atol(v);
+			}
+			if (strncasecmp(p, "Transfer-Encoding:", 18) == 0) {
+				char *v = p + 18; while (*v == ' ') v++;
+				if (strncasecmp(v, "chunked", 7) == 0) c->chunked = 1;
+			}
+			/* fixes231 — disable pool when server says close. */
+			if (strncasecmp(p, "Connection:", 11) == 0) {
+				char *v = p + 11; while (*v == ' ') v++;
+				if (strncasecmp(v, "close", 5) == 0) c->keep_alive_ok = 0;
+			}
+			if (strncasecmp(p, "Location:", 9) == 0) {
+				char *v = p + 9; size_t lv;
+				while (*v == ' ' || *v == '\t') v++;
+				lv = strlen(v);
+				if (lv >= sizeof(c->redirect_url)) lv = sizeof(c->redirect_url) - 1;
+				memcpy(c->redirect_url, v, lv);
+				c->redirect_url[lv] = 0;
+			}
+			/* fixes313b (#150) — Content-Disposition: attachment forces
+			 * download regardless of Content-Type. Servers commonly serve
+			 * downloads with Content-Type: text/html (CMS default) and
+			 * mark them as attachments only via this header. Detect with
+			 * a case-insensitive prefix check on the value. */
+			if (strncasecmp(p, "Content-Disposition:", 20) == 0) {
+				char *v = p + 20;
+				while (*v == ' ' || *v == '\t') v++;
+				if (strncasecmp(v, "attachment", 10) == 0) {
+					force_download = 1;
+				}
+			}
 		}
-		if (strncasecmp(p, "Content-Length:", 15) == 0) {
-			char *v = p + 15; while (*v == ' ') v++;
-			c->content_length = atol(v);
+
+		if (force_download) {
+			strcpy(c->mime, "application/octet-stream");
+			macsurf_debug_log_writef(
+				"https: Content-Disposition attachment "
+				"→ force download (mime override)");
 		}
-		if (strncasecmp(p, "Transfer-Encoding:", 18) == 0) {
-			char *v = p + 18; while (*v == ' ') v++;
-			if (strncasecmp(v, "chunked", 7) == 0) c->chunked = 1;
+
+		/* Now forward all headers, substituting Content-Type when
+		 * force_download is true. */
+		for (i = 0; i < n_header_lines; i++) {
+			const char *line = header_lines[i];
+			if (force_download &&
+			    strncasecmp(line, "Content-Type:", 13) == 0) {
+				line = forced_ct;
+			}
+			msg.type = FETCH_HEADER;
+			msg.data.header_or_data.buf = (const uint8_t *)line;
+			msg.data.header_or_data.len = strlen(line);
+			fetch_send_callback(&msg, c->parent);
 		}
-		/* fixes231 — disable pool when server says close. */
-		if (strncasecmp(p, "Connection:", 11) == 0) {
-			char *v = p + 11; while (*v == ' ') v++;
-			if (strncasecmp(v, "close", 5) == 0) c->keep_alive_ok = 0;
-		}
-		if (strncasecmp(p, "Location:", 9) == 0) {
-			char *v = p + 9; size_t lv;
-			while (*v == ' ' || *v == '\t') v++;
-			lv = strlen(v);
-			if (lv >= sizeof(c->redirect_url)) lv = sizeof(c->redirect_url) - 1;
-			memcpy(c->redirect_url, v, lv);
-			c->redirect_url[lv] = 0;
-		}
-		msg.type = FETCH_HEADER;
-		msg.data.header_or_data.buf = (const uint8_t*)p;
-		msg.data.header_or_data.len = strlen(p);
-		fetch_send_callback(&msg, c->parent);
 	}
 
 	if (c->status >= 300 && c->status < 400 && c->redirect_url[0] != 0) {

@@ -120,7 +120,22 @@ struct gui_window {
 	struct gui_window *next;
 };
 
-struct gui_download_window { struct gui_window *parent; };
+/* fixes313 — download manager V1. One slot per active download (single-
+ * stream V1; cap is enforced at create-time, additional fetches that try
+ * to download while one is active are rejected and surface as
+ * NSERROR_NOMEM). refnum < 0 means "create dialog cancelled or file
+ * open failed" — the data callbacks short-circuit so partial writes
+ * don't crash. fsspec is kept so error / abort can FSpDelete the
+ * partial file. */
+struct gui_download_window {
+	struct gui_window *parent;
+	FSSpec             fsspec;
+	short              refnum;
+	unsigned long      bytes_written;
+	unsigned long      total_length;   /* 0 if unknown */
+	char               filename[64];
+	int                aborted;
+};
 
 /* 5. External Declarations */
 extern struct gui_window_table *macos9_window_table;
