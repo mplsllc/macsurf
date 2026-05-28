@@ -663,6 +663,7 @@ macos9_png_decode_target(const unsigned char *data, size_t size,
 	int mask_rowbytes;
 	int dst_w, dst_h;
 	int dy, dx;
+	int has_trans = 0;
 
 	*out_bitmap = NULL;
 
@@ -731,6 +732,8 @@ macos9_png_decode_target(const unsigned char *data, size_t size,
 				if (src_row[col * 4 + 3] >= 8) {
 					mask_row[col >> 3] |= (unsigned char)
 						(0x80 >> (col & 7));
+				} else {
+					has_trans = 1;
 				}
 			}
 		}
@@ -779,6 +782,8 @@ macos9_png_decode_target(const unsigned char *data, size_t size,
 					if ((a_acc / n_acc) >= 8) {
 						mask_row[dx >> 3] |= (unsigned char)
 							(0x80 >> (dx & 7));
+					} else {
+						has_trans = 1;
 					}
 				}
 			}
@@ -787,7 +792,14 @@ macos9_png_decode_target(const unsigned char *data, size_t size,
 
 	free(rgba);
 
-	guit->bitmap->set_opaque(bm, false);
+	/* fixes301c — only route through the masked (CopyMask) blit when the
+	 * image actually has transparent pixels (alpha < 8). Fully-opaque PNGs
+	 * (e.g. 24-bit RGB screenshots) were being marked non-opaque and forced
+	 * through CopyMask, which on this hardware mangles a correct grey XRGB
+	 * source into a blue cast. Marking them opaque sends them down the plain
+	 * CopyBits srcCopy path — the same path JPEGs use, which is colour-
+	 * accurate. Transparent PNGs still use CopyMask (unchanged). */
+	guit->bitmap->set_opaque(bm, has_trans ? false : true);
 	macos9_bitmap_set_mask(bm, mask, mask_rowbytes);
 
 	*out_bitmap = bm;
@@ -811,6 +823,7 @@ macos9_png_decode_to_bitmap(const unsigned char *data, size_t size,
 	unsigned char *dst_row;
 	unsigned char *mask_row;
 	LodePNGState state;
+	int has_trans = 0;
 
 	*out_bitmap = NULL;
 
@@ -893,6 +906,8 @@ macos9_png_decode_to_bitmap(const unsigned char *data, size_t size,
 				 * means opaque (copy through). */
 				mask_row[col >> 3] |=
 					(unsigned char)(0x80 >> (col & 7));
+			} else {
+				has_trans = 1;
 			}
 		}
 	}
@@ -901,8 +916,10 @@ macos9_png_decode_to_bitmap(const unsigned char *data, size_t size,
 
 	macos9_bitmap_set_mask(bm, mask, mask_rowbytes);
 
+	/* fixes301c — opaque PNGs take the colour-accurate CopyBits srcCopy
+	 * path; only transparent ones use CopyMask. See decode_target. */
 	if (guit->bitmap->set_opaque != NULL) {
-		guit->bitmap->set_opaque(bm, false);
+		guit->bitmap->set_opaque(bm, has_trans ? false : true);
 	}
 	if (guit->bitmap->modified != NULL) {
 		guit->bitmap->modified(bm);

@@ -1440,9 +1440,26 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 		BitMap mask_bm;
 		long tile_count;
 		long tile_cap;
+		RGBColor blit_fg;
+		RGBColor blit_bg;
 
 		GetPort(&save_port);
 		saved_clip = macos9_push_clip();
+
+		/* fixes301j — reset foreground to black and background to white
+		 * before CopyBits / CopyMask. Classic QuickDraw colorizes the
+		 * transfer with the port's current fg/bg colours; the page draws
+		 * blue link text (RGBForeColor blue) and leaves the port fg blue,
+		 * so without this reset every image gets tinted toward the
+		 * leftover fg colour (the "blue tint" / "faded" symptom, and why
+		 * it appeared only after coloured text had drawn). Confirmed via
+		 * DESTRB probe: a black source pixel [255,0,0,0] landed in the
+		 * dest as [0,0,95,169] (blue). With fg=black / bg=white the
+		 * colorize is the identity transform. */
+		blit_fg.red = 0; blit_fg.green = 0; blit_fg.blue = 0;
+		blit_bg.red = 0xFFFF; blit_bg.green = 0xFFFF; blit_bg.blue = 0xFFFF;
+		RGBForeColor(&blit_fg);
+		RGBBackColor(&blit_bg);
 		is_opaque = macos9_bitmap_get_opaque((void *)bitmap);
 		mask_data = is_opaque ? NULL :
 				macos9_bitmap_get_mask((void *)bitmap);
@@ -1600,6 +1617,33 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 			mask_bm.rowBytes = (short)mask_rowbytes;
 			mask_bm.bounds = src_rect;
 			MS_LOG("plot_bitmap: alpha CopyMask");
+#if 1
+			/* fixes301b blit probe: dump the source GWorld centre
+			 * pixel (post-fill / post-box-filter) and the blit
+			 * geometry so we can see what CopyMask actually scales.
+			 * Capped per session. */
+			{
+				static long macos9_blit_probe = 0;
+				int sw = src_rect.right - src_rect.left;
+				int sh = src_rect.bottom - src_rect.top;
+				if (macos9_blit_probe < 10 && sw > 1 && sh > 1) {
+					unsigned char *gp =
+						(unsigned char *)GetPixBaseAddr(pm) +
+						(long)(sh / 2) * dst_rowbytes +
+						(long)(sw / 2) * 4;
+					macos9_blit_probe++;
+					macsurf_debug_log_writef(
+						"BLIT src=%dx%d dst=%dx%d mrb=%d "
+						"gw=[%d,%d,%d,%d] %s",
+						sw, sh, width, height,
+						(int)mask_rowbytes,
+						(int)gp[0], (int)gp[1], (int)gp[2],
+						(int)gp[3],
+						(sw == width && sh == height) ?
+							"1:1" : "SCALED");
+				}
+			}
+#endif
 			for (tile_y = start_y; tile_y < end_y; tile_y += height) {
 				for (tile_x = start_x; tile_x < end_x;
 						tile_x += width) {

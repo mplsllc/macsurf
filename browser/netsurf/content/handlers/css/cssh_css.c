@@ -44,8 +44,21 @@
 /* Define to trace import fetches */
 #undef NSCSS_IMPORT_TRACE
 
-/** Screen DPI in fixed point units: defaults to 90, which RISC OS uses */
-css_fixed nscss_screen_dpi = F_90;
+/** Screen DPI in fixed point units.
+ *
+ * Upstream NetSurf defaults to 90 (the value RISC OS uses). MacSurf never
+ * overrode it, so every CSS length rendered at 90/96 = 93.75% of its CSS px
+ * value (css_unit_css2device_px = css_px * device_dpi / 96). That silent
+ * shrink desynced em-based containers from HTML width="" attributes and
+ * intrinsic image sizes: macintoshgarden.org's #wrapper{width:59em} resolved
+ * to 708px instead of 767px, leaving too little room beside its float:right
+ * sidebar, so the main-content <table width="560px"> (a block formatting
+ * context that can't overlap a float) dropped below the entire sidebar and
+ * the page rendered with a blank content column. fixes300b: use 96 so
+ * 1 CSS px == 1 device px (the modern browser convention). Pages render
+ * ~6.7% larger than before; physical units (pt/in/cm) are treated as if the
+ * screen is 96dpi, which is what every mainstream browser does. */
+css_fixed nscss_screen_dpi = F_96;
 
 struct content_css_data;
 
