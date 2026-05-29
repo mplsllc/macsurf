@@ -123,6 +123,19 @@ typedef struct nscss_content
  * room for it. Now matches the per-entry HTTP cache cap. */
 #define MACOS9_CSS_MAX_BYTES (1024UL * 1024UL)
 
+/*
+ * fixes321 — per-page cumulative CSS budget across all sheets. Raised
+ * 384 KB -> 1 MB. Heavy modern sites (developers.google.com/fonts ships
+ * ~776 KB of CSS across several sheets) hit the old 384 KB cap, dropped
+ * 3 stylesheets, and rendered unstyled (SITE log: blocker=css_budget,
+ * css_total=794603/393216, css_skip=3). 1 MB fits that page with
+ * headroom and matches MACOS9_CSS_MAX_BYTES, so a single max-size sheet
+ * and the per-page total now share one ceiling. The 16 MB Carbon
+ * partition has room; if a real page OOMs the cascade, this is the first
+ * dial to turn back down. Keep in sync with the css_total_cap display
+ * literal in html.c's SITE logger. */
+#define MACOS9_CSS_TOTAL_BUDGET (1024UL * 1024UL)
+
 /**
  * Context for import fetches
  */
@@ -4177,7 +4190,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	 * via the existing fixes160a SITE-counters reset. */
 	{
 		extern unsigned long macsurf__site_css_total_bytes;
-		const unsigned long total_cap = 384UL * 1024UL;
+		const unsigned long total_cap = MACOS9_CSS_TOTAL_BUDGET;
 		macsurf__site_css_total_bytes += (unsigned long)size;
 		if (macsurf__site_css_total_bytes > total_cap) {
 			extern long macsurf__site_css_skip;
