@@ -1,18 +1,18 @@
 # MacSurf Status
 
-**Date:** 2026-05-28
-**Engine HEAD:** fixes304
-**Current fix round:** fixes272–304 — the v1.0 "Showcase" sprint. CSS standards expansion across Bundles A–M (25+ closures including `direction: rtl`, `@media (orientation)`, `grid-auto-flow: dense`, place-items / place-self, Logical Properties Level 1, extended cursor mapping, stacked-gradient first-layer, narrow `calc()` preprocessor, repeating-gradient fallback). Per-site favicons via PNG / ICO (PNG-inside + 32-/24-bpp DIB). State-aware toolbar icons + Netscape-7 tool-belt redesign. HTTPS auto-upgrade fallback. The DPI 90→96 fix that unblocked macintoshgarden.org. The CopyBits-colorize fix that finally explained the long-running "faded mactrove images" and the macintoshgarden "blue tint" complaints in one mechanism. URL-bar Enter now bypasses the disk cache (one-shot, same flag Reload uses).
-**Last release:** **MacSurf v1.0 "Showcase"** (2026-05-28). 30+ open issues closed since v0.7. Full notes: [release-notes/MacSurf-1.0.md](release-notes/MacSurf-1.0.md).
-**Last hardware-accepted:** fixes304 (2026-05-28).
-**Companion site:** **[home.macsurf.org](https://home.macsurf.org/)** launched alongside the release — server-rendered PHP portal with search, weather, and four news feeds (Hacker News, Macintosh Garden, the project's own commits, classic Mac scene). No JS dependency, class-based CSS only, built specifically to render inside MacSurf as the showcase home page.
-**Open issues on `mplsllc/macsurf`:** the long tail (~60), the modern HTML5 / JS / CSS features the project intentionally tracks separately. Nothing blocking real-site rendering at 1.0.
+**Date:** 2026-05-29
+**Engine HEAD:** fixes315
+**Current fix round:** fixes305–315 — the v1.2 "Sealed" sprint. **macTLS v1.0 (macEntropy v1.0)** closes the documented insecure-stub entropy hole with a SHA-256 accumulator feeding BearSSL's HMAC-DRBG; OT packet-arrival jitter, event-loop mouse/key timing, high-resolution clock samples, and a Preferences-folder seed file across boots. **POST forms** now wire the body through both fetchers (was silently `(void)pu` at setup pre-fix). **First download manager** with NavPutFile save dialog, FSWrite streaming, MIME-mapped Mac type/creator codes, partial-file cleanup, and Content-Disposition: attachment routing for Drupal-style sites. **Background-attachment: fixed** anchors to viewport in window coords (#41). **white-space: pre-line** collapses internal whitespace runs (#56). **SVG fill-opacity / stroke-opacity** wired (#36). **HTTPS abort crash** on duckduckgo.com fixed (#150) — the fixes249b auto-upgrade FALLBACK was emitting synthetic FETCH_REDIRECT on NetSurf-initiated aborts, crashing llcache_fetch_redirect on a NULL fetch handle.
+**Last release:** **MacSurf v1.2 "Sealed"** (2026-05-29). Six issues closed since v1.0 plus the macEntropy v1.0 fold-in. Full notes: [release-notes/MacSurf-1.2.md](release-notes/MacSurf-1.2.md).
+**Last hardware-accepted:** fixes315 (2026-05-29).
+**Companion site:** **[home.macsurf.org](https://home.macsurf.org/)** — server-rendered PHP portal with search, weather, and four news feeds. No JS dependency, class-based CSS only.
+**Open issues on `mplsllc/macsurf`:** the long tail (~60), the modern HTML5 / JS / CSS features the project intentionally tracks separately. Nothing blocking real-site rendering at 1.2.
 
 ---
 
 ## Where the project sits today
 
-MacSurf is a working web browser for Classic Mac OS 9.1–9.2.2 on PowerPC, built on a NetSurf fork with a Carbon / QuickDraw / Open Transport frontend. As of 2026-05-25 it speaks TLS 1.2 end-to-end via macTLS (BearSSL on top of Open Transport), so the Go TLS-stripping proxy is no longer on the default path.
+MacSurf is a working web browser for Classic Mac OS 9.1–9.2.2 on PowerPC, built on a NetSurf fork with a Carbon / QuickDraw / Open Transport frontend. As of 2026-05-25 it speaks TLS 1.2 end-to-end via macTLS (BearSSL on top of Open Transport), so the Go TLS-stripping proxy is no longer on the default path. As of 2026-05-29 (v1.2) the entropy backing those TLS handshakes is **macEntropy v1.0** — SHA-256 accumulator + BearSSL HMAC-DRBG, fed by OT packet jitter, event-loop input, high-res clock, and a persisted seed file. The pre-v1.2 insecure-stub entropy source is closed.
 
 The build runs on real beige G3-class hardware, with a G4 upgrade also used in development. The target compiler is CodeWarrior 8 Pro with the 8.3 update, strict C89, and a 16 MB application partition. Network fetches go direct via TLS 1.2 to the origin, using the full Mozilla CA bundle (121 trust anchors) baked into the binary.
 
