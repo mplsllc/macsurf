@@ -1,6 +1,6 @@
 # Per-Font Vertical Metrics on G3 iMac (fixes153 ground truth)
 
-Hardware-captured `GetFontInfo` output for every font/size/face combination MacSurf currently considers. Run via `macos9_font_vmetric_probe_run()` at startup. Probe target: G3 iMac running OS 9.1, fully-populated Fonts folder.
+Hardware-captured `GetFontInfo` output for every font/size/face combination MacSurf currently considers. Run via `macos9_font_vmetric_probe_run()` at startup. Probe target: G3 iMac running OS 9.2.2, fully-populated Fonts folder.
 
 Columns: ascent / descent / widMax / leading / total (ascent+descent+leading).
 

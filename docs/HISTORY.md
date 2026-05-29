@@ -161,7 +161,7 @@ The curated milestone set in [`screenshots/`](../screenshots/) shows the project
 ### Running on real Mac OS 9
 ![MacSurf running in real Mac OS 9 on a G3 iMac](../screenshots/01-running-on-os9.jpg)
 
-The fixes50 text-shadow probe page, rendered on a real Power Macintosh G3 iMac running Mac OS 9.1 with CarbonLib. Platinum theme, beige hardware, modern CSS3 in 2026.
+The fixes50 text-shadow probe page, rendered on a real Power Macintosh G3 iMac running Mac OS 9.2.2 with CarbonLib. Platinum theme, beige hardware, modern CSS3 in 2026.
 
 ### Real CSS typography on Mac OS 9
 ![CSS typography, custom properties, nested lists](../screenshots/02-css-typography.jpg)

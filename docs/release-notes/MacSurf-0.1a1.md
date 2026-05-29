@@ -84,7 +84,7 @@ This is the first numbered alpha, the build everything else has converged toward
 
 ## Verified hardware platforms
 
-- **Power Mac G3 iMac** (beige / blueberry), Mac OS 9.1, 233 MHz, 96 MB RAM, primary dev rig, all probes pass.
+- **Power Mac G3 iMac** (beige / blueberry), Mac OS 9.2.2, 233 MHz, 96 MB RAM, primary dev rig, all probes pass.
 - **CarbonLib 1.5+**, required for the Carbon API surface MacSurf uses. CarbonLib 1.6 is fine.
 
 Not yet tested:

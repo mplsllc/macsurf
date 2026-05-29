@@ -3,7 +3,7 @@
 **Released:** 2026-05-26
 **Codename:** Cleanup
 **Engine HEAD:** fixes271b
-**Verified on:** Power Macintosh G3 iMac, Mac OS 9.1
+**Verified on:** Power Macintosh G3 iMac, Mac OS 9.2.2
 
 ---
 

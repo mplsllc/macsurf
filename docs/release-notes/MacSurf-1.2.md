@@ -3,7 +3,7 @@
 **Released:** 2026-05-29
 **Codename:** Sealed
 **Engine HEAD:** fixes315
-**Verified on:** Power Macintosh G3 iMac, Mac OS 9.1
+**Verified on:** Power Macintosh G3 iMac, Mac OS 9.2.2
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/mplsllc/macsurf/master/img/mactls-logo.png" alt="macTLS" width="420">

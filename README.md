@@ -115,7 +115,7 @@ Each shot below is a real milestone, captured on a Power Macintosh G3 running Ma
 <td width="100%" colspan="2" align="center" valign="top">
   <img src="screenshots/macsurf-1.0-home.jpg" alt="MacSurf 1.0 rendering home.macsurf.org"><br>
   <strong>v1.0: Showcase</strong><br>
-  <em>The new tool-belt toolbar, razor-sharp URL field, and matted icons rendering <a href="https://home.macsurf.org/">home.macsurf.org</a> on a G3 iMac running OS 9.1. Native HTTPS via macTLS direct to the origin, server-rendered portal, true-colour images end to end.</em>
+  <em>The new tool-belt toolbar, razor-sharp URL field, and matted icons rendering <a href="https://home.macsurf.org/">home.macsurf.org</a> on a G3 iMac running OS 9.2.2. Native HTTPS via macTLS direct to the origin, server-rendered portal, true-colour images end to end.</em>
 </td>
 </tr>
 </table>

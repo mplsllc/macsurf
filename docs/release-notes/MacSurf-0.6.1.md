@@ -3,7 +3,7 @@
 **Released:** 2026-05-25
 **Codename:** First-Light-Patch
 **Engine HEAD:** fixes230
-**Verified on:** Power Macintosh G3 iMac, Mac OS 9.1
+**Verified on:** Power Macintosh G3 iMac, Mac OS 9.2.2
 
 ---
 
@@ -35,7 +35,7 @@ Diag signature from the bug report log: `ot_recv bytes=4159` (handshake plus a s
 
 ## Verified on hardware
 
-- **Power Macintosh G3 iMac, Mac OS 9.1, CarbonLib 1.5+** — mactrove.com home page now renders on cold boot, no about-page detour.
+- **Power Macintosh G3 iMac, Mac OS 9.2.2, CarbonLib 1.5+** — mactrove.com home page now renders on cold boot, no about-page detour.
 
 ---
 

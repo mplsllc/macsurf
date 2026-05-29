@@ -3,7 +3,7 @@
 **Released:** 2026-05-25
 **Codename:** Speed-Run
 **Engine HEAD:** fixes263
-**Verified on:** Power Macintosh G3 iMac, Mac OS 9.1
+**Verified on:** Power Macintosh G3 iMac, Mac OS 9.2.2
 
 ---
 
@@ -96,7 +96,7 @@ Net effect: **35–50 seconds of wall-clock savings per cold mactrove load**, pl
 
 ## Hardware verification
 
-- **Power Macintosh G3 iMac, Mac OS 9.1, CarbonLib 1.5+** — primary development hardware, full multi-page smoke test (mactrove, classic.mactrove, macintoshgarden.org) all rendered correctly.
+- **Power Macintosh G3 iMac, Mac OS 9.2.2, CarbonLib 1.5+** — primary development hardware, full multi-page smoke test (mactrove, classic.mactrove, macintoshgarden.org) all rendered correctly.
 - **SheepShaver + OS 9.0.4** — full Carbon init + UI smoke; networking is the limitation (SheepShaver's OT TCP doesn't reach the live internet without manual ethernet config, so HTTPS fetches hit `NO_PROGRESS_TICKS` and route to about:fetcherror). Good for build-smoke gating; not a substitute for hardware-side fetcher testing.
 
 ---

@@ -3,7 +3,7 @@
 **Released:** 2026-05-25
 **Codename:** First-Light
 **Engine HEAD:** fixes229
-**Verified on:** Power Macintosh G3 iMac, Mac OS 9.1
+**Verified on:** Power Macintosh G3 iMac, Mac OS 9.2.2
 
 ---
 
@@ -78,7 +78,7 @@ This release captures the **fixes208–229 chain**, two weeks of work split acro
 
 Built and tested on:
 
-- **Power Macintosh G3 iMac, Mac OS 9.1, CarbonLib 1.5+** — primary development hardware
+- **Power Macintosh G3 iMac, Mac OS 9.2.2, CarbonLib 1.5+** — primary development hardware
 - **Power Mac G4, Mac OS 9.2.2** — secondary, cleaner font rendering
 - **SheepShaver / OS 9.0.4** — smoke-only
 

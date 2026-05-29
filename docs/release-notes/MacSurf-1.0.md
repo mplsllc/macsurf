@@ -3,7 +3,7 @@
 **Released:** 2026-05-28
 **Codename:** Showcase
 **Engine HEAD:** fixes304
-**Verified on:** Power Macintosh G3 iMac, Mac OS 9.1
+**Verified on:** Power Macintosh G3 iMac, Mac OS 9.2.2
 
 ---
 
@@ -15,7 +15,7 @@ Three things make this 1.0 and not 0.8:
 
 1. **The image pipeline is correctness-clean.** Every rendering oddity that made 0.x feel like a tech demo — the blue tint on certain images, the "faded" mactrove logo, the white halos around toolbar buttons — was the same QuickDraw `CopyBits` colorizing behavior leaking the port's foreground color into every blit. fixes301j resets `fg=black / bg=white` before every image transfer; fixes301c marks fully-opaque PNGs as opaque so they take the colour-accurate `srcCopy` path instead of `CopyMask`. The result is true colors end to end on screenshots, transparent PNGs, JPEGs, and GIFs.
 2. **The chrome looks like a real browser.** Toolbar redesign across fixes297–303 produced state-aware icons (disabled back/forward, animated reload, dim home at the home URL), invisible user-pane buttons, matted icon corners (no halos against the platinum toolbar), a razor-sharp 1px URL field, and a 1px `#555555` accent line separating chrome from page. Netscape-7-vibe "tool belt" rather than four chrome buttons floating on grey.
-3. **A site we can show off on.** `home.macsurf.org` launched alongside the release — a server-rendered portal page (PHP, no JS dependency) showing weather, search, four news feeds, and a "Part of the MPLS LLC Network" widget. Rendered on a G3 iMac running OS 9.1, through `macTLS` direct, the [screenshot below](../../screenshots/macsurf-1.0-home.jpg) is the new default home and the headline image of the project.
+3. **A site we can show off on.** `home.macsurf.org` launched alongside the release — a server-rendered portal page (PHP, no JS dependency) showing weather, search, four news feeds, and a "Part of the MPLS LLC Network" widget. Rendered on a G3 iMac running OS 9.2.2, through `macTLS` direct, the [screenshot below](../../screenshots/macsurf-1.0-home.jpg) is the new default home and the headline image of the project.
 
 The standards expansion is the other story of the release: 25+ CSS-related issues closed across a single Bundles A-M sprint (fixes272–281), bringing CSS direction (`rtl`), `@media (orientation)` / `(prefers-color-scheme)`, grid-auto-flow with dense, place-items / place-content, Logical Properties Level 1, extended cursor mapping, stacked-gradient first-layer rendering, narrow `calc()` arithmetic, and a repeating-gradient fallback. The CSS coverage count moved meaningfully without a single regression.
 
@@ -23,7 +23,7 @@ The standards expansion is the other story of the release: 25+ CSS-related issue
 
 ## Headline screenshot
 
-![MacSurf 1.0 rendering home.macsurf.org on G3 iMac, OS 9.1](https://raw.githubusercontent.com/mplsllc/macsurf/master/screenshots/macsurf-1.0-home.jpg)
+![MacSurf 1.0 rendering home.macsurf.org on G3 iMac, OS 9.2.2](https://raw.githubusercontent.com/mplsllc/macsurf/master/screenshots/macsurf-1.0-home.jpg)
 
 `https://home.macsurf.org/`, served via `macTLS`, rendered with the fixes302–303 toolbar.
 
