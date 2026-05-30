@@ -21,41 +21,22 @@
 #include <stddef.h>
 #include <Events.h>
 #include <Quickdraw.h>
-#include <AppleEvents.h>
 
 #include "mlink_log.h"
 #include "mlink_listener.h"
 
 /* ------------------------------------------------------------------ */
-/* Quit-flag, set by AppleEvent handler or by command-key             */
+/* Quit-flag                                                          */
+/*                                                                    */
+/* Phase 0 deliberately does NOT install an AppleEvent quit handler.  */
+/* NewAEEventHandlerUPP expands to NewRoutineDescriptor on this CW8   */
+/* install, and NewRoutineDescriptor isn't exported by the local      */
+/* CarbonLib build. For Phase 0 testing the user force-quits via      */
+/* Cmd-Opt-Esc (Process Manager). Phase 1 revisits this when macTLS  */
+/* enters the picture and we genuinely need clean-shutdown ordering. */
 /* ------------------------------------------------------------------ */
 
 static int g_quit = 0;
-
-/* ------------------------------------------------------------------ */
-/* AppleEvent: Quit ('quit') handler — required for clean shutdown    */
-/* even for an FBA, because the Finder sends 'quit' to all running   */
-/* apps at system shutdown.                                          */
-/* ------------------------------------------------------------------ */
-
-static pascal OSErr mlink__ae_quit(const AppleEvent *evt,
-                                   AppleEvent *reply,
-                                   long refcon)
-{
-    (void)evt;
-    (void)reply;
-    (void)refcon;
-    g_quit = 1;
-    mlink_log("ae: quit received");
-    return noErr;
-}
-
-static OSErr mlink__install_ae_handlers(void)
-{
-    return AEInstallEventHandler(kCoreEventClass, kAEQuitApplication,
-                                 NewAEEventHandlerUPP(mlink__ae_quit),
-                                 0, false);
-}
 
 /* ------------------------------------------------------------------ */
 /* Cooperative event loop                                             */
@@ -68,12 +49,7 @@ static void mlink__one_iter(void)
      * Listener pump runs every iter regardless. */
     (void)WaitNextEvent(everyEvent, &evt, 6, NULL);
 
-    /* Dispatch the few events we care about. Most we drop on the
-     * floor — FBA has no windows. */
-    if (evt.what == kHighLevelEvent) {
-        (void)AEProcessAppleEvent(&evt);
-    }
-
+    /* FBA has no windows; most events get dropped. */
     mlink_listener_pump();
 }
 
@@ -95,11 +71,6 @@ int main(void)
     }
 
     mlink_log("main: macLink starting up");
-
-    if (mlink__install_ae_handlers() != noErr) {
-        mlink_log("main: AE handler install FAIL");
-        /* Non-fatal — we just won't shut down cleanly. Continue. */
-    }
 
     /* Phase 0: bring up just one listener so we can validate the
      * pattern. Phases 4+ open the rest. */
