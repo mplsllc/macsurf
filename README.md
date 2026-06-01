@@ -31,13 +31,15 @@
   <img alt="JavaScript engine" src="https://img.shields.io/badge/JavaScript-Duktape%20ES5-lightgrey">
 </p>
 
----
 
 <p align="center">
   <img src="img/mactls.png" alt="Mac OS 9, meet TLS — Native, no proxy needed." width="500">
 </p>
 
----
+<p align="center"><h3>Intro Video</h3></p>
+
+[![Watch the video](https://img.youtube.com/vi/PLpbHSXca60/hqdefault.jpg)](https://www.youtube.com/watch?v=PLpbHSXca60)
+
 
 > [!NOTE]
 > Early alpha — it runs, renders, and speaks TLS 1.3 natively on a 233 MHz G3, but most of the modern web won't work in it yet. Expect hand-built pages, retro-style sites, and the strange thrill of ES5 JavaScript on PowerPC. Don't expect smooth browsing on arbitrary modern sites, video, or anything React-heavy.
