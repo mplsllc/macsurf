@@ -2,6 +2,13 @@
 
 Step-by-step guide to building MacSurf on a real Power Mac running Mac OS 9.
 
+> **Quickest path:** the complete, ready-to-open project ships as a StuffIt pack in
+> [`builds/`](../builds/) (see [builds/README.md](../builds/README.md)). It bundles
+> the full source tree, the CodeWarrior project with target settings already
+> configured, and the MSL libraries it links against, so you can expand it on the
+> Mac and go straight to Build. The sections below cover installing CodeWarrior,
+> what the project contains, and assembling the source by hand if you prefer.
+
 ---
 
 ## 1. Installing CodeWarrior 8
@@ -24,25 +31,26 @@ Step-by-step guide to building MacSurf on a real Power Mac running Mac OS 9.
    ```
    You should see folders like `CIncludes`, `PInterfaces`, etc. If missing, run the installer again and check the Universal Headers checkbox
 
+**No CD?** CodeWarrior Pro 8 is on Macintosh Garden. The project targets the 8.3 update, which is cumulative: install base **Pro 8.0**, then apply the **8.1**, **8.2**, and **8.3** updaters in that order (each refuses to run until the prior one is installed). You also need **CarbonLib 1.6 or later** in the System Folder.
+
 ---
 
 ## 2. Opening the Project File
 
-1. Copy the entire `macsurf/browser/netsurf/` directory tree to the Mac (see Section 6 for transfer method)
-2. Navigate to `netsurf:frontends:macos9:` in the Finder
-3. Double-click `MacSurf.mcp`, CodeWarrior will open it and display the project window
-4. If CodeWarrior prompts "Cannot find file..." for any source file, the directory structure was not preserved during transfer. Verify that the `utils`, `content`, and `desktop` folders exist three levels up from the `macos9` folder
-5. The project window should show six groups in the left pane:
-   - NetSurf Core Utils (10 files)
-   - NetSurf Content (7 files)
-   - NetSurf Desktop (5 files)
-   - MacSurf Frontend (11 files)
-   - POSIX Shims (5 files)
-   - Libraries (3 items)
+The project is distributed in [`builds/`](../builds/) as a StuffIt pack containing the full source tree, the CodeWarrior project file (with target settings already set), and the bundled MSL libraries.
+
+1. Expand the pack on the Mac with StuffIt Expander.
+2. Open the included CodeWarrior project (double-click it, or File > Open).
+3. The project spans NetSurf core plus the vendored libraries (libcss, libdom, libhubbub, libparserutils, libwapcaplet, Duktape) and the macTLS TLS code, plus the macOS 9 frontend: several hundred source files, grouped by subsystem in the left pane.
+4. If CodeWarrior shows files in red ("Cannot find file..."), the source tree was not expanded where the project's access paths expect it. Re-expand the pack so the `macsurf-source Folder` tree sits at the path the project references.
+
+If you are assembling the project by hand from a source checkout instead, the rest of this guide (target settings, access paths, transfer) walks through it, but the pack is the simplest path and the authoritative reference for the current file list and settings.
 
 ---
 
 ## 3. Verifying Target Settings
+
+If you opened the project from the `builds/` pack, these settings are already configured; this section is a reference, useful mainly for hand-assembly. The access-path list below is from an earlier, smaller layout; the real project carries many more paths, so treat the pack's project file as authoritative.
 
 1. Go to **Edit > MacSurf Settings...** (or press Cmd-J)
 2. In the settings dialog, verify:
@@ -55,14 +63,9 @@ Step-by-step guide to building MacSurf on a real Power Mac running Mac OS 9.
 - Source model: C (not C++)
 - C99 Extensions: enabled
 
-**C/C++ Preprocessor panel:**
-- Prefix text should contain:
-  ```
-  #define __MACOS9__               1
-  #define WITHOUT_DUKTAPE          1
-  #define NO_IPV6                  1
-  #define TARGET_API_MAC_CARBON    1
-  ```
+**Prefix file (C/C++ Language panel):**
+- The project sets a prefix *file*, `macsurf_prefix.h`, in the **Prefix File** field rather than inline preprocessor text. That header handles the platform setup (`__MACOS9__`, `NO_IPV6`, `TARGET_API_MAC_CARBON`, defining away `inline` for C89, and so on).
+- Note `WITHOUT_DUKTAPE` is **not** defined: Duktape is compiled into the project (`duktape.c` is in the file list), so the engine is linked in. (Older setups used inline prefix text with `WITHOUT_DUKTAPE` defined to exclude it.)
 
 **Access Paths panel:**
 - User paths should list (in order):
@@ -86,14 +89,11 @@ Step-by-step guide to building MacSurf on a real Power Mac running Mac OS 9.
 
 Press Cmd-M (Project > Make) to start the build. Here is what to expect:
 
+> The breakdown in this section dates from the early layered bring-up, when only a few dozen files were in the project. The current project builds the whole tree (several hundred files); from the `builds/` pack it compiles and links with the settings already configured. The troubleshooting notes below are mainly useful when assembling the project by hand.
+
 ### What will succeed
 
-The POSIX shim files and frontend files should compile without errors, these have been syntax-checked on Linux with equivalent flags. Files that compiled clean in our Linux syntax-check rounds:
-
-- All 5 `utils/` files (Round 2, zero errors, zero warnings)
-- All 3 `content/` files (Round 2, zero errors)
-- All 5 `desktop/` files (Round 3, zero errors)
-- All 11 frontend files (Round 4, zero errors)
+The POSIX shim files, the macOS 9 frontend, and the vendored libraries (libcss, libdom, libhubbub, libparserutils, libwapcaplet, Duktape) all compile under CW8 with the project's prefix file and settings in place.
 
 ### What will likely fail
 
@@ -117,10 +117,7 @@ If any are missing, copy them from the corresponding `browser/lib*/include/` dir
 3. Select `CarbonLib`
 4. Add it to the Libraries group
 
-**MSL library path issues.** CodeWarrior 8 ships MSL libraries in slightly different directory structures depending on the installer version. If "MSL C.Carbon.Lib" is not found:
-1. Use Sherlock (Cmd-F in Finder) to search for "MSL C.Carbon.Lib" on the boot volume
-2. Note the actual path
-3. In the project, remove the broken library reference and re-add from the correct location
+**MSL libraries.** The project links `MSL_C_Carbon.Lib` and `MSL_Runtime_PPC_D.Lib`; both ship inside the `builds/` pack (they are specific builds, not necessarily the ones in a stock CodeWarrior install). If the linker can't find them, make sure they sit on a library access path, e.g. alongside the other MSL libraries in `{Compiler}:MacOS Support:Libraries:Runtime:Libs:`. (Older notes here referenced `MSL C.Carbon.Lib`, the CodeWarrior 7-era name.)
 
 ### Expected error count
 
