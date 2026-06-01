@@ -2980,13 +2980,16 @@ macsurf__rewrite_calc_aspect(const char *data, size_t in_size)
  * that to nearly solid white, and title bars appear empty.
  *
  * V1 fix: detect `repeating-linear-gradient(...)` / `repeating-radial-
- * gradient(...)` (case-insensitive) and replace the entire call with a
- * neutral platinum-grey hex color `#dddddd`. In the `background:`
- * shorthand context this sets background-color, giving title bars a
- * visible solid backdrop instead of being invisible.
+ * gradient(...)` (case-insensitive) and replace the entire call with the
+ * platinum window-chrome hex `#cccccc`. fixes363 — was `#dddddd` but
+ * that exactly matches `--platinum-bg`, making striped title bars
+ * disappear into the page background. `#cccccc` (the platinum chrome
+ * variable) gives visible contrast against both page bg (#dddddd) and
+ * window body (#eeeeee). In the `background:` shorthand context this
+ * sets background-color, giving title bars a visible solid backdrop.
  *
- * Trade-off: loses the striped texture but matches average tonal value
- * and is far better than nothing. A real repeating-gradient plotter
+ * Trade-off: loses the striped texture but matches platinum vocabulary
+ * and is far better than vanishing. A real repeating-gradient plotter
  * (QuickDraw pattern fill) is a separate round.
  *
  * In-place same-size rewrite (pads with trailing spaces). */
@@ -3011,7 +3014,7 @@ macsurf__rewrite_repeating_gradient_solid(const char *data, size_t in_size)
 		int paren;
 		static const char LIN[] = "repeating-linear-gradient(";
 		static const char RAD[] = "repeating-radial-gradient(";
-		static const size_t REPL_LEN = 7; /* "#dddddd" */
+		static const size_t REPL_LEN = 7; /* "#cccccc" */
 
 		/* Case-insensitive match for both. */
 		{
@@ -3061,8 +3064,8 @@ macsurf__rewrite_repeating_gradient_solid(const char *data, size_t in_size)
 		span = j - i + 1;
 		if (span < REPL_LEN) { i = j + 1; continue; }
 
-		/* Replace with #dddddd + spaces. */
-		memcpy(out + i, "#dddddd", REPL_LEN);
+		/* Replace with #cccccc + spaces. (fixes363) */
+		memcpy(out + i, "#cccccc", REPL_LEN);
 		memset(out + i + REPL_LEN, ' ', span - REPL_LEN);
 		i = j + 1;
 		changed = 1;
@@ -4644,8 +4647,9 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		/* In-place same-size rewrite. */
 	}
 
-	/* fixes281 — collapse repeating-{linear,radial}-gradient(...) to
-	 * a solid platinum-grey #dddddd. Visible fallback for striped
+	/* fixes281+363 — collapse repeating-{linear,radial}-gradient(...) to
+	 * the platinum chrome #cccccc (was #dddddd; that matched the page bg
+	 * and the title bars disappeared). Visible fallback for striped
 	 * title-bar backgrounds. */
 	rewritten_rep_grad = macsurf__rewrite_repeating_gradient_solid(
 			data, (size_t)size);
