@@ -89,6 +89,7 @@ outline_width.c \
 overflow_x.c \
 overflow_y.c \
 s_macsurf_grid_flow.c \
+s_macsurf_hstripe_bg.c \
 s_macsurf_object_position.c \
 padding_bottom.c \
 padding_left.c \

@@ -197,6 +197,14 @@ int32_t css_computed_box_shadow_2(
 int32_t css_computed_box_shadow_3(
 		const css_computed_style *style);
 
+/* fixes364 — horizontal stripe background. Two RGB555 colors packed
+ * into one int32: bit 31 = set flag, bits 15..29 = c2 (high), bits
+ * 0..14 = c1 (low). Mapped from `repeating-linear-gradient(to bottom,
+ * ...)` by cssh_css.c so Platinum title bars get real alternating-row
+ * stripes. Returns 0 when unset. */
+int32_t css_computed_macsurf_hstripe_bg(
+		const css_computed_style *style);
+
 uint8_t css_computed_macsurf_gradient(
 		const css_computed_style *style,
 		int32_t *color);

@@ -425,6 +425,17 @@ struct css_computed_style_i {
 	css_color text_decoration_color;
 	int32_t text_decoration_style;
 	int32_t text_decoration_thickness;
+	/* fixes364 — horizontal stripe background. Two RGB555 colors packed
+	 * into one int32: bits 0..14 = c1, bits 15..29 = c2, bit 31 = set
+	 * flag. 0 = unset (no stripe). Mapped from
+	 * `repeating-linear-gradient(to bottom, ...)` by cssh_css.c so
+	 * mactrove's Platinum window title bars get real alternating-row
+	 * stripes instead of the fixes281/363 solid #cccccc fallback.
+	 * int32_t = self-aligning, memcmp-safe per fixes151b discipline.
+	 * Appended at struct end so stale CW8 .o files do not shift the
+	 * preceding field offsets, per
+	 * project_libcss_struct_mid_insert_crash. */
+	int32_t macsurf_hstripe_bg;
 };
 
 struct css_computed_style {

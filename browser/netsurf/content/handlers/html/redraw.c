@@ -1194,6 +1194,11 @@ extern int macos9_get_bg_fixed_origin(int *out_x, int *out_y,
  * Platinum two-inset + drop convention). */
 extern void macos9_set_box_shadow_2(int32_t packed);
 extern void macos9_set_box_shadow_3(int32_t packed);
+/* fixes364 — horizontal stripe one-shot. Set right before the bg
+ * rectangle paint so the plotter overrides the default flat fill with
+ * alternating-row stripes. Same read-and-clear lifecycle as the
+ * box_shadow_2/3 setters. */
+extern void macos9_set_hstripe_bg(int32_t packed);
 #endif
 
 static bool html_redraw_background(int x, int y, struct box *box, float scale,
@@ -1363,6 +1368,11 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	                macos9_set_box_shadow_2(css_computed_box_shadow_2(
 	                                background->style));
 	                macos9_set_box_shadow_3(css_computed_box_shadow_3(
+	                                background->style));
+	                /* fixes364 — alternating-row stripes from cssh_css.c
+	                 * rewrite of `repeating-linear-gradient(to bottom,
+	                 * c1, c2, ...)`. */
+	                macos9_set_hstripe_bg(css_computed_macsurf_hstripe_bg(
 	                                background->style));
 #endif
 	                (void)scale;  /* scale baked into offset->fixed shift */
@@ -2029,11 +2039,14 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	                        pstyle_fill_bg.box_shadow_color = 0;
 	                }
 	                /* fixes361h / 362 — extra shadows via one-shot
-	                 * statics. */
+	                 * statics. fixes364 — stripe pattern via same
+	                 * pattern. */
 #ifdef __MACOS9__
 	                macos9_set_box_shadow_2(css_computed_box_shadow_2(
 	                                box->style));
 	                macos9_set_box_shadow_3(css_computed_box_shadow_3(
+	                                box->style));
+	                macos9_set_hstripe_bg(css_computed_macsurf_hstripe_bg(
 	                                box->style));
 #endif
 	                (void)scale;

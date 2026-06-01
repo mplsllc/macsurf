@@ -2968,6 +2968,210 @@ macsurf__rewrite_calc_aspect(const char *data, size_t in_size)
 }
 
 
+/* fixes364 — emit `-macsurf-hstripe-bg: c1 c2;` for each
+ * `repeating-linear-gradient(to bottom, ...)` encountered.
+ *
+ * Parses the first two distinct hex colors from inside the gradient
+ * call and inserts a new declaration immediately after the source
+ * declaration's terminating semicolon, keeping the property inside the
+ * same rule block. The fixes281 rewriter still runs afterwards and
+ * collapses the original gradient call to `#cccccc`, so the cascade
+ * sees both `background-color: #cccccc` (fallback) and
+ * `-macsurf-hstripe-bg: c1 c2;` (real stripes). The plotter checks the
+ * stripe slot first and paints alternating-row stripes when set.
+ *
+ * Output is to a new buffer because each insert grows the source by
+ * up to ~50 bytes. Worst-case: every 26-byte window holds one match,
+ * so grow budget is (in_size / 26 + 1) × 50 + 256 padding.
+ *
+ * Only matches `repeating-linear-gradient(` with `to bottom` (the
+ * Platinum pattern). Other directions (to right, diagonal) fall
+ * through to the fixes281 solid-colour collapse. */
+static char *
+macsurf__rewrite_repeating_gradient_hstripe(const char *data, size_t in_size,
+		size_t *out_size_p)
+{
+	static const char NEEDLE[] = "repeating-linear-gradient(";
+	static const size_t NEEDLE_LEN = 26;
+	char *out;
+	size_t cap;
+	size_t pos = 0;
+	size_t i = 0;
+	int changed = 0;
+
+	cap = in_size + (in_size / NEEDLE_LEN + 1) * 64 + 256;
+	out = (char *)malloc(cap);
+	if (out == NULL) return NULL;
+
+	while (i < in_size) {
+		bool match;
+		size_t j;
+		int paren;
+		char c1[8];
+		char c2[8];
+		int got_c1 = 0;
+		int got_c2 = 0;
+		bool has_to_bottom = false;
+		size_t scan;
+		size_t decl_end;
+
+		/* Case-insensitive prefix match. */
+		match = false;
+		if (i + NEEDLE_LEN <= in_size) {
+			size_t k;
+			match = true;
+			for (k = 0; k < NEEDLE_LEN; k++) {
+				char a = data[i + k];
+				char b = NEEDLE[k];
+				if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+				if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+				if (a != b) { match = false; break; }
+			}
+		}
+		if (!match) {
+			out[pos++] = data[i++];
+			continue;
+		}
+
+		/* Find balanced close paren. */
+		j = i + NEEDLE_LEN;
+		paren = 1;
+		while (j < in_size && paren > 0) {
+			if (data[j] == '(') paren++;
+			else if (data[j] == ')') {
+				paren--;
+				if (paren == 0) break;
+			}
+			j++;
+		}
+		if (j >= in_size) {
+			out[pos++] = data[i++];
+			continue;
+		}
+
+		/* Scan inside for `to bottom` and first 2 distinct hex colors. */
+		for (scan = i + NEEDLE_LEN; scan < j; scan++) {
+			if (!has_to_bottom && scan + 9 <= j) {
+				if ((data[scan] == 't' || data[scan] == 'T') &&
+				    (data[scan + 1] == 'o' || data[scan + 1] == 'O') &&
+				    data[scan + 2] == ' ' &&
+				    (data[scan + 3] == 'b' || data[scan + 3] == 'B')) {
+					has_to_bottom = true;
+				}
+			}
+			if (data[scan] == '#' && got_c2 == 0) {
+				size_t hex_len = 0;
+				size_t m;
+				for (m = scan + 1;
+				     m < j && hex_len < 6 &&
+				     ((data[m] >= '0' && data[m] <= '9') ||
+				      (data[m] >= 'a' && data[m] <= 'f') ||
+				      (data[m] >= 'A' && data[m] <= 'F'));
+				     m++) {
+					hex_len++;
+				}
+				if (hex_len == 3 || hex_len == 6) {
+					char buf[8];
+					int b;
+					if (hex_len == 6) {
+						for (b = 0; b < 7; b++) {
+							buf[b] = data[scan + b];
+						}
+						buf[7] = 0;
+					} else {
+						/* Expand #abc -> #aabbcc. */
+						buf[0] = '#';
+						buf[1] = data[scan + 1];
+						buf[2] = data[scan + 1];
+						buf[3] = data[scan + 2];
+						buf[4] = data[scan + 2];
+						buf[5] = data[scan + 3];
+						buf[6] = data[scan + 3];
+						buf[7] = 0;
+					}
+					if (!got_c1) {
+						memcpy(c1, buf, 8);
+						got_c1 = 1;
+					} else {
+						/* Compare case-insensitively. */
+						int diff = 0;
+						int k;
+						for (k = 1; k < 7; k++) {
+							char a = buf[k];
+							char b = c1[k];
+							if (a >= 'A' && a <= 'Z')
+								a = (char)(a - 'A' + 'a');
+							if (b >= 'A' && b <= 'Z')
+								b = (char)(b - 'A' + 'a');
+							if (a != b) { diff = 1; break; }
+						}
+						if (diff) {
+							memcpy(c2, buf, 8);
+							got_c2 = 1;
+						}
+					}
+					scan += hex_len; /* skip past hex digits */
+				}
+			}
+		}
+
+		/* Copy through close paren. */
+		if (pos + (j - i + 1) >= cap) {
+			free(out);
+			return NULL;
+		}
+		memcpy(out + pos, data + i, j - i + 1);
+		pos += j - i + 1;
+		i = j + 1;
+
+		/* Walk to declaration terminator (`;` or `}`). */
+		decl_end = i;
+		while (decl_end < in_size && data[decl_end] != ';' &&
+				data[decl_end] != '}') {
+			decl_end++;
+		}
+
+		/* Copy up to and INCLUDING the terminator. */
+		if (decl_end < in_size) {
+			if (pos + (decl_end - i + 1) >= cap) {
+				free(out);
+				return NULL;
+			}
+			memcpy(out + pos, data + i, decl_end - i + 1);
+			pos += decl_end - i + 1;
+			i = decl_end + 1;
+		}
+
+		/* Insert hstripe declaration only when we have a `to bottom`
+		 * direction AND two distinct colors. */
+		if (has_to_bottom && got_c1 && got_c2) {
+			static const char PFX[] = " -macsurf-hstripe-bg:";
+			static const size_t PFX_LEN = 21;
+			if (pos + PFX_LEN + 8 + 1 + 7 + 1 >= cap) {
+				free(out);
+				return NULL;
+			}
+			memcpy(out + pos, PFX, PFX_LEN);
+			pos += PFX_LEN;
+			memcpy(out + pos, c1, 7);
+			pos += 7;
+			out[pos++] = ' ';
+			memcpy(out + pos, c2, 7);
+			pos += 7;
+			out[pos++] = ';';
+			changed = 1;
+		}
+	}
+
+	*out_size_p = pos;
+	if (!changed) {
+		free(out);
+		return NULL;
+	}
+	return out;
+}
+
+
 /* fixes281 — fallback solid color for repeating-linear-gradient.
  *
  * mactrove's Platinum theme paints window title bars with
@@ -4530,6 +4734,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	char *rewritten_logical = NULL;    /* fixes277 logical properties */
 	char *rewritten_calc = NULL;       /* fixes280 calc() arithmetic */
 	char *rewritten_rep_grad = NULL;   /* fixes281 repeating-gradient -> solid */
+	char *rewritten_hstripe = NULL;    /* fixes364 -macsurf-hstripe-bg emission */
 	char *rewritten_bg_short = NULL;   /* fixes318 background: shorthand gradient */
 	size_t col_span_size = 0;
 	size_t text_shadow_size = 0;
@@ -4645,6 +4850,22 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	if (rewritten_calc != NULL) {
 		data = (const char *)rewritten_calc;
 		/* In-place same-size rewrite. */
+	}
+
+	/* fixes364 — emit `-macsurf-hstripe-bg: c1 c2;` for each
+	 * `repeating-linear-gradient(to bottom, ...)` so the plotter can
+	 * paint real alternating-row stripes for Platinum title bars.
+	 * Runs BEFORE the fixes281+363 solid collapse so it can read the
+	 * original gradient text. Output is a new buffer (may grow). */
+	{
+		size_t hstripe_size = 0;
+		rewritten_hstripe = macsurf__rewrite_repeating_gradient_hstripe(
+				data, (size_t)size, &hstripe_size);
+		if (rewritten_hstripe != NULL &&
+				hstripe_size <= (size_t)0x7fffffff) {
+			data = (const char *)rewritten_hstripe;
+			size = (unsigned int)hstripe_size;
+		}
 	}
 
 	/* fixes281+363 — collapse repeating-{linear,radial}-gradient(...) to
@@ -4841,6 +5062,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	if (rewritten_logical != NULL) free(rewritten_logical); /* fixes277 */
 	if (rewritten_calc != NULL) free(rewritten_calc); /* fixes280 */
 	if (rewritten_rep_grad != NULL) free(rewritten_rep_grad); /* fixes281 */
+	if (rewritten_hstripe != NULL) free(rewritten_hstripe); /* fixes364 */
 	if (rewritten_bg_short != NULL) free(rewritten_bg_short); /* fixes318 */
 
 	if (error != CSS_OK && error != CSS_NEEDDATA) {

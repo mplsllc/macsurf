@@ -85,6 +85,7 @@ PROPERTY_FUNCS(image_rendering);
 PROPERTY_FUNCS(text_decoration_color);
 PROPERTY_FUNCS(text_decoration_style);
 PROPERTY_FUNCS(text_decoration_thickness);
+PROPERTY_FUNCS(macsurf_hstripe_bg);
 
 PROPERTY_FUNCS(bottom);
 PROPERTY_FUNCS(box_sizing);

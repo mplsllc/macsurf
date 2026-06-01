@@ -62,6 +62,7 @@ DIR_SOURCES :=				\
 	padding.c			\
 	pause.c				\
 	p_macsurf_grid_flow.c		\
+	p_macsurf_hstripe_bg.c		\
 	p_macsurf_object_position.c	\
 	play_during.c			\
 	p_pointer_events.c		\

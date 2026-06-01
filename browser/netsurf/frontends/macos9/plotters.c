@@ -298,6 +298,18 @@ void macos9_set_box_shadow_3(int32_t packed)
 	macos9_box_shadow_3_oneshot = packed;
 }
 
+/* fixes364 — horizontal stripe background one-shot. Packed format
+ * mirrors css_computed_macsurf_hstripe_bg: bit 31 = set flag, bits
+ * 15..29 = c2 RGB555, bits 0..14 = c1 RGB555. redraw.c sets this
+ * before plot_rectangle paints the background fill; the plotter
+ * reads-and-clears the slot and overrides the flat-fill with
+ * alternating-row stripes (c1, c2, c1, c2, ...) one pixel each. */
+static int32_t macos9_hstripe_bg_oneshot = 0;
+void macos9_set_hstripe_bg(int32_t packed)
+{
+	macos9_hstripe_bg_oneshot = packed;
+}
+
 extern struct gui_window *macos9_paint_gw;
 /* fixes77g -- prefer macos9_paint_gw over GetPort+GetWRefCon. The old
  * pattern assumed the current port was the window and read gw from the
@@ -617,6 +629,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	 * so the values can't leak across paints. */
 	int32_t bsh2_local;
 	int32_t bsh3_local;
+	int32_t hstripe_local; /* fixes364 */
 
 	(void)ctx;
 
@@ -625,8 +638,10 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 
 	bsh2_local = macos9_box_shadow_2_oneshot;
 	bsh3_local = macos9_box_shadow_3_oneshot;
+	hstripe_local = macos9_hstripe_bg_oneshot; /* fixes364 */
 	macos9_box_shadow_2_oneshot = 0;
 	macos9_box_shadow_3_oneshot = 0;
+	macos9_hstripe_bg_oneshot = 0; /* fixes364 */
 
 	macos9_plot_rect_count++;
 	macos9_rect_from_ns(rectangle, &r);
@@ -1091,6 +1106,40 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 			wht.red = 0xFFFF; wht.green = 0xFFFF; wht.blue = 0xFFFF;
 			RGBBackColor(&wht);
 			FillRect(&r, &stipple_pat);
+			macos9_pop_clip(saved_clip);
+		} else if ((hstripe_local & (int32_t)0x80000000) != 0) {
+			/* fixes364 — alternating-row horizontal stripes from
+			 * `-macsurf-hstripe-bg: c1 c2`. Packed format:
+			 *   bit 31      = set
+			 *   bits 15..29 = c2 RGB555
+			 *   bits 0..14  = c1 RGB555
+			 * Paints 1px rows of c1, c2, c1, c2 (top→bottom). The
+			 * mactrove Platinum title-bar pattern is 3px-period
+			 * (white/gray/white); we approximate as 2px-period
+			 * (white/gray) which preserves the visual signature
+			 * without losing more contrast to JPEG capture. */
+			uint32_t up = (uint32_t)hstripe_local;
+			uint32_t rgb1 = up & 0x7fff;
+			uint32_t rgb2 = (up >> 15) & 0x7fff;
+			RGBColor sc1;
+			RGBColor sc2;
+			short y;
+			RgnHandle saved_clip;
+			sc1.red   = (unsigned short)(((rgb1 >> 10) & 0x1f) << 11);
+			sc1.green = (unsigned short)(((rgb1 >> 5)  & 0x1f) << 11);
+			sc1.blue  = (unsigned short)(( rgb1        & 0x1f) << 11);
+			sc2.red   = (unsigned short)(((rgb2 >> 10) & 0x1f) << 11);
+			sc2.green = (unsigned short)(((rgb2 >> 5)  & 0x1f) << 11);
+			sc2.blue  = (unsigned short)(( rgb2        & 0x1f) << 11);
+			saved_clip = macos9_push_clip();
+			for (y = r.top; y < r.bottom; y++) {
+				if (((y - r.top) & 1) == 0)
+					RGBForeColor(&sc1);
+				else
+					RGBForeColor(&sc2);
+				MoveTo(r.left, y);
+				LineTo((short)(r.right - 1), y);
+			}
 			macos9_pop_clip(saved_clip);
 		} else {
 			RgnHandle saved_clip = macos9_push_clip();

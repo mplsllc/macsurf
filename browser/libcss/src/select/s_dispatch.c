@@ -630,5 +630,9 @@ struct prop_table prop_dispatch[CSS_N_PROPERTIES] = {
 	{
 	        PROPERTY_FUNCS(text_decoration_thickness),
 	        0,
+	},
+	{
+	        PROPERTY_FUNCS(macsurf_hstripe_bg),
+	        0,
 	}
 	};
