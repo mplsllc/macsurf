@@ -321,7 +321,7 @@ css_error css_inline_extras_register_sheet(const css_stylesheet *sh)
 			cur->n_tokens = src->n_tokens;
 #ifdef MACSURF_DEBUG
 			{
-				extern void macsurf_debug_log_writef(
+				extern void macsurf_debug_log_tracef(
 					const char *fmt, ...);
 				int t0 = -1;
 				int t1 = -1;
@@ -329,7 +329,7 @@ css_error css_inline_extras_register_sheet(const css_stylesheet *sh)
 					t0 = (int)src->tokens[0].type;
 				if (src->n_tokens > 1)
 					t1 = (int)src->tokens[1].type;
-				macsurf_debug_log_writef(
+				macsurf_debug_log_tracef(
 					"fixes347d extras REPLACE: name=%s ntok=%ld t0=%d t1=%d",
 					(src->name != NULL) ?
 						lwc_string_data(src->name) :
@@ -358,7 +358,7 @@ css_error css_inline_extras_register_sheet(const css_stylesheet *sh)
 			}
 #ifdef MACSURF_DEBUG
 			{
-				extern void macsurf_debug_log_writef(
+				extern void macsurf_debug_log_tracef(
 					const char *fmt, ...);
 				int t0 = -1;
 				int t1 = -1;
@@ -369,7 +369,7 @@ css_error css_inline_extras_register_sheet(const css_stylesheet *sh)
 					t1 = (int)src->tokens[1].type;
 				if (src->n_tokens > 2)
 					t2 = (int)src->tokens[2].type;
-				macsurf_debug_log_writef(
+				macsurf_debug_log_tracef(
 					"fixes347d extras ADD: name=%s ntok=%ld t0=%d t1=%d t2=%d",
 					(src->name != NULL) ?
 						lwc_string_data(src->name) :
@@ -749,9 +749,9 @@ static const css_cp_entry *lookup_var(lwc_string *name,
 
 #ifdef MACSURF_DEBUG
 	{
-		extern void macsurf_debug_log_writef(
+		extern void macsurf_debug_log_tracef(
 			const char *fmt, ...);
-		macsurf_debug_log_writef(
+		macsurf_debug_log_tracef(
 			"fixes347d lookup_var: name=%s extras_hit=%d found=%d",
 			(name != NULL) ? lwc_string_data(name) : "(null)",
 			(find_inline_extras(name) != NULL) ? 1 : 0,
@@ -936,9 +936,9 @@ css_error css__deferred_decl_resolve(const css_deferred_decl *dd,
 
 #ifdef MACSURF_DEBUG
 	{
-		extern void macsurf_debug_log_writef(
+		extern void macsurf_debug_log_tracef(
 			const char *fmt, ...);
-		macsurf_debug_log_writef(
+		macsurf_debug_log_tracef(
 			"fixes347d deferred ENTER: prop=%s ntok=%ld",
 			(dd->property != NULL) ?
 				lwc_string_data(dd->property) :
@@ -955,9 +955,9 @@ css_error css__deferred_decl_resolve(const css_deferred_decl *dd,
 			0, &scratch, &ok);
 #ifdef MACSURF_DEBUG
 	{
-		extern void macsurf_debug_log_writef(
+		extern void macsurf_debug_log_tracef(
 			const char *fmt, ...);
-		macsurf_debug_log_writef(
+		macsurf_debug_log_tracef(
 			"fixes347d deferred SUBST: prop=%s err=%d ok=%d used=%ld",
 			(dd->property != NULL) ?
 				lwc_string_data(dd->property) :
@@ -1015,9 +1015,9 @@ css_error css__deferred_decl_resolve(const css_deferred_decl *dd,
 	error = handler(&stub_lang, replay, &ctx_idx, scratch_style);
 #ifdef MACSURF_DEBUG
 	{
-		extern void macsurf_debug_log_writef(
+		extern void macsurf_debug_log_tracef(
 			const char *fmt, ...);
-		macsurf_debug_log_writef(
+		macsurf_debug_log_tracef(
 			"fixes347d deferred HANDLER: prop=%s err=%d prop_id=%d",
 			(dd->property != NULL) ?
 				lwc_string_data(dd->property) :

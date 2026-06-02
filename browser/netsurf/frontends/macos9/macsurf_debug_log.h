@@ -43,6 +43,28 @@ void macsurf_debug_log_flush(void);
 void macsurf_debug_log_writef(const char *fmt, ...);
 
 /*
+ * fixes366h -- runtime-gated high-frequency trace channel.
+ *
+ * Same formatting as macsurf_debug_log_writef, but every call is
+ * suppressed unless macsurf_debug_log_trace_enabled is non-zero
+ * (default 0). Use this -- NOT writef -- for any per-element or
+ * per-property diagnostic that fires inside cascade / layout / paint
+ * loops.
+ *
+ * Motivation: the fixes347d var() resolution trace emitted 77,001 of
+ * the 80,601 lines in a single mactrove load (95.5%), firing inside
+ * every one of the page's 14 recascades. Even with buffered writes
+ * (fixes261) that formatting cost is folded into the measured cascade
+ * time, so profiling captures could not separate real cascade cost
+ * from logging overhead. Gating these off by default keeps the phase
+ * stamps and crash-forensic log clean and the cascade timing honest;
+ * flip macsurf_debug_log_trace_enabled = 1 when a var()/grid bug
+ * actually needs the firehose back.
+ */
+extern int macsurf_debug_log_trace_enabled;
+void macsurf_debug_log_tracef(const char *fmt, ...);
+
+/*
  * fixes366a -- profile timer. Captures a Microseconds() timestamp
  * into a static UnsignedWide t0, and on each stamp call writes one
  * log line "[+NNNNNus] LABEL" where N is integer microseconds since

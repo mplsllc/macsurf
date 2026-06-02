@@ -38,6 +38,12 @@
 extern void macos9_redraw_diag_counters_reset(void);
 extern void macos9_plotter_diag_counters_reset(void);
 
+/* fixes366h — runtime gate for high-frequency trace logging. Defined
+ * outside the MACSURF_DEBUG guard so both debug and release builds
+ * link, and so a release build's empty tracef stub still satisfies the
+ * extern in macsurf_debug_log.h. Default 0 (traces suppressed). */
+int macsurf_debug_log_trace_enabled = 0;
+
 /* fixes160a — SITE diagnostic counters. Defined at the top level
  * (outside MACSURF_DEBUG guards) so that html.c's extern references
  * still link in release builds, even though the log itself becomes
@@ -565,6 +571,24 @@ macsurf_debug_log_writef(const char *fmt, ...)
 	macsurf_debug_log_write(buf);
 }
 
+/* fixes366h — runtime-gated high-frequency trace. Default off so the
+ * per-element var()/grid diagnostics don't pollute profiling captures
+ * or the crash-forensic log. Flip the flag at a debugger breakpoint
+ * (or from code) to re-enable the firehose for a specific bug hunt. */
+void
+macsurf_debug_log_tracef(const char *fmt, ...)
+{
+	char buf[256];
+	va_list ap;
+
+	if (!macsurf_debug_log_trace_enabled) return;
+	va_start(ap, fmt);
+	fmt_vformat(buf, (int)sizeof(buf), fmt, ap);
+	va_end(ap);
+
+	macsurf_debug_log_write(buf);
+}
+
 /* ------------------------------------------------------------------
  * fixes366a — Microsecond profile timer
  *
@@ -655,6 +679,7 @@ void macsurf_debug_log_init(void) {}
 void macsurf_debug_log_close(void) {}
 void macsurf_debug_log_write(const char *msg) { (void)msg; }
 void macsurf_debug_log_writef(const char *fmt, ...) { (void)fmt; }
+void macsurf_debug_log_tracef(const char *fmt, ...) { (void)fmt; }
 void macsurf_profile_reset(void)
 {
 	/* fixes366c — even in release builds, call the diag-counter
