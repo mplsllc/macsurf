@@ -436,6 +436,11 @@ struct css_computed_style_i {
 	 * preceding field offsets, per
 	 * project_libcss_struct_mid_insert_crash. */
 	int32_t macsurf_hstripe_bg;
+	/* -macsurf-dotgrid (fixes365c): two-layer 2x2 background-pattern
+	 * stripe colours packed into int32_t (bit31 set flag,
+	 * bits15..29 c2 RGB555, bits0..14 c1 RGB555). Appended at struct
+	 * end per project_libcss_struct_mid_insert_crash. */
+	int32_t macsurf_dotgrid;
 };
 
 struct css_computed_style {

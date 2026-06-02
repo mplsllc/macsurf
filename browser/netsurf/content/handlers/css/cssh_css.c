@@ -3172,6 +3172,442 @@ macsurf__rewrite_repeating_gradient_hstripe(const char *data, size_t in_size,
 }
 
 
+/* fixes365c — emit `-macsurf-dotgrid: c1 c2;` for mactrove's two-layer
+ * 1px-stripe + 2x2 background-size pattern.
+ *
+ * mactrove's body texture is built from two crossed 1px linear
+ * gradients tiled on a 2px grid:
+ *   background-image:
+ *     linear-gradient(rgba(255,255,255,.5) 1px, transparent 1px),
+ *     linear-gradient(90deg, rgba(0,0,0,.03) 1px, transparent 1px);
+ *   background-size: 2px 2px;
+ *
+ * The single-layer fixes266 rewriter drops the second layer and the
+ * vendor parser can't see the matched-pair shape. This pass walks one
+ * `{ ... }` block at a time, looks for a `background-image:` with two
+ * `linear-gradient(...)` calls AND a `background-size:` whose width
+ * and height tokens both round to 2 (px), pulls one colour from each
+ * gradient, and inserts `-macsurf-dotgrid: c1 c2;` right after the
+ * source declaration's terminating `;`. The plotter then paints
+ * alternating 1px vertical (c1) + horizontal (c2) stripes on a 2x2
+ * grid, reproducing the dot-grid texture.
+ *
+ * Colour extraction handles `rgba(R,G,B,A)`, `rgb(R,G,B)`, and `#hex`
+ * (3 or 6 digits). The alpha channel is ignored — the Mac plotter is
+ * 1-bit transparent, so RGB alone is the visual signal. Out-of-range
+ * sizes (4px tiles, 1px tiles, mismatched W/H) skip the insert.
+ *
+ * Output buffer is fresh (each insert grows the rule). Worst-case
+ * grow: one match per { ... } block, ~80 bytes per insert. */
+static char *
+macsurf__rewrite_dotgrid_pattern(const char *data, size_t in_size,
+		size_t *out_size_p)
+{
+	char *out;
+	size_t cap;
+	size_t pos = 0;
+	size_t i = 0;
+	int changed = 0;
+
+	cap = in_size + (in_size / 256 + 1) * 96 + 256;
+	out = (char *)malloc(cap);
+	if (out == NULL) return NULL;
+
+	while (i < in_size) {
+		size_t brace_open;
+		size_t brace_close;
+		size_t bi_start;
+		size_t bi_end;
+		size_t bi_paren_close;
+		size_t bs_start;
+		size_t bs_end;
+		size_t scan;
+		size_t k;
+		int paren;
+		int gradient_count;
+		bool size_match;
+		bool bi_found;
+		bool bs_found;
+		char c1[8];
+		char c2[8];
+		int got_c1;
+		int got_c2;
+		size_t insert_at;
+		size_t insert_len;
+
+		/* Find next `{`. Copy through it. */
+		brace_open = i;
+		while (brace_open < in_size && data[brace_open] != '{') {
+			brace_open++;
+		}
+		if (brace_open >= in_size) {
+			/* No more rules; copy remainder. */
+			if (pos + (in_size - i) >= cap) {
+				free(out);
+				return NULL;
+			}
+			memcpy(out + pos, data + i, in_size - i);
+			pos += in_size - i;
+			i = in_size;
+			break;
+		}
+		/* Find matching `}`. */
+		brace_close = brace_open + 1;
+		paren = 1;
+		while (brace_close < in_size && paren > 0) {
+			if (data[brace_close] == '{') paren++;
+			else if (data[brace_close] == '}') {
+				paren--;
+				if (paren == 0) break;
+			}
+			brace_close++;
+		}
+		if (brace_close >= in_size) {
+			/* Unbalanced; copy remainder. */
+			if (pos + (in_size - i) >= cap) {
+				free(out);
+				return NULL;
+			}
+			memcpy(out + pos, data + i, in_size - i);
+			pos += in_size - i;
+			i = in_size;
+			break;
+		}
+
+		/* Scan inside [brace_open+1 .. brace_close) for the pattern. */
+		bi_found = false;
+		bs_found = false;
+		size_match = false;
+		gradient_count = 0;
+		got_c1 = 0;
+		got_c2 = 0;
+		bi_start = 0;
+		bi_end = 0;
+		bi_paren_close = 0;
+		bs_start = 0;
+		bs_end = 0;
+
+		/* Pass 1: find `background-image:` value start/end. */
+		{
+			static const char BI[] = "background-image:";
+			static const size_t BI_LEN = 17;
+			scan = brace_open + 1;
+			while (scan + BI_LEN <= brace_close) {
+				bool m = true;
+				for (k = 0; k < BI_LEN; k++) {
+					char a = data[scan + k];
+					char b = BI[k];
+					if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+					if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+					if (a != b) { m = false; break; }
+				}
+				if (m) {
+					/* Confirm preceding char is `;`, `{`, or
+					 * whitespace so we don't match inside a
+					 * longhand like `-foo-background-image:`. */
+					if (scan == brace_open + 1) {
+						bi_found = true;
+					} else {
+						char p = data[scan - 1];
+						if (p == ';' || p == '{' || p == ' ' ||
+								p == '\t' || p == '\n' ||
+								p == '\r') {
+							bi_found = true;
+						}
+					}
+					if (bi_found) {
+						bi_start = scan;
+						bi_end = scan + BI_LEN;
+						while (bi_end < brace_close &&
+								data[bi_end] != ';' &&
+								data[bi_end] != '}') {
+							bi_end++;
+						}
+						break;
+					}
+				}
+				scan++;
+			}
+		}
+
+		/* Pass 2: find `background-size:` and check 2x2. */
+		if (bi_found) {
+			static const char BS[] = "background-size:";
+			static const size_t BS_LEN = 16;
+			scan = brace_open + 1;
+			while (scan + BS_LEN <= brace_close) {
+				bool m = true;
+				for (k = 0; k < BS_LEN; k++) {
+					char a = data[scan + k];
+					char b = BS[k];
+					if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+					if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+					if (a != b) { m = false; break; }
+				}
+				if (m) {
+					bool ok_pref = false;
+					if (scan == brace_open + 1) {
+						ok_pref = true;
+					} else {
+						char p = data[scan - 1];
+						if (p == ';' || p == '{' || p == ' ' ||
+								p == '\t' || p == '\n' ||
+								p == '\r') {
+							ok_pref = true;
+						}
+					}
+					if (ok_pref) {
+						bs_found = true;
+						bs_start = scan + BS_LEN;
+						bs_end = bs_start;
+						while (bs_end < brace_close &&
+								data[bs_end] != ';' &&
+								data[bs_end] != '}') {
+							bs_end++;
+						}
+						break;
+					}
+				}
+				scan++;
+			}
+		}
+
+		/* Confirm size is 2x2 (or matched 2-px). */
+		if (bs_found) {
+			int v_w = -1;
+			int v_h = -1;
+			int *cur = &v_w;
+			int accum = -1;
+			bool in_num = false;
+			size_t s;
+			for (s = bs_start; s <= bs_end; s++) {
+				char ch = (s < bs_end) ? data[s] : ' ';
+				if (ch >= '0' && ch <= '9') {
+					if (!in_num) { accum = 0; in_num = true; }
+					accum = accum * 10 + (ch - '0');
+				} else {
+					if (in_num) {
+						if (cur == &v_w && v_w == -1) {
+							v_w = accum;
+						} else if (cur == &v_h && v_h == -1) {
+							v_h = accum;
+						}
+						in_num = false;
+						accum = -1;
+						if (v_w != -1 && v_h == -1) {
+							cur = &v_h;
+						}
+					}
+				}
+			}
+			if (v_w == 2 && v_h == 2) {
+				size_match = true;
+			} else if (v_w == 2 && v_h == -1) {
+				/* Single-value form: applies to both axes. */
+				size_match = true;
+			}
+		}
+
+		/* Pass 3: count `linear-gradient(` in the bg-image value and
+		 * extract the first colour from each of the first two layers. */
+		if (bi_found && size_match) {
+			static const char LG[] = "linear-gradient(";
+			static const size_t LG_LEN = 16;
+			size_t layer_close;
+			scan = bi_end;
+			(void)scan; /* keep scope */
+			bi_paren_close = bi_end;
+			scan = bi_start;
+			while (scan + LG_LEN <= bi_end) {
+				bool m = true;
+				for (k = 0; k < LG_LEN; k++) {
+					char a = data[scan + k];
+					char b = LG[k];
+					if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+					if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+					if (a != b) { m = false; break; }
+				}
+				if (!m) {
+					scan++;
+					continue;
+				}
+				/* Balanced paren walk. */
+				layer_close = scan + LG_LEN;
+				paren = 1;
+				while (layer_close < bi_end && paren > 0) {
+					if (data[layer_close] == '(') paren++;
+					else if (data[layer_close] == ')') {
+						paren--;
+						if (paren == 0) break;
+					}
+					layer_close++;
+				}
+				if (layer_close >= bi_end) break;
+				gradient_count++;
+
+				/* Extract first colour token inside this layer. */
+				if (gradient_count <= 2) {
+					size_t cs;
+					char buf[8];
+					bool got = false;
+					for (cs = scan + LG_LEN;
+							cs < layer_close && !got; cs++) {
+						/* `#hex` */
+						if (data[cs] == '#') {
+							size_t hex_len = 0;
+							size_t m2;
+							for (m2 = cs + 1;
+									m2 < layer_close &&
+									hex_len < 6 &&
+									((data[m2] >= '0' && data[m2] <= '9') ||
+									 (data[m2] >= 'a' && data[m2] <= 'f') ||
+									 (data[m2] >= 'A' && data[m2] <= 'F'));
+									m2++) {
+								hex_len++;
+							}
+							if (hex_len == 3) {
+								buf[0] = '#';
+								buf[1] = data[cs + 1];
+								buf[2] = data[cs + 1];
+								buf[3] = data[cs + 2];
+								buf[4] = data[cs + 2];
+								buf[5] = data[cs + 3];
+								buf[6] = data[cs + 3];
+								buf[7] = 0;
+								got = true;
+							} else if (hex_len == 6) {
+								int b2;
+								for (b2 = 0; b2 < 7; b2++) {
+									buf[b2] = data[cs + b2];
+								}
+								buf[7] = 0;
+								got = true;
+							}
+						}
+						/* `rgb(R,G,B)` / `rgba(R,G,B,A)` */
+						else if ((data[cs] == 'r' || data[cs] == 'R') &&
+								cs + 4 <= layer_close &&
+								(data[cs + 1] == 'g' || data[cs + 1] == 'G') &&
+								(data[cs + 2] == 'b' || data[cs + 2] == 'B')) {
+							size_t op;
+							int rgb[3];
+							int idx = 0;
+							int val = -1;
+							bool in_n = false;
+							/* Find `(` then parse up to 3 ints. */
+							op = cs + 3;
+							if (data[op] == 'a' || data[op] == 'A') op++;
+							if (op < layer_close && data[op] == '(') {
+								size_t cp = op + 1;
+								rgb[0] = 0; rgb[1] = 0; rgb[2] = 0;
+								while (cp < layer_close && idx < 3) {
+									char ch2 = data[cp];
+									if (ch2 >= '0' && ch2 <= '9') {
+										if (!in_n) { val = 0; in_n = true; }
+										val = val * 10 + (ch2 - '0');
+									} else {
+										if (in_n) {
+											if (val > 255) val = 255;
+											rgb[idx++] = val;
+											in_n = false;
+											val = -1;
+										}
+										if (ch2 == ')') break;
+									}
+									cp++;
+								}
+								if (idx >= 3) {
+									static const char H[] = "0123456789abcdef";
+									buf[0] = '#';
+									buf[1] = H[(rgb[0] >> 4) & 0xf];
+									buf[2] = H[rgb[0] & 0xf];
+									buf[3] = H[(rgb[1] >> 4) & 0xf];
+									buf[4] = H[rgb[1] & 0xf];
+									buf[5] = H[(rgb[2] >> 4) & 0xf];
+									buf[6] = H[rgb[2] & 0xf];
+									buf[7] = 0;
+									got = true;
+								}
+							}
+						}
+					}
+					if (got) {
+						if (gradient_count == 1) {
+							memcpy(c1, buf, 8);
+							got_c1 = 1;
+						} else {
+							memcpy(c2, buf, 8);
+							got_c2 = 1;
+						}
+					}
+				}
+				scan = layer_close + 1;
+			}
+			bi_paren_close = bi_end;
+		}
+
+		/* Copy through the brace block, inserting the dotgrid decl
+		 * right after `bi_end` (the `;` terminator) if the pattern
+		 * matched. */
+		if (bi_found && size_match && gradient_count == 2 &&
+				got_c1 && got_c2) {
+			/* Insert just after bi_end's terminator. If bi_end is at
+			 * a `;`, insert after it; if it stopped at `}`, insert
+			 * before the `}` with a leading `;`. */
+			insert_at = bi_end;
+			if (insert_at < brace_close && data[insert_at] == ';') {
+				insert_at++;
+			}
+			insert_len = (brace_close + 1) - i;
+			if (pos + insert_len + 96 >= cap) {
+				free(out);
+				return NULL;
+			}
+			/* Copy from i .. insert_at. */
+			memcpy(out + pos, data + i, insert_at - i);
+			pos += insert_at - i;
+			/* Insert the new declaration. */
+			{
+				static const char PFX[] = " -macsurf-dotgrid:";
+				static const size_t PFX_LEN = 18;
+				memcpy(out + pos, PFX, PFX_LEN);
+				pos += PFX_LEN;
+				out[pos++] = ' ';
+				memcpy(out + pos, c1, 7);
+				pos += 7;
+				out[pos++] = ' ';
+				memcpy(out + pos, c2, 7);
+				pos += 7;
+				out[pos++] = ';';
+			}
+			/* Copy remainder of the rule (insert_at .. brace_close]. */
+			memcpy(out + pos, data + insert_at,
+					(brace_close + 1) - insert_at);
+			pos += (brace_close + 1) - insert_at;
+			i = brace_close + 1;
+			changed = 1;
+		} else {
+			/* No match — copy block verbatim. */
+			insert_len = (brace_close + 1) - i;
+			if (pos + insert_len >= cap) {
+				free(out);
+				return NULL;
+			}
+			memcpy(out + pos, data + i, insert_len);
+			pos += insert_len;
+			i = brace_close + 1;
+		}
+	}
+
+	*out_size_p = pos;
+	if (!changed) {
+		free(out);
+		return NULL;
+	}
+	return out;
+}
+
+
 /* fixes281 — fallback solid color for repeating-linear-gradient.
  *
  * mactrove's Platinum theme paints window title bars with
@@ -4735,6 +5171,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	char *rewritten_calc = NULL;       /* fixes280 calc() arithmetic */
 	char *rewritten_rep_grad = NULL;   /* fixes281 repeating-gradient -> solid */
 	char *rewritten_hstripe = NULL;    /* fixes364 -macsurf-hstripe-bg emission */
+	char *rewritten_dotgrid = NULL;    /* fixes365c -macsurf-dotgrid emission */
 	char *rewritten_bg_short = NULL;   /* fixes318 background: shorthand gradient */
 	size_t col_span_size = 0;
 	size_t text_shadow_size = 0;
@@ -4865,6 +5302,22 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 				hstripe_size <= (size_t)0x7fffffff) {
 			data = (const char *)rewritten_hstripe;
 			size = (unsigned int)hstripe_size;
+		}
+	}
+
+	/* fixes365c — emit `-macsurf-dotgrid: c1 c2;` for mactrove's
+	 * two-layer 1px-gradient + 2x2 background-size dot-grid texture.
+	 * Runs alongside the hstripe rewriter; the patterns are disjoint
+	 * (hstripe is `repeating-linear-gradient`, dotgrid is two plain
+	 * `linear-gradient` calls). Output is a new buffer (may grow). */
+	{
+		size_t dotgrid_size = 0;
+		rewritten_dotgrid = macsurf__rewrite_dotgrid_pattern(
+				data, (size_t)size, &dotgrid_size);
+		if (rewritten_dotgrid != NULL &&
+				dotgrid_size <= (size_t)0x7fffffff) {
+			data = (const char *)rewritten_dotgrid;
+			size = (unsigned int)dotgrid_size;
 		}
 	}
 
@@ -5063,6 +5516,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	if (rewritten_calc != NULL) free(rewritten_calc); /* fixes280 */
 	if (rewritten_rep_grad != NULL) free(rewritten_rep_grad); /* fixes281 */
 	if (rewritten_hstripe != NULL) free(rewritten_hstripe); /* fixes364 */
+	if (rewritten_dotgrid != NULL) free(rewritten_dotgrid); /* fixes365c */
 	if (rewritten_bg_short != NULL) free(rewritten_bg_short); /* fixes318 */
 
 	if (error != CSS_OK && error != CSS_NEEDDATA) {

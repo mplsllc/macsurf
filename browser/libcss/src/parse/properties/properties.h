@@ -178,6 +178,9 @@ css_error css__parse_text_decoration_thickness(css_language *c,
 css_error css__parse_macsurf_hstripe_bg(css_language *c,
 		const parserutils_vector *vector, int32_t *ctx,
 		css_style *result);
+css_error css__parse_macsurf_dotgrid(css_language *c,
+		const parserutils_vector *vector, int32_t *ctx,
+		css_style *result);
 
 css_error css__parse_border_right(css_language *c,		const parserutils_vector *vector, int32_t *ctx,
 		css_style *result);

@@ -500,6 +500,11 @@ int32_t css_computed_macsurf_hstripe_bg(const css_computed_style *style)
 	return style->i.macsurf_hstripe_bg;
 }
 
+int32_t css_computed_macsurf_dotgrid(const css_computed_style *style)
+{
+	return style->i.macsurf_dotgrid;
+}
+
 uint8_t css_computed_macsurf_gradient(const css_computed_style *style,
 		int32_t *color)
 {

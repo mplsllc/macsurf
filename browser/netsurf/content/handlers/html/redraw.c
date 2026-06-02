@@ -1199,6 +1199,12 @@ extern void macos9_set_box_shadow_3(int32_t packed);
  * alternating-row stripes. Same read-and-clear lifecycle as the
  * box_shadow_2/3 setters. */
 extern void macos9_set_hstripe_bg(int32_t packed);
+/* fixes365c — two-layer 2x2 dot-grid background one-shot. Set right
+ * before the bg rectangle paint so the plotter overrides the flat fill
+ * with a 2x2 grid of alternating 1px vertical (c1) + horizontal (c2)
+ * stripes. Same read-and-clear lifecycle as the box_shadow_2/3 and
+ * hstripe_bg setters. */
+extern void macos9_set_dotgrid(int32_t packed);
 /* fixes365b — diagonal / 3-stop linear-gradient one-shots. Set right
  * before the bg rectangle paint so the plotter routes through the
  * per-pixel interpolation branch with the author's full angle and
@@ -1383,6 +1389,10 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	                 * rewrite of `repeating-linear-gradient(to bottom,
 	                 * c1, c2, ...)`. */
 	                macos9_set_hstripe_bg(css_computed_macsurf_hstripe_bg(
+	                                background->style));
+	                /* fixes365c — 2x2 dot-grid texture from cssh_css.c
+	                 * rewrite of two-layer 1px linear-gradient pattern. */
+	                macos9_set_dotgrid(css_computed_macsurf_dotgrid(
 	                                background->style));
 #endif
 	                (void)scale;  /* scale baked into offset->fixed shift */
@@ -2122,6 +2132,9 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	                macos9_set_box_shadow_3(css_computed_box_shadow_3(
 	                                box->style));
 	                macos9_set_hstripe_bg(css_computed_macsurf_hstripe_bg(
+	                                box->style));
+	                /* fixes365c — 2x2 dot-grid pattern setter. */
+	                macos9_set_dotgrid(css_computed_macsurf_dotgrid(
 	                                box->style));
 #endif
 	                (void)scale;

@@ -310,6 +310,17 @@ void macos9_set_hstripe_bg(int32_t packed)
 	macos9_hstripe_bg_oneshot = packed;
 }
 
+/* fixes365c — two-layer dot-grid background one-shot. Same packed
+ * format as hstripe_bg (bit 31 set, bits 15..29 c2 RGB555, bits 0..14
+ * c1 RGB555). redraw.c sets this before plot_rectangle; the plotter
+ * reads-and-clears the slot and overrides the flat fill with a 2x2
+ * grid of alternating 1px vertical (c1) + horizontal (c2) stripes. */
+static int32_t macos9_dotgrid_oneshot = 0;
+void macos9_set_dotgrid(int32_t packed)
+{
+	macos9_dotgrid_oneshot = packed;
+}
+
 /* fixes365b — extended-linear-gradient one-shot statics. redraw.c calls
  * macos9_set_gradient_stops() / macos9_set_gradient_angle() right before
  * a plot->rectangle that should paint a diagonal or 3-stop gradient; the
@@ -648,6 +659,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	int32_t bsh2_local;
 	int32_t bsh3_local;
 	int32_t hstripe_local; /* fixes364 */
+	int32_t dotgrid_local; /* fixes365c */
 	/* fixes365b — extended-linear-gradient one-shots. */
 	const int32_t *grad_stops_local;
 	uint16_t grad_angle_local;
@@ -660,11 +672,13 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	bsh2_local = macos9_box_shadow_2_oneshot;
 	bsh3_local = macos9_box_shadow_3_oneshot;
 	hstripe_local = macos9_hstripe_bg_oneshot; /* fixes364 */
+	dotgrid_local = macos9_dotgrid_oneshot; /* fixes365c */
 	grad_stops_local = macos9_gradient_stops_oneshot; /* fixes365b */
 	grad_angle_local = macos9_gradient_angle_oneshot; /* fixes365b */
 	macos9_box_shadow_2_oneshot = 0;
 	macos9_box_shadow_3_oneshot = 0;
 	macos9_hstripe_bg_oneshot = 0; /* fixes364 */
+	macos9_dotgrid_oneshot = 0; /* fixes365c */
 	macos9_gradient_stops_oneshot = NULL; /* fixes365b */
 	macos9_gradient_angle_oneshot = 0; /* fixes365b */
 
@@ -1359,6 +1373,49 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 					RGBForeColor(&sc2);
 				MoveTo(r.left, y);
 				LineTo((short)(r.right - 1), y);
+			}
+			macos9_pop_clip(saved_clip);
+		} else if ((dotgrid_local & (int32_t)0x80000000) != 0) {
+			/* fixes365c — 2x2 dot-grid pattern from
+			 * `-macsurf-dotgrid: c1 c2`. Same packed format as the
+			 * hstripe branch above (bit 31 set, bits 15..29 c2 RGB555,
+			 * bits 0..14 c1 RGB555).
+			 *
+			 * Paint pattern (matches mactrove's two-crossed-1px-grad
+			 * background): every column with x%2==0 gets a 1px
+			 * vertical line in c1, every row with y%2==0 gets a 1px
+			 * horizontal line in c2. The intersection lands in c2
+			 * (last-write-wins), producing the dot-grid texture. */
+			uint32_t up = (uint32_t)dotgrid_local;
+			uint32_t rgb1 = up & 0x7fff;
+			uint32_t rgb2 = (up >> 15) & 0x7fff;
+			RGBColor sc1;
+			RGBColor sc2;
+			short x;
+			short y;
+			RgnHandle saved_clip;
+			sc1.red   = (unsigned short)(((rgb1 >> 10) & 0x1f) << 11);
+			sc1.green = (unsigned short)(((rgb1 >> 5)  & 0x1f) << 11);
+			sc1.blue  = (unsigned short)(( rgb1        & 0x1f) << 11);
+			sc2.red   = (unsigned short)(((rgb2 >> 10) & 0x1f) << 11);
+			sc2.green = (unsigned short)(((rgb2 >> 5)  & 0x1f) << 11);
+			sc2.blue  = (unsigned short)(( rgb2        & 0x1f) << 11);
+			saved_clip = macos9_push_clip();
+			/* Vertical stripes (c1) at every even column. */
+			RGBForeColor(&sc1);
+			for (x = r.left; x < r.right; x++) {
+				if (((x - r.left) & 1) == 0) {
+					MoveTo(x, r.top);
+					LineTo(x, (short)(r.bottom - 1));
+				}
+			}
+			/* Horizontal stripes (c2) at every even row, overlaid. */
+			RGBForeColor(&sc2);
+			for (y = r.top; y < r.bottom; y++) {
+				if (((y - r.top) & 1) == 0) {
+					MoveTo(r.left, y);
+					LineTo((short)(r.right - 1), y);
+				}
 			}
 			macos9_pop_clip(saved_clip);
 		} else {

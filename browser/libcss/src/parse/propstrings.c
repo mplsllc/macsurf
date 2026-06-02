@@ -264,6 +264,7 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("text-decoration-style"),
 	SMAP("text-decoration-thickness"),
 	SMAP("-macsurf-hstripe-bg"),
+	SMAP("-macsurf-dotgrid"),
 	SMAP("inherit"),
 	SMAP("unset"),
 	SMAP("important"),

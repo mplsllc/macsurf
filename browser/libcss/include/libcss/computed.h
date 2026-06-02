@@ -205,6 +205,16 @@ int32_t css_computed_box_shadow_3(
 int32_t css_computed_macsurf_hstripe_bg(
 		const css_computed_style *style);
 
+/* fixes365c — two-layer 2x2 dot-grid background pattern. Two RGB555
+ * colors packed into one int32: bit 31 = set flag, bits 15..29 = c2
+ * (horizontal stripe), bits 0..14 = c1 (vertical stripe). Mapped from
+ * the two-layer `linear-gradient(c1 1px, transparent 1px),
+ * linear-gradient(90deg, c2 1px, transparent 1px)` + `background-size:
+ * 2px 2px` pattern by cssh_css.c so mactrove's Platinum body texture
+ * paints as alternating 1px stripes on a 2x2 grid. Returns 0 unset. */
+int32_t css_computed_macsurf_dotgrid(
+		const css_computed_style *style);
+
 uint8_t css_computed_macsurf_gradient(
 		const css_computed_style *style,
 		int32_t *color);
