@@ -954,6 +954,7 @@ static void hctx_finish(struct macos9_https_ctx *c)
 
 	macsurf_debug_log_writef("https: done body=%ld status=%d",
 		c->body_bytes, c->status);
+	macsurf_profile_stamp("fetch-finished");
 
 	/* fixes218 — write to disk before tearing down the slot. */
 	if (c->cache_eligible && !c->cache_overflow &&
@@ -1464,6 +1465,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		c->progress_ticks = now_ticks();
 		c->state = HS_TLSING;
 		MS_LOG("https: started");
+		macsurf_profile_stamp("tls-handshake-start");
 		return;
 	}
 
@@ -1513,6 +1515,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 			c->state = HS_SEND_REQ;
 			c->progress_ticks = now_ticks();
 			MS_LOG("https: handshake done");
+			macsurf_profile_stamp("tls-handshake-done");
 		}
 	}
 

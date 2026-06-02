@@ -227,6 +227,7 @@ static void html_box_convert_done(html_content *c, bool success)
 
 	NSLOG(netsurf, INFO, "DOM to box conversion complete (content %p)", c);
 	macsurf_debug_log_writef("fc: box_convert_done entered (success=%d)", (int)success);
+	macsurf_profile_stamp("parse-convert-done");
 
 	c->box_conversion_context = NULL;
 
@@ -1291,6 +1292,7 @@ static void html_reformat(struct content *c, int width, int height)
 	MS_LOG("html_reformat: pre-layout_document");
 	layout_document(htmlc, width, height);
 	MS_LOG("html_reformat: post-layout_document");
+	macsurf_profile_stamp("layout-done");
 	layout = htmlc->layout;
 
 	/* width and height are at least margin box of document */

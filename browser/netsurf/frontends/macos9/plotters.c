@@ -985,6 +985,15 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 		}
 		angle_norm = angle_norm % 360;
 		if (angle_norm < 0) angle_norm += 360;
+		{
+			static int diag_paint_seen = 0;
+			if (diag_paint_seen < 5) {
+				macsurf_debug_log_writef(
+					"plot: diag-gradient angle=%d",
+					angle_norm);
+				diag_paint_seen++;
+			}
+		}
 		p0_eff = grad_stops_local[1];
 		p1_eff = grad_stops_local[2];
 		p2_eff = grad_stops_local[3];
@@ -1359,6 +1368,11 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 			RGBColor sc2;
 			short y;
 			RgnHandle saved_clip;
+			static int hstripe_paint_seen = 0;
+			if (hstripe_paint_seen < 5) {
+				macsurf_debug_log_write("plot: hstripe paint");
+				hstripe_paint_seen++;
+			}
 			sc1.red   = (unsigned short)(((rgb1 >> 10) & 0x1f) << 11);
 			sc1.green = (unsigned short)(((rgb1 >> 5)  & 0x1f) << 11);
 			sc1.blue  = (unsigned short)(( rgb1        & 0x1f) << 11);
@@ -1394,6 +1408,11 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 			short x;
 			short y;
 			RgnHandle saved_clip;
+			static int dotgrid_paint_seen = 0;
+			if (dotgrid_paint_seen < 5) {
+				macsurf_debug_log_write("plot: dotgrid paint");
+				dotgrid_paint_seen++;
+			}
 			sc1.red   = (unsigned short)(((rgb1 >> 10) & 0x1f) << 11);
 			sc1.green = (unsigned short)(((rgb1 >> 5)  & 0x1f) << 11);
 			sc1.blue  = (unsigned short)(( rgb1        & 0x1f) << 11);

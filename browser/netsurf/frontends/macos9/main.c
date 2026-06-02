@@ -436,6 +436,7 @@ static void macos9_handle_update(const EventRecord *event) {
 			macos9_hrb_inline, macos9_hrb_text, macos9_hrb_other,
 			macos9_hrb_clip_skips,
 			macos9_plot_text_count, macos9_plot_rect_count);
+		macsurf_profile_stamp("first-paint-done");
 		macsurf_debug_log_writef(
 			"GRADIENT DIAG: set=%ld radial_unpacks=%ld linear_unpacks=%ld",
 			macos9_grad_set_count,

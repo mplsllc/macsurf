@@ -1196,15 +1196,18 @@ unsigned char js_exec(struct jsthread *thread,
 	(void)name;
 	if (thread == NULL || thread->ctx == NULL || txt == NULL) return 0;
 	if (txtlen == 0) return 1;
+	macsurf_profile_stamp("js-start");
 	duk_push_lstring(thread->ctx, (const char *)txt,
 			(duk_size_t)txtlen);
 	rc = duk_peval(thread->ctx);
 	if (rc != 0) {
 		MS_LOG(duk_safe_to_string(thread->ctx, -1));
 		duk_pop(thread->ctx);
+		macsurf_profile_stamp("js-end");
 		return 0;
 	}
 	duk_pop(thread->ctx);
+	macsurf_profile_stamp("js-end");
 	return 1;
 }
 

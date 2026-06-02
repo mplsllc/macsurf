@@ -3160,6 +3160,8 @@ macsurf__rewrite_repeating_gradient_hstripe(const char *data, size_t in_size,
 			pos += 7;
 			out[pos++] = ';';
 			changed = 1;
+			macsurf_debug_log_writef("cssh: hstripe matched c1=%s c2=%s",
+				c1, c2);
 		}
 	}
 
@@ -3586,6 +3588,8 @@ macsurf__rewrite_dotgrid_pattern(const char *data, size_t in_size,
 			pos += (brace_close + 1) - insert_at;
 			i = brace_close + 1;
 			changed = 1;
+			macsurf_debug_log_writef("cssh: dotgrid matched c1=%s c2=%s",
+				c1, c2);
 		} else {
 			/* No match — copy block verbatim. */
 			insert_len = (brace_close + 1) - i;
@@ -5794,6 +5798,7 @@ void nscss_content_done(struct content_css_data *css, void *pw)
 	/* Finally, catch the content's users up with reality */
 	content_set_ready(c);
 	MS_LOG("nscss firing CONTENT_MSG_DONE");
+	macsurf_profile_stamp("cascade-done");
 	content_set_done(c);
 }
 
