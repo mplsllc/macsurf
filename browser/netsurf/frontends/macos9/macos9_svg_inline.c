@@ -1171,7 +1171,6 @@ static int svg__emit_arc_as_bezier(const struct svg_ctx *c,
 	float cxA, cyA;
 	float dist_sq, half_d;
 	float scale;
-	float ux, uy;
 	float a0, a1, a_sweep, da, k;
 	int n_segs, i, n;
 
@@ -1290,7 +1289,6 @@ static int svg__emit_arc_as_bezier(const struct svg_ctx *c,
 			out[n++] = svg__map_x(c, p3x, p3y);
 			out[n++] = svg__map_y(c, p3x, p3y);
 		}
-		(void)ux; (void)uy;
 	}
 	return n;
 }

@@ -201,7 +201,7 @@ css_error css__parse_box_shadow(css_language *c,
 	 * declaration parses as a whole even if author CSS has 4+. */
 	while (1) {
 		int32_t comma_ctx = *ctx;
-		css_fixed dh, dv, dblur, dspread, dcolor_fix;
+		css_fixed dh, dv, dblur, dspread;
 		bool dinset;
 		css_color dcolor;
 		consumeWhitespace(vector, ctx);
@@ -215,7 +215,6 @@ css_error css__parse_box_shadow(css_language *c,
 		parserutils_vector_iterate(vector, ctx);
 		error = parse_one_shadow(c, vector, ctx,
 				&dh, &dv, &dblur, &dspread, &dinset, &dcolor);
-		(void)dcolor_fix;
 		if (error != CSS_OK) {
 			*ctx = comma_ctx;
 			break;
