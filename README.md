@@ -18,8 +18,6 @@
 <p align="center">
   <em>MacSurf is a nights-and-weekends project. If it brought your old Mac back to the web, a coffee helps keep development going.</em>
 </p>
-<p align="center"><a href="https://ko-fi.com/macsurf" target="_blank"><img src="https://github.com/mplsllc/macsurf/blob/master/support_me_on_kofi_badge_blue.png" /></a></p>
-
 <p align="center">
   <a href="https://github.com/mplsllc/macsurf/issues"><img alt="Open issues" src="https://img.shields.io/github/issues/mplsllc/macsurf"></a>
   <a href="https://github.com/mplsllc/macsurf/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/mplsllc/macsurf?style=flat"></a>
