@@ -1422,13 +1422,20 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	                        int32_t hstripe_val =
 	                                css_computed_macsurf_hstripe_bg(
 	                                        background->style);
-	                        if (hstripe_val != 0 && hstripe_seen_a < 5) {
-	                                macsurf_debug_log_writef(
-	                                  "redraw: hstripe_bg=%p set on box (bg-path)",
-	                                  (void *)background);
-	                                hstripe_seen_a++;
+	                        /* fixes366f — only call the setter when the
+	                         * value is set. Calling with 0 wipes any
+	                         * earlier non-zero value before the actual
+	                         * paint consumes it. Mirrors the existing
+	                         * gradient_stops gating pattern. */
+	                        if (hstripe_val != 0) {
+	                                if (hstripe_seen_a < 5) {
+	                                        macsurf_debug_log_writef(
+	                                          "redraw: hstripe_bg=%p set on box (bg-path)",
+	                                          (void *)background);
+	                                        hstripe_seen_a++;
+	                                }
+	                                macos9_set_hstripe_bg(hstripe_val);
 	                        }
-	                        macos9_set_hstripe_bg(hstripe_val);
 	                }
 	                /* fixes365c — 2x2 dot-grid texture from cssh_css.c
 	                 * rewrite of two-layer 1px linear-gradient pattern. */
@@ -1436,13 +1443,15 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	                        int32_t dotgrid_val =
 	                                css_computed_macsurf_dotgrid(
 	                                        background->style);
-	                        if (dotgrid_val != 0 && dotgrid_seen_a < 5) {
-	                                macsurf_debug_log_writef(
-	                                  "redraw: dotgrid=%p set on box (bg-path)",
-	                                  (void *)background);
-	                                dotgrid_seen_a++;
+	                        if (dotgrid_val != 0) {
+	                                if (dotgrid_seen_a < 5) {
+	                                        macsurf_debug_log_writef(
+	                                          "redraw: dotgrid=%p set on box (bg-path)",
+	                                          (void *)background);
+	                                        dotgrid_seen_a++;
+	                                }
+	                                macos9_set_dotgrid(dotgrid_val);
 	                        }
-	                        macos9_set_dotgrid(dotgrid_val);
 	                }
 #endif
 	                (void)scale;  /* scale baked into offset->fixed shift */
@@ -2202,25 +2211,30 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	                {
 	                        int32_t hstripe_val =
 	                                css_computed_macsurf_hstripe_bg(box->style);
-	                        if (hstripe_val != 0 && hstripe_seen_b < 5) {
-	                                macsurf_debug_log_writef(
-	                                  "redraw: hstripe_bg=%p set on box (inline-path)",
-	                                  (void *)box);
-	                                hstripe_seen_b++;
+	                        /* fixes366f — gate setter same as bg-path. */
+	                        if (hstripe_val != 0) {
+	                                if (hstripe_seen_b < 5) {
+	                                        macsurf_debug_log_writef(
+	                                          "redraw: hstripe_bg=%p set on box (inline-path)",
+	                                          (void *)box);
+	                                        hstripe_seen_b++;
+	                                }
+	                                macos9_set_hstripe_bg(hstripe_val);
 	                        }
-	                        macos9_set_hstripe_bg(hstripe_val);
 	                }
 	                /* fixes365c — 2x2 dot-grid pattern setter. */
 	                {
 	                        int32_t dotgrid_val =
 	                                css_computed_macsurf_dotgrid(box->style);
-	                        if (dotgrid_val != 0 && dotgrid_seen_b < 5) {
-	                                macsurf_debug_log_writef(
-	                                  "redraw: dotgrid=%p set on box (inline-path)",
-	                                  (void *)box);
-	                                dotgrid_seen_b++;
+	                        if (dotgrid_val != 0) {
+	                                if (dotgrid_seen_b < 5) {
+	                                        macsurf_debug_log_writef(
+	                                          "redraw: dotgrid=%p set on box (inline-path)",
+	                                          (void *)box);
+	                                        dotgrid_seen_b++;
+	                                }
+	                                macos9_set_dotgrid(dotgrid_val);
 	                        }
-	                        macos9_set_dotgrid(dotgrid_val);
 	                }
 #endif
 	                (void)scale;
