@@ -1291,19 +1291,35 @@ static void html_reformat(struct content *c, int width, int height)
 
 	MS_LOG("html_reformat: pre-layout_document");
 	{
-		/* fixes366i — bracket one layout_document pass to count
-		 * QuickDraw font-measure calls (the suspected O(N^2) inline
-		 * line-break cost). Reset before, emit after. */
+		/* fixes366i/j — bracket one layout_document pass. Count
+		 * QuickDraw font-measure calls AND capture heap free / largest
+		 * contiguous block before and after, so we can tell whether the
+		 * escalating per-pass cost (5s -> 239s on a stable 1993-box
+		 * tree, with font-measure flat at ~968 calls) is a per-reformat
+		 * leak and/or Memory Manager compaction thrash rather than text
+		 * measurement. */
 		extern long macos9_font_measure_calls;
 		extern long macos9_font_measure_chars;
+		extern long macos9_heap_free_bytes(void);
+		extern long macos9_heap_max_block(void);
 		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		long free_before = macos9_heap_free_bytes();
+		long max_before = macos9_heap_max_block();
+		long free_after;
+		long max_after;
 		macos9_font_measure_calls = 0;
 		macos9_font_measure_chars = 0;
 		layout_document(htmlc, width, height);
+		free_after = macos9_heap_free_bytes();
+		max_after = macos9_heap_max_block();
 		macsurf_debug_log_writef(
 			"FONTPROF layout measure_calls=%ld measure_chars=%ld",
 			macos9_font_measure_calls,
 			macos9_font_measure_chars);
+		macsurf_debug_log_writef(
+			"HEAPPROF layout free=%ld->%ld maxblk=%ld->%ld delta=%ld",
+			free_before, free_after, max_before, max_after,
+			free_before - free_after);
 	}
 	MS_LOG("html_reformat: post-layout_document");
 	macsurf_profile_stamp("layout-done");

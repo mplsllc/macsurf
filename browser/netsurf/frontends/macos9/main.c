@@ -57,6 +57,32 @@ extern const struct plotter_table macos9_plotters;
 extern const BitMap *GetPortBitMapForCopyBits(CGrafPtr port);
 #endif
 
+/* fixes366j -- heap-state probes for per-reformat leak / fragmentation
+ * profiling. FreeMem() is total free bytes in the app heap; MaxBlock()
+ * is the largest contiguous free block. If free shrinks monotonically
+ * across reformats -> leak; if MaxBlock collapses faster than FreeMem
+ * -> fragmentation, and the Memory Manager's compaction pass on each
+ * NewPtr is what makes successive layout passes explode (5s -> 239s on
+ * a stable 1993-box tree). Both are CarbonLib-safe classic Memory
+ * Manager calls. Return long (KB on huge heaps stays < 2^31). */
+long macos9_heap_free_bytes(void)
+{
+#ifdef __MACOS9__
+	return (long)FreeMem();
+#else
+	return 0;
+#endif
+}
+
+long macos9_heap_max_block(void)
+{
+#ifdef __MACOS9__
+	return (long)MaxBlock();
+#else
+	return 0;
+#endif
+}
+
 static void draw_url_bar(struct gui_window *gw) {
 #ifdef __MACOS9__
 	/* fixes303 — razor-sharp 1px inset border. Top + left are technical
