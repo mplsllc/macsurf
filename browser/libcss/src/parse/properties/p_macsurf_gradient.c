@@ -474,12 +474,21 @@ css_error css__parse_macsurf_gradient(css_language *c,
 				for (; j < len; j++) {
 					char ch = data[j];
 					if (ch >= '0' && ch <= '9') {
-						val = val * 100 +
-							(ch - '0') * 100;
+						val = val * 10 +
+							(ch - '0');
 						seen = true;
 					} else {
 						break;
 					}
+				}
+				/* fixes365b review fix — accumulate digits as
+				 * plain integer, then scale to percent×100
+				 * after the loop. Previous code multiplied by
+				 * 100 per digit, producing 50000 for "50%"
+				 * instead of 5000 and breaking every 3-stop
+				 * gradient with explicit positions. */
+				if (seen) {
+					val = val * 100;
 				}
 				if (seen && color_count - 1 < 3) {
 					stop_positions[color_count - 1] =

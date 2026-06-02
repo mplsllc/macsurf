@@ -5316,6 +5316,16 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 				data, (size_t)size, &dotgrid_size);
 		if (rewritten_dotgrid != NULL &&
 				dotgrid_size <= (size_t)0x7fffffff) {
+			/* fixes365 review fix — release the upstream hstripe
+			 * buffer as soon as dotgrid succeeds, matching the
+			 * free-as-you-go pattern used by the grid rewrites
+			 * below. Both buffers were already freed at function
+			 * end, so this is defensive housekeeping rather than
+			 * a hard leak. */
+			if (rewritten_hstripe != NULL) {
+				free(rewritten_hstripe);
+				rewritten_hstripe = NULL;
+			}
 			data = (const char *)rewritten_dotgrid;
 			size = (unsigned int)dotgrid_size;
 		}
