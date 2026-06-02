@@ -29,6 +29,15 @@
 #include <string.h>
 #include <stdarg.h>
 
+/* fixes366c — per-navigation reset hooks for the diagnostic
+ * counters in redraw.c and plotters.c. Both are defined
+ * unconditionally in their own .c files (no MACSURF_DEBUG guard),
+ * so they link cleanly in release builds even when MACSURF_DEBUG
+ * is off. Forward-declared here rather than via a new header to
+ * keep the patch contained to these three files. */
+extern void macos9_redraw_diag_counters_reset(void);
+extern void macos9_plotter_diag_counters_reset(void);
+
 /* fixes160a — SITE diagnostic counters. Defined at the top level
  * (outside MACSURF_DEBUG guards) so that html.c's extern references
  * still link in release builds, even though the log itself becomes
@@ -595,6 +604,12 @@ macsurf_profile_reset(void)
 #else
 	g_profile_t0_set = 1;
 #endif
+	/* fixes366c — clear the redraw / plotter diag-line throttles
+	 * so each navigation gets a fresh window of 5 events per
+	 * pattern instead of one shared budget across the whole
+	 * session. */
+	macos9_redraw_diag_counters_reset();
+	macos9_plotter_diag_counters_reset();
 }
 
 void
@@ -640,7 +655,17 @@ void macsurf_debug_log_init(void) {}
 void macsurf_debug_log_close(void) {}
 void macsurf_debug_log_write(const char *msg) { (void)msg; }
 void macsurf_debug_log_writef(const char *fmt, ...) { (void)fmt; }
-void macsurf_profile_reset(void) {}
+void macsurf_profile_reset(void)
+{
+	/* fixes366c — even in release builds, call the diag-counter
+	 * resets so the symbols are referenced and the file-scope
+	 * statics in redraw.c / plotters.c don't pin up at 5 across
+	 * navigations if a future MACSURF_DEBUG build links the
+	 * same objects. The reset bodies are unconditionally
+	 * compiled and cheap. */
+	macos9_redraw_diag_counters_reset();
+	macos9_plotter_diag_counters_reset();
+}
 void macsurf_profile_stamp(const char *label) { (void)label; }
 
 #endif /* MACSURF_DEBUG */

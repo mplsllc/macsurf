@@ -75,6 +75,36 @@
  * the macsurf_debug.h header is in the macos9 frontend dir and the
  * include path may not reach it from this point in the tree. */
 extern void macsurf_debug_log_writef(const char *fmt, ...);
+
+/* fixes366c — diagnostic counters for the fixes365/fixes366b
+ * gradient / stripe / dot-grid log lines. Originally function-scoped
+ * statics, which capped at 5 per session rather than per navigation.
+ * Hoisted to file scope so macsurf_profile_reset() can zero them at
+ * the start of each navigation via macos9_redraw_diag_counters_reset(). */
+static int hstripe_seen_a = 0;
+static int hstripe_seen_b = 0;
+static int dotgrid_seen_a = 0;
+static int dotgrid_seen_b = 0;
+static int grad_seen_a = 0;
+static int grad_seen_b = 0;
+static int grad_seen_c = 0;
+static int grad_seen_d = 0;
+static int grad_seen_e = 0;
+static int grad_seen_f = 0;
+
+void macos9_redraw_diag_counters_reset(void)
+{
+	hstripe_seen_a = 0;
+	hstripe_seen_b = 0;
+	dotgrid_seen_a = 0;
+	dotgrid_seen_b = 0;
+	grad_seen_a = 0;
+	grad_seen_b = 0;
+	grad_seen_c = 0;
+	grad_seen_d = 0;
+	grad_seen_e = 0;
+	grad_seen_f = 0;
+}
 #endif
 
 
@@ -1389,7 +1419,6 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	                 * rewrite of `repeating-linear-gradient(to bottom,
 	                 * c1, c2, ...)`. */
 	                {
-	                        static int hstripe_seen_a = 0;
 	                        int32_t hstripe_val =
 	                                css_computed_macsurf_hstripe_bg(
 	                                        background->style);
@@ -1404,7 +1433,6 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	                /* fixes365c — 2x2 dot-grid texture from cssh_css.c
 	                 * rewrite of two-layer 1px linear-gradient pattern. */
 	                {
-	                        static int dotgrid_seen_a = 0;
 	                        int32_t dotgrid_val =
 	                                css_computed_macsurf_dotgrid(
 	                                        background->style);
@@ -1527,7 +1555,6 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	                                css_computed_macsurf_gradient_stops(
 	                                        background->style);
 	                        if (grad_ext != NULL) {
-	                                static int grad_seen_a = 0;
 	                                int a = (int)((uint32_t)grad_ext[0] & 0xffffu);
 	                                while (a < 0) a += 360;
 	                                a = a % 360;
@@ -1768,7 +1795,6 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 						css_computed_macsurf_gradient_stops(
 							background->style);
 					if (grad_ext != NULL) {
-						static int grad_seen_b = 0;
 						int a = (int)((uint32_t)grad_ext[0] & 0xffffu);
 						while (a < 0) a += 360;
 						a = a % 360;
@@ -1826,7 +1852,6 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 						css_computed_macsurf_gradient_stops(
 							background->style);
 					if (grad_ext != NULL) {
-						static int grad_seen_c = 0;
 						int a = (int)((uint32_t)grad_ext[0] & 0xffffu);
 						while (a < 0) a += 360;
 						a = a % 360;
@@ -2175,7 +2200,6 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	                macos9_set_box_shadow_3(css_computed_box_shadow_3(
 	                                box->style));
 	                {
-	                        static int hstripe_seen_b = 0;
 	                        int32_t hstripe_val =
 	                                css_computed_macsurf_hstripe_bg(box->style);
 	                        if (hstripe_val != 0 && hstripe_seen_b < 5) {
@@ -2188,7 +2212,6 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	                }
 	                /* fixes365c — 2x2 dot-grid pattern setter. */
 	                {
-	                        static int dotgrid_seen_b = 0;
 	                        int32_t dotgrid_val =
 	                                css_computed_macsurf_dotgrid(box->style);
 	                        if (dotgrid_val != 0 && dotgrid_seen_b < 5) {
@@ -2224,7 +2247,6 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	                                css_computed_macsurf_gradient_stops(
 	                                        box->style);
 	                        if (grad_ext != NULL) {
-	                                static int grad_seen_d = 0;
 	                                int a = (int)((uint32_t)grad_ext[0] & 0xffffu);
 	                                while (a < 0) a += 360;
 	                                a = a % 360;
@@ -2333,7 +2355,6 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 					css_computed_macsurf_gradient_stops(
 						box->style);
 				if (grad_ext != NULL) {
-					static int grad_seen_e = 0;
 					int a = (int)((uint32_t)grad_ext[0] & 0xffffu);
 					while (a < 0) a += 360;
 					a = a % 360;
@@ -2388,7 +2409,6 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 					css_computed_macsurf_gradient_stops(
 						box->style);
 				if (grad_ext != NULL) {
-					static int grad_seen_f = 0;
 					int a = (int)((uint32_t)grad_ext[0] & 0xffffu);
 					while (a < 0) a += 360;
 					a = a % 360;

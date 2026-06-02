@@ -34,6 +34,23 @@ extern int macos9_bitmap_get_mask_rowbytes(void *bitmap);
 long macos9_plot_text_count = 0;
 long macos9_plot_rect_count = 0;
 
+/* fixes366c — per-paint-pattern log throttles for the fixes365/
+ * fixes366b diagnostic lines emitted from macos9_plot_rectangle.
+ * Originally function-scoped statics that capped at 5 per session;
+ * hoisted to file scope so macsurf_profile_reset() can zero them
+ * at the start of each navigation via
+ * macos9_plotter_diag_counters_reset(). */
+static int hstripe_paint_seen = 0;
+static int dotgrid_paint_seen = 0;
+static int diag_paint_seen = 0;
+
+void macos9_plotter_diag_counters_reset(void)
+{
+	hstripe_paint_seen = 0;
+	dotgrid_paint_seen = 0;
+	diag_paint_seen = 0;
+}
+
 /* fixes144b: sub-AA draw-spacing experiment. QuickDraw bitmap text
  * below the AA floor (set to 12pt in main.c via
  * SetAntiAliasedTextEnabled) draws adjacent glyphs with no visible
@@ -986,7 +1003,6 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 		angle_norm = angle_norm % 360;
 		if (angle_norm < 0) angle_norm += 360;
 		{
-			static int diag_paint_seen = 0;
 			if (diag_paint_seen < 5) {
 				macsurf_debug_log_writef(
 					"plot: diag-gradient angle=%d",
@@ -1368,7 +1384,6 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 			RGBColor sc2;
 			short y;
 			RgnHandle saved_clip;
-			static int hstripe_paint_seen = 0;
 			if (hstripe_paint_seen < 5) {
 				macsurf_debug_log_write("plot: hstripe paint");
 				hstripe_paint_seen++;
@@ -1408,7 +1423,6 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 			short x;
 			short y;
 			RgnHandle saved_clip;
-			static int dotgrid_paint_seen = 0;
 			if (dotgrid_paint_seen < 5) {
 				macsurf_debug_log_write("plot: dotgrid paint");
 				dotgrid_paint_seen++;
