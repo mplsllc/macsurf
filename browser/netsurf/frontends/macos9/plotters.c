@@ -1400,11 +1400,13 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 			 *   bit 31      = set
 			 *   bits 15..29 = c2 RGB555
 			 *   bits 0..14  = c1 RGB555
-			 * Paints 1px rows of c1, c2, c1, c2 (top→bottom). The
-			 * mactrove Platinum title-bar pattern is 3px-period
-			 * (white/gray/white); we approximate as 2px-period
-			 * (white/gray) which preserves the visual signature
-			 * without losing more contrast to JPEG capture. */
+			 * The mactrove Platinum title-bar pattern is the true
+			 * 3px-period pinstripe from the CSS:
+			 *   #ffffff 0..1px, #cccccc 1..2px, #ffffff 2..3px
+			 * i.e. 2px of c1 (white) then 1px of c2 (gray) per
+			 * period. fixes366g paints that exactly — the 2px
+			 * approximation used before was 50% gray and read far
+			 * heavier than the genuine subtle Platinum pinstripe. */
 			uint32_t up = (uint32_t)hstripe_local;
 			uint32_t rgb1 = up & 0x7fff;
 			uint32_t rgb2 = (up >> 15) & 0x7fff;
@@ -1424,10 +1426,13 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 			sc2.blue  = (unsigned short)(( rgb2        & 0x1f) << 11);
 			saved_clip = macos9_push_clip();
 			for (y = r.top; y < r.bottom; y++) {
-				if (((y - r.top) & 1) == 0)
-					RGBForeColor(&sc1);
-				else
+				/* 3px period: rows 0,2 = c1 (white),
+				 * row 1 = c2 (gray). Matches the CSS
+				 * repeating-linear-gradient exactly. */
+				if (((y - r.top) % 3) == 1)
 					RGBForeColor(&sc2);
+				else
+					RGBForeColor(&sc1);
 				MoveTo(r.left, y);
 				LineTo((short)(r.right - 1), y);
 			}
