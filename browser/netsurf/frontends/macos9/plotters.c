@@ -706,10 +706,18 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	macos9_gradient_stops_oneshot = NULL; /* fixes365b */
 	macos9_gradient_angle_oneshot = 0; /* fixes365b */
 
-	/* fixes366d — log the snapshot values regardless of branch so we
+	/* fixes366d/e — log the snapshot values regardless of branch so we
 	 * can tell whether the one-shot pipeline is reaching the plotter
-	 * or being consumed by an intermediate paint. */
-	if (snapshot_seen < 8) {
+	 * or being consumed by an intermediate paint.
+	 *
+	 * fixes366e: only log when ANY value is non-zero (i.e. when this
+	 * paint actually inherited a one-shot). Previously capped at 8
+	 * calls flat which burned the budget on early chrome paints before
+	 * any content setters had fired. Cap raised to 32 of the interesting
+	 * cases since they're rare in practice. */
+	if (snapshot_seen < 32 &&
+	    (hstripe_local != 0 || dotgrid_local != 0 ||
+	     grad_stops_local != NULL || grad_angle_local != 0)) {
 		macsurf_debug_log_writef(
 			"plot: snapshot hstripe=%ld dotgrid=%ld grad_stops=%p angle=%d",
 			(long)hstripe_local,
