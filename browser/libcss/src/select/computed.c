@@ -219,6 +219,12 @@ css_error css_computed_style_destroy(css_computed_style *style)
 		style->macsurf_gradient_radial = NULL;
 	}
 
+	/* fixes365b: free heap-allocated extended-linear-gradient array. */
+	if (style->macsurf_gradient_stops != NULL) {
+		free(style->macsurf_gradient_stops);
+		style->macsurf_gradient_stops = NULL;
+	}
+
 	lwc_string_unref(style->i.list_style_image);
 	lwc_string_unref(style->i.background_image);
 
@@ -556,6 +562,15 @@ const int32_t *css_computed_macsurf_gradient_radial(
 		const css_computed_style *style)
 {
 	return style->macsurf_gradient_radial;
+}
+
+/* fixes365b: accessor for the extended-linear-gradient descriptor.
+ * Returns NULL when the legacy 2-stop cardinal fast path suffices.
+ * See computed.h for the 7-int array layout. */
+const int32_t *css_computed_macsurf_gradient_stops(
+		const css_computed_style *style)
+{
+	return style->macsurf_gradient_stops;
 }
 
 uint8_t css_computed_macsurf_grid_col_span(

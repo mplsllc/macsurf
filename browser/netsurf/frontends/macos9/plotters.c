@@ -310,6 +310,24 @@ void macos9_set_hstripe_bg(int32_t packed)
 	macos9_hstripe_bg_oneshot = packed;
 }
 
+/* fixes365b — extended-linear-gradient one-shot statics. redraw.c calls
+ * macos9_set_gradient_stops() / macos9_set_gradient_angle() right before
+ * a plot->rectangle that should paint a diagonal or 3-stop gradient; the
+ * plotter reads-and-clears so the values can't leak to subsequent paints
+ * that didn't explicitly set them. Same lifecycle / safety story as the
+ * box_shadow_2/3 and hstripe_bg one-shots (project_plotters_port_assumption,
+ * fixes361h+364). Storing on plot_style_t would leak stack garbage. */
+static const int32_t *macos9_gradient_stops_oneshot = NULL;
+static uint16_t macos9_gradient_angle_oneshot = 0;
+void macos9_set_gradient_stops(const int32_t *stops)
+{
+	macos9_gradient_stops_oneshot = stops;
+}
+void macos9_set_gradient_angle(uint16_t angle)
+{
+	macos9_gradient_angle_oneshot = angle;
+}
+
 extern struct gui_window *macos9_paint_gw;
 /* fixes77g -- prefer macos9_paint_gw over GetPort+GetWRefCon. The old
  * pattern assumed the current port was the window and read gw from the
@@ -630,6 +648,9 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	int32_t bsh2_local;
 	int32_t bsh3_local;
 	int32_t hstripe_local; /* fixes364 */
+	/* fixes365b — extended-linear-gradient one-shots. */
+	const int32_t *grad_stops_local;
+	uint16_t grad_angle_local;
 
 	(void)ctx;
 
@@ -639,9 +660,13 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	bsh2_local = macos9_box_shadow_2_oneshot;
 	bsh3_local = macos9_box_shadow_3_oneshot;
 	hstripe_local = macos9_hstripe_bg_oneshot; /* fixes364 */
+	grad_stops_local = macos9_gradient_stops_oneshot; /* fixes365b */
+	grad_angle_local = macos9_gradient_angle_oneshot; /* fixes365b */
 	macos9_box_shadow_2_oneshot = 0;
 	macos9_box_shadow_3_oneshot = 0;
 	macos9_hstripe_bg_oneshot = 0; /* fixes364 */
+	macos9_gradient_stops_oneshot = NULL; /* fixes365b */
+	macos9_gradient_angle_oneshot = 0; /* fixes365b */
 
 	macos9_plot_rect_count++;
 	macos9_rect_from_ns(rectangle, &r);
@@ -891,6 +916,201 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 				macos9_pop_clip(saved_clip3);
 			}
 		}
+	}
+#endif
+
+	/* fixes365b — diagonal / 3-stop linear gradient. Triggered when the
+	 * fill is LINEAR_GRADIENT (cardinal or otherwise) AND the redraw
+	 * side has pushed the extended one-shot descriptor. Iterates the
+	 * box pixel by pixel, computes a per-pixel `t` along the requested
+	 * 45/135/225/315 axis, then interpolates colour from the 2-stop or
+	 * 3-stop palette with explicit positions.
+	 *
+	 * Expensive vs the row-fill cardinal path, but mactrove's close
+	 * box is 11x11 px so the cost is negligible. Falls through to the
+	 * cardinal path when grad_stops_local is NULL. */
+#ifdef __MACOS9__
+	if ((pstyle->fill_type == PLOT_OP_TYPE_LINEAR_GRADIENT ||
+	     pstyle->fill_type == PLOT_OP_TYPE_LINEAR_GRADIENT_H) &&
+	    grad_stops_local != NULL) {
+		RGBColor cA, cB, cC;
+		RGBColor cur;
+		long box_w = (long)(r.right - r.left);
+		long box_h = (long)(r.bottom - r.top);
+		long denom;
+		long row, col;
+		int n_stops;
+		int32_t p0_eff, p1_eff, p2_eff;
+		int angle_norm;
+		RgnHandle saved_clip;
+
+		/* Decode angle (low 16 bits) and stop count (high 16 bits)
+		 * from the packed descriptor word. The parser packs both so
+		 * the painter doesn't have to infer stop count from
+		 * potentially-zero col2/pos2 values. */
+		{
+			uint32_t raw = (uint32_t)grad_stops_local[0];
+			angle_norm = (int)(raw & 0xffffu);
+			n_stops = (int)((raw >> 16) & 0xffffu);
+			if (n_stops < 2 || n_stops > 3) {
+				/* Legacy/zero-encoded fallback. */
+				if (grad_stops_local[3] == 0 &&
+				    grad_stops_local[6] == 0) {
+					n_stops = 2;
+				} else {
+					n_stops = 3;
+				}
+			}
+		}
+		/* The redraw side also passes the bare angle via the
+		 * separate one-shot. Prefer the embedded form, but use the
+		 * one-shot as backup when the descriptor didn't encode the
+		 * high bits (e.g. inherited / older bytecode). */
+		if (angle_norm == 0 && grad_angle_local != 0) {
+			angle_norm = (int)grad_angle_local;
+		}
+		angle_norm = angle_norm % 360;
+		if (angle_norm < 0) angle_norm += 360;
+		p0_eff = grad_stops_local[1];
+		p1_eff = grad_stops_local[2];
+		p2_eff = grad_stops_local[3];
+
+		macos9_colour_to_rgb((colour)grad_stops_local[4], &cA);
+		macos9_colour_to_rgb((colour)grad_stops_local[5], &cB);
+		macos9_colour_to_rgb((colour)grad_stops_local[6], &cC);
+
+		saved_clip = macos9_push_clip();
+
+		if (box_w < 1) box_w = 1;
+		if (box_h < 1) box_h = 1;
+
+		/* Diagonal axis length, in pixels. For the 4 supported
+		 * angles the diagonal is the same: w + h - 2 covers the
+		 * full corner-to-corner span. denom is reused per row. */
+		denom = box_w + box_h - 2;
+		if (denom < 1) denom = 1;
+
+		for (row = 0; row < box_h; row++) {
+			for (col = 0; col < box_w; col++) {
+				long t256;
+				long axis;
+				long t10000;
+				int seg_lo, seg_hi;
+				int32_t pos_lo, pos_hi;
+				RGBColor *cLo;
+				RGBColor *cHi;
+				long span_p;
+				long local_t;
+
+				/* Per-axis pixel distance along the gradient
+				 * line. 45 = top-left to bottom-right,
+				 * 135 = top-right to bottom-left,
+				 * 225 = bottom-right to top-left,
+				 * 315 = bottom-left to top-right.
+				 *
+				 * Cardinal angles also handled (the cardinal
+				 * branch below is the fast path; this only
+				 * fires when the rule needs the side-channel,
+				 * which can include 2-stop cardinal with
+				 * non-default positions). */
+				switch (angle_norm) {
+				case 45:
+					axis = col + row;
+					break;
+				case 135:
+					axis = (box_w - 1 - col) + row;
+					break;
+				case 225:
+					axis = (box_w - 1 - col) +
+						(box_h - 1 - row);
+					break;
+				case 315:
+					axis = col + (box_h - 1 - row);
+					break;
+				case 90:
+					axis = (col * (box_w + box_h - 2)) /
+						((box_w > 1) ? (box_w - 1) : 1);
+					break;
+				case 270:
+					axis = ((box_w - 1 - col) *
+						(box_w + box_h - 2)) /
+						((box_w > 1) ? (box_w - 1) : 1);
+					break;
+				case 0:
+					axis = ((box_h - 1 - row) *
+						(box_w + box_h - 2)) /
+						((box_h > 1) ? (box_h - 1) : 1);
+					break;
+				case 180:
+				default:
+					axis = (row * (box_w + box_h - 2)) /
+						((box_h > 1) ? (box_h - 1) : 1);
+					break;
+				}
+				if (axis < 0) axis = 0;
+				if (axis > denom) axis = denom;
+				t10000 = (axis * 10000L) / denom;
+
+				/* Find which segment t falls in, then
+				 * interpolate between the adjacent stops. */
+				if (n_stops == 2) {
+					seg_lo = 0;
+					seg_hi = 1;
+					pos_lo = p0_eff;
+					pos_hi = p1_eff;
+					cLo = &cA;
+					cHi = &cB;
+				} else {
+					if (t10000 <= p1_eff) {
+						seg_lo = 0;
+						seg_hi = 1;
+						pos_lo = p0_eff;
+						pos_hi = p1_eff;
+						cLo = &cA;
+						cHi = &cB;
+					} else {
+						seg_lo = 1;
+						seg_hi = 2;
+						pos_lo = p1_eff;
+						pos_hi = p2_eff;
+						cLo = &cB;
+						cHi = &cC;
+					}
+				}
+				(void)seg_lo; (void)seg_hi;
+				span_p = (long)pos_hi - (long)pos_lo;
+				if (span_p <= 0) span_p = 1;
+				local_t = (t10000 - (long)pos_lo);
+				if (local_t < 0) local_t = 0;
+				if (local_t > span_p) local_t = span_p;
+				t256 = (local_t * 256L) / span_p;
+
+				cur.red = (unsigned short)
+					(((long)cLo->red * (256L - t256) +
+					  (long)cHi->red * t256) >> 8);
+				cur.green = (unsigned short)
+					(((long)cLo->green * (256L - t256) +
+					  (long)cHi->green * t256) >> 8);
+				cur.blue = (unsigned short)
+					(((long)cLo->blue * (256L - t256) +
+					  (long)cHi->blue * t256) >> 8);
+				RGBForeColor(&cur);
+				MoveTo((short)(r.left + col),
+						(short)(r.top + row));
+				LineTo((short)(r.left + col),
+						(short)(r.top + row));
+			}
+		}
+
+		macos9_pop_clip(saved_clip);
+		if (pstyle->stroke_type != PLOT_OP_TYPE_NONE) {
+			macos9_colour_to_rgb(pstyle->stroke_colour, &rgb);
+			RGBForeColor(&rgb);
+			saved_clip = macos9_push_clip();
+			FrameRect(&r);
+			macos9_pop_clip(saved_clip);
+		}
+		return NSERROR_OK;
 	}
 #endif
 

@@ -261,6 +261,21 @@ const css_color *css_computed_macsurf_gradient_full(
 const int32_t *css_computed_macsurf_gradient_radial(
 		const css_computed_style *style);
 
+/* fixes365b: returns a pointer to a 7-int extended-linear-gradient
+ * descriptor, or NULL when the legacy 2-stop cardinal fast path suffices.
+ * Format:
+ *   [0] angle in degrees (0..359; full precision)
+ *   [1] position 0 as percent×100 (0..10000)
+ *   [2] position 1 as percent×100
+ *   [3] position 2 as percent×100 (0 when only 2 stops)
+ *   [4] colour 0 as css_color (ARGB)
+ *   [5] colour 1 as css_color
+ *   [6] colour 2 as css_color (0 when only 2 stops)
+ * Lifetime tied to the computed style. Painter uses this for diagonal
+ * angles (45/135/225/315) and any 3-stop gradient with positions. */
+const int32_t *css_computed_macsurf_gradient_stops(
+		const css_computed_style *style);
+
 /* fixes151: -macsurf-grid-col-span as a uint8_t. 0 = unset (caller
  * treats as 1). 1..254 = literal span count. 255 = "fill the
  * remainder of the row" sentinel (from `grid-column: 1 / -1`-style

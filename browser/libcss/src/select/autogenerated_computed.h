@@ -505,6 +505,31 @@ struct css_computed_style {
 	 * pattern is two inset bevels + one outer drop shadow; this
 	 * holds the drop. Same packing format as the first two slots. */
 	int32_t box_shadow_3;
+
+	/* fixes365b — extended linear-gradient side-channel: diagonal angle
+	 * (45/135/225/315) and up to 3 colour stops with explicit positions.
+	 *
+	 * The existing 2-stop cardinal fast path (vertical / horizontal,
+	 * packed RGB565+R4G6B4 in `i.macsurf_gradient`) is left untouched;
+	 * this side-channel is only allocated when the rule needs more —
+	 * either a non-cardinal angle or a third stop. NULL = use the legacy
+	 * path.
+	 *
+	 * Format (heap-allocated int32_t[7], all words self-aligning for
+	 * arena memcmp safety):
+	 *   [0] angle in degrees (0..359; full precision, low 16 bits used)
+	 *   [1] position 0 as percent×100 (0..10000)
+	 *   [2] position 1 as percent×100
+	 *   [3] position 2 as percent×100 (0 when only 2 stops, in which
+	 *       case [6] is also 0 and consumer reads only 2)
+	 *   [4] colour 0 as css_color (ARGB)
+	 *   [5] colour 1 as css_color
+	 *   [6] colour 2 as css_color (0 when only 2 stops)
+	 *
+	 * Compared in arena.c via arena__compare_macsurf_gradient_stops;
+	 * lifetime owned by this style's destroy path. Appended at struct
+	 * end per project_libcss_struct_mid_insert_crash. */
+	int32_t *macsurf_gradient_stops;
 };
 
 #endif

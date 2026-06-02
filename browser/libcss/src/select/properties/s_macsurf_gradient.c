@@ -70,6 +70,11 @@ css_error css__cascade_macsurf_gradient(uint32_t opv, css_style *style,
 	/* fixes345 — radial size+position tail. */
 	bool rad_set = false;
 	int32_t rad_sx = -1, rad_sy = -1, rad_px = -1, rad_py = -1;
+	/* fixes365b — extended-linear (diagonal / 3-stop) descriptor. */
+	bool ext_set = false;
+	int32_t ext_angle = 0;
+	int32_t ext_pos0 = 0, ext_pos1 = 0, ext_pos2 = 0;
+	css_color ext_col0 = 0, ext_col1 = 0, ext_col2 = 0;
 
 	if (hasFlagValue(opv) == false) {
 		switch (getValue(opv)) {
@@ -148,6 +153,68 @@ css_error css__cascade_macsurf_gradient(uint32_t opv, css_style *style,
 					(long)c1, (long)c2, (int)value);
 			}
 #endif
+			break;
+		case 0x0180: /* fixes365b — extended linear (diagonal /
+		              * 3-stop with positions). Tail layout:
+		              *   [c1, last, angle, p0, p1, p2, col0,
+		              *    col1, col2] = 9 words. */
+			value = CSS_MACSURF_GRADIENT_SET;
+			c1 = *((css_color *) style->bytecode);
+			advance_bytecode(style, sizeof(css_color));
+			c2 = *((css_color *) style->bytecode);
+			advance_bytecode(style, sizeof(css_color));
+			ext_angle = (int32_t)(*((uint32_t *)
+					style->bytecode));
+			advance_bytecode(style, sizeof(uint32_t));
+			ext_pos0 = (int32_t)(*((uint32_t *)
+					style->bytecode));
+			advance_bytecode(style, sizeof(uint32_t));
+			ext_pos1 = (int32_t)(*((uint32_t *)
+					style->bytecode));
+			advance_bytecode(style, sizeof(uint32_t));
+			ext_pos2 = (int32_t)(*((uint32_t *)
+					style->bytecode));
+			advance_bytecode(style, sizeof(uint32_t));
+			ext_col0 = *((css_color *) style->bytecode);
+			advance_bytecode(style, sizeof(css_color));
+			ext_col1 = *((css_color *) style->bytecode);
+			advance_bytecode(style, sizeof(css_color));
+			ext_col2 = *((css_color *) style->bytecode);
+			advance_bytecode(style, sizeof(css_color));
+			ext_set = true;
+			/* Map to a cardinal horizontal/vertical flag for
+			 * the legacy packed slot so existing callers that
+			 * only read the packed int still get a usable
+			 * fallback when the extended pointer is ignored.
+			 * Mask out the high-bits stop-count encoding the
+			 * parser packs into ext_angle. */
+			{
+				int a = (int)((uint32_t)ext_angle & 0xffffu);
+				while (a < 0) a += 360;
+				a = a % 360;
+				if ((a >= 45 && a < 135) ||
+				    (a >= 225 && a < 315)) {
+					horizontal = true;
+				}
+			}
+			packed = macsurf_gradient_pack(c1, c2, horizontal,
+					false);
+			/* Apply the same alpha-aware downgrade as the
+			 * cardinal SET case so semi-transparent
+			 * extended gradients drop gracefully. */
+			{
+				uint8_t a1 = (uint8_t)((c1 >> 24) & 0xff);
+				uint8_t a2 = (uint8_t)((c2 >> 24) & 0xff);
+				bool drop = false;
+				if (a1 < 0xC0 || a2 < 0xC0) drop = true;
+				if ((a1 < 0xFF && a2 == 0) ||
+				    (a2 < 0xFF && a1 == 0)) drop = true;
+				if (drop) {
+					value = CSS_MACSURF_GRADIENT_NONE;
+					packed = 0;
+					ext_set = false;
+				}
+			}
 			break;
 		case 0x00C0: /* SET horizontal (fixes48) */
 			horizontal = true;
@@ -276,6 +343,30 @@ css_error css__cascade_macsurf_gradient(uint32_t opv, css_style *style,
 				state->computed->macsurf_gradient_radial = NULL;
 			}
 		}
+		/* fixes365b — extended-linear side-channel allocation. */
+		if (ext_set) {
+			int32_t *ext = (int32_t *)malloc(7 * sizeof(int32_t));
+			if (ext != NULL) {
+				ext[0] = ext_angle;
+				ext[1] = ext_pos0;
+				ext[2] = ext_pos1;
+				ext[3] = ext_pos2;
+				ext[4] = (int32_t)ext_col0;
+				ext[5] = (int32_t)ext_col1;
+				ext[6] = (int32_t)ext_col2;
+				if (state->computed->macsurf_gradient_stops
+						!= NULL) {
+					free(state->computed->macsurf_gradient_stops);
+				}
+				state->computed->macsurf_gradient_stops = ext;
+			}
+		} else if (value == CSS_MACSURF_GRADIENT_SET ||
+		           value == CSS_MACSURF_GRADIENT_NONE) {
+			if (state->computed->macsurf_gradient_stops != NULL) {
+				free(state->computed->macsurf_gradient_stops);
+				state->computed->macsurf_gradient_stops = NULL;
+			}
+		}
 		return set_macsurf_gradient(state->computed, value,
 				(int32_t)packed);
 	}
@@ -335,6 +426,20 @@ css_error css__copy_macsurf_gradient(
 			memcpy(copy, from->macsurf_gradient_radial,
 				4 * sizeof(int32_t));
 			to->macsurf_gradient_radial = copy;
+		}
+	}
+
+	/* fixes365b — propagate the extended-linear descriptor. */
+	if (to->macsurf_gradient_stops != NULL) {
+		free(to->macsurf_gradient_stops);
+		to->macsurf_gradient_stops = NULL;
+	}
+	if (from->macsurf_gradient_stops != NULL) {
+		int32_t *copy = (int32_t *)malloc(7 * sizeof(int32_t));
+		if (copy != NULL) {
+			memcpy(copy, from->macsurf_gradient_stops,
+				7 * sizeof(int32_t));
+			to->macsurf_gradient_stops = copy;
 		}
 	}
 	return CSS_OK;

@@ -94,6 +94,15 @@ static inline bool arena__compare_macsurf_gradient_radial(
 	return memcmp(a, b, 4 * sizeof(int32_t)) == 0;
 }
 
+/* fixes365b: compare two 7-int diagonal/3-stop gradient arrays. */
+static inline bool arena__compare_macsurf_gradient_stops(
+		const int32_t *a, const int32_t *b)
+{
+	if (a == NULL && b == NULL) return true;
+	if (a == NULL || b == NULL) return false;
+	return memcmp(a, b, 7 * sizeof(int32_t)) == 0;
+}
+
 static inline bool arena__compare_string_list(
 		lwc_string **a,
 		lwc_string **b)
@@ -178,6 +187,13 @@ static inline bool css__arena_style_is_equal(
 	if (!arena__compare_macsurf_gradient_radial(
 			a->macsurf_gradient_radial,
 			b->macsurf_gradient_radial)) {
+		return false;
+	}
+
+	/* fixes365b — diagonal/3-stop gradient extension. */
+	if (!arena__compare_macsurf_gradient_stops(
+			a->macsurf_gradient_stops,
+			b->macsurf_gradient_stops)) {
 		return false;
 	}
 

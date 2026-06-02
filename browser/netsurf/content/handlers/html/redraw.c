@@ -1199,6 +1199,16 @@ extern void macos9_set_box_shadow_3(int32_t packed);
  * alternating-row stripes. Same read-and-clear lifecycle as the
  * box_shadow_2/3 setters. */
 extern void macos9_set_hstripe_bg(int32_t packed);
+/* fixes365b — diagonal / 3-stop linear-gradient one-shots. Set right
+ * before the bg rectangle paint so the plotter routes through the
+ * per-pixel interpolation branch with the author's full angle and
+ * stop palette. Same read-and-clear lifecycle as the box_shadow_2/3
+ * and hstripe_bg setters. The pointer must remain valid until the
+ * immediately following plot_rectangle call, which is the case here
+ * because the array is owned by the computed style and the redraw
+ * holds the style ref through the entire box paint. */
+extern void macos9_set_gradient_stops(const int32_t *stops);
+extern void macos9_set_gradient_angle(uint16_t angle);
 #endif
 
 static bool html_redraw_background(int x, int y, struct box *box, float scale,
@@ -1473,6 +1483,31 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	                                pstyle_fill_bg.radial_py = (int)rad[3];
 	                        }
 	                }
+	                /* fixes365b — diagonal / 3-stop side-channel. When
+	                 * the cascade allocated the extended descriptor, push
+	                 * the angle + stops array to the plotter via the
+	                 * one-shot statics. For cardinal angles (0/90/180/270)
+	                 * we keep the existing horizontal/vertical fast path
+	                 * so opacity/output is byte-for-byte preserved. */
+#ifdef __MACOS9__
+	                if (!grad_r) {
+	                        const int32_t *grad_ext =
+	                                css_computed_macsurf_gradient_stops(
+	                                        background->style);
+	                        if (grad_ext != NULL) {
+	                                int a = (int)((uint32_t)grad_ext[0] & 0xffffu);
+	                                while (a < 0) a += 360;
+	                                a = a % 360;
+	                                if (a != 0 && a != 90 &&
+	                                    a != 180 && a != 270) {
+	                                        pstyle_fill_bg.fill_type =
+	                                                PLOT_OP_TYPE_LINEAR_GRADIENT;
+	                                }
+	                                macos9_set_gradient_stops(grad_ext);
+	                                macos9_set_gradient_angle((uint16_t)a);
+	                        }
+	                }
+#endif
 	        }
 	}	if (ctx->background_images == false)
 		return true;
@@ -1687,6 +1722,26 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 							  PLOT_OP_TYPE_LINEAR_GRADIENT);
 				pstyle_fill_bg.fill_colour  = gc1;
 				pstyle_fill_bg.fill_colour2 = gc2;
+				/* fixes365b — extended (diagonal / 3-stop). */
+#ifdef __MACOS9__
+				if (!grad_r) {
+					const int32_t *grad_ext =
+						css_computed_macsurf_gradient_stops(
+							background->style);
+					if (grad_ext != NULL) {
+						int a = (int)((uint32_t)grad_ext[0] & 0xffffu);
+						while (a < 0) a += 360;
+						a = a % 360;
+						if (a != 0 && a != 90 &&
+						    a != 180 && a != 270) {
+							pstyle_fill_bg.fill_type =
+								PLOT_OP_TYPE_LINEAR_GRADIENT;
+						}
+						macos9_set_gradient_stops(grad_ext);
+						macos9_set_gradient_angle((uint16_t)a);
+					}
+				}
+#endif
 			}
 			if (plot_colour) {
 				/* fixes201: route through the bg-size tiling
@@ -1718,6 +1773,26 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 							  PLOT_OP_TYPE_LINEAR_GRADIENT);
 				pstyle_fill_bg.fill_colour  = gc1;
 				pstyle_fill_bg.fill_colour2 = gc2;
+				/* fixes365b — extended (diagonal / 3-stop). */
+#ifdef __MACOS9__
+				if (!grad_r) {
+					const int32_t *grad_ext =
+						css_computed_macsurf_gradient_stops(
+							background->style);
+					if (grad_ext != NULL) {
+						int a = (int)((uint32_t)grad_ext[0] & 0xffffu);
+						while (a < 0) a += 360;
+						a = a % 360;
+						if (a != 0 && a != 90 &&
+						    a != 180 && a != 270) {
+							pstyle_fill_bg.fill_type =
+								PLOT_OP_TYPE_LINEAR_GRADIENT;
+						}
+						macos9_set_gradient_stops(grad_ext);
+						macos9_set_gradient_angle((uint16_t)a);
+					}
+				}
+#endif
 				res = html_redraw_paint_gradient_tiled(ctx,
 						&pstyle_fill_bg, &r,
 						background->style);
@@ -2066,6 +2141,26 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	                                          PLOT_OP_TYPE_LINEAR_GRADIENT);
 	                pstyle_fill_bg.fill_colour  = gc1;
 	                pstyle_fill_bg.fill_colour2 = gc2;
+	                /* fixes365b — extended (diagonal / 3-stop). */
+#ifdef __MACOS9__
+	                if (!grad_r) {
+	                        const int32_t *grad_ext =
+	                                css_computed_macsurf_gradient_stops(
+	                                        box->style);
+	                        if (grad_ext != NULL) {
+	                                int a = (int)((uint32_t)grad_ext[0] & 0xffffu);
+	                                while (a < 0) a += 360;
+	                                a = a % 360;
+	                                if (a != 0 && a != 90 &&
+	                                    a != 180 && a != 270) {
+	                                        pstyle_fill_bg.fill_type =
+	                                                PLOT_OP_TYPE_LINEAR_GRADIENT;
+	                                }
+	                                macos9_set_gradient_stops(grad_ext);
+	                                macos9_set_gradient_angle((uint16_t)a);
+	                        }
+	                }
+#endif
 	        }
 	}	plot_content = (box->background != NULL);
 	if (html_redraw_printing && nsoption_bool(remove_backgrounds))
@@ -2148,6 +2243,26 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 						  PLOT_OP_TYPE_LINEAR_GRADIENT);
 			pstyle_fill_bg.fill_colour  = gc1;
 			pstyle_fill_bg.fill_colour2 = gc2;
+			/* fixes365b — extended (diagonal / 3-stop). */
+#ifdef __MACOS9__
+			if (!grad_r) {
+				const int32_t *grad_ext =
+					css_computed_macsurf_gradient_stops(
+						box->style);
+				if (grad_ext != NULL) {
+					int a = (int)((uint32_t)grad_ext[0] & 0xffffu);
+					while (a < 0) a += 360;
+					a = a % 360;
+					if (a != 0 && a != 90 &&
+					    a != 180 && a != 270) {
+						pstyle_fill_bg.fill_type =
+							PLOT_OP_TYPE_LINEAR_GRADIENT;
+					}
+					macos9_set_gradient_stops(grad_ext);
+					macos9_set_gradient_angle((uint16_t)a);
+				}
+			}
+#endif
 		}
 
 		if (plot_colour) {
@@ -2176,6 +2291,26 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 						  PLOT_OP_TYPE_LINEAR_GRADIENT);
 			pstyle_fill_bg.fill_colour  = gc1;
 			pstyle_fill_bg.fill_colour2 = gc2;
+			/* fixes365b — extended (diagonal / 3-stop). */
+#ifdef __MACOS9__
+			if (!grad_r) {
+				const int32_t *grad_ext =
+					css_computed_macsurf_gradient_stops(
+						box->style);
+				if (grad_ext != NULL) {
+					int a = (int)((uint32_t)grad_ext[0] & 0xffffu);
+					while (a < 0) a += 360;
+					a = a % 360;
+					if (a != 0 && a != 90 &&
+					    a != 180 && a != 270) {
+						pstyle_fill_bg.fill_type =
+							PLOT_OP_TYPE_LINEAR_GRADIENT;
+					}
+					macos9_set_gradient_stops(grad_ext);
+					macos9_set_gradient_angle((uint16_t)a);
+				}
+			}
+#endif
 			res = html_redraw_paint_gradient_tiled(ctx,
 					&pstyle_fill_bg, &r,
 					box->style);

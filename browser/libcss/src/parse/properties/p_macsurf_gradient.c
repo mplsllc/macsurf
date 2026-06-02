@@ -62,6 +62,25 @@ css_error css__parse_macsurf_gradient(css_language *c,
 	bool has_second_distinct = false;
 	enum flag_value flag_value;
 	bool match = false;
+	/* fixes365b — capture the full angle (0..359), the first three stop
+	 * colours, and their explicit positions. When any of these require
+	 * fidelity the legacy 2-stop fast path can't express (diagonal
+	 * angle 45/135/225/315, or a third colour, or positions other than
+	 * the default 0%/100%), the cascade is asked to allocate the 7-int
+	 * side-channel via an extra OPV value 0x0180. Cardinal 2-stop rules
+	 * with default stop positions keep using the legacy 0x0080/0x00C0
+	 * paths so existing visual output is byte-for-byte unchanged. */
+	int captured_angle = 0;
+	bool captured_angle_seen = false;
+	css_color stop_colors[3];
+	int32_t stop_positions[3];
+	bool stop_position_set[3];
+	int stop_index;
+	for (stop_index = 0; stop_index < 3; stop_index++) {
+		stop_colors[stop_index] = 0;
+		stop_positions[stop_index] = -1;
+		stop_position_set[stop_index] = false;
+	}
 
 	token = parserutils_vector_peek(vector, *ctx);
 	if (token == NULL) return CSS_INVALID;
@@ -362,6 +381,12 @@ css_error css__parse_macsurf_gradient(css_language *c,
 					if (seen_digit) {
 						int a = (angle * sign) % 360;
 						if (a < 0) a += 360;
+						/* fixes365b — preserve full angle
+						 * for the side-channel; legacy
+						 * cardinal collapse stays for the
+						 * fast path. */
+						captured_angle = a;
+						captured_angle_seen = true;
 						if ((a >= 45 && a < 135) ||
 						    (a >= 225 && a < 315))
 							horizontal = true;
@@ -411,20 +436,62 @@ css_error css__parse_macsurf_gradient(css_language *c,
 				has_second_distinct = true;
 			}
 			last_color = tmp_color;
+			/* fixes365b — also record the first 3 colour stops
+			 * into the side-channel capture array. */
+			if (color_count < 3) {
+				stop_colors[color_count] = tmp_color;
+			}
 			color_count++;
 			consumeWhitespace(vector, ctx);
-			/* fixes318 (#148) — accept and ignore optional stop
-			 * position after each colour. CSS modern syntax allows
-			 * `c1 0%, c2 100%` or `c1 50px, c2 75%`. The 2-stop
-			 * storage slot can't express stops other than 0%/100%
-			 * anyway, so we silently consume the position token to
-			 * keep parsing alive. Without this, the parser bails
-			 * with CSS_INVALID on the percentage token and the
-			 * entire gradient declaration drops. */
+			/* fixes318 (#148) — accept (and historically ignored)
+			 * optional stop position after each colour. CSS modern
+			 * syntax allows `c1 0%, c2 100%` or `c1 50px, c2 75%`.
+			 * The legacy 2-stop slot couldn't express stops other
+			 * than 0%/100% so positions used to drop silently.
+			 *
+			 * fixes365b — now capture percentage positions into the
+			 * stop_positions array (percent×100 fixed). Dimension
+			 * / number positions still drop because the px→percent
+			 * resolution needs the box width at paint time and
+			 * isn't worth the round-trip for the common case (the
+			 * mactrove rule uses 0%/50%/100% percentages). */
 			token = parserutils_vector_peek(vector, *ctx);
 			if (token != NULL &&
-			    (token->type == CSS_TOKEN_PERCENTAGE ||
-			     token->type == CSS_TOKEN_DIMENSION ||
+			    token->type == CSS_TOKEN_PERCENTAGE) {
+				const char *data = lwc_string_data(
+						token->idata);
+				size_t len = lwc_string_length(
+						token->idata);
+				int sign = 1;
+				int val = 0;
+				size_t j = 0;
+				bool seen = false;
+				if (len > 0 && data[0] == '-') {
+					sign = -1; j = 1;
+				} else if (len > 0 && data[0] == '+') {
+					j = 1;
+				}
+				for (; j < len; j++) {
+					char ch = data[j];
+					if (ch >= '0' && ch <= '9') {
+						val = val * 100 +
+							(ch - '0') * 100;
+						seen = true;
+					} else {
+						break;
+					}
+				}
+				if (seen && color_count - 1 < 3) {
+					stop_positions[color_count - 1] =
+							sign * val;
+					stop_position_set[color_count - 1] =
+							true;
+				}
+				parserutils_vector_iterate(vector, ctx);
+				consumeWhitespace(vector, ctx);
+				token = parserutils_vector_peek(vector, *ctx);
+			} else if (token != NULL &&
+			    (token->type == CSS_TOKEN_DIMENSION ||
 			     token->type == CSS_TOKEN_NUMBER)) {
 				parserutils_vector_iterate(vector, ctx);
 				consumeWhitespace(vector, ctx);
@@ -469,6 +536,129 @@ css_error css__parse_macsurf_gradient(css_language *c,
 		if (token != NULL && token->type == CSS_TOKEN_CHAR &&
 		    lwc_string_data(token->idata)[0] == ')')
 			parserutils_vector_iterate(vector, ctx);
+
+		/* fixes365b — promote to the extended-linear path when the
+		 * rule expresses something the legacy 2-stop cardinal slot
+		 * can't carry:
+		 *   - 3+ distinct colour stops with positions
+		 *   - non-cardinal angle (diagonals: 45/135/225/315 etc.)
+		 *   - any stop position other than the default 0%/100%
+		 *
+		 * Promotion only applies to linear; radial keeps its own
+		 * 0x0100 tail (size+position) untouched. */
+		{
+			bool promote_linear = false;
+			int extended_pos[3];
+			css_color extended_cols[3];
+			int extended_angle = 0;
+			int extended_count = (color_count >= 3) ? 3 :
+					(color_count >= 2 ? 2 : 1);
+			int p_idx;
+
+			if (!radial) {
+				/* Diagonal angle? */
+				if (captured_angle_seen) {
+					int a = captured_angle;
+					if (a != 0 && a != 90 && a != 180 &&
+					    a != 270) {
+						promote_linear = true;
+					}
+				}
+				/* Third stop with author intent? */
+				if (color_count >= 3) {
+					promote_linear = true;
+				}
+				/* Non-default 2-stop positions? */
+				if (color_count == 2 &&
+				    (stop_position_set[0] ||
+				     stop_position_set[1])) {
+					/* Default = 0%/100%. If positions
+					 * are explicitly set to anything
+					 * other than that, take the path. */
+					int p0 = stop_position_set[0] ?
+						stop_positions[0] : 0;
+					int p1 = stop_position_set[1] ?
+						stop_positions[1] : 10000;
+					if (p0 != 0 || p1 != 10000) {
+						promote_linear = true;
+					}
+				}
+			}
+
+			if (promote_linear) {
+				/* Build the 7-int extended descriptor. */
+				int default_positions[3];
+				if (extended_count == 1) {
+					default_positions[0] = 0;
+					default_positions[1] = 10000;
+					default_positions[2] = 0;
+				} else if (extended_count == 2) {
+					default_positions[0] = 0;
+					default_positions[1] = 10000;
+					default_positions[2] = 0;
+				} else {
+					default_positions[0] = 0;
+					default_positions[1] = 5000;
+					default_positions[2] = 10000;
+				}
+				for (p_idx = 0; p_idx < 3; p_idx++) {
+					if (stop_position_set[p_idx]) {
+						extended_pos[p_idx] =
+							stop_positions[p_idx];
+					} else {
+						extended_pos[p_idx] =
+							default_positions[p_idx];
+					}
+					extended_cols[p_idx] =
+						stop_colors[p_idx];
+				}
+				/* Single-stop already falls through to
+				 * uniform first==last above; the extended
+				 * descriptor still needs valid colours, so
+				 * mirror them. */
+				if (extended_count == 1) {
+					extended_cols[1] = extended_cols[0];
+				}
+				if (extended_count < 3) {
+					extended_cols[2] = 0;
+					extended_pos[2] = 0;
+				}
+				extended_angle = captured_angle_seen ?
+					captured_angle : 0;
+				/* Encode stop count (2 or 3) in the high
+				 * bits of the angle word so the painter
+				 * can distinguish 2-stop from 3-stop
+				 * without ambiguity when col2/pos2 happen
+				 * to be 0. Angle low 16 bits = 0..359,
+				 * high 16 bits = stop_count (2 or 3). */
+				{
+					uint32_t enc = (uint32_t)extended_angle
+						& 0xffffu;
+					enc |= ((uint32_t)extended_count) << 16;
+					extended_angle = (int)enc;
+				}
+
+				error = css__stylesheet_style_appendOPV(result,
+						CSS_PROP_MACSURF_GRADIENT, 0,
+						0x0180);
+				if (error != CSS_OK) return error;
+				/* Tail layout: legacy 2 colours (c1, last)
+				 * for backward read-compat, then the 7-word
+				 * extension. Cascade detects 0x0180 and
+				 * reads 9 words total (2 legacy + 7
+				 * extension). */
+				return css__stylesheet_style_vappend(result, 9,
+					(css_code_t)first_color,
+					(css_code_t)last_color,
+					(css_code_t)(uint32_t)extended_angle,
+					(css_code_t)(uint32_t)extended_pos[0],
+					(css_code_t)(uint32_t)extended_pos[1],
+					(css_code_t)(uint32_t)extended_pos[2],
+					(css_code_t)(uint32_t)extended_cols[0],
+					(css_code_t)(uint32_t)extended_cols[1],
+					(css_code_t)(uint32_t)extended_cols[2]);
+			}
+		}
 
 		error = css__stylesheet_style_appendOPV(result,
 				CSS_PROP_MACSURF_GRADIENT, 0, set_value);
