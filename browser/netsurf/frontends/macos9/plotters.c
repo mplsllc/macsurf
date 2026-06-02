@@ -43,12 +43,19 @@ long macos9_plot_rect_count = 0;
 static int hstripe_paint_seen = 0;
 static int dotgrid_paint_seen = 0;
 static int diag_paint_seen = 0;
+/* fixes366d — log the snapshot values at plot_rectangle entry,
+ * regardless of which branch the plotter ends up taking. Tells us
+ * whether the one-shot values are reaching the plotter at all, or
+ * whether they're being consumed/cleared by an intermediate paint.
+ * Capped to first 8 entries per navigation. */
+static int snapshot_seen = 0;
 
 void macos9_plotter_diag_counters_reset(void)
 {
 	hstripe_paint_seen = 0;
 	dotgrid_paint_seen = 0;
 	diag_paint_seen = 0;
+	snapshot_seen = 0;
 }
 
 /* fixes144b: sub-AA draw-spacing experiment. QuickDraw bitmap text
@@ -698,6 +705,19 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	macos9_dotgrid_oneshot = 0; /* fixes365c */
 	macos9_gradient_stops_oneshot = NULL; /* fixes365b */
 	macos9_gradient_angle_oneshot = 0; /* fixes365b */
+
+	/* fixes366d — log the snapshot values regardless of branch so we
+	 * can tell whether the one-shot pipeline is reaching the plotter
+	 * or being consumed by an intermediate paint. */
+	if (snapshot_seen < 8) {
+		macsurf_debug_log_writef(
+			"plot: snapshot hstripe=%ld dotgrid=%ld grad_stops=%p angle=%d",
+			(long)hstripe_local,
+			(long)dotgrid_local,
+			(void *)grad_stops_local,
+			(int)grad_angle_local);
+		snapshot_seen++;
+	}
 
 	macos9_plot_rect_count++;
 	macos9_rect_from_ns(rectangle, &r);

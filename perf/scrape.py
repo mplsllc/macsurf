@@ -35,7 +35,7 @@ import re
 import subprocess
 import sys
 
-STAMP_RE = re.compile(r'\[\+(\d+)us\]\s+(.+?)\s*(?:$|\n|\Z)')
+STAMP_RE = re.compile(r'\[\+(\d+)us\]\s+([^\r\n]+?)\s*(?=[\r\n\[]|\Z)')
 
 PHASES = [
     'nav-start',
@@ -49,6 +49,21 @@ PHASES = [
     'js-start',
     'js-end',
 ]
+
+
+def _normalize_label(raw):
+    """Map the actual label emitted by macsurf_profile_stamp into a
+    canonical phase name. The agent landed on more verbose strings
+    than the spec called for (e.g. 'nav: launch home' instead of
+    'nav-start'); collapse them here so the scraper still works."""
+    raw = raw.strip()
+    low = raw.lower()
+    if low.startswith('nav:') or low == 'nav-start':
+        return 'nav-start'
+    for p in PHASES:
+        if low == p:
+            return p
+    return None
 
 CSV_COLUMNS = [
     'timestamp',
@@ -75,13 +90,15 @@ def parse_log(path):
     current = None
     for match in STAMP_RE.finditer(text):
         us = int(match.group(1))
-        label = match.group(2).strip()
-        if label == 'nav-start':
+        canon = _normalize_label(match.group(2))
+        if canon is None:
+            continue
+        if canon == 'nav-start':
             if current is not None and len(current) > 1:
                 yield current
             current = {'nav-start': us}
-        elif current is not None and label in PHASES:
-            current[label] = us
+        elif current is not None:
+            current[canon] = us
 
     if current is not None and len(current) > 1:
         yield current
