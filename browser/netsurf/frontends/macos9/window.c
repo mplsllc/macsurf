@@ -406,6 +406,12 @@ void macos9_window_navigate(struct gui_window *g, const char *u) {
 		 * so the next page is assessed fresh. */
 		macsurf_site_navigation_reset();
 	}
+	/* fixes366a — reset the profile clock at the navigation entry
+	 * point, BEFORE the fetch starts. Every macsurf_profile_stamp()
+	 * call downstream (TLS, fetch, parse, cascade, layout, paint, JS)
+	 * is then a delta from the moment the user kicked off this nav. */
+	macsurf_profile_reset();
+	macsurf_profile_stamp("nav: browser_window_navigate entry");
 	nav_e = browser_window_navigate(g->bw, n, NULL, BW_NAVIGATE_HISTORY, NULL, NULL, NULL);
 	macsurf_debug_log_writef("nav: bw_navigate returned %d", (int)nav_e);
 	nsurl_unref(n);

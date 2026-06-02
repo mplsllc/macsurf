@@ -106,6 +106,7 @@ long macsurf__site_decoded_img_skip_budget = 0;
 #include <DateTimeUtils.h>
 #include <OSUtils.h>
 #include <Events.h>   /* fixes233 — TickCount() for log timestamps */
+#include <Timer.h>    /* fixes366a — Microseconds() / UnsignedWide */
 
 /*
  * CW8's Folders.h generally defines these, but be defensive -- the
@@ -555,6 +556,77 @@ macsurf_debug_log_writef(const char *fmt, ...)
 	macsurf_debug_log_write(buf);
 }
 
+/* ------------------------------------------------------------------
+ * fixes366a — Microsecond profile timer
+ *
+ * Captures a Microseconds() timestamp into g_profile_t0 (UnsignedWide:
+ * UInt32 hi + UInt32 lo). Each stamp call writes one log line
+ * "[+NNNNNus] LABEL" with the delta from t0 in integer microseconds.
+ *
+ * Delta is computed in double — CW8 PPC miscompiles long-long
+ * subtraction (project_cw8_longlong_codegen). PPC has a hardware FPU
+ * and IEEE 754's 52-bit mantissa exactly represents every UInt32 we
+ * can multiply by 2^32, so no precision is lost.
+ *
+ * Auto-reset on first stamp keeps a missed reset call from emitting
+ * giant garbage deltas.
+ * ------------------------------------------------------------------ */
+
+#ifdef __MACOS9__
+static UnsignedWide g_profile_t0 = { 0, 0 };
+#endif
+static int g_profile_t0_set = 0;
+
+#ifdef __MACOS9__
+static double
+profile_us_from_wide(const UnsignedWide *w)
+{
+	/* Two 32-bit halves -> double. 4294967296.0 == 2^32. */
+	return (double)w->hi * 4294967296.0 + (double)w->lo;
+}
+#endif
+
+void
+macsurf_profile_reset(void)
+{
+#ifdef __MACOS9__
+	Microseconds(&g_profile_t0);
+	g_profile_t0_set = 1;
+#else
+	g_profile_t0_set = 1;
+#endif
+}
+
+void
+macsurf_profile_stamp(const char *label)
+{
+#ifdef __MACOS9__
+	UnsignedWide now;
+	double us_now;
+	double us_t0;
+	double delta_us;
+	int delta_us_i;
+
+	if (label == NULL) label = "(null)";
+	if (g_profile_t0_set == 0) {
+		macsurf_profile_reset();
+	}
+	Microseconds(&now);
+	us_now = profile_us_from_wide(&now);
+	us_t0 = profile_us_from_wide(&g_profile_t0);
+	delta_us = us_now - us_t0;
+	if (delta_us < 0.0) delta_us = 0.0;
+	delta_us_i = (int)(delta_us + 0.5);
+	macsurf_debug_log_writef("[+%dus] %s", delta_us_i, label);
+#else
+	if (label == NULL) label = "(null)";
+	if (g_profile_t0_set == 0) {
+		macsurf_profile_reset();
+	}
+	macsurf_debug_log_writef("[+0us] %s", label);
+#endif
+}
+
 #else /* !MACSURF_DEBUG */
 
 /*
@@ -568,6 +640,8 @@ void macsurf_debug_log_init(void) {}
 void macsurf_debug_log_close(void) {}
 void macsurf_debug_log_write(const char *msg) { (void)msg; }
 void macsurf_debug_log_writef(const char *fmt, ...) { (void)fmt; }
+void macsurf_profile_reset(void) {}
+void macsurf_profile_stamp(const char *label) { (void)label; }
 
 #endif /* MACSURF_DEBUG */
 

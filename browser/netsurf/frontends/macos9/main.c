@@ -186,6 +186,9 @@ static void macos9_handle_menu(short menu_id, short item) {
 				/* fixes161a — mark next setup as DOCUMENT class. */
 				extern void macos9_http_mark_next_as_document(void);
 				macos9_http_mark_next_as_document();
+				/* fixes366a — fresh phase clock for this navigation. */
+				macsurf_profile_reset();
+				macsurf_profile_stamp("nav: File>New home");
 				browser_window_create(BW_CREATE_HISTORY | BW_CREATE_FOREGROUND,
 					home, NULL, NULL, &bw);
 				nsurl_unref(home);
@@ -808,7 +811,13 @@ void macos9_poll_mouse_hover(void) {
 
 int main(void) {
 	macsurf_debug_log_init();
+	/* fixes366a -- start the profile clock so initial-page-load timing
+	 * has a t0. macsurf_profile_stamp(label) anywhere downstream will
+	 * produce a meaningful delta. The nav-time reset
+	 * (macos9_window_navigate) refreshes t0 on each URL submit. */
+	macsurf_profile_reset();
 	MS_LOG("== MacSurf start ==");
+	macsurf_profile_stamp("main: log init done");
 #ifdef __MACOS9__
 #ifndef kInitOTForApplicationMask
 #define kInitOTForApplicationMask 0x00000002
@@ -972,6 +981,11 @@ int main(void) {
 			extern void macos9_http_mark_next_as_document(void);
 			MS_LOG("launch: browser_window_create with home url");
 			macos9_http_mark_next_as_document();
+			/* fixes366a — reset the profile clock just before the
+			 * initial fetch kicks off, so first-page timings are
+			 * measured from the actual nav start, not app launch. */
+			macsurf_profile_reset();
+			macsurf_profile_stamp("nav: launch home");
 			browser_window_create(BW_CREATE_HISTORY | BW_CREATE_FOREGROUND,
 				home, NULL, NULL, &bw);
 			nsurl_unref(home);

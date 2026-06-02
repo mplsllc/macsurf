@@ -42,4 +42,23 @@ void macsurf_debug_log_flush(void);
  */
 void macsurf_debug_log_writef(const char *fmt, ...);
 
+/*
+ * fixes366a -- profile timer. Captures a Microseconds() timestamp
+ * into a static UnsignedWide t0, and on each stamp call writes one
+ * log line "[+NNNNNus] LABEL" where N is integer microseconds since
+ * t0. Built on top of the existing file-backed log channel so the
+ * timing trail survives crashes.
+ *
+ * Delta is computed in double precision (CW8 PPC miscompiles 64-bit
+ * integer arithmetic -- project_cw8_longlong_codegen). PPC's FPU
+ * handles this in single-digit cycles.
+ *
+ * macsurf_profile_reset() is called at startup and at every
+ * navigation entry so each page load has a fresh phase clock.
+ * macsurf_profile_stamp() auto-resets on first call if reset was
+ * never invoked.
+ */
+void macsurf_profile_reset(void);
+void macsurf_profile_stamp(const char *label);
+
 #endif
