@@ -1290,7 +1290,21 @@ static void html_reformat(struct content *c, int width, int height)
 	htmlc->unit_len_ctx.root_style = htmlc->layout->style;
 
 	MS_LOG("html_reformat: pre-layout_document");
-	layout_document(htmlc, width, height);
+	{
+		/* fixes366i — bracket one layout_document pass to count
+		 * QuickDraw font-measure calls (the suspected O(N^2) inline
+		 * line-break cost). Reset before, emit after. */
+		extern long macos9_font_measure_calls;
+		extern long macos9_font_measure_chars;
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		macos9_font_measure_calls = 0;
+		macos9_font_measure_chars = 0;
+		layout_document(htmlc, width, height);
+		macsurf_debug_log_writef(
+			"FONTPROF layout measure_calls=%ld measure_chars=%ld",
+			macos9_font_measure_calls,
+			macos9_font_measure_chars);
+	}
 	MS_LOG("html_reformat: post-layout_document");
 	macsurf_profile_stamp("layout-done");
 	layout = htmlc->layout;

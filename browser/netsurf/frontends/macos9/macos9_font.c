@@ -140,6 +140,15 @@ macos9_utf8_to_macroman(const char *utf8, size_t len, char *mac_out, size_t max_
         return out_len;
 }
 
+/* fixes366i — per-layout font-measurement profiling counters. Bumped
+ * on every macos9_font_measure call (each does a real QuickDraw
+ * TextWidth). html_reformat resets these before layout_document and
+ * emits a FONTPROF summary after, so one clean number per layout pass
+ * tells us whether text measurement is the per-pass bottleneck. Plain
+ * longs, no timing traps, so the instrumentation itself is ~free. */
+long macos9_font_measure_calls = 0;
+long macos9_font_measure_chars = 0;
+
 #ifdef __MACOS9__
 static int
 macos9_font_measure(const struct plot_font_style *fstyle,
@@ -157,6 +166,9 @@ macos9_font_measure(const struct plot_font_style *fstyle,
 
         if (string == NULL || length == 0)
                 return 0;
+
+        macos9_font_measure_calls++;
+        macos9_font_measure_chars += (long)length;
 
         mac_len = macos9_utf8_to_macroman(string, length, mac_str, sizeof(mac_str));
 
