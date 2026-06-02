@@ -3697,6 +3697,36 @@ bool html_redraw_box(const html_content *html, struct box *box,
 			};
 			struct rect orect;
 			uint8_t ocol_status;
+			/* fixes365a: honour outline-style at paint time.
+			 * libcss parses + cascades the style into ostyle_v
+			 * but the paint path used to hard-code SOLID. Map
+			 * SOLID/DOTTED/DASHED to the matching PLOT_OP_TYPE_*
+			 * enums; complex 3D styles (DOUBLE/GROOVE/RIDGE/
+			 * INSET/OUTSET) fall back to SOLID. NB: the macos9
+			 * plotter currently rasterises DOT/DASH the same as
+			 * SOLID (no QuickDraw pen pattern wired yet), so on
+			 * Mac OS 9 this is a forward-looking emission; other
+			 * frontends honour it today. */
+			switch (ostyle_v) {
+			case CSS_OUTLINE_STYLE_DOTTED:
+				plot_style_outline.stroke_type =
+						PLOT_OP_TYPE_DOT;
+				break;
+			case CSS_OUTLINE_STYLE_DASHED:
+				plot_style_outline.stroke_type =
+						PLOT_OP_TYPE_DASH;
+				break;
+			case CSS_OUTLINE_STYLE_SOLID:
+			case CSS_OUTLINE_STYLE_DOUBLE:
+			case CSS_OUTLINE_STYLE_GROOVE:
+			case CSS_OUTLINE_STYLE_RIDGE:
+			case CSS_OUTLINE_STYLE_INSET:
+			case CSS_OUTLINE_STYLE_OUTSET:
+			default:
+				plot_style_outline.stroke_type =
+						PLOT_OP_TYPE_SOLID;
+				break;
+			}
 			ocol_status = css_computed_outline_color(box->style, &ocol);
 			if (ocol_status == CSS_OUTLINE_COLOR_INVERT ||
 			    ocol_status == CSS_OUTLINE_COLOR_CURRENT_COLOR) {
