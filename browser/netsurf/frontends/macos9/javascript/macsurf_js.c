@@ -939,6 +939,43 @@ static void register_browser_globals(duk_context *ctx)
 		"}"
 		"})(this);");
 
+	/* fixes379 (#167) — FB JS marathon round 2. With fixes377 the
+	 * requireLazy/Set/Array.from errors cleared and FB's feed JS ran
+	 * further, then hit: (a) Promise.all undefined — the existing Promise
+	 * had then/catch but no static combinators; (b) 'clientWidth of null'
+	 * — the document shim left document.documentElement/body as null, so
+	 * FB's viewport sizing threw. Add Promise.all/race/resolve/reject/
+	 * allSettled and give documentElement/body/head inert element-like
+	 * objects with sane viewport metrics. ES5, node-verified (incl.
+	 * minified). Runs after the fixes377 fills + the document/Promise
+	 * shims it patches. */
+	macsurf_js__safe_eval(ctx,
+		"(function(g){"
+		"var P=g.Promise;"
+		"if(typeof P==='function'){"
+		"if(!P.resolve)P.resolve=function(v){return new P(function(res){res(v);});};"
+		"if(!P.reject)P.reject=function(e){return new P(function(a,rej){rej(e);});};"
+		"if(!P.all)P.all=function(arr){var out=[];if(arr&&arr.forEach)arr.forEach(function(p){if(p&&typeof p.then==='function')p.then(function(v){out.push(v);});else out.push(p);});return P.resolve(out);};"
+		"if(!P.race)P.race=function(arr){return new P(function(res,rej){if(arr&&arr.forEach)arr.forEach(function(p){if(p&&typeof p.then==='function')p.then(res,rej);else res(p);});});};"
+		"if(!P.allSettled)P.allSettled=function(arr){var out=[];if(arr&&arr.forEach)arr.forEach(function(p){out.push({status:'fulfilled',value:p});});return P.resolve(out);};"
+		"}"
+		"if(typeof g.document!=='undefined'){"
+		"var vw=(typeof g.innerWidth==='number'&&g.innerWidth)||980;"
+		"var vh=(typeof g.innerHeight==='number'&&g.innerHeight)||600;"
+		"var mkEl=function(){return {clientWidth:vw,clientHeight:vh,offsetWidth:vw,offsetHeight:vh,scrollWidth:vw,scrollHeight:vh,scrollTop:0,scrollLeft:0,offsetTop:0,offsetLeft:0,style:{},className:'',nodeType:1,"
+		"getBoundingClientRect:function(){return {top:0,left:0,right:vw,bottom:vh,width:vw,height:vh,x:0,y:0};},"
+		"appendChild:function(c){return c;},removeChild:function(c){return c;},insertBefore:function(c){return c;},"
+		"setAttribute:function(){},getAttribute:function(){return null;},removeAttribute:function(){},hasAttribute:function(){return false;},"
+		"addEventListener:function(){},removeEventListener:function(){},contains:function(){return false;},"
+		"querySelector:function(){return null;},querySelectorAll:function(){return [];},"
+		"getElementsByClassName:function(){return [];},getElementsByTagName:function(){return [];},"
+		"classList:{add:function(){},remove:function(){},toggle:function(){},contains:function(){return false;}}};};"
+		"if(!g.document.documentElement)g.document.documentElement=mkEl();"
+		"if(!g.document.body)g.document.body=mkEl();"
+		"if(!g.document.head)g.document.head=mkEl();"
+		"}"
+		"})(this);");
+
 	duk_pop(ctx); /* pop global */
 }
 
