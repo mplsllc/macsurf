@@ -1302,23 +1302,28 @@ static void html_reformat(struct content *c, int width, int height)
 		extern long macos9_font_measure_chars;
 		extern long macos9_heap_free_bytes(void);
 		extern long macos9_heap_max_block(void);
+		extern double macos9_micros(void);
 		extern void macsurf_debug_log_writef(const char *fmt, ...);
 		long free_before = macos9_heap_free_bytes();
 		long max_before = macos9_heap_max_block();
+		double t0 = macos9_micros();
 		long free_after;
 		long max_after;
+		long layout_us;
 		macos9_font_measure_calls = 0;
 		macos9_font_measure_chars = 0;
 		layout_document(htmlc, width, height);
+		layout_us = (long)(macos9_micros() - t0);
 		free_after = macos9_heap_free_bytes();
 		max_after = macos9_heap_max_block();
-		/* fixes366k — one combined line so the heap data rides on the
-		 * same writef that already prints (the prior split HEAPPROF
-		 * emit produced no output). measure = QuickDraw TextWidth load;
-		 * free/maxblk = app-heap free total and largest contiguous
-		 * block, before->after this layout pass. */
+		/* fixes366k/l — one combined line. layout_us = the ACTUAL time
+		 * inside layout_document (the layout-done stamp delta is
+		 * misleading; it spans inter-reformat network, dominated by TLS
+		 * handshakes on cross-host image fetches). free/maxblk =
+		 * app-heap free + largest contiguous block before->after. */
 		macsurf_debug_log_writef(
-			"LAYPROF mcalls=%ld mchars=%ld free=%ld->%ld maxblk=%ld->%ld",
+			"LAYPROF layout_us=%ld mcalls=%ld mchars=%ld free=%ld->%ld maxblk=%ld->%ld",
+			layout_us,
 			macos9_font_measure_calls,
 			macos9_font_measure_chars,
 			free_before, free_after, max_before, max_after);

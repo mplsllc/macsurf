@@ -83,6 +83,24 @@ long macos9_heap_max_block(void)
 #endif
 }
 
+/* fixes366l -- absolute Microseconds() as a double, for measuring a
+ * single layout_document pass directly (the layout-done STAMP delta is
+ * misleading: it spans all the inter-reformat network/fetch work, which
+ * on mactrove is dominated by TLS handshakes). Double avoids the CW8
+ * PPC 64-bit-multiply miscompile; IEEE-754's 52-bit mantissa covers the
+ * full 2^32*hi+lo range exactly. Caller subtracts two readings and
+ * casts the small delta to long microseconds. */
+double macos9_micros(void)
+{
+#ifdef __MACOS9__
+	UnsignedWide w;
+	Microseconds(&w);
+	return (double)w.hi * 4294967296.0 + (double)w.lo;
+#else
+	return 0.0;
+#endif
+}
+
 static void draw_url_bar(struct gui_window *gw) {
 #ifdef __MACOS9__
 	/* fixes303 — razor-sharp 1px inset border. Top + left are technical
