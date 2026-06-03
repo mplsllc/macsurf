@@ -1225,6 +1225,35 @@ static int feed_body(struct macos9_https_ctx *c, const char *buf, long n)
 	fetch_msg msg;
 	if (n <= 0) return 0;
 
+	/* fixes368e (#167) — one-shot: on the FIRST body bytes (body_bytes==0)
+	 * scan for the HTML <title> and log it, so the trace says WHICH page
+	 * came back — "Log in to Facebook" vs "Facebook" (logged in) vs
+	 * "Security check" (checkpoint) vs an error — not just its size. The
+	 * <title> lives in <head> so it's in the first chunk. Titles aren't
+	 * secrets. Bounded scan; safe on chunk-framed bytes (substring search). */
+	if (c->body_bytes == 0) {
+		long ti;
+		for (ti = 0; ti + 6 < n; ti++) {
+			if (buf[ti] == '<' &&
+			    strncasecmp(buf + ti, "<title", 6) == 0) {
+				const char *t = buf + ti + 6;
+				const char *end = buf + n;
+				char title[160];
+				int tp = 0;
+				while (t < end && *t != '>') t++;	/* past attrs */
+				if (t < end) t++;			/* past '>' */
+				while (t < end && *t != '<' &&
+				       tp < (int)sizeof(title) - 1) {
+					title[tp++] = *t++;
+				}
+				title[tp] = '\0';
+				macsurf_debug_log_writef(
+					"https: page title: %s", title);
+				break;
+			}
+		}
+	}
+
 	/* fixes320 — robust chunked detection by body framing. Some responses
 	 * (observed: 68kmla.org's soft-404 served for /favicon.ico, which
 	 * carries a large cookie/header block) send Transfer-Encoding: chunked
