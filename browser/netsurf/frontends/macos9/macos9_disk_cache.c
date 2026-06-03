@@ -468,3 +468,47 @@ void macos9_deadhost_clear(void)
 	}
 #endif
 }
+
+/* ------------------------------------------------------------------ */
+/* fixes368 (#167) — cookie-jar persistence across launches.          */
+/*                                                                    */
+/* A Facebook (or any) login lives entirely in the urldb cookie jar,  */
+/* which is in-memory only — so it evaporates on quit. These two      */
+/* helpers persist it so the session survives a relaunch.             */
+/*                                                                    */
+/* We reuse NetSurf's mature cookie serializer (urldb_save_cookies /  */
+/* urldb_load_cookies, content/urldb.c), which reads/writes a tab-    */
+/* separated text file through stdio. It only exposes a path-based    */
+/* API, so unlike the rest of this file (FSSpec binary I/O) we hand   */
+/* it a leaf filename and let MSL resolve it against the app's        */
+/* default directory — the same place every launch, so the file       */
+/* round-trips. Return type is nserror (an int enum); we only log it, */
+/* so an `int` extern decl avoids dragging urldb.h + nsurl into this  */
+/* Toolbox-heavy TU.                                                  */
+/*                                                                    */
+/* Every failure is a SILENT no-op: a missing file (first run) or a   */
+/* refused fopen just leaves the jar in-memory-only — exactly the     */
+/* pre-fixes368 behaviour, never a crash. If the hardware bring-up    */
+/* shows MSL fopen won't honour this path, the fallback is the FSSpec */
+/* route (serialize urldb to a buffer + FSWrite like                  */
+/* macos9_deadhost_save) — see facebook-mbasic-scope.md Step 2.       */
+extern int urldb_load_cookies(const char *filename);
+extern int urldb_save_cookies(const char *filename);
+
+#define MACSURF_COOKIE_FILE "MacSurf Cookies"
+
+void macos9_cookies_load(void)
+{
+	int r;
+	r = urldb_load_cookies(MACSURF_COOKIE_FILE);
+	macsurf_debug_log_writef("cookies: load rc=%d (%s)", r,
+		MACSURF_COOKIE_FILE);
+}
+
+void macos9_cookies_save(void)
+{
+	int r;
+	r = urldb_save_cookies(MACSURF_COOKIE_FILE);
+	macsurf_debug_log_writef("cookies: save rc=%d (%s)", r,
+		MACSURF_COOKIE_FILE);
+}

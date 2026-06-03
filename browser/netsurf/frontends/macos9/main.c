@@ -25,6 +25,12 @@ OTClientContextPtr g_ostls_ot_context = NULL;
 extern void OSTLS_LoadSeed(void);
 extern void OSTLS_SaveSeed(void);
 extern void OSTLS_StirEntropy(const void *data, unsigned long len);
+/* fixes368 (#167) — cookie-jar persistence (impl in macos9_disk_cache.c).
+ * Load after netsurf_init so a prior Facebook login is restored; save at
+ * quit so this session's login survives the relaunch. Declared extern here
+ * to avoid pulling macos9_disk_cache.h's includes into main.c. */
+extern void macos9_cookies_load(void);
+extern void macos9_cookies_save(void);
 #ifdef WITH_DUKTAPE
 #include "javascript/macsurf_js.h"
 #include "content/handlers/javascript/js.h"
@@ -1008,6 +1014,11 @@ int main(void) {
 	MS_LOG("images enabled, author_css on, fetcher 128/16, mem cache 32MB");
 	netsurf_init(NULL);
 	MS_LOG("netsurf_init done");
+	/* fixes368 (#167) — restore a prior session's cookie jar (Facebook
+	 * login etc.) from disk now that urldb is up. Best-effort no-op on
+	 * first run. */
+	macos9_cookies_load();
+	MS_LOG("cookies loaded");
 #ifdef WITH_DUKTAPE
 	js_initialise();
 	MS_LOG("js_initialise done");
@@ -1057,6 +1068,10 @@ int main(void) {
 #endif
 	while (!macos9_done) macos9_poll();
 	MS_LOG("event loop exited");
+	/* fixes368 (#167) — persist the cookie jar BEFORE netsurf_exit tears
+	 * urldb down, so this session's Facebook login survives the relaunch. */
+	macos9_cookies_save();
+	MS_LOG("cookies saved");
 	macos9_quitting = (bool)1; netsurf_exit();
 #ifdef WITH_DUKTAPE
 	js_finalise();
