@@ -7,6 +7,7 @@
 #include "utils/nsurl.h"
 #include "content/fetch.h"
 #include "content/fetchers.h"
+#include "content/urldb.h"	/* fixes367 (#167) — cookie jar: urldb_get_cookie */
 #include "macsurf_debug.h"
 #ifdef __MACOS9__
 #include <Files.h>
@@ -366,12 +367,38 @@ static void mfs_close(struct macos9_fetch_ctx *c) {
 #endif
 }
 
+/* fixes367 (#167) — per-host User-Agent selection. Duplicated from
+ * macos9_https_fetcher.c on purpose (see the TODO there): keeping it a
+ * static in each fetcher avoids a MacSurf.mcp edit. Facebook serves its
+ * lightweight no-JS mbasic page only to a vintage UA; spoof for
+ * facebook.com hosts only, leave every other site on MacSurf's honest UA
+ * so nothing regresses (DIRECTIVE #5). */
+static const char *macos9_ua_for_host(const char *host)
+{
+	static const char ua_fb[] =
+		"Mozilla/4.0 (compatible; MSIE 5.0; Mac_PowerPC) MacSurf/1.4";
+	static const char ua_default[] =
+		"MacSurf/1.4 (Macintosh; PPC Mac OS 9)";
+	size_t hl;
+	if (host == NULL) return ua_default;
+	hl = strlen(host);
+	if (hl >= 12 &&
+	    strncasecmp(host + hl - 12, "facebook.com", 12) == 0 &&
+	    (hl == 12 || host[hl - 13] == '.')) {
+		return ua_fb;
+	}
+	return ua_default;
+}
+
 static int mfs_open(struct macos9_fetch_ctx *c) {
 #ifdef __MACOS9__
 	OSStatus e; OTConfigurationRef cfg; DNSAddress dns; TCall call;
 	char target[96];        /* host:port for OTInitDNSAddress + pool key */
 	char path_buf[1024];    /* path?query for direct-mode request line */
-	char req[2048];
+	/* fixes367 (#167) — req enlarged 2048→8192 to hold a Cookie: header.
+	 * cookie_hdr is capped at 6144; 6144 + path(1024) + host(255) +
+	 * template + UA still fits 8192 with headroom. */
+	char req[8192];
 	OTResult r;
 	lwc_string *scheme_lwc;
 	lwc_string *host_lwc;
@@ -535,6 +562,38 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		const char *post_extra_hdrs = (c->post_body != NULL) ?
 			"Content-Type: application/x-www-form-urlencoded\r\n" :
 			"";
+		/* fixes367 (#167) — per-host UA + cookie jar (mirrors the HTTPS
+		 * fetcher). host_z is a NUL-terminated copy of the host slice so
+		 * the suffix match in macos9_ua_for_host works; cookie_hdr holds
+		 * the stored cookies for this URL as a ready-to-splice header.
+		 * ua_var/ck_var lengths feed the oversize-request guards below. */
+		char cookie_hdr[6144];
+		char host_z[256];
+		const char *ua;
+		char *cookie_str;
+		size_t hz;
+		size_t ua_var;
+		size_t ck_var;
+		hz = host_len; if (hz > sizeof(host_z) - 1) hz = sizeof(host_z) - 1;
+		memcpy(host_z, host_str, hz); host_z[hz] = '\0';
+		ua = macos9_ua_for_host(host_z);
+		ua_var = strlen(ua);
+		cookie_hdr[0] = '\0';
+		cookie_str = (c->url != NULL) ? urldb_get_cookie(c->url, true) : NULL;
+		if (cookie_str != NULL) {
+			size_t cl = strlen(cookie_str);
+			if (cl + 11 <= sizeof(cookie_hdr)) {
+				strcpy(cookie_hdr, "Cookie: ");
+				strcat(cookie_hdr, cookie_str);
+				strcat(cookie_hdr, "\r\n");
+			} else {
+				macsurf_debug_log_writef(
+					"mfs_open: cookie hdr too big cl=%lu",
+					(unsigned long)cl);
+			}
+			free(cookie_str);
+		}
+		ck_var = strlen(cookie_hdr);
 		if (use_proxy) {
 			size_t u_len;
 			u_full = nsurl_access(c->url);
@@ -543,7 +602,7 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 				goto fail_unref;
 			}
 			u_len = strlen(u_full);
-			if (TEMPLATE_LEN + u_len + host_len + 1 > sizeof(req)) {
+			if (TEMPLATE_LEN + u_len + host_len + ua_var + ck_var + 1 > sizeof(req)) {
 				macsurf_debug_log_writef(
 					"mfs_open: REJECT oversize URL "
 					"u_len=%lu host_len=%lu cap=%lu",
@@ -559,21 +618,25 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 				sprintf(req,
 					"POST %s HTTP/1.1\r\n"
 					"Host: %.*s\r\n"
-					"User-Agent: MacSurf/0.2\r\n"
+					"User-Agent: %s\r\n"
 					"Accept: */*\r\n"
+					"%s"
 					"%s"
 					"Content-Length: %ld\r\n"
 					"Connection: close\r\n\r\n",
 					u_full, (int)host_len, host_str,
+					ua, cookie_hdr,
 					post_extra_hdrs, c->post_body_len);
 			} else {
 				sprintf(req,
 					"GET %s HTTP/1.1\r\n"
 					"Host: %.*s\r\n"
-					"User-Agent: MacSurf/0.2\r\n"
+					"User-Agent: %s\r\n"
 					"Accept: */*\r\n"
+					"%s"
 					"Connection: keep-alive\r\n\r\n",
-					u_full, (int)host_len, host_str);
+					u_full, (int)host_len, host_str,
+					ua, cookie_hdr);
 			}
 		} else {
 			size_t pb_used;
@@ -617,7 +680,7 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 					pb_used = p_len + 1 + q_len;
 				}
 			}
-			if (TEMPLATE_LEN + pb_used + host_len + 1 > sizeof(req)) {
+			if (TEMPLATE_LEN + pb_used + host_len + ua_var + ck_var + 1 > sizeof(req)) {
 				macsurf_debug_log_writef(
 					"mfs_open: REJECT oversize req "
 					"pb=%lu host_len=%lu cap=%lu",
@@ -639,21 +702,25 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 				sprintf(req,
 					"POST %s HTTP/1.1\r\n"
 					"Host: %.*s\r\n"
-					"User-Agent: MacSurf/0.2\r\n"
+					"User-Agent: %s\r\n"
 					"Accept: */*\r\n"
+					"%s"
 					"%s"
 					"Content-Length: %ld\r\n"
 					"Connection: close\r\n\r\n",
 					path_buf, (int)host_len, host_str,
+					ua, cookie_hdr,
 					post_extra_hdrs, c->post_body_len);
 			} else {
 				sprintf(req,
 					"GET %s HTTP/1.1\r\n"
 					"Host: %.*s\r\n"
-					"User-Agent: MacSurf/0.2\r\n"
+					"User-Agent: %s\r\n"
 					"Accept: */*\r\n"
+					"%s"
 					"Connection: keep-alive\r\n\r\n",
-					path_buf, (int)host_len, host_str);
+					path_buf, (int)host_len, host_str,
+					ua, cookie_hdr);
 			}
 		}
 	}
@@ -849,6 +916,13 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 			if (lv >= sizeof(c->redirect_url)) lv = sizeof(c->redirect_url) - 1;
 			memcpy(c->redirect_url, v, lv);
 			c->redirect_url[lv] = '\0';
+		}
+		/* fixes367 (#167) — cookie jar: store Set-Cookie before the 3xx
+		 * handling below tears the fetch down, so a login POST's 302
+		 * carries its session cookies into urldb. Mirrors curl.c. */
+		if(strncasecmp(p,"Set-Cookie:",11)==0) {
+			char *v=p+11; while(*v==' '||*v=='\t')v++;
+			fetch_set_cookie(c->parent, v);
 		}
 		msg.type=FETCH_HEADER; msg.data.header_or_data.buf=(const uint8_t*)p;
 		msg.data.header_or_data.len=strlen(p); fetch_send_callback(&msg,c->parent);

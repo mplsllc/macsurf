@@ -26,6 +26,7 @@
 #include "utils/log.h"
 #include "content/fetch.h"
 #include "content/fetchers.h"
+#include "content/urldb.h"	/* fixes367 (#167) — cookie jar: urldb_get_cookie */
 #include "macsurf_debug.h"
 
 #include <string.h>
@@ -116,7 +117,11 @@ struct macos9_https_ctx {
 	int              status;
 
 	OSTLSConnection *conn;
-	char             req_buf[1024];
+	/* fixes367 (#167) — enlarged 1024→8192 to hold a full Cookie:
+	 * request header. Logged-in Facebook sends ~1KB of session cookies
+	 * (c_user, xs, datr, sb, fr, presence, wd, …); the old 1024 buffer
+	 * would fail build_request once the jar filled. */
+	char             req_buf[8192];
 	unsigned long    req_len;
 	unsigned long    req_sent;
 
@@ -1111,6 +1116,18 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 					force_download = 1;
 				}
 			}
+			/* fixes367 (#167) — cookie jar: store Set-Cookie. Handled
+			 * here in the header loop (not after) so a login POST's
+			 * 302 carries its c_user/xs cookies into urldb BEFORE the
+			 * FETCH_REDIRECT below tears the fetch down — the very next
+			 * GET (the redirect target) then sends them back. One call
+			 * per Set-Cookie line; Facebook emits several. Mirrors
+			 * curl.c: fetch_set_cookie → urldb_set_cookie(value, url). */
+			if (strncasecmp(p, "Set-Cookie:", 11) == 0) {
+				char *v = p + 11;
+				while (*v == ' ' || *v == '\t') v++;
+				fetch_set_cookie(c->parent, v);
+			}
 		}
 
 		if (force_download) {
@@ -1261,6 +1278,39 @@ static int feed_body(struct macos9_https_ctx *c, const char *buf, long n)
 	}
 }
 
+/* fixes367 (#167) — per-host User-Agent selection. This is the Classilla
+ * "sitecontrol" / TenFourFox per-site UA-override pattern, the proven
+ * approach on this exact platform: Classilla (also OS 9) mobile-spoofs by
+ * default with a per-host exception table. Facebook gates its lightweight
+ * no-JavaScript mbasic surface on the User-Agent — a modern UA receives the
+ * 400 KB+ www SPA (unrenderable here), a vintage "Mozilla/4.0 ... Mac_PowerPC"
+ * string receives the ~6 KB pure-HTML page MacSurf renders natively. We spoof
+ * ONLY for facebook.com hosts so every other site (mactrove, etc.) keeps
+ * MacSurf's honest default UA and cannot regress (DIRECTIVE #5). The "MacSurf"
+ * token stays appended so we remain identifiable. Suffix-matches facebook.com
+ * so mbasic./m./www./touch. subdomains are all covered. Returns a static
+ * string; never NULL.
+ *
+ * TODO: lift this into a shared macos9_useragent.c with a real host→UA table
+ * once the project file can be updated Mac-side (so both fetchers share one
+ * source of truth instead of this duplicated helper). */
+static const char *macos9_ua_for_host(const char *host)
+{
+	static const char ua_fb[] =
+		"Mozilla/4.0 (compatible; MSIE 5.0; Mac_PowerPC) MacSurf/1.4";
+	static const char ua_default[] =
+		"MacSurf/1.4 (Macintosh; PPC Mac OS 9)";
+	size_t hl;
+	if (host == NULL) return ua_default;
+	hl = strlen(host);
+	if (hl >= 12 &&
+	    strncasecmp(host + hl - 12, "facebook.com", 12) == 0 &&
+	    (hl == 12 || host[hl - 13] == '.')) {
+		return ua_fb;
+	}
+	return ua_default;
+}
+
 /* Append bytes into hdr_buf growing as needed. */
 /* fixes231 — build the request line + headers into c->req_buf. Returns
  * 0 on success, -1 if the formatted request didn't fit. Called from both
@@ -1269,34 +1319,68 @@ static int feed_body(struct macos9_https_ctx *c, const char *buf, long n)
 static int build_request(struct macos9_https_ctx *c)
 {
 	int rn;
+	const char *ua = macos9_ua_for_host(c->host);
+	/* fixes367 (#167) — cookie jar: pull the stored cookies for this URL
+	 * and emit them as a Cookie: header. urldb_get_cookie returns a
+	 * malloc'd "name=val; name2=val2" string (include_http_only=true so
+	 * Facebook's HttpOnly session cookies — c_user/xs — are sent; this
+	 * matches curl.c's fetcher). NULL when the jar has nothing for this
+	 * origin. Secure cookies are returned here because c->url is https. */
+	char  cookie_hdr[6144];
+	char *cookie_str;
+	cookie_hdr[0] = '\0';
+	cookie_str = (c->url != NULL) ? urldb_get_cookie(c->url, true) : NULL;
+	if (cookie_str != NULL) {
+		size_t cl = strlen(cookie_str);
+		/* "Cookie: " (8) + value + "\r\n" (2) + NUL (1) = cl + 11 */
+		if (cl + 11 <= sizeof cookie_hdr) {
+			strcpy(cookie_hdr, "Cookie: ");
+			strcat(cookie_hdr, cookie_str);
+			strcat(cookie_hdr, "\r\n");
+		} else {
+			/* Refuse to truncate — a half cookie header is worse
+			 * than none (FB would reject the session). Logged so
+			 * the cap can be raised if a real jar ever exceeds it. */
+			macsurf_debug_log_writef(
+				"https: cookie hdr too big cl=%lu cap=%lu",
+				(unsigned long)cl,
+				(unsigned long)sizeof cookie_hdr);
+		}
+		free(cookie_str);
+	}
 	if (c->post_body != NULL) {
 		/* fixes312 (#144) — POST. Body goes out in a second
 		 * OSTLS_Write after these headers; req_buf carries
-		 * headers only. */
+		 * headers only.
+		 * fixes367 (#167) — UA chosen per-host (see macos9_ua_for_host):
+		 * facebook.com gets a vintage Mozilla/4.0 Mac string to unlock
+		 * the no-JS mbasic page; everything else keeps MacSurf's UA. */
 		rn = sprintf(c->req_buf,
 			"POST %s HTTP/1.1\r\n"
 			"Host: %s\r\n"
-			"User-Agent: MacSurf/0.2 (Macintosh; PPC Mac OS 9)\r\n"
+			"User-Agent: %s\r\n"
 			"Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
 			"Accept-Language: en-US,en;q=0.5\r\n"
 			"Accept-Encoding: identity\r\n"
+			"%s"
 			"Content-Type: application/x-www-form-urlencoded\r\n"
 			"Content-Length: %lu\r\n"
 			"Connection: keep-alive\r\n"
 			"\r\n",
-			c->path, c->host,
+			c->path, c->host, ua, cookie_hdr,
 			(unsigned long)c->post_body_len);
 	} else {
 		rn = sprintf(c->req_buf,
 			"GET %s HTTP/1.1\r\n"
 			"Host: %s\r\n"
-			"User-Agent: MacSurf/0.2 (Macintosh; PPC Mac OS 9)\r\n"
+			"User-Agent: %s\r\n"
 			"Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
 			"Accept-Language: en-US,en;q=0.5\r\n"
 			"Accept-Encoding: identity\r\n"
+			"%s"
 			"Connection: keep-alive\r\n"
 			"\r\n",
-			c->path, c->host);
+			c->path, c->host, ua, cookie_hdr);
 	}
 	if (rn <= 0 || (unsigned long)rn >= sizeof c->req_buf) return -1;
 	c->req_len = (unsigned long)rn;
