@@ -1127,6 +1127,21 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 				char *v = p + 11;
 				while (*v == ' ' || *v == '\t') v++;
 				fetch_set_cookie(c->parent, v);
+				/* fixes367 (#167) — log the cookie NAME only (up to
+				 * '='), never the value, so the hardware bring-up can
+				 * confirm c_user/xs land without leaking the secret. */
+				{
+					char nm[40];
+					int k = 0;
+					while (v[k] != '\0' && v[k] != '=' && k < 39) {
+						nm[k] = v[k];
+						k++;
+					}
+					nm[k] = '\0';
+					macsurf_debug_log_writef(
+						"https: stored cookie '%s' for %s",
+						nm, c->host);
+				}
 			}
 		}
 
@@ -1347,6 +1362,14 @@ static int build_request(struct macos9_https_ctx *c)
 				(unsigned long)sizeof cookie_hdr);
 		}
 		free(cookie_str);
+	}
+	/* fixes367 (#167) — diagnostic for the hardware login bring-up: log
+	 * that cookies are going out and how many bytes, but NEVER the values
+	 * (c_user/xs are session secrets). Only fires when the jar has
+	 * something for this URL, so non-cookie sites stay quiet. */
+	if (cookie_hdr[0] != '\0') {
+		macsurf_debug_log_writef("https: %s -> Cookie hdr %lu bytes",
+			c->host, (unsigned long)strlen(cookie_hdr));
 	}
 	if (c->post_body != NULL) {
 		/* fixes312 (#144) — POST. Body goes out in a second

@@ -594,6 +594,12 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 			free(cookie_str);
 		}
 		ck_var = strlen(cookie_hdr);
+		/* fixes367 (#167) — diagnostic: cookies going out, bytes only,
+		 * never values. Quiet on non-cookie sites. */
+		if (cookie_hdr[0] != '\0') {
+			macsurf_debug_log_writef("http: %s -> Cookie hdr %lu bytes",
+				host_z, (unsigned long)ck_var);
+		}
 		if (use_proxy) {
 			size_t u_len;
 			u_full = nsurl_access(c->url);
@@ -923,6 +929,13 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 		if(strncasecmp(p,"Set-Cookie:",11)==0) {
 			char *v=p+11; while(*v==' '||*v=='\t')v++;
 			fetch_set_cookie(c->parent, v);
+			/* fixes367 (#167) — log cookie NAME only, never value. */
+			{
+				char nm[40]; int k=0;
+				while(v[k]!='\0' && v[k]!='=' && k<39){ nm[k]=v[k]; k++; }
+				nm[k]='\0';
+				macsurf_debug_log_writef("http: stored cookie '%s'", nm);
+			}
 		}
 		msg.type=FETCH_HEADER; msg.data.header_or_data.buf=(const uint8_t*)p;
 		msg.data.header_or_data.len=strlen(p); fetch_send_callback(&msg,c->parent);
