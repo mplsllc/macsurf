@@ -841,6 +841,104 @@ static void register_browser_globals(duk_context *ctx)
 	 * setter that actually ran wasn't doing the chrome update. Drop the
 	 * override and let setup_globals' setter run as-is. */
 
+	/* fixes377 (#167) — FB-runtime polyfills + module loader. The JS-on
+	 * runs showed Facebook's scripts dying on: requireLazy/__d/require
+	 * (FB's module system, the keystone), Set, Map, Array.from, Image.
+	 * These are standard ES6 builtins plus FB's loader, all fillable
+	 * in-house (DIRECTIVE #2 — don't route around the engine, fill it).
+	 * ES5-only, no-throw, behaviour-verified against node. Installed onto
+	 * the global (g=this) here, AFTER navigator exists, so the sendBeacon
+	 * ensure can attach. Runs before any page <script>. */
+	macsurf_js__safe_eval(ctx,
+		"(function(g){"
+		"if(!Array.from){"
+		"Array.from=function(src,mapFn,thisArg){"
+		"var out=[],i,n,v,idx;"
+		"if(src==null)return out;"
+		"if(typeof src.length==='number'){"
+		"n=src.length>>>0;"
+		"for(i=0;i<n;i++){v=src[i];out.push(mapFn?mapFn.call(thisArg,v,i):v);}"
+		"}else if(typeof src.forEach==='function'){"
+		"idx=0;src.forEach(function(v){out.push(mapFn?mapFn.call(thisArg,v,idx):v);idx++;});"
+		"}"
+		"return out;"
+		"};"
+		"}"
+		"if(!Array.of){Array.of=function(){return Array.prototype.slice.call(arguments);};}"
+		"if(!Array.prototype.includes){Array.prototype.includes=function(x){return this.indexOf(x)>=0;};}"
+		"if(!Array.prototype.find){Array.prototype.find=function(f,t){var i;for(i=0;i<this.length;i++){if(f.call(t,this[i],i,this))return this[i];}return undefined;};}"
+		"if(!Array.prototype.findIndex){Array.prototype.findIndex=function(f,t){var i;for(i=0;i<this.length;i++){if(f.call(t,this[i],i,this))return i;}return -1;};}"
+		"if(!Object.assign){"
+		"Object.assign=function(target){"
+		"var i,k,s;"
+		"for(i=1;i<arguments.length;i++){s=arguments[i];if(s==null)continue;for(k in s){if(Object.prototype.hasOwnProperty.call(s,k))target[k]=s[k];}}"
+		"return target;"
+		"};"
+		"}"
+		"if(typeof g.Set==='undefined'){"
+		"var MSet=function(it){this._k=[];this.size=0;var self=this;if(it){if(typeof it.forEach==='function')it.forEach(function(v){self.add(v);});else if(typeof it.length==='number'){var i;for(i=0;i<it.length;i++)self.add(it[i]);}}};"
+		"MSet.prototype.add=function(v){if(this._k.indexOf(v)<0){this._k.push(v);this.size=this._k.length;}return this;};"
+		"MSet.prototype.has=function(v){return this._k.indexOf(v)>=0;};"
+		"MSet.prototype['delete']=function(v){var i=this._k.indexOf(v);if(i<0)return false;this._k.splice(i,1);this.size=this._k.length;return true;};"
+		"MSet.prototype.clear=function(){this._k=[];this.size=0;};"
+		"MSet.prototype.forEach=function(cb,t){var i;for(i=0;i<this._k.length;i++)cb.call(t,this._k[i],this._k[i],this);};"
+		"MSet.prototype.values=function(){return this._k.slice();};"
+		"MSet.prototype.keys=MSet.prototype.values;"
+		"g.Set=MSet;"
+		"if(typeof g.WeakSet==='undefined')g.WeakSet=MSet;"
+		"}"
+		"if(typeof g.Map==='undefined'){"
+		"var MMap=function(it){this._k=[];this._v=[];this.size=0;var self=this;if(it){if(typeof it.forEach==='function')it.forEach(function(p){self.set(p[0],p[1]);});else if(typeof it.length==='number'){var i;for(i=0;i<it.length;i++)self.set(it[i][0],it[i][1]);}}};"
+		"MMap.prototype.set=function(k,v){var i=this._k.indexOf(k);if(i<0){this._k.push(k);this._v.push(v);this.size=this._k.length;}else{this._v[i]=v;}return this;};"
+		"MMap.prototype.get=function(k){var i=this._k.indexOf(k);return i<0?undefined:this._v[i];};"
+		"MMap.prototype.has=function(k){return this._k.indexOf(k)>=0;};"
+		"MMap.prototype['delete']=function(k){var i=this._k.indexOf(k);if(i<0)return false;this._k.splice(i,1);this._v.splice(i,1);this.size=this._k.length;return true;};"
+		"MMap.prototype.clear=function(){this._k=[];this._v=[];this.size=0;};"
+		"MMap.prototype.forEach=function(cb,t){var i;for(i=0;i<this._k.length;i++)cb.call(t,this._v[i],this._k[i],this);};"
+		"MMap.prototype.keys=function(){return this._k.slice();};"
+		"MMap.prototype.values=function(){return this._v.slice();};"
+		"g.Map=MMap;"
+		"if(typeof g.WeakMap==='undefined')g.WeakMap=MMap;"
+		"}"
+		"if(typeof g.Image==='undefined'){"
+		"var MImage=function(w,h){this.width=w||0;this.height=h||0;this.naturalWidth=0;this.naturalHeight=0;this.complete=false;this.src='';this.onload=null;this.onerror=null;this.style={};};"
+		"MImage.prototype.setAttribute=function(){};"
+		"MImage.prototype.addEventListener=function(){};"
+		"g.Image=MImage;"
+		"}"
+		"if(typeof g.navigator!=='undefined'&&typeof g.navigator.sendBeacon!=='function'){g.navigator.sendBeacon=function(){return false;};}"
+		"if(typeof g.__d==='undefined'){"
+		"var registry={},cache={};"
+		"g.__d=function(name,deps,factory){"
+		"if(typeof name==='function'){var f=name;name=deps;deps=factory;factory=f;}"
+		"registry[name]={deps:(deps&&deps.length)?deps:[],factory:factory};"
+		"};"
+		"var _require=function(name){"
+		"if(cache.hasOwnProperty(name))return cache[name].exports;"
+		"var mod=registry[name];"
+		"if(!mod){var stub={exports:{}};cache[name]=stub;return stub.exports;}"
+		"var module={exports:{}};cache[name]=module;"
+		"try{"
+		"if(typeof mod.factory==='function'){"
+		"var args=[g,_require,_require,g.requireLazy,module,module.exports],i;"
+		"for(i=0;i<mod.deps.length;i++){try{args.push(_require(mod.deps[i]));}catch(e){args.push(undefined);}}"
+		"mod.factory.apply(g,args);"
+		"}"
+		"}catch(e){}"
+		"return module.exports;"
+		"};"
+		"g.require=g.require||_require;"
+		"g.requireDynamic=_require;"
+		"g.__r=_require;"
+		"g.requireLazy=function(names,cb){"
+		"var r=[],i;"
+		"if(names&&names.length){for(i=0;i<names.length;i++){try{r.push(_require(names[i]));}catch(e){r.push(undefined);}}}"
+		"if(typeof cb==='function'){try{cb.apply(null,r);}catch(e){}}"
+		"return r;"
+		"};"
+		"}"
+		"})(this);");
+
 	duk_pop(ctx); /* pop global */
 }
 
@@ -1193,7 +1291,6 @@ unsigned char js_exec(struct jsthread *thread,
 		const char *name)
 {
 	int rc;
-	(void)name;
 	if (thread == NULL || thread->ctx == NULL || txt == NULL) return 0;
 	if (txtlen == 0) return 1;
 	macsurf_profile_stamp("js-start");
@@ -1201,7 +1298,13 @@ unsigned char js_exec(struct jsthread *thread,
 			(duk_size_t)txtlen);
 	rc = duk_peval(thread->ctx);
 	if (rc != 0) {
-		MS_LOG(duk_safe_to_string(thread->ctx, -1));
+		/* fixes377 — name the failing script + its size so a parse/run
+		 * error can be tied to a specific <script> (the FB JS punch-list
+		 * work). MS_LOG dual-channels to title bar + log file. */
+		macsurf_debug_log_writef("js err [%s len=%ld]: %s",
+			(name != NULL) ? name : "(anon)",
+			(long)txtlen,
+			duk_safe_to_string(thread->ctx, -1));
 		duk_pop(thread->ctx);
 		macsurf_profile_stamp("js-end");
 		return 0;
