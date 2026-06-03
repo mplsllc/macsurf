@@ -220,7 +220,9 @@ static void macos9_init_menus(void) {
 static void macos9_handle_menu(short menu_id, short item) {
 #ifdef __MACOS9__
 	WindowRef front;
-	struct gui_window *gw;
+	struct gui_window *gw = NULL;	/* fixes369a — init to silence CW8
+					 * "used before initialized" (assigned
+					 * per-case below before use). */
 	macsurf_debug_log_writef(
 		"fixes352c handle_menu: menu_id=%d item=%d",
 		(int)menu_id, (int)item);
