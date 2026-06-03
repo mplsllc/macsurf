@@ -89,6 +89,19 @@
  * the foreign-fingerprint-reject case before NetSurf renders. */
 #define NO_PROGRESS_TICKS  240   /* 4s at 60Hz */
 
+/* fixes375 (#167) — a POST gets a far longer no-progress budget. A login
+ * POST is NOT a dead sub-resource: Facebook's no-JS login-approval ("2FA")
+ * holds the HTTP response open (long-poll) after sending its TLS session
+ * tickets, waiting for the user to tap "Yes, it's me" on their phone — on
+ * a script-less surface that hold is the only way it CAN do login-approval.
+ * Observed on the G3: the POST sends fully (1390B), FB returns ~380B of
+ * NewSessionTickets, then goes silent for the entire 4s window and we
+ * abort before the user can approve, so c_user/xs never arrive and it
+ * "pushes 2FA every time." GETs keep the tight 4s (a hung CSS file really
+ * is dead); only a POST, which is a deliberate user action worth waiting
+ * on, gets the long budget. */
+#define POST_NO_PROGRESS_TICKS  3600   /* 60s at 60Hz — login-approval hold */
+
 /* fixes231 — keep-alive pool. Each OSTLSConnection is ~32 KB heap
  * (BearSSL bidi buffer + plaintext rings + state). A 16-entry pool
  * holds ~512 KB max, well within the 16 MB partition. fixes232
@@ -1963,7 +1976,11 @@ static void hctx_poll(struct macos9_https_ctx *c)
 	/* No-progress timeout. */
 	if (c->state != HS_IDLE && c->state != HS_DONE && c->state != HS_FAIL) {
 		unsigned long now = now_ticks();
-		if (now - c->progress_ticks > NO_PROGRESS_TICKS) {
+		/* fixes375 — POST waits ~60s (login-approval long-poll); GET 4s. */
+		unsigned long limit = (c->post_body != NULL)
+			? (unsigned long)POST_NO_PROGRESS_TICKS
+			: (unsigned long)NO_PROGRESS_TICKS;
+		if (now - c->progress_ticks > limit) {
 			/* fixes243 — salvage partial body on timeout too.
 			 * Servers that send some response then stall (e.g.
 			 * Google's JA3-blocked reset path) leave us with a
