@@ -536,6 +536,42 @@ html_document_user_data_handler(dom_node_operation operation,
 }
 
 
+/* fixes376 (#167) -- Facebook serves its no-JS fallback forms (login,
+ * checkpoint, two-factor code entry) inside <noscript>. libhubbub parses
+ * <noscript> content as inert text whenever script parsing is enabled, and
+ * box_noscript() then drops it. MacSurf advertises JavaScript (Duktape is
+ * linked) but cannot run Facebook's heavy application bundle, so with
+ * scripting enabled we hit the worst case: the no-JS fallback form is hidden
+ * AND the real form never builds -- a 67 KB checkpoint/2FA page renders to
+ * zero text. Detect Facebook hosts and parse them as no-JS so the <noscript>
+ * fallback becomes real DOM and renders. Gated to facebook.com / *.facebook.com
+ * only, so every other site keeps full scripting (no mactrove regression). */
+static bool html_host_is_facebook(nsurl *url)
+{
+	lwc_string *host;
+	const char *h;
+	size_t hl, sl;
+	bool match;
+
+	if (url == NULL)
+		return false;
+	host = nsurl_get_component(url, NSURL_HOST);
+	if (host == NULL)
+		return false;
+	h = lwc_string_data(host);
+	hl = lwc_string_length(host);
+	sl = SLEN("facebook.com");
+	match = false;
+	/* nsurl lowercases the host, so a plain strncmp suffix-match is safe. */
+	if (hl >= sl &&
+	    strncmp(h + hl - sl, "facebook.com", sl) == 0 &&
+	    (hl == sl || h[hl - sl - 1] == '.')) {
+		match = true;
+	}
+	lwc_string_unref(host);
+	return match;
+}
+
 static nserror
 html_create_html_data(html_content *c, const http_parameter *params)
 {
@@ -588,6 +624,14 @@ html_create_html_data(html_content *c, const http_parameter *params)
 	c->js_thread = NULL;
 
 	c->enable_scripting = nsoption_bool(enable_javascript);
+	/* fixes376 (#167) -- parse Facebook as no-JS so its <noscript> fallback
+	 * forms (login / checkpoint / 2FA) render. See html_host_is_facebook. */
+	if (c->enable_scripting && html_host_is_facebook(c->base_url)) {
+		c->enable_scripting = false;
+		macsurf_debug_log_writef(
+			"html_create: facebook host -> scripting OFF "
+			"(render <noscript> fallback)");
+	}
 	c->base.active = 1; /* The html content itself is active */
 
 	if (lwc_intern_string("*", SLEN("*"), &c->universal) != lwc_error_ok) {

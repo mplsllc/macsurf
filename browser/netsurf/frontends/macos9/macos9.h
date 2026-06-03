@@ -237,6 +237,21 @@ short macos9_face_from_style(const struct plot_font_style *fstyle);
 #define MACSURF_FONT_ALIAS_DIAG_SMART 1
 
 size_t macos9_utf8_to_macroman(const char *u, size_t l, char *m, size_t mx);
+size_t macos9_macroman_to_utf8(const unsigned char *m, size_t l, char *u, size_t mx);
+
+/* fixes376 — Edit menu item ordering. Must match the AppendMenu calls in
+ * main.c: Undo(1), separator(2), Cut(3), Copy(4), Paste(5). Item 2 (the
+ * separator) has no selector. SELECT_ALL is a synthetic selector (not a menu
+ * item) used by macos9_url_te_edit. */
+#define ITEM_EDIT_UNDO        1
+#define ITEM_EDIT_CUT         3
+#define ITEM_EDIT_COPY        4
+#define ITEM_EDIT_PASTE       5
+#define ITEM_EDIT_SELECT_ALL  99
+
+/* fixes376 — Cut/Copy/Paste/Select-All on the URL TextEdit field, synced with
+ * the Carbon desk scrap (MacRoman, no UTF-8 conversion on this path). */
+void macos9_url_te_edit(struct gui_window *g, short edit_item);
 
 /* MACSURF_HOME_URL canonical definition is in macsurf_config.h.
  * Old frogfind default removed per fixes301. */

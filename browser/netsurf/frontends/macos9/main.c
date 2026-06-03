@@ -323,6 +323,42 @@ static void macos9_handle_menu(short menu_id, short item) {
 		default: break;
 		}
 		break;
+	case MENU_EDIT:
+		/* fixes376 — the Edit menu was dead (items appended, no
+		 * dispatcher). Cmd-X/C/V reach here via MenuKey too. If the URL
+		 * field has focus, operate on its TextEdit; otherwise deliver
+		 * the NetSurf NS_KEY_* edit code to the page so in-page form
+		 * fields (textarea/input) copy/cut/paste via desktop/textarea.c
+		 * + the clipboard.c Scrap callbacks. */
+		front = FrontWindow();
+		gw = front ? macos9_find_window(front) : NULL;
+		if (gw == NULL)
+			break;
+		if (gw->url_field_active && gw->url_te != NULL) {
+			switch (item) {
+			case ITEM_EDIT_CUT:
+			case ITEM_EDIT_COPY:
+			case ITEM_EDIT_PASTE:
+				macos9_url_te_edit(gw, item);
+				break;
+			default: break;
+			}
+		} else if (gw->bw != NULL) {
+			unsigned long code = 0;
+			extern bool browser_window_key_press(
+				struct browser_window *, unsigned long);
+			switch (item) {
+			case ITEM_EDIT_CUT:   code = 24; break; /* NS_KEY_CUT_SELECTION  */
+			case ITEM_EDIT_COPY:  code = 3;  break; /* NS_KEY_COPY_SELECTION */
+			case ITEM_EDIT_PASTE: code = 22; break; /* NS_KEY_PASTE          */
+			default:              code = 0;  break; /* Undo: no core key     */
+			}
+			if (code != 0) {
+				(void)browser_window_key_press(gw->bw, code);
+				macos9_window_invalidate_content(gw);
+			}
+		}
+		break;
 	default: break;
 	}
 	HiliteMenu(0);

@@ -10,6 +10,9 @@
 #include "desktop/browser_history.h"
 #include "macos9.h"
 #include "macsurf_config.h"
+#ifdef __MACOS9__
+#include <Scrap.h>	/* fixes376 — desk-scrap I/O for URL-field cut/copy/paste */
+#endif
 #include "macsurf_debug.h"
 
 #ifdef __MACOS9__
@@ -416,6 +419,108 @@ void macos9_window_navigate(struct gui_window *g, const char *u) {
 	macsurf_debug_log_writef("nav: bw_navigate returned %d", (int)nav_e);
 	nsurl_unref(n);
 	MS_LOG("nav: done");
+}
+
+/* fixes376 — Cut / Copy / Paste / Select-All on the URL TextEdit field,
+ * synced with the Carbon desk scrap. The URL field holds MacRoman bytes and
+ * the scrap 'TEXT' flavor is MacRoman, so no UTF-8 conversion is needed on
+ * this path (that conversion lives only in clipboard.c's core callbacks).
+ * edit_item is one of the ITEM_EDIT_* selectors from macos9.h. */
+void macos9_url_te_edit(struct gui_window *g, short edit_item)
+{
+#ifdef __MACOS9__
+	TEHandle te;
+	TEPtr    tp;
+	short    selStart;
+	short    selEnd;
+
+	if (g == NULL || g->url_te == NULL)
+		return;
+	te = g->url_te;
+
+	SetPortWindowPort(g->window);
+
+	switch (edit_item) {
+
+	case ITEM_EDIT_SELECT_ALL:
+		TESetSelect(0, 32767, te);
+		InvalWindowRect(g->window, &g->url_rect);
+		break;
+
+	case ITEM_EDIT_COPY:
+	case ITEM_EDIT_CUT: {
+		CharsHandle hText;
+		ScrapRef    scrap;
+		char       *copybuf;
+		short       selLen;
+
+		tp = *te;
+		selStart = tp->selStart;
+		selEnd   = tp->selEnd;
+		if (selEnd <= selStart)
+			break;			/* empty selection */
+		selLen = (short)(selEnd - selStart);
+
+		hText = TEGetText(te);
+		if (hText == NULL)
+			break;
+
+		copybuf = (char *)malloc((size_t)selLen);
+		if (copybuf != NULL) {
+			HLock((Handle)hText);
+			memcpy(copybuf, (*hText) + selStart, (size_t)selLen);
+			HUnlock((Handle)hText);
+
+			if (ClearCurrentScrap() == noErr &&
+			    GetCurrentScrap(&scrap) == noErr) {
+				(void)PutScrapFlavor(scrap, kScrapFlavorTypeText,
+					kScrapFlavorMaskNone,
+					(Size)selLen, copybuf);
+			}
+			free(copybuf);
+		}
+
+		if (edit_item == ITEM_EDIT_CUT) {
+			TEDelete(te);
+			TECalText(te);
+			InvalWindowRect(g->window, &g->url_rect);
+		}
+		break;
+	}
+
+	case ITEM_EDIT_PASTE: {
+		ScrapRef scrap;
+		Size     n;
+		char    *buf;
+
+		if (GetCurrentScrap(&scrap) != noErr)
+			break;
+		n = 0;
+		if (GetScrapFlavorSize(scrap, kScrapFlavorTypeText, &n) != noErr)
+			break;
+		if (n <= 0)
+			break;
+
+		buf = (char *)malloc((size_t)n);
+		if (buf == NULL)
+			break;
+		if (GetScrapFlavorData(scrap, kScrapFlavorTypeText, &n, buf)
+				== noErr && n > 0) {
+			TEDelete(te);		/* replace selection */
+			TEInsert(buf, (long)n, te);
+			TECalText(te);
+			InvalWindowRect(g->window, &g->url_rect);
+		}
+		free(buf);
+		break;
+	}
+
+	default:
+		break;
+	}
+#else
+	(void)g; (void)edit_item;
+#endif
 }
 
 void macos9_window_address_bar_submit(struct gui_window *g) {
