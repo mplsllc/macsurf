@@ -207,6 +207,10 @@ struct macos9_https_ctx {
 
 static struct macos9_https_ctx https_slots[MAX_HTTPS_F];
 
+/* fixes374 (#167) — forward decl; defined near build_request. Used by the
+ * disk-cache lookup/store paths to bypass caching for Facebook hosts. */
+static int host_is_fb_asset(const char *host);
+
 /* ---------- auto-upgrade fallback (fixes249b) ----------
  * When the user types "example.com" with no scheme, window.c prepends
  * "https://" (fixes249) so modern HTTPS-default sites work. For retro
@@ -1273,8 +1277,15 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 	 * fixes312 (#144) — POST responses are not cacheable: the URL alone
 	 * doesn't identify the response (different bodies → different
 	 * results), so caching would serve stale or wrong data on subsequent
-	 * GETs for the same URL. */
+	 * GETs for the same URL.
+	 * fixes374 (#167) — NEVER cache Facebook. FB serves login/checkpoint
+	 * pages with Cache-Control: private,no-cache,no-store; caching them
+	 * served STALE pages with dead lsd/jazoest CSRF tokens AND meant the
+	 * fresh Set-Cookie (datr/c_user/xs, device-trust) was never seen —
+	 * so the login looped and 2FA was demanded every time. Always go to
+	 * network for FB so tokens are fresh and cookies are captured. */
 	if (c->post_body == NULL &&
+	    !host_is_fb_asset(c->host) &&
 	    macos9_cache_mime_eligible(c->status, c->mime)) {
 		c->cache_eligible = 1;
 	}
@@ -2107,9 +2118,14 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 		const char *url_str = nsurl_access(u);
 		/* fixes312 (#144) — POST responses are not cacheable
 		 * (non-idempotent). Skip the lookup so search forms etc.
-		 * always go to network. */
+		 * always go to network.
+		 * fixes374 (#167) — never SERVE a cached Facebook page either:
+		 * a stale login page (dead CSRF tokens, no Set-Cookie) is what
+		 * broke login. Always hit the network for FB hosts. This also
+		 * evicts any FB pages a pre-fixes374 build already cached. */
 		if (c->post_body == NULL &&
 		    url_str != NULL &&
+		    !host_is_fb_asset(c->host) &&
 		    macos9_cache_lookup(url_str, &c->cache_hit_body,
 				&c->cache_hit_len,
 				c->cache_hit_mime,
