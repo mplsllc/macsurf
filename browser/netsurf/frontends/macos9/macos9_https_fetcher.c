@@ -1227,21 +1227,36 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 			if (strncasecmp(p, "Set-Cookie:", 11) == 0) {
 				char *v = p + 11;
 				while (*v == ' ' || *v == '\t') v++;
-				fetch_set_cookie(c->parent, v);
-				/* fixes367 (#167) — log the cookie NAME only (up to
-				 * '='), never the value, so the hardware bring-up can
-				 * confirm c_user/xs land without leaking the secret. */
-				{
-					char nm[40];
-					int k = 0;
-					while (v[k] != '\0' && v[k] != '=' && k < 39) {
-						nm[k] = v[k];
-						k++;
-					}
-					nm[k] = '\0';
+				/* fixes378 (#167) — refuse Facebook's 'noscript=1'
+				 * marker. We HAVE JavaScript (Duktape + the fixes377
+				 * fills), so we never want FB to think otherwise:
+				 * storing noscript=1 makes every later request announce
+				 * "no JS", locking us onto FB's no-JS surface where the
+				 * 2FA/checkpoint step is the "not available on this
+				 * device" dead end. Drop it on the floor. */
+				if (strncasecmp(v, "noscript=", 9) == 0) {
 					macsurf_debug_log_writef(
-						"https: stored cookie '%s' for %s",
-						nm, c->host);
+						"https: refused 'noscript' Set-Cookie "
+						"(we have JS) for %s", c->host);
+				} else {
+					fetch_set_cookie(c->parent, v);
+					/* fixes367 (#167) — log the cookie NAME only (up
+					 * to '='), never the value, so the hardware
+					 * bring-up can confirm c_user/xs land without
+					 * leaking the secret. */
+					{
+						char nm[40];
+						int k = 0;
+						while (v[k] != '\0' && v[k] != '=' &&
+						       k < 39) {
+							nm[k] = v[k];
+							k++;
+						}
+						nm[k] = '\0';
+						macsurf_debug_log_writef(
+							"https: stored cookie '%s' for %s",
+							nm, c->host);
+					}
 				}
 			}
 		}
@@ -1502,6 +1517,38 @@ static int host_is_fb_asset(const char *host)
 	return 0;
 }
 
+/* fixes378 (#167) — strip any persisted 'noscript=...' token out of an
+ * outgoing Cookie: header value (in place). Neutralises a noscript=1 cookie
+ * that an earlier no-JS render already stored, WITHOUT forcing the user to
+ * wipe the whole jar (which would also lose datr, the device id). Rebuilds the
+ * "n1=v1; n2=v2" string minus the noscript token. Output is never longer than
+ * the input, so the in-place strcpy back is safe. */
+static void cookie_strip_noscript(char *s)
+{
+	char out[6144];
+	char *p = s;
+	int first = 1;
+	out[0] = '\0';
+	while (*p != '\0') {
+		char  *semi = strchr(p, ';');
+		size_t toklen = (semi != NULL) ? (size_t)(semi - p) : strlen(p);
+		if (strncasecmp(p, "noscript=", 9) != 0) {
+			if (!first && strlen(out) + 2 < sizeof out)
+				strcat(out, "; ");
+			if (strlen(out) + toklen < sizeof out) {
+				strncat(out, p, toklen);
+				first = 0;
+			}
+		}
+		if (semi == NULL)
+			break;
+		p = semi + 1;
+		while (*p == ' ')
+			p++;
+	}
+	strcpy(s, out);
+}
+
 static int build_request(struct macos9_https_ctx *c)
 {
 	int rn;
@@ -1518,9 +1565,12 @@ static int build_request(struct macos9_https_ctx *c)
 	cookie_hdr[0] = '\0';
 	cookie_str = (c->url != NULL) ? urldb_get_cookie(c->url, true) : NULL;
 	if (cookie_str != NULL) {
-		size_t cl = strlen(cookie_str);
+		size_t cl;
+		/* fixes378 — drop any stuck noscript=1 before it reaches FB. */
+		cookie_strip_noscript(cookie_str);
+		cl = strlen(cookie_str);
 		/* "Cookie: " (8) + value + "\r\n" (2) + NUL (1) = cl + 11 */
-		if (cl + 11 <= sizeof cookie_hdr) {
+		if (cl > 0 && cl + 11 <= sizeof cookie_hdr) {
 			strcpy(cookie_hdr, "Cookie: ");
 			strcat(cookie_hdr, cookie_str);
 			strcat(cookie_hdr, "\r\n");
