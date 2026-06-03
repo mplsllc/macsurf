@@ -82,6 +82,14 @@ dom_exception macsurf_dom_node_remove_child(dom_node *parent,
     return dom_node_remove_child(parent, old_child, result);
 }
 
+/* fixes385 (M4) — ordered insertion (React reconciler inserts before a
+ * reference node rather than append-only). */
+dom_exception macsurf_dom_node_insert_before(dom_node *parent,
+    dom_node *new_child, dom_node *ref_child, dom_node **result)
+{
+    return dom_node_insert_before(parent, new_child, ref_child, result);
+}
+
 dom_exception macsurf_dom_node_get_node_type(dom_node *node,
     dom_node_type *result)
 {

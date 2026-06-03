@@ -90,6 +90,15 @@ extern dom_exception macsurf_dom_node_get_first_child(dom_node *node,
 		dom_node **result);
 extern dom_exception macsurf_dom_node_get_next_sibling(dom_node *node,
 		dom_node **result);
+/* fixes385 (M4) — extend the mutation API: real createTextNode / insertBefore
+ * / removeChild (the React reconciler needs these beyond appendChild). */
+typedef struct dom_text dom_text;
+extern dom_exception macsurf_dom_document_create_text_node(dom_document *doc,
+		dom_string *data, dom_text **text);
+extern dom_exception macsurf_dom_node_remove_child(dom_node *parent,
+		dom_node *old_child, dom_node **result);
+extern dom_exception macsurf_dom_node_insert_before(dom_node *parent,
+		dom_node *new_child, dom_node *ref_child, dom_node **result);
 
 /* fixes342 — safe JS-init eval (defined in macsurf_js.c). Used for
  * per-element wrapper polyfill installs so a parse error in one
@@ -201,6 +210,8 @@ extern dom_exception macsurf_dom_node_set_text_content(dom_node *node,
 static duk_ret_t macsurf_getAttribute(duk_context *duk);
 static duk_ret_t macsurf_setAttribute(duk_context *duk);
 static duk_ret_t macsurf_appendChild(duk_context *duk);
+static duk_ret_t macsurf_insertBefore(duk_context *duk);   /* fixes385 (M4) */
+static duk_ret_t macsurf_removeChild(duk_context *duk);    /* fixes385 (M4) */
 static duk_ret_t macsurf_addEventListener(duk_context *duk);
 static void wrapper_register(duk_context *duk, dom_element *el,
 		duk_idx_t wrapper_idx);
@@ -232,6 +243,10 @@ macsurf_push_element(duk_context *duk, dom_element *el)
 	duk_put_prop_string(duk, -2, "setAttribute");
 	duk_push_c_function(duk, macsurf_appendChild, 1);
 	duk_put_prop_string(duk, -2, "appendChild");
+	duk_push_c_function(duk, macsurf_insertBefore, 2);   /* fixes385 (M4) */
+	duk_put_prop_string(duk, -2, "insertBefore");
+	duk_push_c_function(duk, macsurf_removeChild, 1);    /* fixes385 (M4) */
+	duk_put_prop_string(duk, -2, "removeChild");
 	duk_push_c_function(duk, macsurf_addEventListener, 3);
 	duk_put_prop_string(duk, -2, "addEventListener");
 
@@ -743,6 +758,86 @@ macsurf_appendChild(duk_context *duk)
 }
 
 /* ----------------------------------------------------------------- */
+/* fixes385 (M4) — element.insertBefore(newNode, refNode)            */
+/* refNode may be null (then == appendChild). Real libdom insert.    */
+/* ----------------------------------------------------------------- */
+static duk_ret_t
+macsurf_insertBefore(duk_context *duk)
+{
+	dom_element *parent;
+	dom_element *newc = NULL;
+	dom_element *refc = NULL;
+	dom_node *result = NULL;
+
+	parent = element_from_this(duk);
+	if (parent == NULL) {
+		duk_push_null(duk);
+		return 1;
+	}
+	duk_get_prop_string(duk, 0, "__el");
+	newc = (dom_element *)duk_get_pointer(duk, -1);
+	duk_pop(duk);
+	if (newc == NULL) {
+		duk_push_null(duk);
+		return 1;
+	}
+	/* refNode is optional; null => append at end. */
+	if (duk_is_object(duk, 1)) {
+		duk_get_prop_string(duk, 1, "__el");
+		refc = (dom_element *)duk_get_pointer(duk, -1);
+		duk_pop(duk);
+	}
+
+	if (macsurf_dom_node_insert_before((dom_node *)parent, (dom_node *)newc,
+			(dom_node *)refc, &result) != DOM_NO_ERR) {
+		duk_push_null(duk);
+		return 1;
+	}
+
+	if (macsurf_js_current_content != NULL)
+		macos9_js_mark_dom_dirty(macsurf_js_current_content);
+
+	duk_dup(duk, 0);                 /* return the inserted node */
+	return 1;
+}
+
+/* ----------------------------------------------------------------- */
+/* fixes385 (M4) — element.removeChild(node). Real libdom remove.    */
+/* ----------------------------------------------------------------- */
+static duk_ret_t
+macsurf_removeChild(duk_context *duk)
+{
+	dom_element *parent;
+	dom_element *child = NULL;
+	dom_node *result = NULL;
+
+	parent = element_from_this(duk);
+	if (parent == NULL) {
+		duk_push_null(duk);
+		return 1;
+	}
+	duk_get_prop_string(duk, 0, "__el");
+	child = (dom_element *)duk_get_pointer(duk, -1);
+	duk_pop(duk);
+	if (child == NULL) {
+		duk_push_null(duk);
+		return 1;
+	}
+
+	if (macsurf_dom_node_remove_child((dom_node *)parent, (dom_node *)child,
+			&result) != DOM_NO_ERR) {
+		duk_push_null(duk);
+		return 1;
+	}
+
+	if (macsurf_js_current_content != NULL)
+		macos9_js_mark_dom_dirty(macsurf_js_current_content);
+
+	duk_dup(duk, 0);                 /* return the removed node */
+	return 1;
+}
+
+/* ----------------------------------------------------------------- */
 /* document.createElement                                             */
 /* ----------------------------------------------------------------- */
 
@@ -772,6 +867,44 @@ macsurf_createElement(duk_context *duk)
 	macsurf_dom_string_unref(tag_str);
 
 	macsurf_push_element(duk, el);
+	return 1;
+}
+
+/* ----------------------------------------------------------------- */
+/* fixes385 (M4) — document.createTextNode(text). Real dom_text;     */
+/* wrapped via macsurf_push_element so appendChild(textNode) splices */
+/* a real text node into the tree (the __el is used as a dom_node*). */
+/* ----------------------------------------------------------------- */
+static duk_ret_t
+macsurf_createTextNode(duk_context *duk)
+{
+	const char *txt;
+	dom_string *str = NULL;
+	dom_text *node = NULL;
+
+	if (macsurf_js_current_document == NULL) {
+		duk_push_null(duk);
+		return 1;
+	}
+	txt = duk_safe_to_string(duk, 0);
+	if (txt == NULL) {
+		duk_push_null(duk);
+		return 1;
+	}
+	if (dom_string_create((const unsigned char *)txt, strlen(txt), &str)
+			!= DOM_NO_ERR || str == NULL) {
+		duk_push_null(duk);
+		return 1;
+	}
+	if (macsurf_dom_document_create_text_node(macsurf_js_current_document,
+			str, &node) != DOM_NO_ERR) {
+		node = NULL;
+	}
+	macsurf_dom_string_unref(str);
+
+	/* Mirror createElement's ref handling: push_element refs; the create
+	 * ref is the ownership ref that transfers to the DOM on append. */
+	macsurf_push_element(duk, (dom_element *) node);
 	return 1;
 }
 
@@ -1043,6 +1176,11 @@ macsurf_js_setup_globals(duk_context *duk)
 
 	duk_push_c_function(duk, macsurf_createElement, 1);
 	duk_put_prop_string(duk, -2, "createElement");
+
+	/* fixes385 (M4) — real createTextNode (overrides the macsurf_js.c JS
+	 * stub via the ||-preserve order). */
+	duk_push_c_function(duk, macsurf_createTextNode, 1);
+	duk_put_prop_string(duk, -2, "createTextNode");
 
 	duk_push_c_function(duk, macsurf_querySelector, 1);
 	duk_put_prop_string(duk, -2, "querySelector");
