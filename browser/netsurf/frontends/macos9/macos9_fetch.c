@@ -49,10 +49,26 @@ struct macos9_ua_rule {
 };
 
 static const struct macos9_ua_rule macos9_ua_rules[] = {
-	/* Facebook's lightweight no-JS mbasic surface is UA-gated; a vintage
-	 * Mozilla/4.0 Mac string unlocks it. " MacSurf/1.4" keeps us honest. */
+	/*
+	 * Facebook login surface is UA-gated. fixes371 (#167): the vintage
+	 * "Mozilla/4.0 ... MSIE 5.0 ... Mac_PowerPC" string we used through
+	 * fixes370 now receives Facebook's "unsupported-interstitial" overlay
+	 * (verified 2026-06-03: 200 OK but the page is just "Facebook is not
+	 * available on this browser", no email/pass form). The KaiOS
+	 * feature-phone UA below is the lightest surface Facebook still serves
+	 * the real login form to — a plain HTML POST to
+	 * /login/device-based/regular/login/ with email/pass AND all hidden
+	 * tokens (lsd/jazoest/m_ts/li/try_number) present as STATIC HTML, so
+	 * core form.c submits it without running the page's (analytics-only)
+	 * scripts. The page is ~68 KB (vs the old ~6 KB) but renders fine.
+	 *
+	 * IMPORTANT: do NOT append " MacSurf/..." here — Facebook's KaiOS gate
+	 * is exact; any extra token drops us back to the unsupported overlay.
+	 * This is a per-host spoof for facebook.com ONLY (Classilla sitecontrol
+	 * pattern); every other host keeps MacSurf's honest default UA.
+	 */
 	{ "facebook.com",
-	  "Mozilla/4.0 (compatible; MSIE 5.0; Mac_PowerPC) MacSurf/1.4" }
+	  "Mozilla/5.0 (Mobile; LYF/F90M/LYF-F90M-000-02-44-130319; rv:48.0) Gecko/48.0 Firefox/48.0 KAIOS/2.5" }
 	/* add more host->UA overrides here */
 };
 
