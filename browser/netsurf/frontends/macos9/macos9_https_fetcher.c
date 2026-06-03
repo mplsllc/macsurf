@@ -1346,8 +1346,12 @@ static int build_request(struct macos9_https_ctx *c)
 	 * this confirms whether the vintage UA or the default went out. Cookie
 	 * BYTES only, never the values (c_user/xs are session secrets). Logged
 	 * unconditionally so the very first (no-cookie) GET is covered too. */
-	macsurf_debug_log_writef("https: REQ %s ua=%s ck=%ldB",
-		c->host, ua, (long)strlen(cookie_hdr));
+	macsurf_debug_log_writef("https: REQ %s %s%s ck=%ldB pb=%ldB ua=%s",
+		(c->post_body != NULL) ? "POST" : "GET",
+		c->host, c->path,
+		(long)strlen(cookie_hdr),
+		(long)((c->post_body != NULL) ? (long)c->post_body_len : 0L),
+		ua);
 	if (c->post_body != NULL) {
 		/* fixes312 (#144) — POST. Body goes out in a second
 		 * OSTLS_Write after these headers; req_buf carries

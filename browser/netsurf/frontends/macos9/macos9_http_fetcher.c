@@ -579,8 +579,11 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		 * chosen UA, and Cookie: header size (bytes only, never values).
 		 * Mirrors the HTTPS fetcher so the troubleshooting trace reads the
 		 * same on both paths. */
-		macsurf_debug_log_writef("http: REQ %s ua=%s ck=%ldB",
-			host_z, ua, (long)ck_var);
+		macsurf_debug_log_writef("http: REQ %s %s ck=%ldB pb=%ldB ua=%s",
+			method, host_z,
+			(long)ck_var,
+			(long)((c->post_body != NULL) ? c->post_body_len : 0L),
+			ua);
 		if (use_proxy) {
 			size_t u_len;
 			u_full = nsurl_access(c->url);
