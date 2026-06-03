@@ -1303,6 +1303,31 @@ static int feed_body(struct macos9_https_ctx *c, const char *buf, long n)
  * macos9_fetch.c (macos9_user_agent_for_host) so both fetchers share one
  * source of truth and the override table is extensible. */
 
+/* fixes368c (#167) — extract cookie NAMES (never values) from a urldb
+ * cookie string "n1=v1; n2=v2; ..." into a space-separated "n1 n2 ..." for
+ * the diagnostic log. Lets the login chain confirm that c_user/xs actually
+ * ride along on the post-login requests, not just that some bytes went out.
+ * Values are dropped entirely — they are session secrets. */
+static void cookie_names_only(const char *src, char *dst, int dstcap)
+{
+	int dp;
+	const char *q;
+	if (dstcap <= 0) return;
+	dst[0] = '\0';
+	if (src == NULL) return;
+	dp = 0;
+	q = src;
+	while (*q != '\0' && dp < dstcap - 1) {
+		while (*q == ' ' || *q == ';') q++;	/* skip sep/space */
+		if (*q == '\0') break;
+		if (dp > 0 && dp < dstcap - 1) dst[dp++] = ' ';
+		while (*q != '\0' && *q != '=' && *q != ';' && dp < dstcap - 1)
+			dst[dp++] = *q++;
+		while (*q != '\0' && *q != ';') q++;	/* skip =value */
+	}
+	dst[dp] = '\0';
+}
+
 /* Append bytes into hdr_buf growing as needed. */
 /* fixes231 — build the request line + headers into c->req_buf. Returns
  * 0 on success, -1 if the formatted request didn't fit. Called from both
@@ -1337,6 +1362,14 @@ static int build_request(struct macos9_https_ctx *c)
 				"https: cookie hdr too big cl=%ld cap=%ld",
 				(long)cl,
 				(long)sizeof cookie_hdr);
+		}
+		/* fixes368c (#167) — names only, never values. */
+		{
+			char cknames[256];
+			cookie_names_only(cookie_str, cknames,
+				(int)sizeof cknames);
+			macsurf_debug_log_writef("https: cookies sent: %s",
+				cknames);
 		}
 		free(cookie_str);
 	}
