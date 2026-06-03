@@ -21,7 +21,7 @@ Nothing else. No "and please verify the Mac unpack worked." No "if this still fa
 
 # MacSurf
 
-A lightweight web browser for Mac OS 9 PowerPC, built on the NetSurf engine, paired with a simple TLS proxy.
+A lightweight web browser for Mac OS 9 PowerPC, built on the NetSurf engine, with native TLS (macTLS) for direct HTTPS — no proxy.
 
 > **Maintenance:** this file falls out of date fast. Update protocol at the bottom under [CLAUDE.md Maintenance](#claudemd-maintenance).
 
@@ -29,18 +29,22 @@ A lightweight web browser for Mac OS 9 PowerPC, built on the NetSurf engine, pai
 
 ```
 macsurf/
-├── browser/          # NetSurf fork with macos9 frontend
-├── proxy/            # MacSurf Proxy (Go)
+├── browser/          # NetSurf fork with macos9 frontend (native macTLS HTTPS built in)
+├── macTLS/           # Native TLS 1.3 stack for Classic Mac OS (BearSSL-based; nested project)
+├── proxy/            # Legacy Go TLS proxy — RETIRED, no longer on the path (kept for history)
 └── docs/             # Build and deployment docs
 ```
 
-## Two Components
+## Components
 
 ### 1. MacSurf Browser
-A port of NetSurf to Classic Mac OS 9 using the Carbon API and CodeWarrior 8. Cross-compiled from Linux targeting PowerPC. Tabs disabled by default. Proxy config built into preferences.
+A port of NetSurf to Classic Mac OS 9 using the Carbon API and CodeWarrior 8. Cross-compiled from Linux targeting PowerPC. Tabs disabled by default. Fetches HTTP directly over Open Transport and HTTPS directly via the built-in macTLS stack — no proxy involved.
 
-### 2. MacSurf Proxy
-A single Go binary that strips TLS, receives plain HTTP from the Mac, fetches via HTTPS, returns plain HTTP. No config files, no dependencies. Deployable on a VPS or local machine.
+### 2. macTLS (native TLS)
+A native TLS stack for Classic Mac OS, built on BearSSL primitives and linked into the browser. Hand-written TLS 1.3 (RFC 8446; X25519 + multi-curve ECDHE, ChaCha20-Poly1305 / AES-128-GCM) with TLS 1.2 fallback, the full Mozilla CA bundle (121 anchors) baked in, and the macEntropy RNG behind it. This is how the Mac reaches HTTPS sites itself. Lives in `macTLS/` (a nested project folded into the browser build). First native TLS 1.3 on Classic Mac OS (v1.3, 2026-05-29).
+
+### (Retired) MacSurf Proxy
+The original design used a single Go binary in `proxy/` that stripped TLS for the Mac. **It has been retired** — native macTLS replaced it around 2026-05-25 and `use_proxy` is pinned off. The directory and a few dead defines remain pending cleanup. Do not reintroduce a proxy dependency or document one as current.
 
 ## Key Technical Constraints
 
@@ -50,19 +54,15 @@ A single Go binary that strips TLS, receives plain HTTP from the Mac, fetches vi
 - Broader target range: Power Mac G3/G4, Mac OS 9.1-9.2.2, minimum 64MB RAM
 - Compiler: CodeWarrior 8 (on-machine) or cross-compile GCC PPC from Linux
 - No threading, OS 9 is cooperative multitasking, use WaitNextEvent loop
-- No HTTPS in browser, all TLS handled by proxy
-- JavaScript is handled in tiers, not banned:
-  - **Base tier (G3 / 64MB floor):** Duktape 2.7.0 ES5 evaluator is linked into the base build and operational. Heavy / modern JS pages still go through the proxy render-and-flatten path.
-  - **Enthusiast tier (G4 500+ / 256MB+):** same Duktape core as base tier, more ambitious inline-script scenarios enabled.
-  - **Proxy tier:** headless Chromium/Playwright executes JS upstream and returns pre-rendered flat HTML. This is where real modern-site JS support lives.
+- HTTPS handled natively in the browser by macTLS (TLS 1.3, TLS 1.2 fallback) over Open Transport — no proxy
+- JavaScript runs **on-device** via Duktape 2.7.0 (ES5), linked into the base build and operational on the G3 / 64 MB floor. Beyond the language core, a broad browser runtime is wired in: timers (`setTimeout`/`setInterval`/`requestAnimationFrame`), `window.location`/`history`, `URL`/`URLSearchParams`, `classList`, `element.style`, DOM `Event`/`CustomEvent`/`MouseEvent`/`KeyboardEvent` constructors, `MutationObserver`, `DOMParser`, `FormData`, `localStorage`, `fetch`, and `addEventListener`. The JS marathon (fixes319-352) closed ~23 issues here; the probe page scores 19/19 on a G3. Heavy SPA frameworks and very large DOM-mutation apps are the open frontier (tracked in issues). There is **no proxy and no JS offload** — what runs, runs on the Mac, and gaps get filled in-house (see DIRECTIVE #2).
 - Carbon API for UI, works on OS 9 and early OS X
 
 ## Coding Conventions
 
-- C for browser frontend (matches NetSurf codebase)
-- Go for proxy
+- C for everything that ships to the Mac: the browser frontend (matches the NetSurf codebase) and macTLS (C89 for CW8; macTLS keeps its own conventions)
 - Keep Mac Toolbox calls isolated in their own files (window.c, bitmap.c, font.c etc.)
-- No external dependencies in proxy, stdlib only
+- (The retired `proxy/` was Go, stdlib-only — historical, not part of the shipped product.)
 
 ## Carbon App Requirements
 
@@ -101,16 +101,29 @@ NetSurf's RISC OS and AmigaOS frontends are the primary references for frontend 
 - `frontends/riscos/`, closest analog to Mac OS 9
 - `frontends/amiga/`, also cooperative multitasking
 
-## Proxy Protocol
+## Networking (native, no proxy)
 
-Standard HTTP proxy protocol, no custom protocol. The Mac sends a normal HTTP proxy request, the proxy fetches via HTTPS and returns plain HTTP. Compatible with any browser that supports HTTP proxies (Classilla works today as validation).
+The browser fetches directly: HTTP/1.1 over Open Transport (chunked transfer, keep-alive, 3xx redirect follow, connection pooling) and HTTPS over the built-in macTLS stack (TLS 1.3, TLS 1.2 fallback). Origin connections are made straight from the Mac — there is no proxy and no custom protocol. (The legacy Go proxy referenced in older notes is retired; see Components.)
+
+### Cookies + per-host User-Agent (fixes367, #167)
+
+Both macos9 fetchers now wire NetSurf's cookie jar and select the User-Agent per host. This is the enabling work for **Facebook compatibility** (see below).
+
+- **Cookie jar.** NetSurf's full RFC-6265 jar is `content/urldb.c` (in `MacSurf.mcp`), but upstream only ever wired it in `content/fetchers/curl.c`, which we don't build. So before fixes367 the macos9 HTTP/HTTPS fetchers sent **no `Cookie:` header and stored no `Set-Cookie:`** — login on any site was impossible. fixes367 adds, to both `macos9_http_fetcher.c` and `macos9_https_fetcher.c`: a `Cookie:` request header from `urldb_get_cookie(url, true)`, and `Set-Cookie:` capture via `fetch_set_cookie(parent, value)` **inside the header-parse loop** (so a login POST's 302 stores `c_user`/`xs` before the redirect tears the fetch down). Request buffers were enlarged (https `1024→8192`, http `2048→8192`) to hold a full session cookie header. Cookies are **in-memory only** for now (urldb, inited by `netsurf_init`); disk persistence (`urldb_save/load_cookies`) is the next, hardware-gated step.
+- **Per-host UA.** `macos9_ua_for_host()` (a `static` duplicated in each fetcher — TODO: unify into `macos9_useragent.c`) suffix-matches `facebook.com` → vintage `Mozilla/4.0 (compatible; MSIE 5.0; Mac_PowerPC) MacSurf/1.4`; **every other host keeps the MacSurf default UA**. This is the Classilla `sitecontrol` / TenFourFox per-site-override pattern. The vintage UA is mandatory because Facebook **301-bounces a modern/MacSurf UA off the lightweight surface** to the 416 KB www SPA. The match guards spoof hosts (`evilfacebook.com` → default UA).
+
+### Facebook (lightweight no-JS mbasic path) — ACTIVE
+
+Strategy (2026-06-03, issue #167): target `mbasic.facebook.com`, Facebook's pure-HTML, **no-JavaScript**, feature-phone surface (~6 KB/page, tables + forms). It is *native* (the Mac is the real client, so auth/cookies live on the client — what FB requires; a proxy could never do this) and renders on the current engine — **no QuickJS, no proxy, no HTTP/2**. Ground truth: [docs/research/facebook-mbasic-scope.md](docs/research/facebook-mbasic-scope.md). The heavy full-SPA plan ([facebook-native-roadmap.md](docs/research/facebook-native-roadmap.md), QuickJS + H2, 18–30 mo) is the long-term north star, deferred.
+
+Login flow (all pure HTML, handled by core `form.c` + fixes367 cookies + fixes312 POST): GET mbasic (vintage UA) → `200`, sets `datr` → user submits `email`/`pass` form (hidden `lsd`/`jazoest`/`m_ts` collected by core) → **POST** `/login/device-based/regular/login/` with `datr` attached → **302** sets `c_user`+`xs` (captured) → redirect GET sends them → logged in. `fb_dtsg` (post-login page) needed only for write actions. **Next:** hardware login bring-up, then cookie disk persistence. **Regression watch (DIRECTIVE #5):** mactrove must keep the default UA and render unchanged.
 
 ## Do Not
 
-- Do not rely on in-app JS for heavy/modern sites, Duktape is ES5-only and intended for small inline scripts. Real-site JS support is still the proxy's job (render-and-flatten).
+- Do not assume JS capability limits (DIRECTIVE #2). Duktape is ES5 but capable, and a large browser runtime already runs on-device; missing pieces get filled in-house, not waved off. There is no proxy/offload to fall back on.
 - Do not enable tabs by default
 - Do not use preemptive threads anywhere in the browser
-- Do not add external dependencies to the proxy stdlib core. The render-and-flatten subsystem is an optional separate service (can use Chromium/Playwright); the base HTTP-proxy binary stays stdlib-only.
+- Do not reintroduce a proxy. HTTPS is native via macTLS; the old Go proxy is retired (see Components). Do not add a proxy dependency or document one as current.
 - Do not target OS X only, Carbon must run on OS 9
 
 ## Build Environment
@@ -254,6 +267,7 @@ When a change introduces a new `.c` file, mention it plainly so the user can add
 - Duktape source files live in [browser/libduktape/](browser/libduktape/).
 - `duk_config.h` is hand-crafted for Mac OS 9 PPC CW8: `DUK_USE_BYTEORDER=3`, `DUK_USE_PACKED_TVAL`, `DUK_USE_ALIGN_BY=8`, `DUK_USE_NATIVE_CALL_RECLIMIT=128`.
 - JS glue files live in [browser/netsurf/frontends/macos9/javascript/](browser/netsurf/frontends/macos9/javascript/).
+- **A browser runtime, not just the language.** The "JavaScript marathon" (fixes319–352, ~23 issues) wired a broad on-device API surface: timers (`setTimeout`/`setInterval`/`requestAnimationFrame`), `window.location`/`history` (`pushState`/`replaceState`), `URL`/`URLSearchParams`, `element.classList`/`style`, DOM `Event`/`CustomEvent`/`MouseEvent`/`KeyboardEvent` constructors, `MutationObserver`, `DOMParser`, `FormData`, `localStorage`, `fetch`, and `addEventListener` for `load`/`DOMContentLoaded`. The JS probe page scores 19/19 on a G3. Heavy SPA frameworks remain the frontier (tracked in issues); gaps get filled in-house, never offloaded (DIRECTIVE #2).
 
 ## Browser Chrome
 
@@ -275,7 +289,7 @@ When a change introduces a new `.c` file, mention it plainly so the user can add
 
 ## Rendering Pipeline (native CSS)
 
-- HTTP fetcher registered for `http:` and `https:` schemes via OT proxy at `<redacted-proxy>:8765`.
+- HTTP fetcher registered for `http:` and `https:` schemes, fetching directly from origin over Open Transport; `https:` runs through the native macTLS stack. No proxy.
 - Resource fetcher serves real CSS content for `resource:default.css`, `resource:internal.css`, `resource:quirks.css` (`macos9_fetcher_stubs.c`).
 - `no_backing_store.c` returns `NSERROR_NOT_IMPLEMENTED` from store and fetch.
 - Event-loop sleep shortens to 1 tick while any fetcher is active (`macos9_fetching || macos9_stub_fetcher_active() || macos9_http_fetcher_active()`) so NetSurf's fetcher ring progresses via `fetch_send_callback` continuations every pass. There is **no** explicit `fetch_poll()` call.
@@ -283,7 +297,7 @@ When a change introduces a new `.c` file, mention it plainly so the user can add
 - **Real HTML rendering with styled text, colours, fonts, layout all working natively.** MacTrove (Drupal 11 site) loads with body background, card chrome, link colours, and theme fonts resolving correctly from CSS custom properties. Verified signal: title bar shows `cp res OK`.
 - **Architectural foundation:** [docs/research/state-survey-2026-04-18.md](docs/research/state-survey-2026-04-18.md) and [state-survey-2026-04-19.md](docs/research/state-survey-2026-04-19.md). The 2026-04-19 survey in particular (§A7) explicitly scoped three paths for var() support, native libcss, proxy preprocessor, browser preprocessor, and chose native. Without that scoping, the fast-looking proxy shortcut would have blocked the real fix. Treat both surveys as load-bearing architectural refs for any future CSS-layer work.
 - Screenshot canonical location: `screenshots/v0.3-mactrove-fixes139.png` (user-saved from the 2026-04-20 session).
-- Carbon partition bumped to 16 MB preferred / 8 MB minimum to accommodate libcss allocation footprint on real pages (CSS_NOMEM blocker long resolved; see Gotchas).
+- Carbon partition bumped well past the original 16 MB floor (current project ~195 MB preferred / ~164 MB minimum) to accommodate libcss + DOM allocation footprint on real pages (CSS_NOMEM blocker long resolved; see Gotchas).
 
 ### Current blockers, CSS structural gaps (see [CSS_STATUS.md](CSS_STATUS.md) for full audit)
 
@@ -306,12 +320,12 @@ For features already shipped (flex alignment, border-radius, box-shadow, gradien
 
 ## Native CSS implementation
 
-MacSurf handles modern CSS natively in libcss and the layout engine rather than preprocessing via the proxy. CSS custom properties (`var()`) ship at fixes133-139; full status (per-property coverage, parsed-but-dropped gaps, deferred features) lives in [docs/css-status.md](docs/css-status.md) — that's the ground truth, not this file.
+MacSurf handles modern CSS natively in libcss and the layout engine rather than preprocessing it anywhere else. CSS custom properties (`var()`) ship at fixes133-139; full status (per-property coverage, parsed-but-dropped gaps, deferred features) lives in [docs/css-status.md](docs/css-status.md) — that's the ground truth, not this file.
 
 Architectural notes worth keeping inline:
 
 - `var()` is resolved at cascade time via token substitution; lexer keystone fix landed at fixes139 ([browser/libcss/src/lex/lex.c](browser/libcss/src/lex/lex.c)).
-- The proxy is **not** a CSS preprocessor — it only strips TLS and optionally renders-and-flattens JS-heavy sites. CSS feature support is the browser's job, native.
+- CSS feature support is the browser's job, handled natively in libcss and the layout engine — never preprocessed or offloaded.
 - Features that degrade gracefully to block layout / flat rendering: `transition`, `animation`, `clip-path`, `mask`, `filter`. Cosmetic in most cases.
 
 ## Build State
@@ -334,13 +348,13 @@ Full fix history: see [docs/changelog-fixes.md](docs/changelog-fixes.md).
 **Build conventions:**
 
 - CW8 project file: [browser/netsurf/frontends/macos9/MacSurf.mcp](browser/netsurf/frontends/macos9/MacSurf.mcp).
-- Carbon partition: **16 MB preferred / 8 MB minimum**. Smaller starves libcss → CSS_NOMEM mid-cascade.
-- Flat-folder build: all `.c` files in one folder, one search path.
+- Carbon partition: the current project ships **large** (~195 MB preferred / ~164 MB minimum; `MWProject_PPC_size = 199384` / `minsize = 168192` K). **16 MB preferred / 8 MB minimum is the floor** — smaller starves libcss → CSS_NOMEM mid-cascade. On a RAM-tight Mac, lower the preferred toward the floor.
+- The CodeWarrior project mirrors the source directory tree via ~55 hierarchical access paths (not a single flat folder), ~850 `.c` files. The build pack in `builds/` carries the authoritative project file, target settings, and file list.
 - Remove Object Code is required before every rebuild after file changes.
 - MacsBug is installed on the G4 for pipeline debugging; `MS_LOG` checkpoints are active throughout.
 
 
-- **Last shipped fix: fixes300-301** (commit e4b32be5), hardware-verified on G3 iMac OS 9.2.2 2026-05-28. Three fixes to clear macintoshgarden + mactrove rendering: (1) `nscss_screen_dpi` 90 → 96 in `cssh_css.c` (fixes float layout via em sizing); (2) `RGBForeColor(black)` / `RGBBackColor(white)` before every CopyBits/CopyMask in `plotters.c` (clears blue tint / fade on all images — see Known Gotcha "QuickDraw CopyBits colorizes with port foreground"); (3) opaque-PNG path in `macos9_image.c` (`set_opaque(true)` when `alpha >= 8`). Full text in [docs/changelog-fixes.md](docs/changelog-fixes.md).
+- **Current release: v1.4 "Open House" (2026-06-01); source tree at fixes364.** Hardware-verified on a G3 iMac running OS 9.2.2. Major arcs since v0.6: native **TLS 1.3** via macTLS + the macEntropy RNG (v1.2–v1.3.1, replacing the retired proxy); the **JavaScript marathon** (fixes319–352, ~23 issues closed, 19/19 JS probe on a G3); and continuing CSS / gradient fidelity work through fixes364. [docs/status.md](docs/status.md) and [docs/version-history.md](docs/version-history.md) are the authoritative current picture; [docs/changelog-fixes.md](docs/changelog-fixes.md) has the per-fix history. (CLAUDE.md tends to lag the real version — when in doubt, trust `docs/status.md`.)
 
 **Full fix history (predecessor chain from fixes225 → fixes143a):** see [docs/changelog-fixes.md](docs/changelog-fixes.md).
 
@@ -410,18 +424,18 @@ attach MacsBug to.
 
 ## Docs
 
-- [docs/macsurf-architecture.md](docs/macsurf-architecture.md), Full platform architecture: rendering modes, proxy services, template system, milestone plan
-- [docs/research/architecture-inventory.md](docs/research/architecture-inventory.md), Snapshot of what currently exists in the repo and on the proxy host (no decisions, just facts)
+- [docs/architecture.md](docs/architecture.md), Full platform architecture: rendering modes, native networking, milestone plan
+- [docs/research/architecture-inventory.md](docs/research/architecture-inventory.md), Snapshot of what currently exists in the repo (no decisions, just facts)
 - [docs/research/window-architecture-2026-04-22.md](docs/research/window-architecture-2026-04-22.md), Window-framework architecture research (fixes161). Full state/event/redraw/scroll inventory of the Mac OS 9 frontend; architectural problem list; proposed unified window-state model; 6-round refactor plan (fixes162-fixes166). **fixes162+ follow this plan.**
 - [docs/status.md](docs/status.md), Project status, milestones, test environment
 - [docs/codewarrior-setup.md](docs/codewarrior-setup.md), How to install CodeWarrior 8 and build on a real Power Mac
-- [docs/deploying-proxy.md](docs/deploying-proxy.md), How to deploy the Go proxy
+- [docs/version-history.md](docs/version-history.md), Per-version architecture narrative (v0.2 → v1.4)
 
 ## SheepShaver as a Testing Tool
 
 MacSurf is built on Linux but target-tested on real OS 9 hardware. SheepShaver (an OS 9 emulator) is a useful *partial* substitute, **not a full one**.
 
-**Confirmed-running on SheepShaver:** OS **9.0.4** runs MacSurf well as of 2026-05-25 — full Carbon init, UI smoke, navigation, and rendering all work. Networking is the limitation: SheepShaver's OT TCP can't reach the live internet without manual ethernet config, so HTTPS fetches hit `NO_PROGRESS_TICKS` and route to about:fetcherror. Good for build-smoke gating; not a substitute for hardware-side fetcher testing. (To be mentioned in v0.6.2 release notes.)
+**Confirmed-running on SheepShaver:** OS **9.0.4** runs MacSurf well as of 2026-05-25 — full Carbon init, UI smoke, navigation, and rendering all work. Networking is the limitation: SheepShaver's OT TCP can't reach the live internet without manual ethernet config, so HTTPS fetches hit `NO_PROGRESS_TICKS` and route to about:fetcherror. Good for build-smoke gating; not a substitute for hardware-side fetcher testing.
 
 - **SheepShaver setup lives at** `/home/patrick/Webs/MAC/sheepshaver/`, shared folder at `shared/`, prefs at `prefs`, Xvfb on `:99`. Shared folder uses `.finf/` (32-byte FInfo per file) + `.rsrc/` (raw resource fork) sidecars for Mac metadata.
 - **Run the SheepShaver AppImage** from `/tmp/squashfs-root/AppRun` with `DISPLAY=:99 APPIMAGE=/tmp/squashfs-root HOME=/home/patrick`.
@@ -436,7 +450,7 @@ MacSurf is built on Linux but target-tested on real OS 9 hardware. SheepShaver (
 **What SheepShaver is NOT useful for:**
 - Hardware-specific crashes (wheel crash, scroll-bar click crash). SheepShaver's CarbonLib + Control Manager emulation is more forgiving than real hardware. A green light in SheepShaver does NOT mean the G3/G4 will also be green.
 - USB Overdrive interactions, doesn't exist in the emulator
-- Real network behavior, `/home/patrick/.sheepshaver_prefs` as shipped has no usable ethernet config, so the initial fetch to the proxy at `<redacted-proxy>:8765` blocks until timeout (~2 min) without yielding. This is a test-env artifact, not a MacSurf bug.
+- Real network behavior, `/home/patrick/.sheepshaver_prefs` as shipped has no usable ethernet config, so the initial HTTPS fetch to the origin blocks until timeout (~2 min) without yielding. This is a test-env artifact, not a MacSurf bug.
 - Timing-sensitive behavior, JIT / coop-scheduler pacing differs from real PPC
 
 **Workflow:** use SheepShaver opportunistically, launch a new build, confirm it boots, click around. If anything hardware-specific is the suspect, move to real G3/G4. Don't treat SheepShaver "passed" as a substitute for hardware-side verification on wheel/scroll/USB-driven bugs.
@@ -455,7 +469,7 @@ MacSurf is built on Linux but target-tested on real OS 9 hardware. SheepShaver (
 - **Do NOT define NSLOG category tokens as macros.** `fetch`, `llcache`, `layout`, `flex`, `schedule` are all used as variable/parameter/struct-member names in the codebase. `#define llcache 0` turns `static struct llcache_s *llcache = NULL;` into `static struct llcache_s *0 = NULL;`, a syntax error. `#define schedule 0` turns `guit->misc->schedule(...)` into `guit->misc->0(...)`. The `__VA_ARGS__` macro approach makes these defines unnecessary.
 - **CW8 C89 fails to complete a struct that has a named enum declared inside its body.** `struct foo { enum bar { A, B } type; ... };` leaves `struct foo` as an incomplete type and `bar` as an undefined identifier. Anonymous enums inside structs (`enum { A, B } type;`) ARE accepted. Fix: hoist named enums before the struct definition. Fixed in fixes259 for `html.h`'s `enum html_script_type`.
 - **macos9/ shim headers that set the real guard WITHOUT defining the structs silently break all TUs that include them.** The CW8 access path puts `frontends/macos9/` before `content/handlers/html/` so shim headers are found first. If a shim like `html/html.h` sets `NETSURF_HTML_HTML_H` (the real guard) without defining `struct html_script`, every TU that includes `html/html.h` gets an empty substitution, the real header is never processed. Symptoms: `incomplete type 'struct html_script'`, `unknown identifier 'HTML_SCRIPT_INLINE'`. **Fix pattern**: make the shim a forwarder with its OWN guard (`MACSURF_SHIM_*`) and include the real header with its full path: `#include "content/handlers/html/html.h"`. The forwarder is found first, includes the real file, and the real guard prevents double inclusion. Applied in fixes260 to `html/html.h` and `html/form_internal.h`.
-- **Carbon partition must be at least 16 MB preferred.** Set in CW8 under "PPC PEF" → Application Heap Size / Minimum Heap Size (`MWProject_PPC_size` / `MWProject_PPC_minsize` in the `.mcp` XML). A 4 MB partition (the CW8 default) runs out mid-CSS-cascade on a moderately-sized real page, `css_select_style` returns `CSS_NOMEM` somewhere around element 380. libcss allocates via raw `malloc`/`calloc` with no NetSurf wrapper, so OOM in libcss really does mean OS-heap exhaustion. Classilla's default is 32 MB; 16 MB is MacSurf's floor. See [docs/research/state-survey-2026-04-18.md](docs/research/state-survey-2026-04-18.md) §2.
+- **Carbon partition must be at least 16 MB preferred.** Set in CW8 under "PPC PEF" → Application Heap Size / Minimum Heap Size (`MWProject_PPC_size` / `MWProject_PPC_minsize` in the `.mcp` XML). A 4 MB partition (the CW8 default) runs out mid-CSS-cascade on a moderately-sized real page, `css_select_style` returns `CSS_NOMEM` somewhere around element 380. libcss allocates via raw `malloc`/`calloc` with no NetSurf wrapper, so OOM in libcss really does mean OS-heap exhaustion. Classilla's default is 32 MB; 16 MB is MacSurf's floor. (The current shipped project sets the preferred partition far higher — ~195 MB / ~164 MB min — but 16 MB remains the floor below which libcss starves.) See [docs/research/state-survey-2026-04-18.md](docs/research/state-survey-2026-04-18.md) §2.
 - **CW8 PPC miscompiles `long long` / `int64_t` multiply-by-constant.** `(long long)a * small_const` writes `a >> log2(const)` into the high word instead of the correct `(a*const) >> 32`. Confirmed on real hardware via probe G (fixes113): `(long long)131072 * 1024LL` produced hi=128, lo=134217728, full product 549,890,031,616 instead of 134,217,728. This broke every FDIV/FMUL in libcss for weeks and masqueraded as a layout bug. **Mitigation:** route 64-bit fixed-point math through `double` under `#ifdef __MWERKS__`. PPC has a hardware FPU and IEEE 754's 52-bit mantissa covers every int32 fixed-point intermediate. See [browser/netsurf/include/libcss/fpmath.h](browser/netsurf/include/libcss/fpmath.h) (fixes114) for the reference pattern. Pure int32 multiplies and divides are fine, the miscompile is specifically the 64-bit shift-multiply path. **Any code doing `int64_t` or `long long` fixed-point math on CW8 PPC is suspect** and needs the same treatment or a confirmation that operands stay small enough that the miscompilation is harmless (e.g. `INTTOFIX(128)` happened to work because `128 >> 10 = 0`, which is the correct hi word by coincidence).
 - **Mac CR line endings** are required for all `.c` / `.h` / `.r` files in the project. Convert with `sed 's/$/\r/' | tr -d '\n'` before packaging.
 - **TextEdit (`TENew` / `TEDispose`) crashes with dsMemWZErr if WRefCon is not initialized before the first call.** The crash happens because `GetWRefCon` returns garbage on a fresh window and TextEdit dereferences it. Safe pattern: `SetPort(window)` then `SetWRefCon(window, 0)` (or to a valid struct pointer) before calling `TENew`. Once this is set, TextEdit is fully usable for the URL field and other text input widgets.
