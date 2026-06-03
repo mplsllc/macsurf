@@ -105,11 +105,12 @@ Build fixes367, load `https://mbasic.facebook.com/` on the G3. Acceptance:
 - **Regression (DIRECTIVE #5):** confirm mactrove.com still renders identically (it must keep the MacSurf default UA and be cookie-unaffected).
 
 ### Step 2 — Cookie disk persistence *(stay logged in across relaunch)*
-Core already provides `urldb_load_cookies(path)` / `urldb_save_cookies(path)` (`content/urldb.c`). Wire them:
-- On startup (after `netsurf_init`, before the event loop): `urldb_load_cookies(<path>)`.
-- On shutdown (before `netsurf_exit` at `main.c`): `urldb_save_cookies(<path>)`.
-- Path: a stable text file via `FindFolder(kPreferencesFolderType …)` → a colon-path MSL `fopen` accepts. **Every failure must be a silent no-op** (missing file / fopen NULL → in-session-only, exactly today's behaviour).
-- This is a **new subsystem** → it must satisfy the CLAUDE.md Regression Audit Checklist (init wired, body reachable, **SheepShaver/hardware smoke test**) before the round closes. That is why it was *not* shipped untested overnight with fixes367.
+Core provides `urldb_load_cookies(path)` / `urldb_save_cookies(path)` (`content/urldb.c`). Wire them at startup (after `netsurf_init`) and shutdown (`main.c`, alongside the existing `OSTLS_SaveSeed()` call). **Every failure must be a silent no-op** → in-session-only, exactly today's behaviour.
+
+**Implementation nuance discovered 2026-06-03 (important — it picks the approach):** `urldb_save_cookies`/`urldb_load_cookies` do their I/O with **stdio `fopen` + `fprintf`/`fgets`**, so they need an `fopen`-able pathname. But the rest of the OS 9 frontend deliberately *avoids* stdio paths: **macEntropy's seed** (`macTLS/os9/ostls_entropy.c`, `OSTLS_LoadSeed`/`OSTLS_SaveSeed`, Preferences folder) and the **disk cache** (`macos9_disk_cache.c`, Desktop) both use **FSSpec I/O** (`FSpCreate`/`FSpOpenDF`/`FSRead`/`FSWrite`) precisely because MSL `fopen` path semantics on Classic Mac OS are unreliable. So there are two routes, to be decided with a hardware probe:
+  - **Route A (reuse urldb as-is):** build a full colon-path to a Preferences-folder file and pass it to `urldb_save/load_cookies`. Verify on hardware that MSL `fopen("Vol:System Folder:Preferences:MacSurf Cookies", …)` actually opens. Lowest code, but rests on the exact `fopen`-path behaviour the codebase elsewhere sidesteps.
+  - **Route B (FSSpec, matches house style):** add a small `macos9_cookie_store.c`-style writer that serializes the jar via FSSpec like the seed/cache, mirroring macEntropy exactly. More code, but uses the proven mechanism and the same `FindFolder(kPreferencesFolderType …)` + `FSpCreate('MPLS', …)` path as the seed. **Preferred** unless Route A's probe passes cleanly.
+- This is a **new subsystem** → it must satisfy the CLAUDE.md Regression Audit Checklist (init wired, body reachable, **SheepShaver/hardware smoke test**) before the round closes. That, plus the `fopen`-vs-FSSpec decision needing a hardware probe, is why persistence was *not* shipped untested overnight with fixes367 — the in-session jar (which works the moment urldb's static-init trees link) already delivers a logged-in session within a launch.
 
 ### Step 3 — Checkpoint / interstitial robustness
 - Verify NetSurf core handles `<meta http-equiv="refresh">` (FB error/checkpoint pages use it instead of JS redirects). If not, add a meta-refresh handler.
