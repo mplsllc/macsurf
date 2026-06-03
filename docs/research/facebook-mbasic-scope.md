@@ -91,7 +91,13 @@ Both `macos9_http_fetcher.c` and `macos9_https_fetcher.c`:
 
 Verified C89-clean with Retro68 `powerpc-apple-macos-gcc -std=c89 -pedantic-errors -Wall` (the closest Linux proxy to CW8). Behaviour of UA-gating + cookie-splice verified by a native build of the extracted logic.
 
-**Known limitation by design:** the per-host UA helper is duplicated as a `static` in each fetcher to avoid a `MacSurf.mcp` edit mid-session. Unify into `macos9_useragent.c` (a real host→UA table, Classilla `sitecontrol` style) once the project file can be updated Mac-side.
+### Then shipped (fixes368 — same issue)
+
+- **Cookie disk persistence** — Step 2 below. Stay logged in across relaunch.
+- **UA site-control module** — the fixes367 duplicated `macos9_ua_for_host` statics are unified into `macos9_user_agent_for_host()` (impl `macos9_fetch.c`, header `macos9_useragent.h`), a data-driven host→UA table (Classilla `sitecontrol` style). Adding another site override is now a one-row table edit. No `MacSurf.mcp` change (impl in an existing build TU + a header).
+- **Meta-refresh verified** — Step 3 below; FB checkpoint pages auto-redirect with no new code.
+
+fixes368 changes 7 files (all in `frontends/macos9/`): `main.c`, `macos9_disk_cache.c/.h`, `macos9_useragent.h` (new header), `macos9_fetch.c`, and both fetchers. **No new `.c` files → no `MacSurf.mcp` change.** `macos9_useragent.h` lands in the already-on-path `macos9/` folder.
 
 ---
 
@@ -104,24 +110,24 @@ Build fixes367, load `https://mbasic.facebook.com/` on the G3. Acceptance:
 - Navigate 2–3 pages; confirm the session persists within the launch.
 - **Regression (DIRECTIVE #5):** confirm mactrove.com still renders identically (it must keep the MacSurf default UA and be cookie-unaffected).
 
-### Step 2 — Cookie disk persistence *(stay logged in across relaunch)*
-Core provides `urldb_load_cookies(path)` / `urldb_save_cookies(path)` (`content/urldb.c`). Wire them at startup (after `netsurf_init`) and shutdown (`main.c`, alongside the existing `OSTLS_SaveSeed()` call). **Every failure must be a silent no-op** → in-session-only, exactly today's behaviour.
+### Step 2 — Cookie disk persistence *(stay logged in across relaunch)* — **SHIPPED fixes368**
+`macos9_cookies_load()` / `macos9_cookies_save()` (in `macos9_disk_cache.c`) wrap `urldb_load_cookies` / `urldb_save_cookies` with a leaf filename (`"MacSurf Cookies"`); wired into `main.c` — load right after `netsurf_init`, save right before `netsurf_exit`. Best-effort: any I/O failure is a silent no-op (in-session-only). **Hardware caveat (the one thing still to confirm):** urldb is stdio/`fopen`-based; if the G3 shows MSL `fopen` won't honour the leaf path, switch to the FSSpec route below (the code + comments already point at it). Worst case it's a no-op, never a regression.
 
 **Implementation nuance discovered 2026-06-03 (important — it picks the approach):** `urldb_save_cookies`/`urldb_load_cookies` do their I/O with **stdio `fopen` + `fprintf`/`fgets`**, so they need an `fopen`-able pathname. But the rest of the OS 9 frontend deliberately *avoids* stdio paths: **macEntropy's seed** (`macTLS/os9/ostls_entropy.c`, `OSTLS_LoadSeed`/`OSTLS_SaveSeed`, Preferences folder) and the **disk cache** (`macos9_disk_cache.c`, Desktop) both use **FSSpec I/O** (`FSpCreate`/`FSpOpenDF`/`FSRead`/`FSWrite`) precisely because MSL `fopen` path semantics on Classic Mac OS are unreliable. So there are two routes, to be decided with a hardware probe:
   - **Route A (reuse urldb as-is):** build a full colon-path to a Preferences-folder file and pass it to `urldb_save/load_cookies`. Verify on hardware that MSL `fopen("Vol:System Folder:Preferences:MacSurf Cookies", …)` actually opens. Lowest code, but rests on the exact `fopen`-path behaviour the codebase elsewhere sidesteps.
   - **Route B (FSSpec, matches house style):** add a small `macos9_cookie_store.c`-style writer that serializes the jar via FSSpec like the seed/cache, mirroring macEntropy exactly. More code, but uses the proven mechanism and the same `FindFolder(kPreferencesFolderType …)` + `FSpCreate('MPLS', …)` path as the seed. **Preferred** unless Route A's probe passes cleanly.
 - This is a **new subsystem** → it must satisfy the CLAUDE.md Regression Audit Checklist (init wired, body reachable, **SheepShaver/hardware smoke test**) before the round closes. That, plus the `fopen`-vs-FSSpec decision needing a hardware probe, is why persistence was *not* shipped untested overnight with fixes367 — the in-session jar (which works the moment urldb's static-init trees link) already delivers a logged-in session within a launch.
 
-### Step 3 — Checkpoint / interstitial robustness
-- Verify NetSurf core handles `<meta http-equiv="refresh">` (FB error/checkpoint pages use it instead of JS redirects). If not, add a meta-refresh handler.
-- Handle the `save-device` interstitial (plain-HTML form; submit or skip both work).
+### Step 3 — Checkpoint / interstitial robustness — **VERIFIED (no code needed)**
+- `<meta http-equiv="refresh">` **is handled** end-to-end: the HTML handler broadcasts `CONTENT_MSG_REFRESH`, `desktop/browser_window.c` (line ~1598) schedules `browser_window_refresh` via `guit->misc->schedule`, and the macos9 scheduler (`schedule.c`, a real 193-line timer list pumped from `main.c`'s event loop) fires it. FB error/checkpoint pages that use meta-refresh auto-redirect.
+- The `save-device` interstitial is a plain-HTML form → core `form.c` handles submit/skip. No new code.
 
 ### Step 4 — Write actions
 - Scrape `fb_dtsg` from a post-login page; ensure it rides along on status/comment/message POSTs (core form handling already collects it — verify).
 - Exercise: post a status, comment, send a Messenger (mbasic `/messages/`) message.
 
 ### Step 5 — Fit & finish
-- Unify the per-host UA helper into `macos9_useragent.c` with a real host→UA table (Classilla `sitecontrol` pattern); add `m.`/`touch.` tuning if a richer-but-still-light variant renders better than mbasic.
+- ~~Unify the per-host UA helper into a real host→UA table~~ **DONE (fixes368)** — `macos9_useragent.h` + `macos9_fetch.c`. Future: add `m.`/`touch.` tuning if a richer-but-still-light variant renders better than mbasic; add other sites (Instagram, etc.) as table rows.
 - Photos/thumbnails: mbasic serves small `<img>` from `*.fbcdn.net` — confirm the image pipeline fetches cross-origin CDN images (no UA gate there; default UA is fine).
 - **Byblos reserve:** if a specific mbasic page has HTML our engine mis-renders, add a pre-parse rewrite hook rather than touching the layout engine.
 

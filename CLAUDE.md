@@ -116,7 +116,9 @@ Both macos9 fetchers now wire NetSurf's cookie jar and select the User-Agent per
 
 Strategy (2026-06-03, issue #167): target `mbasic.facebook.com`, Facebook's pure-HTML, **no-JavaScript**, feature-phone surface (~6 KB/page, tables + forms). It is *native* (the Mac is the real client, so auth/cookies live on the client — what FB requires; a proxy could never do this) and renders on the current engine — **no QuickJS, no proxy, no HTTP/2**. Ground truth: [docs/research/facebook-mbasic-scope.md](docs/research/facebook-mbasic-scope.md). The heavy full-SPA plan ([facebook-native-roadmap.md](docs/research/facebook-native-roadmap.md), QuickJS + H2, 18–30 mo) is the long-term north star, deferred.
 
-Login flow (all pure HTML, handled by core `form.c` + fixes367 cookies + fixes312 POST): GET mbasic (vintage UA) → `200`, sets `datr` → user submits `email`/`pass` form (hidden `lsd`/`jazoest`/`m_ts` collected by core) → **POST** `/login/device-based/regular/login/` with `datr` attached → **302** sets `c_user`+`xs` (captured) → redirect GET sends them → logged in. `fb_dtsg` (post-login page) needed only for write actions. **Next:** hardware login bring-up, then cookie disk persistence. **Regression watch (DIRECTIVE #5):** mactrove must keep the default UA and render unchanged.
+Login flow (all pure HTML, handled by core `form.c` + fixes367 cookies + fixes312 POST): GET mbasic (vintage UA) → `200`, sets `datr` → user submits `email`/`pass` form (hidden `lsd`/`jazoest`/`m_ts` collected by core) → **POST** `/login/device-based/regular/login/` with `datr` attached → **302** sets `c_user`+`xs` (captured) → redirect GET sends them → logged in. `fb_dtsg` (post-login page) needed only for write actions. **Regression watch (DIRECTIVE #5):** mactrove must keep the default UA and render unchanged.
+
+**fixes368** built out the software side to completeness: (a) **cookie disk persistence** (`macos9_cookies_load`/`_save` in `macos9_disk_cache.c`, wired in `main.c`) so a login survives relaunch — hardware-unverified MSL fopen path, no-op on failure; (b) **UA site-control module** — the duplicated per-host UA statics are unified into `macos9_user_agent_for_host()` (`macos9_fetch.c` + new header `macos9_useragent.h`), a one-row-per-site override table; (c) **meta-refresh verified** — FB checkpoint pages auto-redirect via core `CONTENT_MSG_REFRESH` + the macos9 scheduler, no new code. **Next:** hardware login bring-up on the G3 (the whole chain is unverified on real hardware — that's its smoke test).
 
 ## Do Not
 
@@ -393,6 +395,7 @@ Any new subsystem shipped as part of a fix round MUST, before the round is close
 | Open Transport | `InitOpenTransportInContext` | `main.c main()` after log init | `ot_initialized = true` (internal) |
 | NetSurf core | `netsurf_init` | `main.c main()` after OT init | Window shows with content pipeline live |
 | Carbon Appearance | `RegisterAppearanceClient` | `main.c main()` after `InitCursor` | Controls render with platinum theme, not classic |
+| Cookie jar persistence (fixes368) | `macos9_cookies_load` / `_save` | `main.c main()` after `netsurf_init` (load) and before `netsurf_exit` (save) | `MacSurf Debug.log` shows `cookies loaded` / `cookies saved`; a `MacSurf Cookies` file persists a logged-in session across relaunch. **Hardware-unverified** (MSL fopen-path behaviour); no-op on failure, never a regression. |
 
 **Why this checklist exists.** fixes149 through fixes151 accumulated ~20 instrumentation lines across window.c / main.c / the handle functions. None of them wrote anything to the log file because `macsurf_debug_log_init` was never called. The bug was invisible because:
 - `macsurf_debug_log_write` short-circuits silently when `g_log_open == 0`, no stderr, no toolbox call, no stdout.
