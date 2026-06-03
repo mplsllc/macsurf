@@ -27,6 +27,7 @@
 #include "content/fetch.h"
 #include "content/fetchers.h"
 #include "content/urldb.h"	/* fixes367 (#167) — cookie jar: urldb_get_cookie */
+#include "macos9_useragent.h"	/* fixes368 (#167) — per-host UA table */
 #include "macsurf_debug.h"
 
 #include <string.h>
@@ -1293,38 +1294,9 @@ static int feed_body(struct macos9_https_ctx *c, const char *buf, long n)
 	}
 }
 
-/* fixes367 (#167) — per-host User-Agent selection. This is the Classilla
- * "sitecontrol" / TenFourFox per-site UA-override pattern, the proven
- * approach on this exact platform: Classilla (also OS 9) mobile-spoofs by
- * default with a per-host exception table. Facebook gates its lightweight
- * no-JavaScript mbasic surface on the User-Agent — a modern UA receives the
- * 400 KB+ www SPA (unrenderable here), a vintage "Mozilla/4.0 ... Mac_PowerPC"
- * string receives the ~6 KB pure-HTML page MacSurf renders natively. We spoof
- * ONLY for facebook.com hosts so every other site (mactrove, etc.) keeps
- * MacSurf's honest default UA and cannot regress (DIRECTIVE #5). The "MacSurf"
- * token stays appended so we remain identifiable. Suffix-matches facebook.com
- * so mbasic./m./www./touch. subdomains are all covered. Returns a static
- * string; never NULL.
- *
- * TODO: lift this into a shared macos9_useragent.c with a real host→UA table
- * once the project file can be updated Mac-side (so both fetchers share one
- * source of truth instead of this duplicated helper). */
-static const char *macos9_ua_for_host(const char *host)
-{
-	static const char ua_fb[] =
-		"Mozilla/4.0 (compatible; MSIE 5.0; Mac_PowerPC) MacSurf/1.4";
-	static const char ua_default[] =
-		"MacSurf/1.4 (Macintosh; PPC Mac OS 9)";
-	size_t hl;
-	if (host == NULL) return ua_default;
-	hl = strlen(host);
-	if (hl >= 12 &&
-	    strncasecmp(host + hl - 12, "facebook.com", 12) == 0 &&
-	    (hl == 12 || host[hl - 13] == '.')) {
-		return ua_fb;
-	}
-	return ua_default;
-}
+/* fixes368 (#167) — per-host UA moved to macos9_useragent.h /
+ * macos9_fetch.c (macos9_user_agent_for_host) so both fetchers share one
+ * source of truth and the override table is extensible. */
 
 /* Append bytes into hdr_buf growing as needed. */
 /* fixes231 — build the request line + headers into c->req_buf. Returns
@@ -1334,7 +1306,7 @@ static const char *macos9_ua_for_host(const char *host)
 static int build_request(struct macos9_https_ctx *c)
 {
 	int rn;
-	const char *ua = macos9_ua_for_host(c->host);
+	const char *ua = macos9_user_agent_for_host(c->host);
 	/* fixes367 (#167) — cookie jar: pull the stored cookies for this URL
 	 * and emit them as a Cookie: header. urldb_get_cookie returns a
 	 * malloc'd "name=val; name2=val2" string (include_http_only=true so
@@ -1375,7 +1347,7 @@ static int build_request(struct macos9_https_ctx *c)
 		/* fixes312 (#144) — POST. Body goes out in a second
 		 * OSTLS_Write after these headers; req_buf carries
 		 * headers only.
-		 * fixes367 (#167) — UA chosen per-host (see macos9_ua_for_host):
+		 * fixes367 (#167) — UA chosen per-host (macos9_user_agent_for_host):
 		 * facebook.com gets a vintage Mozilla/4.0 Mac string to unlock
 		 * the no-JS mbasic page; everything else keeps MacSurf's UA. */
 		rn = sprintf(c->req_buf,

@@ -8,6 +8,7 @@
 #include "content/fetch.h"
 #include "content/fetchers.h"
 #include "content/urldb.h"	/* fixes367 (#167) — cookie jar: urldb_get_cookie */
+#include "macos9_useragent.h"	/* fixes368 (#167) — per-host UA table */
 #include "macsurf_debug.h"
 #ifdef __MACOS9__
 #include <Files.h>
@@ -367,28 +368,8 @@ static void mfs_close(struct macos9_fetch_ctx *c) {
 #endif
 }
 
-/* fixes367 (#167) — per-host User-Agent selection. Duplicated from
- * macos9_https_fetcher.c on purpose (see the TODO there): keeping it a
- * static in each fetcher avoids a MacSurf.mcp edit. Facebook serves its
- * lightweight no-JS mbasic page only to a vintage UA; spoof for
- * facebook.com hosts only, leave every other site on MacSurf's honest UA
- * so nothing regresses (DIRECTIVE #5). */
-static const char *macos9_ua_for_host(const char *host)
-{
-	static const char ua_fb[] =
-		"Mozilla/4.0 (compatible; MSIE 5.0; Mac_PowerPC) MacSurf/1.4";
-	static const char ua_default[] =
-		"MacSurf/1.4 (Macintosh; PPC Mac OS 9)";
-	size_t hl;
-	if (host == NULL) return ua_default;
-	hl = strlen(host);
-	if (hl >= 12 &&
-	    strncasecmp(host + hl - 12, "facebook.com", 12) == 0 &&
-	    (hl == 12 || host[hl - 13] == '.')) {
-		return ua_fb;
-	}
-	return ua_default;
-}
+/* fixes368 (#167) — per-host UA moved to macos9_useragent.h /
+ * macos9_fetch.c (macos9_user_agent_for_host); see there. */
 
 static int mfs_open(struct macos9_fetch_ctx *c) {
 #ifdef __MACOS9__
@@ -564,7 +545,7 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 			"";
 		/* fixes367 (#167) — per-host UA + cookie jar (mirrors the HTTPS
 		 * fetcher). host_z is a NUL-terminated copy of the host slice so
-		 * the suffix match in macos9_ua_for_host works; cookie_hdr holds
+		 * the suffix match in macos9_user_agent_for_host works; cookie_hdr holds
 		 * the stored cookies for this URL as a ready-to-splice header.
 		 * ua_var/ck_var lengths feed the oversize-request guards below. */
 		char cookie_hdr[6144];
@@ -576,7 +557,7 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		size_t ck_var;
 		hz = host_len; if (hz > sizeof(host_z) - 1) hz = sizeof(host_z) - 1;
 		memcpy(host_z, host_str, hz); host_z[hz] = '\0';
-		ua = macos9_ua_for_host(host_z);
+		ua = macos9_user_agent_for_host(host_z);
 		ua_var = strlen(ua);
 		cookie_hdr[0] = '\0';
 		cookie_str = (c->url != NULL) ? urldb_get_cookie(c->url, true) : NULL;

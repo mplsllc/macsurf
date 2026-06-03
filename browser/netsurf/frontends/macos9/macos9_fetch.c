@@ -33,6 +33,54 @@ extern OTClientContextPtr macos9_ot_context;
 #define MACSURF_PROXY_HOST "116.202.231.103"
 #define MACSURF_PROXY_PORT 8765
 
+#include "macos9_useragent.h"
+
+/* fixes368 (#167) — per-host User-Agent table (Classilla "sitecontrol"
+ * pattern). See macos9_useragent.h. To add a site override, add a
+ * { suffix, ua } row; the suffix is matched on a dot boundary against the
+ * tail of the host. This is the single source of truth that replaced the
+ * duplicated macos9_ua_for_host statics in the two fetchers. */
+static const char MACOS9_UA_DEFAULT[] =
+	"MacSurf/1.4 (Macintosh; PPC Mac OS 9)";
+
+struct macos9_ua_rule {
+	const char *suffix;	/* host suffix, e.g. "facebook.com" */
+	const char *ua;		/* User-Agent to send to that host */
+};
+
+static const struct macos9_ua_rule macos9_ua_rules[] = {
+	/* Facebook's lightweight no-JS mbasic surface is UA-gated; a vintage
+	 * Mozilla/4.0 Mac string unlocks it. " MacSurf/1.4" keeps us honest. */
+	{ "facebook.com",
+	  "Mozilla/4.0 (compatible; MSIE 5.0; Mac_PowerPC) MacSurf/1.4" }
+	/* add more host->UA overrides here */
+};
+
+const char *macos9_user_agent_default(void)
+{
+	return MACOS9_UA_DEFAULT;
+}
+
+const char *macos9_user_agent_for_host(const char *host)
+{
+	size_t hl;
+	size_t n;
+	size_t i;
+	if (host == NULL) return MACOS9_UA_DEFAULT;
+	hl = strlen(host);
+	n = sizeof(macos9_ua_rules) / sizeof(macos9_ua_rules[0]);
+	for (i = 0; i < n; i++) {
+		size_t sl = strlen(macos9_ua_rules[i].suffix);
+		if (hl >= sl &&
+		    strncasecmp(host + hl - sl,
+				macos9_ua_rules[i].suffix, sl) == 0 &&
+		    (hl == sl || host[hl - sl - 1] == '.')) {
+			return macos9_ua_rules[i].ua;
+		}
+	}
+	return MACOS9_UA_DEFAULT;
+}
+
 static const char *macos9_fetch_filetype(const char *unix_path)
 {
 	const char *ext;
