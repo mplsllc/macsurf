@@ -569,18 +569,18 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 				strcat(cookie_hdr, "\r\n");
 			} else {
 				macsurf_debug_log_writef(
-					"mfs_open: cookie hdr too big cl=%lu",
-					(unsigned long)cl);
+					"mfs_open: cookie hdr too big cl=%ld",
+					(long)cl);
 			}
 			free(cookie_str);
 		}
 		ck_var = strlen(cookie_hdr);
-		/* fixes367 (#167) — diagnostic: cookies going out, bytes only,
-		 * never values. Quiet on non-cookie sites. */
-		if (cookie_hdr[0] != '\0') {
-			macsurf_debug_log_writef("http: %s -> Cookie hdr %lu bytes",
-				host_z, (unsigned long)ck_var);
-		}
+		/* fixes368a (#167) — one request-summary line per fetch: host, the
+		 * chosen UA, and Cookie: header size (bytes only, never values).
+		 * Mirrors the HTTPS fetcher so the troubleshooting trace reads the
+		 * same on both paths. */
+		macsurf_debug_log_writef("http: REQ %s ua=%s ck=%ldB",
+			host_z, ua, (long)ck_var);
 		if (use_proxy) {
 			size_t u_len;
 			u_full = nsurl_access(c->url);
@@ -592,10 +592,10 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 			if (TEMPLATE_LEN + u_len + host_len + ua_var + ck_var + 1 > sizeof(req)) {
 				macsurf_debug_log_writef(
 					"mfs_open: REJECT oversize URL "
-					"u_len=%lu host_len=%lu cap=%lu",
-					(unsigned long)u_len,
-					(unsigned long)host_len,
-					(unsigned long)sizeof(req));
+					"u_len=%ld host_len=%ld cap=%ld",
+					(long)u_len,
+					(long)host_len,
+					(long)sizeof(req));
 				c->err = "URL too long";
 				goto fail_unref;
 			}
@@ -670,10 +670,10 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 			if (TEMPLATE_LEN + pb_used + host_len + ua_var + ck_var + 1 > sizeof(req)) {
 				macsurf_debug_log_writef(
 					"mfs_open: REJECT oversize req "
-					"pb=%lu host_len=%lu cap=%lu",
-					(unsigned long)pb_used,
-					(unsigned long)host_len,
-					(unsigned long)sizeof(req));
+					"pb=%ld host_len=%ld cap=%ld",
+					(long)pb_used,
+					(long)host_len,
+					(long)sizeof(req));
 				c->err = "URL too long";
 				goto fail_unref;
 			}

@@ -1173,7 +1173,12 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		msg.type = FETCH_REDIRECT;
 		msg.data.redirect = c->redirect_url;
 		fetch_send_callback(&msg, c->parent);
-		MS_LOG("https: redirect");
+		/* fixes368a (#167) — log the redirect TARGET, not just "redirect".
+		 * The Facebook login chain is GET → POST → 302 → save-device →
+		 * home; seeing each hop's destination is how we troubleshoot a
+		 * login that stalls or loops. */
+		macsurf_debug_log_writef("https: %d redirect -> %s",
+			c->status, c->redirect_url);
 		parent_save = c->parent;
 		hctx_clear(c);
 		fetch_remove_from_queues(parent_save);
@@ -1329,20 +1334,20 @@ static int build_request(struct macos9_https_ctx *c)
 			 * than none (FB would reject the session). Logged so
 			 * the cap can be raised if a real jar ever exceeds it. */
 			macsurf_debug_log_writef(
-				"https: cookie hdr too big cl=%lu cap=%lu",
-				(unsigned long)cl,
-				(unsigned long)sizeof cookie_hdr);
+				"https: cookie hdr too big cl=%ld cap=%ld",
+				(long)cl,
+				(long)sizeof cookie_hdr);
 		}
 		free(cookie_str);
 	}
-	/* fixes367 (#167) — diagnostic for the hardware login bring-up: log
-	 * that cookies are going out and how many bytes, but NEVER the values
-	 * (c_user/xs are session secrets). Only fires when the jar has
-	 * something for this URL, so non-cookie sites stay quiet. */
-	if (cookie_hdr[0] != '\0') {
-		macsurf_debug_log_writef("https: %s -> Cookie hdr %lu bytes",
-			c->host, (unsigned long)strlen(cookie_hdr));
-	}
+	/* fixes368a (#167) — one request-summary line per fetch: the host, the
+	 * User-Agent we chose for it, and the Cookie: header size. The UA is the
+	 * key Facebook diagnostic — if FB serves the wrong page or 301-bounces,
+	 * this confirms whether the vintage UA or the default went out. Cookie
+	 * BYTES only, never the values (c_user/xs are session secrets). Logged
+	 * unconditionally so the very first (no-cookie) GET is covered too. */
+	macsurf_debug_log_writef("https: REQ %s ua=%s ck=%ldB",
+		c->host, ua, (long)strlen(cookie_hdr));
 	if (c->post_body != NULL) {
 		/* fixes312 (#144) — POST. Body goes out in a second
 		 * OSTLS_Write after these headers; req_buf carries
