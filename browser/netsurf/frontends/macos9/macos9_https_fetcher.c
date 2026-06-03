@@ -1072,13 +1072,30 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		int   n_header_lines = 0;
 		int   force_download = 0;
 		int   i;
+		int   fb_host = 0;	/* fixes368d — gate the full-header dump */
+		size_t hh;
 		static const char forced_ct[] =
 			"Content-Type: application/octet-stream";
+
+		/* fixes368d (#167) — for facebook.com only, dump EVERY response
+		 * header (except Set-Cookie, logged name-only elsewhere so no
+		 * session secret hits disk) so the live login test shows exactly
+		 * what FB returned — Location, x-fb-debug, vary, content-type, etc.
+		 * Gated to FB so other sites stay quiet. */
+		hh = strlen(c->host);
+		if (hh >= 12 &&
+		    strncasecmp(c->host + hh - 12, "facebook.com", 12) == 0 &&
+		    (hh == 12 || c->host[hh - 13] == '.'))
+			fb_host = 1;
 
 		while ((p = find_line(&cur, &cur_len)) != NULL) {
 			if (p[0] == 0) break;
 			if (n_header_lines < 64) {
 				header_lines[n_header_lines++] = p;
+			}
+			if (fb_host &&
+			    strncasecmp(p, "Set-Cookie:", 11) != 0) {
+				macsurf_debug_log_writef("https: < %s", p);
 			}
 			if (strncasecmp(p, "Content-Type:", 13) == 0) {
 				char *v = p + 13; while (*v == ' ') v++;
