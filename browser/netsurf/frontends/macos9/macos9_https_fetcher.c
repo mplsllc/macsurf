@@ -1445,10 +1445,44 @@ static void cookie_names_only(const char *src, char *dst, int dstcap)
  * 0 on success, -1 if the formatted request didn't fit. Called from both
  * the cold-handshake path (HS_TLSING → HS_SEND_REQ) and the warm-pool
  * path (HS_QUEUED hit → HS_SEND_REQ direct). */
+/* fixes373 (#167) — Facebook serves its HTTP/1.1 responses with
+ * Content-Length + Connection: keep-alive, but under MacSurf's pooled-
+ * connection reuse the Content-Length is not being honored (the fetch logs
+ * clen=-1), so each FB sub-resource stalls to the 4s no-progress timeout and
+ * its body is discarded — the login page and the login POST's Set-Cookie
+ * (c_user/xs) drown in ~30+ timeouts. For Facebook's own hosts we instead
+ * request Connection: close: FB closes promptly after each response, the body
+ * is close-delimited (kOSTLSEventClosed -> hctx_finish, content_length<0
+ * path, verified present), and there is no pooled-reuse framing ambiguity.
+ * Costs a fresh TLS handshake per resource, but ONLY for FB; every other
+ * origin keeps keep-alive + connection pooling. Covers facebook.com plus the
+ * asset/CDN domains the login surface pulls (fbcdn.net, fbsbx.com,
+ * cdninstagram.com). */
+static int host_is_fb_asset(const char *host)
+{
+	static const char *const fb_suffixes[] = {
+		"facebook.com", "fbcdn.net", "fbsbx.com", "cdninstagram.com"
+	};
+	size_t hl, n, i, sl;
+	if (host == NULL) return 0;
+	hl = strlen(host);
+	n = sizeof(fb_suffixes) / sizeof(fb_suffixes[0]);
+	for (i = 0; i < n; i++) {
+		sl = strlen(fb_suffixes[i]);
+		if (hl >= sl &&
+		    strncasecmp(host + hl - sl, fb_suffixes[i], sl) == 0 &&
+		    (hl == sl || host[hl - sl - 1] == '.')) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
 static int build_request(struct macos9_https_ctx *c)
 {
 	int rn;
 	const char *ua = macos9_user_agent_for_host(c->host);
+	const char *conn = host_is_fb_asset(c->host) ? "close" : "keep-alive";
 	/* fixes367 (#167) — cookie jar: pull the stored cookies for this URL
 	 * and emit them as a Cookie: header. urldb_get_cookie returns a
 	 * malloc'd "name=val; name2=val2" string (include_http_only=true so
@@ -1514,10 +1548,10 @@ static int build_request(struct macos9_https_ctx *c)
 			"%s"
 			"Content-Type: application/x-www-form-urlencoded\r\n"
 			"Content-Length: %lu\r\n"
-			"Connection: keep-alive\r\n"
+			"Connection: %s\r\n"
 			"\r\n",
 			c->path, c->host, ua, cookie_hdr,
-			(unsigned long)c->post_body_len);
+			(unsigned long)c->post_body_len, conn);
 	} else {
 		rn = sprintf(c->req_buf,
 			"GET %s HTTP/1.1\r\n"
@@ -1527,9 +1561,9 @@ static int build_request(struct macos9_https_ctx *c)
 			"Accept-Language: en-US,en;q=0.5\r\n"
 			"Accept-Encoding: identity\r\n"
 			"%s"
-			"Connection: keep-alive\r\n"
+			"Connection: %s\r\n"
 			"\r\n",
-			c->path, c->host, ua, cookie_hdr);
+			c->path, c->host, ua, cookie_hdr, conn);
 	}
 	if (rn <= 0 || (unsigned long)rn >= sizeof c->req_buf) return -1;
 	c->req_len = (unsigned long)rn;
