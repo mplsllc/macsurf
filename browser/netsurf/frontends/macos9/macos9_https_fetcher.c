@@ -1548,10 +1548,10 @@ static int build_request(struct macos9_https_ctx *c)
 			"%s"
 			"Content-Type: application/x-www-form-urlencoded\r\n"
 			"Content-Length: %lu\r\n"
-			"Connection: %s\r\n"
+			"Connection: keep-alive\r\n"
 			"\r\n",
 			c->path, c->host, ua, cookie_hdr,
-			(unsigned long)c->post_body_len, conn);
+			(unsigned long)c->post_body_len);
 	} else {
 		rn = sprintf(c->req_buf,
 			"GET %s HTTP/1.1\r\n"
