@@ -1,15 +1,22 @@
-# Facebook capability matrix — what MacSurf has, needs, and won't chase
+# Facebook capability matrix — what MacSurf has, needs, and will build
 
 Honest mapping of the "what a browser needs to run Facebook" matrix against MacSurf's
 reality (Classic Mac OS 9 / PPC / CW8 / strict C89 / no threads / ~64 MB RAM / G3-G4).
 
 **The load-bearing insight:** the full matrix describes **desktop facebook.com** — the
-416 KB React SPA with video, calls, and games. That target is structurally out of reach
-on a 64 MB G3, and **we are not aiming at it.** We target the surface FB serves our UA
-(the lightweight `m.facebook.com` / `mbasic` feed: text, images, basic interaction). For
-*that* target most of the matrix is **not needed**, and the real critical path is small.
+416 KB React SPA with video, calls, and games. That target is the heaviest climb
+on a 64 MB G3, — so we **start** below it and climb. We begin with the surface FB serves our UA (the
+lightweight `m.facebook.com` / `mbasic` feed: text, images, basic interaction), which needs only
+a small slice of the matrix; then we build outward through the heavy tier until the full SPA runs
+on capable hardware. Start light, climb to everything.
 
-Legend: ✅ have · 🟡 partial/in-progress · 🔨 buildable (with effort) · ⛔ out of reach on this HW · ➖ not needed for our target surface
+**Stance (per the maintainer): scope and attempt EVERYTHING. Aim for perfection.** A capability
+being too heavy for a 64 MB G3 is not a reason to skip it — it's a reason to *gate it on
+hardware*. A G4 with more RAM is a real target; faster machines benefit; and a G3 user simply
+avoids the pages that need the heavy bits. So nothing below is "abandoned" — the ⛔ tier means
+"heavy / needs more capable hardware," and it gets scoped and attempted like everything else.
+
+Legend: ✅ have · 🟡 partial/in-progress · 🔨 buildable (with effort) · ⛔ heavy — needs G4+/faster HW (still scoped + attempted; G3 users skip those sites) · ➖ lower priority for the feed (still scoped)
 
 ---
 
@@ -19,7 +26,7 @@ Legend: ✅ have · 🟡 partial/in-progress · 🔨 buildable (with effort) · 
 | TLS 1.3 | ✅ | **macTLS** — hand-written TLS 1.3 over BearSSL. Our standout; FB's strict HTTPS works. |
 | HTTP/1.1 | ✅ | chunked, keep-alive, redirects, pooling over Open Transport. |
 | HTTP/2 | 🔨 | multiplexing over the existing macTLS conn. FB *prefers* it but works over h1.1. **High value (load speed for hundreds of asset requests) — Tier 2.** |
-| HTTP/3 (QUIC) | ⛔/➖ | QUIC = UDP + a new transport stack. Big lift, low marginal value over h2. Defer indefinitely. |
+| HTTP/3 (QUIC) | ⛔ | QUIC = UDP + a new transport stack over Open Transport. Deepest networking lift, but TLS 1.3 (which QUIC needs) is already ours via macTLS. Scoped, roadmap step 12. |
 | IPv4 | ✅ | Open Transport. FB is dual-stack, IPv4 reaches it. |
 | IPv6 | ➖ | `NO_IPV6` set. Not needed — FB has IPv4. |
 | WebSockets | 🔨 | HTTP upgrade + frame codec over the TCP/macTLS conn. **Needed for chat/notifications/presence — Tier 2.** No threads needed (poll in the coop loop). |
@@ -30,9 +37,9 @@ Legend: ✅ have · 🟡 partial/in-progress · 🔨 buildable (with effort) · 
 | HTML5 parsing | ✅ | libhubbub, full HTML5 tokeniser/tree-builder. |
 | CSS3 Flexbox/Grid/vars | ✅🟡 | libcss; Flexbox + Grid V1 + `var()` shipped. Documented gaps (some parsed-but-dropped props) but the core is there. |
 | Canvas 2D | 🟡 | partial. Feeds don't need it; some widgets do. Tier 3. |
-| WebGL / HW-accel canvas | 🟡/⛔ | separate WebGL project exists (software rasteriser, long arc). 3D posts/games/filters are ⛔ on this HW and ➖ for the feed. |
+| WebGL / HW-accel canvas | 🟡 | the `webgl/` project (software rasteriser + GLSL ES walker) is already underway — Khronos hello-triangle on a G3 is the milestone, richer scenes climb the HW tier. Roadmap step 9. |
 
-## 3. JavaScript Engine & Runtime — **the critical path**
+## 3. JavaScript Engine & Runtime — **the critical path (start here)**
 | Item | Status | Notes |
 |---|---|---|
 | ES5 + broad runtime | ✅ | Duktape 2.7 + the fixes319-380 marathon: timers, URL, classList, Event ctors, fetch, localStorage, Set/Map/Array.from, Promise(+all), the FB `__d`/`requireLazy` module loader, performance API. |
@@ -46,16 +53,16 @@ Legend: ✅ have · 🟡 partial/in-progress · 🔨 buildable (with effort) · 
 |---|---|---|
 | localStorage / sessionStorage | ✅ | shipped. |
 | IndexedDB | 🔨 | FB caches GraphQL responses here. Shimmable (in-memory, or backed by our disk cache). Tier 2 — keeps FB's JS from erroring + speeds it up. |
-| Cache API / Service Workers | ⛔ | SW needs a persistent background process + Cache API. No background process on OS 9. FB degrades gracefully without it (loses PWA/offline only). Park. |
+| Cache API / Service Workers | ⛔ | No OS-9 background process — so synthesize an SW scope serviced from the event loop, with our disk cache as the Cache API backend. Hardest “no background” problem; scoped, roadmap step 7. |
 
-## 5. Media & Device — **mostly out of reach, mostly not needed**
+## 5. Media & Device — **the heavy tier (hardware-gated, all scoped)**
 | Item | Status | Notes |
 |---|---|---|
-| MSE (adaptive video) | ⛔ | PowerFox needs a 1 GHz G4 + GPU for 360p; a 64 MB G3 can't decode video. ➖ for the feed (text/images). |
-| EME (DRM) | ⛔ | Widevine never existed on PPC. |
-| WebRTC (Messenger calls) | ⛔ | no media/RTC stack on this HW. |
+| MSE (adaptive video) | ⛔ | Adaptive-bitrate plumbing + a software decoder. PowerFox proves software H.264 runs on PPC (G4/G5 class); slow-to-none on a 64 MB G3, real on a fast G4/G5. Scope the decoder, start at the lowest rung. Roadmap step 10. |
+| EME (DRM) | ⛔ | No Widevine on PPC, so target ClearKey/clear-content EME (the spec path that needs no proprietary CDM) + scope what DRM is reachable. Roadmap step 13. |
+| WebRTC (Messenger calls) | ⛔ | signaling over WebSocket/HTTP + a media path; audio first (lighter than video). The calls frontier — scoped, roadmap step 11. |
 | Geolocation | 🔨 | trivial stub (return unavailable/denied). Low value, Tier 3. |
-| Push API | ⛔ | needs background. Park. |
+| Push API | ⛔ | Synthetic push serviced from the event loop (poll/long-poll a notifications endpoint, dispatch Push events). Roadmap step 13. |
 
 ## 6. Security
 | Item | Status | Notes |
@@ -79,19 +86,33 @@ by JS; until JS mutations paint, nothing else matters. This is being designed no
 FB's *modern* JS runs. We'll know its real height once JS→DOM→render lands and we see how far
 FB's (KaiOS-surface) JS — which targets old phones and may already be ES5-ish — actually gets.
 
-**Out of reach, and we stop chasing them:** video (MSE/EME), calls (WebRTC), Service Workers,
-Push, HTTP/3, WebGL-accelerated canvas. None are needed for a readable, usable feed.
+**The heavy tier — built, not parked.** Video (MSE/EME), calls (WebRTC), Service Workers,
+Push, HTTP/3, WebGL: these are **hardware-gated, not abandoned.** Precedent: native TLS on
+Classic Mac OS was "impossible" — macTLS shipped it, then shipped **TLS 1.3**. Every one of
+these gets a real scope and a real attempt. If a build is slow on a 64 MB G3, it's slow — and
+it'll be usable on a G4 / faster machine, and a G3 user simply avoids the pages that need it.
+**Nothing is parked.**
 
-### Sequenced roadmap (step by step)
-1. **JS→DOM→render** (re-convert after DOM mutation). *In progress.* Unlocks the SPA shell + JS-built feed painting. **Nothing proceeds without it.**
-2. **Finish JS API fills as FB hits them** — Intersection Observer (lazy-load/infinite-scroll), IndexedDB shim (GraphQL cache), remaining DOM APIs. Driven by the named-error log, round by round.
-3. **Confront the ES6 ceiling** — measure how many FB scripts `SyntaxError`; decide UA-for-ES5 vs a transpile pass vs accept the cap.
-4. **HTTP/2** — multiplexing for load speed (hundreds of asset requests). Big but high-value.
-5. **WebSockets** — chat / notifications / presence (real-time, no reload).
-6. **Polish** — CSP/SameSite correctness, Geolocation stub, Canvas2D as needed.
+### Sequenced roadmap — everything, in attempt order (impact × feasibility first)
+Earlier = higher impact and/or lower effort. Later ≠ optional; later = heavier, so it follows
+the dependencies and the hardware climbs. All of it ships eventually.
 
-Parked permanently (HW limits): MSE/EME video, WebRTC, Service Workers, Push, HTTP/3, WebGL games.
+1. **JS→DOM→render** (re-convert after DOM mutation). *In progress.* Unlocks every JS-built page. Foundation — everything visual depends on it.
+2. **JS API fills, log-driven** — IntersectionObserver (lazy-load/infinite-scroll), MutationObserver, IndexedDB (GraphQL cache), remaining DOM APIs. Round by round off the named-error log.
+3. **ES6 reach** — measure the `SyntaxError` surface, then *raise the ceiling*: an on-device or pre-fetch ES6→ES5 transpile pass so modern syntax (arrow fns, classes, template literals) runs. (Or UA-for-ES5 as the interim.) The "impossible" item that makes the rest tractable.
+4. **HTTP/2** — multiplexing over the macTLS conn; hundreds of asset requests in flight. Big load-speed win.
+5. **WebSockets** — chat / notifications / presence / live reactions, real-time, no reload. HTTP-upgrade + frame codec over OT+macTLS, polled in the coop loop.
+6. **Web Workers** — no OS-9 threads, so run worker scripts on the main loop (cooperative, synchronous-ish). Many sites tolerate it.
+7. **Service Workers + Cache API** — the hardest "no background process" problem; approach: a synthetic SW scope serviced from the event loop + our disk cache as the Cache API backend. Scope it, attempt it.
+8. **Canvas 2D** — software raster (we already plot in QuickDraw); a real CanvasRenderingContext2D over offscreen GWorlds.
+9. **WebGL** — the existing `webgl/` project (software rasteriser + GLSL ES walker). Khronos hello-triangle on a G3 is the milestone; richer scenes climb the HW tier.
+10. **MSE + software video** — adaptive-bitrate plumbing + a software H.264/VP-something decoder. Slow on a G3, real on a fast G4/G5 (PowerFox proves software H.264 is possible on PPC). Scope the decoder, start with stills/lowest-rung.
+11. **WebRTC** — signaling (WebSocket/HTTP) + the media path; audio first (lighter than video). The Messenger-calls frontier.
+12. **HTTP/3 / QUIC** — UDP transport + QUIC over Open Transport; the deepest networking lift, but TLS 1.3 (which QUIC needs) is already ours via macTLS.
+13. **EME, Push, Geolocation, CSP/SameSite correctness** — DRM, background push (synthetic), device APIs, security-header fidelity.
 
-> The win already banked: **login works and persists** (c_user/xs). The remaining FB work is
-> the *render* problem, which is the same problem as "render any modern SPA" — so every step
-> here pays off across a large slice of the web, not just Facebook.
+> Precedent that settles the argument: **macTLS.** Native TLS 1.3 on a 233 MHz G3 was supposed
+> to be impossible. It isn't. None of the above is either — it's a matter of order and effort.
+> The win already banked: **login works and persists** (c_user/xs). And because "render a modern
+> SPA" is the same problem for every site, every step here unlocks a large slice of the web — not
+> just Facebook. **We build all of it.**
