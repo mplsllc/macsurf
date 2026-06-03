@@ -1263,6 +1263,139 @@ static void html_stop(struct content *c)
  * Reformat a CONTENT_HTML to a new width.
  */
 
+/* ----------------------------------------------------------------- */
+/* fixes383 (M2) — JS->DOM->render: re-convert after DOM mutation.     */
+/* Rebuild the disposable box tree from the (JS-mutated, persistent)   */
+/* DOM and repaint. Guards prevent the three crash hazards the design  */
+/* review caught (docs/research/js-dom-render-plan.md).                */
+/* ----------------------------------------------------------------- */
+
+/* HAZARD-1: clear the box* back-reference in every box's DOM-node user_data
+ * BEFORE freeing the box tree. Nodes that skip box generation on re-convert
+ * (display:none, <script>/<style>/<head>) would otherwise keep a dangling
+ * box* and crash box_for_node(). Non-recursive walk of the still-intact tree. */
+static void html_reconvert_clear_node_boxes(html_content *c)
+{
+	struct box *b = c->layout;
+	struct box *root_parent = (b != NULL) ? b->parent : NULL;
+	void *old = NULL;
+	while (b != NULL) {
+		if (b->node != NULL) {
+			(void) dom_node_set_user_data(b->node,
+					corestring_dom___ns_key_box_node_data,
+					NULL, NULL, &old);
+		}
+		if (b->children != NULL) {
+			b = b->children;
+			continue;
+		}
+		while (b != NULL && b->next == NULL) {
+			if (b->parent == root_parent) { b = NULL; break; }
+			b = b->parent;
+		}
+		if (b != NULL) b = b->next;
+	}
+}
+
+/* HAZARD-3: null the box* backpointer on every form control so a click or
+ * submit between the box-free and re-convert-done cannot deref a freed box. */
+static void html_reconvert_detach_forms(html_content *c)
+{
+	struct form *f;
+	struct form_control *fc;
+	for (f = c->forms; f != NULL; f = f->prev) {
+		for (fc = f->controls; fc != NULL; fc = fc->next) {
+			fc->box = NULL;
+		}
+	}
+}
+
+/* Dedicated re-convert completion. Unlike html_box_convert_done it does NOT
+ * destroy the parser (already gone) or re-fire content_set_ready /
+ * proceed_to_done (the content is already DONE). It re-extracts image maps
+ * and relayouts the fresh box tree (same path image-load completion uses). */
+static void html_reconvert_done(html_content *c, bool success)
+{
+	nserror err;
+
+	c->box_conversion_context = NULL;
+	macsurf_debug_log_writef("reconvert: done success=%d layout=%p",
+			(int)success, (void *)c->layout);
+	macsurf_profile_stamp("reconvert-done");
+
+	if ((success == false) || (c->aborted)) {
+		macsurf_debug_log_writef("reconvert: FAILED/aborted");
+		return;
+	}
+
+	err = imagemap_extract(c);
+	if (err != NSERROR_OK) {
+		macsurf_debug_log_writef("reconvert: imagemap_extract err=%d",
+				(int)err);
+	}
+
+	content__reformat(&c->base, false,
+			c->base.available_width, c->base.available_height);
+}
+
+/* Re-run box construction over the current DOM. Returns NSERROR_NEED_DATA if
+ * the caller should re-arm (busy: mid-layout or a convert already in flight).
+ * The DOM persists across this; JS element wrappers stay valid. */
+nserror html_reconvert(html_content *c)
+{
+	dom_node *html = NULL;
+	dom_exception exc;
+	nserror error;
+
+	if ((c == NULL) || (c->document == NULL) || (c->aborted))
+		return NSERROR_OK;
+	/* Only re-convert AFTER the initial load is DONE. A script that mutates
+	 * the DOM during parse is captured by the original convert (which runs
+	 * after parse over the final DOM); triggering a premature re-convert here
+	 * would collide with that original convert. */
+	if (content__get_status(&c->base) != CONTENT_STATUS_DONE)
+		return NSERROR_NEED_DATA;
+	if (c->reflowing)
+		return NSERROR_NEED_DATA;        /* never free boxes mid-layout */
+	if (c->box_conversion_context != NULL)
+		return NSERROR_NEED_DATA;        /* one re-convert in flight    */
+
+	macsurf_debug_log_writef("reconvert: start layout=%p", (void *)c->layout);
+
+	/* HAZARD guards BEFORE freeing the box tree (order matters). */
+	html_reconvert_clear_node_boxes(c);          /* H1: stale node boxes */
+	html_object_free_objects(c);                 /* H2: object_list fetches */
+	html_reconvert_detach_forms(c);              /* H3: form box pointers */
+	imagemap_destroy(c);                         /* rebuilt in done       */
+	if (c->sel != NULL)
+		selection_destroy(c->sel);
+	c->sel = selection_create((struct content *) c);
+
+	/* free the old box tree; null layout so a same-pass reformat bails
+	 * (the html_reformat null-guard) until reconvert_done rebuilds it. */
+	if (c->bctx != NULL) {
+		talloc_free(c->bctx);
+		c->bctx = NULL;
+	}
+	c->layout = NULL;
+
+	exc = dom_document_get_document_element(c->document, (void *) &html);
+	if ((exc != DOM_NO_ERR) || (html == NULL))
+		return NSERROR_DOM;
+	html_get_dimensions(c);
+	error = dom_to_box(html, c, html_reconvert_done,
+			&c->box_conversion_context);
+	dom_node_unref(html);
+	return error;
+}
+
+/* Thin content* wrapper so the macos9 JS bindings can trigger a re-convert
+ * without the full html_content type (or nserror) in scope. */
+void html_reconvert_content(struct content *c)
+{
+	(void) html_reconvert((html_content *) c);
+}
+
 static void html_reformat(struct content *c, int width, int height)
 {
 	html_content *htmlc = (html_content *) c;
@@ -1278,6 +1411,16 @@ static void html_reformat(struct content *c, int width, int height)
 	macsurf_debug_log_writef(
 		"html_reformat: entry w=%d h=%d", width, height);
 	macsurf__cascade_probe_armed = 1;
+
+	/* fixes383 (M2, JS->DOM->render) — re-convert null-guard. html_reconvert
+	 * frees the old box tree and nulls layout while the async re-convert is
+	 * in flight; a same-pass deferred reformat must NOT deref layout->style
+	 * below until html_reconvert_done rebuilds it. Bail safely. */
+	if (htmlc->layout == NULL) {
+		macsurf_debug_log_writef(
+			"html_reformat: layout NULL (re-convert in flight), skip");
+		return;
+	}
 
 	nsu_getmonotonic_ms(&ms_before);
 

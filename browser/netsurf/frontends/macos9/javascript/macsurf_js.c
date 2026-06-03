@@ -1383,7 +1383,11 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 	*out_thread = thread;
 	if (doc_priv != NULL) {
 		html_content *htmlc = (html_content *)doc_priv;
+		extern void macsurf_js_set_content(struct content *c);
 		macsurf_js_set_document(htmlc->document);
+		/* fixes383 (M2) — also wire the html_content so the DOM-mutation
+		 * bindings can trigger a re-convert (rebuild box tree + paint). */
+		macsurf_js_set_content((struct content *)htmlc);
 		MS_LOG("js: thread document wired");
 	}
 	return NSERROR_OK;

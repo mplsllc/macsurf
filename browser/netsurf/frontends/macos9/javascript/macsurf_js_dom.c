@@ -152,6 +152,20 @@ macsurf_js_set_document(dom_document *doc)
 	macsurf_js_current_document = doc;
 }
 
+/* fixes383 (M2) — current html content, for the JS->DOM->render re-convert
+ * trigger. Set alongside the document in js_newthread (doc_priv IS the
+ * html_content). Stored as an opaque struct content* (the html_content base)
+ * so this TU needs no html internals. */
+struct content;
+static struct content *macsurf_js_current_content = NULL;
+extern void html_reconvert_content(struct content *c);
+
+void
+macsurf_js_set_content(struct content *c)
+{
+	macsurf_js_current_content = c;
+}
+
 /* ----------------------------------------------------------------- */
 /* Element wrapper push/finalizer                                     */
 /* ----------------------------------------------------------------- */
@@ -597,32 +611,12 @@ macsurf_setTextContent(duk_context *duk)
 		"setTextContent: ex=%d len=%d", (int)ex, (int)strlen(txt));
 	macsurf_dom_string_unref(str);
 #ifdef __MACOS9__
-	/* fixes320j — JS DOM mutation needs a reformat (DOM → box tree →
-	 * layout) so the new text is in the box tree before paint. An
-	 * invalidate alone forces a paint from the stale box tree, so
-	 * e.g. prompt's output box still shows '(click)' even though
-	 * the DOM has 'prompt: default name'.
-	 *
-	 * Walk window_list head → g->bw → schedule_reformat. */
-	{
-		struct gui_window *win;
-		struct browser_window *bw;
-		extern struct gui_window *macos9_window_list_head(void);
-		extern int browser_window_schedule_reformat(
-				struct browser_window *bw);
-		extern void macos9_window_invalidate_content(
-				struct gui_window *g);
-		extern struct browser_window *macos9_gw_bw(
-				struct gui_window *g);
-		win = macos9_window_list_head();
-		if (win != NULL) {
-			bw = macos9_gw_bw(win);
-			if (bw != NULL) {
-				(void)browser_window_schedule_reformat(bw);
-			}
-			macos9_window_invalidate_content(win);
-		}
-	}
+	/* fixes383 (M2) — supersedes fixes320j. textContent='...' replaced the
+	 * element's children in the real DOM; a re-LAYOUT of the stale box tree
+	 * (the old path) would not show it. Re-convert rebuilds the box tree from
+	 * the mutated DOM and repaints, so the new text actually appears. */
+	if (macsurf_js_current_content != NULL)
+		html_reconvert_content(macsurf_js_current_content);
 #endif
 	return 0;
 }
@@ -730,6 +724,11 @@ macsurf_appendChild(duk_context *duk)
 		duk_push_null(duk);
 		return 1;
 	}
+
+	/* fixes383 (M2) — structural DOM mutation reached the real tree;
+	 * re-convert (rebuild box tree) + repaint so JS-built content shows. */
+	if (macsurf_js_current_content != NULL)
+		html_reconvert_content(macsurf_js_current_content);
 
 	/* Return the appended child (same as input by spec). */
 	duk_dup(duk, 0);
