@@ -83,6 +83,13 @@ extern dom_exception macsurf_dom_element_set_attribute(dom_element *el,
 		dom_string *name, dom_string *value);
 extern dom_exception macsurf_dom_node_append_child(dom_node *parent,
 		dom_node *new_child, dom_node **result);
+/* fixes382 (M1) — JS->DOM->render: real document.body/documentElement/head. */
+extern dom_exception macsurf_dom_document_get_document_element(
+		dom_document *doc, dom_element **result);
+extern dom_exception macsurf_dom_node_get_first_child(dom_node *node,
+		dom_node **result);
+extern dom_exception macsurf_dom_node_get_next_sibling(dom_node *node,
+		dom_node **result);
 
 /* fixes342 — safe JS-init eval (defined in macsurf_js.c). Used for
  * per-element wrapper polyfill installs so a parse error in one
@@ -261,6 +268,27 @@ macsurf_push_element(duk_context *duk, dom_element *el)
 		"    for(var i=0;i<arr.length;i++)if(arr[i]===fn){arr.splice(i,1);return;}"
 		"  };"
 		"  el.dataset=el.dataset||{};"
+		"})");
+
+	/* fixes382 (M1) — layout-ish metrics on every wrapper so the now-REAL
+	 * document.body / documentElement answer FB's viewport sizing (preserves
+	 * the fixes379 stub values). Plain values for now; layout-derived dims
+	 * are a later refinement. */
+	macsurf_js__install_per_element(duk,
+		"(function(el){"
+		"  var vw=(typeof window!=='undefined'&&window.innerWidth)||980;"
+		"  var vh=(typeof window!=='undefined'&&window.innerHeight)||600;"
+		"  if(el.clientWidth===undefined)el.clientWidth=vw;"
+		"  if(el.clientHeight===undefined)el.clientHeight=vh;"
+		"  if(el.offsetWidth===undefined)el.offsetWidth=vw;"
+		"  if(el.offsetHeight===undefined)el.offsetHeight=vh;"
+		"  if(el.scrollWidth===undefined)el.scrollWidth=vw;"
+		"  if(el.scrollHeight===undefined)el.scrollHeight=vh;"
+		"  if(el.scrollTop===undefined)el.scrollTop=0;"
+		"  if(el.scrollLeft===undefined)el.scrollLeft=0;"
+		"  if(el.offsetTop===undefined)el.offsetTop=0;"
+		"  if(el.offsetLeft===undefined)el.offsetLeft=0;"
+		"  if(el.nodeType===undefined)el.nodeType=1;"
 		"})");
 
 	/* fixes336 — common element methods (matches, closest, children,
@@ -742,6 +770,113 @@ macsurf_createElement(duk_context *duk)
 }
 
 /* ----------------------------------------------------------------- */
+/* fixes382 (M1) — document.documentElement / body / head             */
+/* Real wrapped elements (was null/fake stub). The DOM nodes persist   */
+/* across box-tree rebuilds, so these wrappers stay valid; JS appends   */
+/* into the real <body>, the re-convert path (M2/M3) repaints it.       */
+/* ----------------------------------------------------------------- */
+
+/* Find a direct child element of `parent` whose tag == `want` (case-
+ * insensitive). Returns the found element holding ONE outstanding ref
+ * (the caller hands it to macsurf_push_element then unrefs), or NULL.
+ * Balances refs on every skipped sibling. */
+static dom_element *
+macsurf_find_child_by_tag(dom_element *parent, const char *want)
+{
+	dom_node *child = NULL;
+	dom_node *sib = NULL;
+	dom_element *found = NULL;
+	size_t wl;
+
+	if (parent == NULL)
+		return NULL;
+	wl = strlen(want);
+	if (macsurf_dom_node_get_first_child((dom_node *)parent, &child)
+			!= DOM_NO_ERR)
+		return NULL;
+	while (child != NULL) {
+		dom_string *tag = NULL;
+		if (macsurf_dom_element_get_tag_name((dom_element *)child, &tag)
+				== DOM_NO_ERR && tag != NULL) {
+			if ((size_t)dom_string_length(tag) == wl &&
+			    strncasecmp(dom_string_data(tag), want, wl) == 0) {
+				found = (dom_element *)child;  /* keep this ref */
+			}
+			macsurf_dom_string_unref(tag);
+		}
+		if (found != NULL)
+			break;                 /* leave child's ref on `found` */
+		if (macsurf_dom_node_get_next_sibling(child, &sib) != DOM_NO_ERR)
+			sib = NULL;
+		macsurf_dom_node_unref(child); /* drop the skipped child's ref */
+		child = sib;
+		sib = NULL;
+	}
+	return found;
+}
+
+static duk_ret_t
+macsurf_document_get_documentElement(duk_context *duk)
+{
+	dom_element *root = NULL;
+	if (macsurf_js_current_document == NULL) {
+		duk_push_null(duk);
+		return 1;
+	}
+	if (macsurf_dom_document_get_document_element(
+			macsurf_js_current_document, &root) != DOM_NO_ERR)
+		root = NULL;
+	macsurf_push_element(duk, root);        /* push takes its own ref */
+	if (root != NULL)
+		macsurf_dom_node_unref((dom_node *)root);  /* drop get's ref */
+	return 1;
+}
+
+static duk_ret_t
+macsurf_document_get_body(duk_context *duk)
+{
+	dom_element *root = NULL;
+	dom_element *body = NULL;
+	if (macsurf_js_current_document == NULL) {
+		duk_push_null(duk);
+		return 1;
+	}
+	if (macsurf_dom_document_get_document_element(
+			macsurf_js_current_document, &root) != DOM_NO_ERR)
+		root = NULL;
+	if (root != NULL) {
+		body = macsurf_find_child_by_tag(root, "body");
+		macsurf_dom_node_unref((dom_node *)root);
+	}
+	macsurf_push_element(duk, body);        /* push takes its own ref */
+	if (body != NULL)
+		macsurf_dom_node_unref((dom_node *)body);  /* drop walk ref */
+	return 1;
+}
+
+static duk_ret_t
+macsurf_document_get_head(duk_context *duk)
+{
+	dom_element *root = NULL;
+	dom_element *head = NULL;
+	if (macsurf_js_current_document == NULL) {
+		duk_push_null(duk);
+		return 1;
+	}
+	if (macsurf_dom_document_get_document_element(
+			macsurf_js_current_document, &root) != DOM_NO_ERR)
+		root = NULL;
+	if (root != NULL) {
+		head = macsurf_find_child_by_tag(root, "head");
+		macsurf_dom_node_unref((dom_node *)root);
+	}
+	macsurf_push_element(duk, head);
+	if (head != NULL)
+		macsurf_dom_node_unref((dom_node *)head);
+	return 1;
+}
+
+/* ----------------------------------------------------------------- */
 /* document.querySelector — ID-only and tag-only support.             */
 /* Supports "#foo" (getElementById) and bare tag names.  Compound     */
 /* selectors fall through to null for now.                            */
@@ -913,6 +1048,24 @@ macsurf_js_setup_globals(duk_context *duk)
 	duk_def_prop(duk, -4,
 			DUK_DEFPROP_HAVE_GETTER |
 			DUK_DEFPROP_HAVE_SETTER |
+			DUK_DEFPROP_HAVE_ENUMERABLE |
+			DUK_DEFPROP_HAVE_CONFIGURABLE | DUK_DEFPROP_CONFIGURABLE);
+
+	/* fixes382 (M1) — documentElement / body / head as getters returning
+	 * the REAL wrapped elements (replaces the fixes379 fake stubs). */
+	duk_push_string(duk, "documentElement");
+	duk_push_c_function(duk, macsurf_document_get_documentElement, 0);
+	duk_def_prop(duk, -3, DUK_DEFPROP_HAVE_GETTER |
+			DUK_DEFPROP_HAVE_ENUMERABLE |
+			DUK_DEFPROP_HAVE_CONFIGURABLE | DUK_DEFPROP_CONFIGURABLE);
+	duk_push_string(duk, "body");
+	duk_push_c_function(duk, macsurf_document_get_body, 0);
+	duk_def_prop(duk, -3, DUK_DEFPROP_HAVE_GETTER |
+			DUK_DEFPROP_HAVE_ENUMERABLE |
+			DUK_DEFPROP_HAVE_CONFIGURABLE | DUK_DEFPROP_CONFIGURABLE);
+	duk_push_string(duk, "head");
+	duk_push_c_function(duk, macsurf_document_get_head, 0);
+	duk_def_prop(duk, -3, DUK_DEFPROP_HAVE_GETTER |
 			DUK_DEFPROP_HAVE_ENUMERABLE |
 			DUK_DEFPROP_HAVE_CONFIGURABLE | DUK_DEFPROP_CONFIGURABLE);
 

@@ -26,10 +26,18 @@ void macsurf_dom_string_unref(dom_string *str)
     dom_string_unref(str);
 }
 
-dom_exception macsurf_dom_document_get_element_by_id(dom_document *doc, 
+dom_exception macsurf_dom_document_get_element_by_id(dom_document *doc,
     dom_string *id, dom_element **element)
 {
     return dom_document_get_element_by_id(doc, id, element);
+}
+
+/* fixes382 (M1) — JS->DOM->render: the JS bridge needs the real <html>
+ * root to expose document.documentElement/body/head as wrapped elements. */
+dom_exception macsurf_dom_document_get_document_element(dom_document *doc,
+    dom_element **result)
+{
+    return dom_document_get_document_element(doc, result);
 }
 
 dom_exception macsurf_dom_document_create_element(dom_document *doc, 
