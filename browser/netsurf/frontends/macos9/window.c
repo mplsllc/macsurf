@@ -558,61 +558,66 @@ void macos9_windows_te_idle(void) {
 #endif
 }
 
-/* fixes366m — coalesced reflow/repaint throttle.
+/* fixes366n — throttle the full-window REPAINT only.
  *
- * Profiling one mactrove homepage load (after the images were
- * self-hosted, killing the TLS-handshake storm) showed the remaining
- * cost is a REPAINT storm: ~63 full bw_redraws during the ~11s
- * image-arrival phase, one per arriving subresource, even though
- * layout itself is <1ms (measured via layout_us) and the heap is
- * healthy. Each subresource fired gw_event -> immediate
- * schedule_reformat + invalidate_all -> a fresh updateEvt -> a full
- * repaint (image blits dominate, ~170ms each).
+ * The mactrove repaint storm (~63 full bw_redraws / homepage load) came
+ * from gw_event calling macos9_window_invalidate_all on every arriving
+ * subresource (UPDATE_EXTENT / NEW_CONTENT) — layout itself is <1ms
+ * (layout_us) and the heap is healthy, the cost is the repeated paints
+ * (image blits, ~170ms each). Coalesce those into one repaint per
+ * debounce window.
  *
- * Route those through needs_reformat and service them here at most
- * once per debounce window, so a burst of N arrivals collapses to a
- * few reformat+repaint cycles instead of N. Throttle (not pure
- * debounce-on-quiet) so the page still renders progressively during a
- * continuous arrival stream rather than staying blank until the stream
- * pauses. STOP_THROBBER forces an immediate flush so the finished page
- * is prompt and fully correct. */
-#define MACSURF_REFORMAT_DEBOUNCE_TICKS 20  /* ~333ms @ 60 ticks/sec */
-static unsigned long g_last_reformat_tick = 0;
+ * fixes366m additionally tried to throttle the REFORMAT and deadlocked
+ * into a 232s / 660-reformat loop: a reformat fires UPDATE_EXTENT,
+ * which 366m had wired to re-arm needs_reformat, so the throttle
+ * re-reformatted forever at the debounce cadence. Lesson: the reformat
+ * path must stay as the pre-366m baseline — driven by NEW_CONTENT only
+ * and coalesced by NetSurf's own scheduler, which converges. ONLY the
+ * repaint is throttled here, and a repaint (invalidate) never fires
+ * UPDATE_EXTENT, so there is no feedback loop. */
+#define MACSURF_REPAINT_DEBOUNCE_TICKS 20  /* ~333ms @ 60 ticks/sec */
+static unsigned long g_last_repaint_tick = 0;
+static struct gui_window *g_repaint_pending_gw = NULL;
 
-static void macos9_do_one_reformat(struct gui_window *g) {
-	g->reformat_in_progress=1; g->needs_reformat=0;
-	browser_window_schedule_reformat(g->bw);
-	g->reformat_in_progress=0;
-	macos9_window_update_scrollbars(g);
-	macos9_window_invalidate_all(g);
+/* Request a coalesced full repaint of g (serviced, throttled, in
+ * macos9_windows_process_deferred). */
+static void macos9_window_request_repaint(struct gui_window *g) {
+	g_repaint_pending_gw = g;
+}
+
+/* Repaint the pending window now, bypassing the throttle (load
+ * complete — the final frame should not wait out the debounce). */
+static void macos9_window_flush_repaint_now(void) {
+	if (g_repaint_pending_gw != NULL && g_repaint_pending_gw->window != NULL) {
+		macos9_window_invalidate_all(g_repaint_pending_gw);
 #ifdef __MACOS9__
-	g_last_reformat_tick = TickCount();
+		g_last_repaint_tick = TickCount();
 #endif
+	}
+	g_repaint_pending_gw = NULL;
 }
 
 void macos9_windows_process_deferred(void) {
 	struct gui_window *g;
+	/* reformat deferral — unchanged from the pre-366m baseline (RESIZE
+	 * sets needs_reformat; NetSurf's scheduler coalesces the actual
+	 * reformats). Must NOT be throttled (366m looped). */
+	for(g=window_list;g;g=g->next) if(g->needs_reformat && g->bw && !g->reformat_in_progress) {
+		g->reformat_in_progress=1; g->needs_reformat=0; browser_window_schedule_reformat(g->bw); g->reformat_in_progress=0;
+	}
 #ifdef __MACOS9__
-	unsigned long now = TickCount();
-	/* first reformat after a quiet gap fires immediately; subsequent
-	 * ones during a burst are throttled to the debounce interval. */
-	if (g_last_reformat_tick != 0 &&
-	    (now - g_last_reformat_tick) < MACSURF_REFORMAT_DEBOUNCE_TICKS)
-		return;
+	/* throttled repaint flush: at most one full invalidate per window
+	 * per debounce window. First repaint after a quiet gap is immediate. */
+	if (g_repaint_pending_gw != NULL && g_repaint_pending_gw->window != NULL) {
+		unsigned long now = TickCount();
+		if (g_last_repaint_tick == 0 ||
+		    (now - g_last_repaint_tick) >= MACSURF_REPAINT_DEBOUNCE_TICKS) {
+			macos9_window_invalidate_all(g_repaint_pending_gw);
+			g_repaint_pending_gw = NULL;
+			g_last_repaint_tick = now;
+		}
+	}
 #endif
-	for(g=window_list;g;g=g->next) if(g->needs_reformat && g->bw && !g->reformat_in_progress) {
-		macos9_do_one_reformat(g);
-	}
-}
-
-/* fixes366m — bypass the throttle and reformat+repaint pending windows
- * now (called on load complete so the final page doesn't wait out the
- * debounce window). */
-void macos9_windows_flush_reformat_now(void) {
-	struct gui_window *g;
-	for(g=window_list;g;g=g->next) if(g->needs_reformat && g->bw && !g->reformat_in_progress) {
-		macos9_do_one_reformat(g);
-	}
 }
 
 struct gui_window *initial_win = NULL;
@@ -815,19 +820,21 @@ static nserror macos9_gw_event(struct gui_window *g, enum gui_window_event e) {
 		int w=0, h=0; if(g->bw && browser_window_get_extents(g->bw, false, &w, &h)==NSERROR_OK) { g->content_width=w; g->content_height=h; }
 		if(e==GW_EVENT_NEW_CONTENT) {
 			g->scroll_x=0; g->scroll_y=0;
+			/* reformat on NEW_CONTENT only — the pre-366m semantics.
+			 * NetSurf's scheduler coalesces repeated calls and the
+			 * reformat sequence converges. (366m wrongly drove reformat
+			 * from UPDATE_EXTENT too, which a reformat re-fires -> loop.) */
+			if(g->bw) browser_window_schedule_reformat(g->bw);
 		}
-		/* fixes366m — flag the reformat+repaint and let
-		 * macos9_windows_process_deferred throttle it, instead of an
-		 * immediate schedule_reformat + invalidate_all per arriving
-		 * subresource (that produced the ~63-repaint storm). Scrollbar
-		 * and button state stay live for responsiveness; they are
-		 * cheap. STOP_THROBBER means loading is done — flush now so the
-		 * final page renders without waiting out the debounce. */
-		g->needs_reformat = 1;
+		/* fixes366n — coalesce the repaint storm: request a THROTTLED
+		 * full repaint instead of an immediate invalidate_all on every
+		 * event. Scrollbar/button state stay live (cheap, Draw1Control,
+		 * no content invalidate). STOP_THROBBER = load done -> repaint
+		 * now so the final frame doesn't wait out the debounce. */
 		macos9_window_update_scrollbars(g); macos9_window_update_button_states(g);
+		macos9_window_request_repaint(g);
 		if(e==GW_EVENT_STOP_THROBBER) {
-			extern void macos9_windows_flush_reformat_now(void);
-			macos9_windows_flush_reformat_now();
+			macos9_window_flush_repaint_now();
 		}
 	}
 	return 0;
