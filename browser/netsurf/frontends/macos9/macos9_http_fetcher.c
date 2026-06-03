@@ -1207,6 +1207,9 @@ static void macos9_http_poll(lwc_string *s) {
 			c->state=MFS_NOTIFIED; fetch_send_callback(&m,c->parent);
 			macsurf_debug_log_writef("http: done body=%ld len=%ld status=%d ka=%d", c->body_bytes, c->content_length, c->status, c->keep_alive_ok);
 			macsurf_profile_stamp("fetch-finished");
+			/* fixes369 (#167) — page-weight accounting. */
+			macsurf_profile_add_bytes(c->body_bytes);
+			macsurf_profile_count_resource();
 			/* fixes172 — write captured body to the disk cache.
 			 * cache_eligible is set in mfs_parse_headers when
 			 * the response is a cacheable MIME type with

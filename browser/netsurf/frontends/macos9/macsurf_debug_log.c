@@ -610,6 +610,14 @@ static UnsignedWide g_profile_t0 = { 0, 0 };
 #endif
 static int g_profile_t0_set = 0;
 
+/* fixes369 (#167) — per-load page-weight + resource-count accounting, the
+ * size dimension the timing stamps lacked. Reset at nav start with the
+ * timing t0; accumulated by the fetchers; emitted at load-complete as a
+ * single parseable PROFILE line that perf/scrape.py folds into
+ * perf/history.csv so page weight is measurable run-over-run. */
+static long g_profile_bytes = 0;	/* total body bytes this load   */
+static int  g_profile_resources = 0;	/* sub-resource fetches this load */
+
 #ifdef __MACOS9__
 static double
 profile_us_from_wide(const UnsignedWide *w)
@@ -628,6 +636,9 @@ macsurf_profile_reset(void)
 #else
 	g_profile_t0_set = 1;
 #endif
+	/* fixes369 — zero the page-weight + resource counters per load. */
+	g_profile_bytes = 0;
+	g_profile_resources = 0;
 	/* fixes366c — clear the redraw / plotter diag-line throttles
 	 * so each navigation gets a fresh window of 5 events per
 	 * pattern instead of one shared budget across the whole
@@ -666,6 +677,28 @@ macsurf_profile_stamp(const char *label)
 #endif
 }
 
+/* fixes369 (#167) — page-weight + resource-count accounting. */
+void
+macsurf_profile_add_bytes(long n)
+{
+	if (n > 0) g_profile_bytes += n;
+}
+
+void
+macsurf_profile_count_resource(void)
+{
+	g_profile_resources++;
+}
+
+void
+macsurf_profile_emit(const char *url)
+{
+	if (url == NULL) url = "(null)";
+	macsurf_debug_log_writef(
+		"PROFILE url=%s total_bytes=%ld subresources=%d",
+		url, g_profile_bytes, g_profile_resources);
+}
+
 #else /* !MACSURF_DEBUG */
 
 /*
@@ -692,6 +725,9 @@ void macsurf_profile_reset(void)
 	macos9_plotter_diag_counters_reset();
 }
 void macsurf_profile_stamp(const char *label) { (void)label; }
+void macsurf_profile_add_bytes(long n) { (void)n; }
+void macsurf_profile_count_resource(void) {}
+void macsurf_profile_emit(const char *url) { (void)url; }
 
 #endif /* MACSURF_DEBUG */
 

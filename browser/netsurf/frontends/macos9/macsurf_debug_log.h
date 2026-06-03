@@ -83,4 +83,14 @@ void macsurf_debug_log_tracef(const char *fmt, ...);
 void macsurf_profile_reset(void);
 void macsurf_profile_stamp(const char *label);
 
+/* fixes369 (#167) — per-load page-weight + resource-count measurement,
+ * the size dimension the timing stamps lacked. Reset by
+ * macsurf_profile_reset(). The fetchers call _add_bytes() for each chunk
+ * of body delivered and _count_resource() once per fetch started; main.c
+ * calls _emit(url) at first-paint so perf/scrape.py can fold total bytes
+ * and sub-resource count into perf/history.csv alongside the timings. */
+void macsurf_profile_add_bytes(long n);
+void macsurf_profile_count_resource(void);
+void macsurf_profile_emit(const char *url);
+
 #endif

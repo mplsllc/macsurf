@@ -487,6 +487,14 @@ static void macos9_handle_update(const EventRecord *event) {
 			macos9_hrb_clip_skips,
 			macos9_plot_text_count, macos9_plot_rect_count);
 		macsurf_profile_stamp("first-paint-done");
+		/* fixes369 (#167) — page is on screen: emit the per-load
+		 * page-weight + resource-count summary for perf/scrape.py ->
+		 * perf/history.csv, so changes/improvements are measurable. */
+		{
+			struct nsurl *pu = (gw && gw->bw) ?
+				browser_window_access_url(gw->bw) : NULL;
+			macsurf_profile_emit(pu ? nsurl_access(pu) : "(unknown)");
+		}
 		macsurf_debug_log_writef(
 			"GRADIENT DIAG: set=%ld radial_unpacks=%ld linear_unpacks=%ld",
 			macos9_grad_set_count,

@@ -961,6 +961,10 @@ static void hctx_finish(struct macos9_https_ctx *c)
 	macsurf_debug_log_writef("https: done body=%ld status=%d",
 		c->body_bytes, c->status);
 	macsurf_profile_stamp("fetch-finished");
+	/* fixes369 (#167) — page-weight accounting: fold this completed
+	 * sub-resource's body size + 1 into the per-load totals. */
+	macsurf_profile_add_bytes(c->body_bytes);
+	macsurf_profile_count_resource();
 
 	/* fixes218 — write to disk before tearing down the slot. */
 	if (c->cache_eligible && !c->cache_overflow &&
