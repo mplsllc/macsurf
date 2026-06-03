@@ -1389,11 +1389,13 @@ nserror html_reconvert(html_content *c)
 	return error;
 }
 
-/* Thin content* wrapper so the macos9 JS bindings can trigger a re-convert
- * without the full html_content type (or nserror) in scope. */
-void html_reconvert_content(struct content *c)
+/* Thin content* wrapper so the macos9 JS bindings / scheduler can trigger a
+ * re-convert without the full html_content type in scope. Returns the nserror
+ * as int: 0 = NSERROR_OK (re-convert queued), non-zero = busy/skip (the caller
+ * should re-arm). */
+int html_reconvert_content(struct content *c)
 {
-	(void) html_reconvert((html_content *) c);
+	return (int) html_reconvert((html_content *) c);
 }
 
 static void html_reformat(struct content *c, int width, int height)

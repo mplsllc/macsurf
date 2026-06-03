@@ -158,7 +158,10 @@ macsurf_js_set_document(dom_document *doc)
  * so this TU needs no html internals. */
 struct content;
 static struct content *macsurf_js_current_content = NULL;
-extern void html_reconvert_content(struct content *c);
+/* fixes384 (M3) — debounced re-convert (macos9_reconvert.c). Replaces the
+ * fixes383 immediate html_reconvert_content call: a mutation burst now
+ * coalesces to ONE re-convert via the scheduler. */
+extern void macos9_js_mark_dom_dirty(struct content *c);
 
 void
 macsurf_js_set_content(struct content *c)
@@ -616,7 +619,7 @@ macsurf_setTextContent(duk_context *duk)
 	 * (the old path) would not show it. Re-convert rebuilds the box tree from
 	 * the mutated DOM and repaints, so the new text actually appears. */
 	if (macsurf_js_current_content != NULL)
-		html_reconvert_content(macsurf_js_current_content);
+		macos9_js_mark_dom_dirty(macsurf_js_current_content);
 #endif
 	return 0;
 }
@@ -690,6 +693,10 @@ macsurf_setAttribute(duk_context *duk)
 	macsurf_dom_element_set_attribute(el, name_str, val_str);
 	macsurf_dom_string_unref(val_str);
 	macsurf_dom_string_unref(name_str);
+	/* fixes384 (M3) — attribute changes (class/style/hidden) affect render;
+	 * debounced re-convert coalesces the frequent ones. */
+	if (macsurf_js_current_content != NULL)
+		macos9_js_mark_dom_dirty(macsurf_js_current_content);
 	return 0;
 }
 
@@ -728,7 +735,7 @@ macsurf_appendChild(duk_context *duk)
 	/* fixes383 (M2) — structural DOM mutation reached the real tree;
 	 * re-convert (rebuild box tree) + repaint so JS-built content shows. */
 	if (macsurf_js_current_content != NULL)
-		html_reconvert_content(macsurf_js_current_content);
+		macos9_js_mark_dom_dirty(macsurf_js_current_content);
 
 	/* Return the appended child (same as input by spec). */
 	duk_dup(duk, 0);
