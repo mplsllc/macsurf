@@ -52,7 +52,16 @@
                                     cost: ~3.7 KB/slot static + OSTLS
                                     connection only when active, so 64
                                     slots cost ~240 KB resident at idle. */
-#define HDR_BUF_MAX        4096
+/* fixes372 (#167) — 4096 was too small for Facebook's response header
+ * block. FB sends ~5.4 KB of headers to the KaiOS login surface (the
+ * content-security-policy alone is ~2.2 KB, plus permissions-policy ~1 KB,
+ * report-to, reporting-endpoints, and several Set-Cookie lines), and login
+ * 302 responses carry even more Set-Cookies. The old 4 KB cap tripped
+ * "header buffer overflow" and the whole page fell back to fetcherror.
+ * 16 KB gives ample margin for FB and any other heavy-header origin. The
+ * buffer is grown on demand (hdr_append), so this is only a ceiling, not a
+ * per-fetch allocation. */
+#define HDR_BUF_MAX        16384
 /* fixes234 — bumped from 1024 to 8192. With sleep=0 in main.c we poll
  * ~hundreds of times per second, but at 1 KB per drain the body delivery
  * rate ceilinged at ~60 KB/s and a 59 KB mactrove home page took ~2.5 s
