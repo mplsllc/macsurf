@@ -802,6 +802,58 @@ static void hctx_cache_capture(struct macos9_https_ctx *c,
 	c->cache_cap_len += len;
 }
 
+/* fixes369b (#167) — decode a BearSSL error code (OSTLSDiagnostics.br_err)
+ * to its name so a failed handshake is diagnosable from the log at a glance
+ * instead of as a bare number. The Facebook page-load suspects map straight
+ * to names here: X509_NOT_TRUSTED (62) = the chain's root anchor isn't in
+ * our CA bundle; X509_BAD_SIGNATURE (52) = a cert-chain signature (e.g. the
+ * RSA intermediate signing FB's leaf) didn't verify; INVALID_ALGORITHM (26)
+ * = a signature algorithm we don't offer/handle. BearSSL: SSL errors 0-31,
+ * X.509 errors are 32+, fatal-alert ranges at 256/512. */
+static const char *ostls_br_err_name(int e)
+{
+	switch (e) {
+	case 0:  return "OK";
+	case 1:  return "BAD_PARAM";
+	case 2:  return "BAD_STATE";
+	case 3:  return "UNSUPPORTED_VERSION";
+	case 4:  return "BAD_VERSION";
+	case 5:  return "BAD_LENGTH";
+	case 7:  return "BAD_MAC";
+	case 8:  return "NO_RANDOM";
+	case 10: return "UNEXPECTED";
+	case 13: return "BAD_ALERT";
+	case 14: return "BAD_HANDSHAKE";
+	case 16: return "BAD_CIPHER_SUITE";
+	case 19: return "BAD_SECRENEG";
+	case 21: return "BAD_SNI";
+	case 24: return "BAD_FINISHED";
+	case 26: return "INVALID_ALGORITHM";
+	case 27: return "BAD_SIGNATURE";
+	case 28: return "WRONG_KEY_USAGE";
+	case 31: return "IO";
+	case 32: return "X509_OK";
+	case 34: return "X509_TRUNCATED";
+	case 35: return "X509_EMPTY_CHAIN";
+	case 49: return "X509_UNSUPPORTED";
+	case 50: return "X509_LIMIT_EXCEEDED";
+	case 51: return "X509_WRONG_KEY_TYPE";
+	case 52: return "X509_BAD_SIGNATURE";
+	case 53: return "X509_TIME_UNKNOWN";
+	case 54: return "X509_EXPIRED";
+	case 55: return "X509_DN_MISMATCH";
+	case 56: return "X509_BAD_SERVER_NAME";
+	case 58: return "X509_NOT_CA";
+	case 59: return "X509_FORBIDDEN_KEY_USAGE";
+	case 60: return "X509_WEAK_PUBLIC_KEY";
+	case 62: return "X509_NOT_TRUSTED";
+	default: break;
+	}
+	if (e >= 512) return "SEND_FATAL_ALERT";
+	if (e >= 256) return "RECV_FATAL_ALERT";
+	return "?";
+}
+
 static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 {
 	struct fetch *p;
@@ -831,8 +883,9 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 		 * gets printed as decimal; 0xCCA9 = 52393 (ChaCha20-Poly1305),
 		 * 0xC02B = 49195 (ECDHE-ECDSA-AES128-GCM-SHA256). */
 		macsurf_debug_log_writef(
-			"  FAIL diag os_err=%d ot_err=%ld br_err=%d state=%d cipher_dec=%d",
+			"  FAIL diag os_err=%d ot_err=%ld br_err=%d(%s) state=%d cipher_dec=%d",
 			(int)diag.os_err, (long)diag.ot_err, (int)diag.br_err,
+			ostls_br_err_name((int)diag.br_err),
 			(int)diag.state, (int)diag.cipher_suite);
 		macsurf_debug_log_writef(
 			"  FAIL diag pumps=%ld br_state=%ld",
