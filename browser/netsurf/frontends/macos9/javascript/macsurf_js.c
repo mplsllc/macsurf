@@ -986,6 +986,79 @@ static void register_browser_globals(duk_context *ctx)
 		"}"
 		"})(this);");
 
+
+	/* fixes381 (#167) -- capability-detection stub layer: "match the minimums
+	 * so Facebook lets us in." Every API is PRESENT (so if(window.X) passes),
+	 * no-throw, and gracefully degrading (FB falls back, never hangs). FB's SPA
+	 * gates the real feed behind feature detection; satisfy it and FB stops
+	 * serving "not available on this device." Real implementations follow per
+	 * the roadmap (push the limits). ES5, node-verified incl. minified+async.
+	 * Runs last so it does not clobber any earlier real binding. */
+	macsurf_js__safe_eval(ctx,
+		"(function(g){"
+		"var rp = function(v){ return g.Promise ? g.Promise.resolve(v)"
+		": { then:function(cb){ try{cb(v);}catch(e){} return this; },"
+		"catch:function(){ return this; } }; };"
+		"var soon = function(fn){ if(typeof g.setTimeout==='function') g.setTimeout(fn,0); else { try{fn();}catch(e){} } };"
+		"if(typeof g.WebSocket==='undefined'){"
+		"var WS = function(url,protocols){"
+		"var self=this; self.url=url; self.readyState=0; self.protocol='';"
+		"self.binaryType='blob'; self.bufferedAmount=0; self.extensions='';"
+		"self.onopen=null; self.onmessage=null; self.onclose=null; self.onerror=null;"
+		"self.send=function(){ return false; };"
+		"self.close=function(){ self.readyState=3; if(self.onclose){ try{self.onclose({code:1000,reason:'',wasClean:true});}catch(e){} } };"
+		"self.addEventListener=function(t,f){ if(t==='open')self.onopen=f; else if(t==='message')self.onmessage=f; else if(t==='close')self.onclose=f; else if(t==='error')self.onerror=f; };"
+		"self.removeEventListener=function(){};"
+		"soon(function(){ self.readyState=3; if(self.onerror){try{self.onerror({type:'error'});}catch(e){}} if(self.onclose){try{self.onclose({code:1006,reason:'',wasClean:false});}catch(e){}} });"
+		"};"
+		"WS.CONNECTING=0; WS.OPEN=1; WS.CLOSING=2; WS.CLOSED=3;"
+		"g.WebSocket=WS;"
+		"}"
+		"if(typeof g.indexedDB==='undefined'){"
+		"var mkreq = function(){ return {result:undefined,error:{name:'UnknownError',message:'unsupported'},onsuccess:null,onerror:null,onupgradeneeded:null,readyState:'pending'}; };"
+		"g.indexedDB = {"
+		"open:function(){ var r=mkreq(); soon(function(){ r.readyState='done'; if(r.onerror){try{r.onerror({target:r});}catch(e){}} }); return r; },"
+		"deleteDatabase:function(){ var r=mkreq(); soon(function(){ if(r.onsuccess){try{r.onsuccess({target:r});}catch(e){}} }); return r; },"
+		"databases:function(){ return rp([]); },"
+		"cmp:function(a,b){ return a<b?-1:(a>b?1:0); }"
+		"};"
+		"g.IDBKeyRange={ bound:function(){return {};}, only:function(){return {};}, lowerBound:function(){return {};}, upperBound:function(){return {};} };"
+		"}"
+		"if(typeof g.Notification==='undefined'){"
+		"var N = function(title,opts){ this.title=title; this.body=(opts&&opts.body)||''; this.onclick=null; this.onclose=null; this.close=function(){}; };"
+		"N.permission='denied';"
+		"N.requestPermission=function(cb){ if(cb){ try{cb('denied');}catch(e){} } return rp('denied'); };"
+		"g.Notification=N;"
+		"}"
+		"if(typeof g.MediaSource==='undefined'){"
+		"var MS = function(){ this.readyState='closed'; this.sourceBuffers=[]; this.activeSourceBuffers=[]; this.duration=NaN;"
+		"this.addEventListener=function(){}; this.removeEventListener=function(){};"
+		"this.addSourceBuffer=function(){ return { appendBuffer:function(){}, abort:function(){}, addEventListener:function(){}, removeEventListener:function(){}, buffered:{length:0} }; };"
+		"this.removeSourceBuffer=function(){}; this.endOfStream=function(){}; };"
+		"MS.isTypeSupported=function(){ return false; };"
+		"g.MediaSource=MS;"
+		"}"
+		"if(typeof g.crypto==='undefined') g.crypto={};"
+		"if(typeof g.crypto.getRandomValues!=='function'){"
+		"var seed = (typeof g.Date!=='undefined' && g.Date.now) ? (g.Date.now()>>>0) : 123456789;"
+		"g.crypto.getRandomValues=function(arr){ var i; if(arr&&typeof arr.length==='number'){ for(i=0;i<arr.length;i++){ seed=(seed*1103515245+12345)>>>0; arr[i]=(seed>>>(16+(i&7)))&0xff; } } return arr; };"
+		"}"
+		"if(typeof g.caches==='undefined'){"
+		"var emptyCache = { match:function(){return rp(undefined);}, matchAll:function(){return rp([]);}, add:function(){return rp(undefined);}, addAll:function(){return rp(undefined);}, put:function(){return rp(undefined);}, 'delete':function(){return rp(false);}, keys:function(){return rp([]);} };"
+		"g.caches = { open:function(){return rp(emptyCache);}, match:function(){return rp(undefined);}, has:function(){return rp(false);}, 'delete':function(){return rp(false);}, keys:function(){return rp([]);} };"
+		"}"
+		"if(typeof g.Blob==='undefined'){ g.Blob=function(parts,opts){ this.size=0; this.type=(opts&&opts.type)||''; this.slice=function(){ return new g.Blob([]); }; }; }"
+		"if(typeof g.File==='undefined'){ g.File=function(parts,name,opts){ this.name=name||''; this.size=0; this.type=(opts&&opts.type)||''; this.lastModified=0; }; }"
+		"if(typeof g.FileReader==='undefined'){"
+		"var FR = function(){ var s=this; s.result=null; s.error=null; s.readyState=0; s.onload=null; s.onerror=null; s.onloadend=null; s.onprogress=null;"
+		"s.readAsText=function(){ s.readyState=2; if(s.onload){try{s.onload({target:s});}catch(e){}} if(s.onloadend){try{s.onloadend({target:s});}catch(e){}} };"
+		"s.readAsDataURL=s.readAsText; s.readAsArrayBuffer=s.readAsText; s.readAsBinaryString=s.readAsText; s.abort=function(){};"
+		"s.addEventListener=function(){}; s.removeEventListener=function(){}; };"
+		"g.FileReader=FR;"
+		"}"
+		"if(typeof g.URL!=='undefined' && typeof g.URL.createObjectURL!=='function'){ g.URL.createObjectURL=function(){ return 'blob:macsurf/0'; }; g.URL.revokeObjectURL=function(){}; }"
+		"})(this);");
+
 	duk_pop(ctx); /* pop global */
 }
 
