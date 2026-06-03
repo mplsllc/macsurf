@@ -899,6 +899,14 @@ static void macos9_gw_set_status(struct gui_window *g, const char *t) {
 	 * unless the visible text actually changed. */
 	if (g == NULL || t == NULL) return;
 	if (strcmp(g->status, t) == 0) return;
+	/* fixes369c (#167) — log every DISTINCT status string. This is
+	 * NetSurf core's load-lifecycle narration (Fetching… / Loading N
+	 * objects / Done / error text) — the previously-uninstrumented middle
+	 * between the fetcher trace and the bw_redraw counters. If the page
+	 * stalls it shows the last state reached; if it fetches but never
+	 * paints, it shows "Done" with no redraw following. Deduped above, so
+	 * no spam. */
+	macsurf_debug_log_writef("status: %s", t);
 	strncpy(g->status, t, 127);
 	g->status[127] = 0;
 	if (g->window) InvalWindowRect(g->window, &g->status_rect);
