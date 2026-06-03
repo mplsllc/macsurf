@@ -1312,14 +1312,16 @@ static void html_reformat(struct content *c, int width, int height)
 		layout_document(htmlc, width, height);
 		free_after = macos9_heap_free_bytes();
 		max_after = macos9_heap_max_block();
+		/* fixes366k — one combined line so the heap data rides on the
+		 * same writef that already prints (the prior split HEAPPROF
+		 * emit produced no output). measure = QuickDraw TextWidth load;
+		 * free/maxblk = app-heap free total and largest contiguous
+		 * block, before->after this layout pass. */
 		macsurf_debug_log_writef(
-			"FONTPROF layout measure_calls=%ld measure_chars=%ld",
+			"LAYPROF mcalls=%ld mchars=%ld free=%ld->%ld maxblk=%ld->%ld",
 			macos9_font_measure_calls,
-			macos9_font_measure_chars);
-		macsurf_debug_log_writef(
-			"HEAPPROF layout free=%ld->%ld maxblk=%ld->%ld delta=%ld",
-			free_before, free_after, max_before, max_after,
-			free_before - free_after);
+			macos9_font_measure_chars,
+			free_before, free_after, max_before, max_after);
 	}
 	MS_LOG("html_reformat: post-layout_document");
 	macsurf_profile_stamp("layout-done");
