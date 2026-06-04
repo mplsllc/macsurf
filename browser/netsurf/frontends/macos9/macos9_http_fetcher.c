@@ -538,7 +538,8 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		/* Length of the constant template (without %-substitutions).
 		 * fixes312 raises this 60→86 reservation when a Content-Length
 		 * and Content-Type are also emitted. */
-		size_t TEMPLATE_LEN = (c->post_body != NULL) ? 160 : 86;
+		/* fixes407 -- +27 for "Accept-Encoding: identity\r\n" added below */
+		size_t TEMPLATE_LEN = (c->post_body != NULL) ? 200 : 120;
 		const char *method = (c->post_body != NULL) ? "POST" : "GET";
 		const char *post_extra_hdrs = (c->post_body != NULL) ?
 			"Content-Type: application/x-www-form-urlencoded\r\n" :
@@ -610,6 +611,7 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 					"Host: %.*s\r\n"
 					"User-Agent: %s\r\n"
 					"Accept: */*\r\n"
+					"Accept-Encoding: identity\r\n"
 					"%s"
 					"%s"
 					"Content-Length: %ld\r\n"
@@ -623,6 +625,7 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 					"Host: %.*s\r\n"
 					"User-Agent: %s\r\n"
 					"Accept: */*\r\n"
+					"Accept-Encoding: identity\r\n"
 					"%s"
 					"Connection: keep-alive\r\n\r\n",
 					u_full, (int)host_len, host_str,
@@ -694,6 +697,7 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 					"Host: %.*s\r\n"
 					"User-Agent: %s\r\n"
 					"Accept: */*\r\n"
+					"Accept-Encoding: identity\r\n"
 					"%s"
 					"%s"
 					"Content-Length: %ld\r\n"
@@ -707,6 +711,7 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 					"Host: %.*s\r\n"
 					"User-Agent: %s\r\n"
 					"Accept: */*\r\n"
+					"Accept-Encoding: identity\r\n"
 					"%s"
 					"Connection: keep-alive\r\n\r\n",
 					path_buf, (int)host_len, host_str,
