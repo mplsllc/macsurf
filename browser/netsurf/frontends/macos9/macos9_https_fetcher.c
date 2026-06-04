@@ -1619,6 +1619,11 @@ static int build_request(struct macos9_https_ctx *c)
 			"Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
 			"Accept-Language: en-US,en;q=0.5\r\n"
 			"Accept-Encoding: identity\r\n"
+			"Upgrade-Insecure-Requests: 1\r\n"
+			"Sec-Fetch-Dest: document\r\n"
+			"Sec-Fetch-Mode: navigate\r\n"
+			"Sec-Fetch-Site: same-origin\r\n"
+			"Sec-Fetch-User: ?1\r\n"
 			"%s"
 			"Content-Type: application/x-www-form-urlencoded\r\n"
 			"Content-Length: %lu\r\n"
@@ -1627,6 +1632,16 @@ static int build_request(struct macos9_https_ctx *c)
 			c->path, c->host, ua, cookie_hdr,
 			(unsigned long)c->post_body_len);
 	} else {
+		/* fixes400 (#167) — send the fetch-metadata headers a real
+		 * browser sends. Facebook returns HTTP 400 to a modern-UA
+		 * request that LACKS Sec-Fetch-* (verified: www.facebook.com
+		 * 400 without them, 200 with them, on HTTP/1.1 + identity
+		 * encoding). This is FB's "you claim to be Firefox but don't
+		 * send what Firefox sends" bot check. Upgrade-Insecure-Requests
+		 * + Sec-Fetch-Dest/Mode/Site/User make a top-level navigation
+		 * look real. Site: none = user-initiated top-level load (typing
+		 * a URL); this is the correct value for the main document, which
+		 * is the request FB gates. */
 		rn = sprintf(c->req_buf,
 			"GET %s HTTP/1.1\r\n"
 			"Host: %s\r\n"
@@ -1634,6 +1649,11 @@ static int build_request(struct macos9_https_ctx *c)
 			"Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
 			"Accept-Language: en-US,en;q=0.5\r\n"
 			"Accept-Encoding: identity\r\n"
+			"Upgrade-Insecure-Requests: 1\r\n"
+			"Sec-Fetch-Dest: document\r\n"
+			"Sec-Fetch-Mode: navigate\r\n"
+			"Sec-Fetch-Site: none\r\n"
+			"Sec-Fetch-User: ?1\r\n"
 			"%s"
 			"Connection: %s\r\n"
 			"\r\n",
