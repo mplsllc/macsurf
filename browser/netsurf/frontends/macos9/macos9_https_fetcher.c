@@ -1238,6 +1238,30 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 					macsurf_debug_log_writef(
 						"https: refused 'noscript' Set-Cookie "
 						"(we have JS) for %s", c->host);
+				} else if (!fetch_get_verifiable(c->parent)) {
+					/* fixes405 (#167) — store Set-Cookie ONLY from
+					 * the verifiable (document / user-navigation /
+					 * login POST + its 302) fetch. A sub-resource
+					 * fetch (favicon, image, css, js) is
+					 * verifiable=false and routes fetch_set_cookie
+					 * through urldb's referer-matched branch — that
+					 * path crashed the machine on Facebook's logged-in
+					 * mbasic favicon Set-Cookie (datr/fr). Those are
+					 * redundant refreshes of cookies the document
+					 * fetch already stored, so skipping them is loss-
+					 * less for login and removes the crash entirely.
+					 * Name-only log, never the value. */
+					char nm[40];
+					int k = 0;
+					while (v[k] != '\0' && v[k] != '=' &&
+					       k < 39) {
+						nm[k] = v[k];
+						k++;
+					}
+					nm[k] = '\0';
+					macsurf_debug_log_writef(
+						"https: skip sub-resource Set-Cookie "
+						"'%s' for %s", nm, c->host);
 				} else {
 					fetch_set_cookie(c->parent, v);
 					/* fixes367 (#167) — log the cookie NAME only (up

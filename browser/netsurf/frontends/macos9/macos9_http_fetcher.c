@@ -911,13 +911,25 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 		 * handling below tears the fetch down, so a login POST's 302
 		 * carries its session cookies into urldb. Mirrors curl.c. */
 		if(strncasecmp(p,"Set-Cookie:",11)==0) {
-			char *v=p+11; while(*v==' '||*v=='\t')v++;
-			fetch_set_cookie(c->parent, v);
-			/* fixes367 (#167) — log cookie NAME only, never value. */
-			{
-				char nm[40]; int k=0;
-				while(v[k]!='\0' && v[k]!='=' && k<39){ nm[k]=v[k]; k++; }
-				nm[k]='\0';
+			/* fixes405 (#167) — store Set-Cookie ONLY from the
+			 * verifiable (document / user-navigation) fetch; a
+			 * sub-resource (favicon/image/css/js) is verifiable=false
+			 * and takes urldb's referer-matched cookie path, which
+			 * crashed on Facebook's logged-in favicon over https.
+			 * Mirror that guard here so an http sub-resource can't hit
+			 * the same path. Login is unaffected (document + POST +
+			 * 302 are verifiable). */
+			char *v=p+11;
+			char nm[40]; int k=0;
+			while(*v==' '||*v=='\t')v++;
+			while(v[k]!='\0' && v[k]!='=' && k<39){ nm[k]=v[k]; k++; }
+			nm[k]='\0';
+			if (!fetch_get_verifiable(c->parent)) {
+				macsurf_debug_log_writef(
+					"http: skip sub-resource Set-Cookie '%s'", nm);
+			} else {
+				fetch_set_cookie(c->parent, v);
+				/* fixes367 (#167) — log cookie NAME only, never value. */
 				macsurf_debug_log_writef("http: stored cookie '%s'", nm);
 			}
 		}
