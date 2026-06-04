@@ -90,8 +90,15 @@ static const struct macos9_ua_rule macos9_ua_rules[] = {
 	 * still run (NOT the latest FF/Chrome, which pulls the full ES2020+ SPA
 	 * we can't execute). Login now relies on the persisted c_user/xs cookies
 	 * (fixes368), so we no longer need the KaiOS UA's login-form surface. */
+	/* fixes398 (#167) — identify as current DESKTOP Firefox and target the
+	 * real www.facebook.com (not the mobile/mbasic surface). Claiming the
+	 * newest version got FB to drop the "unsupported" gate and actually try
+	 * to load (vs the old-UA interstitial); the remaining work is to BUILD
+	 * the JS capabilities the desktop site needs to run (ES6+ transpiler
+	 * stages), not to keep tuning the UA. Desktop UA so FB serves the full
+	 * site instead of m.facebook. */
 	{ "facebook.com",
-	  "Mozilla/5.0 (Android 9; Mobile; rv:68.0) Gecko/68.0 Firefox/68.0" }
+	  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0" }
 	/* add more host->UA overrides here */
 };
 
