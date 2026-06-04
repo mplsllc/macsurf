@@ -1059,6 +1059,36 @@ static void register_browser_globals(duk_context *ctx)
 		"if(typeof g.URL!=='undefined' && typeof g.URL.createObjectURL!=='function'){ g.URL.createObjectURL=function(){ return 'blob:macsurf/0'; }; g.URL.revokeObjectURL=function(){}; }"
 		"})(this);");
 
+
+	/* fixes386 (#167) -- DOM constructor family. FB references/feature-detects
+	 * these (HTMLCanvasElement undefined was a hard ReferenceError that aborted a
+	 * whole FB script). Presence stubs (empty constructors with a .prototype).
+	 * ES5, node-verified. Part of "match the minimums". */
+	macsurf_js__safe_eval(ctx,
+		"(function(g){"
+		"var names=['Node','Element','CharacterData','Text','Comment','DocumentFragment',"
+		"'HTMLElement','HTMLUnknownElement','HTMLHtmlElement','HTMLHeadElement','HTMLBodyElement',"
+		"'HTMLDivElement','HTMLSpanElement','HTMLParagraphElement','HTMLAnchorElement',"
+		"'HTMLImageElement','HTMLCanvasElement','HTMLInputElement','HTMLButtonElement',"
+		"'HTMLTextAreaElement','HTMLSelectElement','HTMLOptionElement','HTMLFormElement',"
+		"'HTMLLabelElement','HTMLUListElement','HTMLOListElement','HTMLLIElement',"
+		"'HTMLTableElement','HTMLTableRowElement','HTMLTableCellElement',"
+		"'HTMLScriptElement','HTMLStyleElement','HTMLLinkElement','HTMLMetaElement',"
+		"'HTMLIFrameElement','HTMLVideoElement','HTMLAudioElement','HTMLMediaElement',"
+		"'HTMLSourceElement','HTMLPictureElement','HTMLTemplateElement','HTMLSlotElement',"
+		"'HTMLBRElement','HTMLHRElement','HTMLPreElement','HTMLDListElement',"
+		"'SVGElement','SVGSVGElement','HTMLCollection','NodeList','DOMException',"
+		"'CSSStyleDeclaration','CSSStyleSheet','CSSRule','MediaQueryList','DOMTokenList',"
+		"'NamedNodeMap','Attr','Range','XMLDocument','ShadowRoot','MutationRecord',"
+		"'DOMParser','XMLSerializer','TreeWalker','NodeIterator','AbortController','AbortSignal'];"
+		"var i;"
+		"for(i=0;i<names.length;i++){"
+		"if(typeof g[names[i]]==='undefined'){"
+		"g[names[i]]=function(){};"
+		"}"
+		"}"
+		"})(this);");
+
 	duk_pop(ctx); /* pop global */
 }
 
