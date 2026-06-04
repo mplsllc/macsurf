@@ -50,6 +50,21 @@ struct macos9_ua_rule {
 
 static const struct macos9_ua_rule macos9_ua_rules[] = {
 	/*
+	 * fixes391 (#167): mbasic surface, LOGGED-IN path. The KaiOS UA below
+	 * gets us logged in, but on a logged-in session mbasic.facebook.com then
+	 * 302-redirects to the m.facebook.com touch SPA (verified 2026-06-04
+	 * hardware log: GET mbasic -> 302 m.facebook.com/?shouldForceMTouch=1,
+	 * which carries the 'unsupported-interstitial' + a 1.5 MB JS bundle that
+	 * runs ~14 s on the G3). fixes371's finding that the vintage MSIE5 UA
+	 * gets the interstitial was for the LOGGED-OUT login page; once the
+	 * c_user/xs cookies are persisted (fixes368) we no longer need the KaiOS
+	 * UA on mbasic, and a non-touch vintage UA should stick on mbasic's pure
+	 * HTML without the mtouch redirect. This row is more specific than the
+	 * "facebook.com" row below and is matched first (first-match-wins).
+	 */
+	{ "mbasic.facebook.com",
+	  "Mozilla/4.0 (compatible; MSIE 5.0; Mac_PowerPC)" },
+	/*
 	 * Facebook login surface is UA-gated. fixes371 (#167): the vintage
 	 * "Mozilla/4.0 ... MSIE 5.0 ... Mac_PowerPC" string we used through
 	 * fixes370 now receives Facebook's "unsupported-interstitial" overlay
