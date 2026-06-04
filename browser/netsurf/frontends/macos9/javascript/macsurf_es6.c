@@ -900,6 +900,192 @@ es6_template_pass(const char *src, size_t len, char *out, size_t cap)
 	return 0;
 }
 
+/* ===================================================================== */
+/* STAGE 4: async / await (parse-level)                                  */
+/* ===================================================================== */
+
+/* s[pos] == '('; return index just past the matching ')', lexer-aware, or 0
+ * on imbalance. */
+static size_t
+es6_skip_parens(const char *s, size_t n, size_t pos)
+{
+	size_t i;
+	int st;
+	int prev;
+	int depth;
+	if (pos >= n || s[pos] != '(') return 0;
+	i = pos + 1;
+	st = ES_CODE;
+	prev = '(';
+	depth = 1;
+	while (i < n) {
+		char c = s[i];
+		if (st == ES_CODE) {
+			if (c == '/' && i + 1 < n && s[i + 1] == '/') { i += 2; st = ES_LCOM; continue; }
+			if (c == '/' && i + 1 < n && s[i + 1] == '*') { i += 2; st = ES_BCOM; continue; }
+			if (c == '/' && es6_regex_ctx(prev)) { i++; st = ES_RE; continue; }
+			if (c == '\'') { i++; st = ES_SQ; prev = c; continue; }
+			if (c == '"')  { i++; st = ES_DQ; prev = c; continue; }
+			if (c == '`')  { i++; st = ES_TMPL; prev = c; continue; }
+			if (c == '(') depth++;
+			else if (c == ')') { depth--; if (depth == 0) return i + 1; }
+			if (c != ' ' && c != '\t' && c != '\n' && c != '\r') prev = c;
+			i++;
+			continue;
+		}
+		if (st == ES_SQ) { if (c == '\\' && i + 1 < n) i += 2; else { if (c == '\'') st = ES_CODE; i++; } continue; }
+		if (st == ES_DQ) { if (c == '\\' && i + 1 < n) i += 2; else { if (c == '"') st = ES_CODE; i++; } continue; }
+		if (st == ES_TMPL) { if (c == '\\' && i + 1 < n) i += 2; else { if (c == '`') st = ES_CODE; i++; } continue; }
+		if (st == ES_LCOM) { if (c == '\n') st = ES_CODE; i++; continue; }
+		if (st == ES_BCOM) { if (c == '*' && i + 1 < n && s[i + 1] == '/') { i += 2; st = ES_CODE; } else i++; continue; }
+		/* ES_RE */
+		if (c == '\\' && i + 1 < n) i += 2;
+		else { if (c == '/') { st = ES_CODE; prev = '/'; } i++; }
+	}
+	return 0;
+}
+
+/* Strip the `async` keyword (before a function or arrow) and the `await`
+ * unary keyword, so async source at least PARSES and runs synchronously under
+ * Duktape ES5.1 (the parse gate FB's bootstrap trips on). This is parse-level
+ * only: it does NOT reproduce Promise/await scheduling semantics (a later
+ * stage). `async` / `await` used as ordinary identifiers are left untouched.
+ * Streaming, lexer-aware; output is never longer than input (only removes
+ * tokens). Returns bytes written, 0 on overflow. */
+static size_t
+es6_async_pass(const char *src, size_t len, char *out, size_t cap)
+{
+	size_t i;
+	size_t o;
+	int    st;
+	int    prev_sig;
+
+	if (src == NULL || out == NULL || cap == 0) return 0;
+	i = 0; o = 0; st = ES_CODE; prev_sig = 0;
+
+	while (i < len) {
+		char c = src[i];
+		if (o + 1 >= cap) return 0;
+
+		if (st == ES_CODE) {
+			if (c == '/' && i + 1 < len && src[i + 1] == '/') { out[o++] = c; if (o + 1 >= cap) return 0; out[o++] = src[i + 1]; i += 2; st = ES_LCOM; continue; }
+			if (c == '/' && i + 1 < len && src[i + 1] == '*') { out[o++] = c; if (o + 1 >= cap) return 0; out[o++] = src[i + 1]; i += 2; st = ES_BCOM; continue; }
+			if (c == '/' && es6_regex_ctx(prev_sig)) { out[o++] = c; i++; st = ES_RE; continue; }
+			if (c == '\'') { out[o++] = c; prev_sig = c; i++; st = ES_SQ; continue; }
+			if (c == '"')  { out[o++] = c; prev_sig = c; i++; st = ES_DQ; continue; }
+			if (c == '`')  { out[o++] = c; prev_sig = c; i++; st = ES_TMPL; continue; }
+
+			if (es6_is_ident((unsigned char) c) &&
+			    (i == 0 || !es6_is_ident((unsigned char) src[i - 1]))) {
+				size_t ids = i;
+				size_t ide;
+				while (i < len && es6_is_ident((unsigned char) src[i])) i++;
+				ide = i;
+
+				/* async before function / arrow -> strip */
+				if (ide - ids == 5 && strncmp(src + ids, "async", 5) == 0) {
+					size_t j = ide;
+					int strip = 0;
+					while (j < len && (src[j] == ' ' || src[j] == '\t' ||
+					       src[j] == '\n' || src[j] == '\r')) j++;
+					if (j + 8 <= len && strncmp(src + j, "function", 8) == 0 &&
+					    (j + 8 == len || !es6_is_ident((unsigned char) src[j + 8]))) {
+						strip = 1;
+					} else if (j < len && src[j] == '(') {
+						size_t k = es6_skip_parens(src, len, j);
+						if (k > 0) {
+							while (k < len && (src[k] == ' ' || src[k] == '\t' ||
+							       src[k] == '\n' || src[k] == '\r')) k++;
+							if (k + 1 < len && src[k] == '=' && src[k + 1] == '>') strip = 1;
+						}
+					} else if (j < len && es6_is_ident((unsigned char) src[j])) {
+						size_t k = j;
+						while (k < len && es6_is_ident((unsigned char) src[k])) k++;
+						while (k < len && (src[k] == ' ' || src[k] == '\t' ||
+						       src[k] == '\n' || src[k] == '\r')) k++;
+						if (k + 1 < len && src[k] == '=' && src[k + 1] == '>') strip = 1;
+					}
+					if (strip) {
+						i = j;          /* drop "async" + following ws */
+						prev_sig = 0;   /* still expression position */
+						continue;
+					}
+				}
+
+				/* await unary keyword (followed by an expression start) -> strip */
+				if (ide - ids == 5 && strncmp(src + ids, "await", 5) == 0) {
+					size_t j = ide;
+					int nextok = 0;
+					while (j < len && (src[j] == ' ' || src[j] == '\t' ||
+					       src[j] == '\n' || src[j] == '\r')) j++;
+					if (j < len) {
+						char d = src[j];
+						if (es6_is_ident((unsigned char) d) || d == '(' ||
+						    d == '[' || d == '{' || d == '"' || d == '\'' ||
+						    d == '`' || (d >= '0' && d <= '9') ||
+						    d == '!' || d == '~')
+							nextok = 1;
+					}
+					if (nextok) {
+						i = j;          /* drop "await" + following ws */
+						prev_sig = 0;
+						continue;
+					}
+				}
+
+				/* ordinary identifier: emit verbatim */
+				{
+					size_t q;
+					for (q = ids; q < ide; q++) {
+						if (o + 1 >= cap) return 0;
+						out[o++] = src[q];
+					}
+				}
+				prev_sig = src[ide - 1];
+				continue;
+			}
+
+			out[o++] = c;
+			if (c != ' ' && c != '\t' && c != '\n' && c != '\r') prev_sig = c;
+			i++;
+			continue;
+		}
+
+		if (st == ES_SQ) {
+			out[o++] = c;
+			if (c == '\\' && i + 1 < len) { i++; if (o + 1 >= cap) return 0; out[o++] = src[i]; }
+			else if (c == '\'') st = ES_CODE;
+			i++; continue;
+		}
+		if (st == ES_DQ) {
+			out[o++] = c;
+			if (c == '\\' && i + 1 < len) { i++; if (o + 1 >= cap) return 0; out[o++] = src[i]; }
+			else if (c == '"') st = ES_CODE;
+			i++; continue;
+		}
+		if (st == ES_TMPL) {
+			out[o++] = c;
+			if (c == '\\' && i + 1 < len) { i++; if (o + 1 >= cap) return 0; out[o++] = src[i]; }
+			else if (c == '`') st = ES_CODE;
+			i++; continue;
+		}
+		if (st == ES_LCOM) { out[o++] = c; if (c == '\n') st = ES_CODE; i++; continue; }
+		if (st == ES_BCOM) {
+			out[o++] = c;
+			if (c == '*' && i + 1 < len && src[i + 1] == '/') { i++; if (o + 1 >= cap) return 0; out[o++] = src[i]; st = ES_CODE; }
+			i++; continue;
+		}
+		/* ES_RE */
+		out[o++] = c;
+		if (c == '\\' && i + 1 < len) { i++; if (o + 1 >= cap) return 0; out[o++] = src[i]; }
+		else if (c == '/') { st = ES_CODE; prev_sig = '/'; }
+		i++;
+	}
+
+	out[o] = '\0';
+	return o;
+}
+
 /* Iteratively rewrite every transformable arrow. Uses two malloc'd ping-pong
  * work buffers. Returns final length in out, or 0 on overflow / OOM (caller
  * falls back to the pre-arrow text). */
@@ -989,10 +1175,17 @@ macsurf_es6_transpile(const char *src, size_t len, char *out, size_t cap)
 	}
 	cur = buf1;
 
-	/* Pass 2: arrow functions. Pass 3: template literals. Pass 4: arrows
-	 * again (a template interpolation can expose an arrow that pass 2,
-	 * running before the templates were lowered, never saw). Each pass
-	 * returns 0 only on overflow, in which case we keep the prior buffer. */
+	/* Pass 2: async/await strip (parse-level). Runs BEFORE arrows so an
+	 * `async (x) => ...` becomes a plain arrow the arrow pass then lowers. */
+	dst = (cur == buf1) ? buf2 : buf1;
+	m = es6_async_pass(cur, n, dst, wmax);
+	if (m != 0) { cur = dst; n = m; }
+
+	/* Pass 3: arrow functions. Pass 4: template literals. Pass 5: arrows
+	 * again (a template interpolation can expose an arrow that the first
+	 * arrow pass, running before the templates were lowered, never saw).
+	 * Each pass returns 0 only on overflow, in which case we keep the prior
+	 * buffer. */
 	dst = (cur == buf1) ? buf2 : buf1;
 	m = es6_arrow_pass(cur, n, dst, wmax);
 	if (m != 0) { cur = dst; n = m; }
