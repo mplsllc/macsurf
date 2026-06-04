@@ -108,16 +108,17 @@ macos9_reconvert_cb(void *p)
 void
 macos9_js_mark_dom_dirty(struct content *c)
 {
-	/* fixes402 — JS->DOM->render reconvert RE-ENABLED with the
-	 * defer-until-quiescent guard. fixes394 disabled this after the
-	 * complex-site hard crash; investigation showed every documented
-	 * teardown hazard is in fact covered (hlcache_handle_release detaches
-	 * in-flight image callbacks; the box destructor frees box->styles, so
-	 * no css_select_results leak). The residual cause is hardware-only and
-	 * not reproducible from source, so html_reconvert now (a) DEFERS while
-	 * any object fetch is still in flight, and (b) logs every teardown phase
-	 * so the next crash log (if any) pinpoints the exact failing step.
-	 * schedule.c dedups identical (cb, param) so a mutation burst collapses
-	 * to one fire. */
-	(void) macos9_schedule(RECONVERT_DEBOUNCE_MS, macos9_reconvert_cb, c);
+	/* fixes403 — reconvert DISABLED again to keep the user's machine
+	 * stable. fixes402 re-enabled it (deferred + instrumented); on hardware
+	 * Facebook stayed stable (reconvert never fired there — its feed JS is
+	 * still blocked by un-transpiled generators) but google.com still hard-
+	 * crashed. We will NOT keep crash-testing on real hardware. The next
+	 * re-enable attempt must first be validated in SheepShaver and/or proven
+	 * crash-proof by construction (defensive guards on every box/style/object
+	 * deref in the reconvert + reformat path), not by repeated hardware
+	 * crashes. The phase-marker instrumentation (html.c, MS_LOG to the title
+	 * bar) stays in place so that a SINGLE, deliberate future test pinpoints
+	 * the failing step from the title bar. Until then this is a no-op and the
+	 * machine is safe. */
+	(void)c;
 }
