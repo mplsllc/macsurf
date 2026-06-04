@@ -1194,6 +1194,13 @@ macsurf_es6_transpile(const char *src, size_t len, char *out, size_t cap)
 	m = es6_template_pass(cur, n, dst, wmax);
 	if (m != 0) { cur = dst; n = m; }
 
+	/* A template interpolation is emitted verbatim, so async/await/arrows
+	 * that lived inside `${ ... }` only become plain code AFTER the template
+	 * pass. Re-run async then arrows to lower those. */
+	dst = (cur == buf1) ? buf2 : buf1;
+	m = es6_async_pass(cur, n, dst, wmax);
+	if (m != 0) { cur = dst; n = m; }
+
 	dst = (cur == buf1) ? buf2 : buf1;
 	m = es6_arrow_pass(cur, n, dst, wmax);
 	if (m != 0) { cur = dst; n = m; }
