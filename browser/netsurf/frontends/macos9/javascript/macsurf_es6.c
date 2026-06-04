@@ -610,6 +610,296 @@ es6_emit_rewrite(const char *a, size_t alen,
 #undef ES_PUTR
 }
 
+/* ===================================================================== */
+/* STAGE 3: template literals -> string concatenation                    */
+/* ===================================================================== */
+
+/* es6_interp_skip / es6_tmpl_skip are mutually recursive: a template's
+ * ${ } interpolation can contain a nested template, and a nested template can
+ * contain its own ${ } interpolations. Recursion depth == template nesting
+ * depth (tiny in real code). Both return the index just past the construct. */
+static size_t es6_tmpl_skip(const char *s, size_t n, size_t i);
+
+/* s[i] is the first char after a "${"; return index just past the matching
+ * '}' (brace-balanced, lexer-aware). */
+static size_t
+es6_interp_skip(const char *s, size_t n, size_t i)
+{
+	int depth;
+	int st;
+	int prev;
+
+	depth = 1;
+	st = ES_CODE;
+	prev = 0;
+	while (i < n) {
+		char c = s[i];
+		if (st == ES_CODE) {
+			if (c == '/' && i + 1 < n && s[i + 1] == '/') { i += 2; st = ES_LCOM; continue; }
+			if (c == '/' && i + 1 < n && s[i + 1] == '*') { i += 2; st = ES_BCOM; continue; }
+			if (c == '/' && es6_regex_ctx(prev)) { i++; st = ES_RE; continue; }
+			if (c == '\'') { i++; st = ES_SQ; prev = c; continue; }
+			if (c == '"')  { i++; st = ES_DQ; prev = c; continue; }
+			if (c == '`')  { i = es6_tmpl_skip(s, n, i); prev = '`'; continue; }
+			if (c == '{') depth++;
+			else if (c == '}') { depth--; if (depth == 0) return i + 1; }
+			if (c != ' ' && c != '\t' && c != '\n' && c != '\r') prev = c;
+			i++;
+			continue;
+		}
+		if (st == ES_SQ) {
+			if (c == '\\' && i + 1 < n) i += 2;
+			else { if (c == '\'') st = ES_CODE; i++; }
+			continue;
+		}
+		if (st == ES_DQ) {
+			if (c == '\\' && i + 1 < n) i += 2;
+			else { if (c == '"') st = ES_CODE; i++; }
+			continue;
+		}
+		if (st == ES_LCOM) { if (c == '\n') st = ES_CODE; i++; continue; }
+		if (st == ES_BCOM) {
+			if (c == '*' && i + 1 < n && s[i + 1] == '/') { i += 2; st = ES_CODE; }
+			else i++;
+			continue;
+		}
+		/* ES_RE */
+		if (c == '\\' && i + 1 < n) i += 2;
+		else { if (c == '/') { st = ES_CODE; prev = '/'; } i++; }
+	}
+	return n;
+}
+
+/* s[i] == '`'; return index just past the matching close backtick. */
+static size_t
+es6_tmpl_skip(const char *s, size_t n, size_t i)
+{
+	i++;
+	while (i < n) {
+		char c = s[i];
+		if (c == '\\') { i += 2; continue; }
+		if (c == '`') return i + 1;
+		if (c == '$' && i + 1 < n && s[i + 1] == '{') { i = es6_interp_skip(s, n, i + 2); continue; }
+		i++;
+	}
+	return n;
+}
+
+/* Lower the template literal at a[tpos] ('`') into string-concatenation, append
+ * to b at *bo (capacity bcap). Returns the source index just past the close
+ * backtick, or 0 on overflow / unterminated. Interpolation expressions are
+ * emitted verbatim (nested templates / arrows in them are handled by later
+ * pipeline passes). Produces  ("seg"+(expr)+"seg")  form. */
+static size_t
+es6_rewrite_one_template(const char *a, size_t n, size_t tpos,
+	char *b, size_t *bo, size_t bcap)
+{
+	size_t o = *bo;
+	size_t i = tpos + 1;
+
+#define TP_PUT(ch) do { if (o + 1 >= bcap) return 0; b[o++] = (ch); } while (0)
+
+	TP_PUT('(');
+	TP_PUT('"');
+	while (i < n) {
+		char c = a[i];
+		if (c == '`') {
+			TP_PUT('"');
+			TP_PUT(')');
+			*bo = o;
+			return i + 1;
+		}
+		if (c == '\\') {
+			if (i + 1 < n) {
+				char d = a[i + 1];
+				if (d == '`') { TP_PUT('`'); i += 2; continue; }
+				if (d == '$') { TP_PUT('$'); i += 2; continue; }
+				if (d == '\n') { i += 2; continue; } /* line-continuation */
+				TP_PUT('\\'); TP_PUT(d); i += 2; continue;
+			}
+			TP_PUT('\\'); i++; continue;
+		}
+		if (c == '$' && i + 1 < n && a[i + 1] == '{') {
+			size_t e = es6_interp_skip(a, n, i + 2);
+			size_t k = i + 2;
+			TP_PUT('"'); TP_PUT('+'); TP_PUT('(');
+			/* expression is a[i+2 .. e-1) (exclude closing '}') */
+			while (k + 1 < e) { TP_PUT(a[k]); k++; }
+			TP_PUT(')'); TP_PUT('+'); TP_PUT('"');
+			i = e;
+			continue;
+		}
+		if (c == '"')  { TP_PUT('\\'); TP_PUT('"'); i++; continue; }
+		if (c == '\n') { TP_PUT('\\'); TP_PUT('n'); i++; continue; }
+		if (c == '\r') { i++; continue; }
+		if (c == '\t') { TP_PUT('\\'); TP_PUT('t'); i++; continue; }
+		TP_PUT(c);
+		i++;
+	}
+	return 0; /* unterminated template */
+
+#undef TP_PUT
+}
+
+/* Is s[a..e) a reserved word? A template preceded by a keyword (return, typeof,
+ * new, ...) is UNTAGGED — you can't name a tag function with a keyword — so we
+ * must not mistake `return `tpl`` for a tagged template. */
+static int
+es6_is_reserved(const char *s, size_t a, size_t e)
+{
+	static const char *kw[] = {
+		"return","typeof","instanceof","void","delete","throw","new",
+		"in","of","do","else","yield","await","case","default","var",
+		"const","let","if","while","for","switch","function","this",
+		"super","with","null","true","false", 0
+	};
+	size_t len = e - a;
+	int k;
+	for (k = 0; kw[k] != 0; k++) {
+		if (strlen(kw[k]) == len && strncmp(s + a, kw[k], len) == 0)
+			return 1;
+	}
+	return 0;
+}
+
+/* Find the first *untagged* template literal in s[0..n). Tagged templates
+ * (preceded by a non-keyword identifier, ')' or ']' — e.g. String.raw`...`,
+ * css`...`) keep template-object semantics a plain string can't, so they are
+ * left alone. Returns 1 and sets *tpos on success, 0 if none. */
+static int
+es6_find_template(const char *s, size_t n, size_t *tpos)
+{
+	size_t i;
+	int st;
+	int prev_sig;
+	size_t prev_sig_pos;
+
+	i = 0;
+	st = ES_CODE;
+	prev_sig = 0;
+	prev_sig_pos = 0;
+	while (i < n) {
+		char c = s[i];
+		if (st == ES_CODE) {
+			if (c == '/' && i + 1 < n && s[i + 1] == '/') { i += 2; st = ES_LCOM; continue; }
+			if (c == '/' && i + 1 < n && s[i + 1] == '*') { i += 2; st = ES_BCOM; continue; }
+			if (c == '/' && es6_regex_ctx(prev_sig)) { i++; st = ES_RE; continue; }
+			if (c == '\'') { i++; st = ES_SQ; prev_sig = c; prev_sig_pos = i - 1; continue; }
+			if (c == '"')  { i++; st = ES_DQ; prev_sig = c; prev_sig_pos = i - 1; continue; }
+			if (c == '`') {
+				int tagged = 0;
+				if (prev_sig == ')' || prev_sig == ']') {
+					tagged = 1;
+				} else if (es6_is_ident((unsigned char) prev_sig)) {
+					/* preceding identifier ends at prev_sig_pos+1;
+					 * tagged unless it is a reserved word. */
+					size_t a = prev_sig_pos + 1;
+					size_t wstart = prev_sig_pos;
+					while (wstart > 0 &&
+					       es6_is_ident((unsigned char) s[wstart - 1]))
+						wstart--;
+					tagged = !es6_is_reserved(s, wstart, a);
+				}
+				if (tagged) {
+					i = es6_tmpl_skip(s, n, i);
+					prev_sig = '`';
+					prev_sig_pos = i - 1;
+					continue;
+				}
+				*tpos = i;
+				return 1;
+			}
+			if (c != ' ' && c != '\t' && c != '\n' && c != '\r') {
+				prev_sig = c;
+				prev_sig_pos = i;
+			}
+			i++;
+			continue;
+		}
+		if (st == ES_SQ) {
+			if (c == '\\' && i + 1 < n) i += 2;
+			else { if (c == '\'') st = ES_CODE; i++; }
+			continue;
+		}
+		if (st == ES_DQ) {
+			if (c == '\\' && i + 1 < n) i += 2;
+			else { if (c == '"') st = ES_CODE; i++; }
+			continue;
+		}
+		if (st == ES_LCOM) { if (c == '\n') st = ES_CODE; i++; continue; }
+		if (st == ES_BCOM) {
+			if (c == '*' && i + 1 < n && s[i + 1] == '/') { i += 2; st = ES_CODE; }
+			else i++;
+			continue;
+		}
+		/* ES_RE */
+		if (c == '\\' && i + 1 < n) i += 2;
+		else { if (c == '/') { st = ES_CODE; prev_sig = '/'; } i++; }
+	}
+	return 0;
+}
+
+/* Iteratively lower every untagged template literal. Outermost-first; nested
+ * templates exposed inside interpolations are caught on later iterations.
+ * Returns final length in out, or 0 on overflow / OOM. */
+static size_t
+es6_template_pass(const char *src, size_t len, char *out, size_t cap)
+{
+	char *a;
+	char *b;
+	char *tmp;
+	size_t alen;
+	size_t wmax;
+	size_t iter;
+
+	wmax = len * 3 + 4096;
+	if (len + 1 > wmax) {
+		if (len < cap) { memcpy(out, src, len); out[len] = '\0'; return len; }
+		return 0;
+	}
+	a = (char *)malloc(wmax);
+	b = (char *)malloc(wmax);
+	if (a == NULL || b == NULL) {
+		free(a); free(b);
+		if (len < cap) { memcpy(out, src, len); out[len] = '\0'; return len; }
+		return 0;
+	}
+	memcpy(a, src, len);
+	a[len] = '\0';
+	alen = len;
+
+	iter = 0;
+	for (;;) {
+		size_t tpos, bo, src_end, k;
+		if (iter++ > 200000UL) break;
+		if (!es6_find_template(a, alen, &tpos)) break;
+		bo = 0;
+		/* prefix */
+		if (tpos >= wmax) break;
+		for (k = 0; k < tpos; k++) b[bo++] = a[k];
+		src_end = es6_rewrite_one_template(a, alen, tpos, b, &bo, wmax);
+		if (src_end == 0) break;   /* overflow / unterminated — keep `a` */
+		/* suffix */
+		k = src_end;
+		while (k < alen) {
+			if (bo + 1 >= wmax) { bo = 0; break; }
+			b[bo++] = a[k++];
+		}
+		if (bo == 0) break;        /* suffix overflow — keep `a` */
+		tmp = a; a = b; b = tmp;
+		alen = bo;
+	}
+
+	if (alen < cap) {
+		memcpy(out, a, alen);
+		out[alen] = '\0';
+		free(a); free(b);
+		return alen;
+	}
+	free(a); free(b);
+	return 0;
+}
+
 /* Iteratively rewrite every transformable arrow. Uses two malloc'd ping-pong
  * work buffers. Returns final length in out, or 0 on overflow / OOM (caller
  * falls back to the pre-arrow text). */
@@ -669,42 +959,58 @@ es6_arrow_pass(const char *src, size_t len, char *out, size_t cap)
 size_t
 macsurf_es6_transpile(const char *src, size_t len, char *out, size_t cap)
 {
-	char *scratch;
-	size_t n1;
-	size_t n2;
+	char *buf1;
+	char *buf2;
+	char *cur;
+	char *dst;
+	size_t wmax;
+	size_t n;
+	size_t m;
 
 	if (src == NULL || out == NULL || cap == 0)
 		return 0;
 
-	/* scratch needs slack: es6_letconst_pass guards with `o + 2 >= cap`
-	 * before each write, so a buffer of exactly len+1 false-overflows on
-	 * the final byte whenever the output length equals the input (a script
-	 * with no let/const to shrink it). len+16 gives ample headroom; the
-	 * let/const pass never grows the text. */
-	scratch = (char *)malloc(len + 16);
-	if (scratch == NULL) {
-		/* no transform possible — pass through if it fits */
+	wmax = len * 4 + 4096;   /* must hold the largest intermediate */
+	buf1 = (char *)malloc(wmax);
+	buf2 = (char *)malloc(wmax);
+	if (buf1 == NULL || buf2 == NULL) {
+		free(buf1); free(buf2);
 		if (len < cap) { memcpy(out, src, len); out[len] = '\0'; return len; }
 		return 0;
 	}
 
-	n1 = es6_letconst_pass(src, len, scratch, len + 16);
-	if (n1 == 0) {
-		/* let/const pass overflowed (shouldn't with len+1) — pass through */
-		free(scratch);
+	/* Pass 1: let/const -> var (never grows). */
+	n = es6_letconst_pass(src, len, buf1, wmax);
+	if (n == 0) {
+		/* unexpected overflow — pass the input through untouched */
+		free(buf1); free(buf2);
 		if (len < cap) { memcpy(out, src, len); out[len] = '\0'; return len; }
 		return 0;
 	}
+	cur = buf1;
 
-	n2 = es6_arrow_pass(scratch, n1, out, cap);
-	if (n2 == 0) {
-		/* arrow pass overflowed — fall back to the let/const-only result */
-		if (n1 < cap) {
-			memcpy(out, scratch, n1);
-			out[n1] = '\0';
-			n2 = n1;
-		}
+	/* Pass 2: arrow functions. Pass 3: template literals. Pass 4: arrows
+	 * again (a template interpolation can expose an arrow that pass 2,
+	 * running before the templates were lowered, never saw). Each pass
+	 * returns 0 only on overflow, in which case we keep the prior buffer. */
+	dst = (cur == buf1) ? buf2 : buf1;
+	m = es6_arrow_pass(cur, n, dst, wmax);
+	if (m != 0) { cur = dst; n = m; }
+
+	dst = (cur == buf1) ? buf2 : buf1;
+	m = es6_template_pass(cur, n, dst, wmax);
+	if (m != 0) { cur = dst; n = m; }
+
+	dst = (cur == buf1) ? buf2 : buf1;
+	m = es6_arrow_pass(cur, n, dst, wmax);
+	if (m != 0) { cur = dst; n = m; }
+
+	if (n < cap) {
+		memcpy(out, cur, n);
+		out[n] = '\0';
+		free(buf1); free(buf2);
+		return n;
 	}
-	free(scratch);
-	return n2;
+	free(buf1); free(buf2);
+	return 0;
 }
