@@ -27,6 +27,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 #include <string.h>
 
@@ -35,6 +36,7 @@
 #include "duktape.h"
 #include "macsurf_debug.h"
 #include "macsurf_js.h"
+#include "javascript/macsurf_es6.h"
 
 #ifdef WITH_DUKTAPE
 
@@ -1482,6 +1484,44 @@ unsigned char js_exec(struct jsthread *thread,
 			(duk_size_t)txtlen);
 	rc = duk_peval(thread->ctx);
 	if (rc != 0) {
+		/* fixes388 — ES6->ES5 transform-on-failure. A SyntaxError means
+		 * Duktape rejected the WHOLE program before executing anything
+		 * (it compiles before it runs), so NO side effects occurred and
+		 * re-running a transformed copy is safe. We gate strictly on
+		 * SyntaxError: a runtime error (ReferenceError, etc.) ran code
+		 * up to the throw, so re-executing would double its side effects
+		 * — never retry those. Stage 1 transform: let/const -> var. */
+		if (duk_get_error_code(thread->ctx, -1) == DUK_ERR_SYNTAX_ERROR) {
+			char *xbuf = (char *)malloc((size_t)txtlen + 1);
+			if (xbuf != NULL) {
+				size_t xn = macsurf_es6_transpile(
+					(const char *)txt, (size_t)txtlen,
+					xbuf, (size_t)txtlen + 1);
+				/* only retry if the transform actually changed
+				 * the source — otherwise it's the same error
+				 * (e.g. an arrow/class case Stage 1 can't fix),
+				 * and a re-eval just wastes a compile. */
+				if (xn != 0 &&
+				    (xn != (size_t)txtlen ||
+				     memcmp(xbuf, txt, (size_t)txtlen) != 0)) {
+					macsurf_debug_log_writef(
+						"js es6 [%s len=%ld->%ld] retry",
+						(name != NULL) ? name : "(anon)",
+						(long)txtlen, (long)xn);
+					duk_pop(thread->ctx); /* old error */
+					duk_push_lstring(thread->ctx, xbuf,
+						(duk_size_t)xn);
+					rc = duk_peval(thread->ctx);
+					if (rc == 0) {
+						free(xbuf);
+						duk_pop(thread->ctx);
+						macsurf_profile_stamp("js-end");
+						return 1;
+					}
+				}
+				free(xbuf);
+			}
+		}
 		/* fixes377 — name the failing script + its size so a parse/run
 		 * error can be tied to a specific <script> (the FB JS punch-list
 		 * work). MS_LOG dual-channels to title bar + log file. */
