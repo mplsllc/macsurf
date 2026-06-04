@@ -1380,12 +1380,36 @@ mouse_action_drag_none(html_content *html,
 			html->dyn_active_node = want_active;
 			changed = true;
 		}
-		if (changed && bw != NULL) {
-			macsurf_debug_log_write(
-				"dyn change: recascade + reformat");
-			html_recascade_tree(html);
-			browser_window_schedule_reformat(bw);
-		}
+		/* fixes393 — DISABLED the per-hover whole-page recascade +
+		 * reformat. On the first real page we rendered
+		 * (mbasic.facebook.com, 160 boxes) this fired a full
+		 * html_recascade_tree (~85 boxes restyled) AND a full reformat
+		 * on EVERY mouse-hover transition. Two fatal problems on a
+		 * 233MHz-class G3:
+		 *
+		 *   1. CRASH. html_recascade_tree replaces box->styles without
+		 *      freeing the previous css_select_results
+		 *      (box_construct.c html_recascade_tree: `box->styles =
+		 *      new_styles`), so each recascade LEAKS ~85 style sets.
+		 *      A few seconds of mouse movement leaked enough to
+		 *      exhaust/corrupt the heap; a later allocation/call then
+		 *      hit garbage and the machine hard-crashed (MacsBug:
+		 *      "Unimplemented instruction at 00002710", PC in
+		 *      low-memory $FFFF = call through a smashed function
+		 *      pointer; CurApName CodeWarrio...). The log shows ~10
+		 *      "dyn change: recascade + reformat" cycles back-to-back
+		 *      then death.
+		 *   2. PERF. Even leak-free, a whole-page restyle + relayout
+		 *      per hover is unusably slow on the target hardware.
+		 *
+		 * Tracking dyn_hover_node/dyn_active_node above is kept (cheap,
+		 * lets a future scoped restyle re-enable :hover). Cursor changes
+		 * and the status-bar link URL still work via
+		 * get_mouse_action_node, so hovering a link still gives
+		 * feedback. To restore live :hover styling later, (a) free the
+		 * old box->styles in html_recascade_tree and (b) restyle only
+		 * the affected SUBTREE, not the whole page. */
+		(void)changed;
 	}
 
 	if (mouse & BROWSER_MOUSE_CLICK_4) {
