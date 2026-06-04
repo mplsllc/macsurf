@@ -1321,32 +1321,32 @@ macos9_qt_image_convert(struct content *c)
 						&dec_w, &dec_h);
 					if (new_bm != NULL && dec_w > 0 && dec_h > 0) {
 						HUnlock(qti->compressed);
-						/* Populate qti directly and short-circuit
-						 * the rest of convert.  fixes295g — also
-						 * call content_set_ready/done/status so
-						 * NetSurf core marks the content DONE and
-						 * fires the favicon set_icon callback.
-						 * Without these the content stays at
-						 * LOADING forever and set_icon never sees
-						 * the favicon handle. */
-						qti->bitmap = new_bm;
-						qti->bitmap_w = dec_w;
-						qti->bitmap_h = dec_h;
-						qti->is_png_deferred = false;
-						qti->wants_alpha = true;
-						c->width = dec_w;
-						c->height = dec_h;
+						/* fixes392 — HARD-CRASH FIX. The fixes295g
+						 * short-circuit fired content_set_done(c)
+						 * MANUALLY here AND returned true, so NetSurf
+						 * core's content__convert fired content_set_done
+						 * a SECOND time. Double-DONE on the favicon
+						 * content, re-entrantly, while the parent HTML
+						 * content was still inside its fetch-data
+						 * callback, crashed the whole machine on
+						 * mbasic.facebook.com's DIB-in-ICO favicon
+						 * (a normal 16x16 32bpp icon; the decode itself
+						 * is bounds-safe). A favicon is cosmetic and must
+						 * never take down the machine: free the decoded
+						 * bitmap and fail the content cleanly so NetSurf
+						 * falls back to no favicon. DIB-in-ICO display
+						 * can return later via a DEFERRED (non-re-entrant)
+						 * decode that lets convert finish normally. */
+						qti->bitmap = NULL;
+						if (guit->bitmap->destroy != NULL)
+							guit->bitmap->destroy(new_bm);
 						macsurf_debug_log_writef(
-							"img convert: ICO/BMP-DIB %dx%d direct",
+							"img convert: ICO/BMP-DIB %dx%d decoded, "
+							"favicon skipped (fixes392 no-crash)",
 							dec_w, dec_h);
-						{
-							extern long macsurf__site_img_ok;
-							macsurf__site_img_ok++;
-						}
-						content_set_ready(c);
-						content_set_done(c);
-						content_set_status(c, "");
-						return true;
+						content_broadcast_error(c,
+							NSERROR_INVALID, NULL);
+						return false;
 					}
 				}
 			}
