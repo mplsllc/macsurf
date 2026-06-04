@@ -1492,11 +1492,15 @@ unsigned char js_exec(struct jsthread *thread,
 		 * up to the throw, so re-executing would double its side effects
 		 * — never retry those. Stage 1 transform: let/const -> var. */
 		if (duk_get_error_code(thread->ctx, -1) == DUK_ERR_SYNTAX_ERROR) {
-			char *xbuf = (char *)malloc((size_t)txtlen + 1);
+			/* the arrow pass can GROW the source (an arrow expands
+			 * to a function expression), so size the buffer for the
+			 * transpiler's internal growth ceiling (4x + slack). */
+			size_t xcap = (size_t)txtlen * 4 + 4096;
+			char *xbuf = (char *)malloc(xcap);
 			if (xbuf != NULL) {
 				size_t xn = macsurf_es6_transpile(
 					(const char *)txt, (size_t)txtlen,
-					xbuf, (size_t)txtlen + 1);
+					xbuf, xcap);
 				/* only retry if the transform actually changed
 				 * the source — otherwise it's the same error
 				 * (e.g. an arrow/class case Stage 1 can't fix),
