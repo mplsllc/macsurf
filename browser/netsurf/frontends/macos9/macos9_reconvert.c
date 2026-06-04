@@ -108,17 +108,16 @@ macos9_reconvert_cb(void *p)
 void
 macos9_js_mark_dom_dirty(struct content *c)
 {
-	/* fixes403 — reconvert DISABLED again to keep the user's machine
-	 * stable. fixes402 re-enabled it (deferred + instrumented); on hardware
-	 * Facebook stayed stable (reconvert never fired there — its feed JS is
-	 * still blocked by un-transpiled generators) but google.com still hard-
-	 * crashed. We will NOT keep crash-testing on real hardware. The next
-	 * re-enable attempt must first be validated in SheepShaver and/or proven
-	 * crash-proof by construction (defensive guards on every box/style/object
-	 * deref in the reconvert + reformat path), not by repeated hardware
-	 * crashes. The phase-marker instrumentation (html.c, MS_LOG to the title
-	 * bar) stays in place so that a SINGLE, deliberate future test pinpoints
-	 * the failing step from the title bar. Until then this is a no-op and the
-	 * machine is safe. */
-	(void)c;
+	/* fixes404 — reconvert RE-ENABLED with the DOUBLE-BUFFER fix (html.c).
+	 * Root cause: the crash is the same 0x2710 heap-corruption / garbage-
+	 * fn-ptr signature as the recascade leak, which was css_select_results.
+	 * Reconvert's talloc_free(bctx) destroyed the OLD box styles BEFORE the
+	 * re-cascade re-interned them -- the free-then-reintern order that trips
+	 * the libcss arena duplicate-interned-style use-after-free. fixes404 keeps
+	 * the old tree alive THROUGH dom_to_box so the re-cascade shares the still-
+	 * live interned styles (refcount++) instead of freeing then recreating;
+	 * the old tree is freed only after the new tree + reformat are live. Title-
+	 * bar phase markers remain so a single deliberate test confirms
+	 * 'reconvert: PAINTED ok' or names any residual phase -- no blind looping. */
+	(void) macos9_schedule(RECONVERT_DEBOUNCE_MS, macos9_reconvert_cb, c);
 }
