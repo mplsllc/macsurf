@@ -91,7 +91,7 @@ static const struct macos9_ua_rule macos9_ua_rules[] = {
 	 * we can't execute). Login now relies on the persisted c_user/xs cookies
 	 * (fixes368), so we no longer need the KaiOS UA's login-form surface. */
 	{ "facebook.com",
-	  "Mozilla/5.0 (Android 14; Mobile; rv:133.0) Gecko/133.0 Firefox/133.0" }
+	  "Mozilla/5.0 (Android 9; Mobile; rv:68.0) Gecko/68.0 Firefox/68.0" }
 	/* add more host->UA overrides here */
 };
 
