@@ -1334,8 +1334,12 @@ static void html_reconvert_done(html_content *c, bool success)
 				(int)err);
 	}
 
+	macsurf_debug_log_writef("reconvert: reformat start w=%d h=%d",
+			(int) c->base.available_width,
+			(int) c->base.available_height);
 	content__reformat(&c->base, false,
 			c->base.available_width, c->base.available_height);
+	macsurf_debug_log_writef("reconvert: reformat done — JS-built content PAINTED");
 }
 
 /* Re-run box construction over the current DOM. Returns NSERROR_NEED_DATA if
@@ -1360,22 +1364,49 @@ nserror html_reconvert(html_content *c)
 	if (c->box_conversion_context != NULL)
 		return NSERROR_NEED_DATA;        /* one re-convert in flight    */
 
+	/* fixes402 — DEFER the re-convert while any image/object subresource
+	 * fetch is still in flight. Freeing the box tree mid-fetch is the
+	 * documented reconvert crash hazard; only tear down once every object
+	 * has settled (DONE or ERROR). Re-arm (NEED_DATA) otherwise — the
+	 * scheduler retries on the next debounce, and the page shell stays up. */
+	{
+		struct content_html_object *obj;
+		for (obj = c->object_list; obj != NULL; obj = obj->next) {
+			if (obj->content != NULL) {
+				content_status os = content_get_status(obj->content);
+				if (os != CONTENT_STATUS_DONE &&
+				    os != CONTENT_STATUS_ERROR) {
+					macsurf_debug_log_writef(
+						"reconvert: defer (obj %p still loading st=%d)",
+						(void *) obj->content, (int) os);
+					return NSERROR_NEED_DATA;
+				}
+			}
+		}
+	}
+
 	macsurf_debug_log_writef("reconvert: start layout=%p", (void *)c->layout);
 
-	/* HAZARD guards BEFORE freeing the box tree (order matters). */
+	/* HAZARD guards BEFORE freeing the box tree (order matters). Each phase
+	 * logged (flushes to disk) so a crash log pinpoints the failing step. */
 	html_reconvert_clear_node_boxes(c);          /* H1: stale node boxes */
+	macsurf_debug_log_writef("reconvert: H1 node-boxes cleared");
 	html_object_free_objects(c);                 /* H2: object_list fetches */
+	macsurf_debug_log_writef("reconvert: H2 objects freed");
 	html_reconvert_detach_forms(c);              /* H3: form box pointers */
 	imagemap_destroy(c);                         /* rebuilt in done       */
 	if (c->sel != NULL)
 		selection_destroy(c->sel);
 	c->sel = selection_create((struct content *) c);
+	macsurf_debug_log_writef("reconvert: H3/imagemap/sel done");
 
 	/* free the old box tree; null layout so a same-pass reformat bails
 	 * (the html_reformat null-guard) until reconvert_done rebuilds it. */
 	if (c->bctx != NULL) {
+		macsurf_debug_log_writef("reconvert: freeing old box tree");
 		talloc_free(c->bctx);
 		c->bctx = NULL;
+		macsurf_debug_log_writef("reconvert: old box tree freed");
 	}
 	c->layout = NULL;
 
@@ -1383,9 +1414,11 @@ nserror html_reconvert(html_content *c)
 	if ((exc != DOM_NO_ERR) || (html == NULL))
 		return NSERROR_DOM;
 	html_get_dimensions(c);
+	macsurf_debug_log_writef("reconvert: dom_to_box start");
 	error = dom_to_box(html, c, html_reconvert_done,
 			&c->box_conversion_context);
 	dom_node_unref(html);
+	macsurf_debug_log_writef("reconvert: dom_to_box returned err=%d", (int) error);
 	return error;
 }
 
