@@ -1,0 +1,21 @@
+category,url,login,notes
+retro,https://68kmla.org/bb/,yes,phpBB forum — login validated (cookie/form stack works)
+retro,https://macintoshgarden.org/,no,abandonware archive — image-heavy
+retro,https://www.macintoshrepository.org/,no,software archive
+retro,https://www.lowendmac.com/,no,vintage Mac news — text + images
+retro,https://applefritter.com/,maybe,community forum
+retro,https://www.folklore.org/,no,Mac history stories — mostly text
+retro,https://vintageapple.org/,no,scanned magazine archive
+retro,https://www.system7today.com/,no,OS 9-era styled site
+retro,https://mactrove.com/,no,Drupal 11 render benchmark (the existing reference)
+retro,https://everymac.com/,no,Mac spec database — tables
+current,https://en.wikipedia.org/wiki/Macintosh,no,light, server-rendered — should be a strong score
+current,https://news.ycombinator.com/,maybe,Hacker News — extremely light classic HTML
+current,https://lite.cnn.com/,no,CNN text-only edition
+current,https://www.npr.org/,no,news — moderate JS
+current,https://www.macrumors.com/,no,Mac news — heavier
+current,https://apnews.com/,no,news
+current,https://example.com/,no,baseline sanity (trivial page)
+current,https://duckduckgo.com/html/,no,search (no-JS HTML endpoint)
+login,https://68kmla.org/bb/ucp.php?mode=login,yes,forum login flow
+login,https://accounts.google.com/,yes,Google login (hard — anti-bot)

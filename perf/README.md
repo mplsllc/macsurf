@@ -50,3 +50,25 @@ table but aren't double-counted in the bar.
 > Multi-reflow pages (mactrove's reflow storm, FB) can produce noisy/negative
 > per-phase deltas because the scraper takes the latest stamp per phase per
 > cycle. `total_ms` stays meaningful; the dashboard skips non-positive phases.
+
+## Site-compatibility benchmark (multi-site, scored)
+
+`bench.py` turns a captured log into a **scored, honest, per-site** record and
+regenerates **`wiki/Site-Compatibility.md`** — the public progress tracker on
+the GitHub wiki.
+
+```sh
+# score the last cycle for a site you just loaded on the G3, then rebuild the page
+perf/bench.py capture "forclaude/MacSurf Debug.log" \
+    --url https://68kmla.org/bb/ --label "fixes404" --login works
+
+# rebuild the wiki page from accumulated data only
+perf/bench.py render
+```
+
+- `perf/sites.csv` — the curated target list (retro + current Mac sites + login flows). Edit freely.
+- `perf/bench.csv` — accumulated scored runs (one row per capture; auto commit SHA).
+- Scoring is out of 100 from the log alone (render 40 / css 20 / images 15 / speed 15 / clean 10) — transparent, no subjective judgement. A site that can't load is scored `F` and listed honestly, not hidden.
+- `--login works|partial|fails` annotates login state per site (the one thing the log can't auto-detect yet).
+
+**The loop:** load each target on the G3 → pull the log → `bench.py capture … --url <site>` → commit. The wiki page updates so anyone can watch each site's grade climb over releases.

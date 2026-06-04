@@ -1,0 +1,2 @@
+timestamp,commit,url,label,score,grade,status,login,total_ms,total_bytes,subresources,boxes,text,plot_text,plot_rect,img_ok,img_fail,css_ok,css_skip,css_total,js_err,loaded,notes
+2026-06-04T21:18:38,378a2952,https://www.google.com/,fixes404,0,F,Can't load yet,,68806.9,5482,1,31,9,12,4,0,0,4,0,4421,0,0,
