@@ -162,6 +162,9 @@ struct macos9_https_ctx {
 	char             redirect_url[1024];
 
 	unsigned long    progress_ticks;
+	UInt32           last_rx_bytes;  /* fixes414 — last OT recv-byte count
+	                                  * seen, to credit raw wire progress to
+	                                  * the no-progress watchdog. */
 
 	/* fixes218 — disk cache. cache_eligible flips on after parse_headers
 	 * sees a 200 OK with a whitelisted MIME. cache_capture accumulates
@@ -1013,10 +1016,24 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	 * blocklist on timeout and on "peer closed before complete" (the
 	 * fingerprint-rejection signature). We do NOT blocklist on aborts
 	 * (NetSurf cancelling a duplicate fetch) or on transient errors
-	 * that might genuinely recover. */
+	 * that might genuinely recover.
+	 *
+	 * fixes410 — also blocklist on "handshake/transport failed". A host
+	 * macTLS cannot complete a TLS handshake with (e.g. cdn.jsdelivr.net,
+	 * which a normal TLS-1.2 client reaches fine, so this is macTLS-side)
+	 * otherwise gets a fresh handshake attempt for EVERY subresource it
+	 * serves — observed as 12 back-to-back jsdelivr handshake failures
+	 * costing ~48s of dead time on a single mactrove load. Blocklisting
+	 * after the first handshake failure fails the rest FAST; the page is
+	 * missing that host's resources either way (the handshake can't
+	 * succeed this session), so this only removes the per-subresource
+	 * retry cost. The list is per-session and fixes244 refuses to persist
+	 * any host that ever succeeded, so a transient failure self-heals
+	 * next session. */
 	if (why != NULL && c->pool_key[0] != '\0' &&
 	    (strcmp(why, "https: connection timed out") == 0 ||
-	     strcmp(why, "https: peer closed before complete") == 0)) {
+	     strcmp(why, "https: peer closed before complete") == 0 ||
+	     strcmp(why, "https: handshake/transport failed") == 0)) {
 		dead_host_add(c->pool_key);
 	}
 
@@ -1816,6 +1833,30 @@ static void hctx_poll(struct macos9_https_ctx *c)
 	if (e != kOSTLSAsync_OK) {
 		hctx_fail(c, "https: pump error");
 		return;
+	}
+
+	/* fixes414 — credit RAW WIRE progress to the no-progress watchdog.
+	 * Previously c->progress_ticks was refreshed only when OSTLS_Read handed
+	 * the fetcher a header/body byte (below), so a connection that was
+	 * actively receiving encrypted bytes -- a slow transfer, a handshake
+	 * under contention, or a reused keep-alive still waiting on the response
+	 * -- hit NO_PROGRESS_TICKS (4s) and was killed, then retried or HTTP-
+	 * fallback re-fetched. Measured: ~23 such kills + 40 fallbacks = ~90s of
+	 * dead time on one load (the "really struggling" symptom). Refresh
+	 * whenever OT has delivered new bytes into macTLS, so the 4s timer means
+	 * "no RAW progress for 4s"; a genuinely dead/parked server (e.g. a
+	 * fingerprint-reject that ACKs then sends nothing) still times out. The
+	 * recv-byte counter is cumulative across a pooled connection's life, so
+	 * the first poll after a pool reuse sees a jump and grants one fresh
+	 * window -- correct for a reused conn. */
+	if (c->conn != NULL) {
+		OSTLSDiagnostics pdiag;
+		memset(&pdiag, 0, sizeof pdiag);
+		OSTLS_GetDiagnostics(c->conn, &pdiag);
+		if (pdiag.ot_recv_bytes != c->last_rx_bytes) {
+			c->last_rx_bytes = pdiag.ot_recv_bytes;
+			c->progress_ticks = now_ticks();
+		}
 	}
 
 	if (ev == kOSTLSEventFailed) {

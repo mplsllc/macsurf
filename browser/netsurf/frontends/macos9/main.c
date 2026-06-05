@@ -937,10 +937,15 @@ int main(void) {
 	 * in this binary is not the one carrying fixes411. */
 	{
 		extern int OSTLS_SHA384_KAT(void);
-		if (OSTLS_SHA384_KAT() == 0) {
-			MS_LOG("macTLS SHA-384 KAT: PASS");
+		int kr = OSTLS_SHA384_KAT();
+		if (kr == 0) {
+			MS_LOG("macTLS SHA-384 KAT: PASS (single+multiblock)");
+		} else if (kr == 1) {
+			MS_LOG("macTLS SHA-384 KAT: FAIL abc (single-block)");
+		} else if (kr == 2) {
+			MS_LOG("macTLS SHA-384 KAT: FAIL 200a (MULTI-BLOCK)");
 		} else {
-			MS_LOG("macTLS SHA-384 KAT: FAIL (SHA-384 wrong)");
+			MS_LOG("macTLS SHA-384 KAT: FAIL 112a (two-block pad)");
 		}
 	}
 	RegisterAppearanceClient();
