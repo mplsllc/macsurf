@@ -931,6 +931,18 @@ int main(void) {
 	 * first HTTPS fetch after a cold boot isn't drawing on a thin pool. */
 	OSTLS_LoadSeed();
 	MS_LOG("macEntropy: seed loaded");
+	/* fixes413 -- prove on-device whether the macTLS SHA-384 core (fixes411)
+	 * is live and correct. If this logs FAIL, every Sectigo/SHA-384 cert
+	 * chain will be rejected; if it never logs at all, the macTLS library
+	 * in this binary is not the one carrying fixes411. */
+	{
+		extern int OSTLS_SHA384_KAT(void);
+		if (OSTLS_SHA384_KAT() == 0) {
+			MS_LOG("macTLS SHA-384 KAT: PASS");
+		} else {
+			MS_LOG("macTLS SHA-384 KAT: FAIL (SHA-384 wrong)");
+		}
+	}
 	RegisterAppearanceClient();
 	MS_LOG("Appearance OK");
 
