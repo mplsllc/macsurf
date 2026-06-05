@@ -62,18 +62,41 @@ int nsu_base64_encode_url(const unsigned char *input, unsigned long input_length
 	return 2;
 }
 
-/* nsutils monotonic clock — Carbon TickCount (1/60s), good enough
- * for layout-cycle deadlines. */
-#ifdef __MACOS__
+/* nsutils monotonic clock — Carbon TickCount (1/60s), used for layout-cycle
+ * deadlines (content reformat_time + the html/object.c min_reflow_period
+ * throttle).
+ *
+ * fixes409 — this was doubly broken and was the root cause of the "reflow
+ * storm" (a full page relayout on nearly every subresource arrival, ~31
+ * reformats per page, mactrove layout-done ~52s):
+ *
+ *   1. WRONG GUARD. The real implementation was gated on __MACOS__, which
+ *      CodeWarrior does NOT define (the project defines __MACOS9__). So the
+ *      Mac build compiled the no-op #else stub and never wrote *now at all.
+ *   2. WRONG SIGNATURE. Both variants took 'unsigned long *' (32-bit), but
+ *      every caller (object.c, html.c) passes a 64-bit nsutils_ms_t
+ *      (uint64_t). On big-endian PPC a 32-bit write lands in the HIGH word,
+ *      leaving the low word as stack garbage.
+ *
+ * Either way ms_now came back garbage, so 'ms_now > reformat_time' was
+ * effectively random and the throttle never engaged. Fix: correct guard
+ * (__MACOS9__) and the full 64-bit signature/write. The ms value is computed
+ * in 32-bit (it fits for any sane uptime, and this dodges the CW8 PPC
+ * long-long multiply-by-constant miscompile) then widened on store.
+ *
+ * nsutils_ms_t is 'unsigned long long' (see nsutils/time.h); we spell it out
+ * here rather than include the header to avoid an access-path dependency. */
+#ifdef __MACOS9__
 extern unsigned long TickCount(void);
-unsigned long nsu_getmonotonic_ms(unsigned long *now)
+int nsu_getmonotonic_ms(unsigned long long *now)
 {
-	unsigned long t = TickCount() * 1000UL / 60UL;
-	if (now) *now = t;
+	if (now != NULL) {
+		*now = (unsigned long long)(TickCount() * 1000UL / 60UL);
+	}
 	return 0;
 }
 #else
-unsigned long nsu_getmonotonic_ms(unsigned long *now)
+int nsu_getmonotonic_ms(unsigned long long *now)
 {
 	(void)now; return 0;
 }
