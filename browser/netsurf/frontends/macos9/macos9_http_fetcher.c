@@ -538,8 +538,7 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		/* Length of the constant template (without %-substitutions).
 		 * fixes312 raises this 60→86 reservation when a Content-Length
 		 * and Content-Type are also emitted. */
-		/* fixes407 -- +27 for "Accept-Encoding: identity\r\n" added below */
-		size_t TEMPLATE_LEN = (c->post_body != NULL) ? 200 : 120;
+		size_t TEMPLATE_LEN = (c->post_body != NULL) ? 160 : 86;
 		const char *method = (c->post_body != NULL) ? "POST" : "GET";
 		const char *post_extra_hdrs = (c->post_body != NULL) ?
 			"Content-Type: application/x-www-form-urlencoded\r\n" :
@@ -611,7 +610,6 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 					"Host: %.*s\r\n"
 					"User-Agent: %s\r\n"
 					"Accept: */*\r\n"
-					"Accept-Encoding: identity\r\n"
 					"%s"
 					"%s"
 					"Content-Length: %ld\r\n"
@@ -625,7 +623,6 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 					"Host: %.*s\r\n"
 					"User-Agent: %s\r\n"
 					"Accept: */*\r\n"
-					"Accept-Encoding: identity\r\n"
 					"%s"
 					"Connection: keep-alive\r\n\r\n",
 					u_full, (int)host_len, host_str,
@@ -697,7 +694,6 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 					"Host: %.*s\r\n"
 					"User-Agent: %s\r\n"
 					"Accept: */*\r\n"
-					"Accept-Encoding: identity\r\n"
 					"%s"
 					"%s"
 					"Content-Length: %ld\r\n"
@@ -711,7 +707,6 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 					"Host: %.*s\r\n"
 					"User-Agent: %s\r\n"
 					"Accept: */*\r\n"
-					"Accept-Encoding: identity\r\n"
 					"%s"
 					"Connection: keep-alive\r\n\r\n",
 					path_buf, (int)host_len, host_str,
@@ -916,25 +911,13 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 		 * handling below tears the fetch down, so a login POST's 302
 		 * carries its session cookies into urldb. Mirrors curl.c. */
 		if(strncasecmp(p,"Set-Cookie:",11)==0) {
-			/* fixes405 (#167) — store Set-Cookie ONLY from the
-			 * verifiable (document / user-navigation) fetch; a
-			 * sub-resource (favicon/image/css/js) is verifiable=false
-			 * and takes urldb's referer-matched cookie path, which
-			 * crashed on Facebook's logged-in favicon over https.
-			 * Mirror that guard here so an http sub-resource can't hit
-			 * the same path. Login is unaffected (document + POST +
-			 * 302 are verifiable). */
-			char *v=p+11;
-			char nm[40]; int k=0;
-			while(*v==' '||*v=='\t')v++;
-			while(v[k]!='\0' && v[k]!='=' && k<39){ nm[k]=v[k]; k++; }
-			nm[k]='\0';
-			if (!fetch_get_verifiable(c->parent)) {
-				macsurf_debug_log_writef(
-					"http: skip sub-resource Set-Cookie '%s'", nm);
-			} else {
-				fetch_set_cookie(c->parent, v);
-				/* fixes367 (#167) — log cookie NAME only, never value. */
+			char *v=p+11; while(*v==' '||*v=='\t')v++;
+			fetch_set_cookie(c->parent, v);
+			/* fixes367 (#167) — log cookie NAME only, never value. */
+			{
+				char nm[40]; int k=0;
+				while(v[k]!='\0' && v[k]!='=' && k<39){ nm[k]=v[k]; k++; }
+				nm[k]='\0';
 				macsurf_debug_log_writef("http: stored cookie '%s'", nm);
 			}
 		}

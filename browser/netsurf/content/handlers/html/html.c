@@ -1314,25 +1314,6 @@ static void html_reconvert_detach_forms(html_content *c)
  * destroy the parser (already gone) or re-fire content_set_ready /
  * proceed_to_done (the content is already DONE). It re-extracts image maps
  * and relayouts the fresh box tree (same path image-load completion uses). */
-/* fixes404 — DOUBLE-BUFFER: the OLD box tree's talloc context, kept alive
- * across dom_to_box and freed here (after the new tree + reformat are live).
- * Single-window browser => one re-convert in flight, so a file-scope pointer
- * is safe (the box_conversion_context != NULL guard enforces one at a time). */
-static void *g_reconvert_old_bctx = NULL;
-
-/* Free the deferred old box tree (double-buffer). Done AFTER the new tree is
- * built + reformatted so the re-cascade could share the old interned styles
- * instead of freeing-then-reinterning them. */
-static void html_reconvert_free_old(void)
-{
-	if (g_reconvert_old_bctx != NULL) {
-		MS_LOG("reconvert: FREE old tree");
-		talloc_free(g_reconvert_old_bctx);
-		g_reconvert_old_bctx = NULL;
-		MS_LOG("reconvert: old tree FREED");
-	}
-}
-
 static void html_reconvert_done(html_content *c, bool success)
 {
 	nserror err;
@@ -1344,7 +1325,6 @@ static void html_reconvert_done(html_content *c, bool success)
 
 	if ((success == false) || (c->aborted)) {
 		macsurf_debug_log_writef("reconvert: FAILED/aborted");
-		html_reconvert_free_old();   /* still free the deferred old tree */
 		return;
 	}
 
@@ -1354,14 +1334,8 @@ static void html_reconvert_done(html_content *c, bool success)
 				(int)err);
 	}
 
-	MS_LOG("reconvert: REFORMAT");
 	content__reformat(&c->base, false,
 			c->base.available_width, c->base.available_height);
-	MS_LOG("reconvert: PAINTED ok");
-
-	/* new tree is live + laid out — NOW free the old one (shared styles
-	 * survive via their refcount held by the new tree). */
-	html_reconvert_free_old();
 }
 
 /* Re-run box construction over the current DOM. Returns NSERROR_NEED_DATA if
@@ -1386,75 +1360,32 @@ nserror html_reconvert(html_content *c)
 	if (c->box_conversion_context != NULL)
 		return NSERROR_NEED_DATA;        /* one re-convert in flight    */
 
-	/* fixes402 — DEFER the re-convert while any image/object subresource
-	 * fetch is still in flight. Freeing the box tree mid-fetch is the
-	 * documented reconvert crash hazard; only tear down once every object
-	 * has settled (DONE or ERROR). Re-arm (NEED_DATA) otherwise — the
-	 * scheduler retries on the next debounce, and the page shell stays up. */
-	{
-		struct content_html_object *obj;
-		for (obj = c->object_list; obj != NULL; obj = obj->next) {
-			if (obj->content != NULL) {
-				content_status os = content_get_status(obj->content);
-				if (os != CONTENT_STATUS_DONE &&
-				    os != CONTENT_STATUS_ERROR) {
-					macsurf_debug_log_writef(
-						"reconvert: defer (obj %p still loading st=%d)",
-						(void *) obj->content, (int) os);
-					return NSERROR_NEED_DATA;
-				}
-			}
-		}
-	}
+	macsurf_debug_log_writef("reconvert: start layout=%p", (void *)c->layout);
 
-	MS_LOG("reconvert: START");
-
-	/* HAZARD guards BEFORE freeing the box tree (order matters). Each phase
-	 * logged (flushes to disk) so a crash log pinpoints the failing step. */
+	/* HAZARD guards BEFORE freeing the box tree (order matters). */
 	html_reconvert_clear_node_boxes(c);          /* H1: stale node boxes */
-	MS_LOG("reconvert: H1 nodes");
 	html_object_free_objects(c);                 /* H2: object_list fetches */
-	MS_LOG("reconvert: H2 objects");
 	html_reconvert_detach_forms(c);              /* H3: form box pointers */
 	imagemap_destroy(c);                         /* rebuilt in done       */
 	if (c->sel != NULL)
 		selection_destroy(c->sel);
 	c->sel = selection_create((struct content *) c);
-	MS_LOG("reconvert: H3 imagemap/sel");
 
-	/* fixes404 — DOUBLE-BUFFER: do NOT free the old box tree here. Freeing it
-	 * now runs the box destructors -> css_select_results_destroy on the OLD
-	 * styles BEFORE the re-cascade re-interns them; that free-then-reintern
-	 * order is what trips the libcss arena's "duplicate interned style
-	 * destroyed while still referenced" use-after-free (the same heap-
-	 * corruption / 0x2710 garbage-fn-ptr crash as the recascade leak). Keep
-	 * the old tree alive THROUGH dom_to_box so the re-cascade HITS the arena
-	 * (old styles still present) and SHARES them (refcount++) rather than
-	 * freeing-then-recreating. Freed in html_reconvert_done once the new tree
-	 * + reformat are live. All references to the old tree are already cleared
-	 * above (node user_data, objects, forms, imagemap, selection), so the old
-	 * tree is orphaned-but-alive until then. */
-	MS_LOG("reconvert: defer old free");
-	g_reconvert_old_bctx = c->bctx;
-	c->bctx = NULL;
+	/* free the old box tree; null layout so a same-pass reformat bails
+	 * (the html_reformat null-guard) until reconvert_done rebuilds it. */
+	if (c->bctx != NULL) {
+		talloc_free(c->bctx);
+		c->bctx = NULL;
+	}
 	c->layout = NULL;
 
 	exc = dom_document_get_document_element(c->document, (void *) &html);
-	if ((exc != DOM_NO_ERR) || (html == NULL)) {
-		html_reconvert_free_old();   /* don't leak the deferred old tree */
+	if ((exc != DOM_NO_ERR) || (html == NULL))
 		return NSERROR_DOM;
-	}
 	html_get_dimensions(c);
-	MS_LOG("reconvert: dom_to_box");
 	error = dom_to_box(html, c, html_reconvert_done,
 			&c->box_conversion_context);
 	dom_node_unref(html);
-	MS_LOG("reconvert: dom_to_box DONE");
-	if (error != NSERROR_OK) {
-		/* dom_to_box failed synchronously: html_reconvert_done will not
-		 * run, so free the deferred old tree here to avoid a leak. */
-		html_reconvert_free_old();
-	}
 	return error;
 }
 

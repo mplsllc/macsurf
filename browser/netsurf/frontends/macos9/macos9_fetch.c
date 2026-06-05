@@ -82,23 +82,8 @@ static const struct macos9_ua_rule macos9_ua_rules[] = {
 	 * This is a per-host spoof for facebook.com ONLY (Classilla sitecontrol
 	 * pattern); every other host keeps MacSurf's honest default UA.
 	 */
-	/* fixes395 (#167) — EXPERIMENT: report as Firefox 68 mobile instead of
-	 * the KaiOS feature-phone UA. The KaiOS UA still drew FB's
-	 * "unsupported-interstitial" (capability gate), so try the UA PowerFox
-	 * uses for facebook.com (FF68) — modern enough to pass FB's browser
-	 * sniff, old enough that FB serves a surface a Duktape-class engine can
-	 * still run (NOT the latest FF/Chrome, which pulls the full ES2020+ SPA
-	 * we can't execute). Login now relies on the persisted c_user/xs cookies
-	 * (fixes368), so we no longer need the KaiOS UA's login-form surface. */
-	/* fixes398 (#167) — identify as current DESKTOP Firefox and target the
-	 * real www.facebook.com (not the mobile/mbasic surface). Claiming the
-	 * newest version got FB to drop the "unsupported" gate and actually try
-	 * to load (vs the old-UA interstitial); the remaining work is to BUILD
-	 * the JS capabilities the desktop site needs to run (ES6+ transpiler
-	 * stages), not to keep tuning the UA. Desktop UA so FB serves the full
-	 * site instead of m.facebook. */
 	{ "facebook.com",
-	  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0" }
+	  "Mozilla/5.0 (Mobile; LYF/F90M/LYF-F90M-000-02-44-130319; rv:48.0) Gecko/48.0 Firefox/48.0 KAIOS/2.5" }
 	/* add more host->UA overrides here */
 };
 

@@ -261,15 +261,6 @@ nserror fetch_set_http_code(struct fetch *fetch, http_response_code http_code);
 void fetch_set_cookie(struct fetch *fetch, const char *data);
 
 /**
- * Query whether a fetch is "verifiable" (a top-level / user-initiated
- * transaction) as opposed to a sub-resource fetch. The macos9 fetchers
- * use this to store Set-Cookie only from the document fetch, never from
- * sub-resources (favicon / image / css / js), which take urldb's
- * referer-matched cookie path. NULL-safe (returns false).
- */
-bool fetch_get_verifiable(const struct fetch *fetch);
-
-/**
  * Get the set of file descriptors the fetchers are currently using.
  *
  * This obtains the file descriptors the fetch system is using to

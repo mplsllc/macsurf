@@ -16,7 +16,6 @@
 #include "utils/log.h"
 
 #include "macos9.h"
-#include "macsurf_debug_log.h"		/* fixes406 -- UAF guard logging */
 
 #ifdef __MACOS9__
 #include <Timer.h>
@@ -138,36 +137,6 @@ macos9_schedule(int t, void (*callback)(void *p), void *p)
 	return NSERROR_OK;
 }
 
-/*
- * fixes406 -- guard against dispatching a freed/corrupted sched_entry.
- *
- * A use-after-free elsewhere (root trigger observed: the https-timeout
- * auto-upgrade FETCH_REDIRECT cascade in macos9_https_fetcher.c hctx_fail,
- * which re-enters NetSurf's llcache SYNCHRONOUSLY -- aborting the fetch,
- * building a replacement http fetch, and freeing the parent fetch all in
- * one nested call) can free a struct whose memory is then reused by a
- * later allocation that writes small integer values over it. If a
- * sched_entry's block is the one reused, its callback field is overwritten
- * with a small freelist/length value such as 0x00002800. macos9_schedule_run
- * then calls that as a function: "PowerPC illegal instruction at 00002800",
- * R3=0 (the universal p==NULL param), the hard crash we are chasing.
- *
- * On Mac OS 9 PPC every real callback is a CFM code pointer living high in
- * memory (observed: app code around 0x3Fxxxxxx / 0x40xxxxxx, app heap around
- * 0x001Axxxx); a 4-byte-aligned heap/code pointer is always >= 0x00010000.
- * Anything in the first 64 KB, or misaligned, is a smashed pointer. We check
- * BOTH the entry pointer (in case a corrupt entry's ->next dangled into the
- * queue) AND the callback, BEFORE any deref-and-call. On a hit we cannot
- * trust this entry's ->next either, so we drop the whole remaining queue and
- * log rather than branch through garbage. Pending callbacks are lost (the
- * in-flight fetch may stall), but the machine survives and NetSurf re-arms
- * fetcher_poll on the next navigation. The log line also confirms the
- * scheduler-UAF diagnosis and prints the smashed values for the next pass.
- */
-#define SCHED_PTR_OK(x) \
-	(((unsigned long)(x) & 0x3UL) == 0 && \
-	 (unsigned long)(x) >= 0x00010000UL)
-
 bool
 macos9_schedule_run(void)
 {
@@ -183,37 +152,8 @@ macos9_schedule_run(void)
 
 	now = macos9_get_ticks();
 
-	while (sched_queue != NULL) {
+	while (sched_queue != NULL && sched_queue->time <= now) {
 		entry = sched_queue;
-
-		/* fixes406 -- the entry pointer itself may be a wild value
-		 * that dangled in via a previous entry's smashed ->next. */
-		if (!SCHED_PTR_OK(entry)) {
-			macsurf_debug_log_writef(
-				"schedule: UAF guard -- wild queue ptr %p "
-				"dropped (corruption upstream)", (void *)entry);
-			sched_queue = NULL;
-			break;
-		}
-
-		/* Check the callback BEFORE the time test so a smashed entry
-		 * with a garbage (possibly huge) time field can't stall the
-		 * head forever -- we want it dropped, not silently parked. */
-		if (!SCHED_PTR_OK(entry->callback)) {
-			macsurf_debug_log_writef(
-				"schedule: UAF guard -- smashed callback %p "
-				"(entry %p time=%ld p=%p next=%p) -- dropping "
-				"queue", (void *)(unsigned long)entry->callback,
-				(void *)entry, (long)entry->time, entry->p,
-				(void *)entry->next);
-			sched_queue = NULL;
-			break;
-		}
-
-		if (entry->time > now) {
-			break;	/* head not due; rest are later (sorted) */
-		}
-
 		callback = entry->callback;
 		p = entry->p;
 		sched_queue = entry->next;

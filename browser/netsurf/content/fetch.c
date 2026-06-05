@@ -840,12 +840,3 @@ void fetch_set_cookie(struct fetch *fetch, const char *data)
 		urldb_set_cookie(data, fetch->url, fetch->referer);
 	}
 }
-
-/* exported interface documented in content/fetch.h */
-bool fetch_get_verifiable(const struct fetch *fetch)
-{
-	/* NULL-safe: callers in the macos9 fetchers gate cookie storage on
-	 * this, and a NULL fetch (no parent) must read as "not verifiable" so
-	 * the cookie write is skipped rather than dereferencing garbage. */
-	return (fetch != NULL) ? fetch->verifiable : false;
-}
