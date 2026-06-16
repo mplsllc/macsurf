@@ -427,7 +427,7 @@ es6_region_uses_this(const char *s, size_t a, size_t e)
  * indeterminate extents) are skipped over so a later transformable arrow can
  * still be found. */
 static int
-es6_find_arrow(const char *s, size_t n,
+es6_find_arrow(const char *s, size_t n, size_t start_pos,
 	size_t *p0, size_t *p1, int *pident,
 	size_t *bs, size_t *be, int *blk)
 {
@@ -438,15 +438,14 @@ es6_find_arrow(const char *s, size_t n,
 	size_t id_start, id_end;       /* most recent identifier token */
 	size_t grp_open, grp_close;    /* most recent balanced (...) group */
 	size_t pstk[256];
-	int    ptop;
+	int    ptop = 0;
 
-	i = 0;
+	i = start_pos;
 	st = ES_CODE;
 	prev_sig = 0;
 	prev_sig_pos = 0;
 	id_start = 0; id_end = 0;
 	grp_open = 0; grp_close = 0;
-	ptop = 0;
 
 	while (i < n) {
 		char c = s[i];
@@ -767,14 +766,14 @@ es6_is_reserved(const char *s, size_t a, size_t e)
  * css`...`) keep template-object semantics a plain string can't, so they are
  * left alone. Returns 1 and sets *tpos on success, 0 if none. */
 static int
-es6_find_template(const char *s, size_t n, size_t *tpos)
+es6_find_template(const char *s, size_t n, size_t start_pos, size_t *tpos)
 {
 	size_t i;
 	int st;
 	int prev_sig;
-	size_t prev_sig_pos;
+	size_t prev_sig_pos = 0;
 
-	i = 0;
+	i = start_pos;
 	st = ES_CODE;
 	prev_sig = 0;
 	prev_sig_pos = 0;
@@ -851,6 +850,7 @@ es6_template_pass(const char *src, size_t len, char *out, size_t cap)
 	size_t alen;
 	size_t wmax;
 	size_t iter;
+	size_t start_pos;
 
 	wmax = len * 3 + 4096;
 	if (len + 1 > wmax) {
@@ -868,11 +868,12 @@ es6_template_pass(const char *src, size_t len, char *out, size_t cap)
 	a[len] = '\0';
 	alen = len;
 
+	start_pos = 0;
 	iter = 0;
 	for (;;) {
 		size_t tpos, bo, src_end, k;
 		if (iter++ > 200000UL) break;
-		if (!es6_find_template(a, alen, &tpos)) break;
+		if (!es6_find_template(a, alen, start_pos, &tpos)) break;
 		bo = 0;
 		/* prefix */
 		if (tpos >= wmax) break;
@@ -888,6 +889,7 @@ es6_template_pass(const char *src, size_t len, char *out, size_t cap)
 		if (bo == 0) break;        /* suffix overflow — keep `a` */
 		tmp = a; a = b; b = tmp;
 		alen = bo;
+		start_pos = tpos;
 	}
 
 	if (alen < cap) {
@@ -912,6 +914,7 @@ es6_arrow_pass(const char *src, size_t len, char *out, size_t cap)
 	size_t alen;
 	size_t wmax;
 	size_t iter;
+	size_t start_pos;
 
 	wmax = len * 4 + 4096;
 	if (len + 1 > wmax) {
@@ -929,17 +932,19 @@ es6_arrow_pass(const char *src, size_t len, char *out, size_t cap)
 	a[len] = '\0';
 	alen = len;
 
+	start_pos = 0;
 	iter = 0;
 	for (;;) {
 		size_t p0, p1, bs, be, blen;
 		int pident, blk;
 		if (iter++ > 200000UL) break;
-		if (!es6_find_arrow(a, alen, &p0, &p1, &pident, &bs, &be, &blk))
+		if (!es6_find_arrow(a, alen, start_pos, &p0, &p1, &pident, &bs, &be, &blk))
 			break;
 		blen = es6_emit_rewrite(a, alen, p0, p1, pident, bs, be, blk, b, wmax);
 		if (blen == 0) break;   /* overflow — keep `a` as the result */
 		tmp = a; a = b; b = tmp;
 		alen = blen;
+		start_pos = p0;
 	}
 
 	if (alen < cap) {
