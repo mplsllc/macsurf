@@ -1499,6 +1499,12 @@ unsigned char js_exec(struct jsthread *thread,
 			 * transpiler can't fix it anyway. Only doing this if it already threw
 			 * a SyntaxError on the first pass. */
 			if (txtlen > 300000) unsupported = 1; /* > 300KB is too big to retry on G3 */
+			else {
+				for (i = 0; i + 5 < txtlen; i++) {
+					if (txt[i] == 'c' && txt[i+1] == 'l' && txt[i+2] == 'a' && txt[i+3] == 's' && txt[i+4] == 's' && (txt[i+5] == ' ' || txt[i+5] == 123)) { unsupported = 1; break; }
+					if (txt[i] == 'a' && txt[i+1] == 's' && txt[i+2] == 'y' && txt[i+3] == 'n' && txt[i+4] == 'c' && txt[i+5] == ' ') { unsupported = 1; break; }
+				}
+			}
 			
 			if (!unsupported) {
 				/* the arrow pass can GROW the source (an arrow expands
