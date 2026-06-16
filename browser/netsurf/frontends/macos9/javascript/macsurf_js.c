@@ -1492,9 +1492,18 @@ unsigned char js_exec(struct jsthread *thread,
 		 * up to the throw, so re-executing would double its side effects
 		 * — never retry those. Stage 1 transform: let/const -> var. */
 		if (duk_get_error_code(thread->ctx, -1) == DUK_ERR_SYNTAX_ERROR) {
-			/* the arrow pass can GROW the source (an arrow expands
-			 * to a function expression), so size the buffer for the
-			 * transpiler's internal growth ceiling (4x + slack). */
+			int unsupported = 0;
+			unsigned long i;
+			/* fixes418 — fast-fail for huge ES6 bundles or explicitly unsupported
+			 * modern syntax to save CPU. If it contains "class " or "async ", our
+			 * transpiler can't fix it anyway. Only doing this if it already threw
+			 * a SyntaxError on the first pass. */
+			if (txtlen > 300000) unsupported = 1; /* > 300KB is too big to retry on G3 */
+			
+			if (!unsupported) {
+				/* the arrow pass can GROW the source (an arrow expands
+				 * to a function expression), so size the buffer for the
+				 * transpiler's internal growth ceiling (4x + slack). */
 			size_t xcap = (size_t)txtlen * 4 + 4096;
 			char *xbuf = (char *)malloc(xcap);
 			if (xbuf != NULL) {
@@ -1524,6 +1533,7 @@ unsigned char js_exec(struct jsthread *thread,
 					}
 				}
 				free(xbuf);
+			}
 			}
 		}
 		/* fixes377 — name the failing script + its size so a parse/run
