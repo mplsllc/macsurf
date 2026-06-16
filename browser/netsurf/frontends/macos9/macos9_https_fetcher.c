@@ -58,10 +58,10 @@
  * report-to, reporting-endpoints, and several Set-Cookie lines), and login
  * 302 responses carry even more Set-Cookies. The old 4 KB cap tripped
  * "header buffer overflow" and the whole page fell back to fetcherror.
- * 16 KB gives ample margin for FB and any other heavy-header origin. The
- * buffer is grown on demand (hdr_append), so this is only a ceiling, not a
- * per-fetch allocation. */
-#define HDR_BUF_MAX        16384
+ * fixes422 — bumped 16384→65536: 68kmla.org/bb/ sends >16 KB of headers
+ * (XenForo CSP + security headers grew past the old cap). Buffer is grown
+ * on demand so this is only a ceiling, not a per-fetch allocation. */
+#define HDR_BUF_MAX        65536
 /* fixes234 — bumped from 1024 to 8192. With sleep=0 in main.c we poll
  * ~hundreds of times per second, but at 1 KB per drain the body delivery
  * rate ceilinged at ~60 KB/s and a 59 KB mactrove home page took ~2.5 s
