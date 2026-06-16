@@ -959,6 +959,234 @@ es6_arrow_pass(const char *src, size_t len, char *out, size_t cap)
 }
 
 /* ===================================================================== */
+/* STAGE 3b: for...of -> indexed for loop                                */
+/* ===================================================================== */
+
+/* Find the end of a single-statement body (no opening brace).
+ * Returns index past the statement; stops before any unmatched } or {. */
+static size_t
+es6_stmt_end(const char *s, size_t n, size_t start)
+{
+	size_t i = start;
+	int depth = 0;
+
+	while (i < n) {
+		char c = s[i];
+		if (c == '/' && i + 1 < n && s[i + 1] == '/') {
+			i += 2;
+			while (i < n && s[i] != '\n') i++;
+			continue;
+		}
+		if (c == '/' && i + 1 < n && s[i + 1] == '*') {
+			i += 2;
+			while (i + 1 < n && !(s[i] == '*' && s[i + 1] == '/')) i++;
+			i += 2;
+			continue;
+		}
+		if (c == '\'' || c == '"') {
+			char q = c;
+			i++;
+			while (i < n && s[i] != q) {
+				if (s[i] == '\\') i++;
+				i++;
+			}
+			if (i < n) i++;
+			continue;
+		}
+		if (c == '`') {
+			i++;
+			while (i < n && s[i] != '`') {
+				if (s[i] == '\\') i++;
+				i++;
+			}
+			if (i < n) i++;
+			continue;
+		}
+		if (c == '(' || c == '[') { depth++; i++; continue; }
+		if ((c == ')' || c == ']') && depth > 0) { depth--; i++; continue; }
+		if (depth == 0) {
+			if (c == ';') return i + 1;
+			if (c == '}' || c == '{') return i;
+		}
+		i++;
+	}
+	return i;
+}
+
+/*
+ * for_of_pass: transforms  for(var IDENT of EXPR)BODY
+ * into  {var _v0_=EXPR,_i0_=0,IDENT;for(;_i0_<_v0_.length;_i0_++){IDENT=_v0_[_i0_];BODY_CONTENT}}
+ *
+ * Only handles simple-identifier binding (skips destructuring).
+ * Runs after letconst_pass so only "var" remains.
+ */
+static size_t
+es6_for_of_pass(const char *src, size_t len, char *out, size_t cap)
+{
+	size_t i = 0, o = 0;
+	int st = ES_CODE, prev_sig = 0;
+	int ctr = 0;
+
+	while (i < len) {
+		char c = src[i];
+		if (o + 512 >= cap) return 0;
+
+		if (st == ES_CODE) {
+			if (c == '/' && i+1 < len && src[i+1] == '/') {
+				out[o++] = c; out[o++] = src[i+1]; i += 2; st = ES_LCOM; continue;
+			}
+			if (c == '/' && i+1 < len && src[i+1] == '*') {
+				out[o++] = c; out[o++] = src[i+1]; i += 2; st = ES_BCOM; continue;
+			}
+			if (c == '\'' ) { out[o++] = c; i++; st = ES_SQ;   prev_sig = c; continue; }
+			if (c == '"'  ) { out[o++] = c; i++; st = ES_DQ;   prev_sig = c; continue; }
+			if (c == '`'  ) { out[o++] = c; i++; st = ES_TMPL; prev_sig = c; continue; }
+			if (c == '/'  && es6_regex_ctx(prev_sig)) {
+				out[o++] = c; i++; st = ES_RE; continue;
+			}
+
+			/* detect 'for' keyword */
+			if (c == 'f' && i + 2 < len && src[i+1] == 'o' && src[i+2] == 'r'
+			    && (i == 0 || !es6_is_ident((unsigned char)src[i-1]))
+			    && (i + 3 >= len || !es6_is_ident((unsigned char)src[i+3]))) {
+				size_t k = i + 3;
+				/* skip whitespace */
+				while (k < len && (src[k] == ' ' || src[k] == '\t')) k++;
+				if (k < len && src[k] == '(') {
+					k++;
+					while (k < len && (src[k] == ' ' || src[k] == '\t')) k++;
+					/* must be 'var ' after letconst_pass */
+					if (k + 4 <= len && src[k]=='v' && src[k+1]=='a' && src[k+2]=='r' && src[k+3]==' ') {
+						size_t id_s, id_e, expr_s, expr_e, body_s, body_e;
+						int block_body, id_len, expr_len, body_content_len;
+						int depth;
+						char vi[10], vv[10];
+						size_t js, je;
+
+						k += 4;
+						while (k < len && src[k] == ' ') k++;
+						id_s = k;
+						while (k < len && es6_is_ident((unsigned char)src[k])) k++;
+						id_e = k;
+						id_len = (int)(id_e - id_s);
+						/* simple identifier only (no destructuring { }) */
+						if (id_len > 0 && id_len < 60 && id_s < id_e && src[id_s] != '{') {
+							while (k < len && src[k] == ' ') k++;
+							/* check for 'of' keyword */
+							if (k + 2 <= len && src[k] == 'o' && src[k+1] == 'f'
+							    && (k+2 >= len || !es6_is_ident((unsigned char)src[k+2]))) {
+								k += 2;
+								while (k < len && src[k] == ' ') k++;
+								/* extract EXPR until matching ')' */
+								expr_s = k;
+								depth = 1;
+								while (k < len && depth > 0) {
+									char ec = src[k];
+									if (ec == '(' || ec == '[' || ec == '{') { depth++; k++; continue; }
+									if (ec == ')' || ec == ']' || ec == '}') { depth--; if (depth > 0) { k++; continue; } break; }
+									if (ec == '\'' || ec == '"') {
+										char q = ec; k++;
+										while (k < len && src[k] != q) { if (src[k]=='\\') k++; k++; }
+										if (k < len) k++;
+										continue;
+									}
+									k++;
+								}
+								expr_e = k;
+								expr_len = (int)(expr_e - expr_s);
+								if (k < len && src[k] == ')') k++;
+
+								/* skip whitespace */
+								while (k < len && (src[k] == ' ' || src[k] == '\t')) k++;
+								body_s = k;
+								block_body = (k < len && src[k] == '{');
+								if (block_body) {
+									body_e = es6_block_end(src, len, k);
+								} else {
+									body_e = es6_stmt_end(src, len, k);
+								}
+								if (body_e > body_s && expr_len > 0) {
+									/* build temp var names */
+									sprintf(vi, "_i%d_", ctr);
+									sprintf(vv, "_v%d_", ctr);
+									ctr++;
+									/* body content: strip outer braces if block */
+									if (block_body) {
+										js = body_s + 1;
+										je = body_e - 1;
+									} else {
+										js = body_s;
+										je = body_e;
+									}
+									body_content_len = (int)(je - js);
+									/* emit: {var _vN_=EXPR,_iN_=0,IDENT;for(;_iN_<_vN_.length;_iN_++){IDENT=_vN_[_iN_];BODY}} */
+									if (o + 80 + expr_len + id_len + body_content_len < cap) {
+										out[o++] = '{';
+										/* var _vN_=EXPR */
+										{ const char *p = "var "; while (*p) out[o++] = *p++; }
+										{ const char *p = vv; while (*p) out[o++] = *p++; }
+										out[o++] = '=';
+										{ size_t q; for (q = expr_s; q < expr_e; q++) out[o++] = src[q]; }
+										out[o++] = ',';
+										/* _iN_=0 */
+										{ const char *p = vi; while (*p) out[o++] = *p++; }
+										out[o++] = '='; out[o++] = '0'; out[o++] = ',';
+										/* IDENT */
+										{ size_t q; for (q = id_s; q < id_e; q++) out[o++] = src[q]; }
+										out[o++] = ';';
+										/* for(;_iN_<_vN_.length;_iN_++) */
+										{ const char *p = "for(;"; while (*p) out[o++] = *p++; }
+										{ const char *p = vi; while (*p) out[o++] = *p++; }
+										out[o++] = '<';
+										{ const char *p = vv; while (*p) out[o++] = *p++; }
+										{ const char *p = ".length;"; while (*p) out[o++] = *p++; }
+										{ const char *p = vi; while (*p) out[o++] = *p++; }
+										{ const char *p = "++){"; while (*p) out[o++] = *p++; }
+										/* IDENT=_vN_[_iN_]; */
+										{ size_t q; for (q = id_s; q < id_e; q++) out[o++] = src[q]; }
+										out[o++] = '=';
+										{ const char *p = vv; while (*p) out[o++] = *p++; }
+										out[o++] = '[';
+										{ const char *p = vi; while (*p) out[o++] = *p++; }
+										{ const char *p = "];"; while (*p) out[o++] = *p++; }
+										/* body content */
+										{ size_t q; for (q = js; q < je; q++) out[o++] = src[q]; }
+										/* close for loop and outer block */
+										out[o++] = '}'; out[o++] = '}';
+										i = body_e;
+										prev_sig = '}';
+										continue;
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+
+			out[o++] = c;
+			if (c != ' ' && c != '\t' && c != '\n' && c != '\r') prev_sig = c;
+			i++;
+			continue;
+		}
+		out[o++] = c;
+		if (st == ES_SQ && c == '\\' && i+1 < len) { i++; out[o++] = src[i]; }
+		else if (st == ES_SQ  && c == '\'') st = ES_CODE;
+		else if (st == ES_DQ  && c == '\\' && i+1 < len) { i++; out[o++] = src[i]; }
+		else if (st == ES_DQ  && c == '"' ) st = ES_CODE;
+		else if (st == ES_TMPL && c == '\\' && i+1 < len) { i++; out[o++] = src[i]; }
+		else if (st == ES_TMPL && c == '`' ) st = ES_CODE;
+		else if (st == ES_LCOM && c == '\n') st = ES_CODE;
+		else if (st == ES_BCOM && c == '*'  && i+1 < len && src[i+1] == '/') { i++; out[o++] = src[i]; st = ES_CODE; }
+		else if (st == ES_RE   && c == '\\' && i+1 < len) { i++; out[o++] = src[i]; }
+		else if (st == ES_RE   && c == '/' ) { st = ES_CODE; prev_sig = '/'; }
+		i++;
+	}
+	out[o] = '\0';
+	return o;
+}
+
+/* ===================================================================== */
 /* STAGE 4/5: async/await/spread strip and class -> function pass        */
 /* ===================================================================== */
 
@@ -1182,6 +1410,10 @@ macsurf_es6_transpile(const char *src, size_t len, char *out, size_t cap)
 	 * again (a template interpolation can expose an arrow that pass 2,
 	 * running before the templates were lowered, never saw). Each pass
 	 * returns 0 only on overflow, in which case we keep the prior buffer. */
+	dst = (cur == buf1) ? buf2 : buf1;
+	m = es6_for_of_pass(cur, n, dst, wmax);
+	if (m != 0) { cur = dst; n = m; }
+
 	dst = (cur == buf1) ? buf2 : buf1;
 	m = es6_arrow_pass(cur, n, dst, wmax);
 	if (m != 0) { cur = dst; n = m; }
