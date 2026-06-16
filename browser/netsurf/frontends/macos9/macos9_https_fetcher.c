@@ -1350,6 +1350,7 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		macsurf_debug_log_writef(
 			"https: image too large (%ld B > 512KB), skip",
 			c->content_length);
+		c->aborted = 1; /* suppress HTTP fallback — we don't want it over HTTP either */
 		hctx_fail(c, "image too large");
 		return 2;
 	}

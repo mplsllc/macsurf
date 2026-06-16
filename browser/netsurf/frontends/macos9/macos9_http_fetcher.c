@@ -966,6 +966,22 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 	    macos9_cache_mime_eligible(c->status, c->mime)) {
 		c->cache_eligible = 1;
 	}
+	/* fixes426 — same large-image abort as HTTPS fetcher. HTTP fallback
+	 * for oversized images must also be suppressed or the heap still blows. */
+	if (c->status == 200 &&
+	    c->content_length > 512L * 1024L &&
+	    strncasecmp(c->mime, "image/", 6) == 0) {
+		struct fetch *parent_save;
+		macsurf_debug_log_writef(
+			"http: image too large (%ld B > 512KB), skip",
+			c->content_length);
+		c->keep_alive_ok = 0;
+		c->aborted = 1;
+		parent_save = c->parent;
+		fetch_remove_from_queues(parent_save);
+		fetch_free(parent_save);
+		return;
+	}
 	c->state=MFS_BODY;
 	if(sep+4 < c->h_buf+c->h_len) {
 		long initial_body = (long)((c->h_buf+c->h_len)-(sep+4));
