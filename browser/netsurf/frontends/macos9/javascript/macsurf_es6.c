@@ -24,6 +24,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stddef.h>
+#include <stdio.h>
 
 #include "javascript/macsurf_es6.h"
 
@@ -958,6 +959,189 @@ es6_arrow_pass(const char *src, size_t len, char *out, size_t cap)
 }
 
 /* ===================================================================== */
+/* STAGE 4/5: async/await/spread strip and class -> function pass        */
+/* ===================================================================== */
+
+static size_t es6_async_spread_pass(const char *src, size_t len, char *out, size_t cap) {
+	size_t i = 0, o = 0;
+	int st = ES_CODE, prev_sig = 0;
+	while (i < len) {
+		char c = src[i];
+		if (o + 5 >= cap) return 0;
+		if (st == ES_CODE) {
+			if (c == '/' && i + 1 < len && src[i + 1] == '/') { out[o++] = c; out[o++] = src[i + 1]; i += 2; st = ES_LCOM; continue; }
+			if (c == '/' && i + 1 < len && src[i + 1] == '*') { out[o++] = c; out[o++] = src[i + 1]; i += 2; st = ES_BCOM; continue; }
+			if (c == '/' && es6_regex_ctx(prev_sig)) { out[o++] = c; i++; st = ES_RE; continue; }
+			if (c == '\'') { out[o++] = c; prev_sig = c; i++; st = ES_SQ; continue; }
+			if (c == '"')  { out[o++] = c; prev_sig = c; i++; st = ES_DQ; continue; }
+			if (c == '`')  { out[o++] = c; prev_sig = c; i++; st = ES_TMPL; continue; }
+
+			if (c == 'a' && i + 5 <= len && src[i+1] == 's' && src[i+2] == 'y' && src[i+3] == 'n' && src[i+4] == 'c' && (i+5 == len || !es6_is_ident(src[i+5]))) {
+				int prevok = (i == 0) || !es6_is_ident(src[i-1]);
+				if (prevok) { out[o++] = ' '; out[o++] = ' '; out[o++] = ' '; out[o++] = ' '; out[o++] = ' '; i += 5; continue; }
+			}
+			if (c == 'a' && i + 5 <= len && src[i+1] == 'w' && src[i+2] == 'a' && src[i+3] == 'i' && src[i+4] == 't' && (i+5 == len || !es6_is_ident(src[i+5]))) {
+				int prevok = (i == 0) || !es6_is_ident(src[i-1]);
+				if (prevok) { out[o++] = ' '; out[o++] = ' '; out[o++] = ' '; out[o++] = ' '; out[o++] = ' '; i += 5; continue; }
+			}
+			if (c == '.' && i + 3 <= len && src[i+1] == '.' && src[i+2] == '.') {
+				out[o++] = ' '; out[o++] = ' '; out[o++] = ' '; i += 3; continue;
+			}
+
+			out[o++] = c;
+			if (c != ' ' && c != '\t' && c != '\n' && c != '\r') prev_sig = c;
+			i++; continue;
+		}
+		out[o++] = c;
+		if (st == ES_SQ && c == '\\' && i + 1 < len) { i++; out[o++] = src[i]; }
+		else if (st == ES_SQ && c == '\'') st = ES_CODE;
+		else if (st == ES_DQ && c == '\\' && i + 1 < len) { i++; out[o++] = src[i]; }
+		else if (st == ES_DQ && c == '"') st = ES_CODE;
+		else if (st == ES_TMPL && c == '\\' && i + 1 < len) { i++; out[o++] = src[i]; }
+		else if (st == ES_TMPL && c == '`') st = ES_CODE;
+		else if (st == ES_LCOM && c == '\n') st = ES_CODE;
+		else if (st == ES_BCOM && c == '*' && i + 1 < len && src[i+1] == '/') { i++; out[o++] = src[i]; st = ES_CODE; }
+		else if (st == ES_RE && c == '\\' && i + 1 < len) { i++; out[o++] = src[i]; }
+		else if (st == ES_RE && c == '/') { st = ES_CODE; prev_sig = '/'; }
+		i++;
+	}
+	out[o] = '\0'; return o;
+}
+
+static size_t es6_class_pass(const char *src, size_t len, char *out, size_t cap) {
+	size_t i = 0, o = 0;
+	int st = ES_CODE, prev_sig = 0;
+	int brace_depth = 0;
+	char cname[64] = {0};
+	int class_depth = 0;
+	int method_depth = 0;
+
+	while (i < len) {
+		char c = src[i];
+		if (o + 256 >= cap) return 0;
+		if (st == ES_CODE) {
+			if (c == '/' && i + 1 < len && src[i + 1] == '/') { out[o++] = c; out[o++] = src[i + 1]; i += 2; st = ES_LCOM; continue; }
+			if (c == '/' && i + 1 < len && src[i + 1] == '*') { out[o++] = c; out[o++] = src[i + 1]; i += 2; st = ES_BCOM; continue; }
+			if (c == '/' && es6_regex_ctx(prev_sig)) { out[o++] = c; i++; st = ES_RE; continue; }
+			if (c == '\'') { out[o++] = c; prev_sig = c; i++; st = ES_SQ; continue; }
+			if (c == '"')  { out[o++] = c; prev_sig = c; i++; st = ES_DQ; continue; }
+			if (c == '`')  { out[o++] = c; prev_sig = c; i++; st = ES_TMPL; continue; }
+
+			if (c == '{') brace_depth++;
+			if (c == '}') brace_depth--;
+
+			if (class_depth == 0 && c == 'c' && i + 5 <= len && strncmp(src+i, "class", 5) == 0 && (i+5==len || !es6_is_ident(src[i+5]))) {
+				int prevok = (i == 0) || !es6_is_ident(src[i-1]);
+				if (prevok) {
+					size_t j = i + 5;
+					size_t namestart, k, bstart;
+					char basename[64] = {0};
+
+					while (j < len && (src[j] == ' ' || src[j] == '\t' || src[j] == '\n')) j++;
+					namestart = j;
+					while (j < len && es6_is_ident(src[j])) j++;
+					if (j > namestart && j - namestart < 60) {
+						memcpy(cname, src + namestart, j - namestart);
+						cname[j - namestart] = '\0';
+						
+						k = j;
+						while (k + 7 < len && src[k] != '{' && !(src[k] == 'e' && src[k+1] == 'x' && src[k+2] == 't' && src[k+3] == 'e' && src[k+4] == 'n' && src[k+5] == 'd' && src[k+6] == 's' && src[k+7] == ' ')) k++;
+						if (src[k] == 'e' && src[k+1] == 'x' && src[k+2] == 't') {
+							k += 8;
+							while (k < len && (src[k] == ' ' || src[k] == '\t')) k++;
+							bstart = k;
+							while (k < len && (es6_is_ident(src[k]) || src[k] == '.')) k++;
+							if (k > bstart && k - bstart < 60) {
+								memcpy(basename, src + bstart, k - bstart);
+								basename[k - bstart] = '\0';
+							}
+						}
+						
+						while (j < len && src[j] != '{') j++;
+						if (src[j] == '{') {
+							if (basename[0] != '\0') {
+								o += sprintf(out + o, "function %s(){if(typeof %s!=='undefined')%s.apply(this,arguments);if(this._ctor)this._ctor.apply(this,arguments);} %s.prototype=Object.create(typeof %s!=='undefined'?%s.prototype:null);", cname, basename, basename, cname, basename, basename);
+							} else {
+								o += sprintf(out + o, "function %s(){if(this._ctor)this._ctor.apply(this,arguments);}", cname);
+							}
+							class_depth = brace_depth + 1;
+							brace_depth++;
+							i = j + 1;
+							prev_sig = '{';
+							continue;
+						}
+					}
+				}
+			}
+
+			if (class_depth > 0) {
+				if (brace_depth == class_depth - 1 && c == '}') {
+					o += sprintf(out + o, "/*}*/");
+					class_depth = 0;
+					i++; prev_sig = '}'; continue;
+				}
+				
+				if (brace_depth == class_depth && c != ' ' && c != '\t' && c != '\n' && c != '\r') {
+					size_t j = i;
+					int is_static = 0;
+					size_t namestart, nameend;
+
+					if (strncmp(src+j, "static", 6) == 0 && !es6_is_ident(src[j+6])) {
+						is_static = 1;
+						j += 6;
+						while (j < len && (src[j] == ' ' || src[j] == '\t' || src[j] == '\n')) j++;
+					}
+					namestart = j;
+					while (j < len && es6_is_ident(src[j])) j++;
+					nameend = j;
+					while (j < len && (src[j] == ' ' || src[j] == '\t' || src[j] == '\n')) j++;
+					if (j < len && src[j] == '(' && nameend > namestart) {
+						char mname[64] = {0};
+						if (nameend - namestart < 60) {
+							memcpy(mname, src + namestart, nameend - namestart);
+							mname[nameend - namestart] = '\0';
+							if (strcmp(mname, "constructor") == 0) strcpy(mname, "_ctor");
+							if (is_static) {
+								o += sprintf(out + o, "%s.%s=function", cname, mname);
+							} else {
+								o += sprintf(out + o, "%s.prototype.%s=function", cname, mname);
+							}
+							method_depth = class_depth + 1;
+							i = j;
+							continue;
+						}
+					}
+				}
+				
+				if (method_depth > 0 && brace_depth == method_depth - 1 && c == '}') {
+					o += sprintf(out + o, "};");
+					method_depth = 0;
+					i++; prev_sig = '}'; continue;
+				}
+			}
+
+			out[o++] = c;
+			if (c != ' ' && c != '\t' && c != '\n' && c != '\r') prev_sig = c;
+			i++; continue;
+		}
+		
+		out[o++] = c;
+		if (st == ES_SQ && c == '\\' && i + 1 < len) { i++; out[o++] = src[i]; }
+		else if (st == ES_SQ && c == '\'') st = ES_CODE;
+		else if (st == ES_DQ && c == '\\' && i + 1 < len) { i++; out[o++] = src[i]; }
+		else if (st == ES_DQ && c == '"') st = ES_CODE;
+		else if (st == ES_TMPL && c == '\\' && i + 1 < len) { i++; out[o++] = src[i]; }
+		else if (st == ES_TMPL && c == '`') st = ES_CODE;
+		else if (st == ES_LCOM && c == '\n') st = ES_CODE;
+		else if (st == ES_BCOM && c == '*' && i + 1 < len && src[i+1] == '/') { i++; out[o++] = src[i]; st = ES_CODE; }
+		else if (st == ES_RE && c == '\\' && i + 1 < len) { i++; out[o++] = src[i]; }
+		else if (st == ES_RE && c == '/') { st = ES_CODE; prev_sig = '/'; }
+		i++;
+	}
+	out[o] = '\0'; return o;
+}
+
+/* ===================================================================== */
 /* Driver                                                                */
 /* ===================================================================== */
 
@@ -1008,6 +1192,14 @@ macsurf_es6_transpile(const char *src, size_t len, char *out, size_t cap)
 
 	dst = (cur == buf1) ? buf2 : buf1;
 	m = es6_arrow_pass(cur, n, dst, wmax);
+	if (m != 0) { cur = dst; n = m; }
+
+	dst = (cur == buf1) ? buf2 : buf1;
+	m = es6_async_spread_pass(cur, n, dst, wmax);
+	if (m != 0) { cur = dst; n = m; }
+
+	dst = (cur == buf1) ? buf2 : buf1;
+	m = es6_class_pass(cur, n, dst, wmax);
 	if (m != 0) { cur = dst; n = m; }
 
 	if (n < cap) {
