@@ -108,24 +108,12 @@ macos9_reconvert_cb(void *p)
 void
 macos9_js_mark_dom_dirty(struct content *c)
 {
-	/* fixes394 — JS->DOM->render reconvert foundation DISABLED pending
-	 * root-cause of the complex-site hard crash.
-	 *
-	 * Symptom (hardware): heavy-JS sites (google.com, m.facebook.com) hard-
-	 * crash the whole machine "near an image"; simple pages (mbasic) that
-	 * never trigger a re-convert are fine. That is exactly hazard #2 from
-	 * docs/research/js-dom-render-plan.md: a scheduled re-convert frees the
-	 * box tree (talloc_free bctx) WHILE image subresource fetches are still
-	 * in flight; when one finishes, html_object_done writes box->object into
-	 * a freed box -> heap corruption -> garbage function-pointer crash that
-	 * surfaces during image processing. The fixes383 guards
-	 * (html_object_free_objects) clearly do not fully cover the in-flight
-	 * case on real pages.
-	 *
-	 * No-op the trigger: nothing schedules macos9_reconvert_cb, so
-	 * html_reconvert never runs. The rest of the foundation stays linked but
-	 * dormant. The ES6 transpiler (separate, host-proven) stays ON. Re-enable
-	 * only after the in-flight object_list / image-fetch teardown is provably
-	 * safe (cancel or quiesce live object fetches before talloc_free). */
-	(void)c;
+	/* fixes421 — re-enabled. Two crash vectors now closed in html_reconvert:
+	 * (1) DOUBLE-BUFFER: old bctx deferred past dom_to_box so the re-cascade
+	 *     can share already-interned styles rather than free-then-reintern
+	 *     (the libcss arena UAF / 0x2710 crash).
+	 * (2) QUIESCE GUARD: html_reconvert bails with NSERROR_NEED_DATA while
+	 *     base.active > 0 so html_object_callback's pw pointer is never freed
+	 *     under it; macos9_reconvert_cb re-arms and retries. */
+	(void) macos9_schedule(RECONVERT_DEBOUNCE_MS, macos9_reconvert_cb, NULL);
 }
