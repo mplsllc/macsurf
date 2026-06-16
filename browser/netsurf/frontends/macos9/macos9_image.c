@@ -32,6 +32,7 @@
 #include "netsurf/content.h"
 #include "netsurf/bitmap.h"
 #include "content/content_protected.h"
+#include "content/llcache.h"
 #include "content/content_factory.h"
 #include "desktop/gui_internal.h"
 #include "desktop/gui_table.h"
@@ -1451,6 +1452,11 @@ macos9_qt_image_convert(struct content *c)
 		content_set_ready(c);
 		content_set_done(c);
 		content_set_status(c, "");
+		/* fixes426b — free llcache's raw-bytes copy now that the
+		 * image is accepted for deferred decode. qti->compressed
+		 * holds its own copy; source_data in llcache is redundant
+		 * and keeping it ties up 1-2MB per image on the Mac heap. */
+		llcache_handle_drop_source_data(c->llcache);
 		return true;
 	}
 	/* (non-PNG falls through to the QT importer path below) */
@@ -1534,6 +1540,7 @@ macos9_qt_image_convert(struct content *c)
 	content_set_ready(c);
 	content_set_done(c);
 	content_set_status(c, "");
+	llcache_handle_drop_source_data(c->llcache);
 	return true;
 }
 

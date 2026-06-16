@@ -4301,3 +4301,17 @@ bool llcache_handle_references_same_object(const llcache_handle *a,
 {
 	return a->object == b->object;
 }
+
+/* See llcache.h */
+void llcache_handle_drop_source_data(llcache_handle *handle)
+{
+	llcache_object *object;
+	if (handle == NULL || handle->object == NULL) return;
+	object = handle->object;
+	if (object->source_data != NULL) {
+		free(object->source_data);
+		object->source_data = NULL;
+		object->source_len = 0;
+		object->source_alloc = 0;
+	}
+}

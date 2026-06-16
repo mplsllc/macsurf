@@ -1344,16 +1344,6 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 	 * the G3 iMac). Avatars (1-5 KB), logos (~4 KB), and typical inline
 	 * images are well under 512 KB and are unaffected.
 	 * Only applies when Content-Length is known and status is 200. */
-	if (c->status == 200 &&
-	    c->content_length > 512L * 1024L &&
-	    strncasecmp(c->mime, "image/", 6) == 0) {
-		macsurf_debug_log_writef(
-			"https: image too large (%ld B > 512KB), skip",
-			c->content_length);
-		c->aborted = 1; /* suppress HTTP fallback — we don't want it over HTTP either */
-		hctx_fail(c, "image too large");
-		return 2;
-	}
 
 	return 1;
 }

@@ -291,4 +291,11 @@ const char *llcache_handle_get_header(const llcache_handle *handle,
 bool llcache_handle_references_same_object(const llcache_handle *a,
 		const llcache_handle *b);
 
+/**
+ * Free the raw source data for a completed fetch, releasing heap.
+ * Safe to call once all content handlers have received their data.
+ * Used by image handlers after decode to reclaim the compressed-bytes copy.
+ */
+void llcache_handle_drop_source_data(llcache_handle *handle);
+
 #endif
