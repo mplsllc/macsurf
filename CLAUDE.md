@@ -256,7 +256,7 @@ When a change introduces a new `.c` file, mention it plainly so the user can add
 
 ### Shipping discipline
 - Deliverables for a fix round are: delta tar with full tree preserved, `MacSurf.mcp` add/remove list, and `Access Paths.xml` add/remove list.
-- Standard transfer path is: build `fixesNN.tar`, place it in `~/Documents/macfiles/`, then `scp -P 2222 -i ~/.ssh/macsurf_push ~/Documents/macfiles/fixesNN.tar patrick@localhost:Documents/macfiles/`.
+- Standard transfer path is: build `fixesNN.tar`, then `scp -P 2222 -i ~/.ssh/macsurf_push -o StrictHostKeyChecking=no fixesNN.tar patrick@localhost:/home/patrick/afp_share/fixesNN.tar`.
 - Do not stop at "tar created locally" when the user asked to send it.
 
 
@@ -352,11 +352,11 @@ Full fix history: see [docs/changelog-fixes.md](docs/changelog-fixes.md).
 - CW8 project file: [browser/netsurf/frontends/macos9/MacSurf.mcp](browser/netsurf/frontends/macos9/MacSurf.mcp).
 - Carbon partition: the current project ships **large** (~195 MB preferred / ~164 MB minimum; `MWProject_PPC_size = 199384` / `minsize = 168192` K). **16 MB preferred / 8 MB minimum is the floor** — smaller starves libcss → CSS_NOMEM mid-cascade. On a RAM-tight Mac, lower the preferred toward the floor.
 - The CodeWarrior project mirrors the source directory tree via ~55 hierarchical access paths (not a single flat folder), ~850 `.c` files. The build pack in `builds/` carries the authoritative project file, target settings, and file list.
-- Remove Object Code is required before every rebuild after file changes.
+- Remove Object Code is rarely needed before a rebuild.
 - MacsBug is installed on the G4 for pipeline debugging; `MS_LOG` checkpoints are active throughout.
 
 
-- **Current release: v1.4 "Open House" (2026-06-01); source tree at fixes364.** Hardware-verified on a G3 iMac running OS 9.2.2. Major arcs since v0.6: native **TLS 1.3** via macTLS + the macEntropy RNG (v1.2–v1.3.1, replacing the retired proxy); the **JavaScript marathon** (fixes319–352, ~23 issues closed, 19/19 JS probe on a G3); and continuing CSS / gradient fidelity work through fixes364. [docs/status.md](docs/status.md) and [docs/version-history.md](docs/version-history.md) are the authoritative current picture; [docs/changelog-fixes.md](docs/changelog-fixes.md) has the per-fix history. (CLAUDE.md tends to lag the real version — when in doubt, trust `docs/status.md`.)
+- **Current release: v1.5 "Modernity" (2026-06-11); source tree at fixes415.** Hardware-verified on a G3 iMac running OS 9.2.2. Major arcs since v1.4: **On-device ES6-to-ES5 transpilation** (let/const, arrow functions, template literals, async/await, for-of); **JS->DOM->render (re-conversion)** allowing JS-mutated content to paint; and the **v1.5 stability pass** (fixes404-415) including a monotonic clock fix, SHA-384 self-tests, UAF guards, and a CSS Grid 16-column layout limit upgrade (fixes415) which resolves modern 12-column grid collapses (rendered blank/invisible on XenForo pages like `68kmla.org`). (Note: the most aggressive FB-SPA push was rolled back at fixes394 for stability; current work is incrementally re-enabling these features). [docs/status.md](docs/status.md) and [docs/version-history.md](docs/version-history.md) are the authoritative current picture; [docs/changelog-fixes.md](docs/changelog-fixes.md) has the per-fix history.
 
 **Full fix history (predecessor chain from fixes225 → fixes143a):** see [docs/changelog-fixes.md](docs/changelog-fixes.md).
 
