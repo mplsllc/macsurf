@@ -281,7 +281,8 @@ static bool layout_grid_item(
 }
 
 
-#define MACSURF_GRID_TRACK_MAX 8
+#define MACSURF_GRID_TRACK_MAX 16
+#define MACSURF_CSS_GRID_TRACK_MAX 8
 #define MACSURF_GRID_TRACK_UNIT_NONE    0
 #define MACSURF_GRID_TRACK_UNIT_FR      1
 #define MACSURF_GRID_TRACK_UNIT_PX      2
@@ -305,18 +306,18 @@ struct macsurf_grid_slot {
 	int row_span;
 };
 
-/* fixes158a: bit-packed per-row occupancy. One uint8 per row, bit (1 << col)
- * set if that cell is occupied. cols caps at MACSURF_GRID_TRACK_MAX = 8, which
- * fits exactly in 8 bits. Auto-flow skips occupied cells so explicit
- * placements stay visible. */
-static int macsurf_grid_cell_free(const unsigned char *occ, int col, int row)
+/* fixes158a: bit-packed per-row occupancy. One uint16 per row (using unsigned
+ * short), bit (1 << col) set if that cell is occupied. cols caps at 
+ * MACSURF_GRID_TRACK_MAX = 16, which fits in 16 bits. Auto-flow skips occupied 
+ * cells so explicit placements stay visible. */
+static int macsurf_grid_cell_free(const unsigned short *occ, int col, int row)
 {
 	if (row < 0 || row >= MACSURF_GRID_ROWS_MAX) return 0;
 	if (col < 0 || col >= MACSURF_GRID_TRACK_MAX) return 0;
-	return (occ[row] & (unsigned char)(1u << col)) == 0;
+	return (occ[row] & (unsigned short)(1u << col)) == 0;
 }
 
-static int macsurf_grid_run_free(const unsigned char *occ, int col, int row,
+static int macsurf_grid_run_free(const unsigned short *occ, int col, int row,
 		int col_span, int cols)
 {
 	int c;
@@ -326,7 +327,7 @@ static int macsurf_grid_run_free(const unsigned char *occ, int col, int row,
 	return 1;
 }
 
-static void macsurf_grid_mark(unsigned char *occ, int col, int row,
+static void macsurf_grid_mark(unsigned short *occ, int col, int row,
 		int col_span, int row_span, int cols)
 {
 	int r;
@@ -339,7 +340,7 @@ static void macsurf_grid_mark(unsigned char *occ, int col, int row,
 		if (r < 0) continue;
 		for (c = col; c < end_c; c++) {
 			if (c < 0 || c >= MACSURF_GRID_TRACK_MAX) continue;
-			occ[r] |= (unsigned char)(1u << c);
+			occ[r] |= (unsigned short)(1u << c);
 		}
 	}
 }
@@ -504,7 +505,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 		int total_gap;
 		int remaining;
 
-		for (i = 0; i < MACSURF_GRID_TRACK_MAX; i++) {
+		for (i = 0; i < MACSURF_CSS_GRID_TRACK_MAX; i++) {
 			int32_t pk = raw_tracks[i];
 			uint8_t unit;
 			int32_t value;
@@ -701,7 +702,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 	 * container height to distribute against in the auto case. */
 	raw_row_tracks = css_computed_macsurf_grid_row_tracks(grid->style);
 	if (raw_row_tracks != NULL && raw_row_tracks[0] != 0) {
-		for (i = 0; i < MACSURF_GRID_TRACK_MAX; i++) {
+		for (i = 0; i < MACSURF_CSS_GRID_TRACK_MAX; i++) {
 			int32_t pk = raw_row_tracks[i];
 			uint8_t unit;
 			int32_t value;
@@ -745,7 +746,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 		struct macsurf_grid_slot slots[MACSURF_GRID_CHILDREN_MAX];
 		int row_max_h[MACSURF_GRID_ROWS_MAX];
 		int row_y_arr[MACSURF_GRID_ROWS_MAX];
-		unsigned char occupancy[MACSURF_GRID_ROWS_MAX];
+		unsigned short occupancy[MACSURF_GRID_ROWS_MAX];
 		int n_children = 0;
 		int cur_col = 0;
 		int cur_row = 0;
