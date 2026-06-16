@@ -1337,6 +1337,23 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 
 	if (c->chunked) OSTLS_HTTP_ChunkDecoderInit(&c->chunk);
 
+	/* fixes425 — abort image downloads whose body would exceed 512 KB.
+	 * Large forum attachment PNGs (1.4-1.7 MB) corrupt the heap when
+	 * 4+ are in-flight simultaneously (llcache source_data + compressed
+	 * Handles accumulate past a threshold that triggers a system crash on
+	 * the G3 iMac). Avatars (1-5 KB), logos (~4 KB), and typical inline
+	 * images are well under 512 KB and are unaffected.
+	 * Only applies when Content-Length is known and status is 200. */
+	if (c->status == 200 &&
+	    c->content_length > 512L * 1024L &&
+	    strncasecmp(c->mime, "image/", 6) == 0) {
+		macsurf_debug_log_writef(
+			"https: image too large (%ld B > 512KB), skip",
+			c->content_length);
+		hctx_fail(c, "image too large");
+		return 2;
+	}
+
 	return 1;
 }
 
@@ -1666,6 +1683,8 @@ static int build_request(struct macos9_https_ctx *c)
 static int hdr_append(struct macos9_https_ctx *c, const char *buf, long n)
 {
 	if (c->hdr_len + n > HDR_BUF_MAX) {
+		macsurf_debug_log_writef("hdr_append OVERFLOW: hdr_len=%ld n=%ld max=%ld",
+			c->hdr_len, n, (long)HDR_BUF_MAX);
 		hctx_fail(c, "https: header buffer overflow");
 		return -1;
 	}
