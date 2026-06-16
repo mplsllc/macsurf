@@ -204,7 +204,26 @@ es6_letconst_pass(const char *src, size_t len, char *out, size_t cap)
 		}
 		/* ES_RE */
 		out[o++] = c;
-		if (c == '\\' && i + 1 < len) {
+		if (c == '[') {
+			/* character class: copy until ] so [ /] doesn't exit regex */
+			i++;
+			while (i < len && src[i] != ']') {
+				if (o + 1 >= cap) return 0;
+				out[o++] = src[i];
+				if (src[i] == '\\' && i + 1 < len) {
+					i++;
+					if (o + 1 >= cap) return 0;
+					out[o++] = src[i];
+				}
+				i++;
+			}
+			if (i < len) {
+				if (o + 1 >= cap) return 0;
+				out[o++] = src[i]; /* ] */
+				i++;
+			}
+			continue;
+		} else if (c == '\\' && i + 1 < len) {
 			i++;
 			if (o + 1 >= cap) return 0;
 			out[o++] = src[i];
@@ -277,6 +296,16 @@ es6_block_end(const char *s, size_t n, size_t b)
 			continue;
 		}
 		/* ES_RE */
+		if (c == '[') {
+			/* character class: skip until ] so [ /] doesn't exit regex */
+			i++;
+			while (i < n && s[i] != ']') {
+				if (s[i] == '\\' && i + 1 < n) i++;
+				i++;
+			}
+			if (i < n) i++; /* skip ] */
+			continue;
+		}
 		if (c == '\\' && i + 1 < n) i += 2;
 		else { if (c == '/') { st = ES_CODE; prev_sig = '/'; } i++; }
 	}
@@ -347,6 +376,15 @@ es6_expr_end(const char *s, size_t n, size_t b)
 			continue;
 		}
 		/* ES_RE */
+		if (c == '[') {
+			i++;
+			while (i < n && s[i] != ']') {
+				if (s[i] == '\\' && i + 1 < n) i++;
+				i++;
+			}
+			if (i < n) i++;
+			continue;
+		}
 		if (c == '\\' && i + 1 < n) i += 2;
 		else { if (c == '/') { st = ES_CODE; prev_sig = '/'; } i++; }
 	}
@@ -414,6 +452,15 @@ es6_region_uses_this(const char *s, size_t a, size_t e)
 			continue;
 		}
 		/* ES_RE */
+		if (c == '[') {
+			i++;
+			while (i < e && s[i] != ']') {
+				if (s[i] == '\\' && i + 1 < e) i++;
+				i++;
+			}
+			if (i < e) i++;
+			continue;
+		}
 		if (c == '\\' && i + 1 < e) i += 2;
 		else { if (c == '/') st = ES_CODE; i++; }
 	}
@@ -560,6 +607,15 @@ es6_find_arrow(const char *s, size_t n, size_t start_pos,
 			continue;
 		}
 		/* ES_RE */
+		if (c == '[') {
+			i++;
+			while (i < n && s[i] != ']') {
+				if (s[i] == '\\' && i + 1 < n) i++;
+				i++;
+			}
+			if (i < n) i++;
+			continue;
+		}
 		if (c == '\\' && i + 1 < n) i += 2;
 		else { if (c == '/') { st = ES_CODE; prev_sig = '/'; prev_sig_pos = i; } i++; }
 	}
@@ -664,6 +720,15 @@ es6_interp_skip(const char *s, size_t n, size_t i)
 			continue;
 		}
 		/* ES_RE */
+		if (c == '[') {
+			i++;
+			while (i < n && s[i] != ']') {
+				if (s[i] == '\\' && i + 1 < n) i++;
+				i++;
+			}
+			if (i < n) i++;
+			continue;
+		}
 		if (c == '\\' && i + 1 < n) i += 2;
 		else { if (c == '/') { st = ES_CODE; prev = '/'; } i++; }
 	}
@@ -833,6 +898,15 @@ es6_find_template(const char *s, size_t n, size_t start_pos, size_t *tpos)
 			continue;
 		}
 		/* ES_RE */
+		if (c == '[') {
+			i++;
+			while (i < n && s[i] != ']') {
+				if (s[i] == '\\' && i + 1 < n) i++;
+				i++;
+			}
+			if (i < n) i++;
+			continue;
+		}
 		if (c == '\\' && i + 1 < n) i += 2;
 		else { if (c == '/') { st = ES_CODE; prev_sig = '/'; } i++; }
 	}
