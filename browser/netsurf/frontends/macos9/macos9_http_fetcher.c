@@ -1000,6 +1000,7 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 	 * so this is reentrancy-safe under MacSurf's cooperative model. */
 	static char b[RECV_B];
 	OTResult n; fetch_msg m;
+	int loop_count;
 	/* IDLE / NOTIFIED slots are truly inactive — nothing to do. */
 	if(c->state==MFS_IDLE || c->state==MFS_NOTIFIED) return;
 	/* fixes104 — check abort BEFORE the QUEUED early-return. Previously
@@ -1053,54 +1054,60 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 		c->state = MFS_DONE;
 		return;
 	}
-	n=OTRcv(c->ep,b,sizeof(b),NULL);
-	if(n==kOTNoDataErr) return;
-	if(n<0) {
-		if(n==kOTLookErr) {
-			OTResult l=OTLook(c->ep);
-			if(l==T_ORDREL||l==T_DISCONNECT) {
-				/* Server closed before we hit Content-Length —
-				 * treat as done but don't pool. */
-				c->keep_alive_ok = 0;
-				c->state=MFS_DONE; return;
+	loop_count = 0;
+	while (c->state != MFS_IDLE && c->state != MFS_NOTIFIED &&
+	       c->state != MFS_DONE && c->state != MFS_FAIL &&
+	       loop_count < 16) {
+		loop_count++;
+		n=OTRcv(c->ep,b,sizeof(b),NULL);
+		if(n==kOTNoDataErr) break;
+		if(n<0) {
+			if(n==kOTLookErr) {
+				OTResult l=OTLook(c->ep);
+				if(l==T_ORDREL||l==T_DISCONNECT) {
+					/* Server closed before we hit Content-Length —
+					 * treat as done but don't pool. */
+					c->keep_alive_ok = 0;
+					c->state=MFS_DONE; return;
+				}
 			}
+			c->err="OT error"; c->state=MFS_FAIL; return;
 		}
-		c->err="OT error"; c->state=MFS_FAIL; return;
-	}
-	if(n==0) { c->keep_alive_ok=0; c->state=MFS_DONE; return; }
-	/* fixes107 — bytes received, reset no-progress timer. */
-	c->progress_ticks = (unsigned long)TickCount();
-	if(c->state==MFS_HEADERS) {
-		/* fixes169 (SAFETY_REPORT §4) — keep one trailing byte in
-		 * h_buf reserved for a NUL terminator. strstr / strlen on
-		 * h_buf must see network data terminated cleanly even when
-		 * the origin sent no CRLF-CRLF yet. */
-		long nl=c->h_len+n;
-		if(nl+1>c->h_cap) { long nc=c->h_cap==0?4096:c->h_cap*2; while(nc<nl+1)nc*=2; c->h_buf=realloc(c->h_buf,nc); if(c->h_buf) c->h_cap=nc; }
-		if(!c->h_buf) { c->err="OOM"; c->state=MFS_FAIL; return; }
-		memcpy(c->h_buf+c->h_len,b,(size_t)n); c->h_len=nl;
-		c->h_buf[c->h_len]='\0';
-		if(strstr(c->h_buf,"\r\n\r\n")) mfs_parse_headers(c);
-	} else {
-		if (c->chunked) {
-			process_chunked_bytes(c, b, (long)n);
-			if (c->chunk_state == CS_DONE) c->state = MFS_DONE;
+		if(n==0) { c->keep_alive_ok=0; c->state=MFS_DONE; return; }
+		/* fixes107 — bytes received, reset no-progress timer. */
+		c->progress_ticks = (unsigned long)TickCount();
+		if(c->state==MFS_HEADERS) {
+			/* fixes169 (SAFETY_REPORT §4) — keep one trailing byte in
+			 * h_buf reserved for a NUL terminator. strstr / strlen on
+			 * h_buf must see network data terminated cleanly even when
+			 * the origin sent no CRLF-CRLF yet. */
+			long nl=c->h_len+n;
+			if(nl+1>c->h_cap) { long nc=c->h_cap==0?4096:c->h_cap*2; while(nc<nl+1)nc*=2; c->h_buf=realloc(c->h_buf,nc); if(c->h_buf) c->h_cap=nc; }
+			if(!c->h_buf) { c->err="OOM"; c->state=MFS_FAIL; return; }
+			memcpy(c->h_buf+c->h_len,b,(size_t)n); c->h_len=nl;
+			c->h_buf[c->h_len]='\0';
+			if(strstr(c->h_buf,"\r\n\r\n")) mfs_parse_headers(c);
 		} else {
-			long deliver = n;
-			/* fixes91 — cap delivery at Content-Length so we don't bleed
-			 * into the next pipelined response. */
-			if (c->content_length >= 0 && c->body_bytes + deliver > c->content_length)
-				deliver = c->content_length - c->body_bytes;
-			if (deliver > 0) {
-				m.type=FETCH_DATA; m.data.header_or_data.buf=(const uint8_t*)b;
-				m.data.header_or_data.len=(size_t)deliver;
-				fetch_send_callback(&m,c->parent);
-				/* fixes172 — capture for disk cache. */
-				cache_capture_append(c, b, deliver);
-				c->body_bytes += deliver;
-			}
-			if (c->content_length >= 0 && c->body_bytes >= c->content_length) {
-				c->state = MFS_DONE;
+			if (c->chunked) {
+				process_chunked_bytes(c, b, (long)n);
+				if (c->chunk_state == CS_DONE) c->state = MFS_DONE;
+			} else {
+				long deliver = n;
+				/* fixes91 — cap delivery at Content-Length so we don't bleed
+				 * into the next pipelined response. */
+				if (c->content_length >= 0 && c->body_bytes + deliver > c->content_length)
+					deliver = c->content_length - c->body_bytes;
+				if (deliver > 0) {
+					m.type=FETCH_DATA; m.data.header_or_data.buf=(const uint8_t*)b;
+					m.data.header_or_data.len=(size_t)deliver;
+					fetch_send_callback(&m,c->parent);
+					/* fixes172 — capture for disk cache. */
+					cache_capture_append(c, b, deliver);
+					c->body_bytes += deliver;
+				}
+				if (c->content_length >= 0 && c->body_bytes >= c->content_length) {
+					c->state = MFS_DONE;
+				}
 			}
 		}
 	}

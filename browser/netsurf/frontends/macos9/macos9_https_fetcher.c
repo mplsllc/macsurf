@@ -1696,6 +1696,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 	OSErr      e;
 	UInt32     written, got;
 	char       rd[READ_CHUNK];
+	int        loop_count;
 
 	if (c->state == HS_IDLE || c->state == HS_DONE || c->state == HS_FAIL)
 		return;
@@ -1945,7 +1946,9 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		}
 	}
 
-	if (c->state == HS_HEADERS || c->state == HS_BODY) {
+	loop_count = 0;
+	while ((c->state == HS_HEADERS || c->state == HS_BODY) && loop_count < 16) {
+		loop_count++;
 		got = 0;
 		e = OSTLS_Read(c->conn, rd, sizeof rd, &got);
 		if (e != kOSTLSAsync_OK) {
@@ -2001,42 +2004,46 @@ static void hctx_poll(struct macos9_https_ctx *c)
 					return;
 				}
 			}
-		} else if (ev == kOSTLSEventClosed && c->state == HS_BODY) {
-			/* peer closed mid-body — only OK if no content-length
-			 * (HTTP/1.0 style). chunked must have seen final 0. */
-			if (c->content_length < 0 && !c->chunked) {
-				hctx_finish(c);
+		} else {
+			if (ev == kOSTLSEventClosed && c->state == HS_BODY) {
+				/* peer closed mid-body — only OK if no content-length
+				 * (HTTP/1.0 style). chunked must have seen final 0. */
+				if (c->content_length < 0 && !c->chunked) {
+					hctx_finish(c);
+					return;
+				}
+				/* fixes243 — salvage partial body. If we got some body
+				 * bytes before the peer hung up early, deliver what we
+				 * have via hctx_finish instead of routing to
+				 * about:fetcherror. NetSurf core renders truncated
+				 * HTML gracefully. Disable cache-store so a partial
+				 * body doesn't poison the disk cache.
+				 *
+				 * fixes255 — raise threshold to 512 bytes. Tiny bodies
+				 * (e.g. fonts.googleapis.com's ~200-byte JA3-reject
+				 * response) aren't useful content; they're failure
+				 * signatures. Salvaging them hides the failure from
+				 * the dead-host blocklist and lets the bad host stay
+				 * in the keep-alive pool forever, retrying with the
+				 * same fingerprint that already failed.
+				 *
+				 * Also clear keep_alive_ok so the just-stalled
+				 * connection doesn't get pooled. */
+				if (c->body_bytes >= 512) {
+					macsurf_debug_log_writef(
+						"https: peer-close SALVAGE body=%ld of clen=%ld chunked=%d",
+						c->body_bytes,
+						c->content_length, (int)c->chunked);
+					c->cache_eligible = 0;
+					c->keep_alive_ok = 0;
+					hctx_finish(c);
+					return;
+				}
+				hctx_fail(c, "https: truncated body");
 				return;
 			}
-			/* fixes243 — salvage partial body. If we got some body
-			 * bytes before the peer hung up early, deliver what we
-			 * have via hctx_finish instead of routing to
-			 * about:fetcherror. NetSurf core renders truncated
-			 * HTML gracefully. Disable cache-store so a partial
-			 * body doesn't poison the disk cache.
-			 *
-			 * fixes255 — raise threshold to 512 bytes. Tiny bodies
-			 * (e.g. fonts.googleapis.com's ~200-byte JA3-reject
-			 * response) aren't useful content; they're failure
-			 * signatures. Salvaging them hides the failure from
-			 * the dead-host blocklist and lets the bad host stay
-			 * in the keep-alive pool forever, retrying with the
-			 * same fingerprint that already failed.
-			 *
-			 * Also clear keep_alive_ok so the just-stalled
-			 * connection doesn't get pooled. */
-			if (c->body_bytes >= 512) {
-				macsurf_debug_log_writef(
-					"https: peer-close SALVAGE body=%ld of clen=%ld chunked=%d",
-					c->body_bytes,
-					c->content_length, (int)c->chunked);
-				c->cache_eligible = 0;
-				c->keep_alive_ok = 0;
-				hctx_finish(c);
-				return;
-			}
-			hctx_fail(c, "https: truncated body");
-			return;
+			/* got == 0 and no close event -> break loop */
+			break;
 		}
 	}
 
