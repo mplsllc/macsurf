@@ -1337,14 +1337,6 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 
 	if (c->chunked) OSTLS_HTTP_ChunkDecoderInit(&c->chunk);
 
-	/* fixes425 — abort image downloads whose body would exceed 512 KB.
-	 * Large forum attachment PNGs (1.4-1.7 MB) corrupt the heap when
-	 * 4+ are in-flight simultaneously (llcache source_data + compressed
-	 * Handles accumulate past a threshold that triggers a system crash on
-	 * the G3 iMac). Avatars (1-5 KB), logos (~4 KB), and typical inline
-	 * images are well under 512 KB and are unaffected.
-	 * Only applies when Content-Length is known and status is 200. */
-
 	return 1;
 }
 

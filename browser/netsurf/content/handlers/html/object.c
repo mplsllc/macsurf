@@ -252,6 +252,13 @@ html_object_callback(hlcache_handle *object,
 		break;
 
 	case CONTENT_MSG_ERROR:
+		/* fixes428: null box->object before release. hlcache_handle_release
+		 * frees the handle immediately. Without this null, box->object holds
+		 * freed memory and get_mouse_action_node crashes dereferencing it. */
+		if (!o->background && box != NULL && box->object == object) {
+			box->object = NULL;
+		}
+
 		hlcache_handle_release(object);
 
 		o->content = NULL;
