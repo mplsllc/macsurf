@@ -1628,8 +1628,10 @@ static void css_hint_list(
 css_error node_presentational_hint(void *pw, void *node,
 		uint32_t *nhints, css_hint **hints)
 {
+	dom_string *tag;
 	dom_exception exc;
-	dom_html_element_type tag_type;
+	const char *tname;
+	int is_known;
 
 	if (nsoption_bool(author_level_css) == false) {
 		*nhints = 0;
@@ -1639,123 +1641,107 @@ css_error node_presentational_hint(void *pw, void *node,
 
 	css_hint_clean();
 
-	exc = dom_html_element_get_tag_type(node, &tag_type);
-	if (exc != DOM_NO_ERR) {
-		tag_type = DOM_HTML_ELEMENT_TYPE__UNKNOWN;
+	/* fixes429/431: use dom_element_get_tag_name (working vtable slot)
+	 * instead of dom_html_element_get_tag_type (vtable slot 75 = broken CW8
+	 * CFM TVec that redirects through ROM / LNGInitFonts and crashes with
+	 * Unimplemented Trap on 68kmla.org/XenForo pages that carry legacy
+	 * presentational attributes on table elements).
+	 * corestring_lwc_* comparisons replace the element-type switch.
+	 * dom_string_data()+strcasecmp() handles h3-h6, canvas, ol which have
+	 * no dedicated corestrings. */
+	tag = NULL;
+	exc = dom_element_get_tag_name(node, &tag);
+	if (exc != DOM_NO_ERR || tag == NULL) {
+		*nhints = 0;
+		*hints = NULL;
+		return CSS_OK;
 	}
 
-	switch (tag_type) {
-	case DOM_HTML_ELEMENT_TYPE_TH:
-	case DOM_HTML_ELEMENT_TYPE_TD:
+	tname = dom_string_data(tag);
+	is_known = 1;
+
+	if (dom_string_caseless_lwc_isequal(tag, corestring_lwc_th) ||
+			dom_string_caseless_lwc_isequal(tag, corestring_lwc_td)) {
 		css_hint_width(pw, node);
 		css_hint_table_cell_border_padding(pw, node);
 		css_hint_white_space_nowrap(pw, node);
-		fallthrough;
-	case DOM_HTML_ELEMENT_TYPE_TR:
 		css_hint_height(pw, node);
-		fallthrough;
-	case DOM_HTML_ELEMENT_TYPE_THEAD:
-	case DOM_HTML_ELEMENT_TYPE_TBODY:
-	case DOM_HTML_ELEMENT_TYPE_TFOOT:
 		css_hint_text_align_special(pw, node);
-		fallthrough;
-	case DOM_HTML_ELEMENT_TYPE_COL:
 		css_hint_vertical_align_table_cells(pw, node);
-		break;
-	case DOM_HTML_ELEMENT_TYPE_APPLET:
-	case DOM_HTML_ELEMENT_TYPE_IMG:
+	} else if (dom_string_caseless_lwc_isequal(tag, corestring_lwc_tr)) {
+		css_hint_height(pw, node);
+		css_hint_text_align_special(pw, node);
+		css_hint_vertical_align_table_cells(pw, node);
+	} else if (dom_string_caseless_lwc_isequal(tag, corestring_lwc_tbody) ||
+			dom_string_caseless_lwc_isequal(tag, corestring_lwc_thead) ||
+			dom_string_caseless_lwc_isequal(tag, corestring_lwc_tfoot)) {
+		css_hint_text_align_special(pw, node);
+		css_hint_vertical_align_table_cells(pw, node);
+	} else if (dom_string_caseless_lwc_isequal(tag, corestring_lwc_col)) {
+		css_hint_vertical_align_table_cells(pw, node);
+	} else if (dom_string_caseless_lwc_isequal(tag, corestring_lwc_img) ||
+			dom_string_caseless_lwc_isequal(tag, corestring_lwc_applet)) {
 		css_hint_margin_hspace_vspace(pw, node);
-		fallthrough;
-	case DOM_HTML_ELEMENT_TYPE_EMBED:
-	case DOM_HTML_ELEMENT_TYPE_IFRAME:
-	case DOM_HTML_ELEMENT_TYPE_OBJECT:
 		css_hint_height(pw, node);
 		css_hint_width(pw, node);
 		css_hint_vertical_align_replaced(pw, node);
 		css_hint_float(pw, node);
-		break;
-	case DOM_HTML_ELEMENT_TYPE_P:
-	case DOM_HTML_ELEMENT_TYPE_H1:
-	case DOM_HTML_ELEMENT_TYPE_H2:
-	case DOM_HTML_ELEMENT_TYPE_H3:
-	case DOM_HTML_ELEMENT_TYPE_H4:
-	case DOM_HTML_ELEMENT_TYPE_H5:
-	case DOM_HTML_ELEMENT_TYPE_H6:
+	} else if (dom_string_caseless_lwc_isequal(tag, corestring_lwc_embed) ||
+			dom_string_caseless_lwc_isequal(tag, corestring_lwc_iframe) ||
+			dom_string_caseless_lwc_isequal(tag, corestring_lwc_object)) {
+		css_hint_height(pw, node);
+		css_hint_width(pw, node);
+		css_hint_vertical_align_replaced(pw, node);
+		css_hint_float(pw, node);
+	} else if (dom_string_caseless_lwc_isequal(tag, corestring_lwc_p) ||
+			dom_string_caseless_lwc_isequal(tag, corestring_lwc_h1) ||
+			dom_string_caseless_lwc_isequal(tag, corestring_lwc_h2) ||
+			(tname != NULL && (strcasecmp(tname, "h3") == 0 ||
+					   strcasecmp(tname, "h4") == 0 ||
+					   strcasecmp(tname, "h5") == 0 ||
+					   strcasecmp(tname, "h6") == 0))) {
 		css_hint_text_align_normal(pw, node);
-		break;
-	case DOM_HTML_ELEMENT_TYPE_CENTER:
+	} else if (dom_string_caseless_lwc_isequal(tag, corestring_lwc_center)) {
 		css_hint_text_align_center(pw, node);
-		break;
-	case DOM_HTML_ELEMENT_TYPE_CAPTION:
+	} else if (dom_string_caseless_lwc_isequal(tag, corestring_lwc_caption)) {
 		css_hint_caption_side(pw, node);
-		fallthrough;
-	case DOM_HTML_ELEMENT_TYPE_DIV:
 		css_hint_text_align_special(pw, node);
-		break;
-	case DOM_HTML_ELEMENT_TYPE_TABLE:
+	} else if (dom_string_caseless_lwc_isequal(tag, corestring_lwc_div)) {
+		css_hint_text_align_special(pw, node);
+	} else if (dom_string_caseless_lwc_isequal(tag, corestring_lwc_table)) {
 		css_hint_text_align_table_special(pw, node);
 		css_hint_table_spacing_border(pw, node);
 		css_hint_float(pw, node);
 		css_hint_margin_left_right_align_center(pw, node);
 		css_hint_width(pw, node);
-		break;
-	case DOM_HTML_ELEMENT_TYPE_HR:
+	} else if (dom_string_caseless_lwc_isequal(tag, corestring_lwc_hr)) {
 		css_hint_width(pw, node);
 		css_hint_margin_left_right_hr(pw, node);
-		break;
-	case DOM_HTML_ELEMENT_TYPE_TEXTAREA:
+	} else if (dom_string_caseless_lwc_isequal(tag, corestring_lwc_textarea)) {
 		css_hint_height_width_textarea(pw, node);
-		break;
-	case DOM_HTML_ELEMENT_TYPE_INPUT:
+	} else if (dom_string_caseless_lwc_isequal(tag, corestring_lwc_input)) {
 		css_hint_width_input(pw, node);
-		break;
-	case DOM_HTML_ELEMENT_TYPE_A:
+	} else if (dom_string_caseless_lwc_isequal(tag, corestring_lwc_a)) {
 		css_hint_anchor_color(pw, node);
-		break;
-	case DOM_HTML_ELEMENT_TYPE_FONT:
+	} else if (dom_string_caseless_lwc_isequal(tag, corestring_lwc_font)) {
 		css_hint_font_size(pw, node);
-		break;
-	case DOM_HTML_ELEMENT_TYPE_BODY:
+	} else if (dom_string_caseless_lwc_isequal(tag, corestring_lwc_body)) {
 		css_hint_body_color(pw, node);
-		break;
-	case DOM_HTML_ELEMENT_TYPE_CANVAS:
+	} else if (tname != NULL && strcasecmp(tname, "canvas") == 0) {
 		css_hint_height_width_canvas(pw, node);
-		break;
-	case DOM_HTML_ELEMENT_TYPE_OL:
+	} else if (tname != NULL && strcasecmp(tname, "ol") == 0) {
 		css_hint_list(pw, node);
-		break;
-	default:
-		break;
+	} else if (dom_string_caseless_lwc_isequal(tag, corestring_lwc_svg)) {
+		/* SVG is foreign content: forward width/height but skip colour/bg
+		 * hints, mirroring __UNKNOWN handling in the original switch. */
+		css_hint_height(pw, node);
+		css_hint_width(pw, node);
+		is_known = 0;
+	} else {
+		is_known = 0;
 	}
 
-	/* fixes196 — SVG dimension hints.
-	 *
-	 * <svg> is foreign-content per HTML5, so dom_html_element_get_tag_type
-	 * returns DOM_HTML_ELEMENT_TYPE__UNKNOWN and the HTML-element switch
-	 * above gives it nothing. Without a CSS width / height, the cascade
-	 * settles on `auto` and the layout pass sizes the box to 0x0, so
-	 * the SVG painter (fixes195) is invoked with empty rect and never
-	 * paints. Forward the `width=` / `height=` attributes the same way
-	 * IMG / EMBED / IFRAME / OBJECT do above, so authored SVG icons
-	 * (e.g. <svg width="13" height="15">) get real layout dimensions.
-	 *
-	 * Tag-name comparison rather than element-type so the foreign-content
-	 * fork still benefits even though libdom doesn't have a dedicated
-	 * DOM_HTML_ELEMENT_TYPE_SVG enumerator on this branch. */
-	if (tag_type == DOM_HTML_ELEMENT_TYPE__UNKNOWN) {
-		dom_string *svg_tag = NULL;
-		if (dom_element_get_tag_name(node, &svg_tag) == DOM_NO_ERR &&
-				svg_tag != NULL) {
-			if (dom_string_caseless_lwc_isequal(svg_tag,
-					corestring_lwc_svg)) {
-				css_hint_height(pw, node);
-				css_hint_width(pw, node);
-			}
-			dom_string_unref(svg_tag);
-		}
-	}
-
-	if (tag_type != DOM_HTML_ELEMENT_TYPE__UNKNOWN) {
+	if (is_known != 0) {
 		css_hint_color(pw, node);
 		css_hint_bg_color(pw, node);
 		css_hint_bg_image(pw, node);
@@ -1765,6 +1751,7 @@ css_error node_presentational_hint(void *pw, void *node,
 	NSLOG(netsurf, INFO, "Properties with hints: %i", hint_ctx.len);
 #endif
 
+	dom_string_unref(tag);
 	css_hint_get_hints(hints, nhints);
 
 	return CSS_OK;

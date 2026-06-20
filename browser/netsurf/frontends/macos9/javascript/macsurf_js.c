@@ -1479,6 +1479,18 @@ unsigned char js_exec(struct jsthread *thread,
 	int rc;
 	if (thread == NULL || thread->ctx == NULL || txt == NULL) return 0;
 	if (txtlen == 0) return 1;
+	/* fixes430: guard against OOM in duk_push_lstring for large scripts.
+	 * duk_push_lstring is unprotected — if the heap allocation fails
+	 * (common after loading image-heavy pages that fragment the heap),
+	 * Duktape calls its fatal handler with a NULL thread pointer, which
+	 * dereferences NULL in duk_hthread_sync_and_null_currpc and hard-crashes
+	 * the Mac. XenForo/forum JS bundles routinely exceed this limit and
+	 * Duktape on the G3 cannot parse them anyway. */
+	if (txtlen > 262144) {
+		macsurf_debug_log_writef("js skip [%s len=%ld > 256KB]",
+			name ? name : "(anon)", (long)txtlen);
+		return 0;
+	}
 	macsurf_profile_stamp("js-start");
 	duk_push_lstring(thread->ctx, (const char *)txt,
 			(duk_size_t)txtlen);
