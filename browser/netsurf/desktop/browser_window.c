@@ -2819,16 +2819,18 @@ bool browser_window_redraw_ready(struct browser_window *bw)
 		NSLOG(netsurf, INFO, "NULL browser window");
 		return false;
 	} else if (bw->current_content != NULL) {
-		/* fixes458b: only walk the box tree when content is fully done.
-		 * content_get_status returns LOADING or CONVERTING during a
-		 * navigation transition; at those points the box tree is either
-		 * absent or partially built, and image boxes carry freed or
-		 * not-yet-valid hlcache handles.  Walking them crashes at
-		 * hlcache_handle_retrieve (Crash K: r4 = bad ptr from
-		 * box_image_resolve_url).  Requiring DONE here gates every
-		 * caller, including window update events. */
-		if (content_get_status(bw->current_content) != CONTENT_STATUS_DONE)
-			return false;
+		/* fixes458b: block redraw while box tree is absent or partially
+		 * built (LOADING/CONVERTING).  READY means conversion is done and
+		 * all hlcache handles are registered; images may still be
+		 * fetching but image rendering handles NULL decode gracefully
+		 * ("deferred to redraw").  DONE means all subresources finished.
+		 * fixes464: allow READY so the page paints as soon as layout
+		 * completes rather than waiting for every image to download. */
+		{
+			content_status st = content_get_status(bw->current_content);
+			if (st != CONTENT_STATUS_READY && st != CONTENT_STATUS_DONE)
+				return false;
+		}
 		/* Can't render locked contents */
 		return !content_is_locked(bw->current_content);
 	}
