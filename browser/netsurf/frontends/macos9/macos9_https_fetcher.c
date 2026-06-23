@@ -1928,13 +1928,10 @@ static void hctx_poll(struct macos9_https_ctx *c)
 	if (c->state == HS_TLSING) {
 		if (ev == kOSTLSEventHandshakeDone ||
 		    OSTLS_GetState(c->conn) == kOSTLSStateOpen) {
-			{
-				OSTLSDiagnostics diag;
-				OSTLS_GetDiagnostics(c->conn, &diag);
-				macsurf_debug_log_writef(
-					"https: handshake done host=%s resumed=%d cipher=0x%04X",
-					c->host, diag.resumed, (unsigned)diag.cipher_suite);
-			}
+			macsurf_debug_log_writef(
+				"https: handshake done host=%s resumed=%d cipher=0x%04X",
+				c->host, OSTLS_GetResumed(c->conn),
+				(unsigned)OSTLS_GetCipherSuite(c->conn));
 			if (build_request(c) < 0) {
 				hctx_fail(c, "https: request too large");
 				return;

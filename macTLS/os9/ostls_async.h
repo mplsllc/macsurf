@@ -126,7 +126,6 @@ typedef struct OSTLSDiagnostics {
     UInt32 ot_recv_nodata;      /* OTRcv returned kOTNoDataErr         */
     UInt32 pump_calls;
     UInt32 br_state_last;       /* last br_ssl_engine_current_state    */
-    int    resumed;             /* 1 if this connection used a cached session ticket */
 } OSTLSDiagnostics;
 
 /*
@@ -263,6 +262,7 @@ OSErr OSTLS_Read(OSTLSConnection *conn, void *buf, UInt32 cap, UInt32 *out_read)
 OSTLSState  OSTLS_GetState(OSTLSConnection *conn);
 OSErr       OSTLS_GetLastError(OSTLSConnection *conn);
 UInt16      OSTLS_GetCipherSuite(OSTLSConnection *conn);
+int         OSTLS_GetResumed(OSTLSConnection *conn);
 void        OSTLS_GetDiagnostics(OSTLSConnection *conn, OSTLSDiagnostics *out_diag);
 void *      OSTLS_GetUserRefcon(OSTLSConnection *conn);
 

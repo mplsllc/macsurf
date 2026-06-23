@@ -2041,6 +2041,13 @@ OSTLS_GetCipherSuite(OSTLSConnection *conn)
     return conn->cipher_suite;
 }
 
+int
+OSTLS_GetResumed(OSTLSConnection *conn)
+{
+    if (conn == NULL || conn->disposed) return 0;
+    return conn->resumed;
+}
+
 void
 OSTLS_GetDiagnostics(OSTLSConnection *conn,
                      OSTLSDiagnostics *out_diag)
@@ -2061,7 +2068,6 @@ OSTLS_GetDiagnostics(OSTLSConnection *conn,
         out_diag->ot_recv_nodata = 0;
         out_diag->pump_calls     = 0;
         out_diag->br_state_last  = 0;
-        out_diag->resumed        = 0;
         return;
     }
     out_diag->os_err         = conn->os_err;
@@ -2078,7 +2084,6 @@ OSTLS_GetDiagnostics(OSTLSConnection *conn,
     out_diag->ot_recv_nodata = conn->dbg_ot_recv_nodata;
     out_diag->pump_calls     = conn->dbg_pump_calls;
     out_diag->br_state_last  = conn->br_state_last;
-    out_diag->resumed        = conn->resumed;
 }
 
 void *
