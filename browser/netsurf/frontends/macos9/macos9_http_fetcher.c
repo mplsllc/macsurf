@@ -25,6 +25,8 @@
 #define smSystemScript 0
 #endif
 extern OTClientContextPtr macos9_ot_context;
+/* fixes463: break the http-fallback->301->https->dead-host->http-fallback loop */
+extern int macos9_https_host_is_dead(const char *host, int port);
 #endif
 
 /* Persistent on-disk body cache: extracted to macos9_disk_cache.[ch]
@@ -931,6 +933,39 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 	 * decoder complexity. */
 	if (c->status >= 300 && c->status < 400 && c->redirect_url[0] != '\0') {
 		struct fetch *parent_save;
+		/* fixes463: if the redirect target is https:// and that host is
+		 * already on the dead-host list, following it will just loop:
+		 * http-fallback -> 301 -> https dead-fail -> http-fallback.
+		 * Detect the cycle and fail terminally instead. */
+		if (strncmp(c->redirect_url, "https://", 8) == 0) {
+			char rhost[256];
+			int rport = 443;
+			const char *p = c->redirect_url + 8;
+			const char *slash = strchr(p, '/');
+			const char *colon = strchr(p, ':');
+			size_t hlen;
+			if (colon != NULL && (slash == NULL || colon < slash)) {
+				hlen = (size_t)(colon - p);
+				rport = atoi(colon + 1);
+			} else {
+				hlen = slash ? (size_t)(slash - p) : strlen(p);
+			}
+			if (hlen >= sizeof rhost) hlen = sizeof rhost - 1;
+			memcpy(rhost, p, hlen);
+			rhost[hlen] = '\0';
+			if (macos9_https_host_is_dead(rhost, rport)) {
+				macsurf_debug_log_writef(
+					"http: redirect %d -> https dead-host loop BREAK %s",
+					c->status, rhost);
+				msg.type = FETCH_ERROR;
+				msg.data.error = "redirect loop: https host unreachable";
+				fetch_send_callback(&msg, c->parent);
+				parent_save = c->parent;
+				fetch_remove_from_queues(parent_save);
+				fetch_free(parent_save);
+				return;
+			}
+		}
 		msg.type = FETCH_REDIRECT;
 		msg.data.redirect = c->redirect_url;
 		fetch_send_callback(&msg, c->parent);
@@ -1590,7 +1625,10 @@ static void macos9_http_free(void *ctx) {
 	struct macos9_fetch_ctx *c = (struct macos9_fetch_ctx*)ctx;
 	mfs_close(c);
 	if (c->h_buf) free(c->h_buf);
-	if (c->url) nsurl_unref(c->url);
+	if (c->url) {
+		nsurl_unref(c->url);
+		c->url = NULL;
+	}
 	/* fixes172 — release cache state. */
 	if (c->cache_capture) { free(c->cache_capture); c->cache_capture = NULL; }
 	c->cache_cap_len = 0;

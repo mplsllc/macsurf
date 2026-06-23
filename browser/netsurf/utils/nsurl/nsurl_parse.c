@@ -1315,6 +1315,12 @@ nserror nsurl_create(const char * const url_s, nsurl **url)
 	if (buff == NULL)
 		return NSERROR_NOMEM;
 
+	/* fixes446e: zero-initialize so nsurl__components_destroy is safe
+	 * if nsurl__create_from_section fails before setting a component.
+	 * An uninitialized lwc_string* on the stack can be a code address;
+	 * lwc_string_unref on it crashes "nsurl__components_destroy+00160". */
+	memset(&c, 0, sizeof(c));
+
 	/* Set scheme type */
 	c.scheme_type = m.scheme_type;
 
@@ -1356,6 +1362,8 @@ nserror nsurl_create(const char * const url_s, nsurl **url)
 	if (e != NSERROR_OK) {
 		return e;
 	}
+
+	memset(*url, 0, sizeof(**url));
 
 	(*url)->components = c;
 	(*url)->length = length;

@@ -732,6 +732,18 @@ nserror html_object_free_objects(html_content *html)
 			if (content_get_type(victim->content) == CONTENT_HTML) {
 				guit->misc->schedule(-1, html_object_refresh, victim);
 			}
+			/* fixes429: null box->object before releasing the handle.
+			 * hlcache_handle_release frees the handle immediately;
+			 * the freed block's first bytes become a free-list
+			 * chain pointer, making handle->entry appear non-NULL.
+			 * get_mouse_action_node then passes the null-guard but
+			 * crashes dereferencing the chain pointer as an entry.
+			 * Same root cause as fixes428 (CONTENT_MSG_ERROR path). */
+			if (!victim->background &&
+			    victim->box != NULL &&
+			    victim->box->object == victim->content) {
+				victim->box->object = NULL;
+			}
 			hlcache_handle_release(victim->content);
 		}
 

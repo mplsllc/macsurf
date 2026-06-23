@@ -118,6 +118,8 @@ struct gui_window {
 	GWorldPtr content_gworld;
 	Rect content_gworld_rect;
 	struct gui_window *next;
+	/* fixes451: set after first profile emit per page, reset on new URL */
+	int profile_emitted;
 };
 
 /* fixes313 — download manager V1. One slot per active download (single-

@@ -1,0 +1,1 @@
+7bea48e5e850ab4cafbe68d3765cdaba13a86d6f 2026-04-06 09:40:05 -0400 Fixed bug in handling incoming records with invalid length (impacted CBC encryption with 3DES or with the aes_small or aes_big AES implementations; only 3DES was selectable by default).

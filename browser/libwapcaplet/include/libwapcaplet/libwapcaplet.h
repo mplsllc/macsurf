@@ -243,6 +243,16 @@ static lwc_error
 lwc_string_caseless_isequal(lwc_string *str1, lwc_string *str2, bool *ret)
 {
        lwc_error err = lwc_error_ok;
+       /* fixes446c: guard both pointers before first dereference. */
+       {
+           unsigned long sa1_ = (unsigned long)str1;
+           unsigned long sa2_ = (unsigned long)str2;
+           if (sa1_ < 4UL || sa1_ >= 0x28000000UL ||
+               sa2_ < 4UL || sa2_ >= 0x28000000UL) {
+               *ret = 0;
+               return lwc_error_oom;
+           }
+       }
        if (str1->insensitive == NULL) {
            err = lwc__intern_caseless_string(str1);
        }

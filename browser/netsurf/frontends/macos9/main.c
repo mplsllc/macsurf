@@ -475,25 +475,6 @@ static void macos9_handle_update(const EventRecord *event) {
 	    (gw->bw && browser_window_redraw_ready(gw->bw)) ? 1 : 0); }
 	if (gw->bw && browser_window_redraw_ready(gw->bw)) {
 		struct rect clip; struct redraw_context ctx;
-		extern long macos9_plot_text_count, macos9_plot_rect_count;
-		extern long macos9_hrb_visits, macos9_hrb_block, macos9_hrb_inlinec,
-			    macos9_hrb_inline, macos9_hrb_text, macos9_hrb_other,
-			    macos9_hrb_clip_skips;
-		extern long macos9_grad_set_count,
-			    macos9_grad_radial_unpack_count,
-			    macos9_grad_linear_unpack_count;
-		macos9_plot_text_count = 0;
-		macos9_plot_rect_count = 0;
-		macos9_hrb_visits = 0;
-		macos9_hrb_block = 0;
-		macos9_hrb_inlinec = 0;
-		macos9_hrb_inline = 0;
-		macos9_hrb_text = 0;
-		macos9_hrb_other = 0;
-		macos9_hrb_clip_skips = 0;
-		macos9_grad_set_count = 0;
-		macos9_grad_radial_unpack_count = 0;
-		macos9_grad_linear_unpack_count = 0;
 		macsurf_debug_log_writef(
 			"update: redraw_ready, bw=%p scroll=(%d,%d) crect=(%d,%d,%d,%d) ub=(%d,%d,%d,%d) gw=%d",
 			gw->bw, gw->scroll_x, gw->scroll_y,
@@ -518,26 +499,16 @@ static void macos9_handle_update(const EventRecord *event) {
 			&clip, &ctx);
 		{ extern struct gui_window *macos9_paint_gw;
 		  macos9_paint_gw = NULL; }
-		macsurf_debug_log_writef(
-			"update: bw_redraw done visits=%ld block=%ld inlinec=%ld inline=%ld text=%ld other=%ld skips=%ld plot_text=%ld plot_rect=%ld",
-			macos9_hrb_visits, macos9_hrb_block, macos9_hrb_inlinec,
-			macos9_hrb_inline, macos9_hrb_text, macos9_hrb_other,
-			macos9_hrb_clip_skips,
-			macos9_plot_text_count, macos9_plot_rect_count);
-		macsurf_profile_stamp("first-paint-done");
-		/* fixes369 (#167) — page is on screen: emit the per-load
-		 * page-weight + resource-count summary for perf/scrape.py ->
-		 * perf/history.csv, so changes/improvements are measurable. */
-		{
-			struct nsurl *pu = (gw && gw->bw) ?
+		/* fixes451: emit profile stamp + PROFILE line only once per page;
+		 * profile_emitted is reset by macos9_gw_set_url on navigation. */
+		if (!gw->profile_emitted) {
+			struct nsurl *pu;
+			gw->profile_emitted = 1;
+			macsurf_profile_stamp("first-paint-done");
+			pu = (gw && gw->bw) ?
 				browser_window_access_url(gw->bw) : NULL;
 			macsurf_profile_emit(pu ? nsurl_access(pu) : "(unknown)");
 		}
-		macsurf_debug_log_writef(
-			"GRADIENT DIAG: set=%ld radial_unpacks=%ld linear_unpacks=%ld",
-			macos9_grad_set_count,
-			macos9_grad_radial_unpack_count,
-			macos9_grad_linear_unpack_count);
 		if (gworld_active) {
 			const BitMap *src_bm;
 			const BitMap *dst_bm;
@@ -885,6 +856,16 @@ void macos9_poll_mouse_hover(void) {
 	win = FrontWindow();
 	gw = win ? macos9_find_window(win) : NULL;
 	if (!gw || !gw->bw) return;
+	/* fixes430: skip hover dispatch while a new page is loading.
+	 * browser_window_stop_available is true when loading_content exists.
+	 * During that window the old box tree may be transitioning to the new
+	 * one; mouse_track walking it risks a stale-box UAF.  Reset last_pt
+	 * so hover fires fresh when the new content is fully ready. */
+	if (browser_window_stop_available(gw->bw)) {
+		last_pt.h = -1;
+		last_pt.v = -1;
+		return;
+	}
 	SetPortWindowPort(win);
 	GetMouse(&p);
 	if (p.h == last_pt.h && p.v == last_pt.v) return;
@@ -1073,8 +1054,14 @@ int main(void) {
 	 * CSS / images. Apple alone burns ~2 MB on stylesheets per page —
 	 * at 32 MB the cache holds Apple + 5-6 typical pages of history
 	 * with room left over for libcss/libdom working set. */
-	nsoption_set_int(memory_cache_size, 32 * 1024 * 1024);
-	MS_LOG("images enabled, author_css on, fetcher 128/16, mem cache 32MB");
+	/* fixes430: drop from 32MB to 4MB.  The forum index is 22MB of
+	 * subresource bytes; holding 32MB of stale llcache from the previous
+	 * page on top of the new page's working set exhausted the heap.
+	 * 4MB is still enough for shared CSS/images on intra-site navigation
+	 * (XenForo bundles are ~252KB) while giving the new page's DOM+box
+	 * tree and libcss cascade enough room. */
+	nsoption_set_int(memory_cache_size, 0);
+	MS_LOG("images enabled, author_css on, fetcher 128/16, mem cache 0");
 	netsurf_init(NULL);
 	MS_LOG("netsurf_init done");
 	/* fixes368 (#167) — restore a prior session's cookie jar (Facebook

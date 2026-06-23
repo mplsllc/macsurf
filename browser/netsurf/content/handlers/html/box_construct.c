@@ -555,18 +555,6 @@ box_construct_generate(struct box_construct_ctx *ctx,
 			lwc_string *bgimage_uri = NULL;
 			uint8_t bgimg_kind = css_computed_background_image(
 				gen->style, &bgimage_uri);
-#ifdef MACSURF_DEBUG
-			{
-				extern void macsurf_debug_log_writef(
-					const char *fmt, ...);
-				macsurf_debug_log_writef(
-					"fixes347 pseudo bg-image: kind=%d uri=%s",
-					(int)bgimg_kind,
-					(bgimage_uri != NULL) ?
-						lwc_string_data(bgimage_uri) :
-						"(null)");
-			}
-#endif
 			if (bgimg_kind == CSS_BACKGROUND_IMAGE_IMAGE &&
 					bgimage_uri != NULL &&
 					nsoption_bool(background_images)
@@ -1987,6 +1975,8 @@ static void convert_xml_to_box(struct box_construct_ctx *ctx)
 	uint32_t num_processed = 0;
 	const uint32_t max_processed_before_yield = 10;
 
+	macsurf_debug_log_writef("box: convert_xml ctx=%p htmlc=%p", (void*)ctx, (void*)ctx->content);
+
 	do {
 		convert_children = true;
 
@@ -2248,6 +2238,7 @@ nserror cancel_dom_to_box(void *box_conversion_context)
 	struct box_construct_ctx *ctx = box_conversion_context;
 	nserror err;
 
+	macsurf_debug_log_writef("box: cancel_dom ctx=%p htmlc=%p", (void*)ctx, (void*)ctx->content);
 	err = guit->misc->schedule(-1, (void *)convert_xml_to_box, ctx);
 	if (err != NSERROR_OK) {
 		return err;

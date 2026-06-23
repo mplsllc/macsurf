@@ -91,6 +91,22 @@ lwc__intern(const char *s, size_t slen,
 	assert((s != NULL) || (slen == 0));
 	assert(ret);
 
+	/* fixes446f: guard against insane length that would scan megabytes of
+	 * memory into unmapped space.  Root cause: dom_string_intern on a
+	 * CDATA dom_string_internal recycled from a freed sched_entry has
+	 * sched_entry.p (a gui_window* ~0x07000000 = 117MB) as cdata.len.
+	 * Pointer check removed: PEF string literals live at 0x3E... (code
+	 * space), so sa_ >= 0x28000000 wrongly rejects valid interned strings
+	 * like "https", "application/javascript", etc. Length check alone
+	 * is sufficient -- no legitimate string exceeds 1 MB. */
+	if (slen > 1048576UL) {
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		macsurf_debug_log_writef(
+			"fixes446f LWC-INTERN: bad slen=%ld s=%p",
+			(long)slen, (void *)s);
+		return lwc_error_oom;
+	}
+
 	if (ctx == NULL) {
 		eret = lwc__initialise();
 		if (eret != lwc_error_ok)
@@ -104,6 +120,22 @@ lwc__intern(const char *s, size_t slen,
 	str = ctx->buckets[bucket];
 
 	while (str != NULL) {
+		/* fixes446d: guard chain node before dereferencing hash/len/data.
+		 * A freed lwc_string whose memory was reused could leave a
+		 * garbage pointer in ctx->buckets or a str->next slot. */
+		{
+			unsigned long sa_ = (unsigned long)str;
+			if (sa_ < 4UL || sa_ >= 0x28000000UL) {
+				extern void macsurf_debug_log_writef(
+					const char *fmt, ...);
+				macsurf_debug_log_writef(
+					"fixes446d CHAIN: bad str=%p "
+					"bucket=%lu",
+					(void *)str,
+					(unsigned long)bucket);
+				break;
+			}
+		}
 		if ((str->hash == h) && (str->len == slen)) {
 			if (compare(CSTR_OF(str), s, slen) == 0) {
 				str->refcnt++;
@@ -167,6 +199,21 @@ lwc_intern_substring(lwc_string *str,
 lwc_error
 lwc_string_tolower(lwc_string *str, lwc_string **ret)
 {
+	/* fixes446c: crash-guard against corrupt lwc_string pointer.
+	 * Same heap-corruption root cause as the dom_string_tolower
+	 * guard (fixes446a); this catches callers that hold lwc_string*
+	 * pointers directly (e.g. nsurl component strings used in URL
+	 * comparison during hlcache_handle_retrieve). */
+	{
+		unsigned long sa_ = (unsigned long)str;
+		if (sa_ < 4UL || sa_ >= 0x28000000UL) {
+			extern void macsurf_debug_log_writef(const char *fmt, ...);
+			macsurf_debug_log_writef(
+				"fixes446c TOLOWER: bad lwc str=%p",
+				(void *)sa_);
+			return lwc_error_oom;
+		}
+	}
 	assert(str);
 	assert(ret);
 
@@ -254,6 +301,12 @@ lwc__lcase_memcpy(void *restrict _target, const void *restrict _source, size_t n
 lwc_error
 lwc__intern_caseless_string(lwc_string *str)
 {
+	/* fixes446c: same range guard as lwc_string_tolower. */
+	{
+		unsigned long sa_ = (unsigned long)str;
+		if (sa_ < 4UL || sa_ >= 0x28000000UL)
+			return lwc_error_oom;
+	}
 	assert(str);
 	assert(str->insensitive == NULL);
 

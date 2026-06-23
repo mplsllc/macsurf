@@ -3234,13 +3234,33 @@ hubbub_error emit_current_tag(hubbub_tokeniser *tokeniser)
 	/* Set pointers correctly... */
 	ptr = tokeniser->buffer->data;
 	token.data.tag.name.ptr = tokeniser->buffer->data;
-	ptr += token.data.tag.name.len;
 
-	for (i = 0; i < n_attributes; i++) {
-		attrs[i].name.ptr = ptr;
-		ptr += attrs[i].name.len;
-		attrs[i].value.ptr = ptr;
-		ptr += attrs[i].value.len;
+	/* fixes444: guard corrupt attribute lengths. On a heavy page (18+ MB,
+	 * 144+ subresources) heap fragmentation can corrupt n_attributes or
+	 * individual .name.len/.value.len fields. Without this check, ptr walks
+	 * past buffer->data+buffer->length and the strncmp dedup loop below
+	 * reads from unmapped memory -> crash. Clamp to buffer bounds. */
+	{
+		const uint8_t *buf_end = tokeniser->buffer->data +
+				tokeniser->buffer->length;
+		if (token.data.tag.name.len > tokeniser->buffer->length) {
+			token.data.tag.name.len = 0;
+			n_attributes = 0;
+		}
+		ptr += token.data.tag.name.len;
+
+		for (i = 0; i < n_attributes; i++) {
+			if (ptr + attrs[i].name.len > buf_end ||
+					ptr + attrs[i].name.len +
+					attrs[i].value.len > buf_end) {
+				n_attributes = i;
+				break;
+			}
+			attrs[i].name.ptr = ptr;
+			ptr += attrs[i].name.len;
+			attrs[i].value.ptr = ptr;
+			ptr += attrs[i].value.len;
+		}
 	}
 
 

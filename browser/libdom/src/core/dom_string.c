@@ -178,8 +178,24 @@ dom_exception dom_string_intern(dom_string *str,
 	if (istr->type != DOM_STRING_INTERNED) {
 		lwc_string *ret;
 		lwc_error lerr;
-
-		lerr = lwc_intern_string((const char *) istr->data.cdata.ptr, 
+		/* fixes446f: guard against insane length only. Pointer check
+		 * (pa_ >= 0x28000000) removed: PEF string literals live at
+		 * 0x3E... (code space on OS 9) and are valid CDATA sources.
+		 * The corrupt-sched_entry case has sched_entry.p (~0x07000000
+		 * = 117 MB) aliased as cdata.len, which the length check
+		 * catches cleanly. */
+		if (istr->data.cdata.len > 1048576UL) {
+			extern void macsurf_debug_log_writef(
+				const char *fmt, ...);
+			macsurf_debug_log_writef(
+				"fixes446f INTERN: bad len=%ld ptr=%p "
+				"str=%p",
+				(long)istr->data.cdata.len,
+				(void *)istr->data.cdata.ptr,
+				(void *)istr);
+			return DOM_NO_MEM_ERR;
+		}
+		lerr = lwc_intern_string((const char *) istr->data.cdata.ptr,
 				istr->data.cdata.len, &ret);
 		if (lerr != lwc_error_ok) {
 			return _dom_exception_from_lwc_error(lerr);
@@ -897,13 +913,49 @@ const char *dom_string_data(const dom_string *str)
 {
 	dom_string_internal *istr = (void *) str;
 	if (istr->type == DOM_STRING_CDATA) {
+		/* fixes446g: guard against corrupt CDATA ptr from sched_entry
+		 * UAF (sched_entry.callback, a code-space fn-ptr at 0x3E...,
+		 * aliases data.cdata.ptr at struct offset 4).  A legitimate
+		 * CDATA ptr is always malloc'd heap (< 0x28000000).  Return ""
+		 * so callers get an empty string rather than a strlen crash. */
+		{
+			unsigned long pa_ =
+				(unsigned long)istr->data.cdata.ptr;
+			if (pa_ < 4UL || pa_ >= 0x28000000UL) {
+				extern void macsurf_debug_log_writef(
+					const char *fmt, ...);
+				macsurf_debug_log_writef(
+					"fixes446g DATA: bad cdata ptr=%p "
+					"str=%p",
+					(void *)pa_, (void *)str);
+				return "";
+			}
+		}
 		return (const char *) istr->data.cdata.ptr;
 	} else {
+		/* fixes446b: same guard as dom_string_tolower — a corrupt
+		 * intern pointer (UAF or write-past) causes lwc_string_data
+		 * to return garbage_ptr+24, which then crashes in memcpy /
+		 * duk_push_lstring / strlen.  Return "" on bad pointer. */
+		{
+			unsigned long ia_ = (unsigned long)istr->data.intern;
+			if (ia_ < 4UL || ia_ >= 0x28000000UL) {
+				extern void macsurf_debug_log_writef(
+					const char *fmt, ...);
+				macsurf_debug_log_writef(
+					"fixes446b DATA: corrupt intern=%p "
+					"str=%p type=%d",
+					(void *)ia_,
+					(void *)str,
+					(int)istr->type);
+				return "";
+			}
+		}
 		return lwc_string_data(istr->data.intern);
 	}
 }
 
-/** Get the byte length of this dom_string 
+/** Get the byte length of this dom_string
  *
  * \param str	The dom_string object
  */
@@ -913,6 +965,13 @@ size_t dom_string_byte_length(const dom_string *str)
 	if (istr->type == DOM_STRING_CDATA) {
 		return istr->data.cdata.len;
 	} else {
+		/* fixes446b: paired guard — same corrupt intern crashes here
+		 * via lwc_string_length reading str->len at bad_ptr+8. */
+		{
+			unsigned long ia_ = (unsigned long)istr->data.intern;
+			if (ia_ < 4UL || ia_ >= 0x28000000UL)
+				return 0;
+		}
 		return lwc_string_length(istr->data.intern);
 	}
 }
@@ -1008,7 +1067,28 @@ dom_string_tolower(dom_string *source, bool ascii_only, dom_string **lower)
 		bool equal;
 		lwc_error err;
 		lwc_string *l;
-
+		/* fixes446: guard against heap-corrupt lwc_string pointer.
+		 * Crash signature: lbzu r0,0x0001(r4) with r4 in kernel
+		 * address space (>0x28000000 on 640MB Mac OS 9), because
+		 * CSTR_OF(bad_intern) = bad_intern+24 is unmapped.
+		 * Root cause is a UAF that writes garbage to
+		 * dom_string_internal.data.intern; this guard returns before
+		 * lwc__intern_caseless_string dereferences the bad pointer. */
+		{
+			unsigned long intern_addr_ =
+				(unsigned long)isource->data.intern;
+			if (intern_addr_ < 4UL || intern_addr_ >= 0x28000000UL) {
+				extern void macsurf_debug_log_writef(
+					const char *fmt, ...);
+				macsurf_debug_log_writef(
+					"fixes446 GUARD: corrupt intern=%p "
+					"in dom_string_tolower source=%p type=%d",
+					(void *)intern_addr_,
+					(void *)source,
+					(int)isource->type);
+				return DOM_NO_MEM_ERR;
+			}
+		}
 		err = lwc_string_tolower(isource->data.intern, &l);
 		if (err != lwc_error_ok) {
 			return DOM_NO_MEM_ERR;

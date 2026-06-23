@@ -757,6 +757,7 @@ html_create(const content_handler *handler,
 		macsurf__site_box_text = 0;
 		macsurf__site_box_other = 0;
 		/* fixes268 (#9,#11) */
+		macsurf_debug_log_writef("css: budget reset was=%ld", (long)macsurf__site_css_total_bytes);
 		macsurf__site_css_total_bytes = 0;
 		macsurf__site_blocker = 0;
 	}
@@ -1013,6 +1014,11 @@ bool html_can_begin_conversion(html_content *htmlc)
 {
 	unsigned int i;
 
+	/* fixes450: short-circuit on aborted content so convert_script_async_cb
+	 * can never trigger html_begin_conversion on a zombie html_content */
+	if (htmlc->aborted)
+		return false;
+
 	/* Cannot begin conversion if we're still fetching stuff */
 	macsurf_debug_log_int("active fetches", (long)htmlc->base.active);
 	if (htmlc->base.active != 0)
@@ -1227,12 +1233,45 @@ static void html_stop(struct content *c)
 
 	switch (c->status) {
 	case CONTENT_STATUS_LOADING:
-		/* Still loading; simply flag that we've been aborted
-		 * html_convert/html_finish_conversion will do the rest */
+		/* fixes452: cancel any in-progress box walk FIRST, before
+		 * setting aborted, so convert_xml_to_box cannot fire after
+		 * html_destroy frees the html_content.  cancel_dom_to_box
+		 * removes the scheduled entry and frees the ctx; we null the
+		 * pointer so html_destroy's matching cancel is a no-op. */
+		if (htmlc->box_conversion_context != NULL) {
+			cancel_dom_to_box(htmlc->box_conversion_context);
+			htmlc->box_conversion_context = NULL;
+		}
+
+		/* Still loading; flag abort and close the JS thread */
 		htmlc->aborted = true;
 		if (htmlc->js_thread != NULL) {
-			/* Close the JS thread to cancel out any callbacks */
 			js_closethread(htmlc->js_thread);
+		}
+		/* fixes452: abort object fetches started by the partial box
+		 * walk.  Mirrors what CONTENT_STATUS_READY already does below.
+		 * Without this, sub-resource hlcache handles remain live until
+		 * html_destroy, letting their callbacks fire against a zombie
+		 * html_content in the window between stop and destroy. */
+		html_object_abort_objects(htmlc);
+
+		/* fixes450: unregister all script handles so that
+		 * llcache_catch_up_all_users driving a JS content to DONE
+		 * cannot call convert_script_async_cb back into this zombie
+		 * html_content.  Mirrors html_script_free but nulls the
+		 * handles so html_destroy / html_script_free skips them. */
+		{
+			unsigned int si;
+			for (si = 0; si < htmlc->scripts_count; si++) {
+				struct html_script *s = &htmlc->scripts[si];
+				if ((s->type == HTML_SCRIPT_SYNC ||
+				     s->type == HTML_SCRIPT_ASYNC ||
+				     s->type == HTML_SCRIPT_DEFER) &&
+				     s->data.handle != NULL) {
+					hlcache_handle_release(s->data.handle);
+					s->data.handle = NULL;
+				}
+			}
 		}
 		break;
 
@@ -1462,6 +1501,16 @@ static void html_reformat(struct content *c, int width, int height)
 		return;
 	}
 
+	/* fixes445: clear hover/active tracking on reformat. The dyn_hover_node
+	 * pointer survives layout but box_construct.c seeds its context from
+	 * these fields; stale values after a CONTENT_MSG_ERROR-driven reformat
+	 * (e.g. a 404 image triggering content_set_done while the old box tree
+	 * is still live) can direct a subsequent hover dispatch down paths that
+	 * read freed content state. NULL forces a fresh node walk on the next
+	 * poll with no cost: the poll recomputes the node from the box tree. */
+	htmlc->dyn_hover_node = NULL;
+	htmlc->dyn_active_node = NULL;
+
 	nsu_getmonotonic_ms(&ms_before);
 
 	htmlc->reflowing = true;
@@ -1574,7 +1623,7 @@ static void html_reformat(struct content *c, int width, int height)
 		nsurl *u = content_get_url(&htmlc->base);
 		const char *url = (u != NULL) ? nsurl_access(u) : "(null)";
 		const char *blocker_name;
-		const unsigned long css_total_cap = 1024UL * 1024UL; /* fixes321 — keep in sync with MACOS9_CSS_TOTAL_BUDGET in cssh_css.c */
+		const unsigned long css_total_cap = 2048UL * 1024UL; /* fixes448 — keep in sync with MACOS9_CSS_TOTAL_BUDGET in cssh_css.c */
 
 		/* fixes268 (#11) — pick the dominant degradation source by
 		 * comparing skip counters. Highest-priority counter wins; ties
@@ -1765,6 +1814,7 @@ static void html_destroy(struct content *c)
 	html_content *html = (html_content *) c;
 	struct form *f, *g;
 
+	macsurf_debug_log_writef("html_destroy: htmlc=%p content=%p", (void*)html, (void*)c);
 	NSLOG(netsurf, INFO, "content %p", c);
 
 	/* If we're still converting a layout, cancel it */
@@ -1915,6 +1965,22 @@ static nserror html_close(struct content *c)
 {
 	html_content *htmlc = (html_content *) c;
 	nserror ret = NSERROR_OK;
+
+	macsurf_debug_log_writef("html_close: htmlc=%p ctx=%p bw=%p",
+		(void*)htmlc,
+		(void*)htmlc->box_conversion_context,
+		(void*)htmlc->bw);
+
+	/* fixes457: cancel any scheduled convert_xml_to_box callback NOW,
+	 * before bw is nulled and before html_destroy runs.  html_destroy
+	 * also cancels, but if macos9_schedule_run has already dequeued the
+	 * entry (removed from queue, not yet called), html_destroy's cancel
+	 * is a no-op and the callback fires against a zombie htmlc whose
+	 * select_ctx has been freed — crashing at ns_computed_display+0x18. */
+	if (htmlc->box_conversion_context != NULL) {
+		cancel_dom_to_box(htmlc->box_conversion_context);
+		htmlc->box_conversion_context = NULL;
+	}
 
 	selection_clear(htmlc->sel, false);
 

@@ -783,30 +783,35 @@ void content_broadcast(struct content *c, content_msg msg,
 	if (msg == CONTENT_MSG_READY) {
 		struct content_user *probe_u;
 		long n_users = 0;
-		MS_LOG("content broadcast READY: entry");
 		for (probe_u = c->user_list->next; probe_u != 0;
 				probe_u = probe_u->next) {
 			n_users++;
 		}
-		macsurf_debug_log_writef(
-			"content broadcast READY: users=%ld", n_users);
+		macsurf_debug_log_writef("broadcast_ready: content=%p users=%ld", (void*)c, n_users);
+
+		/* fixes449: zombie guard.  users=0 at READY means all hlcache
+		 * handles that referenced this content were released before it
+		 * finished converting — the browser window navigated away while
+		 * the fetch was still in flight.  Firing the callback loop into
+		 * a NULL user list is harmless (the loop is a no-op), but the
+		 * content object itself is now unreachable and will linger as a
+		 * zombie.  Log its identity so we can correlate it with later
+		 * stale-pointer crashes: the content pointer and status are the
+		 * safest fields to read on a potentially-orphaned object. */
+		if (n_users == 0) {
+			macsurf_debug_log_writef(
+				"content broadcast READY: ZOMBIE c=%p status=%d",
+				(void *)c, (int)c->status);
+			/* No return: let the (empty) loop run so READY exit fires. */
+		}
 	}
 
 	nslog_log(__FILE__, "", __LINE__, "%p -> msg:%d", c, msg);
 	for (user = c->user_list->next; user != 0; user = next) {
 		next = user->next;  /* user may be destroyed during callback */
 		if (user->callback != 0) {
-			if (msg == CONTENT_MSG_READY) {
-				macsurf_debug_log_writef(
-					"content broadcast READY: -> user=%p cb=%p",
-					(void *)user, (void *)user->callback);
-			}
 			user->callback(c, msg, data, user->pw);
 		}
-	}
-
-	if (msg == CONTENT_MSG_READY) {
-		MS_LOG("content broadcast READY: exit");
 	}
 }
 

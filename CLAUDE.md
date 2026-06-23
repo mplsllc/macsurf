@@ -256,7 +256,7 @@ When a change introduces a new `.c` file, mention it plainly so the user can add
 
 ### Shipping discipline
 - Deliverables for a fix round are: delta tar with full tree preserved, `MacSurf.mcp` add/remove list, and `Access Paths.xml` add/remove list.
-- Standard transfer path is: build `fixesNN.tar`, then `scp -P 2222 -i ~/.ssh/macsurf_push -o StrictHostKeyChecking=no fixesNN.tar patrick@localhost:/home/patrick/afp_share/fixesNN.tar`.
+- Standard transfer path is: build `fixesNN.tar`, then `scp -P 2222 -i ~/.ssh/macsurf_push -o StrictHostKeyChecking=no fixesNN.tar patrick@localhost:Documents/MacFiles/fixesNN.tar`.
 - Do not stop at "tar created locally" when the user asked to send it.
 
 

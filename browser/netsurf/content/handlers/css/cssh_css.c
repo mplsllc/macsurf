@@ -133,8 +133,13 @@ typedef struct nscss_content
  * and the per-page total now share one ceiling. The 16 MB Carbon
  * partition has room; if a real page OOMs the cascade, this is the first
  * dial to turn back down. Keep in sync with the css_total_cap display
- * literal in html.c's SITE logger. */
-#define MACOS9_CSS_TOTAL_BUDGET (1024UL * 1024UL)
+ * literal in html.c's SITE logger.
+ *
+ * fixes448 — raised to 2 MB. XenForo on 68kmla.org ships two aggregated
+ * css.php bundles totalling ~1.4 MB; the 1 MB cap dropped both, leaving
+ * the page unstyled and triggering a BASE sheet NULL crash path.  The
+ * ~195 MB Carbon partition has ample headroom. */
+#define MACOS9_CSS_TOTAL_BUDGET (2048UL * 1024UL)
 
 /**
  * Context for import fetches
@@ -200,14 +205,6 @@ nscss_create(const content_handler *handler,
 	const char *xnsbase = NULL;
 	lwc_string *charset_value = NULL;
 	nserror error;
-
-	MS_LOG("nscss create");
-	{
-		nsurl *u = llcache_handle_get_url(llcache);
-		macsurf_debug_log_writef(
-			"nscss create url=%s",
-			u ? nsurl_access(u) : "(null)");
-	}
 
 	result = calloc(1, sizeof(nscss_content));
 	if (result == NULL)
@@ -2665,11 +2662,6 @@ macsurf__rewrite_background_shorthand_gradient(const char *data,
 
 	out[pos] = '\0';
 	if (out_size_p != NULL) *out_size_p = pos;
-#ifdef MACSURF_DEBUG
-	macsurf_debug_log_writef(
-		"fixes318 bg-short: in=%ld out=%ld matches=%d",
-		(long)in_size, (long)pos, changed);
-#endif
 	if (!changed) {
 		free(out);
 		return NULL;
@@ -5186,8 +5178,6 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	const char *final_data;
 	unsigned int final_size;
 
-	MS_LOG("nscss process data");
-
 	/* fixes160d — oversize CSS gate. Accumulate bytes per sheet; when
 	 * past MACOS9_CSS_MAX_BYTES, latch the skip flag, broadcast a CSS
 	 * error so NetSurf drops this sheet from the cascade, and refuse
@@ -5220,6 +5210,11 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		extern unsigned long macsurf__site_css_total_bytes;
 		const unsigned long total_cap = MACOS9_CSS_TOTAL_BUDGET;
 		macsurf__site_css_total_bytes += (unsigned long)size;
+		macsurf_debug_log_writef("css: budget sheet=%ld total=%ld cap=%ld %s",
+			(long)size,
+			(long)macsurf__site_css_total_bytes,
+			(long)total_cap,
+			macsurf__site_css_total_bytes > total_cap ? "OVER" : "ok");
 		if (macsurf__site_css_total_bytes > total_cap) {
 			extern long macsurf__site_css_skip;
 			css->skipped = 1;
@@ -5566,7 +5561,7 @@ bool nscss_convert(struct content *c)
 	nscss_content *css = (nscss_content *) c;
 	css_error error;
 
-	MS_LOG("nscss convert");
+	macsurf_debug_log_writef("css: convert content=%p", (void*)css);
 
 	/* fixes160d — sheets dropped by the oversize gate already broadcast
 	 * an error in nscss_process_data; bail without trying to convert

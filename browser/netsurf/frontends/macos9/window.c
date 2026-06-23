@@ -396,6 +396,11 @@ void macos9_window_navigate(struct gui_window *g, const char *u) {
 	set_url_te_text(g,u);
 	set_status_text(g,"Loading...");
 	if(g->window) InvalWindowRect(g->window, &g->status_rect);
+	/* fixes449: log the pointer value before nsurl_create so that if
+	 * lwc__intern fires a LWC-INTERN or CHAIN guard we can correlate
+	 * the crash address against the string actually being interned. */
+	macsurf_debug_log_writef(
+		"nav: pre-create ptr=%p len=%d", (void *)u, (int)uu_len);
 	if(nsurl_create(u,&n)!=NSERROR_OK) { MS_LOG("nav: nsurl_create FAIL"); return; }
 	MS_LOG("nav: calling browser_window_navigate");
 	{
@@ -990,6 +995,8 @@ static nserror macos9_gw_set_url(struct gui_window *g, struct nsurl *u) {
 	/* fixes320h — navigation releases the JS title lock so the new
 	 * page's HTML <title> applies through the normal vtable path. */
 	g_title_locked_by_js = 0;
+	/* fixes451: new URL = new page, reset the per-page profile gate */
+	g->profile_emitted = 0;
 	if(g&&u&&g->url_te&&(s=nsurl_access(u))) set_url_te_text(g,s);
 	return 0;
 }

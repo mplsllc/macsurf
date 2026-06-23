@@ -773,8 +773,6 @@ css_error node_has_name(void *pw, void *node,
 {
 	nscss_select_ctx *ctx = pw;
 	dom_node *n = node;
-	static long nhn_count = 0;
-
 	if (lwc_string_isequal(qname->name, ctx->universal, match) ==
 			lwc_error_ok && *match == false) {
 		dom_string *name;
@@ -787,22 +785,7 @@ css_error node_has_name(void *pw, void *node,
 		/* Element names are case insensitive in HTML */
 		*match = dom_string_caseless_lwc_isequal(name, qname->name);
 
-		if (nhn_count < 30) {
-			macsurf_debug_log_writef(
-				"node_has_name[%ld] node=%s selector=%s match=%d",
-				nhn_count,
-				name ? dom_string_data(name) : "?",
-				qname->name ? lwc_string_data(qname->name) : "?",
-				(int)*match);
-			nhn_count++;
-		}
-
 		dom_string_unref(name);
-	} else if (nhn_count < 30) {
-		macsurf_debug_log_writef(
-			"node_has_name[%ld] UNIVERSAL match=%d",
-			nhn_count, (int)*match);
-		nhn_count++;
 	}
 
 	return CSS_OK;

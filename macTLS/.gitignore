@@ -1,0 +1,13 @@
+# Python caches
+__pycache__/
+*.pyc
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*~
+
+# Probe build artifacts (we keep the .c source, never commit binaries)
+tools/probes/*/probe_host
+tools/probes/*/probe_host.exe
+tools/probes/*/*.o

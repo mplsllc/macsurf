@@ -450,6 +450,10 @@ browser_window_favicon_callback(hlcache_handle *c,
 		if (bw->favicon.current != NULL) {
 			content_close(bw->favicon.current);
 			hlcache_handle_release(bw->favicon.current);
+			/* fixes458: null immediately so any synchronous callback
+			 * fired from bw->favicon.current = c below cannot see
+			 * the released handle. */
+			bw->favicon.current = NULL;
 		}
 
 		bw->favicon.current = c;
@@ -691,6 +695,7 @@ browser_window_convert_to_download(struct browser_window *bw,
 	/* remove content from browser window */
 	hlcache_handle_release(bw->loading_content);
 	bw->loading_content = NULL;
+	macsurf_debug_log_writef("bw: loading_content->NULL bw=%p", (void*)bw);
 
 	browser_window_stop_throbber(bw);
 }
@@ -820,6 +825,18 @@ static void browser_window_update(struct browser_window *bw, bool scroll_to_top)
 }
 
 
+#ifdef __MACOS9__
+/* Schedule llcache_clean(true) as a deferred callback so it never
+ * fires synchronously inside an active llcache_catch_up_all_users
+ * iteration.  Calling it synchronously from within a notify callback
+ * can free the next object in the iteration before we reach it. */
+static void macos9_deferred_llcache_purge(void *ignored)
+{
+	extern void llcache_clean(bool purge);
+	llcache_clean(true);
+}
+#endif
+
 /**
  * handle message for content ready on browser window
  */
@@ -829,31 +846,29 @@ static nserror browser_window_content_ready(struct browser_window *bw)
 	nserror res = NSERROR_OK;
 
 	/* close and release the current window content */
+	macsurf_debug_log_writef("bw: content_ready bw=%p old=%p new=%p",
+		(void*)bw, (void*)bw->current_content, (void*)bw->loading_content);
 	if (bw->current_content != NULL) {
 		content_close(bw->current_content);
 		hlcache_handle_release(bw->current_content);
+		bw->current_content = NULL;
+		macsurf_debug_log_writef("bw: current_content->NULL bw=%p", (void*)bw);
 	}
 
 #ifdef __MACOS9__
 	/* fixes268 (#10) — on top-level non-frame navigation, evict the
-	 * decoded-image LRU and purge the low-level cache so heavy page →
-	 * heavy page transitions start with fresh budget headroom. The old
-	 * current_content has just been released above, so PNG-deferred
-	 * bitmaps owned by that content have already been destroyed via
-	 * the content_handler destroy chain. The LRU evict catches anything
-	 * the destroy chain didn't (long-lived QT entries) and zeroes the
-	 * global decoded-bytes counter. llcache_clean(true) drops cached
-	 * fetched bytes from the previous page. */
+	 * decoded-image LRU and schedule an llcache purge for the next
+	 * event-loop tick (after the current llcache iteration unwinds). */
 	if (bw->parent == NULL) {
 		extern void macos9_purge_decoded_images(void);
-		extern void llcache_clean(bool purge);
 		macos9_purge_decoded_images();
-		llcache_clean(true);
+		guit->misc->schedule(0, macos9_deferred_llcache_purge, NULL);
 	}
 #endif
 
 	bw->current_content = bw->loading_content;
 	bw->loading_content = NULL;
+	macsurf_debug_log_writef("bw: loading_content->NULL bw=%p", (void*)bw);
 
 	if (!bw->internal_nav) {
 		/* Transfer the fetch parameters */
@@ -1416,8 +1431,10 @@ browser_window__handle_error(struct browser_window *bw,
 
 	if (c == bw->loading_content) {
 		bw->loading_content = NULL;
+		macsurf_debug_log_writef("bw: loading_content->NULL bw=%p", (void*)bw);
 	} else if (c == bw->current_content) {
 		bw->current_content = NULL;
+		macsurf_debug_log_writef("bw: current_content->NULL bw=%p", (void*)bw);
 		browser_window_remove_caret(bw, false);
 	}
 
@@ -1910,12 +1927,14 @@ nserror browser_window_destroy_internal(struct browser_window *bw)
 		hlcache_handle_abort(bw->loading_content);
 		hlcache_handle_release(bw->loading_content);
 		bw->loading_content = NULL;
+		macsurf_debug_log_writef("bw: loading_content->NULL bw=%p", (void*)bw);
 	}
 
 	if (bw->current_content != NULL) {
 		content_close(bw->current_content);
 		hlcache_handle_release(bw->current_content);
 		bw->current_content = NULL;
+		macsurf_debug_log_writef("bw: current_content->NULL bw=%p", (void*)bw);
 	}
 
 	if (bw->favicon.loading != NULL) {
@@ -2800,6 +2819,16 @@ bool browser_window_redraw_ready(struct browser_window *bw)
 		NSLOG(netsurf, INFO, "NULL browser window");
 		return false;
 	} else if (bw->current_content != NULL) {
+		/* fixes458b: only walk the box tree when content is fully done.
+		 * content_get_status returns LOADING or CONVERTING during a
+		 * navigation transition; at those points the box tree is either
+		 * absent or partially built, and image boxes carry freed or
+		 * not-yet-valid hlcache handles.  Walking them crashes at
+		 * hlcache_handle_retrieve (Crash K: r4 = bad ptr from
+		 * box_image_resolve_url).  Requiring DONE here gates every
+		 * caller, including window update events. */
+		if (content_get_status(bw->current_content) != CONTENT_STATUS_DONE)
+			return false;
 		/* Can't render locked contents */
 		return !content_is_locked(bw->current_content);
 	}
@@ -4112,6 +4141,7 @@ void browser_window_stop(struct browser_window *bw)
 		hlcache_handle_abort(bw->loading_content);
 		hlcache_handle_release(bw->loading_content);
 		bw->loading_content = NULL;
+		macsurf_debug_log_writef("bw: loading_content->NULL bw=%p", (void*)bw);
 	}
 
 	if (bw->current_content != NULL &&

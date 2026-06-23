@@ -75,7 +75,8 @@ static browser_pointer_shape get_pointer_shape(struct box *box, bool imagemap)
 	enum css_cursor_e cursor;
 	lwc_string **cursor_uris;
 
-	if (box->type == BOX_FLOAT_LEFT || box->type == BOX_FLOAT_RIGHT)
+	if ((box->type == BOX_FLOAT_LEFT || box->type == BOX_FLOAT_RIGHT) &&
+			box->children != NULL)
 		style = box->children->style;
 	else
 		style = box->style;
@@ -1031,6 +1032,15 @@ html_object_mouse_action(html_content *html,
 			 struct mouse_action_state *mas)
 {
 	bool click;
+	/* fixes445: belt-and-suspenders guard. get_mouse_action_node already
+	 * skips boxes with NULL object (line 710: if (box->object)), but a
+	 * CONTENT_MSG_ERROR path (e.g. 404 image) can null box->object AFTER
+	 * get_mouse_action_node set mas->html_object.box and BEFORE we reach
+	 * here.  Dereferencing NULL via content_mouse_track would crash.
+	 * Cost: one pointer load; benefit: guaranteed safe even under races
+	 * between error callbacks and the hover dispatch loop. */
+	if (mas->html_object.box == NULL || mas->html_object.box->object == NULL)
+		return NSERROR_OK;
 	click = mouse & (BROWSER_MOUSE_PRESS_1 | BROWSER_MOUSE_PRESS_2 |
 			 BROWSER_MOUSE_CLICK_1 | BROWSER_MOUSE_CLICK_2 |
 			 BROWSER_MOUSE_DRAG_1 | BROWSER_MOUSE_DRAG_2);
@@ -1362,21 +1372,11 @@ mouse_action_drag_none(html_content *html,
 		dom_node *want_hover = mas.node;
 		dom_node *want_active = active_state ? mas.node : NULL;
 		bool changed = false;
-		extern void macsurf_debug_log_write(const char *s);
-		extern void macsurf_debug_log_writef(const char *fmt, ...);
 		if (want_hover != html->dyn_hover_node) {
-			macsurf_debug_log_writef(
-				"dyn hover: old=%p new=%p",
-				(void *)html->dyn_hover_node,
-				(void *)want_hover);
 			html->dyn_hover_node = want_hover;
 			changed = true;
 		}
 		if (want_active != html->dyn_active_node) {
-			macsurf_debug_log_writef(
-				"dyn active: old=%p new=%p",
-				(void *)html->dyn_active_node,
-				(void *)want_active);
 			html->dyn_active_node = want_active;
 			changed = true;
 		}

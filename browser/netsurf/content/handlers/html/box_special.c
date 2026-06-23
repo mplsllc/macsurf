@@ -1063,6 +1063,29 @@ box_iframe(dom_node *n,
 		return true;
 	}
 
+	/* fixes451: skip video-embed domains MacSurf cannot render.
+	 * These iframes waste connections and delay page conversion. */
+	{
+		lwc_string *host;
+		const char *hd;
+		int hl;
+		host = nsurl_get_component(url, NSURL_HOST);
+		if (host != NULL) {
+			hd = lwc_string_data(host);
+			hl = (int)lwc_string_length(host);
+			if ((hl == 11 && strncmp(hd, "youtube.com", 11) == 0) ||
+			    (hl > 12 && strncmp(hd + hl - 12, ".youtube.com", 12) == 0) ||
+			    (hl == 8  && strncmp(hd, "youtu.be",  8)  == 0) ||
+			    (hl == 9  && strncmp(hd, "vimeo.com", 9)  == 0) ||
+			    (hl > 10 && strncmp(hd + hl - 10, ".vimeo.com", 10) == 0)) {
+				lwc_string_unref(host);
+				nsurl_unref(url);
+				return true;
+			}
+			lwc_string_unref(host);
+		}
+	}
+
 	/* create a new iframe */
 	iframe = talloc(content->bctx, struct content_html_iframe);
 	if (iframe == NULL) {

@@ -1442,9 +1442,6 @@ macos9_qt_image_convert(struct content *c)
 		qti->bitmap_h = 0;
 		c->width = bw;
 		c->height = bh;
-		macsurf_debug_log_writef(
-			"img convert: %dx%d png, deferred to redraw",
-			bw, bh);
 		{
 			extern long macsurf__site_img_ok;
 			macsurf__site_img_ok++;
@@ -1463,8 +1460,6 @@ macos9_qt_image_convert(struct content *c)
 
 	wants_alpha = macos9_qt_format_has_alpha(src_bytes, src_size);
 	HUnlock(qti->compressed);
-	MS_LOG(wants_alpha ? "img convert: alpha format" :
-			"img convert: opaque format");
 
 	data_ref = NULL;
 	osr = PtrToHand(&qti->compressed, &data_ref, (long)sizeof(Handle));
@@ -1684,10 +1679,6 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 			int new_w = (int)(((long)dst_h * (long)nat_w) /
 					(long)nat_h);
 			if (new_w > 0) {
-				macsurf_debug_log_writef(
-					"img aspect fix126: nat=%dx%d req=%dx%d -> %dx%d",
-					nat_w, nat_h, dst_w, dst_h,
-					new_w, dst_h);
 				dst_w = new_w;
 			}
 		} else if (dst_w != nat_w || dst_h != nat_h) {
@@ -1758,6 +1749,20 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 				macsurf_debug_log_writef(
 					"img skip: cache cap exceeded png %dx%d",
 					dst_w, dst_h);
+				return true;
+			}
+
+			/* fixes445: guard compressed Handle before HLock.
+			 * A valid OS 9 Handle (master pointer) is always a
+			 * 4-byte-aligned heap address.  Low-bits != 0 means
+			 * the field was overwritten by heap corruption or a
+			 * double-free chain pointer.  Log + skip rather than
+			 * letting HLock walk into garbage. */
+			macsurf_debug_log_writef(
+				"img png decode: qti=%p cmp=%p",
+				(void *)qti, (void *)qti->compressed);
+			if (((unsigned long)qti->compressed & 3) != 0) {
+				MS_LOG("img png: compressed corrupt, skip");
 				return true;
 			}
 

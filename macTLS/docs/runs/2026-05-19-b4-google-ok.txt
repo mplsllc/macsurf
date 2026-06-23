@@ -1,0 +1,51 @@
+=== MacTLSTest baseline run — Stage B4 native HTTPS GET succeeded ===
+Date  : 2026-05-19 (captured from MacTLSTest.log on Desktop)
+Host  : Power Macintosh G3 Minitower, Mac OS 9.1
+Build : CodeWarrior 8 Pro PPC, Carbon CFM
+Target: google.com:443 (cert chain validated against GTS Root R4 EC P-384)
+Suite : TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 (0xCCA9, TLS 1.2)
+
+This is the proof-point run: every layer (PPC mul64 codegen, BearSSL
+static init, Open Transport TCP, BearSSL handshake state machine over
+OT, br_x509_minimal validation with OS 9 clock conversion, and tiny
+HTTPS GET with decrypted response capture) all working on real OS 9
+hardware in a single end-to-end pass.
+
+Pulled from the Mac via:
+
+    scp -P 2222 -i ~/.ssh/macsurf_push \
+        patrick@localhost:Desktop/MacTLSTest.log /tmp/
+
+----------------- begin captured log -----------------
+
+==== MacTLSTest run ====
+Stage A.5  mul64 probe              ...
+Stage A.5  mul64 probe              -> code=0 OK
+Stage A    BearSSL smoke            ...
+Stage A    BearSSL smoke            -> code=0 OK (engine reports SENDREC)
+OT init    InitOpenTransportInContext...
+OT init    InitOpenTransportInContext-> ot_err=0 OK
+Stage B1   OT TCP connect target=example.com:443 ...
+Stage B1   OT TCP connect           -> code=0 B1: OT TCP connect OK
+Stage B2   TLS handshake (insecure) target=example.com:443 ...
+Stage B2   TLS handshake (insecure) -> code=0 B2 OK TLS1.2 ECDHE-ECDSA CHACHA20 0xCCA9
+Stage B3   TLS handshake (validated) target=google.com:443 ...
+Stage B3   TLS handshake (validated) -> code=0 B3 OK TLS1.2 ECDHE-ECDSA CHACHA20 0xCCA9
+Stage B4   HTTPS GET google.com:443/ ...
+Stage B4   response prefix [95]   : HTTP/1.0 301 Moved Permanently\r\nLocation: https://www.google.com/\r\nContent-Type: text/html; cha
+Stage B4   HTTPS GET                -> code=0 B4 OK TLS1.2 ECDHE-ECDSA CHACHA20 95B body
+
+==== ALL STAGES OK ====
+
+------------------ end captured log ------------------
+
+The 95-byte response prefix is the unencrypted text Google returned
+under TLS, captured byte-for-byte after BearSSL decrypted the records.
+The "301 Moved Permanently" + "Location: https://www.google.com/"
+headers prove the server saw the request, generated a real response,
+and the response made it back through the TLS channel to our buffer.
+
+Stage C (local HTTP proxy app) is the next phase. The B4 fetch path is
+the reusable engine; Stage C builds an OT listener on 127.0.0.1:8765,
+parses incoming plain-HTTP-proxy requests, and routes them through the
+B4 path to return decrypted content to the client.

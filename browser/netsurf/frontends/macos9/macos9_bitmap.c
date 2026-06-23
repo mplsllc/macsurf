@@ -86,11 +86,33 @@ macos9_bitmap_destroy(void *bitmap)
 {
 	struct macos9_bitmap *bm = bitmap;
 
-	if (bm != NULL) {
-		if (bm->mask != NULL) free(bm->mask);
-		free(bm->data);
-		free(bm);
+	if (bm == NULL) return;
+
+	/* fixes431: guard the bitmap struct pointer itself.
+	 * If victim->bitmap is a corrupted LRU entry pointer (e.g. a
+	 * free-list chain link like 0xD762FD0E with low bits != 00),
+	 * free(bm) crashes inside MSL's heap scanner.  An aligned heap
+	 * allocation is always 4-byte aligned on PPC. */
+	if (((unsigned long)bm & 3) != 0) return;
+
+	/* fixes430: guard against corrupted data/mask pointers.
+	 * Heap pointers on OS 9 PPC are always 4-byte aligned.
+	 * A free-list chain pointer (e.g. 0xD762FD0E, low bits != 00)
+	 * means the block was already freed and the first word was
+	 * overwritten by the allocator.  Skip the inner free to avoid
+	 * crashing inside MSL's heap manager; the outer bm struct is
+	 * still coherent and is freed normally. */
+	if (bm->mask != NULL) {
+		if (((unsigned long)bm->mask & 3) == 0)
+			free(bm->mask);
+		bm->mask = NULL;
 	}
+	if (bm->data != NULL) {
+		if (((unsigned long)bm->data & 3) == 0)
+			free(bm->data);
+		bm->data = NULL;
+	}
+	free(bm);
 }
 
 static void

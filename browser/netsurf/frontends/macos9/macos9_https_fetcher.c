@@ -502,6 +502,16 @@ static int dead_host_check(const char *key)
 	return 0;
 }
 
+/* fixes463: public wrapper so macos9_http_fetcher can check the dead-host
+ * list before following a 301 redirect to https://. Breaks the loop:
+ * http-fallback -> 301->https -> dead-host fast-fail -> http-fallback */
+int macos9_https_host_is_dead(const char *host, int port)
+{
+	char key[HTTPS_POOL_KEY_LEN];
+	snprintf(key, sizeof key, "%s:%d", host, port);
+	return dead_host_check(key);
+}
+
 static void dead_host_add(const char *key)
 {
 	int i;
@@ -612,7 +622,7 @@ static int https_pool_count = 0;
  * check at take-time caught some stale entries but not all — if the
  * server closes via TCP FIN that hasn't arrived in our notifier yet,
  * the entry looks fine on take but the next OSTLS_Write fails. */
-#define HTTPS_POOL_TTL_TICKS 1200  /* 20s at 60Hz */
+#define HTTPS_POOL_TTL_TICKS 4500  /* 75s at 60Hz — matches nginx default keepalive_timeout */
 
 /* Try to take a usable connection out of the pool for `key`. Returns
  * NULL if no match or if the matched entry's state is no longer Open
@@ -711,6 +721,31 @@ https_pool_return(const char *key, OSTLSConnection *conn)
 		key, https_pool_count);
 }
 
+/* fixes449: flush all idle pooled connections at navigation time.
+ * Called from browser_window_stop via extern.  Eliminates the vector
+ * where a pooled OSTLSConnection's OT notifier fires a late event
+ * during the new page's fetch and calls back into stale context.
+ * Diagnostic step: if the use-after-free crash family disappears, the
+ * pool is confirmed as a contributing source. */
+void https_pool_flush_all(void)
+{
+	int i;
+	int flushed = 0;
+	for (i = 0; i < https_pool_count; i++) {
+		if (https_pool[i].conn != NULL) {
+			OSTLS_Close(https_pool[i].conn);
+			OSTLS_Dispose(https_pool[i].conn);
+			https_pool[i].conn = NULL;
+			flushed++;
+		}
+	}
+	https_pool_count = 0;
+	if (flushed > 0) {
+		macsurf_debug_log_writef(
+			"https_pool: flush_on_navigate flushed=%d", flushed);
+	}
+}
+
 /* ---------- helpers ---------- */
 
 static unsigned long now_ticks(void)
@@ -724,6 +759,8 @@ static unsigned long now_ticks(void)
 
 static void hctx_clear(struct macos9_https_ctx *c)
 {
+	macsurf_debug_log_writef("https_teardown: host=%s state=%d",
+		c->host[0] ? c->host : "(null)", (int)c->state);
 	if (c->hdr_buf) { free(c->hdr_buf); c->hdr_buf = NULL; }
 	c->hdr_len = 0;
 	c->hdr_cap = 0;
@@ -731,6 +768,8 @@ static void hctx_clear(struct macos9_https_ctx *c)
 		OSTLS_Close(c->conn);
 		OSTLS_Dispose(c->conn);
 		c->conn = NULL;
+		macsurf_debug_log_writef("https_teardown: OT closed host=%s",
+			c->host[0] ? c->host : "(null)");
 	}
 	if (c->cache_capture) { free(c->cache_capture); c->cache_capture = NULL; }
 	c->cache_cap_len = 0;
@@ -741,7 +780,12 @@ static void hctx_clear(struct macos9_https_ctx *c)
 	if (c->post_body) { free(c->post_body); c->post_body = NULL; }
 	c->post_body_len = 0;
 	c->post_body_sent = 0;
-	if (c->url) { nsurl_unref(c->url); c->url = NULL; }
+	if (c->url) {
+		nsurl_unref(c->url);
+		c->url = NULL;
+		macsurf_debug_log_writef("https_teardown: url released host=%s",
+			c->host[0] ? c->host : "(null)");
+	}
 	c->state = HS_IDLE;
 }
 
@@ -1004,6 +1048,17 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 				rm.data.redirect = c->redirect_url;
 				fetch_send_callback(&rm, c->parent);
 				parent_save = c->parent;
+				c->parent = NULL; /* fixes447: null before OT teardown */
+				/* fixes448: dead-host the :443 key before the HTTP
+				 * fallback fires.  Without this, the chain
+				 * HTTPS-fail -> HTTP -> server 301 -> HTTPS loops
+				 * forever because the second HTTPS attempt is not
+				 * blocked.  Cert failures (X509_NOT_TRUSTED) are
+				 * session-permanent; success_host_check still guards
+				 * against poisoning hosts that actually worked. */
+				if (c->pool_key[0] != '\0') {
+					dead_host_add(c->pool_key);
+				}
 				hctx_clear(c);
 				fetch_remove_from_queues(parent_save);
 				fetch_free(parent_save);
@@ -1042,6 +1097,7 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	fetch_send_callback(&msg, c->parent);
 
 	p = c->parent;
+	c->parent = NULL; /* fixes447: null before OT teardown so re-entrant notifier finds NULL */
 	hctx_clear(c);
 	fetch_remove_from_queues(p);
 	fetch_free(p);
@@ -1096,6 +1152,7 @@ static void hctx_finish(struct macos9_https_ctx *c)
 	}
 
 	p = c->parent;
+	c->parent = NULL; /* fixes447: null before OT teardown */
 	hctx_clear(c);
 	fetch_remove_from_queues(p);
 	fetch_free(p);
@@ -1172,30 +1229,13 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		int   n_header_lines = 0;
 		int   force_download = 0;
 		int   i;
-		int   fb_host = 0;	/* fixes368d — gate the full-header dump */
-		size_t hh;
 		static const char forced_ct[] =
 			"Content-Type: application/octet-stream";
-
-		/* fixes368d (#167) — for facebook.com only, dump EVERY response
-		 * header (except Set-Cookie, logged name-only elsewhere so no
-		 * session secret hits disk) so the live login test shows exactly
-		 * what FB returned — Location, x-fb-debug, vary, content-type, etc.
-		 * Gated to FB so other sites stay quiet. */
-		hh = strlen(c->host);
-		if (hh >= 12 &&
-		    strncasecmp(c->host + hh - 12, "facebook.com", 12) == 0 &&
-		    (hh == 12 || c->host[hh - 13] == '.'))
-			fb_host = 1;
 
 		while ((p = find_line(&cur, &cur_len)) != NULL) {
 			if (p[0] == 0) break;
 			if (n_header_lines < 64) {
 				header_lines[n_header_lines++] = p;
-			}
-			if (fb_host &&
-			    strncasecmp(p, "Set-Cookie:", 11) != 0) {
-				macsurf_debug_log_writef("https: < %s", p);
 			}
 			if (strncasecmp(p, "Content-Type:", 13) == 0) {
 				char *v = p + 13; while (*v == ' ') v++;
@@ -1440,11 +1480,6 @@ static int feed_body(struct macos9_https_ctx *c, const char *buf, long n)
 			in += in_c;
 			in_left -= in_c;
 		}
-		/* CHUNKDIAG — remove after Google-Fonts chunked stall is fixed. */
-		macsurf_debug_log_writef(
-			"CHUNKDIAG feed: in=%ld state=%d remain=%ld bodyb=%ld",
-			(long)n, (int)c->chunk.state,
-			(long)c->chunk.remaining, (long)c->body_bytes);
 		if (c->chunk.state == kOSTLSChunkStateDone) return 1;
 		return 0;
 	} else {
@@ -1893,6 +1928,13 @@ static void hctx_poll(struct macos9_https_ctx *c)
 	if (c->state == HS_TLSING) {
 		if (ev == kOSTLSEventHandshakeDone ||
 		    OSTLS_GetState(c->conn) == kOSTLSStateOpen) {
+			{
+				OSTLSDiagnostics diag;
+				OSTLS_GetDiagnostics(c->conn, &diag);
+				macsurf_debug_log_writef(
+					"https: handshake done host=%s resumed=%d cipher=0x%04X",
+					c->host, diag.resumed, (unsigned)diag.cipher_suite);
+			}
 			if (build_request(c) < 0) {
 				hctx_fail(c, "https: request too large");
 				return;
@@ -1912,6 +1954,22 @@ static void hctx_poll(struct macos9_https_ctx *c)
 				(UInt32)(c->req_len - c->req_sent),
 				&written);
 			if (e != kOSTLSAsync_OK) {
+				/* fixes461: stale pool connection — retry cold.
+				 * Server closed the idle connection while it sat
+				 * in our pool; OSTLS_Write fails immediately.
+				 * Dispose the dead conn and open a fresh one
+				 * rather than erroring to the user. */
+				if (c->from_pool) {
+					macsurf_debug_log_writef(
+						"https: pool stale write-fail, retry cold host=%s",
+						c->host);
+					OSTLS_Close(c->conn);
+					OSTLS_Dispose(c->conn);
+					c->conn = NULL;
+					c->from_pool = 0;
+					hctx_reset_for_retry(c);
+					return;
+				}
 				hctx_fail(c, "https: write failed");
 				return;
 			}
@@ -1969,28 +2027,6 @@ static void hctx_poll(struct macos9_https_ctx *c)
 				if (r == 1) {
 					long leftover = c->hdr_len - body_off;
 					c->state = HS_BODY;
-					/* CHUNKDIAG — dump the first body bytes the
-					 * decoder is fed, so we can see if it starts
-					 * at "c1\r\n" (correct) or a wrong offset.
-					 * Remove after the chunked stall is fixed. */
-					{
-						static const char hexd[] = "0123456789abcdef";
-						char hxb[80];
-						long k, hn = (leftover < 24) ? leftover : 24;
-						int hp = 0;
-						for (k = 0; k < hn; k++) {
-							unsigned char ch =
-							 (unsigned char)c->hdr_buf[body_off + k];
-							hxb[hp++] = hexd[ch >> 4];
-							hxb[hp++] = hexd[ch & 15];
-							hxb[hp++] = ' ';
-						}
-						hxb[hp] = '\0';
-						macsurf_debug_log_writef(
-						 "CHUNKDIAG split: chunked=%d clen=%ld off=%ld leftover=%ld body0: %s",
-						 c->chunked, c->content_length,
-						 body_off, leftover, hxb);
-					}
 					if (leftover > 0) {
 						if (feed_body(c,
 						    c->hdr_buf + body_off,
@@ -2261,10 +2297,10 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 		}
 	}
 
-	/* macsurf_debug_log_writef supports only %d %ld %p %s %% — no precision
-	 * specifier. Print the path as a plain %s; if it's huge, so be it. */
-	macsurf_debug_log_writef("https_setup OK host=%s port=%d path=%s",
-		c->host, (int)c->port, c->path);
+	macsurf_debug_log_writef("https_setup: host=%s port=%d cache_hit=%d path=%s",
+		c->host, (int)c->port,
+		(c->state == HS_CACHEHIT) ? 1 : 0,
+		c->path);
 	return c;
 }
 

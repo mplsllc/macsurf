@@ -135,16 +135,39 @@ void nsurl__calc_hash(nsurl *url);
  *
  * \param c	url components
  */
+/* fixes446e: range-guard each component before unref.
+ * Corrupt lwc_string* (from sched_entry/dom_string_internal heap
+ * aliasing) can land a code-space address in an nsurl component.
+ * Accessing code_addr+0x10 for refcnt crashes "nsurl__components_
+ * destroy+00160" with PPC unmapped-memory exception.  Skip unref and
+ * log; the leaked refcount is a memory non-issue vs. a crash. */
+#define NSURL__SAFE_UNREF(field_) \
+	do { \
+		unsigned long nsurl_ua_ = (unsigned long)(field_); \
+		if (nsurl_ua_ == 0UL) { \
+		} else if (nsurl_ua_ < 4UL || nsurl_ua_ >= 0x28000000UL) { \
+			extern void macsurf_debug_log_writef( \
+				const char *fmt_, ...); \
+			macsurf_debug_log_writef( \
+				"fixes446e NSURL: bad " #field_ "=%p", \
+				(void *)nsurl_ua_); \
+		} else { \
+			lwc_string_unref(field_); \
+		} \
+	} while (0)
+
 static inline void nsurl__components_destroy(struct nsurl_components *c)
 {
-	lwc_string_unref(c->scheme);
-	lwc_string_unref(c->username);
-	lwc_string_unref(c->password);
-	lwc_string_unref(c->host);
-	lwc_string_unref(c->port);
-	lwc_string_unref(c->path);
-	lwc_string_unref(c->query);
-	lwc_string_unref(c->fragment);
+	NSURL__SAFE_UNREF(c->scheme);
+	NSURL__SAFE_UNREF(c->username);
+	NSURL__SAFE_UNREF(c->password);
+	NSURL__SAFE_UNREF(c->host);
+	NSURL__SAFE_UNREF(c->port);
+	NSURL__SAFE_UNREF(c->path);
+	NSURL__SAFE_UNREF(c->query);
+	NSURL__SAFE_UNREF(c->fragment);
 }
+
+#undef NSURL__SAFE_UNREF
 
 #endif

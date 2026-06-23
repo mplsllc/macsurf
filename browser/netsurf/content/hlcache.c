@@ -149,6 +149,8 @@ static void hlcache_clean(void *force_clean_flag)
 			entry->next->prev = entry->prev;
 
 		/* Destroy content */
+		macsurf_debug_log_writef("hlcache: clean destroy entry=%p content=%p",
+			(void*)entry, (void*)entry->content);
 		content_destroy(entry->content);
 
 		/* Destroy entry */
@@ -761,6 +763,12 @@ hlcache_handle_retrieve(nsurl *url,
 /* See hlcache.h for documentation */
 nserror hlcache_handle_release(hlcache_handle *handle)
 {
+	/* fixes450: log every release so we can cross-ref against ZOMBIE / crash */
+	macsurf_debug_log_writef(
+		"hlcache_release: handle=%p entry=%p",
+		(void *)handle,
+		(void *)(handle->entry));
+
 	if (handle->entry != NULL) {
 		content_remove_user(handle->entry->content,
 				hlcache_content_callback, handle);

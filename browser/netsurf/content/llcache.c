@@ -204,6 +204,11 @@ struct llcache_object {
 	 * determine object lifetime etc.
 	 */
 	time_t last_used; /**< time the last user was removed from the object */
+
+	/* fixes459: per-object reentrancy guard for llcache_object_notify_users.
+	 * calloc at allocation guarantees both start false. */
+	bool notify_in_progress; /**< notify walk active for this object */
+	bool notify_pending;     /**< reentrant call arrived; re-run after walk */
 };
 
 /**
@@ -267,6 +272,9 @@ struct llcache_s {
 
 /** low level cache state */
 static struct llcache_s *llcache = NULL;
+
+/* fixes460: global notify reentrancy guard — see llcache_object_notify_users */
+static bool llcache_notify_in_progress = false;
 
 /* forward referenced callback function */
 static void llcache_fetch_callback(const fetch_msg *msg, void *p);
@@ -370,6 +378,7 @@ static nserror llcache_object_remove_user(llcache_object *object,
 		object->last_used = time(NULL);
 	}
 
+	macsurf_debug_log_writef("llcache: user_remove obj=%p user=%p", (void*)object, (void*)user);
 	nslog_log(__FILE__, "", __LINE__, "Removing user %p from %p", user, object);
 
 	return NSERROR_OK;
@@ -3382,6 +3391,32 @@ static nserror llcache_object_notify_users(llcache_object *object)
 	llcache_event event;
 	bool emitted_notify = false;
 
+	/* fixes460: global reentrancy guard.
+	 * Per-object guard (fixes459) only blocked same-object reentrancy.
+	 * The crash chain runs through a script object (different object B)
+	 * while HTML object A's walk is on the stack, bypassing the per-object
+	 * guard on B.  The module-level llcache_notify_in_progress flag closes
+	 * the remaining gap: while ANY object's notify walk is executing, all
+	 * other objects defer via notify_pending + llcache_users_not_caught_up.
+	 * llcache_notify_in_progress is declared at the top of this file. */
+	if (object->notify_in_progress) {
+		object->notify_pending = true;
+		macsurf_debug_log_writef("llcache: per-obj reentrant notify blocked obj=%p url=%s",
+			(void*)object,
+			(object->url ? nsurl_access(object->url) : "(null)"));
+		return NSERROR_OK;
+	}
+	if (llcache_notify_in_progress) {
+		object->notify_pending = true;
+		macsurf_debug_log_writef("llcache: global reentrant notify blocked obj=%p url=%s",
+			(void*)object,
+			(object->url ? nsurl_access(object->url) : "(null)"));
+		llcache_users_not_caught_up();
+		return NSERROR_OK;
+	}
+	llcache_notify_in_progress = true;
+	object->notify_in_progress = true;
+
 	/**
 	 * State transitions and event emission for users.
 	 * Rows: user state. Cols: object state.
@@ -3473,8 +3508,11 @@ static nserror llcache_object_notify_users(llcache_object *object)
 				llcache_object_remove_user(object, user);
 				llcache_object_user_destroy(user);
 
-				if (error != NSERROR_OK)
+				if (error != NSERROR_OK) {
+					object->notify_in_progress = false;
+				llcache_notify_in_progress = false;
 					return error;
+				}
 
 				continue;
 			} else if (error == NSERROR_NEED_DATA) {
@@ -3489,6 +3527,8 @@ static nserror llcache_object_notify_users(llcache_object *object)
 				continue;
 			} else if (error != NSERROR_OK) {
 				user->iterator_target = false;
+				object->notify_in_progress = false;
+				llcache_notify_in_progress = false;
 				return error;
 			}
 		}
@@ -3508,8 +3548,11 @@ static nserror llcache_object_notify_users(llcache_object *object)
 				llcache_object_remove_user(object, user);
 				llcache_object_user_destroy(user);
 
-				if (error != NSERROR_OK)
+				if (error != NSERROR_OK) {
+					object->notify_in_progress = false;
+				llcache_notify_in_progress = false;
 					return error;
+				}
 
 				continue;
 			} else if (error == NSERROR_NEED_DATA) {
@@ -3524,6 +3567,8 @@ static nserror llcache_object_notify_users(llcache_object *object)
 				continue;
 			} else if (error != NSERROR_OK) {
 				user->iterator_target = false;
+				object->notify_in_progress = false;
+				llcache_notify_in_progress = false;
 				return error;
 			}
 		}
@@ -3562,8 +3607,11 @@ static nserror llcache_object_notify_users(llcache_object *object)
 				llcache_object_remove_user(object, user);
 				llcache_object_user_destroy(user);
 
-				if (error != NSERROR_OK)
+				if (error != NSERROR_OK) {
+					object->notify_in_progress = false;
+				llcache_notify_in_progress = false;
 					return error;
+				}
 
 				continue;
 			} else if (error == NSERROR_NEED_DATA) {
@@ -3578,6 +3626,8 @@ static nserror llcache_object_notify_users(llcache_object *object)
 				continue;
 			} else if (error != NSERROR_OK) {
 				user->iterator_target = false;
+				object->notify_in_progress = false;
+				llcache_notify_in_progress = false;
 				return error;
 			}
 		}
@@ -3595,8 +3645,11 @@ static nserror llcache_object_notify_users(llcache_object *object)
 				llcache_object_remove_user(object, user);
 				llcache_object_user_destroy(user);
 
-				if (error != NSERROR_OK)
+				if (error != NSERROR_OK) {
+					object->notify_in_progress = false;
+				llcache_notify_in_progress = false;
 					return error;
+				}
 
 				continue;
 			} else if (error == NSERROR_NEED_DATA) {
@@ -3611,6 +3664,8 @@ static nserror llcache_object_notify_users(llcache_object *object)
 				continue;
 			} else if (error != NSERROR_OK) {
 				user->iterator_target = false;
+				object->notify_in_progress = false;
+				llcache_notify_in_progress = false;
 				return error;
 			}
 		}
@@ -3619,6 +3674,13 @@ static nserror llcache_object_notify_users(llcache_object *object)
 		user->iterator_target = false;
 
 		next_user = user->next;
+	}
+
+	object->notify_in_progress = false;
+	llcache_notify_in_progress = false;
+	if (object->notify_pending) {
+		object->notify_pending = false;
+		return llcache_object_notify_users(object);
 	}
 
 	return NSERROR_OK;
@@ -3741,6 +3803,24 @@ total_object_size(llcache_object *object)
 static void llcache_catch_up_all_users(void *ignored)
 {
 	llcache_object *object;
+	llcache_object *next_obj;
+	/* fixes458: guard against reentrant entry.  A user callback can trigger
+	 * content_set_done -> content_broadcast -> another notify path that
+	 * calls llcache_catch_up_all_users again before the outer walk finishes.
+	 * The inner call returns immediately; it also ensures a re-run is
+	 * scheduled via the existing all_caught_up / llcache_users_not_caught_up
+	 * machinery so no notifications are lost. */
+	static int in_progress = 0;
+
+	if (in_progress) {
+		macsurf_debug_log_writef("llcache: reentrant notify blocked");
+		if (llcache->all_caught_up) {
+			llcache->all_caught_up = false;
+			guit->misc->schedule(0, llcache_catch_up_all_users, NULL);
+		}
+		return;
+	}
+	in_progress = 1;
 
 	/* Assume after this we'll be all caught up.  If any user of a handle
 	 * defers then we'll invalidate all_caught_up and reschedule via
@@ -3748,16 +3828,20 @@ static void llcache_catch_up_all_users(void *ignored)
 	 */
 	llcache->all_caught_up = true;
 
-	/* Catch new users up with state of objects */
-	for (object = llcache->cached_objects; object != NULL;
-			object = object->next) {
+	/* Catch new users up with state of objects.
+	 * Save next before each notify: a callback can trigger llcache_clean
+	 * which may destroy the following object before we reach it. */
+	for (object = llcache->cached_objects; object != NULL; object = next_obj) {
+		next_obj = object->next;
 		llcache_object_notify_users(object);
 	}
 
-	for (object = llcache->uncached_objects; object != NULL;
-			object = object->next) {
+	for (object = llcache->uncached_objects; object != NULL; object = next_obj) {
+		next_obj = object->next;
 		llcache_object_notify_users(object);
 	}
+
+	in_progress = 0;
 }
 
 /**

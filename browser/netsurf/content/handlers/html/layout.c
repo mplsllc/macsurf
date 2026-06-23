@@ -2815,6 +2815,37 @@ static bool layout_table_inner(
 	min_width += (columns + 1) * border_spacing_h;
 	max_width += (columns + 1) * border_spacing_h;
 
+	/* fixes431: table-layout: fixed with a declared table width.
+	 * With fixed layout, column widths come from the first row's
+	 * declarations only; subsequent cell content is clipped, not
+	 * expanding.  Non-fixed, non-percent columns contribute 0 to
+	 * min/max so the auto_width >= min_width distribution path fires
+	 * and fills exactly the declared table_width. */
+	if (table_width != AUTO &&
+			css_computed_table_layout(style) ==
+			CSS_TABLE_LAYOUT_FIXED) {
+		min_width = 0;
+		max_width = 0;
+		for (i = 0; i != columns; i++) {
+			if (!col[i].positioned &&
+					col[i].type != COLUMN_WIDTH_FIXED &&
+					col[i].type != COLUMN_WIDTH_PERCENT) {
+				col[i].min = 0;
+				col[i].max = 0;
+			}
+		}
+		for (i = 0; i != columns; i++) {
+			if (!col[i].positioned) {
+				min_width += col[i].min;
+				max_width += col[i].max;
+			}
+		}
+		min_width += (columns + 1 - positioned_columns) *
+				border_spacing_h;
+		max_width += (columns + 1 - positioned_columns) *
+				border_spacing_h;
+	}
+
 	if (auto_width <= min_width) {
 		/* not enough space: minimise column widths */
 		for (i = 0; i < columns; i++) {

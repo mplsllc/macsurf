@@ -157,14 +157,18 @@ macos9_schedule_run(void)
 		callback = entry->callback;
 		p = entry->p;
 		sched_queue = entry->next;
-		free(entry);
-
-		/*
-		 * The callback may call macos9_schedule(), so the queue
-		 * must be in a consistent state before we invoke it.
-		 * (Same safety pattern as RISC OS frontend.)
-		 */
+		/* fixes446d: entry is already removed from the queue above,
+		 * so re-scheduling the same callback inside callback() calls
+		 * sched_remove() as a no-op -- delayed free is safe.
+		 * MUST free AFTER callback: struct sched_entry (16 bytes,
+		 * callback at offset 4) is the same size and layout as
+		 * dom_string_internal. free-before-callback let malloc return
+		 * entry's memory for a new dom_string_internal, aliasing
+		 * entry->callback with data.cdata.ptr.  dom_string_intern then
+		 * called lwc_intern_string(draw_url_bar, gui_window_ptr) which
+		 * scanned megabytes of code into unmapped memory and crashed. */
 		callback(p);
+		free(entry);
 	}
 
 	sched_update_state();
