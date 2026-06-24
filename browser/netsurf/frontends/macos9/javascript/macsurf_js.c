@@ -37,6 +37,7 @@
 #include "macsurf_debug.h"
 #include "macsurf_js.h"
 #include "javascript/macsurf_es6.h"
+#include "macsurf_timebase.h"
 
 #ifdef WITH_DUKTAPE
 
@@ -293,6 +294,17 @@ static duk_ret_t native_document_title_set(duk_context *ctx)
 	return 0;
 }
 
+/* fixes477 -- performance.now() and Date.now() native time provider.
+ * Reads macsurf_duk_monotonic_ms() (mftb, ~60 ns on G3) and returns
+ * the value as a JS number.  Exposed globally as __macsurf_monotonic_ms
+ * so the performance.now JS closure can call it without touching Duktape
+ * internals. */
+static duk_ret_t native_monotonic_ms(duk_context *ctx)
+{
+    duk_push_number(ctx, macsurf_duk_monotonic_ms());
+    return 1;
+}
+
 /* Master registration: install all globals onto the heap's context.
  * Replaces the original register_console_log. */
 static void register_browser_globals(duk_context *ctx)
@@ -312,6 +324,11 @@ static void register_browser_globals(duk_context *ctx)
 	duk_push_c_function(ctx, native_console_debug, DUK_VARARGS);
 	duk_put_prop_string(ctx, -2, "debug");
 	duk_put_prop_string(ctx, -2, "console");
+
+	/* fixes477 -- monotonic ms for performance.now().
+	 * Must be registered before the performance object eval below. */
+	duk_push_c_function(ctx, native_monotonic_ms, 0);
+	duk_put_prop_string(ctx, -2, "__macsurf_monotonic_ms");
 
 	/* alert / confirm / prompt */
 	duk_push_c_function(ctx, native_alert, 1);
@@ -585,7 +602,12 @@ static void register_browser_globals(duk_context *ctx)
 		"this.pageYOffset=0;this.pageXOffset=0;"
 		"this.devicePixelRatio=1;"
 		"this.screen={width:1024,height:768,availWidth:1024,availHeight:740,colorDepth:24};"
-		"this.performance={now:function(){return Date.now();},"
+		/* fixes477: performance.now() via PPC mftb (~60 ns on G3).
+		 * __macsurf_monotonic_ms is registered above as a native C fn.
+		 * timeOrigin captures the JS context creation time so that
+		 * relative durations (now() - t0) remain meaningful. */
+		"this.performance={"
+			"now:function(){return __macsurf_monotonic_ms();},"
 			"getEntriesByType:function(){return [];},"
 			"getEntries:function(){return [];},"
 			"getEntriesByName:function(){return [];},"
@@ -593,8 +615,8 @@ static void register_browser_globals(duk_context *ctx)
 			"clearMarks:function(){},clearMeasures:function(){},"
 			"clearResourceTimings:function(){},"
 			"setResourceTimingBufferSize:function(){},"
-			"timeOrigin:Date.now(),"
-			"timing:{navigationStart:Date.now()},"
+			"timeOrigin:__macsurf_monotonic_ms(),"
+			"timing:{navigationStart:__macsurf_monotonic_ms()},"
 			"navigation:{type:0,redirectCount:0}};"
 		"this.Promise=this.Promise||function(executor){"
 			"var self=this;self._then=[];self._catch=[];"
@@ -1121,6 +1143,73 @@ static void register_browser_globals(duk_context *ctx)
 		"}"
 		"})(this);");
 
+	/* fixes476 — Selection / Range / getSelection / execCommand stubs.
+	 * XenForo and Froala feature-detect these.  All return safe no-op
+	 * values so detection passes without crashing. */
+	macsurf_js__safe_eval(ctx,
+		"(function(g){"
+		"if(typeof g.getSelection!=='function'){"
+		"g.getSelection=function(){"
+		"return{rangeCount:0,isCollapsed:true,type:'None',"
+		"toString:function(){return'';},"
+		"addRange:function(){},"
+		"removeAllRanges:function(){},"
+		"getRangeAt:function(){return null;},"
+		"collapse:function(){},"
+		"selectAllChildren:function(){},"
+		"deleteFromDocument:function(){}};"
+		"};"
+		"}"
+		"var rp={startContainer:null,endContainer:null,startOffset:0,"
+		"endOffset:0,collapsed:true,commonAncestorContainer:null,"
+		"setStart:function(){},setEnd:function(){},"
+		"setStartBefore:function(){},setStartAfter:function(){},"
+		"setEndBefore:function(){},setEndAfter:function(){},"
+		"selectNode:function(){},selectNodeContents:function(){},"
+		"collapse:function(){},cloneRange:function(){return this;},"
+		"deleteContents:function(){},extractContents:function(){},"
+		"insertNode:function(){},surroundContents:function(){},"
+		"getBoundingClientRect:function(){"
+		"return{top:0,left:0,right:0,bottom:0,width:0,height:0};},"
+		"getClientRects:function(){return[];},"
+		"createContextualFragment:function(){return null;},"
+		"toString:function(){return'';},detach:function(){}};"
+		"if(typeof g.Range!=='undefined'){"
+		"var k;for(k in rp){"
+		"if(!g.Range.prototype[k])g.Range.prototype[k]=rp[k];"
+		"}"
+		"}"
+		"if(typeof g.Selection!=='undefined'){"
+		"if(!g.Selection.prototype.getRangeAt){"
+		"g.Selection.prototype.getRangeAt=function(){return null;};"
+		"g.Selection.prototype.addRange=function(){};"
+		"g.Selection.prototype.removeAllRanges=function(){};"
+		"}"
+		"}"
+		"if(typeof g.document!=='undefined'){"
+		"if(typeof g.document.createRange!=='function'){"
+		"g.document.createRange=function(){"
+		"return typeof g.Range!=='undefined'?new g.Range():rp;"
+		"};"
+		"}"
+		"if(typeof g.document.execCommand!=='function'){"
+		"g.document.execCommand=function(){return false;};"
+		"}"
+		"if(typeof g.document.queryCommandSupported!=='function'){"
+		"g.document.queryCommandSupported=function(){return false;};"
+		"}"
+		"if(typeof g.document.queryCommandEnabled!=='function'){"
+		"g.document.queryCommandEnabled=function(){return false;};"
+		"}"
+		"if(!('activeElement'in g.document)){"
+		"g.document.activeElement=null;"
+		"}"
+		"if(typeof g.document.getSelection!=='function'){"
+		"g.document.getSelection=g.getSelection;"
+		"}"
+		"}"
+		"})(this);");
+
 	duk_pop(ctx); /* pop global */
 }
 
@@ -1472,6 +1561,77 @@ void js_destroythread(struct jsthread *thread)
  * size_t == unsigned long. Returns 1 on success (script ran cleanly),
  * 0 on parse/runtime error. Errors get logged via MS_LOG; the heap
  * stack stays clean either way. */
+/* fixes476 — XenForo editor-compiled.js (733KB) exceeds the 256KB eval
+ * limit and is skipped entirely, leaving XF.Editor + FroalaEditor undefined.
+ * XenForo hides the <textarea> before calling Froala, so no editor appears.
+ * When we detect the editor bundle is being skipped, inject a minimal stub
+ * that defines FroalaEditor and XF.Editor backed by the raw <textarea>.
+ * Pure ES5, no class syntax, safe for Duktape 2.7. */
+static const char s_xf_editor_stub[] =
+	"(function(){"
+	"function FroalaEditor(el,opts,cb){"
+	"this._el=el;"
+	"if(el&&el.style){"
+	"el.style.display='block';"
+	"el.style.visibility='';"
+	"el.style.width='100%';"
+	"el.style.minHeight='250px';"
+	"el.style.height='320px';"
+	"el.style.padding='6px';"
+	"el.style.border='1px solid #ccc';"
+	"el.style.boxSizing='border-box';"
+	"el.style.resize='vertical';"
+	"}"
+	"this.html={get:function(){return el?el.value:'';},set:function(v){if(el)el.value=v;}};"
+	"this.events={on:function(){}};"
+	"this.core={isEmpty:function(){return !el||!el.value;},injectStyle:function(){}};"
+	"this.selection={save:function(){},restore:function(){},get:function(){return null;}};"
+	"this.toolbar={show:function(){},hide:function(){}};"
+	"this.opts=opts||{};"
+	"if(cb){try{cb();}catch(e){}}"
+	"}"
+	"FroalaEditor.prototype.destroy=function(){};"
+	"FroalaEditor.prototype.isInitialized=function(){return true;};"
+	"FroalaEditor.extend=function(){};"
+	"FroalaEditor.prototype.extend=function(){};"
+	"FroalaEditor.LANGUAGE={xf:{direction:'ltr',translation:{}}};"
+	"FroalaEditor.DefineIconTemplate=function(){};"
+	"FroalaEditor.DefineIcon=function(){};"
+	"FroalaEditor.RegisterPlugin=function(){};"
+	"FroalaEditor.POPUP_TEMPLATES={};"
+	"FroalaEditor.PLUGINS={};"
+	"window.FroalaEditor=FroalaEditor;"
+	"if(typeof XF!=='undefined'&&XF.Element&&XF.Element.newHandler&&XF.Element.register){"
+	"XF.Editor=XF.Element.newHandler({"
+	"options:{maxHeight:0.7,minHeight:250,buttonsRemove:'',attachmentTarget:false,deferred:false},"
+	"edMinHeight:63,form:null,ed:null,"
+	"init:function(){"
+	"try{"
+	"var el=this.target;"
+	"if(el&&el.tagName==='TEXTAREA'){"
+	"this.form=(el.closest&&el.closest('form'))||null;"
+	"this.startInit();"
+	"}"
+	"}catch(e){}"
+	"},"
+	"startInit:function(){"
+	"var el=this.target,self=this;"
+	"try{"
+	"this.ed=new FroalaEditor(el,{},function(){if(self.editorInit)self.editorInit();});"
+	"}catch(e){"
+	"if(el&&el.style){el.style.display='block';el.style.visibility='';}"
+	"}"
+	"},"
+	"editorInit:function(){},"
+	"reInit:function(a){this.startInit(a);},"
+	"isInitialized:function(){return this.ed!==null;},"
+	"getValue:function(){return this.target?this.target.value:'';},"
+	"destroy:function(){if(this.ed){this.ed.destroy();this.ed=null;}}"
+	"});"
+	"XF.Element.register('editor','XF.Editor');"
+	"}"
+	"})();";
+
 unsigned char js_exec(struct jsthread *thread,
 		const unsigned char *txt, unsigned long txtlen,
 		const char *name)
@@ -1489,6 +1649,19 @@ unsigned char js_exec(struct jsthread *thread,
 	if (txtlen > 262144) {
 		macsurf_debug_log_writef("js skip [%s len=%ld > 256KB]",
 			name ? name : "(anon)", (long)txtlen);
+		/* fixes476 — inject minimal editor stub for XenForo editor bundle
+		 * so forum posting works with plain <textarea> instead of Froala. */
+		if (name != NULL && strstr(name, "editor-compiled") != NULL) {
+			duk_push_string(thread->ctx, s_xf_editor_stub);
+			if (duk_peval(thread->ctx) != 0) {
+				macsurf_debug_log_writef(
+					"editor stub err: %s",
+					duk_safe_to_string(thread->ctx, -1));
+			}
+			duk_pop(thread->ctx);
+			macsurf_debug_log_writef(
+				"js editor stub injected for %s", name);
+		}
 		return 0;
 	}
 	macsurf_profile_stamp("js-start");

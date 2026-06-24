@@ -10,6 +10,7 @@
 #include "utils/nsoption.h"
 #include "macsurf_config.h"
 #include "macsurf_debug.h"
+#include "macsurf_timebase.h"
 
 #ifdef __MACOS9__
 #include <OpenTransport.h>
@@ -888,6 +889,11 @@ void macos9_poll_mouse_hover(void) {
 }
 
 int main(void) {
+	/* fixes477: calibrate PPC time base register (mftb) first so
+	 * macsurf_duk_monotonic_ms() and performance.now() have a valid
+	 * baseline from the first JS eval.  Two TickCount boundaries
+	 * (~33 ms) elapse here at startup; acceptable cost. */
+	macsurf_tb_calibrate();
 	macsurf_debug_log_init();
 	/* fixes366a -- start the profile clock so initial-page-load timing
 	 * has a t0. macsurf_profile_stamp(label) anywhere downstream will

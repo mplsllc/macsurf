@@ -3880,6 +3880,32 @@ typedef struct duk_hthread duk_context;
  * line 1710 from the C99 stdint names we pre-supplied at the top of
  * this file. */
 
+/* fixes477: override Date.now() and performance.now() time providers.
+ *
+ * The generic Duktape platform branch (no recognised platform flag for
+ * __MWERKS__) falls through to DUK_USE_DATE_NOW_TIME which calls
+ * time(), giving 1-second resolution.  Replace with our own providers:
+ *
+ *   macsurf_duk_date_get_now()  -- GetDateTime + Microseconds, sub-ms
+ *                                   resolution for Date.now()
+ *   macsurf_duk_monotonic_ms()  -- PPC mftb register, ~60 ns resolution
+ *                                   for performance.now() / monotonic uses
+ *
+ * Both are implemented in macsurf_timebase.c and wired at startup
+ * via macsurf_tb_calibrate() called from main().
+ *
+ * The extern declarations here make them visible to duk_bi_date.c
+ * (which includes duk_config.h before any other header).  They also
+ * appear in every other CW8 TU that includes duk_config.h, which is
+ * harmless -- extern declarations are idempotent.
+ */
+extern double macsurf_duk_date_get_now(void);
+extern double macsurf_duk_monotonic_ms(void);
+#undef  DUK_USE_DATE_GET_NOW
+#define DUK_USE_DATE_GET_NOW(ctx)       macsurf_duk_date_get_now()
+#undef  DUK_USE_GET_MONOTONIC_TIME
+#define DUK_USE_GET_MONOTONIC_TIME(ctx) macsurf_duk_monotonic_ms()
+
 #endif /* __MACOS9__ || __MWERKS__ */
 
 #endif  /* DUK_CONFIG_H_INCLUDED */
