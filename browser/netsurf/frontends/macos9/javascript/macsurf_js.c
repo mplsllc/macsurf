@@ -1561,6 +1561,156 @@ void js_destroythread(struct jsthread *thread)
  * size_t == unsigned long. Returns 1 on success (script ran cleanly),
  * 0 on parse/runtime error. Errors get logged via MS_LOG; the heap
  * stack stays clean either way. */
+/* fixes480 -- XenForo core-compiled.js (176KB) fails SyntaxError: uses
+ * ES6 class, async, spread, destructuring throughout. Fast-fail check
+ * finds 'async ' at byte 18582 and skips transpiler. Without XF loaded,
+ * XF.Element.newHandler / XF.Element.initialize are undefined and the
+ * editor stub is a no-op. Inject a minimal ES5 XF framework stub instead.
+ * Provides: DataStore, ClassMapper, extendObject, applyDataOptions,
+ * create/extend, Element (newHandler/register/initialize/activate). */
+static const char s_xf_core_stub[] =
+	"(function(){"
+	"var XF=window.XF||{};"
+	"window.XF=XF;"
+	/* DataStore: per-element keyed storage */
+	"XF.DataStore=(function(){"
+	"var nid=1,map={};"
+	"function gid(el){if(!el.__xfDsId)el.__xfDsId=nid++;return el.__xfDsId;}"
+	"return{"
+	"get:function(el,k){var d=map[gid(el)];return d?d[k]:void 0;},"
+	"set:function(el,k,v){var i=gid(el);if(!map[i])map[i]={};map[i][k]=v;},"
+	"remove:function(el,k){var d=map[gid(el)];if(d)delete d[k];}"
+	"};"
+	"})();"
+	/* hasOwn */
+	"XF.hasOwn=function(o,k){return Object.prototype.hasOwnProperty.call(o,k);};"
+	/* extendObject: shallow merge */
+	"XF.extendObject=function(){"
+	"var a=arguments,deep=false,out=a[0]||{},s=1,i,k,src;"
+	"if(typeof out==='boolean'){deep=out;out=a[1]||{};s=2;}"
+	"for(i=s;i<a.length;i++){src=a[i];if(!src)continue;"
+	"for(k in src){if(XF.hasOwn(src,k))out[k]=src[k];}}"
+	"return out;"
+	"};"
+	/* applyDataOptions: merge defaults/dataset/provided */
+	"XF.applyDataOptions=function(def,ds,prov){"
+	"var out={},k,v,dt;"
+	"for(k in def){"
+	"if(!XF.hasOwn(def,k))continue;"
+	"out[k]=def[k];"
+	"if(ds&&XF.hasOwn(ds,k)){"
+	"v=ds[k];dt=typeof v;"
+	"switch(typeof def[k]){"
+	"case 'object':if(dt==='string')try{v=JSON.parse(v);}catch(e){}break;"
+	"case 'string':if(dt!=='string')v=String(v);break;"
+	"case 'number':if(dt!=='number')v=Number(v);break;"
+	"case 'boolean':if(dt!=='boolean')v=(v===true||v==='true');break;"
+	"}"
+	"out[k]=v;"
+	"}}"
+	"if(prov){for(k in prov){if(XF.hasOwn(prov,k))out[k]=prov[k];}}"
+	"return out;"
+	"};"
+	/* create: prototype obj -> 'class' constructor */
+	"XF.create=function(proto){"
+	"var Ctor=function(el,opts){"
+	"var k,o=proto.options||{},inst={};"
+	"for(k in o){if(XF.hasOwn(o,k))inst[k]=o[k];}"
+	"this.options=XF.applyDataOptions(inst,el?el.dataset:{},opts||{});"
+	"this.target=el||null;"
+	"if(proto.__construct)proto.__construct.call(this,el,opts||{});"
+	"};"
+	"var k;"
+	"for(k in proto){if(XF.hasOwn(proto,k))Ctor.prototype[k]=proto[k];}"
+	"Ctor.prototype.constructor=Ctor;"
+	"Ctor.extend=function(mixin){"
+	"var merged={},p=Ctor.prototype;"
+	"for(k in p){if(XF.hasOwn(p,k))merged[k]=p[k];}"
+	"for(k in mixin){if(XF.hasOwn(mixin,k))merged[k]=mixin[k];}"
+	"return XF.create(merged);"
+	"};"
+	"return Ctor;"
+	"};"
+	"XF.extend=function(base,mixin){return base.extend(mixin);};"
+	/* ClassMapper: name -> class resolver */
+	"function ClassMapper(){this._map={};}"
+	"ClassMapper.prototype.add=function(n,c){this._map[n]=c;};"
+	"ClassMapper.prototype.getObjectFromIdentifier=function(n){"
+	"var v=this._map[n];"
+	"if(v){if(typeof v==='function')return v;n=v;}"
+	"var parts=n.split('.'),obj=window,i;"
+	"for(i=0;i<parts.length;i++){if(!obj)return null;obj=obj[parts[i]];}"
+	"return obj||null;"
+	"};"
+	"ClassMapper.prototype.extend=function(n,m){"
+	"var b=this.getObjectFromIdentifier(n);"
+	"if(b&&b.extend)this._map[n]=b.extend(m);"
+	"};"
+	"XF.ClassMapper=ClassMapper;"
+	/* XF.Element: handler registry + DOM scanner */
+	"XF.Element=(function(){"
+	"var mapper=new ClassMapper();"
+	"function applyHandler(el,name,opts){"
+	"var handlers=XF.DataStore.get(el,'xf-element-handlers')||{};"
+	"if(handlers[name])return handlers[name];"
+	"var K=mapper.getObjectFromIdentifier(name);"
+	"if(!K)return null;"
+	"var h=new K(el,opts||{});"
+	"handlers[name]=h;"
+	"XF.DataStore.set(el,'xf-element-handlers',handlers);"
+	"h.init();"
+	"return h;"
+	"}"
+	"function initEl(el){"
+	"if(!el||!el.getAttribute)return;"
+	"var attr=el.getAttribute('data-xf-init');"
+	"if(!attr)return;"
+	"var names=attr.split(' '),i,name,raw,opts;"
+	"for(i=0;i<names.length;i++){"
+	"name=names[i];if(!name)continue;"
+	"raw=el.getAttribute('data-xf-'+name);"
+	"opts=raw?JSON.parse(raw):{};"
+	"applyHandler(el,name,opts);"
+	"}}"
+	"return{"
+	"register:function(n,c){mapper.add(n,c);},"
+	"extend:function(n,m){mapper.extend(n,m);},"
+	"getObjectFromIdentifier:function(n){return mapper.getObjectFromIdentifier(n);},"
+	"newHandler:function(proto){return XF.create(proto);},"
+	"initialize:function(root){"
+	"var els,i;"
+	"try{if(root&&root.nodeType===1&&root.matches&&root.matches('[data-xf-init]'))initEl(root);}catch(e){}"
+	"els=root?root.querySelectorAll('[data-xf-init]'):[];"
+	"for(i=0;i<els.length;i++)initEl(els[i]);"
+	"},"
+	"initializeElement:initEl,"
+	"applyHandler:applyHandler"
+	"};"
+	"})();"
+	/* XF.activate + helpers */
+	"XF.activate=function(el){XF.Element.initialize(el);};"
+	"XF.on=function(el,ev,fn){if(el&&el.addEventListener)el.addEventListener(ev,fn,false);};"
+	"XF.trigger=function(){};"
+	"if(!XF.onPageLoad)XF.onPageLoad=function(){XF.activate(document);};"
+	/* Stubs for onPageLoad sub-calls */
+	"var noop={initialize:function(){}};"
+	"XF.NavDeviceWatcher=noop;XF.ActionIndicator=noop;"
+	"XF.DynamicDate=noop;XF.KeepAlive=noop;"
+	"XF.ScrollButtons=noop;XF.NavButtons=noop;"
+	"XF.KeyboardShortcuts=noop;"
+	"XF.LinkWatcher={initLinkProxy:function(){},initExternalWatcher:function(){}};"
+	"XF.ExpandableContent={watch:function(){}};"
+	"XF.LazyHandlerLoader={checkLazyRegistration:function(){},loadLazyHandlers:function(){}};"
+	"XF.StickyHeader={cache:[]};"
+	"XF.FormInput={initialize:function(){}};"
+	"XF.display=function(){};"
+	"XF.canonicalizeUrl=function(u){return'/'+u;};"
+	"XF.config={url:{js:''}};"
+	"XF.pageDisplayTime=Date.now?Date.now():0;"
+	/* Hook ready system if available */
+	"if(XF.ready)XF.ready(XF.onPageLoad);"
+	"})();";
+
 /* fixes476/478/479 -- XenForo editor-compiled.js (733KB) exceeds the 256KB
  * eval limit. When detected, inject a stub that:
  *   1. Defines FroalaEditor backed by the raw <textarea>
@@ -1699,6 +1849,17 @@ unsigned char js_exec(struct jsthread *thread,
 				"js editor stub injected for %s", name);
 		}
 		return 0;
+	}
+	/* fixes480 -- core-compiled.js: ES6-heavy, inject ES5 XF framework stub */
+	if (name != NULL && strstr(name, "core-compiled.js") != NULL) {
+		macsurf_debug_log_writef("js core stub inject for %s", name);
+		duk_push_string(thread->ctx, s_xf_core_stub);
+		if (duk_peval(thread->ctx) != 0) {
+			macsurf_debug_log_writef("core stub err: %s",
+				duk_safe_to_string(thread->ctx, -1));
+		}
+		duk_pop(thread->ctx);
+		return 1;
 	}
 	macsurf_profile_stamp("js-start");
 	duk_push_lstring(thread->ctx, (const char *)txt,
