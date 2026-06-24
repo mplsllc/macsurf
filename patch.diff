@@ -1,0 +1,120 @@
+--- browser/netsurf/content/llcache.c
++++ browser/netsurf/content/llcache.c
+@@ -171,6 +171,7 @@
+ struct llcache_object {
+ 	llcache_object *prev;	     /**< Previous in list */
+ 	llcache_object *next;	     /**< Next in list */
++	uint32_t refcount;           /**< Reference count */
+ 
+ 	nsurl *url;		     /**< Post-redirect URL for object */
+ 
+@@ -367,7 +368,7 @@
+ 	user->next = user->prev = NULL;
+ 
+ 	/* record the time the last user was removed from the object */
+-	if (object->users == NULL) {
++	if (object->refcount == 1) {
+ 		object->last_used = time(NULL);
+ 	}
+ 
+@@ -391,24 +392,27 @@
+ 	user = object->users;
+ 	while (user != NULL) {
+ 		bool was_target = user->iterator_target;
+ 		user->iterator_target = true;
+ 
+-		error = user->handle->cb(user->handle, event,
+-					user->handle->pw);
+-
+ 		next_user = user->next;
++		
++		/* fixes45x: protect next_user from being immediately destroyed */
++		bool next_was_target = false;
++		if (next_user != NULL) {
++			next_was_target = next_user->iterator_target;
++			next_user->iterator_target = true;
++		}
++
++		if (!user->queued_for_delete) {
++			error = user->handle->cb(user->handle, event,
++						user->handle->pw);
++		}
++
++		if (next_user != NULL) {
++			next_user->iterator_target = next_was_target;
++		}
+ 
+ 		user->iterator_target = was_target;
+@@ -424,6 +428,7 @@
+ {
+ 	llcache_object *obj = calloc(1, sizeof(llcache_object));
+ 	if (obj == NULL)
+ 		return NSERROR_NOMEM;
+ 
++	obj->refcount = 1;
+ 	nslog_log(__FILE__, "", __LINE__, "Created object %p (%s)", obj, nsurl_access(url));
+ 
+@@ -1061,6 +1066,23 @@
+ static nserror llcache_object_destroy(llcache_object *object)
+ {
+@@ -3818,7 +3840,7 @@
+ 
+-		if (object->users == NULL) {
++		if (object->refcount == 0) {
+ 			/* No users, so we can throw the object away */
+ 			llcache_object_remove_from_list(object,
+ 					&llcache->uncached_objects);
+ 			llcache_object_destroy(object);
+@@ -3852,7 +3874,7 @@
+ 
+-			if (object->users == NULL) {
++			if (object->refcount == 0) {
+ 				/* No users, so we can throw the object away */
+ 				llcache_object_remove_from_list(object,
+ 						&llcache->cached_objects);
+ 				llcache_object_destroy(object);
+@@ -3917,7 +3939,7 @@
+ 
+-		if (object->users == NULL) {
++		if (object->refcount == 0) {
+ 			/* No users, so we can throw the object away */
+ 			llcache_object_remove_from_list(object,
+ 					&llcache->uncached_objects);
+ 			llcache_object_destroy(object);
+@@ -3947,7 +3969,7 @@
+ 
+-		if (object->users == NULL) {
++		if (object->refcount == 0) {
+ 			/* No users, so we can throw the object away */
+ 			llcache_object_remove_from_list(object,
+ 					&llcache->cached_objects);
+ 			llcache_object_destroy(object);
+@@ -4012,7 +4034,7 @@
+ 
+-		if (object->users == NULL) {
++		if (object->refcount == 0) {
+ 			/* No users, so we can throw the object away */
+ 			llcache_object_remove_from_list(object,
+ 					&llcache->uncached_objects);
+ 			llcache_object_destroy(object);
+@@ -4033,7 +4055,7 @@
+ 
+-		if (object->users == NULL) {
++		if (object->refcount == 0) {
+ 			/* No users, so we can throw the object away */
+ 			llcache_object_destroy(object);
+ 		}
+@@ -4140,6 +4162,7 @@
+ 		/* Remove the user from the object and destroy it */
+ 		error = llcache_object_remove_user(object, user);
+ 		if (error == NSERROR_OK) {
+ 			error = llcache_object_user_destroy(user);
++			object->refcount--;
+ 		}
+ 	}
+@@ -4158,6 +4181,7 @@
+ 		llcache_object_add_user(handle->object, newuser);
+ 		newuser->handle->state = handle->state;
+ 		*result = newuser->handle;
++		handle->object->refcount++;
+ 	}

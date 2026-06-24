@@ -1146,6 +1146,37 @@ static void layout_minmax_block_inner(
 		block->flags |= HAS_HEIGHT;
 	}
 
+	/* fixes470 — form text inputs (text, password) need intrinsic width
+	 * for flex/grid layout. HTML5 input types (email, search, url, tel)
+	 * map to GADGET_TEXTBOX. Size attribute default = 20 chars.
+	 * Calculate per-char width from font and use as the box's intrinsic
+	 * max_width REGARDLESS of whether CSS sets width:auto/100%/etc.
+	 * This ensures flex base_size has a meaningful fallback, fixing #175. */
+	if (block->gadget && block->style &&
+			(block->gadget->type == GADGET_TEXTBOX ||
+			 block->gadget->type == GADGET_PASSWORD)) {
+		/* Measure the character width of the input's font.
+		 * For form controls, use a monospace assumption (0-width space)
+		 * or fall back to a fixed multiplier of the font size. */
+		css_fixed font_size = 0;
+		css_unit font_unit = CSS_UNIT_PX;
+		int char_width;
+		int size_attr = 20; /* HTML5 default size */
+		int total_width;
+
+		css_computed_font_size(block->style, &font_size, &font_unit);
+		char_width = FIXTOINT(css_unit_len2device_px(block->style,
+				&content->unit_len_ctx, font_size, font_unit));
+
+		/* Heuristic: average character width ≈ 60% of font height.
+		 * For size=20 at 13px font, this gives ~156px (20 × 7.8). */
+		if (char_width <= 0) char_width = 8; /* fallback */
+		total_width = size_attr * (char_width * 3 / 5);
+		if (total_width < 40) total_width = 40; /* floor */
+
+		min = max = total_width;
+	}
+
 	if (block->gadget && (block->gadget->type == GADGET_RADIO ||
 			block->gadget->type == GADGET_CHECKBOX) &&
 			block->style && wtype == CSS_WIDTH_AUTO) {
@@ -1156,8 +1187,6 @@ static void layout_minmax_block_inner(
 		 * if width is AUTO, set it to 1em */
 		min = max = FIXTOINT(css_unit_len2device_px(block->style,
 				&content->unit_len_ctx, size, unit));
-
-		block->flags |= HAS_HEIGHT;
 	}
 
 	if (block->object) {

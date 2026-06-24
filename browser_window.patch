@@ -1,0 +1,33 @@
+--- browser/netsurf/desktop/browser_window.c
++++ browser/netsurf/desktop/browser_window.c
+@@ -3598,9 +3598,14 @@
+ 			hlcache_handle_release(bw->loading_content);
+ 			bw->loading_content = NULL;
+ 		}
++
++		if (bw->current_content != NULL) {
++			hlcache_handle_abort(bw->current_content);
++			hlcache_handle_release(bw->current_content);
++			bw->current_content = NULL;
++		}
++
+ 		if (bw->favicon.loading != NULL) {
+-			macsurf_debug_log_writef(
+-				"nav_internal: WARN favicon.loading non-NULL at fetch start");
+ 			hlcache_handle_abort(bw->favicon.loading);
+ 			hlcache_handle_release(bw->favicon.loading);
+ 			bw->favicon.loading = NULL;
+@@ -3607,6 +3612,14 @@
+ 		}
++
++		if (bw->favicon.current != NULL) {
++			hlcache_handle_abort(bw->favicon.current);
++			hlcache_handle_release(bw->favicon.current);
++			bw->favicon.current = NULL;
++		}
++
++		browser_window__free_fetch_parameters(&bw->current_parameters);
++		browser_window__free_fetch_parameters(&bw->loading_parameters);
+ 	}
+ 
+ 	nslog_log(__FILE__, "", __LINE__, "Loading '%s'", nsurl_access(params->url));

@@ -148,6 +148,24 @@ static const char css_default[] =
 	"input[type=hidden]{display:none}"
 	"input[type=checkbox],input[type=radio]{border:0;padding:0}"
 	"textarea{font-family:monospace}"
+	/* fixes468: contenteditable is not supported in MacSurf. Rich text editors
+	 * (Froala, Quill, etc.) hide the native textarea via inline style="display:none"
+	 * and replace it with a contenteditable div. Force the textarea back and hide the
+	 * non-functional editor shell so users can type and post on XenForo/similar. */
+	".fr-box,.fr-toolbar,.fr-second-toolbar{display:none!important}"
+	"textarea[name=message],textarea[name=body],"
+	"textarea[name=text],textarea[name=content]{"
+	"display:block!important;min-height:150px!important;height:200px!important;"
+	"width:100%;box-sizing:border-box;padding:4px;font-size:13px}"
+	/* fixes469: form inputs lack intrinsic width in NetSurf's minmax pass
+	 * (b->max_width=0 for replaced form elements with no text content).
+	 * In a flex container with flex-basis:auto, base_size=0, so the input
+	 * collapses. Give text/password/email inputs a UA default width matching
+	 * the HTML spec's size=20 default (~20em). Author width:100% overrides
+	 * this, but flex base_size can then use b->width instead of falling to 0. */
+	"input[type=text],input[type=password],input[type=email],"
+	"input[type=search],input[type=url],input[type=tel]{"
+	"width:20em;min-width:4em}"
 	"fieldset{display:block;border:1px solid #888;margin:1em 0;padding:.5em}"
 	"legend{padding:0 .5em}"
 	"label{display:inline}"
@@ -241,7 +259,12 @@ static const char css_internal[] =
 	/* fixes329 (#114) — HTML5 hidden attribute defaults. Specific
 	 * articles/main/section [hidden] rescue rules later in this
 	 * sheet still override. */
-	" [hidden]{display:none}";
+	" [hidden]{display:none}"
+	/* XenForo 2.x: header and post editor are JS-gated but usable
+	 * without has-js. Force them visible. */
+	" .p-header{display:block!important}"
+	" .js-bbCodeInput,.bbCodeInput textarea"
+	"{display:block!important;width:100%!important;min-height:150px!important}";
 
 static const char css_quirks[] =
 	"table{font-size:inherit;font-weight:inherit;text-align:start;"

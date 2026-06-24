@@ -46,6 +46,10 @@
  * code uses the layout_dim_* shared API. */
 #include "html/layout_safe.h"
 
+/* fixes471 — lh__box_is_absolute() now checks for CSS_POSITION_STICKY
+ * in addition to ABSOLUTE/FIXED, so sticky items don't participate in
+ * flex layout space calculations. See layout_internal.h. */
+
 /* fixes161d — diagnostic-only macsurf_debug_log_writef for the
  * LAYOUTPHASE flex marker. Compiles to a no-op in release builds. */
 #include "macsurf_debug.h"
