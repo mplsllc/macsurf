@@ -264,7 +264,17 @@ static const char css_internal[] =
 	 * without has-js. Force them visible. */
 	" .p-header{display:block!important}"
 	" .js-bbCodeInput,.bbCodeInput textarea"
-	"{display:block!important;width:100%!important;min-height:150px!important}";
+	"{display:block!important;width:100%!important;min-height:150px!important}"
+	/* fixes473: XenForo .node-main is a flex item with min-width:0, which
+	 * lets it collapse to zero in NetSurf when the row has no definite
+	 * width. One char per line results. Floor it so text wraps normally. */
+	" .node-main{min-width:150px!important}"
+	/* fixes474: .node-extra-icon has float:left inside a table-layout:fixed
+	 * cell. NetSurf's find_sides() picks up the escaped float and reduces
+	 * available_width for subsequent sibling .node-body tables to <= 326px,
+	 * collapsing the AUTO column (.node-main) to 0. Suppressing the float
+	 * prevents the escape; visual impact is minor (avatar becomes inline). */
+	" .node-extra-icon{float:none!important}";
 
 static const char css_quirks[] =
 	"table{font-size:inherit;font-weight:inherit;text-align:start;"
