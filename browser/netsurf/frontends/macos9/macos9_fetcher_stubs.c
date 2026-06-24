@@ -153,20 +153,21 @@ static const char css_default[] =
 	"text-align:center}"
 	"input[type=hidden]{display:none}"
 	"input[type=checkbox],input[type=radio]{border:0;padding:0}"
-	/* fixes475+: All textareas should expand to visible height, not collapse.
-	 * XenForo and other forums often have constrained parent containers or CSS
-	 * that limits textarea height. Force a minimum to ensure usable input area. */
-	"textarea{font-family:monospace;display:block;min-height:120px!important;"
-	"width:100%;box-sizing:border-box}"
-	/* fixes468: contenteditable is not supported in MacSurf. Rich text editors
-	 * (Froala, Quill, etc.) hide the native textarea via inline style="display:none"
-	 * and replace it with a contenteditable div. Force the textarea back and hide the
-	 * non-functional editor shell so users can type and post on XenForo/similar. */
-	".fr-box,.fr-toolbar,.fr-second-toolbar{display:none!important}"
-	"textarea[name=message],textarea[name=body],"
-	"textarea[name=text],textarea[name=content]{"
-	"display:block!important;min-height:150px!important;height:200px!important;"
-	"width:100%;box-sizing:border-box;padding:4px;font-size:13px}"
+	/* fixes479: XenForo editor textarea visibility.
+	 * Containers need height/overflow freed so the textarea can expand.
+	 * [data-xf-init~="editor"] matches space-separated multi-value attrs.
+	 * .js-editor is the class XF uses to target its editor textareas. */
+	".inputGroup,.formRow,.formRow>*,.messageEditor,.messageEditor>*,"
+	".editorWrapper{min-height:200px!important;height:auto!important;"
+	"max-height:none!important;overflow:visible!important}"
+	"textarea[data-xf-init~=\"editor\"],textarea.js-editor,textarea.input{"
+	"display:block!important;visibility:visible!important;"
+	"width:100%!important;min-height:280px!important;height:320px!important;"
+	"max-height:600px!important;padding:8px!important;"
+	"border:2px solid #888!important;box-sizing:border-box!important;"
+	"background:#fff!important;color:#000!important;"
+	"resize:vertical!important;font-family:monospace!important;"
+	"font-size:12px!important}"
 	/* fixes469: form inputs lack intrinsic width in NetSurf's minmax pass
 	 * (b->max_width=0 for replaced form elements with no text content).
 	 * In a flex container with flex-basis:auto, base_size=0, so the input

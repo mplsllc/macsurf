@@ -1561,14 +1561,18 @@ void js_destroythread(struct jsthread *thread)
  * size_t == unsigned long. Returns 1 on success (script ran cleanly),
  * 0 on parse/runtime error. Errors get logged via MS_LOG; the heap
  * stack stays clean either way. */
-/* fixes476 — XenForo editor-compiled.js (733KB) exceeds the 256KB eval
- * limit and is skipped entirely, leaving XF.Editor + FroalaEditor undefined.
- * XenForo hides the <textarea> before calling Froala, so no editor appears.
- * When we detect the editor bundle is being skipped, inject a minimal stub
- * that defines FroalaEditor and XF.Editor backed by the raw <textarea>.
+/* fixes476/478/479 -- XenForo editor-compiled.js (733KB) exceeds the 256KB
+ * eval limit. When detected, inject a stub that:
+ *   1. Defines FroalaEditor backed by the raw <textarea>
+ *   2. Registers XF.Editor via XF.Element.newHandler (XF's official path)
+ *   3. Re-runs XF.Element.initialize(document) so XF's own c() function
+ *      handles init with correct options and DataStore bookkeeping
+ *   4. Fallback direct querySelector loop in case XF.Element.initialize
+ *      is unavailable or misses something
  * Pure ES5, no class syntax, safe for Duktape 2.7. */
 static const char s_xf_editor_stub[] =
 	"(function(){"
+	/* FroalaEditor stub: keeps textarea visible + syncs value on form submit */
 	"function FroalaEditor(el,opts,cb){"
 	"this._el=el;"
 	"if(el&&el.style){"
@@ -1576,13 +1580,17 @@ static const char s_xf_editor_stub[] =
 	"el.style.visibility='visible';"
 	"el.style.opacity='1';"
 	"el.style.width='100%';"
-	"el.style.minHeight='250px';"
+	"el.style.minHeight='280px';"
 	"el.style.height='320px';"
-	"el.style.padding='6px';"
-	"el.style.border='1px solid #ccc';"
+	"el.style.maxHeight='600px';"
+	"el.style.padding='8px';"
+	"el.style.border='2px solid #888';"
 	"el.style.boxSizing='border-box';"
 	"el.style.resize='vertical';"
-	"el.style.backgroundColor='white';"
+	"el.style.backgroundColor='#fff';"
+	"el.style.color='#000';"
+	"el.style.fontFamily='monospace';"
+	"el.style.fontSize='12px';"
 	"}"
 	"this.html={get:function(){return el?el.value:'';},set:function(v){if(el)el.value=v;}};"
 	"this.events={on:function(){}};"
@@ -1603,6 +1611,11 @@ static const char s_xf_editor_stub[] =
 	"FroalaEditor.POPUP_TEMPLATES={};"
 	"FroalaEditor.PLUGINS={};"
 	"window.FroalaEditor=FroalaEditor;"
+	/* Register XF.Editor via XF.Element.newHandler so XF's own c() function
+	 * handles construction with correct (el, options||{}) signature and
+	 * DataStore bookkeeping.  Then re-invoke XF.Element.initialize(document)
+	 * so XF rescans for data-xf-init="editor" elements it skipped during
+	 * DOMContentLoaded (when "editor" wasn't registered yet). */
 	"if(typeof XF!=='undefined'&&XF.Element&&XF.Element.newHandler&&XF.Element.register){"
 	"XF.Editor=XF.Element.newHandler({"
 	"options:{maxHeight:0.7,minHeight:250,buttonsRemove:'',attachmentTarget:false,deferred:false},"
@@ -1621,7 +1634,7 @@ static const char s_xf_editor_stub[] =
 	"try{"
 	"this.ed=new FroalaEditor(el,{},function(){if(self.editorInit)self.editorInit();});"
 	"}catch(e){"
-	"if(el&&el.style){el.style.display='block';el.style.visibility='';}"
+	"if(el&&el.style){el.style.display='block';el.style.visibility='visible';}"
 	"}"
 	"},"
 	"editorInit:function(){},"
@@ -1631,17 +1644,27 @@ static const char s_xf_editor_stub[] =
 	"destroy:function(){if(this.ed){this.ed.destroy();this.ed=null;}}"
 	"});"
 	"XF.Element.register('editor','XF.Editor');"
+	/* 100ms delay: lets any remaining XF init settle before we rescan */
 	"setTimeout(function(){"
-		"var textareas=document.querySelectorAll('textarea[data-xf-init=\"editor\"]');"
-		"for(var i=0;i<textareas.length;i++){"
-			"var ta=textareas[i];"
-			"if(ta&&!ta.__xf_init){"
-				"ta.__xf_init=true;"
-				"var handler=new XF.Editor(ta);"
-				"try{handler.init();}catch(e){}"
+		/* Primary: use XF's own re-scan so c() handles init correctly */
+		"if(typeof XF.Element.initialize==='function'){"
+			"XF.Element.initialize(document);"
+		"}"
+		/* Fallback: direct loop for any textareas still hidden */
+		"var tas=document.querySelectorAll("
+			"'textarea[data-xf-init*=\"editor\"],textarea.js-editor');"
+		"for(var i=0;i<tas.length;i++){"
+			"var ta=tas[i];"
+			"if(ta&&!ta.__xf_ms_init){"
+				"ta.__xf_ms_init=true;"
+				"if(ta.style){"
+					"ta.style.display='block';"
+					"ta.style.visibility='visible';"
+				"}"
+				"try{new XF.Editor(ta,{}).init();}catch(e){}"
 			"}"
 		"}"
-	"},0);"
+	"},100);"
 	"}"
 	"})();";
 
