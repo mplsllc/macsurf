@@ -87,8 +87,14 @@ static const char css_default[] =
 	"table[border],table[border] td,table[border] tr{"
 	"border-color:#888;border-style:solid;border-width:1px}"
 	/* Body + headings */
+	/* fixes475: XenForo (and some other sites) set body{overflow-y:scroll!important}
+	 * to prevent layout-shift when dynamic content changes scrollbar visibility.
+	 * NetSurf treats this literally — it creates a scrollbar widget for the body
+	 * element and draws it inside the content area, producing an extra scroll bar
+	 * and a static ~60px gap before MacSurf's own vscroll. UA !important beats
+	 * author !important in the cascade, so we override back to visible. */
 	"body{margin:8px;line-height:1.33;color:#000;background:#fff;"
-	"font-family:sans-serif;font-size:13px}"
+	"font-family:sans-serif;font-size:13px;overflow:visible!important}"
 	"h1{font-size:2em;margin:.67em 0;font-weight:bold}"
 	"h2{font-size:1.5em;margin:.83em 0;font-weight:bold}"
 	"h3{font-size:1.17em;margin:1em 0;font-weight:bold}"
@@ -147,7 +153,11 @@ static const char css_default[] =
 	"text-align:center}"
 	"input[type=hidden]{display:none}"
 	"input[type=checkbox],input[type=radio]{border:0;padding:0}"
-	"textarea{font-family:monospace}"
+	/* fixes475+: All textareas should expand to visible height, not collapse.
+	 * XenForo and other forums often have constrained parent containers or CSS
+	 * that limits textarea height. Force a minimum to ensure usable input area. */
+	"textarea{font-family:monospace;display:block;min-height:120px!important;"
+	"width:100%;box-sizing:border-box}"
 	/* fixes468: contenteditable is not supported in MacSurf. Rich text editors
 	 * (Froala, Quill, etc.) hide the native textarea via inline style="display:none"
 	 * and replace it with a contenteditable div. Force the textarea back and hide the
