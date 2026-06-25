@@ -1561,6 +1561,27 @@ void js_destroythread(struct jsthread *thread)
  * size_t == unsigned long. Returns 1 on success (script ran cleanly),
  * 0 on parse/runtime error. Errors get logged via MS_LOG; the heap
  * stack stays clean either way. */
+/* fixes481 -- preamble.min.js does 'const XF={}; window.XF=XF' every page load.
+ * Since MacSurf uses a single shared Duktape heap, concurrent page loads
+ * interleave: page A's core stub sets XF.Element, then page B's preamble
+ * fires 'window.XF = {}' which replaces the entire XF object, wiping
+ * XF.Element. Stub preamble to extend window.XF instead of replacing it,
+ * and only set XF.ready/XF.browser if not already set. */
+static const char s_xf_preamble_stub[] =
+	"(function(){"
+	"window.XF=window.XF||{};"
+	"var XF=window.XF;"
+	"if(!XF.ready){"
+	"var _q=false,_r=[];"
+	"XF.ready=function(a){_q?setTimeout(a,0):_r.push(a);};"
+	"document.addEventListener('DOMContentLoaded',function(){"
+	"_q=true;var i;for(i=0;i<_r.length;i++)setTimeout(_r[i],0);"
+	"});"
+	"}"
+	"XF.browser=XF.browser||{browser:'',version:0,os:'',osVersion:null};"
+	"XF.Feature=XF.Feature||{active:function(){return false;}};"
+	"})();";
+
 /* fixes480 -- XenForo core-compiled.js (176KB) fails SyntaxError: uses
  * ES6 class, async, spread, destructuring throughout. Fast-fail check
  * finds 'async ' at byte 18582 and skips transpiler. Without XF loaded,
@@ -1572,6 +1593,7 @@ static const char s_xf_core_stub[] =
 	"(function(){"
 	"var XF=window.XF||{};"
 	"window.XF=XF;"
+	"if(typeof console!=='undefined')console.log('[ms] core stub start XF.ready='+typeof XF.ready);"
 	/* DataStore: per-element keyed storage */
 	"XF.DataStore=(function(){"
 	"var nid=1,map={};"
@@ -1709,6 +1731,7 @@ static const char s_xf_core_stub[] =
 	"XF.pageDisplayTime=Date.now?Date.now():0;"
 	/* Hook ready system if available */
 	"if(XF.ready)XF.ready(XF.onPageLoad);"
+	"if(typeof console!=='undefined')console.log('[ms] core stub end XF.Element='+typeof XF.Element);"
 	"})();";
 
 /* fixes476/478/479 -- XenForo editor-compiled.js (733KB) exceeds the 256KB
@@ -1849,6 +1872,17 @@ unsigned char js_exec(struct jsthread *thread,
 				"js editor stub injected for %s", name);
 		}
 		return 0;
+	}
+	/* fixes481 -- preamble.min.js: stub to extend XF, not replace it */
+	if (name != NULL && strstr(name, "preamble.min.js") != NULL) {
+		macsurf_debug_log_writef("js preamble stub for %s", name);
+		duk_push_string(thread->ctx, s_xf_preamble_stub);
+		if (duk_peval(thread->ctx) != 0) {
+			macsurf_debug_log_writef("preamble stub err: %s",
+				duk_safe_to_string(thread->ctx, -1));
+		}
+		duk_pop(thread->ctx);
+		return 1;
 	}
 	/* fixes480 -- core-compiled.js: ES6-heavy, inject ES5 XF framework stub */
 	if (name != NULL && strstr(name, "core-compiled.js") != NULL) {
