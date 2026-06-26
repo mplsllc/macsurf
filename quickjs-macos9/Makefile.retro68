@@ -1,0 +1,23 @@
+CC = powerpc-apple-macos-gcc
+AR = powerpc-apple-macos-ar
+CFLAGS = -O2 -g -Wall -std=c89 -pedantic \
+         -Wno-array-bounds -Wno-format-truncation \
+         -DCONFIG_VERSION=\"2025-06\" \
+         -D_GNU_SOURCE -DCONFIG_BIGNUM -Dinline=__inline__ -DMAC_OS_9 \
+         -Dalloca=__builtin_alloca -I. 
+
+# Core objects (add/remove based on your minimal needs)
+OBJS = libregexp.o libunicode.o quickjs.o dtoa.o
+
+libquickjs.a: $(OBJS)
+	$(AR) rcs $@ $^
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+clean:
+	rm -f *.o *.a
+
+# Optional: build test harness
+test: main.o libquickjs.a
+	$(CC) $(CFLAGS) -o qjs_test main.o libquickjs.a -lm

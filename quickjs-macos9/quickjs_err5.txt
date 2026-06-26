@@ -1,0 +1,1154 @@
+In file included from quickjs.c:45:
+cutils.h:512:26: warning: comma at end of enumerator list [-Wpedantic]
+  512 |     UTF8_HAS_ERRORS   = 8,  /* has encoding errors */
+      |                          ^
+cutils.h:516:45: warning: ISO C90 does not support ‘static’ or type qualifiers in parameter array declarators [-Wpedantic]
+  516 | static inline size_t utf8_encode(uint8_t buf[minimum_length(UTF8_CHAR_LEN_MAX)], uint32_t c);
+      |                                             ^
+cutils.h:910:45: warning: ISO C90 does not support ‘static’ or type qualifiers in parameter array declarators [-Wpedantic]
+  910 | static inline size_t utf8_encode(uint8_t buf[minimum_length(UTF8_CHAR_LEN_MAX)], uint32_t c)
+      |                                             ^
+In file included from quickjs.c:47:
+quickjs.h:142:63: warning: anonymous variadic macros were introduced in C99 [-Wvariadic-macros]
+  142 | #define JS_COUNT_ARGS_(_0, _8, _7, _6, _5, _4, _3, _2, _1, N, ...) N
+      |                                                               ^~~
+quickjs.h:143:23: warning: anonymous variadic macros were introduced in C99 [-Wvariadic-macros]
+  143 | #define JS_COUNT_ARGS(...) JS_COUNT_ARGS_(0, __VA_ARGS__, 8, 7, 6, 5, 4, 3, 2, 1, 0)
+      |                       ^~~
+quickjs.h:154:29: warning: anonymous variadic macros were introduced in C99 [-Wvariadic-macros]
+  154 | #define JS_CALLX__(F, X, N, ...) JS_CALLX##N(F, X, __VA_ARGS__)
+      |                             ^~~
+quickjs.h:155:28: warning: anonymous variadic macros were introduced in C99 [-Wvariadic-macros]
+  155 | #define JS_CALLX_(F, X, N, ...) JS_CALLX__(F, X, N, __VA_ARGS__)
+      |                            ^~~
+quickjs.h:199:27: warning: comma at end of enumerator list [-Wpedantic]
+  199 |     JS_TAG_FLOAT64     = 8,
+      |                           ^
+quickjs.h: In function ‘__JS_NewFloat64’:
+quickjs.h:289:5: warning: integer constant is too large for ‘long’ type [-Wlong-long]
+  289 |     if ((u.u64 & 0x7fffffffffffffff) > 0x7ff0000000000000)
+      |     ^~
+quickjs.h:289:5: warning: integer constant is too large for ‘long’ type [-Wlong-long]
+quickjs.h:290:9: warning: integer constant is too large for ‘long’ type [-Wlong-long]
+  290 |         v = JS_NAN;
+      |         ^
+quickjs.h: In function ‘JS_VALUE_IS_NAN’:
+quickjs.h:313:5: warning: integer constant is too large for ‘long’ type [-Wlong-long]
+  313 |     return tag == (JS_NAN >> 32);
+      |     ^~~~~~
+quickjs.h: At top level:
+quickjs.h:621:27: warning: anonymous variadic macros were introduced in C99 [-Wvariadic-macros]
+  621 | #define JS_FreeAtoms(ctx, ...) JS_CALLX_(JS_FreeAtom, ctx, JS_COUNT_ARGS(__VA_ARGS__), __VA_ARGS__)
+      |                           ^~~
+quickjs.h:622:28: warning: anonymous variadic macros were introduced in C99 [-Wvariadic-macros]
+  622 | #define JS_FreeAtomsRT(rt, ...) JS_CALLX_(JS_FreeAtomRT, rt, JS_COUNT_ARGS(__VA_ARGS__), __VA_ARGS__)
+      |                            ^~~
+quickjs.h:867:28: warning: anonymous variadic macros were introduced in C99 [-Wvariadic-macros]
+  867 | #define JS_FreeValues(ctx, ...) JS_CALLX_(JS_FreeValue, ctx, JS_COUNT_ARGS(__VA_ARGS__), __VA_ARGS__)
+      |                            ^~~
+quickjs.h:868:29: warning: anonymous variadic macros were introduced in C99 [-Wvariadic-macros]
+  868 | #define JS_FreeValuesRT(rt, ...) JS_CALLX_(JS_FreeValueRT, rt, JS_COUNT_ARGS(__VA_ARGS__), __VA_ARGS__)
+      |                             ^~~
+quickjs.h:1141:28: warning: comma at end of enumerator list [-Wpedantic]
+ 1141 |     JS_PROMISE_HOOK_RESOLVE,  /* not emitted for rejected promises */
+      |                            ^
+quickjs.c:197:24: warning: comma at end of enumerator list [-Wpedantic]
+  197 |     JS_CLASS_INIT_COUNT, /* last entry for predefined classes */
+      |                        ^
+quickjs.c:293:19: warning: type of bit-field ‘gc_phase’ is a GCC extension [-Wpedantic]
+  293 |     JSGCPhaseEnum gc_phase : 8;
+      |                   ^~~~~~~~
+quickjs.c:346:14: warning: type of bit-field ‘dump_flags’ is a GCC extension [-Wpedantic]
+  346 |     uint32_t dump_flags : 24;
+      |              ^~~~~~~~~~
+quickjs.c:397:24: warning: type of bit-field ‘gc_obj_type’ is a GCC extension [-Wpedantic]
+  397 |     JSGCObjectTypeEnum gc_obj_type : 4;
+      |                        ^~~~~~~~~~~
+quickjs.c:398:13: warning: type of bit-field ‘mark’ is a GCC extension [-Wpedantic]
+  398 |     uint8_t mark : 1; /* used by the GC */
+      |             ^~~~
+quickjs.c:399:13: warning: type of bit-field ‘dummy0’ is a GCC extension [-Wpedantic]
+  399 |     uint8_t dummy0 : 3;
+      |             ^~~~~~
+quickjs.c:414:10: warning: ISO C90 doesn’t support unnamed structs/unions [-Wpedantic]
+  414 |         };
+      |          ^
+quickjs.c:415:6: warning: ISO C90 doesn’t support unnamed structs/unions [-Wpedantic]
+  415 |     };
+      |      ^
+quickjs.c:423:10: warning: ISO C90 doesn’t support unnamed structs/unions [-Wpedantic]
+  423 |         }; /* used when is_detached = false */
+      |          ^
+quickjs.c:424:6: warning: ISO C90 doesn’t support unnamed structs/unions [-Wpedantic]
+  424 |     };
+      |      ^
+quickjs.c:450:15: warning: ISO C90 does not support flexible array members [-Wpedantic]
+  450 |     js_limb_t tab[]; /* two's complement representation, always
+      |               ^~~
+quickjs.c:483:14: warning: type of bit-field ‘binary_object_size’ is a GCC extension [-Wpedantic]
+  483 |     uint32_t binary_object_size : 31;
+      |              ^~~~~~~~~~~~~~~~~~
+quickjs.c:491:13: warning: type of bit-field ‘std_array_prototype’ is a GCC extension [-Wpedantic]
+  491 |     uint8_t std_array_prototype : 1;
+      |             ^~~~~~~~~~~~~~~~~~~
+quickjs.c:610:14: warning: type of bit-field ‘len’ is a GCC extension [-Wpedantic]
+  610 |     uint32_t len : 31;
+      |              ^~~
+quickjs.c:611:14: warning: type of bit-field ‘is_wide_char’ is a GCC extension [-Wpedantic]
+  611 |     uint32_t is_wide_char : 1; /* 0 = 8 bits, 1 = 16 bits characters */
+      |              ^~~~~~~~~~~~
+quickjs.c:615:14: warning: type of bit-field ‘hash’ is a GCC extension [-Wpedantic]
+  615 |     uint32_t hash : 28;
+      |              ^~~~
+quickjs.c:616:14: warning: type of bit-field ‘kind’ is a GCC extension [-Wpedantic]
+  616 |     uint32_t kind : 2;
+      |              ^~~~
+quickjs.c:617:14: warning: type of bit-field ‘atom_type’ is a GCC extension [-Wpedantic]
+  617 |     uint32_t atom_type : 2; /* != 0 if atom, JS_ATOM_TYPE_x */
+      |              ^~~~~~~~~
+quickjs.c:677:29: warning: comma at end of enumerator list [-Wpedantic]
+  677 |     JS_CLOSURE_MODULE_IMPORT, /* definition of a module import (eval code only) */
+      |                             ^
+quickjs.c:681:13: warning: type of bit-field ‘closure_type’ is a GCC extension [-Wpedantic]
+  681 |     uint8_t closure_type : 3; /* see JSClosureTypeEnum */
+      |             ^~~~~~~~~~~~
+quickjs.c:682:13: warning: type of bit-field ‘is_lexical’ is a GCC extension [-Wpedantic]
+  682 |     uint8_t is_lexical : 1; /* lexical variable */
+      |             ^~~~~~~~~~
+quickjs.c:683:13: warning: type of bit-field ‘is_const’ is a GCC extension [-Wpedantic]
+  683 |     uint8_t is_const : 1; /* const variable (is_lexical = 1 if is_const = 1) */
+      |             ^~~~~~~~
+quickjs.c:684:13: warning: type of bit-field ‘var_kind’ is a GCC extension [-Wpedantic]
+  684 |     uint8_t var_kind : 4; /* see JSVarKindEnum */
+      |             ^~~~~~~~
+quickjs.c:698:13: warning: type of bit-field ‘has_using’ is a GCC extension [-Wpedantic]
+  698 |     uint8_t has_using : 1; /* scope has using declarations */
+      |             ^~~~~~~~~
+quickjs.c:699:13: warning: type of bit-field ‘is_await_using’ is a GCC extension [-Wpedantic]
+  699 |     uint8_t is_await_using : 1; /* scope has await using declarations */
+      |             ^~~~~~~~~~~~~~
+quickjs.c:718:24: warning: comma at end of enumerator list [-Wpedantic]
+  718 |     JS_VAR_USING_METHOD, /* hidden local holding the cached dispose method
+      |                        ^
+quickjs.c:738:13: warning: type of bit-field ‘is_const’ is a GCC extension [-Wpedantic]
+  738 |     uint8_t is_const : 1;
+      |             ^~~~~~~~
+quickjs.c:739:13: warning: type of bit-field ‘is_lexical’ is a GCC extension [-Wpedantic]
+  739 |     uint8_t is_lexical : 1;
+      |             ^~~~~~~~~~
+quickjs.c:740:13: warning: type of bit-field ‘is_captured’ is a GCC extension [-Wpedantic]
+  740 |     uint8_t is_captured : 1;
+      |             ^~~~~~~~~~~
+quickjs.c:741:13: warning: type of bit-field ‘is_static_private’ is a GCC extension [-Wpedantic]
+  741 |     uint8_t is_static_private : 1; /* only used during private class field parsing */
+      |             ^~~~~~~~~~~~~~~~~
+quickjs.c:742:13: warning: type of bit-field ‘var_kind’ is a GCC extension [-Wpedantic]
+  742 |     uint8_t var_kind : 4; /* see JSVarKindEnum */
+      |             ^~~~~~~~
+quickjs.c:770:13: warning: type of bit-field ‘is_strict_mode’ is a GCC extension [-Wpedantic]
+  770 |     uint8_t is_strict_mode : 1;
+      |             ^~~~~~~~~~~~~~
+quickjs.c:771:13: warning: type of bit-field ‘has_prototype’ is a GCC extension [-Wpedantic]
+  771 |     uint8_t has_prototype : 1; /* true if a prototype field is necessary */
+      |             ^~~~~~~~~~~~~
+quickjs.c:772:13: warning: type of bit-field ‘has_simple_parameter_list’ is a GCC extension [-Wpedantic]
+  772 |     uint8_t has_simple_parameter_list : 1;
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~
+quickjs.c:773:13: warning: type of bit-field ‘is_derived_class_constructor’ is a GCC extension [-Wpedantic]
+  773 |     uint8_t is_derived_class_constructor : 1;
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+quickjs.c:775:13: warning: type of bit-field ‘need_home_object’ is a GCC extension [-Wpedantic]
+  775 |     uint8_t need_home_object : 1;
+      |             ^~~~~~~~~~~~~~~~
+quickjs.c:776:13: warning: type of bit-field ‘func_kind’ is a GCC extension [-Wpedantic]
+  776 |     uint8_t func_kind : 2;
+      |             ^~~~~~~~~
+quickjs.c:777:13: warning: type of bit-field ‘new_target_allowed’ is a GCC extension [-Wpedantic]
+  777 |     uint8_t new_target_allowed : 1;
+      |             ^~~~~~~~~~~~~~~~~~
+quickjs.c:778:13: warning: type of bit-field ‘super_call_allowed’ is a GCC extension [-Wpedantic]
+  778 |     uint8_t super_call_allowed : 1;
+      |             ^~~~~~~~~~~~~~~~~~
+quickjs.c:779:13: warning: type of bit-field ‘super_allowed’ is a GCC extension [-Wpedantic]
+  779 |     uint8_t super_allowed : 1;
+      |             ^~~~~~~~~~~~~
+quickjs.c:780:13: warning: type of bit-field ‘arguments_allowed’ is a GCC extension [-Wpedantic]
+  780 |     uint8_t arguments_allowed : 1;
+      |             ^~~~~~~~~~~~~~~~~
+quickjs.c:781:13: warning: type of bit-field ‘backtrace_barrier’ is a GCC extension [-Wpedantic]
+  781 |     uint8_t backtrace_barrier : 1; /* stop backtrace on this function */
+      |             ^~~~~~~~~~~~~~~~~
+quickjs.c:810:13: warning: ISO C90 does not support flexible array members [-Wpedantic]
+  810 |     JSValue argv[];
+      |             ^~~~
+quickjs.c:954:20: warning: type of bit-field ‘status’ is a GCC extension [-Wpedantic]
+  954 |     JSModuleStatus status : 8;
+      |                    ^~~~~~
+quickjs.c:981:13: warning: ISO C90 does not support flexible array members [-Wpedantic]
+  981 |     JSValue argv[];
+      |             ^~~~
+quickjs.c:1006:14: warning: type of bit-field ‘hash_next’ is a GCC extension [-Wpedantic]
+ 1006 |     uint32_t hash_next : 26; /* 0 if last in list */
+      |              ^~~~~~~~~
+quickjs.c:1007:14: warning: type of bit-field ‘flags’ is a GCC extension [-Wpedantic]
+ 1007 |     uint32_t flags : 6;   /* JS_PROP_XXX */
+      |              ^~~~~
+quickjs.c:1025:21: warning: ISO C90 does not support flexible array members [-Wpedantic]
+ 1025 |     JSShapeProperty prop[]; /* prop_size elements */
+      |                     ^~~~
+quickjs.c:1033:21: warning: type of bit-field ‘__gc_mark’ is a GCC extension [-Wpedantic]
+ 1033 |             uint8_t __gc_mark : 7; /* corresponds to header.mark/gc_obj_type */
+      |                     ^~~~~~~~~
+quickjs.c:1034:21: warning: type of bit-field ‘is_prototype’ is a GCC extension [-Wpedantic]
+ 1034 |             uint8_t is_prototype : 1; /* object may be used as prototype */
+      |                     ^~~~~~~~~~~~
+quickjs.c:1036:21: warning: type of bit-field ‘extensible’ is a GCC extension [-Wpedantic]
+ 1036 |             uint8_t extensible : 1;
+      |                     ^~~~~~~~~~
+quickjs.c:1037:21: warning: type of bit-field ‘free_mark’ is a GCC extension [-Wpedantic]
+ 1037 |             uint8_t free_mark : 1; /* only used when freeing objects with cycles */
+      |                     ^~~~~~~~~
+quickjs.c:1038:21: warning: type of bit-field ‘is_exotic’ is a GCC extension [-Wpedantic]
+ 1038 |             uint8_t is_exotic : 1; /* true if object has exotic property handlers */
+      |                     ^~~~~~~~~
+quickjs.c:1039:21: warning: type of bit-field ‘fast_array’ is a GCC extension [-Wpedantic]
+ 1039 |             uint8_t fast_array : 1; /* true if u.array is used for get/put (for JS_CLASS_ARRAY, JS_CLASS_ARGUMENTS, JS_CLASS_MAPPED_ARGUMENTS and typed arrays) */
+      |                     ^~~~~~~~~~
+quickjs.c:1040:21: warning: type of bit-field ‘is_constructor’ is a GCC extension [-Wpedantic]
+ 1040 |             uint8_t is_constructor : 1; /* true if object is a constructor function */
+      |                     ^~~~~~~~~~~~~~
+quickjs.c:1041:21: warning: type of bit-field ‘is_uncatchable_error’ is a GCC extension [-Wpedantic]
+ 1041 |             uint8_t is_uncatchable_error : 1; /* if true, error is not catchable */
+      |                     ^~~~~~~~~~~~~~~~~~~~
+quickjs.c:1042:21: warning: type of bit-field ‘tmp_mark’ is a GCC extension [-Wpedantic]
+ 1042 |             uint8_t tmp_mark : 1; /* used in JS_WriteObjectRec() */
+      |                     ^~~~~~~~
+quickjs.c:1043:21: warning: type of bit-field ‘is_HTMLDDA’ is a GCC extension [-Wpedantic]
+ 1043 |             uint8_t is_HTMLDDA : 1; /* specific annex B IsHtmlDDA behavior */
+      |                     ^~~~~~~~~~
+quickjs.c:1045:10: warning: ISO C90 doesn’t support unnamed structs/unions [-Wpedantic]
+ 1045 |         };
+      |          ^
+quickjs.c:1046:6: warning: ISO C90 doesn’t support unnamed structs/unions [-Wpedantic]
+ 1046 |     };
+      |      ^
+quickjs.c:1140:1: warning: string length ‘2334’ is greater than the length ‘509’ ISO C90 compilers are required to support [-Woverlength-strings]
+ 1140 | ;
+      | ^
+quickjs.c:1143:28: warning: comma at end of enumerator list [-Wpedantic]
+ 1143 | #define FMT(f) OP_FMT_ ## f,
+      |                            ^
+quickjs-opcode.h:56:1: note: in expansion of macro ‘FMT’
+   56 | FMT(label_u16)
+      | ^~~
+quickjs.c: In function ‘double_is_int32’:
+quickjs.c:1483:9: warning: integer constant is too large for ‘long’ type [-Wlong-long]
+ 1483 |         return !u || (u == 0xc1e0000000000000);
+      |         ^~~~~~
+quickjs.c: In function ‘js_trigger_gc’:
+quickjs.c:1577:20: warning: ISO C90 does not support the ‘z’ gnu_printf length modifier [-Wformat=]
+ 1577 |             printf("GC: size=%zd\n", rt->malloc_state.malloc_size);
+      |                    ^~~~~~~~~~~~~~~~
+quickjs.c: In function ‘js_free_rt’:
+quickjs.c:1648:5: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+ 1648 |     size_t free_size = rt->mf.js_malloc_usable_size(ptr) + MALLOC_OVERHEAD;
+      |     ^~~~~~
+quickjs.c:1650:16: warning: ISO C90 does not support the ‘z’ gnu_printf length modifier [-Wformat=]
+ 1650 |         printf("js_free_rt: malloc_size underflow: freeing %zu but only %zu tracked\n", free_size, s->malloc_size);
+      |                ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+quickjs.c:1650:16: warning: ISO C90 does not support the ‘z’ gnu_printf length modifier [-Wformat=]
+quickjs.c: In function ‘JS_SetRuntimeInfo’:
+quickjs.c:2266:28: warning: unused variable ‘el1’ [-Wunused-variable]
+ 2266 |     struct list_head *el, *el1;
+      |                            ^~~
+quickjs.c:2266:23: warning: unused variable ‘el’ [-Wunused-variable]
+ 2266 |     struct list_head *el, *el1;
+      |                       ^~
+quickjs.c: In function ‘JS_FreeRuntime’:
+quickjs.c:2459:20: warning: ISO C90 does not support the ‘z’ gnu_printf length modifier [-Wformat=]
+ 2459 |             printf("Memory leak: %zd bytes lost in %zd block%s\n",
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+quickjs.c:2459:20: warning: ISO C90 does not support the ‘z’ gnu_printf length modifier [-Wformat=]
+quickjs.c: In function ‘JS_FreeContext’:
+quickjs.c:2662:28: warning: unused variable ‘el1’ [-Wunused-variable]
+ 2662 |     struct list_head *el, *el1;
+      |                            ^~~
+quickjs.c: In function ‘JS_DumpAtoms’:
+quickjs.c:2943:23: warning: format ‘%d’ expects argument of type ‘int’, but argument 2 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+ 2943 |             printf(" %d }\n", p->hash_next);
+      |                      ~^       ~~~~~~~~~~~~
+      |                       |        |
+      |                       int      uint32_t {aka long unsigned int}
+      |                      %ld
+quickjs.c: In function ‘JS_AtomGetKind’:
+quickjs.c:3058:28: warning: ISO C90 forbids compound literals [-Wpedantic]
+ 3058 |     return (JSAtomKindEnum){-1}; /* pacify compiler */
+      |                            ^
+quickjs.c: In function ‘JS_NewSymbol’:
+quickjs.c:3432:5: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+ 3432 |     JSAtom atom = JS_NewAtom(ctx, description);
+      |     ^~~~~~
+quickjs.c:3435:5: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+ 3435 |     int atom_type =
+      |     ^~~
+quickjs.c: In function ‘JS_AtomGetStrRT’:
+quickjs.c:3448:35: warning: format ‘%u’ expects argument of type ‘unsigned int’, but argument 4 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+ 3448 |         snprintf(buf, buf_size, "%u", __JS_AtomToUInt32(atom));
+      |                                  ~^   ~~~~~~~~~~~~~~~~~~~~~~~
+      |                                   |   |
+      |                                   |   uint32_t {aka long unsigned int}
+      |                                   unsigned int
+      |                                  %lu
+quickjs.c:3453:44: warning: format ‘%x’ expects argument of type ‘unsigned int’, but argument 4 has type ‘JSAtom’ {aka ‘long unsigned int’} [-Wformat=]
+ 3453 |         snprintf(buf, buf_size, "<invalid %x>", atom);
+      |                                           ~^    ~~~~
+      |                                            |    |
+      |                                            |    JSAtom {aka long unsigned int}
+      |                                            unsigned int
+      |                                           %lx
+quickjs.c:3458:45: warning: format ‘%x’ expects argument of type ‘unsigned int’, but argument 4 has type ‘JSAtom’ {aka ‘long unsigned int’} [-Wformat=]
+ 3458 |             snprintf(buf, buf_size, "<free %x>", atom);
+      |                                            ~^    ~~~~
+      |                                             |    |
+      |                                             |    JSAtom {aka long unsigned int}
+      |                                             unsigned int
+      |                                            %lx
+quickjs.c: In function ‘JS_NewAtomString’:
+quickjs.c:4450:5: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+ 4450 |     JSValue val = JS_AtomToString(ctx, atom);
+      |     ^~~~~~~
+quickjs.c: In function ‘JS_FreeCString’:
+quickjs.c:4617:12: warning: ISO C forbids ‘return’ with expression, in function returning void [-Wpedantic]
+ 4617 |     return js_free_cstring(ctx->rt, ptr);
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+quickjs.c:4615:6: note: declared here
+ 4615 | void JS_FreeCString(JSContext *ctx, const char *ptr)
+      |      ^~~~~~~~~~~~~~
+quickjs.c: In function ‘JS_FreeCStringRT’:
+quickjs.c:4622:12: warning: ISO C forbids ‘return’ with expression, in function returning void [-Wpedantic]
+ 4622 |     return js_free_cstring(rt, ptr);
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~
+quickjs.c:4620:6: note: declared here
+ 4620 | void JS_FreeCStringRT(JSRuntime *rt, const char *ptr)
+      |      ^~~~~~~~~~~~~~~~
+quickjs.c: In function ‘JS_FreeCStringUTF16’:
+quickjs.c:4627:12: warning: ISO C forbids ‘return’ with expression, in function returning void [-Wpedantic]
+ 4627 |     return js_free_cstring(ctx->rt, ptr);
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+quickjs.c:4625:6: note: declared here
+ 4625 | void JS_FreeCStringUTF16(JSContext *ctx, const uint16_t *ptr)
+      |      ^~~~~~~~~~~~~~~~~~~
+quickjs.c: In function ‘JS_FreeCStringRT_UTF16’:
+quickjs.c:4632:12: warning: ISO C forbids ‘return’ with expression, in function returning void [-Wpedantic]
+ 4632 |     return js_free_cstring(rt, ptr);
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~
+quickjs.c:4630:6: note: declared here
+ 4630 | void JS_FreeCStringRT_UTF16(JSRuntime *rt, const uint16_t *ptr)
+      |      ^~~~~~~~~~~~~~~~~~~~~~
+quickjs.c: At top level:
+quickjs.c:6183:13: warning: ISO C90 does not support flexible array members [-Wpedantic]
+ 6183 |     JSValue data[];
+      |             ^~~~
+quickjs.c: In function ‘js_call_c_function_data’:
+quickjs.c:6234:19: warning: implicit declaration of function ‘alloca’; did you mean ‘malloc’? [-Wimplicit-function-declaration]
+ 6234 |         arg_buf = alloca(stack_size);
+      |                   ^~~~~~
+      |                   malloc
+quickjs.c:6234:17: warning: assignment to ‘JSValue *’ {aka ‘long long unsigned int *’} from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+ 6234 |         arg_buf = alloca(stack_size);
+      |                 ^
+quickjs.c: In function ‘js_call_c_closure’:
+quickjs.c:6358:17: warning: assignment to ‘JSValue *’ {aka ‘long long unsigned int *’} from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+ 6358 |         arg_buf = alloca(stack_size);
+      |                 ^
+quickjs.c: In function ‘js_free_value_rt’:
+quickjs.c:6779:48: warning: format ‘%d’ expects argument of type ‘int’, but argument 2 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+ 6779 |         printf("js_free_value_rt: unknown tag=%d\n", tag);
+      |                                               ~^     ~~~
+      |                                                |     |
+      |                                                int   uint32_t {aka long unsigned int}
+      |                                               %ld
+quickjs.c: In function ‘JS_DumpMemoryUsage’:
+quickjs.c:7457:17: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+ 7457 |     fprintf(fp, "QuickJS-ng memory usage -- %s version, %d-bit, malloc limit: %"PRId64"\n\n",
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+quickjs.c:7515:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+ 7515 |         fprintf(fp, "%-20s %8"PRId64" %8"PRId64"  (%0.1f per block)\n",
+      |                     ^~~~~~~~~~
+quickjs.c:7515:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+quickjs.c:7518:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+ 7518 |         fprintf(fp, "%-20s %8"PRId64" %8"PRId64"  (%d overhead, %0.1f average slack)\n",
+      |                     ^~~~~~~~~~
+quickjs.c:7518:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+quickjs.c:7524:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+ 7524 |         fprintf(fp, "%-20s %8"PRId64" %8"PRId64"  (%0.1f per atom)\n",
+      |                     ^~~~~~~~~~
+quickjs.c:7524:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+quickjs.c:7529:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+ 7529 |         fprintf(fp, "%-20s %8"PRId64" %8"PRId64"  (%0.1f per string)\n",
+      |                     ^~~~~~~~~~
+quickjs.c:7529:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+quickjs.c:7534:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+ 7534 |         fprintf(fp, "%-20s %8"PRId64" %8"PRId64"  (%0.1f per object)\n",
+      |                     ^~~~~~~~~~
+quickjs.c:7534:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+quickjs.c:7537:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+ 7537 |         fprintf(fp, "%-20s %8"PRId64" %8"PRId64"  (%0.1f per object)\n",
+      |                     ^~~~~~~~~~
+quickjs.c:7537:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+quickjs.c:7540:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+ 7540 |         fprintf(fp, "%-20s %8"PRId64" %8"PRId64"  (%0.1f per shape)\n",
+      |                     ^~~~~~~~~~
+quickjs.c:7540:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+quickjs.c:7545:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+ 7545 |         fprintf(fp, "%-20s %8"PRId64" %8"PRId64"\n",
+      |                     ^~~~~~~~~~
+quickjs.c:7545:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+quickjs.c:7547:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+ 7547 |         fprintf(fp, "%-20s %8"PRId64" %8"PRId64"  (%0.1f per function)\n",
+      |                     ^~~~~~~~~~
+quickjs.c:7547:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+quickjs.c:7551:25: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+ 7551 |             fprintf(fp, "%-20s %8"PRId64" %8"PRId64"  (%0.1f per function)\n",
+      |                         ^~~~~~~~~~
+quickjs.c:7551:25: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+quickjs.c:7558:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+ 7558 |         fprintf(fp, "%-20s %8"PRId64"\n", "C functions", s->c_func_count);
+      |                     ^~~~~~~~~~
+quickjs.c:7561:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+ 7561 |         fprintf(fp, "%-20s %8"PRId64"\n", "arrays", s->array_count);
+      |                     ^~~~~~~~~~
+quickjs.c:7563:25: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+ 7563 |             fprintf(fp, "%-20s %8"PRId64"\n", "  fast arrays", s->fast_array_count);
+      |                         ^~~~~~~~~~
+quickjs.c:7564:25: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+ 7564 |             fprintf(fp, "%-20s %8"PRId64" %8"PRId64"  (%0.1f per fast array)\n",
+      |                         ^~~~~~~~~~
+quickjs.c:7564:25: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+quickjs.c:7571:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+ 7571 |         fprintf(fp, "%-20s %8"PRId64" %8"PRId64"\n",
+      |                     ^~~~~~~~~~
+quickjs.c:7571:21: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+quickjs.c:7456:28: warning: unused variable ‘el1’ [-Wunused-variable]
+ 7456 |     struct list_head *el, *el1;
+      |                            ^~~
+quickjs.c: In function ‘find_line_num’:
+quickjs.c:7684:31: warning: passing argument 1 of ‘get_sleb128’ from incompatible pointer type [-Wincompatible-pointer-types]
+ 7684 |             ret = get_sleb128(&v, p, p_end);
+      |                               ^~
+      |                               |
+      |                               int *
+quickjs.c:7646:33: note: expected ‘int32_t *’ {aka ‘long int *’} but argument is of type ‘int *’
+ 7646 | static int get_sleb128(int32_t *pval, const uint8_t *buf,
+      |                        ~~~~~~~~~^~~~
+quickjs.c:7694:27: warning: passing argument 1 of ‘get_sleb128’ from incompatible pointer type [-Wincompatible-pointer-types]
+ 7694 |         ret = get_sleb128(&v, p, p_end);
+      |                           ^~
+      |                           |
+      |                           int *
+quickjs.c:7646:33: note: expected ‘int32_t *’ {aka ‘long int *’} but argument is of type ‘int *’
+ 7646 | static int get_sleb128(int32_t *pval, const uint8_t *buf,
+      |                        ~~~~~~~~~^~~~
+quickjs.c: In function ‘build_backtrace’:
+quickjs.c:7938:13: warning: initializer element is not computable at load time [-Wpedantic]
+ 7938 |             error_obj,
+      |             ^~~~~~~~~
+quickjs.c:7939:13: warning: initializer element is not computable at load time [-Wpedantic]
+ 7939 |             stack};
+      |             ^~~~~
+quickjs.h:204:22: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+  204 | #define JSValueConst JSValue
+      |                      ^~~~~~~
+quickjs.c:7937:9: note: in expansion of macro ‘JSValueConst’
+ 7937 |         JSValueConst args[] = {
+      |         ^~~~~~~~~~~~
+quickjs.c: In function ‘js_bytecode_autoinit’:
+quickjs.c:8594:17: warning: initializer element is not computable at load time [-Wpedantic]
+ 8594 |                 JS_NewCFunction(ctx, js_array_constructor, "Array", 0),
+      |                 ^~~~~~~~~~~~~~~
+quickjs.c:8595:17: warning: initializer element is not computable at load time [-Wpedantic]
+ 8595 |                 JS_NewCFunctionMagic(ctx, js_error_constructor, "TypeError",
+      |                 ^~~~~~~~~~~~~~~~~~~~
+quickjs.c:8598:17: warning: initializer element is not computable at load time [-Wpedantic]
+ 8598 |                 JS_AtomToValue(ctx, JS_ATOM_Symbol_asyncIterator),
+      |                 ^~~~~~~~~~~~~~
+quickjs.c:8599:17: warning: initializer element is not computable at load time [-Wpedantic]
+ 8599 |                 JS_NewCFunctionMagic(ctx, js_object_defineProperty,
+      |                 ^~~~~~~~~~~~~~~~~~~~
+quickjs.c:8602:17: warning: initializer element is not computable at load time [-Wpedantic]
+ 8602 |                 JS_AtomToValue(ctx, JS_ATOM_Symbol_iterator)};
+      |                 ^~~~~~~~~~~~~~
+quickjs.c:8610:17: warning: initializer element is not computable at load time [-Wpedantic]
+ 8610 |                 js_dup(ctx->class_proto[JS_CLASS_ITERATOR_HELPER]),
+      |                 ^~~~~~
+quickjs.c:8611:17: warning: initializer element is not computable at load time [-Wpedantic]
+ 8611 |                 JS_NewCFunctionMagic(ctx, js_error_constructor, "InternalError",
+      |                 ^~~~~~~~~~~~~~~~~~~~
+quickjs.c:8614:17: warning: initializer element is not computable at load time [-Wpedantic]
+ 8614 |                 JS_NewCFunctionMagic(ctx, js_error_constructor, "TypeError",
+      |                 ^~~~~~~~~~~~~~~~~~~~
+quickjs.c:8617:17: warning: initializer element is not computable at load time [-Wpedantic]
+ 8617 |                 JS_NewCFunction(ctx, js_call_function, "call", 2),
+      |                 ^~~~~~~~~~~~~~~
+quickjs.c:8618:17: warning: initializer element is not computable at load time [-Wpedantic]
+ 8618 |                 JS_AtomToValue(ctx, JS_ATOM_Symbol_iterator)};
+      |                 ^~~~~~~~~~~~~~
+quickjs.c:8628:17: warning: initializer element is not computable at load time [-Wpedantic]
+ 8628 |                 js_dup(ctx->class_proto[JS_CLASS_ITERATOR_HELPER]),
+      |                 ^~~~~~
+quickjs.c:8629:17: warning: initializer element is not computable at load time [-Wpedantic]
+ 8629 |                 JS_NewCFunctionMagic(ctx, js_error_constructor, "InternalError",
+      |                 ^~~~~~~~~~~~~~~~~~~~
+quickjs.c:8632:17: warning: initializer element is not computable at load time [-Wpedantic]
+ 8632 |                 JS_NewCFunctionMagic(ctx, js_error_constructor, "TypeError",
+      |                 ^~~~~~~~~~~~~~~~~~~~
+quickjs.c:8635:17: warning: initializer element is not computable at load time [-Wpedantic]
+ 8635 |                 JS_NewCFunction(ctx, js_call_function, "call", 2),
+      |                 ^~~~~~~~~~~~~~~
+quickjs.c:8636:17: warning: initializer element is not computable at load time [-Wpedantic]
+ 8636 |                 JS_NewCFunction(ctx, js_hasOwnEnumProperty,
+      |                 ^~~~~~~~~~~~~~~
+quickjs.c:8638:17: warning: initializer element is not computable at load time [-Wpedantic]
+ 8638 |                 JS_NewCFunction(ctx, js_getOwnPropertyKeys,
+      |                 ^~~~~~~~~~~~~~~
+quickjs.c:8640:17: warning: initializer element is not computable at load time [-Wpedantic]
+ 8640 |                 JS_AtomToValue(ctx, JS_ATOM_Symbol_iterator)};
+      |                 ^~~~~~~~~~~~~~
+quickjs.c: In function ‘js_bigint_dump1’:
+quickjs.c:12268:21: warning: format ‘%x’ expects argument of type ‘unsigned int’, but argument 2 has type ‘js_limb_t’ {aka ‘long unsigned int’} [-Wformat=]
+12268 |         printf(" %08x", tab[i]);
+      |                  ~~~^   ~~~~~~
+      |                     |      |
+      |                     |      js_limb_t {aka long unsigned int}
+      |                     unsigned int
+      |                  %08lx
+quickjs.c: In function ‘js_atof’:
+quickjs.c:13500:5: warning: integer constant is too large for ‘long’ type [-Wlong-long]
+13500 |     val = JS_NAN;
+      |     ^~~
+quickjs.c: In function ‘JS_ToNumberHintFree’:
+quickjs.c:13538:9: warning: integer constant is too large for ‘long’ type [-Wlong-long]
+13538 |         ret = JS_NAN;
+      |         ^~~
+quickjs.c:13567:25: warning: integer constant is too large for ‘long’ type [-Wlong-long]
+13567 |                         ret = JS_NAN;
+      |                         ^~~
+quickjs.c:13579:9: warning: integer constant is too large for ‘long’ type [-Wlong-long]
+13579 |         ret = JS_NAN;
+      |         ^~~
+quickjs.c: In function ‘JS_ToStringFree’:
+quickjs.c:14225:5: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+14225 |     JSValue ret = JS_ToString(ctx, val);
+      |     ^~~~~~~
+quickjs.c: In function ‘JS_ToQuotedString’:
+quickjs.c:14303:51: warning: format ‘%x’ expects argument of type ‘unsigned int’, but argument 4 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+14303 |                 snprintf(buf, sizeof(buf), "\\u%04x", c);
+      |                                                ~~~^   ~
+      |                                                   |   |
+      |                                                   |   uint32_t {aka long unsigned int}
+      |                                                   unsigned int
+      |                                                %04lx
+quickjs.c: In function ‘JS_DumpValue’:
+quickjs.c:14500:16: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+14500 |         printf("%" PRId64 "n", (int64_t)JS_VALUE_GET_SHORT_BIG_INT(val));
+      |                ^~~
+quickjs.c:14509:40: warning: format ‘%d’ expects argument of type ‘int’, but argument 2 has type ‘long unsigned int’ [-Wformat=]
+14509 |                 printf("BigInt.asIntN(%d,", p->len * JS_LIMB_BITS);
+      |                                       ~^
+      |                                        |
+      |                                        int
+      |                                       %ld
+quickjs.c:14514:28: warning: format ‘%x’ expects argument of type ‘unsigned int’, but argument 2 has type ‘js_limb_t’ {aka ‘long unsigned int’} [-Wformat=]
+14514 |                 printf("%08x", p->tab[i]);
+      |                         ~~~^   ~~~~~~~~~
+      |                            |         |
+      |                            |         js_limb_t {aka long unsigned int}
+      |                            unsigned int
+      |                         %08lx
+quickjs.c:14531:32: warning: format ‘%d’ expects argument of type ‘int’, but argument 2 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+14531 |             printf("[rope len=%d depth=%d]", r->len, r->depth);
+      |                               ~^             ~~~~~~
+      |                                |              |
+      |                                int            uint32_t {aka long unsigned int}
+      |                               %ld
+quickjs.c:14566:31: warning: format ‘%d’ expects argument of type ‘int’, but argument 2 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+14566 |         printf("[unknown tag %d]", tag);
+      |                              ~^    ~~~
+      |                               |    |
+      |                               int  uint32_t {aka long unsigned int}
+      |                              %ld
+quickjs.c: In function ‘JS_StringToBigInt’:
+quickjs.c:14658:17: warning: integer constant is too large for ‘long’ type [-Wlong-long]
+14658 |                 val = JS_NAN;
+      |                 ^~~
+quickjs.c: At top level:
+quickjs.c:16180:5: warning: ISO C90 forbids specifying subobject to initialize [-Wpedantic]
+16180 |     .define_own_property = js_arguments_define_own_property};
+      |     ^
+quickjs.c: In function ‘js_for_in_next’:
+quickjs.c:16474:9: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+16474 |         JSValue obj = it->obj;
+      |         ^~~~~~~
+quickjs.c: In function ‘js_append_enumerate’:
+quickjs.c:16887:28: warning: ISO C90 forbids specifying subobject to initialize [-Wpedantic]
+16887 |     JSCFunctionType ft = { .generic_magic = js_create_array_iterator };
+      |                            ^
+quickjs.c:16887:5: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+16887 |     JSCFunctionType ft = { .generic_magic = js_create_array_iterator };
+      |     ^~~~~~~~~~~~~~~
+quickjs.c:16902:29: warning: ISO C90 forbids specifying subobject to initialize [-Wpedantic]
+16902 |     JSCFunctionType ft2 = { .iterator_next = js_array_iterator_next };
+      |                             ^
+quickjs.c:16902:5: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+16902 |     JSCFunctionType ft2 = { .iterator_next = js_array_iterator_next };
+      |     ^~~~~~~~~~~~~~~
+quickjs.c: At top level:
+quickjs.c:17172:5: warning: ISO C90 forbids specifying subobject to initialize [-Wpedantic]
+17172 |     [JS_FUNC_NORMAL] = JS_CLASS_BYTECODE_FUNCTION,
+      |     ^
+quickjs.c:17173:5: warning: ISO C90 forbids specifying subobject to initialize [-Wpedantic]
+17173 |     [JS_FUNC_GENERATOR] = JS_CLASS_GENERATOR_FUNCTION,
+      |     ^
+quickjs.c:17174:5: warning: ISO C90 forbids specifying subobject to initialize [-Wpedantic]
+17174 |     [JS_FUNC_ASYNC] = JS_CLASS_ASYNC_FUNCTION,
+      |     ^
+quickjs.c:17175:5: warning: ISO C90 forbids specifying subobject to initialize [-Wpedantic]
+17175 |     [JS_FUNC_ASYNC_GENERATOR] = JS_CLASS_ASYNC_GENERATOR_FUNCTION};
+      |     ^
+quickjs.c: In function ‘js_call_c_function’:
+quickjs.c:17398:17: warning: assignment to ‘JSValue *’ {aka ‘long long unsigned int *’} from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+17398 |         arg_buf = alloca(sizeof(arg_buf[0]) * arg_count);
+      |                 ^
+quickjs.c: In function ‘js_call_bound_function’:
+quickjs.c:17509:13: warning: assignment to ‘JSValue *’ {aka ‘long long unsigned int *’} from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+17509 |     arg_buf = alloca(sizeof(JSValue) * arg_count);
+      |             ^
+quickjs.c: In function ‘JS_CallInternal’:
+quickjs.c:17654:15: warning: assignment to ‘JSValue *’ {aka ‘long long unsigned int *’} from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+17654 |     local_buf = alloca(alloca_size);
+      |               ^
+quickjs.c: At top level:
+quickjs.c:21569:11: warning: comma at end of enumerator list [-Wpedantic]
+21569 |     TOK_OF,     /* only used for js_parse_skip_parens_token() */
+      |           ^
+quickjs.c:21590:13: warning: type of bit-field ‘has_iterator’ is a GCC extension [-Wpedantic]
+21590 |     uint8_t has_iterator : 1;
+      |             ^~~~~~~~~~~~
+quickjs.c:21591:13: warning: type of bit-field ‘is_regular_stmt’ is a GCC extension [-Wpedantic]
+21591 |     uint8_t is_regular_stmt : 1; /* i.e. not a loop statement */
+      |             ^~~~~~~~~~~~~~~
+quickjs.c:21592:13: warning: type of bit-field ‘has_using’ is a GCC extension [-Wpedantic]
+21592 |     uint8_t has_using : 1; /* scope has using declarations needing disposal */
+      |             ^~~~~~~~~
+quickjs.c:21599:13: warning: type of bit-field ‘force_init’ is a GCC extension [-Wpedantic]
+21599 |     uint8_t force_init : 1; /* force initialization to undefined */
+      |             ^~~~~~~~~~
+quickjs.c:21600:13: warning: type of bit-field ‘is_lexical’ is a GCC extension [-Wpedantic]
+21600 |     uint8_t is_lexical : 1; /* global let/const definition */
+      |             ^~~~~~~~~~
+quickjs.c:21601:13: warning: type of bit-field ‘is_const’ is a GCC extension [-Wpedantic]
+21601 |     uint8_t is_const   : 1; /* const definition */
+      |             ^~~~~~~~
+quickjs.c:21689:24: warning: type of bit-field ‘func_kind’ is a GCC extension [-Wpedantic]
+21689 |     JSFunctionKindEnum func_kind : 8;
+      |                        ^~~~~~~~~
+quickjs.c:21690:25: warning: type of bit-field ‘func_type’ is a GCC extension [-Wpedantic]
+21690 |     JSParseFunctionEnum func_type : 7;
+      |                         ^~~~~~~~~
+quickjs.c:21691:13: warning: type of bit-field ‘is_strict_mode’ is a GCC extension [-Wpedantic]
+21691 |     uint8_t is_strict_mode : 1;
+      |             ^~~~~~~~~~~~~~
+quickjs.c: In function ‘json_parse_string’:
+quickjs.c:22961:9: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+22961 |         const uint8_t *p_start = p;
+      |         ^~~~~
+quickjs.c: In function ‘js_parse_class_default_ctor’:
+quickjs.c:24913:5: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+24913 |     int idx;
+      |     ^~~
+quickjs.c: In function ‘js_parse_class’:
+quickjs.c:25037:17: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+25037 |                 JSFunctionDef *init;
+      |                 ^~~~~~~~~~~~~
+quickjs.c: At top level:
+quickjs.c:25716:29: warning: comma at end of enumerator list [-Wpedantic]
+25716 |     PUT_LVALUE_NOKEEP_BOTTOM, /* v [depth] -> */
+      |                             ^
+quickjs.c: In function ‘js_parse_var’:
+quickjs.c:28183:13: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+28183 |             int using_method_idx = -1;
+      |             ^~~
+quickjs.c: In function ‘js_parse_for_in_of’:
+quickjs.c:28440:5: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+28440 |     bool is_await_using = false;
+      |     ^~~~
+quickjs.c: At top level:
+quickjs.c:30346:5: warning: ISO C90 forbids specifying subobject to initialize [-Wpedantic]
+30346 |     .has_property = js_module_ns_has};
+      |     ^
+quickjs.c:30499:27: warning: anonymous variadic macros were introduced in C99 [-Wvariadic-macros]
+30499 | #define module_trace(ctx, ...) \
+      |                           ^~~
+quickjs.c: In function ‘js_set_module_evaluated’:
+quickjs.h:204:22: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+  204 | #define JSValueConst JSValue
+      |                      ^~~~~~~
+quickjs.c:31202:9: note: in expansion of macro ‘JSValueConst’
+31202 |         JSValueConst value = JS_UNDEFINED;
+      |         ^~~~~~~~~~~~
+quickjs.c: In function ‘js_evaluate_module’:
+quickjs.h:204:22: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+  204 | #define JSValueConst JSValue
+      |                      ^~~~~~~
+quickjs.c:31579:13: note: in expansion of macro ‘JSValueConst’
+31579 |             JSValueConst value = JS_UNDEFINED;
+      |             ^~~~~~~~~~~~
+quickjs.c: In function ‘js_parse_export’:
+quickjs.c:31767:9: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+31767 |         bool has_string_binding = false;
+      |         ^~~~
+quickjs.c: In function ‘dump_byte_code’:
+quickjs.c:32439:23: warning: format ‘%u’ expects argument of type ‘unsigned int’, but argument 2 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+32439 |             printf(" %u", get_u8(tab + pos));
+      |                      ~^   ~~~~~~~~~~~~~~~~~
+      |                       |   |
+      |                       |   uint32_t {aka long unsigned int}
+      |                       unsigned int
+      |                      %lu
+quickjs.c:32442:23: warning: format ‘%d’ expects argument of type ‘int’, but argument 2 has type ‘int32_t’ {aka ‘long int’} [-Wformat=]
+32442 |             printf(" %d", get_i8(tab + pos));
+      |                      ~^   ~~~~~~~~~~~~~~~~~
+      |                       |   |
+      |                       int int32_t {aka long int}
+      |                      %ld
+quickjs.c:32446:23: warning: format ‘%u’ expects argument of type ‘unsigned int’, but argument 2 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+32446 |             printf(" %u", get_u16(tab + pos));
+      |                      ~^   ~~~~~~~~~~~~~~~~~~
+      |                       |   |
+      |                       |   uint32_t {aka long unsigned int}
+      |                       unsigned int
+      |                      %lu
+quickjs.c:32449:23: warning: format ‘%u’ expects argument of type ‘unsigned int’, but argument 2 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+32449 |             printf(" %u,%u", get_u16(tab + pos), get_u16(tab + pos + 2));
+      |                      ~^      ~~~~~~~~~~~~~~~~~~
+      |                       |      |
+      |                       |      uint32_t {aka long unsigned int}
+      |                       unsigned int
+      |                      %lu
+quickjs.c:32449:26: warning: format ‘%u’ expects argument of type ‘unsigned int’, but argument 3 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+32449 |             printf(" %u,%u", get_u16(tab + pos), get_u16(tab + pos + 2));
+      |                         ~^                       ~~~~~~~~~~~~~~~~~~~~~~
+      |                          |                       |
+      |                          unsigned int            uint32_t {aka long unsigned int}
+      |                         %lu
+quickjs.c:32452:23: warning: format ‘%d’ expects argument of type ‘int’, but argument 2 has type ‘int32_t’ {aka ‘long int’} [-Wformat=]
+32452 |             printf(" %d", get_i16(tab + pos));
+      |                      ~^   ~~~~~~~~~~~~~~~~~~
+      |                       |   |
+      |                       int int32_t {aka long int}
+      |                      %ld
+quickjs.c:32455:23: warning: format ‘%d’ expects argument of type ‘int’, but argument 2 has type ‘int32_t’ {aka ‘long int’} [-Wformat=]
+32455 |             printf(" %d", get_i32(tab + pos));
+      |                      ~^   ~~~~~~~~~~~~~~~~~~
+      |                       |   |
+      |                       int int32_t {aka long int}
+      |                      %ld
+quickjs.c:32458:23: warning: format ‘%u’ expects argument of type ‘unsigned int’, but argument 2 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+32458 |             printf(" %u", get_u32(tab + pos));
+      |                      ~^   ~~~~~~~~~~~~~~~~~~
+      |                       |   |
+      |                       |   uint32_t {aka long unsigned int}
+      |                       unsigned int
+      |                      %lu
+quickjs.c:32461:23: warning: format ‘%u’ expects argument of type ‘unsigned int’, but argument 2 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+32461 |             printf(" %u:%u", get_u32(tab + pos), get_u32(tab + pos + 4));
+      |                      ~^      ~~~~~~~~~~~~~~~~~~
+      |                       |      |
+      |                       |      uint32_t {aka long unsigned int}
+      |                       unsigned int
+      |                      %lu
+quickjs.c:32461:26: warning: format ‘%u’ expects argument of type ‘unsigned int’, but argument 3 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+32461 |             printf(" %u:%u", get_u32(tab + pos), get_u32(tab + pos + 4));
+      |                         ~^                       ~~~~~~~~~~~~~~~~~~~~~~
+      |                          |                       |
+      |                          unsigned int            uint32_t {aka long unsigned int}
+      |                         %lu
+quickjs.c:32484:27: warning: format ‘%u’ expects argument of type ‘unsigned int’, but argument 2 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+32484 |                 printf(",%u", get_u16(tab + pos + 4));
+      |                          ~^   ~~~~~~~~~~~~~~~~~~~~~~
+      |                           |   |
+      |                           |   uint32_t {aka long unsigned int}
+      |                           unsigned int
+      |                          %lu
+quickjs.c:32505:23: warning: format ‘%d’ expects argument of type ‘int’, but argument 2 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+32505 |             printf(",%d", get_u8(tab + pos + 4));
+      |                      ~^   ~~~~~~~~~~~~~~~~~~~~~
+      |                       |   |
+      |                       int uint32_t {aka long unsigned int}
+      |                      %ld
+quickjs.c:32510:23: warning: format ‘%d’ expects argument of type ‘int’, but argument 2 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+32510 |             printf(",%d", get_u16(tab + pos + 4));
+      |                      ~^   ~~~~~~~~~~~~~~~~~~~~~~
+      |                       |   |
+      |                       int uint32_t {aka long unsigned int}
+      |                      %ld
+quickjs.c:32524:27: warning: format ‘%u’ expects argument of type ‘unsigned int’, but argument 2 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+32524 |                 printf(",%u", get_u8(tab + pos + 8));
+      |                          ~^   ~~~~~~~~~~~~~~~~~~~~~
+      |                           |   |
+      |                           |   uint32_t {aka long unsigned int}
+      |                           unsigned int
+      |                          %lu
+quickjs.c:32526:27: warning: format ‘%u’ expects argument of type ‘unsigned int’, but argument 2 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+32526 |                 printf(",%u", get_u16(tab + pos + 8));
+      |                          ~^   ~~~~~~~~~~~~~~~~~~~~~~
+      |                           |   |
+      |                           |   uint32_t {aka long unsigned int}
+      |                           unsigned int
+      |                          %lu
+quickjs.c: In function ‘resolve_labels’:
+quickjs.c:35663:17: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+35663 |                 int op1 = (cc.op == OP_strict_eq || cc.op == OP_eq) ? OP_strict_eq : OP_strict_neq;
+      |                 ^~~
+quickjs.c: In function ‘ss_check’:
+quickjs.c:35855:71: warning: format ‘%d’ expects argument of type ‘int’, but argument 3 has type ‘int32_t’ {aka ‘long int’} [-Wformat=]
+35855 |             JS_ThrowInternalError(ctx, "inconsistent catch position: %d %d (pc=%d)",
+      |                                                                      ~^
+      |                                                                       |
+      |                                                                       int
+      |                                                                      %ld
+35856 |                                   s->catch_pos_tab[pos], catch_pos, pos);
+      |                                   ~~~~~~~~~~~~~~~~~~~~~                
+      |                                                   |
+      |                                                   int32_t {aka long int}
+quickjs.c: In function ‘JS_EvalThis’:
+quickjs.c:37460:9: warning: ISO C90 forbids specifying subobject to initialize [-Wpedantic]
+37460 |         .version = JS_EVAL_OPTIONS_VERSION,
+      |         ^
+quickjs.c:37461:9: warning: ISO C90 forbids specifying subobject to initialize [-Wpedantic]
+37461 |         .filename = filename,
+      |         ^
+quickjs.c:37461:21: warning: initializer element is not computable at load time [-Wpedantic]
+37461 |         .filename = filename,
+      |                     ^~~~~~~~
+quickjs.c:37462:9: warning: ISO C90 forbids specifying subobject to initialize [-Wpedantic]
+37462 |         .line_num = 1,
+      |         ^
+quickjs.c:37463:9: warning: ISO C90 forbids specifying subobject to initialize [-Wpedantic]
+37463 |         .eval_flags = eval_flags
+      |         ^
+quickjs.c:37463:23: warning: initializer element is not computable at load time [-Wpedantic]
+37463 |         .eval_flags = eval_flags
+      |                       ^~~~~~~~~~
+quickjs.c:37464:5: warning: initializer element is not computable at load time [-Wpedantic]
+37464 |     };
+      |     ^
+quickjs.c: In function ‘JS_EvalThis2’:
+quickjs.c:37484:5: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+37484 |     JSValue ret;
+      |     ^~~~~~~
+quickjs.c: In function ‘JS_Eval’:
+quickjs.c:37497:9: warning: ISO C90 forbids specifying subobject to initialize [-Wpedantic]
+37497 |         .version = JS_EVAL_OPTIONS_VERSION,
+      |         ^
+quickjs.c:37498:9: warning: ISO C90 forbids specifying subobject to initialize [-Wpedantic]
+37498 |         .filename = filename,
+      |         ^
+quickjs.c:37498:21: warning: initializer element is not computable at load time [-Wpedantic]
+37498 |         .filename = filename,
+      |                     ^~~~~~~~
+quickjs.c:37499:9: warning: ISO C90 forbids specifying subobject to initialize [-Wpedantic]
+37499 |         .line_num = 1,
+      |         ^
+quickjs.c:37500:9: warning: ISO C90 forbids specifying subobject to initialize [-Wpedantic]
+37500 |         .eval_flags = eval_flags
+      |         ^
+quickjs.c:37500:23: warning: initializer element is not computable at load time [-Wpedantic]
+37500 |         .eval_flags = eval_flags
+      |                       ^~~~~~~~~~
+quickjs.c:37501:5: warning: initializer element is not computable at load time [-Wpedantic]
+37501 |     };
+      |     ^
+quickjs.c: In function ‘JS_WriteObjectRec’:
+quickjs.c:38365:13: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+38365 |             JSAtom atom = js_get_atom_index(s->ctx->rt, p);
+      |             ^~~~~~
+quickjs.c:38372:58: warning: format ‘%d’ expects argument of type ‘int’, but argument 3 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+38372 |         JS_ThrowInternalError(s->ctx, "unsupported tag (%d)", tag);
+      |                                                         ~^    ~~~
+      |                                                          |    |
+      |                                                          int  uint32_t {aka long unsigned int}
+      |                                                         %ld
+quickjs.c: In function ‘JS_ReadBigInt’:
+quickjs.c:38799:22: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+38799 |     bc_read_trace(s, "len=%" PRId64 "\n", (int64_t)len);
+      |                      ^~~~~~~
+quickjs.c: In function ‘JS_ReadObjectRec’:
+quickjs.c:39539:32: warning: format ‘%d’ expects argument of type ‘int’, but argument 3 has type ‘int32_t’ {aka ‘long int’} [-Wformat=]
+39539 |             bc_read_trace(s, "%d\n", val);
+      |                               ~^     ~~~
+      |                                |     |
+      |                                int   int32_t {aka long int}
+      |                               %ld
+quickjs.c:39610:32: warning: format ‘%u’ expects argument of type ‘unsigned int’, but argument 3 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+39610 |             bc_read_trace(s, "%u\n", val);
+      |                               ~^     ~~~
+      |                                |     |
+      |                                |     uint32_t {aka long unsigned int}
+      |                                unsigned int
+      |                               %lu
+quickjs.c:39612:77: warning: format ‘%u’ expects argument of type ‘unsigned int’, but argument 3 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+39612 |                 return JS_ThrowSyntaxError(ctx, "invalid object reference (%u >= %u)",
+      |                                                                            ~^
+      |                                                                             |
+      |                                                                             unsigned int
+      |                                                                            %lu
+39613 |                                            val, s->objects_count);
+      |                                            ~~~                               
+      |                                            |
+      |                                            uint32_t {aka long unsigned int}
+quickjs.c: In function ‘JS_ReadObjectAtoms’:
+quickjs.c:39672:66: warning: format ‘%u’ expects argument of type ‘unsigned int’, but argument 3 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+39672 |         JS_ThrowInternalError(s->ctx, "unreasonable atom count: %u",
+      |                                                                 ~^
+      |                                                                  |
+      |                                                                  unsigned int
+      |                                                                 %lu
+39673 |                               s->idx_to_atom_count);
+      |                               ~~~~~~~~~~~~~~~~~~~~                
+      |                                |
+      |                                uint32_t {aka long unsigned int}
+quickjs.c:39677:24: warning: format ‘%u’ expects argument of type ‘unsigned int’, but argument 3 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+39677 |     bc_read_trace(s, "%u atom indexes {\n", s->idx_to_atom_count);
+      |                       ~^                    ~~~~~~~~~~~~~~~~~~~~
+      |                        |                     |
+      |                        unsigned int          uint32_t {aka long unsigned int}
+      |                       %lu
+quickjs.c: In function ‘JS_NewGlobalCConstructorMagic’:
+quickjs.c:40062:28: warning: ISO C90 forbids specifying subobject to initialize [-Wpedantic]
+40062 |     JSCFunctionType ft = { .constructor_magic = func };
+      |                            ^
+quickjs.c:40062:49: warning: initializer element is not computable at load time [-Wpedantic]
+40062 |     JSCFunctionType ft = { .constructor_magic = func };
+      |                                                 ^~~~
+quickjs.c: In function ‘JS_ToObjectFree’:
+quickjs.c:40264:5: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+40264 |     JSValue obj = JS_ToObject(ctx, val);
+      |     ^~~~~~~
+quickjs.c: In function ‘js_array_with’:
+quickjs.c:42497:33: warning: ISO C90 does not support the ‘ll’ gnu_printf length modifier [-Wformat=]
+42497 |         JS_ThrowRangeError(ctx, "invalid array index: %" PRId64, idx);
+      |                                 ^~~~~~~~~~~~~~~~~~~~~~~~
+quickjs.c: In function ‘JS_FlattenIntoArray’:
+quickjs.c:43706:38: warning: initializer element is not computable at load time [-Wpedantic]
+43706 |             JSValueConst args[3] = { element, index, source };
+      |                                      ^~~~~~~
+quickjs.c:43706:47: warning: initializer element is not computable at load time [-Wpedantic]
+43706 |             JSValueConst args[3] = { element, index, source };
+      |                                               ^~~~~
+quickjs.c:43706:54: warning: initializer element is not computable at load time [-Wpedantic]
+43706 |             JSValueConst args[3] = { element, index, source };
+      |                                                      ^~~~~~
+quickjs.c: In function ‘js_array_sort’:
+quickjs.c:43870:39: warning: initializer element is not computable at load time [-Wpedantic]
+43870 |     struct array_sort_context asc = { ctx, 0, 0, argv[0] };
+      |                                       ^~~
+quickjs.c:43870:50: warning: initializer element is not computable at load time [-Wpedantic]
+43870 |     struct array_sort_context asc = { ctx, 0, 0, argv[0] };
+      |                                                  ^~~~
+quickjs.c: At top level:
+quickjs.c:44244:14: warning: type of bit-field ‘index’ is a GCC extension [-Wpedantic]
+44244 |     uint32_t index : 31; /* elements (not pairs!) in values[] array */
+      |              ^~~~~
+quickjs.c:44245:14: warning: type of bit-field ‘unused’ is a GCC extension [-Wpedantic]
+44245 |     uint32_t unused : 1;
+      |              ^~~~~~
+quickjs.c:44246:14: warning: type of bit-field ‘count’ is a GCC extension [-Wpedantic]
+44246 |     uint32_t count : 31;
+      |              ^~~~~
+quickjs.c:44247:14: warning: type of bit-field ‘running’ is a GCC extension [-Wpedantic]
+44247 |     uint32_t running : 1;
+      |              ^~~~~~~
+quickjs.c:44248:25: warning: ISO C90 does not support flexible array members [-Wpedantic]
+44248 |     JSValue iter, next, values[]; /* array of (object, method) pairs */
+      |                         ^~~~~~
+quickjs.c: In function ‘js_iterator_concat’:
+quickjs.c:44405:5: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+44405 |     int i;
+      |     ^~~
+quickjs.c: At top level:
+quickjs.c:44500:30: warning: type of bit-field ‘kind’ is a GCC extension [-Wpedantic]
+44500 |     JSIteratorHelperKindEnum kind : 8;
+      |                              ^~~~
+quickjs.c:44501:13: warning: type of bit-field ‘executing’ is a GCC extension [-Wpedantic]
+44501 |     uint8_t executing : 1;
+      |             ^~~~~~~~~
+quickjs.c:44502:13: warning: type of bit-field ‘done’ is a GCC extension [-Wpedantic]
+44502 |     uint8_t done : 1;
+      |             ^~~~
+quickjs.c:45404:42: warning: use of C99 long long integer constant [-Wlong-long]
+45404 |     JS_PROP_U2D_DEF("NaN",               0x7FF8ull<<48, 0 ),
+      |                                          ^~~~~~~~~
+quickjs.h:1446:42: note: in definition of macro ‘JS_PROP_U2D_DEF’
+ 1446 |       NULL, 0, NULL, 0, NULL, 0, 0, 0.0, val }
+      |                                          ^~~
+quickjs.c:45405:42: warning: use of C99 long long integer constant [-Wlong-long]
+45405 |     JS_PROP_U2D_DEF("NEGATIVE_INFINITY", 0xFFF0ull<<48, 0 ),
+      |                                          ^~~~~~~~~
+quickjs.h:1446:42: note: in definition of macro ‘JS_PROP_U2D_DEF’
+ 1446 |       NULL, 0, NULL, 0, NULL, 0, 0, 0.0, val }
+      |                                          ^~~
+quickjs.c:45406:42: warning: use of C99 long long integer constant [-Wlong-long]
+45406 |     JS_PROP_U2D_DEF("POSITIVE_INFINITY", 0x7FF0ull<<48, 0 )};
+      |                                          ^~~~~~~~~
+quickjs.h:1446:42: note: in definition of macro ‘JS_PROP_U2D_DEF’
+ 1446 |       NULL, 0, NULL, 0, NULL, 0, 0, 0.0, val }
+      |                                          ^~~
+quickjs.c: In function ‘js_parseInt’:
+quickjs.c:45570:25: warning: passing argument 2 of ‘JS_ToInt32’ from incompatible pointer type [-Wincompatible-pointer-types]
+45570 |     if (JS_ToInt32(ctx, &radix, argv[1])) {
+      |                         ^~~~~~
+      |                         |
+      |                         int *
+quickjs.c:13938:41: note: expected ‘int32_t *’ {aka ‘long int *’} but argument is of type ‘int *’
+13938 | int JS_ToInt32(JSContext *ctx, int32_t *pres, JSValueConst val)
+      |                                ~~~~~~~~~^~~~
+quickjs.c:45575:9: warning: integer constant is too large for ‘long’ type [-Wlong-long]
+45575 |         ret = JS_NAN;
+      |         ^~~
+quickjs.c: In function ‘js_string_charCodeAt’:
+quickjs.c:45975:9: warning: integer constant is too large for ‘long’ type [-Wlong-long]
+45975 |         ret = JS_NAN;
+      |         ^~~
+quickjs.c: In function ‘js_string_CreateHTML’:
+quickjs.c:47310:9: error: C++ style comments are not allowed in ISO C90
+47310 |         // r += " " + attr + "=\"" + value + "\"";
+      |         ^
+quickjs.c:47310:9: note: (this will be reported only once per input file)
+quickjs.c: In function ‘js_math_round’:
+quickjs.c:47512:9: warning: integer constant is too large for ‘long’ type [-Wlong-long]
+47512 |         if (e == (1023 - 1) && u.u64 != 0xbfe0000000000000) {
+      |         ^~
+quickjs.c: At top level:
+quickjs.c:47601:26: warning: comma at end of enumerator list [-Wpedantic]
+47601 |     SUM_PRECISE_STATE_NAN, /* must be after SUM_PRECISE_STATE_MINUS_INFINITY */
+      |                          ^
+quickjs.c: In function ‘xorshift64star’:
+quickjs.c:47850:5: warning: integer constant is too large for ‘long’ type [-Wlong-long]
+47850 |     return x * 0x2545F4914F6CDD1D;
+      |     ^~~~~~
+quickjs.c: In function ‘getTimezoneOffset’:
+quickjs.c:47998:5: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+47998 |     struct tm gmt;
+      |     ^~~~~~
+quickjs.c: In function ‘js_regexp_escape’:
+quickjs.c:48519:43: warning: format ‘%x’ expects argument of type ‘unsigned int’, but argument 4 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+48519 |             snprintf(s, sizeof(s), "\\x%02x", c);
+      |                                        ~~~^   ~
+      |                                           |   |
+      |                                           |   uint32_t {aka long unsigned int}
+      |                                           unsigned int
+      |                                        %02lx
+quickjs.c:48522:43: warning: format ‘%x’ expects argument of type ‘unsigned int’, but argument 4 has type ‘uint32_t’ {aka ‘long unsigned int’} [-Wformat=]
+48522 |             snprintf(s, sizeof(s), "\\u%04x", c);
+      |                                        ~~~^   ~
+      |                                           |   |
+      |                                           |   uint32_t {aka long unsigned int}
+      |                                           unsigned int
+      |                                        %04lx
+quickjs.c: In function ‘js_map_finalizer’:
+quickjs.c:52596:28: warning: unused variable ‘el1’ [-Wunused-variable]
+52596 |     struct list_head *el, *el1;
+      |                            ^~~
+quickjs.c:52596:23: warning: unused variable ‘el’ [-Wunused-variable]
+52596 |     struct list_head *el, *el1;
+      |                       ^~
+quickjs.c: At top level:
+quickjs.c:53571:26: warning: comma at end of enumerator list [-Wpedantic]
+53571 |     JS_DISPOSE_HINT_DEFER,  /* defer: Call(method, undefined) */
+      |                          ^
+quickjs.c:54283:28: warning: anonymous variadic macros were introduced in C99 [-Wvariadic-macros]
+54283 | #define promise_trace(ctx, ...) \
+      |                            ^~~
+quickjs.c: In function ‘JS_SetHostPromiseRejectionTracker’:
+quickjs.c:54346:28: warning: unused variable ‘el1’ [-Wunused-variable]
+54346 |     struct list_head *el, *el1;
+      |                            ^~~
+quickjs.c:54346:23: warning: unused variable ‘el’ [-Wunused-variable]
+54346 |     struct list_head *el, *el1;
+      |                       ^~
+quickjs.c: In function ‘js_promise_finalizer’:
+quickjs.c:54565:28: warning: unused variable ‘el1’ [-Wunused-variable]
+54565 |     struct list_head *el, *el1;
+      |                            ^~~
+quickjs.c:54565:23: warning: unused variable ‘el’ [-Wunused-variable]
+54565 |     struct list_head *el, *el1;
+      |                       ^~
+quickjs.c: At top level:
+quickjs.c:55951:33: warning: use of C99 long long integer constant [-Wlong-long]
+55951 |     JS_PROP_U2D_DEF("Infinity", 0x7FF0ull<<48, 0 ),
+      |                                 ^~~~~~~~~
+quickjs.h:1446:42: note: in definition of macro ‘JS_PROP_U2D_DEF’
+ 1446 |       NULL, 0, NULL, 0, NULL, 0, 0, 0.0, val }
+      |                                          ^~~
+quickjs.c:55952:28: warning: use of C99 long long integer constant [-Wlong-long]
+55952 |     JS_PROP_U2D_DEF("NaN", 0x7FF8ull<<48, 0 ),
+      |                            ^~~~~~~~~
+quickjs.h:1446:42: note: in definition of macro ‘JS_PROP_U2D_DEF’
+ 1446 |       NULL, 0, NULL, 0, NULL, 0, 0, 0.0, val }
+      |                                          ^~~
+quickjs.c:56036:53: warning: ISO C90 does not support ‘static’ or type qualifiers in parameter array declarators [-Wpedantic]
+56036 |                                        double fields[minimum_length(9)],
+      |                                                     ^
+quickjs.c:56098:44: warning: ISO C90 does not support ‘static’ or type qualifiers in parameter array declarators [-Wpedantic]
+56098 | static double set_date_fields(double fields[minimum_length(7)], int is_local) {
+      |                                            ^
+quickjs.c: In function ‘get_date_field’:
+quickjs.c:56173:9: warning: integer constant is too large for ‘long’ type [-Wlong-long]
+56173 |         return JS_NAN;
+      |         ^~~~~~
+quickjs.c: In function ‘set_date_field’:
+quickjs.c:56209:9: warning: integer constant is too large for ‘long’ type [-Wlong-long]
+56209 |         return JS_NAN;
+      |         ^~~~~~
+quickjs.c: In function ‘js_Date_UTC’:
+quickjs.c:56418:9: warning: integer constant is too large for ‘long’ type [-Wlong-long]
+56418 |         return JS_NAN;
+      |         ^~~~~~
+quickjs.c:56425:13: warning: integer constant is too large for ‘long’ type [-Wlong-long]
+56425 |             return JS_NAN;
+      |             ^~~~~~
+quickjs.c: At top level:
+quickjs.c:56692:49: warning: ISO C90 does not support ‘static’ or type qualifiers in parameter array declarators [-Wpedantic]
+56692 |                                       int fields[minimum_length(9)],
+      |                                                 ^
+quickjs.c: In function ‘js_Date_parse’:
+quickjs.c:56856:5: warning: integer constant is too large for ‘long’ type [-Wlong-long]
+56856 |     rv = JS_NAN;
+      |     ^~
+quickjs.c: In function ‘js_date_getTimezoneOffset’:
+quickjs.c:56942:9: warning: integer constant is too large for ‘long’ type [-Wlong-long]
+56942 |         return JS_NAN;
+      |         ^~~~~~
+quickjs.c: In function ‘js_array_buffer_finalizer’:
+quickjs.c:57906:28: warning: unused variable ‘el1’ [-Wunused-variable]
+57906 |     struct list_head *el, *el1;
+      |                            ^~~
+quickjs.c:57906:23: warning: unused variable ‘el’ [-Wunused-variable]
+57906 |     struct list_head *el, *el1;
+      |                       ^~
+quickjs.c: In function ‘js_finrec_free’:
+quickjs.c:61710:28: warning: unused variable ‘el1’ [-Wunused-variable]
+61710 |     struct list_head *el, *el1;
+      |                            ^~~
+quickjs.c:61710:23: warning: unused variable ‘el’ [-Wunused-variable]
+61710 |     struct list_head *el, *el1;
+      |                       ^~
+quickjs.c: In function ‘js_finrec_finalizer’:
+quickjs.c:61720:28: warning: unused variable ‘el1’ [-Wunused-variable]
+61720 |     struct list_head *el, *el1;
+      |                            ^~~
+quickjs.c:61720:23: warning: unused variable ‘el’ [-Wunused-variable]
+61720 |     struct list_head *el, *el1;
+      |                       ^~
+make: *** [Makefile.retro68:16: quickjs.o] Error 1
