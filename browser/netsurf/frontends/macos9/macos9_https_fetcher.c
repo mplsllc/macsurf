@@ -2147,7 +2147,38 @@ static void hctx_poll(struct macos9_https_ctx *c)
 
 static bool macos9_https_initialise(lwc_string *s) { (void)s; return true; }
 static void macos9_https_finalise(lwc_string *s)   { (void)s; }
-static bool macos9_https_acceptable(const struct nsurl *u) { (void)u; return true; }
+/* fixes499d — refuse to fetch pure-analytics / never-executed bundles so
+ * we don't pay their download cost on every page load. These are JS we
+ * already SKIP in js_exec, so downloading them is wasted bandwidth+time:
+ *   - googletagmanager / gtag : Google Analytics, ~366 KB, never run.
+ * Returning false here makes NetSurf treat the subresource as
+ * unavailable (it simply doesn't load — nothing on the page depends on
+ * it). Only matches analytics; all functional resources still fetch.
+ * Kept narrow on purpose: the XF upload bundles (exif/attachment) are
+ * NOT blocked here because XF's loader may probe their load state. */
+static bool macos9_https_acceptable(const struct nsurl *u)
+{
+	lwc_string *host_lwc;
+	const char *host;
+	bool block = false;
+
+	if (u == NULL) return true;
+	host_lwc = nsurl_get_component((struct nsurl *)u, NSURL_HOST);
+	if (host_lwc != NULL) {
+		host = lwc_string_data(host_lwc);
+		if (host != NULL &&
+		    (strstr(host, "googletagmanager") != NULL ||
+		     strstr(host, "google-analytics") != NULL)) {
+			block = true;
+		}
+		lwc_string_unref(host_lwc);
+	}
+	if (block) {
+		macsurf_debug_log_writef("https: BLOCK analytics host");
+		return false;
+	}
+	return true;
+}
 
 static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 	bool o, bool d, const char *pu,

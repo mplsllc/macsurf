@@ -137,6 +137,18 @@ scrollbar_create(bool horizontal,
  */
 void scrollbar_destroy(struct scrollbar *s)
 {
+	/* fixes499f — NULL guard. scrollbar_destroy must be a no-op on a NULL
+	 * scrollbar: it is reached during content teardown
+	 * (content_remove_user -> scrollbar_destroy) where a box's scrollbar
+	 * pointer can legitimately be NULL (never created) or already freed by
+	 * a prior teardown pass. Without this, `s->pair` dereferences NULL and
+	 * the `s->pair->pair = NULL` store writes through a near-NULL address.
+	 * Crash signature: unmapped-memory exception, stw r0,0(r5) with r5~0,
+	 * stack scrollbar_destroy <- content_remove_user <-
+	 * hlcache_handle_release <- html_script_free <- ... <- hlcache_clean. */
+	if (s == NULL) {
+		return;
+	}
 	if (s->pair != NULL) {
 		s->pair->pair = NULL;
 	}

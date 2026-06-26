@@ -655,11 +655,29 @@ nserror html_script_free(html_content *html)
 		case HTML_SCRIPT_DEFER:
 			if (html->scripts[i].data.handle != NULL) {
 				hlcache_handle_release(html->scripts[i].data.handle);
+				/* fixes499e — NULL the handle immediately after
+				 * release. Without this, a second teardown pass
+				 * (html_destroy fired from the scheduler after the
+				 * content's handles were already released elsewhere)
+				 * re-enters here with a stale pointer and
+				 * hlcache_handle_release dereferences freed memory.
+				 * Crash signature: unmapped-memory exception in
+				 * hlcache_handle_release+24 reading off+0x30 of a bad
+				 * handle, stack html_script_free -> html_destroy ->
+				 * content_destroy -> macos9_schedule_run. Nulling makes
+				 * the release idempotent (the != NULL guard now skips
+				 * an already-freed handle on any later pass). */
+				html->scripts[i].data.handle = NULL;
 			}
 			break;
 		}
 	}
 	free(html->scripts);
+	/* fixes499e — also NULL the array + count so a duplicate
+	 * html_script_free / html_destroy can't walk freed `scripts` memory.
+	 * The loop guard (i != scripts_count) then runs zero times. */
+	html->scripts = NULL;
+	html->scripts_count = 0;
 
 	return NSERROR_OK;
 }

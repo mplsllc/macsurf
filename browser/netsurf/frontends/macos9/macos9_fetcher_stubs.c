@@ -87,14 +87,8 @@ static const char css_default[] =
 	"table[border],table[border] td,table[border] tr{"
 	"border-color:#888;border-style:solid;border-width:1px}"
 	/* Body + headings */
-	/* fixes475: XenForo (and some other sites) set body{overflow-y:scroll!important}
-	 * to prevent layout-shift when dynamic content changes scrollbar visibility.
-	 * NetSurf treats this literally — it creates a scrollbar widget for the body
-	 * element and draws it inside the content area, producing an extra scroll bar
-	 * and a static ~60px gap before MacSurf's own vscroll. UA !important beats
-	 * author !important in the cascade, so we override back to visible. */
 	"body{margin:8px;line-height:1.33;color:#000;background:#fff;"
-	"font-family:sans-serif;font-size:13px;overflow:visible!important}"
+	"font-family:sans-serif;font-size:13px}"
 	"h1{font-size:2em;margin:.67em 0;font-weight:bold}"
 	"h2{font-size:1.5em;margin:.83em 0;font-weight:bold}"
 	"h3{font-size:1.17em;margin:1em 0;font-weight:bold}"
@@ -153,21 +147,16 @@ static const char css_default[] =
 	"text-align:center}"
 	"input[type=hidden]{display:none}"
 	"input[type=checkbox],input[type=radio]{border:0;padding:0}"
-	/* fixes479: XenForo editor textarea visibility.
-	 * Containers need height/overflow freed so the textarea can expand.
-	 * [data-xf-init~="editor"] matches space-separated multi-value attrs.
-	 * .js-editor is the class XF uses to target its editor textareas. */
-	".inputGroup,.formRow,.formRow>*,.messageEditor,.messageEditor>*,"
-	".editorWrapper{min-height:200px!important;height:auto!important;"
-	"max-height:none!important;overflow:visible!important}"
-	"textarea[data-xf-init~=\"editor\"],textarea.js-editor,textarea.input{"
-	"display:block!important;visibility:visible!important;"
-	"width:100%!important;min-height:280px!important;height:320px!important;"
-	"max-height:600px!important;padding:8px!important;"
-	"border:2px solid #888!important;box-sizing:border-box!important;"
-	"background:#fff!important;color:#000!important;"
-	"resize:vertical!important;font-family:monospace!important;"
-	"font-size:12px!important}"
+	/* fixes497: XenForo editor textarea reveal is done in JS (the editor
+	 * stub strips `u-jsOnly` and sets an inline !important style on the
+	 * real <textarea class="js-editor">). The earlier UA-stylesheet
+	 * reveals (fixes479/492/496b: editorPlaceholder un-hide, textarea
+	 * force-show, container min-heights) were REMOVED — a UA !important
+	 * rule cannot override an author !important (`.u-jsOnly{display:none
+	 * !important}`), so they never took effect AND the blanket
+	 * `.formRow,.formRow>*{min-height:200px!important}` risked distorting
+	 * unrelated form rows. Inline style from JS is the only layer that
+	 * wins, so the reveal lives there now. */
 	/* fixes469: form inputs lack intrinsic width in NetSurf's minmax pass
 	 * (b->max_width=0 for replaced form elements with no text content).
 	 * In a flex container with flex-basis:auto, base_size=0, so the input
@@ -271,21 +260,29 @@ static const char css_internal[] =
 	 * articles/main/section [hidden] rescue rules later in this
 	 * sheet still override. */
 	" [hidden]{display:none}"
-	/* XenForo 2.x: header and post editor are JS-gated but usable
-	 * without has-js. Force them visible. */
-	" .p-header{display:block!important}"
-	" .js-bbCodeInput,.bbCodeInput textarea"
-	"{display:block!important;width:100%!important;min-height:150px!important}"
-	/* fixes473: XenForo .node-main is a flex item with min-width:0, which
-	 * lets it collapse to zero in NetSurf when the row has no definite
-	 * width. One char per line results. Floor it so text wraps normally. */
-	" .node-main{min-width:150px!important}"
-	/* fixes474: .node-extra-icon has float:left inside a table-layout:fixed
-	 * cell. NetSurf's find_sides() picks up the escaped float and reduces
-	 * available_width for subsequent sibling .node-body tables to <= 326px,
-	 * collapsing the AUTO column (.node-main) to 0. Suppressing the float
-	 * prevents the escape; visual impact is minor (avatar becomes inline). */
-	" .node-extra-icon{float:none!important}";
+	/* fixes499c — modest post spacing on XenForo message blocks. The old
+	 * patches forced large min-heights (distorting layout); this is gentle,
+	 * NON-!important breathing room only — author CSS still wins where it
+	 * sets its own. Just enough to separate stacked posts/articles. */
+	" .message,.block-row,article.message{margin-bottom:10px}"
+	" .message-inner,.message-cell--main{padding:6px 0}"
+	/* fixes499d — give the post editor a little vertical breathing room so
+	 * the "Attach files" button row below the textarea isn't clipped where
+	 * the editor wrapper meets the Options row. The editor textarea has an
+	 * inline fixed height (set by the reveal), so the attach/footer row was
+	 * overflowing the container; a small bottom margin clears it. Gentle,
+	 * non-!important. */
+	" .formRow--editor,.bbCodeEditorContainer,.fr-box,.editorPlaceholder{"
+	"margin-bottom:18px}"
+	" .formButtonGroup,.js-attachmentUpload,.formSubmitRow{margin-top:8px}";
+	/* fixes497: all XenForo-specific UA CSS overrides removed (clean
+	 * slate). These were .p-header / .js-bbCodeInput / textarea.js-editor /
+	 * .node-main / .node-extra-icon force rules plus the editorPlaceholder
+	 * reveals. Several couldn't take effect (UA !important loses to author
+	 * !important) and the blanket min-width/min-height/float overrides risk
+	 * distorting unrelated layout. We add back only what a specific,
+	 * confirmed bug needs. The editor textarea reveal now lives in the JS
+	 * editor stub (inline style, which DOES outrank author !important). */
 
 static const char css_quirks[] =
 	"table{font-size:inherit;font-weight:inherit;text-align:start;"

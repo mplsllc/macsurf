@@ -312,6 +312,344 @@ es6_block_end(const char *s, size_t n, size_t b)
 	return 0; /* unbalanced */
 }
 
+/* Scan a balanced parenthesis group starting at s[b]=='('; return the index of
+ * the matching ')', or 0 if unbalanced. Lexer-aware (skips strings/comments/
+ * regex inside). Used by the method-shorthand pass to find a param list end. */
+static size_t
+es6_paren_end(const char *s, size_t n, size_t b)
+{
+	size_t i;
+	int st;
+	int prev_sig;
+	int depth;
+
+	if (b >= n || s[b] != '(')
+		return 0;
+	i = b + 1;
+	st = ES_CODE;
+	prev_sig = '(';
+	depth = 1;
+	while (i < n) {
+		char c = s[i];
+		if (st == ES_CODE) {
+			if (c == '/' && i + 1 < n && s[i + 1] == '/') { i += 2; st = ES_LCOM; continue; }
+			if (c == '/' && i + 1 < n && s[i + 1] == '*') { i += 2; st = ES_BCOM; continue; }
+			if (c == '/' && es6_regex_ctx(prev_sig)) { i++; st = ES_RE; continue; }
+			if (c == '\'') { i++; st = ES_SQ; prev_sig = c; continue; }
+			if (c == '"')  { i++; st = ES_DQ; prev_sig = c; continue; }
+			if (c == '`')  { i++; st = ES_TMPL; prev_sig = c; continue; }
+			if (c == '(') depth++;
+			else if (c == ')') { depth--; if (depth == 0) return i; }
+			if (c != ' ' && c != '\t' && c != '\n' && c != '\r')
+				prev_sig = c;
+			i++;
+			continue;
+		}
+		if (st == ES_SQ) {
+			if (c == '\\' && i + 1 < n) i += 2;
+			else { if (c == '\'') st = ES_CODE; i++; }
+			continue;
+		}
+		if (st == ES_DQ) {
+			if (c == '\\' && i + 1 < n) i += 2;
+			else { if (c == '"') st = ES_CODE; i++; }
+			continue;
+		}
+		if (st == ES_TMPL) {
+			if (c == '\\' && i + 1 < n) i += 2;
+			else { if (c == '`') st = ES_CODE; i++; }
+			continue;
+		}
+		if (st == ES_LCOM) { if (c == '\n') st = ES_CODE; i++; continue; }
+		if (st == ES_BCOM) {
+			if (c == '*' && i + 1 < n && s[i + 1] == '/') { i += 2; st = ES_CODE; }
+			else i++;
+			continue;
+		}
+		/* ES_RE */
+		if (c == '[') {
+			i++;
+			while (i < n && s[i] != ']') {
+				if (s[i] == '\\' && i + 1 < n) i++;
+				i++;
+			}
+			if (i < n) i++;
+			continue;
+		}
+		if (c == '\\' && i + 1 < n) i += 2;
+		else { if (c == '/') { st = ES_CODE; prev_sig = '/'; } i++; }
+	}
+	return 0; /* unbalanced */
+}
+
+/* ===================================================================== */
+/* STAGE 1b: ES6 method shorthand -> name:function (object literals)      */
+/* and  name(args){...} -> name:function(args){...}                       */
+/*                                                                        */
+/* XenForo's compiled bundles (editor-compiled.js, action.min.js,        */
+/* prefix_menu.min.js, message.min.js, ...) define handlers as object     */
+/* literals using ES6 method shorthand:                                   */
+/*     XF.Element.newHandler({ init(){...}, click(a){...} })              */
+/* Duktape 2.7 is ES5.1 and rejects `name(){}` in an object literal       */
+/* (it's the single most common construct that blocked those bundles).    */
+/* This pass rewrites a shorthand method  IDENT(PARAMS){  to              */
+/*   IDENT:function(PARAMS){  so the result is ES5-clean.                  */
+/*                                                                        */
+/* Detection (conservative, lexer-aware):                                 */
+/*   - in code context, an identifier whose previous significant char is  */
+/*     '{' or ',' (an object-literal member boundary),                    */
+/*   - immediately (modulo whitespace) followed by a balanced (...) group,*/
+/*   - then (modulo whitespace) a '{' that opens a balanced block.        */
+/*   The identifier must not be a reserved word that legitimately takes   */
+/*   `(){` in that position (none do at a member boundary, but we still   */
+/*   skip get/set/async-prefixed forms to avoid changing accessor/async   */
+/*   semantics — those are handled, or stripped, by other passes).        */
+/* This never matches a call `foo(x)` (prev sig there is an operand/`)`/  */
+/* `;`, not '{' or ','), nor control flow `if(){}` (prev sig not a member */
+/* boundary), nor a property value `k:function(){}` (the value `function` */
+/* keyword is emitted by us and prev sig before it is ':').               */
+/* ===================================================================== */
+/* Is the char before an opening '{' one that puts the brace in EXPRESSION
+ * position (so the '{' opens an object literal, not a statement block)?
+ *
+ * `enclosing_is_obj` is 1 when the brace we're currently inside is itself an
+ * object literal — needed to disambiguate ':'. After ':' a '{' is an object
+ * value ONLY when we're inside an object literal (key:{...}); in a statement
+ * context ':' is a LABEL (`label:{...}` is a block, not an object), which is
+ * exactly the case (`a:{if(...)...}`) that previously made the pass mistake
+ * `if(...)` for a method and corrupt the output.
+ *
+ * A '{' opens an object literal when the previous significant char is one of
+ * = ( , [ ? & | ! + - * / % < > ^ ~  (true expression operators), or ':' when
+ * already inside an object literal. A block follows ) } ; : (label) or start. */
+static int
+es6_brace_is_object(int prev, int enclosing_is_obj)
+{
+	if (prev == 0)
+		return 0; /* start of program: a leading { is a block */
+	if (prev == ':')
+		return enclosing_is_obj; /* key:{...} vs label:{...} */
+	/* NOTE: '>' is deliberately EXCLUDED. The only common `>{` is an arrow
+	 * body `=>{...}`, which opens a function block, not an object. Treating
+	 * it as a block is what keeps `forEach(x=>{if(...)...})` from having its
+	 * `if(...)` mistaken for a method. A genuine `a > {obj}` comparison is
+	 * vanishingly rare and harmless to skip. '<' is likewise excluded. */
+	return strchr("=(,[?&|!+-*/%^~", prev) != NULL;
+}
+
+/* Brace-context stack depth cap. Real code nests far less than this; on
+ * overflow we conservatively treat further braces as blocks (no transform). */
+#define ES_MS_STACK 256
+
+static size_t
+es6_method_shorthand_pass(const char *src, size_t len, char *out, size_t cap)
+{
+	size_t i;
+	size_t o;
+	int    st;
+	int    prev_sig;
+	/* obj_stack[d] == 1 if the brace at depth d opened an object literal. */
+	char   obj_stack[ES_MS_STACK];
+	int    depth;
+
+	if (src == NULL || out == NULL || cap == 0)
+		return 0;
+
+	i = 0;
+	o = 0;
+	st = ES_CODE;
+	prev_sig = 0;
+	depth = 0;
+
+	while (i < len) {
+		char c = src[i];
+		if (o + 1 >= cap) return 0;
+
+		if (st == ES_CODE) {
+			if (c == '/' && i + 1 < len && src[i + 1] == '/') {
+				out[o++] = c; out[o++] = src[i + 1]; i += 2; st = ES_LCOM; continue;
+			}
+			if (c == '/' && i + 1 < len && src[i + 1] == '*') {
+				out[o++] = c; out[o++] = src[i + 1]; i += 2; st = ES_BCOM; continue;
+			}
+			if (c == '/' && es6_regex_ctx(prev_sig)) {
+				out[o++] = c; i++; st = ES_RE; continue;
+			}
+			if (c == '\'') { out[o++] = c; prev_sig = c; i++; st = ES_SQ; continue; }
+			if (c == '"')  { out[o++] = c; prev_sig = c; i++; st = ES_DQ; continue; }
+			if (c == '`')  { out[o++] = c; prev_sig = c; i++; st = ES_TMPL; continue; }
+
+			/* Track brace context: classify every '{' as object or block. */
+			if (c == '{') {
+				int encl = (depth > 0 && depth <= ES_MS_STACK) ?
+					(int) obj_stack[depth - 1] : 0;
+				int isobj = es6_brace_is_object(prev_sig, encl);
+				if (depth < ES_MS_STACK)
+					obj_stack[depth] = (char) isobj;
+				depth++;
+				out[o++] = c; prev_sig = c; i++;
+				continue;
+			}
+			if (c == '}') {
+				if (depth > 0) depth--;
+				out[o++] = c; prev_sig = c; i++;
+				continue;
+			}
+
+			/* Candidate method shorthand? Must be at a member boundary AND
+			 * the innermost brace must be an object literal (not a block).
+			 * This is what stops `if(...){` inside a statement block from
+			 * being mistaken for a method. */
+			if ((prev_sig == '{' || prev_sig == ',') &&
+			    depth > 0 && depth <= ES_MS_STACK &&
+			    obj_stack[depth - 1] &&
+			    ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			     c == '_' || c == '$')) {
+				size_t id0 = i;
+				size_t id1;
+				size_t j;
+				size_t pclose;
+				size_t bopen;
+				int    is_method = 0;
+				int    idlen;
+				/* scan identifier */
+				j = i;
+				while (j < len && es6_is_ident((unsigned char) src[j]))
+					j++;
+				id1 = j;
+				idlen = (int)(id1 - id0);
+				/* skip whitespace */
+				while (j < len && (src[j] == ' ' || src[j] == '\t' ||
+				       src[j] == '\n' || src[j] == '\r'))
+					j++;
+				if (j < len && src[j] == '(') {
+					pclose = es6_paren_end(src, len, j);
+					if (pclose != 0) {
+						size_t k = pclose + 1;
+						while (k < len && (src[k] == ' ' ||
+						       src[k] == '\t' || src[k] == '\n' ||
+						       src[k] == '\r'))
+							k++;
+						/* Just require a '{' after the param list.
+						 * We deliberately do NOT call es6_block_end
+						 * to verify the whole block balances: that
+						 * rescans the entire (possibly huge) method
+						 * body on every member-boundary identifier,
+						 * which is O(n^2) and made the 733KB Froala
+						 * bundle take effectively forever. The '(' +
+						 * balanced ')' + '{' signature is already a
+						 * reliable method discriminator here. */
+						if (k < len && src[k] == '{') {
+							is_method = 1;
+							bopen = k;
+							(void) bopen;
+						}
+					}
+				}
+				/* Exclude get/set/async accessor/async forms — leave for
+				 * other passes (the async pass strips async; get/set are
+				 * rare in these bundles and changing them is unsafe). */
+				if (is_method) {
+					if ((idlen == 3 &&
+					     (strncmp(src + id0, "get", 3) == 0 ||
+					      strncmp(src + id0, "set", 3) == 0)) ||
+					    (idlen == 5 &&
+					     strncmp(src + id0, "async", 5) == 0)) {
+						/* but `get`/`set`/`async` could also be the
+						 * actual method NAME (e.g. {get(){...}}). Only
+						 * skip when followed by ANOTHER identifier+`(`,
+						 * i.e. a true accessor `get foo(){}`. If `(`
+						 * directly follows the keyword it IS the name. */
+						size_t p = id1;
+						while (p < len && (src[p] == ' ' ||
+						       src[p] == '\t' || src[p] == '\n' ||
+						       src[p] == '\r'))
+							p++;
+						if (p < len && src[p] != '(')
+							is_method = 0;
+					}
+				}
+				if (is_method) {
+					/* emit IDENT then ":function" */
+					if (o + (size_t)idlen + 10 >= cap) return 0;
+					memcpy(out + o, src + id0, (size_t)idlen);
+					o += (size_t)idlen;
+					memcpy(out + o, ":function", 9);
+					o += 9;
+					prev_sig = 'n';
+					i = id1; /* continue copying from after the name */
+					continue;
+				}
+				/* not a method: fall through to copy the identifier verbatim
+				 * (loop will re-enter char by char). */
+			}
+
+			out[o++] = c;
+			if (c != ' ' && c != '\t' && c != '\n' && c != '\r')
+				prev_sig = c;
+			i++;
+			continue;
+		}
+
+		if (st == ES_SQ) {
+			out[o++] = c;
+			if (c == '\\' && i + 1 < len) { i++; if (o + 1 >= cap) return 0; out[o++] = src[i]; }
+			else if (c == '\'') st = ES_CODE;
+			i++;
+			continue;
+		}
+		if (st == ES_DQ) {
+			out[o++] = c;
+			if (c == '\\' && i + 1 < len) { i++; if (o + 1 >= cap) return 0; out[o++] = src[i]; }
+			else if (c == '"') st = ES_CODE;
+			i++;
+			continue;
+		}
+		if (st == ES_TMPL) {
+			out[o++] = c;
+			if (c == '\\' && i + 1 < len) { i++; if (o + 1 >= cap) return 0; out[o++] = src[i]; }
+			else if (c == '`') st = ES_CODE;
+			i++;
+			continue;
+		}
+		if (st == ES_LCOM) {
+			out[o++] = c;
+			if (c == '\n') st = ES_CODE;
+			i++;
+			continue;
+		}
+		if (st == ES_BCOM) {
+			out[o++] = c;
+			if (c == '*' && i + 1 < len && src[i + 1] == '/') {
+				i++; if (o + 1 >= cap) return 0; out[o++] = src[i]; st = ES_CODE;
+			}
+			i++;
+			continue;
+		}
+		/* ES_RE */
+		out[o++] = c;
+		if (c == '[') {
+			i++;
+			while (i < len && src[i] != ']') {
+				if (o + 1 >= cap) return 0;
+				out[o++] = src[i];
+				if (src[i] == '\\' && i + 1 < len) { i++; if (o + 1 >= cap) return 0; out[o++] = src[i]; }
+				i++;
+			}
+			if (i < len) { if (o + 1 >= cap) return 0; out[o++] = src[i]; i++; }
+			continue;
+		} else if (c == '\\' && i + 1 < len) {
+			i++; if (o + 1 >= cap) return 0; out[o++] = src[i];
+		} else if (c == '/') {
+			st = ES_CODE; prev_sig = '/';
+		}
+		i++;
+	}
+
+	out[o] = '\0';
+	return o;
+}
+
 /* Find the end of a concise (expression) arrow body starting at s[b]. The body
  * ends at the first depth-0, ternary-balanced terminator: ',' ';' a closing
  * ')' ']' '}', a non-ternary ':', or end of input. Returns that index. */
@@ -1124,12 +1462,20 @@ es6_stmt_end(const char *s, size_t n, size_t start)
  * Only handles simple-identifier binding (skips destructuring).
  * Runs after letconst_pass so only "var" remains.
  */
+/* fixes495b: persistent across pass invocations so that re-running the
+ * for-of pass to expand NESTED for-of (a second pass sees the inner loop the
+ * first pass left untouched) never reuses a temp name (_v0_/_i0_) the prior
+ * pass already emitted at an outer level. Reused names shadowed the outer
+ * loop's index and corrupted iteration. A monotonic static counter keeps
+ * every generated temp unique within a transpile run. */
+static int g_forof_ctr = 0;
+
 static size_t
 es6_for_of_pass(const char *src, size_t len, char *out, size_t cap)
 {
 	size_t i = 0, o = 0;
 	int st = ES_CODE, prev_sig = 0;
-	int ctr = 0;
+	int ctr = g_forof_ctr;
 
 	while (i < len) {
 		char c = src[i];
@@ -1218,20 +1564,34 @@ es6_for_of_pass(const char *src, size_t len, char *out, size_t cap)
 								if (block_body) { body_e = es6_block_end(src, len, k); }
 								else {
 									size_t k2;
+									size_t bw;
+									int body_is_if;
 									body_e = es6_stmt_end(src, len, k);
 									if (body_e<len && src[body_e]=='{') body_e=es6_block_end(src,len,body_e);
-									/* consume else/else-if chain */
-									k2 = body_e;
-									while (1) {
-										while (k2<len && (src[k2]==' '||src[k2]=='\t'||src[k2]=='\n'||src[k2]=='\r')) k2++;
-										if (k2+4<=len && src[k2]=='e'&&src[k2+1]=='l'&&src[k2+2]=='s'&&src[k2+3]=='e'
-										    && (k2+4>=len||!es6_is_ident((unsigned char)src[k2+4]))) {
-											k2+=4;
+									/* Only consume a trailing else/else-if chain when the
+									 * for-of BODY is itself an `if` statement — then the
+									 * else pairs with THAT if. Otherwise a following `else`
+									 * belongs to an enclosing `if` (e.g.
+									 * `if(P)for(x of y)B;else Q`) and must NOT be pulled
+									 * into the generated loop body, which previously left a
+									 * dangling `else` inside the braces and broke parsing. */
+									bw = body_s;
+									while (bw<len && (src[bw]==' '||src[bw]=='\t'||src[bw]=='\n'||src[bw]=='\r')) bw++;
+									body_is_if = (bw+2<=len && src[bw]=='i' && src[bw+1]=='f'
+									              && (bw+2>=len || !es6_is_ident((unsigned char)src[bw+2])));
+									if (body_is_if) {
+										k2 = body_e;
+										while (1) {
 											while (k2<len && (src[k2]==' '||src[k2]=='\t'||src[k2]=='\n'||src[k2]=='\r')) k2++;
-											if (k2<len && src[k2]=='{') k2=es6_block_end(src,len,k2);
-											else { k2=es6_stmt_end(src,len,k2); if(k2<len&&src[k2]=='{') k2=es6_block_end(src,len,k2); }
-											body_e = k2;
-										} else break;
+											if (k2+4<=len && src[k2]=='e'&&src[k2+1]=='l'&&src[k2+2]=='s'&&src[k2+3]=='e'
+											    && (k2+4>=len||!es6_is_ident((unsigned char)src[k2+4]))) {
+												k2+=4;
+												while (k2<len && (src[k2]==' '||src[k2]=='\t'||src[k2]=='\n'||src[k2]=='\r')) k2++;
+												if (k2<len && src[k2]=='{') k2=es6_block_end(src,len,k2);
+												else { k2=es6_stmt_end(src,len,k2); if(k2<len&&src[k2]=='{') k2=es6_block_end(src,len,k2); }
+												body_e = k2;
+											} else break;
+										}
 									}
 								}
 								if (body_e > body_s && adcount > 0) {
@@ -1309,30 +1669,41 @@ es6_for_of_pass(const char *src, size_t len, char *out, size_t cap)
 									body_e = es6_block_end(src, len, k);
 								} else {
 									size_t k2;
+									size_t bw;
+									int body_is_if;
 									body_e = es6_stmt_end(src, len, k);
 									/* stmt_end stops AT a '{'; consume the block */
 									if (body_e < len && src[body_e] == '{')
 										body_e = es6_block_end(src, len, body_e);
-									/* consume any trailing else/else-if chains that
-									 * belong to this statement (else left outside
-									 * the for-of block would be a syntax error) */
-									k2 = body_e;
-									while (1) {
-										while (k2 < len && (src[k2]==' ' || src[k2]=='\t' || src[k2]=='\n' || src[k2]=='\r')) k2++;
-										if (k2 + 4 <= len && src[k2]=='e' && src[k2+1]=='l' && src[k2+2]=='s' && src[k2+3]=='e'
-										    && (k2 + 4 >= len || !es6_is_ident((unsigned char)src[k2+4]))) {
-											k2 += 4;
+									/* Only consume a trailing else/else-if chain when the
+									 * for-of BODY is itself an `if` — then the else pairs
+									 * with that if. Otherwise a following `else` belongs to
+									 * an enclosing `if` (e.g. `if(P)for(x of y)B;else Q`)
+									 * and pulling it into the loop body leaves a dangling
+									 * `else` that breaks parsing (Froala paste handler). */
+									bw = body_s;
+									while (bw < len && (src[bw]==' '||src[bw]=='\t'||src[bw]=='\n'||src[bw]=='\r')) bw++;
+									body_is_if = (bw + 2 <= len && src[bw]=='i' && src[bw+1]=='f'
+									              && (bw+2 >= len || !es6_is_ident((unsigned char)src[bw+2])));
+									if (body_is_if) {
+										k2 = body_e;
+										while (1) {
 											while (k2 < len && (src[k2]==' ' || src[k2]=='\t' || src[k2]=='\n' || src[k2]=='\r')) k2++;
-											if (k2 < len && src[k2] == '{') {
-												k2 = es6_block_end(src, len, k2);
-											} else {
-												k2 = es6_stmt_end(src, len, k2);
-												if (k2 < len && src[k2] == '{')
+											if (k2 + 4 <= len && src[k2]=='e' && src[k2+1]=='l' && src[k2+2]=='s' && src[k2+3]=='e'
+											    && (k2 + 4 >= len || !es6_is_ident((unsigned char)src[k2+4]))) {
+												k2 += 4;
+												while (k2 < len && (src[k2]==' ' || src[k2]=='\t' || src[k2]=='\n' || src[k2]=='\r')) k2++;
+												if (k2 < len && src[k2] == '{') {
 													k2 = es6_block_end(src, len, k2);
+												} else {
+													k2 = es6_stmt_end(src, len, k2);
+													if (k2 < len && src[k2] == '{')
+														k2 = es6_block_end(src, len, k2);
+												}
+												body_e = k2;
+											} else {
+												break;
 											}
-											body_e = k2;
-										} else {
-											break;
 										}
 									}
 								}
@@ -1414,6 +1785,7 @@ es6_for_of_pass(const char *src, size_t len, char *out, size_t cap)
 		i++;
 	}
 	out[o] = '\0';
+	g_forof_ctr = ctr;   /* persist temp-name counter across pass re-runs */
 	return o;
 }
 
@@ -1752,33 +2124,106 @@ static size_t es6_async_spread_pass(const char *src, size_t len, char *out, size
  * Also handles comma-chained destructuring inside a var statement:
  *   var x=1,[a,b]=EXPR        -> var x=1,_dv_=EXPR,a=_dv_[0],b=_dv_[1]
  */
+/* Lexer-aware forward skip used by the var-destructuring depth scanners.
+ *
+ * If s[pos] opens a token whose body may contain unbalanced () [] {} — a
+ * string, template literal, regex literal, line comment or block comment —
+ * return the index just PAST that token's closing delimiter. Otherwise
+ * return pos unchanged (caller advances by one and tracks depth itself).
+ *
+ * `prev_sig` is the previous significant (non-whitespace) source char, used
+ * to disambiguate '/' as regex-start vs division (es6_regex_ctx). Without
+ * this, a string like "}}}" or a regex /[}{]/ inside a declarator RHS would
+ * corrupt the brace-depth counter and the scanner would over-consume past a
+ * later `var {…}=` site (the action.min.js bug: 3rd of three identical
+ * destructuring sites skipped). Templates skip their `${…}` interpolations
+ * naively (depth-counted) which is enough for these bundles. fixes495b. */
+static size_t
+es6_vd_skip_token(const char *s, size_t pos, size_t len, int prev_sig)
+{
+    char c;
+    if (pos >= len)
+        return pos;
+    c = s[pos];
+
+    if (c == '\'' || c == '"') {
+        char q = c;
+        size_t i = pos + 1;
+        while (i < len) {
+            if (s[i] == '\\' && i + 1 < len) { i += 2; continue; }
+            if (s[i] == q) return i + 1;
+            i++;
+        }
+        return i;
+    }
+    if (c == '`') {
+        size_t i = pos + 1;
+        int tdepth = 0;
+        while (i < len) {
+            if (s[i] == '\\' && i + 1 < len) { i += 2; continue; }
+            if (tdepth == 0 && s[i] == '`') return i + 1;
+            if (s[i] == '$' && i + 1 < len && s[i + 1] == '{') { tdepth++; i += 2; continue; }
+            if (tdepth > 0 && s[i] == '}') { tdepth--; i++; continue; }
+            i++;
+        }
+        return i;
+    }
+    if (c == '/' && pos + 1 < len && s[pos + 1] == '/') {
+        size_t i = pos + 2;
+        while (i < len && s[i] != '\n') i++;
+        return i;
+    }
+    if (c == '/' && pos + 1 < len && s[pos + 1] == '*') {
+        size_t i = pos + 2;
+        while (i + 1 < len && !(s[i] == '*' && s[i + 1] == '/')) i++;
+        return (i + 1 < len) ? i + 2 : len;
+    }
+    if (c == '/' && es6_regex_ctx(prev_sig)) {
+        size_t i = pos + 1;
+        while (i < len) {
+            if (s[i] == '\\' && i + 1 < len) { i += 2; continue; }
+            if (s[i] == '[') {
+                /* character class: ']' inside is literal, and '/' inside
+                 * does not end the regex */
+                i++;
+                while (i < len && s[i] != ']') {
+                    if (s[i] == '\\' && i + 1 < len) i++;
+                    i++;
+                }
+                if (i < len) i++;
+                continue;
+            }
+            if (s[i] == '/') return i + 1;
+            i++;
+        }
+        return i;
+    }
+    return pos;
+}
+
 static size_t es6_var_destruct_pass(const char *src, size_t len, char *out, size_t cap)
 {
     size_t i = 0, o = 0;
     int changed = 0;
     int dvctr = 0;
+    int prev_sig = 0;   /* previous significant char, for regex-context */
 
     while (i < len) {
-        /* Simple string/comment skipping */
-        if (src[i] == '\'' || src[i] == '"') {
-            char q = src[i];
-            if (o>=cap) { out[0]='\0'; return 0; }
-            out[o++] = src[i++];
-            while (i < len && src[i] != q) {
-                if (src[i]=='\\' && i+1<len) { if(o+2>=cap){out[0]='\0';return 0;} out[o++]=src[i++]; }
-                if (o>=cap){out[0]='\0';return 0;} out[o++]=src[i++];
+        /* Lexer-aware: copy whole strings / templates / regex / comments via
+         * the shared skipper, so a '/' regex literal whose body contains a
+         * quote (e.g. /[^\s"<>{}`]+/) is NOT misread as a string and the
+         * scanner does not swallow past it (the action.min.js bug: an inline
+         * regex after a `var` declarator made the outer loop consume past a
+         * later `var {…}=` site). Strings/comments handled the same way. */
+        {
+            size_t sk = es6_vd_skip_token(src, i, len, prev_sig);
+            if (sk != i) {
+                if (o + (sk - i) >= cap) { out[0]='\0'; return 0; }
+                { size_t q; for (q = i; q < sk; q++) out[o++] = src[q]; }
+                prev_sig = src[sk - 1];
+                i = sk;
+                continue;
             }
-            if (i<len) { if(o>=cap){out[0]='\0';return 0;} out[o++]=src[i++]; }
-            continue;
-        }
-        if (src[i]=='/' && i+1<len && src[i+1]=='/') {
-            while (i<len && src[i]!='\n') { if(o>=cap){out[0]='\0';return 0;} out[o++]=src[i++]; }
-            continue;
-        }
-        if (src[i]=='/' && i+1<len && src[i+1]=='*') {
-            while (i+1<len && !(src[i]=='*' && src[i+1]=='/')) { if(o>=cap){out[0]='\0';return 0;} out[o++]=src[i++]; }
-            if (i+1<len) { if(o+2>=cap){out[0]='\0';return 0;} out[o++]=src[i++]; out[o++]=src[i++]; }
-            continue;
         }
 
         /* Detect 'var ' keyword */
@@ -1852,18 +2297,20 @@ static size_t es6_var_destruct_pass(const char *src, size_t len, char *out, size
                     }
                     i++; /* skip '=' */
                     while (i<len && (src[i]==' '||src[i]=='\t')) i++;
-                    /* scan RHS until ',' or ';' at depth 0 */
+                    /* scan RHS until ',' or ';' at depth 0 (lexer-aware) */
                     rhs_s = i; ddepth = 0;
-                    while (i<len) {
-                        char rc = src[i];
-                        if (rc=='('||rc=='['||rc=='{') ddepth++;
-                        else if (rc==')'||rc==']'||rc=='}') { if(ddepth==0) break; ddepth--; }
-                        else if ((rc==','||rc==';') && ddepth==0) break;
-                        else if (rc=='\''||rc=='"') {
-                            char q=rc; i++;
-                            while (i<len && src[i]!=q) { if(src[i]=='\\') i++; i++; }
+                    {
+                        int rhs_prev = '=';
+                        while (i<len) {
+                            char rc = src[i];
+                            size_t sk = es6_vd_skip_token(src, i, len, rhs_prev);
+                            if (sk != i) { rhs_prev = src[sk-1]; i = sk; continue; }
+                            if (rc=='('||rc=='['||rc=='{') ddepth++;
+                            else if (rc==')'||rc==']'||rc=='}') { if(ddepth==0) break; ddepth--; }
+                            else if ((rc==','||rc==';') && ddepth==0) break;
+                            if (rc!=' '&&rc!='\t'&&rc!='\n'&&rc!='\r') rhs_prev = rc;
+                            i++;
                         }
-                        i++;
                     }
                     rhs_e = i;
                     /* emit: _dvN_=RHS,a=_dvN_[0],b=(_dvN_[1]===void 0?"x":_dvN_[1]),... */
@@ -1950,16 +2397,18 @@ static size_t es6_var_destruct_pass(const char *src, size_t len, char *out, size
                     i++; /* skip '=' */
                     while (i<len && (src[i]==' '||src[i]=='\t')) i++;
                     rhs_s = i; ddepth = 0;
-                    while (i<len) {
-                        char rc = src[i];
-                        if (rc=='('||rc=='['||rc=='{') ddepth++;
-                        else if (rc==')'||rc==']'||rc=='}') { if(ddepth==0) break; ddepth--; }
-                        else if ((rc==','||rc==';') && ddepth==0) break;
-                        else if (rc=='\''||rc=='"') {
-                            char q=rc; i++;
-                            while (i<len && src[i]!=q) { if(src[i]=='\\') i++; i++; }
+                    {
+                        int rhs_prev = '=';
+                        while (i<len) {
+                            char rc = src[i];
+                            size_t sk = es6_vd_skip_token(src, i, len, rhs_prev);
+                            if (sk != i) { rhs_prev = src[sk-1]; i = sk; continue; }
+                            if (rc=='('||rc=='['||rc=='{') ddepth++;
+                            else if (rc==')'||rc==']'||rc=='}') { if(ddepth==0) break; ddepth--; }
+                            else if ((rc==','||rc==';') && ddepth==0) break;
+                            if (rc!=' '&&rc!='\t'&&rc!='\n'&&rc!='\r') rhs_prev = rc;
+                            i++;
                         }
-                        i++;
                     }
                     rhs_e = i;
                     sprintf(dvname, "_dv%d_", dvctr++);
@@ -1982,8 +2431,23 @@ static size_t es6_var_destruct_pass(const char *src, size_t len, char *out, size
                     /* Normal declarator: copy until ',' or ';' at depth 0.
                      * Handle nested 'var [...]=' and 'var {...}=' in function bodies. */
                     int ddepth = 0;
+                    int nd_prev = '=';   /* previous significant char; we just
+                                          * consumed '='/whitespace, so a leading
+                                          * '/' here is regex context */
                     while (i<len) {
                         char c2 = src[i];
+                        size_t sk;
+                        /* Lexer-aware: skip strings / templates / regex /
+                         * comments whole, copying them verbatim, so their
+                         * inner () [] {} never touch ddepth. */
+                        sk = es6_vd_skip_token(src, i, len, nd_prev);
+                        if (sk != i) {
+                            if (o + (sk - i) >= cap) { out[0]='\0'; return 0; }
+                            { size_t q; for (q = i; q < sk; q++) out[o++] = src[q]; }
+                            nd_prev = src[sk - 1];
+                            i = sk;
+                            continue;
+                        }
                         /* Detect nested var destructuring inside function bodies */
                         if (ddepth > 0 && i+4 < len &&
                             src[i]=='v' && src[i+1]=='a' && src[i+2]=='r' && src[i+3]==' ' &&
@@ -2001,6 +2465,7 @@ static size_t es6_var_destruct_pass(const char *src, size_t len, char *out, size
                         else if (c2==')'||c2==']'||c2=='}') { if(ddepth==0) break; ddepth--; }
                         else if ((c2==','||c2==';') && ddepth==0) break;
                         if (o>=cap) { out[0]='\0'; return 0; }
+                        if (c2!=' ' && c2!='\t' && c2!='\n' && c2!='\r') nd_prev = c2;
                         out[o++] = c2; i++;
                     }
                     if (in_var == 1 && i < len && (src[i]=='[' || src[i]=='{'))
@@ -2016,10 +2481,17 @@ static size_t es6_var_destruct_pass(const char *src, size_t len, char *out, size
                     in_var = 0;
                 }
             }
+            /* after a var statement the next significant char is a fresh
+             * statement/expression position, so a leading '/' is regex */
+            prev_sig = ';';
             continue;
         }
 
         if (o>=cap) { out[0]='\0'; return 0; }
+        {
+            char oc = src[i];
+            if (oc!=' ' && oc!='\t' && oc!='\n' && oc!='\r') prev_sig = oc;
+        }
         out[o++] = src[i++];
     }
     if (!changed) return 0;
@@ -2698,14 +3170,44 @@ macsurf_es6_transpile(const char *src, size_t len, char *out, size_t cap)
 	m = es6_letconst_pass(cur, n, dst, wmax);
 	if (m != 0) { cur = dst; n = m; }
 
-	/* Pass 3: for...of (twice — nested for-of missed first time), arrows (twice). */
+	/* Pass 2b: ES6 method shorthand  name(args){...}  ->                 *
+	 * name:function(args){...}  in object literals. Runs BEFORE arrows   *
+	 * and class so method bodies are normal function expressions when    *
+	 * those passes see them. This is what unblocks the XenForo handler   *
+	 * bundles (editor-compiled.js / action / prefix_menu / message),     *
+	 * which all define handlers via { init(){}, click(a){} } shorthand   *
+	 * that Duktape 2.7 (ES5.1) rejects. Run twice: a method body can     *
+	 * itself contain a nested object literal with shorthand methods.     */
 	dst = (cur == buf1) ? buf2 : buf1;
-	m = es6_for_of_pass(cur, n, dst, wmax);
+	m = es6_method_shorthand_pass(cur, n, dst, wmax);
 	if (m != 0) { cur = dst; n = m; }
 
 	dst = (cur == buf1) ? buf2 : buf1;
-	m = es6_for_of_pass(cur, n, dst, wmax);
+	m = es6_method_shorthand_pass(cur, n, dst, wmax);
 	if (m != 0) { cur = dst; n = m; }
+
+	/* Pass 3: for...of — iterate to a fixpoint (cap 6). Each pass expands
+	 * the outermost remaining for-of; a deeply nested chain
+	 * (`for(a of X)for(b of Y)for(c of Z)…`, seen in editor-compiled.js)
+	 * needs one pass per level. The static g_forof_ctr keeps temp names
+	 * unique across the iterations so inner loops don't shadow outer ones.
+	 * fixes495b. Then arrows (twice). */
+	g_forof_ctr = 0;
+	{
+		int fo_iter;
+		for (fo_iter = 0; fo_iter < 6; fo_iter++) {
+			dst = (cur == buf1) ? buf2 : buf1;
+			m = es6_for_of_pass(cur, n, dst, wmax);
+			if (m == 0)
+				break;
+			/* for-of has no changed-flag; it returns the full length
+			 * every pass. Detect the fixpoint by an unchanged result
+			 * (same length AND identical bytes) and stop re-running. */
+			if (m == n && memcmp(dst, cur, n) == 0)
+				break;
+			cur = dst; n = m;
+		}
+	}
 
 	dst = (cur == buf1) ? buf2 : buf1;
 	m = es6_arrow_pass(cur, n, dst, wmax);
@@ -2724,10 +3226,24 @@ macsurf_es6_transpile(const char *src, size_t len, char *out, size_t cap)
 	m = es6_async_spread_pass(cur, n, dst, wmax);
 	if (m != 0) { cur = dst; n = m; }
 
-	/* var [a,b]=expr and var {key:alias}=expr -> ES5 */
-	dst = (cur == buf1) ? buf2 : buf1;
-	m = es6_var_destruct_pass(cur, n, dst, wmax);
-	if (m != 0) { cur = dst; n = m; }
+	/* var [a,b]=expr and var {key:alias}=expr -> ES5.
+	 * Iterate to a fixpoint (cap 6): the single-pass RHS scanner can lose
+	 * declarator sync across a very long value containing deeply nested
+	 * function expressions, skipping a later `var {…}=` site (observed in
+	 * action.min.js: the 3rd of three `var {data:b}=a` sites). Each pass
+	 * transforms at least one more remaining site and returns non-zero
+	 * only when it changed something, so re-running until it returns 0
+	 * clears them all. fixes495b. */
+	{
+		int vd_iter;
+		for (vd_iter = 0; vd_iter < 6; vd_iter++) {
+			dst = (cur == buf1) ? buf2 : buf1;
+			m = es6_var_destruct_pass(cur, n, dst, wmax);
+			if (m == 0)
+				break;        /* nothing left to transform */
+			cur = dst; n = m;
+		}
+	}
 
 	/* Default params + array destructuring params: function(a,b=1) and function([a,b]) */
 	dst = (cur == buf1) ? buf2 : buf1;

@@ -912,6 +912,16 @@ dom_exception _dom_exception_from_lwc_error(lwc_error err)
 const char *dom_string_data(const dom_string *str)
 {
 	dom_string_internal *istr = (void *) str;
+	/* fixes490 — NULL guard. A NULL dom_string here dereferences
+	 * address 0: istr->type reads low memory, and if it happens to be
+	 * DOM_STRING_CDATA (== 0) the code reads data.cdata.ptr at struct
+	 * offset 4 — a low-memory global that, on this G3, points into the
+	 * intern table and renders an unrelated interned string (the
+	 * "data-xf-init" attribute name) as page text. The fixes446g log
+	 * showed exactly this: ptr=3E0006B8 str=00000000. Return "" so a
+	 * NULL string yields empty text instead of garbage. */
+	if (istr == NULL)
+		return "";
 	if (istr->type == DOM_STRING_CDATA) {
 		/* fixes446g: guard against corrupt CDATA ptr from sched_entry
 		 * UAF (sched_entry.callback, a code-space fn-ptr at 0x3E...,
@@ -921,13 +931,28 @@ const char *dom_string_data(const dom_string *str)
 		{
 			unsigned long pa_ =
 				(unsigned long)istr->data.cdata.ptr;
-			if (pa_ < 4UL || pa_ >= 0x28000000UL) {
+			/* fixes489 (Option A) — widen the recycled-struct
+			 * guard. The original check only rejected a
+			 * code-space pointer. A freed dom_string struct that
+			 * the scheduler reused can also leave data.cdata.ptr
+			 * pointing at heap (passing the range test) while
+			 * data.cdata.len holds garbage. A legitimate CDATA
+			 * length is bounded (text nodes here never exceed the
+			 * 1 MB intern cap used a few lines down); a recycled
+			 * struct's len is typically a huge or wrapped value.
+			 * Reject both an out-of-range ptr and an absurd len so
+			 * the caller gets "" instead of reading recycled
+			 * memory as text. */
+			if (pa_ < 4UL || pa_ >= 0x28000000UL ||
+			    istr->data.cdata.len > 1048576UL) {
 				extern void macsurf_debug_log_writef(
 					const char *fmt, ...);
 				macsurf_debug_log_writef(
 					"fixes446g DATA: bad cdata ptr=%p "
-					"str=%p",
-					(void *)pa_, (void *)str);
+					"len=%ld str=%p",
+					(void *)pa_,
+					(long)istr->data.cdata.len,
+					(void *)str);
 				return "";
 			}
 		}
@@ -962,6 +987,10 @@ const char *dom_string_data(const dom_string *str)
 size_t dom_string_byte_length(const dom_string *str)
 {
 	dom_string_internal *istr = (void *) str;
+	/* fixes490 — NULL guard, paired with dom_string_data. A NULL string
+	 * here would read low memory as the length and render garbage. */
+	if (istr == NULL)
+		return 0;
 	if (istr->type == DOM_STRING_CDATA) {
 		return istr->data.cdata.len;
 	} else {

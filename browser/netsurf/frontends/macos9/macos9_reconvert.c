@@ -44,6 +44,31 @@ extern struct browser_window *macos9_gw_bw(struct gui_window *g);
 /* TickCount() of the last re-convert start (0 = none yet). */
 static unsigned long g_last_reconvert_tick = 0;
 
+/* fixes489 — master gate for JS-triggered re-convert.
+ *
+ * The re-convert path (fixes384/421) rebuilds the box tree from the
+ * JS-mutated DOM. On heavily-scripted pages (XenForo 68kmla.org) it
+ * exposes a dom_string use-after-free: a CDATA text node's backing
+ * struct is freed (refcount 0), the cooperative scheduler reuses that
+ * exact block and overwrites data.cdata.ptr with its callback fn-ptr,
+ * and box construction — still holding the stale reference — reads the
+ * recycled memory. When the recycled pointer lands in valid heap range
+ * it slips past the dom_string_data guard and the interned attribute
+ * name ("data-xf-init") gets painted as page text all over the document.
+ *
+ * Until the refcount bug is root-caused (Option B), default the gate
+ * OFF: JS DOM mutations simply don't repaint (pre-fixes384 behaviour),
+ * which is correct for static forms — the editor textarea is force-shown
+ * by the UA stylesheet, not by a re-convert. macsurf_js_set_reconvert_enabled(1)
+ * can flip it back on once the UAF is fixed. */
+static int g_reconvert_enabled = 0;
+
+void
+macsurf_js_set_reconvert_enabled(int enabled)
+{
+	g_reconvert_enabled = enabled ? 1 : 0;
+}
+
 /* The live front-window HTML content, or NULL. Never derefs a stale pointer. */
 static struct content *
 macos9_reconvert_front_content(void)
@@ -108,6 +133,10 @@ macos9_reconvert_cb(void *p)
 void
 macos9_js_mark_dom_dirty(struct content *c)
 {
+	/* fixes489 — gate: when re-convert is disabled, JS DOM mutations
+	 * do not schedule a box-tree rebuild (avoids the reconvert UAF). */
+	if (!g_reconvert_enabled)
+		return;
 	/* fixes421 — re-enabled. Two crash vectors now closed in html_reconvert:
 	 * (1) DOUBLE-BUFFER: old bctx deferred past dom_to_box so the re-cascade
 	 *     can share already-interned styles rather than free-then-reintern

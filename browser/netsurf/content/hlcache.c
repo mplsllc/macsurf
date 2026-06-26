@@ -763,6 +763,26 @@ hlcache_handle_retrieve(nsurl *url,
 /* See hlcache.h for documentation */
 nserror hlcache_handle_release(hlcache_handle *handle)
 {
+	/* fixes499g — entry guard. This release path is reached during
+	 * teardown (html_script_free -> here) where the script's handle slot
+	 * may be a stale/freed pointer that was reallocated for other data.
+	 * The crash that exposed this had r30 (handle) pointing at recycled
+	 * heap holding ASCII text ("xy-q" = 0x78792D71) — dereferencing
+	 * handle->entry for the log line below then read garbage and the
+	 * writef call crashed at +0x24. Bail on a NULL handle, and on a handle
+	 * whose address is outside the malloc heap range used on this G3
+	 * (legitimate handles are ~0x06000000–0x09000000; a code/recycled
+	 * pointer like 0x3E6846D4 is wild). Belt-and-suspenders with the
+	 * fixes499e NULL-after-release in html_script_free. */
+	{
+		unsigned long ha = (unsigned long)handle;
+		if (handle == NULL || ha < 0x01000000UL || ha >= 0x20000000UL) {
+			macsurf_debug_log_writef(
+				"hlcache_release: SKIP wild handle=%p", (void *)handle);
+			return NSERROR_OK;
+		}
+	}
+
 	/* fixes450: log every release so we can cross-ref against ZOMBIE / crash */
 	macsurf_debug_log_writef(
 		"hlcache_release: handle=%p entry=%p",

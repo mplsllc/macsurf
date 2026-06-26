@@ -1817,11 +1817,18 @@ static void html_destroy(struct content *c)
 	macsurf_debug_log_writef("html_destroy: htmlc=%p content=%p", (void*)html, (void*)c);
 	NSLOG(netsurf, INFO, "content %p", c);
 
-	/* If we're still converting a layout, cancel it */
+	/* If we're still converting a layout, cancel it.
+	 * fixes499g — NULL the context after cancel so a second html_destroy
+	 * (the double-destroy via hlcache_clean that this whole crash family
+	 * stems from) does not re-cancel an already-freed conversion context.
+	 * cancel_dom_to_box removes the scheduled convert_xml_to_box entry and
+	 * frees the ctx, so the pointer is dangling after; leaving it non-NULL
+	 * let a second pass fire cancel on freed memory. */
 	if (html->box_conversion_context != NULL) {
 		if (cancel_dom_to_box(html->box_conversion_context) != NSERROR_OK) {
 			NSLOG(netsurf, CRITICAL, "WARNING, Unable to cancel conversion context, browser may crash");
 		}
+		html->box_conversion_context = NULL;
 	}
 
 	selection_destroy(html->sel);

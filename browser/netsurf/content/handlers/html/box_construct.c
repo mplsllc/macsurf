@@ -1722,6 +1722,22 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 		if (text == NULL)
 			return false;
 
+#ifdef __MACOS9__
+		/* fixes491 diag — trace the source of "data-xf-init" text nodes.
+		 * Log the offending character data plus the content-data pointer
+		 * so the node can be tied back to its DOM origin. Remove once the
+		 * leak is root-caused. */
+		{
+			extern void macsurf_debug_log_writef(const char *fmt,
+					...);
+			if (text[0] != '\0' && strstr(text, "xf-init") != NULL) {
+				macsurf_debug_log_writef(
+					"fixes491 TEXTNODE='%s' node=%p",
+					text, (void *)ctx->n);
+			}
+		}
+#endif
+
 		/* if the text is just a space, combine it with the preceding
 		 * text node, if any */
 		if (text[0] == ' ' && text[1] == 0) {

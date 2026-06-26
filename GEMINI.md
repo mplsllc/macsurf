@@ -52,12 +52,12 @@ This file contains the foundational mandates, technical constraints, and operati
 3.  **Pre-flight Check:** Run Linux C89 syntax checks before assuming code is valid for CW8:
     `gcc -fsyntax-only -std=c89 -pedantic -Dinline= -Ibrowser/netsurf/frontends/macos9/shims -Ibrowser/netsurf/frontends -Ibrowser/netsurf/include -Ibrowser/netsurf -include stdbool.h <file.c>`
 
-### Sending Updates to the User
-1.  **Monotonic Versioning:** Ask the user for the next fix number (e.g., `fixes415`).
-2.  **Selective Archiving:** Create a tar file containing ONLY the modified files or files needing a resync, preserving the full tree structure:
-    `tar -cvf fixes415.tar browser/netsurf/content/handlers/html/modified_file.c`
-3.  **Deployment via SCP:** Send the tar to the Mac environment:
-    `scp -P 2222 -i ~/.ssh/macsurf_push -o StrictHostKeyChecking=no fixes415.tar patrick@localhost:/home/patrick/afp_share/fixes415.tar`
+5.  **Sending Updates to the User:**
+    1.  **Monotonic Versioning:** Ask the user for the next fix number and use the `quickjs_fix` prefix for QuickJS standalone tests (e.g., `quickjs_fix10.tar`) or `fixes` for MacSurf (e.g. `fixes415.tar`).
+    2.  **Selective Archiving:** Create a tar file containing ONLY the modified files.
+        `tar -cvf quickjs_fix10.tar quickjs.c cutils.h`
+    3.  **Deployment via SCP:** Send the tar to the Mac environment:
+        `scp -P 2222 -i ~/.ssh/macsurf_push -o StrictHostKeyChecking=no quickjs_fix10.tar patrick@localhost:/home/patrick/Documents/MacFiles/quickjs_fix10.tar`
 
 ## 5. Debugging & Instrumentation
 - **Diagnostic Logging:** `macsurf_debug_log_init()` MUST be called in `main()` at startup.

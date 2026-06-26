@@ -183,8 +183,7 @@ static inline bool lh__have_border(
 static inline bool lh__box_is_absolute(const struct box *b)
 {
 	return css_computed_position(b->style) == CSS_POSITION_ABSOLUTE ||
-	       css_computed_position(b->style) == CSS_POSITION_FIXED ||
-	       css_computed_position(b->style) == CSS_POSITION_STICKY;
+	       css_computed_position(b->style) == CSS_POSITION_FIXED;
 }
 
 static inline bool lh__flex_main_is_horizontal(const struct box *flex)

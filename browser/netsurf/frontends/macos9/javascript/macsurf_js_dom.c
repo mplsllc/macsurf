@@ -1016,6 +1016,168 @@ macsurf_document_get_head(duk_context *duk)
 }
 
 /* ----------------------------------------------------------------- */
+/* querySelectorAll helper: walk the subtree rooted at `node`,        */
+/* push matching element wrappers onto the Duk array at stack[-1].   */
+/*                                                                    */
+/* sel_tag  : tag name to match (e.g. "textarea") or NULL = any tag  */
+/* sel_attr : attribute name that must be present  or NULL = ignored  */
+/* sel_val  : if non-NULL, attribute value must CONTAIN this string   */
+/* ----------------------------------------------------------------- */
+static void
+qsa_walk(duk_context *duk, dom_node *node,
+         const char *sel_tag,
+         const char *sel_attr, const char *sel_val)
+{
+    dom_node   *child = NULL;
+    dom_node   *sib   = NULL;
+    dom_string *tag_s = NULL;
+    int         tag_match = 0;
+
+    if (node == NULL)
+        return;
+
+    /* Check if this node is an element (get_tag_name succeeds). */
+    if (macsurf_dom_element_get_tag_name((dom_element *)node, &tag_s)
+            == DOM_NO_ERR && tag_s != NULL) {
+        /* Tag filter */
+        if (sel_tag == NULL) {
+            tag_match = 1;
+        } else {
+            size_t tl = strlen(sel_tag);
+            tag_match = ((size_t)dom_string_length(tag_s) == tl &&
+                strncasecmp(dom_string_data(tag_s), sel_tag, tl) == 0);
+        }
+        macsurf_dom_string_unref(tag_s);
+
+        if (tag_match) {
+            /* Attribute filter */
+            int attr_match = 1;
+            if (sel_attr != NULL) {
+                dom_string *attr_name_s = NULL;
+                dom_string *attr_val_s  = NULL;
+                attr_match = 0;
+                dom_string_create((const uint8_t *)sel_attr,
+                        strlen(sel_attr), &attr_name_s);
+                if (attr_name_s != NULL) {
+                    if (macsurf_dom_element_get_attribute(
+                            (dom_element *)node,
+                            attr_name_s, &attr_val_s) == DOM_NO_ERR
+                            && attr_val_s != NULL) {
+                        if (sel_val == NULL) {
+                            attr_match = 1; /* attribute present */
+                        } else {
+                            /* substring match */
+                            const char *av = dom_string_data(attr_val_s);
+                            attr_match = (av &&
+                                strstr(av, sel_val) != NULL) ? 1 : 0;
+                        }
+                        macsurf_dom_string_unref(attr_val_s);
+                    }
+                    macsurf_dom_string_unref(attr_name_s);
+                }
+            }
+            if (attr_match) {
+                /* Push this element into the results array (at stack -1). */
+                /* Stack before: [..., array]
+                   push element: [..., array, element]
+                   get_length on array (index -2), put_prop_index pops element
+                   Stack after:  [..., array] */
+                {
+                    duk_uarridx_t len;
+                    macsurf_push_element(duk, (dom_element *)node);
+                    len = (duk_uarridx_t)duk_get_length(duk, -2);
+                    duk_put_prop_index(duk, -2, len);
+                }
+            }
+        }
+    }
+
+    /* Recurse into children. */
+    if (macsurf_dom_node_get_first_child(node, &child) != DOM_NO_ERR)
+        return;
+    while (child != NULL) {
+        qsa_walk(duk, child, sel_tag, sel_attr, sel_val);
+        if (macsurf_dom_node_get_next_sibling(child, &sib) != DOM_NO_ERR)
+            sib = NULL;
+        macsurf_dom_node_unref(child);
+        child = sib;
+    }
+}
+
+/* ----------------------------------------------------------------- */
+/* document.querySelectorAll — supports:                              */
+/*   tag            e.g. "textarea"                                   */
+/*   [attr]         e.g. "[data-xf-init]"                            */
+/*   tag[attr]      e.g. "textarea[name]"                            */
+/*   tag[attr*=v]   substring match, e.g. "textarea[name*=msg]"      */
+/* Returns a JS Array (not a NodeList, but iterable the same way).   */
+/* ----------------------------------------------------------------- */
+static duk_ret_t
+macsurf_querySelectorAll(duk_context *duk)
+{
+    const char *sel = duk_safe_to_string(duk, 0);
+    char sel_tag[32];
+    char sel_attr[64];
+    char sel_val[128];
+    const char *p;
+    dom_element *root = NULL;
+    size_t i;
+    size_t j;
+
+    /* Prepare result array. */
+    duk_push_array(duk);
+
+    if (sel == NULL || sel[0] == '\0' ||
+            macsurf_js_current_document == NULL)
+        return 1;
+
+    /* Parse selector into tag / attr / val components. */
+    sel_tag[0]  = '\0';
+    sel_attr[0] = '\0';
+    sel_val[0]  = '\0';
+
+    p = sel;
+    /* Optional tag name: letters before '[' or end. */
+    if (*p != '[' && *p != '.' && *p != '#') {
+        i = 0;
+        while (*p && *p != '[' && i < sizeof(sel_tag) - 1)
+            sel_tag[i++] = *p++;
+        sel_tag[i] = '\0';
+    }
+    /* Optional [attr] or [attr*=val]. */
+    if (*p == '[') {
+        p++;
+        i = 0;
+        while (*p && *p != ']' && *p != '=' && *p != '*' &&
+               i < sizeof(sel_attr) - 1)
+            sel_attr[i++] = *p++;
+        sel_attr[i] = '\0';
+        if (*p == '*' && *(p+1) == '=') {
+            p += 2;
+            if (*p == '"' || *p == '\'') p++;
+            j = 0;
+            while (*p && *p != '"' && *p != '\'' && *p != ']' &&
+                   j < sizeof(sel_val) - 1)
+                sel_val[j++] = *p++;
+            sel_val[j] = '\0';
+        }
+    }
+
+    /* Walk from documentElement. */
+    if (macsurf_dom_document_get_document_element(
+            macsurf_js_current_document, &root) == DOM_NO_ERR
+            && root != NULL) {
+        qsa_walk(duk, (dom_node *)root,
+                 sel_tag[0]  ? sel_tag  : NULL,
+                 sel_attr[0] ? sel_attr : NULL,
+                 sel_val[0]  ? sel_val  : NULL);
+        macsurf_dom_node_unref((dom_node *)root);
+    }
+
+    return 1;
+}
+
+/* ----------------------------------------------------------------- */
 /* document.querySelector — ID-only and tag-only support.             */
 /* Supports "#foo" (getElementById) and bare tag names.  Compound     */
 /* selectors fall through to null for now.                            */
@@ -1168,6 +1330,30 @@ macsurf_js_setup_globals(duk_context *duk)
 			DUK_DEFPROP_HAVE_ENUMERABLE |
 			DUK_DEFPROP_HAVE_CONFIGURABLE | DUK_DEFPROP_CONFIGURABLE);
 
+	/* fixes496 — the other standard self-references to the global object.
+	 * `self` is the keystone: Froala (editor-compiled.js) wraps itself in
+	 * `(function(f,b){...})(this,function(){...})` and inside resolves the
+	 * global as `self`, throwing ReferenceError: identifier 'self' undefined
+	 * the moment it ran (it now parses+runs after the fixes495 transpiler
+	 * work). `globalThis` (ES2020), `top`, `parent`, `frames` are the same
+	 * window-is-its-own-global aliases real pages assume; define them all so
+	 * library bootstrap code that probes any of them succeeds. */
+	{
+		static const char *const g_aliases[] = {
+			"self", "globalThis", "top", "parent", "frames"
+		};
+		int ai;
+		for (ai = 0; ai < (int)(sizeof(g_aliases)/sizeof(g_aliases[0])); ai++) {
+			duk_push_string(duk, g_aliases[ai]);
+			duk_push_global_object(duk);
+			duk_def_prop(duk, -3,
+					DUK_DEFPROP_HAVE_VALUE |
+					DUK_DEFPROP_HAVE_WRITABLE |   DUK_DEFPROP_WRITABLE |
+					DUK_DEFPROP_HAVE_ENUMERABLE |
+					DUK_DEFPROP_HAVE_CONFIGURABLE | DUK_DEFPROP_CONFIGURABLE);
+		}
+	}
+
 	/* ---- document ---- */
 	duk_push_object(duk);                             /* [global, document] */
 
@@ -1184,6 +1370,9 @@ macsurf_js_setup_globals(duk_context *duk)
 
 	duk_push_c_function(duk, macsurf_querySelector, 1);
 	duk_put_prop_string(duk, -2, "querySelector");
+
+	duk_push_c_function(duk, macsurf_querySelectorAll, 1);
+	duk_put_prop_string(duk, -2, "querySelectorAll");
 
 	/* title accessor */
 	duk_push_string(duk, "title");

@@ -1579,7 +1579,21 @@ static const char s_xf_preamble_stub[] =
 	"});"
 	"}"
 	"XF.browser=XF.browser||{browser:'',version:0,os:'',osVersion:null};"
-	"XF.Feature=XF.Feature||{active:function(){return false;}};"
+	"XF.Feature=XF.Feature||{runTests:function(){},has:function(){return false;}};"
+	/* XenForo 2 starts with html.has-no-js; the real preamble swaps it
+	 * to has-js when JS is available.  Without this swap the CSS cascade
+	 * shows the no-JS fallback content — which uses 'data-xf-init' as
+	 * placeholder text — and hides the JS-rendered navigation/form widgets.
+	 * Do the swap here so XenForo's CSS applies the correct rules. */
+	"(function(){"
+	"var de=document.documentElement;"
+	"if(de&&de.getAttribute){"
+	"var cls=de.getAttribute('class')||'';"
+	"cls=cls.replace(/\\bhas-no-js\\b/g,'has-js');"
+	"if(cls.indexOf('has-js')<0)cls='has-js '+cls;"
+	"de.setAttribute('class',cls);"
+	"}"
+	"})();"
 	"})();";
 
 /* fixes480 -- XenForo core-compiled.js (176KB) fails SyntaxError: uses
@@ -1676,11 +1690,11 @@ static const char s_xf_core_stub[] =
 	"var handlers=XF.DataStore.get(el,'xf-element-handlers')||{};"
 	"if(handlers[name])return handlers[name];"
 	"var K=mapper.getObjectFromIdentifier(name);"
-	"if(!K)return null;"
-	"var h=new K(el,opts||{});"
+	"if(!K||typeof K!=='function')return null;"
+	"var h;try{h=new K(el,opts||{});}catch(e){return null;}"
 	"handlers[name]=h;"
 	"XF.DataStore.set(el,'xf-element-handlers',handlers);"
-	"h.init();"
+	"try{if(h.init)h.init();}catch(e){}"
 	"return h;"
 	"}"
 	"function initEl(el){"
@@ -1729,9 +1743,44 @@ static const char s_xf_core_stub[] =
 	"XF.canonicalizeUrl=function(u){return'/'+u;};"
 	"XF.config={url:{js:''}};"
 	"XF.pageDisplayTime=Date.now?Date.now():0;"
+	/* XF.Event: event-delegation handler factory (same API as XF.Element.newHandler) */
+	"XF.Event=(function(){"
+	"return{"
+	"newHandler:function(proto){return XF.create(proto);},"
+	"extend:function(n,m){},"
+	"register:function(n,h){},"
+	"on:function(n,h){},"
+	"off:function(n,h){},"
+	"trigger:function(n,d){}"
+	"};"
+	"})();"
+	/* Stubs for methods called by message.min.js / action.min.js */
+	"XF.setupHtmlInsert=function(h,cb){if(cb){try{cb(null,document,false);}catch(e){}}};"
+	"XF.Animate={fadeUp:function(){},fadeDown:function(){},addClassTransitioned:function(){},removeClassTransitioned:function(el,cls,cb){if(cb)cb();}};"
+	"XF.Transition=XF.Animate;"
+	"XF.isCreatedContainer=function(){return false;};"
+	"XF.ajax=function(m,u,d,ok,opts){"
+	"var p={finally:function(fn){return p;},then:function(fn){return p;},catch:function(fn){return p;}};"
+	"return p;"
+	"};"
+	"XF.redirect=function(){};"
+	"XF.flashMessage=function(){};"
+	"XF.customEvent=function(n,d){try{return new CustomEvent(n,{detail:d||{}});}catch(e){return {};}};"
+	"XF.findRelativeIf=function(sel,el){"
+	"try{if(sel&&el&&el.querySelector)return el.querySelector(sel);}catch(e){}"
+	"return null;"
+	"};"
+	"XF.onDelegated=function(){};"
+	"XF.isElementWithinDraftForm=function(){return false;};"
+	"XF.phrase=function(k){return String(k);};"
+	"XF.toCamelCase=function(s){return s.replace(/-([a-z])/g,function(m,c){return c.toUpperCase();});};"
+	"XF.Push={isSupported:function(){return false;},registerWorker:function(){}};"
+	"XF.smoothScroll=function(){};"
+	"XF.Message=XF.Message||{};"
+	"XF.MultiQuote=XF.MultiQuote||{init:function(){}};"
 	/* Hook ready system if available */
 	"if(XF.ready)XF.ready(XF.onPageLoad);"
-	"if(typeof console!=='undefined')console.log('[ms] core stub end XF.Element='+typeof XF.Element);"
+	"if(typeof console!=='undefined')console.log('[ms] core stub end XF.Element='+typeof XF.Element+' XF.Event='+typeof XF.Event);"
 	"})();";
 
 /* fixes476/478/479 -- XenForo editor-compiled.js (733KB) exceeds the 256KB
@@ -1789,7 +1838,10 @@ static const char s_xf_editor_stub[] =
 	 * DataStore bookkeeping.  Then re-invoke XF.Element.initialize(document)
 	 * so XF rescans for data-xf-init="editor" elements it skipped during
 	 * DOMContentLoaded (when "editor" wasn't registered yet). */
-	"if(typeof XF!=='undefined'&&XF.Element&&XF.Element.newHandler&&XF.Element.register){"
+	/* fixes493: only define XF.Editor if it is NOT already present — when
+	 * editor-compiled.js (Froala) actually ran it registers its own, and
+	 * we must not clobber it. This makes the stub a true no-op fallback. */
+	"if(typeof XF!=='undefined'&&XF.Element&&XF.Element.newHandler&&XF.Element.register&&!XF.Editor){"
 	"XF.Editor=XF.Element.newHandler({"
 	"options:{maxHeight:0.7,minHeight:250,buttonsRemove:'',attachmentTarget:false,deferred:false},"
 	"edMinHeight:63,form:null,ed:null,"
@@ -1817,29 +1869,144 @@ static const char s_xf_editor_stub[] =
 	"destroy:function(){if(this.ed){this.ed.destroy();this.ed=null;}}"
 	"});"
 	"XF.Element.register('editor','XF.Editor');"
-	/* 100ms delay: lets any remaining XF init settle before we rescan */
-	"setTimeout(function(){"
-		/* Primary: use XF's own re-scan so c() handles init correctly */
-		"if(typeof XF.Element.initialize==='function'){"
-			"XF.Element.initialize(document);"
-		"}"
-		/* Fallback: direct loop for any textareas still hidden */
-		"var tas=document.querySelectorAll("
-			"'textarea[data-xf-init*=\"editor\"],textarea.js-editor');"
-		"for(var i=0;i<tas.length;i++){"
-			"var ta=tas[i];"
-			"if(ta&&!ta.__xf_ms_init){"
-				"ta.__xf_ms_init=true;"
-				"if(ta.style){"
-					"ta.style.display='block';"
-					"ta.style.visibility='visible';"
-				"}"
-				"try{new XF.Editor(ta,{}).init();}catch(e){}"
+	"}"   /* fixes498: CLOSE the !XF.Editor guard here. The reveal below
+	       * must run UNCONDITIONALLY — when Froala ran it already defined
+	       * XF.Editor, so the guard is false and everything inside it
+	       * (including, previously, the reveal) was skipped. That's why no
+	       * [ms] editor-stub line appeared. Reveal now lives outside. */
+	/* fixes497: reveal the editor textarea SYNCHRONOUSLY (not via
+	 * setTimeout). Box construction runs immediately after this script
+	 * returns, so the mutation must land now to be seen by the initial
+	 * conversion. XenForo hides the real editor with class `u-jsOnly`
+	 * (author rule `.u-jsOnly{display:none!important}`); a UA stylesheet
+	 * cannot override an author !important, but an INLINE style with
+	 * !important outranks every author rule. So: strip `u-jsOnly` AND set
+	 * inline display/visibility/size directly on each editor textarea.
+	 * Reconvert is gated off, so this does not trigger the box-rebuild
+	 * UAF — the mutation is simply present when box construction reads the
+	 * DOM. */
+	"try{"
+	"var taAll=document.querySelectorAll('textarea');"
+	"console.log('[ms] editor-stub textareas='+taAll.length);"
+	"var i,t,cl,xi;"
+	"for(i=0;i<taAll.length;i++){"
+		"t=taAll[i];"
+		"xi=(t.getAttribute&&t.getAttribute('data-xf-init'))||'';"
+		"cl=(t.getAttribute&&t.getAttribute('class'))||'';"
+		/* target the message editor: data-xf-init~=editor OR class js-editor */
+		"if(xi.indexOf('editor')>=0||cl.indexOf('js-editor')>=0){"
+			/* drop the u-jsOnly hider from the class list */
+			"if(cl.indexOf('u-jsOnly')>=0){"
+				"cl=cl.replace(/(^|\\s)u-jsOnly(\\s|$)/g,' ');"
+				"t.setAttribute('class',cl);"
 			"}"
+			/* inline !important wins over author rules regardless */
+			"t.setAttribute('style',"
+				"'display:block!important;visibility:visible!important;"
+				"width:100%!important;min-height:280px!important;"
+				"height:320px!important;padding:8px!important;"
+				"border:2px solid #888!important;box-sizing:border-box!important;"
+				"background:#fff!important;color:#000!important;"
+				"font-family:monospace!important;font-size:12px!important');"
+			/* fixes498: a hidden ANCESTOR (u-jsOnly / is-hidden /
+			 * inline display:none) keeps the textarea's box out of the
+			 * tree no matter what we do to the textarea itself. Walk up
+			 * and un-hide each container the same way. */
+			"var p=t.parentNode,d=0,pc;"
+			"while(p&&d<8){"
+				"if(p.getAttribute){"
+					"pc=p.getAttribute('class')||'';"
+					"if(pc.indexOf('u-jsOnly')>=0||pc.indexOf('is-hidden')>=0){"
+						"pc=pc.replace(/(^|\\s)(u-jsOnly|is-hidden)(\\s|$)/g,' ');"
+						"p.setAttribute('class',pc);"
+					"}"
+					"var ps=p.getAttribute('style')||'';"
+					"if(ps.indexOf('display')>=0&&ps.indexOf('none')>=0){"
+						"p.setAttribute('style',ps.replace(/display\\s*:\\s*none[^;]*;?/g,'display:block!important;'));"
+					"}"
+				"}"
+				"p=p.parentNode;d++;"
+			"}"
+			"console.log('[ms] editor textarea revealed name='+(t.name||'-'));"
 		"}"
-	"},100);"
 	"}"
+	"}catch(e){console.log('[ms] reveal err '+e);}"
 	"})();";
+
+/* ---------------------------------------------------------------------
+ * fixes499 — ES6 transpile cache.
+ *
+ * The XenForo bundles are large and immutable (versioned URLs, e.g.
+ * editor-compiled.js?_v=d0f959dd). Transpiling the 733 KB Froala bundle
+ * takes ~7 s on a G3, and the old path did it on EVERY page load — plus a
+ * doomed first duk_peval over the full 733 KB (which Duktape fully lexes
+ * before SyntaxError'ing). This cache stores the transpiled ES5 output
+ * keyed by (name, original length), so the 2nd+ load of an identical
+ * script skips BOTH the wasted first peval and the transpile entirely.
+ *
+ * Bounded, in-memory, single shared heap. Entries are never evicted
+ * (a forum page pulls ~6 distinct bundles; the cap covers that with
+ * headroom). Keys are the script URL string + its byte length; a
+ * versioned URL changes when the content changes, so stale hits cannot
+ * occur in practice.
+ * --------------------------------------------------------------------- */
+#define ES6_CACHE_MAX 16
+
+struct es6_cache_entry {
+	char         *name;     /* malloc'd copy of the script URL/name */
+	unsigned long orig_len; /* original (pre-transpile) byte length */
+	char         *out;      /* malloc'd transpiled ES5 source        */
+	size_t        out_len;
+};
+
+static struct es6_cache_entry g_es6_cache[ES6_CACHE_MAX];
+static int g_es6_cache_count = 0;
+
+/* Return the cached transpiled source for (name,orig_len), or NULL. */
+static const char *
+es6_cache_lookup(const char *name, unsigned long orig_len, size_t *out_len)
+{
+	int i;
+	if (name == NULL) return NULL;
+	for (i = 0; i < g_es6_cache_count; i++) {
+		if (g_es6_cache[i].orig_len == orig_len &&
+		    g_es6_cache[i].name != NULL &&
+		    strcmp(g_es6_cache[i].name, name) == 0) {
+			if (out_len != NULL) *out_len = g_es6_cache[i].out_len;
+			return g_es6_cache[i].out;
+		}
+	}
+	return NULL;
+}
+
+/* Store a COPY of the transpiled source under (name,orig_len). The cache
+ * takes ownership of its own copies; caller keeps its buffer. No-op if the
+ * table is full or out of memory (transpile still works, just uncached). */
+static void
+es6_cache_store(const char *name, unsigned long orig_len,
+		const char *out, size_t out_len)
+{
+	struct es6_cache_entry *e;
+	size_t nlen;
+	if (name == NULL || out == NULL) return;
+	if (g_es6_cache_count >= ES6_CACHE_MAX) return;
+	if (es6_cache_lookup(name, orig_len, NULL) != NULL) return; /* already */
+	e = &g_es6_cache[g_es6_cache_count];
+	nlen = strlen(name);
+	e->name = (char *)malloc(nlen + 1);
+	e->out  = (char *)malloc(out_len + 1);
+	if (e->name == NULL || e->out == NULL) {
+		free(e->name); free(e->out);
+		e->name = NULL; e->out = NULL;
+		return;
+	}
+	memcpy(e->name, name, nlen + 1);
+	memcpy(e->out, out, out_len);
+	e->out[out_len] = '\0';
+	e->orig_len = orig_len;
+	e->out_len = out_len;
+	g_es6_cache_count++;
+}
 
 unsigned char js_exec(struct jsthread *thread,
 		const unsigned char *txt, unsigned long txtlen,
@@ -1848,29 +2015,69 @@ unsigned char js_exec(struct jsthread *thread,
 	int rc;
 	if (thread == NULL || thread->ctx == NULL || txt == NULL) return 0;
 	if (txtlen == 0) return 1;
-	/* fixes430: guard against OOM in duk_push_lstring for large scripts.
-	 * duk_push_lstring is unprotected — if the heap allocation fails
-	 * (common after loading image-heavy pages that fragment the heap),
-	 * Duktape calls its fatal handler with a NULL thread pointer, which
-	 * dereferences NULL in duk_hthread_sync_and_null_currpc and hard-crashes
-	 * the Mac. XenForo/forum JS bundles routinely exceed this limit and
-	 * Duktape on the G3 cannot parse them anyway. */
-	if (txtlen > 262144) {
-		macsurf_debug_log_writef("js skip [%s len=%ld > 256KB]",
-			name ? name : "(anon)", (long)txtlen);
-		/* fixes476 — inject minimal editor stub for XenForo editor bundle
-		 * so forum posting works with plain <textarea> instead of Froala. */
-		if (name != NULL && strstr(name, "editor-compiled") != NULL) {
-			duk_push_string(thread->ctx, s_xf_editor_stub);
-			if (duk_peval(thread->ctx) != 0) {
-				macsurf_debug_log_writef(
-					"editor stub err: %s",
-					duk_safe_to_string(thread->ctx, -1));
-			}
+	/* fixes430/493: large-script ceiling.
+	 *
+	 * duk_push_lstring is unprotected — if the heap allocation fails the
+	 * fatal handler dereferences a NULL thread and hard-crashes the Mac.
+	 * On the 64 MB floor a 733 KB bundle was a real OOM risk, so the old
+	 * ceiling was 256 KB. The current build runs with a ~300 MB partition
+	 * (log: free≈302 MB, maxblk≈301 MB), where 733 KB is 0.24% of the
+	 * largest free block — no OOM risk. fixes493 raises the ceiling to
+	 * 4 MB so editor-compiled.js (Froala) actually executes (DIRECTIVE
+	 * #2: find the real wall, don't assume it). The 4 MB cap still bars
+	 * genuinely pathological inputs and leaves headroom for the ES6
+	 * transpiler's ~4x growth on the retry path.
+	 *
+	 * gtag / analytics bundles are skipped explicitly below regardless of
+	 * size — we never want them running. */
+	if (name != NULL &&
+	    strstr(name, "googletagmanager") != NULL) {
+		macsurf_debug_log_writef("js skip analytics [%s]", name);
+		return 1;
+	}
+	/* fixes499b — Froala already-loaded fast path. The JS heap is shared
+	 * and PERSISTENT across page loads (one `js: heap created` per
+	 * session). editor-compiled.js (733 KB) only DEFINES globals
+	 * (FroalaEditor / XF.Editor / XF.FE); re-running it on every
+	 * navigation just redefines the same things — ~2.6 s of pure waste on
+	 * a G3 even with the transpile cached, because Duktape still
+	 * recompiles+reruns the whole 736 KB. If FroalaEditor is already
+	 * defined on the heap, SKIP the bundle entirely and only run the
+	 * per-page editor-stub reveal (which must re-mutate THIS page's DOM).
+	 * First load still pays the full cost; loads 2+ are ~instant. */
+	if (name != NULL && strstr(name, "editor-compiled") != NULL) {
+		duk_push_string(thread->ctx,
+			"(typeof FroalaEditor!=='undefined'&&typeof XF!=='undefined'&&XF.Editor)?1:0");
+		if (duk_peval(thread->ctx) == 0 &&
+		    duk_to_int(thread->ctx, -1) == 1) {
 			duk_pop(thread->ctx);
 			macsurf_debug_log_writef(
-				"js editor stub injected for %s", name);
+				"js editor-compiled already loaded, skip+reveal [%s]",
+				name);
+			duk_push_string(thread->ctx, s_xf_editor_stub);
+			if (duk_peval(thread->ctx) != 0)
+				macsurf_debug_log_writef("editor stub err: %s",
+					duk_safe_to_string(thread->ctx, -1));
+			duk_pop(thread->ctx);
+			return 1;
 		}
+		duk_pop(thread->ctx);
+	}
+	/* fixes495 — editor-compiled.js (Froala) now RUNS for real. The
+	 * fixes493 attempt parse-errored at line 1029 because the ES6
+	 * transpiler didn't handle method shorthand (`init(){}` in object
+	 * literals). fixes495 adds an es6_method_shorthand_pass (plus an
+	 * object-vs-block brace classifier and a for-of else-pairing fix);
+	 * the full 733 KB bundle now transpiles to ES5 that Duktape accepts
+	 * (verified host-side: zero residual ES6 syntax, passes a strict
+	 * parse). So editor-compiled.js falls through to the normal execution
+	 * path below (with the transpile retry). The s_xf_editor_stub is
+	 * still injected as a fallback at the bottom — it only DEFINES
+	 * XF.Editor when Froala did not, so it's a harmless safety net and
+	 * the CSS-revealed textarea works regardless. */
+	if (txtlen > 4194304UL) {
+		macsurf_debug_log_writef("js skip [%s len=%ld > 4MB]",
+			name ? name : "(anon)", (long)txtlen);
 		return 0;
 	}
 	/* fixes481 -- preamble.min.js: stub to extend XF, not replace it */
@@ -1884,6 +2091,12 @@ unsigned char js_exec(struct jsthread *thread,
 		duk_pop(thread->ctx);
 		return 1;
 	}
+	/* fixes483: xfmg/editor.min.js tries XF.extend(XF.Inserter,...) where
+	 * XF.Inserter is undefined -> TypeError. Stub it to a no-op. */
+	if (name != NULL && strstr(name, "xfmg/editor") != NULL) {
+		macsurf_debug_log_writef("js xfmg editor stub for %s", name);
+		return 1;
+	}
 	/* fixes480 -- core-compiled.js: ES6-heavy, inject ES5 XF framework stub */
 	if (name != NULL && strstr(name, "core-compiled.js") != NULL) {
 		macsurf_debug_log_writef("js core stub inject for %s", name);
@@ -1895,7 +2108,61 @@ unsigned char js_exec(struct jsthread *thread,
 		duk_pop(thread->ctx);
 		return 1;
 	}
+	/* fixes495: the fixes487/488 skips for action.min.js, prefix_menu,
+	 * message, thread were added because ES6 method shorthand "survived
+	 * transpile and caused invalid declarations". That root cause is now
+	 * fixed (es6_method_shorthand_pass), so those bundles transpile and
+	 * run — they are allowed to fall through to the normal path below.
+	 *
+	 * Still skipped: the file-upload / image bundles, which are genuinely
+	 * unneeded for text posting and pull in heavy libs (flow.js, exif):
+	 *   attachment_manager-compiled.js, editor-attachment.min.js,
+	 *   exif-reader.js. Skipping them is a scope choice, not a transpiler
+	 * limitation. */
+	if (name != NULL &&
+	    (strstr(name, "attachment_manager") != NULL ||
+	     strstr(name, "editor-attachment.min.js") != NULL ||
+	     strstr(name, "exif-reader") != NULL)) {
+		macsurf_debug_log_writef("js upload-bundle skip %s", name);
+		return 1;
+	}
 	macsurf_profile_stamp("js-start");
+
+	/* fixes499 — transpile-cache fast path. If we've already transpiled
+	 * this exact script (same URL + length) on a prior load, run the
+	 * cached ES5 directly: skip the doomed first peval of the raw ES6 AND
+	 * the ~7 s transpile. This is the single biggest per-page win for the
+	 * forum, where editor-compiled.js (733 KB) was re-transpiled every
+	 * load. The editor-stub reveal still fires for editor-compiled.js. */
+	{
+		size_t clen = 0;
+		const char *cached = es6_cache_lookup(name, txtlen, &clen);
+		if (cached != NULL) {
+			duk_push_lstring(thread->ctx, cached, (duk_size_t)clen);
+			rc = duk_peval(thread->ctx);
+			if (rc != 0) {
+				macsurf_debug_log_writef(
+					"js cached-es5 err [%s]: %s", name,
+					duk_safe_to_string(thread->ctx, -1));
+			} else {
+				macsurf_debug_log_writef(
+					"js es6 cache HIT [%s len=%ld]",
+					name, (long)txtlen);
+			}
+			duk_pop(thread->ctx);
+			macsurf_profile_stamp("js-end");
+			if (rc == 0 && name != NULL &&
+			    strstr(name, "editor-compiled") != NULL) {
+				duk_push_string(thread->ctx, s_xf_editor_stub);
+				if (duk_peval(thread->ctx) != 0)
+					macsurf_debug_log_writef("editor stub err: %s",
+						duk_safe_to_string(thread->ctx, -1));
+				duk_pop(thread->ctx);
+			}
+			return (rc == 0) ? 1 : 0;
+		}
+	}
+
 	duk_push_lstring(thread->ctx, (const char *)txt,
 			(duk_size_t)txtlen);
 	rc = duk_peval(thread->ctx);
@@ -1909,19 +2176,19 @@ unsigned char js_exec(struct jsthread *thread,
 		 * — never retry those. Stage 1 transform: let/const -> var. */
 		if (duk_get_error_code(thread->ctx, -1) == DUK_ERR_SYNTAX_ERROR) {
 			int unsupported = 0;
-			unsigned long i;
-			/* fixes418 — fast-fail for huge ES6 bundles or explicitly unsupported
-			 * modern syntax to save CPU. If it contains "class " or "async ", our
-			 * transpiler can't fix it anyway. Only doing this if it already threw
-			 * a SyntaxError on the first pass. */
-			if (txtlen > 300000) unsupported = 1; /* > 300KB is too big to retry on G3 */
-			else {
-				for (i = 0; i + 5 < txtlen; i++) {
-					if (txt[i] == 'c' && txt[i+1] == 'l' && txt[i+2] == 'a' && txt[i+3] == 's' && txt[i+4] == 's' && (txt[i+5] == ' ' || txt[i+5] == 123)) { unsupported = 1; break; }
-					if (txt[i] == 'a' && txt[i+1] == 's' && txt[i+2] == 'y' && txt[i+3] == 'n' && txt[i+4] == 'c' && txt[i+5] == ' ') { unsupported = 1; break; }
-				}
-			}
-			
+			/* fixes495 — raised the retry ceiling from 300KB to 4MB. The
+			 * transpiler now handles method shorthand, so large minified
+			 * bundles (editor-compiled.js = 733KB Froala) transpile and run.
+			 * The old crude `class `/`async ` substring fast-fail was also
+			 * removed: it false-fired on Froala (which has "class"/"async"
+			 * only inside HTML-attribute *strings*, not as real keywords),
+			 * which would have blocked the very bundle we now support. The
+			 * transpiler's own class/async passes handle genuine occurrences;
+			 * if a residual construct remains, the re-eval simply fails and
+			 * we fall through to the existing error path — no infinite cost,
+			 * since the transpile pass is linear and bounded by the 4MB cap. */
+			if (txtlen > 4194304UL) unsupported = 1;
+
 			if (!unsupported) {
 				/* the arrow pass can GROW the source (an arrow expands
 				 * to a function expression), so size the buffer for the
@@ -1948,9 +2215,36 @@ unsigned char js_exec(struct jsthread *thread,
 						(duk_size_t)xn);
 					rc = duk_peval(thread->ctx);
 					if (rc == 0) {
+						/* fixes499 — cache the transpiled ES5 so the
+						 * next load of this same script skips the
+						 * transpile (and the doomed first peval). Stored
+						 * before freeing xbuf. */
+						es6_cache_store(name, txtlen, xbuf, xn);
 						free(xbuf);
 						duk_pop(thread->ctx);
 						macsurf_profile_stamp("js-end");
+						/* fixes498: editor-compiled.js (Froala) only ever
+						 * succeeds via THIS transpile-retry path, which
+						 * returned early and skipped the tail editor-stub
+						 * injection — so the textarea reveal never ran.
+						 * Inject the stub here too. It only defines
+						 * XF.Editor if absent (no-op when Froala did) and
+						 * runs the synchronous u-jsOnly strip + inline
+						 * style reveal on the editor textarea. */
+						if (name != NULL &&
+						    strstr(name, "editor-compiled") != NULL) {
+							duk_push_string(thread->ctx,
+								s_xf_editor_stub);
+							if (duk_peval(thread->ctx) != 0)
+								macsurf_debug_log_writef(
+									"editor stub err: %s",
+									duk_safe_to_string(
+										thread->ctx, -1));
+							duk_pop(thread->ctx);
+							macsurf_debug_log_writef(
+								"js editor-compiled RAN (retry), "
+								"stub reveal %s", name);
+						}
 						return 1;
 					}
 				}
@@ -1967,10 +2261,35 @@ unsigned char js_exec(struct jsthread *thread,
 			duk_safe_to_string(thread->ctx, -1));
 		duk_pop(thread->ctx);
 		macsurf_profile_stamp("js-end");
+		/* fixes495 — if Froala (editor-compiled.js) failed despite the
+		 * transpiler support, inject the editor stub so XF.Editor is
+		 * still registered and the CSS-revealed textarea works. */
+		if (name != NULL && strstr(name, "editor-compiled") != NULL) {
+			duk_push_string(thread->ctx, s_xf_editor_stub);
+			if (duk_peval(thread->ctx) != 0)
+				macsurf_debug_log_writef("editor stub err: %s",
+					duk_safe_to_string(thread->ctx, -1));
+			duk_pop(thread->ctx);
+			macsurf_debug_log_writef(
+				"js editor-compiled FAILED, stub fallback %s", name);
+		}
 		return 0;
 	}
 	duk_pop(thread->ctx);
 	macsurf_profile_stamp("js-end");
+	/* fixes495 — editor-compiled.js (Froala) ran. Inject the editor stub
+	 * too: it only DEFINES XF.Editor when absent, so it's a no-op if Froala
+	 * registered its own, and a safety net otherwise (the textarea is also
+	 * unhidden by the UA stylesheet, independent of either). */
+	if (name != NULL && strstr(name, "editor-compiled") != NULL) {
+		duk_push_string(thread->ctx, s_xf_editor_stub);
+		if (duk_peval(thread->ctx) != 0)
+			macsurf_debug_log_writef("editor stub err: %s",
+				duk_safe_to_string(thread->ctx, -1));
+		duk_pop(thread->ctx);
+		macsurf_debug_log_writef(
+			"js editor-compiled RAN, stub safety-net %s", name);
+	}
 	return 1;
 }
 

@@ -73,12 +73,16 @@ static int box_talloc_destructor(struct box *b)
 		data = scrollbar_get_data(b->scroll_x);
 		scrollbar_destroy(b->scroll_x);
 		free(data);
+		b->scroll_x = NULL;   /* fixes499f — idempotent: a second
+		                       * teardown pass must skip the freed bar
+		                       * rather than re-destroy a stale pointer. */
 	}
 
 	if (b->scroll_y != NULL) {
 		data = scrollbar_get_data(b->scroll_y);
 		scrollbar_destroy(b->scroll_y);
 		free(data);
+		b->scroll_y = NULL;
 	}
 
 	return 0;

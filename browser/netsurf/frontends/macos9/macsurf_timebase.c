@@ -55,7 +55,7 @@ macsurf_tb64 macsurf_tb_read(void)
 {
     macsurf_tb64 t;
 #ifdef __MWERKS__
-    unsigned long hi, lo, hi2;
+    register unsigned long hi, lo, hi2;
     do {
         asm { mftbu hi }
         asm { mftb  lo }
