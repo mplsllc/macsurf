@@ -449,11 +449,11 @@ browser_window_favicon_callback(hlcache_handle *c,
 	case CONTENT_MSG_DONE:
 		if (bw->favicon.current != NULL) {
 			content_close(bw->favicon.current);
-			hlcache_handle_release(bw->favicon.current);
-			/* fixes458: null immediately so any synchronous callback
-			 * fired from bw->favicon.current = c below cannot see
-			 * the released handle. */
-			bw->favicon.current = NULL;
+			/* fixes458/501x: null BEFORE release (via safe wrapper) so
+			 * any synchronous callback fired during the release — or
+			 * from bw->favicon.current = c below — cannot see the
+			 * released handle. */
+			safe_hlcache_handle_release(&bw->favicon.current);
 		}
 
 		bw->favicon.current = c;
@@ -693,8 +693,7 @@ browser_window_convert_to_download(struct browser_window *bw,
 	}
 
 	/* remove content from browser window */
-	hlcache_handle_release(bw->loading_content);
-	bw->loading_content = NULL;
+	safe_hlcache_handle_release(&bw->loading_content); /* fixes501x */
 	macsurf_debug_log_writef("bw: loading_content->NULL bw=%p", (void*)bw);
 
 	browser_window_stop_throbber(bw);
@@ -846,12 +845,27 @@ static nserror browser_window_content_ready(struct browser_window *bw)
 	nserror res = NSERROR_OK;
 
 	/* close and release the current window content */
-	macsurf_debug_log_writef("bw: content_ready bw=%p old=%p new=%p",
-		(void*)bw, (void*)bw->current_content, (void*)bw->loading_content);
+	{
+		/* fixes551 — log the URLs of the content being replaced and the one
+		 * taking over, so a switch TO about:query/fetcherror (or any wrong
+		 * page) is visible in the trace, not just opaque pointers. */
+		nsurl *ou = (bw->current_content != NULL) ?
+			hlcache_handle_get_url(bw->current_content) : NULL;
+		nsurl *nu = (bw->loading_content != NULL) ?
+			hlcache_handle_get_url(bw->loading_content) : NULL;
+		macsurf_debug_log_writef("NAV: content_ready bw=%p old=%s new=%s",
+			(void*)bw,
+			(ou != NULL) ? nsurl_access(ou) : "(none)",
+			(nu != NULL) ? nsurl_access(nu) : "(none)");
+	}
 	if (bw->current_content != NULL) {
 		content_close(bw->current_content);
-		hlcache_handle_release(bw->current_content);
-		bw->current_content = NULL;
+		/* fixes501x: NULL before release.  content_close ->
+		 * html_close -> html_object_close_objects -> content_close ->
+		 * content_textsearch_destroy can re-enter and read
+		 * bw->current_content; nulling first means the re-entrant read
+		 * sees NULL.  This is the exact path of the free_matches crash. */
+		safe_hlcache_handle_release(&bw->current_content);
 		macsurf_debug_log_writef("bw: current_content->NULL bw=%p", (void*)bw);
 	}
 
@@ -869,6 +883,20 @@ static nserror browser_window_content_ready(struct browser_window *bw)
 	bw->current_content = bw->loading_content;
 	bw->loading_content = NULL;
 	macsurf_debug_log_writef("bw: loading_content->NULL bw=%p", (void*)bw);
+
+	/* fixes513: reentrant content_broadcast can fire a second call to
+	 * browser_window_content_ready for the same bw before the first
+	 * returns.  The first call already nulled loading_content (above),
+	 * so the second call sees current_content=NULL here.
+	 * content_reformat(NULL,...) -> content__reformat(NULL,...) -> stw
+	 * through r3=0 at +005C.  Bail early; the first invocation is still
+	 * live on the stack and will complete the transition. */
+	if (bw->current_content == NULL) {
+		macsurf_debug_log_writef(
+			"bw_content_ready: REENTRANT NULL current bw=%p, skip",
+			(void *)bw);
+		return NSERROR_OK;
+	}
 
 	if (!bw->internal_nav) {
 		/* Transfer the fetch parameters */
@@ -1420,6 +1448,18 @@ browser_window__handle_error(struct browser_window *bw,
 	nserror res;
 	nsurl *url = hlcache_handle_get_url(c);
 
+	/* fixes551 — log WHY a content errored BEFORE we replace it with the
+	 * error page.  This is the single line that explains a page which fetched
+	 * fine (even from cache) yet still shows about:query/fetcherror: it names
+	 * the failing URL, the nserror code, the raw fetch message, and whether the
+	 * erroring content was the in-flight nav (loading) or the displayed one. */
+	macsurf_debug_log_writef(
+		"NAV: ERROR url=%s code=%d msg=%s loading=%d current=%d -> error page",
+		(url != NULL) ? nsurl_access(url) : "(null)",
+		(int)code, (message != NULL) ? message : "(null)",
+		(c == bw->loading_content) ? 1 : 0,
+		(c == bw->current_content) ? 1 : 0);
+
 	/* Unexpected OK? */
 	assert(code != NSERROR_OK);
 
@@ -1542,7 +1582,11 @@ browser_window_callback(hlcache_handle *c, const hlcache_event *event, void *pw)
 
 	case CONTENT_MSG_DONE:
 		assert(bw->current_content == c);
-
+		{
+			nsurl *du = hlcache_handle_get_url(c);
+			macsurf_debug_log_writef("NAV: DONE url=%s",
+				(du != NULL) ? nsurl_access(du) : "(null)");
+		}
 		res = browser_window_content_done(bw);
 		break;
 
@@ -1925,28 +1969,25 @@ nserror browser_window_destroy_internal(struct browser_window *bw)
 
 	if (bw->loading_content != NULL) {
 		hlcache_handle_abort(bw->loading_content);
-		hlcache_handle_release(bw->loading_content);
-		bw->loading_content = NULL;
+		/* fixes501x: NULL before release via safe wrapper. */
+		safe_hlcache_handle_release(&bw->loading_content);
 		macsurf_debug_log_writef("bw: loading_content->NULL bw=%p", (void*)bw);
 	}
 
 	if (bw->current_content != NULL) {
 		content_close(bw->current_content);
-		hlcache_handle_release(bw->current_content);
-		bw->current_content = NULL;
+		safe_hlcache_handle_release(&bw->current_content);
 		macsurf_debug_log_writef("bw: current_content->NULL bw=%p", (void*)bw);
 	}
 
 	if (bw->favicon.loading != NULL) {
 		hlcache_handle_abort(bw->favicon.loading);
-		hlcache_handle_release(bw->favicon.loading);
-		bw->favicon.loading = NULL;
+		safe_hlcache_handle_release(&bw->favicon.loading);
 	}
 
 	if (bw->favicon.current != NULL) {
 		content_close(bw->favicon.current);
-		hlcache_handle_release(bw->favicon.current);
-		bw->favicon.current = NULL;
+		safe_hlcache_handle_release(&bw->favicon.current);
 	}
 
 	if (bw->jsheap != NULL) {
@@ -2156,6 +2197,35 @@ browser_window_mouse_click_internal(struct browser_window *bw,
 	const char *status = NULL;
 	browser_pointer_shape pointer = BROWSER_POINTER_DEFAULT;
 
+	/* fixes501: guard against stale current_content handle.
+	 * On navigation the old hlcache_handle is released and freed, but
+	 * cooperative multitasking means a mouse event can still arrive
+	 * before the browser_window field is updated.  A freed handle whose
+	 * heap memory was reused for string data has a non-NULL entry field
+	 * (the first bytes of the string) so hlcache_handle_get_content
+	 * returns non-NULL garbage, the assert passes, and we crash
+	 * dereferencing the garbage content pointer.
+	 * The OS 9 malloc heap lives in ~0x01000000–0x20000000; anything
+	 * outside that range is a recycled/wild pointer. Bail early. */
+	if (c != NULL) {
+		unsigned long ca = (unsigned long)(void *)c;
+		if (ca < 0x01000000UL || ca >= 0x20000000UL) {
+			macsurf_debug_log_writef(
+				"bw_mouse_click: SKIP wild c_content=%p", (void *)c);
+			return;
+		}
+		/* also skip if entry pointer looks uninitialized/wild */
+		{
+			struct hlcache_entry **ep = (struct hlcache_entry **)c;
+			unsigned long ea = (unsigned long)(void *)(*ep);
+			if (ea != 0 && (ea < 0x01000000UL || ea >= 0x20000000UL)) {
+				macsurf_debug_log_writef(
+					"bw_mouse_click: SKIP wild entry=%p", (void *)(*ep));
+				return;
+			}
+		}
+	}
+
 	if (bw->children) {
 		/* Browser window has children (frames) */
 		struct browser_window *child;
@@ -2290,6 +2360,21 @@ browser_window_mouse_track_internal(struct browser_window *bw,
 	hlcache_handle *c = bw->current_content;
 	const char *status = NULL;
 	browser_pointer_shape pointer = BROWSER_POINTER_DEFAULT;
+
+	/* fixes501: same stale-handle guard as browser_window_mouse_click_internal */
+	if (c != NULL) {
+		unsigned long ca = (unsigned long)(void *)c;
+		if (ca < 0x01000000UL || ca >= 0x20000000UL) {
+			return;
+		}
+		{
+			struct hlcache_entry **ep = (struct hlcache_entry **)c;
+			unsigned long ea = (unsigned long)(void *)(*ep);
+			if (ea != 0 && (ea < 0x01000000UL || ea >= 0x20000000UL)) {
+				return;
+			}
+		}
+	}
 
 	if (bw->window != NULL && bw->drag.window && bw != bw->drag.window) {
 		/* This is the root browser window and there's an active drag
@@ -2945,7 +3030,11 @@ browser_window_set_drag_type(struct browser_window *bw,
 			break;
 		}
 
-		guit->window->drag_start(top_bw->window, gtype, rect);
+		/* fixes510: macos9 has no drag_start implementation (NULL slot).
+		 * Calling through NULL crashes at the instruction in low memory.
+		 * Guard before dispatch; drag state is already set above. */
+		if (guit->window->drag_start != NULL)
+			guit->window->drag_start(top_bw->window, gtype, rect);
 	}
 }
 
@@ -3856,6 +3945,13 @@ browser_window__navigate_internal(struct browser_window *bw,
 {
 	lwc_string *scheme, *path;
 
+	/* fixes551 — start of every navigation (real pages, internal redirects,
+	 * and the about:query/* error/login/cert pages), so the NAV trace reads
+	 * START -> (ERROR why | DONE) -> content_ready switch. */
+	macsurf_debug_log_writef("NAV: START url=%s",
+		((params != NULL) && (params->url != NULL)) ?
+			nsurl_access(params->url) : "(null)");
+
 	/* All our special URIs are in the about: scheme */
 	scheme = nsurl_get_component(params->url, NSURL_SCHEME);
 	if (scheme != corestring_lwc_about) {
@@ -4141,8 +4237,7 @@ void browser_window_stop(struct browser_window *bw)
 
 	if (bw->loading_content != NULL) {
 		hlcache_handle_abort(bw->loading_content);
-		hlcache_handle_release(bw->loading_content);
-		bw->loading_content = NULL;
+		safe_hlcache_handle_release(&bw->loading_content); /* fixes501x */
 		macsurf_debug_log_writef("bw: loading_content->NULL bw=%p", (void*)bw);
 	}
 

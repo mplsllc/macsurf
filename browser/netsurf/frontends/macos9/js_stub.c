@@ -1,14 +1,13 @@
 /*
  * MacSurf — js_stub.c
  *
- * No-op stubs for the NetSurf js_thread API.  Active only when the
- * Duktape build is disabled (i.e. WITH_DUKTAPE is NOT defined).  When
- * WITH_DUKTAPE is on, every symbol below is provided for real by
- * frontends/macos9/javascript/macsurf_js.c and this whole file
+ * No-op stubs for the NetSurf js_thread API.  Active only when the QuickJS
+ * engine is not built (WITH_QUICKJS undefined).  When QuickJS is on, every
+ * symbol below is provided for real by macsurf_qjs.c and this whole file
  * compiles to nothing.
  *
- * Keep the file in the project file list so toggling JS off via the
- * prefix doesn't require an .mcp edit.
+ * Keep the file in the project file list so toggling JS off doesn't require
+ * an .mcp edit.
  */
 
 
@@ -16,7 +15,7 @@
 #include <stddef.h>
 #include "utils/ns_errors.h"
 
-#ifndef WITH_DUKTAPE
+#ifndef WITH_QUICKJS
 
 struct dom_event;
 struct dom_document;
@@ -75,4 +74,4 @@ void js_event_cleanup(jsthread *thread, struct dom_event *evt)
 	(void)thread; (void)evt;
 }
 
-#endif /* !WITH_DUKTAPE */
+#endif /* !WITH_QUICKJS */

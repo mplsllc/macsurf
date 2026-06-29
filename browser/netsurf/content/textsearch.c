@@ -139,6 +139,21 @@ static void free_matches(struct textsearch_context *textsearch)
 	struct list_entry *cur;
 	struct list_entry *nxt;
 
+	/* fixes501x: NULL-walk guard.  The crash signature was
+	 * free_matches+0x40 lwz r29,0x0004(r31) with r31=NULL — i.e.
+	 * textsearch->found was NULL when this ran, reached via the
+	 * content_close -> content_textsearch_destroy path during a
+	 * browser_window_content_ready that fires while a *different*
+	 * content is mid-broadcast.  Guard the context and its list head
+	 * before dereferencing either. */
+	if (textsearch == NULL || textsearch->found == NULL) {
+		macsurf_debug_log_writef(
+			"free_matches: NULL ctx=%p found=%p, skip",
+			(void *)textsearch,
+			(void *)(textsearch != NULL ? textsearch->found : NULL));
+		return;
+	}
+
 	cur = textsearch->found->next;
 
 	/*
@@ -167,6 +182,10 @@ static void free_matches(struct textsearch_context *textsearch)
 static void search_show_all(bool all, struct textsearch_context *context)
 {
 	struct list_entry *a;
+
+	/* fixes501x: NULL-walk guard, same class as free_matches. */
+	if (context == NULL || context->found == NULL)
+		return;
 
 	for (a = context->found->next; a; a = a->next) {
 		bool add = true;
@@ -646,7 +665,14 @@ content_textsearch_ishighlighted(struct textsearch_context *textsearch,
 /* exported interface, documented in content/textsearch.h */
 nserror content_textsearch_destroy(struct textsearch_context *textsearch)
 {
-	assert(textsearch != NULL);
+	/* fixes501x: MacSurf compiles asserts to log-and-continue, so a
+	 * bare assert(textsearch != NULL) would fall through and crash on
+	 * the first dereference below.  Guard with a real early return. */
+	if (textsearch == NULL) {
+		macsurf_debug_log_writef(
+			"content_textsearch_destroy: NULL context, skip");
+		return NSERROR_OK;
+	}
 
 	if (textsearch->string != NULL) {
 		/* broadcast recent query string */

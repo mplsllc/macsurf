@@ -42,8 +42,47 @@
 
 #include "html/html.h"
 #include "html/private.h"
+#include "netsurf/misc.h"
+#include "desktop/gui_internal.h"
+#include "macsurf_debug.h"
 
 typedef bool (script_handler_t)(struct jsthread *jsthread, const uint8_t *data, size_t size, const char *name);
+
+/* fixes535: out-of-band live-content registry (anti-UAF).  The three
+ * convert_script_*_cb hlcache callbacks carry the parent html_content as pw.
+ * The reliable cancellation is the script handle release in html_script_free /
+ * html_stop (content_remove_user deregisters the callback), but the bulk
+ * hlcache_clean double-destroy can drive a sub-content to DONE/ERROR and
+ * dispatch one of these callbacks against a parent that was freed and reused in
+ * the same clean pass.  The reused struct's bytes read as plausible garbage so
+ * the find-script loop and assert below walk freed memory.  Validate the parent
+ * by registry membership (never dereferences it) before touching parent->scripts.
+ * No-op (always live) on non-Mac syntax-check builds. */
+#ifdef __MACOS9__
+extern int macos9_content_is_live(struct content *c);
+extern unsigned long macos9_content_token(struct content *c);
+extern int macos9_content_token_valid(struct content *c, unsigned long token);
+#else
+#define macos9_content_is_live(c) (1)
+#define macos9_content_token(c) (1UL)
+#define macos9_content_token_valid(c, t) (1)
+#endif
+
+/* fixes550: scheduler payload for deferred_parser_unpause.  It carries the
+ * content GENERATION TOKEN captured at SCHEDULE time so dispatch can reject a
+ * freed-OR-freed-and-reused (ABA) html_content.  Pointer membership alone
+ * (macos9_content_is_live, fixes549) cannot: a bulk hlcache_clean frees this
+ * content between schedule and dispatch, the allocator hands the SAME address
+ * to a new content which re-registers at content__init, and is_live then
+ * returns 1 for the stale pointer (false positive) -> the resumed parser drives
+ * the WRONG/garbage tokeniser -> wild dom_string interned in create_element
+ * (the lbzu / r4-wild crash).  The registry's monotonic generation token
+ * defeats this; see macos9_content_registry.h ("Capture the token at schedule
+ * time"). */
+struct macos9_unpause_payload {
+	html_content  *parent;
+	unsigned long  token;
+};
 
 
 static script_handler_t *select_script_handler(content_type ctype)
@@ -164,6 +203,16 @@ convert_script_async_cb(hlcache_handle *script,
 	unsigned int i;
 	struct html_script *s;
 
+	/* fixes535: registry-membership liveness guard FIRST, before any field of
+	 * parent is read.  Not live => the html_content was torn down; the script
+	 * handle release that should have deregistered this callback raced behind a
+	 * bulk hlcache_clean destroy, so unwind without touching freed state. */
+	if (macos9_content_is_live(&parent->base) == 0) {
+		macsurf_debug_log_writef(
+			"convert_script_async_cb: parent NOT LIVE parent=%p", (void *)parent);
+		return NSERROR_OK;
+	}
+
 	/* Find script */
 	for (i = 0, s = parent->scripts; i != parent->scripts_count; i++, s++) {
 		if (s->type == HTML_SCRIPT_ASYNC && s->data.handle == script)
@@ -192,8 +241,9 @@ convert_script_async_cb(hlcache_handle *script,
 		      nsurl_access(hlcache_handle_get_url(script)),
 		      event->data.errordata.errormsg);
 
-		hlcache_handle_release(script);
-		s->data.handle = NULL;
+		/* fixes515: NULL before release so a reentrant callback finds
+		 * NULL instead of a freed handle / freed callback TVector. */
+		safe_hlcache_handle_release(&s->data.handle);
 		parent->base.active--;
 		NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
 
@@ -232,6 +282,13 @@ convert_script_defer_cb(hlcache_handle *script,
 	unsigned int i;
 	struct html_script *s;
 
+	/* fixes535: registry-membership liveness guard FIRST (see async cb). */
+	if (macos9_content_is_live(&parent->base) == 0) {
+		macsurf_debug_log_writef(
+			"convert_script_defer_cb: parent NOT LIVE parent=%p", (void *)parent);
+		return NSERROR_OK;
+	}
+
 	/* Find script */
 	for (i = 0, s = parent->scripts; i != parent->scripts_count; i++, s++) {
 		if (s->type == HTML_SCRIPT_DEFER && s->data.handle == script)
@@ -255,8 +312,9 @@ convert_script_defer_cb(hlcache_handle *script,
 		      nsurl_access(hlcache_handle_get_url(script)),
 		      event->data.errordata.errormsg);
 
-		hlcache_handle_release(script);
-		s->data.handle = NULL;
+		/* fixes515: NULL before release so a reentrant callback finds
+		 * NULL instead of a freed handle / freed callback TVector. */
+		safe_hlcache_handle_release(&s->data.handle);
 		parent->base.active--;
 		NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
 
@@ -276,6 +334,121 @@ convert_script_defer_cb(hlcache_handle *script,
 	return NSERROR_OK;
 }
 
+/* fixes512: deferred parser unpause.
+ * convert_script_sync_cb is invoked from inside a content_broadcast walk
+ * (content_set_done -> content_broadcast -> hlcache_content_callback ->
+ * convert_script_sync_cb).  Calling dom_hubbub_parser_pause(parser, false)
+ * synchronously from that chain re-enters the hubbub tokenizer while it is
+ * still mid-token from the original parse call.  The tokenizer's internal
+ * buffer pointer becomes r4=1 (stale state from the interrupted parse) and
+ * the next lbzu crashes.  Fix: schedule the unpause for the next event loop
+ * tick (delay=0) so it fires after the notification walk has fully returned.
+ * The html_content pointer is safe to hold across one scheduler tick because
+ * html_destroy cancels all scheduled callbacks via cancel_dom_to_box and
+ * html_close sets aborted=true; we guard both here. */
+static void
+deferred_parser_unpause(void *pw)
+{
+	struct macos9_unpause_payload *pl = (struct macos9_unpause_payload *)pw;
+	html_content *parent;
+	unsigned long saved_token;
+	dom_hubbub_error err;
+
+	if (pl == NULL)
+		return;
+	parent = pl->parent;
+	saved_token = pl->token;
+	free(pl);   /* our own allocation; consumed regardless of outcome below */
+
+	/* fixes550: GENERATION-TOKEN validation — the actual fix for the
+	 * deferred_parser_unpause -> dom_hubbub_parser_pause -> hubbub_tokeniser_run
+	 * -> create_element/intern -> wild dom_string (lbzu, r4 wild) crash.
+	 *
+	 * fixes549 gated on macos9_content_is_live (pointer membership), which a
+	 * bulk hlcache_clean defeats via ABA: it frees this content between schedule
+	 * and dispatch, the allocator reuses the SAME address for a new content that
+	 * re-registers at content__init, and is_live then returns 1 for the stale
+	 * pointer (a FALSE POSITIVE) -> we resume the wrong/garbage tokeniser ->
+	 * crash.  The registry stamps each occupancy with a monotonically-increasing
+	 * generation; captured at schedule time and validated here, it rejects both
+	 * a freed content (absent) and a reused address (higher generation, token no
+	 * longer matches).  macos9_content_token_valid is address-keyed and never
+	 * dereferences parent, so a freed parent is safe to test.  Invalid =>
+	 * freed/reused => bail BEFORE any hubbub call (no pause/setopt/tokeniser_run);
+	 * the page it would have continued is gone.  This is strictly stronger than
+	 * the is_live membership check it replaces and, like it, cannot
+	 * false-negative a live parse (a live content keeps its generation), so it
+	 * does not re-introduce the fixes521 parser-stuck-paused stall. */
+	if (macos9_content_token_valid(&parent->base, saved_token) == 0) {
+		macsurf_debug_log_writef(
+			"deferred_unpause: TOKEN INVALID (freed/ABA) parent=%p tok=%ld, skip",
+			(void *)parent, (long)saved_token);
+		return;
+	}
+
+	/* fixes521: the fixes520 hlcache_content_is_live() gate was removed here
+	 * — a false-negative leaves the parser paused forever (page stuck
+	 * "Loading").  The dead/aborted/by-value-parser guards below are the
+	 * retained protection. */
+
+	/* fixes517: dead-content guard, defense-in-depth behind the universal
+	 * macos9_schedule_cancel_owner() called from content_destroy.  Cancel
+	 * normally removes this callback before the content is freed; this guard
+	 * covers the narrow race where the cooperative scheduler had already
+	 * dequeued the callback before cancel ran.  &parent->base is the content
+	 * (base is html_content's first member); if it has been destroyed its
+	 * handler is NULL and we must not touch the parser. */
+	if (CONTENT_IS_DEAD(&parent->base)) {
+		macsurf_debug_log_writef(
+			"deferred_unpause: DEAD content=%p, skip", (void *)parent);
+		return;
+	}
+	if (parent->aborted) {
+		macsurf_debug_log_writef("deferred_unpause: aborted, skip parser=%p",
+			(void *)parent->parser);
+		return;
+	}
+	/* fixes518: validate parser BY VALUE, not just against NULL.  The crash
+	 * signature is the unpause firing after the html_content was freed and
+	 * its memory reused: parent->parser reads back reuse garbage (observed
+	 * r3=B9921C91) or a small non-NULL value (observed r4=1), NOT NULL — so
+	 * a "== NULL" guard sails straight through and dom_hubbub_parser_pause
+	 * dereferences parser->parser into the tokenizer and dies.  A heap-range
+	 * test rejects NULL, 1, and reuse garbage alike; legitimate parser
+	 * objects live in the malloc heap (~0x06000000-0x0A000000 on this G3,
+	 * 0x01000000-0x20000000 with headroom).  This is the same by-value
+	 * pointer gate used in content_broadcast and hlcache_handle_release. */
+	{
+		unsigned long pa = (unsigned long)(void *)parent->parser;
+		if (pa < 0x01000000UL || pa >= 0x20000000UL) {
+			macsurf_debug_log_writef(
+				"deferred_unpause: WILD parser=%p owner=%p, skip",
+				(void *)parent->parser, (void *)parent);
+			return;
+		}
+	}
+	err = dom_hubbub_parser_pause(parent->parser, false);
+	if (err != DOM_HUBBUB_OK) {
+		macsurf_debug_log_writef("deferred_unpause: pause returned 0x%x",
+			(int)err);
+	}
+}
+
+/* fixes550: schedule a parser unpause carrying the content generation token
+ * captured NOW, so deferred_parser_unpause can reject a freed/ABA-reused
+ * content at dispatch (see struct macos9_unpause_payload).  On OOM we simply
+ * skip the unpause: a stalled parse is recoverable; a bad deref is not. */
+static void macos9_schedule_unpause(html_content *parent)
+{
+	struct macos9_unpause_payload *pl =
+		(struct macos9_unpause_payload *)malloc(sizeof(*pl));
+	if (pl == NULL)
+		return;
+	pl->parent = parent;
+	pl->token = macos9_content_token(&parent->base);
+	guit->misc->schedule(0, deferred_parser_unpause, pl);
+}
+
 /**
  * Callback for syncronous scripts
  */
@@ -288,8 +461,14 @@ convert_script_sync_cb(hlcache_handle *script,
 	unsigned int i;
 	struct html_script *s;
 	script_handler_t *script_handler;
-	dom_hubbub_error err;
 	unsigned int active_sync_scripts = 0;
+
+	/* fixes535: registry-membership liveness guard FIRST (see async cb). */
+	if (macos9_content_is_live(&parent->base) == 0) {
+		macsurf_debug_log_writef(
+			"convert_script_sync_cb: parent NOT LIVE parent=%p", (void *)parent);
+		return NSERROR_OK;
+	}
 
 	/* Count sync scripts which have yet to complete (other than us) */
 	for (i = 0, s = parent->scripts; i != parent->scripts_count; i++, s++) {
@@ -327,12 +506,10 @@ convert_script_sync_cb(hlcache_handle *script,
 				       nsurl_access(hlcache_handle_get_url(s->data.handle)));
 		}
 
-		/* continue parse */
+		/* continue parse -- deferred to avoid re-entering the tokenizer
+		 * from inside the content_broadcast notification walk. */
 		if (parent->parser != NULL && active_sync_scripts == 0) {
-			err = dom_hubbub_parser_pause(parent->parser, false);
-			if (err != DOM_HUBBUB_OK) {
-				NSLOG(netsurf, INFO, "unpause returned 0x%x", err);
-			}
+			macos9_schedule_unpause(parent);
 		}
 
 		break;
@@ -342,20 +519,18 @@ convert_script_sync_cb(hlcache_handle *script,
 		      nsurl_access(hlcache_handle_get_url(script)),
 		      event->data.errordata.errormsg);
 
-		hlcache_handle_release(script);
-		s->data.handle = NULL;
+		/* fixes515: NULL before release so a reentrant callback finds
+		 * NULL instead of a freed handle / freed callback TVector. */
+		safe_hlcache_handle_release(&s->data.handle);
 		parent->base.active--;
 
 		NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
 
 		s->already_started = true;
 
-		/* continue parse */
+		/* continue parse -- deferred, same reason as DONE case above. */
 		if (parent->parser != NULL && active_sync_scripts == 0) {
-			err = dom_hubbub_parser_pause(parent->parser, false);
-			if (err != DOM_HUBBUB_OK) {
-				NSLOG(netsurf, INFO, "unpause returned 0x%x", err);
-			}
+			macos9_schedule_unpause(parent);
 		}
 
 		break;
@@ -654,20 +829,20 @@ nserror html_script_free(html_content *html)
 			/* fallthrough */
 		case HTML_SCRIPT_DEFER:
 			if (html->scripts[i].data.handle != NULL) {
-				hlcache_handle_release(html->scripts[i].data.handle);
-				/* fixes499e — NULL the handle immediately after
-				 * release. Without this, a second teardown pass
-				 * (html_destroy fired from the scheduler after the
-				 * content's handles were already released elsewhere)
-				 * re-enters here with a stale pointer and
+				/* fixes499e/501x — NULL the handle BEFORE release
+				 * (via the safe wrapper). Without this, a second
+				 * teardown pass (html_destroy fired from the scheduler
+				 * after the content's handles were already released
+				 * elsewhere) re-enters here with a stale pointer and
 				 * hlcache_handle_release dereferences freed memory.
 				 * Crash signature: unmapped-memory exception in
 				 * hlcache_handle_release+24 reading off+0x30 of a bad
 				 * handle, stack html_script_free -> html_destroy ->
-				 * content_destroy -> macos9_schedule_run. Nulling makes
-				 * the release idempotent (the != NULL guard now skips
-				 * an already-freed handle on any later pass). */
-				html->scripts[i].data.handle = NULL;
+				 * content_destroy -> macos9_schedule_run. NULLing
+				 * before release makes it idempotent and closes the
+				 * re-entrant-read window during the release itself. */
+				safe_hlcache_handle_release(
+					&html->scripts[i].data.handle);
 			}
 			break;
 		}

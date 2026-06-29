@@ -6,8 +6,16 @@ struct gui_window;
 struct rect;
 
 /* 1. Mandatory C89 Shims for CodeWarrior */
+/* fixes526: guard so we don't REDEFINE inline.  macsurf_prefix.h (the global
+ * prefix) already defines `inline` for the QuickJS build (__inline__); an
+ * unconditional `#define inline` here redefined it to empty -> CW8 "macro
+ * 'inline' redefined" error.  Defer to whatever the prefix set. */
+#ifndef inline
 #define inline
+#endif
+#ifndef restrict
 #define restrict
+#endif
 
 /* 2. Absolute Foundation - MUST BE FIRST 
  * We define standard types and Carbon before anything else.
@@ -216,6 +224,8 @@ void macos9_handle_key_down(const EventRecord *event);
 void macos9_poll_mouse_hover(void);
 void macos9_poll(void);
 extern nserror macos9_schedule(int t, void (*callback)(void *p), void *p);
+/* fixes517: cancel ALL scheduled callbacks owned by p (universal anti-UAF). */
+extern void macos9_schedule_cancel_owner(void *p);
 short macos9_font_id_from_style(const struct plot_font_style *fstyle);
 void  macos9_font_metric_probe_run(void); /* fixes144a -- diagnostic probe */
 void  macos9_font_vmetric_probe_run(void); /* fixes153 -- FontInfo dump */

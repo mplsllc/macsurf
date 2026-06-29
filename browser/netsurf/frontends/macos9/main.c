@@ -32,8 +32,9 @@ extern void OSTLS_StirEntropy(const void *data, unsigned long len);
  * to avoid pulling macos9_disk_cache.h's includes into main.c. */
 extern void macos9_cookies_load(void);
 extern void macos9_cookies_save(void);
-#ifdef WITH_DUKTAPE
-#include "javascript/macsurf_js.h"
+/* JS init: js_initialise/js_finalise are declared in the shared content js.h
+ * and provided by the QuickJS engine glue (macsurf_qjs.c). */
+#ifdef WITH_QUICKJS
 #include "content/handlers/javascript/js.h"
 #endif
 #ifndef kInitOTForApplicationMask
@@ -46,9 +47,20 @@ extern void macos9_cookies_save(void);
  * mUpMask: required for TrackControl on push buttons and scroll bars.
  * activMask: needed for activateEvt (URL field + button hilite on focus change).
  * Wheel events are NOT in the mask — CarbonLib on OS 9 crashes when
- * it attempts to dispatch kEventMouseWheelMoved (CarbonLib: not available). */
+ * it attempts to dispatch kEventMouseWheelMoved (CarbonLib: not available).
+ *
+ * fixes507 — osMask and highLevelEventMask REMOVED. MacSurf's
+ * WaitNextEvent dispatch (switch (ev.what) in main.c) only handles
+ * updateEvt / mouseDown / keyDown / autoKey / activateEvt; osEvt (what=15
+ * suspend/resume) and kHighLevelEvent (AppleEvents) fall to default:break,
+ * so we processed neither. But requesting them forced the Toolbox through
+ * its TSM / high-level delivery machinery inside WaitNextEvent. With no
+ * InitTSMAwareApplication / NewTSMDocument call, the Text Services Manager
+ * has no document state and _TSMEvent crashed writing a near-zero pointer
+ * (00010DE0, low-memory) during event delivery. We never consumed these
+ * events; not requesting them keeps the Toolbox off that code path. */
 #define MACOS9_EVENT_MASK (mDownMask | mUpMask | keyDownMask | autoKeyMask | \
-	updateMask | activMask | osMask | highLevelEventMask)
+	updateMask | activMask)
 #else
 #define MACOS9_EVENT_MASK everyEvent
 #endif
@@ -688,20 +700,7 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 							browser_window_mouse_click(gw->bw,
 								BROWSER_MOUSE_CLICK_1 | mods,
 								rx_ns, ry_ns);
-							/* fixes320 — dispatch inline onclick="..."
-							 * attribute handler to the JS bridge.
-							 * NetSurf core's interaction.c doesn't
-							 * fire DOM click events for generic
-							 * elements; we walk the box tree, find
-							 * the deepest element with an onclick
-							 * attribute, and peval it. */
-							{
-								extern bool macos9_dispatch_click_to_js(
-									struct browser_window *bw,
-									int x_ns, int y_ns);
-								(void)macos9_dispatch_click_to_js(
-									gw->bw, rx_ns, ry_ns);
-							}
+							/* inline onclick handlers run natively in the JS engine */
 						} else {
 							macos9_window_te_deactivate_url(gw);
 						}
@@ -831,8 +830,10 @@ void macos9_poll(void) {
 		{ extern void macos9_animation_tick(void);
 		  macos9_animation_tick(); }
 		/* fixes321 (#103) — drive setTimeout / setInterval. */
-		{ extern void macsurf_js_pump_timers(void);
-		  macsurf_js_pump_timers(); }
+#ifdef WITH_QUICKJS
+		{ extern void macsurf_qjs_pump_all(void);
+		  macsurf_qjs_pump_all(); }
+#endif
 	}
 }
 
@@ -888,9 +889,74 @@ void macos9_poll_mouse_hover(void) {
 #endif
 }
 
+/* fixes531: deferred initial navigation.
+ *
+ * Firing the home-page fetch synchronously from main() BEFORE the
+ * WaitNextEvent loop starts meant the first live HTTPS connect ran with
+ * the cooperative OT pump not yet cycling and the monotonic-clock
+ * baseline not yet established.  The connect deadline was therefore
+ * already expired on the very first pump, so the connection was abandoned
+ * after a single pass and reported a bogus timeout.  Log signature on the
+ * failing run: `pumps=1`, `ot_send calls=0 bytes=0`, `ot_err=2147483647`
+ * (INT_MAX sentinel, i.e. no real OT error), with `os_err=0 br_err=0(OK)`.
+ * The page then fell back to about:query/fetcherror.  Manual URL-bar
+ * navigation always worked because by then the event loop was live.
+ *
+ * Fix: create the window empty (no url -> no synchronous fetch) and
+ * schedule the navigation as a zero-delay callback, so it runs on the
+ * first macos9_schedule_run pass with the loop running, the OT pump
+ * cycling, and the clock baseline valid.  This routes the initial load
+ * through the exact browser_window_navigate path manual navigation uses,
+ * rather than special-casing the first fetch.  It fixes both candidate
+ * causes (clock-baseline-not-ready and pump-not-cycling) at once by
+ * removing the precondition that makes either bite.
+ */
+static void macos9_deferred_home_load(void *pw)
+{
+	struct browser_window *bw = (struct browser_window *)pw;
+	nsurl *home = NULL;
+	extern void macos9_http_mark_next_as_document(void);
+
+	/* WATCH (callback-safety audit, 2026-06-29): this is the ONE live
+	 * content/window-referencing scheduled callback with no out-of-band
+	 * liveness guard and no bw-keyed teardown cancel.  It is SAFE today ONLY
+	 * because it is scheduled with delay 0 at startup (see the macos9_schedule
+	 * call in main) and therefore fires on the first scheduler pass, before
+	 * any user event can destroy the root browser_window.  If you ever give it
+	 * a non-zero delay, re-arm it after startup, or schedule it from anywhere
+	 * a window teardown could intervene, it MUST first validate bw against the
+	 * live window set (walk window_list / browser_window liveness) or be
+	 * cancelled on browser_window destroy — otherwise it becomes a UAF on a
+	 * freed browser_window. */
+
+	/* One free log line to confirm cause 1 in passing: compare this
+	 * first-tick clock value against the "launch home: clock_ms=" line
+	 * logged at startup.  If the startup value is 0/garbage and this one
+	 * is sane, the monotonic baseline wasn't valid pre-loop. */
+	macsurf_debug_log_writef("deferred home: clock_ms=%ld (first tick)",
+		(long)macsurf_monotonic_ms());
+
+	if (bw == NULL) {
+		MS_LOG("deferred home: bw NULL, skip");
+		return;
+	}
+	if (nsurl_create(MACSURF_HOME_URL, &home) != NSERROR_OK) {
+		MS_LOG("deferred home: nsurl_create failed");
+		return;
+	}
+	macos9_http_mark_next_as_document();
+	/* reset the profile clock at the real nav start, as the old
+	 * synchronous path did (fixes366a). */
+	macsurf_profile_reset();
+	macsurf_profile_stamp("nav: launch home (deferred)");
+	browser_window_navigate(bw, home, NULL, BW_NAVIGATE_HISTORY,
+		NULL, NULL, NULL);
+	nsurl_unref(home);
+}
+
 int main(void) {
 	/* fixes477: calibrate PPC time base register (mftb) first so
-	 * macsurf_duk_monotonic_ms() and performance.now() have a valid
+	 * macsurf_monotonic_ms() and performance.now() have a valid
 	 * baseline from the first JS eval.  Two TickCount boundaries
 	 * (~33 ms) elapse here at startup; acceptable cost. */
 	macsurf_tb_calibrate();
@@ -1025,7 +1091,7 @@ int main(void) {
 	/* Enable author CSS so inline <style>/<link> rules apply. */
 	nsoption_set_bool(author_level_css, true);
 	/* fixes319 (#115-#121) — turn on inline <script> execution. Defaults
-	 * to false in NetSurf core; without this, the Duktape bridge that
+	 * to false in NetSurf core; without this, the JS bridge that
 	 * fixes316 wired up is dead-code from NetSurf's perspective because
 	 * html_script_exec returns early without ever calling js_exec. */
 	nsoption_set_bool(enable_javascript, true);
@@ -1075,7 +1141,7 @@ int main(void) {
 	 * first run. */
 	macos9_cookies_load();
 	MS_LOG("cookies loaded");
-#ifdef WITH_DUKTAPE
+#ifdef WITH_QUICKJS
 	js_initialise();
 	MS_LOG("js_initialise done");
 #endif
@@ -1086,21 +1152,26 @@ int main(void) {
 	}
 	{
 		struct browser_window *bw = NULL;
-		nsurl *home = NULL;
-		if (macos9_ot_context != NULL &&
-		    nsurl_create(MACSURF_HOME_URL, &home) == NSERROR_OK) {
-			/* fixes161a — mark next setup as DOCUMENT class. */
-			extern void macos9_http_mark_next_as_document(void);
-			MS_LOG("launch: browser_window_create with home url");
-			macos9_http_mark_next_as_document();
-			/* fixes366a — reset the profile clock just before the
-			 * initial fetch kicks off, so first-page timings are
-			 * measured from the actual nav start, not app launch. */
-			macsurf_profile_reset();
-			macsurf_profile_stamp("nav: launch home");
+		if (macos9_ot_context != NULL) {
+			/* fixes531: create the window EMPTY (NULL url -> no
+			 * synchronous fetch), then defer the home navigation to
+			 * the first event-loop tick via the scheduler.  Running
+			 * the first live fetch before the WaitNextEvent loop was
+			 * cycling produced an instant bogus-timeout (pumps=1,
+			 * ot_err=INT_MAX) -> about:query/fetcherror.  See
+			 * macos9_deferred_home_load above. */
+			extern nserror macos9_schedule(int t,
+				void (*callback)(void *p), void *p);
+			MS_LOG("launch: create empty window, defer home nav");
 			browser_window_create(BW_CREATE_HISTORY | BW_CREATE_FOREGROUND,
-				home, NULL, NULL, &bw);
-			nsurl_unref(home);
+				NULL, NULL, NULL, &bw);
+			macsurf_debug_log_writef(
+				"launch home: clock_ms=%ld (startup, pre-loop)",
+				(long)macsurf_monotonic_ms());
+			if (bw != NULL) {
+				macos9_schedule(0, macos9_deferred_home_load, bw);
+				MS_LOG("launch: home nav scheduled (deferred)");
+			}
 		}
 		if (bw == NULL) {
 			MS_LOG("launch: fallback create_initial_window");
@@ -1129,7 +1200,7 @@ int main(void) {
 	macos9_cookies_save();
 	MS_LOG("cookies saved");
 	macos9_quitting = (bool)1; netsurf_exit();
-#ifdef WITH_DUKTAPE
+#ifdef WITH_QUICKJS
 	js_finalise();
 #endif
 	/* macEntropy: persist this session's accumulated entropy so the next

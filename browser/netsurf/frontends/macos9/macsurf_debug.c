@@ -250,4 +250,22 @@ void macsurf_debug_log_int_force(const char *label, long value)
 	g_title_locked = 1;
 }
 #endif
+
+#else /* !MACSURF_DEBUG */
+/* fixes528: the QuickJS-migration prefix no longer defines MACSURF_DEBUG, which
+ * gated out EVERY definition in this file -> the title-bar/probe API was
+ * undefined at link while plotters.c (macos9_plot_bitmap) and html.c
+ * (html_begin_conversion) still call macsurf_debug_set_title /
+ * macsurf_debug_log_int.  Provide no-op stubs for the whole public API so it
+ * links with MACSURF_DEBUG off.  The durable file log (macsurf_debug_log_writef
+ * in macsurf_debug_log.c) is separate and unaffected. */
+void macsurf_debug_set_title(const char *msg) { (void)msg; }
+void macsurf_debug_log_int(const char *label, long value) { (void)label; (void)value; }
+void macsurf_debug_log_str(const char *label, const char *value) { (void)label; (void)value; }
+void macsurf_debug_set_title_force(const char *msg) { (void)msg; }
+void macsurf_debug_log_int_force(const char *label, long value) { (void)label; (void)value; }
+int  macsurf_debug_title_is_locked(void) { return 0; }
+void macsurf_debug_probe_append(const char *msg) { (void)msg; }
+void macsurf_debug_probe_append_int(const char *label, long value) { (void)label; (void)value; }
+void macsurf_debug_probe_reset(void) { }
 #endif

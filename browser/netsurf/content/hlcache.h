@@ -131,6 +131,47 @@ nserror hlcache_handle_retrieve(nsurl *url, uint32_t flags,
 nserror hlcache_handle_release(hlcache_handle *handle);
 
 /**
+ * Safely release a high-level cache handle held in a variable, NULLing
+ * the variable BEFORE the release runs (fixes501x).
+ *
+ * The release can re-enter the caller (via content_remove_user ->
+ * content callbacks).  If the same field is read during that re-entry it
+ * must already be NULL, otherwise the second reader sees a handle that is
+ * about to be / has just been freed and double-releases or dereferences
+ * freed memory.  NULLing before release closes the whole double-release
+ * crash family at the call site.  Passing NULL or *handle_ptr == NULL is
+ * a harmless no-op.
+ *
+ * \param handle_ptr  Address of the variable holding the handle.
+ */
+void safe_hlcache_handle_release(hlcache_handle **handle_ptr);
+
+/**
+ * Request that pending (deferred) content broadcasts be pumped on the
+ * next event-loop tick (fixes515).
+ *
+ * content_broadcast defers any broadcast that begins while another is
+ * already walking (the global reentrancy guard).  The deferred message is
+ * stored on the content; this schedules a one-shot pass over the content
+ * cache that re-issues content_broadcast for every content still carrying
+ * a pending message.  Idempotent: repeated calls before the pump fires
+ * coalesce into a single scheduled pass.
+ */
+void hlcache_request_broadcast_catchup(void);
+
+/**
+ * Test whether a content is still live (present in the high-level cache).
+ *
+ * fixes520: liveness check by registry membership, for scheduled callbacks
+ * that may fire after their content was destroyed in a bulk clean.  Does not
+ * dereference \a c, so it is safe to call with a freed/reused content pointer.
+ *
+ * \param c  Content pointer to test (not dereferenced)
+ * \return true iff \a c is currently registered in the content cache
+ */
+bool hlcache_content_is_live(const struct content *c);
+
+/**
  * Abort a high-level cache fetch
  *
  * \param handle  Handle to abort

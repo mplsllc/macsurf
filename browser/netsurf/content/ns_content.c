@@ -43,6 +43,25 @@
 
 #include "macsurf_debug.h"
 
+/* fixes517: frontend scheduler cancellation. Forward-declared here (core
+ * file, Mac-only fork) rather than pulling the macos9 frontend header into
+ * content core — same approach as the macsurf_debug_log_writef forward decl
+ * in content_protected.h.  No-op on non-Mac syntax-check builds. */
+#ifdef __MACOS9__
+extern void macos9_schedule_cancel_owner(void *p);
+/* fixes533: out-of-band live-content registry (anti-UAF).  A content
+ * registers at content__init and deregisters as the first action of
+ * content_destroy, so a scheduled callback can validate it by registry
+ * membership instead of reading its (reusable) bytes.  Implemented in
+ * frontends/macos9/macos9_content_registry.c. */
+extern void macos9_content_register(struct content *c);
+extern void macos9_content_unregister(struct content *c);
+#else
+#define macos9_schedule_cancel_owner(p) ((void)0)
+#define macos9_content_register(c) ((void)0)
+#define macos9_content_unregister(c) ((void)0)
+#endif
+
 #define URL_FMT_SPC "%.140s"
 
 const char * const content_status_name[] = {
@@ -51,6 +70,22 @@ const char * const content_status_name[] = {
 	"DONE",
 	"ERROR"
 };
+
+/* fixes515: GLOBAL content_broadcast reentrancy guard.
+ *
+ * The per-content c->broadcast_in_progress flag (fixes500) only stops a
+ * content re-broadcasting ITSELF during its own walk.  But the real crash
+ * stacks show two content_broadcast frames on TWO DIFFERENT contents:
+ * broadcast(A) -> hlcache_content_callback -> content_convert(B) ->
+ * content_set_ready/done(B) -> broadcast(B) -> convert_script_sync_cb ->
+ * use-after-free.  A per-content flag lets B's broadcast through because B
+ * != A.  This module-global flag serialises ALL content broadcasts: any
+ * broadcast that begins while another is mid-walk — on any content — is
+ * deferred (its message stored on the content) and replayed on the next
+ * event-loop tick via hlcache's catch-up pump.  Mirrors llcache's pairing
+ * of object->notify_in_progress with the global llcache_notify_in_progress
+ * (fixes459/460). */
+static bool content_broadcast_active = false;
 
 
 /**
@@ -69,6 +104,12 @@ const char * const content_status_name[] = {
 static void content_convert(struct content *c)
 {
 	assert(c);
+	if (c->handler == NULL) {
+		macsurf_debug_log_writef(
+			"DESTROYED CONTENT in content_convert content=%p",
+			(void *)c);
+		return;
+	}
 	assert(c->status == CONTENT_STATUS_LOADING ||
 	       c->status == CONTENT_STATUS_ERROR);
 
@@ -174,6 +215,7 @@ content_llcache_callback(llcache_handle *llcache,
  */
 static void content_update_status(struct content *c)
 {
+	if (c->handler == NULL) return; /* destroyed sentinel */
 	if (c->status == CONTENT_STATUS_LOADING ||
 	    c->status == CONTENT_STATUS_READY) {
 		/* Not done yet */
@@ -223,6 +265,11 @@ content__init(struct content *c,
 	c->llcache = llcache;
 	c->mime_type = lwc_string_ref(imime_type);
 	c->handler = handler;
+
+	/* fixes533: register as live the instant the destroyed-sentinel (handler)
+	 * is set, so any scheduled callback that resolves to this content can
+	 * validate it by registry membership rather than reading its bytes. */
+	macos9_content_register(c);
 	c->status = CONTENT_STATUS_LOADING;
 	c->width = 0;
 	c->height = 0;
@@ -240,6 +287,8 @@ content__init(struct content *c,
 	c->user_list = user_sentinel;
 	c->sub_status[0] = 0;
 	c->locked = false;
+	c->broadcast_in_progress = false;
+	c->broadcast_pending_count = 0;
 	c->total_size = 0;
 	c->http_code = 0;
 
@@ -252,6 +301,9 @@ content__init(struct content *c,
 	error = llcache_handle_change_callback(llcache,
 					       content_llcache_callback, c);
 	if (error != NSERROR_OK) {
+		/* fixes534: unregister before the caller frees us on this
+		 * create-time failure, so no stale 'live' slot is left behind. */
+		macos9_content_unregister(c);
 		lwc_string_unref(c->mime_type);
 		return error;
 	}
@@ -275,7 +327,11 @@ bool content_can_reformat(hlcache_handle *h)
 /* exported interface documented in content/protected.h */
 void content_set_status(struct content *c, const char *status_message)
 {
-	size_t len = strlen(status_message);
+	size_t len;
+
+	CONTENT_CHECK_VOID(c);
+
+	len = strlen(status_message);
 
 	if (len >= sizeof(c->sub_status)) {
 		len = sizeof(c->sub_status) - 1;
@@ -290,6 +346,13 @@ void content_set_status(struct content *c, const char *status_message)
 /* exported interface documented in content/protected.h */
 void content_set_ready(struct content *c)
 {
+	/* destroyed sentinel — content_destroy clears handler before freeing */
+	if (c->handler == NULL) {
+		macsurf_debug_log_writef(
+			"DESTROYED CONTENT in content_set_ready content=%p",
+			(void *)c);
+		return;
+	}
 	/* The content must be locked at this point, as it can only
 	 * become READY after conversion. */
 	assert(c->locked);
@@ -306,6 +369,14 @@ void content_set_done(struct content *c)
 {
 	uint64_t now_ms;
 
+	/* destroyed sentinel */
+	if (c->handler == NULL) {
+		macsurf_debug_log_writef(
+			"DESTROYED CONTENT in content_set_done content=%p",
+			(void *)c);
+		return;
+	}
+
 	nsu_getmonotonic_ms(&now_ms);
 
 	c->status = CONTENT_STATUS_DONE;
@@ -318,6 +389,7 @@ void content_set_done(struct content *c)
 /* exported interface documented in content/protected.h */
 void content_set_error(struct content *c)
 {
+	CONTENT_CHECK_VOID(c);
 	c->locked = false;
 	c->status = CONTENT_STATUS_ERROR;
 }
@@ -337,7 +409,20 @@ void
 content__reformat(struct content *c, bool background, int width, int height)
 {
 	union content_msg_data data;
-	assert(c != 0);
+	/* fixes513: last-resort NULL guard; browser_window_content_ready
+	 * catches the reentrant case first, but guard here too since
+	 * content_reformat(hlcache_handle_get_content(h),...) can reach us
+	 * with NULL if the handle was released mid-broadcast. */
+	if (c == NULL) {
+		macsurf_debug_log_writef("content__reformat: NULL content, skip");
+		return;
+	}
+	if (c->handler == NULL) {
+		macsurf_debug_log_writef(
+			"content__reformat: DESTROYED content=%p skip",
+			(void *)c);
+		return;
+	}
 	assert(c->status == CONTENT_STATUS_READY ||
 	       c->status == CONTENT_STATUS_DONE);
 	assert(c->locked == false);
@@ -356,20 +441,117 @@ content__reformat(struct content *c, bool background, int width, int height)
 }
 
 
+#ifdef __MACOS9__
+/* fixes552 — writer-side deferred-destroy list.  When a box walk currently on
+ * the stack still references a content (macos9_box_walk_owns_content, defined in
+ * box_construct.c), freeing it now crashes the walk; queue it here and let the
+ * walk drain it the instant the batch returns (macos9_content_drain_deferred),
+ * once the references are gone.  Bounded + deduped; a full table leaks rather
+ * than free under a live walk. */
+extern int macos9_box_walk_owns_content(struct content *c);
+
+#define MACOS9_DEFER_MAX 32
+static struct content *macos9_defer_list[MACOS9_DEFER_MAX];
+static int macos9_defer_count = 0;
+
+void macos9_content_drain_deferred(void)
+{
+	while (macos9_defer_count > 0) {
+		struct content *dc = macos9_defer_list[--macos9_defer_count];
+		macos9_defer_list[macos9_defer_count] = NULL;
+		content_destroy(dc);   /* walk is off-stack now -> owns()=0 -> proceeds */
+	}
+}
+#endif
+
+
 /* exported interface documented in content/content.h */
 void content_destroy(struct content *c)
 {
 	struct content_rfc5988_link *link;
+	const struct content_handler *h;
 
-	assert(c);
-	nslog_log(__FILE__, "", __LINE__,
-		      "content %p %s",
-		      c,
-		      nsurl_access_log(llcache_handle_get_url(c->llcache)));
+	/* fixes508: NULL guard and double-destroy sentinel must be the
+	 * absolute first operations — before any assert, log, or field
+	 * access.  On a double-destroy c is a valid non-NULL address (just
+	 * freed/reused memory), so assert(c) passes but c->handler is NULL
+	 * (we zeroed it on the first call).  We use c->handler as the
+	 * sentinel: set at creation, cleared on first destroy, bail if NULL.
+	 *
+	 * Cannot use c->status == CONTENT_STATUS_ERROR: hlcache_clean's
+	 * force-clean path calls content_set_error() before content_destroy,
+	 * so ERROR at entry is a valid first-destroy, not a double.
+	 *
+	 * Crash signature prevented: hlcache_clean fires 100ms after the
+	 * first content_destroy ran via content_remove_user -> zero-users.
+	 * By the second call c->handler has been freed/reused (heap reuse
+	 * pattern A6875475 in r3/r19 in MacsBug) and the vtable dispatch
+	 * crashes.  The sentinel bails before any field is touched. */
+	if (c == NULL) return;
+
+#ifdef __MACOS9__
+	/* fixes552 — WRITER-SIDE free guard, the systemic cure for the
+	 * free-during-box-walk crash family (fixes547 box->style, fixes550 parser):
+	 * if a box walk currently on the stack still references this content, do NOT
+	 * free it now — defer until the walk's batch returns and drains it.  Placed
+	 * BEFORE the double-destroy sentinel (so the deferred re-call still sees a
+	 * live handler and actually destroys) and BEFORE the registry unregister (so
+	 * the content stays correctly live during the deferral; it is not freed yet).
+	 * macos9_box_walk_owns_content gen-checks against ABA, so a freed+reused
+	 * address is NOT deferred and frees normally. */
+	if (macos9_box_walk_owns_content(c)) {
+		int i;
+		for (i = 0; i < macos9_defer_count; i++) {
+			if (macos9_defer_list[i] == c) break;
+		}
+		if (i == macos9_defer_count) {
+			if (macos9_defer_count < MACOS9_DEFER_MAX) {
+				macos9_defer_list[macos9_defer_count++] = c;
+				macsurf_debug_log_writef(
+					"content_destroy: DEFERRED (walk live) c=%p", (void *)c);
+			} else {
+				macsurf_debug_log_writef(
+					"content_destroy: DEFER TABLE FULL leak c=%p", (void *)c);
+			}
+		}
+		return;
+	}
+#endif
+
+	h = c->handler;
+	if (h == NULL) {
+		macsurf_debug_log_writef(
+			"content_destroy: DOUBLE DESTROY BLOCKED content=%p",
+			(void *)c);
+		return;
+	}
+	c->handler = NULL; /* sentinel: any re-entrant call bails above */
+
+	/* fixes533: deregister from the live-content registry as the first
+	 * mutating action after the sentinel is cleared, BEFORE anything is
+	 * freed.  From here macos9_content_is_live(c) is false, so a scheduled
+	 * callback that resolves to this content (directly or via a sub-context's
+	 * parent pointer) is rejected at fire time without ever dereferencing
+	 * this soon-to-be-freed struct. */
+	macos9_content_unregister(c);
+
+	/* fixes517: UNIVERSAL anti-UAF — cancel every scheduled callback owned
+	 * by this content BEFORE the handler destroy runs or anything is freed.
+	 * This is the systemic cure for the whole "scheduled callback fires
+	 * after its owner was freed" crash family (deferred_parser_unpause, box
+	 * conversion, object refresh, css modified styles, ...), replacing the
+	 * per-callback schedule(-1, fn, ctx) cancels that had to enumerate every
+	 * callback and kept missing new ones.  html_content embeds struct
+	 * content as its FIRST member, so callbacks scheduled with the
+	 * html_content pointer share this address and are cancelled here too. */
+	macos9_schedule_cancel_owner(c);
+
+	/* Now safe to assert and log */
+	macsurf_debug_log_writef("content_destroy: content=%p", (void *)c);
 	assert(c->locked == false);
 
-	if (c->handler->destroy != NULL)
-		c->handler->destroy(c);
+	if (h->destroy != NULL)
+		h->destroy(c);
 
 	llcache_handle_release(c->llcache);
 	c->llcache = NULL;
@@ -382,9 +564,11 @@ void content_destroy(struct content *c)
 		link = content__free_rfc5988_link(link);
 	}
 
-	/* free the user list */
+	/* free the user list; NULL it so content_broadcast's guard catches
+	 * any re-entrant broadcast on this content after destroy. */
 	if (c->user_list != NULL) {
 		free(c->user_list);
+		c->user_list = NULL;
 	}
 
 	/* free the title */
@@ -408,8 +592,14 @@ content_mouse_track(hlcache_handle *h,
 		    browser_mouse_state mouse,
 		    int x, int y)
 {
-	struct content *c = hlcache_handle_get_content(h);
-	assert(c != NULL);
+	struct content *c;
+	unsigned long ha;
+	/* fixes501: stale-handle guard */
+	if (h == NULL) return;
+	c = hlcache_handle_get_content(h);
+	if (c == NULL) return;
+	ha = (unsigned long)(void *)c->handler;
+	if (ha < 0x01000000UL || ha >= 0x20000000UL) return;
 
 	if (c->handler->mouse_track != NULL) {
 		c->handler->mouse_track(c, bw, mouse, x, y);
@@ -431,8 +621,14 @@ content_mouse_action(hlcache_handle *h,
 		     browser_mouse_state mouse,
 		     int x, int y)
 {
-	struct content *c = hlcache_handle_get_content(h);
-	assert(c != NULL);
+	struct content *c;
+	unsigned long ha;
+	/* fixes501: stale-handle guard */
+	if (h == NULL) return;
+	c = hlcache_handle_get_content(h);
+	if (c == NULL) return;
+	ha = (unsigned long)(void *)c->handler;
+	if (ha < 0x01000000UL || ha >= 0x20000000UL) return;
 
 	if (c->handler->mouse_action != NULL)
 		c->handler->mouse_action(c, bw, mouse, x, y);
@@ -445,7 +641,7 @@ content_mouse_action(hlcache_handle *h,
 bool content_keypress(struct hlcache_handle *h, uint32_t key)
 {
 	struct content *c = hlcache_handle_get_content(h);
-	assert(c != NULL);
+	CONTENT_CHECK_RETURN(c, false);
 
 	if (c->handler->keypress != NULL)
 		return c->handler->keypress(c, key);
@@ -469,8 +665,7 @@ void content__request_redraw(struct content *c,
 {
 	union content_msg_data data;
 
-	if (c == NULL)
-		return;
+	CONTENT_CHECK_VOID(c);
 
 	data.redraw.x = x;
 	data.redraw.y = y;
@@ -486,7 +681,7 @@ bool content_exec(struct hlcache_handle *h, const char *src, size_t srclen)
 {
 	struct content *c = hlcache_handle_get_content(h);
 
-	assert(c != NULL);
+	CONTENT_CHECK_RETURN(c, false);
 
 	if (c->locked) {
 		/* Not safe to do stuff */
@@ -552,7 +747,7 @@ bool content_saw_insecure_objects(struct hlcache_handle *h)
 	}
 
 	/* Otherwise try and chain through the handler */
-	if (c != NULL && c->handler->saw_insecure_objects != NULL) {
+	if (!CONTENT_IS_DEAD(c) && c->handler->saw_insecure_objects != NULL) {
 		return c->handler->saw_insecure_objects(c);
 	}
 
@@ -570,7 +765,10 @@ content_redraw(hlcache_handle *h,
 {
 	struct content *c = hlcache_handle_get_content(h);
 
-	assert(c != NULL);
+	/* fixes516: a redraw queued before navigation can fire after the old
+	 * content is destroyed; the dead sentinel skips it (return true = "no
+	 * draw needed") instead of dispatching through a freed handler. */
+	CONTENT_CHECK_RETURN(c, true);
 
 	if (c->locked) {
 		/* not safe to attempt redraw */
@@ -598,7 +796,7 @@ content_scaled_redraw(struct hlcache_handle *h,
 	struct content_redraw_data data;
 	bool plot_ok = true;
 
-	assert(c != NULL);
+	CONTENT_CHECK_RETURN(c, true);
 
 	/* ensure it is safe to attempt redraw */
 	if (c->locked) {
@@ -669,6 +867,8 @@ content_add_user(struct content *c,
 {
 	struct content_user *user;
 
+	CONTENT_CHECK_RETURN(c, false);
+
 	nslog_log(__FILE__, "", __LINE__,
 		      "content "URL_FMT_SPC" (%p), user %p %p",
 		      nsurl_access_log(llcache_handle_get_url(c->llcache)),
@@ -701,6 +901,23 @@ content_remove_user(struct content *c,
 		    void *pw)
 {
 	struct content_user *user, *next;
+
+	/* fixes508: guard against calling content_remove_user on a content
+	 * that content_destroy has already run on.  After content_destroy:
+	 *   c->handler is NULL (sentinel), c->llcache is NULL.
+	 * A stale hlcache_handle that survived cleanup reaches here via
+	 * hlcache_handle_release -> content_remove_user.  The nslog_log
+	 * call below would dereference c->llcache (NULL) to get the URL,
+	 * crashing at content_remove_user+000D8.  Line 766 would then
+	 * dereference c->handler (NULL) for remove_user vtable dispatch.
+	 * Both are fatal on a destroyed content struct. */
+	if (c->handler == NULL) {
+		macsurf_debug_log_writef(
+			"content_remove_user: SKIP destroyed content=%p cb=%p",
+			(void *)c, (void *)callback);
+		return;
+	}
+
 	nslog_log(__FILE__, "", __LINE__,
 		      "content "URL_FMT_SPC" (%p), user %p %p",
 		      nsurl_access_log(llcache_handle_get_url(c->llcache)),
@@ -734,7 +951,7 @@ uint32_t content_count_users(struct content *c)
 	struct content_user *user;
 	uint32_t counter = 0;
 
-	assert(c != NULL);
+	CONTENT_CHECK_RETURN(c, 0);
 
 	for (user = c->user_list; user != NULL; user = user->next)
 		counter += 1;
@@ -748,6 +965,8 @@ uint32_t content_count_users(struct content *c)
 /* exported interface documented in content/content.h */
 bool content_matches_quirks(struct content *c, bool quirks)
 {
+	CONTENT_CHECK_RETURN(c, false);
+
 	if (c->handler->matches_quirks == NULL)
 		return true;
 
@@ -758,6 +977,8 @@ bool content_matches_quirks(struct content *c, bool quirks)
 /* exported interface documented in content/content.h */
 bool content_is_shareable(struct content *c)
 {
+	CONTENT_CHECK_RETURN(c, false);
+
 	return c->handler->no_share == false;
 }
 
@@ -767,7 +988,65 @@ void content_broadcast(struct content *c, content_msg msg,
 		       const union content_msg_data *data)
 {
 	struct content_user *user, *next;
+	content_msg pending_msg;
+
 	assert(c);
+
+	/* Destroyed sentinel.  content_destroy sets c->handler = NULL before
+	 * freeing any fields.  A reentrant call that arrives after destroy
+	 * (e.g. hlcache_content_callback -> content_set_done -> here) would
+	 * walk the already-freed user_list; the sentinel stops it before any
+	 * field is touched. */
+	if (c == NULL || c->handler == NULL) {
+		macsurf_debug_log_writef(
+			"content_broadcast: SKIP dead/destroyed c=%p msg=%d",
+			(void *)c, (int)msg);
+		return;
+	}
+
+	/* Reentrancy guard — global + per-content (mirrors fixes459/460).
+	 * A user callback invoked during ANY broadcast walk can call
+	 * content_set_ready / content_set_done — on the same content OR a
+	 * different one — which calls content_broadcast again.  Nested walks
+	 * find partially-invalidated state and crash (NULL GrafPort write,
+	 * __ptr_glue through a freed callback TVector, etc., all confirmed in
+	 * MacsBug stacks with content_broadcast appearing 2-3 times).
+	 *
+	 * Defer instead of recursing: store the message on the content and
+	 * ask hlcache to pump pending broadcasts on the next event-loop tick.
+	 * The content's status field is already updated by the caller before
+	 * it broadcasts, so only the NOTIFICATION is delayed, never the state
+	 * transition.  Data pointers are not stored (often stack-allocated and
+	 * invalid by replay time); replay always passes NULL data, which the
+	 * READY/DONE/STATUS/REDRAW paths tolerate.
+	 *
+	 * Pending is last-wins for terminal messages: DONE/ERROR overwrite a
+	 * stored READY/STATUS so a deferred load still reaches completion, but
+	 * a stored terminal message is never downgraded by a later cosmetic
+	 * one. */
+	if (content_broadcast_active || c->broadcast_in_progress) {
+		macsurf_debug_log_writef(
+			"content_broadcast: REENTRANT BLOCKED msg=%d c=%p (global=%d self=%d)",
+			(int)msg, (void *)c,
+			(int)content_broadcast_active, (int)c->broadcast_in_progress);
+		/* Append to the FIFO, preserving order.  Dedup only against the
+		 * immediately-previous queued message so repeated REDRAW/STATUS
+		 * don't flood the queue, while READY-then-DONE is kept intact. */
+		if (c->broadcast_pending_count >= CONTENT_BROADCAST_PENDING_MAX) {
+			macsurf_debug_log_writef(
+				"content_broadcast: pending FIFO full, drop msg=%d c=%p",
+				(int)msg, (void *)c);
+		} else if (c->broadcast_pending_count > 0 &&
+			   c->broadcast_pending[c->broadcast_pending_count - 1] == msg) {
+			/* consecutive duplicate; ignore */
+		} else {
+			c->broadcast_pending[c->broadcast_pending_count++] = msg;
+		}
+		hlcache_request_broadcast_catchup();
+		return;
+	}
+	content_broadcast_active = true;
+	c->broadcast_in_progress = true;
 
 	/* fixes97: per-broadcast MS_LOG dropped. The READY transition is
 	 * useful but fires once per content load — we log content_broadcast
@@ -806,12 +1085,77 @@ void content_broadcast(struct content *c, content_msg msg,
 		}
 	}
 
+	/* fixes511: guard c->user_list against NULL (freed by content_destroy)
+	 * and each user/next pointer against heap-reuse garbage.
+	 * content_destroy frees c->user_list but does not null it.  If a
+	 * re-entrant path (hlcache_content_callback -> content_set_done ->
+	 * content_broadcast) arrives after the first destroy, user_list is
+	 * dangling.  Also guard each user and next: a callback may call
+	 * content_remove_user on a sibling entry, freeing it; if the
+	 * allocator immediately reuses that memory (e.g. for a JS source
+	 * buffer), next->next reads garbage.  Symptoms: r4=NULL or r4/r5 =
+	 * CBB3A1B4/CBB3A1B5 heap-reuse bytes at lbzu in content_broadcast. */
+	if (c->user_list == NULL) {
+		macsurf_debug_log_writef(
+			"content_broadcast: NULL user_list c=%p msg=%d",
+			(void *)c, (int)msg);
+		c->broadcast_in_progress = false;
+		content_broadcast_active = false;
+		return;
+	}
 	nslog_log(__FILE__, "", __LINE__, "%p -> msg:%d", c, msg);
 	for (user = c->user_list->next; user != 0; user = next) {
-		next = user->next;  /* user may be destroyed during callback */
-		if (user->callback != 0) {
+		unsigned long ua = (unsigned long)(void *)user;
+		if (ua < 0x01000000UL || ua >= 0x20000000UL) {
+			macsurf_debug_log_writef(
+				"content_broadcast: wild user=%p c=%p msg=%d, stopping",
+				(void *)user, (void *)c, (int)msg);
+			break;
+		}
+		next = user->next;
+		/* validate next before the loop uses it */
+		if (next != NULL) {
+			unsigned long na = (unsigned long)(void *)next;
+			if (na < 0x01000000UL || na >= 0x20000000UL) {
+				macsurf_debug_log_writef(
+					"content_broadcast: wild next=%p c=%p msg=%d, stopping after this user",
+					(void *)next, (void *)c, (int)msg);
+				next = NULL; /* stop after this iteration */
+			}
+		}
+		if (user->callback != NULL) {
 			user->callback(c, msg, data, user->pw);
 		}
+	}
+
+	/* Clear both reentrancy flags.  The global flag MUST be cleared before
+	 * the inline replay below, otherwise the replay would see the global
+	 * flag still set and defer itself forever. */
+	c->broadcast_in_progress = false;
+	content_broadcast_active = false;
+
+	/* Replay this content's deferred queue, in FIFO order, with NULL data
+	 * (fast path; saves a scheduler round-trip).  Pop the front message
+	 * and re-issue it; the recursive call's own exit-drain handles the
+	 * remainder, so order is preserved.  Re-check handler in case a
+	 * callback destroyed this content during the walk (handler == NULL,
+	 * content freed) — then discard the queue.  Deferred messages for
+	 * OTHER contents are replayed by hlcache's catch-up pump next tick. */
+	if (c->handler == NULL) {
+		if (c->broadcast_pending_count != 0) {
+			macsurf_debug_log_writef(
+				"content_broadcast: discard %d pending, c=%p destroyed during walk",
+				c->broadcast_pending_count, (void *)c);
+			c->broadcast_pending_count = 0;
+		}
+	} else if (c->broadcast_pending_count > 0) {
+		int k;
+		pending_msg = c->broadcast_pending[0];
+		for (k = 1; k < c->broadcast_pending_count; k++) {
+			c->broadcast_pending[k - 1] = c->broadcast_pending[k];
+		}
+		c->broadcast_pending_count--;
+		content_broadcast(c, pending_msg, NULL);
 	}
 }
 
@@ -823,16 +1167,22 @@ content_broadcast_error(struct content *c, nserror errorcode, const char *msg)
 	struct content_user *user, *next;
 	union content_msg_data data;
 
-	assert(c);
+	CONTENT_CHECK_VOID(c);
 
 	data.errordata.errorcode = errorcode;
 	data.errordata.errormsg = msg;
 
+	if (c->user_list == NULL) return;
 	for (user = c->user_list->next; user != 0; user = next) {
-		next = user->next;  /* user may be destroyed during callback */
+		unsigned long ua = (unsigned long)(void *)user;
+		if (ua < 0x01000000UL || ua >= 0x20000000UL) break;
+		next = user->next;
+		if (next != NULL) {
+			unsigned long na = (unsigned long)(void *)next;
+			if (na < 0x01000000UL || na >= 0x20000000UL) next = NULL;
+		}
 		if (user->callback != 0) {
-			user->callback(c, CONTENT_MSG_ERROR,
-				       &data, user->pw);
+			user->callback(c, CONTENT_MSG_ERROR, &data, user->pw);
 		}
 	}
 }
@@ -849,7 +1199,7 @@ content_open(hlcache_handle *h,
 	nserror res;
 
 	c = hlcache_handle_get_content(h);
-	assert(c != 0);
+	CONTENT_CHECK_RETURN(c, NSERROR_OK);
 	nslog_log(__FILE__, "", __LINE__,
 		      "content %p %s",
 		      c,
@@ -872,6 +1222,11 @@ nserror content_close(hlcache_handle *h)
 	c = hlcache_handle_get_content(h);
 	if (c == NULL) {
 		return NSERROR_BAD_PARAMETER;
+	}
+	if (c->handler == NULL) {
+		macsurf_debug_log_writef(
+			"content_close: DEAD content=%p, skip", (void *)c);
+		return NSERROR_OK;
 	}
 
 	if ((c->status != CONTENT_STATUS_READY) &&
@@ -903,9 +1258,12 @@ nserror content_close(hlcache_handle *h)
 void content_clear_selection(hlcache_handle *h)
 {
 	struct content *c = hlcache_handle_get_content(h);
-	assert(c != 0);
+	CONTENT_CHECK_VOID(c);
 
-	if (c->handler->get_selection != NULL)
+	/* fixes516: dispatch clear_selection only if the vtable slot for it
+	 * (not get_selection) is populated — a handler may implement one but
+	 * not the other, and calling a NULL fn-ptr is its own crash class. */
+	if (c->handler->clear_selection != NULL)
 		c->handler->clear_selection(c);
 }
 
@@ -914,7 +1272,7 @@ void content_clear_selection(hlcache_handle *h)
 char * content_get_selection(hlcache_handle *h)
 {
 	struct content *c = hlcache_handle_get_content(h);
-	assert(c != 0);
+	CONTENT_CHECK_RETURN(c, NULL);
 
 	if (c->handler->get_selection != NULL)
 		return c->handler->get_selection(c);
@@ -930,7 +1288,7 @@ content_get_contextual_content(struct hlcache_handle *h,
 			       struct browser_window_features *data)
 {
 	struct content *c = hlcache_handle_get_content(h);
-	assert(c != 0);
+	CONTENT_CHECK_RETURN(c, NSERROR_BAD_PARAMETER);
 
 	if (c->handler->get_contextual_content != NULL) {
 		return c->handler->get_contextual_content(c, x, y, data);
@@ -948,7 +1306,7 @@ content_scroll_at_point(struct hlcache_handle *h,
 			int scrx, int scry)
 {
 	struct content *c = hlcache_handle_get_content(h);
-	assert(c != 0);
+	CONTENT_CHECK_RETURN(c, false);
 
 	if (c->handler->scroll_at_point != NULL)
 		return c->handler->scroll_at_point(c, x, y, scrx, scry);
@@ -964,7 +1322,7 @@ content_drop_file_at_point(struct hlcache_handle *h,
 			   char *file)
 {
 	struct content *c = hlcache_handle_get_content(h);
-	assert(c != 0);
+	CONTENT_CHECK_RETURN(c, false);
 
 	if (c->handler->drop_file_at_point != NULL)
 		return c->handler->drop_file_at_point(c, x, y, file);
@@ -978,7 +1336,7 @@ nserror
 content_debug_dump(struct hlcache_handle *h, FILE *f, enum content_debug op)
 {
 	struct content *c = hlcache_handle_get_content(h);
-	assert(c != 0);
+	CONTENT_CHECK_RETURN(c, NSERROR_BAD_PARAMETER);
 
 	if (c->handler->debug_dump == NULL) {
 		return NSERROR_NOT_IMPLEMENTED;
@@ -993,9 +1351,7 @@ nserror content_debug(struct hlcache_handle *h, enum content_debug op)
 {
 	struct content *c = hlcache_handle_get_content(h);
 
-	if (c == NULL) {
-		return NSERROR_BAD_PARAMETER;
-	}
+	CONTENT_CHECK_RETURN(c, NSERROR_BAD_PARAMETER);
 
 	if (c->handler->debug == NULL) {
 		return NSERROR_NOT_IMPLEMENTED;
@@ -1010,8 +1366,12 @@ struct content_rfc5988_link *
 content_find_rfc5988_link(hlcache_handle *h, lwc_string *rel)
 {
 	struct content *c = hlcache_handle_get_content(h);
-	struct content_rfc5988_link *link = c->links;
+	struct content_rfc5988_link *link;
 	unsigned char rel_match = 0;
+
+	/* fixes516: guard before touching c->links (freed at destroy). */
+	CONTENT_CHECK_RETURN(c, NULL);
+	link = c->links;
 
 	while (link != NULL) {
 		if (lwc_string_caseless_isequal(link->rel, rel,
@@ -1051,6 +1411,8 @@ content__add_rfc5988_link(struct content *c,
 {
 	struct content_rfc5988_link *newlink;
 	union content_msg_data msg_data;
+
+	CONTENT_CHECK_RETURN(c, false);
 
 	/* a link relation must be present for it to be a link */
 	if (link->rel == NULL) {
@@ -1098,8 +1460,7 @@ content__add_rfc5988_link(struct content *c,
 /* exported interface documented in content/content.h */
 nsurl *content_get_url(struct content *c)
 {
-	if (c == NULL)
-		return NULL;
+	CONTENT_CHECK_RETURN(c, NULL);
 
 	return llcache_handle_get_url(c->llcache);
 }
@@ -1110,8 +1471,7 @@ content_type content_get_type(hlcache_handle *h)
 {
 	struct content *c = hlcache_handle_get_content(h);
 
-	if (c == NULL)
-		return CONTENT_NONE;
+	CONTENT_CHECK_RETURN(c, CONTENT_NONE);
 
 	return c->handler->type();
 }
@@ -1127,8 +1487,7 @@ lwc_string *content_get_mime_type(hlcache_handle *h)
 /* exported interface documented in content/content_protected.h */
 lwc_string *content__get_mime_type(struct content *c)
 {
-	if (c == NULL)
-		return NULL;
+	CONTENT_CHECK_RETURN(c, NULL);
 
 	return lwc_string_ref(c->mime_type);
 }
@@ -1160,8 +1519,7 @@ const char *content_get_title(hlcache_handle *h)
 /* exported interface documented in content/content_protected.h */
 const char *content__get_title(struct content *c)
 {
-	if (c == NULL)
-		return NULL;
+	CONTENT_CHECK_RETURN(c, NULL);
 
 	return c->title != NULL ? c->title :
 		nsurl_access(llcache_handle_get_url(c->llcache));
@@ -1195,8 +1553,7 @@ const char *content_get_status_message(hlcache_handle *h)
 /* exported interface documented in content/content_protected.h */
 const char *content__get_status_message(struct content *c)
 {
-	if (c == NULL)
-		return NULL;
+	CONTENT_CHECK_RETURN(c, NULL);
 
 	return c->status_message;
 }
@@ -1266,8 +1623,7 @@ const uint8_t *content__get_source_data(struct content *c, size_t *size)
 	assert(size != NULL);
 
 	/** \todo check if the content check should be an assert */
-	if (c == NULL)
-		return NULL;
+	CONTENT_CHECK_RETURN(c, NULL);
 
 	return llcache_handle_get_source_data(c->llcache, size);
 }
@@ -1398,6 +1754,11 @@ bool content_is_locked(hlcache_handle *h)
 /* exported interface documented in content/content_protected.h */
 bool content__is_locked(struct content *c)
 {
+	/* fixes516: dead/NULL content -> report locked so callers that gate
+	 * work behind "is this content busy?" skip it rather than operate on
+	 * a torn-down struct. */
+	CONTENT_CHECK_RETURN(c, true);
+
 	return c->locked;
 }
 
@@ -1417,6 +1778,8 @@ struct content *content_clone(struct content *c)
 {
 	struct content *nc;
 	nserror error;
+
+	CONTENT_CHECK_RETURN(c, NULL);
 
 	error = c->handler->clone(c, &nc);
 	if (error != NSERROR_OK)
@@ -1485,6 +1848,8 @@ nserror content__clone(const struct content *c, struct content *nc)
 	memcpy(&(nc->sub_status), &(c->sub_status), 80);
 
 	nc->locked = c->locked;
+	nc->broadcast_in_progress = false;
+	nc->broadcast_pending_count = 0;
 	nc->total_size = c->total_size;
 	nc->http_code = c->http_code;
 
@@ -1495,6 +1860,8 @@ nserror content__clone(const struct content *c, struct content *nc)
 /* exported interface documented in content/content.h */
 nserror content_abort(struct content *c)
 {
+	CONTENT_CHECK_RETURN(c, NSERROR_OK);
+
 	nslog_log(__FILE__, "", __LINE__, "Aborting %p", c);
 
 	if (c->handler->stop != NULL)

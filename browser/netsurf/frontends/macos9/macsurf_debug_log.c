@@ -24,6 +24,18 @@
  * has already pulled MacTypes.h / stdint.h / the NSLOG block.
  */
 
+/* fixes530c: self-enable the file log in this TU only, so the real
+ * implementation below (gated on #ifdef MACSURF_DEBUG) compiles in
+ * WITHOUT editing macsurf_prefix.h (which forces a full rebuild).
+ * Public functions are declared unconditionally in the header, so
+ * other TUs link against the real bodies here.  Without this the
+ * prefix lacks MACSURF_DEBUG, init is an empty stub, g_log_open stays
+ * 0, and no MacSurf Debug.log is created. */
+#ifndef MACSURF_RELEASE
+#ifndef MACSURF_DEBUG
+#define MACSURF_DEBUG 1
+#endif
+#endif
 #include "macsurf_debug_log.h"
 
 #include <string.h>

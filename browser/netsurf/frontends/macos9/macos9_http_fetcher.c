@@ -25,8 +25,20 @@
 #define smSystemScript 0
 #endif
 extern OTClientContextPtr macos9_ot_context;
-/* fixes463: break the http-fallback->301->https->dead-host->http-fallback loop */
+/* fixes463/548: break the http-fallback->301->https->dead-host->http-fallback
+ * loop.  This was a LOCAL STUB returning 0, which made the loop-break in the
+ * 3xx redirect handler below dead code: every 301->https landing back on a
+ * TLS-dead host (e.g. cdn.jsdelivr.net, preloaded into the dead-host list) was
+ * handed to llcache and re-queued, thrashing the connect machinery dozens of
+ * times per heavy page (and manufacturing free-during-box-walk UAF windows).
+ * Call the REAL dead-host check exported by the https fetcher so a 301 to a
+ * dead host fails the resource ONCE (-> alt text) instead of looping. */
 extern int macos9_https_host_is_dead(const char *host, int port);
+/* fixes554: per-URL terminal-fail set (exported by the https fetcher).  A
+ * resource URL that fast-failed once is terminal — do NOT follow a 301 onto it
+ * and do NOT scheme-fall-back to it, so the cdn.jsdelivr.net emoji storm cannot
+ * be relaunched from the http side. */
+extern int macos9_https_url_is_terminal(const char *url);
 #endif
 
 /* Persistent on-disk body cache: extracted to macos9_disk_cache.[ch]
@@ -228,7 +240,7 @@ static void cache_capture_append(struct macos9_fetch_ctx *c,
  * 2 active to allow back-to-back navigation. CSS gets 4 (Apple ships
  * 8-12 sheets per page after the size gate). Images stay at 8 from
  * fixes160c. Scripts get the same peer-class 4 active that CSS gets —
- * Duktape is a capable engine and anything it can't run yet we'll fill
+ * The JS engine is capable and anything it can't run yet we'll fill
  * in-house, so JS is not a deferable second-tier resource. Fonts get
  * 2. OTHER gets 4 for XHR/manifest/etc. Global cap of 16 keeps total
  * active fetch pressure bounded regardless of which classes are
@@ -933,6 +945,22 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 	 * decoder complexity. */
 	if (c->status >= 300 && c->status < 400 && c->redirect_url[0] != '\0') {
 		struct fetch *parent_save;
+		/* fixes554: never follow a 301 onto a URL already marked
+		 * terminally failed (a resource that fast-failed on a dead host).
+		 * This is the http-side half of "do not follow the 301": render
+		 * alt text instead of re-entering the jsdelivr fast-fail loop. */
+		if (macos9_https_url_is_terminal(c->redirect_url)) {
+			macsurf_debug_log_writef(
+				"http: redirect %d -> TERMINAL url BREAK %s",
+				c->status, c->redirect_url);
+			msg.type = FETCH_ERROR;
+			msg.data.error = "redirect to terminally-failed resource";
+			fetch_send_callback(&msg, c->parent);
+			parent_save = c->parent;
+			fetch_remove_from_queues(parent_save);
+			fetch_free(parent_save);
+			return;
+		}
 		/* fixes463: if the redirect target is https:// and that host is
 		 * already on the dead-host list, following it will just loop:
 		 * http-fallback -> 301 -> https dead-fail -> http-fallback.
@@ -1217,8 +1245,14 @@ static void macos9_http_poll(lwc_string *s) {
 					fetch_msg rm;
 					int n = sprintf(c->redirect_url,
 						"https://%s", u + 7);
+					/* fixes554 — do not scheme-fall-back onto a
+					 * URL already marked terminally failed; the
+					 * https side of the jsdelivr fast-fail loop.
+					 * Fall through to FETCH_ERROR (alt text). */
 					if (n > 0 &&
-					    (size_t)n < sizeof c->redirect_url) {
+					    (size_t)n < sizeof c->redirect_url &&
+					    !macos9_https_url_is_terminal(
+						    c->redirect_url)) {
 						macsurf_debug_log_writef(
 						    "http: scheme-fallback -> %s",
 						    c->redirect_url);

@@ -16,6 +16,7 @@
 #include "utils/log.h"
 
 #include "macos9.h"
+#include "macsurf_debug.h"
 
 #ifdef __MACOS9__
 #include <Timer.h>
@@ -90,6 +91,51 @@ sched_update_state(void)
 	} else {
 		macos9_sched_active = false;
 	}
+}
+
+/**
+ * fixes517: UNIVERSAL scheduled-callback cancellation by owner pointer.
+ *
+ * Every crash in the "callback outlives its object" family is a
+ * guit->misc->schedule(delay, fn, ctx) entry whose ctx was freed before
+ * fn fired (box conversion, deferred parser unpause, object refresh, ...).
+ * Cancelling one callback at a time (schedule(-1, fn, ctx)) requires the
+ * teardown code to know every fn that might be queued for that object —
+ * and it never does, which is why the crashes keep reappearing at new
+ * sites.  This removes EVERY queued entry whose ->p matches, regardless of
+ * callback.  Call it once from the object's destroy path and no scheduled
+ * callback can ever fire against the freed object again — including
+ * callbacks added by future code, as long as they pass the object as p.
+ *
+ * Safe to call from inside a running callback: macos9_schedule_run() has
+ * already unlinked the in-flight entry from sched_queue before invoking it,
+ * so the entry being executed is never in the list this walk touches.
+ */
+void
+macos9_schedule_cancel_owner(void *p)
+{
+	struct sched_entry **prev = &sched_queue;
+	struct sched_entry *entry;
+	int removed = 0;
+
+	while (*prev != NULL) {
+		entry = *prev;
+		if (entry->p == p) {
+			*prev = entry->next;
+			free(entry);
+			removed++;
+		} else {
+			prev = &entry->next;
+		}
+	}
+
+	if (removed != 0) {
+		macsurf_debug_log_writef(
+			"sched_cancel_owner: dropped %d callback(s) for owner=%p",
+			removed, p);
+	}
+
+	sched_update_state();
 }
 
 nserror

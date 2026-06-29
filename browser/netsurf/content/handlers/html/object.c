@@ -50,6 +50,18 @@
 /* break reference loop */
 static void html_object_refresh(void *p);
 
+/* fixes533: out-of-band live-content registry (anti-UAF).  html_fetch_object
+ * is reached by a re-entrant box walk, and html_object_refresh is scheduled
+ * with a content_html_object* (NOT the content), so the by-owner scheduler
+ * cancel in content_destroy/html_destroy cannot match it.  Validate the
+ * owning content by registry membership (never dereferences it) before
+ * acting.  No-op (always live) on non-Mac syntax-check builds. */
+#ifdef __MACOS9__
+extern int macos9_content_is_live(struct content *c);
+#else
+#define macos9_content_is_live(c) (1)
+#endif
+
 /**
  * Retrieve objects used by HTML document
  *
@@ -166,11 +178,20 @@ html_object_nobox_callback(hlcache_handle *object,
 {
 	struct content_html_object *chobject = pw;
 
+	/* fixes535: this hlcache callback carries a content_html_object whose
+	 * owning content is chobject->parent.  The reliable cancellation is the
+	 * object handle release in html_object_free_objects / abort (which
+	 * deregisters this callback), but a bulk hlcache_clean double-destroy can
+	 * dispatch it against a freed+reused owner first.  Validate the owner by
+	 * registry membership (never dereferences it) before touching chobject. */
+	if (macos9_content_is_live(chobject->parent) == 0) {
+		return NSERROR_OK;
+	}
+
 	switch (event->type) {
 	case CONTENT_MSG_ERROR:
-		hlcache_handle_release(object);
-
-		chobject->content = NULL;
+		/* fixes515: NULL before release. */
+		safe_hlcache_handle_release(&chobject->content);
 		break;
 
 	default:
@@ -190,9 +211,23 @@ html_object_callback(hlcache_handle *object,
 		     void *pw)
 {
 	struct content_html_object *o = pw;
-	html_content *c = (html_content *) o->parent;
+	html_content *c;
 	int x, y;
 	struct box *box;
+
+	/* fixes535: this hlcache callback carries a content_html_object whose
+	 * owning content is o->parent.  The reliable cancellation is the object
+	 * handle release in html_object_free_objects / html_object_abort_objects
+	 * (which deregisters this callback), but a bulk hlcache_clean double-destroy
+	 * can dispatch it against a freed+reused owner first; the reused struct's
+	 * bytes read as plausible garbage so c->base.* below walks freed memory.
+	 * macos9_content_is_live never dereferences o->parent, so validate it
+	 * before reading anything through it. */
+	if (macos9_content_is_live(o->parent) == 0) {
+		return NSERROR_OK;
+	}
+
+	c = (html_content *) o->parent;
 
 	box = o->box;
 
@@ -259,9 +294,8 @@ html_object_callback(hlcache_handle *object,
 			box->object = NULL;
 		}
 
-		hlcache_handle_release(object);
-
-		o->content = NULL;
+		/* fixes515: NULL before release. */
+		safe_hlcache_handle_release(&o->content);
 
 		c->base.active--;
 		NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
@@ -580,8 +614,7 @@ static bool html_replace_object(struct content_html_object *object, nsurl *url)
 			      c->base.active);
 		}
 
-		hlcache_handle_release(object->content);
-		object->content = NULL;
+		safe_hlcache_handle_release(&object->content); /* fixes515 */
 
 		object->box->object = NULL;
 	}
@@ -613,6 +646,21 @@ static void html_object_refresh(void *p)
 {
 	struct content_html_object *object = p;
 	nsurl *refresh_url;
+
+	/* fixes533: this callback is keyed on the content_html_object, not its
+	 * owning content, so content_destroy's by-owner scheduler cancel does not
+	 * reach it.  Validate the OWNER (object->parent) by registry membership
+	 * before touching object->content; if the document was torn down the
+	 * owner is no longer registered and we bail without driving a refresh
+	 * through freed state. */
+	if (object == NULL)
+		return;
+	if (macos9_content_is_live(object->parent) == 0) {
+		macsurf_debug_log_writef(
+			"html_object_refresh: owner NOT LIVE (registry) object=%p parent=%p",
+			(void *)object, (void *)object->parent);
+		return;
+	}
 
 	assert(content_get_type(object->content) == CONTENT_HTML);
 
@@ -680,8 +728,7 @@ nserror html_object_abort_objects(html_content *htmlc)
 
 		default:
 			hlcache_handle_abort(object->content);
-			hlcache_handle_release(object->content);
-			object->content = NULL;
+			safe_hlcache_handle_release(&object->content); /* fixes515 */
 			if (object->box != NULL) {
 				htmlc->base.active--;
 				NSLOG(netsurf, INFO, "%d fetches active",
@@ -744,7 +791,8 @@ nserror html_object_free_objects(html_content *html)
 			    victim->box->object == victim->content) {
 				victim->box->object = NULL;
 			}
-			hlcache_handle_release(victim->content);
+			/* fixes501x: NULL before release. */
+			safe_hlcache_handle_release(&victim->content);
 		}
 
 		html->object_list = victim->next;
@@ -767,11 +815,48 @@ html_fetch_object(html_content *c,
 	hlcache_child_context child;
 	nserror error;
 
+	/* fixes533: registry-membership liveness check FIRST, before any field of
+	 * `c` is read.  The box walk that reaches here runs inside a
+	 * convert_xml_to_box callback the scheduler already DEQUEUED before
+	 * invoking, so a bulk hlcache_clean -> content_destroy -> html_destroy that
+	 * fires while this long walk is yielding (hlcache_handle_retrieve drives
+	 * OT) frees and reuses this html_content WITHOUT being able to stop the
+	 * in-flight walk.  The reused struct's bytes read as plausible garbage
+	 * (aborted=0, encoding=1), so the c->aborted / CONTENT_IS_DEAD gates below
+	 * pass and we crash dereferencing the dead content (the html_fetch_object
+	 * charset-deref / r4=1 signature).  macos9_content_is_live walks the
+	 * registry and never dereferences `c`, so it is the only signal that
+	 * survives a freed+reused struct.  Not live => teardown underway: treat as
+	 * fetch-handled and unwind without touching it. */
+	if (macos9_content_is_live((struct content *)c) == 0) {
+		macsurf_debug_log_writef(
+			"html_fetch_object: DEAD content c=%p, drop fetch", (void *)c);
+		return true;
+	}
+
 	/* If we've already been aborted, don't bother attempting the fetch */
 	if (c->aborted)
 		return true;
 
+	/* fixes519: the box walk can reach here holding a freed+reused
+	 * html_content whose byte fields read as plausible-but-wild values
+	 * (aborted=0 above, encoding=1 here).  hlcache_handle_retrieve strdup()s
+	 * child.charset, so a wild encoding pointer makes strdup scan unmapped
+	 * memory and crash (observed: lbzu through r4=1 in hlcache_handle_retrieve).
+	 * Treat a dead content, or an encoding pointer outside the malloc heap,
+	 * as "no fetch" / "unknown charset" rather than dereferencing garbage. */
+	if (CONTENT_IS_DEAD(&c->base))
+		return true;
 	child.charset = c->encoding;
+	if (child.charset != NULL) {
+		unsigned long ea = (unsigned long)(void *)child.charset;
+		if (ea < 0x01000000UL || ea >= 0x20000000UL) {
+			macsurf_debug_log_writef(
+				"html_fetch_object: WILD encoding=%p c=%p, drop charset",
+				(void *)child.charset, (void *)c);
+			child.charset = NULL;
+		}
+	}
 	child.quirks = c->base.quirks;
 
 	object = calloc(1, sizeof(struct content_html_object));

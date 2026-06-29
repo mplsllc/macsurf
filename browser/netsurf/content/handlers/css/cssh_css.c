@@ -5646,9 +5646,8 @@ static void nscss_destroy_css_data(struct content_css_data *c)
 
 	for (i = 0; i < c->import_count; i++) {
 		if (c->imports[i].c != NULL) {
-			hlcache_handle_release(c->imports[i].c);
+			safe_hlcache_handle_release(&c->imports[i].c); /* fixes515 */
 		}
-		c->imports[i].c = NULL;
 	}
 
 	free(c->imports);
@@ -5929,8 +5928,8 @@ nserror nscss_import(hlcache_handle *handle,
 		break;
 
 	case CONTENT_MSG_ERROR:
-		hlcache_handle_release(handle);
-		ctx->css->imports[ctx->index].c = NULL;
+		/* fixes515: NULL before release. */
+		safe_hlcache_handle_release(&ctx->css->imports[ctx->index].c);
 
 		error = nscss_import_complete(ctx);
 		/* Already released handle */
@@ -6025,14 +6024,29 @@ css_error nscss_register_imports(struct content_css_data *c)
 css_error nscss_register_import(struct content_css_data *c,
 		const hlcache_handle *import)
 {
-	css_stylesheet *sheet;
+	css_stylesheet *sheet = NULL;
 	css_error error;
 
-	if (import != NULL) {
-		nscss_content *s =
-			(nscss_content *) hlcache_handle_get_content(import);
-		sheet = s->data.sheet;
-	} else {
+	{
+		int use_blank = (import == NULL);
+		if (import != NULL) {
+			nscss_content *s =
+				(nscss_content *) hlcache_handle_get_content(import);
+			/* fixes504: hlcache_handle_get_content returns NULL if the
+			 * entry was already cleaned (entry->content nulled by
+			 * hlcache_clean). Use blank_import as a safe fallback so
+			 * css_stylesheet_register_import gets a valid sheet pointer
+			 * rather than dereferencing a freed/reused allocation. */
+			if (s == NULL || s->data.sheet == NULL) {
+				macsurf_debug_log_writef(
+					"nscss_register_import: stale import s=%p, using blank",
+					(void *)s);
+				use_blank = 1;
+			} else {
+				sheet = s->data.sheet;
+			}
+		}
+		if (use_blank) {
 		/* Create a blank sheet if needed. */
 		if (blank_import == NULL) {
 			css_stylesheet_params params;
@@ -6066,7 +6080,8 @@ css_error nscss_register_import(struct content_css_data *c,
 		}
 
 		sheet = blank_import;
-	}
+		} /* end if (use_blank) */
+	} /* end outer block */
 
 	error = css_stylesheet_register_import(c->sheet, sheet);
 	if (error != CSS_OK) {

@@ -59,16 +59,15 @@ unsigned long macsurf_tb_ticks_per_us(void);
 double macsurf_tb_elapsed_ms(void);
 
 /* ------------------------------------------------------------------ */
-/* Duktape time provider hooks (used via duk_config.h overrides)      */
+/* JS time provider hooks (performance.now / Date.now backends)       */
 /* ------------------------------------------------------------------ */
 
-/* DUK_USE_DATE_GET_NOW provider: ms since Unix epoch, sub-ms
- * precision from Microseconds().  Replaces the 1-second time()
- * fallback from the generic Duktape platform branch. */
-double macsurf_duk_date_get_now(void);
+/* Date.now() backend: ms since Unix epoch, sub-ms precision from
+ * Microseconds(). */
+double macsurf_date_get_now(void);
 
-/* DUK_USE_GET_MONOTONIC_TIME provider and performance.now() backend:
- * ms since macsurf_tb_calibrate(), ~60 ns resolution on G3 via mftb. */
-double macsurf_duk_monotonic_ms(void);
+/* performance.now() backend: ms since macsurf_tb_calibrate(), ~60 ns
+ * resolution on G3 via mftb. */
+double macsurf_monotonic_ms(void);
 
 #endif /* MACSURF_TIMEBASE_H */

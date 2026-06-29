@@ -140,3 +140,48 @@ dom_exception macsurf_dom_node_set_text_content(dom_node *node,
     return dom_node_set_text_content(node, content);
 }
 
+dom_exception macsurf_dom_node_get_parent_node(dom_node *node,
+    dom_node **result)
+{
+    return dom_node_get_parent_node(node, result);
+}
+
+dom_exception macsurf_dom_node_get_previous_sibling(dom_node *node,
+    dom_node **result)
+{
+    return dom_node_get_previous_sibling(node, result);
+}
+
+dom_exception macsurf_dom_node_get_last_child(dom_node *node,
+    dom_node **result)
+{
+    return dom_node_get_last_child(node, result);
+}
+
+dom_exception macsurf_dom_element_has_attribute(dom_element *el,
+    dom_string *name, int *result)
+{
+    bool b = false;
+    dom_exception exc = dom_element_has_attribute(el, name, &b);
+    *result = b ? 1 : 0;
+    return exc;
+}
+
+dom_exception macsurf_dom_element_remove_attribute(dom_element *el,
+    dom_string *name)
+{
+    return dom_element_remove_attribute(el, name);
+}
+
+dom_exception macsurf_dom_document_create_element_s(dom_document *doc,
+    const char *tag, dom_element **element)
+{
+    dom_string *ds = NULL;
+    dom_exception exc;
+    dom_string_create((const uint8_t *)tag, (unsigned)strlen(tag), &ds);
+    if (ds == NULL) return 5; /* DOM_NO_MEMORY_ERR */
+    exc = dom_document_create_element(doc, ds, element);
+    dom_string_unref(ds);
+    return exc;
+}
+

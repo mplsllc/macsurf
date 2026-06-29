@@ -60,6 +60,17 @@
 #include "html/html.h"
 #include "macsurf_debug.h"
 
+/* fixes518: frontend scheduler cancellation (forward-declared here, Mac-only
+ * fork, same approach as macsurf_debug_log_writef in content_protected.h).
+ * Used in html_close/html_destroy to cancel every scheduled callback keyed
+ * on this html_content (deferred_parser_unpause, html_css_process_modified_
+ * styles, ...) before any parser/content state is torn down. */
+#ifdef __MACOS9__
+extern void macos9_schedule_cancel_owner(void *p);
+#else
+#define macos9_schedule_cancel_owner(p) ((void)0)
+#endif
+
 long macos9_html_bytes_processed = 0;
 char macos9_html_head[64];
 unsigned int macos9_html_head_len = 0;
@@ -792,6 +803,13 @@ html_create(const content_handler *handler,
 #endif
 	if (error != NSERROR_OK) {
 		content_broadcast_error(&html->base, error, NULL);
+#ifdef __MACOS9__
+		/* fixes534: content__init registered this content; this error
+		 * path frees it directly (not via content_destroy), so drop the
+		 * registry slot first to avoid leaving a stale 'live' entry. */
+		{ extern void macos9_content_unregister(struct content *c);
+		  macos9_content_unregister(&html->base); }
+#endif
 		free(html);
 		return error;
 	}
@@ -805,6 +823,13 @@ html_create(const content_handler *handler,
 #endif
 	if (error != NSERROR_OK) {
 		content_broadcast_error(&html->base, error, NULL);
+#ifdef __MACOS9__
+		/* fixes534: content__init registered this content; this error
+		 * path frees it directly (not via content_destroy), so drop the
+		 * registry slot first to avoid leaving a stale 'live' entry. */
+		{ extern void macos9_content_unregister(struct content *c);
+		  macos9_content_unregister(&html->base); }
+#endif
 		free(html);
 		return error;
 	}
@@ -892,6 +917,17 @@ html_process_encoding_change(struct content *c,
 	}
 
 	source_data = content__get_source_data(c, &source_size);
+
+	/* fixes506: don't feed a NULL/empty buffer to the parser. After
+	 * a double-destroy nulls c->llcache, content__get_source_data
+	 * returns NULL here; passing that to dom_hubbub_parser_parse_chunk
+	 * makes the tokenizer scan from a garbage pointer (r4=1 crash). */
+	if (source_data == NULL || source_size == 0) {
+		macsurf_debug_log_writef(
+			"html: reprocess skipped, source_data=%p size=%ld",
+			(void *)source_data, (long)source_size);
+		return NSERROR_OK;
+	}
 
 	/* Reprocess all the data.  This is safe because
 	 * the encoding is now specified at parser start which means
@@ -1268,8 +1304,8 @@ static void html_stop(struct content *c)
 				     s->type == HTML_SCRIPT_ASYNC ||
 				     s->type == HTML_SCRIPT_DEFER) &&
 				     s->data.handle != NULL) {
-					hlcache_handle_release(s->data.handle);
-					s->data.handle = NULL;
+					/* fixes501x: NULL before release. */
+					safe_hlcache_handle_release(&s->data.handle);
 				}
 			}
 		}
@@ -1817,6 +1853,20 @@ static void html_destroy(struct content *c)
 	macsurf_debug_log_writef("html_destroy: htmlc=%p content=%p", (void*)html, (void*)c);
 	NSLOG(netsurf, INFO, "content %p", c);
 
+	/* fixes502: set aborted before cancel so that if convert_xml_to_box
+	 * was already dequeued by the scheduler (cancel_dom_to_box is then a
+	 * no-op) the callback still checks aborted and returns immediately
+	 * rather than walking a freed select_ctx. */
+	html->aborted = true;
+
+	/* fixes518: cancel EVERY scheduled callback keyed on this html_content
+	 * (deferred_parser_unpause, html_css_process_modified_styles, ...) before
+	 * the parser/document/objects below are freed.  Without this, a queued
+	 * deferred_parser_unpause fires a tick later, reads parent->parser out of
+	 * the freed+reused html_content, and resumes a garbage parser inside the
+	 * hubbub tokenizer (crash sig: lbzu through r4=0/1, r3=reuse garbage). */
+	macos9_schedule_cancel_owner(html);
+
 	/* If we're still converting a layout, cancel it.
 	 * fixes499g — NULL the context after cancel so a second html_destroy
 	 * (the double-destroy via hlcache_clean that this whole crash family
@@ -1978,12 +2028,18 @@ static nserror html_close(struct content *c)
 		(void*)htmlc->box_conversion_context,
 		(void*)htmlc->bw);
 
-	/* fixes457: cancel any scheduled convert_xml_to_box callback NOW,
-	 * before bw is nulled and before html_destroy runs.  html_destroy
-	 * also cancels, but if macos9_schedule_run has already dequeued the
-	 * entry (removed from queue, not yet called), html_destroy's cancel
-	 * is a no-op and the callback fires against a zombie htmlc whose
-	 * select_ctx has been freed — crashing at ns_computed_display+0x18. */
+	/* fixes457/502: set aborted first so that even if the box-convert
+	 * callback was already dequeued by the scheduler, it sees aborted=true
+	 * and returns without touching freed content state. Then cancel to
+	 * prevent it firing at all if still in the queue. */
+	htmlc->aborted = true;
+
+	/* fixes518: cancel every scheduled callback keyed on this html_content
+	 * here too — html_close runs on navigate-away BEFORE content_destroy, so
+	 * a deferred_parser_unpause queued during script load could otherwise
+	 * fire in the window between close and destroy. */
+	macos9_schedule_cancel_owner(htmlc);
+
 	if (htmlc->box_conversion_context != NULL) {
 		cancel_dom_to_box(htmlc->box_conversion_context);
 		htmlc->box_conversion_context = NULL;

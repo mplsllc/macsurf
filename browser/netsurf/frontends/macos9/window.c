@@ -826,6 +826,18 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 }
 
 void macos9_window_destroy(struct gui_window *g) { struct gui_window **p; for(p=&window_list;*p;p=&(*p)->next) if(*p==g) { *p=g->next; break; }
+	/* fixes523 — kill the reload-icon animation before freeing g.  The
+	 * tick (macos9_reload_anim_tick) reschedules itself every 200ms keyed
+	 * on this gui_window* and is gated only by the global
+	 * macos9_reload_animating flag.  If the window is torn down mid-load
+	 * (navigate away / content abort / close) before GW_EVENT_STOP_THROBBER
+	 * fires, a still-queued tick would fire against this freed g, deref
+	 * g->window / g->reload_btn (freed-struct read, the r4=1 signature),
+	 * and reschedule itself — driving repaint/re-entry against dead
+	 * content.  Clear the flag and drop EVERY scheduled callback owned by
+	 * g (cancel-by-owner, fixes517) so nothing can fire against it. */
+	macos9_reload_animating = 0;
+	macos9_schedule_cancel_owner(g);
 #ifdef __MACOS9__
 	if(g->content_gworld) { DisposeGWorld(g->content_gworld); g->content_gworld = NULL; }
 #endif
@@ -885,9 +897,30 @@ static void macos9_reload_anim_tick(void *p)
 {
 #ifdef __MACOS9__
 	struct gui_window *g = (struct gui_window *)p;
+	struct gui_window *w;
+	int alive;
+	struct hlcache_handle *cur;
+	/* fixes523 — bail BEFORE any deref if our window is gone.  This tick
+	 * reschedules itself off the global macos9_reload_animating flag, so a
+	 * stale entry left in the scheduler would otherwise read a freed
+	 * gui_window* (g->window / g->reload_btn) and requeue forever, driving
+	 * repaint/re-entry against dead content (the r4=00000001 freed-struct
+	 * signature).  Confirm g is still a live, listed window first; if it
+	 * isn't, clear the flag and do NOT reschedule. */
 	if (!macos9_reload_animating) return;
+	if (macos9_quitting) { macos9_reload_animating = 0; return; }
+	alive = 0;
+	for (w = window_list; w != NULL; w = w->next) {
+		if (w == g) { alive = 1; break; }
+	}
+	if (!alive || g == NULL) { macos9_reload_animating = 0; return; }
+	/* If the window's content is dead (no current content), there is
+	 * nothing loading — stop the animation rather than spin against a
+	 * torn-down hlcache handle. */
+	cur = (g->bw != NULL) ? browser_window_get_content(g->bw) : NULL;
+	if (cur == NULL) { macos9_reload_animating = 0; return; }
 	macos9_reload_frame++;
-	if (g != NULL && g->window != NULL && g->reload_btn != NULL) {
+	if (g->window != NULL && g->reload_btn != NULL) {
 		Rect r;
 		GetControlBounds(g->reload_btn, &r);
 		InvalWindowRect(g->window, &r);

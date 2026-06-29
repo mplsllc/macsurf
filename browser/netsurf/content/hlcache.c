@@ -43,6 +43,17 @@
 
 #include "macsurf_debug.h"
 
+#ifdef __MACOS9__
+/* fixes553 — defined in content/handlers/html/box_construct.c.  Returns non-zero
+ * when the content is pinned by the box walk currently on the stack (the walked
+ * html_content or any sub-resource content in its object_list).  hlcache_clean
+ * consults this to SKIP evicting a content the live walk still dereferences,
+ * which is the source-side cure for the convert_xml_to_box free-during-walk UAF
+ * (box_image -> box_image_resolve_url -> html_fetch_object ->
+ * hlcache_handle_retrieve byte-scan on a wild pointer). */
+extern int macos9_box_walk_owns_content(struct content *c);
+#endif
+
 typedef struct hlcache_entry hlcache_entry;
 typedef struct hlcache_retrieval_ctx hlcache_retrieval_ctx;
 
@@ -101,6 +112,11 @@ struct hlcache_s {
 /** high level cache state */
 static struct hlcache_s *hlcache = NULL;
 
+/** fixes515: set while a broadcast catch-up pump is scheduled but not yet
+ * run, so repeated requests coalesce into a single pass. */
+static bool hlcache_broadcast_catchup_scheduled = false;
+static void hlcache_broadcast_catchup(void *unused);
+
 
 /******************************************************************************
  * High-level cache internals						      *
@@ -139,6 +155,25 @@ static void hlcache_clean(void *force_clean_flag)
 		 * the cache fits in the configured cache size limit.
 		 */
 
+#ifdef __MACOS9__
+		/* fixes553 — do NOT evict a content the box walk currently on the
+		 * stack still references (the walked html_content, or any content in
+		 * its object_list).  Freeing it here, mid-walk, is the
+		 * convert_xml_to_box UAF: box_image -> box_image_resolve_url ->
+		 * html_fetch_object -> hlcache_handle_retrieve byte-scans a wild
+		 * pointer.  A content with a live user must not be in the eviction
+		 * set.  Leave the entry intact in the cache; the next bg_clean pass
+		 * re-evaluates it once the walk is off-stack.  Generation-validated
+		 * inside macos9_box_walk_owns_content, so a freed+reused walked
+		 * content cannot ABA-false-positive a skip. */
+		if (macos9_box_walk_owns_content(entry->content)) {
+			macsurf_debug_log_writef(
+				"clean: PINNED (walk live) c=%p",
+				(void *)entry->content);
+			continue;
+		}
+#endif
+
 		/* Remove entry from cache */
 		if (entry->prev == NULL)
 			hlcache->content_list = entry->next;
@@ -148,10 +183,28 @@ static void hlcache_clean(void *force_clean_flag)
 		if (entry->next != NULL)
 			entry->next->prev = entry->prev;
 
-		/* Destroy content */
-		macsurf_debug_log_writef("hlcache: clean destroy entry=%p content=%p",
-			(void*)entry, (void*)entry->content);
-		content_destroy(entry->content);
+		/* fixes502: null entry->content BEFORE destroy so any
+		 * hlcache_handle still pointing at this entry reads NULL
+		 * from entry->content rather than freed/reused memory.
+		 * fixes504: belt-and-suspenders guard — if c->handler is
+		 * already NULL the sentinel in content_destroy would catch
+		 * the double-destroy, but we skip the call entirely here
+		 * to avoid even entering content_destroy on freed memory. */
+		{
+			struct content *c_to_destroy = entry->content;
+			if (c_to_destroy->handler == NULL) {
+				macsurf_debug_log_writef(
+					"hlcache: skip already-destroyed entry=%p content=%p",
+					(void*)entry, (void*)c_to_destroy);
+				entry->content = NULL;
+			} else {
+				entry->content = NULL;
+				macsurf_debug_log_writef(
+					"hlcache: clean destroy entry=%p content=%p",
+					(void*)entry, (void*)c_to_destroy);
+				content_destroy(c_to_destroy);
+			}
+		}
 
 		/* Destroy entry */
 		free(entry);
@@ -690,6 +743,9 @@ void hlcache_finalise(void)
 
 	/* De-schedule ourselves */
 	guit->misc->schedule(-1, hlcache_clean, NULL);
+	/* fixes515: drop any pending broadcast catch-up pass too */
+	guit->misc->schedule(-1, hlcache_broadcast_catchup, NULL);
+	hlcache_broadcast_catchup_scheduled = false;
 
 	free(hlcache);
 	hlcache = NULL;
@@ -790,8 +846,34 @@ nserror hlcache_handle_release(hlcache_handle *handle)
 		(void *)(handle->entry));
 
 	if (handle->entry != NULL) {
+		/* fixes503: guard handle->entry before dereferencing.  If
+		 * hlcache_clean already called free(entry) and the allocator
+		 * reused that memory, handle->entry is a valid-looking address
+		 * pointing at new data.  The NULL check at entry->content will
+		 * pass (new allocation has non-NULL first word) and we'll call
+		 * content_remove_user on a garbage content pointer.
+		 * Belt-and-suspenders: also validate entry is in the heap range
+		 * before reading its fields. */
+		{
+			unsigned long ea = (unsigned long)(void *)handle->entry;
+			if (ea < 0x01000000UL || ea >= 0x20000000UL) {
+				macsurf_debug_log_writef(
+					"hlcache_release: SKIP wild entry=%p handle=%p",
+					(void *)handle->entry, (void *)handle);
+				goto release_handle_done;
+			}
+		}
+		/* fixes502: entry->content is nulled by hlcache_clean before
+		 * free(entry), so a stale handle whose entry was already
+		 * cleaned reads NULL here rather than freed memory. */
+		if (handle->entry->content == NULL) {
+			macsurf_debug_log_writef(
+				"hlcache_release: entry %p already cleaned, skip remove_user",
+				(void *)handle->entry);
+		} else {
 		content_remove_user(handle->entry->content,
 				hlcache_content_callback, handle);
+		}
 	} else {
 		RING_ITERATE_START(struct hlcache_retrieval_ctx,
 				   hlcache->retrieval_ctx_ring,
@@ -814,6 +896,7 @@ nserror hlcache_handle_release(hlcache_handle *handle)
 		} RING_ITERATE_END(hlcache->retrieval_ctx_ring, ictx);
 	}
 
+release_handle_done:
 	handle->cb = NULL;
 	handle->pw = NULL;
 
@@ -823,10 +906,147 @@ nserror hlcache_handle_release(hlcache_handle *handle)
 }
 
 /* See hlcache.h for documentation */
+void safe_hlcache_handle_release(hlcache_handle **handle_ptr)
+{
+	hlcache_handle *h;
+
+	if (handle_ptr == NULL || *handle_ptr == NULL)
+		return;
+
+	/* NULL the variable BEFORE releasing so any re-entrant read during
+	 * the release sees NULL and skips, rather than racing on a handle
+	 * that is being freed. */
+	h = *handle_ptr;
+	*handle_ptr = NULL;
+
+	hlcache_handle_release(h);
+}
+
+/**
+ * Re-issue every deferred content broadcast (fixes515).
+ *
+ * Walks the content cache and, for each live content still carrying a
+ * pending (deferred) broadcast message, calls content_broadcast again.
+ * content_broadcast clears the content's pending flag and, being called
+ * from a non-reentrant context here, runs the walk normally.  If that
+ * walk defers anything further, content_broadcast re-arms the pump.
+ */
+static void hlcache_broadcast_catchup(void *unused)
+{
+	hlcache_entry *entry, *next;
+
+	(void) unused;
+
+	hlcache_broadcast_catchup_scheduled = false;
+
+	if (hlcache == NULL)
+		return;
+
+	for (entry = hlcache->content_list; entry != NULL; entry = next) {
+		struct content *c;
+		content_msg msg;
+		int k;
+
+		next = entry->next;
+
+		c = entry->content;
+		if (c == NULL)
+			continue;
+		/* destroyed sentinel — skip freed/destroyed contents */
+		if (c->handler == NULL)
+			continue;
+		if (c->broadcast_pending_count <= 0)
+			continue;
+
+		/* Pop the FIFO front; content_broadcast's own exit-drain replays
+		 * the remainder of this content's queue in order. */
+		msg = c->broadcast_pending[0];
+		for (k = 1; k < c->broadcast_pending_count; k++) {
+			c->broadcast_pending[k - 1] = c->broadcast_pending[k];
+		}
+		c->broadcast_pending_count--;
+		macsurf_debug_log_writef(
+			"hlcache_catchup: replay msg=%d c=%p",
+			(int)msg, (void *)c);
+		content_broadcast(c, msg, NULL);
+	}
+}
+
+/* See hlcache.h for documentation */
+void hlcache_request_broadcast_catchup(void)
+{
+	if (hlcache_broadcast_catchup_scheduled)
+		return;
+	hlcache_broadcast_catchup_scheduled = true;
+	guit->misc->schedule(0, hlcache_broadcast_catchup, NULL);
+}
+
+/* See hlcache.h for documentation */
+bool hlcache_content_is_live(const struct content *c)
+{
+	hlcache_entry *entry;
+
+	/* fixes520: liveness by REGISTRY MEMBERSHIP, not by reading the
+	 * content's own fields.  A scheduled callback (deferred_parser_unpause,
+	 * convert_xml_to_box, ...) can fire a tick after its content was
+	 * destroyed in a bulk hlcache_clean pass; by then the struct is freed
+	 * and reused, so its handler/aborted/status bytes read as plausible
+	 * garbage and every field-based guard passes.  hlcache_clean NULLs
+	 * entry->content before content_destroy and unlinks the entry after, so
+	 * a content that is no longer reachable from content_list is provably
+	 * gone — checked here without dereferencing the suspect pointer. */
+	if (c == NULL || hlcache == NULL)
+		return false;
+
+	for (entry = hlcache->content_list; entry != NULL; entry = entry->next) {
+		if (entry->content == c)
+			return true;
+	}
+
+	return false;
+}
+
+/* See hlcache.h for documentation */
 struct content *hlcache_handle_get_content(const hlcache_handle *handle)
 {
-	if ((handle != NULL) && (handle->entry != NULL)) {
-		return handle->entry->content;
+	if (handle == NULL)
+		return NULL;
+
+	/* fixes508/Fix5: guard handle->entry against freed+reused memory.
+	 * If hlcache_clean freed this entry and the allocator reused it for
+	 * a CSS source buffer, handle->entry is a valid-looking address
+	 * pointing at raw CSS bytes.  handle->entry->content then reads the
+	 * first 4 bytes of that text (e.g. "@cha" = 0x40636861) as a
+	 * struct content pointer.  The caller (nscss_register_import) casts
+	 * the result to nscss_content* and reads data.sheet from it, getting
+	 * the raw CSS bytes at that offset as a css_stylesheet pointer.
+	 * css_stylesheet_register_import stores it in i->sheet; later select
+	 * reads i->sheet->rule_list and crashes in css__selector_hash_insert.
+	 * Confirmed: dm 067CC240 = "@charset \"UTF-8\"" in MacsBug.
+	 * Legitimate hlcache_entry pointers live in 0x01000000–0x20000000;
+	 * a reused-for-source-data pointer will be in the same range, so the
+	 * range check alone is insufficient — also check entry->content for
+	 * the same heap range to catch the common reuse pattern. */
+	if (handle->entry != NULL) {
+		unsigned long ea = (unsigned long)(void *)handle->entry;
+		if (ea >= 0x01000000UL && ea < 0x20000000UL) {
+			struct content *c = handle->entry->content;
+			if (c != NULL) {
+				unsigned long ca = (unsigned long)(void *)c;
+				/* Also verify c is heap-range before returning */
+				if (ca >= 0x01000000UL && ca < 0x20000000UL) {
+					/* Final guard: if content_destroy already
+					 * ran, c->handler is NULL. Callers that
+					 * need a live content get NULL. */
+					if (c->handler != NULL)
+						return c;
+					macsurf_debug_log_writef(
+						"hlcache_get_content: content=%p already destroyed",
+						(void *)c);
+					return NULL;
+				}
+			}
+		}
 	}
 
 	return NULL;
@@ -927,9 +1147,44 @@ nsurl *hlcache_handle_get_url(const hlcache_handle *handle)
 {
 	nsurl *result = NULL;
 
-	assert(handle != NULL);
+	/* fixes515: mirror the hlcache_handle_get_content guard.  The crash
+	 * stack was convert_script_sync_cb -> hlcache_handle_get_url ->
+	 * __ptr_glue with a bad r12, i.e. this ran on a handle whose memory
+	 * had been freed and reused, so handle->entry / entry->content were
+	 * wild pointers and content_get_url dereferenced garbage.  Validate
+	 * the handle, the entry, the content, and the destroyed sentinel
+	 * before touching any of them; return NULL (callers already tolerate
+	 * a NULL URL) rather than dereferencing wild memory. */
+	{
+		unsigned long ha = (unsigned long)(const void *)handle;
+		if (handle == NULL || ha < 0x01000000UL || ha >= 0x20000000UL) {
+			macsurf_debug_log_writef(
+				"hlcache_get_url: wild handle=%p", (void *)handle);
+			return NULL;
+		}
+	}
 
 	if (handle->entry != NULL) {
+		unsigned long ea = (unsigned long)(void *)handle->entry;
+		if (ea < 0x01000000UL || ea >= 0x20000000UL) {
+			macsurf_debug_log_writef(
+				"hlcache_get_url: wild entry=%p handle=%p",
+				(void *)handle->entry, (void *)handle);
+			return NULL;
+		}
+		{
+			struct content *c = handle->entry->content;
+			if (c != NULL) {
+				unsigned long ca = (unsigned long)(void *)c;
+				if (ca < 0x01000000UL || ca >= 0x20000000UL ||
+				    c->handler == NULL) {
+					macsurf_debug_log_writef(
+						"hlcache_get_url: dead/wild content=%p",
+						(void *)c);
+					return NULL;
+				}
+			}
+		}
 		result = content_get_url(handle->entry->content);
 	} else {
 		RING_ITERATE_START(struct hlcache_retrieval_ctx,

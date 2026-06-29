@@ -7,8 +7,8 @@
  *   macsurf_tb_to_us()         -- interval to microseconds
  *   macsurf_tb_ticks_per_us()  -- raw calibration value
  *   macsurf_tb_elapsed_ms()    -- ms since calibration (monotonic)
- *   macsurf_duk_date_get_now() -- Duktape DUK_USE_DATE_GET_NOW provider
- *   macsurf_duk_monotonic_ms() -- Duktape DUK_USE_GET_MONOTONIC_TIME provider
+ *   macsurf_date_get_now()  -- Date.now() backend (ms since epoch)
+ *   macsurf_monotonic_ms()  -- performance.now() backend (monotonic ms)
  *
  * The PPC Time Base (TBL SPR 268, TBU SPR 269) ticks at bus_speed/4 and
  * is readable from user mode without any Toolbox call.  On a 66 MHz-bus
@@ -172,9 +172,9 @@ double macsurf_tb_elapsed_ms(void)
 }
 
 /* ------------------------------------------------------------------
- * macsurf_duk_date_get_now
+ * macsurf_date_get_now
  *
- * Duktape DUK_USE_DATE_GET_NOW() provider.
+ * Date.now() backend.
  * Returns milliseconds since the Unix epoch (Jan 1, 1970) as a
  * double, with sub-millisecond precision from Microseconds().
  *
@@ -186,7 +186,7 @@ double macsurf_tb_elapsed_ms(void)
  * the fractional-second component as microseconds-since-boot % 1e6,
  * matching the approach in shims/mac_time.c:mac_gettimeofday.
  * ------------------------------------------------------------------ */
-double macsurf_duk_date_get_now(void)
+double macsurf_date_get_now(void)
 {
 #ifdef __MWERKS__
     unsigned long secs;
@@ -207,16 +207,15 @@ double macsurf_duk_date_get_now(void)
 }
 
 /* ------------------------------------------------------------------
- * macsurf_duk_monotonic_ms
+ * macsurf_monotonic_ms
  *
- * Duktape DUK_USE_GET_MONOTONIC_TIME() provider and the backing
- * implementation for JS performance.now().
+ * Backing implementation for JS performance.now().
  *
  * Returns milliseconds elapsed since macsurf_tb_calibrate() ran,
  * using the PPC TBL register directly for ~60 ns resolution on G3
  * (vs ~16 667 us for TickCount, ~1 us for Microseconds).
  * ------------------------------------------------------------------ */
-double macsurf_duk_monotonic_ms(void)
+double macsurf_monotonic_ms(void)
 {
     return macsurf_tb_elapsed_ms();
 }

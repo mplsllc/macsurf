@@ -176,6 +176,13 @@ struct content_user
 };
 
 /**
+ * Depth of the per-content deferred-broadcast FIFO (fixes515).  Deeper than
+ * any realistic reentrant broadcast nesting; overflow drops the newest
+ * message (logged) rather than corrupting the queue.
+ */
+#define CONTENT_BROADCAST_PENDING_MAX 8
+
+/**
  * Content which corresponds to a single URL.
  */
 struct content {
@@ -278,6 +285,25 @@ struct content {
 	bool locked;
 
 	/**
+	 * Reentrancy state for content_broadcast (fixes500/515).
+	 *
+	 * broadcast_in_progress is set while this content's own user-callback
+	 * walk is active.  A broadcast that arrives while ANY content is mid-
+	 * walk (tracked by the module-global content_broadcast_active flag) is
+	 * deferred: its message is appended to broadcast_pending[] and replayed
+	 * in FIFO order once the active walk unwinds — inline for this content,
+	 * or via hlcache's catch-up pump for others.  FIFO (not a single slot)
+	 * so a deferred READY then DONE replay in the right order; collapsing
+	 * them would make browser_window see DONE without the READY that
+	 * promotes loading_content -> current_content.  Same shape as
+	 * llcache_object_notify_users + the global llcache_notify_in_progress
+	 * (fixes459/460).
+	 */
+	bool broadcast_in_progress;
+	content_msg broadcast_pending[CONTENT_BROADCAST_PENDING_MAX];
+	int broadcast_pending_count;
+
+	/**
 	 * Total data size, 0 if unknown.
 	 */
 	unsigned long total_size;
@@ -297,6 +323,49 @@ struct content {
 
 extern const char * const content_type_name[];
 extern const char * const content_status_name[];
+
+
+/* ============================================================
+ * Universal content-validity guards (fixes501x).
+ *
+ * Every crash in the content-destroy / reentrant-broadcast family
+ * reduces to a function touching a content struct that has already
+ * been destroyed, or is NULL.  Rather than guard each crash site, we
+ * guard each ENTRY point: a function that receives a struct content *
+ * tests liveness as its first statement and bails before touching any
+ * field.
+ *
+ * c->handler is the destroyed sentinel: it is set exactly once at
+ * content__init, cleared exactly once at the very top of
+ * content_destroy (before any field is freed), and never restored.
+ * So (c == NULL || c->handler == NULL) is a complete liveness test
+ * that costs one compare and is impossible to get wrong once applied.
+ *
+ * macsurf_debug_log_writef is forward-declared here so the macros can
+ * be expanded in any TU that includes this header without each one
+ * having to pull in macsurf_debug.h.
+ * ============================================================ */
+void macsurf_debug_log_writef(const char *fmt, ...);
+
+#define CONTENT_IS_DEAD(c) ((c) == NULL || (c)->handler == NULL)
+
+#define CONTENT_CHECK_RETURN(c, ret) \
+	do { \
+		if (CONTENT_IS_DEAD(c)) { \
+			macsurf_debug_log_writef( \
+				"DEAD CONTENT in %s c=%p", __func__, (void *)(c)); \
+			return (ret); \
+		} \
+	} while (0)
+
+#define CONTENT_CHECK_VOID(c) \
+	do { \
+		if (CONTENT_IS_DEAD(c)) { \
+			macsurf_debug_log_writef( \
+				"DEAD CONTENT in %s c=%p", __func__, (void *)(c)); \
+			return; \
+		} \
+	} while (0)
 
 
 /**

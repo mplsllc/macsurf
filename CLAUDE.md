@@ -1,3 +1,28 @@
+# ⚠️ READ THIS FIRST: WORKING TREE ≠ HEAD (2026-06-29)
+
+**The committed tree (HEAD) and the working tree are two different projects. Reason about the WORKING TREE — that is what the user builds and ships. HEAD is far behind it.**
+
+- **HEAD ≈ fixes481 / the QuickJS-port merge.** Still Duktape-based in the committed sources.
+- **Working tree ≈ fixes554.** A full Duktape→QuickJS engine migration plus ~70 further fix rounds, **none of it committed.** Per DIRECTIVE #4, commits are held until hardware-confirmed, so this entire body of work is **uncommitted and hardware-UNVERIFIED.**
+- Anything below describing "current state" describes the working tree unless it says HEAD. Do not assume `git log` reflects what the user is running — it does not.
+
+**What changed in the working tree that this file used to get wrong (now corrected below):**
+- **JS engine is QuickJS, not Duktape.** See [JavaScript Engine](#javascript-engine).
+- **HTTPS fetcher renamed** `macos9_https_fetcher.c` → `macos9_tls_fetcher.c` (untracked).
+- **ACTIVE, undiagnosed-on-hardware crash:** the `convert_xml_to_box → box_image → hlcache_handle_retrieve` free-during-walk **UAF is OPEN**, not closed. See the Active Crash note below.
+- **Untracked working-tree files** not yet in HEAD: `macos9_tls_fetcher.c`, `macos9_content_registry.c` / `.h`, `javascript/macsurf_qjs.c` / `.h`, `browser/libquickjs/`. The old `content.c` has been **renamed to `ns_content.c`** in the worktree (old `content.c` shows as deleted).
+
+## 🔴 Active Crash — convert_xml_to_box free-during-walk UAF (OPEN)
+
+**Status: ACTIVE, uncommitted, hardware-UNVERIFIED. Do NOT treat as closed.** The memory note that called the UAF family "closed at fixes500-516" is wrong; fixes547-554 are still fighting the same crash.
+
+- **Crash chain:** `convert_xml_to_box` (mid box-walk) → `box_image` → `box_image_resolve_url` → `html_fetch_object` → `hlcache_handle_retrieve` byte-scans a pointer to a content that was freed out from under the live walk (cache-pressure eviction during a sub-resource fetch yield).
+- **Current defense (all uncommitted, fixes533/547/550/552/553):**
+  - **Writer-side free guard** — [box_construct.c:61-99](browser/netsurf/content/handlers/html/box_construct.c#L61) pins the walked content's **entire** box tree for the duration of the walk (generation token; fixes552 pinned one box, fixes553 extended to the whole tree).
+  - **Eviction guard** — [hlcache.c:159](browser/netsurf/content/hlcache.c#L159): `hlcache_clean` refuses to evict a content whose box walk is currently on the stack.
+  - **Out-of-band live-content registry** — `macos9_content_registry.c` (untracked, fixes533).
+- The fixes554 per-URL terminal-fail set (see Networking) was added specifically to collapse the jsdelivr sub-resource storm that *manufactured* the cache-pressure eviction behind this UAF.
+
 # DIRECTIVE #1, NEVER BLAME STALE FILES, EVER
 
 This is a repeating, lazy failure mode. You are NOT ALLOWED to consider, suggest, hint, or imply that:
@@ -55,7 +80,7 @@ The original design used a single Go binary in `proxy/` that stripped TLS for th
 - Compiler: CodeWarrior 8 (on-machine) or cross-compile GCC PPC from Linux
 - No threading, OS 9 is cooperative multitasking, use WaitNextEvent loop
 - HTTPS handled natively in the browser by macTLS (TLS 1.3, TLS 1.2 fallback) over Open Transport — no proxy
-- JavaScript runs **on-device** via Duktape 2.7.0 (ES5), linked into the base build and operational on the G3 / 64 MB floor. Beyond the language core, a broad browser runtime is wired in: timers (`setTimeout`/`setInterval`/`requestAnimationFrame`), `window.location`/`history`, `URL`/`URLSearchParams`, `classList`, `element.style`, DOM `Event`/`CustomEvent`/`MouseEvent`/`KeyboardEvent` constructors, `MutationObserver`, `DOMParser`, `FormData`, `localStorage`, `fetch`, and `addEventListener`. The JS marathon (fixes319-352) closed ~23 issues here; the probe page scores 19/19 on a G3. Heavy SPA frameworks and very large DOM-mutation apps are the open frontier (tracked in issues). There is **no proxy and no JS offload** — what runs, runs on the Mac, and gaps get filled in-house (see DIRECTIVE #2).
+- JavaScript runs **on-device** via **QuickJS** (ES2023, working tree; HEAD still builds Duktape — see banner), linked into the build and gated by `WITH_QUICKJS`. QuickJS replaced Duktape so modern JS runs natively, and the in-house ES6→ES5 transpiler was retired (fixes522). Heavy SPA frameworks and very large DOM-mutation apps are the open frontier (tracked in issues). There is **no proxy and no JS offload** — what runs, runs on the Mac, and gaps get filled in-house (see DIRECTIVE #2). Full detail in [JavaScript Engine](#javascript-engine).
 - Carbon API for UI, works on OS 9 and early OS X
 
 ## Coding Conventions
@@ -103,13 +128,19 @@ NetSurf's RISC OS and AmigaOS frontends are the primary references for frontend 
 
 ## Networking (native, no proxy)
 
-The browser fetches directly: HTTP/1.1 over Open Transport (chunked transfer, keep-alive, 3xx redirect follow, connection pooling) and HTTPS over the built-in macTLS stack (TLS 1.3, TLS 1.2 fallback). Origin connections are made straight from the Mac — there is no proxy and no custom protocol. (The legacy Go proxy referenced in older notes is retired; see Components.)
+The browser fetches directly: HTTP/1.1 over Open Transport (chunked transfer, keep-alive, 3xx redirect follow, connection pooling) and HTTPS over the built-in macTLS stack (TLS 1.3, TLS 1.2 fallback). Origin connections are made straight from the Mac — there is no proxy and no custom protocol. (The legacy Go proxy referenced in older notes is retired; see Components.) The HTTPS fetcher lives in `macos9_tls_fetcher.c` (renamed from `macos9_https_fetcher.c`, untracked).
+
+### Per-URL terminal-fail set (fixes554)
+
+`macos9_tls_fetcher.c` carries **two** fast-fail tiers, and they are distinct:
+- **Per-HOST `dead_hosts` list** — fast-fails a whole host:port for the session (e.g. `fonts.googleapis.com` fingerprint-blocking). FIFO, so a host can age out and be retried.
+- **Per-URL `terminal_urls` set ([macos9_tls_fetcher.c:535-575](browser/netsurf/frontends/macos9/macos9_tls_fetcher.c#L535))** — keyed on the **full URL string** (`strcmp` over `nsurl_access(c->url)`), marks an individual resource URL terminally failed on its first dead-host fast-fail. A terminal URL renders alt text and is **never retried**: no http scheme-fallback, no 301 follow, no re-queue. It is checked *before* the per-host list so it survives `dead_hosts` FIFO eviction. This collapses the `cdn.jsdelivr.net` emoji/avatar storm (dozens of distinct URLs each looping fast-fail → http → 301 → fast-fail) to **one `FETCH_ERROR` per URL** — which is what removed the cache-pressure that was triggering the convert_xml_to_box UAF (see the Active Crash note at top). Log lines: `terminal-URL FAST-FAIL %s` and `resource: TERMINAL FAIL url=%s`. HTTP-side wrapper: `macos9_https_url_is_terminal()`.
 
 ### Cookies + per-host User-Agent (fixes367, #167)
 
 Both macos9 fetchers now wire NetSurf's cookie jar and select the User-Agent per host. This is the enabling work for **Facebook compatibility** (see below).
 
-- **Cookie jar.** NetSurf's full RFC-6265 jar is `content/urldb.c` (in `MacSurf.mcp`), but upstream only ever wired it in `content/fetchers/curl.c`, which we don't build. So before fixes367 the macos9 HTTP/HTTPS fetchers sent **no `Cookie:` header and stored no `Set-Cookie:`** — login on any site was impossible. fixes367 adds, to both `macos9_http_fetcher.c` and `macos9_https_fetcher.c`: a `Cookie:` request header from `urldb_get_cookie(url, true)`, and `Set-Cookie:` capture via `fetch_set_cookie(parent, value)` **inside the header-parse loop** (so a login POST's 302 stores `c_user`/`xs` before the redirect tears the fetch down). Request buffers were enlarged (https `1024→8192`, http `2048→8192`) to hold a full session cookie header. Cookies are **in-memory only** for now (urldb, inited by `netsurf_init`); disk persistence (`urldb_save/load_cookies`) is the next, hardware-gated step.
+- **Cookie jar.** NetSurf's full RFC-6265 jar is `content/urldb.c` (in `MacSurf.mcp`), but upstream only ever wired it in `content/fetchers/curl.c`, which we don't build. So before fixes367 the macos9 HTTP/HTTPS fetchers sent **no `Cookie:` header and stored no `Set-Cookie:`** — login on any site was impossible. fixes367 adds, to both `macos9_http_fetcher.c` and `macos9_tls_fetcher.c` (the HTTPS fetcher, renamed from `macos9_https_fetcher.c` in the worktree): a `Cookie:` request header from `urldb_get_cookie(url, true)`, and `Set-Cookie:` capture via `fetch_set_cookie(parent, value)` **inside the header-parse loop** (so a login POST's 302 stores `c_user`/`xs` before the redirect tears the fetch down). Request buffers were enlarged (https `1024→8192`, http `2048→8192`) to hold a full session cookie header. Cookies are **in-memory only** for now (urldb, inited by `netsurf_init`); disk persistence (`urldb_save/load_cookies`) is the next, hardware-gated step.
 - **Per-host UA.** `macos9_ua_for_host()` (a `static` duplicated in each fetcher — TODO: unify into `macos9_useragent.c`) suffix-matches `facebook.com` → vintage `Mozilla/4.0 (compatible; MSIE 5.0; Mac_PowerPC) MacSurf/1.4`; **every other host keeps the MacSurf default UA**. This is the Classilla `sitecontrol` / TenFourFox per-site-override pattern. The vintage UA is mandatory because Facebook **301-bounces a modern/MacSurf UA off the lightweight surface** to the 416 KB www SPA. The match guards spoof hosts (`evilfacebook.com` → default UA).
 
 ### Facebook (lightweight no-JS mbasic path) — ACTIVE
@@ -254,6 +285,13 @@ When auditing a new C99 library for CW8 / strict C89, grep for:
 ### Adding new .c files
 When a change introduces a new `.c` file, mention it plainly so the user can add it to the project. **Do NOT edit `MacSurf.mcp` and do NOT include it in fix zips**, the user maintains the project file list on the Mac side through the CW8 IDE, and a Linux-edited `.mcp` will clobber their local changes. Just list the new filename(s) in the handoff and let the user add them.
 
+**Working-tree files not yet in HEAD (untracked / renamed — must be in `MacSurf.mcp`):**
+- `frontends/macos9/macos9_tls_fetcher.c` — the HTTPS fetcher, **renamed** from `macos9_https_fetcher.c` (old name deleted in the worktree). Swap the entry in `MacSurf.mcp`.
+- `frontends/macos9/macos9_content_registry.c` / `.h` — out-of-band live-content registry (anti-UAF, fixes533).
+- `frontends/macos9/javascript/macsurf_qjs.c` / `.h` — the QuickJS engine glue (replaces the deleted `macsurf_js.c` / `macsurf_es6.c` family).
+- `browser/libquickjs/` — the QuickJS engine sources (replaces the deleted `browser/libduktape/`).
+- `content/content.c` is **renamed to `content/ns_content.c`** in the worktree (old `content.c` shows as deleted).
+
 ### Shipping discipline
 - Deliverables for a fix round are: delta tar with full tree preserved, `MacSurf.mcp` add/remove list, and `Access Paths.xml` add/remove list.
 - Standard transfer path is: build `fixesNN.tar`, then `scp -P 2222 -i ~/.ssh/macsurf_push -o StrictHostKeyChecking=no fixesNN.tar patrick@localhost:Documents/MacFiles/fixesNN.tar`.
@@ -262,14 +300,18 @@ When a change introduces a new `.c` file, mention it plainly so the user can add
 
 ## JavaScript Engine
 
-- Duktape 2.7.0 is fully linked and operational in the base build.
-- ES5 evaluator confirmed working, stress tests pass including closures, prototypes, regex, JSON, promises, recursion, matrix multiply, Mandelbrot.
-- `js_newheap` / `js_destroyheap` / `js_exec` lifecycle working.
-- `WITHOUT_DUKTAPE` has been removed from `macsurf_prefix.h`.
-- Duktape source files live in [browser/libduktape/](browser/libduktape/).
-- `duk_config.h` is hand-crafted for Mac OS 9 PPC CW8: `DUK_USE_BYTEORDER=3`, `DUK_USE_PACKED_TVAL`, `DUK_USE_ALIGN_BY=8`, `DUK_USE_NATIVE_CALL_RECLIMIT=128`.
-- JS glue files live in [browser/netsurf/frontends/macos9/javascript/](browser/netsurf/frontends/macos9/javascript/).
-- **A browser runtime, not just the language.** The "JavaScript marathon" (fixes319–352, ~23 issues) wired a broad on-device API surface: timers (`setTimeout`/`setInterval`/`requestAnimationFrame`), `window.location`/`history` (`pushState`/`replaceState`), `URL`/`URLSearchParams`, `element.classList`/`style`, DOM `Event`/`CustomEvent`/`MouseEvent`/`KeyboardEvent` constructors, `MutationObserver`, `DOMParser`, `FormData`, `localStorage`, `fetch`, and `addEventListener` for `load`/`DOMContentLoaded`. The JS probe page scores 19/19 on a G3. Heavy SPA frameworks remain the frontier (tracked in issues); gaps get filled in-house, never offloaded (DIRECTIVE #2).
+**The engine in the working tree is QuickJS, not Duktape.** (HEAD still builds Duktape; the migration is uncommitted — see the banner at the top.)
+
+- **QuickJS** is the JS engine, gated by `WITH_QUICKJS` (defined `1` by default in [macsurf_prefix.h:281](browser/netsurf/frontends/macos9/macsurf_prefix.h#L281)).
+- The engine implementation lives in [browser/netsurf/frontends/macos9/javascript/macsurf_qjs.c](browser/netsurf/frontends/macos9/javascript/macsurf_qjs.c) (untracked). It owns `js_initialise` / `js_newheap` / `js_exec` / `js_fire_event` etc. and runs **ES2023 natively** through `JS_Eval` (`JS_NewRuntime` at heap creation).
+- QuickJS sources are at [browser/libquickjs/](browser/libquickjs/) (untracked; `cutils.h`, `libregexp.c`, `libunicode.c`, `quickjs.c`, …). Not to be confused with the separate `quickjs-macos9/` standalone port.
+- **The ES6→ES5 transpiler is removed / bypassed (fixes522).** `javascript/macsurf_es6.c` / `.h` are deleted in the worktree — QuickJS runs modern JS directly, so the transpiler (which was corrupting bundles) is gone. The earlier "JavaScript marathon" hand-built API surface (`macsurf_js.c`, `macsurf_js_dom.c`, the `.bnd` files, etc.) is likewise deleted.
+- **`js_exec` accepts all JS natively** (no keyword fast-fail, no stub). A memory limit and ~20s eval timeout guard runaway scripts.
+
+**Cleanup items (dead/inert, safe to remove when convenient):**
+- `content/handlers/javascript/Makefile` still has an `ifeq ($(NETSURF_USE_DUKTAPE),YES)` branch — dead; MacSurf builds from the CW8 `.mcp`, not this Makefile.
+- [js_stub.c](browser/netsurf/frontends/macos9/js_stub.c) provides no-op `js_*` fallbacks gated on `#ifndef WITH_QUICKJS` — inert while `WITH_QUICKJS` is defined.
+- All `browser/libduktape/*` and `content/handlers/javascript/duktape/*` are deleted in the worktree.
 
 ## Browser Chrome
 
@@ -315,6 +357,7 @@ The CSS pipeline parses 167 properties via libcss but layout/redraw only consume
 - `transition`, `animation`, `clip-path`, `mask`, deferred (v0.4.5+).
 
 **Pipeline bugs (not CSS feature gaps):**
+- **Cache-hit first-paint bug (OPEN, undiagnosed at the paint-trigger level).** Every navigation first-paints the placeholder (`about:query` / `about:fetcherror`) before the real cached page lands. **This is NOT a synchronous-delivery problem** — and earlier theories that the fix is "deliver the cache hit synchronously" are wrong. Cache-hit delivery is *already* async-by-design: `macos9_https_start` only sets `c->started`; `hctx_poll` serves the `HS_CACHEHIT` state (FETCH_HEADER + FETCH_DATA + `hctx_finish`) on a **later** poll-loop pass ([macos9_tls_fetcher.c:1831](browser/netsurf/frontends/macos9/macos9_tls_fetcher.c#L1831), `ops.poll` registered at :2527). Root cause is in the **first-paint trigger timing**: the paint fires against the placeholder before the deferred cache delivery completes. Fix belongs at the paint-trigger, not the fetcher. Still open and undiagnosed at that level.
 - **JPEG photo plot is slow when scrolling.** Pre-scale at decode time if it becomes the bottleneck.
 - **Inline boxes occasionally duplicate**, known issue post-fixes33, cause unknown.
 
@@ -356,7 +399,8 @@ Full fix history: see [docs/changelog-fixes.md](docs/changelog-fixes.md).
 - MacsBug is installed on the G4 for pipeline debugging; `MS_LOG` checkpoints are active throughout.
 
 
-- **Current release: v1.5 "Modernity" (2026-06-11); source tree at fixes415.** Hardware-verified on a G3 iMac running OS 9.2.2. Major arcs since v1.4: **On-device ES6-to-ES5 transpilation** (let/const, arrow functions, template literals, async/await, for-of); **JS->DOM->render (re-conversion)** allowing JS-mutated content to paint; and the **v1.5 stability pass** (fixes404-415) including a monotonic clock fix, SHA-384 self-tests, UAF guards, and a CSS Grid 16-column layout limit upgrade (fixes415) which resolves modern 12-column grid collapses (rendered blank/invisible on XenForo pages like `68kmla.org`). (Note: the most aggressive FB-SPA push was rolled back at fixes394 for stability; current work is incrementally re-enabling these features). [docs/status.md](docs/status.md) and [docs/version-history.md](docs/version-history.md) are the authoritative current picture; [docs/changelog-fixes.md](docs/changelog-fixes.md) has the per-fix history.
+- **Last hardware-verified release (PAST): v1.5 "Modernity" (2026-06-11), source tree at fixes415.** Verified on a G3 iMac running OS 9.2.2. That release brought: on-device ES6→ES5 transpilation (since **retired** in favour of QuickJS, fixes522); JS→DOM→render re-conversion so JS-mutated content paints; and the v1.5 stability pass (fixes404-415: monotonic clock fix, SHA-384 self-tests, UAF guards, CSS Grid 8→16 column limit fixing modern 12-col grid collapses on XenForo pages like `68kmla.org`).
+- **Current working tree (NOT a release): an uncommitted QuickJS-migration branch at ~fixes554, hardware-UNVERIFIED.** This is well ahead of both the v1.5 release and HEAD (≈fixes481). It swaps the JS engine Duktape→QuickJS and stacks ~70 further fix rounds (incl. the still-open convert_xml_to_box UAF defense, fixes533-553, and the fixes554 per-URL terminal-fail). None of it has been confirmed on a G3/G4. Do not describe any of it as shipped or verified. [docs/status.md](docs/status.md) and [docs/version-history.md](docs/version-history.md) lag this tree; [docs/changelog-fixes.md](docs/changelog-fixes.md) has the per-fix history.
 
 **Full fix history (predecessor chain from fixes225 → fixes143a):** see [docs/changelog-fixes.md](docs/changelog-fixes.md).
 

@@ -57,6 +57,19 @@
 
 #include "macsurf_debug.h"
 
+/* fixes518: an llcache_object pointer is "wild" if NULL or outside the
+ * malloc heap range used on this target (legitimate objects live in
+ * 0x01000000–0x20000000, same range hlcache validates its handles/entries
+ * against).  A freed object that the allocator has not yet reused, or a
+ * stale pointer reached through a recycled struct, lands below the floor
+ * (the crash that motivated this had object ~0x00AC3998).  Any function
+ * that operates on an object passed in from a retrieve/refetch path tests
+ * this first and bails rather than dereferencing wild memory. */
+#define LLCACHE_OBJECT_WILD(o) \
+	((o) == NULL || \
+	 (unsigned long)(void *)(o) < 0x01000000UL || \
+	 (unsigned long)(void *)(o) >= 0x20000000UL)
+
 /**
  * State of a low-level cache object fetch.
  */
@@ -920,6 +933,32 @@ static nserror llcache_object_refetch(llcache_object *object)
 	int header_idx = 0;
 	nserror res;
 
+	/* fixes518: guard the object pointer itself (not just object->url).
+	 * The crash stack was html_css_process_modified_styles -> ... ->
+	 * llcache_object_refetch with object ~0x00AC3998 (below the heap
+	 * floor) — a freed/stale object.  object->url was then read from wild
+	 * memory and could pass the old url check, crashing deeper in the body
+	 * (stw through NULL r5).  Reject a wild object before any field read. */
+	if (LLCACHE_OBJECT_WILD(object)) {
+		macsurf_debug_log_writef(
+			"llcache_object_refetch: wild object=%p, skip",
+			(void *)object);
+		return NSERROR_BAD_PARAMETER;
+	}
+	/* fixes502: guard against stale/freed URL pointer before touching it */
+	if (object->url == NULL) {
+		NSLOG(llcache, INFO, "refetch: object %p has NULL url, skip", object);
+		return NSERROR_BAD_PARAMETER;
+	}
+	{
+		unsigned long ua = (unsigned long)(void *)object->url;
+		if (ua < 0x01000000UL || ua >= 0x20000000UL) {
+			NSLOG(llcache, INFO, "refetch: object %p url wild ptr %p, skip",
+				object, (void *)object->url);
+			return NSERROR_BAD_PARAMETER;
+		}
+	}
+
 	if (object->fetch.post != NULL) {
 		if (object->fetch.post->type == LLCACHE_POST_URL_ENCODED) {
 			urlenc = object->fetch.post->data.urlenc;
@@ -1036,6 +1075,14 @@ static nserror llcache_object_fetch(llcache_object *object, uint32_t flags,
 	nsurl *referer_clone = NULL;
 	llcache_post_data *post_clone = NULL;
 
+	/* fixes518: reject a wild/freed object before writing its fetch fields */
+	if (LLCACHE_OBJECT_WILD(object)) {
+		macsurf_debug_log_writef(
+			"llcache_object_fetch: wild object=%p, skip",
+			(void *)object);
+		return NSERROR_BAD_PARAMETER;
+	}
+
 	nslog_log(__FILE__, "", __LINE__, "Starting fetch for %p", object);
 
 	if (post != NULL) {
@@ -1087,6 +1134,7 @@ static nserror llcache_object_destroy(llcache_object *object)
 	}
 
 	nsurl_unref(object->url);
+	object->url = NULL; /* fixes502: poison to catch use-after-free in refetch */
 
 	if (object->fetch.fetch != NULL) {
 		fetch_abort(object->fetch.fetch);
@@ -2196,6 +2244,17 @@ llcache_object_retrieve(nsurl *url,
 static nserror llcache_object_add_user(llcache_object *object,
 		llcache_object_user *user)
 {
+	/* fixes518: reject a wild/freed object before linking the user into
+	 * its list (object->users deref).  MacSurf compiles asserts to
+	 * log-and-continue, so the asserts below would not stop a bad pointer
+	 * on their own. */
+	if (LLCACHE_OBJECT_WILD(object) || user == NULL) {
+		macsurf_debug_log_writef(
+			"llcache_object_add_user: wild object=%p user=%p, skip",
+			(void *)object, (void *)user);
+		return NSERROR_BAD_PARAMETER;
+	}
+
 	assert(user->next == NULL);
 	assert(user->prev == NULL);
 	assert(user->handle != NULL);
@@ -3391,6 +3450,18 @@ static nserror llcache_object_notify_users(llcache_object *object)
 	llcache_event event;
 	bool emitted_notify = false;
 
+	/* fixes537: reject a NULL/wild object before touching any field.  A
+	 * freed+reused object reaching here (e.g. via a stale catch-up advance)
+	 * has garbage source_data, and the HAD_DATA path below would hand the
+	 * parser a wild input buffer -> tokeniser byte-scan crash on an out-of-
+	 * heap pointer.  Belt-and-suspenders with the catch-up next_obj
+	 * re-validation (llcache_object_is_listed). */
+	if (LLCACHE_OBJECT_WILD(object)) {
+		macsurf_debug_log_writef(
+			"llcache_notify_users: wild object=%p, skip", (void *)object);
+		return NSERROR_OK;
+	}
+
 	/* fixes460: global reentrancy guard.
 	 * Per-object guard (fixes459) only blocked same-object reentrancy.
 	 * The crash chain runs through a script object (different object B)
@@ -3574,9 +3645,22 @@ static nserror llcache_object_notify_users(llcache_object *object)
 		}
 
 		/* User: DATA, Obj: DATA, COMPLETE, more source available */
+		/* fixes539: guard the source buffer BEFORE it becomes the parser's
+		 * input.  The HAD_DATA buf is object->source_data + handle->bytes;
+		 * if source_data is NULL or a wild value (e.g. 586A2E5A, the garbage
+		 * source_data of a freed+reused object), handing it to
+		 * dom_hubbub_parser_parse_chunk crashes the tokeniser byte-scan on an
+		 * out-of-heap pointer.  fixes537's object re-validation stops us
+		 * reaching here on a freed object; this is the last-line buffer check
+		 * so a notification can never run the parser against a wild buffer.
+		 * Skipping HAD_DATA (no handle->bytes update) just defers the user's
+		 * catch-up to a later pass once real data is present. */
 		if (handle->state == LLCACHE_FETCH_DATA &&
 				objstate >= LLCACHE_FETCH_DATA &&
-				object->source_len > handle->bytes) {
+				object->source_len > handle->bytes &&
+				object->source_data != NULL &&
+				(unsigned long)(void *)object->source_data >= 0x01000000UL &&
+				(unsigned long)(void *)object->source_data < 0x20000000UL) {
 			size_t orig_handle_read;
 
 			/* Construct HAD_DATA event */
@@ -3796,6 +3880,34 @@ total_object_size(llcache_object *object)
 }
 
 /**
+ * fixes537: is `object` still a member of either live llcache list?
+ *
+ * A notify callback during catch-up can synchronously destroy an arbitrary
+ * object (a cascade into llcache_clean), so a next_obj cached before a notify
+ * may be freed by the time the loop advances to it.  Destruction unlinks the
+ * object from its list before freeing, so a freed object is simply absent
+ * here -- this walk only dereferences live, linked objects and never touches
+ * freed memory.  Lists are short (tens of objects) so the scan is cheap.
+ */
+static int llcache_object_is_listed(llcache_object *object)
+{
+	llcache_object *o;
+
+	if (object == NULL)
+		return 0;
+
+	for (o = llcache->cached_objects; o != NULL; o = o->next) {
+		if (o == object)
+			return 1;
+	}
+	for (o = llcache->uncached_objects; o != NULL; o = o->next) {
+		if (o == object)
+			return 1;
+	}
+	return 0;
+}
+
+/**
  * Catch up the cache users with state changes from fetchers.
  *
  * \param ignored We ignore this because all our state comes from llcache.
@@ -3834,11 +3946,37 @@ static void llcache_catch_up_all_users(void *ignored)
 	for (object = llcache->cached_objects; object != NULL; object = next_obj) {
 		next_obj = object->next;
 		llcache_object_notify_users(object);
+		/* fixes537: the notify above can synchronously free next_obj.
+		 * Saving next_obj before the notify (above) protects against the
+		 * CURRENT object being freed, but NOT against the notify cascade
+		 * (content_convert -> ... -> llcache_clean) destroying the
+		 * FOLLOWING object.  Advancing into a freed next_obj is the
+		 * llcache_catch_up -> notify_users -> wild source_data -> parser
+		 * tokeniser crash (r4 out of heap range).  Re-validate next_obj is
+		 * still listed; if it was freed, stop and reschedule a fresh pass
+		 * (notifies are idempotent off handle->bytes, so re-walking the
+		 * current list loses nothing). */
+		if (next_obj != NULL && llcache_object_is_listed(next_obj) == 0) {
+			macsurf_debug_log_writef(
+				"llcache catch-up: next_obj=%p freed mid-walk, reschedule",
+				(void *)next_obj);
+			llcache->all_caught_up = false;
+			guit->misc->schedule(0, llcache_catch_up_all_users, NULL);
+			break;
+		}
 	}
 
 	for (object = llcache->uncached_objects; object != NULL; object = next_obj) {
 		next_obj = object->next;
 		llcache_object_notify_users(object);
+		if (next_obj != NULL && llcache_object_is_listed(next_obj) == 0) {
+			macsurf_debug_log_writef(
+				"llcache catch-up: next_obj=%p freed mid-walk (uncached), reschedule",
+				(void *)next_obj);
+			llcache->all_caught_up = false;
+			guit->misc->schedule(0, llcache_catch_up_all_users, NULL);
+			break;
+		}
 	}
 
 	in_progress = 0;
@@ -4355,6 +4493,17 @@ nsurl *llcache_handle_get_url(const llcache_handle *handle)
 const uint8_t *llcache_handle_get_source_data(const llcache_handle *handle,
 		size_t *size)
 {
+	/* fixes506: guard a NULL handle. After content_destroy nulls
+	 * c->llcache (double-destroy defense), a late reprocess path
+	 * (html_proceed_to_done -> content__get_source_data) can arrive
+	 * here with handle == NULL. Dereferencing handle->object then
+	 * reads from a near-zero address and the buffer pointer handed
+	 * to the parser becomes garbage (r4=1 crash in parse_chunk). */
+	if (handle == NULL) {
+		*size = 0;
+		return NULL;
+	}
+
 	*size = handle->object != NULL ? handle->object->source_len : 0;
 
 	return handle->object != NULL ? handle->object->source_data : NULL;

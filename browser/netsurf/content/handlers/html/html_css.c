@@ -124,8 +124,7 @@ html_convert_css_callback(hlcache_handle *css,
 		      nsurl_access(hlcache_handle_get_url(css)),
 		      event->data.errordata.errormsg);
 
-		hlcache_handle_release(css);
-		s->sheet = NULL;
+		safe_hlcache_handle_release(&s->sheet); /* fixes515 */
 		parent->base.active--;
 		NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
 		break;
@@ -287,7 +286,7 @@ html_css_process_modified_style(html_content *c, struct html_stylesheet *s)
 				NSLOG(netsurf, INFO, "%d fetches active",
 				      c->base.active);
 			}
-			hlcache_handle_release(s->sheet);
+			safe_hlcache_handle_release(&s->sheet); /* fixes515 */
 		}
 		s->sheet = sheet;
 	}
@@ -307,6 +306,15 @@ static void html_css_process_modified_styles(void *pw)
 	struct html_stylesheet *s;
 	unsigned int i;
 	bool all_done = true;
+
+	/* fixes518: dead-content guard.  Scheduled callback keyed on the
+	 * html_content; cancelled in html_close/html_destroy, but guard the
+	 * dequeued-before-cancel race (base is html_content's first member). */
+	if (CONTENT_IS_DEAD(&c->base)) {
+		macsurf_debug_log_writef(
+			"css_modified_styles: dead content=%p, skip", (void *)c);
+		return;
+	}
 
 	for (i = 0, s = c->stylesheets; i != c->stylesheet_count; i++, s++) {
 		if (c->stylesheets[i].modified) {
@@ -538,7 +546,7 @@ nserror html_css_free_stylesheets(html_content *html)
 
 	for (i = 0; i != html->stylesheet_count; i++) {
 		if (html->stylesheets[i].sheet != NULL) {
-			hlcache_handle_release(html->stylesheets[i].sheet);
+			safe_hlcache_handle_release(&html->stylesheets[i].sheet); /* fixes515 */
 		}
 		if (html->stylesheets[i].node != NULL) {
 			dom_node_unref(html->stylesheets[i].node);
@@ -833,7 +841,7 @@ html_css_register_inline_style_sync(html_content *c, dom_node *style)
 
 	if (sheet != NULL) {
 		if (s->sheet != NULL) {
-			hlcache_handle_release(s->sheet);
+			safe_hlcache_handle_release(&s->sheet); /* fixes515 */
 		}
 		s->sheet = sheet;
 		macsurf_debug_log_writef(

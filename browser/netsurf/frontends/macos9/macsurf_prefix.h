@@ -275,14 +275,10 @@ extern int   memcmp(const void *, const void *, size_t);
 #define PRIxPTR "lx"
 #endif
 
-/* Duktape JS engine. WITH_DUKTAPE enables the real Duktape engine.
- * The MacSurf.mcp may have WITHOUT_DUKTAPE defined as a CW8 language
- * preprocessor override — if so that will suppress the WITH_DUKTAPE block
- * via the #ifndef guard below, keeping both control points in sync. */
-#ifndef WITHOUT_DUKTAPE
-#ifndef WITH_DUKTAPE
-#define WITH_DUKTAPE 1
-#endif
+/* JS engine = QuickJS (macsurf_qjs.c owns js_initialise/js_newheap/js_exec).
+ * js_stub.c provides no-op stubs when WITH_QUICKJS is not defined. */
+#ifndef WITH_QUICKJS
+#define WITH_QUICKJS 1
 #endif
 
 /* fixes305a: enable the file-backed diagnostic log channel by default.

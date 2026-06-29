@@ -38,8 +38,45 @@
 #include "utils/utils.h"
 #include "netsurf/misc.h"
 #include "css/select.h"
+#include "content/hlcache.h"		/* fixes520: hlcache_content_is_live */
 #include "desktop/gui_internal.h"
 
+/* fixes533: out-of-band live-content registry (anti-UAF).  Populated at
+ * content__init (before any box conversion is scheduled) and cleared at
+ * content_destroy, so unlike hlcache_content_is_live (removed from the entry
+ * gate at fixes521 for false-negatives) this never false-bails a live
+ * conversion.  No-op (always live) on non-Mac syntax-check builds. */
+#ifdef __MACOS9__
+extern int macos9_content_is_live(struct content *c);
+extern unsigned long macos9_content_token(struct content *c);
+extern int macos9_content_token_valid(struct content *c, unsigned long token);
+extern void macos9_content_drain_deferred(void);
+#else
+#define macos9_content_is_live(c) (1)
+#define macos9_content_token(c) (1UL)
+#define macos9_content_token_valid(c, t) (1)
+#define macos9_content_drain_deferred() ((void)0)
+#endif
+
+/* fixes552 — WRITER-SIDE free guard (closes the free-during-walk window at the
+ * single writer instead of at every reader).  g_walk_content marks the content
+ * whose box walk is CURRENTLY on the stack — set by the convert_xml_to_box
+ * wrapper for the entire batch, INCLUDING the html_fetch_object -> OT yield
+ * where a bulk hlcache_clean fires content_destroy.  Both the eviction path
+ * (hlcache_clean, fixes553) and content_destroy (ns_content.c) call
+ * macos9_box_walk_owns_content() and SKIP / DEFER freeing a pinned content, so
+ * box->style / the box arena / the parser / the DOM strings cannot be torn out
+ * from under the live walk (the fixes547/550 family).  The generation token
+ * defeats ABA: if g_walk_content's address was freed+reused, the token no
+ * longer matches and the free proceeds normally.
+ *
+ * fixes553 — the pin now covers the walked content's ENTIRE tree, not just the
+ * content itself; see macos9_box_walk_owns_content below the html/ includes
+ * (it walks object_list, which needs the full content_html_object definition). */
+static struct content *g_walk_content = NULL;
+static unsigned long    g_walk_gen     = 0;
+
+#include "html/html.h"		/* fixes553: content_html_object full def for object_list walk */
 #include "html/private.h"
 #include "html/object.h"
 #include "html/box.h"
@@ -50,6 +87,52 @@
 #include "html/form_internal.h"
 
 #include "macsurf_debug.h"
+
+/* fixes553 — extend the fixes552 writer-side free guard from the single walked
+ * content to its ENTIRE tree.  The box walk dereferences not just the
+ * html_content itself but the sub-resource contents hanging off its object_list
+ * (images, iframes, embedded objects) and the DOM document strings the
+ * html_content owns.  A bulk hlcache_clean (cache-pressure eviction) firing
+ * while convert_xml_to_box is mid-walk (during the html_fetch_object -> OT
+ * yield) must not free ANY content the walk still holds, or
+ * box_image_resolve_url / hlcache_handle_retrieve byte-scans a wild pointer
+ * (the reported convert_xml_to_box UAF).
+ *
+ * Returns non-zero when c is pinned by the live walk:
+ *   (a) c is the walked html_content itself — which also covers the DOM
+ *       document it owns and the dom_strings the walk dereferences; or
+ *   (b) c is a sub-resource content in the walked html_content's object_list.
+ *
+ * The walked content's generation is validated FIRST: if its address was freed
+ * and reused, g_walk_gen no longer matches and NOTHING is pinned, so a stale
+ * tree cannot ABA-false-positive.  Once validated, object_list is owned by the
+ * (live) html_content and safe to walk on this cooperative single thread. */
+int macos9_box_walk_owns_content(struct content *c)
+{
+	html_content *hc;
+	struct content_html_object *obj;
+
+	if (g_walk_content == NULL || c == NULL)
+		return 0;
+
+	/* gen-gate the walked content; bail (pin nothing) on ABA mismatch */
+	if (macos9_content_token_valid(g_walk_content, g_walk_gen) == 0)
+		return 0;
+
+	/* (a) the html_content itself (and the DOM document / strings it owns) */
+	if (c == g_walk_content)
+		return 1;
+
+	/* (b) any sub-resource content in its object/child list */
+	hc = (html_content *)g_walk_content;
+	for (obj = hc->object_list; obj != NULL; obj = obj->next) {
+		if (obj->content != NULL &&
+		    hlcache_handle_get_content(obj->content) == c)
+			return 1;
+	}
+
+	return 0;
+}
 
 
 /* Diagnostic: count text boxes constructed during DOM->box conversion. */
@@ -1229,6 +1312,26 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		return false;
 	}
 
+	/* fixes547: convert_special_elements above yields (box_image ->
+	 * html_fetch_object -> hlcache_handle_retrieve drives OT).  A
+	 * content_destroy during that yield talloc_free's ctx->content->bctx
+	 * (html.c html_destroy), freeing THIS box and box->style AFTER the
+	 * loop-top registry gate already passed.  Everything below derefs the
+	 * freed box / box->style / box->styles / ctx->n with no re-check:
+	 * counter_apply(box->style), the ::before generate, ns_computed_display,
+	 * css_select_results_destroy(styles) [double-free], dom_node_set_user_data,
+	 * and the background-image lwc_string byte-scan (the observed lbzu crash,
+	 * MacsBug-misattributed to box_image/anim_tick).  Registry membership
+	 * never derefs the freed struct, so it is the only surviving signal.
+	 * Return true so the loop reaches its post-element gate (which unwinds
+	 * without calling ctx->cb -- the content it would broadcast to is gone). */
+	if (macos9_content_is_live((struct content *)ctx->content) == 0) {
+		macsurf_debug_log_writef(
+			"box: DEAD after convert_special ctx=%p content=%p",
+			(void *)ctx, (void *)ctx->content);
+		return true;
+	}
+
 	/* fixes134b: element NORMAL counter-reset / counter-increment
 	 * fire HERE, before the ::before pseudo runs. This is half of
 	 * the ordering rule:
@@ -1243,6 +1346,16 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	if (!(box->flags & IS_REPLACED)) {
 		box_construct_generate(ctx, ctx->n, ctx->content, box,
 				box->styles->styles[CSS_PSEUDO_ELEMENT_BEFORE]);
+	}
+
+	/* fixes547: box_construct_generate (::before) can yield via its own
+	 * html_fetch_object for a content: url() image; re-check before the
+	 * box->style / styles / ctx->n derefs below. */
+	if (macos9_content_is_live((struct content *)ctx->content) == 0) {
+		macsurf_debug_log_writef(
+			"box: DEAD after ::before generate ctx=%p content=%p",
+			(void *)ctx, (void *)ctx->content);
+		return true;
 	}
 
 	if (box->type == BOX_NONE || (ns_computed_display(box->style,
@@ -1326,6 +1439,18 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 			}
 			nsurl_unref(url);
 		}
+	}
+
+	/* fixes547: the background-image html_fetch_object above also yields;
+	 * the SVG detection (dom_element_get_tag_name(ctx->n) byte-scan), the
+	 * inline ::before generate, ns_computed_display, and box_construct_marker
+	 * (its own lwc_string byte-scan) all follow with no re-check.  Gate before
+	 * them; the loop's post-element gate handles the final unwind. */
+	if (macos9_content_is_live((struct content *)ctx->content) == 0) {
+		macsurf_debug_log_writef(
+			"box: DEAD after background fetch ctx=%p content=%p",
+			(void *)ctx, (void *)ctx->content);
+		return true;
 	}
 
 	/* fixes195 — inline <svg> root detection.
@@ -1984,25 +2109,136 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
  * Convert an ELEMENT node to a box tree fragment,
  * then schedule conversion of the next ELEMENT node
  */
-static void convert_xml_to_box(struct box_construct_ctx *ctx)
+static void convert_xml_to_box(struct box_construct_ctx *ctx); /* fixes552 wrapper, defined just below the inner */
+static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 {
 	dom_node *next;
 	bool convert_children;
 	uint32_t num_processed = 0;
 	const uint32_t max_processed_before_yield = 10;
 
+	/* fixes519: validate the content BEFORE any access to it — the log line
+	 * below dereferences ctx->content.  convert_xml_to_box is static and is
+	 * ONLY ever invoked as a scheduled callback (guit->misc->schedule); it is
+	 * not reachable directly from the window-update handler, so schedule(-1)
+	 * cancellation does cover its sole entry path.  This gate additionally
+	 * covers the window where the content was destroyed (handler cleared)
+	 * before the cancel ran.  ctx itself is always valid here (a cancelled
+	 * entry is removed and never fires, and cancel frees ctx), so only the
+	 * content it points at may be gone.  On a dead content do NOT touch its
+	 * DOM — document teardown is underway — just release ctx. */
+	if (ctx == NULL)
+		return;
+	/* fixes533: validate the OWNING content by registry membership BEFORE
+	 * touching ctx->content.  convert_xml_to_box is scheduled with ctx (a
+	 * box_construct_ctx*, NOT the content), so the by-owner scheduler cancel
+	 * in content_destroy cannot match it; this registry gate closes that
+	 * window.  ctx->content is the html_content whose first member is
+	 * `struct content base`, so the cast yields the registered pointer
+	 * without dereferencing it.  The registry is filled at content__init
+	 * (before any conversion is scheduled), so unlike the fixes521-removed
+	 * hlcache walk this cannot false-negative a live conversion. */
+	if (macos9_content_is_live((struct content *)ctx->content) == 0) {
+		macsurf_debug_log_writef(
+			"box: convert_xml content NOT LIVE (registry) ctx=%p content=%p",
+			(void*)ctx, (void*)ctx->content);
+		free(ctx);
+		return;
+	}
+	/* fixes521: the fixes520 hlcache_content_is_live() gate was removed here
+	 * — it risked false-negatives that abandon a live box conversion (blank
+	 * page).  The field-based dead check below plus the by-value charset gate
+	 * in html_fetch_object are the retained protection. */
+	if (CONTENT_IS_DEAD(&ctx->content->base)) {
+		macsurf_debug_log_writef(
+			"box: convert_xml DEAD content ctx=%p content=%p",
+			(void*)ctx, (void*)ctx->content);
+		free(ctx);
+		return;
+	}
+
+	/* fixes535: claim SOLE ownership of ctx now that content is confirmed
+	 * live.  NULL the owner's box_conversion_context so a teardown
+	 * (html_close / html_destroy / html_stop) that runs during a later yield
+	 * in this walk (html_fetch_object -> hlcache_handle_retrieve drives OT)
+	 * sees NULL and does NOT cancel_dom_to_box(ctx).  Without this, that
+	 * cancel frees ctx out from under this still-running walk, and the next
+	 * teardown path then cancels an already-freed ctx -> cancel_dom_to_box
+	 * crashes decrementing the freed dom_node refcount (r30+0x04, the
+	 * reported crash).  From here convert_xml_to_box owns ctx and frees it on
+	 * every exit; teardown only sets aborted, which the loop checks. */
+	if (ctx->content->box_conversion_context == ctx) {
+		ctx->content->box_conversion_context = NULL;
+	}
+
 	macsurf_debug_log_writef("box: convert_xml ctx=%p htmlc=%p", (void*)ctx, (void*)ctx->content);
+
+	/* fixes503: check aborted BEFORE entering the processing loop.
+	 * The scheduler may have fired this callback after html_close /
+	 * html_destroy already set aborted=true (the cancel_dom_to_box
+	 * call in those functions removes the scheduled entry, but if
+	 * the OS 9 cooperative scheduler already dequeued this callback
+	 * before cancel runs, the callback fires anyway with a dead ctx).
+	 * Calling ctx->cb(content, false) here is safe: html_box_convert_done
+	 * checks aborted at line 235 and routes to the error path which
+	 * does not touch the DOM tree. */
+	if (ctx->content->aborted) {
+		macsurf_debug_log_writef("box: convert_xml ABORTED early ctx=%p", (void*)ctx);
+		ctx->cb(ctx->content, false);
+		dom_node_unref(ctx->n);
+		free(ctx);
+		return;
+	}
 
 	do {
 		convert_children = true;
 
 		assert(ctx->n != NULL);
 
-		if (box_construct_element(ctx, &convert_children) == false) {
-			ctx->cb(ctx->content, false);
+		/* fixes533: re-check liveness every iteration, not just at entry.
+		 * The walk yields (box_construct_element -> html_fetch_object ->
+		 * hlcache_handle_retrieve drives OT/the scheduler), and a bulk
+		 * hlcache_clean teardown during that yield frees+reuses ctx->content
+		 * AFTER the entry-time gate passed.  The registry membership test
+		 * never dereferences the (possibly reused) struct.  On a no-longer-
+		 * live content, abandon the walk WITHOUT calling ctx->cb (the content
+		 * it would broadcast to is gone) and without touching the DOM
+		 * (document teardown is underway) -- just release the node + ctx. */
+		if (macos9_content_is_live((struct content *)ctx->content) == 0) {
+			macsurf_debug_log_writef(
+				"box: convert_xml DEAD mid-walk ctx=%p content=%p",
+				(void*)ctx, (void*)ctx->content);
 			dom_node_unref(ctx->n);
 			free(ctx);
 			return;
+		}
+
+		{
+			bool bce_ok = box_construct_element(ctx, &convert_children);
+			/* fixes547: box_construct_element yields internally
+			 * (convert_special_elements / ::before generate / background
+			 * fetch / marker -> html_fetch_object -> OT).  A content_destroy
+			 * during any of those frees ctx->content->bctx (this box +
+			 * box->style) AFTER the loop-top gate passed AND after
+			 * box_construct_element's own interior gates returned true.
+			 * Re-check BEFORE interpreting the result or touching
+			 * ctx->n / ctx->content: on a dead content do NOT call ctx->cb
+			 * (its broadcast target is gone) and do NOT next_node (derefs the
+			 * freed node) -- unwind exactly like the loop-top gate. */
+			if (macos9_content_is_live((struct content *)ctx->content) == 0) {
+				macsurf_debug_log_writef(
+					"box: DEAD after box_construct_element ctx=%p content=%p",
+					(void *)ctx, (void *)ctx->content);
+				dom_node_unref(ctx->n);
+				free(ctx);
+				return;
+			}
+			if (bce_ok == false) {
+				ctx->cb(ctx->content, false);
+				dom_node_unref(ctx->n);
+				free(ctx);
+				return;
+			}
 		}
 
 		/* Find next element to process, converting text nodes as we go */
@@ -2065,8 +2301,49 @@ static void convert_xml_to_box(struct box_construct_ctx *ctx)
 		}
 	} while (++num_processed < max_processed_before_yield);
 
-	/* More work to do: schedule a continuation */
+	/* fixes536: re-expose ctx via box_conversion_context BEFORE queuing the
+	 * continuation.  fixes535's entry-time claim NULLs box_conversion_context
+	 * so a teardown during this batch cannot free ctx out from under the
+	 * running walk.  But that also meant the SELF-RESCHEDULED continuation
+	 * below was orphaned: html_close/destroy/stop only call cancel_dom_to_box
+	 * when box_conversion_context != NULL, so they could not cancel this
+	 * queued entry, and it fired on the next tick against freed content
+	 * (convert_xml_to_box byte-scan crash on a wild pointer, misattributed by
+	 * MacsBug to macos9_reload_anim_tick).  Re-arming the handle here, while
+	 * the entry merely SITS in the queue (not running), lets teardown cancel
+	 * it.  Safe to deref ctx->content: the loop above bailed already if it
+	 * had gone dead, so reaching here means it was live throughout the batch.
+	 * The next dispatch re-claims (NULLs) it at entry, keeping the batch
+	 * protected.  Completion/abort paths free ctx and leave this NULL. */
+	if (ctx->content != NULL) {
+		ctx->content->box_conversion_context = ctx;
+	}
 	guit->misc->schedule(0, (void *)convert_xml_to_box, ctx);
+}
+
+/* fixes552 — wrapper around the per-batch box walk.  Marks this content's walk
+ * as ON-STACK for the whole batch (including the html_fetch_object -> OT yield)
+ * so content_destroy (ns_content.c) DEFERS freeing it; runs the batch via
+ * _inner; then unmarks and drains any deferred frees now that the walk's
+ * references are gone.  content + generation are captured BEFORE _inner runs
+ * because _inner may free ctx, and it self-reschedules THIS wrapper. */
+static void convert_xml_to_box(struct box_construct_ctx *ctx)
+{
+	struct content *c;
+
+	if (ctx == NULL || ctx->content == NULL) {
+		convert_xml_to_box_inner(ctx);
+		return;
+	}
+	c = (struct content *)ctx->content;
+	g_walk_content = c;
+	g_walk_gen = macos9_content_token(c);
+
+	convert_xml_to_box_inner(ctx);   /* may free ctx and/or reschedule */
+
+	g_walk_content = NULL;
+	g_walk_gen = 0;
+	macos9_content_drain_deferred();
 }
 
 
@@ -2254,13 +2531,27 @@ nserror cancel_dom_to_box(void *box_conversion_context)
 	struct box_construct_ctx *ctx = box_conversion_context;
 	nserror err;
 
+	/* fixes535: NULL-guard ctx before the log line derefs ctx->content, and
+	 * guard + NULL ctx->n around the unref so a second cancel on the same ctx
+	 * (the two teardown paths html_close + html_destroy can both reach here)
+	 * cannot double-decrement an already-freed dom_node refcount (r30+0x04
+	 * crash).  Paired with the convert_xml_to_box ownership claim, which
+	 * makes box_conversion_context NULL while a walk is in flight so this is
+	 * never called on a ctx the running walk still owns. */
+	if (ctx == NULL) {
+		return NSERROR_OK;
+	}
+
 	macsurf_debug_log_writef("box: cancel_dom ctx=%p htmlc=%p", (void*)ctx, (void*)ctx->content);
 	err = guit->misc->schedule(-1, (void *)convert_xml_to_box, ctx);
 	if (err != NSERROR_OK) {
 		return err;
 	}
 
-	dom_node_unref(ctx->n);
+	if (ctx->n != NULL) {
+		dom_node_unref(ctx->n);
+		ctx->n = NULL;
+	}
 	free(ctx);
 
 	return NSERROR_OK;
