@@ -72,6 +72,13 @@ extern void macos9_schedule_cancel_owner(void *p);
 #endif
 
 long macos9_html_bytes_processed = 0;
+/* fixes560 — per-load reformat sequence counter.  Reset to 0 at
+ * parse-convert-done (start of a page's reformat cycle) and incremented at
+ * each html_reformat entry, so the timestamped log shows the reflow storm
+ * explicitly: "reformat #1 ... #15" with each one's begin-stamp lets the
+ * per-reformat cost (ms_after-ms_before, already in the SITE line) be read
+ * against the count.  See project_mactrove_reflow_storm. */
+static long macos9_html_reformat_seq = 0;
 char macos9_html_head[64];
 unsigned int macos9_html_head_len = 0;
 
@@ -239,6 +246,7 @@ static void html_box_convert_done(html_content *c, bool success)
 	NSLOG(netsurf, INFO, "DOM to box conversion complete (content %p)", c);
 	macsurf_debug_log_writef("fc: box_convert_done entered (success=%d)", (int)success);
 	macsurf_profile_stamp("parse-convert-done");
+	macos9_html_reformat_seq = 0; /* fixes560: fresh reflow-storm count per load */
 
 	c->box_conversion_context = NULL;
 
@@ -1057,6 +1065,10 @@ bool html_can_begin_conversion(html_content *htmlc)
 
 	/* Cannot begin conversion if we're still fetching stuff */
 	macsurf_debug_log_int("active fetches", (long)htmlc->base.active);
+	/* fixes560 — also surface the live count on-screen (title bar).  This
+	 * re-runs on every sub-resource fetch completion, so the user sees the
+	 * count count down as the page's objects arrive. */
+	macsurf_debug_show_int("active fetches", (long)htmlc->base.active);
 	if (htmlc->base.active != 0)
 		return false;
 
@@ -1096,12 +1108,49 @@ html_begin_conversion(html_content *htmlc)
 		NSLOG(netsurf, INFO, "Completing parse (%p)", htmlc);
 		/* complete parsing */
 		error = dom_hubbub_parser_completed(htmlc->parser);
-		if (error == DOM_HUBBUB_HUBBUB_ERR_PAUSED && htmlc->base.active > 0) {
-			/* The act of completing the parse failed because we've
-			 * encountered a sync script which needs to run
-			 */
-			NSLOG(netsurf, INFO, "Completing parse brought synchronous JS to light, cannot complete yet");
-			return true;
+		if (error == DOM_HUBBUB_HUBBUB_ERR_PAUSED) {
+			/* The parse paused on a synchronous <script src>. The parser
+			 * is resumed by the DEFERRED unpause (macos9_schedule_unpause
+			 * -> deferred_parser_unpause, fixes512), which re-drives this
+			 * conversion. PAUSED is therefore NOT a failure *as long as
+			 * something will resume the parser*. There are exactly two such
+			 * states, and we must wait in both:
+			 *
+			 *   - base.active > 0 : the pausing script's fetch is still in
+			 *     flight; its completion callback (convert_script_sync_cb)
+			 *     will schedule the unpause. This is the normal network case.
+			 *
+			 *   - htmlc->unpause_pending : the fetch already completed and the
+			 *     unpause is scheduled but has not run yet. This is the
+			 *     CACHE-HIT BURST: the document and its sync <script src> are
+			 *     delivered in one synchronous burst with no event-loop tick
+			 *     between them, so by the time this completion check runs
+			 *     base.active is already 0 while the parser is still paused.
+			 *
+			 * fixes556 removed the old `&& base.active > 0` guard (which
+			 * missed the cache-hit case and fired the error branch: PAUSED
+			 * maps to NSERROR_OK(0) in libdom_hubbub_error_to_nserror, so the
+			 * broadcast was CONTENT_MSG_ERROR code=0 msg=NULL ->
+			 * about:query/fetcherror on a page that fetched fine, log
+			 * "NAV: ERROR ... code=0 msg=(null)"). But fixes556 then waited on
+			 * EVERY PAUSED, which would HANG at "Loading" forever if the parser
+			 * were paused with nothing scheduled to resume it (e.g. the unpause
+			 * schedule failed on OOM). fixes558 narrows it: wait only when a
+			 * resume is guaranteed; otherwise the parser is genuinely stuck and
+			 * we report a REAL error code instead of the spurious 0. Genuine
+			 * parse failures return other (non-OK, non-PAUSED) codes and still
+			 * fall through to the error branch below unchanged. */
+			if (htmlc->base.active > 0 || htmlc->unpause_pending) {
+				NSLOG(netsurf, INFO, "Completing parse brought synchronous JS to light, cannot complete yet");
+				return true;
+			}
+			/* PAUSED with no fetch in flight and no unpause scheduled: the
+			 * parser is genuinely stuck. Surface a real, non-zero error so the
+			 * page routes to the error view with a meaningful code rather than
+			 * the PAUSED->NSERROR_OK(0) that produced the spurious nav error. */
+			NSLOG(netsurf, INFO, "Parser stuck PAUSED with no pending unpause");
+			content_broadcast_error(&htmlc->base, NSERROR_STOPPED, NULL);
+			return false;
 		}
 		if (error != DOM_HUBBUB_OK) {
 			NSLOG(netsurf, INFO, "Parsing failed");
@@ -1523,8 +1572,16 @@ static void html_reformat(struct content *c, int width, int height)
 	 * dynamic style lookup) logs a stage marker. Defined in select.c. */
 	extern int macsurf__cascade_probe_armed;
 
+	macos9_html_reformat_seq++;
 	macsurf_debug_log_writef(
-		"html_reformat: entry w=%d h=%d", width, height);
+		"html_reformat #%ld: entry w=%d h=%d",
+		macos9_html_reformat_seq, width, height);
+	/* fixes560 — timestamped begin marker so each reformat in the storm is
+	 * bracketed in the profile trail (paired with the layout-done stamp at
+	 * exit); the gap between consecutive reformat-begin stamps is the
+	 * inter-reformat network/idle time, the gap to layout-done is the
+	 * layout cost. */
+	macsurf_profile_stamp("reformat-begin");
 	macsurf__cascade_probe_armed = 1;
 
 	/* fixes383 (M2, JS->DOM->render) — re-convert null-guard. html_reconvert

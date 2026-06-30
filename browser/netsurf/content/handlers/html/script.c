@@ -82,6 +82,7 @@ extern int macos9_content_token_valid(struct content *c, unsigned long token);
 struct macos9_unpause_payload {
 	html_content  *parent;
 	unsigned long  token;
+	void          *parser;   /* fixes557: parser identity captured at schedule */
 };
 
 
@@ -352,13 +353,29 @@ deferred_parser_unpause(void *pw)
 	struct macos9_unpause_payload *pl = (struct macos9_unpause_payload *)pw;
 	html_content *parent;
 	unsigned long saved_token;
+	unsigned long cur_token;
+	void *saved_parser;
 	dom_hubbub_error err;
 
 	if (pl == NULL)
 		return;
 	parent = pl->parent;
 	saved_token = pl->token;
+	saved_parser = pl->parser;
 	free(pl);   /* our own allocation; consumed regardless of outcome below */
+
+	/* fixes557: ENTRY instrumentation — logged BEFORE the token check and
+	 * WITHOUT dereferencing parent (macos9_content_token is address-keyed and
+	 * never reads parent's bytes, so it is safe even on a freed pointer).  This
+	 * is the decisive G3 probe: if this line does NOT appear before the
+	 * emit_current_tag crash, this script.c (the fixes550/557 guard) is not in
+	 * the running binary and the answer is "build it", not "re-guard".  If it
+	 * DOES appear and is followed by TOKEN INVALID / PARSER CHANGED with no
+	 * crash, the guard caught the ABA/parser-free case. */
+	cur_token = macos9_content_token(&parent->base);
+	macsurf_debug_log_writef(
+		"deferred_unpause: ENTRY parent=%p savedtok=%ld curtok=%ld savedparser=%p",
+		(void *)parent, (long)saved_token, (long)cur_token, saved_parser);
 
 	/* fixes550: GENERATION-TOKEN validation — the actual fix for the
 	 * deferred_parser_unpause -> dom_hubbub_parser_pause -> hubbub_tokeniser_run
@@ -386,6 +403,20 @@ deferred_parser_unpause(void *pw)
 		return;
 	}
 
+	/* fixes558: clear the pending-unpause flag UNCONDITIONALLY now that this
+	 * scheduled callback is being dispatched. The token check above confirms
+	 * &parent->base is this exact live occupancy, so the deref is safe. After
+	 * this point the scheduler has dequeued this callback, so there is no
+	 * longer any scheduled resume for this content — regardless of whether the
+	 * lifetime guards below let us actually unpause (DEAD / aborted / PARSER
+	 * CHANGED / WILD all bail) or we resume successfully. Clearing here (not
+	 * only on the success path) keeps the invariant exact: "unpause_pending"
+	 * means a resume is still scheduled. If any bail returned without clearing,
+	 * the completion check (html_begin_conversion) would wait forever on a
+	 * resume that already decided not to happen — trading Fix A's crash for a
+	 * hang. This stays correct no matter how Fix A's bail logic evolves. */
+	parent->unpause_pending = false;
+
 	/* fixes521: the fixes520 hlcache_content_is_live() gate was removed here
 	 * — a false-negative leaves the parser paused forever (page stuck
 	 * "Loading").  The dead/aborted/by-value-parser guards below are the
@@ -406,6 +437,28 @@ deferred_parser_unpause(void *pw)
 	if (parent->aborted) {
 		macsurf_debug_log_writef("deferred_unpause: aborted, skip parser=%p",
 			(void *)parent->parser);
+		return;
+	}
+	/* fixes557: PARSER-IDENTITY check — the second lifetime gate this crash
+	 * needs.  Static teardown analysis (html_finish_conversion at html.c:341-343,
+	 * also :675-676 / :880-881) shows dom_hubbub_parser_destroy(c->parser);
+	 * c->parser = NULL runs on the NORMAL conversion-completion path while the
+	 * html_content stays LIVE and REGISTERED.  The fixes550 content-generation
+	 * token still validates as live in that window (it keys on &parent->base,
+	 * not on the parser), so a stale unpause can sail past it and re-enter a
+	 * freed hubbub tokeniser / inputstream — the emit_current_tag lbzu r4-wild
+	 * crash, whose freed bytes live INSIDE parser->parser, not inside the
+	 * content struct.  The parser is created once in html_create and only ever
+	 * transitions valid->NULL for a live content (it is never replaced), so
+	 * requiring parent->parser to be unchanged from schedule time AND non-NULL
+	 * is ABA-proof and cannot false-stall a legitimately-live parse: if the
+	 * parser was destroyed (cur==NULL) or the content was freed-and-reused
+	 * (cur!=saved), we bail BEFORE any hubbub call.  Safe to deref parent here:
+	 * the token check above already confirmed this exact occupancy is live. */
+	if ((void *)parent->parser != saved_parser || parent->parser == NULL) {
+		macsurf_debug_log_writef(
+			"deferred_unpause: PARSER CHANGED saved=%p cur=%p, skip",
+			saved_parser, (void *)parent->parser);
 		return;
 	}
 	/* fixes518: validate parser BY VALUE, not just against NULL.  The crash
@@ -431,6 +484,28 @@ deferred_parser_unpause(void *pw)
 	if (err != DOM_HUBBUB_OK) {
 		macsurf_debug_log_writef("deferred_unpause: pause returned 0x%x",
 			(int)err);
+		return;
+	}
+	/* fixes558: unpause_pending was already cleared unconditionally at dispatch
+	 * entry (just past the token check). The parser is resumed now; the
+	 * re-drive below completes the parse with the parser no longer paused. */
+
+	/* fixes556 — re-drive post-parse conversion now that the parser has
+	 * actually resumed.  Upstream NetSurf unpauses the parser and then
+	 * completes the parse in the SAME call (convert_script_*_cb); fixes512
+	 * split that ordering by deferring the unpause to this scheduler tick,
+	 * so the synchronous html_begin_conversion that ran back in the script
+	 * callback saw a still-paused parser.  With the fixes556 change in
+	 * html_begin_conversion that case now returns true (wait) instead of
+	 * spuriously erroring to about:query/fetcherror — but something must
+	 * still finish the job once the parser is live again, or the page
+	 * stalls at "Loading".  That is this call.  Gated on
+	 * html_can_begin_conversion so we never start conversion while a
+	 * newly-revealed sync <script src> is still being fetched
+	 * (base.active > 0); that script's own completion callback will
+	 * re-drive instead. */
+	if (html_can_begin_conversion(parent)) {
+		html_begin_conversion(parent);
 	}
 }
 
@@ -446,7 +521,15 @@ static void macos9_schedule_unpause(html_content *parent)
 		return;
 	pl->parent = parent;
 	pl->token = macos9_content_token(&parent->base);
+	pl->parser = (void *)parent->parser;   /* fixes557: parser identity */
 	guit->misc->schedule(0, deferred_parser_unpause, pl);
+	/* fixes558: mark that a resume is now scheduled and imminent. The
+	 * parse-completion check (html_begin_conversion) reads this to tell the
+	 * cache-hit burst case (PAUSED + base.active==0 + unpause pending => wait)
+	 * apart from a genuinely stuck parser (PAUSED + nothing scheduled => real
+	 * error). Set only after the schedule succeeds; on the OOM skip above the
+	 * flag stays false so the stuck parser is reported rather than hung. */
+	parent->unpause_pending = true;
 }
 
 /**

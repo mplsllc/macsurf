@@ -1,27 +1,43 @@
-# ⚠️ READ THIS FIRST: WORKING TREE ≠ HEAD (2026-06-29)
+# ⚠️ READ THIS FIRST: WORKING TREE ≠ HEAD (provenance) + PER-COMPONENT G3 STATUS (2026-06-30)
 
 **The committed tree (HEAD) and the working tree are two different projects. Reason about the WORKING TREE — that is what the user builds and ships. HEAD is far behind it.**
 
-- **HEAD ≈ fixes481 / the QuickJS-port merge.** Still Duktape-based in the committed sources.
-- **Working tree ≈ fixes554.** A full Duktape→QuickJS engine migration plus ~70 further fix rounds, **none of it committed.** Per DIRECTIVE #4, commits are held until hardware-confirmed, so this entire body of work is **uncommitted and hardware-UNVERIFIED.**
+- **HEAD = `f305816c` — the QuickJS migration commit itself** (titled "QuickJS engine migration + fixes482–554"). It already contains the engine swap. The *pre-migration Duktape baseline* is `664273a4` (fixes481); that is the tree to diff against to see what the migration changed.
+- **Working tree ≈ fixes560+.** It is HEAD (`f305816c`) plus uncommitted fixes555+ (parser-resume "chase" layer, cache-hit PAUSED fix, fixes471 one-column restore, on-screen fetch readout + profiling, cascade-dedup attempt). Per DIRECTIVE #4 the diffs are held uncommitted until hardware-confirmed — but uncommitted does **NOT** mean unrun: see the per-component G3 status below.
+- **Two diff spans matter and must not be conflated:** `664273a4 → f305816c` is the *regression-introducing* span (engine swap + fetcher replacement + content registry + parser-resume rewrite + ns_content rename — where Failure A and Failure B were born). `f305816c → working tree` is the *attempted-fix* span (reactions to those crashes, not their source).
 - Anything below describing "current state" describes the working tree unless it says HEAD. Do not assume `git log` reflects what the user is running — it does not.
 
 **What changed in the working tree that this file used to get wrong (now corrected below):**
 - **JS engine is QuickJS, not Duktape.** See [JavaScript Engine](#javascript-engine).
 - **HTTPS fetcher renamed** `macos9_https_fetcher.c` → `macos9_tls_fetcher.c` (untracked).
-- **ACTIVE, undiagnosed-on-hardware crash:** the `convert_xml_to_box → box_image → hlcache_handle_retrieve` free-during-walk **UAF is OPEN**, not closed. See the Active Crash note below.
 - **Untracked working-tree files** not yet in HEAD: `macos9_tls_fetcher.c`, `macos9_content_registry.c` / `.h`, `javascript/macsurf_qjs.c` / `.h`, `browser/libquickjs/`. The old `content.c` has been **renamed to `ns_content.c`** in the worktree (old `content.c` shows as deleted).
 
-## 🔴 Active Crash — convert_xml_to_box free-during-walk UAF (OPEN)
+## 🟢🟡🔴 G3 Hardware Verification Status (2026-06-30)
 
-**Status: ACTIVE, uncommitted, hardware-UNVERIFIED. Do NOT treat as closed.** The memory note that called the UAF family "closed at fixes500-516" is wrong; fixes547-554 are still fighting the same crash.
+**Process note: every fix this session is tested on real G3 hardware. Status below is PER-COMPONENT — do NOT assume tree-wide non-verification.** The old blanket "hardware-UNVERIFIED" banner was accurate only while the migration was a fresh untouched pile; it is now false for the load path. Treat each component by its bucket, not by the fact that the diff is uncommitted.
 
-- **Crash chain:** `convert_xml_to_box` (mid box-walk) → `box_image` → `box_image_resolve_url` → `html_fetch_object` → `hlcache_handle_retrieve` byte-scans a pointer to a content that was freed out from under the live walk (cache-pressure eviction during a sub-resource fetch yield).
-- **Current defense (all uncommitted, fixes533/547/550/552/553):**
-  - **Writer-side free guard** — [box_construct.c:61-99](browser/netsurf/content/handlers/html/box_construct.c#L61) pins the walked content's **entire** box tree for the duration of the walk (generation token; fixes552 pinned one box, fixes553 extended to the whole tree).
-  - **Eviction guard** — [hlcache.c:159](browser/netsurf/content/hlcache.c#L159): `hlcache_clean` refuses to evict a content whose box walk is currently on the stack.
-  - **Out-of-band live-content registry** — `macos9_content_registry.c` (untracked, fixes533).
-- The fixes554 per-URL terminal-fail set (see Networking) was added specifically to collapse the jsdelivr sub-resource storm that *manufactured* the cache-pressure eviction behind this UAF.
+### ✅ VERIFIED ON G3 (ran correctly on real hardware)
+- **fixes556 — cache-hit navigation load.** Confirmed: nav goes straight to `NAV: DONE url=https://…`, no `NAV: ERROR code=0`, no `about:query`/`about:fetcherror`, no URL-bar re-enter needed. The bug where every cache-hit nav errored to the placeholder is fixed.
+- **fixes560 — on-screen diagnostics.** The `active fetches: N` title-bar readout, `html_reformat #1/#2/#3` sequencing, and profile stamps (`[+NNNNus] LABEL`) all confirmed working on G3.
+- **fixes559 — fixes471 one-column restore.** `lh__box_is_absolute` again excludes `CSS_POSITION_STICKY` from flex space allocation. Confirmed by the user this session: the 68kmla front page renders multi-column ("the home page IS loading properly"). *(This corrects the earlier triage that listed it as still-open — it is fixed and confirmed.)*
+- **Per-URL terminal-fail flag (fixes554).** Confirmed firing on G3: `TERMINAL FAIL` once per URL, then `terminal-URL FAST-FAIL`, no storm.
+- **Box-walk pin guard (hlcache-evict path).** Held through at least one clean full-page load to event-loop-exit with a bulk clean landing *post*-walk. (Covers the hlcache evict path only — see the crashing bucket for the gap.)
+
+### 🟡 SHIPPED, PENDING G3 CONFIRMATION (code on hardware, specific catch not yet observed)
+- **Fix A / parser-lifetime token** (`deferred_parser_unpause` ABA guard). The `deferred_unpause: ENTRY` instrumentation fires on G3 and the happy path (token match, `savedtok==curtok`) works — but a token **MISMATCH has never been observed**, so the ABA bail itself is UNPROVEN. Needs a run where `savedtok != curtok` to confirm `PARSER TOKEN INVALID` actually catches. Note: the token is currently keyed on `parent->base`; investigation indicated the freed lifetime is `parent->parser`, so a re-key may still be needed.
+- **fixes561/562 — CSS cascade-dedup.** Shipped (URL-keyed dedup in `html_css_process_link`) but the G3 log shows it **not yet effective**: the 239 KB sheet still cascades twice (~4.8s pre-paint waste), zero `css dedup` hits. fixes562 adds an unconditional `css link scan: count=… withsheet=… matched=…` diagnostic to pin down why the match fails on the next run. Treat as in-diagnosis, not landed.
+
+### 🔴 ACTIVELY CRASHING ON G3 (open, reproduced on hardware)
+**Box-walk UAF via the LLCACHE user-destroy path.** Chain: `convert_xml_to_box` → `box_construct_element` → `convert_special_elements` → `_dom_html_element_get_attribute` → `box_image` → `box_image_resolve_url` → `html_fetch_object` → `hlcache_handle_retrieve` (faults at `lbzu r0,0x0001(r4)`, r4 wild). The free comes from `llcache_object_user_destroy` → `llcache_object_notify_users` → `macos9_handle_update` (scheduler) firing **mid-walk** — NOT a bulk `hlcache_clean` eviction this time. Reproduces RIGHT AT STARTUP on the first home-page load (cache-hit home delivered in one synchronous burst; the first `convert_xml_to_box` descends while the initial content's llcache user bookkeeping is still settling) AND on heavy pages.
+- **Coverage gap:** the pin guard `macos9_box_walk_owns_content` is consulted ONLY at [ns_content.c content_destroy](browser/netsurf/content/ns_content.c) and [hlcache.c hlcache_clean](browser/netsurf/content/hlcache.c) — `llcache.c` never consults it. The llcache-level user-destroy path is uncovered.
+- **Fix in progress:** extend the pin/registry-generation-token check DOWN to the `llcache_object_user_destroy` path (defer the destroy when the owning content is pinned by an active box walk, gen-validated for ABA), and ensure the pin is armed before the first descent on the startup deferred-nav path. Same registry mechanism as the existing pin — one liveness model, one level lower. Log the catch (`llcache: USER-DESTROY DEFERRED (walk live)`). **Not fixed — diagnosis confirmed, fix not yet shipped.**
+- The fixes554 per-URL terminal-fail set (see Networking) was the storm-collapse that *manufactured* less of the cache pressure behind the older eviction-path variant; it does not address this llcache-path variant.
+
+### ⚪ OPEN / NON-CRASH (triaged this session, not yet fixed)
+- **fixes515 deferred-broadcast FIFO** — same scheduled-work-outlives-object pattern, guarded only by a weak `handler==NULL` sentinel rather than the registry generation token. Latent; audit/harden pending (should adopt the same registry-token mechanism as the box-walk pin).
+- **Perf — CSS cascade runs twice** (~4.8s pre-paint waste). Cascade-dedup gate shipped but not yet effective (see SHIPPED/PENDING bucket).
+- **Perf — oversized images.** A 3024×2507 source JPEG; decode is already deferred + display-sized (fixes162), so the cost on this load was the ~50s network transfer of a 3.6 MB file (post-first-paint), not a 22 MB RGB buffer (this Mac had ~280 MB free). Lever is lazy/deferred off-screen image fetching, a fetcher change — held. Possible duplicate large-image fetch (same byte count twice) flagged for investigation.
+- **hiddenscroll "removeChild of null" JS error** on every page — non-fatal, waits on the phase-one DOM wrapper port.
 
 # DIRECTIVE #1, NEVER BLAME STALE FILES, EVER
 
@@ -400,7 +416,7 @@ Full fix history: see [docs/changelog-fixes.md](docs/changelog-fixes.md).
 
 
 - **Last hardware-verified release (PAST): v1.5 "Modernity" (2026-06-11), source tree at fixes415.** Verified on a G3 iMac running OS 9.2.2. That release brought: on-device ES6→ES5 transpilation (since **retired** in favour of QuickJS, fixes522); JS→DOM→render re-conversion so JS-mutated content paints; and the v1.5 stability pass (fixes404-415: monotonic clock fix, SHA-384 self-tests, UAF guards, CSS Grid 8→16 column limit fixing modern 12-col grid collapses on XenForo pages like `68kmla.org`).
-- **Current working tree (NOT a release): an uncommitted QuickJS-migration branch at ~fixes554, hardware-UNVERIFIED.** This is well ahead of both the v1.5 release and HEAD (≈fixes481). It swaps the JS engine Duktape→QuickJS and stacks ~70 further fix rounds (incl. the still-open convert_xml_to_box UAF defense, fixes533-553, and the fixes554 per-URL terminal-fail). None of it has been confirmed on a G3/G4. Do not describe any of it as shipped or verified. [docs/status.md](docs/status.md) and [docs/version-history.md](docs/version-history.md) lag this tree; [docs/changelog-fixes.md](docs/changelog-fixes.md) has the per-fix history.
+- **Current working tree (NOT a release): an uncommitted QuickJS-migration branch at ~fixes560+.** This is well ahead of both the v1.5 release and HEAD (≈fixes481). It swaps the JS engine Duktape→QuickJS and stacks ~80 further fix rounds. It is **uncommitted but NOT tree-wide unverified** — verification is per-component as of 2026-06-30; see [G3 Hardware Verification Status](#-g3-hardware-verification-status-2026-06-30) at the top of this file (cache-hit nav, on-screen diagnostics, one-column restore, and terminal-fail are G3-confirmed; the parser-token catch is pending; the llcache user-destroy box-walk UAF is actively crashing). Do not blanket-label the whole tree "shipped" *or* "unverified" — go by the bucket. [docs/status.md](docs/status.md) and [docs/version-history.md](docs/version-history.md) lag this tree; [docs/changelog-fixes.md](docs/changelog-fixes.md) has the per-fix history.
 
 **Full fix history (predecessor chain from fixes225 → fixes143a):** see [docs/changelog-fixes.md](docs/changelog-fixes.md).
 

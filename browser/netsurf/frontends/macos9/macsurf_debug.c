@@ -103,6 +103,57 @@ macsurf_debug_probe_append_int(const char *label, long value)
 	macsurf_debug_set_title_force(g_probe_buf);
 }
 
+/* fixes560 — show a labelled integer in the window title bar as a LIVE
+ * on-screen diagnostic.  Unlike macsurf_debug_log_int (routed to the file
+ * log only since fixes168), this is for counts the user wants to watch on
+ * screen — e.g. the active-fetch count during a page load, which updates
+ * each time html_begin_conversion re-runs as a sub-resource fetch
+ * completes (5 -> 4 -> ... -> 0).  Clears the probe lock so the value is
+ * always visible, but does NOT re-lock, so the real page title (set via
+ * gui_window_set_title, which bypasses this lock) and later pipeline-stage
+ * titles can still update afterward.  Routes through macsurf_debug_set_title,
+ * so it is a no-op when that itself is a stub. */
+void
+macsurf_debug_show_int(const char *label, long value)
+{
+	char buf[128];
+	unsigned long uv;
+	int neg;
+	char digits[12];
+	int di;
+	int len;
+	int i;
+
+	if (label == NULL) label = "?";
+	len = 0;
+	while (label[len] != '\0' && len < 80) {
+		buf[len] = label[len];
+		len++;
+	}
+	buf[len++] = ':';
+	buf[len++] = ' ';
+
+	neg = 0;
+	if (value < 0) {
+		neg = 1;
+		uv = (unsigned long)(-(value + 1)) + 1UL;
+	} else {
+		uv = (unsigned long)value;
+	}
+	di = 0;
+	do {
+		digits[di++] = (char)('0' + (int)(uv % 10UL));
+		uv /= 10UL;
+	} while (uv > 0UL && di < 11);
+	if (neg) digits[di++] = '-';
+	for (i = di - 1; i >= 0 && len < 126; i--)
+		buf[len++] = digits[i];
+	buf[len] = '\0';
+
+	g_title_locked = 0;
+	macsurf_debug_set_title(buf);
+}
+
 #ifdef __MACOS9__
 #include <Files.h>
 struct AliasRecord;
@@ -260,6 +311,7 @@ void macsurf_debug_log_int_force(const char *label, long value)
  * links with MACSURF_DEBUG off.  The durable file log (macsurf_debug_log_writef
  * in macsurf_debug_log.c) is separate and unaffected. */
 void macsurf_debug_set_title(const char *msg) { (void)msg; }
+void macsurf_debug_show_int(const char *label, long value) { (void)label; (void)value; }
 void macsurf_debug_log_int(const char *label, long value) { (void)label; (void)value; }
 void macsurf_debug_log_str(const char *label, const char *value) { (void)label; (void)value; }
 void macsurf_debug_set_title_force(const char *msg) { (void)msg; }

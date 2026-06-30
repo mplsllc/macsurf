@@ -98,6 +98,11 @@ typedef struct html_content {
 	bool parse_completed; /**< Whether the parse has been completed */
 	bool conversion_begun; /**< Whether or not the conversion has begun */
 	bool stylesheets_discovered; /**< Whether explicit <style>/<link> walker has run */
+	bool unpause_pending; /**< fixes558: a deferred parser unpause
+	                       * (macos9_schedule_unpause) is scheduled and not
+	                       * yet run. Lets the parse-completion check tell
+	                       * "PAUSED, resume imminent" (cache-hit burst) from
+	                       * "PAUSED, genuinely stuck". */
 
 	/** Document tree */
 	dom_document *document;

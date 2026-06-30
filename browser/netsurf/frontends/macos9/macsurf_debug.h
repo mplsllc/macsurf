@@ -21,6 +21,7 @@
 #include "macsurf_debug_log.h"
 
 void macsurf_debug_set_title(const char *msg);
+void macsurf_debug_show_int(const char *label, long value);
 void macsurf_debug_log_int(const char *label, long value);
 void macsurf_debug_log_str(const char *label, const char *value);
 void macsurf_debug_set_title_force(const char *msg);

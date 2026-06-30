@@ -52,6 +52,21 @@
  * (box_image -> box_image_resolve_url -> html_fetch_object ->
  * hlcache_handle_retrieve byte-scan on a wild pointer). */
 extern int macos9_box_walk_owns_content(struct content *c);
+/* fixes559 — defined in frontends/macos9/macos9_content_registry.c.  Returns
+ * non-zero while the content is registered (alive): registered at
+ * content__init, deregistered as the FIRST action of content_destroy.  The
+ * deferred-broadcast catch-up pump (hlcache_broadcast_catchup) re-derives its
+ * targets from the live content_list each tick rather than from a baked-in
+ * pointer, and hlcache_clean nulls entry->content + unlinks the entry before
+ * freeing (fixes502), so a destroyed content is normally never visited.  This
+ * check is the belt-and-suspenders against any future free-path that frees a
+ * list-resident content without unlinking: it validates registry membership
+ * (which does NOT read the content's reusable bytes) instead of trusting the
+ * weak c->handler == NULL sentinel (which does).  Same mechanism as the
+ * parser-unpause guard — not a parallel one. */
+extern int macos9_content_is_live(struct content *c);
+#else
+#define macos9_content_is_live(c) (1)
 #endif
 
 typedef struct hlcache_entry hlcache_entry;
@@ -955,6 +970,22 @@ static void hlcache_broadcast_catchup(void *unused)
 		/* destroyed sentinel — skip freed/destroyed contents */
 		if (c->handler == NULL)
 			continue;
+		/* fixes559 — registry-membership guard.  The handler==NULL
+		 * sentinel above reads c's (reusable) bytes; under heap reuse a
+		 * dangling entry->content could read non-NULL garbage and slip
+		 * through.  macos9_content_is_live consults the out-of-band
+		 * registry instead, which deregisters as content_destroy's first
+		 * action — so a freed/ABA-reused content fails here even when its
+		 * bytes look like a live handler.  Expected never to fire given
+		 * the unlink-before-free invariant (fixes502); if it ever logs a
+		 * catch, a new free-path is leaving a list-resident entry dangling
+		 * and must be fixed at the source. */
+		if (!macos9_content_is_live(c)) {
+			macsurf_debug_log_writef(
+				"hlcache_catchup: STALE c=%p not registered, dropping",
+				(void *)c);
+			continue;
+		}
 		if (c->broadcast_pending_count <= 0)
 			continue;
 

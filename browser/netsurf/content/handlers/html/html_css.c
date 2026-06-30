@@ -458,6 +458,57 @@ bool html_css_process_link(html_content *htmlc, dom_node *node)
 	}
 	dom_string_unref(href);
 
+	/* fixes561 — dedup on stylesheet-SET IDENTITY (URL), not call-count.
+	 * html_css_process_link runs twice for the same <link>: once from the
+	 * live-parse insertion event (dom_event.c) and again from the explicit
+	 * post-parse DOM re-walk in html_css_discover_stylesheets (the "event
+	 * chain is unreliable" workaround).  When the event chain DID fire, the
+	 * re-walk re-fetched (cache hit) and re-PARSED every author sheet — on
+	 * 68kmla the two css.php sheets (48KB + 239KB) cascaded twice, ~4.8s of
+	 * pure waste before first paint (profile: cascade-done at +4.37s then
+	 * the identical sheet again at +9.25s).  Skip a link whose joined URL is
+	 * already loaded in this content's stylesheet set.  Keyed on URL, so a
+	 * script that injects a genuinely NEW stylesheet (different URL) is not
+	 * skipped and still cascades — this dedups duplicates, it does not
+	 * suppress dynamic additions.  Independent of the parser-resume logic in
+	 * html.c (that path only decides WHEN begin_conversion re-runs; this gate
+	 * decides whether a re-walked link is a duplicate). */
+	{
+		unsigned int di;
+		int matched = -1;
+		int with_sheet = 0;
+		for (di = 0; di != htmlc->stylesheet_count; di++) {
+			hlcache_handle *ex = htmlc->stylesheets[di].sheet;
+			if (ex == NULL)
+				continue;
+			with_sheet++;
+			if (nsurl_compare(joined, hlcache_handle_get_url(ex),
+					  NSURL_COMPLETE)) {
+				matched = (int)di;
+				break;
+			}
+		}
+		/* fixes562 — unconditional diagnostic: one line per process_link
+		 * call so the log tells us definitively whether the dedup runs and
+		 * what it sees (count, how many slots carry a live sheet handle,
+		 * and the matched slot or -1).  fixes561 logged only on a hit, so a
+		 * miss was indistinguishable from "not reached". */
+		macsurf_debug_log_writef(
+			"css link scan: count=%d withsheet=%d matched=%d url=%s",
+			(int)htmlc->stylesheet_count, with_sheet, matched,
+			nsurl_access(joined));
+		if (matched >= 0) {
+			NSLOG(netsurf, INFO,
+			      "linked stylesheet '%s' already loaded, skip",
+			      nsurl_access(joined));
+			macsurf_debug_log_writef(
+				"css dedup: link already loaded slot=%d url=%s",
+				matched, nsurl_access(joined));
+			nsurl_unref(joined);
+			return true;
+		}
+	}
+
 	NSLOG(netsurf, INFO, "linked stylesheet %i '%s'",
 	      htmlc->stylesheet_count, nsurl_access(joined));
 
