@@ -56,6 +56,7 @@
 #include "content/urldb.h"
 
 #include "macsurf_debug.h"
+#include "macos9_deathrow.h"
 
 /* fixes518: an llcache_object pointer is "wild" if NULL or outside the
  * malloc heap range used on this target (legitimate objects live in
@@ -222,6 +223,9 @@ struct llcache_object {
 	 * calloc at allocation guarantees both start false. */
 	bool notify_in_progress; /**< notify walk active for this object */
 	bool notify_pending;     /**< reentrant call arrived; re-run after walk */
+	/* fixes573: on the Stage-1 death row (deferred free). calloc starts it
+	 * false; idempotent so a double-destroy can never double-free. */
+	bool dr_queued;
 };
 
 /**
@@ -925,6 +929,37 @@ static nserror get_referer_header(nsurl *url, nsurl *referer, char **header_out)
  * \param object Object to refetch
  * \return NSERROR_OK on success, appropriate error otherwise
  */
+/*
+ * fixes574 -- validate object->cache.etag before it is read on the
+ * conditional-GET revalidation path (If-None-Match build in
+ * llcache_object_refetch; deep clone in llcache_object_clone_cache_data).
+ *
+ * Repeated forum avatars hammer this path; on 68kmla the etag field of a
+ * LIVE cached object comes back as a wild pointer (observed 0x49723858, a
+ * foreign/ASCII-looking value -- neither heap 0x06-0x09 nor code 0x3E), so
+ * something is WRITING garbage into the cache field of an alive object (not a
+ * lifetime UAF -- fixes570/573 proved that). strlen/strdup on it crashes in
+ * the Script Manager. Reject an out-of-range etag (treat as no-etag: a normal
+ * full GET) and log value+object+url -- that log line is the evidence needed
+ * to find the stray write.
+ */
+static const char *
+llcache_safe_etag(const llcache_object *object)
+{
+	const char *e = object->cache.etag;
+	unsigned long a = (unsigned long) e;
+
+	if (e != NULL && (a < 4UL || a >= 0x28000000UL)) {
+		macsurf_debug_log_writef(
+			"fixes574 ETAG: wild etag=%p obj=%p url=%s (corrupt cache field)",
+			(void *) a, (void *) object,
+			(object->url != NULL) ?
+				nsurl_access(object->url) : "(null)");
+		return NULL;
+	}
+	return e;
+}
+
 static nserror llcache_object_refetch(llcache_object *object)
 {
 	const char *urlenc = NULL;
@@ -973,10 +1008,12 @@ static nserror llcache_object_refetch(llcache_object *object)
 		return NSERROR_NOMEM;
 	}
 
-	/* cache-control header for etag */
-	if (object->cache.etag != NULL) {
+	/* cache-control header for etag (fixes574: validate first) */
+	{
+	const char *etag_safe = llcache_safe_etag(object);
+	if (etag_safe != NULL) {
 		const size_t len = SLEN("If-None-Match: ") +
-				strlen(object->cache.etag) + 1;
+				strlen(etag_safe) + 1;
 
 		headers[header_idx] = malloc(len);
 		if (headers[header_idx] == NULL) {
@@ -985,9 +1022,10 @@ static nserror llcache_object_refetch(llcache_object *object)
 		}
 
 		snprintf(headers[header_idx], len, "If-None-Match: %s",
-				object->cache.etag);
+				etag_safe);
 
 		header_idx++;
+	}
 	}
 
 	/* cache-control header for modification time */
@@ -1114,7 +1152,55 @@ static nserror llcache_object_fetch(llcache_object *object, uint32_t flags,
  * \param object  Object to destroy
  * \return NSERROR_OK on success, appropriate error otherwise
  */
-static nserror llcache_object_destroy(llcache_object *object)
+static nserror llcache_object_destroy_now(llcache_object *object);
+
+static void
+llcache_object_deathrow_teardown(void *p)
+{
+	llcache_object_destroy_now((llcache_object *) p);
+}
+
+/*
+ * fixes573 — defer the llcache object free to the quiescent death-row drain.
+ *
+ * The old body (now llcache_object_destroy_now) frees cache.etag, headers[],
+ * url and source_data, then the object, but NULLs no external reference to
+ * itself. On the coalescing OS 9 allocator the block is reused quickly, so a
+ * still-live transient reader -- a cache-revalidation clone reading
+ * source->cache.etag (llcache_object_clone_cache_data), a header snapshot,
+ * or llcache_handle_get_header reading object->headers[i].value -- reads
+ * code-space garbage and crashes in strdup/strlen (68kmla forum avatars).
+ * Deferring the reclamation to the next macos9_poll drain keeps the memory
+ * valid until every synchronous reader of the current poll turn has returned.
+ * The caller has already unlinked the object from the cache lists, so no NEW
+ * lookup can find it; only already-captured transient pointers remain, which
+ * is exactly what the deferral protects. Completes the Stage-1 swap that was
+ * held out for the fetch-abort-timing risk (mitigated below by aborting the
+ * fetch synchronously, before enqueue).
+ */
+static nserror
+llcache_object_destroy(llcache_object *object)
+{
+	if (object == NULL) {
+		return NSERROR_OK;
+	}
+
+	/* Synchronous: abort any in-flight fetch NOW so it cannot write into
+	 * memory queued for deferred free. */
+	if (object->fetch.fetch != NULL) {
+		fetch_abort(object->fetch.fetch);
+		object->fetch.fetch = NULL;
+	}
+
+	if (object->dr_queued) {
+		return NSERROR_OK;	/* idempotent -> no double free */
+	}
+	object->dr_queued = 1;
+	macos9_deathrow_add(object, llcache_object_deathrow_teardown, NULL);
+	return NSERROR_OK;
+}
+
+static nserror llcache_object_destroy_now(llcache_object *object)
 {
 	size_t i;
 
@@ -1136,10 +1222,9 @@ static nserror llcache_object_destroy(llcache_object *object)
 	nsurl_unref(object->url);
 	object->url = NULL; /* fixes502: poison to catch use-after-free in refetch */
 
-	if (object->fetch.fetch != NULL) {
-		fetch_abort(object->fetch.fetch);
-		object->fetch.fetch = NULL;
-	}
+	/* fixes573: fetch_abort now happens synchronously in the deferring
+	 * wrapper (llcache_object_destroy); by the time this teardown runs at
+	 * the drain, object->fetch.fetch is already NULL. */
 
 	if (object->fetch.referer != NULL)
 		nsurl_unref(object->fetch.referer);
@@ -1276,8 +1361,9 @@ static bool llcache_object_is_fresh(const llcache_object *object)
 static nserror llcache_object_clone_cache_data(llcache_object *source,
 		llcache_object *destination, bool deep)
 {
-	/* ETag must be first, as it can fail when deep cloning */
-	if (source->cache.etag != NULL) {
+	/* ETag must be first, as it can fail when deep cloning.
+	 * fixes574: validate the source etag (skip a wild one) before use. */
+	if (llcache_safe_etag(source) != NULL) {
 		char *etag = source->cache.etag;
 
 		if (deep) {
@@ -4233,7 +4319,10 @@ void llcache_finalise(void)
 		/* Fetch system has already been destroyed */
 		object->fetch.fetch = NULL;
 
-		llcache_object_destroy(object);
+		/* fixes573: shutdown -- free synchronously. The poll loop will
+		 * not drain the death row again, so deferring here would leak
+		 * every cached object at exit. */
+		llcache_object_destroy_now(object);
 	}
 
 	/* Clean cached objects */
@@ -4254,7 +4343,10 @@ void llcache_finalise(void)
 		/* Fetch system has already been destroyed */
 		object->fetch.fetch = NULL;
 
-		llcache_object_destroy(object);
+		/* fixes573: shutdown -- free synchronously. The poll loop will
+		 * not drain the death row again, so deferring here would leak
+		 * every cached object at exit. */
+		llcache_object_destroy_now(object);
 	}
 
 	/* backing store finalisation */

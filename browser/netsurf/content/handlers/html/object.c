@@ -46,6 +46,7 @@
 #include "html/box.h"
 #include "html/box_inspect.h"
 #include "html/object.h"
+#include "macos9_deathrow.h"
 
 /* break reference loop */
 static void html_object_refresh(void *p);
@@ -902,4 +903,30 @@ html_fetch_object(html_content *c,
 	}
 
 	return true;
+}
+
+
+/*
+ * Stage 1 death-row pinned-check: does a pending html_object_refresh
+ * continuation still reference `target`?  Checks BOTH the raw parent
+ * content (object->parent) and the object's own content handle, since the
+ * refresh re-drives into the parent and touches the image content.
+ */
+bool
+html_object_sched_pins(void (*cb)(void *), void *p, struct content *target)
+{
+	struct content_html_object *o;
+
+	if (cb != html_object_refresh || p == NULL) {
+		return false;
+	}
+	o = (struct content_html_object *) p;
+	if (o->parent == target) {
+		return true;
+	}
+	if (o->content != NULL &&
+	    hlcache_handle_get_content(o->content) == target) {
+		return true;
+	}
+	return false;
 }

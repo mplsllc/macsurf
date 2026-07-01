@@ -187,6 +187,14 @@ struct content_user
  */
 struct content {
 	/**
+	 * Stage 1 death-row: set when this content has been enqueued for
+	 * deferred free (macos9_deathrow). Makes double-enqueue (and thus
+	 * double-free) structurally impossible; ABA-safe because it lives
+	 * in the content's own memory.
+	 */
+	bool dr_queued;
+
+	/**
 	 * Low-level cache object
 	 */
 	struct llcache_handle *llcache;

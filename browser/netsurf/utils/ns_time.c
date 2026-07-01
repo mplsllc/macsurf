@@ -115,6 +115,27 @@ const char *rfc1123_date(time_t t)
 
 	tm = gmtime(&t);
 
+	/* fixes575: gmtime can return NULL for an out-of-range/garbage time
+	 * (a corrupt or unparseable Last-Modified reaching us), and even a
+	 * non-NULL tm can carry an out-of-range tm_wday/tm_mon; indexing
+	 * weekdays_short[]/months[] then reads a wild char* that snprintf's %s
+	 * strlen's -> crash (the If-Modified-Since revalidation crash on 68kmla
+	 * forum avatars). Bail to the epoch on any bad input, and log the
+	 * offending value so we can trace where the garbage time comes from
+	 * (the `tm == NULL` test short-circuits before any tm-> read). */
+	if (tm == NULL ||
+	    tm->tm_wday < 0 || tm->tm_wday >= NSC_TIME_WEEKDAY__COUNT ||
+	    tm->tm_mon  < 0 || tm->tm_mon  >= NSC_TIME_MONTH__COUNT) {
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		macsurf_debug_log_writef(
+			"fixes575 rfc1123_date: bad time=%ld tm=%p wday=%d mon=%d",
+			(long) t, (void *) tm,
+			(tm != NULL) ? tm->tm_wday : -1,
+			(tm != NULL) ? tm->tm_mon  : -1);
+		snprintf(ret, sizeof ret, "Thu, 01 Jan 1970 00:00:00 GMT");
+		return ret;
+	}
+
 	snprintf(ret, sizeof ret, "%s, %02d %s %d %02d:%02d:%02d GMT",
 			weekdays_short[tm->tm_wday], tm->tm_mday,
 			months[tm->tm_mon], tm->tm_year + 1900,

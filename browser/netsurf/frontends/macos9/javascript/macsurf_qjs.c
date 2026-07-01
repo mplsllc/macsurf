@@ -697,6 +697,22 @@ static struct content *g_qjs_content = NULL;
 void qjs_set_document(dom_document *doc)  { g_qjs_document = doc; }
 void qjs_set_content(struct content *c)   { g_qjs_content  = c; }
 
+/* Stage 1 death-row hook (fixes565, QuickJS port of the Duktape
+ * macsurf_js_notify_content_freed): g_qjs_content is a raw content pointer,
+ * independent of content_list and not reachable via any scheduled
+ * continuation, so the death-row pinned-check cannot see it. The drain calls
+ * this just before it frees a content; NULL our cached pointers if the content
+ * going away is the one we hold, so the DOM bindings (macos9_js_mark_dom_dirty
+ * and friends) never deref a freed content or a document living inside it. */
+void
+macsurf_js_notify_content_freed(struct content *c)
+{
+	if (g_qjs_content == c) {
+		g_qjs_content = NULL;
+		g_qjs_document = NULL;
+	}
+}
+
 /* ---- dom_string helper ---- */
 static dom_string *qjs_make_domstr(const char *s)
 {

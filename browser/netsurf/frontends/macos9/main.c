@@ -506,10 +506,15 @@ static void macos9_handle_update(const EventRecord *event) {
 		ctx.plot = &macos9_plotters;
 		{ extern struct gui_window *macos9_paint_gw;
 		  macos9_paint_gw = gw; }
+		/* Stage 1: the redraw box-tree walk dereferences content/box
+		 * objects; keep op_depth>0 so the death-row drain cannot fire
+		 * and free one mid-walk. */
+		{ extern int macos9_op_depth; macos9_op_depth++; }
 		browser_window_redraw(gw->bw,
 			gw->content_rect.left - gw->scroll_x,
 			gw->content_rect.top  - gw->scroll_y,
 			&clip, &ctx);
+		{ extern int macos9_op_depth; macos9_op_depth--; }
 		{ extern struct gui_window *macos9_paint_gw;
 		  macos9_paint_gw = NULL; }
 		/* fixes451: emit profile stamp + PROFILE line only once per page;
@@ -824,7 +829,11 @@ void macos9_poll(void) {
 		 * and synchronous cache-hit broadcasts. Pumping here
 		 * keeps queued jobs dispatching and per-scheme polls
 		 * running every loop iteration. */
-		{ extern void fetch_pump(void); fetch_pump(); }
+		{ extern void fetch_pump(void); extern int macos9_op_depth;
+		  /* Stage 1: fetch_pump drives fetch completions, which drive
+		   * convert/teardown -- engine work. Mark the depth so the
+		   * death-row drain below cannot free mid-pump. */
+		  macos9_op_depth++; fetch_pump(); macos9_op_depth--; }
 		macos9_windows_te_idle(); macos9_windows_process_deferred();
 		macos9_poll_mouse_hover();
 		{ extern void macos9_animation_tick(void);
@@ -834,6 +843,13 @@ void macos9_poll(void) {
 		{ extern void macsurf_qjs_pump_all(void);
 		  macsurf_qjs_pump_all(); }
 #endif
+		/* Stage 1 (fixes565): the one quiescent drain point. schedule_run /
+		 * fetch_pump / event dispatch have all returned, so nothing
+		 * walk/convert/redraw is on the stack. macos9_deathrow_drain()
+		 * itself no-ops unless macos9_op_depth==0, so a nested poll
+		 * (should one ever exist) cannot free mid-operation. */
+		{ extern void macos9_deathrow_drain(void);
+		  macos9_deathrow_drain(); }
 	}
 }
 

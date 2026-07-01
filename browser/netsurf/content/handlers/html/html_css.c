@@ -45,6 +45,7 @@
 #include "html/css.h"
 
 #include "macsurf_debug.h"
+#include "macos9_deathrow.h"
 
 static nsurl *html_default_stylesheet_url;
 static nsurl *html_adblock_stylesheet_url;
@@ -1063,4 +1064,19 @@ void html_css_fini(void)
 		nsurl_unref(html_default_stylesheet_url);
 		html_default_stylesheet_url = NULL;
 	}
+}
+
+
+/*
+ * Stage 1 death-row pinned-check: does a pending
+ * html_css_process_modified_styles continuation still reference `target`?
+ * Its param IS the html_content.
+ */
+bool
+html_css_sched_pins(void (*cb)(void *), void *p, struct content *target)
+{
+	if (cb != html_css_process_modified_styles) {
+		return false;
+	}
+	return (struct content *) p == target;
 }

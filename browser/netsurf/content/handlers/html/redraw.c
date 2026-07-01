@@ -63,6 +63,7 @@
 #include "html/form_internal.h"
 #include "html/private.h"
 #include "html/layout.h"
+#include "html/macsurf_dom_compat.h"
 #include "html/layout_safe.h"
 
 /* fixes195 — inline SVG renderer lives in the macos9 frontend so it
@@ -4134,7 +4135,7 @@ bool html_redraw_box(const html_content *html, struct box *box,
 	}
 
 	if (box->node != NULL) {
-		exc = dom_html_element_get_tag_type(box->node, &tag_type);
+		exc = macsurf_html_element_get_tag_type(box->node, &tag_type);
 		if (exc != DOM_NO_ERR) {
 			tag_type = DOM_HTML_ELEMENT_TYPE__UNKNOWN;
 		}

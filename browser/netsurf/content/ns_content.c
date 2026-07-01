@@ -42,6 +42,7 @@
 #include "content/urldb.h"
 
 #include "macsurf_debug.h"
+#include "macos9_deathrow.h"
 
 /* fixes517: frontend scheduler cancellation. Forward-declared here (core
  * file, Mac-only fork) rather than pulling the macos9 frontend header into
@@ -447,7 +448,10 @@ content__reformat(struct content *c, bool background, int width, int height)
  * box_construct.c), freeing it now crashes the walk; queue it here and let the
  * walk drain it the instant the batch returns (macos9_content_drain_deferred),
  * once the references are gone.  Bounded + deduped; a full table leaks rather
- * than free under a live walk. */
+ * than free under a live walk.  NOTE (fixes565-577 arc): content_destroy now
+ * routes every free through the op-depth-gated death row (below), so this
+ * writer-side list is a secondary guard for the box-walk-owns case referenced
+ * from content_destroy_now; the drain hook is retained for that path. */
 extern int macos9_box_walk_owns_content(struct content *c);
 
 #define MACOS9_DEFER_MAX 32
@@ -465,8 +469,38 @@ void macos9_content_drain_deferred(void)
 #endif
 
 
+/* Stage 1 death-row: content_destroy now DEFERS. It unlinks/ownership has
+ * already happened at the call site (hlcache_clean unlinks from
+ * content_list synchronously); here we only enqueue the real teardown,
+ * which runs at the quiescent drain (no walk/convert on the stack, no
+ * scheduled continuation still referencing c). Idempotent via c->dr_queued
+ * so a double content_destroy can never double-free. */
+static void content_destroy_now(struct content *c);
+
+/* The JS DOM keeps a raw current-content pointer (macsurf_js_dom.c);
+ * Seam 1 requires NULLing it before the content's memory is reclaimed. */
+extern void macsurf_js_notify_content_freed(struct content *c);
+
+static void
+content_deathrow_teardown(void *p)
+{
+	struct content *c = (struct content *) p;
+	macsurf_js_notify_content_freed(c);
+	content_destroy_now(c);
+}
+
 /* exported interface documented in content/content.h */
 void content_destroy(struct content *c)
+{
+	if (c == NULL || c->dr_queued) {
+		return;
+	}
+	c->dr_queued = 1;
+	macos9_deathrow_add(c, content_deathrow_teardown, c);
+}
+
+static void
+content_destroy_now(struct content *c)
 {
 	struct content_rfc5988_link *link;
 	const struct content_handler *h;
@@ -1104,6 +1138,13 @@ void content_broadcast(struct content *c, content_msg msg,
 		return;
 	}
 	nslog_log(__FILE__, "", __LINE__, "%p -> msg:%d", c, msg);
+	/* Stage 1 drain-gate: a user callback can navigate away and tear down
+	 * content mid-walk; hold macos9_op_depth>0 so the death-row drain
+	 * cannot fire while this broadcast loop is on the stack and free an
+	 * object the loop still iterates. This is NOT the same-frame reentrant
+	 * broadcast guard (that is broadcast_in_progress / Stage 3) — its only
+	 * job here is to keep the drain out until the walk unwinds. */
+	macos9_op_depth++;
 	for (user = c->user_list->next; user != 0; user = next) {
 		unsigned long ua = (unsigned long)(void *)user;
 		if (ua < 0x01000000UL || ua >= 0x20000000UL) {
@@ -1127,6 +1168,12 @@ void content_broadcast(struct content *c, content_msg msg,
 			user->callback(c, msg, data, user->pw);
 		}
 	}
+	/* Stage 1 death-row (fixes565-577 arc): the walk is now off the stack,
+	 * so release the drain gate before the inline replay below.  The replay
+	 * issues a recursive content_broadcast, which brackets its own
+	 * op_depth++/-- around its walk, so the gate is correctly re-entered
+	 * there if there is more work. */
+	macos9_op_depth--;
 
 	/* Clear both reentrancy flags.  The global flag MUST be cleared before
 	 * the inline replay below, otherwise the replay would see the global

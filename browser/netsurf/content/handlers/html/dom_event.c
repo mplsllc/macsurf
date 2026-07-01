@@ -43,6 +43,7 @@
 #include "html/box.h"
 #include "html/box_construct.h"
 #include "html/form_internal.h"
+#include "html/macsurf_dom_compat.h"
 #include "html/dom_event.h"
 
 
@@ -596,7 +597,7 @@ dom_default_action_DOMNodeInserted_cb(struct dom_event *evt, void *pw)
 		/* an element node has been inserted */
 		dom_html_element_type tag_type;
 
-		exc = dom_html_element_get_tag_type(node, &tag_type);
+		exc = macsurf_html_element_get_tag_type(node, &tag_type);
 		if (exc != DOM_NO_ERR) {
 			tag_type = DOM_HTML_ELEMENT_TYPE__UNKNOWN;
 		}
@@ -680,7 +681,7 @@ dom_default_action_DOMNodeInsertedIntoDocument_cb(struct dom_event *evt,
 			/* an element node has been modified */
 			dom_html_element_type tag_type;
 
-			exc = dom_html_element_get_tag_type(node, &tag_type);
+			exc = macsurf_html_element_get_tag_type(node, &tag_type);
 			if (exc != DOM_NO_ERR) {
 				tag_type = DOM_HTML_ELEMENT_TYPE__UNKNOWN;
 			}
@@ -723,7 +724,7 @@ dom_default_action_DOMSubtreeModified_cb(struct dom_event *evt, void *pw)
 			/* an element node has been modified */
 			dom_html_element_type tag_type;
 
-			exc = dom_html_element_get_tag_type(node, &tag_type);
+			exc = macsurf_html_element_get_tag_type(node, &tag_type);
 			if (exc != DOM_NO_ERR) {
 				tag_type = DOM_HTML_ELEMENT_TYPE__UNKNOWN;
 			}

@@ -42,6 +42,7 @@
 #include "content/content_factory.h"
 
 #include "macsurf_debug.h"
+#include "macos9_deathrow.h"
 
 #ifdef __MACOS9__
 /* fixes553 — defined in content/handlers/html/box_construct.c.  Returns non-zero
@@ -96,6 +97,8 @@ struct hlcache_handle {
 
 	hlcache_handle_callback cb;	/**< Client callback */
 	void *pw;			/**< Client data */
+
+	bool dr_queued;			/**< Stage 1: on the death row */
 };
 
 /** Entry in high-level cache */
@@ -104,6 +107,8 @@ struct hlcache_entry {
 
 	hlcache_entry *next;		/**< Next sibling */
 	hlcache_entry *prev;		/**< Previous sibling */
+
+	bool dr_queued;			/**< Stage 1: on the death row */
 };
 
 /** Current state of the cache.
@@ -136,6 +141,41 @@ static void hlcache_broadcast_catchup(void *unused);
 /******************************************************************************
  * High-level cache internals						      *
  ******************************************************************************/
+
+
+/* Stage 1 death-row: an hlcache_entry / hlcache_handle freed from the
+ * scheduler-driven teardown path defers its free() to the quiescent drain.
+ * Idempotent via dr_queued (double-free impossible, ABA-safe). The node is
+ * gated on its content's pending scheduled continuations (pin_key) so a
+ * still-in-flight box walk can never have the node yanked from under it.
+ * Teardown is a bare free() — the node owns no further resources. */
+static void
+hlcache_node_deathrow_teardown(void *p)
+{
+	free(p);
+}
+
+static void
+hlcache_entry_deferred_free(hlcache_entry *entry)
+{
+	if (entry == NULL || entry->dr_queued) {
+		return;
+	}
+	entry->dr_queued = 1;
+	macos9_deathrow_add(entry, hlcache_node_deathrow_teardown,
+			entry->content);
+}
+
+static void
+hlcache_handle_deferred_free(hlcache_handle *handle)
+{
+	if (handle == NULL || handle->dr_queued) {
+		return;
+	}
+	handle->dr_queued = 1;
+	macos9_deathrow_add(handle, hlcache_node_deathrow_teardown,
+			(handle->entry != NULL) ? handle->entry->content : NULL);
+}
 
 
 /**
@@ -221,8 +261,9 @@ static void hlcache_clean(void *force_clean_flag)
 			}
 		}
 
-		/* Destroy entry */
-		free(entry);
+		/* Destroy entry (Stage 1: deferred to the quiescent drain,
+		 * gated on its content's pending continuations) */
+		hlcache_entry_deferred_free(entry);
 	}
 
 	/* Attempt to clean the llcache */
@@ -502,6 +543,36 @@ static nserror hlcache_migrate_ctx(hlcache_retrieval_ctx *ctx,
 	return error;
 }
 
+/*
+ * fixes571 -- guard the Content-Type header read on the mimesniff path.
+ *
+ * llcache_handle_get_header returns handle->object->headers[i].value. Under
+ * re-entrant script-driven fetch churn (convert_script_sync_cb runs js_exec
+ * synchronously, then unpauses the parser -> nested fetch/convert) an llcache
+ * object can be destroyed while a retrieval ctx's handle still points at it;
+ * handle->object is not NULL'd, so this returns a dangling/reused header value
+ * (observed 0x3DBE2F6E, a code-space callback from a reused block) that the
+ * content-type parser strlen's -> crash. The real cure is deferring the
+ * llcache object free (the swap Stage 1 held out); until then, reject a
+ * wild value here. mimesniff_compute_effective_type(NULL,...) is a supported
+ * path (sniffs from data / defaults), so NULL is safe.
+ */
+static const char *
+hlcache_safe_content_type(const llcache_handle *handle)
+{
+	const char *ct = llcache_handle_get_header(handle, "Content-Type");
+	unsigned long a = (unsigned long) ct;
+
+	if (ct != NULL && (a < 4UL || a >= 0x28000000UL)) {
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		macsurf_debug_log_writef(
+			"fixes571 CTYPE: wild content-type=%p (dangling llcache object)",
+			(void *) ct);
+		return NULL;
+	}
+	return ct;
+}
+
 /**
  * Handler for low-level cache events
  *
@@ -538,7 +609,7 @@ hlcache_llcache_callback(llcache_handle *handle,
 		}
 		break;
 	case LLCACHE_EVENT_HAD_HEADERS:
-		error = mimesniff_compute_effective_type(llcache_handle_get_header(handle, "Content-Type"), NULL, 0,
+		error = mimesniff_compute_effective_type(hlcache_safe_content_type(handle), NULL, 0,
 				ctx->flags & HLCACHE_RETRIEVE_SNIFF_TYPE,
 				ctx->accepted_types == CONTENT_IMAGE,
 				&effective_type);
@@ -562,7 +633,7 @@ hlcache_llcache_callback(llcache_handle *handle,
 
 		break;
 	case LLCACHE_EVENT_HAD_DATA:
-		error = mimesniff_compute_effective_type(llcache_handle_get_header(handle, "Content-Type"),
+		error = mimesniff_compute_effective_type(hlcache_safe_content_type(handle),
 				event->data.data.buf, event->data.data.len,
 				ctx->flags & HLCACHE_RETRIEVE_SNIFF_TYPE,
 				ctx->accepted_types == CONTENT_IMAGE,
@@ -581,7 +652,7 @@ hlcache_llcache_callback(llcache_handle *handle,
 	case LLCACHE_EVENT_DONE:
 		/* DONE event before we could determine the effective MIME type.
 		 */
-		error = mimesniff_compute_effective_type(llcache_handle_get_header(handle, "Content-Type"),
+		error = mimesniff_compute_effective_type(hlcache_safe_content_type(handle),
 				NULL, 0, false, false, &effective_type);
 		if (error == NSERROR_OK || error == NSERROR_NOT_FOUND) {
 			error = hlcache_migrate_ctx(ctx, effective_type);
@@ -798,11 +869,32 @@ hlcache_handle_retrieve(nsurl *url,
 
 	if (child != NULL) {
 		if (child->charset != NULL) {
-			ctx->child.charset = strdup(child->charset);
-			if (ctx->child.charset == NULL) {
-				free(ctx->handle);
-				free(ctx);
-				return NSERROR_NOMEM;
+			/* fixes570: child->charset is the parent html_content's
+			 * c->encoding, read raw. Under heavy churn (68kmla) that
+			 * field can be clobbered to a wild value (observed
+			 * 0x2C7B7060) -> strdup's strlen walks unmapped memory and
+			 * crashes in the Script Manager. Same range guard as the
+			 * dom_string accessors; a wild charset is treated as
+			 * no-charset (NULL is already handled below) since a
+			 * child/image fetch needs none. This is a SEPARATE vector
+			 * from the sched_entry aliasing -- the value is not a
+			 * code-space callback -- so it also serves as the diagnostic
+			 * log for locating the clobber source. */
+			unsigned long ca_ = (unsigned long) child->charset;
+			if (ca_ < 4UL || ca_ >= 0x28000000UL) {
+				extern void macsurf_debug_log_writef(
+					const char *fmt, ...);
+				macsurf_debug_log_writef(
+					"fixes570 CHARSET: wild child->charset=%p quirks=%d",
+					(void *) ca_, (int) child->quirks);
+				ctx->child.charset = NULL;
+			} else {
+				ctx->child.charset = strdup(child->charset);
+				if (ctx->child.charset == NULL) {
+					free(ctx->handle);
+					free(ctx);
+					return NSERROR_NOMEM;
+				}
 			}
 		}
 		ctx->child.quirks = child->quirks;
@@ -847,7 +939,12 @@ nserror hlcache_handle_release(hlcache_handle *handle)
 	 * fixes499e NULL-after-release in html_script_free. */
 	{
 		unsigned long ha = (unsigned long)handle;
-		if (handle == NULL || ha < 0x01000000UL || ha >= 0x20000000UL) {
+		/* fixes572: also reject an UNALIGNED handle. A real hlcache_handle*
+		 * is 4-byte aligned; a corrupted scripts-array entry can hold an
+		 * in-range but unaligned garbage value (observed 0x07513EC1) that
+		 * passes the range test yet faults when handle->entry is read. */
+		if (handle == NULL || ha < 0x01000000UL || ha >= 0x20000000UL ||
+		    (ha & 3) != 0) {
 			macsurf_debug_log_writef(
 				"hlcache_release: SKIP wild handle=%p", (void *)handle);
 			return NSERROR_OK;
@@ -861,33 +958,35 @@ nserror hlcache_handle_release(hlcache_handle *handle)
 		(void *)(handle->entry));
 
 	if (handle->entry != NULL) {
-		/* fixes503: guard handle->entry before dereferencing.  If
-		 * hlcache_clean already called free(entry) and the allocator
-		 * reused that memory, handle->entry is a valid-looking address
-		 * pointing at new data.  The NULL check at entry->content will
-		 * pass (new allocation has non-NULL first word) and we'll call
-		 * content_remove_user on a garbage content pointer.
-		 * Belt-and-suspenders: also validate entry is in the heap range
-		 * before reading its fields. */
-		{
-			unsigned long ea = (unsigned long)(void *)handle->entry;
-			if (ea < 0x01000000UL || ea >= 0x20000000UL) {
-				macsurf_debug_log_writef(
-					"hlcache_release: SKIP wild entry=%p handle=%p",
-					(void *)handle->entry, (void *)handle);
-				goto release_handle_done;
+		/* fixes576: verify handle->entry is still a LIVE cache entry
+		 * before dereferencing entry->content. hlcache_clean unlinks a
+		 * reaped entry from content_list (hlcache.c:183-198) then defers
+		 * its free; during a re-entrant mass-close (browser_window_content
+		 * _ready -> content_close(old) fired mid-READY-broadcast) an object
+		 * handle can still point at a reaped+reused entry (observed entry=
+		 * 0x0649ACB0, a freed llcache_object_user block now holding text) ->
+		 * entry->content derefs freed memory -> crash. A range/alignment
+		 * guard cannot catch this (a reaped entry is a valid-range aligned
+		 * pointer), so verify LIVENESS by content_list membership. If the
+		 * entry is gone, its content was destroyed with it, so skip the
+		 * remove; the handle is still freed below. */
+		hlcache_entry *le;
+		bool entry_live = false;
+
+		for (le = hlcache->content_list; le != NULL; le = le->next) {
+			if (le == handle->entry) {
+				entry_live = true;
+				break;
 			}
 		}
-		/* fixes502: entry->content is nulled by hlcache_clean before
-		 * free(entry), so a stale handle whose entry was already
-		 * cleaned reads NULL here rather than freed memory. */
-		if (handle->entry->content == NULL) {
-			macsurf_debug_log_writef(
-				"hlcache_release: entry %p already cleaned, skip remove_user",
-				(void *)handle->entry);
+
+		if (entry_live) {
+			content_remove_user(handle->entry->content,
+					hlcache_content_callback, handle);
 		} else {
-		content_remove_user(handle->entry->content,
-				hlcache_content_callback, handle);
+			macsurf_debug_log_writef(
+				"hlcache_release: STALE entry=%p handle=%p (reaped, skip)",
+				(void *) handle->entry, (void *) handle);
 		}
 	} else {
 		RING_ITERATE_START(struct hlcache_retrieval_ctx,
@@ -911,11 +1010,13 @@ nserror hlcache_handle_release(hlcache_handle *handle)
 		} RING_ITERATE_END(hlcache->retrieval_ctx_ring, ictx);
 	}
 
-release_handle_done:
 	handle->cb = NULL;
 	handle->pw = NULL;
 
-	free(handle);
+	/* Stage 1: defer the handle free to the quiescent drain so a box
+	 * walk / redraw still holding this handle can never read freed
+	 * memory (the fixes428/429 box->object UAF). */
+	hlcache_handle_deferred_free(handle);
 
 	return NSERROR_OK;
 }
