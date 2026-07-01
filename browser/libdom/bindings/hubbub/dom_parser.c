@@ -11,7 +11,12 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <hubbub/hubbub_errors.h>
+/* hubbub_errors.h is this binding's OWN header (same dir). Include it
+ * locally, NOT as <hubbub/hubbub_errors.h>: the angle-bracket form forced
+ * browser/libdom/bindings/ onto the access-path list, whose hubbub/parser.h
+ * (dom_hubbub_parser wrapper) then shadowed libhubbub's real <hubbub/parser.h>
+ * and broke hub_parser.c ("hubbub_parser undefined"). */
+#include "hubbub_errors.h"
 #include <hubbub/hubbub.h>
 #include <hubbub/parser.h>
 
