@@ -178,6 +178,19 @@ macsurf_js_set_content(struct content *c)
 	macsurf_js_current_content = c;
 }
 
+/* Stage 1 death-row hook (Seam 1, the one exception): macsurf_js_current_content
+ * is a raw content pointer independent of content_list and not reachable via
+ * any scheduled continuation, so the death-row pinned-check cannot see it. The
+ * drain calls this just before it frees a content; NULL our cached pointer if
+ * it is the one going away, so the DOM bindings never deref a freed content. */
+void
+macsurf_js_notify_content_freed(struct content *c)
+{
+	if (macsurf_js_current_content == c) {
+		macsurf_js_current_content = NULL;
+	}
+}
+
 /* ----------------------------------------------------------------- */
 /* Element wrapper push/finalizer                                     */
 /* ----------------------------------------------------------------- */

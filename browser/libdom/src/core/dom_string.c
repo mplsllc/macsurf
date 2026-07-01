@@ -992,6 +992,28 @@ size_t dom_string_byte_length(const dom_string *str)
 	if (istr == NULL)
 		return 0;
 	if (istr->type == DOM_STRING_CDATA) {
+		/* fixes569: same recycled-struct guard as dom_string_data's
+		 * CDATA branch (fixes446g/489). A dom_string_internal freed and
+		 * reused by the scheduler leaves data.cdata.ptr in code space
+		 * (>= 0x28000000) or data.cdata.len garbage. Consumers that size
+		 * a memcpy/scan by this length (box_construct_text box_construct.c
+		 * :1819, forms.c, css_fetcher.c) then read wild memory and crash
+		 * in a strlen-style loop (68kmla box_image path, r4 wild).
+		 * dom_string_data already returns "" for these; return 0 here so
+		 * the paired (data, len) agree and no overrun happens. */
+		{
+			unsigned long pa_ = (unsigned long)istr->data.cdata.ptr;
+			if (pa_ < 4UL || pa_ >= 0x28000000UL ||
+			    istr->data.cdata.len > 1048576UL) {
+				extern void macsurf_debug_log_writef(
+					const char *fmt, ...);
+				macsurf_debug_log_writef(
+					"fixes569 LEN: bad cdata ptr=%p len=%ld",
+					(void *)pa_,
+					(long)istr->data.cdata.len);
+				return 0;
+			}
+		}
 		return istr->data.cdata.len;
 	} else {
 		/* fixes446b: paired guard — same corrupt intern crashes here

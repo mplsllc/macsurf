@@ -16,6 +16,7 @@
 #include "utils/log.h"
 
 #include "macos9.h"
+#include "macos9_deathrow.h"
 
 #ifdef __MACOS9__
 #include <Timer.h>
@@ -38,6 +39,76 @@ static struct sched_entry *sched_queue = NULL;
 
 bool macos9_sched_active = false;
 unsigned long macos9_sched_time = 0;
+
+/*
+ * fixes570 -- dedicated sched_entry pool.
+ *
+ * struct sched_entry is exactly 16 bytes with the SAME field offsets as
+ * libdom's dom_string_internal (callback @off4 == cdata.ptr, p @off8 ==
+ * cdata.len). While both draw from the general malloc free-list, a freed
+ * dom_string block gets reused by a scheduled callback, so a still-referenced
+ * (over-freed) dom_string reads a code-space callback pointer where its data
+ * pointer should be -> the Script-Manager strlen crash (the whole fixes446g/
+ * 489/569 family). Allocating sched_entry from a private pool that is NEVER
+ * returned to the general heap makes that aliasing structurally impossible:
+ * a dom_string malloc can never receive a sched_entry block and vice-versa.
+ * Only the fatal code-pointer variant is removed; benign dom_string<->
+ * dom_string reuse is still handled by the existing dom_string_data/
+ * byte_length guards.
+ */
+#define MACOS9_SCHED_POOL_SIZE 256	/* 4 KB static; peak concurrent entries
+					 * (JS timers + fetchers + gif + convert
+					 * reschedule) stays well under this */
+static struct sched_entry sched_pool[MACOS9_SCHED_POOL_SIZE];
+static struct sched_entry *sched_freelist = NULL;
+static int sched_pool_inited = 0;
+
+static void
+sched_pool_init(void)
+{
+	int i;
+	for (i = 0; i < MACOS9_SCHED_POOL_SIZE; i++) {
+		sched_pool[i].next = sched_freelist;
+		sched_freelist = &sched_pool[i];
+	}
+	sched_pool_inited = 1;
+}
+
+static struct sched_entry *
+sched_entry_alloc(void)
+{
+	struct sched_entry *e;
+
+	if (sched_pool_inited == 0) {
+		sched_pool_init();
+	}
+	if (sched_freelist == NULL) {
+		/* Pool exhausted: rare; fall back to malloc (this one entry
+		 * can alias, but the pool is sized so this ~never happens). */
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		macsurf_debug_log_writef("sched: POOL EXHAUSTED -> malloc fallback");
+		return (struct sched_entry *) malloc(sizeof(struct sched_entry));
+	}
+	e = sched_freelist;
+	sched_freelist = e->next;
+	return e;
+}
+
+static void
+sched_entry_free(struct sched_entry *e)
+{
+	unsigned long a = (unsigned long) e;
+
+	if (a >= (unsigned long) &sched_pool[0] &&
+	    a <  (unsigned long) &sched_pool[MACOS9_SCHED_POOL_SIZE]) {
+		/* Pool entry: return to the private free-list, NOT the heap. */
+		e->next = sched_freelist;
+		sched_freelist = e;
+	} else {
+		/* Was a malloc fallback entry. */
+		free(e);
+	}
+}
 
 /**
  * Get current tick count.
@@ -71,7 +142,7 @@ sched_remove(void (*callback)(void *p), void *p)
 		entry = *prev;
 		if (entry->callback == callback && entry->p == p) {
 			*prev = entry->next;
-			free(entry);
+			sched_entry_free(entry);
 			return;
 		}
 		prev = &entry->next;
@@ -114,7 +185,7 @@ macos9_schedule(int t, void (*callback)(void *p), void *p)
 	/* Convert ms to ticks: 1 tick = 1/60s ≈ 16.67ms */
 	due = now + ((unsigned long)t * 60 / 1000);
 
-	entry = malloc(sizeof(*entry));
+	entry = sched_entry_alloc();
 	if (entry == NULL) {
 		NSLOG(netsurf, INFO, "malloc failed for scheduler entry");
 		return NSERROR_NOMEM;
@@ -167,8 +238,14 @@ macos9_schedule_run(void)
 		 * entry->callback with data.cdata.ptr.  dom_string_intern then
 		 * called lwc_intern_string(draw_url_bar, gui_window_ptr) which
 		 * scanned megabytes of code into unmapped memory and crashed. */
+		/* Stage 1: a scheduled callback (convert_xml_to_box,
+		 * hlcache_clean, reformat, JS timers...) is engine work; mark
+		 * the operation depth non-zero so the death-row drain cannot
+		 * free anything while this callback is on the stack. */
+		macos9_op_depth++;
 		callback(p);
-		free(entry);
+		macos9_op_depth--;
+		sched_entry_free(entry);
 	}
 
 	sched_update_state();
@@ -194,4 +271,25 @@ macos9_get_next_delay(void)
 	}
 
 	return (int)delta;
+}
+
+/*
+ * Stage 1 death-row support: visit every pending scheduled entry's
+ * (callback, param) and return true if `pred` matches any. Used by the
+ * death-row drain to keep a content alive while a scheduled continuation
+ * (convert_xml_to_box / html_css_process_modified_styles /
+ * html_object_refresh) still references it. Read-only over the queue.
+ */
+bool
+macos9_sched_any(bool (*pred)(void (*cb)(void *), void *p, void *arg),
+		void *arg)
+{
+	struct sched_entry *e;
+
+	for (e = sched_queue; e != NULL; e = e->next) {
+		if (pred(e->callback, e->p, arg)) {
+			return true;
+		}
+	}
+	return false;
 }

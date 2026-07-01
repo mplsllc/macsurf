@@ -73,6 +73,7 @@
 #include "html/layout.h"
 #include "html/layout_internal.h"
 #include "html/layout_safe.h"
+#include "html/macsurf_dom_compat.h"
 #include "html/table.h"
 
 /* fixes161e — per-redraw call counter generation. Bumped at the top of
@@ -5358,7 +5359,7 @@ layout__get_element_tag(
 		return false;
 	}
 
-	exc = dom_html_element_get_tag_type(node, &element_type);
+	exc = macsurf_html_element_get_tag_type(node, &element_type);
 	if (exc != DOM_NO_ERR) {
 		return false;
 	}

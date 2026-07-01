@@ -835,6 +835,23 @@ static void macos9_deferred_llcache_purge(void *ignored)
 	extern void llcache_clean(bool purge);
 	llcache_clean(true);
 }
+
+/* fixes577: close+release the OLD page content off the re-entrant
+ * READY-broadcast stack. browser_window_content_ready runs from
+ * CONTENT_MSG_READY (inside the new content's convert->broadcast); closing
+ * the old content there tears down ~25 object handles and frees many
+ * content_user nodes re-entrantly -- the window the recent teardown crashes
+ * (fixes572 script handles, fixes576 reaped entry, the MSL free() heap
+ * corruption) all land in. Running it from a scheduled tick means the
+ * teardown happens quiescent, when nothing is mid-broadcast/convert. */
+static void browser_window_deferred_close(void *p)
+{
+	struct hlcache_handle *old = (struct hlcache_handle *) p;
+	if (old != NULL) {
+		content_close(old);
+		hlcache_handle_release(old);
+	}
+}
 #endif
 
 /**
@@ -849,10 +866,26 @@ static nserror browser_window_content_ready(struct browser_window *bw)
 	macsurf_debug_log_writef("bw: content_ready bw=%p old=%p new=%p",
 		(void*)bw, (void*)bw->current_content, (void*)bw->loading_content);
 	if (bw->current_content != NULL) {
+#ifdef __MACOS9__
+		/* fixes577: defer the old content's close+release to the next
+		 * event-loop tick (mirrors the fixes268 deferred llcache purge
+		 * below). We are inside the new content's convert->broadcast here;
+		 * a synchronous close tears the old page down re-entrantly, which
+		 * is where the recent teardown crashes land. NULL current_content
+		 * now so the transition below proceeds normally; the captured old
+		 * handle is torn down quiescent at the tick. */
+		{
+			struct hlcache_handle *old = bw->current_content;
+			bw->current_content = NULL;
+			guit->misc->schedule(0, browser_window_deferred_close, old);
+			macsurf_debug_log_writef("bw: DEFERRED close old=%p", (void*)old);
+		}
+#else
 		content_close(bw->current_content);
 		hlcache_handle_release(bw->current_content);
 		bw->current_content = NULL;
 		macsurf_debug_log_writef("bw: current_content->NULL bw=%p", (void*)bw);
+#endif
 	}
 
 #ifdef __MACOS9__

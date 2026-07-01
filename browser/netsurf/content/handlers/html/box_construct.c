@@ -50,6 +50,7 @@
 #include "html/form_internal.h"
 
 #include "macsurf_debug.h"
+#include "macos9_deathrow.h"
 
 
 /* Diagnostic: count text boxes constructed during DOM->box conversion. */
@@ -2348,4 +2349,24 @@ box_extract_link(const html_content *content,
 	}
 
 	return true;
+}
+
+
+/*
+ * Stage 1 death-row pinned-check: does a pending convert_xml_to_box
+ * continuation still reference `target`?  Lives here because the
+ * box_construct_ctx struct and convert_xml_to_box are private to this
+ * translation unit.  The death-row drain calls this to keep a content
+ * alive while its box walk is still queued.
+ */
+bool
+box_construct_sched_pins(void (*cb)(void *), void *p, struct content *target)
+{
+	struct box_construct_ctx *ctx;
+
+	if (cb != (void (*)(void *)) convert_xml_to_box || p == NULL) {
+		return false;
+	}
+	ctx = (struct box_construct_ctx *) p;
+	return (struct content *) ctx->content == target;
 }

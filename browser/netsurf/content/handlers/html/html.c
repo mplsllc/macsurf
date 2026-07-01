@@ -1997,6 +1997,30 @@ static nserror html_close(struct content *c)
 	/* remove all object references from the html content */
 	html_object_close_objects(htmlc);
 
+	/* fixes572: release + NULL script handles at close, mirroring the
+	 * fixes450 block in html_stop's LOADING case. html_close runs for
+	 * READY/DONE contents navigated away from; without this the live script
+	 * handles ride into the DEFERRED html_destroy (Stage-1 death-row
+	 * drain), where the scripts array entry is stale/garbage and
+	 * hlcache_handle_release dereferences wild memory (observed handle
+	 * 0x07513EC1, unaligned). Releasing here also aborts any pending script
+	 * fetch (removes the llcache user), so no late convert_script_*_cb
+	 * fires against this closing content. html_script_free's != NULL guard
+	 * then skips these at drain (idempotent). */
+	{
+		unsigned int si;
+		for (si = 0; si < htmlc->scripts_count; si++) {
+			struct html_script *s = &htmlc->scripts[si];
+			if ((s->type == HTML_SCRIPT_SYNC ||
+			     s->type == HTML_SCRIPT_ASYNC ||
+			     s->type == HTML_SCRIPT_DEFER) &&
+			    s->data.handle != NULL) {
+				hlcache_handle_release(s->data.handle);
+				s->data.handle = NULL;
+			}
+		}
+	}
+
 	if (htmlc->js_thread != NULL) {
 		/* Close, but do not destroy (yet) the JS thread */
 		ret = js_closethread(htmlc->js_thread);

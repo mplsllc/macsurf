@@ -42,6 +42,7 @@
 #include "content/urldb.h"
 
 #include "macsurf_debug.h"
+#include "macos9_deathrow.h"
 
 #define URL_FMT_SPC "%.140s"
 
@@ -356,8 +357,38 @@ content__reformat(struct content *c, bool background, int width, int height)
 }
 
 
+/* Stage 1 death-row: content_destroy now DEFERS. It unlinks/ownership has
+ * already happened at the call site (hlcache_clean unlinks from
+ * content_list synchronously); here we only enqueue the real teardown,
+ * which runs at the quiescent drain (no walk/convert on the stack, no
+ * scheduled continuation still referencing c). Idempotent via c->dr_queued
+ * so a double content_destroy can never double-free. */
+static void content_destroy_now(struct content *c);
+
+/* The JS DOM keeps a raw current-content pointer (macsurf_js_dom.c);
+ * Seam 1 requires NULLing it before the content's memory is reclaimed. */
+extern void macsurf_js_notify_content_freed(struct content *c);
+
+static void
+content_deathrow_teardown(void *p)
+{
+	struct content *c = (struct content *) p;
+	macsurf_js_notify_content_freed(c);
+	content_destroy_now(c);
+}
+
 /* exported interface documented in content/content.h */
 void content_destroy(struct content *c)
+{
+	if (c == NULL || c->dr_queued) {
+		return;
+	}
+	c->dr_queued = 1;
+	macos9_deathrow_add(c, content_deathrow_teardown, c);
+}
+
+static void
+content_destroy_now(struct content *c)
 {
 	struct content_rfc5988_link *link;
 
@@ -807,12 +838,20 @@ void content_broadcast(struct content *c, content_msg msg,
 	}
 
 	nslog_log(__FILE__, "", __LINE__, "%p -> msg:%d", c, msg);
+	/* Stage 1 drain-gate: a user callback can navigate away and tear down
+	 * content mid-walk; hold macos9_op_depth>0 so the death-row drain
+	 * cannot fire while this broadcast loop is on the stack and free an
+	 * object the loop still iterates. This is NOT the same-frame reentrant
+	 * broadcast guard (that is broadcast_in_progress / Stage 3) — its only
+	 * job here is to keep the drain out until the walk unwinds. */
+	macos9_op_depth++;
 	for (user = c->user_list->next; user != 0; user = next) {
 		next = user->next;  /* user may be destroyed during callback */
 		if (user->callback != 0) {
 			user->callback(c, msg, data, user->pw);
 		}
 	}
+	macos9_op_depth--;
 }
 
 

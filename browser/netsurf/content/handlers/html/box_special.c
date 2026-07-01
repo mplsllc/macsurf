@@ -52,6 +52,7 @@
 #include "html/box_special.h"
 #include "html/box_textarea.h"
 #include "html/form_internal.h"
+#include "html/macsurf_dom_compat.h"
 
 
 static const content_type image_types = CONTENT_IMAGE;
@@ -2049,7 +2050,7 @@ convert_special_elements(dom_node *node,
 	dom_html_element_type tag_type;
 	bool res;
 
-	exc = dom_html_element_get_tag_type(node, &tag_type);
+	exc = macsurf_html_element_get_tag_type(node, &tag_type);
 	if (exc != DOM_NO_ERR) {
 		tag_type = DOM_HTML_ELEMENT_TYPE__UNKNOWN;
 	}
