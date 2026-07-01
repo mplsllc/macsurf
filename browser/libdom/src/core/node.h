@@ -16,7 +16,7 @@
 #include "event_target.h"
 #include "mutation_event.h"
 
-#include "list.h"
+#include "dom_utils_list.h"
 
 /**
  * User data context attached to a DOM node

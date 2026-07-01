@@ -29,7 +29,7 @@
 #include "nodelist.h"
 
 #include "dom_hashtable.h"
-#include "list.h"
+#include "dom_utils_list.h"
 
 #include "document_event.h"
 

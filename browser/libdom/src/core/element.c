@@ -29,7 +29,7 @@
 #include "validate.h"
 #include "namespace.h"
 #include "utils.h"
-#include "list.h"
+#include "dom_utils_list.h"
 #include "mutation_event.h"
 #include "dom_internal_dispatch.h"
 
