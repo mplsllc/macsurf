@@ -5,7 +5,7 @@
 [nsgenbind-quickjs-scope.md](nsgenbind-quickjs-scope.md) (Q4 = port the hand-written
 lifecycle pattern, not the generator).
 
-**Attribution:** the lifecycle pattern here is ported from ClassicNetSurf's hand-written `quickjs.c` DOM binding by **sempaisquad** — <https://github.com/sempaisquad>. Credit sempaisquad as a contributor for any of it that ships in MacSurf.
+**Attribution:** MacSurf arrived at this lifecycle design largely independently (fixes541), but **sempaisquad** worked out the same node-identity + keepalive + finalizer discipline in parallel in ClassicNetSurf's hand-written `quickjs.c` — a concurrent NetSurf-on-OS 9 effort at a different scope. Credit sempaisquad (<https://github.com/sempaisquad>) as a contributor for the convergent pattern.
 
 Phase one proves the **lifecycle bridge** on the smallest real DOM surface. It does
 **not** deliver DOM coverage — coverage is phase two onward, built on a validated

@@ -5,7 +5,7 @@
 **hollow** in MacSurf's single-context model. No teardown reorder can fix it; the
 port **must** carry CN's owner-document keepalive. Research/analysis only — no code change.
 
-**Attribution:** the owner-document keepalive (and the lifecycle pattern it belongs to) is from ClassicNetSurf by **sempaisquad** — <https://github.com/sempaisquad>. Credit sempaisquad as a contributor for any of it that ships in MacSurf.
+**Attribution:** MacSurf's owner-document keepalive matches what **sempaisquad** independently worked out in ClassicNetSurf (a concurrent NetSurf-on-OS 9 effort, different scope). Credit sempaisquad (<https://github.com/sempaisquad>) as a contributor for the convergent lifecycle pattern. (Rule: "ported" only for code lifted directly; anything MacSurf reached before reading CN's source is convergent/independent.)
 
 ## What the invariant requires
 
