@@ -3,6 +3,8 @@
 **Date:** 2026-06-29. **Verdict: NO-GO on adopting nsgenbind-generated QuickJS bindings.**
 Evidence from the ClassicNetSurf + netsurf-libs source trees (another dev's NetSurf-on-OS9 port). Research/estimation only — no build changes, no committed bindings, no integration.
 
+**Attribution:** ClassicNetSurf is by **sempaisquad** — <https://github.com/sempaisquad>. The donor pattern (the hand-written `quickjs.c` lifecycle discipline) is theirs; credit sempaisquad as a contributor for any of it that ships in MacSurf.
+
 ## TL;DR
 
 Adopting nsgenbind to replace MacSurf's hand-wired DOM is **not viable as a shortcut**, because the thing it would give you (class scaffolding) is the cheap part, and the parts that actually matter (libdom marshalling logic, the node-identity cache, the refcount/finalizer lifecycle — exactly MacSurf's UAF danger zone) are **not generated**. Decisively: **ClassicNetSurf itself abandoned the nsgenbind-quickjs generator** — it's unwired, doesn't build as-shipped, has no node cache — and hand-wrote the entire QuickJS DOM binding into a forked `quickjs.c` instead.

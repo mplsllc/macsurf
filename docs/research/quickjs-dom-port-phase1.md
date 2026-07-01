@@ -1,9 +1,11 @@
 # QuickJS DOM port — Phase One scope
 
-**Date:** 2026-06-29. **Status:** scope/plan only — no code yet.
+**Date:** 2026-06-29. **Status:** ~~scope/plan only — no code yet~~ → **IMPLEMENTED as fixes541** in `browser/netsurf/frontends/macos9/javascript/macsurf_qjs.c` (node-identity map + owner-document keepalive + finalizer + pure-C teardown drain). Doc retained as the design rationale.
 **Depends on:** [teardown-ordering-audit.md](teardown-ordering-audit.md),
 [nsgenbind-quickjs-scope.md](nsgenbind-quickjs-scope.md) (Q4 = port the hand-written
 lifecycle pattern, not the generator).
+
+**Attribution:** the lifecycle pattern here is ported from ClassicNetSurf's hand-written `quickjs.c` DOM binding by **sempaisquad** — <https://github.com/sempaisquad>. Credit sempaisquad as a contributor for any of it that ships in MacSurf.
 
 Phase one proves the **lifecycle bridge** on the smallest real DOM surface. It does
 **not** deliver DOM coverage — coverage is phase two onward, built on a validated

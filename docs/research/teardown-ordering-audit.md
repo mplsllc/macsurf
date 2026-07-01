@@ -5,6 +5,8 @@
 **hollow** in MacSurf's single-context model. No teardown reorder can fix it; the
 port **must** carry CN's owner-document keepalive. Research/analysis only — no code change.
 
+**Attribution:** the owner-document keepalive (and the lifecycle pattern it belongs to) is from ClassicNetSurf by **sempaisquad** — <https://github.com/sempaisquad>. Credit sempaisquad as a contributor for any of it that ships in MacSurf.
+
 ## What the invariant requires
 
 A finalizer-based DOM binding (the port, item 3) registers a QuickJS finalizer per

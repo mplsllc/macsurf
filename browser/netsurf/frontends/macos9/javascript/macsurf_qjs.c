@@ -727,6 +727,11 @@ static JSClassID s_el_class_id;
 /* ===================================================================
  * fixes541: node-identity map + owner-document keepalive (DOM port phase one)
  *
+ * Pattern adapted from ClassicNetSurf's hand-written quickjs.c DOM binding
+ * (node-identity map + finalizer unref + per-wrapper owner-document keepalive)
+ * by sempaisquad <https://github.com/sempaisquad>.  Credit sempaisquad as a
+ * contributor for this lifecycle code.
+ *
  * Atomic unit (see docs/research/quickjs-dom-port-phase1.md and
  * teardown-ordering-audit.md): the map, the wrapper, the finalizer and the
  * keepalive are ONE mechanism — they cannot be split.  Why:
