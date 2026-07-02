@@ -9,30 +9,17 @@
 <p>
   MacSurf is a web browser for Classic Mac OS 9 PowerPC. CSS3, ES5 JavaScript, and PNGs with alpha — running on a G3 iMac.
 </p>
+<em>MacSurf is a full-time project. If it brought your old Mac back to the web, every dollar helps keep development going. Also follow the progress on Patreon with daily dev logs.</em><br/><br/>
 
 <div align="center">
-  <a href="https://www.buymeacoffee.com/Ptricky">
-    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-blue.png" alt="Buy Me A Coffee" height="48" width="217">
+  <a href="https://ko-fi.com/macsurf" target="_blank">
+    <img src="https://github.com/mplsllc/macsurf/blob/master/support_me_on_kofi_badge_blue.png" alt="Follow me on Ko-Fi!" height="60" max-width="150px">
   </a>
-</div>
-<p align="center">
-  <em>MacSurf is a nights-and-weekends project. If it brought your old Mac back to the web, a coffee helps keep development going.</em>
+<a href="https://www.patreon.com/cw/MacSurf" target="_blank"><img src="https://github.com/mplsllc/macsurf/blob/master/patreon-banner-519x200.png" width="150" /></a>
 </p>
-<p align="center">
-  <a href="https://github.com/mplsllc/macsurf/issues"><img alt="Open issues" src="https://img.shields.io/github/issues/mplsllc/macsurf"></a>
-  <a href="https://github.com/mplsllc/macsurf/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/mplsllc/macsurf?style=flat"></a>
-  <a href="https://en.wikipedia.org/wiki/Mac_OS_9"><img alt="Mac OS 9" src="https://img.shields.io/badge/Mac%20OS-9.1%E2%80%939.2.2-silver?logo=apple&logoColor=white"></a>
-  <a href="https://en.wikipedia.org/wiki/PowerPC_G3"><img alt="PowerPC" src="https://img.shields.io/badge/CPU-PowerPC%20G3%2FG4-blue"></a>
-  <a href="https://en.wikipedia.org/wiki/CodeWarrior"><img alt="Built with CodeWarrior" src="https://img.shields.io/badge/built%20with-CodeWarrior%208-orange"></a>
-  <a href="https://en.wikipedia.org/wiki/Carbon_(API)"><img alt="Carbon API" src="https://img.shields.io/badge/API-Carbon-lightgrey"></a>
-  <a href="docs/css-status.md"><img alt="CSS coverage" src="https://img.shields.io/badge/CSS-150%2B%20properties-9cf"></a>
-  <img alt="JavaScript engine" src="https://img.shields.io/badge/JavaScript-Duktape%20ES5-lightgrey">
-</p>
-
-
 <p align="center">
   <img src="img/mactls.png" alt="Mac OS 9, meet TLS — Native, no proxy needed." width="500">
-</p>
+</p></div>
 
 <p align="center"><h3>Intro Video</h3></p>
 
