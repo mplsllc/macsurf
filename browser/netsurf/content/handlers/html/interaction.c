@@ -1470,7 +1470,25 @@ mouse_action_drag_none(html_content *html,
 
 	/* fire dom click event */
 	if (mouse & BROWSER_MOUSE_CLICK_1) {
+		int js_default_prevented = 0;
 		fire_generic_dom_event(corestring_dom_click, mas.node, true, true);
+		/* MacSurf (Gate 5): also dispatch the click through the QuickJS
+		 * shadow-DOM event layer so page scripts that use element-level AND
+		 * document-level (XenForo-style) delegation actually run.  The
+		 * bridge returns non-zero only when a real JS listener called
+		 * preventDefault(); pages with no JS have no listeners and never set
+		 * it, so the static navigation path is byte-for-byte unchanged. */
+		{
+			extern int macsurf_qjs_dispatch_dom_click(
+					struct dom_node *node);
+			js_default_prevented =
+				macsurf_qjs_dispatch_dom_click(mas.node);
+		}
+		if (js_default_prevented != 0 &&
+		    (mas.result.action == ACTION_NAVIGATE ||
+		     mas.result.action == ACTION_SUBMIT)) {
+			mas.result.action = ACTION_NONE;
+		}
 	}
 
 	/* deferred actions that can cause this browser_window to be destroyed

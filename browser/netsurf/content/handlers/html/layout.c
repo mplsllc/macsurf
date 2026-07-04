@@ -450,6 +450,7 @@ static void layout_minmax_table(struct box *table,
 	float extra_frac = 0;
 	struct column *col;
 	struct box *row_group, *row, *cell;
+	bool tl_fixed = false;
 
 	/* check if the widths have already been calculated */
 	if (table->max_width != UNKNOWN_MAX_WIDTH)
@@ -461,6 +462,19 @@ static void layout_minmax_table(struct box *table,
 		return;
 	}
 	col = table->col;
+
+	/* fixes573: table-layout:fixed — column widths come from the declared
+	 * widths (first row / <col>) only; CONTENT must not size columns (it
+	 * overflows). Without this, a fixed sidebar column (XenForo
+	 * .p-body-sidebar width:250px) gets its min/max inflated by its
+	 * unwrappable content (the username list) from 250 to ~702, which both
+	 * bloats the sidebar and, when the table is later handed a narrower
+	 * available width, pushes table_min past it and collapses the layout.
+	 * fixes184 fixed column TYPING for fixed layout but left this bump. */
+	if (table->style != NULL &&
+			css_computed_table_layout(table->style) ==
+				CSS_TABLE_LAYOUT_FIXED)
+		tl_fixed = true;
 
 	/* start with 0 except for fixed-width columns */
 	for (i = 0; i != table->columns; i++) {
@@ -503,11 +517,15 @@ static void layout_minmax_table(struct box *table,
 		if (col[i].positioned)
 			continue;
 
-		/* update column min, max widths using cell widths */
-		if (col[i].min < cell->min_width)
-			col[i].min = cell->min_width;
-		if (col[i].max < cell->max_width)
-			col[i].max = cell->max_width;
+		/* update column min, max widths using cell widths.
+		 * fixes573: skip the content bump for table-layout:fixed so a
+		 * declared-width column stays at its declared width. */
+		if (!tl_fixed) {
+			if (col[i].min < cell->min_width)
+				col[i].min = cell->min_width;
+			if (col[i].max < cell->max_width)
+				col[i].max = cell->max_width;
+		}
 	}
 
 	/* 2nd pass: cells which span multiple columns */
@@ -522,6 +540,12 @@ static void layout_minmax_table(struct box *table,
 
 		layout_minmax_block(cell, font_func, content);
 		i = cell->start_column;
+
+		/* fixes573: fixed-layout tables don't content-size columns; the
+		 * cell is still laid out above (height/recursion) but its width
+		 * must not expand the spanned columns. */
+		if (tl_fixed)
+			continue;
 
 		/* find min width so far of spanned columns, and count
 		 * number of non-fixed spanned columns and total fixed width */
@@ -1084,6 +1108,43 @@ static void layout_minmax_block(struct box *block,
 	layout_watchdog_exit();
 }
 
+/* Collapse fix (Phase 1): tree-wide minmax invalidator.
+ *
+ * The intrinsic min/max width pass runs on the first reformat, before images
+ * decode and fonts activate, and freezes any value it measures (an undecoded
+ * image = 0, text measured against a not-yet-active font = 0). object.c only
+ * re-arms max_width along a completing image's ancestor spine, and fonts never
+ * trigger a re-arm at all, so a cell can stay frozen at width 0 and collapse
+ * to min-content (one character per line). Resetting max_width to
+ * UNKNOWN_MAX_WIDTH forces a full recompute on the next minmax pass (every
+ * recompute guard keys on max_width and rewrites min_width when it proceeds).
+ * Non-recursive walk of the whole tree (mirrors html_reconvert_clear_node_boxes
+ * so deep trees do not overflow the Mac OS 9 stack). */
+static void box_minmax_invalidate_tree(struct box *box)
+{
+	struct box *b = box;
+	struct box *root_parent = (b != NULL) ? b->parent : NULL;
+	while (b != NULL) {
+		b->max_width = UNKNOWN_MAX_WIDTH;
+		if (b->children != NULL) {
+			b = b->children;
+			continue;
+		}
+		while (b != NULL && b->next == NULL) {
+			if (b->parent == root_parent) { b = NULL; break; }
+			b = b->parent;
+		}
+		if (b != NULL) b = b->next;
+	}
+}
+
+/* Extern wrapper so html.c (html_reformat) can drive the invalidation without
+ * the file-static in scope. Prototype in layout.h. */
+void html_minmax_invalidate_tree(struct box *box)
+{
+	box_minmax_invalidate_tree(box);
+}
+
 static void layout_minmax_block_inner(
 		struct box *block,
 		const struct gui_layout_table *font_func,
@@ -1366,6 +1427,21 @@ static void layout_minmax_block_inner(
 			if (val >= 0 && max > val) {
 				max = val;
 				using_max_border_box = border_box;
+			}
+			/* fixes576: for a REPLACED element (img/embed/object)
+			 * max-width scales the whole box, so it caps the
+			 * MIN-content width too. Otherwise a huge natural image
+			 * (e.g. 1387px) constrained by max-width:48px keeps
+			 * min_width=1387 while max is clamped to 48 (min>max);
+			 * a shrink-to-fit float around it (XenForo
+			 * .notice-image) then reserves the full 1387 and shoves
+			 * the following .notice-content far to the right. Text
+			 * is intentionally NOT clamped here — a long word may
+			 * legitimately overflow max-width. */
+			if (val >= 0 && block->object != NULL &&
+					content_get_type(block->object) !=
+						CONTENT_HTML && min > val) {
+				min = val;
 			}
 		}
 	}
@@ -2876,6 +2952,48 @@ static bool layout_table_inner(
 				border_spacing_h;
 	}
 
+	/* Collapse fix (Phase 3): a flex parent whose intrinsic width froze at 0
+	 * while resources settled hands this table a non-positive available/auto
+	 * width, so the branch below minimises every column to col[i].min -- which
+	 * is itself frozen 0 when the cell text was measured before its font was
+	 * active, producing one character per line. When auto_width is degenerate
+	 * but there is real max-content to show, fall back to the max-content sum
+	 * so cells take their natural width instead of collapsing. Phase 1's
+	 * settle recompute makes this rare; this is the last-line executor guard. */
+	if (auto_width <= 0 && max_width > min_width) {
+		macsurf_debug_log_writef("TABLEFLOOR avail=%d minw=%d maxw=%d",
+				(int)auto_width, (int)min_width, (int)max_width);
+		auto_width = max_width;
+	}
+
+	/* fixes572 TBLDIAG — one-round diagnostic for the two-column collapse.
+	 * Logs the exact inputs the distribution below consumes, for multi-
+	 * column tables only, capped per layout pass. Zero behaviour change. */
+	if (columns >= 2) {
+		static long tbl_diag_calls = 0;
+		static long tbl_diag_seq = -1;
+		if (tbl_diag_seq != macsurf_layout_seq) {
+			tbl_diag_calls = 0;
+			tbl_diag_seq = macsurf_layout_seq;
+		}
+		tbl_diag_calls++;
+		if (tbl_diag_calls <= 12) {
+			int tl = (int)css_computed_table_layout(style);
+			macsurf_debug_log_writef(
+				"TBLDIAG box=%p avail=%d tw=%d tl=%d cols=%d min=%d max=%d",
+				(void *)table, (int)available_width,
+				(int)table_width, tl, (int)columns,
+				(int)min_width, (int)max_width);
+			for (i = 0; i < columns && i < 3; i++) {
+				macsurf_debug_log_writef(
+					"TBLCOL i=%d t=%d w=%d min=%d max=%d",
+					(int)i, (int)col[i].type,
+					(int)col[i].width,
+					(int)col[i].min, (int)col[i].max);
+			}
+		}
+	}
+
 	if (auto_width <= min_width) {
 		/* not enough space: minimise column widths */
 		for (i = 0; i < columns; i++) {
@@ -2937,6 +3055,26 @@ static bool layout_table_inner(
 					(col[i].max - col[i].min) * scale);
 		}
 		table_width = auto_width;
+	}
+
+	/* fixes572 TBLDIAG — final column widths after distribution (same cap
+	 * discipline as the pre-distribution block above). */
+	if (columns >= 2) {
+		static long tbl_fin_calls = 0;
+		static long tbl_fin_seq = -1;
+		if (tbl_fin_seq != macsurf_layout_seq) {
+			tbl_fin_calls = 0;
+			tbl_fin_seq = macsurf_layout_seq;
+		}
+		tbl_fin_calls++;
+		if (tbl_fin_calls <= 12) {
+			macsurf_debug_log_writef(
+				"TBLPICK box=%p table_w=%d f0=%d f1=%d f2=%d",
+				(void *)table, (int)table_width,
+				(int)col[0].width,
+				(columns > 1) ? (int)col[1].width : -1,
+				(columns > 2) ? (int)col[2].width : -1);
+		}
 	}
 
 	xs[0] = x = border_spacing_h;
@@ -6754,13 +6892,44 @@ static void layout_calculate_descendant_bboxes(
 
 		layout_calculate_descendant_bboxes(unit_len_ctx, child);
 
-		if (box->style && css_computed_overflow_x(box->style) ==
-				CSS_OVERFLOW_HIDDEN &&
-				css_computed_overflow_y(box->style) ==
-				CSS_OVERFLOW_HIDDEN)
-			continue;
+		{
+			/* fixes574: clip the descendant extent PER AXIS for
+			 * overflow:hidden. The old test required BOTH overflow-x
+			 * AND overflow-y hidden before skipping the child's
+			 * contribution, so a box with overflow-x:hidden and
+			 * overflow-y:visible (XenForo .hScroller-scroll — the nav
+			 * bar: white-space:nowrap; overflow-x:hidden) let its
+			 * ~1380px of non-wrapping content expand the whole
+			 * document width, forcing a horizontal page scroll into
+			 * empty space on a narrow window. Now each hidden axis
+			 * clips independently: save the box's pre-child extent,
+			 * apply the child, then restore any axis that is hidden. */
+			bool ox_hidden = box->style != NULL &&
+					css_computed_overflow_x(box->style) ==
+						CSS_OVERFLOW_HIDDEN;
+			bool oy_hidden = box->style != NULL &&
+					css_computed_overflow_y(box->style) ==
+						CSS_OVERFLOW_HIDDEN;
+			int save_x0 = box->descendant_x0;
+			int save_x1 = box->descendant_x1;
+			int save_y0 = box->descendant_y0;
+			int save_y1 = box->descendant_y1;
 
-		layout_update_descendant_bbox(unit_len_ctx, box, child, 0, 0);
+			if (ox_hidden && oy_hidden)
+				continue;
+
+			layout_update_descendant_bbox(unit_len_ctx, box,
+					child, 0, 0);
+
+			if (ox_hidden) {
+				box->descendant_x0 = save_x0;
+				box->descendant_x1 = save_x1;
+			}
+			if (oy_hidden) {
+				box->descendant_y0 = save_y0;
+				box->descendant_y1 = save_y1;
+			}
+		}
 	}
 
 	for (child = box->float_children; child; child = child->next_float) {

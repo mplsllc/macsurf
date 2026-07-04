@@ -60,12 +60,16 @@ struct redraw_context;
  * \param w     Box pixel width.
  * \param h     Box pixel height.
  * \param ctx   Redraw context (plotter table).
+ * \param base_url  Page base URL for resolving external <use> sprite
+ *              references; may be NULL (external icons then skipped).
  * \return NSERROR_OK on success; on partial failure paints what it
  *         can and returns NSERROR_OK. Returns an error only on
  *         catastrophic state (NULL ctx, etc.).
  */
+struct nsurl;
 nserror macos9_svg_paint_inline(struct box *box,
 		int x, int y, int w, int h,
-		const struct redraw_context *ctx);
+		const struct redraw_context *ctx,
+		struct nsurl *base_url);
 
 #endif /* MACOS9_SVG_INLINE_H_ */

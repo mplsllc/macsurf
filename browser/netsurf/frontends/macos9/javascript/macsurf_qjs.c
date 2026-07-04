@@ -61,14 +61,61 @@ static struct jsheap *g_heap = NULL;
  * evals run unbounded).  Set around the top-level JS_Eval in js_exec. */
 double macsurf_qjs_get_now(void);
 #define QJS_SCRIPT_TIMEOUT_MS 20000
+/* fixes586 — timer/event callbacks get a shorter budget: a callback that
+ * burns 8s of straight CPU is pathological, and the UI is frozen while it
+ * runs.  (Top-level scripts keep the 20s budget: big bundles on a G3 are
+ * legitimately slow.) */
+#define QJS_TIMER_TIMEOUT_MS 8000
 static double g_qjs_script_deadline = 0.0;
+
+/* fixes586 — THE tinkerdifferent hard-freeze.  The deadline was armed ONLY
+ * around the top-level JS_Eval in js_exec; setTimeout/setInterval callbacks
+ * (macsurf_qjs_run_timers -> JS_Call) and event dispatches (js_fire_event /
+ * js_fire_dom_ready -> safe_eval) ran with deadline==0 == UNBOUNDED.  A page
+ * timer that enters an infinite loop (XenForo/ThemeHouse retry-poll against
+ * our partial DOM) therefore froze the machine forever with no crash: the
+ * interrupt handler's WNE swallowed all events (dead UI), the deadline never
+ * fired (never armed), and the log's last line was merely whatever the event
+ * loop logged before the timer pass ran that tick — which is why the freeze
+ * site appeared to wander between builds.  Fix: push a deadline around EVERY
+ * JS entry point.  push never EXTENDS an outer deadline (nest-safe); pop
+ * restores the caller's value. */
+static double qjs_deadline_push(double budget_ms)
+{
+	double prev = g_qjs_script_deadline;
+	double want = macsurf_qjs_get_now() + budget_ms;
+	if (prev == 0.0 || want < prev)
+		g_qjs_script_deadline = want;
+	return prev;
+}
+static void qjs_deadline_pop(double prev)
+{
+	g_qjs_script_deadline = prev;
+}
 
 static int qjs_interrupt_handler(JSRuntime *rt, void *opaque)
 {
+	static double hb_last = 0.0;
+	double hb_now;
 	(void)rt; (void)opaque;
+
+	/* fixes583 DIAG: heartbeat while a deadline is armed. If a script loops,
+	 * these pulse every ~2s and prove JS is the freeze (and whether the
+	 * deadline value is sane / the monotonic clock is advancing). Silence
+	 * means JS execution is NOT where tinkerdifferent wedges. */
+	if (g_qjs_script_deadline != 0.0) {
+		hb_now = macsurf_qjs_get_now();
+		if (hb_now - hb_last > 2000.0) {
+			hb_last = hb_now;
+			macsurf_debug_log_writef(
+				"qjs: interrupt hb now=%ld deadline=%ld",
+				(long)hb_now, (long)g_qjs_script_deadline);
+		}
+	}
 
 	if (g_qjs_script_deadline != 0.0 &&
 	    macsurf_qjs_get_now() > g_qjs_script_deadline) {
+		macsurf_debug_log_writef("qjs: DEADLINE hit, aborting script");
 		return 1;
 	}
 
@@ -112,8 +159,14 @@ double macsurf_qjs_get_now(void)
 
 void macsurf_qjs__safe_eval(JSContext *qctx, const char *src)
 {
+	/* fixes586 — safe_eval runs PAGE event listeners (js_fire_event /
+	 * js_fire_dom_ready dispatch jQuery-ready + XF init through here), so
+	 * it needs the runaway deadline too.  Internal setup evals are tiny and
+	 * never notice it. */
+	double prevdl = qjs_deadline_push((double)QJS_SCRIPT_TIMEOUT_MS);
 	JSValue val = JS_Eval(qctx, src, strlen(src),
 			"<init>", JS_EVAL_TYPE_GLOBAL);
+	qjs_deadline_pop(prevdl);
 	if (JS_IsException(val)) {
 		JSValue exc = JS_GetException(qctx);
 		const char *str = JS_ToCString(qctx, exc);
@@ -577,7 +630,21 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 				else s_timer_head = next;
 			}
 			{
-				JSValue ret = JS_Call(qctx, fn, JS_UNDEFINED, 0, NULL);
+				/* fixes586 — arm the runaway deadline around the
+				 * timer callback (previously UNBOUNDED: the
+				 * tinkerdifferent hard-freeze).  If the callback is
+				 * aborted by the deadline and the timer repeats,
+				 * KILL it — otherwise the rogue interval re-freezes
+				 * the UI on every fire. */
+				double prevdl;
+				double mydl;
+				JSValue ret;
+				prevdl = g_qjs_script_deadline;
+				mydl = macsurf_qjs_get_now() +
+					(double)QJS_TIMER_TIMEOUT_MS;
+				if (prevdl == 0.0 || mydl < prevdl)
+					g_qjs_script_deadline = mydl;
+				ret = JS_Call(qctx, fn, JS_UNDEFINED, 0, NULL);
 				if (JS_IsException(ret)) {
 					JSValue exc = JS_GetException(qctx);
 					const char *str = JS_ToCString(qctx, exc);
@@ -585,8 +652,23 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 							str ? str : "?");
 					if (str) JS_FreeCString(qctx, str);
 					JS_FreeValue(qctx, exc);
+					if (t->live &&
+					    macsurf_qjs_get_now() >= mydl) {
+						/* Deadline abort of a repeating
+						 * timer: unlink + free so it can
+						 * never fire (or be re-linked by
+						 * timer_alloc slot reuse) again. */
+						macsurf_debug_log_writef(
+							"qjs: TIMER TIMEOUT -- repeating timer KILLED");
+						if (prev) prev->next = next;
+						else s_timer_head = next;
+						JS_FreeValue(qctx, t->fn);
+						t->fn = JS_UNDEFINED;
+						t->live = 0;
+					}
 				}
 				JS_FreeValue(qctx, ret);
+				g_qjs_script_deadline = prevdl;
 			}
 			JS_FreeValue(qctx, fn);
 			if (!t->live) {
@@ -2914,6 +2996,118 @@ static JSContext *qjs_build_context(struct jsheap *heap)
 	return ctx;
 }
 
+/* fixes593 — QuickJS capability self-test. Runs a battery of JS through the
+ * engine at first heap creation, BEFORE any page loads, and logs PASS/FAIL +
+ * the actual value. Purpose: prove the CW8 QuickJS port is fundamentally sound
+ * (correct results) and can survive heavy allocation (the 100k-object test
+ * mimics what jquery/webpack bundles do). If a test returns a WRONG value, a
+ * code path is miscompiled; if the engine FREEZES here with no page loaded,
+ * the heap corruptor is in the engine itself, reproduced in isolation. */
+static int qjs_selftest_i(JSContext *ctx, const char *name,
+		const char *src, int want)
+{
+	JSValue v;
+	int32_t got = -987654;
+	int ok;
+	v = JS_Eval(ctx, src, strlen(src), "<selftest>", JS_EVAL_TYPE_GLOBAL);
+	if (JS_IsException(v)) {
+		JSValue e = JS_GetException(ctx);
+		const char *s = JS_ToCString(ctx, e);
+		macsurf_debug_log_writef("qjs selftest %s: EXCEPTION %s",
+			name, s ? s : "?");
+		if (s) JS_FreeCString(ctx, s);
+		JS_FreeValue(ctx, e);
+		JS_FreeValue(ctx, v);
+		return 0;
+	}
+	JS_ToInt32(ctx, &got, v);
+	JS_FreeValue(ctx, v);
+	ok = (got == want);
+	macsurf_debug_log_writef("qjs selftest %s: %s got=%ld want=%d",
+		name, ok ? "PASS" : "FAIL", (long)got, want);
+	return ok;
+}
+
+static void qjs_selftest(JSContext *ctx)
+{
+	macsurf_debug_log_writef("qjs selftest: BEGIN");
+	qjs_selftest_i(ctx, "arith", "123456789 % 1000", 789);
+	qjs_selftest_i(ctx, "bigmul", "40000*40000/1000", 1600000);
+	qjs_selftest_i(ctx, "str20k",
+		"(function(){var s='';var i;for(i=0;i<20000;i++)s+='ab';return s.length;})()",
+		40000);
+	qjs_selftest_i(ctx, "arr20k",
+		"(function(){var a=[];var i;for(i=0;i<20000;i++)a.push(i*2);return a[19999];})()",
+		39998);
+	qjs_selftest_i(ctx, "props2k",
+		"(function(){var o={};var i;for(i=0;i<2000;i++)o['k'+i]=i;return o.k1999;})()",
+		1999);
+	qjs_selftest_i(ctx, "fib25",
+		"(function f(n){return n<2?n:f(n-1)+f(n-2);})(25)", 75025);
+	qjs_selftest_i(ctx, "json",
+		"JSON.parse('{\"a\":[1,2,3],\"b\":{\"c\":42}}').b.c", 42);
+	qjs_selftest_i(ctx, "mapreduce",
+		"[1,2,3,4,5].map(function(x){return x*x;}).reduce(function(a,b){return a+b;},0)",
+		55);
+	qjs_selftest_i(ctx, "regex",
+		"('a1b22c333'.match(/[0-9]+/g)).length", 3);
+	macsurf_debug_log_writef("qjs selftest: heavy 100k objects (mimics bundles)...");
+	qjs_selftest_i(ctx, "obj100k",
+		"(function(){var a=[];var i;for(i=0;i<100000;i++)a.push({v:i});return a.length;})()",
+		100000);
+
+	/* fixes597 — engine core is proven sound; now hammer the DOM BRIDGE (the
+	 * layer the real scripts hit that the pure-JS tests above don't): wrapper
+	 * creation, dom_string round-trips, node refcounts. If one of these FREEZES
+	 * with no page loaded, the corruptor is reproduced in the bridge, minimal.
+	 * These may THROW at startup if document isn't wired yet — a logged
+	 * exception is fine (tells us the bridge needs a live doc); a FREEZE is the
+	 * prize. */
+	macsurf_debug_log_writef("qjs selftest: DOM bridge stress...");
+	qjs_selftest_i(ctx, "dom_create",
+		"(function(){var e=document.createElement('div');e.setAttribute('id','q');return e.getAttribute('id')==='q'?1:0;})()",
+		1);
+	qjs_selftest_i(ctx, "dom_attr5k",
+		"(function(){var i,e;for(i=0;i<5000;i++){e=document.createElement('span');e.setAttribute('class','c'+i);e.setAttribute('data-n',''+i);}return 1;})()",
+		1);
+	qjs_selftest_i(ctx, "dom_tree3k",
+		"(function(){var r=document.createElement('div');var i,c;for(i=0;i<3000;i++){c=document.createElement('p');r.appendChild(c);}return r.childNodes.length;})()",
+		3000);
+	qjs_selftest_i(ctx, "dom_churn",
+		"(function(){var r=document.createElement('div');var i,c;for(i=0;i<3000;i++){c=document.createElement('b');r.appendChild(c);r.removeChild(c);}return 1;})()",
+		1);
+	qjs_selftest_i(ctx, "dom_query",
+		"(function(){var i;for(i=0;i<2000;i++){document.getElementById('nope');}return 1;})()",
+		1);
+
+	/* fixes598 — the ONE thing every real script does that the tests above
+	 * don't: THROW. All of tinkerdifferent's scripts throw TypeErrors, and
+	 * every freeze window this session sat next to exception handling
+	 * (JS_FreeCString of the message/.stack, build_backtrace). Hammer
+	 * throw+catch, then throw+catch+.stack (which runs build_backtrace). If one
+	 * of these FREEZES with no page, the exception machinery is the corruptor,
+	 * reproduced minimally. */
+	macsurf_debug_log_writef("qjs selftest: exception stress...");
+	qjs_selftest_i(ctx, "throw5k",
+		"(function(){var i,n=0;for(i=0;i<5000;i++){try{var z=null;z.x;}catch(e){if(e.message.length>0)n++;}}return n;})()",
+		5000);
+	qjs_selftest_i(ctx, "throwstack2k",
+		"(function(){var i,n=0;for(i=0;i<2000;i++){try{var z;z.foo();}catch(e){if(e.stack&&e.stack.length>0)n++;}}return n;})()",
+		2000);
+
+	/* fixes599 — the last untested bridge path: LIVE nodes attached to the
+	 * document tree (all tests above used DETACHED createElement'd nodes; the
+	 * real scripts wrap live parsed nodes). Attach 2k nodes to the live root and
+	 * query them back through the wrapper/refcount path. Returns -1 if no root
+	 * exists at startup (then this must move post-navigation); 1 if live-node
+	 * wrapping is sound; a FREEZE = found it. */
+	macsurf_debug_log_writef("qjs selftest: live-tree stress...");
+	qjs_selftest_i(ctx, "dom_live2k",
+		"(function(){var r=document.documentElement||document.body;if(!r)return -1;var i,c;for(i=0;i<2000;i++){c=document.createElement('div');c.setAttribute('id','n'+i);r.appendChild(c);}var q=document.getElementById('n1500');return q?1:0;})()",
+		1);
+	macsurf_debug_log_writef("qjs selftest: END");
+}
+
 nserror js_newheap(int timeout, struct jsheap **out_heap)
 {
 	struct jsheap *heap;
@@ -2925,10 +3119,66 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 	heap->rt = JS_NewRuntime();
 	if (heap->rt == NULL) { free(heap); return NSERROR_NOMEM; }
 
+	/* fixes590 -- ROOT CAUSE of the tinkerdifferent hard-freeze.
+	 *
+	 * QuickJS guards native-stack overflow (deep JS recursion => deep
+	 * recursive JS_CallInternal C frames, each with its own alloca) via
+	 * rt->stack_limit = stack_top - stack_size.  The default stack_size is
+	 * JS_DEFAULT_STACK_SIZE = 1 MB (quickjs.h), calibrated for a desktop
+	 * process.  js_newheap never called JS_SetMaxStackSize, so that 1 MB
+	 * default stood on OS 9 -- where the native stack is FAR smaller than
+	 * 1 MB and grows DOWN toward the very same application partition that
+	 * holds the MSL malloc pool.  A jQuery/Sizzle/webpack deep recursion
+	 * therefore overruns the real native stack and overwrites the MSL heap
+	 * free-list metadata LONG before QuickJS's 1 MB guard fires: the guard
+	 * is effectively dead.  Because it clobbers MAPPED heap (not an unmapped
+	 * page) there is no crash -- instead the free-list goes cyclic and the
+	 * next malloc()/free() spins forever (the deterministic freeze; JS-off
+	 * loads fine; disabling build_backtrace only shifted the collision
+	 * threshold, all consistent with a stack-into-heap overrun).
+	 *
+	 * Fix: size the guard to the REAL native-stack headroom.  StackSpace()
+	 * is (current SP - ApplLimit); ApplLimit is the fixed ceiling the heap
+	 * cannot grow past, so setting stack_size = StackSpace() - margin puts
+	 * rt->stack_limit at (ApplLimit + margin) -- a fixed address safely above
+	 * the heap, independent of how deep JS later runs.  QuickJS then throws a
+	 * catchable "RangeError: stack overflow" instead of smashing the heap. */
+#ifdef __MACOS9__
+	{
+		/* Explicit prototype: StackSpace() returns long; without a
+		 * declaration CW8 assumes int and truncates. CarbonLib-safe. */
+		extern long StackSpace(void);
+		long sp_room = StackSpace();       /* SP - ApplLimit, bytes */
+		long qmax = sp_room - (96L * 1024L); /* margin: non-JS frames + slop */
+		/* fixes593: StackSpace() reads ~107MB on real hw (big partition), so
+		 * the native stack was never the corruptor — set the guard to the real
+		 * headroom (no small cap, which would wrongly RangeError legit deep JS)
+		 * with a floor so basic JS still runs if the read is tiny. */
+		if (qmax < 24576L) qmax = 24576L;  /* floor so basic JS still runs */
+		JS_SetMaxStackSize(heap->rt, (size_t)qmax);
+		macsurf_debug_log_writef(
+			"qjs: stack guard=%ld (StackSpace=%ld)", qmax, sp_room);
+	}
+#else
+	JS_SetMaxStackSize(heap->rt, 256UL * 1024UL);
+#endif
+
 	/* fixes522: bound the JS heap so a heavy/runaway script throws an OOM
 	 * exception instead of exhausting the OS partition and crashing the
 	 * machine.  Generous (partition free is ~300MB) but capped. */
 	JS_SetMemoryLimit(heap->rt, 128UL * 1024UL * 1024UL);
+
+	/* fixes593 — the heap-corruption freeze on heavy JS pages (tinkerdifferent:
+	 * all scripts still RUN through QuickJS, but a later malloc/free spins on a
+	 * smashed free-list). Prime suspect is QuickJS's automatic cycle-GC: it only
+	 * fires once malloc_size crosses this threshold (default 256KB), i.e. ONLY
+	 * on heavy pages — exactly the tinkerdifferent-vs-68kmla split — and if any
+	 * ref is over-released, the cycle collector double-frees when it walks the
+	 * graph. Push the threshold past the 128MB memory cap so auto-GC never runs
+	 * mid-load. Nothing about which JS runs changes; the per-navigation runtime
+	 * is torn down wholesale on nav, so uncollected cycles never accumulate.
+	 * (If this proves it, the real refcount bug gets fixed and GC re-armed.) */
+	JS_SetGCThreshold(heap->rt, (size_t)0x40000000UL);  /* 1GB > 128MB cap */
 
 	JS_SetInterruptHandler(heap->rt, qjs_interrupt_handler, NULL);
 
@@ -2952,6 +3202,15 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 	g_heap = heap;
 	*out_heap = heap;
 	MS_LOG("qjs: heap created");
+
+	/* fixes593 — run the capability self-test once, at first heap creation. */
+	{
+		static int selftest_done = 0;
+		if (!selftest_done) {
+			selftest_done = 1;
+			qjs_selftest(heap->ctx);
+		}
+	}
 	return NSERROR_OK;
 }
 
@@ -3431,6 +3690,24 @@ unsigned char js_exec(struct jsthread *thread,
 	if (thread == NULL || thread->ctx == NULL) return 0;
 	if (txt == NULL || txtlen == 0) return 1;
 
+	/* fixes587 BISECTION DIAG: short-circuit ALL script execution. With this
+	 * on, no JS_Eval / thrown exception / build_backtrace / DOM-wrapper /
+	 * timer work runs at all — the scripts are treated as clean no-ops so the
+	 * parser resumes normally. Purpose: split a JS-side heap corruptor from a
+	 * fetch/parse/content-side one on the 100%-deterministic tinkerdifferent
+	 * freeze. If it STILL hard-freezes with this on, the corruptor is NOT in
+	 * the JS path (look at fetch/parse/schedule). If it LOADS, the corruptor
+	 * IS in JS exec/exception/wrapper/timer. Flip to 0 to restore JS. */
+	{
+		static int g_diag_disable_js = 0;   /* diagnostics off on branch; bisection ships separately */
+		if (g_diag_disable_js) {
+			macsurf_debug_log_writef(
+				"js: EXEC DISABLED (bisect diag) [%s len=%ld]",
+				name ? name : "(anon)", (long)txtlen);
+			return 1;
+		}
+	}
+
 	/* Hard size cap */
 	if (txtlen > 4194304UL) {
 		macsurf_debug_log_writef("js skip [%s len=%ld > 4MB]",
@@ -3487,10 +3764,14 @@ unsigned char js_exec(struct jsthread *thread,
 	memcpy(src, txt, txtlen);
 	src[txtlen] = '\0';
 
-	g_qjs_script_deadline = macsurf_qjs_get_now() + (double)QJS_SCRIPT_TIMEOUT_MS;
-	val = JS_Eval(thread->ctx, src, txtlen,
-			name ? name : "<script>", JS_EVAL_TYPE_GLOBAL);
-	g_qjs_script_deadline = 0.0;
+	/* fixes586 — push/pop (nest-safe) instead of set/clear-to-0, so a
+	 * re-entrant exec can never erase an outer deadline. */
+	{
+		double prevdl = qjs_deadline_push((double)QJS_SCRIPT_TIMEOUT_MS);
+		val = JS_Eval(thread->ctx, src, txtlen,
+				name ? name : "<script>", JS_EVAL_TYPE_GLOBAL);
+		qjs_deadline_pop(prevdl);
+	}
 	free(src);
 	ok = !JS_IsException(val);
 	if (!ok) {
@@ -3499,6 +3780,14 @@ unsigned char js_exec(struct jsthread *thread,
 		macsurf_debug_log_writef("qjs exec err [%s len=%ld]: %s",
 			name ? name : "(anon)", (long)txtlen, estr ? estr : "?");
 		if (estr) JS_FreeCString(thread->ctx, estr);
+
+		/* fixes581 DIAG: bracket the stack-extraction block. tinkerdifferent
+		 * freezes right after 'qjs exec err' for ripple.min.js (the only script
+		 * whose 'qjs stack' line never prints), so this block is the prime
+		 * suspect. If the log ends after 'qjs: pre-stack' with no 'qjs: post-
+		 * stack', the hang is inside JS_GetPropertyStr/JS_ToCString on the
+		 * exception's .stack. */
+		macsurf_debug_log_writef("qjs: pre-stack [%s]", name ? name : "?");
 
 		/* fixes522: surface the JS stack so compatibility holes (missing
 		 * DOM/BOM API, etc.) are easy to pinpoint and fix in the engine. */
@@ -3515,8 +3804,11 @@ unsigned char js_exec(struct jsthread *thread,
 			JS_FreeValue(thread->ctx, stk);
 		}
 
+		macsurf_debug_log_writef("qjs: post-stack [%s]", name ? name : "?");
+
 		JS_FreeValue(thread->ctx, exc);
 		JS_FreeValue(thread->ctx, val);
+		macsurf_debug_log_writef("qjs: exec-return0 [%s]", name ? name : "?");
 		return 0;
 	}
 	JS_FreeValue(thread->ctx, val);
@@ -3530,9 +3822,13 @@ unsigned char js_fire_event(struct jsthread *thread, const char *type,
 	if (thread == NULL || thread->ctx == NULL || type == NULL) return 0;
 	/* Fire window.dispatchEvent(new Event(type)) */
 	{
-		char script[128];
+		/* fixes603 — buffer/guard mismatch overflow: bytes written are
+		 * 48(prefix) + tlen + 20(suffix) + 1(NUL) = 69 + tlen, but the guard
+		 * was tlen<80 against a 128-byte buffer, so a 60-79 char event type
+		 * wrote up to 20 bytes past script[]. Enlarged buffer + correct guard. */
+		char script[256];
 		size_t tlen = strlen(type);
-		if (tlen < 80) {
+		if (tlen < 180) {
 			memcpy(script,
 				"(function(){try{window.dispatchEvent(new Event('", 48);
 			memcpy(script + 48, type, tlen);
@@ -3541,6 +3837,36 @@ unsigned char js_fire_event(struct jsthread *thread, const char *type,
 			macsurf_qjs__safe_eval(thread->ctx, script);
 		}
 	}
+	return 1;
+}
+
+/* GATE 3: dispatch DOMContentLoaded then load into the JS *document*'s
+ * registered listeners (document._listeners, installed by the shim at
+ * register_browser_globals).  js_fire_event only ever reaches window
+ * listeners, so without this XenForo's preamble.min.js DOMContentLoaded
+ * handler never runs, XF.ready()'s queue never drains, and XF.activate
+ * (document) is never called.  Call this once, after the initial box tree
+ * exists.  Idempotent per realm via document.__ms_ready_fired; the realm is
+ * rebuilt per navigation (js_newthread) so the flag resets automatically. */
+unsigned char js_fire_dom_ready(struct jsthread *thread, struct dom_document *doc)
+{
+	static const char s_dom_ready_src[] =
+		"(function(){try{"
+		"if(typeof document==='undefined')return;"
+		"if(document.__ms_ready_fired)return;"
+		"document.__ms_ready_fired=true;"
+		"document.readyState='complete';"
+		"try{document.dispatchEvent(new Event('DOMContentLoaded'));}catch(e){}"
+		"try{if(typeof window!=='undefined')"
+		"window.dispatchEvent(new Event('DOMContentLoaded'));}catch(e){}"
+		"try{document.dispatchEvent(new Event('load'));}catch(e){}"
+		"}catch(e){}})();";
+	(void)doc;
+	if (thread == NULL || thread->ctx == NULL) {
+		return 0;
+	}
+	macsurf_qjs__safe_eval(thread->ctx, s_dom_ready_src);
+	macsurf_debug_log_writef("qjs: DOMContentLoaded+load fired to document");
 	return 1;
 }
 

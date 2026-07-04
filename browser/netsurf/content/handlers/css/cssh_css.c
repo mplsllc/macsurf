@@ -6121,6 +6121,14 @@ nserror nscss_init(void)
 	css_content_handler.clone = nscss_clone;
 	css_content_handler.matches_quirks = nscss_matches_quirks;
 	css_content_handler.type = nscss_content_type;
+	/* fixes595 — reverted fixes594's no_share=true. Forcing CSS re-conversion
+	 * DID restore the css_ok=5 double-parse, but as a side effect it shifted
+	 * the fetch-completion timing so box construction ran before the window
+	 * was sized: the layout collapsed to one column (c_w 1322->949). Since
+	 * media.width is correct at select time in the shared (css_ok=3) path and
+	 * the multi-column layout is fine there, the secondary-menu problem is NOT
+	 * the double-parse — it is a per-element style/paint issue, tracked
+	 * separately. Keep CSS shareable. */
 	css_content_handler.no_share = false;
 
 	error = content_factory_register_handler("text/css",

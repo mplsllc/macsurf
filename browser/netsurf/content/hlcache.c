@@ -89,6 +89,7 @@ struct hlcache_retrieval_ctx {
 	hlcache_child_context child;	/**< Child context */
 
 	bool migrate_target;		/**< Whether this context is the migration target */
+	int dr_queued;			/**< fixes600: on macos9 death-row */
 };
 
 /** High-level cache handle */
@@ -175,6 +176,30 @@ hlcache_handle_deferred_free(hlcache_handle *handle)
 	handle->dr_queued = 1;
 	macos9_deathrow_add(handle, hlcache_node_deathrow_teardown,
 			(handle->entry != NULL) ? handle->entry->content : NULL);
+}
+
+/* fixes600 — a nascent retrieval context is freed synchronously from the
+ * retrieval-abort path when a sibling handle is released mid-completion-burst
+ * (RING_REMOVE then free, inside a callback). Under tinkerdifferent's ~50
+ * concurrent sub-resources that small free lands on the general free-list while
+ * walks are on the stack, in the aliasing size class. Defer it and its charset
+ * to the quiescent drain, matching the entry/handle nodes above. */
+static void
+hlcache_rctx_deathrow_teardown(void *p)
+{
+	hlcache_retrieval_ctx *ctx = (hlcache_retrieval_ctx *) p;
+	free((char *) ctx->child.charset);
+	free(ctx);
+}
+
+static void
+hlcache_rctx_deferred_free(hlcache_retrieval_ctx *ctx)
+{
+	if (ctx == NULL || ctx->dr_queued) {
+		return;
+	}
+	ctx->dr_queued = 1;
+	macos9_deathrow_add(ctx, hlcache_rctx_deathrow_teardown, NULL);
 }
 
 
@@ -537,8 +562,7 @@ static nserror hlcache_migrate_ctx(hlcache_retrieval_ctx *ctx,
 
 	/* No longer require retrieval context */
 	RING_REMOVE(hlcache->retrieval_ctx_ring, ctx);
-	free((char *) ctx->child.charset);
-	free(ctx);
+	hlcache_rctx_deferred_free(ctx);   /* fixes600: deferred, was free() */
 
 	return error;
 }
@@ -1000,9 +1024,8 @@ nserror hlcache_handle_release(hlcache_handle *handle)
 				llcache_handle_release(ictx->llcache);
 				/* Remove us from the ring */
 				RING_REMOVE(hlcache->retrieval_ctx_ring, ictx);
-				/* Throw us away */
-				free((char *) ictx->child.charset);
-				free(ictx);
+				/* Throw us away (fixes600: deferred, was free()) */
+				hlcache_rctx_deferred_free(ictx);
 				/* And stop */
 				RING_ITERATE_STOP(hlcache->retrieval_ctx_ring,
 						ictx);
@@ -1207,9 +1230,8 @@ nserror hlcache_handle_abort(hlcache_handle *handle)
 				llcache_handle_release(ictx->llcache);
 				/* Remove us from the ring */
 				RING_REMOVE(hlcache->retrieval_ctx_ring, ictx);
-				/* Throw us away */
-				free((char *) ictx->child.charset);
-				free(ictx);
+				/* Throw us away (fixes600: deferred, was free()) */
+				hlcache_rctx_deferred_free(ictx);
 				/* And stop */
 				RING_ITERATE_STOP(hlcache->retrieval_ctx_ring,
 						ictx);

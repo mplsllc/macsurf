@@ -46,9 +46,13 @@
  * code uses the layout_dim_* shared API. */
 #include "html/layout_safe.h"
 
-/* fixes471 — lh__box_is_absolute() now checks for CSS_POSITION_STICKY
- * in addition to ABSOLUTE/FIXED, so sticky items don't participate in
- * flex layout space calculations. See layout_internal.h. */
+/* fixes471/fixes565 — all six flex main-axis space/position sites use
+ * lh__box_is_flex_out_of_flow() instead of lh__box_is_absolute(). sticky is
+ * out-of-flow on a ROW main axis (fixes471: a sticky item must not consume a
+ * column slot -> preserves 68kmla/mactrove multi-column) but IN flow on a
+ * COLUMN main axis (fixes565: a sticky nav reserves its height so following
+ * siblings like .p-sectionLinks don't slide up under it). See
+ * layout_internal.h. */
 
 /* fixes161d — diagnostic-only macsurf_debug_log_writef for the
  * LAYOUTPHASE flex marker. Compiles to a no-op in release builds. */
@@ -128,11 +132,21 @@ static int flex_item_intrinsic_main_size(struct box *b,
 
 	if (main_is_horizontal) {
 		mw = b->max_width;
-		if (mw == UNKNOWN_MAX_WIDTH) return 0;
-		if (mw == AUTO) return 0;
-		if (mw < 0) return 0;
-		if (mw > FLEX_SAFE_MAX) return FLEX_SAFE_MAX;
-		return mw;
+		if (mw != UNKNOWN_MAX_WIDTH && mw != AUTO && mw > 0) {
+			if (mw > FLEX_SAFE_MAX) return FLEX_SAFE_MAX;
+			return mw;
+		}
+		/* Collapse fix (Phase 2): max_width was frozen unusable (an
+		 * undecoded image / not-yet-active font measured at 0, or AUTO).
+		 * Fall back to the min-content width (longest word) so the item
+		 * is not surrendered to a zero base_size, which the downstream
+		 * auto-table turns into a one-char-per-line collapse. */
+		mw = b->min_width;
+		if (mw > 0) {
+			if (mw > FLEX_SAFE_MAX) return FLEX_SAFE_MAX;
+			return mw;
+		}
+		return 0;
 	}
 
 	/* Vertical main axis. If the item already has a concrete height
@@ -769,12 +783,12 @@ static struct flex_line_data *layout_flex__build_line(struct flex_ctx *ctx,
 		{
 			int item_main_with_gap = pos_main;
 			if (line->count > 0 &&
-			    lh__box_is_absolute(item->box) == false) {
+			    lh__box_is_flex_out_of_flow(item->box) == false) {
 				item_main_with_gap += ctx->main_gap;
 			}
 			if (!(ctx->wrap == CSS_FLEX_WRAP_NOWRAP ||
 			    item_main_with_gap + used_main <= ctx->available_main ||
-			    lh__box_is_absolute(item->box) ||
+			    lh__box_is_flex_out_of_flow(item->box) ||
 			    ctx->available_main == AUTO ||
 			    line->count == 0 ||
 			    pos_main == 0)) {
@@ -782,7 +796,7 @@ static struct flex_line_data *layout_flex__build_line(struct flex_ctx *ctx,
 			}
 		}
 
-		if (lh__box_is_absolute(item->box) == false) {
+		if (lh__box_is_flex_out_of_flow(item->box) == false) {
 			if (line->count > 0) {
 				line->main_size += ctx->main_gap;
 				used_main += ctx->main_gap;
@@ -824,7 +838,7 @@ static inline void layout_flex__item_freeze(
 	item->freeze = true;
 	line->frozen++;
 
-	if (!lh__box_is_absolute(item->box)){
+	if (!lh__box_is_flex_out_of_flow(item->box)){
 		line->used_main_size += item->target_main_size;
 	}
 
@@ -1244,7 +1258,7 @@ static bool layout_flex__place_line_items_main(
 		box_size_main = lh__box_size_main(ctx->horizontal, b);
 		box_pos_main = ctx->horizontal ? &b->x : &b->y;
 
-		if (!lh__box_is_absolute(b)) {
+		if (!lh__box_is_flex_out_of_flow(b)) {
 			if (b->margin[main_start] == AUTO) {
 				extra_pre = extra + extra_remainder;
 			}
@@ -1261,7 +1275,7 @@ static bool layout_flex__place_line_items_main(
 		*box_pos_main = main_pos + lh__non_auto_margin(b, main_start) +
 				extra_pre + b->border[main_start].width;
 
-		if (!lh__box_is_absolute(b)) {
+		if (!lh__box_is_flex_out_of_flow(b)) {
 			int cross_size;
 			int box_size_cross = lh__box_size_cross(
 					ctx->horizontal, b);

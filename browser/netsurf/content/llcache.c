@@ -58,6 +58,109 @@
 #include "macsurf_debug.h"
 #include "macos9_deathrow.h"
 
+/* fixes591: nsu_base64_encode / nsu_base64_decode_alloc defined here (external
+ * linkage) because CW8 will not emit a static-in-header body into this TU, so
+ * they stayed undefined at link. Standard base64 (RFC 4648); llcache is the
+ * only in-build caller. Declarations come from <nsutils/base64.h>. */
+nsuerror nsu_base64_encode(const unsigned char *input, size_t input_length,
+		unsigned char *output, size_t *output_length)
+{
+	static const char b64[] =
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	size_t needed;
+	size_t i;
+	size_t o;
+	unsigned long v;
+
+	if (input == NULL || output == NULL || output_length == NULL)
+		return NSUERROR_BAD_INPUT;
+
+	needed = ((input_length + 2) / 3) * 4;
+	if (needed > *output_length)
+		return NSUERROR_NOMEM;
+
+	o = 0;
+	for (i = 0; i + 3 <= input_length; i += 3) {
+		v = ((unsigned long)input[i] << 16) |
+		    ((unsigned long)input[i + 1] << 8) |
+		    ((unsigned long)input[i + 2]);
+		output[o++] = (unsigned char)b64[(v >> 18) & 0x3f];
+		output[o++] = (unsigned char)b64[(v >> 12) & 0x3f];
+		output[o++] = (unsigned char)b64[(v >> 6) & 0x3f];
+		output[o++] = (unsigned char)b64[v & 0x3f];
+	}
+
+	if (input_length - i == 1) {
+		v = ((unsigned long)input[i] << 16);
+		output[o++] = (unsigned char)b64[(v >> 18) & 0x3f];
+		output[o++] = (unsigned char)b64[(v >> 12) & 0x3f];
+		output[o++] = (unsigned char)'=';
+		output[o++] = (unsigned char)'=';
+	} else if (input_length - i == 2) {
+		v = ((unsigned long)input[i] << 16) |
+		    ((unsigned long)input[i + 1] << 8);
+		output[o++] = (unsigned char)b64[(v >> 18) & 0x3f];
+		output[o++] = (unsigned char)b64[(v >> 12) & 0x3f];
+		output[o++] = (unsigned char)b64[(v >> 6) & 0x3f];
+		output[o++] = (unsigned char)'=';
+	}
+
+	*output_length = o;
+	return NSUERROR_OK;
+}
+
+nsuerror nsu_base64_decode_alloc(const unsigned char *input, size_t input_length,
+		unsigned char **output, size_t *output_length)
+{
+	unsigned char *out;
+	size_t i;
+	size_t o;
+	unsigned long accum;
+	int nbits;
+	int c;
+	int val;
+
+	if (input == NULL || output == NULL || output_length == NULL)
+		return NSUERROR_BAD_INPUT;
+
+	*output = NULL;
+	*output_length = 0;
+
+	out = (unsigned char *)malloc(input_length / 4 * 3 + 3);
+	if (out == NULL)
+		return NSUERROR_NOMEM;
+
+	accum = 0;
+	nbits = 0;
+	o = 0;
+	for (i = 0; i < input_length; i++) {
+		c = input[i];
+		if (c >= 'A' && c <= 'Z')
+			val = c - 'A';
+		else if (c >= 'a' && c <= 'z')
+			val = c - 'a' + 26;
+		else if (c >= '0' && c <= '9')
+			val = c - '0' + 52;
+		else if (c == '+')
+			val = 62;
+		else if (c == '/')
+			val = 63;
+		else
+			continue;
+
+		accum = (accum << 6) | (unsigned long)val;
+		nbits += 6;
+		if (nbits >= 8) {
+			nbits -= 8;
+			out[o++] = (unsigned char)((accum >> nbits) & 0xff);
+		}
+	}
+
+	*output = out;
+	*output_length = o;
+	return NSUERROR_OK;
+}
+
 /* fixes518: an llcache_object pointer is "wild" if NULL or outside the
  * malloc heap range used on this target (legitimate objects live in
  * 0x01000000–0x20000000, same range hlcache validates its handles/entries
@@ -107,6 +210,7 @@ typedef struct llcache_object_user {
 
 	bool iterator_target;		/**< This is the iterator target */
 	bool queued_for_delete;		/**< This user is queued for deletion */
+	int dr_queued;			/**< fixes600: on macos9 death-row */
 
 	struct llcache_object_user *prev;	/**< Previous in list */
 	struct llcache_object_user *next;	/**< Next in list */
@@ -349,6 +453,23 @@ static nserror llcache_object_user_new(llcache_handle_callback cb, void *pw,
  *
  * \pre User is not attached to an object
  */
+#ifdef __MACOS9__
+/* fixes600 — teardown for a deferred llcache_object_user free. user_destroy is
+ * reached synchronously from fetch-completion / error / retrieval-abort
+ * callbacks while op_depth>0 and other object/user walks are on the stack; the
+ * 16-byte user + 20-byte handle land on the general free-list mid-burst and
+ * alias sched_entry/dom_string (the freeze under tinkerdifferent's ~50
+ * concurrent sub-resources). Defer both frees to the quiescent drain like the
+ * cache-spine nodes. */
+static void llcache_user_deathrow_teardown(void *p)
+{
+	llcache_object_user *user = (llcache_object_user *) p;
+	if (user->handle != NULL)
+		free(user->handle);
+	free(user);
+}
+#endif
+
 static nserror llcache_object_user_destroy(llcache_object_user *user)
 {
 	nslog_log(__FILE__, "", __LINE__, "Destroyed user %p", user);
@@ -356,12 +477,24 @@ static nserror llcache_object_user_destroy(llcache_object_user *user)
 	assert(user->next == NULL);
 	assert(user->prev == NULL);
 
+#ifdef __MACOS9__
+	/* fixes600 — defer the free (see llcache_user_deathrow_teardown). The user
+	 * is already unlinked (asserts above). dr_queued gates double-enqueue; NULL
+	 * pin_key means "free once no walk is on the stack" (op_depth==0), which is
+	 * exactly the protection this node needs. */
+	if (!user->dr_queued) {
+		user->dr_queued = 1;
+		macos9_deathrow_add(user, llcache_user_deathrow_teardown, NULL);
+	}
+	return NSERROR_OK;
+#else
 	if (user->handle != NULL)
 		free(user->handle);
 
 	free(user);
 
 	return NSERROR_OK;
+#endif
 }
 
 /**

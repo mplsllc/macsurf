@@ -350,6 +350,16 @@ static void html_box_convert_done(html_content *c, bool success)
 	dom_hubbub_parser_destroy(c->parser);
 	c->parser = NULL;
 
+	/* GATE 3: the initial box tree now exists.  Fire DOMContentLoaded then
+	 * load into the JS document's registered listeners so XenForo's
+	 * preamble XF.ready() queue drains and XF.activate(document) runs.
+	 * Guarded by js_thread (JS-less pages skip it) and fires once per
+	 * navigation (JS-side __ms_ready_fired; the JS realm is rebuilt per
+	 * document load so the flag resets automatically). */
+	if (c->js_thread != NULL) {
+		js_fire_dom_ready(c->js_thread, c->document);
+	}
+
 	content_set_ready(&c->base);
 
 	html_proceed_to_done(c);
@@ -1614,6 +1624,24 @@ static void html_reformat(struct content *c, int width, int height)
 			INTTOFIX(height), htmlc->unit_len_ctx.device_dpi);
 	htmlc->unit_len_ctx.root_style = htmlc->layout->style;
 
+	/* Collapse fix (Phase 1): force ONE tree-wide minmax recompute on the
+	 * first fully-settled reformat. Intrinsic minmax frozen while fetches
+	 * were still outstanding (undecoded images / not-yet-active fonts each
+	 * measured at 0) collapses cells to min-content (one char per line) and
+	 * overflows their boxes (spurious scrollbars). This re-measures the whole
+	 * tree against now-settled resources exactly once, deterministically —
+	 * fonts have no completion hook of their own, so the settle pass is what
+	 * covers them. */
+	/* Collapse fix (Phase 1) NEUTRALISED (fixes571). The tree-wide minmax
+	 * resettle diverges from the incremental (object.c spine) recompute: on a
+	 * cache-hit RETURN to a page it recomputes the two-column region as
+	 * STACKED (sidebar pushed below the content) — proven in the log where
+	 * reformat #3's `MINMAX resettle` grows c_h 4543->4642. That is a worse
+	 * regression than the cold-load char-per-line it was meant to fix, so the
+	 * invalidation is disabled pending a redesign (the latch field, the
+	 * invalidator, and its prototype are retained for that work). */
+	(void) htmlc->minmax_measured_while_active;
+
 	MS_LOG("html_reformat: pre-layout_document");
 	{
 		/* fixes366i/j — bracket one layout_document pass. Count
@@ -2082,8 +2110,8 @@ static nserror html_close(struct content *c)
 
 	macsurf_debug_log_writef("html_close: htmlc=%p ctx=%p bw=%p",
 		(void*)htmlc,
-		(void*)htmlc->box_conversion_context,
-		(void*)htmlc->bw);
+		(void*)(htmlc != NULL ? htmlc->box_conversion_context : NULL),
+		(void*)(htmlc != NULL ? htmlc->bw : NULL));
 
 	/* fixes457/502: set aborted first so that even if the box-convert
 	 * callback was already dequeued by the scheduler, it sees aborted=true

@@ -111,6 +111,75 @@ sched_entry_free(struct sched_entry *e)
 	}
 }
 
+/*
+ * fixes584 — scheduler freeze-proofing.
+ *
+ * The sched_queue is a plain singly-linked list. If memory corruption (the
+ * open UAF family) ever writes a ->next that points back into the list, EVERY
+ * walk of the queue (sched_remove, the time-sorted insert in macos9_schedule,
+ * the drain in macos9_schedule_run) spins forever and the whole cooperative
+ * event loop hard-freezes with no crash — exactly the tinkerdifferent symptom
+ * (frozen, blank, 'evloop: hb' stops while 'qjs: interrupt hb' never fires;
+ * the last log line is inside macos9_schedule_unpause -> macos9_schedule).
+ *
+ * A scheduler must never be able to infinite-loop, regardless of what
+ * corrupted it. sched_queue_is_cyclic() walks at most a hard bound (well above
+ * any legitimate queue length: the pool caps concurrent entries at
+ * MACOS9_SCHED_POOL_SIZE) and reports a cycle. sched_hard_reset() abandons the
+ * corrupted queue and rebuilds the free-list to pristine — the current caller
+ * then proceeds on a clean queue, so the in-flight callback (e.g. the deferred
+ * parser unpause) is still scheduled and the page load can continue past the
+ * corruption instead of wedging the machine.
+ */
+#define MACOS9_SCHED_WALK_MAX (MACOS9_SCHED_POOL_SIZE + 64)
+/* Per-tick callback dispatch ceiling — far above any legitimate burst. */
+#define MACOS9_SCHED_DRAIN_MAX 8192
+
+static int
+sched_queue_is_cyclic(void)
+{
+	struct sched_entry *e = sched_queue;
+	int n = 0;
+
+	while (e != NULL) {
+		if (++n > MACOS9_SCHED_WALK_MAX) {
+			return 1;
+		}
+		e = e->next;
+	}
+	return 0;
+}
+
+static void
+sched_hard_reset(void)
+{
+	int i;
+
+	/* Abandon the (cyclic) queue wholesale and rebuild the pool free-list.
+	 * Abandoned pool slots become reachable again via the fresh free-list;
+	 * any malloc-fallback entries in the old queue leak (rare, bounded). */
+	sched_queue = NULL;
+	sched_freelist = NULL;
+	for (i = 0; i < MACOS9_SCHED_POOL_SIZE; i++) {
+		sched_pool[i].next = sched_freelist;
+		sched_freelist = &sched_pool[i];
+	}
+	sched_pool_inited = 1;
+	macos9_sched_active = false;
+	macos9_sched_time = 0;
+	macsurf_debug_log_writef(
+		"sched: QUEUE CORRUPT (cycle) -- hard reset, pending callbacks dropped");
+}
+
+/* Detect-and-recover guard, called before any sched_queue walk. */
+static void
+sched_guard(void)
+{
+	if (sched_queue_is_cyclic()) {
+		sched_hard_reset();
+	}
+}
+
 /**
  * Get current tick count.
  *
@@ -189,11 +258,18 @@ macos9_schedule_cancel_owner(void *p)
 	struct sched_entry *entry;
 	int removed = 0;
 
+	/* fixes584 — never walk a cyclic queue (freeze-proof). */
+	sched_guard();
+
 	while (*prev != NULL) {
 		entry = *prev;
 		if (entry->p == p) {
 			*prev = entry->next;
-			free(entry);
+			/* fixes584 — MUST use sched_entry_free (pool-aware); a
+			 * plain free() on a pool slot (static array address)
+			 * corrupts the Memory Manager arena and is itself a
+			 * prime suspect for the very cycle this guards against. */
+			sched_entry_free(entry);
 			removed++;
 		} else {
 			prev = &entry->next;
@@ -216,6 +292,9 @@ macos9_schedule(int t, void (*callback)(void *p), void *p)
 	struct sched_entry **queue;
 	unsigned long now;
 	unsigned long due;
+
+	/* fixes584 — never walk a cyclic queue (freeze-proof). */
+	sched_guard();
 
 	/* Always remove any existing entry for this callback+param */
 	sched_remove(callback, p);
@@ -261,15 +340,28 @@ macos9_schedule_run(void)
 	void (*callback)(void *p);
 	void *p;
 	unsigned long now;
+	long drained;
 
 	/* fixes146 -- during shutdown, NetSurf's teardown path frees
 	 * state that scheduled callbacks may reference. Don't drive
 	 * any more callbacks after macos9_quitting is set. */
 	if (macos9_quitting) return false;
 
+	/* fixes584 — never drain a cyclic queue (freeze-proof). */
+	sched_guard();
+
 	now = macos9_get_ticks();
 
+	/* fixes584 — belt-and-suspenders: a callback could corrupt the queue
+	 * into a cycle mid-drain (after the entry guard ran). Cap the number of
+	 * callbacks dispatched per tick far above any legitimate burst; if the
+	 * cap is hit, reset and bail rather than spin the machine. */
+	drained = 0;
 	while (sched_queue != NULL && sched_queue->time <= now) {
+		if (++drained > MACOS9_SCHED_DRAIN_MAX) {
+			sched_hard_reset();
+			break;
+		}
 		entry = sched_queue;
 		callback = entry->callback;
 		p = entry->p;

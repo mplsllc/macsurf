@@ -204,6 +204,28 @@ static inline bool lh__flex_main_is_horizontal(const struct box *flex)
 	}
 }
 
+/* fixes565 — flex out-of-flow test that treats position:sticky correctly.
+ * abs/fixed are always out of flow. sticky is IN flow (reserves main-axis
+ * space, like relative) on a COLUMN main axis, so a sticky nav in a
+ * flex-direction:column wrapper reserves its height and following siblings
+ * (e.g. .p-sectionLinks on 68kmla) don't slide up underneath it. sticky
+ * stays EXCLUDED on a ROW main axis, preserving the fixes471 multi-column
+ * behaviour (a sticky item in a horizontal flex row must not consume a
+ * column slot). Axis is derived from the box's flex parent, so this works
+ * even where the flex ctx isn't in scope (e.g. item_freeze). */
+static inline bool lh__box_is_flex_out_of_flow(const struct box *b)
+{
+	if (css_computed_position(b->style) == CSS_POSITION_ABSOLUTE ||
+	    css_computed_position(b->style) == CSS_POSITION_FIXED) {
+		return true;
+	}
+	if (css_computed_position(b->style) == CSS_POSITION_STICKY) {
+		return (b->parent != NULL) &&
+		       lh__flex_main_is_horizontal(b->parent);
+	}
+	return false;
+}
+
 static inline bool lh__flex_direction_reversed(const struct box *flex)
 {
 	switch (css_computed_flex_direction(flex->style)) {

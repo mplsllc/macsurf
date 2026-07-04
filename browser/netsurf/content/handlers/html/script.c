@@ -546,10 +546,38 @@ convert_script_sync_cb(hlcache_handle *script,
 	script_handler_t *script_handler;
 	unsigned int active_sync_scripts = 0;
 
+	/* fixes582 DIAG: unconditional entry probe + heap state. Pins whether the
+	 * LAST script's DONE even reaches this callback (vs hanging in the content
+	 * broadcast before it), and whether free/largest-block memory collapses by
+	 * the final script (exhaustion/fragmentation hypothesis for tinkerdifferent
+	 * wedging on script 6). */
+	{
+		extern long macos9_heap_free_bytes(void);
+		extern long macos9_heap_max_block(void);
+		macsurf_debug_log_writef(
+			"sync_cb: ENTRY type=%d count=%ld free=%ld maxblk=%ld",
+			(int)event->type, (long)parent->scripts_count,
+			macos9_heap_free_bytes(), macos9_heap_max_block());
+	}
+
 	/* fixes535: registry-membership liveness guard FIRST (see async cb). */
 	if (macos9_content_is_live(&parent->base) == 0) {
 		macsurf_debug_log_writef(
 			"convert_script_sync_cb: parent NOT LIVE parent=%p", (void *)parent);
+		return NSERROR_OK;
+	}
+
+	/* fixes585 — freeze-proof the scripts[] walks below. tinkerdifferent
+	 * hard-freezes here spinning `for (i != parent->scripts_count)` when
+	 * scripts_count holds a garbage value (heap corruption / html_content
+	 * UAF — the same corruptor that cycles sched_queue elsewhere). A real
+	 * page has a handful of scripts; anything past a sane ceiling is
+	 * corruption. Bail rather than spin the machine, and log the value so
+	 * we can trace WHEN it goes bad (correlate against the prior op). */
+	if (parent->scripts_count > 1024) {
+		macsurf_debug_log_writef(
+			"sync_cb: CORRUPT scripts_count=%ld parent=%p — bail",
+			(long)parent->scripts_count, (void *)parent);
 		return NSERROR_OK;
 	}
 
@@ -589,11 +617,19 @@ convert_script_sync_cb(hlcache_handle *script,
 				       nsurl_access(hlcache_handle_get_url(s->data.handle)));
 		}
 
+		/* fixes581 DIAG: js_exec returned. If the log ends here (after
+		 * 'qjs: exec-return0' but before 'sync_cb: sched done'), the hang is
+		 * in macos9_schedule_unpause. */
+		macsurf_debug_log_writef("sync_cb: exec done i=%d active_sync=%d",
+			(int)i, (int)active_sync_scripts);
+
 		/* continue parse -- deferred to avoid re-entering the tokenizer
 		 * from inside the content_broadcast notification walk. */
 		if (parent->parser != NULL && active_sync_scripts == 0) {
 			macos9_schedule_unpause(parent);
 		}
+
+		macsurf_debug_log_writef("sync_cb: sched done i=%d", (int)i);
 
 		break;
 
@@ -893,17 +929,37 @@ bool html_saw_insecure_scripts(html_content *htmlc)
 /* exported internal interface documented in html/html_internal.h */
 nserror html_script_free(html_content *html)
 {
+	struct html_script *scripts = html->scripts;
+	unsigned int count = html->scripts_count;
 	unsigned int i;
 
-	for (i = 0; i != html->scripts_count; i++) {
-		if (html->scripts[i].mimetype != NULL) {
-			dom_string_unref(html->scripts[i].mimetype);
+	/* fixes600: DETACH the script list from the content BEFORE releasing
+	 * any handle. Releasing a script handle can re-enter teardown
+	 * (convert_script_async_cb / llcache_catch_up_all_users can drive a
+	 * JS content to DONE and call back into this content), so a
+	 * re-entrant or repeated html_script_free / content_destroy must not
+	 * walk this list a second time -- doing so would free `scripts` out
+	 * from under the outer loop and double-release an already-freed
+	 * handle. With html->scripts NULL and the count 0 up front, any
+	 * second reach is a no-op and the freed slots are unreachable (an
+	 * ownership transfer, not a validity guard). The fixes499e/501x
+	 * null-on-release via safe_hlcache_handle_release is preserved. */
+	html->scripts = NULL;
+	html->scripts_count = 0;
+
+	if (scripts == NULL) {
+		return NSERROR_OK;
+	}
+
+	for (i = 0; i != count; i++) {
+		if (scripts[i].mimetype != NULL) {
+			dom_string_unref(scripts[i].mimetype);
 		}
 
-		switch (html->scripts[i].type) {
+		switch (scripts[i].type) {
 		case HTML_SCRIPT_INLINE:
-			if (html->scripts[i].data.string != NULL) {
-				dom_string_unref(html->scripts[i].data.string);
+			if (scripts[i].data.string != NULL) {
+				dom_string_unref(scripts[i].data.string);
 			}
 			break;
 		case HTML_SCRIPT_SYNC:
@@ -911,7 +967,7 @@ nserror html_script_free(html_content *html)
 		case HTML_SCRIPT_ASYNC:
 			/* fallthrough */
 		case HTML_SCRIPT_DEFER:
-			if (html->scripts[i].data.handle != NULL) {
+			if (scripts[i].data.handle != NULL) {
 				/* fixes499e/501x — NULL the handle BEFORE release
 				 * (via the safe wrapper). Without this, a second
 				 * teardown pass (html_destroy fired from the scheduler
@@ -925,12 +981,12 @@ nserror html_script_free(html_content *html)
 				 * before release makes it idempotent and closes the
 				 * re-entrant-read window during the release itself. */
 				safe_hlcache_handle_release(
-					&html->scripts[i].data.handle);
+					&scripts[i].data.handle);
 			}
 			break;
 		}
 	}
-	free(html->scripts);
+	free(scripts);
 	/* fixes499e — also NULL the array + count so a duplicate
 	 * html_script_free / html_destroy can't walk freed `scripts` memory.
 	 * The loop guard (i != scripts_count) then runs zero times. */

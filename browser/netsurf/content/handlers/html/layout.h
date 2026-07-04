@@ -44,6 +44,11 @@ struct gui_layout_table;
  */
 bool layout_document(struct html_content *content, int width, int height);
 
+/* Collapse fix: reset max_width to UNKNOWN_MAX_WIDTH across the whole box
+ * tree so the next minmax pass recomputes intrinsic widths that were frozen
+ * (at 0) while images/fonts were still settling. */
+void html_minmax_invalidate_tree(struct box *box);
+
 unsigned int layout_multicol_segment_count(const struct box *box);
 bool layout_multicol_segment_bounds(const struct box *box,
 		unsigned int index, int *top, int *bottom);

@@ -798,6 +798,19 @@ static void macos9_handle_activate(const EventRecord *event) {
 
 void macos9_poll(void) {
 	EventRecord ev;
+	/* fixes583 DIAG: main-event-loop heartbeat (throttled ~2s). If the
+	 * browser freezes and THIS stops while 'qjs: interrupt hb' keeps pulsing,
+	 * the loop is blocked inside js_exec (runaway JS). If this keeps pulsing
+	 * with no other progress, it's a stall, not a freeze. If BOTH stop, the
+	 * event loop is wedged in a non-JS tight loop. */
+	{
+		static unsigned long hb_last = 0;
+		unsigned long hb_now = (unsigned long)TickCount();
+		if (hb_now - hb_last > 120) {
+			hb_last = hb_now;
+			macsurf_debug_log_writef("evloop: hb tick=%ld", (long)hb_now);
+		}
+	}
 	/* fixes234a — revert sleep=0 (fixes234). On Carbon CFM, sleep=0 in
 	 * WaitNextEvent yields effectively zero quantum to the OS scheduler.
 	 * OT's notifier callbacks (which set nf_data_pending) starve, so

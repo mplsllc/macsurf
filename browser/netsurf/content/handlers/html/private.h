@@ -131,6 +131,12 @@ typedef struct html_content {
 	/** Whether an initial layout has been done */
 	bool had_initial_layout;
 
+	/** Collapse fix: set when a minmax pass ran while fetches were still
+	 *  active (intrinsic widths frozen against undecoded images / not-yet-
+	 *  active fonts). Forces one tree-wide minmax recompute on the first
+	 *  fully-settled reformat. */
+	bool minmax_measured_while_active;
+
 	/** Whether scripts are enabled for this content */
 	bool enable_scripting;
 

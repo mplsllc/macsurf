@@ -10,6 +10,10 @@
 
 #ifdef WITH_QUICKJS
 #  include "content/handlers/javascript/js.h"
+/* MacSurf GATE 3 extension: fire DOMContentLoaded+load into the JS document's
+ * registered listeners once the initial box tree exists (drains XF.ready and
+ * runs XF.activate(document)).  Implemented in javascript/macsurf_qjs.c. */
+unsigned char js_fire_dom_ready(jsthread *thread, struct dom_document *doc);
 #else
 
 #ifndef NETSURF_JAVASCRIPT_JS_H_
@@ -43,6 +47,7 @@ unsigned char js_exec(jsthread *thread,
 		const char *name);
 unsigned char js_fire_event(jsthread *thread, const char *type,
 		struct dom_document *doc, struct dom_node *target);
+unsigned char js_fire_dom_ready(jsthread *thread, struct dom_document *doc);
 
 void js_handle_new_element(jsthread *thread, struct dom_element *node);
 void js_event_cleanup(jsthread *thread, struct dom_event *evt);

@@ -1962,13 +1962,16 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 				white_space == CSS_WHITE_SPACE_PRE_WRAP);
 
 		text = malloc(text_len + 1);
-		dom_string_unref(content);
 
-		if (text == NULL)
+		if (text == NULL) {
+			dom_string_unref(content);
 			return false;
+		}
 
 		memcpy(text, dom_string_data(content), text_len);
 		text[text_len] = '\0';
+
+		dom_string_unref(content);
 
 		/* TODO: Handle tabs properly */
 		for (i = 0; i < text_len; i++)

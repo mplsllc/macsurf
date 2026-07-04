@@ -1,34 +1,37 @@
 /*
- * Stub nsutils/base64.h for Mac OS 9 syntax checking.
- * Real libnsutils is not yet built for this target.
+ * MacSurf — nsutils/base64.h  (declarations only)
+ *
+ * fixes591: CW8 does not emit `static`-in-header function bodies into the
+ * including TU, so nsu_base64_encode/decode_alloc stayed undefined at link.
+ * The bodies now live (external linkage) in netsurf/content/llcache.c, the
+ * sole in-build consumer; this header only declares them.
  */
 
 #ifndef NSUTILS_BASE64_H
 #define NSUTILS_BASE64_H
 
-#include <stdint.h>
 #include <stddef.h>
 
 typedef enum {
-	NSUERROR_OK = 0,
-	NSUERROR_NOMEM,
-	NSUERROR_BAD_INPUT
+    NSUERROR_OK        = 0,
+    NSUERROR_NOMEM     = 1,
+    NSUERROR_BAD_INPUT = 2
 } nsuerror;
 
-static inline nsuerror nsu_base64_encode(const uint8_t *input, size_t input_length, uint8_t *output, size_t *output_length)
-{
-	(void)input; (void)input_length;
-	(void)output;
-	*output_length = 0;
-	return NSUERROR_NOMEM;
-}
+extern nsuerror nsu_base64_encode(
+        const unsigned char *input, size_t input_length,
+        unsigned char *output, size_t *output_length);
 
-static inline nsuerror nsu_base64_decode_alloc(const uint8_t *input, size_t input_length, uint8_t **output, size_t *output_length)
-{
-	(void)input; (void)input_length;
-	*output = NULL;
-	*output_length = 0;
-	return NSUERROR_NOMEM;
-}
+extern nsuerror nsu_base64_decode_alloc(
+        const unsigned char *input, size_t input_length,
+        unsigned char **output, size_t *output_length);
 
-#endif
+extern nsuerror nsu_base64_encode_url(
+        const unsigned char *input, size_t input_length,
+        unsigned char *output, size_t *output_length);
+
+extern nsuerror nsu_base64_decode_alloc_url(
+        const unsigned char *input, size_t input_length,
+        unsigned char **output, size_t *output_length);
+
+#endif /* NSUTILS_BASE64_H */

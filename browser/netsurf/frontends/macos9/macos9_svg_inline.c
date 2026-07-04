@@ -29,6 +29,7 @@
 
 #include "frontends/macos9/macos9.h"
 #include "frontends/macos9/macos9_svg_inline.h"
+#include "frontends/macos9/macos9_svg_sprite.h"
 #include "frontends/macos9/macsurf_debug_log.h"
 
 #include <stdlib.h>
@@ -159,6 +160,9 @@ struct svg_ctx {
 	const struct redraw_context *plot_ctx;
 	/* gradient table populated before painting (fixes201). */
 	struct svg_gradient_table *grads;
+	/* fixes577 — page base URL, for resolving external
+	 * <use href="file.svg#id"> sprite references. May be NULL. */
+	struct nsurl *base_url;
 };
 
 /* fixes201 — 3x3 matrix multiply (only top two rows since the third
@@ -1604,6 +1608,128 @@ static void svg__paint_path(dom_node *node, const struct svg_ctx *c,
 
 
 /* ----------------------------------------------------------------- */
+/* <use> — external sprite reference (fixes577)                      */
+/* ----------------------------------------------------------------- */
+
+/* Case-insensitive "use" tag test (no corestring for it). */
+static int svg__tag_is_use(dom_string *tag)
+{
+	const char *s;
+	if (tag == NULL || dom_string_length(tag) != 3)
+		return 0;
+	s = (const char *)dom_string_data(tag);
+	if (s == NULL)
+		return 0;
+	return (s[0] == 'u' || s[0] == 'U') &&
+	       (s[1] == 's' || s[1] == 'S') &&
+	       (s[2] == 'e' || s[2] == 'E');
+}
+
+/* Paint an external-sprite <use href="file.svg#id">. Resolves the symbol via
+ * macos9_svg_sprite (fetch+cache+mini-parse) and paints its path scaled from
+ * the symbol viewBox onto this icon box. V1: single path per symbol, external
+ * (#fragment-in-other-file) references only; same-document <use> is not
+ * handled here (68kmla/FontAwesome uses external sprites). */
+static void svg__paint_use(dom_node *node, const struct svg_ctx *c,
+		const struct svg_paint_state *st)
+{
+	dom_string *dh = NULL;
+	dom_string *dxh = NULL;
+	const char *href;
+	const char *sstart = NULL;
+	const char *send = NULL;
+	const char *p;
+	const char *dp;
+	const char *dend;
+	float vb[4];
+	struct svg_ctx sc;
+	float buf[MACOS9_SVG_PATH_MAX];
+	int n;
+	int total;
+	int paths;
+	plot_style_t pstyle;
+	long cpy;
+	static char d_local[4096];
+
+	if (c->base_url == NULL)
+		return;
+
+	href = svg__attr(node, "href", &dh);
+	if (href == NULL)
+		href = svg__attr(node, "xlink:href", &dxh);
+	if (href == NULL) {
+		if (dh != NULL) dom_string_unref(dh);
+		if (dxh != NULL) dom_string_unref(dxh);
+		return;
+	}
+
+	if (macos9_svg_sprite_symbol(c->base_url, href, &sstart, &send, vb) == 1 &&
+			sstart != NULL && send != NULL && send > sstart &&
+			vb[2] > 0.0f && vb[3] > 0.0f) {
+		/* Map the SYMBOL viewBox to this icon box (a fresh matrix; the
+		 * icon <svg>'s own viewBox usually differs or is absent). */
+		sc = *c;
+		sc.vb_x = vb[0];
+		sc.vb_y = vb[1];
+		sc.vb_w = vb[2];
+		sc.vb_h = vb[3];
+		sc.scale_x = (float)c->box_w / vb[2];
+		sc.scale_y = (float)c->box_h / vb[3];
+		sc.m[0] = sc.scale_x;
+		sc.m[1] = 0.0f;
+		sc.m[2] = 0.0f;
+		sc.m[3] = sc.scale_y;
+		sc.m[4] = (float)c->box_x - vb[0] * sc.scale_x;
+		sc.m[5] = (float)c->box_y - vb[1] * sc.scale_y;
+
+		svg__init_plot_style(&pstyle, st, &sc);
+
+		/* Walk every <path d="…"> in the symbol content. FontAwesome
+		 * icons with holes/overlays carry more than one path. */
+		total = 0;
+		paths = 0;
+		p = sstart;
+		while (p < send && paths < 32) {
+			dp = strstr(p, " d=\"");
+			if (dp == NULL || dp >= send)
+				break;
+			dp += 4;
+			dend = dp;
+			while (dend < send && *dend != '"')
+				dend++;
+			if (dend >= send)
+				break;
+
+			cpy = (long)(dend - dp);
+			if (cpy > (long)sizeof(d_local) - 1)
+				cpy = (long)sizeof(d_local) - 1;
+			memcpy(d_local, dp, (size_t)cpy);
+			d_local[cpy] = '\0';
+
+			n = svg__path_parse(d_local, &sc, buf,
+					MACOS9_SVG_PATH_MAX);
+			if (n > 0) {
+				sc.plot_ctx->plot->path(sc.plot_ctx, &pstyle,
+						buf, (unsigned int)n, NULL);
+				total += n;
+			}
+			paths++;
+			p = dend + 1;
+		}
+		macsurf_debug_log_writef(
+			"svg_use: paths=%d n=%d vb=(%d,%d,%d,%d) box=(%d,%d,%d,%d)",
+			paths, total, (int)vb[0], (int)vb[1], (int)vb[2],
+			(int)vb[3], c->box_x, c->box_y, c->box_w, c->box_h);
+	} else {
+		macsurf_debug_log_writef("svg_use: unresolved href=%s", href);
+	}
+
+	if (dh != NULL) dom_string_unref(dh);
+	if (dxh != NULL) dom_string_unref(dxh);
+}
+
+
+/* ----------------------------------------------------------------- */
 /* <text>                                                            */
 /* ----------------------------------------------------------------- */
 
@@ -1986,6 +2112,8 @@ static void svg__paint_subtree(dom_node *parent,
 			} else if (dom_string_caseless_lwc_isequal(tag,
 					corestring_lwc_text)) {
 				svg__paint_text(child, use_ctx, &child_st);
+			} else if (svg__tag_is_use(tag)) {
+				svg__paint_use(child, use_ctx, &child_st);
 			}
 			/* <defs> / <linearGradient> / <radialGradient> /
 			 * unknown tags are silently skipped (gradients are
@@ -2008,7 +2136,8 @@ static void svg__paint_subtree(dom_node *parent,
 
 nserror macos9_svg_paint_inline(struct box *box,
 		int x, int y, int w, int h,
-		const struct redraw_context *ctx)
+		const struct redraw_context *ctx,
+		struct nsurl *base_url)
 {
 	struct svg_ctx c;
 	struct svg_paint_state st;
@@ -2028,6 +2157,7 @@ nserror macos9_svg_paint_inline(struct box *box,
 	c.box_w = w;
 	c.box_h = h;
 	c.plot_ctx = ctx;
+	c.base_url = base_url;
 
 	/* Read width / height attributes for viewBox fallback. */
 	vb_w_default = svg__attr_float((dom_node *)box->node,

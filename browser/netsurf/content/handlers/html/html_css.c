@@ -459,56 +459,17 @@ bool html_css_process_link(html_content *htmlc, dom_node *node)
 	}
 	dom_string_unref(href);
 
-	/* fixes561 — dedup on stylesheet-SET IDENTITY (URL), not call-count.
-	 * html_css_process_link runs twice for the same <link>: once from the
-	 * live-parse insertion event (dom_event.c) and again from the explicit
-	 * post-parse DOM re-walk in html_css_discover_stylesheets (the "event
-	 * chain is unreliable" workaround).  When the event chain DID fire, the
-	 * re-walk re-fetched (cache hit) and re-PARSED every author sheet — on
-	 * 68kmla the two css.php sheets (48KB + 239KB) cascaded twice, ~4.8s of
-	 * pure waste before first paint (profile: cascade-done at +4.37s then
-	 * the identical sheet again at +9.25s).  Skip a link whose joined URL is
-	 * already loaded in this content's stylesheet set.  Keyed on URL, so a
-	 * script that injects a genuinely NEW stylesheet (different URL) is not
-	 * skipped and still cascades — this dedups duplicates, it does not
-	 * suppress dynamic additions.  Independent of the parser-resume logic in
-	 * html.c (that path only decides WHEN begin_conversion re-runs; this gate
-	 * decides whether a re-walked link is a duplicate). */
-	{
-		unsigned int di;
-		int matched = -1;
-		int with_sheet = 0;
-		for (di = 0; di != htmlc->stylesheet_count; di++) {
-			hlcache_handle *ex = htmlc->stylesheets[di].sheet;
-			if (ex == NULL)
-				continue;
-			with_sheet++;
-			if (nsurl_compare(joined, hlcache_handle_get_url(ex),
-					  NSURL_COMPLETE)) {
-				matched = (int)di;
-				break;
-			}
-		}
-		/* fixes562 — unconditional diagnostic: one line per process_link
-		 * call so the log tells us definitively whether the dedup runs and
-		 * what it sees (count, how many slots carry a live sheet handle,
-		 * and the matched slot or -1).  fixes561 logged only on a hit, so a
-		 * miss was indistinguishable from "not reached". */
-		macsurf_debug_log_writef(
-			"css link scan: count=%d withsheet=%d matched=%d url=%s",
-			(int)htmlc->stylesheet_count, with_sheet, matched,
-			nsurl_access(joined));
-		if (matched >= 0) {
-			NSLOG(netsurf, INFO,
-			      "linked stylesheet '%s' already loaded, skip",
-			      nsurl_access(joined));
-			macsurf_debug_log_writef(
-				"css dedup: link already loaded slot=%d url=%s",
-				matched, nsurl_access(joined));
-			nsurl_unref(joined);
-			return true;
-		}
-	}
+	/* fixes593 — the fixes561/562 URL dedup that used to sit here is
+	 * REMOVED (reverting to the duktape / pre-561 behaviour).  It assumed a
+	 * <link> re-processed by the post-parse discovery re-walk was pure
+	 * waste, but that second pass re-cascades the author sheets against the
+	 * COMPLETE DOM and is load-bearing: on 68kmla the discovery re-cascade
+	 * is what lays out the grid sidebar and the secondary nav row.  Once the
+	 * dedup started matching (sheets already loaded at discovery time) it
+	 * skipped that pass — css_ok fell 5->3, c_w collapsed 1322->949, ~263
+	 * boxes vanished, and the page rendered single-column with no secondary
+	 * menu.  The ~4.8s the dedup saved was buying a broken layout.  Let the
+	 * re-walked link fall through and cascade again, exactly as duktape. */
 
 	NSLOG(netsurf, INFO, "linked stylesheet %i '%s'",
 	      htmlc->stylesheet_count, nsurl_access(joined));
@@ -592,19 +553,35 @@ bool html_css_saw_insecure_stylesheets(html_content *html)
 /* exported function documented in html/css.h */
 nserror html_css_free_stylesheets(html_content *html)
 {
+	struct html_stylesheet *stylesheets = html->stylesheets;
+	unsigned int count = html->stylesheet_count;
 	unsigned int i;
 
 	guit->misc->schedule(-1, html_css_process_modified_styles, html);
 
-	for (i = 0; i != html->stylesheet_count; i++) {
-		if (html->stylesheets[i].sheet != NULL) {
-			safe_hlcache_handle_release(&html->stylesheets[i].sheet); /* fixes515 */
+	/* fixes600: DETACH before releasing -- same ownership-null discipline
+	 * as html_script_free. A re-entrant or repeated teardown must not walk
+	 * this list again and double-release a freed sheet handle (its ->entry
+	 * would be wild in hlcache_handle_release) or free the array out from
+	 * under this loop. Null the owner array + count up front so a second
+	 * reach is a no-op and the freed slots are unreachable. Preserves the
+	 * fixes515 null-on-release via safe_hlcache_handle_release below. */
+	html->stylesheets = NULL;
+	html->stylesheet_count = 0;
+
+	if (stylesheets == NULL) {
+		return NSERROR_OK;
+	}
+
+	for (i = 0; i != count; i++) {
+		if (stylesheets[i].sheet != NULL) {
+			safe_hlcache_handle_release(&stylesheets[i].sheet); /* fixes515 */
 		}
-		if (html->stylesheets[i].node != NULL) {
-			dom_node_unref(html->stylesheets[i].node);
+		if (stylesheets[i].node != NULL) {
+			dom_node_unref(stylesheets[i].node);
 		}
 	}
-	free(html->stylesheets);
+	free(stylesheets);
 
 	return NSERROR_OK;
 }

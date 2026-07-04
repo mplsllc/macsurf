@@ -74,4 +74,12 @@ void js_event_cleanup(jsthread *thread, struct dom_event *evt)
 	(void)thread; (void)evt;
 }
 
+/* Bridge called from content/handlers/html/interaction.c on a real click.
+ * No JS engine -> nothing to dispatch, and nothing ever prevents default. */
+int macsurf_qjs_dispatch_dom_click(struct dom_node *target)
+{
+	(void)target;
+	return 0;
+}
+
 #endif /* !WITH_QUICKJS */

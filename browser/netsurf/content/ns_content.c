@@ -122,7 +122,7 @@ static void content_convert(struct content *c)
 
 	nslog_log(__FILE__, "", __LINE__,
 		      "content "URL_FMT_SPC" (%p)",
-		      nsurl_access_log(llcache_handle_get_url(c->llcache)),
+		      (c != NULL && c->llcache != NULL && llcache_handle_get_url(c->llcache) != NULL ? nsurl_access_log(llcache_handle_get_url(c->llcache)) : "(null)"),
 		      c);
 
 	if (c->handler->data_complete != NULL) {
@@ -488,6 +488,22 @@ content_deathrow_teardown(void *p)
 	macsurf_js_notify_content_freed(c);
 	content_destroy_now(c);
 }
+
+#ifdef __MACOS9__
+/* fixes600 — teardown for a deferred content_user free. content_remove_user is
+ * reached from inside a content_broadcast callback (via
+ * hlcache_handle_release), so freeing the content_user node synchronously there
+ * — while op_depth>0 and the broadcast loop still holds it as its captured
+ * `next` (or current iterator) — frees a 12/16-byte node whose size class
+ * aliases sched_entry/dom_string, smashing the free-list. The death-row defers
+ * it to the quiescent drain (op_depth==0), matching how the spine nodes are
+ * freed. */
+static void
+content_user_deathrow_teardown(void *p)
+{
+	free(p);
+}
+#endif
 
 /* exported interface documented in content/content.h */
 void content_destroy(struct content *c)
@@ -905,7 +921,7 @@ content_add_user(struct content *c,
 
 	nslog_log(__FILE__, "", __LINE__,
 		      "content "URL_FMT_SPC" (%p), user %p %p",
-		      nsurl_access_log(llcache_handle_get_url(c->llcache)),
+		      (c != NULL && c->llcache != NULL && llcache_handle_get_url(c->llcache) != NULL ? nsurl_access_log(llcache_handle_get_url(c->llcache)) : "(null)"),
 		      c,
 		      callback,
 		      pw);
@@ -954,7 +970,7 @@ content_remove_user(struct content *c,
 
 	nslog_log(__FILE__, "", __LINE__,
 		      "content "URL_FMT_SPC" (%p), user %p %p",
-		      nsurl_access_log(llcache_handle_get_url(c->llcache)),
+		      (c != NULL && c->llcache != NULL && llcache_handle_get_url(c->llcache) != NULL ? nsurl_access_log(llcache_handle_get_url(c->llcache)) : "(null)"),
 		      c,
 		      callback,
 		      pw);
@@ -974,8 +990,18 @@ content_remove_user(struct content *c,
 		c->handler->remove_user(c);
 
 	next = user->next;
-	user->next = next->next;
+	user->next = next->next;   /* unlink synchronously so the list is consistent */
+#ifdef __MACOS9__
+	/* fixes600 — defer the free (see content_user_deathrow_teardown). Unlinked
+	 * above, so it is out of the list; the death-row frees it once no walk is on
+	 * the stack. dr_queued gates against a double-enqueue. */
+	if (!next->dr_queued) {
+		next->dr_queued = 1;
+		macos9_deathrow_add(next, content_user_deathrow_teardown, c);
+	}
+#else
 	free(next);
+#endif
 }
 
 
@@ -1114,7 +1140,7 @@ void content_broadcast(struct content *c, content_msg msg,
 		if (n_users == 0) {
 			macsurf_debug_log_writef(
 				"content broadcast READY: ZOMBIE c=%p status=%d",
-				(void *)c, (int)c->status);
+				(void *)c, (c != NULL ? (int)c->status : -1));
 			/* No return: let the (empty) loop run so READY exit fires. */
 		}
 	}
@@ -1250,7 +1276,7 @@ content_open(hlcache_handle *h,
 	nslog_log(__FILE__, "", __LINE__,
 		      "content %p %s",
 		      c,
-		      nsurl_access_log(llcache_handle_get_url(c->llcache)));
+		      (c != NULL && c->llcache != NULL && llcache_handle_get_url(c->llcache) != NULL ? nsurl_access_log(llcache_handle_get_url(c->llcache)) : "(null)"));
 	if (c->handler->open != NULL) {
 		res = c->handler->open(c, bw, page, params);
 	} else {
@@ -1285,7 +1311,7 @@ nserror content_close(hlcache_handle *h)
 	nslog_log(__FILE__, "", __LINE__,
 		      "content %p %s",
 		      c,
-		      nsurl_access_log(llcache_handle_get_url(c->llcache)));
+		      (c != NULL && c->llcache != NULL && llcache_handle_get_url(c->llcache) != NULL ? nsurl_access_log(llcache_handle_get_url(c->llcache)) : "(null)"));
 
 	if (c->textsearch.context != NULL) {
 		content_textsearch_destroy(c->textsearch.context);

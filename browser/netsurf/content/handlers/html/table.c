@@ -894,6 +894,23 @@ table_calculate_column_types(const css_unit_ctx *unit_len_ctx, struct box *table
 		}
 first_pass_done:
 
+	/* fixes572 TBLDIAG — log the one-time column typing for multi-column
+	 * tables (this function runs once per table and its result is cached
+	 * on table->col, so this fires once per table, not per reformat).
+	 * type enum: 0=UNKNOWN 1=FIXED 2=AUTO 3=PERCENT 4=RELATIVE (see
+	 * struct column). Zero behaviour change. */
+	if (table->columns >= 2) {
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		macsurf_debug_log_writef(
+			"TBLTYPES box=%p tlfix=%d cols=%d c0=%d/%d c1=%d/%d c2=%d/%d",
+			(void *)table, (int)tl_fixed, (int)table->columns,
+			(int)col[0].type, (int)col[0].width,
+			(table->columns > 1) ? (int)col[1].type : -1,
+			(table->columns > 1) ? (int)col[1].width : -1,
+			(table->columns > 2) ? (int)col[2].type : -1,
+			(table->columns > 2) ? (int)col[2].width : -1);
+	}
+
 	/* 2nd pass: cells which span multiple columns */
 	for (row_group = table->children; row_group; row_group =row_group->next)
 		for (row = row_group->children; row; row = row->next)

@@ -842,13 +842,21 @@ void box_dump(FILE *stream, struct box *box, unsigned int depth, bool style)
 }
 
 
+/* Scrollbar-suppression tolerance (px): sub-pixel / rounding slop from flex
+ * and table sizing can leave descendant_[xy]1 a few pixels past the box; a
+ * strict '<' then manufactured a spurious element scrollbar mid-page. Require
+ * the content to overflow by more than this before a scrollbar appears.
+ * Genuine scroll regions (code/quote blocks) overflow by far more. */
+#define BOX_SCROLLBAR_SLOP 4
+
 /* exported interface documented in html/box.h */
 bool box_vscrollbar_present(const struct box * const box)
 {
 	return box->padding[TOP] +
 		box->height +
 		box->padding[BOTTOM] +
-		box->border[BOTTOM].width < box->descendant_y1;
+		box->border[BOTTOM].width + BOX_SCROLLBAR_SLOP <
+			box->descendant_y1;
 }
 
 
@@ -858,7 +866,8 @@ bool box_hscrollbar_present(const struct box * const box)
 	return box->padding[LEFT] +
 		box->width +
 		box->padding[RIGHT] +
-		box->border[RIGHT].width < box->descendant_x1;
+		box->border[RIGHT].width + BOX_SCROLLBAR_SLOP <
+			box->descendant_x1;
 }
 
 

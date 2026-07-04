@@ -1,12 +1,10 @@
 /*
- * MacSurf stub — nsutils/base64.h
- * Minimal C89-compatible stub for CodeWarrior 8 compilation.
+ * MacSurf — nsutils/base64.h  (declarations only)
  *
- * Symbols stubbed:
- *   types: nsuerror
- *   enums: NSUERROR_OK, NSUERROR_NOMEM, NSUERROR_BAD_INPUT
- *   funcs: nsu_base64_encode, nsu_base64_decode_alloc,
- *          nsu_base64_encode_url, nsu_base64_decode_alloc_url
+ * fixes591: CW8 does not emit `static`-in-header function bodies into the
+ * including TU, so nsu_base64_encode/decode_alloc stayed undefined at link.
+ * The bodies now live (external linkage) in netsurf/content/llcache.c, the
+ * sole in-build consumer; this header only declares them.
  */
 
 #ifndef NSUTILS_BASE64_H

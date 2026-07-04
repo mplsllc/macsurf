@@ -2130,6 +2130,119 @@ static const char *macos9_qt_image_mime[] = {
 	"image/vnd.microsoft.icon"
 };
 
+/* fixes578b — minimal image/svg+xml content handler.
+ *
+ * It does NOT decode or render. It exists only so hlcache_handle_retrieve for
+ * an external SVG sprite (FontAwesome <use href="file.svg#id">) is ACCEPTED and
+ * runs the fetch to completion, letting the content hold the raw SVG source.
+ * The inline-SVG painter (macos9_svg_sprite.c) reads that source via
+ * content_get_source_data and paints the referenced <symbol>. Without a handler
+ * for image/svg+xml, hlcache aborts the fetch after type-sniff (no acceptable
+ * content type) and the bytes are never delivered — exactly what the fixes577
+ * "svg_use: unresolved" log showed. Field order in the handler MUST match
+ * struct content_handler (see the QT handler above). */
+typedef struct { struct content base; } macos9_svg_src_content;
+
+static nserror
+macos9_svg_src_create(const struct content_handler *handler,
+		lwc_string *imime_type, const struct http_parameter *params,
+		struct llcache_handle *llcache, const char *fallback_charset,
+		bool quirks, struct content **c)
+{
+	macos9_svg_src_content *s;
+	nserror err;
+
+	s = (macos9_svg_src_content *)calloc(1, sizeof(macos9_svg_src_content));
+	if (s == NULL) {
+		return NSERROR_NOMEM;
+	}
+	err = content__init(&s->base, handler, imime_type, params, llcache,
+			fallback_charset, quirks);
+	if (err != NSERROR_OK) {
+		free(s);
+		return err;
+	}
+	*c = (struct content *)s;
+	return NSERROR_OK;
+}
+
+static bool
+macos9_svg_src_process(struct content *c, const char *data, unsigned int size)
+{
+	(void)c;
+	(void)data;
+	(void)size;
+	/* The framework retains the raw source; we read it on data_complete. */
+	return true;
+}
+
+static bool
+macos9_svg_src_convert(struct content *c)
+{
+	content_set_ready(c);
+	content_set_done(c);
+	return true;
+}
+
+static void
+macos9_svg_src_destroy(struct content *c)
+{
+	(void)c;
+}
+
+static nserror
+macos9_svg_src_clone(const struct content *old, struct content **newc)
+{
+	(void)old;
+	(void)newc;
+	return NSERROR_CLONE_FAILED;
+}
+
+static content_type
+macos9_svg_src_type(void)
+{
+	return CONTENT_IMAGE;
+}
+
+static const struct content_handler macos9_svg_src_handler = {
+	NULL,				/* fini */
+	macos9_svg_src_create,		/* create */
+	macos9_svg_src_process,		/* process_data */
+	macos9_svg_src_convert,		/* data_complete */
+	NULL,				/* reformat */
+	macos9_svg_src_destroy,		/* destroy */
+	NULL,				/* stop */
+	NULL,				/* mouse_track */
+	NULL,				/* mouse_action */
+	NULL,				/* keypress */
+	NULL,				/* redraw */
+	NULL,				/* open */
+	NULL,				/* close */
+	NULL,				/* clear_selection */
+	NULL,				/* get_selection */
+	NULL,				/* get_contextual_content */
+	NULL,				/* scroll_at_point */
+	NULL,				/* drop_file_at_point */
+	NULL,				/* debug_dump */
+	NULL,				/* debug */
+	macos9_svg_src_clone,		/* clone */
+	NULL,				/* matches_quirks */
+	NULL,				/* get_encoding */
+	macos9_svg_src_type,		/* type */
+	NULL,				/* add_user */
+	NULL,				/* remove_user */
+	NULL,				/* exec */
+	NULL,				/* saw_insecure_objects */
+	NULL,				/* textsearch_find */
+	NULL,				/* textsearch_bounds */
+	NULL,				/* textselection_redraw */
+	NULL,				/* textselection_copy */
+	NULL,				/* textselection_get_end */
+	NULL,				/* get_internal */
+	NULL,				/* is_opaque */
+	false				/* no_share */
+};
+
 nserror image_init(void)
 {
 	nserror err;
@@ -2144,5 +2257,18 @@ nserror image_init(void)
 			return err;
 		}
 	}
+
+	/* fixes578b — SVG source handler so external sprite fetches complete. */
+	err = content_factory_register_handler("image/svg+xml",
+			&macos9_svg_src_handler);
+	if (err != NSERROR_OK) {
+		return err;
+	}
+	err = content_factory_register_handler("image/svg",
+			&macos9_svg_src_handler);
+	if (err != NSERROR_OK) {
+		return err;
+	}
+
 	return NSERROR_OK;
 }

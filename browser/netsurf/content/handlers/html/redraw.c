@@ -3398,10 +3398,18 @@ bool html_redraw_box(const html_content *html, struct box *box,
 		if (box->descendant_x1 < -10000 || box->descendant_x1 > 10000) box->descendant_x1 = box->width;
 		if (box->descendant_y1 < -200000 || box->descendant_y1 > 200000) box->descendant_y1 = box->height;
 		/* Expand descendants if collapsed — happens when layout hasn't
-		 * fully run but the box has real text children. */
-		if (box->descendant_x1 <= box->descendant_x0)
+		 * fully run but the box has real text children. Skip this for
+		 * boxes that can carry an element scrollbar (overflow auto/scroll):
+		 * the inflated descendant extent would trick box_[hv]scrollbar_present
+		 * into manufacturing a spurious mid-page scrollbar (the ScrollV bar
+		 * splitting XenForo pages). */
+		if (box->descendant_x1 <= box->descendant_x0 &&
+				overflow_x != CSS_OVERFLOW_AUTO &&
+				overflow_x != CSS_OVERFLOW_SCROLL)
 			box->descendant_x1 = box->descendant_x0 + 10000;
-		if (box->descendant_y1 <= box->descendant_y0)
+		if (box->descendant_y1 <= box->descendant_y0 &&
+				overflow_y != CSS_OVERFLOW_AUTO &&
+				overflow_y != CSS_OVERFLOW_SCROLL)
 			box->descendant_y1 = box->descendant_y0 + 200000;
 	}
 
@@ -3565,6 +3573,52 @@ bool html_redraw_box(const html_content *html, struct box *box,
 		border_top = box->border[TOP].width * scale;
 		border_right = box->border[RIGHT].width * scale;
 		border_bottom = box->border[BOTTOM].width * scale;
+	}
+
+	/* fixes599 diagnostic — dump the entire 68kmla secondary-nav subtree
+	 * (.p-sectionLinks / .hScroller / .p-navEl*) with class name, the four
+	 * styles that decide row height (display, white-space, font-size,
+	 * line-height), overflow, and final laid-out geometry. One build shows
+	 * exactly which container collapses to h=0 and why. Class-targeted so
+	 * it never spams. Enum refs: display BLOCK=2 INLINE_BLOCK=5 TABLE=6
+	 * NONE=16; white-space NOWRAP=3; line-height NORMAL=3. */
+	{
+		static int ms_menu_dump = 0;
+		if (ms_menu_dump < 120 && box->node != NULL &&
+				box->style != NULL) {
+			dom_string *cls = NULL;
+			dom_exception mdex = dom_element_get_attribute(
+					(dom_element *)box->node,
+					corestring_dom_class, &cls);
+			if (mdex == DOM_NO_ERR && cls != NULL) {
+				const char *cs = dom_string_data(cls);
+				/* header/body container stack — trace where the flow
+				 * breaks that leaves .p-sectionLinks at the nav's y. */
+				if (cs != NULL && (strstr(cs, "sectionLinks") != NULL ||
+						strstr(cs, "Sticky") != NULL ||
+						strstr(cs, "p-nav-inner") != NULL ||
+						strstr(cs, "p-body") != NULL ||
+						strstr(cs, "p-header") != NULL ||
+						strstr(cs, "pageWrapper") != NULL)) {
+					css_fixed mt = 0;
+					css_unit mu = CSS_UNIT_PX;
+					uint8_t disp = css_computed_display(box->style, false);
+					uint8_t pos = css_computed_position(box->style);
+					uint8_t mtk = css_computed_margin_top(box->style,
+							&mt, &mu);
+					macsurf_debug_log_writef(
+						"hdr: '%s' t=%d disp=%d pos=%d mt=%d/%d "
+						"x=%d y=%d w=%d h=%d dy=(%d..%d)",
+						cs, (int)box->type, (int)disp, (int)pos,
+						(int)mtk, (int)FIXTOINT(mt),
+						x, y, width, height,
+						(int)box->descendant_y0,
+						(int)box->descendant_y1);
+					ms_menu_dump++;
+				}
+				dom_string_unref(cls);
+			}
+		}
 	}
 
 	/* calculate rectangle covering this box and descendants */
@@ -4296,7 +4350,8 @@ bool html_redraw_box(const html_content *html, struct box *box,
 				y + padding_top,
 				width,
 				height,
-				ctx);
+				ctx,
+				html->base_url);
 #endif
 
 	} else {

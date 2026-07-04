@@ -172,6 +172,8 @@ struct content_user
 			void *pw);
 	void *pw;
 
+	int dr_queued;		/* fixes600: on macos9 death-row deferred-free list */
+
 	struct content_user *next;
 };
 
