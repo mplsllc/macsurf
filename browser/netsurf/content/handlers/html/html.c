@@ -395,8 +395,12 @@ static void html_get_dimensions(html_content *htmlc)
 	css_fixed device_dpi = nscss_screen_dpi;
 	unsigned f_size;
 	unsigned f_min;
-	unsigned w;
-	unsigned h;
+	/* fixes612: initialise to 0 so a GETDIMS broadcast that reaches no
+	 * handler (content unattached at select time) leaves a detectable 0
+	 * rather than uninitialised garbage (was observed as media.width=0,
+	 * media.height=21845). */
+	unsigned w = 0;
+	unsigned h = 0;
 	/* MacSurf: C89 unions can't use designated initializers — populate
 	 * the .getdims branch via assignment. */
 	union content_msg_data msg_data;
@@ -405,6 +409,23 @@ static void html_get_dimensions(html_content *htmlc)
 	msg_data.getdims.viewport_height = &h;
 
 	content_broadcast(&htmlc->base, CONTENT_MSG_GETDIMS, &msg_data);
+
+#ifdef __MACOS9__
+	/* fixes612: if GETDIMS delivered nothing (content not yet bound to a
+	 * browser_window at CSS-select time), w/h are still 0 and every width
+	 * media query collapses to the mobile branch — the reason
+	 * tinkerdifferent's desktop two-column layout never applied. Fall back
+	 * to the real front-window content size (device px) so @media resolves
+	 * against the actual viewport. */
+	if (w == 0 || h == 0) {
+		extern void macos9_frontend_viewport(int *vw, int *vh);
+		int vw = 0;
+		int vh = 0;
+		macos9_frontend_viewport(&vw, &vh);
+		if (w == 0 && vw > 0) w = (unsigned)vw;
+		if (h == 0 && vh > 0) h = (unsigned)vh;
+	}
+#endif
 
 	w = css_unit_device2css_px(INTTOFIX(w), device_dpi);
 	h = css_unit_device2css_px(INTTOFIX(h), device_dpi);
@@ -437,6 +458,20 @@ static void html_get_dimensions(html_content *htmlc)
 
 	htmlc->unit_len_ctx.font_size_default = f_size;
 	htmlc->unit_len_ctx.font_size_minimum = f_min;
+
+#ifdef __MACOS9__
+	/* fixes611 DIAG: log the media viewport width used for @media
+	 * evaluation. If this is < 901 at CSS-select time, the mobile
+	 * (max-width:900) branch bakes into the cascade and the desktop
+	 * two-column layout never applies even in a 949px window. */
+	{
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		macsurf_debug_log_writef(
+			"html_get_dimensions: media.width=%d media.height=%d",
+			(int)FIXTOINT(htmlc->media.width),
+			(int)FIXTOINT(htmlc->media.height));
+	}
+#endif
 }
 
 /* exported function documented in html/html_internal.h */

@@ -169,6 +169,24 @@ static Rect macos9_active_favicon_src_rect;
 
 struct gui_window *macos9_find_window(WindowRef w) { struct gui_window *g; for(g=window_list;g;g=g->next) if(g->window==w) return g; return NULL; }
 struct gui_window *macos9_window_list_head(void) { return window_list; }
+
+/* fixes612 — expose the front window's content viewport (device px) so the
+ * core html_get_dimensions() media-query path has a real width even when the
+ * CONTENT_MSG_GETDIMS broadcast returns nothing (content not yet bound to a
+ * browser_window at CSS-select time). Without it media.width is 0, every
+ * width media query collapses to the mobile branch (max-width:900 always
+ * true), and desktop two-column layouts never apply. */
+void macos9_frontend_viewport(int *w, int *h)
+{
+	struct gui_window *g = window_list;
+	int vw = 0, vh = 0;
+	if (g != NULL) {
+		vw = g->content_rect.right - g->content_rect.left;
+		vh = g->content_rect.bottom - g->content_rect.top;
+	}
+	if (w != NULL) *w = vw;
+	if (h != NULL) *h = vh;
+}
 /* fixes320j — accessor so the JS bridge can reach bw to schedule
  * a reformat after JS DOM mutation. */
 struct browser_window *macos9_gw_bw(struct gui_window *g) { return g ? g->bw : NULL; }
