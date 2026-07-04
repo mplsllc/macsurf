@@ -450,6 +450,30 @@ static inline bool layout_flex__base_and_main_sizes(
 		delta_outer_main = 0;
 	}
 
+	/* fixes614 — CSS Flexbox automatic minimum size (§4.5): a flex item
+	 * whose min-width is auto has an automatic minimum equal to the SMALLER
+	 * of its min-content size and its specified (or max) main size when
+	 * that is definite. NetSurf used b->min_width (min-content) as an
+	 * unconditional floor (see the max(base_size, content_min_width) clamp
+	 * below), so a horizontal item whose min-content exceeds the available
+	 * width could never shrink to its own width:calc(...) — it inflated and
+	 * forced following items to wrap (tinkerdifferent: content column at
+	 * min-content ~970 pushed the 250px sidebar below instead of beside).
+	 * When the item has a resolvable definite main-axis width (css calc/%
+	 * included — css_computed_width_px resolves it), clamp the min floor
+	 * down to it so the item can honour its specified width. Auto-width
+	 * items (px_st != SET) keep the min-content floor unchanged. */
+	if (ctx->horizontal && b->style != NULL && content_min_width > 0) {
+		int spec_main_px = -1;
+		if (css_computed_width_px(b->style, ctx->unit_len_ctx,
+				available_width, &spec_main_px) ==
+					CSS_WIDTH_SET &&
+				spec_main_px >= 0 &&
+				content_min_width > spec_main_px) {
+			content_min_width = spec_main_px;
+		}
+	}
+
 	if (item->basis == CSS_FLEX_BASIS_SET) {
 		if (item->basis_unit == CSS_UNIT_PCT) {
 			item->base_size = FPCT_OF_INT_TOINT(
@@ -476,7 +500,11 @@ static inline bool layout_flex__base_and_main_sizes(
 		}
 
 		if (!layout_flex_item(ctx, item, b->width)) {
-			return false;
+			/* fixes613f — tolerate (see the matching site in
+			 * place_line_items_main): degrade the failed item to
+			 * zero content height rather than collapsing the whole
+			 * container. */
+			b->height = 0;
 		}
 	}
 
@@ -927,6 +955,22 @@ static inline int layout_flex__get_min_max_violations(
 			continue;
 		}
 
+#ifdef __MACOS9__
+		/* fixes614 DIAG: per-item main-size clamp inputs on wide flex
+		 * rows. Confirms whether box->min_width (the item's min-content
+		 * width) is the value inflating a definite-width item past its
+		 * flex base size. */
+		if (ctx->available_main > 400 && item->base_size > 100) {
+			extern void macsurf_debug_log_writef(const char *fmt, ...);
+			macsurf_debug_log_writef(
+				"fixes614 clamp: target=%d base=%d min_main=%d "
+				"max_main=%d boxminw=%d horiz=%d",
+				(int)target_main_size, (int)item->base_size,
+				(int)item->min_main, (int)item->max_main,
+				(int)item->box->min_width, (int)ctx->horizontal);
+		}
+#endif
+
 		if (item->max_main > 0 &&
 		    target_main_size > item->max_main) {
 			target_main_size = item->max_main;
@@ -943,10 +987,33 @@ static inline int layout_flex__get_min_max_violations(
 		}
 
 		if (target_main_size < item->box->min_width) {
-			target_main_size = item->box->min_width;
-			item->min_violation = true;
-			NSLOG(flex, DEEPDEBUG, "Violation: box min_width: %i",
-					item->box->min_width);
+			/* fixes614 -- CSS Flexbox 4.5 automatic minimum size.
+			 * The content-based minimum (box->min_width, the item's
+			 * min-content width) must be capped by the item's
+			 * specified size suggestion (its flex base size) when
+			 * that base size is definite. Without the cap a flex
+			 * item with a definite width (e.g.
+			 * width:calc(100% - 270px) -> ~700) but a wide
+			 * min-content is forced up to its full min-content,
+			 * inflating it to the container width and wrapping the
+			 * in-flow sidebar onto the next line. Only applied on
+			 * the main (row) axis, where box->min_width is the
+			 * main-axis measure, and only when a positive base size
+			 * exists. Auto-width items are unaffected: their base
+			 * size is the max-content size (>= min-content), so the
+			 * cap is a no-op and they still clamp to min-content. */
+			int auto_min = item->box->min_width;
+			if (ctx->horizontal && item->base_size > 0 &&
+					auto_min > item->base_size) {
+				auto_min = item->base_size;
+			}
+			if (target_main_size < auto_min) {
+				target_main_size = auto_min;
+				item->min_violation = true;
+				NSLOG(flex, DEEPDEBUG,
+						"Violation: box min_width: %i",
+						item->box->min_width);
+			}
 		}
 
 		if (target_main_size < 0) {
@@ -1251,7 +1318,17 @@ static bool layout_flex__place_line_items_main(
 					lh__delta_outer_width(b);
 
 			if (!layout_flex_item(ctx, item, b->width)) {
-				return false;
+				/* fixes613f — tolerate a single item's content
+				 * layout failure instead of aborting the whole
+				 * flex container to block flow. Mirrors the block
+				 * fallback's fixes168c (zero-height the failed
+				 * child, keep going). Without this, one deep
+				 * narrow sub-box that fails layout_block_context
+				 * (observed: a 31px BOX_BLOCK in the node rows)
+				 * collapsed EVERY flex on the page to stacked
+				 * blocks — the 2-column and the node-row layouts.
+				 * Degrade just the failed item, keep the line. */
+				b->height = 0;
 			}
 		}
 
