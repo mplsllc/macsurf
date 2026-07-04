@@ -233,6 +233,53 @@ long macos9_font_measure_calls = 0;
 long macos9_font_measure_chars = 0;
 
 #ifdef __MACOS9__
+/* fixes609: shared effective-spacing computation. The measure path (here)
+ * and the paint path (plotters.c macos9_plot_text) MUST derive letter/word
+ * spacing identically, or reserved width drifts from painted width and
+ * inter-word spaces collapse ("newadventure"). Bold-smear breathing room
+ * (fixes70/69) and the sub-12pt bitmap glyph-gap correction (fixes144b/146)
+ * are folded into the effective letter-spacing here so both paths pick the
+ * same value AND the same bulk-vs-per-char branch. Exported for plotters.c. */
+void
+macos9_run_spacing(const struct plot_font_style *fstyle,
+                   short font_id, short face, short size, size_t mac_len,
+                   int *out_ls, int *out_ws)
+{
+        int ls = (fstyle != NULL) ? fstyle->letter_spacing : 0;
+        int ws = (fstyle != NULL) ? fstyle->word_spacing : 0;
+        if ((face & 1) && mac_len > 1)
+                ls += 1;                /* bold smear breathing room */
+        if (size < 12 && font_id != kFontIDMonaco && mac_len > 1)
+                ls += 1;                /* sub-12 bitmap glyph gap */
+        *out_ls = ls;
+        *out_ws = ws;
+}
+
+/* fixes609: painted extent of a MacRoman run under the per-char model -- the
+ * exact right edge the paint path's per-glyph pen walk produces (sum of
+ * CharWidth plus the inter-glyph gaps between, but not after, the last
+ * glyph). QuickDraw's TextWidth(full) UNDER-counts vs this per-char sum
+ * (macos9_font.c:561 metric probe), which is the bold/sub-12 overlap source;
+ * measuring this way makes measure and paint agree exactly. Requires the QD
+ * port's TextFont/TextSize/TextFace to already be set. */
+static int
+macos9_run_extent(const char *mac_str, size_t mac_len, int ls, int ws)
+{
+        int total = 0;
+        size_t i;
+        for (i = 0; i < mac_len; i++) {
+                total += (int)CharWidth(mac_str[i]);
+                if (i + 1 < mac_len) {
+                        total += ls;
+                        if (mac_str[i] == ' ')
+                                total += ws;
+                }
+        }
+        if (total < 0)
+                total = 0;
+        return total;
+}
+
 static int
 macos9_font_measure(const struct plot_font_style *fstyle,
                     const char *string,
@@ -277,75 +324,31 @@ macos9_font_measure(const struct plot_font_style *fstyle,
         TextSize(size);
         TextFace(face);
 
-        width = TextWidth(mac_str, 0, (short)mac_len);
-
-        /* fixes42: letter-spacing inserted between glyph pairs.
-         * mac_len characters => mac_len - 1 gaps. */
-        if (fstyle != NULL && fstyle->letter_spacing != 0 && mac_len > 1) {
-                width += (int)(mac_len - 1) * fstyle->letter_spacing;
-                if (width < 0) width = 0;
-        }
-
-        /* fixes139b: word-spacing inserted after each ASCII space in
-         * the MacRoman string. CSS word-spacing only affects literal
-         * spaces; the per-space accounting here keeps measure and
-         * paint in lockstep so wrap decisions match the painted
-         * glyph positions. */
-        if (fstyle != NULL && fstyle->word_spacing != 0 && mac_len > 0) {
-                size_t k;
-                int sc = 0;
-                for (k = 0; k < (size_t) mac_len; k++) {
-                        if (mac_str[k] == ' ') sc++;
+        /* fixes609: measure via the SAME model the painter advances by, so
+         * reserved width == painted width by construction. This replaces the
+         * accreted TextWidth + slop stack (fixes42/139b/51a/69/146): the AA
+         * slop over-reserved (opening gaps and skewing wrap points), while
+         * TextWidth still under-counted vs the per-char pen walk for
+         * bold/sub-12/spaced runs, so paint overran the reservation and
+         * inter-word spaces collapsed ("newadventure"). macos9_run_spacing
+         * folds bold-smear + sub-12 gaps into the effective letter-spacing
+         * exactly as the paint path does; the branch below mirrors the
+         * painter's bulk-vs-per-char decision so the two never drift. */
+        {
+                int eff_ls;
+                int eff_ws;
+                macos9_run_spacing(fstyle, font_id, face, size, mac_len,
+                                   &eff_ls, &eff_ws);
+                if ((eff_ls == 0 && eff_ws == 0) || mac_len <= 1) {
+                        /* Bulk model: matches paint's single DrawText, which
+                         * advances by exactly TextWidth. */
+                        width = TextWidth(mac_str, 0, (short)mac_len);
+                } else {
+                        /* Per-char model: matches paint's per-glyph pen walk
+                         * (sum of CharWidth + inter-glyph gaps). */
+                        width = macos9_run_extent(mac_str, mac_len,
+                                                  eff_ls, eff_ws);
                 }
-                if (sc > 0) {
-                        width += sc * fstyle->word_spacing;
-                        if (width < 0) width = 0;
-                }
-        }
-
-        /* fixes51a -- anti-aliased TrueType glyphs (fixes51) can paint
-         * a fringe pixel past the integer-pixel TextWidth value. NetSurf's
-         * inline layout uses font_width to choose line breaks, and any
-         * width underestimate cascades into subsequent lines being placed
-         * too close to or even on top of each other. Add a small slop
-         * proportional to character count so the layout always reserves
-         * at least the true painted width. 1 px per 24 chars + 1 floor
-         * is invisible at full-line widths but enough to absorb AA bleed
-         * and the occasional fractional-pixel drift. */
-        if (mac_len > 0) {
-                width += (int)(mac_len / 24) + 1;
-        }
-
-        /* fixes69: bold-specific extra slop. QuickDraw fakes bold via
-         * smear — each glyph is rendered twice with a 1-pixel right
-         * shift to thicken the strokes. TextWidth(bold) returns the
-         * smeared total width, but the smear from glyph N still bleeds
-         * 1 pixel into glyph N+1's slot, causing letter pairs like "BE"
-         * or "OB" to look fused in tight bold runs (visible on PROBE
-         * card headings). Add 1 extra px per glyph-pair gap so the
-         * smear has breathing room. Only applies when bold face is
-         * active. */
-        if ((face & 1) && mac_len > 1) {
-                width += (int)(mac_len - 1);
-        }
-
-        /* fixes146: mirror plotters.c's MACSURF_SUBAA_DRAW_SPACING +1px
-         * between-glyph bump. The draw path adds +1 to ls when
-         * size < 12 && font_id != kFontIDMonaco && mac_len > 1, which
-         * makes the painted run wider than what plain TextWidth reports.
-         * If measurement isn't mirrored here, NetSurf's inline layout
-         * reserves the narrower width for the segment and the next inline
-         * segment starts before the painted text ends -- adjacent
-         * segments scramble into each other on any multi-segment line
-         * (body text + <code>, etc.). Same conditions as the draw bump
-         * so the two paths agree. fixes144b's original "measurement
-         * untouched" claim was wrong for multi-segment inline content;
-         * this is the real fix.
-         *
-         * Gate kept inline (no shared header for MACSURF_SUBAA_DRAW_SPACING
-         * yet); if either side is flipped, flip the other manually. */
-        if (size < 12 && font_id != kFontIDMonaco && mac_len > 1) {
-                width += (int)(mac_len - 1);
         }
 
 #if MACSURF_FONT_ALIAS_DIAG

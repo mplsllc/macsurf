@@ -2461,12 +2461,14 @@ macos9_plot_text(const struct redraw_context *ctx,
 #endif
 
 		saved_clip = macos9_push_clip();
-		ls = (fstyle != NULL) ? fstyle->letter_spacing : 0;
-		/* fixes139b: word-spacing pulled out so the per-char branch
-		 * below can add it whenever the just-drawn glyph is an ASCII
-		 * space. ws == 0 (the common case) keeps the fast DrawText
-		 * path eligible. */
-		ws = (fstyle != NULL) ? fstyle->word_spacing : 0;
+		/* fixes609: derive effective letter/word spacing from the SAME
+		 * shared helper the measure path uses (macos9_run_spacing), so
+		 * the bulk-vs-per-char branch and the advance width can never
+		 * drift between measure and paint. It folds in the bold-smear
+		 * and sub-12 bitmap-gap bumps that used to live inline below
+		 * (fixes70 + fixes144b). */
+		macos9_run_spacing(fstyle, font_id, face, size, mac_len,
+				   &ls, &ws);
 		sx = (fstyle != NULL) ? fstyle->shadow_x : 0;
 		sy = (fstyle != NULL) ? fstyle->shadow_y : 0;
 
@@ -2486,40 +2488,10 @@ macos9_plot_text(const struct redraw_context *ctx,
 			y += ty;
 		}
 
-		/* fixes70: bold smear breathing room (the real fix).
-		 * QuickDraw fakes bold by drawing each glyph twice with a
-		 * 1-pixel right shift. The smear from glyph N paints into
-		 * glyph N+1's slot, fusing letter pairs like "OB"/"BE" in
-		 * tight bold runs (visible on PROBE card headings).
-		 *
-		 * font_width slop (fixes69) reserves enough space for the
-		 * whole bold run in layout, but within one DrawText call
-		 * QuickDraw still positions glyphs at their natural bold
-		 * advances and the smear collides. Real fix: add +1 to
-		 * effective letter-spacing for bold runs, which forces the
-		 * per-char draw path below and inserts a real pixel between
-		 * each glyph. Smear has its breathing room and "PROBE"
-		 * letters stop fusing. */
-		if ((face & 1) && mac_len > 1) {
-			ls += 1;
-		}
-
-#if MACSURF_SUBAA_DRAW_SPACING
-		/* fixes144b: sub-AA bitmap glyph-overlap optical correction.
-		 * Below 12pt (the AA floor set in main.c) QuickDraw paints
-		 * raw bitmaps with no anti-aliased transition pixel between
-		 * adjacent glyphs, so Helvetica's "Di" pair has D's right
-		 * edge touching i's left edge with no visible gap. Adding
-		 * +1 to ls forces the per-char draw branch below and inserts
-		 * a real pixel between every glyph. Skipped for Monaco
-		 * (monospaced — every advance is already wider than the
-		 * painted glyph, no overlap possible). Measurement is left
-		 * untouched so layout / wrap / text-overflow stay stable.
-		 * See plotters.c top-of-file comment for full rationale. */
-		if (size < 12 && font_id != kFontIDMonaco && mac_len > 1) {
-			ls += 1;
-		}
-#endif
+		/* fixes609: the bold-smear (was fixes70) and sub-12 bitmap-gap
+		 * (was fixes144b) breathing-room bumps are now folded into ls
+		 * by macos9_run_spacing above, so the measure path applies them
+		 * identically and the two can't drift. */
 
 		/* fixes50 -- text-shadow pass. Paint the same glyphs at
 		 * (x+sx, y+sy) in the shadow colour before the main

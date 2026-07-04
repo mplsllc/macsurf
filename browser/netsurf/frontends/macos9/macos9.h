@@ -251,6 +251,13 @@ short macos9_face_from_style(const struct plot_font_style *fstyle);
 size_t macos9_utf8_to_macroman(const char *u, size_t l, char *m, size_t mx);
 size_t macos9_macroman_to_utf8(const unsigned char *m, size_t l, char *u, size_t mx);
 
+/* fixes609 — shared effective letter/word spacing, so macos9_font_measure
+ * (macos9_font.c) and macos9_plot_text (plotters.c) fold in the bold-smear
+ * and sub-12 bitmap-gap bumps identically and their advance widths agree. */
+void macos9_run_spacing(const struct plot_font_style *fstyle,
+			short font_id, short face, short size, size_t mac_len,
+			int *out_ls, int *out_ws);
+
 /* fixes376 — Edit menu item ordering. Must match the AppendMenu calls in
  * main.c: Undo(1), separator(2), Cut(3), Copy(4), Paste(5). Item 2 (the
  * separator) has no selector. SELECT_ALL is a synthetic selector (not a menu
