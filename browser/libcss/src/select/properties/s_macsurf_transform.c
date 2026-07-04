@@ -47,27 +47,32 @@ static int32_t macsurf_transform_b_pack(css_fixed scale_x, css_fixed scale_y)
  * Translation arrives as Q22.10 px. Shift right by 10 to land in
  * integer px; clamp to int8 range. */
 static int32_t macsurf_transform_pack(css_fixed rotation,
-		css_fixed tx, css_fixed ty)
+		css_fixed tx, css_fixed ty, int translate_is_pct)
 {
 	int32_t rot_q106 = (int32_t)(rotation >> 4);
 	int32_t tx_px = (int32_t)(tx >> 10);
 	int32_t ty_px = (int32_t)(ty >> 10);
-	int32_t mod_full = 360 * 64;  /* 360deg in Q10.6 */
+	int32_t half = 180 * 64;  /* 180deg in Q10.6 */
+	int32_t full = 360 * 64;  /* 360deg in Q10.6 */
 	uint32_t out;
 
-	/* Wrap rotation into a single 360° turn so the int16 slot is
-	 * always in range regardless of how many turns the author asked
-	 * for. */
-	while (rot_q106 < -mod_full) rot_q106 += mod_full;
-	while (rot_q106 >= mod_full) rot_q106 -= mod_full;
+	/* fixes610: rotation now occupies bits 30..16 (15-bit signed) so bit
+	 * 31 can flag percent-translate. Wrap into (-180,180] to fit the
+	 * narrower field; the value is mod-360 identical and the unpack
+	 * re-normalises to 0..359. */
+	while (rot_q106 <= -half) rot_q106 += full;
+	while (rot_q106 >   half) rot_q106 -= full;
 
+	/* tx/ty hold px, or (when translate_is_pct) the raw percent number
+	 * (-100..100 comfortably fits int8); redraw resolves % vs box size. */
 	if (tx_px > 127) tx_px = 127;
 	if (tx_px < -128) tx_px = -128;
 	if (ty_px > 127) ty_px = 127;
 	if (ty_px < -128) ty_px = -128;
 
-	out = (((uint32_t)((uint16_t)((int16_t)rot_q106))) << 16) |
-	      (((uint32_t)((uint8_t)tx_px))                  << 8)  |
+	out = ((translate_is_pct ? 1u : 0u)          << 31) |
+	      (((uint32_t)(rot_q106 & 0x7fff))        << 16) |
+	      (((uint32_t)((uint8_t)tx_px))           << 8)  |
 	       ((uint32_t)((uint8_t)ty_px));
 
 	return (int32_t)out;
@@ -91,7 +96,8 @@ css_error css__cascade_macsurf_transform(uint32_t opv, css_style *style,
 		case 0x0000: /* NONE */
 			value = CSS_MACSURF_TRANSFORM_NONE;
 			break;
-		case 0x0080: /* SET */
+		case 0x0080: /* SET (px translate) */
+		case 0x0081: /* fixes610: SET with percent translate */
 			value = CSS_MACSURF_TRANSFORM_SET;
 			rotation = *((css_fixed *) style->bytecode);
 			advance_bytecode(style, sizeof(css_fixed));
@@ -103,7 +109,8 @@ css_error css__cascade_macsurf_transform(uint32_t opv, css_style *style,
 			advance_bytecode(style, sizeof(css_fixed));
 			scale_y = *((css_fixed *) style->bytecode);
 			advance_bytecode(style, sizeof(css_fixed));
-			packed = macsurf_transform_pack(rotation, tx, ty);
+			packed = macsurf_transform_pack(rotation, tx, ty,
+					getValue(opv) == 0x0081 ? 1 : 0);
 			packed_b = macsurf_transform_b_pack(scale_x, scale_y);
 			break;
 		}

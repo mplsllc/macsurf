@@ -80,6 +80,12 @@ css_error css__parse_macsurf_transform(css_language *c,
 	css_fixed scale_y = (css_fixed)(1 << 10);
 	uint32_t unit = 0;
 	int got_any = 0;
+	/* fixes610: track whether a translate component used percentage units.
+	 * A % translate resolves against the box's OWN size, which is only
+	 * known at layout/redraw time, so we can't bake it to px here — we flag
+	 * it (via a distinct SET opcode value) and store the raw percent number
+	 * in the int8 translate slots for redraw to resolve. */
+	int translate_is_pct = 0;
 
 	token = parserutils_vector_peek(vector, *ctx);
 	if (token == NULL) return CSS_INVALID;
@@ -117,6 +123,8 @@ css_error css__parse_macsurf_transform(css_language *c,
 		bool is_scale = false;     /* fixes73 */
 		bool scale_axis_x = false; /* scaleX only */
 		bool scale_axis_y = false; /* scaleY only */
+		bool translate_axis_x = false; /* fixes610: translateX only */
+		bool translate_axis_y = false; /* fixes610: translateY only */
 
 		consumeWhitespace(vector, ctx);
 
@@ -134,6 +142,12 @@ css_error css__parse_macsurf_transform(css_language *c,
 		if (strncasecmp(fname, "rotate", 6) == 0 &&
 				(fname[6] == '(' || fname[6] == '\0')) {
 			is_rotate = true;
+		} else if (strncasecmp(fname, "translateX", 10) == 0 &&
+				(fname[10] == '(' || fname[10] == '\0')) {
+			is_translate = true; translate_axis_x = true;
+		} else if (strncasecmp(fname, "translateY", 10) == 0 &&
+				(fname[10] == '(' || fname[10] == '\0')) {
+			is_translate = true; translate_axis_y = true;
 		} else if (strncasecmp(fname, "translate", 9) == 0 &&
 				(fname[9] == '(' || fname[9] == '\0')) {
 			is_translate = true;
@@ -183,24 +197,37 @@ css_error css__parse_macsurf_transform(css_language *c,
 			error = css__parse_unit_specifier(c, vector, ctx,
 					UNIT_PX, &v1, &unit);
 			if (error == CSS_OK) {
-				/* fixes201: compose multiple translate()
-				 * calls by accumulating. Translation is
-				 * commutative so order doesn't matter for
-				 * the net offset. */
-				tx += v1;
-				consumeWhitespace(vector, ctx);
-				token = parserutils_vector_peek(vector, *ctx);
-				if (token != NULL && token->type == CSS_TOKEN_CHAR &&
-						token->idata != NULL) {
-					const char *s = lwc_string_data(token->idata);
-					if (s != NULL && s[0] == ',') {
-						parserutils_vector_iterate(vector, ctx);
+				/* fixes610: any % axis flags percent-translate
+				 * (resolved against the box at redraw). */
+				if (unit & UNIT_PCT) translate_is_pct = 1;
+				/* fixes201/610: compose by accumulating; respect
+				 * the axis. translateY(v) sets Y; translate() and
+				 * translateX() set X (translate() also takes a 2nd
+				 * Y arg after a comma). */
+				if (translate_axis_y) {
+					ty += v1;
+				} else {
+					tx += v1;
+					if (!translate_axis_x) {
 						consumeWhitespace(vector, ctx);
-						error = css__parse_unit_specifier(
-								c, vector, ctx,
-								UNIT_PX, &v2,
-								&unit);
-						if (error == CSS_OK) ty += v2;
+						token = parserutils_vector_peek(vector, *ctx);
+						if (token != NULL &&
+								token->type == CSS_TOKEN_CHAR &&
+								token->idata != NULL) {
+							const char *s = lwc_string_data(token->idata);
+							if (s != NULL && s[0] == ',') {
+								parserutils_vector_iterate(vector, ctx);
+								consumeWhitespace(vector, ctx);
+								error = css__parse_unit_specifier(
+										c, vector, ctx,
+										UNIT_PX, &v2, &unit);
+								if (error == CSS_OK) {
+									if (unit & UNIT_PCT)
+										translate_is_pct = 1;
+									ty += v2;
+								}
+							}
+						}
 					}
 				}
 				got_any = 1;
@@ -304,8 +331,10 @@ css_error css__parse_macsurf_transform(css_language *c,
 		return CSS_INVALID;
 	}
 
+	/* fixes610: 0x0081 == SET with percent translate; 0x0080 == SET (px). */
 	error = css__stylesheet_style_appendOPV(result,
-			CSS_PROP_MACSURF_TRANSFORM, 0, 0x0080 /* SET */);
+			CSS_PROP_MACSURF_TRANSFORM, 0,
+			translate_is_pct ? 0x0081 : 0x0080);
 	if (error != CSS_OK) return error;
 
 	/* fixes73: append scale_x and scale_y in addition to the

@@ -3539,6 +3539,33 @@ bool html_redraw_box(const html_content *html, struct box *box,
 		}
 	}
 
+	/* fixes610 — box-level percent translate (e.g. the off-canvas
+	 * sidebar's transform:translateX(-100%)). A % translate resolves
+	 * against the box's OWN padding-box size, known only here at paint
+	 * time; shifting x_parent/y_parent moves the box AND its whole subtree
+	 * (same mechanism as the sticky block above). Only the percent case
+	 * (packed bit 31, emitted by the 0x0081 cascade) is handled here —
+	 * pixel translate stays on the background/text transform path — so
+	 * existing transforms never double-apply. */
+	if (box->style != NULL) {
+		int32_t tfm_packed = 0;
+		uint8_t tfm_type = css_computed_macsurf_transform(box->style,
+				&tfm_packed);
+		if (tfm_type == CSS_MACSURF_TRANSFORM_SET &&
+				(((uint32_t)tfm_packed >> 31) & 1)) {
+			int tx_pct = (int)(int8_t)
+					(((uint32_t)tfm_packed >> 8) & 0xff);
+			int ty_pct = (int)(int8_t)
+					(((uint32_t)tfm_packed) & 0xff);
+			int box_w = box->width + box->padding[LEFT] +
+					box->padding[RIGHT];
+			int box_h = box->height + box->padding[TOP] +
+					box->padding[BOTTOM];
+			x_parent += (tx_pct * box_w) / 100;
+			y_parent += (ty_pct * box_h) / 100;
+		}
+	}
+
 	/* avoid trivial FP maths */
 	if (scale == 1.0) {
 		x = x_parent + box->x;

@@ -622,19 +622,32 @@ static void
 macos9_transform_unpack(int transform,
 			int *rot_deg, int *tx, int *ty)
 {
-	int rot_q106;
+	int32_t rot_q106;
 	int deg;
+	int is_pct = (int)(((uint32_t)transform >> 31) & 1);
 	int8_t tx_px = (int8_t)((((uint32_t)transform) >> 8) & 0xff);
 	int8_t ty_px = (int8_t)( ((uint32_t)transform)       & 0xff);
 
-	rot_q106 = (int)((int16_t)((((uint32_t)transform) >> 16) & 0xffff));
-	deg = rot_q106 / 64;
+	/* fixes610: rotation is now a 15-bit signed field (bits 30..16); bit
+	 * 31 flags percent-translate. A % translate resolves against the box's
+	 * own size and is applied at the box level in redraw (html_redraw_box),
+	 * so here — the background-fill and text-glyph transform paths — we
+	 * zero the translate to avoid double-applying it. Pixel translate
+	 * (is_pct == 0) is unchanged and still applied here as before. */
+	rot_q106 = (int32_t)((((uint32_t)transform) >> 16) & 0x7fff);
+	if (rot_q106 & 0x4000) rot_q106 -= 0x8000;   /* sign-extend 15-bit */
+	deg = (int)(rot_q106 / 64);
 	while (deg < 0)   deg += 360;
 	while (deg >= 360) deg -= 360;
 
 	*rot_deg = deg;
-	*tx = (int)tx_px;
-	*ty = (int)ty_px;
+	if (is_pct) {
+		*tx = 0;
+		*ty = 0;
+	} else {
+		*tx = (int)tx_px;
+		*ty = (int)ty_px;
+	}
 }
 
 /* Rotate a single point around (cx, cy) by rot_deg degrees, then translate.
