@@ -484,41 +484,44 @@ struct qjs_timer {
 	double  interval_ms;
 	int     live;
 	JSValue fn;
-	struct qjs_timer *next;
 };
 
 static struct qjs_timer s_timer_arena[QJS_MAX_TIMERS];
-static struct qjs_timer *s_timer_head = NULL;
 static int s_timer_next_id = 1;
 
+/* fixes608 — the timer subsystem is a fixed index-addressed arena with NO
+ * intrusive linked list.  The old s_timer_head list could be spliced into a
+ * cycle when a timer callback reentrantly called setTimeout (timer_alloc
+ * evicting/reusing a slot the run_timers walk still held), and run_timers'
+ * `while (t != NULL)` then spun forever — the tinkerdifferent hard-freeze,
+ * immune to the fixes586 callback deadline because the spin is in the C loop,
+ * not inside JS_Call.  Index-based iteration (0..QJS_MAX_TIMERS-1) makes an
+ * infinite loop structurally impossible. */
 static struct qjs_timer *timer_alloc(void)
 {
 	int i;
+	struct qjs_timer *oldest;
+	double oldest_expiry;
 	for (i = 0; i < QJS_MAX_TIMERS; i++) {
 		if (!s_timer_arena[i].live) return &s_timer_arena[i];
 	}
-	/* All full: reclaim the soonest-expiring slot */
-	{
-		struct qjs_timer *oldest = &s_timer_arena[0];
-		double oldest_expiry = oldest->expiry_ms;
-		struct qjs_timer **pp = &s_timer_head;
-		for (i = 1; i < QJS_MAX_TIMERS; i++) {
-			if (s_timer_arena[i].expiry_ms < oldest_expiry) {
-				oldest = &s_timer_arena[i];
-				oldest_expiry = s_timer_arena[i].expiry_ms;
-			}
+	/* All full: reclaim the soonest-expiring slot.  Free its callback ref
+	 * against the shared context (fixes the eviction leak) and mark it
+	 * not-live; the caller reuses the slot immediately. */
+	oldest = &s_timer_arena[0];
+	oldest_expiry = oldest->expiry_ms;
+	for (i = 1; i < QJS_MAX_TIMERS; i++) {
+		if (s_timer_arena[i].expiry_ms < oldest_expiry) {
+			oldest = &s_timer_arena[i];
+			oldest_expiry = s_timer_arena[i].expiry_ms;
 		}
-		/* Unlink it */
-		while (*pp && *pp != oldest) pp = &(*pp)->next;
-		if (*pp) *pp = oldest->next;
-		/* fn already freed below in run_timers if it fires, but if
-		 * we forcibly evict it we must free the JSValue reference. */
-		/* NOTE: can't free here without a JSContext — mark not-live;
-		 * run_timers will skip it and we don't need to free because
-		 * we're about to reuse the slot immediately. */
-		oldest->live = 0;
-		return oldest;
 	}
+	if (g_heap != NULL && g_heap->ctx != NULL) {
+		JS_FreeValue(g_heap->ctx, oldest->fn);
+		oldest->fn = JS_UNDEFINED;
+	}
+	oldest->live = 0;
+	return oldest;
 }
 
 static JSValue qjs_settimeout_impl(JSContext *ctx,
@@ -546,8 +549,6 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	t->interval_ms = delay_ms;
 	t->live = 1;
 	t->fn = JS_DupValue(ctx, argv[0]);
-	t->next = s_timer_head;
-	s_timer_head = t;
 
 	return JS_NewInt32(ctx, id);
 }
@@ -573,12 +574,16 @@ static JSValue qjs_cleartimeout(JSContext *ctx, JSValueConst this_val,
 	(void)this_val;
 	if (argc < 1) return JS_UNDEFINED;
 	JS_ToInt32(ctx, &target_id, argv[0]);
-	for (t = s_timer_head; t != NULL; t = t->next) {
-		if (t->live && t->id == target_id) {
-			JS_FreeValue(ctx, t->fn);
-			t->fn = JS_UNDEFINED;
-			t->live = 0;
-			break;
+	{
+		int i;
+		for (i = 0; i < QJS_MAX_TIMERS; i++) {
+			t = &s_timer_arena[i];
+			if (t->live && t->id == target_id) {
+				JS_FreeValue(ctx, t->fn);
+				t->fn = JS_UNDEFINED;
+				t->live = 0;
+				break;
+			}
 		}
 	}
 	return JS_UNDEFINED;
@@ -599,86 +604,87 @@ static void qjs_flush_timers(JSContext *old_ctx)
 			s_timer_arena[i].live = 0;
 		}
 	}
-	s_timer_head = NULL;
 }
 
 void macsurf_qjs_run_timers(struct jscontext *ctx)
 {
 	double now;
-	struct qjs_timer *t;
-	struct qjs_timer *prev;
 	JSContext *qctx;
+	int due_idx[QJS_MAX_TIMERS];
+	int due_id[QJS_MAX_TIMERS];
+	int ndue;
+	int k;
+	int i;
 
 	if (ctx == NULL || ctx->qctx == NULL) return;
 	qctx = ctx->qctx;
 	now = macsurf_qjs_get_now();
 
-	t = s_timer_head;
-	prev = NULL;
-	while (t != NULL) {
-		struct qjs_timer *next = t->next;
-		if (t->live && t->expiry_ms <= now) {
-			JSValue fn = JS_DupValue(qctx, t->fn);
-			if (t->repeating) {
-				t->expiry_ms = now + t->interval_ms;
-			} else {
+	/* fixes608 — snapshot the DUE timers by (slot index, id) BEFORE firing
+	 * any, then fire from the snapshot.  A callback can reentrantly call
+	 * setTimeout (which may evict+reuse an arena slot) or clearTimeout
+	 * (which frees a slot); the index+id snapshot makes that reentrancy
+	 * safe, and the bounded 0..QJS_MAX_TIMERS-1 walk can never loop forever
+	 * (the old intrusive-list walk could be spliced into a cycle mid-callback
+	 * -> the tinkerdifferent hard-freeze). */
+	ndue = 0;
+	for (i = 0; i < QJS_MAX_TIMERS; i++) {
+		if (s_timer_arena[i].live && s_timer_arena[i].expiry_ms <= now) {
+			due_idx[ndue] = i;
+			due_id[ndue] = s_timer_arena[i].id;
+			ndue++;
+		}
+	}
+
+	for (k = 0; k < ndue; k++) {
+		struct qjs_timer *t = &s_timer_arena[due_idx[k]];
+		JSValue fn;
+		double prevdl;
+		double mydl;
+		JSValue ret;
+
+		/* Revalidate: a prior callback may have cleared this timer, or
+		 * timer_alloc may have evicted+reused this slot for a different
+		 * id.  Only fire if it is still the same live timer. */
+		if (!t->live || t->id != due_id[k]) continue;
+
+		fn = JS_DupValue(qctx, t->fn);
+		if (t->repeating) {
+			t->expiry_ms = macsurf_qjs_get_now() + t->interval_ms;
+		} else {
+			JS_FreeValue(qctx, t->fn);
+			t->fn = JS_UNDEFINED;
+			t->live = 0;
+		}
+
+		/* fixes586 — bound the callback so a runaway script can't hang
+		 * (the interrupt handler checks g_qjs_script_deadline). */
+		prevdl = g_qjs_script_deadline;
+		mydl = macsurf_qjs_get_now() + (double)QJS_TIMER_TIMEOUT_MS;
+		if (prevdl == 0.0 || mydl < prevdl)
+			g_qjs_script_deadline = mydl;
+		ret = JS_Call(qctx, fn, JS_UNDEFINED, 0, NULL);
+		if (JS_IsException(ret)) {
+			JSValue exc = JS_GetException(qctx);
+			const char *str = JS_ToCString(qctx, exc);
+			macsurf_debug_log_writef("qjs timer exc: %s",
+					str ? str : "?");
+			if (str) JS_FreeCString(qctx, str);
+			JS_FreeValue(qctx, exc);
+			/* Deadline-abort of a still-live (repeating) timer: kill
+			 * it so the rogue interval can never re-freeze the UI. */
+			if (t->live && t->id == due_id[k] &&
+			    macsurf_qjs_get_now() >= mydl) {
+				macsurf_debug_log_writef(
+					"qjs: TIMER TIMEOUT -- repeating timer KILLED");
 				JS_FreeValue(qctx, t->fn);
 				t->fn = JS_UNDEFINED;
 				t->live = 0;
-				/* Unlink */
-				if (prev) prev->next = next;
-				else s_timer_head = next;
-			}
-			{
-				/* fixes586 — arm the runaway deadline around the
-				 * timer callback (previously UNBOUNDED: the
-				 * tinkerdifferent hard-freeze).  If the callback is
-				 * aborted by the deadline and the timer repeats,
-				 * KILL it — otherwise the rogue interval re-freezes
-				 * the UI on every fire. */
-				double prevdl;
-				double mydl;
-				JSValue ret;
-				prevdl = g_qjs_script_deadline;
-				mydl = macsurf_qjs_get_now() +
-					(double)QJS_TIMER_TIMEOUT_MS;
-				if (prevdl == 0.0 || mydl < prevdl)
-					g_qjs_script_deadline = mydl;
-				ret = JS_Call(qctx, fn, JS_UNDEFINED, 0, NULL);
-				if (JS_IsException(ret)) {
-					JSValue exc = JS_GetException(qctx);
-					const char *str = JS_ToCString(qctx, exc);
-					macsurf_debug_log_writef("qjs timer exc: %s",
-							str ? str : "?");
-					if (str) JS_FreeCString(qctx, str);
-					JS_FreeValue(qctx, exc);
-					if (t->live &&
-					    macsurf_qjs_get_now() >= mydl) {
-						/* Deadline abort of a repeating
-						 * timer: unlink + free so it can
-						 * never fire (or be re-linked by
-						 * timer_alloc slot reuse) again. */
-						macsurf_debug_log_writef(
-							"qjs: TIMER TIMEOUT -- repeating timer KILLED");
-						if (prev) prev->next = next;
-						else s_timer_head = next;
-						JS_FreeValue(qctx, t->fn);
-						t->fn = JS_UNDEFINED;
-						t->live = 0;
-					}
-				}
-				JS_FreeValue(qctx, ret);
-				g_qjs_script_deadline = prevdl;
-			}
-			JS_FreeValue(qctx, fn);
-			if (!t->live) {
-				/* already unlinked above */
-				t = next;
-				continue;
 			}
 		}
-		prev = t;
-		t = next;
+		JS_FreeValue(qctx, ret);
+		g_qjs_script_deadline = prevdl;
+		JS_FreeValue(qctx, fn);
 	}
 }
 
