@@ -882,7 +882,20 @@ static void svg__init_plot_style(plot_style_t *p,
 	memset(p, 0, sizeof(*p));
 	if (st->fill_present) {
 		p->fill_type = PLOT_OP_TYPE_SOLID;
-		p->fill_colour = st->fill;
+		/* fixes626: SVG colours are built ARGB-style with the top byte
+		 * 0xFF meaning OPAQUE (e.g. black == 0xFF000000), but the ns
+		 * `colour` convention the plotter now uses is top byte 0 =
+		 * opaque / higher = MORE transparent (see nscss_color_to_ns and
+		 * plotters.c macos9_colour_to_rgb). fixes620 taught
+		 * macos9_colour_to_rgb to composite semi-transparent (rgba)
+		 * fills against the backdrop by reading that top byte -- which
+		 * made every opaque SVG colour read as ~fully transparent and
+		 * blend away to the backdrop (SVGs vanished/greyed: the
+		 * regression). SVG opacity is carried separately in
+		 * pstyle->opacity (the fixes49 stipple bucket) below, NOT in the
+		 * colour alpha, so the colour must be opaque in ns terms: mask
+		 * the top byte to 0. */
+		p->fill_colour = st->fill & 0x00ffffff;
 	} else {
 		p->fill_type = PLOT_OP_TYPE_NONE;
 	}
@@ -890,7 +903,7 @@ static void svg__init_plot_style(plot_style_t *p,
 		float sw = st->stroke_width *
 			(c->scale_x < c->scale_y ? c->scale_x : c->scale_y);
 		p->stroke_type = PLOT_OP_TYPE_SOLID;
-		p->stroke_colour = st->stroke;
+		p->stroke_colour = st->stroke & 0x00ffffff;   /* fixes626, as fill */
 		if (sw < 1.0f) sw = 1.0f;
 		p->stroke_width = (plot_style_fixed)sw << PLOT_STYLE_RADIX;
 	} else {

@@ -810,25 +810,30 @@ box_html(dom_node *n,
 {
 	css_color color;
 
+	/* fixes628: base/canvas background — capture the FIRST non-transparent
+	 * root <html> background and keep it; a later re-convert cannot revert
+	 * it. On tinkerdifferent MacSurf re-converts the same content and the
+	 * SECOND convert reads the root background as the light UA/system-
+	 * default #EBEBEB instead of the author html{background:#2d3238} (a
+	 * MacSurf re-convert cascade quirk on the ROOT element only -- the
+	 * cards and stock NetSurf and the FIRST MacSurf convert all read
+	 * #2d3238 correctly). Overwriting the good dark value with that light
+	 * grey made the whole page base paint near-white while the cards
+	 * stayed dark. Mirrors box_body's existing first-wins guard;
+	 * content->background_colour persists across converts (only reset at
+	 * content creation, html.c), so the correct value sticks. */
+	if (content->background_colour != NS_TRANSPARENT) {
+		return true;
+	}
+
 	if (box->style != NULL) {
-		long st;
-		st = (long) css_computed_background_color(box->style, &color);
-		/* fixes621 DIAG — what the root <html> box's computed style
-		 * actually holds for background-color. Stock NetSurf paints the
-		 * base #2d3238; MacSurf paints white, so either this reads
-		 * transparent (cascade dropped html{background:#2d3238}) or it
-		 * reads the colour (then the canvas clear/root paint is at
-		 * fault). bg=0x..2d3238 transp=0 => cascade OK, paint bug;
-		 * bg=0x0 transp=1 => cascade drop. */
-		macsurf_debug_log_writef(
-			"box_html: bgstate=%ld bg=%p transp=%ld",
-			st, (void *)(unsigned long) color,
-			(long) nscss_color_is_transparent(color));
+		css_computed_background_color(box->style, &color);
 		if (nscss_color_is_transparent(color) == false) {
 			content->background_colour = nscss_color_to_ns(color);
+			macsurf_debug_log_writef(
+				"box_html: base bg captured %p",
+				(void *)(unsigned long) color);
 		}
-	} else {
-		macsurf_debug_log_writef("box_html: style=NULL");
 	}
 
 	return true;
