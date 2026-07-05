@@ -2409,6 +2409,35 @@ blit_done:
 	return NSERROR_OK;
 }
 
+#ifdef __MACOS9__
+/* First UTF-8 codepoint of a run (0 on empty/invalid); PUA test. Shared by the
+ * webfont icon-glyph diversion in macos9_plot_text (fixes630). */
+static unsigned long macos9_first_cp(const char *s, size_t len)
+{
+	unsigned char c;
+	if (s == NULL || len == 0)
+		return 0;
+	c = (unsigned char) s[0];
+	if (c < 0x80)
+		return c;
+	if ((c & 0xE0) == 0xC0 && len >= 2)
+		return ((unsigned long) (c & 0x1F) << 6) |
+		       (unsigned long) (s[1] & 0x3F);
+	if ((c & 0xF0) == 0xE0 && len >= 3)
+		return ((unsigned long) (c & 0x0F) << 12) |
+		       ((unsigned long) (s[1] & 0x3F) << 6) |
+		       (unsigned long) (s[2] & 0x3F);
+	if ((c & 0xF8) == 0xF0 && len >= 4)
+		return ((unsigned long) (c & 0x07) << 18) |
+		       ((unsigned long) (s[1] & 0x3F) << 12) |
+		       ((unsigned long) (s[2] & 0x3F) << 6) |
+		       (unsigned long) (s[3] & 0x3F);
+	return 0;
+}
+#define MACOS9_CP_IS_PUA(cp) (((cp) >= 0xE000UL && (cp) <= 0xF8FFUL) || \
+			      ((cp) >= 0xF0000UL && (cp) <= 0x10FFFDUL))
+#endif
+
 static nserror
 macos9_plot_text(const struct redraw_context *ctx,
 		 const plot_font_style_t *fstyle,
@@ -2427,24 +2456,9 @@ macos9_plot_text(const struct redraw_context *ctx,
 	if (fstyle == NULL || text == NULL || length == 0)
 		return NSERROR_OK;
 
-	/* fixes615 (webfonts, Item 1) — the first time we paint text in a
-	 * given @font-face family, kick off the font-file fetch so a later
-	 * round can render its glyphs. Cheap after the first sight of each
-	 * family (macos9_webfont_ensure early-returns). Round 1 only fetches. */
-	if (fstyle->families != NULL && macos9_paint_gw != NULL) {
-		struct browser_window *wf_bw = macos9_gw_bw(macos9_paint_gw);
-		struct hlcache_handle *wf_h = (wf_bw != NULL) ?
-				browser_window_get_content(wf_bw) : NULL;
-		struct content *wf_c = (wf_h != NULL) ?
-				hlcache_handle_get_content(wf_h) : NULL;
-		if (wf_c != NULL) {
-			lwc_string * const *wf_f = fstyle->families;
-			while (*wf_f != NULL) {
-				macos9_webfont_ensure(wf_c, *wf_f);
-				wf_f++;
-			}
-		}
-	}
+	/* fixes630 (webfonts): the fetch is now kicked from the MEASURE path
+	 * (macos9_font.c) so the icon box gets sized; the actual glyph render
+	 * for a PUA-in-webfont run happens below, after the text fg is set. */
 
 	font_id = macos9_font_id_from_style(fstyle);
 	face    = macos9_face_from_style(fstyle);
@@ -2458,6 +2472,34 @@ macos9_plot_text(const struct redraw_context *ctx,
 
 	macos9_colour_to_rgb(fstyle->foreground, &rgb);
 	RGBForeColor(&rgb);
+
+#ifdef __MACOS9__
+	/* fixes630: render a downloadable-webfont icon glyph (a PUA codepoint
+	 * in an @font-face family) as a filled QuickDraw region in the text fg
+	 * just set. Falls through to the normal path (which blanks PUA) if the
+	 * font isn't loaded/parsed yet or has no glyph for this codepoint. y is
+	 * the text baseline. */
+	{
+		unsigned long cp = macos9_first_cp(text, length);
+		if (MACOS9_CP_IS_PUA(cp) && macos9_paint_gw != NULL &&
+				fstyle->families != NULL) {
+			struct browser_window *bw = macos9_gw_bw(macos9_paint_gw);
+			struct hlcache_handle *h = (bw != NULL) ?
+					browser_window_get_content(bw) : NULL;
+			struct content *c = (h != NULL) ?
+					hlcache_handle_get_content(h) : NULL;
+			if (c != NULL) {
+				lwc_string * const *ff;
+				for (ff = fstyle->families; *ff != NULL; ff++) {
+					if (macos9_webfont_render(c, *ff, cp,
+							(int) x, (int) y,
+							(int) size) >= 0)
+						return NSERROR_OK;
+				}
+			}
+		}
+	}
+#endif
 
 	/* Diagnostic: dump foreground colour + first 16 chars of the
 	 * string for the first ~12 text plots each redraw, so we can

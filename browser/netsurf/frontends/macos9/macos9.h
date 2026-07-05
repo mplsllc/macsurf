@@ -189,6 +189,7 @@ struct gui_window *macos9_find_window(WindowRef w);
 void macos9_window_layout(struct gui_window *g);
 void macos9_window_invalidate_all(struct gui_window *g);
 void macos9_window_invalidate_content(struct gui_window *g);
+void macos9_window_request_reformat(struct gui_window *g);
 void macos9_window_invalidate_rect(struct gui_window *g, int px, int py, int pw, int ph);
 void macos9_window_invalidate_status(struct gui_window *g);
 void macos9_window_invalidate_url(struct gui_window *g);

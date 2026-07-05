@@ -19,7 +19,80 @@
 
 #include "macos9.h"
 #include "macsurf_debug_log.h"
+#include "macos9_webfont.h"
+#include "netsurf/browser_window.h"
+#include "content/hlcache.h"
 #include <libwapcaplet/libwapcaplet.h>
+
+#ifdef __MACOS9__
+extern struct gui_window *macos9_window_list_head(void);
+extern struct browser_window *macos9_gw_bw(struct gui_window *g);
+
+/* First UTF-8 codepoint of a run (0 on empty/invalid). */
+static unsigned long macos9_wf_first_cp(const char *s, size_t len)
+{
+        unsigned char c;
+        if (s == NULL || len == 0)
+                return 0;
+        c = (unsigned char) s[0];
+        if (c < 0x80)
+                return c;
+        if ((c & 0xE0) == 0xC0 && len >= 2)
+                return ((unsigned long) (c & 0x1F) << 6) |
+                       (unsigned long) (s[1] & 0x3F);
+        if ((c & 0xF0) == 0xE0 && len >= 3)
+                return ((unsigned long) (c & 0x0F) << 12) |
+                       ((unsigned long) (s[1] & 0x3F) << 6) |
+                       (unsigned long) (s[2] & 0x3F);
+        if ((c & 0xF8) == 0xF0 && len >= 4)
+                return ((unsigned long) (c & 0x07) << 18) |
+                       ((unsigned long) (s[1] & 0x3F) << 12) |
+                       ((unsigned long) (s[2] & 0x3F) << 6) |
+                       (unsigned long) (s[3] & 0x3F);
+        return 0;
+}
+
+/* Content currently in the front window (for @font-face resolution). */
+static struct content *macos9_wf_current_content(void)
+{
+        struct gui_window *gw = macos9_window_list_head();
+        struct browser_window *bw = (gw != NULL) ? macos9_gw_bw(gw) : NULL;
+        struct hlcache_handle *h = (bw != NULL) ?
+                browser_window_get_content(bw) : NULL;
+        return (h != NULL) ? hlcache_handle_get_content(h) : NULL;
+}
+
+#define MACOS9_WF_IS_PUA(cp) (((cp) >= 0xE000UL && (cp) <= 0xF8FFUL) || \
+                              ((cp) >= 0xF0000UL && (cp) <= 0x10FFFDUL))
+
+/* fixes630: if this run is a single Private-Use-Area codepoint in a
+ * downloadable @font-face family, return the glyph's advance width in px (also
+ * kicks the font fetch on first sight, and re-measures via a reformat once it
+ * loads). Returns -1 for ordinary text so normal measurement is untouched —
+ * ordinary text never starts with a PUA codepoint, so this is a no-op for it. */
+static int macos9_wf_icon_advance(const struct plot_font_style *fstyle,
+                const char *string, size_t length, int size_px)
+{
+        unsigned long cp;
+        struct content *c;
+        lwc_string * const *ff;
+
+        if (fstyle == NULL || fstyle->families == NULL)
+                return -1;
+        cp = macos9_wf_first_cp(string, length);
+        if (!MACOS9_WF_IS_PUA(cp))
+                return -1;
+        c = macos9_wf_current_content();
+        if (c == NULL)
+                return -1;
+        for (ff = fstyle->families; *ff != NULL; ff++) {
+                int a = macos9_webfont_advance(c, *ff, cp, size_px);
+                if (a >= 0)
+                        return a;
+        }
+        return -1;
+}
+#endif /* __MACOS9__ */
 
 /* Heuristic constants for non-Mac builds */
 #define CW_MONO_NUM  614   /* 0.60 * 1024 */
@@ -331,6 +404,16 @@ macos9_font_measure(const struct plot_font_style *fstyle,
         face = macos9_face_from_style(fstyle);
         size = (short)(fstyle->size >> PLOT_STYLE_RADIX);
         if (size <= 0) size = 12;
+
+        /* fixes630: divert a downloadable-webfont icon glyph (PUA codepoint in
+         * an @font-face family) to its real advance so the box gets sized
+         * instead of collapsing to zero (QuickDraw has no glyph for PUA). No
+         * port state touched yet, so we can return straight away. */
+        {
+                int wf = macos9_wf_icon_advance(fstyle, string, length, (int)size);
+                if (wf >= 0)
+                        return wf;
+        }
 
         GetPort(&old_port);
         /* Only switch ports if the current one isn't a window we can use. 

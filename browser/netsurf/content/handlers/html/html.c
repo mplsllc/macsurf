@@ -422,32 +422,39 @@ struct nsurl *html_macsurf_font_face_url(struct content *c, lwc_string *family)
 		const css_font_face *ff = res->font_faces[0];
 		uint32_t nsrc = 0;
 		uint32_t i;
+		int pass;
 
 		css_font_face_count_srcs(ff, &nsrc);
-		for (i = 0; i < nsrc && out == NULL; i++) {
-			const css_font_face_src *src = NULL;
-			css_font_face_format fmt;
-			lwc_string *loc = NULL;
+		/* Tiered preference: the macos9 rasterizer only parses RAW sfnt
+		 * (no zlib inflate), so prefer a "truetype"/"opentype" src (a
+		 * bare .ttf/.otf) — libcss maps both to _OPENTYPE. Fall back to
+		 * an unhinted src (magic-validated at parse time), then WOFF
+		 * (zlib; presently rejected at parse — kept as a future hook).
+		 * Never pick EOT, SVG, or UNKNOWN/woff2 (Brotli, out of scope).
+		 * Two-pass so the .ttf wins even when the CSS lists woff first. */
+		for (pass = 0; pass < 3 && out == NULL; pass++) {
+			css_font_face_format want =
+				(pass == 0) ? CSS_FONT_FACE_FORMAT_OPENTYPE :
+				(pass == 1) ? CSS_FONT_FACE_FORMAT_UNSPECIFIED :
+				              CSS_FONT_FACE_FORMAT_WOFF;
+			for (i = 0; i < nsrc && out == NULL; i++) {
+				const css_font_face_src *src = NULL;
+				lwc_string *loc = NULL;
 
-			if (css_font_face_get_src(ff, i, &src) != CSS_OK ||
-					src == NULL)
-				continue;
-			if (css_font_face_src_location_type(src) !=
-					CSS_FONT_FACE_LOCATION_TYPE_URI)
-				continue;
-			/* Only formats we can rasterize: raw sfnt (OpenType/
-			 * TrueType), WOFF (zlib-wrapped sfnt), or an unspecified
-			 * hint (guess sfnt). Skip EOT, SVG fonts, and UNKNOWN
-			 * (woff2). */
-			fmt = css_font_face_src_format(src);
-			if (fmt != CSS_FONT_FACE_FORMAT_UNSPECIFIED &&
-					fmt != CSS_FONT_FACE_FORMAT_WOFF &&
-					fmt != CSS_FONT_FACE_FORMAT_OPENTYPE)
-				continue;
-			if (css_font_face_src_get_location(src, &loc) != CSS_OK ||
-					loc == NULL)
-				continue;
-			nsurl_join(htmlc->base_url, lwc_string_data(loc), &out);
+				if (css_font_face_get_src(ff, i, &src) != CSS_OK ||
+						src == NULL)
+					continue;
+				if (css_font_face_src_location_type(src) !=
+						CSS_FONT_FACE_LOCATION_TYPE_URI)
+					continue;
+				if (css_font_face_src_format(src) != want)
+					continue;
+				if (css_font_face_src_get_location(src, &loc) !=
+						CSS_OK || loc == NULL)
+					continue;
+				nsurl_join(htmlc->base_url,
+						lwc_string_data(loc), &out);
+			}
 		}
 	}
 

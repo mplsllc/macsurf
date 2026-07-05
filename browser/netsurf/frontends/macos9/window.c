@@ -284,6 +284,10 @@ void macos9_window_layout(struct gui_window *g) {
 
 void macos9_window_invalidate_all(struct gui_window *g) { Rect r; if(!g||!g->window)return; GetWindowBounds(g->window, 33, &r); r.right=(short)(r.right-r.left); r.bottom=(short)(r.bottom-r.top); r.left=0; r.top=0; InvalWindowRect(g->window, &r); }
 void macos9_window_invalidate_content(struct gui_window *g) { if(!g||!g->window)return; InvalWindowRect(g->window, &g->content_rect); }
+/* fixes630: request a re-layout on the next null-event pass. Used when an
+ * async webfont file arrives so the MEASURE path re-runs and sizes the icon
+ * boxes with the now-known glyph advances. The main loop coalesces it. */
+void macos9_window_request_reformat(struct gui_window *g) { if(g) g->needs_reformat = 1; }
 
 /* fixes76c -- invalidate a single rect, clipped to content_rect.
  * x, y are window coords (already include the content_rect.top /
