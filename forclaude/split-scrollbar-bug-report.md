@@ -3,8 +3,39 @@
 > Handoff dossier for a higher-capability agent tasked with designing the fix.
 > Target: MacSurf (NetSurf fork, Mac OS 9 / PowerPC / CodeWarrior 8, strict C89).
 > Page: `tinkerdifferent.com` (XenForo forum, ThemeHouse "Abyss" dark theme).
-> Date: 2026-07-04. Working tree ≈ fixes624 (uncommitted).
+> Date: 2026-07-04. Working tree ≈ fixes624 (uncommitted at time of writing).
 > All line citations below were re-verified against the working-tree source before publication.
+
+---
+
+## 0. RESOLUTION — FIXED in fixes625 (hardware/QEMU verified 2026-07-04)
+
+**Status: RESOLVED.** The layered fix from §11.2 was implemented and confirmed on real
+OS 9 hardware / QEMU: `tinkerdifferent.com` and `68kmla.org` (both XenForo) now render
+full desktop layout, `c_w`/`descendant_x1` are finite, and the empty-canvas "split" is
+gone. Committed as `2a62aba9`, tag `fixes625-split-scrollbar-verified`.
+
+What shipped (the report's recommended A + B + D layers):
+- **A (choke point) — `layout.c` `layout_get_box_bbox`:** sanitize a box's
+  `width`/`height` to 0 when it is `UNKNOWN_WIDTH (INT_MAX)`, negative, or `> 1e6`
+  *before* it becomes an X/Y extent, and drive the two "clamps" (`:6748`/`:6750`) off
+  the sanitized value so they can never restore the sentinel; plus a finite ceiling on
+  the bbox accumulation. This single choke point stops the whole class regardless of
+  origin (H1/H2/H3), which is why it worked where the earlier source-only fixes622/623
+  did not.
+- **B (flex source, H2+H3) — `layout_flex.c` place-site:** reject `UNKNOWN_MAX_WIDTH`
+  in the AUTO fallback (mirroring `flex_item_intrinsic_main_size`) and hard-clamp
+  `b->width` to `FLEX_SAFE_MAX`.
+- **D (sink backstop) — `html.c`:** clamp `descendant_x1` to `1000000` before `c->width`.
+
+The confirmed origin was consistent with **H1/H2/H3 co-leading** — an un-resolved or
+computed-near-INT_MAX box width reaching the defeated bbox clamp; the choke-point fix
+made isolating the *exact* originating box unnecessary. **Upstream relevance:** the
+`overflow-x:hidden ⇒ min-content 0` rule (fixes622, CSS Flexbox §4.5) and the
+`available_main == AUTO` free-space handling (§H3, CSS Flexbox §8.1) are genuinely
+upstream-relevant; the raw `UNKNOWN_WIDTH` propagation is triggered by the fork's
+failure-tolerant layout but the *unguarded* bbox propagator is a latent upstream
+weakness worth reporting. The analysis below is preserved as-written for the record.
 
 ---
 
