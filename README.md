@@ -17,17 +17,24 @@
   </a>
 <a href="https://www.patreon.com/cw/MacSurf" target="_blank"><img src="https://github.com/mplsllc/macsurf/blob/master/patreon-banner-519x200.png" width="150" /></a>
 </p>
-<p align="center">
-  <img src="img/mactls.png" alt="Mac OS 9, meet TLS — Native, no proxy needed." width="500">
-</p></div>
 
 <h3 align="center">Supporters</h3>
 
-<p align="center"><em>MacSurf is kept alive by its Patreon supporters — thank you:</em></p>
+<p align="center"><em>MacSurf is kept alive by its supporters — thank you:</em></p>
 
 <p align="center">
-  <strong>Shlooom</strong>
+  <strong>Patreon</strong><br/>
+  Shlooom
 </p>
+
+<p align="center">
+  <strong>Ko-Fi</strong><br/>
+  kilgeist
+</p>
+
+<p align="center">
+  <img src="img/mactls.png" alt="Mac OS 9, meet TLS — Native, no proxy needed." width="500">
+</p></div>
 
 <p align="center"><h3>Intro Video</h3></p>
 
