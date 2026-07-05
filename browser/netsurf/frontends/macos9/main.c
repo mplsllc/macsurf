@@ -163,6 +163,12 @@ static void draw_status_bar(struct gui_window *gw) {
 	Rect r = gw->status_rect;
 	RGBForeColor(&black); RGBBackColor(&white);
 	EraseRect(&r); FrameRect(&r);
+	/* fixes627: pin a small chrome font before drawing the status /
+	 * hover-URL text. draw_status_bar never set the port font, so it
+	 * inherited whatever the last content plot left behind -- after the
+	 * 66px hero heading, the hover URL rendered gigantic across the
+	 * status bar. Geneva 9 (plain) is the standard OS 9 chrome size. */
+	TextFont(kFontIDGeneva); TextSize(9); TextFace(0);
 	MoveTo((short)(r.left+4), (short)(r.bottom-4));
 	if (gw->status[0]) {
 		unsigned char p[128]; size_t l = strlen(gw->status);
@@ -241,6 +247,11 @@ static void macos9_handle_menu(short menu_id, short item) {
 		(int)menu_id, (int)item);
 	switch (menu_id) {
 	case MENU_APPLE:
+		/* Item 1 = "About MacSurf..."; items 3+ are desk accessories. */
+		if (item == 1) {
+			extern void macos9_about_show(void);
+			macos9_about_show();
+		}
 		break;
 	case MENU_FILE:
 		switch (item) {

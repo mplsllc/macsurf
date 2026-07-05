@@ -453,3 +453,42 @@ void macos9_bookmark_list_show(struct gui_window *g)
 	(void)g;
 #endif
 }
+
+/* About box — shown from the Apple menu's "About MacSurf..." item. Carries the
+ * project credit and the Patreon supporter roll. When a new supporter joins,
+ * add their name to the SUPPORTERS line below (and to README.md's Supporters
+ * section). Kept as a plain StandardAlert so it needs no DITL/'ALRT' resource. */
+void macos9_about_show(void)
+{
+#ifdef __MACOS9__
+	/* Build the Pascal strings at RUNTIME (length byte + bytes). A literal
+	 * "\p..." only length-prefixes the first token, so splitting a Pascal
+	 * literal across concatenated lines yields a wrong length; and the text
+	 * renders as MacRoman, so keep it ASCII (no em dash). */
+	static const char *title =
+		"MacSurf - a web browser for Classic Mac OS 9";
+	static const char *body =
+		"Native TLS 1.3 via macTLS. Built on the NetSurf engine.\r\r"
+		"by mplsllc\r\r"
+		"Patreon supporters:\r"
+		"    Shlooom\r\r"
+		"Thank you for keeping vintage Macs on the modern web.";
+	Str255 ptitle;
+	Str255 pbody;
+	size_t tlen;
+	size_t blen;
+	short item;
+
+	tlen = strlen(title);
+	if (tlen > 255) tlen = 255;
+	ptitle[0] = (unsigned char) tlen;
+	memcpy(ptitle + 1, title, tlen);
+
+	blen = strlen(body);
+	if (blen > 255) blen = 255;
+	pbody[0] = (unsigned char) blen;
+	memcpy(pbody + 1, body, blen);
+
+	StandardAlert(kAlertNoteAlert, ptitle, pbody, NULL, &item);
+#endif
+}
