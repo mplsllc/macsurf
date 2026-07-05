@@ -21,6 +21,14 @@
   <img src="img/mactls.png" alt="Mac OS 9, meet TLS — Native, no proxy needed." width="500">
 </p></div>
 
+<h3 align="center">Supporters</h3>
+
+<p align="center"><em>MacSurf is kept alive by its Patreon supporters — thank you:</em></p>
+
+<p align="center">
+  <strong>Shlooom</strong>
+</p>
+
 <p align="center"><h3>Intro Video</h3></p>
 
 [![Watch the video](https://img.youtube.com/vi/PLpbHSXca60/hqdefault.jpg)](https://www.youtube.com/watch?v=PLpbHSXca60)
