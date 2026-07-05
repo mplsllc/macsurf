@@ -3357,6 +3357,17 @@ bool html_redraw_box(const html_content *html, struct box *box,
 	case BOX_TEXT: macos9_hrb_text++; break;
 	default: macos9_hrb_other++; break;
 	}
+#ifdef __MACOS9__
+	/* fixes620: publish the backdrop the Mac plotter composites
+	 * semi-transparent (rgba) fills, borders and text against. On entry
+	 * this is the background beneath this box -- the correct backdrop for
+	 * this box's own translucent background fill. Refreshed to the box's
+	 * resolved background before the border pass below. */
+	{
+		extern colour macos9_plot_backdrop;
+		macos9_plot_backdrop = current_background_color;
+	}
+#endif
 
 	if (html_redraw_printing && (box->flags & PRINTED))
 		return true;
@@ -3919,6 +3930,17 @@ bool html_redraw_box(const html_content *html, struct box *box,
 	       box->gadget->type == GADGET_TEXTBOX ||
 	       box->gadget->type == GADGET_PASSWORD))) &&
 	    (border_top || border_right || border_bottom || border_left)) {
+#ifdef __MACOS9__
+		/* fixes620: html_redraw_background (above) updated
+		 * current_background_color to this box's own resolved
+		 * background, so refresh the plotter backdrop before borders
+		 * -- rgba hairlines blend over the box's background, not the
+		 * page. */
+		{
+			extern colour macos9_plot_backdrop;
+			macos9_plot_backdrop = current_background_color;
+		}
+#endif
 		if (!html_redraw_borders(box, x_parent, y_parent,
 				padding_width, padding_height, &r,
 				scale, ctx))

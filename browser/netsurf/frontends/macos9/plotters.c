@@ -161,6 +161,19 @@ long macos9_grad_linear_unpack_count = 0;
 
 #include "macos9.h"
 #include "macsurf_debug.h"
+#include "macos9_webfont.h"
+
+/* fixes615 (webfonts) — lean externs to reach the current content from the
+ * paint path without pulling the full browser_window / hlcache headers into
+ * this frontend TU. All opaque pointers. */
+struct browser_window;
+struct hlcache_handle;
+struct content;
+extern struct browser_window *macos9_gw_bw(struct gui_window *g);
+extern struct hlcache_handle *browser_window_get_content(
+		struct browser_window *bw);
+extern struct content *hlcache_handle_get_content(
+		const struct hlcache_handle *handle);
 
 #ifdef __MACOS9__
 #include <Quickdraw.h>
@@ -204,12 +217,43 @@ static void LineTo(short h, short v) { (void)h; (void)v; }
  * which return the byte value. Replicate locally to avoid pulling
  * in extra headers.
  */
+/* fixes620: backdrop the plotter composites semi-transparent (rgba)
+ * fills, strokes, borders, gradient stops, shadows and text against.
+ * Published per box by html_redraw_box (content/handlers/html/redraw.c)
+ * as the current_background_color beneath the box being painted. ns
+ * colour format is 0x00BBGGRR; the top byte carries (255 - css_alpha),
+ * i.e. transparency: 0 = fully opaque, 255 = fully transparent (see
+ * nscss_color_to_ns, which NOTs the css alpha byte). Init to white;
+ * overwritten before the first real content fill. Non-static so
+ * redraw.c can reach it via `extern colour macos9_plot_backdrop`. */
+colour macos9_plot_backdrop = 0x00ffffff;
+
 static void
 macos9_colour_to_rgb(colour c, RGBColor *out)
 {
 	unsigned int r = (unsigned int)((c >>  0) & 0xff);
 	unsigned int g = (unsigned int)((c >>  8) & 0xff);
 	unsigned int b = (unsigned int)((c >> 16) & 0xff);
+	unsigned int t = (unsigned int)((c >> 24) & 0xff);
+
+	/* fixes620: composite rgba() over the current backdrop so alpha
+	 * actually blends instead of rendering solid. op = css_alpha =
+	 * 255 - transparency; out = fg*op + backdrop*(255-op) per channel.
+	 * op + t == 255 so this is a true weighted average. Integer math
+	 * only (max 255*255 = 65025, fits in int) -- no long long, CW8
+	 * safe. t == 0 is the opaque fast path (leaves fg untouched).
+	 * NS_TRANSPARENT (0x01000000) is a sentinel, not an alpha value,
+	 * so it is excluded (guarded upstream; excluding it here keeps the
+	 * pre-fix behaviour if it ever reaches a fill). */
+	if (t != 0 && c != NS_TRANSPARENT) {
+		unsigned int op = 255u - t;
+		unsigned int br = (unsigned int)((macos9_plot_backdrop >>  0) & 0xff);
+		unsigned int bgc = (unsigned int)((macos9_plot_backdrop >>  8) & 0xff);
+		unsigned int bb = (unsigned int)((macos9_plot_backdrop >> 16) & 0xff);
+		r = (r * op + br * t) / 255u;
+		g = (g * op + bgc * t) / 255u;
+		b = (b * op + bb * t) / 255u;
+	}
 
 	/* 8-bit -> 16-bit by replicating the byte (0xAB -> 0xABAB).
 	 * Standard QuickDraw idiom — same trick CopyBits / Picture
@@ -2382,6 +2426,25 @@ macos9_plot_text(const struct redraw_context *ctx,
 
 	if (fstyle == NULL || text == NULL || length == 0)
 		return NSERROR_OK;
+
+	/* fixes615 (webfonts, Item 1) — the first time we paint text in a
+	 * given @font-face family, kick off the font-file fetch so a later
+	 * round can render its glyphs. Cheap after the first sight of each
+	 * family (macos9_webfont_ensure early-returns). Round 1 only fetches. */
+	if (fstyle->families != NULL && macos9_paint_gw != NULL) {
+		struct browser_window *wf_bw = macos9_gw_bw(macos9_paint_gw);
+		struct hlcache_handle *wf_h = (wf_bw != NULL) ?
+				browser_window_get_content(wf_bw) : NULL;
+		struct content *wf_c = (wf_h != NULL) ?
+				hlcache_handle_get_content(wf_h) : NULL;
+		if (wf_c != NULL) {
+			lwc_string * const *wf_f = fstyle->families;
+			while (*wf_f != NULL) {
+				macos9_webfont_ensure(wf_c, *wf_f);
+				wf_f++;
+			}
+		}
+	}
 
 	font_id = macos9_font_id_from_style(fstyle);
 	face    = macos9_face_from_style(fstyle);

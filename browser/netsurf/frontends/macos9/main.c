@@ -723,7 +723,32 @@ void macos9_handle_key_down(const EventRecord *event) {
 	struct gui_window *gw = win ? macos9_find_window(win) : NULL;
 	char ch = (char)(event->message & charCodeMask);
 	if (event->modifiers & cmdKey) {
-		long sel = MenuKey(ch);
+		long sel;
+		/* fixes621: Cmd -/+/0 page zoom. NetSurf's scale sets the
+		 * layout viewport to (window / scale), so zooming OUT lays the
+		 * page out at a WIDER effective width -- the desktop layout --
+		 * then renders it scaled down to fit the physical window. On a
+		 * 1024x768 Mac this both shrinks-to-fit and takes the wide
+		 * layout path instead of the cramped narrow-column one.
+		 * Cmd-minus = out, Cmd-plus/equals = in, Cmd-0 = reset 100%. */
+		if (gw != NULL && gw->bw != NULL &&
+		    (ch == '-' || ch == '_' || ch == '=' || ch == '+' ||
+		     ch == '0')) {
+			extern nserror browser_window_set_scale(
+				struct browser_window *bw, float scale,
+				bool absolute);
+			if (ch == '0') {
+				browser_window_set_scale(gw->bw, 1.0, true);
+			} else if (ch == '-' || ch == '_') {
+				browser_window_set_scale(gw->bw, -0.1, false);
+			} else {
+				browser_window_set_scale(gw->bw, 0.1, false);
+			}
+			gw->needs_reformat = 1;
+			macos9_window_invalidate_content(gw);
+			return;
+		}
+		sel = MenuKey(ch);
 		if (sel != 0) {
 			macos9_handle_menu((short)((sel >> 16) & 0xFFFF),
 				(short)(sel & 0xFFFF));

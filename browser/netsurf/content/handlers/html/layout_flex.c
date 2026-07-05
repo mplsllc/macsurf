@@ -1314,8 +1314,68 @@ static bool layout_flex__place_line_items_main(
 		int *box_pos_main;
 
 		if (ctx->horizontal) {
-			b->width = item->target_main_size -
-					lh__delta_outer_width(b);
+			int tgt = item->target_main_size;
+			int delta = lh__delta_outer_width(b);
+			int floor_w;
+
+			/* fixes623: guard the flex item's used main width against
+			 * two degenerate inputs that produce the tinkerdifferent
+			 * "split" (content collapses narrow, empty viewport space
+			 * to the side):
+			 *  (a) target_main_size == AUTO (INT_MIN): AUTO - delta
+			 *      wraps to ~INT_MAX, blowing the box (and c_w) up to
+			 *      2147483647.
+			 *  (b) target_main_size below the item's min-content
+			 *      (observed 31px on node rows): layout_block_context
+			 *      then can't fit the cell text, the item fails, and
+			 *      the fixes613f tolerance zero-heights/drops it.
+			 * Resolve AUTO/negative to a real size, then floor to the
+			 * item's min-content (CSS: flex items don't shrink below
+			 * min-content; they overflow instead). */
+			if (tgt == AUTO || tgt < 0) {
+				/* fixes625 (H2): reject the UNKNOWN sentinel
+				 * (INT_MAX) when max_width/min_width was left
+				 * un-repopulated by an incomplete minmax
+				 * recompute -- mirrors flex_item_intrinsic_
+				 * main_size's guard. Without this the fallback
+				 * feeds tgt = INT_MAX -> b->width ~INT_MAX. */
+				if (b->max_width != AUTO && b->max_width > 0 &&
+						b->max_width != UNKNOWN_MAX_WIDTH) {
+					tgt = b->max_width;
+				} else if (b->min_width != AUTO &&
+						b->min_width > 0 &&
+						b->min_width != UNKNOWN_WIDTH) {
+					tgt = b->min_width;
+				} else {
+					tgt = 0;
+				}
+			}
+			b->width = tgt - delta;
+			if (b->min_width != AUTO && b->min_width > 0 &&
+					b->min_width != UNKNOWN_WIDTH) {
+				floor_w = b->min_width - delta;
+				if (b->width < floor_w) {
+					b->width = floor_w;
+				}
+			}
+			if (b->width < 0) {
+				b->width = 0;
+			}
+			/* fixes625 (H3): a huge-POSITIVE target bypasses the
+			 * AUTO/negative test above -- the INT_MAX free-space
+			 * seed from an indefinite (AUTO) available_main absorbed
+			 * by a flex-grow item lands here as tgt > 0. Hard-clamp
+			 * the used width to the container's real available main
+			 * size (or FLEX_SAFE_MAX if that is itself indefinite/
+			 * garbage). Flex-side source fix; layout_get_box_bbox's
+			 * sanitiser is the outer safety net. */
+			if (b->width > FLEX_SAFE_MAX) {
+				b->width = (ctx->available_main != AUTO &&
+						ctx->available_main > 0 &&
+						ctx->available_main <= FLEX_SAFE_MAX)
+						? ctx->available_main
+						: FLEX_SAFE_MAX;
+			}
 
 			if (!layout_flex_item(ctx, item, b->width)) {
 				/* fixes613f — tolerate a single item's content

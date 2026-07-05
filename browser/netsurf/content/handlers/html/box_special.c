@@ -42,6 +42,7 @@
 #include "css/hints.h"
 #include "desktop/frame_types.h"
 #include "content/content_factory.h"
+#include "macsurf_debug.h"
 
 #include "html/html.h"
 #include "html/private.h"
@@ -766,11 +767,68 @@ box_body(dom_node *n,
 {
 	css_color color;
 
+	/* Canvas (viewport) background per CSS 2.1 §14.2 background
+	 * propagation: the ROOT element's (<html>) background wins for the
+	 * page canvas; the <body> background propagates only when the root
+	 * has none. box_html() runs first (DOM order) and already captured a
+	 * non-transparent root background into content->background_colour, so
+	 * only fall back to <body> here when the root left it transparent.
+	 *
+	 * Upstream NetSurf read <body> unconditionally and so cleared the
+	 * canvas to the default white on pages that set the page colour on
+	 * <html> (e.g. tinkerdifferent's `html{background:#2d3238}` with a
+	 * transparent <body>) — the whole page rendered light instead of
+	 * dark. The box-paint path already honours this precedence in
+	 * html_redraw_find_bg_box; this mirrors it for the canvas clear. */
+	if (content->background_colour != NS_TRANSPARENT) {
+		return true;
+	}
+
 	css_computed_background_color(box->style, &color);
 	if (nscss_color_is_transparent(color)) {
 		content->background_colour = NS_TRANSPARENT;
 	} else {
 		content->background_colour = nscss_color_to_ns(color);
+	}
+
+	return true;
+}
+
+
+/**
+ * Document root element handler [<html>].
+ *
+ * Capture the root background for the page canvas (CSS 2.1 §14.2 — the
+ * root element's background propagates to the viewport and wins over the
+ * <body> background). Runs before box_body in DOM order.
+ */
+static bool
+box_html(dom_node *n,
+	 html_content *content,
+	 struct box *box,
+	 bool *convert_children)
+{
+	css_color color;
+
+	if (box->style != NULL) {
+		long st;
+		st = (long) css_computed_background_color(box->style, &color);
+		/* fixes621 DIAG — what the root <html> box's computed style
+		 * actually holds for background-color. Stock NetSurf paints the
+		 * base #2d3238; MacSurf paints white, so either this reads
+		 * transparent (cascade dropped html{background:#2d3238}) or it
+		 * reads the colour (then the canvas clear/root paint is at
+		 * fault). bg=0x..2d3238 transp=0 => cascade OK, paint bug;
+		 * bg=0x0 transp=1 => cascade drop. */
+		macsurf_debug_log_writef(
+			"box_html: bgstate=%ld bg=%p transp=%ld",
+			st, (void *)(unsigned long) color,
+			(long) nscss_color_is_transparent(color));
+		if (nscss_color_is_transparent(color) == false) {
+			content->background_colour = nscss_color_to_ns(color);
+		}
+	} else {
+		macsurf_debug_log_writef("box_html: style=NULL");
 	}
 
 	return true;
@@ -2062,6 +2120,10 @@ convert_special_elements(dom_node *node,
 
 	case DOM_HTML_ELEMENT_TYPE_BODY:
 		res = box_body(node, content, box, convert_children);
+		break;
+
+	case DOM_HTML_ELEMENT_TYPE_HTML:
+		res = box_html(node, content, box, convert_children);
 		break;
 
 	case DOM_HTML_ELEMENT_TYPE_BR:

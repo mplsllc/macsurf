@@ -133,7 +133,32 @@ macos9_utf8_to_macroman(const char *utf8, size_t len, char *mac_out, size_t max_
                                 /* Currency */
                                 case 0x00A5: mac_out[out_len++] = (char)0xB4; break; /* Yen */
                                 case 0x00A2: mac_out[out_len++] = (char)0xA2; break; /* Cent */
-                                default:     mac_out[out_len++] = '?'; break;
+                                default:
+                                        /* fixes615 — icon-font glyphs
+                                         * (FontAwesome / Material Design) live
+                                         * in the Unicode Private Use Area
+                                         * (U+E000..U+F8FF). NetSurf has no
+                                         * downloadable-webfont support, so
+                                         * QuickDraw can't render them and they
+                                         * fell back to '?', littering the page
+                                         * with question marks. Emit nothing
+                                         * (blank) for PUA codepoints so icon
+                                         * slots read clean; non-PUA unmapped
+                                         * chars still show '?'. */
+                                        if ((ucs4 >= 0xE000 && ucs4 <= 0xF8FF) ||
+                                            (ucs4 >= 0xF0000 && ucs4 <= 0x10FFFD)) {
+                                                /* skip — render blank. Covers the
+                                                 * BMP Private Use Area (FontAwesome,
+                                                 * glyphicons) AND Supplementary PUA
+                                                 * planes A/B (U+F0000+), where
+                                                 * Material Design Icons v5+ live
+                                                 * (e.g. mdi \F0004). Round 1 has no
+                                                 * glyph renderer yet, so blank beats
+                                                 * a '?' littering every icon slot. */
+                                        } else {
+                                                mac_out[out_len++] = '?';
+                                        }
+                                        break;
                         }
                 }
         }

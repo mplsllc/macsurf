@@ -56,6 +56,8 @@ macsurf_html_element_get_tag_type(const void *node, dom_html_element_type *type)
 			t = DOM_HTML_ELEMENT_TYPE_A;
 		else if (strcasecmp(name, "body") == 0)
 			t = DOM_HTML_ELEMENT_TYPE_BODY;
+		else if (strcasecmp(name, "html") == 0)
+			t = DOM_HTML_ELEMENT_TYPE_HTML;
 		else if (strcasecmp(name, "br") == 0)
 			t = DOM_HTML_ELEMENT_TYPE_BR;
 		else if (strcasecmp(name, "button") == 0)

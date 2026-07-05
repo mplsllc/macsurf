@@ -1392,6 +1392,25 @@ static void layout_minmax_block_inner(
 		assert(0);
 	}
 
+	/* fixes622: CSS overflow — a box whose overflow-x is other than
+	 * `visible` (hidden / scroll / auto) has an automatic minimum
+	 * content size of 0 (CSS Box Sizing 3 §4; Overflow 3). Its content
+	 * is clipped or scrolled, so it must NOT force the box (or its
+	 * ancestors) wide enough to contain that content. NetSurf accumulated
+	 * the children's full min-content regardless, so tinkerdifferent's
+	 * last-post cell (`overflow:hidden; white-space:nowrap`) reported
+	 * min=999px and dragged the whole page's min-width to 1297px on a
+	 * 984px viewport -> permanent horizontal overflow ("the split").
+	 * Reset the content-derived min here; the explicit width / min-width
+	 * handling just below re-establishes any DEFINITE minimum, and `max`
+	 * (the preferred width) is untouched. Applies to flex items too (a
+	 * flex item's automatic min size is likewise 0 when it clips). */
+	if (block->style != NULL &&
+			css_computed_overflow_x(block->style) !=
+				CSS_OVERFLOW_VISIBLE) {
+		min = 0;
+	}
+
 	/* fixed width takes priority */
 	if (block->type != BOX_TABLE_CELL && !lh__box_is_flex_item(block)) {
 		bool border_box = bs == CSS_BOX_SIZING_BORDER_BOX;
@@ -6718,18 +6737,44 @@ layout_get_box_bbox(
 		int *desc_x0, int *desc_y0,
 		int *desc_x1, int *desc_y1)
 {
-	*desc_x0 = -box->border[LEFT].width;
-	*desc_y0 = -box->border[TOP].width;
-	*desc_x1 = box->padding[LEFT] + box->width + box->padding[RIGHT] +
-			box->border[RIGHT].width;
-	*desc_y1 = box->padding[TOP] + box->height + box->padding[BOTTOM] +
-			box->border[BOTTOM].width;
-	if (*desc_x0 < -10000) *desc_x0 = 0;
-	if (*desc_y0 < -10000) *desc_y0 = 0;
-	if (*desc_x1 > 10000) *desc_x1 = (box->width > 0) ? box->width : 10000;
-	if (*desc_y1 > 10000) *desc_y1 = (box->height > 0) ? box->height : 10000;
-	if (*desc_x1 <= *desc_x0) *desc_x1 = *desc_x0 + ((box->width > 0) ? box->width : 1);
-	if (*desc_y1 <= *desc_y0) *desc_y1 = *desc_y0 + ((box->height > 0) ? box->height : 1);
+	{
+		/* fixes625 (split-scrollbar root fix, propagator catch-all):
+		 * a box that layout never resolved keeps its BIRTH width ==
+		 * UNKNOWN_WIDTH (INT_MAX); the fork's failure-tolerant paths
+		 * (fixes613f/171 etc.) zero such a box's HEIGHT but not its
+		 * WIDTH. Feeding that sentinel (or any overflowed/garbage
+		 * width) into the X extent blew descendant_x1 -> c_w up to
+		 * 2147483647 -- the tinkerdifferent "split": a ~2.1-billion-px
+		 * empty canvas beside 949px of real content. The old
+		 * `> 10000` / `<= desc_x0` clamps below were meant to catch
+		 * garbage padding/border, but they RE-INJECTED box->width
+		 * verbatim, so they were no-ops for exactly this input (the
+		 * width itself being the garbage). Sanitize width/height to 0
+		 * up front -- mirroring how a height-0 box already keeps the Y
+		 * axis clean -- and drive the clamps off the sanitized values
+		 * so they can never restore the sentinel. This is the single
+		 * choke point every descendant-extent flows through, so it
+		 * stops the whole class regardless of which layout path left
+		 * the box un-resolved. */
+		int bw = box->width;
+		int bh = box->height;
+		if (bw == UNKNOWN_WIDTH || bw < 0 || bw > LAYOUT_SAFE_MAX)
+			bw = 0;
+		if (bh < 0 || bh > LAYOUT_SAFE_MAX)
+			bh = 0;
+		*desc_x0 = -box->border[LEFT].width;
+		*desc_y0 = -box->border[TOP].width;
+		*desc_x1 = box->padding[LEFT] + bw + box->padding[RIGHT] +
+				box->border[RIGHT].width;
+		*desc_y1 = box->padding[TOP] + bh + box->padding[BOTTOM] +
+				box->border[BOTTOM].width;
+		if (*desc_x0 < -10000) *desc_x0 = 0;
+		if (*desc_y0 < -10000) *desc_y0 = 0;
+		if (*desc_x1 > 10000) *desc_x1 = (bw > 0) ? bw : 10000;
+		if (*desc_y1 > 10000) *desc_y1 = (bh > 0) ? bh : 10000;
+		if (*desc_x1 <= *desc_x0) *desc_x1 = *desc_x0 + ((bw > 0) ? bw : 1);
+		if (*desc_y1 <= *desc_y0) *desc_y1 = *desc_y0 + ((bh > 0) ? bh : 1);
+	}
 
 	/* To stop the top of text getting clipped when css line-height is
 	 * reduced, we increase the top of the descendant bbox. */
@@ -6813,8 +6858,16 @@ layout_update_descendant_bbox(
 		box->descendant_x0 = child_desc_x0;
 	if (child_desc_y0 < box->descendant_y0)
 		box->descendant_y0 = child_desc_y0;
+	/* fixes625: never let one child push the parent's descendant extent
+	 * past the finite safe ceiling. Backstops layout_get_box_bbox's
+	 * width sanitisation and also catches a child positioned at a garbage
+	 * x (child_desc_x1 = child->descendant_x1 + child_x). */
+	if (child_desc_x1 > LAYOUT_SAFE_MAX)
+		child_desc_x1 = LAYOUT_SAFE_MAX;
 	if (box->descendant_x1 < child_desc_x1)
 		box->descendant_x1 = child_desc_x1;
+	if (child_desc_y1 > LAYOUT_SAFE_MAX)
+		child_desc_y1 = LAYOUT_SAFE_MAX;
 	if (box->descendant_y1 < child_desc_y1)
 		box->descendant_y1 = child_desc_y1;
 }

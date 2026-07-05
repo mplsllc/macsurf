@@ -82,6 +82,7 @@ static long macos9_html_reformat_seq = 0;
 char macos9_html_head[64];
 unsigned int macos9_html_head_len = 0;
 
+#include <libcss/font_face.h>
 #include "html/private.h"
 #include "html/dom_event.h"
 #include "html/css.h"
@@ -387,6 +388,71 @@ html_proceed_to_done(html_content *html)
 		break;
 	}
 	return NSERROR_UNKNOWN;
+}
+
+
+/* fixes615 (webfonts, Item 1) — resolve a CSS font-family name to a
+ * downloadable @font-face src URL we can rasterize (raw sfnt / OpenType /
+ * WOFF), joined against the document base. Returns a NEW nsurl ref (caller
+ * unrefs) or NULL if the family has no usable @font-face URI rule.
+ *
+ * libcss fully parses @font-face and exposes css_select_font_faces(), but
+ * nothing in NetSurf ever calls it, so downloadable webfonts (how modern
+ * sites ship icon fonts — FontAwesome, Material Design) never render. This
+ * lives in core because it needs the html content's own select ctx / media /
+ * unit ctx. The macos9 frontend calls it during paint (see macos9_webfont.c)
+ * and fetches the returned URL. WOFF2 (format UNKNOWN) is skipped — it needs
+ * Brotli, which is out of scope. */
+struct nsurl *html_macsurf_font_face_url(struct content *c, lwc_string *family)
+{
+	html_content *htmlc = (html_content *) c;
+	css_select_font_faces_results *res = NULL;
+	struct nsurl *out = NULL;
+
+	if (c == NULL || family == NULL || htmlc->select_ctx == NULL)
+		return NULL;
+
+	if (css_select_font_faces(htmlc->select_ctx, &htmlc->media,
+			&htmlc->unit_len_ctx, family, &res) != CSS_OK)
+		return NULL;
+	if (res == NULL)
+		return NULL;
+
+	if (res->n_font_faces > 0) {
+		const css_font_face *ff = res->font_faces[0];
+		uint32_t nsrc = 0;
+		uint32_t i;
+
+		css_font_face_count_srcs(ff, &nsrc);
+		for (i = 0; i < nsrc && out == NULL; i++) {
+			const css_font_face_src *src = NULL;
+			css_font_face_format fmt;
+			lwc_string *loc = NULL;
+
+			if (css_font_face_get_src(ff, i, &src) != CSS_OK ||
+					src == NULL)
+				continue;
+			if (css_font_face_src_location_type(src) !=
+					CSS_FONT_FACE_LOCATION_TYPE_URI)
+				continue;
+			/* Only formats we can rasterize: raw sfnt (OpenType/
+			 * TrueType), WOFF (zlib-wrapped sfnt), or an unspecified
+			 * hint (guess sfnt). Skip EOT, SVG fonts, and UNKNOWN
+			 * (woff2). */
+			fmt = css_font_face_src_format(src);
+			if (fmt != CSS_FONT_FACE_FORMAT_UNSPECIFIED &&
+					fmt != CSS_FONT_FACE_FORMAT_WOFF &&
+					fmt != CSS_FONT_FACE_FORMAT_OPENTYPE)
+				continue;
+			if (css_font_face_src_get_location(src, &loc) != CSS_OK ||
+					loc == NULL)
+				continue;
+			nsurl_join(htmlc->base_url, lwc_string_data(loc), &out);
+		}
+	}
+
+	css_select_font_faces_results_destroy(res);
+	return out;
 }
 
 
@@ -1728,7 +1794,19 @@ static void html_reformat(struct content *c, int width, int height)
 		layout->padding[BOTTOM] + layout->border[BOTTOM].width +
 		layout->margin[BOTTOM];
 
-	/* if boxes overflow right or bottom edge, expand to contain it */
+	/* if boxes overflow right or bottom edge, expand to contain it.
+	 * fixes625: backstop the descendant extent against a garbage/overflow
+	 * value (1000000 px -- the same ceiling as LAYOUT_SAFE_MAX, inlined
+	 * here because layout_safe.h is not on html.c's include path). The
+	 * real cause is fixed in layout_get_box_bbox + the flex place-site,
+	 * but this guarantees a regression can never again surface a
+	 * ~2.1-billion-px content width (the "split scrollbar": a giant empty
+	 * canvas beside the real page). Mirrors the documented redraw.c
+	 * +-200000 defensive-clamp gotcha. */
+	if (layout->descendant_x1 > 1000000)
+		layout->descendant_x1 = 1000000;
+	if (layout->descendant_y1 > 1000000)
+		layout->descendant_y1 = 1000000;
 	if (c->width < layout->x + layout->descendant_x1)
 		c->width = layout->x + layout->descendant_x1;
 	if (c->height < layout->y + layout->descendant_y1)
@@ -1741,6 +1819,48 @@ static void html_reformat(struct content *c, int width, int height)
 		(int)layout->descendant_x1, (int)layout->descendant_y1,
 		(int)layout->x, (int)layout->y,
 		(int)layout->width, (int)layout->height);
+
+	/* fixes624 DIAG — when descendant_x1 blows up to ~INT_MAX (the
+	 * tinkerdifferent "split": content is 949 wide but one box overflows
+	 * to 2147483647, making the canvas that wide with empty base beside
+	 * the content), walk the tree and log the boxes whose OWN x/width is
+	 * garbage (the leak source, not the ancestors that merely inherit the
+	 * bad descendant_x1). Iterative + bounded so it can't blow the OS 9
+	 * stack. One-shot per session. */
+	if (layout != NULL && (layout->descendant_x1 > 1000000 ||
+			layout->descendant_x1 < -1000000)) {
+		static int td_garbage_dumped = 0;
+		if (td_garbage_dumped == 0) {
+			struct box *stack[256];
+			int sp = 0;
+			int found = 0;
+			td_garbage_dumped = 1;
+			stack[sp++] = layout;
+			while (sp > 0 && found < 14) {
+				struct box *bx = stack[--sp];
+				struct box *ch;
+				if (bx == NULL)
+					continue;
+				if (bx->width > 1000000 || bx->width < -1000000 ||
+						bx->x > 1000000 ||
+						bx->x < -1000000) {
+					macsurf_debug_log_writef(
+						"GARBAGEBOX type=%d x=%d w=%d dx1=%d mL=%d mR=%d",
+						(int)bx->type, (int)bx->x,
+						(int)bx->width,
+						(int)bx->descendant_x1,
+						(int)bx->margin[LEFT],
+						(int)bx->margin[RIGHT]);
+					found++;
+				}
+				for (ch = bx->children;
+						ch != NULL && sp < 256;
+						ch = ch->next) {
+					stack[sp++] = ch;
+				}
+			}
+		}
+	}
 
 	/* fixes160a — SITE summary line. Emits one compact, grep-friendly
 	 * line per page reformat with the box-tree counters stashed at

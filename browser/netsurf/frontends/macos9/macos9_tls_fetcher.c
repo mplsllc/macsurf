@@ -2029,8 +2029,8 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		    OSTLS_GetState(c->conn) == kOSTLSStateOpen) {
 			macsurf_debug_log_writef(
 				"https: handshake done host=%s resumed=%d cipher=%d",
-				c->host, 0,
-				0);
+				c->host, OSTLS_GetResumed(c->conn),
+				(int)OSTLS_GetCipherSuite(c->conn));
 			if (build_request(c) < 0) {
 				hctx_fail(c, "https: request too large");
 				return;
