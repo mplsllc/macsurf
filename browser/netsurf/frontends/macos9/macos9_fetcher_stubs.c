@@ -87,7 +87,21 @@ static const char css_default[] =
 	"table[border],table[border] td,table[border] tr{"
 	"border-color:#888;border-style:solid;border-width:1px}"
 	/* Body + headings */
-	"body{margin:8px;line-height:1.33;color:#000;background:#fff;"
+	/* fixes629: THE white-background-on-dark-sites fix. The old UA
+	 * body{background:#fff;color:#000} painted the body box WHITE over a
+	 * dark author html{background:#2d3238} canvas (box_html captured the
+	 * correct #2d3238 base, but the body box then covered it), and forced
+	 * black body text over the author's light color -- so dark-themed
+	 * sites (tinkerdifferent, any XenForo dark theme) rendered white with
+	 * black hero text. Fix: put the default text colour on the ROOT so a
+	 * dark-theme author html{color:...} is inherited by body, and set NO
+	 * background here. We do NOT add html{background} -- that would defeat
+	 * the CSS body-background->canvas propagation used by sites that set
+	 * their page colour on <body>. Plain pages still render black-on-
+	 * white: the canvas defaults to white (data->background_colour) and
+	 * html{color:#000} makes text black. */
+	"html{color:#000}"
+	"body{margin:8px;line-height:1.33;"
 	"font-family:sans-serif;font-size:13px}"
 	"h1{font-size:2em;margin:.67em 0;font-weight:bold}"
 	"h2{font-size:1.5em;margin:.83em 0;font-weight:bold}"
