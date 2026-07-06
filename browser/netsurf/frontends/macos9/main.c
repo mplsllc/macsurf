@@ -417,6 +417,25 @@ static void macos9_handle_menu(short menu_id, short item) {
 #endif
 }
 
+/* fixes659: erase the page base to WHITE, not the port's default grey.
+ * fixes629 removed the UA body{background:#fff} (it painted white OVER dark
+ * sites); the side effect is that a LIGHT site whose <html> has no background
+ * (XenForo/68kmla set their page colour on wrapper classes, not <html>) no
+ * longer covers the grey EraseRect base, so bare regions (e.g. the account
+ * nav strip) show grey. White is the correct browser-default canvas. Dark
+ * sites are unaffected: their <html> background paints over the full viewport,
+ * covering this erase exactly as it covered the old grey one. bkColor is
+ * saved/restored so anti-aliased text blending elsewhere is untouched. */
+static void macos9_erase_content_base(const Rect *r)
+{
+	RGBColor sv_bk, wht;
+	GetBackColor(&sv_bk);
+	wht.red = wht.green = wht.blue = 0xFFFF;
+	RGBBackColor(&wht);
+	EraseRect(r);
+	RGBBackColor(&sv_bk);
+}
+
 static void macos9_handle_update(const EventRecord *event) {
 #ifdef __MACOS9__
 	WindowRef win = (WindowRef)(unsigned long)event->message;
@@ -506,12 +525,12 @@ static void macos9_handle_update(const EventRecord *event) {
 	if (gworld_active) {
 		/* Erase only the dirty bbox; window-coord rect lines up with
 		 * pixel rows correctly because SetOrigin already ran. */
-		EraseRect(&update_bounds);
+		macos9_erase_content_base(&update_bounds);
 	} else {
 		/* Fallback path: paint directly into window. Flash returns. */
 		Boolean fb_top_dirty = (Boolean)(update_bounds.top < gw->content_rect.top);
 		Boolean fb_bot_dirty = (Boolean)(update_bounds.bottom > gw->content_rect.bottom);
-		EraseRect(&gw->content_rect);
+		macos9_erase_content_base(&gw->content_rect);
 		if (fb_top_dirty) {
 			macos9_window_draw_toolbar_bg(gw);
 			draw_url_bar(gw);
