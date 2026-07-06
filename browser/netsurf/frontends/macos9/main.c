@@ -19,6 +19,13 @@
 OTClientContextPtr macos9_ot_context = NULL;
 /* macTLS expects this symbol; aliased to our OT context after init. */
 OTClientContextPtr g_ostls_ot_context = NULL;
+/* fixes656 — last content scroll offset, published for the core sticky-overlay
+ * hit-test (interaction.c compute_sticky_shift). Set just before every
+ * browser_window_mouse_click/_track so the hit-test can recover the PAINTED
+ * position of position:sticky boxes (which are pinned to a viewport edge at
+ * paint time but hit-tested at their un-pinned layout position). */
+int macos9_hittest_scroll_x = 0;
+int macos9_hittest_scroll_y = 0;
 /* macEntropy host hooks (macTLS os9/ostls_entropy.h). Declared locally,
  * matching this file's extern idiom, to avoid pulling BearSSL headers
  * into main.c. LoadSeed warms cold-start; StirEntropy feeds event jitter
@@ -808,6 +815,8 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 								mods |= BROWSER_MOUSE_MOD_3;
 							x_ns = (int)p.h - gw->content_rect.left + gw->scroll_x;
 							y_ns = (int)p.v - gw->content_rect.top  + gw->scroll_y;
+							macos9_hittest_scroll_x = gw->scroll_x;
+							macos9_hittest_scroll_y = gw->scroll_y;
 							MS_LOG("content: PRESS_1");
 							browser_window_mouse_click(gw->bw,
 								BROWSER_MOUSE_PRESS_1 | mods,
@@ -1081,6 +1090,8 @@ void macos9_poll_mouse_hover(void) {
 	if (!PtInRect(p, &gw->content_rect)) return;
 	x_ns = (int)p.h - gw->content_rect.left + gw->scroll_x;
 	y_ns = (int)p.v - gw->content_rect.top  + gw->scroll_y;
+	macos9_hittest_scroll_x = gw->scroll_x;
+	macos9_hittest_scroll_y = gw->scroll_y;
 	browser_window_mouse_track(gw->bw, BROWSER_MOUSE_HOVER, x_ns, y_ns);
 #endif
 }

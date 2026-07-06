@@ -60,6 +60,8 @@
 #include "html/private.h"
 #include "html/imagemap.h"
 #include "html/interaction.h"
+#include <libcss/unit.h>	/* css_unit_len2device_px (fixes656) */
+#include <libcss/fpmath.h>	/* FIXTOINT (fixes656) */
 
 /**
  * Get pointer shape for given box
@@ -751,30 +753,148 @@ find_nearest_link(struct box *box, int bx, int by, int x, int y, int depth,
 	}
 }
 
-/* fixes655a DIAG (temporary): dump every <a href> box within ~120px of a click
- * — global coords, size, css position, box type — so we can see the geometry of
- * the notice's link vs the page links "behind" it that currently win. */
+/* fixes656 — sticky-overlay hit-test precedence.
+ *
+ * The renderer paints position:sticky boxes PINNED to a viewport edge
+ * (redraw.c "position: sticky clamp", fixes191c/201): it lays them out like
+ * position:relative, then at PAINT time shifts the box + its whole subtree by
+ * adjusting x_parent/y_parent so the painted position respects top/bottom/
+ * left/right. The DOM-order hit-test (box_at_point) does NOT apply that shift —
+ * it uses the un-pinned layout position — so a click on a pinned cookie bar /
+ * sticky header lands ~N px away in empty space and either misses or hits the
+ * page content painted BEHIND the bar. Cookie-consent bars (68kmla) are the
+ * canonical case: the Accept button is unreachable except when scrolled so far
+ * that pinned≈laid-out.
+ *
+ * These two helpers mirror the redraw pin math to recover the PAINTED position
+ * of sticky boxes for hit-testing, and — because sticky paints on top — let a
+ * link found inside a *displaced* sticky subtree take precedence over whatever
+ * the normal walk found behind it. Scroll offset comes from the frontend
+ * (set just before browser_window_mouse_click). */
+extern int macos9_hittest_scroll_x;
+extern int macos9_hittest_scroll_y;
+
 static void
-debug_dump_links_near(struct box *box, int bx, int by, int x, int y, int depth)
+compute_sticky_shift(html_content *html, struct box *box, int bx, int by,
+		int *out_sx, int *out_sy)
+{
+	css_fixed off_v = 0;
+	css_unit off_u = CSS_UNIT_PX;
+	uint8_t off_type;
+	int viewport_w, viewport_h;
+	int normal_x, normal_y, box_w, box_h;
+	int sx = 0, sy = 0;
+
+	*out_sx = 0;
+	*out_sy = 0;
+	if (box->style == NULL) {
+		return;
+	}
+
+	viewport_w = FIXTOINT(html->unit_len_ctx.viewport_width);
+	viewport_h = FIXTOINT(html->unit_len_ctx.viewport_height);
+
+	/* normal_{x,y}: painted position BEFORE pin, in viewport coords
+	 * (layout doc coord minus scroll) — matches redraw's normal_x/y. */
+	normal_x = bx - macos9_hittest_scroll_x;
+	normal_y = by - macos9_hittest_scroll_y;
+	box_w = box->width + box->padding[LEFT] + box->padding[RIGHT];
+	box_h = box->height + box->padding[TOP] + box->padding[BOTTOM];
+
+	off_type = css_computed_top(box->style, &off_v, &off_u);
+	if (off_type == CSS_TOP_SET) {
+		int top_px = (off_u == CSS_UNIT_PCT) ? 0 :
+			FIXTOINT(css_unit_len2device_px(box->style,
+				&html->unit_len_ctx, off_v, off_u));
+		if (normal_y < top_px) {
+			sy += (top_px - normal_y);
+			normal_y = top_px;
+		}
+	}
+	off_type = css_computed_bottom(box->style, &off_v, &off_u);
+	if (off_type == CSS_BOTTOM_SET && viewport_h > 0) {
+		int bot_px = (off_u == CSS_UNIT_PCT) ? 0 :
+			FIXTOINT(css_unit_len2device_px(box->style,
+				&html->unit_len_ctx, off_v, off_u));
+		int max_y = viewport_h - bot_px - box_h;
+		if (normal_y > max_y) {
+			sy -= (normal_y - max_y);
+		}
+	}
+	off_type = css_computed_left(box->style, &off_v, &off_u);
+	if (off_type == CSS_LEFT_SET) {
+		int left_px = (off_u == CSS_UNIT_PCT) ? 0 :
+			FIXTOINT(css_unit_len2device_px(box->style,
+				&html->unit_len_ctx, off_v, off_u));
+		if (normal_x < left_px) {
+			sx += (left_px - normal_x);
+			normal_x = left_px;
+		}
+	}
+	off_type = css_computed_right(box->style, &off_v, &off_u);
+	if (off_type == CSS_RIGHT_SET && viewport_w > 0) {
+		int right_px = (off_u == CSS_UNIT_PCT) ? 0 :
+			FIXTOINT(css_unit_len2device_px(box->style,
+				&html->unit_len_ctx, off_v, off_u));
+		int max_x = viewport_w - right_px - box_w;
+		if (normal_x > max_x) {
+			sx -= (normal_x - max_x);
+		}
+	}
+	*out_sx = sx;
+	*out_sy = sy;
+}
+
+/* Walk the tree accumulating the sticky pin shift (sx,sy). For any <a href>
+ * box inside a DISPLACED sticky subtree (shift != 0), measure the click's
+ * distance to the box's PAINTED rect and keep the nearest within *best_d2.
+ * Restricting to displaced subtrees means this only claims clicks that land on
+ * a pinned overlay — normal in-flow links are untouched. The nearest-within-
+ * radius test also absorbs the split-anchor case (icon box sibling of the
+ * href-carrying text box), same as find_nearest_link but in painted coords. */
+static void
+sticky_nearest_link(html_content *html, struct box *box, int bx, int by,
+		int sx, int sy, int x, int y, int depth,
+		struct box **best, long *best_d2)
 {
 	struct box *child;
+	int shift_x = sx, shift_y = sy;
+	int px, py;
 
 	if (box == NULL || depth > 100) {
 		return;
 	}
-	if (box->href != NULL &&
-	    bx >= x - 140 && bx <= x + 140 && by >= y - 120 && by <= y + 120) {
-		extern void macsurf_debug_log_writef(const char *fmt, ...);
-		unsigned int pos = (box->style != NULL) ?
-			css_computed_position(box->style) : 99;
-		macsurf_debug_log_writef(
-			"  LNK gx=%d gy=%d w=%d h=%d pos=%d type=%d",
-			bx, by, box->width, box->height, (int)pos,
-			(int)box->type);
+	if (box->style != NULL &&
+	    css_computed_position(box->style) == CSS_POSITION_STICKY) {
+		int addx = 0, addy = 0;
+		/* pass the ancestor-shifted position so a nested sticky pins
+		 * against its already-shifted parent, matching the renderer. */
+		compute_sticky_shift(html, box, bx + shift_x, by + shift_y,
+			&addx, &addy);
+		shift_x += addx;
+		shift_y += addy;
+	}
+	px = bx + shift_x;
+	py = by + shift_y;
+
+	if (box->href != NULL && (shift_x != 0 || shift_y != 0)) {
+		int x0 = px - box->border[LEFT].width;
+		int x1 = px + box->padding[LEFT] + box->width +
+			box->padding[RIGHT] + box->border[RIGHT].width;
+		int y0 = py - box->border[TOP].width;
+		int y1 = py + box->padding[TOP] + box->height +
+			box->padding[BOTTOM] + box->border[BOTTOM].width;
+		int dx = (x < x0) ? (x0 - x) : ((x > x1) ? (x - x1) : 0);
+		int dy = (y < y0) ? (y0 - y) : ((y > y1) ? (y - y1) : 0);
+		long d2 = (long)dx * (long)dx + (long)dy * (long)dy;
+		if (d2 < *best_d2) {
+			*best_d2 = d2;
+			*best = box;
+		}
 	}
 	for (child = box->children; child != NULL; child = child->next) {
-		debug_dump_links_near(child, bx + child->x, by + child->y,
-			x, y, depth + 1);
+		sticky_nearest_link(html, child, bx + child->x, by + child->y,
+			shift_x, shift_y, x, y, depth + 1, best, best_d2);
 	}
 }
 
@@ -921,6 +1041,31 @@ get_mouse_action_node(html_content *html,
 
 	/* use of box_x, box_y, or content below this point is probably a
 	 * mistake; they will refer to the last box returned by box_at_point */
+
+	/* fixes656 (sticky-overlay precedence): a click on a pinned position:sticky
+	 * bar (cookie-consent notice, sticky header) is painted on top, so it must
+	 * win over any page content link the DOM-order walk found painted BEHIND
+	 * it. Search displaced sticky subtrees in PAINTED coords for the nearest
+	 * <a href> within ~48px; if found, override whatever the normal walk chose.
+	 * Runs unconditionally (NOT gated on 'no link') — that's the whole point:
+	 * it takes precedence. Only claims clicks on actually-displaced overlays,
+	 * so ordinary pages are unaffected. */
+	{
+		struct box *sbest = NULL;
+		long sbest_d2 = 48L * 48L;
+		sticky_nearest_link(html, html->layout,
+			html->layout->margin[LEFT], html->layout->margin[TOP],
+			0, 0, x, y, 0, &sbest, &sbest_d2);
+		if (sbest != NULL) {
+			man->link.url = sbest->href;
+			man->link.target = sbest->target;
+			man->link.box = sbest;
+			man->link.is_imagemap = false;
+			if (sbest->node != NULL) {
+				man->node = sbest->node;
+			}
+		}
+	}
 
 	/* fixes654 (split-anchor click): if the DOM-order box walk found no link,
 	 * the clicked box may be part of an <a> whose inline box got split (e.g.
@@ -1613,17 +1758,6 @@ mouse_action_drag_none(html_content *html,
 	/* fire dom click event */
 	if (mouse & BROWSER_MOUSE_CLICK_1) {
 		int js_default_prevented = 0;
-		/* fixes655a DIAG: log what the click resolved to + all links near
-		 * the point, to see the notice-link-vs-content-link overlap. */
-		{
-			extern void macsurf_debug_log_writef(const char *fmt, ...);
-			macsurf_debug_log_writef(
-				"CLK2 x=%d y=%d gotlink=%d",
-				x, y, mas.link.url != NULL ? 1 : 0);
-			debug_dump_links_near(html->layout,
-				html->layout->margin[LEFT],
-				html->layout->margin[TOP], x, y, 0);
-		}
 		fire_generic_dom_event(corestring_dom_click, mas.node, true, true);
 		/* MacSurf (Gate 5): also dispatch the click through the QuickJS
 		 * shadow-DOM event layer so page scripts that use element-level AND
