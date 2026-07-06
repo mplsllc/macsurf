@@ -742,19 +742,31 @@ debug_dump_boxes_at(struct box *box, int bx, int by, int x, int y, int depth)
 	}
 	rx = x - bx;
 	ry = y - by;
-	if (rx >= -box->border[LEFT].width &&
-	    rx < box->padding[LEFT] + box->width +
-		 box->padding[RIGHT] + box->border[RIGHT].width &&
-	    ry >= -box->border[TOP].width &&
-	    ry < box->padding[TOP] + box->height +
-		 box->padding[BOTTOM] + box->border[BOTTOM].width) {
-		extern void macsurf_debug_log_writef(const char *fmt, ...);
-		unsigned int pos = (box->style != NULL) ?
-			css_computed_position(box->style) : 99;
-		macsurf_debug_log_writef(
-			"  CLKBOX d=%d gx=%d gy=%d w=%d h=%d href=%d pos=%d type=%d",
-			depth, bx, by, box->width, box->height,
-			box->href != NULL ? 1 : 0, (int)pos, (int)box->type);
+	{
+		int phys = (rx >= -box->border[LEFT].width &&
+		    rx < box->padding[LEFT] + box->width +
+			 box->padding[RIGHT] + box->border[RIGHT].width &&
+		    ry >= -box->border[TOP].width &&
+		    ry < box->padding[TOP] + box->height +
+			 box->padding[BOTTOM] + box->border[BOTTOM].width);
+		/* fixes653c: also surface any <a href> box within ~60px of the
+		 * click even if not physically containing it — so we can see where
+		 * the Accept link's box actually sits vs where we clicked. */
+		int near_href = (box->href != NULL &&
+		    rx >= -60 && rx < box->padding[LEFT] + box->width +
+			 box->padding[RIGHT] + 60 &&
+		    ry >= -60 && ry < box->padding[TOP] + box->height +
+			 box->padding[BOTTOM] + 60);
+		if (phys || near_href) {
+			extern void macsurf_debug_log_writef(const char *fmt, ...);
+			unsigned int pos = (box->style != NULL) ?
+				css_computed_position(box->style) : 99;
+			macsurf_debug_log_writef(
+				"  CLKBOX d=%d gx=%d gy=%d w=%d h=%d href=%d pos=%d type=%d phys=%d",
+				depth, bx, by, box->width, box->height,
+				box->href != NULL ? 1 : 0, (int)pos,
+				(int)box->type, phys);
+		}
 	}
 	for (child = box->children; child != NULL; child = child->next) {
 		debug_dump_boxes_at(child, bx + child->x, by + child->y,
