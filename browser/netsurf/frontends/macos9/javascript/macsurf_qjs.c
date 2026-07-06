@@ -3900,6 +3900,18 @@ unsigned char js_fire_event(struct jsthread *thread, const char *type,
 	return 1;
 }
 
+/* fixes652: real-build definition of interaction.c's click bridge (Gate 5).
+ * The js_stub.c copy is gated `#ifndef WITH_QUICKJS`, so with QuickJS ON the
+ * symbol was undefined and interaction.c failed to link the moment it was
+ * rebuilt. Return 0 ("JS did not call preventDefault") so the browser's
+ * navigation / form submit proceeds unchanged; per-element onclick handlers
+ * still fire via fire_generic_dom_event at the call site. */
+int macsurf_qjs_dispatch_dom_click(struct dom_node *target)
+{
+	(void)target;
+	return 0;
+}
+
 /* GATE 3: dispatch DOMContentLoaded then load into the JS *document*'s
  * registered listeners (document._listeners, installed by the shim at
  * register_browser_globals).  js_fire_event only ever reaches window
