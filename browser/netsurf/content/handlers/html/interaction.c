@@ -672,6 +672,59 @@ struct mouse_action_state {
  * text_box - text box
  * text_box_x - text_box
  */
+/* fixes651 (overlay click-through): positioned overlays (position:fixed or
+ * absolute — e.g. a XenForo cookie-consent bar) paint ON TOP of the page, but
+ * the DOM-order box walk in get_mouse_action_node resolves the in-flow content
+ * BENEATH them, so a click on the overlay's link is lost. This walks the box
+ * tree for the deepest <a href> box that (a) sits inside a fixed/absolute
+ * positioned subtree and (b) physically contains the point. Deeper/later boxes
+ * win (they paint last). Global coords accumulate exactly as box_next_xy's
+ * child descent does (child_global = parent_global + child->x). Depth-capped
+ * so a deeply-nested page can't overflow the small OS 9 stack (real overlays
+ * are shallow — a notice bar is a handful of levels under <body>). */
+static struct box *
+find_overlay_link_box(struct box *box, int bx, int by, int x, int y,
+		bool in_positioned, int depth)
+{
+	struct box *child;
+	struct box *found = NULL;
+	bool pos = in_positioned;
+
+	if (box == NULL || depth > 64) {
+		return NULL;
+	}
+	if (box->style != NULL) {
+		unsigned int p = css_computed_position(box->style);
+		if (p == CSS_POSITION_FIXED || p == CSS_POSITION_ABSOLUTE) {
+			pos = true;
+		}
+	}
+	for (child = box->children; child != NULL; child = child->next) {
+		struct box *r = find_overlay_link_box(child,
+				bx + child->x, by + child->y,
+				x, y, pos, depth + 1);
+		if (r != NULL) {
+			found = r;
+		}
+	}
+	if (found != NULL) {
+		return found;
+	}
+	if (pos && box->href != NULL) {
+		int rx = x - bx;
+		int ry = y - by;
+		if (rx >= -box->border[LEFT].width &&
+		    rx < box->padding[LEFT] + box->width +
+			 box->padding[RIGHT] + box->border[RIGHT].width &&
+		    ry >= -box->border[TOP].width &&
+		    ry < box->padding[TOP] + box->height +
+			 box->padding[BOTTOM] + box->border[BOTTOM].width) {
+			return box;
+		}
+	}
+	return NULL;
+}
+
 static nserror
 get_mouse_action_node(html_content *html,
 		      int x, int y,
@@ -815,6 +868,25 @@ get_mouse_action_node(html_content *html,
 
 	/* use of box_x, box_y, or content below this point is probably a
 	 * mistake; they will refer to the last box returned by box_at_point */
+
+	/* fixes651 (overlay click-through): if the DOM-order walk found no link,
+	 * a positioned overlay (cookie bar, modal, sticky button) painted on top
+	 * of the content may own the point — prefer its link. Gated on no link so
+	 * normal link hovers/clicks skip this full-tree scan (perf). */
+	if (man->link.url == NULL) {
+		struct box *ov = find_overlay_link_box(html->layout,
+				html->layout->margin[LEFT],
+				html->layout->margin[TOP], x, y, false, 0);
+		if (ov != NULL) {
+			man->link.url = ov->href;
+			man->link.target = ov->target;
+			man->link.box = ov;
+			man->link.is_imagemap = false;
+			if (ov->node != NULL) {
+				man->node = ov->node;
+			}
+		}
+	}
 
 	assert(man->node != NULL);
 
