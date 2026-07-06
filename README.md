@@ -9,7 +9,7 @@
 <p>
   MacSurf is a web browser for Classic Mac OS 9 PowerPC. CSS3, ES5 JavaScript, and PNGs with alpha — running on a G3 iMac.
 </p>
-<em>MacSurf is a full-time project. If it brought your old Mac back to the web, every dollar helps keep development going. Also follow the progress on Patreon with daily dev logs.</em><br/><br/>
+<em>MacSurf is a full-time project. If it brought your old Mac back to the web, every dollar helps keep development going. Also follow the progress on Patreon with dev logs.</em><br/><br/>
 
 <div align="center">
   <a href="https://ko-fi.com/macsurf" target="_blank">
