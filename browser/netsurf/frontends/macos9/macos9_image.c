@@ -176,6 +176,8 @@ macos9_qti_lru_insert_mru(macos9_qt_image_content *q)
 static void
 macos9_qti_lru_touch(macos9_qt_image_content *q)
 {
+	/* fixes650 (#168): never dereference a mis-aligned (recycled) node. */
+	if (q == NULL || ((unsigned long)q & 3) != 0) return;
 	if (!q->in_lru || q->lru_prev == NULL) return; /* already MRU */
 	macos9_qti_lru_unlink(q);
 	macos9_qti_lru_insert_mru(q);
@@ -201,6 +203,21 @@ macos9_qti_lru_make_room(long need_bytes)
 			MACOS9_DECODED_IMG_MAX_BYTES &&
 			macos9_qti_lru_tail != NULL) {
 		victim = macos9_qti_lru_tail;
+		/* fixes650 (#168): if the tail node was freed and its memory
+		 * recycled into a free-list link, it reads back mis-aligned (heap
+		 * allocations are 4-byte aligned on PPC) or with in_lru cleared.
+		 * Do NOT dereference it — sever the walk (a bounded, benign cache
+		 * flush) instead of faulting inside the LRU walker, which is where
+		 * #168 actually crashes. Alignment is checked first so the in_lru
+		 * read is only reached for an aligned pointer. */
+		if (((unsigned long)victim & 3) != 0 || !victim->in_lru) {
+			macsurf_debug_log_writef(
+				"img lru: SEVER (recycled tail %p) #168 guard",
+				(void *)victim);
+			macos9_qti_lru_head = NULL;
+			macos9_qti_lru_tail = NULL;
+			break;
+		}
 		macsurf_debug_log_writef(
 			"img lru evict: qti=%p bytes=%ld global=%ld need=%ld",
 			(void *)victim,
@@ -249,6 +266,13 @@ macos9_purge_decoded_images(void)
 
 	while (macos9_qti_lru_tail != NULL) {
 		victim = macos9_qti_lru_tail;
+		/* fixes650 (#168): sever on a recycled/mis-aligned tail node
+		 * rather than dereference freed memory. */
+		if (((unsigned long)victim & 3) != 0 || !victim->in_lru) {
+			macos9_qti_lru_head = NULL;
+			macos9_qti_lru_tail = NULL;
+			break;
+		}
 		macos9_qti_lru_unlink(victim);
 		macos9_qti_lru_total_bytes -= victim->decoded_bytes;
 		if (macos9_qti_lru_total_bytes < 0)
@@ -1910,6 +1934,21 @@ macos9_qt_image_destroy(struct content *c)
 		}
 		macos9_qti_lru_unlink(qti);
 	}
+	/* fixes650 (#168): unconditional membership scrub. Even if in_lru
+	 * desynced from actual list membership (node still linked but flag
+	 * cleared, or head/tail still points here), guarantee that neither the
+	 * LRU globals nor any neighbour can keep referencing this node after it
+	 * is freed — that dangling reference is the root of the #168 UAF the LRU
+	 * walkers then crash on. (No-op after a normal in_lru unlink above.) */
+	if (macos9_qti_lru_head == qti) macos9_qti_lru_head = qti->lru_next;
+	if (macos9_qti_lru_tail == qti) macos9_qti_lru_tail = qti->lru_prev;
+	if (qti->lru_prev != NULL && qti->lru_prev->lru_next == qti)
+		qti->lru_prev->lru_next = qti->lru_next;
+	if (qti->lru_next != NULL && qti->lru_next->lru_prev == qti)
+		qti->lru_next->lru_prev = qti->lru_prev;
+	qti->lru_prev = NULL;
+	qti->lru_next = NULL;
+	qti->in_lru = false;
 
 	if (qti->bitmap != NULL) {
 		if (guit != NULL && guit->bitmap != NULL &&

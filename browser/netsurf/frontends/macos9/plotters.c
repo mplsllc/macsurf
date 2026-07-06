@@ -29,6 +29,13 @@ extern size_t macos9_bitmap_get_rowstride(void *bitmap);
 extern bool macos9_bitmap_get_opaque(void *bitmap);
 extern unsigned char *macos9_bitmap_get_mask(void *bitmap);
 extern int macos9_bitmap_get_mask_rowbytes(void *bitmap);
+/* fixes648 (Track C1): prepared-GWorld cache on the bitmap (macos9_bitmap.c). */
+extern GWorldPtr macos9_bitmap_get_prepared(void *bitmap, int render_w,
+		int render_h, bool is_opaque, int *out_src_w, int *out_src_h,
+		unsigned char **out_mask, int *out_mask_rowbytes);
+extern bool macos9_bitmap_set_prepared(void *bitmap, GWorldPtr gw,
+		int render_w, int render_h, int src_w, int src_h,
+		unsigned char *mask, int mask_rowbytes, bool is_opaque, long bytes);
 
 /* Diagnostic counters - read from main.c after redraw. */
 long macos9_plot_text_count = 0;
@@ -1910,6 +1917,13 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 	unsigned char *dst_row;
 	long dst_rowbytes;
 	long col;
+	/* fixes648 (Track C1): prepared-GWorld cache locals. */
+	GWorldPtr cached_gw = NULL;
+	int psrc_w = 0, psrc_h = 0;
+	unsigned char *pmask = NULL;
+	int pmrb = 0;
+	int prep_cached = 0;
+	int is_opaque_early = 0;
 
 	MS_ASSERT(bitmap != NULL, "plot_bitmap: bitmap is NULL");
 	(void)ctx; (void)bg;
@@ -1925,6 +1939,27 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 	SetRect(&src_rect, 0, 0, (short)bw, (short)bh);
 	SetRect(&dst_rect, (short)x, (short)y,
 		(short)(x + width), (short)(y + height));
+
+	/* fixes648 (Track C1): if this bitmap already has a prepared GWorld for
+	 * this exact render size (+ opaque/mask-presence), reuse it and jump
+	 * straight to the blit — skipping NewGWorld + the RGBA->XRGB byte-swap +
+	 * the box-filter downscale (the measured ~2.5s/paint prepare cost). The
+	 * cached pixmap is kept LockPixels'd for the entry's whole life. */
+	is_opaque_early = macos9_bitmap_get_opaque((void *)bitmap);
+	cached_gw = macos9_bitmap_get_prepared((void *)bitmap, width, height,
+			is_opaque_early ? true : false,
+			&psrc_w, &psrc_h, &pmask, &pmrb);
+	if (cached_gw != NULL) {
+		PixMapHandle cpm = GetGWorldPixMap(cached_gw);
+		if (cpm != NULL) {
+			gw = cached_gw;
+			pm = cpm;
+			SetRect(&src_rect, 0, 0, (short)psrc_w, (short)psrc_h);
+			dst_rowbytes = (*pm)->rowBytes & 0x3FFF;
+			prep_cached = 1;
+			goto do_blit;
+		}
+	}
 
 	/* useTempMem (=4) so a large source bitmap (e.g. 1600x1200 JPEG
 	 * = 7.7 MB) doesn't exhaust the app heap on every redraw. */
@@ -2134,6 +2169,7 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 		}
 	}
 
+do_blit:
 	{
 		GrafPtr save_port;
 		RgnHandle saved_clip;
@@ -2176,6 +2212,13 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 				macos9_bitmap_get_mask((void *)bitmap);
 		mask_rowbytes = is_opaque ? 0 :
 				macos9_bitmap_get_mask_rowbytes((void *)bitmap);
+		/* fixes648: on a cache hit that was box-filter-downscaled, use the
+		 * cached scaled mask; pmask==NULL means the non-downscaled case, so
+		 * keep the live mask fetched just above. */
+		if (prep_cached && pmask != NULL) {
+			mask_data = pmask;
+			mask_rowbytes = pmrb;
+		}
 
 		/* fixes203 — if the box-filter pre-downscale above swapped
 		 * src_rect from bw×bh to width×height, the original mask
@@ -2183,7 +2226,7 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 		 * Box-filter the mask to a fresh dest-sized buffer
 		 * (rowbytes rounded up to whole words for QuickDraw),
 		 * UNION over the source block. Owned locally; freed below. */
-		if (mask_data != NULL &&
+		if (!prep_cached && mask_data != NULL &&
 				(src_rect.right - src_rect.left) == (int)width &&
 				(src_rect.bottom - src_rect.top) == (int)height &&
 				(bw != (int)width || bh != (int)height)) {
@@ -2394,14 +2437,42 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 		}
 blit_done:
 		macos9_pop_clip(saved_clip);
-		/* fixes203 — release the box-filtered mask buffer. */
+		/* fixes648 (Track C1): cache the freshly-prepared GWorld (+ any
+		 * box-filtered mask) so future repaints at this size skip the whole
+		 * prepare. On success the bitmap OWNS gw + mask (kept LockPixels'd)
+		 * and we must not free/dispose them here; on decline (oversize /
+		 * budget) we fall through to the transient free + dispose below,
+		 * byte-for-byte identical to the pre-cache behaviour. */
+		if (!prep_cached) {
+			int cache_sw = src_rect.right - src_rect.left;
+			int cache_sh = src_rect.bottom - src_rect.top;
+			long cache_bytes = (long)dst_rowbytes * (long)cache_sh;
+			if (bf_small_mask != NULL)
+				cache_bytes += (long)bf_small_mask_rowbytes *
+						(long)height;
+			if (macos9_bitmap_set_prepared((void *)bitmap, gw,
+					width, height, cache_sw, cache_sh,
+					bf_small_mask, bf_small_mask_rowbytes,
+					is_opaque_early ? true : false,
+					cache_bytes)) {
+				prep_cached = 1;
+				bf_small_mask = NULL;  /* ownership -> bitmap */
+			}
+		}
+		/* fixes203 — release the box-filtered mask buffer (unless the cache
+		 * took ownership of it just above). */
 		if (bf_small_mask != NULL) {
 			free(bf_small_mask);
 		}
 	}
 
-	UnlockPixels(pm);
-	DisposeGWorld(gw);
+	/* fixes648: on a cache hit OR a successful cache store, the GWorld is now
+	 * owned by the bitmap (kept locked) — do NOT unlock/dispose it here. Only
+	 * the transient / declined path tears down. */
+	if (!prep_cached) {
+		UnlockPixels(pm);
+		DisposeGWorld(gw);
+	}
 #else
 	(void)ctx; (void)bitmap;
 	(void)x; (void)y; (void)width; (void)height; (void)bg; (void)flags;
