@@ -307,6 +307,12 @@ extern void macsurf_debug_set_title(const char *msg);
  * static (same helper as macos9_disk_cache.c — the codebase already duplicates
  * small statics like macos9_ua_for_host rather than adding a shared TU). */
 #ifdef __MACOS9__
+/* fixes647: shared MacSurfData resolver, defined in macos9_disk_cache.c.
+ * The log nests in MacSurfData/ like everything else, with a fallback to
+ * the app dir / Desktop below so the crash channel stays robust. */
+extern OSErr macos9_data_dir_get(const char *subfolder,
+		short *vRef, long *dirID);
+
 static OSErr macos9_app_dir_get(short *vRef, long *dirID)
 {
 	ProcessSerialNumber psn;
@@ -346,15 +352,19 @@ macsurf_debug_log_init(void)
 	vRefNum = 0;
 	dirID = 0;
 
-	/* fixes641 (#197): put the log next to the running application; fall
-	 * back to the boot-volume Desktop only if the app dir can't be found. */
-	err = macos9_app_dir_get(&vRefNum, &dirID);
+	/* fixes647 (#197): log lives in the shared MacSurfData folder. Fall back
+	 * to the app dir, then the boot Desktop, so the crash channel survives
+	 * even if MacSurfData can't be created. */
+	err = macos9_data_dir_get(NULL, &vRefNum, &dirID);
 	if (err != noErr) {
-		err = FindFolder(kOnSystemDisk, kDesktopFolderType,
-				kDontCreateFolder, &vRefNum, &dirID);
+		err = macos9_app_dir_get(&vRefNum, &dirID);
 		if (err != noErr) {
-			macsurf_debug_set_title("log init: dir fail");
-			return;
+			err = FindFolder(kOnSystemDisk, kDesktopFolderType,
+					kDontCreateFolder, &vRefNum, &dirID);
+			if (err != noErr) {
+				macsurf_debug_set_title("log init: dir fail");
+				return;
+			}
 		}
 	}
 

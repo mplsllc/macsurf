@@ -109,15 +109,14 @@ static OSErr macos9_app_dir_get(short *vRef, long *dirID)
 	return noErr;
 }
 
-/* Build/resolve "MacSurf Cache" under a given base directory. Creates it if
- * missing. Returns noErr + the folder's (vRefNum, dirID). */
-static OSErr cache_dir_under(short base_vref, long base_dir,
+/* Ensure a subfolder `name` exists under (base_vref, base_dir); return its
+ * (vRefNum, dirID). Creates it if missing. */
+static OSErr ensure_subdir(short base_vref, long base_dir, const char *name,
 		short *vRef, long *dirID)
 {
 	OSErr err;
 	FSSpec spec;
 	unsigned char fname[32];
-	const char *name = "MacSurf Cache";
 	size_t nlen;
 	long new_dir;
 
@@ -152,27 +151,56 @@ static OSErr cache_dir_under(short base_vref, long base_dir,
 	return noErr;
 }
 
-/* Resolve the cache folder. fixes641 (#197): create "MacSurf Cache" next to the
- * running application; fall back to the boot Desktop only if the app dir can't
- * be resolved or isn't writable. */
-static OSErr cache_dir_get(short *vRef, long *dirID)
+/* Resolve <app-or-Desktop>/MacSurfData[/subfolder], creating folders as
+ * needed. subfolder == NULL returns the MacSurfData folder itself.
+ *
+ * fixes647 (#197): consolidate everything MacSurf writes under ONE
+ * "MacSurfData" folder next to the app — Cache/ and Downloads/ subfolders,
+ * plus the Bookmarks and log files at its root. Two reasons: (1) users no
+ * longer face a scatter of "MacSurf *" folders beside the app, and (2)
+ * bookmarks live OUTSIDE Cache/, so clearing the cache can't delete them. */
+static OSErr macsurfdata_dir_get(const char *subfolder,
+		short *vRef, long *dirID)
 {
 	OSErr err;
 	short base_vref;
 	long base_dir;
 	short desk_vref;
 	long desk_dir;
+	short data_vref;
+	long data_dir;
 
 	err = macos9_app_dir_get(&base_vref, &base_dir);
-	if (err == noErr) {
-		err = cache_dir_under(base_vref, base_dir, vRef, dirID);
-		if (err == noErr) return noErr;
+	if (err != noErr) {
+		/* Fallback: boot-volume Desktop. */
+		err = FindFolder(kOnSystemDisk, kDesktopFolderType,
+				kDontCreateFolder, &desk_vref, &desk_dir);
+		if (err != noErr) return err;
+		base_vref = desk_vref;
+		base_dir = desk_dir;
 	}
-	/* Fallback: boot-volume Desktop (original behaviour). */
-	err = FindFolder(kOnSystemDisk, kDesktopFolderType,
-			kDontCreateFolder, &desk_vref, &desk_dir);
+	err = ensure_subdir(base_vref, base_dir, "MacSurfData",
+			&data_vref, &data_dir);
 	if (err != noErr) return err;
-	return cache_dir_under(desk_vref, desk_dir, vRef, dirID);
+	if (subfolder == NULL) {
+		*vRef = data_vref;
+		*dirID = data_dir;
+		return noErr;
+	}
+	return ensure_subdir(data_vref, data_dir, subfolder, vRef, dirID);
+}
+
+/* Public wrapper so other TUs (the debug log) share the same MacSurfData
+ * root. subfolder == NULL => the MacSurfData folder itself. */
+OSErr macos9_data_dir_get(const char *subfolder, short *vRef, long *dirID)
+{
+	return macsurfdata_dir_get(subfolder, vRef, dirID);
+}
+
+/* Cache folder = MacSurfData/Cache. */
+static OSErr cache_dir_get(short *vRef, long *dirID)
+{
+	return macsurfdata_dir_get("Cache", vRef, dirID);
 }
 #endif /* __MACOS9__ */
 
@@ -540,7 +568,9 @@ long macos9_bookmarks_load(char *out_buf, long buf_cap)
 	if (out_buf == NULL || buf_cap <= 0) return 0;
 	out_buf[0] = '\0';
 
-	err = cache_dir_get(&vRef, &dirID);
+	/* fixes647: bookmarks live at the MacSurfData ROOT, NOT under Cache/,
+	 * so clearing the cache never deletes them. */
+	err = macsurfdata_dir_get(NULL, &vRef, &dirID);
 	if (err != noErr) return 0;
 
 	nlen = strlen(name);
@@ -584,7 +614,8 @@ void macos9_bookmarks_save(const char *buf, long len)
 
 	if (buf == NULL || len < 0) return;
 
-	err = cache_dir_get(&vRef, &dirID);
+	/* fixes647: bookmarks live at the MacSurfData ROOT (see load). */
+	err = macsurfdata_dir_get(NULL, &vRef, &dirID);
 	if (err != noErr) return;
 
 	nlen = strlen(name);
@@ -617,64 +648,13 @@ void macos9_bookmarks_save(const char *buf, long len)
 #endif
 }
 
-/* fixes645 — resolve the "MacSurf Downloads" folder (app-relative,    */
-/* Desktop fallback) and hand back vRef/dirID so the download path can */
-/* auto-save without a modal Nav dialog. Reuses cache_dir_get's app-   */
-/* dir-first logic but targets a sibling "MacSurf Downloads" folder.   */
+/* fixes647 — downloads land in MacSurfData/Downloads (was the standalone
+ * "MacSurf Downloads" folder). Same shared MacSurfData root as cache and
+ * bookmarks, so there's one folder next to the app, not several. */
 OSErr macos9_downloads_dir_get(short *vRef, long *dirID)
 {
 #ifdef __MACOS9__
-	OSErr err;
-	short base_vref;
-	long base_dir;
-	short desk_vref;
-	long desk_dir;
-	FSSpec spec;
-	long new_dir;
-	unsigned char fname[24];
-	const char *fn = "MacSurf Downloads";
-	size_t n = strlen(fn);
-	if (n > 23) n = 23;
-	fname[0] = (unsigned char)n;
-	memcpy(fname + 1, fn, n);
-
-	err = macos9_app_dir_get(&base_vref, &base_dir);
-	if (err != noErr) {
-		err = FindFolder(kOnSystemDisk, kDesktopFolderType,
-			kDontCreateFolder, &desk_vref, &desk_dir);
-		if (err != noErr) return err;
-		base_vref = desk_vref;
-		base_dir = desk_dir;
-	}
-
-	err = FSMakeFSSpec(base_vref, base_dir, fname, &spec);
-	if (err == fnfErr) {
-		err = FSpDirCreate(&spec, smSystemScript, &new_dir);
-		if (err != noErr) return err;
-		*vRef = base_vref;
-		*dirID = new_dir;
-		return noErr;
-	} else if (err != noErr) {
-		return err;
-	}
-	/* Folder (or a same-named file) exists — resolve its dirID. */
-	{
-		CInfoPBRec pb;
-		Str63 nm;
-		memcpy(nm, fname, fname[0] + 1);
-		memset(&pb, 0, sizeof(pb));
-		pb.dirInfo.ioNamePtr = nm;
-		pb.dirInfo.ioVRefNum = base_vref;
-		pb.dirInfo.ioDrDirID = base_dir;
-		pb.dirInfo.ioFDirIndex = 0;
-		if (PBGetCatInfoSync(&pb) != noErr ||
-		    !(pb.dirInfo.ioFlAttrib & ioDirMask)) {
-			return dirNFErr;
-		}
-		*vRef = base_vref;
-		*dirID = pb.dirInfo.ioDrDirID;
-		return noErr;
-	}
+	return macsurfdata_dir_get("Downloads", vRef, dirID);
 #else
 	(void)vRef; (void)dirID;
 	return -1;

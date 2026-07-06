@@ -13,7 +13,7 @@
 - **Downloads work over HTTPS and have a manager.** Downloads auto-save to a `MacSurf Downloads` folder next to the app (server-suggested filename, sanitised for HFS + de-duplicated), and a modeless **Downloads** window lists each transfer with live byte progress and Done/Stopped status. Active downloads have a per-row **Cancel** button.
   - Root cause of the previous "HTTPS downloads do nothing": the modal save dialog (`NavPutFile`) returned `kNavInvalidSystemConfigErr` (-5699) when invoked from inside the fetch callback. Removing the modal dialog (auto-save instead) fixed it and also allows several concurrent downloads.
 - **Window maximize (zoom box) works.** Clicking the zoom box (top-right of the title bar) fills the screen below the menu bar; clicking again restores the previous size and position exactly.
-- **App-relative files.** Cache, debug log, downloads, and bookmarks now live next to the app instead of the boot-volume Desktop.
+- **One `MacSurfData` folder.** Everything MacSurf writes now nests under a single `MacSurfData` folder next to the app — `Cache/` and `Downloads/` subfolders, plus the bookmarks and debug-log files at its root — instead of a scatter of `MacSurf *` folders on the boot Desktop. Bookmarks live *outside* `Cache/`, so clearing the cache can't delete them. (One-time note: bookmarks/downloads from the earlier scattered layout aren't migrated; re-add bookmarks and delete any leftover old `MacSurf Cache` / `MacSurf Downloads` folders.)
 - **Logins are retained.** A header-parser bug that dropped the final `Set-Cookie` on a login 302 is fixed, so site logins now persist.
 
 ## Known issues

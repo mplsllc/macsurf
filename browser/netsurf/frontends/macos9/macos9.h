@@ -219,6 +219,10 @@ void macos9_download_mgr_draw(void);
 void macos9_download_mgr_click(short part, Point where);
 #ifdef __MACOS9__
 OSErr macos9_downloads_dir_get(short *vRef, long *dirID);
+/* fixes647: shared <app>/MacSurfData[/subfolder] resolver (Cache, Downloads,
+ * Bookmarks, log all nest under one MacSurfData folder). subfolder NULL =
+ * the MacSurfData folder itself. */
+OSErr macos9_data_dir_get(const char *subfolder, short *vRef, long *dirID);
 #endif
 
 struct gui_window *macos9_find_window(WindowRef w);
