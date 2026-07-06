@@ -687,11 +687,27 @@ OSErr macos9_downloads_dir_get(short *vRef, long *dirID)
 extern int urldb_load_cookies(const char *filename);
 extern int urldb_save_cookies(const char *filename);
 
-#define MACSURF_COOKIE_FILE "MacSurf Cookies"
+/* fixes649: keep cookies inside MacSurfData too. urldb only takes a path and
+ * uses MSL fopen, which resolves a bare leaf against the app dir (where the
+ * cookie file used to land, next to the app). A LEADING-COLON path is HFS
+ * "relative to that same default dir", so ":MacSurfData:MacSurf Cookies" drops
+ * it into the MacSurfData folder instead — provided the folder exists, which
+ * macos9_cookies_ensure_dir guarantees first. */
+#define MACSURF_COOKIE_FILE ":MacSurfData:MacSurf Cookies"
+
+static void macos9_cookies_ensure_dir(void)
+{
+#ifdef __MACOS9__
+	short vRef;
+	long dirID;
+	(void)macsurfdata_dir_get(NULL, &vRef, &dirID);
+#endif
+}
 
 void macos9_cookies_load(void)
 {
 	int r;
+	macos9_cookies_ensure_dir();
 	r = urldb_load_cookies(MACSURF_COOKIE_FILE);
 	macsurf_debug_log_writef("cookies: load rc=%d (%s)", r,
 		MACSURF_COOKIE_FILE);
@@ -700,6 +716,7 @@ void macos9_cookies_load(void)
 void macos9_cookies_save(void)
 {
 	int r;
+	macos9_cookies_ensure_dir();
 	r = urldb_save_cookies(MACSURF_COOKIE_FILE);
 	macsurf_debug_log_writef("cookies: save rc=%d (%s)", r,
 		MACSURF_COOKIE_FILE);
