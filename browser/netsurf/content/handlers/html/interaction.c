@@ -721,7 +721,7 @@ link_box_for_ancestor(dom_node *start)
  * *best_dist2 starts at the max radius squared and shrinks to the nearest. */
 static void
 find_nearest_link(struct box *box, int bx, int by, int x, int y, int depth,
-		struct box **best, long *best_dist2)
+		struct box **best, long *best_dist2, int *best_gx, int *best_gy)
 {
 	struct box *child;
 
@@ -741,11 +741,40 @@ find_nearest_link(struct box *box, int bx, int by, int x, int y, int depth,
 		if (d2 < *best_dist2) {
 			*best_dist2 = d2;
 			*best = box;
+			*best_gx = bx;
+			*best_gy = by;
 		}
 	}
 	for (child = box->children; child != NULL; child = child->next) {
 		find_nearest_link(child, bx + child->x, by + child->y,
-			x, y, depth + 1, best, best_dist2);
+			x, y, depth + 1, best, best_dist2, best_gx, best_gy);
+	}
+}
+
+/* fixes655a DIAG (temporary): dump every <a href> box within ~120px of a click
+ * — global coords, size, css position, box type — so we can see the geometry of
+ * the notice's link vs the page links "behind" it that currently win. */
+static void
+debug_dump_links_near(struct box *box, int bx, int by, int x, int y, int depth)
+{
+	struct box *child;
+
+	if (box == NULL || depth > 100) {
+		return;
+	}
+	if (box->href != NULL &&
+	    bx >= x - 140 && bx <= x + 140 && by >= y - 120 && by <= y + 120) {
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		unsigned int pos = (box->style != NULL) ?
+			css_computed_position(box->style) : 99;
+		macsurf_debug_log_writef(
+			"  LNK gx=%d gy=%d w=%d h=%d pos=%d type=%d",
+			bx, by, box->width, box->height, (int)pos,
+			(int)box->type);
+	}
+	for (child = box->children; child != NULL; child = child->next) {
+		debug_dump_links_near(child, bx + child->x, by + child->y,
+			x, y, depth + 1);
 	}
 }
 
@@ -914,8 +943,10 @@ get_mouse_action_node(html_content *html,
 	if (man->link.url == NULL) {
 		struct box *best = NULL;
 		long best_dist2 = 48L * 48L;
+		int bgx = 0, bgy = 0;
 		find_nearest_link(html->layout, html->layout->margin[LEFT],
-			html->layout->margin[TOP], x, y, 0, &best, &best_dist2);
+			html->layout->margin[TOP], x, y, 0, &best, &best_dist2,
+			&bgx, &bgy);
 		if (best != NULL) {
 			man->link.url = best->href;
 			man->link.target = best->target;
@@ -1582,6 +1613,17 @@ mouse_action_drag_none(html_content *html,
 	/* fire dom click event */
 	if (mouse & BROWSER_MOUSE_CLICK_1) {
 		int js_default_prevented = 0;
+		/* fixes655a DIAG: log what the click resolved to + all links near
+		 * the point, to see the notice-link-vs-content-link overlap. */
+		{
+			extern void macsurf_debug_log_writef(const char *fmt, ...);
+			macsurf_debug_log_writef(
+				"CLK2 x=%d y=%d gotlink=%d",
+				x, y, mas.link.url != NULL ? 1 : 0);
+			debug_dump_links_near(html->layout,
+				html->layout->margin[LEFT],
+				html->layout->margin[TOP], x, y, 0);
+		}
 		fire_generic_dom_event(corestring_dom_click, mas.node, true, true);
 		/* MacSurf (Gate 5): also dispatch the click through the QuickJS
 		 * shadow-DOM event layer so page scripts that use element-level AND
