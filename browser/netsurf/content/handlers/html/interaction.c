@@ -714,45 +714,6 @@ link_box_for_ancestor(dom_node *start)
 	return found;
 }
 
-/* fixes655 — spatial link fallback for split-anchor buttons. When neither the
- * box walk nor the DOM-ancestry walk resolves a link (the clicked box, e.g. a
- * flex/SVG icon, is a SIBLING of the anchor's text box and shares no href-
- * carrying ancestor the box tree can see), find the NEAREST <a href> box to the
- * click within a small radius and use it. Global coords accumulate exactly as
- * box_next_xy's child descent does (child_global = parent_global + child->x).
- * *best_dist2 starts at the max radius squared and shrinks to the nearest. */
-static void
-find_nearest_link(struct box *box, int bx, int by, int x, int y, int depth,
-		struct box **best, long *best_dist2, int *best_gx, int *best_gy)
-{
-	struct box *child;
-
-	if (box == NULL || depth > 100) {
-		return;
-	}
-	if (box->href != NULL) {
-		int x0 = bx - box->border[LEFT].width;
-		int x1 = bx + box->padding[LEFT] + box->width +
-			box->padding[RIGHT] + box->border[RIGHT].width;
-		int y0 = by - box->border[TOP].width;
-		int y1 = by + box->padding[TOP] + box->height +
-			box->padding[BOTTOM] + box->border[BOTTOM].width;
-		int dx = (x < x0) ? (x0 - x) : ((x > x1) ? (x - x1) : 0);
-		int dy = (y < y0) ? (y0 - y) : ((y > y1) ? (y - y1) : 0);
-		long d2 = (long)dx * (long)dx + (long)dy * (long)dy;
-		if (d2 < *best_dist2) {
-			*best_dist2 = d2;
-			*best = box;
-			*best_gx = bx;
-			*best_gy = by;
-		}
-	}
-	for (child = box->children; child != NULL; child = child->next) {
-		find_nearest_link(child, bx + child->x, by + child->y,
-			x, y, depth + 1, best, best_dist2, best_gx, best_gy);
-	}
-}
-
 /* fixes656 — sticky-overlay hit-test precedence.
  *
  * The renderer paints position:sticky boxes PINNED to a viewport edge
@@ -851,7 +812,7 @@ compute_sticky_shift(html_content *html, struct box *box, int bx, int by,
  * Restricting to displaced subtrees means this only claims clicks that land on
  * a pinned overlay — normal in-flow links are untouched. The nearest-within-
  * radius test also absorbs the split-anchor case (icon box sibling of the
- * href-carrying text box), same as find_nearest_link but in painted coords. */
+ * href-carrying text box), via nearest-within-radius in painted coords. */
 static void
 sticky_nearest_link(html_content *html, struct box *box, int bx, int by,
 		int sx, int sy, int x, int y, int depth,
@@ -1082,26 +1043,13 @@ get_mouse_action_node(html_content *html,
 		}
 	}
 
-	/* fixes655 (spatial fallback): still no link — the clicked box is a
-	 * sibling of the anchor's box (split flex/icon button) that the ancestry
-	 * walk can't reach. Grab the nearest <a href> box within ~48px. */
-	if (man->link.url == NULL) {
-		struct box *best = NULL;
-		long best_dist2 = 48L * 48L;
-		int bgx = 0, bgy = 0;
-		find_nearest_link(html->layout, html->layout->margin[LEFT],
-			html->layout->margin[TOP], x, y, 0, &best, &best_dist2,
-			&bgx, &bgy);
-		if (best != NULL) {
-			man->link.url = best->href;
-			man->link.target = best->target;
-			man->link.box = best;
-			man->link.is_imagemap = false;
-			if (best->node != NULL) {
-				man->node = best->node;
-			}
-		}
-	}
+	/* fixes657: the fixes655 GLOBAL nearest-<a>-within-48px fallback was
+	 * removed here — it grabbed the closest link to ANY click, so clicking
+	 * empty whitespace near a link navigated to it ("clicks links when not
+	 * even over them"). The cookie-bar / overlay case it was meant to solve is
+	 * now handled correctly and in-scope by the sticky-precedence pass above
+	 * (fixes656), which only searches actually-displaced sticky subtrees.
+	 * Non-sticky split anchors are covered by the fixes654 DOM-ancestry walk. */
 
 	assert(man->node != NULL);
 
