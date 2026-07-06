@@ -2446,17 +2446,31 @@ blit_done:
 		if (!prep_cached) {
 			int cache_sw = src_rect.right - src_rect.left;
 			int cache_sh = src_rect.bottom - src_rect.top;
-			long cache_bytes = (long)dst_rowbytes * (long)cache_sh;
-			if (bf_small_mask != NULL)
-				cache_bytes += (long)bf_small_mask_rowbytes *
-						(long)height;
-			if (macos9_bitmap_set_prepared((void *)bitmap, gw,
-					width, height, cache_sw, cache_sh,
-					bf_small_mask, bf_small_mask_rowbytes,
-					is_opaque_early ? true : false,
-					cache_bytes)) {
-				prep_cached = 1;
-				bf_small_mask = NULL;  /* ownership -> bitmap */
+			/* fixes650b (review): if this was a DOWNSCALE of a MASKED
+			 * bitmap but the box-filtered small-mask couldn't be built
+			 * (calloc failed under heap pressure), this frame already
+			 * blitted a mismatched full-res mask against the W×H source.
+			 * Do NOT cache that broken state — a cache hit would repeat
+			 * the wrong-transparency blit forever, whereas the transient
+			 * path self-heals on the next repaint once memory frees. */
+			int downscaled = (cache_sw != bw) || (cache_sh != bh);
+			int masked = (!is_opaque_early) &&
+				(macos9_bitmap_get_mask((void *)bitmap) != NULL);
+			if (!(downscaled && masked && bf_small_mask == NULL)) {
+				long cache_bytes = (long)dst_rowbytes *
+						(long)cache_sh;
+				if (bf_small_mask != NULL)
+					cache_bytes += (long)bf_small_mask_rowbytes *
+							(long)height;
+				if (macos9_bitmap_set_prepared((void *)bitmap, gw,
+						width, height, cache_sw, cache_sh,
+						bf_small_mask,
+						bf_small_mask_rowbytes,
+						is_opaque_early ? true : false,
+						cache_bytes)) {
+					prep_cached = 1;
+					bf_small_mask = NULL; /* owned by bitmap */
+				}
 			}
 		}
 		/* fixes203 — release the box-filtered mask buffer (unless the cache

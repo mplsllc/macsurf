@@ -72,13 +72,17 @@ static long g_prep_lru_bytes = 0;
 static void macos9_prep_lru_unlink(struct macos9_bitmap *bm)
 {
 	if (!bm->prep_in_lru) return;
+	/* fixes650b (review): only rewrite a global if it actually points at bm.
+	 * After a corruption-sever (head=tail=NULL) a stranded entry can still
+	 * have prep_in_lru==true with prep_lru_prev==NULL; a naive
+	 * "else head = next" would then revive the head with a dangling node. */
 	if (bm->prep_lru_prev != NULL)
 		bm->prep_lru_prev->prep_lru_next = bm->prep_lru_next;
-	else
+	else if (g_prep_lru_head == bm)
 		g_prep_lru_head = bm->prep_lru_next;
 	if (bm->prep_lru_next != NULL)
 		bm->prep_lru_next->prep_lru_prev = bm->prep_lru_prev;
-	else
+	else if (g_prep_lru_tail == bm)
 		g_prep_lru_tail = bm->prep_lru_prev;
 	bm->prep_lru_prev = NULL;
 	bm->prep_lru_next = NULL;
