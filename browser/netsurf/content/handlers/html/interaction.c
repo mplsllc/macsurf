@@ -725,6 +725,43 @@ find_overlay_link_box(struct box *box, int bx, int by, int x, int y,
 	return NULL;
 }
 
+/* fixes653 DIAG (temporary): dump every box PHYSICALLY under a click point —
+ * global x/y, size, whether it carries an href, its CSS position, and box type.
+ * Lets us see exactly what sits under the un-clickable cookie-bar Accept link
+ * (is the <a> box even there? is it positioned? does it have the href?).
+ * Remove once the overlay click issue is understood. */
+static void
+debug_dump_boxes_at(struct box *box, int bx, int by, int x, int y, int depth)
+{
+	struct box *child;
+	int rx;
+	int ry;
+
+	if (box == NULL || depth > 80) {
+		return;
+	}
+	rx = x - bx;
+	ry = y - by;
+	if (rx >= -box->border[LEFT].width &&
+	    rx < box->padding[LEFT] + box->width +
+		 box->padding[RIGHT] + box->border[RIGHT].width &&
+	    ry >= -box->border[TOP].width &&
+	    ry < box->padding[TOP] + box->height +
+		 box->padding[BOTTOM] + box->border[BOTTOM].width) {
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		unsigned int pos = (box->style != NULL) ?
+			css_computed_position(box->style) : 99;
+		macsurf_debug_log_writef(
+			"  CLKBOX d=%d gx=%d gy=%d w=%d h=%d href=%d pos=%d type=%d",
+			depth, bx, by, box->width, box->height,
+			box->href != NULL ? 1 : 0, (int)pos, (int)box->type);
+	}
+	for (child = box->children; child != NULL; child = child->next) {
+		debug_dump_boxes_at(child, bx + child->x, by + child->y,
+			x, y, depth + 1);
+	}
+}
+
 static nserror
 get_mouse_action_node(html_content *html,
 		      int x, int y,
@@ -1543,6 +1580,18 @@ mouse_action_drag_none(html_content *html,
 	/* fire dom click event */
 	if (mouse & BROWSER_MOUSE_CLICK_1) {
 		int js_default_prevented = 0;
+		/* fixes653 DIAG: log the click resolution + dump the boxes under
+		 * the point so we can see why the cookie-bar Accept isn't hit. */
+		{
+			extern void macsurf_debug_log_writef(const char *fmt, ...);
+			macsurf_debug_log_writef(
+				"CLICKDIAG x=%d y=%d link=%d action=%d",
+				x, y, mas.link.url != NULL ? 1 : 0,
+				(int)mas.result.action);
+			debug_dump_boxes_at(html->layout,
+				html->layout->margin[LEFT],
+				html->layout->margin[TOP], x, y, 0);
+		}
 		fire_generic_dom_event(corestring_dom_click, mas.node, true, true);
 		/* MacSurf (Gate 5): also dispatch the click through the QuickJS
 		 * shadow-DOM event layer so page scripts that use element-level AND
