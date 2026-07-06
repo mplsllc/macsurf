@@ -712,6 +712,43 @@ link_box_for_ancestor(dom_node *start)
 	return found;
 }
 
+/* fixes655 — spatial link fallback for split-anchor buttons. When neither the
+ * box walk nor the DOM-ancestry walk resolves a link (the clicked box, e.g. a
+ * flex/SVG icon, is a SIBLING of the anchor's text box and shares no href-
+ * carrying ancestor the box tree can see), find the NEAREST <a href> box to the
+ * click within a small radius and use it. Global coords accumulate exactly as
+ * box_next_xy's child descent does (child_global = parent_global + child->x).
+ * *best_dist2 starts at the max radius squared and shrinks to the nearest. */
+static void
+find_nearest_link(struct box *box, int bx, int by, int x, int y, int depth,
+		struct box **best, long *best_dist2)
+{
+	struct box *child;
+
+	if (box == NULL || depth > 100) {
+		return;
+	}
+	if (box->href != NULL) {
+		int x0 = bx - box->border[LEFT].width;
+		int x1 = bx + box->padding[LEFT] + box->width +
+			box->padding[RIGHT] + box->border[RIGHT].width;
+		int y0 = by - box->border[TOP].width;
+		int y1 = by + box->padding[TOP] + box->height +
+			box->padding[BOTTOM] + box->border[BOTTOM].width;
+		int dx = (x < x0) ? (x0 - x) : ((x > x1) ? (x - x1) : 0);
+		int dy = (y < y0) ? (y0 - y) : ((y > y1) ? (y - y1) : 0);
+		long d2 = (long)dx * (long)dx + (long)dy * (long)dy;
+		if (d2 < *best_dist2) {
+			*best_dist2 = d2;
+			*best = box;
+		}
+	}
+	for (child = box->children; child != NULL; child = child->next) {
+		find_nearest_link(child, bx + child->x, by + child->y,
+			x, y, depth + 1, best, best_dist2);
+	}
+}
+
 static nserror
 get_mouse_action_node(html_content *html,
 		      int x, int y,
@@ -868,6 +905,25 @@ get_mouse_action_node(html_content *html,
 			man->link.target = lb->target;
 			man->link.box = lb;
 			man->link.is_imagemap = false;
+		}
+	}
+
+	/* fixes655 (spatial fallback): still no link — the clicked box is a
+	 * sibling of the anchor's box (split flex/icon button) that the ancestry
+	 * walk can't reach. Grab the nearest <a href> box within ~48px. */
+	if (man->link.url == NULL) {
+		struct box *best = NULL;
+		long best_dist2 = 48L * 48L;
+		find_nearest_link(html->layout, html->layout->margin[LEFT],
+			html->layout->margin[TOP], x, y, 0, &best, &best_dist2);
+		if (best != NULL) {
+			man->link.url = best->href;
+			man->link.target = best->target;
+			man->link.box = best;
+			man->link.is_imagemap = false;
+			if (best->node != NULL) {
+				man->node = best->node;
+			}
 		}
 	}
 
