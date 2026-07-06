@@ -65,3 +65,6 @@ forgem/
 
 # macSSL is its own git repo at macSSL/ — manage separately (submodule or merge later)
 macSSL/
+
+# Scratch/reference dir for Claude sessions — never tracked (large HARs, logs, tars)
+forclaude/
