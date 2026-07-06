@@ -1,6 +1,7 @@
-# MacSurf next — (in progress)
+# MacSurf 1.86 — (in progress)
 
-**Status:** unreleased draft — accumulates notes for the next release. Rename to `MacSurf-<version>.md` at release time.
+**Status:** unreleased draft — accumulates notes for the 1.86 release.
+**Version note:** the 1.86 number honors 68kmla.org, the focus of the majority of this cycle's work.
 **Engine HEAD:** fixes646+ (MacSurf side)
 **Verified on:** Power Macintosh G3 iMac, Mac OS 9.2.2
 
