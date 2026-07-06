@@ -825,6 +825,9 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 							int x_ns, y_ns, rx_ns, ry_ns;
 							browser_mouse_state mods = 0;
 							Point relp;
+							int px_ns, py_ns, cx_ns, cy_ns, last_cx, last_cy;
+							int dragging = 0;
+							Point curp;
 							macos9_window_te_deactivate_url(gw);
 							if (event->modifiers & shiftKey)
 								mods |= BROWSER_MOUSE_MOD_1;
@@ -840,18 +843,49 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 							browser_window_mouse_click(gw->bw,
 								BROWSER_MOUSE_PRESS_1 | mods,
 								x_ns, y_ns);
-							/* Wait for the mouse-up that ends this click.
-							 * StillDown blocks until the user releases the
-							 * button; safe under cooperative MT because
-							 * Toolbox yields ticks while polling. */
-							while (StillDown()) { /* spin */ }
+							/* fixes662 (#192): drive a real drag so in-page text SELECTION works.
+							 * Old code busy-spun through StillDown and only sent PRESS then CLICK,
+							 * so NetSurf's textarea never saw the DRAG_1/HOLDING_1 it needs to build
+							 * a selection. Now: poll the mouse while held; once it moves past a small
+							 * threshold, start the drag (mouse_click DRAG_1 at the press point) and
+							 * feed mouse_track(DRAG_ON|HOLDING_1) as it moves; on release end the drag
+							 * with mouse_track(0). A pure click (no movement) still fires CLICK_1 so
+							 * links/buttons/caret placement are unchanged. Mirrors the framebuffer
+							 * frontend's fb_browser_window_move drag model. */
+							px_ns = x_ns; py_ns = y_ns;
+							last_cx = x_ns; last_cy = y_ns;
+							while (StillDown()) {
+								int dx, dy;
+								GetMouse(&curp);
+								cx_ns = (int)curp.h - gw->content_rect.left + gw->scroll_x;
+								cy_ns = (int)curp.v - gw->content_rect.top  + gw->scroll_y;
+								if (!dragging) {
+									dx = cx_ns - px_ns; if (dx < 0) dx = -dx;
+									dy = cy_ns - py_ns; if (dy < 0) dy = -dy;
+									if (dx > 4 || dy > 4) {
+										dragging = 1;
+										browser_window_mouse_click(gw->bw,
+											BROWSER_MOUSE_DRAG_1 | mods, px_ns, py_ns);
+									}
+								}
+								if (dragging && (cx_ns != last_cx || cy_ns != last_cy)) {
+									last_cx = cx_ns; last_cy = cy_ns;
+									browser_window_mouse_track(gw->bw,
+										BROWSER_MOUSE_DRAG_ON | BROWSER_MOUSE_HOLDING_1 | mods,
+										cx_ns, cy_ns);
+								}
+							}
 							GetMouse(&relp);
 							rx_ns = (int)relp.h - gw->content_rect.left + gw->scroll_x;
 							ry_ns = (int)relp.v - gw->content_rect.top  + gw->scroll_y;
-							MS_LOG("content: CLICK_1");
-							browser_window_mouse_click(gw->bw,
-								BROWSER_MOUSE_CLICK_1 | mods,
-								rx_ns, ry_ns);
+							if (dragging) {
+								MS_LOG("content: DRAG end");
+								browser_window_mouse_track(gw->bw, 0, rx_ns, ry_ns);
+							} else {
+								MS_LOG("content: CLICK_1");
+								browser_window_mouse_click(gw->bw,
+									BROWSER_MOUSE_CLICK_1 | mods, rx_ns, ry_ns);
+							}
 							/* inline onclick handlers run natively in the JS engine */
 						} else {
 							macos9_window_te_deactivate_url(gw);
