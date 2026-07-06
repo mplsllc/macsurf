@@ -3743,6 +3743,55 @@ unsigned char js_exec(struct jsthread *thread,
 			name ? name : "?", (long)txtlen, (void *)dsum, dhead);
 	}
 
+	/* fixes648 (regression fix): restore the per-bundle XenForo ES5 stub
+	 * substitution that fixes522 removed. QuickJS ran the real preamble /
+	 * core / editor bundles natively, but they CRASH on this engine — the
+	 * documented cascade: preamble.min.js's `div.parentNode` hiddenscroll
+	 * probe reads null and throws -> jQuery's Sizzle self-test throws ->
+	 * core-compiled.js dies on jQuery.support -> XF.Element is never
+	 * registered -> editor-compiled.js throws "newHandler of undefined". Net
+	 * effect on hardware: the reply/post editor collapses to a bare one-line
+	 * textarea (has-js never set, Froala never reveals/sizes it) — the "post
+	 * box is shrunk/missing" report. The ES5 stubs still in this file sidestep
+	 * all of it: s_xf_preamble_stub sets has-js + XF.ready, s_xf_core_stub
+	 * defines XF.Element/XF.create, s_xf_editor_stub reveals+sizes the editor
+	 * textarea (display:block, minHeight 280px). Substitute by script name;
+	 * the real (crashing) bundle never runs. jQuery is left to run natively
+	 * (the stubs are jQuery-independent), so its Sizzle crash is isolated to
+	 * its own eval and does not block the editor. This was the fixes476-481
+	 * mechanism that made real forum replies post on 68kmla under Duktape. */
+	if (name != NULL) {
+		const char *stub = NULL;
+		const char *tag = NULL;
+		if (strstr(name, "editor-compiled") != NULL) {
+			stub = s_xf_editor_stub; tag = "editor";
+		} else if (strstr(name, "preamble.min.js") != NULL) {
+			stub = s_xf_preamble_stub; tag = "preamble";
+		} else if (strstr(name, "core-compiled.js") != NULL) {
+			stub = s_xf_core_stub; tag = "core";
+		}
+		if (stub != NULL) {
+			JSValue sv;
+			macsurf_debug_log_writef(
+				"js XF stub INJECT: %s for [%s] (real bundle skipped)",
+				tag, name);
+			sv = JS_Eval(thread->ctx, stub, strlen(stub), name,
+					JS_EVAL_TYPE_GLOBAL);
+			if (JS_IsException(sv)) {
+				JSValue exc = JS_GetException(thread->ctx);
+				const char *estr = JS_ToCString(thread->ctx, exc);
+				macsurf_debug_log_writef("js XF stub %s ERR: %s",
+					tag, estr ? estr : "?");
+				if (estr != NULL) JS_FreeCString(thread->ctx, estr);
+				JS_FreeValue(thread->ctx, exc);
+			} else {
+				macsurf_debug_log_writef("js XF stub %s OK", tag);
+			}
+			JS_FreeValue(thread->ctx, sv);
+			return 1;
+		}
+	}
+
 	/* fixes522: accept ALL JavaScript.  Run every script through QuickJS
 	 * natively (ES2023) — no per-filename stubs (preamble/core/editor/
 	 * upload), no ES6->ES5 transpiler, no transpile cache.  Those were
