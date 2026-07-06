@@ -29,13 +29,6 @@ extern size_t macos9_bitmap_get_rowstride(void *bitmap);
 extern bool macos9_bitmap_get_opaque(void *bitmap);
 extern unsigned char *macos9_bitmap_get_mask(void *bitmap);
 extern int macos9_bitmap_get_mask_rowbytes(void *bitmap);
-/* fixes648 (Track C1): prepared-GWorld cache on the bitmap (macos9_bitmap.c). */
-extern GWorldPtr macos9_bitmap_get_prepared(void *bitmap, int render_w,
-		int render_h, bool is_opaque, int *out_src_w, int *out_src_h,
-		unsigned char **out_mask, int *out_mask_rowbytes);
-extern bool macos9_bitmap_set_prepared(void *bitmap, GWorldPtr gw,
-		int render_w, int render_h, int src_w, int src_h,
-		unsigned char *mask, int mask_rowbytes, bool is_opaque, long bytes);
 
 /* Diagnostic counters - read from main.c after redraw. */
 long macos9_plot_text_count = 0;
@@ -1895,6 +1888,19 @@ macos9_plot_path(const struct redraw_context *ctx,
 #endif
 	return NSERROR_OK;
 }
+
+/* fixes648/650 (Track C1): prepared-GWorld cache on the bitmap
+ * (macos9_bitmap.c). Declared HERE, not with the other bitmap externs near the
+ * top of the file, because these use GWorldPtr — a type that isn't defined
+ * until macos9.h pulls in QDOffscreen.h further down. Placing them before that
+ * include broke the parse and cascaded through the Carbon headers. */
+extern GWorldPtr macos9_bitmap_get_prepared(void *bitmap, int render_w,
+		int render_h, bool is_opaque, int *out_src_w, int *out_src_h,
+		unsigned char **out_mask, int *out_mask_rowbytes);
+extern bool macos9_bitmap_set_prepared(void *bitmap, GWorldPtr gw,
+		int render_w, int render_h, int src_w, int src_h,
+		unsigned char *mask, int mask_rowbytes, bool is_opaque,
+		long bytes);
 
 static nserror
 macos9_plot_bitmap(const struct redraw_context *ctx,
