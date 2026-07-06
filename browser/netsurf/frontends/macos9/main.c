@@ -915,25 +915,47 @@ void macos9_handle_key_down(const EventRecord *event) {
 		}
 	} else {
 		unsigned char uc;
-		int is_printable;
+		unsigned long ns_key;
+		int have_key;
+		Boolean shift_down;
 		uc = (unsigned char)ch;
-		is_printable = (uc >= 0x20 && uc < 0x7F) || uc == 0x08 || uc == 0x7F || uc == 0x0D;
-		if (is_printable && gw->bw) {
+		shift_down = (event->modifiers & shiftKey) != 0;
+		/* fixes660 (#191/#192/#194): translate the Mac key code to an
+		 * NS_KEY_* value and offer it to the focused in-page field FIRST
+		 * (caret move, Tab focus traversal, shift-arrow selection, edit).
+		 * Most Mac control-char codes already EQUAL their NS_KEY_* value:
+		 * arrows 0x1C-0x1F = NS_KEY_LEFT..DOWN 28-31, Tab 0x09 = 9,
+		 * backspace 0x08 = 8, forward-delete 0x7F = 127, CR 0x0D = 13;
+		 * only shift-Tab, Home, End and Page keys need remapping. If a
+		 * field consumes it we return; otherwise (nothing focused ->
+		 * content_keypress returns false) we fall through to window
+		 * scrolling for the navigation keys, exactly as before. */
+		ns_key = 0; have_key = 0;
+		if (uc >= 0x20 && uc < 0x7F) { ns_key = uc; have_key = 1; }
+		else switch (uc) {
+			case 0x08: ns_key = 8;   have_key = 1; break; /* backspace   */
+			case 0x7F: ns_key = 127; have_key = 1; break; /* fwd delete  */
+			case 0x0D: ns_key = 13;  have_key = 1; break; /* return      */
+			case 0x09: ns_key = shift_down ? 11 : 9; have_key = 1; break; /* (shift-)tab */
+			case 0x19: ns_key = 11;  have_key = 1; break; /* back-tab    */
+			case 0x1C: ns_key = 28;  have_key = 1; break; /* left        */
+			case 0x1D: ns_key = 29;  have_key = 1; break; /* right       */
+			case 0x1E: ns_key = 30;  have_key = 1; break; /* up          */
+			case 0x1F: ns_key = 31;  have_key = 1; break; /* down        */
+			case 0x01: ns_key = 128; have_key = 1; break; /* home = LINE_START */
+			case 0x04: ns_key = 129; have_key = 1; break; /* end  = LINE_END   */
+			case 0x0B: ns_key = 136; have_key = 1; break; /* pgup = PAGE_UP    */
+			case 0x0C: ns_key = 137; have_key = 1; break; /* pgdn = PAGE_DOWN  */
+			default: break;
+		}
+		if (have_key && gw->bw) {
 			extern bool browser_window_key_press(struct browser_window *, unsigned long);
-			if (browser_window_key_press(gw->bw, (unsigned long)uc)) {
-				macsurf_debug_log_writef("page key: 0x%02x consumed", (int)uc);
-				/* fixes101 — do NOT invalidate the whole content area here.
-				 * NetSurf calls gw_invalidate during browser_window_key_press
-				 * with the exact dirty rects (textarea field bbox + caret).
-				 * fixes100 made gw_invalidate honour those rects; this
-				 * trailing whole-content InvalRect was overriding them
-				 * with a 585x351 region, forcing ~170 DrawText calls per
-				 * keystroke on the duck-duck search results page. If
-				 * NetSurf returned true but didn't invalidate, nothing
-				 * visually changed and there is nothing to repaint. */
+			if (browser_window_key_press(gw->bw, ns_key)) {
+				macsurf_debug_log_writef("page key: 0x%02x -> ns %ld consumed", (int)uc, (long)ns_key);
 				return;
 			}
 		}
+		/* not consumed by a field -> window navigation scrolling */
 		switch (ch) {
 			case 0x1E: macos9_window_scroll_by(gw, 0, -48); break; /* up */
 			case 0x1F: macos9_window_scroll_by(gw, 0,  48); break; /* down */
