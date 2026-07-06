@@ -44,12 +44,20 @@ PROFILE_RE = re.compile(
     r'PROFILE\s+url=(?P<url>\S+)\s+total_bytes=(?P<bytes>\d+)'
     r'\s+subresources=(?P<res>\d+)')
 
-# Combined scanner so stamps and the PROFILE line are processed in
-# document order (the PROFILE line attaches to the current nav cycle).
+# Combined scanner so stamps, the PROFILE line, and the fixes640 PERFACC line
+# are processed in document order (both summary lines attach to the current
+# nav cycle). PERFACC carries the TRUSTWORTHY per-phase accumulators (honest
+# summed CPU per phase); when present it supersedes the old milestone-delta
+# math for the phase columns. ttfb may be -1 (no fetch-finished stamped).
 COMBINED_RE = re.compile(
     r'\[\+(?P<us>\d+)us\]\s+(?P<label>[^\r\n]+?)\s*(?=[\r\n\[]|\Z)'
     r'|PROFILE\s+url=(?P<purl>\S+)\s+total_bytes=(?P<pbytes>\d+)'
-    r'\s+subresources=(?P<pres>\d+)')
+    r'\s+subresources=(?P<pres>\d+)'
+    r'|PERFACC\s+tls=(?P<atls>\d+)us\s+net=(?P<anet>\d+)us'
+    r'\s+ttfb=(?P<attfb>-?\d+)us\s+parse=(?P<aparse>\d+)us'
+    r'\s+cascade=(?P<acasc>\d+)us\s+layout=(?P<alay>\d+)us'
+    r'\s+paint=(?P<apaint>\d+)us\s+js=(?P<ajs>\d+)us'
+    r'\s+reflows=(?P<areflows>\d+)\s+total=(?P<atotal>\d+)us')
 
 PHASES = [
     'nav-start',
@@ -116,12 +124,27 @@ def parse_log(path):
                 current = {'nav-start': us}
             elif current is not None:
                 current[canon] = us
-        else:
+        elif match.group('purl') is not None:
             # PROFILE line — attach page-weight metrics to the open cycle.
             if current is not None:
                 current['__bytes__'] = int(match.group('pbytes'))
                 current['__resources__'] = int(match.group('pres'))
                 current['__url__'] = match.group('purl')
+        elif match.group('atls') is not None:
+            # PERFACC line (fixes640) — trustworthy per-phase accumulators.
+            if current is not None:
+                current['__perfacc__'] = {
+                    'tls': int(match.group('atls')),
+                    'net': int(match.group('anet')),
+                    'ttfb': int(match.group('attfb')),
+                    'parse': int(match.group('aparse')),
+                    'cascade': int(match.group('acasc')),
+                    'layout': int(match.group('alay')),
+                    'paint': int(match.group('apaint')),
+                    'js': int(match.group('ajs')),
+                    'reflows': int(match.group('areflows')),
+                    'total': int(match.group('atotal')),
+                }
 
     if current is not None and len(current) > 1:
         yield current
@@ -140,11 +163,40 @@ def cycle_to_row(cycle, commit_sha, url, label):
     total_us = (max(phase_vals) - cycle['nav-start']) if phase_vals else 0
     raw = ';'.join('{}={}'.format(k, cycle[k]) for k in PHASES if k in cycle)
 
-    return {
+    base = {
         'timestamp': datetime.datetime.now().isoformat(timespec='seconds'),
         'commit_sha': commit_sha,
         'url': url or cycle.get('__url__', ''),
         'label': label,
+        'total_bytes': cycle.get('__bytes__', ''),
+        'subresources': cycle.get('__resources__', ''),
+        'raw_stamps_us': raw,
+    }
+
+    # fixes640 — prefer the TRUSTWORTHY per-phase accumulators when the PERFACC
+    # line is present. These are honest summed CPU per phase (unlike the old
+    # milestone subtraction, which produced negative garbage). total_ms here is
+    # the sum of the CPU phases — directly attributable, comparable run-over-run.
+    pa = cycle.get('__perfacc__')
+    if pa is not None:
+        def _ms(v):
+            return round(v / 1000.0, 3) if v is not None and v >= 0 else ''
+        base.update({
+            'total_ms': _ms(pa['total']),
+            'tls_handshake_ms': _ms(pa['tls']),
+            'fetch_ms': _ms(pa['ttfb']),   # ~TTFB (first completed fetch)
+            'parse_ms': _ms(pa['parse']),
+            'cascade_ms': _ms(pa['cascade']),
+            'layout_ms': _ms(pa['layout']),
+            'paint_ms': _ms(pa['paint']),
+            'js_ms': _ms(pa['js']),
+            'raw_stamps_us': raw + ';net={}us;reflows={}'.format(
+                pa['net'], pa['reflows']),
+        })
+        return base
+
+    # Legacy fallback: milestone subtraction (unreliable — kept for old logs).
+    base.update({
         'total_ms': round(total_us / 1000.0, 3),
         'tls_handshake_ms': delta_ms('tls-handshake-start', 'tls-handshake-done'),
         'fetch_ms': delta_ms('nav-start', 'fetch-finished'),
@@ -153,10 +205,8 @@ def cycle_to_row(cycle, commit_sha, url, label):
         'layout_ms': delta_ms('cascade-done', 'layout-done'),
         'paint_ms': delta_ms('layout-done', 'first-paint-done'),
         'js_ms': delta_ms('js-start', 'js-end'),
-        'total_bytes': cycle.get('__bytes__', ''),
-        'subresources': cycle.get('__resources__', ''),
-        'raw_stamps_us': raw,
-    }
+    })
+    return base
 
 
 def get_commit_sha():

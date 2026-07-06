@@ -3773,9 +3773,14 @@ unsigned char js_exec(struct jsthread *thread,
 	/* fixes586 — push/pop (nest-safe) instead of set/clear-to-0, so a
 	 * re-entrant exec can never erase an outer deadline. */
 	{
+		/* fixes640 — accumulate JS execution CPU per top-level eval. */
+		extern double macos9_micros(void);
+		extern void macsurf_profile_accum_js(long us);
 		double prevdl = qjs_deadline_push((double)QJS_SCRIPT_TIMEOUT_MS);
+		double t_js = macos9_micros();
 		val = JS_Eval(thread->ctx, src, txtlen,
 				name ? name : "<script>", JS_EVAL_TYPE_GLOBAL);
+		macsurf_profile_accum_js((long)(macos9_micros() - t_js));
 		qjs_deadline_pop(prevdl);
 	}
 	free(src);

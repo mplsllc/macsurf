@@ -390,11 +390,162 @@ void macos9_find_in_page(struct gui_window *g)
 }
 
 /* ====================================================================
- * #48 Bookmarks — unchanged in fixes352; session-only storage
+ * #48 Bookmarks — fixes645: clickable Bookmarks MENU + disk persistence
+ *
+ * Old behaviour (fixes351/352): a session-only array of URL strings and
+ * a "Show Bookmarks" StandardAlert dump — which the user (rightly)
+ * called useless: you couldn't click a bookmark to go there. This
+ * replaces it with real menu integration.
+ *
+ * Storage is now {url, label} pairs. `label` is the page title captured
+ * from the window title bar (GetWTitle) at add time, falling back to the
+ * URL. The Bookmarks menu lists each entry below "Add Bookmark" and a
+ * separator; selecting one navigates the front window to its URL. The
+ * set round-trips to a "MacSurf Bookmarks" text file (one "url\tlabel\n"
+ * record per line) via macos9_disk_cache's FSSpec I/O, so bookmarks now
+ * survive relaunch.
+ *
+ * Menu layout (MENU_BOOKMARK):
+ *   item 1  : "Add Bookmark"
+ *   item 2  : separator
+ *   item 3+ : one per bookmark (ITEM_BMK_FIRST = 3)
  * ==================================================================== */
-#define MACSURF_BOOKMARKS_MAX 32
-static char macsurf_bookmarks[MACSURF_BOOKMARKS_MAX][512];
+#define MACSURF_BOOKMARKS_MAX 64
+#define MACSURF_BMK_URL_MAX   512
+#define MACSURF_BMK_LBL_MAX   96
+
+struct macsurf_bookmark {
+	char url[MACSURF_BMK_URL_MAX];
+	char label[MACSURF_BMK_LBL_MAX];
+};
+static struct macsurf_bookmark macsurf_bookmarks[MACSURF_BOOKMARKS_MAX];
 static int macsurf_bookmark_count = 0;
+
+extern long macos9_bookmarks_load(char *out_buf, long buf_cap);
+extern void macos9_bookmarks_save(const char *buf, long len);
+
+/* Serialize the in-memory set to the on-disk file. Buffer is heap-
+ * allocated (worst case ~40 KB) — never on the OS 9 stack. */
+static void macsurf_bookmarks_persist(void)
+{
+	char *buf;
+	size_t cap, pos = 0;
+	int i;
+	if (macsurf_bookmark_count <= 0) {
+		macos9_bookmarks_save("", 0);
+		return;
+	}
+	cap = (size_t)macsurf_bookmark_count *
+		(MACSURF_BMK_URL_MAX + MACSURF_BMK_LBL_MAX + 4) + 4;
+	buf = (char *)malloc(cap);
+	if (buf == NULL) return;
+	for (i = 0; i < macsurf_bookmark_count; i++) {
+		size_t ul = strlen(macsurf_bookmarks[i].url);
+		size_t ll = strlen(macsurf_bookmarks[i].label);
+		if (pos + ul + ll + 3 >= cap) break;
+		memcpy(buf + pos, macsurf_bookmarks[i].url, ul); pos += ul;
+		buf[pos++] = '\t';
+		memcpy(buf + pos, macsurf_bookmarks[i].label, ll); pos += ll;
+		buf[pos++] = '\n';
+	}
+	macos9_bookmarks_save(buf, (long)pos);
+	free(buf);
+}
+
+/* Parse the on-disk file back into the array. Silent no-op on any
+ * failure (missing file on first run just leaves an empty set). */
+static void macsurf_bookmarks_restore(void)
+{
+	long n;
+	char *buf;
+	char *p;
+	size_t cap = MACSURF_BOOKMARKS_MAX *
+		(MACSURF_BMK_URL_MAX + MACSURF_BMK_LBL_MAX + 4) + 16;
+	buf = (char *)malloc(cap);
+	if (buf == NULL) return;
+	n = macos9_bookmarks_load(buf, (long)cap);
+	if (n <= 0) { free(buf); return; }
+	macsurf_bookmark_count = 0;
+	p = buf;
+	while (*p != '\0' && macsurf_bookmark_count < MACSURF_BOOKMARKS_MAX) {
+		char *line = p;
+		char *nl = strchr(p, '\n');
+		char *tab;
+		const char *url;
+		const char *label;
+		size_t ul, ll;
+		if (nl != NULL) { *nl = '\0'; p = nl + 1; }
+		else { p = line + strlen(line); }
+		if (line[0] == '\0') continue;
+		tab = strchr(line, '\t');
+		if (tab != NULL) { *tab = '\0'; url = line; label = tab + 1; }
+		else { url = line; label = ""; }
+		ul = strlen(url); ll = strlen(label);
+		if (ul == 0 || ul >= MACSURF_BMK_URL_MAX) continue;
+		if (ll >= MACSURF_BMK_LBL_MAX) ll = MACSURF_BMK_LBL_MAX - 1;
+		memcpy(macsurf_bookmarks[macsurf_bookmark_count].url, url, ul);
+		macsurf_bookmarks[macsurf_bookmark_count].url[ul] = '\0';
+		memcpy(macsurf_bookmarks[macsurf_bookmark_count].label, label, ll);
+		macsurf_bookmarks[macsurf_bookmark_count].label[ll] = '\0';
+		macsurf_bookmark_count++;
+	}
+	free(buf);
+}
+
+/* Rebuild the dynamic portion of the Bookmarks menu (everything after
+ * the item-2 separator). Called after add/load. AppendMenu interprets
+ * metacharacters ('/', ';', '(', '-', ...) which URLs are full of, so
+ * we append a placeholder then SetMenuItemText the real (meta-safe)
+ * label.
+ *
+ * NOTE: we do NOT call CountMenuItems — on this CW8 SDK it macro-maps to
+ * the classic CountMItems, which is absent from the linked library (link
+ * error). Instead we track how many dynamic items we appended last time
+ * in `prev_dynamic` and walk item indices ourselves (fixed layout: item
+ * 1 = Add, item 2 = separator, items 3.. = bookmarks). */
+void macos9_bookmark_menu_rebuild(void)
+{
+#ifdef __MACOS9__
+	static int prev_dynamic = 0;
+	MenuHandle m = GetMenuHandle(MENU_BOOKMARK);
+	int i;
+	short item_index;
+	if (m == NULL) return;
+	/* Delete the previously-appended block. Deleting item 3 repeatedly
+	 * collapses it (indices shift down after each delete). */
+	while (prev_dynamic > 0) { DeleteMenuItem(m, 3); prev_dynamic--; }
+	if (macsurf_bookmark_count == 0) {
+		/* Leading '(' renders the item disabled — a greyed hint. */
+		AppendMenu(m, "\p(No bookmarks yet");
+		prev_dynamic = 1;
+		return;
+	}
+	item_index = 2;                 /* last fixed item (separator) */
+	for (i = 0; i < macsurf_bookmark_count; i++) {
+		Str255 pt;
+		const char *s = (macsurf_bookmarks[i].label[0] != '\0') ?
+			macsurf_bookmarks[i].label : macsurf_bookmarks[i].url;
+		size_t ln = strlen(s);
+		if (ln > 80) ln = 80;
+		pt[0] = (unsigned char)ln;
+		memcpy(pt + 1, s, ln);
+		AppendMenu(m, "\px");
+		item_index++;
+		SetMenuItemText(m, item_index, pt);
+	}
+	prev_dynamic = macsurf_bookmark_count;
+#endif
+}
+
+/* Navigate the front window to the bookmark backing a given menu item
+ * (item numbers ITEM_BMK_FIRST.. map to bookmark index 0..). */
+void macos9_bookmark_navigate(struct gui_window *g, int menu_item)
+{
+	int idx = menu_item - ITEM_BMK_FIRST;
+	if (g == NULL) return;
+	if (idx < 0 || idx >= macsurf_bookmark_count) return;
+	macos9_window_navigate(g, macsurf_bookmarks[idx].url);
+}
 
 void macos9_bookmark_add(struct gui_window *g)
 {
@@ -408,50 +559,44 @@ void macos9_bookmark_add(struct gui_window *g)
 	u = browser_window_access_url(bw);
 	if (u == NULL) return;
 	href = nsurl_access(u);
-	if (href == NULL || strlen(href) >= 512) return;
+	if (href == NULL || strlen(href) >= MACSURF_BMK_URL_MAX) return;
 	for (i = 0; i < macsurf_bookmark_count; i++) {
-		if (strcmp(macsurf_bookmarks[i], href) == 0) return;
+		if (strcmp(macsurf_bookmarks[i].url, href) == 0) return;
 	}
 	if (macsurf_bookmark_count >= MACSURF_BOOKMARKS_MAX) return;
-	strcpy(macsurf_bookmarks[macsurf_bookmark_count], href);
+	strcpy(macsurf_bookmarks[macsurf_bookmark_count].url, href);
+	macsurf_bookmarks[macsurf_bookmark_count].label[0] = '\0';
+#ifdef __MACOS9__
+	/* Label = current page title from the window title bar. */
+	if (g->window != NULL) {
+		Str255 wt;
+		size_t ln;
+		GetWTitle(g->window, wt);
+		ln = wt[0];
+		if (ln > MACSURF_BMK_LBL_MAX - 1) ln = MACSURF_BMK_LBL_MAX - 1;
+		memcpy(macsurf_bookmarks[macsurf_bookmark_count].label,
+			wt + 1, ln);
+		macsurf_bookmarks[macsurf_bookmark_count].label[ln] = '\0';
+	}
+#endif
 	macsurf_bookmark_count++;
+	macsurf_bookmarks_persist();
+	macos9_bookmark_menu_rebuild();
 }
 
+/* Startup hook: load persisted bookmarks and populate the menu. Called
+ * from main.c after the menu bar is built. */
+void macos9_bookmarks_init(void)
+{
+	macsurf_bookmarks_restore();
+	macos9_bookmark_menu_rebuild();
+}
+
+/* Legacy "Show Bookmarks" alert — retained for ABI but no longer menu-
+ * wired (the live menu supersedes it). */
 void macos9_bookmark_list_show(struct gui_window *g)
 {
-#ifdef __MACOS9__
 	(void)g;
-	{
-		short item;
-		char buf[512];
-		int i;
-		size_t pos = 0;
-		buf[pos++] = 0;
-		if (macsurf_bookmark_count == 0) {
-			static const char *msg = "No bookmarks yet. Bookmarks "
-				"are session-scoped in V1; full persistence "
-				"queued for follow-on.";
-			size_t mlen = strlen(msg);
-			if (mlen > 250) mlen = 250;
-			memcpy(buf + 1, msg, mlen);
-			buf[0] = (char)mlen;
-		} else {
-			for (i = 0; i < macsurf_bookmark_count && pos < 250; i++) {
-				size_t ll = strlen(macsurf_bookmarks[i]);
-				if (ll > 80) ll = 80;
-				if (pos + ll + 1 > 250) break;
-				memcpy(buf + 1 + pos, macsurf_bookmarks[i], ll);
-				pos += ll;
-				buf[1 + pos++] = '\r';
-			}
-			buf[0] = (char)pos;
-		}
-		StandardAlert(kAlertNoteAlert,
-			(unsigned char *)buf, "\p", NULL, &item);
-	}
-#else
-	(void)g;
-#endif
 }
 
 /* About box — shown from the Apple menu's "About MacSurf..." item. Carries the

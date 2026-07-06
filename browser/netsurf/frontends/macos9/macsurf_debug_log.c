@@ -130,6 +130,7 @@ long macsurf__site_decoded_img_skip_budget = 0;
 #include <Files.h>
 #include <Folders.h>
 #include <Script.h>
+#include <Processes.h>   /* fixes641 (#197) — app-relative log location */
 #include <DateTimeUtils.h>
 #include <OSUtils.h>
 #include <Events.h>   /* fixes233 — TickCount() for log timestamps */
@@ -301,6 +302,32 @@ fmt_vformat(char *dst, int dst_size, const char *fmt, va_list ap)
  * circular include via macsurf_debug.h. */
 extern void macsurf_debug_set_title(const char *msg);
 
+/* fixes641 (#197): resolve the running application's own directory so the log
+ * lands next to MacSurf.app, not on the boot volume's Desktop. Duplicated
+ * static (same helper as macos9_disk_cache.c — the codebase already duplicates
+ * small statics like macos9_ua_for_host rather than adding a shared TU). */
+#ifdef __MACOS9__
+static OSErr macos9_app_dir_get(short *vRef, long *dirID)
+{
+	ProcessSerialNumber psn;
+	ProcessInfoRec      info;
+	FSSpec              appSpec;
+	OSErr               err;
+
+	psn.highLongOfPSN = 0;
+	psn.lowLongOfPSN  = kCurrentProcess;
+	memset(&info, 0, sizeof(info));
+	info.processInfoLength = sizeof(ProcessInfoRec);
+	info.processName = NULL;
+	info.processAppSpec = &appSpec;
+	err = GetProcessInformation(&psn, &info);
+	if (err != noErr) return err;
+	*vRef = appSpec.vRefNum;
+	*dirID = appSpec.parID;
+	return noErr;
+}
+#endif
+
 void
 macsurf_debug_log_init(void)
 {
@@ -319,11 +346,16 @@ macsurf_debug_log_init(void)
 	vRefNum = 0;
 	dirID = 0;
 
-	err = FindFolder(kOnSystemDisk, kDesktopFolderType,
-			kDontCreateFolder, &vRefNum, &dirID);
+	/* fixes641 (#197): put the log next to the running application; fall
+	 * back to the boot-volume Desktop only if the app dir can't be found. */
+	err = macos9_app_dir_get(&vRefNum, &dirID);
 	if (err != noErr) {
-		macsurf_debug_set_title("log init: FindFolder fail");
-		return;
+		err = FindFolder(kOnSystemDisk, kDesktopFolderType,
+				kDontCreateFolder, &vRefNum, &dirID);
+		if (err != noErr) {
+			macsurf_debug_set_title("log init: dir fail");
+			return;
+		}
 	}
 
 	name = "MacSurf Debug.log";
@@ -630,6 +662,31 @@ static int g_profile_t0_set = 0;
 static long g_profile_bytes = 0;	/* total body bytes this load   */
 static int  g_profile_resources = 0;	/* sub-resource fetches this load */
 
+/* fixes640 — TRUSTWORTHY per-load phase accumulators (microseconds).
+ *
+ * This replaces the fixes637/638 milestone-subtraction scheme, which produced
+ * negative/garbage per-phase numbers because it subtracted NON-sequential
+ * milestone timestamps (cascade overlaps parse; fetch-finished fires once per
+ * sub-resource; first-paint-done repeats). Only total_ms was ever meaningful.
+ *
+ * Instead, each phase brackets its choke function with macos9_micros() and adds
+ * the elapsed delta into one of these accumulators via the macsurf_profile_
+ * accum_* adders below. The SUM across the whole load is honest CPU-per-phase,
+ * regardless of how the phases interleave. Reset at nav start; emitted once at
+ * the real load-complete edge as the PERFACC line. All longs (the writef
+ * formatter only supports %d/%ld/%p/%s/%%; a 34s load = 34e6 us << 2.1e9). */
+static long g_accum_tls_us     = 0;	/* TLS handshake CPU               */
+static long g_accum_net_us     = 0;	/* OTRcv + deliver CPU (not idle)  */
+static long g_accum_parse_us   = 0;	/* html tokenize only (not box ctor)*/
+static long g_accum_cascade_us = 0;	/* css_select_style, summed        */
+static long g_accum_layout_us  = 0;	/* layout_document, summed          */
+static long g_accum_paint_us   = 0;	/* browser_window_redraw, summed    */
+static long g_accum_js_us      = 0;	/* js_exec, summed                  */
+static long g_accum_reflows    = 0;	/* full html_reformat passes        */
+static long g_perf_ttfb_us     = -1;	/* first fetch-finished = TTFB     */
+
+static void macsurf_profile_note_milestone(const char *label, int delta_us_i);
+
 #ifdef __MACOS9__
 static double
 profile_us_from_wide(const UnsignedWide *w)
@@ -657,6 +714,16 @@ macsurf_profile_reset(void)
 	 * session. */
 	macos9_redraw_diag_counters_reset();
 	macos9_plotter_diag_counters_reset();
+	/* fixes640 — fresh phase accumulators per load. */
+	g_accum_tls_us     = 0;
+	g_accum_net_us     = 0;
+	g_accum_parse_us   = 0;
+	g_accum_cascade_us = 0;
+	g_accum_layout_us  = 0;
+	g_accum_paint_us   = 0;
+	g_accum_js_us      = 0;
+	g_accum_reflows    = 0;
+	g_perf_ttfb_us     = -1;
 }
 
 void
@@ -680,13 +747,85 @@ macsurf_profile_stamp(const char *label)
 	if (delta_us < 0.0) delta_us = 0.0;
 	delta_us_i = (int)(delta_us + 0.5);
 	macsurf_debug_log_writef("[+%dus] %s", delta_us_i, label);
+	macsurf_profile_note_milestone(label, delta_us_i);
 #else
 	if (label == NULL) label = "(null)";
 	if (g_profile_t0_set == 0) {
 		macsurf_profile_reset();
 	}
 	macsurf_debug_log_writef("[+0us] %s", label);
+	macsurf_profile_note_milestone(label, 0);
 #endif
+}
+
+/* fixes640 — the ONLY milestone we still derive is TTFB: the first
+ * fetch-finished after nav start. On single-burst / cache-hit loads this is
+ * the main document; on a cold streaming load a tiny early sub-resource on a
+ * fast host can complete first, so treat it as "time to first completed fetch"
+ * (a rough TTFB), not an exact main-doc timing. Everything else is measured by
+ * accumulators, not milestone subtraction. */
+static void
+macsurf_profile_note_milestone(const char *label, int delta_us_i)
+{
+	if (g_perf_ttfb_us < 0 && strcmp(label, "fetch-finished") == 0)
+		g_perf_ttfb_us = (long)delta_us_i;
+}
+
+/* fixes640 — phase-time adders. Each brackets a choke function with
+ * macos9_micros() and passes the elapsed microsecond delta. Guarded
+ * non-negative (a clock hiccup or reset mid-bracket can't corrupt the sum). */
+void macsurf_profile_accum_tls(long us)     { if (us > 0) g_accum_tls_us     += us; }
+void macsurf_profile_accum_net(long us)     { if (us > 0) g_accum_net_us     += us; }
+void macsurf_profile_accum_parse(long us)   { if (us > 0) g_accum_parse_us   += us; }
+void macsurf_profile_accum_cascade(long us) { if (us > 0) g_accum_cascade_us += us; }
+void macsurf_profile_accum_layout(long us)  { if (us > 0) g_accum_layout_us  += us; }
+void macsurf_profile_accum_paint(long us)   { if (us > 0) g_accum_paint_us   += us; }
+void macsurf_profile_accum_js(long us)      { if (us > 0) g_accum_js_us      += us; }
+void macsurf_profile_note_reflow(void)      { g_accum_reflows++; }
+
+/* fixes640a (review blocker): inline <script> executes SYNCHRONOUSLY inside
+ * dom_hubbub_parser_parse_chunk (parser script callback -> js_exec -> JS_Eval),
+ * so the parse bracket in html_process_data would double-count that JS time in
+ * both parse and js. The parse bracket reads this before/after and subtracts
+ * the js delta, so parse = pure tokenize and total isn't inflated. */
+long macsurf_profile_get_js_us(void)        { return g_accum_js_us; }
+
+/* fixes640 — emit the honest per-phase breakdown ONCE at the load-complete
+ * edge (see main.c poll loop). Every field is a summed microsecond total, so
+ * they can be compared run-over-run; perf/scrape.py folds them straight into
+ * the existing history.csv columns. `total` is the sum of the CPU phases (tls
+ * is a subset of net-adjacent handshake CPU; ttfb is wall-clock, reported
+ * alongside but NOT summed into total). */
+void
+macsurf_profile_emit_phases(const char *url)
+{
+	long total;
+	(void)url;
+	total = g_accum_tls_us + g_accum_net_us + g_accum_parse_us +
+		g_accum_cascade_us + g_accum_layout_us + g_accum_paint_us +
+		g_accum_js_us;
+	macsurf_debug_log_writef(
+		"PERFACC tls=%ldus net=%ldus ttfb=%ldus parse=%ldus cascade=%ldus "
+		"layout=%ldus paint=%ldus js=%ldus reflows=%ld total=%ldus",
+		g_accum_tls_us, g_accum_net_us,
+		(g_perf_ttfb_us < 0) ? -1L : g_perf_ttfb_us,
+		g_accum_parse_us, g_accum_cascade_us, g_accum_layout_us,
+		g_accum_paint_us, g_accum_js_us, g_accum_reflows, total);
+	/* fixes640b — zero the accumulators AFTER emitting so the next load
+	 * starts clean regardless of navigation type (URL-bar, link click,
+	 * back/forward). This replaces the mid-load set_url reset that was
+	 * corrupting the numbers. A settle-reflow that fires after this emit
+	 * bleeds a little into the next load's layout/paint — a slight, rare
+	 * mis-attribution, far better than the mid-load wipe. */
+	g_accum_tls_us     = 0;
+	g_accum_net_us     = 0;
+	g_accum_parse_us   = 0;
+	g_accum_cascade_us = 0;
+	g_accum_layout_us  = 0;
+	g_accum_paint_us   = 0;
+	g_accum_js_us      = 0;
+	g_accum_reflows    = 0;
+	g_perf_ttfb_us     = -1;
 }
 
 /* fixes369 (#167) — page-weight + resource-count accounting. */
@@ -740,6 +879,17 @@ void macsurf_profile_stamp(const char *label) { (void)label; }
 void macsurf_profile_add_bytes(long n) { (void)n; }
 void macsurf_profile_count_resource(void) {}
 void macsurf_profile_emit(const char *url) { (void)url; }
+/* fixes640 — release no-op stubs for the phase accumulators. */
+void macsurf_profile_accum_tls(long us)     { (void)us; }
+void macsurf_profile_accum_net(long us)     { (void)us; }
+void macsurf_profile_accum_parse(long us)   { (void)us; }
+void macsurf_profile_accum_cascade(long us) { (void)us; }
+void macsurf_profile_accum_layout(long us)  { (void)us; }
+void macsurf_profile_accum_paint(long us)   { (void)us; }
+void macsurf_profile_accum_js(long us)      { (void)us; }
+void macsurf_profile_note_reflow(void) {}
+long macsurf_profile_get_js_us(void) { return 0; }
+void macsurf_profile_emit_phases(const char *url) { (void)url; }
 
 #endif /* MACSURF_DEBUG */
 

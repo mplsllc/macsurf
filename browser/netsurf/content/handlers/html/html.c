@@ -1092,9 +1092,25 @@ html_process_data(struct content *c, const char *data, unsigned int size)
 		macos9_html_head[copy] = '\0';
 		macos9_html_head_len = copy;
 	}
-	dom_ret = dom_hubbub_parser_parse_chunk(html->parser,
-					      (const uint8_t *) data,
-					      size);
+	{
+		/* fixes640 — accumulate HTML tokenize CPU per chunk. fixes640a:
+		 * inline <script> runs SYNCHRONOUSLY inside parse_chunk (parser
+		 * script callback -> js_exec), and JS is bracketed separately, so
+		 * subtract the JS that ran during this chunk to keep parse = pure
+		 * tokenize and avoid inflating both parse and total. */
+		extern double macos9_micros(void);
+		extern void macsurf_profile_accum_parse(long us);
+		extern long macsurf_profile_get_js_us(void);
+		double t_parse = macos9_micros();
+		long js_before = macsurf_profile_get_js_us();
+		long parse_us;
+		dom_ret = dom_hubbub_parser_parse_chunk(html->parser,
+						      (const uint8_t *) data,
+						      size);
+		parse_us = (long)(macos9_micros() - t_parse)
+				- (macsurf_profile_get_js_us() - js_before);
+		macsurf_profile_accum_parse(parse_us);
+	}
 
 	err = libdom_hubbub_error_to_nserror(dom_ret);
 
@@ -1788,6 +1804,15 @@ static void html_reformat(struct content *c, int width, int height)
 			macos9_font_measure_calls,
 			macos9_font_measure_chars,
 			free_before, free_after, max_before, max_after);
+		/* fixes640 — feed the honest per-load layout accumulator + reflow
+		 * count. layout_us is the ACTUAL time inside layout_document (the
+		 * layout-done stamp delta spans inter-reformat network idle). */
+		{
+			extern void macsurf_profile_accum_layout(long us);
+			extern void macsurf_profile_note_reflow(void);
+			macsurf_profile_accum_layout(layout_us);
+			macsurf_profile_note_reflow();
+		}
 	}
 	MS_LOG("html_reformat: post-layout_document");
 	macsurf_profile_stamp("layout-done");

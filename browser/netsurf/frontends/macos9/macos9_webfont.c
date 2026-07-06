@@ -695,12 +695,88 @@ static double g_scale;
 static double g_curx, g_cury, g_ctrlx, g_ctrly;
 static int   g_have_ctrl;
 
+/* fixes635: fill glyphs with a direct even-odd SCANLINE fill instead of a
+ * QuickDraw region. OpenRgn/CloseRgn silently degrades on complex/large glyph
+ * paths (the node-icon "angular mess"); the scanline fill is byte-identical to
+ * the Linux-verified render. Contours are flattened into this screen-space
+ * point list (subpath breaks marked), then filled span-by-span. */
+#define WF_MAXFLAT 4096
+static double g_fx[WF_MAXFLAT];
+static double g_fy[WF_MAXFLAT];
+static wf_u8  g_fbrk[WF_MAXFLAT];	/* 1 = first point of a new subpath   */
+static int    g_fn;
+static double g_ymin, g_ymax;
+
+static void
+wf_emit_pt(double gx, double gy, int is_break)
+{
+	double sx = (double) g_pen_x + gx * g_scale;
+	double sy = (double) g_base_y - gy * g_scale;
+	if (g_fn >= WF_MAXFLAT)
+		return;
+	g_fx[g_fn] = sx;
+	g_fy[g_fn] = sy;
+	g_fbrk[g_fn] = (wf_u8) (is_break ? 1 : 0);
+	g_fn++;
+	if (sy < g_ymin) g_ymin = sy;
+	if (sy > g_ymax) g_ymax = sy;
+}
+
 static void
 wf_screen_lineto(double gx, double gy)
 {
-	short sx = (short) (g_pen_x + WF_RND(gx * g_scale));
-	short sy = (short) (g_base_y - WF_RND(gy * g_scale));
-	LineTo(sx, sy);
+	wf_emit_pt(gx, gy, 0);
+}
+
+/* Even-odd scanline fill of the accumulated flattened contours, in the current
+ * foreground colour. One 1px-tall PaintRect per span (respects the clip). */
+static void
+wf_scanline_fill(void)
+{
+	int y0, y1, y;
+
+	if (g_fn < 2)
+		return;
+	y0 = (int) g_ymin;
+	y1 = (int) g_ymax + 1;
+	PenNormal();	/* solid pen so PaintRect fills flat in the fg colour */
+	for (y = y0; y < y1; y++) {
+		double yc = (double) y + 0.5;
+		double xs[128];
+		int nx = 0;
+		int i, a, b;
+		for (i = 0; i + 1 < g_fn; i++) {
+			double ya, yb, xa, xb, t;
+			if (g_fbrk[i + 1])
+				continue;	/* no edge across a subpath break */
+			ya = g_fy[i]; yb = g_fy[i + 1];
+			xa = g_fx[i]; xb = g_fx[i + 1];
+			if ((ya <= yc && yb > yc) || (yb <= yc && ya > yc)) {
+				t = (yc - ya) / (yb - ya);
+				if (nx < 128)
+					xs[nx++] = xa + t * (xb - xa);
+			}
+		}
+		for (a = 0; a < nx; a++)
+			for (b = a + 1; b < nx; b++)
+				if (xs[b] < xs[a]) {
+					double tmp = xs[a];
+					xs[a] = xs[b];
+					xs[b] = tmp;
+				}
+		for (i = 0; i + 1 < nx; i += 2) {
+			int xl = (int) (xs[i] + 0.5);
+			int xr = (int) (xs[i + 1] + 0.5);
+			if (xr > xl) {
+				Rect r;
+				r.top = (short) y;
+				r.bottom = (short) (y + 1);
+				r.left = (short) xl;
+				r.right = (short) xr;
+				PaintRect(&r);
+			}
+		}
+	}
 }
 
 static void
@@ -722,7 +798,6 @@ static void
 wf_emit_contour(const int *px, const int *py, const wf_u8 *on, int cnt)
 {
 	int startx, starty, idx, i;
-	short sx, sy;
 
 	if (cnt <= 0)
 		return;
@@ -735,9 +810,7 @@ wf_emit_contour(const int *px, const int *py, const wf_u8 *on, int cnt)
 		starty = (py[0] + py[cnt - 1]) / 2;
 		idx = 0;
 	}
-	sx = (short) (g_pen_x + WF_RND((double) startx * g_scale));
-	sy = (short) (g_base_y - WF_RND((double) starty * g_scale));
-	MoveTo(sx, sy);
+	wf_emit_pt((double) startx, (double) starty, 1);	/* new subpath */
 	g_curx = startx; g_cury = starty; g_have_ctrl = 0;
 	g_ctrlx = 0; g_ctrly = 0;
 
@@ -783,7 +856,6 @@ macos9_webfont_render(struct content *content, lwc_string *family,
 	int adv_px, base, ci;
 	short nc;
 	wf_u16 npts, insLen, fi;
-	RgnHandle rgn;
 
 	if (content == NULL || family == NULL || size_px <= 0)
 		return -1;
@@ -809,22 +881,6 @@ macos9_webfont_render(struct content *content, lwc_string *family,
 	nc = wf_rds16(g);
 	if (nc <= 0 || nc > WF_MAXCONT)
 		return adv_px;	/* composite / degenerate: skip, keep advance */
-
-	/* fixes632 DIAG — first ~15 glyph renders: codepoint, glyph id, pen
-	 * (x,baseline y), size, advance, contour count, and glyf bbox (font
-	 * units). Tells us where each icon lands vs its box so we can pin the
-	 * alignment. */
-	{
-		static int g_diag_n = 0;
-		if (g_diag_n < 15) {
-			g_diag_n++;
-			macsurf_debug_log_writef(
-				"wf render cp=%ld gid=%ld x=%d ybase=%d sz=%d adv=%d nc=%d bboxY=%d..%d",
-				(long) cp, (long) gid,
-				pen_x, baseline_y, size_px, adv_px, (int) nc,
-				(int) wf_rds16(g + 4), (int) wf_rds16(g + 8));
-		}
-	}
 
 	/* endPtsOfContours */
 	p = g + 10;
@@ -910,15 +966,15 @@ macos9_webfont_render(struct content *content, lwc_string *family,
 		}
 	}
 
-	/* Build the region: each contour framed as a closed loop; OpenRgn/
-	 * CloseRgn accumulates them even-odd so glyph holes render. */
-	rgn = NewRgn();
-	if (rgn == NULL)
-		return adv_px;
+	/* Flatten every contour into the screen-space point list, then even-odd
+	 * scanline-fill it in the current fg (fixes635 — was OpenRgn/PaintRgn,
+	 * which garbled complex/large glyphs). */
 	g_pen_x = pen_x;
 	g_base_y = baseline_y;
 	g_scale = (double) size_px / (double) slot->upem;
-	OpenRgn();
+	g_fn = 0;
+	g_ymin = 1.0e9;
+	g_ymax = -1.0e9;
 	base = 0;
 	for (ci = 0; ci < nc; ci++) {
 		int end = s_ends[ci];
@@ -927,9 +983,7 @@ macos9_webfont_render(struct content *content, lwc_string *family,
 			wf_emit_contour(&s_px[base], &s_py[base], &s_on[base], cnt);
 		base = end + 1;
 	}
-	CloseRgn(rgn);
-	PaintRgn(rgn);
-	DisposeRgn(rgn);
+	wf_scanline_fill();
 	return adv_px;
 }
 

@@ -128,15 +128,31 @@ struct gui_window {
 	struct gui_window *next;
 	/* fixes451: set after first profile emit per page, reset on new URL */
 	int profile_emitted;
+	/* fixes640: PERFACC (phase-accumulator) summary is emitted once at the
+	 * real load-complete edge (browser_window_stop_available true->false),
+	 * NOT at first-paint. perf_load_active latches that a load was seen in
+	 * flight; perf_summary_emitted prevents a second emit. Both reset on new
+	 * URL in macos9_gw_set_url. */
+	int perf_load_active;
+	int perf_summary_emitted;
+	/* fixes645 (#188): self-tracked zoom/maximize state. CreateNewWindow
+	 * never populates the classic WStateData standard state, so we don't
+	 * rely on ZoomWindow/ZoomWindowIdeal — on first zoom we save the
+	 * user-state content bounds here and fill the screen; on the next
+	 * zoom we restore them. `zoomed` toggles which way the box goes. */
+	Rect zoom_saved_bounds;
+	int zoomed;
 };
 
-/* fixes313 — download manager V1. One slot per active download (single-
- * stream V1; cap is enforced at create-time, additional fetches that try
- * to download while one is active are rejected and surface as
- * NSERROR_NOMEM). refnum < 0 means "create dialog cancelled or file
- * open failed" — the data callbacks short-circuit so partial writes
- * don't crash. fsspec is kept so error / abort can FSpDelete the
- * partial file. */
+/* fixes645 — download manager V2. Downloads now auto-save to a "MacSurf
+ * Downloads" folder (no modal Nav save dialog — that was the source of
+ * the kNavInvalidSystemConfigErr / -5699 failure that made HTTPS
+ * downloads silently do nothing), so several can run concurrently. Each
+ * download is one node in a list the modeless manager window draws.
+ * refnum < 0 means the file could not be created — data callbacks then
+ * short-circuit so partial writes don't crash. fsspec is kept so
+ * error/abort can FSpDelete the partial file. dl_state: 0=active,
+ * 1=done, 2=failed. */
 struct gui_download_window {
 	struct gui_window *parent;
 	FSSpec             fsspec;
@@ -145,6 +161,9 @@ struct gui_download_window {
 	unsigned long      total_length;   /* 0 if unknown */
 	char               filename[64];
 	int                aborted;
+	int                dl_state;       /* fixes645: 0 active,1 done,2 fail/cancel */
+	struct gui_download_window *dl_next; /* fixes645: manager list link */
+	struct download_context *dl_ctx;   /* fixes646: for Cancel (abort) */
 };
 
 /* 5. External Declarations */
@@ -181,9 +200,26 @@ extern bool macos9_quitting;
 #define ITEM_VIEW_SOURCE    1
 #define ITEM_VIEW_FIND      3
 
-/* fixes351 (#48) — Bookmarks menu items. */
+/* Bookmarks menu items. Layout: 1=Add, 2=separator, 3+=bookmarks. */
 #define ITEM_BMK_ADD        1
-#define ITEM_BMK_SHOW       2
+#define ITEM_BMK_FIRST      3   /* fixes645 (#48): first dynamic entry */
+
+/* fixes645 (#48) — bookmarks menu + persistence (macos9_chrome_extras.c
+ * + macos9_disk_cache.c). */
+void macos9_bookmarks_init(void);
+void macos9_bookmark_menu_rebuild(void);
+void macos9_bookmark_navigate(struct gui_window *g, int menu_item);
+long macos9_bookmarks_load(char *out_buf, long buf_cap);
+void macos9_bookmarks_save(const char *buf, long len);
+
+/* fixes645 (#199) — modeless download-manager window (macos9_download.c),
+ * routed from the main event loop. */
+long macos9_download_mgr_is(WindowRef w);   /* 1 if w is the mgr window */
+void macos9_download_mgr_draw(void);
+void macos9_download_mgr_click(short part, Point where);
+#ifdef __MACOS9__
+OSErr macos9_downloads_dir_get(short *vRef, long *dirID);
+#endif
 
 struct gui_window *macos9_find_window(WindowRef w);
 void macos9_window_layout(struct gui_window *g);
@@ -216,6 +252,10 @@ void macos9_window_reload(struct gui_window *g);
 void macos9_window_home(struct gui_window *g);
 void macos9_window_update_button_states(struct gui_window *g);
 void macos9_window_resize(struct gui_window *g);
+/* fixes641 — declared for the per-window close path in main.c (both defined
+ * in window.c; previously only referenced internally). */
+struct gui_window *macos9_window_list_head(void);
+void macos9_window_destroy(struct gui_window *g);
 void macos9_windows_te_idle(void);
 void macos9_windows_process_deferred(void);
 struct gui_window *macos9_create_initial_window(void);

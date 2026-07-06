@@ -883,7 +883,12 @@ process_chunked_bytes(struct macos9_fetch_ctx *c, const char *b, long len)
 static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 	char *sep = strstr(c->h_buf, "\r\n\r\n"), *p, *cur; long cur_len; fetch_msg msg;
 	if(!sep) return;
-	*sep = 0; cur = c->h_buf; cur_len = (long)(sep - c->h_buf) + 2;
+	/* fixes641 (#193): do NOT NUL sep's '\r'. mfs_find_line is length-bounded
+	 * by cur_len and NULs each line's own '\r'; the old `*sep=0` clobbered the
+	 * final header's terminating '\r' so the LAST header (e.g. Set-Cookie on a
+	 * login 302) was dropped -> sessions never stuck. Same fix as the TLS
+	 * fetcher's parse_headers. */
+	cur = c->h_buf; cur_len = (long)(sep - c->h_buf) + 2;
 	p = mfs_find_line(&cur, &cur_len);
 	if(p && strncmp(p,"HTTP/",5)==0) {
 		char *sp=strchr(p,' '); if(sp) c->status=atoi(sp+1);

@@ -221,18 +221,22 @@ static void macos9_init_menus(void) {
 		InsertMenu(view_menu, 0);
 	}
 
-	/* fixes351 (#48) — Bookmarks menu. Items dispatch to the existing
-	 * macos9_bookmark_add / macos9_bookmark_list_show in
-	 * macos9_chrome_extras.c (which already store in a session-scope
-	 * array; disk persistence deferred). */
+	/* fixes645 (#48) — Bookmarks menu. Item 1 = Add, item 2 = separator,
+	 * items 3+ are the saved bookmarks themselves (filled in by
+	 * macos9_bookmarks_init below and rebuilt on each add). Selecting a
+	 * bookmark navigates the front window to it. */
 	{
 		MenuHandle bookmark_menu = NewMenu(MENU_BOOKMARK, "\pBookmarks");
 		AppendMenu(bookmark_menu, "\pAdd Bookmark/D");
-		AppendMenu(bookmark_menu, "\pShow Bookmarks/B");
+		AppendMenu(bookmark_menu, "\p(-");
 		InsertMenu(bookmark_menu, 0);
 	}
 
 	DrawMenuBar();
+
+	/* fixes645 (#48) — load persisted bookmarks and populate the menu.
+	 * Must run after the menu is inserted so GetMenuHandle finds it. */
+	macos9_bookmarks_init();
 #endif
 }
 
@@ -287,6 +291,21 @@ static void macos9_handle_menu(short menu_id, short item) {
 				}
 			}
 		} break;
+		case ITEM_FILE_CLOSE:
+			/* fixes641 (#189): Cmd-W / File>Close closes ONLY the front
+			 * window (was a dead menu item — no case existed). Same
+			 * per-window teardown as the go-away box. */
+			front = FrontWindow();
+			gw = front ? macos9_find_window(front) : NULL;
+			if (gw != NULL) {
+				if (gw->bw != NULL)
+					browser_window_destroy(gw->bw);
+				else
+					macos9_window_destroy(gw);
+				if (macos9_window_list_head() == NULL)
+					macos9_done = (bool)1;
+			}
+			break;
 		case ITEM_FILE_QUIT:
 			macos9_done = (bool)1;
 			break;
@@ -332,19 +351,19 @@ static void macos9_handle_menu(short menu_id, short item) {
 		}
 		break;
 	case MENU_BOOKMARK:
-		/* fixes351 (#48) — Bookmarks menu dispatcher. The add/show
-		 * functions live in macos9_chrome_extras.c and were landed in
-		 * fixes331 with no menu wiring at the time; this hooks them up. */
-		switch (item) {
-		case ITEM_BMK_ADD: {
+		/* fixes641 (#200): derive the front window FIRST (this case used
+		 * to run with an uninitialized `gw`). */
+		front = FrontWindow();
+		gw = front ? macos9_find_window(front) : NULL;
+		if (gw == NULL) break;
+		/* fixes645 (#48) — item 1 adds the current page; items >= 3 are
+		 * saved bookmarks (item 2 is the separator, never selectable) and
+		 * navigate the front window to their URL. */
+		if (item == ITEM_BMK_ADD) {
 			extern void macos9_bookmark_add(struct gui_window *g);
 			macos9_bookmark_add(gw);
-		} break;
-		case ITEM_BMK_SHOW: {
-			extern void macos9_bookmark_list_show(struct gui_window *g);
-			macos9_bookmark_list_show(gw);
-		} break;
-		default: break;
+		} else if (item >= ITEM_BMK_FIRST) {
+			macos9_bookmark_navigate(gw, item);
 		}
 		break;
 	case MENU_EDIT:
@@ -403,6 +422,10 @@ static void macos9_handle_update(const EventRecord *event) {
 	Rect      off_bounds;
 	Rect      update_bounds;
 	int       off_w, off_h;
+	/* fixes645 (#199): the modeless download-manager window is not a
+	 * gui_window, so macos9_find_window returns NULL and the update would
+	 * be dropped. Draw it here and return before the gui_window path. */
+	if (macos9_download_mgr_is(win)) { macos9_download_mgr_draw(); return; }
 	if (!gw || macos9_quitting) return;
 	SetPortWindowPort(win); BeginUpdate(win);
 	/* fixes77f -- offscreen GWorld V2.
@@ -521,10 +544,15 @@ static void macos9_handle_update(const EventRecord *event) {
 		 * objects; keep op_depth>0 so the death-row drain cannot fire
 		 * and free one mid-walk. */
 		{ extern int macos9_op_depth; macos9_op_depth++; }
-		browser_window_redraw(gw->bw,
-			gw->content_rect.left - gw->scroll_x,
-			gw->content_rect.top  - gw->scroll_y,
-			&clip, &ctx);
+		{
+			/* fixes640 — accumulate paint CPU (full box-tree redraw). */
+			double t_paint = macos9_micros();
+			browser_window_redraw(gw->bw,
+				gw->content_rect.left - gw->scroll_x,
+				gw->content_rect.top  - gw->scroll_y,
+				&clip, &ctx);
+			macsurf_profile_accum_paint((long)(macos9_micros() - t_paint));
+		}
 		{ extern int macos9_op_depth; macos9_op_depth--; }
 		{ extern struct gui_window *macos9_paint_gw;
 		  macos9_paint_gw = NULL; }
@@ -594,6 +622,12 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 	WindowRef win;
 	short part = FindWindow(event->where, &win);
 	struct gui_window *gw;
+	/* fixes645 (#199): route clicks on the modeless download-manager
+	 * window (drag / close / select) — it is not a gui_window. */
+	if (macos9_download_mgr_is(win)) {
+		macos9_download_mgr_click(part, event->where);
+		return;
+	}
 	switch (part) {
 		case inMenuBar: {
 			long sel = MenuSelect(event->where);
@@ -610,8 +644,23 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 			}
 			break;
 		case inGoAway:
+			/* fixes641 (#189): close ONLY the clicked window, not the
+			 * whole app. The old code set the global macos9_done quit
+			 * flag, so closing a 2nd window (or either window) exited
+			 * the run loop and netsurf_exit tore down BOTH OS windows.
+			 * browser_window_destroy cascades through the gui destroy
+			 * vtable into macos9_window_destroy, which unlinks just this
+			 * one gui_window and cancels its scheduled callbacks. Quit
+			 * only when the LAST window is gone (Mac convention). */
 			if (win && TrackGoAway(win, event->where)) {
-				macos9_done = (bool)1;
+				struct gui_window *cgw = macos9_find_window(win);
+				if (cgw != NULL && cgw->bw != NULL) {
+					browser_window_destroy(cgw->bw);
+				} else if (cgw != NULL) {
+					macos9_window_destroy(cgw);
+				}
+				if (macos9_window_list_head() == NULL)
+					macos9_done = (bool)1;
 			}
 			break;
 		case inGrow:
@@ -625,6 +674,65 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 					SizeWindow(win, (short)(sz & 0xFFFF), (short)((sz >> 16) & 0xFFFF), (Boolean)1);
 					gw = macos9_find_window(win);
 					if (gw) macos9_window_resize(gw);
+				}
+			}
+			break;
+		case inZoomIn:
+		case inZoomOut:
+			/* fixes645 (#188): the zoom/maximize box (top-right of the
+			 * title bar) had no useful handler. We DON'T rely on
+			 * ZoomWindow/ZoomWindowIdeal: CreateNewWindow never populates
+			 * the classic WStateData standard state, so the Window
+			 * Manager's own zoom would jump to garbage, and its inZoomIn
+			 * vs inZoomOut part code isn't reliable without that state.
+			 * Instead we track zoom ourselves: first click saves the
+			 * current content bounds and fills the screen (below the menu
+			 * bar); next click restores the saved bounds. */
+			if (win && TrackBox(win, event->where, part)) {
+				gw = macos9_find_window(win);
+				if (gw != NULL) {
+					SetPortWindowPort(win);
+					if (!gw->zoomed) {
+						/* fixes646 (#188): use Set/GetWindowBounds on the
+						 * SAME region (content, 33) so the save/restore is
+						 * an exact round-trip. The fixes645 MoveWindow +
+						 * SizeWindow drifted because MoveWindow repositions
+						 * a different origin than the content bounds we
+						 * saved, so each cycle shifted the window and the
+						 * fill math looked wrong. SetWindowBounds sets the
+						 * content region to an exact global Rect in one
+						 * call — no move/size ambiguity. */
+						Rect content;
+						BitMap qd;
+						short mbar;
+						GetWindowBounds(win, 33,
+							&gw->zoom_saved_bounds);
+						GetQDGlobalsScreenBits(&qd);
+						mbar = GetMBarHeight();
+						content.left = (short)(qd.bounds.left + 4);
+						content.top = (short)(qd.bounds.top + mbar + 22);
+						content.right = (short)(qd.bounds.right - 4);
+						content.bottom = (short)(qd.bounds.bottom - 6);
+						SetWindowBounds(win, 33, &content);
+						gw->zoomed = 1;
+						macsurf_debug_log_writef(
+							"zoom max: scr=%d,%d,%d,%d mbar=%d -> content=%d,%d,%d,%d",
+							(int)qd.bounds.top, (int)qd.bounds.left,
+							(int)qd.bounds.bottom, (int)qd.bounds.right,
+							(int)mbar, (int)content.top, (int)content.left,
+							(int)content.bottom, (int)content.right);
+					} else {
+						SetWindowBounds(win, 33,
+							&gw->zoom_saved_bounds);
+						gw->zoomed = 0;
+						macsurf_debug_log_writef(
+							"zoom restore: content=%d,%d,%d,%d",
+							(int)gw->zoom_saved_bounds.top,
+							(int)gw->zoom_saved_bounds.left,
+							(int)gw->zoom_saved_bounds.bottom,
+							(int)gw->zoom_saved_bounds.right);
+					}
+					macos9_window_resize(gw);
 				}
 			}
 			break;
@@ -884,6 +992,29 @@ void macos9_poll(void) {
 		   * death-row drain below cannot free mid-pump. */
 		  macos9_op_depth++; fetch_pump(); macos9_op_depth--; }
 		macos9_windows_te_idle(); macos9_windows_process_deferred();
+		/* fixes640 — emit the PERFACC phase summary ONCE, at the real
+		 * load-complete edge (browser_window_stop_available true->false),
+		 * so the post-first-paint reflow/settle passes are included (they
+		 * are the whole point of measuring). first-paint would emit too
+		 * early and miss the reflow storm. */
+		{
+			WindowRef pf_win = FrontWindow();
+			struct gui_window *pf_gw = pf_win ?
+				macos9_find_window(pf_win) : NULL;
+			if (pf_gw != NULL && pf_gw->bw != NULL) {
+				if (browser_window_stop_available(pf_gw->bw)) {
+					pf_gw->perf_load_active = 1;
+				} else if (pf_gw->perf_load_active &&
+						!pf_gw->perf_summary_emitted) {
+					struct nsurl *pf_u =
+						browser_window_access_url(pf_gw->bw);
+					pf_gw->perf_summary_emitted = 1;
+					pf_gw->perf_load_active = 0;
+					macsurf_profile_emit_phases(pf_u ?
+						nsurl_access(pf_u) : "(unknown)");
+				}
+			}
+		}
 		macos9_poll_mouse_hover();
 		{ extern void macos9_animation_tick(void);
 		  macos9_animation_tick(); }

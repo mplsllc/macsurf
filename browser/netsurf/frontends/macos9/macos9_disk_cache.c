@@ -32,6 +32,7 @@
 #include <Folders.h>
 #include <Script.h>
 #include <Types.h>
+#include <Processes.h>
 #endif
 
 #define MACSURF_CACHE_MAGIC0 'M'
@@ -82,33 +83,54 @@ static void cache_filename_for_url(const char *url, unsigned char *fname)
 }
 
 #ifdef __MACOS9__
-/* Resolve the cache folder FSSpec. Creates "MacSurf Cache" on the
- * boot Desktop if missing. Returns noErr on success. */
-static OSErr cache_dir_get(short *vRef, long *dirID)
+/* fixes641 (#197): resolve the RUNNING APPLICATION's own directory (the folder
+ * MacSurf.app lives in), so the cache + log go next to the app rather than the
+ * boot volume's Desktop. Uses the app's own FSSpec from GetProcessInformation.
+ * Returns noErr + the app's parent (vRefNum, dirID). */
+static OSErr macos9_app_dir_get(short *vRef, long *dirID)
+{
+	ProcessSerialNumber psn;
+	ProcessInfoRec      info;
+	FSSpec              appSpec;
+	OSErr               err;
+
+	psn.highLongOfPSN = 0;
+	psn.lowLongOfPSN  = kCurrentProcess;
+	memset(&info, 0, sizeof(info));
+	info.processInfoLength = sizeof(ProcessInfoRec);
+	info.processName = NULL;
+	info.processAppSpec = &appSpec;
+	err = GetProcessInformation(&psn, &info);
+	if (err != noErr) return err;
+	/* appSpec identifies the application file; its parent (vRefNum, parID)
+	 * is the folder the app lives in. */
+	*vRef = appSpec.vRefNum;
+	*dirID = appSpec.parID;
+	return noErr;
+}
+
+/* Build/resolve "MacSurf Cache" under a given base directory. Creates it if
+ * missing. Returns noErr + the folder's (vRefNum, dirID). */
+static OSErr cache_dir_under(short base_vref, long base_dir,
+		short *vRef, long *dirID)
 {
 	OSErr err;
-	short desk_vref;
-	long desk_dir;
 	FSSpec spec;
 	unsigned char fname[32];
 	const char *name = "MacSurf Cache";
 	size_t nlen;
 	long new_dir;
 
-	err = FindFolder(kOnSystemDisk, kDesktopFolderType,
-			kDontCreateFolder, &desk_vref, &desk_dir);
-	if (err != noErr) return err;
-
 	nlen = strlen(name);
 	if (nlen > 31) nlen = 31;
 	fname[0] = (unsigned char)nlen;
 	memcpy(fname + 1, name, nlen);
 
-	err = FSMakeFSSpec(desk_vref, desk_dir, fname, &spec);
+	err = FSMakeFSSpec(base_vref, base_dir, fname, &spec);
 	if (err == fnfErr) {
 		err = FSpDirCreate(&spec, smSystemScript, &new_dir);
 		if (err != noErr) return err;
-		err = FSMakeFSSpec(desk_vref, desk_dir, fname, &spec);
+		err = FSMakeFSSpec(base_vref, base_dir, fname, &spec);
 		if (err != noErr) return err;
 	} else if (err != noErr) {
 		return err;
@@ -128,6 +150,29 @@ static OSErr cache_dir_get(short *vRef, long *dirID)
 		*dirID = pb.dirInfo.ioDrDirID;
 	}
 	return noErr;
+}
+
+/* Resolve the cache folder. fixes641 (#197): create "MacSurf Cache" next to the
+ * running application; fall back to the boot Desktop only if the app dir can't
+ * be resolved or isn't writable. */
+static OSErr cache_dir_get(short *vRef, long *dirID)
+{
+	OSErr err;
+	short base_vref;
+	long base_dir;
+	short desk_vref;
+	long desk_dir;
+
+	err = macos9_app_dir_get(&base_vref, &base_dir);
+	if (err == noErr) {
+		err = cache_dir_under(base_vref, base_dir, vRef, dirID);
+		if (err == noErr) return noErr;
+	}
+	/* Fallback: boot-volume Desktop (original behaviour). */
+	err = FindFolder(kOnSystemDisk, kDesktopFolderType,
+			kDontCreateFolder, &desk_vref, &desk_dir);
+	if (err != noErr) return err;
+	return cache_dir_under(desk_vref, desk_dir, vRef, dirID);
 }
 #endif /* __MACOS9__ */
 
@@ -466,6 +511,173 @@ void macos9_deadhost_clear(void)
 	if (FSMakeFSSpec(vRef, dirID, fname, &spec) == noErr) {
 		(void)FSpDelete(&spec);
 	}
+#endif
+}
+
+/* ------------------------------------------------------------------ */
+/* fixes645 (#48) — bookmark persistence across launches.             */
+/*                                                                    */
+/* Raw-buffer read/write of a "MacSurf Bookmarks" text file next to   */
+/* the app (or Desktop fallback), using the same FSSpec binary I/O as */
+/* the dead-host list — NOT the flaky MSL fopen path. chrome_extras.c */
+/* owns the (de)serialization (one "URL\tlabel\n" record per line);   */
+/* these two just move the bytes. Every failure is a silent no-op.    */
+/* ------------------------------------------------------------------ */
+
+long macos9_bookmarks_load(char *out_buf, long buf_cap)
+{
+#ifdef __MACOS9__
+	OSErr err;
+	short vRef;
+	long dirID;
+	FSSpec spec;
+	unsigned char fname[32];
+	short ref = 0;
+	long count;
+	const char *name = "MacSurf Bookmarks";
+	size_t nlen;
+
+	if (out_buf == NULL || buf_cap <= 0) return 0;
+	out_buf[0] = '\0';
+
+	err = cache_dir_get(&vRef, &dirID);
+	if (err != noErr) return 0;
+
+	nlen = strlen(name);
+	if (nlen > 31) nlen = 31;
+	fname[0] = (unsigned char)nlen;
+	memcpy(fname + 1, name, nlen);
+
+	err = FSMakeFSSpec(vRef, dirID, fname, &spec);
+	if (err != noErr) return 0;
+	if (FSpOpenDF(&spec, fsRdPerm, &ref) != noErr) return 0;
+
+	count = buf_cap - 1;
+	if (FSRead(ref, &count, out_buf) != noErr && count == 0) {
+		FSClose(ref);
+		return 0;
+	}
+	FSClose(ref);
+	if (count < 0) count = 0;
+	if (count >= buf_cap) count = buf_cap - 1;
+	out_buf[count] = '\0';
+	macsurf_debug_log_writef("bookmarks LOAD count=%ld bytes", count);
+	return count;
+#else
+	(void)out_buf; (void)buf_cap;
+	return 0;
+#endif
+}
+
+void macos9_bookmarks_save(const char *buf, long len)
+{
+#ifdef __MACOS9__
+	OSErr err;
+	short vRef;
+	long dirID;
+	FSSpec spec;
+	unsigned char fname[32];
+	short ref = 0;
+	long count;
+	const char *name = "MacSurf Bookmarks";
+	size_t nlen;
+
+	if (buf == NULL || len < 0) return;
+
+	err = cache_dir_get(&vRef, &dirID);
+	if (err != noErr) return;
+
+	nlen = strlen(name);
+	if (nlen > 31) nlen = 31;
+	fname[0] = (unsigned char)nlen;
+	memcpy(fname + 1, name, nlen);
+
+	err = FSMakeFSSpec(vRef, dirID, fname, &spec);
+	if (err == fnfErr) {
+		err = FSpCreate(&spec, 'MPLS', 'TEXT', smSystemScript);
+		if (err != noErr) return;
+		err = FSMakeFSSpec(vRef, dirID, fname, &spec);
+		if (err != noErr) return;
+	} else if (err != noErr) {
+		return;
+	}
+
+	if (FSpOpenDF(&spec, fsRdWrPerm, &ref) != noErr) return;
+	(void)SetEOF(ref, 0);
+	if (len > 0) {
+		count = len;
+		(void)FSWrite(ref, &count, buf);
+	}
+	SetEOF(ref, len);
+	FSClose(ref);
+	(void)FlushVol(NULL, vRef);
+	macsurf_debug_log_writef("bookmarks SAVE len=%ld", len);
+#else
+	(void)buf; (void)len;
+#endif
+}
+
+/* fixes645 — resolve the "MacSurf Downloads" folder (app-relative,    */
+/* Desktop fallback) and hand back vRef/dirID so the download path can */
+/* auto-save without a modal Nav dialog. Reuses cache_dir_get's app-   */
+/* dir-first logic but targets a sibling "MacSurf Downloads" folder.   */
+OSErr macos9_downloads_dir_get(short *vRef, long *dirID)
+{
+#ifdef __MACOS9__
+	OSErr err;
+	short base_vref;
+	long base_dir;
+	short desk_vref;
+	long desk_dir;
+	FSSpec spec;
+	long new_dir;
+	unsigned char fname[24];
+	const char *fn = "MacSurf Downloads";
+	size_t n = strlen(fn);
+	if (n > 23) n = 23;
+	fname[0] = (unsigned char)n;
+	memcpy(fname + 1, fn, n);
+
+	err = macos9_app_dir_get(&base_vref, &base_dir);
+	if (err != noErr) {
+		err = FindFolder(kOnSystemDisk, kDesktopFolderType,
+			kDontCreateFolder, &desk_vref, &desk_dir);
+		if (err != noErr) return err;
+		base_vref = desk_vref;
+		base_dir = desk_dir;
+	}
+
+	err = FSMakeFSSpec(base_vref, base_dir, fname, &spec);
+	if (err == fnfErr) {
+		err = FSpDirCreate(&spec, smSystemScript, &new_dir);
+		if (err != noErr) return err;
+		*vRef = base_vref;
+		*dirID = new_dir;
+		return noErr;
+	} else if (err != noErr) {
+		return err;
+	}
+	/* Folder (or a same-named file) exists — resolve its dirID. */
+	{
+		CInfoPBRec pb;
+		Str63 nm;
+		memcpy(nm, fname, fname[0] + 1);
+		memset(&pb, 0, sizeof(pb));
+		pb.dirInfo.ioNamePtr = nm;
+		pb.dirInfo.ioVRefNum = base_vref;
+		pb.dirInfo.ioDrDirID = base_dir;
+		pb.dirInfo.ioFDirIndex = 0;
+		if (PBGetCatInfoSync(&pb) != noErr ||
+		    !(pb.dirInfo.ioFlAttrib & ioDirMask)) {
+			return dirNFErr;
+		}
+		*vRef = base_vref;
+		*dirID = pb.dirInfo.ioDrDirID;
+		return noErr;
+	}
+#else
+	(void)vRef; (void)dirID;
+	return -1;
 #endif
 }
 

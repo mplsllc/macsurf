@@ -38,6 +38,7 @@
 #include "html/box_textarea.h"
 #include "html/font.h"
 #include "html/form_internal.h"
+#include "netsurf/css.h"
 
 
 nserror box_textarea_keypress(html_content *html, struct box *box, uint32_t key)
@@ -272,6 +273,7 @@ bool box_textarea_create_textarea(html_content *html,
 		0,
 		0
 	};
+	colour ta_background = NS_TRANSPARENT;
 	bool read_only = false;
 	bool disabled = false;
 	struct form_control *gadget = box->gadget;
@@ -339,6 +341,31 @@ bool box_textarea_create_textarea(html_content *html,
 
 	gadget->data.text.data.gadget = gadget;
 
+	/* fixes639: pick up the author's CSS (color/background/font-size/
+	 * family/weight) instead of the hardcoded black-on-transparent 10pt
+	 * sans-serif above. This widget is drawn by NetSurf core's own
+	 * desktop/textarea.c (a real styleable widget, not a native Mac
+	 * TextEdit control) but box_construct never consulted box->style, so
+	 * every <textarea>/<input> on every site rendered with the same
+	 * fixed look regardless of the page's theme. box->style already
+	 * holds the cascaded computed style at this point (construction
+	 * time, before layout resolves geometry) -- font_plot_style_from_css
+	 * is the same resolver ordinary text uses, so this stays consistent
+	 * with the rest of the page. */
+	if (box->style != NULL) {
+		css_color bgcol = 0;
+		uint8_t bgtype;
+
+		font_plot_style_from_css(&html->unit_len_ctx, box->style,
+				&fstyle);
+
+		bgtype = css_computed_background_color(box->style, &bgcol);
+		if (bgtype == CSS_BACKGROUND_COLOR_COLOR &&
+				((bgcol >> 24) & 0xff) != 0) {
+			ta_background = nscss_color_to_ns(bgcol);
+		}
+	}
+
 	/* Reset to correct values by layout */
 	ta_setup.width = 200;
 	ta_setup.height = 20;
@@ -351,7 +378,7 @@ bool box_textarea_create_textarea(html_content *html,
 	ta_setup.border_width = 0;
 	ta_setup.border_col = 0x000000;
 	ta_setup.text = fstyle;
-	ta_setup.text.background = NS_TRANSPARENT;
+	ta_setup.text.background = ta_background;
 	/* Make selected text either black or white, as gives greatest contrast
 	 * with background colour. */
 	ta_setup.selected_bg = fstyle.foreground;

@@ -313,9 +313,17 @@ css_select_results *nscss_get_style(nscss_select_ctx *ctx, dom_node *n,
 		macsurf__cascade_probe_armed = 0;
 	}
 
-	/* Select style for node */
-	error = css_select_style(ctx->ctx, n, unit_len_ctx, media, inline_style,
-			&selection_handler, ctx, &styles);
+	/* Select style for node. fixes640 — bracket the per-element selector
+	 * match; summed across every element = honest total cascade CPU (the
+	 * old cascade-done milestone was per-stylesheet, network-bound). */
+	{
+		extern double macos9_micros(void);
+		extern void macsurf_profile_accum_cascade(long us);
+		double t_casc = macos9_micros();
+		error = css_select_style(ctx->ctx, n, unit_len_ctx, media,
+				inline_style, &selection_handler, ctx, &styles);
+		macsurf_profile_accum_cascade((long)(macos9_micros() - t_casc));
+	}
 
 	if (error != CSS_OK || styles == NULL) {
 		/* Failed selecting partial style -- bail out */

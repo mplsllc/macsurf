@@ -333,7 +333,24 @@ void macos9_window_update_scrollbars(struct gui_window *g) {
 #endif
 }
 
-void macos9_window_scroll_to(struct gui_window *g, int nx, int ny) { if(!g) return; g->scroll_x=nx; g->scroll_y=ny; macos9_window_update_scrollbars(g); macos9_window_invalidate_content(g); }
+void macos9_window_scroll_to(struct gui_window *g, int nx, int ny) {
+	int vw, vh, mx, my;
+	if(!g) return;
+	/* fixes643 (#195): CLAMP the scroll target to [0, max] at this single
+	 * choke point. Every scroll path routes through here (arrow keys via
+	 * scroll_by, scroll-bar drag, core set_scroll, End=0x7FFFFFFF). Without
+	 * the clamp, a left/up arrow at the edge drove scroll NEGATIVE, and the
+	 * paint origin (content_rect.left - scroll_x) then shoved the ENTIRE
+	 * page off-canvas sideways/down — the reported "viewport pushed to a
+	 * direction" bug. Same max math as macos9_window_update_scrollbars. */
+	vw = g->content_rect.right - g->content_rect.left;
+	vh = g->content_rect.bottom - g->content_rect.top;
+	mx = g->content_width - vw; my = g->content_height - vh;
+	if(mx < 0) mx = 0; if(my < 0) my = 0;
+	if(nx < 0) nx = 0; if(nx > mx) nx = mx;
+	if(ny < 0) ny = 0; if(ny > my) ny = my;
+	g->scroll_x=nx; g->scroll_y=ny; macos9_window_update_scrollbars(g); macos9_window_invalidate_content(g);
+}
 void macos9_window_scroll_by(struct gui_window *g, int dx, int dy) { if(g) macos9_window_scroll_to(g, g->scroll_x+dx, g->scroll_y+dy); }
 
 void macos9_window_handle_scrollbar_click(struct gui_window *g, ControlRef c, short p, void *lp) {
@@ -1052,6 +1069,20 @@ static nserror macos9_gw_set_url(struct gui_window *g, struct nsurl *u) {
 	g_title_locked_by_js = 0;
 	/* fixes451: new URL = new page, reset the per-page profile gate */
 	g->profile_emitted = 0;
+	/* fixes640: ARM the PERFACC latch at nav-start (not when the poll first
+	 * observes stop_available==true) so a cache-hit / synchronous-burst load
+	 * that completes between two poll passes still emits its summary. The
+	 * poll emits when stop_available goes false with perf_load_active set. */
+	g->perf_load_active = 1;
+	g->perf_summary_emitted = 0;
+	/* fixes640b: do NOT call macsurf_profile_reset() here. set_url fires
+	 * MULTIPLE times per load (redirect chains, late URL commits), so a reset
+	 * here wiped the early-phase accumulators (parse/cascade/tls/js) MID-load,
+	 * leaving only the tail (layout/paint) — observed as parse=0 cascade=0 in
+	 * the first baseline. Per-load freshness is instead guaranteed by zeroing
+	 * the accumulators at the END of macsurf_profile_emit_phases (so the next
+	 * load starts clean regardless of nav type — this also covers the
+	 * click-nav case the review flagged, without a mid-load wipe). */
 	if(g&&u&&g->url_te&&(s=nsurl_access(u))) set_url_te_text(g,s);
 	return 0;
 }

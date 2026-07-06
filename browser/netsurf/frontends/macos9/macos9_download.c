@@ -1,38 +1,39 @@
 /*
  * MacSurf — Mac OS 9 frontend for NetSurf
- * macos9_download.c — gui_download_table callbacks
+ * macos9_download.c — gui_download_table callbacks + download manager
  *
- * fixes313 — V1 download manager.
+ * fixes645 — download manager V2.
  *
- * NetSurf core detects non-renderable responses (Content-Disposition:
- * attachment, unknown MIME, save-link-as gesture) and routes them
- * through browser_window_download → gui_download_table.create. Pre-
- * fix313 all four callbacks were TODOs: the create stub allocated a
- * struct but never opened a file, data dropped every chunk on the
- * floor, error/done did nothing. Net result: clicking any download
- * link looked like a no-op.
+ * ── Why V1 (fixes313) was broken on real hardware ──────────────────
+ * V1 opened a modal Navigation Services save dialog (NavPutFile) from
+ * inside the fetch/content callback that fires when NetSurf core decides
+ * a response is a download. On the G3 that call returned err=-5699
+ * (kNavInvalidSystemConfigErr): Navigation Services refuses to run its
+ * modal dialog from that context while OT sync-idle notifiers are
+ * pumping. Result: create() returned NULL, the received bytes were
+ * discarded, and "downloading did nothing" on HTTPS sites. (It happened
+ * to succeed once on a quiescent http page, which is why it looked
+ * intermittent.)
  *
- * V1 wires the four callbacks to the Mac Toolbox:
+ * ── V2 design ──────────────────────────────────────────────────────
+ * No modal dialog in the callback. Downloads auto-save into a
+ * "MacSurf Downloads" folder next to the app (Desktop fallback), with
+ * the server-suggested filename (sanitised for HFS + de-duplicated).
+ * Because there is no single modal dialog, several downloads can run at
+ * once. Each download is a node in a list that a modeless "Downloads"
+ * window draws (filename + live byte progress + Done/Failed). The window
+ * auto-opens on the first download and is routed from the main event
+ * loop (update / mouseDown) via macos9_download_mgr_* below.
  *
- *   create → StandardPutFile (modal save dialog) with the suggested
- *            filename from NetSurf as default → FSpCreate (binary file,
- *            'BINA'/'????' if MIME doesn't map to a registered type) →
- *            FSpOpenDF for write. Stash the FSSpec + refnum + total
- *            length in dw. If the user cancels, refnum stays -1 and
- *            data callbacks silently drop bytes.
- *   data   → FSWrite each chunk; update bytes_written; report progress
- *            via the parent gw's status bar.
- *   done   → FSClose, status bar success message, free dw.
- *   error  → FSClose, FSpDelete (partial file cleanup), error alert,
- *            free dw.
- *
- * V1 caps to ONE active download at a time. A second download attempt
- * while the slot is occupied returns NULL from create — NetSurf surfaces
- * that as a fetch failure rather than silently overwriting. Multi-slot
- * is a V2 follow-up once the single-download path is stable.
- *
- * Progress UI is the parent window's status bar (already wired). A
- * dedicated modeless progress window is deferred to V2.
+ * Callback wiring:
+ *   create → resolve Downloads folder → unique FSSpec → FSpCreate +
+ *            FSpOpenDF → push node → show manager. No dialog, no -5699.
+ *   data   → FSWrite each chunk; update byte count; repaint manager +
+ *            parent status bar (throttled).
+ *   done   → FSClose; mark node Done; final repaint. Node is KEPT in the
+ *            list (so the manager shows history); freed later by the LRU
+ *            cap, not here.
+ *   error  → FSClose; FSpDelete the partial file; mark node Failed.
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.
@@ -54,19 +55,28 @@
 #ifdef __MACOS9__
 #include <Files.h>
 #include <Script.h>
-#include <Navigation.h>
-#include <AppleEvents.h>
 #endif
 
-/* Active-download slot. NULL = idle. V1 only allows one at a time. */
-static struct gui_download_window *g_active_dw = NULL;
+/* Newest-first list of downloads the manager window draws. Nodes stay
+ * after completion (for history) and are freed by the LRU cap. */
+static struct gui_download_window *g_dl_list = NULL;
+static int g_dl_count = 0;
+#define MACSURF_DL_MAX 64
+
+/* Manager-window row layout (window-local coords). */
+#define DL_ROW0_BASE 50   /* text baseline of row 0, below the header rule */
+#define DL_ROW_H     18   /* per-row vertical step */
+#define DL_CANCEL_W  56   /* width of the per-row [Cancel] box */
+#define DL_ROWS_MAX  10   /* max rows drawn / hit-tested */
+
+#ifdef __MACOS9__
+static WindowRef g_dl_mgr_win = NULL;
+static void dl_mgr_progress(void);   /* fwd: dl_cancel calls it */
+#endif
 
 #ifdef __MACOS9__
 /* Map a NetSurf MIME string to a Mac type/creator pair. Best-effort —
- * anything not recognised falls back to 'BINA' / '????' which gives a
- * generic binary-file icon and no default-open behaviour. The mapping
- * is short on purpose; expanding it doesn't affect correctness, only
- * which app Finder offers as the default. */
+ * anything not recognised falls back to 'BINA' / '????'. */
 static void
 macos9_download_mime_to_type(const char *mime,
 		OSType *out_type, OSType *out_creator)
@@ -100,21 +110,85 @@ macos9_download_mime_to_type(const char *mime,
 	}
 }
 
-/* Convert a C string to a Pascal string, truncating to 63 chars + len
- * byte so it fits in Str63 (StandardPutFile's default-name buffer). */
+/* C string → Str63 (length byte + up to 63 bytes). */
 static void
 macos9_download_cstr_to_p63(const char *src, Str63 dst)
 {
 	size_t n;
-	if (src == NULL) src = "untitled";
+	if (src == NULL) src = "download";
 	n = strlen(src);
 	if (n > 63) n = 63;
 	dst[0] = (unsigned char)n;
 	memcpy(dst + 1, src, n);
 }
 
-/* Push a one-line status message to the parent window's status bar. The
- * status function on macos9_window_table tolerates a NULL gw. */
+/* Bounded C-string copy (no MSL strlcpy on CW8). */
+static void
+dl_strlcpy(char *dst, const char *src, size_t cap)
+{
+	size_t n;
+	if (cap == 0) return;
+	n = strlen(src);
+	if (n > cap - 1) n = cap - 1;
+	memcpy(dst, src, n);
+	dst[n] = '\0';
+}
+
+/* Sanitise a server-suggested name into a classic-HFS-legal leaf: no
+ * ':' (path separator) or control chars, capped to 28 chars so a
+ * " NN" de-dup suffix still fits inside the 31-char HFS limit. */
+static void
+dl_sanitize_name(const char *src, char *dst, size_t cap)
+{
+	size_t i, n;
+	if (src == NULL || src[0] == '\0') src = "download";
+	n = strlen(src);
+	if (cap > 29) cap = 29;          /* reserve room for " NN" */
+	if (n > cap - 1) n = cap - 1;
+	for (i = 0; i < n; i++) {
+		char c = src[i];
+		if (c == ':' || c == '/' || (unsigned char)c < 32) c = '-';
+		dst[i] = c;
+	}
+	dst[n] = '\0';
+	if (dst[0] == '\0') { dst[0] = 'd'; dst[1] = '\0'; }
+}
+
+/* Find a non-existent FSSpec in (vRef,dirID) for `leaf`, appending
+ * " 2".." 99" if the name is taken. On success `leaf` is updated to the
+ * name actually used and *out is a spec ready for FSpCreate. */
+static OSErr
+dl_unique_spec(short vRef, long dirID, char *leaf, size_t leaf_cap,
+		FSSpec *out)
+{
+	char base[32];
+	char trial[40];
+	Str63 pn;
+	int i;
+	OSErr err;
+
+	dl_strlcpy(base, leaf, sizeof base);
+	if (strlen(base) > 27) base[27] = '\0';
+
+	for (i = 0; i < 100; i++) {
+		if (i == 0)
+			dl_strlcpy(trial, leaf, sizeof trial);
+		else
+			sprintf(trial, "%s %d", base, i + 1);
+		if (strlen(trial) > 31) trial[31] = '\0';
+		macos9_download_cstr_to_p63(trial, pn);
+		err = FSMakeFSSpec(vRef, dirID, pn, out);
+		if (err == fnfErr) {              /* free slot — use it */
+			dl_strlcpy(leaf, trial, leaf_cap);
+			return noErr;
+		}
+		if (err != noErr) return err;     /* real error */
+		/* else exists — try next suffix */
+	}
+	return dupFNErr;
+}
+
+/* Push a one-line status message to the parent window's status bar. */
 static void
 macos9_download_status(struct gui_download_window *dw, const char *msg)
 {
@@ -124,7 +198,231 @@ macos9_download_status(struct gui_download_window *dw, const char *msg)
 		macos9_window_table->set_status(dw->parent, msg);
 	}
 }
+
+/* ── Manager window ─────────────────────────────────────────────── */
+
+static void dl_mgr_ensure(void)
+{
+	Rect b;
+	Str255 title;
+	const char *t = "Downloads";
+	size_t n;
+	if (g_dl_mgr_win != NULL) return;
+	SetRect(&b, 60, 250, 500, 460);
+	if (CreateNewWindow(kDocumentWindowClass, kWindowCloseBoxAttribute,
+			&b, &g_dl_mgr_win) != noErr) {
+		g_dl_mgr_win = NULL;
+		return;
+	}
+	n = strlen(t);
+	title[0] = (unsigned char)n;
+	memcpy(title + 1, t, n);
+	SetWTitle(g_dl_mgr_win, title);
+}
+
+/* Paint the list into the current (already-set) port. */
+static void dl_mgr_paint(void)
+{
+	Rect pr;
+	struct gui_download_window *nd;
+	int shown = 0;
+	short cancel_x;
+	if (g_dl_mgr_win == NULL) return;
+	GetWindowPortBounds(g_dl_mgr_win, &pr);
+	EraseRect(&pr);
+	TextFont(3);          /* Geneva */
+	TextSize(10);
+	TextFace(1);          /* bold (Style bit) */
+	MoveTo((short)(pr.left + 12), (short)(pr.top + 22));
+	DrawString("\pDownloads");
+	TextFace(0);          /* normal */
+	MoveTo((short)(pr.left + 8), (short)(pr.top + 30));
+	LineTo((short)(pr.right - 8), (short)(pr.top + 30));
+	if (g_dl_list == NULL) {
+		MoveTo((short)(pr.left + 12), (short)(pr.top + DL_ROW0_BASE));
+		DrawString("\p(no downloads yet)");
+		return;
+	}
+	cancel_x = (short)(pr.right - DL_CANCEL_W - 6);
+	for (nd = g_dl_list; nd != NULL && shown < DL_ROWS_MAX;
+	     nd = nd->dl_next, shown++) {
+		char line[180];
+		size_t ln;
+		Rect tclip;
+		short y = (short)(pr.top + DL_ROW0_BASE + shown * DL_ROW_H);
+		if (nd->dl_state == 1) {
+			sprintf(line, "%s  -  Done (%lu bytes)",
+				nd->filename, nd->bytes_written);
+		} else if (nd->dl_state == 2) {
+			sprintf(line, "%s  -  Stopped (%lu bytes)",
+				nd->filename, nd->bytes_written);
+		} else if (nd->total_length > 0) {
+			sprintf(line, "%s  -  %lu / %lu",
+				nd->filename, nd->bytes_written,
+				nd->total_length);
+		} else {
+			sprintf(line, "%s  -  %lu bytes",
+				nd->filename, nd->bytes_written);
+		}
+		ln = strlen(line);
+		if (ln > 179) ln = 179;
+		/* Clip the row text so it can't run under the Cancel box. */
+		tclip = pr;
+		tclip.right = (nd->dl_state == 0) ?
+			(short)(cancel_x - 6) : (short)(pr.right - 6);
+		ClipRect(&tclip);
+		MoveTo((short)(pr.left + 12), y);
+		DrawText(line, 0, (short)ln);
+		ClipRect(&pr);
+		if (nd->dl_state == 0) {
+			Rect cb;
+			cb.left = cancel_x;
+			cb.top = (short)(y - 12);
+			cb.right = (short)(pr.right - 6);
+			cb.bottom = (short)(y + 3);
+			FrameRect(&cb);
+			MoveTo((short)(cancel_x + 6), y);
+			DrawString("\pCancel");
+		}
+	}
+}
+
+/* Cancel an active download: stop the fetch, drop the partial file, mark
+ * the node Stopped. Safe to call only on an active (dl_state==0) node. */
+static void dl_cancel(struct gui_download_window *dw)
+{
+	if (dw == NULL || dw->dl_state != 0) return;
+	dw->aborted = 1;
+	dw->dl_state = 2;
+	if (dw->refnum >= 0) { FSClose(dw->refnum); dw->refnum = -1; }
+	(void)FSpDelete(&dw->fsspec);
+	if (dw->dl_ctx != NULL) {
+		download_context_abort(dw->dl_ctx);
+		dw->dl_ctx = NULL;
+	}
+	macsurf_debug_log_writef("download CANCEL file=%s at=%lu",
+		dw->filename, dw->bytes_written);
+	dl_mgr_progress();
+}
+
+static void dl_mgr_show(void)
+{
+	dl_mgr_ensure();
+	if (g_dl_mgr_win == NULL) return;
+	ShowWindow(g_dl_mgr_win);
+	SelectWindow(g_dl_mgr_win);
+}
+
+/* Direct (non-update) repaint used for live progress. Clipped to the
+ * window's visRgn by QuickDraw, so it is safe outside BeginUpdate. */
+static void dl_mgr_progress(void)
+{
+	GrafPtr saved;
+	if (g_dl_mgr_win == NULL) return;
+	if (!IsWindowVisible(g_dl_mgr_win)) return;
+	GetPort(&saved);
+	SetPortWindowPort(g_dl_mgr_win);
+	dl_mgr_paint();
+	SetPort(saved);
+}
+
+/* Evict the oldest COMPLETED node when the list is full. Never evicts an
+ * active download. */
+static void dl_list_evict(void)
+{
+	struct gui_download_window *prev = NULL;
+	struct gui_download_window *nd = g_dl_list;
+	struct gui_download_window *victim = NULL;
+	struct gui_download_window *victim_prev = NULL;
+	if (g_dl_count < MACSURF_DL_MAX) return;
+	while (nd != NULL) {
+		if (nd->dl_state != 0) { victim = nd; victim_prev = prev; }
+		prev = nd;
+		nd = nd->dl_next;
+	}
+	if (victim == NULL) return;      /* all active — keep them */
+	if (victim_prev == NULL)
+		g_dl_list = victim->dl_next;
+	else
+		victim_prev->dl_next = victim->dl_next;
+	free(victim);
+	g_dl_count--;
+}
+#endif /* __MACOS9__ */
+
+/* ── main-loop entry points (declared in macos9.h) ─────────────────── */
+
+long macos9_download_mgr_is(WindowRef w)
+{
+#ifdef __MACOS9__
+	return (g_dl_mgr_win != NULL && w == g_dl_mgr_win) ? 1L : 0L;
+#else
+	(void)w;
+	return 0L;
 #endif
+}
+
+void macos9_download_mgr_draw(void)
+{
+#ifdef __MACOS9__
+	GrafPtr saved;
+	if (g_dl_mgr_win == NULL) return;
+	GetPort(&saved);
+	SetPortWindowPort(g_dl_mgr_win);
+	BeginUpdate(g_dl_mgr_win);
+	dl_mgr_paint();
+	EndUpdate(g_dl_mgr_win);
+	SetPort(saved);
+#endif
+}
+
+void macos9_download_mgr_click(short part, Point where)
+{
+#ifdef __MACOS9__
+	if (g_dl_mgr_win == NULL) return;
+	if (part == inDrag) {
+		Rect b;
+		b.left = -32000; b.top = -32000;
+		b.right = 32000; b.bottom = 32000;
+		DragWindow(g_dl_mgr_win, where, &b);
+	} else if (part == inGoAway) {
+		if (TrackGoAway(g_dl_mgr_win, where))
+			HideWindow(g_dl_mgr_win);
+	} else if (part == inContent) {
+		GrafPtr saved;
+		Point p = where;
+		struct gui_download_window *nd;
+		int shown = 0;
+		short cancel_x;
+		Rect pr;
+		if (g_dl_mgr_win != FrontWindow()) {
+			SelectWindow(g_dl_mgr_win);
+			return;
+		}
+		GetPort(&saved);
+		SetPortWindowPort(g_dl_mgr_win);
+		GlobalToLocal(&p);
+		GetWindowPortBounds(g_dl_mgr_win, &pr);
+		cancel_x = (short)(pr.right - DL_CANCEL_W - 6);
+		for (nd = g_dl_list; nd != NULL && shown < DL_ROWS_MAX;
+		     nd = nd->dl_next, shown++) {
+			short y = (short)(pr.top + DL_ROW0_BASE +
+					shown * DL_ROW_H);
+			if (nd->dl_state == 0 &&
+			    p.v >= (short)(y - 12) && p.v <= (short)(y + 3) &&
+			    p.h >= cancel_x && p.h <= (short)(pr.right - 6)) {
+				dl_cancel(nd);
+				break;
+			}
+		}
+		SetPort(saved);
+	}
+#else
+	(void)part; (void)where;
+#endif
+}
+
+/* ── gui_download_table callbacks ──────────────────────────────────── */
 
 static struct gui_download_window *
 macos9_download_create(struct download_context *ctx,
@@ -132,26 +430,15 @@ macos9_download_create(struct download_context *ctx,
 {
 	struct gui_download_window *dw;
 #ifdef __MACOS9__
-	NavReplyRecord  reply;
-	NavDialogOptions options;
-	AEKeyword       keyword;
-	DescType        actual_type;
-	Size            actual_size;
-	Str63           default_name;
+	short           vRef;
+	long            dirID;
+	FSSpec          spec;
 	const char     *suggested;
 	const char     *mime;
 	OSType          type, creator;
 	OSErr           err;
 	unsigned long long total_ll;
 #endif
-
-	if (g_active_dw != NULL) {
-		/* fixes313 V1 — one download at a time. */
-		macsurf_debug_log_writef(
-			"download_create: slot busy (current=%s)",
-			g_active_dw->filename);
-		return NULL;
-	}
 
 	dw = (struct gui_download_window *)calloc(1, sizeof(*dw));
 	if (dw == NULL) return NULL;
@@ -162,95 +449,52 @@ macos9_download_create(struct download_context *ctx,
 	dw->total_length = 0;
 	dw->filename[0] = '\0';
 	dw->aborted = 0;
+	dw->dl_state = 0;
+	dw->dl_next = NULL;
+	dw->dl_ctx = ctx;   /* fixes646: kept so Cancel can abort the fetch */
 
 #ifdef __MACOS9__
 	suggested = download_context_get_filename(ctx);
 	mime = download_context_get_mime_type(ctx);
 	total_ll = download_context_get_total_length(ctx);
-	if (total_ll > 0xFFFFFFFFu) {
-		/* Truncate the displayed total to 32-bit; the actual file
-		 * write keeps going as long as data flows. Rare case for
-		 * >4 GB downloads on a Mac with limited free space anyway. */
+	if (total_ll > 0xFFFFFFFFu)
 		dw->total_length = 0xFFFFFFFFu;
-	} else {
+	else
 		dw->total_length = (unsigned long)total_ll;
-	}
 
-	if (suggested != NULL) {
-		size_t n = strlen(suggested);
-		if (n >= sizeof(dw->filename)) n = sizeof(dw->filename) - 1;
-		memcpy(dw->filename, suggested, n);
-		dw->filename[n] = '\0';
-	} else {
-		strcpy(dw->filename, "untitled");
-	}
-
-	macos9_download_cstr_to_p63(dw->filename, default_name);
-
+	dl_sanitize_name(suggested, dw->filename, sizeof dw->filename);
 	macos9_download_mime_to_type(mime, &type, &creator);
 
-	/* NavPutFile is the Carbon save-dialog API; CarbonLib already
-	 * linked. NavGetDefaultDialogOptions fills the options struct
-	 * with the system defaults (including the modern Save panel
-	 * appearance), then we overwrite savedFileName with our suggested
-	 * filename so the dialog opens with it pre-filled. */
-	err = NavGetDefaultDialogOptions(&options);
-	if (err != noErr) {
+	if (macos9_downloads_dir_get(&vRef, &dirID) != noErr) {
 		macsurf_debug_log_writef(
-			"download_create: NavGetDefaultDialogOptions err=%d",
-			(int)err);
-		free(dw);
-		return NULL;
-	}
-	/* Copy our Pascal-format filename into the options. savedFileName
-	 * is a Str255 (256-byte Pascal string buffer) inside NavDialogOptions. */
-	{
-		unsigned char n = default_name[0];
-		options.savedFileName[0] = n;
-		memcpy(options.savedFileName + 1, default_name + 1, n);
-	}
-
-	err = NavPutFile(NULL, &reply, &options, NULL,
-			type, creator, NULL);
-	if (err != noErr || !reply.validRecord) {
-		macsurf_debug_log_writef(
-			"download_create: NavPutFile err=%d valid=%d",
-			(int)err, (int)reply.validRecord);
-		if (err == noErr) NavDisposeReply(&reply);
+			"download_create: no Downloads folder");
 		free(dw);
 		return NULL;
 	}
 
-	/* Extract the chosen FSSpec from the reply's selection AEDescList. */
-	err = AEGetNthPtr(&reply.selection, 1, typeFSS,
-			&keyword, &actual_type,
-			&dw->fsspec, sizeof(dw->fsspec), &actual_size);
-	NavDisposeReply(&reply);
+	err = dl_unique_spec(vRef, dirID, dw->filename,
+			sizeof dw->filename, &spec);
 	if (err != noErr) {
 		macsurf_debug_log_writef(
-			"download_create: AEGetNthPtr err=%d", (int)err);
+			"download_create: unique-spec err=%d", (int)err);
 		free(dw);
 		return NULL;
 	}
+	dw->fsspec = spec;
 
-	/* Delete any existing file at this path so FSpCreate succeeds (the
-	 * dialog prompted the user to replace; saying yes returns the
-	 * existing FSSpec but FSpCreate refuses to overwrite). */
-	(void)FSpDelete(&dw->fsspec);
-
-	err = FSpCreate(&dw->fsspec, creator, type, smSystemScript);
-	if (err != noErr) {
+	err = FSpCreate(&spec, creator, type, smSystemScript);
+	if (err != noErr && err != dupFNErr) {
 		macsurf_debug_log_writef(
 			"download_create: FSpCreate err=%d", (int)err);
 		free(dw);
 		return NULL;
 	}
 
-	err = FSpOpenDF(&dw->fsspec, fsRdWrPerm, &dw->refnum);
+	err = FSpOpenDF(&spec, fsRdWrPerm, &dw->refnum);
 	if (err != noErr) {
 		macsurf_debug_log_writef(
 			"download_create: FSpOpenDF err=%d", (int)err);
-		(void)FSpDelete(&dw->fsspec);
+		(void)FSpDelete(&spec);
 		free(dw);
 		return NULL;
 	}
@@ -260,11 +504,19 @@ macos9_download_create(struct download_context *ctx,
 		sprintf(status, "Downloading %s...", dw->filename);
 		macos9_download_status(dw, status);
 	}
+	macsurf_debug_log_writef("download START file=%s total=%lu",
+		dw->filename, dw->total_length);
+
+	dl_list_evict();
+	dw->dl_next = g_dl_list;
+	g_dl_list = dw;
+	g_dl_count++;
+	dl_mgr_show();
+	dl_mgr_progress();
 #else
 	(void)ctx;
 #endif
 
-	g_active_dw = dw;
 	return dw;
 }
 
@@ -291,12 +543,13 @@ macos9_download_data(struct gui_download_window *dw,
 			"download_data: FSWrite err=%d wrote=%ld of=%u",
 			(int)err, (long)count, (unsigned)size);
 		dw->aborted = 1;
+		dw->dl_state = 2;
+		dl_mgr_progress();
 		return NSERROR_SAVE_FAILED;
 	}
 	dw->bytes_written += (unsigned long)size;
 
-	/* Throttle status updates: ~every 16 KB so we don't repaint the
-	 * status bar for every TCP segment. */
+	/* Throttle UI updates to ~every 16 KB. */
 	if ((dw->bytes_written & 0x3FFFul) < (unsigned long)size) {
 		char status[128];
 		if (dw->total_length > 0) {
@@ -310,6 +563,7 @@ macos9_download_data(struct gui_download_window *dw,
 				dw->filename, dw->bytes_written);
 		}
 		macos9_download_status(dw, status);
+		dl_mgr_progress();
 	}
 #else
 	(void)data; (void)size;
@@ -328,6 +582,8 @@ macos9_download_error(struct gui_download_window *dw,
 
 	if (dw == NULL) return;
 	dw->aborted = 1;
+	if (dw->dl_state == 0) dw->dl_state = 2;   /* keep 2 if already stopped */
+	dw->dl_ctx = NULL;                          /* core destroys ctx now */
 
 #ifdef __MACOS9__
 	if (dw->refnum >= 0) {
@@ -340,12 +596,11 @@ macos9_download_error(struct gui_download_window *dw,
 	macos9_download_status(dw, status);
 	macsurf_debug_log_writef(
 		"download_error: file=%s msg=%s", dw->filename, m);
+	dl_mgr_progress();
 #else
 	(void)error_msg;
 #endif
-
-	if (g_active_dw == dw) g_active_dw = NULL;
-	free(dw);
+	/* Node stays in the manager list (Failed); freed by the LRU cap. */
 }
 
 static void
@@ -356,6 +611,14 @@ macos9_download_done(struct gui_download_window *dw)
 #endif
 
 	if (dw == NULL) return;
+	dw->dl_ctx = NULL;                          /* core destroys ctx now */
+	if (dw->dl_state != 0) {                    /* was cancelled/failed */
+#ifdef __MACOS9__
+		dl_mgr_progress();
+#endif
+		return;
+	}
+	dw->dl_state = 1;
 
 #ifdef __MACOS9__
 	if (dw->refnum >= 0) {
@@ -365,11 +628,12 @@ macos9_download_done(struct gui_download_window *dw)
 	sprintf(status, "Saved %s (%lu bytes)",
 		dw->filename, dw->bytes_written);
 	macos9_download_status(dw, status);
-	macsurf_debug_log_writef("%s", status);
+	macsurf_debug_log_writef("download DONE file=%s wrote=%ld total=%ld",
+		dw->filename, (long)dw->bytes_written,
+		(long)dw->total_length);
+	dl_mgr_progress();
 #endif
-
-	if (g_active_dw == dw) g_active_dw = NULL;
-	free(dw);
+	/* Node stays in the manager list (Done); freed by the LRU cap. */
 }
 
 /* Field order: create, data, error, done (see include/netsurf/download.h) */

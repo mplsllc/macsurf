@@ -624,9 +624,21 @@ macos9_font_split(const struct plot_font_style *fstyle,
         }
 
         if (have_space) {
-                /* Return the character AFTER the space as the start of the next line.
-                 * This "consumes" the space at the end of the current line. */
-                *char_offset = last_space + 1;
+                /* fixes636: return the offset OF the space itself, not the
+                 * char after it. NetSurf core's layout_text_box_split
+                 * (layout.c:3512) does
+                 *     bool space = (split_box->text[new_length] == ' ');
+                 * i.e. it requires char_offset to land ON the space so core
+                 * can detect it, reserve box->space, and consume exactly one
+                 * space itself (used_length = new_length + (space?1:0)).
+                 * Returning last_space+1 made core see a letter at that
+                 * offset, so it treated the break as spaceless: box->space
+                 * was forced to 0 and the next fragment packed flush against
+                 * the previous one with no gap -- "software and" rendered as
+                 * "softwareand". actual_x is unchanged: it already measures
+                 * width up to (excluding) the space, which is exactly what
+                 * core expects paired with char_offset == last_space. */
+                *char_offset = last_space;
                 macos9_font_width(fstyle, string, last_space, actual_x);
         } else {
                 /* No space found in the part that fits. Force a hard break. */

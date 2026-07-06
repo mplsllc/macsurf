@@ -93,4 +93,29 @@ void macsurf_profile_add_bytes(long n);
 void macsurf_profile_count_resource(void);
 void macsurf_profile_emit(const char *url);
 
+/* fixes640 — TRUSTWORTHY per-phase timing. Replaces the fixes637/638
+ * milestone-subtraction (which produced negative garbage because phases
+ * overlap). Each phase brackets its choke function with the existing
+ * macos9_micros() double clock and adds the elapsed microsecond delta:
+ *
+ *   double t = macos9_micros();
+ *   ... phase work ...
+ *   macsurf_profile_accum_layout((long)(macos9_micros() - t));
+ *
+ * The SUM across the whole load is honest CPU-per-phase regardless of
+ * interleave. Reset by macsurf_profile_reset(); the load-complete edge in
+ * main.c calls macsurf_profile_emit_phases(url) once, which writes the
+ * parseable "PERFACC ..." line perf/scrape.py folds into history.csv. Callers
+ * in other TUs add `extern double macos9_micros(void);` (see html.c). */
+void macsurf_profile_accum_tls(long us);
+void macsurf_profile_accum_net(long us);
+void macsurf_profile_accum_parse(long us);
+void macsurf_profile_accum_cascade(long us);
+void macsurf_profile_accum_layout(long us);
+void macsurf_profile_accum_paint(long us);
+void macsurf_profile_accum_js(long us);
+void macsurf_profile_note_reflow(void);   /* +1 per full html_reformat pass */
+long macsurf_profile_get_js_us(void);     /* for parse to subtract nested inline JS */
+void macsurf_profile_emit_phases(const char *url);
+
 #endif

@@ -1270,7 +1270,15 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 	}
 	if (!sep) return 0;
 
-	*sep = 0;
+	/* fixes641 (#193): do NOT NUL the '\r' at sep. sep points at the '\r'
+	 * that ENDS the last header line (the first '\r' of the terminating
+	 * \r\n\r\n). find_line is length-bounded by cur_len below (it does not
+	 * need a NUL terminator) and NULs each line's own '\r' as it emits it.
+	 * The old `*sep = 0` clobbered the final header's '\r' so find_line
+	 * could never match its \r\n -> the LAST header line was silently
+	 * dropped. When that last header is Set-Cookie (login 302), the session
+	 * cookie was lost and logins never stuck. body_off uses sep+4 pointer
+	 * math and is unaffected. */
 	cur = c->hdr_buf;
 	cur_len = (long)(sep - c->hdr_buf) + 2;
 	*body_off = (long)((sep + 4) - c->hdr_buf);
@@ -1446,6 +1454,18 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 	}
 
 	if (c->chunked) OSTLS_HTTP_ChunkDecoderInit(&c->chunk);
+
+	/* fixes644 (#198): a response with NO Content-Length and NOT chunked is
+	 * connection-close-delimited — the ONLY way to know the body ended is the
+	 * server closing the connection. If we leave keep_alive_ok set, our pool
+	 * logic waits for more bytes on a socket the server considers done, and
+	 * the no-progress watchdog eventually truncates the body (the salvage
+	 * path), corrupting a large download. Clearing keep_alive_ok makes the
+	 * peer-close path at the bottom terminate the body cleanly. Mirrors the
+	 * HTTP fetcher; only affects close-delimited responses, so no regression
+	 * to Content-Length / chunked transfers. */
+	if (c->content_length < 0 && !c->chunked)
+		c->keep_alive_ok = 0;
 
 	return 1;
 }
@@ -1966,7 +1986,24 @@ static void hctx_poll(struct macos9_https_ctx *c)
 
 	/* Pump up to PUMP_STEPS atomic steps per poll tick (fixes234). */
 	ev = kOSTLSEventNone;
-	e = OSTLS_Pump(c->conn, PUMP_STEPS, &ev);
+	{
+		/* fixes640 — accumulate the CPU inside the TLS engine (excludes
+		 * WaitNextEvent idle between polls). Attribute by pre-pump state:
+		 * handshake crypto (X25519/ECDHE/verify — the G3's real cost) ->
+		 * tls; record decrypt during transfer -> net. */
+		extern double macos9_micros(void);
+		extern void macsurf_profile_accum_tls(long us);
+		extern void macsurf_profile_accum_net(long us);
+		double t_pump = macos9_micros();
+		int was_handshaking = (c->state == HS_TLSING);
+		long pump_us;
+		e = OSTLS_Pump(c->conn, PUMP_STEPS, &ev);
+		pump_us = (long)(macos9_micros() - t_pump);
+		if (was_handshaking)
+			macsurf_profile_accum_tls(pump_us);
+		else
+			macsurf_profile_accum_net(pump_us);
+	}
 	if (e != kOSTLSAsync_OK) {
 		hctx_fail(c, "https: pump error");
 		return;
