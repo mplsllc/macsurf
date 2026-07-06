@@ -672,133 +672,44 @@ struct mouse_action_state {
  * text_box - text box
  * text_box_x - text_box
  */
-/* fixes651 (overlay click-through): positioned overlays (position:fixed or
- * absolute — e.g. a XenForo cookie-consent bar) paint ON TOP of the page, but
- * the DOM-order box walk in get_mouse_action_node resolves the in-flow content
- * BENEATH them, so a click on the overlay's link is lost. This walks the box
- * tree for the deepest <a href> box that (a) sits inside a fixed/absolute
- * positioned subtree and (b) physically contains the point. Deeper/later boxes
- * win (they paint last). Global coords accumulate exactly as box_next_xy's
- * child descent does (child_global = parent_global + child->x). Depth-capped
- * so a deeply-nested page can't overflow the small OS 9 stack (real overlays
- * are shallow — a notice bar is a handful of levels under <body>). */
+/* fixes654 — split-anchor click resolution. When an <a href>'s inline box gets
+ * split (e.g. a XenForo SVG-icon flex button: the anchor's href ends up on its
+ * text box, but the sibling icon box you actually click does NOT inherit it —
+ * the box_construct href-inheritance chain is broken by the flex/SVG box
+ * restructuring), the DOM-order box walk in get_mouse_action_node resolves the
+ * clicked box and finds no link. But the <a> is ALWAYS a DOM ancestor of what
+ * you clicked, even when the box tree split it. Walk UP the clicked node's DOM
+ * ancestry to the nearest box carrying an href and return it. Ref discipline
+ * mirrors box_construct.c's ancestor walk: never unref the borrowed start node;
+ * unref each parent we step through. */
 static struct box *
-find_overlay_link_box(struct box *box, int bx, int by, int x, int y,
-		bool in_positioned, int depth)
+link_box_for_ancestor(dom_node *start)
 {
-	struct box *child;
+	dom_node *cur = start;
 	struct box *found = NULL;
-	bool pos = in_positioned;
 
-	if (box == NULL || depth > 64) {
-		return NULL;
-	}
-	if (box->style != NULL) {
-		unsigned int p = css_computed_position(box->style);
-		if (p == CSS_POSITION_FIXED || p == CSS_POSITION_ABSOLUTE) {
-			pos = true;
-		}
-	}
-	for (child = box->children; child != NULL; child = child->next) {
-		struct box *r = find_overlay_link_box(child,
-				bx + child->x, by + child->y,
-				x, y, pos, depth + 1);
-		if (r != NULL) {
-			found = r;
-		}
-	}
-	if (found != NULL) {
-		return found;
-	}
-	if (pos && box->href != NULL) {
-		int rx = x - bx;
-		int ry = y - by;
-		if (rx >= -box->border[LEFT].width &&
-		    rx < box->padding[LEFT] + box->width +
-			 box->padding[RIGHT] + box->border[RIGHT].width &&
-		    ry >= -box->border[TOP].width &&
-		    ry < box->padding[TOP] + box->height +
-			 box->padding[BOTTOM] + box->border[BOTTOM].width) {
-			return box;
-		}
-	}
-	return NULL;
-}
+	while (cur != NULL) {
+		struct box *b = box_for_node(cur);
+		dom_node *par = NULL;
+		dom_exception e;
 
-/* fixes653 DIAG (temporary): dump every box PHYSICALLY under a click point —
- * global x/y, size, whether it carries an href, its CSS position, and box type.
- * Lets us see exactly what sits under the un-clickable cookie-bar Accept link
- * (is the <a> box even there? is it positioned? does it have the href?).
- * Remove once the overlay click issue is understood. */
-static void
-debug_dump_boxes_at(struct box *box, int bx, int by, int x, int y, int depth)
-{
-	struct box *child;
-	int rx;
-	int ry;
-
-	if (box == NULL || depth > 80) {
-		return;
-	}
-	rx = x - bx;
-	ry = y - by;
-	{
-		int phys = (rx >= -box->border[LEFT].width &&
-		    rx < box->padding[LEFT] + box->width +
-			 box->padding[RIGHT] + box->border[RIGHT].width &&
-		    ry >= -box->border[TOP].width &&
-		    ry < box->padding[TOP] + box->height +
-			 box->padding[BOTTOM] + box->border[BOTTOM].width);
-		/* fixes653c: also surface any <a href> box within ~60px of the
-		 * click even if not physically containing it — so we can see where
-		 * the Accept link's box actually sits vs where we clicked. */
-		int near_href = (box->href != NULL &&
-		    rx >= -60 && rx < box->padding[LEFT] + box->width +
-			 box->padding[RIGHT] + 60 &&
-		    ry >= -60 && ry < box->padding[TOP] + box->height +
-			 box->padding[BOTTOM] + 60);
-		if (phys || near_href) {
-			extern void macsurf_debug_log_writef(const char *fmt, ...);
-			unsigned int pos = (box->style != NULL) ?
-				css_computed_position(box->style) : 99;
-			macsurf_debug_log_writef(
-				"  CLKBOX d=%d gx=%d gy=%d w=%d h=%d href=%d pos=%d type=%d phys=%d",
-				depth, bx, by, box->width, box->height,
-				box->href != NULL ? 1 : 0, (int)pos,
-				(int)box->type, phys);
+		if (b != NULL && b->href != NULL) {
+			found = b;
+			if (cur != start) {
+				dom_node_unref(cur);
+			}
+			break;
 		}
-	}
-	for (child = box->children; child != NULL; child = child->next) {
-		debug_dump_boxes_at(child, bx + child->x, by + child->y,
-			x, y, depth + 1);
-	}
-}
-
-/* fixes653b DIAG (temporary): dump EVERY position:fixed / :absolute box's
- * global LAYOUT coords + size + href, regardless of the click point — so we can
- * see where the cookie bar's box actually lives vs where it's drawn/clicked. */
-static void
-debug_dump_positioned(struct box *box, int bx, int by, int depth)
-{
-	struct box *child;
-
-	if (box == NULL || depth > 80) {
-		return;
-	}
-	if (box->style != NULL) {
-		unsigned int pos = css_computed_position(box->style);
-		if (pos == CSS_POSITION_FIXED || pos == CSS_POSITION_ABSOLUTE) {
-			extern void macsurf_debug_log_writef(const char *fmt, ...);
-			macsurf_debug_log_writef(
-				"  POSBOX pos=%d gx=%d gy=%d w=%d h=%d href=%d type=%d",
-				(int)pos, bx, by, box->width, box->height,
-				box->href != NULL ? 1 : 0, (int)box->type);
+		e = dom_node_get_parent_node(cur, &par);
+		if (cur != start) {
+			dom_node_unref(cur);
 		}
+		if (e != DOM_NO_ERR || par == NULL) {
+			break;
+		}
+		cur = par;
 	}
-	for (child = box->children; child != NULL; child = child->next) {
-		debug_dump_positioned(child, bx + child->x, by + child->y,
-			depth + 1);
-	}
+	return found;
 }
 
 static nserror
@@ -945,22 +856,18 @@ get_mouse_action_node(html_content *html,
 	/* use of box_x, box_y, or content below this point is probably a
 	 * mistake; they will refer to the last box returned by box_at_point */
 
-	/* fixes651 (overlay click-through): if the DOM-order walk found no link,
-	 * a positioned overlay (cookie bar, modal, sticky button) painted on top
-	 * of the content may own the point — prefer its link. Gated on no link so
-	 * normal link hovers/clicks skip this full-tree scan (perf). */
-	if (man->link.url == NULL) {
-		struct box *ov = find_overlay_link_box(html->layout,
-				html->layout->margin[LEFT],
-				html->layout->margin[TOP], x, y, false, 0);
-		if (ov != NULL) {
-			man->link.url = ov->href;
-			man->link.target = ov->target;
-			man->link.box = ov;
+	/* fixes654 (split-anchor click): if the DOM-order box walk found no link,
+	 * the clicked box may be part of an <a> whose inline box got split (e.g.
+	 * an icon inside a flex button that didn't inherit the anchor's href).
+	 * Walk up the clicked node's DOM ancestry to the nearest box with an href.
+	 * Gated on 'no link found' so normal links skip it. */
+	if (man->link.url == NULL && man->node != NULL) {
+		struct box *lb = link_box_for_ancestor(man->node);
+		if (lb != NULL) {
+			man->link.url = lb->href;
+			man->link.target = lb->target;
+			man->link.box = lb;
 			man->link.is_imagemap = false;
-			if (ov->node != NULL) {
-				man->node = ov->node;
-			}
 		}
 	}
 
@@ -1619,21 +1526,6 @@ mouse_action_drag_none(html_content *html,
 	/* fire dom click event */
 	if (mouse & BROWSER_MOUSE_CLICK_1) {
 		int js_default_prevented = 0;
-		/* fixes653 DIAG: log the click resolution + dump the boxes under
-		 * the point so we can see why the cookie-bar Accept isn't hit. */
-		{
-			extern void macsurf_debug_log_writef(const char *fmt, ...);
-			macsurf_debug_log_writef(
-				"CLICKDIAG x=%d y=%d link=%d action=%d",
-				x, y, mas.link.url != NULL ? 1 : 0,
-				(int)mas.result.action);
-			debug_dump_boxes_at(html->layout,
-				html->layout->margin[LEFT],
-				html->layout->margin[TOP], x, y, 0);
-			debug_dump_positioned(html->layout,
-				html->layout->margin[LEFT],
-				html->layout->margin[TOP], 0);
-		}
 		fire_generic_dom_event(corestring_dom_click, mas.node, true, true);
 		/* MacSurf (Gate 5): also dispatch the click through the QuickJS
 		 * shadow-DOM event layer so page scripts that use element-level AND
