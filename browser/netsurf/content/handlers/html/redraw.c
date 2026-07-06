@@ -3328,6 +3328,20 @@ static bool html_redraw_box_children(const html_content *html, struct box *box,
  * x, y, clip_[xy][01] are in target coordinates.
  */
 
+/* fixes650 (Track C2): the ONLY consumer of a box's element tag-type in
+ * html_redraw_box is the canvas branch, yet the lookup (a DOM vtable dispatch +
+ * dom_string refcount + up to 26 strcasecmp) used to run for EVERY element box
+ * on EVERY redraw/scroll. Resolve it lazily here, called only after the cheap
+ * REPLACE_DIM gate, so ~99.9% of boxes skip it each frame. */
+static bool macsurf_box_node_is_canvas(struct box *box)
+{
+	dom_html_element_type tt = DOM_HTML_ELEMENT_TYPE__UNKNOWN;
+	dom_exception e;
+	if (box == NULL || box->node == NULL) return false;
+	e = macsurf_html_element_get_tag_type(box->node, &tt);
+	return (e == DOM_NO_ERR && tt == DOM_HTML_ELEMENT_TYPE_CANVAS);
+}
+
 bool html_redraw_box(const html_content *html, struct box *box,
 		int x_parent, int y_parent,
 		const struct rect *clip, const float scale,
@@ -3347,7 +3361,6 @@ bool html_redraw_box(const html_content *html, struct box *box,
 	enum css_overflow_e overflow_x = CSS_OVERFLOW_VISIBLE;
 	enum css_overflow_e overflow_y = CSS_OVERFLOW_VISIBLE;
 	dom_exception exc;
-	dom_html_element_type tag_type;
 
 	macos9_hrb_visits++;
 	switch (box->type) {
@@ -4191,14 +4204,9 @@ bool html_redraw_box(const html_content *html, struct box *box,
 			return false;
 	}
 
-	if (box->node != NULL) {
-		exc = macsurf_html_element_get_tag_type(box->node, &tag_type);
-		if (exc != DOM_NO_ERR) {
-			tag_type = DOM_HTML_ELEMENT_TYPE__UNKNOWN;
-		}
-	} else {
-		tag_type = DOM_HTML_ELEMENT_TYPE__UNKNOWN;
-	}
+	/* fixes650 (Track C2): the per-box tag-type lookup that used to run here
+	 * on every frame is now deferred into the canvas branch below (behind the
+	 * cheap REPLACE_DIM gate) via macsurf_box_node_is_canvas(). */
 
 	if (box->object && width != 0 && height != 0) {
 		struct content_redraw_data obj_data;
@@ -4284,9 +4292,8 @@ bool html_redraw_box(const html_content *html, struct box *box,
 					    fallback, fallback_len) != NSERROR_OK)
 				return false;
 		}
-	} else if (tag_type == DOM_HTML_ELEMENT_TYPE_CANVAS &&
-		   box->node != NULL &&
-		   box->flags & REPLACE_DIM) {
+	} else if ((box->flags & REPLACE_DIM) && box->node != NULL &&
+		   macsurf_box_node_is_canvas(box)) {
 		/* Canvas to draw */
 		struct bitmap *bitmap = NULL;
 		exc = dom_node_get_user_data(box->node,
