@@ -762,6 +762,33 @@ debug_dump_boxes_at(struct box *box, int bx, int by, int x, int y, int depth)
 	}
 }
 
+/* fixes653b DIAG (temporary): dump EVERY position:fixed / :absolute box's
+ * global LAYOUT coords + size + href, regardless of the click point — so we can
+ * see where the cookie bar's box actually lives vs where it's drawn/clicked. */
+static void
+debug_dump_positioned(struct box *box, int bx, int by, int depth)
+{
+	struct box *child;
+
+	if (box == NULL || depth > 80) {
+		return;
+	}
+	if (box->style != NULL) {
+		unsigned int pos = css_computed_position(box->style);
+		if (pos == CSS_POSITION_FIXED || pos == CSS_POSITION_ABSOLUTE) {
+			extern void macsurf_debug_log_writef(const char *fmt, ...);
+			macsurf_debug_log_writef(
+				"  POSBOX pos=%d gx=%d gy=%d w=%d h=%d href=%d type=%d",
+				(int)pos, bx, by, box->width, box->height,
+				box->href != NULL ? 1 : 0, (int)box->type);
+		}
+	}
+	for (child = box->children; child != NULL; child = child->next) {
+		debug_dump_positioned(child, bx + child->x, by + child->y,
+			depth + 1);
+	}
+}
+
 static nserror
 get_mouse_action_node(html_content *html,
 		      int x, int y,
@@ -1591,6 +1618,9 @@ mouse_action_drag_none(html_content *html,
 			debug_dump_boxes_at(html->layout,
 				html->layout->margin[LEFT],
 				html->layout->margin[TOP], x, y, 0);
+			debug_dump_positioned(html->layout,
+				html->layout->margin[LEFT],
+				html->layout->margin[TOP], 0);
 		}
 		fire_generic_dom_event(corestring_dom_click, mas.node, true, true);
 		/* MacSurf (Gate 5): also dispatch the click through the QuickJS
