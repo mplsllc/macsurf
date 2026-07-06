@@ -1375,6 +1375,23 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 						"(we have JS) for %s", c->host);
 				} else {
 					fetch_set_cookie(c->parent, v);
+					/* fixes658 (#193) login cache-staleness fix. A login is a POST
+					 * whose response sets session cookies then 303/302-redirects to a
+					 * page we very likely CACHED from BEFORE login (the logged-OUT
+					 * copy). Serving that stale copy makes a good login look
+					 * failed/errored. So when a POST response stores a Set-Cookie,
+					 * force the next main-document fetch (the redirect target) to
+					 * bypass cache and refetch fresh WITH the new session cookies.
+					 * Static sub-resources still serve from cache (one-shot, clears
+					 * on the next cache store). GET responses setting analytics
+					 * cookies do NOT trip this (guarded on post_body). */
+					if (c->post_body != NULL) {
+						extern int macsurf_http_skip_next_cache;
+						macsurf_http_skip_next_cache = 1;
+						macsurf_debug_log_writef(
+							"https: POST set-cookie -> skip stale "
+							"cache (login) host=%s", c->host);
+					}
 					/* fixes367 (#167) — log the cookie NAME only (up
 					 * to '='), never the value, so the hardware
 					 * bring-up can confirm c_user/xs land without
