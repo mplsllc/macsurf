@@ -41,6 +41,54 @@
 #include "netsurf/css.h"
 
 
+/* fixes664 (#194): document-order Tab focus traversal. NetSurf core has no
+ * general focus traversal; stock box_textarea_keypress only walked the per-form
+ * gadget->next chain, so Tab did nothing for bare inputs (no <form>) or across
+ * forms. These walk the box tree in pre-order (= document order) collecting
+ * displayed text fields so Tab/Shift-Tab cycle them with or without a form. */
+#define BOX_TAB_MAX 256
+static void box_collect_text_fields(struct box *b, struct box **list,
+		int *n, int cap)
+{
+	struct box *ch;
+	if (b == NULL || *n >= cap) {
+		return;
+	}
+	if (b->gadget != NULL &&
+	    (b->gadget->type == GADGET_TEXTBOX ||
+	     b->gadget->type == GADGET_PASSWORD ||
+	     b->gadget->type == GADGET_TEXTAREA) &&
+	    b->gadget->data.text.ta != NULL) {
+		list[(*n)++] = b;
+	}
+	for (ch = b->children; ch != NULL; ch = ch->next) {
+		box_collect_text_fields(ch, list, n, cap);
+	}
+}
+
+static struct box *box_next_text_field(struct box *root, struct box *cur,
+		bool forward)
+{
+	struct box *list[BOX_TAB_MAX];
+	int n = 0, i, idx = -1;
+	box_collect_text_fields(root, list, &n, BOX_TAB_MAX);
+	if (n < 2) {
+		return NULL;
+	}
+	for (i = 0; i < n; i++) {
+		if (list[i] == cur) { idx = i; break; }
+	}
+	if (idx < 0) {
+		return NULL;
+	}
+	if (forward) {
+		idx = (idx + 1) % n;
+	} else {
+		idx = (idx - 1 + n) % n;
+	}
+	return list[idx];
+}
+
 nserror box_textarea_keypress(html_content *html, struct box *box, uint32_t key)
 {
 	struct form_control *gadget = box->gadget;
@@ -50,6 +98,21 @@ nserror box_textarea_keypress(html_content *html, struct box *box, uint32_t key)
 	nserror res = NSERROR_OK;
 
 	assert(ta != NULL);
+
+	/* fixes664 (#194): Tab / Shift-Tab move focus to the next/previous text
+	 * field in DOCUMENT order (box_next_text_field), working with or without
+	 * a <form>. Handled BEFORE the GADGET_TEXTAREA passthrough so Tab also
+	 * leaves a multiline textarea instead of being swallowed as a tab char. */
+	if (key == NS_KEY_TAB || key == NS_KEY_SHIFT_TAB) {
+		struct box *nb = box_next_text_field(html->layout, box,
+				(bool)(key == NS_KEY_TAB));
+		if (nb != NULL && nb->gadget != NULL &&
+		    nb->gadget->data.text.ta != NULL) {
+			textarea_set_caret(ta, -1);
+			textarea_set_caret(nb->gadget->data.text.ta, 0);
+		}
+		return NSERROR_OK;
+	}
 
 	if (gadget->type == GADGET_TEXTAREA) {
 		if (textarea_keypress(ta, key)) {
@@ -68,48 +131,6 @@ nserror box_textarea_keypress(html_content *html, struct box *box, uint32_t key)
 					  html->bw,
 					  form,
 					  NULL);
-		}
-		break;
-
-	case NS_KEY_TAB:
-		{
-			struct form_control *next_input;
-			/* Find next text entry field that is actually
-			 * displayed (i.e. has an associated box) */
-			for (next_input = gadget->next;
-			     next_input &&
-				     ((next_input->type != GADGET_TEXTBOX &&
-				       next_input->type != GADGET_TEXTAREA &&
-				       next_input->type != GADGET_PASSWORD) ||
-				      !next_input->box);
-			     next_input = next_input->next)
-				;
-
-			if (next_input != NULL) {
-				textarea_set_caret(ta, -1);
-				textarea_set_caret(next_input->data.text.ta, 0);
-			}
-		}
-		break;
-
-	case NS_KEY_SHIFT_TAB:
-		{
-			struct form_control *prev_input;
-			/* Find previous text entry field that is actually
-			 * displayed (i.e. has an associated box) */
-			for (prev_input = gadget->prev;
-			     prev_input &&
-				     ((prev_input->type != GADGET_TEXTBOX &&
-				       prev_input->type != GADGET_TEXTAREA &&
-				       prev_input->type != GADGET_PASSWORD) ||
-				      !prev_input->box);
-			     prev_input = prev_input->prev)
-				;
-
-			if (prev_input != NULL) {
-				textarea_set_caret(ta, -1);
-				textarea_set_caret(prev_input->data.text.ta, 0);
-			}
 		}
 		break;
 
