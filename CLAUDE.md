@@ -1,43 +1,29 @@
-# ⚠️ READ THIS FIRST: WORKING TREE ≠ HEAD (provenance) + PER-COMPONENT G3 STATUS (2026-06-30)
+# ⚠️ READ THIS FIRST: 1.86 "macQJS" RELEASE STATE (2026-07-07)
 
-**The committed tree (HEAD) and the working tree are two different projects. Reason about the WORKING TREE — that is what the user builds and ships. HEAD is far behind it.**
+**The working tree is the packaged MacSurf 1.86 "macQJS" release.** Tip is **fixes674c** (`9c2d76b7`), and per the current push-freely policy the fix commits ARE committed/pushed (HEAD ≈ working tree). The only uncommitted deltas are release docs (this file, README.md, docs/status.md, docs/release-notes/MacSurf-1.86.md, `Read Me!`, `readme.txt`) held pending the user's final editing pass, plus a small set of in-flight ALPN/handshake changes (`macos9_tls_fetcher.c`, `macTLS/os9/*handshake*`, `cssh_css.c`, `html.c`, `ns_content.c`) the user is working on separately.
 
-- **HEAD = `f305816c` — the QuickJS migration commit itself** (titled "QuickJS engine migration + fixes482–554"). It already contains the engine swap. The *pre-migration Duktape baseline* is `664273a4` (fixes481); that is the tree to diff against to see what the migration changed.
-- **Working tree ≈ fixes560+.** It is HEAD (`f305816c`) plus uncommitted fixes555+ (parser-resume "chase" layer, cache-hit PAUSED fix, fixes471 one-column restore, on-screen fetch readout + profiling, cascade-dedup attempt). Per DIRECTIVE #4 the diffs are held uncommitted until hardware-confirmed — but uncommitted does **NOT** mean unrun: see the per-component G3 status below.
-- **Two diff spans matter and must not be conflated:** `664273a4 → f305816c` is the *regression-introducing* span (engine swap + fetcher replacement + content registry + parser-resume rewrite + ns_content rename — where Failure A and Failure B were born). `f305816c → working tree` is the *attempted-fix* span (reactions to those crashes, not their source).
-- Anything below describing "current state" describes the working tree unless it says HEAD. Do not assume `git log` reflects what the user is running — it does not.
+- **JS engine is macQJS (QuickJS, ES2023), not Duktape.** See [JavaScript Engine](#javascript-engine). Migration commit was `f305816c`; pre-migration Duktape baseline is `664273a4` (fixes481).
+- **HTTPS fetcher** is `macos9_tls_fetcher.c` (renamed from `macos9_https_fetcher.c`).
+- **Working-tree files** beyond the classic list: `macos9_content_registry.c`/`.h`, `javascript/macsurf_qjs.c`/`.h`, `browser/libquickjs/`, and `content.c` renamed to `ns_content.c`.
 
-**What changed in the working tree that this file used to get wrong (now corrected below):**
-- **JS engine is QuickJS, not Duktape.** See [JavaScript Engine](#javascript-engine).
-- **HTTPS fetcher renamed** `macos9_https_fetcher.c` → `macos9_tls_fetcher.c` (untracked).
-- **Untracked working-tree files** not yet in HEAD: `macos9_tls_fetcher.c`, `macos9_content_registry.c` / `.h`, `javascript/macsurf_qjs.c` / `.h`, `browser/libquickjs/`. The old `content.c` has been **renamed to `ns_content.c`** in the worktree (old `content.c` shows as deleted).
+## 🟢 G3 Hardware Verification Status (2026-07-07 — 1.86 release cycle)
 
-## 🟢🟡🔴 G3 Hardware Verification Status (2026-06-30)
+**The two big migration-era crashes are RESOLVED and the tree is a shipping release.** 68kmla.org and tinkerdifferent.com render full-width, log in, and post replies from real Mac OS 9. The old 2026-06-30 "actively crashing box-walk UAF" and "cache-hit first-paint error" banners are **closed** — do not resurrect them as open bugs.
 
-**Process note: every fix this session is tested on real G3 hardware. Status below is PER-COMPONENT — do NOT assume tree-wide non-verification.** The old blanket "hardware-UNVERIFIED" banner was accurate only while the migration was a fresh untouched pile; it is now false for the load path. Treat each component by its bucket, not by the fact that the diff is uncommitted.
+### ✅ VERIFIED ON G3 THIS CYCLE (fixes656–674c)
+- **fixes656 — sticky-overlay hit-test.** Cookie-consent Accept bar (`position:sticky`) clickable; hit-test mirrors the renderer's viewport pin + overlay precedence. Tag `fixes656-sticky-hittest-verified`.
+- **fixes658 — login persists.** Post-login 303 no longer serves a stale cached logged-out page (`macsurf_http_skip_next_cache` on POST-response Set-Cookie).
+- **fixes660–664 — text input.** Blinking caret (frontend `place_caret`), click-drag selection, Cut/Copy/Paste (Scrap Manager), Tab/Shift-Tab between form fields in document order, arrow/Home/End/PageUp-Down routing. Tag `fixes664-text-input-verified`. (Tab-to-links deferred, #205.)
+- **fixes665 — image/font disk cache.** Images + downloadable fonts cached to disk; 64 MB budget, LRU eviction.
+- **fixes671 — near-instant startup.** Removed the ~17 s synchronous `qjs_selftest` JS benchmark battery that ran at every launch before the event loop. Startup now <1 s. (Gated behind `MACSURF_QJS_SELFTEST`, off by default.)
+- **fixes674c — viewport lazy image loading.** `loading="lazy"` images fetched only as they enter the viewport; the rest stream in on scroll. ~26 % faster wall-clock on a heavy forum page. Crash-gated on `CONTENT_STATUS_DONE` (stable box tree) after fixes674/674b UAF (raw `box*` went stale via normalisation; now holds the DOM node and re-resolves via `box_for_node`, and only when the tree is DONE).
 
-### ✅ VERIFIED ON G3 (ran correctly on real hardware)
-- **fixes556 — cache-hit navigation load.** Confirmed: nav goes straight to `NAV: DONE url=https://…`, no `NAV: ERROR code=0`, no `about:query`/`about:fetcherror`, no URL-bar re-enter needed. The bug where every cache-hit nav errored to the placeholder is fixed.
-- **fixes560 — on-screen diagnostics.** The `active fetches: N` title-bar readout, `html_reformat #1/#2/#3` sequencing, and profile stamps (`[+NNNNus] LABEL`) all confirmed working on G3.
-- **fixes559 — fixes471 one-column restore.** `lh__box_is_absolute` again excludes `CSS_POSITION_STICKY` from flex space allocation. Confirmed by the user this session: the 68kmla front page renders multi-column ("the home page IS loading properly"). *(This corrects the earlier triage that listed it as still-open — it is fixed and confirmed.)*
-- **Per-URL terminal-fail flag (fixes554).** Confirmed firing on G3: `TERMINAL FAIL` once per URL, then `terminal-URL FAST-FAIL`, no storm.
-- **Box-walk pin guard (hlcache-evict path).** Held through at least one clean full-page load to event-loop-exit with a bulk clean landing *post*-walk. (Covers the hlcache evict path only — see the crashing bucket for the gap.)
-
-### 🟡 SHIPPED, PENDING G3 CONFIRMATION (code on hardware, specific catch not yet observed)
-- **Fix A / parser-lifetime token** (`deferred_parser_unpause` ABA guard). The `deferred_unpause: ENTRY` instrumentation fires on G3 and the happy path (token match, `savedtok==curtok`) works — but a token **MISMATCH has never been observed**, so the ABA bail itself is UNPROVEN. Needs a run where `savedtok != curtok` to confirm `PARSER TOKEN INVALID` actually catches. Note: the token is currently keyed on `parent->base`; investigation indicated the freed lifetime is `parent->parser`, so a re-key may still be needed.
-- **fixes561/562 — CSS cascade-dedup.** Shipped (URL-keyed dedup in `html_css_process_link`) but the G3 log shows it **not yet effective**: the 239 KB sheet still cascades twice (~4.8s pre-paint waste), zero `css dedup` hits. fixes562 adds an unconditional `css link scan: count=… withsheet=… matched=…` diagnostic to pin down why the match fails on the next run. Treat as in-diagnosis, not landed.
-
-### 🔴 ACTIVELY CRASHING ON G3 (open, reproduced on hardware)
-**Box-walk UAF via the LLCACHE user-destroy path.** Chain: `convert_xml_to_box` → `box_construct_element` → `convert_special_elements` → `_dom_html_element_get_attribute` → `box_image` → `box_image_resolve_url` → `html_fetch_object` → `hlcache_handle_retrieve` (faults at `lbzu r0,0x0001(r4)`, r4 wild). The free comes from `llcache_object_user_destroy` → `llcache_object_notify_users` → `macos9_handle_update` (scheduler) firing **mid-walk** — NOT a bulk `hlcache_clean` eviction this time. Reproduces RIGHT AT STARTUP on the first home-page load (cache-hit home delivered in one synchronous burst; the first `convert_xml_to_box` descends while the initial content's llcache user bookkeeping is still settling) AND on heavy pages.
-- **Coverage gap:** the pin guard `macos9_box_walk_owns_content` is consulted ONLY at [ns_content.c content_destroy](browser/netsurf/content/ns_content.c) and [hlcache.c hlcache_clean](browser/netsurf/content/hlcache.c) — `llcache.c` never consults it. The llcache-level user-destroy path is uncovered.
-- **Fix in progress:** extend the pin/registry-generation-token check DOWN to the `llcache_object_user_destroy` path (defer the destroy when the owning content is pinned by an active box walk, gen-validated for ABA), and ensure the pin is armed before the first descent on the startup deferred-nav path. Same registry mechanism as the existing pin — one liveness model, one level lower. Log the catch (`llcache: USER-DESTROY DEFERRED (walk live)`). **Not fixed — diagnosis confirmed, fix not yet shipped.**
-- The fixes554 per-URL terminal-fail set (see Networking) was the storm-collapse that *manufactured* less of the cache pressure behind the older eviction-path variant; it does not address this llcache-path variant.
-
-### ⚪ OPEN / NON-CRASH (triaged this session, not yet fixed)
-- **fixes515 deferred-broadcast FIFO** — same scheduled-work-outlives-object pattern, guarded only by a weak `handler==NULL` sentinel rather than the registry generation token. Latent; audit/harden pending (should adopt the same registry-token mechanism as the box-walk pin).
-- **Perf — CSS cascade runs twice** (~4.8s pre-paint waste). Cascade-dedup gate shipped but not yet effective (see SHIPPED/PENDING bucket).
-- **Perf — oversized images.** A 3024×2507 source JPEG; decode is already deferred + display-sized (fixes162), so the cost on this load was the ~50s network transfer of a 3.6 MB file (post-first-paint), not a 22 MB RGB buffer (this Mac had ~280 MB free). Lever is lazy/deferred off-screen image fetching, a fetcher change — held. Possible duplicate large-image fetch (same byte count twice) flagged for investigation.
-- **hiddenscroll "removeChild of null" JS error** on every page — non-fatal, waits on the phase-one DOM wrapper port.
+### ⚪ OPEN / DEFERRED (non-crash, tracked for next cycle)
+- **#196 — GitHub & heavy HTTPS sites don't render.** TLS connects; failure is a post-redirect URL-parse quirk + GitHub being a very heavy SPA. Deferred. Workaround: non-SSL (http) macsurf.org for self-download from a Mac.
+- **#204 — logged-in XenForo account nav renders grey.** `.has-js` progressive-enhancement styling applies too late; cosmetic.
+- **#205 — Tab doesn't reach links/buttons**, only text fields (no NetSurf link-focus model yet).
+- **XenForo reply/editor cascade under QuickJS** — `preamble.min.js` `parentNode`-null → jQuery Sizzle → `jQuery.support` → `XF.Element`-never-registered chain; small ES5 shims substitute the three bundles. See the Known Gotchas entry and [[project_xenforo_editor_qjs_cascade]].
+- **hiddenscroll "removeChild of null" JS error** — non-fatal, same DOM-shim root as the editor cascade.
 
 # DIRECTIVE #1, NEVER BLAME STALE FILES, EVER
 
@@ -416,7 +402,7 @@ Full fix history: see [docs/changelog-fixes.md](docs/changelog-fixes.md).
 
 
 - **Last hardware-verified release (PAST): v1.5 "Modernity" (2026-06-11), source tree at fixes415.** Verified on a G3 iMac running OS 9.2.2. That release brought: on-device ES6→ES5 transpilation (since **retired** in favour of QuickJS, fixes522); JS→DOM→render re-conversion so JS-mutated content paints; and the v1.5 stability pass (fixes404-415: monotonic clock fix, SHA-384 self-tests, UAF guards, CSS Grid 8→16 column limit fixing modern 12-col grid collapses on XenForo pages like `68kmla.org`).
-- **Current working tree (NOT a release): an uncommitted QuickJS-migration branch at ~fixes560+.** This is well ahead of both the v1.5 release and HEAD (≈fixes481). It swaps the JS engine Duktape→QuickJS and stacks ~80 further fix rounds. It is **uncommitted but NOT tree-wide unverified** — verification is per-component as of 2026-06-30; see [G3 Hardware Verification Status](#-g3-hardware-verification-status-2026-06-30) at the top of this file (cache-hit nav, on-screen diagnostics, one-column restore, and terminal-fail are G3-confirmed; the parser-token catch is pending; the llcache user-destroy box-walk UAF is actively crashing). Do not blanket-label the whole tree "shipped" *or* "unverified" — go by the bucket. [docs/status.md](docs/status.md) and [docs/version-history.md](docs/version-history.md) lag this tree; [docs/changelog-fixes.md](docs/changelog-fixes.md) has the per-fix history.
+- **Current release: MacSurf 1.86 "macQJS" (2026-07-07), source tree at fixes674c (`9c2d76b7`).** The engine is now macQJS (QuickJS, ES2023) replacing Duktape; on top of the migration this cycle landed the sticky hit-test, login persistence, full text input (caret/selection/Tab/clipboard), image+font disk cache, near-instant startup, and viewport lazy image loading — all G3-verified (see the status block at the top). Release notes: [docs/release-notes/MacSurf-1.86.md](docs/release-notes/MacSurf-1.86.md). The two migration-era crashes (box-walk UAF, cache-hit first-paint) are resolved. [docs/changelog-fixes.md](docs/changelog-fixes.md) has the per-fix history.
 
 **Full fix history (predecessor chain from fixes225 → fixes143a):** see [docs/changelog-fixes.md](docs/changelog-fixes.md).
 
@@ -589,3 +575,4 @@ Update CLAUDE.md as part of every round that changes project state:
 - When the build state advances (v0.2 → v0.3 etc.), update the "Build State" section
 
 The goal is that any new agent reading CLAUDE.md at the start of a session has an accurate picture of where the project actually stands, not where it was three rounds ago. If the file has drifted from reality, fix it before doing any new work.
+- **Browser stall on CSS fetch aborts (the 'fetches: 2' bug).** When a fetch aborted (e.g. hitting the CSS memory cap), the fetcher would skip the CSS without firing a completion or error event. This left the main document waiting forever with a non-zero fetch count, preventing DOM conversion and locking up the UI. Fix: Added `content_broadcast_error` in `ns_content.c` during the `content_convert` and `content_llcache_callback` phases whenever a subresource aborted. This ensures the document active-fetch counter is decremented properly. (Fixed in fixes_budget/fixes196).
