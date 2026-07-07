@@ -533,6 +533,34 @@ macsurf_debug_log_write(const char *msg)
 	 * SITE fires a few times per page reformat (low volume; survivable). */
 #endif
 
+	/* fixes666 — perf-cleanup pass. Earlier fix rounds left a pile of
+	 * per-element / per-fetch diagnostics that now dominate log volume on a
+	 * real page (measured: fixes614 clamp 1048x, plot_bitmap 421x, TBLCOL
+	 * 346x, img plot 306x, active fetches 289x, https_teardown 364x, svg_use
+	 * 171x per session). They are memcpy'd into the log buffer and flushed in
+	 * bulk, but at ~3000+ lines/page they still add up and bury the signal.
+	 * Suppress them by prefix, KEEPING the lines that matter for the current
+	 * reflow/re-conversion bottleneck: PERFACC, [+Nus] stamps, NAV/SITE,
+	 * html_reformat, and box: convert_xml. Re-enable any group with its
+	 * MACSURF_VERBOSE_* macro. */
+#ifndef MACSURF_VERBOSE_PAINT_LOG
+	if (msg[0] == 'p' && strncmp(msg, "plot_bitmap", 11) == 0) return;
+	if (msg[0] == 'i' && strncmp(msg, "img plot:", 9) == 0) return;
+	if (msg[0] == 's' && strncmp(msg, "svg_use:", 8) == 0) return;
+#endif
+#ifndef MACSURF_VERBOSE_LAYOUT_LOG
+	if (msg[0] == 'T' && strncmp(msg, "TBLCOL", 6) == 0) return;
+	if (msg[0] == 'f' && strncmp(msg, "fixes614 clamp:", 15) == 0) return;
+#endif
+#ifndef MACSURF_VERBOSE_FETCH_LOG
+	if (msg[0] == 'h' && (strncmp(msg, "https_teardown:", 15) == 0 ||
+			      strncmp(msg, "https: request sent", 19) == 0 ||
+			      strncmp(msg, "https: done", 11) == 0 ||
+			      strncmp(msg, "https: cookies sent", 19) == 0)) return;
+	if (msg[0] == 'a' && strncmp(msg, "active fetches:", 15) == 0) return;
+	if (msg[0] == 'e' && strncmp(msg, "evloop: hb", 10) == 0) return;
+#endif
+
 	/* fixes233 — prepend ms-since-first-log to every line so we can
 	 * see where the wall-clock seconds actually go. TickCount is 60 Hz
 	 * on OS 9; multiply by 1000/60 = 17 (close enough) for a rough ms
