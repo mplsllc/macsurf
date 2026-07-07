@@ -44,6 +44,13 @@
 #define MACSURF_CACHE_MAGIC6 'E'
 #define MACSURF_CACHE_MAGIC7 0x01
 
+/* fixes665: ioDirMask (0x10 bit of ioFlAttrib = "this catalog entry is a
+ * directory") is standard in Files.h; define defensively per the CW8
+ * missing-constant pattern so the LRU sweep's dir-skip always compiles. */
+#ifndef ioDirMask
+#define ioDirMask 0x10
+#endif
+
 /* fixes181 — Reload sets this to 1 so the next lookup short-circuits
  * to miss. Cleared after a successful store so sub-resources resume
  * normal cache behaviour. */
@@ -232,7 +239,88 @@ int macos9_cache_mime_eligible(int status, const char *mime)
 	if (strncmp(mime, "application/xhtml", 17) == 0) return 1;
 	if (strncmp(mime, "application/javascript", 22) == 0) return 1;
 	if (strncmp(mime, "application/json", 16) == 0) return 1;
+	/* fixes665 (A): images + downloadable webfonts. These re-download on
+	 * every relaunch and every time OS 9 memory pressure evicts NetSurf's
+	 * RAM cache; disk-caching the compressed bytes keeps image-heavy pages
+	 * (forum avatars, galleries) fast. Bounded by CACHE_TOTAL_BUDGET. */
+	if (strncmp(mime, "image/", 6) == 0) return 1;
+	if (strncmp(mime, "font/", 5) == 0) return 1;
+	if (strncmp(mime, "application/font", 16) == 0) return 1;
+	if (strncmp(mime, "application/x-font", 18) == 0) return 1;
+	if (strncmp(mime, "application/vnd.ms-fontobject", 29) == 0) return 1;
 	return 0;
+}
+
+/* fixes665 (B): total-size budget + LRU eviction. With images now cacheable
+ * the store could grow without bound (there was only a per-file cap), so cap
+ * the whole cache directory and evict the least-recently-modified files when
+ * over budget. One dir scan collects the CACHE_EVICT_BATCH oldest files and
+ * deletes oldest-first until back under budget. Called amortised from
+ * cache_store (at most once per CACHE_SWEEP_INTERVAL bytes stored, plus once at
+ * first use to trim a cache left bloated by a previous session); a very large
+ * legacy cache converges over several store-sweeps. */
+#define CACHE_TOTAL_BUDGET   (64L * 1024L * 1024L)   /* 64 MB on-disk cap   */
+#define CACHE_SWEEP_INTERVAL (2L * 1024L * 1024L)    /* re-check per ~2 MB   */
+
+#define CACHE_EVICT_BATCH 64  /* oldest files trimmed per sweep (bounds work) */
+
+static void macos9_cache_enforce_budget(void)
+{
+#ifdef __MACOS9__
+	/* One directory pass: sum the cache and keep the CACHE_EVICT_BATCH oldest
+	 * files (sorted ascending by modification date); if over budget, delete
+	 * oldest-first until back under. Bounded to one scan + <=BATCH deletes per
+	 * call, so a large legacy cache converges over several store-sweeps instead
+	 * of stalling. Statics keep the batch arrays off the stack. */
+	static Str63 names[CACHE_EVICT_BATCH];
+	static unsigned long dats[CACHE_EVICT_BATCH];
+	static long sizes[CACHE_EVICT_BATCH];
+	CInfoPBRec pb;
+	Str63 nm;
+	short vRef, idx;
+	long dirID, total = 0;
+	int nk = 0, k, j;
+	if (cache_dir_get(&vRef, &dirID) != noErr) return;
+	for (idx = 1; ; idx++) {
+		unsigned long d;
+		long sz;
+		memset(&pb, 0, sizeof(pb));
+		pb.hFileInfo.ioNamePtr = nm;
+		pb.hFileInfo.ioVRefNum = vRef;
+		pb.hFileInfo.ioDirID = dirID;
+		pb.hFileInfo.ioFDirIndex = idx;
+		if (PBGetCatInfoSync(&pb) != noErr) break;
+		if (pb.hFileInfo.ioFlAttrib & ioDirMask) continue;
+		sz = pb.hFileInfo.ioFlLgLen;
+		d = (unsigned long)pb.hFileInfo.ioFlMdDat;
+		total += sz;
+		if (nk < CACHE_EVICT_BATCH) {
+			k = nk++;
+		} else if (d < dats[CACHE_EVICT_BATCH - 1]) {
+			k = CACHE_EVICT_BATCH - 1;
+		} else {
+			continue;
+		}
+		while (k > 0 && dats[k - 1] > d) {
+			dats[k] = dats[k - 1];
+			sizes[k] = sizes[k - 1];
+			memcpy(names[k], names[k - 1], names[k - 1][0] + 1);
+			k--;
+		}
+		dats[k] = d;
+		sizes[k] = sz;
+		memcpy(names[k], nm, nm[0] + 1);
+	}
+	if (total <= CACHE_TOTAL_BUDGET) return;
+	for (j = 0; j < nk && total > CACHE_TOTAL_BUDGET; j++) {
+		FSSpec spec;
+		if (FSMakeFSSpec(vRef, dirID, names[j], &spec) == noErr &&
+		    FSpDelete(&spec) == noErr) {
+			total -= sizes[j];
+			macsurf_debug_log_writef("CACHE evict oldest (total now %ld)", total);
+		}
+	}
+#endif
 }
 
 void macos9_cache_store(const char *url, int status, const char *mime,
@@ -309,6 +397,21 @@ void macos9_cache_store(const char *url, int status, const char *mime,
 		"CACHE store url=%s mime=%s len=%ld",
 		url, mime, body_len);
 	macsurf_http_skip_next_cache = 0;
+	/* fixes665 (B): amortised total-size enforcement. Sweep once at
+	 * first use (trims a previous session's over-budget cache) and
+	 * thereafter at most once per CACHE_SWEEP_INTERVAL bytes stored. */
+	{
+		static long g_bytes_since_sweep = -1;
+		if (g_bytes_since_sweep < 0) {
+			g_bytes_since_sweep = 0;
+			macos9_cache_enforce_budget();
+		}
+		g_bytes_since_sweep += body_len;
+		if (g_bytes_since_sweep >= CACHE_SWEEP_INTERVAL) {
+			g_bytes_since_sweep = 0;
+			macos9_cache_enforce_budget();
+		}
+	}
 #else
 	(void)url; (void)status; (void)mime; (void)body_ptr; (void)body_len;
 #endif
