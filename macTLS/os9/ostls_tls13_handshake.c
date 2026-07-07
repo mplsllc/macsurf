@@ -569,6 +569,15 @@ static int tls13_build_client_hello(tls13_hs_ctx *hs,
         pos += hs->cookie_len;
     }
 
+    /* ── Extension: ALPN — type 16 ──
+     * macTLS#196: Needed for HTTP/2-only edges (e.g. Cloudflare) */
+    if (pos + 4 + 11 > buf_size) return -1;
+    put_u16(buf + pos, TLS13_EXT_ALPN); pos += 2;
+    put_u16(buf + pos, 11); pos += 2;             /* ext_data_length */
+    put_u16(buf + pos, 9); pos += 2;              /* protocol_name_list_length */
+    buf[pos++] = 8;                               /* protocol_name_length */
+    memcpy(buf + pos, "http/1.1", 8); pos += 8;   /* protocol_name */
+
     /* ── Extension: psk_key_exchange_modes — type 45 ──
      * Sent on EVERY ClientHello (macTLS#2 Stage E fix): a server will not
      * issue NewSessionTicket unless the client advertised PSK support via

@@ -129,6 +129,7 @@ static void content_convert(struct content *c)
 		c->locked = true;
 		if (c->handler->data_complete(c) == false) {
 			content_set_error(c);
+			content_broadcast_error(c, NSERROR_UNKNOWN, "Data complete failed");
 		}
 		/* Conversion to the READY state will unlock the content */
 	} else {
@@ -170,6 +171,7 @@ content_llcache_callback(llcache_handle *llcache,
 				c->status = CONTENT_STATUS_ERROR;
 				/** \todo It's not clear what error this is */
 				error = NSERROR_NOMEM;
+				content_broadcast_error(c, error, "Data processing failed");
 			}
 		}
 		break;

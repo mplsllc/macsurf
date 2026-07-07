@@ -683,6 +683,13 @@ ostls_setup_bearssl(OSTLSConnection *conn)
     OSTLS_B3_GetAnchors(&anchors, &anchors_count);
     br_ssl_client_init_full(&conn->sc, &conn->xc,
                             anchors, anchors_count);
+                            
+    /* macTLS#196: ALPN extension for HTTP/1.1 (required by Cloudflare/HTTP2 edges) */
+    {
+        static const char *alpn_names[1] = { "http/1.1" };
+        br_ssl_engine_set_protocol_names(&conn->sc.eng, alpn_names, 1);
+    }
+    
     br_x509_minimal_set_time(&conn->xc, br_days, br_seconds);
 
     entropy_err = OSTLS_InjectEntropy(&conn->sc.eng);

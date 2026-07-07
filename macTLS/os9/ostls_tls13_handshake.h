@@ -36,6 +36,7 @@
 #define TLS13_EXT_SERVER_NAME           0
 #define TLS13_EXT_SUPPORTED_GROUPS     10
 #define TLS13_EXT_SIGNATURE_ALGORITHMS 13
+#define TLS13_EXT_ALPN                 16
 #define TLS13_EXT_PRE_SHARED_KEY       41
 #define TLS13_EXT_SUPPORTED_VERSIONS   43
 #define TLS13_EXT_COOKIE               44

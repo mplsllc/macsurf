@@ -41,10 +41,11 @@
 #include "ostls_http.h"
 #include "macos9_disk_cache.h"
 
-#define MAX_HTTPS_F        64   /* fixes241: was 32; image-heavy pages
-                                    hit ~10 NO FREE SLOTS / cold load at 32
-                                    because setup() is called for every
-                                    queued fetch up-front (start gating
+#define MAX_HTTPS_F        128  /* macTLS#196: bumped to 128 for GitHub (65+ in-flight)
+                                 * fixes241: was 32; image-heavy pages
+                                 * hit ~10 NO FREE SLOTS / cold load at 32
+                                 * because setup() is called for every
+                                 * queued fetch up-front (start gating
                                     only governs dispatch, not setup
                                     allocation). Heavy mactrove front page
                                     has ~40+ sub-resources in flight; 64

@@ -139,7 +139,7 @@ typedef struct nscss_content
  * css.php bundles totalling ~1.4 MB; the 1 MB cap dropped both, leaving
  * the page unstyled and triggering a BASE sheet NULL crash path.  The
  * ~195 MB Carbon partition has ample headroom. */
-#define MACOS9_CSS_TOTAL_BUDGET (2048UL * 1024UL)
+#define MACOS9_CSS_TOTAL_BUDGET (8192UL * 1024UL)
 
 /**
  * Context for import fetches

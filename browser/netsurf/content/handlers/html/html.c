@@ -1931,7 +1931,7 @@ static void html_reformat(struct content *c, int width, int height)
 		nsurl *u = content_get_url(&htmlc->base);
 		const char *url = (u != NULL) ? nsurl_access(u) : "(null)";
 		const char *blocker_name;
-		const unsigned long css_total_cap = 2048UL * 1024UL; /* fixes448 — keep in sync with MACOS9_CSS_TOTAL_BUDGET in cssh_css.c */
+		const unsigned long css_total_cap = 8192UL * 1024UL; /* fixes448 — keep in sync with MACOS9_CSS_TOTAL_BUDGET in cssh_css.c */
 
 		/* fixes268 (#11) — pick the dominant degradation source by
 		 * comparing skip counters. Highest-priority counter wins; ties
