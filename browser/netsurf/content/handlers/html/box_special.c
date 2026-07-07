@@ -42,6 +42,7 @@
 #include "css/hints.h"
 #include "desktop/frame_types.h"
 #include "content/content_factory.h"
+#include "netsurf/misc.h"		/* fixes673: struct gui_misc_table */
 #include "desktop/gui_internal.h"
 #include "macsurf_debug.h"
 
