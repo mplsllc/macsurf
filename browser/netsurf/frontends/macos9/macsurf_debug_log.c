@@ -593,6 +593,14 @@ macsurf_debug_log_write(const char *msg)
 	if (msg[0] == 'c' && (strncmp(msg, "css: budget", 11) == 0 ||
 			      strncmp(msg, "css: convert", 12) == 0)) return;
 	if (msg[0] == 'b' && strncmp(msg, "broadcast_ready", 15) == 0) return;
+	/* fixes672 — more per-element diagnostics found still firing on big pages:
+	 * TBLPICK/TBLDIAG (per-table layout picks), fixes569 LEN / fixes446g DATA
+	 * (per-cdata-node bad-len probes), gw_invalidate (per-invalidate rects). */
+	if (msg[0] == 'T' && (strncmp(msg, "TBLPICK", 7) == 0 ||
+			      strncmp(msg, "TBLDIAG", 7) == 0)) return;
+	if (msg[0] == 'f' && (strncmp(msg, "fixes569 LEN", 12) == 0 ||
+			      strncmp(msg, "fixes446g DATA", 14) == 0)) return;
+	if (msg[0] == 'g' && strncmp(msg, "gw_invalidate", 13) == 0) return;
 #endif
 
 	/* fixes233 — prepend ms-since-first-log to every line so we can
