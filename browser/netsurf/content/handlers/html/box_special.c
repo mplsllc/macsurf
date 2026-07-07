@@ -1468,6 +1468,8 @@ static void macsurf_lazyimg_flush(void *p)
 	struct lazyimg_entry *e;
 	int rearm = 0;
 	int force;
+	int n_fetched = 0;
+	int n_requeued = 0;
 	(void)p;
 	g_lazyimg_armed = 0;
 	/* after ~12s waiting for DONE (e.g. a stuck sub-resource), stop waiting
@@ -1485,15 +1487,22 @@ static void macsurf_lazyimg_flush(void *p)
 			e->next = pending;
 			pending = e;
 			rearm = 1;
+			n_requeued++;
 		} else {
 			(void) html_fetch_object(e->content, e->url, e->box,
 					image_types, false);
 			nsurl_unref(e->url);
 			free(e);
+			n_fetched++;
 		}
 		e = next;
 	}
 	g_lazyimg_head = pending;
+	if (n_fetched || n_requeued) {
+		macsurf_debug_log_writef(
+			"lazyimg: flush fetched=%d requeued=%d force=%d",
+			n_fetched, n_requeued, force);
+	}
 	if (rearm) macsurf_lazyimg_arm();
 }
 
