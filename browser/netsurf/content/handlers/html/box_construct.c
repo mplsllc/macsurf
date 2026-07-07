@@ -2119,7 +2119,17 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 	dom_node *next;
 	bool convert_children;
 	uint32_t num_processed = 0;
-	const uint32_t max_processed_before_yield = 10;
+	/* fixes668 (perf): raised 10 -> 100. The box walk re-schedules itself
+	 * every max_processed_before_yield nodes; at 10 a ~2200-node forum page
+	 * took ~223 scheduler round-trips (each a full event-loop pass) just to
+	 * build the box tree once — the "box: convert_xml storm" in the log.
+	 * Image/resource nodes still yield implicitly inside box_construct_element
+	 * (html_fetch_object -> OT), so this only lengthens text-heavy runs to
+	 * ~100 nodes (~a few ms) between explicit yields — imperceptible latency,
+	 * ~10x fewer round-trips. Bigger batches also mean FEWER yield windows, so
+	 * the per-batch liveness guards run less often, not more (no added UAF
+	 * exposure). This does NOT touch the JS reconvert path (still disabled). */
+	const uint32_t max_processed_before_yield = 100;
 
 	/* fixes519: validate the content BEFORE any access to it — the log line
 	 * below dereferences ctx->content.  convert_xml_to_box is static and is
