@@ -1,12 +1,12 @@
-# ⚠️ READ THIS FIRST: 1.86 "macQJS" RELEASE STATE (2026-07-07)
+# ⚠️ READ THIS FIRST: 1.68 "macQJS" RELEASE STATE (2026-07-07)
 
-**The working tree is the packaged MacSurf 1.86 "macQJS" release.** Tip is **fixes674c** (`9c2d76b7`), and per the current push-freely policy the fix commits ARE committed/pushed (HEAD ≈ working tree). The only uncommitted deltas are release docs (this file, README.md, docs/status.md, docs/release-notes/MacSurf-1.86.md, `Read Me!`, `readme.txt`) held pending the user's final editing pass, plus a small set of in-flight ALPN/handshake changes (`macos9_tls_fetcher.c`, `macTLS/os9/*handshake*`, `cssh_css.c`, `html.c`, `ns_content.c`) the user is working on separately.
+**The working tree is the packaged MacSurf 1.68 "macQJS" release.** Tip is **fixes674c** (`9c2d76b7`), and per the current push-freely policy the fix commits ARE committed/pushed (HEAD ≈ working tree). The only uncommitted deltas are release docs (this file, README.md, docs/status.md, docs/release-notes/MacSurf-1.68.md, `Read Me!`, `readme.txt`) held pending the user's final editing pass, plus a small set of in-flight ALPN/handshake changes (`macos9_tls_fetcher.c`, `macTLS/os9/*handshake*`, `cssh_css.c`, `html.c`, `ns_content.c`) the user is working on separately.
 
 - **JS engine is macQJS (QuickJS, ES2023), not Duktape.** See [JavaScript Engine](#javascript-engine). Migration commit was `f305816c`; pre-migration Duktape baseline is `664273a4` (fixes481).
 - **HTTPS fetcher** is `macos9_tls_fetcher.c` (renamed from `macos9_https_fetcher.c`).
 - **Working-tree files** beyond the classic list: `macos9_content_registry.c`/`.h`, `javascript/macsurf_qjs.c`/`.h`, `browser/libquickjs/`, and `content.c` renamed to `ns_content.c`.
 
-## 🟢 G3 Hardware Verification Status (2026-07-07 — 1.86 release cycle)
+## 🟢 G3 Hardware Verification Status (2026-07-07 — 1.68 release cycle)
 
 **The two big migration-era crashes are RESOLVED and the tree is a shipping release.** 68kmla.org and tinkerdifferent.com render full-width, log in, and post replies from real Mac OS 9. The old 2026-06-30 "actively crashing box-walk UAF" and "cache-hit first-paint error" banners are **closed** — do not resurrect them as open bugs.
 
@@ -402,7 +402,7 @@ Full fix history: see [docs/changelog-fixes.md](docs/changelog-fixes.md).
 
 
 - **Last hardware-verified release (PAST): v1.5 "Modernity" (2026-06-11), source tree at fixes415.** Verified on a G3 iMac running OS 9.2.2. That release brought: on-device ES6→ES5 transpilation (since **retired** in favour of QuickJS, fixes522); JS→DOM→render re-conversion so JS-mutated content paints; and the v1.5 stability pass (fixes404-415: monotonic clock fix, SHA-384 self-tests, UAF guards, CSS Grid 8→16 column limit fixing modern 12-col grid collapses on XenForo pages like `68kmla.org`).
-- **Current release: MacSurf 1.86 "macQJS" (2026-07-07), source tree at fixes674c (`9c2d76b7`).** The engine is now macQJS (QuickJS, ES2023) replacing Duktape; on top of the migration this cycle landed the sticky hit-test, login persistence, full text input (caret/selection/Tab/clipboard), image+font disk cache, near-instant startup, and viewport lazy image loading — all G3-verified (see the status block at the top). Release notes: [docs/release-notes/MacSurf-1.86.md](docs/release-notes/MacSurf-1.86.md). The two migration-era crashes (box-walk UAF, cache-hit first-paint) are resolved. [docs/changelog-fixes.md](docs/changelog-fixes.md) has the per-fix history.
+- **Current release: MacSurf 1.68 "macQJS" (2026-07-07), source tree at fixes674c (`9c2d76b7`).** The engine is now macQJS (QuickJS, ES2023) replacing Duktape; on top of the migration this cycle landed the sticky hit-test, login persistence, full text input (caret/selection/Tab/clipboard), image+font disk cache, near-instant startup, and viewport lazy image loading — all G3-verified (see the status block at the top). Release notes: [docs/release-notes/MacSurf-1.68.md](docs/release-notes/MacSurf-1.68.md). The two migration-era crashes (box-walk UAF, cache-hit first-paint) are resolved. [docs/changelog-fixes.md](docs/changelog-fixes.md) has the per-fix history.
 
 **Full fix history (predecessor chain from fixes225 → fixes143a):** see [docs/changelog-fixes.md](docs/changelog-fixes.md).
 
