@@ -3009,6 +3009,7 @@ static JSContext *qjs_build_context(struct jsheap *heap)
  * mimics what jquery/webpack bundles do). If a test returns a WRONG value, a
  * code path is miscompiled; if the engine FREEZES here with no page loaded,
  * the heap corruptor is in the engine itself, reproduced in isolation. */
+#ifdef MACSURF_QJS_SELFTEST
 static int qjs_selftest_i(JSContext *ctx, const char *name,
 		const char *src, int want)
 {
@@ -3113,6 +3114,7 @@ static void qjs_selftest(JSContext *ctx)
 		1);
 	macsurf_debug_log_writef("qjs selftest: END");
 }
+#endif /* MACSURF_QJS_SELFTEST */
 
 nserror js_newheap(int timeout, struct jsheap **out_heap)
 {
@@ -3209,7 +3211,14 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 	*out_heap = heap;
 	MS_LOG("qjs: heap created");
 
-	/* fixes593 — run the capability self-test once, at first heap creation. */
+	/* fixes671 (perf): the fixes593-598 capability self-test runs a heavy JS
+	 * battery (100k object allocs, fib25, 20k string/array ops, 5k DOM ops,
+	 * throw/backtrace stress) SYNCHRONOUSLY at first heap creation — ~17s on a
+	 * real G3 BEFORE the event loop starts, i.e. the entire 'pause on browser
+	 * open'. It was a diagnostic to hunt a QuickJS freeze (long closed) and is
+	 * not needed in normal operation. Gated OFF by default; define
+	 * MACSURF_QJS_SELFTEST to re-run it when debugging the engine. */
+#ifdef MACSURF_QJS_SELFTEST
 	{
 		static int selftest_done = 0;
 		if (!selftest_done) {
@@ -3217,6 +3226,7 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 			qjs_selftest(heap->ctx);
 		}
 	}
+#endif
 	return NSERROR_OK;
 }
 
