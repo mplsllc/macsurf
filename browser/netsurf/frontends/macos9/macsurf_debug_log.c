@@ -566,6 +566,35 @@ macsurf_debug_log_write(const char *msg)
 	if (msg[0] == 'l' && strncmp(msg, "llcache", 7) == 0) return;
 #endif
 
+	/* fixes669 — perf-focus. Suppress the remaining non-perf diagnostic
+	 * categories so the log shows ONLY what bears on load speed. KEEPS:
+	 * [+Nus] phase stamps, PERFACC, NAV/SITE, html_reformat, reformat:,
+	 * box: convert_xml, https: REQ (network fetches), and error/FAIL lines.
+	 * Everything below is fetch-setup / cache-hit / JS-heartbeat / per-image /
+	 * per-CSS-slot / DOM-tag detail, useful only when debugging those
+	 * subsystems. Re-enable the lot by defining MACSURF_VERBOSE_PERF_OFF. */
+#ifndef MACSURF_VERBOSE_PERF_OFF
+	if (msg[0] == 'h' && (strncmp(msg, "https_setup", 11) == 0 ||
+			      strncmp(msg, "https: CACHE", 12) == 0 ||
+			      strncmp(msg, "https: handshake", 16) == 0 ||
+			      strncmp(msg, "https: status", 13) == 0 ||
+			      strncmp(msg, "https: started", 14) == 0 ||
+			      strncmp(msg, "hdr_first", 9) == 0)) return;
+	if (msg[0] == 'C' && strncmp(msg, "CACHE", 5) == 0) return;
+	if (msg[0] == 'f' && strncmp(msg, "fetch FINISHED", 14) == 0) return;
+	if (msg[0] == 'i' && strncmp(msg, "img ", 4) == 0) return;
+	if (msg[0] == 'q' && (strncmp(msg, "qjs intr", 8) == 0 ||
+			      strncmp(msg, "qjs selftest", 12) == 0)) return;
+	if (msg[0] == 'g' && strncmp(msg, "grad cascade", 12) == 0) return;
+	if (msg[0] == 'j' && strncmp(msg, "js src", 6) == 0) return;
+	if (msg[0] == 't' && strncmp(msg, "tagtype:", 8) == 0) return;
+	if (msg[0] == 'n' && strncmp(msg, "nscss", 5) == 0) return;
+	if (msg[0] == 's' && strncmp(msg, "sync_cb", 7) == 0) return;
+	if (msg[0] == 'c' && (strncmp(msg, "css: budget", 11) == 0 ||
+			      strncmp(msg, "css: convert", 12) == 0)) return;
+	if (msg[0] == 'b' && strncmp(msg, "broadcast_ready", 15) == 0) return;
+#endif
+
 	/* fixes233 — prepend ms-since-first-log to every line so we can
 	 * see where the wall-clock seconds actually go. TickCount is 60 Hz
 	 * on OS 9; multiply by 1000/60 = 17 (close enough) for a rough ms

@@ -252,10 +252,19 @@ html_object_callback(hlcache_handle *object,
 			/* Adjust parent content for new object size */
 			html_object_done(box, object, o->background);
 			if (c->base.status == CONTENT_STATUS_READY ||
-					c->base.status == CONTENT_STATUS_DONE)
+					c->base.status == CONTENT_STATUS_DONE) {
+				/* fixes669 (perf diag): each object whose size resolves
+				 * drives a full reformat here — the per-image reflow
+				 * storm. 'active' = objects still loading; a reformat
+				 * fired while active>0 will be immediately superseded, so
+				 * this is the coalescing candidate. */
+				macsurf_debug_log_writef(
+					"reformat: trig=obj-size active=%d",
+					(int)c->base.active);
 				content__reformat(&c->base, false,
 						c->base.available_width,
 						c->base.available_height);
+			}
 		}
 		break;
 
