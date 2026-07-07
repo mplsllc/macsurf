@@ -1484,6 +1484,22 @@ void macsurf_lazyimg_viewport_changed(int scroll_y, int viewport_h)
 			e = next;
 			continue;
 		}
+		/* fixes674c (crash fix): only walk the box tree once this content
+		 * is DONE. box_create zeroes scroll_x/y, so the crash (scroll_x =
+		 * 0x66CC0240, a non-NULL dangling pointer -> scrollbar_get_offset
+		 * faults) is a USE-AFTER-FREE: box_coords was walking a parent
+		 * chain being freed/renormalised mid-construction (this hook runs
+		 * on every paint, including paints while the tree is still being
+		 * built). At DONE the tree is fully constructed + laid out + stable
+		 * (fixes673 gated on the same status and never crashed), so the
+		 * walk is safe. Off-screen images just wait for the next paint. */
+		if (e->content->base.status != CONTENT_STATUS_DONE) {
+			e->next = keep;
+			keep = e;
+			n_kept++;
+			e = next;
+			continue;
+		}
 		/* fixes674b: resolve the CURRENT box for this node (NULL if the
 		 * node has no box yet / was removed). Never touches a stale box. */
 		box = box_for_node(e->node);
