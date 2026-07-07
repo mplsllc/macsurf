@@ -68,3 +68,7 @@ macSSL/
 
 # Scratch/reference dir for Claude sessions — never tracked (large HARs, logs, tars)
 forclaude/
+
+# Embedded reference repos — each has its own .git, never track here
+NanoKernel/
+browser/buildsystem/
