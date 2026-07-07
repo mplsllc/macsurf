@@ -1431,7 +1431,11 @@ extern int macos9_content_is_live(struct content *c);
  * while its content is live (box tree freed only at teardown; JS reconvert off). */
 struct lazyimg_entry {
 	html_content *content;
-	struct box *box;
+	struct dom_node *node;	/* fixes674b: hold the DOM node (refcounted, stable),
+				 * NOT the box (freed by box normalisation while the
+				 * content is still live -> box_coords crashed on a
+				 * wild scroll pointer). Resolve the live box per
+				 * paint via box_for_node. */
 	nsurl *url;
 	struct lazyimg_entry *next;
 };
@@ -1441,13 +1445,14 @@ static struct lazyimg_entry *g_lazyimg_head = NULL;
  * before they fully scroll into view. ~one 68kmla content viewport. */
 #define LAZYIMG_MARGIN 600
 
-static bool macsurf_lazyimg_defer(html_content *content, struct box *box,
+static bool macsurf_lazyimg_defer(html_content *content, struct dom_node *node,
 		nsurl *url)
 {
 	struct lazyimg_entry *e = malloc(sizeof(*e));
 	if (e == NULL) return false;
 	e->content = content;
-	e->box = box;
+	e->node = node;
+	dom_node_ref(node);
 	e->url = url;
 	nsurl_ref(url);
 	e->next = g_lazyimg_head;
@@ -1471,18 +1476,28 @@ void macsurf_lazyimg_viewport_changed(int scroll_y, int viewport_h)
 	g_lazyimg_head = NULL;
 	while (e != NULL) {
 		struct lazyimg_entry *next = e->next;
+		struct box *box;
 		if (macos9_content_is_live((struct content *)e->content) == 0) {
+			dom_node_unref(e->node);
 			nsurl_unref(e->url);
 			free(e);
+			e = next;
+			continue;
+		}
+		/* fixes674b: resolve the CURRENT box for this node (NULL if the
+		 * node has no box yet / was removed). Never touches a stale box. */
+		box = box_for_node(e->node);
+		if (box == NULL) {
+			e->next = keep; keep = e; n_kept++;
 		} else {
 			int bx = 0, by = 0;
-			int bh;
-			box_coords(e->box, &bx, &by);
-			bh = e->box->height;
+			int bh = box->height;
+			box_coords(box, &bx, &by);
 			if (bh < 0) bh = 0;
 			if (by + bh >= vp_top && by <= vp_bot) {
 				(void) html_fetch_object(e->content, e->url,
-						e->box, image_types, false);
+						box, image_types, false);
+				dom_node_unref(e->node);
 				nsurl_unref(e->url);
 				free(e);
 				n_fetched++;
@@ -1567,7 +1582,7 @@ box_image(dom_node *n,
 		    strcmp(loading, "lazy") == 0) {
 			lazy = true;
 		}
-		if (lazy && macsurf_lazyimg_defer(content, box, url)) {
+		if (lazy && macsurf_lazyimg_defer(content, n, url)) {
 			ok = true;
 		} else {
 			ok = html_fetch_object(content, url, box,
