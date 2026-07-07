@@ -582,6 +582,12 @@ static void macos9_handle_update(const EventRecord *event) {
 		{ extern int macos9_op_depth; macos9_op_depth--; }
 		{ extern struct gui_window *macos9_paint_gw;
 		  macos9_paint_gw = NULL; }
+		/* fixes674 (perf): box tree is laid out + painted now, so box coords
+		 * are valid — fetch loading="lazy" images inside the viewport +
+		 * preload band, leave off-screen ones queued (re-runs on scroll). */
+		{ extern void macsurf_lazyimg_viewport_changed(int, int);
+		  macsurf_lazyimg_viewport_changed(gw->scroll_y,
+			gw->content_rect.bottom - gw->content_rect.top); }
 		/* fixes451: emit profile stamp + PROFILE line only once per page;
 		 * profile_emitted is reset by macos9_gw_set_url on navigation. */
 		if (!gw->profile_emitted) {

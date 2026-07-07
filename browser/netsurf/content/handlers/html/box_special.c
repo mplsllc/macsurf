@@ -50,6 +50,7 @@
 #include "html/private.h"
 #include "html/object.h"
 #include "html/box.h"
+#include "html/box_inspect.h"	/* fixes674: box_coords */
 #include "html/box_manipulate.h"
 #include "html/box_construct.h"
 #include "html/box_special.h"
@@ -1416,17 +1417,18 @@ extern int macos9_content_is_live(struct content *c);
 #define macos9_content_is_live(c) (1)
 #endif
 
-/* fixes673 (perf): loading="lazy" deferred-image queue. On a big forum page
- * (68kmla whats-new: 88 images, most below the fold) fetching every image during
- * box construction keeps the content non-DONE and blocks first paint for many
- * seconds. Images marked loading="lazy" are queued here instead and flushed
- * AFTER the document reaches CONTENT_STATUS_DONE, so the page becomes usable fast
- * and the lazy images stream in behind it. This is the "cheap" pass; a
- * viewport/scroll-gated version (fetch only what's near the viewport) is scoped
- * for a later release. Liveness is registry-guarded (macos9_content_is_live) so
- * a navigation before the flush cannot deref freed content; the box stays valid
- * while its content is live (the box tree is freed only at content teardown and
- * the JS reconvert path is disabled). */
+/* fixes673/674 (perf): loading="lazy" VIEWPORT-gated deferred image loading. On
+ * a big forum page (68kmla: 70+ lazy avatars, most below the fold) fetching every
+ * image during box construction adds dozens of cold network round-trips to the
+ * critical load and holds the frontend on "loading" until they all finish.
+ * loading="lazy" images are queued here instead and fetched only once their box
+ * is within (viewport + margin). The check is driven from the frontend paint path
+ * (macsurf_lazyimg_viewport_changed, called after each browser_window_redraw) so
+ * it runs after layout (box coords valid) on first paint AND on every scroll —
+ * images never scrolled to are never fetched, which is the raw-time win over the
+ * cheap fixes673 DONE-flush. Liveness is registry-guarded (macos9_content_is_live)
+ * so a navigation before a fetch cannot deref freed content; the box stays valid
+ * while its content is live (box tree freed only at teardown; JS reconvert off). */
 struct lazyimg_entry {
 	html_content *content;
 	struct box *box;
@@ -1434,17 +1436,10 @@ struct lazyimg_entry {
 	struct lazyimg_entry *next;
 };
 static struct lazyimg_entry *g_lazyimg_head = NULL;
-static int g_lazyimg_armed = 0;
-static int g_lazyimg_rearms = 0;
 
-static void macsurf_lazyimg_flush(void *p);
-
-static void macsurf_lazyimg_arm(void)
-{
-	if (g_lazyimg_armed) return;
-	g_lazyimg_armed = 1;
-	guit->misc->schedule(300, macsurf_lazyimg_flush, NULL);
-}
+/* preload band above/below the viewport (px) so images just off-screen load
+ * before they fully scroll into view. ~one 68kmla content viewport. */
+#define LAZYIMG_MARGIN 600
 
 static bool macsurf_lazyimg_defer(html_content *content, struct box *box,
 		nsurl *url)
@@ -1457,24 +1452,21 @@ static bool macsurf_lazyimg_defer(html_content *content, struct box *box,
 	nsurl_ref(url);
 	e->next = g_lazyimg_head;
 	g_lazyimg_head = e;
-	g_lazyimg_rearms = 0;
-	macsurf_lazyimg_arm();
 	return true;
 }
 
-static void macsurf_lazyimg_flush(void *p)
+/* Frontend hook (main.c update handler, after browser_window_redraw): fetch any
+ * queued lazy images whose box is within the (viewport + margin) band, drop dead
+ * ones, and leave off-screen images queued for a later scroll. scroll_y and
+ * viewport_h are the content-area document scroll offset and pixel height. */
+void macsurf_lazyimg_viewport_changed(int scroll_y, int viewport_h)
 {
-	struct lazyimg_entry *pending = NULL;
+	struct lazyimg_entry *keep = NULL;
 	struct lazyimg_entry *e;
-	int rearm = 0;
-	int force;
 	int n_fetched = 0;
-	int n_requeued = 0;
-	(void)p;
-	g_lazyimg_armed = 0;
-	/* after ~12s waiting for DONE (e.g. a stuck sub-resource), stop waiting
-	 * and fetch the lazy images anyway so they never get stranded. */
-	force = (++g_lazyimg_rearms > 40);
+	int n_kept = 0;
+	int vp_top = scroll_y - LAZYIMG_MARGIN;
+	int vp_bot = scroll_y + viewport_h + LAZYIMG_MARGIN;
 	e = g_lazyimg_head;
 	g_lazyimg_head = NULL;
 	while (e != NULL) {
@@ -1482,28 +1474,32 @@ static void macsurf_lazyimg_flush(void *p)
 		if (macos9_content_is_live((struct content *)e->content) == 0) {
 			nsurl_unref(e->url);
 			free(e);
-		} else if (!force &&
-			   e->content->base.status != CONTENT_STATUS_DONE) {
-			e->next = pending;
-			pending = e;
-			rearm = 1;
-			n_requeued++;
 		} else {
-			(void) html_fetch_object(e->content, e->url, e->box,
-					image_types, false);
-			nsurl_unref(e->url);
-			free(e);
-			n_fetched++;
+			int bx = 0, by = 0;
+			int bh;
+			box_coords(e->box, &bx, &by);
+			bh = e->box->height;
+			if (bh < 0) bh = 0;
+			if (by + bh >= vp_top && by <= vp_bot) {
+				(void) html_fetch_object(e->content, e->url,
+						e->box, image_types, false);
+				nsurl_unref(e->url);
+				free(e);
+				n_fetched++;
+			} else {
+				e->next = keep;
+				keep = e;
+				n_kept++;
+			}
 		}
 		e = next;
 	}
-	g_lazyimg_head = pending;
-	if (n_fetched || n_requeued) {
+	g_lazyimg_head = keep;
+	if (n_fetched) {
 		macsurf_debug_log_writef(
-			"lazyimg: flush fetched=%d requeued=%d force=%d",
-			n_fetched, n_requeued, force);
+			"lazyimg: viewport fetched=%d kept=%d (scroll=%d vh=%d)",
+			n_fetched, n_kept, scroll_y, viewport_h);
 	}
-	if (rearm) macsurf_lazyimg_arm();
 }
 
 static bool
