@@ -36,6 +36,14 @@
 #define MACSURF_DEBUG 1
 #endif
 #endif
+
+/* fixes677 (#206) — TEMPORARY: re-open the networking/TLS log lines through
+ * the fixes675 crash-only gate so the macintoshgarden.org http-downgrade can
+ * be captured (request UA + scheme, handshake result, status, redirects).
+ * Self-enabled in this TU so only macsurf_debug_log.c needs reshipping.
+ * DELETE this define to put the release back to crash-only logging. */
+#define MACSURF_SSL_LOG 1
+
 #include "macsurf_debug_log.h"
 
 #include <string.h>
@@ -463,7 +471,7 @@ macsurf_debug_log_buffer_flush(void)
 #endif
 }
 
-/* fixes675 — RELEASE crash-only logging. For the shipping 1.86 build the
+/* fixes675 — RELEASE crash-only logging. For the shipping 1.68 build the
  * diagnostic channel keeps ONLY crash / fault / guard reports (the durable
  * post-crash forensic trace) and drops every perf / render / fetch / JS
  * diagnostic. This returns non-zero for a line worth keeping. NAV is kept as
@@ -487,6 +495,17 @@ macsurf_log_is_crash_report(const char *m)
 	if (strstr(m, "TERMINAL") != NULL) return 1;
 	if (strstr(m, "exception") != NULL) return 1;
 	if (strstr(m, "crash") != NULL) return 1;
+#ifdef MACSURF_SSL_LOG
+	/* fixes677 (#206) — SSL/fetch investigation. Surface the networking
+	 * lines so a UA-based or TLS-based http downgrade is visible: the
+	 * request line (`https: REQ ... ua=%s`), the handshake result, the
+	 * response status, and any redirect (`https: NNN redirect -> ...`).
+	 * "http" (4-char prefix) catches http:/https:/http_/https_; "hdr"
+	 * catches the response-header dump. Remove MACSURF_SSL_LOG (below)
+	 * to return the release to crash-only. */
+	if (m[0] == 'h' && strncmp(m, "http", 4) == 0) return 1;
+	if (m[0] == 'h' && strncmp(m, "hdr", 3) == 0) return 1;
+#endif
 	return 0;
 }
 
