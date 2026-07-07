@@ -559,6 +559,11 @@ macsurf_debug_log_write(const char *msg)
 			      strncmp(msg, "https: cookies sent", 19) == 0)) return;
 	if (msg[0] == 'a' && strncmp(msg, "active fetches:", 15) == 0) return;
 	if (msg[0] == 'e' && strncmp(msg, "evloop: hb", 10) == 0) return;
+	/* fixes667 — hlcache/llcache content-lifecycle trace (~965 lines/session).
+	 * Left over from the box-walk UAF investigation; not needed for the reflow
+	 * bottleneck. Re-enable with MACSURF_VERBOSE_FETCH_LOG if a UAF recurs. */
+	if (msg[0] == 'h' && strncmp(msg, "hlcache", 7) == 0) return;
+	if (msg[0] == 'l' && strncmp(msg, "llcache", 7) == 0) return;
 #endif
 
 	/* fixes233 — prepend ms-since-first-log to every line so we can
