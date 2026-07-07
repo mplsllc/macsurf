@@ -42,6 +42,7 @@
 #include "css/hints.h"
 #include "desktop/frame_types.h"
 #include "content/content_factory.h"
+#include "desktop/gui_internal.h"
 #include "macsurf_debug.h"
 
 #include "html/html.h"
@@ -1406,6 +1407,95 @@ box_image_resolve_url(dom_node *n, html_content *content, nsurl **out_url)
 /**
  * Embedded image [13.2].
  */
+/* fixes673: liveness registry gate (frontend); mirror box_construct.c
+ * — no-op (always live) on non-Mac syntax-check builds. */
+#ifdef __MACOS9__
+extern int macos9_content_is_live(struct content *c);
+#else
+#define macos9_content_is_live(c) (1)
+#endif
+
+/* fixes673 (perf): loading="lazy" deferred-image queue. On a big forum page
+ * (68kmla whats-new: 88 images, most below the fold) fetching every image during
+ * box construction keeps the content non-DONE and blocks first paint for many
+ * seconds. Images marked loading="lazy" are queued here instead and flushed
+ * AFTER the document reaches CONTENT_STATUS_DONE, so the page becomes usable fast
+ * and the lazy images stream in behind it. This is the "cheap" pass; a
+ * viewport/scroll-gated version (fetch only what's near the viewport) is scoped
+ * for a later release. Liveness is registry-guarded (macos9_content_is_live) so
+ * a navigation before the flush cannot deref freed content; the box stays valid
+ * while its content is live (the box tree is freed only at content teardown and
+ * the JS reconvert path is disabled). */
+struct lazyimg_entry {
+	html_content *content;
+	struct box *box;
+	nsurl *url;
+	struct lazyimg_entry *next;
+};
+static struct lazyimg_entry *g_lazyimg_head = NULL;
+static int g_lazyimg_armed = 0;
+static int g_lazyimg_rearms = 0;
+
+static void macsurf_lazyimg_flush(void *p);
+
+static void macsurf_lazyimg_arm(void)
+{
+	if (g_lazyimg_armed) return;
+	g_lazyimg_armed = 1;
+	guit->misc->schedule(300, macsurf_lazyimg_flush, NULL);
+}
+
+static bool macsurf_lazyimg_defer(html_content *content, struct box *box,
+		nsurl *url)
+{
+	struct lazyimg_entry *e = malloc(sizeof(*e));
+	if (e == NULL) return false;
+	e->content = content;
+	e->box = box;
+	e->url = url;
+	nsurl_ref(url);
+	e->next = g_lazyimg_head;
+	g_lazyimg_head = e;
+	g_lazyimg_rearms = 0;
+	macsurf_lazyimg_arm();
+	return true;
+}
+
+static void macsurf_lazyimg_flush(void *p)
+{
+	struct lazyimg_entry *pending = NULL;
+	struct lazyimg_entry *e;
+	int rearm = 0;
+	int force;
+	(void)p;
+	g_lazyimg_armed = 0;
+	/* after ~12s waiting for DONE (e.g. a stuck sub-resource), stop waiting
+	 * and fetch the lazy images anyway so they never get stranded. */
+	force = (++g_lazyimg_rearms > 40);
+	e = g_lazyimg_head;
+	g_lazyimg_head = NULL;
+	while (e != NULL) {
+		struct lazyimg_entry *next = e->next;
+		if (macos9_content_is_live((struct content *)e->content) == 0) {
+			nsurl_unref(e->url);
+			free(e);
+		} else if (!force &&
+			   e->content->base.status != CONTENT_STATUS_DONE) {
+			e->next = pending;
+			pending = e;
+			rearm = 1;
+		} else {
+			(void) html_fetch_object(e->content, e->url, e->box,
+					image_types, false);
+			nsurl_unref(e->url);
+			free(e);
+		}
+		e = next;
+	}
+	g_lazyimg_head = pending;
+	if (rearm) macsurf_lazyimg_arm();
+}
+
 static bool
 box_image(dom_node *n,
 	  html_content *content,
@@ -1461,7 +1551,23 @@ box_image(dom_node *n,
 
 	/* start fetch */
 	box->flags |= IS_REPLACED;
-	ok = html_fetch_object(content, url, box, image_types, false);
+	/* fixes673: defer loading="lazy" images (see macsurf_lazyimg_*)
+	 * so below-the-fold images don't hold up first paint. */
+	{
+		char *loading = NULL;
+		bool lazy = false;
+		if (box_get_attribute(n, "loading", content->bctx,
+				&loading) && loading != NULL &&
+		    strcmp(loading, "lazy") == 0) {
+			lazy = true;
+		}
+		if (lazy && macsurf_lazyimg_defer(content, box, url)) {
+			ok = true;
+		} else {
+			ok = html_fetch_object(content, url, box,
+					image_types, false);
+		}
+	}
 	nsurl_unref(url);
 
 	wtype = css_computed_width(box->style, &value, &wunit);
