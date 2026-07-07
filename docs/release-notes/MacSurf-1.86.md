@@ -109,7 +109,6 @@ These are the "how was this ever shipped" basics that are now solid:
 
 - **Instant startup** — removed a ~17 s diagnostic JS self-test battery that ran synchronously at every launch before the event loop.
 - **Image & web-font disk cache** — images and downloadable fonts are now cached to disk (bounded 64 MB budget with LRU eviction), so revisiting an image-heavy page — or reloading after Mac OS evicts the RAM cache — no longer re-downloads everything.
-- **Viewport lazy image loading** — `loading="lazy"` images are fetched only as they enter the viewport, so a page with dozens of below-the-fold avatars fetches the ~handful on screen instead of all of them, and the rest stream in as you scroll. Measured ~26 % faster wall-clock on a heavy forum page.
 - **Prepared-image GWorld cache** — `plot_bitmap` no longer rebuilds a 32-bit GWorld (RGBA→XRGB swap + downscale) on every paint (~2.5 s/paint on a big image); the ready-to-blit buffer is cached, killing scroll jank.
 - **Faster box construction** — the HTML→box conversion yielded to the event loop every 10 nodes; it now processes 100, cutting scheduler round-trips ~10× on large pages.
 - **Deferred per-box DOM lookups** in redraw, and a large log-volume reduction (per-element diagnostics suppressed by default).

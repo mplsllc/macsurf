@@ -42,15 +42,12 @@
 #include "css/hints.h"
 #include "desktop/frame_types.h"
 #include "content/content_factory.h"
-#include "netsurf/misc.h"		/* fixes673: struct gui_misc_table */
-#include "desktop/gui_internal.h"
 #include "macsurf_debug.h"
 
 #include "html/html.h"
 #include "html/private.h"
 #include "html/object.h"
 #include "html/box.h"
-#include "html/box_inspect.h"	/* fixes674: box_coords */
 #include "html/box_manipulate.h"
 #include "html/box_construct.h"
 #include "html/box_special.h"
@@ -1409,130 +1406,6 @@ box_image_resolve_url(dom_node *n, html_content *content, nsurl **out_url)
 /**
  * Embedded image [13.2].
  */
-/* fixes673: liveness registry gate (frontend); mirror box_construct.c
- * — no-op (always live) on non-Mac syntax-check builds. */
-#ifdef __MACOS9__
-extern int macos9_content_is_live(struct content *c);
-#else
-#define macos9_content_is_live(c) (1)
-#endif
-
-/* fixes673/674 (perf): loading="lazy" VIEWPORT-gated deferred image loading. On
- * a big forum page (68kmla: 70+ lazy avatars, most below the fold) fetching every
- * image during box construction adds dozens of cold network round-trips to the
- * critical load and holds the frontend on "loading" until they all finish.
- * loading="lazy" images are queued here instead and fetched only once their box
- * is within (viewport + margin). The check is driven from the frontend paint path
- * (macsurf_lazyimg_viewport_changed, called after each browser_window_redraw) so
- * it runs after layout (box coords valid) on first paint AND on every scroll —
- * images never scrolled to are never fetched, which is the raw-time win over the
- * cheap fixes673 DONE-flush. Liveness is registry-guarded (macos9_content_is_live)
- * so a navigation before a fetch cannot deref freed content; the box stays valid
- * while its content is live (box tree freed only at teardown; JS reconvert off). */
-struct lazyimg_entry {
-	html_content *content;
-	struct dom_node *node;	/* fixes674b: hold the DOM node (refcounted, stable),
-				 * NOT the box (freed by box normalisation while the
-				 * content is still live -> box_coords crashed on a
-				 * wild scroll pointer). Resolve the live box per
-				 * paint via box_for_node. */
-	nsurl *url;
-	struct lazyimg_entry *next;
-};
-static struct lazyimg_entry *g_lazyimg_head = NULL;
-
-/* preload band above/below the viewport (px) so images just off-screen load
- * before they fully scroll into view. ~one 68kmla content viewport. */
-#define LAZYIMG_MARGIN 600
-
-static bool macsurf_lazyimg_defer(html_content *content, struct dom_node *node,
-		nsurl *url)
-{
-	struct lazyimg_entry *e = malloc(sizeof(*e));
-	if (e == NULL) return false;
-	e->content = content;
-	e->node = node;
-	dom_node_ref(node);
-	e->url = url;
-	nsurl_ref(url);
-	e->next = g_lazyimg_head;
-	g_lazyimg_head = e;
-	return true;
-}
-
-/* Frontend hook (main.c update handler, after browser_window_redraw): fetch any
- * queued lazy images whose box is within the (viewport + margin) band, drop dead
- * ones, and leave off-screen images queued for a later scroll. scroll_y and
- * viewport_h are the content-area document scroll offset and pixel height. */
-void macsurf_lazyimg_viewport_changed(int scroll_y, int viewport_h)
-{
-	struct lazyimg_entry *keep = NULL;
-	struct lazyimg_entry *e;
-	int n_fetched = 0;
-	int n_kept = 0;
-	int vp_top = scroll_y - LAZYIMG_MARGIN;
-	int vp_bot = scroll_y + viewport_h + LAZYIMG_MARGIN;
-	e = g_lazyimg_head;
-	g_lazyimg_head = NULL;
-	while (e != NULL) {
-		struct lazyimg_entry *next = e->next;
-		struct box *box;
-		if (macos9_content_is_live((struct content *)e->content) == 0) {
-			dom_node_unref(e->node);
-			nsurl_unref(e->url);
-			free(e);
-			e = next;
-			continue;
-		}
-		/* fixes674c (crash fix): only walk the box tree once this content
-		 * is DONE. box_create zeroes scroll_x/y, so the crash (scroll_x =
-		 * 0x66CC0240, a non-NULL dangling pointer -> scrollbar_get_offset
-		 * faults) is a USE-AFTER-FREE: box_coords was walking a parent
-		 * chain being freed/renormalised mid-construction (this hook runs
-		 * on every paint, including paints while the tree is still being
-		 * built). At DONE the tree is fully constructed + laid out + stable
-		 * (fixes673 gated on the same status and never crashed), so the
-		 * walk is safe. Off-screen images just wait for the next paint. */
-		if (e->content->base.status != CONTENT_STATUS_DONE) {
-			e->next = keep;
-			keep = e;
-			n_kept++;
-			e = next;
-			continue;
-		}
-		/* fixes674b: resolve the CURRENT box for this node (NULL if the
-		 * node has no box yet / was removed). Never touches a stale box. */
-		box = box_for_node(e->node);
-		if (box == NULL) {
-			e->next = keep; keep = e; n_kept++;
-		} else {
-			int bx = 0, by = 0;
-			int bh = box->height;
-			box_coords(box, &bx, &by);
-			if (bh < 0) bh = 0;
-			if (by + bh >= vp_top && by <= vp_bot) {
-				(void) html_fetch_object(e->content, e->url,
-						box, image_types, false);
-				dom_node_unref(e->node);
-				nsurl_unref(e->url);
-				free(e);
-				n_fetched++;
-			} else {
-				e->next = keep;
-				keep = e;
-				n_kept++;
-			}
-		}
-		e = next;
-	}
-	g_lazyimg_head = keep;
-	if (n_fetched) {
-		macsurf_debug_log_writef(
-			"lazyimg: viewport fetched=%d kept=%d (scroll=%d vh=%d)",
-			n_fetched, n_kept, scroll_y, viewport_h);
-	}
-}
-
 static bool
 box_image(dom_node *n,
 	  html_content *content,
@@ -1588,23 +1461,7 @@ box_image(dom_node *n,
 
 	/* start fetch */
 	box->flags |= IS_REPLACED;
-	/* fixes673: defer loading="lazy" images (see macsurf_lazyimg_*)
-	 * so below-the-fold images don't hold up first paint. */
-	{
-		char *loading = NULL;
-		bool lazy = false;
-		if (box_get_attribute(n, "loading", content->bctx,
-				&loading) && loading != NULL &&
-		    strcmp(loading, "lazy") == 0) {
-			lazy = true;
-		}
-		if (lazy && macsurf_lazyimg_defer(content, n, url)) {
-			ok = true;
-		} else {
-			ok = html_fetch_object(content, url, box,
-					image_types, false);
-		}
-	}
+	ok = html_fetch_object(content, url, box, image_types, false);
 	nsurl_unref(url);
 
 	wtype = css_computed_width(box->style, &value, &wunit);

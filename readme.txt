@@ -33,8 +33,7 @@ WHAT'S NEW IN 1.86
   working window Maximize, and one tidy "MacSurfData" folder next to
   the app for the cache, downloads, bookmarks, and log.
 
-* Faster page loads: image/font disk cache, and lazy images that
-  load as you scroll instead of all at once.
+* Faster page loads: images and fonts are cached to disk.
 
 * Lots of rendering fixes (forum layouts, web-font icons, text
   spacing, cookie-consent bars you can actually click).
