@@ -463,6 +463,33 @@ macsurf_debug_log_buffer_flush(void)
 #endif
 }
 
+/* fixes675 — RELEASE crash-only logging. For the shipping 1.86 build the
+ * diagnostic channel keeps ONLY crash / fault / guard reports (the durable
+ * post-crash forensic trace) and drops every perf / render / fetch / JS
+ * diagnostic. This returns non-zero for a line worth keeping. NAV is kept as
+ * crash context (what page was loading when it died). Dev builds define
+ * MACSURF_VERBOSE_LOG to bypass this gate and get the full filtered trace. */
+static int
+macsurf_log_is_crash_report(const char *m)
+{
+	if (m[0] == 'N' && strncmp(m, "NAV", 3) == 0) return 1;
+	if (strstr(m, "FAIL") != NULL) return 1;
+	if (strstr(m, "ERROR") != NULL) return 1;
+	if (strstr(m, "ASSERT") != NULL) return 1;
+	if (strstr(m, "PANIC") != NULL) return 1;
+	if (strstr(m, "UAF") != NULL) return 1;
+	if (strstr(m, "INVALID") != NULL) return 1;
+	if (strstr(m, "ABORT") != NULL) return 1;
+	if (strstr(m, "NOMEM") != NULL) return 1;
+	if (strstr(m, "CORRUPT") != NULL) return 1;
+	if (strstr(m, "WATCHDOG") != NULL) return 1;
+	if (strstr(m, "DEFERRED") != NULL) return 1;
+	if (strstr(m, "TERMINAL") != NULL) return 1;
+	if (strstr(m, "exception") != NULL) return 1;
+	if (strstr(m, "crash") != NULL) return 1;
+	return 0;
+}
+
 void
 macsurf_debug_log_write(const char *msg)
 {
@@ -476,6 +503,12 @@ macsurf_debug_log_write(const char *msg)
 	unsigned long now;
 
 	if (!g_log_open || msg == NULL) return;
+
+	/* fixes675 — crash-only gate for the release build. Keeps just the
+	 * forensic lines; drops all perf/render/fetch diagnostics. */
+#ifndef MACSURF_VERBOSE_LOG
+	if (!macsurf_log_is_crash_report(msg)) return;
+#endif
 
 	/* fixes250 — silence the layout-engine debug spam by default.
 	 * Cold mactrove loads produced ~7300 LAYOUTPHASE/MCOL/FLEXPHASE
