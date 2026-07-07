@@ -3770,6 +3770,23 @@ unsigned char js_exec(struct jsthread *thread,
 		} else if (strstr(name, "core-compiled.js") != NULL) {
 			stub = s_xf_core_stub; tag = "core";
 		}
+		/* fixes670 (perf): these XenForo feature bundles depend on XF internals
+		 * we don't fully provide, so on hardware they PARSE (lightbox-compiled.js
+		 * alone is ~155 KB) and then throw immediately (TypeError: cannot read
+		 * property 'handle'/'extend' of undefined) — a big, pure-waste slice of
+		 * the per-page js= time. Substitute an empty no-op so the parse+exec is
+		 * skipped entirely; the features (image lightbox, media gallery, upload,
+		 * token input, prefix menu) don't work either way, so nothing is lost.
+		 * Only applied AFTER the real-stub checks above so preamble/core/editor
+		 * still get their functional stubs. Add doomed bundles here as they
+		 * surface in the qjs-exec-err log. */
+		else if (strstr(name, "lightbox-compiled") != NULL ||
+			 strstr(name, "/xfmg/") != NULL ||
+			 strstr(name, "attachment_manager") != NULL ||
+			 strstr(name, "token_input") != NULL ||
+			 strstr(name, "prefix_menu") != NULL) {
+			stub = ""; tag = "skip-doomed";
+		}
 		if (stub != NULL) {
 			JSValue sv;
 			macsurf_debug_log_writef(
