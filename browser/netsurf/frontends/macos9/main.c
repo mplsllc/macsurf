@@ -639,6 +639,32 @@ static void macos9_handle_update(const EventRecord *event) {
 		if (gwpm != NULL) UnlockPixels(gwpm);
 		gworld_active = (Boolean)0;
 	}
+	/* fixes663 (#191): draw the in-page text caret on top of the just-
+	 * composited content, in window coords, clipped to the content area.
+	 * caret_x/y are document coords from macos9_gw_place_caret; convert the
+	 * same way macos9_gw_invalidate does. Only the blink-ON phase draws;
+	 * QuickDraw hardware-clips to BeginUpdate's dirty region so a content
+	 * repaint elsewhere never disturbs a steady caret. */
+	if (gw->caret_active && gw->caret_on) {
+		int cwx = gw->content_rect.left + gw->caret_x - gw->scroll_x;
+		int cy0 = gw->content_rect.top  + gw->caret_y - gw->scroll_y;
+		int cy1 = cy0 + gw->caret_h;
+		if (cwx >= gw->content_rect.left && cwx < gw->content_rect.right) {
+			RGBColor blk;
+			RgnHandle savedClip = NewRgn();
+			if (cy0 < gw->content_rect.top)    cy0 = gw->content_rect.top;
+			if (cy1 > gw->content_rect.bottom) cy1 = gw->content_rect.bottom;
+			SetPortWindowPort(win);
+			if (savedClip != NULL) GetClip(savedClip);
+			ClipRect(&gw->content_rect);
+			blk.red = blk.green = blk.blue = 0;
+			RGBForeColor(&blk);
+			PenNormal();
+			MoveTo((short)cwx, (short)cy0);
+			LineTo((short)cwx, (short)cy1);
+			if (savedClip != NULL) { SetClip(savedClip); DisposeRgn(savedClip); }
+		}
+	}
 	EndUpdate(win);
 #endif
 }

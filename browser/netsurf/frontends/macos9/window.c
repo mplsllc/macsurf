@@ -972,9 +972,16 @@ static void macos9_reload_anim_tick(void *p)
 #endif
 }
 
+static void macos9_gw_remove_caret(struct gui_window *g); /* fixes663 fwd */
+
 static nserror macos9_gw_event(struct gui_window *g, enum gui_window_event e) {
 	struct hlcache_handle *cur = (g && g->bw) ? browser_window_get_content(g->bw) : NULL;
 	macsurf_debug_log_writef("gw_event: e=%d current_content=%p", (int)e, cur);
+	/* fixes663 (#191): a field lost the caret (blur / focus change) — clear
+	 * it so it does not linger after the user clicks out of the field. */
+	if (e == GW_EVENT_REMOVE_CARET) {
+		macos9_gw_remove_caret(g);
+	}
 	/* fixes297e — refresh-icon loading animation hook. */
 	if (e == GW_EVENT_START_THROBBER) {
 		macos9_reload_animating = 1;
@@ -1002,6 +1009,7 @@ static nserror macos9_gw_event(struct gui_window *g, enum gui_window_event e) {
 		int w=0, h=0; if(g->bw && browser_window_get_extents(g->bw, false, &w, &h)==NSERROR_OK) { g->content_width=w; g->content_height=h; }
 		if(e==GW_EVENT_NEW_CONTENT) {
 			g->scroll_x=0; g->scroll_y=0;
+			g->caret_active=0; /* fixes663: drop a stale caret on navigation */
 			/* reformat on NEW_CONTENT only — the pre-366m semantics.
 			 * NetSurf's scheduler coalesces repeated calls and the
 			 * reformat sequence converges. (366m wrongly drove reformat
@@ -1678,9 +1686,65 @@ void macos9_window_draw_toolbar_icons(struct gui_window *g)
 #endif
 }
 
+/* fixes663 (#191): in-page text caret. NetSurf draws page-field carets ONLY
+ * when the field carries TEXTAREA_INTERNAL_CARET; otherwise it delegates the
+ * VISIBLE caret to this place_caret gui callback — and, crucially, the same
+ * path sets keyboard focus (browser_window_place_caret sets root_bw->focus,
+ * which is what browser_window_key_press routes on). The earlier attempt of
+ * setting TEXTAREA_INTERNAL_CARET drew a caret but SUPPRESSED the CARET_UPDATE
+ * message that drives html_set_focus, so arrows/Tab/copy and blur-cleanup all
+ * broke — hence this proper frontend implementation instead. */
+static void macos9_caret_invalidate(struct gui_window *g)
+{
+	struct rect r;
+	if (g == NULL) return;
+	r.x0 = g->caret_x - 1;
+	r.y0 = g->caret_y;
+	r.x1 = g->caret_x + 2;
+	r.y1 = g->caret_y + g->caret_h + 1;
+	macos9_gw_invalidate(g, &r);
+}
+
+static void macos9_caret_blink_tick(void *p)
+{
+	struct gui_window *g = (struct gui_window *)p;
+	if (g == NULL || !g->caret_active) return; /* stop: do not reschedule */
+	g->caret_on = !g->caret_on;
+	macos9_caret_invalidate(g);
+	macos9_schedule(500, macos9_caret_blink_tick, g);
+}
+
+static void macos9_gw_place_caret(struct gui_window *g, int x, int y,
+		int height, const struct rect *clip)
+{
+	int was_active;
+	(void)clip;
+	if (g == NULL) return;
+	was_active = g->caret_active;
+	if (was_active) {
+		macos9_caret_invalidate(g); /* erase the old position */
+	}
+	g->caret_x = x;
+	g->caret_y = y;
+	g->caret_h = height;
+	g->caret_active = 1;
+	g->caret_on = 1; /* show immediately when placed/moved */
+	macos9_caret_invalidate(g); /* draw the new position */
+	if (!was_active) {
+		macos9_schedule(500, macos9_caret_blink_tick, g);
+	}
+}
+
+static void macos9_gw_remove_caret(struct gui_window *g)
+{
+	if (g == NULL || !g->caret_active) return;
+	g->caret_active = 0;
+	macos9_caret_invalidate(g); /* erase (caret is drawn only while active) */
+}
+
 static struct gui_window_table wt = {
 	macos9_window_create, macos9_window_destroy, macos9_gw_invalidate, macos9_gw_get_scroll,
 	macos9_gw_set_scroll, macos9_gw_get_dimensions, macos9_gw_event, macos9_gw_set_title,
-	macos9_gw_set_url, macos9_gw_set_icon, macos9_gw_set_status, macos9_gw_set_pointer, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0
+	macos9_gw_set_url, macos9_gw_set_icon, macos9_gw_set_status, macos9_gw_set_pointer, macos9_gw_place_caret, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0
 };
 struct gui_window_table *macos9_window_table = &wt;

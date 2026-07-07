@@ -287,7 +287,7 @@ bool box_textarea_create_textarea(html_content *html,
 	if (gadget->type == GADGET_TEXTAREA) {
 		dom_html_text_area_element *textarea =
 				(dom_html_text_area_element *) node;
-		ta_flags = TEXTAREA_MULTILINE | TEXTAREA_INTERNAL_CARET;  /* fixes661 (#191): draw our own caret; macos9 has no place_caret */
+		ta_flags = TEXTAREA_MULTILINE;
 
 		err = dom_html_text_area_element_get_read_only(
 				textarea, &read_only);
@@ -318,9 +318,9 @@ bool box_textarea_create_textarea(html_content *html,
 			return false;
 
 		if (gadget->type == GADGET_PASSWORD)
-			ta_flags = TEXTAREA_PASSWORD | TEXTAREA_INTERNAL_CARET;  /* fixes661 (#191): draw our own caret; macos9 has no place_caret */
+			ta_flags = TEXTAREA_PASSWORD;
 		else
-			ta_flags = TEXTAREA_DEFAULT | TEXTAREA_INTERNAL_CARET;  /* fixes661 (#191): draw our own caret; macos9 has no place_caret */
+			ta_flags = TEXTAREA_DEFAULT;
 
 		/* Get initial text */
 		err = dom_html_input_element_get_value(input, &dom_text);

@@ -142,6 +142,17 @@ struct gui_window {
 	 * zoom we restore them. `zoomed` toggles which way the box goes. */
 	Rect zoom_saved_bounds;
 	int zoomed;
+	/* fixes663 (#191): in-page text caret. The place_caret gui callback
+	 * hands us document-relative coords + height; the update handler draws
+	 * the caret on top of the composited content and macos9_caret_blink_tick
+	 * toggles caret_on. caret_active is set while a field owns the caret and
+	 * cleared on GW_EVENT_REMOVE_CARET (blur). Distinct from the URL bar,
+	 * which is a Carbon TextEdit field with its own TEIdle blink. */
+	int caret_active;
+	int caret_on;
+	int caret_x;
+	int caret_y;
+	int caret_h;
 };
 
 /* fixes645 — download manager V2. Downloads now auto-save to a "MacSurf
