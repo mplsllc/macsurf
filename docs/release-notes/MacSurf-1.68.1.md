@@ -1,9 +1,9 @@
-# MacSurf 1.68 — "macQJS"
+# MacSurf 1.68.1 — "macQJS"
 
 *A native web browser for Classic Mac OS (PowerPC, Mac OS 9.1–9.2.2), with real HTTPS and a modern JavaScript engine — no proxy, no companion machine.*
 
 **Verified on:** Power Macintosh G3 iMac and G4, Mac OS 9.2.2.
-The **1.68** number honors **68kmla.org** — the community and the site that drove the majority of this cycle's work.
+The **1.68.1** number honors **68kmla.org** — the community and the site that drove the majority of this cycle's work.
 
 ---
 
@@ -22,9 +22,9 @@ No pressure — but if I don't ask, I can't keep doing this, so I'm asking. Than
 
 ## For 68kmla.org — thank you
 
-This release is named **1.68** in honor of **[68kmla.org](https://68kmla.org)**, the 68k/PowerPC Mac community that has been the heart of this cycle's work.
+This release is named **1.68.1** in honor of **[68kmla.org](https://68kmla.org)**, the 68k/PowerPC Mac community that has been the heart of this cycle's work.
 
-An enormous amount of 1.68 exists because 68kmla exists: it's the site I test against every single day, it's where the toughest real-world rendering, login, and JavaScript problems surfaced, and it's the reason so many of the fixes below are as thorough as they are. More than that, the 68kmla community has been genuinely kind and welcoming to a new, rough-around-the-edges project — patient with the bugs, generous with detailed feedback, and encouraging at every step. That reception is a big part of why MacSurf kept moving forward. So: **thank you, 68kmla.** Getting your forums to render, log in, and let you post a reply from a real Mac OS 9 machine has been one of the most rewarding targets to build toward.
+An enormous amount of 1.68.1 exists because 68kmla exists: it's the site I test against every single day, it's where the toughest real-world rendering, login, and JavaScript problems surfaced, and it's the reason so many of the fixes below are as thorough as they are. More than that, the 68kmla community has been genuinely kind and welcoming to a new, rough-around-the-edges project — patient with the bugs, generous with detailed feedback, and encouraging at every step. That reception is a big part of why MacSurf kept moving forward. So: **thank you, 68kmla.** Getting your forums to render, log in, and let you post a reply from a real Mac OS 9 machine has been one of the most rewarding targets to build toward.
 
 ---
 
@@ -61,7 +61,7 @@ These are the "how was this ever shipped" basics that are now solid:
 
 ---
 
-## Everything new in 1.68, by area
+## Everything new in 1.68 / 1.68.1, by area
 
 ### JavaScript engine (macQJS)
 

@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  <img src="screenshots/macsurf-1.68-imac.jpg" alt="MacSurf 1.68 running on a Power Macintosh G3 iMac" width="760">
+  <img src="screenshots/macsurf-1.68-imac.jpg" alt="MacSurf 1.68.1 running on a Power Macintosh G3 iMac" width="760">
   <br>
-  <em>MacSurf 1.68 on a Power Mac G3 iMac, rendering <a href="https://home.macsurf.org/">home.macsurf.org</a> over native HTTPS.</em>
+  <em>MacSurf 1.68.1 on a Power Mac G3 iMac, rendering <a href="https://home.macsurf.org/">home.macsurf.org</a> over native HTTPS.</em>
 </p>
 
 ---
@@ -31,7 +31,7 @@
 ---
 
 > [!NOTE]
-> **1.68 "macQJS"** runs a real modern JavaScript engine, speaks TLS 1.3 natively, keeps you logged in, and renders full desktop forums on a 233 MHz G3. It's at its best on hand-built pages, retro sites, and forums. Very heavy modern apps — GitHub, video, React-heavy SPAs — still don't render. This is honest, in-progress software. Got a G3 or G4? Load it up and tell us what breaks. See [docs/status.md](docs/status.md) for the current punch list.
+> **1.68.1 "macQJS"** runs a real modern JavaScript engine, speaks TLS 1.3 natively, keeps you logged in, and renders full desktop forums on a 233 MHz G3. It's at its best on hand-built pages, retro sites, and forums. Very heavy modern apps — GitHub, video, React-heavy SPAs — still don't render. This is honest, in-progress software. Got a G3 or G4? Load it up and tell us what breaks. See [docs/status.md](docs/status.md) for the current punch list.
 
 ## Why this exists
 
@@ -132,7 +132,7 @@ Every shot below is a live site, captured on a Power Mac G3 running Mac OS 9.2.2
 
 ## Download
 
-**[MacSurf 1.68 "macQJS"](https://github.com/mplsllc/macsurf/releases/latest)** (2026-07-07) — the JavaScript engine was replaced (Duktape ES5 → macQJS / QuickJS ES2023), plus working text input, persistent logins, a bookmarks menu and downloads manager, the split-scrollbar render fix, downloadable web-font icons, and a big performance pass (near-instant startup, image / font disk cache). Named for **[68kmla.org](https://68kmla.org)**, the community that drove the cycle. [Full release notes →](docs/release-notes/MacSurf-1.68.md)
+**[MacSurf 1.68.1 "macQJS"](https://github.com/mplsllc/macsurf/releases/latest)** (2026-07-08) — the JavaScript engine was replaced (Duktape ES5 → macQJS / QuickJS ES2023), plus working text input, persistent logins, a bookmarks menu and downloads manager, the split-scrollbar render fix, downloadable web-font icons, and a big performance pass (near-instant startup, image / font disk cache). Named for **[68kmla.org](https://68kmla.org)**, the community that drove the cycle. [Full release notes →](docs/release-notes/MacSurf-1.68.1.md)
 
 - **[Download the .sit →](https://github.com/mplsllc/macsurf/releases/latest)** — expand with StuffIt Expander on Mac OS 9.1+ (CarbonLib 1.5+) and double-click. No installer.
 - Already on a Mac OS 9 machine? Grab it from the plain-HTTP **[macsurf.org](http://macsurf.org/)** — GitHub doesn't render on-device yet.

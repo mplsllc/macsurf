@@ -1,4 +1,4 @@
-MacSurf 1.68 "macQJS"
+MacSurf 1.68.1 "macQJS"
 A native web browser for Classic Mac OS (PowerPC, Mac OS 9.1-9.2.2).
 Real HTTPS, a modern JavaScript engine, no proxy, no second machine.
 
@@ -16,7 +16,7 @@ doing this.
 Thank you.
 
 --------------------------------------------------------------------
-WHAT'S NEW IN 1.68
+WHAT'S NEW IN 1.68 / 1.68.1
 --------------------------------------------------------------------
 * NEW JAVASCRIPT ENGINE (macQJS). Duktape (ES5) is gone; MacSurf now
   runs QuickJS - modern ES2023 JavaScript - natively on Mac OS 9.
@@ -63,7 +63,7 @@ KNOWN LIMITATIONS
 --------------------------------------------------------------------
 THANK YOU, 68kmla.org
 --------------------------------------------------------------------
-This release is named 1.68 in honor of 68kmla.org - the 68k/PowerPC
+This release is named 1.68.1 in honor of 68kmla.org - the 68k/PowerPC
 Mac community that has been so kind and welcoming, tested MacSurf
 every day, and shaped this whole cycle of work. Getting your forums
 to render, log in, and post from a real Mac OS 9 machine has been a
