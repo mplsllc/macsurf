@@ -367,21 +367,33 @@ static int tls13_build_client_hello(tls13_hs_ctx *hs,
     put_u16(buf + pos, TLS12_VERSION);
     pos += 2;
 
-    /* Random: 32 bytes of cryptographic randomness */
+    /* Random: 32 bytes of cryptographic randomness.
+     * fixes691 (#206): a post-HRR ClientHello (CH2) MUST carry the SAME
+     * Random as CH1 (RFC 8446 4.1.2). Generate once on the first build and
+     * replay from hs->ch_random on the HRR resend, rather than regenerating
+     * (the old bug that made CH2 malformed and forced the http downgrade). */
     if (pos + 32 > buf_size) return -1;
-    br_hmac_drbg_generate(rng, buf + pos, 32);
+    if (!hs->ch_fields_valid) {
+        br_hmac_drbg_generate(rng, hs->ch_random, 32);
+    }
+    memcpy(buf + pos, hs->ch_random, 32);
     pos += 32;
 
     /*
-     * legacy_session_id: 32 random bytes.
+     * legacy_session_id: 32 bytes.
      * RFC 8446 Section 4.1.2: MUST be set to a 32-byte value by a client
-     * that wishes to use middlebox compatibility mode (we do).
-     * A random value is recommended.
+     * that wishes to use middlebox compatibility mode (we do), and — like
+     * Random — MUST be echoed verbatim in the post-HRR CH2. Same replay
+     * discipline as above (fixes691, #206).
      */
     if (pos + 1 + 32 > buf_size) return -1;
     buf[pos++] = 32;  /* session_id length */
-    br_hmac_drbg_generate(rng, buf + pos, 32);
+    if (!hs->ch_fields_valid) {
+        br_hmac_drbg_generate(rng, hs->ch_session_id, 32);
+    }
+    memcpy(buf + pos, hs->ch_session_id, 32);
     pos += 32;
+    hs->ch_fields_valid = 1;  /* CH1 identity now captured; CH2 replays it */
 
     /*
      * Cipher suites: TLS 1.3 suites first, then TLS 1.2 suites.

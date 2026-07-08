@@ -139,6 +139,15 @@ typedef struct {
     size_t              ecdhe_public_len;
     uint16_t            hrr_group;       /* group requested by HelloRetryRequest (0 = none) */
     int                 hrr_pending;     /* transient: an HRR was just parsed, resend CH now */
+    /* fixes691 (#206): RFC 8446 4.1.2 requires the post-HRR ClientHello (CH2)
+     * to be byte-identical to CH1 except key_share / cookie / binder / padding.
+     * Persist CH1's Random + legacy_session_id here on the first build and
+     * replay them verbatim on the HRR resend; regenerating them (the old bug)
+     * makes CH2 malformed, the server alerts, and MacSurf downgrades to http
+     * (e.g. macintoshgarden.org, a secp384r1-only server that always HRRs). */
+    unsigned char       ch_random[32];
+    unsigned char       ch_session_id[32];
+    int                 ch_fields_valid; /* 0 until CH1 populates ch_random/ch_session_id */
 
     /* Traffic secrets (kept for Finished key derivation) */
     unsigned char       client_hs_secret[64];
