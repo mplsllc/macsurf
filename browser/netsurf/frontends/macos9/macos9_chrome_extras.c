@@ -16,6 +16,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <stdbool.h>
 
 #include "utils/ns_errors.h"
@@ -410,22 +411,40 @@ void macos9_find_in_page(struct gui_window *g)
  *   item 2  : separator
  *   item 3+ : one per bookmark (ITEM_BMK_FIRST = 3)
  * ==================================================================== */
-#define MACSURF_BOOKMARKS_MAX 64
+#define MACSURF_BOOKMARKS_MAX 128   /* folders + bookmarks share the array */
 #define MACSURF_BMK_URL_MAX   512
 #define MACSURF_BMK_LBL_MAX   96
 
+/* fixes693 (#50-adjacent bookmark UI): each record is a bookmark OR a folder.
+ * `id` is a stable per-record identifier (>0); `parent_id` gives folder
+ * membership (0 = root). `is_folder` records with no url are organizational
+ * containers. The flat parent-id model serializes trivially and stays C89. */
 struct macsurf_bookmark {
+	int  id;
+	int  parent_id;
+	int  is_folder;
 	char url[MACSURF_BMK_URL_MAX];
-	char label[MACSURF_BMK_LBL_MAX];
+	char label[MACSURF_BMK_LBL_MAX];  /* bookmark label or folder name */
 };
 static struct macsurf_bookmark macsurf_bookmarks[MACSURF_BOOKMARKS_MAX];
 static int macsurf_bookmark_count = 0;
+static int macsurf_bookmark_next_id = 1;
+
+/* Menu-position -> bookmark array index map. Folders are not shown in the
+ * flat menu, so the Nth menu item is NOT the Nth array slot; navigate() maps
+ * through this. Rebuilt by macos9_bookmark_menu_rebuild. */
+static int macsurf_bmk_menu_map[MACSURF_BOOKMARKS_MAX];
+static int macsurf_bmk_menu_n = 0;
 
 extern long macos9_bookmarks_load(char *out_buf, long buf_cap);
 extern void macos9_bookmarks_save(const char *buf, long len);
 
-/* Serialize the in-memory set to the on-disk file. Buffer is heap-
- * allocated (worst case ~40 KB) — never on the OS 9 stack. */
+/* Serialize the in-memory set to the on-disk file. Grammar (fixes693):
+ *   F<TAB>id<TAB>parent<TAB>name        — a folder
+ *   B<TAB>id<TAB>parent<TAB>url<TAB>label — a bookmark
+ * A legacy line (no sigil, "url<TAB>label") is still READ as a root bookmark
+ * by _restore, so old "MacSurf Bookmarks" files load unchanged; the writer
+ * always emits the new grammar. Buffer heap-allocated — never on the stack. */
 static void macsurf_bookmarks_persist(void)
 {
 	char *buf;
@@ -436,60 +455,190 @@ static void macsurf_bookmarks_persist(void)
 		return;
 	}
 	cap = (size_t)macsurf_bookmark_count *
-		(MACSURF_BMK_URL_MAX + MACSURF_BMK_LBL_MAX + 4) + 4;
+		(MACSURF_BMK_URL_MAX + MACSURF_BMK_LBL_MAX + 48) + 8;
 	buf = (char *)malloc(cap);
 	if (buf == NULL) return;
 	for (i = 0; i < macsurf_bookmark_count; i++) {
-		size_t ul = strlen(macsurf_bookmarks[i].url);
-		size_t ll = strlen(macsurf_bookmarks[i].label);
-		if (pos + ul + ll + 3 >= cap) break;
-		memcpy(buf + pos, macsurf_bookmarks[i].url, ul); pos += ul;
-		buf[pos++] = '\t';
-		memcpy(buf + pos, macsurf_bookmarks[i].label, ll); pos += ll;
+		struct macsurf_bookmark *b = &macsurf_bookmarks[i];
+		size_t ll = strlen(b->label);
+		size_t ul = b->is_folder ? 0 : strlen(b->url);
+		char hdr[48];
+		int hn;
+		if (b->is_folder)
+			hn = sprintf(hdr, "F\t%d\t%d\t", b->id, b->parent_id);
+		else
+			hn = sprintf(hdr, "B\t%d\t%d\t", b->id, b->parent_id);
+		if (hn < 0) continue;
+		if (pos + (size_t)hn + ul + ll + 3 >= cap) break;
+		memcpy(buf + pos, hdr, (size_t)hn); pos += (size_t)hn;
+		if (!b->is_folder) {
+			memcpy(buf + pos, b->url, ul); pos += ul;
+			buf[pos++] = '\t';
+		}
+		memcpy(buf + pos, b->label, ll); pos += ll;
 		buf[pos++] = '\n';
 	}
 	macos9_bookmarks_save(buf, (long)pos);
 	free(buf);
 }
 
-/* Parse the on-disk file back into the array. Silent no-op on any
- * failure (missing file on first run just leaves an empty set). */
+/* Split a NUL-terminated line into up to `maxf` fields on TAB, in place.
+ * Returns the field count; fields[] point into the line. The final field
+ * keeps any embedded tabs (label/name may not, but this is defensive). */
+static int macsurf_bmk_split(char *line, char **fields, int maxf)
+{
+	int n = 0;
+	char *p = line;
+	while (n < maxf) {
+		fields[n++] = p;
+		if (n == maxf) break;   /* last field = remainder incl. tabs */
+		p = strchr(p, '\t');
+		if (p == NULL) break;
+		*p++ = '\0';
+	}
+	return n;
+}
+
+/* Parse the on-disk file back into the array. Silent no-op on failure. */
 static void macsurf_bookmarks_restore(void)
 {
 	long n;
 	char *buf;
 	char *p;
 	size_t cap = MACSURF_BOOKMARKS_MAX *
-		(MACSURF_BMK_URL_MAX + MACSURF_BMK_LBL_MAX + 4) + 16;
+		(MACSURF_BMK_URL_MAX + MACSURF_BMK_LBL_MAX + 48) + 16;
 	buf = (char *)malloc(cap);
 	if (buf == NULL) return;
 	n = macos9_bookmarks_load(buf, (long)cap);
 	if (n <= 0) { free(buf); return; }
 	macsurf_bookmark_count = 0;
+	macsurf_bookmark_next_id = 1;
 	p = buf;
 	while (*p != '\0' && macsurf_bookmark_count < MACSURF_BOOKMARKS_MAX) {
 		char *line = p;
 		char *nl = strchr(p, '\n');
-		char *tab;
-		const char *url;
-		const char *label;
+		struct macsurf_bookmark *b;
+		const char *url = "";
+		const char *label = "";
+		int rec_id = 0, rec_parent = 0, is_folder = 0, legacy = 0;
 		size_t ul, ll;
 		if (nl != NULL) { *nl = '\0'; p = nl + 1; }
 		else { p = line + strlen(line); }
 		if (line[0] == '\0') continue;
-		tab = strchr(line, '\t');
-		if (tab != NULL) { *tab = '\0'; url = line; label = tab + 1; }
-		else { url = line; label = ""; }
-		ul = strlen(url); ll = strlen(label);
-		if (ul == 0 || ul >= MACSURF_BMK_URL_MAX) continue;
+
+		if (line[0] == 'F' && line[1] == '\t') {
+			char *f[4];
+			if (macsurf_bmk_split(line, f, 4) >= 4) {
+				is_folder = 1;
+				rec_id = atoi(f[1]); rec_parent = atoi(f[2]);
+				label = f[3];
+			} else continue;
+		} else if (line[0] == 'B' && line[1] == '\t') {
+			char *f[5];
+			int nf = macsurf_bmk_split(line, f, 5);
+			if (nf >= 4) {
+				rec_id = atoi(f[1]); rec_parent = atoi(f[2]);
+				url = f[3];
+				label = (nf >= 5) ? f[4] : "";
+			} else continue;
+		} else {
+			/* legacy "url<TAB>label" — root bookmark, id assigned below */
+			char *tab = strchr(line, '\t');
+			legacy = 1;
+			if (tab != NULL) { *tab = '\0'; url = line; label = tab + 1; }
+			else { url = line; label = ""; }
+		}
+
+		if (!is_folder) {
+			ul = strlen(url);
+			if (ul == 0 || ul >= MACSURF_BMK_URL_MAX) continue;
+		}
+		ll = strlen(label);
 		if (ll >= MACSURF_BMK_LBL_MAX) ll = MACSURF_BMK_LBL_MAX - 1;
-		memcpy(macsurf_bookmarks[macsurf_bookmark_count].url, url, ul);
-		macsurf_bookmarks[macsurf_bookmark_count].url[ul] = '\0';
-		memcpy(macsurf_bookmarks[macsurf_bookmark_count].label, label, ll);
-		macsurf_bookmarks[macsurf_bookmark_count].label[ll] = '\0';
+
+		b = &macsurf_bookmarks[macsurf_bookmark_count];
+		b->is_folder = is_folder;
+		b->parent_id = rec_parent;
+		if (legacy || rec_id <= 0) b->id = macsurf_bookmark_next_id++;
+		else {
+			b->id = rec_id;
+			if (rec_id >= macsurf_bookmark_next_id)
+				macsurf_bookmark_next_id = rec_id + 1;
+		}
+		if (is_folder) b->url[0] = '\0';
+		else { memcpy(b->url, url, strlen(url)); b->url[strlen(url)] = '\0'; }
+		memcpy(b->label, label, ll); b->label[ll] = '\0';
 		macsurf_bookmark_count++;
 	}
 	free(buf);
+}
+
+/* ---- fixes693 mutators (used by the management window; also safe standalone) */
+
+static int macsurf_bmk_find(int id)
+{
+	int i;
+	for (i = 0; i < macsurf_bookmark_count; i++)
+		if (macsurf_bookmarks[i].id == id) return i;
+	return -1;
+}
+
+/* Rename a bookmark or folder by id. Returns 1 on success. */
+int macos9_bookmark_rename(int id, const char *new_label)
+{
+	int i = macsurf_bmk_find(id);
+	size_t ln;
+	if (i < 0 || new_label == NULL) return 0;
+	ln = strlen(new_label);
+	if (ln >= MACSURF_BMK_LBL_MAX) ln = MACSURF_BMK_LBL_MAX - 1;
+	memcpy(macsurf_bookmarks[i].label, new_label, ln);
+	macsurf_bookmarks[i].label[ln] = '\0';
+	macsurf_bookmarks_persist();
+	macos9_bookmark_menu_rebuild();
+	return 1;
+}
+
+/* Delete a bookmark/folder by id. Deleting a folder re-parents its children
+ * to root (parent_id 0) rather than orphaning or cascade-deleting them. */
+int macos9_bookmark_delete(int id)
+{
+	int i = macsurf_bmk_find(id);
+	int was_folder;
+	int j;
+	if (i < 0) return 0;
+	was_folder = macsurf_bookmarks[i].is_folder;
+	if (was_folder) {
+		for (j = 0; j < macsurf_bookmark_count; j++)
+			if (macsurf_bookmarks[j].parent_id == id)
+				macsurf_bookmarks[j].parent_id = 0;
+	}
+	for (j = i; j < macsurf_bookmark_count - 1; j++)
+		macsurf_bookmarks[j] = macsurf_bookmarks[j + 1];
+	macsurf_bookmark_count--;
+	macsurf_bookmarks_persist();
+	macos9_bookmark_menu_rebuild();
+	return 1;
+}
+
+/* Create a folder under `parent_id` (0 = root). Returns new folder id, or 0. */
+int macos9_bookmark_new_folder(const char *name, int parent_id)
+{
+	struct macsurf_bookmark *b;
+	size_t ln;
+	if (name == NULL || macsurf_bookmark_count >= MACSURF_BOOKMARKS_MAX)
+		return 0;
+	b = &macsurf_bookmarks[macsurf_bookmark_count];
+	b->id = macsurf_bookmark_next_id++;
+	b->parent_id = parent_id;
+	b->is_folder = 1;
+	b->url[0] = '\0';
+	ln = strlen(name);
+	if (ln >= MACSURF_BMK_LBL_MAX) ln = MACSURF_BMK_LBL_MAX - 1;
+	memcpy(b->label, name, ln); b->label[ln] = '\0';
+	macsurf_bookmark_count++;
+	macsurf_bookmarks_persist();
+	macos9_bookmark_menu_rebuild();
+	return b->id;
 }
 
 /* Rebuild the dynamic portion of the Bookmarks menu (everything after
@@ -514,26 +663,35 @@ void macos9_bookmark_menu_rebuild(void)
 	/* Delete the previously-appended block. Deleting item 3 repeatedly
 	 * collapses it (indices shift down after each delete). */
 	while (prev_dynamic > 0) { DeleteMenuItem(m, 3); prev_dynamic--; }
-	if (macsurf_bookmark_count == 0) {
-		/* Leading '(' renders the item disabled — a greyed hint. */
-		AppendMenu(m, "\p(No bookmarks yet");
-		prev_dynamic = 1;
-		return;
-	}
+	/* fixes693: folders are organizational (managed in the bookmark window),
+	 * so the flat menu lists only actual bookmarks. macsurf_bmk_menu_map[k]
+	 * records which array slot the k-th menu item came from, so navigate()
+	 * maps a menu item back to the right bookmark even with folders present. */
+	macsurf_bmk_menu_n = 0;
 	item_index = 2;                 /* last fixed item (separator) */
 	for (i = 0; i < macsurf_bookmark_count; i++) {
 		Str255 pt;
-		const char *s = (macsurf_bookmarks[i].label[0] != '\0') ?
+		const char *s;
+		size_t ln;
+		if (macsurf_bookmarks[i].is_folder) continue;
+		s = (macsurf_bookmarks[i].label[0] != '\0') ?
 			macsurf_bookmarks[i].label : macsurf_bookmarks[i].url;
-		size_t ln = strlen(s);
+		ln = strlen(s);
 		if (ln > 80) ln = 80;
 		pt[0] = (unsigned char)ln;
 		memcpy(pt + 1, s, ln);
 		AppendMenu(m, "\px");
 		item_index++;
 		SetMenuItemText(m, item_index, pt);
+		macsurf_bmk_menu_map[macsurf_bmk_menu_n++] = i;
 	}
-	prev_dynamic = macsurf_bookmark_count;
+	if (macsurf_bmk_menu_n == 0) {
+		/* Leading '(' renders the item disabled — a greyed hint. */
+		AppendMenu(m, "\p(No bookmarks yet");
+		prev_dynamic = 1;
+		return;
+	}
+	prev_dynamic = macsurf_bmk_menu_n;
 #endif
 }
 
@@ -541,8 +699,11 @@ void macos9_bookmark_menu_rebuild(void)
  * (item numbers ITEM_BMK_FIRST.. map to bookmark index 0..). */
 void macos9_bookmark_navigate(struct gui_window *g, int menu_item)
 {
-	int idx = menu_item - ITEM_BMK_FIRST;
+	int menu_pos = menu_item - ITEM_BMK_FIRST;
+	int idx;
 	if (g == NULL) return;
+	if (menu_pos < 0 || menu_pos >= macsurf_bmk_menu_n) return;
+	idx = macsurf_bmk_menu_map[menu_pos];   /* fixes693: map past folders */
 	if (idx < 0 || idx >= macsurf_bookmark_count) return;
 	macos9_window_navigate(g, macsurf_bookmarks[idx].url);
 }
@@ -564,6 +725,9 @@ void macos9_bookmark_add(struct gui_window *g)
 		if (strcmp(macsurf_bookmarks[i].url, href) == 0) return;
 	}
 	if (macsurf_bookmark_count >= MACSURF_BOOKMARKS_MAX) return;
+	macsurf_bookmarks[macsurf_bookmark_count].id = macsurf_bookmark_next_id++;
+	macsurf_bookmarks[macsurf_bookmark_count].parent_id = 0;
+	macsurf_bookmarks[macsurf_bookmark_count].is_folder = 0;
 	strcpy(macsurf_bookmarks[macsurf_bookmark_count].url, href);
 	macsurf_bookmarks[macsurf_bookmark_count].label[0] = '\0';
 #ifdef __MACOS9__
