@@ -222,6 +222,10 @@ void macos9_bookmark_menu_rebuild(void);
 void macos9_bookmark_navigate(struct gui_window *g, int menu_item);
 long macos9_bookmarks_load(char *out_buf, long buf_cap);
 void macos9_bookmarks_save(const char *buf, long len);
+/* fixes693 — bookmark folders + rename (used by the management UI). */
+int  macos9_bookmark_rename(int id, const char *new_label);
+int  macos9_bookmark_delete(int id);
+int  macos9_bookmark_new_folder(const char *name, int parent_id);
 
 /* fixes645 (#199) — modeless download-manager window (macos9_download.c),
  * routed from the main event loop. */
