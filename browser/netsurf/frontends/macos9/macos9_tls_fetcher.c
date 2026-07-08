@@ -2127,6 +2127,23 @@ static void hctx_poll(struct macos9_https_ctx *c)
 			if (written > 0) {
 				c->req_sent += written;
 				c->progress_ticks = now_ticks();
+			} else if (OSTLS_WantWrite(c->conn)) {
+				/* fixes686 (Path B) — OT send buffer is full
+				 * (kOTFlowErr / nf_want_write set). The notifier
+				 * will receive T_GODATA when the buffer drains and
+				 * will clear the flag; the next hctx_poll call will
+				 * retry OSTLS_Write automatically. Nothing to do
+				 * here except avoid busy-spinning on req_sent. */
+				macsurf_debug_log_writef(
+					"https: flow-ctrl WANT_WRITE req_sent=%ld/%ld host=%s",
+					(long)c->req_sent, (long)c->req_len, c->host);
+			} else {
+				/* T_GODATA already cleared the flag this tick —
+				 * kick the pump once more to flush any staged TLS
+				 * record bytes before the next outer poll. */
+				OSTLSEvent xev = kOSTLSEventNone;
+				OSTLS_Pump(c->conn, PUMP_STEPS, &xev);
+				(void)xev;
 			}
 		}
 		/* fixes312 (#144) — POST body. After the header block is

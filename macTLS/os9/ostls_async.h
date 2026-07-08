@@ -265,6 +265,11 @@ UInt16      OSTLS_GetCipherSuite(OSTLSConnection *conn);
 int         OSTLS_GetResumed(OSTLSConnection *conn);
 void        OSTLS_GetDiagnostics(OSTLSConnection *conn, OSTLSDiagnostics *out_diag);
 void *      OSTLS_GetUserRefcon(OSTLSConnection *conn);
+/* fixes686 (Path B) — returns 1 if the last OTSnd hit kOTFlowErr and the
+ * pump is waiting for T_GODATA before it can send more TLS data.  The
+ * fetcher can call this after OSTLS_Write to decide whether to re-invoke
+ * OSTLS_Pump immediately or defer to the next poll tick. */
+int         OSTLS_WantWrite(OSTLSConnection *conn);
 
 /*
  * Process-wide switch for the TLS 1.3 path. Enabled by default: every

@@ -213,6 +213,7 @@ struct OSTLSConnection {
     volatile Boolean nf_data_pending;
     volatile Boolean nf_ord_release;
     volatile Boolean nf_disconnect;
+    volatile Boolean nf_want_write;   /* T_GODATA: socket is writable again */
     volatile OTResult nf_last_result;
 
     /* ----- BearSSL ----- */
@@ -291,8 +292,30 @@ ostls_notifier(void *context, OTEventCode event,
 
     switch (event) {
     case T_OPENCOMPLETE:
-        /* cookie is the new EndpointRef. Stash it for Pump to pick up. */
+        /* cookie is the new EndpointRef. Stash it for Pump to pick up.
+         *
+         * fixes686 (Path B) — immediately configure the endpoint for
+         * pure asynchronous, non-blocking I/O:
+         *   OTSetAsynchronous  — OT delivers all events via notifier.
+         *   OTSetNonBlocking   — OTSnd/OTRcv return kOTFlowErr instead
+         *                        of blocking the thread on flow control.
+         *   OTUseSyncIdleEvents— still fire kOTSyncIdleEvent so we can
+         *                        call YieldToAnyThread() cooperatively.
+         *   OTSetTimeout       — 15-second hard timeout on all ops;
+         *                        kills dead sockets on pool reuse.
+         * This mirrors what the HTTP fetcher does for its synchronous
+         * path, but strictly in the non-blocking direction so the TLS
+         * state machine's WantRead/WantWrite signals reach the pump. */
         conn->ep = (EndpointRef)cookie;
+        if (conn->ep != NULL) {
+            OTSetAsynchronous(conn->ep);
+            OTSetNonBlocking(conn->ep);
+            OTUseSyncIdleEvents(conn->ep, true);
+            /* fixes686a: OTSetTimeout does not exist in Classic OT.
+             * Dead-socket protection is provided by the no-progress
+             * watchdog (connect_timeout_ticks / NO_PROGRESS_TICKS)
+             * and the 1-step validation pump in https_pool_take. */
+        }
         conn->nf_open_complete = true;
         break;
 
@@ -312,6 +335,20 @@ ostls_notifier(void *context, OTEventCode event,
     case T_DATA:
     case T_EXDATA:
         conn->nf_data_pending = true;
+        break;
+
+    case T_GODATA:
+        /* fixes686 (Path B) — OT signals that the send buffer has room
+         * again after a previous kOTFlowErr. Set nf_want_write so the
+         * next OSTLS_Pump call retries the pending TLS write. */
+        conn->nf_want_write = false;  /* clear the "I'm waiting" flag */
+        conn->nf_data_pending = true; /* piggyback on existing wake-up path */
+        break;
+
+    case kOTSyncIdleEvent:
+        /* fixes686 (Path B) — cooperatively yield to the Thread Manager
+         * so other tasks (UI, event loop) run while OT is blocked. */
+        YieldToAnyThread();
         break;
 
     case T_ORDREL:
@@ -1077,8 +1114,10 @@ pump_ot_send_from_bearssl(OSTLSConnection *conn)
         return 0;
     }
     if (sent == kOTFlowErr) {
-        /* OT send buffer full; try again next tick. */
+        /* fixes686 (Path B) — OT send buffer full.  Set nf_want_write so
+         * T_GODATA in the notifier wakes the pump when space is available. */
         conn->dbg_ot_send_flow++;
+        conn->nf_want_write = true;
         return 0;
     }
     if (sent == kOTLookErr) {
@@ -1227,7 +1266,12 @@ ostls_send_raw(OSTLSConnection *conn, const unsigned char *buf,
         if (sent == 0) conn->dbg_ot_send_zero++;
         return 0;
     }
-    if (sent == kOTFlowErr) { conn->dbg_ot_send_flow++; return 0; }
+    if (sent == kOTFlowErr) {
+        /* fixes686 (Path B) — as above; signal pump to wait for T_GODATA. */
+        conn->dbg_ot_send_flow++;
+        conn->nf_want_write = true;
+        return 0;
+    }
     if (sent == kOTLookErr) {
         OTResult look = OTLook(conn->ep);
         if (look == T_ORDREL) {
@@ -2098,6 +2142,19 @@ OSTLS_GetUserRefcon(OSTLSConnection *conn)
 {
     if (conn == NULL || conn->disposed) return NULL;
     return conn->user_refcon;
+}
+
+/* fixes686 (Path B) — non-blocking write-ready probe.
+ * Returns 1 if the last OTSnd hit kOTFlowErr and we are waiting for a
+ * T_GODATA event before the TLS engine can push more bytes.  The fetcher
+ * uses this to decide whether to call OSTLS_Pump immediately (true = no,
+ * wait for notifier to clear the flag) or to proceed (false = pump is free
+ * to send). */
+int
+OSTLS_WantWrite(OSTLSConnection *conn)
+{
+    if (conn == NULL || conn->disposed) return 0;
+    return conn->nf_want_write ? 1 : 0;
 }
 
 void
