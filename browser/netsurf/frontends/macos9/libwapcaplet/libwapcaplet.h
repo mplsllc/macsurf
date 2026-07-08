@@ -16,6 +16,8 @@
 #ifndef libwapcaplet_h_
 #define libwapcaplet_h_
 
+#include "macsurf_alloc_override.h"
+
 #include <stddef.h>
 
 /* --- bool compatibility (C89) ---

@@ -8,6 +8,8 @@
 #ifndef dom_functypes_h_
 #define dom_functypes_h_
 
+#include "macsurf_alloc_override.h"
+
 #include <stddef.h>
 #include <inttypes.h>
 

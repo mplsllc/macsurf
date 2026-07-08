@@ -8,6 +8,8 @@
 #ifndef libcss_functypes_h_
 #define libcss_functypes_h_
 
+#include "macsurf_alloc_override.h"
+
 #ifdef __cplusplus
 extern "C"
 {
