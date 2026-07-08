@@ -251,13 +251,22 @@ html_object_callback(hlcache_handle *object,
 
 			/* Adjust parent content for new object size */
 			html_object_done(box, object, o->background);
-			if (c->base.status == CONTENT_STATUS_READY ||
-					c->base.status == CONTENT_STATUS_DONE) {
-				/* fixes669 (perf diag): each object whose size resolves
-				 * drives a full reformat here — the per-image reflow
-				 * storm. 'active' = objects still loading; a reformat
-				 * fired while active>0 will be immediately superseded, so
-				 * this is the coalescing candidate. */
+			if ((c->base.status == CONTENT_STATUS_READY ||
+					c->base.status == CONTENT_STATUS_DONE) &&
+					c->base.active == 0) {
+				/* fixes689 (#208): the per-image reflow storm. This
+				 * CONTENT_MSG_READY branch used to fire a full
+				 * content__reformat for EVERY object whose size resolves,
+				 * gated only on parent status — and synchronously, outside
+				 * the 50ms scheduler dedup that coalesces every other
+				 * reformat trigger. On an avatar-heavy forum page that was
+				 * ~15 full layout_document walks per load. Any reformat
+				 * fired while active>0 is immediately superseded by the next
+				 * object and finally by the guaranteed active==0 reformat at
+				 * the end of this callback, so gate on active==0. Progressive
+				 * display during load is already handled by the throttled
+				 * incremental_reflow branch below (>=250ms). Collapses the
+				 * storm to ~2-3 reflows. */
 				macsurf_debug_log_writef(
 					"reformat: trig=obj-size active=%d",
 					(int)c->base.active);
