@@ -44,6 +44,15 @@
  * DELETE this define to put the release back to crash-only logging. */
 #define MACSURF_SSL_LOG 1
 
+/* fixes688 — surface the fixes640 per-phase performance breakdown through the
+ * fixes675 crash-only gate so a normal (non-full-verbose) build emits the
+ * PERFACC load-complete line and the [+Nus] milestone stamps. This is the
+ * targeted perf-work channel: it does NOT re-open the high-volume per-element
+ * layout/paint/fetch spam (those stay behind their own MACSURF_VERBOSE_* macros),
+ * so the log stays readable while carrying real timing numbers.
+ * Self-enabled in this TU; DELETE this define to return to crash-only. */
+#define MACSURF_PERF_LOG 1
+
 #include "macsurf_debug_log.h"
 
 #include <string.h>
@@ -510,6 +519,14 @@ macsurf_log_is_crash_report(const char *m)
 	 * to return the release to crash-only. */
 	if (m[0] == 'h' && strncmp(m, "http", 4) == 0) return 1;
 	if (m[0] == 'h' && strncmp(m, "hdr", 3) == 0) return 1;
+#endif
+#ifdef MACSURF_PERF_LOG
+	/* fixes688 — perf-work channel: keep the load-complete PERFACC summary
+	 * (tls/net/parse/cascade/layout/paint/js/reflows totals) and the [+Nus]
+	 * milestone stamps. Both are one-per-load / few-per-load, so they carry
+	 * the timing signal without the per-element volume. */
+	if (m[0] == 'P' && strncmp(m, "PERFACC", 7) == 0) return 1;
+	if (m[0] == '[' && m[1] == '+') return 1;
 #endif
 	return 0;
 }
