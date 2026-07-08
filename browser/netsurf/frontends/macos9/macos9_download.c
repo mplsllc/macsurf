@@ -110,16 +110,29 @@ macos9_download_mime_to_type(const char *mime,
 	}
 }
 
-/* C string → Str63 (length byte + up to 63 bytes). */
+/* C string → Pascal filename, enforced HFS-legal at the Carbon boundary.
+ * This is the LAST stop before FSMakeFSSpec/FSpCreate, so it hard-guards
+ * both classic-HFS failure modes itself rather than trusting callers:
+ *   - hard-truncate to 31 bytes (HFS leaf limit; a >31 name is paramErr).
+ *     NOTE: was 63 (Str63's capacity) — wrong for a filename, and the
+ *     source of BadPerimeter/paramErr(-50) reports when a long or
+ *     un-truncated name slipped through.
+ *   - replace ':' (the HFS path separator — illegal in a leaf), '/', and
+ *     control chars with '-'.
+ * Str63 has room for 31 comfortably. */
 static void
 macos9_download_cstr_to_p63(const char *src, Str63 dst)
 {
-	size_t n;
-	if (src == NULL) src = "download";
+	size_t n, i;
+	if (src == NULL || src[0] == '\0') src = "download";
 	n = strlen(src);
-	if (n > 63) n = 63;
+	if (n > 31) n = 31;                 /* HFS hard limit, NOT 63 */
+	for (i = 0; i < n; i++) {
+		unsigned char c = (unsigned char)src[i];
+		if (c == ':' || c == '/' || c < 32) c = '-';
+		dst[i + 1] = c;
+	}
 	dst[0] = (unsigned char)n;
-	memcpy(dst + 1, src, n);
 }
 
 /* Bounded C-string copy (no MSL strlcpy on CW8). */
