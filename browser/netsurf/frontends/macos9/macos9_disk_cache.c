@@ -21,6 +21,8 @@
  * responses are still served live, just not cached.
  */
 
+#undef malloc
+
 #include "macos9_disk_cache.h"
 #include "macsurf_debug.h"
 
@@ -34,6 +36,9 @@
 #include <Types.h>
 #include <Processes.h>
 #endif
+
+/* main.c -- heap-state probes (fixes366j). */
+extern long macos9_heap_max_block(void);
 
 #define MACSURF_CACHE_MAGIC0 'M'
 #define MACSURF_CACHE_MAGIC1 'S'
@@ -423,6 +428,9 @@ int macos9_cache_lookup(const char *url, char **body_out,
 
 	body = (char *)malloc(body_len);
 	if (body == NULL) {
+		macsurf_debug_log_writef(
+			"CACHE OOM url=%s need=%ld maxblock=%ld",
+			url, (long)body_len, (long)macos9_heap_max_block());
 		FSClose(ref);
 		return 0;
 	}

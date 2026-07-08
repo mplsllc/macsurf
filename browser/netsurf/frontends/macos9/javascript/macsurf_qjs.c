@@ -3116,6 +3116,49 @@ static void qjs_selftest(JSContext *ctx)
 }
 #endif /* MACSURF_QJS_SELFTEST */
 
+/* Bulletproof allocator wrappers for QuickJS JSMallocFunctions.
+ * Call macsurf_safe_* directly -- do NOT route through the prefix
+ * malloc macro to avoid any recursion risk. */
+static void *qjs_safe_malloc(void *opaque, size_t size)
+{
+	(void)opaque;
+	return macsurf_safe_alloc(size);
+}
+
+static void qjs_safe_free(void *opaque, void *ptr)
+{
+	(void)opaque;
+	free(ptr);
+}
+
+static void *qjs_safe_realloc(void *opaque, void *ptr, size_t size)
+{
+	(void)opaque;
+	return macsurf_safe_realloc(ptr, size);
+}
+
+static void *qjs_safe_calloc(void *opaque, size_t count, size_t size)
+{
+	(void)opaque;
+	return macsurf_safe_calloc(count, size);
+}
+
+static size_t qjs_safe_usable_size(const void *ptr)
+{
+	(void)ptr;
+	return 0;
+}
+
+/* Field order must match JSMallocFunctions (quickjs.h:470):
+ * calloc, malloc, free, realloc, malloc_usable_size */
+static JSMallocFunctions macsurf_qjs_mf = {
+	qjs_safe_calloc,
+	qjs_safe_malloc,
+	qjs_safe_free,
+	qjs_safe_realloc,
+	qjs_safe_usable_size
+};
+
 nserror js_newheap(int timeout, struct jsheap **out_heap)
 {
 	struct jsheap *heap;
@@ -3124,7 +3167,7 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 	heap = (struct jsheap *)calloc(1, sizeof(*heap));
 	if (heap == NULL) return NSERROR_NOMEM;
 
-	heap->rt = JS_NewRuntime();
+	heap->rt = JS_NewRuntime2(&macsurf_qjs_mf, NULL);
 	if (heap->rt == NULL) { free(heap); return NSERROR_NOMEM; }
 
 	/* fixes590 -- ROOT CAUSE of the tinkerdifferent hard-freeze.

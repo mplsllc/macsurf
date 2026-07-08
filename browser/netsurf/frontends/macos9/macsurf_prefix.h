@@ -76,6 +76,17 @@ void macsurf_assert_failed_(const char *expr, const char *file, int line);
 #include <stdlib.h>
 #include <stdio.h>
 
+/* Bulletproof allocator intercept -- prevents NULL-write-to-$0000
+ * crash on fragmented heaps. Must come AFTER <stdlib.h> so MSL's
+ * declarations parse before the macros rename the symbols.
+ * macsurf_memory.c #undefs these to call MSL directly. */
+extern void *macsurf_safe_alloc(size_t size);
+extern void *macsurf_safe_calloc(size_t count, size_t size);
+extern void *macsurf_safe_realloc(void *ptr, size_t size);
+#define malloc  macsurf_safe_alloc
+#define calloc  macsurf_safe_calloc
+#define realloc macsurf_safe_realloc
+
 /* POSIX types foundation */
 #ifndef __RETRO68__
   #ifndef _TIME_T

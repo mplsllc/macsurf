@@ -55,6 +55,7 @@ These are the "how was this ever shipped" basics that are now solid:
 - **Tab moves between form fields.** Fill out a login or search form with the keyboard.
 - **The browser opens almost instantly.** A diagnostic self-test was running a heavy JavaScript benchmark battery at every launch — roughly a **17-second freeze** before the first page. It's gone; startup is now well under a second.
 - **Cookie-consent / sticky bars are clickable.** The "Accept" button on sticky overlays (68kmla's cookie banner) now clicks where you'd expect, instead of falling through to the page behind it.
+- **Low-Memory Crash Protection (Heap Fragmentation Mitigation — #207).** On machines with limited RAM (e.g., 256MB G3/G4s), thousands of tiny allocations from NetSurf and QuickJS fragment the heap, causing allocations to fail even when total free memory is high. Instead of returning `NULL` and letting the browser write to `$0000` (which halts the OS instantly), a new bulletproof allocator intercepts all allocations. On failure, it logs diagnostics (`MaxBlock` vs requested size), posts a native `StandardAlert`, and terminates cleanly via `ExitToShell()`. Special thanks to **@glossolallia**, **@CaptainPanic29**, and **@Azryael** for their detailed bug reports and logs that traced this fragmentation behavior.
 - **Second window no longer closes the first.** Window lifecycle is fixed.
 - **Maximize (zoom box) works**, and **"About MacSurf"** opens.
 
