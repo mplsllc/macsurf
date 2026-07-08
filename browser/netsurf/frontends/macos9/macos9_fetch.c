@@ -41,7 +41,7 @@ extern OTClientContextPtr macos9_ot_context;
  * tail of the host. This is the single source of truth that replaced the
  * duplicated macos9_ua_for_host statics in the two fetchers. */
 static const char MACOS9_UA_DEFAULT[] =
-	"MacSurf/1.4 (Macintosh; PPC Mac OS 9)";
+	"MacSurf/1.68.1 (Macintosh; PPC Mac OS 9)";
 
 struct macos9_ua_rule {
 	const char *suffix;	/* host suffix, e.g. "facebook.com" */

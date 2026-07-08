@@ -617,6 +617,9 @@ void macos9_about_show(void)
 		"by mplsllc\r\r"
 		"Patreon supporters:\r"
 		"    Shlooom\r\r"
+		"Ko-Fi supporters:\r"
+		"    kilgeist\r"
+		"    Turuun\r\r"
 		"Thank you for keeping vintage Macs on the modern web.";
 	Str255 ptitle;
 	Str255 pbody;
