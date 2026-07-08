@@ -2566,7 +2566,7 @@ static void register_browser_globals(JSContext *ctx)
 	/* --- navigator --- */
 	nav_obj = JS_NewObject(ctx);
 	JS_SetPropertyStr(ctx, nav_obj, "userAgent",
-		JS_NewString(ctx, "MacSurf/1.68.1 (Macintosh; PPC Mac OS 9)"));
+		JS_NewString(ctx, "MacSurf/1.68.2 (Macintosh; PPC Mac OS 9)"));
 	JS_SetPropertyStr(ctx, nav_obj, "appVersion",
 		JS_NewString(ctx, "5.0 (Macintosh; PPC Mac OS 9)"));
 	JS_SetPropertyStr(ctx, nav_obj, "platform",

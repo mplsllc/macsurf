@@ -1,78 +1,1 @@
-MacSurf 1.68.1 "macQJS"
-A native web browser for Classic Mac OS (PowerPC, Mac OS 9.1-9.2.2).
-Real HTTPS, a modern JavaScript engine, no proxy, no second machine.
-
---------------------------------------------------------------------
-PLEASE SUPPORT MACSURF
---------------------------------------------------------------------
-MacSurf is a full-time project. If it put your old Mac back on the
-web, please consider chipping in - every bit genuinely helps keep
-development going at this pace, and if I don't ask, I can't keep
-doing this.
-
-  Patreon:  https://www.patreon.com/cw/MacSurf
-  Ko-Fi:    https://ko-fi.com/macsurf
-
-Thank you.
-
---------------------------------------------------------------------
-WHAT'S NEW IN 1.68 / 1.68.1
---------------------------------------------------------------------
-* NEW JAVASCRIPT ENGINE (macQJS). Duktape (ES5) is gone; MacSurf now
-  runs QuickJS - modern ES2023 JavaScript - natively on Mac OS 9.
-  Real sites' real scripts run without being dumbed down first.
-
-* Text input actually works: a visible blinking cursor, click-drag
-  selection, Cut/Copy/Paste, and Tab between form fields.
-
-* Logins stick. Signing in to a site now keeps you signed in.
-
-* Near-instant startup (removed a ~17-second launch self-test).
-
-* Bookmarks menu, a Downloads manager (HTTPS downloads work now),
-  working window Maximize, and one tidy "MacSurfData" folder next to
-  the app for the cache, downloads, bookmarks, and log.
-
-* Faster page loads: images and fonts are cached to disk.
-
-* Lots of rendering fixes (forum layouts, web-font icons, text
-  spacing, cookie-consent bars you can actually click).
-
---------------------------------------------------------------------
-REQUIREMENTS
---------------------------------------------------------------------
-* A Power Macintosh (G3 or G4)
-* Mac OS 9.1 - 9.2.2 with CarbonLib 1.5 or newer
-* ~64 MB RAM (more helps on heavy pages)
-
---------------------------------------------------------------------
-TO RUN
---------------------------------------------------------------------
-Expand this archive with StuffIt Expander and double-click MacSurf.
-That's it - no installer, no configuration.
-
---------------------------------------------------------------------
-KNOWN LIMITATIONS
---------------------------------------------------------------------
-* Very heavy sites (e.g. GitHub) don't render yet. To download new
-  MacSurf releases from a Mac OS machine, use the plain non-SSL
-  (http) version of macsurf.org - no other machine needed.
-* Tab reaches form fields, but not links/buttons yet.
-* Tabs (multiple pages in one window) are not enabled yet.
-
---------------------------------------------------------------------
-THANK YOU, 68kmla.org
---------------------------------------------------------------------
-This release is named 1.68.1 in honor of 68kmla.org - the 68k/PowerPC
-Mac community that has been so kind and welcoming, tested MacSurf
-every day, and shaped this whole cycle of work. Getting your forums
-to render, log in, and post from a real Mac OS 9 machine has been a
-joy to build toward. Thank you.
-
---------------------------------------------------------------------
-  Web:      https://macsurf.org   (a non-SSL http version is
-                                   available for downloading from
-                                   Mac OS machines)
-  Source:   https://github.com/mplsllc/macsurf
-  Engine:   https://github.com/mplsllc/macQJS
---------------------------------------------------------------------
+                 @%%%###########%             @%%%%%%###############           @@@@@%%%%*++=-:.. .-+#####          @@@@@@@%:              :*####         @@@@@@%:        .-=:.     -##*+++        @@@@@#.        -@*=+*%#     .+#=++==++      @@@@@+.     .:-+*@*+=@%+@:      :+=+=-=+**     @@@@=   .:--====-:+%+##**@.       +====.-+****     @@@#               -+**#*:        =====:.-+*****    @@@@@%.                        ..  ======..==*****    @@@@@%%-                    .:---::======-.-==#***#    @@@@@%%%#                   -==-===%%#*+==..==+##**   @@@@@@%%%%%:                 :-----*##%%@@%#--==###**   @@@@@@%%%%%%+              .===---+*******##%%@%%%##*   @@@@@@%%%%%%%%.          .=======*******#**#%%#%%@@@@  @@@@@@@%%%%%%%%%@@*=:.  .========+#***##**#%#%%%%%% @@@@@@@@%%%%%%%%%%@@@@@@@@@%%####%%#######%%%% @@@@@@@%%%%%%%%%%%%%@@@@@@@@@@@@@@  @@@@@@%%%%%%%%%%%%%%@@@@@@@@@@@@@@    @@@%%%%%%%%%%%%%%%%@@@@@@@@@@@@@               Welcome to:      @%%%%%%%%%%%%%%%%%@@@@@@@@@@@@@               MacSurf 1.68.2        %%%%%%%%%%%%%%%%%%@@@@@@@@@@@@               *macQJS*           %%%%%%%%%%%%%%%%@@@@@@@@@@@@         A native web browser for Classic Mac OS               @@%%%%%%%%%%%@@@@@@@             Real HTTPS, a modern JavaScript engine.        											                                                                                                     No proxy, no second machine.   Thank you for downloading MacSurf.  This note has   everything you need to get started, and one small   favor to ask at the end of the first section.   -------------------------------------------------     PLEASE SUPPORT MACSURF   -------------------------------------------------   MacSurf is a full-time project.  Bringing the modern,   HTTPS web back to real Mac OS 9 hardware is a great   deal of work, and it only continues at this pace if   it can pay its own way.   If MacSurf put your old Mac back on the web, please   consider chipping in.  Every bit genuinely helps -   and if I never ask, I can't expect any, so here I   am, asking.        Patreon . . . https://www.patreon.com/cw/MacSurf        Ko-Fi . . . . https://ko-fi.com/macsurf   Supporters get the dev logs and a say in what comes   next.  Thank you - truly.~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~   Thank you for your support and contributions to MacSurf on Patreon & Ko-Fi~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    Shlooom ~~~~~~~~~~~~~~~~~~~~    Kilgeist  ~~~~~~~~~~~~~~~~~~~~    Turuun ~~~~~~~~~~~~****************************************************************************Special thanks to @glossolallia, @CaptainPanic29, and @Azryael on GitHub and @SandwichEnthusiast7 on Reddit for their detailed bug reports, crash logs, and hardware verification work on G3 and G4 systems that made isolating this issue possible. Hopefully this version works better for all!   -------------------------------------------------     WHAT'S NEW IN 1.68.2   -------------------------------------------------This patch release addresses a critical issue where the browser would crash and freeze the entire OS when running low on contiguous memory, plus a separate freeze that could strike while loading image-heavy pages.Low-Memory Crash Protection (Heap Fragmentation Mitigation  Issue #207):On machines with limited RAM (e.g., 256MB G3/G4s), thousands of tiny allocations from NetSurf and QuickJS fragment the heap, causing allocations to fail even when total free memory is high. Instead of returning NULL and letting the browser write to $0000 (which halts the Classic Mac OS instantly due to lacking memory protection), a new bulletproof allocator intercepts all allocations:Safe Allocator Wrappers: macsurf_safe_alloc, macsurf_safe_calloc, and macsurf_safe_realloc are guaranteed to never return NULL to the engines.Clean Panic & Diagnostics: On allocation failure, they capture the exact MaxBlock() and FreeMem() readings, write a fatal log entry to MacSurf Debug.log (flushed immediately), post a native Carbon StandardAlert explaining the heap fragmentation state, and terminate cleanly via ExitToShell() to avoid system corruption.Full Page-Pipeline Coverage: every engine that builds a page - QuickJS, the NetSurf core, and the HTML (libdom), CSS (libcss), and string (libwapcaplet) layout libraries - now routes its allocations through the safe wrappers. Previously the layout libraries still called the standard library directly, so under fragmentation one could slip a NULL node into the page and later write through it to $0000. That gap is now closed, so no engine on the page path can ever receive a NULL allocation.Disk Cache Recovery: The cached body lookup gracefully falls back to a network fetch under memory starvation rather than panicking.Standard Library Parsing Order Safeguard: Allocator macro overrides in the prefix header are ordered to avoid compiler errors with Metrowerks Standard Library.Connection-Reuse Freeze Fix: On image-heavy pages (such as avatar-rich forum threads), reusing a pooled HTTPS keep-alive connection could block the cooperative event loop when the network send buffer filled, freezing the whole machine at a half-drawn or blank window. The TLS layer is now fully non-blocking: it detects the flow-control condition, yields to the system, and resumes sending the moment the buffer drains, so heavy pages keep loading instead of locking up.Version Visibility & Reporting:About Box: Updated the Apple menu's "About MacSurf..." dialog to display MacSurf 1.68.2.User-Agent Reporting: Synchronized request headers to send MacSurf/1.68.2.JavaScript Environment: Updated the engine's navigator.userAgent to report MacSurf/1.68.2 to on-page scripts.   -------------------------------------------------     TO RUN   -------------------------------------------------   Expand this archive with StuffIt Expander and double-   click MacSurf.  No installer, no configuration.     Requirements:  Power Macintosh (G3 or G4)                    Mac OS 9.1 - 9.2.2, CarbonLib 1.5+                    ~64 MB RAM (more helps on heavy pages)   -------------------------------------------------     A FEW THINGS TO KNOW   -------------------------------------------------   *  Very heavy sites (such as GitHub) don't render yet.      To download new MacSurf releases from a Mac OS      machine, use the plain non-SSL (http) version of      macsurf.org - no other computer needed.   *  Tab reaches form fields, but not links or buttons      yet.   *  Tabs (several pages in one window) are not enabled      yet.   -------------------------------------------------     THANK YOU, 68kmla.org   -------------------------------------------------   This release is named 1.68 in honor of 68kmla.org -   the 68k / PowerPC Mac community that has been so kind   and welcoming, tested MacSurf every single day, and   shaped this whole cycle of work.  Getting your forums   to render, log in, and post a reply from a real Mac   OS 9 machine has been one of the most rewarding things   to build toward.  Thank you.        =============================================     Web  . . . . https://macsurf.org                  ( a non-SSL http version is available                    for downloading from Mac OS machines )     Source . . . https://github.com/mplsllc/macsurf     Engine . . . https://github.com/mplsllc/macQJS              Made with care for old Macs.  Enjoy.        =============================================                                  For Gary & Kaija

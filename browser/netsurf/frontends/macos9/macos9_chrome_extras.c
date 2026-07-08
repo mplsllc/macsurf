@@ -611,7 +611,7 @@ void macos9_about_show(void)
 	 * literal across concatenated lines yields a wrong length; and the text
 	 * renders as MacRoman, so keep it ASCII (no em dash). */
 	static const char *title =
-		"MacSurf 1.68.1 - a web browser for Classic Mac OS 9";
+		"MacSurf 1.68.2 - a web browser for Classic Mac OS 9";
 	static const char *body =
 		"Native TLS 1.3 via macTLS. Built on the NetSurf engine.\r\r"
 		"by mplsllc\r\r"
