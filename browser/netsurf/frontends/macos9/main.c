@@ -1277,6 +1277,15 @@ int main(void) {
 	MS_LOG("== MacSurf start ==");
 	macsurf_profile_stamp("main: log init done");
 #ifdef __MACOS9__
+	/* fixes680 (#207): DIAG memory/lifecycle trace. FreeMem = total free
+	 * bytes in the app partition, MaxBlock = largest contiguous block. Logged
+	 * at each startup milestone so a launch-time failure shows how far init
+	 * got and whether the heap starved/fragmented. 'DIAG' survives the
+	 * crash-only gate (fixes675). Remove for release. */
+	macsurf_debug_log_writef("DIAG boot: free=%ld maxblk=%ld",
+		(long)FreeMem(), (long)MaxBlock());
+#endif
+#ifdef __MACOS9__
 #ifndef kInitOTForApplicationMask
 #define kInitOTForApplicationMask 0x00000002
 #endif
@@ -1442,8 +1451,16 @@ int main(void) {
 	 * tree and libcss cascade enough room. */
 	nsoption_set_int(memory_cache_size, 0);
 	MS_LOG("images enabled, author_css on, fetcher 128/16, mem cache 0");
+#ifdef __MACOS9__
+	macsurf_debug_log_writef("DIAG pre-netsurf_init: free=%ld maxblk=%ld",
+		(long)FreeMem(), (long)MaxBlock());
+#endif
 	netsurf_init(NULL);
 	MS_LOG("netsurf_init done");
+#ifdef __MACOS9__
+	macsurf_debug_log_writef("DIAG post-netsurf_init: free=%ld maxblk=%ld",
+		(long)FreeMem(), (long)MaxBlock());
+#endif
 	/* fixes368 (#167) — restore a prior session's cookie jar (Facebook
 	 * login etc.) from disk now that urldb is up. Best-effort no-op on
 	 * first run. */
@@ -1487,6 +1504,10 @@ int main(void) {
 		}
 	}
 	MS_LOG("initial window created");
+#ifdef __MACOS9__
+	macsurf_debug_log_writef("DIAG post-window: free=%ld maxblk=%ld",
+		(long)FreeMem(), (long)MaxBlock());
+#endif
 	/* fixes247 — font probes (fixes144a / fixes153) gated behind a
 	 * startup flag, default off. They were extremely useful when
 	 * diagnosing fixes144b sub-AA glyph spacing and fixes153 gui_layout

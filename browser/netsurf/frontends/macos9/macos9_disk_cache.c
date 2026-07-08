@@ -179,22 +179,41 @@ static OSErr macsurfdata_dir_get(const char *subfolder,
 
 	err = macos9_app_dir_get(&base_vref, &base_dir);
 	if (err != noErr) {
+		/* fixes680 (#207): DIAG. app-dir resolution failed -> Desktop. */
+		macsurf_debug_log_writef("DIAG appdir FAIL err=%d (Desktop fallback)",
+			(int)err);
 		/* Fallback: boot-volume Desktop. */
 		err = FindFolder(kOnSystemDisk, kDesktopFolderType,
 				kDontCreateFolder, &desk_vref, &desk_dir);
-		if (err != noErr) return err;
+		if (err != noErr) {
+			macsurf_debug_log_writef("DIAG Desktop-fallback FAIL err=%d",
+				(int)err);
+			return err;
+		}
 		base_vref = desk_vref;
 		base_dir = desk_dir;
 	}
 	err = ensure_subdir(base_vref, base_dir, "MacSurfData",
 			&data_vref, &data_dir);
-	if (err != noErr) return err;
+	if (err != noErr) {
+		/* fixes680 (#207): DIAG. MacSurfData folder create/resolve failed
+		 * — this would also break the log if it lives here, and cascade. */
+		macsurf_debug_log_writef("DIAG MacSurfData FAIL err=%d", (int)err);
+		return err;
+	}
 	if (subfolder == NULL) {
 		*vRef = data_vref;
 		*dirID = data_dir;
 		return noErr;
 	}
-	return ensure_subdir(data_vref, data_dir, subfolder, vRef, dirID);
+	{
+		OSErr serr = ensure_subdir(data_vref, data_dir, subfolder,
+				vRef, dirID);
+		if (serr != noErr)
+			macsurf_debug_log_writef("DIAG subdir '%s' FAIL err=%d",
+				subfolder, (int)serr);
+		return serr;
+	}
 }
 
 /* Public wrapper so other TUs (the debug log) share the same MacSurfData

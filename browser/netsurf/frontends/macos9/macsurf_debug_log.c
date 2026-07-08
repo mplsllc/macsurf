@@ -495,6 +495,11 @@ macsurf_log_is_crash_report(const char *m)
 	if (strstr(m, "TERMINAL") != NULL) return 1;
 	if (strstr(m, "exception") != NULL) return 1;
 	if (strstr(m, "crash") != NULL) return 1;
+	/* fixes680 (#207): targeted launch/cache/memory diagnostics. 'DIAG'
+	 * lines (memory readings, data-dir resolution) survive the crash-only
+	 * gate so a reporter's log shows how far launch got and the heap level.
+	 * Remove this line + the DIAG call sites for release. */
+	if (m[0] == 'D' && strncmp(m, "DIAG", 4) == 0) return 1;
 #ifdef MACSURF_SSL_LOG
 	/* fixes677 (#206) — SSL/fetch investigation. Surface the networking
 	 * lines so a UA-based or TLS-based http downgrade is visible: the
