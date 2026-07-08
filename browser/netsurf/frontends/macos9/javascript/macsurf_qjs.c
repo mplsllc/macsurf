@@ -96,32 +96,44 @@ static void qjs_deadline_pop(double prev)
 static int qjs_interrupt_handler(JSRuntime *rt, void *opaque)
 {
 	static double hb_last = 0.0;
-	double hb_now;
+	static double wne_last = 0.0;   /* fixes690 (#209): WNE poll throttle */
+	double now;
 	(void)rt; (void)opaque;
+
+	/* fixes690: QuickJS fires this handler every JS_INTERRUPT_COUNTER_INIT
+	 * (=10000) bytecode ops. macsurf_qjs_get_now() (Microseconds/mftb) is
+	 * cheap; call it once per invocation and drive everything off it. */
+	now = macsurf_qjs_get_now();
 
 	/* fixes583 DIAG: heartbeat while a deadline is armed. If a script loops,
 	 * these pulse every ~2s and prove JS is the freeze (and whether the
 	 * deadline value is sane / the monotonic clock is advancing). Silence
 	 * means JS execution is NOT where tinkerdifferent wedges. */
 	if (g_qjs_script_deadline != 0.0) {
-		hb_now = macsurf_qjs_get_now();
-		if (hb_now - hb_last > 2000.0) {
-			hb_last = hb_now;
+		if (now - hb_last > 2000.0) {
+			hb_last = now;
 			macsurf_debug_log_writef(
 				"qjs: interrupt hb now=%ld deadline=%ld",
-				(long)hb_now, (long)g_qjs_script_deadline);
+				(long)now, (long)g_qjs_script_deadline);
 		}
 	}
 
-	if (g_qjs_script_deadline != 0.0 &&
-	    macsurf_qjs_get_now() > g_qjs_script_deadline) {
+	/* Deadline check runs EVERY invocation (cheap): a runaway script is
+	 * still bounded to the ~20s eval timeout regardless of the WNE throttle. */
+	if (g_qjs_script_deadline != 0.0 && now > g_qjs_script_deadline) {
 		macsurf_debug_log_writef("qjs: DEADLINE hit, aborting script");
 		return 1;
 	}
 
 #ifdef __MACOS9__
-	{
+	/* fixes690 (#209): a full WaitNextEvent Toolbox round-trip on EVERY
+	 * 10k-op interrupt was thousands of WNE calls (each consuming+discarding
+	 * events) during a multi-million-op jQuery/XenForo init. Poll for the
+	 * cmd-period abort at most every ~200ms instead; the deadline check
+	 * above still bounds runaway scripts on every call. */
+	if (now - wne_last > 200.0) {
 		EventRecord ev;
+		wne_last = now;
 		if (WaitNextEvent(everyEvent, &ev, 0, NULL)) {
 			if (ev.what == keyDown &&
 			    (ev.modifiers & cmdKey) &&
@@ -1818,22 +1830,85 @@ static JSValue qjs_querySelectorAll(JSContext *ctx, JSValueConst this_val,
 	return arr;
 }
 
+/* fixes691 (#210): first-match-only walker. Pre-order DFS that returns the
+ * FIRST matching element (with one ref held for the caller to hand to
+ * qjs_wrap_element, which takes ownership) instead of collecting+wrapping the
+ * whole matching set. Same document order as qjs_collect_by_tag, so it returns
+ * exactly what qsa[0] would have — without the O(n) walk and the expensive
+ * per-node wrapper install on every non-first match. */
+static dom_element *qjs_find_first_by_tag(dom_node *node, const char *tag_lc)
+{
+	dom_node *child = NULL;
+	dom_node *next  = NULL;
+	dom_node_type ntype = 0;
+	dom_element *found = NULL;
+
+	if (node == NULL) return NULL;
+	macsurf_dom_node_get_node_type(node, &ntype);
+	if (ntype == 1) { /* ELEMENT_NODE */
+		dom_string *tname = NULL;
+		if (macsurf_dom_element_get_tag_name((dom_element *)node, &tname)
+		    == DOM_NO_ERR && tname != NULL) {
+			const char *ts = dom_string_data(tname);
+			char lc[32];
+			int i;
+			for (i = 0; i < 31 && ts[i]; i++) {
+				char c = ts[i];
+				lc[i] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
+			}
+			lc[i] = '\0';
+			macsurf_dom_string_unref(tname);
+			if (strcmp(tag_lc, "*") == 0 || strcmp(lc, tag_lc) == 0) {
+				macsurf_dom_node_ref(node);
+				return (dom_element *)node;
+			}
+		}
+	}
+	macsurf_dom_node_get_first_child(node, &child);
+	while (child) {
+		found = qjs_find_first_by_tag(child, tag_lc);
+		if (found != NULL) {
+			macsurf_dom_node_unref(child);
+			return found;
+		}
+		macsurf_dom_node_get_next_sibling(child, &next);
+		macsurf_dom_node_unref(child);
+		child = next;
+	}
+	return NULL;
+}
+
 /* ---- document.querySelector ---- */
 static JSValue qjs_querySelector(JSContext *ctx, JSValueConst this_val,
 		int argc, JSValueConst *argv)
 {
-	JSValue arr, el;
-	uint32_t len = 0;
+	const char *sel;
+	char tag_lc[64];
+	int i;
+	dom_element *root = NULL;
+	dom_element *found = NULL;
 
-	arr = qjs_querySelectorAll(ctx, this_val, argc, argv);
-	JS_ToUint32(ctx, &len, JS_GetPropertyStr(ctx, arr, "length"));
-	if (len > 0) {
-		el = JS_GetPropertyUint32(ctx, arr, 0);
-	} else {
-		el = JS_NULL;
+	(void)this_val;
+	if (g_qjs_document == NULL || argc < 1) return JS_NULL;
+	sel = JS_ToCString(ctx, argv[0]);
+	if (sel == NULL) return JS_NULL;
+
+	/* Same tag-part extraction as qsa (bare tag / tag.class / tag[attr]). */
+	for (i = 0; i < 63 && sel[i] && sel[i] != '[' && sel[i] != '.'
+	     && sel[i] != ':' && sel[i] != ' '; i++) {
+		char c = sel[i];
+		tag_lc[i] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
 	}
-	JS_FreeValue(ctx, arr);
-	return el;
+	tag_lc[i] = '\0';
+	JS_FreeCString(ctx, sel);
+	if (tag_lc[0] == '\0') return JS_NULL; /* class-only sel unsupported */
+
+	macsurf_dom_document_get_document_element(g_qjs_document, &root);
+	if (root == NULL) return JS_NULL;
+	found = qjs_find_first_by_tag((dom_node *)root, tag_lc);
+	macsurf_dom_node_unref((dom_node *)root);
+	if (found == NULL) return JS_NULL;
+	return qjs_wrap_element(ctx, found);
 }
 
 /* ---- Init class ID (call once at startup) ---- */
