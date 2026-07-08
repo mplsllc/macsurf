@@ -53,7 +53,7 @@ nserror dom_namespace_initialise(void) { return NSERROR_OK; }
 nserror textplain_init(void) { return NSERROR_OK; }
 
 /* nsutils base64 — used only by ssl_certs.c for cert query strings.
- * MacSurf strips TLS at the proxy, so cert chain queries never fire.
+ * MacSurf handles TLS natively via macTLS, so cert-chain queries never fire.
  * Returns BAD_INPUT (NSUERROR=2). */
 int nsu_base64_encode_url(const unsigned char *input, unsigned long input_length,
 		unsigned char **output, unsigned long *output_length)

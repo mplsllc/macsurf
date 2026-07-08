@@ -48,14 +48,12 @@ extern int macos9_https_url_is_terminal(const char *url);
  * et al) because they touch the HTTP fetcher's context struct. */
 #include "macos9_disk_cache.h"
 
-#define PROXY_H "116.202.231.103"
-#define PROXY_P 8765
 #define MAX_F 64
 /* fixes92 — bigger OTRcv buffer cuts the syscall count for large bodies.
  * 32 KB picks ~1 OTRcv per typical sub-resource response and ~3-4 per
  * the main HTML on MacTrove. Mac OS 9 stack frames are fine with this. */
 #define RECV_B 32768
-/* fixes92 — pool 16 simultaneous keep-alive sockets to the proxy.
+/* fixes92 — pool 16 simultaneous keep-alive sockets to each origin.
  * NetSurf may have up to 16 fetches per host in flight after fixes91's
  * max_fetchers_per_host bump; 16 here matches. */
 #define POOL_SIZE 16
@@ -99,8 +97,8 @@ enum chunk_state {
 
 /* fixes94 — pool_key remembers which (host, port) this slot's endpoint
  * was opened to. Returned to the matching bucket on close. Direct
- * origins ("frogfind.com:80") and the proxy ("PROXY") each get their
- * own pool entries so reuse only happens on identical targets. */
+ * origins ("frogfind.com:80") each get their own pool entries so
+ * reuse only happens on identical targets. */
 #define POOL_KEY_LEN 96
 struct macos9_fetch_ctx {
 	struct fetch *parent; struct nsurl *url; enum mfs_state state;
@@ -119,7 +117,7 @@ struct macos9_fetch_ctx {
 	 * when ops.start transitions QUEUED→INIT, and reset whenever OTRcv
 	 * delivers bytes. If 900 ticks (15s at 60Hz) elapse without any
 	 * progress, the poll loop forces MFS_FAIL with a "Connection timed
-	 * out" error so a silently-stalled proxy/origin surfaces as a real
+	 * out" error so a silently-stalled origin surfaces as a real
 	 * fetch failure rather than a frozen URL bar. */
 	unsigned long progress_ticks;
 	/* fixes98 — 3xx auto-follow. Location header captured during header
@@ -266,9 +264,8 @@ void macos9_http_mark_next_as_document(void)
 }
 
 #ifdef __MACOS9__
-/* fixes94 — keyed endpoint pool. Previously all entries were assumed
- * to be proxy connections; now we route http:// directly to the
- * origin, so each pool entry needs to remember its (host, port). */
+/* fixes94 — keyed endpoint pool. We route http:// directly to the
+ * origin, so each pool entry remembers its (host, port). */
 struct ep_pool_entry {
 	EndpointRef ep;
 	char key[POOL_KEY_LEN];
@@ -405,9 +402,7 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 	size_t host_len;
 	size_t scheme_len;
 	int port_num;
-	int use_proxy;
 	EndpointRef pooled;
-	const char *u_full;
 
 	scheme_lwc = NULL;
 	host_lwc = NULL;
@@ -457,38 +452,33 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 	host_str = lwc_string_data(host_lwc);
 	host_len = lwc_string_length(host_lwc);
 
-	/* gauntlet — proxy is fully disabled. HTTPS now goes through
-	 * macos9_https_fetcher.c (macTLS native). HTTP goes direct.
-	 * use_proxy is hard-pinned to 0 so the proxy branch below is
-	 * dead code. If https ever reaches this fetcher it's a bug, log
-	 * loudly and refuse. */
+	/* This fetcher serves http:// directly over Open Transport only.
+	 * HTTPS is handled natively by macTLS (macos9_tls_fetcher.c); if an
+	 * https URL ever reaches this fetcher it's a routing bug, so log
+	 * loudly and refuse. (fixes692 #153: the retired-proxy branch that
+	 * used to build a PROXY target here is gone — MacSurf has been
+	 * proxy-free since native macTLS landed.) */
 	if (scheme_len == 5 && strncmp(scheme_str, "https", 5) == 0) {
 		MS_LOG("http_fetcher: REFUSING https (should route to macTLS)");
 		if (scheme_lwc) lwc_string_unref(scheme_lwc);
 		if (host_lwc) lwc_string_unref(host_lwc);
 		return -1;
 	}
-	use_proxy = 0;
 
-	if (use_proxy) {
-		sprintf(target, "%s:%d", PROXY_H, PROXY_P);
-		strcpy(c->pool_key, "PROXY");
+	port_lwc = nsurl_get_component(c->url, NSURL_PORT);
+	if (port_lwc != NULL && lwc_string_length(port_lwc) > 0) {
+		port_num = atoi(lwc_string_data(port_lwc));
+		if (port_num <= 0 || port_num > 65535) port_num = 80;
 	} else {
-		port_lwc = nsurl_get_component(c->url, NSURL_PORT);
-		if (port_lwc != NULL && lwc_string_length(port_lwc) > 0) {
-			port_num = atoi(lwc_string_data(port_lwc));
-			if (port_num <= 0 || port_num > 65535) port_num = 80;
-		} else {
-			port_num = 80;
-		}
-		if (host_len + 8 >= sizeof(target)) {
-			MS_LOG("mfs_open: host too long");
-			goto fail_unref;
-		}
-		sprintf(target, "%.*s:%d", (int)host_len, host_str, port_num);
-		strncpy(c->pool_key, target, POOL_KEY_LEN - 1);
-		c->pool_key[POOL_KEY_LEN - 1] = '\0';
+		port_num = 80;
 	}
+	if (host_len + 8 >= sizeof(target)) {
+		MS_LOG("mfs_open: host too long");
+		goto fail_unref;
+	}
+	sprintf(target, "%.*s:%d", (int)host_len, host_str, port_num);
+	strncpy(c->pool_key, target, POOL_KEY_LEN - 1);
+	c->pool_key[POOL_KEY_LEN - 1] = '\0';
 
 	MS_LOG("mfs_open: enter");
 	pooled = ep_pool_take(c->pool_key);
@@ -527,21 +517,14 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		}
 	}
 
-	/* Build the request line.
-	 *   proxy: absolute-form  (GET http://example.com/foo HTTP/1.1)
-	 *   direct: origin-form   (GET /foo HTTP/1.1)
-	 * In both cases Host: holds the origin hostname.
+	/* Build the request line in origin-form (GET /foo HTTP/1.1); Host:
+	 * holds the origin hostname. (The retired proxy used absolute-form
+	 * GET http://host/foo — that path is gone, fixes692 #153.)
 	 *
-	 * fixes95: direct fetches send `Connection: close` and skip the
-	 * pool. The proxy buffers responses and emits Content-Length so
-	 * we can frame them and keep-alive cleanly. Origin servers
-	 * (e.g. nginx) reply with Transfer-Encoding: chunked + keep-alive
-	 * for HTML; we don't have a chunked decoder yet, so without a
-	 * Content-Length we can't tell where one response ends on a
-	 * reused socket — the fetch just hangs. Connection: close makes
-	 * the origin close after the response, which OTRcv reports as
-	 * n==0 and we transition to MFS_DONE. Cost: one TCP setup per
-	 * direct fetch. Still saves the Hetzner round-trip vs proxy. */
+	 * POST sends `Connection: close`; GET uses keep-alive and relies on
+	 * the chunked decoder (fixes98) in mfs_poll_one / process_chunked_bytes
+	 * to frame Transfer-Encoding: chunked responses so a reused socket
+	 * knows where one response ends. */
 	/* fixes169 (SAFETY_REPORT §3) — bound the request-line write. The
 	 * template constant is 86 chars; the variable part is the URL (or
 	 * path?query) plus the host. Refuse the fetch if the combined
@@ -598,51 +581,11 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 			(long)ck_var,
 			(long)((c->post_body != NULL) ? c->post_body_len : 0L),
 			ua);
-		if (use_proxy) {
-			size_t u_len;
-			u_full = nsurl_access(c->url);
-			if (u_full == NULL) {
-				MS_LOG("mfs_open: nsurl_access NULL");
-				goto fail_unref;
-			}
-			u_len = strlen(u_full);
-			if (TEMPLATE_LEN + u_len + host_len + ua_var + ck_var + 1 > sizeof(req)) {
-				macsurf_debug_log_writef(
-					"mfs_open: REJECT oversize URL "
-					"u_len=%ld host_len=%ld cap=%ld",
-					(long)u_len,
-					(long)host_len,
-					(long)sizeof(req));
-				c->err = "URL too long";
-				goto fail_unref;
-			}
-			macsurf_debug_log_writef("mfs_open: %s (proxy) %s",
-					method, u_full);
-			if (c->post_body != NULL) {
-				sprintf(req,
-					"POST %s HTTP/1.1\r\n"
-					"Host: %.*s\r\n"
-					"User-Agent: %s\r\n"
-					"Accept: */*\r\n"
-					"%s"
-					"%s"
-					"Content-Length: %ld\r\n"
-					"Connection: close\r\n\r\n",
-					u_full, (int)host_len, host_str,
-					ua, cookie_hdr,
-					post_extra_hdrs, c->post_body_len);
-			} else {
-				sprintf(req,
-					"GET %s HTTP/1.1\r\n"
-					"Host: %.*s\r\n"
-					"User-Agent: %s\r\n"
-					"Accept: */*\r\n"
-					"%s"
-					"Connection: keep-alive\r\n\r\n",
-					u_full, (int)host_len, host_str,
-					ua, cookie_hdr);
-			}
-		} else {
+		{
+			/* fixes692 (#153): the retired-proxy absolute-form request
+			 * branch that used to sit here (GET http://host/path) is
+			 * removed. MacSurf is proxy-free; only the direct origin-form
+			 * request below remains. */
 			size_t pb_used;
 			path_lwc = nsurl_get_component(c->url, NSURL_PATH);
 			query_lwc = nsurl_get_component(c->url, NSURL_QUERY);
@@ -1205,7 +1148,7 @@ static void macos9_http_poll(lwc_string *s) {
 		 * idle (NetSurf hasn't dispatched yet); MFS_INIT only lasts
 		 * the one cycle that calls mfs_open and is impossible to see
 		 * between polls. If progress_ticks hasn't advanced in 900
-		 * ticks (15s at 60Hz), the proxy / origin has stalled — fail
+		 * ticks (15s at 60Hz), the origin has stalled — fail
 		 * the slot so the URL bar comes back alive and NetSurf core
 		 * hears about the failure rather than waiting silently. */
 		/* fixes239 — aligned with HTTPS NO_PROGRESS_TICKS (fixes235).
@@ -1232,18 +1175,16 @@ static void macos9_http_poll(lwc_string *s) {
 			 * can't bounce back. */
 			extern void macsurf_scheme_mark_http_failed(const char *key);
 			extern int  macsurf_scheme_was_https_tried(const char *key);
-			if (c->pool_key[0] != '\0' &&
-			    strcmp(c->pool_key, "PROXY") != 0) {
+			if (c->pool_key[0] != '\0') {
 				macsurf_scheme_mark_http_failed(c->pool_key);
 			}
 			/* fixes317 — fall back to HTTPS when HTTP fails AND
 			 * HTTPS hasn't already failed this navigation. Only
-			 * triggers for direct (non-proxy) http:// URLs. The
+			 * triggers for direct http:// URLs. The
 			 * tracker prevents the bounce loop with HSTS hosts
 			 * whose HTTPS fail prior. */
 			if (c->aborted == 0 &&
 			    c->url != NULL && c->pool_key[0] != '\0' &&
-			    strcmp(c->pool_key, "PROXY") != 0 &&
 			    !macsurf_scheme_was_https_tried(c->pool_key)) {
 				const char *u = nsurl_access(c->url);
 				if (u != NULL && strncmp(u, "http://", 7) == 0) {
@@ -1691,9 +1632,9 @@ nserror macos9_http_fetcher_register(void) {
 	ops.setup=macos9_http_setup; ops.start=macos9_http_start; ops.abort=macos9_http_abort;
 	ops.free=macos9_http_free; ops.poll=macos9_http_poll; ops.fdset=NULL; ops.finalise=macos9_http_finalise;
 	lwc_intern_string("http",4,&sh); lwc_intern_string("https",5,&ss);
-	/* gauntlet — https now goes through macos9_https_fetcher.c (macTLS
-	 * native). Proxy path here is disabled; the old fetcher_add for ss
-	 * is commented out so the new HTTPS fetcher owns the scheme. */
+	/* https is handled natively by macTLS (macos9_tls_fetcher.c), so the
+	 * fetcher_add for ss is intentionally left commented out here — the
+	 * macTLS HTTPS fetcher owns the https scheme. */
 	fetcher_add(sh,&ops);
 	/* fetcher_add(ss,&ops); */
 	(void)ss;

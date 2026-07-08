@@ -77,7 +77,7 @@ int macsurf_debug_log_trace_enabled = 0;
  * (outside MACSURF_DEBUG guards) so that html.c's extern references
  * still link in release builds, even though the log itself becomes
  * a no-op. Updated cross-module by image decode (img_ok / img_fail),
- * HTTP fetcher (http_body / http_status / http_proxy), and box-
+ * HTTP fetcher (http_body / http_status), and box-
  * convert in html.c (box_* set). Read once per reformat by the SITE
  * summary line. Globals because pages don't overlap on this
  * single-threaded cooperative app. */
