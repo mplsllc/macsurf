@@ -19,10 +19,11 @@
 #include <stddef.h>
 
 /* Single-response cap. Bigger bodies are served live, not cached.
- * fixes665: raised 1MB->4MB so typical images and larger JS/CSS bundles are
- * cacheable; the whole cache dir is bounded separately by CACHE_TOTAL_BUDGET
- * + LRU eviction in macos9_disk_cache.c. */
-#define MACSURF_CACHE_MAX_BYTES (4L * 1024L * 1024L)
+ * fixes679: reverted 4MB->1MB (old cache style). fixes665's image/font
+ * disk caching + 4MB cap + directory budget-sweep were backed out; the
+ * cache holds only small text bodies (HTML/CSS/JS) again. The MacSurfData
+ * one-folder layout (fixes641/647) is retained. */
+#define MACSURF_CACHE_MAX_BYTES (1L * 1024L * 1024L)
 
 /* When non-zero, the next cache_lookup short-circuits to "miss" so
  * the Reload button forces a fresh fetch. cache_store clears the flag
