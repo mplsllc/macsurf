@@ -239,11 +239,19 @@ static void macos9_init_menus(void) {
 		InsertMenu(bookmark_menu, 0);
 	}
 
+	/* fixes694 (#47) — History menu. Whole menu is dynamic (recent visits,
+	 * most-recent first), rebuilt from urldb on each menu-bar click. */
+	{
+		MenuHandle history_menu = NewMenu(MENU_HISTORY, "\pHistory");
+		InsertMenu(history_menu, 0);
+	}
+
 	DrawMenuBar();
 
 	/* fixes645 (#48) — load persisted bookmarks and populate the menu.
 	 * Must run after the menu is inserted so GetMenuHandle finds it. */
 	macos9_bookmarks_init();
+	macos9_history_init();   /* fixes694 (#47) */
 #endif
 }
 
@@ -371,6 +379,16 @@ static void macos9_handle_menu(short menu_id, short item) {
 			macos9_bookmark_add(gw);
 		} else if (item >= ITEM_BMK_FIRST) {
 			macos9_bookmark_navigate(gw, item);
+		}
+		break;
+	case MENU_HISTORY:
+		/* fixes694 (#47) — every item is a recent-visit entry; navigate
+		 * the front window to it. Menu was refreshed on the menu-bar click. */
+		front = FrontWindow();
+		gw = front ? macos9_find_window(front) : NULL;
+		if (gw == NULL) break;
+		if (item >= ITEM_HIST_FIRST) {
+			macos9_history_navigate(gw, item);
 		}
 		break;
 	case MENU_EDIT:
@@ -682,7 +700,12 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 	}
 	switch (part) {
 		case inMenuBar: {
-			long sel = MenuSelect(event->where);
+			long sel;
+			/* fixes694 (#47) — refresh the History menu from urldb just
+			 * before the user picks from it, so it reflects the latest
+			 * visits. Cheap: a bounded top-N snapshot walk. */
+			macos9_history_menu_rebuild();
+			sel = MenuSelect(event->where);
 			if (sel != 0) macos9_handle_menu((short)((sel >> 16) & 0xFFFF),
 				(short)(sel & 0xFFFF));
 			HiliteMenu(0);

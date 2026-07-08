@@ -22,6 +22,7 @@
 #include "utils/ns_errors.h"
 #include "netsurf/browser_window.h"
 #include "netsurf/content.h"
+#include "netsurf/url_db.h"   /* fixes694 (#47): urldb_iterate_entries + struct url_data */
 #include "macos9.h"
 #include "macsurf_debug.h"
 
@@ -754,6 +755,122 @@ void macos9_bookmarks_init(void)
 {
 	macsurf_bookmarks_restore();
 	macos9_bookmark_menu_rebuild();
+}
+
+/* ====================================================================
+ * HISTORY (fixes694, #47). The backend is free: NetSurf core already
+ * records every visit (title, visit count, last_visit) in urldb
+ * (content/urldb.c, in the build for the cookie jar). We iterate urldb
+ * into a bounded most-recent-N snapshot and render a flat History menu,
+ * reusing the exact bookmark-menu pattern (no new Carbon surface).
+ * ==================================================================== */
+#define MACSURF_HIST_MENU_MAX 30
+#define MACSURF_HIST_URL_MAX  512
+#define MACSURF_HIST_TTL_MAX  100
+
+struct macsurf_hist_ent {
+	char url[MACSURF_HIST_URL_MAX];
+	char title[MACSURF_HIST_TTL_MAX];
+	long last_visit;
+};
+static struct macsurf_hist_ent macsurf_hist[MACSURF_HIST_MENU_MAX];
+static int macsurf_hist_n = 0;
+
+/* urldb_iterate_entries callback: insertion-sort each visited entry into
+ * macsurf_hist[], kept sorted by last_visit DESC, bounded to N. No context
+ * pointer is passed by the iterator, so the snapshot is file-static. */
+static bool macsurf_hist_collect(struct nsurl *url, const struct url_data *data)
+{
+	const char *u;
+	long lv;
+	int pos, j;
+	size_t ul, tl;
+	if (url == NULL || data == NULL) return true;
+	if (data->visits == 0) return true;         /* only actually-visited */
+	u = nsurl_access(url);
+	if (u == NULL) return true;
+	ul = strlen(u);
+	if (ul == 0 || ul >= MACSURF_HIST_URL_MAX) return true;
+	lv = (long)data->last_visit;
+
+	if (macsurf_hist_n >= MACSURF_HIST_MENU_MAX &&
+	    lv <= macsurf_hist[MACSURF_HIST_MENU_MAX - 1].last_visit)
+		return true;                        /* full and older than all */
+
+	/* find insertion point (descending by last_visit) */
+	for (pos = 0; pos < macsurf_hist_n; pos++)
+		if (lv >= macsurf_hist[pos].last_visit) break;
+	if (pos >= MACSURF_HIST_MENU_MAX) return true;
+
+	/* shift down (drop the tail if the array is already full) */
+	j = (macsurf_hist_n < MACSURF_HIST_MENU_MAX)
+		? macsurf_hist_n : MACSURF_HIST_MENU_MAX - 1;
+	for (; j > pos; j--)
+		macsurf_hist[j] = macsurf_hist[j - 1];
+	if (macsurf_hist_n < MACSURF_HIST_MENU_MAX) macsurf_hist_n++;
+
+	memcpy(macsurf_hist[pos].url, u, ul);
+	macsurf_hist[pos].url[ul] = '\0';
+	tl = (data->title != NULL) ? strlen(data->title) : 0;
+	if (tl >= MACSURF_HIST_TTL_MAX) tl = MACSURF_HIST_TTL_MAX - 1;
+	if (tl > 0) memcpy(macsurf_hist[pos].title, data->title, tl);
+	macsurf_hist[pos].title[tl] = '\0';
+	macsurf_hist[pos].last_visit = lv;
+	return true;
+}
+
+/* Rebuild the History menu from a fresh urldb snapshot. Same dynamic-item
+ * discipline as the bookmark menu (track prev_dynamic; never CountMenuItems;
+ * AppendMenu placeholder + SetMenuItemText to dodge metacharacters). */
+void macos9_history_menu_rebuild(void)
+{
+#ifdef __MACOS9__
+	static int prev_dynamic = 0;
+	MenuHandle m = GetMenuHandle(MENU_HISTORY);
+	int i;
+	short item_index;
+	if (m == NULL) return;
+	while (prev_dynamic > 0) { DeleteMenuItem(m, ITEM_HIST_FIRST); prev_dynamic--; }
+
+	macsurf_hist_n = 0;
+	urldb_iterate_entries(macsurf_hist_collect);
+
+	if (macsurf_hist_n == 0) {
+		AppendMenu(m, "\p(No history yet");
+		prev_dynamic = 1;
+		return;
+	}
+	item_index = (short)(ITEM_HIST_FIRST - 1);
+	for (i = 0; i < macsurf_hist_n; i++) {
+		Str255 pt;
+		const char *s = (macsurf_hist[i].title[0] != '\0') ?
+			macsurf_hist[i].title : macsurf_hist[i].url;
+		size_t ln = strlen(s);
+		if (ln > 80) ln = 80;
+		pt[0] = (unsigned char)ln;
+		memcpy(pt + 1, s, ln);
+		AppendMenu(m, "\px");
+		item_index++;
+		SetMenuItemText(m, item_index, pt);
+	}
+	prev_dynamic = macsurf_hist_n;
+#endif
+}
+
+/* Navigate the front window to the history entry backing a menu item. */
+void macos9_history_navigate(struct gui_window *g, int menu_item)
+{
+	int idx = menu_item - ITEM_HIST_FIRST;
+	if (g == NULL) return;
+	if (idx < 0 || idx >= macsurf_hist_n) return;
+	macos9_window_navigate(g, macsurf_hist[idx].url);
+}
+
+/* Startup hook: build the History menu from whatever urldb has (usually
+ * empty at cold launch until the first navigation populates it). */
+void macos9_history_init(void)
+{
+	macos9_history_menu_rebuild();
 }
 
 /* Legacy "Show Bookmarks" alert — retained for ABI but no longer menu-

@@ -196,6 +196,7 @@ extern bool macos9_quitting;
 #define MENU_GO     131
 #define MENU_VIEW   132
 #define MENU_BOOKMARK 133  /* fixes351 (#48) */
+#define MENU_HISTORY  134  /* fixes694 (#47) */
 
 #define ITEM_FILE_NEW       1
 #define ITEM_FILE_LOCATION  2
@@ -215,6 +216,10 @@ extern bool macos9_quitting;
 #define ITEM_BMK_ADD        1
 #define ITEM_BMK_FIRST      3   /* fixes645 (#48): first dynamic entry */
 
+/* History menu items (fixes694 #47). Whole menu is dynamic: 1+ = entries,
+ * most-recent first, rebuilt on every menu-bar click. */
+#define ITEM_HIST_FIRST     1
+
 /* fixes645 (#48) — bookmarks menu + persistence (macos9_chrome_extras.c
  * + macos9_disk_cache.c). */
 void macos9_bookmarks_init(void);
@@ -226,6 +231,10 @@ void macos9_bookmarks_save(const char *buf, long len);
 int  macos9_bookmark_rename(int id, const char *new_label);
 int  macos9_bookmark_delete(int id);
 int  macos9_bookmark_new_folder(const char *name, int parent_id);
+/* fixes694 (#47) — History menu, backed by urldb. */
+void macos9_history_init(void);
+void macos9_history_menu_rebuild(void);
+void macos9_history_navigate(struct gui_window *g, int menu_item);
 
 /* fixes645 (#199) — modeless download-manager window (macos9_download.c),
  * routed from the main event loop. */
