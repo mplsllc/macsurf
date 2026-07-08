@@ -1,10 +1,22 @@
-# ⚠️ READ THIS FIRST: 1.68 "macQJS" RELEASE STATE (2026-07-07)
+# ⚠️ READ THIS FIRST: 1.68.2 "macQJS" RELEASE STATE (2026-07-08)
 
-**The working tree is the packaged MacSurf 1.68 "macQJS" release.** Tip is **fixes674c** (`9c2d76b7`), and per the current push-freely policy the fix commits ARE committed/pushed (HEAD ≈ working tree). The only uncommitted deltas are release docs (this file, README.md, docs/status.md, docs/release-notes/MacSurf-1.68.md, `Read Me!`, `readme.txt`) held pending the user's final editing pass, plus a small set of in-flight ALPN/handshake changes (`macos9_tls_fetcher.c`, `macTLS/os9/*handshake*`, `cssh_css.c`, `html.c`, `ns_content.c`) the user is working on separately.
+**The working tree is CLEAN and FULLY COMMITTED — trust it.** Tip is **fixes690** (`a92ca6e9`) on `master`, pushed to all three remotes (origin/github/codeberg). Shipped release is **MacSurf 1.68.2 "macQJS"** (GitHub release `v1.68.2`, tag on `d2eee8e3`, asset `MacSurf1682.sit`). There are **no untracked build files and no pending renames** — everything in the CW8 build is tracked in git. `TwoPointOh` is a deliberate fallback branch, currently behind master; leave it until an explicit merge. (When editing this banner, re-run the state check — see [Working-tree hygiene](#working-tree-hygiene) — so it never goes stale again.)
 
 - **JS engine is macQJS (QuickJS, ES2023), not Duktape.** See [JavaScript Engine](#javascript-engine). Migration commit was `f305816c`; pre-migration Duktape baseline is `664273a4` (fixes481).
-- **HTTPS fetcher** is `macos9_tls_fetcher.c` (renamed from `macos9_https_fetcher.c`).
-- **Working-tree files** beyond the classic list: `macos9_content_registry.c`/`.h`, `javascript/macsurf_qjs.c`/`.h`, `browser/libquickjs/`, and `content.c` renamed to `ns_content.c`.
+- **HTTPS fetcher** is `macos9_tls_fetcher.c` (renamed from `macos9_https_fetcher.c`; tracked). macTLS async engine is `macTLS/os9/ostls_async.c`.
+- **Renamed/added, all tracked now:** `content.c` → `ns_content.c`; QuickJS glue `javascript/macsurf_qjs.c`/`.h`; engine sources `browser/libquickjs/`; live-content registry `macos9_content_registry.c`/`.h`.
+
+## Working-tree hygiene
+
+State confusion — unpushed commits from a prior session, a diverged codeberg mirror, a stale banner contradicting a clean tree — has repeatedly cost time. Run this **preflight at session start and before every ship/commit**; it answers "what's uncommitted, unpushed, or diverged" in one shot:
+
+- `git status --short` — dirty/uncommitted files (should be empty at rest).
+- `git ls-files --others --exclude-standard '*.c' '*.h'` — untracked BUILD files. **Must be empty**: a `.c`/`.h` in the CW8 build but not in git means a fresh clone won't build and a fix tar can ship a file git never records. This is the single most dangerous drift.
+- `git fetch --all -q` then, for each of `origin github codeberg`: `git log --oneline master..$r/master` (remote ahead of you → divergence, investigate before pushing) and `git log --oneline $r/master..master` (you ahead → unpushed, push it).
+
+Rules:
+- Commit each fix as you go (individually revertable). Push to **all three** remotes (origin + github + codeberg) — codeberg is a separate mirror and has silently diverged before ([[feedback_hold_pushes_until_tested]]).
+- Clean `git status` + empty untracked-build-files + zero unpushed per remote = synced. **Trust that over any prose banner.** If the top banner or any "uncommitted/in-flight" note disagrees with `git status`, git wins — fix the banner (and it must never claim pending work that isn't in `git status`).
 
 ## 🟢 G3 Hardware Verification Status (2026-07-07 — 1.68 release cycle)
 
