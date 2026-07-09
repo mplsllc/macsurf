@@ -14,9 +14,9 @@
 #include <dom/core/nodelist.h>
 #include <dom/core/string.h>
 
-#include "document.h"
-#include "node.h"
-#include "nodelist.h"
+#include "document_i.h"
+#include "node_i.h"
+#include "nodelist_i.h"
 
 #include "utils.h"
 

@@ -8,12 +8,12 @@
 #include <assert.h>
 #include <stdlib.h>
 
-#include "event.h"
-#include "event_listener.h"
-#include "event_target.h"
+#include "event_i.h"
+#include "event_listener_i.h"
+#include "event_target_i.h"
 
-#include "document.h"
-#include "node.h"
+#include "document_i.h"
+#include "node_i.h"
 #include "dom_internal_string.h"
 
 #include "utils.h"

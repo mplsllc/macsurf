@@ -7,9 +7,9 @@
 
 #include <stdlib.h>
 
-#include "document.h"
-#include "node.h"
-#include "pi.h"
+#include "document_i.h"
+#include "node_i.h"
+#include "pi_i.h"
 
 #include "utils.h"
 

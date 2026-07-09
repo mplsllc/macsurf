@@ -15,7 +15,7 @@
 #include <parserutils/charset/utf8.h>
 
 #include "dom_internal_string.h"
-#include "document.h"
+#include "document_i.h"
 #include "utils.h"
 
 /**
@@ -234,7 +234,7 @@ bool dom_string_isequal(const dom_string *s1, const dom_string *s2)
 
 	if (is1->type == DOM_STRING_INTERNED && 
 			is2->type == DOM_STRING_INTERNED) {
-		bool match;
+		unsigned char match;   /* shim isequal takes unsigned char * */
 
 		(void) lwc_string_isequal(is1->data.intern, is2->data.intern,
 			&match);
@@ -283,7 +283,7 @@ bool dom_string_caseless_isequal(const dom_string *s1, const dom_string *s2)
 
 	if (is1->type == DOM_STRING_INTERNED && 
 			is2->type == DOM_STRING_INTERNED) {
-		bool match;
+		unsigned char match;   /* shim isequal takes unsigned char * */
 
 		if (lwc_string_caseless_isequal(is1->data.intern,
 				is2->data.intern, &match) != lwc_error_ok)
@@ -331,7 +331,7 @@ bool dom_string_lwc_isequal(const dom_string *s1, lwc_string *s2)
 		return false;
 
 	if (is1->type == DOM_STRING_INTERNED) {
-		bool match;
+		unsigned char match;   /* shim isequal takes unsigned char * */
 
 		(void) lwc_string_isequal(is1->data.intern, s2, &match);
 
@@ -368,7 +368,7 @@ bool dom_string_caseless_lwc_isequal(const dom_string *s1, lwc_string *s2)
 		return false;
 
 	if (is1->type == DOM_STRING_INTERNED) {
-		bool match;
+		unsigned char match;   /* shim isequal takes unsigned char * */
 
 		if (lwc_string_caseless_isequal(is1->data.intern, s2, &match) != lwc_error_ok)
 			return false;

@@ -10,15 +10,15 @@
 
 #include <dom/html/html_table_element.h>
 
-#include "html_document.h"
-#include "html_table_element.h"
-#include "html_tablecaption_element.h"
-#include "html_tablesection_element.h"
-#include "html_tablerow_element.h"
-#include "html_collection.h"
+#include "html_document_i.h"
+#include "html_table_element_i.h"
+#include "html_tablecaption_element_i.h"
+#include "html_tablesection_element_i.h"
+#include "html_tablerow_element_i.h"
+#include "html_collection_i.h"
 
-#include "node.h"
-#include "attr.h"
+#include "node_i.h"
+#include "attr_i.h"
 #include "utils.h"
 
 static const struct dom_element_protected_vtable _protect_vtable = {

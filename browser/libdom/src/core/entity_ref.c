@@ -8,9 +8,9 @@
 
 #include <stdlib.h>
 
-#include "document.h"
-#include "entity_ref.h"
-#include "node.h"
+#include "document_i.h"
+#include "entity_ref_i.h"
+#include "node_i.h"
 #include "utils.h"
 
 /**

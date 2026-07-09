@@ -13,11 +13,11 @@
 #include <dom/core/string.h>
 #include <dom/events/dom_events.h>
 
-#include "characterdata.h"
-#include "document.h"
-#include "node.h"
+#include "characterdata_i.h"
+#include "document_i.h"
+#include "node_i.h"
 #include "utils.h"
-#include "mutation_event.h"
+#include "mutation_event_i.h"
 #include "dom_internal_dispatch.h"
 
 /* The virtual functions for dom_characterdata, we make this vtable

@@ -8,9 +8,9 @@
 
 #include <stdlib.h>
 
-#include "cdatasection.h"
-#include "document.h"
-#include "text.h"
+#include "cdatasection_i.h"
+#include "document_i.h"
+#include "text_i.h"
 #include "utils.h"
 
 /**

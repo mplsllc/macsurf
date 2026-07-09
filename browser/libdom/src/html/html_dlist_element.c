@@ -10,11 +10,11 @@
 
 #include <dom/html/html_dlist_element.h>
 
-#include "html_document.h"
-#include "html_dlist_element.h"
+#include "html_document_i.h"
+#include "html_dlist_element_i.h"
 
-#include "node.h"
-#include "attr.h"
+#include "node_i.h"
+#include "attr_i.h"
 #include "utils.h"
 
 static const struct dom_element_protected_vtable _protect_vtable = {

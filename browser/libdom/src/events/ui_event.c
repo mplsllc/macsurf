@@ -6,9 +6,9 @@
  */
 
 #include <stdlib.h>
-#include "event.h"
+#include "event_i.h"
 
-#include "ui_event.h"
+#include "ui_event_i.h"
 
 static void _virtual_dom_ui_event_destroy(struct dom_event *evt);
 

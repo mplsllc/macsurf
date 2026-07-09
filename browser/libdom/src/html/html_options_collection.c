@@ -10,10 +10,10 @@
 
 #include <libwapcaplet/libwapcaplet.h>
 
-#include "html_options_collection.h"
+#include "html_options_collection_i.h"
 
-#include "node.h"
-#include "element.h"
+#include "node_i.h"
+#include "element_i.h"
 #include "dom_internal_string.h"
 #include "utils.h"
 

@@ -10,11 +10,11 @@
 
 #include <libwapcaplet/libwapcaplet.h>
 
-#include "html_collection.h"
-#include "html_document.h"
+#include "html_collection_i.h"
+#include "html_document_i.h"
 
-#include "node.h"
-#include "element.h"
+#include "node_i.h"
+#include "element_i.h"
 #include "dom_internal_string.h"
 
 /*-----------------------------------------------------------------------*/

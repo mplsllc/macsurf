@@ -11,10 +11,10 @@
 #include <dom/html/html_option_element.h>
 #include <dom/html/html_options_collection.h>
 
-#include "html_document.h"
-#include "html_select_element.h"
+#include "html_document_i.h"
+#include "html_select_element_i.h"
 
-#include "node.h"
+#include "node_i.h"
 #include "utils.h"
 
 static const struct dom_element_protected_vtable _protect_vtable = {

@@ -11,9 +11,9 @@
 #include <stdlib.h>
 
 #include "dom_internal_string.h"
-#include "document_type.h"
-#include "namednodemap.h"
-#include "node.h"
+#include "document_type_i.h"
+#include "namednodemap_i.h"
+#include "node_i.h"
 #include "utils.h"
 #include "namespace.h"
 

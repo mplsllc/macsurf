@@ -14,9 +14,9 @@
 
 #include <libwapcaplet/libwapcaplet.h>
 
-#include "characterdata.h"
-#include "document.h"
-#include "text.h"
+#include "characterdata_i.h"
+#include "document_i.h"
+#include "text_i.h"
 #include "utils.h"
 
 /* The virtual table for dom_text */

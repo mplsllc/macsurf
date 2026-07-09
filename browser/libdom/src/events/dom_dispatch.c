@@ -7,9 +7,9 @@
 
 #include <assert.h>
 
-#include "document.h"
+#include "document_i.h"
 #include "dom_internal_dispatch.h"
-#include "mutation_event.h"
+#include "mutation_event_i.h"
 
 #include "utils.h"
 

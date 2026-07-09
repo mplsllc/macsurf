@@ -8,8 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "keyboard_event.h"
-#include "document.h"
+#include "keyboard_event_i.h"
+#include "document_i.h"
 
 #include "utils.h"
 

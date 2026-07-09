@@ -16,11 +16,11 @@
 #include <dom/core/node.h>
 #include <dom/core/string.h>
 
-#include "attr.h"
-#include "document.h"
-#include "entity_ref.h"
-#include "node.h"
-#include "element.h"
+#include "attr_i.h"
+#include "document_i.h"
+#include "entity_ref_i.h"
+#include "node_i.h"
+#include "element_i.h"
 #include "utils.h"
 #include "dom_internal_dispatch.h"
 

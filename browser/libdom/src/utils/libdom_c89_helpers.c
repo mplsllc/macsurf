@@ -17,9 +17,9 @@
 #include <stddef.h>
 
 #include "dom_utils_list.h"
-#include "node.h"
-#include "element.h"
-#include "event.h"
+#include "node_i.h"
+#include "element_i.h"
+#include "event_i.h"
 
 /* ---- list.h functions ---- */
 

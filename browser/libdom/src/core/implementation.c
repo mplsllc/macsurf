@@ -9,10 +9,10 @@
 
 #include <dom/core/implementation.h>
 
-#include "document.h"
-#include "document_type.h"
+#include "document_i.h"
+#include "document_type_i.h"
 
-#include "html_document.h"
+#include "html_document_i.h"
 
 #include "namespace.h"
 #include "utils.h"

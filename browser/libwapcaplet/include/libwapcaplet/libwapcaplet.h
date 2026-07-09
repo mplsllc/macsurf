@@ -9,6 +9,23 @@
 #ifndef libwapcaplet_h_
 #define libwapcaplet_h_
 
+/* MacSurf: pin `bool` to `unsigned char` for the whole translation unit.
+ * This header is the common early include for every libdom TU (via
+ * dom/core/string.h) and for libcss, so pinning it here keeps `bool` a
+ * single type across each TU. Without it, the macos9 frontend shims
+ * (macos9.h:34, shims/mac_types.h, nsutils/endian.h, ...) each do the
+ * same `typedef unsigned char bool` under `#ifndef bool`, but they fire
+ * partway through a TU that has already parsed this header's `bool *ret`
+ * with CW8's native `bool` -- splitting `bool` into two incompatible
+ * types and producing the "was bool, now unsigned char" redeclarations
+ * and the "unsigned char * -> bool *" conversion errors. Setting
+ * __bool_true_false_are_defined makes the <stdbool.h> below a no-op.
+ * This mirrors the known-good pattern in macos9.h. */
+#ifndef bool
+typedef unsigned char bool;
+#define __bool_true_false_are_defined 1
+#endif
+
 #ifdef __cplusplus
 extern "C"
 {
