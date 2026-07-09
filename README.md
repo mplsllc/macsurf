@@ -24,6 +24,8 @@
   <a href="https://ko-fi.com/macsurf" target="_blank"><img src="support_me_on_kofi_badge_blue.png" alt="Support on Ko-Fi" height="46"></a>
   &nbsp;&nbsp;
   <a href="https://www.patreon.com/cw/MacSurf" target="_blank"><img src="patreon-banner-519x200.png" alt="Support on Patreon" height="46"></a>
+  &nbsp;&nbsp;
+  <a href="https://discord.gg/mrwZK8zHr2" target="_blank"><img src="https://github.com/mplsllc/macsurf/blob/master/img/discord.jpeg" alt="Join our Discord!" height="46"></a>
 </p>
 
 <p align="center"><sub><strong>Thanks to our supporters:</strong> Shlooom (Patreon) &middot; kilgeist (Ko-Fi)</sub></p>
