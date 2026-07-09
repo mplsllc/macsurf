@@ -212,9 +212,11 @@ extern bool macos9_quitting;
 #define ITEM_VIEW_SOURCE    1
 #define ITEM_VIEW_FIND      3
 
-/* Bookmarks menu items. Layout: 1=Add, 2=separator, 3+=bookmarks. */
+/* Bookmarks menu items. fixes700 (#50): 1=Add, 2=Manage Bookmarks (opens
+ * the manager window), 3=separator, 4+=bookmarks. */
 #define ITEM_BMK_ADD        1
-#define ITEM_BMK_FIRST      3   /* fixes645 (#48): first dynamic entry */
+#define ITEM_BMK_MANAGE     2
+#define ITEM_BMK_FIRST      4   /* first dynamic entry */
 
 /* History menu items. fixes699 (#47): item 1 = Show All History (opens the
  * manager window), item 2 = Clear History, item 3 = separator, items 4+ =
@@ -235,6 +237,10 @@ void macos9_bookmarks_save(const char *buf, long len);
 int  macos9_bookmark_rename(int id, const char *new_label);
 int  macos9_bookmark_delete(int id);
 int  macos9_bookmark_new_folder(const char *name, int parent_id);
+int  macos9_bookmark_set_parent(int id, int parent_id);
+/* fixes700 (#50) — modal Bookmark manager window (folders, rename, delete,
+ * move, go). */
+void macos9_bookmark_window_show(struct gui_window *g);
 /* fixes694/698 (#47) — History menu + persistent, clearable history store
  * (macos9_chrome_extras.c + macos9_disk_cache.c). */
 void macos9_history_init(void);

@@ -235,6 +235,7 @@ static void macos9_init_menus(void) {
 	{
 		MenuHandle bookmark_menu = NewMenu(MENU_BOOKMARK, "\pBookmarks");
 		AppendMenu(bookmark_menu, "\pAdd Bookmark/D");
+		AppendMenu(bookmark_menu, "\pManage Bookmarks\311/B");
 		AppendMenu(bookmark_menu, "\p(-");
 		InsertMenu(bookmark_menu, 0);
 	}
@@ -381,6 +382,8 @@ static void macos9_handle_menu(short menu_id, short item) {
 		if (item == ITEM_BMK_ADD) {
 			extern void macos9_bookmark_add(struct gui_window *g);
 			macos9_bookmark_add(gw);
+		} else if (item == ITEM_BMK_MANAGE) {
+			macos9_bookmark_window_show(gw);
 		} else if (item >= ITEM_BMK_FIRST) {
 			macos9_bookmark_navigate(gw, item);
 		}

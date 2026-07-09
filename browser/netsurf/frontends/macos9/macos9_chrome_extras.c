@@ -620,6 +620,18 @@ int macos9_bookmark_delete(int id)
 	return 1;
 }
 
+/* Move a bookmark/folder under a new parent (0 = root). Returns 1 on
+ * success. Refuses to parent an item to itself. */
+int macos9_bookmark_set_parent(int id, int parent_id)
+{
+	int i = macsurf_bmk_find(id);
+	if (i < 0 || id == parent_id) return 0;
+	macsurf_bookmarks[i].parent_id = parent_id;
+	macsurf_bookmarks_persist();
+	macos9_bookmark_menu_rebuild();
+	return 1;
+}
+
 /* Create a folder under `parent_id` (0 = root). Returns new folder id, or 0. */
 int macos9_bookmark_new_folder(const char *name, int parent_id)
 {
@@ -660,15 +672,15 @@ void macos9_bookmark_menu_rebuild(void)
 	int i;
 	short item_index;
 	if (m == NULL) return;
-	/* Delete the previously-appended block. Deleting item 3 repeatedly
-	 * collapses it (indices shift down after each delete). */
-	while (prev_dynamic > 0) { DeleteMenuItem(m, 3); prev_dynamic--; }
+	/* Delete the previously-appended block. Deleting the first dynamic
+	 * item repeatedly collapses it (indices shift down after each delete). */
+	while (prev_dynamic > 0) { DeleteMenuItem(m, ITEM_BMK_FIRST); prev_dynamic--; }
 	/* fixes693: folders are organizational (managed in the bookmark window),
 	 * so the flat menu lists only actual bookmarks. macsurf_bmk_menu_map[k]
 	 * records which array slot the k-th menu item came from, so navigate()
 	 * maps a menu item back to the right bookmark even with folders present. */
 	macsurf_bmk_menu_n = 0;
-	item_index = 2;                 /* last fixed item (separator) */
+	item_index = (short)(ITEM_BMK_FIRST - 1);   /* last fixed item (separator) */
 	for (i = 0; i < macsurf_bookmark_count; i++) {
 		Str255 pt;
 		const char *s;
@@ -1360,6 +1372,475 @@ void macos9_history_window_show(struct gui_window *g)
 
 #else  /* !__MACOS9__ */
 void macos9_history_window_show(struct gui_window *g) { (void)g; }
+#endif
+
+/* ====================================================================
+ * fixes700 (#50) — Bookmark MANAGER WINDOW.
+ *
+ * Modal window over the same list/scroll/draw pattern as the History
+ * window, presenting the two-level folder tree (root bookmarks, then
+ * each folder and its children indented). Buttons: New Folder, Rename,
+ * Delete (with confirm), Move (cycles a bookmark's parent folder), Go,
+ * Done. Rename / New Folder collect text via chrome_prompt_text, a
+ * reusable TextEdit modal. The folder model + mutators are fixes693.
+ * ==================================================================== */
+#ifdef __MACOS9__
+
+/* Reusable single-line text prompt (mirrors macos9_find_in_page's TE
+ * dialog). Returns 1 with the entered text in out[] (accepted, non-empty),
+ * else 0. */
+static int chrome_prompt_text(const char *title, const char *initial,
+	char *out, int outcap)
+{
+	WindowRef win;
+	Rect wb, te_rect, ok_rect, cancel_rect;
+	TEHandle te;
+	EventRecord ev;
+	GrafPtr saved;
+	Str255 pt;
+	int done = 0, accepted = 0;
+
+	SetRect(&wb, 200, 170, 560, 262);
+	if (CreateNewWindow(kDocumentWindowClass, kWindowCloseBoxAttribute,
+			&wb, &win) != noErr || win == NULL)
+		return 0;
+	c_to_pstring(title, pt);
+	SetWTitle(win, pt);
+	GetPort(&saved);
+	SetPortWindowPort(win);
+	TextFont(1);
+	TextSize(10);
+
+	SetRect(&te_rect, 12, 30, 348, 50);
+	te = TENew(&te_rect, &te_rect);
+	if (te == NULL) { SetPort(saved); DisposeWindow(win); return 0; }
+	if (initial != NULL && initial[0] != '\0') {
+		TESetText(initial, (long)strlen(initial), te);
+		TESetSelect(0, 32767, te);
+	}
+	SetRect(&ok_rect, 260, 58, 348, 82);
+	SetRect(&cancel_rect, 150, 58, 250, 82);
+
+	ShowWindow(win);
+	SelectWindow(win);
+	TEActivate(te);
+
+	while (!done) {
+		WaitNextEvent(everyEvent, &ev, 20, NULL);
+		switch (ev.what) {
+		case mouseDown: {
+			WindowRef which;
+			short part = FindWindow(ev.where, &which);
+			if (which != win) break;
+			if (part == inDrag) {
+				Rect db; BitMap sb;
+				GetQDGlobalsScreenBits(&sb);
+				db = sb.bounds;
+				DragWindow(win, ev.where, &db);
+			} else if (part == inGoAway) {
+				if (TrackGoAway(win, ev.where)) done = 1;
+			} else if (part == inContent) {
+				Point lp = ev.where;
+				GlobalToLocal(&lp);
+				if (PtInRect(lp, &ok_rect)) { accepted = 1; done = 1; }
+				else if (PtInRect(lp, &cancel_rect)) done = 1;
+				else if (PtInRect(lp, &te_rect)) TEClick(lp, false, te);
+			}
+			break;
+		}
+		case keyDown:
+		case autoKey: {
+			char ch = (char)(ev.message & charCodeMask);
+			if (ch == '\r' || ch == 0x03) { accepted = 1; done = 1; }
+			else if (ch == 0x1B) done = 1;
+			else if ((ev.modifiers & cmdKey) && ch == '.') done = 1;
+			else TEKey(ch, te);
+			break;
+		}
+		case updateEvt:
+			if ((WindowRef)ev.message == win) {
+				BeginUpdate(win);
+				EraseRect(&te_rect); FrameRect(&te_rect);
+				TEUpdate(&te_rect, te);
+				EraseRect(&ok_rect); FrameRect(&ok_rect);
+				MoveTo(ok_rect.left + 34, ok_rect.top + 16);
+				DrawString("\pOK");
+				EraseRect(&cancel_rect); FrameRect(&cancel_rect);
+				MoveTo(cancel_rect.left + 26, cancel_rect.top + 16);
+				DrawString("\pCancel");
+				EndUpdate(win);
+			}
+			break;
+		case nullEvent:
+			TEIdle(te);
+			break;
+		default:
+			break;
+		}
+	}
+
+	if (accepted) {
+		CharsHandle h = TEGetText(te);
+		long len = (*te)->teLength;
+		if (len > (long)outcap - 1) len = (long)outcap - 1;
+		if (len > 0) {
+			HLock((Handle)h);
+			memcpy(out, *(char **)h, (size_t)len);
+			HUnlock((Handle)h);
+		}
+		out[len] = '\0';
+	} else {
+		out[0] = '\0';
+	}
+
+	TEDispose(te);
+	SetPort(saved);
+	DisposeWindow(win);
+	return accepted && out[0] != '\0';
+}
+
+/* Caution alert with Delete / Cancel. Returns 1 if the user confirms. */
+static int chrome_confirm_delete(const char *msg)
+{
+	Str255 p;
+	SInt16 item = 0;
+	AlertStdAlertParamRec par;
+	c_to_pstring(msg, p);
+	par.movable = false;
+	par.helpButton = false;
+	par.filterProc = NULL;
+	par.defaultText = (StringPtr)"\pDelete";
+	par.cancelText = (StringPtr)"\pCancel";
+	par.otherText = NULL;
+	par.defaultButton = kAlertStdAlertOKButton;
+	par.cancelButton = kAlertStdAlertCancelButton;
+	par.position = kWindowDefaultPosition;
+	StandardAlert(kAlertCautionAlert, p, "\p", &par, &item);
+	return item == kAlertStdAlertOKButton;
+}
+
+/* One rendered line in the bookmark tree. */
+struct bw_row {
+	short bidx;       /* index into macsurf_bookmarks[] */
+	short is_folder;
+	short depth;      /* 0 = root/folder, 1 = bookmark inside a folder */
+	char  text[160];
+};
+
+/* Build the two-level display list: root bookmarks, then each folder and
+ * the bookmarks parented to it. Returns row count. */
+static int bw_build_rows(struct bw_row *rows, int cap)
+{
+	int i, j, n = 0;
+	for (i = 0; i < macsurf_bookmark_count && n < cap; i++) {
+		struct macsurf_bookmark *b = &macsurf_bookmarks[i];
+		const char *s;
+		size_t ln;
+		if (b->is_folder || b->parent_id != 0) continue;
+		rows[n].bidx = (short)i; rows[n].is_folder = 0; rows[n].depth = 0;
+		s = (b->label[0] != '\0') ? b->label : b->url;
+		ln = strlen(s); if (ln > 150) ln = 150;
+		memcpy(rows[n].text, s, ln); rows[n].text[ln] = '\0';
+		n++;
+	}
+	for (i = 0; i < macsurf_bookmark_count && n < cap; i++) {
+		struct macsurf_bookmark *f = &macsurf_bookmarks[i];
+		const char *nm;
+		size_t ln;
+		if (!f->is_folder) continue;
+		nm = (f->label[0] != '\0') ? f->label : "(folder)";
+		strcpy(rows[n].text, "> ");
+		ln = strlen(nm); if (ln > 150) ln = 150;
+		memcpy(rows[n].text + 2, nm, ln); rows[n].text[2 + ln] = '\0';
+		rows[n].bidx = (short)i; rows[n].is_folder = 1; rows[n].depth = 0;
+		n++;
+		for (j = 0; j < macsurf_bookmark_count && n < cap; j++) {
+			struct macsurf_bookmark *b = &macsurf_bookmarks[j];
+			const char *s;
+			if (b->is_folder || b->parent_id != f->id) continue;
+			rows[n].bidx = (short)j; rows[n].is_folder = 0; rows[n].depth = 1;
+			s = (b->label[0] != '\0') ? b->label : b->url;
+			ln = strlen(s); if (ln > 150) ln = 150;
+			memcpy(rows[n].text, s, ln); rows[n].text[ln] = '\0';
+			n++;
+		}
+	}
+	return n;
+}
+
+/* Cycle a bookmark's parent to the next folder (root -> folder1 -> ... ->
+ * root). No-op for a folder row. */
+static void bw_move_next(int bidx)
+{
+	int folders[MACSURF_BOOKMARKS_MAX + 1];
+	int nf = 0, i, cur = -1, next;
+	int cur_parent;
+	if (bidx < 0 || bidx >= macsurf_bookmark_count) return;
+	if (macsurf_bookmarks[bidx].is_folder) return;
+	folders[nf++] = 0;   /* root */
+	for (i = 0; i < macsurf_bookmark_count; i++)
+		if (macsurf_bookmarks[i].is_folder)
+			folders[nf++] = macsurf_bookmarks[i].id;
+	if (nf <= 1) return; /* no folders to move into */
+	cur_parent = macsurf_bookmarks[bidx].parent_id;
+	for (i = 0; i < nf; i++) if (folders[i] == cur_parent) { cur = i; break; }
+	if (cur < 0) cur = 0;
+	next = (cur + 1) % nf;
+	macos9_bookmark_set_parent(macsurf_bookmarks[bidx].id, folders[next]);
+}
+
+void macos9_bookmark_window_show(struct gui_window *g)
+{
+	WindowRef win;
+	Rect wb, list, up, dn, nf, rn, del, mv, go, done;
+	GrafPtr saved_port;
+	EventRecord ev;
+	struct bw_row *rows;
+	int cap, nrows;
+	int scroll_top = 0, sel = -1;
+	int row_h = 14, vis;
+	int done_flag = 0, dirty = 1;
+	char go_url[MACSURF_BMK_URL_MAX];
+
+	if (g == NULL) return;
+	go_url[0] = '\0';
+
+	cap = macsurf_bookmark_count * 2 + 4;
+	rows = (struct bw_row *)malloc((size_t)cap * sizeof(struct bw_row));
+	if (rows == NULL) return;
+
+	SetRect(&wb, 110, 90, 670, 490);
+	if (CreateNewWindow(kDocumentWindowClass, kWindowCloseBoxAttribute,
+			&wb, &win) != noErr || win == NULL) {
+		free(rows);
+		return;
+	}
+	{ Str255 t; c_to_pstring("Bookmarks", t); SetWTitle(win, t); }
+
+	GetPort(&saved_port);
+	SetPortWindowPort(win);
+	TextFont(1);
+	TextSize(10);
+
+	/* content is 560 x 400 local */
+	SetRect(&list, 8, 8, 552, 356);
+	SetRect(&up,   534, 8,   552, 30);
+	SetRect(&dn,   534, 334, 552, 356);
+	SetRect(&nf,   8,   364, 92,  388);
+	SetRect(&rn,   98,  364, 170, 388);
+	SetRect(&del,  176, 364, 240, 388);
+	SetRect(&mv,   246, 364, 302, 388);
+	SetRect(&go,   430, 364, 486, 388);
+	SetRect(&done, 492, 364, 552, 388);
+	vis = (list.bottom - list.top - 4) / row_h;
+
+	nrows = bw_build_rows(rows, cap);
+	sel = (nrows > 0) ? 0 : -1;
+
+	ShowWindow(win);
+	SelectWindow(win);
+
+	while (!done_flag) {
+		int rebuilt = 0;
+		WaitNextEvent(everyEvent, &ev, 30, NULL);
+		switch (ev.what) {
+		case updateEvt:
+			if ((WindowRef)ev.message == win) {
+				BeginUpdate(win);
+				EndUpdate(win);
+				dirty = 1;
+			}
+			break;
+		case mouseDown: {
+			WindowRef which;
+			short part = FindWindow(ev.where, &which);
+			Point lp;
+			if (which != win) break;
+			if (part == inDrag) {
+				Rect db; BitMap sb;
+				GetQDGlobalsScreenBits(&sb);
+				db = sb.bounds;
+				DragWindow(win, ev.where, &db);
+				break;
+			}
+			if (part == inGoAway) {
+				if (TrackGoAway(win, ev.where)) done_flag = 1;
+				break;
+			}
+			if (part != inContent) break;
+			lp = ev.where;
+			GlobalToLocal(&lp);
+			if (PtInRect(lp, &done)) { done_flag = 1; break; }
+			if (PtInRect(lp, &up)) {
+				scroll_top -= 3; if (scroll_top < 0) scroll_top = 0; break;
+			}
+			if (PtInRect(lp, &dn)) {
+				int maxtop = nrows - vis; if (maxtop < 0) maxtop = 0;
+				scroll_top += 3; if (scroll_top > maxtop) scroll_top = maxtop;
+				break;
+			}
+			if (PtInRect(lp, &nf)) {
+				char name[MACSURF_BMK_LBL_MAX];
+				if (chrome_prompt_text("New Folder", "", name, sizeof name))
+					macos9_bookmark_new_folder(name, 0);
+				rebuilt = 1; break;
+			}
+			if (PtInRect(lp, &rn)) {
+				if (sel >= 0 && sel < nrows) {
+					int bi = rows[sel].bidx;
+					char name[MACSURF_BMK_LBL_MAX];
+					if (bi >= 0 && bi < macsurf_bookmark_count &&
+					    chrome_prompt_text("Rename",
+						macsurf_bookmarks[bi].label, name, sizeof name))
+						macos9_bookmark_rename(macsurf_bookmarks[bi].id, name);
+				}
+				rebuilt = 1; break;
+			}
+			if (PtInRect(lp, &del)) {
+				if (sel >= 0 && sel < nrows) {
+					int bi = rows[sel].bidx;
+					if (bi >= 0 && bi < macsurf_bookmark_count &&
+					    chrome_confirm_delete(
+						macsurf_bookmarks[bi].is_folder ?
+						"Delete this folder? Its bookmarks move to the top level."
+						: "Delete this bookmark?"))
+						macos9_bookmark_delete(macsurf_bookmarks[bi].id);
+				}
+				rebuilt = 1; break;
+			}
+			if (PtInRect(lp, &mv)) {
+				if (sel >= 0 && sel < nrows)
+					bw_move_next(rows[sel].bidx);
+				rebuilt = 1; break;
+			}
+			if (PtInRect(lp, &go)) {
+				if (sel >= 0 && sel < nrows && !rows[sel].is_folder) {
+					int bi = rows[sel].bidx;
+					if (bi >= 0 && bi < macsurf_bookmark_count) {
+						strcpy(go_url, macsurf_bookmarks[bi].url);
+						done_flag = 1;
+					}
+				}
+				break;
+			}
+			if (PtInRect(lp, &list)) {
+				int idx = scroll_top + (lp.v - (list.top + 2)) / row_h;
+				if (idx >= 0 && idx < nrows) sel = idx;
+			}
+			break;
+		}
+		case keyDown:
+		case autoKey: {
+			char ch = (char)(ev.message & charCodeMask);
+			if ((ev.modifiers & cmdKey) &&
+			    (ch == '.' || ch == 'w' || ch == 'W')) {
+				done_flag = 1;
+			} else if (ch == 0x1B) {
+				done_flag = 1;
+			} else if (ch == 0x0D || ch == 0x03) {
+				if (sel >= 0 && sel < nrows && !rows[sel].is_folder) {
+					int bi = rows[sel].bidx;
+					if (bi >= 0 && bi < macsurf_bookmark_count) {
+						strcpy(go_url, macsurf_bookmarks[bi].url);
+						done_flag = 1;
+					}
+				}
+			} else if (ch == 0x1F) {
+				if (sel < nrows - 1) sel++;
+			} else if (ch == 0x1E) {
+				if (sel > 0) sel--;
+			} else if (ch == 0x0C) {
+				scroll_top += vis - 1;
+			} else if (ch == 0x0B) {
+				scroll_top -= vis - 1;
+			} else if (ch == 0x01) {
+				scroll_top = 0; sel = (nrows > 0) ? 0 : -1;
+			} else if (ch == 0x04) {
+				sel = nrows - 1; scroll_top = nrows - vis;
+			}
+			if (scroll_top < 0) scroll_top = 0;
+			{
+				int maxtop = nrows - vis; if (maxtop < 0) maxtop = 0;
+				if (scroll_top > maxtop) scroll_top = maxtop;
+			}
+			if (sel >= 0) {
+				if (sel < scroll_top) scroll_top = sel;
+				else if (sel >= scroll_top + vis)
+					scroll_top = sel - vis + 1;
+			}
+			break;
+		}
+		default:
+			break;
+		}
+
+		if (rebuilt) {
+			nrows = bw_build_rows(rows, cap);
+			if (sel >= nrows) sel = nrows - 1;
+			if (nrows == 0) sel = -1;
+			if (scroll_top > nrows - vis) {
+				scroll_top = nrows - vis;
+				if (scroll_top < 0) scroll_top = 0;
+			}
+		}
+		if (ev.what == mouseDown || ev.what == keyDown ||
+		    ev.what == autoKey)
+			dirty = 1;
+
+		if (!done_flag && dirty) {
+			RgnHandle saveclip = NewRgn();
+			Rect tr;
+			int r, y;
+			GetClip(saveclip);
+			EraseRect(&list);
+			FrameRect(&list);
+			ClipRect(&list);
+			y = list.top + 2;
+			for (r = scroll_top;
+			     r < nrows && (r - scroll_top) < vis; r++) {
+				short len = (short)strlen(rows[r].text);
+				short x = (short)(list.left + 4 + rows[r].depth * 16);
+				tr.left = (short)(list.left + 1);
+				tr.right = (short)(list.right - 20);
+				tr.top = (short)y;
+				tr.bottom = (short)(y + row_h);
+				if (rows[r].is_folder) TextFace(bold);
+				MoveTo(x, (short)(y + 11));
+				DrawText(rows[r].text, 0, len);
+				if (rows[r].is_folder) TextFace(normal);
+				if (r == sel) InvertRect(&tr);
+				y += row_h;
+			}
+			SetClip(saveclip);
+			DisposeRgn(saveclip);
+			EraseRect(&up); FrameRect(&up);
+			MoveTo(up.left + 6, up.top + 15); DrawString("\p^");
+			EraseRect(&dn); FrameRect(&dn);
+			MoveTo(dn.left + 6, dn.top + 15); DrawString("\pv");
+			chrome_draw_button(&nf, "\pNew Folder");
+			chrome_draw_button(&rn, "\pRename");
+			chrome_draw_button(&del, "\pDelete");
+			chrome_draw_button(&mv, "\pMove");
+			chrome_draw_button(&go, "\pGo");
+			chrome_draw_button(&done, "\pDone");
+			if (nrows == 0) {
+				MoveTo(list.left + 12, list.top + 24);
+				DrawString("\p(No bookmarks yet)");
+			}
+			dirty = 0;
+		}
+	}
+
+	SetPort(saved_port);
+	DisposeWindow(win);
+	free(rows);
+
+	if (go_url[0] != '\0')
+		macos9_window_navigate(g, go_url);
+}
+
+#else  /* !__MACOS9__ */
+void macos9_bookmark_window_show(struct gui_window *g) { (void)g; }
 #endif
 
 /* Legacy "Show Bookmarks" alert — retained for ABI but no longer menu-
