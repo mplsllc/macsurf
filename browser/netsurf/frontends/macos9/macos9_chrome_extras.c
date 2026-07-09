@@ -1003,6 +1003,365 @@ void macos9_history_init(void)
 	macos9_history_menu_rebuild();
 }
 
+/* ====================================================================
+ * fixes699 (#47) — History MANAGER WINDOW.
+ *
+ * A self-contained modal window (built programmatically, no DLOG/DITL,
+ * mirroring macos9_find_in_page's proven pattern). Lists every stored
+ * visit, grouped under day headers (Today / Yesterday / "Wed, Jul 8,
+ * 2026"), newest first. Select a row and press Go / double-click to
+ * navigate; Clear History empties the store; Done / close box dismiss.
+ *
+ * Scrolling is keyboard (arrows / PageUp-Down / Home-End) plus two
+ * on-window scroll arrows — deliberately NOT a Carbon scrollbar CDEF,
+ * which crashes on real G3/G4 hardware (see CLAUDE.md Known Gotchas).
+ * ==================================================================== */
+#ifdef __MACOS9__
+
+/* One rendered line: a day header, or a visit (hidx into macsurf_hist[]). */
+struct hw_row {
+	short is_header;
+	short hidx;
+	char  text[160];
+};
+
+/* Centered framed-rect push button with a Pascal label. Shared by both
+ * manager windows. */
+static void chrome_draw_button(const Rect *r, ConstStr255Param label)
+{
+	short bw = (short)(r->right - r->left);
+	short tw = StringWidth(label);
+	EraseRect(r);
+	FrameRect(r);
+	MoveTo((short)(r->left + (bw - tw) / 2),
+	       (short)(r->top + (r->bottom - r->top) / 2 + 4));
+	DrawString(label);
+}
+
+/* Format a day header from a Mac-seconds timestamp relative to today. */
+static void chrome_day_header(long ts, long today_day, char *out)
+{
+	static const char *wd[7] =
+		{ "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+	static const char *mo[12] =
+		{ "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+		  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+	long day = ts / 86400L;
+	DateTimeRec dtr;
+	const char *wds;
+	const char *mos;
+	if (day == today_day)     { strcpy(out, "Today");     return; }
+	if (day == today_day - 1) { strcpy(out, "Yesterday"); return; }
+	SecondsToDate((unsigned long)ts, &dtr);
+	wds = (dtr.dayOfWeek >= 1 && dtr.dayOfWeek <= 7) ? wd[dtr.dayOfWeek - 1] : "";
+	mos = (dtr.month >= 1 && dtr.month <= 12) ? mo[dtr.month - 1] : "";
+	sprintf(out, "%s, %s %d, %d", wds, mos,
+		(int)dtr.day, (int)dtr.year);
+}
+
+/* (Re)build the flat display-row list from the store. Returns row count. */
+static int hw_build_rows(struct hw_row *rows, int cap, long today_day)
+{
+	int i, n = 0;
+	long prev_day = 0x7FFFFFFFL;
+	for (i = 0; i < macsurf_hist_n && n < cap - 1; i++) {
+		long day = macsurf_hist[i].ts / 86400L;
+		const char *ttl = macsurf_hist[i].title;
+		const char *url = macsurf_hist[i].url;
+		if (i == 0 || day != prev_day) {
+			rows[n].is_header = 1;
+			rows[n].hidx = -1;
+			chrome_day_header(macsurf_hist[i].ts, today_day, rows[n].text);
+			n++;
+			prev_day = day;
+			if (n >= cap - 1) break;
+		}
+		rows[n].is_header = 0;
+		rows[n].hidx = (short)i;
+		if (ttl[0] != '\0') {
+			size_t tl = strlen(ttl);
+			if (tl > 150) tl = 150;
+			memcpy(rows[n].text, ttl, tl);
+			rows[n].text[tl] = '\0';
+		} else {
+			size_t ul = strlen(url);
+			if (ul > 150) ul = 150;
+			memcpy(rows[n].text, url, ul);
+			rows[n].text[ul] = '\0';
+		}
+		n++;
+	}
+	return n;
+}
+
+/* First entry row at or after `from` (skips headers); -1 if none. */
+static int hw_next_entry(struct hw_row *rows, int nrows, int from)
+{
+	int r;
+	for (r = from; r < nrows; r++)
+		if (!rows[r].is_header) return r;
+	return -1;
+}
+static int hw_prev_entry(struct hw_row *rows, int from)
+{
+	int r;
+	for (r = from; r >= 0; r--)
+		if (!rows[r].is_header) return r;
+	return -1;
+}
+
+void macos9_history_window_show(struct gui_window *g)
+{
+	WindowRef win;
+	Rect wb, list, up, dn, clr, go, done;
+	GrafPtr saved_port;
+	EventRecord ev;
+	struct hw_row *rows;
+	int cap, nrows;
+	int scroll_top = 0, sel = -1;
+	int row_h = 14, vis;
+	long today_day = 0;
+	int done_flag = 0;
+	char go_url[MACSURF_HIST_URL_MAX];
+	int last_click_row = -1;
+	unsigned long last_click_time = 0;
+	int dirty = 1;
+
+	if (g == NULL) return;
+	go_url[0] = '\0';
+
+	{
+		unsigned long secs = 0;
+		GetDateTime(&secs);
+		today_day = (long)secs / 86400L;
+	}
+
+	cap = macsurf_hist_n * 2 + 4;
+	rows = (struct hw_row *)malloc((size_t)cap * sizeof(struct hw_row));
+	if (rows == NULL) return;
+
+	SetRect(&wb, 120, 90, 640, 490);
+	if (CreateNewWindow(kDocumentWindowClass, kWindowCloseBoxAttribute,
+			&wb, &win) != noErr || win == NULL) {
+		free(rows);
+		return;
+	}
+	{ Str255 t; c_to_pstring("History", t); SetWTitle(win, t); }
+
+	GetPort(&saved_port);
+	SetPortWindowPort(win);
+	TextFont(1);   /* application font (Geneva) */
+	TextSize(10);
+
+	/* content is 520 x 400 local */
+	SetRect(&list, 8, 8, 512, 356);
+	SetRect(&up,   494, 8,   512, 30);
+	SetRect(&dn,   494, 334, 512, 356);
+	SetRect(&clr,  8,   364, 128, 388);
+	SetRect(&go,   300, 364, 380, 388);
+	SetRect(&done, 420, 364, 512, 388);
+	vis = (list.bottom - list.top - 4) / row_h;
+
+	nrows = hw_build_rows(rows, cap, today_day);
+	sel = hw_next_entry(rows, nrows, 0);
+
+	ShowWindow(win);
+	SelectWindow(win);
+
+	while (!done_flag) {
+		WaitNextEvent(everyEvent, &ev, 30, NULL);
+		switch (ev.what) {
+		case updateEvt:
+			if ((WindowRef)ev.message == win) {
+				BeginUpdate(win);
+				EndUpdate(win);   /* validate; shared draw repaints */
+				dirty = 1;
+			}
+			break;
+		case mouseDown: {
+			WindowRef which;
+			short part = FindWindow(ev.where, &which);
+			Point lp;
+			if (which != win) break;
+			if (part == inDrag) {
+				Rect db; BitMap sb;
+				GetQDGlobalsScreenBits(&sb);
+				db = sb.bounds;
+				DragWindow(win, ev.where, &db);
+				break;
+			}
+			if (part == inGoAway) {
+				if (TrackGoAway(win, ev.where)) done_flag = 1;
+				break;
+			}
+			if (part != inContent) break;
+			lp = ev.where;
+			GlobalToLocal(&lp);
+			if (PtInRect(lp, &done)) { done_flag = 1; break; }
+			if (PtInRect(lp, &clr)) {
+				macos9_history_clear();
+				nrows = hw_build_rows(rows, cap, today_day);
+				sel = hw_next_entry(rows, nrows, 0);
+				scroll_top = 0;
+				last_click_row = -1;
+				break;
+			}
+			if (PtInRect(lp, &go)) {
+				if (sel >= 0 && sel < nrows && !rows[sel].is_header) {
+					int hi = rows[sel].hidx;
+					if (hi >= 0 && hi < macsurf_hist_n) {
+						strcpy(go_url, macsurf_hist[hi].url);
+						done_flag = 1;
+					}
+				}
+				break;
+			}
+			if (PtInRect(lp, &up)) {
+				scroll_top -= 3;
+				if (scroll_top < 0) scroll_top = 0;
+				break;
+			}
+			if (PtInRect(lp, &dn)) {
+				int maxtop = nrows - vis;
+				if (maxtop < 0) maxtop = 0;
+				scroll_top += 3;
+				if (scroll_top > maxtop) scroll_top = maxtop;
+				break;
+			}
+			if (PtInRect(lp, &list)) {
+				int idx = scroll_top + (lp.v - (list.top + 2)) / row_h;
+				if (idx >= 0 && idx < nrows && !rows[idx].is_header) {
+					if (idx == last_click_row &&
+					    (ev.when - last_click_time) <= GetDblTime()) {
+						int hi = rows[idx].hidx;
+						if (hi >= 0 && hi < macsurf_hist_n) {
+							strcpy(go_url, macsurf_hist[hi].url);
+							done_flag = 1;
+						}
+					}
+					sel = idx;
+					last_click_row = idx;
+					last_click_time = ev.when;
+				}
+			}
+			break;
+		}
+		case keyDown:
+		case autoKey: {
+			char ch = (char)(ev.message & charCodeMask);
+			if ((ev.modifiers & cmdKey) &&
+			    (ch == '.' || ch == 'w' || ch == 'W')) {
+				done_flag = 1;
+			} else if (ch == 0x1B) {          /* Esc */
+				done_flag = 1;
+			} else if (ch == 0x0D || ch == 0x03) { /* Return / Enter */
+				if (sel >= 0 && sel < nrows && !rows[sel].is_header) {
+					int hi = rows[sel].hidx;
+					if (hi >= 0 && hi < macsurf_hist_n) {
+						strcpy(go_url, macsurf_hist[hi].url);
+						done_flag = 1;
+					}
+				}
+			} else if (ch == 0x1F) {          /* Down arrow */
+				int ns = hw_next_entry(rows, nrows,
+					(sel < 0) ? 0 : sel + 1);
+				if (ns >= 0) sel = ns;
+			} else if (ch == 0x1E) {          /* Up arrow */
+				int ps = hw_prev_entry(rows, (sel <= 0) ? 0 : sel - 1);
+				if (ps >= 0) sel = ps;
+			} else if (ch == 0x0C) {          /* Page Down */
+				scroll_top += vis - 1;
+			} else if (ch == 0x0B) {          /* Page Up */
+				scroll_top -= vis - 1;
+			} else if (ch == 0x01) {          /* Home */
+				scroll_top = 0; sel = hw_next_entry(rows, nrows, 0);
+			} else if (ch == 0x04) {          /* End */
+				sel = hw_prev_entry(rows, nrows - 1);
+				scroll_top = nrows - vis;
+			}
+			if (scroll_top < 0) scroll_top = 0;
+			{
+				int maxtop = nrows - vis;
+				if (maxtop < 0) maxtop = 0;
+				if (scroll_top > maxtop) scroll_top = maxtop;
+			}
+			/* keep selection visible */
+			if (sel >= 0) {
+				if (sel < scroll_top) scroll_top = sel;
+				else if (sel >= scroll_top + vis)
+					scroll_top = sel - vis + 1;
+			}
+			break;
+		}
+		default:
+			break;
+		}
+
+		/* Any user event may have changed scroll/selection/contents. */
+		if (ev.what == mouseDown || ev.what == keyDown ||
+		    ev.what == autoKey)
+			dirty = 1;
+
+		/* Repaint only when something changed (no idle flicker). */
+		if (!done_flag && dirty) {
+			RgnHandle saveclip = NewRgn();
+			Rect tr;
+			int r, y;
+			GetClip(saveclip);
+			EraseRect(&list);
+			FrameRect(&list);
+			ClipRect(&list);
+			y = list.top + 2;
+			for (r = scroll_top;
+			     r < nrows && (r - scroll_top) < vis; r++) {
+				short len = (short)strlen(rows[r].text);
+				tr.left = (short)(list.left + 1);
+				tr.right = (short)(list.right - 20);
+				tr.top = (short)y;
+				tr.bottom = (short)(y + row_h);
+				if (rows[r].is_header) {
+					TextFace(bold);
+					MoveTo((short)(list.left + 4), (short)(y + 11));
+					DrawText(rows[r].text, 0, len);
+					TextFace(normal);
+				} else {
+					MoveTo((short)(list.left + 16), (short)(y + 11));
+					DrawText(rows[r].text, 0, len);
+					if (r == sel) InvertRect(&tr);
+				}
+				y += row_h;
+			}
+			SetClip(saveclip);
+			DisposeRgn(saveclip);
+			/* scroll arrows */
+			EraseRect(&up); FrameRect(&up);
+			MoveTo(up.left + 6, up.top + 15); DrawString("\p^");
+			EraseRect(&dn); FrameRect(&dn);
+			MoveTo(dn.left + 6, dn.top + 15); DrawString("\pv");
+			/* buttons */
+			chrome_draw_button(&clr, "\pClear History");
+			chrome_draw_button(&go, "\pGo");
+			chrome_draw_button(&done, "\pDone");
+			if (nrows == 0) {
+				MoveTo(list.left + 12, list.top + 24);
+				DrawString("\p(No history yet)");
+			}
+			dirty = 0;
+		}
+	}
+
+	SetPort(saved_port);
+	DisposeWindow(win);
+	free(rows);
+
+	if (go_url[0] != '\0')
+		macos9_window_navigate(g, go_url);
+}
+
+#else  /* !__MACOS9__ */
+void macos9_history_window_show(struct gui_window *g) { (void)g; }
+#endif
+
 /* Legacy "Show Bookmarks" alert — retained for ABI but no longer menu-
  * wired (the live menu supersedes it). */
 void macos9_bookmark_list_show(struct gui_window *g)

@@ -244,6 +244,7 @@ static void macos9_init_menus(void) {
 	 * macos9_history_init below and rebuilt on each menu-bar click. */
 	{
 		MenuHandle history_menu = NewMenu(MENU_HISTORY, "\pHistory");
+		AppendMenu(history_menu, "\pShow All History/H");
 		AppendMenu(history_menu, "\pClear History");
 		AppendMenu(history_menu, "\p(-");
 		InsertMenu(history_menu, 0);
@@ -391,7 +392,9 @@ static void macos9_handle_menu(short menu_id, short item) {
 		front = FrontWindow();
 		gw = front ? macos9_find_window(front) : NULL;
 		if (gw == NULL) break;
-		if (item == ITEM_HIST_CLEAR) {
+		if (item == ITEM_HIST_SHOW_ALL) {
+			macos9_history_window_show(gw);
+		} else if (item == ITEM_HIST_CLEAR) {
 			macos9_history_clear();
 		} else if (item >= ITEM_HIST_FIRST) {
 			macos9_history_navigate(gw, item);

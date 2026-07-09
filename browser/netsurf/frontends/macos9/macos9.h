@@ -216,11 +216,13 @@ extern bool macos9_quitting;
 #define ITEM_BMK_ADD        1
 #define ITEM_BMK_FIRST      3   /* fixes645 (#48): first dynamic entry */
 
-/* History menu items. fixes698 (#47): item 1 = Clear History, item 2 =
- * separator, items 3+ = recent visits (most-recent first), rebuilt from
- * the persistent history store on every menu-bar click. */
-#define ITEM_HIST_CLEAR     1
-#define ITEM_HIST_FIRST     3
+/* History menu items. fixes699 (#47): item 1 = Show All History (opens the
+ * manager window), item 2 = Clear History, item 3 = separator, items 4+ =
+ * recent visits (most-recent first), rebuilt from the persistent history
+ * store on every menu-bar click. */
+#define ITEM_HIST_SHOW_ALL  1
+#define ITEM_HIST_CLEAR     2
+#define ITEM_HIST_FIRST     4
 
 /* fixes645 (#48) — bookmarks menu + persistence (macos9_chrome_extras.c
  * + macos9_disk_cache.c). */
@@ -242,6 +244,8 @@ void macos9_history_record(struct gui_window *g, const char *title);
 void macos9_history_clear(void);
 long macos9_history_load(char *out_buf, long buf_cap);
 void macos9_history_save(const char *buf, long len);
+/* fixes699 (#47) — modal History manager window (day-grouped, clearable). */
+void macos9_history_window_show(struct gui_window *g);
 
 /* fixes645 (#199) — modeless download-manager window (macos9_download.c),
  * routed from the main event loop. */
