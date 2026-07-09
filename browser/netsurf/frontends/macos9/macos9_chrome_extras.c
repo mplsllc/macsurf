@@ -1149,14 +1149,15 @@ struct hw_row {
 	char  text[160];
 };
 
-/* Centered framed-rect push button with a Pascal label. Shared by both
- * manager windows. */
+/* Centered rounded push button with a Pascal label. fixes710 — rounded
+ * corners read as a real Mac push button rather than a bare box. Shared by
+ * both manager windows. */
 static void chrome_draw_button(const Rect *r, ConstStr255Param label)
 {
 	short bw = (short)(r->right - r->left);
 	short tw = StringWidth(label);
 	EraseRect(r);
-	FrameRect(r);
+	FrameRoundRect(r, 10, 10);
 	MoveTo((short)(r->left + (bw - tw) / 2),
 	       (short)(r->top + (r->bottom - r->top) / 2 + 4));
 	DrawString(label);
@@ -1300,6 +1301,12 @@ void macos9_history_window_show(struct gui_window *g)
 				BeginUpdate(win);
 				EndUpdate(win);   /* validate; shared draw repaints */
 				dirty = 1;
+			} else {
+				/* fixes709 — repaint an uncovered background browser
+				 * window (dragging left it white). Restore our port. */
+				extern void macos9_handle_update(const EventRecord *event);
+				macos9_handle_update(&ev);
+				SetPortWindowPort(win);
 			}
 			break;
 		case mouseDown: {
@@ -1725,6 +1732,65 @@ static void bw_move_via_picker(int bidx, short glob_top, short glob_left)
 	}
 }
 
+/* fixes710 — invert a visible list row (self-reversing drop-target hilite). */
+static void bw_invert_row(const Rect *list, int row, int scroll_top, int row_h)
+{
+	Rect r;
+	int vi = row - scroll_top;
+	if (vi < 0) return;
+	r.left = (short)(list->left + 1);
+	r.right = (short)(list->right - 20);
+	r.top = (short)(list->top + 2 + vi * row_h);
+	r.bottom = (short)(r.top + row_h);
+	InvertRect(&r);
+}
+
+/* fixes710 — drag-and-drop move. Called on mouseDown on a bookmark row.
+ * Tracks the mouse (no Carbon Drag Manager needed): while held, the folder
+ * row under the cursor is framed as the drop target; on release over a
+ * folder the bookmark is reparented there. Returns 1 if a move happened, so
+ * the caller rebuilds. A plain click (no drag onto a folder) returns 0. */
+static int bw_try_drag(struct bw_row *rows, int nrows, int src_row,
+		const Rect *list, int scroll_top, int row_h)
+{
+	Point mp;
+	int src_bidx = rows[src_row].bidx;
+	int target = -1, last_target = -1;
+	int did_move = 0;
+	if (src_bidx < 0 || src_bidx >= macsurf_bookmark_count) return 0;
+	if (macsurf_bookmarks[src_bidx].is_folder) return 0;
+	while (StillDown()) {
+		int t;
+		GetMouse(&mp);   /* local to the manager window's port */
+		if (PtInRect(mp, list)) {
+			t = scroll_top + (mp.v - (list->top + 2)) / row_h;
+			if (t < 0 || t >= nrows || t == src_row || !rows[t].is_folder)
+				t = -1;
+		} else {
+			t = -1;
+		}
+		if (t != last_target) {
+			if (last_target >= 0)
+				bw_invert_row(list, last_target, scroll_top, row_h);
+			if (t >= 0)
+				bw_invert_row(list, t, scroll_top, row_h);
+			last_target = t;
+		}
+		target = t;
+	}
+	if (last_target >= 0)
+		bw_invert_row(list, last_target, scroll_top, row_h);   /* restore */
+	if (target >= 0 && target < nrows && rows[target].is_folder) {
+		int fbidx = rows[target].bidx;
+		if (fbidx >= 0 && fbidx < macsurf_bookmark_count) {
+			macos9_bookmark_set_parent(macsurf_bookmarks[src_bidx].id,
+				macsurf_bookmarks[fbidx].id);
+			did_move = 1;
+		}
+	}
+	return did_move;
+}
+
 void macos9_bookmark_window_show(struct gui_window *g)
 {
 	WindowRef win;
@@ -1785,6 +1851,13 @@ void macos9_bookmark_window_show(struct gui_window *g)
 				BeginUpdate(win);
 				EndUpdate(win);
 				dirty = 1;
+			} else {
+				/* fixes709 — repaint a background browser window we
+				 * uncovered while being dragged, so it doesn't stay
+				 * white. Restore our port afterwards. */
+				extern void macos9_handle_update(const EventRecord *event);
+				macos9_handle_update(&ev);
+				SetPortWindowPort(win);
 			}
 			break;
 		case mouseDown: {
@@ -1865,7 +1938,15 @@ void macos9_bookmark_window_show(struct gui_window *g)
 			}
 			if (PtInRect(lp, &list)) {
 				int idx = scroll_top + (lp.v - (list.top + 2)) / row_h;
-				if (idx >= 0 && idx < nrows) sel = idx;
+				if (idx >= 0 && idx < nrows) {
+					sel = idx;
+					/* fixes710 — drag a bookmark onto a folder to
+					 * move it (folders/headers aren't draggable). */
+					if (!rows[idx].is_folder &&
+					    bw_try_drag(rows, nrows, idx, &list,
+							scroll_top, row_h))
+						rebuilt = 1;
+				}
 			}
 			break;
 		}

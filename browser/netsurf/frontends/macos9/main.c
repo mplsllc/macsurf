@@ -480,7 +480,9 @@ static void macos9_erase_content_base(const Rect *r)
 	RGBBackColor(&sv_bk);
 }
 
-static void macos9_handle_update(const EventRecord *event) {
+/* fixes709 — non-static so the modal manager windows (macos9_chrome_extras.c)
+ * can repaint background browser windows exposed while they're dragged. */
+void macos9_handle_update(const EventRecord *event) {
 #ifdef __MACOS9__
 	WindowRef win = (WindowRef)(unsigned long)event->message;
 	struct gui_window *gw = macos9_find_window(win);
