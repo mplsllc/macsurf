@@ -1054,6 +1054,11 @@ static void macos9__set_title_impl(struct gui_window *g, const char *t) {
 	p[0] = (unsigned char)out_l;
 	memcpy(p + 1, mac_buf, out_l);
 	SetWTitle(g->window, p);
+	/* fixes698 (#47) — record the visit in the persistent history store.
+	 * This is the point where both the committed URL (from the browser
+	 * window) and the human page title are known; macos9_history_record
+	 * pulls the URL itself and ignores non-http(s) schemes. */
+	macos9_history_record(g, t);
 }
 
 /* fixes319 — non-static so the JS bridge can drive document.title from

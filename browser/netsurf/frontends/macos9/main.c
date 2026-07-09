@@ -239,10 +239,13 @@ static void macos9_init_menus(void) {
 		InsertMenu(bookmark_menu, 0);
 	}
 
-	/* fixes694 (#47) — History menu. Whole menu is dynamic (recent visits,
-	 * most-recent first), rebuilt from urldb on each menu-bar click. */
+	/* fixes694/698 (#47) — History menu. Item 1 = Clear History, item 2 =
+	 * separator, items 3+ = recent visits (most-recent first) filled in by
+	 * macos9_history_init below and rebuilt on each menu-bar click. */
 	{
 		MenuHandle history_menu = NewMenu(MENU_HISTORY, "\pHistory");
+		AppendMenu(history_menu, "\pClear History");
+		AppendMenu(history_menu, "\p(-");
 		InsertMenu(history_menu, 0);
 	}
 
@@ -382,12 +385,15 @@ static void macos9_handle_menu(short menu_id, short item) {
 		}
 		break;
 	case MENU_HISTORY:
-		/* fixes694 (#47) — every item is a recent-visit entry; navigate
-		 * the front window to it. Menu was refreshed on the menu-bar click. */
+		/* fixes694/698 (#47) — item 1 clears history; items >= 3 are
+		 * recent-visit entries (item 2 is the separator, never selectable)
+		 * and navigate the front window. Menu refreshed on menu-bar click. */
 		front = FrontWindow();
 		gw = front ? macos9_find_window(front) : NULL;
 		if (gw == NULL) break;
-		if (item >= ITEM_HIST_FIRST) {
+		if (item == ITEM_HIST_CLEAR) {
+			macos9_history_clear();
+		} else if (item >= ITEM_HIST_FIRST) {
 			macos9_history_navigate(gw, item);
 		}
 		break;

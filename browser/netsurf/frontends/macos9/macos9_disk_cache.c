@@ -692,6 +692,109 @@ void macos9_bookmarks_save(const char *buf, long len)
 #endif
 }
 
+/* ------------------------------------------------------------------ */
+/* fixes698 (#47) — persistent visit HISTORY store. A "MacSurf History" */
+/* text file next to bookmarks in the MacSurfData root, moved by the   */
+/* same FSSpec binary I/O (NOT MSL fopen). chrome_extras.c owns the    */
+/* "ts<TAB>url<TAB>title\n" (de)serialization; these move the bytes.   */
+/* NetSurf's own urldb is session-only and exposes no clear API, so    */
+/* MacSurf keeps its own store so history survives relaunch and can be */
+/* cleared. Every failure is a silent no-op.                           */
+/* ------------------------------------------------------------------ */
+
+long macos9_history_load(char *out_buf, long buf_cap)
+{
+#ifdef __MACOS9__
+	OSErr err;
+	short vRef;
+	long dirID;
+	FSSpec spec;
+	unsigned char fname[32];
+	short ref = 0;
+	long count;
+	const char *name = "MacSurf History";
+	size_t nlen;
+
+	if (out_buf == NULL || buf_cap <= 0) return 0;
+	out_buf[0] = '\0';
+
+	err = macsurfdata_dir_get(NULL, &vRef, &dirID);
+	if (err != noErr) return 0;
+
+	nlen = strlen(name);
+	if (nlen > 31) nlen = 31;
+	fname[0] = (unsigned char)nlen;
+	memcpy(fname + 1, name, nlen);
+
+	err = FSMakeFSSpec(vRef, dirID, fname, &spec);
+	if (err != noErr) return 0;
+	if (FSpOpenDF(&spec, fsRdPerm, &ref) != noErr) return 0;
+
+	count = buf_cap - 1;
+	if (FSRead(ref, &count, out_buf) != noErr && count == 0) {
+		FSClose(ref);
+		return 0;
+	}
+	FSClose(ref);
+	if (count < 0) count = 0;
+	if (count >= buf_cap) count = buf_cap - 1;
+	out_buf[count] = '\0';
+	macsurf_debug_log_writef("history LOAD count=%ld bytes", count);
+	return count;
+#else
+	(void)out_buf; (void)buf_cap;
+	return 0;
+#endif
+}
+
+void macos9_history_save(const char *buf, long len)
+{
+#ifdef __MACOS9__
+	OSErr err;
+	short vRef;
+	long dirID;
+	FSSpec spec;
+	unsigned char fname[32];
+	short ref = 0;
+	long count;
+	const char *name = "MacSurf History";
+	size_t nlen;
+
+	if (buf == NULL || len < 0) return;
+
+	err = macsurfdata_dir_get(NULL, &vRef, &dirID);
+	if (err != noErr) return;
+
+	nlen = strlen(name);
+	if (nlen > 31) nlen = 31;
+	fname[0] = (unsigned char)nlen;
+	memcpy(fname + 1, name, nlen);
+
+	err = FSMakeFSSpec(vRef, dirID, fname, &spec);
+	if (err == fnfErr) {
+		err = FSpCreate(&spec, 'MPLS', 'TEXT', smSystemScript);
+		if (err != noErr) return;
+		err = FSMakeFSSpec(vRef, dirID, fname, &spec);
+		if (err != noErr) return;
+	} else if (err != noErr) {
+		return;
+	}
+
+	if (FSpOpenDF(&spec, fsRdWrPerm, &ref) != noErr) return;
+	(void)SetEOF(ref, 0);
+	if (len > 0) {
+		count = len;
+		(void)FSWrite(ref, &count, buf);
+	}
+	SetEOF(ref, len);
+	FSClose(ref);
+	(void)FlushVol(NULL, vRef);
+	macsurf_debug_log_writef("history SAVE len=%ld", len);
+#else
+	(void)buf; (void)len;
+#endif
+}
+
 /* fixes647 — downloads land in MacSurfData/Downloads (was the standalone
  * "MacSurf Downloads" folder). Same shared MacSurfData root as cache and
  * bookmarks, so there's one folder next to the app, not several. */
