@@ -28,7 +28,7 @@
   <a href="https://discord.gg/mrwZK8zHr2" target="_blank"><img src="https://github.com/mplsllc/macsurf/blob/master/img/discord.jpeg" alt="Join our Discord!" height="46"></a>
 </p>
 
-<p align="center"><sub><strong>Thanks to our supporters:</strong> Shlooom (Patreon) &middot; kilgeist (Ko-Fi)</sub></p>
+<p align="center"><sub><strong>Thanks to our supporters:</strong> Shlooom (Patreon) &middot; kilgeist, Turuun (Ko-Fi)</sub></p>
 
 ---
 
