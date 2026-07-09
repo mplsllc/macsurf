@@ -478,6 +478,15 @@ macsurf_debug_log_close(void)
 static char g_log_buf[LOG_BUF_CAP];
 static long g_log_buf_pos = 0;
 
+/* fixes704 — durable EARLY logging. The first LOG_EAGER_LINES actually-
+ * written lines of a session flush straight to disk (buffer flush +
+ * FlushVol) so a freeze/hang during startup still leaves the very
+ * beginning on disk. After that we fall back to the fast buffered path
+ * (fixes261) so page loads aren't slowed by per-line HFS sync. OS 9 is one
+ * process per launch, so the file-scope initializer sets this once per run. */
+#define LOG_EAGER_LINES 250
+static long g_log_eager_left = LOG_EAGER_LINES;
+
 static void
 macsurf_debug_log_buffer_flush(void)
 {
@@ -736,6 +745,15 @@ macsurf_debug_log_write(const char *msg)
 		g_log_buf_pos += (long)mlen;
 	}
 	g_log_buf[g_log_buf_pos++] = '\r';
+
+	/* fixes704 — flush the first LOG_EAGER_LINES lines straight to disk so a
+	 * freeze/hang during startup still leaves the very beginning on disk.
+	 * After the budget is spent we return to the fast buffered path. */
+	if (g_log_eager_left > 0) {
+		g_log_eager_left--;
+		macsurf_debug_log_buffer_flush();
+		if (g_log_vref != 0) (void)FlushVol(NULL, g_log_vref);
+	}
 
 	/*
 	 * fixes96 — per-write FlushVol REMOVED. It was synchronously
