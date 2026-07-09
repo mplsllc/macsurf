@@ -416,19 +416,29 @@ macsurf_debug_log_init(void)
 
 	(void)SetFPos(g_log_ref, fsFromLEOF, 0);
 
-	macsurf_debug_log_write("");
-	macsurf_debug_log_write("========================================");
+	/* fixes703 — prominent, unmistakable session header so a log that spans
+	 * several launches (the reporter didn't clear it) is trivially segmented.
+	 * Every line is '='-led so it survives the crash-only gate (fixes697).
+	 * __DATE__/__TIME__ stamp the BUILD (distinguishes two different .sit's);
+	 * the GetDateTime line stamps this LAUNCH. */
+	macsurf_debug_log_write(
+		"====================================================================");
+	macsurf_debug_log_write(
+		"=====================   N E W   S E S S I O N   ====================");
+	macsurf_debug_log_writef(
+		"===  MacSurf 1.68.2   (build %s %s)", __DATE__, __TIME__);
 	{
 		unsigned long secs = 0;
 		DateTimeRec dtr;
 		GetDateTime(&secs);
 		SecondsToDate(secs, &dtr);
 		macsurf_debug_log_writef(
-			"=== MacSurf session %d-%d-%d %d:%d:%d ===",
+			"===  launched %d-%d-%d  %d:%d:%d",
 			(int)dtr.year, (int)dtr.month, (int)dtr.day,
 			(int)dtr.hour, (int)dtr.minute, (int)dtr.second);
 	}
-	macsurf_debug_log_write("========================================");
+	macsurf_debug_log_write(
+		"====================================================================");
 	macsurf_debug_log_writef("log init OK vref=%d dirID=%ld fsref=%d",
 		(int)vRefNum, (long)dirID, (int)g_log_ref);
 	/* fixes96 — explicit checkpoint: the startup banner needs to be
