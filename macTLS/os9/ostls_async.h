@@ -126,6 +126,8 @@ typedef struct OSTLSDiagnostics {
     UInt32 ot_recv_nodata;      /* OTRcv returned kOTNoDataErr         */
     UInt32 pump_calls;
     UInt32 br_state_last;       /* last br_ssl_engine_current_state    */
+    int    hs_fail_site;        /* fixes701 (#206): TLS13_FAIL_* step   */
+    int    hs_state;            /* fixes701 (#206): tls13 hs state      */
 } OSTLSDiagnostics;
 
 /*

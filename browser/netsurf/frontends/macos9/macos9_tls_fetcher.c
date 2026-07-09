@@ -2052,6 +2052,24 @@ static void hctx_poll(struct macos9_https_ctx *c)
 	}
 
 	if (ev == kOSTLSEventFailed) {
+		/* fixes701 (#206) — surface the exact macTLS failure so a hardware
+		 * log pinpoints why a P-384/HRR handshake dies. br_err is the tls13
+		 * hs->error; hs_fail=TLS13_FAIL_* names the step (6=ECDH math,
+		 * 5=group mismatch, 7=keygen, 3=no key_share, ...); hs_state is the
+		 * tls13 handshake state. "TLS-FAIL" survives the crash-only gate. */
+		if (c->conn != NULL) {
+			OSTLSDiagnostics fd;
+			memset(&fd, 0, sizeof fd);
+			OSTLS_GetDiagnostics(c->conn, &fd);
+			macsurf_debug_log_writef(
+				"https: TLS-FAIL host=%s br_err=%d hs_fail=%d hs_state=%d "
+				"os_err=%d ot_err=%ld br_state=%ld suite=%d",
+				c->host[0] ? c->host : "(unset)",
+				(int)fd.br_err, (int)fd.hs_fail_site, (int)fd.hs_state,
+				(int)fd.os_err, (long)fd.ot_err,
+				(long)fd.br_state_last,
+				(int)fd.cipher_suite);
+		}
 		/* fixes228 — retry once on early-stage handshake failure.
 		 * CF / Google CDN sometimes drop the first connection but
 		 * accept the second cleanly. Only retry if no app data yet. */

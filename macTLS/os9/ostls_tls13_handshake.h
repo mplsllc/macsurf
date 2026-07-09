@@ -220,6 +220,12 @@ typedef struct {
     /* Error code from BearSSL (if handshake fails) */
     int                 error;
 
+    /* fixes701 (#206) — diagnostic: which handshake step failed. 0 = none;
+     * see the TLS13_FAIL_* codes in the .c. Surfaced via OSTLSDiagnostics so
+     * a hardware log pinpoints WHY a P-384/HRR handshake dies (ECDH math vs.
+     * group mismatch vs. keygen vs. CH build), instead of a bare br_err. */
+    int                 fail_site;
+
     /* Session resumption (macTLS#2). res_master is the
      * resumption_master_secret, derived at SendFinished while ks.secret
      * still holds the Master Secret; it lives for the connection so any

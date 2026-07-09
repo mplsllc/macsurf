@@ -99,6 +99,19 @@ void tls13_transcript_snapshot(const tls13_transcript *t,
     }
 }
 
+/* fixes701 (#206) — handshake failure-site markers. Written into
+ * hs->fail_site at each critical failure return so a hardware log shows
+ * exactly WHERE a P-384/HRR handshake dies, not just a bare br_err.
+ * Surfaced via OSTLSDiagnostics.hs_fail_site -> the fetcher's TLS-FAIL log. */
+#define TLS13_FAIL_HRR_GROUP_UNSUPP  1  /* HRR named a group we don't support */
+#define TLS13_FAIL_HRR_DOUBLE        2  /* second HRR (RFC forbids)            */
+#define TLS13_FAIL_SH_NO_KEYSHARE    3  /* ServerHello lacked a key_share      */
+#define TLS13_FAIL_SH_HASH_MISMATCH  4  /* suite hash != transcript hash       */
+#define TLS13_FAIL_SH_GROUP_MISMATCH 5  /* server share group != our share     */
+#define TLS13_FAIL_ECDH_COMPUTE      6  /* tls13_ecdh_shared failed (curve math)*/
+#define TLS13_FAIL_KEYGEN            7  /* tls13_generate_keypair failed        */
+#define TLS13_FAIL_CH_BUILD          8  /* tls13_build_client_hello failed      */
+
 void tls13_transcript_reset_for_hrr(tls13_transcript *t)
 {
     /*
@@ -1073,6 +1086,7 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
         if (hs->hrr_received) {
             /* RFC 8446: only one HRR allowed */
             hs->error = BR_ERR_UNEXPECTED;
+            hs->fail_site = TLS13_FAIL_HRR_DOUBLE;
             return kTLS13_Error;
         }
         hs->hrr_received = 1;
@@ -1084,6 +1098,7 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
          */
         if (tls13_br_curve_for_group(server_share_group) == 0) {
             hs->error = BR_ERR_BAD_PARAM;
+            hs->fail_site = TLS13_FAIL_HRR_GROUP_UNSUPP;
             return kTLS13_Error;
         }
         hs->hrr_group = server_share_group;
@@ -1111,6 +1126,7 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
      */
     if (!found_key_share) {
         hs->error = BR_ERR_BAD_PARAM;
+        hs->fail_site = TLS13_FAIL_SH_NO_KEYSHARE;
         return kTLS13_Error;
     }
 
@@ -1134,6 +1150,7 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
              * error since our preferred suites all use SHA-256.
              */
             hs->error = BR_ERR_BAD_CIPHER_SUITE;
+            hs->fail_site = TLS13_FAIL_SH_HASH_MISMATCH;
             return kTLS13_Error;
         }
     }
@@ -1160,6 +1177,7 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
         /* The server must answer with the group we key_shared. */
         if (server_share_group != hs->ecdhe_group) {
             hs->error = BR_ERR_BAD_PARAM;
+            hs->fail_site = TLS13_FAIL_SH_GROUP_MISMATCH;
             return kTLS13_Error;
         }
         ret = tls13_ecdh_shared(hs->ecdhe_group,
@@ -1168,6 +1186,7 @@ static tls13_hs_result tls13_parse_server_hello(tls13_hs_ctx *hs,
                                 shared_secret, &shared_len);
         if (ret != 0) {
             hs->error = BR_ERR_BAD_PARAM;
+            hs->fail_site = TLS13_FAIL_ECDH_COMPUTE;
             return kTLS13_Error;
         }
 
@@ -2595,6 +2614,7 @@ static tls13_hs_result tls13_state_send_client_hello(tls13_hs_ctx *hs,
         ret = tls13_generate_keypair(hs, kg, &rng);
         if (ret != 0) {
             hs->error = BR_ERR_BAD_STATE;
+            hs->fail_site = TLS13_FAIL_KEYGEN;
             return kTLS13_Error;
         }
     }
@@ -2603,6 +2623,7 @@ static tls13_hs_result tls13_state_send_client_hello(tls13_hs_ctx *hs,
     ret = tls13_build_client_hello(hs, hostname, &rng);
     if (ret != 0) {
         hs->error = BR_ERR_TOO_LARGE;
+        hs->fail_site = TLS13_FAIL_CH_BUILD;
         return kTLS13_Error;
     }
 

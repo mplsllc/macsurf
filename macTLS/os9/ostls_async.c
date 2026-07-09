@@ -2119,6 +2119,8 @@ OSTLS_GetDiagnostics(OSTLSConnection *conn,
         out_diag->ot_recv_nodata = 0;
         out_diag->pump_calls     = 0;
         out_diag->br_state_last  = 0;
+        out_diag->hs_fail_site   = 0;
+        out_diag->hs_state       = 0;
         return;
     }
     out_diag->os_err         = conn->os_err;
@@ -2135,6 +2137,10 @@ OSTLS_GetDiagnostics(OSTLSConnection *conn,
     out_diag->ot_recv_nodata = conn->dbg_ot_recv_nodata;
     out_diag->pump_calls     = conn->dbg_pump_calls;
     out_diag->br_state_last  = conn->br_state_last;
+    /* fixes701 (#206): read the tls13 failure step + state straight from
+     * the live handshake context (valid until conn dispose). */
+    out_diag->hs_fail_site   = (conn->hs13 != NULL) ? conn->hs13->fail_site : 0;
+    out_diag->hs_state       = (conn->hs13 != NULL) ? (int)conn->hs13->state : 0;
 }
 
 void *
