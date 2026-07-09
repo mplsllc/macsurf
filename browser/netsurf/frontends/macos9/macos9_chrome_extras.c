@@ -1680,25 +1680,49 @@ static int bw_build_rows(struct bw_row *rows, int cap)
 	return n;
 }
 
-/* Cycle a bookmark's parent to the next folder (root -> folder1 -> ... ->
- * root). No-op for a folder row. */
-static void bw_move_next(int bidx)
+/* fixes708 — move a bookmark into a folder via a POPUP picker (replaces the
+ * confusing "cycle to next folder" Move). Pops a menu of "Top Level" + every
+ * folder at the given global point; the choice becomes the bookmark's parent.
+ * No-op for a folder row. */
+#define BW_MOVE_POPUP_ID 250
+static void bw_move_via_picker(int bidx, short glob_top, short glob_left)
 {
-	int folders[MACSURF_BOOKMARKS_MAX + 1];
-	int nf = 0, i, cur = -1, next;
-	int cur_parent;
+	MenuHandle pm;
+	int folder_ids[MACSURF_BOOKMARKS_MAX + 1];
+	int nf = 0, i, cur_item = 1;
+	long chosen;
 	if (bidx < 0 || bidx >= macsurf_bookmark_count) return;
 	if (macsurf_bookmarks[bidx].is_folder) return;
-	folders[nf++] = 0;   /* root */
-	for (i = 0; i < macsurf_bookmark_count; i++)
-		if (macsurf_bookmarks[i].is_folder)
-			folders[nf++] = macsurf_bookmarks[i].id;
-	if (nf <= 1) return; /* no folders to move into */
-	cur_parent = macsurf_bookmarks[bidx].parent_id;
-	for (i = 0; i < nf; i++) if (folders[i] == cur_parent) { cur = i; break; }
-	if (cur < 0) cur = 0;
-	next = (cur + 1) % nf;
-	macos9_bookmark_set_parent(macsurf_bookmarks[bidx].id, folders[next]);
+	pm = NewMenu(BW_MOVE_POPUP_ID, "\pMove");
+	if (pm == NULL) return;
+	AppendMenu(pm, "\pTop Level");
+	folder_ids[nf++] = 0;
+	for (i = 0; i < macsurf_bookmark_count && nf <= MACSURF_BOOKMARKS_MAX; i++) {
+		Str255 pt;
+		const char *nm;
+		size_t ln;
+		if (!macsurf_bookmarks[i].is_folder) continue;
+		nm = (macsurf_bookmarks[i].label[0] != '\0')
+			? macsurf_bookmarks[i].label : "(folder)";
+		ln = strlen(nm); if (ln > 80) ln = 80;
+		pt[0] = (unsigned char)ln;
+		memcpy(pt + 1, nm, ln);
+		AppendMenu(pm, "\px");
+		SetMenuItemText(pm, (short)(nf + 1), pt);
+		if (macsurf_bookmarks[i].id == macsurf_bookmarks[bidx].parent_id)
+			cur_item = nf + 1;   /* pre-highlight current folder */
+		folder_ids[nf++] = macsurf_bookmarks[i].id;
+	}
+	InsertMenu(pm, hierMenu);
+	chosen = PopUpMenuSelect(pm, glob_top, glob_left, (short)cur_item);
+	DeleteMenu(BW_MOVE_POPUP_ID);
+	DisposeMenu(pm);
+	if (chosen != 0) {
+		int item = (int)(chosen & 0xFFFF);
+		if (item >= 1 && item <= nf)
+			macos9_bookmark_set_parent(
+				macsurf_bookmarks[bidx].id, folder_ids[item - 1]);
+	}
 }
 
 void macos9_bookmark_window_show(struct gui_window *g)
@@ -1821,8 +1845,12 @@ void macos9_bookmark_window_show(struct gui_window *g)
 				rebuilt = 1; break;
 			}
 			if (PtInRect(lp, &mv)) {
-				if (sel >= 0 && sel < nrows)
-					bw_move_next(rows[sel].bidx);
+				Point gp;
+				if (sel >= 0 && sel < nrows && !rows[sel].is_folder) {
+					gp.h = mv.left; gp.v = mv.top;
+					LocalToGlobal(&gp);
+					bw_move_via_picker(rows[sel].bidx, gp.v, gp.h);
+				}
 				rebuilt = 1; break;
 			}
 			if (PtInRect(lp, &go)) {
