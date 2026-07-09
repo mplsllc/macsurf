@@ -670,6 +670,15 @@ void macos9_https_forget_host_key(const char *key)
 	}
 }
 
+/* Public: forget ALL session dead-host + terminal-URL state (used by the
+ * Clear Cache menu item so a wipe takes effect immediately, no relaunch). */
+void macos9_https_forget_all(void)
+{
+	dead_hosts_count = 0;
+	terminal_urls_count = 0;
+	macsurf_debug_log_writef("https: dead-host FORGET ALL");
+}
+
 /* Public: forget the dead/terminal state for the host of an explicit
  * navigation URL. Parses "scheme://host[:port]" and defaults the port.
  * Called from macos9_window_navigate. Silent no-op if it can't parse. */

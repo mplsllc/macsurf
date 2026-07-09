@@ -247,6 +247,7 @@ static void macos9_init_menus(void) {
 		MenuHandle history_menu = NewMenu(MENU_HISTORY, "\pHistory");
 		AppendMenu(history_menu, "\pShow All History/H");
 		AppendMenu(history_menu, "\pClear History");
+		AppendMenu(history_menu, "\pClear Cache");
 		AppendMenu(history_menu, "\p(-");
 		InsertMenu(history_menu, 0);
 	}
@@ -399,6 +400,8 @@ static void macos9_handle_menu(short menu_id, short item) {
 			macos9_history_window_show(gw);
 		} else if (item == ITEM_HIST_CLEAR) {
 			macos9_history_clear();
+		} else if (item == ITEM_HIST_CLEAR_CACHE) {
+			macos9_cache_clear_ui();
 		} else if (item >= ITEM_HIST_FIRST) {
 			macos9_history_navigate(gw, item);
 		}

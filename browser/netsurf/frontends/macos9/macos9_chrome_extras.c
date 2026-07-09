@@ -951,6 +951,30 @@ void macos9_history_clear(void)
 	macos9_history_menu_rebuild();
 }
 
+/* fixes706 — Clear Cache menu handler: wipe the disk cache (cached bodies +
+ * the old deadhosts.txt) and the in-memory dead-host state, then report the
+ * count. Bookmarks / history / cookies (MacSurfData root) are untouched. */
+void macos9_cache_clear_ui(void)
+{
+#ifdef __MACOS9__
+	extern long macos9_cache_clear(void);
+	extern void macos9_https_forget_all(void);
+	long n;
+	Str255 msg;
+	char buf[80];
+	short item;
+	n = macos9_cache_clear();
+	macos9_https_forget_all();
+	sprintf(buf, "Cleared %ld cached file%s from disk.",
+		n, (n == 1) ? "" : "s");
+	c_to_pstring(buf, msg);
+	StandardAlert(kAlertNoteAlert, msg, "\p", NULL, &item);
+#else
+	extern long macos9_cache_clear(void);
+	(void)macos9_cache_clear();
+#endif
+}
+
 /* Read-only accessors for the manager window (fixes699), same TU. */
 int  macos9_history_count(void) { return macsurf_hist_n; }
 long macos9_history_entry_ts(int i)

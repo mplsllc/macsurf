@@ -586,6 +586,60 @@ void macos9_deadhost_clear(void)
 #endif
 }
 
+/* fixes706 (#Delete Cache) — empty the disk cache: delete every file in the
+ * MacSurfData/Cache folder (cached bodies "h_xxxxxxxx" + deadhosts.txt).
+ * Bookmarks / history / cookies live at the MacSurfData ROOT, not under
+ * Cache/, so they are untouched. Returns the number of files deleted. */
+long macos9_cache_clear(void)
+{
+#ifdef __MACOS9__
+	short vRef;
+	long dirID;
+	short idx;
+	long deleted = 0;
+
+	if (cache_dir_get(&vRef, &dirID) != noErr) return 0;
+
+	/* Enumerate by directory index. On a successful delete the directory
+	 * compacts, so the next entry slides into the same index — keep idx.
+	 * On a subdirectory or an undeletable entry, advance idx to skip it.
+	 * PBGetCatInfoSync returning an error means "no entry at this index" =
+	 * done. A safety cap bounds a pathological loop. */
+	idx = 1;
+	while (idx > 0 && deleted < 100000L) {
+		CInfoPBRec pb;
+		Str63 nm;
+		FSSpec spec;
+		OSErr err;
+
+		nm[0] = 0;
+		memset(&pb, 0, sizeof pb);
+		pb.hFileInfo.ioNamePtr = nm;
+		pb.hFileInfo.ioVRefNum = vRef;
+		pb.hFileInfo.ioDirID = dirID;
+		pb.hFileInfo.ioFDirIndex = idx;
+		err = PBGetCatInfoSync(&pb);
+		if (err != noErr) break;   /* no more entries */
+
+		if ((pb.hFileInfo.ioFlAttrib & 0x10) != 0) {
+			idx++;                 /* a subdirectory — skip it */
+			continue;
+		}
+		if (FSMakeFSSpec(vRef, dirID, nm, &spec) == noErr &&
+		    FSpDelete(&spec) == noErr) {
+			deleted++;             /* keep idx: list compacted */
+		} else {
+			idx++;                 /* couldn't delete — skip past it */
+		}
+	}
+	(void)FlushVol(NULL, vRef);
+	macsurf_debug_log_writef("cache CLEAR deleted=%ld files", deleted);
+	return deleted;
+#else
+	return 0;
+#endif
+}
+
 /* ------------------------------------------------------------------ */
 /* fixes645 (#48) — bookmark persistence across launches.             */
 /*                                                                    */

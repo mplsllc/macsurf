@@ -65,6 +65,11 @@ long macos9_deadhost_load(char *out_buf, long buf_cap);
 void macos9_deadhost_save(const char *buf, long len);
 void macos9_deadhost_clear(void);
 
+/* fixes706 — empty the disk cache (all cached bodies + deadhosts.txt under
+ * MacSurfData/Cache). Bookmarks/history/cookies at the root are untouched.
+ * Returns the count of files deleted. */
+long macos9_cache_clear(void);
+
 /* fixes368 (#167) — cookie-jar persistence across launches so a Facebook
  * (or any) login survives a relaunch. Call macos9_cookies_load() once at
  * startup (after netsurf_init, before the event loop) and
