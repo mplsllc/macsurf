@@ -613,64 +613,92 @@ static void dead_host_add(const char *key)
 	macsurf_debug_log_writef("https: dead-host ADD %s count=%d",
 		key, dead_hosts_count);
 
-	/* fixes256 — re-enable persistence to disk. fixes244 disabled this
-	 * because fixes238 had no notion of "host has never succeeded"; a
-	 * transient timeout on mactrove late in a session was persisted and
-	 * poisoned subsequent sessions. The success_host_check guard added
-	 * in fixes244 now ensures dead_host_add is refused for any host
-	 * we've successfully fetched at any point, so the file only ever
-	 * accumulates truly-dead hosts (fonts.googleapis.com etc.). Saves
-	 * the 4s fonts.googleapis timeout on every cold-load of every
-	 * subsequent session. */
+	/* fixes705 — persistence to disk REMOVED. The list is now purely
+	 * session-scoped (in-memory). It still fast-fails a genuinely-dead host
+	 * for the rest of THIS session (killing the jsdelivr subresource storm
+	 * and the per-subresource 4s NO_PROGRESS timeout), but it NEVER survives
+	 * a relaunch. The old deadhosts.txt (written into the Cache folder,
+	 * loaded at every launch, no TTL) let a single transient TLS failure on
+	 * a site's MAIN document poison that host permanently — the site then
+	 * fast-failed to a BLANK page before any fetch was even attempted, and
+	 * the only cure was deleting the cache. success_host_check only ever
+	 * covered same-session successes, so a host whose first-ever event was a
+	 * transient failure could never self-heal. Removing persistence (plus
+	 * macos9_https_forget_host on explicit navigation, below) closes that.
+	 * Cost: fonts.googleapis.com etc. eat one 4s timeout per session again —
+	 * cheap next to permanently-blank sites. */
+}
+
+/* fixes705 — remove a host:port from the in-session dead list (and any
+ * terminal-URL entries under it), so an EXPLICIT user navigation always gets
+ * a fresh attempt even if that host fast-failed earlier this session.
+ * Subresource storms don't route through here, so their in-page fast-fail
+ * protection is untouched. Only ever REMOVES entries — cannot break a fetch. */
+void macos9_https_forget_host_key(const char *key)
+{
+	int i, j;
+	if (key == NULL || key[0] == '\0') return;
+	for (i = 0; i < dead_hosts_count; i++) {
+		if (strcmp(dead_hosts[i], key) != 0) continue;
+		for (j = i; j < dead_hosts_count - 1; j++)
+			strncpy(dead_hosts[j], dead_hosts[j + 1], HTTPS_POOL_KEY_LEN);
+		dead_hosts_count--;
+		macsurf_debug_log_writef("https: dead-host FORGET %s", key);
+		break;
+	}
+	/* forget terminal-URL entries whose host part matches this key's host */
 	{
-		char ser[HTTPS_DEADHOSTS * (HTTPS_POOL_KEY_LEN + 2) + 4];
-		long pos = 0;
-		int j;
-		for (j = 0; j < dead_hosts_count; j++) {
-			long elen = (long)strlen(dead_hosts[j]);
-			if (pos + elen + 1 >= (long)sizeof ser) break;
-			memcpy(ser + pos, dead_hosts[j], elen);
-			pos += elen;
-			ser[pos++] = '\n';
+		size_t klen = strlen(key);
+		const char *colon = strrchr(key, ':');
+		size_t hlen = colon ? (size_t)(colon - key) : klen;
+		i = 0;
+		while (i < terminal_urls_count) {
+			const char *u = terminal_urls[i];
+			const char *h = NULL;
+			/* find host start after scheme "://" */
+			const char *p = strstr(u, "://");
+			if (p != NULL) h = p + 3; else h = u;
+			if (h != NULL && strncmp(h, key, hlen) == 0 &&
+			    (h[hlen] == '/' || h[hlen] == ':' || h[hlen] == '\0')) {
+				for (j = i; j < terminal_urls_count - 1; j++)
+					strcpy(terminal_urls[j], terminal_urls[j + 1]);
+				terminal_urls_count--;
+				continue;   /* re-check the slot we shifted down */
+			}
+			i++;
 		}
-		if (pos < (long)sizeof ser) ser[pos] = '\0';
-		macos9_deadhost_save(ser, pos);
 	}
 }
 
-/* fixes256 — load persisted dead-host list at startup. Parses
- * "host:port\n" lines and populates the in-memory array. Called from
- * macos9_https_fetcher_register. */
-static void dead_host_load_from_disk(void)
+/* Public: forget the dead/terminal state for the host of an explicit
+ * navigation URL. Parses "scheme://host[:port]" and defaults the port.
+ * Called from macos9_window_navigate. Silent no-op if it can't parse. */
+void macos9_https_forget_host(const char *url)
 {
-	char buf[HTTPS_DEADHOSTS * (HTTPS_POOL_KEY_LEN + 2) + 4];
-	long blen;
-	long pos = 0;
-
-	blen = macos9_deadhost_load(buf, (long)sizeof(buf));
-	if (blen <= 0) return;
-
-	while (pos < blen && dead_hosts_count < HTTPS_DEADHOSTS) {
-		long line_start = pos;
-		long line_end;
-		long line_len;
-		while (pos < blen && buf[pos] != '\n' && buf[pos] != '\r')
-			pos++;
-		line_end = pos;
-		while (pos < blen && (buf[pos] == '\n' || buf[pos] == '\r'))
-			pos++;
-		line_len = line_end - line_start;
-		if (line_len <= 0) continue;
-		if (line_len >= HTTPS_POOL_KEY_LEN)
-			line_len = HTTPS_POOL_KEY_LEN - 1;
-		memcpy(dead_hosts[dead_hosts_count], buf + line_start,
-			line_len);
-		dead_hosts[dead_hosts_count][line_len] = '\0';
-		macsurf_debug_log_writef(
-			"https: dead-host PRELOAD %s",
-			dead_hosts[dead_hosts_count]);
-		dead_hosts_count++;
-	}
+	const char *h, *p, *e;
+	char host[HTTPS_POOL_KEY_LEN];
+	char key[HTTPS_POOL_KEY_LEN];
+	size_t hlen;
+	int port;
+	int https;
+	if (url == NULL) return;
+	https = (strncmp(url, "https://", 8) == 0);
+	p = strstr(url, "://");
+	h = (p != NULL) ? p + 3 : url;
+	/* host runs until ':' (port), '/' (path), or end */
+	e = h;
+	while (*e != '\0' && *e != '/' && *e != ':') e++;
+	hlen = (size_t)(e - h);
+	/* host[256] matches c->host; the +":port" then fits key[HTTPS_POOL_KEY_LEN
+	 * =280] with room to spare (no sprintf overflow). A longer host can't
+	 * match any real pool_key anyway. */
+	if (hlen == 0 || hlen >= 256) return;
+	memcpy(host, h, hlen);
+	host[hlen] = '\0';
+	port = https ? 443 : 80;
+	if (*e == ':') port = atoi(e + 1);
+	if (sprintf(key, "%s:%d", host, port) < 0) return;
+	macos9_https_forget_host_key(key);
 }
 
 /* ---------- keep-alive pool (fixes231) ---------- */
@@ -2602,12 +2630,11 @@ nserror macos9_https_fetcher_register(void)
 {
 	struct fetcher_operation_table ops;
 	lwc_string *ss;
-	/* fixes256 — preload the dead-host blocklist from disk so the first
-	 * fetch of a previously-broken host (fonts.googleapis.com etc.)
-	 * fast-fails instead of paying the 4s timeout. Safe because
-	 * dead_host_add (paired with success_host_check) refuses to
-	 * persist any host that ever succeeded in any session. */
-	dead_host_load_from_disk();
+	/* fixes705 — no dead-host preload from disk. The blocklist is now
+	 * session-only (see dead_host_add) so a stale persisted entry can no
+	 * longer blank a working site on launch. Purge any deadhosts.txt left by
+	 * an older build so already-poisoned installs self-heal on first launch. */
+	macos9_deadhost_clear();
 	ops.initialise = macos9_https_initialise;
 	ops.acceptable = macos9_https_acceptable;
 	ops.setup      = macos9_https_setup;

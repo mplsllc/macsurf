@@ -424,6 +424,15 @@ void macos9_window_navigate(struct gui_window *g, const char *u) {
 	MS_LOG(u ? u : "(null)");
 	if(!g||!u||!u[0]) { MS_LOG("nav: no g or empty u"); return; }
 	if(!g->bw) { MS_LOG("nav: no bw"); return; }
+	/* fixes705 — an explicit user navigation means "load this now": clear any
+	 * session dead-host / terminal mark for the target so a host that
+	 * transiently failed earlier this session gets a fresh attempt instead of
+	 * fast-failing to a blank page. Sub-resource fetches don't come through
+	 * here, so their in-page storm protection is untouched. */
+	{
+		extern void macos9_https_forget_host(const char *url);
+		macos9_https_forget_host(u);
+	}
 	uu_len = (long)strlen(u);
 	macsurf_debug_log_writef("nav: url len=%ld bytes", uu_len);
 	for(i = 0; u[i] != 0; i++) {
