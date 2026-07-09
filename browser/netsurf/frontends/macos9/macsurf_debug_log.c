@@ -489,6 +489,12 @@ macsurf_debug_log_buffer_flush(void)
 static int
 macsurf_log_is_crash_report(const char *m)
 {
+	/* fixes697 — the startup banner ("=== MacSurf session Y-M-D H:M:S ==="
+	 * and the two "====" rules around it) is the marker that tells a
+	 * reporter one log spans multiple launches. It was being dropped by
+	 * this crash-only gate (matches no crash keyword). Keep any '='-led
+	 * line: 3 lines per session, zero per-page volume. */
+	if (m[0] == '=') return 1;
 	if (m[0] == 'N' && strncmp(m, "NAV", 3) == 0) return 1;
 	if (strstr(m, "FAIL") != NULL) return 1;
 	if (strstr(m, "ERROR") != NULL) return 1;
