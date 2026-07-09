@@ -71,19 +71,34 @@ static long g_prep_lru_bytes = 0;
 
 static void macos9_prep_lru_unlink(struct macos9_bitmap *bm)
 {
+	struct macos9_bitmap *prev, *next;
 	if (!bm->prep_in_lru) return;
+	prev = bm->prep_lru_prev;
+	next = bm->prep_lru_next;
+	/* fixes702 (crash): macos9_prep_make_room severs a corrupted list
+	 * (head=tail=NULL) WITHOUT clearing prep_in_lru / prep_lru_prev / _next
+	 * on the stranded nodes, because it can't safely walk a corrupt chain.
+	 * A stranded MID-list node then has prep_lru_prev pointing at a neighbour
+	 * that may since have been freed — a freed struct's first word becomes a
+	 * free-list chain pointer, MISALIGNED on PPC (e.g. 0xD762FD0E). The old
+	 * code did `bm->prep_lru_prev->prep_lru_next = ...` unconditionally and
+	 * stored through that garbage pointer -> address-error crash at
+	 * `stw r0,0x3C(r3)`. Sanitize a misaligned link to NULL up front so it is
+	 * never dereferenced NOR propagated into a neighbour's back-link / the
+	 * global tail (mirrors the fixes430/431 data/mask alignment guards). */
+	if (prev != NULL && ((unsigned long)prev & 3) != 0) prev = NULL;
+	if (next != NULL && ((unsigned long)next & 3) != 0) next = NULL;
 	/* fixes650b (review): only rewrite a global if it actually points at bm.
-	 * After a corruption-sever (head=tail=NULL) a stranded entry can still
-	 * have prep_in_lru==true with prep_lru_prev==NULL; a naive
-	 * "else head = next" would then revive the head with a dangling node. */
-	if (bm->prep_lru_prev != NULL)
-		bm->prep_lru_prev->prep_lru_next = bm->prep_lru_next;
+	 * After a corruption-sever a stranded entry can have prep_lru_prev==NULL
+	 * yet not be the head; "else head = next" would revive a dangling head. */
+	if (prev != NULL)
+		prev->prep_lru_next = next;
 	else if (g_prep_lru_head == bm)
-		g_prep_lru_head = bm->prep_lru_next;
-	if (bm->prep_lru_next != NULL)
-		bm->prep_lru_next->prep_lru_prev = bm->prep_lru_prev;
+		g_prep_lru_head = next;
+	if (next != NULL)
+		next->prep_lru_prev = prev;
 	else if (g_prep_lru_tail == bm)
-		g_prep_lru_tail = bm->prep_lru_prev;
+		g_prep_lru_tail = prev;
 	bm->prep_lru_prev = NULL;
 	bm->prep_lru_next = NULL;
 	bm->prep_in_lru = false;
@@ -91,6 +106,14 @@ static void macos9_prep_lru_unlink(struct macos9_bitmap *bm)
 
 static void macos9_prep_lru_insert_mru(struct macos9_bitmap *bm)
 {
+	/* fixes702: never chain onto a corrupted head — a misaligned head is a
+	 * freed struct's free-list word (see macos9_prep_lru_unlink). Drop the
+	 * corrupt list and restart with bm as the sole node rather than storing
+	 * bm's back-pointer through the garbage head. */
+	if (g_prep_lru_head != NULL && ((unsigned long)g_prep_lru_head & 3) != 0) {
+		g_prep_lru_head = NULL;
+		g_prep_lru_tail = NULL;
+	}
 	bm->prep_lru_prev = NULL;
 	bm->prep_lru_next = g_prep_lru_head;
 	if (g_prep_lru_head != NULL) g_prep_lru_head->prep_lru_prev = bm;
