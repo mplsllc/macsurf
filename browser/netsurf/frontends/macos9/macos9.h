@@ -198,6 +198,12 @@ extern bool macos9_quitting;
 #define MENU_BOOKMARK 133  /* fixes351 (#48) */
 #define MENU_HISTORY  134  /* fixes694 (#47) */
 
+/* fixes707 — hierarchical bookmark folder submenus get IDs
+ * MENU_BMK_SUB_BASE .. MENU_BMK_SUB_BASE+MENU_BMK_SUB_MAX-1. Kept clear of
+ * the 128-134 app menus and the toolbox's own hierarchical range. */
+#define MENU_BMK_SUB_BASE 200
+#define MENU_BMK_SUB_MAX  32
+
 #define ITEM_FILE_NEW       1
 #define ITEM_FILE_LOCATION  2
 #define ITEM_FILE_CLOSE     3
@@ -232,6 +238,7 @@ extern bool macos9_quitting;
 void macos9_bookmarks_init(void);
 void macos9_bookmark_menu_rebuild(void);
 void macos9_bookmark_navigate(struct gui_window *g, int menu_item);
+void macos9_bookmark_submenu_navigate(struct gui_window *g, int menu_id, int item);
 long macos9_bookmarks_load(char *out_buf, long buf_cap);
 void macos9_bookmarks_save(const char *buf, long len);
 /* fixes693 — bookmark folders + rename (used by the management UI). */

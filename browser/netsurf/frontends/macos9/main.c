@@ -270,6 +270,17 @@ static void macos9_handle_menu(short menu_id, short item) {
 	macsurf_debug_log_writef(
 		"fixes352c handle_menu: menu_id=%d item=%d",
 		(int)menu_id, (int)item);
+	/* fixes707 — a bookmark folder submenu selection carries the submenu's
+	 * own ID as menu_id; route it to the folder's Nth bookmark. */
+	if (menu_id >= MENU_BMK_SUB_BASE &&
+	    menu_id < MENU_BMK_SUB_BASE + MENU_BMK_SUB_MAX) {
+		front = FrontWindow();
+		gw = front ? macos9_find_window(front) : NULL;
+		if (gw != NULL)
+			macos9_bookmark_submenu_navigate(gw, menu_id, item);
+		HiliteMenu(0);
+		return;
+	}
 	switch (menu_id) {
 	case MENU_APPLE:
 		/* Item 1 = "About MacSurf..."; items 3+ are desk accessories. */

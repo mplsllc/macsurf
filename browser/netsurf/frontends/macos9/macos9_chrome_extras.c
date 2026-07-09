@@ -653,17 +653,29 @@ int macos9_bookmark_new_folder(const char *name, int parent_id)
 	return b->id;
 }
 
-/* Rebuild the dynamic portion of the Bookmarks menu (everything after
- * the item-2 separator). Called after add/load. AppendMenu interprets
- * metacharacters ('/', ';', '(', '-', ...) which URLs are full of, so
- * we append a placeholder then SetMenuItemText the real (meta-safe)
- * label.
+/* fixes707 — hierarchical Bookmarks menu. Folders were previously skipped
+ * entirely (they "vanished"); now each folder is a real submenu holding its
+ * bookmarks. Root-level bookmarks stay as direct items in the parent menu.
  *
- * NOTE: we do NOT call CountMenuItems — on this CW8 SDK it macro-maps to
- * the classic CountMItems, which is absent from the linked library (link
- * error). Instead we track how many dynamic items we appended last time
- * in `prev_dynamic` and walk item indices ourselves (fixed layout: item
- * 1 = Add, item 2 = separator, items 3.. = bookmarks). */
+ * Carbon hierarchical menus: create a submenu with a unique ID, InsertMenu
+ * it with hierMenu(-1), then mark the parent item with hMenuCmd + the
+ * submenu ID so the Menu Manager pops it. A submenu selection comes back
+ * from MenuSelect as (submenu-ID, item), dispatched via
+ * macos9_bookmark_submenu_navigate. We never call CountMItems (absent on
+ * this SDK); item indices are tracked by hand. */
+#ifndef hMenuCmd
+#define hMenuCmd 0x1B
+#endif
+#ifndef hierMenu
+#define hierMenu (-1)
+#endif
+
+#ifdef __MACOS9__
+static MenuHandle bmk_submenus[MENU_BMK_SUB_MAX];
+static int        bmk_submenu_folderid[MENU_BMK_SUB_MAX];
+static int        bmk_submenu_count = 0;
+#endif
+
 void macos9_bookmark_menu_rebuild(void)
 {
 #ifdef __MACOS9__
@@ -672,24 +684,31 @@ void macos9_bookmark_menu_rebuild(void)
 	int i;
 	short item_index;
 	if (m == NULL) return;
-	/* Delete the previously-appended block. Deleting the first dynamic
-	 * item repeatedly collapses it (indices shift down after each delete). */
+	/* Delete the previously-appended parent items (from the first dynamic
+	 * slot; deleting it repeatedly collapses the block). */
 	while (prev_dynamic > 0) { DeleteMenuItem(m, ITEM_BMK_FIRST); prev_dynamic--; }
-	/* fixes693: folders are organizational (managed in the bookmark window),
-	 * so the flat menu lists only actual bookmarks. macsurf_bmk_menu_map[k]
-	 * records which array slot the k-th menu item came from, so navigate()
-	 * maps a menu item back to the right bookmark even with folders present. */
+	/* Tear down last round's submenus. */
+	for (i = 0; i < bmk_submenu_count; i++) {
+		if (bmk_submenus[i] != NULL) {
+			DeleteMenu((short)(MENU_BMK_SUB_BASE + i));
+			DisposeMenu(bmk_submenus[i]);
+			bmk_submenus[i] = NULL;
+		}
+	}
+	bmk_submenu_count = 0;
+
 	macsurf_bmk_menu_n = 0;
 	item_index = (short)(ITEM_BMK_FIRST - 1);   /* last fixed item (separator) */
+
+	/* Root-level bookmarks (parent_id == 0) as direct items. */
 	for (i = 0; i < macsurf_bookmark_count; i++) {
+		struct macsurf_bookmark *b = &macsurf_bookmarks[i];
 		Str255 pt;
 		const char *s;
 		size_t ln;
-		if (macsurf_bookmarks[i].is_folder) continue;
-		s = (macsurf_bookmarks[i].label[0] != '\0') ?
-			macsurf_bookmarks[i].label : macsurf_bookmarks[i].url;
-		ln = strlen(s);
-		if (ln > 80) ln = 80;
+		if (b->is_folder || b->parent_id != 0) continue;
+		s = (b->label[0] != '\0') ? b->label : b->url;
+		ln = strlen(s); if (ln > 80) ln = 80;
 		pt[0] = (unsigned char)ln;
 		memcpy(pt + 1, s, ln);
 		AppendMenu(m, "\px");
@@ -697,13 +716,82 @@ void macos9_bookmark_menu_rebuild(void)
 		SetMenuItemText(m, item_index, pt);
 		macsurf_bmk_menu_map[macsurf_bmk_menu_n++] = i;
 	}
+
+	/* Each folder as a hierarchical submenu of its bookmarks. */
+	for (i = 0; i < macsurf_bookmark_count &&
+			bmk_submenu_count < MENU_BMK_SUB_MAX; i++) {
+		struct macsurf_bookmark *f = &macsurf_bookmarks[i];
+		Str255 pt;
+		const char *nm;
+		size_t ln;
+		MenuHandle sub;
+		short subID;
+		short sub_item;
+		int j;
+		if (!f->is_folder) continue;
+		nm = (f->label[0] != '\0') ? f->label : "(folder)";
+		ln = strlen(nm); if (ln > 80) ln = 80;
+		pt[0] = (unsigned char)ln;
+		memcpy(pt + 1, nm, ln);
+		AppendMenu(m, "\px");
+		item_index++;
+		SetMenuItemText(m, item_index, pt);
+		macsurf_bmk_menu_map[macsurf_bmk_menu_n++] = -1;   /* folder marker */
+
+		subID = (short)(MENU_BMK_SUB_BASE + bmk_submenu_count);
+		sub = NewMenu(subID, "\px");
+		if (sub == NULL) continue;    /* fall back: folder shows, no submenu */
+		sub_item = 0;
+		for (j = 0; j < macsurf_bookmark_count; j++) {
+			struct macsurf_bookmark *bb = &macsurf_bookmarks[j];
+			Str255 sp;
+			const char *ss;
+			size_t sl;
+			if (bb->is_folder || bb->parent_id != f->id) continue;
+			ss = (bb->label[0] != '\0') ? bb->label : bb->url;
+			sl = strlen(ss); if (sl > 80) sl = 80;
+			sp[0] = (unsigned char)sl;
+			memcpy(sp + 1, ss, sl);
+			AppendMenu(sub, "\px");
+			sub_item++;
+			SetMenuItemText(sub, sub_item, sp);
+		}
+		if (sub_item == 0) AppendMenu(sub, "\p(empty");
+		InsertMenu(sub, hierMenu);
+		SetItemCmd(m, item_index, hMenuCmd);
+		SetItemMark(m, item_index, (short)subID);
+		bmk_submenus[bmk_submenu_count] = sub;
+		bmk_submenu_folderid[bmk_submenu_count] = f->id;
+		bmk_submenu_count++;
+	}
+
 	if (macsurf_bmk_menu_n == 0) {
-		/* Leading '(' renders the item disabled — a greyed hint. */
 		AppendMenu(m, "\p(No bookmarks yet");
 		prev_dynamic = 1;
 		return;
 	}
 	prev_dynamic = macsurf_bmk_menu_n;
+#endif
+}
+
+/* Navigate to the bookmark chosen from a folder SUBMENU. MenuSelect returns
+ * the submenu's ID + the 1-based item within it. */
+void macos9_bookmark_submenu_navigate(struct gui_window *g, int menu_id, int item)
+{
+#ifdef __MACOS9__
+	int seq = menu_id - MENU_BMK_SUB_BASE;
+	int folder_id, j, k = 0;
+	if (g == NULL || item < 1) return;
+	if (seq < 0 || seq >= bmk_submenu_count) return;
+	folder_id = bmk_submenu_folderid[seq];
+	for (j = 0; j < macsurf_bookmark_count; j++) {
+		struct macsurf_bookmark *bb = &macsurf_bookmarks[j];
+		if (bb->is_folder || bb->parent_id != folder_id) continue;
+		k++;
+		if (k == item) { macos9_window_navigate(g, bb->url); return; }
+	}
+#else
+	(void)g; (void)menu_id; (void)item;
 #endif
 }
 
