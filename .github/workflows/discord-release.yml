@@ -1,0 +1,111 @@
+name: Announce release on Discord
+
+# Fires when a GitHub Release is published. Posts a formatted embed to a
+# Discord channel via a channel-scoped webhook (DISCORD_WEBHOOK repo secret).
+#
+# SETUP (one time):
+#   1. Discord: open the TARGET channel → Edit Channel → Integrations →
+#      Webhooks → New Webhook → name it (e.g. "MacSurf Releases"), confirm the
+#      channel, Copy Webhook URL. The channel is chosen HERE (the webhook is
+#      bound to it).
+#   2. GitHub: repo → Settings → Secrets and variables → Actions →
+#      New repository secret → name it DISCORD_WEBHOOK, paste the webhook URL.
+#   3. Publish a release → this workflow posts the announcement.
+#
+# Manual test: Actions tab → this workflow → "Run workflow" (announces the
+# latest published release).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gather release info
+        id: rel
+        env:
+          EVENT:  ${{ github.event_name }}
+          E_NAME: ${{ github.event.release.name }}
+          E_TAG:  ${{ github.event.release.tag_name }}
+          E_URL:  ${{ github.event.release.html_url }}
+          E_BODY: ${{ github.event.release.body }}
+          GH_TOKEN: ${{ github.token }}
+          REPO:   ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Body/name/url are read from env (never inlined into the script),
+          # so arbitrary release-note content can't break or inject anything.
+          if [ "$EVENT" = "release" ]; then
+            NAME="$E_NAME"; TAG="$E_TAG"; URL="$E_URL"
+            printf '%s' "$E_BODY" > body.md
+          else
+            NAME=$(gh release view --repo "$REPO" --json name    --jq '.name')
+            TAG=$( gh release view --repo "$REPO" --json tagName --jq '.tagName')
+            URL=$( gh release view --repo "$REPO" --json url     --jq '.url')
+            gh release view --repo "$REPO" --json body --jq '.body' > body.md
+          fi
+          {
+            echo "name=$NAME"
+            echo "tag=$TAG"
+            echo "url=$URL"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post to Discord
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          REL_NAME: ${{ steps.rel.outputs.name }}
+          REL_TAG:  ${{ steps.rel.outputs.tag }}
+          REL_URL:  ${{ steps.rel.outputs.url }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DISCORD_WEBHOOK:-}" ]; then
+            echo "::error::DISCORD_WEBHOOK secret is not set — add it in repo Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+          TITLE="🌊 MacSurf ${REL_NAME:-$REL_TAG} released"
+
+          # Discord embed description caps at 4096 chars; stay well under and
+          # append a "full notes" link if we truncate.
+          BODY="$(head -c 3500 body.md)"
+          if [ "$(wc -c < body.md)" -gt 3500 ]; then
+            BODY="${BODY}"$'\n\n'"…[full release notes]("$REL_URL")"
+          fi
+          if [ -z "$(printf '%s' "$BODY" | tr -d '[:space:]')" ]; then
+            BODY="A new MacSurf release is available."
+          fi
+          printf '%s' "$BODY" > body_final.md
+
+          # Build payload with jq (escapes quotes/newlines). color 16024086 =
+          # 0xF48416, the MacSurf toolbar orange.
+          jq -n \
+            --arg title "$TITLE" \
+            --arg url   "$REL_URL" \
+            --arg tag   "$REL_TAG" \
+            --rawfile desc body_final.md \
+            '{
+              username: "MacSurf Releases",
+              content: ("**MacSurf " + $tag + "** is out — <" + $url + ">"),
+              embeds: [ {
+                title: $title,
+                url: $url,
+                description: $desc,
+                color: 16024086,
+                footer: { text: ("MacSurf • " + $tag) }
+              } ]
+            }' > payload.json
+
+          # Discord returns 204 No Content on success.
+          code=$(curl -sS -o resp.txt -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            -d @payload.json "$DISCORD_WEBHOOK")
+          echo "Discord responded HTTP $code"
+          if [ "$code" != "204" ] && [ "$code" != "200" ]; then
+            echo "::error::Discord webhook failed (HTTP $code)"; cat resp.txt; exit 1
+          fi
