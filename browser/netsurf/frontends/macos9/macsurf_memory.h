@@ -38,4 +38,47 @@ void *macsurf_safe_calloc(size_t count, size_t size);
  */
 void *macsurf_safe_realloc(void *ptr, size_t size);
 
+/*
+ * fixes711 (#207) blank-screen reconnaissance. Both emit 'RECON'
+ * lines that survive the crash-only log gate.
+ *
+ * macsurf_recon_mem(tag): one flushed line -- VM on/off (Gestalt),
+ *   FreeMem, MaxBlock (contiguity), Temp + Purge pools. Call it very
+ *   early at launch so an early blank still leaves the baseline, and
+ *   again per navigation to snapshot the heap before each page.
+ *
+ * macsurf_recon_note(where,a,b,n): throttled NULL-pointer report from
+ *   the libcss selection hot path; lets the caller bail safely instead
+ *   of dereferencing NULL. Implemented here so libcss needs only an
+ *   extern declaration, no frontend headers.
+ */
+void macsurf_recon_mem(const char *tag);
+void macsurf_recon_note(const char *where, const void *a,
+                        const void *b, long n);
+
+/*
+ * fixes712a (#207) blank-page harness.
+ *
+ * Poison bytes. Only malloc is poisoned -- calloc's contract is zeroed
+ * memory, and the malloc/calloc distinction is exactly what we're testing.
+ * Read back through a 32-bit signed field these become:
+ *     0xA5A5A5A5 -> -1515870811   (never-initialised memory)
+ *     0xDDDDDDDD ->  -572662307   (freed memory; reserved for fixes712b)
+ * Both trip the redraw clamp's < -200000 tests, so the VALUE ITSELF says
+ * which bug we caught.
+ */
+#define MACSURF_POISON_ALLOC_BYTE 0xA5
+#define MACSURF_POISON_FREE_BYTE  0xDD
+#define MACSURF_POISON_ALLOC_WORD (-1515870811L)
+#define MACSURF_POISON_FREE_WORD   (-572662307L)
+
+/*
+ * Called by the redraw defensive clamp when it finds a garbage box field.
+ * Until now that clamp silently overwrote the value -- and a zeroed root
+ * height collapses the clip and paints a blank page. Throttled; decodes the
+ * poison patterns above. Ungated: it costs nothing unless garbage appears.
+ */
+void macsurf_recon_clamp(const char *field, long value);
+
+
 #endif /* MACSURF_MEMORY_H */

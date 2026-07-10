@@ -10,6 +10,7 @@
 #include "utils/nsoption.h"
 #include "macsurf_config.h"
 #include "macsurf_debug.h"
+#include "macsurf_memory.h"    /* macsurf_recon_mem() */
 #include "macsurf_timebase.h"
 
 #ifdef __MACOS9__
@@ -1326,6 +1327,10 @@ int main(void) {
 	 * (macos9_window_navigate) refreshes t0 on each URL submit. */
 	macsurf_profile_reset();
 	MS_LOG("== MacSurf start ==");
+	/* fixes711 (#207): earliest possible RECON snapshot -- VM on/off +
+	 * heap/temp/purge -- flushed immediately so even an early blank leaves
+	 * the baseline (and the VM state that labels this whole run) on disk. */
+	macsurf_recon_mem("boot");
 	macsurf_profile_stamp("main: log init done");
 #ifdef __MACOS9__
 	/* fixes680 (#207): DIAG memory/lifecycle trace. FreeMem = total free
@@ -1512,6 +1517,10 @@ int main(void) {
 	macsurf_debug_log_writef("DIAG post-netsurf_init: free=%ld maxblk=%ld",
 		(long)FreeMem(), (long)MaxBlock());
 #endif
+	/* fixes711 (#207): snapshot the heap just after core init, before the
+	 * first page. Compared against RECON MEM boot this shows how much
+	 * contiguity netsurf_init consumed -- the pool libcss must draw from. */
+	macsurf_recon_mem("post-init");
 	/* fixes368 (#167) — restore a prior session's cookie jar (Facebook
 	 * login etc.) from disk now that urldb is up. Best-effort no-op on
 	 * first run. */

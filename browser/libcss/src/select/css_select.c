@@ -32,6 +32,19 @@
 #include "utils/parserutilserror.h"
 #include "utils/utils.h"
 
+/* fixes711 (#207): blank-screen reconnaissance. The G3 StdLog crash is a
+ * $0000-scribble whose stack sits in match_selectors_in_sheet -- a per-node
+ * pointer that must never be NULL was NULL (once even with VM on + 191 MB
+ * free, so not purely a memory trigger). macsurf_recon_note() lives in
+ * macsurf_memory.c; libcss needs only this extern (no frontend headers).
+ * Remove the extern + its two call sites for a release build. */
+#ifdef __MACOS9__
+extern void macsurf_recon_note(const char *where, const void *a,
+                               const void *b, long n);
+#else
+#define macsurf_recon_note(w, a, b, n) ((void)0)
+#endif
+
 /* Define this to enable verbose messages when matching selector chains */
 #undef DEBUG_CHAIN_MATCHING
 
@@ -2033,6 +2046,23 @@ css_error match_selectors_in_sheet(css_select_ctx *ctx,
 	struct css_hash_selection_requirments req;
 	css_error error;
 
+	/* fixes711 (#207): the G3 $0000-scribble crash lands here. If a per-node
+	 * pointer that must never be NULL is NULL, log which one and skip
+	 * matching this node (it renders unstyled) instead of dereferencing NULL
+	 * at req.node_bloom below. Cheap pointer compares on the hot path. */
+	if (state == NULL || state->node_data == NULL ||
+			state->node_data->bloom == NULL) {
+		long which = 0;
+		if (state == NULL) which = 1;
+		else if (state->node_data == NULL) which = 2;
+		else which = 4;                 /* bloom NULL */
+		macsurf_recon_note("msis",
+			(const void *)state,
+			(const void *)((state != NULL) ? state->node_data : NULL),
+			which);
+		return CSS_OK;
+	}
+
 	/* Set up general selector chain requirments */
 	req.media = state->media;
 	req.unit_ctx = state->unit_ctx;
@@ -2167,12 +2197,24 @@ css_error match_selector_chain(css_select_ctx *ctx,
 		const css_selector *selector, css_select_state *state)
 {
 	const css_selector *s = selector;
-	void *node = state->node;
-	const css_selector_detail *detail = &s->data;
+	void *node;
+	const css_selector_detail *detail;
 	bool match = false, may_optimise = true;
 	bool rejected_by_cache;
 	css_pseudo_element pseudo;
 	css_error error;
+
+	/* fixes711 (#207): defensive NULL guard mirroring the match_selectors_
+	 * in_sheet guard above -- a NULL selection state or chain renders
+	 * no-match instead of dereferencing NULL (state->node / &s->data). */
+	if (state == NULL || selector == NULL) {
+		macsurf_recon_note("chain", (const void *)state,
+			(const void *)selector, 0);
+		return CSS_OK;
+	}
+
+	node = state->node;
+	detail = &s->data;
 
 #ifdef DEBUG_CHAIN_MATCHING
 	fprintf(stderr, "matching: ");

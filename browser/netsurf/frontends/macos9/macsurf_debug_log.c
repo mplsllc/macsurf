@@ -426,7 +426,7 @@ macsurf_debug_log_init(void)
 	macsurf_debug_log_write(
 		"=====================   N E W   S E S S I O N   ====================");
 	macsurf_debug_log_writef(
-		"===  MacSurf 1.68.2   (build %s %s)", __DATE__, __TIME__);
+		"===  MacSurf 1.68.3   (build %s %s)", __DATE__, __TIME__);
 	{
 		unsigned long secs = 0;
 		DateTimeRec dtr;
@@ -524,6 +524,12 @@ macsurf_log_is_crash_report(const char *m)
 	if (strstr(m, "ABORT") != NULL) return 1;
 	if (strstr(m, "NOMEM") != NULL) return 1;
 	if (strstr(m, "CORRUPT") != NULL) return 1;
+	/* fixes711 (#207): blank-screen reconnaissance. RECON lines carry the
+	 * VM on/off state (Gestalt), the full heap/temp/purge snapshot, and the
+	 * CSS-selection NULL-pointer catcher. Survive the crash-only gate so a
+	 * reporter's VM-on vs VM-off runs both show the memory picture and any
+	 * SELNULL hit. Remove this line + the RECON call sites for release. */
+	if (strstr(m, "RECON") != NULL) return 1;
 	if (strstr(m, "WATCHDOG") != NULL) return 1;
 	if (strstr(m, "DEFERRED") != NULL) return 1;
 	if (strstr(m, "TERMINAL") != NULL) return 1;

@@ -41,6 +41,29 @@
 #include "utils/utils.h"
 #include "utils/nsoption.h"
 #include "utils/corestrings.h"
+
+/* fixes712a (#207): the defensive box-field clamp below has silently
+ * overwritten garbage geometry for years -- and a zeroed root height
+ * collapses the clip so html_redraw_box returns without painting: a BLANK
+ * PAGE. Make it report. macsurf_recon_clamp() lives in macsurf_memory.c;
+ * only an extern is needed here (no frontend headers). It decodes the
+ * fixes712a poison patterns, so the logged value distinguishes an
+ * uninitialised read (UNINIT) from a use-after-free (FREED). */
+#ifdef __MACOS9__
+extern void macsurf_recon_clamp(const char *field, long value);
+#else
+#define macsurf_recon_clamp(f, v) ((void)0)
+#endif
+
+/* Report-then-clamp. Preserves the original semantics exactly; the only
+ * change is that the garbage value is logged before being overwritten. */
+#define MSURF_CLAMP(f, lo, hi, fb) \
+	do { \
+		if ((f) < (lo) || (f) > (hi)) { \
+			macsurf_recon_clamp(#f, (long)(f)); \
+			(f) = (fb); \
+		} \
+	} while (0)
 #include "netsurf/content.h"
 #include "netsurf/browser_window.h"
 #include "netsurf/plotters.h"
@@ -3405,22 +3428,22 @@ bool html_redraw_box(const html_content *html, struct box *box,
 	 * real content); x-coords / widths stay at ±10000 (no real page goes
 	 * wider). */
 	{
-		if (box->x < -10000 || box->x > 10000) box->x = 0;
-		if (box->y < -200000 || box->y > 200000) box->y = 0;
-		if (box->width < 0 || box->width > 10000) box->width = 0;
-		if (box->height < 0 || box->height > 200000) box->height = 0;
-		if (box->padding[LEFT] < 0 || box->padding[LEFT] > 10000) box->padding[LEFT] = 0;
-		if (box->padding[TOP] < 0 || box->padding[TOP] > 10000) box->padding[TOP] = 0;
-		if (box->padding[RIGHT] < 0 || box->padding[RIGHT] > 10000) box->padding[RIGHT] = 0;
-		if (box->padding[BOTTOM] < 0 || box->padding[BOTTOM] > 10000) box->padding[BOTTOM] = 0;
-		if (box->border[LEFT].width < 0 || box->border[LEFT].width > 1000) box->border[LEFT].width = 0;
-		if (box->border[TOP].width < 0 || box->border[TOP].width > 1000) box->border[TOP].width = 0;
-		if (box->border[RIGHT].width < 0 || box->border[RIGHT].width > 1000) box->border[RIGHT].width = 0;
-		if (box->border[BOTTOM].width < 0 || box->border[BOTTOM].width > 1000) box->border[BOTTOM].width = 0;
-		if (box->descendant_x0 < -10000 || box->descendant_x0 > 10000) box->descendant_x0 = 0;
-		if (box->descendant_y0 < -200000 || box->descendant_y0 > 200000) box->descendant_y0 = 0;
-		if (box->descendant_x1 < -10000 || box->descendant_x1 > 10000) box->descendant_x1 = box->width;
-		if (box->descendant_y1 < -200000 || box->descendant_y1 > 200000) box->descendant_y1 = box->height;
+		MSURF_CLAMP(box->x, -10000, 10000, 0);
+		MSURF_CLAMP(box->y, -200000, 200000, 0);
+		MSURF_CLAMP(box->width, 0, 10000, 0);
+		MSURF_CLAMP(box->height, 0, 200000, 0);
+		MSURF_CLAMP(box->padding[LEFT], 0, 10000, 0);
+		MSURF_CLAMP(box->padding[TOP], 0, 10000, 0);
+		MSURF_CLAMP(box->padding[RIGHT], 0, 10000, 0);
+		MSURF_CLAMP(box->padding[BOTTOM], 0, 10000, 0);
+		MSURF_CLAMP(box->border[LEFT].width, 0, 1000, 0);
+		MSURF_CLAMP(box->border[TOP].width, 0, 1000, 0);
+		MSURF_CLAMP(box->border[RIGHT].width, 0, 1000, 0);
+		MSURF_CLAMP(box->border[BOTTOM].width, 0, 1000, 0);
+		MSURF_CLAMP(box->descendant_x0, -10000, 10000, 0);
+		MSURF_CLAMP(box->descendant_y0, -200000, 200000, 0);
+		MSURF_CLAMP(box->descendant_x1, -10000, 10000, box->width);
+		MSURF_CLAMP(box->descendant_y1, -200000, 200000, box->height);
 		/* Expand descendants if collapsed — happens when layout hasn't
 		 * fully run but the box has real text children. Skip this for
 		 * boxes that can carry an element scrollbar (overflow auto/scroll):

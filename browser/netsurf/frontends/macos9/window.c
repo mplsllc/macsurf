@@ -14,6 +14,7 @@
 #include <Scrap.h>	/* fixes376 — desk-scrap I/O for URL-field cut/copy/paste */
 #endif
 #include "macsurf_debug.h"
+#include "macsurf_memory.h"    /* macsurf_recon_mem() */
 
 #ifdef __MACOS9__
 #include <MacWindows.h>
@@ -422,6 +423,10 @@ void macos9_window_navigate(struct gui_window *g, const char *u) {
 	int i;
 	MS_LOG("navigate:");
 	MS_LOG(u ? u : "(null)");
+	/* fixes711 (#207): heap/VM snapshot immediately before this page loads,
+	 * so a blank on THIS navigation is bracketed by the memory state that
+	 * produced it. The URL is on the two MS_LOG lines just above. */
+	macsurf_recon_mem("nav");
 	if(!g||!u||!u[0]) { MS_LOG("nav: no g or empty u"); return; }
 	if(!g->bw) { MS_LOG("nav: no bw"); return; }
 	/* fixes705 — an explicit user navigation means "load this now": clear any

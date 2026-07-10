@@ -19,6 +19,12 @@
  * C89 / CW8 / MSL compatible. Carbon Toolbox only.
  */
 
+/* fixes712a/713 blank-page harness (RETIRED, kept re-armable).
+ * Define MACSURF_POISON to fill every malloc() with 0xA5, reproducing the
+ * VM-off "garbage in fresh memory" condition on any machine. Used to prove
+ * there is NO uninitialised-heap read on the render path: a full page load
+ * completed clean with poison armed. Left off -- it memsets every malloc. */
+
 /* Restore real allocators before any header pulls in the prefix
  * macros. Must be the very first lines of the file. */
 #undef malloc
@@ -37,6 +43,7 @@
 #include <Memory.h>
 #include <Dialogs.h>
 #include <Processes.h>
+#include <Gestalt.h>
 #endif
 
 /* ------------------------------------------------------------------ */
@@ -103,6 +110,97 @@ static void macsurf_oom_panic(size_t size)
 #endif
 }
 
+/* ================================================================== */
+/* fixes711 (#207) BLANK-SCREEN RECONNAISSANCE                          */
+/*                                                                      */
+/* Two observers, both routed through the 'RECON' crash-only log gate:  */
+/*   macsurf_recon_mem(tag)  -- one line per call: VM on/off (Gestalt) +*/
+/*      FreeMem / MaxBlock (contiguity) / Temp + Purge pools. Labels a  */
+/*      whole run VM-on vs VM-off and shows fragmentation. Flushed so an */
+/*      early blank still leaves the baseline on disk.                  */
+/*   macsurf_recon_note(...) -- called from the libcss selection hot    */
+/*      path when a per-node pointer that must never be NULL is NULL     */
+/*      (the $0000-scribble seen in the G3 StdLog). Logs, throttled, so  */
+/*      the caller can bail safely instead of writing through NULL.     */
+/* Remove this whole block + the call sites for a release build.        */
+/* ================================================================== */
+
+void macsurf_recon_mem(const char *tag)
+{
+#ifdef __MACOS9__
+    long vmresp = 0;
+    long vm_on;
+    long freem, maxblk;
+    long tmpfree, tmpmax;
+    long purge_total = 0, purge_contig = 0;
+    Size grow = 0;
+
+#ifndef gestaltVMAttr
+#define gestaltVMAttr 'vm  '
+#endif
+#ifndef gestaltVMPresent
+#define gestaltVMPresent 0
+#endif
+
+    if (Gestalt(gestaltVMAttr, &vmresp) != noErr)
+        vm_on = -1;                         /* couldn't query */
+    else
+        vm_on = (vmresp & (1L << gestaltVMPresent)) ? 1 : 0;
+
+    freem  = (long)FreeMem();
+    maxblk = (long)MaxBlock();
+    tmpfree = (long)TempFreeMem();
+    tmpmax  = (long)TempMaxMem(&grow);
+    PurgeSpace(&purge_total, &purge_contig);
+
+    /* One line, well under the 255-byte writef cap. vm=1 on, 0 off,
+     * -1 unknown. maxblk << free proves fragmentation. */
+    macsurf_debug_log_writef(
+        "RECON MEM %s vm=%ld free=%ld maxblk=%ld tmpfree=%ld tmpmax=%ld purge=%ld/%ld",
+        (tag != NULL) ? tag : "?",
+        vm_on, freem, maxblk, tmpfree, tmpmax, purge_total, purge_contig);
+    macsurf_debug_log_flush();
+#else
+    (void)tag;
+#endif
+}
+
+void macsurf_recon_note(const char *where, const void *a,
+                        const void *b, long n)
+{
+    static long count = 0;
+    if (count >= 40) return;                /* cap the flood */
+    count++;
+    macsurf_debug_log_writef("RECON SELNULL %s a=%p b=%p n=%ld",
+        (where != NULL) ? where : "?", a, b, n);
+    macsurf_debug_log_flush();
+    if (count == 40)
+        macsurf_debug_log_writef("RECON SELNULL (capped at 40)");
+}
+
+/* fixes712a: the redraw defensive clamp found a garbage box field. Decode
+ * the value against the poison patterns so the log says WHERE the garbage
+ * came from, not merely that it existed. */
+void macsurf_recon_clamp(const char *field, long value)
+{
+    static long count = 0;
+    const char *kind;
+
+    if (count >= 60) return;                /* cap the flood */
+    count++;
+
+    if (value == MACSURF_POISON_ALLOC_WORD)     kind = "UNINIT";
+    else if (value == MACSURF_POISON_FREE_WORD) kind = "FREED";
+    else                                        kind = "OTHER";
+
+    macsurf_debug_log_writef("RECON CLAMP %s=%ld (%s)",
+        (field != NULL) ? field : "?", value, kind);
+    macsurf_debug_log_flush();
+
+    if (count == 60)
+        macsurf_debug_log_writef("RECON CLAMP (capped at 60)");
+}
+
 /* ------------------------------------------------------------------ */
 /* macsurf_safe_alloc                                                  */
 /* ------------------------------------------------------------------ */
@@ -111,9 +209,17 @@ void *macsurf_safe_alloc(size_t size)
     void *p;
     if (size == 0) size = 1;
     p = malloc(size);
-    if (p != NULL) return p;
-    macsurf_oom_panic(size);
-    return NULL; /* unreachable */
+    if (p == NULL) macsurf_oom_panic(size); /* never returns */
+#ifdef MACSURF_POISON
+    /* fixes712a: malloc returns INDETERMINATE memory. Under Virtual Memory
+     * a fresh page is zero-filled, so an uninitialised read is silently
+     * benign; with VM off it reads whatever the previous process left.
+     * Poisoning reproduces the VM-off worst case on ANY machine, VM on or
+     * off -- removing our dependence on a reporter's unlucky heap.
+     * calloc is deliberately NOT poisoned: zeroed memory is its contract. */
+    memset(p, MACSURF_POISON_ALLOC_BYTE, size);
+#endif
+    return p;
 }
 
 /* ------------------------------------------------------------------ */
