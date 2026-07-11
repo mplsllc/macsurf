@@ -18,7 +18,12 @@ MacSurf is what I do full-time, and it only keeps moving at this pace if it pays
 
 Huge thank you to **Shlooom**, **Kestral**, and **Mothra** on Patreon, and **kilgeist** and **Turuun** on Ko-Fi. You keep the lights on.
 
-<p align="center"><img src="2.0-assets/kofi-qr.png" width="140" alt="Ko-Fi QR code"></p>
+<p align="center">
+  <img src="2.0-assets/kofi-qr.png" width="150" alt="Ko-Fi QR code">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="2.0-assets/patreon-qr.png" width="150" alt="Patreon QR code">
+</p>
+<p align="center"><sub>Ko-Fi&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&middot;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Patreon</sub></p>
 
 ## What's new (and I'm thrilled about all of it)
 
