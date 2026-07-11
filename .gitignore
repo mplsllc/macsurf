@@ -72,3 +72,6 @@ forclaude/
 # Embedded reference repos — each has its own .git, never track here
 NanoKernel/
 browser/buildsystem/
+
+# User-uploaded debug logs (may contain sensitive data) — organized by date, never commit
+/builds/logs/
