@@ -41,5 +41,34 @@ type 'carb' {};
 
 resource 'carb' (0) {};
 
+/* 'vers' (1) + (2) — Finder "Get Info" version (#219). Without a 'vers' (1)
+ * Get Info shows "N/A". The type is defined locally (like 'carb' above) to
+ * avoid a SysTypes.r build dependency. The app build LINKS the binary
+ * MacSurf.rsrc (no Rez step), so this is the canonical record — regenerate
+ * both with tools/png_to_mac_icon_rez.py --version <x>. */
+type 'vers' {
+	hex byte;                              /* major revision, BCD          */
+	hex byte;                              /* minor + bugfix, BCD          */
+	hex byte  development = 0x20,          /* release stage                */
+	          alpha = 0x40, beta = 0x60,
+	          final = 0x80, release = 0x80;
+	hex byte;                              /* non-release revision         */
+	integer   verUS = 0;                   /* region code                  */
+	pstring;                               /* short version string         */
+	pstring;                               /* long "Get Info" string       */
+};
+
+resource 'vers' (1) {
+	0x02, 0x00, final, 0x00, verUS,
+	"2.0",
+	"MacSurf 2.0"
+};
+
+resource 'vers' (2) {
+	0x02, 0x00, final, 0x00, verUS,
+	"2.0",
+	"MacSurf 2.0"
+};
+
 /* Icon family + FREF + BNDL. Generated; do not hand-edit. */
 #include "MacSurfIcon.r"

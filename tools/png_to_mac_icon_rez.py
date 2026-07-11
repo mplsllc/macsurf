@@ -548,6 +548,26 @@ def build_bndl_resource(creator: bytes,
 # -------------------------------------------------------------------
 # main
 # -------------------------------------------------------------------
+def build_vers_resource(short_ver: str, long_ver: str,
+                        major_bcd: int = 0x02, minor_bug_bcd: int = 0x00,
+                        stage: int = 0x80, non_rel: int = 0x00,
+                        region: int = 0x0000) -> bytes:
+    """Binary payload for a 'vers' resource — the Finder Get Info version.
+
+    Without a 'vers' (1) resource Get Info shows "N/A" (#219). Layout:
+    majorBCD, minorBugBCD, devStage, nonRelRev, int16 regionCode, then
+    two Pascal strings: the short version (shown as the version) and the
+    long "get info" string. stage 0x80 = final/release. The numeric BCD is
+    only used for automatic version comparison; the STRING drives display.
+    """
+    def pstr(s: str) -> bytes:
+        b = s.encode("mac_roman")[:255]
+        return bytes([len(b)]) + b
+    return (struct.pack(">BBBBH", major_bcd & 0xFF, minor_bug_bcd & 0xFF,
+                        stage & 0xFF, non_rel & 0xFF, region & 0xFFFF)
+            + pstr(short_ver) + pstr(long_ver))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -566,6 +586,11 @@ def main() -> int:
                          "(default: MPLS)")
     ap.add_argument("--file-type", default="APPL",
                     help="four-character file type (default: APPL)")
+    ap.add_argument("--version", default="2.0",
+                    help="short version string for 'vers' / Get Info "
+                         "(default: 2.0)")
+    ap.add_argument("--version-long", default=None,
+                    help="long Get Info string (default: 'MacSurf <version>')")
     args = ap.parse_args()
 
     if len(args.creator) != 4:
@@ -612,6 +637,12 @@ def main() -> int:
         fref_resource_id=args.icon_id,
     )
     fork.add(b"BNDL", args.icon_id, bndl)
+    # 'vers' (1) + (2) — Finder Get Info version. Without it Get Info shows
+    # "N/A" (#219). vers(1) = the version; vers(2) = the "package"/long line.
+    vlong = args.version_long or ("MacSurf %s" % args.version)
+    vers = build_vers_resource(args.version, vlong)
+    fork.add(b"vers", 1, vers)
+    fork.add(b"vers", 2, vers)
     blob = fork.build()
     os.makedirs(os.path.dirname(args.rsrc) or ".", exist_ok=True)
     with open(args.rsrc, "wb") as f:
