@@ -1198,8 +1198,19 @@ void macos9_handle_key_down(const EventRecord *event) {
 		}
 		if (have_key && gw->bw) {
 			extern bool browser_window_key_press(struct browser_window *, unsigned long);
-			if (browser_window_key_press(gw->bw, ns_key)) {
-				macsurf_debug_log_writef("page key: %d -> ns %ld consumed", (int)uc, (long)ns_key);
+			/* fixes758 (#212) DIAGNOSTIC — time the whole keystroke (textarea
+			 * insert + reflow + redraw-request) so a big-message log shows the
+			 * per-key cost growing. Pair with RECON TAref (reflow-only dt): if
+			 * KEY dt >> TAref dt, the cost is the page redraw/reformat, not the
+			 * reflow. Remove once #212 is diagnosed. */
+			UnsignedWide _kt0, _kt1;
+			int _consumed;
+			Microseconds(&_kt0);
+			_consumed = browser_window_key_press(gw->bw, ns_key) ? 1 : 0;
+			Microseconds(&_kt1);
+			macsurf_debug_log_writef("RECON KEY ns=%ld dt=%ldus consumed=%d",
+				(long)ns_key, (long)(_kt1.lo - _kt0.lo), _consumed);
+			if (_consumed) {
 				return;
 			}
 		}

@@ -913,6 +913,14 @@ static bool textarea_reflow_singleline(struct textarea *ta, size_t b_off,
  * \param r		Modified/reduced to area where redraw is required
  * \return true on success false otherwise
  */
+#ifdef __MACOS9__
+/* fixes758 (#212) — DIAGNOSTIC ONLY: per-reflow timing + scope, to find why
+ * typing in a big multiline textarea crawls. Externs kept local so no Mac
+ * headers leak into core textarea.c. Remove with the log lines once diagnosed. */
+extern void macsurf_debug_log_writef(const char *fmt, ...);
+extern void Microseconds(UnsignedWide *microTickCount);
+#endif
+
 static bool textarea_reflow_multiline(struct textarea *ta,
 		const size_t b_start, const int b_length, struct rect *r)
 {
@@ -930,6 +938,10 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 	int v_extent; /* vertical extent */
 	bool restart = false;
 	bool skip_line = false;
+#ifdef __MACOS9__
+	UnsignedWide _rt0, _rt1; int _restart_n = 0; unsigned int _start0 = 0;
+	Microseconds(&_rt0);
+#endif
 
 	assert(ta->flags & TEXTAREA_MULTILINE);
 
@@ -962,6 +974,9 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 
 	/* Record original end pos of start line */
 	b_start_line_end = ta->lines[start].b_start + ta->lines[start].b_length;
+#ifdef __MACOS9__
+	_start0 = start;
+#endif
 
 	/* During layout we may decide we need to restart again from the
 	 * textarea's first line. */
@@ -1132,6 +1147,9 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 						ta->bar_y);
 			ta->pad_right += SCROLLBAR_WIDTH;
 			restart = true;
+#ifdef __MACOS9__
+			_restart_n++;
+#endif
 
 		} else if (line <= scroll_lines && ta->bar_y != NULL) {
 			/* Remove vertical scrollbar */
@@ -1139,6 +1157,9 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 			ta->bar_y = NULL;
 			ta->pad_right -= SCROLLBAR_WIDTH;
 			restart = true;
+#ifdef __MACOS9__
+			_restart_n++;
+#endif
 		}
 	} while (restart);
 
@@ -1166,6 +1187,13 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 	ta->h_extent = h_extent;
 	ta->v_extent = v_extent;
 	ta->line_count = line;
+#ifdef __MACOS9__
+	Microseconds(&_rt1);
+	macsurf_debug_log_writef(
+		"RECON TAref len=%ld start=%ld lines=%ld restart=%d dt=%ldus",
+		(long)ta->text.len, (long)_start0, (long)line, _restart_n,
+		(long)(_rt1.lo - _rt0.lo));
+#endif
 
 	/* Update start line end byte pos, if it's increased */
 	if (ta->lines[start].b_start + ta->lines[start].b_length >
