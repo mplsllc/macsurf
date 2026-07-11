@@ -607,6 +607,9 @@ macsurf_log_is_crash_report(const char *m)
 	 * per-launch DIAG memory readings are dropped for release — re-enable via
 	 * MACSURF_NUCLEAR_LOG / MACSURF_VERBOSE_LOG when diagnosing a new bug. */
 	if (strstr(m, "RECON HEAP BOUNDS") != NULL) return 1;
+	/* fixes769 (#232) — let the mime-recon lines through the crash-only
+	 * gate so a downloaded-instead-of-rendered page is diagnosable. */
+	if (strstr(m, "RECON MIME") != NULL) return 1;
 	if (strstr(m, "WATCHDOG") != NULL) return 1;
 	if (strstr(m, "TERMINAL") != NULL) return 1;
 	if (strstr(m, "exception") != NULL) return 1;
