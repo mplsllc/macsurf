@@ -1463,6 +1463,14 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 					 * cookies do NOT trip this (guarded on post_body). */
 					if (c->post_body != NULL) {
 						extern int macsurf_http_skip_next_cache;
+						/* fixes750 (#213): purge cached bodies ONCE per
+						 * login (on the skip 0->1 edge) so a page cached
+						 * logged-OUT isn't re-served on a later visit.
+						 * deadhosts.txt is preserved. */
+						if (macsurf_http_skip_next_cache == 0) {
+							extern long macos9_cache_clear_bodies(void);
+							macos9_cache_clear_bodies();
+						}
 						macsurf_http_skip_next_cache = 1;
 						macsurf_debug_log_writef(
 							"https: POST set-cookie -> skip stale "

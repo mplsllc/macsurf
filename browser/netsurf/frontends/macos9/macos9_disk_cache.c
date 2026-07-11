@@ -586,6 +586,60 @@ void macos9_deadhost_clear(void)
 #endif
 }
 
+/* fixes750 (#213) — purge only the cached BODY files ("h_xxxxxxxx"), leaving
+ * deadhosts.txt (and any other non-body file) in place. Called when a login
+ * POST establishes a session: every page we cached logged-OUT is now stale,
+ * so drop the bodies and let later navigations refetch WITH the session
+ * cookie. Preserving deadhosts.txt matters — a full clear would re-enable the
+ * fast-fail hosts (jsdelivr / fonts.googleapis) and restart the fetch storm
+ * the perf work fixed. Returns the number of body files deleted. */
+long macos9_cache_clear_bodies(void)
+{
+#ifdef __MACOS9__
+	short vRef;
+	long dirID;
+	short idx;
+	long deleted = 0;
+
+	if (cache_dir_get(&vRef, &dirID) != noErr) return 0;
+
+	idx = 1;
+	while (idx > 0 && deleted < 100000L) {
+		CInfoPBRec pb;
+		Str63 nm;
+		FSSpec spec;
+		OSErr err;
+
+		nm[0] = 0;
+		memset(&pb, 0, sizeof pb);
+		pb.hFileInfo.ioNamePtr = nm;
+		pb.hFileInfo.ioVRefNum = vRef;
+		pb.hFileInfo.ioDirID = dirID;
+		pb.hFileInfo.ioFDirIndex = idx;
+		err = PBGetCatInfoSync(&pb);
+		if (err != noErr) break;   /* no more entries */
+
+		/* skip subdirectories and anything not a cache body ("h_...") */
+		if ((pb.hFileInfo.ioFlAttrib & 0x10) != 0 ||
+		    nm[0] < 2 || nm[1] != 'h' || nm[2] != '_') {
+			idx++;
+			continue;
+		}
+		if (FSMakeFSSpec(vRef, dirID, nm, &spec) == noErr &&
+		    FSpDelete(&spec) == noErr) {
+			deleted++;             /* keep idx: list compacted */
+		} else {
+			idx++;                 /* couldn't delete — skip past it */
+		}
+	}
+	(void)FlushVol(NULL, vRef);
+	macsurf_debug_log_writef("cache CLEAR-BODIES deleted=%ld files", deleted);
+	return deleted;
+#else
+	return 0;
+#endif
+}
+
 /* fixes706 (#Delete Cache) — empty the disk cache: delete every file in the
  * MacSurfData/Cache folder (cached bodies "h_xxxxxxxx" + deadhosts.txt).
  * Bookmarks / history / cookies live at the MacSurfData ROOT, not under

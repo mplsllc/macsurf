@@ -913,6 +913,24 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 		if(strncasecmp(p,"Set-Cookie:",11)==0) {
 			char *v=p+11; while(*v==' '||*v=='\t')v++;
 			fetch_set_cookie(c->parent, v);
+			/* fixes750 (#213) — a login POST that stores a Set-Cookie
+			 * establishes a session: force the redirect target fresh
+			 * (skip_next_cache) AND purge cached bodies once (skip 0->1
+			 * edge) so previously-visited pages don't serve their
+			 * logged-OUT copy. Mirrors the https fetcher's fixes658/750.
+			 * GET responses setting analytics cookies do NOT trip this. */
+			if (c->post_body != NULL) {
+				extern int macsurf_http_skip_next_cache;
+				if (macsurf_http_skip_next_cache == 0) {
+					extern long macos9_cache_clear_bodies(void);
+					macos9_cache_clear_bodies();
+				}
+				macsurf_http_skip_next_cache = 1;
+				macsurf_debug_log_writef(
+					"http: POST set-cookie -> skip stale cache "
+					"(login) url=%s",
+					(c->url != NULL) ? nsurl_access(c->url) : "?");
+			}
 			/* fixes367 (#167) — log cookie NAME only, never value. */
 			{
 				char nm[40]; int k=0;
