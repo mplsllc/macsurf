@@ -494,8 +494,9 @@ void macos9_window_handle_scrollbar_click(struct gui_window *g, ControlRef c, sh
 #endif
 }
 
+void macos9_urlsug_hide(struct gui_window *g);   /* fixes763 fwd — defined below */
 void macos9_window_te_activate_url(struct gui_window *g) { if(!g||!g->url_te||g->url_field_active) return; SetPortWindowPort(g->window); TEActivate(g->url_te); g->url_field_active=1; InvalWindowRect(g->window, &g->url_rect); }
-void macos9_window_te_deactivate_url(struct gui_window *g) { if(!g||!g->url_te||!g->url_field_active) return; SetPortWindowPort(g->window); TEDeactivate(g->url_te); g->url_field_active=0; InvalWindowRect(g->window, &g->url_rect); }
+void macos9_window_te_deactivate_url(struct gui_window *g) { if(!g||!g->url_te||!g->url_field_active) return; macos9_urlsug_hide(g); SetPortWindowPort(g->window); TEDeactivate(g->url_te); g->url_field_active=0; InvalWindowRect(g->window, &g->url_rect); }
 
 /* fixes756 (#229) — give the single-line URL field a WIDE destRect so a long
  * URL lays out on one line extending past the visible viewRect instead of
@@ -784,11 +785,205 @@ int macos9_url_autocomplete(struct gui_window *g)
 	return 0;
 }
 
+/* ---- fixes763: address-bar suggestion dropdown ---------------------------
+ * An in-window overlay drawn just below the URL bar listing up to URLSUG_MAX
+ * history matches for what the user typed. Down/Up arrows move the highlight
+ * (and fill the field); a click picks a row; Enter accepts the field; Esc /
+ * navigation / clicking away dismisses it. Kept in the main window (not a
+ * separate window) so it needs no extra activation/event routing. */
+#define URLSUG_MAX  6
+#define URLSUG_ROWH 18
+static char g_urlsug[URLSUG_MAX][320];
+static int  g_urlsug_n = 0;
+static int  g_urlsug_sel = -1;
+static struct gui_window *g_urlsug_gw = NULL;
+
+int macos9_urlsug_active(struct gui_window *g)
+{
+	return (g_urlsug_n > 0 && g_urlsug_gw == g);
+}
+
+static void macos9_urlsug_rect(struct gui_window *g, Rect *out)
+{
+	out->left   = g->url_rect.left;
+	out->top    = (short)(g->url_rect.bottom + 1);
+	out->right  = g->url_rect.right;
+	out->bottom = (short)(out->top + g_urlsug_n * URLSUG_ROWH + 2);
+}
+
+void macos9_urlsug_hide(struct gui_window *g)
+{
+	if (g != NULL && g_urlsug_gw == g && g_urlsug_n > 0 && g->window != NULL) {
+		Rect r;
+		macos9_urlsug_rect(g, &r);
+		InvalWindowRect(g->window, &r);   /* restore the content underneath */
+	}
+	g_urlsug_n = 0; g_urlsug_sel = -1; g_urlsug_gw = NULL;
+}
+
+static int macos9_url_field_text(struct gui_window *g, char *buf, size_t cap)
+{
+	CharsHandle h;
+	long len;
+	if (g == NULL || g->url_te == NULL) return 0;
+	h = TEGetText(g->url_te);
+	if (h == NULL) return 0;
+	len = GetHandleSize((Handle)h);
+	if (len < 0 || len >= (long)cap) return 0;
+	memcpy(buf, *h, (size_t)len);
+	buf[len] = '\0';
+	return 1;
+}
+
+/* Rebuild the suggestion list from `typed` (scheme-stripped, de-duped). */
+static int macos9_urlsug_build(struct gui_window *g, const char *typed)
+{
+	extern int macos9_history_count(void);
+	extern const char *macos9_history_entry_url(int i);
+	int i, n, cnt = 0;
+	size_t tl;
+	if (g == NULL || typed == NULL) { macos9_urlsug_hide(g); return 0; }
+	tl = strlen(typed);
+	if (tl < 2 || strstr(typed, "://") != NULL) { macos9_urlsug_hide(g); return 0; }
+	n = macos9_history_count();
+	for (i = 0; i < n && cnt < URLSUG_MAX; i++) {
+		const char *hurl = macos9_history_entry_url(i);
+		const char *hs, *base;
+		int dup, k;
+		if (hurl == NULL) continue;
+		hs = ac_strip_scheme(hurl);
+		base = NULL;
+		if (strncasecmp(hs, typed, tl) == 0) base = hs;
+		else if (strncasecmp(hs, "www.", 4) == 0 &&
+			 strncasecmp(hs + 4, typed, tl) == 0) base = hs + 4;
+		if (base == NULL || strlen(base) >= sizeof(g_urlsug[0])) continue;
+		dup = 0;
+		for (k = 0; k < cnt; k++)
+			if (strcmp(g_urlsug[k], base) == 0) { dup = 1; break; }
+		if (dup) continue;
+		strcpy(g_urlsug[cnt], base);
+		cnt++;
+	}
+	g_urlsug_n = cnt;
+	g_urlsug_sel = -1;
+	g_urlsug_gw = (cnt > 0) ? g : NULL;
+	if (cnt == 0) macos9_urlsug_hide(g);
+	return cnt;
+}
+
+void macos9_urlsug_draw(struct gui_window *g)
+{
+	Rect box, row;
+	int i;
+	RGBColor black, white, hi, txt;
+	if (!macos9_urlsug_active(g) || g->window == NULL) return;
+	macos9_urlsug_rect(g, &box);
+	SetPortWindowPort(g->window);
+	black.red = black.green = black.blue = 0;
+	white.red = white.green = white.blue = 0xFFFF;
+	hi.red = 0xD800; hi.green = 0xE400; hi.blue = 0xFFFF;   /* light-blue selection */
+	txt.red = txt.green = txt.blue = 0x1400;
+	RGBForeColor(&white); PaintRect(&box);
+	RGBForeColor(&black); FrameRect(&box);
+	TextFont(kFontIDGeneva); TextSize(11); TextFace(0);
+	for (i = 0; i < g_urlsug_n; i++) {
+		int len;
+		row.left   = (short)(box.left + 1);
+		row.right  = (short)(box.right - 1);
+		row.top    = (short)(box.top + 1 + i * URLSUG_ROWH);
+		row.bottom = (short)(row.top + URLSUG_ROWH);
+		if (i == g_urlsug_sel) { RGBForeColor(&hi); PaintRect(&row); }
+		RGBForeColor(&txt);
+		MoveTo((short)(row.left + 5), (short)(row.top + 13));
+		len = (int)strlen(g_urlsug[i]);
+		if (len > 160) len = 160;
+		DrawText(g_urlsug[i], 0, (short)len);
+	}
+	/* reset fg/bg so a later CopyBits blit isn't tinted (colorize gotcha) */
+	RGBForeColor(&black); RGBBackColor(&white);
+}
+
+/* Click hit-test: returns clicked row (0..n-1) or -1 if p is outside. */
+int macos9_urlsug_hittest(struct gui_window *g, Point p)
+{
+	Rect box;
+	int row;
+	if (!macos9_urlsug_active(g)) return -1;
+	macos9_urlsug_rect(g, &box);
+	if (!PtInRect(p, &box)) return -1;
+	row = (p.v - (box.top + 1)) / URLSUG_ROWH;
+	if (row < 0) row = 0;
+	if (row >= g_urlsug_n) row = g_urlsug_n - 1;
+	return row;
+}
+
+const char *macos9_urlsug_row_text(int i)
+{
+	if (i < 0 || i >= g_urlsug_n) return NULL;
+	return g_urlsug[i];
+}
+
+/* Down (+1) / Up (-1): move highlight, fill the field with that row. */
+int macos9_urlsug_move(struct gui_window *g, int dir)
+{
+	Rect box;
+	if (!macos9_urlsug_active(g)) return 0;
+	if (g_urlsug_sel < 0) g_urlsug_sel = (dir > 0) ? 0 : g_urlsug_n - 1;
+	else {
+		g_urlsug_sel += dir;
+		if (g_urlsug_sel < 0) g_urlsug_sel = g_urlsug_n - 1;
+		if (g_urlsug_sel >= g_urlsug_n) g_urlsug_sel = 0;
+	}
+	set_url_te_text(g, g_urlsug[g_urlsug_sel]);
+	if (g->url_te) TESetSelect(32767, 32767, g->url_te);
+	macos9_urlsug_rect(g, &box);
+	if (g->window) InvalWindowRect(g->window, &box);
+	return 1;
+}
+
+/* Forward-typing entry point: build the dropdown from the raw typed text, then
+ * inline-complete, then draw. Returns the inline-complete result. */
+int macos9_url_typeahead(struct gui_window *g)
+{
+	char typed[512];
+	int r;
+	if (!macos9_url_field_text(g, typed, sizeof(typed))) { macos9_urlsug_hide(g); return 0; }
+	macos9_urlsug_build(g, typed);
+	r = macos9_url_autocomplete(g);
+	macos9_urlsug_draw(g);
+	return r;
+}
+
+/* Editing (backspace/delete) entry point: rebuild the dropdown for the new
+ * field text without inline-completing. */
+void macos9_urlsug_refresh(struct gui_window *g)
+{
+	char typed[512];
+	if (!macos9_url_field_text(g, typed, sizeof(typed))) { macos9_urlsug_hide(g); return; }
+	macos9_urlsug_build(g, typed);
+	if (macos9_urlsug_active(g)) macos9_urlsug_draw(g);
+}
+
+/* Mouse-down (window-local point): if it lands on a dropdown row, put that URL
+ * in the field and navigate. Returns 1 if the click was consumed. */
+int macos9_urlsug_click(struct gui_window *g, Point p)
+{
+	int row;
+	if (!macos9_urlsug_active(g)) return 0;
+	row = macos9_urlsug_hittest(g, p);
+	if (row < 0) return 0;
+	set_url_te_text(g, g_urlsug[row]);
+	if (g->url_te) TESetSelect(32767, 32767, g->url_te);
+	macos9_window_address_bar_submit(g);   /* navigates + hides the dropdown */
+	return 1;
+}
+
 void macos9_window_address_bar_submit(struct gui_window *g) {
 	CharsHandle h; long l; char r[1024], f[1024];
 	long i, j;
 	MS_LOG("URL submit fired");
 	if(!g||!g->url_te) { MS_LOG("submit: no g or url_te"); return; }
+	macos9_urlsug_hide(g);   /* fixes763 — dismiss the suggestion dropdown */
 	h=TEGetText(g->url_te); if(!h) { MS_LOG("submit: TEGetText null"); return; }
 	l=GetHandleSize((Handle)h); if(l<=0) { MS_LOG("submit: empty"); return; }
 	if(l>1023) l=1023; HLock((Handle)h); memcpy(r,*h,(size_t)l); HUnlock((Handle)h); r[l]=0;

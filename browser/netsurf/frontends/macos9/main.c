@@ -808,6 +808,7 @@ void macos9_handle_update(const EventRecord *event) {
 		}
 	}
 	EndUpdate(win);
+	macos9_urlsug_draw(gw);   /* fixes763 — redraw dropdown atop fresh content */
 	/* fixes738 — viewport-gated image loading. After the content is
 	 * composited and the box tree is stable, fetch any deferred images now
 	 * within (viewport + margin) and drop dead queue entries; off-screen
@@ -1001,10 +1002,14 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 							if (ctrl == gw->vscroll || ctrl == gw->hscroll) {
 								macos9_window_handle_scrollbar_click(gw, ctrl, cpart, &p);
 							}
+						} else if (ctrl == NULL && macos9_urlsug_click(gw, p)) {
+							/* fixes763 — a suggestion row was clicked + navigated */
 						} else if (ctrl == NULL && PtInRect(p, &gw->url_rect)) {
+							macos9_urlsug_hide(gw);   /* fixes763 dismiss stale suggestions */
 							macos9_window_te_activate_url(gw);
 							if (gw->url_te) { TEClick(p, (event->modifiers & shiftKey) != 0, gw->url_te); TESelView(gw->url_te); } /* fixes756 (#229) */
 						} else if (ctrl == NULL && PtInRect(p, &gw->content_rect) && gw->bw) {
+							macos9_urlsug_hide(gw);   /* fixes763 dismiss on content click */
 							/* Click in content area — dispatch to NetSurf so
 							 * links navigate, forms submit, etc.  Coordinates
 							 * are translated from window-local to NetSurf
@@ -1163,10 +1168,16 @@ void macos9_handle_key_down(const EventRecord *event) {
 	}
 	if (!gw) return;
 	if (gw->url_field_active && gw->url_te) {
+		extern int  macos9_urlsug_active(struct gui_window *g);
+		extern int  macos9_urlsug_move(struct gui_window *g, int dir);
+		extern int  macos9_url_typeahead(struct gui_window *g);
+		extern void macos9_urlsug_refresh(struct gui_window *g);
 		if (ch == 0x0D || ch == 0x03) {
 			macos9_window_address_bar_submit(gw);
 		} else if (ch == 0x1B) {
 			macos9_window_te_deactivate_url(gw);
+		} else if ((ch == 0x1F || ch == 0x1E) && macos9_urlsug_active(gw)) {
+			macos9_urlsug_move(gw, (ch == 0x1F) ? 1 : -1);  /* fixes763 arrow nav */
 		} else {
 			int did_ac = 0;
 			SetPortWindowPort(gw->window);
@@ -1176,8 +1187,9 @@ void macos9_handle_key_down(const EventRecord *event) {
 			 * completion is inserted it shows the URL start with the tail
 			 * selected, so don't scroll the caret (end) into view. */
 			if ((unsigned char)ch >= 0x20 && (unsigned char)ch != 0x7F) {
-				extern int macos9_url_autocomplete(struct gui_window *g);
-				did_ac = macos9_url_autocomplete(gw);
+				did_ac = macos9_url_typeahead(gw);  /* fixes763 dropdown + inline */
+			} else {
+				macos9_urlsug_refresh(gw);          /* fixes763 rebuild on delete */
 			}
 			if (!did_ac)
 				TESelView(gw->url_te);  /* fixes756 (#229) caret into view */

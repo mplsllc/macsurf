@@ -302,6 +302,11 @@ void macos9_window_scroll_by(struct gui_window *g, int dx, int dy);
 void macos9_window_handle_scrollbar_click(struct gui_window *g, ControlRef c, short p, void *lp);
 void macos9_window_te_activate_url(struct gui_window *g);
 void macos9_window_te_deactivate_url(struct gui_window *g);
+/* fixes763 — address-bar suggestion dropdown */
+int  macos9_urlsug_active(struct gui_window *g);
+int  macos9_urlsug_click(struct gui_window *g, Point p);
+void macos9_urlsug_hide(struct gui_window *g);
+void macos9_urlsug_draw(struct gui_window *g);
 void macos9_window_navigate(struct gui_window *g, const char *u);
 void macos9_window_address_bar_submit(struct gui_window *g);
 void macos9_window_back(struct gui_window *g);
