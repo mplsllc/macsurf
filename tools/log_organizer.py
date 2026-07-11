@@ -138,7 +138,10 @@ def notify(msg):
             data = json.dumps({"content": msg}).encode("utf-8")
             req = urllib.request.Request(
                 WEBHOOK, data=data,
-                headers={"Content-Type": "application/json"})
+                headers={"Content-Type": "application/json",
+                         # Discord is behind Cloudflare, which 403s the default
+                         # Python-urllib UA — a real User-Agent is required.
+                         "User-Agent": "MacSurf-LogWatcher/1.0 (+https://macsurf.org)"})
             urllib.request.urlopen(req, timeout=6).read()
         except Exception as exc:  # never let a webhook failure break organizing
             print("  (webhook failed: %s)" % exc, flush=True)
@@ -279,6 +282,18 @@ def main():
     if not os.path.isdir(LOGDIR):
         print("no such log dir: %s" % LOGDIR, file=sys.stderr)
         return 2
+
+    # Webhook secret: env var wins; else read the gitignored builds/logs/.webhook
+    # file (keeps the URL out of git AND out of the crontab / process list).
+    global WEBHOOK
+    if not WEBHOOK:
+        wf = os.path.join(LOGDIR, ".webhook")
+        if os.path.isfile(wf):
+            try:
+                with open(wf, "r", encoding="utf-8") as fh:
+                    WEBHOOK = fh.read().strip()
+            except OSError:
+                pass
 
     if args.reindex:
         rebuild_index()
