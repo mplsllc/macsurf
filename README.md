@@ -15,9 +15,9 @@
 </p>
 
 <p align="center">
-  <img src="screenshots/macsurf-1.68-imac.jpg" alt="MacSurf 1.68.1 running on a Power Macintosh G3 iMac" width="760">
+  <img src="screenshots/macsurf-1.68-imac.jpg" alt="MacSurf 2.0 running on a Power Macintosh G3 iMac" width="760">
   <br>
-  <em>MacSurf 1.68.1 on a Power Mac G3 iMac, rendering <a href="https://home.macsurf.org/">home.macsurf.org</a> over native HTTPS.</em>
+  <em>MacSurf 2.0 on a Power Mac G3 iMac, rendering <a href="https://home.macsurf.org/">home.macsurf.org</a> over native HTTPS.</em>
 </p>
 
 ---
@@ -31,7 +31,7 @@
   &nbsp;&nbsp;
   <a href="https://www.patreon.com/cw/MacSurf" target="_blank"><img src="patreon-banner-519x200.png" alt="Support on Patreon" height="46"></a>
   &nbsp;&nbsp;
-  <a href="https://discord.gg/mrwZK8zHr2" target="_blank"><img src="https://github.com/mplsllc/macsurf/blob/master/img/discord.jpeg" alt="Join our Discord!" height="46"></a>
+  <a href="https://discord.gg/mrwZK8zHr2" target="_blank"><img src="img/discord.jpeg" alt="Join our Discord!" height="46"></a>
 </p>
 
 <p align="center"><sub><strong>Thanks to our supporters:</strong> Shlooom (Patreon) &middot; kilgeist, Turuun (Ko-Fi)</sub></p>
@@ -39,7 +39,7 @@
 ---
 
 > [!NOTE]
-> **1.68.1 "macQJS"** runs a real modern JavaScript engine, speaks TLS 1.3 natively, keeps you logged in, and renders full desktop forums on a 233 MHz G3. It's at its best on hand-built pages, retro sites, and forums. Very heavy modern apps — GitHub, video, React-heavy SPAs — still don't render. This is honest, in-progress software. Got a G3 or G4? Load it up and tell us what breaks. See [docs/status.md](docs/status.md) for the current punch list.
+> **2.0** fixes the blank-screen bug on high-RAM Macs, loads a whole class of cross-signed HTTPS sites (macintoshgarden.org included), cuts heavy forums from minutes to seconds with lazy image loading, and adds a type-ahead address bar plus real History and Bookmark managers — all on the macQJS JavaScript engine and native TLS 1.3, on a 233 MHz G3. It's at its best on hand-built pages, retro sites, and forums. Very heavy modern apps — GitHub, video, React-heavy SPAs — still don't render. This is honest, in-progress software. Got a G3 or G4? Load it up and tell us what breaks. See [docs/status.md](docs/status.md) for the current punch list.
 
 ## Why this exists
 
@@ -140,7 +140,7 @@ Every shot below is a live site, captured on a Power Mac G3 running Mac OS 9.2.2
 
 ## Download
 
-**[MacSurf 1.68.1 "macQJS"](https://github.com/mplsllc/macsurf/releases/latest)** (2026-07-08) — the JavaScript engine was replaced (Duktape ES5 → macQJS / QuickJS ES2023), plus working text input, persistent logins, a bookmarks menu and downloads manager, the split-scrollbar render fix, downloadable web-font icons, and a big performance pass (near-instant startup, image / font disk cache). Named for **[68kmla.org](https://68kmla.org)**, the community that drove the cycle. [Full release notes →](docs/release-notes/MacSurf-1.68.1.md)
+**[MacSurf 2.0](https://github.com/mplsllc/macsurf/releases/latest)** (2026-07-11) — the blank-screen fix for high-RAM Macs, cross-signed HTTPS (macintoshgarden.org and a whole family of sites), viewport lazy image loading (heavy forums load in seconds instead of minutes), a type-ahead address bar with a suggestions dropdown, real History and Bookmark manager windows, and a refreshed interface — all on native TLS 1.3 and the macQJS ES2023 JavaScript engine. [Full release notes →](docs/release-notes/MacSurf-2.0.md)
 
 - **[Download the .sit →](https://github.com/mplsllc/macsurf/releases/latest)** — expand with StuffIt Expander on Mac OS 9.1+ (CarbonLib 1.5+) and double-click. No installer.
 - Already on a Mac OS 9 machine? Grab it from the plain-HTTP **[macsurf.org](http://macsurf.org/)** — GitHub doesn't render on-device yet.
