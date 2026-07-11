@@ -1168,9 +1168,19 @@ void macos9_handle_key_down(const EventRecord *event) {
 		} else if (ch == 0x1B) {
 			macos9_window_te_deactivate_url(gw);
 		} else {
+			int did_ac = 0;
 			SetPortWindowPort(gw->window);
 			TEKey(ch, gw->url_te);
-			TESelView(gw->url_te);  /* fixes756 (#229) scroll caret into view for long URLs */
+			/* fixes762 — inline history autocomplete on FORWARD typing only
+			 * (skip backspace/delete/control so editing isn't fought). When a
+			 * completion is inserted it shows the URL start with the tail
+			 * selected, so don't scroll the caret (end) into view. */
+			if ((unsigned char)ch >= 0x20 && (unsigned char)ch != 0x7F) {
+				extern int macos9_url_autocomplete(struct gui_window *g);
+				did_ac = macos9_url_autocomplete(gw);
+			}
+			if (!did_ac)
+				TESelView(gw->url_te);  /* fixes756 (#229) caret into view */
 			InvalWindowRect(gw->window, &gw->url_rect);
 		}
 	} else {

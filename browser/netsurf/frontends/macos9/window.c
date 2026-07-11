@@ -714,6 +714,76 @@ void macos9_url_te_edit(struct gui_window *g, short edit_item)
 #endif
 }
 
+/* fixes762 — inline address-bar autocomplete from visit history. After a
+ * forward keystroke, find the most-recent history URL whose host/path (scheme
+ * and optional leading "www." stripped) begins with what the user typed, fill
+ * the remainder into the field, and SELECT that added tail so the next
+ * keystroke replaces it (classic type-ahead). Returns 1 if a completion was
+ * inserted. Submit defaults a bare host to https:// (fixes249) with http
+ * fallback (fixes317), so accepting a suggestion navigates correctly. Skipped
+ * when the user is typing an explicit scheme (contains "://"). */
+static const char *ac_strip_scheme(const char *u)
+{
+	if (u == NULL) return u;
+	if (strncasecmp(u, "https://", 8) == 0) return u + 8;
+	if (strncasecmp(u, "http://", 7) == 0) return u + 7;
+	return u;
+}
+
+int macos9_url_autocomplete(struct gui_window *g)
+{
+	extern int macos9_history_count(void);
+	extern const char *macos9_history_entry_url(int i);
+	CharsHandle h;
+	long len;
+	char typed[512];
+	int i, n;
+	size_t tl;
+	if (g == NULL || g->url_te == NULL) return 0;
+	h = TEGetText(g->url_te);
+	if (h == NULL) return 0;
+	len = GetHandleSize((Handle)h);
+	if (len < 2 || len >= (long)sizeof(typed)) return 0;
+	memcpy(typed, *h, (size_t)len);
+	typed[len] = '\0';
+	if (strstr(typed, "://") != NULL) return 0;   /* explicit URL — don't fight it */
+	tl = (size_t)len;
+	n = macos9_history_count();
+	for (i = 0; i < n; i++) {
+		const char *hurl = macos9_history_entry_url(i);
+		const char *hs, *base;
+		size_t bl;
+		if (hurl == NULL) continue;
+		hs = ac_strip_scheme(hurl);
+		base = NULL;
+		if (strncasecmp(hs, typed, tl) == 0) {
+			base = hs;
+		} else if (strncasecmp(hs, "www.", 4) == 0 &&
+			   strncasecmp(hs + 4, typed, tl) == 0) {
+			base = hs + 4;
+		}
+		if (base == NULL) continue;
+		bl = strlen(base);
+		if (bl <= tl) continue;   /* nothing to add */
+		{
+			char shown[1024];
+			Rect vr;
+			if (bl >= sizeof(shown)) continue;
+			memcpy(shown, base, bl);
+			shown[bl] = '\0';
+			SetPortWindowPort(g->window);
+			TESetText(shown, (long)bl, g->url_te);
+			TECalText(g->url_te);
+			compute_url_te_rect(&g->url_rect, &vr);
+			set_url_te_geometry(g->url_te, &vr);  /* wide destRect, start visible */
+			TESetSelect((long)tl, (long)bl, g->url_te);
+			InvalWindowRect(g->window, &g->url_rect);
+		}
+		return 1;
+	}
+	return 0;
+}
+
 void macos9_window_address_bar_submit(struct gui_window *g) {
 	CharsHandle h; long l; char r[1024], f[1024];
 	long i, j;
