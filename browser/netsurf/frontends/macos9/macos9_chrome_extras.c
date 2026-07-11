@@ -25,6 +25,7 @@
 #include "macos9.h"
 #include "macsurf_debug.h"
 #include "about_logo_data.h"   /* fixes726 — crisp 64x64 puffin PNG */
+#include "manager_icons_data.h" /* fixes745 — History/Bookmark banner icons */
 
 #ifdef __MACOS9__
 #include <Carbon.h>
@@ -1153,15 +1154,210 @@ struct hw_row {
 /* Centered rounded push button with a Pascal label. fixes710 — rounded
  * corners read as a real Mac push button rather than a bare box. Shared by
  * both manager windows. */
+/* fixes742 — vertical gradient fill (8-bit endpoint colours) for the manager
+ * windows' shine. */
+static void chrome_vgrad(const Rect *r, int r0, int g0, int b0,
+		int r1, int g1, int b1)
+{
+	short y;
+	short h = (short)(r->bottom - r->top);
+	RGBColor c;
+	Rect ln;
+	if (h <= 0) return;
+	ln.left = r->left;
+	ln.right = r->right;
+	for (y = 0; y < h; y++) {
+		int rv = r0 + (r1 - r0) * y / h;
+		int gv = g0 + (g1 - g0) * y / h;
+		int bv = b0 + (b1 - b0) * y / h;
+		c.red   = (unsigned short)((rv << 8) | rv);
+		c.green = (unsigned short)((gv << 8) | gv);
+		c.blue  = (unsigned short)((bv << 8) | bv);
+		RGBForeColor(&c);
+		ln.top = (short)(r->top + y);
+		ln.bottom = (short)(ln.top + 1);
+		PaintRect(&ln);
+	}
+}
+
+/* fixes745 — decode a PNG into a 32-bit colour GWorld + a 1-bit mask BitMap
+ * (from alpha) for CopyMask compositing over the gradient banner. Returns 1 on
+ * success. Mirrors about_logo_ensure. */
+static int mgr_icon_build(const unsigned char *png, unsigned long len,
+		GWorldPtr *out_gw, BitMap *out_mask, Rect *out_src)
+{
+	extern unsigned lodepng_decode32(unsigned char **out, unsigned *w,
+			unsigned *h, const unsigned char *in, unsigned long insize);
+	unsigned char *rgba = NULL;
+	unsigned w = 0, h = 0, err;
+	OSErr oerr;
+	GWorldPtr saved_port;
+	GDHandle saved_gdh;
+	PixMapHandle pm;
+	long dst_rb, mask_rb, row, col;
+	unsigned char *src_row, *dst_row, *mrow;
+
+	*out_gw = NULL;
+	out_mask->baseAddr = NULL;
+	err = lodepng_decode32(&rgba, &w, &h, png, len);
+	if (err != 0 || rgba == NULL || w == 0 || h == 0) {
+		if (rgba != NULL) free(rgba);
+		return 0;
+	}
+	SetRect(out_src, 0, 0, (short)w, (short)h);
+	GetGWorld(&saved_port, &saved_gdh);
+	oerr = NewGWorld(out_gw, 32, out_src, NULL, NULL, 0);
+	if (oerr != noErr || *out_gw == NULL) {
+		free(rgba); SetGWorld(saved_port, saved_gdh); return 0;
+	}
+	pm = GetGWorldPixMap(*out_gw);
+	if (pm == NULL || !LockPixels(pm)) {
+		DisposeGWorld(*out_gw); *out_gw = NULL;
+		free(rgba); SetGWorld(saved_port, saved_gdh); return 0;
+	}
+	dst_rb = (long)((*pm)->rowBytes & 0x3FFF);
+	for (row = 0; row < (long)h; row++) {
+		src_row = rgba + row * (long)w * 4L;
+		dst_row = (unsigned char *)GetPixBaseAddr(pm) + row * dst_rb;
+		for (col = 0; col < (long)w; col++) {
+			dst_row[col*4+0] = 0xFF;
+			dst_row[col*4+1] = src_row[col*4+0];
+			dst_row[col*4+2] = src_row[col*4+1];
+			dst_row[col*4+3] = src_row[col*4+2];
+		}
+	}
+	UnlockPixels(pm);
+	SetGWorld(saved_port, saved_gdh);
+	mask_rb = (((long)w + 15) / 16) * 2;
+	out_mask->baseAddr = NewPtrClear(mask_rb * (long)h);
+	if (out_mask->baseAddr == NULL) {
+		DisposeGWorld(*out_gw); *out_gw = NULL; free(rgba); return 0;
+	}
+	out_mask->rowBytes = (short)mask_rb;
+	out_mask->bounds = *out_src;
+	for (row = 0; row < (long)h; row++) {
+		src_row = rgba + row * (long)w * 4L;
+		mrow = (unsigned char *)out_mask->baseAddr + row * mask_rb;
+		for (col = 0; col < (long)w; col++) {
+			if (src_row[col*4+3] >= 128)
+				mrow[col >> 3] |= (unsigned char)(0x80 >> (col & 7));
+		}
+	}
+	free(rgba);
+	return 1;
+}
+
+/* Lazy-decoded banner icons (id 1 = History, 2 = Bookmarks). */
+static GWorldPtr s_mgr_ic_gw[3];
+static BitMap    s_mgr_ic_mask[3];
+static Rect      s_mgr_ic_src[3];
+static int       s_mgr_ic_tried[3];
+
+static void mgr_icon_ensure(int id)
+{
+	if (id < 1 || id > 2 || s_mgr_ic_tried[id]) return;
+	s_mgr_ic_tried[id] = 1;
+	if (id == 1)
+		(void)mgr_icon_build(macos9_mgr_hist_png, macos9_mgr_hist_png_len,
+			&s_mgr_ic_gw[id], &s_mgr_ic_mask[id], &s_mgr_ic_src[id]);
+	else
+		(void)mgr_icon_build(macos9_mgr_bm_png, macos9_mgr_bm_png_len,
+			&s_mgr_ic_gw[id], &s_mgr_ic_mask[id], &s_mgr_ic_src[id]);
+}
+
+/* fixes742/745 — a shiny gold gradient title banner across the top of a manager
+ * window, with an icon (id 1=History, 2=Bookmarks, 0=none) + bold white title.
+ * content is the window's local rect. */
+static void chrome_mgr_header(const Rect *content, const char *title, int icon)
+{
+	Rect band;
+	Rect ln;
+	RGBColor saved_fg;
+	RGBColor white;
+	RGBColor accent;
+	white.red = white.green = white.blue = 0xFFFF;
+	accent.red = 0x8C8C; accent.green = 0x5A5A; accent.blue = 0x1010;  /* dark amber */
+	band.left = content->left;
+	band.right = content->right;
+	band.top = content->top;
+	band.bottom = (short)(content->top + 34);   /* fixes744 — dialed back */
+	GetForeColor(&saved_fg);
+	/* fixes744 — MacSurf gold scheme (softened orange) instead of blue */
+	chrome_vgrad(&band, 0xF0, 0xA8, 0x40, 0xD2, 0x82, 0x1E);
+	ln.left = band.left; ln.right = band.right;
+	ln.top = (short)(band.bottom - 1); ln.bottom = band.bottom;
+	RGBForeColor(&accent); PaintRect(&ln);
+	{
+		short tx = (short)(band.left + 14);
+		if (icon >= 1 && icon <= 2) {
+			mgr_icon_ensure(icon);
+			if (s_mgr_ic_gw[icon] != NULL) {
+				extern const BitMap *GetPortBitMapForCopyBits(CGrafPtr port);
+				GrafPtr gp;
+				Rect ir;
+				short isz = MACOS9_MGR_ICON_SIZE;
+				ir.left = (short)(band.left + 12);
+				ir.top = (short)(band.top + (34 - isz) / 2);
+				ir.right = (short)(ir.left + isz);
+				ir.bottom = (short)(ir.top + isz);
+				GetPort(&gp);
+				{
+					const BitMap *src = GetPortBitMapForCopyBits(
+						(CGrafPtr)s_mgr_ic_gw[icon]);
+					const BitMap *dst = GetPortBitMapForCopyBits(
+						(CGrafPtr)gp);
+					RGBColor blk, wht2;
+					blk.red = blk.green = blk.blue = 0;
+					wht2.red = wht2.green = wht2.blue = 0xFFFF;
+					RGBForeColor(&blk); RGBBackColor(&wht2);
+					if (src != NULL && dst != NULL)
+						CopyMask(src, &s_mgr_ic_mask[icon], dst,
+							&s_mgr_ic_src[icon],
+							&s_mgr_ic_src[icon], &ir);
+				}
+				tx = (short)(ir.right + 8);
+			}
+		}
+		RGBForeColor(&white);
+		TextFont(1); TextFace(bold); TextSize(15);
+		MoveTo(tx, (short)(band.top + 23));
+		DrawText(title, 0, (short)strlen(title));
+		TextFace(normal);
+	}
+	RGBForeColor(&saved_fg);
+}
+
+/* fixes742 — shiny rounded button: a light top-lit gradient clipped to the
+ * round-rect, a crisp frame, centred label. */
 static void chrome_draw_button(const Rect *r, ConstStr255Param label)
 {
 	short bw = (short)(r->right - r->left);
 	short tw = StringWidth(label);
+	RGBColor blk;
+	RGBColor saved_fg;
+	RgnHandle btn = NewRgn();
+	RgnHandle sav = NewRgn();
+	blk.red = blk.green = blk.blue = 0;
+	GetForeColor(&saved_fg);
 	EraseRect(r);
+	if (btn != NULL && sav != NULL) {
+		GetClip(sav);
+		OpenRgn();
+		FrameRoundRect(r, 10, 10);
+		CloseRgn(btn);
+		SetClip(btn);
+		chrome_vgrad(r, 0xFD, 0xF6, 0xE6, 0xF0, 0xD8, 0xAC);  /* fixes745 — gold */
+		SetClip(sav);
+	}
+	RGBForeColor(&blk);
+	PenSize(1, 1);
 	FrameRoundRect(r, 10, 10);
 	MoveTo((short)(r->left + (bw - tw) / 2),
 	       (short)(r->top + (r->bottom - r->top) / 2 + 4));
 	DrawString(label);
+	RGBForeColor(&saved_fg);
+	if (btn != NULL) DisposeRgn(btn);
+	if (sav != NULL) DisposeRgn(sav);
 }
 
 /* Format a day header from a Mac-seconds timestamp relative to today. */
@@ -1245,7 +1441,7 @@ void macos9_history_window_show(struct gui_window *g)
 	struct hw_row *rows;
 	int cap, nrows;
 	int scroll_top = 0, sel = -1;
-	int row_h = 14, vis;
+	int row_h = 20, vis;              /* fixes742 — taller rows, more padding */
 	long today_day = 0;
 	int done_flag = 0;
 	char go_url[MACSURF_HIST_URL_MAX];
@@ -1277,11 +1473,11 @@ void macos9_history_window_show(struct gui_window *g)
 	GetPort(&saved_port);
 	SetPortWindowPort(win);
 	TextFont(1);   /* application font (Geneva) */
-	TextSize(10);
+	TextSize(12);  /* fixes742 — larger row text */
 
-	/* content is 520 x 400 local */
-	SetRect(&list, 8, 8, 512, 356);
-	SetRect(&up,   494, 8,   512, 30);
+	/* content is 520 x 400 local; list sits below the 40px title banner */
+	SetRect(&list, 8, 44, 512, 356);
+	SetRect(&up,   494, 44,  512, 66);
 	SetRect(&dn,   494, 334, 512, 356);
 	SetRect(&clr,  8,   364, 128, 388);
 	SetRect(&go,   300, 364, 380, 388);
@@ -1440,6 +1636,8 @@ void macos9_history_window_show(struct gui_window *g)
 			Rect tr;
 			int r, y;
 			GetClip(saveclip);
+			{ Rect content; SetRect(&content, 0, 0, 520, 400);
+			  chrome_mgr_header(&content, "History", 1); }
 			EraseRect(&list);
 			FrameRect(&list);
 			ClipRect(&list);
@@ -1447,19 +1645,38 @@ void macos9_history_window_show(struct gui_window *g)
 			for (r = scroll_top;
 			     r < nrows && (r - scroll_top) < vis; r++) {
 				short len = (short)strlen(rows[r].text);
+				RGBColor blk, wht;
+				blk.red = blk.green = blk.blue = 0;
+				wht.red = wht.green = wht.blue = 0xFFFF;
 				tr.left = (short)(list.left + 1);
 				tr.right = (short)(list.right - 20);
 				tr.top = (short)y;
 				tr.bottom = (short)(y + row_h);
 				if (rows[r].is_header) {
+					RGBColor hc;
+					hc.red = 0x7A7A; hc.green = 0x4E4E; hc.blue = 0x1414;
+					chrome_vgrad(&tr, 0xFB, 0xF0, 0xDC, 0xF4, 0xE2, 0xC0);
+					RGBForeColor(&hc);
 					TextFace(bold);
-					MoveTo((short)(list.left + 4), (short)(y + 11));
+					MoveTo((short)(list.left + 6), (short)(y + 14));
 					DrawText(rows[r].text, 0, len);
 					TextFace(normal);
+					RGBForeColor(&blk);
 				} else {
-					MoveTo((short)(list.left + 16), (short)(y + 11));
+					if (r == sel) {
+						RGBColor selc;
+						selc.red = 0xE8E8; selc.green = 0x9E9E; selc.blue = 0x3838;
+						RGBForeColor(&selc); PaintRect(&tr);
+					} else if (((r - scroll_top) & 1) != 0) {
+						RGBColor st;
+						st.red = 0xFDFD; st.green = 0xF8F8; st.blue = 0xEFEF;
+						RGBForeColor(&st); PaintRect(&tr);
+					}
+					if (r == sel) RGBForeColor(&wht);
+					else RGBForeColor(&blk);
+					MoveTo((short)(list.left + 18), (short)(y + 14));
 					DrawText(rows[r].text, 0, len);
-					if (r == sel) InvertRect(&tr);
+					RGBForeColor(&blk);
 				}
 				y += row_h;
 			}
@@ -1801,7 +2018,7 @@ void macos9_bookmark_window_show(struct gui_window *g)
 	struct bw_row *rows;
 	int cap, nrows;
 	int scroll_top = 0, sel = -1;
-	int row_h = 14, vis;
+	int row_h = 20, vis;              /* fixes742 — taller rows, more padding */
 	int done_flag = 0, dirty = 1;
 	char go_url[MACSURF_BMK_URL_MAX];
 
@@ -1823,11 +2040,11 @@ void macos9_bookmark_window_show(struct gui_window *g)
 	GetPort(&saved_port);
 	SetPortWindowPort(win);
 	TextFont(1);
-	TextSize(10);
+	TextSize(12);  /* fixes742 — larger row text */
 
-	/* content is 560 x 400 local */
-	SetRect(&list, 8, 8, 552, 356);
-	SetRect(&up,   534, 8,   552, 30);
+	/* content is 560 x 400 local; list sits below the 40px title banner */
+	SetRect(&list, 8, 44, 552, 356);
+	SetRect(&up,   534, 44,  552, 66);
 	SetRect(&dn,   534, 334, 552, 356);
 	SetRect(&nf,   8,   364, 92,  388);
 	SetRect(&rn,   98,  364, 170, 388);
@@ -2014,6 +2231,8 @@ void macos9_bookmark_window_show(struct gui_window *g)
 			Rect tr;
 			int r, y;
 			GetClip(saveclip);
+			{ Rect content; SetRect(&content, 0, 0, 560, 400);
+			  chrome_mgr_header(&content, "Bookmarks", 2); }
 			EraseRect(&list);
 			FrameRect(&list);
 			ClipRect(&list);
@@ -2021,16 +2240,37 @@ void macos9_bookmark_window_show(struct gui_window *g)
 			for (r = scroll_top;
 			     r < nrows && (r - scroll_top) < vis; r++) {
 				short len = (short)strlen(rows[r].text);
-				short x = (short)(list.left + 4 + rows[r].depth * 16);
+				short x = (short)(list.left + 6 + rows[r].depth * 18);
+				RGBColor blk, wht;
+				blk.red = blk.green = blk.blue = 0;
+				wht.red = wht.green = wht.blue = 0xFFFF;
 				tr.left = (short)(list.left + 1);
 				tr.right = (short)(list.right - 20);
 				tr.top = (short)y;
 				tr.bottom = (short)(y + row_h);
+				if (r == sel) {
+					RGBColor selc;
+					selc.red = 0xE8E8; selc.green = 0x9E9E; selc.blue = 0x3838;
+					RGBForeColor(&selc); PaintRect(&tr);
+				} else if (((r - scroll_top) & 1) != 0) {
+					RGBColor st;
+					st.red = 0xFDFD; st.green = 0xF8F8; st.blue = 0xEFEF;
+					RGBForeColor(&st); PaintRect(&tr);
+				}
 				if (rows[r].is_folder) TextFace(bold);
-				MoveTo(x, (short)(y + 11));
+				if (r == sel) {
+					RGBForeColor(&wht);
+				} else if (rows[r].is_folder) {
+					RGBColor fc;
+					fc.red = 0x7A7A; fc.green = 0x4E4E; fc.blue = 0x1414;
+					RGBForeColor(&fc);
+				} else {
+					RGBForeColor(&blk);
+				}
+				MoveTo(x, (short)(y + 14));
 				DrawText(rows[r].text, 0, len);
 				if (rows[r].is_folder) TextFace(normal);
-				if (r == sel) InvertRect(&tr);
+				RGBForeColor(&blk);
 				y += row_h;
 			}
 			SetClip(saveclip);
