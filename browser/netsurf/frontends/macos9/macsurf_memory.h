@@ -80,5 +80,23 @@ void macsurf_recon_note(const char *where, const void *a,
  */
 void macsurf_recon_clamp(const char *field, long value);
 
+/*
+ * fixes719 (#207) — runtime application-partition pointer bounds. Call
+ * macsurf_heap_bounds_init() ONCE at startup (in main(), after
+ * macsurf_debug_log_init() and before any string interning / URL parse /
+ * content fetch) to capture this process's real partition window from the
+ * Process Manager. Then the two predicates replace every hardcoded
+ * 0x01000000/0x20000000/0x28000000 pointer-range guard:
+ *   macsurf_ptr_is_heap(p)  -> p is inside the app partition (malloc'd objs)
+ *   macsurf_ptr_is_valid(p) -> p is merely non-NULL/non-tiny (may be a
+ *                              static const vtable / PEF literal off-heap)
+ * Library / core files that cannot include this header reach them with a
+ * bare `extern int macsurf_ptr_is_heap(const void *);` at the point of use,
+ * exactly as they already do for macsurf_debug_log_writef.
+ */
+void macsurf_heap_bounds_init(void);
+int  macsurf_ptr_is_heap(const void *p);
+int  macsurf_ptr_is_valid(const void *p);
+
 
 #endif /* MACSURF_MEMORY_H */

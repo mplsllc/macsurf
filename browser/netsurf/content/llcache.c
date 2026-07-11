@@ -58,6 +58,8 @@
 #include "macsurf_debug.h"
 #include "macos9_deathrow.h"
 
+extern int macsurf_ptr_is_heap(const void *);
+
 /* fixes591: nsu_base64_encode / nsu_base64_decode_alloc defined here (external
  * linkage) because CW8 will not emit a static-in-header body into this TU, so
  * they stayed undefined at link. Standard base64 (RFC 4648); llcache is the
@@ -171,8 +173,7 @@ nsuerror nsu_base64_decode_alloc(const unsigned char *input, size_t input_length
  * this first and bails rather than dereferencing wild memory. */
 #define LLCACHE_OBJECT_WILD(o) \
 	((o) == NULL || \
-	 (unsigned long)(void *)(o) < 0x01000000UL || \
-	 (unsigned long)(void *)(o) >= 0x20000000UL)
+	 !macsurf_ptr_is_heap((const void *)(o)))
 
 /**
  * State of a low-level cache object fetch.
@@ -1082,7 +1083,7 @@ llcache_safe_etag(const llcache_object *object)
 	const char *e = object->cache.etag;
 	unsigned long a = (unsigned long) e;
 
-	if (e != NULL && (a < 4UL || a >= 0x28000000UL)) {
+	if (e != NULL && !macsurf_ptr_is_heap((const void *)(e))) {
 		macsurf_debug_log_writef(
 			"fixes574 ETAG: wild etag=%p obj=%p url=%s (corrupt cache field)",
 			(void *) a, (void *) object,
@@ -1119,8 +1120,7 @@ static nserror llcache_object_refetch(llcache_object *object)
 		return NSERROR_BAD_PARAMETER;
 	}
 	{
-		unsigned long ua = (unsigned long)(void *)object->url;
-		if (ua < 0x01000000UL || ua >= 0x20000000UL) {
+		if (!macsurf_ptr_is_heap((const void *)(object->url))) {
 			NSLOG(llcache, INFO, "refetch: object %p url wild ptr %p, skip",
 				object, (void *)object->url);
 			return NSERROR_BAD_PARAMETER;
@@ -3878,8 +3878,7 @@ static nserror llcache_object_notify_users(llcache_object *object)
 				objstate >= LLCACHE_FETCH_DATA &&
 				object->source_len > handle->bytes &&
 				object->source_data != NULL &&
-				(unsigned long)(void *)object->source_data >= 0x01000000UL &&
-				(unsigned long)(void *)object->source_data < 0x20000000UL) {
+				macsurf_ptr_is_heap((const void *)object->source_data)) {
 			size_t orig_handle_read;
 
 			/* Construct HAD_DATA event */

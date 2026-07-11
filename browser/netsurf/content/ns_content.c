@@ -63,6 +63,8 @@ extern void macos9_content_unregister(struct content *c);
 #define macos9_content_unregister(c) ((void)0)
 #endif
 
+extern int macsurf_ptr_is_heap(const void *);
+
 #define URL_FMT_SPC "%.140s"
 
 const char * const content_status_name[] = {
@@ -651,7 +653,20 @@ content_mouse_track(hlcache_handle *h,
 	c = hlcache_handle_get_content(h);
 	if (c == NULL) return;
 	ha = (unsigned long)(void *)c->handler;
-	if (ha < 0x01000000UL || ha >= 0x20000000UL) return;
+	/* fixes719b: the old hardcoded 0x01000000..0x20000000 ceiling rejected a
+	 * VALID content_handler vtable on a high-mapped partition (0x4B..), so
+	 * every click/hover bailed -> "can't click on anything" on high-RAM Macs
+	 * (fine on the low-mapped dev iMac). c is already validated in-heap with a
+	 * non-NULL handler by the fixes719 hlcache_handle_get_content gate, and the
+	 * render path calls c->handler fine, so accept any handler inside the REAL
+	 * app partition. is_heap safely no-ops (never a wild call) on out-of-
+	 * partition garbage; log the address if it ever rejects so we can widen. */
+	if (!macsurf_ptr_is_heap((const void *)c->handler)) {
+		macsurf_debug_log_writef(
+			"fixes719b mouse: handler out-of-partition ha=%p -- skip",
+			(void *)ha);
+		return;
+	}
 
 	if (c->handler->mouse_track != NULL) {
 		c->handler->mouse_track(c, bw, mouse, x, y);
@@ -680,7 +695,20 @@ content_mouse_action(hlcache_handle *h,
 	c = hlcache_handle_get_content(h);
 	if (c == NULL) return;
 	ha = (unsigned long)(void *)c->handler;
-	if (ha < 0x01000000UL || ha >= 0x20000000UL) return;
+	/* fixes719b: the old hardcoded 0x01000000..0x20000000 ceiling rejected a
+	 * VALID content_handler vtable on a high-mapped partition (0x4B..), so
+	 * every click/hover bailed -> "can't click on anything" on high-RAM Macs
+	 * (fine on the low-mapped dev iMac). c is already validated in-heap with a
+	 * non-NULL handler by the fixes719 hlcache_handle_get_content gate, and the
+	 * render path calls c->handler fine, so accept any handler inside the REAL
+	 * app partition. is_heap safely no-ops (never a wild call) on out-of-
+	 * partition garbage; log the address if it ever rejects so we can widen. */
+	if (!macsurf_ptr_is_heap((const void *)c->handler)) {
+		macsurf_debug_log_writef(
+			"fixes719b mouse: handler out-of-partition ha=%p -- skip",
+			(void *)ha);
+		return;
+	}
 
 	if (c->handler->mouse_action != NULL)
 		c->handler->mouse_action(c, bw, mouse, x, y);
@@ -1175,7 +1203,7 @@ void content_broadcast(struct content *c, content_msg msg,
 	macos9_op_depth++;
 	for (user = c->user_list->next; user != 0; user = next) {
 		unsigned long ua = (unsigned long)(void *)user;
-		if (ua < 0x01000000UL || ua >= 0x20000000UL) {
+		if (!macsurf_ptr_is_heap((const void *)(user))) {
 			macsurf_debug_log_writef(
 				"content_broadcast: wild user=%p c=%p msg=%d, stopping",
 				(void *)user, (void *)c, (int)msg);
@@ -1185,7 +1213,7 @@ void content_broadcast(struct content *c, content_msg msg,
 		/* validate next before the loop uses it */
 		if (next != NULL) {
 			unsigned long na = (unsigned long)(void *)next;
-			if (na < 0x01000000UL || na >= 0x20000000UL) {
+			if (!macsurf_ptr_is_heap((const void *)(next))) {
 				macsurf_debug_log_writef(
 					"content_broadcast: wild next=%p c=%p msg=%d, stopping after this user",
 					(void *)next, (void *)c, (int)msg);
@@ -1250,11 +1278,11 @@ content_broadcast_error(struct content *c, nserror errorcode, const char *msg)
 	if (c->user_list == NULL) return;
 	for (user = c->user_list->next; user != 0; user = next) {
 		unsigned long ua = (unsigned long)(void *)user;
-		if (ua < 0x01000000UL || ua >= 0x20000000UL) break;
+		if (!macsurf_ptr_is_heap((const void *)(user))) break;
 		next = user->next;
 		if (next != NULL) {
 			unsigned long na = (unsigned long)(void *)next;
-			if (na < 0x01000000UL || na >= 0x20000000UL) next = NULL;
+			if (!macsurf_ptr_is_heap((const void *)(next))) next = NULL;
 		}
 		if (user->callback != 0) {
 			user->callback(c, CONTENT_MSG_ERROR, &data, user->pw);

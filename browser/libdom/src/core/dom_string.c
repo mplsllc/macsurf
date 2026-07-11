@@ -18,6 +18,8 @@
 #include "document_i.h"
 #include "utils.h"
 
+extern int macsurf_ptr_is_heap(const void *);
+
 /**
  * Type of a DOM string
  */
@@ -943,7 +945,7 @@ const char *dom_string_data(const dom_string *str)
 			 * Reject both an out-of-range ptr and an absurd len so
 			 * the caller gets "" instead of reading recycled
 			 * memory as text. */
-			if (pa_ < 4UL || pa_ >= 0x28000000UL ||
+			if (!macsurf_ptr_is_heap((const void *)istr->data.cdata.ptr) ||
 			    istr->data.cdata.len > 1048576UL) {
 				extern void macsurf_debug_log_writef(
 					const char *fmt, ...);
@@ -964,7 +966,7 @@ const char *dom_string_data(const dom_string *str)
 		 * duk_push_lstring / strlen.  Return "" on bad pointer. */
 		{
 			unsigned long ia_ = (unsigned long)istr->data.intern;
-			if (ia_ < 4UL || ia_ >= 0x28000000UL) {
+			if (!macsurf_ptr_is_heap((const void *)istr->data.intern)) {
 				extern void macsurf_debug_log_writef(
 					const char *fmt, ...);
 				macsurf_debug_log_writef(
@@ -1003,7 +1005,7 @@ size_t dom_string_byte_length(const dom_string *str)
 		 * the paired (data, len) agree and no overrun happens. */
 		{
 			unsigned long pa_ = (unsigned long)istr->data.cdata.ptr;
-			if (pa_ < 4UL || pa_ >= 0x28000000UL ||
+			if (!macsurf_ptr_is_heap((const void *)istr->data.cdata.ptr) ||
 			    istr->data.cdata.len > 1048576UL) {
 				extern void macsurf_debug_log_writef(
 					const char *fmt, ...);
@@ -1019,8 +1021,7 @@ size_t dom_string_byte_length(const dom_string *str)
 		/* fixes446b: paired guard — same corrupt intern crashes here
 		 * via lwc_string_length reading str->len at bad_ptr+8. */
 		{
-			unsigned long ia_ = (unsigned long)istr->data.intern;
-			if (ia_ < 4UL || ia_ >= 0x28000000UL)
+			if (!macsurf_ptr_is_heap((const void *)istr->data.intern))
 				return 0;
 		}
 		return lwc_string_length(istr->data.intern);
@@ -1128,7 +1129,7 @@ dom_string_tolower(dom_string *source, bool ascii_only, dom_string **lower)
 		{
 			unsigned long intern_addr_ =
 				(unsigned long)isource->data.intern;
-			if (intern_addr_ < 4UL || intern_addr_ >= 0x28000000UL) {
+			if (!macsurf_ptr_is_heap((const void *)isource->data.intern)) {
 				extern void macsurf_debug_log_writef(
 					const char *fmt, ...);
 				macsurf_debug_log_writef(

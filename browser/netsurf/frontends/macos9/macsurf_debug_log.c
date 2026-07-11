@@ -53,6 +53,50 @@
  * Self-enabled in this TU; DELETE this define to return to crash-only. */
 #define MACSURF_PERF_LOG 1
 
+/* ============ fixes716 — NUCLEAR DIAGNOSTIC MODE (#207) ============
+ * ONE switch to capture EVERYTHING, hang-proof, for root-causing the
+ * blank-page bug (and anything else the machine is silently skipping).
+ * It:
+ *   1. Opens the fixes675 crash-only gate AND every per-category
+ *      sub-gate (layout / paint / redraw / fetch), so every log line
+ *      the whole app emits is kept — not just crash/NAV/DIAG lines.
+ *   2. Turns on the runtime high-frequency trace channel
+ *      (macsurf_debug_log_trace_enabled) at init.
+ *   3. Flushes EVERY line straight to disk (buffer flush + FlushVol),
+ *      not just the first 250 — so a freeze / blank / hang leaves the
+ *      COMPLETE trace on disk with nothing stuck in the RAM buffer.
+ *
+ * This is a DIAGNOSTIC build, not a release: it is slow (per-line HFS
+ * sync) and produces very large logs. That is the point — completeness
+ * over speed. Self-enabled in this TU, so ONLY macsurf_debug_log.c
+ * needs reshipping (no full rebuild). DELETE this one define to return
+ * the build to normal crash-only logging. */
+/* fixes719c: NUCLEAR OFF. It flushed every log line to disk (FlushVol per
+ * line) — ~15k synced writes per browsing session — which crippled the G3/
+ * QEMU to a "frozen" crawl. It did its job (captured the blank-screen bug,
+ * now fixed by fixes719). Back to crash-only logging: fast, still keeps the
+ * RECON HEAP BOUNDS line + crash forensics. Re-enable only to capture a new
+ * hard bug. */
+/* #define MACSURF_NUCLEAR_LOG 1 */
+
+#ifdef MACSURF_NUCLEAR_LOG
+#ifndef MACSURF_VERBOSE_LOG
+#define MACSURF_VERBOSE_LOG 1
+#endif
+#ifndef MACSURF_VERBOSE_LAYOUT_LOG
+#define MACSURF_VERBOSE_LAYOUT_LOG 1
+#endif
+#ifndef MACSURF_VERBOSE_PAINT_LOG
+#define MACSURF_VERBOSE_PAINT_LOG 1
+#endif
+#ifndef MACSURF_VERBOSE_REDRAW_LOG
+#define MACSURF_VERBOSE_REDRAW_LOG 1
+#endif
+#ifndef MACSURF_VERBOSE_FETCH_LOG
+#define MACSURF_VERBOSE_FETCH_LOG 1
+#endif
+#endif /* MACSURF_NUCLEAR_LOG */
+
 #include "macsurf_debug_log.h"
 
 #include <string.h>
@@ -414,6 +458,12 @@ macsurf_debug_log_init(void)
 	g_log_vref = vRefNum;
 	g_log_open = 1;
 
+#ifdef MACSURF_NUCLEAR_LOG
+	/* NUCLEAR (#207): turn on the runtime high-frequency trace channel so
+	 * every macsurf_debug_log_tracef() site emits too. */
+	macsurf_debug_log_trace_enabled = 1;
+#endif
+
 	(void)SetFPos(g_log_ref, fsFromLEOF, 0);
 
 	/* fixes703 — prominent, unmistakable session header so a log that spans
@@ -458,6 +508,40 @@ macsurf_debug_log_close(void)
 	(void)FSClose(g_log_ref);
 	g_log_ref = 0;
 	g_log_open = 0;
+#endif
+}
+
+/* fixes720 — read the current log back into the caller's buffer. Flushes the
+ * buffer first, reads from the module's OWN open fork (avoids a second open on
+ * a busy file), then restores the append position. Returns bytes read (out is
+ * NUL-terminated); 0 if the log isn't open. Used by File > Send Debug Log to
+ * POST the log straight to the server from MacSurf itself. */
+long
+macsurf_debug_log_read(char *out, long cap)
+{
+#ifdef __MACOS9__
+	long eof = 0;
+	long count;
+	if (out == NULL || cap <= 0) return 0;
+	out[0] = '\0';
+	if (!g_log_open || g_log_ref == 0) return 0;
+	macsurf_debug_log_buffer_flush();
+	if (GetEOF(g_log_ref, &eof) != noErr) return 0;
+	if (SetFPos(g_log_ref, fsFromStart, 0) != noErr) return 0;
+	count = eof;
+	if (count > cap - 1) count = cap - 1;
+	if (FSRead(g_log_ref, &count, out) != noErr && count == 0) {
+		(void)SetFPos(g_log_ref, fsFromLEOF, 0);
+		return 0;
+	}
+	if (count < 0) count = 0;
+	if (count > cap - 1) count = cap - 1;
+	out[count] = '\0';
+	(void)SetFPos(g_log_ref, fsFromLEOF, 0);   /* restore append position */
+	return count;
+#else
+	(void)out; (void)cap;
+	return 0;
 #endif
 }
 
@@ -752,6 +836,13 @@ macsurf_debug_log_write(const char *msg)
 	}
 	g_log_buf[g_log_buf_pos++] = '\r';
 
+#ifdef MACSURF_NUCLEAR_LOG
+	/* NUCLEAR (#207): flush EVERY line straight to disk (buffer flush +
+	 * FlushVol). A freeze / blank / hang then loses nothing — the last
+	 * line on disk is the last thing that executed. Slow by design. */
+	macsurf_debug_log_buffer_flush();
+	if (g_log_vref != 0) (void)FlushVol(NULL, g_log_vref);
+#else
 	/* fixes704 — flush the first LOG_EAGER_LINES lines straight to disk so a
 	 * freeze/hang during startup still leaves the very beginning on disk.
 	 * After the budget is spent we return to the fast buffered path. */
@@ -760,6 +851,7 @@ macsurf_debug_log_write(const char *msg)
 		macsurf_debug_log_buffer_flush();
 		if (g_log_vref != 0) (void)FlushVol(NULL, g_log_vref);
 	}
+#endif
 
 	/*
 	 * fixes96 — per-write FlushVol REMOVED. It was synchronously

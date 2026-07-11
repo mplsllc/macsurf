@@ -24,6 +24,8 @@
 #include "utils/nsurl.h"
 #include "utils/utils.h"
 
+extern int macsurf_ptr_is_heap(const void *);
+
 
 /**
  * nsurl components
@@ -145,7 +147,7 @@ void nsurl__calc_hash(nsurl *url);
 	do { \
 		unsigned long nsurl_ua_ = (unsigned long)(field_); \
 		if (nsurl_ua_ == 0UL) { \
-		} else if (nsurl_ua_ < 4UL || nsurl_ua_ >= 0x28000000UL) { \
+		} else if (!macsurf_ptr_is_heap((const void *)(field_))) { \
 			extern void macsurf_debug_log_writef( \
 				const char *fmt_, ...); \
 			macsurf_debug_log_writef( \

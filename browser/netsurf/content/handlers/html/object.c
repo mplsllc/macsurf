@@ -48,6 +48,8 @@
 #include "html/object.h"
 #include "macos9_deathrow.h"
 
+extern int macsurf_ptr_is_heap(const void *);
+
 /* break reference loop */
 static void html_object_refresh(void *p);
 
@@ -868,8 +870,7 @@ html_fetch_object(html_content *c,
 		return true;
 	child.charset = c->encoding;
 	if (child.charset != NULL) {
-		unsigned long ea = (unsigned long)(void *)child.charset;
-		if (ea < 0x01000000UL || ea >= 0x20000000UL) {
+		if (!macsurf_ptr_is_heap((const void *)(child.charset))) {
 			macsurf_debug_log_writef(
 				"html_fetch_object: WILD encoding=%p c=%p, drop charset",
 				(void *)child.charset, (void *)c);

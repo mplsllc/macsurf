@@ -46,6 +46,8 @@
 #include "desktop/gui_internal.h"
 #include "macsurf_debug.h"
 
+extern int macsurf_ptr_is_heap(const void *);
+
 typedef bool (script_handler_t)(struct jsthread *jsthread, const uint8_t *data, size_t size, const char *name);
 
 /* fixes535: out-of-band live-content registry (anti-UAF).  The three
@@ -472,8 +474,7 @@ deferred_parser_unpause(void *pw)
 	 * 0x01000000-0x20000000 with headroom).  This is the same by-value
 	 * pointer gate used in content_broadcast and hlcache_handle_release. */
 	{
-		unsigned long pa = (unsigned long)(void *)parent->parser;
-		if (pa < 0x01000000UL || pa >= 0x20000000UL) {
+		if (!macsurf_ptr_is_heap((const void *)(parent->parser))) {
 			macsurf_debug_log_writef(
 				"deferred_unpause: WILD parser=%p owner=%p, skip",
 				(void *)parent->parser, (void *)parent);

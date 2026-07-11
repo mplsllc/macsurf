@@ -70,6 +70,8 @@ extern int macos9_content_is_live(struct content *c);
 #define macos9_content_is_live(c) (1)
 #endif
 
+extern int macsurf_ptr_is_heap(const void *);
+
 typedef struct hlcache_entry hlcache_entry;
 typedef struct hlcache_retrieval_ctx hlcache_retrieval_ctx;
 
@@ -587,7 +589,7 @@ hlcache_safe_content_type(const llcache_handle *handle)
 	const char *ct = llcache_handle_get_header(handle, "Content-Type");
 	unsigned long a = (unsigned long) ct;
 
-	if (ct != NULL && (a < 4UL || a >= 0x28000000UL)) {
+	if (ct != NULL && !macsurf_ptr_is_heap((const void *)(ct))) {
 		extern void macsurf_debug_log_writef(const char *fmt, ...);
 		macsurf_debug_log_writef(
 			"fixes571 CTYPE: wild content-type=%p (dangling llcache object)",
@@ -905,7 +907,7 @@ hlcache_handle_retrieve(nsurl *url,
 			 * code-space callback -- so it also serves as the diagnostic
 			 * log for locating the clobber source. */
 			unsigned long ca_ = (unsigned long) child->charset;
-			if (ca_ < 4UL || ca_ >= 0x28000000UL) {
+			if (!macsurf_ptr_is_heap((const void *)(child->charset))) {
 				extern void macsurf_debug_log_writef(
 					const char *fmt, ...);
 				macsurf_debug_log_writef(
@@ -967,7 +969,7 @@ nserror hlcache_handle_release(hlcache_handle *handle)
 		 * is 4-byte aligned; a corrupted scripts-array entry can hold an
 		 * in-range but unaligned garbage value (observed 0x07513EC1) that
 		 * passes the range test yet faults when handle->entry is read. */
-		if (handle == NULL || ha < 0x01000000UL || ha >= 0x20000000UL ||
+		if (handle == NULL || !macsurf_ptr_is_heap((const void *)(handle)) ||
 		    (ha & 3) != 0) {
 			macsurf_debug_log_writef(
 				"hlcache_release: SKIP wild handle=%p", (void *)handle);
@@ -1184,12 +1186,12 @@ struct content *hlcache_handle_get_content(const hlcache_handle *handle)
 	 * the same heap range to catch the common reuse pattern. */
 	if (handle->entry != NULL) {
 		unsigned long ea = (unsigned long)(void *)handle->entry;
-		if (ea >= 0x01000000UL && ea < 0x20000000UL) {
+		if (macsurf_ptr_is_heap((const void *)(handle->entry))) {
 			struct content *c = handle->entry->content;
 			if (c != NULL) {
 				unsigned long ca = (unsigned long)(void *)c;
 				/* Also verify c is heap-range before returning */
-				if (ca >= 0x01000000UL && ca < 0x20000000UL) {
+				if (macsurf_ptr_is_heap((const void *)(c))) {
 					/* Final guard: if content_destroy already
 					 * ran, c->handler is NULL. Callers that
 					 * need a live content get NULL. */
@@ -1311,7 +1313,7 @@ nsurl *hlcache_handle_get_url(const hlcache_handle *handle)
 	 * a NULL URL) rather than dereferencing wild memory. */
 	{
 		unsigned long ha = (unsigned long)(const void *)handle;
-		if (handle == NULL || ha < 0x01000000UL || ha >= 0x20000000UL) {
+		if (handle == NULL || !macsurf_ptr_is_heap((const void *)(handle))) {
 			macsurf_debug_log_writef(
 				"hlcache_get_url: wild handle=%p", (void *)handle);
 			return NULL;
@@ -1320,7 +1322,7 @@ nsurl *hlcache_handle_get_url(const hlcache_handle *handle)
 
 	if (handle->entry != NULL) {
 		unsigned long ea = (unsigned long)(void *)handle->entry;
-		if (ea < 0x01000000UL || ea >= 0x20000000UL) {
+		if (!macsurf_ptr_is_heap((const void *)(handle->entry))) {
 			macsurf_debug_log_writef(
 				"hlcache_get_url: wild entry=%p handle=%p",
 				(void *)handle->entry, (void *)handle);
@@ -1330,7 +1332,7 @@ nsurl *hlcache_handle_get_url(const hlcache_handle *handle)
 			struct content *c = handle->entry->content;
 			if (c != NULL) {
 				unsigned long ca = (unsigned long)(void *)c;
-				if (ca < 0x01000000UL || ca >= 0x20000000UL ||
+				if (!macsurf_ptr_is_heap((const void *)(c)) ||
 				    c->handler == NULL) {
 					macsurf_debug_log_writef(
 						"hlcache_get_url: dead/wild content=%p",

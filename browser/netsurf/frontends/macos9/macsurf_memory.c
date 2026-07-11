@@ -261,3 +261,113 @@ void *macsurf_safe_realloc(void *ptr, size_t size)
     macsurf_oom_panic(size);
     return NULL; /* unreachable */
 }
+
+/* ==================================================================
+ * fixes719 (#207) — runtime application-partition pointer bounds.
+ *
+ * THE BLANK-SCREEN BUG. Dozens of "is this pointer valid?" guards
+ * across libwapcaplet, nsurl, libdom, hlcache/llcache, ns_content and
+ * browser_window were hardcoded to assume a live heap pointer lives in
+ * a FIXED low window (0x01000000..0x20000000, or ..0x28000000). That is
+ * false: there is no kernel boundary at 0x28000000 on classic Mac OS —
+ * it is just 640 MB of a flat 32-bit space. WHERE the Process Manager
+ * maps MacSurf's partition depends on the machine's RAM. On the dev
+ * iMac/minitower the partition lands low (0x10..) so the guards work;
+ * on a higher-RAM Mac (user "autumn": partition at 0x2B..) EVERY valid
+ * heap pointer is above the ceiling, so the guards fire on everything.
+ * The behaviour-changing ones then break string interning
+ * (libwapcaplet.c:128 breaks the intern hash-walk -> dedup fails -> the
+ * nav URL's 'https' scheme gets a different lwc_string* than the
+ * fetcher's registered 'https' -> lwc_string_isequal pointer-compare
+ * fails -> get_fetcher_for_scheme == -1 -> NSERROR_NO_FETCH_HANDLER ->
+ * no fetch is EVER started for any https URL -> current_content stays
+ * NULL -> permanent blank page), plus reject valid cache/content
+ * handles. Reproduced identically across two of autumn's launches.
+ *
+ * Fix: capture the REAL partition window once at startup from the
+ * Process Manager (processLocation .. +processSize = the whole
+ * partition: heap + gap + stack + globals), and test pointers against
+ * that instead of the machine-specific constants. This still rejects
+ * the genuine corruption the guards were added for (NULL/tiny scribble
+ * below the partition; freed sched_entry alias ~0x07.. below the base;
+ * code-space alias ~0x3E.. above the top) while ACCEPTING a valid high
+ * heap pointer like 0x2B487BF0. Using the full partition (not
+ * GetApplLimit(), which excludes the ~107 MB stack region) makes the
+ * window immune to heap-growth / ApplLimit timing. Fails OPEN
+ * (accept-all above the NULL page) if the Toolbox can't give a sane
+ * window, so it can never re-introduce the blank page.
+ * ================================================================== */
+static unsigned long g_ptr_lo = 0x00001000UL;   /* fail-open: reject NULL page */
+static unsigned long g_ptr_hi = 0xFFFFFFFFUL;   /* fail-open until init narrows */
+static int           g_ptr_bounds_ok = 0;
+
+void macsurf_heap_bounds_init(void)
+{
+#ifdef __MACOS9__
+	ProcessSerialNumber psn;
+	ProcessInfoRec      info;
+	OSErr               err;
+	unsigned long       lo = 0UL;
+	unsigned long       hi = 0UL;
+	/* fixes719a: GetApplLimit() is not exported by the CW8 link (undefined
+	 * at link time), so it's dropped from the diagnostic. The real bounds
+	 * come from GetProcessInformation below, not from ApplLimit. StackSpace()
+	 * DOES link (used in macsurf_qjs.c) so it stays as a cushion readout. */
+	extern long StackSpace(void);
+
+	psn.highLongOfPSN = 0;
+	psn.lowLongOfPSN  = kCurrentProcess;
+	memset(&info, 0, sizeof(info));
+	info.processInfoLength = sizeof(ProcessInfoRec);
+	info.processName    = NULL;
+	info.processAppSpec = NULL;
+	err = GetProcessInformation(&psn, &info);
+	if (err == noErr) {
+		lo = (unsigned long)info.processLocation;
+		hi = lo + (unsigned long)info.processSize;
+	}
+
+	/* One-shot diagnostic (RECON survives the crash-only log gate): the
+	 * real partition window + heap ceiling + stack cushion, so a high-base
+	 * machine's log PROVES its 0x2B.. pointers fall inside the window. */
+	macsurf_debug_log_writef(
+		"RECON HEAP BOUNDS lo=%p hi=%p size=%ld stack=%ld ok=%d",
+		(void *)lo, (void *)hi, (long)info.processSize,
+		(long)StackSpace(),
+		(err == noErr) ? 1 : 0);
+
+	/* Validate before trusting; fail OPEN on anything suspicious so a bad
+	 * Toolbox return can never NARROW the window and false-reject valid
+	 * pointers (which would re-create the blank page). Require a sane
+	 * partition >= 8 MB. */
+	if (err == noErr && hi > lo && (hi - lo) >= 0x00800000UL) {
+		g_ptr_lo = lo;
+		g_ptr_hi = hi;
+		g_ptr_bounds_ok = 1;
+	} else {
+		macsurf_debug_log_writef(
+			"RECON HEAP BOUNDS BAD err=%d -- fail-open accept-all",
+			(int)err);
+	}
+	macsurf_debug_log_flush();
+#endif
+}
+
+/* STRICT partition test — for malloc'd objects (lwc_string*, interned
+ * dom_string, nsurl components, llcache_object, hlcache handle/entry/
+ * content, content_user nodes, source buffers, parser, qjs dom_node).
+ * These always come from MSL malloc / NewPtr backed by the app zone, so
+ * they live inside the captured partition window on ANY machine. */
+int macsurf_ptr_is_heap(const void *p)
+{
+	unsigned long a = (unsigned long)p;
+	return (a >= g_ptr_lo) && (a < g_ptr_hi);
+}
+
+/* FLOOR-ONLY test — for pointers that may legitimately live OUTSIDE the
+ * partition heap window (e.g. a static const vtable or PEF read-only
+ * literal in the code fragment). Only rejects NULL/tiny scribble. */
+int macsurf_ptr_is_valid(const void *p)
+{
+	return (unsigned long)p >= 0x00001000UL;
+}

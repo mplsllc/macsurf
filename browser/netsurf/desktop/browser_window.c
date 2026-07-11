@@ -73,6 +73,8 @@
 #include "desktop/theme.h"
 #endif
 
+extern int macsurf_ptr_is_heap(const void *);
+
 /**
  * smallest scale that can be applied to a browser window
  */
@@ -2242,7 +2244,7 @@ browser_window_mouse_click_internal(struct browser_window *bw,
 	 * outside that range is a recycled/wild pointer. Bail early. */
 	if (c != NULL) {
 		unsigned long ca = (unsigned long)(void *)c;
-		if (ca < 0x01000000UL || ca >= 0x20000000UL) {
+		if (!macsurf_ptr_is_heap((const void *)(c))) {
 			macsurf_debug_log_writef(
 				"bw_mouse_click: SKIP wild c_content=%p", (void *)c);
 			return;
@@ -2251,7 +2253,7 @@ browser_window_mouse_click_internal(struct browser_window *bw,
 		{
 			struct hlcache_entry **ep = (struct hlcache_entry **)c;
 			unsigned long ea = (unsigned long)(void *)(*ep);
-			if (ea != 0 && (ea < 0x01000000UL || ea >= 0x20000000UL)) {
+			if (ea != 0 && !macsurf_ptr_is_heap((const void *)(*ep))) {
 				macsurf_debug_log_writef(
 					"bw_mouse_click: SKIP wild entry=%p", (void *)(*ep));
 				return;
@@ -2397,13 +2399,13 @@ browser_window_mouse_track_internal(struct browser_window *bw,
 	/* fixes501: same stale-handle guard as browser_window_mouse_click_internal */
 	if (c != NULL) {
 		unsigned long ca = (unsigned long)(void *)c;
-		if (ca < 0x01000000UL || ca >= 0x20000000UL) {
+		if (!macsurf_ptr_is_heap((const void *)(c))) {
 			return;
 		}
 		{
 			struct hlcache_entry **ep = (struct hlcache_entry **)c;
 			unsigned long ea = (unsigned long)(void *)(*ep);
-			if (ea != 0 && (ea < 0x01000000UL || ea >= 0x20000000UL)) {
+			if (ea != 0 && !macsurf_ptr_is_heap((const void *)(*ep))) {
 				return;
 			}
 		}

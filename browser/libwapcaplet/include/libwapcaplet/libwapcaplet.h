@@ -37,6 +37,8 @@ extern "C"
 #include <stdint.h>
 #include <assert.h>
 
+extern int macsurf_ptr_is_heap(const void *);
+
 /**
  * The type of a reference counter used in libwapcaplet.
  */
@@ -264,8 +266,8 @@ lwc_string_caseless_isequal(lwc_string *str1, lwc_string *str2, bool *ret)
        {
            unsigned long sa1_ = (unsigned long)str1;
            unsigned long sa2_ = (unsigned long)str2;
-           if (sa1_ < 4UL || sa1_ >= 0x28000000UL ||
-               sa2_ < 4UL || sa2_ >= 0x28000000UL) {
+           if (!macsurf_ptr_is_heap((const void *)(str1)) ||
+               !macsurf_ptr_is_heap((const void *)(str2))) {
                *ret = 0;
                return lwc_error_oom;
            }

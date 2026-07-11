@@ -118,4 +118,8 @@ void macsurf_profile_note_reflow(void);   /* +1 per full html_reformat pass */
 long macsurf_profile_get_js_us(void);     /* for parse to subtract nested inline JS */
 void macsurf_profile_emit_phases(const char *url);
 
+/* fixes720 — read the current log into a caller buffer (for File > Send Debug
+ * Log). Returns bytes read; out is NUL-terminated. */
+long macsurf_debug_log_read(char *out, long cap);
+
 #endif

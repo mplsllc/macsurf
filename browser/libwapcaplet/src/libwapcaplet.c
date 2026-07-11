@@ -12,6 +12,8 @@
 
 #include "libwapcaplet/libwapcaplet.h"
 
+extern int macsurf_ptr_is_heap(const void *);
+
 #ifndef UNUSED
 #define UNUSED(x) ((x) = (x))
 #endif
@@ -125,7 +127,7 @@ lwc__intern(const char *s, size_t slen,
 		 * garbage pointer in ctx->buckets or a str->next slot. */
 		{
 			unsigned long sa_ = (unsigned long)str;
-			if (sa_ < 4UL || sa_ >= 0x28000000UL) {
+			if (!macsurf_ptr_is_heap((const void *)(str))) {
 				extern void macsurf_debug_log_writef(
 					const char *fmt, ...);
 				macsurf_debug_log_writef(
@@ -206,7 +208,7 @@ lwc_string_tolower(lwc_string *str, lwc_string **ret)
 	 * comparison during hlcache_handle_retrieve). */
 	{
 		unsigned long sa_ = (unsigned long)str;
-		if (sa_ < 4UL || sa_ >= 0x28000000UL) {
+		if (!macsurf_ptr_is_heap((const void *)(str))) {
 			extern void macsurf_debug_log_writef(const char *fmt, ...);
 			macsurf_debug_log_writef(
 				"fixes446c TOLOWER: bad lwc str=%p",
@@ -304,7 +306,7 @@ lwc__intern_caseless_string(lwc_string *str)
 	/* fixes446c: same range guard as lwc_string_tolower. */
 	{
 		unsigned long sa_ = (unsigned long)str;
-		if (sa_ < 4UL || sa_ >= 0x28000000UL)
+		if (!macsurf_ptr_is_heap((const void *)(str)))
 			return lwc_error_oom;
 	}
 	assert(str);

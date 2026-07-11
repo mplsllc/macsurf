@@ -27,6 +27,8 @@
 #include "macsurf_timebase.h"
 #include "content/handlers/html/private.h"
 
+extern int macsurf_ptr_is_heap(const void *);
+
 #ifdef WITH_QUICKJS
 
 struct dom_event;
@@ -855,10 +857,6 @@ static JSClassID s_el_class_id;
  * =================================================================== */
 
 #define QJS_WRAP_BUCKETS 1024u
-/* Heap-pointer sanity window (mirrors the llcache wild-pointer guard): a real
- * libdom node lives well inside this range on OS 9. */
-#define QJS_NODE_PTR_MIN ((size_t)0x01000000)
-#define QJS_NODE_PTR_MAX ((size_t)0x20000000)
 
 struct qjs_wrap_entry {
 	dom_node  *node;       /* key; wrapper's single owned node ref     */
@@ -961,7 +959,7 @@ static dom_node *qjs_get_node(JSValueConst val)
 	dom_node *n = (dom_node *)JS_GetOpaque(val, s_el_class_id);
 	if (n == NULL) return NULL;
 	if (((size_t)n & 3u) != 0) return NULL;
-	if ((size_t)n < QJS_NODE_PTR_MIN || (size_t)n > QJS_NODE_PTR_MAX)
+	if (!macsurf_ptr_is_heap((const void *)(n)))
 		return NULL;
 	return n;
 }
@@ -2151,6 +2149,118 @@ static void qjs_dom_install(JSContext *ctx)
 	JS_FreeValue(ctx, global);
 }
 
+/* ====================================================================
+ * fixes717 (#207 diagnostic) — crypto.getRandomValues / crypto.randomUUID
+ *
+ * QuickJS ships no `crypto` global, so any script that touches it (uuid
+ * libraries, cache-busting, the Cloudflare beacon captured in the
+ * SuperLogger log) throws "crypto.getRandomValues() not supported" and
+ * aborts the whole script. Fill requests from a clock-seeded xorshift
+ * generator, re-stirred with a fresh high-resolution timestamp (and
+ * stack-address noise) on every call. This is NOT cryptographic-grade;
+ * the goal is that these scripts RUN instead of crashing (DIRECTIVE #2).
+ * If a page ever needs real CSPRNG output, back this with macEntropy's
+ * pool (OSTLS_*), which is already linked and hardware-verified.
+ * ==================================================================== */
+static unsigned long qjs_rng_s[2] = { 0UL, 0UL };
+
+static void qjs_rng_stir(void)
+{
+	unsigned long t = (unsigned long)macsurf_monotonic_ms();
+	unsigned long a = (unsigned long)(size_t)&t;   /* stack-address noise */
+	static unsigned long ctr = 0UL;
+	ctr += 0x9E3779B9UL;
+	if (qjs_rng_s[0] == 0UL && qjs_rng_s[1] == 0UL) {
+		qjs_rng_s[0] = t ^ 0x85EBCA6BUL ^ ctr;
+		qjs_rng_s[1] = a ^ 0xC2B2AE35UL;
+		if (qjs_rng_s[0] == 0UL) qjs_rng_s[0] = 1UL;
+		if (qjs_rng_s[1] == 0UL) qjs_rng_s[1] = 1UL;
+	} else {
+		qjs_rng_s[0] ^= (t + ctr) & 0xFFFFFFFFUL;
+		qjs_rng_s[1] ^= ((a << 1) + 0x27D4EB2FUL) & 0xFFFFFFFFUL;
+	}
+}
+
+static unsigned long qjs_rng_next(void)
+{
+	unsigned long s1 = qjs_rng_s[0];
+	unsigned long s0 = qjs_rng_s[1];
+	qjs_rng_s[0] = s0;
+	s1 ^= (s1 << 13) & 0xFFFFFFFFUL;
+	s1 ^= s1 >> 17;
+	s1 ^= s0 ^ (s0 >> 5);
+	qjs_rng_s[1] = s1 & 0xFFFFFFFFUL;
+	return (s1 + s0) & 0xFFFFFFFFUL;
+}
+
+static JSValue qjs_crypto_get_random_values(JSContext *ctx,
+	JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	size_t byte_off = 0, byte_len = 0, bpe = 0, ab_size = 0;
+	JSValue ab;
+	uint8_t *ptr;
+	size_t i;
+	unsigned long r = 0UL;
+	int rb = 0;
+
+	(void)this_val;
+	if (argc < 1)
+		return JS_ThrowTypeError(ctx,
+			"crypto.getRandomValues requires a TypedArray");
+	ab = JS_GetTypedArrayBuffer(ctx, argv[0], &byte_off, &byte_len, &bpe);
+	if (JS_IsException(ab))
+		return ab;
+	ptr = JS_GetArrayBuffer(ctx, &ab_size, ab);
+	if (ptr == NULL) {
+		JS_FreeValue(ctx, ab);
+		return JS_ThrowTypeError(ctx,
+			"crypto.getRandomValues: not a typed array");
+	}
+	if (byte_len > 65536) {
+		JS_FreeValue(ctx, ab);
+		return JS_ThrowRangeError(ctx,
+			"crypto.getRandomValues: array exceeds 65536 bytes");
+	}
+	qjs_rng_stir();
+	for (i = 0; i < byte_len; i++) {
+		if (rb == 0) { r = qjs_rng_next(); rb = 4; }
+		ptr[byte_off + i] = (uint8_t)(r & 0xFFUL);
+		r >>= 8;
+		rb--;
+	}
+	JS_FreeValue(ctx, ab);
+	return JS_DupValue(ctx, argv[0]);   /* spec: returns the same array */
+}
+
+static JSValue qjs_crypto_random_uuid(JSContext *ctx,
+	JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	static const char hex[] = "0123456789abcdef";
+	unsigned char b[16];
+	char out[37];
+	unsigned long r = 0UL;
+	int rb = 0, i, p;
+
+	(void)this_val; (void)argc; (void)argv;
+	qjs_rng_stir();
+	for (i = 0; i < 16; i++) {
+		if (rb == 0) { r = qjs_rng_next(); rb = 4; }
+		b[i] = (unsigned char)(r & 0xFFUL);
+		r >>= 8;
+		rb--;
+	}
+	b[6] = (unsigned char)((b[6] & 0x0F) | 0x40);   /* version 4 */
+	b[8] = (unsigned char)((b[8] & 0x3F) | 0x80);   /* RFC 4122 variant */
+	p = 0;
+	for (i = 0; i < 16; i++) {
+		if (i == 4 || i == 6 || i == 8 || i == 10) out[p++] = '-';
+		out[p++] = hex[(b[i] >> 4) & 0x0F];
+		out[p++] = hex[b[i] & 0x0F];
+	}
+	out[p] = '\0';
+	return JS_NewString(ctx, out);
+}
+
 static void register_browser_globals(JSContext *ctx)
 {
 	JSValue global = JS_GetGlobalObject(ctx);
@@ -2158,6 +2268,7 @@ static void register_browser_globals(JSContext *ctx)
 	JSValue location_obj;
 	JSValue history_obj;
 	JSValue nav_obj;
+	JSValue crypto_obj;
 
 	/* window / self / globalThis aliases — scripts check 'typeof window' */
 	JS_SetPropertyStr(ctx, global, "window",     JS_DupValue(ctx, global));
@@ -2172,6 +2283,13 @@ static void register_browser_globals(JSContext *ctx)
 	qjs_set_func(ctx, console, "info",  qjs_console_info,  1);
 	qjs_set_func(ctx, console, "debug", qjs_console_debug, 1);
 	JS_SetPropertyStr(ctx, global, "console", console);
+
+	/* --- crypto (getRandomValues / randomUUID) — fixes717 --- */
+	crypto_obj = JS_NewObject(ctx);
+	qjs_set_func(ctx, crypto_obj, "getRandomValues",
+		qjs_crypto_get_random_values, 1);
+	qjs_set_func(ctx, crypto_obj, "randomUUID", qjs_crypto_random_uuid, 0);
+	JS_SetPropertyStr(ctx, global, "crypto", crypto_obj);
 
 	/* --- monotonic clock for performance.now() --- */
 	qjs_set_func(ctx, global, "__macsurf_monotonic_ms", qjs_monotonic_ms, 0);
