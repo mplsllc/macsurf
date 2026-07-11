@@ -2341,6 +2341,7 @@ static const struct about_line about_roll[] = {
 	{ "Patreon supporters", 1 },
 	{ "Shlooom",            0 },
 	{ "Kestral",            0 },
+	{ "Mothra",             0 },
 	{ "",                   2 },
 	{ "Ko-Fi supporters",   1 },
 	{ "kilgeist",           0 },

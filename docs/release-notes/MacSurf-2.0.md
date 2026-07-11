@@ -26,7 +26,7 @@ MacSurf is a full‑time, one‑person project. Bringing the modern HTTPS web ba
 
 <p align="center"><img src="2.0-assets/kofi-qr.png" width="150" alt="Ko-Fi QR code"></p>
 
-*Huge thanks to our supporters — **Shlooom** on Patreon, **kilgeist** and **Turuun** on Ko‑Fi. You make this possible.*
+*Huge thanks to our supporters — **Shlooom**, **Kestral**, and **Mothra** on Patreon, **kilgeist** and **Turuun** on Ko‑Fi. You make this possible.*
 
 ---
 
