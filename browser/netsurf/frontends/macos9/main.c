@@ -1223,6 +1223,19 @@ void macos9_handle_key_down(const EventRecord *event) {
 			macsurf_debug_log_writef("RECON KEY ns=%ld dt=%ldus consumed=%d",
 				(long)ns_key, (long)(_kt1.lo - _kt0.lo), _consumed);
 			if (_consumed) {
+				/* fixes760 (#212): paint the edit NOW instead of waiting for
+				 * the next event-loop updateEvt. While a page is still loading
+				 * the loop spins the fetcher (idle=0ms) and delays that
+				 * updateEvt, so each typed letter appeared with a visible lag.
+				 * A synthetic updateEvt repaints the just-invalidated region
+				 * immediately (same technique as drag-select fixes747;
+				 * handle_update only reads event->message). */
+				if (gw->window != NULL) {
+					EventRecord _uev;
+					_uev.what = updateEvt;
+					_uev.message = (long)(unsigned long)gw->window;
+					macos9_handle_update(&_uev);
+				}
 				return;
 			}
 		}
