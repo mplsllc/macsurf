@@ -367,7 +367,7 @@ void macos9_run_spacing(const struct plot_font_style *fstyle,
 #define ITEM_EDIT_CUT         3
 #define ITEM_EDIT_COPY        4
 #define ITEM_EDIT_PASTE       5
-#define ITEM_EDIT_SELECT_ALL  99
+#define ITEM_EDIT_SELECT_ALL  7   /* fixes743 (#214): Undo,sep,Cut,Copy,Paste,sep,SelectAll */
 
 /* fixes376 — Cut/Copy/Paste/Select-All on the URL TextEdit field, synced with
  * the Carbon desk scrap (MacRoman, no UTF-8 conversion on this path). */

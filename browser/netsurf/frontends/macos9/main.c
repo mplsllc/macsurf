@@ -197,7 +197,13 @@ static void macos9_init_menus(void) {
 	apple_menu = NewMenu(MENU_APPLE, "\p\024");
 	AppendMenu(apple_menu, "\pAbout MacSurf...");
 	AppendMenu(apple_menu, "\p(-");
-	AppendResMenu(apple_menu, 'DRVR');
+	/* fixes753 (#228) — do NOT AppendResMenu('DRVR') here. Under Carbon /
+	 * CarbonLib the Menu Manager auto-populates the Apple menu with the
+	 * Apple Menu Items folder AND auto-handles their selection. Adding them
+	 * ourselves produced a SECOND copy of every item (the "duplicated Apple
+	 * menu when MacSurf is frontmost" bug) — and the app never dispatched
+	 * them anyway (the MENU_APPLE handler only acts on item 1 = About).
+	 * The system's single auto-added copy is the correct one. */
 	InsertMenu(apple_menu, 0);
 
 	file_menu = NewMenu(MENU_FILE, "\pFile");
@@ -215,6 +221,8 @@ static void macos9_init_menus(void) {
 	AppendMenu(edit_menu, "\pCut/X");
 	AppendMenu(edit_menu, "\pCopy/C");
 	AppendMenu(edit_menu, "\pPaste/V");
+	AppendMenu(edit_menu, "\p(-");                 /* fixes743 (#214) */
+	AppendMenu(edit_menu, "\pSelect All/A");
 	InsertMenu(edit_menu, 0);
 
 	go_menu = NewMenu(MENU_GO, "\pGo");
@@ -506,6 +514,10 @@ static void macos9_handle_menu(short menu_id, short item) {
 			case ITEM_EDIT_PASTE:
 				macos9_url_te_edit(gw, item);
 				break;
+			case ITEM_EDIT_SELECT_ALL:   /* fixes743 (#214) */
+				TESetSelect(0, 32767, gw->url_te);
+				InvalWindowRect(gw->window, &gw->url_rect);
+				break;
 			default: break;
 			}
 		} else if (gw->bw != NULL) {
@@ -516,6 +528,7 @@ static void macos9_handle_menu(short menu_id, short item) {
 			case ITEM_EDIT_CUT:   code = 24; break; /* NS_KEY_CUT_SELECTION  */
 			case ITEM_EDIT_COPY:  code = 3;  break; /* NS_KEY_COPY_SELECTION */
 			case ITEM_EDIT_PASTE: code = 22; break; /* NS_KEY_PASTE          */
+			case ITEM_EDIT_SELECT_ALL: code = 1; break; /* NS_KEY_SELECT_ALL — fixes743 */
 			default:              code = 0;  break; /* Undo: no core key     */
 			}
 			if (code != 0) {
@@ -990,6 +1003,8 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 							int px_ns, py_ns, cx_ns, cy_ns, last_cx, last_cy;
 							int dragging = 0;
 							Point curp;
+							unsigned long last_draw_tick = 0; /* fixes747 */
+							unsigned long last_scroll_tick = 0; /* fixes749 #216 */
 							macos9_window_te_deactivate_url(gw);
 							if (event->modifiers & shiftKey)
 								mods |= BROWSER_MOUSE_MOD_1;
@@ -1019,6 +1034,24 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 							while (StillDown()) {
 								int dx, dy;
 								GetMouse(&curp);
+								/* fixes749 (#216) - auto-scroll while selecting: if the cursor is
+								 * dragged above/below the content area, scroll the page (throttled)
+								 * so the selection extends past the visible region. scroll_y updates
+								 * before cx/cy so mouse_track below extends to the new position. */
+								if (dragging) {
+									int edge = 0;
+									if (curp.v < gw->content_rect.top + 6)
+										edge = -1;
+									else if (curp.v > gw->content_rect.bottom - 6)
+										edge = 1;
+									if (edge != 0) {
+										unsigned long st = TickCount();
+										if (st - last_scroll_tick >= 2) {
+											last_scroll_tick = st;
+											macos9_window_scroll_by(gw, 0, edge * 40);
+										}
+									}
+								}
 								cx_ns = (int)curp.h - gw->content_rect.left + gw->scroll_x;
 								cy_ns = (int)curp.v - gw->content_rect.top  + gw->scroll_y;
 								if (!dragging) {
@@ -1031,10 +1064,28 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 									}
 								}
 								if (dragging && (cx_ns != last_cx || cy_ns != last_cy)) {
+									unsigned long nowt;
 									last_cx = cx_ns; last_cy = cy_ns;
 									browser_window_mouse_track(gw->bw,
 										BROWSER_MOUSE_DRAG_ON | BROWSER_MOUSE_HOLDING_1 | mods,
 										cx_ns, cy_ns);
+									/* fixes747 — LIVE selection feedback. mouse_track
+									 * invalidates the changed selection rows, but the
+									 * StillDown loop blocks the event loop so nothing
+									 * repaints until release (selection felt frozen /
+									 * "not smooth"). Repaint the pending delta here,
+									 * throttled to ~20fps so a big page's box-walk
+									 * doesn't stall the drag. handle_update only reads
+									 * event->message, so a synthetic updateEvt is safe. */
+									nowt = TickCount();
+									if (nowt - last_draw_tick >= 3) {
+										EventRecord uev;
+										last_draw_tick = nowt;
+										uev.what = updateEvt;
+										uev.message =
+											(long)(unsigned long)gw->window;
+										macos9_handle_update(&uev);
+									}
 								}
 							}
 							GetMouse(&relp);
@@ -1147,7 +1198,7 @@ void macos9_handle_key_down(const EventRecord *event) {
 		if (have_key && gw->bw) {
 			extern bool browser_window_key_press(struct browser_window *, unsigned long);
 			if (browser_window_key_press(gw->bw, ns_key)) {
-				macsurf_debug_log_writef("page key: 0x%02x -> ns %ld consumed", (int)uc, (long)ns_key);
+				macsurf_debug_log_writef("page key: %d -> ns %ld consumed", (int)uc, (long)ns_key);
 				return;
 			}
 		}

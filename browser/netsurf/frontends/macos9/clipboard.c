@@ -124,6 +124,17 @@ macos9_clipboard_set(const char *buffer, size_t length,
 		return;
 	}
 
+	/* fixes743 (#218) — Mac OS apps expect CR line endings on the desk scrap;
+	 * NetSurf hands us text with UNIX LF. Convert in place so pasting into
+	 * SimpleText/other Mac apps doesn't run every line together. NetSurf's
+	 * selection text is LF-only (no CRLF), so a straight \n -> \r is correct. */
+	{
+		size_t i;
+		for (i = 0; i < mac_len; i++) {
+			if (mac_buf[i] == '\n') mac_buf[i] = '\r';
+		}
+	}
+
 	err = ClearCurrentScrap();	/* required before replacing clipboard */
 	if (err != noErr) {
 		free(mac_buf);

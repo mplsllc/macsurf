@@ -435,10 +435,53 @@ void macos9_window_handle_scrollbar_click(struct gui_window *g, ControlRef c, sh
 	case 21: cur += step; break;          /* down/right arrow */
 	case 22: cur -= page; break;          /* page up/left */
 	case 23: cur += page; break;          /* page down/right */
-	case 129:                              /* thumb drag */
-		TrackControl(c, pt, NULL);
+	case 129: {                            /* thumb drag — LIVE (fixes749 #215) */
+		/* The old TrackControl(c,pt,NULL) blocked until release, so the view
+		 * only jumped at the end (and the live Appearance CDEF proc-386 crashes
+		 * on real hardware — see the gotcha in CLAUDE.md). Instead poll the
+		 * thumb ourselves: map the mouse to a value, scroll, and repaint the
+		 * content live (throttled), all with the safe proc-384 control. */
+		extern void macos9_handle_update(const EventRecord *event);
+		Rect cb;
+		short arrow = 16;
+		unsigned long lastdraw = 0;
+		GetControlBounds(c, &cb);
+		while (StillDown()) {
+			Point mp;
+			long span, rel, val;
+			GetMouse(&mp);
+			if (c == g->vscroll) {
+				span = (long)((cb.bottom - arrow) - (cb.top + arrow));
+				rel  = (long)(mp.v - (cb.top + arrow));
+			} else {
+				span = (long)((cb.right - arrow) - (cb.left + arrow));
+				rel  = (long)(mp.h - (cb.left + arrow));
+			}
+			if (span < 1) span = 1;
+			if (rel < 0) rel = 0;
+			if (rel > span) rel = span;
+			val = rel * (long)mx / span;
+			if ((short)val != GetControlValue(c)) {
+				SetControlValue(c, (short)val);
+				if (c == g->vscroll)
+					macos9_window_scroll_to(g, g->scroll_x, (int)val);
+				else
+					macos9_window_scroll_to(g, (int)val, g->scroll_y);
+				{
+					unsigned long nowt = TickCount();
+					if (nowt - lastdraw >= 2) {
+						EventRecord uev;
+						lastdraw = nowt;
+						uev.what = updateEvt;
+						uev.message = (long)(unsigned long)g->window;
+						macos9_handle_update(&uev);
+					}
+				}
+			}
+		}
 		cur = GetControlValue(c);
 		break;
+	}
 	default:
 		TrackControl(c, pt, NULL);
 		cur = GetControlValue(c);
@@ -509,7 +552,7 @@ void macos9_window_navigate(struct gui_window *g, const char *u) {
 	for(i = 0; u[i] != 0; i++) {
 		unsigned char c = (unsigned char)u[i];
 		if (c < 0x20 || c == 0x7F) {
-			macsurf_debug_log_writef("nav: ctrl-char at %d = 0x%02x", i, (int)c);
+			macsurf_debug_log_writef("nav: ctrl-char at %d = %d", i, (int)c);
 		}
 	}
 	set_url_te_text(g,u);

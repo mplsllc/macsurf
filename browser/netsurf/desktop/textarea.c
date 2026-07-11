@@ -2503,7 +2503,11 @@ bool textarea_keypress(struct textarea *ta, uint32_t key)
 						NULL, 0, true, &byte_delta, &r))
 					return false;
 			}
-			break;
+			/* fixes749 (#217): copy doesn't move the caret or change
+			 * text — return before the common textarea_set_caret_internal
+			 * tail, which would scroll the view to the (possibly
+			 * off-screen) caret. Mirrors NS_KEY_SELECT_ALL above. */
+			return true;
 		case NS_KEY_DELETE_LEFT:
 			if (readonly)
 				break;
