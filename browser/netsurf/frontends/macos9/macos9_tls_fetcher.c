@@ -88,7 +88,18 @@
  * that hangs >2s mid-transfer is effectively dead anyway; 4s gives us
  * comfortable headroom for the slowest legitimate hosts while killing
  * the foreign-fingerprint-reject case before NetSurf renders. */
-#define NO_PROGRESS_TICKS  240   /* 4s at 60Hz */
+#define NO_PROGRESS_TICKS  240   /* 4s at 60Hz — connect/handshake stage */
+
+/* fixes718 (#207) — once the TLS handshake has completed AND the origin has
+ * begun answering (HS_HEADERS/HS_BODY), it is demonstrably alive and speaking
+ * HTTPS; a stall now means "slow origin", not "dead host". A cold-cache backend
+ * that fetches feeds/weather server-side legitimately takes 5-10s to produce
+ * the first body bytes, and the tight 4s GET window was killing it mid-response,
+ * then dead-hosting the site and cascading into the HTTP-fallback -> 301 -> dead
+ * -> about:fetcherror blank page (captured on the minitower). Give a RESPONDING
+ * origin 15s before we give up. The connect/handshake stage keeps the 4s window
+ * so a truly dead or macTLS-incompatible host still fast-fails. */
+#define RESP_NO_PROGRESS_TICKS  900   /* 15s at 60Hz — headers/body arriving */
 
 /* fixes375 (#167) — a POST gets a far longer no-progress budget. A login
  * POST is NOT a dead sub-resource: Facebook's no-JS login-approval ("2FA")
@@ -172,6 +183,8 @@ struct macos9_https_ctx {
 	UInt32           last_rx_bytes;  /* fixes414 — last OT recv-byte count
 	                                  * seen, to credit raw wire progress to
 	                                  * the no-progress watchdog. */
+	unsigned long    rxlog_ticks;    /* fixes735 — throttle for the in-flight
+	                                  * RX-progress log (RECON RX), ~every 2s. */
 
 	/* fixes218 — disk cache. cache_eligible flips on after parse_headers
 	 * sees a 200 OK with a whitelisted MIME. cache_capture accumulates
@@ -224,6 +237,9 @@ struct macos9_https_ctx {
 	char            *post_body;
 	UInt32           post_body_len;
 	UInt32           post_body_sent;
+	/* fixes721 (#144 file upload) — POST Content-Type. Empty = urlencoded
+	 * default; "multipart/form-data; boundary=..." for a file upload. */
+	char             post_ctype[128];
 };
 
 #define HTTPS_MAX_RETRIES 2
@@ -1038,8 +1054,26 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 {
 	struct fetch *p;
 	fetch_msg msg;
+	/* fixes718 (#207) — whether HTTPS demonstrably worked. Captured BEFORE
+	 * c->state is overwritten with HS_FAIL below. Reaching HS_HEADERS/HS_BODY
+	 * means the handshake completed and BearSSL decrypted a response, so the
+	 * origin speaks valid HTTPS and this failure is a slow/flaky stall — NOT
+	 * an HTTPS-incompatible or dead host. When set, we must NOT fall back to
+	 * http:// (which 301s back to https, now dead-hosted -> redirect loop ->
+	 * about:fetcherror) and must NOT dead-host a working origin (which blocks
+	 * an immediate reload for the whole FIFO window). True dead / retro
+	 * HTTP-only / macTLS-incompatible hosts fail at HS_TLSING (pre-response),
+	 * so https_worked stays 0 and the existing fallback/dead-host path runs. */
+	int https_worked;
 
 	if (c->state == HS_FAIL || c->state == HS_DONE) return;
+
+	https_worked = (c->state == HS_HEADERS || c->state == HS_BODY);
+	if (https_worked)
+		macsurf_debug_log_writef(
+			"https: worked-but-stalled state=%d host=%s — skip "
+			"fallback+dead-host", c->state,
+			c->host[0] ? c->host : "(unset)");
 
 	/* fixes226 — full diag dump on every fail. We need:
 	 *  - host being fetched (so we know WHICH sites fail)
@@ -1123,6 +1157,7 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	 * has ALSO already failed this navigation surfaces FETCH_ERROR
 	 * instead of bouncing. */
 	if (c->aborted == 0 &&
+	    !https_worked &&   /* fixes718: HTTPS answered — don't fall back to http */
 	    c->url != NULL && c->pool_key[0] != '\0' &&
 	    !terminal_url_check(nsurl_access(c->url)) &&
 	    !macsurf_scheme_was_http_tried(c->pool_key)) {
@@ -1193,10 +1228,13 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	 * retry cost. The list is per-session and fixes244 refuses to persist
 	 * any host that ever succeeded, so a transient failure self-heals
 	 * next session. */
-	if (why != NULL && c->pool_key[0] != '\0' &&
+	if (why != NULL && c->pool_key[0] != '\0' && !https_worked &&
 	    (strcmp(why, "https: connection timed out") == 0 ||
 	     strcmp(why, "https: peer closed before complete") == 0 ||
 	     strcmp(why, "https: handshake/transport failed") == 0)) {
+		/* fixes718: !https_worked — a host that already spoke valid HTTPS
+		 * (HS_HEADERS/HS_BODY) is alive; a stall must not poison it, or an
+		 * immediate reload is blocked for the whole dead-host FIFO window. */
 		dead_host_add(c->pool_key);
 	}
 
@@ -1808,7 +1846,12 @@ static int build_request(struct macos9_https_ctx *c)
 		 * headers only.
 		 * fixes367 (#167) — UA chosen per-host (macos9_user_agent_for_host):
 		 * facebook.com gets a vintage Mozilla/4.0 Mac string to unlock
-		 * the no-JS mbasic page; everything else keeps MacSurf's UA. */
+		 * the no-JS mbasic page; everything else keeps MacSurf's UA.
+		 * fixes721 (#144 file upload) — Content-Type is multipart (with
+		 * boundary) for a file upload, else the urlencoded default. */
+		const char *ct = (c->post_ctype[0] != '\0')
+			? c->post_ctype
+			: "application/x-www-form-urlencoded";
 		rn = sprintf(c->req_buf,
 			"POST %s HTTP/1.1\r\n"
 			"Host: %s\r\n"
@@ -1817,11 +1860,11 @@ static int build_request(struct macos9_https_ctx *c)
 			"Accept-Language: en-US,en;q=0.5\r\n"
 			"Accept-Encoding: identity\r\n"
 			"%s"
-			"Content-Type: application/x-www-form-urlencoded\r\n"
+			"Content-Type: %s\r\n"
 			"Content-Length: %lu\r\n"
 			"Connection: keep-alive\r\n"
 			"\r\n",
-			c->path, c->host, ua, cookie_hdr,
+			c->path, c->host, ua, cookie_hdr, ct,
 			(unsigned long)c->post_body_len);
 	} else {
 		rn = sprintf(c->req_buf,
@@ -2086,6 +2129,28 @@ static void hctx_poll(struct macos9_https_ctx *c)
 			c->last_rx_bytes = pdiag.ot_recv_bytes;
 			c->progress_ticks = now_ticks();
 		}
+		/* fixes735 — throttled in-flight RX progress so a slow/stuck fetch is
+		 * VISIBLE. The perf filter drops the per-poll fetch lines, leaving the
+		 * multi-second "black holes" (the 47s/135s gaps on 68kmla); the RECON
+		 * prefix survives the filter. Emitted ~every 2s while a request is in
+		 * flight. Read it as: body=/raw= climbing → progressing; body=/raw=
+		 * frozen while nodata= and idle= climb → STUCK on that resource. */
+		{
+			unsigned long nowt = now_ticks();
+			if ((c->state == HS_TLSING || c->state == HS_SEND_REQ ||
+			     c->state == HS_HEADERS || c->state == HS_BODY) &&
+			    (c->rxlog_ticks == 0 || nowt - c->rxlog_ticks >= 120)) {
+				c->rxlog_ticks = nowt;
+				macsurf_debug_log_writef(
+					"RECON RX host=%s st=%d body=%ld/%ld raw=%ld nodata=%ld idle=%ldms",
+					c->host[0] ? c->host : "(unset)",
+					(int)c->state, (long)c->body_bytes,
+					(long)c->content_length,
+					(long)pdiag.ot_recv_bytes,
+					(long)pdiag.ot_recv_nodata,
+					(long)((nowt - c->progress_ticks) * 1000UL / 60UL));
+			}
+		}
 	}
 
 	if (ev == kOSTLSEventFailed) {
@@ -2137,8 +2202,13 @@ static void hctx_poll(struct macos9_https_ctx *c)
 	if (c->state == HS_TLSING) {
 		if (ev == kOSTLSEventHandshakeDone ||
 		    OSTLS_GetState(c->conn) == kOSTLSStateOpen) {
+			/* fixes735 — was "https: handshake done…", which the perf
+			 * filter drops (it suppresses every "https: handshake*" line),
+			 * so TLS resumption status was invisible. RECON survives the
+			 * filter; resumed=1 means the abbreviated (session-ticket)
+			 * handshake fired, resumed=0 a full one. */
 			macsurf_debug_log_writef(
-				"https: handshake done host=%s resumed=%d cipher=%d",
+				"RECON TLS host=%s resumed=%d cipher=%d",
 				c->host, OSTLS_GetResumed(c->conn),
 				(int)OSTLS_GetCipherSuite(c->conn));
 			if (build_request(c) < 0) {
@@ -2361,10 +2431,18 @@ static void hctx_poll(struct macos9_https_ctx *c)
 	/* No-progress timeout. */
 	if (c->state != HS_IDLE && c->state != HS_DONE && c->state != HS_FAIL) {
 		unsigned long now = now_ticks();
-		/* fixes375 — POST waits ~60s (login-approval long-poll); GET 4s. */
-		unsigned long limit = (c->post_body != NULL)
-			? (unsigned long)POST_NO_PROGRESS_TICKS
-			: (unsigned long)NO_PROGRESS_TICKS;
+		/* fixes375 — POST waits ~60s (login-approval long-poll).
+		 * fixes718 — a GET that has reached HS_HEADERS/HS_BODY has a live,
+		 * responding origin: give it 15s (RESP_NO_PROGRESS_TICKS) so a
+		 * slow-but-alive backend isn't killed. Connect/handshake stage
+		 * keeps the tight 4s so truly dead hosts still fast-fail. */
+		unsigned long limit;
+		if (c->post_body != NULL)
+			limit = (unsigned long)POST_NO_PROGRESS_TICKS;
+		else if (c->state == HS_HEADERS || c->state == HS_BODY)
+			limit = (unsigned long)RESP_NO_PROGRESS_TICKS;
+		else
+			limit = (unsigned long)NO_PROGRESS_TICKS;
 		if (now - c->progress_ticks > limit) {
 			/* fixes243 — salvage partial body on timeout too.
 			 * Servers that send some response then stall (e.g.
@@ -2480,6 +2558,26 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 		/* POST responses are not safely poolable in the keep-alive
 		 * pool — many servers close the connection after a POST. */
 		c->keep_alive_ok = 0;
+	} else if (pm != NULL) {
+		/* fixes721 (#144 file upload) — multipart POST: serialise the
+		 * parts (reading file parts off disk) into a multipart/form-data
+		 * body; record the boundary in the Content-Type. */
+		extern char *macos9_build_multipart(
+			const struct fetch_multipart_data *pm_,
+			char *boundary_out, long *out_len);
+		char boundary[64];
+		long body_len = 0;
+		char *body = macos9_build_multipart(pm, boundary, &body_len);
+		if (body != NULL && body_len > 0) {
+			c->post_body = body;
+			c->post_body_len = (UInt32)body_len;
+			c->post_body_sent = 0;
+			c->keep_alive_ok = 0;
+			sprintf(c->post_ctype,
+				"multipart/form-data; boundary=%s", boundary);
+		} else if (body != NULL) {
+			free(body);
+		}
 	}
 
 	host_lwc = nsurl_get_component(u, NSURL_HOST);

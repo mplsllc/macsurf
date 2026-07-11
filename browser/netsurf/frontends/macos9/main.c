@@ -130,30 +130,27 @@ double macos9_micros(void)
 
 static void draw_url_bar(struct gui_window *gw) {
 #ifdef __MACOS9__
-	/* fixes303 — razor-sharp 1px inset border. Top + left are technical
-	 * charcoal #444444, bottom + right are crisp white #FFFFFF. White
-	 * canvas inside. Text in Geneva 12 with the existing favicon at the
-	 * left and the TE rect inset well past it. */
-	RGBColor black     = {0, 0, 0};
-	RGBColor white     = {0xFFFF, 0xFFFF, 0xFFFF};
-	RGBColor charcoal  = {0x4444, 0x4444, 0x4444};   /* #444444 */
+	/* fixes727 — rounded "pill" URL field. White rounded canvas, a soft grey
+	 * border at rest and a 2px orange focus ring while the field is active for
+	 * typing. Geneva 12 text, favicon at the left. The rounded corners sit on
+	 * the toolbar gradient, which draw_toolbar_bg repaints just before this. */
+	RGBColor black  = {0, 0, 0};
+	RGBColor white  = {0xFFFF, 0xFFFF, 0xFFFF};
+	RGBColor border = {0x9999, 0x9999, 0x9999};    /* #999 soft edge */
+	RGBColor orange = {0xF4F4, 0x8484, 0x1616};    /* focus accent */
 	Rect u = gw->url_rect;
-	Rect r;
-	short L = u.left, T = u.top, R = u.right, B = u.bottom;
 
-	/* white input canvas inside the 1px frame */
+	/* white rounded canvas */
 	RGBForeColor(&white);
-	SetRect(&r, (short)(L + 1), (short)(T + 1), (short)(R - 1), (short)(B - 1));
-	PaintRect(&r);
-
-	/* top + left = #444 */
-	RGBForeColor(&charcoal);
-	SetRect(&r, L, T, R, (short)(T + 1)); PaintRect(&r);
-	SetRect(&r, L, T, (short)(L + 1), B); PaintRect(&r);
-	/* bottom + right = #FFFFFF */
-	RGBForeColor(&white);
-	SetRect(&r, L, (short)(B - 1), R, B); PaintRect(&r);
-	SetRect(&r, (short)(R - 1), T, R, B); PaintRect(&r);
+	PaintRoundRect(&u, 12, 12);
+	/* border — orange focus ring when active, soft grey otherwise */
+	if (gw->url_field_active) {
+		RGBForeColor(&orange); PenSize(2, 2);
+	} else {
+		RGBForeColor(&border); PenSize(1, 1);
+	}
+	FrameRoundRect(&u, 12, 12);
+	PenSize(1, 1);
 
 	/* text */
 	RGBForeColor(&black); RGBBackColor(&white);
@@ -167,17 +164,25 @@ static void draw_url_bar(struct gui_window *gw) {
 
 static void draw_status_bar(struct gui_window *gw) {
 #ifdef __MACOS9__
-	RGBColor black = {0,0,0}, white = {0xFFFF, 0xFFFF, 0xFFFF};
+	/* fixes727 — refined status bar: a soft light-grey fill with a 1px top
+	 * highlight/separator instead of the old boxy black FrameRect, and lighter
+	 * #555 text. Reads as a subtle chrome shelf rather than a stark box. */
+	RGBColor fill  = {0xEDED, 0xEDED, 0xEDED};   /* #EDEDED shelf */
+	RGBColor top   = {0xB4B4, 0xB4B4, 0xB4B4};   /* #B4 separator */
+	RGBColor text  = {0x5555, 0x5555, 0x5555};   /* #555 text */
+	RGBColor bg    = {0xEDED, 0xEDED, 0xEDED};
 	Rect r = gw->status_rect;
-	RGBForeColor(&black); RGBBackColor(&white);
-	EraseRect(&r); FrameRect(&r);
-	/* fixes627: pin a small chrome font before drawing the status /
-	 * hover-URL text. draw_status_bar never set the port font, so it
-	 * inherited whatever the last content plot left behind -- after the
-	 * 66px hero heading, the hover URL rendered gigantic across the
-	 * status bar. Geneva 9 (plain) is the standard OS 9 chrome size. */
+	Rect line;
+	RGBForeColor(&fill); RGBBackColor(&bg);
+	PaintRect(&r);
+	line.left = r.left; line.right = r.right;
+	line.top = r.top; line.bottom = (short)(r.top + 1);
+	RGBForeColor(&top); PaintRect(&line);
+	/* fixes627: pin a small chrome font (Geneva 9) before drawing status /
+	 * hover-URL text so it doesn't inherit a huge content-plot size. */
 	TextFont(kFontIDGeneva); TextSize(9); TextFace(0);
-	MoveTo((short)(r.left+4), (short)(r.bottom-4));
+	RGBForeColor(&text);
+	MoveTo((short)(r.left+6), (short)(r.bottom-4));
 	if (gw->status[0]) {
 		unsigned char p[128]; size_t l = strlen(gw->status);
 		if(l>127) l=127; p[0]=(unsigned char)l; memcpy(p+1, gw->status, l);
@@ -199,6 +204,7 @@ static void macos9_init_menus(void) {
 	AppendMenu(file_menu, "\pNew Window/N");
 	AppendMenu(file_menu, "\pOpen Location.../L");
 	AppendMenu(file_menu, "\pClose/W");
+	AppendMenu(file_menu, "\pSend Debug Log");   /* fixes720 (item 4) */
 	AppendMenu(file_menu, "\p(-");
 	AppendMenu(file_menu, "\pQuit/Q");
 	InsertMenu(file_menu, 0);
@@ -259,6 +265,63 @@ static void macos9_init_menus(void) {
 	 * Must run after the menu is inserted so GetMenuHandle finds it. */
 	macos9_bookmarks_init();
 	macos9_history_init();   /* fixes694 (#47) */
+#endif
+}
+
+/* fixes720 (#207 tooling) — File > Send Debug Log. MacSurf has no file picker,
+ * so instead of the web upload form we read our OWN Desktop log and POST it
+ * straight to the server (urlencoded, reusing the fixes312 POST path). One
+ * click, no SimpleText/copy/paste, no picker. The server (upload.php) accepts
+ * the `logtext` field and saves it. Plain http:// so the classic-UA vhost
+ * serves it without an https redirect. */
+static void macos9_send_debug_log(struct gui_window *gw)
+{
+#ifdef __MACOS9__
+	char *raw;
+	char *body;
+	long  rawlen, i, bp;
+	long  cap = 1024L * 1024L;   /* 1 MB — a non-nuclear log is far smaller */
+	nsurl *url = NULL;
+	static const char hexd[] = "0123456789ABCDEF";
+	static const char pfx[] = "who=MacSurf&logtext=";
+
+	if (gw == NULL || gw->bw == NULL) return;
+	raw = (char *)malloc((size_t)cap);
+	if (raw == NULL) return;
+	rawlen = macsurf_debug_log_read(raw, cap);
+	if (rawlen <= 0) { free(raw); return; }
+
+	/* url-encode: worst case 3 bytes per input byte + prefix + NUL. */
+	body = (char *)malloc((size_t)(rawlen * 3 + (long)sizeof pfx + 4));
+	if (body == NULL) { free(raw); return; }
+	bp = 0;
+	for (i = 0; pfx[i] != '\0'; i++) body[bp++] = pfx[i];
+	for (i = 0; i < rawlen; i++) {
+		unsigned char ch = (unsigned char)raw[i];
+		if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+		    (ch >= '0' && ch <= '9') ||
+		    ch == '-' || ch == '_' || ch == '.' || ch == '~') {
+			body[bp++] = (char)ch;
+		} else {
+			body[bp++] = '%';
+			body[bp++] = hexd[(ch >> 4) & 0x0F];
+			body[bp++] = hexd[ch & 0x0F];
+		}
+	}
+	body[bp] = '\0';
+	free(raw);
+
+	if (nsurl_create("http://macsurf.org/upload.php", &url) == NSERROR_OK) {
+		macsurf_profile_reset();
+		/* post_urlenc is arg 5; core strdup's it, so freeing body after is
+		 * safe. Navigates the front window to the "thank you" response. */
+		browser_window_navigate(gw->bw, url, NULL, BW_NAVIGATE_HISTORY,
+			body, NULL, NULL);
+		nsurl_unref(url);
+	}
+	free(body);
+#else
+	(void)gw;
 #endif
 }
 
@@ -338,6 +401,13 @@ static void macos9_handle_menu(short menu_id, short item) {
 				if (macos9_window_list_head() == NULL)
 					macos9_done = (bool)1;
 			}
+			break;
+		case ITEM_FILE_SENDLOG:
+			/* fixes720: POST the Desktop MacSurf Debug.log to the server. */
+			front = FrontWindow();
+			gw = front ? macos9_find_window(front) : NULL;
+			if (gw != NULL)
+				macos9_send_debug_log(gw);
 			break;
 		case ITEM_FILE_QUIT:
 			macos9_done = (bool)1;
@@ -713,6 +783,18 @@ void macos9_handle_update(const EventRecord *event) {
 		}
 	}
 	EndUpdate(win);
+	/* fixes738 — viewport-gated image loading. After the content is
+	 * composited and the box tree is stable, fetch any deferred images now
+	 * within (viewport + margin) and drop dead queue entries; off-screen
+	 * images stay queued until a later scroll/paint. Runs only when
+	 * redraw_ready (content laid out) so the box walk is safe. */
+	if (gw != NULL && gw->bw != NULL &&
+	    browser_window_redraw_ready(gw->bw)) {
+		extern void macsurf_lazyimg_viewport_changed(int scroll_y,
+				int viewport_h);
+		macsurf_lazyimg_viewport_changed(gw->scroll_y,
+			gw->content_rect.bottom - gw->content_rect.top);
+	}
 #endif
 }
 
@@ -869,6 +951,8 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 								if (PtInRect(p, &bb)) { tbtn = gw->back_btn; tact = macos9_window_back; } }
 							if (tbtn == NULL && gw->forward_btn) { GetControlBounds(gw->forward_btn, &bb);
 								if (PtInRect(p, &bb)) { tbtn = gw->forward_btn; tact = macos9_window_forward; } }
+							if (tbtn == NULL && gw->stop_btn) { GetControlBounds(gw->stop_btn, &bb);
+								if (PtInRect(p, &bb)) { tbtn = gw->stop_btn; tact = macos9_window_stop; } }   /* fixes724 */
 							if (tbtn == NULL && gw->reload_btn) { GetControlBounds(gw->reload_btn, &bb);
 								if (PtInRect(p, &bb)) { tbtn = gw->reload_btn; tact = macos9_window_reload; } }
 							if (tbtn == NULL && gw->home_btn) { GetControlBounds(gw->home_btn, &bb);
@@ -1154,6 +1238,11 @@ void macos9_poll(void) {
 		   * death-row drain below cannot free mid-pump. */
 		  macos9_op_depth++; fetch_pump(); macos9_op_depth--; }
 		macos9_windows_te_idle(); macos9_windows_process_deferred();
+		/* fixes725 — nav-button hover highlight: track the pointer over the
+		 * front window's toolbar (cheap; only repaints on a hover change). */
+		{ WindowRef hfw = FrontWindow();
+		  struct gui_window *hfg = hfw ? macos9_find_window(hfw) : NULL;
+		  if (hfg != NULL) macos9_window_update_hover(hfg); }
 		/* fixes640 — emit the PERFACC phase summary ONCE, at the real
 		 * load-complete edge (browser_window_stop_available true->false),
 		 * so the post-first-paint reflow/settle passes are included (they
@@ -1321,6 +1410,15 @@ int main(void) {
 	 * (~33 ms) elapse here at startup; acceptable cost. */
 	macsurf_tb_calibrate();
 	macsurf_debug_log_init();
+	/* fixes719 (#207): capture the REAL application-partition pointer window
+	 * from the Process Manager NOW -- after the log is up (so RECON HEAP
+	 * BOUNDS is recorded) and before ANY string interning / URL parse /
+	 * content fetch (netsurf_init and later). Every hardcoded
+	 * 0x01000000/0x20000000/0x28000000 pointer-range guard tests against
+	 * this window instead, so a partition mapped high (>0x28000000 on a
+	 * higher-RAM Mac) no longer makes those guards reject valid heap
+	 * pointers -> the blank-screen bug. Must stay before netsurf_init. */
+	macsurf_heap_bounds_init();
 	/* fixes366a -- start the profile clock so initial-page-load timing
 	 * has a t0. macsurf_profile_stamp(label) anywhere downstream will
 	 * produce a meaningful delta. The nav-time reset
@@ -1499,20 +1597,43 @@ int main(void) {
 	 * CSS / images. Apple alone burns ~2 MB on stylesheets per page —
 	 * at 32 MB the cache holds Apple + 5-6 typical pages of history
 	 * with room left over for libcss/libdom working set. */
-	/* fixes430: drop from 32MB to 4MB.  The forum index is 22MB of
-	 * subresource bytes; holding 32MB of stale llcache from the previous
-	 * page on top of the new page's working set exhausted the heap.
-	 * 4MB is still enough for shared CSS/images on intra-site navigation
-	 * (XenForo bundles are ~252KB) while giving the new page's DOM+box
-	 * tree and libcss cascade enough room. */
-	nsoption_set_int(memory_cache_size, 0);
-	MS_LOG("images enabled, author_css on, fetcher 128/16, mem cache 0");
+	/* fixes430: 32MB -> 4MB (a 22MB forum index + 32MB stale llcache on top
+	 * of the live working set exhausted the heap).
+	 * fixes460-463: dropped to 0 while chasing an llcache-reentrancy crash and
+	 * the blank-page bug.
+	 * fixes731: RESTORE to 8MB. The blank page was root-caused to the
+	 * pointer-ceiling guards (#207 / fixes719), NOT the cache, and the
+	 * llcache reentrancy guards (fixes459/460, op_depth) are still in place —
+	 * so the reason it was zeroed no longer applies. With no cache, every
+	 * navigation (and every back-button) re-fetched AND re-did the ~1s TLS
+	 * handshake for shared CSS/JS/images; an 8MB cache lets intra-site nav and
+	 * back-button skip both. Kept conservative (not 32MB) to avoid the fixes430
+	 * heap-exhaustion on heavy forum indexes and to stay safe on 64MB Macs. */
+	nsoption_set_int(memory_cache_size, 32 * 1024 * 1024);
+	MS_LOG("images enabled, author_css on, fetcher 128/16, mem cache 32MB");
 #ifdef __MACOS9__
 	macsurf_debug_log_writef("DIAG pre-netsurf_init: free=%ld maxblk=%ld",
 		(long)FreeMem(), (long)MaxBlock());
 #endif
 	netsurf_init(NULL);
 	MS_LOG("netsurf_init done");
+	/* fixes721b — MacSurf loads no Messages file, so core message tokens
+	 * render as the raw token (e.g. an <input type=file> showed a white box
+	 * reading "Form_Drop"). Register the handful of form-gadget labels core
+	 * actually paints/statuses so they read as English. */
+	{
+		extern nserror messages_add_key_value(const char *k, const char *v);
+		messages_add_key_value("Form_Drop", "Choose File\311");
+		messages_add_key_value("FormFile", "File upload");
+		messages_add_key_value("FormSubmit", "Submit form");
+		messages_add_key_value("FormReset", "Reset form");
+		messages_add_key_value("FormButton", "Button");
+		messages_add_key_value("FormTextarea", "Text area");
+		messages_add_key_value("FormSelect", "Select");
+		messages_add_key_value("FormCheckbox", "Checkbox");
+		messages_add_key_value("FormRadio", "Radio button");
+		messages_add_key_value("FormTextbox", "Text field");
+	}
 #ifdef __MACOS9__
 	macsurf_debug_log_writef("DIAG post-netsurf_init: free=%ld maxblk=%ld",
 		(long)FreeMem(), (long)MaxBlock());
@@ -1588,10 +1709,16 @@ int main(void) {
 	 * urldb down, so this session's Facebook login survives the relaunch. */
 	macos9_cookies_save();
 	MS_LOG("cookies saved");
-	macos9_quitting = (bool)1; netsurf_exit();
+	macos9_quitting = (bool)1;
 #ifdef WITH_QUICKJS
+	/* fixes717 (#207 log) — finalise the JS heap BEFORE netsurf_exit.
+	 * netsurf_exit releases the hlcache handles; running js_finalise AFTER
+	 * it made QuickJS teardown call hlcache_get_url on already-freed
+	 * handles (the "wild handle" spam at shutdown). Destroy the consumer
+	 * (JS) before the producer (browser core). */
 	js_finalise();
 #endif
+	netsurf_exit();
 	/* macEntropy: persist this session's accumulated entropy so the next
 	 * cold boot starts warm. Must run before OT teardown. */
 	OSTLS_SaveSeed();

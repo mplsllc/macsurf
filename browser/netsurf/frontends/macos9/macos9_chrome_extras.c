@@ -24,6 +24,7 @@
 #include "netsurf/content.h"
 #include "macos9.h"
 #include "macsurf_debug.h"
+#include "about_logo_data.h"   /* fixes726 — crisp 64x64 puffin PNG */
 
 #ifdef __MACOS9__
 #include <Carbon.h>
@@ -2071,44 +2072,492 @@ void macos9_bookmark_list_show(struct gui_window *g)
 	(void)g;
 }
 
-/* About box — shown from the Apple menu's "About MacSurf..." item. Carries the
- * project credit and the Patreon supporter roll. When a new supporter joins,
- * add their name to the SUPPORTERS line below (and to README.md's Supporters
- * section). Kept as a plain StandardAlert so it needs no DITL/'ALRT' resource. */
+/* ====================================================================
+ * About box — a small animated "space glass" credits window.
+ *
+ * Shown from the Apple menu's "About MacSurf..." item. Double-buffered
+ * through a 32-bit offscreen GWorld (flicker-free) and animated off the
+ * event loop's null-event frame tick: a vertical deep-blue gradient, a
+ * drifting starfield, a metallic shine that sweeps the title, and a
+ * scrolling credits roll of the supporter list. Everything fades up
+ * from black on open (all draw colours are scaled by a brightness ramp,
+ * since classic GWorlds have no alpha).
+ *
+ * The supporter roll is the single source of truth for the in-app
+ * credits — add a new supporter to about_roll[] below (and to
+ * README.md + .private/supporters.md). Because the list scrolls, it has
+ * no length ceiling (unlike the old Str255 StandardAlert body, which is
+ * still built from the same names as a resource-free fallback).
+ * ==================================================================== */
+#ifdef __MACOS9__
+
+#define ABOUT_W      380
+#define ABOUT_H      300
+#define ABOUT_STARS  48
+
+/* kind: 0 = supporter name, 1 = section header, 2 = blank spacer. */
+struct about_line { const char *text; short kind; };
+static const struct about_line about_roll[] = {
+	{ "Patreon supporters", 1 },
+	{ "Shlooom",            0 },
+	{ "Kestral",            0 },
+	{ "",                   2 },
+	{ "Ko-Fi supporters",   1 },
+	{ "kilgeist",           0 },
+	{ "Turuun",             0 },
+	{ "",                   2 },
+	{ "Thank you for keeping",  0 },
+	{ "vintage Macs on the web.",0 }
+};
+#define ABOUT_ROLL_N ((short)(sizeof(about_roll) / sizeof(about_roll[0])))
+
+static short         about_star_x[ABOUT_STARS];
+static short         about_star_y0[ABOUT_STARS];
+static short         about_star_v[ABOUT_STARS];   /* 1/16 px per tick */
+static short         about_star_b[ABOUT_STARS];   /* 0..255 base brightness */
+static int           about_stars_ready = 0;
+static unsigned long about_rng = 0;
+
+static unsigned long about_rand(void)
+{
+	about_rng = about_rng * 1103515245UL + 12345UL;
+	return (about_rng >> 16) & 0x7fffUL;
+}
+
+static void about_stars_init(void)
+{
+	short i;
+	about_rng = (unsigned long)TickCount() ^ 0x9E3779B9UL;
+	for (i = 0; i < ABOUT_STARS; i++) {
+		about_star_x[i]  = (short)(about_rand() % ABOUT_W);
+		about_star_y0[i] = (short)(about_rand() % ABOUT_H);
+		about_star_v[i]  = (short)(4 + (about_rand() % 20));
+		about_star_b[i]  = (short)(90 + (about_rand() % 165));
+	}
+	about_stars_ready = 1;
+}
+
+/* Set the QuickDraw foreground to (r,g,b) [0..255] scaled by brightness
+ * bri [0..255] — the whole frame fades up from black by ramping bri. */
+static void about_fore(short r, short g, short b, short bri)
+{
+	RGBColor c;
+	if (bri < 0) bri = 0;
+	if (bri > 255) bri = 255;
+	c.red   = (unsigned short)(((long)r * bri / 255) * 257);
+	c.green = (unsigned short)(((long)g * bri / 255) * 257);
+	c.blue  = (unsigned short)(((long)b * bri / 255) * 257);
+	RGBForeColor(&c);
+}
+
+static void about_center(const char *s, short cx, short y)
+{
+	short n = (short)strlen(s), w;
+	if (n <= 0) return;
+	w = TextWidth(s, 0, n);
+	MoveTo(cx - w / 2, y);
+	DrawText(s, 0, n);
+}
+
+/* fixes726 — crisp About-box puffin. The old PlotIconID upscaled the 32x32
+ * icon-family member to 52x52 (visibly blocky). We decode a 64x64 PNG once
+ * into a 32-bit colour GWorld plus a hand-built 1-bit mask (from alpha) and
+ * CopyMask it over the animated gradient, so it composites cleanly (stars show
+ * through the transparent margins) and downscales crisply. */
+static GWorldPtr s_about_logo_gw   = NULL;
+static BitMap    s_about_logo_mask;   /* real 1-bit BitMap (rowBytes<0x2000) */
+static Rect      s_about_logo_src;
+static int       s_about_logo_tried  = 0;
+static int       s_about_logo_ok     = 0;
+
+static void about_logo_ensure(void)
+{
+	extern unsigned lodepng_decode32(unsigned char **out, unsigned *w,
+			unsigned *h, const unsigned char *in,
+			unsigned long insize);
+	unsigned char *rgba = NULL;
+	unsigned w = 0, h = 0, err;
+	OSErr oerr;
+	GWorldPtr saved_port;
+	GDHandle saved_gdh;
+	PixMapHandle pm;
+	long dst_rb, mask_rb, row, col;
+	unsigned char *src_row, *dst_row, *mrow;
+
+	if (s_about_logo_tried) return;
+	s_about_logo_tried = 1;
+
+	err = lodepng_decode32(&rgba, &w, &h, macos9_about_logo_png,
+		macos9_about_logo_png_len);
+	if (err != 0 || rgba == NULL || w == 0 || h == 0) {
+		if (rgba != NULL) free(rgba);
+		return;
+	}
+	SetRect(&s_about_logo_src, 0, 0, (short)w, (short)h);
+
+	GetGWorld(&saved_port, &saved_gdh);
+	oerr = NewGWorld(&s_about_logo_gw, 32, &s_about_logo_src, NULL, NULL, 0);
+	if (oerr != noErr || s_about_logo_gw == NULL) {
+		free(rgba); SetGWorld(saved_port, saved_gdh); return;
+	}
+	pm = GetGWorldPixMap(s_about_logo_gw);
+	if (pm == NULL || !LockPixels(pm)) {
+		DisposeGWorld(s_about_logo_gw); s_about_logo_gw = NULL;
+		free(rgba); SetGWorld(saved_port, saved_gdh); return;
+	}
+	/* colour plane: straight ARGB copy (mask handles transparency) */
+	dst_rb = (long)((*pm)->rowBytes & 0x3FFF);
+	for (row = 0; row < (long)h; row++) {
+		src_row = rgba + row * (long)w * 4L;
+		dst_row = (unsigned char *)GetPixBaseAddr(pm) + row * dst_rb;
+		for (col = 0; col < (long)w; col++) {
+			dst_row[col*4+0] = 0xFF;
+			dst_row[col*4+1] = src_row[col*4+0];
+			dst_row[col*4+2] = src_row[col*4+1];
+			dst_row[col*4+3] = src_row[col*4+2];
+		}
+	}
+	UnlockPixels(pm);
+	SetGWorld(saved_port, saved_gdh);
+
+	/* 1-bit mask BitMap: bit set (black) where the pixel is opaque, so
+	 * CopyMask copies the source there and leaves the gradient elsewhere. */
+	mask_rb = (((long)w + 15) / 16) * 2;   /* even, well under 0x2000 */
+	s_about_logo_mask.baseAddr = NewPtrClear(mask_rb * (long)h);
+	if (s_about_logo_mask.baseAddr == NULL) {
+		DisposeGWorld(s_about_logo_gw); s_about_logo_gw = NULL;
+		free(rgba); return;
+	}
+	s_about_logo_mask.rowBytes = (short)mask_rb;
+	s_about_logo_mask.bounds   = s_about_logo_src;
+	for (row = 0; row < (long)h; row++) {
+		src_row = rgba + row * (long)w * 4L;
+		mrow = (unsigned char *)s_about_logo_mask.baseAddr + row * mask_rb;
+		for (col = 0; col < (long)w; col++) {
+			if (src_row[col*4+3] >= 128)
+				mrow[col >> 3] |= (unsigned char)(0x80 >> (col & 7));
+		}
+	}
+	free(rgba);
+	s_about_logo_ok = 1;
+}
+
+/* Render one frame into the offscreen GWorld, then blit it to the
+ * window. elapsed is ticks since the window opened. */
+static void about_draw(GWorldPtr off, WindowRef win, const Rect *content,
+	const Rect *okr, long elapsed, short titleFnum, short bodyFnum,
+	const RGBColor *black, const RGBColor *white)
+{
+	CGrafPtr     saveGW;
+	GDHandle     saveGD;
+	PixMapHandle offpm = GetGWorldPixMap(off);
+	short        bri = (short)(elapsed * 255 / 30);
+	Rect         full;
+
+	if (bri > 255) bri = 255;
+	if (bri < 0)   bri = 0;
+	SetRect(&full, 0, 0, ABOUT_W, ABOUT_H);
+
+	GetGWorld(&saveGW, &saveGD);
+	SetGWorld(off, NULL);
+	ClipRect(&full);
+
+	/* 1. vertical gradient backdrop (deep blue -> near black) */
+	{
+		short yy;
+		for (yy = 0; yy < ABOUT_H; yy += 2) {
+			Rect ln;
+			short rr = (short)(20 + (2  - 20) * yy / ABOUT_H);
+			short gg = (short)(28 + (4  - 28) * yy / ABOUT_H);
+			short bb = (short)(70 + (16 - 70) * yy / ABOUT_H);
+			about_fore(rr, gg, bb, bri);
+			SetRect(&ln, 0, yy, ABOUT_W, yy + 2);
+			PaintRect(&ln);
+		}
+	}
+
+	/* 2. drifting starfield */
+	{
+		short i;
+		for (i = 0; i < ABOUT_STARS; i++) {
+			short yy = (short)((about_star_y0[i] +
+				((elapsed * about_star_v[i]) >> 4)) % ABOUT_H);
+			short sb = about_star_b[i];
+			Rect pr;
+			about_fore(sb, sb, (short)(sb > 235 ? 255 : sb + 20), bri);
+			if (sb > 200)
+				SetRect(&pr, about_star_x[i], yy,
+					about_star_x[i] + 2, yy + 2);
+			else
+				SetRect(&pr, about_star_x[i], yy,
+					about_star_x[i] + 1, yy + 1);
+			PaintRect(&pr);
+		}
+	}
+
+	/* 3. app icon (puffin) — crisp 64x64 CopyMask blit (fixes726), with a
+	 * PlotIconID fallback if the PNG decode failed. */
+	{
+		Rect ir;
+		SetRect(&ir, 164, 14, 216, 66);
+		about_logo_ensure();
+		if (s_about_logo_ok && s_about_logo_gw != NULL) {
+			PixMapHandle spm = GetGWorldPixMap(s_about_logo_gw);
+			RGBColor sfg, sbg;
+			GetForeColor(&sfg); GetBackColor(&sbg);
+			RGBForeColor(black); RGBBackColor(white);
+			if (spm != NULL && LockPixels(spm)) {
+				CopyMask((BitMap *)*spm, &s_about_logo_mask,
+					(BitMap *)*offpm,
+					&s_about_logo_src, &s_about_logo_src, &ir);
+				UnlockPixels(spm);
+			}
+			RGBForeColor(&sfg); RGBBackColor(&sbg);
+		} else {
+			PlotIconID(&ir, kAlignNone, kTransformNone, 128);
+		}
+	}
+
+	/* 4. title with a sweeping metallic shine */
+	{
+		const char *tt = "MacSurf 1.68.3";
+		short n = (short)strlen(tt), tw, tx, ty = 100;
+		TextFont(titleFnum);
+		TextFace(bold);
+		TextSize(20);
+		tw = TextWidth(tt, 0, n);
+		tx = (ABOUT_W - tw) / 2;
+		about_fore(198, 216, 244, bri);
+		MoveTo(tx, ty);
+		DrawText(tt, 0, n);
+		{
+			long period = 150;
+			long phase  = elapsed % period;
+			long span   = tw + 80;
+			short bc = (short)(tx - 40 + phase * span / period);
+			Rect band;
+			SetRect(&band, (short)(bc - 10), ty - 20,
+				(short)(bc + 10), ty + 6);
+			ClipRect(&band);
+			about_fore(255, 255, 255, bri);
+			MoveTo(tx, ty);
+			DrawText(tt, 0, n);
+			ClipRect(&full);
+		}
+		TextFace(normal);
+	}
+
+	/* 5. accent underline + subtitle + author */
+	{
+		Rect a;
+		about_fore(70, 140, 255, bri);
+		SetRect(&a, 96, 110, 284, 112);
+		PaintRect(&a);
+		TextFont(bodyFnum);
+		TextSize(9);
+		TextFace(normal);
+		about_fore(120, 145, 190, bri);
+		about_center("Native TLS 1.3   -   NetSurf engine", 190, 128);
+		about_fore(150, 165, 200, bri);
+		about_center("by mplsllc", 190, 143);
+	}
+
+	/* 6. scrolling supporter credits roll (clipped to a viewport) */
+	{
+		Rect  vp;
+		short lineH = 16, i, cx = 190;
+		long  vph, cycle, offs;
+		SetRect(&vp, 24, 152, ABOUT_W - 24, 250);
+		vph   = vp.bottom - vp.top;
+		cycle = (long)ABOUT_ROLL_N * lineH + vph;
+		offs  = (elapsed / 3) % cycle;
+		ClipRect(&vp);
+		for (i = 0; i < ABOUT_ROLL_N; i++) {
+			short y = (short)(vp.bottom - offs + i * lineH);
+			if (about_roll[i].kind == 2) continue;
+			if (y < vp.top - lineH || y > vp.bottom + lineH) continue;
+			TextFont(bodyFnum);
+			TextSize(10);
+			if (about_roll[i].kind == 1) {
+				TextFace(bold);
+				about_fore(120, 185, 255, bri);
+			} else {
+				TextFace(normal);
+				about_fore(232, 240, 252, bri);
+			}
+			about_center(about_roll[i].text, cx, y);
+		}
+		TextFace(normal);
+		ClipRect(&full);
+	}
+
+	/* 7. beveled OK button */
+	{
+		about_fore(46, 68, 120, bri);
+		PaintRoundRect(okr, 12, 12);
+		PenSize(1, 1);
+		about_fore(120, 160, 230, bri);
+		FrameRoundRect(okr, 12, 12);
+		TextFont(bodyFnum);
+		TextFace(bold);
+		TextSize(10);
+		about_fore(240, 246, 255, bri);
+		about_center("OK", (short)((okr->left + okr->right) / 2),
+			(short)(okr->top + 16));
+		TextFace(normal);
+	}
+
+	/* blit offscreen -> window. Reset fg/bg first: classic QuickDraw
+	 * colorizes CopyBits toward the port foreground (fixes301j). */
+	SetGWorld(saveGW, saveGD);
+	RGBForeColor(black);
+	RGBBackColor(white);
+	CopyBits((BitMap *)*offpm,
+		&((GrafPtr)GetWindowPort(win))->portBits,
+		content, content, srcCopy, NULL);
+}
+#endif /* __MACOS9__ */
+
 void macos9_about_show(void)
 {
 #ifdef __MACOS9__
-	/* Build the Pascal strings at RUNTIME (length byte + bytes). A literal
-	 * "\p..." only length-prefixes the first token, so splitting a Pascal
-	 * literal across concatenated lines yields a wrong length; and the text
-	 * renders as MacRoman, so keep it ASCII (no em dash). */
-	static const char *title =
-		"MacSurf 1.68.3 - a web browser for Classic Mac OS 9";
-	static const char *body =
-		"Native TLS 1.3 via macTLS. Built on the NetSurf engine.\r\r"
-		"by mplsllc\r\r"
-		"Patreon supporters:\r"
-		"    Shlooom\r\r"
-		"Ko-Fi supporters:\r"
-		"    kilgeist\r"
-		"    Turuun\r\r"
-		"Thank you for keeping vintage Macs on the modern web.";
-	Str255 ptitle;
-	Str255 pbody;
-	size_t tlen;
-	size_t blen;
-	short item;
+	WindowRef    win = NULL;
+	Rect         wb, content, okr;
+	GWorldPtr    off = NULL;
+	PixMapHandle offpm = NULL;
+	GrafPtr      savedPort;
+	EventRecord  ev;
+	long         startTick;
+	short        titleFnum = 0, bodyFnum = 0;
+	int          done = 0;
+	RGBColor     black, white;
 
-	tlen = strlen(title);
-	if (tlen > 255) tlen = 255;
-	ptitle[0] = (unsigned char) tlen;
-	memcpy(ptitle + 1, title, tlen);
+	{
+		BitMap sb;
+		short  sw, sh, l, t;
+		GetQDGlobalsScreenBits(&sb);
+		sw = sb.bounds.right - sb.bounds.left;
+		sh = sb.bounds.bottom - sb.bounds.top;
+		l = (short)((sw - ABOUT_W) / 2);
+		t = (short)((sh - ABOUT_H) / 3);
+		if (l < 4) l = 4;
+		if (t < 40) t = 40;
+		SetRect(&wb, l, t, (short)(l + ABOUT_W), (short)(t + ABOUT_H));
+	}
 
-	blen = strlen(body);
-	if (blen > 255) blen = 255;
-	pbody[0] = (unsigned char) blen;
-	memcpy(pbody + 1, body, blen);
+	if (CreateNewWindow(kDocumentWindowClass, kWindowCloseBoxAttribute,
+			&wb, &win) != noErr || win == NULL)
+		goto fallback;
 
-	StandardAlert(kAlertNoteAlert, ptitle, pbody, NULL, &item);
+	SetWTitle(win, "\pAbout MacSurf");
+	GetPort(&savedPort);
+	SetPortWindowPort(win);
+
+	SetRect(&content, 0, 0, ABOUT_W, ABOUT_H);
+	NewGWorld(&off, 32, &content, NULL, NULL, 0);
+	if (off == NULL) {
+		SetPort(savedPort);
+		DisposeWindow(win);
+		goto fallback;
+	}
+	offpm = GetGWorldPixMap(off);
+	LockPixels(offpm);
+
+	GetFNum("\pGeneva", &titleFnum);
+	bodyFnum = titleFnum;
+	if (!about_stars_ready) about_stars_init();
+
+	SetRect(&okr, 155, 262, 225, 286);
+	black.red = black.green = black.blue = 0;
+	white.red = white.green = white.blue = 0xFFFF;
+
+	ShowWindow(win);
+	SelectWindow(win);
+	startTick = (long)TickCount();
+
+	while (!done) {
+		WaitNextEvent(everyEvent, &ev, 2, NULL);
+		switch (ev.what) {
+		case mouseDown: {
+			WindowRef which;
+			short part = FindWindow(ev.where, &which);
+			if (which != win) break;
+			if (part == inDrag) {
+				Rect db; BitMap sb2;
+				GetQDGlobalsScreenBits(&sb2);
+				db = sb2.bounds;
+				DragWindow(win, ev.where, &db);
+			} else if (part == inGoAway) {
+				if (TrackGoAway(win, ev.where)) done = 1;
+			} else if (part == inContent) {
+				Point lp = ev.where;
+				GlobalToLocal(&lp);
+				if (PtInRect(lp, &okr)) done = 1;
+			}
+			break;
+		}
+		case keyDown:
+		case autoKey: {
+			char ch = (char)(ev.message & charCodeMask);
+			if (ch == '\r' || ch == 0x03 || ch == 0x1B || ch == ' ')
+				done = 1;
+			break;
+		}
+		case updateEvt:
+			if ((WindowRef)ev.message == win) {
+				BeginUpdate(win);
+				EndUpdate(win);
+			}
+			break;
+		default:
+			break;
+		}
+
+		about_draw(off, win, &content, &okr,
+			(long)TickCount() - startTick,
+			titleFnum, bodyFnum, &black, &white);
+	}
+
+	UnlockPixels(offpm);
+	DisposeGWorld(off);
+	SetPort(savedPort);
+	DisposeWindow(win);
+	return;
+
+fallback:
+	/* Resource-free StandardAlert, built from the same supporter roll.
+	 * Reached only if the window or offscreen buffer can't be created. */
+	{
+		char   body[512];
+		char  *p = body;
+		short  i, item;
+		Str255 ptitle, pbody;
+		size_t blen;
+		const char *title =
+			"MacSurf 1.68.3 - a web browser for Classic Mac OS 9";
+		size_t tlen = strlen(title);
+
+		strcpy(p, "Native TLS 1.3 via macTLS. Built on NetSurf.\r"
+			"by mplsllc\r\r");
+		p += strlen(p);
+		for (i = 0; i < ABOUT_ROLL_N; i++) {
+			const char *t = about_roll[i].text;
+			if (about_roll[i].kind == 2) { *p++ = '\r'; continue; }
+			if (about_roll[i].kind == 0) { *p++ = ' '; *p++ = ' '; }
+			strcpy(p, t);
+			p += strlen(p);
+			*p++ = '\r';
+		}
+		*p = '\0';
+
+		if (tlen > 255) tlen = 255;
+		ptitle[0] = (unsigned char) tlen;
+		memcpy(ptitle + 1, title, tlen);
+		blen = strlen(body);
+		if (blen > 255) blen = 255;
+		pbody[0] = (unsigned char) blen;
+		memcpy(pbody + 1, body, blen);
+		StandardAlert(kAlertNoteAlert, ptitle, pbody, NULL, &item);
+	}
 #endif
 }

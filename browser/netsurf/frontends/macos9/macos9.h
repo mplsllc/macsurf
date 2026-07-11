@@ -101,6 +101,7 @@ struct gui_window {
 	WindowRef window;
 	ControlRef back_btn;
 	ControlRef forward_btn;
+	ControlRef stop_btn;      /* fixes724 — Stop (X) */
 	ControlRef reload_btn;
 	ControlRef home_btn;
 	ControlRef vscroll;
@@ -114,6 +115,7 @@ struct gui_window {
 	int content_height;
 	Rect toolbar_rect;
 	Rect url_rect;
+	Rect loader_rect;         /* fixes726 — animated loading spinner slot */
 	Rect content_rect;
 	Rect status_rect;
 	bool needs_reformat;
@@ -207,7 +209,8 @@ extern bool macos9_quitting;
 #define ITEM_FILE_NEW       1
 #define ITEM_FILE_LOCATION  2
 #define ITEM_FILE_CLOSE     3
-#define ITEM_FILE_QUIT      5
+#define ITEM_FILE_SENDLOG   4   /* fixes720: Send Debug Log */
+#define ITEM_FILE_QUIT      6
 
 #define ITEM_GO_BACK        1
 #define ITEM_GO_FORWARD     2
@@ -303,9 +306,11 @@ void macos9_window_navigate(struct gui_window *g, const char *u);
 void macos9_window_address_bar_submit(struct gui_window *g);
 void macos9_window_back(struct gui_window *g);
 void macos9_window_forward(struct gui_window *g);
+void macos9_window_stop(struct gui_window *g);   /* fixes724 */
 void macos9_window_reload(struct gui_window *g);
 void macos9_window_home(struct gui_window *g);
 void macos9_window_update_button_states(struct gui_window *g);
+void macos9_window_update_hover(struct gui_window *g);   /* fixes725 */
 void macos9_window_resize(struct gui_window *g);
 /* fixes641 — declared for the per-window close path in main.c (both defined
  * in window.c; previously only referenced internally). */

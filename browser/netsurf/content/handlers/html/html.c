@@ -1199,10 +1199,10 @@ bool html_can_begin_conversion(html_content *htmlc)
 
 	/* Cannot begin conversion if we're still fetching stuff */
 	macsurf_debug_log_int("active fetches", (long)htmlc->base.active);
-	/* fixes560 — also surface the live count on-screen (title bar).  This
-	 * re-runs on every sub-resource fetch completion, so the user sees the
-	 * count count down as the page's objects arrive. */
-	macsurf_debug_show_int("active fetches", (long)htmlc->base.active);
+	/* fixes727 — the live fetch count no longer hijacks the title bar; the
+	 * Netscape-style animated puffin throbber (right of the nav bar) now
+	 * signals load activity instead. Keep the file-log line above for
+	 * diagnostics. */
 	if (htmlc->base.active != 0)
 		return false;
 

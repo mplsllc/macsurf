@@ -163,6 +163,10 @@ struct macos9_fetch_ctx {
 	 * freed in mfs_close (slot-recycle path). */
 	char *post_body;
 	long post_body_len;
+	/* fixes721 (#144 file upload) — POST Content-Type. Empty = the default
+	 * application/x-www-form-urlencoded; set to "multipart/form-data;
+	 * boundary=..." when the fetch carries a file (post_multipart). */
+	char post_ctype[128];
 };
 static struct macos9_fetch_ctx f_slots[MAX_F];
 
@@ -537,9 +541,11 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		 * and Content-Type are also emitted. */
 		size_t TEMPLATE_LEN = (c->post_body != NULL) ? 160 : 86;
 		const char *method = (c->post_body != NULL) ? "POST" : "GET";
-		const char *post_extra_hdrs = (c->post_body != NULL) ?
-			"Content-Type: application/x-www-form-urlencoded\r\n" :
-			"";
+		/* fixes721 — Content-Type: multipart (with boundary) if a file was
+		 * posted, else the urlencoded default. Built into a buffer since the
+		 * multipart boundary is dynamic. */
+		char ct_hdr[192];
+		const char *post_extra_hdrs;
 		/* fixes367 (#167) — per-host UA + cookie jar (mirrors the HTTPS
 		 * fetcher). host_z is a NUL-terminated copy of the host slice so
 		 * the suffix match in macos9_user_agent_for_host works; cookie_hdr holds
@@ -552,6 +558,19 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		size_t hz;
 		size_t ua_var;
 		size_t ck_var;
+		/* fixes721 — POST Content-Type: multipart (with boundary) for a
+		 * file upload, else the urlencoded default. Assigned HERE, after
+		 * all declarations, so CW8 C89 (decls-before-statements) is happy. */
+		if (c->post_body == NULL) {
+			post_extra_hdrs = "";
+		} else if (c->post_ctype[0] != '\0') {
+			sprintf(ct_hdr, "Content-Type: %s\r\n", c->post_ctype);
+			post_extra_hdrs = ct_hdr;
+			TEMPLATE_LEN += strlen(ct_hdr);
+		} else {
+			post_extra_hdrs =
+				"Content-Type: application/x-www-form-urlencoded\r\n";
+		}
 		hz = host_len; if (hz > sizeof(host_z) - 1) hz = sizeof(host_z) - 1;
 		memcpy(host_z, host_str, hz); host_z[hz] = '\0';
 		ua = macos9_user_agent_for_host(host_z);
@@ -684,14 +703,33 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 	 * bytes sent on success; we treat anything < post_body_len as a
 	 * fatal failure rather than implementing partial-resend, since a
 	 * short blocking write almost always means the endpoint is dead. */
+	/* fixes734 — resend loop for the POST body. The old code did ONE OTSnd
+	 * and treated any short write as fatal; that dropped large uploads (the
+	 * native "Send Debug Log" — a 150KB log urlencodes to ~450KB) on real
+	 * hardware, where OT legitimately short-writes a send bigger than its
+	 * send window (SheepShaver/QEMU happened to swallow it whole, masking the
+	 * bug). Advance on each positive return; on a non-positive (flow-control /
+	 * try-again) yield to the coop scheduler and retry, bounded so a truly
+	 * dead endpoint still bails. */
 	if (c->post_body != NULL && c->post_body_len > 0) {
-		r = OTSnd(c->ep, c->post_body,
-				(long)c->post_body_len, 0);
-		if (r < 0 || r != (long)c->post_body_len) {
-			macsurf_debug_log_writef(
-				"mfs_open: OTSnd body err=%ld want=%ld",
-				(long)r, (long)c->post_body_len);
-			goto fail_unref;
+		long sent = 0;
+		long want = (long)c->post_body_len;
+		long retries = 0;
+		for (;;) {
+			r = OTSnd(c->ep, c->post_body + sent, want - sent, 0);
+			if (r > 0) {
+				sent += r;
+				retries = 0;
+				if (sent >= want) break;
+				continue;
+			}
+			if (++retries > 4000) {
+				macsurf_debug_log_writef(
+					"mfs_open: OTSnd body fail sent=%ld want=%ld r=%ld",
+					sent, want, (long)r);
+				goto fail_unref;
+			}
+			YieldToAnyThread();
 		}
 	}
 	OTSetNonBlocking(c->ep);
@@ -1571,6 +1609,25 @@ static void *macos9_http_setup(struct fetch *p, struct nsurl *u, bool o, bool d,
 		memcpy(f_slots[slot_index].post_body, pu, pu_len);
 		f_slots[slot_index].post_body_len = (long)pu_len;
 		f_slots[slot_index].keep_alive_ok = 0;
+	} else if (pm != NULL) {
+		/* fixes721 (#144 file upload) — multipart POST: serialise the
+		 * parts (reading file parts off disk) into a multipart/form-data
+		 * body and record the boundary in the Content-Type. */
+		extern char *macos9_build_multipart(
+			const struct fetch_multipart_data *pm_,
+			char *boundary_out, long *out_len);
+		char boundary[64];
+		long body_len = 0;
+		char *body = macos9_build_multipart(pm, boundary, &body_len);
+		if (body != NULL && body_len > 0) {
+			f_slots[slot_index].post_body = body;
+			f_slots[slot_index].post_body_len = body_len;
+			f_slots[slot_index].keep_alive_ok = 0;
+			sprintf(f_slots[slot_index].post_ctype,
+				"multipart/form-data; boundary=%s", boundary);
+		} else if (body != NULL) {
+			free(body);
+		}
 	}
 	/* fetch_active_peak: high-water-mark across the page load.
 	 * +1 because this allocation hasn't been counted yet. */

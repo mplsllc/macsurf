@@ -128,6 +128,7 @@ static int  macos9_default_favicon_loaded = 0;
  * when the icon GWorld failed to load (graceful fallback to text-only
  * button). */
 #include "toolbar_icons_data.h"
+#include "loader_frames_data.h"   /* fixes726 — animated loading spinner frames */
 static GWorldPtr macos9_btn_back_gworld = NULL;
 static GWorldPtr macos9_btn_forward_gworld = NULL;
 static GWorldPtr macos9_btn_refresh_gworld = NULL;
@@ -136,6 +137,12 @@ static Rect macos9_btn_back_src_rect;
 static Rect macos9_btn_forward_src_rect;
 static Rect macos9_btn_refresh_src_rect;
 static Rect macos9_btn_home_src_rect;
+/* fixes724 — Stop (X). Coloured when the page is loading (stoppable), the
+ * grey variant when idle (non-active). */
+static GWorldPtr macos9_btn_stop_gworld = NULL;
+static Rect      macos9_btn_stop_src_rect;
+static GWorldPtr macos9_btn_stop_g_gworld = NULL;
+static Rect      macos9_btn_stop_g_src_rect;
 /* fixes297d — disabled-state variants for back / forward (only ones with
  * an "unavailable" state at the top of history).  refresh + home are
  * always available so don't need greyed variants. */
@@ -150,10 +157,21 @@ static GWorldPtr macos9_btn_refresh_g_gworld = NULL;
 static Rect macos9_btn_refresh_g_src_rect;
 static int macos9_reload_animating = 0;
 static int macos9_reload_frame = 0;
+/* fixes726 — decoded loader-animation frames (shared across windows, like the
+ * toolbar icons). Populated in macos9_window_load_toolbar_icons; NULL entries
+ * are simply skipped so a partial decode degrades gracefully. */
+#ifdef __MACOS9__
+static GWorldPtr macos9_loader_gworld[MACOS9_LOADER_FRAMES];
+static Rect      macos9_loader_src_rect[MACOS9_LOADER_FRAMES];
+static int       macos9_loader_frames_loaded = 0;
+#endif
 /* fixes297f — home dim variant when current page == home URL. */
 static GWorldPtr macos9_btn_home_g_gworld = NULL;
 static Rect macos9_btn_home_g_src_rect;
 static int  macos9_toolbar_icons_loaded = 0;
+/* fixes725 — nav button the pointer is currently over (or NULL), for the
+ * hover-highlight frame. Set by macos9_window_update_hover. */
+static ControlRef macos9_hovered_btn = NULL;
 
 /* fixes295 Phase 1b — active per-site favicon GWorld.  When NetSurf
  * resolves a page's <link rel=icon> or default /favicon.ico, set_icon
@@ -212,13 +230,50 @@ static void compute_url_te_rect(const Rect *u, Rect *o) {
  * Replaces the fixes298 vertical gradient.  Buttons sit directly on this
  * surface with no white "tab" backing — the icon's own colours provide
  * contrast. */
+/* fixes727 — soft vertical toolbar gradient. The old flat #D6D6D6 platinum
+ * read as "stock"; a gentle top-lighter/bottom-darker sheen plus a bright top
+ * highlight and a bottom shadow bevel make the toolbar read as a raised,
+ * designed surface. The gradient centre lands on #D6 (0xD6) at the button band
+ * so the icons (matted to #D6) still blend seamlessly. */
+#define MACOS9_TOOLBAR_H   48
+#define MACOS9_TB_TOP_GREY 0xDC   /* 220 — lit top */
+#define MACOS9_TB_BOT_GREY 0xD0   /* 208 — shaded bottom */
+
+#ifdef __MACOS9__
+static unsigned short macos9_tb_grey_at(short y)
+{
+	long v;
+	if (y < 0) y = 0;
+	if (y >= MACOS9_TOOLBAR_H) y = (short)(MACOS9_TOOLBAR_H - 1);
+	v = MACOS9_TB_TOP_GREY +
+	    (long)(MACOS9_TB_BOT_GREY - MACOS9_TB_TOP_GREY) * y / MACOS9_TOOLBAR_H;
+	return (unsigned short)((v << 8) | v);   /* 8-bit -> 16-bit component */
+}
+
+/* Fill a rect with the toolbar gradient (one PaintRect per scanline). Used for
+ * the whole bar and for each icon-button slot so nothing shows a flat patch. */
+static void macos9_tb_fill_gradient(const Rect *r)
+{
+	short y;
+	RGBColor c;
+	Rect ln;
+	ln.left = r->left; ln.right = r->right;
+	for (y = r->top; y < r->bottom; y++) {
+		unsigned short g16 = macos9_tb_grey_at(y);
+		c.red = g16; c.green = g16; c.blue = g16;
+		RGBForeColor(&c);
+		ln.top = y; ln.bottom = (short)(y + 1);
+		PaintRect(&ln);
+	}
+}
+#endif
+
 void macos9_window_draw_toolbar_bg(struct gui_window *g)
 {
 #ifdef __MACOS9__
 	Rect w_bounds;
 	Rect bar;
 	RGBColor saved_fg;
-	RGBColor platinum = {0xD6D6, 0xD6D6, 0xD6D6};
 	GWorldPtr saved_port;
 	GDHandle saved_gdh;
 
@@ -233,20 +288,24 @@ void macos9_window_draw_toolbar_bg(struct gui_window *g)
 	bar.top = 0;
 	bar.right = (short)(w_bounds.right - w_bounds.left);
 	bar.bottom = (short)(g->content_rect.top);
-	RGBForeColor(&platinum);
-	PaintRect(&bar);
+	macos9_tb_fill_gradient(&bar);
 
-	/* fixes303 — 1px dark-grey accent line along the bottom edge of
-	 * the toolbar to cleanly separate chrome from the page viewport. */
+	/* fixes727 — depth bevel: a bright highlight along the very top edge and
+	 * a soft shadow just above the crisp separator at the bottom. */
 	{
-		RGBColor sep = {0x5555, 0x5555, 0x5555};   /* #555555 */
+		RGBColor hi  = {0xF0F0, 0xF0F0, 0xF0F0};   /* top highlight */
+		RGBColor sh  = {0xBEBE, 0xBEBE, 0xBEBE};   /* bottom shadow */
+		RGBColor sep = {0x8888, 0x8888, 0x8888};   /* separator */
 		Rect line;
-		line.left = 0;
-		line.right = bar.right;
-		line.top = (short)(bar.bottom - 1);
-		line.bottom = bar.bottom;
-		RGBForeColor(&sep);
-		PaintRect(&line);
+		line.left = 0; line.right = bar.right;
+		/* top highlight */
+		line.top = 0; line.bottom = 1;
+		RGBForeColor(&hi); PaintRect(&line);
+		/* bottom shadow + separator */
+		line.top = (short)(bar.bottom - 2); line.bottom = (short)(bar.bottom - 1);
+		RGBForeColor(&sh); PaintRect(&line);
+		line.top = (short)(bar.bottom - 1); line.bottom = bar.bottom;
+		RGBForeColor(&sep); PaintRect(&line);
 	}
 
 	RGBForeColor(&saved_fg);
@@ -270,16 +329,23 @@ static void compute_favicon_rect(const Rect *u, Rect *o)
 void macos9_window_layout(struct gui_window *g) {
 	Rect c; short w, h, ux, ur, cb, ht; if(!g||!g->window) return;
 	GetWindowBounds(g->window, 33, &c); w=(short)(c.right-c.left); h=(short)(c.bottom-c.top);
-	/* fixes303 — dense "tool belt" geometry. Buttons are 32 wide at a
-	 * 34-pixel pitch (2px gap), so x=4,38,72,106 and the home button's
-	 * right edge is 138. The URL field sits 6px past it (x=144) and is
-	 * aligned to the button vertical band (y=6..38) for a unified
-	 * horizontal baseline. The 1px #555 separator at y=43 (drawn by
-	 * macos9_window_draw_toolbar_bg) closes the toolbar. */
-	ux=(short)(4 + 3*34 + 32 + 6); ur=(short)(w-4);
-	SetRect(&g->url_rect, ux, 6, ur, 38);
-	ht=(short)(h-15); cb=(short)(ht-16); SetRect(&g->content_rect, 0, 44, (short)(w-15), cb); SetRect(&g->status_rect, 0, cb, (short)(w-15), ht);
-	if(g->vscroll) { MoveControl(g->vscroll, (short)(w-15), 43); SizeControl(g->vscroll, 16, (short)(cb-42)); }
+	/* fixes303/fixes723/fixes724 — dense "tool belt", 5 buttons (Back,
+	 * Forward, Stop, Refresh, Home). 36 wide at a 38-pixel pitch (2px gap),
+	 * so x=4,42,80,118,156 and the home button's right edge is 192. The URL
+	 * field sits 2px past it (x=194) aligned to the button band (y=6..42).
+	 * The 1px separator at y=47 (drawn by macos9_window_draw_toolbar_bg from
+	 * content_rect.top-1) closes the 48px toolbar. */
+	ux=(short)(4 + 4*38 + 36 + 2);
+	/* fixes726/fixes727 — reserve a 40px Netscape-style throbber slot on the
+	 * far right of the toolbar (8px gap from the URL field). Bigger than the
+	 * 36px buttons so it reads clearly; spans y=4..44 within the 48px bar. */
+	ur=(short)(w - 4 - MACOS9_LOADER_SIZE - 8);
+	if (ur < ux + 40) ur = (short)(ux + 40);   /* keep URL field usable on tiny windows */
+	SetRect(&g->url_rect, ux, 6, ur, 42);
+	SetRect(&g->loader_rect, (short)(w - 4 - MACOS9_LOADER_SIZE), 4,
+		(short)(w - 4), (short)(4 + MACOS9_LOADER_SIZE));
+	ht=(short)(h-15); cb=(short)(ht-16); SetRect(&g->content_rect, 0, 48, (short)(w-15), cb); SetRect(&g->status_rect, 0, cb, (short)(w-15), ht);
+	if(g->vscroll) { MoveControl(g->vscroll, (short)(w-15), 47); SizeControl(g->vscroll, 16, (short)(cb-46)); }
 	if(g->hscroll) { MoveControl(g->hscroll, -1, ht); SizeControl(g->hscroll, (short)(w-13), 16); }
 }
 
@@ -686,6 +752,7 @@ void macos9_window_address_bar_submit(struct gui_window *g) {
 void macos9_window_back(struct gui_window *g) { if(g&&g->bw&&browser_window_history_back_available(g->bw)) { browser_window_history_back(g->bw, false); macos9_window_update_button_states(g); } }
 void macos9_window_forward(struct gui_window *g) { if(g&&g->bw&&browser_window_history_forward_available(g->bw)) { browser_window_history_forward(g->bw, false); macos9_window_update_button_states(g); } }
 extern int macsurf_http_skip_next_cache;
+void macos9_window_stop(struct gui_window *g) { if(g&&g->bw) { browser_window_stop(g->bw); macos9_window_update_button_states(g); } }  /* fixes724 */
 void macos9_window_reload(struct gui_window *g) { if(g&&g->bw) { macsurf_http_skip_next_cache = 1; browser_window_reload(g->bw, true); } }
 void macos9_window_home(struct gui_window *g) { macos9_window_navigate(g, MACSURF_HOME_URL); }
 
@@ -694,6 +761,7 @@ void macos9_window_update_button_states(struct gui_window *g) {
 	if(!g) return; SetPortWindowPort(g->window);
 	if(g->back_btn) { HiliteControl(g->back_btn, (short)(g->bw && browser_window_history_back_available(g->bw)?0:255)); Draw1Control(g->back_btn); }
 	if(g->forward_btn) { HiliteControl(g->forward_btn, (short)(g->bw && browser_window_history_forward_available(g->bw)?0:255)); Draw1Control(g->forward_btn); }
+	if(g->stop_btn) { HiliteControl(g->stop_btn, (short)(g->bw && browser_window_stop_available(g->bw)?0:255)); Draw1Control(g->stop_btn); }  /* fixes724 */
 	if(g->reload_btn) { HiliteControl(g->reload_btn, (short)(g->bw && browser_window_has_content(g->bw)?0:255)); Draw1Control(g->reload_btn); }
 	if(g->home_btn) Draw1Control(g->home_btn);
 	/* fixes297c — repaint icon overlay over every freshly-redrawn
@@ -839,18 +907,19 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 	g->bw=bw; if(CreateNewWindow(6, 0x1F, &b, &g->window)!=0) { free(g); return NULL; }
 	SetWRefCon(g->window,(long)g); SetPortWindowPort(g->window); SetWTitle(g->window,(const unsigned char*)"\pMacSurf");
 	g->next=window_list; window_list=g; 
-	/* fixes300 — 32x32 square buttons (was 32x28).  Vertically centered
-	 * inside the 44-tall toolbar: top=6, bottom=38, height=32.  4px
-	 * horizontal gap → stride=36 (32 + 4) → URL bar still starts at
-	 * x=4+4*36=148.  The 25x25 icon centers automatically inside the
-	 * 32x32 control bounds, giving (32-25)/2 = ~3px padding on every
-	 * side — matches the period-accurate breathing-room target. */
-	/* fixes303 — tight 2px gap between buttons (34px pitch on 32px
+	/* fixes300/fixes723 — 36x36 square buttons (was 32x32, ~12.5% bigger).
+	 * Vertically centered inside the 48-tall toolbar: top=6, bottom=42,
+	 * height=36. 2px gap → 38px pitch → x=4,42,80,118, home's right edge
+	 * 154, URL bar starts at x=156. paint_toolbar_icon auto-scales the
+	 * 25x25 source to btn-8 = 28x28 centered, 4px padding every side. */
+	/* fixes303 — tight 2px gap between buttons (38px pitch on 36px
 	 * buttons) for a dense Netscape-7-style tool belt. */
-	x=4; SetRect(&b,x,6,(short)(x+32),38); g->back_btn=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,0,256,(long)g); x=(short)(x+34);
-	SetRect(&b,x,6,(short)(x+32),38); g->forward_btn=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,0,256,(long)g); x=(short)(x+34);
-	SetRect(&b,x,6,(short)(x+32),38); g->reload_btn=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,0,256,(long)g); x=(short)(x+34);
-	SetRect(&b,x,6,(short)(x+32),38); g->home_btn=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,0,256,(long)g);
+	/* fixes724 — five buttons: Back, Forward, Stop, Refresh, Home. */
+	x=4; SetRect(&b,x,6,(short)(x+36),42); g->back_btn=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,0,256,(long)g); x=(short)(x+38);
+	SetRect(&b,x,6,(short)(x+36),42); g->forward_btn=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,0,256,(long)g); x=(short)(x+38);
+	SetRect(&b,x,6,(short)(x+36),42); g->stop_btn=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,0,256,(long)g); x=(short)(x+38);
+	SetRect(&b,x,6,(short)(x+36),42); g->reload_btn=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,0,256,(long)g); x=(short)(x+38);
+	SetRect(&b,x,6,(short)(x+36),42); g->home_btn=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,0,256,(long)g);
 	SetRect(&b,0,0,16,16); g->vscroll=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,0,384,(long)g);
 	g->hscroll=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,0,384,(long)g);
 	macos9_window_layout(g);
@@ -942,10 +1011,13 @@ static nserror macos9_gw_invalidate(struct gui_window *g, const struct rect *r) 
 static bool macos9_gw_get_scroll(struct gui_window *g, int *x, int *y) { if(x) *x=g->scroll_x; if(y) *y=g->scroll_y; return 1; }
 static nserror macos9_gw_set_scroll(struct gui_window *g, const struct rect *r) { if(r) macos9_window_scroll_to(g,r->x0,r->y0); return 0; }
 static nserror macos9_gw_get_dimensions(struct gui_window *g, int *w, int *h) { if(!g) return 0; if(w) *w=g->content_rect.right-g->content_rect.left; if(h) *h=g->content_rect.bottom-g->content_rect.top; return 0; }
-/* fixes297e — schedule callback that advances the refresh-icon animation
- * frame and reschedules itself while the page is still loading.  Driven
- * by macos9_schedule (NetSurf's timer registry).  Param is the
- * gui_window* so we know which reload button to invalidate. */
+static void macos9_window_draw_loader(struct gui_window *g);   /* fixes726 fwd */
+static void macos9_window_draw_progress(struct gui_window *g); /* fixes727 fwd */
+
+/* fixes297e — schedule callback that advances the throbber + progress-bar
+ * animation frame and reschedules itself while the page is still loading.
+ * Driven by macos9_schedule (NetSurf's timer registry). Param is the
+ * gui_window*. */
 static void macos9_reload_anim_tick(void *p)
 {
 #ifdef __MACOS9__
@@ -973,13 +1045,15 @@ static void macos9_reload_anim_tick(void *p)
 	cur = (g->bw != NULL) ? browser_window_get_content(g->bw) : NULL;
 	if (cur == NULL) { macos9_reload_animating = 0; return; }
 	macos9_reload_frame++;
-	if (g->window != NULL && g->reload_btn != NULL) {
-		Rect r;
-		GetControlBounds(g->reload_btn, &r);
-		InvalWindowRect(g->window, &r);
+	/* fixes726/fixes727 — advance the throbber + progress bar. Draw them
+	 * DIRECTLY (small, self-bracketed regions) instead of invalidating, so
+	 * a per-frame tick does not force a full toolbar chrome repaint. */
+	if (g->window != NULL) {
+		macos9_window_draw_loader(g);
+		macos9_window_draw_progress(g);
 	}
 	if (macos9_reload_animating) {
-		macos9_schedule(200, macos9_reload_anim_tick, p);
+		macos9_schedule(120, macos9_reload_anim_tick, p);
 	}
 #else
 	(void)p;
@@ -996,26 +1070,24 @@ static nserror macos9_gw_event(struct gui_window *g, enum gui_window_event e) {
 	if (e == GW_EVENT_REMOVE_CARET) {
 		macos9_gw_remove_caret(g);
 	}
-	/* fixes297e — refresh-icon loading animation hook. */
+	/* fixes726 — right-hand animated loading-spinner hook (was the refresh
+	 * button spin). START begins the frame timer; STOP clears it and erases
+	 * the spinner from its slot. */
 	if (e == GW_EVENT_START_THROBBER) {
 		macos9_reload_animating = 1;
 		macos9_reload_frame = 0;
-		macos9_schedule(200, macos9_reload_anim_tick, g);
+		macos9_schedule(120, macos9_reload_anim_tick, g);
 #ifdef __MACOS9__
-		if (g != NULL && g->window != NULL && g->reload_btn != NULL) {
-			Rect r;
-			GetControlBounds(g->reload_btn, &r);
-			InvalWindowRect(g->window, &r);
+		if (g != NULL && g->window != NULL) {
+			InvalWindowRect(g->window, &g->loader_rect);
 		}
 #endif
 	}
 	if (e == GW_EVENT_STOP_THROBBER) {
 		macos9_reload_animating = 0;
 #ifdef __MACOS9__
-		if (g != NULL && g->window != NULL && g->reload_btn != NULL) {
-			Rect r;
-			GetControlBounds(g->reload_btn, &r);
-			InvalWindowRect(g->window, &r);
+		if (g != NULL && g->window != NULL) {
+			InvalWindowRect(g->window, &g->loader_rect);
 		}
 #endif
 	}
@@ -1211,8 +1283,8 @@ void macos9_window_load_default_favicon(void)
 		macos9_default_favicon_png,
 		macos9_default_favicon_png_len);
 	if (err != 0 || rgba == NULL || w == 0 || h == 0) {
-		macsurf_debug_log_writef("favicon: lodepng err=%u w=%u h=%u",
-			err, w, h);
+		macsurf_debug_log_writef("favicon: lodepng err=%d w=%d h=%d",
+			(int)err, (int)w, (int)h);
 		if (rgba != NULL) free(rgba);
 		return;
 	}
@@ -1256,8 +1328,10 @@ void macos9_window_load_default_favicon(void)
 	free(rgba);
 
 	macos9_default_favicon_loaded = 1;
-	macsurf_debug_log_writef("favicon: loaded w=%u h=%u gworld=%p",
-		w, h, (void *)macos9_default_favicon_gworld);
+	/* fixes717: %u is unsupported by macsurf_debug_log_writef (printed
+	 * literal "%u"); use %d with int casts. w/h are lodepng unsigned. */
+	macsurf_debug_log_writef("favicon: loaded w=%d h=%d gworld=%p",
+		(int)w, (int)h, (void *)macos9_default_favicon_gworld);
 #endif
 }
 
@@ -1306,7 +1380,21 @@ void macos9_window_draw_favicon(struct gui_window *g)
 		return;
 	}
 
-	CopyBits(src_bm, dst_bm, src_rect_ptr, &dst_rect, srcCopy, NULL);
+	/* fixes728 — reset fg=black/bg=white before the blit. Classic QuickDraw
+	 * colorizes CopyBits toward the port foreground (the fixes301j gotcha);
+	 * without this the per-site favicon was tinted by whatever colour the
+	 * previous draw left (the "favicon overlay-coloured after load" bug). The
+	 * default favicon only looked right because draw_url_bar happened to leave
+	 * fg=black. */
+	{
+		RGBColor blk = {0, 0, 0};
+		RGBColor wht = {0xFFFF, 0xFFFF, 0xFFFF};
+		RGBColor sfg, sbg;
+		GetForeColor(&sfg); GetBackColor(&sbg);
+		RGBForeColor(&blk); RGBBackColor(&wht);
+		CopyBits(src_bm, dst_bm, src_rect_ptr, &dst_rect, srcCopy, NULL);
+		RGBForeColor(&sfg); RGBBackColor(&sbg);
+	}
 
 	SetGWorld(saved_port, saved_gdh);
 #else
@@ -1386,9 +1474,18 @@ static int active_favicon_build(struct hlcache_handle *icon)
 		src_row = buf + row * rowstride;
 		dst_row = (unsigned char *)GetPixBaseAddr(pm) + row * dst_rowbytes;
 		for (col = 0; col < bw; col++) {
-			unsigned char r = src_row[col * 4 + 0];
-			unsigned char gn = src_row[col * 4 + 1];
-			unsigned char b = src_row[col * 4 + 2];
+			/* fixes736 — matte transparent favicon pixels to WHITE (the URL
+			 * field background) instead of forcing them opaque with the
+			 * under-alpha colour. Site favicons are typically 16x16 with a
+			 * transparent background; the old "force alpha 0xFF" made that
+			 * background show its palette-entry colour, washing a solid
+			 * colour over the whole icon (the "favicon overlay-coloured"
+			 * bug). The blit is opaque srcCopy onto the white pill, so
+			 * white-matted transparency reads as clean transparency. */
+			unsigned char a  = src_row[col * 4 + 3];
+			unsigned char r  = (a < 24) ? 0xFF : src_row[col * 4 + 0];
+			unsigned char gn = (a < 24) ? 0xFF : src_row[col * 4 + 1];
+			unsigned char b  = (a < 24) ? 0xFF : src_row[col * 4 + 2];
 			dst_row[col * 4 + 0] = 0xFF;
 			dst_row[col * 4 + 1] = r;
 			dst_row[col * 4 + 2] = gn;
@@ -1540,8 +1637,32 @@ void macos9_window_load_toolbar_icons(void)
 	ok += macos9_decode_png_to_gworld(macos9_btn_home_g_png,
 		macos9_btn_home_g_png_len,
 		&macos9_btn_home_g_gworld, &macos9_btn_home_g_src_rect);
+	/* fixes724 — Stop (X) coloured + grey */
+	ok += macos9_decode_png_to_gworld(macos9_btn_stop_png,
+		macos9_btn_stop_png_len,
+		&macos9_btn_stop_gworld, &macos9_btn_stop_src_rect);
+	ok += macos9_decode_png_to_gworld(macos9_btn_stop_g_png,
+		macos9_btn_stop_g_png_len,
+		&macos9_btn_stop_g_gworld, &macos9_btn_stop_g_src_rect);
 	macos9_toolbar_icons_loaded = 1;
 	macsurf_debug_log_writef("toolbar icons loaded ok=%d/8", ok);
+	/* fixes726 — decode the animated loader frames. Best-effort per frame;
+	 * NULL GWorlds are skipped at paint time. */
+	{
+		int i, lok = 0;
+		for (i = 0; i < MACOS9_LOADER_FRAMES; i++) {
+			macos9_loader_gworld[i] = NULL;
+			if (macos9_decode_png_to_gworld(macos9_loader_frame_png[i],
+					macos9_loader_frame_len[i],
+					&macos9_loader_gworld[i],
+					&macos9_loader_src_rect[i])) {
+				lok++;
+			}
+		}
+		macos9_loader_frames_loaded = 1;
+		macsurf_debug_log_writef("loader frames loaded ok=%d/%d",
+			lok, (int)MACOS9_LOADER_FRAMES);
+	}
 #endif
 }
 
@@ -1601,21 +1722,160 @@ static void paint_toolbar_icon(WindowRef window, ControlRef ctrl,
 	 * row of icons on the toolbar rather than four chrome buttons. */
 	{
 		RGBColor saved_fg, saved_bg;
-		RGBColor toolbar_grey = {0xD6D6, 0xD6D6, 0xD6D6};
 		GetForeColor(&saved_fg); GetBackColor(&saved_bg);
-		RGBForeColor(&toolbar_grey); RGBBackColor(&toolbar_grey);
-		PaintRect(&ctrl_bounds);
+		/* fixes727 — paint the slot with the toolbar gradient (not a flat
+		 * grey patch) so the button band matches the surrounding sheen. */
+		macos9_tb_fill_gradient(&ctrl_bounds);
+		/* fixes727 — soft hover highlight: a light rounded plate behind the
+		 * icon when the pointer is over this button (the orange edge is
+		 * added later in macos9_window_draw_toolbar_icons). */
+		if (ctrl == macos9_hovered_btn) {
+			RGBColor hl = {0xEAEA, 0xE7E7, 0xE0E0};   /* warm light grey */
+			Rect hr = ctrl_bounds;
+			InsetRect(&hr, 2, 2);
+			RGBForeColor(&hl);
+			PaintRoundRect(&hr, 10, 10);
+		}
 		RGBForeColor(&saved_fg); RGBBackColor(&saved_bg);
 	}
 
 	dst_bm = GetPortBitMapForCopyBits(win_port);
 	src_bm = GetPortBitMapForCopyBits((CGrafPtr)src_gw);
 	if (src_bm != NULL && dst_bm != NULL) {
+		/* fixes729a — force fg=black/bg=white for the blit. Classic
+		 * QuickDraw colorizes CopyBits toward the port foreground
+		 * (fixes301j); the icons were inheriting whatever colour the
+		 * previous chrome/content draw left, tinting the whole tool belt
+		 * pale-yellow and shifting between redraws (the "glitchy fade").
+		 * The slot-fill block above restored the (possibly coloured) entry
+		 * fg, so reset it here right before the copy. */
+		RGBColor blk = {0, 0, 0};
+		RGBColor wht = {0xFFFF, 0xFFFF, 0xFFFF};
+		RGBColor sfg, sbg;
+		GetForeColor(&sfg); GetBackColor(&sbg);
+		RGBForeColor(&blk); RGBBackColor(&wht);
 		CopyBits(src_bm, dst_bm, src_rect, &dst_rect, srcCopy, NULL);
+		RGBForeColor(&sfg); RGBBackColor(&sbg);
 	}
 	SetGWorld(saved_port, saved_gdh);
 #else
 	(void)window; (void)ctrl; (void)src_gw; (void)src_rect;
+#endif
+}
+
+/* fixes726/fixes727 — Netscape-style throbber in the far-right toolbar slot
+ * (g->loader_rect). It is ALWAYS visible: the full frame set cycles while a
+ * page is loading, and it rests on frame 0 (the idle pose) when done — never
+ * an empty gap. The frame index is macos9_reload_frame, advanced by
+ * macos9_reload_anim_tick. Frames are matted to toolbar grey, so blitting one
+ * fully erases the previous frame (no separate clear needed). */
+static void macos9_window_draw_loader(struct gui_window *g)
+{
+#ifdef __MACOS9__
+	extern const BitMap *GetPortBitMapForCopyBits(CGrafPtr port);
+	GrafPtr   saved_port;
+	CGrafPtr  win_port;
+	Rect      slot;
+	int       idx;
+	GWorldPtr src_gw;
+
+	if (g == NULL || g->window == NULL || !macos9_loader_frames_loaded) return;
+	slot = g->loader_rect;
+
+	idx = macos9_reload_animating
+		? (macos9_reload_frame % MACOS9_LOADER_FRAMES)
+		: 0;   /* idle rest pose */
+	src_gw = macos9_loader_gworld[idx];
+	if (src_gw == NULL) src_gw = macos9_loader_gworld[0];
+	if (src_gw == NULL) return;
+
+	GetPort(&saved_port);
+	SetPortWindowPort(g->window);
+	win_port = GetWindowPort(g->window);
+	if (win_port == NULL) { SetPort(saved_port); return; }
+	{
+		const BitMap *src_bm = GetPortBitMapForCopyBits((CGrafPtr)src_gw);
+		const BitMap *dst_bm = GetPortBitMapForCopyBits(win_port);
+		RGBColor saved_fg, saved_bg;
+		RGBColor blk = {0,0,0}, wht = {0xFFFF,0xFFFF,0xFFFF};
+		GetForeColor(&saved_fg); GetBackColor(&saved_bg);
+		/* fg=black/bg=white so CopyBits doesn't colorize (plot_bitmap
+		 * gotcha in CLAUDE.md). */
+		RGBForeColor(&blk); RGBBackColor(&wht);
+		if (src_bm != NULL && dst_bm != NULL) {
+			CopyBits(src_bm, dst_bm,
+				&macos9_loader_src_rect[idx], &slot,
+				srcCopy, NULL);
+		}
+		RGBForeColor(&saved_fg); RGBBackColor(&saved_bg);
+	}
+	SetPort(saved_port);
+#else
+	(void)g;
+#endif
+}
+
+/* fixes727 — page-load progress bar: a slim orange strip along the bottom edge
+ * of the toolbar that creeps forward while a page loads (paired with the
+ * throbber). Monotonic time-based creep toward ~92% (no per-byte wiring); the
+ * STOP_THROBBER full repaint clears it. Drawn directly from the animation tick
+ * AND from the chrome repaint, so both paths keep it current. No-op when idle
+ * (the toolbar-bg repaint restores the bevel). */
+static void macos9_window_draw_progress(struct gui_window *g)
+{
+#ifdef __MACOS9__
+	GrafPtr  saved_port;
+	Rect     w_bounds, strip, fill;
+	long     track_w, seg_w, span, pos, seg_l, seg_r, step;
+	RGBColor saved_fg;
+	RGBColor track  = {0xC8C8, 0xC8C8, 0xC8C8};
+	RGBColor orange = {0xF4F4, 0x8484, 0x1616};
+
+	if (g == NULL || g->window == NULL) return;
+	if (!macos9_reload_animating) return;
+
+	GetPort(&saved_port);
+	SetPortWindowPort(g->window);
+	GetForeColor(&saved_fg);
+	GetWindowBounds(g->window, 33, &w_bounds);
+
+	strip.left   = 0;
+	strip.right  = (short)(w_bounds.right - w_bounds.left);
+	strip.bottom = (short)(g->content_rect.top - 1);   /* above the separator */
+	strip.top    = (short)(strip.bottom - 3);          /* 3px tall */
+
+	/* fixes732 — INDETERMINATE sweep. A ~28%-wide orange segment travels
+	 * left->right across the track and wraps, so it can never pin at a fake
+	 * percentage (this engine can't compute true load %). Continuous motion
+	 * reads as "still working"; the old creep-to-92%-and-freeze looked stuck
+	 * on long loads (68kmla). */
+	track_w = (long)strip.right - (long)strip.left;
+	if (track_w < 8) track_w = 8;
+	seg_w = track_w * 28 / 100;
+	if (seg_w < 8) seg_w = 8;
+	span = track_w + seg_w;
+	step = track_w / 10;
+	if (step < 4) step = 4;
+	pos   = ((long)macos9_reload_frame * step) % span;  /* segment trailing edge */
+	seg_r = (long)strip.left + pos;
+	seg_l = seg_r - seg_w;
+	if (seg_l < (long)strip.left)  seg_l = (long)strip.left;
+	if (seg_r > (long)strip.right) seg_r = (long)strip.right;
+
+	RGBForeColor(&track);
+	PaintRect(&strip);
+	if (seg_r > seg_l) {
+		fill = strip;
+		fill.left  = (short)seg_l;
+		fill.right = (short)seg_r;
+		RGBForeColor(&orange);
+		PaintRect(&fill);
+	}
+
+	RGBForeColor(&saved_fg);
+	SetPort(saved_port);
+#else
+	(void)g;
 #endif
 }
 
@@ -1659,46 +1919,94 @@ void macos9_window_draw_toolbar_icons(struct gui_window *g)
 
 	paint_toolbar_icon(g->window, g->back_btn, back_gw, back_rect);
 	paint_toolbar_icon(g->window, g->forward_btn, fwd_gw, fwd_rect);
-	/* fixes297e — toggle refresh icon between the two variants while a
-	 * page load is in progress.  macos9_reload_animating flips on
-	 * START_THROBBER and off on STOP_THROBBER; macos9_reload_frame is
-	 * advanced by the scheduled tick callback. */
-	if (macos9_reload_animating && (macos9_reload_frame & 1) &&
-	    macos9_btn_refresh_g_gworld != NULL) {
-		paint_toolbar_icon(g->window, g->reload_btn,
-			macos9_btn_refresh_g_gworld, &macos9_btn_refresh_g_src_rect);
-	} else {
-		paint_toolbar_icon(g->window, g->reload_btn,
-			macos9_btn_refresh_gworld, &macos9_btn_refresh_src_rect);
-	}
-	/* fixes297f — pick home_g when currently on the home URL.  Falls
-	 * back to coloured home on URL access failure or if home_g didn't
-	 * load.  MacSurf's nsurl_compare is the 3-arg bool-returning form,
-	 * not NetSurf upstream's 4-arg out-param form. */
+	/* fixes724 — Stop: orange X while the page is loading (stoppable), grey
+	 * X when idle (non-active). */
 	{
-		int at_home = 0;
-		if (g->bw != NULL && macos9_btn_home_g_gworld != NULL) {
-			struct nsurl *cur = browser_window_access_url(g->bw);
-			struct nsurl *home = NULL;
-			if (cur != NULL &&
-			    nsurl_create(MACSURF_HOME_URL, &home) == NSERROR_OK &&
-			    home != NULL) {
-				if (nsurl_compare(cur, home,
-						NSURL_WITH_FRAGMENT)) {
-					at_home = 1;
-				}
-				nsurl_unref(home);
-			}
-		}
-		if (at_home) {
-			paint_toolbar_icon(g->window, g->home_btn,
-				macos9_btn_home_g_gworld,
-				&macos9_btn_home_g_src_rect);
+		int stop_avail = (g->bw != NULL) &&
+			browser_window_stop_available(g->bw);
+		if (stop_avail || macos9_btn_stop_g_gworld == NULL) {
+			paint_toolbar_icon(g->window, g->stop_btn,
+				macos9_btn_stop_gworld, &macos9_btn_stop_src_rect);
 		} else {
-			paint_toolbar_icon(g->window, g->home_btn,
-				macos9_btn_home_gworld,
-				&macos9_btn_home_src_rect);
+			paint_toolbar_icon(g->window, g->stop_btn,
+				macos9_btn_stop_g_gworld,
+				&macos9_btn_stop_g_src_rect);
 		}
+	}
+	/* fixes725 — refresh is always the coloured icon. The old loading-state
+	 * toggle (fixes297e) is removed; a dedicated animated loader icon on the
+	 * right of the nav bar will replace it. */
+	paint_toolbar_icon(g->window, g->reload_btn,
+		macos9_btn_refresh_gworld, &macos9_btn_refresh_src_rect);
+	/* fixes725 — home is always the coloured icon. The at-home dim variant
+	 * (fixes297f) is removed; it read as a broken greyed-out button. */
+	paint_toolbar_icon(g->window, g->home_btn,
+		macos9_btn_home_gworld, &macos9_btn_home_src_rect);
+
+	/* fixes725 — hover highlight: a 1px rounded accent frame around whichever
+	 * nav button the mouse is over (set by macos9_window_update_hover). A full
+	 * icon repaint above already erased any previous frame. */
+	if (macos9_hovered_btn != NULL &&
+	    (macos9_hovered_btn == g->back_btn ||
+	     macos9_hovered_btn == g->forward_btn ||
+	     macos9_hovered_btn == g->stop_btn ||
+	     macos9_hovered_btn == g->reload_btn ||
+	     macos9_hovered_btn == g->home_btn)) {
+		GrafPtr  sp;
+		Rect     hbnd;
+		RGBColor hi = {0xF4F4, 0x8484, 0x1616};   /* icon orange */
+		RGBColor sfg;
+		GetPort(&sp);
+		SetPortWindowPort(g->window);
+		GetControlBounds(macos9_hovered_btn, &hbnd);
+		InsetRect(&hbnd, 2, 2);
+		GetForeColor(&sfg);
+		RGBForeColor(&hi);
+		PenSize(1, 1);
+		FrameRoundRect(&hbnd, 8, 8);
+		RGBForeColor(&sfg);
+		SetPort(sp);
+	}
+
+	/* fixes726 — paint the Netscape-style throbber in its right-hand slot. */
+	macos9_window_draw_loader(g);
+	/* fixes727 — page-load progress bar along the toolbar's bottom edge. */
+	macos9_window_draw_progress(g);
+#else
+	(void)g;
+#endif
+}
+
+/* fixes725 — mouse-over tracking for the nav buttons. Called from the event
+ * loop's idle pass for the front window. Sets macos9_hovered_btn to whichever
+ * nav button the pointer is over (or NULL) and, only when it changes, repaints
+ * the toolbar icons so the hover frame appears/moves/clears. */
+void macos9_window_update_hover(struct gui_window *g)
+{
+#ifdef __MACOS9__
+	Point      p;
+	Rect       bnd;
+	GrafPtr    sp;
+	ControlRef newh = NULL;
+	ControlRef btns[5];
+	int        i;
+
+	if (g == NULL || g->window == NULL) return;
+	GetPort(&sp);
+	SetPortWindowPort(g->window);
+	GetMouse(&p);   /* window-local, matching GetControlBounds */
+	SetPort(sp);
+	btns[0] = g->back_btn;  btns[1] = g->forward_btn; btns[2] = g->stop_btn;
+	btns[3] = g->reload_btn; btns[4] = g->home_btn;
+	for (i = 0; i < 5; i++) {
+		if (btns[i] != NULL) {
+			GetControlBounds(btns[i], &bnd);
+			if (PtInRect(p, &bnd)) { newh = btns[i]; break; }
+		}
+	}
+	if (newh != macos9_hovered_btn) {
+		macos9_hovered_btn = newh;
+		macos9_window_draw_toolbar_icons(g);
 	}
 #else
 	(void)g;
@@ -1761,9 +2069,118 @@ static void macos9_gw_remove_caret(struct gui_window *g)
 	macos9_caret_invalidate(g); /* erase (caret is drawn only while active) */
 }
 
+#ifdef __MACOS9__
+/* fixes721 (#144 file upload) — build a full HFS path "Volume:dir:...:leaf"
+ * from an FSSpec by walking up parent dir IDs (PBGetCatInfoSync), so the
+ * multipart builder can fopen() the file the user picked. Returns 0 on
+ * success. */
+static int macos9_fsspec_to_path(const FSSpec *spec, char *out, long cap)
+{
+	Str255      parts[48];
+	int         nparts = 0;
+	long        dirid = spec->parID;
+	short       vref = spec->vRefNum;
+	CInfoPBRec  pb;
+	long        pos, i;
+	int         L;
+
+	BlockMoveData(spec->name, parts[nparts], (long)spec->name[0] + 1);
+	nparts++;
+	while (dirid != fsRtParID && nparts < 48) {
+		Str255 nm;
+		memset(&pb, 0, sizeof pb);
+		pb.dirInfo.ioNamePtr   = nm;
+		pb.dirInfo.ioVRefNum   = vref;
+		pb.dirInfo.ioDrDirID   = dirid;
+		pb.dirInfo.ioFDirIndex = -1;   /* info about the dir itself */
+		if (PBGetCatInfoSync(&pb) != noErr) break;
+		BlockMoveData(nm, parts[nparts], (long)nm[0] + 1);
+		nparts++;
+		dirid = pb.dirInfo.ioDrParID;
+	}
+	pos = 0;
+	for (i = nparts - 1; i >= 0; i--) {
+		L = parts[i][0];
+		if (pos + L + 2 >= cap) return -1;
+		memcpy(out + pos, parts[i] + 1, (size_t)L);
+		pos += L;
+		if (i > 0) out[pos++] = ':';
+	}
+	out[pos] = '\0';
+	return 0;
+}
+
+/* fixes721 — file_gadget_open gui callback. Core calls this when the user
+ * clicks an <input type=file>. Show a Navigation Services Open dialog (the
+ * same generation as the fixes313a NavPutFile save dialog, which links under
+ * CarbonLib), then hand the chosen file's path to core via
+ * html_set_file_gadget_filename; the fetcher reads it at submit. */
+static void macos9_window_file_gadget_open(struct gui_window *gw,
+		struct hlcache_handle *hl, struct form_control *gadget)
+{
+	NavDialogOptions opts;
+	NavReplyRecord   reply;
+	OSErr            err;
+	OSErr            aeerr;
+	FSSpec           spec;
+	AEKeyword        kw;
+	DescType         dt;
+	Size             sz;
+	char             path[1024];
+	extern void html_set_file_gadget_filename(struct hlcache_handle *,
+			struct form_control *, const char *);
+
+	(void)gw;
+	/* fixes721b — "RECON" prefix so these lines survive the crash-only log
+	 * gate (nuclear is off in shipping builds), letting a reporter's log show
+	 * exactly where the picker failed. */
+	if (NavGetDefaultDialogOptions(&opts) != noErr) {
+		macsurf_debug_log_writef("RECON filegadget: NavGetDefaultDialogOptions FAIL");
+		return;
+	}
+	err = NavGetFile(NULL, &reply, &opts, NULL, NULL, NULL, NULL, NULL);
+	macsurf_debug_log_writef("RECON filegadget: NavGetFile err=%d valid=%d",
+		(int)err, (int)(err == noErr ? reply.validRecord : 0));
+	if (err != noErr) return;
+	if (!reply.validRecord) { NavDisposeReply(&reply); return; }
+	/* CarbonLib's NavGetFile reply may carry the selection as typeFSS OR
+	 * typeFSRef; try FSS first, fall back to FSRef -> FSSpec. */
+	aeerr = AEGetNthPtr(&reply.selection, 1, typeFSS, &kw, &dt,
+			&spec, sizeof spec, &sz);
+	if (aeerr != noErr) {
+		FSRef ref;
+		OSErr e2 = AEGetNthPtr(&reply.selection, 1, typeFSRef, &kw, &dt,
+				&ref, sizeof ref, &sz);
+		if (e2 == noErr)
+			e2 = FSGetCatalogInfo(&ref, kFSCatInfoNone, NULL, NULL,
+					&spec, NULL);
+		aeerr = e2;
+	}
+	NavDisposeReply(&reply);
+	macsurf_debug_log_writef("RECON filegadget: AE extract err=%d", (int)aeerr);
+	if (aeerr != noErr) return;
+	if (macos9_fsspec_to_path(&spec, path, (long)sizeof path) != 0) {
+		macsurf_debug_log_writef("RECON filegadget: fsspec_to_path FAIL");
+		return;
+	}
+	macsurf_debug_log_writef("RECON filegadget: path=%s", path);
+	html_set_file_gadget_filename(hl, gadget, path);
+	macsurf_debug_log_writef("RECON filegadget: filename set OK");
+}
+#else
+static void macos9_window_file_gadget_open(struct gui_window *gw,
+		struct hlcache_handle *hl, struct form_control *gadget)
+{
+	(void)gw; (void)hl; (void)gadget;
+}
+#endif
+
 static struct gui_window_table wt = {
 	macos9_window_create, macos9_window_destroy, macos9_gw_invalidate, macos9_gw_get_scroll,
 	macos9_gw_set_scroll, macos9_gw_get_dimensions, macos9_gw_event, macos9_gw_set_title,
-	macos9_gw_set_url, macos9_gw_set_icon, macos9_gw_set_status, macos9_gw_set_pointer, macos9_gw_place_caret, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0, (void*)0
+	macos9_gw_set_url, macos9_gw_set_icon, macos9_gw_set_status, macos9_gw_set_pointer, macos9_gw_place_caret,
+	/* drag_start */ (void*)0, /* save_link */ (void*)0, /* create_form_select_menu */ (void*)0,
+	/* fixes721 file_gadget_open */ macos9_window_file_gadget_open,
+	/* drag_save_object */ (void*)0, /* drag_save_selection */ (void*)0, /* console_log */ (void*)0
 };
 struct gui_window_table *macos9_window_table = &wt;

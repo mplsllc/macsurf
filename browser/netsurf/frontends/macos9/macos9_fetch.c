@@ -21,6 +21,7 @@
 #include "utils/ns_errors.h"
 #include "utils/log.h"
 #include "netsurf/fetch.h"
+#include "content/fetch.h"   /* fixes721: struct fetch_multipart_data */
 #include "macos9.h"
 
 #ifdef __MACOS9__
@@ -361,3 +362,102 @@ struct gui_fetch_table macos9_fetch_table = {
 	NULL,
 	NULL
 };
+
+/* ==================================================================
+ * fixes721 (#207 tooling) — multipart/form-data body builder, shared by
+ * the HTTP and HTTPS fetchers so an <input type=file> upload (e.g. the
+ * debug-log page) works from MacSurf. NetSurf core hands the fetcher a
+ * fetch_multipart_data list; we serialise it into a real
+ * multipart/form-data body, reading each file part off disk via fopen
+ * (the path the NavServices picker stored on the gadget). Returns a
+ * malloc'd body (caller frees), fills *out_len and the caller's
+ * boundary buffer (>= 64 bytes). NULL on OOM.
+ * ================================================================== */
+static int macos9_mp_append(char **buf, long *len, long *cap,
+		const char *src, long add)
+{
+	if (add <= 0) return 0;
+	if (*len + add > *cap) {
+		long ncap = (*cap == 0) ? 8192L : *cap;
+		char *nb;
+		while (ncap < *len + add) ncap *= 2L;
+		nb = (char *)realloc(*buf, (size_t)ncap);
+		if (nb == NULL) return -1;
+		*buf = nb;
+		*cap = ncap;
+	}
+	memcpy(*buf + *len, src, (size_t)add);
+	*len += add;
+	return 0;
+}
+
+char *macos9_build_multipart(const struct fetch_multipart_data *pm,
+		char *boundary_out, long *out_len)
+{
+	static unsigned long mp_ctr = 0UL;
+	char *body = NULL;
+	long  len = 0L, cap = 0L;
+	char  hdr[4096];
+	char  boundary[64];
+	const struct fetch_multipart_data *n;
+	int   hl;
+
+	*out_len = 0L;
+	mp_ctr++;
+	sprintf(boundary, "----------MacSurfFormBoundary4D53%lu", mp_ctr);
+	if (boundary_out != NULL) strcpy(boundary_out, boundary);
+
+	for (n = pm; n != NULL; n = n->next) {
+		if (n->file) {
+			hl = sprintf(hdr,
+				"--%s\r\nContent-Disposition: form-data; "
+				"name=\"%s\"; filename=\"%s\"\r\n"
+				"Content-Type: application/octet-stream\r\n\r\n",
+				boundary, (n->name != NULL) ? n->name : "",
+				(n->value != NULL) ? n->value : "file");
+		} else {
+			hl = sprintf(hdr,
+				"--%s\r\nContent-Disposition: form-data; "
+				"name=\"%s\"\r\n\r\n",
+				boundary, (n->name != NULL) ? n->name : "");
+		}
+		if (hl < 0 || macos9_mp_append(&body, &len, &cap, hdr, hl) != 0)
+			goto fail;
+
+		if (n->file) {
+			FILE *f = fopen((n->rawfile != NULL) ? n->rawfile : "", "rb");
+			if (f != NULL) {
+				char rb[4096];
+				size_t got;
+				while ((got = fread(rb, 1, sizeof rb, f)) > 0) {
+					if (macos9_mp_append(&body, &len, &cap,
+							rb, (long)got) != 0) {
+						fclose(f);
+						goto fail;
+					}
+				}
+				fclose(f);
+			}
+			/* fopen failure -> an empty file part; server still gets the
+			 * form, just with no file bytes. */
+		} else if (n->value != NULL) {
+			if (macos9_mp_append(&body, &len, &cap,
+					n->value, (long)strlen(n->value)) != 0)
+				goto fail;
+		}
+		if (macos9_mp_append(&body, &len, &cap, "\r\n", 2L) != 0)
+			goto fail;
+	}
+
+	hl = sprintf(hdr, "--%s--\r\n", boundary);
+	if (hl < 0 || macos9_mp_append(&body, &len, &cap, hdr, hl) != 0)
+		goto fail;
+
+	*out_len = len;
+	return body;
+
+fail:
+	if (body != NULL) free(body);
+	*out_len = 0L;
+	return NULL;
+}
