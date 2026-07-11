@@ -497,6 +497,23 @@ void macos9_window_handle_scrollbar_click(struct gui_window *g, ControlRef c, sh
 void macos9_window_te_activate_url(struct gui_window *g) { if(!g||!g->url_te||g->url_field_active) return; SetPortWindowPort(g->window); TEActivate(g->url_te); g->url_field_active=1; InvalWindowRect(g->window, &g->url_rect); }
 void macos9_window_te_deactivate_url(struct gui_window *g) { if(!g||!g->url_te||!g->url_field_active) return; SetPortWindowPort(g->window); TEDeactivate(g->url_te); g->url_field_active=0; InvalWindowRect(g->window, &g->url_rect); }
 
+/* fixes756 (#229) — give the single-line URL field a WIDE destRect so a long
+ * URL lays out on one line extending past the visible viewRect instead of
+ * wrapping/clipping with no way to reach the end. TESelView (called after
+ * each keystroke) then scrolls the caret into view. Only the right edge is
+ * stretched; left is kept at the view edge so a freshly-set URL shows from
+ * the start (resets any horizontal scroll left over from a prior long URL). */
+static void set_url_te_geometry(TEHandle te, const Rect *view) {
+	TERec *p;
+	Rect d;
+	if (te == NULL || view == NULL) return;
+	p = *te;
+	d = *view;
+	d.right = (short)(view->left + 8000);
+	p->viewRect = *view;
+	p->destRect = d;
+}
+
 static void set_url_te_text(struct gui_window *g, const char *u) {
 	CharsHandle h;
 	long new_len;
@@ -522,6 +539,13 @@ static void set_url_te_text(struct gui_window *g, const char *u) {
 	SetPortWindowPort(g->window);
 	TESetText(u, new_len, g->url_te);
 	TECalText(g->url_te);
+	/* fixes756 (#229) — keep the wide destRect and reset scroll to the start
+	 * so a newly-navigated URL shows the protocol/host, not a stale offset. */
+	{
+		Rect view;
+		compute_url_te_rect(&g->url_rect, &view);
+		set_url_te_geometry(g->url_te, &view);
+	}
 	InvalWindowRect(g->window, &g->url_rect);
 }
 
@@ -817,9 +841,9 @@ void macos9_window_update_button_states(struct gui_window *g) {
 }
 
 void macos9_window_resize(struct gui_window *g) {
-	Rect tr; TERec *ptr; if(!g) return; macos9_window_layout(g);
+	Rect tr; if(!g) return; macos9_window_layout(g);
 #ifdef __MACOS9__
-	if(g->url_te) { compute_url_te_rect(&g->url_rect, &tr); ptr = *g->url_te; ptr->destRect = tr; ptr->viewRect = tr; TECalText(g->url_te); }
+	if(g->url_te) { compute_url_te_rect(&g->url_rect, &tr); set_url_te_geometry(g->url_te, &tr); TECalText(g->url_te); } /* fixes756 (#229) wide destRect */
 #endif
 	macos9_window_update_scrollbars(g); g->needs_reformat=1; macos9_window_invalidate_all(g);
 }
@@ -978,6 +1002,8 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 	TextFont(kFontIDGeneva); TextSize(12); TextFace(0);
 	compute_url_te_rect(&g->url_rect,&b); g->url_te=TENew(&b,&b);
 	if(g->url_te) {
+		set_url_te_geometry(g->url_te, &b);   /* fixes756 (#229) wide destRect */
+		TEAutoView(true, g->url_te);          /* enable TESelView caret auto-scroll */
 		TESetText(MACSURF_HOME_URL,(long)strlen(MACSURF_HOME_URL),g->url_te);
 		TECalText(g->url_te);
 		TEActivate(g->url_te);
