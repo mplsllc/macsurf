@@ -883,6 +883,19 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 		if(strncasecmp(p,"Content-Type:",13)==0) {
 			char *v=p+13; while(*v==' ')v++;
 			strncpy(c->mime,v,127); c->mime[127]=0;
+			/* fixes770 (#232) — no standalone text/plain content
+			 * handler, so a text/plain response downloads instead of
+			 * displaying. Browsers show it inline. Relabel as
+			 * text/html so it renders through the HTML pipeline
+			 * (mirrors the TLS fetcher). Substitute the forwarded
+			 * header too so NetSurf's content factory agrees. */
+			if(strncasecmp(c->mime,"text/plain",10)==0) {
+				strcpy(c->mime,"text/html");
+				p=(char*)"Content-Type: text/html; charset=utf-8";
+				macsurf_debug_log_writef(
+					"RECON MIME text/plain->text/html (http) "
+					"st=%d", c->status);
+			}
 		}
 		/* fixes91 — parse Content-Length so we know when the body
 		 * ends without waiting for the server to close. */

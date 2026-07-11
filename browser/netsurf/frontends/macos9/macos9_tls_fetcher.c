@@ -1382,9 +1382,12 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		char *header_lines[64];
 		int   n_header_lines = 0;
 		int   force_download = 0;
+		int   force_html = 0;   /* fixes770 (#232) */
 		int   i;
 		static const char forced_ct[] =
 			"Content-Type: application/octet-stream";
+		static const char forced_html_ct[] =
+			"Content-Type: text/html; charset=utf-8";
 
 		while ((p = find_line(&cur, &cur_len)) != NULL) {
 			if (p[0] == 0) break;
@@ -1509,11 +1512,37 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		 * why a page downloads. mime=(empty) => Content-Type never
 		 * parsed (no handler => download); mime=application/octet-stream
 		 * with cd=1 => Content-Disposition forced it. */
-		macsurf_debug_log_writef(
-			"RECON MIME net host=%s path=%s mime=%s cd=%d st=%d",
-			c->host, c->path,
-			c->mime[0] ? c->mime : "(empty)",
-			force_download, c->status);
+		/* fixes768/770 (#232) — log the resolved mime only for the
+		 * INTERESTING cases (an error status, an empty/parse-failed
+		 * mime, or a forced download), so we can see WHY a page
+		 * downloads without spamming a synced log line per image. */
+		if (force_download || c->status >= 400 || c->mime[0] == 0) {
+			macsurf_debug_log_writef(
+				"RECON MIME net host=%s path=%s mime=%s cd=%d st=%d",
+				c->host, c->path,
+				c->mime[0] ? c->mime : "(empty)",
+				force_download, c->status);
+		}
+
+		/* fixes770 (#232) — MacSurf has no standalone text/plain content
+		 * handler (misc_stub.c stubs textplain_init), so a text/plain
+		 * response has no handler and NetSurf routes it to the
+		 * DOWNLOADER: an HN 429 "rate limited" page, robots.txt, or a
+		 * .txt file all dump to disk instead of displaying. Browsers
+		 * show text/plain INLINE. Until the real textplain.c handler is
+		 * ported (#233), relabel text/plain as text/html so it renders
+		 * through the HTML pipeline. Prose / error pages read fine;
+		 * embedded markup is imperfect (unescaped) — acceptable stopgap.
+		 * Skipped when a real attachment already forced a download. */
+		if (!force_download &&
+		    strncasecmp(c->mime, "text/plain", 10) == 0) {
+			strcpy(c->mime, "text/html");
+			force_html = 1;
+			macsurf_debug_log_writef(
+				"RECON MIME text/plain->text/html (no textplain "
+				"handler) host=%s path=%s st=%d",
+				c->host, c->path, c->status);
+		}
 
 		/* Now forward all headers, substituting Content-Type when
 		 * force_download is true. */
@@ -1522,6 +1551,9 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 			if (force_download &&
 			    strncasecmp(line, "Content-Type:", 13) == 0) {
 				line = forced_ct;
+			} else if (force_html &&
+			    strncasecmp(line, "Content-Type:", 13) == 0) {
+				line = forced_html_ct;   /* fixes770 (#232) */
 			}
 			msg.type = FETCH_HEADER;
 			msg.data.header_or_data.buf = (const uint8_t *)line;
@@ -2691,13 +2723,13 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 			macsurf_debug_log_writef(
 				"https_setup CACHE hit url=%s mime=%s len=%ld",
 				url_str, c->cache_hit_mime, c->cache_hit_len);
-			/* fixes768 (#232) — RECON: a page cached with a bad
-			 * mime (empty/octet-stream) downloads every time. */
-			macsurf_debug_log_writef(
-				"RECON MIME cache host=%s path=%s mime=%s",
-				c->host, c->path,
-				c->cache_hit_mime[0] ?
-					c->cache_hit_mime : "(empty)");
+			/* fixes768 (#232) — RECON: only flag a cache entry with a
+			 * bad (empty) mime, which would download every time. */
+			if (c->cache_hit_mime[0] == 0) {
+				macsurf_debug_log_writef(
+					"RECON MIME cache host=%s path=%s "
+					"mime=(empty)", c->host, c->path);
+			}
 		}
 	}
 
