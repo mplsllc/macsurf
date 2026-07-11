@@ -1690,6 +1690,106 @@ static void tls13_copy_pkey(tls13_hs_ctx *hs, const br_x509_pkey *src)
     }
 }
 
+/* fixes739 (#206) — X.509 chain reordering. BearSSL's x509_minimal is a
+ * STREAMING, order-required validator: the leaf must come first and each
+ * subsequent cert must be the issuer of the previous. Many servers (Sectigo /
+ * USERTrust cross-signed setups — e.g. macintoshgarden.org) send an UNORDERED
+ * or cross-signed chain, which OpenSSL reorders automatically but BearSSL
+ * rejects with BR_ERR_X509_DN_MISMATCH (55) -> HTTPS fails -> http fallback.
+ * We parse each cert's issuer/subject DN and feed the chain leaf-first in
+ * issuer order, dropping certs that don't link (e.g. an out-of-order root the
+ * baked anchor bundle already covers). On parse failure we fall back to the
+ * original wire order, so correctly-ordered chains never regress. */
+#define OSTLS_MAX_CHAIN 12
+
+/* Read one DER TLV at p (bounded by end). On success returns total bytes
+ * consumed (header+value) and sets *tag/*val/*vlen; returns 0 on error. */
+static uint32_t ostls_der_tlv(const unsigned char *p, const unsigned char *end,
+    unsigned char *tag, const unsigned char **val, uint32_t *vlen)
+{
+    uint32_t len;
+    uint32_t hdr;
+    if (p == NULL || p + 2 > end) return 0;
+    *tag = p[0];
+    if (p[1] < 0x80) {
+        len = p[1];
+        hdr = 2;
+    } else {
+        unsigned int nb = (unsigned int)(p[1] & 0x7F);
+        unsigned int i;
+        if (nb == 0 || nb > 4 || p + 2 + nb > end) return 0;
+        len = 0;
+        for (i = 0; i < nb; i++) {
+            len = (len << 8) | (uint32_t)p[2 + i];
+        }
+        hdr = 2 + nb;
+    }
+    if (len > (uint32_t)(end - (p + hdr))) return 0;
+    *val = p + hdr;
+    *vlen = len;
+    return hdr + len;
+}
+
+/* Capture the raw DER TLV byte-range of a cert's issuer and subject Name.
+ * Compared byte-for-byte to match issuer(child) == subject(parent).
+ * Returns 0 on success, -1 on parse failure. */
+static int ostls_cert_dns(const unsigned char *cert, uint32_t clen,
+    const unsigned char **issuer, uint32_t *ilen,
+    const unsigned char **subject, uint32_t *slen)
+{
+    const unsigned char *end = cert + clen;
+    const unsigned char *tbs;
+    const unsigned char *tbs_end;
+    const unsigned char *p;
+    const unsigned char *fs;
+    const unsigned char *val;
+    unsigned char tag;
+    uint32_t vlen;
+    uint32_t tbs_len;
+    uint32_t used;
+
+    /* Certificate ::= SEQUENCE { tbsCertificate SEQUENCE {...}, ... } */
+    used = ostls_der_tlv(cert, end, &tag, &val, &vlen);
+    if (used == 0 || tag != 0x30) return -1;
+    used = ostls_der_tlv(val, val + vlen, &tag, &tbs, &tbs_len);
+    if (used == 0 || tag != 0x30) return -1;
+    p = tbs;
+    tbs_end = tbs + tbs_len;
+
+    /* [0] version (EXPLICIT, optional) */
+    if (p < tbs_end && p[0] == 0xA0) {
+        used = ostls_der_tlv(p, tbs_end, &tag, &val, &vlen);
+        if (used == 0) return -1;
+        p += used;
+    }
+    /* serialNumber INTEGER */
+    used = ostls_der_tlv(p, tbs_end, &tag, &val, &vlen);
+    if (used == 0) return -1;
+    p += used;
+    /* signature AlgorithmIdentifier SEQUENCE */
+    used = ostls_der_tlv(p, tbs_end, &tag, &val, &vlen);
+    if (used == 0) return -1;
+    p += used;
+    /* issuer Name SEQUENCE — capture the whole TLV */
+    fs = p;
+    used = ostls_der_tlv(p, tbs_end, &tag, &val, &vlen);
+    if (used == 0 || tag != 0x30) return -1;
+    *issuer = fs;
+    *ilen = used;
+    p += used;
+    /* validity SEQUENCE */
+    used = ostls_der_tlv(p, tbs_end, &tag, &val, &vlen);
+    if (used == 0) return -1;
+    p += used;
+    /* subject Name SEQUENCE — capture the whole TLV */
+    fs = p;
+    used = ostls_der_tlv(p, tbs_end, &tag, &val, &vlen);
+    if (used == 0 || tag != 0x30) return -1;
+    *subject = fs;
+    *slen = used;
+    return 0;
+}
+
 /*
  * Handle the kTLS13_RecvCertificate state.
  *
@@ -1782,39 +1882,111 @@ static tls13_hs_result tls13_state_recv_certificate(
      * Stream certificates through the X.509 validator.
      */
     xc = *hs->x509_ctx;
-    xc->start_chain(hs->x509_ctx, hostname);
 
-    while (pos < cert_list_end) {
-        uint32_t cert_data_len;
-        uint16_t cert_ext_len;
+    /* fixes739 (#206) — collect the certs, then feed them leaf-first in issuer
+     * order so BearSSL's order-required x509_minimal accepts cross-signed /
+     * unordered chains (macintoshgarden.org etc.). Falls back to wire order on
+     * parse trouble so well-formed chains are unaffected. */
+    {
+        const unsigned char *cert_ptr[OSTLS_MAX_CHAIN];
+        uint32_t             cert_len[OSTLS_MAX_CHAIN];
+        int                  used_flag[OSTLS_MAX_CHAIN];
+        int                  order[OSTLS_MAX_CHAIN];
+        int                  n_certs = 0;
+        int                  n_order = 0;
+        int                  use_ordered;
+        int                  i;
 
-        /* cert_data<1..2^24-1> */
-        if (pos + 3 > cert_list_end) {
-            hs->error = BR_ERR_BAD_PARAM;
+        /* pass 1: collect (ptr,len) for each cert with the same framing checks */
+        while (pos < cert_list_end) {
+            uint32_t cert_data_len;
+            uint16_t cert_ext_len;
+
+            if (pos + 3 > cert_list_end) {
+                hs->error = BR_ERR_BAD_PARAM;
+                return kTLS13_Error;
+            }
+            cert_data_len = get_u24(hs->msg_buf + pos);
+            pos += 3;
+            if (pos + cert_data_len > cert_list_end) {
+                hs->error = BR_ERR_BAD_PARAM;
+                return kTLS13_Error;
+            }
+            if (n_certs < OSTLS_MAX_CHAIN) {
+                cert_ptr[n_certs] = hs->msg_buf + pos;
+                cert_len[n_certs] = cert_data_len;
+                n_certs++;
+            }
+            pos += cert_data_len;
+
+            /* Per-certificate extensions<0..2^16-1> — skip them */
+            if (pos + 2 > cert_list_end) {
+                hs->error = BR_ERR_BAD_PARAM;
+                return kTLS13_Error;
+            }
+            cert_ext_len = get_u16(hs->msg_buf + pos);
+            pos += 2 + cert_ext_len;
+        }
+        if (n_certs == 0) {
+            hs->error = BR_ERR_X509_NOT_TRUSTED;
             return kTLS13_Error;
         }
-        cert_data_len = get_u24(hs->msg_buf + pos);
-        pos += 3;
 
-        if (pos + cert_data_len > cert_list_end) {
-            hs->error = BR_ERR_BAD_PARAM;
-            return kTLS13_Error;
+        /* pass 2: build leaf-first, issuer-ordered index list */
+        for (i = 0; i < n_certs; i++) used_flag[i] = 0;
+        order[0] = 0;              /* TLS mandates the leaf (sender cert) first */
+        used_flag[0] = 1;
+        n_order = 1;
+        use_ordered = 1;
+        for (;;) {
+            const unsigned char *cur_iss, *cur_sub;
+            uint32_t cur_ilen, cur_slen;
+            int cur = order[n_order - 1];
+            int found = -1;
+            int j;
+
+            if (ostls_cert_dns(cert_ptr[cur], cert_len[cur],
+                    &cur_iss, &cur_ilen, &cur_sub, &cur_slen) != 0) {
+                use_ordered = 0;   /* parse failure -> wire order */
+                break;
+            }
+            for (j = 0; j < n_certs; j++) {
+                const unsigned char *j_iss, *j_sub;
+                uint32_t j_ilen, j_slen;
+                if (used_flag[j]) continue;
+                if (ostls_cert_dns(cert_ptr[j], cert_len[j],
+                        &j_iss, &j_ilen, &j_sub, &j_slen) != 0) continue;
+                if (j_slen == cur_ilen &&
+                    memcmp(j_sub, cur_iss, (size_t)j_slen) == 0) {
+                    found = j;
+                    break;
+                }
+            }
+            if (found < 0) break;   /* next issuer is a trust anchor — chain done */
+            order[n_order++] = found;
+            used_flag[found] = 1;
+            if (n_order >= n_certs) break;
         }
+        /* If we couldn't even link the first intermediate to the leaf, the DN
+         * match failed outright — trust the server's wire order instead. */
+        if (n_order == 1 && n_certs > 1) use_ordered = 0;
 
-        /* Feed this certificate through the X.509 validator */
-        xc->start_cert(hs->x509_ctx, cert_data_len);
-        xc->append(hs->x509_ctx, hs->msg_buf + pos, cert_data_len);
-        xc->end_cert(hs->x509_ctx);
-
-        pos += cert_data_len;
-
-        /* Per-certificate extensions<0..2^16-1> — skip them */
-        if (pos + 2 > cert_list_end) {
-            hs->error = BR_ERR_BAD_PARAM;
-            return kTLS13_Error;
+        /* pass 3: feed */
+        xc->start_chain(hs->x509_ctx, hostname);
+        if (use_ordered) {
+            for (i = 0; i < n_order; i++) {
+                int k = order[i];
+                xc->start_cert(hs->x509_ctx, cert_len[k]);
+                xc->append(hs->x509_ctx, cert_ptr[k], cert_len[k]);
+                xc->end_cert(hs->x509_ctx);
+            }
+        } else {
+            for (i = 0; i < n_certs; i++) {
+                xc->start_cert(hs->x509_ctx, cert_len[i]);
+                xc->append(hs->x509_ctx, cert_ptr[i], cert_len[i]);
+                xc->end_cert(hs->x509_ctx);
+            }
         }
-        cert_ext_len = get_u16(hs->msg_buf + pos);
-        pos += 2 + cert_ext_len;
     }
 
     /* Finish the certificate chain validation */
