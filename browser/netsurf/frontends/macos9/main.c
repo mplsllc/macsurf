@@ -1009,7 +1009,8 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 							macos9_window_te_activate_url(gw);
 							if (gw->url_te) { TEClick(p, (event->modifiers & shiftKey) != 0, gw->url_te); TESelView(gw->url_te); } /* fixes756 (#229) */
 						} else if (ctrl == NULL && PtInRect(p, &gw->content_rect) && gw->bw) {
-							macos9_urlsug_hide(gw);   /* fixes763 dismiss on content click */
+							/* fixes763: dropdown is hidden by the
+							 * macos9_window_te_deactivate_url() call below. */
 							/* Click in content area — dispatch to NetSurf so
 							 * links navigate, forms submit, etc.  Coordinates
 							 * are translated from window-local to NetSurf
