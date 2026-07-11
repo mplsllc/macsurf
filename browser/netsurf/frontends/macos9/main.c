@@ -702,12 +702,24 @@ void macos9_handle_update(const EventRecord *event) {
 		{ extern int macos9_op_depth; macos9_op_depth++; }
 		{
 			/* fixes640 — accumulate paint CPU (full box-tree redraw). */
+			/* fixes759 (#212) DIAGNOSTIC — time this paint and count boxes
+			 * walked. RECON KEY only measured key_press; the real per-keystroke
+			 * cost on a heavy page is THIS full-tree redraw fired on the
+			 * update event. clip = dirty rect (small when only a textarea line
+			 * changed); boxes = how many the walk visited regardless of clip
+			 * (if ~all page boxes, the tree walk isn't pruning to the clip). */
 			double t_paint = macos9_micros();
+			extern long macos9_hrb_visits;
+			long _v0 = macos9_hrb_visits, _pdt;
 			browser_window_redraw(gw->bw,
 				gw->content_rect.left - gw->scroll_x,
 				gw->content_rect.top  - gw->scroll_y,
 				&clip, &ctx);
-			macsurf_profile_accum_paint((long)(macos9_micros() - t_paint));
+			_pdt = (long)(macos9_micros() - t_paint);
+			macsurf_profile_accum_paint(_pdt);
+			macsurf_debug_log_writef("RECON PAINT dt=%ldus clip=%dx%d boxes=%ld",
+				_pdt, (int)(clip.x1 - clip.x0), (int)(clip.y1 - clip.y0),
+				(long)(macos9_hrb_visits - _v0));
 		}
 		{ extern int macos9_op_depth; macos9_op_depth--; }
 		{ extern struct gui_window *macos9_paint_gw;
