@@ -132,9 +132,9 @@ lwc__intern(const char *s, size_t slen,
 					const char *fmt, ...);
 				macsurf_debug_log_writef(
 					"fixes446d CHAIN: bad str=%p "
-					"bucket=%lu",
+					"bucket=%ld",
 					(void *)str,
-					(unsigned long)bucket);
+					(long)bucket);
 				break;
 			}
 		}

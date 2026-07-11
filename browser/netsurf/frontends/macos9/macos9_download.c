@@ -313,8 +313,8 @@ static void dl_cancel(struct gui_download_window *dw)
 		download_context_abort(dw->dl_ctx);
 		dw->dl_ctx = NULL;
 	}
-	macsurf_debug_log_writef("download CANCEL file=%s at=%lu",
-		dw->filename, dw->bytes_written);
+	macsurf_debug_log_writef("download CANCEL file=%s at=%ld",
+		dw->filename, (long)dw->bytes_written);
 	dl_mgr_progress();
 }
 
@@ -517,8 +517,8 @@ macos9_download_create(struct download_context *ctx,
 		sprintf(status, "Downloading %s...", dw->filename);
 		macos9_download_status(dw, status);
 	}
-	macsurf_debug_log_writef("download START file=%s total=%lu",
-		dw->filename, dw->total_length);
+	macsurf_debug_log_writef("download START file=%s total=%ld",
+		dw->filename, (long)dw->total_length);
 
 	dl_list_evict();
 	dw->dl_next = g_dl_list;
