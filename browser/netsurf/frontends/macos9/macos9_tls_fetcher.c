@@ -1504,6 +1504,17 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 				"→ force download (mime override)");
 		}
 
+		/* fixes768 (#232) — RECON: log the resolved mime + attachment
+		 * flag for EVERY response so the failures-only gate still shows
+		 * why a page downloads. mime=(empty) => Content-Type never
+		 * parsed (no handler => download); mime=application/octet-stream
+		 * with cd=1 => Content-Disposition forced it. */
+		macsurf_debug_log_writef(
+			"RECON MIME net host=%s path=%s mime=%s cd=%d st=%d",
+			c->host, c->path,
+			c->mime[0] ? c->mime : "(empty)",
+			force_download, c->status);
+
 		/* Now forward all headers, substituting Content-Type when
 		 * force_download is true. */
 		for (i = 0; i < n_header_lines; i++) {
@@ -2680,6 +2691,13 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 			macsurf_debug_log_writef(
 				"https_setup CACHE hit url=%s mime=%s len=%ld",
 				url_str, c->cache_hit_mime, c->cache_hit_len);
+			/* fixes768 (#232) — RECON: a page cached with a bad
+			 * mime (empty/octet-stream) downloads every time. */
+			macsurf_debug_log_writef(
+				"RECON MIME cache host=%s path=%s mime=%s",
+				c->host, c->path,
+				c->cache_hit_mime[0] ?
+					c->cache_hit_mime : "(empty)");
 		}
 	}
 
