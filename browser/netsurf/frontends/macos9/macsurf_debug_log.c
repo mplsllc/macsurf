@@ -37,21 +37,13 @@
 #endif
 #endif
 
-/* fixes677 (#206) — TEMPORARY: re-open the networking/TLS log lines through
- * the fixes675 crash-only gate so the macintoshgarden.org http-downgrade can
- * be captured (request UA + scheme, handshake result, status, redirects).
- * Self-enabled in this TU so only macsurf_debug_log.c needs reshipping.
- * DELETE this define to put the release back to crash-only logging. */
-#define MACSURF_SSL_LOG 1
-
-/* fixes688 — surface the fixes640 per-phase performance breakdown through the
- * fixes675 crash-only gate so a normal (non-full-verbose) build emits the
- * PERFACC load-complete line and the [+Nus] milestone stamps. This is the
- * targeted perf-work channel: it does NOT re-open the high-volume per-element
- * layout/paint/fetch spam (those stay behind their own MACSURF_VERBOSE_* macros),
- * so the log stays readable while carrying real timing numbers.
- * Self-enabled in this TU; DELETE this define to return to crash-only. */
-#define MACSURF_PERF_LOG 1
+/* fixes765 (2.0 release) — the temporary #206 SSL/TLS channel and the fixes688
+ * perf channel are OFF for release. Their investigations (macintoshgarden http
+ * downgrade -> fixes739; the typing-latency perf pass -> fixes760) are done, so
+ * the release log is back to failures-only. Re-enable either #define below to
+ * bring the networking or timing lines back through the crash-only gate. */
+/* #define MACSURF_SSL_LOG 1 */
+/* #define MACSURF_PERF_LOG 1 */
 
 /* ============ fixes716 — NUCLEAR DIAGNOSTIC MODE (#207) ============
  * ONE switch to capture EVERYTHING, hang-proof, for root-causing the
@@ -608,22 +600,17 @@ macsurf_log_is_crash_report(const char *m)
 	if (strstr(m, "ABORT") != NULL) return 1;
 	if (strstr(m, "NOMEM") != NULL) return 1;
 	if (strstr(m, "CORRUPT") != NULL) return 1;
-	/* fixes711 (#207): blank-screen reconnaissance. RECON lines carry the
-	 * VM on/off state (Gestalt), the full heap/temp/purge snapshot, and the
-	 * CSS-selection NULL-pointer catcher. Survive the crash-only gate so a
-	 * reporter's VM-on vs VM-off runs both show the memory picture and any
-	 * SELNULL hit. Remove this line + the RECON call sites for release. */
-	if (strstr(m, "RECON") != NULL) return 1;
+	/* fixes765 (2.0 release): keep ONLY the one-line-per-launch #207
+	 * partition-bounds diagnostic (still useful if a field user with a
+	 * high-RAM Mac reports a blank page). All the other RECON reconnaissance
+	 * (per-nav MEM/RX, the retired KEY/TAref/PAINT/OVL perf probes) and the
+	 * per-launch DIAG memory readings are dropped for release — re-enable via
+	 * MACSURF_NUCLEAR_LOG / MACSURF_VERBOSE_LOG when diagnosing a new bug. */
+	if (strstr(m, "RECON HEAP BOUNDS") != NULL) return 1;
 	if (strstr(m, "WATCHDOG") != NULL) return 1;
-	if (strstr(m, "DEFERRED") != NULL) return 1;
 	if (strstr(m, "TERMINAL") != NULL) return 1;
 	if (strstr(m, "exception") != NULL) return 1;
 	if (strstr(m, "crash") != NULL) return 1;
-	/* fixes680 (#207): targeted launch/cache/memory diagnostics. 'DIAG'
-	 * lines (memory readings, data-dir resolution) survive the crash-only
-	 * gate so a reporter's log shows how far launch got and the heap level.
-	 * Remove this line + the DIAG call sites for release. */
-	if (m[0] == 'D' && strncmp(m, "DIAG", 4) == 0) return 1;
 #ifdef MACSURF_SSL_LOG
 	/* fixes677 (#206) — SSL/fetch investigation. Surface the networking
 	 * lines so a UA-based or TLS-based http downgrade is visible: the
