@@ -75,3 +75,7 @@ browser/buildsystem/
 
 # User-uploaded debug logs (may contain sensitive data) — organized by date, never commit
 /builds/logs/
+
+# Python bytecode cache
+__pycache__/
+*.pyc
