@@ -250,9 +250,28 @@ macos9_colour_to_rgb(colour c, RGBColor *out)
 		unsigned int br = (unsigned int)((macos9_plot_backdrop >>  0) & 0xff);
 		unsigned int bgc = (unsigned int)((macos9_plot_backdrop >>  8) & 0xff);
 		unsigned int bb = (unsigned int)((macos9_plot_backdrop >> 16) & 0xff);
+		unsigned int fr_ = r, fg_ = g, fb_ = b;   /* fixes751: pre-composite fg */
 		r = (r * op + br * t) / 255u;
 		g = (g * op + bgc * t) / 255u;
 		b = (b * op + bb * t) / 255u;
+		/* fixes751 (#204) PROBE — a dark semi-transparent overlay is the
+		 * XenForo .p-navgroup rgba(20,20,20,.15) user-button/search fill.
+		 * Log fg, alpha, the backdrop it composited against, and the
+		 * result. If bd=255,255,255 the button flattened against WHITE
+		 * (the bug -> grey ~202); if bd~=23,79,121 it hit the nav blue
+		 * (correct). RECON prefix survives the perf log filter; dark-gated
+		 * and capped so it doesn't flood. */
+		if (fr_ < 60 && fg_ < 60 && fb_ < 60) {
+			static int recon_ovl_n = 0;
+			if (recon_ovl_n < 12) {
+				recon_ovl_n++;
+				macsurf_debug_log_writef(
+					"RECON OVL fg=%d,%d,%d a=%d bd=%d,%d,%d -> %d,%d,%d",
+					(int)fr_, (int)fg_, (int)fb_, (int)op,
+					(int)br, (int)bgc, (int)bb,
+					(int)r, (int)g, (int)b);
+			}
+		}
 	}
 
 	/* 8-bit -> 16-bit by replicating the byte (0xAB -> 0xABAB).

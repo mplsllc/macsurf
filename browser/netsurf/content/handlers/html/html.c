@@ -1378,6 +1378,57 @@ html_begin_conversion(html_content *htmlc)
 	}
 	dom_string_unref(node_name);
 
+	/* fixes743 (#204): flip has-no-js -> has-js (and no-js -> js) on the root
+	 * <html> BEFORE the cascade. Modernizr/XenForo gate their JS-enabled
+	 * styling behind a .has-js/.js class that a page script normally sets; we
+	 * HAVE JS (QuickJS), so setting it here means the progressive-enhancement
+	 * CSS applies on FIRST paint with no re-cascade — fixing the grey XenForo
+	 * account-nav + search boxes and hiding aria-hidden dropdown menus. A
+	 * single "no-js"->"js" pass handles both "has-no-js"->"has-js" and a bare
+	 * "no-js"->"js" token, and only shrinks the string so clen+1 always fits. */
+	{
+		dom_string *class_name = NULL;
+		if (dom_string_create((const uint8_t *) "class", 5, &class_name)
+				== DOM_NO_ERR && class_name != NULL) {
+			dom_string *cls = NULL;
+			if (dom_element_get_attribute(html, class_name, &cls)
+					== DOM_NO_ERR && cls != NULL) {
+				const char *cdata = dom_string_data(cls);
+				size_t clen = dom_string_byte_length(cls);
+				if (cdata != NULL && clen >= 5 &&
+				    strstr(cdata, "no-js") != NULL) {
+					char *buf = (char *) malloc(clen + 1);
+					if (buf != NULL) {
+						size_t si = 0, di = 0;
+						while (si < clen) {
+							if (si + 5 <= clen &&
+							    strncmp(cdata + si, "no-js", 5) == 0) {
+								buf[di++] = 'j';
+								buf[di++] = 's';
+								si += 5;
+							} else {
+								buf[di++] = cdata[si++];
+							}
+						}
+						{
+							dom_string *newcls = NULL;
+							if (dom_string_create(
+								(const uint8_t *) buf, di, &newcls)
+								== DOM_NO_ERR && newcls != NULL) {
+								(void) dom_element_set_attribute(
+									html, class_name, newcls);
+								dom_string_unref(newcls);
+							}
+						}
+						free(buf);
+					}
+				}
+				dom_string_unref(cls);
+			}
+			dom_string_unref(class_name);
+		}
+	}
+
 	/* Retrieve forms from parser */
 	htmlc->forms = html_forms_get_forms(htmlc->encoding,
 			(dom_html_document *) htmlc->document);

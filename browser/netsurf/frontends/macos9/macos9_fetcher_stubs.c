@@ -226,6 +226,20 @@ static const char css_internal[] =
 	"progress,meter{display:inline-block;width:10em;height:1em;"
 	"background:#ccc;border:1px inset #999}"
 	"noscript{display:block}"
+	/* fixes743 (#114) — HTML5 hidden attribute -> display:none generally.
+	 * Non-!important so the content-container rescue rules below re-show
+	 * article/main/section[hidden] (the JS-hydration pattern) via !important;
+	 * a bare <div>/<span>/<button hidden> that JS won't reveal stays hidden. */
+	"[hidden]{display:none}"
+	/* fixes746 (#204) — XenForo header account/search group renders grey. The
+	 * container .p-navgroup has TWO rules: an early background:rgba(20,20,20,
+	 * 0.15) overlay and a later background:none reset. MacSurf drops the `none`
+	 * reset AND composites the rgba against the page's #ebebeb (not the blue
+	 * behind it), so rgba(20,20,20,.15) over #ebebeb == #cacaca — exactly the
+	 * grey seen on the blue bar. Force the group + its iconic links transparent
+	 * so the blue .p-header/.p-nav shows through. */
+	".p-navgroup,.p-navgroup-link--iconic,.p-navgroup-link--search,"
+	".p-navgroup-link--user{background-color:transparent !important;border:0 !important}"
 	/* fixes168c — Modern-web rescue rules. Targeted at JS-required
 	 * overlay patterns and content-hidden-until-hydration patterns.
 	 * Selectors are narrow enough that legitimate uses are extremely

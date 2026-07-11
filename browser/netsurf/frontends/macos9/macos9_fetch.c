@@ -83,6 +83,14 @@ static const struct macos9_ua_rule macos9_ua_rules[] = {
 	{ "facebook.com",
 	  "Mozilla/5.0 (Mobile; LYF/F90M/LYF-F90M-000-02-44-130319; rv:48.0) Gecko/48.0 Firefox/48.0 KAIOS/2.5" }
 	/* add more host->UA overrides here */
+	/*
+	 * fixes741: macintoshrepository.org UA override REVERTED. fixes740 proved
+	 * the https->http 301 IS UA-gated — a modern Firefox UA keeps the server
+	 * on https — but the modern site it then serves is heavy and renders
+	 * poorly on MacSurf, whereas the default-UA http surface is lighter and
+	 * loads better. So we deliberately let it serve http. Do NOT re-add a
+	 * modern-UA override here.
+	 */
 };
 
 const char *macos9_user_agent_default(void)
