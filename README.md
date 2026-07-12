@@ -15,11 +15,6 @@
 </p>
 
 <p align="center">
-  <img src="screenshots/2.0-hero.png" alt="MacSurf 2.0 — Prettier. Faster. Puffin-er." width="300">
-  <img src="img/PuffyStars.gif" alt="" width="150" align="middle">
-</p>
-
-<p align="center">
   <img src="screenshots/macsurf-1.68-imac.jpg" alt="MacSurf 2.0 running on a Power Macintosh G3 iMac" width="760">
   <br>
   <em>MacSurf 2.0 on a Power Mac G3 iMac, rendering <a href="https://home.macsurf.org/">home.macsurf.org</a> over native HTTPS.</em>
@@ -65,30 +60,46 @@ Every shot below is a live site, captured on a Power Mac G3 running Mac OS 9.2.2
 <table>
 <tr>
 <td width="50%" align="center" valign="top"><img src="screenshots/2.0-68kmla.png" alt="68kmla.org forum"><br><strong>68kmla.org</strong><br><em>A full XenForo forum — logged in, full-width, posting replies.</em></td>
-<td width="50%" align="center" valign="top"><img src="screenshots/site-macintoshgarden.png" alt="Macintosh Garden"><br><strong>macintoshgarden.org</strong><br><em>The classic Mac abandonware library.</em></td>
+<td width="50%" align="center" valign="top"><img src="screenshots/2.0-ppcmla.png" alt="ppcmla.org forum"><br><strong>ppcmla.org</strong><br><em>Another full forum, over native HTTPS.</em></td>
 </tr>
 <tr>
 <td width="50%" align="center" valign="top"><img src="screenshots/2.0-macintoshrepository.png" alt="Macintosh Repository"><br><strong>macintoshrepository.org</strong><br><em>Thumbnails, tables, and all.</em></td>
-<td width="50%" align="center" valign="top"><img src="screenshots/site-machut.png" alt="Mac Hut"><br><strong>machut.net</strong><br><em>Vintage Mac archives, over native HTTPS.</em></td>
-</tr>
-<tr>
-<td width="50%" align="center" valign="top"><img src="screenshots/site-lobsters.png" alt="Lobsters thread about MacSurf"><br><strong>lobste.rs</strong><br><em>Reading its own thread — nested comments and all.</em></td>
 <td width="50%" align="center" valign="top"><img src="screenshots/2.0-duckduckgo.png" alt="DuckDuckGo search"><br><strong>DuckDuckGo</strong><br><em>Search that works.</em></td>
 </tr>
 </table>
 
-## New in 2.0 <img src="img/PuffyCircle.gif" alt="" width="34" align="absmiddle">
+## New in 2.0
 
 <table>
 <tr>
-<td width="50%" align="center" valign="top"><img src="screenshots/2.0-url-autocomplete.png" alt="Type-ahead address bar"><br><strong>Type-ahead address bar</strong><br><em>History- and bookmark-backed suggestions as you type.</em></td>
-<td width="50%" align="center" valign="top"><img src="screenshots/2.0-ppcmla.png" alt="ppcmla.org"><br><strong>ppcmla.org</strong><br><em>Another full forum, rendered over native HTTPS.</em></td>
+<td colspan="2" align="center" valign="top"><img src="screenshots/2.0-url-autocomplete.png" alt="Type-ahead address bar" width="720"><br><strong>Type-ahead address bar</strong><br><em>History- and bookmark-backed suggestions as you type.</em></td>
 </tr>
 <tr>
 <td width="50%" align="center" valign="top"><img src="screenshots/2.0-history.png" alt="History manager"><br><strong>History manager</strong><br><em>Day-grouped, searchable, clearable — a real window.</em></td>
 <td width="50%" align="center" valign="top"><img src="screenshots/2.0-bookmarks.png" alt="Bookmark manager"><br><strong>Bookmark manager</strong><br><em>Save, organize, and jump straight from the menu.</em></td>
 </tr>
 </table>
+
+<details>
+<summary><strong>Earlier shots</strong> — the same sites on previous builds</summary>
+
+<br>
+
+<table>
+<tr>
+<td width="50%" align="center" valign="top"><img src="screenshots/site-68kmla.png" alt="68kmla.org forum"><br><strong>68kmla.org</strong></td>
+<td width="50%" align="center" valign="top"><img src="screenshots/site-macintoshgarden.png" alt="Macintosh Garden"><br><strong>macintoshgarden.org</strong></td>
+</tr>
+<tr>
+<td width="50%" align="center" valign="top"><img src="screenshots/site-macintoshrepository.png" alt="Macintosh Repository"><br><strong>macintoshrepository.org</strong></td>
+<td width="50%" align="center" valign="top"><img src="screenshots/site-machut.png" alt="Mac Hut"><br><strong>machut.net</strong></td>
+</tr>
+<tr>
+<td width="50%" align="center" valign="top"><img src="screenshots/site-lobsters.png" alt="Lobsters thread about MacSurf"><br><strong>lobste.rs</strong></td>
+<td width="50%" align="center" valign="top"><img src="screenshots/site-duckduckgo.png" alt="DuckDuckGo search"><br><strong>DuckDuckGo</strong></td>
+</tr>
+</table>
+</details>
 
 <details>
 <summary><strong>How it got here</strong> — a couple of early milestones</summary>
