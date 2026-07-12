@@ -578,7 +578,21 @@ macos9_qt_decode_to_bitmap(GraphicsImportComponent gi,
 
 	GraphicsImportSetGWorld(gi, temp_gw, NULL);
 	GraphicsImportSetBoundsRect(gi, &tmp_bounds);
-	GraphicsImportDraw(gi);
+	{
+		/* WORK (#230): GraphicsImportDraw's result was being discarded,
+		 * so a QT decode failure (progressive JPEG / large APP1-EXIF /
+		 * finicky GIF on OS 9) silently painted the erased GWorld --
+		 * black for the alpha path -- with no signal. Capture + log it
+		 * (capped) so we can see which images fail and the QT error. */
+		long gi_draw_err = (long)GraphicsImportDraw(gi);
+		static int work_qt_n = 0;
+		if (gi_draw_err != 0 && work_qt_n < 24) {
+			work_qt_n++;
+			macsurf_debug_log_writef(
+				"WORK img: QT GraphicsImportDraw err=%ld bw=%d bh=%d alpha=%d",
+				gi_draw_err, (int)bw, (int)bh, (int)wants_alpha);
+		}
+	}
 
 	SetGWorld(save_port, save_gdh);
 
