@@ -1319,6 +1319,7 @@ extern void macos9_set_gradient_angle(uint16_t angle);
 #endif
 
 static colour html_redraw_opaque_backdrop(struct box *box, colour page_default);
+static colour html_redraw_precomposite_rgba(colour fill, colour backdrop);
 
 static bool html_redraw_background(int x, int y, struct box *box, float scale,
 		const struct rect *clip, colour *background_colour,
@@ -1899,20 +1900,22 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 			}
 			if (plot_colour) {
 #ifdef __MACOS9__
-				/* #227: set the composite backdrop IMMEDIATELY
-				 * before the fill so nothing can reset it in
-				 * between. A translucent (rgba) fill composites
+				/* #227: pre-composite a translucent (rgba) fill
 				 * against the nearest opaque-background ancestor
-				 * of the bg_box (`background`), not the page bg.
-				 * fill_colour carries transparency in its high
-				 * byte (non-zero => translucent). */
+				 * of the bg_box (`background`) HERE, and hand the
+				 * plotter an OPAQUE colour. This sidesteps the
+				 * fragile global macos9_plot_backdrop (which was
+				 * being read as the page bg by the time the fill
+				 * actually plotted). fill_colour transparency is
+				 * in its high byte (non-zero => translucent). */
 				if (((pstyle_fill_bg.fill_colour >> 24) & 0xff)
 						!= 0x00 && background != NULL) {
-					extern colour macos9_plot_backdrop;
-					macos9_plot_backdrop =
-						html_redraw_opaque_backdrop(
-							background,
-							*background_colour);
+					colour bd = html_redraw_opaque_backdrop(
+						background, *background_colour);
+					pstyle_fill_bg.fill_colour =
+						html_redraw_precomposite_rgba(
+							pstyle_fill_bg.fill_colour,
+							bd);
 				}
 #endif
 				/* fixes201: route through the bg-size tiling
@@ -2482,14 +2485,14 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 
 		if (plot_colour) {
 #ifdef __MACOS9__
-			/* #227: same backdrop fix as the block path, inline
-			 * variant — keyed to `box` (the styled inline box). */
+			/* #227: pre-composite (inline path), keyed to `box`. */
 			if (((pstyle_fill_bg.fill_colour >> 24) & 0xff) != 0x00
 					&& box != NULL) {
-				extern colour macos9_plot_backdrop;
-				macos9_plot_backdrop =
-					html_redraw_opaque_backdrop(box,
+				colour bd = html_redraw_opaque_backdrop(box,
 						*background_colour);
+				pstyle_fill_bg.fill_colour =
+					html_redraw_precomposite_rgba(
+						pstyle_fill_bg.fill_colour, bd);
 			}
 #endif
 			/* fixes201: gradient bg-size tile loop (inline path). */
@@ -3533,42 +3536,44 @@ static bool macsurf_box_node_is_canvas(struct box *box)
  * Walk box->parent for the first opaque background-color; fall back to
  * the supplied page default when no opaque ancestor exists.
  */
-static int recon_bd_n = 0; /* fixes775 #227 probe cap */
-
 static colour html_redraw_opaque_backdrop(struct box *box, colour page_default)
 {
 	struct box *a;
-	int d = 0;
-	int log_on = (recon_bd_n < 40);
 
 	for (a = box->parent; a != NULL; a = a->parent) {
 		css_color bg = 0;
-		uint8_t st = 99;
-		if (a->style != NULL)
-			st = css_computed_background_color(a->style, &bg);
-		if (log_on) {
-			recon_bd_n++;
-			macsurf_debug_log_writef(
-				"RECON OVL walk d=%d type=%d st=%d al=%d rgb=%d,%d,%d",
-				(int)d, (int)a->type, (int)st,
-				(int)((bg >> 24) & 0xff),
-				(int)((bg >> 16) & 0xff),
-				(int)((bg >> 8) & 0xff),
-				(int)(bg & 0xff));
-		}
 		if (a->style != NULL &&
-				st == CSS_BACKGROUND_COLOR_COLOR &&
+				css_computed_background_color(a->style, &bg) ==
+					CSS_BACKGROUND_COLOR_COLOR &&
 				((bg >> 24) & 0xff) == 0xff) {
-			if (log_on)
-				macsurf_debug_log_writef(
-					"RECON OVL walk MATCH d=%d", (int)d);
 			return nscss_color_to_ns(bg);
 		}
-		d++;
 	}
-	if (log_on)
-		macsurf_debug_log_writef("RECON OVL walk NONE d=%d", (int)d);
 	return page_default;
+}
+
+/**
+ * MacSurf (#227): composite a translucent NetSurf `fill` colour over an
+ * opaque `backdrop` and return the resulting OPAQUE colour, so the plotter
+ * paints the right tint without depending on the global backdrop. Both are
+ * NetSurf colours (0xTTBBGGRR); transparency is the high byte. Integer math
+ * only (max 255*255) — CW8 safe.
+ */
+static colour html_redraw_precomposite_rgba(colour fill, colour backdrop)
+{
+	unsigned int t  = (fill >> 24) & 0xff;   /* transparency */
+	unsigned int op = 255u - t;              /* alpha */
+	unsigned int fr = fill & 0xff;
+	unsigned int fg = (fill >> 8) & 0xff;
+	unsigned int fb = (fill >> 16) & 0xff;
+	unsigned int br = backdrop & 0xff;
+	unsigned int bgc = (backdrop >> 8) & 0xff;
+	unsigned int bb = (backdrop >> 16) & 0xff;
+	unsigned int rr = (fr * op + br * t) / 255u;
+	unsigned int rg = (fg * op + bgc * t) / 255u;
+	unsigned int rb = (fb * op + bb * t) / 255u;
+
+	return (colour)((rb << 16) | (rg << 8) | rr); /* T=0, opaque */
 }
 
 
