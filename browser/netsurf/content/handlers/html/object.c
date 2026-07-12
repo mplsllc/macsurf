@@ -565,15 +565,25 @@ html_object_callback(hlcache_handle *object,
 		break;
 	}
 
-	if (c->base.status == CONTENT_STATUS_READY &&
-	    c->base.active == 0 &&
+	if (c->base.active == 0 &&
 	    (event->type == CONTENT_MSG_LOADING ||
 	     event->type == CONTENT_MSG_DONE ||
-	     event->type == CONTENT_MSG_ERROR)) {
-		/* all objects have arrived */
+	     event->type == CONTENT_MSG_ERROR) &&
+	    (c->base.status == CONTENT_STATUS_READY ||
+	     c->base.status == CONTENT_STATUS_DONE)) {
+		/* All objects have arrived. #235: also fire this guaranteed
+		 * reflow when the parent is already DONE -- a viewport-lazy
+		 * image (#223) scrolled into view completes AFTER the page
+		 * flipped to DONE, so the READY-only guard used to skip it and
+		 * the throttled incremental branch could drop it with no retry,
+		 * leaving the image box collapsed (vertically squished) until
+		 * the next navigation. Its intrinsic dimensions are known at
+		 * convert, so one reflow here sizes the box. active==0 keeps
+		 * this coalesced (fires once per completed batch -- no storm). */
 		content__reformat(&c->base, false, c->base.available_width,
 				c->base.available_height);
-		content_set_done(&c->base);
+		if (c->base.status == CONTENT_STATUS_READY)
+			content_set_done(&c->base);
 	} else if (nsoption_bool(incremental_reflow) &&
 		   event->type == CONTENT_MSG_DONE &&
 		   box != NULL &&
