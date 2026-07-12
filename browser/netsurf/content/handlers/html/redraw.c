@@ -3494,6 +3494,33 @@ static bool macsurf_box_node_is_canvas(struct box *box)
 	return (e == DOM_NO_ERR && tt == DOM_HTML_ELEMENT_TYPE_CANVAS);
 }
 
+/**
+ * MacSurf (#227): the backdrop a translucent (rgba) background fill
+ * composites against is the nearest ancestor box with a fully-opaque
+ * background-color — NOT the threaded current_background_color, which
+ * mis-resolves to the page background through nested boxes on this fork
+ * (reproduced: a plain opaque div > rgba div renders grey, not tinted).
+ * Walk box->parent for the first opaque background-color; fall back to
+ * the supplied page default when no opaque ancestor exists.
+ */
+static colour html_redraw_opaque_backdrop(struct box *box, colour page_default)
+{
+	struct box *a;
+
+	for (a = box->parent; a != NULL; a = a->parent) {
+		css_color bg;
+		if (a->style == NULL)
+			continue;
+		if (css_computed_background_color(a->style, &bg) ==
+				CSS_BACKGROUND_COLOR_COLOR &&
+				((bg >> 24) & 0xff) == 0xff) {
+			return nscss_color_to_ns(bg);
+		}
+	}
+	return page_default;
+}
+
+
 bool html_redraw_box(const html_content *html, struct box *box,
 		int x_parent, int y_parent,
 		const struct rect *clip, const float scale,
@@ -3530,7 +3557,22 @@ bool html_redraw_box(const html_content *html, struct box *box,
 	 * resolved background before the border pass below. */
 	{
 		extern colour macos9_plot_backdrop;
+		css_color obg;
 		macos9_plot_backdrop = current_background_color;
+		/* #227: if THIS box has a translucent background-color, its fill
+		 * must composite against the real element behind it (nearest
+		 * opaque ancestor), not the mis-threaded page background. Only
+		 * walk in that case so opaque boxes stay on the fast path. */
+		if (box->style != NULL &&
+				css_computed_background_color(box->style, &obg) ==
+					CSS_BACKGROUND_COLOR_COLOR) {
+			unsigned int oa = (obg >> 24) & 0xff;
+			if (oa != 0xff && oa != 0x00) {
+				macos9_plot_backdrop =
+					html_redraw_opaque_backdrop(box,
+						current_background_color);
+			}
+		}
 	}
 #endif
 
