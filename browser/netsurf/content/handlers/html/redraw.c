@@ -996,12 +996,52 @@ text_redraw(const char *utf8_text,
  * \return true if successful, false otherwise
  */
 
+/**
+ * MacSurf (#252): resolve the CSS accent-color for a form-control box.
+ * Returns true and writes the tint colour when accent-color is an explicit
+ * colour or currentColor; returns false for auto/inherit (keep the default
+ * platinum "blob" styling). Not blended — the selection blob is a solid
+ * fill, so a crisp colour reads better than an antialiased one.
+ */
+static bool html_redraw_accent_colour(struct box *box, colour *out)
+{
+	css_color c;
+	uint8_t st;
+
+	if (box == NULL || box->style == NULL) {
+		return false;
+	}
+	st = css_computed_accent_color(box->style, &c);
+	if (st == CSS_ACCENT_COLOR_COLOR) {
+		*out = nscss_color_to_ns(c);
+		return true;
+	}
+	if (st == CSS_ACCENT_COLOR_CURRENT_COLOR) {
+		css_computed_color(box->style, &c);
+		*out = nscss_color_to_ns(c);
+		return true;
+	}
+	return false;
+}
+
+
 static bool html_redraw_checkbox(int x, int y, int width, int height,
-		bool selected, const struct redraw_context *ctx)
+		bool selected, bool accent_set, colour accent_col,
+		const struct redraw_context *ctx)
 {
 	double z;
 	nserror res;
 	struct rect rect;
+	/* #252: local copies of the selection-blob styles so accent-color
+	 * can override the fill/stroke colour without touching the shared
+	 * static plot styles. */
+	plot_style_t blob_fill = *plot_style_fill_wblobc;
+	plot_style_t blob_stroke = *plot_style_stroke_wblobc;
+
+	if (accent_set) {
+		blob_fill.fill_colour = accent_col;
+		blob_stroke.stroke_colour = accent_col;
+	}
 
 	z = width * 0.15;
 	if (z == 0) {
@@ -1055,7 +1095,7 @@ static bool html_redraw_checkbox(int x, int y, int width, int height,
 			rect.y0 = y + z + z;
 			rect.x1 = x + width - z;
 			rect.y1 = y + height - z;
-			res = ctx->plot->rectangle(ctx, plot_style_fill_wblobc, &rect);
+			res = ctx->plot->rectangle(ctx, &blob_fill, &rect);
 			if (res != NSERROR_OK) {
 				return false;
 			}
@@ -1065,7 +1105,7 @@ static bool html_redraw_checkbox(int x, int y, int width, int height,
 			rect.y0 = y + z;
 			rect.x1 = x + (z * 3);
 			rect.y1 = y + height - z;
-			res = ctx->plot->line(ctx, plot_style_stroke_wblobc, &rect);
+			res = ctx->plot->line(ctx, &blob_stroke, &rect);
 			if (res != NSERROR_OK) {
 				return false;
 			}
@@ -1074,7 +1114,7 @@ static bool html_redraw_checkbox(int x, int y, int width, int height,
 			rect.y0 = y + height - z;
 			rect.x1 = x + z + z;
 			rect.y1 = y + (height / 2);
-			res = ctx->plot->line(ctx, plot_style_stroke_wblobc, &rect);
+			res = ctx->plot->line(ctx, &blob_stroke, &rect);
 			if (res != NSERROR_OK) {
 				return false;
 			}
@@ -1096,9 +1136,16 @@ static bool html_redraw_checkbox(int x, int y, int width, int height,
  * \return true if successful, false otherwise
  */
 static bool html_redraw_radio(int x, int y, int width, int height,
-		bool selected, const struct redraw_context *ctx)
+		bool selected, bool accent_set, colour accent_col,
+		const struct redraw_context *ctx)
 {
 	nserror res;
+	/* #252: local copy of the selection-dot style for accent-color. */
+	plot_style_t blob_fill = *plot_style_fill_wblobc;
+
+	if (accent_set) {
+		blob_fill.fill_colour = accent_col;
+	}
 
 	/* plot background of radio button */
 	res = ctx->plot->disc(ctx,
@@ -1137,7 +1184,7 @@ static bool html_redraw_radio(int x, int y, int width, int height,
 	if (selected) {
 		/* plot selection blob */
 		res = ctx->plot->disc(ctx,
-				      plot_style_fill_wblobc,
+				      &blob_fill,
 				      x + width * 0.5,
 				      y + height * 0.5,
 				      width * 0.3 - 1);
@@ -4419,13 +4466,19 @@ bool html_redraw_box(const html_content *html, struct box *box,
 				y + padding_top, &r, ctx);
 
 	} else if (box->gadget && box->gadget->type == GADGET_CHECKBOX) {
+		colour accent_col = 0;
+		bool accent_set = html_redraw_accent_colour(box, &accent_col);
 		if (!html_redraw_checkbox(x + padding_left, y + padding_top,
-				width, height, box->gadget->selected, ctx))
+				width, height, box->gadget->selected,
+				accent_set, accent_col, ctx))
 			return false;
 
 	} else if (box->gadget && box->gadget->type == GADGET_RADIO) {
+		colour accent_col = 0;
+		bool accent_set = html_redraw_accent_colour(box, &accent_col);
 		if (!html_redraw_radio(x + padding_left, y + padding_top,
-				width, height, box->gadget->selected, ctx))
+				width, height, box->gadget->selected,
+				accent_set, accent_col, ctx))
 			return false;
 
 	} else if (box->gadget && box->gadget->type == GADGET_FILE) {
