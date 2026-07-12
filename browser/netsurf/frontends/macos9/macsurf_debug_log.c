@@ -610,6 +610,10 @@ macsurf_log_is_crash_report(const char *m)
 	/* fixes769 (#232) — let the mime-recon lines through the crash-only
 	 * gate so a downloaded-instead-of-rendered page is diagnosable. */
 	if (strstr(m, "RECON MIME") != NULL) return 1;
+	/* fixes773 (#227) — let the rgba-overlay backdrop probe through the
+	 * crash-only gate so we can see which backdrop a translucent fill
+	 * composites against (bug: body bg instead of the real parent). */
+	if (strstr(m, "RECON OVL") != NULL) return 1;
 	if (strstr(m, "WATCHDOG") != NULL) return 1;
 	if (strstr(m, "TERMINAL") != NULL) return 1;
 	if (strstr(m, "exception") != NULL) return 1;

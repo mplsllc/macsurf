@@ -263,7 +263,7 @@ macos9_colour_to_rgb(colour c, RGBColor *out)
 		 * and capped so it doesn't flood. */
 		if (fr_ < 60 && fg_ < 60 && fb_ < 60) {
 			static int recon_ovl_n = 0;
-			if (recon_ovl_n < 12) {
+			if (recon_ovl_n < 48) { /* fixes773 (#227): raised 12->48 so all t.html RG cards log across repaints */
 				recon_ovl_n++;
 				macsurf_debug_log_writef(
 					"RECON OVL fg=%d,%d,%d a=%d bd=%d,%d,%d -> %d,%d,%d",
