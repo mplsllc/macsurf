@@ -1850,22 +1850,6 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 			int32_t grad_col_late = 0;
 			*background_colour = nscss_color_to_ns(bgcol);
 			pstyle_fill_bg.fill_colour = *background_colour;
-#ifdef __MACOS9__
-			/* #227: a translucent (rgba) background fill must
-			 * composite against the real element behind this
-			 * bg_box -- the nearest opaque-background ancestor --
-			 * not the page background. Keyed to `background` (the
-			 * bg_box actually being filled), which is where the
-			 * translucent colour comes from; the walked `box` may
-			 * be an ancestor via background propagation, which is
-			 * why an entry-keyed fix never fired. */
-			if (((bgcol >> 24) & 0xff) != 0xff) {
-				extern colour macos9_plot_backdrop;
-				macos9_plot_backdrop =
-					html_redraw_opaque_backdrop(background,
-						*background_colour);
-			}
-#endif
 			/* MacSurf fixes40+45 -- -macsurf-gradient takes
 			 * precedence over background-color when the rule
 			 * also carries a `background: linear-gradient(...)`
@@ -1914,6 +1898,23 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 #endif
 			}
 			if (plot_colour) {
+#ifdef __MACOS9__
+				/* #227: set the composite backdrop IMMEDIATELY
+				 * before the fill so nothing can reset it in
+				 * between. A translucent (rgba) fill composites
+				 * against the nearest opaque-background ancestor
+				 * of the bg_box (`background`), not the page bg.
+				 * fill_colour carries transparency in its high
+				 * byte (non-zero => translucent). */
+				if (((pstyle_fill_bg.fill_colour >> 24) & 0xff)
+						!= 0x00 && background != NULL) {
+					extern colour macos9_plot_backdrop;
+					macos9_plot_backdrop =
+						html_redraw_opaque_backdrop(
+							background,
+							*background_colour);
+				}
+#endif
 				/* fixes201: route through the bg-size tiling
 				 * helper so gradient backgrounds repeat at
 				 * the requested tile size when bg-size is set
@@ -2480,6 +2481,17 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 		}
 
 		if (plot_colour) {
+#ifdef __MACOS9__
+			/* #227: same backdrop fix as the block path, inline
+			 * variant — keyed to `box` (the styled inline box). */
+			if (((pstyle_fill_bg.fill_colour >> 24) & 0xff) != 0x00
+					&& box != NULL) {
+				extern colour macos9_plot_backdrop;
+				macos9_plot_backdrop =
+					html_redraw_opaque_backdrop(box,
+						*background_colour);
+			}
+#endif
 			/* fixes201: gradient bg-size tile loop (inline path). */
 			res = html_redraw_paint_gradient_tiled(ctx,
 					&pstyle_fill_bg, &r,
