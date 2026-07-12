@@ -1318,6 +1318,8 @@ extern void macos9_set_gradient_stops(const int32_t *stops);
 extern void macos9_set_gradient_angle(uint16_t angle);
 #endif
 
+static colour html_redraw_opaque_backdrop(struct box *box, colour page_default);
+
 static bool html_redraw_background(int x, int y, struct box *box, float scale,
 		const struct rect *clip, colour *background_colour,
 		struct box *background,
@@ -1848,6 +1850,22 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 			int32_t grad_col_late = 0;
 			*background_colour = nscss_color_to_ns(bgcol);
 			pstyle_fill_bg.fill_colour = *background_colour;
+#ifdef __MACOS9__
+			/* #227: a translucent (rgba) background fill must
+			 * composite against the real element behind this
+			 * bg_box -- the nearest opaque-background ancestor --
+			 * not the page background. Keyed to `background` (the
+			 * bg_box actually being filled), which is where the
+			 * translucent colour comes from; the walked `box` may
+			 * be an ancestor via background propagation, which is
+			 * why an entry-keyed fix never fired. */
+			if (((bgcol >> 24) & 0xff) != 0xff) {
+				extern colour macos9_plot_backdrop;
+				macos9_plot_backdrop =
+					html_redraw_opaque_backdrop(background,
+						*background_colour);
+			}
+#endif
 			/* MacSurf fixes40+45 -- -macsurf-gradient takes
 			 * precedence over background-color when the rule
 			 * also carries a `background: linear-gradient(...)`
@@ -3578,32 +3596,7 @@ bool html_redraw_box(const html_content *html, struct box *box,
 	 * resolved background before the border pass below. */
 	{
 		extern colour macos9_plot_backdrop;
-		css_color obg;
 		macos9_plot_backdrop = current_background_color;
-		/* #227: if THIS box has a translucent background-color, its fill
-		 * must composite against the real element behind it (nearest
-		 * opaque ancestor), not the mis-threaded page background. Only
-		 * walk in that case so opaque boxes stay on the fast path. */
-		if (box->style != NULL &&
-				css_computed_background_color(box->style, &obg) ==
-					CSS_BACKGROUND_COLOR_COLOR) {
-			unsigned int oa = (obg >> 24) & 0xff;
-			if (recon_bd_n < 40 && oa != 0xff) {
-				macsurf_debug_log_writef(
-					"RECON OVL gate box type=%d own al=%d rgb=%d,%d,%d cbc=%d,%d,%d",
-					(int)box->type, (int)oa,
-					(int)((obg >> 16) & 0xff),
-					(int)((obg >> 8) & 0xff), (int)(obg & 0xff),
-					(int)(current_background_color & 0xff),
-					(int)((current_background_color >> 8) & 0xff),
-					(int)((current_background_color >> 16) & 0xff));
-			}
-			if (oa != 0xff && oa != 0x00) {
-				macos9_plot_backdrop =
-					html_redraw_opaque_backdrop(box,
-						current_background_color);
-			}
-		}
 	}
 #endif
 
