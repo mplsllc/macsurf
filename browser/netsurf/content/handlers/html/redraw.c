@@ -2609,7 +2609,7 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 static bool
 html_redraw_decoration_run(const struct redraw_context *ctx,
 		plot_style_t *ps, int x0, int y0, int x1,
-		uint8_t dstyle)
+		uint8_t dstyle, int dthick)
 {
 	struct rect r;
 	int x;
@@ -2618,6 +2618,21 @@ html_redraw_decoration_run(const struct redraw_context *ctx,
 	if (x1 <= x0) {
 		return true;
 	}
+
+	/* #44: thickness > 1 — draw the (single-line) styles as `dthick`
+	 * stacked 1px lines. double/wavy carry their own vertical extent,
+	 * so thickness only stacks the solid/dotted/dashed forms. */
+	if (dthick > 1 && dstyle != CSS_TEXT_DECORATION_STYLE_DOUBLE &&
+			dstyle != CSS_TEXT_DECORATION_STYLE_WAVY) {
+		int i;
+		for (i = 0; i < dthick; i++) {
+			if (!html_redraw_decoration_run(ctx, ps, x0, y0 + i, x1,
+					dstyle, 1))
+				return false;
+		}
+		return true;
+	}
+
 	r.y0 = y0;
 	r.y1 = y0;
 
@@ -2689,6 +2704,7 @@ html_redraw_text_decoration_inline(struct box *box,
 				   colour colour,
 				   float ratio,
 				   uint8_t dstyle,
+				   int dthick,
 				   const struct redraw_context *ctx)
 {
 	struct box *c;
@@ -2711,7 +2727,7 @@ html_redraw_text_decoration_inline(struct box *box,
 		rect.y0 = (y + c->y + c->height * ratio) * scale;
 		rect.x1 = (x + c->x + c->width) * scale;
 		if (!html_redraw_decoration_run(ctx, &plot_style_box,
-				rect.x0, rect.y0, rect.x1, dstyle)) {
+				rect.x0, rect.y0, rect.x1, dstyle, dthick)) {
 			return false;
 		}
 	}
@@ -2739,6 +2755,7 @@ html_redraw_text_decoration_block(struct box *box,
 				  colour colour,
 				  float ratio,
 				  uint8_t dstyle,
+				  int dthick,
 				  const struct redraw_context *ctx)
 {
 	struct box *c;
@@ -2758,13 +2775,15 @@ html_redraw_text_decoration_block(struct box *box,
 			rect.y0 = (y + c->y + c->height * ratio) * scale;
 			rect.x1 = (x + c->x + c->width) * scale;
 			if (!html_redraw_decoration_run(ctx, &plot_style_box,
-					rect.x0, rect.y0, rect.x1, dstyle)) {
+					rect.x0, rect.y0, rect.x1, dstyle,
+					dthick)) {
 				return false;
 			}
 		} else if ((c->type == BOX_INLINE_CONTAINER) || (c->type == BOX_BLOCK)) {
 			if (!html_redraw_text_decoration_block(c,
 					x + c->x, y + c->y,
-					scale, colour, ratio, dstyle, ctx))
+					scale, colour, ratio, dstyle,
+					dthick, ctx))
 				return false;
 		}
 	}
@@ -2798,6 +2817,7 @@ static bool html_redraw_text_decoration(struct box *box,
 	css_color dcol;
 	uint8_t dcstatus;
 	uint8_t dstyle;
+	int dthick;
 
 	css_computed_color(box->style, &col);
 	fgcol = nscss_color_to_ns(col);
@@ -2812,6 +2832,14 @@ static bool html_redraw_text_decoration(struct box *box,
 	/* #249: text-decoration-style (solid/double/dotted/dashed/wavy). */
 	dstyle = css_computed_text_decoration_style(box->style);
 
+	/* #44/#249: text-decoration-thickness (px; 0 = auto/from-font).
+	 * Clamp to a sane 1..4 device px; auto stays 1px. */
+	dthick = (int)css_computed_text_decoration_thickness(box->style);
+	if (dthick <= 0)
+		dthick = 1;
+	else if (dthick > 4)
+		dthick = 4;
+
 	/* antialias colour for under/overline */
 	if (html_redraw_printing == false)
 		fgcol = blend_colour(background_colour, fgcol);
@@ -2824,7 +2852,8 @@ static bool html_redraw_text_decoration(struct box *box,
 					decoration[i])
 				if (!html_redraw_text_decoration_inline(box,
 						x_parent, y_parent, scale,
-						fgcol, line_ratio[i], dstyle, ctx))
+						fgcol, line_ratio[i], dstyle,
+						dthick, ctx))
 					return false;
 	} else {
 		for (i = 0; i != NOF_ELEMENTS(decoration); i++)
@@ -2834,7 +2863,8 @@ static bool html_redraw_text_decoration(struct box *box,
 						x_parent + box->x,
 						y_parent + box->y,
 						scale,
-						fgcol, line_ratio[i], dstyle, ctx))
+						fgcol, line_ratio[i], dstyle,
+						dthick, ctx))
 					return false;
 	}
 

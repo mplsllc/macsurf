@@ -66,8 +66,12 @@ css_error css__parse_text_decoration_thickness(css_language *c,
 		error = css__stylesheet_style_appendOPV(result,
 				CSS_PROP_TEXT_DECORATION_THICKNESS, 0,
 				TEXT_DECORATION_THICKNESS_AUTO);
-	} else if (token->type == CSS_TOKEN_NUMBER &&
+	} else if ((token->type == CSS_TOKEN_NUMBER ||
+			token->type == CSS_TOKEN_DIMENSION) &&
 			token->idata != NULL) {
+		/* #44 follow-up: accept `Npx` dimension form too, not just a
+		 * bare number. css__number_from_lwc_string parses the numeric
+		 * prefix ("2" of "2px"); the unit is treated as px. */
 		size_t consumed = 0;
 		css_fixed num;
 		int32_t n;
