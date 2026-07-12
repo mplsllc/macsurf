@@ -3503,20 +3503,41 @@ static bool macsurf_box_node_is_canvas(struct box *box)
  * Walk box->parent for the first opaque background-color; fall back to
  * the supplied page default when no opaque ancestor exists.
  */
+static int recon_bd_n = 0; /* fixes775 #227 probe cap */
+
 static colour html_redraw_opaque_backdrop(struct box *box, colour page_default)
 {
 	struct box *a;
+	int d = 0;
+	int log_on = (recon_bd_n < 40);
 
 	for (a = box->parent; a != NULL; a = a->parent) {
-		css_color bg;
-		if (a->style == NULL)
-			continue;
-		if (css_computed_background_color(a->style, &bg) ==
-				CSS_BACKGROUND_COLOR_COLOR &&
+		css_color bg = 0;
+		uint8_t st = 99;
+		if (a->style != NULL)
+			st = css_computed_background_color(a->style, &bg);
+		if (log_on) {
+			recon_bd_n++;
+			macsurf_debug_log_writef(
+				"RECON OVL walk d=%d type=%d st=%d al=%d rgb=%d,%d,%d",
+				(int)d, (int)a->type, (int)st,
+				(int)((bg >> 24) & 0xff),
+				(int)((bg >> 16) & 0xff),
+				(int)((bg >> 8) & 0xff),
+				(int)(bg & 0xff));
+		}
+		if (a->style != NULL &&
+				st == CSS_BACKGROUND_COLOR_COLOR &&
 				((bg >> 24) & 0xff) == 0xff) {
+			if (log_on)
+				macsurf_debug_log_writef(
+					"RECON OVL walk MATCH d=%d", (int)d);
 			return nscss_color_to_ns(bg);
 		}
+		d++;
 	}
+	if (log_on)
+		macsurf_debug_log_writef("RECON OVL walk NONE d=%d", (int)d);
 	return page_default;
 }
 
@@ -3567,6 +3588,16 @@ bool html_redraw_box(const html_content *html, struct box *box,
 				css_computed_background_color(box->style, &obg) ==
 					CSS_BACKGROUND_COLOR_COLOR) {
 			unsigned int oa = (obg >> 24) & 0xff;
+			if (recon_bd_n < 40 && oa != 0xff) {
+				macsurf_debug_log_writef(
+					"RECON OVL gate box type=%d own al=%d rgb=%d,%d,%d cbc=%d,%d,%d",
+					(int)box->type, (int)oa,
+					(int)((obg >> 16) & 0xff),
+					(int)((obg >> 8) & 0xff), (int)(obg & 0xff),
+					(int)(current_background_color & 0xff),
+					(int)((current_background_color >> 8) & 0xff),
+					(int)((current_background_color >> 16) & 0xff));
+			}
 			if (oa != 0xff && oa != 0x00) {
 				macos9_plot_backdrop =
 					html_redraw_opaque_backdrop(box,
