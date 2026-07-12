@@ -2519,6 +2519,76 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 
 
 /**
+ * MacSurf (#249): draw a single horizontal decoration run in the requested
+ * text-decoration-style. The macos9 plotter's line op is solid-only (plain
+ * MoveTo/LineTo, no pen pattern), so dotted/dashed/double/wavy are emitted
+ * here as multiple short plot->line segments. Keeps the whole feature in
+ * redraw.c with no plotter/pen-state risk. \p y0 is the (already scaled)
+ * baseline for the decoration; the rect is horizontal (y0 == y1).
+ */
+static bool
+html_redraw_decoration_run(const struct redraw_context *ctx,
+		plot_style_t *ps, int x0, int y0, int x1,
+		uint8_t dstyle)
+{
+	struct rect r;
+	int x;
+	nserror res;
+
+	if (x1 <= x0) {
+		return true;
+	}
+	r.y0 = y0;
+	r.y1 = y0;
+
+	switch (dstyle) {
+	case CSS_TEXT_DECORATION_STYLE_DOUBLE:
+		r.x0 = x0; r.x1 = x1;
+		res = ctx->plot->line(ctx, ps, &r);
+		if (res != NSERROR_OK) return false;
+		r.y0 = y0 + 2; r.y1 = y0 + 2;
+		r.x0 = x0; r.x1 = x1;
+		return ctx->plot->line(ctx, ps, &r) == NSERROR_OK;
+
+	case CSS_TEXT_DECORATION_STYLE_DOTTED:
+		for (x = x0; x < x1; x += 3) {
+			r.x0 = x;
+			r.x1 = (x + 1 < x1) ? x + 1 : x1;
+			res = ctx->plot->line(ctx, ps, &r);
+			if (res != NSERROR_OK) return false;
+		}
+		return true;
+
+	case CSS_TEXT_DECORATION_STYLE_DASHED:
+		for (x = x0; x < x1; x += 6) {
+			r.x0 = x;
+			r.x1 = (x + 3 < x1) ? x + 3 : x1;
+			res = ctx->plot->line(ctx, ps, &r);
+			if (res != NSERROR_OK) return false;
+		}
+		return true;
+
+	case CSS_TEXT_DECORATION_STYLE_WAVY:
+		/* V1 approximation: 2px zigzag between y and y+1. True wavy
+		 * needs an anti-aliased sine QuickDraw hairlines can't draw. */
+		for (x = x0; x < x1; x += 2) {
+			r.y0 = r.y1 = y0 + (((x - x0) >> 1) & 1);
+			r.x0 = x;
+			r.x1 = (x + 1 < x1) ? x + 1 : x1;
+			res = ctx->plot->line(ctx, ps, &r);
+			if (res != NSERROR_OK) return false;
+		}
+		return true;
+
+	case CSS_TEXT_DECORATION_STYLE_SOLID:
+	default:
+		r.x0 = x0; r.x1 = x1;
+		return ctx->plot->line(ctx, ps, &r) == NSERROR_OK;
+	}
+}
+
+
+/**
  * Plot text decoration for an inline box.
  *
  * \param  box     box to plot decorations for, of type BOX_INLINE
@@ -2527,6 +2597,7 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
  * \param  scale   scale for redraw
  * \param  colour  colour for decorations
  * \param  ratio   position of line as a ratio of line height
+ * \param  dstyle  text-decoration-style (#249)
  * \param  ctx	   current redraw context
  * \return true if successful, false otherwise
  */
@@ -2537,10 +2608,10 @@ html_redraw_text_decoration_inline(struct box *box,
 				   float scale,
 				   colour colour,
 				   float ratio,
+				   uint8_t dstyle,
 				   const struct redraw_context *ctx)
 {
 	struct box *c;
-	nserror res;
 	struct rect rect;
 	/* MacSurf: positional init (CW8 C89). plot_style_t order:
 	 * stroke_type, stroke_width, stroke_colour, fill_type, fill_colour. */
@@ -2559,9 +2630,8 @@ html_redraw_text_decoration_inline(struct box *box,
 		rect.x0 = (x + c->x) * scale;
 		rect.y0 = (y + c->y + c->height * ratio) * scale;
 		rect.x1 = (x + c->x + c->width) * scale;
-		rect.y1 = (y + c->y + c->height * ratio) * scale;
-		res = ctx->plot->line(ctx, &plot_style_box, &rect);
-		if (res != NSERROR_OK) {
+		if (!html_redraw_decoration_run(ctx, &plot_style_box,
+				rect.x0, rect.y0, rect.x1, dstyle)) {
 			return false;
 		}
 	}
@@ -2588,10 +2658,10 @@ html_redraw_text_decoration_block(struct box *box,
 				  float scale,
 				  colour colour,
 				  float ratio,
+				  uint8_t dstyle,
 				  const struct redraw_context *ctx)
 {
 	struct box *c;
-	nserror res;
 	struct rect rect;
 	/* MacSurf: positional init (CW8 C89). plot_style_t order:
 	 * stroke_type, stroke_width, stroke_colour, fill_type, fill_colour. */
@@ -2607,15 +2677,14 @@ html_redraw_text_decoration_block(struct box *box,
 			rect.x0 = (x + c->x) * scale;
 			rect.y0 = (y + c->y + c->height * ratio) * scale;
 			rect.x1 = (x + c->x + c->width) * scale;
-			rect.y1 = (y + c->y + c->height * ratio) * scale;
-			res = ctx->plot->line(ctx, &plot_style_box, &rect);
-			if (res != NSERROR_OK) {
+			if (!html_redraw_decoration_run(ctx, &plot_style_box,
+					rect.x0, rect.y0, rect.x1, dstyle)) {
 				return false;
 			}
 		} else if ((c->type == BOX_INLINE_CONTAINER) || (c->type == BOX_BLOCK)) {
 			if (!html_redraw_text_decoration_block(c,
 					x + c->x, y + c->y,
-					scale, colour, ratio, ctx))
+					scale, colour, ratio, dstyle, ctx))
 				return false;
 		}
 	}
@@ -2646,9 +2715,22 @@ static bool html_redraw_text_decoration(struct box *box,
 	colour fgcol;
 	unsigned int i;
 	css_color col;
+	css_color dcol;
+	uint8_t dcstatus;
+	uint8_t dstyle;
 
 	css_computed_color(box->style, &col);
 	fgcol = nscss_color_to_ns(col);
+
+	/* #249: text-decoration-color overrides the text colour for the
+	 * decoration lines. CURRENT_COLOR (the default) keeps the text
+	 * colour we just resolved. */
+	dcstatus = css_computed_text_decoration_color(box->style, &dcol);
+	if (dcstatus == CSS_TEXT_DECORATION_COLOR_COLOR)
+		fgcol = nscss_color_to_ns(dcol);
+
+	/* #249: text-decoration-style (solid/double/dotted/dashed/wavy). */
+	dstyle = css_computed_text_decoration_style(box->style);
 
 	/* antialias colour for under/overline */
 	if (html_redraw_printing == false)
@@ -2662,7 +2744,7 @@ static bool html_redraw_text_decoration(struct box *box,
 					decoration[i])
 				if (!html_redraw_text_decoration_inline(box,
 						x_parent, y_parent, scale,
-						fgcol, line_ratio[i], ctx))
+						fgcol, line_ratio[i], dstyle, ctx))
 					return false;
 	} else {
 		for (i = 0; i != NOF_ELEMENTS(decoration); i++)
@@ -2672,7 +2754,7 @@ static bool html_redraw_text_decoration(struct box *box,
 						x_parent + box->x,
 						y_parent + box->y,
 						scale,
-						fgcol, line_ratio[i], ctx))
+						fgcol, line_ratio[i], dstyle, ctx))
 					return false;
 	}
 
