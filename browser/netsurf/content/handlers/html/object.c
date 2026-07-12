@@ -285,6 +285,20 @@ html_object_callback(hlcache_handle *object,
 
 		html_object_done(box, object, o->background);
 
+		/* WORK (#235): show the box height vs the object's intrinsic
+		 * height the moment the image finishes, plus parent status /
+		 * active count — so we can see whether the box is collapsed and
+		 * whether a reflow will follow. */
+		if (box != NULL && !o->background) {
+			macsurf_debug_log_writef(
+				"WORK img: DONE boxh=%d boxw=%d objh=%d objw=%d rdim=%d status=%d active=%d",
+				(int)box->height, (int)box->width,
+				(int)content_get_height(object),
+				(int)content_get_width(object),
+				(int)((box->flags & REPLACE_DIM) != 0),
+				(int)c->base.status, (int)c->base.active);
+		}
+
 		if (c->base.status != CONTENT_STATUS_LOADING &&
 				box->flags & REPLACE_DIM) {
 			union content_msg_data data;
@@ -580,6 +594,9 @@ html_object_callback(hlcache_handle *object,
 		 * the next navigation. Its intrinsic dimensions are known at
 		 * convert, so one reflow here sizes the box. active==0 keeps
 		 * this coalesced (fires once per completed batch -- no storm). */
+		macsurf_debug_log_writef(
+			"WORK img: guaranteed-reflow (status=%d event=%d) -- #235 late-image path is status==DONE",
+			(int)c->base.status, (int)event->type);
 		content__reformat(&c->base, false, c->base.available_width,
 				c->base.available_height);
 		if (c->base.status == CONTENT_STATUS_READY)

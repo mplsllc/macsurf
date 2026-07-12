@@ -610,6 +610,12 @@ macsurf_log_is_crash_report(const char *m)
 	/* fixes769 (#232) — let the mime-recon lines through the crash-only
 	 * gate so a downloaded-instead-of-rendered page is diagnosable. */
 	if (strstr(m, "RECON MIME") != NULL) return 1;
+	/* WORK: dedicated always-on channel for whatever feature/bug is
+	 * currently under development. Prefix any diagnostic with "WORK "
+	 * and it passes the failures-only gate so each build's active-work
+	 * behaviour is visible without re-whitelisting per feature. Keep
+	 * WORK lines few and remove them once a fix is verified. */
+	if (strstr(m, "WORK ") != NULL) return 1;
 	if (strstr(m, "WATCHDOG") != NULL) return 1;
 	if (strstr(m, "TERMINAL") != NULL) return 1;
 	if (strstr(m, "exception") != NULL) return 1;
