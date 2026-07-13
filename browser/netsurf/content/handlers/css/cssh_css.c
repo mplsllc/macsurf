@@ -5012,6 +5012,12 @@ static const struct {
 	{ "inset-block-end",      15, "bottom",            6 },
 	{ "inline-size",          11, "width",             5 },
 	{ "block-size",           10, "height",            6 },
+	/* #247: min/max logical sizing — the one gap in the fixes277 table.
+	 * All physical names are shorter, so the in-place space-pad holds. */
+	{ "min-inline-size",      15, "min-width",         9 },
+	{ "max-inline-size",      15, "max-width",         9 },
+	{ "min-block-size",       14, "min-height",       10 },
+	{ "max-block-size",       14, "max-height",       10 },
 	{ NULL, 0, NULL, 0 }
 };
 
