@@ -4007,6 +4007,29 @@ macsurf__rewrite_inset(const char *data, size_t in_size, size_t *out_size_p)
 		static const size_t FIELD_LENS[4] = {4, 6, 7, 5};
 		int k;
 
+		/* Copy CSS comments verbatim -- an "inset" written inside a
+		 * comment must not be treated as a property; otherwise the
+		 * value scan runs past the comment close and eats the following
+		 * rule (fixes801g, same class as the shorthand expander fix). */
+		if (data[i] == '/' && i + 1 < in_size && data[i + 1] == '*') {
+			if (out_pos + 2 >= cap) goto grow_fail;
+			out[out_pos++] = data[i++];
+			out[out_pos++] = data[i++];
+			while (i < in_size) {
+				if (out_pos + 1 >= cap) goto grow_fail;
+				out[out_pos++] = data[i];
+				if (data[i] == '*' && i + 1 < in_size &&
+						data[i + 1] == '/') {
+					i++;
+					if (out_pos + 1 >= cap) goto grow_fail;
+					out[out_pos++] = data[i++];
+					break;
+				}
+				i++;
+			}
+			continue;
+		}
+
 		if (!macsurf__match_prop_name(data, in_size, i,
 				NAME, NAME_LEN)) {
 			if (out_pos + 1 >= cap) goto grow_fail;
