@@ -443,6 +443,69 @@ macos9_qt_format_has_alpha(const unsigned char *p, long n)
  *
  * Opaque formats (JPEG / 24-bit BMP / GIF) still allocate via the
  * vanilla NewGWorld(32) path -- no alpha to preserve. */
+/* #230: QuickTime's OS 9 JPEG codec returns codecBadDataErr (-8969) on JPEGs
+ * that carry APP1/EXIF/XMP metadata markers (macos9lives, macintoshgarden,
+ * modern camera/CMS output). Strip APP1..APP15 segments in place -- keeping
+ * APP0/JFIF, the frame/scan headers and the entropy data -- so QT sees a
+ * clean baseline stream. Conservative: on any structural surprise it copies
+ * the remainder verbatim rather than corrupting the scan. Returns the new
+ * length (<= in_size); returns in_size unchanged if the buffer isn't a JPEG. */
+static long
+macos9_jpeg_strip_appn(unsigned char *p, long in_size)
+{
+	long ri = 2, wi = 2;   /* keep SOI (FF D8) */
+
+	if (p == NULL || in_size < 4 || p[0] != 0xFF || p[1] != 0xD8) {
+		return in_size;
+	}
+
+	while (ri + 1 < in_size) {
+		unsigned char m;
+		long seg_len;
+
+		if (p[ri] != 0xFF) {          /* stray byte: keep, resync */
+			p[wi++] = p[ri++];
+			continue;
+		}
+		m = p[ri + 1];
+		if (m == 0xFF) {              /* fill byte */
+			p[wi++] = p[ri++];
+			continue;
+		}
+		if (m == 0xDA || m == 0xD9) { /* SOS or EOI: copy the rest verbatim */
+			long rest = in_size - ri;
+			if (wi != ri) memmove(p + wi, p + ri, (size_t)rest);
+			return wi + rest;
+		}
+		if ((m >= 0xD0 && m <= 0xD7) || m == 0x01) { /* standalone, no len */
+			p[wi++] = p[ri++];
+			p[wi++] = p[ri++];
+			continue;
+		}
+		if (ri + 3 >= in_size) break;              /* truncated length */
+		seg_len = ((long)p[ri + 2] << 8) | (long)p[ri + 3];
+		if (seg_len < 2 || ri + 2 + seg_len > in_size) break; /* malformed */
+		if (m >= 0xE1 && m <= 0xEF) {              /* APP1..APP15: drop */
+			ri += 2 + seg_len;
+		} else {                                   /* keep marker+segment */
+			long total = 2 + seg_len;
+			if (wi != ri) memmove(p + wi, p + ri, (size_t)total);
+			wi += total;
+			ri += total;
+		}
+	}
+
+	{
+		long rest = in_size - ri;   /* malformed tail: copy verbatim */
+		if (rest > 0) {
+			if (wi != ri) memmove(p + wi, p + ri, (size_t)rest);
+			wi += rest;
+		}
+	}
+	return wi;
+}
+
+
 static nserror
 macos9_qt_decode_to_bitmap(GraphicsImportComponent gi,
 		int bw, int bh, bool wants_alpha, void **out_bitmap)
@@ -1495,6 +1558,25 @@ macos9_qt_image_convert(struct content *c)
 		return true;
 	}
 	/* (non-PNG falls through to the QT importer path below) */
+
+	/* #230: for JPEGs, strip APP1..APP15 (EXIF/XMP) markers in place so
+	 * QuickTime's codec stops rejecting them (codecBadDataErr). qti->
+	 * compressed is what both this importer and the deferred display-size
+	 * decode read, so cleaning it once here fixes both. */
+	if (src_size >= 4 && src_bytes[0] == 0xFF && src_bytes[1] == 0xD8) {
+		long cleaned = macos9_jpeg_strip_appn(
+				(unsigned char *)src_bytes, src_size);
+		if (cleaned > 0 && cleaned < src_size) {
+			HUnlock(qti->compressed);
+			SetHandleSize(qti->compressed, (Size)cleaned);
+			HLock(qti->compressed);
+			src_bytes = (const unsigned char *)*qti->compressed;
+			src_size = cleaned;
+			macsurf_debug_log_writef(
+				"WORK img: JPEG stripped APPn -> %ld bytes",
+				cleaned);
+		}
+	}
 
 	wants_alpha = macos9_qt_format_has_alpha(src_bytes, src_size);
 	HUnlock(qti->compressed);

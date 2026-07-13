@@ -656,6 +656,13 @@ macsurf_debug_log_write(const char *msg)
 
 	if (!g_log_open || msg == NULL) return;
 
+	/* WORK channel: active-development diagnostics prefixed "WORK " bypass
+	 * EVERY release filter (the crash-only gate AND all the perf/volume
+	 * suppressors below) and go straight to the writer, so what we're
+	 * currently debugging is never silently dropped. Keep WORK lines few
+	 * and strip them once a fix ships. */
+	if (strstr(msg, "WORK ") != NULL) goto do_write;
+
 	/* fixes675 — crash-only gate for the release build. Keeps just the
 	 * forensic lines; drops all perf/render/fetch diagnostics. */
 #ifndef MACSURF_VERBOSE_LOG
@@ -793,6 +800,7 @@ macsurf_debug_log_write(const char *msg)
 	 * on OS 9; multiply by 1000/60 = 17 (close enough) for a rough ms
 	 * approximation, or print raw ticks and let the reader divide. We
 	 * print raw ticks: smaller field, no math, exact. */
+do_write:
 	now = (unsigned long)TickCount();
 	if (t0_ticks == 0) t0_ticks = now;
 	tlen = sprintf(tbuf, "[%lu] ", now - t0_ticks);
