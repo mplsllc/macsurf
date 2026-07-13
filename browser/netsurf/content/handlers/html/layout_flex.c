@@ -1572,28 +1572,6 @@ static void layout_flex__place_line_items_cross(struct flex_ctx *ctx,
 					b->border[cross_start].width;
 			break;
 		}
-
-#ifdef MACSURF_DEBUG
-		{
-			extern void macsurf_debug_log_writef(
-				const char *fmt, ...);
-			static int wfx_n = 0;
-			if (wfx_n < 400) {
-				wfx_n++;
-				/* #270: raw = item's own align-self; aitems =
-				 * container align-items; resolved = what the
-				 * switch used; ypos = the cross position we just
-				 * wrote; free/linepos to check the math. */
-				macsurf_debug_log_writef(
-					"WORK flexcross: raw=%d aitems=%d resolved=%d free=%d ypos=%d linepos=%d h=%d",
-					(int)css_computed_align_self(b->style),
-					(int)css_computed_align_items(ctx->flex->style),
-					(int)lh__box_align_self(ctx->flex, b),
-					cross_free_space, (int)*box_pos_cross,
-					(int)line->pos, (int)ctx->flex->height);
-			}
-		}
-#endif
 	}
 }
 
