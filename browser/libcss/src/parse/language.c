@@ -2020,6 +2020,20 @@ css_error parseProperty(css_language *c, const css_token *property,
 
 		if (logical_hit >= 0) {
 			i = logical_hit;
+#ifdef MACSURF_DEBUG
+			{
+				extern void macsurf_debug_log_writef(
+					const char *fmt, ...);
+				/* #247 probe: confirm the logical property name
+				 * was recognised and which physical property it
+				 * mapped to (fires once per declaration at parse
+				 * time). "WORK " passes the crash-only gate. */
+				macsurf_debug_log_writef(
+					"WORK logical: %s -> phys=%d",
+					lwc_string_data(property->idata),
+					(int)logical_hit);
+			}
+#endif
 		} else {
 			/* Find property index */
 			/** \todo improve on this linear search */
