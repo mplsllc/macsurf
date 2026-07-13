@@ -1977,17 +1977,64 @@ css_error parseProperty(css_language *c, const css_token *property,
 				cp_tokens, cp_n);
 	}
 
-	/* Find property index */
-	/** \todo improve on this linear search */
-	for (i = FIRST_PROP; i <= LAST_PROP; i++) {
-		bool match = false;
+	/* #247: CSS logical properties. In horizontal-tb / LTR each logical
+	 * longhand maps 1:1 onto a physical longhand, so translate the name to
+	 * the physical property index and dispatch to its existing handler --
+	 * no new CSS_PROP_, no computed-style storage, no dispatch table entry.
+	 * (Vertical/RTL writing modes would need a mode-aware mapping; deferred
+	 * with #248.) */
+	{
+		static const struct { int logical; int physical; } logical_map[] = {
+			{ MARGIN_BLOCK_START,   MARGIN_TOP },
+			{ MARGIN_BLOCK_END,     MARGIN_BOTTOM },
+			{ MARGIN_INLINE_START,  MARGIN_LEFT },
+			{ MARGIN_INLINE_END,    MARGIN_RIGHT },
+			{ PADDING_BLOCK_START,  PADDING_TOP },
+			{ PADDING_BLOCK_END,    PADDING_BOTTOM },
+			{ PADDING_INLINE_START, PADDING_LEFT },
+			{ PADDING_INLINE_END,   PADDING_RIGHT },
+			{ INSET_BLOCK_START,    TOP },
+			{ INSET_BLOCK_END,      BOTTOM },
+			{ INSET_INLINE_START,   LEFT },
+			{ INSET_INLINE_END,     RIGHT },
+			{ BLOCK_SIZE,           HEIGHT },
+			{ INLINE_SIZE,          WIDTH },
+			{ MIN_BLOCK_SIZE,       MIN_HEIGHT },
+			{ MIN_INLINE_SIZE,      MIN_WIDTH },
+			{ MAX_BLOCK_SIZE,       MAX_HEIGHT },
+			{ MAX_INLINE_SIZE,      MAX_WIDTH }
+		};
+		int li;
+		int logical_hit = -1;
 
-		if (lwc_string_caseless_isequal(property->idata, c->strings[i],
-				&match) == lwc_error_ok && match)
-			break;
+		for (li = 0; li < (int) (sizeof(logical_map) /
+				sizeof(logical_map[0])); li++) {
+			bool lm = false;
+			if (lwc_string_caseless_isequal(property->idata,
+					c->strings[logical_map[li].logical],
+					&lm) == lwc_error_ok && lm) {
+				logical_hit = logical_map[li].physical;
+				break;
+			}
+		}
+
+		if (logical_hit >= 0) {
+			i = logical_hit;
+		} else {
+			/* Find property index */
+			/** \todo improve on this linear search */
+			for (i = FIRST_PROP; i <= LAST_PROP; i++) {
+				bool match = false;
+
+				if (lwc_string_caseless_isequal(property->idata,
+						c->strings[i],
+						&match) == lwc_error_ok && match)
+					break;
+			}
+			if (i == LAST_PROP + 1)
+				return CSS_INVALID;
+		}
 	}
-	if (i == LAST_PROP + 1)
-		return CSS_INVALID;
 
 	/* If the value references var(), we cannot compile to bytecode now
 	 * (the referenced custom property may live in a later stylesheet,

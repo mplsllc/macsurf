@@ -99,6 +99,22 @@ enum {
 	MACSURF_DOTGRID,
 
 	LAST_PROP = MACSURF_DOTGRID,
+
+	/* #247: CSS logical property NAMES. Placed AFTER LAST_PROP so they
+	 * are NOT dispatched as real properties (no handler / no CSS_PROP_).
+	 * parseProperty() translates each to its physical longhand (valid for
+	 * horizontal-tb / LTR) and reuses that property's existing handler.
+	 * Order here MUST match the SMAP() order in propstrings.c. */
+	MARGIN_BLOCK_START, MARGIN_BLOCK_END,
+	MARGIN_INLINE_START, MARGIN_INLINE_END,
+	PADDING_BLOCK_START, PADDING_BLOCK_END,
+	PADDING_INLINE_START, PADDING_INLINE_END,
+	INSET_BLOCK_START, INSET_BLOCK_END,
+	INSET_INLINE_START, INSET_INLINE_END,
+	BLOCK_SIZE, INLINE_SIZE,
+	MIN_BLOCK_SIZE, MIN_INLINE_SIZE,
+	MAX_BLOCK_SIZE, MAX_INLINE_SIZE,
+
 	/* Other keywords */
 	INHERIT, UNSET, IMPORTANT, NONE, BOTH, FIXED, SCROLL, TRANSPARENT,
 	NO_REPEAT, REPEAT_X, REPEAT_Y, REPEAT, HIDDEN, DOTTED, DASHED,
