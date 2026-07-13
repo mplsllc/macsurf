@@ -642,5 +642,17 @@ struct prop_table prop_dispatch[CSS_N_PROPERTIES] = {
 	{
 		PROPERTY_FUNCS(text_align_last),
 		1,
+	},
+	{
+		PROPERTY_FUNCS(hyphens),
+		1,
+	},
+	{
+		PROPERTY_FUNCS(text_justify),
+		1,
+	},
+	{
+		PROPERTY_FUNCS(hanging_punctuation),
+		1,
 	}
 	};

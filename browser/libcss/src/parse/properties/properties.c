@@ -191,7 +191,10 @@ const css_prop_handler property_handlers[LAST_PROP + 1 - FIRST_PROP] =
 	css__parse_text_decoration_thickness,
 	css__parse_macsurf_hstripe_bg,
 	css__parse_macsurf_dotgrid,
-	css__parse_text_align_last
+	css__parse_text_align_last,
+	css__parse_hyphens,
+	css__parse_text_justify,
+	css__parse_hanging_punctuation
 };
 
 /** Mapping from property bytecode index to bytecode unit class mask. */

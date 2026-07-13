@@ -170,6 +170,9 @@ enum css_properties_e {
 	CSS_PROP_MACSURF_HSTRIPE_BG             = 0x099,
 	CSS_PROP_MACSURF_DOTGRID                = 0x09A,
 	CSS_PROP_TEXT_ALIGN_LAST                = 0x09B,
+	CSS_PROP_HYPHENS                        = 0x09C,
+	CSS_PROP_TEXT_JUSTIFY                   = 0x09D,
+	CSS_PROP_HANGING_PUNCTUATION            = 0x09E,
 	CSS_N_PROPERTIES
 };
 
@@ -452,6 +455,34 @@ enum css_text_align_last_e {
 	CSS_TEXT_ALIGN_LAST_JUSTIFY		= 0x5,
 	CSS_TEXT_ALIGN_LAST_START		= 0x6,
 	CSS_TEXT_ALIGN_LAST_END			= 0x7
+};
+
+/* #251 — hyphens. auto is treated as manual (no dictionary). */
+enum css_hyphens_e {
+	CSS_HYPHENS_INHERIT			= 0x0,
+	CSS_HYPHENS_NONE			= 0x1,
+	CSS_HYPHENS_MANUAL			= 0x2,
+	CSS_HYPHENS_AUTO			= 0x3
+};
+
+/* #251 — text-justify. */
+enum css_text_justify_e {
+	CSS_TEXT_JUSTIFY_INHERIT		= 0x0,
+	CSS_TEXT_JUSTIFY_AUTO			= 0x1,
+	CSS_TEXT_JUSTIFY_NONE			= 0x2,
+	CSS_TEXT_JUSTIFY_INTER_WORD		= 0x3,
+	CSS_TEXT_JUSTIFY_INTER_CHARACTER	= 0x4
+};
+
+/* #251 — hanging-punctuation (single-value V1; combos collapse to the
+ * strongest single value). */
+enum css_hanging_punctuation_e {
+	CSS_HANGING_PUNCTUATION_INHERIT		= 0x0,
+	CSS_HANGING_PUNCTUATION_NONE		= 0x1,
+	CSS_HANGING_PUNCTUATION_FIRST		= 0x2,
+	CSS_HANGING_PUNCTUATION_LAST		= 0x3,
+	CSS_HANGING_PUNCTUATION_FORCE_END	= 0x4,
+	CSS_HANGING_PUNCTUATION_ALLOW_END	= 0x5
 };
 
 enum css_overflow_wrap_e {

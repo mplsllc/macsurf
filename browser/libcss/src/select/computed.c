@@ -935,6 +935,21 @@ uint8_t css_computed_text_align_last(const css_computed_style *style)
 	return get_text_align_last(style);
 }
 
+uint8_t css_computed_hyphens(const css_computed_style *style)
+{
+	return get_hyphens(style);
+}
+
+uint8_t css_computed_text_justify(const css_computed_style *style)
+{
+	return get_text_justify(style);
+}
+
+uint8_t css_computed_hanging_punctuation(const css_computed_style *style)
+{
+	return get_hanging_punctuation(style);
+}
+
 uint8_t css_computed_overflow_wrap(const css_computed_style *style)
 {
 	return get_overflow_wrap(style);

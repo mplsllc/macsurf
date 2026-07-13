@@ -266,6 +266,9 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("-macsurf-hstripe-bg"),
 	SMAP("-macsurf-dotgrid"),
 	SMAP("text-align-last"),
+	SMAP("hyphens"),
+	SMAP("text-justify"),
+	SMAP("hanging-punctuation"),
 	SMAP("inherit"),
 	SMAP("unset"),
 	SMAP("important"),
@@ -555,6 +558,12 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("has"),
 	SMAP("start"),
 	SMAP("end"),
+	SMAP("manual"),
+	SMAP("inter-word"),
+	SMAP("inter-character"),
+	SMAP("last"),
+	SMAP("force-end"),
+	SMAP("allow-end"),
 
 	/* Named colours */
 	SMAP("aliceblue"),

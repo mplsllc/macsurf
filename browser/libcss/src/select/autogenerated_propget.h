@@ -2237,6 +2237,54 @@ static inline uint8_t get_text_align_last(const css_computed_style *style)
 #undef TEXT_ALIGN_LAST_SHIFT
 #undef TEXT_ALIGN_LAST_MASK
 
+/* #251 hyphens: bits[15] shift 20 */
+#define HYPHENS_INDEX 15
+#define HYPHENS_SHIFT 20
+#define HYPHENS_MASK 0x300000
+static inline uint8_t get_hyphens(const css_computed_style *style)
+{
+	uint32_t bits = style->i.bits[HYPHENS_INDEX];
+	bits &= HYPHENS_MASK;
+	bits >>= HYPHENS_SHIFT;
+
+	return (bits & 0x3);
+}
+#undef HYPHENS_INDEX
+#undef HYPHENS_SHIFT
+#undef HYPHENS_MASK
+
+/* #251 text_justify: bits[15] shift 22 */
+#define TEXT_JUSTIFY_INDEX 15
+#define TEXT_JUSTIFY_SHIFT 22
+#define TEXT_JUSTIFY_MASK 0x1c00000
+static inline uint8_t get_text_justify(const css_computed_style *style)
+{
+	uint32_t bits = style->i.bits[TEXT_JUSTIFY_INDEX];
+	bits &= TEXT_JUSTIFY_MASK;
+	bits >>= TEXT_JUSTIFY_SHIFT;
+
+	return (bits & 0x7);
+}
+#undef TEXT_JUSTIFY_INDEX
+#undef TEXT_JUSTIFY_SHIFT
+#undef TEXT_JUSTIFY_MASK
+
+/* #251 hanging_punctuation: bits[15] shift 25 */
+#define HANGING_PUNCTUATION_INDEX 15
+#define HANGING_PUNCTUATION_SHIFT 25
+#define HANGING_PUNCTUATION_MASK 0xe000000
+static inline uint8_t get_hanging_punctuation(const css_computed_style *style)
+{
+	uint32_t bits = style->i.bits[HANGING_PUNCTUATION_INDEX];
+	bits &= HANGING_PUNCTUATION_MASK;
+	bits >>= HANGING_PUNCTUATION_SHIFT;
+
+	return (bits & 0x7);
+}
+#undef HANGING_PUNCTUATION_INDEX
+#undef HANGING_PUNCTUATION_SHIFT
+#undef HANGING_PUNCTUATION_MASK
+
 #undef OBJECT_FIT_INDEX
 #undef OBJECT_FIT_SHIFT
 #undef OBJECT_FIT_MASK
