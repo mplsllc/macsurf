@@ -4621,6 +4621,20 @@ layout_line(struct box *first,
 			justify_extra = leftover / justify_gaps;
 			justify_rem = leftover % justify_gaps;
 		}
+#ifdef MACSURF_DEBUG
+		{
+			extern void macsurf_debug_log_writef(
+				const char *fmt, ...);
+			static int wj_n = 0;
+			if (wj_n < 20) {
+				wj_n++;
+				macsurf_debug_log_writef(
+					"WORK justify: gaps=%d leftover=%d x=%d x1=%d x0=%d extra=%d",
+					justify_gaps, leftover, x, x1, x0,
+					justify_extra);
+			}
+		}
+#endif
 	}
 	}
 
