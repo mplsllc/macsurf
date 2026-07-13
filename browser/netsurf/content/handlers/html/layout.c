@@ -4120,6 +4120,25 @@ layout_line(struct box *first,
 				&max_height, &min_height,
 				NULL, NULL, NULL);
 
+		/* WORK (#235): pin the source of macgarden's squashed inline
+		 * images -- log the CSS-resolved w/h (AUTO shows as the AUTO
+		 * sentinel), REPLACE_DIM (explicit HTML attrs -> aspect path
+		 * skipped), max_height (a clamp source), and natural dims. */
+		if (b->object) {
+			static int work_is_n = 0;
+			if (work_is_n < 40) {
+				work_is_n++;
+				macsurf_debug_log_writef(
+					"WORK imgsize: rdim=%d css_w=%d css_h=%d maxh=%d nat=%dx%d AUTO=%d",
+					(int)((b->flags & REPLACE_DIM) != 0),
+					(int)b->width, (int)b->height,
+					(int)max_height,
+					(int)content_get_width(b->object),
+					(int)content_get_height(b->object),
+					(int)AUTO);
+			}
+		}
+
 		if (b->object && !(b->flags & REPLACE_DIM)) {
 			layout_get_object_dimensions(b, &b->width, &b->height,
 					min_width, max_width,
