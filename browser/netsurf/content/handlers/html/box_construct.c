@@ -1973,10 +1973,59 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 
 		dom_string_unref(content);
 
-		/* TODO: Handle tabs properly */
-		for (i = 0; i < text_len; i++)
-			if (text[i] == '\t')
-				text[i] = ' ';
+		/* fixes804 (#251): expand tabs to the next tab-stop per CSS
+		 * `tab-size` (css_computed_tab_size, default 8) instead of
+		 * collapsing each tab to a single space, so <pre> code
+		 * indentation lines up. Column-based: a tab advances to the
+		 * next multiple of tab-size columns; the column resets at each
+		 * newline. Falls back to the old flatten-to-space on OOM or an
+		 * absurd expansion size. */
+		{
+			int32_t tab_size =
+				css_computed_tab_size(props.parent_style);
+			char *expanded = NULL;
+			size_t cap;
+
+			if (tab_size < 1) tab_size = 8;
+			if (tab_size > 32) tab_size = 32;
+			cap = text_len * (size_t)tab_size + 1;
+			if (cap > text_len &&
+					cap < (size_t)16 * 1024 * 1024)
+				expanded = malloc(cap);
+
+			if (expanded != NULL) {
+				size_t src_i;
+				size_t dst_i = 0;
+				size_t col = 0;
+				size_t spaces;
+				size_t k;
+
+				for (src_i = 0; src_i < text_len; src_i++) {
+					char c = text[src_i];
+					if (c == '\t') {
+						spaces = (size_t)tab_size -
+							(col % (size_t)tab_size);
+						for (k = 0; k < spaces; k++)
+							expanded[dst_i++] = ' ';
+						col += spaces;
+					} else {
+						expanded[dst_i++] = c;
+						if (c == '\n' || c == '\r')
+							col = 0;
+						else
+							col++;
+					}
+				}
+				expanded[dst_i] = '\0';
+				free(text);
+				text = expanded;
+				text_len = dst_i;
+			} else {
+				for (i = 0; i < text_len; i++)
+					if (text[i] == '\t')
+						text[i] = ' ';
+			}
+		}
 
 		/* fixes307 (#56) — pre-line collapses runs of horizontal
 		 * whitespace (spaces, tabs — already converted to spaces
