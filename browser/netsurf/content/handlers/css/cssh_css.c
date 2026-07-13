@@ -4844,6 +4844,15 @@ macsurf__rewrite_grid_alignment(const char *data, size_t in_size,
 			justify_axis = "justify-content";
 			k = i + 13;
 		} else if (macsurf__cc_prop_at(data, in_size, i,
+				"place-self", 10)) {
+			/* #253: place-self: A [B] -> align-self: A; justify-self: B
+			 * (single value fills both). justify-self picks up the
+			 * text-align shadow below, same as the standalone longhand. */
+			match_prop = "place-self";
+			align_axis = "align-self";
+			justify_axis = "justify-self";
+			k = i + 10;
+		} else if (macsurf__cc_prop_at(data, in_size, i,
 				"justify-items", 13)) {
 			match_prop = "justify-items";
 			align_axis = NULL;
