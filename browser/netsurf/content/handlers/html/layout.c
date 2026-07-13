@@ -4432,7 +4432,24 @@ layout_line(struct box *first,
 							 avail,
 							 &char_off,
 							 &char_x);
-					if (char_off > 0 &&
+					{
+						static int work_cb_n = 0;
+						if (work_cb_n < 40) {
+							work_cb_n++;
+							macsurf_debug_log_writef(
+								"WORK charbreak: len=%d avail=%d off=%d inline=%d apply=%d",
+								(int)split_box->length,
+								(int)avail, (int)char_off,
+								(int)inline_count,
+								(int)(inline_count == 1));
+						}
+					}
+					/* #234: only char-break when this token is the FIRST box on
+					 * the line (genuinely too long for a full line). On a partial
+					 * line leave split==0 so the whole token wraps to the next
+					 * line. Without this, break-word forum text (68kmla
+					 * usernames/URLs) shattered into random letters. */
+					if (inline_count == 1 && char_off > 0 &&
 					    char_off < split_box->length) {
 						split = char_off;
 						w = char_x;

@@ -614,7 +614,7 @@ macos9_font_split(const struct plot_font_style *fstyle,
          * Capped so a big page doesn't flood. */
         {
                 static int work_split_n = 0;
-                if (work_split_n < 24) {
+                if (work_split_n < 60) {
                         int sp_w = -1;
                         char preview[20];
                         size_t pv = (length < 14) ? length : 14;
