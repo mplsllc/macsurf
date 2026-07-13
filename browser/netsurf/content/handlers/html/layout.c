@@ -4432,18 +4432,6 @@ layout_line(struct box *first,
 							 avail,
 							 &char_off,
 							 &char_x);
-					{
-						static int work_cb_n = 0;
-						if (work_cb_n < 40) {
-							work_cb_n++;
-							macsurf_debug_log_writef(
-								"WORK charbreak: len=%d avail=%d off=%d inline=%d apply=%d",
-								(int)split_box->length,
-								(int)avail, (int)char_off,
-								(int)inline_count,
-								(int)(inline_count == 1));
-						}
-					}
 					/* #234: only char-break when this token is the FIRST box on
 					 * the line (genuinely too long for a full line). On a partial
 					 * line leave split==0 so the whole token wraps to the next

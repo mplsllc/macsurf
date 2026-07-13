@@ -608,31 +608,6 @@ macos9_font_split(const struct plot_font_style *fstyle,
 
         macos9_font_position(fstyle, string, length, x, &fit_offset, &fit_x);
 
-        /* WORK (#234): dump every split call -- the run text, available x,
-         * how much fits, and the measured width of a single space in this
-         * font/face/size (the prime suspect for collapsed inter-word gaps).
-         * Capped so a big page doesn't flood. */
-        {
-                static int work_split_n = 0;
-                if (work_split_n < 60) {
-                        int sp_w = -1;
-                        char preview[20];
-                        size_t pv = (length < 14) ? length : 14;
-                        size_t k;
-                        for (k = 0; k < pv; k++) {
-                                char ch = string[k];
-                                preview[k] = (ch >= 0x20 && ch < 0x7f) ? ch : '.';
-                        }
-                        preview[pv] = '\0';
-                        macos9_font_width(fstyle, " ", 1, &sp_w);
-                        macsurf_debug_log_writef(
-                                "WORK split: \"%s\" len=%d x=%d fit_off=%d fit_x=%d spacew=%d",
-                                preview, (int)length, (int)x,
-                                (int)fit_offset, (int)fit_x, sp_w);
-                        work_split_n++;
-                }
-        }
-
         /* If the entire string fits within the width, do not split it at all. */
         if (fit_offset == length) {
                 *char_offset = length;
