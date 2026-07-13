@@ -63,6 +63,7 @@ PROPERTY_FUNCS(object_fit);
 PROPERTY_FUNCS(macsurf_object_position);
 PROPERTY_FUNCS(text_overflow);
 PROPERTY_FUNCS(word_break);
+PROPERTY_FUNCS(text_align_last);
 PROPERTY_FUNCS(overflow_wrap);
 PROPERTY_FUNCS(macsurf_grid_rows);
 PROPERTY_FUNCS(macsurf_grid_col_span);

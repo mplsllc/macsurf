@@ -4545,7 +4545,32 @@ layout_line(struct box *first,
 	}
 
 	/* set positions */
-	switch (css_computed_text_align(first->parent->parent->style)) {
+	{
+	uint8_t ta_align =
+		css_computed_text_align(first->parent->parent->style);
+
+	/* #251: the LAST line of a block (b == NULL -> no following line)
+	 * uses text-align-last when it isn't auto. Map onto the text-align
+	 * enum the switch understands; start/end -> left/right for the
+	 * horizontal-tb LTR case. */
+	if (b == NULL) {
+		switch (css_computed_text_align_last(
+				first->parent->parent->style)) {
+		case CSS_TEXT_ALIGN_LAST_LEFT:
+		case CSS_TEXT_ALIGN_LAST_START:
+			ta_align = CSS_TEXT_ALIGN_LEFT; break;
+		case CSS_TEXT_ALIGN_LAST_RIGHT:
+		case CSS_TEXT_ALIGN_LAST_END:
+			ta_align = CSS_TEXT_ALIGN_RIGHT; break;
+		case CSS_TEXT_ALIGN_LAST_CENTER:
+			ta_align = CSS_TEXT_ALIGN_CENTER; break;
+		case CSS_TEXT_ALIGN_LAST_JUSTIFY:
+			ta_align = CSS_TEXT_ALIGN_JUSTIFY; break;
+		default: break;
+		}
+	}
+
+	switch (ta_align) {
 	case CSS_TEXT_ALIGN_RIGHT:
 	case CSS_TEXT_ALIGN_LIBCSS_RIGHT:
 		x0 = x1 - x;
@@ -4570,6 +4595,7 @@ layout_line(struct box *first,
 			break;
 		}
 		break;
+	}
 	}
 
 	for (d = first; d != b; d = d->next) {

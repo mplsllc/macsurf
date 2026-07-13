@@ -169,6 +169,7 @@ enum css_properties_e {
 	CSS_PROP_TEXT_DECORATION_THICKNESS      = 0x098,
 	CSS_PROP_MACSURF_HSTRIPE_BG             = 0x099,
 	CSS_PROP_MACSURF_DOTGRID                = 0x09A,
+	CSS_PROP_TEXT_ALIGN_LAST                = 0x09B,
 	CSS_N_PROPERTIES
 };
 
@@ -438,6 +439,19 @@ enum css_word_break_e {
 	CSS_WORD_BREAK_NORMAL			= 0x1,
 	CSS_WORD_BREAK_BREAK_ALL		= 0x2,
 	CSS_WORD_BREAK_KEEP_ALL			= 0x3
+};
+
+/* #251 — text-align-last. start/end are logical; layout maps them to
+ * left/right for horizontal-tb LTR. */
+enum css_text_align_last_e {
+	CSS_TEXT_ALIGN_LAST_INHERIT		= 0x0,
+	CSS_TEXT_ALIGN_LAST_AUTO		= 0x1,
+	CSS_TEXT_ALIGN_LAST_LEFT		= 0x2,
+	CSS_TEXT_ALIGN_LAST_RIGHT		= 0x3,
+	CSS_TEXT_ALIGN_LAST_CENTER		= 0x4,
+	CSS_TEXT_ALIGN_LAST_JUSTIFY		= 0x5,
+	CSS_TEXT_ALIGN_LAST_START		= 0x6,
+	CSS_TEXT_ALIGN_LAST_END			= 0x7
 };
 
 enum css_overflow_wrap_e {

@@ -930,6 +930,11 @@ uint8_t css_computed_word_break(const css_computed_style *style)
 	return get_word_break(style);
 }
 
+uint8_t css_computed_text_align_last(const css_computed_style *style)
+{
+	return get_text_align_last(style);
+}
+
 uint8_t css_computed_overflow_wrap(const css_computed_style *style)
 {
 	return get_overflow_wrap(style);

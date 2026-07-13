@@ -1734,6 +1734,23 @@ static inline css_error set_pointer_events(css_computed_style *style, uint8_t ty
 #undef POINTER_EVENTS_SHIFT
 #undef POINTER_EVENTS_MASK
 
+/* #251 text-align-last: bits[15] 17-19 (3 bits), free above pointer_events */
+#define TEXT_ALIGN_LAST_INDEX 15
+#define TEXT_ALIGN_LAST_SHIFT 17
+#define TEXT_ALIGN_LAST_MASK 0xe0000
+static inline css_error set_text_align_last(css_computed_style *style, uint8_t type)
+{
+	uint32_t *bits = &style->i.bits[TEXT_ALIGN_LAST_INDEX];
+
+	*bits = (*bits & ~TEXT_ALIGN_LAST_MASK) |
+			(((uint32_t)type & 0x7) << TEXT_ALIGN_LAST_SHIFT);
+
+	return CSS_OK;
+}
+#undef TEXT_ALIGN_LAST_INDEX
+#undef TEXT_ALIGN_LAST_SHIFT
+#undef TEXT_ALIGN_LAST_MASK
+
 #undef OBJECT_FIT_INDEX
 #undef OBJECT_FIT_SHIFT
 #undef OBJECT_FIT_MASK

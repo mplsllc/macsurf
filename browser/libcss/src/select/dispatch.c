@@ -638,5 +638,9 @@ struct prop_table prop_dispatch[CSS_N_PROPERTIES] = {
 	{
 		PROPERTY_FUNCS(macsurf_dotgrid),
 		0,
+	},
+	{
+		PROPERTY_FUNCS(text_align_last),
+		1,
 	}
 	};

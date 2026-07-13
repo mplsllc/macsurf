@@ -130,6 +130,9 @@ css_error css__parse_text_overflow(css_language *c,
 css_error css__parse_word_break(css_language *c,
                 const parserutils_vector *vector, int32_t *ctx,
                 css_style *result);
+css_error css__parse_text_align_last(css_language *c,
+                const parserutils_vector *vector, int32_t *ctx,
+                css_style *result);
 css_error css__parse_overflow_wrap(css_language *c,
                 const parserutils_vector *vector, int32_t *ctx,
                 css_style *result);

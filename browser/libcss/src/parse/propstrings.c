@@ -265,6 +265,7 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("text-decoration-thickness"),
 	SMAP("-macsurf-hstripe-bg"),
 	SMAP("-macsurf-dotgrid"),
+	SMAP("text-align-last"),
 	SMAP("inherit"),
 	SMAP("unset"),
 	SMAP("important"),
@@ -552,6 +553,8 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("is"),
 	SMAP("where"),
 	SMAP("has"),
+	SMAP("start"),
+	SMAP("end"),
 
 	/* Named colours */
 	SMAP("aliceblue"),

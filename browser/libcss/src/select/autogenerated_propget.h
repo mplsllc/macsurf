@@ -2221,6 +2221,22 @@ static inline uint8_t get_pointer_events(const css_computed_style *style)
 #undef POINTER_EVENTS_SHIFT
 #undef POINTER_EVENTS_MASK
 
+/* #251 text-align-last: bits[15] 17-19 (3 bits), free above pointer_events */
+#define TEXT_ALIGN_LAST_INDEX 15
+#define TEXT_ALIGN_LAST_SHIFT 17
+#define TEXT_ALIGN_LAST_MASK 0xe0000
+static inline uint8_t get_text_align_last(const css_computed_style *style)
+{
+	uint32_t bits = style->i.bits[TEXT_ALIGN_LAST_INDEX];
+	bits &= TEXT_ALIGN_LAST_MASK;
+	bits >>= TEXT_ALIGN_LAST_SHIFT;
+
+	return (bits & 0x7);
+}
+#undef TEXT_ALIGN_LAST_INDEX
+#undef TEXT_ALIGN_LAST_SHIFT
+#undef TEXT_ALIGN_LAST_MASK
+
 #undef OBJECT_FIT_INDEX
 #undef OBJECT_FIT_SHIFT
 #undef OBJECT_FIT_MASK
