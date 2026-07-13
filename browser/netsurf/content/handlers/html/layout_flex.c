@@ -1523,6 +1523,29 @@ static void layout_flex__place_line_items_cross(struct flex_ctx *ctx,
 		cross_free_space = line->cross_size + extra - *box_size_cross -
 				lh__delta_outer_cross(ctx->flex, b);
 
+#ifdef MACSURF_DEBUG
+		{
+			extern void macsurf_debug_log_writef(
+				const char *fmt, ...);
+			static int wfx_n = 0;
+			if (wfx_n < 24) {
+				wfx_n++;
+				/* #270 probe: why cross-axis center/end doesn't
+				 * move items. free<=0 => no room (availX not
+				 * carrying the container height); align= the
+				 * CSS_ALIGN_SELF_* enum actually seen. */
+				macsurf_debug_log_writef(
+					"WORK flexcross: availX=%d ctxcross=%d extra=%d linecross=%d bsize=%d free=%d align=%d h=%d",
+					(int)ctx->available_cross,
+					(int)ctx->cross_size, extra,
+					(int)line->cross_size,
+					(int)*box_size_cross, cross_free_space,
+					(int)lh__box_align_self(ctx->flex, b),
+					(int)ctx->flex->height);
+			}
+		}
+#endif
+
 		switch (lh__box_align_self(ctx->flex, b)) {
 		default:
 		case CSS_ALIGN_SELF_STRETCH:
