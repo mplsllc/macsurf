@@ -206,6 +206,39 @@ html_object_nobox_callback(hlcache_handle *object,
 
 
 /**
+ * fixes797 (#235): deferred, coalesced reflow used when a late object-link
+ * reflow would otherwise be dropped by the reformat_time throttle.
+ *
+ * A macintoshgarden-style <img> with no dimensions links box->object via
+ * CONTENT_MSG_READY and never sends CONTENT_MSG_DONE. The size-resolving
+ * reflow is throttled to at most one per reformat_time window, which on a
+ * G3 can be >1s; a trailing link within that window used to be dropped
+ * with no retry, leaving the box at its pre-load line-height (squashed)
+ * until the next navigation. Instead of dropping, the throttled branch now
+ * schedules this callback for just after the window (cancel+reschedule so
+ * only the last one survives -- a single coalesced reflow, no #208 storm).
+ *
+ * Fires from the scheduler, so the content may have been destroyed in
+ * between; validate liveness (fixes535 registry) before touching it.
+ */
+static void html_object_deferred_reflow(void *pw)
+{
+	html_content *c = (html_content *) pw;
+
+	if (macos9_content_is_live(&c->base) == 0) {
+		return;
+	}
+
+	if (c->base.status == CONTENT_STATUS_READY ||
+			c->base.status == CONTENT_STATUS_DONE) {
+		content__reformat(&c->base, false,
+				c->base.available_width,
+				c->base.available_height);
+	}
+}
+
+
+/**
  * Callback for hlcache_handle_retrieve() for objects with a box.
  */
 static nserror
@@ -638,6 +671,18 @@ html_object_callback(hlcache_handle *object,
 					  false,
 					  c->base.available_width,
 					  c->base.available_height);
+		} else if (event->type == CONTENT_MSG_READY) {
+			/* fixes797 (#235): still inside the throttle window.
+			 * The DONE-only guaranteed reflow will never fire for
+			 * these READY-only images, so dropping here would leave
+			 * a late-linked <img> squashed until the next nav. Defer
+			 * one coalesced reflow to just past the window instead
+			 * (cancel any pending, reschedule) so the trailing link
+			 * always gets sized -- and only once, no #208 storm. */
+			int delay = (int)(c->base.reformat_time - ms_now) + 50;
+			guit->misc->schedule(-1, html_object_deferred_reflow, c);
+			guit->misc->schedule(delay,
+					html_object_deferred_reflow, c);
 		}
 	}
 
