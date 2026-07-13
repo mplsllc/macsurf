@@ -4947,15 +4947,29 @@ macsurf__rewrite_grid_alignment(const char *data, size_t in_size,
 				tmp[tlen++] = ';';
 				tmp[tlen++] = ' ';
 			}
-			/* emit justify-axis declaration */
-			memcpy(tmp + tlen, justify_axis, strlen(justify_axis));
-			tlen += strlen(justify_axis);
-			tmp[tlen++] = ':';
-			tmp[tlen++] = ' ';
-			need = v2_end - v2_start;
-			if (tlen + need + 2 >= sizeof tmp) need = sizeof tmp - tlen - 2;
-			memcpy(tmp + tlen, data + v2_start, need);
-			tlen += need;
+			/* justify axis. justify-content is a real libcss property,
+			 * so emit the declaration. justify-items / justify-self are
+			 * UNKNOWN to libcss (#270): emitting them is dead weight, AND
+			 * a downstream preprocessor stage keying off the emitted
+			 * `justify-self:`/`justify-items:` corrupts the PRECEDING
+			 * align-* declaration -- so place-items / place-self items
+			 * silently lost their alignment (align-self read back as
+			 * auto). For those axes emit ONLY the text-align shadow below
+			 * (which is what actually produces the visual); skip the
+			 * useless justify-* declaration. */
+			if (justify_axis != NULL &&
+					strcmp(justify_axis, "justify-content") == 0) {
+				memcpy(tmp + tlen, justify_axis,
+						strlen(justify_axis));
+				tlen += strlen(justify_axis);
+				tmp[tlen++] = ':';
+				tmp[tlen++] = ' ';
+				need = v2_end - v2_start;
+				if (tlen + need + 2 >= sizeof tmp)
+					need = sizeof tmp - tlen - 2;
+				memcpy(tmp + tlen, data + v2_start, need);
+				tlen += need;
+			}
 
 			/* Shadow with text-align for justify-items / justify-self
 			 * paths only (so visual cell-content alignment works).
@@ -4990,8 +5004,9 @@ macsurf__rewrite_grid_alignment(const char *data, size_t in_size,
 					out_kw_len = 5;
 				}
 				if (out_kw != NULL) {
-					tmp[tlen++] = ';';
-					tmp[tlen++] = ' ';
+					/* align_axis (if present) already emitted its
+					 * trailing "; "; standalone justify-* starts
+					 * fresh -- so no leading separator here. */
 					memcpy(tmp + tlen, "text-align: ", 12);
 					tlen += 12;
 					if (tlen + out_kw_len + 2 >= sizeof tmp)
