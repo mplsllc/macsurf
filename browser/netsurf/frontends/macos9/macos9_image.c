@@ -1689,6 +1689,22 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 	nat_w = (int)c->width;
 	nat_h = (int)c->height;
 
+	/* WORK (#235): show the render size layout asked for (dst) vs the
+	 * image's natural size (nat). If dst_h is squished relative to
+	 * dst_w * nat_h/nat_w, layout handed us a collapsed height -- the
+	 * macintoshgarden header squash. Capped. */
+	{
+		static int work_imgr_n = 0;
+		if (work_imgr_n < 40) {
+			int want_h = (nat_w > 0) ?
+				(int)(((long)dst_w * (long)nat_h) / (long)nat_w) : 0;
+			work_imgr_n++;
+			macsurf_debug_log_writef(
+				"WORK imgredraw: nat=%dx%d dst=%dx%d aspect_h=%d",
+				nat_w, nat_h, dst_w, dst_h, want_h);
+		}
+	}
+
 	/* fixes269 (#8) — above-fold bias for lazy decode. If the image's
 	 * destination rect is entirely outside the redraw clip rect, skip
 	 * the decode entirely. NetSurf core's box-tree walker prunes most
