@@ -4057,6 +4057,26 @@ layout_line(struct box *first,
 			continue;
 		}
 
+#ifdef __MACOS9__
+		/* WORK (#235): at the inline branch decision, log non-text boxes
+		 * -- whether they have an object yet, REPLACE_DIM, and the
+		 * is_replace verdict. Confirms the squash theory: an <img> whose
+		 * object hasn't loaded is is_replace=0 -> falls into the
+		 * line-height branch below and gets a squashed placeholder. */
+		if (b->flags & IS_REPLACED) {
+			static int work_ib_n = 0;
+			if (work_ib_n < 40) {
+				work_ib_n++;
+				macsurf_debug_log_writef(
+					"WORK inlbox: type=%d obj=%d rdim=%d isrep=%d nat=%dx%d",
+					(int)b->type, (int)(b->object != NULL),
+					(int)((b->flags & REPLACE_DIM) != 0),
+					(int)lh__box_is_replace(b),
+					b->object ? (int)content_get_width(b->object) : -1,
+					b->object ? (int)content_get_height(b->object) : -1);
+			}
+		}
+#endif
 		if (lh__box_is_replace(b) == false) {
 			/* inline non-replaced, 10.3.1 and 10.6.1 */
 			b->height = line_height(&content->unit_len_ctx,
