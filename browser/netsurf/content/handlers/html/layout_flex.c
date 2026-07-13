@@ -1578,7 +1578,7 @@ static void layout_flex__place_line_items_cross(struct flex_ctx *ctx,
 			extern void macsurf_debug_log_writef(
 				const char *fmt, ...);
 			static int wfx_n = 0;
-			if (wfx_n < 28) {
+			if (wfx_n < 400) {
 				wfx_n++;
 				/* #270: raw = item's own align-self; aitems =
 				 * container align-items; resolved = what the
