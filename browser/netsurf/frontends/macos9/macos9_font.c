@@ -666,18 +666,23 @@ macos9_font_split(const struct plot_font_style *fstyle,
                 *char_offset = last_space;
                 macos9_font_width(fstyle, string, last_space, actual_x);
         } else {
-                /* No space found in the part that fits. Force a hard break. */
-                if (fit_offset == 0) {
-                        /* Force at least one character even if it doesn't fit. */
-                        size_t first_char_len = utf8_next(string, length, 0);
-                        if (first_char_len == 0 || first_char_len > length) 
-                                first_char_len = 1;
-                        *char_offset = first_char_len;
-                        macos9_font_width(fstyle, string, first_char_len, actual_x);
-                } else {
-                        *char_offset = fit_offset;
-                        *actual_x = fit_x;
-                }
+                /* #234: no word-boundary (space) break fits within the
+                 * available width x. Return char_offset == 0 -- the standard
+                 * NetSurf "text can't be split here" signal -- and let core
+                 * decide (layout.c:4462): if this is the FIRST box on the line
+                 * it force-fits the word (or char-breaks it when the author set
+                 * word-break/overflow-wrap, handled at layout.c:4414);
+                 * otherwise the whole word wraps to the next line.
+                 *
+                 * The previous code returned `fit_offset` here -- a mid-word
+                 * offset -- so on a nearly-full line (small remaining x) core
+                 * accepted a mid-word break: "remain" rendered as "remai"+"n"
+                 * on reflow. That fixes136a-era aggressive char-break (a
+                 * documented deviation from spec) was itself the cause of the
+                 * word-merge/mid-wrap symptoms. Standard behaviour: long
+                 * unbreakable words overflow unless overflow-wrap:break-word. */
+                *char_offset = 0;
+                *actual_x = 0;
         }
 
         return NSERROR_OK;
