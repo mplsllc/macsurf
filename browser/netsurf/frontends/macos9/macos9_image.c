@@ -1777,11 +1777,14 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 			}
 
 			need_bytes = (long)dst_w * (long)dst_h * 4L;
-			if (need_bytes > MACOS9_IMG_MAX_DECODED_BYTES) {
-				macsurf_debug_log_writef(
-					"img skip: per-image ceiling png %dx%d",
-					dst_w, dst_h);
-				return true;
+			/* #230/#235: cap-to-fit instead of skip (see the QT
+			 * path below) so an oversize PNG renders at reduced
+			 * resolution rather than vanishing. */
+			while (need_bytes > MACOS9_IMG_MAX_DECODED_BYTES &&
+					dst_w > 1 && dst_h > 1) {
+				dst_w = (dst_w + 1) / 2;
+				dst_h = (dst_h + 1) / 2;
+				need_bytes = (long)dst_w * (long)dst_h * 4L;
 			}
 			if (!macos9_qti_lru_make_room(need_bytes)) {
 				macsurf_debug_log_writef(
@@ -1869,15 +1872,18 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 
 			need_bytes = (long)dst_w * (long)dst_h * 4L;
 
-			/* Per-image ceiling: still skip if even one
-			 * display-sized buffer is absurdly big. */
-			if (need_bytes > MACOS9_IMG_MAX_DECODED_BYTES) {
-				macsurf_debug_log_writef(
-					"img skip: per-image ceiling %dx%d "
-					"bytes=%ld cap=%ld",
-					dst_w, dst_h, need_bytes,
-					(long)MACOS9_IMG_MAX_DECODED_BYTES);
-				return true;
+			/* #230/#235: an image whose display buffer exceeds the
+			 * per-image ceiling used to SKIP (return true) and
+			 * render nothing -- so a large JPEG (e.g. 4080x3072)
+			 * vanished entirely. Instead, halve the decode dims
+			 * until it fits the ceiling; QuickTime scales the
+			 * source into the target rect, so it renders at reduced
+			 * resolution rather than disappearing. */
+			while (need_bytes > MACOS9_IMG_MAX_DECODED_BYTES &&
+					dst_w > 1 && dst_h > 1) {
+				dst_w = (dst_w + 1) / 2;
+				dst_h = (dst_h + 1) / 2;
+				need_bytes = (long)dst_w * (long)dst_h * 4L;
 			}
 
 			/* Evict LRU tail until this fits. */
