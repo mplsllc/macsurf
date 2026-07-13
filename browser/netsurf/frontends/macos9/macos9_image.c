@@ -489,6 +489,16 @@ macos9_jpeg_strip_appn(unsigned char *p, long in_size)
 			ri += 2 + seg_len;
 		} else {                                   /* keep marker+segment */
 			long total = 2 + seg_len;
+			/* #230: QuickTime rejects the SOF1 (extended-sequential)
+			 * frame marker, but 8-bit extended-sequential Huffman is
+			 * byte-identical to baseline (SOF0) decoding. Rewrite the
+			 * marker so QT decodes it as baseline. Precision is the
+			 * first byte of the segment payload (p[ri+4]); only 8-bit
+			 * is safe to reinterpret. Progressive (SOF2) is genuinely
+			 * different and left alone. */
+			if (m == 0xC1 && ri + 4 < in_size && p[ri + 4] == 8) {
+				p[ri + 1] = 0xC0;
+			}
 			if (wi != ri) memmove(p + wi, p + ri, (size_t)total);
 			wi += total;
 			ri += total;
