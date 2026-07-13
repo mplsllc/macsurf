@@ -602,11 +602,24 @@ html_object_callback(hlcache_handle *object,
 		if (c->base.status == CONTENT_STATUS_READY)
 			content_set_done(&c->base);
 	} else if (nsoption_bool(incremental_reflow) &&
-		   event->type == CONTENT_MSG_DONE &&
+		   (event->type == CONTENT_MSG_DONE ||
+		    event->type == CONTENT_MSG_READY) &&
 		   box != NULL &&
 		   !(box->flags & REPLACE_DIM) &&
 		   (c->base.status == CONTENT_STATUS_READY ||
 		    c->base.status == CONTENT_STATUS_DONE)) {
+		/* #235: a macintoshgarden-style <img> with no width/height
+		 * attrs and no CSS dimensions links box->object via
+		 * CONTENT_MSG_READY (content_can_reformat is true for it) and
+		 * NEVER sends CONTENT_MSG_DONE, so the DONE-only guaranteed and
+		 * incremental reflows above both skip it. Without a reflow after
+		 * the object links, layout keeps the box at its pre-load
+		 * line-height (~17/19px) and the image renders vertically
+		 * squashed. Allowing READY here re-lays-out once the object is
+		 * linked -- layout then sees b->object != NULL, takes the
+		 * replaced branch, and sizes the box from the object's intrinsic
+		 * dimensions. The 250ms reformat_time throttle below keeps this
+		 * coalesced (no #208 reflow storm). */
 		/* 1) the configuration option to reflow pages while
 		 *      objects are fetched is set
 		 * 2) an object is newly fetched & converted,
