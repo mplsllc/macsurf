@@ -4148,6 +4148,193 @@ grow_fail:
 }
 
 
+/* #247 phase 2 — 2-value logical shorthand expander.
+ *
+ * Expands the inline/block-axis 2-value logical shorthands to their
+ * physical longhands (horizontal-tb / LTR):
+ *   margin-inline:  A [B]  -> margin-left:A;  margin-right:B;
+ *   margin-block:   A [B]  -> margin-top:A;   margin-bottom:B;
+ *   padding-inline: A [B]  -> padding-left:A; padding-right:B;
+ *   padding-block:  A [B]  -> padding-top:A;  padding-bottom:B;
+ *   inset-inline:   A [B]  -> left:A;         right:B;
+ *   inset-block:    A [B]  -> top:A;          bottom:B;
+ * A single value fills both sides -- `margin-inline: auto` -> both auto,
+ * the common horizontal-centering idiom. !important is propagated.
+ *
+ * A ':' is required immediately after the name (modulo whitespace), so it
+ * never fires on the -start/-end longhands (margin-inline-start, ...),
+ * which the alias table handles separately. Values (length / % / auto /
+ * calc() / var()) are copied verbatim; a balanced () group is one token.
+ * Models macsurf__rewrite_inset; pass-through (NULL) on no-op. */
+static char *
+macsurf__rewrite_logical_shorthands(const char *data, size_t in_size,
+		size_t *out_size_p)
+{
+	static const struct {
+		const char *name; size_t nlen;
+		const char *fs;   size_t fslen;   /* start-side field, e.g. "margin-left:" */
+		const char *fe;   size_t felen;   /* end-side field,   e.g. "margin-right:" */
+	} PAIRS[] = {
+		{ "margin-inline",  13, "margin-left:",  12, "margin-right:",  13 },
+		{ "margin-block",   12, "margin-top:",   11, "margin-bottom:", 14 },
+		{ "padding-inline", 14, "padding-left:", 13, "padding-right:", 14 },
+		{ "padding-block",  13, "padding-top:",  12, "padding-bottom:",15 },
+		{ "inset-inline",   12, "left:",          5, "right:",          6 },
+		{ "inset-block",    11, "top:",           4, "bottom:",         7 }
+	};
+	char *out;
+	size_t cap;
+	size_t out_pos;
+	size_t i;
+	int changed = 0;
+	int np = (int)(sizeof(PAIRS) / sizeof(PAIRS[0]));
+
+	cap = in_size * 2 + 256;
+	out = (char *)malloc(cap);
+	if (out == NULL) return NULL;
+	out_pos = 0;
+	i = 0;
+
+	while (i < in_size) {
+		int p;
+		int matched = -1;
+		size_t name_end;
+		size_t val_start;
+		size_t val_end;
+		const char *toks[2];
+		size_t tlens[2];
+		int ntok;
+		int important;
+		size_t scan;
+		const char *va; size_t la;
+		const char *vb; size_t lb;
+		size_t need;
+
+		for (p = 0; p < np; p++) {
+			if (macsurf__match_prop_name(data, in_size, i,
+					PAIRS[p].name, PAIRS[p].nlen)) {
+				matched = p;
+				break;
+			}
+		}
+		if (matched < 0) {
+			if (out_pos + 1 >= cap) goto grow_fail;
+			out[out_pos++] = data[i++];
+			continue;
+		}
+
+		name_end = i + PAIRS[matched].nlen;
+		while (name_end < in_size && (data[name_end] == ' ' ||
+				data[name_end] == '\t' || data[name_end] == '\n' ||
+				data[name_end] == '\r')) name_end++;
+		if (name_end >= in_size || data[name_end] != ':') {
+			/* not a shorthand here (e.g. margin-inline-start) */
+			if (out_pos + 1 >= cap) goto grow_fail;
+			out[out_pos++] = data[i++];
+			continue;
+		}
+		val_start = name_end + 1;
+		val_end = val_start;
+		while (val_end < in_size && data[val_end] != ';' &&
+				data[val_end] != '}') val_end++;
+
+		/* tokenise up to 2 values; balanced () is one token */
+		ntok = 0;
+		important = 0;
+		scan = val_start;
+		while (scan < val_end && ntok < 2) {
+			size_t tok_start;
+			while (scan < val_end && (data[scan] == ' ' ||
+					data[scan] == '\t' || data[scan] == '\n' ||
+					data[scan] == '\r')) scan++;
+			if (scan >= val_end) break;
+			if (data[scan] == '!') {
+				important = 1;
+				scan = val_end;
+				break;
+			}
+			tok_start = scan;
+			while (scan < val_end && data[scan] != ' ' &&
+					data[scan] != '\t' && data[scan] != '\n' &&
+					data[scan] != '\r') {
+				if (data[scan] == '(') {
+					int depth = 1;
+					scan++;
+					while (scan < val_end && depth > 0) {
+						if (data[scan] == '(') depth++;
+						else if (data[scan] == ')') depth--;
+						scan++;
+					}
+				} else {
+					scan++;
+				}
+			}
+			toks[ntok] = data + tok_start;
+			tlens[ntok] = scan - tok_start;
+			ntok++;
+		}
+
+		if (ntok < 1) {
+			/* malformed -- pass through unchanged */
+			while (i < val_end) {
+				if (out_pos + 1 >= cap) goto grow_fail;
+				out[out_pos++] = data[i++];
+			}
+			continue;
+		}
+
+		va = toks[0]; la = tlens[0];
+		if (ntok >= 2) { vb = toks[1]; lb = tlens[1]; }
+		else { vb = toks[0]; lb = tlens[0]; }
+
+		need = PAIRS[matched].fslen + la + PAIRS[matched].felen + lb +
+			(important ? 22 : 0) + 8;
+		while (out_pos + need >= cap) {
+			char *grown;
+			size_t newcap = cap * 2 + 256;
+			grown = (char *)realloc(out, newcap);
+			if (grown == NULL) goto grow_fail;
+			out = grown;
+			cap = newcap;
+		}
+
+		/* start side */
+		memcpy(out + out_pos, PAIRS[matched].fs, PAIRS[matched].fslen);
+		out_pos += PAIRS[matched].fslen;
+		memcpy(out + out_pos, va, la);
+		out_pos += la;
+		if (important) {
+			memcpy(out + out_pos, " !important", 11);
+			out_pos += 11;
+		}
+		out[out_pos++] = ';';
+		/* end side */
+		memcpy(out + out_pos, PAIRS[matched].fe, PAIRS[matched].felen);
+		out_pos += PAIRS[matched].felen;
+		memcpy(out + out_pos, vb, lb);
+		out_pos += lb;
+		if (important) {
+			memcpy(out + out_pos, " !important", 11);
+			out_pos += 11;
+		}
+
+		changed = 1;
+		i = val_end;  /* keep terminator (; or }) for caller */
+	}
+
+	if (!changed) {
+		free(out);
+		return NULL;
+	}
+	*out_size_p = out_pos;
+	return out;
+
+grow_fail:
+	free(out);
+	return NULL;
+}
+
+
 /* fixes273 (Bundle I) — at-rule preprocessor for @supports and @layer.
  *
  * libcss in this vintage doesn't parse @supports or @layer rules
@@ -5002,6 +5189,22 @@ static const struct {
 	{ "margin-inline-end",    17, "margin-right",     12 },
 	{ "margin-block-start",   18, "margin-top",       10 },
 	{ "margin-block-end",     16, "margin-bottom",    13 },
+	/* #247 phase 2: logical border longhands. MUST precede the
+	 * border-inline-start/... shorthand entries below -- the matcher has
+	 * no trailing-boundary check, so the shorter name would otherwise win
+	 * the prefix match inside "border-inline-start-width". */
+	{ "border-inline-start-width", 25, "border-left-width",   17 },
+	{ "border-inline-start-style", 25, "border-left-style",   17 },
+	{ "border-inline-start-color", 25, "border-left-color",   17 },
+	{ "border-inline-end-width",   23, "border-right-width",  18 },
+	{ "border-inline-end-style",   23, "border-right-style",  18 },
+	{ "border-inline-end-color",   23, "border-right-color",  18 },
+	{ "border-block-start-width",  24, "border-top-width",    16 },
+	{ "border-block-start-style",  24, "border-top-style",    16 },
+	{ "border-block-start-color",  24, "border-top-color",    16 },
+	{ "border-block-end-width",    22, "border-bottom-width", 19 },
+	{ "border-block-end-style",    22, "border-bottom-style", 19 },
+	{ "border-block-end-color",    22, "border-bottom-color", 19 },
 	{ "border-inline-start",  19, "border-left",      11 },
 	{ "border-inline-end",    17, "border-right",     12 },
 	{ "border-block-start",   18, "border-top",       10 },
@@ -5166,6 +5369,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	char *rewritten_object_position = NULL;
 	char *rewritten_modern_compat = NULL;
 	char *rewritten_inset = NULL;
+	char *rewritten_lshort = NULL;   /* #247 phase 2 */
 	char *rewritten_at_rules = NULL;   /* fixes273 — @supports/@layer */
 	char *rewritten_grid_align = NULL; /* fixes274 grid alignment */
 	char *rewritten_grid_flow = NULL;  /* fixes275 grid-auto-flow */
@@ -5181,6 +5385,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	size_t object_position_size = 0;
 	size_t modern_compat_size = 0;
 	size_t inset_size = 0;
+	size_t lshort_size = 0;   /* #247 phase 2 */
 	const char *final_data;
 	unsigned int final_size;
 
@@ -5470,6 +5675,17 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		final_size = (unsigned int)inset_size;
 	}
 
+	/* #247 phase 2 — 2-value logical shorthands (margin-inline: A B, etc.)
+	 * to physical longhand pairs. Runs after the inset expander; requires
+	 * ':' after the name so it never touches the -start/-end longhands. */
+	rewritten_lshort = macsurf__rewrite_logical_shorthands(final_data,
+			(size_t)final_size, &lshort_size);
+	if (rewritten_lshort != NULL &&
+			lshort_size <= (size_t)0x7fffffff) {
+		final_data = (const char *)rewritten_lshort;
+		final_size = (unsigned int)lshort_size;
+	}
+
 	/* fixes318 (#145) — background: shorthand → -macsurf-gradient:.
 	 * Runs BEFORE fixes266 so by the time fixes266's matcher inspects
 	 * the data, any shorthand-form gradient has already been extracted
@@ -5517,6 +5733,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	}
 
 	if (rewritten_inset != NULL) free(rewritten_inset);
+	if (rewritten_lshort != NULL) free(rewritten_lshort); /* #247 phase 2 */
 	if (rewritten_modern_compat != NULL) free(rewritten_modern_compat);
 	if (rewritten_object_position != NULL) free(rewritten_object_position);
 	if (rewritten_transform != NULL) free(rewritten_transform);
