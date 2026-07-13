@@ -4318,6 +4318,16 @@ macsurf__rewrite_logical_shorthands(const char *data, size_t in_size,
 			out_pos += 11;
 		}
 
+#ifdef MACSURF_DEBUG
+		{
+			extern void macsurf_debug_log_writef(
+				const char *fmt, ...);
+			/* #247 phase 2 probe: which shorthand expanded + token
+			 * count (1 = single value fills both sides). */
+			macsurf_debug_log_writef("WORK lsh: %s ntok=%d",
+				PAIRS[matched].name, ntok);
+		}
+#endif
 		changed = 1;
 		i = val_end;  /* keep terminator (; or }) for caller */
 	}
