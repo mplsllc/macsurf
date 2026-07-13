@@ -231,6 +231,9 @@ static void html_object_deferred_reflow(void *pw)
 
 	if (c->base.status == CONTENT_STATUS_READY ||
 			c->base.status == CONTENT_STATUS_DONE) {
+		macsurf_debug_log_writef(
+			"WORK defer-reflow: FIRED status=%d active=%d",
+			(int)c->base.status, (int)c->base.active);
 		content__reformat(&c->base, false,
 				c->base.available_width,
 				c->base.available_height);
@@ -680,6 +683,8 @@ html_object_callback(hlcache_handle *object,
 			 * (cancel any pending, reschedule) so the trailing link
 			 * always gets sized -- and only once, no #208 storm. */
 			int delay = (int)(c->base.reformat_time - ms_now) + 50;
+			macsurf_debug_log_writef(
+				"WORK defer-reflow: scheduled delay=%d", delay);
 			guit->misc->schedule(-1, html_object_deferred_reflow, c);
 			guit->misc->schedule(delay,
 					html_object_deferred_reflow, c);
