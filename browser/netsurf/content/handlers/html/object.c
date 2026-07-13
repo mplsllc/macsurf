@@ -231,9 +231,6 @@ static void html_object_deferred_reflow(void *pw)
 
 	if (c->base.status == CONTENT_STATUS_READY ||
 			c->base.status == CONTENT_STATUS_DONE) {
-		macsurf_debug_log_writef(
-			"WORK defer-reflow: FIRED status=%d active=%d",
-			(int)c->base.status, (int)c->base.active);
 		content__reformat(&c->base, false,
 				c->base.available_width,
 				c->base.available_height);
@@ -320,20 +317,6 @@ html_object_callback(hlcache_handle *object,
 		NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
 
 		html_object_done(box, object, o->background);
-
-		/* WORK (#235): show the box height vs the object's intrinsic
-		 * height the moment the image finishes, plus parent status /
-		 * active count — so we can see whether the box is collapsed and
-		 * whether a reflow will follow. */
-		if (box != NULL && !o->background) {
-			macsurf_debug_log_writef(
-				"WORK img: DONE boxh=%d boxw=%d objh=%d objw=%d rdim=%d status=%d active=%d",
-				(int)box->height, (int)box->width,
-				(int)content_get_height(object),
-				(int)content_get_width(object),
-				(int)((box->flags & REPLACE_DIM) != 0),
-				(int)c->base.status, (int)c->base.active);
-		}
 
 		if (c->base.status != CONTENT_STATUS_LOADING &&
 				box->flags & REPLACE_DIM) {
@@ -630,9 +613,6 @@ html_object_callback(hlcache_handle *object,
 		 * the next navigation. Its intrinsic dimensions are known at
 		 * convert, so one reflow here sizes the box. active==0 keeps
 		 * this coalesced (fires once per completed batch -- no storm). */
-		macsurf_debug_log_writef(
-			"WORK img: guaranteed-reflow (status=%d event=%d) -- #235 late-image path is status==DONE",
-			(int)c->base.status, (int)event->type);
 		content__reformat(&c->base, false, c->base.available_width,
 				c->base.available_height);
 		if (c->base.status == CONTENT_STATUS_READY)
@@ -683,8 +663,6 @@ html_object_callback(hlcache_handle *object,
 			 * (cancel any pending, reschedule) so the trailing link
 			 * always gets sized -- and only once, no #208 storm. */
 			int delay = (int)(c->base.reformat_time - ms_now) + 50;
-			macsurf_debug_log_writef(
-				"WORK defer-reflow: scheduled delay=%d", delay);
 			guit->misc->schedule(-1, html_object_deferred_reflow, c);
 			guit->misc->schedule(delay,
 					html_object_deferred_reflow, c);

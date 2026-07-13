@@ -651,21 +651,7 @@ macos9_qt_decode_to_bitmap(GraphicsImportComponent gi,
 
 	GraphicsImportSetGWorld(gi, temp_gw, NULL);
 	GraphicsImportSetBoundsRect(gi, &tmp_bounds);
-	{
-		/* WORK (#230): GraphicsImportDraw's result was being discarded,
-		 * so a QT decode failure (progressive JPEG / large APP1-EXIF /
-		 * finicky GIF on OS 9) silently painted the erased GWorld --
-		 * black for the alpha path -- with no signal. Capture + log it
-		 * (capped) so we can see which images fail and the QT error. */
-		long gi_draw_err = (long)GraphicsImportDraw(gi);
-		static int work_qt_n = 0;
-		if (gi_draw_err != 0 && work_qt_n < 24) {
-			work_qt_n++;
-			macsurf_debug_log_writef(
-				"WORK img: QT GraphicsImportDraw err=%ld bw=%d bh=%d alpha=%d",
-				gi_draw_err, (int)bw, (int)bh, (int)wants_alpha);
-		}
-	}
+	GraphicsImportDraw(gi);
 
 	SetGWorld(save_port, save_gdh);
 
@@ -1582,9 +1568,6 @@ macos9_qt_image_convert(struct content *c)
 			HLock(qti->compressed);
 			src_bytes = (const unsigned char *)*qti->compressed;
 			src_size = cleaned;
-			macsurf_debug_log_writef(
-				"WORK img: JPEG stripped APPn -> %ld bytes",
-				cleaned);
 		}
 	}
 
@@ -1688,22 +1671,6 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 	dst_h = data->height;
 	nat_w = (int)c->width;
 	nat_h = (int)c->height;
-
-	/* WORK (#235): show the render size layout asked for (dst) vs the
-	 * image's natural size (nat). If dst_h is squished relative to
-	 * dst_w * nat_h/nat_w, layout handed us a collapsed height -- the
-	 * macintoshgarden header squash. Capped. */
-	{
-		static int work_imgr_n = 0;
-		if (work_imgr_n < 40) {
-			int want_h = (nat_w > 0) ?
-				(int)(((long)dst_w * (long)nat_h) / (long)nat_w) : 0;
-			work_imgr_n++;
-			macsurf_debug_log_writef(
-				"WORK imgredraw: nat=%dx%d dst=%dx%d aspect_h=%d",
-				nat_w, nat_h, dst_w, dst_h, want_h);
-		}
-	}
 
 	/* fixes269 (#8) — above-fold bias for lazy decode. If the image's
 	 * destination rect is entirely outside the redraw clip rect, skip
