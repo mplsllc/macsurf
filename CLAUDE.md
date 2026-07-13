@@ -66,6 +66,19 @@ Nothing else. No "and please verify the Mac unpack worked." No "if this still fa
 
 ---
 
+# DIRECTIVE, NEVER CLOSE OR MARK-VERIFIED AN ISSUE WITHOUT THE MAINTAINER'S EXPLICIT CONFIRMATION
+
+Do NOT `gh issue close` an issue, tag a build `*-verified`, mark a fix "verified", or write "closed/fixed/done" in the tracker on the strength of your own testing — a passing Linux syntax check, a green synthetic `t.html` probe, a clean log, or "it should work." **Hardware verification is the maintainer's call, on the actual reported case, and only they make it.**
+
+- After shipping a fix, state it as **"shipped — awaiting your verification on <the real reported case>"**, and stop there.
+- Only close / tag-verified / check the tracker box **after the maintainer explicitly says it's confirmed** ("looks good", "verified", "that works", etc.) — and confirmed on the *reported* scenario, not a proxy you substituted.
+- A synthetic repro passing is NOT the reported bug passing. (e.g. a below-fold PNG loading is not the macintoshgarden header un-squashing.)
+- If you already closed something on assumption, reopen it and correct the tracker the moment you realize it.
+
+Same root failure mode as DIRECTIVE #1: substituting your assumption for the maintainer's ground truth. Don't.
+
+---
+
 # MacSurf
 
 A lightweight web browser for Mac OS 9 PowerPC, built on the NetSurf engine, with native TLS (macTLS) for direct HTTPS — no proxy.
