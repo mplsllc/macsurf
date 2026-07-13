@@ -2346,6 +2346,7 @@ static const struct about_line about_roll[] = {
 	{ "Ko-Fi supporters",   1 },
 	{ "kilgeist",           0 },
 	{ "Turuun",             0 },
+	{ "Rogue",              0 },
 	{ "",                   2 },
 	{ "Thank you for keeping",  0 },
 	{ "vintage Macs on the web.",0 }

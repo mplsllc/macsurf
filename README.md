@@ -34,7 +34,7 @@
   <a href="https://discord.gg/mrwZK8zHr2" target="_blank"><img src="img/discord.jpeg" alt="Join our Discord!" height="46"></a>
 </p>
 
-<p align="center"><sub><strong>Thanks to our supporters:</strong> Shlooom, Kestral, Mothra (Patreon) &middot; kilgeist, Turuun (Ko-Fi)</sub></p>
+<p align="center"><sub><strong>Thanks to our supporters:</strong> Shlooom, Kestral, Mothra (Patreon) &middot; kilgeist, Turuun, Rogue (Ko-Fi)</sub></p>
 
 <p align="center">
   <img src="screenshots/2.0-thankyou.png" alt="The MacSurf 2.0 About box crediting supporters" width="420">
