@@ -626,34 +626,6 @@ macos9_font_split(const struct plot_font_style *fstyle,
                 return NSERROR_OK;
         }
 
-        /* WORK #251 byte-dump (temporary): the fixes810 shy probe never fired,
-         * meaning no U+00AD (c2 ad) reaches the split path -- so &shy; is not
-         * arriving as a soft hyphen. Dump the raw box-text bytes for the test
-         * words so we can see what &shy; actually became (c2 ad = U+00AD, 2d =
-         * literal hyphen, or other). Fires even when the word fits. */
-        if (length >= 4 &&
-            ((string[0] == 's' && string[1] == 'u' &&
-              string[2] == 'p' && string[3] == 'e') ||
-             (string[0] == 'a' && string[1] == 'a' &&
-              string[2] == 'a' && string[3] == 'a'))) {
-                char hx[72];
-                size_t n = (length < 22) ? length : 22;
-                size_t j;
-                int p = 0;
-                const char *hd = "0123456789abcdef";
-                for (j = 0; j < n && p < 66; j++) {
-                        int b = (unsigned char)string[j];
-                        hx[p++] = hd[(b >> 4) & 0xf];
-                        hx[p++] = hd[b & 0xf];
-                        hx[p++] = ' ';
-                }
-                hx[p] = '\0';
-                macsurf_debug_log_writef(
-                    "WORK conv-bytes len=%ld hy=%d hex=%s",
-                    (long)length,
-                    (int)(fstyle != NULL ? fstyle->hyphens : -1), hx);
-        }
-
         macos9_font_position(fstyle, string, length, x, &fit_offset, &fit_x);
 
         /* If the entire string fits within the width, do not split it at all. */
@@ -721,38 +693,6 @@ macos9_font_split(const struct plot_font_style *fstyle,
                  * unbreakable words overflow unless overflow-wrap:break-word. */
                 *char_offset = 0;
                 *actual_x = 0;
-        }
-
-        /* WORK #251 shy diag (temporary): the source path looks correct on
-         * Linux but hardware renders hyphens:none as breaking and a multi-shy
-         * word with a '-' per syllable. Log the actual runtime values for any
-         * word that contains a soft hyphen so the divergence is measured, not
-         * guessed. "WORK " prefix passes the failures-only log gate. */
-        {
-                int has_shy = 0;
-                size_t k;
-                for (k = 0; k + 1 < length; k++) {
-                        if ((unsigned char)string[k] == 0xC2 &&
-                            (unsigned char)string[k + 1] == 0xAD) {
-                                has_shy = 1;
-                                break;
-                        }
-                }
-                if (has_shy) {
-                        char pv[24];
-                        size_t p = (length < 20) ? length : 20;
-                        for (k = 0; k < p; k++) {
-                                unsigned char c = (unsigned char)string[k];
-                                pv[k] = (c >= 0x20 && c < 0x7f) ?
-                                        (char)c : '.';
-                        }
-                        pv[p] = '\0';
-                        macsurf_debug_log_writef(
-                            "WORK shy-split hy=%d allow=%d hshy=%d hsp=%d lshy=%ld off=%ld w='%s'",
-                            (int)(fstyle != NULL ? fstyle->hyphens : -1),
-                            (int)allow_shy, (int)have_shy, (int)have_space,
-                            (long)last_shy, (long)*char_offset, pv);
-                }
         }
 
         return NSERROR_OK;
