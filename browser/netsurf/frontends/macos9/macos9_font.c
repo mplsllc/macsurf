@@ -695,6 +695,38 @@ macos9_font_split(const struct plot_font_style *fstyle,
                 *actual_x = 0;
         }
 
+        /* WORK #251 shy diag (temporary): the source path looks correct on
+         * Linux but hardware renders hyphens:none as breaking and a multi-shy
+         * word with a '-' per syllable. Log the actual runtime values for any
+         * word that contains a soft hyphen so the divergence is measured, not
+         * guessed. "WORK " prefix passes the failures-only log gate. */
+        {
+                int has_shy = 0;
+                size_t k;
+                for (k = 0; k + 1 < length; k++) {
+                        if ((unsigned char)string[k] == 0xC2 &&
+                            (unsigned char)string[k + 1] == 0xAD) {
+                                has_shy = 1;
+                                break;
+                        }
+                }
+                if (has_shy) {
+                        char pv[24];
+                        size_t p = (length < 20) ? length : 20;
+                        for (k = 0; k < p; k++) {
+                                unsigned char c = (unsigned char)string[k];
+                                pv[k] = (c >= 0x20 && c < 0x7f) ?
+                                        (char)c : '.';
+                        }
+                        pv[p] = '\0';
+                        macsurf_debug_log_writef(
+                            "WORK shy-split hy=%d allow=%d hshy=%d hsp=%d lshy=%ld off=%ld w='%s'",
+                            (int)(fstyle != NULL ? fstyle->hyphens : -1),
+                            (int)allow_shy, (int)have_shy, (int)have_space,
+                            (long)last_shy, (long)*char_offset, pv);
+                }
+        }
+
         return NSERROR_OK;
 }
 
