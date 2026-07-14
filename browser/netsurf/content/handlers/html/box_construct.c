@@ -1947,8 +1947,13 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 			 * END of <b>ab&shy;</b> sits BEFORE the BOX_INLINE_END, so
 			 * the direct 'last' is the marker, not the text (this is why
 			 * the fixes813 direct-last check was a no-op on hardware). */
+			/* fixes815 (#275): also skip BOX_BR -- a shy right before a
+			 * <br> (foo&shy;<br>bar, case 2b) is dangling too (the <br>
+			 * forces the break, so the shy can never be the wrap point),
+			 * so reach past it to strip foo's trailing shy. */
 			while (pv != NULL && (pv->type == BOX_INLINE_END ||
-					pv->type == BOX_INLINE))
+					pv->type == BOX_INLINE ||
+					pv->type == BOX_BR))
 				pv = pv->prev;
 			if (pv != NULL && pv->type == BOX_TEXT &&
 					pv->text != NULL && pv->length >= 2 &&
@@ -1959,6 +1964,25 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 				size_t pl = pv->length;
 				pv->text[pl - 2] = '\0';
 				pv->length = pl - 2;
+#ifdef __MACOS9__
+				{
+					extern void macsurf_debug_log_writef(
+						const char *fmt, ...);
+					char pvw[16];
+					size_t z = ((pl - 2) < 15) ? (pl - 2) : 15;
+					size_t q;
+					for (q = 0; q < z; q++) {
+						unsigned char c =
+							(unsigned char) pv->text[q];
+						pvw[q] = (c >= 0x20 && c < 0x7f) ?
+							(char) c : '.';
+					}
+					pvw[z] = '\0';
+					macsurf_debug_log_writef(
+						"WORK shystrip -> len=%ld '%s'",
+						(long)(pl - 2), pvw);
+				}
+#endif
 			}
 		}
 
