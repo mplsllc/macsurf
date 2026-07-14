@@ -1941,15 +1941,22 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 		 * is not reached here (BR is not a text node) and stays open.
 		 * WORK shystrip probe proves it only ever hits short boundary
 		 * boxes ("ab"/"cali"), never a long coalesced word. */
-		if (props.inline_container != NULL &&
-				props.inline_container->last != NULL &&
-				props.inline_container->last->type == BOX_TEXT &&
-				props.inline_container->last->text != NULL &&
-				props.inline_container->last->length >= 2) {
+		if (props.inline_container != NULL) {
 			struct box *pv = props.inline_container->last;
-			size_t pl = pv->length;
-			if ((unsigned char) pv->text[pl - 2] == 0xC2 &&
-					(unsigned char) pv->text[pl - 1] == 0xAD) {
+			/* fixes813b: skip inline start/end markers -- a shy at the
+			 * END of <b>ab&shy;</b> sits BEFORE the BOX_INLINE_END, so
+			 * the direct 'last' is the marker, not the text (this is why
+			 * the fixes813 direct-last check was a no-op on hardware). */
+			while (pv != NULL && (pv->type == BOX_INLINE_END ||
+					pv->type == BOX_INLINE))
+				pv = pv->prev;
+			if (pv != NULL && pv->type == BOX_TEXT &&
+					pv->text != NULL && pv->length >= 2 &&
+					(unsigned char) pv->text[pv->length - 2]
+						== 0xC2 &&
+					(unsigned char) pv->text[pv->length - 1]
+						== 0xAD) {
+				size_t pl = pv->length;
 				pv->text[pl - 2] = '\0';
 				pv->length = pl - 2;
 #ifdef __MACOS9__
