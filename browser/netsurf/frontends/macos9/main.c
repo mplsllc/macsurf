@@ -794,12 +794,28 @@ void macos9_handle_update(const EventRecord *event) {
 		if (cwx >= gw->content_rect.left && cwx < gw->content_rect.right) {
 			RGBColor blk;
 			RgnHandle savedClip = NewRgn();
+			/* #252: honour the focused field's CSS caret-color. The ns
+			 * colour primitive is 0x00BBGGRR (see nscss_color_to_ns and
+			 * plotters.c macos9_colour_to_rgb). Falls back to black for
+			 * caret-color:auto or when no editable box is focused, so the
+			 * default caret is unchanged. */
+			colour caretcol = 0;
+			struct hlcache_handle *carh = (gw->bw != NULL) ?
+					browser_window_get_content(gw->bw) : NULL;
+			extern bool html_get_caret_colour(struct hlcache_handle *h,
+					colour *colour_out);
 			if (cy0 < gw->content_rect.top)    cy0 = gw->content_rect.top;
 			if (cy1 > gw->content_rect.bottom) cy1 = gw->content_rect.bottom;
 			SetPortWindowPort(win);
 			if (savedClip != NULL) GetClip(savedClip);
 			ClipRect(&gw->content_rect);
-			blk.red = blk.green = blk.blue = 0;
+			if (carh != NULL && html_get_caret_colour(carh, &caretcol)) {
+				blk.red   = (unsigned short)(((caretcol >>  0) & 0xff) * 257);
+				blk.green = (unsigned short)(((caretcol >>  8) & 0xff) * 257);
+				blk.blue  = (unsigned short)(((caretcol >> 16) & 0xff) * 257);
+			} else {
+				blk.red = blk.green = blk.blue = 0;
+			}
 			RGBForeColor(&blk);
 			PenNormal();
 			MoveTo((short)cwx, (short)cy0);

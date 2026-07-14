@@ -41,6 +41,7 @@
 #include "netsurf/misc.h"
 #include "netsurf/layout.h"
 #include "netsurf/keypress.h"
+#include "netsurf/css.h"	/* nscss_color_to_ns (#252 caret-color) */
 #include "content/hlcache.h"
 #include "content/textsearch.h"
 #include "desktop/browser_history.h"
@@ -60,6 +61,7 @@
 #include "html/private.h"
 #include "html/imagemap.h"
 #include "html/interaction.h"
+#include "html/html.h"		/* html_get_caret_colour proto (#252) */
 #include <libcss/unit.h>	/* css_unit_len2device_px (fixes656) */
 #include <libcss/fpmath.h>	/* FIXTOINT (fixes656) */
 
@@ -2081,6 +2083,48 @@ void html_set_focus(html_content *html, html_focus_type focus_type,
 
 	/* Inform of the content's drag status change */
 	content_broadcast((struct content *)html, CONTENT_MSG_CARET, &msg_data);
+}
+
+/* MacSurf (#252): resolve caret-color of the currently focused editable box.
+ * Documented in html.h. Mirrors html_redraw_accent_colour (redraw.c): reads
+ * the focus-owner box's computed caret-color and, for an explicit colour or
+ * currentColor, converts it to the NetSurf colour primitive. Returns false
+ * for auto / no focus so the frontend keeps its default (black) caret. */
+bool html_get_caret_colour(struct hlcache_handle *h, colour *colour_out)
+{
+	html_content *html;
+	struct box *box = NULL;
+	css_color cc;
+	uint8_t st;
+
+	if (h == NULL || colour_out == NULL) {
+		return false;
+	}
+	html = (html_content *) hlcache_handle_get_content(h);
+	if (html == NULL) {
+		return false;
+	}
+	if (html->focus_type == HTML_FOCUS_TEXTAREA) {
+		box = html->focus_owner.textarea;
+	} else if (html->focus_type == HTML_FOCUS_CONTENT) {
+		box = html->focus_owner.content;
+	} else {
+		return false;
+	}
+	if (box == NULL || box->style == NULL) {
+		return false;
+	}
+	st = css_computed_caret_color(box->style, &cc);
+	if (st == CSS_CARET_COLOR_COLOR) {
+		*colour_out = nscss_color_to_ns(cc);
+		return true;
+	}
+	if (st == CSS_CARET_COLOR_CURRENT_COLOR) {
+		css_computed_color(box->style, &cc);
+		*colour_out = nscss_color_to_ns(cc);
+		return true;
+	}
+	return false;
 }
 
 /* Documented in html_internal.h */

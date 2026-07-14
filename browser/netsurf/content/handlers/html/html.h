@@ -170,6 +170,17 @@ nserror html_init(void);
 void html_redraw_a_box(struct hlcache_handle *h, struct box *box);
 
 /**
+ * MacSurf (#252): resolve the CSS caret-color of the currently focused
+ * editable box (text input / textarea) in an HTML content. Writes the
+ * NetSurf colour and returns true when caret-color is an explicit colour
+ * or currentColor; returns false for auto / no focus (caller keeps the
+ * default caret colour). C89 / CW8-safe.
+ *
+ * used by core browser (frontend caret paint)
+ */
+bool html_get_caret_colour(struct hlcache_handle *h, colour *colour_out);
+
+/**
  * obtain html frame content from handle
  *
  * used by core browser
