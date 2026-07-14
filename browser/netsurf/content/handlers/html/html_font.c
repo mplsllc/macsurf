@@ -193,6 +193,10 @@ void font_plot_style_from_css(
 			fstyle->word_spacing = 0;
 		}
 	}
+
+	/* #251: carry the CSS hyphens value so macos9_font_split only takes
+	 * soft-hyphen break opportunities when hyphens != none. */
+	fstyle->hyphens = (int)css_computed_hyphens(css);
 	/* fixes50/200: -macsurf-text-shadow packed value.
 	 *   bits 31..26 h-offset px (6-bit signed, -32..31)
 	 *   bits 25..20 v-offset px (6-bit signed, -32..31)

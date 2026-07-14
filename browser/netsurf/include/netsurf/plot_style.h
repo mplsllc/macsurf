@@ -188,6 +188,10 @@ typedef struct plot_font_style {
 	int transform;
 	/* fixes73: scale companion (sx_q88, sy_q88) for text origin. */
 	int transform_b;
+	/* #251: CSS `hyphens` computed value (css_hyphens_e). Carried into
+	 * macos9_font_split so soft-hyphen (U+00AD) break opportunities are
+	 * only taken when != CSS_HYPHENS_NONE. 0 (inherit) treated as manual. */
+	int hyphens;
 } plot_font_style_t;
 
 
