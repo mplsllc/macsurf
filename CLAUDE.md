@@ -378,12 +378,12 @@ When a change introduces a new `.c` file, mention it plainly so the user can add
 - Screenshot canonical location: `screenshots/v0.3-mactrove-fixes139.png` (user-saved from the 2026-04-20 session).
 - Carbon partition bumped well past the original 16 MB floor (current project ~195 MB preferred / ~164 MB minimum) to accommodate libcss + DOM allocation footprint on real pages (CSS_NOMEM blocker long resolved; see Gotchas).
 
-### Current blockers, CSS structural gaps (see [CSS_STATUS.md](CSS_STATUS.md) for full audit)
+### Current blockers, CSS structural gaps (current ground truth: [docs/research/css-gap-inventory-2026-07-13.md](docs/research/css-gap-inventory-2026-07-13.md); stale reference audits: [.private/CSS_SUPPORT_MATRIX.md](.private/CSS_SUPPORT_MATRIX.md) + [.private/docs/css-status.md](.private/docs/css-status.md))
 
 The CSS pipeline parses 167 properties via libcss but layout/redraw only consumes 87 of them. The visible "pages don't load properly" symptoms map to specific silent-fail properties:
 
 
-**Other gaps documented in CSS_STATUS.md:**
+**Other gaps documented in [docs/research/css-gap-inventory-2026-07-13.md](docs/research/css-gap-inventory-2026-07-13.md):**
 - `background-attachment: fixed`, `quotes`, `empty-cells`, `table-layout`, `unicode-bidi`, `writing-mode`, `word-spacing`, `break-*`, `page-break-*`, `orphans`, `widows`, `fill-opacity`, `stroke-opacity`, all parsed, all silently dropped.
 - `gap: A B` two-value form, single value works (97% of cases), two-value collapses to column-gap=B (deferred, fixes148).
 - `font-family` matching narrow (Geneva/Monaco/Chicago/Charcoal only).
@@ -400,7 +400,7 @@ For features already shipped (flex alignment, border-radius, box-shadow, gradien
 
 ## Native CSS implementation
 
-MacSurf handles modern CSS natively in libcss and the layout engine rather than preprocessing it anywhere else. CSS custom properties (`var()`) ship at fixes133-139; full status (per-property coverage, parsed-but-dropped gaps, deferred features) lives in [docs/css-status.md](docs/css-status.md) — that's the ground truth, not this file.
+MacSurf handles modern CSS natively in libcss and the layout engine rather than preprocessing it anywhere else. CSS custom properties (`var()`) ship at fixes133-139; full status (per-property coverage, parsed-but-dropped gaps, deferred features) lives in [docs/research/css-gap-inventory-2026-07-13.md](docs/research/css-gap-inventory-2026-07-13.md) — that's the current ground truth, not this file (the older `.private/docs/css-status.md` + `.private/CSS_SUPPORT_MATRIX.md` audits are stale, superseded by the inventory).
 
 Architectural notes worth keeping inline:
 
@@ -439,11 +439,11 @@ Full fix history: see [docs/changelog-fixes.md](docs/changelog-fixes.md).
 
 **Full fix history (predecessor chain from fixes225 → fixes143a):** see [docs/changelog-fixes.md](docs/changelog-fixes.md).
 
-### Next work queue (priorities from [CSS_STATUS.md](CSS_STATUS.md))
+### Next work queue (priorities from [docs/research/css-gap-inventory-2026-07-13.md](docs/research/css-gap-inventory-2026-07-13.md))
 
 Real-world impact ranked, lowest-effort first within each priority. Numbering reflects the fixes132+ ship order.
 
-[CSS_STATUS.md](CSS_STATUS.md) is the ground truth for what's shipped vs. open. The list below tracks the active queue only.
+[docs/research/css-gap-inventory-2026-07-13.md](docs/research/css-gap-inventory-2026-07-13.md) is the current ground truth for what's shipped vs. open (spec/MDN reference for the gaps: [docs/research/css-missing-properties.md](docs/research/css-missing-properties.md)). The list below tracks the active queue only.
 
 Currently-open queue:
 
