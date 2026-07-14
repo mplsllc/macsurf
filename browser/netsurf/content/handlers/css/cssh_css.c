@@ -5430,6 +5430,35 @@ char *macsurf__rewrite_inline_style(const char *data, size_t in_size,
 		src_size = cur_size;
 	}
 
+	/* fixes817e (#62): inline style attributes NEVER ran the grid
+	 * template rewrites -- a grid declared via style="display:grid;
+	 * grid-template-columns:..." kept the raw property, which has no
+	 * macsurf parser, so -macsurf-grid was never set and the grid
+	 * collapsed to one column (t.html 4b/4c/4d stacked; PRE-EXISTING,
+	 * predates fixes817 -- only <style>/external sheets got the
+	 * rewrite via nscss_process_data). Run the same in-place same-size
+	 * rewrites here. NOTE contract differs from the rewriters above:
+	 * these return a malloc'd SAME-SIZE buffer (NULL = OOM), so the
+	 * size does not change. The broader gap (logical props, place-*,
+	 * grid placement etc. also skipped inline) is tracked separately. */
+	next = macsurf__rewrite_grid_template_columns(src, src_size);
+	if (next != NULL) {
+		if (cur != NULL) free(cur);
+		cur = next;
+		cur_size = src_size;
+		src = (const char *)cur;
+		src_size = cur_size;
+	}
+
+	next = macsurf__rewrite_grid_template_rows(src, src_size);
+	if (next != NULL) {
+		if (cur != NULL) free(cur);
+		cur = next;
+		cur_size = src_size;
+		src = (const char *)cur;
+		src_size = cur_size;
+	}
+
 	if (cur == NULL) {
 		return NULL;
 	}
