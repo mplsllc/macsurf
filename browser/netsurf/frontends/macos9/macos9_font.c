@@ -695,38 +695,6 @@ macos9_font_split(const struct plot_font_style *fstyle,
                 *actual_x = 0;
         }
 
-        /* WORK #275 (temporary, fixes813 round): prove the box_construct
-         * shy-strip did NOT damage layout-time wrap fragments -- the
-         * coalesced &shy; word must still reach here with its inline shys
-         * and break (hy=2 off>0), and hyphens:none must still not break
-         * (hy=1 off=0). Logs any word carrying a soft hyphen. */
-        {
-                int has_shy = 0;
-                size_t k;
-                for (k = 0; k + 1 < length; k++) {
-                        if ((unsigned char)string[k] == 0xC2 &&
-                            (unsigned char)string[k + 1] == 0xAD) {
-                                has_shy = 1;
-                                break;
-                        }
-                }
-                if (has_shy) {
-                        char pv[24];
-                        size_t p = (length < 20) ? length : 20;
-                        for (k = 0; k < p; k++) {
-                                unsigned char c = (unsigned char)string[k];
-                                pv[k] = (c >= 0x20 && c < 0x7f) ?
-                                        (char)c : '.';
-                        }
-                        pv[p] = '\0';
-                        macsurf_debug_log_writef(
-                            "WORK shy-split hy=%d allow=%d lshy=%ld off=%ld w='%s'",
-                            (int)(fstyle != NULL ? fstyle->hyphens : -1),
-                            (int)allow_shy, (long)last_shy,
-                            (long)*char_offset, pv);
-                }
-        }
-
         return NSERROR_OK;
 }
 

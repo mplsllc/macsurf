@@ -1959,25 +1959,6 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 				size_t pl = pv->length;
 				pv->text[pl - 2] = '\0';
 				pv->length = pl - 2;
-#ifdef __MACOS9__
-				{
-					extern void macsurf_debug_log_writef(
-						const char *fmt, ...);
-					char pvw[16];
-					size_t z = ((pl - 2) < 15) ? (pl - 2) : 15;
-					size_t q;
-					for (q = 0; q < z; q++) {
-						unsigned char c =
-							(unsigned char) pv->text[q];
-						pvw[q] = (c >= 0x20 && c < 0x7f) ?
-							(char) c : '.';
-					}
-					pvw[z] = '\0';
-					macsurf_debug_log_writef(
-						"WORK shystrip -> len=%ld '%s'",
-						(long)(pl - 2), pvw);
-				}
-#endif
 			}
 		}
 
