@@ -499,15 +499,6 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 	 * Distribution: subtract PX + PERCENT widths from container,
 	 * divide remainder proportionally across FR units. */
 	raw_tracks = css_computed_macsurf_grid_tracks(grid->style);
-#ifdef __MACOS9__
-	/* WORK #62 (temporary): the track-sizing probe never fired, so the
-	 * raw_tracks path isn't taken -- log WHY (status/null/first track/
-	 * cols) to see if the -macsurf-grid-tracks list reaches layout. */
-	macsurf_debug_log_writef(
-		"WORK gridraw st=%d null=%d t0=%ld cols=%d",
-		(int)grid_status, (int)(raw_tracks == NULL),
-		(long)(raw_tracks != NULL ? raw_tracks[0] : 0), (int)cols);
-#endif
 	if (grid_status == CSS_MACSURF_GRID_SET && raw_tracks != NULL &&
 			raw_tracks[0] != 0) {
 		int fixed_total = 0;
@@ -709,24 +700,6 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 				}
 			}
 
-#ifdef __MACOS9__
-			/* WORK #62 (temporary): dump the resolved track sizing
-			 * so the screenshot ambiguity (equal vs 0-width vs guard
-			 * fallback) is measured, not guessed. */
-			{
-				int zz;
-				macsurf_debug_log_writef(
-					"WORK gridtrk n=%d place=%d cw=%d frq=%d",
-					n_tracks, grid_has_placement,
-					(int)container_width, fr_total_q88);
-				for (zz = 0; zz < n_tracks && zz < 4; zz++) {
-					macsurf_debug_log_writef(
-						"WORK gridcol j=%d auto=%d w=%d",
-						zz, is_auto[zz],
-						track_widths[zz]);
-				}
-			}
-#endif
 
 		}
 	}
