@@ -626,6 +626,34 @@ macos9_font_split(const struct plot_font_style *fstyle,
                 return NSERROR_OK;
         }
 
+        /* WORK #251 byte-dump (temporary): the fixes810 shy probe never fired,
+         * meaning no U+00AD (c2 ad) reaches the split path -- so &shy; is not
+         * arriving as a soft hyphen. Dump the raw box-text bytes for the test
+         * words so we can see what &shy; actually became (c2 ad = U+00AD, 2d =
+         * literal hyphen, or other). Fires even when the word fits. */
+        if (length >= 4 &&
+            ((string[0] == 's' && string[1] == 'u' &&
+              string[2] == 'p' && string[3] == 'e') ||
+             (string[0] == 'a' && string[1] == 'a' &&
+              string[2] == 'a' && string[3] == 'a'))) {
+                char hx[72];
+                size_t n = (length < 22) ? length : 22;
+                size_t j;
+                int p = 0;
+                const char *hd = "0123456789abcdef";
+                for (j = 0; j < n && p < 66; j++) {
+                        int b = (unsigned char)string[j];
+                        hx[p++] = hd[(b >> 4) & 0xf];
+                        hx[p++] = hd[b & 0xf];
+                        hx[p++] = ' ';
+                }
+                hx[p] = '\0';
+                macsurf_debug_log_writef(
+                    "WORK conv-bytes len=%ld hy=%d hex=%s",
+                    (long)length,
+                    (int)(fstyle != NULL ? fstyle->hyphens : -1), hx);
+        }
+
         macos9_font_position(fstyle, string, length, x, &fit_offset, &fit_x);
 
         /* If the entire string fits within the width, do not split it at all. */
