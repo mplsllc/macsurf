@@ -42,6 +42,7 @@
 #define MACSURF_GRID_TRACK_UNIT_FR      1
 #define MACSURF_GRID_TRACK_UNIT_PX      2
 #define MACSURF_GRID_TRACK_UNIT_PERCENT 3
+#define MACSURF_GRID_TRACK_UNIT_AUTO    4  /* fixes817 (#62): content-sized */
 #define MACSURF_GRID_TRACK_MAX          8
 
 static int32_t macsurf__pack_track(uint8_t unit, int32_t value)
@@ -123,6 +124,22 @@ css_error css__parse_macsurf_grid(css_language *c,
 			consumeWhitespace(vector, ctx);
 			token = parserutils_vector_peek(vector, *ctx);
 			if (token == NULL) break;
+			/* fixes817 (#62): an `auto` column track packs a distinct
+			 * UNIT_AUTO (content-sized at layout). cssh_css emits only
+			 * `auto` verbatim as an ident here; min-content/max-content/
+			 * minmax still arrive folded to 1fr. */
+			if (token->type == CSS_TOKEN_IDENT) {
+				bool amatch = false;
+				if (lwc_string_caseless_isequal(token->idata,
+						c->strings[AUTO], &amatch) ==
+						lwc_error_ok && amatch) {
+					tracks[n_tracks++] = macsurf__pack_track(
+						MACSURF_GRID_TRACK_UNIT_AUTO, 0);
+					parserutils_vector_iterate(vector, ctx);
+					continue;
+				}
+				break;  /* unknown ident -- end the track list */
+			}
 			if (token->type != CSS_TOKEN_DIMENSION &&
 					token->type != CSS_TOKEN_PERCENTAGE &&
 					token->type != CSS_TOKEN_NUMBER) {

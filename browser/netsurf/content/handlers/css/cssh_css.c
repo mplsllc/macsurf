@@ -469,10 +469,11 @@ macsurf__emit_one_track(char *out, size_t cap,
 	size_t emit_len = tok_len;
 	size_t i;
 	bool is_value = false;
+	bool is_auto = false;
 
 	/* Detect if the token looks like a value (starts with digit, '.',
 	 * '+' or '-'). Anything else (auto, min-content, max-content,
-	 * leftover minmax/calc) becomes "1fr". */
+	 * leftover minmax/calc) becomes "1fr" -- EXCEPT `auto` (below). */
 	if (tok_len > 0) {
 		char c = tok[0];
 		if ((c >= '0' && c <= '9') || c == '.' || c == '+' ||
@@ -480,7 +481,15 @@ macsurf__emit_one_track(char *out, size_t cap,
 			is_value = true;
 		}
 	}
-	if (!is_value) {
+	/* fixes817 (#62): emit the `auto` track keyword VERBATIM so the libcss
+	 * columns parser can pack a distinct UNIT_AUTO and layout can
+	 * content-size it. min-content/max-content/minmax/calc still fold to
+	 * 1fr (deferred). */
+	if (tok_len == 4 && tok[0] == 'a' && tok[1] == 'u' &&
+			tok[2] == 't' && tok[3] == 'o') {
+		is_auto = true;
+	}
+	if (!is_value && !is_auto) {
 		tok_to_emit = fr_fallback;
 		emit_len = 3;
 	}
