@@ -1862,6 +1862,43 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 					text, (void *)ctx->n);
 			}
 		}
+		/* WORK #251 fragmentation probe (temporary): confirm whether
+		 * &shy; words arrive as ONE text node ("super\xC2\xAD cali...")
+		 * or FRAGMENTED into separate per-run + per-shy nodes ("super",
+		 * "\xC2\xAD", "cali", ...). Dumps each test-word / bare-shy node's
+		 * bytes so the mechanism is measured, not guessed. */
+		{
+			extern void macsurf_debug_log_writef(const char *fmt,
+					...);
+			size_t tl = strlen(text);
+			int is_test = 0;
+			if (tl >= 4 &&
+			    ((text[0] == 's' && text[1] == 'u' &&
+			      text[2] == 'p' && text[3] == 'e') ||
+			     (text[0] == 'a' && text[1] == 'a' &&
+			      text[2] == 'a' && text[3] == 'a')))
+				is_test = 1;
+			if (tl >= 2 && (unsigned char)text[0] == 0xC2 &&
+			    (unsigned char)text[1] == 0xAD)
+				is_test = 1;
+			if (is_test) {
+				char hx[48];
+				size_t n = (tl < 14) ? tl : 14;
+				size_t j;
+				int p = 0;
+				const char *hd = "0123456789abcdef";
+				for (j = 0; j < n && p < 44; j++) {
+					int b = (unsigned char)text[j];
+					hx[p++] = hd[(b >> 4) & 0xf];
+					hx[p++] = hd[b & 0xf];
+					hx[p++] = ' ';
+				}
+				hx[p] = '\0';
+				macsurf_debug_log_writef(
+					"WORK boxtext len=%ld hex=%s",
+					(long)tl, hx);
+			}
+		}
 #endif
 
 		/* if the text is just a space, combine it with the preceding
