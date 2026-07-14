@@ -147,13 +147,16 @@ macos9_utf8_to_macroman(const char *utf8, size_t len, char *mac_out, size_t max_
                 i += char_len;
 
                 if (ucs4 == 0x00AD) {
-                        /* #251/#272 soft hyphen: always zero-width and
-                         * invisible. Previously fell through to '?', which
-                         * littered any &shy; page. A visible hyphen at an
-                         * actual line break needs true break-position info the
-                         * converter doesn't have (chunking makes "last char of
-                         * run" unreliable), so that is deferred; invisible is
-                         * correct for hyphens:none and the common case. */
+                        /* #251 soft hyphen: zero-width and invisible in the
+                         * middle of a run; only when it is the LAST codepoint
+                         * of the run (the line broke right after it) does it
+                         * paint a hyphen. This is what makes hyphens:manual
+                         * show a '-' at the break and nothing otherwise --
+                         * and it fixes the old '?' that U+00AD fell through
+                         * to. Applies to measurement and paint alike, since
+                         * both go through this converter. */
+                        if (i >= len)
+                                mac_out[out_len++] = '-';
                         continue;
                 }
 
@@ -610,6 +613,12 @@ macos9_font_split(const struct plot_font_style *fstyle,
         size_t last_space = 0;
         int have_space = 0;
         size_t i;
+        /* #251 soft-hyphen (U+00AD = 0xC2 0xAD) break opportunity. */
+        size_t last_shy = 0;   /* byte offset AFTER a soft hyphen that fits */
+        int have_shy = 0;
+        /* CSS_HYPHENS_NONE == 1 (css_hyphens_e); allow shy breaks otherwise
+         * (inherit/manual/auto). Avoids a libcss include in the font code. */
+        int allow_shy = (fstyle != NULL && fstyle->hyphens != 1);
 
         if (string == NULL || length == 0) {
                 *char_offset = 0;
@@ -626,15 +635,30 @@ macos9_font_split(const struct plot_font_style *fstyle,
                 return NSERROR_OK;
         }
 
-        /* The string overflows. Find the last space character that FITS. */
+        /* The string overflows. Find the last space -- and, when hyphens
+         * allows, the last soft hyphen -- that FITS. */
         for (i = 0; i < fit_offset; i++) {
                 if (string[i] == ' ') {
                         last_space = i;
                         have_space = 1;
                 }
+                if (allow_shy && i + 1 < fit_offset &&
+                                (unsigned char)string[i] == 0xC2 &&
+                                (unsigned char)string[i + 1] == 0xAD) {
+                        last_shy = i + 2;   /* break AFTER the soft hyphen */
+                        have_shy = 1;
+                }
         }
 
-        if (have_space) {
+        /* #251: prefer whichever break fits the most content (rightmost). A
+         * soft-hyphen break returns the offset AFTER the U+00AD so the first
+         * fragment ends with it and paints a trailing '-' (macos9_utf8_to_
+         * macroman); core sees a non-space at that offset so reserves no
+         * box->space, exactly right for a hyphenation break. */
+        if (have_shy && (have_space == 0 || last_shy > last_space)) {
+                *char_offset = last_shy;
+                macos9_font_width(fstyle, string, last_shy, actual_x);
+        } else if (have_space) {
                 /* fixes636: return the offset OF the space itself, not the
                  * char after it. NetSurf core's layout_text_box_split
                  * (layout.c:3512) does
