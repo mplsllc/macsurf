@@ -1412,6 +1412,24 @@ static bool layout_flex__place_line_items_main(
 		*box_pos_main = main_pos + lh__non_auto_margin(b, main_start) +
 				extra_pre + b->border[main_start].width;
 
+#ifdef __MACOS9__
+		/* WORK #278 (temporary): measure the protrusion arithmetic.
+		 * av=container available main, used=line used, w=final content
+		 * width, dl=item outer delta, x=placed pos, bsm=box_size_main
+		 * (post child-layout -- catches layout_flex_item overwriting
+		 * the assigned width). */
+		if (ctx->horizontal) {
+			macsurf_debug_log_writef(
+				"WORK flexmbp av=%d used=%d w=%d dl=%d x=%d bsm=%d",
+				(int)ctx->available_main,
+				(int)line->used_main_size,
+				(int)b->width,
+				(int)lh__delta_outer_main(ctx->flex, b),
+				(int)*box_pos_main,
+				(int)box_size_main);
+		}
+#endif
+
 		if (!lh__box_is_flex_out_of_flow(b)) {
 			int cross_size;
 			int box_size_cross = lh__box_size_cross(
