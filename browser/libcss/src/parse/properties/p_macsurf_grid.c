@@ -118,6 +118,24 @@ css_error css__parse_macsurf_grid(css_language *c,
 			token->type == CSS_TOKEN_PERCENTAGE) {
 		track_list_form = true;
 	}
+	/* fixes817d (#62): a track list may START with `auto` (e.g.
+	 * `auto 1fr`, `auto auto`). The first-token detection above only
+	 * recognised DIMENSION/PERCENTAGE, so a leading-auto list fell
+	 * through to the V1 integer form and the WHOLE declaration went
+	 * CSS_INVALID -> property never set -> grids collapsed to cols=1
+	 * (the fixes817 hardware regression: gridraw probe showed st=0 on
+	 * every test grid, all of which start with `auto`). NOTE the `none`
+	 * ident was already consumed above, so any `auto` ident here is a
+	 * track token. */
+	if (!track_list_form && token->type == CSS_TOKEN_IDENT &&
+			token->idata != NULL) {
+		bool amatch = false;
+		if (lwc_string_caseless_isequal(token->idata,
+				c->strings[AUTO], &amatch) == lwc_error_ok &&
+				amatch) {
+			track_list_form = true;
+		}
+	}
 
 	if (track_list_form) {
 		while (n_tracks < MACSURF_GRID_TRACK_MAX) {
