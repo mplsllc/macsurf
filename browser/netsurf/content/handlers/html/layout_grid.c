@@ -499,6 +499,15 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 	 * Distribution: subtract PX + PERCENT widths from container,
 	 * divide remainder proportionally across FR units. */
 	raw_tracks = css_computed_macsurf_grid_tracks(grid->style);
+#ifdef __MACOS9__
+	/* WORK #62 (temporary): the track-sizing probe never fired, so the
+	 * raw_tracks path isn't taken -- log WHY (status/null/first track/
+	 * cols) to see if the -macsurf-grid-tracks list reaches layout. */
+	macsurf_debug_log_writef(
+		"WORK gridraw st=%d null=%d t0=%ld cols=%d",
+		(int)grid_status, (int)(raw_tracks == NULL),
+		(long)(raw_tracks != NULL ? raw_tracks[0] : 0), (int)cols);
+#endif
 	if (grid_status == CSS_MACSURF_GRID_SET && raw_tracks != NULL &&
 			raw_tracks[0] != 0) {
 		int fixed_total = 0;
