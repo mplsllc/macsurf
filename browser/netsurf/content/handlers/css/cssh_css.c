@@ -3723,8 +3723,11 @@ macsurf__rewrite_repeating_gradient_solid(const char *data, size_t in_size)
  *  - `:focus-visible` -> `:focus        ` (8 trailing spaces; same length)
  *  - `:focus-within`  -> `:focus       ` (7 trailing spaces; same length)
  *  - declarations dropped (name+value replaced with spaces, terminator kept):
- *    -webkit-line-clamp, line-clamp, image-rendering,
+ *    -webkit-line-clamp, line-clamp,
  *    font-variant-numeric, break-inside, outline-offset
+ *    (#256: image-rendering un-dropped -- it now parses/stores in libcss;
+ *     no consumer reads css_computed_image_rendering so behaviour is
+ *     unchanged, the plotter stays nearest-neighbor/box-filter.)
  *  - `repeating-linear-gradient(` -> `          linear-gradient(`
  *    (10 leading spaces; first cycle still renders via fixes49)
  *  - `repeating-radial-gradient(` -> `          radial-gradient(`
@@ -3736,7 +3739,6 @@ macsurf__rewrite_modern_compat(const char *data, size_t in_size,
 	static const char *const DROP_PROPS[] = {
 		"-webkit-line-clamp",
 		"line-clamp",
-		"image-rendering",
 		"font-variant-numeric",
 		"break-inside",
 		"outline-offset",
