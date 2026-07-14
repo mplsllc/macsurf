@@ -1927,6 +1927,53 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 			}
 		}
 
+		/* fixes813 (#275): reaching here means the shy-coalesce above
+		 * DECLINED to merge (different style / boundary), so we are about
+		 * to start a NEW text box. If the PREVIOUS same-container box ends
+		 * with a dangling soft hyphen, that shy will never be a wrap point
+		 * (nothing same-style follows it) yet would paint a stray '-' via
+		 * the converter's last-codepoint rule (2a/1g). Strip that one
+		 * trailing U+00AD. CRITICAL: this runs at CONSTRUCTION time, before
+		 * layout/font_split creates any wrap fragment, so it structurally
+		 * cannot touch a real wrap fragment's trailing (break) shy; and it
+		 * removes ONLY the last codepoint, so internal shys (valid break
+		 * points inside a coalesced word) are untouched. The <br> case (2b)
+		 * is not reached here (BR is not a text node) and stays open.
+		 * WORK shystrip probe proves it only ever hits short boundary
+		 * boxes ("ab"/"cali"), never a long coalesced word. */
+		if (props.inline_container != NULL &&
+				props.inline_container->last != NULL &&
+				props.inline_container->last->type == BOX_TEXT &&
+				props.inline_container->last->text != NULL &&
+				props.inline_container->last->length >= 2) {
+			struct box *pv = props.inline_container->last;
+			size_t pl = pv->length;
+			if ((unsigned char) pv->text[pl - 2] == 0xC2 &&
+					(unsigned char) pv->text[pl - 1] == 0xAD) {
+				pv->text[pl - 2] = '\0';
+				pv->length = pl - 2;
+#ifdef __MACOS9__
+				{
+					extern void macsurf_debug_log_writef(
+						const char *fmt, ...);
+					char pvw[16];
+					size_t z = ((pl - 2) < 15) ? (pl - 2) : 15;
+					size_t q;
+					for (q = 0; q < z; q++) {
+						unsigned char c =
+							(unsigned char) pv->text[q];
+						pvw[q] = (c >= 0x20 && c < 0x7f) ?
+							(char) c : '.';
+					}
+					pvw[z] = '\0';
+					macsurf_debug_log_writef(
+						"WORK shystrip -> len=%ld '%s'",
+						(long)(pl - 2), pvw);
+				}
+#endif
+			}
+		}
+
 		if (props.inline_container == NULL) {
 			/* Child of a block without a current container
 			 * (i.e. this box is the first child of its parent, or
