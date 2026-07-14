@@ -4630,19 +4630,6 @@ layout_line(struct box *first,
 				for (g = first; g != b; g = g->next)
 					if (g->type == BOX_TEXT)
 						g->space_expand = per;
-#ifdef MACSURF_DEBUG
-				{
-					extern void macsurf_debug_log_writef(
-						const char *fmt, ...);
-					static int wj_n = 0;
-					if (wj_n < 16) {
-						wj_n++;
-						macsurf_debug_log_writef(
-							"WORK justify2: spaces=%d leftover=%d per=%d",
-							spaces, leftover, per);
-					}
-				}
-#endif
 			}
 		}
 	}
