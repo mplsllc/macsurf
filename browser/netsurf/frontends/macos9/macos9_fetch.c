@@ -81,7 +81,20 @@ static const struct macos9_ua_rule macos9_ua_rules[] = {
 	 * pattern); every other host keeps MacSurf's honest default UA.
 	 */
 	{ "facebook.com",
-	  "Mozilla/5.0 (Mobile; LYF/F90M/LYF-F90M-000-02-44-130319; rv:48.0) Gecko/48.0 Firefox/48.0 KAIOS/2.5" }
+	  "Mozilla/5.0 (Mobile; LYF/F90M/LYF-F90M-000-02-44-130319; rv:48.0) Gecko/48.0 Firefox/48.0 KAIOS/2.5" },
+	/*
+	 * fixes821: Hacker News UA-gates /login (and other dynamic routes)
+	 * at nginx: the honest "MacSurf/2.0 (Macintosh; PPC Mac OS 9)" UA
+	 * gets 429 "Sorry." while a Chrome UA gets the form -- PROVEN by a
+	 * same-IP curl A/B from the maintainer's network (2026-07-14:
+	 * MacSurf-UA 429 / Chrome-UA 200; the Jul-11 Chrome HAR shows the
+	 * full login 200->302 works from that IP). Content routes (/,
+	 * /news, /item) are NOT gated. Per-host spoof with the exact
+	 * string the A/B proved; HN's login is pure HTML form POST
+	 * (goto/acct/pw), no JS needed, so core form.c handles it.
+	 */
+	{ "news.ycombinator.com",
+	  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36" }
 	/* add more host->UA overrides here */
 	/*
 	 * fixes741: macintoshrepository.org UA override REVERTED. fixes740 proved
