@@ -4432,13 +4432,22 @@ layout_line(struct box *first,
 							 avail,
 							 &char_off,
 							 &char_x);
-					/* #234: only char-break when this token is the FIRST box on
-					 * the line (genuinely too long for a full line). On a partial
-					 * line leave split==0 so the whole token wraps to the next
-					 * line. Without this, break-word forum text (68kmla
-					 * usernames/URLs) shattered into random letters. */
-					if (inline_count == 1 && char_off > 0 &&
-					    char_off < split_box->length) {
+					/* #234: for the overflow-wrap family (break-word /
+					 * anywhere) only char-break when this token is the FIRST
+					 * box on the line (genuinely too long for a full line); on
+					 * a partial line leave split==0 so the whole token wraps.
+					 * Without this, break-word forum text (68kmla usernames/
+					 * URLs) shattered into random letters.
+					 *
+					 * fixes809 (#273): word-break:break-all is POSITION-
+					 * INDEPENDENT -- per CSS Text L3 it breaks between any two
+					 * chars regardless of line position -- so it must fire the
+					 * char-break even mid-line (inline_count>1), filling the
+					 * remaining width. break-word/anywhere stay gated. */
+					if (char_off > 0 &&
+					    char_off < split_box->length &&
+					    (inline_count == 1 ||
+					     wb == CSS_WORD_BREAK_BREAK_ALL)) {
 						split = char_off;
 						w = char_x;
 					}
@@ -4552,8 +4561,13 @@ layout_line(struct box *first,
 	/* #251: the LAST line of a block (b == NULL -> no following line)
 	 * uses text-align-last when it isn't auto. Map onto the text-align
 	 * enum the switch understands; start/end -> left/right for the
-	 * horizontal-tb LTR case. */
-	if (b == NULL) {
+	 * horizontal-tb LTR case.
+	 *
+	 * fixes809 (#276): a line ENDED BY A FORCED BREAK (<br> -> br_box set)
+	 * is also a "last line" for alignment per CSS Text L3, so it takes
+	 * text-align-last semantics too -- otherwise a justified paragraph's
+	 * pre-<br> line gets its spaces stretched instead of start-aligned. */
+	if (b == NULL || br_box != NULL) {
 		switch (css_computed_text_align_last(
 				first->parent->parent->style)) {
 		case CSS_TEXT_ALIGN_LAST_LEFT:
