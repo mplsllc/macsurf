@@ -72,4 +72,15 @@ nserror macos9_svg_paint_inline(struct box *box,
 		const struct redraw_context *ctx,
 		struct nsurl *base_url);
 
+/**
+ * fixes823 (#280): paint a STANDALONE external SVG (img src=*.svg /
+ * CSS background url(*.svg)) from its raw source text into (x,y,w,h).
+ * V1 coverage: <path d> with per-path fill; viewBox (else width/height
+ * attrs) maps to the dest rect. Used by the image/svg+xml content
+ * handler's redraw (macos9_image.c).
+ */
+nserror macos9_svg_paint_standalone(const char *src, size_t len,
+		int x, int y, int w, int h,
+		const struct redraw_context *ctx);
+
 #endif /* MACOS9_SVG_INLINE_H_ */

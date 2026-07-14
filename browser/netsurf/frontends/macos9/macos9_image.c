@@ -38,6 +38,7 @@
 #include "desktop/gui_table.h"
 
 #include "macsurf_debug.h"
+#include "macos9_svg_inline.h"	/* fixes823 (#280) svg-as-image */
 
 #include "lodepng.h"
 
@@ -2310,11 +2311,93 @@ macos9_svg_src_process(struct content *c, const char *data, unsigned int size)
 	return true;
 }
 
+/* fixes823 (#280): tiny attribute-number scanner for the root <svg> tag.
+ * Reads the integer prefix of attr="VALUE" within the first 512 bytes.
+ * Returns 0 when absent/unparsable. Integer-only is fine for icon dims;
+ * the PAINT path (macos9_svg_paint_standalone) does full float parsing. */
+static int
+macos9_svg_src_attr_int(const char *src, size_t len, const char *name)
+{
+	char needle[24];
+	size_t nl = strlen(name);
+	const char *p;
+	const char *end;
+	int v = 0;
+	int any = 0;
+
+	if (len > 512) len = 512;
+	if (nl + 4 > sizeof(needle)) return 0;
+	needle[0] = ' ';
+	memcpy(needle + 1, name, nl);
+	needle[1 + nl] = '=';
+	needle[2 + nl] = '"';
+	needle[3 + nl] = '\0';
+	end = src + len;
+	for (p = src; p + nl + 3 < end; p++) {
+		if (memcmp(p, needle, nl + 3) == 0) {
+			p += nl + 3;
+			while (p < end && *p >= '0' && *p <= '9') {
+				v = v * 10 + (*p - '0');
+				any = 1;
+				p++;
+			}
+			return any ? v : 0;
+		}
+	}
+	return 0;
+}
+
 static bool
 macos9_svg_src_convert(struct content *c)
 {
+	/* fixes823 (#280): give the SVG intrinsic dimensions so <img> layout
+	 * sizes it (without these the image lays out 0x0 and the redraw never
+	 * fires). width/height attrs first; else viewBox w/h; else 16. */
+	size_t sz = 0;
+	const uint8_t *src = content__get_source_data(c, &sz);
+	int w = 0;
+	int h = 0;
+
+	if (src != NULL && sz > 0) {
+		w = macos9_svg_src_attr_int((const char *)src, sz, "width");
+		h = macos9_svg_src_attr_int((const char *)src, sz, "height");
+	}
+	if (w <= 0 || h <= 0) {
+		/* crude viewBox fallback: last two numbers of viewBox. */
+		w = (w > 0) ? w : 16;
+		h = (h > 0) ? h : 16;
+	}
+	c->width = w;
+	c->height = h;
+
 	content_set_ready(c);
 	content_set_done(c);
+	return true;
+}
+
+/* fixes823 (#280): REAL redraw for external SVG -- previously NULL, so
+ * <img src="*.svg"> and CSS background url(*.svg) painted nothing (the
+ * fixes578b handler existed only to feed sprite <use>). Paint the raw
+ * source via the shared standalone painter (paths+fills, viewBox->rect). */
+static bool
+macos9_svg_src_redraw(struct content *c, struct content_redraw_data *data,
+		const struct rect *clip, const struct redraw_context *ctx)
+{
+	size_t sz = 0;
+	const uint8_t *src = content__get_source_data(c, &sz);
+	int w;
+	int h;
+
+	(void)clip;   /* vector paints are clipped by the caller's plot clip */
+
+	if (src == NULL || sz == 0)
+		return true;
+	w = (data->width > 0) ? data->width : c->width;
+	h = (data->height > 0) ? data->height : c->height;
+	if (w <= 0 || h <= 0)
+		return true;
+	(void)macos9_svg_paint_standalone((const char *)src, sz,
+			data->x, data->y, w, h, ctx);
 	return true;
 }
 
@@ -2349,7 +2432,7 @@ static const struct content_handler macos9_svg_src_handler = {
 	NULL,				/* mouse_track */
 	NULL,				/* mouse_action */
 	NULL,				/* keypress */
-	NULL,				/* redraw */
+	macos9_svg_src_redraw,		/* redraw */
 	NULL,				/* open */
 	NULL,				/* close */
 	NULL,				/* clear_selection */

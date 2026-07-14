@@ -2256,3 +2256,198 @@ nserror macos9_svg_paint_inline(struct box *box,
 	}
 	return NSERROR_OK;
 }
+
+
+/* ----------------------------------------------------------------- */
+/* fixes823 (#280) -- standalone external SVG paint                   */
+/* ----------------------------------------------------------------- */
+
+/* Extract attribute `name="..."` from tag text [tag..tag_end); copies the
+ * value into out (NUL-terminated, capped). Returns 1 on success. The needle
+ * includes the leading space so `viewBox` never matches `xviewBox`. */
+static int svg__tag_attr(const char *tag, const char *tag_end,
+		const char *name, char *out, size_t cap)
+{
+	char needle[32];
+	const char *p;
+	const char *v;
+	size_t i;
+	size_t nl;
+
+	nl = strlen(name);
+	if (nl + 4 > sizeof(needle))
+		return 0;
+	needle[0] = ' ';
+	memcpy(needle + 1, name, nl);
+	needle[1 + nl] = '=';
+	needle[2 + nl] = '"';
+	needle[3 + nl] = '\0';
+
+	p = strstr(tag, needle);
+	if (p == NULL || p >= tag_end)
+		return 0;
+	v = p + nl + 3;
+	i = 0;
+	while (v < tag_end && *v != '"' && i < cap - 1) {
+		out[i++] = *v++;
+	}
+	out[i] = '\0';
+	return 1;
+}
+
+/* Paint a STANDALONE external SVG (an <img src="*.svg"> or a CSS
+ * background url(*.svg)) from its raw source text into (x,y,w,h).
+ * V1 shape coverage: <path d="..."> with per-path fill / fill="none"
+ * (covers plain icon files: HN's y18.svg logo + triangle.svg vote
+ * arrows, FontAwesome-style single-file icons). rect/circle/text/
+ * gradients in standalone files are deferred -- the inline renderer
+ * has them but walks a live DOM, which an external file doesn't have.
+ * Documented in #280. */
+nserror macos9_svg_paint_standalone(const char *src, size_t len,
+		int x, int y, int w, int h,
+		const struct redraw_context *ctx)
+{
+	char *buf0;
+	const char *root;
+	const char *root_end;
+	char av[128];
+	float vb[4];
+	int have_vb = 0;
+	struct svg_ctx sc;
+	const char *p;
+	static char d_local[4096];
+	float pbuf[MACOS9_SVG_PATH_MAX];
+	int paths = 0;
+
+	if (src == NULL || len == 0 || ctx == NULL || ctx->plot == NULL ||
+			w <= 0 || h <= 0)
+		return NSERROR_BAD_PARAMETER;
+	if (len > 262144)
+		len = 262144;
+
+	/* Source data is not NUL-terminated; take a bounded copy. */
+	buf0 = (char *)malloc(len + 1);
+	if (buf0 == NULL)
+		return NSERROR_NOMEM;
+	memcpy(buf0, src, len);
+	buf0[len] = '\0';
+
+	root = strstr(buf0, "<svg");
+	if (root == NULL) {
+		free(buf0);
+		return NSERROR_INVALID;
+	}
+	root_end = strchr(root, '>');
+	if (root_end == NULL) {
+		free(buf0);
+		return NSERROR_INVALID;
+	}
+
+	/* viewBox, else width/height attrs, else the dest rect 1:1.
+	 * MSL sscanf/atof are untrusted on CW8 (this file already carries
+	 * svg__atof for exactly that reason) -- parse with it. */
+	if (svg__tag_attr(root, root_end, "viewBox", av, sizeof(av))) {
+		const char *q = av;
+		size_t used = 0;
+		int k;
+		int got = 0;
+		for (k = 0; k < 4; k++) {
+			while (*q == ' ' || *q == ',' || *q == '\t')
+				q++;
+			if (*q == '\0')
+				break;
+			vb[k] = svg__atof(q, &used);
+			if (used == 0)
+				break;
+			q += used;
+			got++;
+		}
+		if (got == 4 && vb[2] > 0.0f && vb[3] > 0.0f)
+			have_vb = 1;
+	}
+	if (!have_vb) {
+		float aw = 0.0f, ah = 0.0f;
+		size_t used = 0;
+		if (svg__tag_attr(root, root_end, "width", av, sizeof(av)) &&
+				strchr(av, '%') == NULL)
+			aw = svg__atof(av, &used);
+		if (svg__tag_attr(root, root_end, "height", av, sizeof(av)) &&
+				strchr(av, '%') == NULL)
+			ah = svg__atof(av, &used);
+		vb[0] = 0.0f;
+		vb[1] = 0.0f;
+		vb[2] = (aw > 0.0f) ? aw : (float)w;
+		vb[3] = (ah > 0.0f) ? ah : (float)h;
+	}
+
+	memset(&sc, 0, sizeof(sc));
+	sc.box_x = x;
+	sc.box_y = y;
+	sc.box_w = w;
+	sc.box_h = h;
+	sc.vb_x = vb[0];
+	sc.vb_y = vb[1];
+	sc.vb_w = vb[2];
+	sc.vb_h = vb[3];
+	sc.scale_x = (float)w / vb[2];
+	sc.scale_y = (float)h / vb[3];
+	sc.m[0] = sc.scale_x;
+	sc.m[1] = 0.0f;
+	sc.m[2] = 0.0f;
+	sc.m[3] = sc.scale_y;
+	sc.m[4] = (float)x - vb[0] * sc.scale_x;
+	sc.m[5] = (float)y - vb[1] * sc.scale_y;
+	sc.plot_ctx = ctx;
+	sc.grads = NULL;
+	sc.base_url = NULL;
+
+	/* Walk every <path> tag; paint d with the path's own fill. */
+	p = root_end;
+	while (paths < 64) {
+		const char *tag = strstr(p, "<path");
+		const char *tend;
+		struct svg_paint_state st;
+		plot_style_t pstyle;
+		int n;
+
+		if (tag == NULL)
+			break;
+		tend = strchr(tag, '>');
+		if (tend == NULL)
+			break;
+
+		memset(&st, 0, sizeof(st));
+		st.fill = 0;              /* SVG default: opaque black */
+		st.fill_present = 1;
+		st.fill_opacity = 1.0f;
+		st.stroke_present = 0;
+		st.stroke_opacity = 1.0f;
+		if (svg__tag_attr(tag, tend, "fill", av, sizeof(av))) {
+			colour col;
+			int none = 0;
+			if (svg__parse_colour(av, &col, &none)) {
+				if (none)
+					st.fill_present = 0;
+				else
+					st.fill = col;
+			}
+		}
+
+		if (st.fill_present &&
+				svg__tag_attr(tag, tend, "d", d_local,
+					sizeof(d_local))) {
+			svg__init_plot_style(&pstyle, &st, &sc);
+			n = svg__path_parse(d_local, &sc, pbuf,
+					MACOS9_SVG_PATH_MAX);
+			if (n > 0) {
+				sc.plot_ctx->plot->path(sc.plot_ctx, &pstyle,
+						pbuf, (unsigned int)n, NULL);
+			}
+		}
+		paths++;
+		p = tend + 1;
+	}
+
+	free(buf0);
+	return NSERROR_OK;
+}
