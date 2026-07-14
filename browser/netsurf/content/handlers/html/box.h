@@ -386,6 +386,14 @@ struct box {
 	int space;
 
 	/**
+	 * #251: extra px to add to each internal space when rendering this
+	 * text box, for text-align:justify. Set per justified line in
+	 * layout_line; folded into plot word_spacing in html_redraw_text_box.
+	 * 0 for non-justified boxes.
+	 */
+	int space_expand;
+
+	/**
 	 * Byte offset within a textual representation of this content.
 	 */
 	size_t byte_offset;

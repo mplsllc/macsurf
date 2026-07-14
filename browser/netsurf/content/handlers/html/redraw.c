@@ -2927,6 +2927,12 @@ static bool html_redraw_text_box(const html_content *html, struct box *box,
 	font_plot_style_from_css(&html->unit_len_ctx, box->style, &fstyle);
 	fstyle.background = current_background_color;
 
+	/* #251: text-align:justify spreads leftover width across spaces by
+	 * adding a per-space delta (computed per justified line in
+	 * layout_line) to word_spacing, which the plotter's per-glyph path
+	 * already applies after each ASCII space. 0 for non-justified boxes. */
+	fstyle.word_spacing += box->space_expand;
+
 	if (!text_redraw(box->text,
 			 box->length,
 			 box->byte_offset,

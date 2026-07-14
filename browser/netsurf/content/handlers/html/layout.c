@@ -3907,12 +3907,6 @@ layout_line(struct box *first,
 	int x1 = *width;
 	int x, h, x_previous;
 	int fy = cy;
-	/* #251 inter-word justification accumulators (text-align:justify) */
-	int justify_extra = 0;
-	int justify_rem = 0;
-	int justify_acc = 0;
-	int justify_gaps = 0;
-	int justify_done = 0;
 	struct box *left;
 	struct box *right;
 	struct box *b;
@@ -4603,38 +4597,54 @@ layout_line(struct box *first,
 		break;
 	}
 
-	/* #251: distribute the leftover width across inter-word gaps for a
-	 * non-last justified line (unless text-justify:none). Applied as a
-	 * cumulative per-gap offset in the positioning loop below. */
-	if (ta_align == CSS_TEXT_ALIGN_JUSTIFY && b != NULL &&
-			css_computed_text_justify(
-				first->parent->parent->style) !=
-					CSS_TEXT_JUSTIFY_NONE) {
-		int leftover = (x1 - x0) - x;
+	/* #251: text-align:justify. Reset per line, then for a non-last
+	 * justified line spread the leftover width across the spaces INSIDE
+	 * the text boxes: set each text box's space_expand (extra px per
+	 * space), which html_redraw_text_box folds into word_spacing so the
+	 * plotter's per-glyph path adds it after each ASCII space. This is
+	 * how the words visually justify, since a paragraph line is a single
+	 * text box (inter-box gaps are 0). */
+	{
 		struct box *g;
-		for (g = first; g != b; g = g->next) {
-			if (g->next != b && g->space > 0 &&
-					g->space != UNKNOWN_WIDTH)
-				justify_gaps++;
-		}
-		if (leftover > 0 && justify_gaps > 0) {
-			justify_extra = leftover / justify_gaps;
-			justify_rem = leftover % justify_gaps;
-		}
+
+		for (g = first; g != b; g = g->next)
+			g->space_expand = 0;
+
+		if (ta_align == CSS_TEXT_ALIGN_JUSTIFY && b != NULL &&
+				css_computed_text_justify(
+					first->parent->parent->style) !=
+						CSS_TEXT_JUSTIFY_NONE) {
+			int leftover = (x1 - x0) - x;
+			int spaces = 0;
+
+			for (g = first; g != b; g = g->next) {
+				if (g->type == BOX_TEXT && g->text != NULL) {
+					size_t k;
+					for (k = 0; k < g->length; k++)
+						if (g->text[k] == ' ')
+							spaces++;
+				}
+			}
+			if (leftover > 0 && spaces > 0) {
+				int per = leftover / spaces;
+				for (g = first; g != b; g = g->next)
+					if (g->type == BOX_TEXT)
+						g->space_expand = per;
 #ifdef MACSURF_DEBUG
-		{
-			extern void macsurf_debug_log_writef(
-				const char *fmt, ...);
-			static int wj_n = 0;
-			if (wj_n < 20) {
-				wj_n++;
-				macsurf_debug_log_writef(
-					"WORK justify: gaps=%d leftover=%d x=%d x1=%d x0=%d extra=%d",
-					justify_gaps, leftover, x, x1, x0,
-					justify_extra);
+				{
+					extern void macsurf_debug_log_writef(
+						const char *fmt, ...);
+					static int wj_n = 0;
+					if (wj_n < 16) {
+						wj_n++;
+						macsurf_debug_log_writef(
+							"WORK justify2: spaces=%d leftover=%d per=%d",
+							spaces, leftover, per);
+					}
+				}
+#endif
 			}
 		}
-#endif
 	}
 	}
 
@@ -4677,23 +4687,6 @@ layout_line(struct box *first,
 					d->margin[BOTTOM];
 			if (used_height < h)
 				used_height = h;
-		}
-	}
-
-	/* #251: apply inter-word justification. First word stays put; each
-	 * later word shifts right by the accumulated per-gap expansion, so
-	 * the leftover width is spread evenly across the spaces. */
-	if (justify_extra > 0 || justify_rem > 0) {
-		for (d = first; d != b; d = d->next) {
-			d->x += justify_acc;
-			if (d->next != b && d->space > 0 &&
-					d->space != UNKNOWN_WIDTH) {
-				justify_acc += justify_extra;
-				if (justify_done < justify_rem) {
-					justify_acc++;
-					justify_done++;
-				}
-			}
 		}
 	}
 
