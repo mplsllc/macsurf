@@ -4566,7 +4566,14 @@ layout_line(struct box *first,
 			ta_align = CSS_TEXT_ALIGN_CENTER; break;
 		case CSS_TEXT_ALIGN_LAST_JUSTIFY:
 			ta_align = CSS_TEXT_ALIGN_JUSTIFY; break;
-		default: break;
+		default:
+			/* text-align-last:auto behaves as text-align, EXCEPT
+			 * that justify resolves to start (left) for the last
+			 * line -- so a normal justified paragraph's final line
+			 * is left-aligned, not stretched. */
+			if (ta_align == CSS_TEXT_ALIGN_JUSTIFY)
+				ta_align = CSS_TEXT_ALIGN_LEFT;
+			break;
 		}
 	}
 
@@ -4610,7 +4617,10 @@ layout_line(struct box *first,
 		for (g = first; g != b; g = g->next)
 			g->space_expand = 0;
 
-		if (ta_align == CSS_TEXT_ALIGN_JUSTIFY && b != NULL &&
+		/* justify inner lines (b != NULL) OR the last line when its
+		 * resolved alignment is justify (text-align-last:justify;
+		 * text-align-last:auto already resolved to left above). */
+		if (ta_align == CSS_TEXT_ALIGN_JUSTIFY &&
 				css_computed_text_justify(
 					first->parent->parent->style) !=
 						CSS_TEXT_JUSTIFY_NONE) {
