@@ -700,6 +700,25 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 				}
 			}
 
+#ifdef __MACOS9__
+			/* WORK #62 (temporary): dump the resolved track sizing
+			 * so the screenshot ambiguity (equal vs 0-width vs guard
+			 * fallback) is measured, not guessed. */
+			{
+				int zz;
+				macsurf_debug_log_writef(
+					"WORK gridtrk n=%d place=%d cw=%d frq=%d",
+					n_tracks, grid_has_placement,
+					(int)container_width, fr_total_q88);
+				for (zz = 0; zz < n_tracks && zz < 4; zz++) {
+					macsurf_debug_log_writef(
+						"WORK gridcol j=%d auto=%d w=%d",
+						zz, is_auto[zz],
+						track_widths[zz]);
+				}
+			}
+#endif
+
 		}
 	}
 
