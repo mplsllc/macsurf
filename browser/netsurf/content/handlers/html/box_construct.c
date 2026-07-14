@@ -1916,6 +1916,54 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 			return true;
 		}
 
+		/* fixes811 (#251): a &shy; entity is tokenised as its OWN
+		 * character token, so libhubbub emits "super"|shy|"cali"|... as
+		 * separate text nodes and this function makes a separate BOX_TEXT
+		 * per node. A bare U+00AD box then renders '-' via the converter's
+		 * last-codepoint rule (per-syllable dashes) and is too short to
+		 * reach macos9_font_split, so the soft-hyphen break code
+		 * (allow_shy/last_shy) is starved and hyphens:none can't gate.
+		 * Coalesce a shy-adjacent SAME-STYLE run back into the previous
+		 * BOX_TEXT so the shy sits INLINE in the word: font_split then
+		 * sees it and hyphens:manual/none both work. Gated on the JOINING
+		 * CODEPOINT being U+00AD specifically (0xC2 0xAD), not on "was this
+		 * box entity-produced", so &nbsp; (U+00A0 = 0xC2 0xA0) and ordinary
+		 * entity fragmentation (AT&amp;T) stay untouched. LIMITATION (by
+		 * design, tracked #275): a shy landing exactly on a STYLE boundary
+		 * (<b>ab&shy;</b>cd) fragments across a different computed style, so
+		 * the same-style gate won't merge it and it won't break there (the
+		 * lone shy box still paints '-'); coalescing across differing fstyle
+		 * would be wrong. Rare in real content; left as a known gap. */
+		if (props.inline_container != NULL &&
+				props.inline_container->last != NULL &&
+				props.inline_container->last->type == BOX_TEXT &&
+				props.inline_container->last->style ==
+					props.parent_style &&
+				props.inline_container->last->space == 0 &&
+				props.inline_container->last->text != NULL) {
+			struct box *prev = props.inline_container->last;
+			size_t tlen = strlen(text);
+			size_t plen = prev->length;
+			int new_is_shy = (tlen >= 2 &&
+				(unsigned char) text[0] == 0xC2 &&
+				(unsigned char) text[1] == 0xAD);
+			int prev_shy = (plen >= 2 &&
+				(unsigned char) prev->text[plen - 2] == 0xC2 &&
+				(unsigned char) prev->text[plen - 1] == 0xAD);
+			if ((new_is_shy || prev_shy) && tlen > 0) {
+				char *merged = talloc_realloc(ctx->bctx,
+					prev->text, char, plen + tlen + 1);
+				if (merged != NULL) {
+					memcpy(merged + plen, text, tlen);
+					merged[plen + tlen] = '\0';
+					prev->text = merged;
+					prev->length = plen + tlen;
+					free(text);
+					return true;
+				}
+			}
+		}
+
 		if (props.inline_container == NULL) {
 			/* Child of a block without a current container
 			 * (i.e. this box is the first child of its parent, or
