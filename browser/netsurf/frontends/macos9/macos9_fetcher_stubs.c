@@ -86,6 +86,13 @@ static const char css_default[] =
 	"th{font-weight:bold;text-align:center}"
 	"table[border],table[border] td,table[border] tr{"
 	"border-color:#888;border-style:solid;border-width:1px}"
+	/* fixes822: border="0" means NO border (HTML presentational hint).
+	 * The [border] rule above matches any table POSSESSING the attribute
+	 * regardless of value, so border="0" tables (Hacker News writes it on
+	 * every table) grew phantom 1px cell borders. Same specificity, later
+	 * in the sheet -> wins. */
+	"table[border='0'],table[border='0'] td,table[border='0'] tr{"
+	"border-style:none;border-width:0}"
 	/* Body + headings */
 	/* fixes629: THE white-background-on-dark-sites fix. The old UA
 	 * body{background:#fff;color:#000} painted the body box WHITE over a
