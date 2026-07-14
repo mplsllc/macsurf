@@ -1927,20 +1927,23 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 			}
 		}
 
-		/* fixes813 (#275): reaching here means the shy-coalesce above
-		 * DECLINED to merge (different style / boundary), so we are about
-		 * to start a NEW text box. If the PREVIOUS same-container box ends
-		 * with a dangling soft hyphen, that shy will never be a wrap point
-		 * (nothing same-style follows it) yet would paint a stray '-' via
-		 * the converter's last-codepoint rule (2a/1g). Strip that one
-		 * trailing U+00AD. CRITICAL: this runs at CONSTRUCTION time, before
+		/* fixes813b/815 (#275): reaching here means the shy-coalesce above
+		 * DECLINED to merge (different style / inline boundary), so a NEW
+		 * text box is starting. Walk back past inline start/end markers and
+		 * BOX_BR to the nearest preceding BOX_TEXT; if it ends with a
+		 * dangling soft hyphen (nothing same-style follows, or a <br>/style
+		 * boundary intervenes) that shy can never be the wrap point yet
+		 * would paint a stray '-' via the converter's last-codepoint rule
+		 * (cases 2a <b>ab&shy;</b>cd, 1g, 2b foo&shy;<br>bar). Strip that
+		 * one trailing U+00AD. Runs at CONSTRUCTION time, before
 		 * layout/font_split creates any wrap fragment, so it structurally
-		 * cannot touch a real wrap fragment's trailing (break) shy; and it
-		 * removes ONLY the last codepoint, so internal shys (valid break
-		 * points inside a coalesced word) are untouched. The <br> case (2b)
-		 * is not reached here (BR is not a text node) and stays open.
-		 * WORK shystrip probe proves it only ever hits short boundary
-		 * boxes ("ab"/"cali"), never a long coalesced word. */
+		 * cannot touch a real wrap fragment's trailing break-shy; removes
+		 * ONLY the last codepoint, so internal shys (valid break points in
+		 * a coalesced word) are untouched. Hardware-verified via a shystrip
+		 * probe (only ever fired on short boundary boxes ab/cali/foo, never
+		 * a long word). Remaining micro-edge: a shy before a TRAILING <br>
+		 * with no following text isn't reached (no later box triggers this
+		 * walk-back). */
 		if (props.inline_container != NULL) {
 			struct box *pv = props.inline_container->last;
 			/* fixes813b: skip inline start/end markers -- a shy at the
@@ -1964,25 +1967,6 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 				size_t pl = pv->length;
 				pv->text[pl - 2] = '\0';
 				pv->length = pl - 2;
-#ifdef __MACOS9__
-				{
-					extern void macsurf_debug_log_writef(
-						const char *fmt, ...);
-					char pvw[16];
-					size_t z = ((pl - 2) < 15) ? (pl - 2) : 15;
-					size_t q;
-					for (q = 0; q < z; q++) {
-						unsigned char c =
-							(unsigned char) pv->text[q];
-						pvw[q] = (c >= 0x20 && c < 0x7f) ?
-							(char) c : '.';
-					}
-					pvw[z] = '\0';
-					macsurf_debug_log_writef(
-						"WORK shystrip -> len=%ld '%s'",
-						(long)(pl - 2), pvw);
-				}
-#endif
 			}
 		}
 
