@@ -239,12 +239,31 @@ static bool layout_grid_item(
 	 * than the cell can hold — fixes that without losing the equal-fill
 	 * behaviour for items that don't set their own width. */
 	if (dummy_w == AUTO) {
-		item->width = cell_width;
+		/* fixes820 (#278): cell_width is the TRACK width -- the cell's
+		 * full outer budget. item->width is the CONTENT width, so the
+		 * child's own margins/borders/padding (resolved just above)
+		 * must come out of the track, or every cell's border box pokes
+		 * past its track by exactly that much (the t.html gcells:
+		 * 1px border + 5px padding each side = 12px per cell past the
+		 * container border). AUTO margins count as 0 via
+		 * lh__non_auto_margin. */
+		int mbp = lh__delta_outer_width(item);
+		if (mbp < 0 || mbp > cell_width) {
+			mbp = 0;
+		}
+		item->width = cell_width - mbp;
 	} else {
 		item->width = dummy_w;
 		if (item->width > cell_width) {
-			item->width = cell_width;
+			int mbp = lh__delta_outer_width(item);
+			if (mbp < 0 || mbp > cell_width) {
+				mbp = 0;
+			}
+			item->width = cell_width - mbp;
 		}
+	}
+	if (item->width < 0) {
+		item->width = 0;
 	}
 
 	switch (item->type) {
