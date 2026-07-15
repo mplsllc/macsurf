@@ -1254,13 +1254,24 @@ void macos9_handle_key_down(const EventRecord *event) {
 			 * per-key cost growing. Pair with RECON TAref (reflow-only dt): if
 			 * KEY dt >> TAref dt, the cost is the page redraw/reformat, not the
 			 * reflow. Remove once #212 is diagnosed. */
-			UnsignedWide _kt0, _kt1;
+			UnsignedWide _kt0, _kt1, _kt2;
 			int _consumed;
+			/* WORK keylat (temporary, HN typing-slowness diag): the old
+			 * RECON KEY line is DROPPED by the failures-only log gate
+			 * (only HEAP BOUNDS / MIME are whitelisted), so #212-style
+			 * timing has been invisible. Split the keystroke into its two
+			 * halves -- press = browser_window_key_press (core edit +
+			 * any reflow it runs), paint = the fixes760 synthetic update
+			 * -- and count how many text boxes that paint visits (tb):
+			 * a handful = localized repaint; hundreds = the whole page
+			 * repainting per letter, which on the HN table would be the
+			 * slowness. */
+			{
+			extern long macos9_html_redraw_text_box_calls;
+			long _tb0 = macos9_html_redraw_text_box_calls;
 			Microseconds(&_kt0);
 			_consumed = browser_window_key_press(gw->bw, ns_key) ? 1 : 0;
 			Microseconds(&_kt1);
-			macsurf_debug_log_writef("RECON KEY ns=%ld dt=%ldus consumed=%d",
-				(long)ns_key, (long)(_kt1.lo - _kt0.lo), _consumed);
 			if (_consumed) {
 				/* fixes760 (#212): paint the edit NOW instead of waiting for
 				 * the next event-loop updateEvt. While a page is still loading
@@ -1275,7 +1286,18 @@ void macos9_handle_key_down(const EventRecord *event) {
 					_uev.message = (long)(unsigned long)gw->window;
 					macos9_handle_update(&_uev);
 				}
+				Microseconds(&_kt2);
+				macsurf_debug_log_writef(
+					"WORK keylat ns=%ld press=%ldus paint=%ldus tb=%ld",
+					(long)ns_key,
+					(long)(_kt1.lo - _kt0.lo),
+					(long)(_kt2.lo - _kt1.lo),
+					(long)(macos9_html_redraw_text_box_calls - _tb0));
 				return;
+			}
+			macsurf_debug_log_writef(
+				"WORK keylat ns=%ld press=%ldus consumed=0",
+				(long)ns_key, (long)(_kt1.lo - _kt0.lo));
 			}
 		}
 		/* not consumed by a field -> window navigation scrolling */
