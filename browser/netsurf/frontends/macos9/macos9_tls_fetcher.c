@@ -1388,6 +1388,14 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		msg.data.header_or_data.len = strlen(p);
 		fetch_send_callback(&msg, c->parent);
 	}
+	/* fixes836 (#167 M1 diag) — Facebook response status line, WORK-gated.
+	 * A login POST that re-shows the form (status 200) vs a real success
+	 * (302 -> Set-Cookie c_user/xs) is the whole diagnosis for "wrong
+	 * password". */
+	if (host_is_fb_asset(c->host)) {
+		macsurf_debug_log_writef("WORK fbresp status=%d host=%s%s",
+			c->status, c->host, c->path);
+	}
 	fetch_set_http_code(c->parent, c->status);
 	macsurf_debug_log_writef("https: status=%d mime='%s' clen=%ld chunked=%d",
 		c->status, c->mime, c->content_length, c->chunked);
@@ -1438,6 +1446,12 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 				if (lv >= sizeof(c->redirect_url)) lv = sizeof(c->redirect_url) - 1;
 				memcpy(c->redirect_url, v, lv);
 				c->redirect_url[lv] = 0;
+				/* fixes836 (#167 M1 diag) — where FB is sending us
+				 * after the login POST (checkpoint / 2FA / home). */
+				if (host_is_fb_asset(c->host)) {
+					macsurf_debug_log_writef(
+						"WORK fbloc %s", c->redirect_url);
+				}
 			}
 			/* fixes313b (#150) — Content-Disposition: attachment forces
 			 * download regardless of Content-Type. Servers commonly serve
@@ -1515,6 +1529,14 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 						macsurf_debug_log_writef(
 							"https: stored cookie '%s' for %s",
 							nm, c->host);
+						/* fixes836 (#167 M1 diag) — WORK-gated
+						 * copy for Facebook so the login Set-Cookie
+						 * (c_user/xs = success) survives the log
+						 * gate. Name only, never the value. */
+						if (host_is_fb_asset(c->host)) {
+							macsurf_debug_log_writef(
+								"WORK fbsc %s %s", nm, c->host);
+						}
 					}
 				}
 			}
@@ -1855,6 +1877,43 @@ static void cookie_strip_noscript(char *s)
 	strcpy(s, out);
 }
 
+/* fixes836 (#167 M1 diag) — build a REDACTED field map of a urlencoded POST
+ * body: "name=VALUELEN" per field. Values (password, email, tokens) are
+ * NEVER logged — only each field's name and the byte-length of its value, so
+ * the login POST can be verified well-formed (pass present + non-empty, lsd/
+ * jazoest present) without leaking secrets. Output bounded to outcap-1. */
+static void fb_body_fieldmap(const char *body, long len, char *out, size_t outcap)
+{
+	long i = 0;
+	size_t used = 0;
+	if (out == NULL || outcap == 0) return;
+	out[0] = '\0';
+	if (body == NULL) return;
+	while (i < len && used + 2 < outcap) {
+		long ns = i, ne, vl = 0;
+		char num[24];
+		size_t nl, k;
+		while (i < len && body[i] != '=' && body[i] != '&') i++;
+		ne = i;
+		if (i < len && body[i] == '=') {
+			i++;
+			while (i < len && body[i] != '&') { i++; vl++; }
+		}
+		if (i < len && body[i] == '&') i++;
+		nl = (size_t)(ne - ns);
+		if (nl > 24) nl = 24;
+		if (used + nl + 2 >= outcap) break;
+		memcpy(out + used, body + ns, nl); used += nl;
+		out[used++] = '=';
+		sprintf(num, "%ld", vl);
+		k = strlen(num);
+		if (used + k + 2 >= outcap) { out[used] = '\0'; break; }
+		memcpy(out + used, num, k); used += k;
+		out[used++] = ' ';
+		out[used] = '\0';
+	}
+}
+
 static int build_request(struct macos9_https_ctx *c)
 {
 	int rn;
@@ -1957,6 +2016,29 @@ static int build_request(struct macos9_https_ctx *c)
 		sl = strlen(synth);
 		ol = strlen(org);
 		if (sl + ol < sizeof synth) strcat(synth, org);
+	}
+	/* fixes836 (#167 M1 diag) — dump the shape of a Facebook POST (the login
+	 * submit) so we can see EXACTLY what goes on the wire when FB says "wrong
+	 * password". WORK-prefixed so it survives the failures-only log gate.
+	 * fbreq = request shape (cookie bytes, body bytes, Origin/Sec-Fetch/Referer
+	 * present?, UA tail); fbbody = redacted field map (names + value LENGTHS,
+	 * never the values). Confirms pass is present/non-empty and lsd/jazoest are
+	 * there. host_is_fb_asset keeps this to Facebook only. */
+	if (c->post_body != NULL && host_is_fb_asset(c->host)) {
+		char fmap[200];
+		size_t ual = strlen(ua);
+		fb_body_fieldmap(c->post_body, (long)c->post_body_len,
+			fmap, sizeof fmap);
+		macsurf_debug_log_writef(
+			"WORK fbreq POST %s%s ckB=%ld pbB=%ld org=%d sf=%d ref=%d uatail=%s",
+			c->host, c->path,
+			(long)strlen(cookie_hdr), (long)c->post_body_len,
+			(int)(synth[0] != '\0'
+			      && macos9_hdr_has_ci(synth, "origin:")),
+			(int)(synth[0] != '\0'),
+			(int)macos9_hdr_has_ci(c->caller_hdrs, "referer:"),
+			(ual > 12) ? (ua + ual - 12) : ua);
+		macsurf_debug_log_writef("WORK fbbody %s", fmap);
 	}
 	if (c->post_body != NULL) {
 		/* fixes312 (#144) — POST. Body goes out in a second
