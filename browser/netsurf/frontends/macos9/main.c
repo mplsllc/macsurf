@@ -1270,57 +1270,26 @@ void macos9_handle_key_down(const EventRecord *event) {
 			default: break;
 		}
 		if (have_key && gw->bw) {
-			extern bool browser_window_key_press(struct browser_window *, unsigned long);
-			/* fixes758 (#212) DIAGNOSTIC — time the whole keystroke (textarea
-			 * insert + reflow + redraw-request) so a big-message log shows the
-			 * per-key cost growing. Pair with RECON TAref (reflow-only dt): if
-			 * KEY dt >> TAref dt, the cost is the page redraw/reformat, not the
-			 * reflow. Remove once #212 is diagnosed. */
-			UnsignedWide _kt0, _kt1, _kt2;
-			int _consumed;
-			/* WORK keylat (temporary, HN typing-slowness diag): the old
-			 * RECON KEY line is DROPPED by the failures-only log gate
-			 * (only HEAP BOUNDS / MIME are whitelisted), so #212-style
-			 * timing has been invisible. Split the keystroke into its two
-			 * halves -- press = browser_window_key_press (core edit +
-			 * any reflow it runs), paint = the fixes760 synthetic update
-			 * -- and count how many text boxes that paint visits (tb):
-			 * a handful = localized repaint; hundreds = the whole page
-			 * repainting per letter, which on the HN table would be the
-			 * slowness. */
-			{
-			extern long macos9_html_redraw_text_box_calls;
-			long _tb0 = macos9_html_redraw_text_box_calls;
-			Microseconds(&_kt0);
-			_consumed = browser_window_key_press(gw->bw, ns_key) ? 1 : 0;
-			Microseconds(&_kt1);
-			if (_consumed) {
-				/* fixes760 (#212): paint the edit NOW instead of waiting for
-				 * the next event-loop updateEvt. While a page is still loading
-				 * the loop spins the fetcher (idle=0ms) and delays that
-				 * updateEvt, so each typed letter appeared with a visible lag.
-				 * A synthetic updateEvt repaints the just-invalidated region
-				 * immediately (same technique as drag-select fixes747;
-				 * handle_update only reads event->message). */
-				if (gw->window != NULL) {
-					EventRecord _uev;
-					_uev.what = updateEvt;
-					_uev.message = (long)(unsigned long)gw->window;
-					macos9_handle_update(&_uev);
+				extern bool browser_window_key_press(struct browser_window *, unsigned long);
+				int _consumed;
+				_consumed = browser_window_key_press(gw->bw, ns_key) ? 1 : 0;
+				if (_consumed) {
+					/* fixes760 (#212): paint the edit NOW instead of waiting for
+					 * the next event-loop updateEvt. While a page is still loading
+					 * the loop spins the fetcher (idle=0ms) and delays that
+					 * updateEvt, so each typed letter appeared with a visible lag.
+					 * A synthetic updateEvt repaints the just-invalidated region
+					 * immediately (same technique as drag-select fixes747;
+					 * handle_update only reads event->message). The fixes825
+					 * dirty-rect blit keeps this cheap (~2ms/keystroke). */
+					if (gw->window != NULL) {
+						EventRecord _uev;
+						_uev.what = updateEvt;
+						_uev.message = (long)(unsigned long)gw->window;
+						macos9_handle_update(&_uev);
+					}
+					return;
 				}
-				Microseconds(&_kt2);
-				macsurf_debug_log_writef(
-					"WORK keylat ns=%ld press=%ldus paint=%ldus tb=%ld",
-					(long)ns_key,
-					(long)(_kt1.lo - _kt0.lo),
-					(long)(_kt2.lo - _kt1.lo),
-					(long)(macos9_html_redraw_text_box_calls - _tb0));
-				return;
-			}
-			macsurf_debug_log_writef(
-				"WORK keylat ns=%ld press=%ldus consumed=0",
-				(long)ns_key, (long)(_kt1.lo - _kt0.lo));
-			}
 		}
 		/* not consumed by a field -> window navigation scrolling */
 		switch (ch) {
