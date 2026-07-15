@@ -2141,6 +2141,28 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 					long dxp;
 					dst_rb_small = (*pm_small)->rowBytes
 						& 0x3FFF;
+					/* fixes829e (#256): belt-and-braces guard.
+					 * The box-filter walks src_base (bw*bh) and
+					 * dst_base_small (width*height). If EITHER
+					 * base is NULL or a rowbytes is nonsensically
+					 * small for its width, do NOT run the loops --
+					 * a bad base is exactly what crashed as
+					 * src[col*4] on the temp-mem-reclamation bug.
+					 * Skip the box-filter and let the full-size
+					 * source blit via QuickDraw instead (image
+					 * still shows, just un-downscaled), rather than
+					 * fault. */
+					if (src_base == NULL ||
+					    dst_base_small == NULL ||
+					    src_rb < (long)bw * 4 ||
+					    dst_rb_small < (long)width * 4) {
+						UnlockPixels(pm_small);
+						DisposeGWorld(gw_small);
+						gw_small = NULL;
+						MS_LOG("plot_bitmap: box-filter "
+							"bad base/stride, skip");
+						goto do_blit;
+					}
 					for (dy = 0; dy < (long)height; dy++) {
 						long sy0 = (dy * (long)bh) /
 							(long)height;
