@@ -1967,23 +1967,29 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 	rowstride = (long)macos9_bitmap_get_rowstride((void *)bitmap);
 	if (bw <= 0 || bh <= 0) return NSERROR_OK;
 
-	/* fixes829f (#256 crash diag + guard): the box-filter/fill loops keep
-	 * faulting on src[col*4]/dst[col*4] even though the arithmetic is
-	 * in-bounds FOR SANE dimensions -- which points at a corrupted
-	 * dimension/stride arriving here (the fixes702 prep-cache corruption
-	 * class the maintainer flagged). Log the actual values (WORK-prefixed
-	 * so it passes the failures-only gate) and BAIL on anything insane
-	 * before we walk a single pixel, so a garbage dimension paints nothing
-	 * instead of crashing. */
-	macsurf_debug_log_writef(
-		"WORK pbmp bw=%ld bh=%ld w=%d h=%d rs=%ld buf=%p flags=%ld",
-		(long)bw, (long)bh, width, height, rowstride,
-		(void *)buf, (long)flags);
+	/* fixes829g (#256 crash): use-after-free guard on the incoming bitmap.
+	 *
+	 * Hardware probe (fixes829f) caught a FREED bitmap struct reaching
+	 * plot_bitmap on the shared-bitmap page during refresh:
+	 *   bw=1266812540 (a heap pointer) rs=772282864 buf=00000003
+	 * i.e. a navigation/refresh freed the content's bitmap while a pending
+	 * knockout redraw still held a pointer to it (the fixes650/#168
+	 * content-lifecycle UAF class). The box-filter/fill loops then walked
+	 * garbage dimensions off the freed struct -> the reported crash.
+	 *
+	 * Proper fix is upstream (don't replay a redraw against a freed
+	 * bitmap); until then this guard makes the UAF non-fatal: if the
+	 * bitmap's own reported dimensions are impossible, the struct is not a
+	 * live bitmap -> paint nothing instead of crashing. Real dimensions are
+	 * always small on this platform (Mac 16-bit coord space); a >8192 side,
+	 * a non-positive render size, or a stride too small for the width all
+	 * mean corruption. Logs once per hit (rare) so the UAF stays visible. */
 	if (bw > 8192 || bh > 8192 || width <= 0 || height <= 0 ||
 	    width > 8192 || height > 8192 || rowstride < (long)bw * 4) {
 		macsurf_debug_log_writef(
-			"WORK pbmp BAIL insane dims bw=%ld bh=%ld w=%d h=%d rs=%ld",
-			(long)bw, (long)bh, width, height, rowstride);
+			"FAIL plot_bitmap freed/corrupt bitmap bw=%ld bh=%ld "
+			"w=%d h=%d rs=%ld buf=%p", (long)bw, (long)bh,
+			width, height, rowstride, (void *)buf);
 		return NSERROR_OK;
 	}
 
