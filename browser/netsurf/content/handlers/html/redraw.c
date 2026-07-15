@@ -2589,6 +2589,88 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 			bg_data.repeat_x = repeat_x;
 			bg_data.repeat_y = repeat_y;
 
+			/* fixes828 (#255/#280): honour background-size on INLINE
+			 * backgrounds too. The block path (html_redraw_background)
+			 * already sizes the tile from css_computed_background_size;
+			 * this inline path was painting at intrinsic content size,
+			 * so a sized background (e.g. an SVG icon with
+			 * background-size:Npx) overflowed its box. Mirror the block
+			 * path's math: box edge from `b`, natural size from the
+			 * content, cover/contain/explicit/auto per-axis. Integer
+			 * math (no int64) per the CW8 PPC long-long gotcha. */
+			if (box->style != NULL) {
+				int32_t bgsz = css_computed_background_size(
+						box->style);
+				if (bgsz != 0) {
+					int16_t wc = (int16_t)((bgsz >> 16) &
+							0xFFFF);
+					int16_t hc = (int16_t)(bgsz & 0xFFFF);
+					int nat_w = width;
+					int nat_h = height;
+					int box_w = b.x1 - b.x0;
+					int box_h = b.y1 - b.y0;
+					int tile_w = box_w;
+					int tile_h = box_h;
+					if (nat_w < 1) nat_w = 1;
+					if (nat_h < 1) nat_h = 1;
+					if (box_w < 1) box_w = 1;
+					if (box_h < 1) box_h = 1;
+					if (wc == -1 || hc == -1) {
+						/* cover */
+						if (nat_w * box_h >
+								nat_h * box_w) {
+							tile_h = box_h;
+							tile_w = (nat_w *
+								box_h) / nat_h;
+						} else {
+							tile_w = box_w;
+							tile_h = (nat_h *
+								box_w) / nat_w;
+						}
+					} else if (wc == -2 || hc == -2) {
+						/* contain */
+						if (nat_w * box_h <
+								nat_h * box_w) {
+							tile_h = box_h;
+							tile_w = (nat_w *
+								box_h) / nat_h;
+						} else {
+							tile_w = box_w;
+							tile_h = (nat_h *
+								box_w) / nat_w;
+						}
+					} else {
+						/* per-axis explicit or auto */
+						if (wc > 0) {
+							tile_w = (int)(
+							(float)wc * scale);
+						} else if (hc > 0) {
+							tile_w = (int)(
+							(float)hc *
+							(float)nat_w /
+							(float)nat_h * scale);
+						} else {
+							tile_w = nat_w;
+						}
+						if (hc > 0) {
+							tile_h = (int)(
+							(float)hc * scale);
+						} else if (wc > 0) {
+							tile_h = (int)(
+							(float)wc *
+							(float)nat_h /
+							(float)nat_w * scale);
+						} else {
+							tile_h = nat_h;
+						}
+					}
+					if (tile_w < 1) tile_w = 1;
+					if (tile_h < 1) tile_h = 1;
+					bg_data.width = tile_w;
+					bg_data.height = tile_h;
+				}
+			}
+
 			/* We just continue if redraw fails */
 			content_redraw(box->background, &bg_data, &r, ctx);
 		}
