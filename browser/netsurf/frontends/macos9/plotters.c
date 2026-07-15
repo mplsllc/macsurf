@@ -1992,16 +1992,20 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 		}
 	}
 
-	/* useTempMem (=4) so a large source bitmap (e.g. 1600x1200 JPEG
-	 * = 7.7 MB) doesn't exhaust the app heap on every redraw. */
-	err = NewGWorld(&gw, 32, &src_rect, NULL, NULL, (GWorldFlags)4);
+	/* fixes829c (#256 crash): allocate in NORMAL memory, not temporary
+	 * memory (the old useTempMem=4). This GWorld can be handed to the
+	 * prepared-GWorld cache and held across redraws; temporary-memory
+	 * pixel images are reclaimable under memory pressure, so on an
+	 * image-heavy page (e.g. many references to one bitmap churning the
+	 * cache) a cached temp-mem GWorld's pixels got reclaimed and the next
+	 * box-filter read of its base address faulted -- the reported
+	 * macos9_plot_bitmap box-filter-loop crash (src[col*4], base invalid).
+	 * Normal-memory pixels are not reclaimable; the 8 MB prepared-cache
+	 * budget + immediate disposal of the transient path bound the cost. */
+	err = NewGWorld(&gw, 32, &src_rect, NULL, NULL, 0);
 	if (err != noErr || gw == NULL) {
-		MS_LOG("plot_bitmap: NewGWorld tempmem FAIL, retry");
-		err = NewGWorld(&gw, 32, &src_rect, NULL, NULL, 0);
-		if (err != noErr || gw == NULL) {
-			MS_LOG("plot_bitmap: NewGWorld FAIL");
-			return NSERROR_OK;
-		}
+		MS_LOG("plot_bitmap: NewGWorld FAIL");
+		return NSERROR_OK;
 	}
 
 	pm = GetGWorldPixMap(gw);
@@ -2107,12 +2111,13 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 			PixMapHandle pm_small;
 			OSErr small_err;
 			SetRect(&small_rect, 0, 0, (short)width, (short)height);
+			/* fixes829c: normal memory, not temp (see the main
+			 * NewGWorld above). This box-filtered intermediate is
+			 * what the prepared-GWorld cache stores for downscaled
+			 * images, so temp-mem reclamation of its pixels was the
+			 * box-filter-read crash on cache-churning pages. */
 			small_err = NewGWorld(&gw_small, 32, &small_rect, NULL,
-					NULL, (GWorldFlags)4);
-			if (small_err != noErr || gw_small == NULL) {
-				small_err = NewGWorld(&gw_small, 32, &small_rect,
-						NULL, NULL, 0);
-			}
+					NULL, 0);
 			if (small_err == noErr && gw_small != NULL) {
 				pm_small = GetGWorldPixMap(gw_small);
 				if (pm_small != NULL && LockPixels(pm_small)) {
