@@ -1992,20 +1992,28 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 		}
 	}
 
-	/* fixes829c (#256 crash): allocate in NORMAL memory, not temporary
-	 * memory (the old useTempMem=4). This GWorld can be handed to the
-	 * prepared-GWorld cache and held across redraws; temporary-memory
-	 * pixel images are reclaimable under memory pressure, so on an
-	 * image-heavy page (e.g. many references to one bitmap churning the
-	 * cache) a cached temp-mem GWorld's pixels got reclaimed and the next
-	 * box-filter read of its base address faulted -- the reported
-	 * macos9_plot_bitmap box-filter-loop crash (src[col*4], base invalid).
-	 * Normal-memory pixels are not reclaimable; the 8 MB prepared-cache
-	 * budget + immediate disposal of the transient path bound the cost. */
+	/* fixes829d (#256): NORMAL memory primary, TEMP memory fallback.
+	 *
+	 * The crash (fixes829c investigation): the box-filter reads THIS
+	 * GWorld's pixels while allocating the small intermediate gw_small.
+	 * When both were temp memory, gw_small's temp allocation reclaimed
+	 * this source's pixels out from under the locked pixmap -> the
+	 * box-filter-loop fault (src[col*4], stale base). The real fix is that
+	 * gw_small is now NORMAL-only (below), so it can never reclaim a temp
+	 * source. That lets us keep a temp FALLBACK here: normal memory is
+	 * preferred (stable, cache-safe), but if the app heap is tight (a
+	 * RAM-limited G3/iMac) normal can fail -- and fixes829c, by dropping
+	 * the old temp fallback, made those failures paint NOTHING (the
+	 * intermittent blank-image regression). Fall back to temp so the
+	 * image still renders; gw_small being normal keeps it crash-free. */
 	err = NewGWorld(&gw, 32, &src_rect, NULL, NULL, 0);
 	if (err != noErr || gw == NULL) {
-		MS_LOG("plot_bitmap: NewGWorld FAIL");
-		return NSERROR_OK;
+		MS_LOG("plot_bitmap: NewGWorld normal FAIL, temp fallback");
+		err = NewGWorld(&gw, 32, &src_rect, NULL, NULL, (GWorldFlags)4);
+		if (err != noErr || gw == NULL) {
+			MS_LOG("plot_bitmap: NewGWorld FAIL");
+			return NSERROR_OK;
+		}
 	}
 
 	pm = GetGWorldPixMap(gw);
