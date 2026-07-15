@@ -167,6 +167,9 @@ struct macos9_fetch_ctx {
 	 * application/x-www-form-urlencoded; set to "multipart/form-data;
 	 * boundary=..." when the fetch carries a file (post_multipart). */
 	char post_ctype[128];
+	/* fixes835 (#167 M1) — captured core request headers (sanitized).
+	 * In-struct fixed buffer; zero-inited by the setup memset. */
+	char caller_hdrs[512];
 };
 static struct macos9_fetch_ctx f_slots[MAX_F];
 
@@ -558,6 +561,10 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		size_t hz;
 		size_t ua_var;
 		size_t ck_var;
+		int    verifiable;   /* fixes835 (#167 M1) */
+		char   synth[512];   /* fixes835 — Sec-Fetch + Origin */
+		size_t xh_var;       /* fixes835 — strlen(caller_hdrs) for the guard */
+		size_t sf_var;       /* fixes835 — strlen(synth) for the guard */
 		/* fixes721 — POST Content-Type: multipart (with boundary) for a
 		 * file upload, else the urlencoded default. Assigned HERE, after
 		 * all declarations, so CW8 C89 (decls-before-statements) is happy. */
@@ -591,6 +598,47 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 			free(cookie_str);
 		}
 		ck_var = strlen(cookie_hdr);
+		/* fixes835 (#167 Facebook M1) — mirror of the HTTPS fetcher's
+		 * Sec-Fetch + Origin synthesis, keyed on request kind; scheme is
+		 * http on this path (FB is https-only so it never reaches here, but
+		 * the metadata is browser-standard for any http site). A caller that
+		 * already supplied its own Sec-Fetch/Origin wins. */
+		verifiable = fetch_get_verifiable(c->parent);
+		synth[0] = '\0';
+		if (!macos9_hdr_has_ci(c->caller_hdrs, "sec-fetch-")) {
+			if (verifiable && c->post_body != NULL) {
+				strcpy(synth,
+					"Sec-Fetch-Dest: document\r\n"
+					"Sec-Fetch-Mode: navigate\r\n"
+					"Sec-Fetch-Site: same-origin\r\n"
+					"Sec-Fetch-User: ?1\r\n"
+					"Upgrade-Insecure-Requests: 1\r\n");
+			} else if (verifiable) {
+				strcpy(synth,
+					"Sec-Fetch-Dest: document\r\n"
+					"Sec-Fetch-Mode: navigate\r\n"
+					"Sec-Fetch-Site: none\r\n"
+					"Sec-Fetch-User: ?1\r\n"
+					"Upgrade-Insecure-Requests: 1\r\n");
+			} else {
+				strcpy(synth,
+					"Sec-Fetch-Dest: empty\r\n"
+					"Sec-Fetch-Mode: no-cors\r\n"
+					"Sec-Fetch-Site: same-origin\r\n");
+			}
+		}
+		if (c->post_body != NULL &&
+		    !macos9_hdr_has_ci(c->caller_hdrs, "origin:")) {
+			char   org[320];
+			size_t sl2;
+			size_t ol2;
+			sprintf(org, "Origin: http://%s\r\n", host_z);
+			sl2 = strlen(synth);
+			ol2 = strlen(org);
+			if (sl2 + ol2 < sizeof synth) strcat(synth, org);
+		}
+		xh_var = strlen(c->caller_hdrs);
+		sf_var = strlen(synth);
 		/* fixes368a (#167) — one request-summary line per fetch: host, the
 		 * chosen UA, and Cookie: header size (bytes only, never values).
 		 * Mirrors the HTTPS fetcher so the troubleshooting trace reads the
@@ -646,7 +694,8 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 					pb_used = p_len + 1 + q_len;
 				}
 			}
-			if (TEMPLATE_LEN + pb_used + host_len + ua_var + ck_var + 1 > sizeof(req)) {
+			if (TEMPLATE_LEN + pb_used + host_len + ua_var + ck_var
+			    + xh_var + sf_var + 1 > sizeof(req)) {   /* fixes835 */
 				macsurf_debug_log_writef(
 					"mfs_open: REJECT oversize req "
 					"pb=%ld host_len=%ld cap=%ld",
@@ -670,12 +719,14 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 					"Host: %.*s\r\n"
 					"User-Agent: %s\r\n"
 					"Accept: */*\r\n"
-					"%s"
-					"%s"
+					"%s"              /* cookie_hdr  */
+					"%s"              /* caller_hdrs (fixes835) */
+					"%s"              /* synth       (fixes835) */
+					"%s"              /* post_extra_hdrs */
 					"Content-Length: %ld\r\n"
 					"Connection: close\r\n\r\n",
 					path_buf, (int)host_len, host_str,
-					ua, cookie_hdr,
+					ua, cookie_hdr, c->caller_hdrs, synth,
 					post_extra_hdrs, c->post_body_len);
 			} else {
 				sprintf(req,
@@ -683,10 +734,12 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 					"Host: %.*s\r\n"
 					"User-Agent: %s\r\n"
 					"Accept: */*\r\n"
-					"%s"
+					"%s"              /* cookie_hdr  */
+					"%s"              /* caller_hdrs (fixes835) */
+					"%s"              /* synth       (fixes835) */
 					"Connection: keep-alive\r\n\r\n",
 					path_buf, (int)host_len, host_str,
-					ua, cookie_hdr);
+					ua, cookie_hdr, c->caller_hdrs, synth);
 			}
 		}
 	}
@@ -1550,7 +1603,7 @@ static void *macos9_http_setup(struct fetch *p, struct nsurl *u, bool o, bool d,
 	int class_active;
 	int global_active;
 	int slot_index = -1;
-	(void)o;(void)d;(void)pm;(void)h;
+	(void)o;(void)d;(void)pm;
 
 	/* fixes161a — classify. Navigation-hint flag wins over URL suffix
 	 * (top-level docs that look like /api/x or /foo.png still classify
@@ -1625,6 +1678,10 @@ static void *macos9_http_setup(struct fetch *p, struct nsurl *u, bool o, bool d,
 	f_slots[slot_index].content_length = -1;
 	f_slots[slot_index].keep_alive_ok = 1;
 	f_slots[slot_index].rclass = rc;
+	/* fixes835 (#167 M1) — capture core's additional request headers now
+	 * (the h[] array is only valid for this setup call). */
+	macos9_capture_extra_headers(h, f_slots[slot_index].caller_hdrs,
+		sizeof f_slots[slot_index].caller_hdrs);
 	/* fixes312 (#144) — capture POST body. NULL → GET (default). POST
 	 * forces keep-alive off (origin commonly closes after a POST). */
 	if (pu != NULL) {

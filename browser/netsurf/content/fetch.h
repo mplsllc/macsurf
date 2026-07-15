@@ -261,6 +261,14 @@ nserror fetch_set_http_code(struct fetch *fetch, http_response_code http_code);
 void fetch_set_cookie(struct fetch *fetch, const char *data);
 
 /**
+ * Query whether a fetch is "verifiable" (top-level / user-initiated
+ * navigation, including a login POST) versus a sub-resource fetch. The
+ * macos9 fetchers use this to key Sec-Fetch request metadata. NULL-safe
+ * (returns false). fixes835 (#167 M1).
+ */
+bool fetch_get_verifiable(const struct fetch *fetch);
+
+/**
  * Get the set of file descriptors the fetchers are currently using.
  *
  * This obtains the file descriptors the fetch system is using to

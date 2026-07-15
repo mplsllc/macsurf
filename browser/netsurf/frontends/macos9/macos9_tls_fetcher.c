@@ -155,8 +155,15 @@ struct macos9_https_ctx {
 	/* fixes367 (#167) — enlarged 1024→8192 to hold a full Cookie:
 	 * request header. Logged-in Facebook sends ~1KB of session cookies
 	 * (c_user, xs, datr, sb, fr, presence, wd, …); the old 1024 buffer
-	 * would fail build_request once the jar filled. */
-	char             req_buf[8192];
+	 * would fail build_request once the jar filled.
+	 * fixes835 (#167 M1) — enlarged 8192→12288: build_request has no
+	 * pre-sprintf guard (only the post-hoc rn>=sizeof check), and the
+	 * worst case Cookie(6144)+caller_hdrs(512)+synth(512)+request-line+
+	 * host+UA+Accept lines can exceed 8192 and overrun BEFORE that check
+	 * fires. 12288 keeps the worst realistic case (~8.8KB) inside the
+	 * buffer with margin; the rn>=sizeof guard remains the backstop. This
+	 * is a per-slot ctx field, not stack, so the extra 4KB is negligible. */
+	char             req_buf[12288];
 	unsigned long    req_len;
 	unsigned long    req_sent;
 
@@ -240,6 +247,11 @@ struct macos9_https_ctx {
 	/* fixes721 (#144 file upload) — POST Content-Type. Empty = urlencoded
 	 * default; "multipart/form-data; boundary=..." for a file upload. */
 	char             post_ctype[128];
+	/* fixes835 (#167 M1) — NetSurf core's additional request headers,
+	 * sanitized and captured at setup (see macos9_capture_extra_headers).
+	 * In-struct fixed buffer: zero-inited by the setup memset, nothing to
+	 * free. Empty ("") splices as a no-op. */
+	char             caller_hdrs[512];
 };
 
 #define HTTPS_MAX_RETRIES 2
@@ -1155,9 +1167,17 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	 * of whether the URL was no-scheme typed (the old auto_upgrade
 	 * mark). Gated by the per-host scheme tracker so a host whose HTTP
 	 * has ALSO already failed this navigation surfaces FETCH_ERROR
-	 * instead of bouncing. */
+	 * instead of bouncing.
+	 * fixes835 (#167 M1) — NEVER downgrade a Facebook host to http. FB is
+	 * https-only; an http fallback would (a) get a 301 back to https and
+	 * (b) drop the Secure session cookies (xs/datr) on the http hop,
+	 * silently breaking a logged-in session ("login succeeds, session
+	 * doesn't stick"). host_is_fb_asset covers facebook.com/fbcdn.net/
+	 * fbsbx.com/cdninstagram.com on a dot boundary. A transient TLS glitch
+	 * on FB surfaces FETCH_ERROR (retryable) instead. */
 	if (c->aborted == 0 &&
 	    !https_worked &&   /* fixes718: HTTPS answered — don't fall back to http */
+	    !host_is_fb_asset(c->host) &&
 	    c->url != NULL && c->pool_key[0] != '\0' &&
 	    !terminal_url_check(nsurl_access(c->url)) &&
 	    !macsurf_scheme_was_http_tried(c->pool_key)) {
@@ -1848,6 +1868,8 @@ static int build_request(struct macos9_https_ctx *c)
 	 * origin. Secure cookies are returned here because c->url is https. */
 	char  cookie_hdr[6144];
 	char *cookie_str;
+	int   verifiable;      /* fixes835 (#167 M1) */
+	char  synth[512];      /* fixes835 — Sec-Fetch + Origin, built below */
 	cookie_hdr[0] = '\0';
 	cookie_str = (c->url != NULL) ? urldb_get_cookie(c->url, true) : NULL;
 	if (cookie_str != NULL) {
@@ -1891,6 +1913,51 @@ static int build_request(struct macos9_https_ctx *c)
 		(long)strlen(cookie_hdr),
 		(long)((c->post_body != NULL) ? (long)c->post_body_len : 0L),
 		ua);
+	/* fixes835 (#167 Facebook M1) — synthesize the Sec-Fetch request
+	 * metadata a real browser sends (FB returns HTTP 400 to a modern UA
+	 * that omits these), keyed on request kind so the claimed identity is
+	 * coherent: a form POST is a same-origin document submit; a top-level
+	 * GET navigation (typed/bookmarked) has no initiator origin (Site:
+	 * none); a sub-resource (script/css/font/img) is Dest:empty /
+	 * Mode:no-cors / Site:same-origin. The POST/GET nav split matches the
+	 * proven fixes400 values. A caller that already supplied its own
+	 * Sec-Fetch set (future M3 XHR) wins. Ships globally (browser-standard).
+	 * This is the https fetcher, so Origin is always https and c->host has
+	 * no port (FB is :443). */
+	verifiable = fetch_get_verifiable(c->parent);
+	synth[0] = '\0';
+	if (!macos9_hdr_has_ci(c->caller_hdrs, "sec-fetch-")) {
+		if (verifiable && c->post_body != NULL) {
+			strcpy(synth,
+				"Sec-Fetch-Dest: document\r\n"
+				"Sec-Fetch-Mode: navigate\r\n"
+				"Sec-Fetch-Site: same-origin\r\n"
+				"Sec-Fetch-User: ?1\r\n"
+				"Upgrade-Insecure-Requests: 1\r\n");
+		} else if (verifiable) {
+			strcpy(synth,
+				"Sec-Fetch-Dest: document\r\n"
+				"Sec-Fetch-Mode: navigate\r\n"
+				"Sec-Fetch-Site: none\r\n"
+				"Sec-Fetch-User: ?1\r\n"
+				"Upgrade-Insecure-Requests: 1\r\n");
+		} else {
+			strcpy(synth,
+				"Sec-Fetch-Dest: empty\r\n"
+				"Sec-Fetch-Mode: no-cors\r\n"
+				"Sec-Fetch-Site: same-origin\r\n");
+		}
+	}
+	if (c->post_body != NULL &&
+	    !macos9_hdr_has_ci(c->caller_hdrs, "origin:")) {
+		char   org[320];
+		size_t sl;
+		size_t ol;
+		sprintf(org, "Origin: https://%s\r\n", c->host);
+		sl = strlen(synth);
+		ol = strlen(org);
+		if (sl + ol < sizeof synth) strcat(synth, org);
+	}
 	if (c->post_body != NULL) {
 		/* fixes312 (#144) — POST. Body goes out in a second
 		 * OSTLS_Write after these headers; req_buf carries
@@ -1910,12 +1977,14 @@ static int build_request(struct macos9_https_ctx *c)
 			"Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
 			"Accept-Language: en-US,en;q=0.5\r\n"
 			"Accept-Encoding: identity\r\n"
-			"%s"
+			"%s"                        /* cookie_hdr  */
+			"%s"                        /* caller_hdrs (fixes835) */
+			"%s"                        /* synth       (fixes835) */
 			"Content-Type: %s\r\n"
 			"Content-Length: %lu\r\n"
 			"Connection: keep-alive\r\n"
 			"\r\n",
-			c->path, c->host, ua, cookie_hdr, ct,
+			c->path, c->host, ua, cookie_hdr, c->caller_hdrs, synth, ct,
 			(unsigned long)c->post_body_len);
 	} else {
 		rn = sprintf(c->req_buf,
@@ -1925,10 +1994,12 @@ static int build_request(struct macos9_https_ctx *c)
 			"Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
 			"Accept-Language: en-US,en;q=0.5\r\n"
 			"Accept-Encoding: identity\r\n"
-			"%s"
+			"%s"                    /* cookie_hdr  */
+			"%s"                    /* caller_hdrs (fixes835) */
+			"%s"                    /* synth       (fixes835) */
 			"Connection: %s\r\n"
 			"\r\n",
-			c->path, c->host, ua, cookie_hdr, conn);
+			c->path, c->host, ua, cookie_hdr, c->caller_hdrs, synth, conn);
 	}
 	if (rn <= 0 || (unsigned long)rn >= sizeof c->req_buf) return -1;
 	c->req_len = (unsigned long)rn;
@@ -2571,7 +2642,7 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 	size_t hs_n, ps_n;
 	struct macos9_https_ctx *c;
 
-	(void)o; (void)d; (void)pm; (void)h;
+	(void)o; (void)d; (void)pm;
 
 	for (i = 0; i < MAX_HTTPS_F; i++) {
 		if (https_slots[i].state == HS_IDLE) { slot = i; break; }
@@ -2584,6 +2655,9 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 	memset(c, 0, sizeof *c);
 	c->parent = p;
 	c->url = nsurl_ref(u);
+	/* fixes835 (#167 M1) — capture core's additional request headers now
+	 * (the h[] array is only valid for this setup call). */
+	macos9_capture_extra_headers(h, c->caller_hdrs, sizeof c->caller_hdrs);
 	c->state = HS_QUEUED;
 	c->content_length = -1;
 	c->status = 0;

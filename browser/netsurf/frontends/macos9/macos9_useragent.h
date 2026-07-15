@@ -23,6 +23,8 @@
 #ifndef MACOS9_USERAGENT_H
 #define MACOS9_USERAGENT_H
 
+#include <stddef.h>	/* size_t (fixes835 header-capture helper) */
+
 /* MacSurf's honest default User-Agent (every host not in the override
  * table). Exposed so callers / diagnostics can reference it. */
 const char *macos9_user_agent_default(void);
@@ -33,5 +35,10 @@ const char *macos9_user_agent_default(void);
  * be NULL (returns the default). The returned string is static storage and
  * must not be freed or modified; never NULL. */
 const char *macos9_user_agent_for_host(const char *host);
+
+/* fixes835 (#167 M1) — request-header helpers (shared, impl in
+ * macos9_fetch.c). See that file for the drop-list contract. */
+int  macos9_hdr_has_ci(const char *hay, const char *needle);
+void macos9_capture_extra_headers(const char **h, char *dst, size_t cap);
 
 #endif /* MACOS9_USERAGENT_H */

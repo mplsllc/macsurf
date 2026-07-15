@@ -41,6 +41,15 @@ extern OTClientContextPtr macos9_ot_context;
 static const char MACOS9_UA_DEFAULT[] =
 	"MacSurf/2.0.5 (Macintosh; PPC Mac OS 9)";
 
+/* fixes835 (#167 Facebook M1) — desktop Firefox 134. Facebook serves its
+ * modern www surface to this UA (verified 2026-07-15: www.facebook.com
+ * returns HTTP 200 + a server-rendered login_form to FF134 + Sec-Fetch;
+ * a bare modern UA without Sec-Fetch gets 400). Used for facebook.com and
+ * its asset/script origins so every request carries one coherent identity. */
+static const char MACOS9_UA_FB_FF134[] =
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) "
+	"Gecko/20100101 Firefox/134.0";
+
 struct macos9_ua_rule {
 	const char *suffix;	/* host suffix, e.g. "facebook.com" */
 	const char *ua;		/* User-Agent to send to that host */
@@ -48,40 +57,38 @@ struct macos9_ua_rule {
 
 static const struct macos9_ua_rule macos9_ua_rules[] = {
 	/*
-	 * fixes391 (#167): mbasic surface, LOGGED-IN path. The KaiOS UA below
-	 * gets us logged in, but on a logged-in session mbasic.facebook.com then
-	 * 302-redirects to the m.facebook.com touch SPA (verified 2026-06-04
-	 * hardware log: GET mbasic -> 302 m.facebook.com/?shouldForceMTouch=1,
-	 * which carries the 'unsupported-interstitial' + a 1.5 MB JS bundle that
-	 * runs ~14 s on the G3). fixes371's finding that the vintage MSIE5 UA
-	 * gets the interstitial was for the LOGGED-OUT login page; once the
-	 * c_user/xs cookies are persisted (fixes368) we no longer need the KaiOS
-	 * UA on mbasic, and a non-touch vintage UA should stick on mbasic's pure
-	 * HTML without the mtouch redirect. This row is more specific than the
-	 * "facebook.com" row below and is matched first (first-match-wins).
+	 * fixes835 (#167 M1): m.facebook.com keeps the KaiOS feature-phone UA
+	 * — the lightest surface Facebook still serves a plain-HTML login form
+	 * to (email/pass POST to /login/device-based/regular/login/ with the
+	 * hidden lsd/jazoest/m_ts tokens as STATIC HTML, so core form.c submits
+	 * it with no JS). Cookies are domain-wide .facebook.com, so a login on
+	 * m works on www — this is the login fallback if the www form loops.
+	 * MORE SPECIFIC than the "facebook.com" row below and MUST stay above
+	 * it (first-match-wins). Do NOT append " MacSurf/..." — FB's KaiOS gate
+	 * is exact; any extra token drops to the "unsupported browser" overlay.
 	 */
-	{ "mbasic.facebook.com",
-	  "Mozilla/4.0 (compatible; MSIE 5.0; Mac_PowerPC)" },
-	/*
-	 * Facebook login surface is UA-gated. fixes371 (#167): the vintage
-	 * "Mozilla/4.0 ... MSIE 5.0 ... Mac_PowerPC" string we used through
-	 * fixes370 now receives Facebook's "unsupported-interstitial" overlay
-	 * (verified 2026-06-03: 200 OK but the page is just "Facebook is not
-	 * available on this browser", no email/pass form). The KaiOS
-	 * feature-phone UA below is the lightest surface Facebook still serves
-	 * the real login form to — a plain HTML POST to
-	 * /login/device-based/regular/login/ with email/pass AND all hidden
-	 * tokens (lsd/jazoest/m_ts/li/try_number) present as STATIC HTML, so
-	 * core form.c submits it without running the page's (analytics-only)
-	 * scripts. The page is ~68 KB (vs the old ~6 KB) but renders fine.
-	 *
-	 * IMPORTANT: do NOT append " MacSurf/..." here — Facebook's KaiOS gate
-	 * is exact; any extra token drops us back to the unsupported overlay.
-	 * This is a per-host spoof for facebook.com ONLY (Classilla sitecontrol
-	 * pattern); every other host keeps MacSurf's honest default UA.
-	 */
-	{ "facebook.com",
+	{ "m.facebook.com",
 	  "Mozilla/5.0 (Mobile; LYF/F90M/LYF-F90M-000-02-44-130319; rv:48.0) Gecko/48.0 Firefox/48.0 KAIOS/2.5" },
+	/*
+	 * fixes835 (#167 M1): www/apex facebook.com now presents as desktop
+	 * Firefox 134 (the round-2 direction — the Mac is the real client with
+	 * native TLS, so FB's auth/cookies live here; no proxy). Replaces the
+	 * retired KaiOS-on-apex / mbasic strategy. mbasic.facebook.com is DEAD
+	 * (serves the "not available on this browser" interstitial to every UA
+	 * as of 2026-07-15), so its old row was removed this round. The Sec-Fetch
+	 * request headers that pair with this UA are synthesized in the fetchers'
+	 * build_request (fixes835), keyed on nav-vs-subresource.
+	 */
+	{ "facebook.com", MACOS9_UA_FB_FF134 },
+	/*
+	 * fixes835 — FB asset/script origins get the SAME desktop FF134 UA so
+	 * the ~90 bundle fetches (static.xx.fbcdn.net, scontent.*.fbcdn.net,
+	 * connect.facebook.net, …) match the document's identity rather than
+	 * falling to the MacSurf default UA. Broad registrable-domain suffixes;
+	 * keep any future more-specific *.fbcdn.net override ABOVE these rows.
+	 */
+	{ "fbcdn.net",    MACOS9_UA_FB_FF134 },
+	{ "facebook.net", MACOS9_UA_FB_FF134 },
 	/*
 	 * fixes821: Hacker News UA-gates /login (and other dynamic routes)
 	 * at nginx: the honest "MacSurf/2.0.5 (Macintosh; PPC Mac OS 9)" UA
@@ -129,6 +136,78 @@ const char *macos9_user_agent_for_host(const char *host)
 		}
 	}
 	return MACOS9_UA_DEFAULT;
+}
+
+/* fixes835 (#167 Facebook M1) — case-insensitive substring test. Used by
+ * the fetchers to decide whether the caller already supplied a Sec-Fetch
+ * / Origin header (which then WINS over the synthesized one). */
+int macos9_hdr_has_ci(const char *hay, const char *needle)
+{
+	size_t nl;
+	size_t hl;
+	size_t i;
+	if (hay == NULL || needle == NULL) return 0;
+	nl = strlen(needle);
+	if (nl == 0) return 0;
+	hl = strlen(hay);
+	if (hl < nl) return 0;
+	for (i = 0; i + nl <= hl; i++) {
+		if (strncasecmp(hay + i, needle, nl) == 0) return 1;
+	}
+	return 0;
+}
+
+/* fixes835 (#167 Facebook M1) — copy NetSurf core's additional request
+ * headers (a NULL-terminated array of "Name: value" strings) into one
+ * ready-to-splice buffer, "Name: value\r\n" per KEPT header. Dropped:
+ * every header the fetcher emits itself (Host, User-Agent, the Accept
+ * family, Content-Length, Content-Type, Connection), all hop-by-hop
+ * headers, and Cookie (the jar wins). ALSO
+ * dropped: If-None-Match / If-Modified-Since — core's llcache emits these to
+ * revalidate a stale object, but NEITHER macos9 fetcher has a 304 branch
+ * (no FETCH_NOTMODIFIED, unlike curl.c), so a conditional GET that draws a
+ * 304 would be delivered as an empty body and blank the cached resource
+ * (fixes835: caught in adversarial review — worst on revalidated images/
+ * fonts like forum avatars). We can't answer 304, so we must not ask.
+ * KEPT: Referer, Sec-Fetch-*, Origin, etc. dst is always NUL-terminated; a
+ * header that would overflow is skipped whole, never truncated. */
+void macos9_capture_extra_headers(const char **h, char *dst, size_t cap)
+{
+	static const char *const drop[] = {
+		"host:", "cookie:", "connection:", "keep-alive:",
+		"proxy-connection:", "transfer-encoding:", "te:",
+		"trailer:", "upgrade:", "content-length:", "content-type:",
+		"accept-encoding:", "user-agent:", "accept:",
+		"accept-language:", "if-none-match:", "if-modified-since:"
+	};
+	size_t nd = sizeof(drop) / sizeof(drop[0]);
+	size_t used = 0;
+	int i;
+	if (dst == NULL || cap == 0) return;
+	dst[0] = '\0';
+	if (h == NULL) return;
+	for (i = 0; h[i] != NULL; i++) {
+		const char *line = h[i];
+		size_t ll;
+		size_t j;
+		int drop_it = 0;
+		if (line[0] == '\0') continue;
+		for (j = 0; j < nd; j++) {
+			size_t dl = strlen(drop[j]);
+			if (strncasecmp(line, drop[j], dl) == 0) {
+				drop_it = 1;
+				break;
+			}
+		}
+		if (drop_it) continue;
+		ll = strlen(line);
+		if (used + ll + 3 > cap) continue;   /* +CRLF +NUL; skip whole */
+		memcpy(dst + used, line, ll);
+		used += ll;
+		dst[used++] = '\r';
+		dst[used++] = '\n';
+		dst[used] = '\0';
+	}
 }
 
 static const char *macos9_fetch_filetype(const char *unix_path)
