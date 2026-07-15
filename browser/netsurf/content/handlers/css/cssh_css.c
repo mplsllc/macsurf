@@ -5459,6 +5459,75 @@ char *macsurf__rewrite_inline_style(const char *data, size_t in_size,
 		src_size = cur_size;
 	}
 
+	/* fixes831 (#277): the inline path historically ran only a handful of
+	 * rewriters, so CSS written in a style="" attribute silently dropped
+	 * every feature the stylesheet path (nscss_process_data) rewrites but
+	 * the raw libcss parser doesn't understand -- logical properties/
+	 * shorthands, inset, grid alignment/flow, modern-compat, calc(),
+	 * background: shorthand gradients. Real pages set these inline all the
+	 * time (React/Tailwind-style `style={{...}}`, framework inline styles),
+	 * so shipped features (#247 logical props, #253 place-*, grid) no-op'd
+	 * exactly where many pages use them. Run the same rewriters here.
+	 * Two contracts, matching nscss_process_data:
+	 *   - size-changing (out_size_p): swap + take next_size.
+	 *   - same-size in-place (no out_size_p, NULL=OOM): swap + keep size. */
+	next = macsurf__rewrite_modern_compat(src, src_size, &next_size);
+	if (next != NULL) {
+		if (cur != NULL) free(cur);
+		cur = next; cur_size = next_size;
+		src = (const char *)cur; src_size = cur_size;
+	}
+
+	next = macsurf__rewrite_inset(src, src_size, &next_size);
+	if (next != NULL) {
+		if (cur != NULL) free(cur);
+		cur = next; cur_size = next_size;
+		src = (const char *)cur; src_size = cur_size;
+	}
+
+	next = macsurf__rewrite_logical_shorthands(src, src_size, &next_size);
+	if (next != NULL) {
+		if (cur != NULL) free(cur);
+		cur = next; cur_size = next_size;
+		src = (const char *)cur; src_size = cur_size;
+	}
+
+	next = macsurf__rewrite_logical_properties(src, src_size);
+	if (next != NULL) {
+		if (cur != NULL) free(cur);
+		cur = next; cur_size = src_size;
+		src = (const char *)cur; src_size = cur_size;
+	}
+
+	next = macsurf__rewrite_grid_alignment(src, src_size, &next_size);
+	if (next != NULL) {
+		if (cur != NULL) free(cur);
+		cur = next; cur_size = next_size;
+		src = (const char *)cur; src_size = cur_size;
+	}
+
+	next = macsurf__rewrite_grid_auto_flow(src, src_size, &next_size);
+	if (next != NULL) {
+		if (cur != NULL) free(cur);
+		cur = next; cur_size = next_size;
+		src = (const char *)cur; src_size = cur_size;
+	}
+
+	next = macsurf__rewrite_calc_aspect(src, src_size);
+	if (next != NULL) {
+		if (cur != NULL) free(cur);
+		cur = next; cur_size = src_size;
+		src = (const char *)cur; src_size = cur_size;
+	}
+
+	next = macsurf__rewrite_background_shorthand_gradient(src, src_size,
+			&next_size);
+	if (next != NULL) {
+		if (cur != NULL) free(cur);
+		cur = next; cur_size = next_size;
+		src = (const char *)cur; src_size = cur_size;
+	}
+
 	if (cur == NULL) {
 		return NULL;
 	}
