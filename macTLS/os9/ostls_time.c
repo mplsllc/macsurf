@@ -15,11 +15,18 @@
 #ifdef __MWERKS__
 #include <Types.h>
 #include <DateTimeUtils.h>      /* GetDateTime */
+#include <OSUtils.h>            /* ReadLocation, MachineLocation */
 #else
-/* Non-CW8 syntax check. GetDateTime is a Toolbox call -- under
- * Retro68 we stub it to a fixed value sufficient to make the file
- * parse and exercise the math at the type-system level. */
+/* Non-CW8 syntax check. GetDateTime / ReadLocation are Toolbox calls --
+ * under Retro68 we stub them so the file parses and the math is exercised
+ * at the type-system level. */
 static void GetDateTime(UInt32 *p) { *p = 0; }
+typedef struct {
+    long latitude;
+    long longitude;
+    union { char dlsDelta; long gmtDelta; } u;
+} MachineLocation;
+static void ReadLocation(MachineLocation *l) { l->u.gmtDelta = 0; }
 #endif
 
 
@@ -63,6 +70,37 @@ OSTLS_GetBearSSLTime(UInt32 *out_days, UInt32 *out_seconds)
 
     mac_seconds = 0;
     GetDateTime(&mac_seconds);
+
+    /* fixes834: GetDateTime returns the Mac's LOCAL time, but X.509
+     * notBefore/notAfter are in GMT and br_x509_minimal_set_time expects
+     * a GMT "now". Using local time as GMT skews validation by the
+     * machine's timezone offset -- normally harmless (certs last months)
+     * but on a FRESH cert whose notBefore is within that offset of now,
+     * a machine behind GMT (e.g. US timezones) sees it as not-yet-valid
+     * and fails with X509_EXPIRED (br_err=54), while a machine at/ahead
+     * of GMT loads it fine. Convert local -> GMT with the machine's
+     * gmtDelta (seconds EAST of GMT; local = GMT + gmtDelta, so
+     * GMT = local - gmtDelta). Low 24 bits of u.gmtDelta hold the signed
+     * offset; the high byte is dlsDelta. If unset, gmtDelta is 0 -> no
+     * change (correct for a GMT machine). Done in unsigned arithmetic
+     * because mac_seconds exceeds LONG_MAX for post-2038 Mac epochs. */
+    {
+        MachineLocation loc;
+        long gmtDelta;
+        memset(&loc, 0, sizeof(loc));
+        ReadLocation(&loc);
+        gmtDelta = loc.u.gmtDelta & 0x00FFFFFFL;   /* low 24 bits */
+        if (gmtDelta & 0x00800000L) {              /* sign-extend 24-bit */
+            gmtDelta -= 0x01000000L;
+        }
+        if (gmtDelta >= 0) {
+            if (mac_seconds >= (UInt32)gmtDelta) {
+                mac_seconds -= (UInt32)gmtDelta;
+            }
+        } else {
+            mac_seconds += (UInt32)(-gmtDelta);
+        }
+    }
 
     /* If the clock reads before 1970 the subtraction would underflow
      * in unsigned arithmetic; catch that as the same "clock before
