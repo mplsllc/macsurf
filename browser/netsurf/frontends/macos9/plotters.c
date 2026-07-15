@@ -2085,6 +2085,7 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 		 * 1058x245 logo at 400x92 is 2.6× — under the old 3× gate
 		 * it stayed faded; under 1.5× it pre-downscales sharply. */
 		if (MACSURF_BOX_FILTER_DOWNSCALE &&
+				!(flags & BITMAPF_NEAREST) &&   /* fixes829 (#256): pixelated/crisp-edges forces nearest */
 				(sx_ratio_q8 >= (3L * 128L) || sy_ratio_q8 >= (3L * 128L)) &&
 				width >= 4 && height >= 4) {
 			GWorldPtr gw_small = NULL;

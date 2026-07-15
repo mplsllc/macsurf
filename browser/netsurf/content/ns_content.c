@@ -916,6 +916,7 @@ content_scaled_redraw(struct hlcache_handle *h,
 	data.background_colour = 0xFFFFFF;
 	data.repeat_x = false;
 	data.repeat_y = false;
+	data.nearest = false;  /* fixes829 (#256) */
 
 	/* Find the scale factor to use if the content has a width */
 	if (c->width) {

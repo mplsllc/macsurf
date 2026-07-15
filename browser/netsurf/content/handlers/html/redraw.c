@@ -2022,6 +2022,13 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 				bg_data.scale = scale;
 				bg_data.repeat_x = repeat_x;
 				bg_data.repeat_y = repeat_y;
+				bg_data.nearest = (background->style != NULL &&
+					(css_computed_image_rendering(
+						background->style) ==
+						CSS_IMAGE_RENDERING_PIXELATED ||
+					 css_computed_image_rendering(
+						background->style) ==
+						CSS_IMAGE_RENDERING_CRISP_EDGES));
 
 				/* fixes191b -- background-size consumer.
 				 *
@@ -2588,6 +2595,11 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 			bg_data.scale = scale;
 			bg_data.repeat_x = repeat_x;
 			bg_data.repeat_y = repeat_y;
+			bg_data.nearest = (box->style != NULL &&
+				(css_computed_image_rendering(box->style) ==
+					CSS_IMAGE_RENDERING_PIXELATED ||
+				 css_computed_image_rendering(box->style) ==
+					CSS_IMAGE_RENDERING_CRISP_EDGES));
 
 			/* fixes828 (#255/#280): honour background-size on INLINE
 			 * backgrounds too. The block path (html_redraw_background)
@@ -4575,6 +4587,13 @@ bool html_redraw_box(const html_content *html, struct box *box,
 		obj_data.scale = scale;
 		obj_data.repeat_x = false;
 		obj_data.repeat_y = false;
+		/* fixes829 (#256): image-rendering:pixelated/crisp-edges ->
+		 * nearest-neighbor (skip the plotter's box-filter smoothing). */
+		obj_data.nearest = (box->style != NULL &&
+			(css_computed_image_rendering(box->style) ==
+				CSS_IMAGE_RENDERING_PIXELATED ||
+			 css_computed_image_rendering(box->style) ==
+				CSS_IMAGE_RENDERING_CRISP_EDGES));
 
 		if (content_get_type(box->object) == CONTENT_HTML) {
 			obj_data.x /= scale;

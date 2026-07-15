@@ -57,6 +57,12 @@ struct content_redraw_data {
 
 	bool repeat_x; /**< whether content is tiled in x direction */
 	bool repeat_y; /**< whether content is tiled in y direction */
+
+	/** fixes829 (#256): CSS image-rendering wants nearest-neighbor
+	 *  scaling (pixelated / crisp-edges). When true the frontend
+	 *  bitmap plotter must skip its smoothing box-filter downscale.
+	 */
+	bool nearest;
 };
 
 /**
