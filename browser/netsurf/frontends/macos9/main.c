@@ -738,6 +738,7 @@ void macos9_handle_update(const EventRecord *event) {
 			const BitMap *src_bm;
 			const BitMap *dst_bm;
 			RGBColor blk; RGBColor wht;
+			Rect blit_r;   /* fixes825: dirty-rect blit, see below */
 			blk.red = 0; blk.green = 0; blk.blue = 0;
 			wht.red = 0xFFFF; wht.green = 0xFFFF; wht.blue = 0xFFFF;
 			SetGWorld(saved_port, saved_gdh);
@@ -745,12 +746,33 @@ void macos9_handle_update(const EventRecord *event) {
 				(CGrafPtr)gw->content_gworld);
 			dst_bm = GetPortBitMapForCopyBits(GetWindowPort(win));
 			RGBForeColor(&blk); RGBBackColor(&wht);
-			/* Dst port visRgn is BeginUpdate's update region; QD
-			 * hardware-clips the blit so only dirty pixels reach
-			 * the screen even though src/dst rects span the full
-			 * content area. */
-			CopyBits(src_bm, dst_bm, &off_bounds, &off_bounds,
-			         srcCopy, NULL);
+			/* fixes825 (#212/#239): blit only the DIRTY rect, not the
+			 * whole viewport. The old code passed off_bounds (the entire
+			 * content_rect) as src+dst and relied on the dst visRgn to
+			 * clip -- but classic-QD CopyBits sets up its blit loop over
+			 * the RECT it's handed, so a full-viewport rect costs a
+			 * full-viewport blit (~20ms measured per keystroke via WORK
+			 * keylat) even when a single form field changed. The GWorld's
+			 * non-dirty pixels already match the screen (only update_bounds
+			 * was erased+redrawn this pass), so blitting just the dirty
+			 * area keeps them in sync at a fraction of the cost. Clamp to
+			 * content_rect first: update_bounds can include chrome rows
+			 * that lie outside the GWorld (content-sized), and reading
+			 * those would blit garbage. */
+			blit_r = update_bounds;
+			if (blit_r.left   < gw->content_rect.left)
+				blit_r.left   = gw->content_rect.left;
+			if (blit_r.top    < gw->content_rect.top)
+				blit_r.top    = gw->content_rect.top;
+			if (blit_r.right  > gw->content_rect.right)
+				blit_r.right  = gw->content_rect.right;
+			if (blit_r.bottom > gw->content_rect.bottom)
+				blit_r.bottom = gw->content_rect.bottom;
+			if (blit_r.right > blit_r.left &&
+			    blit_r.bottom > blit_r.top) {
+				CopyBits(src_bm, dst_bm, &blit_r, &blit_r,
+				         srcCopy, NULL);
+			}
 			if (gwpm != NULL) UnlockPixels(gwpm);
 			gworld_active = (Boolean)0;
 		}
