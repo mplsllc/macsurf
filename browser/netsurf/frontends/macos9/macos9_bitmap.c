@@ -15,6 +15,7 @@
 #include "netsurf/content.h"
 
 #include "macos9.h"
+#include "macos9_deathrow.h"	/* fixes829h (#281): defer bitmap free during redraw */
 
 struct macos9_bitmap {
 	int width;
@@ -55,6 +56,7 @@ struct macos9_bitmap {
 	struct macos9_bitmap *prep_lru_prev;
 	struct macos9_bitmap *prep_lru_next;
 	bool prep_in_lru;
+	int dr_queued;   /* fixes829h (#281): on the frontend death row */
 #ifdef __MACOS9__
 	GWorldPtr prep_gw;
 #endif
@@ -300,7 +302,7 @@ macos9_bitmap_create(int width, int height, enum gui_bitmap_flags flags)
 }
 
 static void
-macos9_bitmap_destroy(void *bitmap)
+macos9_bitmap_destroy_now(void *bitmap)
 {
 	struct macos9_bitmap *bm = bitmap;
 
@@ -341,6 +343,50 @@ macos9_bitmap_destroy(void *bitmap)
 		bm->data = NULL;
 	}
 	free(bm);
+}
+
+/* Death-row teardown thunk (fixes829h #281). */
+static void
+macos9_bitmap_deathrow_teardown(void *p)
+{
+	macos9_bitmap_destroy_now(p);
+}
+
+/*
+ * Public gui_bitmap_table destroy callback (fixes829h, #281).
+ *
+ * Root cause: NetSurf core (navigation/refresh, hlcache clean) can free a
+ * content's bitmap while a redraw is on the stack -- the knockout plot buffer
+ * batches raw bitmap pointers during the box-tree walk and replays them at
+ * knockout_plot_end, so a bitmap freed mid-redraw is replayed as a freed
+ * struct (probe caught bw=<heap ptr>, buf=0x00000003) -> plot_bitmap walked
+ * garbage dims and crashed. This is the same object-freed-by-destroy class the
+ * death row already closes for contents.
+ *
+ * Fix: while macos9_op_depth > 0 (a walk/convert/redraw/broadcast is on the
+ * stack) DEFER the free to the quiescent drain (top of macos9_poll), so the
+ * bitmap stays live for the rest of the redraw -- the pending knockout replay
+ * then paints a VALID bitmap instead of a freed one (fixes the crash AND the
+ * blank-on-refresh residual). pin_key is NULL: no scheduled continuation
+ * references a bitmap, only the redraw stack does, which op_depth covers.
+ * Idempotent via dr_queued. When no walk is active, free immediately as before.
+ */
+void
+macos9_bitmap_destroy(void *bitmap)
+{
+	struct macos9_bitmap *bm = bitmap;
+
+	if (bm == NULL) return;
+	if (((unsigned long)bm & 3) != 0) return;
+
+	if (macos9_op_depth > 0) {
+		if (bm->dr_queued) return;
+		bm->dr_queued = 1;
+		macos9_deathrow_add(bm, macos9_bitmap_deathrow_teardown,
+				(struct content *)NULL);
+		return;
+	}
+	macos9_bitmap_destroy_now(bm);
 }
 
 static void
