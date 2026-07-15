@@ -640,7 +640,19 @@ def main() -> int:
     # 'vers' (1) + (2) — Finder Get Info version. Without it Get Info shows
     # "N/A" (#219). vers(1) = the version; vers(2) = the "package"/long line.
     vlong = args.version_long or ("MacSurf %s" % args.version)
-    vers = build_vers_resource(args.version, vlong)
+    # Derive the NumVersion BCD from the dotted --version string so Get Info's
+    # numeric compare matches the display string (major, minor.bugfix BCD).
+    _vp = (args.version.split(".") + ["0", "0", "0"])[:3]
+    def _bcd(n):
+        try:
+            n = int(n)
+        except ValueError:
+            n = 0
+        return ((n // 10) << 4) | (n % 10)
+    _major = _bcd(_vp[0])
+    _minor_bug = (_bcd(_vp[1]) << 4) | (_bcd(_vp[2]) & 0x0F)
+    vers = build_vers_resource(args.version, vlong,
+                               major_bcd=_major, minor_bug_bcd=_minor_bug)
     fork.add(b"vers", 1, vers)
     fork.add(b"vers", 2, vers)
     blob = fork.build()

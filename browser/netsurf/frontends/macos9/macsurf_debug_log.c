@@ -468,7 +468,7 @@ macsurf_debug_log_init(void)
 	macsurf_debug_log_write(
 		"=====================   N E W   S E S S I O N   ====================");
 	macsurf_debug_log_writef(
-		"===  MacSurf 2.0   (build %s %s)", __DATE__, __TIME__);
+		"===  MacSurf 2.0.5   (build %s %s)", __DATE__, __TIME__);
 	{
 		unsigned long secs = 0;
 		DateTimeRec dtr;

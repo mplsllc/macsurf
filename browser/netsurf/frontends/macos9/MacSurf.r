@@ -59,15 +59,15 @@ type 'vers' {
 };
 
 resource 'vers' (1) {
-	0x02, 0x00, final, 0x00, verUS,
-	"2.0",
-	"MacSurf 2.0"
+	0x02, 0x05, final, 0x00, verUS,
+	"2.0.5",
+	"MacSurf 2.0.5"
 };
 
 resource 'vers' (2) {
-	0x02, 0x00, final, 0x00, verUS,
-	"2.0",
-	"MacSurf 2.0"
+	0x02, 0x05, final, 0x00, verUS,
+	"2.0.5",
+	"MacSurf 2.0.5"
 };
 
 /* Icon family + FREF + BNDL. Generated; do not hand-edit. */

@@ -39,7 +39,7 @@ extern OTClientContextPtr macos9_ot_context;
  * tail of the host. This is the single source of truth that replaced the
  * duplicated macos9_ua_for_host statics in the two fetchers. */
 static const char MACOS9_UA_DEFAULT[] =
-	"MacSurf/2.0 (Macintosh; PPC Mac OS 9)";
+	"MacSurf/2.0.5 (Macintosh; PPC Mac OS 9)";
 
 struct macos9_ua_rule {
 	const char *suffix;	/* host suffix, e.g. "facebook.com" */
@@ -84,7 +84,7 @@ static const struct macos9_ua_rule macos9_ua_rules[] = {
 	  "Mozilla/5.0 (Mobile; LYF/F90M/LYF-F90M-000-02-44-130319; rv:48.0) Gecko/48.0 Firefox/48.0 KAIOS/2.5" },
 	/*
 	 * fixes821: Hacker News UA-gates /login (and other dynamic routes)
-	 * at nginx: the honest "MacSurf/2.0 (Macintosh; PPC Mac OS 9)" UA
+	 * at nginx: the honest "MacSurf/2.0.5 (Macintosh; PPC Mac OS 9)" UA
 	 * gets 429 "Sorry." while a Chrome UA gets the form -- PROVEN by a
 	 * same-IP curl A/B from the maintainer's network (2026-07-14:
 	 * MacSurf-UA 429 / Chrome-UA 200; the Jul-11 Chrome HAR shows the
