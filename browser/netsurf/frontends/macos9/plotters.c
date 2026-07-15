@@ -1967,6 +1967,26 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 	rowstride = (long)macos9_bitmap_get_rowstride((void *)bitmap);
 	if (bw <= 0 || bh <= 0) return NSERROR_OK;
 
+	/* fixes829f (#256 crash diag + guard): the box-filter/fill loops keep
+	 * faulting on src[col*4]/dst[col*4] even though the arithmetic is
+	 * in-bounds FOR SANE dimensions -- which points at a corrupted
+	 * dimension/stride arriving here (the fixes702 prep-cache corruption
+	 * class the maintainer flagged). Log the actual values (WORK-prefixed
+	 * so it passes the failures-only gate) and BAIL on anything insane
+	 * before we walk a single pixel, so a garbage dimension paints nothing
+	 * instead of crashing. */
+	macsurf_debug_log_writef(
+		"WORK pbmp bw=%ld bh=%ld w=%d h=%d rs=%ld buf=%p flags=%ld",
+		(long)bw, (long)bh, width, height, rowstride,
+		(void *)buf, (long)flags);
+	if (bw > 8192 || bh > 8192 || width <= 0 || height <= 0 ||
+	    width > 8192 || height > 8192 || rowstride < (long)bw * 4) {
+		macsurf_debug_log_writef(
+			"WORK pbmp BAIL insane dims bw=%ld bh=%ld w=%d h=%d rs=%ld",
+			(long)bw, (long)bh, width, height, rowstride);
+		return NSERROR_OK;
+	}
+
 	SetRect(&src_rect, 0, 0, (short)bw, (short)bh);
 	SetRect(&dst_rect, (short)x, (short)y,
 		(short)(x + width), (short)(y + height));
