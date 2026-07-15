@@ -64,7 +64,10 @@ NSOPTION_STRING(http_proxy_noproxy, "localhost")
 NSOPTION_INTEGER(treeview_font_size, 110)
 
 /** Default font size (unit: 0.1pt) */
-NSOPTION_INTEGER(font_size, 128)
+/* fixes830 (#244): 128 (12.8pt) -> 160 (16pt) so the root default and the
+ * `font-size: medium` keyword match the mainstream-browser 16px baseline,
+ * consistent with the UA body{font-size:16px} bump. */
+NSOPTION_INTEGER(font_size, 160)
 
 /** Minimum font size. */
 NSOPTION_INTEGER(font_min_size, 85)

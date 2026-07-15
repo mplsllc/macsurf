@@ -108,8 +108,16 @@ static const char css_default[] =
 	 * white: the canvas defaults to white (data->background_colour) and
 	 * html{color:#000} makes text black. */
 	"html{color:#000}"
+	/* fixes830 (#244): default body font 13px -> 16px to match every
+	 * mainstream browser's default (Chrome/Firefox/Safari all render an
+	 * unstyled page at 16px). 13px made every un-styled page read ~20%
+	 * too small -- the top v2.0 legibility complaint. em-based headings
+	 * (h1=2em etc.) scale proportionally; pages that set their own
+	 * font-size are unaffected (they override this). line-height stays
+	 * 1.33 (comfortable; mainstream 'normal' is ~1.2 but tighter reads
+	 * worse at OS-9 AA quality). */
 	"body{margin:8px;line-height:1.33;"
-	"font-family:sans-serif;font-size:13px}"
+	"font-family:sans-serif;font-size:16px}"
 	"h1{font-size:2em;margin:.67em 0;font-weight:bold}"
 	"h2{font-size:1.5em;margin:.83em 0;font-weight:bold}"
 	"h3{font-size:1.17em;margin:1em 0;font-weight:bold}"
