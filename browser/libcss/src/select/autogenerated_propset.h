@@ -1802,6 +1802,23 @@ static inline css_error set_hanging_punctuation(css_computed_style *style, uint8
 #undef HANGING_PUNCTUATION_SHIFT
 #undef HANGING_PUNCTUATION_MASK
 
+/* #255 background-clip: bits[15] shift 28 (2 bits), free above hanging_punctuation */
+#define BACKGROUND_CLIP_INDEX 15
+#define BACKGROUND_CLIP_SHIFT 28
+#define BACKGROUND_CLIP_MASK 0x30000000
+static inline css_error set_background_clip(css_computed_style *style, uint8_t type)
+{
+	uint32_t *bits = &style->i.bits[BACKGROUND_CLIP_INDEX];
+
+	*bits = (*bits & ~BACKGROUND_CLIP_MASK) |
+			(((uint32_t)type & 0x3) << BACKGROUND_CLIP_SHIFT);
+
+	return CSS_OK;
+}
+#undef BACKGROUND_CLIP_INDEX
+#undef BACKGROUND_CLIP_SHIFT
+#undef BACKGROUND_CLIP_MASK
+
 #undef OBJECT_FIT_INDEX
 #undef OBJECT_FIT_SHIFT
 #undef OBJECT_FIT_MASK

@@ -269,6 +269,7 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("hyphens"),
 	SMAP("text-justify"),
 	SMAP("hanging-punctuation"),
+	SMAP("background-clip"),   /* #255 */
 	SMAP("inherit"),
 	SMAP("unset"),
 	SMAP("important"),
@@ -508,6 +509,7 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("vertical-lr"),
 	SMAP("content-box"),
 	SMAP("border-box"),
+	SMAP("padding-box"),   /* #255 */
 	SMAP("stretch"),
 	SMAP("inline-flex"),
 	SMAP("flex-start"),

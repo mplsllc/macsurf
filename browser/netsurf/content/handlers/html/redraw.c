@@ -1355,6 +1355,36 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 
 	pstyle_fill_bg.fill_colour = *background_colour;
 
+	/* #255 background-clip: inset the background paint rect from the
+	 * border box (default) to the padding box (subtract border widths) or
+	 * the content box (subtract border + padding). Applies to the normal
+	 * block-box fill/clip rect r (= *clip = the box's border box); the
+	 * table-row path recomputes r per cell and is left on border-box.
+	 * Integer scale math (CW8 PPC). */
+	if (background != NULL && background->style != NULL &&
+			box->type != BOX_TABLE_ROW) {
+		uint8_t bclip = css_computed_background_clip(background->style);
+		if (bclip == CSS_BACKGROUND_CLIP_PADDING_BOX ||
+				bclip == CSS_BACKGROUND_CLIP_CONTENT_BOX) {
+			int il = box->border[LEFT].width;
+			int it = box->border[TOP].width;
+			int ir = box->border[RIGHT].width;
+			int ib = box->border[BOTTOM].width;
+			if (bclip == CSS_BACKGROUND_CLIP_CONTENT_BOX) {
+				il += box->padding[LEFT];
+				it += box->padding[TOP];
+				ir += box->padding[RIGHT];
+				ib += box->padding[BOTTOM];
+			}
+			r.x0 += (int)(il * scale);
+			r.y0 += (int)(it * scale);
+			r.x1 -= (int)(ir * scale);
+			r.y1 -= (int)(ib * scale);
+			if (r.x1 < r.x0) r.x1 = r.x0;
+			if (r.y1 < r.y0) r.y1 = r.y0;
+		}
+	}
+
 	if (background && background->style && css_computed_border_radius(background->style, &br_len, &br_unit) == CSS_BORDER_RADIUS_SET) {
 	        pstyle_fill_bg.border_radius = br_len * scale;
 	        if (pstyle_fill_bg.border_radius > 0) {

@@ -173,6 +173,7 @@ enum css_properties_e {
 	CSS_PROP_HYPHENS                        = 0x09C,
 	CSS_PROP_TEXT_JUSTIFY                   = 0x09D,
 	CSS_PROP_HANGING_PUNCTUATION            = 0x09E,
+	CSS_PROP_BACKGROUND_CLIP                = 0x09F,
 	CSS_N_PROPERTIES
 };
 
@@ -483,6 +484,15 @@ enum css_hanging_punctuation_e {
 	CSS_HANGING_PUNCTUATION_LAST		= 0x3,
 	CSS_HANGING_PUNCTUATION_FORCE_END	= 0x4,
 	CSS_HANGING_PUNCTUATION_ALLOW_END	= 0x5
+};
+
+/* #255 — background-clip. 'text' (gradient text) deferred; box-model values
+ * only. Layout/redraw insets the background paint rect to the named box. */
+enum css_background_clip_e {
+	CSS_BACKGROUND_CLIP_INHERIT		= 0x0,
+	CSS_BACKGROUND_CLIP_BORDER_BOX		= 0x1,
+	CSS_BACKGROUND_CLIP_PADDING_BOX		= 0x2,
+	CSS_BACKGROUND_CLIP_CONTENT_BOX		= 0x3
 };
 
 enum css_overflow_wrap_e {
