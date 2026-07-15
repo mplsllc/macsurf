@@ -120,8 +120,20 @@ typedef struct nscss_content
  * overview.built.css that was still being dropped at 256 KB,
  * leaving the page unstyled in places. Browsers are supposed to
  * load whatever they're given; the 16 MB Carbon partition has
- * room for it. Now matches the per-entry HTTP cache cap. */
-#define MACOS9_CSS_MAX_BYTES (1024UL * 1024UL)
+ * room for it. Now matches the per-entry HTTP cache cap.
+ *
+ * fixes837 (#167) — raised 1 MB -> 4 MB. This is the SINGLE-SHEET cap;
+ * the per-page total is already 8 MB (fixes448). www.facebook.com ships
+ * one ~1.4 MB aggregated stylesheet (static.xx.fbcdn.net/....css) that hit
+ * the 1 MB single-sheet cap: nscss_process_data broadcast CONTENT_MSG_ERROR
+ * -> the HTML content released the sheet handle -> llcache_handle_abort ->
+ * fetch_abort, so the fetch aborted ~1 MB in ("https: aborted", body=1048577
+ * = 1 MB + 1) and the desktop shell rendered UNDER-STYLED (HW-verified
+ * 2026-07-15). 4 MB covers FB's sheet with headroom, stays <= the 8 MB
+ * per-page budget, and generalises to any site with a large single sheet.
+ * The ~195 MB Carbon partition holds a transient 4 MB sheet fine; this is
+ * still the first dial to turn back down if a page OOMs the cascade. */
+#define MACOS9_CSS_MAX_BYTES (4096UL * 1024UL)
 
 /*
  * fixes321 — per-page cumulative CSS budget across all sheets. Raised
