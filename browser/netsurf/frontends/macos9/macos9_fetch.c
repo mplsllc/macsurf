@@ -67,19 +67,21 @@ static const struct macos9_ua_rule macos9_ua_rules[] = {
 	 * it (first-match-wins). Do NOT append " MacSurf/..." — FB's KaiOS gate
 	 * is exact; any extra token drops to the "unsupported browser" overlay.
 	 */
-	/* fixes839 (#167): m.facebook.com identifies as an Android 4.4.2 stock
-	 * browser on a Samsung Galaxy S5 — a common, mainstream real device (not
-	 * the KaiOS "LYF Jio F90M" feature phone FB kept naming, and not a modern
-	 * UA). WHY this exact string: curl-verified 2026-07-15 that FB serves the
-	 * light plain-HTML login form (id="login_form" + static lsd/jazoest/m_ts/
-	 * email/pass, so core form.c can POST it) to OLD mobile browsers only.
-	 * Modern UAs (Firefox-Android/Chrome/iOS Safari — fixes838 tried Firefox-
-	 * Android) get redirected to /unified/login_via/app/ (a JS app-login SPA,
-	 * bn=org.mozilla.firefox) or the heavy touch SPA, where no HTML form
-	 * renders. This old-Android UA is the sweet spot: normal device identity
-	 * AND the working light surface. */
+	/* fixes840 (#167): m.facebook.com REVERTED to the KaiOS feature-phone UA.
+	 * This is the string that gets FURTHEST end-to-end on hardware: the light
+	 * plain-HTML login form renders, the login POST is accepted (302), AND the
+	 * two_step_verification/two_factor checkpoint page returns 200 HTML (it
+	 * renders). fixes838's Firefox-Android UA broke the surface (FB app-login
+	 * redirect, bn=org.mozilla.firefox); fixes839's Android-4.4.2/Galaxy-S5 UA
+	 * got the HTML form but the login POST drew an FB-side 500 — NOT a MacSurf
+	 * request bug (curl with the identical UA + body + headers gets a clean
+	 * 302; the maintainer's password is plain alphanumeric so no encode-mangle;
+	 * the 500 was FB account/rate state from repeated attempts). KaiOS names
+	 * the device "LYF Jio F90M" — cosmetic; the device is remembered by the
+	 * persistent datr cookie (fixes838), not the UA label. Do NOT append
+	 * " MacSurf/..." — FB's KaiOS gate is exact. */
 	{ "m.facebook.com",
-	  "Mozilla/5.0 (Linux; U; Android 4.4.2; en-us; SAMSUNG SM-G900F Build/KOT49H) AppleWebKit/537.36 (KHTML, like Gecko) Version/1.5 Chrome/28.0.1500.94 Mobile Safari/537.36" },
+	  "Mozilla/5.0 (Mobile; LYF/F90M/LYF-F90M-000-02-44-130319; rv:48.0) Gecko/48.0 Firefox/48.0 KAIOS/2.5" },
 	/*
 	 * fixes835 (#167 M1): www/apex facebook.com now presents as desktop
 	 * Firefox 134 (the round-2 direction — the Mac is the real client with
