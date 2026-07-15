@@ -1819,6 +1819,23 @@ static inline css_error set_background_clip(css_computed_style *style, uint8_t t
 #undef BACKGROUND_CLIP_SHIFT
 #undef BACKGROUND_CLIP_MASK
 
+/* #279 justify-items: bits[15] shift 30 (2 bits), the last free slot in the word */
+#define JUSTIFY_ITEMS_INDEX 15
+#define JUSTIFY_ITEMS_SHIFT 30
+#define JUSTIFY_ITEMS_MASK 0xc0000000
+static inline css_error set_justify_items(css_computed_style *style, uint8_t type)
+{
+	uint32_t *bits = &style->i.bits[JUSTIFY_ITEMS_INDEX];
+
+	*bits = (*bits & ~JUSTIFY_ITEMS_MASK) |
+			(((uint32_t)type & 0x3) << JUSTIFY_ITEMS_SHIFT);
+
+	return CSS_OK;
+}
+#undef JUSTIFY_ITEMS_INDEX
+#undef JUSTIFY_ITEMS_SHIFT
+#undef JUSTIFY_ITEMS_MASK
+
 #undef OBJECT_FIT_INDEX
 #undef OBJECT_FIT_SHIFT
 #undef OBJECT_FIT_MASK

@@ -252,6 +252,23 @@ static bool layout_grid_item(
 			mbp = 0;
 		}
 		item->width = cell_width - mbp;
+		/* #279 justify-items: start / center size the item to its
+		 * CONTENT (max-content) instead of stretching to fill the
+		 * track, so it can then be positioned left/centre in the
+		 * placement pass. Gated on an EXPLICIT non-stretch container
+		 * value -> the default (stretch) path above is byte-identical,
+		 * zero regression to existing grids. Falls back to stretch if
+		 * the content width isn't sensible. */
+		if (item->parent != NULL && item->parent->style != NULL) {
+			uint8_t ji = css_computed_justify_items(
+					item->parent->style);
+			if ((ji == CSS_JUSTIFY_ITEMS_START ||
+			     ji == CSS_JUSTIFY_ITEMS_CENTER) &&
+			    item->max_width > 0 &&
+			    item->max_width < item->width) {
+				item->width = item->max_width;
+			}
+		}
 	} else {
 		item->width = dummy_w;
 		if (item->width > cell_width) {
@@ -1388,6 +1405,33 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 					x_pos = slot_col * (col_width + col_gap);
 				}
 				child->x = x_pos;
+
+				/* #279 justify-items: position the item on the
+				 * inline (horizontal) axis within its cell.
+				 * center offsets by half the slack; start leaves
+				 * it at the cell edge (default). Mirrors the
+				 * align-items vertical logic below. V1 uses the
+				 * first track's width for the cell (span-centre
+				 * is uncommon). */
+				{
+					uint8_t grid_ji =
+						CSS_JUSTIFY_ITEMS_STRETCH;
+					if (grid->style != NULL)
+						grid_ji =
+						  css_computed_justify_items(
+							grid->style);
+					if (grid_ji == CSS_JUSTIFY_ITEMS_CENTER) {
+						int cell_w = has_tracks ?
+							track_widths[slot_col] :
+							col_width;
+						int outer_w = child->width +
+						  lh__delta_outer_width(child);
+						if (cell_w > outer_w) {
+							child->x = x_pos +
+							  (cell_w - outer_w) / 2;
+						}
+					}
+				}
 
 				if (slot_row < 0 ||
 				    slot_row >= MACSURF_GRID_ROWS_MAX) {

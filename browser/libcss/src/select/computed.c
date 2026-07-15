@@ -956,6 +956,12 @@ uint8_t css_computed_background_clip(const css_computed_style *style)
 	return get_background_clip(style);
 }
 
+/* #279 */
+uint8_t css_computed_justify_items(const css_computed_style *style)
+{
+	return get_justify_items(style);
+}
+
 uint8_t css_computed_overflow_wrap(const css_computed_style *style)
 {
 	return get_overflow_wrap(style);

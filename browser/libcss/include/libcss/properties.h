@@ -174,6 +174,7 @@ enum css_properties_e {
 	CSS_PROP_TEXT_JUSTIFY                   = 0x09D,
 	CSS_PROP_HANGING_PUNCTUATION            = 0x09E,
 	CSS_PROP_BACKGROUND_CLIP                = 0x09F,
+	CSS_PROP_JUSTIFY_ITEMS                  = 0x0A0,
 	CSS_N_PROPERTIES
 };
 
@@ -493,6 +494,16 @@ enum css_background_clip_e {
 	CSS_BACKGROUND_CLIP_BORDER_BOX		= 0x1,
 	CSS_BACKGROUND_CLIP_PADDING_BOX		= 0x2,
 	CSS_BACKGROUND_CLIP_CONTENT_BOX		= 0x3
+};
+
+/* #279 — justify-items (grid inline-axis item alignment). V1 = 2-bit slot:
+ * stretch (default) / start / center. 'end' + 'normal'/'baseline' deferred
+ * (center is the common case). 'normal' and 'legacy' map to STRETCH. */
+enum css_justify_items_e {
+	CSS_JUSTIFY_ITEMS_INHERIT		= 0x0,
+	CSS_JUSTIFY_ITEMS_STRETCH		= 0x1,
+	CSS_JUSTIFY_ITEMS_START			= 0x2,
+	CSS_JUSTIFY_ITEMS_CENTER		= 0x3
 };
 
 enum css_overflow_wrap_e {

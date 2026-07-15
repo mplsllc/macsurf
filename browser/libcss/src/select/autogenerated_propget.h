@@ -2301,6 +2301,22 @@ static inline uint8_t get_background_clip(const css_computed_style *style)
 #undef BACKGROUND_CLIP_SHIFT
 #undef BACKGROUND_CLIP_MASK
 
+/* #279 justify-items: bits[15] shift 30 (2 bits) */
+#define JUSTIFY_ITEMS_INDEX 15
+#define JUSTIFY_ITEMS_SHIFT 30
+#define JUSTIFY_ITEMS_MASK 0xc0000000
+static inline uint8_t get_justify_items(const css_computed_style *style)
+{
+	uint32_t bits = style->i.bits[JUSTIFY_ITEMS_INDEX];
+	bits &= JUSTIFY_ITEMS_MASK;
+	bits >>= JUSTIFY_ITEMS_SHIFT;
+
+	return (bits & 0x3);
+}
+#undef JUSTIFY_ITEMS_INDEX
+#undef JUSTIFY_ITEMS_SHIFT
+#undef JUSTIFY_ITEMS_MASK
+
 #undef OBJECT_FIT_INDEX
 #undef OBJECT_FIT_SHIFT
 #undef OBJECT_FIT_MASK

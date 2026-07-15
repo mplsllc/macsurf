@@ -466,6 +466,9 @@ uint8_t css_computed_hanging_punctuation(
 uint8_t css_computed_background_clip(
 		const css_computed_style *style);   /* #255 */
 
+uint8_t css_computed_justify_items(
+		const css_computed_style *style);   /* #279 */
+
 uint8_t css_computed_overflow_wrap(
 		const css_computed_style *style);
 
