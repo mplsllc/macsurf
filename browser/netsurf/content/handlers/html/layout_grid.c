@@ -262,6 +262,10 @@ static bool layout_grid_item(
 		if (item->parent != NULL && item->parent->style != NULL) {
 			uint8_t ji = css_computed_justify_items(
 					item->parent->style);
+			macsurf_debug_log_writef(
+				"WORK jitems ji=%d maxw=%d w=%d cell=%d",
+				(int)ji, (int)item->max_width,
+				(int)item->width, cell_width);
 			if ((ji == CSS_JUSTIFY_ITEMS_START ||
 			     ji == CSS_JUSTIFY_ITEMS_CENTER) &&
 			    item->max_width > 0 &&

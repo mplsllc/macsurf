@@ -4958,18 +4958,19 @@ macsurf__rewrite_grid_alignment(const char *data, size_t in_size,
 				tmp[tlen++] = ';';
 				tmp[tlen++] = ' ';
 			}
-			/* justify axis. justify-content is a real libcss property,
-			 * so emit the declaration. justify-items / justify-self are
-			 * UNKNOWN to libcss (#270): emitting them is dead weight, AND
-			 * a downstream preprocessor stage keying off the emitted
-			 * `justify-self:`/`justify-items:` corrupts the PRECEDING
-			 * align-* declaration -- so place-items / place-self items
-			 * silently lost their alignment (align-self read back as
-			 * auto). For those axes emit ONLY the text-align shadow below
-			 * (which is what actually produces the visual); skip the
-			 * useless justify-* declaration. */
+			/* justify axis. justify-content AND justify-items are now
+			 * real libcss properties (justify-items added #279/fixes833
+			 * — it does the actual grid item box positioning), so emit
+			 * their declarations. justify-SELF is still unknown to libcss
+			 * (per-item override deferred): emitting it is dead weight and
+			 * a downstream stage keying off `justify-self:` corrupts the
+			 * PRECEDING align-* declaration, so for justify-self emit ONLY
+			 * the text-align shadow below. The text-align shadow is still
+			 * emitted for justify-items too (harmless: it aligns text
+			 * inside the now-content-sized item; a no-op there). */
 			if (justify_axis != NULL &&
-					strcmp(justify_axis, "justify-content") == 0) {
+					(strcmp(justify_axis, "justify-content") == 0 ||
+					 strcmp(justify_axis, "justify-items") == 0)) {
 				memcpy(tmp + tlen, justify_axis,
 						strlen(justify_axis));
 				tlen += strlen(justify_axis);
