@@ -46,7 +46,7 @@ few that even the upstream NetSurf engine we're built on doesn't ship:
   **`text-align-last`**, and a proper `background: none` reset.
 
 Full property-by-property status is in the new
-[CSS support tracker](css-support.md).
+[CSS support tracker](../../docs/css-support.md).
 
 ---
 

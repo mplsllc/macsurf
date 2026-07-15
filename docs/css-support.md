@@ -6,7 +6,7 @@
 MacSurf is a NetSurf-based browser doing full native CSS on PowerPC Mac OS 9 —
 libcss parse + cascade, our own layout, and QuickDraw painting. This page is the
 user-facing summary; the deep engineering audit lives in
-[docs/research/css-gap-inventory-2026-07-13.md](../../docs/research/css-gap-inventory-2026-07-13.md).
+[docs/research/css-gap-inventory-2026-07-13.md](research/css-gap-inventory-2026-07-13.md).
 
 *Last updated: MacSurf 2.0.5 (2026-07-15).*
 
