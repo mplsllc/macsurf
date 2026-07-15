@@ -67,15 +67,19 @@ static const struct macos9_ua_rule macos9_ua_rules[] = {
 	 * it (first-match-wins). Do NOT append " MacSurf/..." — FB's KaiOS gate
 	 * is exact; any extra token drops to the "unsupported browser" overlay.
 	 */
-	/* fixes838 (#167): identify m.facebook.com as a common Firefox-for-
-	 * Android device, NOT the KaiOS "LYF Jio F90M" feature phone (FB was
-	 * literally reporting "login attempt from LYF Jio F90M", and a weird
-	 * feature-phone identity invites more aggressive new-device checkpoints).
-	 * A mainstream mobile UA is a more normal device to FB. Watch the log:
-	 * if m.facebook.com now bounces this to the heavy touch SPA instead of
-	 * the light HTML login surface, revisit. */
+	/* fixes839 (#167): m.facebook.com identifies as an Android 4.4.2 stock
+	 * browser on a Samsung Galaxy S5 — a common, mainstream real device (not
+	 * the KaiOS "LYF Jio F90M" feature phone FB kept naming, and not a modern
+	 * UA). WHY this exact string: curl-verified 2026-07-15 that FB serves the
+	 * light plain-HTML login form (id="login_form" + static lsd/jazoest/m_ts/
+	 * email/pass, so core form.c can POST it) to OLD mobile browsers only.
+	 * Modern UAs (Firefox-Android/Chrome/iOS Safari — fixes838 tried Firefox-
+	 * Android) get redirected to /unified/login_via/app/ (a JS app-login SPA,
+	 * bn=org.mozilla.firefox) or the heavy touch SPA, where no HTML form
+	 * renders. This old-Android UA is the sweet spot: normal device identity
+	 * AND the working light surface. */
 	{ "m.facebook.com",
-	  "Mozilla/5.0 (Android 13; Mobile; rv:134.0) Gecko/134.0 Firefox/134.0" },
+	  "Mozilla/5.0 (Linux; U; Android 4.4.2; en-us; SAMSUNG SM-G900F Build/KOT49H) AppleWebKit/537.36 (KHTML, like Gecko) Version/1.5 Chrome/28.0.1500.94 Mobile Safari/537.36" },
 	/*
 	 * fixes835 (#167 M1): www/apex facebook.com now presents as desktop
 	 * Firefox 134 (the round-2 direction — the Mac is the real client with
