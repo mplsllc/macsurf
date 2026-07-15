@@ -41,14 +41,23 @@ extern OTClientContextPtr macos9_ot_context;
 static const char MACOS9_UA_DEFAULT[] =
 	"MacSurf/2.0.5 (Macintosh; PPC Mac OS 9)";
 
-/* fixes835 (#167 Facebook M1) — desktop Firefox 134. Facebook serves its
- * modern www surface to this UA (verified 2026-07-15: www.facebook.com
- * returns HTTP 200 + a server-rendered login_form to FF134 + Sec-Fetch;
- * a bare modern UA without Sec-Fetch gets 400). Used for facebook.com and
- * its asset/script origins so every request carries one coherent identity. */
-static const char MACOS9_UA_FB_FF134[] =
-	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) "
-	"Gecko/20100101 Firefox/134.0";
+/* fixes841 (#167 Facebook) — ONE Facebook device. Every facebook.com origin
+ * (www, m, apex) AND the fbcdn.net / facebook.net asset origins present the
+ * SAME KaiOS feature-phone UA, so FB sees a single consistent device rather
+ * than a new one per UA experiment (fixes835 FF134 desktop, fixes838 Firefox-
+ * Android, fixes839 Galaxy-S5 each looked like a DIFFERENT device — that
+ * re-triggered new-device checkpoints every time and made it impossible to
+ * tell whether cookie persistence was working). KaiOS is the string that gets
+ * furthest end-to-end: light plain-HTML login form renders, login POST is
+ * accepted (302), and the m two_factor checkpoint returns 200 HTML. www under
+ * KaiOS 301s to the m mobile surface — fine, that's where the checkpoint
+ * actually renders (www's is a JS-only 404 route). The "LYF Jio F90M" device
+ * label is cosmetic; the device is remembered by the persistent datr cookie
+ * (fixes838), not the UA. Do NOT append " MacSurf/..." — FB's KaiOS gate is
+ * exact. The FF134 desktop-shell UA (fixes835) lives in git history if we
+ * revisit the desktop path once login/persistence is nailed down. */
+static const char MACOS9_UA_FB_KAIOS[] =
+	"Mozilla/5.0 (Mobile; LYF/F90M/LYF-F90M-000-02-44-130319; rv:48.0) Gecko/48.0 Firefox/48.0 KAIOS/2.5";
 
 struct macos9_ua_rule {
 	const char *suffix;	/* host suffix, e.g. "facebook.com" */
@@ -57,51 +66,18 @@ struct macos9_ua_rule {
 
 static const struct macos9_ua_rule macos9_ua_rules[] = {
 	/*
-	 * fixes835 (#167 M1): m.facebook.com keeps the KaiOS feature-phone UA
-	 * — the lightest surface Facebook still serves a plain-HTML login form
-	 * to (email/pass POST to /login/device-based/regular/login/ with the
-	 * hidden lsd/jazoest/m_ts tokens as STATIC HTML, so core form.c submits
-	 * it with no JS). Cookies are domain-wide .facebook.com, so a login on
-	 * m works on www — this is the login fallback if the www form loops.
-	 * MORE SPECIFIC than the "facebook.com" row below and MUST stay above
-	 * it (first-match-wins). Do NOT append " MacSurf/..." — FB's KaiOS gate
-	 * is exact; any extra token drops to the "unsupported browser" overlay.
+	 * fixes841 (#167): ONE KaiOS device for EVERY Facebook origin (see the
+	 * MACOS9_UA_FB_KAIOS note above for why we consolidated). The single
+	 * "facebook.com" suffix row covers www.facebook.com, m.facebook.com, and
+	 * the apex via the dot-boundary matcher, so no separate m.facebook.com row
+	 * is needed. fbcdn.net / facebook.net (the asset+SDK origins) get the SAME
+	 * KaiOS UA so a real KaiOS device's asset fetches match its navigation —
+	 * one coherent device, nothing for FB to cross-check as inconsistent.
+	 * Do NOT append " MacSurf/..." — FB's KaiOS gate is exact.
 	 */
-	/* fixes840 (#167): m.facebook.com REVERTED to the KaiOS feature-phone UA.
-	 * This is the string that gets FURTHEST end-to-end on hardware: the light
-	 * plain-HTML login form renders, the login POST is accepted (302), AND the
-	 * two_step_verification/two_factor checkpoint page returns 200 HTML (it
-	 * renders). fixes838's Firefox-Android UA broke the surface (FB app-login
-	 * redirect, bn=org.mozilla.firefox); fixes839's Android-4.4.2/Galaxy-S5 UA
-	 * got the HTML form but the login POST drew an FB-side 500 — NOT a MacSurf
-	 * request bug (curl with the identical UA + body + headers gets a clean
-	 * 302; the maintainer's password is plain alphanumeric so no encode-mangle;
-	 * the 500 was FB account/rate state from repeated attempts). KaiOS names
-	 * the device "LYF Jio F90M" — cosmetic; the device is remembered by the
-	 * persistent datr cookie (fixes838), not the UA label. Do NOT append
-	 * " MacSurf/..." — FB's KaiOS gate is exact. */
-	{ "m.facebook.com",
-	  "Mozilla/5.0 (Mobile; LYF/F90M/LYF-F90M-000-02-44-130319; rv:48.0) Gecko/48.0 Firefox/48.0 KAIOS/2.5" },
-	/*
-	 * fixes835 (#167 M1): www/apex facebook.com now presents as desktop
-	 * Firefox 134 (the round-2 direction — the Mac is the real client with
-	 * native TLS, so FB's auth/cookies live here; no proxy). Replaces the
-	 * retired KaiOS-on-apex / mbasic strategy. mbasic.facebook.com is DEAD
-	 * (serves the "not available on this browser" interstitial to every UA
-	 * as of 2026-07-15), so its old row was removed this round. The Sec-Fetch
-	 * request headers that pair with this UA are synthesized in the fetchers'
-	 * build_request (fixes835), keyed on nav-vs-subresource.
-	 */
-	{ "facebook.com", MACOS9_UA_FB_FF134 },
-	/*
-	 * fixes835 — FB asset/script origins get the SAME desktop FF134 UA so
-	 * the ~90 bundle fetches (static.xx.fbcdn.net, scontent.*.fbcdn.net,
-	 * connect.facebook.net, …) match the document's identity rather than
-	 * falling to the MacSurf default UA. Broad registrable-domain suffixes;
-	 * keep any future more-specific *.fbcdn.net override ABOVE these rows.
-	 */
-	{ "fbcdn.net",    MACOS9_UA_FB_FF134 },
-	{ "facebook.net", MACOS9_UA_FB_FF134 },
+	{ "facebook.com", MACOS9_UA_FB_KAIOS },
+	{ "fbcdn.net",    MACOS9_UA_FB_KAIOS },
+	{ "facebook.net", MACOS9_UA_FB_KAIOS },
 	/*
 	 * fixes821: Hacker News UA-gates /login (and other dynamic routes)
 	 * at nginx: the honest "MacSurf/2.0.5 (Macintosh; PPC Mac OS 9)" UA
