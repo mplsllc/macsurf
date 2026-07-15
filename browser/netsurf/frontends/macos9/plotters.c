@@ -1914,12 +1914,13 @@ macos9_plot_path(const struct redraw_context *ctx,
  * until macos9.h pulls in QDOffscreen.h further down. Placing them before that
  * include broke the parse and cascaded through the Carbon headers. */
 extern GWorldPtr macos9_bitmap_get_prepared(void *bitmap, int render_w,
-		int render_h, bool is_opaque, int *out_src_w, int *out_src_h,
+		int render_h, bool is_opaque, bool nearest,
+		int *out_src_w, int *out_src_h,
 		unsigned char **out_mask, int *out_mask_rowbytes);
 extern bool macos9_bitmap_set_prepared(void *bitmap, GWorldPtr gw,
 		int render_w, int render_h, int src_w, int src_h,
 		unsigned char *mask, int mask_rowbytes, bool is_opaque,
-		long bytes);
+		bool nearest, long bytes);
 
 static nserror
 macos9_plot_bitmap(const struct redraw_context *ctx,
@@ -1949,6 +1950,11 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 	int pmrb = 0;
 	int prep_cached = 0;
 	int is_opaque_early = 0;
+	/* fixes829b (#256): nearest-neighbor (image-rendering:pixelated/
+	 * crisp-edges) request. Part of the prepared-GWorld cache key so a
+	 * smooth and a nearest render of the SAME bitmap at the SAME size
+	 * don't collide (they'd otherwise paint-order-alias to one look). */
+	int nn = (flags & BITMAPF_NEAREST) != 0;
 
 	MS_ASSERT(bitmap != NULL, "plot_bitmap: bitmap is NULL");
 	(void)ctx; (void)bg;
@@ -1972,7 +1978,7 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 	 * cached pixmap is kept LockPixels'd for the entry's whole life. */
 	is_opaque_early = macos9_bitmap_get_opaque((void *)bitmap);
 	cached_gw = macos9_bitmap_get_prepared((void *)bitmap, width, height,
-			is_opaque_early ? true : false,
+			is_opaque_early ? true : false, nn ? true : false,
 			&psrc_w, &psrc_h, &pmask, &pmrb);
 	if (cached_gw != NULL) {
 		PixMapHandle cpm = GetGWorldPixMap(cached_gw);
@@ -2084,8 +2090,16 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 		 * visible and box-filter is a clear improvement. mactrove's
 		 * 1058x245 logo at 400x92 is 2.6× — under the old 3× gate
 		 * it stayed faded; under 1.5× it pre-downscales sharply. */
+		/* fixes829b (#256): image-rendering:pixelated/crisp-edges samples
+		 * nearest instead of averaging. We deliberately keep going THROUGH
+		 * the box-filter block (not skipping it) so the prepared-GWorld
+		 * cache stores a render-sized GWorld exactly as the smooth path
+		 * does -- skipping it cached the full-size temp-memory source under
+		 * the render-size key, and the size/handle mismatch crashed
+		 * DisposeGWorld in the cache (fixes829 regression). The nn flag
+		 * (computed at function scope) collapses each source block to its
+		 * top-left pixel. */
 		if (MACSURF_BOX_FILTER_DOWNSCALE &&
-				!(flags & BITMAPF_NEAREST) &&   /* fixes829 (#256): pixelated/crisp-edges forces nearest */
 				(sx_ratio_q8 >= (3L * 128L) || sy_ratio_q8 >= (3L * 128L)) &&
 				width >= 4 && height >= 4) {
 			GWorldPtr gw_small = NULL;
@@ -2140,6 +2154,15 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 							long syk;
 							if (sx1 <= sx0)
 								sx1 = sx0 + 1;
+							/* fixes829b: nearest -> one
+							 * top-left sample, no average.
+							 * (sy1 is recomputed every dy
+							 * row, so clamping it here is
+							 * safe.) */
+							if (nn) {
+								sx1 = sx0 + 1;
+								sy1 = sy0 + 1;
+							}
 							sum_r = 0; sum_g = 0;
 							sum_b = 0; count = 0;
 							for (syk = sy0; syk <
@@ -2493,6 +2516,7 @@ blit_done:
 						bf_small_mask,
 						bf_small_mask_rowbytes,
 						is_opaque_early ? true : false,
+						nn ? true : false,
 						cache_bytes)) {
 					prep_cached = 1;
 					bf_small_mask = NULL; /* owned by bitmap */

@@ -50,6 +50,7 @@ struct macos9_bitmap {
 	int prep_src_h;
 	bool prep_opaque;
 	bool prep_had_mask;
+	bool prep_nearest;   /* fixes829b (#256): image-rendering nearest key */
 	long prep_bytes;
 	struct macos9_bitmap *prep_lru_prev;
 	struct macos9_bitmap *prep_lru_next;
@@ -157,6 +158,7 @@ static void macos9_prep_dispose_locked(struct macos9_bitmap *bm)
 	bm->prep_src_h = 0;
 	bm->prep_mask_rowbytes = 0;
 	bm->prep_had_mask = false;
+	bm->prep_nearest = false;
 }
 
 /* Evict LRU-tail prepared entries until need_bytes fits the budget. */
@@ -187,7 +189,7 @@ void macos9_bitmap_drop_prepared(void *bitmap)
  * hit, fills out_src_w/h + out_mask/out_mask_rowbytes and marks the entry MRU.
  * out_mask == NULL means "use the live bm->mask" (non-downscaled case). */
 GWorldPtr macos9_bitmap_get_prepared(void *bitmap, int render_w, int render_h,
-		bool is_opaque, int *out_src_w, int *out_src_h,
+		bool is_opaque, bool nearest, int *out_src_w, int *out_src_h,
 		unsigned char **out_mask, int *out_mask_rowbytes)
 {
 	struct macos9_bitmap *bm = bitmap;
@@ -196,6 +198,7 @@ GWorldPtr macos9_bitmap_get_prepared(void *bitmap, int render_w, int render_h,
 	had_mask = (bm->mask != NULL) && !is_opaque;
 	if (bm->prep_w != render_w || bm->prep_h != render_h ||
 			bm->prep_opaque != is_opaque ||
+			bm->prep_nearest != nearest ||
 			bm->prep_had_mask != had_mask) {
 		macos9_prep_dispose_locked(bm);
 		return NULL;
@@ -214,7 +217,7 @@ GWorldPtr macos9_bitmap_get_prepared(void *bitmap, int render_w, int render_h,
  * budget or room can't be made. */
 bool macos9_bitmap_set_prepared(void *bitmap, GWorldPtr gw, int render_w,
 		int render_h, int src_w, int src_h, unsigned char *mask,
-		int mask_rowbytes, bool is_opaque, long bytes)
+		int mask_rowbytes, bool is_opaque, bool nearest, long bytes)
 {
 	struct macos9_bitmap *bm = bitmap;
 	if (bm == NULL) return false;
@@ -229,6 +232,7 @@ bool macos9_bitmap_set_prepared(void *bitmap, GWorldPtr gw, int render_w,
 	bm->prep_mask = mask;
 	bm->prep_mask_rowbytes = mask_rowbytes;
 	bm->prep_opaque = is_opaque;
+	bm->prep_nearest = nearest;
 	bm->prep_had_mask = (mask != NULL) ||
 			((bm->mask != NULL) && !is_opaque);
 	bm->prep_bytes = bytes;
