@@ -2407,8 +2407,11 @@ static void macos9_gw_remove_caret(struct gui_window *g)
 /* fixes721 (#144 file upload) — build a full HFS path "Volume:dir:...:leaf"
  * from an FSSpec by walking up parent dir IDs (PBGetCatInfoSync), so the
  * multipart builder can fopen() the file the user picked. Returns 0 on
- * success. */
-static int macos9_fsspec_to_path(const FSSpec *spec, char *out, long cap)
+ * success. fixes838 (#167): un-static'd so cookie persistence can build the
+ * full path MSL fopen honours (the ':MacSurfData:' colon-relative path did
+ * not round-trip; a full Volume:...:leaf path does, as this upload path
+ * proves). */
+int macos9_fsspec_to_path(const FSSpec *spec, char *out, long cap)
 {
 	Str255      parts[48];
 	int         nparts = 0;

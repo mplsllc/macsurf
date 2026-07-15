@@ -949,6 +949,7 @@ extern int urldb_save_cookies(const char *filename);
  * it into the MacSurfData folder instead — provided the folder exists, which
  * macos9_cookies_ensure_dir guarantees first. */
 #define MACSURF_COOKIE_FILE ":MacSurfData:MacSurf Cookies"
+#define MACSURF_COOKIE_LEAF  "MacSurf Cookies"
 
 static void macos9_cookies_ensure_dir(void)
 {
@@ -959,12 +960,81 @@ static void macos9_cookies_ensure_dir(void)
 #endif
 }
 
+#ifdef __MACOS9__
+/* fixes838 (#167) — the full HFS path builder from window.c (proven to give
+ * MSL fopen a path it honours; the file-upload multipart builder fopen()s
+ * exactly such a path). */
+extern int macos9_fsspec_to_path(const FSSpec *spec, char *out, long cap);
+
+/* Build "Volume:...:MacSurfData:MacSurf Cookies" into out. 0 on success. The
+ * ':MacSurfData:MacSurf Cookies' colon-relative path did NOT round-trip
+ * through MSL fopen (jar was memory-only -> a fresh datr every launch -> FB
+ * saw a new device every login). A full absolute path fixes it. */
+static int macos9_cookie_fullpath(char *out, long cap)
+{
+	short vRef;
+	long dirID;
+	FSSpec spec;
+	OSErr err;
+	unsigned char fname[32];
+	size_t nlen;
+	if (macsurfdata_dir_get(NULL, &vRef, &dirID) != noErr) return -1;
+	nlen = strlen(MACSURF_COOKIE_LEAF);
+	if (nlen > 31) nlen = 31;
+	fname[0] = (unsigned char)nlen;
+	memcpy(fname + 1, MACSURF_COOKIE_LEAF, nlen);
+	err = FSMakeFSSpec(vRef, dirID, fname, &spec);
+	/* fnfErr = file not created yet, but spec is valid for fopen("w"). */
+	if (err != noErr && err != fnfErr) return -1;
+	return macos9_fsspec_to_path(&spec, out, cap);
+}
+
+/* DIAGNOSTIC (fixes838): byte size of the on-disk cookie file via FSSpec —
+ * independent of MSL fopen, so it reports the truth even if fopen is broken.
+ * -1 = file absent / unopenable. This is how we SEE whether save wrote and
+ * load had something to read. */
+static long macos9_cookie_file_bytes(void)
+{
+	short vRef;
+	long dirID;
+	FSSpec spec;
+	short ref = 0;
+	long eof = -1;
+	unsigned char fname[32];
+	size_t nlen;
+	if (macsurfdata_dir_get(NULL, &vRef, &dirID) != noErr) return -1;
+	nlen = strlen(MACSURF_COOKIE_LEAF);
+	if (nlen > 31) nlen = 31;
+	fname[0] = (unsigned char)nlen;
+	memcpy(fname + 1, MACSURF_COOKIE_LEAF, nlen);
+	if (FSMakeFSSpec(vRef, dirID, fname, &spec) != noErr) return -1;
+	if (FSpOpenDF(&spec, fsRdPerm, &ref) != noErr) return -1;
+	if (GetEOF(ref, &eof) != noErr) eof = -1;
+	FSClose(ref);
+	return eof;
+}
+#endif /* __MACOS9__ */
+
 void macos9_cookies_load(void)
 {
 	int r;
 	macos9_cookies_ensure_dir();
+#ifdef __MACOS9__
+	{
+		char path[512];
+		long pre = macos9_cookie_file_bytes();
+		if (macos9_cookie_fullpath(path, (long)sizeof path) == 0) {
+			r = urldb_load_cookies(path);
+			macsurf_debug_log_writef(
+				"WORK ckload rc=%d filebytes=%ld path=%s",
+				r, pre, path);
+			return;
+		}
+		macsurf_debug_log_writef("WORK ckload PATHFAIL filebytes=%ld", pre);
+	}
+#endif
 	r = urldb_load_cookies(MACSURF_COOKIE_FILE);
-	macsurf_debug_log_writef("cookies: load rc=%d (%s)", r,
+	macsurf_debug_log_writef("WORK ckload rc=%d (colon-fallback %s)", r,
 		MACSURF_COOKIE_FILE);
 }
 
@@ -972,7 +1042,20 @@ void macos9_cookies_save(void)
 {
 	int r;
 	macos9_cookies_ensure_dir();
+#ifdef __MACOS9__
+	{
+		char path[512];
+		if (macos9_cookie_fullpath(path, (long)sizeof path) == 0) {
+			r = urldb_save_cookies(path);
+			macsurf_debug_log_writef(
+				"WORK cksave rc=%d filebytes=%ld path=%s",
+				r, macos9_cookie_file_bytes(), path);
+			return;
+		}
+		macsurf_debug_log_writef("WORK cksave PATHFAIL");
+	}
+#endif
 	r = urldb_save_cookies(MACSURF_COOKIE_FILE);
-	macsurf_debug_log_writef("cookies: save rc=%d (%s)", r,
+	macsurf_debug_log_writef("WORK cksave rc=%d (colon-fallback %s)", r,
 		MACSURF_COOKIE_FILE);
 }

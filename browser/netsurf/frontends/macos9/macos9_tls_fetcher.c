@@ -1957,6 +1957,14 @@ static int build_request(struct macos9_https_ctx *c)
 				(int)sizeof cknames);
 			macsurf_debug_log_writef("https: cookies sent: %s",
 				cknames);
+			/* fixes838 (#167 diag) — WORK-gated copy for Facebook so
+			 * we can SEE which cookies go out. If 'datr' is present and
+			 * the SAME across relaunches, the device persists; if it is
+			 * absent / different every session, the jar isn't persisting
+			 * (the new-device-every-login bug). Names only, never values. */
+			if (host_is_fb_asset(c->host)) {
+				macsurf_debug_log_writef("WORK fbcksent %s", cknames);
+			}
 		}
 		free(cookie_str);
 	}

@@ -67,8 +67,15 @@ static const struct macos9_ua_rule macos9_ua_rules[] = {
 	 * it (first-match-wins). Do NOT append " MacSurf/..." — FB's KaiOS gate
 	 * is exact; any extra token drops to the "unsupported browser" overlay.
 	 */
+	/* fixes838 (#167): identify m.facebook.com as a common Firefox-for-
+	 * Android device, NOT the KaiOS "LYF Jio F90M" feature phone (FB was
+	 * literally reporting "login attempt from LYF Jio F90M", and a weird
+	 * feature-phone identity invites more aggressive new-device checkpoints).
+	 * A mainstream mobile UA is a more normal device to FB. Watch the log:
+	 * if m.facebook.com now bounces this to the heavy touch SPA instead of
+	 * the light HTML login surface, revisit. */
 	{ "m.facebook.com",
-	  "Mozilla/5.0 (Mobile; LYF/F90M/LYF-F90M-000-02-44-130319; rv:48.0) Gecko/48.0 Firefox/48.0 KAIOS/2.5" },
+	  "Mozilla/5.0 (Android 13; Mobile; rv:134.0) Gecko/134.0 Firefox/134.0" },
 	/*
 	 * fixes835 (#167 M1): www/apex facebook.com now presents as desktop
 	 * Firefox 134 (the round-2 direction — the Mac is the real client with
