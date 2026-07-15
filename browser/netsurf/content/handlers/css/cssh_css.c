@@ -4981,6 +4981,17 @@ macsurf__rewrite_grid_alignment(const char *data, size_t in_size,
 					need = sizeof tmp - tlen - 2;
 				memcpy(tmp + tlen, data + v2_start, need);
 				tlen += need;
+				/* fixes833c (#279): terminate the justify-* decl so
+				 * the text-align shadow that may follow is a SEPARATE
+				 * declaration. Without this the emit ran together as
+				 * "justify-items: centertext-align: center", which
+				 * libcss rejected -> justify-items never cascaded
+				 * (probe showed ji=1/STRETCH). Harmless trailing
+				 * "; " for justify-content (no shadow follows). */
+				if (tlen + 2 < sizeof tmp) {
+					tmp[tlen++] = ';';
+					tmp[tlen++] = ' ';
+				}
 			}
 
 			/* Shadow with text-align for justify-items / justify-self
