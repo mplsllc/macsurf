@@ -254,49 +254,86 @@ static bool html_process_inserted_link(html_content *c, dom_node *node)
 static void
 dom_SCRIPT_showed_up(html_content *htmlc, dom_html_script_element *script)
 {
+	/* fixes860 (#288 probe) — same local-extern pattern box_construct.c:2516
+	 * uses; the frontend owns the impl and the harness stubs it. */
+	extern void macsurf_debug_log_writef(const char *fmt, ...);
 	dom_exception exc;
 	dom_html_script_element_flags flags;
 	dom_hubbub_error res;
 	bool within;
 
+	/* fixes860 (#288 probe) — this whole function reported itself ONLY through
+	 * NSLOG, which macsurf_prefix.h:148 defines as `do {} while(0)`.  Every
+	 * decision below -- scripting off, flags unreadable, parser-inserted,
+	 * not-in-document, and the html_process_script result itself -- was
+	 * therefore invisible on EVERY build MacSurf has ever shipped.  A
+	 * dynamically-injected <script> that never ran and one that ran fine
+	 * produced byte-identical logs, so "no evidence it ran" has never been
+	 * evidence it didn't.
+	 *
+	 * This matters right now for hackaday's reply box: the Jetpack comment
+	 * iframe builds its form by injecting <script src=verbum-comments.js> via
+	 * document.body.appendChild() (its dynamic-loader.js does
+	 * WP_Enqueue_Dynamic_Script.loadScript('verbum') ->
+	 * loadWPScript('wp-polyfill').then(() => loadWPScript('verbum')), and each
+	 * loadWPScript resolves only on the injected script's onload).  The JS
+	 * path reaches here exactly like the parser does -- macsurf_dom_node_append_child
+	 * is a thin wrapper over dom_node_append_child, so appendChild ->
+	 * _dom_node_attach -> DOMNodeInserted -> dom_default_action_DOMNodeInserted_cb
+	 * -> here -- so the machinery IS wired; what we cannot see is which of the
+	 * five bail-outs (if any) is taken.  Get the number before writing code.
+	 *
+	 * "WORK " prefix so it survives the failures-only gate. */
 	if (!htmlc->enable_scripting) {
-		NSLOG(netsurf, INFO, "Encountered a script, but scripting is off, ignoring");
+		macsurf_debug_log_writef(
+			"WORK scr showed_up BAIL scripting-off htmlc=%p", (void *)htmlc);
 		return;
 	}
 
-	NSLOG(netsurf, DEEPDEBUG, "Encountered a script, node %p showed up", script);
-
 	exc = dom_html_script_element_get_flags(script, &flags);
 	if (exc != DOM_NO_ERR) {
-		NSLOG(netsurf, DEEPDEBUG, "Unable to retrieve flags, giving up");
+		macsurf_debug_log_writef(
+			"WORK scr showed_up BAIL get_flags exc=%d", (int)exc);
 		return;
 	}
 
 	if (flags & DOM_HTML_SCRIPT_ELEMENT_FLAG_PARSER_INSERTED) {
-		NSLOG(netsurf, DEBUG, "Script was parser inserted, skipping");
+		/* Expected + correct for every parser-inserted <script>; the
+		 * parser runs those itself.  Only a JS-INJECTED script should
+		 * get past here, so this line firing for verbum would mean the
+		 * flag is being set wrongly by our createElement path. */
+		macsurf_debug_log_writef(
+			"WORK scr showed_up skip parser-inserted flags=%d", (int)flags);
 		return;
 	}
 
 	exc = dom_node_contains(htmlc->document, script, &within);
 	if (exc != DOM_NO_ERR) {
-		NSLOG(netsurf, DEBUG, "Unable to determine if script was within document, ignoring");
+		macsurf_debug_log_writef(
+			"WORK scr showed_up BAIL contains exc=%d", (int)exc);
 		return;
 	}
 
 	if (!within) {
-		NSLOG(netsurf, DEBUG, "Script was not within the document, ignoring for now");
+		/* Suspect #1 for the Verbum case: if our document.createElement
+		 * builds the node against a different dom_document than
+		 * htmlc->document, this reads false and the script is dropped in
+		 * silence -- indistinguishable, until now, from never being tried. */
+		macsurf_debug_log_writef(
+			"WORK scr showed_up BAIL not-within-document flags=%d", (int)flags);
 		return;
 	}
 
+	macsurf_debug_log_writef("WORK scr showed_up RUN flags=%d", (int)flags);
 	res = html_process_script(htmlc, (dom_node *) script);
 	if (res == DOM_HUBBUB_OK) {
-		NSLOG(netsurf, DEEPDEBUG, "Inserted script has finished running");
+		macsurf_debug_log_writef("WORK scr showed_up DONE sync");
+	} else if (res == (DOM_HUBBUB_HUBBUB_ERR | HUBBUB_PAUSED)) {
+		/* The good outcome for `<script src=...>`: fetch launched, and
+		 * completion runs it. */
+		macsurf_debug_log_writef("WORK scr showed_up ASYNC (fetch launched)");
 	} else {
-		if (res == (DOM_HUBBUB_HUBBUB_ERR | HUBBUB_PAUSED)) {
-			NSLOG(netsurf, DEEPDEBUG, "Inserted script has launced asynchronously");
-		} else {
-			NSLOG(netsurf, DEEPDEBUG, "Failure starting script");
-		}
+		macsurf_debug_log_writef("WORK scr showed_up FAIL res=%d", (int)res);
 	}
 }
 
