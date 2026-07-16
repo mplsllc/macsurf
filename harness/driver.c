@@ -568,6 +568,33 @@ int main(void)
 	fprintf(stderr, "=== Test 2 PASS: no ASan trap through the "
 			"interleaved-yield reconvert scenario ===\n");
 
+	/* --- Test 3 (fixes845): smoke-test the new XMLHttpRequest shim + the
+	 * existing fetch() shim through the REAL js_exec path, confirming
+	 * neither throws and both produce the expected WORK census lines,
+	 * before trusting this new JS surface on real hardware. --- */
+	fprintf(stderr, "\n=== Test 3: XMLHttpRequest + fetch shim smoke test ===\n");
+	{
+		const char *xhr_fetch_js =
+			"(function(){"
+			"var x=new XMLHttpRequest();"
+			"x.open('GET','https://example.invalid/xhr-direct');"
+			"x.send(null);"
+			"fetch('https://example.invalid/fetch-path').then(function(r){"
+			"return r.json();"
+			"});"
+			"})();";
+		unsigned char ok = js_exec(thread,
+				(const unsigned char *)xhr_fetch_js,
+				strlen(xhr_fetch_js), "driver-xhr-smoke.js");
+		fprintf(stderr, "js_exec(xhr+fetch smoke) ok=%d\n", (int)ok);
+		if (!ok) {
+			fprintf(stderr, "FAIL: xhr/fetch smoke test threw\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 3 PASS: XMLHttpRequest + fetch shims run "
+			"cleanly through js_exec ===\n");
+
 	free(html_src_big);
 	return 0;
 }

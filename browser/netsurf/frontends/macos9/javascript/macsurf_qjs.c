@@ -2287,6 +2287,32 @@ static JSValue qjs_work_log_fetch(JSContext *ctx, JSValueConst this_val,
 	return JS_UNDEFINED;
 }
 
+/* fixes845 (#167 S1 census cont'd) — a census round that only instruments
+ * the fetch() shim produced ZERO "WORK fetch" lines against real Facebook
+ * hardware traffic, home feed included. The fetch() shim's own internal
+ * "new XMLHttpRequest()" throws (no real XHR global exists), silently
+ * caught -- but that means production JS calling XMLHttpRequest DIRECTLY
+ * (a very common pattern, often preferred over fetch() for compatibility)
+ * never touches the fetch shim OR its logging at all; the throw happens
+ * wherever the caller's own code is, invisible to the fetch-level census.
+ * This is XHR-level visibility instead: every construction/open/send is
+ * logged regardless of which API surface the calling JS actually uses. */
+static JSValue qjs_work_log_xhr(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	const char *event = (argc > 0) ? JS_ToCString(ctx, argv[0]) : NULL;
+	const char *method = (argc > 1) ? JS_ToCString(ctx, argv[1]) : NULL;
+	const char *url = (argc > 2) ? JS_ToCString(ctx, argv[2]) : NULL;
+	(void)this_val;
+	macsurf_debug_log_writef("WORK xhr event=%s method=%s url=%s",
+			event ? event : "?", method ? method : "",
+			url ? url : "");
+	if (event) JS_FreeCString(ctx, event);
+	if (method) JS_FreeCString(ctx, method);
+	if (url) JS_FreeCString(ctx, url);
+	return JS_UNDEFINED;
+}
+
 static void register_browser_globals(JSContext *ctx)
 {
 	JSValue global = JS_GetGlobalObject(ctx);
@@ -2312,6 +2338,8 @@ static void register_browser_globals(JSContext *ctx)
 
 	/* fixes843b (#167 S1 census) — see qjs_work_log_fetch's comment. */
 	qjs_set_func(ctx, global, "__workLogFetch", qjs_work_log_fetch, 3);
+	/* fixes845 — see qjs_work_log_xhr's comment. */
+	qjs_set_func(ctx, global, "__workLogXHR", qjs_work_log_xhr, 3);
 
 	/* --- crypto (getRandomValues / randomUUID) — fixes717 --- */
 	crypto_obj = JS_NewObject(ctx);
@@ -2638,6 +2666,58 @@ static void register_browser_globals(JSContext *ctx)
 				"if(this._k[i]==k){this._k.splice(i,1);this._v.splice(i,1);}};"
 		"FormData.prototype.forEach=function(cb){"
 			"for(var i=0;i<this._k.length;i++)cb(this._v[i],this._k[i],this);};");
+
+	/* --- XMLHttpRequest shim (fixes845, #167 S1 census cont'd) --- *
+	 * Previously undefined entirely: `new XMLHttpRequest()` threw a
+	 * ReferenceError immediately (caught by fetch()'s try/catch when
+	 * called that way, or wherever calling code's own try/catch is when
+	 * called directly). No real network path exists yet (that's S3) --
+	 * this shim's job right now is purely to make every attempt VISIBLE
+	 * (construction/open/send, logged via __workLogXHR) instead of an
+	 * invisible throw, and to fail SAFELY (synchronous no-op completion,
+	 * status 0) so calling code that awaits onload/onreadystatechange
+	 * gets an answer instead of hanging forever on a throw that never
+	 * reached it. fetch()'s own "new XMLHttpRequest()" now routes
+	 * through here too, so its behaviour (ok:false,status:0) is
+	 * unchanged, just via a real object instead of a caught exception. */
+	macsurf_qjs__safe_eval(ctx,
+		"function XMLHttpRequest(){"
+			"this.readyState=0;this.status=0;this.statusText='';"
+			"this.responseText='';this.response='';this.responseType='';"
+			"this._method='GET';this._url='';this._headers={};"
+			"if(typeof __workLogXHR==='function')__workLogXHR('new','','');"
+		"}"
+		"XMLHttpRequest.UNSENT=0;XMLHttpRequest.OPENED=1;"
+		"XMLHttpRequest.HEADERS_RECEIVED=2;XMLHttpRequest.LOADING=3;"
+		"XMLHttpRequest.DONE=4;"
+		"XMLHttpRequest.prototype.open=function(method,url){"
+			"this._method=String(method||'GET');this._url=String(url||'');"
+			"this.readyState=1;"
+			"if(typeof __workLogXHR==='function')"
+				"__workLogXHR('open',this._method,this._url);"
+		"};"
+		"XMLHttpRequest.prototype.setRequestHeader=function(k,v){"
+			"this._headers[k]=v;};"
+		"XMLHttpRequest.prototype.getAllResponseHeaders=function(){return '';};"
+		"XMLHttpRequest.prototype.getResponseHeader=function(){return null;};"
+		"XMLHttpRequest.prototype.overrideMimeType=function(){};"
+		"XMLHttpRequest.prototype.abort=function(){this.readyState=0;};"
+		"XMLHttpRequest.prototype.addEventListener=function(type,fn){"
+			"var t='on'+type;if(typeof this[t]!=='function')this[t]=fn;};"
+		"XMLHttpRequest.prototype.removeEventListener=function(){};"
+		"XMLHttpRequest.prototype.send=function(body){"
+			"if(typeof __workLogXHR==='function')"
+				"__workLogXHR('send',this._method,this._url);"
+			"this.readyState=4;this.status=0;this.statusText='';"
+			"this.responseText='';this.response='';"
+			"if(typeof this.onreadystatechange==='function'){"
+				"try{this.onreadystatechange();}catch(e){}}"
+			"if(typeof this.onerror==='function'){"
+				"try{this.onerror();}catch(e){}}"
+			"if(typeof this.onloadend==='function'){"
+				"try{this.onloadend();}catch(e){}}"
+		"};"
+		"this.XMLHttpRequest=XMLHttpRequest;");
 
 	/* --- fetch shim --- */
 	macsurf_qjs__safe_eval(ctx,
