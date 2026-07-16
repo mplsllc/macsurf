@@ -1619,6 +1619,86 @@ static void html_reconvert_detach_forms(html_content *c)
 	}
 }
 
+/* fixes843 (#167 S2) — pin the OLD tree's text-node dom_strings across the
+ * teardown+rebuild window, the same way fixes421 already defers the OLD box
+ * CONTEXT to protect shared/interned CSS styles. The gap fixes421 left open:
+ * a JS mutation (React/FB feed churn, or a XenForo script) can drop a live
+ * text node's dom_string to refcount 0 (a normal, correct DOM operation)
+ * WHILE the new dom_to_box walk is still mid-tree (it self-reschedules every
+ * 100 nodes through the cooperative scheduler and can be paused for several
+ * event-loop passes on a slow Mac). If that freed block gets reused before
+ * the new walk reaches the node, box_construct_text's read of the recycled
+ * memory paints garbage (observed: an interned attribute name leaking in as
+ * page text). Taking an extra ref here on every OLD BOX_TEXT box's CURRENT
+ * dom_string keeps that exact memory from being freed-and-reused during the
+ * window; the extra refs are released in html_reconvert_free_old(), same
+ * lifetime as the deferred bctx. Iterative walk (box trees run to
+ * thousands of boxes on real pages; NetSurf's own conversion walk is
+ * iterative for the same reason -- see convert_xml_to_box_inner). */
+struct macsurf_pinned_string {
+	dom_string *str;
+	struct macsurf_pinned_string *next;
+};
+
+static struct macsurf_pinned_string *g_reconvert_pinned_strings = NULL;
+
+static void html_reconvert_pin_text_strings(struct box *root)
+{
+	struct box *b = root;
+	struct box *root_parent;
+
+	if (b == NULL)
+		return;
+
+	root_parent = b->parent;
+
+	while (b != NULL) {
+		if (b->type == BOX_TEXT && b->node != NULL) {
+			dom_string *ds = NULL;
+			dom_exception exc = dom_characterdata_get_data(
+					(dom_characterdata *) b->node, &ds);
+			if (exc == DOM_NO_ERR && ds != NULL) {
+				struct macsurf_pinned_string *p =
+						malloc(sizeof(*p));
+				if (p != NULL) {
+					/* adopts the ref get_data returned */
+					p->str = ds;
+					p->next = g_reconvert_pinned_strings;
+					g_reconvert_pinned_strings = p;
+				} else {
+					dom_string_unref(ds);
+				}
+			}
+		}
+
+		if (b->children != NULL) {
+			b = b->children;
+			continue;
+		}
+		while (b != NULL && b->next == NULL) {
+			if (b->parent == root_parent) {
+				b = NULL;
+				break;
+			}
+			b = b->parent;
+		}
+		if (b != NULL)
+			b = b->next;
+	}
+}
+
+static void html_reconvert_release_pinned_strings(void)
+{
+	struct macsurf_pinned_string *p = g_reconvert_pinned_strings;
+	while (p != NULL) {
+		struct macsurf_pinned_string *next = p->next;
+		dom_string_unref(p->str);
+		free(p);
+		p = next;
+	}
+	g_reconvert_pinned_strings = NULL;
+}
+
 /* Dedicated re-convert completion. Unlike html_box_convert_done it does NOT
  * destroy the parser (already gone) or re-fire content_set_ready /
  * proceed_to_done (the content is already DONE). It re-extracts image maps
@@ -1632,6 +1712,7 @@ static void *g_reconvert_old_bctx = NULL;
 
 static void html_reconvert_free_old(void)
 {
+	html_reconvert_release_pinned_strings();
 	if (g_reconvert_old_bctx != NULL) {
 		MS_LOG("reconvert: FREE old tree");
 		talloc_free(g_reconvert_old_bctx);
@@ -1708,6 +1789,10 @@ nserror html_reconvert(html_content *c)
 	if (c->sel != NULL)
 		selection_destroy(c->sel);
 	c->sel = selection_create((struct content *) c);
+
+	/* fixes843 — pin the OLD tree's text-node dom_strings BEFORE anything
+	 * else can touch them, while c->layout is still the intact old tree. */
+	html_reconvert_pin_text_strings(c->layout);
 
 	/* fixes421 DOUBLE-BUFFER: do NOT free the old bctx yet. Freeing it now
 	 * runs box destructors -> css_select_results_destroy on old styles BEFORE

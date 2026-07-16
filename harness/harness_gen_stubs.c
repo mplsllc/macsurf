@@ -1,0 +1,165 @@
+/* AUTO-GENERATED harness link stubs (S0). Frontend/desktop functions the
+ * reconvert UAF repro does not exercise -> no-op. Refine any that turn out
+ * to be on the repro path. */
+#include <stddef.h>
+#include <stdlib.h>
+#include <time.h>
+#include <stdint.h>
+/* real allocator (harness uses libc malloc so ASan tracks) */
+void *macsurf_safe_alloc(size_t n){return malloc(n);}
+void *macsurf_safe_calloc(size_t a,size_t b){return calloc(a,b);}
+void *macsurf_safe_realloc(void*p,size_t n){return realloc(p,n);}
+int macsurf_ptr_is_heap(const void*p){(void)p;return 1;}
+double macsurf_monotonic_ms(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return t.tv_sec*1000.0+t.tv_nsec/1e6;}
+unsigned long macsurf_get_ticks(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (unsigned long)(t.tv_sec*60+t.tv_nsec/16666666);}
+unsigned long macos9_micros(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (unsigned long)(t.tv_sec*1000000+t.tv_nsec/1000);}
+/* guit + nsoptions[] are now REAL, properly-typed globals in driver.c
+ * (driver.c needs a working guit->misc->schedule to pump box construction,
+ * and box_get_style reads nsoptions[NSOPTION_author_level_css] at runtime —
+ * a bogus 0-arg/void stub here would be a live landmine, not a harmless nop). */
+/* macos9_schedule is likewise real now (harness_stubs.c) -- the JS mutation
+ * bindings call it unconditionally after every DOM mutation. */
+void browser_window_drop_file_at_point(void){}
+void browser_window_find_target(void){}
+void browser_window_frame_resize_start(void){}
+void browser_window_get_content(void){}
+void browser_window_get_drag_type(void){}
+void browser_window_get_features(void){}
+void browser_window_get_position(void){}
+void browser_window_get_scale(void){}
+void browser_window_history_back(void){}
+void browser_window_history_forward(void){}
+void browser_window_mouse_click(void){}
+void browser_window_mouse_track(void){}
+void browser_window_navigate(void){}
+void browser_window_page_drag_start(void){}
+void browser_window_redraw(void){}
+void browser_window_reformat(void){}
+void browser_window_scroll_at_point(void){}
+void browser_window_set_dimensions(void){}
+void browser_window_set_drag_type(void){}
+void browser_window_set_position(void){}
+void browser_window_set_status(void){}
+void cookie_manager_add(void){}
+void cookie_manager_remove(void){}
+void fetch_about_register(void){}
+void fetch_data_register(void){}
+void fetch_file_register(void){}
+void fetch_javascript_register(void){}
+void fetch_resource_register(void){}
+void html_redraw_printing(void){}
+void html_redraw_printing_border(void){}
+void html_redraw_printing_top_cropped(void){}
+void knockout_plot_end(void){}
+void knockout_plot_start(void){}
+void macos9_animation_now_ticks(void){}
+void macos9_animation_register(void){}
+void macos9_animation_register_rect(void){}
+void macos9_font_measure_calls(void){}
+void macos9_font_measure_chars(void){}
+void macos9_grad_linear_unpack_count(void){}
+void macos9_grad_radial_unpack_count(void){}
+void macos9_grad_set_count(void){}
+void macos9_gw_bw(void){}
+void macos9_heap_free_bytes(void){}
+void macos9_heap_max_block(void){}
+void macos9_hittest_scroll_x(void){}
+void macos9_hittest_scroll_y(void){}
+void macos9_window_list_head(void){}
+void macsurf__decoded_img_bytes_current(void){}
+void macsurf_profile_accum_cascade(void){}
+void macsurf_profile_accum_js(void){}
+void macsurf_profile_accum_layout(void){}
+void macsurf_profile_accum_parse(void){}
+void macsurf_profile_get_js_us(void){}
+void macsurf_profile_note_reflow(void){}
+void macsurf_profile_stamp(void){}
+void macsurf__site_blocker(void){}
+void macsurf__site_box_blk(void){}
+void macsurf__site_box_inline(void){}
+void macsurf__site_box_inlinec(void){}
+void macsurf__site_box_other(void){}
+void macsurf__site_box_text(void){}
+void macsurf__site_box_total(void){}
+void macsurf__site_css_ok(void){}
+void macsurf__site_css_skip(void){}
+void macsurf__site_css_total_bytes(void){}
+void macsurf__site_decoded_img_bytes_peak(void){}
+void macsurf__site_decoded_img_skip_budget(void){}
+void macsurf__site_fetch_active_peak(void){}
+void macsurf__site_fetch_slot_fail(void){}
+void macsurf__site_heavy(void){}
+void macsurf__site_img_fail(void){}
+void macsurf__site_img_ok(void){}
+void macsurf__site_rgov_skip_css(void){}
+void macsurf__site_rgov_skip_doc(void){}
+void macsurf__site_rgov_skip_font(void){}
+void macsurf__site_rgov_skip_img(void){}
+void macsurf__site_rgov_skip_other(void){}
+void macsurf__site_rgov_skip_script(void){}
+void N_ELEMENTS(void){}
+void netsurf_mkdir_all(void){}
+void netsurf_mkpath(void){}
+void netsurf_recursive_rm(void){}
+void netsurf_version_major(void){}
+void netsurf_version_minor(void){}
+void nslog_log(void){}
+void ns_system_colour(void){}
+void ns_system_colour_char(void){}
+void nsu_base64_decode_alloc_url(void){}
+void plot_fstyle_broken_object(void){}
+void plot_style_broken_object(void){}
+void plot_style_content_edge(void){}
+void plot_style_fill_darkwbasec(void){}
+void plot_style_fill_lightwbasec(void){}
+void plot_style_fill_wbasec(void){}
+void plot_style_fill_wblobc(void){}
+void plot_style_fill_white(void){}
+void plot_style_margin_edge(void){}
+void plot_style_padding_edge(void){}
+void plot_style_stroke_darkwbasec(void){}
+void plot_style_stroke_lightwbasec(void){}
+void plot_style_stroke_wblobc(void){}
+void save_text_solve_whitespace(void){}
+void scrollbar_create(void){}
+void scrollbar_destroy(void){}
+void scrollbar_get_data(void){}
+void scrollbar_get_offset(void){}
+void scrollbar_is_horizontal(void){}
+void scrollbar_make_pair(void){}
+void scrollbar_mouse_action(void){}
+void scrollbar_mouse_drag_end(void){}
+void scrollbar_mouse_status_to_message(void){}
+void scrollbar_redraw(void){}
+void scrollbar_scroll(void){}
+void scrollbar_set(void){}
+void scrollbar_set_extents(void){}
+void scrollbar_start_content_drag(void){}
+void selection_active(void){}
+void selection_clear(void){}
+void selection_click(void){}
+void selection_copy_to_clipboard(void){}
+void selection_dragging(void){}
+void selection_dragging_start(void){}
+void selection_get_copy(void){}
+void selection_highlighted(void){}
+void selection_init(void){}
+void selection_reinit(void){}
+void selection_select_all(void){}
+void selection_set_position(void){}
+void selection_string_append(void){}
+void selection_track(void){}
+void textarea_clear_selection(void){}
+void textarea_create(void){}
+void textarea_destroy(void){}
+void textarea_drop_text(void){}
+void textarea_get_selection(void){}
+void textarea_keypress(void){}
+void textarea_mouse_action(void){}
+void textarea_redraw(void){}
+void textarea_scroll(void){}
+void textarea_set_caret(void){}
+void textarea_set_layout(void){}
+void textarea_set_text(void){}
+void TickCount(void){}
+void UNUSED(void){}

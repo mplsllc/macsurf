@@ -79,3 +79,12 @@ browser/buildsystem/
 # Python bytecode cache
 __pycache__/
 *.pyc
+
+# S0 harness (Linux-only ASan dev tool, never shipped) — keep the scripts,
+# drop the build output. harness/build/ holds symlinks into the real shipped
+# source (zero-drift compile inputs, not build output) -- unignore it despite
+# the generic build/ rule above.
+/harness/obj/
+/harness/reconvert_harness
+!/harness/build/
+!/harness/build/*
