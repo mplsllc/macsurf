@@ -48,6 +48,13 @@ double macsurf_qjs_get_now(void);
 /* DOM bindings + browser globals entry point. */
 void macsurf_qjs_setup_globals(JSContext *qctx);
 
+/* Current page's struct content* (opaque here — macos9_js_fetch.c only
+ * needs it to read the page URL as a fetch_start() referer), or NULL if
+ * no page is wired in yet. See g_qjs_content's comment in macsurf_qjs.c
+ * for its lifetime rules: snapshot what you need synchronously, it can
+ * go NULL on the very next navigation. */
+struct content *qjs_get_content(void);
+
 /* console.log append (used by DOM bindings). */
 void macsurf_qjs_console_append(const char *line);
 

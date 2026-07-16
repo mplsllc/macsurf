@@ -5,11 +5,14 @@
  * static inline in the LibDOM headers. 
  */
 
+#include <string.h>
+
 #include <dom/dom.h>
 #include <dom/core/node.h>
 #include <dom/core/element.h>
 #include <dom/core/document.h>
 #include <dom/core/string.h>
+#include <dom/core/characterdata.h>
 
 void macsurf_dom_node_ref(dom_node *node)
 {
@@ -181,6 +184,49 @@ dom_exception macsurf_dom_document_create_element_s(dom_document *doc,
     dom_string_create((const uint8_t *)tag, (unsigned)strlen(tag), &ds);
     if (ds == NULL) return 5; /* DOM_NO_MEMORY_ERR */
     exc = dom_document_create_element(doc, ds, element);
+    dom_string_unref(ds);
+    return exc;
+}
+
+/* fixes846 (#167 S3) — document.createTextNode() from a plain JS C string,
+ * mirroring create_element_s above. */
+dom_exception macsurf_dom_document_create_text_node_s(dom_document *doc,
+    const char *data, dom_text **text)
+{
+    dom_string *ds = NULL;
+    dom_exception exc;
+    dom_string_create((const uint8_t *)data, (unsigned)strlen(data), &ds);
+    if (ds == NULL) return 5; /* DOM_NO_MEMORY_ERR */
+    exc = dom_document_create_text_node(doc, ds, text);
+    dom_string_unref(ds);
+    return exc;
+}
+
+/* fixes846 (#167 S3) — document.createDocumentFragment(). */
+dom_exception macsurf_dom_document_create_document_fragment(dom_document *doc,
+    dom_document_fragment **fragment)
+{
+    return dom_document_create_document_fragment(doc, fragment);
+}
+
+/* fixes846 (#167 S3) — text/comment node data accessors (dom_characterdata
+ * is the shared vtable base for dom_text/dom_comment/dom_cdatasection; the
+ * cast to dom_characterdata* mirrors how dom_element_* calls elsewhere in
+ * this file take a dom_node* through similarly-shaped casts). */
+dom_exception macsurf_dom_characterdata_get_data(dom_node *node,
+    dom_string **data)
+{
+    return dom_characterdata_get_data((dom_characterdata *) node, data);
+}
+
+dom_exception macsurf_dom_characterdata_set_data_s(dom_node *node,
+    const char *data)
+{
+    dom_string *ds = NULL;
+    dom_exception exc;
+    dom_string_create((const uint8_t *)data, (unsigned)strlen(data), &ds);
+    if (ds == NULL) return 5; /* DOM_NO_MEMORY_ERR */
+    exc = dom_characterdata_set_data((dom_characterdata *) node, ds);
     dom_string_unref(ds);
     return exc;
 }

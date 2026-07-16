@@ -43,7 +43,7 @@ EXTRA_SRC := $(LIBDIR)/libdom/bindings/hubbub/dom_parser.c \
              $(NS)/utils/nsurl/nsurl.c $(NS)/utils/nsurl/nsurl_parse.c
 QJS_SRC   := $(QJS)/quickjs.c $(QJS)/libregexp.c $(QJS)/libunicode.c $(QJS)/dtoa.c
 GLUE_SRC  := build/macsurf_qjs.c build/macos9_reconvert.c build/macsurf_dom_dispatch.c \
-             build/macos9_content_registry.c build/misc_stub.c
+             build/macos9_content_registry.c build/misc_stub.c build/macos9_js_fetch.c
 HARN_SRC  := harness_stubs.c harness_gen_stubs.c driver.c
 
 # object mapping (flatten paths)
@@ -79,6 +79,7 @@ objs:
 	$(CC) -c $(CFLAGS) $(INC) $(QJSFLAGS) $(QJS)/dtoa.c       -o $(OBJ)/qjs_dtoa.o
 	$(CC) -c $(CFLAGS) -DWITH_QUICKJS $(INC) build/macsurf_qjs.c        -o $(OBJ)/glue_macsurf_qjs.o
 	$(CC) -c $(CFLAGS) -DWITH_QUICKJS $(INC) build/macsurf_dom_dispatch.c -o $(OBJ)/glue_macsurf_dom_dispatch.o
+	$(CC) -c $(CFLAGS) -DWITH_QUICKJS $(INC) build/macos9_js_fetch.c -o $(OBJ)/glue_macos9_js_fetch.o
 	$(CC) -c $(CFLAGS) $(INC) build/macos9_reconvert.c  -o $(OBJ)/glue_macos9_reconvert.o
 	$(CC) -c $(CFLAGS) $(INC) build/macos9_content_registry.c -o $(OBJ)/glue_macos9_content_registry.o
 	$(CC) -c $(CFLAGS) $(INC) build/misc_stub.c -o $(OBJ)/glue_misc_stub.o

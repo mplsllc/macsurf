@@ -168,8 +168,10 @@ struct macos9_fetch_ctx {
 	 * boundary=..." when the fetch carries a file (post_multipart). */
 	char post_ctype[128];
 	/* fixes835 (#167 M1) — captured core request headers (sanitized).
-	 * In-struct fixed buffer; zero-inited by the setup memset. */
-	char caller_hdrs[512];
+	 * In-struct fixed buffer; zero-inited by the setup memset.
+	 * fixes846 (#167 S3): 512 -> 2048, see macos9_tls_fetcher.c's
+	 * caller_hdrs comment (XHR/GraphQL header sets overflow 512). */
+	char caller_hdrs[2048];
 };
 static struct macos9_fetch_ctx f_slots[MAX_F];
 

@@ -25,7 +25,9 @@
 #include "macsurf_debug.h"
 #include "macsurf_qjs.h"
 #include "macsurf_timebase.h"
+#include "macos9_js_fetch.h"
 #include "content/handlers/html/private.h"
+#include "utils/libdom.h"
 
 extern int macsurf_ptr_is_heap(const void *);
 
@@ -788,6 +790,15 @@ extern dom_exception macsurf_dom_element_remove_attribute(dom_element *el,
 		dom_string *name);
 extern dom_exception macsurf_dom_document_create_element_s(dom_document *doc,
 		const char *tag, dom_element **element);
+/* fixes846 (#167 S3) — real createTextNode/createDocumentFragment/text-data. */
+extern dom_exception macsurf_dom_document_create_text_node_s(dom_document *doc,
+		const char *data, dom_text **text);
+extern dom_exception macsurf_dom_document_create_document_fragment(
+		dom_document *doc, dom_document_fragment **fragment);
+extern dom_exception macsurf_dom_characterdata_get_data(dom_node *node,
+		dom_string **data);
+extern dom_exception macsurf_dom_characterdata_set_data_s(dom_node *node,
+		const char *data);
 
 /* macos9_reconvert.c — deferred re-convert after DOM mutation */
 extern void macos9_js_mark_dom_dirty(struct content *c);
@@ -798,6 +809,12 @@ static struct content *g_qjs_content = NULL;
 
 void qjs_set_document(dom_document *doc)  { g_qjs_document = doc; }
 void qjs_set_content(struct content *c)   { g_qjs_content  = c; }
+
+/* fixes846 (#167 S3) — macos9_js_fetch.c's only need for g_qjs_content:
+ * read the page URL as a fetch_start() referer at send()-time. See this
+ * pointer's staleness rules two comments below; the caller must snapshot
+ * whatever it needs synchronously, not hold this across an async gap. */
+struct content *qjs_get_content(void) { return g_qjs_content; }
 
 /* Stage 1 death-row hook (fixes565, QuickJS port of the Duktape
  * macsurf_js_notify_content_freed): g_qjs_content is a raw content pointer,
@@ -1177,6 +1194,153 @@ static JSValue qjs_el_set_text_content_data(JSContext *ctx,
 	return JS_UNDEFINED;
 }
 
+/* Find the first element child of `parent` whose tag name (case-
+ * insensitive) matches `want`. Returns a REF'D dom_node, or NULL. Mirrors
+ * the body/head lookup already used by qjs_wrap_doc_section. */
+static dom_node *qjs_find_child_element_by_tag(dom_node *parent,
+		const char *want)
+{
+	dom_node *child = NULL, *next = NULL;
+	dom_node_type ntype;
+
+	macsurf_dom_node_get_first_child(parent, &child);
+	while (child != NULL) {
+		ntype = 0;
+		macsurf_dom_node_get_node_type(child, &ntype);
+		if (ntype == 1) {
+			dom_string *tname = NULL;
+			if (macsurf_dom_element_get_tag_name(
+					(dom_element *) child, &tname) == DOM_NO_ERR
+			    && tname != NULL) {
+				const char *ts = dom_string_data(tname);
+				char lc[16];
+				int i;
+				for (i = 0; i < 15 && ts[i]; i++) {
+					char c = ts[i];
+					lc[i] = (c >= 'A' && c <= 'Z')
+						? (char) (c + 32) : c;
+				}
+				lc[i] = '\0';
+				macsurf_dom_string_unref(tname);
+				if (strcmp(lc, want) == 0) return child;
+			}
+		}
+		next = NULL;
+		macsurf_dom_node_get_next_sibling(child, &next);
+		macsurf_dom_node_unref(child);
+		child = next;
+	}
+	return NULL;
+}
+
+/* ---- innerHTML= via real HTML fragment parsing (fixes846, #167 S3) ----
+ * Previously: el.textContent = html.replace(/<[^>]*>/g,''), i.e. every tag
+ * was stripped and only the text carcass assigned, so any markup-injecting
+ * JS (template-string HTML injection, dangerouslySetInnerHTML-style
+ * rendering) never built real elements -- confirmed via repo-wide grep that
+ * dom_hubbub_fragment_parser_create had ZERO callers anywhere in this
+ * codebase before this.
+ *
+ * This libdom binding's dom_hubbub_fragment_parser_create() has NO context-
+ * element parameter (confirmed by reading bindings/hubbub/parser.c) -- it
+ * just runs a normal from-scratch parse with the fragment standing in for
+ * the document node. Per the HTML5 tree-construction algorithm's "before
+ * html" / "before head" insertion modes, that means hubbub IMPLICITLY
+ * wraps the input in html>head+body, same as parsing a full page. Naively
+ * appending the fragment's own children puts a SINGLE implied <html>
+ * element into el instead of the real content one level down inside its
+ * <body> -- caught by the S0 harness's Test 4 (children.length was 1, not
+ * the 2 real elements the test HTML actually contains). Fix: descend
+ * fragment -> <html> -> <body> and move THAT element's children, not the
+ * fragment's. Falls back to the fragment's own children if no <html>/
+ * <body> is found (e.g. a future context-aware parser is swapped in). */
+static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv,
+		int magic, JSValueConst *func_data)
+{
+	dom_element *el;
+	dom_node *child, *next, *removed, *append_result;
+	dom_node *src_parent, *html_el, *body_el;
+	dom_hubbub_parser_params params;
+	dom_hubbub_parser *parser = NULL;
+	dom_hubbub_error herr;
+	dom_document_fragment *frag = NULL;
+	const char *html_src;
+	size_t html_len = 0;
+
+	(void) this_val; (void) magic;
+	el = (dom_element *) qjs_get_node(func_data[0]);
+	if (el == NULL || argc < 1 || g_qjs_document == NULL)
+		return JS_UNDEFINED;
+	html_src = JS_ToCStringLen(ctx, &html_len, argv[0]);
+	if (html_src == NULL) return JS_UNDEFINED;
+
+	memset(&params, 0, sizeof(params));
+	params.enc = "UTF-8";
+	params.fix_enc = true;
+	params.enable_script = false;
+
+	herr = dom_hubbub_fragment_parser_create(&params, g_qjs_document,
+			&parser, &frag);
+	if (herr != DOM_HUBBUB_OK || parser == NULL || frag == NULL) {
+		JS_FreeCString(ctx, html_src);
+		return JS_UNDEFINED;
+	}
+	dom_hubbub_parser_parse_chunk(parser,
+			(const uint8_t *) html_src, html_len);
+	dom_hubbub_parser_completed(parser);
+	dom_hubbub_parser_destroy(parser);
+	JS_FreeCString(ctx, html_src);
+
+	/* Clear existing children before inserting the parsed content --
+	 * innerHTML= REPLACES content, it does not append. */
+	child = NULL;
+	macsurf_dom_node_get_first_child((dom_node *) el, &child);
+	while (child != NULL) {
+		next = NULL;
+		macsurf_dom_node_get_next_sibling(child, &next);
+		removed = NULL;
+		macsurf_dom_node_remove_child((dom_node *) el, child, &removed);
+		if (removed != NULL) macsurf_dom_node_unref(removed);
+		macsurf_dom_node_unref(child);
+		child = next;
+	}
+
+	src_parent = (dom_node *) frag;
+	html_el = qjs_find_child_element_by_tag((dom_node *) frag, "html");
+	if (html_el != NULL) {
+		body_el = qjs_find_child_element_by_tag(html_el, "body");
+		if (body_el != NULL) {
+			src_parent = body_el;
+		} else {
+			src_parent = html_el;
+		}
+	}
+
+	/* Move src_parent's children into el one at a time (dom_node_
+	 * append_child MOVES a node already attached elsewhere -- no clone
+	 * needed). Re-fetch first_child each iteration since removing/
+	 * appending mutates src_parent's child list. */
+	child = NULL;
+	macsurf_dom_node_get_first_child(src_parent, &child);
+	while (child != NULL) {
+		append_result = NULL;
+		macsurf_dom_node_append_child((dom_node *) el, child,
+				&append_result);
+		if (append_result != NULL) macsurf_dom_node_unref(append_result);
+		macsurf_dom_node_unref(child);
+		child = NULL;
+		macsurf_dom_node_get_first_child(src_parent, &child);
+	}
+	if (html_el != NULL) macsurf_dom_node_unref(html_el);
+	if (src_parent != html_el && src_parent != (dom_node *) frag)
+		macsurf_dom_node_unref(src_parent);
+	macsurf_dom_node_unref((dom_node *) frag);
+
+	if (g_qjs_content) macos9_js_mark_dom_dirty(g_qjs_content);
+	return JS_UNDEFINED;
+}
+
 /* ---- parentNode ---- */
 static JSValue qjs_el_get_parent_node_data(JSContext *ctx,
 		JSValueConst this_val, int argc, JSValueConst *argv,
@@ -1483,12 +1647,19 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"get:function(){return el.getAttribute('type')||'';},"
 		"set:function(v){el.setAttribute('type',v);},"
 		"configurable:true});"
-		/* innerHTML — write sets textContent; read returns empty */
+		/* innerHTML= (fixes846, #167 S3) — real HTML fragment parse via
+		 * __setInnerHTML (dom_hubbub_fragment_parser_create), builds
+		 * actual child elements instead of stripping all markup to text.
+		 * Read side is still textContent-shaped (no serializer back to
+		 * markup exists in this engine); good enough for the
+		 * write-then-read-back-as-text patterns that exist, wrong for
+		 * code that expects its own markup echoed back verbatim. */
 		"Object.defineProperty(el,'innerHTML',{"
 		"get:function(){return el.textContent||'';},"
 		"set:function(v){"
-		"var tmp=v.replace(/<[^>]*>/g,'');"
-		"el.textContent=tmp;},"
+		"if(typeof el.__setInnerHTML==='function')"
+		"el.__setInnerHTML(String(v));"
+		"else el.textContent=String(v).replace(/<[^>]*>/g,'');},"
 		"configurable:true});"
 		/* outerHTML stub */
 		"Object.defineProperty(el,'outerHTML',{"
@@ -1660,6 +1831,9 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 	JS_SetPropertyStr(ctx, obj, "__getTextContent", f);
 	f = JS_NewCFunctionData(ctx, qjs_el_set_text_content_data, 1, 0, 1, data);
 	JS_SetPropertyStr(ctx, obj, "__setTextContent", f);
+	/* fixes846 (#167 S3) — real innerHTML= via HTML fragment parsing. */
+	f = JS_NewCFunctionData(ctx, qjs_el_set_inner_html_data, 1, 0, 1, data);
+	JS_SetPropertyStr(ctx, obj, "__setInnerHTML", f);
 
 	/* Traversal */
 	f = JS_NewCFunctionData(ctx, qjs_el_get_parent_node_data, 0, 0, 1, data);
@@ -1729,6 +1903,305 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 static JSValue qjs_wrap_element_full(JSContext *ctx, dom_element *el)
 {
 	return qjs_wrap_element(ctx, el);
+}
+
+/* ---- real text-node wrapper (fixes846, #167 S3) ----
+ * document.createTextNode() previously returned a fake plain JS object with
+ * no native opaque tag, so parent.appendChild(textNode) silently no-opped
+ * (qjs_get_node() returned NULL for it, per the census). qjs_get_node() /
+ * the wrap table / the finalizer are generic over ANY dom_node* stored
+ * under s_el_class_id, so they're reused verbatim here -- what must NOT be
+ * reused is qjs_wrap_element's property-install body, which bakes in
+ * element-only semantics (tagName read, hardcoded nodeType=1, the full
+ * attribute API). A text node gets its own minimal surface instead:
+ * nodeType=3, nodeName='#text', and nodeValue/data/textContent backed by
+ * the real characterdata (NOT a children walk -- a text node's data IS its
+ * content, it has no children). */
+static JSValue qjs_text_get_data_data(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv, int magic, JSValueConst *func_data)
+{
+	dom_node *n;
+	dom_string *ds = NULL;
+	const char *s = "";
+	JSValue ret;
+	(void) this_val; (void) argc; (void) argv; (void) magic;
+	n = qjs_get_node(func_data[0]);
+	if (n == NULL) return JS_NewString(ctx, "");
+	if (macsurf_dom_characterdata_get_data(n, &ds) == DOM_NO_ERR
+	    && ds != NULL) {
+		s = dom_string_data(ds);
+	}
+	ret = JS_NewString(ctx, s);
+	if (ds != NULL) macsurf_dom_string_unref(ds);
+	return ret;
+}
+
+static JSValue qjs_text_set_data_data(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv, int magic, JSValueConst *func_data)
+{
+	dom_node *n;
+	const char *v;
+	(void) this_val; (void) magic;
+	n = qjs_get_node(func_data[0]);
+	if (n == NULL || argc < 1) return JS_UNDEFINED;
+	v = JS_ToCString(ctx, argv[0]);
+	if (v == NULL) return JS_UNDEFINED;
+	macsurf_dom_characterdata_set_data_s(n, v);
+	JS_FreeCString(ctx, v);
+	if (g_qjs_content) macos9_js_mark_dom_dirty(g_qjs_content);
+	return JS_UNDEFINED;
+}
+
+static JSValue qjs_text_append_child_noop(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	(void) ctx; (void) this_val; (void) argc; (void) argv;
+	return JS_NULL;
+}
+
+static JSValue qjs_text_clone_node_data(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv,
+		int magic, JSValueConst *func_data)
+{
+	(void) this_val; (void) argc; (void) argv; (void) magic;
+	return JS_DupValue(ctx, func_data[0]);
+}
+
+static JSValue qjs_wrap_text_node(JSContext *ctx, dom_text *tn)
+{
+	dom_node *node = (dom_node *) tn;
+	struct qjs_wrap_entry *hit;
+	dom_node *owner_doc;
+	JSValue obj;
+	JSValue data[1];
+	JSValue f;
+
+	if (tn == NULL) return JS_NULL;
+
+	hit = qjs_wrap_lookup(node);
+	if (hit != NULL) {
+		macsurf_dom_node_unref(node);
+		return JS_DupValue(ctx, hit->val);
+	}
+
+	obj = JS_NewObjectClass(ctx, (int) s_el_class_id);
+	if (JS_IsException(obj)) {
+		macsurf_dom_node_unref(node);
+		return JS_NULL;
+	}
+	JS_SetOpaque(obj, tn);
+
+	owner_doc = (dom_node *) g_qjs_document;
+	if (owner_doc) macsurf_dom_node_ref(owner_doc);
+
+	if (qjs_wrap_insert(node, owner_doc, obj) == 0) {
+		JS_SetOpaque(obj, NULL);
+		macsurf_dom_node_unref(node);
+		if (owner_doc) macsurf_dom_node_unref(owner_doc);
+		return obj;
+	}
+
+	JS_SetPropertyStr(ctx, obj, "nodeType", JS_NewInt32(ctx, 3));
+	JS_SetPropertyStr(ctx, obj, "nodeName", JS_NewString(ctx, "#text"));
+	JS_SetPropertyStr(ctx, obj, "__ptr",
+		JS_NewInt64(ctx, (long long) (size_t) tn));
+
+	/* fixes846 perf — nodeValue/data/textContent/parentNode are wired as
+	 * REAL C getter/setter pairs (JS_DefinePropertyGetSet), not an
+	 * Object.defineProperty(...) block run through JS_Eval on every
+	 * single wrap. A reconciler-heavy page (React) calls createTextNode
+	 * per leaf text update; re-lexing/parsing a JS source string on every
+	 * one of those calls is a real, avoidable per-node cost that the
+	 * element-wrapper path (qjs_el_install_native_attrs) also pays today
+	 * -- fixed here for the new text-node path since it's freshly
+	 * written; that pre-existing element-side cost is unchanged by this
+	 * fix and is a good target for its own round if profiling confirms
+	 * it matters. */
+	data[0] = JS_DupValue(ctx, obj);
+	{
+		JSAtom atom;
+		JSValue getter, setter;
+
+		getter = JS_NewCFunctionData(ctx, qjs_text_get_data_data,
+				0, 0, 1, data);
+		setter = JS_NewCFunctionData(ctx, qjs_text_set_data_data,
+				1, 0, 1, data);
+
+		atom = JS_NewAtom(ctx, "nodeValue");
+		JS_DefinePropertyGetSet(ctx, obj, atom,
+				JS_DupValue(ctx, getter), JS_DupValue(ctx, setter),
+				JS_PROP_CONFIGURABLE);
+		JS_FreeAtom(ctx, atom);
+
+		atom = JS_NewAtom(ctx, "data");
+		JS_DefinePropertyGetSet(ctx, obj, atom,
+				JS_DupValue(ctx, getter), JS_DupValue(ctx, setter),
+				JS_PROP_CONFIGURABLE);
+		JS_FreeAtom(ctx, atom);
+
+		atom = JS_NewAtom(ctx, "textContent");
+		JS_DefinePropertyGetSet(ctx, obj, atom, getter, setter,
+				JS_PROP_CONFIGURABLE);
+		JS_FreeAtom(ctx, atom);
+	}
+	{
+		JSAtom atom = JS_NewAtom(ctx, "parentNode");
+		JSValue getter = JS_NewCFunctionData(ctx,
+				qjs_el_get_parent_node_data, 0, 0, 1, data);
+		JS_DefinePropertyGetSet(ctx, obj, atom, getter, JS_UNDEFINED,
+				JS_PROP_CONFIGURABLE);
+		JS_FreeAtom(ctx, atom);
+	}
+	JS_SetPropertyStr(ctx, obj, "appendChild",
+		JS_NewCFunction(ctx, qjs_text_append_child_noop,
+				"appendChild", 1));
+	f = JS_NewCFunctionData(ctx, qjs_text_clone_node_data, 0, 0, 1, data);
+	JS_SetPropertyStr(ctx, obj, "cloneNode", f);
+	JS_FreeValue(ctx, data[0]);
+
+	return obj;
+}
+
+/* ---- document.createTextNode (native) ---- */
+static JSValue qjs_create_text_node(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	const char *text;
+	dom_text *tn = NULL;
+	JSValue obj;
+
+	(void) this_val;
+	if (g_qjs_document == NULL || argc < 1) return JS_NULL;
+	text = JS_ToCString(ctx, argv[0]);
+	if (text == NULL) return JS_NULL;
+	if (macsurf_dom_document_create_text_node_s(g_qjs_document, text, &tn)
+	    != DOM_NO_ERR || tn == NULL) {
+		JS_FreeCString(ctx, text);
+		return JS_NULL;
+	}
+	JS_FreeCString(ctx, text);
+	obj = qjs_wrap_text_node(ctx, tn);
+	return obj;
+}
+
+/* ---- real document-fragment wrapper (fixes846, #167 S3) ----
+ * A DocumentFragment needs appendChild/removeChild/insertBefore (dom_node_
+ * append_child on a fragment target unwraps its children per DOM spec when
+ * the fragment is later appended elsewhere), so it's tempting to just reuse
+ * qjs_wrap_element wholesale -- DON'T: the S0 harness caught this as a real
+ * global-buffer-overflow (ASan, ELEMENT_get_tag_name read through a
+ * document_fragment's SMALLER vtable, dom_element_get_tag_name expects the
+ * element vtable shape and a fragment's df_vtable doesn't have it -- this
+ * is exactly the "accidental safety" the design research flagged as
+ * unverified, and it turned out not to be safe at all). Same fix pattern
+ * as qjs_wrap_text_node: reuse the class id / wrap-table / finalizer
+ * (generic over any dom_node*), but only install the operations that are
+ * genuinely defined on the BASE dom_node_vtable (append/remove/insertBefore/
+ * parentNode/textContent/children -- confirmed via dom/core/node.h, every
+ * node subtype's vtable starts with that base) -- never the element-only
+ * ones (getAttribute et al, tagName) that live on a DIFFERENT, narrower
+ * vtable a fragment doesn't have. */
+static JSValue qjs_wrap_fragment(JSContext *ctx, dom_document_fragment *frag)
+{
+	dom_node *node = (dom_node *) frag;
+	struct qjs_wrap_entry *hit;
+	dom_node *owner_doc;
+	JSValue obj;
+	JSValue data[1];
+	JSValue f;
+
+	if (frag == NULL) return JS_NULL;
+
+	hit = qjs_wrap_lookup(node);
+	if (hit != NULL) {
+		macsurf_dom_node_unref(node);
+		return JS_DupValue(ctx, hit->val);
+	}
+
+	obj = JS_NewObjectClass(ctx, (int) s_el_class_id);
+	if (JS_IsException(obj)) {
+		macsurf_dom_node_unref(node);
+		return JS_NULL;
+	}
+	JS_SetOpaque(obj, frag);
+
+	owner_doc = (dom_node *) g_qjs_document;
+	if (owner_doc) macsurf_dom_node_ref(owner_doc);
+
+	if (qjs_wrap_insert(node, owner_doc, obj) == 0) {
+		JS_SetOpaque(obj, NULL);
+		macsurf_dom_node_unref(node);
+		if (owner_doc) macsurf_dom_node_unref(owner_doc);
+		return obj;
+	}
+
+	JS_SetPropertyStr(ctx, obj, "nodeType", JS_NewInt32(ctx, 11));
+	JS_SetPropertyStr(ctx, obj, "nodeName",
+			JS_NewString(ctx, "#document-fragment"));
+	JS_SetPropertyStr(ctx, obj, "__ptr",
+			JS_NewInt64(ctx, (long long) (size_t) frag));
+
+	data[0] = JS_DupValue(ctx, obj);
+	f = JS_NewCFunctionData(ctx, qjs_el_append_child_data, 1, 0, 1, data);
+	JS_SetPropertyStr(ctx, obj, "appendChild", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_remove_child_data, 1, 0, 1, data);
+	JS_SetPropertyStr(ctx, obj, "removeChild", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_insert_before_data, 2, 0, 1, data);
+	JS_SetPropertyStr(ctx, obj, "insertBefore", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_get_children_data, 0, 0, 1, data);
+	JS_SetPropertyStr(ctx, obj, "__getChildren", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_get_text_content_data, 0, 0, 1, data);
+	JS_SetPropertyStr(ctx, obj, "__getTextContent", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_set_text_content_data, 1, 0, 1, data);
+	JS_SetPropertyStr(ctx, obj, "__setTextContent", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_get_parent_node_data, 0, 0, 1, data);
+	JS_SetPropertyStr(ctx, obj, "__getParentNode", f);
+	JS_FreeValue(ctx, data[0]);
+
+	{
+		JSAtom atom;
+		JSValue getter;
+
+		atom = JS_NewAtom(ctx, "children");
+		getter = JS_GetPropertyStr(ctx, obj, "__getChildren");
+		JS_DefinePropertyGetSet(ctx, obj, atom, getter, JS_UNDEFINED,
+				JS_PROP_CONFIGURABLE);
+		JS_FreeAtom(ctx, atom);
+
+		atom = JS_NewAtom(ctx, "parentNode");
+		getter = JS_GetPropertyStr(ctx, obj, "__getParentNode");
+		JS_DefinePropertyGetSet(ctx, obj, atom, getter, JS_UNDEFINED,
+				JS_PROP_CONFIGURABLE);
+		JS_FreeAtom(ctx, atom);
+
+		atom = JS_NewAtom(ctx, "textContent");
+		JS_DefinePropertyGetSet(ctx, obj, atom,
+				JS_GetPropertyStr(ctx, obj, "__getTextContent"),
+				JS_GetPropertyStr(ctx, obj, "__setTextContent"),
+				JS_PROP_CONFIGURABLE);
+		JS_FreeAtom(ctx, atom);
+	}
+
+	return obj;
+}
+
+/* ---- document.createDocumentFragment (native) ----
+ * Replaces the old JS-only mkfb('#fragment') fake (qjs_dom_install) whose
+ * children were plain JS objects invisible to qjs_get_node(), so appending
+ * it to a real element silently dropped every child -- see the S1 census
+ * and the removed no-op override in register_browser_globals. */
+static JSValue qjs_create_document_fragment(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	dom_document_fragment *frag = NULL;
+
+	(void) this_val; (void) argc; (void) argv;
+	if (g_qjs_document == NULL) return JS_NULL;
+	if (macsurf_dom_document_create_document_fragment(g_qjs_document, &frag)
+	    != DOM_NO_ERR || frag == NULL) {
+		return JS_NULL;
+	}
+	return qjs_wrap_fragment(ctx, frag);
 }
 
 /* ---- DOM tree walker: collect all elements matching tag name ---- */
@@ -2061,6 +2534,12 @@ static void qjs_dom_install(JSContext *ctx)
 		 * window). */
 		qjs_set_func(ctx, doc, "__createElementNative",
 				qjs_create_element, 1);
+		/* fixes846 (#167 S3) — real createTextNode/createDocumentFragment,
+		 * same native-fast-path/JS-fallback shape as createElement above. */
+		qjs_set_func(ctx, doc, "__createTextNodeNative",
+				qjs_create_text_node, 1);
+		qjs_set_func(ctx, doc, "__createDocumentFragmentNative",
+				qjs_create_document_fragment, 0);
 		/* Native section accessors used by the body/head/documentElement
 		 * getters installed in JS below. */
 		qjs_set_func(ctx, doc, "__getDocumentElement",
@@ -2117,7 +2596,10 @@ static void qjs_dom_install(JSContext *ctx)
 			"if(n)return n;return mkfb(tag);};"
 			"if(typeof d.createDocumentFragment!=='function'||!d.__hasFrag){"
 			"d.__hasFrag=true;"
-			"d.createDocumentFragment=function(){return mkfb('#fragment');};"
+			"d.createDocumentFragment=function(){"
+			"var n=d.__createDocumentFragmentNative?"
+			"d.__createDocumentFragmentNative():null;"
+			"if(n)return n;return mkfb('#fragment');};"
 			"}"
 			"var _fbHtml=null,_fbBody=null,_fbHead=null;"
 			"Object.defineProperty(d,'documentElement',{configurable:true,"
@@ -2341,6 +2823,10 @@ static void register_browser_globals(JSContext *ctx)
 	/* fixes845 — see qjs_work_log_xhr's comment. */
 	qjs_set_func(ctx, global, "__workLogXHR", qjs_work_log_xhr, 3);
 
+	/* fixes846 (#167 S3) — native XHR/fetch backend over fetch_start().
+	 * See macos9_js_fetch.c for the full design. */
+	macos9_js_fetch_install(ctx, global);
+
 	/* --- crypto (getRandomValues / randomUUID) — fixes717 --- */
 	crypto_obj = JS_NewObject(ctx);
 	qjs_set_func(ctx, crypto_obj, "getRandomValues",
@@ -2475,12 +2961,21 @@ static void register_browser_globals(JSContext *ctx)
 			"document.URL=document.URL||(typeof location!=='undefined'?location.href:'');"
 			"document.referrer='';"
 			"document.domain='';"
+			/* fixes846 (#167 S3) — real native-backed nodes, same
+			 * native-fast-path/pre-document-fallback shape as createElement
+			 * (qjs_dom_install installs __createTextNodeNative /
+			 * __createDocumentFragmentNative once a real document is
+			 * wired; createDocumentFragment itself is defined there too,
+			 * so it is NOT redefined here -- an earlier unconditional
+			 * override at this exact spot was dead code, always clobbered
+			 * by qjs_dom_install running right after this function, but
+			 * misleadingly suggested a no-op fragment was live; removed). */
 			"document.createTextNode=document.createTextNode||function(t){"
+				"var n=document.__createTextNodeNative?"
+					"document.__createTextNodeNative(String(t)):null;"
+				"if(n)return n;"
 				"return {nodeValue:String(t),textContent:String(t),"
-					"appendChild:function(){},data:String(t)};};"
-			"document.createDocumentFragment=function(){"
-				"return {appendChild:function(){},childNodes:[],"
-					"firstChild:null,lastChild:null};};"
+					"appendChild:function(){return null;},data:String(t)};};"
 			"document.getElementsByTagName=document.getElementsByTagName||"
 				"function(){return [];};"
 			"document.getElementsByClassName=document.getElementsByClassName||"
@@ -2667,90 +3162,143 @@ static void register_browser_globals(JSContext *ctx)
 		"FormData.prototype.forEach=function(cb){"
 			"for(var i=0;i<this._k.length;i++)cb(this._v[i],this._k[i],this);};");
 
-	/* --- XMLHttpRequest shim (fixes845, #167 S1 census cont'd) --- *
-	 * Previously undefined entirely: `new XMLHttpRequest()` threw a
-	 * ReferenceError immediately (caught by fetch()'s try/catch when
-	 * called that way, or wherever calling code's own try/catch is when
-	 * called directly). No real network path exists yet (that's S3) --
-	 * this shim's job right now is purely to make every attempt VISIBLE
-	 * (construction/open/send, logged via __workLogXHR) instead of an
-	 * invisible throw, and to fail SAFELY (synchronous no-op completion,
-	 * status 0) so calling code that awaits onload/onreadystatechange
-	 * gets an answer instead of hanging forever on a throw that never
-	 * reached it. fetch()'s own "new XMLHttpRequest()" now routes
-	 * through here too, so its behaviour (ok:false,status:0) is
-	 * unchanged, just via a real object instead of a caught exception. */
+	/* --- XMLHttpRequest (fixes846, #167 S3) --- *
+	 * REAL, async, backed by macos9_js_fetch.c's native slot arena over
+	 * fetch_start() -- the S1 census (fixes843b/845) proved real Facebook
+	 * JS never received a single byte of real response data through the
+	 * old shim (fixes845), which only ever logged the attempt and failed
+	 * safe with status 0. send() now hands off to __xhrNativeSend(), which
+	 * starts a real fetch and returns a slot id; the C side calls
+	 * __onNativeComplete() (below) once the response is in, from a
+	 * macos9_schedule()-deferred tick -- never synchronously from send()
+	 * itself, so this matches every other async completion in the engine
+	 * (setTimeout, the reconvert debounce). A synchronous open(...,false)
+	 * is accepted (per spec) but still delivered asynchronously -- true
+	 * blocking XHR would need a nested pump loop this cooperative
+	 * scheduler doesn't have, and no real site actually requires it work
+	 * to receive data, only that it doesn't hang or throw. */
 	macsurf_qjs__safe_eval(ctx,
 		"function XMLHttpRequest(){"
 			"this.readyState=0;this.status=0;this.statusText='';"
 			"this.responseText='';this.response='';this.responseType='';"
-			"this._method='GET';this._url='';this._headers={};"
+			"this.responseURL='';"
+			"this._method='GET';this._url='';this._reqHeaders=[];"
+			"this._slotId=-1;this._listeners={};"
 			"if(typeof __workLogXHR==='function')__workLogXHR('new','','');"
 		"}"
 		"XMLHttpRequest.UNSENT=0;XMLHttpRequest.OPENED=1;"
 		"XMLHttpRequest.HEADERS_RECEIVED=2;XMLHttpRequest.LOADING=3;"
 		"XMLHttpRequest.DONE=4;"
-		"XMLHttpRequest.prototype.open=function(method,url){"
+		"XMLHttpRequest.prototype.open=function(method,url,async){"
 			"this._method=String(method||'GET');this._url=String(url||'');"
+			"this._async=(async===false)?false:true;"
 			"this.readyState=1;"
 			"if(typeof __workLogXHR==='function')"
 				"__workLogXHR('open',this._method,this._url);"
 		"};"
 		"XMLHttpRequest.prototype.setRequestHeader=function(k,v){"
-			"this._headers[k]=v;};"
-		"XMLHttpRequest.prototype.getAllResponseHeaders=function(){return '';};"
-		"XMLHttpRequest.prototype.getResponseHeader=function(){return null;};"
+			"this._reqHeaders.push(String(k)+': '+String(v));};"
+		"XMLHttpRequest.prototype.getAllResponseHeaders=function(){"
+			"return this.__responseHeadersRaw||'';};"
+		"XMLHttpRequest.prototype.getResponseHeader=function(name){"
+			"var raw=this.__responseHeadersRaw||'',lines=raw.split(/\\r\\n|\\n/),i;"
+			"name=String(name).toLowerCase();"
+			"for(i=0;i<lines.length;i++){"
+				"var c=lines[i].indexOf(':');if(c<0)continue;"
+				"if(lines[i].slice(0,c).trim().toLowerCase()===name)"
+					"return lines[i].slice(c+1).trim();"
+			"}"
+			"return null;"
+		"};"
 		"XMLHttpRequest.prototype.overrideMimeType=function(){};"
-		"XMLHttpRequest.prototype.abort=function(){this.readyState=0;};"
+		"XMLHttpRequest.prototype.abort=function(){"
+			"if(this._slotId>=0&&typeof __xhrNativeAbort==='function')"
+				"__xhrNativeAbort(this._slotId);"
+			"this._slotId=-1;this.readyState=0;this.status=0;"
+		"};"
 		"XMLHttpRequest.prototype.addEventListener=function(type,fn){"
-			"var t='on'+type;if(typeof this[t]!=='function')this[t]=fn;};"
-		"XMLHttpRequest.prototype.removeEventListener=function(){};"
+			"if(!this._listeners[type])this._listeners[type]=[];"
+			"this._listeners[type].push(fn);"
+		"};"
+		"XMLHttpRequest.prototype.removeEventListener=function(type,fn){"
+			"var a=this._listeners[type];if(!a)return;"
+			"var i=a.indexOf(fn);if(i>=0)a.splice(i,1);"
+		"};"
+		"XMLHttpRequest.prototype._fire=function(type){"
+			"var t='on'+type;"
+			"if(typeof this[t]==='function'){try{this[t]();}catch(e){}}"
+			"var a=this._listeners[type];"
+			"if(a)for(var i=0;i<a.length;i++){try{a[i]();}catch(e){}}"
+		"};"
+		"XMLHttpRequest.prototype.__onNativeComplete=function(){"
+			"var ok=this.status>=200&&this.status<300;"
+			"if(typeof __workLogXHR==='function')"
+				"__workLogXHR('complete',this._method,this._url);"
+			"this._fire('readystatechange');"
+			"if(this.status===0){this._fire('error');}"
+			"else{this._fire('load');}"
+			"this._fire('loadend');"
+		"};"
 		"XMLHttpRequest.prototype.send=function(body){"
 			"if(typeof __workLogXHR==='function')"
 				"__workLogXHR('send',this._method,this._url);"
-			"this.readyState=4;this.status=0;this.statusText='';"
-			"this.responseText='';this.response='';"
-			"if(typeof this.onreadystatechange==='function'){"
-				"try{this.onreadystatechange();}catch(e){}}"
-			"if(typeof this.onerror==='function'){"
-				"try{this.onerror();}catch(e){}}"
-			"if(typeof this.onloadend==='function'){"
-				"try{this.onloadend();}catch(e){}}"
+			"if(typeof __xhrNativeSend!=='function'){"
+				"this.readyState=4;this.status=0;this._fire('readystatechange');"
+				"this._fire('error');this._fire('loadend');return;"
+			"}"
+			"this._slotId=__xhrNativeSend(this,this._method,this._url,"
+				"(body===undefined)?null:body,this._reqHeaders,this._async);"
+			"if(this._slotId<0){"
+				"var self=this;"
+				"setTimeout(function(){"
+					"self.readyState=4;self.status=0;"
+					"self._fire('readystatechange');self._fire('error');"
+					"self._fire('loadend');"
+				"},0);"
+			"}"
 		"};"
 		"this.XMLHttpRequest=XMLHttpRequest;");
 
-	/* --- fetch shim --- */
+	/* --- fetch() (fixes846) --- *
+	 * A real Promise (QuickJS's native Promise is already an intrinsic --
+	 * JS_AddIntrinsicPromise, see qjs_build_context) wrapping the real
+	 * async XHR above. Replaces the fake synchronous thenable that always
+	 * resolved {ok:false,status:0} regardless of what happened. */
 	macsurf_qjs__safe_eval(ctx,
 		"this.fetch=function(url,opts){"
 			"opts=opts||{};"
-			"var ok=false,status=0,respText='',respHeaders='';"
-			"try{"
-				"var xhr=new XMLHttpRequest();"
-				"xhr.open(opts.method||'GET',url,false);"
-				"if(opts.headers){"
-					"for(var h in opts.headers)"
-						"xhr.setRequestHeader(h,opts.headers[h]);"
-				"}"
-				"xhr.send(opts.body||null);"
-				"status=xhr.status;"
-				"ok=status>=200&&status<300;"
-				"respText=xhr.responseText||'';"
-				"respHeaders=xhr.getAllResponseHeaders?xhr.getAllResponseHeaders():'';"
-			"}catch(e){}"
-			"if(typeof __workLogFetch==='function')__workLogFetch(String(url),ok,status);"
-			"var resp={"
-				"ok:ok,status:status,"
-				"text:function(){"
-					"var t={then:function(cb){cb(respText);return t;}};return t;},"
-				"json:function(){"
-					"var j={then:function(cb){"
-						"try{cb(JSON.parse(respText));}catch(_){}return j;}};return j;}"
-			"};"
-			"var thenable={"
-				"then:function(cb){if(cb)cb(resp);return thenable;},"
-				"catch:function(){return thenable;}"
-			"};"
-			"return thenable;"
+			"return new Promise(function(resolve,reject){"
+				"try{"
+					"var xhr=new XMLHttpRequest();"
+					"xhr.open(opts.method||'GET',url,true);"
+					"if(opts.headers){"
+						"for(var h in opts.headers)"
+							"xhr.setRequestHeader(h,opts.headers[h]);"
+					"}"
+					"xhr.onreadystatechange=function(){"
+						"if(xhr.readyState!==4)return;"
+						"var ok=xhr.status>=200&&xhr.status<300;"
+						"if(typeof __workLogFetch==='function')"
+							"__workLogFetch(String(url),ok,xhr.status);"
+						"if(xhr.status===0){reject(new Error('Network error'));return;}"
+						"var respText=xhr.responseText||'';"
+						"var resp={"
+							"ok:ok,status:xhr.status,statusText:xhr.statusText||'',"
+							"url:xhr.responseURL||String(url),"
+							"headers:{"
+								"get:function(n){return xhr.getResponseHeader(n);}"
+							"},"
+							"text:function(){return Promise.resolve(respText);},"
+							"json:function(){"
+								"try{return Promise.resolve(JSON.parse(respText));}"
+								"catch(e){return Promise.reject(e);}"
+							"}"
+						"};"
+						"resolve(resp);"
+					"};"
+					"xhr.send(opts.body===undefined?null:opts.body);"
+				"}catch(e){reject(e);}"
+			"});"
 		"};");
 
 	/* --- localStorage / sessionStorage --- */
@@ -3611,6 +4159,12 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 	if (doc_priv != NULL && heap->ctx != NULL) {
 		JSContext *fresh;
 		qjs_flush_timers(heap->ctx);
+		/* fixes846 (#167 S3) — same load-bearing ordering as the timer
+		 * flush above: abort every in-flight XHR and free its dup'd
+		 * JSValue against the OLD context before it's freed, or a
+		 * response that arrives after navigation would JS_Call into
+		 * freed heap from xhr_deliver(). */
+		macos9_js_fetch_flush(heap->ctx);
 		fresh = qjs_build_context(heap);
 		if (fresh != NULL) {
 			JS_FreeContext(heap->ctx);

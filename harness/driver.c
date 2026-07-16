@@ -595,6 +595,66 @@ int main(void)
 	fprintf(stderr, "=== Test 3 PASS: XMLHttpRequest + fetch shims run "
 			"cleanly through js_exec ===\n");
 
+	/* --- Test 4 (fixes846, #167 S3): createTextNode / createDocumentFragment
+	 * / innerHTML= are all brand-new real-DOM code paths (previously fake/
+	 * no-op objects per the S1 census). Each assert throws on failure, so
+	 * a regression shows up as js_exec returning !ok, not a silent pass. --- */
+	fprintf(stderr, "\n=== Test 4: createTextNode/createDocumentFragment/"
+			"innerHTML DOM mutation smoke test ===\n");
+	{
+		const char *dom_mutate_js =
+			"(function(){"
+			"function assert(c,m){if(!c)throw new Error('ASSERT FAIL: '+m);}"
+			"var body=document.body;"
+			"assert(body,'document.body exists');"
+
+			"var el=document.createElement('div');"
+			"var tn=document.createTextNode('hello-s0-text');"
+			"assert(tn.nodeType===3,'text node nodeType===3, got '+tn.nodeType);"
+			"el.appendChild(tn);"
+			"assert(el.textContent==='hello-s0-text',"
+			"'textContent after appendChild(textNode): '+el.textContent);"
+			"assert(tn.nodeValue==='hello-s0-text','nodeValue readback');"
+			"tn.data='changed';"
+			"assert(el.textContent==='changed',"
+			"'textContent reflects data= mutation: '+el.textContent);"
+
+			"var frag=document.createDocumentFragment();"
+			"assert(frag.nodeType===11,'fragment nodeType===11, got '+frag.nodeType);"
+			"var a=document.createElement('span');a.textContent='A';"
+			"var b=document.createElement('span');b.textContent='B';"
+			"frag.appendChild(a);frag.appendChild(b);"
+			"var host=document.createElement('div');"
+			"host.appendChild(frag);"
+			"assert(host.textContent==='AB',"
+			"'fragment unwraps into host children: '+host.textContent);"
+
+			"var h2=document.createElement('div');"
+			"h2.innerHTML='<b>bold</b> and <i>italic</i>';"
+			"assert(h2.textContent.indexOf('bold')>=0&&"
+			"h2.textContent.indexOf('italic')>=0,"
+			"'innerHTML fragment-parsed text present: '+h2.textContent);"
+			"assert(h2.children&&h2.children.length>=2,"
+			"'innerHTML built real child elements, length='+"
+			"(h2.children?h2.children.length:'undef'));"
+
+			"body.appendChild(el);"
+			"body.appendChild(host);"
+			"body.appendChild(h2);"
+			"})();";
+		unsigned char ok = js_exec(thread,
+				(const unsigned char *)dom_mutate_js,
+				strlen(dom_mutate_js), "driver-dom-mutate.js");
+		fprintf(stderr, "js_exec(dom mutate smoke) ok=%d\n", (int)ok);
+		if (!ok) {
+			fprintf(stderr, "FAIL: DOM mutation smoke test threw "
+					"(see the assert message above)\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 4 PASS: createTextNode/createDocumentFragment/"
+			"innerHTML all build real, connected DOM ===\n");
+
 	free(html_src_big);
 	return 0;
 }

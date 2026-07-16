@@ -250,8 +250,14 @@ struct macos9_https_ctx {
 	/* fixes835 (#167 M1) — NetSurf core's additional request headers,
 	 * sanitized and captured at setup (see macos9_capture_extra_headers).
 	 * In-struct fixed buffer: zero-inited by the setup memset, nothing to
-	 * free. Empty ("") splices as a no-op. */
-	char             caller_hdrs[512];
+	 * free. Empty ("") splices as a no-op.
+	 * fixes846 (#167 S3): 512 -> 2048. A single XHR call setting FB's
+	 * GraphQL X-FB-* header set (X-FB-Friendly-Name, X-FB-LSD,
+	 * X-ASBD-ID, X-FB-Client-IP, ...) plus a Sec-Fetch override plus
+	 * Origin easily exceeds 512, and macsurf_capture_extra_headers()
+	 * SKIPS a header whole rather than truncating it on overflow --
+	 * silently dropping exactly the headers XHR needs to be believed. */
+	char             caller_hdrs[2048];
 };
 
 #define HTTPS_MAX_RETRIES 2
