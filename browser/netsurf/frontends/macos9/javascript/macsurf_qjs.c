@@ -2361,6 +2361,37 @@ static JSValue qjs_querySelectorAll(JSContext *ctx, JSValueConst this_val,
 	sel = JS_ToCString(ctx, argv[0]);
 	if (sel == NULL) return arr;
 
+	/* fixes864 (#290) — '#id' FIRST; see the matching note in
+	 * qjs_querySelector.  An id is unique, so the result set is 0 or 1. */
+	{
+		const char *hash = strchr(sel, '#');
+		if (hash != NULL) {
+			char id_buf[128];
+			int k = 0;
+			const char *p = hash + 1;
+			while (k < 127 && *p && *p != '[' && *p != '.' &&
+			       *p != ':' && *p != ' ' && *p != '>' && *p != ',') {
+				id_buf[k++] = *p++;
+			}
+			id_buf[k] = '\0';
+			JS_FreeCString(ctx, sel);
+			if (k > 0) {
+				dom_string *id_ds = qjs_make_domstr(id_buf);
+				dom_element *el = NULL;
+				if (id_ds != NULL) {
+					macsurf_dom_document_get_element_by_id(
+							g_qjs_document, id_ds, &el);
+					macsurf_dom_string_unref(id_ds);
+				}
+				if (el != NULL) {
+					JS_SetPropertyUint32(ctx, arr, 0,
+							qjs_wrap_element(ctx, el));
+				}
+			}
+			return arr;
+		}
+	}
+
 	/* Parse selector: support bare tag, tag[attr*=val], tag.class, .class */
 	/* Extract tag part (up to first [ or . or : or space) */
 	for (i = 0; i < 63 && sel[i] && sel[i] != '[' && sel[i] != '.'
@@ -2443,6 +2474,44 @@ static JSValue qjs_querySelector(JSContext *ctx, JSValueConst this_val,
 	if (g_qjs_document == NULL || argc < 1) return JS_NULL;
 	sel = JS_ToCString(ctx, argv[0]);
 	if (sel == NULL) return JS_NULL;
+
+	/* fixes864 (#290) — '#id' FIRST.  '#' was not a delimiter below and there
+	 * was no id branch, so "#commentform" fell through as a TAG NAME, matched
+	 * no element, and returned null while getElementById('commentform') found
+	 * it fine.  Silent null, no throw -- which is exactly how hackaday's reply
+	 * box dies: its loader is
+	 *     var e = document.querySelector("#commentform"); if (e) { ...all of it... }
+	 * so a null `e` skips the whole form-loading chain (IntersectionObserver ->
+	 * loadScript -> fetch -> injected <script>) without a single error line.
+	 * Handles "#id" and "tag#id"; the id runs through the same
+	 * get_element_by_id path getElementById already uses. */
+	{
+		const char *hash = strchr(sel, '#');
+		if (hash != NULL) {
+			char id_buf[128];
+			int k = 0;
+			const char *p = hash + 1;
+			/* id ends at the next combinator/qualifier */
+			while (k < 127 && *p && *p != '[' && *p != '.' &&
+			       *p != ':' && *p != ' ' && *p != '>' && *p != ',') {
+				id_buf[k++] = *p++;
+			}
+			id_buf[k] = '\0';
+			JS_FreeCString(ctx, sel);
+			if (k == 0) return JS_NULL;
+			{
+				dom_string *id_ds = qjs_make_domstr(id_buf);
+				dom_element *el = NULL;
+				if (id_ds == NULL) return JS_NULL;
+				macsurf_dom_document_get_element_by_id(g_qjs_document,
+						id_ds, &el);
+				macsurf_dom_string_unref(id_ds);
+				if (el == NULL) return JS_NULL;
+				/* get_element_by_id hands back a ref; wrap takes it. */
+				return qjs_wrap_element(ctx, el);
+			}
+		}
+	}
 
 	/* Same tag-part extraction as qsa (bare tag / tag.class / tag[attr]). */
 	for (i = 0; i < 63 && sel[i] && sel[i] != '[' && sel[i] != '.'
@@ -3181,9 +3250,32 @@ static void register_browser_globals(JSContext *ctx)
 		"this.removeEventListener=function(t,fn){"
 			"var arr=this._winListeners[t];if(!arr)return;"
 			"for(var i=0;i<arr.length;i++)if(arr[i]===fn){arr.splice(i,1);return;}};"
+		/* fixes863 (#289 probe) — this used to be a bare
+		 *     if(arr)arr.forEach(function(f){try{f(ev);}catch(e){}});
+		 * so a window listener that THREW was swallowed in total silence,
+		 * and js_fire_dom_ready wraps the whole dispatch in a second bare
+		 * catch(e){} on top.  Two layers of silence over the exact spot
+		 * hackaday's comment iframe lives: its dynamic-loader.js puts its
+		 * ENTIRE body inside window.addEventListener('DOMContentLoaded',...)
+		 * -> querySelector('#commentform') -> IntersectionObserver ->
+		 * loadScript -> fetch.  We have proven the listener is registered
+		 * BEFORE the event fires ([11121] loader runs, [11123] domready), that
+		 * the iframe has its own heap (pump heaps=2) and that it IS pumped
+		 * (fixes861) -- yet fetch never runs.  So either the handler throws
+		 * (invisible until now) or it runs and silently does nothing.
+		 * `n=` separates those: n=0 means the loader never registered here at
+		 * all; n>=1 with no THREW line means it ran clean and bailed on its
+		 * own `if(e)` -- i.e. querySelector('#commentform') returned null.
+		 * console.error routes to MS_LOG, and the "WORK " in the text is what
+		 * gets it past the failures-only gate. */
 		"this.dispatchEvent=function(ev){"
 			"var t=ev&&ev.type;var arr=t&&this._winListeners[t];"
-			"if(arr)arr.forEach(function(f){try{f(ev);}catch(e){}});return true;};"
+			"var n=arr?arr.length:0;"
+			"try{console.error('WORK winevt type='+t+' n='+n);}catch(_){}"
+			"if(arr)arr.forEach(function(f){try{f(ev);}catch(e){"
+				"try{console.error('WORK winevt THREW type='+t+': '+"
+					"((e&&e.message)||e));}catch(_){}"
+			"}});return true;};"
 		"this.getComputedStyle=function(el){"
 			"return {"
 				"getPropertyValue:function(p){"

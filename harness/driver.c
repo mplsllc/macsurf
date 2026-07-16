@@ -988,6 +988,67 @@ int main(void)
 	fprintf(stderr, "=== Test 8 PASS: every live heap's timers fire; teardown "
 			"unlinks cleanly ===\n");
 
+	/* --- Test 9 (fixes863): reproduce hackaday's loader shape exactly --
+	 * register a DOMContentLoaded handler on WINDOW (not document), fire
+	 * js_fire_dom_ready, and assert the handler actually ran.  This is the
+	 * precise mechanism the Jetpack comment iframe uses. --- */
+	fprintf(stderr, "\n=== Test 9: window DOMContentLoaded listener fires ===\n");
+	{
+		const char *reg =
+			"globalThis.__ran=0;globalThis.__found=-1;"
+			"window.addEventListener('DOMContentLoaded',function(){"
+				"globalThis.__ran=1;"
+				"var e=document.querySelector('#commentform');"
+				"globalThis.__found=e?1:0;"
+			"});";
+		const char *chk =
+			"if(!globalThis.__ran)"
+				"throw new Error('ASSERT FAIL: window DOMContentLoaded listener never ran');";
+		unsigned char ok;
+		ok = js_exec(thread, (const unsigned char *)reg, strlen(reg), "reg-win.js");
+		if (!ok) { fprintf(stderr, "FAIL: register\n"); return 1; }
+		/* the real path the browser uses */
+		js_fire_dom_ready(thread, (struct dom_document *)htmlc.document);
+		ok = js_exec(thread, (const unsigned char *)chk, strlen(chk), "chk-win.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: a window DOMContentLoaded listener does NOT "
+					"fire -- this is hackaday's loader mechanism\n");
+			return 1;
+		}
+		fprintf(stderr, "window DOMContentLoaded listener ran\n");
+	}
+	fprintf(stderr, "=== Test 9 PASS: window DOMContentLoaded listeners fire ===\n");
+
+	/* --- Test 10 (fixes864): document.querySelector('#id').  hackaday's
+	 * comment-iframe loader is literally
+	 *     var e = document.querySelector("#commentform"); if (e) { ...everything... }
+	 * so if #id lookup returns null the ENTIRE form-loading chain is skipped
+	 * silently -- no throw, no fetch, no injected script, no error line.  The
+	 * harness doc has a real <div id="feed">, so this is a direct test. --- */
+	fprintf(stderr, "\n=== Test 10: querySelector('#id') ===\n");
+	{
+		const char *q =
+			"globalThis.__byId   = document.getElementById('feed') ? 1 : 0;"
+			"globalThis.__byQS   = document.querySelector('#feed') ? 1 : 0;"
+			"globalThis.__byQSA  = (document.querySelectorAll('#feed')||[]).length;";
+		const char *chk =
+			"if(!globalThis.__byId)"
+				"throw new Error('getElementById(feed) failed - harness doc wrong');"
+			"if(!globalThis.__byQS)"
+				"throw new Error('ASSERT FAIL: querySelector(\\'#feed\\') returned null "
+					"while getElementById found it - #id selectors unsupported');";
+		unsigned char ok = js_exec(thread, (const unsigned char *)q, strlen(q), "qs-id.js");
+		if (!ok) { fprintf(stderr, "FAIL: probe threw\n"); return 1; }
+		ok = js_exec(thread, (const unsigned char *)chk, strlen(chk), "qs-id-chk.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: querySelector('#id') is BROKEN -- this is why "
+					"hackaday's reply box never loads\n");
+			return 1;
+		}
+		fprintf(stderr, "querySelector('#feed') resolves\n");
+	}
+	fprintf(stderr, "=== Test 10 PASS: #id selectors work ===\n");
+
 	free(html_src_big);
 	return 0;
 }
