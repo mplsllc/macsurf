@@ -79,6 +79,15 @@ long macos9_html_bytes_processed = 0;
  * per-reformat cost (ms_after-ms_before, already in the SITE line) be read
  * against the count.  See project_mactrove_reflow_storm. */
 static long macos9_html_reformat_seq = 0;
+/* fixes848 (#167 perf investigation) — wall-clock span of box construction
+ * + per-element CSS cascade (dom_to_box is an incremental, self-rescheduling
+ * walk, so its own synchronous return does NOT mean it finished -- the true
+ * completion signal is the html_box_convert_done callback). Set at the
+ * dom_to_box() call site, read+logged in html_box_convert_done. File-scope
+ * static because the two sites are different functions; imprecise only if
+ * two conversions are somehow interleaved, which is not the normal case
+ * this is diagnosing. */
+static double s_convert_start_us = 0.0;
 char macos9_html_head[64];
 unsigned int macos9_html_head_len = 0;
 
@@ -246,6 +255,25 @@ static void html_box_convert_done(html_content *c, bool success)
 
 	NSLOG(netsurf, INFO, "DOM to box conversion complete (content %p)", c);
 	macsurf_debug_log_writef("fc: box_convert_done entered (success=%d)", (int)success);
+	/* fixes848 (#167 perf investigation) — WORK-prefixed pipeline
+	 * checkpoint. A hardware log against a heavy Facebook page showed
+	 * NAV: content_ready fire and then nothing at all until the app
+	 * appeared to hang -- every intermediate line in this pipeline
+	 * (this one included) was plain macsurf_debug_log_writef, invisible
+	 * on the release build. This marks "box construction + per-element
+	 * CSS cascade are done" (dom_to_box is itself an incremental,
+	 * self-rescheduling walk -- this callback is the TRUE completion
+	 * signal, not dom_to_box()'s own synchronous return). */
+	{
+		extern double macos9_micros(void);
+		double elapsed_us = (s_convert_start_us > 0.0) ?
+				(macos9_micros() - s_convert_start_us) : -1.0;
+		macsurf_debug_log_writef(
+				"WORK pipeline: box+cascade DONE us=%ld c=%p url=%s",
+				(long) elapsed_us, (void *) c,
+				nsurl_access(content_get_url((struct content *) c)));
+		s_convert_start_us = 0.0;
+	}
 	macsurf_profile_stamp("parse-convert-done");
 	macos9_html_reformat_seq = 0; /* fixes560: fresh reflow-storm count per load */
 
@@ -624,6 +652,14 @@ void html_finish_conversion(html_content *htmlc)
 	html_get_dimensions(htmlc);
 
 	macsurf_debug_log_writef("fc: dimensions done, dom_to_box");
+	{
+		extern double macos9_micros(void);
+		s_convert_start_us = macos9_micros();
+	}
+	macsurf_debug_log_writef(
+			"WORK pipeline: dom_to_box START c=%p url=%s",
+			(void *) htmlc,
+			nsurl_access(content_get_url((struct content *) htmlc)));
 	error = dom_to_box(html, htmlc, html_box_convert_done, &htmlc->box_conversion_context);
 	macsurf_debug_log_writef("fc: dom_to_box returned err=%d", (int)error);
 	if (error != NSERROR_OK) {
@@ -1227,6 +1263,11 @@ html_begin_conversion(html_content *htmlc)
 	dom_hubbub_error error;
 
 	MS_LOG("html begin conversion");
+	/* fixes848 (#167 perf investigation) -- see html_box_convert_done's
+	 * comment; this is the matching "about to start" bracket. */
+	macsurf_debug_log_writef("WORK pipeline: begin_conversion c=%p url=%s",
+			(void *) htmlc,
+			nsurl_access(content_get_url((struct content *) htmlc)));
 	/* The act of completing the parse can result in additional data
 	 * being flushed through the parser. This may result in new style or
 	 * script nodes, upon which the conversion depends. Thus, once we
@@ -1937,8 +1978,12 @@ static void html_reformat(struct content *c, int width, int height)
 		 * misleading; it spans inter-reformat network, dominated by TLS
 		 * handshakes on cross-host image fetches). free/maxblk =
 		 * app-heap free + largest contiguous block before->after. */
+		/* fixes848 (#167 perf investigation) -- see html_box_convert_done's
+		 * comment. This line already computed the real elapsed time
+		 * inside layout_document via macos9_micros(); it just wasn't
+		 * WORK-prefixed, so it never survived the release filter. */
 		macsurf_debug_log_writef(
-			"LAYPROF layout_us=%ld mcalls=%ld mchars=%ld free=%ld->%ld maxblk=%ld->%ld",
+			"WORK LAYPROF layout_us=%ld mcalls=%ld mchars=%ld free=%ld->%ld maxblk=%ld->%ld",
 			layout_us,
 			macos9_font_measure_calls,
 			macos9_font_measure_chars,
