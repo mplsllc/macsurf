@@ -3016,6 +3016,27 @@ static void register_browser_globals(JSContext *ctx)
 			"document.body=document.body||null;"
 			"document.head=document.head||null;"
 			"document.documentElement=document.documentElement||null;"
+			/* fixes855 (#284) — document.nodeType MUST be 9
+			 * (DOCUMENT_NODE).  Elements get nodeType 1, text 3 and
+			 * fragments 11 (qjs_wrap_*), but the document itself never got
+			 * one, so `document.nodeType` read `undefined`.  jQuery's
+			 * setDocument is:
+			 *   function V(e){var t,n=e?e.ownerDocument||e:ye;
+			 *     return n!=T && 9===n.nodeType && n.documentElement &&
+			 *            (r=(T=n).documentElement, ...);}
+			 * `9===undefined` is false, so it short-circuits and T -- the
+			 * document handle every later `T.createElement(...)` support
+			 * probe uses -- is NEVER assigned.  jQuery then dies on its own
+			 * first assert with "TypeError: cannot read property
+			 * 'createElement' of undefined", taking every dependent bundle
+			 * with it ("ReferenceError: jQuery is not defined").
+			 * HW-observed on hackaday.com (the jquery.min.js+jquery-migrate
+			 * _static bundle) and it is the same first link in the XenForo
+			 * preamble->Sizzle->core-compiled cascade on 68kmla /
+			 * tinkerdifferent.  documentElement is already a getter that
+			 * always returns a node, so nodeType was the only miss. */
+			"document.nodeType=9;"
+			"document.nodeName='#document';"
 			"document.readyState='complete';"
 			"document.cookie='';"
 			"document.URL=document.URL||(typeof location!=='undefined'?location.href:'');"

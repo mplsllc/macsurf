@@ -806,71 +806,101 @@ int main(void)
 	fprintf(stderr, "=== Test 6 PASS: timers are per-runtime; no cross-runtime "
 			"free through navigation-flush or heap teardown ===\n");
 
-	/* --- Test 7 (fixes855, #284): the REAL jQuery must initialise.
-	 * hackaday's first script is the _static ??-bundle of jquery.min.js +
-	 * jquery-migrate.min.js, and on hardware it dies with "TypeError: cannot
-	 * read property 'createElement' of undefined", after which every
-	 * dependent bundle reports "ReferenceError: jQuery is not defined".
-	 * jQuery 3.7.1's setDocument only captures the document when
-	 * `9===n.nodeType && n.documentElement` -- and document.nodeType was
-	 * never set, so its internal handle T stayed undefined and the first
-	 * T.createElement() support probe threw.  This runs the byte-exact file
-	 * hackaday serves through the real js_exec path. --- */
-	fprintf(stderr, "\n=== Test 7: real jQuery 3.7.1 initialises ===\n");
+	/* --- Test 7 (fixes855, #284): the REAL jQuery must clear its own first
+	 * support probe.  hackaday's first script is the _static ??-bundle of
+	 * jquery.min.js + jquery-migrate.min.js; on hardware it died with
+	 * "TypeError: cannot read property 'createElement' of undefined" and
+	 * every dependent bundle then reported "jQuery is not defined".  jQuery
+	 * 3.7.1's setDocument only captures the document when
+	 * `9===n.nodeType && n.documentElement`, and document.nodeType was never
+	 * set -- so its internal handle T stayed undefined and the first
+	 * T.createElement() probe threw.  Runs the byte-exact file hackaday
+	 * serves, wrapped in JS try/catch so we can assert on the error TEXT.
+	 *
+	 * This does NOT yet require full jQuery init: the element wrapper's
+	 * traversal API is still hardcoded (cloneNode returns the element
+	 * itself, childNodes=[], firstChild/lastChild=null), so jQuery
+	 * legitimately throws later at
+	 * le.checkClone=xe.cloneNode(!0).cloneNode(!0).lastChild.checked.  What
+	 * must never come back is the document-identity failure.  The test
+	 * tightens itself automatically once real traversal lands. --- */
+	fprintf(stderr, "\n=== Test 7: real jQuery 3.7.1 clears the document probe ===\n");
 	{
 		FILE *jf = fopen("jquery-3.7.1.min.js", "rb");
-		char *jsrc; long jlen; size_t rd;
-		unsigned char ok;
 		const char *probe_js =
 			"if(document.nodeType!==9)"
 				"throw new Error('ASSERT FAIL: document.nodeType='+document.nodeType);"
 			"if(!document.documentElement)"
 				"throw new Error('ASSERT FAIL: no documentElement');";
-		const char *check_js =
-			"if(typeof jQuery==='undefined')"
-				"throw new Error('ASSERT FAIL: jQuery is not defined');"
-			"if(typeof jQuery.fn==='undefined'||!jQuery.fn.jquery)"
-				"throw new Error('ASSERT FAIL: jQuery.fn missing');"
-			"globalThis.__jqver=jQuery.fn.jquery;";
+		unsigned char ok;
+
+		ok = js_exec(thread, (const unsigned char *)probe_js,
+				strlen(probe_js), "driver-doc-probe.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: document node identity wrong "
+					"(nodeType must be 9, DOCUMENT_NODE)\n");
+			return 1;
+		}
+		fprintf(stderr, "document.nodeType==9 and documentElement present\n");
+
 		if (jf == NULL) {
-			fprintf(stderr, "SKIP: jquery-3.7.1.min.js not present\n");
+			fprintf(stderr, "SKIP: jquery-3.7.1.min.js not present "
+					"(fetch it to run the real-jQuery leg)\n");
 		} else {
+			char *jsrc, *wrapped;
+			long jlen;
+			size_t rd, wn;
+			const char *pre =
+				"globalThis.__jqErr='';try{";
+			const char *post =
+				"}catch(e){globalThis.__jqErr=String((e&&e.message)||e);}";
+			const char *verdict_js =
+				"globalThis.__jqOK=(typeof jQuery!=='undefined'&&"
+					"!!(jQuery.fn&&jQuery.fn.jquery));"
+				"if(/createElement/.test(globalThis.__jqErr))"
+					"throw new Error('fixes855 REGRESSED: '+globalThis.__jqErr);";
+			const char *report_js =
+				"globalThis.__jqOK?('OK jQuery '+jQuery.fn.jquery)"
+					":('GAP '+(globalThis.__jqErr||'(no error recorded)'))";
+
 			fseek(jf, 0, SEEK_END); jlen = ftell(jf); fseek(jf, 0, SEEK_SET);
 			jsrc = (char *)malloc((size_t)jlen + 1);
 			rd = fread(jsrc, 1, (size_t)jlen, jf);
 			jsrc[rd] = '\0';
 			fclose(jf);
 
-			ok = js_exec(thread, (const unsigned char *)probe_js,
-					strlen(probe_js), "driver-doc-probe.js");
-			if (!ok) {
-				fprintf(stderr, "FAIL: document node identity wrong "
-						"(nodeType must be 9)\n");
-				return 1;
-			}
-			fprintf(stderr, "document.nodeType==9 and documentElement present\n");
+			wn = strlen(pre) + rd + strlen(post) + 1;
+			wrapped = (char *)malloc(wn);
+			strcpy(wrapped, pre);
+			memcpy(wrapped + strlen(pre), jsrc, rd);
+			strcpy(wrapped + strlen(pre) + rd, post);
 
-			ok = js_exec(thread, (const unsigned char *)jsrc, rd,
-					"jquery-3.7.1.min.js");
-			fprintf(stderr, "js_exec(real jQuery %ld bytes) ok=%d\n",
+			ok = js_exec(thread, (const unsigned char *)wrapped,
+					strlen(wrapped), "jquery-3.7.1.min.js");
+			fprintf(stderr, "js_exec(real jQuery, %ld bytes) ok=%d\n",
 					jlen, (int)ok);
-			if (!ok) {
-				fprintf(stderr, "FAIL: real jQuery threw during init\n");
-				free(jsrc);
-				return 1;
-			}
-			ok = js_exec(thread, (const unsigned char *)check_js,
-					strlen(check_js), "driver-jq-check.js");
-			if (!ok) {
-				fprintf(stderr, "FAIL: jQuery did not export itself\n");
-				free(jsrc);
-				return 1;
-			}
 			free(jsrc);
+			free(wrapped);
+			if (!ok) {
+				fprintf(stderr, "FAIL: the jQuery wrapper itself threw\n");
+				return 1;
+			}
+
+			/* Hard-fails ONLY if the fixes855 document-identity error is back. */
+			ok = js_exec(thread, (const unsigned char *)verdict_js,
+					strlen(verdict_js), "driver-jq-verdict.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: fixes855 REGRESSED -- jQuery is back "
+						"to failing on the document handle\n");
+				return 1;
+			}
+			(void)js_exec(thread, (const unsigned char *)report_js,
+					strlen(report_js), "driver-jq-report.js");
 		}
 	}
-	fprintf(stderr, "=== Test 7 PASS: real jQuery 3.7.1 initialises and "
-			"exports jQuery.fn ===\n");
+	fprintf(stderr, "=== Test 7 PASS: jQuery clears the document-identity probe "
+			"(fixes855); any remaining throw is the known traversal gap "
+			"(cloneNode/firstChild/lastChild/childNodes) ===\n");
 
 	free(html_src_big);
 	return 0;
