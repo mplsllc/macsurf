@@ -95,6 +95,20 @@ long macsurf_layout_seq = 0;
 int macsurf_layout_depth = 0;
 long macsurf_layout_calls = 0;
 int macsurf_layout_aborted = 0;
+/* fixes851 (#167) — reformat-pass generation for the flex/grid item
+ * re-layout memo (struct box::flex_layout_gen). Bumped once per
+ * html_reformat traversal (in macsurf_layout_watchdog_reset, which already
+ * runs at the top of every layout_document), so a box's cached gen only
+ * matches within the same pass; a new pass invalidates every box's memo
+ * without any tree walk. Starts at 1 so a freshly talloc_zero'd box
+ * (gen 0) never spuriously hits. */
+unsigned macsurf_layout_pass_gen = 1;
+/* fixes851 — runtime kill-switch for the flex/grid re-layout memo. On by
+ * default. A diagnostic (the S0 harness's cache-vs-no-cache equivalence
+ * test) or a field escape hatch can set it to 0 to fall back to the
+ * always-re-layout behaviour if the memo is ever suspected of changing a
+ * render. */
+int macsurf_flex_layout_cache_enabled = 1;
 
 struct box_multicol_entry {
 	struct box *box;
@@ -221,6 +235,11 @@ void macsurf_layout_watchdog_reset(void)
 	macsurf_layout_depth = 0;
 	macsurf_layout_calls = 0;
 	macsurf_layout_aborted = 0;
+	/* fixes851 — new pass: invalidate every box's flex/grid re-layout
+	 * memo by advancing the generation (skip 0, the talloc_zero sentinel). */
+	macsurf_layout_pass_gen++;
+	if (macsurf_layout_pass_gen == 0)
+		macsurf_layout_pass_gen = 1;
 }
 
 void macsurf_layout_set_current_url(const char *url)

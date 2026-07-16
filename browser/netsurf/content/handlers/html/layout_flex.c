@@ -371,6 +371,36 @@ static bool layout_flex_item(
 	bool success;
 	struct box *b = item->box;
 
+	/* fixes851 (#167) — re-layout memo. A flex container lays each item
+	 * out up to 3x per pass (base-size measure, main placement, cross
+	 * placement), and a flex item can itself be a flex/grid container, so
+	 * this per-level multiplier compounds through nesting into an O(3^d)
+	 * re-layout blow-up (Facebook's ~20-30-deep flex shell: 1.6M+ layout
+	 * calls for 428 boxes, a hardware hang; a shallower 993-box variant
+	 * laid out fine in 247ms).
+	 *
+	 * Correctness invariant for the skip: a box laid out is a
+	 * deterministic function of (b->width, b->style, content) -- its
+	 * position (x/y) is assigned by the parent AFTER this returns and
+	 * doesn't feed the box's own content layout. So if, on re-entry, the
+	 * box's width AND height are byte-identical to what they were
+	 * immediately AFTER its last layout this pass, then NOTHING has
+	 * perturbed it since, a re-layout would reproduce the exact same
+	 * result, and skipping is a pure saving. Any genuine perturbation
+	 * changes one of them and correctly misses: flex grow/shrink rewrites
+	 * b->width (main placement, line ~1407); cross-axis STRETCH rewrites
+	 * b->height for a row flex (line ~1574) BEFORE re-calling -- keying on
+	 * height too is exactly what makes that stretch re-layout still fire.
+	 * Flex/grid items are block-formatting-context roots, so a skipped
+	 * re-layout has no float-escape side effect on ancestors. */
+	if (macsurf_flex_layout_cache_enabled &&
+			b->flex_layout_gen == macsurf_layout_pass_gen &&
+			b->flex_layout_width == available_width &&
+			b->flex_layout_width == b->width &&
+			b->flex_layout_height == b->height) {
+		return true;
+	}
+
 	switch (b->type) {
 	case BOX_BLOCK:
 	case BOX_INLINE_BLOCK:
@@ -409,6 +439,16 @@ static bool layout_flex_item(
 
 	if (!success) {
 		NSLOG(flex, ERROR, "box %p: layout failed", b);
+	}
+
+	/* fixes851 — record the memo only on a successful layout, snapshotting
+	 * the box's post-layout width AND height so a later re-entry can tell
+	 * whether anything perturbed it since (see the skip check above). A
+	 * failed/degraded item is left un-memoed so it is retried, not pinned. */
+	if (success) {
+		b->flex_layout_gen = macsurf_layout_pass_gen;
+		b->flex_layout_width = b->width;
+		b->flex_layout_height = b->height;
 	}
 
 	return success;

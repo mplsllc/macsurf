@@ -176,6 +176,11 @@ static int layout_dim_clamp(int v)
 extern int macsurf_layout_depth;
 extern long macsurf_layout_calls;
 extern int macsurf_layout_aborted;
+/* fixes851 (#167) — reformat-pass generation for the flex/grid item
+ * re-layout memo. See struct box::flex_layout_gen and layout.c. */
+extern unsigned macsurf_layout_pass_gen;
+/* fixes851 — runtime kill-switch for that memo (1 = on, default). */
+extern int macsurf_flex_layout_cache_enabled;
 
 /* macsurf_layout_watchdog_reset() and macsurf_layout_breadcrumb()
  * are real functions (defined in layout.c) so they can do I/O and

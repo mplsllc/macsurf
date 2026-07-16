@@ -487,6 +487,28 @@ struct box {
 	 */
 	struct box_multicol_data *multicol_data;
 
+	/**
+	 * fixes851 (#167) — flex/grid item re-layout memo. The flex and
+	 * grid layout algorithms lay each item out 2-3 times per pass
+	 * (base-size measurement, main placement, cross placement), and
+	 * because a flex item can itself be a flex/grid container, that
+	 * per-level multiplier compounds through nesting: a subtree at flex
+	 * depth d is fully re-laid-out O(3^d) times. Facebook's logged-in
+	 * shell nests flex ~20-30 deep, producing 1.6M+ layout calls for a
+	 * 428-box tree (hardware hang; a shallower 993-box variant laid out
+	 * fine in 247ms). These record the reformat generation and the
+	 * content width the item was last laid out at, so an identical
+	 * re-layout at the same width within the same pass is skipped (the
+	 * box already holds the correct, deterministic result). Flex/grid
+	 * items establish their own block-formatting context, so re-laying
+	 * one out has no float-escape side effect on ancestors -- skipping
+	 * is purely a saving. Reset implicitly by the per-reformat
+	 * generation bump (macsurf_layout_pass_gen), so no walk to clear.
+	 */
+	unsigned flex_layout_gen;
+	int flex_layout_width;
+	int flex_layout_height;
+
 };
 
 
