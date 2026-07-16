@@ -1317,6 +1317,10 @@ static JSValue qjs_el_remove_attribute_data(JSContext *ctx,
 	JS_FreeCString(ctx, name_cstr);
 	if (name_ds) {
 		macsurf_dom_element_remove_attribute(el, name_ds);
+		/* fixes843b — this real DOM mutation never marked dirty, so
+		 * el.removeAttribute(...) (a common show/hide idiom) never
+		 * triggered a repaint. Match setAttribute's behaviour. */
+		if (g_qjs_content) macos9_js_mark_dom_dirty(g_qjs_content);
 		macsurf_dom_string_unref(name_ds);
 	}
 	return JS_UNDEFINED;
@@ -2261,6 +2265,28 @@ static JSValue qjs_crypto_random_uuid(JSContext *ctx,
 	return JS_NewString(ctx, out);
 }
 
+/* fixes843b (#167 S1 census) — native-side visibility into the fetch()
+ * shim (macsurf_qjs.c has no real XMLHttpRequest, so fetch() always
+ * synchronously resolves to {ok:false,status:0} -- see the shim below).
+ * Called from JS right after the try/catch so we can see, per call, the
+ * URL requested and what the shim actually returned, WITHOUT needing a
+ * real network path to exist yet. WORK-gated so it survives the
+ * failures-only release filter; remove once S3 (native XHR) lands and
+ * this census question is answered for good. */
+static JSValue qjs_work_log_fetch(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	const char *url = (argc > 0) ? JS_ToCString(ctx, argv[0]) : NULL;
+	int ok = (argc > 1) ? JS_ToBool(ctx, argv[1]) : 0;
+	int32_t status = 0;
+	(void)this_val;
+	if (argc > 2) JS_ToInt32(ctx, &status, argv[2]);
+	macsurf_debug_log_writef("WORK fetch url=%s ok=%d status=%d",
+			url ? url : "(null)", ok, (int)status);
+	if (url) JS_FreeCString(ctx, url);
+	return JS_UNDEFINED;
+}
+
 static void register_browser_globals(JSContext *ctx)
 {
 	JSValue global = JS_GetGlobalObject(ctx);
@@ -2283,6 +2309,9 @@ static void register_browser_globals(JSContext *ctx)
 	qjs_set_func(ctx, console, "info",  qjs_console_info,  1);
 	qjs_set_func(ctx, console, "debug", qjs_console_debug, 1);
 	JS_SetPropertyStr(ctx, global, "console", console);
+
+	/* fixes843b (#167 S1 census) — see qjs_work_log_fetch's comment. */
+	qjs_set_func(ctx, global, "__workLogFetch", qjs_work_log_fetch, 3);
 
 	/* --- crypto (getRandomValues / randomUUID) — fixes717 --- */
 	crypto_obj = JS_NewObject(ctx);
@@ -2628,6 +2657,7 @@ static void register_browser_globals(JSContext *ctx)
 				"respText=xhr.responseText||'';"
 				"respHeaders=xhr.getAllResponseHeaders?xhr.getAllResponseHeaders():'';"
 			"}catch(e){}"
+			"if(typeof __workLogFetch==='function')__workLogFetch(String(url),ok,status);"
 			"var resp={"
 				"ok:ok,status:status,"
 				"text:function(){"
@@ -4100,7 +4130,14 @@ unsigned char js_exec(struct jsthread *thread,
 	if (!ok) {
 		JSValue exc = JS_GetException(thread->ctx);
 		const char *estr = JS_ToCString(thread->ctx, exc);
-		macsurf_debug_log_writef("qjs exec err [%s len=%ld]: %s",
+		/* fixes843b (#167 S1 census) — "err" (lowercase) never matched the
+		 * crash-only log gate's "ERROR" (uppercase) keyword, so every JS
+		 * exception on every page has been silently invisible in a normal
+		 * build since fixes765. WORK-prefix it so a census build actually
+		 * shows what's throwing. Remove the WORK prefix once the census
+		 * round is done (this is deliberately loud -- one line per failed
+		 * script, which is the whole point right now). */
+		macsurf_debug_log_writef("WORK qjs exec err [%s len=%ld]: %s",
 			name ? name : "(anon)", (long)txtlen, estr ? estr : "?");
 		if (estr) JS_FreeCString(thread->ctx, estr);
 

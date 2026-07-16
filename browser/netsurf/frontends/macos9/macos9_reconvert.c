@@ -183,6 +183,11 @@ macos9_reconvert_cb(void *p)
 	}
 
 	rc = html_reconvert_content(c);		/* 0 = queued, !=0 = busy */
+	/* fixes843b (#167 S1 census) — this callback is only ever scheduled
+	 * after macos9_js_mark_dom_dirty's host-allowed check passed, so it
+	 * fires for facebook.com content only; safe to log unconditionally. */
+	macsurf_debug_log_writef("WORK reconvert: html_reconvert_content rc=%d c=%p",
+			rc, (void *) c);
 	if (rc != 0) {
 		/* mid-layout or a convert already in flight — re-arm */
 		(void) macos9_schedule(RECONVERT_DEBOUNCE_MS,
@@ -212,6 +217,12 @@ macos9_js_mark_dom_dirty(struct content *c)
 	 * pre-fixes384 behaviour no matter what g_reconvert_enabled is. */
 	if (!macos9_reconvert_host_allowed(c))
 		return;
+	/* fixes843b (#167 S1 census) — proves a JS mutation actually reached
+	 * here AND matched the host allow-list. Only fires for facebook.com
+	 * content by construction (the check above), so this is naturally
+	 * rate-limited to what we actually want to see. */
+	macsurf_debug_log_writef("WORK reconvert: dirty-mark host-allowed, scheduling c=%p",
+			(void *) c);
 	/* fixes421 — two crash vectors closed in html_reconvert:
 	 * (1) DOUBLE-BUFFER: old bctx deferred past dom_to_box so the re-cascade
 	 *     can share already-interned styles rather than free-then-reintern

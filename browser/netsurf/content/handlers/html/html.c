@@ -1725,12 +1725,15 @@ static void html_reconvert_done(html_content *c, bool success)
 	nserror err;
 
 	c->box_conversion_context = NULL;
-	macsurf_debug_log_writef("reconvert: done success=%d layout=%p",
+	/* fixes843b (#167 S1 census) — WORK-gated: only reachable via the
+	 * facebook.com-gated path (macos9_js_mark_dom_dirty), so naturally
+	 * rate-limited; not filtered by the failures-only release gate. */
+	macsurf_debug_log_writef("WORK reconvert: done success=%d layout=%p",
 			(int)success, (void *)c->layout);
 	macsurf_profile_stamp("reconvert-done");
 
 	if ((success == false) || (c->aborted)) {
-		macsurf_debug_log_writef("reconvert: FAILED/aborted");
+		macsurf_debug_log_writef("WORK reconvert: FAILED/aborted");
 		html_reconvert_free_old();   /* don't leak the deferred old tree */
 		return;
 	}
@@ -1779,7 +1782,7 @@ nserror html_reconvert(html_content *c)
 		return NSERROR_NEED_DATA;
 	}
 
-	macsurf_debug_log_writef("reconvert: start layout=%p", (void *)c->layout);
+	macsurf_debug_log_writef("WORK reconvert: start layout=%p", (void *)c->layout);
 
 	/* HAZARD guards BEFORE freeing the box tree (order matters). */
 	html_reconvert_clear_node_boxes(c);          /* H1: stale node boxes */
