@@ -600,13 +600,45 @@ static void html_get_dimensions(html_content *htmlc)
 	/* fixes611 DIAG: log the media viewport width used for @media
 	 * evaluation. If this is < 901 at CSS-select time, the mobile
 	 * (max-width:900) branch bakes into the cascade and the desktop
-	 * two-column layout never applies even in a 949px window. */
+	 * two-column layout never applies even in a 949px window.
+	 *
+	 * fixes858 (#287 probe) — re-prefixed "WORK " so it survives the
+	 * failures-only log gate (macsurf_debug_log.c drops anything not
+	 * whitelisted; the old prefix meant this line has been invisible on
+	 * every default build), and widened to carry the whole em chain.
+	 *
+	 * Reading it: `em` in a media query resolves against fsdef (the CSS-px
+	 * default font size), so hackaday's `@media (min-width:59.5em)` -- which
+	 * gates its ENTIRE desktop layout incl. .main-navigation (display:none
+	 * until it matches) -- needs mediaw >= need595. Chrome: fsdef=16 ->
+	 * need595=952 -> matches in a ~958px window. MacSurf: nsoption font_size
+	 * is 0.1pt units, 160 = 16pt, and html.c converts 96*16/72 -> fsdef=21.33
+	 * -> need595=1269 -> never matches, so we render the mobile branch and
+	 * the nav stays hidden.
+	 *
+	 * dpi is the other half: browser_set_dpi() is never called, so
+	 * nscss_screen_dpi keeps its F_96 static init while QuickDraw is 72dpi.
+	 * mediaw is device2css_px(device_w, dpi), so at dpi=96 CSS px == device
+	 * px (958). At the physically-correct dpi=72 the same window would report
+	 * 1277 CSS px and 1277 > 1269 would match -- with text unchanged (px->pt
+	 * is a fixed 72/96, independent of dpi) but every px LAYOUT length
+	 * shrinking to 0.75x. That trade-off is the maintainer's call; this probe
+	 * exists to supply the real numbers first rather than guess. */
 	{
 		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		int mediaw = (int)FIXTOINT(htmlc->media.width);
+		int fsdef  = (int)FIXTOINT(f_size);
 		macsurf_debug_log_writef(
-			"html_get_dimensions: media.width=%d media.height=%d",
-			(int)FIXTOINT(htmlc->media.width),
-			(int)FIXTOINT(htmlc->media.height));
+			"WORK mediaq mediaw=%d mediah=%d dpi=%d fsdef=%d fsmin=%d "
+			"need595=%d need705=%d desktop=%d",
+			mediaw,
+			(int)FIXTOINT(htmlc->media.height),
+			(int)FIXTOINT(device_dpi),
+			fsdef,
+			(int)FIXTOINT(f_min),
+			(int)((fsdef * 595 + 5) / 10),
+			(int)((fsdef * 705 + 5) / 10),
+			(mediaw * 10 >= fsdef * 595) ? 1 : 0);
 	}
 #endif
 }
