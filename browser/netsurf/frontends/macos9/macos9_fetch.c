@@ -32,6 +32,7 @@ extern OTClientContextPtr macos9_ot_context;
 #endif
 
 #include "macos9_useragent.h"
+#include "macos9_blocklist.h"
 
 /* fixes368 (#167) — per-host User-Agent table (Classilla "sitecontrol"
  * pattern). See macos9_useragent.h. To add a site override, add a
@@ -143,6 +144,109 @@ const char *macos9_user_agent_for_host(const char *host)
 		}
 	}
 	return MACOS9_UA_DEFAULT;
+}
+
+/* fixes856 (#285) — tracker / ad-network / consent-platform host blocklist.
+ * See macos9_blocklist.h for the full rationale, the measured hackaday.com
+ * numbers (~908 KB of 2406 KB = ~38% of the page), the allow-policy for small
+ * privacy-respecting analytics (umami/plausible/fathom/...), and the list of
+ * origins deliberately left OUT because blocking them would break real work.
+ *
+ * Entries are host SUFFIXES matched on a dot boundary. Keep them grouped and
+ * keep the comments: the next person needs to know why a row is here before
+ * they add a neighbour that quietly breaks a site. */
+static const char *const macos9_tracker_hosts[] = {
+	/* --- Google analytics / tag management / ads --- */
+	"google-analytics.com",
+	"googletagmanager.com",		/* gtag/js = 475 KB on hackaday alone */
+	"googlesyndication.com",
+	"googleadservices.com",
+	"doubleclick.net",
+	"adservice.google.com",
+	/* --- Consent-management platforms (banner = pure drag on OS 9) --- */
+	"usercentrics.eu",		/* hackaday: loader + WebSdk + JSON ~433 KB */
+	"cookielaw.org",		/* OneTrust */
+	"onetrust.com",
+	"cookiebot.com",
+	"consensu.org",
+	"trustarc.com",
+	/* --- Analytics / RUM / session recording --- */
+	"scorecardresearch.com",
+	"quantserve.com",
+	"quantcast.com",
+	"chartbeat.com",
+	"chartbeat.net",
+	"newrelic.com",			/* js-agent.newrelic.com */
+	"nr-data.net",
+	"hotjar.com",
+	"fullstory.com",
+	"mouseflow.com",
+	"crazyegg.com",
+	"clarity.ms",			/* Microsoft Clarity */
+	"mixpanel.com",
+	"segment.com",
+	"segment.io",
+	"amplitude.com",
+	"branch.io",
+	/* --- WordPress.com telemetry ONLY.  s0/s1/i0.wp.com serve real assets
+	 * and jetpack.wordpress.com hosts the comment iframe — never add those. */
+	"stats.wp.com",
+	"pixel.wp.com",
+	/* --- Ad exchanges / servers --- */
+	"adnxs.com",
+	"criteo.com",
+	"criteo.net",
+	"taboola.com",
+	"outbrain.com",
+	"pubmatic.com",
+	"rubiconproject.com",
+	"openx.net",
+	"adsrvr.org",
+	"amazon-adsystem.com",
+	"casalemedia.com",
+	"indexexchange.com",
+	"33across.com",
+	"sharethrough.com",
+	"adform.net",
+	"smartadserver.com",
+	"teads.tv",
+	/* --- Social tracking pixels.  NOTE: facebook.net / fbcdn.net / fbsbx.com
+	 * are deliberately ABSENT — #167 loads the real site through them. --- */
+	"ads-twitter.com",
+	"analytics.twitter.com",
+	"analytics.tiktok.com",
+	"px.ads.linkedin.com",
+	"snap.licdn.com",
+	"bat.bing.com",
+	/* --- Ad servers seen on hackaday specifically --- */
+	"rv-ads.supplyframe.com",
+	"analytics.supplyframe.com"
+	/* Add new rows here. Before adding: confirm the origin serves NOTHING the
+	 * page needs to render, and that the suffix cannot swallow a sibling host
+	 * that does (the facebook.net case above is the cautionary tale). */
+};
+
+int macos9_host_is_tracker(const char *host)
+{
+	size_t hl;
+	size_t n;
+	size_t i;
+	if (host == NULL) return 0;
+	hl = strlen(host);
+	n = sizeof(macos9_tracker_hosts) / sizeof(macos9_tracker_hosts[0]);
+	for (i = 0; i < n; i++) {
+		size_t sl = strlen(macos9_tracker_hosts[i]);
+		/* Dot-boundary suffix match, same spoof-guard as the UA table:
+		 * "doubleclick.net" matches ad.doubleclick.net but never
+		 * evildoubleclick.net. */
+		if (hl >= sl &&
+		    strncasecmp(host + hl - sl,
+				macos9_tracker_hosts[i], sl) == 0 &&
+		    (hl == sl || host[hl - sl - 1] == '.')) {
+			return 1;
+		}
+	}
+	return 0;
 }
 
 /* fixes835 (#167 Facebook M1) — case-insensitive substring test. Used by

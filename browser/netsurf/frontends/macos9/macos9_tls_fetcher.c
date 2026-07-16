@@ -28,6 +28,7 @@
 #include "content/fetchers.h"
 #include "content/urldb.h"	/* fixes367 (#167) — cookie jar: urldb_get_cookie */
 #include "macos9_useragent.h"	/* fixes368 (#167) — per-host UA table */
+#include "macos9_blocklist.h"	/* fixes856 (#285) — tracker/ad blocklist */
 #include "macsurf_debug.h"
 
 #include <string.h>
@@ -2216,6 +2217,27 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		 * handshake EVERY URL in setup order regardless of per-host
 		 * throttle, killing the fixes231 keep-alive pool. */
 		if (!c->started) return;
+
+		/* fixes856 (#285) — refuse trackers / ad networks / consent
+		 * platforms outright.  Checked FIRST: this host is never going to
+		 * contribute a pixel, so there is no reason to pay for a TLS
+		 * handshake, the bytes, or the QuickJS parse+exec of a bundle built
+		 * for a modern desktop CPU.  On hackaday.com this drops ~908 KB of
+		 * 2406 KB (~38%) — gtag/js alone is 475 KB, one request.  Marked
+		 * terminal so hctx_fail suppresses the http scheme-fallback and core
+		 * never re-queues it: one clean FETCH_ERROR per URL, exactly the
+		 * fixes554 contract.  Blocked scripts simply never run, which is what
+		 * an ad blocker does everywhere; the page's own JS is unaffected
+		 * because these are independent <script> tags.  See
+		 * macos9_blocklist.h for the policy (umami/plausible/... allowed) and
+		 * for the origins deliberately NOT in the table. */
+		if (c->url != NULL && macos9_host_is_tracker(c->host)) {
+			macsurf_debug_log_writef(
+				"WORK blocked tracker host=%s", c->host);
+			(void)terminal_url_add(nsurl_access(c->url));
+			hctx_fail(c, "https: tracker/ad host blocked");
+			return;
+		}
 
 		/* fixes554 — per-URL terminal fail: a resource URL that already
 		 * fast-failed once renders alt text and is NEVER retried.  Checked
