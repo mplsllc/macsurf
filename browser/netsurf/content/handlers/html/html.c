@@ -241,6 +241,33 @@ bool fire_dom_keyboard_event(dom_string *type, dom_node *target,
 	return result;
 }
 
+/* fixes850 (#167 perf investigation) — cheap iterative box-tree counter
+ * for the WORK log below. Iterative (explicit stack via the sibling/child
+ * pointers already on struct box), not recursive: this must not add its
+ * own stack-depth risk to a diagnostic for a stack-depth-adjacent
+ * investigation. A NULL root counts as zero. */
+static long macsurf_count_boxes(struct box *root)
+{
+	struct box *b = root;
+	long n = 0;
+
+	if (b == NULL) return 0;
+
+	while (b != NULL) {
+		n++;
+		if (b->children != NULL) {
+			b = b->children;
+			continue;
+		}
+		while (b != root && b->next == NULL) {
+			b = b->parent;
+		}
+		if (b == root) break;
+		b = b->next;
+	}
+	return n;
+}
+
 /**
  * Perform post-box-creation conversion of a document
  *
@@ -268,9 +295,18 @@ static void html_box_convert_done(html_content *c, bool success)
 		extern double macos9_micros(void);
 		double elapsed_us = (s_convert_start_us > 0.0) ?
 				(macos9_micros() - s_convert_start_us) : -1.0;
+		/* fixes850 (#167 perf investigation) — the fixes849 hardware log
+		 * showed layout's call count climbing steadily into the millions
+		 * with bounded recursion depth (21-30) -- real work, not a hang,
+		 * but that alone doesn't say whether 1.5M+ calls is proportionate
+		 * to this page's actual size or a sign something is being
+		 * redone. Logging the real box count here (once, cheap, box
+		 * tree is already fully built at this point) gives the
+		 * calls-per-box ratio the next log needs to tell those apart. */
+		long box_count = macsurf_count_boxes(c->layout);
 		macsurf_debug_log_writef(
-				"WORK pipeline: box+cascade DONE us=%ld c=%p url=%s",
-				(long) elapsed_us, (void *) c,
+				"WORK pipeline: box+cascade DONE us=%ld boxes=%ld c=%p url=%s",
+				(long) elapsed_us, box_count, (void *) c,
 				nsurl_access(content_get_url((struct content *) c)));
 		s_convert_start_us = 0.0;
 	}
