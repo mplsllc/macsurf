@@ -767,18 +767,27 @@ int main(void)
 		if (!ok) { fprintf(stderr, "FAIL: arm iframe timer\n"); return 1; }
 		fprintf(stderr, "armed one live timer in each of 2 runtimes\n");
 
-		/* Navigate heap 1. js_newthread() calls qjs_flush_timers(heap->ctx).
-		 * Pre-fix this freed heap2's callback against heap1's runtime and
-		 * blew up inside js_shape_hash_unlink. */
+		/* Navigate heap2 (the iframe). js_newthread() calls
+		 * qjs_flush_timers(heap2->ctx); pre-fix that freed the MAIN heap's
+		 * still-live callback against heap2's runtime and blew up inside
+		 * js_shape_hash_unlink.
+		 *
+		 * Deliberately navigating heap2 and NOT the main heap: js_newthread
+		 * does `JS_FreeContext(heap->ctx); heap->ctx = fresh;` and only
+		 * points the NEW jsthread at the fresh ctx -- so navigating the main
+		 * heap would leave this file's long-lived `thread` holding a freed
+		 * JSContext, and every later test (7, 8) would silently be running in
+		 * a dead realm. Same cross-runtime exercise either way. */
 		{
 			struct jsthread *thread_nav = NULL;
-			nerr = js_newthread(heap, NULL, (void *)&htmlc, &thread_nav);
+			nerr = js_newthread(heap2, NULL, (void *)&htmlc, &thread_nav);
 			if (nerr != NSERROR_OK) {
 				fprintf(stderr, "FAIL: js_newthread(nav) nerr=%d\n",
 						(int)nerr);
 				return 1;
 			}
-			fprintf(stderr, "heap1 navigation flush survived\n");
+			thread2 = thread_nav;   /* old thread2 ctx is now freed */
+			fprintf(stderr, "iframe navigation flush survived\n");
 		}
 
 		/* heap2's realm must still be intact and usable. */
@@ -901,6 +910,83 @@ int main(void)
 	fprintf(stderr, "=== Test 7 PASS: jQuery clears the document-identity probe "
 			"(fixes855); any remaining throw is the known traversal gap "
 			"(cloneNode/firstChild/lastChild/childNodes) ===\n");
+
+	/* --- Test 8 (fixes861, #289): EVERY heap's timers must fire, not just the
+	 * newest.  js_newheap() runs per browser_window AND per (i)frame, and the
+	 * browser's one pump (main.c -> macsurf_qjs_pump_all) used to pump only
+	 * g_heap = the most-recently-created heap.  That was survivable while
+	 * run_timers fired every arena slot regardless of owner; fixes854 correctly
+	 * gated slots on `t->ctx == qctx` (they were being freed/called against a
+	 * foreign runtime), which left exactly ONE heap able to tick.
+	 *
+	 * On hardware that froze the Jetpack comment iframe: its
+	 * IntersectionObserver.observe() delivery is a setTimeout(...,0), so the
+	 * reply box never loaded.  This models it directly -- two heaps, a timer
+	 * armed in each, one pump -- and asserts BOTH fire.  Pre-fix the older
+	 * heap's timer never runs. --- */
+	fprintf(stderr, "\n=== Test 8: pump_all fires timers in EVERY heap ===\n");
+	{
+		extern void macsurf_qjs_pump_all(void);
+		struct jsheap *heapA = NULL, *heapB = NULL;
+		struct jsthread *thA = NULL, *thB = NULL;
+		const char *arm =
+			"globalThis.__ticked=0;setTimeout(function(){globalThis.__ticked=1;},0);";
+		const char *check =
+			"if(!globalThis.__ticked)"
+				"throw new Error('ASSERT FAIL: this heap never ticked');";
+		unsigned char ok;
+		int pump;
+
+		/* heapA first, heapB second -> g_heap == heapB, so pre-fix heapA
+		 * is the frozen one (exactly the iframe-vs-page situation). */
+		if (js_newheap(20000, &heapA) != NSERROR_OK ||
+		    js_newthread(heapA, NULL, (void *)&htmlc, &thA) != NSERROR_OK) {
+			fprintf(stderr, "FAIL: heapA setup\n"); return 1;
+		}
+		if (js_newheap(20000, &heapB) != NSERROR_OK ||
+		    js_newthread(heapB, NULL, (void *)&htmlc, &thB) != NSERROR_OK) {
+			fprintf(stderr, "FAIL: heapB setup\n"); return 1;
+		}
+		ok = js_exec(thA, (const unsigned char *)arm, strlen(arm), "arm-A.js");
+		if (!ok) { fprintf(stderr, "FAIL: arm heapA\n"); return 1; }
+		ok = js_exec(thB, (const unsigned char *)arm, strlen(arm), "arm-B.js");
+		if (!ok) { fprintf(stderr, "FAIL: arm heapB\n"); return 1; }
+		fprintf(stderr, "armed a 0ms timer in each of 2 heaps (g_heap == heapB)\n");
+
+		for (pump = 0; pump < 8; pump++) macsurf_qjs_pump_all();
+
+		ok = js_exec(thB, (const unsigned char *)check, strlen(check), "check-B.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: newest heap (g_heap) never ticked\n");
+			return 1;
+		}
+		fprintf(stderr, "heapB (newest) ticked\n");
+		ok = js_exec(thA, (const unsigned char *)check, strlen(check), "check-A.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: the OLDER heap never ticked -- pump_all is "
+					"still single-heap, so an iframe's realm is frozen "
+					"(this is the hackaday reply-box bug)\n");
+			return 1;
+		}
+		fprintf(stderr, "heapA (older) ticked\n");
+		js_destroyheap(heapB);
+		js_destroyheap(heapA);
+		/* The main heap must still tick after those teardowns -- proves
+		 * js_destroyheap unlinks cleanly and pump_all is not walking freed
+		 * memory. */
+		ok = js_exec(thread, (const unsigned char *)arm, strlen(arm), "arm-main.js");
+		if (!ok) { fprintf(stderr, "FAIL: arm main heap\n"); return 1; }
+		for (pump = 0; pump < 8; pump++) macsurf_qjs_pump_all();
+		ok = js_exec(thread, (const unsigned char *)check, strlen(check), "check-main.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: main heap stopped ticking after teardown "
+					"(bad unlink in js_destroyheap)\n");
+			return 1;
+		}
+		fprintf(stderr, "main heap still ticks after both teardowns\n");
+	}
+	fprintf(stderr, "=== Test 8 PASS: every live heap's timers fire; teardown "
+			"unlinks cleanly ===\n");
 
 	free(html_src_big);
 	return 0;

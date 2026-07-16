@@ -43,6 +43,12 @@ struct jsheap {
 	JSRuntime *rt;
 	JSContext *ctx;
 	int timeout;
+	/* fixes861 (#289) — every live heap, so macsurf_qjs_pump_all() can pump
+	 * ALL of them.  js_newheap() runs per browser_window AND per (i)frame
+	 * (browser_window.c:3373), so "the heap" has never been a real thing on a
+	 * page with an iframe; g_heap is only ever the most-RECENTLY-created one.
+	 * See the note on macsurf_qjs_pump_all(). */
+	struct jsheap *next;
 };
 
 struct jsthread {
@@ -52,7 +58,17 @@ struct jsthread {
 	void *doc_priv;
 };
 
+/* The most-recently-created heap.  NOT "the" heap: js_newheap() runs per
+ * browser_window AND per (i)frame, so on any page carrying an iframe there are
+ * two or more, each with its OWN JSRuntime.  Only use g_heap where "whatever
+ * realm is current" is genuinely right; anything that must reach EVERY live
+ * heap has to walk g_heap_list (fixes861). */
 static struct jsheap *g_heap = NULL;
+
+/* fixes861 (#289) — every live heap, newest first.  js_newheap() links,
+ * js_destroyheap() unlinks.  Exists so macsurf_qjs_pump_all() can pump all of
+ * them; see the note there for why pumping only g_heap froze iframes. */
+static struct jsheap *g_heap_list = NULL;
 
 /* ------------------------------------------------------------------ */
 /* Interrupt handler — Cmd-. on OS 9                                   */
@@ -4227,6 +4243,10 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 	heap->timeout = timeout;
 
 	g_heap = heap;
+	/* fixes861 (#289) — link into the all-heaps list so this heap's timers
+	 * actually get pumped.  Newest-first; order does not matter. */
+	heap->next = g_heap_list;
+	g_heap_list = heap;
 	*out_heap = heap;
 	MS_LOG("qjs: heap created");
 
@@ -4270,6 +4290,15 @@ void js_destroyheap(struct jsheap *heap)
 	qjs_wrap_drain();
 	if (heap->rt  != NULL) JS_FreeRuntime(heap->rt);
 	if (g_heap == heap) g_heap = NULL;
+	/* fixes861 (#289) — unlink before the free, or pump_all walks freed
+	 * memory on the very next event-loop pass. */
+	{
+		struct jsheap **pp = &g_heap_list;
+		while (*pp != NULL) {
+			if (*pp == heap) { *pp = heap->next; break; }
+			pp = &(*pp)->next;
+		}
+	}
 	free(heap);
 }
 
@@ -5049,16 +5078,49 @@ void js_event_cleanup(struct jsthread *thread, struct dom_event *evt)
 	(void)thread; (void)evt;
 }
 
+/* fixes861 (#289) — pump EVERY live heap, not just g_heap.
+ *
+ * This is the one timer pump in the browser (main.c's event loop calls it).  It
+ * used to do `tmp.qctx = g_heap->ctx; run_timers(&tmp);` -- a single heap.  That
+ * was survivable only while run_timers fired every slot in the global arena
+ * regardless of owner: the "wrong" ctx still dragged the other heap's timers
+ * along.  fixes854 stopped that (it was freeing/JS_Calling JSValues against a
+ * foreign runtime -- the js_shape_hash_unlink crash) and correctly gated every
+ * slot on `t->ctx == qctx`.  Correct, but it left this pump single-heap: with
+ * g_heap only ever the most-RECENTLY-created heap, and js_newheap() running per
+ * window AND per (i)frame (browser_window.c:3373), exactly ONE heap's timers
+ * could still fire.  Any page with an iframe had a frozen realm -- and which
+ * one flipped depending on creation order.
+ *
+ * HW-observed on hackaday.com: the Jetpack comment iframe's dynamic-loader.js
+ * calls IntersectionObserver.observe(#commentform), whose delivery is a
+ * setTimeout(...,0) (see the IntersectionObserver shim).  The iframe's heap was
+ * not g_heap, so that timer never ran, the IO callback never delivered,
+ * WP_Enqueue_Dynamic_Script.loadScript('verbum') was never called, and
+ * verbum-comments.js was never even fetched -- the reply box rendered as an
+ * empty Preact mount (iframe box tree = 6 boxes).  Confirmed by the fixes860
+ * probe: every script reaching dom_SCRIPT_showed_up was flags=6
+ * (PARSER_INSERTED|NON_BLOCKING) i.e. parser-created and correctly skipped, with
+ * ZERO flags=4 JS-injected ones, and by `WORK xhr` = 0 in the log (fetch() never
+ * ran, and macos9_js_fetch.c logs every send).
+ *
+ * Walking the list is safe against a callback creating a heap (new heaps are
+ * prepended, so `h` and its tail stay valid) but NOT against one destroying a
+ * heap mid-walk, so read `next` BEFORE running the timers. */
 void macsurf_qjs_pump_all(void)
 {
-	if (g_heap == NULL || g_heap->ctx == NULL) return;
-	{
-		struct jscontext tmp;
-		tmp.qctx = g_heap->ctx;
-		tmp.qrt  = g_heap->rt;
-		tmp.win_priv = NULL;
-		tmp.doc_priv = NULL;
-		macsurf_qjs_run_timers(&tmp);
+	struct jsheap *h = g_heap_list;
+	while (h != NULL) {
+		struct jsheap *next = h->next;
+		if (h->ctx != NULL) {
+			struct jscontext tmp;
+			tmp.qctx = h->ctx;
+			tmp.qrt  = h->rt;
+			tmp.win_priv = NULL;
+			tmp.doc_priv = NULL;
+			macsurf_qjs_run_timers(&tmp);
+		}
+		h = next;
 	}
 }
 
