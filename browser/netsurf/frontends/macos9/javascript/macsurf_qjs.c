@@ -5064,7 +5064,20 @@ unsigned char js_fire_dom_ready(struct jsthread *thread, struct dom_document *do
 		return 0;
 	}
 	macsurf_qjs__safe_eval(thread->ctx, s_dom_ready_src);
-	macsurf_debug_log_writef("qjs: DOMContentLoaded+load fired to document");
+	/* fixes862 (#289 probe) — was "qjs: DOMContentLoaded+load fired to
+	 * document", which the failures-only gate DROPS (macsurf_debug_log.c:
+	 * only "WORK " and genuine failures survive), so this has been invisible
+	 * on every default build. That matters now: hackaday's comment iframe
+	 * loads its form from inside
+	 *     window.addEventListener("DOMContentLoaded", ...)
+	 * so if this never fires for the IFRAME's realm, its entire loader body
+	 * -- querySelector, IntersectionObserver, loadScript, fetch -- never runs,
+	 * which is exactly what the log shows (WORK xhr = 0, no injected script).
+	 * ctx distinguishes the realms: the main page and the iframe are separate
+	 * heaps, so two different ctx values must appear here. Only one = the
+	 * iframe never gets DOMContentLoaded. */
+	macsurf_debug_log_writef("WORK domready fired ctx=%p doc=%p",
+			(void *)thread->ctx, (void *)doc);
 	return 1;
 }
 
@@ -5110,6 +5123,24 @@ void js_event_cleanup(struct jsthread *thread, struct dom_event *evt)
 void macsurf_qjs_pump_all(void)
 {
 	struct jsheap *h = g_heap_list;
+	/* fixes862 (#289 probe) — fixes861 shipped with NO observable marker, so
+	 * there was no way to tell from a log whether it was even in the build,
+	 * let alone whether a second (iframe) heap exists to pump. Log the heap
+	 * count, but ONLY when it changes: this runs every event-loop pass, so an
+	 * unconditional line would drown the log. heaps>=2 on an iframe page also
+	 * confirms browser_window_initialise_common (frames.c:232 -> js_newheap)
+	 * really does give iframes their own heap -- an assumption fixes861 rests
+	 * on and which I have not otherwise verified on hardware. */
+	static int s_last_heaps = -1;
+	int heaps = 0;
+	{
+		struct jsheap *c = g_heap_list;
+		while (c != NULL) { heaps++; c = c->next; }
+	}
+	if (heaps != s_last_heaps) {
+		s_last_heaps = heaps;
+		macsurf_debug_log_writef("WORK pump heaps=%d", heaps);
+	}
 	while (h != NULL) {
 		struct jsheap *next = h->next;
 		if (h->ctx != NULL) {
