@@ -4603,7 +4603,16 @@ unsigned char js_exec(struct jsthread *thread,
 	int ok;
 	char *src;
 
-	if (thread == NULL || thread->ctx == NULL) return 0;
+	/* fixes847 (#167 S1 census gap) — the other half of the js_exec
+	 * visibility fix below: if thread/ctx is NULL, js_exec bails before
+	 * even reaching the entry breadcrumb, and NOTHING about this script
+	 * is ever logged. Make that visible too, so "zero js activity" in a
+	 * hardware log can be told apart from "no thread was ever wired". */
+	if (thread == NULL || thread->ctx == NULL) {
+		macsurf_debug_log_writef("WORK js exec: no thread/ctx [%s]",
+				name ? name : "(anon)");
+		return 0;
+	}
 	if (txt == NULL || txtlen == 0) return 1;
 
 	/* fixes587 BISECTION DIAG: short-circuit ALL script execution. With this
@@ -4626,7 +4635,14 @@ unsigned char js_exec(struct jsthread *thread,
 
 	/* Hard size cap */
 	if (txtlen > 4194304UL) {
-		macsurf_debug_log_writef("js skip [%s len=%ld > 4MB]",
+		/* fixes847 (#167 S1 census gap) — WORK-prefixed: this line was
+		 * plain macsurf_debug_log_writef, silently dropped by the
+		 * failures-only release filter (only WORK/NAV/FAIL/etc. survive
+		 * it — see the log-visibility-traps gotcha). A hardware log
+		 * showing zero js activity of ANY kind on facebook.com could not
+		 * be told apart from "a bundle silently hit this cap" without
+		 * this being visible. */
+		macsurf_debug_log_writef("WORK js skip [%s len=%ld > 4MB]",
 			name ? name : "(anon)", (long)txtlen);
 		return 0;
 	}
@@ -4636,7 +4652,17 @@ unsigned char js_exec(struct jsthread *thread,
 	 * bundles are valid pure-ASCII JS host-side, yet QuickJS reports
 	 * SyntaxError / invalid-UTF-8 on them.  Logs len + 32-bit byte-sum (as
 	 * hex via %p) + first 40 printable bytes; compare to the canonical
-	 * fingerprint.  Remove once the cause is pinned. */
+	 * fingerprint.  Remove once the cause is pinned.
+	 * fixes847 (#167 S1 census gap) — WORK-prefixed. This is js_exec's
+	 * OWN entry breadcrumb, the single line that answers "did any script
+	 * on this page get to QuickJS at all" -- it was plain
+	 * macsurf_debug_log_writef, silently dropped by the failures-only
+	 * release filter. A hardware log against real Facebook (2026-07-16,
+	 * fixes846 build) showed real .js bundles downloading (fbresp
+	 * status=200) but ZERO qjs/reconvert/xhr/fetch activity of any kind
+	 * -- with this line gated, that log is genuinely ambiguous between
+	 * "no script ever executed" and "scripts ran cleanly but never
+	 * touched fetch/XHR/DOM". This makes the next log unambiguous. */
 	{
 		const unsigned char *dp = (const unsigned char *)txt;
 		unsigned long dsum = 0;
@@ -4649,7 +4675,7 @@ unsigned char js_exec(struct jsthread *thread,
 			dhead[di] = (b >= 32 && b < 127) ? (char)b : '.';
 		}
 		dhead[dn] = '\0';
-		macsurf_debug_log_writef("js src [%s] len=%ld sum=%p head=%s",
+		macsurf_debug_log_writef("WORK js src [%s] len=%ld sum=%p head=%s",
 			name ? name : "?", (long)txtlen, (void *)dsum, dhead);
 	}
 

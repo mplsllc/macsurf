@@ -128,8 +128,26 @@ nserror html_script_exec(html_content *c, bool allow_defer)
 			/* ensure script handler for content type */
 			script_handler = select_script_handler(
 					content_get_type(s->data.handle));
-			if (script_handler == NULL)
+			if (script_handler == NULL) {
+				/* fixes847 (#167 S1 census gap) — this is a silent
+				 * script-execution skip with NO log of any kind
+				 * before this fix: select_script_handler() only
+				 * returns non-NULL for CONTENT_JS (0x40, see
+				 * netsurf/content_type.h); if the fetched resource's
+				 * detected content-type is anything else (a
+				 * misdetected/unexpected Content-Type header,
+				 * content sniffing choosing wrong, etc.) the script
+				 * NEVER runs and nothing anywhere says so. Async/
+				 * defer scripts are exactly the pattern modern
+				 * sites (Facebook) use for their real bundles. */
+				macsurf_debug_log_writef(
+					"WORK script_exec: SKIP unsupported "
+					"content_type=%d url=%s",
+					(int) content_get_type(s->data.handle),
+					nsurl_access(
+						hlcache_handle_get_url(s->data.handle)));
 				continue; /* unsupported type */
+			}
 
 			if (content_get_status(s->data.handle) ==
 					CONTENT_STATUS_DONE) {
@@ -138,6 +156,15 @@ nserror html_script_exec(html_content *c, bool allow_defer)
 				size_t size;
 				data = content_get_source_data(
 						s->data.handle, &size );
+				/* fixes847 (#167 S1 census gap) — positive
+				 * confirmation a script is actually about to reach
+				 * js_exec, WORK-gated (this whole function had zero
+				 * log lines of any kind before this fix). */
+				macsurf_debug_log_writef(
+					"WORK script_exec: RUN bytes=%ld url=%s",
+					(long) size,
+					nsurl_access(
+						hlcache_handle_get_url(s->data.handle)));
 				script_handler(c->js_thread, data, size,
 					       nsurl_access(hlcache_handle_get_url(s->data.handle)));
 				have_run_something = true;
@@ -614,8 +641,21 @@ convert_script_sync_cb(hlcache_handle *script,
 			const uint8_t *data;
 			size_t size;
 			data = content_get_source_data(s->data.handle, &size );
+			/* fixes847 (#167 S1 census gap) — the sync-script sibling of
+			 * html_script_exec's RUN log below. */
+			macsurf_debug_log_writef(
+				"WORK script_exec: RUN(sync) bytes=%ld url=%s",
+				(long) size,
+				nsurl_access(hlcache_handle_get_url(s->data.handle)));
 			script_handler(parent->js_thread, data, size,
 				       nsurl_access(hlcache_handle_get_url(s->data.handle)));
+		} else {
+			macsurf_debug_log_writef(
+				"WORK script_exec: SKIP(sync) handler=%p "
+				"js_thread=%p content_type=%d url=%s",
+				(void *) script_handler, (void *) parent->js_thread,
+				(int) content_get_type(s->data.handle),
+				nsurl_access(hlcache_handle_get_url(s->data.handle)));
 		}
 
 		/* fixes581 DIAG: js_exec returned. If the log ends here (after
