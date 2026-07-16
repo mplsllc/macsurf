@@ -64,10 +64,26 @@ NSOPTION_STRING(http_proxy_noproxy, "localhost")
 NSOPTION_INTEGER(treeview_font_size, 110)
 
 /** Default font size (unit: 0.1pt) */
-/* fixes830 (#244): 128 (12.8pt) -> 160 (16pt) so the root default and the
- * `font-size: medium` keyword match the mainstream-browser 16px baseline,
- * consistent with the UA body{font-size:16px} bump. */
-NSOPTION_INTEGER(font_size, 160)
+/* fixes859 (#287): 160 (16pt) -> 120 (12pt).  MUST land together with the
+ * css_unit_len2device_px switch in html_font.c -- neither is correct alone.
+ *
+ * This option is in 0.1pt, and html.c:593 converts it to the CSS-px default:
+ * 96*(N/10)/72.  fixes830 set 160 aiming at "the mainstream-browser 16px
+ * baseline", but 16pt is 21.33 CSS px, not 16 -- because the real problem was
+ * downstream (font_plot_style_from_css went through points, so QuickDraw's
+ * 72dpi TextSize rendered every CSS px at 0.75x), and inflating the default by
+ * 1.33x hid it for the DEFAULT size only.  The cost was everything that reads
+ * the default in CSS px: 1rem and media-query 1em became 21.33px instead of
+ * 16px, so hackaday's `@media (min-width:59.5em)` demanded 1269px of viewport
+ * instead of 952 and its entire desktop branch (nav, 86px logo, 7rem title)
+ * never applied.
+ *
+ * 120 = 12pt = 96*12/72 = exactly 16.00 CSS px -- Chrome's default, so em/rem/
+ * @media now agree with every other browser.  On screen the default is
+ * UNCHANGED: html_font.c now converts CSS px -> device px (96dpi, 1:1) rather
+ * than to points, so medium is still size=16.  Do not "fix" this back to 160
+ * without also reverting html_font.c -- see the note there. */
+NSOPTION_INTEGER(font_size, 120)
 
 /** Minimum font size. */
 NSOPTION_INTEGER(font_min_size, 85)

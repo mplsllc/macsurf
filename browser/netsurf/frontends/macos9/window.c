@@ -1222,10 +1222,25 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 		sh = (short)(sb.bottom - sb.top);
 		want_w = 1024;
 		want_h = 768;
-		left = 40;
+		/* fixes859 (#287) — left 40 -> 8 and the right margin 20 -> 8.
+		 * On the 1024x768 baseline this window used to open 964 wide, and
+		 * after the 15px scrollbar that left a 949px viewport -- confirmed
+		 * exactly by the fixes858 probe (mediaw=949 mediah=609, both
+		 * predicted from these constants).  Desktop CSS breakpoints cluster
+		 * right there: hackaday's is 59.5em = 952 CSS px once em resolves
+		 * correctly (fixes859), so 949 missed the desktop branch BY THREE
+		 * PIXELS and fell back to mobile -- no nav, 42px logo, 2.1rem title.
+		 * 60px of a 1024px screen was going to margins we do not need; 8+8
+		 * yields a 1008px window -> 993px viewport, clearing 952 with room
+		 * and still leaving the window visibly framed on screen.  top/30
+		 * are left alone: vertical has no breakpoint riding on it.
+		 * NOTE both halves matter -- widening alone does nothing while
+		 * @media still demands 1269px, and the em fix alone still lands 3px
+		 * short in a 949px viewport. */
+		left = 8;
 		top = 50;
-		if ((short)(sw - left - 20) < want_w) {
-			want_w = (short)(sw - left - 20);
+		if ((short)(sw - left - 8) < want_w) {
+			want_w = (short)(sw - left - 8);
 		}
 		if ((short)(sh - top - 30) < want_h) {
 			want_h = (short)(sh - top - 30);

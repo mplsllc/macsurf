@@ -147,7 +147,34 @@ void font_plot_style_from_css(
 	fstyle->families = families;
 
 	css_computed_font_size(css, &length, &unit);
-	fstyle->size = FIXTOINT(FMUL(css_unit_font_size_len2pt(css,
+	/* fixes859 (#287) — DEVICE PIXELS, not points.
+	 *
+	 * This used css_unit_font_size_len2pt(), and the macos9 plotter feeds
+	 * fstyle->size straight to QuickDraw's TextSize() -- which is a POINT
+	 * size that QuickDraw renders at 72dpi, i.e. 1 pt = 1 device pixel.  But
+	 * nscss_screen_dpi is 96 (cssh_css.c:61; browser_set_dpi() is never
+	 * called), so the cascade says 1 CSS px == 1 device px.  The pt hop threw
+	 * away that 96/72: EVERY author `font-size:14px` was measured and drawn
+	 * at 14*72/96 = 10.5 device px -- 25% too small, browser-wide.  That is
+	 * why small text has always looked cramped here, and it is what fixes830
+	 * was really compensating for when it inflated the DEFAULT font 128->160
+	 * to make the default look right (leaving every explicit px size short,
+	 * and every em/rem/@media resolving against a 21.33px default instead of
+	 * 16 -- hackaday's `@media (min-width:59.5em)` wanted 1269px instead of
+	 * 952, so its whole desktop branch, nav included, never applied).
+	 *
+	 * len2device_px honours ctx->device_dpi, so the value lands in the same
+	 * space the plotter and macos9_font.c already treat it as (they even name
+	 * the local `size_px`).  Paired with font_size 160->120 in options.h, the
+	 * DEFAULT is unchanged on screen -- was: medium = 21.33 CSS px -> 16 pt ->
+	 * size=16; now: medium = 16 CSS px -> 16 device px -> size=16, the same
+	 * number -- while author px sizes become correct (14px: 10 -> 14) and
+	 * em/rem/@media finally match Chrome.  Both must land together: this alone
+	 * would scale all text 1.33x, and the option alone would shrink it 0.75x.
+	 *
+	 * The min clamp below is unit-agnostic and keeps the same effective floor
+	 * (8.5 -> 8.5 device px), so it needs no change. */
+	fstyle->size = FIXTOINT(FMUL(css_unit_len2device_px(css,
 				      unit_len_ctx, length, unit),
 				      INTTOFIX(PLOT_STYLE_SCALE)));
 
