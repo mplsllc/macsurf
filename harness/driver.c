@@ -655,6 +655,58 @@ int main(void)
 	fprintf(stderr, "=== Test 4 PASS: createTextNode/createDocumentFragment/"
 			"innerHTML all build real, connected DOM ===\n");
 
+	/* --- Test 5 (fixes853): IntersectionObserver must actually FIRE. Modern
+	 * feeds (Facebook) gate content load on it -- a no-op observer means the
+	 * feed JS runs but never requests data. This observes an element, pumps
+	 * the real JS timer arena (macsurf_qjs_pump_all, exactly what the WNE
+	 * loop calls), and asserts the callback fired asynchronously with
+	 * isIntersecting=true. --- */
+	fprintf(stderr, "\n=== Test 5: IntersectionObserver fires the callback ===\n");
+	{
+		extern void macsurf_qjs_pump_all(void);
+		const char *io_setup_js =
+			"globalThis.__ioFired=0;globalThis.__ioIntersecting=0;"
+			"(function(){"
+			"var el=document.createElement('div');"
+			"var io=new IntersectionObserver(function(entries){"
+				"globalThis.__ioFired=1;"
+				"if(entries&&entries[0]&&entries[0].isIntersecting)"
+					"globalThis.__ioIntersecting=1;"
+			"});"
+			"io.observe(el);"
+			"})();";
+		const char *io_check_js =
+			"if(!globalThis.__ioFired)"
+				"throw new Error('ASSERT FAIL: IO callback never fired');"
+			"if(!globalThis.__ioIntersecting)"
+				"throw new Error('ASSERT FAIL: IO entry not isIntersecting');";
+		unsigned char ok1, ok2;
+		int pump;
+
+		ok1 = js_exec(thread, (const unsigned char *)io_setup_js,
+				strlen(io_setup_js), "driver-io-setup.js");
+		if (!ok1) {
+			fprintf(stderr, "FAIL: IO setup threw\n");
+			return 1;
+		}
+		/* observe() scheduled the entry via setTimeout(0); the async
+		 * delivery only happens when the timer arena is pumped. */
+		for (pump = 0; pump < 8; pump++) {
+			macsurf_qjs_pump_all();
+			harness_pump_all(1000);
+		}
+		ok2 = js_exec(thread, (const unsigned char *)io_check_js,
+				strlen(io_check_js), "driver-io-check.js");
+		fprintf(stderr, "js_exec(io check) ok=%d\n", (int)ok2);
+		if (!ok2) {
+			fprintf(stderr, "FAIL: IntersectionObserver did not deliver "
+					"an isIntersecting entry after pumping timers\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 5 PASS: IntersectionObserver delivers an "
+			"isIntersecting entry asynchronously ===\n");
+
 	free(html_src_big);
 	return 0;
 }

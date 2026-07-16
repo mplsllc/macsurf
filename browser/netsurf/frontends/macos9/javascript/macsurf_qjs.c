@@ -3016,7 +3016,23 @@ static void register_browser_globals(JSContext *ctx)
 			"navigator.sendBeacon=function(){return false;};"
 		"}");
 
-	/* --- Observers (stubs) --- */
+	/* --- Observers --- *
+	 * MutationObserver / ResizeObserver / PerformanceObserver stay no-ops
+	 * (firing them risks feedback loops with our own reconvert/relayout).
+	 * IntersectionObserver is DIFFERENT and must actually fire: modern
+	 * feeds (Facebook) gate their content load on it -- they observe the
+	 * feed container and only request/reveal content when the observer
+	 * reports it intersecting the viewport. A no-op observer means the
+	 * "you're visible, load now" signal never arrives, so the feed JS runs
+	 * (confirmed on hardware: ~550KB executed) but issues ZERO fetch/XHR
+	 * and never hydrates. fixes853 (#167): give IntersectionObserver a
+	 * real-enough implementation -- observe() asynchronously delivers a
+	 * single isIntersecting=true entry for the target (a pragmatic
+	 * "visible on layout" first cut; geometry-accurate viewport testing is
+	 * a later refinement), which is the trigger that lets the feed request
+	 * its data through the now-real fetch/XHR (fixes846). Fires via the
+	 * real timer arena (setTimeout), asynchronously, exactly as a browser
+	 * delivers observer records. */
 	macsurf_qjs__safe_eval(ctx,
 		"function _Observer(cb){this._cb=cb;}"
 		"_Observer.prototype.observe=function(){};"
@@ -3024,9 +3040,37 @@ static void register_browser_globals(JSContext *ctx)
 		"_Observer.prototype.disconnect=function(){};"
 		"_Observer.prototype.takeRecords=function(){return [];};"
 		"this.MutationObserver=_Observer;"
-		"this.IntersectionObserver=_Observer;"
 		"this.ResizeObserver=_Observer;"
 		"this.PerformanceObserver=_Observer;");
+	macsurf_qjs__safe_eval(ctx,
+		"function IntersectionObserver(cb,opts){"
+			"this._cb=cb;this._opts=opts||{};this._targets=[];"
+			"this.root=(opts&&opts.root)||null;"
+			"this.rootMargin=(opts&&opts.rootMargin)||'0px';"
+			"this.thresholds=[0];"
+		"}"
+		"IntersectionObserver.prototype.observe=function(el){"
+			"if(!el)return;"
+			"this._targets.push(el);"
+			"var self=this;"
+			"setTimeout(function(){"
+				"if(self._targets.indexOf(el)<0)return;"
+				"var r=(el.getBoundingClientRect&&el.getBoundingClientRect())||"
+					"{top:0,left:0,bottom:0,right:0,width:0,height:0,x:0,y:0};"
+				"var entry={target:el,isIntersecting:true,"
+					"intersectionRatio:1,boundingClientRect:r,"
+					"intersectionRect:r,rootBounds:null,"
+					"time:(typeof performance!=='undefined'&&performance.now)?"
+						"performance.now():0};"
+				"try{self._cb([entry],self);}catch(e){}"
+			"},0);"
+		"};"
+		"IntersectionObserver.prototype.unobserve=function(el){"
+			"var i=this._targets.indexOf(el);if(i>=0)this._targets.splice(i,1);"
+		"};"
+		"IntersectionObserver.prototype.disconnect=function(){this._targets=[];};"
+		"IntersectionObserver.prototype.takeRecords=function(){return [];};"
+		"this.IntersectionObserver=IntersectionObserver;");
 
 	/* --- window event helpers, scroll, getComputedStyle, matchMedia --- */
 	macsurf_qjs__safe_eval(ctx,
