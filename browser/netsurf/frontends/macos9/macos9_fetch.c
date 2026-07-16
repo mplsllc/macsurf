@@ -59,6 +59,23 @@ static const char MACOS9_UA_DEFAULT[] =
 static const char MACOS9_UA_FB_KAIOS[] =
 	"Mozilla/5.0 (Mobile; LYF/F90M/LYF-F90M-000-02-44-130319; rv:48.0) Gecko/48.0 Firefox/48.0 KAIOS/2.5";
 
+/* fixes842 (#167 Facebook) — desktop Firefox 134, restored for the VIEWING
+ * surface. The fixes841 one-KaiOS-device baseline proved the login stack: a
+ * clean account logs in fully on m.facebook.com (KaiOS) — c_user + xs set, no
+ * checkpoint, lands on the logged-in home — and the session persists (fixes838
+ * cookies). BUT the KaiOS logged-in surface refuses the feed ("Facebook is not
+ * available on this device — switch to a mobile or desktop device"), HW-seen
+ * 2026-07-16. So we split again by ROLE: m.facebook.com stays KaiOS (the
+ * reliable no-checkpoint LOGIN surface), while www/apex facebook.com + the
+ * fbcdn/facebook.net asset origins use FF134 (the DESKTOP surface that renders
+ * the real logged-in shell — the June baseline: nav + group-chats rail; the
+ * feed itself is JS-built and awaits the JS work). The session cookies
+ * (c_user/xs) are domain-wide .facebook.com, so a KaiOS login on m carries
+ * straight over to an FF134 view on www. Sec-Fetch is synthesized per request
+ * in build_request. */
+static const char MACOS9_UA_FB_FF134[] =
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0";
+
 struct macos9_ua_rule {
 	const char *suffix;	/* host suffix, e.g. "facebook.com" */
 	const char *ua;		/* User-Agent to send to that host */
@@ -66,18 +83,19 @@ struct macos9_ua_rule {
 
 static const struct macos9_ua_rule macos9_ua_rules[] = {
 	/*
-	 * fixes841 (#167): ONE KaiOS device for EVERY Facebook origin (see the
-	 * MACOS9_UA_FB_KAIOS note above for why we consolidated). The single
-	 * "facebook.com" suffix row covers www.facebook.com, m.facebook.com, and
-	 * the apex via the dot-boundary matcher, so no separate m.facebook.com row
-	 * is needed. fbcdn.net / facebook.net (the asset+SDK origins) get the SAME
-	 * KaiOS UA so a real KaiOS device's asset fetches match its navigation —
-	 * one coherent device, nothing for FB to cross-check as inconsistent.
-	 * Do NOT append " MacSurf/..." — FB's KaiOS gate is exact.
+	 * fixes842 (#167): split by ROLE (see the MACOS9_UA_FB_FF134 note). The
+	 * m.facebook.com row is MORE SPECIFIC and MUST stay first (first-match-
+	 * wins): it keeps the KaiOS UA — the reliable no-checkpoint LOGIN surface
+	 * (a clean account logs straight in, c_user+xs). www/apex facebook.com and
+	 * the fbcdn/facebook.net assets use FF134 — the DESKTOP surface that shows
+	 * the logged-in shell (KaiOS logged-in = "not available on this device").
+	 * Session cookies are domain-wide, so login on m carries to viewing on www.
+	 * Do NOT append " MacSurf/..." to the KaiOS UA — FB's gate is exact.
 	 */
-	{ "facebook.com", MACOS9_UA_FB_KAIOS },
-	{ "fbcdn.net",    MACOS9_UA_FB_KAIOS },
-	{ "facebook.net", MACOS9_UA_FB_KAIOS },
+	{ "m.facebook.com", MACOS9_UA_FB_KAIOS },
+	{ "facebook.com",   MACOS9_UA_FB_FF134 },
+	{ "fbcdn.net",      MACOS9_UA_FB_FF134 },
+	{ "facebook.net",   MACOS9_UA_FB_FF134 },
 	/*
 	 * fixes821: Hacker News UA-gates /login (and other dynamic routes)
 	 * at nginx: the honest "MacSurf/2.0.5 (Macintosh; PPC Mac OS 9)" UA
