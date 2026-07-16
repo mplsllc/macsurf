@@ -256,17 +256,34 @@ void font_plot_style_from_css(
 			fstyle->transform_b = (int)0x01000100;
 		}
 	}
-	/* Safety: when the CSS cascade produces a suspicious colour (white,
-	 * transparent, or otherwise garbage from an incomplete computed
-	 * style), force foreground to opaque black so text is always
-	 * legible. This is a diagnostic fallback; real CSS text colour
-	 * support lands once the cascade is sound. NetSurf colour is XBGR
-	 * so 0x00000000 = opaque black. */
-	{
-		uint32_t rgb = fstyle->foreground & 0x00ffffff;
-		if (rgb == 0x00000000 || rgb == 0x00ffffff)
-			fstyle->foreground = 0x00000000;
-	}
+	/* fixes857 (#286) — the white-to-black clamp is GONE.  It used to read:
+	 *     rgb = fstyle->foreground & 0x00ffffff;
+	 *     if (rgb == 0x00000000 || rgb == 0x00ffffff)
+	 *             fstyle->foreground = 0x00000000;
+	 * i.e. any text the cascade computed as pure WHITE was repainted opaque
+	 * BLACK.  Its own comment called it "a diagnostic fallback; real CSS text
+	 * colour support lands once the cascade is sound" -- a v0.4-era guard from
+	 * when the UA sheet still had body{background:#fff} and a mis-cascaded
+	 * white would vanish into it.  fixes629 fixed that for real (dropped the
+	 * UA body background, moved the default text colour to an inheritable,
+	 * author-overridable html{color:#000}), but the clamp was never removed --
+	 * so it kept silently mugging the single most common colour on the modern
+	 * web: white text on a dark theme.
+	 *
+	 * HW-observed on hackaday.com: `h1,h1>a,h2,h2>a{color:#fff}` (style.css:344)
+	 * rendered BLACK on the #1a1a1a body, while `<p>` under
+	 * `body{color:#ddd}` (style.css:310) rendered correctly light -- because
+	 * #dddddd is not pure white and slipped past the == test.  That split is
+	 * the clamp's fingerprint, and it also proves the cascade is sound: the
+	 * exact same sheet, element and inheritance chain deliver #ddd fine.  Only
+	 * #fff was ever broken.
+	 *
+	 * There is nothing to replace it with.  `color: #fff` is valid CSS and the
+	 * renderer's job is to draw it; a page that really does put white on white
+	 * is broken in every browser, and guessing on the author's behalf is what
+	 * caused this bug.  Deliberately no clamp, no heuristic, no contrast
+	 * fixup -- if text is illegible, fix the cascade or the backdrop, not the
+	 * colour at the point of use. */
 }
 
 int font_plot_style_baseline(const plot_font_style_t *fstyle, int line_height)
