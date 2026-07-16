@@ -797,6 +797,34 @@ html_create_html_data(html_content *c, const http_parameter *params)
 	c->js_thread = NULL;
 
 	c->enable_scripting = nsoption_bool(enable_javascript);
+#ifdef __MACOS9__
+	/* fixes852 (#167) — m.facebook.com is FB's no-JS feature-phone
+	 * surface (KaiOS UA — the reliable login + new-device-checkpoint
+	 * path; see the role split in macos9_fetch.c: KaiOS on m, FF134 on
+	 * www). Phase 1 completed login there with FB's JS effectively inert
+	 * (fetch/XHR were dead stubs). fixes846 made those bundles run for
+	 * real, and on hardware the notification-2FA approval stopped
+	 * completing — the log shows FB's ~550KB of JS executing on the
+	 * two_factor page, ZERO xhr/fetch, ZERO reconvert, and c_user/xs
+	 * never issued (login parked at the checkpoint). The m. surface is
+	 * DESIGNED to work without scripting; running FB's modern JS there
+	 * only invites a JS-app flow that half-works. Force scripting OFF for
+	 * m.facebook.com so the plain-HTML login/checkpoint flow (and any
+	 * <noscript> fallback, which hubbub only parses to real DOM when
+	 * scripting is off — in_head.c:147) run as they did pre-Phase-2.
+	 * www.facebook.com (the feed, which NEEDS JS) is unaffected. */
+	if (c->base_url != NULL) {
+		lwc_string *hcomp = nsurl_get_component(c->base_url, NSURL_HOST);
+		if (hcomp != NULL) {
+			const char *hs = lwc_string_data(hcomp);
+			size_t hl = lwc_string_length(hcomp);
+			if (hl == 14 && strncasecmp(hs, "m.facebook.com", 14) == 0) {
+				c->enable_scripting = false;
+			}
+			lwc_string_unref(hcomp);
+		}
+	}
+#endif
 	c->base.active = 1; /* The html content itself is active */
 
 	if (lwc_intern_string("*", SLEN("*"), &c->universal) != lwc_error_ok) {
