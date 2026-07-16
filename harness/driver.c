@@ -707,6 +707,171 @@ int main(void)
 	fprintf(stderr, "=== Test 5 PASS: IntersectionObserver delivers an "
 			"isIntersecting entry asynchronously ===\n");
 
+	/* --- Test 6 (fixes854, #283): THE hackaday.com crash — a timer JSValue
+	 * must never be freed against a foreign JSRuntime.
+	 *
+	 * js_newheap() runs per browser_window AND per (i)frame
+	 * (browser_window.c:3373 "new javascript context for each
+	 * window/(i)frame"), and each heap gets its OWN JSRuntime — so ANY page
+	 * carrying an iframe (hackaday's Jetpack comment form; Facebook's fbsbx
+	 * pixel) has two runtimes alive at once.  s_timer_arena, though, is ONE
+	 * global array.  qjs_flush_timers() used to free every live slot against
+	 * the passed ctx regardless of which heap owned it, so navigating the
+	 * main page freed the IFRAME's callback against the MAIN runtime:
+	 *   JS_FreeValue(ctx_main, fn_iframe) -> refcount 0
+	 *     -> free_object(rt_main, obj_iframe)
+	 *       -> js_free_shape(rt_main, shape_iframe)
+	 *         -> js_shape_hash_unlink(rt_main, shape_iframe)
+	 * and that last one walks rt_main's bucket chain hunting a shape that
+	 * lives in rt_iframe's table.  It never matches, the loop has no NULL
+	 * check, and it runs off the end of the chain — on hardware a PowerPC
+	 * unmapped memory exception at js_shape_hash_unlink+0004C; here a SEGV
+	 * near-null as the walk dereferences (NULL)->shape_hash_next.
+	 *
+	 * This models exactly that: two heaps, one live anonymous-closure timer
+	 * in each (refcount 1, so the flush really does drive it to zero), then
+	 * a navigation flush on heap 1.  With the fix, heap 1 touches only its
+	 * own slot and heap 2's timer survives untouched. --- */
+	fprintf(stderr, "\n=== Test 6: cross-runtime timer free "
+			"(main page + iframe) ===\n");
+	{
+		struct jsheap *heap2 = NULL;
+		struct jsthread *thread2 = NULL;
+		const char *arm_js =
+			"globalThis.__fired=0;"
+			"setTimeout(function(){globalThis.__fired=1;}, 99000);";
+		const char *live_js =
+			"if(typeof setTimeout!=='function')"
+				"throw new Error('ASSERT FAIL: realm damaged');";
+		unsigned char ok;
+
+		/* heap2 == the iframe: a second, independent JSRuntime. */
+		nerr = js_newheap(20000, &heap2);
+		if (nerr != NSERROR_OK) {
+			fprintf(stderr, "FAIL: js_newheap(2) nerr=%d\n", (int)nerr);
+			return 1;
+		}
+		nerr = js_newthread(heap2, NULL, (void *)&htmlc, &thread2);
+		if (nerr != NSERROR_OK) {
+			fprintf(stderr, "FAIL: js_newthread(2) nerr=%d\n", (int)nerr);
+			return 1;
+		}
+
+		/* Arm a long timer in EACH runtime. Anonymous closures, so the arena
+		 * slot holds the only reference and the flush drives refcount to 0. */
+		ok = js_exec(thread, (const unsigned char *)arm_js,
+				strlen(arm_js), "driver-timer-main.js");
+		if (!ok) { fprintf(stderr, "FAIL: arm main timer\n"); return 1; }
+		ok = js_exec(thread2, (const unsigned char *)arm_js,
+				strlen(arm_js), "driver-timer-iframe.js");
+		if (!ok) { fprintf(stderr, "FAIL: arm iframe timer\n"); return 1; }
+		fprintf(stderr, "armed one live timer in each of 2 runtimes\n");
+
+		/* Navigate heap 1. js_newthread() calls qjs_flush_timers(heap->ctx).
+		 * Pre-fix this freed heap2's callback against heap1's runtime and
+		 * blew up inside js_shape_hash_unlink. */
+		{
+			struct jsthread *thread_nav = NULL;
+			nerr = js_newthread(heap, NULL, (void *)&htmlc, &thread_nav);
+			if (nerr != NSERROR_OK) {
+				fprintf(stderr, "FAIL: js_newthread(nav) nerr=%d\n",
+						(int)nerr);
+				return 1;
+			}
+			fprintf(stderr, "heap1 navigation flush survived\n");
+		}
+
+		/* heap2's realm must still be intact and usable. */
+		ok = js_exec(thread2, (const unsigned char *)live_js,
+				strlen(live_js), "driver-iframe-live.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: iframe realm damaged by heap1's flush\n");
+			return 1;
+		}
+
+		/* Tearing down heap2 must also be clean: js_destroyheap now flushes
+		 * this heap's own slots before JS_FreeContext, so no live slot is
+		 * left pointing into a freed runtime. */
+		js_destroyheap(heap2);
+		fprintf(stderr, "iframe heap destroyed cleanly\n");
+
+		/* And the main heap must still run JS afterwards. */
+		ok = js_exec(thread, (const unsigned char *)live_js,
+				strlen(live_js), "driver-main-live.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: main realm damaged by iframe teardown\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 6 PASS: timers are per-runtime; no cross-runtime "
+			"free through navigation-flush or heap teardown ===\n");
+
+	/* --- Test 7 (fixes855, #284): the REAL jQuery must initialise.
+	 * hackaday's first script is the _static ??-bundle of jquery.min.js +
+	 * jquery-migrate.min.js, and on hardware it dies with "TypeError: cannot
+	 * read property 'createElement' of undefined", after which every
+	 * dependent bundle reports "ReferenceError: jQuery is not defined".
+	 * jQuery 3.7.1's setDocument only captures the document when
+	 * `9===n.nodeType && n.documentElement` -- and document.nodeType was
+	 * never set, so its internal handle T stayed undefined and the first
+	 * T.createElement() support probe threw.  This runs the byte-exact file
+	 * hackaday serves through the real js_exec path. --- */
+	fprintf(stderr, "\n=== Test 7: real jQuery 3.7.1 initialises ===\n");
+	{
+		FILE *jf = fopen("jquery-3.7.1.min.js", "rb");
+		char *jsrc; long jlen; size_t rd;
+		unsigned char ok;
+		const char *probe_js =
+			"if(document.nodeType!==9)"
+				"throw new Error('ASSERT FAIL: document.nodeType='+document.nodeType);"
+			"if(!document.documentElement)"
+				"throw new Error('ASSERT FAIL: no documentElement');";
+		const char *check_js =
+			"if(typeof jQuery==='undefined')"
+				"throw new Error('ASSERT FAIL: jQuery is not defined');"
+			"if(typeof jQuery.fn==='undefined'||!jQuery.fn.jquery)"
+				"throw new Error('ASSERT FAIL: jQuery.fn missing');"
+			"globalThis.__jqver=jQuery.fn.jquery;";
+		if (jf == NULL) {
+			fprintf(stderr, "SKIP: jquery-3.7.1.min.js not present\n");
+		} else {
+			fseek(jf, 0, SEEK_END); jlen = ftell(jf); fseek(jf, 0, SEEK_SET);
+			jsrc = (char *)malloc((size_t)jlen + 1);
+			rd = fread(jsrc, 1, (size_t)jlen, jf);
+			jsrc[rd] = '\0';
+			fclose(jf);
+
+			ok = js_exec(thread, (const unsigned char *)probe_js,
+					strlen(probe_js), "driver-doc-probe.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: document node identity wrong "
+						"(nodeType must be 9)\n");
+				return 1;
+			}
+			fprintf(stderr, "document.nodeType==9 and documentElement present\n");
+
+			ok = js_exec(thread, (const unsigned char *)jsrc, rd,
+					"jquery-3.7.1.min.js");
+			fprintf(stderr, "js_exec(real jQuery %ld bytes) ok=%d\n",
+					jlen, (int)ok);
+			if (!ok) {
+				fprintf(stderr, "FAIL: real jQuery threw during init\n");
+				free(jsrc);
+				return 1;
+			}
+			ok = js_exec(thread, (const unsigned char *)check_js,
+					strlen(check_js), "driver-jq-check.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: jQuery did not export itself\n");
+				free(jsrc);
+				return 1;
+			}
+			free(jsrc);
+		}
+	}
+	fprintf(stderr, "=== Test 7 PASS: real jQuery 3.7.1 initialises and "
+			"exports jQuery.fn ===\n");
+
 	free(html_src_big);
 	return 0;
 }

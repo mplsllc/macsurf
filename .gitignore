@@ -88,3 +88,4 @@ __pycache__/
 /harness/reconvert_harness
 !/harness/build/
 !/harness/build/*
+harness/jquery-3.7.1.min.js

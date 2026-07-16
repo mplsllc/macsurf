@@ -493,13 +493,31 @@ static JSValue qjs_history_go(JSContext *ctx, JSValueConst this_val,
 
 #define QJS_MAX_TIMERS 64
 
+/* fixes854 (#283) — `ctx` is the OWNER of this slot's `fn`, captured at
+ * setTimeout time, and it is load-bearing, not bookkeeping.  js_newheap()
+ * runs per browser_window AND per (i)frame (browser_window.c:3373 "new
+ * javascript context for each window/(i)frame"), and every heap gets its
+ * OWN JSRuntime (JS_NewRuntime2 in js_newheap) — so a page with an iframe
+ * has TWO runtimes, each with its own shape hash table, sharing this ONE
+ * global arena.  A JSValue is only ever valid against the runtime that made
+ * it: JS_FreeValue(ctx_B, fn_from_rt_A) decrefs an rt_A object, and when it
+ * hits zero free_object() -> js_free_shape(rt_B, shape_A) ->
+ * js_shape_hash_unlink(rt_B, shape_A) walks rt_B's bucket chain looking for
+ * a shape that lives in rt_A's table, never finds it, and runs off the end
+ * into unmapped memory.  That is the hackaday.com crash (PowerPC unmapped
+ * memory exception at js_shape_hash_unlink+0004C, reached via
+ * qjs_flush_timers -> JS_FreeValue -> free_object -> js_free_shape).
+ * Every touch of `fn` MUST therefore be gated on `t->ctx == <this ctx>`.
+ * This mirrors the XHR slot arena (macos9_js_fetch.c), which captures its
+ * owning `ctx` and filters on it in macos9_js_fetch_flush(). */
 struct qjs_timer {
-	int     id;
-	double  expiry_ms;
-	int     repeating;
-	double  interval_ms;
-	int     live;
-	JSValue fn;
+	int        id;
+	double     expiry_ms;
+	int        repeating;
+	double     interval_ms;
+	int        live;
+	JSContext *ctx;		/* owner of `fn` — see the note above */
+	JSValue    fn;
 };
 
 static struct qjs_timer s_timer_arena[QJS_MAX_TIMERS];
@@ -522,8 +540,14 @@ static struct qjs_timer *timer_alloc(void)
 		if (!s_timer_arena[i].live) return &s_timer_arena[i];
 	}
 	/* All full: reclaim the soonest-expiring slot.  Free its callback ref
-	 * against the shared context (fixes the eviction leak) and mark it
-	 * not-live; the caller reuses the slot immediately. */
+	 * and mark it not-live; the caller reuses the slot immediately.
+	 * fixes854 (#283) — free against the slot's OWN ctx, never g_heap->ctx.
+	 * g_heap is just "the most recently created heap"; with an iframe on the
+	 * page the evicted slot can belong to a DIFFERENT heap/runtime, and
+	 * freeing an rt_A JSValue against rt_B corrupts rt_B's shape table (see
+	 * the struct qjs_timer note).  A live slot always has a live ctx:
+	 * qjs_flush_timers() clears this ctx's slots on navigation and
+	 * js_destroyheap() clears them on teardown, both BEFORE JS_FreeContext. */
 	oldest = &s_timer_arena[0];
 	oldest_expiry = oldest->expiry_ms;
 	for (i = 1; i < QJS_MAX_TIMERS; i++) {
@@ -532,10 +556,11 @@ static struct qjs_timer *timer_alloc(void)
 			oldest_expiry = s_timer_arena[i].expiry_ms;
 		}
 	}
-	if (g_heap != NULL && g_heap->ctx != NULL) {
-		JS_FreeValue(g_heap->ctx, oldest->fn);
-		oldest->fn = JS_UNDEFINED;
+	if (oldest->ctx != NULL) {
+		JS_FreeValue(oldest->ctx, oldest->fn);
 	}
+	oldest->fn = JS_UNDEFINED;
+	oldest->ctx = NULL;
 	oldest->live = 0;
 	return oldest;
 }
@@ -564,6 +589,10 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	t->repeating = repeating;
 	t->interval_ms = delay_ms;
 	t->live = 1;
+	/* fixes854 (#283) — capture the owning context alongside the dup.  `fn`
+	 * belongs to THIS ctx's runtime and may only ever be duped/called/freed
+	 * against it. */
+	t->ctx = ctx;
 	t->fn = JS_DupValue(ctx, argv[0]);
 
 	return JS_NewInt32(ctx, id);
@@ -594,9 +623,16 @@ static JSValue qjs_cleartimeout(JSContext *ctx, JSValueConst this_val,
 		int i;
 		for (i = 0; i < QJS_MAX_TIMERS; i++) {
 			t = &s_timer_arena[i];
-			if (t->live && t->id == target_id) {
+			/* fixes854 (#283) — `t->ctx == ctx` is a correctness gate, not
+			 * an optimisation: ids come from one global counter shared by
+			 * every heap, so without it a page could clearTimeout an
+			 * IFRAME's id and free that runtime's JSValue against this
+			 * context (see the struct qjs_timer note).  It also correctly
+			 * scopes clearTimeout to the caller's own realm. */
+			if (t->live && t->id == target_id && t->ctx == ctx) {
 				JS_FreeValue(ctx, t->fn);
 				t->fn = JS_UNDEFINED;
+				t->ctx = NULL;
 				t->live = 0;
 				break;
 			}
@@ -614,9 +650,20 @@ static void qjs_flush_timers(JSContext *old_ctx)
 	int i;
 	if (old_ctx == NULL) return;
 	for (i = 0; i < QJS_MAX_TIMERS; i++) {
-		if (s_timer_arena[i].live) {
+		/* fixes854 (#283) — THE hackaday.com crash.  This used to free every
+		 * live slot against old_ctx.  The arena is global but heaps are
+		 * per-window/per-iframe and each has its own JSRuntime, so on any
+		 * page with an iframe it freed the IFRAME's timer JSValues against
+		 * the MAIN page's context: JS_FreeValue(ctx_main, fn_iframe) ->
+		 * free_object(rt_main, obj_iframe) -> js_shape_hash_unlink(rt_main,
+		 * shape_iframe) -> the bucket walk never finds a shape that lives in
+		 * rt_iframe's table -> runs off the chain -> unmapped memory
+		 * exception at js_shape_hash_unlink+0004C.  Only ever touch slots
+		 * this context owns; the other heap flushes its own. */
+		if (s_timer_arena[i].live && s_timer_arena[i].ctx == old_ctx) {
 			JS_FreeValue(old_ctx, s_timer_arena[i].fn);
 			s_timer_arena[i].fn = JS_UNDEFINED;
+			s_timer_arena[i].ctx = NULL;
 			s_timer_arena[i].live = 0;
 		}
 	}
@@ -645,7 +692,14 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 	 * -> the tinkerdifferent hard-freeze). */
 	ndue = 0;
 	for (i = 0; i < QJS_MAX_TIMERS; i++) {
-		if (s_timer_arena[i].live && s_timer_arena[i].expiry_ms <= now) {
+		/* fixes854 (#283) — only fire timers belonging to THIS context.  The
+		 * arena is shared by every heap (one per window/iframe, each with its
+		 * own JSRuntime), so without this gate the main page's poll would
+		 * JS_DupValue/JS_Call an IFRAME's callback against the main runtime —
+		 * a cross-runtime call on a JSValue rt_main never allocated.  Each
+		 * heap's own run_timers pass fires its own slots. */
+		if (s_timer_arena[i].live && s_timer_arena[i].ctx == qctx &&
+		    s_timer_arena[i].expiry_ms <= now) {
 			due_idx[ndue] = i;
 			due_id[ndue] = s_timer_arena[i].id;
 			ndue++;
@@ -662,7 +716,11 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		/* Revalidate: a prior callback may have cleared this timer, or
 		 * timer_alloc may have evicted+reused this slot for a different
 		 * id.  Only fire if it is still the same live timer. */
-		if (!t->live || t->id != due_id[k]) continue;
+		/* fixes854 (#283) — re-check the owner too: a callback can run
+		 * arbitrary JS, and an eviction may have handed this slot to a
+		 * DIFFERENT heap's setTimeout since we snapshotted, which would make
+		 * the JS_DupValue below cross-runtime. */
+		if (!t->live || t->id != due_id[k] || t->ctx != qctx) continue;
 
 		fn = JS_DupValue(qctx, t->fn);
 		if (t->repeating) {
@@ -670,6 +728,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		} else {
 			JS_FreeValue(qctx, t->fn);
 			t->fn = JS_UNDEFINED;
+			t->ctx = NULL;
 			t->live = 0;
 		}
 
@@ -689,12 +748,13 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 			JS_FreeValue(qctx, exc);
 			/* Deadline-abort of a still-live (repeating) timer: kill
 			 * it so the rogue interval can never re-freeze the UI. */
-			if (t->live && t->id == due_id[k] &&
+			if (t->live && t->id == due_id[k] && t->ctx == qctx &&
 			    macsurf_qjs_get_now() >= mydl) {
 				macsurf_debug_log_writef(
 					"qjs: TIMER TIMEOUT -- repeating timer KILLED");
 				JS_FreeValue(qctx, t->fn);
 				t->fn = JS_UNDEFINED;
+				t->ctx = NULL;
 				t->live = 0;
 			}
 		}
@@ -4171,6 +4231,18 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 void js_destroyheap(struct jsheap *heap)
 {
 	if (heap == NULL) return;
+	/* fixes854 (#283) — drop this heap's timer + XHR slots BEFORE the context
+	 * dies.  Both arenas are global while heaps are per-window/per-iframe, so
+	 * a closed iframe used to leave `live` slots behind holding JSValues into
+	 * a freed runtime: the next run_timers pass would JS_Call them, and the
+	 * next navigation's qjs_flush_timers would free them against an unrelated
+	 * context.  js_newthread() already does exactly this pair on the
+	 * navigation path; teardown needs it too.  Order is load-bearing (free
+	 * the refs against the still-live ctx, then free the ctx). */
+	if (heap->ctx != NULL) {
+		qjs_flush_timers(heap->ctx);
+		macos9_js_fetch_flush(heap->ctx);
+	}
 	if (heap->ctx != NULL) JS_FreeContext(heap->ctx);
 	/* fixes541: release any wrappers whose finalizer JS_FreeContext did not
 	 * run (obj->method reference cycles); both halves, then clear. */
