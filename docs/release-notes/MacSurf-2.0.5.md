@@ -43,7 +43,9 @@ Point MacSurf at **hackaday.com** and the article front page comes up — at rea
 
 ## Closed issues
 
-Closes #62, #201, #212, #227, #230, #232, #234, #235, #239, #244, #247, #249, #251, #253, #255, #256, #268, #270, #271, #272, #273, #275, #276, #277, #278, #279, #280, #282, #285, #286, #287.
+Closes #62, #201, #212, #227, #230, #232, #234, #235, #239, #244, #247, #249, #251, #252, #253, #268, #270, #271, #272, #273, #275, #276, #277, #278, #282, #283, #284, #285, #286, #287, #288, #289, #291, #292, #293, #294, #295, #296, #297, #298, #300, #301, #302, #304.
+
+Partial (the headline sub-feature shipped, remainder still tracked): #255 (`background-clip` box values; `background-clip:text` deferred), #256 (`image-rendering`; `box-decoration-break` deferred), #279 (`justify-items`; Grid Round 2 placement/minmax open), #280 (`<img src=*.svg>`; CSS `background:url(*.svg)` open).
 
 ## Seen on real hardware
 
