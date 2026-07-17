@@ -11,11 +11,14 @@
  * LAST mutation. A min-interval FLOOR bounds the re-convert rate so a
  * continuously-mutating feed (Facebook) cannot peg a 233 MHz G3.
  *
- * Crash-safety: the scheduled callback NEVER dereferences the (possibly stale)
- * scheduled content pointer. It re-fetches the FRONT window's current content
- * each fire, so a navigation between schedule and fire is harmless. The actual
- * teardown guards live in core html_reconvert (see
- * docs/research/js-dom-render-plan.md).
+ * Crash-safety: the scheduled callback never TRUSTS a scheduled content pointer.
+ * fixes874 makes it rebuild the contents that actually mutated (a frame's
+ * mutations belong to the frame, not to the front window), so it can no longer
+ * simply re-derive a guaranteed-live target from the front window. Instead each
+ * pending entry carries the content's registry GENERATION TOKEN, captured at
+ * mark time and re-validated at fire time -- which rejects both a freed content
+ * and a freed-then-recycled address (ABA). The actual teardown guards live in
+ * core html_reconvert (see docs/research/js-dom-render-plan.md).
  *
  * This is part of MacSurf, built on the NetSurf engine. Licensed under GPL v2.
  */
@@ -48,6 +51,81 @@ extern struct browser_window *macos9_gw_bw(struct gui_window *g);
 /* TickCount() of the last re-convert start (0 = none yet). */
 static unsigned long g_last_reconvert_tick = 0;
 
+/* fixes874 (#303) — the PENDING set: which contents actually mutated.
+ *
+ * Before this, the scheduled callback re-derived its target from the FRONT
+ * WINDOW (macos9_reconvert_front_content) and ignored the content that was
+ * marked dirty. That was invisible while the allow-list pinned this path to
+ * facebook.com, where the mutating document IS the front window's top-level
+ * document -- the two were the same thing by luck. They are not the same thing
+ * in general: hackaday's Verbum comment form lives in a cross-origin IFRAME, so
+ * its mutations belong to a CHILD content while the front window holds
+ * hackaday.com. The old code would have rebuilt the parent page (which did not
+ * change) and never the frame (which did) -- so the reply box could not paint
+ * even with every JS gate open. That is the white box.
+ *
+ * Registry TOKENS, not bare pointers: a content can be freed between schedule
+ * and fire, and the allocator can hand the same address to a NEW content
+ * (fixes550's ABA problem in script.c -- pointer-liveness alone returns a false
+ * positive and drives the WRONG document). Capture the generation token at MARK
+ * time and re-validate at FIRE time; that is the same contract
+ * macos9_unpause_payload uses, for the same reason.
+ *
+ * Small fixed array, no allocation: the scheduler dedups on (cb, param) and we
+ * always schedule with param NULL, so a mutation burst still collapses to one
+ * fire -- which it would not if each mark carried its own malloc'd payload.
+ * Overflow (more than N distinct mutating frames between fires) degrades to
+ * "reconvert the front content", i.e. exactly the old behaviour, rather than
+ * dropping the work. */
+#define RECONVERT_MAX_PENDING 8
+
+struct macos9_reconvert_pending {
+	struct content *c;
+	unsigned long   token;
+};
+
+static struct macos9_reconvert_pending g_pending[RECONVERT_MAX_PENDING];
+static int g_pending_overflow = 0;
+
+#ifdef __MACOS9__
+extern int macos9_content_is_live(struct content *c);
+extern unsigned long macos9_content_token(struct content *c);
+extern int macos9_content_token_valid(struct content *c, unsigned long token);
+#else
+#define macos9_content_is_live(c) (1)
+#define macos9_content_token(c) (1UL)
+#define macos9_content_token_valid(c, t) (1)
+#endif
+
+/* Record c as dirty. Idempotent per content, so a burst of mutations on one
+ * document occupies one slot rather than filling the table. */
+static void
+macos9_reconvert_pending_add(struct content *c)
+{
+	int i;
+	int freeslot = -1;
+
+	if (c == NULL)
+		return;
+	for (i = 0; i < RECONVERT_MAX_PENDING; i++) {
+		if (g_pending[i].c == c) {
+			/* Refresh the token: same address, possibly a newer
+			 * generation, and the newer one is what we want to
+			 * validate against at fire time. */
+			g_pending[i].token = macos9_content_token(c);
+			return;
+		}
+		if (g_pending[i].c == NULL && freeslot < 0)
+			freeslot = i;
+	}
+	if (freeslot < 0) {
+		g_pending_overflow = 1;
+		return;
+	}
+	g_pending[freeslot].c = c;
+	g_pending[freeslot].token = macos9_content_token(c);
+}
+
 /* fixes489 — master gate for JS-triggered re-convert.
  *
  * The re-convert path (fixes384/421) rebuilds the box tree from the
@@ -67,73 +145,21 @@ static unsigned long g_last_reconvert_tick = 0;
  * were never protected across the teardown+rebuild window the way the box
  * CONTEXT itself is (fixes421's double-buffer). html.c now pins them
  * (html_reconvert_pin_text_strings / _release_pinned_strings), closing
- * that gap. Default flips to ON, but macos9_reconvert_host_allowed()
- * below is the REAL safety boundary — only facebook.com family hosts can
- * actually reach macos9_schedule() from here, so a regression on XenForo
- * or anywhere else is structurally impossible regardless of this flag.
- * macsurf_js_set_reconvert_enabled(0) remains available as an emergency
- * global kill if the host-list approach ever needs to be paused wholesale. */
+ * that gap.
+ *
+ * fixes874 (#303) — the per-host allow-list that used to follow this flag is
+ * GONE; see macos9_js_mark_dom_dirty() for the full rationale. Short version:
+ * that list was never the fix for the crash above (fixes843's string pinning
+ * was), it was the rollout gate left standing afterwards because Facebook was
+ * the only verified site -- and it was also the single reason JS-driven pages
+ * did not repaint at all. This flag remains the emergency global kill via
+ * macsurf_js_set_reconvert_enabled(0). */
 static int g_reconvert_enabled = 1;
 
 void
 macsurf_js_set_reconvert_enabled(int enabled)
 {
 	g_reconvert_enabled = enabled ? 1 : 0;
-}
-
-/* fixes843 (#167 S2) — per-host allow-list. Even with the master switch
- * armed, JS DOM mutations only schedule a box-tree rebuild for Facebook
- * hosts. This is the actual safety boundary: it keeps the blast radius of
- * re-arming reconvert to exactly one site. XenForo (68kmla.org /
- * tinkerdifferent.com — the ORIGINAL crash site fixes489 was written for)
- * and every other page stay on the pre-fixes384 behaviour (JS mutates the
- * DOM, nothing repaints) regardless of the master switch. Root cause of the
- * UAF itself is addressed separately (fixes843, html.c: the OLD tree's
- * text-node dom_strings are now pinned across the teardown+rebuild window,
- * closing the gap fixes421's box-context deferral left open) — this
- * host-list is the second, independent layer, not a substitute for that
- * fix. Suffix list matches the fetcher's host_is_fb_asset() in
- * macos9_tls_fetcher.c (kept separate/static per-file rather than shared,
- * same pattern already used for the UA table). */
-static int
-macos9_reconvert_host_allowed(struct content *c)
-{
-	struct nsurl *url;
-	lwc_string *host;
-	const char *h;
-	size_t hl, sl, i, n;
-	static const char *const allow_suffixes[] = {
-		"facebook.com", "fbcdn.net", "fbsbx.com", "cdninstagram.com"
-	};
-
-	/* content_get_url -> llcache_handle_get_url derefs the llcache handle
-	 * unconditionally; guard here rather than assume every caller of
-	 * macos9_js_mark_dom_dirty only ever sees a fully-live content. */
-	if (c == NULL || c->llcache == NULL)
-		return 0;
-
-	url = content_get_url(c);
-	if (url == NULL)
-		return 0;
-
-	host = nsurl_get_component(url, NSURL_HOST);
-	if (host == NULL)
-		return 0;
-
-	h = lwc_string_data(host);
-	hl = lwc_string_length(host);
-	n = sizeof(allow_suffixes) / sizeof(allow_suffixes[0]);
-	for (i = 0; i < n; i++) {
-		sl = strlen(allow_suffixes[i]);
-		if (hl >= sl &&
-		    strncasecmp(h + hl - sl, allow_suffixes[i], sl) == 0 &&
-		    (hl == sl || h[hl - sl - 1] == '.')) {
-			lwc_string_unref(host);
-			return 1;
-		}
-	}
-	lwc_string_unref(host);
-	return 0;
 }
 
 /* The live front-window HTML content, or NULL. Never derefs a stale pointer. */
@@ -164,12 +190,11 @@ macos9_reconvert_cb(void *p)
 	struct content *c;
 	unsigned long now;
 	int rc;
+	int i;
+	int busy = 0;
+	int did_one = 0;
 
 	(void) p;	/* dedup key only — value is never dereferenced */
-
-	c = macos9_reconvert_front_content();
-	if (c == NULL)
-		return;
 
 	now = (unsigned long) TickCount();
 
@@ -182,22 +207,66 @@ macos9_reconvert_cb(void *p)
 		return;
 	}
 
-	rc = html_reconvert_content(c);		/* 0 = queued, !=0 = busy */
-	/* fixes843b (#167 S1 census) — this callback is only ever scheduled
-	 * after macos9_js_mark_dom_dirty's host-allowed check passed, so it
-	 * fires for facebook.com content only; safe to log unconditionally. */
-	macsurf_debug_log_writef("WORK reconvert: html_reconvert_content rc=%d c=%p",
-			rc, (void *) c);
-	if (rc != 0) {
-		/* mid-layout or a convert already in flight — re-arm */
-		(void) macos9_schedule(RECONVERT_DEBOUNCE_MS,
-				macos9_reconvert_cb, p);
-		return;
+	/* fixes874 (#303) — rebuild the contents that actually MUTATED, not
+	 * whatever the front window happens to hold. See the pending-set comment
+	 * above for why those are not the same thing once frames are involved. */
+	for (i = 0; i < RECONVERT_MAX_PENDING; i++) {
+		c = g_pending[i].c;
+		if (c == NULL)
+			continue;
+
+		/* Two-step liveness, in this order, neither sufficient alone:
+		 *  - is_live: is this pointer in the registry at all (freed?).
+		 *  - token_valid: is it the SAME content generation we marked, or
+		 *    did the allocator recycle the address for a new one (ABA)?
+		 * Skipping the token check is how fixes550's wild-tokeniser crash
+		 * happened: a stale pointer that passes is_live by luck drives the
+		 * WRONG document. */
+		if (!macos9_content_is_live(c) ||
+		    !macos9_content_token_valid(c, g_pending[i].token)) {
+			g_pending[i].c = NULL;
+			g_pending[i].token = 0;
+			continue;
+		}
+
+		rc = html_reconvert_content(c);	/* 0 = queued, !=0 = busy */
+		macsurf_debug_log_writef(
+			"WORK reconvert: html_reconvert_content rc=%d c=%p", rc,
+			(void *) c);
+		if (rc != 0) {
+			/* mid-layout or a convert already in flight — KEEP the
+			 * slot and re-arm, so a busy frame is retried rather than
+			 * silently dropped. */
+			busy = 1;
+			continue;
+		}
+		g_pending[i].c = NULL;
+		g_pending[i].token = 0;
+		did_one = 1;
 	}
 
-	g_last_reconvert_tick = (unsigned long) TickCount();
-	macsurf_debug_log_writef("reconvert: debounced fire ran (c=%p)",
-			(void *) c);
+	/* Overflow fallback: more distinct frames mutated than the table holds,
+	 * so rebuild the front content too rather than lose the work. This is the
+	 * pre-fixes874 behaviour, used only as a backstop. */
+	if (g_pending_overflow) {
+		g_pending_overflow = 0;
+		c = macos9_reconvert_front_content();
+		if (c != NULL) {
+			rc = html_reconvert_content(c);
+			macsurf_debug_log_writef(
+				"WORK reconvert: OVERFLOW front rc=%d c=%p", rc,
+				(void *) c);
+			if (rc == 0) did_one = 1;
+			else busy = 1;
+		}
+	}
+
+	if (did_one)
+		g_last_reconvert_tick = (unsigned long) TickCount();
+	if (busy) {
+		(void) macos9_schedule(RECONVERT_DEBOUNCE_MS,
+				macos9_reconvert_cb, p);
+	}
 }
 
 /* Called from the JS DOM-mutation bindings on every successful mutation.
@@ -211,18 +280,43 @@ macos9_js_mark_dom_dirty(struct content *c)
 	 * fixes843 below) unless a future round wires an explicit override. */
 	if (!g_reconvert_enabled)
 		return;
-	/* fixes843 — the real safety boundary: facebook.com family only.
-	 * See macos9_reconvert_host_allowed()'s comment for the full
-	 * rationale. Everything else (XenForo included) stays on the
-	 * pre-fixes384 behaviour no matter what g_reconvert_enabled is. */
-	if (!macos9_reconvert_host_allowed(c))
-		return;
-	/* fixes843b (#167 S1 census) — proves a JS mutation actually reached
-	 * here AND matched the host allow-list. Only fires for facebook.com
-	 * content by construction (the check above), so this is naturally
-	 * rate-limited to what we actually want to see. */
-	macsurf_debug_log_writef("WORK reconvert: dirty-mark host-allowed, scheduling c=%p",
+
+	/* fixes874 (#303) — the facebook.com-family allow-list that used to sit
+	 * here is GONE. JS-mutated DOM now repaints on every site.
+	 *
+	 * What that list was: NOT the fix for the fixes489 crash, but the staging
+	 * fence left standing after it. The crash was real and specific -- on
+	 * XenForo (68kmla.org) a CDATA text node's backing struct was freed
+	 * (refcount 0), the cooperative scheduler reused that exact block and
+	 * overwrote data.cdata.ptr with its own callback fn-pointer, and box
+	 * construction read the recycled memory; when the stale pointer landed in
+	 * valid heap it slipped past dom_string_data's guard and the interned
+	 * attribute name "data-xf-init" got painted as page text across the
+	 * document. fixes843 ROOT-CAUSED it with the ASan harness: the old box
+	 * tree's text-node dom_strings were never pinned across the
+	 * teardown+rebuild window the way fixes421's double-buffer pins the box
+	 * CONTEXT. html.c pins them now (html_reconvert_pin_text_strings /
+	 * _release_pinned_strings, html.c:1782/1935). The allow-list was kept
+	 * afterwards purely because Facebook was the only site verified -- it is a
+	 * rollout gate, not a guard.
+	 *
+	 * Keeping it costs more than it saves now: it is the single reason
+	 * JS-driven pages do not repaint at all. hackaday's Verbum comment form
+	 * renders correctly into the DOM and then never paints, because
+	 * jetpack.wordpress.com is not facebook.com. The same fence is why the
+	 * XenForo reply editor cannot repaint either.
+	 *
+	 * Still standing: the DEBOUNCE (coalesces a burst into one rebuild), the
+	 * FLOOR (bounds the rate so a churning feed cannot peg a G3), the
+	 * fixes421 double-buffer + quiesce guards, the fixes843 string pinning,
+	 * and the registry token check in the callback. Harness Tests 1-2 exercise
+	 * this exact shape -- textContent churn plus a data-xf-init setAttribute
+	 * across a reconvert -- ASan-clean.
+	 *
+	 * macsurf_js_set_reconvert_enabled(0) remains the emergency global kill. */
+	macsurf_debug_log_writef("WORK reconvert: dirty-mark scheduling c=%p",
 			(void *) c);
+	macos9_reconvert_pending_add(c);
 	/* fixes421 — two crash vectors closed in html_reconvert:
 	 * (1) DOUBLE-BUFFER: old bctx deferred past dom_to_box so the re-cascade
 	 *     can share already-interned styles rather than free-then-reintern
