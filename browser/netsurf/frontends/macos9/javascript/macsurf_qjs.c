@@ -528,7 +528,16 @@ static JSValue qjs_history_go(JSContext *ctx, JSValueConst this_val,
  * pass while bounding the worst case. */
 #define QJS_MAX_JOBS_PER_PUMP 256
 
-#define QJS_MAX_TIMERS 64
+/* fixes877 — was 64, which is low for a page running several libraries at once
+ * (jQuery + a carousel + an analytics shim will each hold intervals), and every
+ * overflow silently destroys a callback. The arena is a fixed static array, so
+ * the cost is purely memory: ~120 B/slot * 256 = ~30 KB against a ~195 MB
+ * partition. Cheap insurance against a class of silent, page-visible loss.
+ *
+ * Also sizes run_timers' due_idx/due_id stack arrays: 2 * 256 * 4 = 2 KB per
+ * frame. run_timers is called only from macsurf_qjs_pump_all and is not
+ * recursive, so this is a one-off 2 KB, not a per-depth cost. */
+#define QJS_MAX_TIMERS 256
 
 /* fixes876 — how many trailing setTimeout(fn, delay, ...) arguments a slot can
  * carry.  4 covers every real use (rAF's timestamp needs 1); anything beyond is
@@ -652,13 +661,22 @@ static void timer_slot_clear(struct qjs_timer *t, int free_vals)
 static struct qjs_timer *timer_alloc(void)
 {
 	int i;
-	struct qjs_timer *oldest;
-	double oldest_expiry;
+	struct qjs_timer *victim;
+	double victim_expiry;
 	for (i = 0; i < QJS_MAX_TIMERS; i++) {
 		if (!s_timer_arena[i].live) return &s_timer_arena[i];
 	}
-	/* All full: reclaim the soonest-expiring slot.  Free its callback ref
-	 * and mark it not-live; the caller reuses the slot immediately.
+	/* All full: evict the FURTHEST-OUT slot.
+	 *
+	 * fixes877 — this loop used `<` on expiry_ms, i.e. it picked the MINIMUM
+	 * deadline: the soonest-expiring timer, the one closest to firing and so
+	 * the one most likely to be needed imminently. A page that briefly
+	 * over-filled the arena would silently lose the callback that was about to
+	 * run while keeping ones due much later -- a wrong answer, delivered
+	 * quietly. (The old variable name `oldest` disguised it: nearest-future is
+	 * not least-recently-created.) Evicting the furthest-out gives every
+	 * remaining timer the most time to fire before its slot is at risk.
+	 *
 	 * fixes854 (#283) — free against the slot's OWN ctx, never g_heap->ctx.
 	 * g_heap is just "the most recently created heap"; with an iframe on the
 	 * page the evicted slot can belong to a DIFFERENT heap/runtime, and
@@ -666,21 +684,29 @@ static struct qjs_timer *timer_alloc(void)
 	 * the struct qjs_timer note).  A live slot always has a live ctx:
 	 * qjs_flush_timers() clears this ctx's slots on navigation and
 	 * js_destroyheap() clears them on teardown, both BEFORE JS_FreeContext. */
-	oldest = &s_timer_arena[0];
-	oldest_expiry = oldest->expiry_ms;
+	victim = &s_timer_arena[0];
+	victim_expiry = victim->expiry_ms;
 	for (i = 1; i < QJS_MAX_TIMERS; i++) {
-		if (s_timer_arena[i].expiry_ms < oldest_expiry) {
-			oldest = &s_timer_arena[i];
-			oldest_expiry = s_timer_arena[i].expiry_ms;
+		if (s_timer_arena[i].expiry_ms > victim_expiry) {
+			victim = &s_timer_arena[i];
+			victim_expiry = s_timer_arena[i].expiry_ms;
 		}
 	}
+	/* Evicting a timer is a real, page-visible loss (a callback that will now
+	 * never run). It used to be silent, which reads as "everything is fine"
+	 * while a page quietly misbehaves. */
+	macsurf_debug_log_writef(
+		"WORK timer: arena FULL (%d) -- evicting furthest-out id=%d "
+		"(expiry %ld ms out); its callback will never run",
+		QJS_MAX_TIMERS, victim->id,
+		(long)(victim_expiry - macsurf_qjs_get_now()));
 	/* fixes875 (#304) — free ONLY if the slot's realm is still the live one at
 	 * that address.  A stale slot from a dead realm whose ctx address has been
 	 * recycled would otherwise be freed against the NEW runtime. */
-	timer_slot_clear(oldest,
-			 oldest->ctx != NULL && oldest->ctx_gen != 0 &&
-			 oldest->ctx_gen == qjs_ctx_gen(oldest->ctx));
-	return oldest;
+	timer_slot_clear(victim,
+			 victim->ctx != NULL && victim->ctx_gen != 0 &&
+			 victim->ctx_gen == qjs_ctx_gen(victim->ctx));
+	return victim;
 }
 
 static JSValue qjs_settimeout_impl(JSContext *ctx,

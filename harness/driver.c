@@ -2121,6 +2121,56 @@ int main(void)
 	fprintf(stderr, "=== Test 19 PASS: setTimeout forwards extra args, binds `this`, "
 			"and rAF delivers an advancing timestamp ===\n");
 
+	/* --- Test 20 (fixes877): arena overflow MUST NOT evict the timer that is
+	 * about to fire.
+	 *
+	 * timer_alloc's eviction loop used `<` on expiry_ms, selecting the MINIMUM
+	 * deadline -- the soonest-expiring timer, i.e. the one closest to running
+	 * and most likely to be needed imminently. So a page that briefly
+	 * over-filled the arena silently lost the callback that was due NOW while
+	 * keeping ones due minutes later.
+	 *
+	 * The shape of this test matters: the victim must be armed FIRST and then
+	 * buried under far-future registrations. Arming the 0ms timer LAST would
+	 * pass either way, because the eviction victim would be some OTHER slot and
+	 * the new timer would get the freed one regardless of the comparison
+	 * direction -- a test that cannot distinguish the bug from the fix.
+	 *
+	 * NEGATIVE CONTROL: verified red against the pre-fix tree ("the 0ms timer
+	 * was evicted"). */
+	fprintf(stderr, "\n=== Test 20: arena overflow evicts the furthest-out timer, "
+			"not the imminent one ===\n");
+	{
+		extern void macsurf_qjs_pump_all(void);
+		/* 400 > QJS_MAX_TIMERS (256), so eviction is guaranteed. Each filler is
+		 * ~16 minutes out, so every one of them is further out than the 0ms
+		 * timer armed first. */
+		const char *arm =
+			"globalThis.__imminent=0;"
+			"setTimeout(function(){globalThis.__imminent=1;},0);"
+			"var i;for(i=0;i<400;i++){setTimeout(function(){},1000000);}";
+		const char *chk =
+			"if(!globalThis.__imminent)"
+				"throw new Error('ASSERT FAIL: the 0ms timer was EVICTED by later "
+					"far-future registrations -- arena overflow is dropping the "
+					"callback that was about to fire');";
+		unsigned char ok;
+		int pump;
+
+		ok = js_exec(thread, (const unsigned char *)arm, strlen(arm), "evict-arm.js");
+		if (!ok) { fprintf(stderr, "FAIL: eviction arm threw\n"); return 1; }
+		for (pump = 0; pump < 8; pump++) macsurf_qjs_pump_all();
+
+		ok = js_exec(thread, (const unsigned char *)chk, strlen(chk), "evict-chk.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: arena overflow evicted the imminent timer\n");
+			return 1;
+		}
+		fprintf(stderr, "imminent 0ms timer survived 400 far-future registrations\n");
+	}
+	fprintf(stderr, "=== Test 20 PASS: overflow evicts furthest-out; the imminent "
+			"timer still fires ===\n");
+
 	free(html_src_big);
 	return 0;
 }
