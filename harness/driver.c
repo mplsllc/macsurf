@@ -2040,6 +2040,87 @@ int main(void)
 		}
 	}
 
+	/* --- Test 19 (fixes876): setTimeout MUST forward its extra arguments,
+	 * bind `this`, and give requestAnimationFrame a real DOMHighResTimeStamp.
+	 *
+	 * qjs_settimeout_impl stored only argv[0] and macsurf_qjs_run_timers called
+	 * it with JS_Call(qctx, fn, JS_UNDEFINED, 0, NULL) -- zero arguments. So:
+	 *   - setTimeout(fn, 0, a, b) silently dropped a and b;
+	 *   - rAF (a one-liner over setTimeout(fn,16)) handed its callback NOTHING,
+	 *     so the ubiquitous `function(t){ dt = t - last; }` idiom saw undefined,
+	 *     made dt NaN, and every delta-driven animation loop silently stalled.
+	 *
+	 * The rAF timestamp is checked for MONOTONIC ADVANCE across two frames, not
+	 * merely for being a number: passing the time as a setTimeout extra arg
+	 * would compile and return a plausible number frozen at REGISTRATION time.
+	 * Only a fire-time read advances, so this assert is what distinguishes the
+	 * real fix from the plausible-but-wrong one.
+	 *
+	 * NEGATIVE CONTROL: verified red against the pre-fix tree -- the arg assert
+	 * throws ('got undefined,undefined') and the rAF assert throws on a
+	 * non-number timestamp. */
+	fprintf(stderr, "\n=== Test 19: setTimeout extra args + this-binding + rAF "
+			"timestamp ===\n");
+	{
+		extern void macsurf_qjs_pump_all(void);
+		const char *arm =
+			"globalThis.__args=null;globalThis.__this_ok=0;"
+			"globalThis.__raf=[];"
+			"setTimeout(function(a,b){"
+				"globalThis.__args=[a,b];"
+				"globalThis.__this_ok=(this===globalThis)?1:0;"
+			"},0,'A','B');"
+			/* two chained frames: the second is registered from inside the
+			 * first, so its timestamp must be strictly later. */
+			"requestAnimationFrame(function(t1){"
+				"globalThis.__raf.push(t1);"
+				"requestAnimationFrame(function(t2){globalThis.__raf.push(t2);});"
+			"});";
+		const char *chk =
+			"if(globalThis.__args===null)"
+				"throw new Error('ASSERT FAIL: the 0ms timer never fired at all');"
+			"if(globalThis.__args[0]!=='A'||globalThis.__args[1]!=='B')"
+				"throw new Error('ASSERT FAIL: setTimeout dropped its extra args -- "
+					"got '+globalThis.__args[0]+','+globalThis.__args[1]);"
+			"if(!globalThis.__this_ok)"
+				"throw new Error('ASSERT FAIL: setTimeout callback `this` is not the "
+					"global (HTML spec says it is the window)');"
+			"if(globalThis.__raf.length<2)"
+				"throw new Error('ASSERT FAIL: rAF did not deliver 2 frames, got '"
+					"+globalThis.__raf.length);"
+			"if(typeof globalThis.__raf[0]!=='number')"
+				"throw new Error('ASSERT FAIL: rAF callback got no DOMHighResTimeStamp "
+					"(typeof '+(typeof globalThis.__raf[0])+') -- every `t - last` "
+					"animation loop is NaN');"
+			"if(!(globalThis.__raf[1]>globalThis.__raf[0]))"
+				"throw new Error('ASSERT FAIL: rAF timestamp did not ADVANCE between "
+					"frames ('+globalThis.__raf[0]+' -> '+globalThis.__raf[1]+') -- it "
+					"is frozen at registration time, not read at fire time');";
+		unsigned char ok;
+		int pump;
+
+		ok = js_exec(thread, (const unsigned char *)arm, strlen(arm), "timer-arm.js");
+		if (!ok) { fprintf(stderr, "FAIL: timer arm threw\n"); return 1; }
+
+		/* rAF is setTimeout(...,16) and the timebase is a real clock, so the
+		 * frames need real elapsed time. Pump around each sleep. */
+		for (pump = 0; pump < 6; pump++) {
+			macsurf_qjs_pump_all();
+			usleep(12000);
+			macsurf_qjs_pump_all();
+		}
+
+		ok = js_exec(thread, (const unsigned char *)chk, strlen(chk), "timer-chk.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: setTimeout/rAF argument contract broken\n");
+			return 1;
+		}
+		fprintf(stderr, "extra args forwarded; `this`===globalThis; rAF timestamps "
+				"advance across frames\n");
+	}
+	fprintf(stderr, "=== Test 19 PASS: setTimeout forwards extra args, binds `this`, "
+			"and rAF delivers an advancing timestamp ===\n");
+
 	free(html_src_big);
 	return 0;
 }

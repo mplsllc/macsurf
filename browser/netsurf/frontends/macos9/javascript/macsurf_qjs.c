@@ -530,6 +530,11 @@ static JSValue qjs_history_go(JSContext *ctx, JSValueConst this_val,
 
 #define QJS_MAX_TIMERS 64
 
+/* fixes876 — how many trailing setTimeout(fn, delay, ...) arguments a slot can
+ * carry.  4 covers every real use (rAF's timestamp needs 1); anything beyond is
+ * logged and dropped rather than silently truncated. */
+#define QJS_TIMER_MAX_ARGS 4
+
 /* fixes854 (#283) — `ctx` is the OWNER of this slot's `fn`, captured at
  * setTimeout time, and it is load-bearing, not bookkeeping.  js_newheap()
  * runs per browser_window AND per (i)frame (browser_window.c:3373 "new
@@ -559,8 +564,17 @@ struct qjs_timer {
 	int        repeating;
 	double     interval_ms;
 	int        live;
-	JSContext *ctx;		/* owner of `fn` — see the note above */
+	JSContext *ctx;		/* owner of `fn` AND `args` — see the note above */
 	JSValue    fn;
+	/* fixes876 — setTimeout(fn, delay, a, b): the extra arguments, duped at
+	 * registration and replayed at every fire.  These carry EXACTLY the same
+	 * cross-runtime lifetime hazard as `fn` above: they are JSValues owned by
+	 * `ctx`'s runtime and may only be duped/passed/freed against it.  Every
+	 * release path therefore goes through timer_slot_clear(), which handles
+	 * `fn` and `args` together -- freeing one and forgetting the other is the
+	 * bug this arena has already produced twice (fixes854, fixes875). */
+	int        nargs;
+	JSValue    args[QJS_TIMER_MAX_ARGS];
 };
 
 static struct qjs_timer s_timer_arena[QJS_MAX_TIMERS];
@@ -604,6 +618,37 @@ static int qjs_timer_owned_by(struct qjs_timer *t, JSContext *ctx)
  * exactly what a JSContext* address fails to guarantee. */
 static unsigned long g_ctx_gen_next = 1;
 
+/* fixes876 — the ONE way a timer slot is released.  Every release path in this
+ * file goes through here so that `fn` and `args` can never fall out of step.
+ *
+ * `free_vals` selects between the two disciplines this arena already needs, and
+ * the distinction is load-bearing (see qjs_flush_timers' fixes875 note):
+ *   1 = the slot's realm is still live at that address -> free against t->ctx.
+ *   0 = ABANDON.  The owning runtime is gone, so nothing can legally free these
+ *       values; blank them and leak into a runtime that no longer exists, which
+ *       costs nothing real.  Freeing here is the unmapped-memory crash.
+ *
+ * Freeing against t->ctx (never a caller-supplied ctx) makes it structurally
+ * impossible to free an rt_A value against rt_B, which is what fixes854 fixed
+ * by hand at each site. */
+static void timer_slot_clear(struct qjs_timer *t, int free_vals)
+{
+	int i;
+
+	if (free_vals && t->ctx != NULL) {
+		JS_FreeValue(t->ctx, t->fn);
+		for (i = 0; i < t->nargs; i++)
+			JS_FreeValue(t->ctx, t->args[i]);
+	}
+	t->fn = JS_UNDEFINED;
+	for (i = 0; i < t->nargs; i++)
+		t->args[i] = JS_UNDEFINED;
+	t->nargs = 0;
+	t->ctx = NULL;
+	t->ctx_gen = 0;
+	t->live = 0;
+}
+
 static struct qjs_timer *timer_alloc(void)
 {
 	int i;
@@ -632,14 +677,9 @@ static struct qjs_timer *timer_alloc(void)
 	/* fixes875 (#304) — free ONLY if the slot's realm is still the live one at
 	 * that address.  A stale slot from a dead realm whose ctx address has been
 	 * recycled would otherwise be freed against the NEW runtime. */
-	if (oldest->ctx != NULL && oldest->ctx_gen != 0 &&
-	    oldest->ctx_gen == qjs_ctx_gen(oldest->ctx)) {
-		JS_FreeValue(oldest->ctx, oldest->fn);
-	}
-	oldest->fn = JS_UNDEFINED;
-	oldest->ctx = NULL;
-	oldest->ctx_gen = 0;
-	oldest->live = 0;
+	timer_slot_clear(oldest,
+			 oldest->ctx != NULL && oldest->ctx_gen != 0 &&
+			 oldest->ctx_gen == qjs_ctx_gen(oldest->ctx));
 	return oldest;
 }
 
@@ -650,6 +690,8 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	struct qjs_timer *t;
 	double delay_ms = 0.0;
 	int id;
+	int extra;
+	int i;
 
 	(void)this_val;
 	if (argc < 1 || !JS_IsFunction(ctx, argv[0])) return JS_NewInt32(ctx, 0);
@@ -667,12 +709,29 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	t->repeating = repeating;
 	t->interval_ms = delay_ms;
 	t->live = 1;
+
+	/* fixes876 — capture setTimeout(fn, delay, a, b, ...)'s trailing args.
+	 * Dropping these is why requestAnimationFrame callbacks saw `undefined`
+	 * instead of a DOMHighResTimeStamp, making the ubiquitous `t - last` idiom
+	 * NaN and breaking every animation loop. */
+	extra = argc - 2;
+	if (extra < 0) extra = 0;
+	if (extra > QJS_TIMER_MAX_ARGS) {
+		macsurf_debug_log_writef(
+			"WORK timer: setTimeout extra args %d > cap %d -- dropping %d",
+			extra, QJS_TIMER_MAX_ARGS, extra - QJS_TIMER_MAX_ARGS);
+		extra = QJS_TIMER_MAX_ARGS;
+	}
+	t->nargs = extra;
 	/* fixes854 (#283) — capture the owning context alongside the dup.  `fn`
 	 * belongs to THIS ctx's runtime and may only ever be duped/called/freed
 	 * against it. */
 	t->ctx = ctx;
 	t->ctx_gen = qjs_ctx_gen(ctx);
 	t->fn = JS_DupValue(ctx, argv[0]);
+	/* Dup against the SAME ctx as `fn`, for the same reason. */
+	for (i = 0; i < extra; i++)
+		t->args[i] = JS_DupValue(ctx, argv[2 + i]);
 
 	return JS_NewInt32(ctx, id);
 }
@@ -709,10 +768,9 @@ static JSValue qjs_cleartimeout(JSContext *ctx, JSValueConst this_val,
 			 * context (see the struct qjs_timer note).  It also correctly
 			 * scopes clearTimeout to the caller's own realm. */
 			if (qjs_timer_owned_by(t, ctx) && t->id == target_id) {
-				JS_FreeValue(ctx, t->fn);
-				t->fn = JS_UNDEFINED;
-				t->ctx = NULL;
-				t->live = 0;
+				/* owned_by() already proved t->ctx == ctx, so the
+				 * helper's free-against-t->ctx is this same ctx. */
+				timer_slot_clear(t, 1);
 				break;
 			}
 		}
@@ -770,18 +828,12 @@ static void qjs_flush_timers(JSContext *old_ctx)
 				"ctx=%p (dead realm at a recycled address)",
 				i, s_timer_arena[i].ctx_gen, qjs_ctx_gen(old_ctx),
 				(void *) old_ctx);
-			s_timer_arena[i].fn = JS_UNDEFINED;
-			s_timer_arena[i].ctx = NULL;
-			s_timer_arena[i].ctx_gen = 0;
-			s_timer_arena[i].live = 0;
+			/* free_vals=0: ABANDON — see the note above. */
+			timer_slot_clear(&s_timer_arena[i], 0);
 			continue;
 		}
 
-		JS_FreeValue(old_ctx, s_timer_arena[i].fn);
-		s_timer_arena[i].fn = JS_UNDEFINED;
-		s_timer_arena[i].ctx = NULL;
-		s_timer_arena[i].ctx_gen = 0;
-		s_timer_arena[i].live = 0;
+		timer_slot_clear(&s_timer_arena[i], 1);
 	}
 }
 
@@ -831,6 +883,10 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		double prevdl;
 		double mydl;
 		JSValue ret;
+		JSValue call_args[QJS_TIMER_MAX_ARGS];
+		JSValue this_obj;
+		int call_nargs;
+		int a;
 
 		/* Revalidate: a prior callback may have cleared this timer, or
 		 * timer_alloc may have evicted+reused this slot for a different
@@ -841,15 +897,18 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		 * the JS_DupValue below cross-runtime. */
 		if (!qjs_timer_owned_by(t, qctx) || t->id != due_id[k]) continue;
 
+		/* fixes876 — snapshot fn AND the extra args BEFORE the slot can be
+		 * cleared below: timer_slot_clear() blanks t->args, and the callback
+		 * itself may evict/reuse this slot reentrantly. */
 		fn = JS_DupValue(qctx, t->fn);
+		call_nargs = t->nargs;
+		for (a = 0; a < call_nargs; a++)
+			call_args[a] = JS_DupValue(qctx, t->args[a]);
+
 		if (t->repeating) {
 			t->expiry_ms = macsurf_qjs_get_now() + t->interval_ms;
 		} else {
-			JS_FreeValue(qctx, t->fn);
-			t->fn = JS_UNDEFINED;
-			t->ctx = NULL;
-			t->ctx_gen = 0;
-			t->live = 0;
+			timer_slot_clear(t, 1);
 		}
 
 		/* fixes586 — bound the callback so a runaway script can't hang
@@ -858,7 +917,11 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		mydl = macsurf_qjs_get_now() + (double)QJS_TIMER_TIMEOUT_MS;
 		if (prevdl == 0.0 || mydl < prevdl)
 			g_qjs_script_deadline = mydl;
-		ret = JS_Call(qctx, fn, JS_UNDEFINED, 0, NULL);
+		/* fixes876 — HTML spec calls timer callbacks with `this` = the window.
+		 * JS_UNDEFINED left strict-mode callbacks with `this === undefined`. */
+		this_obj = JS_GetGlobalObject(qctx);
+		ret = JS_Call(qctx, fn, this_obj, call_nargs, call_args);
+		JS_FreeValue(qctx, this_obj);
 		if (JS_IsException(ret)) {
 			JSValue exc = JS_GetException(qctx);
 			const char *str = JS_ToCString(qctx, exc);
@@ -872,15 +935,14 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 			    macsurf_qjs_get_now() >= mydl) {
 				macsurf_debug_log_writef(
 					"qjs: TIMER TIMEOUT -- repeating timer KILLED");
-				JS_FreeValue(qctx, t->fn);
-				t->fn = JS_UNDEFINED;
-				t->ctx = NULL;
-				t->live = 0;
+				timer_slot_clear(t, 1);
 			}
 		}
 		JS_FreeValue(qctx, ret);
 		g_qjs_script_deadline = prevdl;
 		JS_FreeValue(qctx, fn);
+		for (a = 0; a < call_nargs; a++)
+			JS_FreeValue(qctx, call_args[a]);
 	}
 }
 
@@ -3702,9 +3764,24 @@ static void register_browser_globals(JSContext *ctx)
 	qjs_set_func(ctx, global, "clearInterval", qjs_cleartimeout, 1);
 
 	/* --- requestAnimationFrame via setTimeout(fn, 16) --- */
+	/* fixes876 — pass the DOMHighResTimeStamp every rAF callback expects.
+	 * Previously `setTimeout(fn,16)` fired fn with NO arguments, so the
+	 * near-universal `function(t){ var dt = t - last; ... }` idiom saw
+	 * `undefined`, made `dt` NaN, and every animation loop driven off a delta
+	 * silently did nothing (or jumped).
+	 *
+	 * The timestamp MUST be read inside the callback, at FIRE time. Passing it
+	 * as a setTimeout extra arg would freeze it at REGISTRATION time -- each
+	 * frame would report ~16ms stale, which is exactly the sort of
+	 * plausible-but-wrong value that is worse than the missing one.
+	 *
+	 * __macsurf_monotonic_ms is the native binding installed above, so this
+	 * does not depend on `performance` (defined in a later eval block). */
 	macsurf_qjs__safe_eval(ctx,
 		"function requestAnimationFrame(fn){"
-			"return setTimeout(fn,16);"
+			"return setTimeout(function(){"
+				"fn(__macsurf_monotonic_ms());"
+			"},16);"
 		"}"
 		"function cancelAnimationFrame(id){"
 			"clearTimeout(id);"
