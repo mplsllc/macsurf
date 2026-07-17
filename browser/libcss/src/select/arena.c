@@ -285,8 +285,21 @@ enum css_error css__arena_remove_style(struct css_computed_style *style)
 		struct css_computed_style *existing = NULL;
 		struct css_computed_style *prev = NULL;
 
+		/* fixes899 (MacSurf) — unlink by POINTER IDENTITY, not by value.
+		 * The caller (css_computed_style_destroy) is removing the exact
+		 * style it is about to free(), so that precise pointer must leave
+		 * the table. The old css__arena_style_is_equal() value-match could
+		 * unlink a DIFFERENT but equal entry and leave the freed `style`
+		 * linked in table_s[bin] -> the next bin walk dereferences freed
+		 * memory and calls through a garbage vtable (PC=0x2710). This is the
+		 * reconvert re-cascade UAF: a second cascade populates the global,
+		 * never-reset arena with near-duplicate entries (the memcmp over
+		 * css_computed_style_i is not a byte-identical replay across passes),
+		 * so value-match collisions are guaranteed. Identity-match makes the
+		 * whole mis-classification class degrade to a harmless duplicate/leak
+		 * instead of a heap-corrupting UAF -- the OS 9 safety net. */
 		do {
-			if (css__arena_style_is_equal(l, style)) {
+			if (l == style) {
 				existing = l;
 				break;
 			}

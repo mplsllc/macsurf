@@ -1733,6 +1733,73 @@ static void html_stop(struct content *c)
 /* review caught (docs/research/js-dom-render-plan.md).                */
 /* ----------------------------------------------------------------- */
 
+/* fixes899 (MacSurf) — restore the two initial-build CSS preconditions the
+ * reconvert was silently violating (the real reconvert-crash root cause, found
+ * by a 3-agent architecture study; Layer 1 of the reconvert-incremental work):
+ *
+ *  (A) Every element still carries the libcss node data (cached pass-1 partial
+ *      computed styles + bloom filter) from the FIRST cascade. libcss's
+ *      cross-node style-sharing optimization reads a NEIGHBOUR's cached node
+ *      data mid-pass and refs its pass-1 partial styles into the pass-2 result
+ *      -- but those styles are owned by the OLD box tree that
+ *      html_reconvert_free_old is about to talloc_free. Combined with the arena
+ *      remove-by-value bug (now identity, css__arena_remove_style), that is the
+ *      PC=0x2710 UAF. Releasing every element's node data here makes pass 2
+ *      rebuild fresh, exactly like the initial build (empty node data on every
+ *      node). Routed through nscss_reset_node_data -> CSS_NODE_DELETED handler,
+ *      so refs are UNREF'd, never leaked.
+ *
+ *  (B) unit_len_ctx.root_style: the initial cascade runs with it NULL
+ *      (html_reformat sets it only AFTER layout), but on a reconvert it still
+ *      points at the OLD, deferred-then-freed layout->style -- a dangling
+ *      pointer the first pass never had. Mirror the initial NULL state.
+ *
+ * Recursive over DOM depth (bounded; 512 stack guard), element nodes only. */
+extern int nscss_reset_node_data(dom_node *node);
+
+static long html_reconvert_reset_node_data_walk(dom_node *node, int depth)
+{
+	dom_node_type type = 0;
+	dom_node *child = NULL;
+	dom_node *next = NULL;
+	long cleared = 0;
+
+	if (node == NULL || depth > 512)
+		return 0;
+
+	dom_node_get_node_type(node, &type);
+	if (type == DOM_ELEMENT_NODE)
+		cleared += (long) nscss_reset_node_data(node);
+
+	dom_node_get_first_child(node, &child);
+	while (child != NULL) {
+		cleared += html_reconvert_reset_node_data_walk(child, depth + 1);
+		dom_node_get_next_sibling(child, &next);
+		dom_node_unref(child);
+		child = next;
+	}
+	return cleared;
+}
+
+static long html_reconvert_reset_css_state(html_content *c)
+{
+	dom_node *root = NULL;
+	long cleared = 0;
+
+	/* (B) — mirror the initial-build NULL; html_reformat re-sets it after
+	 * layout, so this is the correct state at cascade start. */
+	c->unit_len_ctx.root_style = NULL;
+
+	/* (A) — release every element's stale pass-1 libcss node data. */
+	if (c->document != NULL &&
+			dom_document_get_document_element(c->document,
+				(void *) &root) == DOM_NO_ERR && root != NULL) {
+		cleared = html_reconvert_reset_node_data_walk(root, 0);
+		dom_node_unref(root);
+	}
+	return cleared;
+}
+
 /* HAZARD-1: clear the box* back-reference in every box's DOM-node user_data
  * BEFORE freeing the box tree. Nodes that skip box generation on re-convert
  * (display:none, <script>/<style>/<head>) would otherwise keep a dangling
@@ -2125,6 +2192,22 @@ nserror html_reconvert(html_content *c)
 	macsurf_debug_log_writef(
 		"WORK reconvert #%ld: H3 forms+imagemap+selection reset",
 		(long) macsurf_reconvert_seq);
+
+	/* fixes899 — restore the initial-build CSS preconditions BEFORE re-cascade:
+	 * release every element's stale pass-1 libcss node data (so the second
+	 * cascade cannot share freed pass-1 styles) and NULL the stale root_style.
+	 * Placed here while the OLD box tree is still alive, so releasing a
+	 * node_data style ref cannot drop a shared style to refcount 0 (the old
+	 * box->styles still holds it); the old tree is freed later in
+	 * html_reconvert_free_old, after the new tree owns its refs. This is the
+	 * real reconvert-crash fix (Layer 1); the fixes889-898 guards were
+	 * scaffolding around this un-restored precondition. */
+	{
+		long ncleared = html_reconvert_reset_css_state(c);
+		macsurf_debug_log_writef(
+			"WORK reconvert #%ld: CSS reset -- node_data cleared=%ld,"
+			" root_style=NULL", (long) macsurf_reconvert_seq, ncleared);
+	}
 
 	/* fixes896 — pin the DOM's live text-node dom_strings across the rebuild
 	 * window. Was fixes843, which walked c->layout (the box tree) for BOX_TEXT

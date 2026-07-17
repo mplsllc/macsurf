@@ -1912,3 +1912,39 @@ css_error get_libcss_node_data(void *pw, void *node, void **libcss_node_data)
 
 	return CSS_OK;
 }
+
+/* fixes899 (MacSurf) — release a node's cached libcss node data (the pass-1
+ * partial computed styles + bloom) and clear the user-data slot.
+ *
+ * The reconvert re-cascade UAF: on the SECOND cascade every element still
+ * carries its pass-1 node data, and libcss's cross-node style-sharing
+ * optimization pulls those stale pass-1 partial styles -- owned by the OLD box
+ * tree that html_reconvert_free_old is about to talloc_free -- into pass-2
+ * results, then the value-matching arena remove (see css__arena_remove_style)
+ * unlinks the wrong entry and leaves a freed style linked -> PC=0x2710.
+ *
+ * html_reconvert walks the DOM and calls this on every element BEFORE
+ * re-cascading, so pass 2 starts from empty node data exactly like the initial
+ * build. set_libcss_node_data(NULL) NULLs the slot AND, because the old data is
+ * non-NULL, routes it through css_libcss_node_data_handler(CSS_NODE_DELETED) --
+ * the proper unref, so this releases refs rather than leaking them. Returns
+ * non-zero if a node actually had node data (so the caller can count how many
+ * stale caches it cleared). */
+int nscss_reset_node_data(dom_node *node)
+{
+	void *existing = NULL;
+
+	if (node == NULL)
+		return 0;
+
+	/* peek so we can report whether there was anything to clear */
+	if (dom_node_get_user_data(node,
+			corestring_dom___ns_key_libcss_node_data,
+			&existing) != DOM_NO_ERR)
+		return 0;
+	if (existing == NULL)
+		return 0;
+
+	(void) set_libcss_node_data(NULL, node, NULL);
+	return 1;
+}
