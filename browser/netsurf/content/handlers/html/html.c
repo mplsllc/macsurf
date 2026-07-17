@@ -439,6 +439,20 @@ html_proceed_to_done(html_content *html)
 	switch (content__get_status(&html->base)) {
 	case CONTENT_STATUS_READY:
 		if (html->base.active == 0) {
+			/* fixes881 (Phase 0.7) — THE load event, and the only one.
+			 * This is the READY->DONE transition: the box tree exists
+			 * (html_box_convert_done ran) and base.active has fallen to
+			 * 0, so every subresource has settled. That is precisely
+			 * what the spec means by `load`, and it is strictly after
+			 * the DOMContentLoaded fired in html_box_convert_done.
+			 * Fired BEFORE content_set_done so a listener observes the
+			 * page in the same state a real browser would.
+			 * js_fire_window_load is idempotent per realm: object.c can
+			 * call this function repeatedly as subresources land. */
+			if (html->js_thread != NULL) {
+				js_fire_window_load(html->js_thread,
+						html->document);
+			}
 			content_set_done(&html->base);
 			return NSERROR_OK;
 		}
@@ -690,17 +704,20 @@ void html_finish_conversion(html_content *htmlc)
 	}
 
 
-	/* fire a simple event named load at the Document's Window
-	 * object, but with its target set to the Document object (and
-	 * the currentTarget set to the Window object)
-	 */
-	/* FCDIAG — localize the load-time freeze. Remove once found. */
-	macsurf_debug_log_writef("fc: select_ctx OK, firing load (js=%p)",
-		(void *)htmlc->js_thread);
-	if (htmlc->js_thread != NULL) {
-		js_fire_event(htmlc->js_thread, "load", htmlc->document, NULL);
-	}
-	macsurf_debug_log_writef("fc: load event done");
+	/* fixes881 (Phase 0.7) — the `load` fire that used to sit HERE is gone.
+	 *
+	 * It ran ~30 lines BEFORE dom_to_box below, so `load` was delivered before
+	 * the box tree existed; js_fire_dom_ready (from html_box_convert_done, i.e.
+	 * AFTER conversion) then fired DOMContentLoaded and a SECOND `load` at the
+	 * document. Net observed order:
+	 *     window load -> DOMContentLoaded -> document load
+	 * which is the reverse of spec, fires load twice, and never delivers a load
+	 * to window once the page is actually there.
+	 *
+	 * `load` now fires exactly once, from html_proceed_to_done's READY->DONE
+	 * transition -- the point where the box tree exists AND base.active has
+	 * reached 0, i.e. every subresource has settled. That is what the spec
+	 * means by load, and it is strictly after DOMContentLoaded. */
 
 	/* convert dom tree to box tree */
 	NSLOG(netsurf, INFO, "DOM to box (%p)", htmlc);

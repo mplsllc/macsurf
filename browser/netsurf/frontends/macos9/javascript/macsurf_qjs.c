@@ -4373,7 +4373,23 @@ static void register_browser_globals(JSContext *ctx)
 			 * always returns a node, so nodeType was the only miss. */
 			"document.nodeType=9;"
 			"document.nodeName='#document';"
-			"document.readyState='complete';"
+			/* fixes881 (Phase 0.7) — 'loading', not 'complete'.
+			 *
+			 * This is realm setup: it runs while the page is still parsing, so
+			 * 'complete' was simply false. It also never became anything else
+			 * -- js_fire_dom_ready set 'complete' again, and 'loading' and
+			 * 'interactive' appeared nowhere in the file.
+			 *
+			 * The cost was not cosmetic. The near-universal init guard
+			 *     if (document.readyState === 'loading')
+			 *         addEventListener('DOMContentLoaded', init);
+			 *     else init();
+			 * always took the else branch and ran init() synchronously during
+			 * parse, BEFORE the box tree existed -- so scripts that carefully
+			 * wait for the DOM got the one thing they were avoiding. Now:
+			 * 'loading' here -> 'interactive' at js_fire_dom_ready ->
+			 * 'complete' at js_fire_window_load. */
+			"document.readyState='loading';"
 			/* fixes879 — `document.cookie=''` used to live here as a plain
 			 * data property: writes stuck to the string for the session,
 			 * reached no jar, and every navigation started empty. It is now a
@@ -6530,16 +6546,27 @@ int macsurf_qjs_dispatch_dom_click(struct dom_node *target)
  * rebuilt per navigation (js_newthread) so the flag resets automatically. */
 unsigned char js_fire_dom_ready(struct jsthread *thread, struct dom_document *doc)
 {
+	/* fixes881 (Phase 0.7) — 'interactive', not 'complete', and NO load here.
+	 *
+	 * readyState went straight to 'complete' and this same function then fired
+	 * `load` at the document, while html_finish_conversion had ALREADY fired
+	 * `load` at the window ~30 lines before dom_to_box even started. Observed
+	 * order: window-load -> DOMContentLoaded -> document-load. Spec order is
+	 * DOMContentLoaded -> load, and `load` never reached window at all once the
+	 * box tree existed.
+	 *
+	 * 'interactive' is the correct state at this point: the DOM (and here the
+	 * initial box tree) exists, subresources have not necessarily settled.
+	 * js_fire_window_load takes it to 'complete' and fires load. */
 	static const char s_dom_ready_src[] =
 		"(function(){try{"
 		"if(typeof document==='undefined')return;"
 		"if(document.__ms_ready_fired)return;"
 		"document.__ms_ready_fired=true;"
-		"document.readyState='complete';"
+		"document.readyState='interactive';"
 		"try{document.dispatchEvent(new Event('DOMContentLoaded'));}catch(e){}"
 		"try{if(typeof window!=='undefined')"
 		"window.dispatchEvent(new Event('DOMContentLoaded'));}catch(e){}"
-		"try{document.dispatchEvent(new Event('load'));}catch(e){}"
 		"}catch(e){}})();";
 	(void)doc;
 	if (thread == NULL || thread->ctx == NULL) {
@@ -6559,6 +6586,44 @@ unsigned char js_fire_dom_ready(struct jsthread *thread, struct dom_document *do
 	 * heaps, so two different ctx values must appear here. Only one = the
 	 * iframe never gets DOMContentLoaded. */
 	macsurf_debug_log_writef("WORK domready fired ctx=%p doc=%p",
+			(void *)thread->ctx, (void *)doc);
+	return 1;
+}
+
+/* fixes881 (Phase 0.7) — readyState='complete' + `load` at document AND window.
+ *
+ * Called from html_proceed_to_done's READY->DONE transition, i.e. once the box
+ * tree exists AND base.active has fallen to 0 (every subresource settled) --
+ * which is what the spec means by the load event.
+ *
+ * Before this, html_finish_conversion fired `load` ~30 lines BEFORE dom_to_box,
+ * so it arrived before the box tree existed, and js_fire_dom_ready then fired a
+ * SECOND `load` at the document afterwards. Net observed order was
+ *   window load -> DOMContentLoaded -> document load
+ * i.e. reversed, doubled, and window never saw a load once the page was really
+ * there. Both of those fires are gone; this is the only one.
+ *
+ * Idempotent per realm (__ms_load_fired). html_proceed_to_done only reaches
+ * content_set_done once per navigation, but object.c can call it repeatedly as
+ * subresources land, so the guard is doing real work, not decoration. */
+unsigned char js_fire_window_load(struct jsthread *thread, struct dom_document *doc)
+{
+	static const char s_window_load_src[] =
+		"(function(){try{"
+		"if(typeof document==='undefined')return;"
+		"if(document.__ms_load_fired)return;"
+		"document.__ms_load_fired=true;"
+		"document.readyState='complete';"
+		"try{document.dispatchEvent(new Event('load'));}catch(e){}"
+		"try{if(typeof window!=='undefined')"
+		"window.dispatchEvent(new Event('load'));}catch(e){}"
+		"}catch(e){}})();";
+	(void)doc;
+	if (thread == NULL || thread->ctx == NULL) {
+		return 0;
+	}
+	macsurf_qjs__safe_eval(thread->ctx, s_window_load_src);
+	macsurf_debug_log_writef("WORK window load fired ctx=%p doc=%p",
 			(void *)thread->ctx, (void *)doc);
 	return 1;
 }

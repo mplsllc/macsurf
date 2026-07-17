@@ -14,6 +14,15 @@
  * registered listeners once the initial box tree exists (drains XF.ready and
  * runs XF.activate(document)).  Implemented in javascript/macsurf_qjs.c. */
 unsigned char js_fire_dom_ready(jsthread *thread, struct dom_document *doc);
+/* fixes881 (Phase 0.7) — set document.readyState='complete' and fire `load` at
+ * BOTH document and window, once the box tree exists AND every subresource has
+ * settled (html_proceed_to_done's READY->DONE transition).
+ *
+ * Previously html_finish_conversion fired `load` ~30 lines BEFORE dom_to_box,
+ * so the observed order was window-load -> DOMContentLoaded -> document-load:
+ * the reverse of spec, with `load` arriving before the box tree existed and
+ * never reaching window at all afterwards. Implemented in macsurf_qjs.c. */
+unsigned char js_fire_window_load(jsthread *thread, struct dom_document *doc);
 /* fixes869 (#295) — fire `load` (ok!=0) or `error` (ok==0) at a <script> element
  * once its fetch+execute completes.  The universal dynamic-loader idiom
  * (createElement('script'); s.onload = () => resolve(); appendChild) resolves a

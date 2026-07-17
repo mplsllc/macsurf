@@ -2471,6 +2471,116 @@ int main(void)
 	fprintf(stderr, "=== Test 23 PASS: element-scoped querySelector matches like the "
 			"document level ===\n");
 
+	/* --- Test 24 (fixes881): the document lifecycle -- readyState really moves
+	 * loading -> interactive -> complete, and DOMContentLoaded precedes load.
+	 *
+	 * Two compounding bugs:
+	 *   - readyState was initialised to 'complete' at realm setup and set to
+	 *     'complete' again by js_fire_dom_ready. It was NEVER 'loading' or
+	 *     'interactive' -- neither string appeared in the file. So the
+	 *     near-universal guard
+	 *         if (document.readyState === 'loading')
+	 *             addEventListener('DOMContentLoaded', init);
+	 *         else init();
+	 *     always took the else branch and ran init() synchronously during
+	 *     parse, BEFORE the box tree existed: scripts that carefully wait for
+	 *     the DOM got exactly what they were avoiding.
+	 *   - The events fired in reverse: html_finish_conversion fired `load` at
+	 *     the window ~30 lines before dom_to_box, then js_fire_dom_ready fired
+	 *     DOMContentLoaded and a SECOND `load` at the document. Observed:
+	 *     window load -> DOMContentLoaded -> document load.
+	 *
+	 * Needs a FRESH realm: the main thread already fired dom_ready in Test 9,
+	 * and the fire is idempotent per realm by design.
+	 *
+	 * NEGATIVE CONTROL: verified red pre-fix -- readyState reads 'complete' at
+	 * realm setup. */
+	fprintf(stderr, "\n=== Test 24: readyState lifecycle + DOMContentLoaded "
+			"precedes load ===\n");
+	{
+		struct jsheap *heapL = NULL;
+		struct jsthread *thL = NULL;
+		unsigned char ok;
+
+		if (js_newheap(20000, &heapL) != NSERROR_OK ||
+		    js_newthread(heapL, NULL, (void *)&htmlc, &thL) != NSERROR_OK) {
+			fprintf(stderr, "FAIL: lifecycle heap setup\n");
+			return 1;
+		}
+
+		/* At realm setup the page is, by definition, still parsing. */
+		{
+			const char *arm =
+				"globalThis.__seq=[];"
+				"globalThis.__rs_at_setup=document.readyState;"
+				"document.addEventListener('DOMContentLoaded',function(){"
+					"globalThis.__seq.push('dcl:'+document.readyState);});"
+				"document.addEventListener('load',function(){"
+					"globalThis.__seq.push('load-doc:'+document.readyState);});"
+				"window.addEventListener('load',function(){"
+					"globalThis.__seq.push('load-win');});";
+			ok = js_exec(thL, (const unsigned char *)arm, strlen(arm),
+					"life-arm.js");
+			if (!ok) { fprintf(stderr, "FAIL: lifecycle arm threw\n"); return 1; }
+		}
+
+		js_fire_dom_ready(thL, htmlc.document);
+		{
+			const char *mid =
+				"globalThis.__rs_after_ready=document.readyState;";
+			js_exec(thL, (const unsigned char *)mid, strlen(mid), "life-mid.js");
+		}
+
+		js_fire_window_load(thL, htmlc.document);
+		/* twice on purpose: object.c can call html_proceed_to_done repeatedly
+		 * as subresources land, so the per-realm guard must hold. */
+		js_fire_window_load(thL, htmlc.document);
+
+		{
+			const char *chk =
+				"var s=globalThis.__seq;"
+				"if(globalThis.__rs_at_setup!=='loading')"
+					"throw new Error('ASSERT FAIL: readyState at realm setup is '"
+						"+globalThis.__rs_at_setup+', expected loading -- the standard "
+						"init guard runs init() synchronously during parse, before the "
+						"box tree exists');"
+				"if(globalThis.__rs_after_ready!=='interactive')"
+					"throw new Error('ASSERT FAIL: readyState after DOMContentLoaded "
+						"is '+globalThis.__rs_after_ready+', expected interactive');"
+				"if(document.readyState!=='complete')"
+					"throw new Error('ASSERT FAIL: readyState after load is '"
+						"+document.readyState+', expected complete');"
+				"var dcl=s.indexOf('dcl:interactive');"
+				"if(dcl<0)"
+					"throw new Error('ASSERT FAIL: DOMContentLoaded did not fire at "
+						"the document with readyState=interactive; seq='+s.join(','));"
+				"var lw=s.indexOf('load-win');"
+				"if(lw<0)"
+					"throw new Error('ASSERT FAIL: load never fired at WINDOW -- seq='"
+						"+s.join(',')+' (it used to fire only at the document)');"
+				"if(!(dcl<lw))"
+					"throw new Error('ASSERT FAIL: load fired BEFORE DOMContentLoaded "
+						"-- seq='+s.join(','));"
+				"var n=0,i;for(i=0;i<s.length;i++)if(s[i]==='load-win')n++;"
+				"if(n!==1)"
+					"throw new Error('ASSERT FAIL: window load fired '+n+' times, "
+						"expected exactly 1 (the per-realm guard is not holding); seq='"
+						"+s.join(','));";
+			ok = js_exec(thL, (const unsigned char *)chk, strlen(chk),
+					"life-chk.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: document lifecycle contract broken\n");
+				return 1;
+			}
+		}
+		js_destroythread(thL);
+		js_destroyheap(heapL);
+		fprintf(stderr, "loading -> interactive -> complete; DOMContentLoaded "
+				"precedes load; load fires once at window\n");
+	}
+	fprintf(stderr, "=== Test 24 PASS: readyState lifecycle and event order match "
+			"the spec ===\n");
+
 	free(html_src_big);
 	return 0;
 }
