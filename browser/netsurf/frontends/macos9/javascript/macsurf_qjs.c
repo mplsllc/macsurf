@@ -875,6 +875,39 @@ extern dom_exception macsurf_dom_element_remove_attribute(dom_element *el,
 		dom_string *name);
 extern dom_exception macsurf_dom_document_create_element_s(dom_document *doc,
 		const char *tag, dom_element **element);
+/* fixes873 — shorten a script URL to something a 255-byte log line can afford.
+ * Keeps the FILENAME (the identifying part) and drops the leading path and the
+ * query string, so
+ *   https://jetpack.wordpress.com/wp-content/mu-plugins/jetpack-mu-wpcom-plugin/
+ *   sun/jetpack_vendor/automattic/jetpack-mu-wpcom/src/build/verbum-comments/
+ *   verbum-comments.js?m=1783962184i&minify=false&ver=2af6b658a7893b8bad68
+ * becomes "verbum-comments.js". Truncating from the LEFT (the naive `%.40s`)
+ * would keep "https://jetpack.wordpress.com/wp-content/" for every script on the
+ * page -- i.e. the part that is identical everywhere and identifies nothing. */
+static void qjs_short_name(const char *name, char *out, int cap)
+{
+	const char *base;
+	const char *p;
+	int i = 0;
+
+	if (out == NULL || cap <= 0) return;
+	out[0] = '\0';
+	if (name == NULL || name[0] == '\0') {
+		if (cap > 6) strcpy(out, "(anon)");
+		return;
+	}
+	base = name;
+	for (p = name; *p != '\0'; p++) {
+		if (*p == '/' && p[1] != '\0') base = p + 1;
+	}
+	while (i < cap - 1 && base[i] != '\0' && base[i] != '?' && base[i] != '#') {
+		out[i] = base[i];
+		i++;
+	}
+	out[i] = '\0';
+	if (out[0] == '\0' && cap > 6) strcpy(out, "(anon)");
+}
+
 /* fixes870 (#297) — createElementNS, Preact's only element factory. */
 extern dom_exception macsurf_dom_document_create_element_ns_s(dom_document *doc,
 		const char *ns, const char *qname, dom_element **element);
@@ -3722,10 +3755,31 @@ static void register_browser_globals(JSContext *ctx)
 				"if(n)return n;"
 				"return {nodeValue:String(t),textContent:String(t),"
 					"appendChild:function(){return null;},data:String(t)};};"
-			"document.getElementsByTagName=document.getElementsByTagName||"
-				"function(){return [];};"
-			"document.getElementsByClassName=document.getElementsByClassName||"
-				"function(){return [];};"
+			/* fixes873 (#301) — getElementsByTagName/ClassName were stubs that
+			 * returned [] FOREVER. That is what makes webpack's runtime throw
+			 * "Automatic publicPath is not supported in this browser" and take
+			 * the whole bundle down with it:
+			 *     if (!e && t && (t.currentScript && ... && (e=t.currentScript.src), !e)) {
+			 *       var n = t.getElementsByTagName("script");
+			 *       if (n.length) for (var o=n.length-1; o>-1 && (!e||!/^http(s?):/.test(e));)
+			 *         e = n[o--].src
+			 *     }
+			 *     if (!e) throw new Error("Automatic publicPath is not supported...")
+			 * With n.length===0 the loop never runs, e stays undefined, and every
+			 * webpack-built bundle dies before its first line of real code.
+			 *
+			 * querySelectorAll now does real compound matching (fixes871), and a
+			 * bare tag / bare .class IS a compound selector -- so these are the
+			 * same query. Delegating keeps ONE matcher instead of a second
+			 * subtly-different walker ('*' included, since the matcher handles
+			 * it). The live-HTMLCollection semantics of the real DOM are not
+			 * reproduced; a static array is what every caller here actually
+			 * uses. */
+			"document.getElementsByTagName=function(t){"
+				"return document.querySelectorAll(String(t));};"
+			"document.getElementsByClassName=function(c){"
+				"return document.querySelectorAll('.'+String(c).split(/\\s+/)"
+					".filter(function(x){return !!x;}).join('.'));};"
 			"document.getElementsByName=document.getElementsByName||"
 				"function(){return [];};"
 			"document.querySelectorAll=document.querySelectorAll||"
@@ -3931,15 +3985,50 @@ static void register_browser_globals(JSContext *ctx)
 		"}"
 		"})(this);");
 
-	/* --- DOMParser --- */
+	/* --- DOMParser (fixes873, #302) ---
+	 * This used to hand back a FAKE document with `documentElement: null` and
+	 * querySelector hardcoded to null. Any caller doing the ordinary thing --
+	 *     const t = new DOMParser().parseFromString(s, "text/html");
+	 *     return "" === t.documentElement.textContent.trim() && !t.querySelector("img")
+	 * (verbum-comments.js:1:54379, its "is this comment empty" check) -- throws
+	 * "cannot read property 'textContent' of null" instead. That one runs at
+	 * MODULE INIT, inside a Preact computed signal, so it kills the bundle on
+	 * every load, not just on submit.
+	 *
+	 * A real parse is cheap now: `innerHTML =` became genuinely real in fixes846
+	 * (dom_hubbub_fragment_parser_create), so parsing into a detached <html>
+	 * element gives a real subtree with real textContent and real element-scoped
+	 * querySelector -- no new native code, no second parser.
+	 *
+	 * Not a full Document: no getElementById index, no live collections. It is a
+	 * DOM subtree wearing a document-shaped hat, which is what parseFromString
+	 * callers actually touch. Everything is delegated to the real root element so
+	 * there is nothing here that can drift from the real DOM's behaviour. */
 	macsurf_qjs__safe_eval(ctx,
 		"function DOMParser(){}"
 		"DOMParser.prototype.parseFromString=function(s,m){"
-			"return {body:{innerHTML:s||''},documentElement:null,"
+			"var root=null;"
+			"try{root=document.createElement('html');"
+			"root.innerHTML=String(s==null?'':s);}catch(e){}"
+			"if(!root)return {body:{innerHTML:s||''},documentElement:null,"
 				"querySelector:function(){return null;},"
 				"querySelectorAll:function(){return [];},"
 				"getElementById:function(){return null;},"
 				"getElementsByTagName:function(){return [];}};"
+			"return {documentElement:root,body:root,head:null,nodeType:9,"
+				"querySelector:function(x){"
+					"try{return root.querySelector?root.querySelector(x):null;}"
+					"catch(e){return null;}},"
+				"querySelectorAll:function(x){"
+					"try{return root.querySelectorAll?root.querySelectorAll(x):[];}"
+					"catch(e){return [];}},"
+				"getElementById:function(x){"
+					"try{return root.querySelector?root.querySelector('#'+x):null;}"
+					"catch(e){return null;}},"
+				"getElementsByTagName:function(x){"
+					"try{return root.querySelectorAll?"
+						"root.querySelectorAll(String(x)):[];}"
+					"catch(e){return [];}}};"
 		"};");
 
 	/* --- FormData --- */
@@ -4875,7 +4964,20 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 			"qjs: stack guard=%ld (StackSpace=%ld)", qmax, sp_room);
 	}
 #else
-	JS_SetMaxStackSize(heap->rt, 256UL * 1024UL);
+	/* fixes873 — NON-MAC (the Linux ASan harness) — 4 MB, not the 256 KB that
+	 * used to be here.
+	 *
+	 * This branch must MODEL the Mac branch above, and 256 KB modelled nothing:
+	 * the Mac sets the guard to real native headroom, which reads ~107 MB on
+	 * hardware (fixes593), and even QuickJS's own default is 1 MB. At 256 KB the
+	 * harness invented a "RangeError: Maximum call stack size exceeded" inside
+	 * Preact's recursive reconciler for the real verbum bundle -- a failure
+	 * hardware cannot have. Same trap as the timebase stub: a harness that
+	 * diverges from the shipping config reports fiction. Too small manufactures
+	 * phantom bugs; too large hides real ones. 4 MB sits well under the 8 MB
+	 * Linux main-thread stack while giving deep-but-legitimate JS recursion the
+	 * headroom the Mac actually has. */
+	JS_SetMaxStackSize(heap->rt, 4UL * 1024UL * 1024UL);
 #endif
 
 	/* fixes522: bound the JS heap so a heavy/runaway script throws an OOM
@@ -5635,8 +5737,21 @@ unsigned char js_exec(struct jsthread *thread,
 		 * shows what's throwing. Remove the WORK prefix once the census
 		 * round is done (this is deliberately loud -- one line per failed
 		 * script, which is the whole point right now). */
-		macsurf_debug_log_writef("WORK qjs exec err [%s len=%ld]: %s",
-			name ? name : "(anon)", (long)txtlen, estr ? estr : "?");
+		/* fixes873 — the MESSAGE goes FIRST, and the script name is shortened.
+		 * macsurf_debug_log_writef hard-caps output at 255 bytes, and a modern
+		 * script URL is far longer than that on its own:
+		 *   .../jetpack_vendor/automattic/jetpack-mu-wpcom/src/build/
+		 *   verbum-comments/verbum-comments.js?m=1783962184i&minify=false&ver=...
+		 * so with the name first, the line spent its whole budget on the URL and
+		 * the actual exception was truncated to "Erro". The one thing this line
+		 * exists to say was the one thing it could never say -- and on the
+		 * biggest script on the page, which is exactly where it's needed. */
+		{
+			char sname[48];
+			qjs_short_name(name, sname, (int)sizeof(sname));
+			macsurf_debug_log_writef("WORK qjs exec err: %s [%s len=%ld]",
+				estr ? estr : "?", sname, (long)txtlen);
+		}
 		if (estr) JS_FreeCString(thread->ctx, estr);
 
 		/* fixes581 DIAG: bracket the stack-extraction block. tinkerdifferent
@@ -5654,8 +5769,13 @@ unsigned char js_exec(struct jsthread *thread,
 			if (JS_IsString(stk)) {
 				const char *ss = JS_ToCString(thread->ctx, stk);
 				if (ss != NULL) {
-					macsurf_debug_log_writef("qjs stack [%s]: %s",
-						name ? name : "(anon)", ss);
+					/* fixes873 — stack FIRST, short name after: same
+					 * 255-byte-cap trap as the message line above, and a
+					 * truncated stack is worth even less than none. */
+					char sname[48];
+					qjs_short_name(name, sname, (int)sizeof(sname));
+					macsurf_debug_log_writef("WORK qjs stack: %s [%s]",
+						ss, sname);
 					JS_FreeCString(thread->ctx, ss);
 				}
 			}
@@ -5778,6 +5898,57 @@ unsigned char js_fire_dom_ready(struct jsthread *thread, struct dom_document *do
  * miss paths, and our caller (struct html_script.node) keeps its own ref for
  * later teardown -- so take a fresh ref FOR the wrap, or the wrapper's adopt
  * and html_script_free's unref would both claim the same one. */
+/* fixes873 (#301) — document.currentScript.
+ *
+ * The FIRST thing webpack's publicPath runtime reaches for:
+ *     t.currentScript && "SCRIPT" === t.currentScript.tagName.toUpperCase()
+ *         && (e = t.currentScript.src)
+ * and if that yields nothing it falls to getElementsByTagName("script") and then
+ * throws outright. We had no currentScript at all (0 references anywhere), so
+ * every webpack bundle -- which is most of the modern web -- threw on its own
+ * runtime prologue before reaching a single line of application code.
+ *
+ * Per spec this is set for the duration of a script's execution and restored
+ * afterwards (it nests: a script that synchronously runs another must get its
+ * own value back), hence set/clear around script_handler in html_script_exec
+ * rather than a write-once.
+ *
+ * `node` NULL clears it to null, which is also the correct value outside script
+ * execution and for a script running from a callback.
+ *
+ * (The tagName.toUpperCase() above is why #299 -- our lowercase tagName -- does
+ * not bite here. It would bite a bundler that compared tagName directly.)
+ */
+void js_set_current_script(struct jsthread *thread, struct dom_node *node)
+{
+	JSContext *ctx;
+	JSValue global;
+	JSValue doc;
+	JSValue el;
+
+	if (thread == NULL || thread->ctx == NULL) return;
+	ctx = thread->ctx;
+
+	global = JS_GetGlobalObject(ctx);
+	doc = JS_GetPropertyStr(ctx, global, "document");
+	if (JS_IsUndefined(doc) || JS_IsNull(doc)) {
+		JS_FreeValue(ctx, doc);
+		JS_FreeValue(ctx, global);
+		return;
+	}
+
+	if (node == NULL) {
+		el = JS_NULL;
+	} else {
+		macsurf_dom_node_ref(node);	/* the wrap CONSUMES a ref */
+		el = qjs_wrap_element(ctx, (dom_element *)node);
+	}
+	JS_SetPropertyStr(ctx, doc, "currentScript", el);
+
+	JS_FreeValue(ctx, doc);
+	JS_FreeValue(ctx, global);
+}
+
 unsigned char js_fire_script_load(struct jsthread *thread,
 		struct dom_node *node, int ok)
 {

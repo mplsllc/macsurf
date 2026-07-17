@@ -24,6 +24,12 @@ unsigned char js_fire_dom_ready(jsthread *thread, struct dom_document *doc);
  * is the no-op-stub build and is not what MacSurf compiles. */
 unsigned char js_fire_script_load(jsthread *thread, struct dom_node *node,
 		int ok);
+/* fixes873 (#301) — set document.currentScript for the duration of a script's
+ * execution (NULL clears it).  webpack's publicPath runtime reads it first and
+ * throws "Automatic publicPath is not supported in this browser" if it and the
+ * getElementsByTagName("script") fallback both come up empty -- which kills the
+ * bundle on its own prologue, before any application code. */
+void js_set_current_script(jsthread *thread, struct dom_node *node);
 #else
 
 #ifndef NETSURF_JAVASCRIPT_JS_H_

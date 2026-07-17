@@ -1867,9 +1867,178 @@ int main(void)
 		}
 		fprintf(stderr, "loader -> script.onload -> promise chain -> second script -> "
 				"createElementNS -> .class mount -> on* bind -> CLICK HANDLER RAN\n");
+
+		/* Remove the fixture, same reason Test 15 does: it holds a
+		 * .comment-form__verbum mount, and Test 18 below counts those. Test 18
+		 * reported mount=2 until this landed. */
+		{
+			const char *cleanup =
+				"var h=document.querySelector('#cap-host');"
+				"if(h&&h.parentNode)h.parentNode.removeChild(h);"
+				"globalThis.__capLeft="
+					"document.querySelectorAll('.comment-form__verbum').length;";
+			const char *cleanup_chk =
+				"if(globalThis.__capLeft!==0)"
+					"throw new Error('ASSERT FAIL: capstone leaked '+globalThis.__capLeft+"
+						"' mount node(s) into the shared document');";
+			ok = js_exec(thread, (const unsigned char *)cleanup, strlen(cleanup),
+					"cap-cleanup.js");
+			if (!ok) { fprintf(stderr, "FAIL: capstone cleanup threw\n"); return 1; }
+			ok = js_exec(thread, (const unsigned char *)cleanup_chk,
+					strlen(cleanup_chk), "cap-cleanup-chk.js");
+			if (!ok) { fprintf(stderr, "FAIL: capstone fixture leaked\n"); return 1; }
+		}
 	}
 	fprintf(stderr, "=== Test 17 PASS (CAPSTONE): the full reply-box chain "
 			"completes end to end ===\n");
+
+	/* --- Test 18: run the REAL verbum-comments.js (86,970 B, Preact 10.26/27).
+	 * Hardware (2026-07-17) got the whole chain running -- dynamic-loader ->
+	 * wp-polyfill -> verbum-comments.js all EXECUTED, `script fired load`x2,
+	 * zero errors -- and then the bundle THREW, leaving the iframe at boxes=6
+	 * (empty shell). The log line that should have named the exception was
+	 * truncated to "Erro" by the 255-byte cap (the URL ate the budget; fixes873
+	 * reorders it), so hardware could not say what broke.
+	 *
+	 * It does not have to. The real bundle is a file, and this harness runs the
+	 * same QuickJS + same DOM glue on Linux, where the full message and stack are
+	 * free. Synthetic gate tests answer "is the mechanism present"; only the real
+	 * bundle answers "is it ENOUGH".
+	 *
+	 * DIAGNOSTIC, NOT A GATE: this reports whatever the bundle does and does not
+	 * fail the suite. Verbum legitimately needs browser surface we have not built
+	 * yet, so a throw here is information (the next target), not a regression.
+	 * It fails ONLY if the bundle is missing -- silence must never look like
+	 * success. --- */
+	fprintf(stderr, "\n=== Test 18 (DIAGNOSTIC): the real verbum-comments.js ===\n");
+	{
+		FILE *vf = fopen("verbum-comments.js", "rb");
+		if (vf == NULL) {
+			fprintf(stderr, "SKIP: verbum-comments.js not present next to the "
+					"harness (copy it from the HAR to run this leg)\n");
+		} else {
+			char *vsrc;
+			long vlen;
+			unsigned char ok;
+
+			fseek(vf, 0, SEEK_END); vlen = ftell(vf); fseek(vf, 0, SEEK_SET);
+			vsrc = (char *)malloc((size_t)vlen + 1);
+			if (vsrc == NULL) { fclose(vf); fprintf(stderr, "FAIL: oom\n"); return 1; }
+			if (fread(vsrc, 1, (size_t)vlen, vf) != (size_t)vlen) {
+				fclose(vf); free(vsrc);
+				fprintf(stderr, "FAIL: short read of verbum-comments.js\n");
+				return 1;
+			}
+			fclose(vf);
+			vsrc[vlen] = '\0';
+
+			/* The child frame's own HTML supplies BOTH of these before the
+			 * bundle runs, so they are FIXTURE, not browser surface:
+			 *  - the mount + the real (second) #commentform;
+			 *  - the `VerbumComments` config global. Its property set is read
+			 *    straight out of the bundle (every VerbumComments.<prop> plus
+			 *    the destructured ones), so this is the real shape rather than a
+			 *    guess. Values match the guest-comment state established from
+			 *    the HAR: comment_registration=0 (guests allowed),
+			 *    require_name_email=1.
+			 * Not providing them would make the bundle throw for a reason that
+			 * says nothing about MacSurf. */
+			{
+				const char *mount =
+					"var vhost=document.createElement('div');"
+					"vhost.id='verbum-host';"
+					"vhost.innerHTML='<form id=\"commentform\" method=\"post\">'+"
+						"'<div class=\"comment-form__verbum dark\"></div>'+"
+						"'</form>';"
+					"document.body.appendChild(vhost);"
+					"globalThis.VerbumComments={"
+						"siteId:'123456',postId:'99',"
+						"mustLogIn:false,commentRegistration:false,"
+						"requireNameEmail:true,"
+						"connectURL:'https://jetpack.wordpress.com/connect',"
+						"logoutURL:'https://jetpack.wordpress.com/logout',"
+						"subscribeToComment:false,subscribeToBlog:false,"
+						"enableSubscriptionModal:false,enableBlocks:false,"
+						"currentLocale:'en',isRTL:false,colorScheme:'dark',"
+						"embedNonce:'nonce',vbeCacheBuster:'1',"
+						"jetpackAvatar:'',jetpackSignature:'',"
+						"jetpackUserId:0,jetpackUsername:'',"
+						"isJetpackComments:true,isJetpackCommentsLoggedIn:false,"
+						"fullyLoadedTime:0};";
+				ok = js_exec(thread, (const unsigned char *)mount, strlen(mount),
+						"verbum-mount.js");
+				if (!ok) { free(vsrc); fprintf(stderr, "FAIL: mount threw\n"); return 1; }
+			}
+
+			fprintf(stderr, "--- running the real bundle (%ld bytes) ---\n", vlen);
+			ok = js_exec(thread, (const unsigned char *)vsrc, (size_t)vlen,
+					"verbum-comments.js");
+			free(vsrc);
+
+			{
+				const char *report =
+					"globalThis.__v={};var v=globalThis.__v;"
+					"v.mount=document.querySelectorAll('.comment-form__verbum').length;"
+					"var m=document.querySelector('.comment-form__verbum');"
+					"v.kids=m?m.childNodes.length:-1;"
+					"v.html=m?(m.innerHTML||'').length:-1;"
+					"v.inputs=document.querySelectorAll('textarea').length;";
+				(void)js_exec(thread, (const unsigned char *)report,
+						strlen(report), "verbum-report.js");
+			}
+			{
+				const char *emit =
+					"console.error('WORK verbum mount='+globalThis.__v.mount+"
+					"' kidsInMount='+globalThis.__v.kids+"
+					"' mountHtmlLen='+globalThis.__v.html+"
+					"' textareas='+globalThis.__v.inputs);"
+					"var mm=document.querySelector('.comment-form__verbum');"
+					"console.error('WORK verbum HTML: '+(mm?(mm.innerHTML||'(empty)'):'(no mount)'));"
+					"var ta=document.querySelector('textarea');"
+					"console.error('WORK verbum textarea: '+(ta?('name='+ta.getAttribute('name')+"
+						"' placeholder='+ta.getAttribute('placeholder')):'(none)'))";
+				(void)js_exec(thread, (const unsigned char *)emit, strlen(emit),
+						"verbum-emit.js");
+			}
+
+			if (!ok) {
+				fprintf(stderr, "=== Test 18: the real bundle THREW -- the message "
+						"and stack above are the next target ===\n");
+				return 1;
+			}
+			/* It renders now, so this is a GATE, not a diagnostic: the real
+			 * bundle must build a real comment box. Asserting the textarea (not
+			 * just "didn't throw") is the point -- Preact can swallow an error
+			 * and render nothing while the bundle still "succeeds". */
+			{
+				const char *chk =
+					"var v=globalThis.__v;"
+					"if(v.mount!==1)"
+						"throw new Error('ASSERT FAIL: expected exactly 1 verbum mount, "
+							"got '+v.mount+' -- a leftover fixture from an earlier "
+							"test, or the mount query broke');"
+					"if(v.inputs<1)"
+						"throw new Error('ASSERT FAIL: the real verbum bundle ran but "
+							"built NO textarea -- there is no comment box');"
+					"var ta=document.querySelector('textarea');"
+					"if(!ta||ta.getAttribute('name')!=='comment')"
+						"throw new Error('ASSERT FAIL: the textarea is not the comment "
+							"field (name='+(ta&&ta.getAttribute('name'))+')');"
+					"if(v.html<1)"
+						"throw new Error('ASSERT FAIL: the mount is empty (innerHTML len "
+							"'+v.html+') -- Preact rendered nothing into it');";
+				ok = js_exec(thread, (const unsigned char *)chk, strlen(chk),
+						"verbum-chk.js");
+				if (!ok) {
+					fprintf(stderr, "FAIL: the real bundle ran but produced no "
+							"comment box\n");
+					return 1;
+				}
+			}
+			fprintf(stderr, "=== Test 18 PASS: the REAL verbum-comments.js (86,970 B, "
+					"Preact) runs clean and builds a real comment box ===\n");
+		}
+	}
 
 	free(html_src_big);
 	return 0;

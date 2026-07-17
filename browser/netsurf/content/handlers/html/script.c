@@ -165,8 +165,25 @@ nserror html_script_exec(html_content *c, bool allow_defer)
 					(long) size,
 					nsurl_access(
 						hlcache_handle_get_url(s->data.handle)));
+				/* fixes873 (#301) — document.currentScript must name THIS
+				 * script while it runs. webpack's publicPath runtime reads
+				 * it first thing and throws "Automatic publicPath is not
+				 * supported in this browser" if it (and the
+				 * getElementsByTagName fallback) come up empty -- killing
+				 * the bundle on its own prologue. Set before, cleared after,
+				 * so it is null outside script execution as the spec says. */
+				if (s->node != NULL) {
+					js_set_current_script(c->js_thread, s->node);
+				}
 				script_handler(c->js_thread, data, size,
 					       nsurl_access(hlcache_handle_get_url(s->data.handle)));
+				/* Re-acquire BEFORE touching s again: script_handler is JS
+				 * and can realloc c->scripts. */
+				s = &(c->scripts[i]);
+				if (s->node != NULL) {
+					js_set_current_script(c->js_thread, NULL);
+					s = &(c->scripts[i]);
+				}
 				have_run_something = true;
 				/* We have to re-acquire this here since the
 				 * c->scripts array may have been reallocated
