@@ -42,6 +42,18 @@ struct dom_string;
 struct jsheap {
 	JSRuntime *rt;
 	JSContext *ctx;
+	/* fixes875 (#304) — monotonic generation of `ctx`, bumped every time a new
+	 * context is built for this heap.  A JSContext* ALONE cannot identify a
+	 * realm: free one and the allocator can hand the same address straight back
+	 * for the next one, so every `slot->ctx == ctx` ownership test in this file
+	 * silently matches a DEAD realm's slot against a LIVE realm at the same
+	 * address.  That is the ABA problem fixes550 documents for contents, and it
+	 * is how a rt_OLD JSValue gets freed against rt_NEW -> free_object ->
+	 * js_free_shape -> js_shape_hash_unlink walks rt_NEW's bucket chain for a
+	 * shape that lives in rt_OLD's table, runs off the end, and takes an
+	 * unmapped-memory exception at js_shape_hash_unlink+0004C.  The generation
+	 * never repeats, so (ctx, gen) does identify a realm. */
+	unsigned long ctx_gen;
 	int timeout;
 	/* fixes861 (#289) — every live heap, so macsurf_qjs_pump_all() can pump
 	 * ALL of them.  js_newheap() runs per browser_window AND per (i)frame
@@ -536,6 +548,12 @@ static JSValue qjs_history_go(JSContext *ctx, JSValueConst this_val,
  * This mirrors the XHR slot arena (macos9_js_fetch.c), which captures its
  * owning `ctx` and filters on it in macos9_js_fetch_flush(). */
 struct qjs_timer {
+	/* fixes875 (#304) — the owning realm's generation, captured next to `ctx`.
+	 * `ctx` alone is a recycled address; see struct jsheap's ctx_gen note. A
+	 * slot whose ctx matches but whose gen does NOT belongs to a dead realm at
+	 * a reused address: its `fn` must be ABANDONED, never freed -- the runtime
+	 * that owns it is gone, so there is nothing left to free it against. */
+	unsigned long ctx_gen;
 	int        id;
 	double     expiry_ms;
 	int        repeating;
@@ -556,6 +574,36 @@ static int s_timer_next_id = 1;
  * immune to the fixes586 callback deadline because the spin is in the C loop,
  * not inside JS_Call.  Index-based iteration (0..QJS_MAX_TIMERS-1) makes an
  * infinite loop structurally impossible. */
+/* fixes875 (#304) — the generation currently owning `ctx`, or 0 if NO live heap
+ * does.  Walks g_heap_list (fixes861), which is the only authority on which
+ * realms exist.
+ *
+ * Zero is the important answer: it means this JSContext* is either dead or
+ * belongs to a heap that is gone, so any JSValue tagged with it must be
+ * abandoned rather than freed.  Freeing it is what crashes -- see struct
+ * jsheap's ctx_gen note. */
+static unsigned long qjs_ctx_gen(JSContext *ctx)
+{
+	struct jsheap *h;
+	if (ctx == NULL) return 0;
+	for (h = g_heap_list; h != NULL; h = h->next) {
+		if (h->ctx == ctx) return h->ctx_gen;
+	}
+	return 0;
+}
+
+/* Does this slot really belong to (ctx, its current generation)? */
+static int qjs_timer_owned_by(struct qjs_timer *t, JSContext *ctx)
+{
+	if (!t->live || t->ctx != ctx) return 0;
+	return t->ctx_gen == qjs_ctx_gen(ctx) && t->ctx_gen != 0;
+}
+
+/* fixes875 (#304) — never-repeating realm id. Monotonic across the whole
+ * process: the ONLY property required is that a value is never reused, which is
+ * exactly what a JSContext* address fails to guarantee. */
+static unsigned long g_ctx_gen_next = 1;
+
 static struct qjs_timer *timer_alloc(void)
 {
 	int i;
@@ -581,11 +629,16 @@ static struct qjs_timer *timer_alloc(void)
 			oldest_expiry = s_timer_arena[i].expiry_ms;
 		}
 	}
-	if (oldest->ctx != NULL) {
+	/* fixes875 (#304) — free ONLY if the slot's realm is still the live one at
+	 * that address.  A stale slot from a dead realm whose ctx address has been
+	 * recycled would otherwise be freed against the NEW runtime. */
+	if (oldest->ctx != NULL && oldest->ctx_gen != 0 &&
+	    oldest->ctx_gen == qjs_ctx_gen(oldest->ctx)) {
 		JS_FreeValue(oldest->ctx, oldest->fn);
 	}
 	oldest->fn = JS_UNDEFINED;
 	oldest->ctx = NULL;
+	oldest->ctx_gen = 0;
 	oldest->live = 0;
 	return oldest;
 }
@@ -618,6 +671,7 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	 * belongs to THIS ctx's runtime and may only ever be duped/called/freed
 	 * against it. */
 	t->ctx = ctx;
+	t->ctx_gen = qjs_ctx_gen(ctx);
 	t->fn = JS_DupValue(ctx, argv[0]);
 
 	return JS_NewInt32(ctx, id);
@@ -654,7 +708,7 @@ static JSValue qjs_cleartimeout(JSContext *ctx, JSValueConst this_val,
 			 * IFRAME's id and free that runtime's JSValue against this
 			 * context (see the struct qjs_timer note).  It also correctly
 			 * scopes clearTimeout to the caller's own realm. */
-			if (t->live && t->id == target_id && t->ctx == ctx) {
+			if (qjs_timer_owned_by(t, ctx) && t->id == target_id) {
 				JS_FreeValue(ctx, t->fn);
 				t->fn = JS_UNDEFINED;
 				t->ctx = NULL;
@@ -685,12 +739,49 @@ static void qjs_flush_timers(JSContext *old_ctx)
 		 * rt_iframe's table -> runs off the chain -> unmapped memory
 		 * exception at js_shape_hash_unlink+0004C.  Only ever touch slots
 		 * this context owns; the other heap flushes its own. */
-		if (s_timer_arena[i].live && s_timer_arena[i].ctx == old_ctx) {
-			JS_FreeValue(old_ctx, s_timer_arena[i].fn);
+		if (!s_timer_arena[i].live || s_timer_arena[i].ctx != old_ctx)
+			continue;
+
+		/* fixes875 (#304) — THE CRASH SITE (unmapped memory exception at
+		 * js_shape_hash_unlink+0004C, reached via
+		 *   js_newthread -> qjs_flush_timers -> JS_FreeValue -> free_object
+		 *   -> js_free_shape -> js_shape_hash_unlink).
+		 *
+		 * The `ctx == old_ctx` test above is a POINTER compare, and a
+		 * JSContext* is a recycled address: JS_FreeContext returns it to the
+		 * allocator and the next JS_NewContext -- for a DIFFERENT heap, with a
+		 * DIFFERENT JSRuntime -- can be handed the same address. A leftover
+		 * slot from the dead realm then matches the live one, and freeing its
+		 * `fn` here runs js_shape_hash_unlink(rt_NEW, shape_OLD): the bucket
+		 * walk never finds a shape that lives in rt_OLD's table, runs off the
+		 * end of the chain, and dereferences garbage. This is exactly the ABA
+		 * problem fixes550 documents for contents -- pointer identity is not
+		 * identity once the allocator can reuse the address.
+		 *
+		 * The generation settles it. A mismatch means this slot belongs to a
+		 * DEAD realm, so its `fn` is ABANDONED, not freed: the runtime that
+		 * allocated it is gone, and there is nothing left that can legally free
+		 * it. That leaks the JSValue -- into a runtime that no longer exists,
+		 * i.e. it costs nothing real -- which is the only safe move. */
+		if (s_timer_arena[i].ctx_gen == 0 ||
+		    s_timer_arena[i].ctx_gen != qjs_ctx_gen(old_ctx)) {
+			macsurf_debug_log_writef(
+				"WORK timer: ABANDON stale slot %d gen=%lu live_gen=%lu "
+				"ctx=%p (dead realm at a recycled address)",
+				i, s_timer_arena[i].ctx_gen, qjs_ctx_gen(old_ctx),
+				(void *) old_ctx);
 			s_timer_arena[i].fn = JS_UNDEFINED;
 			s_timer_arena[i].ctx = NULL;
+			s_timer_arena[i].ctx_gen = 0;
 			s_timer_arena[i].live = 0;
+			continue;
 		}
+
+		JS_FreeValue(old_ctx, s_timer_arena[i].fn);
+		s_timer_arena[i].fn = JS_UNDEFINED;
+		s_timer_arena[i].ctx = NULL;
+		s_timer_arena[i].ctx_gen = 0;
+		s_timer_arena[i].live = 0;
 	}
 }
 
@@ -723,7 +814,10 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		 * JS_DupValue/JS_Call an IFRAME's callback against the main runtime —
 		 * a cross-runtime call on a JSValue rt_main never allocated.  Each
 		 * heap's own run_timers pass fires its own slots. */
-		if (s_timer_arena[i].live && s_timer_arena[i].ctx == qctx &&
+		/* fixes875 (#304) — generation too: a stale slot at a recycled ctx
+		 * address would otherwise be JS_DupValue'd + JS_Call'd against the
+		 * WRONG runtime. */
+		if (qjs_timer_owned_by(&s_timer_arena[i], qctx) &&
 		    s_timer_arena[i].expiry_ms <= now) {
 			due_idx[ndue] = i;
 			due_id[ndue] = s_timer_arena[i].id;
@@ -745,7 +839,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		 * arbitrary JS, and an eviction may have handed this slot to a
 		 * DIFFERENT heap's setTimeout since we snapshotted, which would make
 		 * the JS_DupValue below cross-runtime. */
-		if (!t->live || t->id != due_id[k] || t->ctx != qctx) continue;
+		if (!qjs_timer_owned_by(t, qctx) || t->id != due_id[k]) continue;
 
 		fn = JS_DupValue(qctx, t->fn);
 		if (t->repeating) {
@@ -754,6 +848,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 			JS_FreeValue(qctx, t->fn);
 			t->fn = JS_UNDEFINED;
 			t->ctx = NULL;
+			t->ctx_gen = 0;
 			t->live = 0;
 		}
 
@@ -5013,12 +5108,22 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 		free(heap);
 		return NSERROR_NOMEM;
 	}
+	/* fixes875 (#304) — stamp the realm, then link. qjs_ctx_gen() answers by
+	 * walking g_heap_list, so a timer registered before the link would be
+	 * stamped generation 0 and abandoned forever (never fires, silently).
+	 * Nothing between here and the link runs page JS, and JS cannot run any
+	 * earlier either: heap->ctx does not exist until qjs_build_context returns,
+	 * so linking sooner would not help -- the list keys on heap->ctx. */
+	heap->ctx_gen = g_ctx_gen_next++;
 
 	heap->timeout = timeout;
 
 	g_heap = heap;
 	/* fixes861 (#289) — link into the all-heaps list so this heap's timers
-	 * actually get pumped.  Newest-first; order does not matter. */
+	 * actually get pumped.  Newest-first; order does not matter.
+	 * fixes875 (#304) — this list is now also the authority qjs_ctx_gen()
+	 * consults to decide which realm owns a ctx, so an unlinked heap means
+	 * "generation 0" = every timer it registers is abandoned and never fires. */
 	heap->next = g_heap_list;
 	g_heap_list = heap;
 	*out_heap = heap;
@@ -5113,6 +5218,13 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 			 * fresh context wraps anything.  Both halves, then clear. */
 			qjs_wrap_drain();
 			heap->ctx = fresh;
+			/* fixes875 (#304) — a NEW realm, so a NEW generation. This is
+			 * the reuse that bites: JS_FreeContext just above returned the
+			 * old ctx's memory to the allocator, so `fresh` (or some other
+			 * heap's next context) can legitimately land on that exact
+			 * address. Without a fresh generation, any leftover slot tagged
+			 * with the old pointer would now "own" this realm. */
+			heap->ctx_gen = g_ctx_gen_next++;
 			MS_LOG("qjs: realm reset for navigation");
 		} else {
 			MS_LOG("qjs: realm reset FAILED, reusing old ctx");
