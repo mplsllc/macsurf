@@ -1242,8 +1242,17 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 		hsts_pinned = urldb_get_hsts_enabled(c->url) ? 1 : 0;
 	}
 	if (cert_rejected || hsts_pinned) {
+		/* fixes885 — "WORK " prefix is LOAD-BEARING, not decoration. The
+		 * release build runs a failures-only gate (macsurf_log_is_crash_report)
+		 * that keeps a banner, NAV, genuine FAIL/ERROR/exception lines, a
+		 * hardcoded RECON whitelist, and anything containing "WORK ". This line
+		 * said "https: NO http fallback ..." and matched NONE of those, so the
+		 * one diagnostic that says why an https page refused to load was
+		 * dropped before it reached disk -- invisible on exactly the default
+		 * build a user would report from. Same trap the RECON whitelist note in
+		 * CLAUDE.md records. */
 		macsurf_debug_log_writef(
-			"https: NO http fallback host=%s cert_rejected=%d(br_err=%d %s) "
+			"WORK https: NO http fallback host=%s cert_rejected=%d(br_err=%d %s) "
 			"hsts=%d -- refusing to complete an https:// request in cleartext",
 			c->host[0] ? c->host : "(unset)", cert_rejected, br_err,
 			ostls_br_err_name(br_err), hsts_pinned);
