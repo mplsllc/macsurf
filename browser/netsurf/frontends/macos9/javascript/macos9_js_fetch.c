@@ -459,7 +459,42 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 		return JS_NewInt32(ctx, -1);
 	}
 
-	err = nsurl_create(url_c, &url);
+	/* fixes865 (#291) — resolve the target against the DOCUMENT BASE.
+	 *
+	 * This was a bare nsurl_create(url_c), which only works for an absolute
+	 * URL.  Real pages overwhelmingly pass root-relative ones, and those came
+	 * out with no scheme and no host, so the fetch died instantly:
+	 *   WORK xhr event=send GET /wp-includes/js/dist/vendor/wp-polyfill.min.js
+	 *   WORK fetch url=/wp-includes/js/dist/vendor/wp-polyfill.min.js ok=0 status=0
+	 * (hackaday's comment iframe: its verbum loader's urls{} are all
+	 * root-relative, so BOTH wp-polyfill and verbum-comments.js failed and the
+	 * form never loaded.)
+	 *
+	 * Note the redirect path in this same file already does it right --
+	 * `nsurl_join(s->url, target, &joined)` -- so relative handling existed;
+	 * only the INITIAL send lacked it.  Same shape as the timer-vs-XHR arena
+	 * asymmetry (fixes854): the newer/second path learned the lesson, the
+	 * first one never had it.
+	 *
+	 * nsurl_join is RFC-3986 and passes an absolute target straight through,
+	 * so this is a strict superset of the old behaviour.  Base is the current
+	 * document's URL via the same qjs_get_content() + c->llcache NULL-guard
+	 * xhr_start_fetch() already uses for the referer (content_get_url()
+	 * dereferences llcache unconditionally and crashes on a not-fully-live
+	 * content).  No base (JS with no live content) falls back to the old
+	 * create, which is right: there is nothing to resolve against. */
+	{
+		struct content *bc = qjs_get_content();
+		nsurl *base = NULL;
+		if (bc != NULL && bc->llcache != NULL) {
+			base = content_get_url(bc);	/* borrowed */
+		}
+		if (base != NULL) {
+			err = nsurl_join(base, url_c, &url);
+		} else {
+			err = nsurl_create(url_c, &url);
+		}
+	}
 	if (err != NSERROR_OK || url == NULL) {
 		JS_FreeCString(ctx, method_c);
 		JS_FreeCString(ctx, url_c);
