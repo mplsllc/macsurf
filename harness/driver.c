@@ -41,6 +41,10 @@
 #include "macos9_content_registry.h"
 
 extern int html_reconvert_content(struct content *c);
+/* fixes866 (#292): the real parser hooks html.c uses, so the harness exercises
+ * the same DOMNodeInserted -> dom_SCRIPT_showed_up path the browser does. */
+#include "content/handlers/html/dom_event.h"
+extern dom_hubbub_error html_process_script(void *ctx, dom_node *node);
 extern void macsurf_js_set_reconvert_enabled(int enabled);
 extern nserror corestrings_init(void);
 
@@ -310,11 +314,17 @@ int main(void)
 	memset(&params, 0, sizeof(params));
 	params.enc = NULL;
 	params.fix_enc = true;
-	params.enable_script = false;
-	params.script = NULL;
+	/* fixes866 (#292) — mirror html.c:896-899 exactly. params.daf was NULL and
+	 * enable_script false, so dom_default_action_DOMNodeInserted_cb was never
+	 * registered here and the ENTIRE dynamic-<script> path (DOMNodeInserted ->
+	 * dom_SCRIPT_showed_up -> html_process_script) was untestable in the
+	 * harness -- which is why it took hardware round-trips to learn anything
+	 * about it. With these wired, Test 11 can exercise it locally. */
+	params.enable_script = true;
+	params.script = html_process_script;
 	params.msg = NULL;
-	params.ctx = NULL;
-	params.daf = NULL;
+	params.ctx = &htmlc;
+	params.daf = html_dom_event_fetcher;
 
 	herr = dom_hubbub_parser_create(&params, &parser, &document);
 	if (herr != DOM_HUBBUB_OK || parser == NULL || document == NULL) {
@@ -1048,6 +1058,79 @@ int main(void)
 		fprintf(stderr, "querySelector('#feed') resolves\n");
 	}
 	fprintf(stderr, "=== Test 10 PASS: #id selectors work ===\n");
+
+	/* --- Test 11 (fixes866, #292): DYNAMIC <script> INJECTION -- the exact
+	 * sequence hackaday's verbum loader uses and the last thing standing
+	 * between us and a real comment box:
+	 *     const s = document.createElement('script');
+	 *     s.onload = () => resolve();
+	 *     s.src = url;
+	 *     document.body.appendChild(s);
+	 * On HW the fetch now succeeds (fixes865, ok=1 status=200) but
+	 * verbum-comments.js still never executes and ZERO flags=4 scripts reach
+	 * dom_SCRIPT_showed_up -- so the injection itself is not landing. The path
+	 * (DOMNodeInserted -> dom_SCRIPT_showed_up -> html_process_script) is
+	 * fully wired in core; the question is whether our createElement/
+	 * appendChild produce a REAL libdom node that dispatches the event.
+	 * Checks each link separately so the failure names itself. --- */
+	fprintf(stderr, "\n=== Test 11: dynamic <script> injection ===\n");
+	{
+		const char *probe =
+			"globalThis.__r={};"
+			"var s=document.createElement('script');"
+			"globalThis.__r.made      = !!s;"
+			"globalThis.__r.isNative  = !!(s&&s.__ptr);"          /* real libdom node? */
+			"globalThis.__r.tag       = (s&&s.tagName)||'?';"
+			"try{s.src='https://example.invalid/injected.js';"
+			"globalThis.__r.srcSet=(s.getAttribute?(s.getAttribute('src')||''):'');}"
+			"catch(e){globalThis.__r.srcSet='THREW:'+e;}"
+			"globalThis.__r.bodyIs    = document.body?(document.body.__ptr?'native':'FALLBACK'):'null';"
+			"try{document.body.appendChild(s);globalThis.__r.appended=1;}"
+			"catch(e){globalThis.__r.appended='THREW:'+e;}";
+		const char *report =
+			"'made='+globalThis.__r.made+' isNative='+globalThis.__r.isNative+"
+			"' tag='+globalThis.__r.tag+' srcSet='+globalThis.__r.srcSet+"
+			"' body='+globalThis.__r.bodyIs+' appended='+globalThis.__r.appended";
+		unsigned char ok = js_exec(thread, (const unsigned char *)probe,
+				strlen(probe), "inject-probe.js");
+		if (!ok) { fprintf(stderr, "FAIL: injection probe threw\n"); return 1; }
+		{
+			/* surface the values through the same console->MS_LOG path */
+			const char *emit = "console.error('WORK inject '+(";
+			char *buf = (char *)malloc(strlen(emit)+strlen(report)+8);
+			strcpy(buf, emit); strcat(buf, report); strcat(buf, "))");
+			(void)js_exec(thread, (const unsigned char *)buf, strlen(buf),
+					"inject-report.js");
+			free(buf);
+		}
+		{
+			const char *chk =
+				"if(!globalThis.__r.made)"
+					"throw new Error('ASSERT FAIL: createElement(script) returned nothing');"
+				"if(!globalThis.__r.isNative)"
+					"throw new Error('ASSERT FAIL: createElement(script) is a JS FALLBACK object, "
+						"not a libdom node -- appendChild can never dispatch DOMNodeInserted');"
+				"if(globalThis.__r.bodyIs!=='native')"
+					"throw new Error('ASSERT FAIL: document.body is '+globalThis.__r.bodyIs+"
+						"' -- appendChild goes nowhere');"
+				"if(globalThis.__r.appended!==1)"
+					"throw new Error('ASSERT FAIL: appendChild -> '+globalThis.__r.appended);"
+				"if(!globalThis.__r.srcSet)"
+					"throw new Error('ASSERT FAIL: script.src did not stick (getAttribute empty) "
+						"-- html_process_script would treat it as an INLINE script');";
+			ok = js_exec(thread, (const unsigned char *)chk, strlen(chk),
+					"inject-chk.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: dynamic <script> injection is broken -- "
+						"see the ASSERT above; this is why the reply box "
+						"never loads\n");
+				return 1;
+			}
+		}
+		fprintf(stderr, "createElement(script) is native, src sticks, body is "
+				"native, appendChild ok\n");
+	}
+	fprintf(stderr, "=== Test 11 PASS: dynamic <script> injection reaches the DOM ===\n");
 
 	free(html_src_big);
 	return 0;

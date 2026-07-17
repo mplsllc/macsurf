@@ -1713,6 +1713,37 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"get:function(){return el.getAttribute('value')||'';},"
 		"set:function(v){el.setAttribute('value',v);},"
 		"configurable:true});"
+		/* fixes866 (#292) — reflect the rest of the common content
+		 * attributes.  className/id/value above were the ONLY reflected
+		 * properties, so `el.src = url` (and .href/.type/...) merely created a
+		 * plain JS property on the wrapper and the DOM attribute was never
+		 * set.  That is fatal for dynamically-injected scripts, which is how
+		 * every modern site loads code:
+		 *     const s = document.createElement('script');
+		 *     s.src = url; document.body.appendChild(s);
+		 * html_process_script() then does
+		 *     dom_element_get_attribute(node, corestring_dom_src, &src);
+		 *     if (src == NULL) exec_inline_script(...); else exec_src_script(...);
+		 * so with no src attribute the injected script is run as an INLINE
+		 * script with empty content -- it silently does nothing, no error.
+		 * That is why hackaday's reply box never loads: its verbum loader
+		 * fetches verbum-comments.js fine (fixes865, ok=1 status=200) and then
+		 * injects it exactly this way.  Harness Test 11 caught it:
+		 *   made=true isNative=true tag=script srcSet=  body=native appended=1
+		 * -- every link works except the src.
+		 * `value` is deliberately left as-is above: for form controls the
+		 * property and the attribute legitimately diverge once the user types,
+		 * so it is not a plain reflection and is not touched here. */
+		"(function(){"
+		"var _rp=['src','href','type','name','rel','target','alt','title',"
+			"'placeholder','action','method','width','height','media'];"
+		"var _i;for(_i=0;_i<_rp.length;_i++){(function(p){"
+		"Object.defineProperty(el,p,{"
+		"get:function(){return el.getAttribute(p)||'';},"
+		"set:function(v){el.setAttribute(p,String(v));},"
+		"configurable:true});"
+		"})(_rp[_i]);}"
+		"})();"
 		/* name property */
 		"Object.defineProperty(el,'name',{"
 		"get:function(){return el.getAttribute('name')||'';},"
