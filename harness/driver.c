@@ -2398,6 +2398,79 @@ int main(void)
 			"document.cookie is a real accessor (JS->jar round trip is "
 			"HW-gated: no llcache here) ===\n");
 
+	/* --- Test 23 (fixes880): element-scoped querySelector uses the REAL
+	 * matcher.
+	 *
+	 * qjs_el_qsa_data truncated the selector at the first '[', '.', ':' or ' '
+	 * and collected by the remaining tag prefix. That produced silent wrong
+	 * answers in BOTH directions, which is why both are asserted here:
+	 *   - '.foo' truncated to '' -> returned null. Every class-scoped lookup.
+	 *   - 'div.bar' truncated to 'div' -> returned EVERY descendant div,
+	 *     ignoring the class.
+	 * fixes871 fixed the document level and left the element level behind.
+	 *
+	 * Also asserts the scope rule: per spec the element itself never matches
+	 * its own query, though a descendant combinator may still resolve through
+	 * ancestors above it.
+	 *
+	 * NEGATIVE CONTROL: verified red pre-fix on the '.foo' assert. */
+	fprintf(stderr, "\n=== Test 23: element-scoped querySelector uses the real "
+			"matcher ===\n");
+	{
+		const char *arm =
+			"var box=document.createElement('div');"
+			"box.setAttribute('id','qsa-fixture');"
+			"box.setAttribute('class','bar');"   /* scope el itself matches .bar */
+			"document.body.appendChild(box);"
+			"var a=document.createElement('div');a.setAttribute('class','bar');"
+			"var b=document.createElement('div');b.setAttribute('class','baz');"
+			"var c=document.createElement('span');c.setAttribute('class','bar');"
+			"box.appendChild(a);box.appendChild(b);box.appendChild(c);"
+			"globalThis.__q={};var q=globalThis.__q;"
+			"q.dot_bar=box.querySelectorAll('.bar').length;"
+			"q.first_dot_bar_is_a=(box.querySelector('.bar')===a);"
+			"q.div_bar=box.querySelectorAll('div.bar').length;"
+			"q.all_div=box.querySelectorAll('div').length;"
+			"q.miss=box.querySelector('.nope');"
+			"q.by_id=(document.querySelector('#qsa-fixture')===box);"
+			"document.body.removeChild(box);";
+		const char *chk =
+			"var q=globalThis.__q;"
+			"if(q.dot_bar!==2)"
+				"throw new Error('ASSERT FAIL: el.querySelectorAll(\".bar\") found '"
+					"+q.dot_bar+', expected 2 (the div and the span inside; NOT the "
+					"scope element itself, which also has class=bar)');"
+			"if(!q.first_dot_bar_is_a)"
+				"throw new Error('ASSERT FAIL: el.querySelector(\".bar\") did not "
+					"return the first matching DESCENDANT -- class-scoped lookup is "
+					"still truncating the selector to nothing and returning null');"
+			"if(q.div_bar!==1)"
+				"throw new Error('ASSERT FAIL: el.querySelectorAll(\"div.bar\") found '"
+					"+q.div_bar+', expected 1 -- the class qualifier is being ignored "
+					"and every descendant div matched');"
+			"if(q.all_div!==2)"
+				"throw new Error('ASSERT FAIL: bare tag selector regressed: found '"
+					"+q.all_div+' divs, expected 2');"
+			"if(q.miss!==null)"
+				"throw new Error('ASSERT FAIL: a non-matching selector must return "
+					"null, got '+String(q.miss));"
+			"if(!q.by_id)"
+				"throw new Error('ASSERT FAIL: document-level #id regressed');";
+		unsigned char ok;
+
+		ok = js_exec(thread, (const unsigned char *)arm, strlen(arm), "qsa-arm.js");
+		if (!ok) { fprintf(stderr, "FAIL: qsa arm threw\n"); return 1; }
+		ok = js_exec(thread, (const unsigned char *)chk, strlen(chk), "qsa-chk.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: element-scoped querySelector contract broken\n");
+			return 1;
+		}
+		fprintf(stderr, "class-scoped lookup works; tag.class no longer over-matches; "
+				"scope element excluded\n");
+	}
+	fprintf(stderr, "=== Test 23 PASS: element-scoped querySelector matches like the "
+			"document level ===\n");
+
 	free(html_src_big);
 	return 0;
 }

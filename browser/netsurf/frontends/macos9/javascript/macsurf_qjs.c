@@ -1577,6 +1577,32 @@ static JSValue qjs_el_setAttribute_data(JSContext *ctx,
 static JSValue qjs_wrap_element_full(JSContext *ctx, dom_element *el);
 static void qjs_collect_by_tag(JSContext *ctx, dom_node *node,
 		const char *tag_lc, JSValue arr, int *count);
+
+/* fixes880 — the CSS-selector matcher's types and entry points. The matcher
+ * bodies live further down (near qjs_sel_parse); only the type definitions had
+ * to move up here, because qjs_el_qsa_data holds a `struct qjs_sel` by value
+ * and a forward declaration is not enough for that. Selector support and the
+ * `approx` fallback are documented at the matcher itself. */
+#define QJS_SEL_MAX_COMPOUND 4
+#define QJS_SEL_MAX_CLASS    4
+#define QJS_SEL_NAME         64
+
+struct qjs_sel_compound {
+	char tag[32];                                 /* "" = any, or lowercase */
+	char cls[QJS_SEL_MAX_CLASS][QJS_SEL_NAME];
+	int  ncls;
+	char id[QJS_SEL_NAME];                        /* "" = none */
+};
+
+struct qjs_sel {
+	struct qjs_sel_compound c[QJS_SEL_MAX_COMPOUND];
+	int n;      /* compound count; c[n-1] is the SUBJECT (rightmost) */
+	int approx; /* 1 = selector had syntax we ignored (tag-only fallback) */
+};
+
+static void qjs_sel_parse(const char *sel, struct qjs_sel *out);
+static void qjs_collect_by_sel(JSContext *ctx, dom_node *node,
+		const struct qjs_sel *s, JSValue arr, int *count);
 /* fixes878 — node-type-dispatching wrapper, defined after the three concrete
  * wrappers.  The node-oriented traversal getters below are installed by
  * qjs_el_install_native_attrs, which sits ABOVE qjs_wrap_text_node /
@@ -2184,30 +2210,68 @@ static JSValue qjs_el_get_children_data(JSContext *ctx,
 }
 
 /* ---- element.querySelectorAll (scoped) ---- */
+/* fixes880 — element-scoped querySelectorAll now uses the SAME matcher the
+ * document level has used since fixes871 (qjs_sel_parse + qjs_collect_by_sel).
+ *
+ * It used to truncate the selector at the first '[', '.', ':' or ' ' and call
+ * qjs_collect_by_tag on whatever prefix was left. Two silent wrong answers fell
+ * out of that, in opposite directions:
+ *   - `el.querySelector('.foo')` truncated to the EMPTY string and returned
+ *     null. Every class-scoped lookup on the web.
+ *   - `el.querySelectorAll('div.bar')` truncated to `div` and returned EVERY
+ *     descendant div, ignoring the class entirely.
+ * Neither threw, so a page just quietly did the wrong thing. fixes871 fixed the
+ * document level and left this one behind.
+ *
+ * SCOPE: descendants only -- qjs_collect_by_sel matches the node it is handed,
+ * which is right for the document walk (document.querySelector('html') must
+ * find <html>) but wrong here: per spec the scope element itself never matches
+ * its own query. So the walk starts at each CHILD rather than at `el`.
+ *
+ * Descendant combinators still resolve against the full ancestor chain, above
+ * `el` as well -- container.querySelector('div p') matching a <p> whose <div>
+ * ancestor is outside the container is correct per spec, not a leak. */
 static JSValue qjs_el_qsa_data(JSContext *ctx,
 		JSValueConst this_val, int argc, JSValueConst *argv,
 		int magic, JSValueConst *func_data)
 {
 	dom_element *el;
 	const char *sel;
-	char tag_lc[64];
-	int i, count = 0;
+	int count = 0;
 	JSValue arr;
+	struct qjs_sel s;
+	dom_node *child = NULL;
+	dom_node *next = NULL;
+
 	(void)this_val; (void)magic;
 	arr = JS_NewArray(ctx);
 	el = (dom_element *)qjs_get_node(func_data[0]);
 	if (el == NULL || argc < 1) return arr;
 	sel = JS_ToCString(ctx, argv[0]);
 	if (sel == NULL) return arr;
-	for (i = 0; i < 63 && sel[i] && sel[i] != '[' && sel[i] != '.'
-	     && sel[i] != ':' && sel[i] != ' '; i++) {
-		char c = sel[i];
-		tag_lc[i] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
+
+	qjs_sel_parse(sel, &s);
+	if (s.approx) {
+		macsurf_debug_log_writef(
+			"WORK el.qsa: APPROX selector (unsupported syntax ignored): %s",
+			sel);
 	}
-	tag_lc[i] = '\0';
 	JS_FreeCString(ctx, sel);
-	if (tag_lc[0] == '\0') return arr;
-	qjs_collect_by_tag(ctx, (dom_node *)el, tag_lc, arr, &count);
+	if (s.n == 0) return arr;
+
+	if (macsurf_dom_node_get_first_child((dom_node *)el, &child) != DOM_NO_ERR)
+		return arr;
+	while (child != NULL) {
+		qjs_collect_by_sel(ctx, child, &s, arr, &count);
+		if (macsurf_dom_node_get_next_sibling(child, &next) != DOM_NO_ERR)
+			next = NULL;
+		/* collect_by_sel refs again before wrapping, so this child's own
+		 * ref from get_first_child/get_next_sibling is still ours to drop --
+		 * same discipline as collect_by_sel's internal loop. */
+		macsurf_dom_node_unref(child);
+		child = next;
+		next = NULL;
+	}
 	return arr;
 }
 
@@ -3126,22 +3190,10 @@ static JSValue qjs_getElementById(JSContext *ctx, JSValueConst this_val,
  * today's sloppy behaviour regresses -- but the approximation is now explicit
  * and logged instead of being an unmarked lie in a comment.
  */
-#define QJS_SEL_MAX_COMPOUND 4
-#define QJS_SEL_MAX_CLASS    4
-#define QJS_SEL_NAME         64
-
-struct qjs_sel_compound {
-	char tag[32];                                 /* "" = any, or lowercase */
-	char cls[QJS_SEL_MAX_CLASS][QJS_SEL_NAME];
-	int  ncls;
-	char id[QJS_SEL_NAME];                        /* "" = none */
-};
-
-struct qjs_sel {
-	struct qjs_sel_compound c[QJS_SEL_MAX_COMPOUND];
-	int n;      /* compound count; c[n-1] is the SUBJECT (rightmost) */
-	int approx; /* 1 = selector had syntax we ignored (tag-only fallback) */
-};
+/* fixes880 — the selector TYPES moved up next to the forward declarations, so
+ * the element-scoped qsa (which is defined well above this point) can hold a
+ * `struct qjs_sel` by value and reach the same matcher the document level uses.
+ * The matcher itself stays here. */
 
 /* Whitespace-delimited token test over a class attribute value. `strstr` would
  * be wrong: class="foobar" must NOT match `.foo`. */
