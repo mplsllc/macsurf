@@ -1166,6 +1166,48 @@ int main(void)
 	fprintf(stderr, "=== Test 11 PASS: dynamic <script> injection reaches the DOM; "
 			"DOM-failure probe verified live ===\n");
 
+	/* --- Test 12 (fixes868, #294): PROMISE REACTIONS MUST RUN.
+	 * QuickJS queues every .then() as a pending JOB; they only execute when the
+	 * host drains the queue via JS_ExecutePendingJob(). Nothing in MacSurf ever
+	 * called it -- so every Promise chain in the browser is dead past the first
+	 * resolve(). That is why hackaday's reply box never loads: the fetch DOES
+	 * resolve (HW log: `WORK fetch ... ok=1 status=200`, emitted from
+	 * xhr.onreadystatechange, a DIRECT JS_Call), but the loader's
+	 *     loadExtra(...).then(...).then(() => loadExternalScript(handle))
+	 * chain never advances, so createElement/appendChild are never reached --
+	 * exactly matching zero appends AND zero append failures on hardware. --- */
+	fprintf(stderr, "\n=== Test 12: Promise .then() reactions run ===\n");
+	{
+		extern void macsurf_qjs_pump_all(void);
+		const char *arm =
+			"globalThis.__p1=0;globalThis.__p2=0;globalThis.__chain=0;"
+			"Promise.resolve(1).then(function(){globalThis.__p1=1;});"
+			"Promise.resolve(2).then(function(){return 3;})"
+				".then(function(){globalThis.__p2=1;})"
+				".then(function(){globalThis.__chain=1;});";
+		const char *chk =
+			"if(!globalThis.__p1)"
+				"throw new Error('ASSERT FAIL: a single .then() never ran - the "
+					"QuickJS job queue is not being drained (JS_ExecutePendingJob)');"
+			"if(!globalThis.__p2||!globalThis.__chain)"
+				"throw new Error('ASSERT FAIL: chained .then() did not advance');";
+		unsigned char ok;
+		int pump;
+
+		ok = js_exec(thread, (const unsigned char *)arm, strlen(arm), "promise-arm.js");
+		if (!ok) { fprintf(stderr, "FAIL: promise arm threw\n"); return 1; }
+		/* Same pump the WNE loop calls. */
+		for (pump = 0; pump < 8; pump++) macsurf_qjs_pump_all();
+		ok = js_exec(thread, (const unsigned char *)chk, strlen(chk), "promise-chk.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Promise reactions never run -- EVERY modern JS "
+					"chain in the browser is dead past the first resolve()\n");
+			return 1;
+		}
+		fprintf(stderr, "single + chained .then() both ran\n");
+	}
+	fprintf(stderr, "=== Test 12 PASS: Promise reactions are drained ===\n");
+
 	free(html_src_big);
 	return 0;
 }

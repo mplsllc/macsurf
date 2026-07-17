@@ -507,6 +507,15 @@ static JSValue qjs_history_go(JSContext *ctx, JSValueConst this_val,
 /* Timer subsystem                                                      */
 /* ------------------------------------------------------------------ */
 
+/* fixes868 (#294) — microtask budget per pump pass.  A .then() can enqueue the
+ * next job, so draining unbounded lets a promise chain (or a self-scheduling
+ * loop) starve the cooperative WaitNextEvent loop and hang the Mac -- the same
+ * failure class as the fixes608 timer cycle.  Leftover jobs simply run on the
+ * next poll pass; a real browser's task/microtask split behaves the same way.
+ * 256 clears any realistic startup chain (hackaday's loader is ~6 deep) in one
+ * pass while bounding the worst case. */
+#define QJS_MAX_JOBS_PER_PUMP 256
+
 #define QJS_MAX_TIMERS 64
 
 /* fixes854 (#283) — `ctx` is the OWNER of this slot's `fn`, captured at
@@ -5385,6 +5394,64 @@ void macsurf_qjs_pump_all(void)
 			tmp.win_priv = NULL;
 			tmp.doc_priv = NULL;
 			macsurf_qjs_run_timers(&tmp);
+		}
+		/* fixes868 (#294) — DRAIN THE MICROTASK QUEUE.
+		 *
+		 * QuickJS does not run Promise reactions itself: `resolve(v)` only
+		 * ENQUEUES the .then() callbacks as pending jobs, and the host must
+		 * pump them with JS_ExecutePendingJob().  Nothing in MacSurf ever
+		 * called it -- so since the day Promises were enabled, EVERY promise
+		 * chain in the browser has been dead past its first resolve().  Not a
+		 * hackaday bug: it is every modern site, because ~all modern JS is
+		 * promise-driven.
+		 *
+		 * It hid because the shapes that DO work look like promises but are
+		 * not: xhr.onreadystatechange and setTimeout callbacks are direct
+		 * JS_Calls (which is why the HW log shows `WORK fetch ok=1 status=200`
+		 * -- that line is emitted from onreadystatechange -- while the .then()
+		 * on the very same fetch never fires), and a .then() whose promise is
+		 * already settled *inside* the same JS_Eval still needs a job cycle it
+		 * never gets.  On hackaday: fetch resolves, then
+		 *   loadExtra(h,'translations').then(...).then(() => loadExternalScript(h))
+		 * never advances, so createElement/appendChild are never reached --
+		 * which is exactly why the log shows ZERO appends AND zero append
+		 * failures (fixes867 proved the failure probe is live).
+		 *
+		 * PER-RUNTIME: jobs belong to a JSRuntime, and every heap has its own
+		 * (fixes854/861), so each is drained separately -- passing one runtime's
+		 * jobs to another is the cross-runtime crash all over again.
+		 *
+		 * Bounded: a job may enqueue another (a .then() chain), so an unbounded
+		 * `while (JS_IsJobPending)` lets a promise loop starve the cooperative
+		 * event loop -- the same class of hang as the fixes608 timer cycle.
+		 * QJS_MAX_JOBS_PER_PUMP caps one pass; leftovers run on the next poll,
+		 * which is what a real browser's task/microtask split does anyway. */
+		if (h->rt != NULL) {
+			int jobs = 0;
+			while (JS_IsJobPending(h->rt) && jobs < QJS_MAX_JOBS_PER_PUMP) {
+				JSContext *jctx = NULL;
+				int r = JS_ExecutePendingJob(h->rt, &jctx);
+				if (r < 0) {
+					/* Uncaught rejection / job threw: surface it, keep
+					 * draining -- one bad job must not stall the queue. */
+					if (jctx != NULL) {
+						JSValue exc = JS_GetException(jctx);
+						const char *s = JS_ToCString(jctx, exc);
+						macsurf_debug_log_writef("WORK job exc: %s",
+								s ? s : "?");
+						if (s) JS_FreeCString(jctx, s);
+						JS_FreeValue(jctx, exc);
+					}
+				} else if (r == 0) {
+					break;		/* queue empty */
+				}
+				jobs++;
+			}
+			if (jobs >= QJS_MAX_JOBS_PER_PUMP) {
+				macsurf_debug_log_writef(
+					"WORK job pump: hit cap %d, deferring rest",
+					(int)QJS_MAX_JOBS_PER_PUMP);
+			}
 		}
 		h = next;
 	}
