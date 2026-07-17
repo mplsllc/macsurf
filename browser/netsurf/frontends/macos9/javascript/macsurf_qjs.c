@@ -1046,6 +1046,14 @@ extern dom_exception macsurf_dom_node_get_text_content(dom_node *node,
 		dom_string **result);
 extern dom_exception macsurf_dom_node_set_text_content(dom_node *node,
 		dom_string *content);
+/* fixes878 — real cloneNode/contains (macsurf_dom_dispatch.c). `deep` and
+ * `contains` are int, not bool: this file's C89 build maps bool to Apple's
+ * Boolean (see macos9.h), so keeping the shim boundary int-only avoids
+ * depending on which bool won in a given TU. */
+extern dom_exception macsurf_dom_node_clone_node(dom_node *node, int deep,
+		dom_node **result);
+extern dom_exception macsurf_dom_node_contains(dom_node *node,
+		dom_node *other, int *contains);
 extern dom_exception macsurf_dom_node_append_child(dom_node *parent,
 		dom_node *new_child, dom_node **result);
 extern dom_exception macsurf_dom_node_remove_child(dom_node *parent,
@@ -1488,6 +1496,11 @@ static JSValue qjs_el_setAttribute_data(JSContext *ctx,
 static JSValue qjs_wrap_element_full(JSContext *ctx, dom_element *el);
 static void qjs_collect_by_tag(JSContext *ctx, dom_node *node,
 		const char *tag_lc, JSValue arr, int *count);
+/* fixes878 — node-type-dispatching wrapper, defined after the three concrete
+ * wrappers.  The node-oriented traversal getters below are installed by
+ * qjs_el_install_native_attrs, which sits ABOVE qjs_wrap_text_node /
+ * qjs_wrap_fragment, so they reach it through this declaration. */
+static JSValue qjs_wrap_any_node(JSContext *ctx, dom_node *node);
 
 /* ---- textContent read ---- */
 static JSValue qjs_el_get_text_content_data(JSContext *ctx,
@@ -1937,6 +1950,128 @@ static JSValue qjs_el_has_attribute_data(JSContext *ctx,
 }
 
 /* ---- children (element-only child list) ---- */
+/* ---- fixes878: node-oriented traversal (magic selects which edge) ----
+ *
+ * These replace hardcoded `null` data properties frozen onto every element at
+ * wrap time. The old surface never consulted libdom and never updated as the
+ * tree mutated, so the canonical clear-children idiom
+ *     while (node.firstChild) node.removeChild(node.firstChild);
+ * saw an empty element and no-opped, and every hand-rolled node walk visited
+ * nothing. The C plumbing was already here and already used by this file's own
+ * tree walkers -- only the JS exposure was fake.
+ *
+ * magic: 0=firstChild 1=lastChild 2=nextSibling 3=previousSibling
+ */
+static JSValue qjs_el_get_edge_data(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv,
+		int magic, JSValueConst *func_data)
+{
+	dom_node *self;
+	dom_node *out = NULL;
+	dom_exception exc;
+
+	(void) this_val; (void) argc; (void) argv;
+	self = qjs_get_node(func_data[0]);
+	if (self == NULL) return JS_NULL;
+
+	switch (magic) {
+	case 0:  exc = macsurf_dom_node_get_first_child(self, &out); break;
+	case 1:  exc = macsurf_dom_node_get_last_child(self, &out); break;
+	case 2:  exc = macsurf_dom_node_get_next_sibling(self, &out); break;
+	default: exc = macsurf_dom_node_get_previous_sibling(self, &out); break;
+	}
+	if (exc != DOM_NO_ERR || out == NULL) return JS_NULL;
+	/* `out` carries a ref; qjs_wrap_any_node adopts it. */
+	return qjs_wrap_any_node(ctx, out);
+}
+
+/* ---- fixes878: node.childNodes ----
+ * ALL children, unlike `children` which is elements-only. Returns a plain
+ * snapshot array, not a live NodeList: length/indexing/forEach work, but it
+ * does not update as the tree changes. That is a real (documented) gap, not a
+ * silent one -- a live NodeList needs an invalidation hook this binding has no
+ * home for yet. */
+static JSValue qjs_el_get_child_nodes_data(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv,
+		int magic, JSValueConst *func_data)
+{
+	dom_node *self;
+	dom_node *child = NULL, *next = NULL;
+	JSValue arr;
+	int count = 0;
+
+	(void) this_val; (void) argc; (void) argv; (void) magic;
+	arr = JS_NewArray(ctx);
+	self = qjs_get_node(func_data[0]);
+	if (self == NULL) return arr;
+
+	if (macsurf_dom_node_get_first_child(self, &child) != DOM_NO_ERR)
+		return arr;
+	while (child != NULL) {
+		JSValue w;
+		/* Read the sibling link BEFORE wrapping: the wrapper adopts
+		 * child's ref, so child must not be touched afterwards. */
+		if (macsurf_dom_node_get_next_sibling(child, &next) != DOM_NO_ERR)
+			next = NULL;
+		w = qjs_wrap_any_node(ctx, child);   /* consumes child's ref */
+		if (JS_IsNull(w)) {
+			/* unwrappable type (already unref'd by the wrapper) */
+		} else {
+			JS_SetPropertyUint32(ctx, arr, (unsigned int) count, w);
+			count++;
+		}
+		child = next;
+		next = NULL;
+	}
+	return arr;
+}
+
+/* ---- fixes878: node.cloneNode(deep) ----
+ * Was `function(){return el;}` -- it handed back the element ITSELF, so
+ * parent.appendChild(node.cloneNode(true)) MOVED the original instead of
+ * copying it. Pages rendered one relocated node where they meant N copies,
+ * with no error anywhere. */
+static JSValue qjs_el_clone_node_data(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv,
+		int magic, JSValueConst *func_data)
+{
+	dom_node *self;
+	dom_node *copy = NULL;
+	int deep = 0;
+
+	(void) this_val; (void) magic;
+	self = qjs_get_node(func_data[0]);
+	if (self == NULL) return JS_NULL;
+	if (argc >= 1) deep = JS_ToBool(ctx, argv[0]) ? 1 : 0;
+
+	if (macsurf_dom_node_clone_node(self, deep, &copy) != DOM_NO_ERR ||
+	    copy == NULL)
+		return JS_NULL;
+	/* The clone is parentless and carries a ref, which the wrapper adopts. */
+	return qjs_wrap_any_node(ctx, copy);
+}
+
+/* ---- fixes878: node.contains(other) ----
+ * Was `function(){return false;}`. libdom's is non-virtual and correctly
+ * reports true for the node itself, per spec. */
+static JSValue qjs_el_contains_data(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv,
+		int magic, JSValueConst *func_data)
+{
+	dom_node *self;
+	dom_node *other;
+	int contains = 0;
+
+	(void) this_val; (void) magic;
+	self = qjs_get_node(func_data[0]);
+	if (self == NULL || argc < 1) return JS_FALSE;
+	other = qjs_get_node(argv[0]);
+	if (other == NULL) return JS_FALSE;
+	if (macsurf_dom_node_contains(self, other, &contains) != DOM_NO_ERR)
+		return JS_FALSE;
+	return contains ? JS_TRUE : JS_FALSE;
+}
+
 static JSValue qjs_el_get_children_data(JSContext *ctx,
 		JSValueConst this_val, int argc, JSValueConst *argv,
 		int magic, JSValueConst *func_data)
@@ -2246,11 +2381,25 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"el.focus=function(){};"
 		"el.blur=function(){};"
 		"el.click=function(){};"
-		"el.cloneNode=function(){return el;};"
-		"el.contains=function(n){return false;};"
-		"el.childNodes=[];"
-		"el.firstChild=null;el.lastChild=null;"
-		"el.nextSibling=null;el.previousSibling=null;"
+		/* fixes878 — the node-oriented traversal surface used to be hardcoded
+		 * HERE, as five lines of constants:
+		 *     el.cloneNode=function(){return el;};
+		 *     el.contains=function(n){return false;};
+		 *     el.childNodes=[];
+		 *     el.firstChild=null;el.lastChild=null;
+		 *     el.nextSibling=null;el.previousSibling=null;
+		 * They were not shadowing real natives -- no native of any of those
+		 * names existed, so these WERE the implementation, and every one of
+		 * them was a wrong answer rather than a missing one. cloneNode handing
+		 * back `el` itself was the worst: it made the universal
+		 * clone-and-append idiom MOVE the original.
+		 *
+		 * cloneNode/contains are now real C natives installed by
+		 * qjs_el_install_native_attrs (which calls this function, so anything
+		 * defined here would overwrite them -- hence their removal, not just
+		 * their replacement). firstChild/lastChild/nextSibling/previousSibling/
+		 * childNodes are live accessors installed in the tc_src block, which
+		 * runs AFTER this one and so has the last word. */
 		"})";
 	JSValue fn, args[1];
 	fn = JS_Eval(ctx, src, strlen(src), "<el-helpers>", JS_EVAL_TYPE_GLOBAL);
@@ -2264,6 +2413,72 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		macsurf_debug_log_writef("qjs el-helpers eval error: %s", msg ? msg : "?");
 		if (msg) JS_FreeCString(ctx, msg);
 		JS_FreeValue(ctx, ex);
+	}
+	JS_FreeValue(ctx, fn);
+}
+
+/* ---- fixes878: the node-level traversal surface, for EVERY node wrapper ----
+ *
+ * Installed on elements, text/comment nodes AND fragments. That breadth is the
+ * point: `box.firstChild.nextSibling` walks THROUGH a text node, so if only
+ * elements carry the surface the chain dies at the first gap between tags --
+ * which is most real markup, and was the first thing Test 21 caught.
+ *
+ * SAFE ON ALL THREE SHAPES because every function here goes through the base
+ * dom_node vtable (get_first_child / get_next_sibling / clone_node / contains),
+ * which element, text and fragment all implement. This is the same rule
+ * fixes846 arrived at the hard way: qjs_wrap_element reads through the ELEMENT
+ * vtable (dom_element_get_tag_name), and reusing it for a fragment -- a
+ * different, smaller shape -- was an ASan global-buffer-overflow. Nothing in
+ * this function may touch an element-only operation.
+ *
+ * `data[0]` holds one ref that JS_NewCFunctionData dups per closure, so it is
+ * released once at the end, mirroring qjs_el_install_native_attrs. */
+static void qjs_install_node_traversal(JSContext *ctx, JSValue obj)
+{
+	JSValue data[1];
+	JSValue f;
+	static const char *nav_src =
+		"(function(el){"
+		"Object.defineProperty(el,'firstChild',{"
+		"get:function(){return el.__getFirstChild();},configurable:true});"
+		"Object.defineProperty(el,'lastChild',{"
+		"get:function(){return el.__getLastChild();},configurable:true});"
+		"Object.defineProperty(el,'nextSibling',{"
+		"get:function(){return el.__getNextSibling();},configurable:true});"
+		"Object.defineProperty(el,'previousSibling',{"
+		"get:function(){return el.__getPreviousSibling();},configurable:true});"
+		/* snapshot array, not a live NodeList -- see qjs_el_get_child_nodes_data */
+		"Object.defineProperty(el,'childNodes',{"
+		"get:function(){return el.__getChildNodes();},configurable:true});"
+		"el.hasChildNodes=function(){return el.__getFirstChild()!==null;};"
+		"})";
+	JSValue fn, args[1];
+
+	data[0] = JS_DupValue(ctx, obj);
+
+	f = JS_NewCFunctionData(ctx, qjs_el_get_edge_data, 0, 0 /*firstChild*/, 1, data);
+	JS_SetPropertyStr(ctx, obj, "__getFirstChild", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_get_edge_data, 0, 1 /*lastChild*/, 1, data);
+	JS_SetPropertyStr(ctx, obj, "__getLastChild", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_get_edge_data, 0, 2 /*nextSibling*/, 1, data);
+	JS_SetPropertyStr(ctx, obj, "__getNextSibling", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_get_edge_data, 0, 3 /*prevSibling*/, 1, data);
+	JS_SetPropertyStr(ctx, obj, "__getPreviousSibling", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_get_child_nodes_data, 0, 0, 1, data);
+	JS_SetPropertyStr(ctx, obj, "__getChildNodes", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_clone_node_data, 1, 0, 1, data);
+	JS_SetPropertyStr(ctx, obj, "cloneNode", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_contains_data, 1, 0, 1, data);
+	JS_SetPropertyStr(ctx, obj, "contains", f);
+
+	JS_FreeValue(ctx, data[0]);
+
+	fn = JS_Eval(ctx, nav_src, strlen(nav_src), "<node-nav>", JS_EVAL_TYPE_GLOBAL);
+	if (!JS_IsException(fn)) {
+		args[0] = JS_DupValue(ctx, obj);
+		JS_Call(ctx, fn, JS_UNDEFINED, 1, args);
+		JS_FreeValue(ctx, args[0]);
 	}
 	JS_FreeValue(ctx, fn);
 }
@@ -2354,6 +2569,9 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 		}
 		JS_FreeValue(ctx, fn2);
 	}
+
+	/* fixes878 — last, so nothing above can clobber it. */
+	qjs_install_node_traversal(ctx, obj);
 }
 
 /* Full wrap: identical to qjs_wrap_element now — method install is folded into
@@ -2418,14 +2636,12 @@ static JSValue qjs_text_append_child_noop(JSContext *ctx,
 	return JS_NULL;
 }
 
-static JSValue qjs_text_clone_node_data(JSContext *ctx,
-		JSValueConst this_val, int argc, JSValueConst *argv,
-		int magic, JSValueConst *func_data)
-{
-	(void) this_val; (void) argc; (void) argv; (void) magic;
-	return JS_DupValue(ctx, func_data[0]);
-}
-
+/* fixes878 — qjs_text_clone_node_data is GONE. It was
+ *     return JS_DupValue(ctx, func_data[0]);
+ * i.e. it handed back the SAME text node, exactly the self-returning bug the
+ * element-side cloneNode had; a text node "cloned" into a second parent was
+ * really moved out of the first. Both now use the real libdom virtual clone via
+ * qjs_el_clone_node_data, installed by qjs_install_node_traversal. */
 static JSValue qjs_wrap_text_node(JSContext *ctx, dom_text *tn)
 {
 	dom_node *node = (dom_node *) tn;
@@ -2460,8 +2676,23 @@ static JSValue qjs_wrap_text_node(JSContext *ctx, dom_text *tn)
 		return obj;
 	}
 
-	JS_SetPropertyStr(ctx, obj, "nodeType", JS_NewInt32(ctx, 3));
-	JS_SetPropertyStr(ctx, obj, "nodeName", JS_NewString(ctx, "#text"));
+	/* fixes878 — report the node's REAL type instead of hardcoding #text.
+	 * This wrapper is now also the landing place for the other CharacterData
+	 * types reachable through firstChild/nextSibling (comment = 8,
+	 * CDATASection = 4), which share CharacterData's data/nodeValue surface and
+	 * so are safe here -- but calling a comment a "#text" of nodeType 3 would
+	 * be a wrong answer, and comment nodes are load-bearing markers for Preact
+	 * and React. createTextNode still lands on 3/#text exactly as before. */
+	{
+		dom_node_type wt = 0;
+		const char *wname = "#text";
+		macsurf_dom_node_get_node_type(node, &wt);
+		if (wt == 0) wt = 3;
+		if (wt == 8) wname = "#comment";
+		else if (wt == 4) wname = "#cdata-section";
+		JS_SetPropertyStr(ctx, obj, "nodeType", JS_NewInt32(ctx, (int) wt));
+		JS_SetPropertyStr(ctx, obj, "nodeName", JS_NewString(ctx, wname));
+	}
 	JS_SetPropertyStr(ctx, obj, "__ptr",
 		JS_NewInt64(ctx, (long long) (size_t) tn));
 
@@ -2514,9 +2745,15 @@ static JSValue qjs_wrap_text_node(JSContext *ctx, dom_text *tn)
 	JS_SetPropertyStr(ctx, obj, "appendChild",
 		JS_NewCFunction(ctx, qjs_text_append_child_noop,
 				"appendChild", 1));
-	f = JS_NewCFunctionData(ctx, qjs_text_clone_node_data, 0, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "cloneNode", f);
 	JS_FreeValue(ctx, data[0]);
+
+	/* fixes878 — text/comment nodes get the SAME node-level traversal surface
+	 * as elements. This is not optional decoration: firstChild lands on the
+	 * text between tags, so `box.firstChild.nextSibling` walks THROUGH a text
+	 * node. Without it that chain dies at the first gap in real markup -- the
+	 * first thing Test 21 caught. Base dom_node vtable ops only, so it is safe
+	 * on this shape (see the qjs_install_node_traversal note). */
+	qjs_install_node_traversal(ctx, obj);
 
 	return obj;
 }
@@ -2641,7 +2878,60 @@ static JSValue qjs_wrap_fragment(JSContext *ctx, dom_document_fragment *frag)
 		JS_FreeAtom(ctx, atom);
 	}
 
+	/* fixes878 — fragments need the node surface too: the whole point of a
+	 * DocumentFragment is to build a subtree and then walk or move its
+	 * children. Base dom_node vtable ops only, which is exactly why this is
+	 * safe on the fragment's smaller shape (fixes846). */
+	qjs_install_node_traversal(ctx, obj);
+
 	return obj;
+}
+
+/* ---- fixes878: wrap a node of ANY type ----
+ *
+ * The node-oriented traversal surface (firstChild / lastChild / nextSibling /
+ * previousSibling / childNodes / cloneNode) reaches nodes that are NOT
+ * elements -- text between tags, and the comment markers Preact and React
+ * depend on. `children` and nextElementSibling can filter to elements and use
+ * qjs_wrap_element_full directly; these cannot.
+ *
+ * Dispatch on the real nodeType and use the wrapper built for that shape.
+ * Getting this wrong is not theoretical: fixes846 hit an ASan
+ * global-buffer-overflow by reusing the ELEMENT wrapper for a DocumentFragment,
+ * whose vtable is a different, smaller shape -- qjs_wrap_element reads through
+ * the element vtable (dom_element_get_tag_name), which a fragment does not
+ * have. Unknown types get NULL rather than a guessed wrapper, for the same
+ * reason.
+ *
+ * REF CONTRACT: takes the caller's transferred ref (libdom's get_* / clone
+ * return a ref'd node) and hands it to the chosen wrapper, every one of which
+ * adopts it -- on a wrap-map hit they unref it and return a dup, so identity
+ * holds. The unknown-type path must therefore unref, or the node leaks. */
+static JSValue qjs_wrap_any_node(JSContext *ctx, dom_node *node)
+{
+	dom_node_type ntype = 0;
+
+	if (node == NULL) return JS_NULL;
+	if (macsurf_dom_node_get_node_type(node, &ntype) != DOM_NO_ERR) {
+		macsurf_dom_node_unref(node);
+		return JS_NULL;
+	}
+
+	switch ((int) ntype) {
+	case 1:		/* element */
+		return qjs_wrap_element_full(ctx, (dom_element *) node);
+	case 3:		/* text */
+	case 4:		/* CDATASection  */
+	case 8:		/* comment -- CharacterData, same data/nodeValue surface */
+		return qjs_wrap_text_node(ctx, (dom_text *) node);
+	case 11:	/* DocumentFragment */
+		return qjs_wrap_fragment(ctx, (dom_document_fragment *) node);
+	default:
+		/* document (9), doctype (10), attr (2), PI (7): no wrapper of the
+		 * right shape exists, and guessing one is the fixes846 crash. */
+		macsurf_dom_node_unref(node);
+		return JS_NULL;
+	}
 }
 
 /* ---- document.createDocumentFragment (native) ----

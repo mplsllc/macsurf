@@ -2171,6 +2171,112 @@ int main(void)
 	fprintf(stderr, "=== Test 20 PASS: overflow evicts furthest-out; the imminent "
 			"timer still fires ===\n");
 
+	/* --- Test 21 (fixes878): node-oriented traversal is REAL, and cloneNode
+	 * COPIES instead of returning the element itself.
+	 *
+	 * qjs_el_install_js_helpers used to hardcode the whole node surface as
+	 * constants -- cloneNode returned `el`, contains returned false, childNodes
+	 * was a fresh [] forever, and firstChild/lastChild/nextSibling/
+	 * previousSibling were `null` data properties frozen at wrap time. None of
+	 * them shadowed a native; they WERE the implementation. So each was a wrong
+	 * answer rather than a missing one, which is why nothing ever threw.
+	 *
+	 * The cloneNode assert is the sharp one: returning `el` means
+	 * parent.appendChild(node.cloneNode(true)) MOVES the original, so a page
+	 * that meant N copies silently rendered one relocated node.
+	 *
+	 * This test removes its own fixture: the harness shares one document. */
+	fprintf(stderr, "\n=== Test 21: real node traversal + cloneNode copies ===\n");
+	{
+		const char *arm =
+			"var box=document.createElement('div');"
+			"box.setAttribute('id','trav-fixture');"
+			"document.body.appendChild(box);"
+			/* text + element + comment: firstChild must see the TEXT, and
+			 * childNodes must count all three, where `children` sees 1. */
+			"box.appendChild(document.createTextNode('lead'));"
+			"var inner=document.createElement('span');"
+			"inner.setAttribute('class','kid');"
+			"box.appendChild(inner);"
+			"globalThis.__t={};"
+			"var t=globalThis.__t;"
+			"t.first_type=box.firstChild?box.firstChild.nodeType:-1;"
+			"t.last_is_span=(box.lastChild===inner);"
+			"t.childNodes_len=box.childNodes.length;"
+			"t.children_len=box.children.length;"
+			"t.next_of_first=box.firstChild?(box.firstChild.nextSibling===inner):false;"
+			"t.prev_of_span=(inner.previousSibling===box.firstChild);"
+			"t.contains_kid=box.contains(inner);"
+			"t.contains_self=box.contains(box);"
+			"t.contains_foreign=box.contains(document.body);"
+			/* THE clone bug */
+			"var clone=inner.cloneNode(true);"
+			"t.clone_is_self=(clone===inner);"
+			"t.clone_parent_null=(clone.parentNode===null);"
+			"box.appendChild(clone);"
+			"t.after_clone_children=box.children.length;"
+			"t.original_still_in=(inner.parentNode===box);"
+			/* the canonical clear-children idiom */
+			"var guard=0;"
+			"while(box.firstChild&&guard<100){box.removeChild(box.firstChild);guard++;}"
+			"t.cleared=box.childNodes.length;"
+			"t.guard=guard;"
+			"document.body.removeChild(box);";
+		const char *chk =
+			"var t=globalThis.__t;"
+			"if(t.first_type!==3)"
+				"throw new Error('ASSERT FAIL: firstChild did not return the leading "
+					"TEXT node (nodeType '+t.first_type+') -- node traversal is still "
+					"hardcoded');"
+			"if(!t.last_is_span)"
+				"throw new Error('ASSERT FAIL: lastChild is wrong');"
+			"if(t.childNodes_len!==2)"
+				"throw new Error('ASSERT FAIL: childNodes saw '+t.childNodes_len+', "
+					"expected 2 (text + span)');"
+			"if(t.children_len!==1)"
+				"throw new Error('ASSERT FAIL: children (elements only) saw '"
+					"+t.children_len+', expected 1');"
+			"if(!t.next_of_first||!t.prev_of_span)"
+				"throw new Error('ASSERT FAIL: nextSibling/previousSibling do not link');"
+			"if(!t.contains_kid)"
+				"throw new Error('ASSERT FAIL: contains(descendant) is false');"
+			"if(!t.contains_self)"
+				"throw new Error('ASSERT FAIL: contains(self) must be true per spec');"
+			"if(t.contains_foreign)"
+				"throw new Error('ASSERT FAIL: contains(ancestor) must be false');"
+			"if(t.clone_is_self)"
+				"throw new Error('ASSERT FAIL: cloneNode returned the element ITSELF -- "
+					"clone-and-append MOVES the original instead of copying it');"
+			"if(!t.clone_parent_null)"
+				"throw new Error('ASSERT FAIL: a fresh clone must be parentless');"
+			"if(t.after_clone_children!==2)"
+				"throw new Error('ASSERT FAIL: after appending the clone the box has '"
+					"+t.after_clone_children+' element children, expected 2 (original + "
+					"copy) -- the original was MOVED, not copied');"
+			"if(!t.original_still_in)"
+				"throw new Error('ASSERT FAIL: the original left its parent -- it was "
+					"moved by the clone-append');"
+			"if(t.cleared!==0)"
+				"throw new Error('ASSERT FAIL: the while(firstChild) removeChild idiom "
+					"left '+t.cleared+' children');"
+			"if(t.guard===0)"
+				"throw new Error('ASSERT FAIL: the clear loop never ran even once -- "
+					"firstChild was falsy from the start');";
+		unsigned char ok;
+
+		ok = js_exec(thread, (const unsigned char *)arm, strlen(arm), "trav-arm.js");
+		if (!ok) { fprintf(stderr, "FAIL: traversal arm threw\n"); return 1; }
+		ok = js_exec(thread, (const unsigned char *)chk, strlen(chk), "trav-chk.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: node traversal / cloneNode contract broken\n");
+			return 1;
+		}
+		fprintf(stderr, "firstChild/lastChild/siblings/childNodes/contains real; "
+				"cloneNode copies; clear-children idiom empties the node\n");
+	}
+	fprintf(stderr, "=== Test 21 PASS: node traversal is real libdom and cloneNode "
+			"copies ===\n");
+
 	free(html_src_big);
 	return 0;
 }

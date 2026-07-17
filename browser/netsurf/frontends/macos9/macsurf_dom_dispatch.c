@@ -288,3 +288,33 @@ dom_exception macsurf_dom_characterdata_set_data_s(dom_node *node,
     return exc;
 }
 
+/* fixes878 — real cloneNode. The JS binding previously handed back the element
+ * ITSELF, so the universal clone-and-append idiom
+ *     parent.appendChild(tpl.cloneNode(true))
+ * MOVED the original instead of copying it: pages rendered one relocated node
+ * where they meant N copies, silently and with no error. This is libdom's own
+ * virtual clone, so `deep` is honoured properly.
+ *
+ * The result carries a ref that the caller owns (libdom's clone returns a
+ * ref'd node), matching dom_node_get_first_child et al above -- the QuickJS
+ * wrappers adopt that transferred ref. */
+dom_exception macsurf_dom_node_clone_node(dom_node *node, int deep,
+    dom_node **result)
+{
+    return dom_node_clone_node(node, (bool) (deep != 0), result);
+}
+
+/* fixes878 — node.contains(). Non-virtual in libdom (see the comment at
+ * dom/core/node.h:205), and it correctly reports true for the node itself,
+ * which is what the DOM spec requires. `contains` used to be hardcoded
+ * `return false`. */
+dom_exception macsurf_dom_node_contains(dom_node *node, dom_node *other,
+    int *contains)
+{
+    bool c = false;
+    dom_exception exc;
+    exc = dom_node_contains(node, other, &c);
+    *contains = c ? 1 : 0;
+    return exc;
+}
+
