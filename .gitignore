@@ -89,3 +89,8 @@ __pycache__/
 !/harness/build/
 !/harness/build/*
 harness/jquery-3.7.1.min.js
+# Same reason as jquery above: a vendored third-party bundle the harness runs to
+# test against REAL code rather than a synthetic mock. 87 KB of someone else's
+# minified output does not belong in this repo's history; the tests SKIP cleanly
+# when it is absent (fetch it from the site's HAR to run that leg).
+harness/verbum-comments.js
