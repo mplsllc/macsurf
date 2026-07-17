@@ -33,7 +33,7 @@
   &nbsp;&nbsp;
   <a href="https://discord.gg/mrwZK8zHr2" target="_blank"><img src="img/discord.jpeg" alt="Join our Discord!" height="46"></a>
     &nbsp;&nbsp;
-  <a href"https://bsky.app/profile/macsurfos9.bsky.social" target="_blank"><img src="img/bsky.png" alt="Follow me on BlueSky!" height="46"></a>
+  <a href="https://bsky.app/profile/macsurfos9.bsky.social" target="_blank"><img src="img/bsky.png" alt="Follow me on BlueSky!" height="46"></a>
 </p>
 
 <p align="center"><sub><strong>Thanks to our supporters:</strong> Shlooom, Kestral, Mothra (Patreon) &middot; kilgeist, Turuun, Rogue (Ko-Fi)</sub></p>
