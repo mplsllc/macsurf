@@ -2581,6 +2581,92 @@ int main(void)
 	fprintf(stderr, "=== Test 24 PASS: readyState lifecycle and event order match "
 			"the spec ===\n");
 
+	/* --- Test 25 (#304 repro attempt): the NAVIGATION realm reset, which is
+	 * what actually crashes on hardware.
+	 *
+	 * HW signature: unmapped memory at js_shape_hash_unlink+0004C via
+	 *   browser_window_callback -> js_newthread -> qjs_flush_timers ->
+	 *   JS_FreeValue -> free_object -> js_free_shape -> js_shape_hash_unlink
+	 * i.e. the flush DECIDED TO FREE (the fixes875 gate passed) and the free
+	 * blew up. Reproduced by refreshing a page (68kmla) with timers pending.
+	 *
+	 * Test 6 already covers a CLEAN destroy of two heaps; it passes, and it is
+	 * not this path. js_newthread's realm reset is different in ways that
+	 * matter: it flushes timers, then builds a fresh context ON THE SAME
+	 * RUNTIME, frees the old context, and only THEN bumps heap->ctx_gen -- so
+	 * during qjs_build_context() the heap still advertises the OLD (ctx, gen)
+	 * while a NEW context already exists on the same runtime.
+	 *
+	 * Two heaps on purpose: a page with an iframe is the hardware situation,
+	 * and it is what makes a stale slot from realm A able to meet a recycled
+	 * address in realm B. */
+	fprintf(stderr, "\n=== Test 25: navigation realm reset with timers pending "
+			"(#304 repro) ===\n");
+	{
+		extern void macsurf_qjs_pump_all(void);
+		struct jsheap *hA = NULL, *hB = NULL;
+		struct jsthread *tA1 = NULL, *tA2 = NULL, *tB1 = NULL, *tB2 = NULL;
+		const char *arm =
+			/* a spread of shapes: closures over objects, so the freed
+			 * JSValues own real shapes in the runtime's shape table --
+			 * which is what js_shape_hash_unlink walks. */
+			"var keep=[];"
+			"for(var i=0;i<24;i++){(function(n){"
+				"var o={a:n,b:'x'+n,c:[n,n+1],d:{deep:{deeper:n}}};"
+				"keep.push(o);"
+				"setTimeout(function(){return o.d.deep.deeper+n;},100000);"
+				"setInterval(function(){return o.c[0];},100000);"
+			"})(i);}";
+		int pump;
+
+		if (js_newheap(20000, &hA) != NSERROR_OK ||
+		    js_newheap(20000, &hB) != NSERROR_OK) {
+			fprintf(stderr, "FAIL: heap setup\n"); return 1;
+		}
+		/* realm 1 in each */
+		if (js_newthread(hA, NULL, (void *)&htmlc, &tA1) != NSERROR_OK ||
+		    js_newthread(hB, NULL, (void *)&htmlc, &tB1) != NSERROR_OK) {
+			fprintf(stderr, "FAIL: thread setup\n"); return 1;
+		}
+		js_exec(tA1, (const unsigned char *)arm, strlen(arm), "navA1.js");
+		js_exec(tB1, (const unsigned char *)arm, strlen(arm), "navB1.js");
+		fprintf(stderr, "armed 48 far-future timers per realm across 2 heaps\n");
+
+		/* THE NAVIGATION: a second js_newthread on the SAME heap is exactly
+		 * what a refresh does -- flush old timers, free old ctx, fresh realm. */
+		if (js_newthread(hA, NULL, (void *)&htmlc, &tA2) != NSERROR_OK) {
+			fprintf(stderr, "FAIL: heapA navigation\n"); return 1;
+		}
+		fprintf(stderr, "heapA navigated (realm reset #1)\n");
+		js_exec(tA2, (const unsigned char *)arm, strlen(arm), "navA2.js");
+
+		/* navigate B too: B's fresh ctx may land on A's freed ctx address */
+		if (js_newthread(hB, NULL, (void *)&htmlc, &tB2) != NSERROR_OK) {
+			fprintf(stderr, "FAIL: heapB navigation\n"); return 1;
+		}
+		fprintf(stderr, "heapB navigated (realm reset #2)\n");
+
+		/* and again, to churn the allocator into reusing addresses */
+		{
+			struct jsthread *tA3 = NULL, *tB3 = NULL;
+			js_newthread(hA, NULL, (void *)&htmlc, &tA3);
+			js_exec(tA3, (const unsigned char *)arm, strlen(arm), "navA3.js");
+			js_newthread(hB, NULL, (void *)&htmlc, &tB3);
+			for (pump = 0; pump < 4; pump++) macsurf_qjs_pump_all();
+			js_destroythread(tA3); js_destroythread(tB3);
+		}
+
+		for (pump = 0; pump < 4; pump++) macsurf_qjs_pump_all();
+
+		js_destroythread(tA1); js_destroythread(tA2);
+		js_destroythread(tB1); js_destroythread(tB2);
+		js_destroyheap(hB);
+		js_destroyheap(hA);
+		fprintf(stderr, "both heaps torn down after repeated realm resets\n");
+	}
+	fprintf(stderr, "=== Test 25 PASS: navigation realm reset is clean under ASan "
+			"===\n");
+
 	free(html_src_big);
 	return 0;
 }

@@ -591,6 +591,17 @@ struct qjs_timer {
 	 * bug this arena has already produced twice (fixes854, fixes875). */
 	int        nargs;
 	JSValue    args[QJS_TIMER_MAX_ARGS];
+	/* fixes888 (#304) — the owning JSRuntime, captured at registration.
+	 *
+	 * (ctx, gen) is bookkeeping ABOUT the runtime; this is the runtime. The
+	 * crash is precisely "an rt_A JSValue freed against rt_B" -- free_object
+	 * -> js_free_shape -> js_shape_hash_unlink walks rt_B's bucket chain for a
+	 * shape living in rt_A's table, runs off the end, unmapped memory at
+	 * js_shape_hash_unlink+0004C. Comparing the runtime directly tests the
+	 * exact invariant JS_FreeValue requires, so it holds even when the
+	 * generation bookkeeping is wrong -- which the hardware says it is, since
+	 * fixes875's gate passed and the free still blew up. */
+	JSRuntime *rt;
 };
 
 static struct qjs_timer s_timer_arena[QJS_MAX_TIMERS];
@@ -622,6 +633,22 @@ static unsigned long qjs_ctx_gen(JSContext *ctx)
 	return 0;
 }
 
+/* fixes888 (#304) — the LIVE runtime owning `ctx`, or NULL if no live heap does.
+ *
+ * Deliberately resolved through g_heap_list rather than JS_GetRuntime(ctx):
+ * JS_GetRuntime dereferences the context, and the whole problem here is that
+ * the pointer may be freed. The heap list is the only authority on which
+ * contexts still exist, so this asks it instead of trusting the pointer. */
+static JSRuntime *qjs_ctx_live_rt(JSContext *ctx)
+{
+	struct jsheap *h;
+	if (ctx == NULL) return NULL;
+	for (h = g_heap_list; h != NULL; h = h->next) {
+		if (h->ctx == ctx) return h->rt;
+	}
+	return NULL;
+}
+
 /* Does this slot really belong to (ctx, its current generation)? */
 static int qjs_timer_owned_by(struct qjs_timer *t, JSContext *ctx)
 {
@@ -650,6 +677,32 @@ static unsigned long g_ctx_gen_next = 1;
 static void timer_slot_clear(struct qjs_timer *t, int free_vals)
 {
 	int i;
+
+	/* fixes888 (#304) — FINAL GATE, and the one that actually matters.
+	 *
+	 * Whatever the caller decided from (ctx, gen), refuse to free unless the
+	 * slot's ctx is STILL LIVE and STILL OWNED BY THE RUNTIME THAT MADE THESE
+	 * VALUES. Every caller's own reasoning is bookkeeping that can be wrong;
+	 * this is the invariant JS_FreeValue actually requires. If it does not
+	 * hold, ABANDON -- leaking into a runtime that is gone (or that never
+	 * owned these values) costs nothing real, and freeing is the crash.
+	 *
+	 * fixes875 tried to close this with (ctx, generation) alone and hardware
+	 * still crashed at js_shape_hash_unlink+0004C through
+	 * js_newthread -> qjs_flush_timers -> JS_FreeValue, i.e. its gate PASSED
+	 * and the free was still cross-runtime. So the gen check stays as a first
+	 * filter, but it is no longer what we trust. */
+	if (free_vals) {
+		JSRuntime *live_rt = qjs_ctx_live_rt(t->ctx);
+		if (live_rt == NULL || t->rt == NULL || live_rt != t->rt) {
+			macsurf_debug_log_writef(
+				"WORK timer: REFUSING cross-runtime free id=%d ctx=%p "
+				"slot_rt=%p live_rt=%p -- abandoning instead",
+				t->id, (void *) t->ctx, (void *) t->rt,
+				(void *) live_rt);
+			free_vals = 0;
+		}
+	}
 
 	if (free_vals && t->ctx != NULL) {
 		JS_FreeValue(t->ctx, t->fn);
@@ -761,6 +814,9 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	 * against it. */
 	t->ctx = ctx;
 	t->ctx_gen = qjs_ctx_gen(ctx);
+	/* fixes888 (#304) — capture the owning runtime alongside the dup. Safe to
+	 * dereference here: we are executing IN this context, so it is live. */
+	t->rt = JS_GetRuntime(ctx);
 	t->fn = JS_DupValue(ctx, argv[0]);
 	/* Dup against the SAME ctx as `fn`, for the same reason. */
 	for (i = 0; i < extra; i++)
@@ -5770,14 +5826,26 @@ void js_destroyheap(struct jsheap *heap)
 		qjs_flush_timers(heap->ctx);
 		macos9_js_fetch_flush(heap->ctx);
 	}
-	if (heap->ctx != NULL) JS_FreeContext(heap->ctx);
+	if (heap->ctx != NULL) {
+		JS_FreeContext(heap->ctx);
+		/* fixes888 (#304) — same rule as js_newthread: a freed context
+		 * pointer must never stay visible on g_heap_list. This heap is not
+		 * unlinked until the bottom of this function, and JS_FreeRuntime
+		 * below runs finalizers -- so without this, every qjs_ctx_gen /
+		 * qjs_ctx_live_rt scan during that window can match this dead
+		 * heap's dangling ctx and report its generation as live. */
+		heap->ctx = NULL;
+		heap->ctx_gen = 0;
+	}
 	/* fixes541: release any wrappers whose finalizer JS_FreeContext did not
 	 * run (obj->method reference cycles); both halves, then clear. */
 	qjs_wrap_drain();
-	if (heap->rt  != NULL) JS_FreeRuntime(heap->rt);
-	if (g_heap == heap) g_heap = NULL;
-	/* fixes861 (#289) — unlink before the free, or pump_all walks freed
-	 * memory on the very next event-loop pass. */
+	/* fixes888 (#304) — unlink BEFORE JS_FreeRuntime, not after. The runtime
+	 * teardown runs finalizers, and anything they touch that scans g_heap_list
+	 * must not find this heap: its ctx is already gone and its rt is in the
+	 * middle of being destroyed. fixes861 moved the unlink ahead of free(heap)
+	 * for the same class of reason (pump_all walking freed memory); this moves
+	 * it ahead of the teardown that can re-enter. */
 	{
 		struct jsheap **pp = &g_heap_list;
 		while (*pp != NULL) {
@@ -5785,6 +5853,8 @@ void js_destroyheap(struct jsheap *heap)
 			pp = &(*pp)->next;
 		}
 	}
+	if (g_heap == heap) g_heap = NULL;
+	if (heap->rt  != NULL) JS_FreeRuntime(heap->rt);
 	free(heap);
 }
 
@@ -5820,6 +5890,22 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 		fresh = qjs_build_context(heap);
 		if (fresh != NULL) {
 			JS_FreeContext(heap->ctx);
+			/* fixes888 (#304) — do NOT leave a freed pointer visible.
+			 *
+			 * heap is on g_heap_list the whole time, and qjs_ctx_gen /
+			 * qjs_ctx_live_rt answer by scanning that list for h->ctx == ctx.
+			 * Between JS_FreeContext above and `heap->ctx = fresh` below,
+			 * heap->ctx is a DANGLING pointer still advertising this heap's
+			 * old generation -- so any lookup landing on that address during
+			 * the window (qjs_wrap_drain runs finalizers here) gets a
+			 * confident, wrong answer about a realm that no longer exists.
+			 * Worse, the allocator can hand that exact address to the next
+			 * context, and then TWO heaps answer for one pointer and the scan
+			 * returns whichever is first in the list.
+			 * NULL it immediately: qjs_ctx_gen/qjs_ctx_live_rt both return
+			 * 0/NULL for NULL, which is the correct "no live realm" answer. */
+			heap->ctx = NULL;
+			heap->ctx_gen = 0;
 			/* fixes541: release every old-page wrapper's node ref AND
 			 * owner-document keepalive, then clear the map, before the
 			 * fresh context wraps anything.  Both halves, then clear. */
