@@ -1,8 +1,8 @@
 # MacSurf Status
 
-**Date:** 2026-07-11
-**Engine HEAD:** fixes765 (MacSurf side, `8cad5551`)
-**Current release:** **MacSurf 2.0** (2026-07-11) — the blank-screen fix on high-RAM Macs (#207: runtime Process-Manager partition-bounds pointer validation + session-only dead-host list), cross-signed HTTPS chain reordering (#206 — macintoshgarden.org loads over https), viewport lazy image loading for **all** images (#223 — heavy forums load in seconds, not minutes), a type-ahead address bar with a suggestions dropdown (#231), real day-grouped History and folder-based Bookmark manager windows (#47/#221), cache-purge-on-login (#213), a refreshed toolbar / animated About UI, Get Info version via a `'vers'` resource (#219), a typing-latency fix (#212), and failures-only release logging. Full notes: [release-notes/MacSurf-2.0.md](release-notes/MacSurf-2.0.md). *(The 1.68.1 and v1.4 narratives below are retained as history.)*
+**Date:** 2026-07-17
+**Engine HEAD:** fixes894 (MacSurf side, `master`)
+**Current release:** **MacSurf 2.0.5 "HACKADAY"** (2026-07-17) — a polish release over 2.0. Headline: **hackaday.com renders at full desktop width**. The load-bearing fix underneath was browser-wide — every author `font-size` was drawing ~25% too small and CSS `em`/`rem`/`@media` width queries were computing against the wrong number, so pages came up cramped into a narrow column; MacSurf now measures type in real device pixels (#244/#287, fixes859). On top of that: a large modern-CSS pass (justified text #271, soft hyphens #272/#275, `tab-size`/typography cluster #251, box-alignment shorthands #253, logical properties #247, grid auto-track sizing #62, `caret-color`/`accent-color` #252, `background-clip` #255, `image-rendering` #256, inline-`style` rewriters #277); a much more capable on-device JavaScript engine (real `fetch()`/`XMLHttpRequest`, draining Promise chains, `document.cookie`, DOM traversal + `querySelector`, load lifecycle — #283–#302); tracker/ad-network blocking; text/plain rendering inline (#232); rgba backdrop compositing (#227); and a typing-latency dirty-rect fix (#212/#239). Full notes: [release-notes/MacSurf-2.0.5.md](release-notes/MacSurf-2.0.5.md). *(The 2.0, 1.68.1, and v1.4 narratives below are retained as history.)*
 
 **Historical (v1.4 round):** v1.4 "Open House" — **the JavaScript marathon closed.** Twenty-three GitHub issues went from open to closed across fixes319-352 — `setTimeout` / `setInterval` / `requestAnimationFrame`, `window.location` (full surface), `window.history` (`pushState` / `replaceState` / `state`), `URL` + `URLSearchParams`, `element.classList`, `element.style`, `Event` / `CustomEvent` / `MouseEvent` / `KeyboardEvent` constructors, `MutationObserver`, `DOMParser`, `FormData`, `localStorage`, `fetch`, `window.addEventListener` for `load` + `DOMContentLoaded`, `<details>` / `<summary>` click-to-toggle, `hidden` attribute. The purpose-built probe page at `mactrove.com/t.html` scored **`JS 19/19 pass, 0 fail`** on a G3 iMac. Two structural bugs caught along the way: **fixes349** repaired the IIFE per-element installer broken by fixes342's `_noresult` change (`TypeError: [object Object] not callable` on every element wrapper, the install aborted mid-stream and elements lost classList / style / matches / closest / etc); **fixes350** extended `js_fire_event` to dispatch `_winListeners` so `load` / `DOMContentLoaded` actually reach `addEventListener` listeners (was only firing the inline `on<type>` handler).
 
@@ -10,7 +10,7 @@ Diagnostic + power-user features also landed: **about:cache**, **about:memory**,
 
 CSS / gradient fidelity also moved in this window: **fixes348** downgraded alpha-overlay gradients to NONE so Platinum pinstripes (`rgba(...) 1px, transparent 1px`) stop rendering as harsh black-to-white bands; **fixes344b** added real alpha-aware gradient stops on an outer-struct side channel so RGBA + `transparent` no longer truncate to opaque; **fixes345** captured radial-gradient size+position prefixes; **fixes346** added pinstripe / repeating-pattern recovery so first==last across N≥3 stops swaps to the first distinct intermediate colour.
 **Predecessor:** v1.3.1 "Forward, refined" (2026-05-29) — multi-curve ECDHE in TLS 1.3. v1.3 "Forward" (2026-05-29) — first native TLS 1.3 on Classic Mac OS, ever. v1.2 "Sealed" (same day) — macEntropy v1.0 closed the entropy hole, POST forms wired, V1 download manager landed.
-**Latest release:** **MacSurf 2.0** (2026-07-11). Full notes: [release-notes/MacSurf-2.0.md](release-notes/MacSurf-2.0.md). Predecessor: 1.68.1 "macQJS" ([notes](release-notes/MacSurf-1.68.1.md)), v1.4 "Open House" ([notes](release-notes/MacSurf-1.4.md)), v1.3.1 ([notes](release-notes/MacSurf-1.3.1.md)).
+**Latest release:** **MacSurf 2.0.5 "HACKADAY"** (2026-07-17). Full notes: [release-notes/MacSurf-2.0.5.md](release-notes/MacSurf-2.0.5.md). Predecessor: 2.0 ([notes](release-notes/MacSurf-2.0.md)), 1.68.1 "macQJS" ([notes](release-notes/MacSurf-1.68.1.md)), v1.4 "Open House" ([notes](release-notes/MacSurf-1.4.md)).
 **Last hardware-accepted:** v1.4 JavaScript marathon + Find / View Source / about:* (G3 iMac OS 9.2.2, 2026-06-01).
 **Companion site:** **[home.macsurf.org](https://home.macsurf.org/)** — server-rendered PHP portal with search, weather, and four news feeds. No JS dependency, class-based CSS only.
 **Open issues on `mplsllc/macsurf`:** the long tail (~50, down from ~60), the modern HTML5 / JS / CSS features the project intentionally tracks separately. **#48 Bookmarks** is the largest still-open from this round — menu installs and Show works, but Add still uses a session-only local array instead of `desktop/hotlist.c`. Nothing in the long tail blocks real-site rendering.
@@ -49,13 +49,12 @@ The build runs on a G3 iMac for current work, with a beige G3 Minitower (Sonnet 
 - `object-fit` plus `object-position` (V1; `object-position` got its own libcss property at fixes199h)
 - See [css-status.md](css-status.md) for the property-by-property audit.
 
-### JavaScript
-- Duktape 2.7.0, full ES5
-- Closures, prototypes, regex, JSON, promises (polyfill), recursion
-- Date arithmetic that bridges the Mac epoch (1904) to the Unix epoch (1970)
-- `ackermann(3,7)` in about 5–6 seconds on a 233 MHz G3
-- Mandelbrot fractal in pure JS
-- Basic DOM bridge (document + element wrappers; coverage growing), plus MacSurf-side timer and XHR plumbing
+### JavaScript — macQJS (QuickJS, ES2023)
+- QuickJS port running modern ES2023 natively on PowerPC — `let`/`const`, arrows, classes, template literals, generators, native `Promise`, modern regex (the in-house ES6→ES5 transpiler was retired at fixes522)
+- Real `fetch()` and `XMLHttpRequest` backed by the network (over the same fetch path as the rest of the browser, so cookies/UA apply), relative-URL resolution against the document base, and a drained job queue so Promise chains resolve past their first step (2.0.5, #283–#302)
+- Real DOM: node traversal (`firstChild`/`childNodes`/`cloneNode`), `querySelector`/`querySelectorAll` compound selectors, `createElementNS`, `document.cookie` over the real jar, and the `readyState`/`DOMContentLoaded`/`load` lifecycle
+- Date arithmetic bridging the Mac epoch (1904) to the Unix epoch (1970)
+- Runs real site bundles on-device (jQuery, Preact, webpack runtimes); heavy DOM-mutation SPAs are the open frontier
 
 ### Networking
 - Open Transport TCP, `OTOpenEndpointInContext` synchronous calls yielding on `kOTSyncIdleEvent`

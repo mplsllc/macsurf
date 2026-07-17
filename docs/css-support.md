@@ -42,7 +42,8 @@ user-facing summary; the deep engineering audit lives in
 | `background-size` | ◑ | Honored for raster images; not yet for background SVG. |
 | `background-position` / `-repeat` | ✅ | |
 | `background: none` / `transparent` reset | ✅ | Shorthand reset fixed 2.0.5 (#268). |
-| `background-clip` / `background-origin` | ✖ | Deferred (#255). |
+| `background-clip` | ◑&ast; | `border-box`/`padding-box`/`content-box` honored (2.0.5, #255); `background-clip: text` deferred. |
+| `background-origin` | ✖ | Deferred (#255). |
 | `background-attachment: fixed` | ✖ | |
 
 ## Gradients

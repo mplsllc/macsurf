@@ -15,9 +15,9 @@
 </p>
 
 <p align="center">
-  <img src="screenshots/macsurf-1.68-imac.jpg" alt="MacSurf 2.0 running on a Power Macintosh G3 iMac" width="760">
+  <img src="screenshots/2.0.5-hackaday-imac.jpg" alt="MacSurf 2.0.5 rendering hackaday.com on a Power Macintosh G3 iMac" width="760">
   <br>
-  <em>MacSurf 2.0 on a Power Mac G3 iMac, rendering <a href="https://home.macsurf.org/">home.macsurf.org</a> over native HTTPS.</em>
+  <em>MacSurf 2.0.5 on a Power Mac G3 iMac, rendering <a href="https://hackaday.com/">hackaday.com</a> at full desktop width over native HTTPS.</em>
 </p>
 
 ---
@@ -45,7 +45,7 @@
 ---
 
 > [!NOTE]
-> **2.0** fixes the blank-screen bug on high-RAM Macs, loads a whole class of cross-signed HTTPS sites (macintoshgarden.org included), cuts heavy forums from minutes to seconds with lazy image loading, and adds a type-ahead address bar plus real History and Bookmark managers — all on the macQJS JavaScript engine and native TLS 1.3, on a 233 MHz G3. It's at its best on hand-built pages, retro sites, and forums. Very heavy modern apps — GitHub, video, React-heavy SPAs — still don't render. This is honest, in-progress software. Got a G3 or G4? Load it up and tell us what breaks. See [docs/status.md](docs/status.md) for the current punch list.
+> **2.0.5 "HACKADAY"** is a polish release over 2.0: point it at **hackaday.com** and the front page renders at real desktop width, with the right fonts and the article cards laid out. Under that headline is a browser-wide text-size fix (author `font-size` was drawing ~25% too small, which is why so many sites came up cramped), a large modern-CSS pass, a more capable on-device JavaScript engine, and tracker/ad-network blocking. It's still at its best on hand-built pages, retro sites, and forums; very heavy modern apps — GitHub, video, React-heavy SPAs — still don't render. This is honest, in-progress software. Got a G3 or G4? Load it up and tell us what breaks. See [docs/status.md](docs/status.md) for the current punch list.
 
 ## Why this exists
 
@@ -69,6 +69,16 @@ Every shot below is a live site, captured on a Power Mac G3 running Mac OS 9.2.2
 <td width="50%" align="center" valign="top"><img src="screenshots/2.0-duckduckgo.png" alt="DuckDuckGo search"><br><strong>DuckDuckGo</strong><br><em>Search that works.</em></td>
 </tr>
 </table>
+
+## New in 2.0.5
+
+<table>
+<tr>
+<td colspan="2" align="center" valign="top"><img src="screenshots/2.0.5-hackaday.png" alt="hackaday.com rendering at desktop width" width="720"><br><strong>hackaday.com renders</strong><br><em>A modern, JavaScript-heavy news site at full desktop width — correct type, article cards, images in place.</em></td>
+</tr>
+</table>
+
+<sub>Under it: text is measured in real device pixels (author `font-size` no longer draws 25% too small), a large modern-CSS pass (justified text, soft hyphens, logical properties, box-alignment shorthands, grid auto-sizing), a more capable JavaScript engine (real `fetch`/`XHR`, resolving Promise chains, DOM traversal, `document.cookie`), and tracker/ad-network blocking. [Full 2.0.5 notes →](docs/release-notes/MacSurf-2.0.5.md)</sub>
 
 ## New in 2.0
 
@@ -175,7 +185,7 @@ Every shot below is a live site, captured on a Power Mac G3 running Mac OS 9.2.2
 
 ## Download
 
-**[MacSurf 2.0](https://github.com/mplsllc/macsurf/releases/latest)** (2026-07-11) — the blank-screen fix for high-RAM Macs, cross-signed HTTPS (macintoshgarden.org and a whole family of sites), viewport lazy image loading (heavy forums load in seconds instead of minutes), a type-ahead address bar with a suggestions dropdown, real History and Bookmark manager windows, and a refreshed interface — all on native TLS 1.3 and the macQJS ES2023 JavaScript engine. [Full release notes →](docs/release-notes/MacSurf-2.0.md)
+**[MacSurf 2.0.5 "HACKADAY"](https://github.com/mplsllc/macsurf/releases/latest)** (2026-07-17) — a polish release over 2.0: hackaday.com renders at full desktop width, a browser-wide text-size fix (author `font-size` was drawing ~25% too small), a large modern-CSS pass, a more capable on-device JavaScript engine, and tracker/ad-network blocking. [Full release notes →](docs/release-notes/MacSurf-2.0.5.md) &middot; [2.0 notes →](docs/release-notes/MacSurf-2.0.md)
 
 - **[Download the .sit →](https://github.com/mplsllc/macsurf/releases/latest)** — expand with StuffIt Expander on Mac OS 9.1+ (CarbonLib 1.5+) and double-click. No installer.
 - Already on a Mac OS 9 machine? Grab it from the plain-HTTP **[macsurf.org](http://macsurf.org/)** — GitHub doesn't render on-device yet.
