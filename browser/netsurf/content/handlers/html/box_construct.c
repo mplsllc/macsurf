@@ -2447,6 +2447,25 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 			return;
 		}
 
+		/* fixes897 — per-ELEMENT durable marker for the first 150 nodes of a
+		 * reconvert (the crash reproduces there: HW fixes896 died in nodes
+		 * 1-20 and 80-100 with freemem healthy, so it is NOT memory and NOT the
+		 * text-string pin -- it is box construction reading a bad node/attr).
+		 * Logs the node POINTER (safe to format even if the node is freed) and
+		 * flushes BEFORE box_construct_element touches it, so a bomb inside the
+		 * cascade/create leaves this node's index+ptr as the last durable
+		 * position. No tag lookup here -- dom_node_get_node_name on a freed node
+		 * would itself crash and hide which node it was. */
+		if (macsurf_reconvert_in_progress && g_reconv_node_ix <= 150) {
+			macsurf_debug_log_writef(
+				"WORK reconvert #%ld: elem node=%ld ptr=%p",
+				(long) macsurf_reconvert_seq, (long) g_reconv_node_ix,
+				(void *) ctx->n);
+			macsurf_reconv_pos_set("construct-elem",
+				(long) macsurf_reconvert_seq, (long) g_reconv_node_ix, "");
+			macsurf_reconv_pos_flush();
+		}
+
 		{
 			bool bce_ok = box_construct_element(ctx, &convert_children);
 			/* fixes547: box_construct_element yields internally
@@ -2494,6 +2513,21 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 
 			if (type == DOM_TEXT_NODE) {
 				ctx->n = next;
+				/* fixes897 — per-TEXT durable marker (first 150 nodes).
+				 * Distinguishes a crash in box_construct_text (the
+				 * dom_string read, fixes489 UAF) from one in
+				 * box_construct_element (attr/cascade). */
+				if (macsurf_reconvert_in_progress &&
+						g_reconv_node_ix <= 150) {
+					macsurf_debug_log_writef(
+						"WORK reconvert #%ld: text node=%ld ptr=%p",
+						(long) macsurf_reconvert_seq,
+						(long) g_reconv_node_ix, (void *) next);
+					macsurf_reconv_pos_set("construct-text",
+						(long) macsurf_reconvert_seq,
+						(long) g_reconv_node_ix, "");
+					macsurf_reconv_pos_flush();
+				}
 				if (box_construct_text(ctx) == false) {
 					ctx->cb(ctx->content, false);
 					dom_node_unref(ctx->n);
