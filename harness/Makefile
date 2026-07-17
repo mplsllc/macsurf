@@ -4,8 +4,18 @@
 # dom_string use-after-free deterministically. Linux dev tool only — NOT shipped.
 #
 # Usage: make -C harness          (build ./harness/reconvert_harness)
-#        make -C harness run      (run it)
+#        make -C harness run      (build + run it)
 #        make -C harness clean
+#
+# Incremental: every object has its source as a real prerequisite plus -MMD
+# header deps, so touching a header (e.g. html.h's struct html_script) rebuilds
+# its dependents. If you ever find yourself reasoning about whether the binary
+# picked up an edit, `make clean` -- but fix the dependency instead.
+
+# The per-source rules below are generated with $(eval), so the first of THEM
+# would otherwise become the default goal (make takes the first target it sees).
+# Pin it explicitly.
+.DEFAULT_GOAL := reconvert_harness
 
 ROOT   := $(abspath ..)
 NS     := $(ROOT)/browser/netsurf
@@ -46,51 +56,71 @@ GLUE_SRC  := build/macsurf_qjs.c build/macos9_reconvert.c build/macsurf_dom_disp
              build/macos9_content_registry.c build/misc_stub.c build/macos9_js_fetch.c
 HARN_SRC  := harness_stubs.c harness_gen_stubs.c driver.c
 
-# object mapping (flatten paths)
-obj_of = $(OBJ)/$(subst /,_,$(patsubst $(ROOT)/%,%,$1)).o
-LIB_OBJ  := $(foreach s,$(LIB_SRC),$(call obj_of,$s))
-CORE_OBJ := $(foreach s,$(CORE_SRC),$(call obj_of,$s))
-GLUE_OBJ := $(OBJ)/glue_macsurf_qjs.o $(OBJ)/glue_macos9_reconvert.o
-QJS_OBJ  := $(OBJ)/qjs_quickjs.o $(OBJ)/qjs_libregexp.o $(OBJ)/qjs_libunicode.o $(OBJ)/qjs_dtoa.o
-HARN_OBJ := $(OBJ)/harness_stubs.o $(OBJ)/driver.o
-
-ALL_OBJ := $(LIB_OBJ) $(CORE_OBJ) $(GLUE_OBJ) $(QJS_OBJ) $(HARN_OBJ)
-
-reconvert_harness: $(ALL_OBJ)
-	$(CC) $(ASAN) -pthread $(ALL_OBJ) -o $@ -lm
-
-# generic rule via a per-source compile script would be cleaner; use explicit patterns:
-$(OBJ)/%.o:
-	@mkdir -p $(OBJ)
-# lib + core objects (name-mangled): compiled by the phony 'objs' below
-
 INC += -I$(LIBDIR)/libdom/bindings/hubbub
 
-.PHONY: objs run clean
-# object names are path-mangled (flatten). Compile each set with the right flags.
-objs:
+# --- object mapping ---------------------------------------------------------
+# Objects are FLAT (paths mangled to underscores) because sources come from a
+# dozen directories and CW8's flat namespace is what the Mac build mirrors.
+obj_of  = $(OBJ)/$(subst /,_,$(patsubst $(ROOT)/%,%,$1)).o
+qjs_of  = $(OBJ)/qjs_$(notdir $(1:.c=.o))
+glue_of = $(OBJ)/glue_$(notdir $(1:.c=.o))
+harn_of = $(OBJ)/$(notdir $(1:.c=.o))
+
+# Glue splits on ONE flag: the QuickJS-facing files need -DWITH_QUICKJS (it gates
+# the whole engine, see macsurf_prefix.h), the rest must NOT have it.
+GLUE_QJS_SRC   := build/macsurf_qjs.c build/macsurf_dom_dispatch.c build/macos9_js_fetch.c
+GLUE_PLAIN_SRC := build/macos9_reconvert.c build/macos9_content_registry.c build/misc_stub.c
+
+# $(sort) dedupes: dedup.sh's `core` set and EXTRA_SRC both name corestrings.c,
+# and two rules for one object is a "overriding recipe" warning at best.
+BASE_SRC := $(sort $(LIB_SRC) $(CORE_SRC) $(EXTRA_SRC))
+
+BASE_OBJ  := $(foreach s,$(BASE_SRC),$(call obj_of,$s))
+QJS_OBJ   := $(foreach s,$(QJS_SRC),$(call qjs_of,$s))
+GLUE_OBJ  := $(foreach s,$(GLUE_QJS_SRC) $(GLUE_PLAIN_SRC),$(call glue_of,$s))
+HARN_OBJ  := $(foreach s,$(HARN_SRC),$(call harn_of,$s))
+
+ALL_OBJ := $(BASE_OBJ) $(QJS_OBJ) $(GLUE_OBJ) $(HARN_OBJ)
+
+# --- rules ------------------------------------------------------------------
+# One rule per source, generated, each with its source as a REAL prerequisite
+# and -MMD header deps. This replaces a phony `objs` target whose recipe
+# rebuilt every file unconditionally while the default goal
+# (`reconvert_harness: $(ALL_OBJ)`) had an EMPTY compile recipe -- so a bare
+# `make` (the invocation in this file's own usage note, and in the plan's
+# checklist) compiled NOTHING, silently relinked nothing, and reported success.
+# A stale binary then re-ran the previous run's tests and printed all-PASS:
+# edits to driver.c could not fail, which is the exact false-green this harness
+# exists to prevent. ALL_OBJ was also missing six objects, which is why the old
+# link globbed $(OBJ)/*.o rather than trusting it.
+define COMPILE_RULE
+$(2): $(1) | $$(OBJ)
+	$$(CC) -c $$(CFLAGS) -MMD -MP $$(INC) $(3) $$< -o $$@
+endef
+
+$(foreach s,$(BASE_SRC),$(eval $(call COMPILE_RULE,$s,$(call obj_of,$s),)))
+$(foreach s,$(QJS_SRC),$(eval $(call COMPILE_RULE,$s,$(call qjs_of,$s),$$(QJSFLAGS))))
+$(foreach s,$(GLUE_QJS_SRC),$(eval $(call COMPILE_RULE,$s,$(call glue_of,$s),-DWITH_QUICKJS)))
+$(foreach s,$(GLUE_PLAIN_SRC),$(eval $(call COMPILE_RULE,$s,$(call glue_of,$s),)))
+$(foreach s,$(HARN_SRC),$(eval $(call COMPILE_RULE,$s,$(call harn_of,$s),)))
+
+$(OBJ):
 	@mkdir -p $(OBJ)
-	@set -e; for s in $(LIB_SRC) $(CORE_SRC) $(EXTRA_SRC); do \
-	  o=$(OBJ)/$$(echo $$s | sed "s|$(ROOT)/||; s|/|_|g").o; \
-	  $(CC) -c $(CFLAGS) $(INC) $$s -o $$o; done
-	$(CC) -c $(CFLAGS) $(INC) $(QJSFLAGS) $(QJS)/quickjs.c    -o $(OBJ)/qjs_quickjs.o
-	$(CC) -c $(CFLAGS) $(INC) $(QJSFLAGS) $(QJS)/libregexp.c  -o $(OBJ)/qjs_libregexp.o
-	$(CC) -c $(CFLAGS) $(INC) $(QJSFLAGS) $(QJS)/libunicode.c -o $(OBJ)/qjs_libunicode.o
-	$(CC) -c $(CFLAGS) $(INC) $(QJSFLAGS) $(QJS)/dtoa.c       -o $(OBJ)/qjs_dtoa.o
-	$(CC) -c $(CFLAGS) -DWITH_QUICKJS $(INC) build/macsurf_qjs.c        -o $(OBJ)/glue_macsurf_qjs.o
-	$(CC) -c $(CFLAGS) -DWITH_QUICKJS $(INC) build/macsurf_dom_dispatch.c -o $(OBJ)/glue_macsurf_dom_dispatch.o
-	$(CC) -c $(CFLAGS) -DWITH_QUICKJS $(INC) build/macos9_js_fetch.c -o $(OBJ)/glue_macos9_js_fetch.o
-	$(CC) -c $(CFLAGS) $(INC) build/macos9_reconvert.c  -o $(OBJ)/glue_macos9_reconvert.o
-	$(CC) -c $(CFLAGS) $(INC) build/macos9_content_registry.c -o $(OBJ)/glue_macos9_content_registry.o
-	$(CC) -c $(CFLAGS) $(INC) build/misc_stub.c -o $(OBJ)/glue_misc_stub.o
-	$(CC) -c $(CFLAGS) $(INC) harness_stubs.c     -o $(OBJ)/harness_stubs.o
-	$(CC) -c $(CFLAGS) $(INC) harness_gen_stubs.c -o $(OBJ)/harness_gen_stubs.o
-	$(CC) -c $(CFLAGS) $(INC) driver.c            -o $(OBJ)/driver.o
 
-link: objs
-	$(CC) $(ASAN) -pthread $(OBJ)/*.o -o reconvert_harness -lz -lm
+reconvert_harness: $(ALL_OBJ)
+	$(CC) $(ASAN) -pthread $(ALL_OBJ) -o $@ -lz -lm
 
-run: link
+-include $(ALL_OBJ:.o=.d)
+
+.PHONY: all run clean
+all: reconvert_harness
+
+# Kept as aliases: `make link` / `make objs` are in muscle memory and in older
+# notes. They now mean the same thing as the default goal instead of being the
+# only invocations that actually built anything.
+link objs: reconvert_harness
+
+run: reconvert_harness
 	./reconvert_harness
 
 clean:
