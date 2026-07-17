@@ -6946,6 +6946,8 @@ void js_event_cleanup(struct jsthread *thread, struct dom_event *evt)
 void macsurf_qjs_pump_all(void)
 {
 	struct jsheap *h = g_heap_list;
+	static int s_last_heaps = -1;
+	int heaps = 0;
 	/* fixes898 — FREEZE JS while a reconvert box walk is in flight.
 	 *
 	 * The reconvert rebuilds the box tree from the DOM across MANY cooperative
@@ -6995,8 +6997,6 @@ void macsurf_qjs_pump_all(void)
 	 * confirms browser_window_initialise_common (frames.c:232 -> js_newheap)
 	 * really does give iframes their own heap -- an assumption fixes861 rests
 	 * on and which I have not otherwise verified on hardware. */
-	static int s_last_heaps = -1;
-	int heaps = 0;
 	{
 		struct jsheap *c = g_heap_list;
 		while (c != NULL) { heaps++; c = c->next; }
