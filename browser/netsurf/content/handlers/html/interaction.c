@@ -872,8 +872,48 @@ get_mouse_action_node(html_content *html,
 
 	/* initialise the mouse action state data */
 	memset(man, 0, sizeof(struct mouse_action_state));
-	man->node = html->layout->node; /* Default dom node to the <HTML> */
 	man->result.pointer = BROWSER_POINTER_DEFAULT;
+
+	/* fixes891 — DO NOT WALK A BOX TREE THAT IS BEING REBUILT.
+	 *
+	 * This is the hover crash. On hardware:
+	 *   macos9_poll_mouse_hover -> browser_window_mouse_track ->
+	 *   html_mouse_action -> get_mouse_action_node -> box_at_point +
+	 *   link_box_for_ancestor -> box_for_node -> dispatch through a freed
+	 *   dom_node's vtable -> PC in zeroed System heap (003B009C).
+	 *
+	 * Reconvert (JS DOM mutation -> re-run box construction) frees the old
+	 * box tree and builds a new one across SEPARATE cooperative poll passes,
+	 * and mouse hover runs on poll passes too -- so a hover fires mid-reconvert
+	 * and box_at_point walks freed boxes. The same freed box gave up a stale
+	 * box->scroll_x (fixes890 caught that one) AND a stale box->node (this
+	 * one), which is why both symptoms share this call stack.
+	 *
+	 * There was NO guard here at all: get_mouse_action_node dereferenced
+	 * html->layout->node unconditionally. Three states make the tree unsafe to
+	 * walk, and all touch only html_content fields -- never the box tree we
+	 * distrust, so the check itself can never fault:
+	 *   - layout == NULL             : torn down, not yet rebuilt
+	 *   - box_conversion_context set : dom_to_box is building it right now
+	 *                                  (c->layout may be a partial subtree)
+	 *   - reflowing                  : mid-reformat, positions inconsistent
+	 * In any of them, report NEED_DATA so html_mouse_action does nothing this
+	 * pass; the next hover after the tree settles works normally. A dropped
+	 * hover frame is invisible; walking a freed tree is fatal. */
+	if (html->layout == NULL ||
+	    html->box_conversion_context != NULL ||
+	    html->reflowing) {
+		macsurf_debug_log_writef(
+			"WORK hover: SKIP -- tree not walkable (layout=%p convert=%p "
+			"reflowing=%d); the mouse path will not touch a tree a "
+			"reconvert is rebuilding",
+			(void *) html->layout,
+			(void *) html->box_conversion_context,
+			(int) html->reflowing);
+		return NSERROR_NEED_DATA;
+	}
+
+	man->node = html->layout->node; /* Default dom node to the <HTML> */
 
 	/* search the box tree for a link, imagemap, form control, or
 	 * box with scrollbars

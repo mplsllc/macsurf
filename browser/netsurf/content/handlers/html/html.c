@@ -2008,6 +2008,15 @@ nserror html_reconvert(html_content *c)
 	}
 
 	/* HAZARD guards BEFORE freeing the box tree (order matters). */
+	/* fixes891 — clear the stored hover/active DOM nodes. They are cleared on
+	 * reformat (html_reformat) but were NOT cleared on reconvert. They are
+	 * dom_nodes, and the JS mutation that triggered THIS reconvert may have
+	 * removed the very node one of them holds -- leaving a dangling dom_node
+	 * that the next hover would feed to box_for_node (a vtable dispatch, so a
+	 * freed node -> jump through garbage -> the 003B009C crash). Same reason
+	 * fixes445 clears them in html_reformat. */
+	c->dyn_hover_node = NULL;
+	c->dyn_active_node = NULL;
 	html_reconvert_clear_node_boxes(c);          /* H1: stale node boxes */
 	html_object_free_objects(c);                 /* H2: object_list fetches */
 	html_reconvert_detach_forms(c);              /* H3: form box pointers */

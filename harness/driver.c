@@ -2848,6 +2848,74 @@ int main(void)
 	fprintf(stderr, "=== Test 27 PASS: a stale scrollbar can no longer take the "
 			"machine down ===\n");
 
+	/* --- Test 28 (fixes891): a hover during reconvert must not walk a freed
+	 * box tree. THE hover crash, reproduced.
+	 *
+	 * HW: macos9_poll_mouse_hover -> ... -> get_mouse_action_node ->
+	 *     box_at_point + link_box_for_ancestor -> box_for_node ->
+	 *     dispatch through a freed dom_node's vtable -> PC in zeroed heap.
+	 * Reconvert frees the old box tree on one poll pass; hover runs on another;
+	 * there was no guard, so a hover mid-reconvert walked freed boxes. The same
+	 * dead box gave up a stale scroll_x (fixes890) and a stale node (this).
+	 *
+	 * Reproduced by putting the content in the exact unsafe state -- a
+	 * conversion in flight -- and hovering. get_mouse_action_node must refuse
+	 * to touch the tree (NEED_DATA), not walk it.
+	 *
+	 * NEGATIVE CONTROL: with the guard reverted this SEGVs inside
+	 * get_mouse_action_node dereferencing html->layout, exactly as hardware. */
+	fprintf(stderr, "\n=== Test 28: hover during reconvert does not walk a torn "
+			"tree (the box_for_node crash) ===\n");
+	{
+		extern nserror html_mouse_action(struct content *c,
+				struct browser_window *bw,
+				browser_mouse_state mouse, int x, int y);
+		nserror r;
+
+		/* State 1: conversion in flight (dom_to_box building). c->layout may
+		 * be a partial subtree; the hardware walked it. */
+		htmlc.box_conversion_context = (void *) 0x1;   /* non-NULL sentinel */
+		r = html_mouse_action((struct content *) &htmlc, NULL,
+				BROWSER_MOUSE_HOVER, 10, 10);
+		if (r != NSERROR_NEED_DATA) {
+			fprintf(stderr, "FAIL: hover during in-flight reconvert returned "
+					"%d, expected NEED_DATA (it walked the tree)\n", (int) r);
+			return 1;
+		}
+		htmlc.box_conversion_context = NULL;
+
+		/* State 2: layout torn down (html_reconvert set it NULL). Without the
+		 * guard this is `html->layout->node` on NULL. */
+		{
+			struct box *saved = htmlc.layout;
+			htmlc.layout = NULL;
+			r = html_mouse_action((struct content *) &htmlc, NULL,
+					BROWSER_MOUSE_HOVER, 10, 10);
+			if (r != NSERROR_NEED_DATA) {
+				fprintf(stderr, "FAIL: hover with NULL layout returned %d, "
+						"expected NEED_DATA\n", (int) r);
+				return 1;
+			}
+			htmlc.layout = saved;
+		}
+
+		/* State 3: mid-reformat. */
+		htmlc.reflowing = true;
+		r = html_mouse_action((struct content *) &htmlc, NULL,
+				BROWSER_MOUSE_HOVER, 10, 10);
+		if (r != NSERROR_NEED_DATA) {
+			fprintf(stderr, "FAIL: hover while reflowing returned %d, "
+					"expected NEED_DATA\n", (int) r);
+			return 1;
+		}
+		htmlc.reflowing = false;
+
+		fprintf(stderr, "hover refused to walk the tree in all three unsafe "
+				"states (in-flight / NULL layout / reflowing)\n");
+	}
+	fprintf(stderr, "=== Test 28 PASS: the mouse path will not walk a tree a "
+			"reconvert is rebuilding ===\n");
+
 	free(html_src_big);
 	return 0;
 }
