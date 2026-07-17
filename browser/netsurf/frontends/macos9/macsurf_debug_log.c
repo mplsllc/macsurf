@@ -610,12 +610,15 @@ macsurf_log_is_crash_report(const char *m)
 	/* fixes769 (#232) — let the mime-recon lines through the crash-only
 	 * gate so a downloaded-instead-of-rendered page is diagnosable. */
 	if (strstr(m, "RECON MIME") != NULL) return 1;
-	/* WORK: dedicated always-on channel for whatever feature/bug is
-	 * currently under development. Prefix any diagnostic with "WORK "
-	 * and it passes the failures-only gate so each build's active-work
-	 * behaviour is visible without re-whitelisting per feature. Keep
-	 * WORK lines few and remove them once a fix is verified. */
+	/* WORK: dedicated development channel for whatever feature/bug is
+	 * currently under work. fixes893 (2.0.5 release): gated behind
+	 * MACSURF_WORK_LOG (see the note at the passthrough in
+	 * macsurf_debug_log_write) so a shipped build stays crash-basic. Undefined
+	 * here = a "WORK " line is kept ONLY if it also matches a real crash/
+	 * failure keyword above, exactly like any other line. */
+#ifdef MACSURF_WORK_LOG
 	if (strstr(m, "WORK ") != NULL) return 1;
+#endif
 	if (strstr(m, "WATCHDOG") != NULL) return 1;
 	if (strstr(m, "TERMINAL") != NULL) return 1;
 	if (strstr(m, "exception") != NULL) return 1;
@@ -659,9 +662,19 @@ macsurf_debug_log_write(const char *msg)
 	/* WORK channel: active-development diagnostics prefixed "WORK " bypass
 	 * EVERY release filter (the crash-only gate AND all the perf/volume
 	 * suppressors below) and go straight to the writer, so what we're
-	 * currently debugging is never silently dropped. Keep WORK lines few
-	 * and strip them once a fix ships. */
+	 * currently debugging is never silently dropped.
+	 *
+	 * fixes893 (2.0.5 release): gated behind MACSURF_WORK_LOG, matching the
+	 * MACSURF_SSL_LOG / MACSURF_PERF_LOG dev-channel pattern. It is NOT defined
+	 * in a shipped build, so WORK lines fall through to the crash-only gate
+	 * below (and survive only if they ALSO carry a genuine failure keyword).
+	 * That returns the release log to crash-basic -- the fixes765 (2.0) state
+	 * -- instead of the development flood of WORK pipeline/pump/reconvert/hover
+	 * lines. Define MACSURF_WORK_LOG in macsurf_prefix.h to re-arm the channel
+	 * for the next debugging cycle. */
+#ifdef MACSURF_WORK_LOG
 	if (strstr(msg, "WORK ") != NULL) goto do_write;
+#endif
 
 	/* fixes675 — crash-only gate for the release build. Keeps just the
 	 * forensic lines; drops all perf/render/fetch diagnostics. */
