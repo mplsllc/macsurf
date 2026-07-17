@@ -1825,54 +1825,81 @@ struct macsurf_pinned_string {
 
 static struct macsurf_pinned_string *g_reconvert_pinned_strings = NULL;
 
-/* fixes895 — returns the count of strings pinned, so html_reconvert can log
- * it as a phase breadcrumb (a zero count where the old tree clearly had text
- * is itself a signal). */
-static long html_reconvert_pin_text_strings(struct box *root)
+/* fixes896 — pin the DOM's live text-node dom_strings across the reconvert
+ * teardown+rebuild window. Returns the count pinned.
+ *
+ * fixes843 INTENDED exactly this but walked the BOX tree for `BOX_TEXT` boxes
+ * with `b->node != NULL` -- and box_construct NEVER sets `->node` on a text box
+ * (only on ELEMENT boxes, box_construct.c:1438, `box->node = dom_node_ref`).
+ * So the condition was never true: the walk matched nothing and pinned ZERO
+ * strings on EVERY page since the day it was written (HW fixes895 confirmed:
+ * "pinned 0 old text-node strings" on a 1251-box hackaday tree). That left the
+ * fixes489 text-node dom_string UAF completely unprotected -- which is the
+ * reconvert crash inside dom_to_box: box_construct_text's
+ * `dom_characterdata_get_data(ctx->n)` reads a text node's dom_string that a JS
+ * timer firing between the reconvert's cooperative yields dropped to refcount 0
+ * and the allocator reused (freemem was healthy on the crashing run, so it is
+ * this UAF, not memory exhaustion).
+ *
+ * The fix walks the DOM itself -- the actual source box_construct_text reads --
+ * and takes an extra ref on every text/CDATA node's CURRENT dom_string, so that
+ * exact memory cannot be freed+reused until html_reconvert_free_old releases the
+ * pins after the new tree is live. Recursive over DOM DEPTH (bounded on real
+ * pages; a defensive cap stops a pathological nesting from overrunning the
+ * stack), not the box tree's breadth. */
+static long html_reconvert_pin_dom_node(dom_node *node, int depth)
 {
-	struct box *b = root;
-	struct box *root_parent;
+	dom_node_type type = 0;
+	dom_node *child = NULL;
+	dom_node *next = NULL;
 	long pinned = 0;
 
-	if (b == NULL)
+	if (node == NULL)
 		return 0;
+	if (depth > 512)
+		return 0;   /* pathological-nesting stack guard */
 
-	root_parent = b->parent;
-
-	while (b != NULL) {
-		if (b->type == BOX_TEXT && b->node != NULL) {
-			dom_string *ds = NULL;
-			dom_exception exc = dom_characterdata_get_data(
-					(dom_characterdata *) b->node, &ds);
-			if (exc == DOM_NO_ERR && ds != NULL) {
-				struct macsurf_pinned_string *p =
-						malloc(sizeof(*p));
-				if (p != NULL) {
-					/* adopts the ref get_data returned */
-					p->str = ds;
-					p->next = g_reconvert_pinned_strings;
-					g_reconvert_pinned_strings = p;
-					pinned++;
-				} else {
-					dom_string_unref(ds);
-				}
+	dom_node_get_node_type(node, &type);
+	if (type == DOM_TEXT_NODE || type == DOM_CDATA_SECTION_NODE) {
+		dom_string *ds = NULL;
+		dom_exception exc = dom_characterdata_get_data(
+				(dom_characterdata *) node, &ds);
+		if (exc == DOM_NO_ERR && ds != NULL) {
+			struct macsurf_pinned_string *p = malloc(sizeof(*p));
+			if (p != NULL) {
+				/* adopts the ref get_data returned */
+				p->str = ds;
+				p->next = g_reconvert_pinned_strings;
+				g_reconvert_pinned_strings = p;
+				pinned++;
+			} else {
+				dom_string_unref(ds);
 			}
 		}
-
-		if (b->children != NULL) {
-			b = b->children;
-			continue;
-		}
-		while (b != NULL && b->next == NULL) {
-			if (b->parent == root_parent) {
-				b = NULL;
-				break;
-			}
-			b = b->parent;
-		}
-		if (b != NULL)
-			b = b->next;
 	}
+
+	dom_node_get_first_child(node, &child);
+	while (child != NULL) {
+		pinned += html_reconvert_pin_dom_node(child, depth + 1);
+		dom_node_get_next_sibling(child, &next);
+		dom_node_unref(child);
+		child = next;
+	}
+	return pinned;
+}
+
+static long html_reconvert_pin_text_strings(dom_document *doc)
+{
+	dom_node *root = NULL;
+	long pinned;
+
+	if (doc == NULL)
+		return 0;
+	if (dom_document_get_document_element(doc, (void *) &root) != DOM_NO_ERR
+			|| root == NULL)
+		return 0;
+	pinned = html_reconvert_pin_dom_node(root, 0);
+	dom_node_unref(root);
 	return pinned;
 }
 
@@ -2099,12 +2126,15 @@ nserror html_reconvert(html_content *c)
 		"WORK reconvert #%ld: H3 forms+imagemap+selection reset",
 		(long) macsurf_reconvert_seq);
 
-	/* fixes843 — pin the OLD tree's text-node dom_strings BEFORE anything
-	 * else can touch them, while c->layout is still the intact old tree. */
+	/* fixes896 — pin the DOM's live text-node dom_strings across the rebuild
+	 * window. Was fixes843, which walked c->layout (the box tree) for BOX_TEXT
+	 * boxes with a node backlink that box_construct never sets -> pinned 0 ->
+	 * the fixes489 UAF stayed open. Walk c->document, the real source
+	 * box_construct_text reads. */
 	{
-		long pinned = html_reconvert_pin_text_strings(c->layout);
+		long pinned = html_reconvert_pin_text_strings(c->document);
 		macsurf_debug_log_writef(
-			"WORK reconvert #%ld: pinned %ld old text-node strings",
+			"WORK reconvert #%ld: pinned %ld DOM text-node strings",
 			(long) macsurf_reconvert_seq, pinned);
 	}
 
