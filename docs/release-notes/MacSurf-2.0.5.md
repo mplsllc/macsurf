@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="2.0.5-assets/hero-hackaday-imac.jpg" width="720" alt="Hackaday.com rendering on a sticker-covered iMac G3 running Mac OS 9">
+</p>
+
 # MacSurf 2.0.5 "HACKADAY"
 
 A polish release. 2.0 got MacSurf onto real Macs and rendering the modern web — 2.0.5 is the batch of fixes and CSS work that makes those pages actually look *right*. No new setup, nothing to configure. Drop it in over 2.0.
@@ -11,6 +15,11 @@ Point MacSurf at **hackaday.com** and the article front page comes up — at rea
 ## The big wins
 
 **Text is the right size again — everywhere.** The quiet fix that mattered most. Every author `font-size` in the browser was drawing about 25% too small, and CSS `em`/`rem` units and `@media` width queries were all computing against the wrong number — which is why so many sites came up cramped into a narrow column instead of laying out at full desktop width. Fixed at the root: MacSurf now measures type in real device pixels, like every other browser.
+
+<table>
+<tr><td width="50%"><img src="2.0.5-assets/hackaday-old.png" alt="Before: Hackaday article with text 25% too small"></td><td width="50%"><img src="2.0.5-assets/hackaday-new.png" alt="After: correct device-pixel text, masthead logo, and images"></td></tr>
+<tr><td align="center"><em>Before — text 25% too small, no masthead logo</em></td><td align="center"><em>After 2.0.5 — correct type, the logo and images render</em></td></tr>
+</table>
 
 **Trackers and ad networks are blocked.** Known analytics and ad hosts (Usercentrics, Supplyframe, WP stats, Cloudflare beacons and the like) are refused before they load. On a heavy page that's a real chunk of fetching and script-running the Mac used to grind through for nothing.
 
@@ -35,6 +44,21 @@ Point MacSurf at **hackaday.com** and the article front page comes up — at rea
 ## Closed issues
 
 Closes #62, #201, #212, #227, #230, #232, #234, #235, #239, #244, #247, #249, #251, #253, #255, #256, #268, #270, #271, #272, #273, #275, #276, #277, #278, #279, #280, #282, #285, #286, #287.
+
+## Seen on real hardware
+
+XenForo forums like **68kMLA** render, log in, and stay logged in — the correct text size and the modern-CSS work land the whole layout:
+
+<table>
+<tr><td width="50%"><img src="2.0.5-assets/68kmla-old.png" alt="Before: 68kMLA logged out, small text"></td><td width="50%"><img src="2.0.5-assets/68kmla.png" alt="After: 68kMLA logged in, correct text size"></td></tr>
+<tr><td align="center"><em>Before</em></td><td align="center"><em>After 2.0.5 — logged in, correct type</em></td></tr>
+</table>
+
+And **macintoshgarden.org** — image-heavy and fully styled — over a secure connection handled on the Mac itself:
+
+<p align="center">
+  <img src="2.0.5-assets/macgarden.png" width="720" alt="macintoshgarden.org rendering over HTTPS with images and styling">
+</p>
 
 ## To run
 
