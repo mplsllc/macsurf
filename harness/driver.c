@@ -1129,8 +1129,42 @@ int main(void)
 		}
 		fprintf(stderr, "createElement(script) is native, src sticks, body is "
 				"native, appendChild ok\n");
+
+		/* fixes867 (#293) — CONTROL: prove the instrument can actually FIRE.
+		 * Everything above only shows appendChild not throwing; that was true
+		 * even when it silently swallowed every rejection (the old `appended=1`
+		 * assert could not fail). So force a rejection libdom is guaranteed to
+		 * produce -- inserting an ancestor into its own descendant, which
+		 * node.c:752-756 rejects with HIERARCHY_REQUEST_ERR -- and require that
+		 * it THROWS. If this control ever goes quiet, the probe is blind again
+		 * and every "append ok" above is worthless. */
+		{
+			const char *ctrl =
+				"globalThis.__threw=0;"
+				"var p=document.body;"
+				"var c=document.createElement('div');"
+				"p.appendChild(c);"
+				"try{c.appendChild(p);}catch(e){globalThis.__threw=1;}";
+			const char *ctrl_chk =
+				"if(!globalThis.__threw)"
+					"throw new Error('ASSERT FAIL: appendChild(ancestor) did NOT throw "
+						"- the exception is still being swallowed, so no append "
+						"result in this file can be trusted');";
+			unsigned char cok = js_exec(thread, (const unsigned char *)ctrl,
+					strlen(ctrl), "inject-control.js");
+			if (!cok) { fprintf(stderr, "FAIL: control setup threw\n"); return 1; }
+			cok = js_exec(thread, (const unsigned char *)ctrl_chk,
+					strlen(ctrl_chk), "inject-control-chk.js");
+			if (!cok) {
+				fprintf(stderr, "FAIL: the DOM-failure probe is BLIND - a "
+						"guaranteed-invalid append reported success\n");
+				return 1;
+			}
+			fprintf(stderr, "control: invalid append throws (probe is live)\n");
+		}
 	}
-	fprintf(stderr, "=== Test 11 PASS: dynamic <script> injection reaches the DOM ===\n");
+	fprintf(stderr, "=== Test 11 PASS: dynamic <script> injection reaches the DOM; "
+			"DOM-failure probe verified live ===\n");
 
 	free(html_src_big);
 	return 0;

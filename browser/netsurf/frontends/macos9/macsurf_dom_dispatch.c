@@ -149,6 +149,19 @@ dom_exception macsurf_dom_node_get_parent_node(dom_node *node,
     return dom_node_get_parent_node(node, result);
 }
 
+/* fixes867 (#293) — owner document, for the DOM-mutation failure diagnostic in
+ * macsurf_qjs.c (qjs_dom_mut_check).  Distinguishing WRONG_DOCUMENT_ERR from the
+ * mutation-semaphore rejection needs to compare the child's owner against the
+ * parent's, and both look identical from JS otherwise.  On the base
+ * dom_node_vtable, so it is safe for element/text/comment/fragment alike --
+ * unlike the dom_element_* ops (see qjs_wrap_fragment's note on the vtable-shape
+ * hazard).  Returns an owned ref the caller must unref. */
+dom_exception macsurf_dom_node_get_owner_document(dom_node *node,
+    dom_document **result)
+{
+    return dom_node_get_owner_document(node, result);
+}
+
 dom_exception macsurf_dom_node_get_previous_sibling(dom_node *node,
     dom_node **result)
 {

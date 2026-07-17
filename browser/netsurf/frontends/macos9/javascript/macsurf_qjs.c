@@ -1025,10 +1025,15 @@ static void qjs_wrap_drain(void)
 {
 	unsigned int i;
 	int cleaned = 0;
+	int foreign = 0;
+	dom_document *cur = g_qjs_document;
 	for (i = 0; i < QJS_WRAP_BUCKETS; i++) {
 		struct qjs_wrap_entry *e = s_wrap_buckets[i];
 		while (e != NULL) {
 			struct qjs_wrap_entry *next = e->next;
+			/* fixes867 (#293) — count wrappers we are releasing that belong
+			 * to a DIFFERENT document than the realm being reset. */
+			if (e->owner_doc != (dom_node *)cur) foreign++;
 			if (e->node)      macsurf_dom_node_unref(e->node);
 			if (e->owner_doc) macsurf_dom_node_unref(e->owner_doc);
 			free(e);
@@ -1037,7 +1042,27 @@ static void qjs_wrap_drain(void)
 		}
 		s_wrap_buckets[i] = NULL;
 	}
-	macsurf_debug_log_writef("qjs wrap_drain: %d wrapper(s) released", cleaned);
+	/* fixes867 (#293) — was "qjs wrap_drain: %d wrapper(s) released", which the
+	 * failures-only gate DROPS, so this has never reached disk.
+	 *
+	 * `foreign` is the whole point, and it answers a live architectural
+	 * question with a number instead of an argument. This map is file-static
+	 * and shared by EVERY runtime (its own comment at the declaration says
+	 * "one context per window ... so a file-static map is sufficient" — which
+	 * js_newheap() running per-(i)frame contradicts), and this drain walks
+	 * every bucket unconditionally on realm-reset and heap-destroy. So when an
+	 * IFRAME resets its realm, it may be releasing the PARENT's live wrappers'
+	 * node refs and doc keepalives.
+	 *   foreign == 0 always  -> the bug is theoretical; partitioning the map
+	 *                           can wait for the window.parent work.
+	 *   foreign  > 0         -> it is REAL and biting today, and the map MUST
+	 *                           be partitioned before wrapper count grows
+	 *                           (i.e. before real DOM traversal lands).
+	 * That is the Phase 2-blocks-Phase-3-or-Phase-4 decision, settled by
+	 * observation rather than by my reading. */
+	macsurf_debug_log_writef(
+		"WORK wrapmap drain freed=%d foreign=%d curdoc=%p heap=%p",
+		cleaned, foreign, (void *)cur, (void *)g_heap);
 }
 
 /* Pointer-validate guard (ON from phase one).  Single chokepoint every accessor
@@ -1479,6 +1504,68 @@ static JSValue qjs_el_get_prev_sibling_data(JSContext *ctx,
 	return JS_NULL;
 }
 
+/* fixes867 (#293) — THE BLINDFOLD, removed.
+ *
+ * appendChild/removeChild/insertBefore each called their libdom op and DROPPED
+ * the dom_exception on the floor, then returned the child as if it had been
+ * inserted.  A rejected insert was indistinguishable from a successful one --
+ * to JS, to the harness, to the log.  Six rounds of hackaday debugging were
+ * spent above a failure this hid, and harness Test 11's `appended=1` assert was
+ * a tautology that could not fail.
+ *
+ * _dom_node_insert_before has THREE silent rejections that return before any
+ * attach or DOMNodeInserted dispatch (node.c:726-760), and they demand
+ * completely different fixes:
+ *   NO_MODIFICATION_ALLOWED_ERR + dispatching_mutation>0
+ *       -> the mutation semaphore (node.c:2045): libdom marks the document
+ *          read-only while dispatching a mutation event, on the assumption that
+ *          "nothing should be listening" -- but NetSurf runs its whole script
+ *          engine from that default action.  Architectural fix.
+ *   WRONG_DOCUMENT_ERR + childOwner != nodeOwner
+ *       -> document identity: g_qjs_document is a process-global set per
+ *          js_newthread, so the last thread created wins for every realm.
+ *          State fix.
+ *   HIERARCHY_REQUEST_ERR
+ *       -> neither.
+ * Logging only the exception CODE would still need the cause inferred from a
+ * statistical pattern; logging the OPERANDS makes one line decisive.
+ *
+ * Also THROWS on failure, which is what the DOM spec requires and what lets a
+ * page's own error handling see the truth. `seq` is a monotonic insert counter
+ * so execution ORDER is visible -- needed before choosing between deferring
+ * script execution (which reorders) and dropping the semaphore (which doesn't).
+ */
+extern uint32_t _dom_document_dispatching_mutation(dom_document *doc);
+
+static int s_dom_mut_seq = 0;
+
+static JSValue qjs_dom_mut_check(JSContext *ctx, const char *op,
+		dom_exception exc, dom_node *parent, dom_node *child)
+{
+	dom_document *pdoc = NULL;
+	dom_document *cdoc = NULL;
+	int seq = ++s_dom_mut_seq;
+
+	if (exc == DOM_NO_ERR) return JS_UNDEFINED;
+
+	/* Failure path only — these are diagnostic reads, kept off the hot path.
+	 * get_owner_document hands back an OWNED ref; unref both below. */
+	if (parent != NULL) macsurf_dom_node_get_owner_document(parent, &pdoc);
+	if (child  != NULL) macsurf_dom_node_get_owner_document(child,  &cdoc);
+
+	macsurf_debug_log_writef(
+		"WORK dom %s FAIL exc=%d seq=%d dispatching_mutation=%d "
+		"childOwner=%p nodeOwner=%p parent=%p child=%p",
+		op, (int)exc, seq,
+		(int)_dom_document_dispatching_mutation(pdoc),
+		(void *)cdoc, (void *)pdoc, (void *)parent, (void *)child);
+
+	if (pdoc != NULL) macsurf_dom_node_unref((dom_node *)pdoc);
+	if (cdoc != NULL) macsurf_dom_node_unref((dom_node *)cdoc);
+
+	return JS_ThrowTypeError(ctx, "%s failed: DOM exception %d", op, (int)exc);
+}
+
 /* ---- appendChild ---- */
 static JSValue qjs_el_append_child_data(JSContext *ctx,
 		JSValueConst this_val, int argc, JSValueConst *argv,
@@ -1487,13 +1574,19 @@ static JSValue qjs_el_append_child_data(JSContext *ctx,
 	dom_element *el;
 	dom_element *child_el;
 	dom_node *result = NULL;
+	dom_exception exc;
+	JSValue err;
 	(void)this_val; (void)magic;
 	el = (dom_element *)qjs_get_node(func_data[0]);
 	if (el == NULL || argc < 1) return JS_NULL;
 	child_el = (dom_element *)qjs_get_node(argv[0]);
 	if (child_el == NULL) return JS_NULL;
-	macsurf_dom_node_append_child((dom_node *)el, (dom_node *)child_el, &result);
+	exc = macsurf_dom_node_append_child((dom_node *)el, (dom_node *)child_el,
+			&result);
 	if (result) macsurf_dom_node_unref(result);
+	err = qjs_dom_mut_check(ctx, "appendChild", exc, (dom_node *)el,
+			(dom_node *)child_el);
+	if (JS_IsException(err)) return err;
 	if (g_qjs_content) macos9_js_mark_dom_dirty(g_qjs_content);
 	return JS_DupValue(ctx, argv[0]);
 }
@@ -1506,13 +1599,23 @@ static JSValue qjs_el_remove_child_data(JSContext *ctx,
 	dom_element *el;
 	dom_element *child_el;
 	dom_node *result = NULL;
+	dom_exception exc;
+	JSValue err;
 	(void)this_val; (void)magic;
 	el = (dom_element *)qjs_get_node(func_data[0]);
 	if (el == NULL || argc < 1) return JS_NULL;
 	child_el = (dom_element *)qjs_get_node(argv[0]);
 	if (child_el == NULL) return JS_NULL;
-	macsurf_dom_node_remove_child((dom_node *)el, (dom_node *)child_el, &result);
+	exc = macsurf_dom_node_remove_child((dom_node *)el, (dom_node *)child_el,
+			&result);
 	if (result) macsurf_dom_node_unref(result);
+	/* fixes867 (#293) — same blindfold as appendChild.  removeChild is hit by
+	 * the SAME mutation semaphore (node.c:989 dispatches DOMNodeRemoval, and
+	 * :744's readonly check guards the removal path too), so a JS remove from
+	 * inside a mutation handler fails just as silently. */
+	err = qjs_dom_mut_check(ctx, "removeChild", exc, (dom_node *)el,
+			(dom_node *)child_el);
+	if (JS_IsException(err)) return err;
 	if (g_qjs_content) macos9_js_mark_dom_dirty(g_qjs_content);
 	return JS_DupValue(ctx, argv[0]);
 }
@@ -1526,6 +1629,8 @@ static JSValue qjs_el_insert_before_data(JSContext *ctx,
 	dom_element *new_el;
 	dom_element *ref_el;
 	dom_node *result = NULL;
+	dom_exception exc;
+	JSValue err;
 	(void)this_val; (void)magic;
 	el = (dom_element *)qjs_get_node(func_data[0]);
 	if (el == NULL || argc < 1) return JS_NULL;
@@ -1533,9 +1638,16 @@ static JSValue qjs_el_insert_before_data(JSContext *ctx,
 	if (new_el == NULL) return JS_NULL;
 	ref_el = (argc >= 2 && !JS_IsNull(argv[1]))
 		? (dom_element *)qjs_get_node(argv[1]) : NULL;
-	macsurf_dom_node_insert_before((dom_node *)el, (dom_node *)new_el,
+	exc = macsurf_dom_node_insert_before((dom_node *)el, (dom_node *)new_el,
 		(dom_node *)ref_el, &result);
 	if (result) macsurf_dom_node_unref(result);
+	/* fixes867 (#293) — same blindfold as appendChild, and this one matters
+	 * most for modern pages: insertBefore(node, null) is Preact's ONLY
+	 * insertion primitive (it never calls appendChild), so a silent rejection
+	 * here means a React/Preact app renders nothing, with no error. */
+	err = qjs_dom_mut_check(ctx, "insertBefore", exc, (dom_node *)el,
+			(dom_node *)new_el);
+	if (JS_IsException(err)) return err;
 	if (g_qjs_content) macos9_js_mark_dom_dirty(g_qjs_content);
 	return JS_DupValue(ctx, argv[0]);
 }

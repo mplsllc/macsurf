@@ -2048,6 +2048,26 @@ bool _dom_node_readonly_owner(const dom_node_internal *node)
 	return false;
 }
 
+/* fixes867 (#293) — read-only accessor for the mutation semaphore above.
+ *
+ * Diagnostic ONLY; it changes no behaviour.  The macos9 JS binding needs it to
+ * tell apart the three silent rejections in _dom_node_insert_before, which all
+ * look identical from JS:
+ *   NO_MODIFICATION_ALLOWED_ERR + dispatching_mutation>0  -> this semaphore
+ *   WRONG_DOCUMENT_ERR          + childOwner!=nodeOwner   -> document identity
+ *   HIERARCHY_REQUEST_ERR                                 -> neither
+ * Without it the binding can log the exception code but not WHY, and the
+ * difference decides an architectural fix (defer script execution out of the
+ * mutation default action) vs a state fix (per-heap document).
+ *
+ * Lives here because node.c already includes document_i.h, where the field is
+ * declared; exposing it from the frontend would otherwise need libdom/src/core
+ * on the CW8 access paths.  Returns 0 for NULL, so callers need no guard. */
+uint32_t _dom_document_dispatching_mutation(dom_document *doc)
+{
+	return (doc != NULL) ? doc->dispatching_mutation : 0;
+}
+
 /**
  * Determine if a node is read only
  *
