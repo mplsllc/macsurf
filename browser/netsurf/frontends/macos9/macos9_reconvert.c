@@ -193,7 +193,7 @@ macos9_reconvert_pending_add(struct content *c)
  * old children/next-only clear walk really was leaving boxes behind.
  *
  * If it still crashes, the log now says which population and how many. */
-static int g_reconvert_enabled = 1;
+static int g_reconvert_enabled = 0;
 
 void
 macsurf_js_set_reconvert_enabled(int enabled)
