@@ -6946,6 +6946,47 @@ void js_event_cleanup(struct jsthread *thread, struct dom_event *evt)
 void macsurf_qjs_pump_all(void)
 {
 	struct jsheap *h = g_heap_list;
+	/* fixes898 — FREEZE JS while a reconvert box walk is in flight.
+	 *
+	 * The reconvert rebuilds the box tree from the DOM across MANY cooperative
+	 * poll passes (convert_xml_to_box_inner self-reschedules every 20 nodes).
+	 * This pump runs on every one of those passes and fires setTimeout /
+	 * setInterval callbacks AND Promise microtasks -- all of which mutate the
+	 * DOM. On a page whose JS never idles (hackaday's dirty-mark storm), that
+	 * mutation frees+reuses nodes/strings the in-flight box walk is about to
+	 * read -> box_construct reads recycled memory -> 0x2710 garbage-fn-ptr.
+	 * HW (fixes897) proved it: the crash node VARIES run-to-run (a timing race),
+	 * node pointers are valid, freemem is healthy -- not memory, not a single
+	 * bad node, but JS racing the walk. fixes896's one-shot text-string pin
+	 * cannot cover nodes CREATED-then-freed during the walk; the only correct
+	 * model is to not interleave mutation with the rebuild (what a real browser
+	 * does for synchronous layout). Suppress ALL JS execution for the reconvert
+	 * window; it resumes the pass after html_reconvert_done clears the flag.
+	 *
+	 * FAIL-SAFE: the flag is global, and a content torn down mid-walk can bail
+	 * out of convert_xml_to_box without html_reconvert_done ever running, which
+	 * would leave it stuck TRUE and freeze JS forever. A reconvert completes in
+	 * well under a second, so after a generous 10 s we force JS back on rather
+	 * than deadlock. Edge-stamped locally so no other TU has to cooperate. */
+	{
+		extern int macsurf_reconvert_in_progress;
+		static int s_reconv_was_active = 0;
+		static double s_reconv_since = 0.0;
+		if (macsurf_reconvert_in_progress) {
+			double now = macsurf_qjs_get_now();
+			if (s_reconv_was_active == 0) {
+				s_reconv_was_active = 1;
+				s_reconv_since = now;
+			}
+			if (now - s_reconv_since < 10000.0)
+				return;   /* frozen: no JS during the active reconvert */
+			/* stuck > 10 s -> fail-safe: unfreeze and pump. */
+			macsurf_reconvert_in_progress = 0;
+			s_reconv_was_active = 0;
+		} else {
+			s_reconv_was_active = 0;
+		}
+	}
 	/* fixes862 (#289 probe) — fixes861 shipped with NO observable marker, so
 	 * there was no way to tell from a log whether it was even in the build,
 	 * let alone whether a second (iframe) heap exists to pump. Log the heap
