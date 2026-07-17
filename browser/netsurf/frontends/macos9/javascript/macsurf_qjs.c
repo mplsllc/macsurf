@@ -28,6 +28,13 @@
 #include "macos9_js_fetch.h"
 #include "content/handlers/html/private.h"
 #include "utils/libdom.h"
+/* fixes879 — document.cookie against the real jar. urldb owns NetSurf's
+ * RFC-6265 cookie store; content_protected.h is what makes c->llcache visible
+ * for the content_get_url() NULL guard (same include set macos9_js_fetch.c
+ * uses for the same guard). */
+#include "utils/nsurl.h"
+#include "content/urldb.h"
+#include "content/content_protected.h"
 
 extern int macsurf_ptr_is_heap(const void *);
 
@@ -1134,6 +1141,80 @@ void qjs_set_content(struct content *c)   { g_qjs_content  = c; }
  * pointer's staleness rules two comments below; the caller must snapshot
  * whatever it needs synchronously, not hold this across an async gap. */
 struct content *qjs_get_content(void) { return g_qjs_content; }
+
+/* ---- fixes879: document.cookie, against the REAL jar ----
+ *
+ * Was the data property `document.cookie=''`: a plain string that a page write
+ * stuck to for the session and that reached no jar, persisted nothing, and
+ * started every navigation empty. The jar itself is real, RFC-6265 and
+ * disk-persistent (urldb.c), and both fetchers have read and written it since
+ * fixes367. Only the JS exposure was fake -- so session-detection code, which
+ * is the thing that reads document.cookie constantly, concluded "logged out" on
+ * every page even while the very request that fetched it carried the session
+ * cookie.
+ *
+ * The URL comes from THIS realm's own content (g_qjs_content), NOT from
+ * macos9_window_list_head() the way location does: that returns the FIRST
+ * window, which for an iframe is a different document entirely -- and cookies
+ * are precisely where reading the wrong document's URL would be a security bug
+ * rather than a cosmetic one.
+ *
+ * The c->llcache NULL guard is not defensive noise: content_get_url() ->
+ * llcache_handle_get_url() dereferences it unconditionally and crashes on a
+ * content that is not (yet, or any longer) fully live. Same guard as
+ * xhr_start_fetch() and macos9_reconvert_host_allowed(), for the same reason;
+ * the S0 harness's minimal test content has no llcache and caught it there. */
+static nsurl *qjs_cookie_doc_url(void)
+{
+	struct content *c = qjs_get_content();
+	if (c == NULL || c->llcache == NULL) return NULL;
+	return content_get_url(c);	/* borrowed */
+}
+
+static JSValue qjs_document_cookie_get(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	nsurl *url;
+	char *cookies;
+	JSValue ret;
+
+	(void)this_val; (void)argc; (void)argv;
+	url = qjs_cookie_doc_url();
+	if (url == NULL) return JS_NewString(ctx, "");
+
+	/* include_http_only = FALSE. HttpOnly exists precisely to be invisible to
+	 * script; the fetchers pass true because the wire is allowed to see those
+	 * cookies, and this path is not. Passing true here would hand every
+	 * session cookie the server marked HttpOnly to any script on the page. */
+	cookies = urldb_get_cookie(url, false);
+	if (cookies == NULL) return JS_NewString(ctx, "");
+	ret = JS_NewString(ctx, cookies);
+	free(cookies);
+	return ret;
+}
+
+static JSValue qjs_document_cookie_set(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	nsurl *url;
+	const char *hdr;
+
+	(void)this_val;
+	if (argc < 1) return JS_UNDEFINED;
+	url = qjs_cookie_doc_url();
+	if (url == NULL) return JS_UNDEFINED;
+
+	hdr = JS_ToCString(ctx, argv[0]);
+	if (hdr == NULL) return JS_UNDEFINED;
+	/* A document.cookie write is one Set-Cookie-shaped declaration; urldb
+	 * parses attributes (path/domain/expires/secure) itself. referrer NULL =>
+	 * a verifiable, first-party transaction, which is what a script setting a
+	 * cookie on its own document is (see urldb_set_cookie's RFC 2109 4.3.5
+	 * unverifiable-transaction check). */
+	urldb_set_cookie(hdr, url, NULL);
+	JS_FreeCString(ctx, hdr);
+	return JS_UNDEFINED;
+}
 
 /* Stage 1 death-row hook (fixes565, QuickJS port of the Duktape
  * macsurf_js_notify_content_freed): g_qjs_content is a raw content pointer,
@@ -3761,6 +3842,23 @@ static void qjs_dom_install(JSContext *ctx)
 				qjs_create_text_node, 1);
 		qjs_set_func(ctx, doc, "__createDocumentFragmentNative",
 				qjs_create_document_fragment, 0);
+		/* fixes879 — document.cookie as a REAL accessor pair over the
+		 * urldb jar, replacing the `document.cookie=''` data property
+		 * installed in register_browser_globals. Defined here (rather
+		 * than in the JS block) because qjs_dom_install runs once a real
+		 * document is wired, which is exactly when a URL exists to key
+		 * the jar by. defineProperty overrides the plain data property
+		 * whichever order the two run in. */
+		{
+			JSAtom atom = JS_NewAtom(ctx, "cookie");
+			JSValue getter = JS_NewCFunction(ctx,
+					qjs_document_cookie_get, "get", 0);
+			JSValue setter = JS_NewCFunction(ctx,
+					qjs_document_cookie_set, "set", 1);
+			JS_DefinePropertyGetSet(ctx, doc, atom, getter, setter,
+					JS_PROP_CONFIGURABLE);
+			JS_FreeAtom(ctx, atom);
+		}
 		/* Native section accessors used by the body/head/documentElement
 		 * getters installed in JS below. */
 		qjs_set_func(ctx, doc, "__getDocumentElement",
@@ -4224,7 +4322,15 @@ static void register_browser_globals(JSContext *ctx)
 			"document.nodeType=9;"
 			"document.nodeName='#document';"
 			"document.readyState='complete';"
-			"document.cookie='';"
+			/* fixes879 — `document.cookie=''` used to live here as a plain
+			 * data property: writes stuck to the string for the session,
+			 * reached no jar, and every navigation started empty. It is now a
+			 * real accessor pair over urldb, installed by qjs_dom_install once
+			 * a document (and therefore a URL to key the jar by) exists. This
+			 * fallback keeps the property defined for the pre-document window,
+			 * where there is no URL and no correct answer but '' -- but it must
+			 * NOT clobber the real accessor, so only define it if absent. */
+			"if(!('cookie' in document))document.cookie='';"
 			"document.URL=document.URL||(typeof location!=='undefined'?location.href:'');"
 			"document.referrer='';"
 			"document.domain='';"
@@ -4287,22 +4393,21 @@ static void register_browser_globals(JSContext *ctx)
 					"if(L)L.forEach(function(f){try{f(ev);}catch(e){}});return true;};"
 		"}");
 
-	/* --- navigator extended shims --- */
-	macsurf_qjs__safe_eval(ctx,
-		"if(typeof navigator!=='undefined'){"
-			"navigator.cookieEnabled=false;"
-			"navigator.onLine=true;"
-			"navigator.languages=navigator.languages||[navigator.language||'en-US'];"
-			"navigator.doNotTrack='1';"
-			"navigator.connection={effectiveType:'3g',downlink:1.5,rtt:300};"
-			"navigator.hardwareConcurrency=1;"
-			"navigator.deviceMemory=0.5;"
-			"navigator.vendor='Anthropic/MPLS';"
-			"navigator.product='MacSurf';"
-			"navigator.productSub='20260531';"
-			"navigator.javaEnabled=function(){return false;};"
-			"navigator.sendBeacon=function(){return false;};"
-		"}");
+	/* fixes879 — the "navigator extended shims" block that used to sit HERE was
+	 * DEAD CODE, every line of it. It is guarded by
+	 *     if (typeof navigator !== 'undefined') { ... }
+	 * but `navigator` is not created until the JS_NewObject/JS_SetPropertyStr
+	 * pair further down this same function, so the guard was always false and
+	 * the whole block was skipped -- silently, since a skipped if is not an
+	 * error. Probed at runtime under the harness: cookieEnabled, onLine and
+	 * vendor all read back `undefined`, not the values written here.
+	 *
+	 * That is also why cookieEnabled was never actually `false` as the audit
+	 * recorded -- it simply never existed. Same practical result (undefined is
+	 * falsy, so sites concluded "cookies disabled"), different cause, and it
+	 * would have defeated the fix if taken at face value.
+	 *
+	 * Moved verbatim to just after navigator is installed. See below. */
 
 	/* --- Observers --- *
 	 * MutationObserver / ResizeObserver / PerformanceObserver stay no-ops
@@ -4817,6 +4922,34 @@ static void register_browser_globals(JSContext *ctx)
 	JS_SetPropertyStr(ctx, nav_obj, "language",
 		JS_NewString(ctx, "en-US"));
 	JS_SetPropertyStr(ctx, global, "navigator", nav_obj);
+
+	/* --- navigator extended shims ---
+	 * fixes879 — MUST stay after the JS_SetPropertyStr(global,"navigator")
+	 * above. This block lived earlier in the function, where its own
+	 * `typeof navigator !== 'undefined'` guard was always false because
+	 * navigator did not exist yet, so none of it ever ran.
+	 *
+	 * cookieEnabled is now TRUE. It read `undefined` (falsy) before, which was
+	 * accurate while document.cookie was a dead string, but the jar is real,
+	 * persistent and now reachable from script -- and sites gate their login
+	 * flow on this exact flag, showing "please enable cookies" instead of the
+	 * page. Leaving it falsy would waste most of the value of wiring
+	 * document.cookie up at all. */
+	macsurf_qjs__safe_eval(ctx,
+		"if(typeof navigator!=='undefined'){"
+			"navigator.cookieEnabled=true;"
+			"navigator.onLine=true;"
+			"navigator.languages=navigator.languages||[navigator.language||'en-US'];"
+			"navigator.doNotTrack='1';"
+			"navigator.connection={effectiveType:'3g',downlink:1.5,rtt:300};"
+			"navigator.hardwareConcurrency=1;"
+			"navigator.deviceMemory=0.5;"
+			"navigator.vendor='Anthropic/MPLS';"
+			"navigator.product='MacSurf';"
+			"navigator.productSub='20260531';"
+			"navigator.javaEnabled=function(){return false;};"
+			"navigator.sendBeacon=function(){return false;};"
+		"}");
 
 	/* --- ES6+ polyfills (Array.from, Set, Map, Image, FB module system) --- */
 	macsurf_qjs__safe_eval(ctx,

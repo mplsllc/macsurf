@@ -30,6 +30,10 @@
 #include "netsurf/content_type.h"
 
 #include "content/content_protected.h"
+/* fixes879 — Test 22 exercises the real cookie jar directly (urldb.c and
+ * nsurl*.c are both compiled into the harness). */
+#include "utils/nsurl.h"
+#include "content/urldb.h"
 #include "content/handlers/html/box.h"
 #include "content/handlers/html/private.h"
 #include "content/handlers/html/box_construct.h"
@@ -2276,6 +2280,123 @@ int main(void)
 	}
 	fprintf(stderr, "=== Test 21 PASS: node traversal is real libdom and cloneNode "
 			"copies ===\n");
+
+	/* --- Test 22 (fixes879): the jar must not hand HttpOnly cookies to script,
+	 * and document.cookie must be a real accessor.
+	 *
+	 * SCOPE, stated honestly: this harness's html_content is memset to 0, so
+	 * c->llcache is NULL and qjs_cookie_doc_url() correctly returns NULL --
+	 * the JS getter therefore returns '' here no matter what, and the full
+	 * JS->jar round trip is HARDWARE-GATED. struct llcache_handle is private to
+	 * llcache.c, so fabricating one would mean guessing a struct layout: a
+	 * worse test than an honest gap.
+	 *
+	 * What IS verified, because it is the part with a security consequence and
+	 * it is fully testable (urldb.c and nsurl are compiled in):
+	 *   (a) that include_http_only=false -- the argument the getter passes --
+	 *       really withholds HttpOnly cookies. THIS TEST CAUGHT A REAL BUG:
+	 *       urldb_get_cookie gathers matches in four loops and only the
+	 *       exact-path one had the HttpOnly gate, so the ordinary Path=/
+	 *       session cookie was handed out anyway. Latent upstream because
+	 *       nothing had ever passed false; document.cookie is the first caller
+	 *       that does, which would have turned it into "any script reads the
+	 *       session token".
+	 *   (b) the JS shape: `cookie` is an ACCESSOR rather than the old data
+	 *       property, and navigator.cookieEnabled is true. */
+	fprintf(stderr, "\n=== Test 22: cookie jar HttpOnly gate + document.cookie "
+			"accessor shape ===\n");
+	{
+		nsurl *curl = NULL;
+		char *got = NULL;
+		unsigned char ok;
+
+		if (nsurl_create("http://cookies.example/path", &curl) != NSERROR_OK ||
+		    curl == NULL) {
+			fprintf(stderr, "FAIL: nsurl_create for the cookie test\n");
+			return 1;
+		}
+		/* Path=/ so this matches by PREFIX, not exact path -- which is the
+		 * loop that was missing the gate, and the shape of essentially every
+		 * real session cookie. An exact-path cookie would have passed against
+		 * the buggy code and proved nothing. */
+		urldb_set_cookie("plain=visible; path=/", curl, NULL);
+		urldb_set_cookie("sess=secret; path=/; HttpOnly", curl, NULL);
+
+		got = urldb_get_cookie(curl, false);	/* what document.cookie does */
+		if (got == NULL) {
+			fprintf(stderr, "FAIL: jar returned nothing for a cookie it was "
+					"just given\n");
+			nsurl_unref(curl);
+			return 1;
+		}
+		if (strstr(got, "plain=visible") == NULL) {
+			fprintf(stderr, "FAIL: script-visible cookie missing from the jar "
+					"read: '%s'\n", got);
+			free(got); nsurl_unref(curl);
+			return 1;
+		}
+		if (strstr(got, "sess=secret") != NULL) {
+			fprintf(stderr, "FAIL: SECURITY -- urldb_get_cookie(url,false) "
+					"returned an HttpOnly cookie ('%s'); document.cookie would "
+					"hand the session token to any script on the page\n", got);
+			free(got); nsurl_unref(curl);
+			return 1;
+		}
+		free(got);
+
+		/* The wire-facing read (what the fetchers pass) must STILL see it --
+		 * otherwise the assert above passes for the wrong reason, i.e. the
+		 * cookie was never stored at all. */
+		got = urldb_get_cookie(curl, true);
+		if (got == NULL || strstr(got, "sess=secret") == NULL) {
+			fprintf(stderr, "FAIL: the HttpOnly cookie is missing even with "
+					"include_http_only=true ('%s') -- the exclusion above "
+					"proved nothing\n", got ? got : "(null)");
+			if (got) free(got);
+			nsurl_unref(curl);
+			return 1;
+		}
+		free(got);
+		nsurl_unref(curl);
+		fprintf(stderr, "jar: script read hides HttpOnly, wire read keeps it\n");
+
+		{
+			const char *chk =
+				"var d=Object.getOwnPropertyDescriptor(document,'cookie');"
+				"if(!d)throw new Error('ASSERT FAIL: document.cookie is not "
+					"defined at all');"
+				"if(typeof d.get!=='function')"
+					"throw new Error('ASSERT FAIL: document.cookie is still a plain "
+						"data property -- writes go to a string and never reach the "
+						"jar');"
+				"if(typeof document.cookie!=='string')"
+					"throw new Error('ASSERT FAIL: document.cookie did not read back "
+						"a string');"
+				"document.cookie='x=1';"
+				"if(navigator.cookieEnabled!==true)"
+					"throw new Error('ASSERT FAIL: navigator.cookieEnabled is '"
+						"+String(navigator.cookieEnabled)+' -- sites gate their login "
+						"flow on it and will show \"please enable cookies\" instead "
+						"of the page');"
+				/* the navigator shim block as a whole was dead; spot-check a
+				 * second property so a future re-ordering fails loudly here */
+				"if(navigator.onLine!==true)"
+					"throw new Error('ASSERT FAIL: navigator.onLine is '"
+						"+String(navigator.onLine)+' -- the navigator extended-shim "
+						"block is not running again');";
+			ok = js_exec(thread, (const unsigned char *)chk, strlen(chk),
+					"cookie-chk.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: document.cookie binding shape wrong\n");
+				return 1;
+			}
+		}
+		fprintf(stderr, "document.cookie is an accessor; a write does not throw; "
+				"cookieEnabled+onLine live\n");
+	}
+	fprintf(stderr, "=== Test 22 PASS: jar withholds HttpOnly from script; "
+			"document.cookie is a real accessor (JS->jar round trip is "
+			"HW-gated: no llcache here) ===\n");
 
 	free(html_src_big);
 	return 0;

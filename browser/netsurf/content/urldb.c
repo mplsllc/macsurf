@@ -4164,6 +4164,23 @@ error:
 
 
 /* exported interface documented in content/urldb.h */
+/* fixes879 — INVARIANT: this function gathers matching cookies in FOUR separate
+ * loops (exact path, path-prefix, `p` itself for Path=/foo, and domain
+ * cookies). EVERY one of them must apply the same three filters -- expired,
+ * secure-on-insecure, and HttpOnly -- before it does matched_cookies[count++].
+ *
+ * Only the exact-path loop had the HttpOnly check. The other three added the
+ * cookie unconditionally, so `include_http_only=false` was silently ineffective
+ * for any cookie that matched by prefix or by domain -- which is to say, for the
+ * ordinary Path=/ session cookie.
+ *
+ * It was latent rather than harmful because nothing had ever passed false:
+ * upstream only ever wired this to content/fetchers/curl.c, and MacSurf's two
+ * fetchers pass true (the wire is allowed to see HttpOnly). fixes879's
+ * document.cookie is the first caller in the tree's history to pass false, which
+ * turned a dormant bug into "any script on the page can read the session token".
+ *
+ * If you add a fifth loop, it needs all three filters too. */
 char *urldb_get_cookie(nsurl *url, bool include_http_only)
 {
 	const struct path_data *p, *q;
@@ -4288,6 +4305,14 @@ char *urldb_get_cookie(nsurl *url, bool include_http_only)
 					 * => ignore */
 					continue;
 
+				/* fixes879 — HttpOnly gate. See the note at the
+				 * head of the exact-path loop above: this loop
+				 * was missing it, so a path-prefix cookie (i.e.
+				 * the ordinary Path=/ case) was handed out even
+				 * when the caller asked for no HttpOnly. */
+				if (c->http_only && !include_http_only)
+					continue;
+
 				matched_cookies[count++] = c;
 
 				GROW_MATCHED_COOKIES;
@@ -4332,6 +4357,10 @@ char *urldb_get_cookie(nsurl *url, bool include_http_only)
 				 * => ignore */
 				continue;
 
+			/* fixes879 — HttpOnly gate; this loop was missing it. */
+			if (c->http_only && !include_http_only)
+				continue;
+
 			matched_cookies[count++] = c;
 
 			GROW_MATCHED_COOKIES;
@@ -4364,6 +4393,12 @@ char *urldb_get_cookie(nsurl *url, bool include_http_only)
 							    &match) &&
 			    match == false)
 				/* secure cookie for insecure host. ignore */
+				continue;
+
+			/* fixes879 — HttpOnly gate; this loop was missing it.
+			 * Domain cookies are where session tokens usually live,
+			 * so this is the most consequential of the three. */
+			if (c->http_only && !include_http_only)
 				continue;
 
 			matched_cookies[count++] = c;
