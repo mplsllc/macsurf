@@ -122,7 +122,7 @@ macsurf/
 ## Components
 
 ### 1. MacSurf Browser
-A port of NetSurf to Classic Mac OS 9 using the Carbon API and CodeWarrior 8. Cross-compiled from Linux targeting PowerPC. Tabs disabled by default. Fetches HTTP directly over Open Transport and HTTPS directly via the built-in macTLS stack — no proxy involved.
+A port of NetSurf to Classic Mac OS 9 using the Carbon API and CodeWarrior 8. Cross-compiled from Linux targeting PowerPC. **Tabs are UNIMPLEMENTED, not "disabled"** (fixes882 correction): there is no tab code at all — no tab fields in `struct gui_window`, no tab bar, and zero `BW_CREATE_TAB` anywhere in `frontends/macos9/`. `macos9_window_create(bw, ex, f)` ignores both `ex` and `f` and unconditionally creates a top-level window, so a core `BW_CREATE_TAB` request silently produces a separate window. Multi-window IS real (window_list, File > New Window/Cmd-N, per-window event/reformat loops). Fetches HTTP directly over Open Transport and HTTPS directly via the built-in macTLS stack — no proxy involved.
 
 ### 2. macTLS (native TLS)
 A native TLS stack for Classic Mac OS, built on BearSSL primitives and linked into the browser. Hand-written TLS 1.3 (RFC 8446; X25519 + multi-curve ECDHE, ChaCha20-Poly1305 / AES-128-GCM) with TLS 1.2 fallback, the full Mozilla CA bundle (121 anchors) baked in, and the macEntropy RNG behind it. This is how the Mac reaches HTTPS sites itself. Lives in `macTLS/` (a nested project folded into the browser build). First native TLS 1.3 on Classic Mac OS (v1.3, 2026-05-29).
@@ -213,7 +213,7 @@ Login flow (all pure HTML, handled by core `form.c` + fixes367 cookies + fixes31
 ## Do Not
 
 - Do not assume JS capability limits (DIRECTIVE #2). Duktape is ES5 but capable, and a large browser runtime already runs on-device; missing pieces get filled in-house, not waved off. There is no proxy/offload to fall back on.
-- Do not enable tabs by default
+- Do not enable tabs by default — but note this line describes an INTENT, not a switch: tabs are unimplemented, so there is nothing to enable (see Components). If tabs are ever built, they stay off by default.
 - Do not use preemptive threads anywhere in the browser
 - Do not reintroduce a proxy. HTTPS is native via macTLS; the old Go proxy is retired (see Components). Do not add a proxy dependency or document one as current.
 - Do not target OS X only, Carbon must run on OS 9

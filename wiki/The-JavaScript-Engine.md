@@ -58,11 +58,38 @@ The runtime now installed at heap creation includes:
 - **`element.classList`** — `add`, `remove`, `toggle`, `contains`.
 - **`element.style`** — per-property setters.
 - **DOM event constructors** — `Event`, `CustomEvent`, `MouseEvent`, `KeyboardEvent`.
-- **`MutationObserver`**, **`DOMParser`**, **`FormData`**.
-- **`localStorage`** — `setItem` / `getItem` / `removeItem`.
-- **`fetch`** — a minimal shim backed by a *synchronous* `XMLHttpRequest`, returning a thenable rather than a true Promise. Enough for the common `fetch(url).then(r => r.text())` pattern that shows up in inline scripts; it is not a full Fetch/Promise implementation.
+- **`DOMParser`** — real (fixes873).
+- **`MutationObserver`** — **stub.** The constructor exists and stores the
+  callback; `observe` / `unobserve` / `disconnect` are empty and `takeRecords`
+  returns `[]`. The callback is never called. Deliberate: firing records risks
+  feedback loops with our own reconvert/relayout, which needs a queue-and-drain
+  design before it can be safe.
+- **`FormData`** — **partial.** The map (append/get/set/has/delete/forEach) is
+  real, but the constructor harvests via `form.elements`, which is never defined
+  on the element wrapper, so `new FormData(realForm)` always yields an EMPTY set.
+- **`localStorage` / `sessionStorage`** — **in-memory shim, no persistence.**
+  The method surface (getItem/setItem/removeItem/clear/key/length) is complete
+  and correct, but it is a JS object with no C backing: data dies with the JS
+  context, i.e. on EVERY navigation. sessionStorage has no lifetime distinct
+  from localStorage. The `storage` event does not exist. (The only real,
+  persistent, C-backed store in the browser is the HTTP cookie jar.)
+- **`fetch`** — real since fixes846, and this entry used to UNDERSTATE it: it is
+  no longer a synchronous fake thenable. `fetch()` returns a genuine QuickJS
+  `Promise` wrapping a real native `XMLHttpRequest`, reaching the same
+  `fetch_start()` entry point the rest of the browser uses (so cookies, UA and
+  redirects all apply), with resolution deferred through the scheduler -- never
+  re-entrant into JS from the fetch callback. The gaps are surface, not
+  substance: `Response` carries only `ok`/`status`/`statusText`/`url`/
+  `headers.get`/`text()`/`json()` -- no `blob()`, `arrayBuffer()`, `formData()`,
+  no `Request`/`Response`/`Headers` constructors, no `AbortSignal`, no
+  `credentials`/`mode`.
 - **`addEventListener`** at the window level for `load` and `DOMContentLoaded`, alongside `getComputedStyle`, `matchMedia`, `window.scrollTo`, `navigator.userAgent`, `document.title`, and `document.readyState`.
-- **Element query and geometry** — `element.matches`, `closest`, `contains`, `getBoundingClientRect`.
+- **Element query and geometry** — `element.matches`, `closest` and `contains`
+  are real (`contains` since fixes878; it used to return a hardcoded `false`).
+  **`getBoundingClientRect` is a stub** that returns all zeros unconditionally
+  and never consults the box tree, so `getClientRects` and everything measuring
+  geometry -- including IntersectionObserver's ratios -- reads zeros. The box
+  tree itself is real; only this exposure is missing.
 - **`console.log` / `warn` / `error` / `info` / `debug`**, plus `alert`, `confirm`, `prompt`, and `btoa` / `atob`.
 
 MacSurf validates this surface with a purpose-built probe page (`mactrove.com/t.html`) that exercises each API as a numbered probe. On a G3 iMac running OS 9.2.2, that page finishes **`JS 19/19 pass, 0 fail`**. That's nineteen distinct runtime capabilities confirmed running on real 1999 hardware, not on an emulator and not on a desktop stand-in. (Emulators like SheepShaver are useful for a smoke test, but they're more forgiving than hardware; the score that counts is the one from the G3 — see [Diagnostics & Debugging](Diagnostics-and-Debugging) for why we insist on this.)

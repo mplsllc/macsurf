@@ -10,8 +10,14 @@
  *   - Find-in-page: programmatic Carbon dialog with TextEdit input +
  *     OK/Cancel buttons; routes to browser_window_search. Search term
  *     cached for Find Again.
- *   - Bookmarks: unchanged in this round — still session-only array;
- *     follow-on round wires desktop/hotlist.c for disk persistence.
+ *   - Bookmarks: 128-entry array of bookmarks AND folders, PERSISTED to a
+ *     tab-delimited "MacSurf Bookmarks" file (macos9_disk_cache.c: see
+ *     _bookmarks_save / _bookmarks_load).
+ *     fixes882: this used to read "still session-only array; follow-on round
+ *     wires desktop/hotlist.c for disk persistence". The follow-on round
+ *     happened (fixes645); the comment did not. Persistence is our own file
+ *     format rather than desktop/hotlist.c, which is probably why the
+ *     sentence was never revisited.
  */
 
 #include <string.h>

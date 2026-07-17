@@ -32,17 +32,31 @@
  *   - row-span > 1 reserves the row visually but row heights are
  *     still per-row tallest-child for V1 (no vertical merging)
  *
- * Out of V1 scope (deferred to V2+):
- *   - grid-template-columns / grid-template-rows full grammar
- *     (fr units, repeat(), auto, minmax)
+ * fixes882 -- THIS HEADER WAS STALE. It described a V1 scope that later
+ * rounds had already exceeded, so it understated the file by several
+ * features. Now shipped, despite having been listed as out of scope:
+ *   - fr / px / percent / AUTO track units (see the
+ *     MACSURF_GRID_TRACK_UNIT_* defines below; content-sized AUTO landed
+ *     in fixes817-820 for #62)
+ *   - grid-template-areas (synthesized by the cssh_css.c preprocessor)
+ *   - justify-items per-cell alignment (native property, fixes833, #279)
+ *
+ * Genuinely still out of scope (V2+):
+ *   - repeat() / minmax() composition (the preprocessor collapses minmax()
+ *     to a single token before libcss ever sees it)
  *   - grid-area shorthand
  *   - named grid lines
  *   - negative line numbers (`-1` for end-only is supported as the
  *     fill-row sentinel; `-2`, etc. are not)
- *   - grid-template-areas
  *   - grid-auto-flow column/dense
  *   - subgrid
- *   - align-items / justify-items per-cell alignment
+ *   - justify-self (BLOCKED: the bit-packed bits[16] computed-style array is
+ *     full -- justify-items took the last slot, bits[15] shift 30 -- so the
+ *     array must be extended to bits[17] first, which is a structural change
+ *     to the arena-interning-sensitive css_computed_style_i)
+ *   - align-items: stretch as the CSS 12.8 default (cells leave empty space
+ *     when the row track exceeds content height)
+ *   - fr row distribution against a definite container height
  *   - row-gap independent of column-gap (shares column-gap storage)
  *
  * This V1 covers the most common real-world pattern of "N equal columns,

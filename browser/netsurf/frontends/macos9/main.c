@@ -1155,7 +1155,16 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 								browser_window_mouse_click(gw->bw,
 									BROWSER_MOUSE_CLICK_1 | mods, rx_ns, ry_ns);
 							}
-							/* inline onclick handlers run natively in the JS engine */
+							/* fixes882: this said "inline onclick handlers run
+						 * natively in the JS engine". They do not. Nothing
+						 * compiles an on* HTML ATTRIBUTE into a handler --
+						 * the _H map is only ever populated by a JS
+						 * assignment (el.onclick = fn) through the prototype
+						 * accessors, so <button onclick="f()"> never runs f.
+						 * And even a JS-assigned handler is unreachable from
+						 * a real click, because the bridge at
+						 * interaction.c's fire-dom-click site is a `return 0`
+						 * stub (#300). See the note there. */
 						} else {
 							macos9_window_te_deactivate_url(gw);
 						}

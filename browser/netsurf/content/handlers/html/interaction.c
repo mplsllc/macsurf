@@ -1709,12 +1709,31 @@ mouse_action_drag_none(html_content *html,
 	if (mouse & BROWSER_MOUSE_CLICK_1) {
 		int js_default_prevented = 0;
 		fire_generic_dom_event(corestring_dom_click, mas.node, true, true);
-		/* MacSurf (Gate 5): also dispatch the click through the QuickJS
-		 * shadow-DOM event layer so page scripts that use element-level AND
-		 * document-level (XenForo-style) delegation actually run.  The
-		 * bridge returns non-zero only when a real JS listener called
-		 * preventDefault(); pages with no JS have no listeners and never set
-		 * it, so the static navigation path is byte-for-byte unchanged. */
+		/* fixes882 -- READ THIS BEFORE DEBUGGING A CLICK.
+		 *
+		 * This comment used to claim the call below "dispatches the click
+		 * through the QuickJS shadow-DOM event layer so page scripts that use
+		 * element-level AND document-level (XenForo-style) delegation actually
+		 * run". It does not, and never did. macsurf_qjs_dispatch_dom_click is
+		 * `{ (void)target; return 0; }` -- a stub. So:
+		 *
+		 *   - NO JS click listener of any kind runs from real mouse input.
+		 *     Not addEventListener('click'), not el.onclick, not delegation.
+		 *   - js_default_prevented below is therefore provably always 0, and
+		 *     the branch that reads it is dead code.
+		 *
+		 * The fire_generic_dom_event above IS a real libdom dispatch, and
+		 * libdom implements capture/target/bubble correctly -- but nothing in
+		 * the tree ever calls dom_event_target_add_event_listener, so it
+		 * dispatches into an empty listener set. The JS side keeps its own
+		 * parallel registries (el._L / el._H / document._listeners /
+		 * _winListeners) that libdom knows nothing about.
+		 *
+		 * This is the true cause of "renders perfectly, ignores every click"
+		 * (#300). Fixing it is the event-model phase, not a comment change.
+		 * Note the S0 harness dispatches events SYNTHETICALLY through
+		 * el.dispatchEvent, which is the path that works -- so it reports
+		 * healthy while hardware ignores every click. */
 		{
 			extern int macsurf_qjs_dispatch_dom_click(
 					struct dom_node *node);

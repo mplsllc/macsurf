@@ -5147,8 +5147,16 @@ static void register_browser_globals(JSContext *ctx)
 		"})(this);");
 
 	/* --- capability-detection stubs (WebSocket, indexedDB, Notification,
-	 *     MediaSource, crypto.getRandomValues, caches, Blob, File,
-	 *     FileReader, URL.createObjectURL) --- */
+	 *     crypto.getRandomValues, caches, Blob, File, FileReader,
+	 *     URL.createObjectURL) ---
+	 *
+	 * fixes882: MediaSource was listed here and is NOT defined by the block
+	 * below -- the name appears nowhere else in this file, so `MediaSource` is
+	 * simply undefined at runtime. The only media-adjacent things installed are
+	 * the bare HTMLVideoElement/HTMLAudioElement/HTMLMediaElement/
+	 * HTMLSourceElement constructors further down, which exist purely so
+	 * `typeof` checks do not throw. Listing a stub that was never written is
+	 * worse than listing nothing: it reads as "handled" to anyone grepping. */
 	macsurf_qjs__safe_eval(ctx,
 		"(function(g){"
 		"var rp=function(v){return g.Promise?g.Promise.resolve(v)"
