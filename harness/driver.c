@@ -1548,9 +1548,31 @@ int main(void)
 				return 1;
 			}
 		}
+		/* Clean the fixture out of the document. It uses the same
+		 * `.comment-form__verbum` class the CAPSTONE below queries for, and a
+		 * leftover copy makes that test count 2 mounts and fail for a reason
+		 * that has nothing to do with the code under test. Tests share one
+		 * document here, so each one puts its fixture back. */
+		{
+			const char *cleanup =
+				"if(typeof host!=='undefined'&&host&&host.parentNode)"
+					"host.parentNode.removeChild(host);"
+				"globalThis.__selLeft="
+					"document.querySelectorAll('.comment-form__verbum').length;";
+			const char *cleanup_chk =
+				"if(globalThis.__selLeft!==0)"
+					"throw new Error('ASSERT FAIL: Test 15 leaked '+globalThis.__selLeft+"
+						"' .comment-form__verbum node(s) into the shared document');";
+			ok = js_exec(thread, (const unsigned char *)cleanup, strlen(cleanup),
+					"sel-cleanup.js");
+			if (!ok) { fprintf(stderr, "FAIL: selector cleanup threw\n"); return 1; }
+			ok = js_exec(thread, (const unsigned char *)cleanup_chk,
+					strlen(cleanup_chk), "sel-cleanup-chk.js");
+			if (!ok) { fprintf(stderr, "FAIL: Test 15 fixture leaked\n"); return 1; }
+		}
 		fprintf(stderr, "class-only mount query works; token (not substring) class "
 				"matching; tag.class narrows; descendant constrains by ancestor; "
-				"'#a .b' returns the inner element\n");
+				"'#a .b' returns the inner element; fixture removed\n");
 	}
 	fprintf(stderr, "=== Test 15 PASS: class + descendant selectors ===\n");
 
@@ -1656,6 +1678,198 @@ int main(void)
 				"alongside; null clears\n");
 	}
 	fprintf(stderr, "=== Test 16 PASS: on* handler properties ===\n");
+
+	/* --- Test 17 (CAPSTONE): the whole chain, end to end.
+	 *
+	 * The five gates are SERIAL, so five green unit tests can still add up to a
+	 * red chain -- that is exactly the false-green class Test 11's old
+	 * `appended=1` assert belonged to. This runs the real sequence in one go and
+	 * asserts the thing a user would actually check: a button exists and
+	 * clicking it runs code.
+	 *
+	 * Mirrors hackaday's actual loader shape:
+	 *   dynamic-loader.js:  querySelector(mount) -> loadScript('wp-polyfill')
+	 *                       -> .then(() => loadScript('verbum'))
+	 *   each loadScript:    createElement('script'); s.onload = resolve;
+	 *                       s.src = url; body.appendChild(s)
+	 *   verbum body:        querySelectorAll('.comment-form__verbum').forEach(
+	 *                         createElementNS -> on* bind -> appendChild)
+	 *
+	 * Every gate is load-bearing here and a failure in ANY of them turns this
+	 * red:
+	 *   #294 job queue      -- .then() never advances, chain stops at 0
+	 *   #295 script.onload  -- promise never settles, verbum never requested
+	 *   #297 createElementNS-- Preact's factory throws, nothing is built
+	 *   #298 .class         -- the mount query is empty, forEach runs 0 times
+	 *   #300 on*            -- registers "Click", the button ignores the click
+	 *
+	 * The C side stands in for the network + core: it finds each injected
+	 * <script>, runs its "body", and fires load -- which is what
+	 * html_script_exec does on real hardware. --- */
+	fprintf(stderr, "\n=== Test 17 (CAPSTONE): loader -> onload -> Preact -> "
+			"a button you can click ===\n");
+	{
+		extern void macsurf_qjs_pump_all(void);
+		unsigned char ok;
+		int pump;
+		int step;
+		/* The two scripts the chain loads, in order. */
+		const char *want[2];
+		want[0] = "polyfill";
+		want[1] = "verbum";
+
+		/* The parent page's empty Preact mount, as served in the child frame. */
+		{
+			const char *arm =
+				"var host=document.createElement('div');"
+				"host.id='cap-host';"
+				"host.innerHTML='<div class=\"comment-form__verbum dark\"></div>';"
+				"document.body.appendChild(host);"
+				"globalThis.__cap={log:[],chain:0,clicked:0};";
+			ok = js_exec(thread, (const unsigned char *)arm, strlen(arm), "cap-arm.js");
+			if (!ok) { fprintf(stderr, "FAIL: capstone arm threw\n"); return 1; }
+		}
+
+		/* The loader. Note it resolves ONLY on script.onload, like the real one. */
+		{
+			const char *loader =
+				"var cap=globalThis.__cap;"
+				"function loadScript(id){"
+				"return new Promise(function(resolve,reject){"
+					"var s=document.createElement('script');"
+					"s.id=id;"
+					"s.onload=function(){cap.log.push('load:'+id);resolve(id);};"
+					"s.onerror=function(){cap.log.push('err:'+id);reject(id);};"
+					"s.src='https://example.invalid/'+id+'.js';"
+					"document.body.appendChild(s);"
+				"});}"
+				/* the mount gate the real loader checks first */
+				"cap.mountSeen=document.querySelector('#cap-host')?1:0;"
+				"loadScript('polyfill').then(function(){"
+					"cap.chain=1;"
+					"return loadScript('verbum');"
+				"}).then(function(){cap.chain=2;})"
+				".catch(function(e){cap.err=''+e;});";
+			ok = js_exec(thread, (const unsigned char *)loader, strlen(loader),
+					"cap-loader.js");
+			if (!ok) { fprintf(stderr, "FAIL: capstone loader threw\n"); return 1; }
+		}
+
+		/* Drive the chain: for each expected script, find it, run its body, fire
+		 * load -- then pump so the .then() reactions can queue the next one. */
+		for (step = 0; step < 2; step++) {
+			dom_string *id_str = NULL;
+			dom_element *el = NULL;
+
+			for (pump = 0; pump < 8; pump++) macsurf_qjs_pump_all();
+
+			if (dom_string_create((const uint8_t *)want[step],
+					(unsigned)strlen(want[step]), &id_str) != DOM_NO_ERR) {
+				fprintf(stderr, "FAIL: dom_string_create\n"); return 1;
+			}
+			dom_document_get_element_by_id(document, id_str, &el);
+			dom_string_unref(id_str);
+
+			if (el == NULL) {
+				fprintf(stderr, "FAIL: CAPSTONE broke at step %d: the loader never "
+						"injected <script id=%s>.%s\n", step, want[step],
+						step == 1 ? " The first script's onload never resolved "
+							"its promise, so the chain stopped -- verbum is "
+							"never even requested (#294/#295)."
+						 : " The very first injection never landed (#292).");
+				return 1;
+			}
+
+			/* Step 1 is verbum: run its body BEFORE firing load, exactly as
+			 * html_script_exec does (a loader resolving on load expects the
+			 * script's globals to already exist). */
+			if (step == 1) {
+				const char *verbum_body =
+					"(function(){var cap=globalThis.__cap;"
+					"var mounts=document.querySelectorAll('.comment-form__verbum');"
+					"cap.mounts=mounts.length;"
+					"mounts.forEach(function(root){"
+						"var XHTML='http://www.w3.org/1999/xhtml';"
+						"var props={className:'verbum-submit'};"
+						/* Preact's factory, with its real 3rd-arg expression */
+						"var btn=document.createElementNS(XHTML,'button',"
+							"props.is&&props);"
+						"btn.className=props.className;"
+						/* Preact's real on*-name resolution */
+						"var t='onClick';var a=t.toLowerCase();"
+						"var nm=(a in btn)?a.slice(2):t.slice(2);"
+						"cap.evName=nm;"
+						"btn.addEventListener(nm,function(){cap.clicked++;});"
+						"root.appendChild(btn);"
+					"});})();";
+				ok = js_exec(thread, (const unsigned char *)verbum_body,
+						strlen(verbum_body), "cap-verbum.js");
+				if (!ok) {
+					fprintf(stderr, "FAIL: CAPSTONE broke: the verbum body threw "
+							"while rendering\n");
+					dom_node_unref((dom_node *)el);
+					return 1;
+				}
+			}
+
+			js_fire_script_load(thread, (dom_node *)el, 1);
+			dom_node_unref((dom_node *)el);
+		}
+		for (pump = 0; pump < 8; pump++) macsurf_qjs_pump_all();
+
+		/* Now the user's test: is there a button, and does clicking it work? */
+		{
+			const char *click =
+				"var cap=globalThis.__cap;"
+				"var b=document.querySelector('.comment-form__verbum .verbum-submit');"
+				"cap.btn=b?1:0;"
+				"cap.btnTag=(b&&b.tagName||'?').toLowerCase();"
+				"if(b)b.dispatchEvent({type:'click'});";
+			ok = js_exec(thread, (const unsigned char *)click, strlen(click),
+					"cap-click.js");
+			if (!ok) { fprintf(stderr, "FAIL: capstone click threw\n"); return 1; }
+		}
+		{
+			const char *chk =
+				"var cap=globalThis.__cap;"
+				"if(cap.err)"
+					"throw new Error('ASSERT FAIL: the loader chain REJECTED: '+cap.err);"
+				"if(!cap.mountSeen)"
+					"throw new Error('ASSERT FAIL: the loader could not even find its "
+						"host element (#290)');"
+				"if(cap.chain!==2)"
+					"throw new Error('ASSERT FAIL: the promise chain reached step '+"
+						"cap.chain+' of 2. log=['+cap.log.join(',')+'] -- on real "
+						"hardware this is the exact shape of \"wp-polyfill "
+						"executed, verbum never requested\" (#294/#295)');"
+				"if(cap.mounts!==1)"
+					"throw new Error('ASSERT FAIL: the mount query matched '+cap.mounts+"
+						"' elements, expected 1 (#298)');"
+				"if(cap.evName!=='click')"
+					"throw new Error('ASSERT FAIL: Preact resolved the event name to \"'+"
+						"cap.evName+'\", expected \"click\" (#300)');"
+				"if(!cap.btn)"
+					"throw new Error('ASSERT FAIL: no button in the DOM -- Preact built "
+						"nothing, or it never got connected (#297)');"
+				"if(cap.btnTag!=='button')"
+					"throw new Error('ASSERT FAIL: created <'+cap.btnTag+'>, expected "
+						"<button>');"
+				"if(cap.clicked!==1)"
+					"throw new Error('ASSERT FAIL: THE BUTTON RENDERED BUT THE CLICK DID "
+						"NOTHING (handler ran '+cap.clicked+' times). This is the "
+						"failure that looks like success (#300).');";
+			ok = js_exec(thread, (const unsigned char *)chk, strlen(chk), "cap-chk.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: CAPSTONE -- the five gates pass individually "
+						"but the CHAIN does not complete\n");
+				return 1;
+			}
+		}
+		fprintf(stderr, "loader -> script.onload -> promise chain -> second script -> "
+				"createElementNS -> .class mount -> on* bind -> CLICK HANDLER RAN\n");
+	}
+	fprintf(stderr, "=== Test 17 PASS (CAPSTONE): the full reply-box chain "
+			"completes end to end ===\n");
 
 	free(html_src_big);
 	return 0;

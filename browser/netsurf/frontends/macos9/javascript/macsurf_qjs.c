@@ -875,6 +875,16 @@ extern dom_exception macsurf_dom_element_remove_attribute(dom_element *el,
 		dom_string *name);
 extern dom_exception macsurf_dom_document_create_element_s(dom_document *doc,
 		const char *tag, dom_element **element);
+/* fixes870 (#297) — createElementNS, Preact's only element factory. */
+extern dom_exception macsurf_dom_document_create_element_ns_s(dom_document *doc,
+		const char *ns, const char *qname, dom_element **element);
+/* fixes872 — declare the fixes867 owner-document accessor properly. It was being
+ * called with NO prototype in scope, so C89 implicitly declared it int-returning.
+ * Benign by luck here (dom_exception is an enum, i.e. int, and comes back in r3
+ * either way) -- but only by luck, and the same omission on a double- or
+ * pointer-returning function is a real miscompile. */
+extern dom_exception macsurf_dom_node_get_owner_document(dom_node *node,
+		dom_document **result);
 /* fixes846 (#167 S3) — real createTextNode/createDocumentFragment/text-data. */
 extern dom_exception macsurf_dom_document_create_text_node_s(dom_document *doc,
 		const char *data, dom_text **text);
