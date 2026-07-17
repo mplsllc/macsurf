@@ -1336,6 +1336,100 @@ int main(void)
 	}
 	fprintf(stderr, "=== Test 13 PASS: script.onload/onerror fire ===\n");
 
+	/* --- Test 14 (fixes870, #297): GATE 3 -- document.createElementNS.
+	 * Preact's ONLY element factory; its reconciler never calls createElement:
+	 *     if("svg"==k)a="http://www.w3.org/2000/svg";
+	 *     else if("math"==k)a="http://www.w3.org/1998/Math/MathML";
+	 *     else if(!a)a="http://www.w3.org/1999/xhtml";
+	 *     e=document.createElementNS(a,k,w.is&&w)
+	 * (verbatim from verbum-comments.js). With createElementNS missing, a Preact
+	 * app renders NOTHING -- no amount of fixing the loader gets a comment box.
+	 *
+	 * The THIRD ARG is the trap this test exists for: `w.is && w` is undefined
+	 * when props.is is unset but the ENTIRE props object when it is set. A
+	 * control that only passes undefined would not exercise what Preact actually
+	 * sends, so both forms are checked here.
+	 *
+	 * Elements must come out REAL (native, appendable, findable), not fallback
+	 * objects -- a fallback would satisfy a naive "did it return something?"
+	 * assert while being invisible to layout, which is the Test-11 false-green
+	 * class. --- */
+	fprintf(stderr, "\n=== Test 14: createElementNS (Preact's element factory) ===\n");
+	{
+		const char *probe =
+			"globalThis.__ns={};"
+			"var XHTML='http://www.w3.org/1999/xhtml';"
+			"var SVG='http://www.w3.org/2000/svg';"
+			"var n=globalThis.__ns;"
+			"n.exists=(typeof document.createElementNS==='function');"
+			/* the ordinary Preact case: 3rd arg undefined.  Guarded like every
+			 * other probe line below: a probe must COLLECT FACTS and never
+			 * throw, so that the descriptive ASSERT in the check phase is what
+			 * names the failure. An unguarded call here dies with a bare
+			 * "TypeError: not a function" and the reader learns nothing. */
+			"var d=null;"
+			"try{d=document.createElementNS(XHTML,'div',undefined);}"
+			"catch(e){n.madeErr=''+e;}"
+			"n.made=!!d; n.native=!!(d&&d.__ptr); n.tag=(d&&d.tagName)||'?';"
+			/* THE TRAP: props.is set => 3rd arg is the whole props object */
+			"try{var props={is:'my-el',className:'x',children:[]};"
+			"var c=document.createElementNS(XHTML,'div',props.is&&props);"
+			"n.optObj=!!(c&&c.__ptr);}catch(e){n.optObj='THREW:'+e;}"
+			/* null namespace is legal per spec */
+			"try{var z=document.createElementNS(null,'span');"
+			"n.nullNs=!!(z&&z.__ptr);}catch(e){n.nullNs='THREW:'+e;}"
+			/* svg branch must not blow up */
+			"try{var s=document.createElementNS(SVG,'svg');"
+			"n.svg=!!(s&&s.__ptr);}catch(e){n.svg='THREW:'+e;}"
+			/* and the element must be REAL: appendable + findable */
+			"try{d.id='ns-probe';document.body.appendChild(d);"
+			"n.found=(document.getElementById('ns-probe')===d)?1:0;}"
+			"catch(e){n.found='THREW:'+e;}";
+		unsigned char ok = js_exec(thread, (const unsigned char *)probe,
+				strlen(probe), "ns-probe.js");
+		if (!ok) { fprintf(stderr, "FAIL: createElementNS probe threw\n"); return 1; }
+		{
+			const char *chk =
+				"var n=globalThis.__ns;"
+				"if(!n.exists)"
+					"throw new Error('ASSERT FAIL: document.createElementNS does not "
+						"exist -- Preact never calls createElement, so its "
+						"reconciler cannot create a single element');"
+				"if(!n.made)"
+					"throw new Error('ASSERT FAIL: createElementNS returned nothing'+"
+						"(n.madeErr?' ('+n.madeErr+')':''));"
+				"if(!n.native)"
+					"throw new Error('ASSERT FAIL: createElementNS returned a JS "
+						"FALLBACK object, not a libdom node -- invisible to "
+						"layout, so the form would never paint');"
+				"if(n.tag!=='div')"
+					"throw new Error('ASSERT FAIL: tagName is '+n.tag+', expected div');"
+				"if(n.optObj!==true)"
+					"throw new Error('ASSERT FAIL: createElementNS(ns,tag,PROPS_OBJECT) "
+						"-> '+n.optObj+'. Preact passes `props.is && props`, i.e. "
+						"the ENTIRE props object, whenever props.is is set; it "
+						"must be ignored, not choked on');"
+				"if(n.nullNs!==true)"
+					"throw new Error('ASSERT FAIL: createElementNS(null,tag) -> '+n.nullNs+"
+						"' -- a null namespace is legal per spec');"
+				"if(n.svg!==true)"
+					"throw new Error('ASSERT FAIL: createElementNS(SVG,...) -> '+n.svg);"
+				"if(n.found!==1)"
+					"throw new Error('ASSERT FAIL: the created element is not in the "
+						"document after appendChild (getElementById -> '+n.found+') "
+						"-- it is not a real, connected node');";
+			ok = js_exec(thread, (const unsigned char *)chk, strlen(chk), "ns-chk.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: Gate 3 is shut -- Preact cannot create "
+						"elements, so the comment form renders nothing\n");
+				return 1;
+			}
+		}
+		fprintf(stderr, "createElementNS: xhtml/svg/null-ns all native; the "
+				"props-object 3rd arg is tolerated; element is connected\n");
+	}
+	fprintf(stderr, "=== Test 14 PASS: createElementNS ===\n");
+
 	free(html_src_big);
 	return 0;
 }

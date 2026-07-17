@@ -201,6 +201,50 @@ dom_exception macsurf_dom_document_create_element_s(dom_document *doc,
     return exc;
 }
 
+/* fixes870 (#297) — document.createElementNS() from plain JS C strings.
+ *
+ * This is Preact's ONLY element factory -- its renderer never calls
+ * createElement at all:
+ *     e = document.createElementNS(a, k, w.is && w)
+ * so with no createElementNS, a Preact app renders NOTHING.
+ *
+ * Uses the REAL namespaced create rather than falling back to
+ * create_element_s(), because the namespace is not cosmetic here: hubbub tags
+ * HTML elements HUBBUB_NS_HTML, and the parser binding then builds them with
+ * dom_document_create_element_ns(doc, dom_namespaces[HUBBUB_NS_HTML], ...) --
+ * i.e. every parser-built element is in the XHTML namespace. Going through this
+ * path makes a Preact-created <div> byte-identical to a parsed one, where
+ * create_element_s() would give it a NULL namespace instead. It also gets SVG
+ * right for free (libdom knows the namespace table; see libdom's
+ * src/utils/namespace.c).
+ *
+ * `ns` NULL/empty => a null-namespace element, which is what
+ * createElementNS(null, 'div') means per spec. */
+dom_exception macsurf_dom_document_create_element_ns_s(dom_document *doc,
+    const char *ns, const char *qname, dom_element **element)
+{
+    dom_string *ns_s = NULL;
+    dom_string *qn_s = NULL;
+    dom_exception exc;
+
+    if (qname == NULL) return 5; /* DOM_NO_MEMORY_ERR */
+    if (dom_string_create((const uint8_t *)qname, (unsigned)strlen(qname),
+                          &qn_s) != DOM_NO_ERR || qn_s == NULL) {
+        return 5;
+    }
+    if (ns != NULL && ns[0] != '\0') {
+        if (dom_string_create((const uint8_t *)ns, (unsigned)strlen(ns),
+                              &ns_s) != DOM_NO_ERR) {
+            dom_string_unref(qn_s);
+            return 5;
+        }
+    }
+    exc = dom_document_create_element_ns(doc, ns_s, qn_s, element);
+    if (ns_s != NULL) dom_string_unref(ns_s);
+    dom_string_unref(qn_s);
+    return exc;
+}
+
 /* fixes846 (#167 S3) — document.createTextNode() from a plain JS C string,
  * mirroring create_element_s above. */
 dom_exception macsurf_dom_document_create_text_node_s(dom_document *doc,

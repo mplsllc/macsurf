@@ -2731,6 +2731,58 @@ static JSValue qjs_create_element(JSContext *ctx, JSValueConst this_val,
 	return obj;
 }
 
+/* ---- document.createElementNS(namespaceURI, qualifiedName, options) ----
+ * Preact's ONLY element factory. Its renderer is, verbatim:
+ *     if ("svg" == k) a = "http://www.w3.org/2000/svg";
+ *     else if ("math" == k) a = "http://www.w3.org/1998/Math/MathML";
+ *     else if (!a) a = "http://www.w3.org/1999/xhtml";
+ *     ...
+ *     e = document.createElementNS(a, k, w.is && w)
+ * -- createElement is never reached from the reconciler at all, so without this
+ * a Preact app (hackaday's Verbum comment form) renders literally nothing.
+ *
+ * The THIRD ARGUMENT IS A TRAP: `w.is && w` is `undefined` when props.is is
+ * unset, but the ENTIRE vnode props object when it is set. It must be tolerated
+ * without choking. We deliberately never read argv[2] -- custom elements ("is")
+ * are not implemented, and per spec an unrecognised `is` is simply ignored.
+ * Reading it (e.g. JS_ToCString on an object) is what would break.
+ *
+ * argv[0] may legitimately be null: createElementNS(null, 'div') is valid and
+ * means "no namespace", so null/undefined is passed through as NULL rather than
+ * treated as an error. */
+static JSValue qjs_create_element_ns(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	const char *ns = NULL;
+	const char *tag = NULL;
+	dom_element *el = NULL;
+	JSValue obj;
+
+	(void)this_val;
+	if (g_qjs_document == NULL || argc < 2) return JS_NULL;
+
+	if (!JS_IsNull(argv[0]) && !JS_IsUndefined(argv[0])) {
+		ns = JS_ToCString(ctx, argv[0]);
+	}
+	tag = JS_ToCString(ctx, argv[1]);
+	if (tag == NULL) {
+		if (ns != NULL) JS_FreeCString(ctx, ns);
+		return JS_NULL;
+	}
+
+	if (macsurf_dom_document_create_element_ns_s(g_qjs_document, ns, tag, &el)
+	    != DOM_NO_ERR || el == NULL) {
+		JS_FreeCString(ctx, tag);
+		if (ns != NULL) JS_FreeCString(ctx, ns);
+		return JS_NULL;
+	}
+	JS_FreeCString(ctx, tag);
+	if (ns != NULL) JS_FreeCString(ctx, ns);
+
+	obj = qjs_wrap_element_full(ctx, el);
+	return obj;
+}
+
 /* ---- Wrap the live <html>/<body>/<head> element ----
  * which : 0 = documentElement (<html>), 1 = <body>, 2 = <head>.
  * Returns JS_NULL when the document is not parsed/wired (JS fallback path). */
@@ -2831,6 +2883,9 @@ static void qjs_dom_install(JSContext *ctx)
 		 * window). */
 		qjs_set_func(ctx, doc, "__createElementNative",
 				qjs_create_element, 1);
+		/* fixes870 (#297) — createElementNS: Preact's only element factory. */
+		qjs_set_func(ctx, doc, "__createElementNSNative",
+				qjs_create_element_ns, 3);
 		/* fixes846 (#167 S3) — real createTextNode/createDocumentFragment,
 		 * same native-fast-path/JS-fallback shape as createElement above. */
 		qjs_set_func(ctx, doc, "__createTextNodeNative",
@@ -2890,6 +2945,16 @@ static void qjs_dom_install(JSContext *ctx)
 			"return el;}"
 			"d.createElement=function(tag){"
 			"var n=d.__createElementNative?d.__createElementNative(tag):null;"
+			"if(n)return n;return mkfb(tag);};"
+			/* fixes870 (#297) — createElementNS, Preact's only element factory.
+			 * Same native-then-fallback shape as createElement above. `opt` is
+			 * accepted and deliberately NEVER forwarded: Preact passes
+			 * `props.is && props`, i.e. undefined OR the entire vnode props
+			 * object, so swallowing it here guarantees the native side can
+			 * never be handed an object it might try to read as a string. */
+			"d.createElementNS=function(ns,tag,opt){"
+			"var n=d.__createElementNSNative?"
+				"d.__createElementNSNative(ns,tag):null;"
 			"if(n)return n;return mkfb(tag);};"
 			"if(typeof d.createDocumentFragment!=='function'||!d.__hasFrag){"
 			"d.__hasFrag=true;"
