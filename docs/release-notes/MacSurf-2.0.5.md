@@ -64,6 +64,6 @@ And **macintoshgarden.org** — image-heavy and fully styled — over a secure c
 
 ## To run
 
-Expand the archive with StuffIt Expander and double-click MacSurf. No installer, no configuration. Requires a Power Macintosh (G3 or G4), Mac OS 9.1–9.2.2 with CarbonLib 1.5+, and about 64 MB of RAM (more helps on heavy pages).
+Expand the archive with StuffIt Expander and double-click MacSurf. No installer, no configuration. Requires a Power Macintosh (G3 or G4), Mac OS 9.1–9.2.2 with CarbonLib 1.5+, and **128 MB of RAM minimum — 256 MB recommended, 384 MB for the heaviest JavaScript sites**. (The modern JavaScript engine and CSS layout need real headroom; 64 MB is no longer enough for a usable modern-web experience.)
 
 Thanks to everyone testing on real hardware and filing issues — every fix above came from a report on an actual G3/G4.

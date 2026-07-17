@@ -21,7 +21,7 @@ CSS / gradient fidelity also moved in this window: **fixes348** downgraded alpha
 
 MacSurf is a working web browser for Classic Mac OS 9.1–9.2.2 on PowerPC, built on a NetSurf fork with a Carbon / QuickDraw / Open Transport frontend. As of 2026-05-25 it speaks TLS end-to-end via macTLS (BearSSL on top of Open Transport), so the Go TLS-stripping proxy is no longer on the default path. As of 2026-05-29 (v1.2) the entropy backing those TLS handshakes is **macEntropy v1.0** — SHA-256 accumulator + BearSSL HMAC-DRBG, fed by OT packet jitter, event-loop input, high-res clock, and a persisted seed file. The pre-v1.2 insecure-stub entropy source is closed. **Also as of 2026-05-29 (v1.3), the wire protocol is TLS 1.3** — hand-written per RFC 8446 on BearSSL primitives, X25519 key exchange, ChaCha20-Poly1305 and AES-128-GCM, with transparent fallback to TLS 1.2. First native TLS 1.3 on Classic Mac OS, ever.
 
-The build runs on a G3 iMac for current work, with a beige G3 Minitower (Sonnet G4 upgrade) for the initial development arc. The target compiler is CodeWarrior 8 Pro with the 8.3 update, strict C89. The shipping application partition is large (~195 MB preferred / ~164 MB minimum) to hold the libcss + DOM allocation footprint on real pages; 16 MB preferred is the floor below which libcss starves mid-cascade. Network fetches go direct to the origin over **TLS 1.3 (1.2 fallback)**, using the full Mozilla CA bundle (121 trust anchors) baked into the binary.
+The build runs on a G3 iMac for current work, with a beige G3 Minitower (Sonnet G4 upgrade) for the initial development arc. The target compiler is CodeWarrior 8 Pro with the 8.3 update, strict C89. The application partition is set to **224 MB preferred / 128 MB minimum, 16 MB stack** — validated stable across heavy JavaScript sites (~208 MB usable heap; on a smaller partition a single large allocation fails as "out of contiguous memory" long before total free is exhausted). That maps to **128 MB RAM minimum, 256 MB recommended, 384 MB for the heaviest JS sites**. Network fetches go direct to the origin over **TLS 1.3 (1.2 fallback)**, using the full Mozilla CA bundle (121 trust anchors) baked into the binary.
 
 ## What works in the current tree
 
@@ -86,7 +86,7 @@ The build runs on a G3 iMac for current work, with a beige G3 Minitower (Sonnet 
 - **Compiler:** Metrowerks CodeWarrior 8 Pro with the 8.3 update
 - **Output:** PEF / CFM, PowerPC only
 - **Project file:** `MacSurf.mcp` (binary, not in this repo — see [`builds/MacSurf-BuildPack.sit`](../builds/MacSurf-BuildPack.sit))
-- **Target settings:** ~195 MB preferred / ~164 MB minimum application partition (16 MB is the floor before libcss starves), 64 MB disk cache budget, 128/16 fetcher pool
+- **Target settings:** 224 MB preferred / 128 MB minimum application partition, 16 MB stack (~208 MB usable heap, validated stable on heavy JS sites; ~76 MB leaner than the old 300/102 config, reclaimed from an oversized stack), 64 MB disk cache budget, 128/16 fetcher pool
 - **Prerequisites:** Mac OS 9.1+, CarbonLib 1.5+, StuffIt Expander, and a real Power Mac (G3 or G4) — or SheepShaver with caveats
 - **Cross-dev pre-flight:** Retro68 PowerPC GCC + `scripts/verify_macsurf.sh` for `-std=c89 -pedantic` syntax checks before any fix ships
 
