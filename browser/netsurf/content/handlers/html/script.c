@@ -176,6 +176,27 @@ nserror html_script_exec(html_content *c, bool allow_defer)
 
 				s->already_started = true;
 
+				/* fixes869 (#295) — fire `load` at the element, AFTER
+				 * the script has run (per spec, and what a loader
+				 * waiting on it expects: the script's own globals must
+				 * exist by the time onload resolves the promise).
+				 *
+				 * s->node is set only for JS-INSERTED scripts
+				 * (exec_src_script), which are the only ones anything
+				 * can be waiting on -- so parser-inserted scripts cost
+				 * nothing here.
+				 *
+				 * Ordering is load-bearing: it must come AFTER the
+				 * re-acquire above, because script_handler() can
+				 * realloc c->scripts, and reading s->node through the
+				 * stale pointer would be a use-after-free. */
+				if (s->node != NULL) {
+					js_fire_script_load(c->js_thread, s->node, 1);
+					/* Re-acquire again: the load handler is JS and can
+					 * itself insert more scripts (that is precisely the
+					 * chain we are enabling), reallocating the array. */
+					s = &(c->scripts[i]);
+				}
 			}
 		}
 	}
@@ -213,6 +234,10 @@ html_process_new_script(html_content *c,
 	nscript->ready_exec = false;
 	nscript->async = false;
 	nscript->defer = false;
+	/* fixes869 (#295) — see struct html_script. Callers that have the element
+	 * (exec_src_script) set this; realloc above means every field must be
+	 * initialised here or the new slot inherits garbage. */
+	nscript->node = NULL;
 
 	nscript->type = type;
 
@@ -270,6 +295,18 @@ convert_script_async_cb(hlcache_handle *script,
 		NSLOG(netsurf, INFO, "script %s failed: %s",
 		      nsurl_access(hlcache_handle_get_url(script)),
 		      event->data.errordata.errormsg);
+
+		/* fixes869 (#295) — fire `error` at the element so a loader waiting
+		 * on this script REJECTS rather than hanging forever.  A promise that
+		 * never settles is strictly worse than a rejected one: the page gets
+		 * no chance to fall back or report.  Fired BEFORE the release below,
+		 * while s is still valid, and only for JS-inserted scripts
+		 * (s->node != NULL).  The handler is JS and can realloc c->scripts,
+		 * so re-acquire s afterwards. */
+		if (s->node != NULL && parent->js_thread != NULL) {
+			js_fire_script_load(parent->js_thread, s->node, 0);
+			s = &(parent->scripts[i]);
+		}
 
 		/* fixes515: NULL before release so a reentrant callback finds
 		 * NULL instead of a freed handle / freed callback TVector. */
@@ -341,6 +378,18 @@ convert_script_defer_cb(hlcache_handle *script,
 		NSLOG(netsurf, INFO, "script %s failed: %s",
 		      nsurl_access(hlcache_handle_get_url(script)),
 		      event->data.errordata.errormsg);
+
+		/* fixes869 (#295) — fire `error` at the element so a loader waiting
+		 * on this script REJECTS rather than hanging forever.  A promise that
+		 * never settles is strictly worse than a rejected one: the page gets
+		 * no chance to fall back or report.  Fired BEFORE the release below,
+		 * while s is still valid, and only for JS-inserted scripts
+		 * (s->node != NULL).  The handler is JS and can realloc c->scripts,
+		 * so re-acquire s afterwards. */
+		if (s->node != NULL && parent->js_thread != NULL) {
+			js_fire_script_load(parent->js_thread, s->node, 0);
+			s = &(parent->scripts[i]);
+		}
 
 		/* fixes515: NULL before release so a reentrant callback finds
 		 * NULL instead of a freed handle / freed callback TVector. */
@@ -798,6 +847,16 @@ exec_src_script(html_content *c,
 		return DOM_HUBBUB_NOMEM;
 	}
 
+	/* fixes869 (#295) — remember the element so html_script_exec can fire
+	 * `load` at it (and convert_script_async_cb `error`).  Only worth it for a
+	 * JS-INSERTED script: a parser-inserted one has no JS waiting on its
+	 * onload, and skipping those keeps a ref off every <script> on every page.
+	 * Owned ref; released in html_script_free. */
+	if (c->parse_completed) {
+		nscript->node = node;
+		dom_node_ref(node);
+	}
+
 	/* set up child fetch encoding and quirks */
 	child.charset = c->encoding;
 	child.quirks = c->base.quirks;
@@ -995,6 +1054,17 @@ nserror html_script_free(html_content *html)
 	for (i = 0; i != count; i++) {
 		if (scripts[i].mimetype != NULL) {
 			dom_string_unref(scripts[i].mimetype);
+		}
+
+		/* fixes869 (#295) — release the <script> element ref taken in
+		 * exec_src_script.  NULL it first: this teardown is documented above
+		 * as re-entrant (releasing a handle can drive a JS content to DONE and
+		 * call back in), so the same null-before-release discipline the
+		 * handle uses applies here. */
+		if (scripts[i].node != NULL) {
+			struct dom_node *n = scripts[i].node;
+			scripts[i].node = NULL;
+			dom_node_unref(n);
 		}
 
 		switch (scripts[i].type) {

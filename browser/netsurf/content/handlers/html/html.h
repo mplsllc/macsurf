@@ -82,6 +82,21 @@ struct html_script {
 	} data;	/**< Script data */
 	struct dom_string *mimetype;
 	struct dom_string *encoding;
+	/* fixes869 (#295) — the <script> ELEMENT this entry came from, so a
+	 * `load` / `error` event can be fired AT it once the fetch+exec finishes.
+	 * Nothing here recorded the node before, so there was no way to reach the
+	 * element from html_script_exec, and script.onload could never fire.
+	 * That is fatal for the universal dynamic-loader idiom:
+	 *     const s = document.createElement('script');
+	 *     s.onload = () => resolve();       // <- resolves the caller's Promise
+	 *     s.src = url; document.body.appendChild(s);
+	 * With no load event the promise never settles and the caller's chain
+	 * stalls forever (hackaday's verbum loader does exactly this, and
+	 * wp-polyfill now executes but verbum is never requested).
+	 * Owned ref (dom_node_ref at store, unref in html_script_free), because a
+	 * page may remove the element from the DOM before the fetch completes.
+	 * NULL for parser-inserted scripts, which need no such event. */
+	struct dom_node *node;
 	bool already_started;
 	bool parser_inserted;
 	bool force_async;

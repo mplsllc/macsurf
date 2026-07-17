@@ -14,6 +14,16 @@
  * registered listeners once the initial box tree exists (drains XF.ready and
  * runs XF.activate(document)).  Implemented in javascript/macsurf_qjs.c. */
 unsigned char js_fire_dom_ready(jsthread *thread, struct dom_document *doc);
+/* fixes869 (#295) — fire `load` (ok!=0) or `error` (ok==0) at a <script> element
+ * once its fetch+execute completes.  The universal dynamic-loader idiom
+ * (createElement('script'); s.onload = () => resolve(); appendChild) resolves a
+ * Promise from that event, so with no event the caller's chain stalls forever.
+ * `thread` MUST be the script's OWNING content's js_thread -- a JSValue is only
+ * valid in the runtime that made it (fixes854).  Implemented in macsurf_qjs.c.
+ * NOTE: this declaration must live in the WITH_QUICKJS branch; the #else below
+ * is the no-op-stub build and is not what MacSurf compiles. */
+unsigned char js_fire_script_load(jsthread *thread, struct dom_node *node,
+		int ok);
 #else
 
 #ifndef NETSURF_JAVASCRIPT_JS_H_
@@ -48,6 +58,15 @@ unsigned char js_exec(jsthread *thread,
 unsigned char js_fire_event(jsthread *thread, const char *type,
 		struct dom_document *doc, struct dom_node *target);
 unsigned char js_fire_dom_ready(jsthread *thread, struct dom_document *doc);
+
+/* fixes869 (#295) — fire `load` (ok!=0) or `error` (ok==0) at a <script>
+ * element once its fetch+execute completes.  The dynamic-loader idiom
+ * (createElement('script'); s.onload = () => resolve(); appendChild) resolves a
+ * Promise from that event, so without it the caller's chain stalls forever.
+ * `thread` MUST be the script's owning content's js_thread -- a JSValue is only
+ * valid in the runtime that made it (see fixes854). */
+unsigned char js_fire_script_load(jsthread *thread, struct dom_node *node,
+		int ok);
 
 void js_handle_new_element(jsthread *thread, struct dom_element *node);
 void js_event_cleanup(jsthread *thread, struct dom_event *evt);

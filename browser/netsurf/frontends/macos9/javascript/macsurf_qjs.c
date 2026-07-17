@@ -5325,6 +5325,82 @@ unsigned char js_fire_dom_ready(struct jsthread *thread, struct dom_document *do
 	return 1;
 }
 
+/* fixes869 (#295) — fire `load` / `error` AT a <script> element.
+ *
+ * The universal dynamic-loader idiom is:
+ *     const s = document.createElement('script');
+ *     s.onload  = () => resolve();      // resolves the caller's Promise
+ *     s.onerror = (e) => reject(e);
+ *     s.src = url; document.body.appendChild(s);
+ * Nothing ever fired those events, so the caller's promise never settled and
+ * its chain stalled forever.  HW-confirmed on hackaday after fixes868: the
+ * injected wp-polyfill reaches dom_SCRIPT_showed_up (flags=4), runs ASYNC and
+ * EXECUTES -- and then `loadWPScript('wp-polyfill').then(() => loadWPScript('verbum'))`
+ * never advances, so verbum-comments.js is never requested.
+ *
+ * Fires BOTH shapes because they are different registries: `s.onload = fn` is a
+ * plain property on the wrapper, while addEventListener('load') lands in the
+ * element's own `_L` map that el.dispatchEvent walks.  A loader may use either.
+ *
+ * Realm: `thread` is the script's OWNING content's js_thread (html_script_exec
+ * passes c->js_thread), so this always runs in the right runtime -- passing a
+ * JSValue across runtimes is the fixes854 crash.
+ *
+ * Ref discipline: qjs_wrap_element CONSUMES an owned ref on both the hit and
+ * miss paths, and our caller (struct html_script.node) keeps its own ref for
+ * later teardown -- so take a fresh ref FOR the wrap, or the wrapper's adopt
+ * and html_script_free's unref would both claim the same one. */
+unsigned char js_fire_script_load(struct jsthread *thread,
+		struct dom_node *node, int ok)
+{
+	static const char s_fire_src[] =
+		"(function(el,type){try{"
+		"var ev={type:type,target:el,currentTarget:el,"
+			"bubbles:false,cancelable:false,defaultPrevented:false,"
+			"preventDefault:function(){},stopPropagation:function(){}};"
+		"var h=el['on'+type];"
+		"if(typeof h==='function'){try{h.call(el,ev);}catch(e){}}"
+		"if(typeof el.dispatchEvent==='function'){try{el.dispatchEvent(ev);}catch(e){}}"
+		"}catch(e){}})";
+	JSContext *ctx;
+	JSValue fn, el, args[2], ret;
+
+	if (thread == NULL || thread->ctx == NULL || node == NULL) return 0;
+	ctx = thread->ctx;
+
+	fn = JS_Eval(ctx, s_fire_src, strlen(s_fire_src),
+			"<script-load>", JS_EVAL_TYPE_GLOBAL);
+	if (JS_IsException(fn)) { JS_FreeValue(ctx, fn); return 0; }
+
+	macsurf_dom_node_ref(node);	/* the wrap consumes this one */
+	el = qjs_wrap_element(ctx, (dom_element *)node);
+	if (JS_IsNull(el) || JS_IsUndefined(el)) {
+		JS_FreeValue(ctx, el);
+		JS_FreeValue(ctx, fn);
+		return 0;
+	}
+
+	args[0] = el;
+	args[1] = JS_NewString(ctx, ok ? "load" : "error");
+	ret = JS_Call(ctx, fn, JS_UNDEFINED, 2, (JSValueConst *)args);
+	if (JS_IsException(ret)) {
+		JSValue exc = JS_GetException(ctx);
+		const char *s = JS_ToCString(ctx, exc);
+		macsurf_debug_log_writef("WORK script %s handler exc: %s",
+				ok ? "load" : "error", s ? s : "?");
+		if (s) JS_FreeCString(ctx, s);
+		JS_FreeValue(ctx, exc);
+	}
+	JS_FreeValue(ctx, ret);
+	JS_FreeValue(ctx, args[1]);
+	JS_FreeValue(ctx, el);
+	JS_FreeValue(ctx, fn);
+
+	macsurf_debug_log_writef("WORK script fired %s node=%p",
+			ok ? "load" : "error", (void *)node);
+	return 1;
+}
+
 void js_handle_new_element(struct jsthread *thread, struct dom_element *node)
 {
 	(void)thread; (void)node;

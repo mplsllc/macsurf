@@ -1208,6 +1208,134 @@ int main(void)
 	}
 	fprintf(stderr, "=== Test 12 PASS: Promise reactions are drained ===\n");
 
+	/* --- Test 13 (fixes869, #295): GATE 2 -- script.onload MUST FIRE.
+	 * With fixes868 the loader's Promise chain finally advances and wp-polyfill
+	 * EXECUTES on hardware (the first JS-injected script ever to run in
+	 * MacSurf). It then stops dead, because the universal loader idiom
+	 *     const s = document.createElement('script');
+	 *     s.onload = () => resolve();     // <- settles the caller's promise
+	 *     s.src = url; document.body.appendChild(s);
+	 * resolves ONLY on the load event, and nothing in MacSurf ever fired one.
+	 * So promises['wp-polyfill'] never settles and verbum-comments.js is never
+	 * even requested (HW: `wp-polyfill EXECUTED=1`, `verbum EXECUTED=0`).
+	 *
+	 * Both delivery routes must work -- pages use either:
+	 *   s.onload = fn                 (the property)
+	 *   s.addEventListener('load',fn) (the listener map)
+	 * and the event object must carry a usable .type/.target.
+	 *
+	 * NEGATIVE CONTROL: this test fails red if js_fire_script_load is a no-op
+	 * (every flag stays 0), which is exactly the pre-fix state -- so it cannot
+	 * pass vacuously the way Test 11's old `appended=1` assert could. --- */
+	fprintf(stderr, "\n=== Test 13: script.onload / onerror fire ===\n");
+	{
+		dom_string *id_str = NULL;
+		dom_element *el_ok = NULL, *el_err = NULL;
+		unsigned char ok;
+
+		/* Arm two scripts: one we will report success for, one failure. */
+		const char *arm =
+			"globalThis.__g2={onload:0,onerror:0,al:0,type:'',tgt:0,order:[]};"
+			"function mk(id){"
+				"var s=document.createElement('script');"
+				"s.id=id;"
+				"s.onload=function(e){globalThis.__g2.onload++;"
+					"globalThis.__g2.type=e?e.type:'NOEVENT';"
+					"globalThis.__g2.tgt=(e&&e.target===s)?1:0;"
+					"globalThis.__g2.order.push('prop');};"
+				"s.onerror=function(e){globalThis.__g2.onerror++;"
+					"globalThis.__g2.type=e?e.type:'NOEVENT';};"
+				"s.addEventListener('load',function(){"
+					"globalThis.__g2.al++;globalThis.__g2.order.push('listener');});"
+				"s.src='https://example.invalid/'+id+'.js';"
+				"document.body.appendChild(s);"
+				"return s;}"
+			"mk('g2ok');mk('g2err');";
+		ok = js_exec(thread, (const unsigned char *)arm, strlen(arm), "gate2-arm.js");
+		if (!ok) { fprintf(stderr, "FAIL: gate2 arm threw\n"); return 1; }
+
+		/* Reach the elements the same way core does -- through libdom, not
+		 * through any QuickJS internals. If getElementById can't find them the
+		 * append in the arm never really landed and the rest is meaningless. */
+		if (dom_string_create((const uint8_t *)"g2ok", 4, &id_str) != DOM_NO_ERR) {
+			fprintf(stderr, "FAIL: dom_string_create\n"); return 1;
+		}
+		dom_document_get_element_by_id(document, id_str, &el_ok);
+		dom_string_unref(id_str);
+		id_str = NULL;
+		if (dom_string_create((const uint8_t *)"g2err", 5, &id_str) != DOM_NO_ERR) {
+			fprintf(stderr, "FAIL: dom_string_create\n"); return 1;
+		}
+		dom_document_get_element_by_id(document, id_str, &el_err);
+		dom_string_unref(id_str);
+
+		if (el_ok == NULL || el_err == NULL) {
+			fprintf(stderr, "FAIL: the injected <script> elements are not in the "
+					"document (getElementById found %s/%s) -- appendChild "
+					"did not really land\n",
+					el_ok ? "ok" : "NULL", el_err ? "ok" : "NULL");
+			return 1;
+		}
+
+		/* This is what script.c now does when the fetch+exec completes. */
+		js_fire_script_load(thread, (dom_node *)el_ok, 1);
+		js_fire_script_load(thread, (dom_node *)el_err, 0);
+
+		{
+			const char *chk =
+				"var g=globalThis.__g2;"
+				"if(g.onload!==1)"
+					"throw new Error('ASSERT FAIL: script.onload fired '+g.onload+' "
+						"times, expected 1 -- the dynamic-loader idiom "
+						"(s.onload=()=>resolve()) can NEVER settle, so every "
+						"chained script load hangs forever');"
+				"if(g.al!==1)"
+					"throw new Error('ASSERT FAIL: addEventListener(\"load\") fired "
+						"'+g.al+' times, expected 1 -- the event reaches the "
+						"onload PROPERTY but not the listener map (or vice "
+						"versa); pages use both');"
+				"if(g.type!=='error')"
+					"throw new Error('ASSERT FAIL: last event type was \"'+g.type+"
+						"'\", expected \"error\" from the second fire');"
+				"if(g.onerror!==1)"
+					"throw new Error('ASSERT FAIL: script.onerror fired '+g.onerror+"
+						"' times, expected 1 -- a failed script must REJECT, not "
+						"hang; a promise that never settles is worse than a "
+						"rejected one');";
+			ok = js_exec(thread, (const unsigned char *)chk, strlen(chk), "gate2-chk.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: Gate 2 is shut -- script load/error events "
+						"do not reach the element, so verbum is never "
+						"requested\n");
+				return 1;
+			}
+		}
+
+		/* The success fire must not ALSO have run the error handler, and the
+		 * failure fire must not have run onload a second time. Both are checked
+		 * above by the exact counts (1 and 1), which a fire-everything
+		 * implementation would break. */
+		{
+			const char *ordchk =
+				"var o=globalThis.__g2.order.join(',');"
+				"if(o!=='prop,listener'&&o!=='listener,prop')"
+					"throw new Error('ASSERT FAIL: unexpected delivery set: '+o);"
+				"if(!globalThis.__g2.tgt)"
+					"throw new Error('ASSERT FAIL: event.target is not the script "
+						"element -- loaders that read e.target.src to key their "
+						"promise map will misfire');";
+			ok = js_exec(thread, (const unsigned char *)ordchk, strlen(ordchk),
+					"gate2-ord.js");
+			if (!ok) { fprintf(stderr, "FAIL: Gate 2 event shape is wrong\n"); return 1; }
+		}
+
+		dom_node_unref(el_ok);
+		dom_node_unref(el_err);
+		fprintf(stderr, "onload fires once via BOTH the property and the listener "
+				"map; onerror fires on failure; event.target is the script\n");
+	}
+	fprintf(stderr, "=== Test 13 PASS: script.onload/onerror fire ===\n");
+
 	free(html_src_big);
 	return 0;
 }
