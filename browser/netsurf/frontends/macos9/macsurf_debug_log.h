@@ -122,4 +122,21 @@ void macsurf_profile_emit_phases(const char *url);
  * Log). Returns bytes read; out is NUL-terminated. */
 long macsurf_debug_log_read(char *out, long cap);
 
+/* fixes895 (reconvert-crash hunt) — durable single-slot "furthest position"
+ * marker + phase-scoped eager flush. Core callers (html.c / box_construct.c)
+ * declare these with a local `extern` matching the codebase pattern; the
+ * prototypes here keep the definitions honest and let frontend TUs use them.
+ *   _reconv_flush(1/0)  — arm/disarm per-line FlushVol of WORK reconvert/timer
+ *                         breadcrumbs (bounded to the reconvert window).
+ *   _reconv_pos_set()   — RAM-only, safe per node.
+ *   _reconv_pos_flush() — rewrite+FlushVol the one line in MacSurf ReconvPos.txt. */
+void macsurf_debug_log_reconv_flush(int on);
+void macsurf_reconv_pos_set(const char *phase, long seq, long node_ix,
+		const char *tag);
+void macsurf_reconv_pos_flush(void);
+/* fixes895 — largest contiguous free block (bytes), -1 off-Mac. For the H1
+ * double-buffer memory-exhaustion hypothesis (watch it approach 0 near the
+ * crash node index on heavy pages). */
+long macsurf_free_mem(void);
+
 #endif

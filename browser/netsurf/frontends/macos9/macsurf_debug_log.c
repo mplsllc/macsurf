@@ -239,6 +239,31 @@ static int   g_log_open = 0;
  * log_write impl that owns the buffer). */
 static void macsurf_debug_log_buffer_flush(void);
 
+/* fixes895 (reconvert-crash hunt) — narrow dev gate, self-defined HERE so the
+ * hunt is armed/disarmed by reshipping ONLY this one file (no prefix edit, no
+ * full rebuild). When defined, the crash-only gate additionally keeps the
+ * "WORK reconvert" (box-build window) and "WORK timer" (QuickJS realm/timer
+ * teardown) breadcrumbs, so both crashes are visible on a shipped-style build
+ * WITHOUT opening the whole WORK / verbose firehose. Remove this line to return
+ * the log to crash-basic. The breadcrumb CODE ships unconditionally and is
+ * runtime-gated by macos9_reconvert_in_progress; this macro only controls
+ * whether the emitted lines reach disk. */
+#define MACSURF_VERBOSE_RECONVERT 1
+
+/* fixes895 — phase-scoped eager flush. While non-zero, macsurf_debug_log_write
+ * FlushVols every line it keeps, so the in-flight reconvert/timer breadcrumbs
+ * are on disk in order even if the trailing 4 KB buffer is lost to a hard bomb.
+ * Armed by html_reconvert (via macsurf_debug_log_reconv_flush(1)) and cleared
+ * in html_reconvert_done, so the FlushVol cost is bounded to the reconvert
+ * window (breadcrumbs are function/batch level, not per node). */
+static int g_log_reconv_flush = 0;
+
+void
+macsurf_debug_log_reconv_flush(int on)
+{
+	g_log_reconv_flush = on ? 1 : 0;
+}
+
 /* ------------------------------------------------------------------
  * Minimal formatter
  * ------------------------------------------------------------------ */
@@ -619,6 +644,14 @@ macsurf_log_is_crash_report(const char *m)
 #ifdef MACSURF_WORK_LOG
 	if (strstr(m, "WORK ") != NULL) return 1;
 #endif
+	/* fixes895 — the reconvert-crash hunt channel. Keep ONLY the two
+	 * breadcrumb families (box-build window + QuickJS timer/realm teardown)
+	 * so both crashes are diagnosable on a shipped-style build, without the
+	 * MACSURF_WORK_LOG firehose. */
+#ifdef MACSURF_VERBOSE_RECONVERT
+	if (strstr(m, "WORK reconvert") != NULL) return 1;
+	if (strstr(m, "WORK timer") != NULL) return 1;
+#endif
 	if (strstr(m, "WATCHDOG") != NULL) return 1;
 	if (strstr(m, "TERMINAL") != NULL) return 1;
 	if (strstr(m, "exception") != NULL) return 1;
@@ -867,6 +900,11 @@ do_write:
 		g_log_eager_left--;
 		macsurf_debug_log_buffer_flush();
 		if (g_log_vref != 0) (void)FlushVol(NULL, g_log_vref);
+	} else if (g_log_reconv_flush) {
+		/* fixes895 — while a reconvert/timer flush is in flight, force the
+		 * breadcrumb to disk in order so a hard bomb loses nothing after it. */
+		macsurf_debug_log_buffer_flush();
+		if (g_log_vref != 0) (void)FlushVol(NULL, g_log_vref);
 	}
 #endif
 
@@ -917,6 +955,151 @@ macsurf_debug_log_writef(const char *fmt, ...)
 
 	macsurf_debug_log_write(buf);
 }
+
+/* ------------------------------------------------------------------
+ * fixes895 — reconvert-crash hunt: durable single-slot "furthest
+ * position reached" marker.
+ *
+ * The box-build window (dom_to_box -> convert_xml_to_box_inner ->
+ * html_reconvert_done -> content__reformat) is where the reconvert
+ * crash kills the session, and the 4 KB log buffer loses its tail on
+ * a hard bomb -- so even "rc=0 was the last line" is unreliable.
+ * macsurf_reconv_pos_set() records the current phase/node into RAM
+ * (per-node, no I/O); macsurf_reconv_pos_flush() rewrites that ONE
+ * line into "MacSurf ReconvPos.txt" and FlushVols it, called only at
+ * batch/phase boundaries. After a bomb this file names the exact
+ * function-phase, reconvert seq, furthest node index, and node tag the
+ * Mac was in -- at 100-node granularity -- independent of the main log.
+ * ------------------------------------------------------------------ */
+
+static char g_reconv_pos[256] = "reconv-pos (never set)";
+
+void
+macsurf_reconv_pos_set(const char *phase, long seq, long node_ix,
+		const char *tag)
+{
+	int pos = 0;
+	int cap = (int)sizeof(g_reconv_pos);
+
+	fmt_append_str(g_reconv_pos, cap, &pos, "reconv-pos phase=");
+	fmt_append_str(g_reconv_pos, cap, &pos, (phase != NULL) ? phase : "(null)");
+	fmt_append_str(g_reconv_pos, cap, &pos, " seq=");
+	fmt_append_long(g_reconv_pos, cap, &pos, seq);
+	fmt_append_str(g_reconv_pos, cap, &pos, " node=");
+	fmt_append_long(g_reconv_pos, cap, &pos, node_ix);
+	fmt_append_str(g_reconv_pos, cap, &pos, " tag=");
+	fmt_append_str(g_reconv_pos, cap, &pos, (tag != NULL) ? tag : "");
+	g_reconv_pos[pos] = '\0';
+}
+
+#ifdef __MACOS9__
+static short g_pos_ref = 0;
+static short g_pos_vref = 0;
+static int   g_pos_open = 0;
+static int   g_pos_tried = 0;
+
+/* Lazily create/open MacSurf ReconvPos.txt in the same MacSurfData dir the
+ * log uses, with the same app-dir/Desktop fallback chain. Tried at most once;
+ * a failure leaves the marker silently inert (never crashes the hunt). */
+static void
+macsurf_reconv_pos_open(void)
+{
+	FSSpec spec;
+	OSErr err;
+	short vRefNum;
+	long dirID;
+	unsigned char fname[32];
+	const char *name;
+	size_t nlen;
+
+	if (g_pos_open || g_pos_tried) return;
+	g_pos_tried = 1;
+
+	vRefNum = 0;
+	dirID = 0;
+	err = macos9_data_dir_get(NULL, &vRefNum, &dirID);
+	if (err != noErr) {
+		err = macos9_app_dir_get(&vRefNum, &dirID);
+		if (err != noErr) {
+			err = FindFolder(kOnSystemDisk, kDesktopFolderType,
+					kDontCreateFolder, &vRefNum, &dirID);
+			if (err != noErr) return;
+		}
+	}
+
+	name = "MacSurf ReconvPos.txt";
+	nlen = strlen(name);
+	if (nlen > 31) nlen = 31;
+	fname[0] = (unsigned char)nlen;
+	memcpy(fname + 1, name, nlen);
+
+	err = FSMakeFSSpec(vRefNum, dirID, fname, &spec);
+	if (err == fnfErr) {
+		if (FSpCreate(&spec, 'ttxt', 'TEXT', smSystemScript) != noErr)
+			return;
+		err = FSMakeFSSpec(vRefNum, dirID, fname, &spec);
+	}
+	if (err != noErr) return;
+	if (FSpOpenDF(&spec, fsRdWrPerm, &g_pos_ref) != noErr) {
+		g_pos_ref = 0;
+		return;
+	}
+	g_pos_vref = vRefNum;
+	g_pos_open = 1;
+}
+
+void
+macsurf_reconv_pos_flush(void)
+{
+	long count;
+	size_t plen;
+
+	if (!g_pos_open)
+		macsurf_reconv_pos_open();
+	if (!g_pos_open)
+		return;
+
+	plen = strlen(g_reconv_pos);
+	(void)SetFPos(g_pos_ref, fsFromStart, 0);
+	count = (long)plen;
+	(void)FSWrite(g_pos_ref, &count, g_reconv_pos);
+	count = 1;
+	(void)FSWrite(g_pos_ref, &count, "\r");
+	/* truncate any leftover tail from a previous, longer line. */
+	(void)SetEOF(g_pos_ref, (long)plen + 1);
+	if (g_pos_vref != 0)
+		(void)FlushVol(NULL, g_pos_vref);
+}
+#else
+void
+macsurf_reconv_pos_flush(void)
+{
+	fprintf(stderr, "RECONV-POS: %s\n", g_reconv_pos);
+}
+#endif
+
+/* fixes895 — largest contiguous free block (bytes), for the H1 double-buffer
+ * memory-exhaustion hypothesis: two full box trees + two style sets coexist as
+ * the new tree nears completion, so if box_create/talloc_zero is returning NULL
+ * on heavy pages this reading should approach 0 near the crash node index.
+ * Returns -1 off-Mac (no Memory Manager). PurgeSpace reports max-contiguous,
+ * which is what a single large libcss/box alloc actually needs. */
+#ifdef __MACOS9__
+long
+macsurf_free_mem(void)
+{
+	long total = 0;
+	long contig = 0;
+	PurgeSpace(&total, &contig);
+	return contig;
+}
+#else
+long
+macsurf_free_mem(void)
+{
+	return -1;
+}
+#endif
 
 /* fixes366h — runtime-gated high-frequency trace. Default off so the
  * per-element var()/grid diagnostics don't pollute profiling captures

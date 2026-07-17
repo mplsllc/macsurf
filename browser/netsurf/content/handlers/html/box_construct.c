@@ -58,6 +58,25 @@ extern void macos9_content_drain_deferred(void);
 #define macos9_content_drain_deferred() ((void)0)
 #endif
 
+/* fixes895 (reconvert-crash hunt) — dense breadcrumbs for the async box-build
+ * window, which is where the reconvert crash kills the session (between
+ * "html_reconvert_content rc=0" and "reconvert #N: DONE"). All of it is gated
+ * on macsurf_reconvert_in_progress (defined in html.c, non-zero ONLY during a
+ * re-convert) so a cold page load -- which drives the SAME convert_xml_to_box
+ * path -- is not flooded. The pos marker + freemem reading are defined in
+ * macsurf_debug_log.c; declared local-extern here matching this file's existing
+ * `extern void macsurf_debug_log_writef` pattern. */
+extern int macsurf_reconvert_in_progress;
+extern void macsurf_debug_log_writef(const char *fmt, ...);
+extern void macsurf_reconv_pos_set(const char *phase, long seq, long node_ix,
+		const char *tag);
+extern void macsurf_reconv_pos_flush(void);
+extern long macsurf_free_mem(void);
+extern unsigned long macsurf_reconvert_seq;   /* html.c */
+/* running node index within the CURRENT reconvert's box build (reset in
+ * dom_to_box). Names the furthest node reached when a bomb hits. */
+static unsigned long g_reconv_node_ix = 0;
+
 /* fixes552 — WRITER-SIDE free guard (closes the free-during-walk window at the
  * single writer instead of at every reader).  g_walk_content marks the content
  * whose box walk is CURRENTLY on the stack — set by the convert_xml_to_box
@@ -1213,8 +1232,25 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	box = box_create(styles, styles->styles[CSS_PSEUDO_ELEMENT_NONE], false,
 			props.href, props.target, props.title, id,
 			ctx->bctx);
-	if (box == NULL)
+	if (box == NULL) {
+		/* fixes895 — box_create/talloc_zero returned NULL. During a
+		 * reconvert this is the H1 smoking gun: the double-buffer keeps a
+		 * whole SECOND box tree alive, so a heavy JS page can exhaust the
+		 * partition here. Durable + flushed so a bomb right after it is
+		 * unambiguous. */
+		if (macsurf_reconvert_in_progress) {
+			macsurf_reconv_pos_set("box_create-NULL",
+				(long) macsurf_reconvert_seq,
+				(long) g_reconv_node_ix, "");
+			macsurf_reconv_pos_flush();
+			macsurf_debug_log_writef(
+				"WORK reconvert #%ld: box_create NULL"
+				" -- CANDIDATE H1-memory node_ix=%ld freemem=%ld",
+				(long) macsurf_reconvert_seq,
+				(long) g_reconv_node_ix, macsurf_free_mem());
+		}
 		return false;
+	}
 
 	/* If this is the root box, add it to the context */
 	if (props.node_is_root)
@@ -1386,8 +1422,17 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	err = dom_node_set_user_data(ctx->n,
 			corestring_dom___ns_key_box_node_data, box, NULL,
 			(void *) &old_box);
-	if (err != DOM_NO_ERR)
+	if (err != DOM_NO_ERR) {
+		/* fixes895 — the box<->node backlink box_for_node() reads could
+		 * not be installed; a later hover/click on this node would then
+		 * resolve to a stale/absent box. */
+		if (macsurf_reconvert_in_progress)
+			macsurf_debug_log_writef(
+				"WORK reconvert #%ld: set_user_data FAIL node_ix=%ld exc=%d",
+				(long) macsurf_reconvert_seq,
+				(long) g_reconv_node_ix, (int) err);
 		return false;
+	}
 
 	/* Attach box to DOM node */
 	box->node = dom_node_ref(ctx->n);
@@ -2254,6 +2299,34 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
  * then schedule conversion of the next ELEMENT node
  */
 static void convert_xml_to_box(struct box_construct_ctx *ctx); /* fixes552 wrapper, defined just below the inner */
+
+/* fixes895 — copy the node's tag/name into a static buffer for the durable
+ * position marker. Called once per batch boundary (not per node), so the single
+ * transient dom_string it allocates+frees never grows the reconvert peak the H1
+ * hypothesis is about. Returns "" on any failure. */
+static const char *
+reconv_node_tag(dom_node *n)
+{
+	static char buf[32];
+	dom_string *name = NULL;
+
+	buf[0] = '\0';
+	if (n == NULL)
+		return "(null)";
+	if (dom_node_get_node_name(n, &name) == DOM_NO_ERR && name != NULL) {
+		const char *d = dom_string_data(name);
+		size_t len = dom_string_byte_length(name);
+		if (len > 31)
+			len = 31;
+		if (d != NULL) {
+			memcpy(buf, d, len);
+			buf[len] = '\0';
+		}
+		dom_string_unref(name);
+	}
+	return buf;
+}
+
 static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 {
 	dom_node *next;
@@ -2269,7 +2342,11 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 	 * ~10x fewer round-trips. Bigger batches also mean FEWER yield windows, so
 	 * the per-batch liveness guards run less often, not more (no added UAF
 	 * exposure). This does NOT touch the JS reconvert path (still disabled). */
-	const uint32_t max_processed_before_yield = 100;
+	/* fixes895 — during a re-convert only, drop the batch to 20 so the durable
+	 * per-batch position marker localizes a crash to a 20-node window instead of
+	 * 100. Cold page loads keep 100 (no perf regression on normal navigation). */
+	const uint32_t max_processed_before_yield =
+			macsurf_reconvert_in_progress ? 20 : 100;
 
 	/* fixes519: validate the content BEFORE any access to it — the log line
 	 * below dereferences ctx->content.  convert_xml_to_box is static and is
@@ -2346,6 +2423,9 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 
 	do {
 		convert_children = true;
+
+		if (macsurf_reconvert_in_progress)
+			g_reconv_node_ix++;
 
 		assert(ctx->n != NULL);
 
@@ -2437,6 +2517,22 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 			root.children = root.last = ctx->root_box;
 			root.children->parent = &root;
 
+			if (macsurf_reconvert_in_progress) {
+				/* fixes895 — all nodes walked; the crash-relevant
+				 * remaining steps are box_normalise_block (H3) then
+				 * the ctx->cb = html_reconvert_done. Durable marker so
+				 * a bomb here is not confused with a mid-walk one. */
+				macsurf_reconv_pos_set("box_normalise_block",
+					(long) macsurf_reconvert_seq,
+					(long) g_reconv_node_ix, "");
+				macsurf_reconv_pos_flush();
+				macsurf_debug_log_writef(
+					"WORK reconvert #%ld: convert COMPLETE nodes=%ld"
+					" -> normalise+cb freemem=%ld",
+					(long) macsurf_reconvert_seq,
+					(long) g_reconv_node_ix, macsurf_free_mem());
+			}
+
 			/** \todo Remove box_normalise_block */
 			if (box_normalise_block(&root, ctx->root_box,
 					ctx->content) == false) {
@@ -2471,6 +2567,22 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 	 * protected.  Completion/abort paths free ctx and leave this NULL. */
 	if (ctx->content != NULL) {
 		ctx->content->box_conversion_context = ctx;
+	}
+	if (macsurf_reconvert_in_progress) {
+		/* fixes895 — durable per-batch checkpoint. On a hard bomb the
+		 * position file names the furthest node reached (20-node window)
+		 * and the tag of the node the NEXT batch will process; freemem
+		 * trends toward 0 near the crash node if this is the H1 double-
+		 * buffer memory-exhaustion path. */
+		macsurf_reconv_pos_set("batch-yield",
+			(long) macsurf_reconvert_seq, (long) g_reconv_node_ix,
+			reconv_node_tag(ctx->n));
+		macsurf_reconv_pos_flush();
+		macsurf_debug_log_writef(
+			"WORK reconvert #%ld: batch yield node_ix=%ld next_tag=%s"
+			" freemem=%ld",
+			(long) macsurf_reconvert_seq, (long) g_reconv_node_ix,
+			reconv_node_tag(ctx->n), macsurf_free_mem());
 	}
 	guit->misc->schedule(0, (void *)convert_xml_to_box, ctx);
 }
@@ -2652,16 +2764,40 @@ dom_to_box(dom_node *n,
 
 	assert(box_conversion_context != NULL);
 
+	if (macsurf_reconvert_in_progress) {
+		/* fixes895 — start of the re-convert box build. Reset the node
+		 * index and mark ENTER so a batch-1 crash (before the first yield
+		 * flush) is still bracketed here rather than at "pre-dom_to_box". */
+		g_reconv_node_ix = 0;
+		macsurf_reconv_pos_set("dom_to_box-ENTER",
+			(long) macsurf_reconvert_seq, 0, "");
+		macsurf_reconv_pos_flush();
+		macsurf_debug_log_writef(
+			"WORK reconvert #%ld: dom_to_box ENTER n=%p c->bctx=%p freemem=%ld",
+			(long) macsurf_reconvert_seq, (void *) n, (void *) c->bctx,
+			macsurf_free_mem());
+	}
+
 	if (c->bctx == NULL) {
 		/* create a context allocation for this box tree */
 		c->bctx = talloc_zero(0, int);
 		if (c->bctx == NULL) {
+			if (macsurf_reconvert_in_progress)
+				macsurf_debug_log_writef(
+					"WORK reconvert #%ld: dom_to_box NOMEM (bctx)"
+					" -- CANDIDATE H1-memory freemem=%ld",
+					(long) macsurf_reconvert_seq, macsurf_free_mem());
 			return NSERROR_NOMEM;
 		}
 	}
 
 	ctx = malloc(sizeof(*ctx));
 	if (ctx == NULL) {
+		if (macsurf_reconvert_in_progress)
+			macsurf_debug_log_writef(
+				"WORK reconvert #%ld: dom_to_box NOMEM (ctx)"
+				" -- CANDIDATE H1-memory freemem=%ld",
+				(long) macsurf_reconvert_seq, macsurf_free_mem());
 		return NSERROR_NOMEM;
 	}
 

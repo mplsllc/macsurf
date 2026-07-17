@@ -193,7 +193,14 @@ macos9_reconvert_pending_add(struct content *c)
  * old children/next-only clear walk really was leaving boxes behind.
  *
  * If it still crashes, the log now says which population and how many. */
-static int g_reconvert_enabled = 0;
+/* fixes895 — HUNT ONLY: back ON so the reproduced hackaday/68kmla box-build
+ * crash can be captured with the new dense dark-window instrumentation
+ * (html.c/box_construct.c breadcrumbs + the durable MacSurf ReconvPos.txt
+ * marker, gated by MACSURF_VERBOSE_RECONVERT in macsurf_debug_log.c). This is a
+ * DIAGNOSTIC build switch, NOT a fix: validate against a hardware log before
+ * making it permanent. macsurf_js_set_reconvert_enabled(0) remains the runtime
+ * kill. */
+static int g_reconvert_enabled = 1;
 
 void
 macsurf_js_set_reconvert_enabled(int enabled)

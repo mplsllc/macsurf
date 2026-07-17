@@ -2916,6 +2916,124 @@ int main(void)
 	fprintf(stderr, "=== Test 28 PASS: the mouse path will not walk a tree a "
 			"reconvert is rebuilding ===\n");
 
+	/* --- Test 29 (fixes895): reconvert over a JS-CREATED subtree, the shape the
+	 * static fixture never had.
+	 *
+	 * build_large_doc's lists/floats/tables (fixes889/890) all exist at PARSE
+	 * time. Preact/jQuery build the mount at RUN time: createElement +
+	 * appendChild grows a NEW subtree that itself carries markers (<li>), floats
+	 * and <img> objects; innerHTML= parses a fragment into it; removeChild drops
+	 * existing text nodes toward refcount 0 -- all BEFORE the reconvert. That is
+	 * the hackaday shape the reproduced HW crash fires on (log dies inside
+	 * dom_to_box, between rc=0 and DONE), and it is exactly what Tests 1/2/26
+	 * never constructed. This runs that shape through the FULL reconvert cycle
+	 * (clear_node_boxes -> pin -> double-buffer -> dom_to_box -> done ->
+	 * reformat) and then sweeps box_for_node + every text node, so any dangling
+	 * box/dom_node/dom_string traps under ASan with the reconvert on the stack.
+	 *
+	 * NEGATIVE CONTROL: the detection power of the box_for_node sweep below is
+	 * the SAME instrument Test 26 uses, which its author verified RED against the
+	 * pre-fixes889 tree; a Test-29-specific pin/double-buffer revert needs a
+	 * build toggle in the shipped html.c, deferred to keep this round's shipped
+	 * diff instrumentation-only. If the HW log localizes the crash to a phase,
+	 * the next round adds the matching RED control here. */
+	fprintf(stderr, "\n=== Test 29: reconvert over a JS-created subtree "
+			"(the hackaday shape) ===\n");
+	{
+		extern struct box *box_for_node(dom_node *n);
+		const char *mutate29 =
+			"var feed=document.getElementById('feed');"
+			"var i;"
+			"var ul=document.createElement('ul');"
+			"for(i=0;i<10;i++){var li=document.createElement('li');"
+			"li.textContent='new item '+i;ul.appendChild(li);}"
+			"feed.appendChild(ul);"
+			"var fl=document.createElement('div');"
+			"fl.setAttribute('style','float:left');"
+			"fl.textContent='new float';feed.appendChild(fl);"
+			"var im=document.createElement('img');"
+			"im.setAttribute('src','x.png');feed.appendChild(im);"
+			"var m=document.createElement('div');"
+			"m.setAttribute('class','comment-form__verbum');"
+			"feed.appendChild(m);"
+			"m.innerHTML='<span>reply</span><ul><li>a</li><li>b</li></ul>';"
+			"var p0=document.getElementById('p0');if(p0){feed.removeChild(p0);}"
+			"var p1=document.getElementById('p1');if(p1){feed.removeChild(p1);}"
+			"var p2=document.getElementById('p2');"
+			"if(p2){p2.setAttribute('data-xf-init','1');"
+			"p2.textContent='churned';}";
+		unsigned char ok29;
+		int rc29;
+		dom_nodelist *all29 = NULL;
+		dom_string *star29 = NULL;
+		uint32_t len29 = 0, k29;
+		unsigned long touched29 = 0, live29 = 0;
+		dom_node *root29 = NULL;
+
+		ok29 = js_exec(thread, (const unsigned char *)mutate29,
+				strlen(mutate29), "driver-mutate29.js");
+		fprintf(stderr, "js_exec(mutate29) ok=%d\n", (int)ok29);
+		harness_pump_all(100000);
+
+		htmlc.base.status = CONTENT_STATUS_DONE;
+		htmlc.reflowing = false;
+		htmlc.box_conversion_context = NULL;
+		htmlc.aborted = false;
+		htmlc.base.active = 0;
+
+		rc29 = html_reconvert_content((struct content *)&htmlc);
+		fprintf(stderr, "html_reconvert_content(t29) rc=%d (0=queued)\n", rc29);
+		if (rc29 != 0) {
+			fprintf(stderr, "FAIL: t29 reconvert did not queue\n");
+			return 1;
+		}
+		harness_pump_all(100000);
+		fprintf(stderr, "t29 reconvert drained, layout=%p\n",
+				(void *)htmlc.layout);
+
+		/* sweep box_for_node over the rebuilt tree (the click-crash instrument) */
+		if (dom_string_create((const uint8_t *)"*", 1, &star29) != DOM_NO_ERR) {
+			fprintf(stderr, "FAIL: t29 dom_string_create('*')\n"); return 1;
+		}
+		if (dom_document_get_elements_by_tag_name(document, star29, &all29)
+				!= DOM_NO_ERR || all29 == NULL) {
+			fprintf(stderr, "FAIL: t29 get_elements_by_tag_name\n");
+			dom_string_unref(star29); return 1;
+		}
+		dom_nodelist_get_length(all29, &len29);
+		for (k29 = 0; k29 < len29; k29++) {
+			dom_node *nd = NULL;
+			struct box *bx;
+			if (dom_nodelist_item(all29, k29, &nd) != DOM_NO_ERR || nd == NULL)
+				continue;
+			bx = box_for_node(nd);
+			touched29++;
+			if (bx != NULL) {
+				volatile int probe = (int) bx->type;
+				(void) probe;
+				live29++;
+			}
+			dom_node_unref(nd);
+		}
+		dom_nodelist_unref(all29);
+		dom_string_unref(star29);
+
+		/* read every text node exactly like box_construct_text does */
+		dom_document_get_document_element(document, (void *)&root29);
+		g_text_nodes_read = 0;
+		walk_read_text(root29);
+		if (root29 != NULL) dom_node_unref(root29);
+
+		fprintf(stderr, "t29 swept %lu elements (%lu boxed), read %d text nodes\n",
+				touched29, live29, g_text_nodes_read);
+		if (touched29 == 0) {
+			fprintf(stderr, "FAIL: t29 swept nothing -- proves nothing\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 29 PASS: reconvert over a JS-created subtree "
+			"(markers/floats/img/innerHTML/removeChild) is ASan-clean ===\n");
+
 	free(html_src_big);
 	return 0;
 }

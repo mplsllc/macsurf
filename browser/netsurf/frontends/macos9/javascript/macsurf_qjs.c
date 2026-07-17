@@ -875,6 +875,24 @@ static void qjs_flush_timers(JSContext *old_ctx)
 {
 	int i;
 	if (old_ctx == NULL) return;
+
+	/* fixes895 (crash-B hunt) — this is the navigation/realm-teardown path
+	 * that bombs at js_shape_hash_unlink+0004C when an rt_A JSValue is freed
+	 * against rt_B. fixes888's runtime gate in timer_slot_clear should now
+	 * refuse that free, but it is HW-unverified. Arm the durable eager flush
+	 * for the whole flush so every "WORK timer" breadcrumb (including the
+	 * FREE-ALLOWED identity line below and any REFUSING line) is on disk in
+	 * order before the potentially-fatal JS_FreeValue -- and drop a durable
+	 * position marker so a bomb here is unmistakable in MacSurf ReconvPos.txt.
+	 * Disarmed at every return. */
+	macsurf_debug_log_reconv_flush(1);
+	macsurf_reconv_pos_set("qjs_flush_timers", 0, 0, "");
+	macsurf_reconv_pos_flush();
+	macsurf_debug_log_writef(
+		"WORK timer: flush START old_ctx=%p live_rt=%p live_gen=%lu",
+		(void *) old_ctx, (void *) qjs_ctx_live_rt(old_ctx),
+		qjs_ctx_gen(old_ctx));
+
 	for (i = 0; i < QJS_MAX_TIMERS; i++) {
 		/* fixes854 (#283) — THE hackaday.com crash.  This used to free every
 		 * live slot against old_ctx.  The arena is global but heaps are
@@ -922,8 +940,30 @@ static void qjs_flush_timers(JSContext *old_ctx)
 			continue;
 		}
 
+		/* fixes895 (crash-B hunt) — the (ctx,gen) gate ALLOWED this free.
+		 * timer_slot_clear's fixes888 runtime gate gets the final say, but if
+		 * IT is wrong this is the last breadcrumb before the fatal JS_FreeValue.
+		 * Log the full identity (captured slot_rt vs the live rt, gen vs live
+		 * gen) durably, then a position marker, so a bomb pinpoints this slot
+		 * and whether gen matched while the runtime differed. */
+		macsurf_debug_log_writef(
+			"WORK timer: FREE-ALLOWED slot=%d id=%d ctx=%p slot_rt=%p "
+			"live_rt=%p gen=%lu live_gen=%lu",
+			i, s_timer_arena[i].id, (void *) s_timer_arena[i].ctx,
+			(void *) s_timer_arena[i].rt,
+			(void *) qjs_ctx_live_rt(s_timer_arena[i].ctx),
+			s_timer_arena[i].ctx_gen, qjs_ctx_gen(old_ctx));
+		macsurf_reconv_pos_set("timer-free", (long) s_timer_arena[i].id,
+				(long) i, "");
+		macsurf_reconv_pos_flush();
+
 		timer_slot_clear(&s_timer_arena[i], 1);
 	}
+
+	/* fixes895 — flush done without a bomb; disarm the eager flush. */
+	macsurf_debug_log_reconv_flush(0);
+	macsurf_reconv_pos_set("timer-flush-done", 0, 0, "");
+	macsurf_reconv_pos_flush();
 }
 
 void macsurf_qjs_run_timers(struct jscontext *ctx)

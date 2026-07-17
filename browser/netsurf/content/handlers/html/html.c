@@ -1825,13 +1825,17 @@ struct macsurf_pinned_string {
 
 static struct macsurf_pinned_string *g_reconvert_pinned_strings = NULL;
 
-static void html_reconvert_pin_text_strings(struct box *root)
+/* fixes895 — returns the count of strings pinned, so html_reconvert can log
+ * it as a phase breadcrumb (a zero count where the old tree clearly had text
+ * is itself a signal). */
+static long html_reconvert_pin_text_strings(struct box *root)
 {
 	struct box *b = root;
 	struct box *root_parent;
+	long pinned = 0;
 
 	if (b == NULL)
-		return;
+		return 0;
 
 	root_parent = b->parent;
 
@@ -1848,6 +1852,7 @@ static void html_reconvert_pin_text_strings(struct box *root)
 					p->str = ds;
 					p->next = g_reconvert_pinned_strings;
 					g_reconvert_pinned_strings = p;
+					pinned++;
 				} else {
 					dom_string_unref(ds);
 				}
@@ -1868,6 +1873,7 @@ static void html_reconvert_pin_text_strings(struct box *root)
 		if (b != NULL)
 			b = b->next;
 	}
+	return pinned;
 }
 
 static void html_reconvert_release_pinned_strings(void)
@@ -1901,6 +1907,22 @@ static void *g_reconvert_old_bctx = NULL;
  * interaction.c stamps them on every click. */
 unsigned long macsurf_reconvert_seq = 0;
 void *macsurf_reconvert_last_layout = NULL;
+
+/* fixes895 — the reconvert-crash hunt gate. Non-zero ONLY between the START of
+ * a re-convert and html_reconvert_done, so the dense per-node breadcrumbs in
+ * box_construct.c's shared dom_to_box path fire during a reconvert but NOT on
+ * every cold page load (which uses the same convert_xml_to_box_inner). Read via
+ * extern in box_construct.c. */
+int macsurf_reconvert_in_progress = 0;
+
+/* fixes895 — durable "furthest position" marker + phase-scoped eager flush,
+ * defined in macsurf_debug_log.c (local extern, matching this file's existing
+ * `extern void macsurf_debug_log_writef` pattern). */
+extern void macsurf_debug_log_reconv_flush(int on);
+extern void macsurf_reconv_pos_set(const char *phase, long seq, long node_ix,
+		const char *tag);
+extern void macsurf_reconv_pos_flush(void);
+extern long macsurf_free_mem(void);
 
 static void html_reconvert_free_old(void)
 {
@@ -1938,33 +1960,64 @@ static void html_reconvert_done(html_content *c, bool success)
 	nserror err;
 
 	c->box_conversion_context = NULL;
+	/* fixes895 — the box build finished (or failed); this brackets the dark
+	 * async span. A crash BEFORE this line was in dom_to_box; a crash AFTER it
+	 * is in free_old / imagemap / reformat / first-paint. */
+	macsurf_reconv_pos_set("html_reconvert_done", (long) macsurf_reconvert_seq,
+			0, "");
+	macsurf_reconv_pos_flush();
 	/* fixes843b (#167 S1 census) — WORK-gated: only reachable via the
 	 * facebook.com-gated path (macos9_js_mark_dom_dirty), so naturally
 	 * rate-limited; not filtered by the failures-only release gate. */
 	macsurf_reconvert_last_layout = (void *) c->layout;
 	macsurf_debug_log_writef(
-			"WORK reconvert #%ld: DONE success=%d layout=%p",
+			"WORK reconvert #%ld: DONE-ENTRY success=%d layout=%p",
 			(long) macsurf_reconvert_seq, (int)success, (void *)c->layout);
 	macsurf_profile_stamp("reconvert-done");
 
 	if ((success == false) || (c->aborted)) {
-		macsurf_debug_log_writef("WORK reconvert: FAILED/aborted");
+		macsurf_debug_log_writef("WORK reconvert #%ld: FAILED/aborted",
+				(long) macsurf_reconvert_seq);
 		html_reconvert_free_old();   /* don't leak the deferred old tree */
+		/* fixes895 — disarm the hunt: the async span is over. */
+		macsurf_reconvert_in_progress = 0;
+		macsurf_debug_log_reconv_flush(0);
+		macsurf_reconv_pos_set("reconvert-idle-FAILED",
+				(long) macsurf_reconvert_seq, 0, "");
+		macsurf_reconv_pos_flush();
 		return;
 	}
 
 	/* New tree is live + laid out — NOW free the old one. Shared styles
 	 * survive via their refcount held by the new tree. */
 	html_reconvert_free_old();
+	macsurf_reconv_pos_set("after-free_old", (long) macsurf_reconvert_seq,
+			0, "");
+	macsurf_reconv_pos_flush();
 
 	err = imagemap_extract(c);
-	if (err != NSERROR_OK) {
-		macsurf_debug_log_writef("reconvert: imagemap_extract err=%d",
-				(int)err);
-	}
+	macsurf_debug_log_writef(
+			"WORK reconvert #%ld: imagemap_extract -> %d",
+			(long) macsurf_reconvert_seq, (int)err);
 
+	macsurf_debug_log_writef(
+			"WORK reconvert #%ld: -> content__reformat w=%d h=%d",
+			(long) macsurf_reconvert_seq,
+			(int) c->base.available_width, (int) c->base.available_height);
+	macsurf_reconv_pos_set("content__reformat", (long) macsurf_reconvert_seq,
+			0, "");
+	macsurf_reconv_pos_flush();
 	content__reformat(&c->base, false,
 			c->base.available_width, c->base.available_height);
+
+	/* fixes895 — the full cycle repainted without a crash. Disarm. */
+	macsurf_debug_log_writef(
+			"WORK reconvert #%ld: first-paint OK", (long) macsurf_reconvert_seq);
+	macsurf_reconvert_in_progress = 0;
+	macsurf_debug_log_reconv_flush(0);
+	macsurf_reconv_pos_set("reconvert-idle", (long) macsurf_reconvert_seq,
+			0, "");
+	macsurf_reconv_pos_flush();
 }
 
 /* Re-run box construction over the current DOM. Returns NSERROR_NEED_DATA if
@@ -2001,11 +2054,26 @@ nserror html_reconvert(html_content *c)
 		extern unsigned long macsurf_box_backlink_cleared;
 		macsurf_reconvert_seq++;
 		macsurf_debug_log_writef(
-			"WORK reconvert #%ld: START layout=%p active=%d backlinks_cleared=%ld",
+			"WORK reconvert #%ld: START layout=%p active=%d backlinks_cleared=%ld"
+			" freemem=%ld",
 			(long) macsurf_reconvert_seq, (void *) c->layout,
 			(int) c->base.active,
-			(long) macsurf_box_backlink_cleared);
+			(long) macsurf_box_backlink_cleared,
+			macsurf_free_mem());
 	}
+
+	/* fixes895 — arm the hunt for the ENTIRE async span (from here through
+	 * html_reconvert_done). in_progress makes box_construct.c's shared
+	 * dom_to_box path emit its dense per-node breadcrumbs only during a
+	 * reconvert; reconv_flush forces each breadcrumb to disk so a hard bomb
+	 * loses nothing; the pos marker names the phase durably in a separate file.
+	 * Every exit path below (dom_to_box-failed here, both branches of _done)
+	 * disarms it. */
+	macsurf_reconvert_in_progress = 1;
+	macsurf_debug_log_reconv_flush(1);
+	macsurf_reconv_pos_set("reconvert-START", (long) macsurf_reconvert_seq,
+			0, "");
+	macsurf_reconv_pos_flush();
 
 	/* HAZARD guards BEFORE freeing the box tree (order matters). */
 	/* fixes891 — clear the stored hover/active DOM nodes. They are cleared on
@@ -2019,15 +2087,26 @@ nserror html_reconvert(html_content *c)
 	c->dyn_active_node = NULL;
 	html_reconvert_clear_node_boxes(c);          /* H1: stale node boxes */
 	html_object_free_objects(c);                 /* H2: object_list fetches */
+	macsurf_debug_log_writef(
+		"WORK reconvert #%ld: H2 objects freed active=%d",
+		(long) macsurf_reconvert_seq, (int) c->base.active);
 	html_reconvert_detach_forms(c);              /* H3: form box pointers */
 	imagemap_destroy(c);                         /* rebuilt in done       */
 	if (c->sel != NULL)
 		selection_destroy(c->sel);
 	c->sel = selection_create((struct content *) c);
+	macsurf_debug_log_writef(
+		"WORK reconvert #%ld: H3 forms+imagemap+selection reset",
+		(long) macsurf_reconvert_seq);
 
 	/* fixes843 — pin the OLD tree's text-node dom_strings BEFORE anything
 	 * else can touch them, while c->layout is still the intact old tree. */
-	html_reconvert_pin_text_strings(c->layout);
+	{
+		long pinned = html_reconvert_pin_text_strings(c->layout);
+		macsurf_debug_log_writef(
+			"WORK reconvert #%ld: pinned %ld old text-node strings",
+			(long) macsurf_reconvert_seq, pinned);
+	}
 
 	/* fixes421 DOUBLE-BUFFER: do NOT free the old bctx yet. Freeing it now
 	 * runs box destructors -> css_select_results_destroy on old styles BEFORE
@@ -2041,17 +2120,39 @@ nserror html_reconvert(html_content *c)
 	g_reconvert_old_bctx = c->bctx;
 	c->bctx = NULL;
 	c->layout = NULL;
+	macsurf_debug_log_writef(
+		"WORK reconvert #%ld: old bctx deferred layout=NULL",
+		(long) macsurf_reconvert_seq);
 
 	exc = dom_document_get_document_element(c->document, (void *) &html);
 	if ((exc != DOM_NO_ERR) || (html == NULL)) {
+		macsurf_debug_log_writef(
+			"WORK reconvert #%ld: doc_element FAILED exc=%d",
+			(long) macsurf_reconvert_seq, (int) exc);
 		html_reconvert_free_old();
+		/* fixes895 — disarm: html_reconvert_done will never run. */
+		macsurf_reconvert_in_progress = 0;
+		macsurf_debug_log_reconv_flush(0);
 		return NSERROR_DOM;
 	}
+	macsurf_debug_log_writef(
+		"WORK reconvert #%ld: doc_element=%p -> dims -> dom_to_box",
+		(long) macsurf_reconvert_seq, (void *) html);
 	html_get_dimensions(c);
+	macsurf_reconv_pos_set("pre-dom_to_box", (long) macsurf_reconvert_seq,
+			0, "");
+	macsurf_reconv_pos_flush();
 	error = dom_to_box(html, c, html_reconvert_done,
 			&c->box_conversion_context);
-	if (error != NSERROR_OK)
+	if (error != NSERROR_OK) {
+		macsurf_debug_log_writef(
+			"WORK reconvert #%ld: dom_to_box FAILED err=%d",
+			(long) macsurf_reconvert_seq, (int) error);
 		html_reconvert_free_old();   /* dom_to_box failed: _done won't run */
+		/* fixes895 — disarm: html_reconvert_done will never run. */
+		macsurf_reconvert_in_progress = 0;
+		macsurf_debug_log_reconv_flush(0);
+	}
 	dom_node_unref(html);
 	return error;
 }

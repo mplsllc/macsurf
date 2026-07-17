@@ -16,6 +16,19 @@ void macsurf_debug_probe_append(const char *m){(void)m;}
 void macsurf_debug_probe_append_int(const char *l,long v){(void)l;(void)v;}
 void macsurf_debug_probe_reset(void){}
 
+/* fixes895 — reconvert-crash hunt durable-position channel (Mac-only on
+ * hardware; here it just echoes so Test 29's reconvert path links + is visible
+ * in the ASan run). */
+static char g_reconv_pos_h[256] = "reconv-pos (never set)";
+void macsurf_debug_log_reconv_flush(int on){(void)on;}
+void macsurf_reconv_pos_set(const char *phase,long seq,long node_ix,const char *tag){
+	snprintf(g_reconv_pos_h,sizeof(g_reconv_pos_h),
+		"reconv-pos phase=%s seq=%ld node=%ld tag=%s",
+		phase?phase:"(null)",seq,node_ix,tag?tag:"");
+}
+void macsurf_reconv_pos_flush(void){ fprintf(stderr,"RECONV-POS: %s\n",g_reconv_pos_h); }
+long macsurf_free_mem(void){ return -1; }
+
 /* --- harness deathrow: defer frees to an explicit drain (mimics the Mac
  * quiescent-point defer so the reconvert free-timing matches). --- */
 #include <stdbool.h>
