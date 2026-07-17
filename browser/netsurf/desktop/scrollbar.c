@@ -28,6 +28,7 @@
 
 #include "utils/log.h"
 #include "utils/messages.h"
+#include "macsurf_debug_log.h"     /* fixes890 — WORK channel */
 #include "utils/utils.h"
 #include "utils/nscolour.h"
 #include "utils/nsoption.h"
@@ -89,6 +90,73 @@ struct scrollbar {
 /*
  * Exported interface.  Documented in desktop/scrollbar.h
  */
+/* fixes890 — LIVE-SCROLLBAR REGISTRY.
+ *
+ * Hardware crash, on hover (not click):
+ *   macos9_poll_mouse_hover -> browser_window_mouse_track -> html_mouse_action
+ *   -> get_mouse_action_node -> box_at_point -> scrollbar_get_offset
+ *   -> `return s->offset;` with s = 0xEC7D8381
+ * The debugger showed every field of *s as "Invalid pointer": s is a WILD
+ * pointer, not NULL (so the existing `s == NULL` guard sails past it) and not
+ * a poison fill (so it is not simply freed-and-poisoned memory -- that block
+ * has been reused). box_at_point calls scrollbar_get_offset(box->scroll_x) on
+ * EVERY box containing the pointer, so one box in the live tree is carrying a
+ * stale/garbage scrollbar and every hover over it is fatal.
+ *
+ * WHY A REGISTRY AND NOT A MAGIC FIELD: a magic word inside the struct would
+ * have to be READ through the very pointer we distrust -- `s->magic` faults on
+ * 0xEC7D8381 exactly like `s->offset` does. Validity has to be decided WITHOUT
+ * dereferencing, so membership of a set we control is the only test that works.
+ *
+ * This does not pretend to find the owner of the stale pointer -- it makes the
+ * crash impossible and makes it REPORT ITSELF, which is what the log has never
+ * been able to do. `WORK scrollbar: STALE ...` in a user log names the bad
+ * pointer and proves the use-after-free is real, without taking the machine
+ * down first.
+ *
+ * Cost: a linear scan of at most SB_MAX_LIVE on each call. Scrollbars per page
+ * are a handful; box_at_point touches a few boxes per hover. Negligible, and a
+ * hover that no longer crashes is worth more than the cycles. */
+#define SB_MAX_LIVE 256
+static struct scrollbar *s_sb_live[SB_MAX_LIVE];
+static int s_sb_live_n = 0;
+static unsigned long s_sb_stale_hits = 0;
+
+static void scrollbar_live_add(struct scrollbar *s)
+{
+	if (s_sb_live_n < SB_MAX_LIVE) {
+		s_sb_live[s_sb_live_n++] = s;
+	} else {
+		/* Full: we can no longer vouch for new bars. Report it rather
+		 * than silently degrade to "everything looks stale". */
+		macsurf_debug_log_writef(
+			"WORK scrollbar: live registry FULL (%d) -- validity "
+			"checking is now incomplete for new scrollbars",
+			SB_MAX_LIVE);
+	}
+}
+
+static void scrollbar_live_remove(struct scrollbar *s)
+{
+	int i;
+	for (i = 0; i < s_sb_live_n; i++) {
+		if (s_sb_live[i] == s) {
+			s_sb_live[i] = s_sb_live[--s_sb_live_n];
+			return;
+		}
+	}
+}
+
+/* 1 = this pointer is a scrollbar we created and have not destroyed. */
+static int scrollbar_is_live(struct scrollbar *s)
+{
+	int i;
+	for (i = 0; i < s_sb_live_n; i++) {
+		if (s_sb_live[i] == s) return 1;
+	}
+	return 0;
+}
+
 nserror
 scrollbar_create(bool horizontal,
 		 int length,
@@ -106,6 +174,7 @@ scrollbar_create(bool horizontal,
 		*s = NULL;
 		return NSERROR_NOMEM;
 	}
+	scrollbar_live_add(scrollbar);   /* fixes890 */
 
 	scrollbar->horizontal = horizontal;
 	scrollbar->length = length;
@@ -149,6 +218,18 @@ void scrollbar_destroy(struct scrollbar *s)
 	if (s == NULL) {
 		return;
 	}
+	/* fixes890 — refuse to destroy a pointer we never handed out (or already
+	 * destroyed). Same reasoning as scrollbar_get_offset: `s->pair` below is
+	 * a dereference, and on a stale pointer it is the crash, not a diagnosis. */
+	if (!scrollbar_is_live(s)) {
+		s_sb_stale_hits++;
+		macsurf_debug_log_writef(
+			"WORK scrollbar: STALE destroy s=%p -- not a live scrollbar "
+			"(double-destroy or wild pointer); ignoring, hits=%ld",
+			(void *) s, (long) s_sb_stale_hits);
+		return;
+	}
+	scrollbar_live_remove(s);
 	if (s->pair != NULL) {
 		s->pair->pair = NULL;
 	}
@@ -642,6 +723,29 @@ int scrollbar_get_offset(struct scrollbar *s)
 	if (s == NULL) {
 		return 0;
 	}
+	/* fixes890 — THE HARDWARE CRASH SITE.
+	 *
+	 *   box_at_point -> scrollbar_get_offset -> `return s->offset;`
+	 *   with s = 0xEC7D8381 (every field "Invalid pointer" in the debugger)
+	 *
+	 * The NULL guard above passes a wild pointer straight through to the
+	 * dereference. box_at_point calls this for box->scroll_x AND box->scroll_y
+	 * on every box under the cursor, so a single box carrying a stale
+	 * scrollbar makes every hover over it fatal -- no click required, which is
+	 * why this fires from macos9_poll_mouse_hover.
+	 *
+	 * Returning 0 for an unknown pointer is exactly what the NULL case already
+	 * does, and 0 is the right answer for "no scroll offset". The page loses a
+	 * scroll adjustment on one box; it does not lose the machine. */
+	if (!scrollbar_is_live(s)) {
+		s_sb_stale_hits++;
+		macsurf_debug_log_writef(
+			"WORK scrollbar: STALE get_offset s=%p -- box_at_point is "
+			"holding a scrollbar that was never created or is already "
+			"freed (THE hover crash); returning 0, hits=%ld",
+			(void *) s, (long) s_sb_stale_hits);
+		return 0;
+	}
 	return s->offset;
 }
 
@@ -1015,5 +1119,21 @@ void scrollbar_make_pair(struct scrollbar *horizontal,
  */
 void *scrollbar_get_data(struct scrollbar *s)
 {
+	/* fixes890 — box_talloc_destructor calls this on box->scroll_x and then
+	 * free()s the result. On a stale pointer that is a read of freed memory
+	 * followed by free() of whatever garbage came back -- a wild free, which
+	 * corrupts the heap and surfaces later as the allocator blowup seen in
+	 * the teardown trace (_dom_element_finalise). NULL is safe: free(NULL) is
+	 * a no-op. */
+	if (s == NULL || !scrollbar_is_live(s)) {
+		if (s != NULL) {
+			s_sb_stale_hits++;
+			macsurf_debug_log_writef(
+				"WORK scrollbar: STALE get_data s=%p -- caller would have "
+				"free()d a garbage client_data; returning NULL, hits=%ld",
+				(void *) s, (long) s_sb_stale_hits);
+		}
+		return NULL;
+	}
 	return s->client_data;
 }

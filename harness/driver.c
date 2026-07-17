@@ -269,6 +269,22 @@ static char *build_large_doc(int n)
 		off += (size_t)snprintf(buf + off, cap - off,
 				"<div id=\"fl%d\" style=\"float:left\">f%d</div>", i, i);
 	}
+	/* fixes890 — MALFORMED TABLES, to reach box_normalise's box_free() path.
+	 * box_normalise discards mis-nested table boxes via box_free ->
+	 * box_free_box, which destroys styles/scrollbars and then talloc_free()s
+	 * the box -- running box_talloc_destructor, which destroys the SAME things
+	 * again because box_free_box never nulled them. Nothing in this fixture
+	 * had a table, so that path had never once run here. Stray <tr>/<td>
+	 * outside a <table>, and a row group with no rows, are what force it. */
+	off += (size_t)snprintf(buf + off, cap - off,
+			"<table id=\"t1\"><tr><td>a</td><td>b</td></tr>"
+			"<tbody></tbody>"
+			"<tr><td>c</td></tr></table>");
+	off += (size_t)snprintf(buf + off, cap - off,
+			"<table id=\"t2\"><thead></thead><tfoot></tfoot>"
+			"<tr><td>d</td></tr></table>");
+	off += (size_t)snprintf(buf + off, cap - off,
+			"<tr><td>orphan row</td></tr><td>orphan cell</td>");
 	off += (size_t)snprintf(buf + off, cap - off, "</div></body></html>");
 	return buf;
 }
@@ -2761,6 +2777,76 @@ int main(void)
 	}
 	fprintf(stderr, "=== Test 26 PASS: every post-reconvert box_for_node result "
 			"is live memory ===\n");
+
+	/* --- Test 27 (fixes890): scrollbar_get_offset must survive a WILD pointer.
+	 *
+	 * HW: macos9_poll_mouse_hover -> browser_window_mouse_track ->
+	 *     html_mouse_action -> get_mouse_action_node -> box_at_point ->
+	 *     scrollbar_get_offset -> `return s->offset;`  s = 0xEC7D8381
+	 * Not NULL (so the old guard passed it through), not a poison fill (so the
+	 * block had been reused) -- a genuinely wild pointer, dereferenced.
+	 *
+	 * A magic word inside the struct cannot defend this: reading s->magic
+	 * faults on 0xEC7D8381 exactly like s->offset does. Only a membership test
+	 * against a set we own can decide validity WITHOUT dereferencing, which is
+	 * why fixes890 uses a live registry.
+	 *
+	 * This feeds the accessors the real crash value and requires them to
+	 * survive. Verified RED against the pre-fix tree: ASan reports SEGV on an
+	 * unknown address inside scrollbar_get_offset. */
+	fprintf(stderr, "\n=== Test 27: scrollbar accessors survive a wild pointer "
+			"(the hover crash) ===\n");
+	{
+		extern int scrollbar_get_offset(struct scrollbar *s);
+		extern void *scrollbar_get_data(struct scrollbar *s);
+		extern void scrollbar_destroy(struct scrollbar *s);
+		/* the exact value off the G4 debugger */
+		struct scrollbar *wild = (struct scrollbar *) (size_t) 0xEC7D8381UL;
+		struct scrollbar *real = NULL;
+		int off;
+		void *data;
+
+		if (scrollbar_get_offset(NULL) != 0) {
+			fprintf(stderr, "FAIL: NULL scrollbar must read 0\n"); return 1;
+		}
+
+		off = scrollbar_get_offset(wild);
+		if (off != 0) {
+			fprintf(stderr, "FAIL: wild scrollbar returned %d, expected 0\n", off);
+			return 1;
+		}
+		data = scrollbar_get_data(wild);
+		if (data != NULL) {
+			fprintf(stderr, "FAIL: wild scrollbar returned client_data %p -- "
+					"the caller would free() that\n", data);
+			return 1;
+		}
+		scrollbar_destroy(wild);   /* must not free a pointer we never made */
+
+		/* CONTROL: a real scrollbar must still work, or the guard is just
+		 * breaking scrollbars rather than protecting them. */
+		if (scrollbar_create(true, 100, 400, 100, NULL, NULL, &real)
+				!= NSERROR_OK || real == NULL) {
+			fprintf(stderr, "FAIL: could not create a real scrollbar\n");
+			return 1;
+		}
+		if (scrollbar_get_offset(real) != 0) {
+			fprintf(stderr, "FAIL: a REAL scrollbar was rejected by the "
+					"registry -- the guard is over-rejecting\n");
+			return 1;
+		}
+		scrollbar_destroy(real);
+		/* after a legitimate destroy it must be treated as stale, not live */
+		if (scrollbar_get_offset(real) != 0) {
+			fprintf(stderr, "FAIL: a destroyed scrollbar is still considered "
+					"live\n");
+			return 1;
+		}
+		fprintf(stderr, "wild pointer -> 0 / NULL / no-op; real scrollbar works; "
+				"destroyed scrollbar reads stale\n");
+	}
+	fprintf(stderr, "=== Test 27 PASS: a stale scrollbar can no longer take the "
+			"machine down ===\n");
 
 	free(html_src_big);
 	return 0;

@@ -48,9 +48,15 @@ QJSFLAGS := -pthread -D_GNU_SOURCE -include pthread.h -DCONFIG_VERSION='"harness
 # drops the stale twin, drops *_gen.c codegen (own main()), and the Mac/config-only utils.
 LIB_SRC   := $(shell ./dedup.sh libs   $(LIBDIR))
 CORE_SRC  := $(shell ./dedup.sh core   $(NS))
+# fixes890 — the REAL desktop/scrollbar.c, not harness_gen_stubs' empty
+# `void scrollbar_get_offset(void){}`. box_at_point calls scrollbar_get_offset
+# on every box under the cursor, and the hover crash on hardware is that
+# function dereferencing a wild pointer -- which a stub can never reproduce or
+# verify. Test 27 needs the real accessors.
 EXTRA_SRC := $(LIBDIR)/libdom/bindings/hubbub/dom_parser.c \
              $(wildcard $(NS)/utils/http/*.c) $(NS)/utils/corestrings.c \
-             $(NS)/utils/nsurl/nsurl.c $(NS)/utils/nsurl/nsurl_parse.c
+             $(NS)/utils/nsurl/nsurl.c $(NS)/utils/nsurl/nsurl_parse.c \
+             $(NS)/desktop/scrollbar.c
 QJS_SRC   := $(QJS)/quickjs.c $(QJS)/libregexp.c $(QJS)/libunicode.c $(QJS)/dtoa.c
 GLUE_SRC  := build/macsurf_qjs.c build/macos9_reconvert.c build/macsurf_dom_dispatch.c \
              build/macos9_content_registry.c build/misc_stub.c build/macos9_js_fetch.c
