@@ -1430,6 +1430,130 @@ int main(void)
 	}
 	fprintf(stderr, "=== Test 14 PASS: createElementNS ===\n");
 
+	/* --- Test 15 (fixes871, #298): GATE 4 -- class + descendant selectors.
+	 * Preact's Verbum mount is, literally:
+	 *     document.querySelectorAll(".comment-form__verbum").forEach(...)
+	 * A class-only selector returned EMPTY ("class-only sel unsupported"), so
+	 * that forEach ran ZERO times and the comment form never rendered -- even
+	 * with a working loader (#294/#295) and a working element factory (#297).
+	 *
+	 * The whole bundle's selector surface is four literals: `#comment_parent`,
+	 * `img`, `.comment-form__verbum`, `.wp-die-message p`. All four are checked
+	 * here, plus the traps:
+	 *   - `div.foo` must NOT match every div (the old code ignored the class);
+	 *   - `.foo` must NOT match class="foobar" (substring vs token);
+	 *   - `#a .b` must return the .b INSIDE #a, not #a itself (the old strchr
+	 *     fast path returned the wrong element, confidently);
+	 *   - the return value must have .forEach -- Preact calls it directly. --- */
+	fprintf(stderr, "\n=== Test 15: class + descendant selectors ===\n");
+	{
+		const char *arm =
+			"var host=document.createElement('div');"
+			"host.id='sel-host';"
+			"host.innerHTML="
+				"'<div class=\"comment-form__verbum dark\">MOUNT</div>'+"
+				"'<div class=\"foobar\">NOT-A-MATCH</div>'+"
+				"'<div class=\"wp-die-message\"><p>ERRTEXT</p></div>'+"
+				"'<span class=\"foo\">span-foo</span>'+"
+				"'<div class=\"foo\">div-foo</div>';"
+			"document.body.appendChild(host);";
+		const char *probe =
+			"globalThis.__s={};var s=globalThis.__s;"
+			"var q=function(x){try{return document.querySelectorAll(x);}"
+				"catch(e){return 'THREW:'+e;}};"
+			/* THE MOUNT -- the one that matters */
+			"var m=q('.comment-form__verbum');"
+			"s.mountLen=m.length; s.mountTxt=(m[0]&&m[0].textContent)||'';"
+			"s.hasForEach=(typeof m.forEach==='function');"
+			/* forEach must actually iterate (Preact calls it directly) */
+			"s.iter=0; if(s.hasForEach) m.forEach(function(){s.iter++;});"
+			/* token vs substring: .foo must not match class='foobar' */
+			"var f=q('.foo'); s.fooLen=f.length;"
+			/* tag.class must not degrade to 'every div' */
+			"var dv=q('div.foo'); s.divFooLen=dv.length;"
+			"s.divFooTag=((dv[0]&&dv[0].tagName)||'?').toLowerCase();"
+			/* descendant: .wp-die-message p */
+			"var d=q('.wp-die-message p');"
+			"s.descLen=d.length; s.descTxt=(d[0]&&d[0].textContent)||'';"
+			/* descendant must not match a p OUTSIDE the ancestor */
+			"var bogus=q('.comment-form__verbum p'); s.bogusLen=bogus.length;"
+			/* '#a .b' must return the INNER element, not #a.
+			 * NOTE tagName is compared case-insensitively: MacSurf reports it
+			 * LOWERCASE, where a real browser uppercases it for HTML elements.
+			 * That is a genuine fidelity gap (tracked separately) but not this
+			 * gate's business -- and it does not bite Verbum, which defensively
+			 * calls tagName.toUpperCase(). Asserting 'SPAN' here would make this
+			 * test fail for a reason that has nothing to do with selectors. */
+			"var inner=document.querySelector('#sel-host .foo');"
+			"s.innerTag=((inner&&inner.tagName)||'null').toUpperCase();"
+			"s.innerTxt=(inner&&inner.textContent)||'';"
+			/* plain id still works (fixes864 must not regress) */
+			"s.idOk=(document.querySelector('#sel-host')===host)?1:0;"
+			/* bare tag still works */
+			"s.pLen=q('p').length;";
+		unsigned char ok;
+
+		ok = js_exec(thread, (const unsigned char *)arm, strlen(arm), "sel-arm.js");
+		if (!ok) { fprintf(stderr, "FAIL: selector arm threw\n"); return 1; }
+		ok = js_exec(thread, (const unsigned char *)probe, strlen(probe), "sel-probe.js");
+		if (!ok) { fprintf(stderr, "FAIL: selector probe threw\n"); return 1; }
+		{
+			const char *chk =
+				"var s=globalThis.__s;"
+				"if(s.mountLen!==1)"
+					"throw new Error('ASSERT FAIL: querySelectorAll(\".comment-form"
+						"__verbum\") returned '+s.mountLen+' elements, expected 1 "
+						"-- this is Preact\\'s Verbum MOUNT; 0 means the comment "
+						"form can never render');"
+				"if(s.mountTxt!=='MOUNT')"
+					"throw new Error('ASSERT FAIL: matched the wrong element: '+s.mountTxt);"
+				"if(!s.hasForEach)"
+					"throw new Error('ASSERT FAIL: querySelectorAll result has no "
+						"forEach -- the mount code calls it directly');"
+				"if(s.iter!==1)"
+					"throw new Error('ASSERT FAIL: forEach iterated '+s.iter+' times');"
+				"if(s.fooLen!==2)"
+					"throw new Error('ASSERT FAIL: .foo matched '+s.fooLen+', expected 2 "
+						"-- class matching must be WHITESPACE-TOKEN based; "
+						"class=\"foobar\" must not match .foo (a substring test "
+						"would give 3)');"
+				"if(s.divFooLen!==1||s.divFooTag!=='div')"
+					"throw new Error('ASSERT FAIL: div.foo matched '+s.divFooLen+' ('+"
+						"s.divFooTag+'), expected 1 div -- the old code ignored the "
+						"class and matched EVERY div');"
+				"if(s.descLen!==1||s.descTxt!=='ERRTEXT')"
+					"throw new Error('ASSERT FAIL: .wp-die-message p -> len='+s.descLen+"
+						"' txt='+s.descTxt+' (expected 1/ERRTEXT)');"
+				"if(s.bogusLen!==0)"
+					"throw new Error('ASSERT FAIL: .comment-form__verbum p matched '+"
+						"s.bogusLen+' -- the descendant combinator is not "
+						"constraining by ancestor at all');"
+				"if(s.innerTag!=='SPAN'||s.innerTxt!=='span-foo')"
+					"throw new Error('ASSERT FAIL: querySelector(\"#sel-host .foo\") "
+						"returned <'+s.innerTag+'> \"'+s.innerTxt+'\", expected the "
+						"SPAN inside -- the old strchr(sel,\"#\") fast path returned "
+						"the #id element itself for any \"#a .b\" selector');"
+				"if(s.idOk!==1)"
+					"throw new Error('ASSERT FAIL: plain #id selector regressed');"
+				/* The harness document is build_large_doc(300), so a bare 'p'
+				 * legitimately matches ~301. The assert is only that bare-tag
+				 * matching still works at all (fixes864 must not regress); an
+				 * exact count here would be asserting the fixture, not the code. */
+				"if(s.pLen<1)"
+					"throw new Error('ASSERT FAIL: bare tag selector regressed: p -> '+s.pLen);";
+			ok = js_exec(thread, (const unsigned char *)chk, strlen(chk), "sel-chk.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: Gate 4 is shut -- Preact's mount query finds "
+						"nothing, so the comment form never renders\n");
+				return 1;
+			}
+		}
+		fprintf(stderr, "class-only mount query works; token (not substring) class "
+				"matching; tag.class narrows; descendant constrains by ancestor; "
+				"'#a .b' returns the inner element\n");
+	}
+	fprintf(stderr, "=== Test 15 PASS: class + descendant selectors ===\n");
+
 	free(html_src_big);
 	return 0;
 }

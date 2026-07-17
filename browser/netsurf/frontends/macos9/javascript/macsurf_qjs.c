@@ -2497,6 +2497,294 @@ static JSValue qjs_getElementById(JSContext *ctx, JSValueConst this_val,
 }
 
 /* ---- document.querySelectorAll (tag-name only for now) ---- */
+/* ==== fixes871 (#298) — compound selector matcher ==========================
+ *
+ * Before this, the selector code extracted the TAG and nothing else, then called
+ * qjs_collect_by_tag(). So `div.foo` matched EVERY div and `.foo` alone matched
+ * nothing at all ("class-only sel unsupported"). The comment above the parse
+ * loop claimed "support bare tag, tag[attr*=val], tag.class, .class" -- none of
+ * that was true beyond the bare tag.
+ *
+ * A class-only selector is not a nice-to-have here: Preact's Verbum mount is
+ *     document.querySelectorAll(".comment-form__verbum").forEach(...)
+ * which yielded 0 iterations, so the comment form never rendered even with a
+ * working loader and a working element factory.
+ *
+ * Grepping the whole 86,970 B bundle, its ENTIRE selector surface is four
+ * literals -- `#comment_parent`, `img`, `.comment-form__verbum`, and
+ * `.wp-die-message p` -- and there are no non-literal selector arguments. So
+ * tag / .class / #id / descendant is complete for this bundle, not a guess.
+ *
+ * Supported: `tag`, `*`, `.class`, `#id`, any combination (`div.a.b#c`), and the
+ * descendant combinator (`.a b c`). Matching is right-to-left from the subject,
+ * as every real engine does.
+ *
+ * NOT supported: `[attr]`, `:pseudo`, `>`, `+`, `~`, `,`. Those keep the OLD
+ * tag-only approximation rather than returning empty, so nothing that relies on
+ * today's sloppy behaviour regresses -- but the approximation is now explicit
+ * and logged instead of being an unmarked lie in a comment.
+ */
+#define QJS_SEL_MAX_COMPOUND 4
+#define QJS_SEL_MAX_CLASS    4
+#define QJS_SEL_NAME         64
+
+struct qjs_sel_compound {
+	char tag[32];                                 /* "" = any, or lowercase */
+	char cls[QJS_SEL_MAX_CLASS][QJS_SEL_NAME];
+	int  ncls;
+	char id[QJS_SEL_NAME];                        /* "" = none */
+};
+
+struct qjs_sel {
+	struct qjs_sel_compound c[QJS_SEL_MAX_COMPOUND];
+	int n;      /* compound count; c[n-1] is the SUBJECT (rightmost) */
+	int approx; /* 1 = selector had syntax we ignored (tag-only fallback) */
+};
+
+/* Whitespace-delimited token test over a class attribute value. `strstr` would
+ * be wrong: class="foobar" must NOT match `.foo`. */
+static int qjs_class_has(const char *list, const char *want)
+{
+	size_t wl;
+	const char *p = list;
+
+	if (list == NULL || want == NULL || want[0] == '\0') return 0;
+	wl = strlen(want);
+	while (*p != '\0') {
+		const char *s;
+		while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r'
+		       || *p == '\f') {
+			p++;
+		}
+		if (*p == '\0') break;
+		s = p;
+		while (*p != '\0' && *p != ' ' && *p != '\t' && *p != '\n'
+		       && *p != '\r' && *p != '\f') {
+			p++;
+		}
+		if ((size_t)(p - s) == wl && strncmp(s, want, wl) == 0) return 1;
+	}
+	return 0;
+}
+
+/* Read an attribute into a caller buffer. Returns 1 when present. */
+static int qjs_attr_str(dom_element *el, const char *name, char *out, int cap)
+{
+	dom_string *nds;
+	dom_string *vds = NULL;
+	int got = 0;
+
+	out[0] = '\0';
+	nds = qjs_make_domstr(name);
+	if (nds == NULL) return 0;
+	if (macsurf_dom_element_get_attribute(el, nds, &vds) == DOM_NO_ERR
+	    && vds != NULL) {
+		const char *v = dom_string_data(vds);
+		int i = 0;
+		while (i < cap - 1 && v[i] != '\0') { out[i] = v[i]; i++; }
+		out[i] = '\0';
+		macsurf_dom_string_unref(vds);
+		got = 1;
+	}
+	macsurf_dom_string_unref(nds);
+	return got;
+}
+
+/* Parse a selector into compounds. Never fails; unsupported syntax degrades to
+ * the tag-only approximation and sets ->approx. */
+static void qjs_sel_parse(const char *sel, struct qjs_sel *out)
+{
+	int ci = 0;
+	const char *p = sel;
+
+	memset(out, 0, sizeof(*out));
+	out->n = 0;
+
+	while (*p != '\0' && ci < QJS_SEL_MAX_COMPOUND) {
+		struct qjs_sel_compound *c;
+		int started = 0;
+
+		while (*p == ' ' || *p == '\t') p++;
+		if (*p == '\0') break;
+
+		c = &out->c[ci];
+
+		while (*p != '\0' && *p != ' ' && *p != '\t') {
+			if (*p == '.' || *p == '#') {
+				char kind = *p++;
+				char buf[QJS_SEL_NAME];
+				int k = 0;
+				while (k < QJS_SEL_NAME - 1 && *p != '\0' && *p != '.'
+				       && *p != '#' && *p != ' ' && *p != '\t'
+				       && *p != '[' && *p != ':' && *p != '>'
+				       && *p != ',' && *p != '+' && *p != '~') {
+					buf[k++] = *p++;
+				}
+				buf[k] = '\0';
+				if (k == 0) { out->approx = 1; continue; }
+				if (kind == '.') {
+					if (c->ncls < QJS_SEL_MAX_CLASS) {
+						strcpy(c->cls[c->ncls], buf);
+						c->ncls++;
+						started = 1;
+					} else {
+						out->approx = 1;
+					}
+				} else {
+					strcpy(c->id, buf);
+					started = 1;
+				}
+			} else if (*p == '[' || *p == ':' || *p == '>' || *p == ','
+				   || *p == '+' || *p == '~') {
+				/* Unsupported: swallow the rest of this compound and
+				 * fall back to whatever tag/class/id we already have. */
+				out->approx = 1;
+				while (*p != '\0' && *p != ' ' && *p != '\t') p++;
+			} else {
+				int k = 0;
+				while (k < 31 && *p != '\0' && *p != '.' && *p != '#'
+				       && *p != ' ' && *p != '\t' && *p != '['
+				       && *p != ':' && *p != '>' && *p != ','
+				       && *p != '+' && *p != '~') {
+					char ch = *p++;
+					c->tag[k++] = (ch >= 'A' && ch <= 'Z')
+							? (char)(ch + 32) : ch;
+				}
+				c->tag[k] = '\0';
+				if (k > 0) started = 1;
+			}
+		}
+		if (started) ci++;
+	}
+	out->n = ci;
+	if (*p != '\0') out->approx = 1; /* ran out of compound slots */
+}
+
+/* Does ONE element match ONE compound? */
+static int qjs_compound_match(dom_node *node, const struct qjs_sel_compound *c)
+{
+	dom_node_type ntype = 0;
+	int i;
+
+	if (node == NULL) return 0;
+	macsurf_dom_node_get_node_type(node, &ntype);
+	if (ntype != 1) return 0; /* ELEMENT_NODE only */
+
+	if (c->tag[0] != '\0' && strcmp(c->tag, "*") != 0) {
+		dom_string *tname = NULL;
+		char lc[32];
+		int k;
+		int ok;
+		if (macsurf_dom_element_get_tag_name((dom_element *)node, &tname)
+		    != DOM_NO_ERR || tname == NULL) {
+			return 0;
+		}
+		{
+			const char *ts = dom_string_data(tname);
+			for (k = 0; k < 31 && ts[k] != '\0'; k++) {
+				char ch = ts[k];
+				lc[k] = (ch >= 'A' && ch <= 'Z') ? (char)(ch + 32) : ch;
+			}
+			lc[k] = '\0';
+		}
+		macsurf_dom_string_unref(tname);
+		ok = (strcmp(lc, c->tag) == 0);
+		if (!ok) return 0;
+	}
+
+	if (c->id[0] != '\0') {
+		char buf[QJS_SEL_NAME];
+		if (!qjs_attr_str((dom_element *)node, "id", buf, (int)sizeof(buf)))
+			return 0;
+		if (strcmp(buf, c->id) != 0) return 0;
+	}
+
+	if (c->ncls > 0) {
+		char buf[512];
+		if (!qjs_attr_str((dom_element *)node, "class", buf, (int)sizeof(buf)))
+			return 0;
+		for (i = 0; i < c->ncls; i++) {
+			if (!qjs_class_has(buf, c->cls[i])) return 0;
+		}
+	}
+	return 1;
+}
+
+/* Full match: subject compound against `node`, then each preceding compound
+ * against some ancestor, right-to-left (what every real engine does -- it lets
+ * a non-matching subject bail before any ancestor walk). */
+static int qjs_sel_match(dom_node *node, const struct qjs_sel *s)
+{
+	int ci;
+	dom_node *cur = NULL;
+
+	if (s->n <= 0) return 0;
+	ci = s->n - 1;
+	if (!qjs_compound_match(node, &s->c[ci])) return 0;
+	ci--;
+	if (ci < 0) return 1;
+
+	macsurf_dom_node_get_parent_node(node, &cur);
+	while (cur != NULL && ci >= 0) {
+		dom_node *par = NULL;
+		if (qjs_compound_match(cur, &s->c[ci])) ci--;
+		macsurf_dom_node_get_parent_node(cur, &par);
+		macsurf_dom_node_unref(cur);
+		cur = par;
+	}
+	if (cur != NULL) macsurf_dom_node_unref(cur);
+	return (ci < 0) ? 1 : 0;
+}
+
+/* Collect every match in document order. */
+static void qjs_collect_by_sel(JSContext *ctx, dom_node *node,
+		const struct qjs_sel *s, JSValue arr, int *count)
+{
+	dom_node *child = NULL;
+	dom_node *next  = NULL;
+
+	if (node == NULL) return;
+	if (qjs_sel_match(node, s)) {
+		macsurf_dom_node_ref(node); /* qjs_wrap_element CONSUMES a ref */
+		JS_SetPropertyUint32(ctx, arr, (uint32_t)(*count),
+				qjs_wrap_element(ctx, (dom_element *)node));
+		(*count)++;
+	}
+	macsurf_dom_node_get_first_child(node, &child);
+	while (child != NULL) {
+		qjs_collect_by_sel(ctx, child, s, arr, count);
+		macsurf_dom_node_get_next_sibling(child, &next);
+		macsurf_dom_node_unref(child);
+		child = next;
+	}
+}
+
+/* First match in document order; returns an owned ref for qjs_wrap_element. */
+static dom_element *qjs_find_first_by_sel(dom_node *node, const struct qjs_sel *s)
+{
+	dom_node *child = NULL;
+	dom_node *next  = NULL;
+	dom_element *found = NULL;
+
+	if (node == NULL) return NULL;
+	if (qjs_sel_match(node, s)) {
+		macsurf_dom_node_ref(node);
+		return (dom_element *)node;
+	}
+	macsurf_dom_node_get_first_child(node, &child);
+	while (child != NULL) {
+		found = qjs_find_first_by_sel(child, s);
+		if (found != NULL) {
+			macsurf_dom_node_unref(child);
+			return found;
+		}
+		macsurf_dom_node_get_next_sibling(child, &next);
+		macsurf_dom_node_unref(child);
+		child = next;
+	}
+	return NULL;
+}
+
 static JSValue qjs_querySelectorAll(JSContext *ctx, JSValueConst this_val,
 		int argc, JSValueConst *argv)
 {
@@ -2513,54 +2801,35 @@ static JSValue qjs_querySelectorAll(JSContext *ctx, JSValueConst this_val,
 	sel = JS_ToCString(ctx, argv[0]);
 	if (sel == NULL) return arr;
 
-	/* fixes864 (#290) — '#id' FIRST; see the matching note in
-	 * qjs_querySelector.  An id is unique, so the result set is 0 or 1. */
+	/* fixes871 (#298) — the fixes864 '#id' fast path that used to sit here is
+	 * gone: it did strchr(sel,'#') ANYWHERE in the selector, so `#a .b` returned
+	 * #a rather than the .b inside it. Ids are just another compound qualifier
+	 * to the matcher below, which gets `#a .b`, `div#a`, and `.x#a` all right.
+	 * (qs keeps a getElementById fast path because a single-id lookup there is
+	 * O(1) and by far the most common call; a qsa returning a 0-or-1 array does
+	 * not justify a second, subtly-different code path.)
+	 *
+	 * fixes871 (#298) — real compound matching (tag/.class/#id/descendant).
+	 * The old code extracted only the tag, so `.comment-form__verbum` (Preact's
+	 * Verbum mount) returned EMPTY and `div.foo` matched every div. */
 	{
-		const char *hash = strchr(sel, '#');
-		if (hash != NULL) {
-			char id_buf[128];
-			int k = 0;
-			const char *p = hash + 1;
-			while (k < 127 && *p && *p != '[' && *p != '.' &&
-			       *p != ':' && *p != ' ' && *p != '>' && *p != ',') {
-				id_buf[k++] = *p++;
-			}
-			id_buf[k] = '\0';
-			JS_FreeCString(ctx, sel);
-			if (k > 0) {
-				dom_string *id_ds = qjs_make_domstr(id_buf);
-				dom_element *el = NULL;
-				if (id_ds != NULL) {
-					macsurf_dom_document_get_element_by_id(
-							g_qjs_document, id_ds, &el);
-					macsurf_dom_string_unref(id_ds);
-				}
-				if (el != NULL) {
-					JS_SetPropertyUint32(ctx, arr, 0,
-							qjs_wrap_element(ctx, el));
-				}
-			}
-			return arr;
+		struct qjs_sel s;
+		qjs_sel_parse(sel, &s);
+		if (s.approx) {
+			macsurf_debug_log_writef(
+				"WORK qsa: APPROX selector (unsupported syntax "
+				"ignored) sel=%s", sel);
+		}
+		JS_FreeCString(ctx, sel);
+		if (s.n == 0) return arr;
+
+		macsurf_dom_document_get_document_element(g_qjs_document, &root);
+		if (root != NULL) {
+			qjs_collect_by_sel(ctx, (dom_node *)root, &s, arr, &count);
+			macsurf_dom_node_unref((dom_node *)root);
 		}
 	}
-
-	/* Parse selector: support bare tag, tag[attr*=val], tag.class, .class */
-	/* Extract tag part (up to first [ or . or : or space) */
-	for (i = 0; i < 63 && sel[i] && sel[i] != '[' && sel[i] != '.'
-	     && sel[i] != ':' && sel[i] != ' '; i++) {
-		char c = sel[i];
-		tag_lc[i] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
-	}
-	tag_lc[i] = '\0';
-	JS_FreeCString(ctx, sel);
-
-	if (tag_lc[0] == '\0') return arr; /* class-only sel unsupported */
-
-	macsurf_dom_document_get_document_element(g_qjs_document, &root);
-	if (root) {
-		qjs_collect_by_tag(ctx, (dom_node *)root, tag_lc, arr, &count);
-		macsurf_dom_node_unref((dom_node *)root);
-	}
+	(void)tag_lc; (void)i;
 	return arr;
 }
 
@@ -2627,60 +2896,53 @@ static JSValue qjs_querySelector(JSContext *ctx, JSValueConst this_val,
 	sel = JS_ToCString(ctx, argv[0]);
 	if (sel == NULL) return JS_NULL;
 
-	/* fixes864 (#290) — '#id' FIRST.  '#' was not a delimiter below and there
-	 * was no id branch, so "#commentform" fell through as a TAG NAME, matched
-	 * no element, and returned null while getElementById('commentform') found
-	 * it fine.  Silent null, no throw -- which is exactly how hackaday's reply
-	 * box dies: its loader is
+	/* fixes864 (#290) — '#id' had no branch at all, so "#commentform" fell
+	 * through as a TAG NAME, matched nothing, and returned null while
+	 * getElementById('commentform') found it fine.  Silent null, no throw --
+	 * exactly how hackaday's reply box dies:
 	 *     var e = document.querySelector("#commentform"); if (e) { ...all of it... }
-	 * so a null `e` skips the whole form-loading chain (IntersectionObserver ->
-	 * loadScript -> fetch -> injected <script>) without a single error line.
-	 * Handles "#id" and "tag#id"; the id runs through the same
-	 * get_element_by_id path getElementById already uses. */
+	 * a null `e` skips the whole chain (IntersectionObserver -> loadScript ->
+	 * fetch -> injected <script>) without a single error line.
+	 *
+	 * fixes871 (#298) — that branch did `strchr(sel, '#')` ANYWHERE in the
+	 * selector, so `#a .b` ("the .b inside #a") returned #a: the wrong element,
+	 * confidently. Now the fast path is taken only when the parsed selector
+	 * really is a single id-bearing compound, and the result is still run
+	 * through the full compound match so a tag/class qualifier can reject it. */
 	{
-		const char *hash = strchr(sel, '#');
-		if (hash != NULL) {
-			char id_buf[128];
-			int k = 0;
-			const char *p = hash + 1;
-			/* id ends at the next combinator/qualifier */
-			while (k < 127 && *p && *p != '[' && *p != '.' &&
-			       *p != ':' && *p != ' ' && *p != '>' && *p != ',') {
-				id_buf[k++] = *p++;
-			}
-			id_buf[k] = '\0';
-			JS_FreeCString(ctx, sel);
-			if (k == 0) return JS_NULL;
-			{
-				dom_string *id_ds = qjs_make_domstr(id_buf);
-				dom_element *el = NULL;
-				if (id_ds == NULL) return JS_NULL;
-				macsurf_dom_document_get_element_by_id(g_qjs_document,
-						id_ds, &el);
-				macsurf_dom_string_unref(id_ds);
-				if (el == NULL) return JS_NULL;
-				/* get_element_by_id hands back a ref; wrap takes it. */
-				return qjs_wrap_element(ctx, el);
-			}
+		struct qjs_sel s;
+		qjs_sel_parse(sel, &s);
+		if (s.approx) {
+			macsurf_debug_log_writef(
+				"WORK qs: APPROX selector (unsupported syntax "
+				"ignored) sel=%s", sel);
 		}
-	}
+		JS_FreeCString(ctx, sel);
+		if (s.n == 0) return JS_NULL;
 
-	/* Same tag-part extraction as qsa (bare tag / tag.class / tag[attr]). */
-	for (i = 0; i < 63 && sel[i] && sel[i] != '[' && sel[i] != '.'
-	     && sel[i] != ':' && sel[i] != ' '; i++) {
-		char c = sel[i];
-		tag_lc[i] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
-	}
-	tag_lc[i] = '\0';
-	JS_FreeCString(ctx, sel);
-	if (tag_lc[0] == '\0') return JS_NULL; /* class-only sel unsupported */
+		if (s.n == 1 && s.c[0].id[0] != '\0') {
+			dom_string *id_ds = qjs_make_domstr(s.c[0].id);
+			dom_element *el = NULL;
+			if (id_ds == NULL) return JS_NULL;
+			macsurf_dom_document_get_element_by_id(g_qjs_document,
+					id_ds, &el);
+			macsurf_dom_string_unref(id_ds);
+			if (el == NULL) return JS_NULL;
+			if (!qjs_compound_match((dom_node *)el, &s.c[0])) {
+				macsurf_dom_node_unref((dom_node *)el);
+				return JS_NULL;
+			}
+			/* get_element_by_id hands back a ref; wrap takes it. */
+			return qjs_wrap_element(ctx, el);
+		}
 
-	macsurf_dom_document_get_document_element(g_qjs_document, &root);
-	if (root == NULL) return JS_NULL;
-	found = qjs_find_first_by_tag((dom_node *)root, tag_lc);
-	macsurf_dom_node_unref((dom_node *)root);
-	if (found == NULL) return JS_NULL;
-	return qjs_wrap_element(ctx, found);
+		macsurf_dom_document_get_document_element(g_qjs_document, &root);
+		if (root == NULL) return JS_NULL;
+		found = qjs_find_first_by_sel((dom_node *)root, &s);
+		macsurf_dom_node_unref((dom_node *)root);
+		if (found == NULL) return JS_NULL;
+		return qjs_wrap_element(ctx, found);
+	}
 }
 
 /* ---- Init class ID (call once at startup) ---- */
