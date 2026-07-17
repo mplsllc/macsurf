@@ -1742,11 +1742,36 @@ static void html_reconvert_clear_node_boxes(html_content *c)
 	struct box *b = c->layout;
 	struct box *root_parent = (b != NULL) ? b->parent : NULL;
 	void *old = NULL;
+	/* fixes889 — DIAGNOSTIC. This walk descends children/next ONLY, but a box
+	 * can also be reachable solely via float_children/next_float or
+	 * list_marker (box_construct sets marker->parent and box->list_marker,
+	 * and never puts the marker in children). Those boxes are NOT visited
+	 * here, so their nodes keep pointing at a box this reconvert is about to
+	 * free -- which is what makes box_for_node() hand freed memory to
+	 * link_box_for_ancestor on the next click.
+	 *
+	 * Count both populations. `missed` is the smoking gun: if it is non-zero
+	 * on a page that crashes, the dangling backlink is confirmed. The actual
+	 * retraction now happens per-box in box_talloc_destructor (fixes889), so
+	 * this walk stays as-is and reports rather than pretending to be
+	 * complete. */
+	unsigned long walked = 0, cleared = 0, missed = 0;
 	while (b != NULL) {
+		walked++;
 		if (b->node != NULL) {
+			cleared++;
 			(void) dom_node_set_user_data(b->node,
 					corestring_dom___ns_key_box_node_data,
 					NULL, NULL, &old);
+		}
+		if (b->list_marker != NULL && b->list_marker->node != NULL)
+			missed++;
+		{
+			struct box *fl = b->float_children;
+			while (fl != NULL) {
+				if (fl->node != NULL) missed++;
+				fl = fl->next_float;
+			}
 		}
 		if (b->children != NULL) {
 			b = b->children;
@@ -1758,6 +1783,10 @@ static void html_reconvert_clear_node_boxes(html_content *c)
 		}
 		if (b != NULL) b = b->next;
 	}
+	macsurf_debug_log_writef(
+		"WORK reconvert H1: walked=%ld cleared=%ld MISSED(float/marker)=%ld"
+		" -- missed>0 means those nodes kept a dangling box* before fixes889",
+		(long) walked, (long) cleared, (long) missed);
 }
 
 /* HAZARD-3: null the box* backpointer on every form control so a click or
@@ -1864,13 +1893,43 @@ static void html_reconvert_release_pinned_strings(void)
  * Single-window browser => one re-convert at a time; file-scope is safe. */
 static void *g_reconvert_old_bctx = NULL;
 
+/* fixes889 — reconvert sequence + the layout pointer each one installed.
+ * The click crash (box_for_node -> freed box -> illegal instruction) and a
+ * reconvert are invisible to each other in the log today, so there is no way
+ * to tell from a crash report whether a reconvert had just swapped the tree
+ * out from under the click. These two make that correlation readable:
+ * interaction.c stamps them on every click. */
+unsigned long macsurf_reconvert_seq = 0;
+void *macsurf_reconvert_last_layout = NULL;
+
 static void html_reconvert_free_old(void)
 {
+	extern unsigned long macsurf_box_backlink_cleared;
+	unsigned long before;
+
 	html_reconvert_release_pinned_strings();
 	if (g_reconvert_old_bctx != NULL) {
 		MS_LOG("reconvert: FREE old tree");
+		/* fixes889 — THE window that matters. This frees the OLD box tree
+		 * AFTER dom_to_box has already built the new one, so every box
+		 * destructed here belongs to a dead tree while the DOM nodes now
+		 * point at LIVE boxes.
+		 *
+		 * box_talloc_destructor only retracts a node's backlink when it
+		 * still points at the box being freed (`cur == b`), so a non-zero
+		 * delta here means those nodes were STILL pointing at old, about-to-
+		 * be-freed boxes at this moment -- i.e. html_reconvert_clear_node_boxes
+		 * missed them, which is exactly the dangling pointer box_for_node()
+		 * would have handed to the next click. Pair this number with the
+		 * "MISSED(float/marker)=N" line from H1. */
+		before = macsurf_box_backlink_cleared;
 		talloc_free(g_reconvert_old_bctx);
 		g_reconvert_old_bctx = NULL;
+		macsurf_debug_log_writef(
+			"WORK reconvert: old tree freed -- %ld stale backlinks retracted"
+			" during the free (non-zero = H1 missed them; those nodes would"
+			" have handed a FREED box to box_for_node)",
+			(long) (macsurf_box_backlink_cleared - before));
 	}
 }
 
@@ -1882,8 +1941,10 @@ static void html_reconvert_done(html_content *c, bool success)
 	/* fixes843b (#167 S1 census) — WORK-gated: only reachable via the
 	 * facebook.com-gated path (macos9_js_mark_dom_dirty), so naturally
 	 * rate-limited; not filtered by the failures-only release gate. */
-	macsurf_debug_log_writef("WORK reconvert: done success=%d layout=%p",
-			(int)success, (void *)c->layout);
+	macsurf_reconvert_last_layout = (void *) c->layout;
+	macsurf_debug_log_writef(
+			"WORK reconvert #%ld: DONE success=%d layout=%p",
+			(long) macsurf_reconvert_seq, (int)success, (void *)c->layout);
 	macsurf_profile_stamp("reconvert-done");
 
 	if ((success == false) || (c->aborted)) {
@@ -1936,7 +1997,15 @@ nserror html_reconvert(html_content *c)
 		return NSERROR_NEED_DATA;
 	}
 
-	macsurf_debug_log_writef("WORK reconvert: start layout=%p", (void *)c->layout);
+	{
+		extern unsigned long macsurf_box_backlink_cleared;
+		macsurf_reconvert_seq++;
+		macsurf_debug_log_writef(
+			"WORK reconvert #%ld: START layout=%p active=%d backlinks_cleared=%ld",
+			(long) macsurf_reconvert_seq, (void *) c->layout,
+			(int) c->base.active,
+			(long) macsurf_box_backlink_cleared);
+	}
 
 	/* HAZARD guards BEFORE freeing the box tree (order matters). */
 	html_reconvert_clear_node_boxes(c);          /* H1: stale node boxes */

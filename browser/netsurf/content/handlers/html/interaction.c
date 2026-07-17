@@ -1708,6 +1708,36 @@ mouse_action_drag_none(html_content *html,
 	/* fire dom click event */
 	if (mouse & BROWSER_MOUSE_CLICK_1) {
 		int js_default_prevented = 0;
+		/* fixes889 — CLICK/RECONVERT CORRELATION.
+		 *
+		 * The hardware click crash is
+		 *   html_mouse_action -> get_mouse_action_node ->
+		 *   link_box_for_ancestor -> box_for_node -> *freed box* ->
+		 *   illegal instruction (PC in zeroed System heap).
+		 * box_for_node hands back a raw box* stored on the DOM node, so the
+		 * question the log has never been able to answer is: had a reconvert
+		 * just swapped the box tree out from under this click, and is the
+		 * tree we are walking the one the last reconvert installed?
+		 *
+		 * If a crash report's last click shows a layout that does NOT match
+		 * the last reconvert's, the click is walking a dead tree. If they
+		 * match, the dangling pointer is per-node, not per-tree, and the
+		 * H1/backlink counters say which. */
+		{
+			extern unsigned long macsurf_reconvert_seq;
+			extern void *macsurf_reconvert_last_layout;
+			html_content *hc_dbg = (html_content *) c;
+			macsurf_debug_log_writef(
+				"WORK click: node=%p layout=%p last_reconvert=#%ld"
+				" installed_layout=%p%s",
+				(void *) mas.node, (void *) hc_dbg->layout,
+				(long) macsurf_reconvert_seq,
+				macsurf_reconvert_last_layout,
+				(macsurf_reconvert_seq > 0 &&
+				 macsurf_reconvert_last_layout != (void *) hc_dbg->layout)
+					? "  <-- MISMATCH: clicking a tree the last reconvert did not install"
+					: "");
+		}
 		fire_generic_dom_event(corestring_dom_click, mas.node, true, true);
 		/* fixes882 -- READ THIS BEFORE DEBUGGING A CLICK.
 		 *

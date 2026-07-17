@@ -181,7 +181,19 @@ macos9_reconvert_pending_add(struct content *c)
  *
  * So if (1) still bites with this off, that is expected and is a separate bug
  * to chase in the timer/realm teardown path, not here. */
-static int g_reconvert_enabled = 0;
+/* fixes889 — BACK ON. fixes887 turned this off so the fixes876-886 batch could
+ * be verified without the reconvert crash in the way; that is done, and this
+ * round is the hunt for the crash itself, which needs the feature live.
+ *
+ * What changed underneath it (fixes889): box_talloc_destructor now retracts
+ * each box's own node backlink as it is freed. The dangling
+ * corestring_dom___ns_key_box_node_data pointer that box_for_node() handed to
+ * link_box_for_ancestor -- the click crash -- should be structurally gone.
+ * The "WORK reconvert H1: ... MISSED(float/marker)=N" line reports whether the
+ * old children/next-only clear walk really was leaving boxes behind.
+ *
+ * If it still crashes, the log now says which population and how many. */
+static int g_reconvert_enabled = 1;
 
 void
 macsurf_js_set_reconvert_enabled(int enabled)

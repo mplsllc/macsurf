@@ -29,6 +29,10 @@
 #include "utils/ns_errors.h"
 #include "utils/talloc.h"
 #include "utils/nsurl.h"
+/* fixes889 — corestring_dom___ns_key_box_node_data (the box<->node backlink)
+ * and the WORK diagnostic channel. */
+#include "utils/corestrings.h"
+#include "macsurf_debug_log.h"
 #include "netsurf/types.h"
 #include "netsurf/mouse.h"
 #include "desktop/scrollbar.h"
@@ -39,6 +43,13 @@
 #include "html/box.h"
 #include "html/box_manipulate.h"
 
+
+/* fixes889 — how many boxes retracted their own node backlink on the way out.
+ * Reported per reconvert / teardown. A NON-ZERO count that the old
+ * children/next-only walk in html_reconvert_clear_node_boxes could not have
+ * reached (floats, list markers) is the dangling box_for_node() pointer behind
+ * both hardware crashes. Read by html.c. */
+unsigned long macsurf_box_backlink_cleared = 0;
 
 /**
  * Destructor for box nodes which own styles
@@ -66,6 +77,44 @@ static int box_talloc_destructor(struct box *b)
 	lwc_string_unref(b->id);
 
 	if (b->node != NULL) {
+		/* fixes889 — THE CHOKE POINT. Clear this node's back-pointer to
+		 * THIS box before dropping our ref.
+		 *
+		 * box_for_node() reads a raw `struct box *` stored as user data on
+		 * the DOM node (corestring_dom___ns_key_box_node_data, set in
+		 * box_construct). Nothing else clears it except
+		 * html_reconvert_clear_node_boxes(), which walks children/next ONLY --
+		 * so any box reachable only via `float_children`/`next_float` or
+		 * `list_marker` (a marker is linked ONLY through box->list_marker;
+		 * box_construct sets marker->parent but never puts it in children)
+		 * keeps its node pointing at the box after the tree is freed. Then:
+		 *   - a click -> get_mouse_action_node -> link_box_for_ancestor ->
+		 *     box_for_node() hands back FREED memory and it is dereferenced
+		 *     (HW: illegal instruction, PC in zeroed System heap);
+		 *   - teardown walks the same freed box again (HW: allocator blowup
+		 *     inside _dom_element_finalise).
+		 *
+		 * Doing it HERE instead of extending that walk is deliberate: every
+		 * box passes through this destructor exactly once, however it was
+		 * linked, so no future link field can reintroduce the hole.
+		 *
+		 * The `cur == b` identity test is load-bearing, not defensive noise.
+		 * On a reconvert the OLD tree is deliberately kept alive THROUGH
+		 * dom_to_box (the fixes421 double-buffer) and freed afterwards, by
+		 * which time the node's pointer legitimately belongs to the NEW box.
+		 * An unconditional clear here would null the LIVE tree's back-pointer
+		 * and break box_for_node for the page that just rendered. Only ever
+		 * retract our own backlink. */
+		struct box *cur = NULL;
+		if (dom_node_get_user_data(b->node,
+				corestring_dom___ns_key_box_node_data,
+				&cur) == DOM_NO_ERR && cur == b) {
+			void *old_ud = NULL;
+			(void) dom_node_set_user_data(b->node,
+					corestring_dom___ns_key_box_node_data,
+					NULL, NULL, &old_ud);
+			macsurf_box_backlink_cleared++;
+		}
 		dom_node_unref(b->node);
 	}
 

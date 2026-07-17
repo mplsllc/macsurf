@@ -236,7 +236,7 @@ static css_error harness_css_resolve_url(void *pw, const char *base,
  * Caller frees the returned buffer. */
 static char *build_large_doc(int n)
 {
-	size_t cap = 64 + (size_t)n * 64;
+	size_t cap = 4096 + (size_t)n * 64;   /* fixes889: + list/float section */
 	char *buf = (char *)malloc(cap);
 	size_t off = 0;
 	int i;
@@ -246,6 +246,28 @@ static char *build_large_doc(int n)
 	for (i = 0; i < n; i++) {
 		off += (size_t)snprintf(buf + off, cap - off,
 				"<p id=\"p%d\">text node %d original</p>", i, i);
+	}
+	/* fixes889 — LIST ITEMS AND FLOATS, and they are the whole point.
+	 *
+	 * This fixture was <p> elements and nothing else, so Tests 1/2 have never
+	 * once constructed a list_marker or a float_children box -- which are
+	 * exactly the boxes html_reconvert_clear_node_boxes cannot reach (it
+	 * descends children/next only; a marker hangs off box->list_marker and a
+	 * float off float_children/next_float). That is why the reconvert UAF has
+	 * never reproduced here while it keeps killing the G4: the harness was
+	 * blind to the box shapes that carry the bug, not proving their absence.
+	 *
+	 * <li> gives every item a list_marker box; float:left gives the container
+	 * a float_children chain. */
+	off += (size_t)snprintf(buf + off, cap - off, "<ul id=\"lst\">");
+	for (i = 0; i < 24; i++) {
+		off += (size_t)snprintf(buf + off, cap - off,
+				"<li id=\"li%d\">item %d</li>", i, i);
+	}
+	off += (size_t)snprintf(buf + off, cap - off, "</ul>");
+	for (i = 0; i < 12; i++) {
+		off += (size_t)snprintf(buf + off, cap - off,
+				"<div id=\"fl%d\" style=\"float:left\">f%d</div>", i, i);
 	}
 	off += (size_t)snprintf(buf + off, cap - off, "</div></body></html>");
 	return buf;
@@ -2666,6 +2688,79 @@ int main(void)
 	}
 	fprintf(stderr, "=== Test 25 PASS: navigation realm reset is clean under ASan "
 			"===\n");
+
+	/* --- Test 26 (fixes889): after a reconvert, NO node may hand box_for_node
+	 * a freed box. This is the click crash, reproduced.
+	 *
+	 * HW trace: macos9_handle_mouse_down -> browser_window_mouse_click ->
+	 *   html_mouse_action -> get_mouse_action_node -> link_box_for_ancestor ->
+	 *   box_for_node -> illegal instruction (PC in zeroed System heap).
+	 *
+	 * box_for_node() returns a raw `struct box *` stashed on the DOM node as
+	 * user data. Only html_reconvert_clear_node_boxes clears it, and it walks
+	 * children/next ONLY -- so a box reachable solely via list_marker or
+	 * float_children/next_float keeps its node pointing at a box the reconvert
+	 * then frees. The next click resolves that node and dereferences freed
+	 * memory.
+	 *
+	 * This test does exactly what the click path does: resolve every element's
+	 * box and READ it. Under ASan a dangling backlink is a heap-use-after-free
+	 * at the read, with a clean free stack pointing at the reconvert.
+	 *
+	 * It needs the fixture to actually CONTAIN markers and floats -- see
+	 * build_large_doc; it did not until fixes889, which is why this never
+	 * reproduced here. */
+	fprintf(stderr, "\n=== Test 26: box_for_node after reconvert (the click "
+			"crash) ===\n");
+	{
+		extern struct box *box_for_node(dom_node *n);
+		dom_nodelist *all = NULL;
+		dom_string *star = NULL;
+		uint32_t len = 0, i2;
+		unsigned long touched = 0, live = 0;
+
+		if (dom_string_create((const uint8_t *)"*", 1, &star) != DOM_NO_ERR) {
+			fprintf(stderr, "FAIL: dom_string_create('*')\n"); return 1;
+		}
+		if (dom_document_get_elements_by_tag_name(document, star, &all)
+				!= DOM_NO_ERR || all == NULL) {
+			fprintf(stderr, "FAIL: get_elements_by_tag_name('*')\n");
+			dom_string_unref(star); return 1;
+		}
+		dom_nodelist_get_length(all, &len);
+		fprintf(stderr, "sweeping %lu elements through box_for_node()\n",
+				(unsigned long) len);
+
+		for (i2 = 0; i2 < len; i2++) {
+			dom_node *nd = NULL;
+			struct box *bx;
+			if (dom_nodelist_item(all, i2, &nd) != DOM_NO_ERR || nd == NULL)
+				continue;
+			bx = box_for_node(nd);
+			touched++;
+			if (bx != NULL) {
+				/* THE DEREF. If this box was freed by the reconvert, ASan
+				 * traps here with the free stack in html_reconvert_free_old
+				 * -- which is the hardware's illegal instruction, caught. */
+				volatile int probe = (int) bx->type;
+				volatile int probe2 = (int) bx->width;
+				(void) probe; (void) probe2;
+				live++;
+			}
+			dom_node_unref(nd);
+		}
+		dom_nodelist_unref(all);
+		dom_string_unref(star);
+
+		fprintf(stderr, "resolved %lu nodes, %lu returned a box, all readable\n",
+				touched, live);
+		if (touched == 0) {
+			fprintf(stderr, "FAIL: swept nothing -- the test proves nothing\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 26 PASS: every post-reconvert box_for_node result "
+			"is live memory ===\n");
 
 	free(html_src_big);
 	return 0;
