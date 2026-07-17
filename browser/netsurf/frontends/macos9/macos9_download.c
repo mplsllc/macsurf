@@ -326,6 +326,18 @@ static void dl_mgr_show(void)
 	SelectWindow(g_dl_mgr_win);
 }
 
+/* fixes883 — public entry point for the View > Downloads menu item.
+ *
+ * The download manager is a real Carbon window (live byte counts, per-row
+ * Cancel, completed-row eviction), but dl_mgr_show was static and its only
+ * caller was the start-a-download path -- so the window was reachable ONLY by
+ * starting a download, and there was no way back to it once closed. The
+ * plumbing was finished; only discoverability was missing. */
+void macos9_download_mgr_show(void)
+{
+	dl_mgr_show();
+}
+
 /* Direct (non-update) repaint used for live progress. Clipped to the
  * window's visRgn by QuickDraw, so it is safe outside BeginUpdate. */
 static void dl_mgr_progress(void)

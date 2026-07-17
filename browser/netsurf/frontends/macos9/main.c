@@ -240,6 +240,17 @@ static void macos9_init_menus(void) {
 		AppendMenu(view_menu, "\pView Source/U");
 		AppendMenu(view_menu, "\p(-");
 		AppendMenu(view_menu, "\pFind.../F");
+		/* fixes883 — Zoom and Downloads: both already worked, neither was
+		 * discoverable. Page zoom was reachable only through Cmd -/+/0
+		 * keystrokes that appeared in no menu, and the download-manager
+		 * window only ever opened by starting a download. Keep the item
+		 * numbering in sync with the ITEM_VIEW_* defines in macos9.h. */
+		AppendMenu(view_menu, "\p(-");                    /* 4 */
+		AppendMenu(view_menu, "\pZoom In/+");             /* 5 */
+		AppendMenu(view_menu, "\pZoom Out/-");            /* 6 */
+		AppendMenu(view_menu, "\pActual Size/0");         /* 7 */
+		AppendMenu(view_menu, "\p(-");                    /* 8 */
+		AppendMenu(view_menu, "\pDownloads");             /* 9 */
 		InsertMenu(view_menu, 0);
 	}
 
@@ -458,6 +469,21 @@ static void macos9_handle_menu(short menu_id, short item) {
 				"fixes352c ITEM_VIEW_FIND: gw=%p", (void *)gw);
 			macos9_find_in_page(gw);
 		} break;
+		/* fixes883 — same helper as the Cmd -/+/0 keystrokes. */
+		case ITEM_VIEW_ZOOM_IN:
+			macos9_zoom_apply(gw, 0.1, 0);
+			break;
+		case ITEM_VIEW_ZOOM_OUT:
+			macos9_zoom_apply(gw, -0.1, 0);
+			break;
+		case ITEM_VIEW_ZOOM_100:
+			macos9_zoom_apply(gw, 1.0, 1);
+			break;
+		case ITEM_VIEW_DOWNLOADS:
+			/* fixes883 — the manager window was previously
+			 * reachable only by starting a download. */
+			macos9_download_mgr_show();
+			break;
 		default: break;
 		}
 		break;
@@ -1176,6 +1202,24 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 #endif
 }
 
+/* fixes883 — ONE zoom implementation, shared by the Cmd -/+/0 keystrokes and
+ * the new View menu items, so the two paths cannot drift apart.
+ *
+ * NetSurf's scale sets the layout viewport to (window / scale), so zooming OUT
+ * lays the page out at a WIDER effective width -- the desktop layout -- then
+ * renders it scaled down to fit the physical window. On a 1024x768 Mac that
+ * both shrinks-to-fit and takes the wide layout path instead of the cramped
+ * narrow-column one (fixes621). */
+static void macos9_zoom_apply(struct gui_window *gw, float amount, int absolute)
+{
+	extern nserror browser_window_set_scale(
+		struct browser_window *bw, float scale, bool absolute);
+	if (gw == NULL || gw->bw == NULL) return;
+	browser_window_set_scale(gw->bw, amount, absolute ? true : false);
+	gw->needs_reformat = 1;
+	macos9_window_invalidate_content(gw);
+}
+
 void macos9_handle_key_down(const EventRecord *event) {
 #ifdef __MACOS9__
 	WindowRef win = FrontWindow();
@@ -1193,18 +1237,19 @@ void macos9_handle_key_down(const EventRecord *event) {
 		if (gw != NULL && gw->bw != NULL &&
 		    (ch == '-' || ch == '_' || ch == '=' || ch == '+' ||
 		     ch == '0')) {
-			extern nserror browser_window_set_scale(
-				struct browser_window *bw, float scale,
-				bool absolute);
+			/* fixes883 — same helper the View > Zoom items call.
+			 * Note this intercepts BEFORE MenuKey below, so the
+			 * menu items' Cmd shortcuts land here rather than
+			 * dispatching through the menu; identical result, and
+			 * the menu entries exist so the keystrokes are
+			 * discoverable at all. */
 			if (ch == '0') {
-				browser_window_set_scale(gw->bw, 1.0, true);
+				macos9_zoom_apply(gw, 1.0, 1);
 			} else if (ch == '-' || ch == '_') {
-				browser_window_set_scale(gw->bw, -0.1, false);
+				macos9_zoom_apply(gw, -0.1, 0);
 			} else {
-				browser_window_set_scale(gw->bw, 0.1, false);
+				macos9_zoom_apply(gw, 0.1, 0);
 			}
-			gw->needs_reformat = 1;
-			macos9_window_invalidate_content(gw);
 			return;
 		}
 		sel = MenuKey(ch);

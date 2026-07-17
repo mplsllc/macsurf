@@ -220,6 +220,14 @@ extern bool macos9_quitting;
 
 #define ITEM_VIEW_SOURCE    1
 #define ITEM_VIEW_FIND      3
+/* fixes883 — Zoom and Downloads were REAL and completely undiscoverable:
+ * page zoom worked only via unlisted Cmd -/+/0 keystrokes, and the download
+ * manager window could only be reached by starting a download. Both are pure
+ * exposure -- no new plumbing. */
+#define ITEM_VIEW_ZOOM_IN   5
+#define ITEM_VIEW_ZOOM_OUT  6
+#define ITEM_VIEW_ZOOM_100  7
+#define ITEM_VIEW_DOWNLOADS 9
 
 /* Bookmarks menu items. fixes700 (#50): 1=Add, 2=Manage Bookmarks (opens
  * the manager window), 3=separator, 4+=bookmarks. */
@@ -270,6 +278,7 @@ void macos9_cache_clear_ui(void);
  * routed from the main event loop. */
 long macos9_download_mgr_is(WindowRef w);   /* 1 if w is the mgr window */
 void macos9_download_mgr_draw(void);
+void macos9_download_mgr_show(void);        /* fixes883: View > Downloads */
 void macos9_download_mgr_click(short part, Point where);
 #ifdef __MACOS9__
 OSErr macos9_downloads_dir_get(short *vRef, long *dirID);
