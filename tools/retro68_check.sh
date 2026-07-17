@@ -45,6 +45,8 @@ INCS="-I $ROOT/browser/libwapcaplet/include
       -I $ROOT/browser/netsurf -I $ROOT/browser/netsurf/include
       -I $ROOT/browser/netsurf/frontends/macos9
       -I $ROOT/browser/netsurf/frontends/macos9/shims
+      -I $ROOT/macTLS/os9
+      -I $ROOT/macTLS/bearssl/inc
       -include stdbool.h"
 
 check_one() {

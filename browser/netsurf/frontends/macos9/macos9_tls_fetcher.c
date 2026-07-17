@@ -180,6 +180,11 @@ struct macos9_https_ctx {
 
 	char             mime[128];
 	char             redirect_url[1024];
+	/* fixes884 (Phase 1.1) — the user-facing "certificate rejected (REASON)
+	 * for HOST" string. Per-ctx, not a stack buffer: NetSurf's llcache holds
+	 * the fetch_msg's error pointer past our return, which is the same trap
+	 * fixes262 hit with redirect_url above. */
+	char             cert_err_msg[384];
 
 	unsigned long    progress_ticks;
 	unsigned long    last_poll_tick; /* fixes548 — tick of the
@@ -961,6 +966,7 @@ static void hctx_reset_for_retry(struct macos9_https_ctx *c)
 	c->chunked = 0;
 	c->mime[0] = 0;
 	c->redirect_url[0] = 0;
+	c->cert_err_msg[0] = 0;   /* fixes884 */
 	c->state = HS_QUEUED;
 	/* Do NOT clear c->aborted: if NetSurf aborted during the first
 	 * attempt, we should NOT retry. The first thing the next poll
@@ -1084,6 +1090,19 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	 * HTTP-only / macTLS-incompatible hosts fail at HS_TLSING (pre-response),
 	 * so https_worked stays 0 and the existing fallback/dead-host path runs. */
 	int https_worked;
+	/* fixes884 — the failure CLASS, captured for the http-fallback gate below.
+	 *
+	 * br_err is BearSSL's verdict. Its X509 range is 32..62
+	 * (BR_ERR_X509_OK .. BR_ERR_X509_NOT_TRUSTED, bearssl_x509.h), so
+	 * anything in 33..62 means "the certificate chain was REJECTED" --
+	 * expired/not-yet-valid (54), DN mismatch (55), bad server name (56),
+	 * not trusted (62), bad signature (52), and so on. Everything else --
+	 * TCP failures, timeouts, peer close, protocol errors, fatal alerts
+	 * (>=256) -- is a transport failure, where no trust claim was made or
+	 * rejected. */
+	int br_err = 0;
+	int cert_rejected = 0;
+	int hsts_pinned = 0;
 
 	if (c->state == HS_FAIL || c->state == HS_DONE) return;
 
@@ -1111,6 +1130,7 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 		OSTLSDiagnostics diag;
 		memset(&diag, 0, sizeof diag);
 		OSTLS_GetDiagnostics(c->conn, &diag);
+		br_err = (int)diag.br_err;   /* fixes884: for the fallback gate */
 		/* fixes227 — macsurf_debug_log_writef supports only %d %ld %p %s %%
 		 * (see project_macsurf_debug_log_specifiers memory). Cipher
 		 * gets printed as decimal; 0xCCA9 = 52393 (ChaCha20-Poly1305),
@@ -1182,8 +1202,57 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	 * doesn't stick"). host_is_fb_asset covers facebook.com/fbcdn.net/
 	 * fbsbx.com/cdninstagram.com on a dot boundary. A transient TLS glitch
 	 * on FB surfaces FETCH_ERROR (retryable) instead. */
+	/* fixes884 (Phase 1.1) — CLASSIFY THE FAILURE BEFORE FALLING BACK.
+	 *
+	 * The fallback below rewrites https://host/path to http://host/path and
+	 * emits it as a 301. Until now it fired on ANY pre-response failure, and a
+	 * rejected certificate is exactly that class (cert checks fail at
+	 * HS_TLSING, so https_worked stays 0). The only exemption was a hardcoded
+	 * Facebook host list, added for session-cookie reasons rather than
+	 * security. So: full BearSSL validation ran, produced a correct REJECT,
+	 * and the fetcher then discarded that verdict and refetched the same
+	 * resource in cleartext, with no user notice. An attacker with a bad cert
+	 * -- or simply the ability to break the handshake -- got the page loaded
+	 * over plaintext.
+	 *
+	 * This is NOT about discouraging http:// browsing, which is fine and
+	 * expected for this audience. It is that a resource requested over
+	 * https:// completed over cleartext AFTER trust was denied.
+	 *
+	 * Two gates now:
+	 *
+	 * (a) cert_rejected -- a trust claim was made and REFUSED. Never fall back.
+	 *     There is no version of "the certificate is invalid" that is answered
+	 *     by "then fetch it unencrypted instead". Transport/connect failures
+	 *     still fall back, because no trust claim was rejected -- a genuinely
+	 *     HTTP-only retro host fails there, and that fallback is the point.
+	 *
+	 * (b) hsts_pinned -- the host previously told us "https only, for this
+	 *     long". Honouring that is the whole meaning of HSTS, and the fallback
+	 *     used to defeat it by issuing its redirect through
+	 *     fetch_send_callback directly, without ever consulting the policy
+	 *     that llcache had faithfully recorded.
+	 *
+	 * Note (b) also narrows the plain downgrade attack that (a) alone cannot
+	 * close: an attacker who simply BREAKS the handshake produces a transport
+	 * failure, not a cert rejection, and would still get the fallback. HSTS is
+	 * the mechanism that exists to say "never do that for this host". */
+	cert_rejected = (br_err > 32 && br_err <= 62);
+	if (c->url != NULL) {
+		hsts_pinned = urldb_get_hsts_enabled(c->url) ? 1 : 0;
+	}
+	if (cert_rejected || hsts_pinned) {
+		macsurf_debug_log_writef(
+			"https: NO http fallback host=%s cert_rejected=%d(br_err=%d %s) "
+			"hsts=%d -- refusing to complete an https:// request in cleartext",
+			c->host[0] ? c->host : "(unset)", cert_rejected, br_err,
+			ostls_br_err_name(br_err), hsts_pinned);
+	}
+
 	if (c->aborted == 0 &&
 	    !https_worked &&   /* fixes718: HTTPS answered — don't fall back to http */
+	    !cert_rejected &&  /* fixes884: trust was denied — never go cleartext */
+	    !hsts_pinned &&    /* fixes884: the host said https-only */
 	    !host_is_fb_asset(c->host) &&
 	    c->url != NULL && c->pool_key[0] != '\0' &&
 	    !terminal_url_check(nsurl_access(c->url)) &&
@@ -1267,6 +1336,29 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 
 	msg.type = FETCH_ERROR;
 	msg.data.error = why ? why : "https: fetch failed";
+	/* fixes884 (Phase 1.1) — say WHY a certificate was rejected.
+	 *
+	 * The specific X.509 reason (expired / name mismatch / unknown issuer /
+	 * chain incomplete) was decoded right here into the DEBUG LOG and then
+	 * thrown away: the user got a generic "handshake/transport failed" ->
+	 * about:fetcherror, which is indistinguishable from the site being down.
+	 * That mattered little while the fetcher silently completed the request
+	 * over http anyway; now that a cert rejection correctly fails CLOSED, the
+	 * reason is the only thing the user has to act on.
+	 *
+	 * This is not the interstitial (that is the next round, with the override
+	 * path). It is the honest error in the meantime: the buffer is per-ctx so
+	 * it outlives our return, which the stack-buffer bug in fixes262 is the
+	 * reminder for. */
+	if (cert_rejected) {
+		int n = sprintf(c->cert_err_msg,
+				"https: certificate rejected (%s) for %s",
+				ostls_br_err_name(br_err),
+				c->host[0] ? c->host : "this site");
+		if (n > 0 && (size_t)n < sizeof c->cert_err_msg) {
+			msg.data.error = c->cert_err_msg;
+		}
+	}
 	fetch_send_callback(&msg, c->parent);
 
 	p = c->parent;
