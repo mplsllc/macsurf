@@ -154,7 +154,34 @@ macos9_reconvert_pending_add(struct content *c)
  * the only verified site -- and it was also the single reason JS-driven pages
  * did not repaint at all. This flag remains the emergency global kill via
  * macsurf_js_set_reconvert_enabled(0). */
-static int g_reconvert_enabled = 1;
+/* fixes887 — TEMPORARILY OFF at the maintainer's request, so that the
+ * fixes876-886 batch can be verified without the reconvert crash confusing the
+ * results. This is a rollout switch, NOT a fix: nothing about the underlying
+ * defect changed, and this line is meant to go back to 1 once it is closed.
+ *
+ * CAVEAT on the two MacsBug traces from 2026-07-16/17 -- they are NOT the same
+ * crash, and this switch is only expected to address one of them:
+ *
+ *  (1) unmapped memory at js_shape_hash_unlink+0004C, reached via
+ *        html_process_data -> parse_chunk -> handle_before_html ->
+ *        append_child -> DOMNodeInserted default action -> content_broadcast
+ *        -> browser_window_callback -> js_newthread -> qjs_flush_timers ->
+ *        JS_FreeValue -> free_object -> js_free_shape -> js_shape_hash_unlink
+ *      That is the NAVIGATION path (a new page is being parsed, js_newthread
+ *      builds its realm and flushes the OLD realm's timers). It does not go
+ *      through this file at all, so THIS SWITCH WILL PROBABLY NOT STOP IT.
+ *      It is also the exact signature fixes875 was written against, which
+ *      means the (ctx, generation) gate did not close it.
+ *
+ *  (2) illegal instruction reached via macos9_handle_mouse_down ->
+ *        browser_window_mouse_click -> html_mouse_action ->
+ *        get_mouse_action_node -> link_box_for_ancestor -> box_for_node
+ *      A click walking a box tree that is being/has been rebuilt. THAT is the
+ *      one plausibly on this feature's account.
+ *
+ * So if (1) still bites with this off, that is expected and is a separate bug
+ * to chase in the timer/realm teardown path, not here. */
+static int g_reconvert_enabled = 0;
 
 void
 macsurf_js_set_reconvert_enabled(int enabled)
