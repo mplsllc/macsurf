@@ -3443,12 +3443,17 @@ static JSValue qjs_querySelectorAll(JSContext *ctx, JSValueConst this_val,
 		int argc, JSValueConst *argv)
 {
 	const char *sel;
-	char tag_lc[64];
-	int i;
 	dom_element *root = NULL;
 	JSValue arr;
 	int count = 0;
 
+	/* fixes886 — `char tag_lc[64]; int i;` used to be declared here, left
+	 * behind when fixes871 removed the '#id' fast path that used them. They
+	 * were kept alive only by a `(void)tag_lc; (void)i;` below, and reading an
+	 * uninitialised int that way is what produced CW8's
+	 *     Warning: variable 'i' is not initialized before being used
+	 * Removed rather than silenced: a dead local kept quiet by a (void) cast is
+	 * a warning suppressor with no upside. */
 	(void)this_val;
 	arr = JS_NewArray(ctx);
 	if (g_qjs_document == NULL || argc < 1) return arr;
@@ -3483,7 +3488,7 @@ static JSValue qjs_querySelectorAll(JSContext *ctx, JSValueConst this_val,
 			macsurf_dom_node_unref((dom_node *)root);
 		}
 	}
-	(void)tag_lc; (void)i;
+
 	return arr;
 }
 

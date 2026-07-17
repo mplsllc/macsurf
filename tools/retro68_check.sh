@@ -33,8 +33,13 @@ fi
 # violations (declaration-after-statement etc), which made --selftest report a
 # false green. The errors it promotes in upstream headers are filtered out by
 # check_one()'s target-file-only match.
+# -Wno-overlength-strings: C90 only requires compilers to SUPPORT 509-char
+# literals; it does not forbid longer ones. macsurf_qjs.c is built from very
+# large JS source strings and CW8 has always accepted them, so -pedantic-errors
+# promoting this to an error is pure noise that buries real findings.
 FLAGS="-std=c89 -pedantic-errors -Wall -Wno-unused-parameter -Wno-unused-variable
-       -Wno-long-long -Dinline= -D__MACOS9__=1 -DTARGET_API_MAC_CARBON=1
+       -Wno-long-long -Wno-overlength-strings
+       -Dinline= -D__MACOS9__=1 -DTARGET_API_MAC_CARBON=1
        -DWITH_QUICKJS -DNO_IPV6"
 
 INCS="-I $ROOT/browser/libwapcaplet/include
@@ -43,18 +48,34 @@ INCS="-I $ROOT/browser/libwapcaplet/include
       -I $ROOT/browser/libcss/include -I $ROOT/browser/libhubbub/include
       -I $ROOT/browser/libparserutils/include
       -I $ROOT/browser/netsurf -I $ROOT/browser/netsurf/include
+      -I $ROOT/browser/netsurf/content/handlers
       -I $ROOT/browser/netsurf/frontends/macos9
       -I $ROOT/browser/netsurf/frontends/macos9/shims
+      -I $ROOT/browser/libquickjs
       -I $ROOT/macTLS/os9
       -I $ROOT/macTLS/bearssl/inc
       -include stdbool.h"
 
+# A "fatal error" (a missing header) ABORTS the compile, so the target's own code
+# is never parsed. Reporting that as "clean", or as an unchanged error count
+# versus a baseline that hit the SAME fatal error, is a false green -- it says
+# "no new errors" while checking nothing at all. That is how fixes886's
+# macos9_zoom_apply redeclaration reached CW8: main.c dies at a missing
+# OpenTransport.h on line 17, ~450 lines before the bug.
+#
+# So: detect the abort and say DID-NOT-RUN, loudly, distinct from clean.
 check_one() {
-	# Report only errors whose file is the target itself.
 	local f="$1"
-	local base
+	local base out fatal
 	base=$(basename "$f")
-	$CC -fsyntax-only $FLAGS $INCS "$f" 2>&1 | grep -E "/${base}:[0-9]+.*error:"
+	out=$($CC -fsyntax-only $FLAGS $INCS "$f" 2>&1)
+
+	fatal=$(echo "$out" | grep -E "fatal error:" | head -1)
+	if [ -n "$fatal" ]; then
+		echo "__DIDNOTRUN__ $fatal"
+		return
+	fi
+	echo "$out" | grep -E "/${base}:[0-9]+.*error:"
 }
 
 if [ "$1" = "--selftest" ]; then
@@ -87,13 +108,27 @@ fi
 rc=0
 for f in "$@"; do
 	out=$(check_one "$f")
-	if [ -n "$out" ]; then
+	case "$out" in
+	__DIDNOTRUN__*)
+		# Not a pass and not a fail: the compiler never reached this file's
+		# code. Retro68's multiversal headers are a PARTIAL set (no
+		# OpenTransport.h, Aliases.h, ...), so some frontend files simply
+		# cannot be checked here. Say so instead of implying coverage.
+		echo "DID NOT RUN: $(basename "$f") -- ${out#__DIDNOTRUN__ }"
+		echo "             (compile aborted before this file's code was parsed;"
+		echo "              this check provides NO coverage for it -- CW8 is the"
+		echo "              only thing that will see these errors)"
+		rc=2
+		;;
+	"")
+		echo "clean: $(basename "$f")"
+		;;
+	*)
 		echo "=== ERRORS in $(basename "$f") ==="
 		echo "$out"
 		rc=1
-	else
-		echo "clean: $(basename "$f")"
-	fi
+		;;
+	esac
 done
 
 exit $rc

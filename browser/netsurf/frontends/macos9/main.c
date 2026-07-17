@@ -344,6 +344,24 @@ static void macos9_send_debug_log(struct gui_window *gw)
 #endif
 }
 
+/* fixes886 — forward declaration, and it is REQUIRED here.
+ *
+ * fixes883 defined macos9_zoom_apply just above macos9_handle_key_down (~1213),
+ * but macos9_handle_menu below calls it at ~474 -- EARLIER in the file. C89 then
+ * implicitly declares it `int()` at that first call, and the real
+ * `static void (struct gui_window *, float, int)` definition conflicts:
+ *     Error: identifier 'macos9_zoom_apply(...)' redeclared
+ *            was declared as: 'int (...)'
+ * followed by a cascade of "undefined identifier 'gw'" as CW8 discards the
+ * parameter list it could not reconcile.
+ *
+ * The Linux pre-flight missed this twice over: gcc in C89 mode ALLOWS an
+ * implicit declaration, and more importantly the check never reached this code
+ * at all -- main.c dies at a missing OpenTransport.h, which the check was
+ * reporting as an unchanged error count rather than as "did not run". Both are
+ * addressed in tools/retro68_check.sh. */
+static void macos9_zoom_apply(struct gui_window *gw, float amount, int absolute);
+
 static void macos9_handle_menu(short menu_id, short item) {
 #ifdef __MACOS9__
 	WindowRef front;
@@ -1202,7 +1220,10 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 #endif
 }
 
-/* fixes883 — ONE zoom implementation, shared by the Cmd -/+/0 keystrokes and
+/* fixes886 — definition; the forward declaration is up with the other
+ * prototypes, because macos9_handle_menu (far above) calls this.
+ *
+ * fixes883 — ONE zoom implementation, shared by the Cmd -/+/0 keystrokes and
  * the new View menu items, so the two paths cannot drift apart.
  *
  * NetSurf's scale sets the layout viewport to (window / scale), so zooming OUT
