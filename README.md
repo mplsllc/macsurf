@@ -57,16 +57,16 @@ As far as we can tell, it's the first serious [NetSurf](https://www.netsurf-brow
 
 ## Real sites, on real hardware
 
-Every shot below is a live site, captured on a Power Mac G3 running Mac OS 9.2.2.
+Every shot below is a live site, captured on a Power Mac G3 running Mac OS 9.2.2 with MacSurf 2.0.5.
 
 <table>
 <tr>
-<td width="50%" align="center" valign="top"><img src="screenshots/2.0-68kmla.png" alt="68kmla.org forum"><br><strong>68kmla.org</strong><br><em>A full XenForo forum — logged in, full-width, posting replies.</em></td>
-<td width="50%" align="center" valign="top"><img src="screenshots/2.0-ppcmla.png" alt="ppcmla.org forum"><br><strong>ppcmla.org</strong><br><em>Another full forum, over native HTTPS.</em></td>
+<td width="50%" align="center" valign="top"><img src="screenshots/2.0.5-hackaday.png" alt="hackaday.com"><br><strong>hackaday.com</strong><br><em>A modern, JavaScript-heavy news site at full desktop width.</em></td>
+<td width="50%" align="center" valign="top"><img src="screenshots/2.0.5-68kmla.png" alt="68kmla.org forum"><br><strong>68kmla.org</strong><br><em>A full XenForo forum — logged in, full-width, correct text size.</em></td>
 </tr>
 <tr>
-<td width="50%" align="center" valign="top"><img src="screenshots/2.0-macintoshrepository.png" alt="Macintosh Repository"><br><strong>macintoshrepository.org</strong><br><em>Thumbnails, tables, and all.</em></td>
-<td width="50%" align="center" valign="top"><img src="screenshots/2.0-duckduckgo.png" alt="DuckDuckGo search"><br><strong>DuckDuckGo</strong><br><em>Search that works.</em></td>
+<td width="50%" align="center" valign="top"><img src="screenshots/2.0.5-macgarden.png" alt="macintoshgarden.org"><br><strong>macintoshgarden.org</strong><br><em>Image-heavy and fully styled, over native HTTPS.</em></td>
+<td width="50%" align="center" valign="top"><img src="screenshots/2.0.5-hackernews.png" alt="Hacker News"><br><strong>news.ycombinator.com</strong><br><em>Hacker News — login and front page, no phantom boxes.</em></td>
 </tr>
 </table>
 
