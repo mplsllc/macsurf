@@ -1554,6 +1554,109 @@ int main(void)
 	}
 	fprintf(stderr, "=== Test 15 PASS: class + descendant selectors ===\n");
 
+	/* --- Test 16 (fixes872, #300): GATE 5 -- `"onclick" in el` must be TRUE.
+	 * Preact picks an event's NAME from whether the property exists (verbatim):
+	 *     a = t.toLowerCase(),
+	 *     t = a in e || "onFocusOut"==t || "onFocusIn"==t ? a.slice(2) : t.slice(2),
+	 *     ... e.addEventListener(t, i?p:m, i)
+	 * For onClick: if `"onclick" in e` is TRUE  -> addEventListener("click").
+	 *              if FALSE -> addEventListener("Click") -- capital C, which
+	 * nothing ever dispatches. The form then renders PERFECTLY and ignores every
+	 * click. That is the worst failure shape there is: it looks finished, so the
+	 * only way to catch it is to assert the mechanism, which is what this does --
+	 * including a literal replay of Preact's own name-picking expression.
+	 *
+	 * `el.onclick =` appears ZERO times in the bundle, so replace semantics are
+	 * not required by Verbum -- but they are implemented and asserted here for
+	 * the many sites that DO assign on*, where an accumulating handler would be
+	 * a nasty, silent bug. --- */
+	fprintf(stderr, "\n=== Test 16: on* handler properties ===\n");
+	{
+		const char *probe =
+			"globalThis.__h={};var h=globalThis.__h;"
+			"var e=document.createElement('button');"
+			"document.body.appendChild(e);"
+			/* THE requirement */
+			"h.inClick=('onclick' in e);"
+			"h.inChange=('onchange' in e);"
+			"h.inInput=('oninput' in e);"
+			"h.inKeyDown=('onkeydown' in e);"
+			"h.inBlur=('onblur' in e);"
+			/* Preact's ACTUAL name-picking expression, replayed verbatim */
+			"var t='onClick';var a=t.toLowerCase();"
+			"h.preactName=(a in e||'onFocusOut'==t||'onFocusIn'==t)?a.slice(2):t.slice(2);"
+			/* default is null, not undefined */
+			"h.initial=(e.onclick===null);"
+			/* replace semantics: second assignment must REPLACE the first */
+			"h.a=0;h.b=0;"
+			"e.onclick=function(){h.a++;};"
+			"e.onclick=function(){h.b++;};"
+			"h.getterIsFn=(typeof e.onclick==='function');"
+			/* addEventListener must ACCUMULATE alongside, not replace */
+			"h.l=0;e.addEventListener('click',function(){h.l++;});"
+			"e.dispatchEvent({type:'click'});"
+			/* null clears it */
+			"e.onclick=null;h.clearedNull=(e.onclick===null);"
+			"e.dispatchEvent({type:'click'});";
+		unsigned char ok = js_exec(thread, (const unsigned char *)probe,
+				strlen(probe), "on-probe.js");
+		if (!ok) { fprintf(stderr, "FAIL: on* probe threw\n"); return 1; }
+		{
+			const char *chk =
+				"var h=globalThis.__h;"
+				"if(!h.inClick)"
+					"throw new Error('ASSERT FAIL: \"onclick\" in element is FALSE. "
+						"Preact then does addEventListener(\"Click\") -- capital C, "
+						"which nothing dispatches. The comment form renders "
+						"perfectly and ignores every click.');"
+				"if(!h.inChange||!h.inInput||!h.inKeyDown||!h.inBlur)"
+					"throw new Error('ASSERT FAIL: missing on* props: change='+h.inChange+"
+						"' input='+h.inInput+' keydown='+h.inKeyDown+' blur='+h.inBlur+"
+						"' -- all are used by verbum-comments.js');"
+				"if(h.preactName!=='click')"
+					"throw new Error('ASSERT FAIL: Preact would register the event as \"'+"
+						"h.preactName+'\" instead of \"click\" -- this is its real "
+						"name-picking expression, so the handler would never fire');"
+				"if(!h.initial)"
+					"throw new Error('ASSERT FAIL: el.onclick should default to null, got '+"
+						"(typeof h.initial));"
+				"if(!h.getterIsFn)"
+					"throw new Error('ASSERT FAIL: the on* getter does not return the "
+						"assigned function');"
+				"if(h.a!==0)"
+					"throw new Error('ASSERT FAIL: the REPLACED onclick handler still fired "
+						"('+h.a+' times) -- on* assignment must replace, not "
+						"accumulate');"
+				"if(h.b!==1)"
+					"throw new Error('ASSERT FAIL: the current onclick handler fired '+h.b+"
+						"' times, expected exactly 1');"
+				/* TWO dispatches happen in the probe (one before onclick=null,
+				 * one after) and the addEventListener listener is never removed,
+				 * so 2 is correct. It also proves the two routes are INDEPENDENT:
+				 * clearing on* must not silently unregister the listener. */
+				"if(h.l!==2)"
+					"throw new Error('ASSERT FAIL: addEventListener handler fired '+h.l+"
+						"' times across 2 dispatches, expected 2 -- on* and "
+						"addEventListener are independent routes; clearing on* "
+						"must not disturb the listener list');"
+				"if(!h.clearedNull)"
+					"throw new Error('ASSERT FAIL: el.onclick=null did not clear it');"
+				"if(h.b!==1)"
+					"throw new Error('ASSERT FAIL: handler still fired after being set to "
+						"null (b='+h.b+')');";
+			ok = js_exec(thread, (const unsigned char *)chk, strlen(chk), "on-chk.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: Gate 5 is shut -- the form would render and "
+						"then ignore every click\n");
+				return 1;
+			}
+		}
+		fprintf(stderr, "\"onclick\" in el is true (Preact resolves 'click', not "
+				"'Click'); assignment replaces; addEventListener accumulates "
+				"alongside; null clears\n");
+	}
+	fprintf(stderr, "=== Test 16 PASS: on* handler properties ===\n");
+
 	free(html_src_big);
 	return 0;
 }

@@ -2000,11 +2000,16 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"if(!el._L||!el._L[t])return;"
 		"var a=el._L[t];"
 		"var i;for(i=0;i<a.length;i++){if(a[i]===fn){a.splice(i,1);return;}}};"
+		/* fixes872 (#300) — fire the addEventListener list (_L) AND the on*
+		 * handler (_H, set through the prototype accessors) exactly once each.
+		 * Both routes are real and pages use both; dispatchEvent firing only _L
+		 * is why js_fire_script_load had to call el['on'+type] separately. */
 		"el.dispatchEvent=function(ev){"
 		"var t=ev&&ev.type||'';"
 		"if(el._L&&el._L[t]){"
 		"var a=el._L[t].slice();"
 		"var i;for(i=0;i<a.length;i++){try{a[i].call(el,ev);}catch(e){}}}"
+		"if(el._H&&el._H[t]){try{el._H[t].call(el,ev);}catch(e){}}"
 		"return true;};"
 		/* misc */
 		"el.getBoundingClientRect=function(){"
@@ -3129,10 +3134,96 @@ static JSValue qjs_get_head(JSContext *ctx, JSValueConst this_val,
 }
 
 /* Wire getElementById/querySelectorAll onto the document object */
+/* ---- fixes872 (#300) — the element PROTOTYPE, carrying the on* handlers ----
+ *
+ * Preact decides an event's name from whether the property EXISTS:
+ *     i = t != (t = t.replace(d,"$1")),
+ *     a = t.toLowerCase(),
+ *     t = a in e || "onFocusOut"==t || "onFocusIn"==t ? a.slice(2) : t.slice(2),
+ *     e.l || (e.l = {}), e.l[t+i] = n,
+ *     n ? (o ? n.u = o.u : (n.u = _, e.addEventListener(t, i?p:m, i)))
+ *       : e.removeEventListener(t, i?p:m, i)
+ * (verbatim from verbum-comments.js). For onClick: a = "onclick". If
+ * `"onclick" in e` is TRUE it registers addEventListener("click") -- correct. If
+ * FALSE it falls to `t.slice(2)` and registers addEventListener("Click"), capital
+ * C, which NOTHING ever dispatches. The form then renders perfectly and silently
+ * ignores every click, which is about the worst failure shape available: it looks
+ * finished.
+ *
+ * So the entire requirement for Verbum is that `"onclick" in e` be true.
+ * `el.onclick =` appears ZERO times in the whole bundle -- Preact keeps handlers
+ * in its own `e.l` map and registers ONE dispatcher per type. Proper replace
+ * semantics are implemented anyway, for the many sites that DO assign on*.
+ *
+ * On the PROTOTYPE, not per element:
+ *   - `in` walks the prototype chain, so this satisfies Preact at zero
+ *     per-element cost. The alternative (~27 defineProperty calls inside the
+ *     per-element install eval) would add real G3 time to EVERY wrapped node,
+ *     and that install is already the expensive part of wrapping.
+ *   - The proto also gives elements Object.prototype (hasOwnProperty/toString),
+ *     which a null-proto object does not have. Closer to a real browser.
+ * Accessors are non-enumerable so `for (k in el)` does not start listing 27 new
+ * keys on code that never asked for them.
+ *
+ * Handlers live in the element's own `_H` map, deliberately SEPARATE from the
+ * `_L` addEventListener array, because the two have different semantics:
+ * assigning on* REPLACES, addEventListener ACCUMULATES. Keeping them apart makes
+ * replace semantics fall out of `_H[t] = v` for free, and lets dispatchEvent
+ * fire both exactly once.
+ *
+ * Set per CONTEXT (class protos are per-context in QuickJS), from
+ * qjs_dom_install, which already runs once per realm before anything is wrapped.
+ */
+static void qjs_el_install_proto(JSContext *ctx)
+{
+	static const char s_proto_src[] =
+		"(function(){"
+		"var n=['click','dblclick','mousedown','mouseup','mousemove',"
+			"'mouseover','mouseout','mouseenter','mouseleave',"
+			"'keydown','keyup','keypress',"
+			"'input','change','submit','reset','focus','blur','select',"
+			"'load','error','scroll','resize','contextmenu',"
+			"'touchstart','touchend','touchmove'];"
+		"var p={};var i;"
+		"for(i=0;i<n.length;i++){(function(k){"
+		"Object.defineProperty(p,'on'+k,{configurable:true,enumerable:false,"
+		"get:function(){return (this._H&&this._H[k])||null;},"
+		"set:function(v){if(!this._H)this._H={};"
+		"this._H[k]=(typeof v==='function')?v:null;}});"
+		"})(n[i]);}"
+		"return p;})()";
+	JSValue proto;
+
+	/* qjs_dom_install() runs TWICE per context (once at build, once when the
+	 * thread's real document is wired), so bail if the proto is already in
+	 * place. Re-running is not corrupting -- the second proto is identical and
+	 * per-element _H maps are unaffected -- but it would orphan the first proto
+	 * and leave elements wrapped in between pointing at a different (equivalent)
+	 * object, which is a confusing thing to leave lying around for no gain. */
+	proto = JS_GetClassProto(ctx, s_el_class_id);
+	if (JS_IsObject(proto)) {
+		JS_FreeValue(ctx, proto);
+		return;
+	}
+	JS_FreeValue(ctx, proto);
+
+	proto = JS_Eval(ctx, s_proto_src, strlen(s_proto_src),
+			"<el-proto>", JS_EVAL_TYPE_GLOBAL);
+	if (JS_IsException(proto)) {
+		JS_FreeValue(ctx, proto);
+		return;
+	}
+	/* JS_SetClassProto takes ownership; do not free proto after this. */
+	JS_SetClassProto(ctx, s_el_class_id, proto);
+}
+
 static void qjs_dom_install(JSContext *ctx)
 {
 	JSValue global = JS_GetGlobalObject(ctx);
 	JSValue doc    = JS_GetPropertyStr(ctx, global, "document");
+
+	/* fixes872 (#300) — before any element is wrapped in this realm. */
+	qjs_el_install_proto(ctx);
 	if (!JS_IsUndefined(doc) && !JS_IsNull(doc)) {
 		qjs_set_func(ctx, doc, "getElementById",
 				qjs_getElementById, 1);
@@ -5680,14 +5771,24 @@ unsigned char js_fire_dom_ready(struct jsthread *thread, struct dom_document *do
 unsigned char js_fire_script_load(struct jsthread *thread,
 		struct dom_node *node, int ok)
 {
+	/* fixes872 (#300) — dispatchEvent now fires BOTH the addEventListener list
+	 * and the on* handler, so this must NOT also call el['on'+type] itself: that
+	 * would run an onload handler TWICE, and a loader whose promise resolves
+	 * there would resolve twice. Only fall back to the direct property call when
+	 * the target has no dispatchEvent at all -- i.e. a JS FALLBACK element (mkfb,
+	 * used before a document is wired), which is a plain object with no
+	 * prototype accessors and no _H map, so on* is a bare expando on it. */
 	static const char s_fire_src[] =
 		"(function(el,type){try{"
 		"var ev={type:type,target:el,currentTarget:el,"
 			"bubbles:false,cancelable:false,defaultPrevented:false,"
 			"preventDefault:function(){},stopPropagation:function(){}};"
-		"var h=el['on'+type];"
-		"if(typeof h==='function'){try{h.call(el,ev);}catch(e){}}"
-		"if(typeof el.dispatchEvent==='function'){try{el.dispatchEvent(ev);}catch(e){}}"
+		"if(typeof el.dispatchEvent==='function'){"
+			"try{el.dispatchEvent(ev);}catch(e){}"
+		"}else{"
+			"var h=el['on'+type];"
+			"if(typeof h==='function'){try{h.call(el,ev);}catch(e){}}"
+		"}"
 		"}catch(e){}})";
 	JSContext *ctx;
 	JSValue fn, el, args[2], ret;
