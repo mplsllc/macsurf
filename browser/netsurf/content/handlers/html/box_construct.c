@@ -2882,6 +2882,31 @@ dom_to_box(dom_node *n,
 
 	*box_conversion_context = ctx;
 
+	/* fixes903 — a RECONVERT runs the box build SYNCHRONOUSLY, right here, with
+	 * NO event-loop re-entry between teardown and repaint.
+	 *
+	 * The initial LOAD schedules the walk (returns to the event loop so the UI
+	 * stays live while the page streams in). But a reconvert first tears the old
+	 * render down -- H2 frees the object list + image bitmaps, and the fixes421
+	 * double-buffer sets c->layout = NULL -- and only rebuilds on a LATER poll
+	 * pass. That leaves a window where the event loop runs against a torn-down
+	 * tree: fixes902 made the build itself atomic, but a redraw firing in the
+	 * one poll pass BETWEEN this schedule and the walk still painted a freed
+	 * GWorld with layout==NULL -> the NQDStretch/StretchBits crash
+	 * (ReconvPos stuck at dom_to_box-ENTER). Every crash this hunt chased was an
+	 * async event landing in a reconvert re-entry window; running the whole walk
+	 * synchronously here (fixes902 already makes it one uninterrupted pass, so
+	 * this one call builds the entire tree, fires html_reconvert_done, and
+	 * SCHEDULES the repaint of the COMPLETE tree) collapses the layout==NULL
+	 * window to within this single call -- no poll pass, no redraw, no callback,
+	 * no drain can observe the half-built state. This is the endpoint of the
+	 * "no interleaving during the rebuild" gate. convert_xml_to_box frees ctx on
+	 * completion, so box_conversion_context is already NULLed by then. */
+	if (macsurf_reconvert_in_progress) {
+		convert_xml_to_box(ctx);
+		return NSERROR_OK;
+	}
+
 	return guit->misc->schedule(0, (void *)convert_xml_to_box, ctx);
 }
 
