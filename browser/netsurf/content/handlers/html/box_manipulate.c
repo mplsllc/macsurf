@@ -51,6 +51,40 @@
  * both hardware crashes. Read by html.c. */
 unsigned long macsurf_box_backlink_cleared = 0;
 
+/* fixes908 -- recently-freed-box ring for the reconvert double-free hunt.
+ * box_talloc_destructor is the single choke point every box passes through on
+ * its FIRST free (via box_free_box, or via talloc_free(tree) recursion -- talloc
+ * runs the destructor per chunk). Recording (box, during-label) here lets the
+ * talloc double-free abort in talloc.c report WHERE the box was first freed --
+ * the missing half of the picture (the second-free path is the live during=
+ * label). 4096 slots so a whole heavy-page tree-free does not evict the target
+ * before the double-free lands. Diagnostic only. */
+#define MACSURF_BOXFREE_RING 4096
+static void *g_boxfree_ptr[MACSURF_BOXFREE_RING];
+static const char *g_boxfree_ctx[MACSURF_BOXFREE_RING];
+static int g_boxfree_ix = 0;
+
+void macsurf_box_freed_note(void *box, const char *ctx)
+{
+	g_boxfree_ptr[g_boxfree_ix] = box;
+	g_boxfree_ctx[g_boxfree_ix] = (ctx != NULL) ? ctx : "(null)";
+	g_boxfree_ix++;
+	if (g_boxfree_ix >= MACSURF_BOXFREE_RING) {
+		g_boxfree_ix = 0;
+	}
+}
+
+const char *macsurf_box_freed_lookup(void *box)
+{
+	int i;
+	for (i = 0; i < MACSURF_BOXFREE_RING; i++) {
+		if (g_boxfree_ptr[i] == box) {
+			return g_boxfree_ctx[i];
+		}
+	}
+	return "(not-in-ring)";
+}
+
 /**
  * Destructor for box nodes which own styles
  *
@@ -60,6 +94,12 @@ unsigned long macsurf_box_backlink_cleared = 0;
 static int box_talloc_destructor(struct box *b)
 {
 	struct html_scrollbar_data *data;
+
+	/* fixes908 -- note this box's first free + the free path in flight. */
+	{
+		extern const char *macsurf_talloc_free_ctx;
+		macsurf_box_freed_note(b, macsurf_talloc_free_ctx);
+	}
 
 	if ((b->flags & STYLE_OWNED) && b->style != NULL) {
 		css_computed_style_destroy(b->style);
@@ -270,6 +310,11 @@ void box_unlink_and_free(struct box *box)
 void box_free(struct box *box)
 {
 	struct box *child, *next;
+	/* fixes908 -- label the second-free path (box_free covers box_normalise
+	 * table fixups + box_unlink_and_free). Save/restore for the recursion. */
+	extern const char *macsurf_talloc_free_ctx;
+	const char *prev_ctx = macsurf_talloc_free_ctx;
+	macsurf_talloc_free_ctx = "box_free";
 
 	/* free children first */
 	for (child = box->children; child; child = next) {
@@ -279,6 +324,8 @@ void box_free(struct box *box)
 
 	/* last this box */
 	box_free_box(box);
+
+	macsurf_talloc_free_ctx = prev_ctx;
 }
 
 

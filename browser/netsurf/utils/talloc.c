@@ -167,13 +167,18 @@ static inline struct talloc_chunk *talloc_chunk_from_ptr(const void *ptr)
 	if (unlikely((tc->flags & (TALLOC_FLAG_FREE | ~0xF)) != TALLOC_MAGIC)) {
 		if (tc->flags & TALLOC_FLAG_FREE) {
 			/* fixes907 -- freed chunk: header (incl. name) survives the
-			 * free, so tc->name is a live type/location literal. */
+			 * free, so tc->name is a live type/location literal.
+			 * fixes908 -- first-free= is the path that first freed this box
+			 * (from the box_talloc_destructor ring); during= is the path
+			 * doing the second (double) free right now. */
+			extern const char *macsurf_box_freed_lookup(void *box);
 			macsurf_debug_log_writef(
 				"TALLOC CORRUPT double-free chunk=%p size=%ld"
-				" name=%s during=%s",
+				" name=%s during=%s first-free=%s",
 				(void *)ptr, (long)tc->size,
 				tc->name ? tc->name : "?",
-				macsurf_talloc_free_ctx);
+				macsurf_talloc_free_ctx,
+				macsurf_box_freed_lookup((void *)ptr));
 			TALLOC_ABORT("Bad talloc magic value - double free");
 		} else {
 			/* fixes907 -- magic wrong / never a chunk: name may be garbage,
