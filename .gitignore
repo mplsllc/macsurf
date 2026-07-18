@@ -94,3 +94,16 @@ harness/jquery-3.7.1.min.js
 # minified output does not belong in this repo's history; the tests SKIP cleanly
 # when it is absent (fetch it from the site's HAR to run that leg).
 harness/verbum-comments.js
+
+# Profiler / stray patch / scratch data outputs (never track at repo root)
+/gmon.out
+/*.out
+/*.diff
+/*.patch
+/*.orig
+/*.csv
+/MacSurf.sit
+
+# Editor swap files
+*.swp
+*.swo
