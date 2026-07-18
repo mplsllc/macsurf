@@ -184,6 +184,15 @@ void browser_window_handle_scrollbars(struct browser_window *bw)
 /* exported function documented in desktop/frames.h */
 nserror browser_window_invalidate_iframe(struct browser_window *bw)
 {
+	/* fixes905 (MacSurf) — belt-and-suspenders: never feed box_coords a NULL
+	 * or absent iframe box. recalculate_iframes re-links bw->box on every
+	 * reformat, so the primary fix keeps it current; this only guards the
+	 * degenerate case (no box yet / detached parent) so a stale broadcast can
+	 * never dereference a missing box. */
+	if (bw->box == NULL || bw->parent == NULL ||
+			bw->parent->current_content == NULL) {
+		return NSERROR_OK;
+	}
 	html_redraw_a_box(bw->parent->current_content, bw->box);
 	return NSERROR_OK;
 }
@@ -292,6 +301,39 @@ void browser_window_recalculate_iframes(struct browser_window *bw)
 {
 	struct browser_window *window;
 	int index;
+
+	/* fixes905 (MacSurf) — RE-LINK each iframe window to its box in the
+	 * parent's CURRENT box tree before anything touches window->box.
+	 *
+	 * window->box is set ONCE, at browser_window_create_iframes, and NULLed
+	 * only at destroy. But a reconvert rebuilds the parent's box tree from the
+	 * (JS-mutated) DOM -- freeing the OLD iframe boxes and creating new ones --
+	 * without re-running create_iframes. window->box then dangles at a freed
+	 * box, and browser_window_invalidate_iframe -> html_redraw_a_box ->
+	 * box_coords walks that freed box's parent chain (observed wild ptr
+	 * 0x40408200, well below the app heap) -> crash. The reconvert rebuilt the
+	 * content's iframe list (html_get_iframe) with the NEW boxes, in the same
+	 * DOM order create_iframes consumed, so re-point each window at its new box
+	 * and fix the box->iframe backlink. This runs on every CONTENT_MSG_REFORMAT,
+	 * so a reconvert's reformat re-links before any later iframe redraw. */
+	if (bw->iframes != NULL && bw->iframe_count > 0 &&
+			bw->current_content != NULL &&
+			content_get_type(bw->current_content) == CONTENT_HTML) {
+		struct content_html_iframe *cur =
+				html_get_iframe(bw->current_content);
+		index = 0;
+		while (cur != NULL && index < bw->iframe_count) {
+			window = &(bw->iframes[index]);
+			if (window->box != cur->box) {
+				window->box = cur->box;
+				if (cur->box != NULL) {
+					cur->box->iframe = window;
+				}
+			}
+			cur = cur->next;
+			index++;
+		}
+	}
 
 	for (index = 0; index < bw->iframe_count; index++) {
 		window = &(bw->iframes[index]);
