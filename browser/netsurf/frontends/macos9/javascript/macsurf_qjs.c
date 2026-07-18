@@ -1375,11 +1375,20 @@ struct qjs_wrap_entry {
 	dom_node  *node;       /* key; wrapper's single owned node ref     */
 	dom_node  *owner_doc;  /* keepalive; wrapper's single owned doc ref */
 	JSValue    val;        /* WEAK handle to the wrapper JS object      */
+	JSRuntime *rt;         /* fixes900 — the runtime that created this
+	                        * wrapper; the drain is PER-RUNTIME so an
+	                        * iframe heap-destroy cannot free the parent
+	                        * runtime's wrappers (crash B). */
 	struct qjs_wrap_entry *next;
 };
 
-/* One context per window (tabs disabled by default), so a file-static map is
- * sufficient; it is fully drained on realm reset and heap destroy. */
+/* This map is file-static and shared by EVERY runtime -- js_newheap() runs per
+ * window AND per (i)frame, so on a page with an iframe there are multiple live
+ * runtimes with entries here at once. It is drained on realm reset and heap
+ * destroy, but ONLY for the runtime being torn down (fixes900): draining every
+ * bucket unconditionally used to unref the PARENT document's node + keepalive
+ * refs when an iframe closed, freeing the parent's document out from under its
+ * still-live runtime -> the js_shape_hash_unlink / null-fn-ptr crash. */
 static struct qjs_wrap_entry *s_wrap_buckets[QJS_WRAP_BUCKETS];
 
 /* install is defined far below; wrap (just under here) folds it in on miss. */
@@ -1401,7 +1410,8 @@ static struct qjs_wrap_entry *qjs_wrap_lookup(dom_node *node)
 }
 
 /* Returns 1 on success, 0 on malloc failure (caller degrades gracefully). */
-static int qjs_wrap_insert(dom_node *node, dom_node *owner_doc, JSValue val)
+static int qjs_wrap_insert(dom_node *node, dom_node *owner_doc, JSValue val,
+		JSRuntime *rt)
 {
 	unsigned int h = qjs_wrap_hash(node);
 	struct qjs_wrap_entry *e =
@@ -1410,6 +1420,7 @@ static int qjs_wrap_insert(dom_node *node, dom_node *owner_doc, JSValue val)
 	e->node = node;
 	e->owner_doc = owner_doc;
 	e->val = val;
+	e->rt = rt;             /* fixes900 — owning runtime for the per-rt drain */
 	e->next = s_wrap_buckets[h];
 	s_wrap_buckets[h] = e;
 	return 1;
@@ -1441,48 +1452,50 @@ static void qjs_wrap_remove(dom_node *node)
  * drop the node ref AND the owner-document keepalive ref, THEN clear the entry.
  * Never touches e->val — the JS object may already be gone after JS_FreeContext;
  * the matching finalizer (if it runs later) finds no map entry and no-ops. */
-static void qjs_wrap_drain(void)
+static void qjs_wrap_drain(JSRuntime *rt)
 {
 	unsigned int i;
 	int cleaned = 0;
-	int foreign = 0;
-	dom_document *cur = g_qjs_document;
+	int kept = 0;
 	for (i = 0; i < QJS_WRAP_BUCKETS; i++) {
 		struct qjs_wrap_entry *e = s_wrap_buckets[i];
+		struct qjs_wrap_entry *prev = NULL;
 		while (e != NULL) {
 			struct qjs_wrap_entry *next = e->next;
-			/* fixes867 (#293) — count wrappers we are releasing that belong
-			 * to a DIFFERENT document than the realm being reset. */
-			if (e->owner_doc != (dom_node *)cur) foreign++;
+			/* fixes900 — PER-RUNTIME drain. Only release wrappers created by
+			 * the runtime being torn down. An entry belonging to a DIFFERENT,
+			 * still-live runtime (the classic case: the parent document's
+			 * wrappers while an IFRAME heap is being destroyed) is LEFT LINKED
+			 * -- unref'ing its node + document-keepalive here would free the
+			 * parent's DOM out from under its live runtime, which is crash B
+			 * (fixes867 merely COUNTED these 'foreign' entries and freed them
+			 * anyway). rt==NULL means "drain everything" (final process
+			 * teardown), preserving the old behaviour for that one case. */
+			if (rt != NULL && e->rt != rt) {
+				prev = e;
+				kept++;
+				e = next;
+				continue;
+			}
+			if (prev == NULL) s_wrap_buckets[i] = next;
+			else prev->next = next;
 			if (e->node)      macsurf_dom_node_unref(e->node);
 			if (e->owner_doc) macsurf_dom_node_unref(e->owner_doc);
 			free(e);
 			cleaned++;
 			e = next;
 		}
-		s_wrap_buckets[i] = NULL;
 	}
-	/* fixes867 (#293) — was "qjs wrap_drain: %d wrapper(s) released", which the
-	 * failures-only gate DROPS, so this has never reached disk.
-	 *
-	 * `foreign` is the whole point, and it answers a live architectural
-	 * question with a number instead of an argument. This map is file-static
-	 * and shared by EVERY runtime (its own comment at the declaration says
-	 * "one context per window ... so a file-static map is sufficient" — which
-	 * js_newheap() running per-(i)frame contradicts), and this drain walks
-	 * every bucket unconditionally on realm-reset and heap-destroy. So when an
-	 * IFRAME resets its realm, it may be releasing the PARENT's live wrappers'
-	 * node refs and doc keepalives.
-	 *   foreign == 0 always  -> the bug is theoretical; partitioning the map
-	 *                           can wait for the window.parent work.
-	 *   foreign  > 0         -> it is REAL and biting today, and the map MUST
-	 *                           be partitioned before wrapper count grows
-	 *                           (i.e. before real DOM traversal lands).
-	 * That is the Phase 2-blocks-Phase-3-or-Phase-4 decision, settled by
-	 * observation rather than by my reading. */
+	/* fixes900 — `kept` (wrappers left linked because they belong to another
+	 * live runtime) replaces fixes867's `foreign` counter: a non-zero `kept`
+	 * on an iframe teardown is exactly the parent's wrappers we now correctly
+	 * DECLINE to free. The old code counted them and freed them anyway (crash
+	 * B). rt keys the ownership; g_qjs_document is no longer consulted here (it
+	 * is a single stale-prone global — the reason the old owner_doc match was
+	 * unreliable). */
 	macsurf_debug_log_writef(
-		"WORK wrapmap drain freed=%d foreign=%d curdoc=%p heap=%p",
-		cleaned, foreign, (void *)cur, (void *)g_heap);
+		"WORK wrapmap drain freed=%d kept-foreign=%d heap=%p",
+		cleaned, kept, (void *)g_heap);
 }
 
 /* Pointer-validate guard (ON from phase one).  Single chokepoint every accessor
@@ -1569,7 +1582,7 @@ static JSValue qjs_wrap_element(JSContext *ctx, dom_element *el)
 	owner_doc = (dom_node *)g_qjs_document;
 	if (owner_doc) macsurf_dom_node_ref(owner_doc);
 
-	if (qjs_wrap_insert(node, owner_doc, obj) == 0) {
+	if (qjs_wrap_insert(node, owner_doc, obj, JS_GetRuntime(ctx)) == 0) {
 		/* malloc failed: degrade to a dead wrapper rather than leak or
 		 * crash.  Drop BOTH refs now and null the opaque so the finalizer
 		 * and the accessor guard both no-op on this object. */
@@ -2910,7 +2923,7 @@ static JSValue qjs_wrap_text_node(JSContext *ctx, dom_text *tn)
 	owner_doc = (dom_node *) g_qjs_document;
 	if (owner_doc) macsurf_dom_node_ref(owner_doc);
 
-	if (qjs_wrap_insert(node, owner_doc, obj) == 0) {
+	if (qjs_wrap_insert(node, owner_doc, obj, JS_GetRuntime(ctx)) == 0) {
 		JS_SetOpaque(obj, NULL);
 		macsurf_dom_node_unref(node);
 		if (owner_doc) macsurf_dom_node_unref(owner_doc);
@@ -3065,7 +3078,7 @@ static JSValue qjs_wrap_fragment(JSContext *ctx, dom_document_fragment *frag)
 	owner_doc = (dom_node *) g_qjs_document;
 	if (owner_doc) macsurf_dom_node_ref(owner_doc);
 
-	if (qjs_wrap_insert(node, owner_doc, obj) == 0) {
+	if (qjs_wrap_insert(node, owner_doc, obj, JS_GetRuntime(ctx)) == 0) {
 		JS_SetOpaque(obj, NULL);
 		macsurf_dom_node_unref(node);
 		if (owner_doc) macsurf_dom_node_unref(owner_doc);
@@ -5879,7 +5892,7 @@ void js_destroyheap(struct jsheap *heap)
 	}
 	/* fixes541: release any wrappers whose finalizer JS_FreeContext did not
 	 * run (obj->method reference cycles); both halves, then clear. */
-	qjs_wrap_drain();
+	qjs_wrap_drain(heap->rt);
 	/* fixes888 (#304) — unlink BEFORE JS_FreeRuntime, not after. The runtime
 	 * teardown runs finalizers, and anything they touch that scans g_heap_list
 	 * must not find this heap: its ctx is already gone and its rt is in the
@@ -5949,7 +5962,7 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 			/* fixes541: release every old-page wrapper's node ref AND
 			 * owner-document keepalive, then clear the map, before the
 			 * fresh context wraps anything.  Both halves, then clear. */
-			qjs_wrap_drain();
+			qjs_wrap_drain(heap->rt);
 			heap->ctx = fresh;
 			/* fixes875 (#304) — a NEW realm, so a NEW generation. This is
 			 * the reuse that bites: JS_FreeContext just above returned the

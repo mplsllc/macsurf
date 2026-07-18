@@ -3034,6 +3034,73 @@ int main(void)
 	fprintf(stderr, "=== Test 29 PASS: reconvert over a JS-created subtree "
 			"(markers/floats/img/innerHTML/removeChild) is ASan-clean ===\n");
 
+	/* --- Test 30 (fixes900): closing an IFRAME heap must NOT free the PARENT
+	 * runtime's DOM wrappers. THE crash the whole reconvert hunt actually kept
+	 * hitting (crash B): the durable ReconvPos marker on hardware said the
+	 * bomb was in qjs_flush_timers/realm teardown, not the box build. Root
+	 * cause: qjs_wrap_drain walked the GLOBAL, file-static wrap map (shared by
+	 * every runtime) and, on ANY js_destroyheap, unref'd + freed EVERY entry --
+	 * so tearing down an iframe freed the parent document's node + keepalive
+	 * refs out from under its still-live runtime -> next parent DOM/JS op calls
+	 * through freed memory -> PC=0 / js_shape_hash_unlink. On hardware the
+	 * trigger is the reconvert rebuilding hackaday's iframe (~box node 60-80).
+	 *
+	 * Repro: parent runtime holds an ORPHAN element whose ONLY ref is its
+	 * wrapper; a second (iframe) heap wraps its own nodes; destroy the iframe;
+	 * then the parent natively derefs its orphan. Pre-fix the orphan's node was
+	 * freed by the iframe drain -> ASan heap-use-after-free at appendChild.
+	 * VERIFIED RED against the unconditional-drain code, GREEN with the
+	 * per-runtime drain (fixes900). */
+	fprintf(stderr, "\n=== Test 30: iframe heap-destroy must not free the "
+			"parent runtime's wrappers (crash B) ===\n");
+	{
+		struct jsheap *ih = NULL;
+		struct jsthread *it = NULL;
+		const char *parent_wrap =
+			"globalThis.__orphan = document.createElement('div');"
+			"var b = document.body; var d = document.documentElement;";
+		const char *iframe_wrap = "var x = document.body;";
+		/* NATIVE deref of the parent orphan; pre-fix its node is freed. */
+		const char *parent_use =
+			"globalThis.__orphan.appendChild("
+				"document.createElement('span'));"
+			"if(globalThis.__orphan.nodeType!==1)"
+				"throw new Error('ASSERT FAIL: parent wrapper lost');";
+		unsigned char ok;
+
+		ok = js_exec(thread, (const unsigned char *)parent_wrap,
+				strlen(parent_wrap), "t30-parent-wrap.js");
+		if (!ok) { fprintf(stderr, "FAIL: t30 parent wrap\n"); return 1; }
+
+		nerr = js_newheap(20000, &ih);
+		if (nerr != NSERROR_OK) {
+			fprintf(stderr, "FAIL: t30 iframe heap nerr=%d\n", (int)nerr);
+			return 1;
+		}
+		nerr = js_newthread(ih, NULL, (void *)&htmlc, &it);
+		if (nerr != NSERROR_OK) {
+			fprintf(stderr, "FAIL: t30 iframe thread nerr=%d\n", (int)nerr);
+			return 1;
+		}
+		ok = js_exec(it, (const unsigned char *)iframe_wrap,
+				strlen(iframe_wrap), "t30-iframe-wrap.js");
+		(void) ok;
+
+		/* Close the iframe: drains ONLY its own runtime's wrappers now. */
+		js_destroyheap(ih);
+
+		/* Parent must still natively deref its orphan wrapper. */
+		ok = js_exec(thread, (const unsigned char *)parent_use,
+				strlen(parent_use), "t30-parent-use.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: t30 parent wrapper freed by iframe "
+					"teardown (crash B)\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 30 PASS: parent wrappers survive an iframe "
+			"heap-destroy (crash B closed) ===\n");
+
 	free(html_src_big);
 	return 0;
 }
