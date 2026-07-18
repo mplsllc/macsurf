@@ -1061,6 +1061,9 @@ box_normalise_inline_container(struct box *cont,
 
 			if (child->children == NULL) {
 				/* the child has destroyed itself: remove float */
+				extern const char *macsurf_talloc_free_ctx;
+				const char *prev_nf = macsurf_talloc_free_ctx;
+
 				if (child->prev == NULL)
 					child->parent->children = child->next;
 				else
@@ -1070,7 +1073,11 @@ box_normalise_inline_container(struct box *cont,
 				else
 					child->parent->last = child->prev;
 
+				/* fixes909 -- name this specific free site so a
+				 * TALLOC_ABORT here reads during=normalise-float-remove. */
+				macsurf_talloc_free_ctx = "normalise-float-remove";
 				box_free(child);
+				macsurf_talloc_free_ctx = prev_nf;
 			}
 			break;
 		case BOX_FLEX:

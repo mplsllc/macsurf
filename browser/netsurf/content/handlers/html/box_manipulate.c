@@ -314,7 +314,11 @@ void box_free(struct box *box)
 	 * table fixups + box_unlink_and_free). Save/restore for the recursion. */
 	extern const char *macsurf_talloc_free_ctx;
 	const char *prev_ctx = macsurf_talloc_free_ctx;
-	macsurf_talloc_free_ctx = "box_free";
+	/* fixes909 -- only claim the generic "box_free" label when no more
+	 * specific site label (e.g. box_normalise's) is already in flight, so a
+	 * caller's site name survives through this recursion to the abort. */
+	macsurf_talloc_free_ctx =
+		(prev_ctx == NULL || prev_ctx[0] == '(') ? "box_free" : prev_ctx;
 
 	/* free children first */
 	for (child = box->children; child; child = next) {
