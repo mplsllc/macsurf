@@ -107,3 +107,18 @@ harness/verbum-comments.js
 # Editor swap files
 *.swp
 *.swo
+
+# Compiled test/tool binaries (rebuildable from the sources beside them)
+/quickjs-macos9/qjs_test
+/macTLS/tests/host/test_tls13_handshake
+/macTLS/tests/host/test_tls13_keysched
+/macTLS/tests/host/test_tls13_record
+/macTLS/tests/host/test_tls13_ticket
+/macTLS/tests/host/test_tls13_ticket_cache
+
+# Retired Go TLS proxy -- superseded by native macTLS, kept locally only
+/proxy/
+
+# Dead CVS metadata from vendored upstream test suites
+CVS/
+.cvsignore
