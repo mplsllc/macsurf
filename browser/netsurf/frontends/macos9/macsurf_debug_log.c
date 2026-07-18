@@ -247,8 +247,16 @@ static void macsurf_debug_log_buffer_flush(void);
  * WITHOUT opening the whole WORK / verbose firehose. Remove this line to return
  * the log to crash-basic. The breadcrumb CODE ships unconditionally and is
  * runtime-gated by macos9_reconvert_in_progress; this macro only controls
- * whether the emitted lines reach disk. */
-#define MACSURF_VERBOSE_RECONVERT 1
+ * whether the emitted lines reach disk.
+ *
+ * fixes904 — OFF now that the reconvert crash is closed (fixes900-903). This
+ * both returns the log to crash-basic (drops the WORK reconvert/timer flood)
+ * AND -- via the guards on macsurf_reconv_pos_flush / _reconv_flush below --
+ * kills the per-node FlushVol cost, which the SYNCHRONOUS reconvert (fixes903)
+ * had packed into one blocking pass (~150 volume syncs per rebuild = a large
+ * chunk of the "sluggish"). Re-`#define MACSURF_VERBOSE_RECONVERT 1` to re-arm
+ * the whole hunt (log lines + durable ReconvPos marker) if it ever recurs. */
+/* #define MACSURF_VERBOSE_RECONVERT 1 */
 
 /* fixes895 — phase-scoped eager flush. While non-zero, macsurf_debug_log_write
  * FlushVols every line it keeps, so the in-flight reconvert/timer breadcrumbs
@@ -261,7 +269,11 @@ static int g_log_reconv_flush = 0;
 void
 macsurf_debug_log_reconv_flush(int on)
 {
+#ifdef MACSURF_VERBOSE_RECONVERT
 	g_log_reconv_flush = on ? 1 : 0;
+#else
+	(void) on;   /* fixes904 — trace off: never arm the per-line FlushVol */
+#endif
 }
 
 /* ------------------------------------------------------------------
@@ -993,6 +1005,7 @@ macsurf_reconv_pos_set(const char *phase, long seq, long node_ix,
 }
 
 #ifdef __MACOS9__
+#ifdef MACSURF_VERBOSE_RECONVERT   /* fixes904 — only compiled when the hunt is armed */
 static short g_pos_ref = 0;
 static short g_pos_vref = 0;
 static int   g_pos_open = 0;
@@ -1047,10 +1060,17 @@ macsurf_reconv_pos_open(void)
 	g_pos_vref = vRefNum;
 	g_pos_open = 1;
 }
+#endif /* MACSURF_VERBOSE_RECONVERT (fixes904) */
 
 void
 macsurf_reconv_pos_flush(void)
 {
+	/* fixes904 — trace off (MACSURF_VERBOSE_RECONVERT undefined): the whole
+	 * durable-marker body compiles out, so there is NO per-node FlushVol. The
+	 * synchronous reconvert (fixes903) ran ~150 of these in one blocking pass;
+	 * removing them is a real speedup, not just log hygiene. Re-arm the macro
+	 * to restore the durable ReconvPos.txt marker for a future crash hunt. */
+#ifdef MACSURF_VERBOSE_RECONVERT
 	long count;
 	size_t plen;
 
@@ -1069,6 +1089,7 @@ macsurf_reconv_pos_flush(void)
 	(void)SetEOF(g_pos_ref, (long)plen + 1);
 	if (g_pos_vref != 0)
 		(void)FlushVol(NULL, g_pos_vref);
+#endif
 }
 #else
 void
