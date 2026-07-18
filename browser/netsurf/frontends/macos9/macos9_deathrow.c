@@ -133,6 +133,32 @@ macos9_deathrow_drain(void)
 		return;
 	}
 
+	/* fixes901 — NEVER free while a reconvert box build is in flight. The
+	 * reconvert yields between batches, and op_depth returns to 0 in that gap,
+	 * so a deferred free draining here -- e.g. a blocked tracker/image
+	 * content_destroy on hackaday -- ran content teardown against a half-rebuilt
+	 * tree (the box-node-80 crash the durable ReconvPos marker points at). Hold
+	 * every deferred free until html_reconvert_done clears the flag; they drain
+	 * on the first poll after. Delaying a deferred free is always safe -- the
+	 * object was already condemned; only the timing changes. */
+	{
+		extern int macsurf_reconvert_in_progress;
+		if (macsurf_reconvert_in_progress) {
+			return;
+		}
+	}
+
+	/* fixes901 — poll-level flush of the fixes552 deferred-CONTENT list
+	 * (macos9_content_drain_deferred). It is normally drained by the box-convert
+	 * wrapper per batch, but that call is suppressed during a reconvert, so
+	 * drain it here once the reconvert is done. Runs only at op_depth==0 and
+	 * !in_progress; its content_destroy()s re-enqueue onto THIS table, which the
+	 * loop below then frees. Normally the list is empty (a no-op). */
+	{
+		extern void macos9_content_drain_deferred(void);
+		macos9_content_drain_deferred();
+	}
+
 	dr_in_drain = 1;
 
 	for (i = 0; i < dr_count; i++) {

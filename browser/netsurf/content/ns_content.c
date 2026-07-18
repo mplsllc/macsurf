@@ -464,6 +464,18 @@ static int macos9_defer_count = 0;
 
 void macos9_content_drain_deferred(void)
 {
+	/* fixes901 — suppress the deferred-content free-drain while a reconvert box
+	 * build is in flight. The box-convert wrapper calls this between batches;
+	 * a content_destroy running in that gap on a half-rebuilt tree is the
+	 * box-node-80 reconvert crash. The frees accumulate here and drain on the
+	 * first poll after html_reconvert_done clears the flag (via the poll-level
+	 * call added in macos9_deathrow_drain). */
+	{
+		extern int macsurf_reconvert_in_progress;
+		if (macsurf_reconvert_in_progress) {
+			return;
+		}
+	}
 	while (macos9_defer_count > 0) {
 		struct content *dc = macos9_defer_list[--macos9_defer_count];
 		macos9_defer_list[macos9_defer_count] = NULL;

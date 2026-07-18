@@ -2421,6 +2421,17 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 		return;
 	}
 
+	/* fixes901 — durable marker: THIS batch's _inner actually started. If a
+	 * reconvert bombs with ReconvPos at "wrapper-pre-drain" (previous batch)
+	 * and never reaches "batch-enter", the death is in the inter-batch poll
+	 * (death-row/deferred drain -- now gated -- or an image-fetch callback);
+	 * if it reaches "batch-enter" the death is back inside box construction. */
+	if (macsurf_reconvert_in_progress) {
+		macsurf_reconv_pos_set("batch-enter",
+			(long) macsurf_reconvert_seq, (long) g_reconv_node_ix, "");
+		macsurf_reconv_pos_flush();
+	}
+
 	do {
 		convert_children = true;
 
@@ -2643,6 +2654,16 @@ static void convert_xml_to_box(struct box_construct_ctx *ctx)
 
 	g_walk_content = NULL;
 	g_walk_gen = 0;
+	/* fixes901 — durable marker for the inter-batch gap. If a reconvert still
+	 * bombs with ReconvPos at "wrapper-pre-drain" (not "batch-yield"), the
+	 * schedule/return survived and the death is in the drain or the poll after;
+	 * if it stays at "batch-yield", the death is the schedule/return itself.
+	 * ctx may be freed here -- use globals only, no ctx deref. */
+	if (macsurf_reconvert_in_progress) {
+		macsurf_reconv_pos_set("wrapper-pre-drain",
+			(long) macsurf_reconvert_seq, (long) g_reconv_node_ix, "");
+		macsurf_reconv_pos_flush();
+	}
 	macos9_content_drain_deferred();
 }
 
