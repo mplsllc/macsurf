@@ -149,16 +149,41 @@ struct talloc_chunk {
 #define TC_HDR_SIZE ((sizeof(struct talloc_chunk)+15)&~15)
 #define TC_PTR_FROM_CHUNK(tc) ((void *)(TC_HDR_SIZE + (char*)tc))
 
+/* fixes907 (reconvert double-free hunt) -- names the box-tree free currently in
+ * flight, set by html.c around the reconvert-old-tree free and the
+ * content-destroy bctx free. A TALLOC_ABORT then reports WHICH free path caught
+ * the corruption ("during=") plus WHAT chunk (talloc name/size), which localizes
+ * the double-free the hardware log shows on nav-away from a reconverted page. */
+const char *macsurf_talloc_free_ctx = "(none)";
+#ifndef __MACOS9__
+extern void macsurf_debug_log_writef(const char *fmt, ...);
+#endif
+
 /* panic if we get a bad magic value */
 static inline struct talloc_chunk *talloc_chunk_from_ptr(const void *ptr)
 {
 	const void *pp = ((const char *)ptr) - TC_HDR_SIZE;
 	struct talloc_chunk *tc = discard_const_p(struct talloc_chunk, pp);
-	if (unlikely((tc->flags & (TALLOC_FLAG_FREE | ~0xF)) != TALLOC_MAGIC)) { 
+	if (unlikely((tc->flags & (TALLOC_FLAG_FREE | ~0xF)) != TALLOC_MAGIC)) {
 		if (tc->flags & TALLOC_FLAG_FREE) {
-			TALLOC_ABORT("Bad talloc magic value - double free"); 
+			/* fixes907 -- freed chunk: header (incl. name) survives the
+			 * free, so tc->name is a live type/location literal. */
+			macsurf_debug_log_writef(
+				"TALLOC CORRUPT double-free chunk=%p size=%ld"
+				" name=%s during=%s",
+				(void *)ptr, (long)tc->size,
+				tc->name ? tc->name : "?",
+				macsurf_talloc_free_ctx);
+			TALLOC_ABORT("Bad talloc magic value - double free");
 		} else {
-			TALLOC_ABORT("Bad talloc magic value - unknown value"); 
+			/* fixes907 -- magic wrong / never a chunk: name may be garbage,
+			 * so log only the numeric fields (no %s). */
+			macsurf_debug_log_writef(
+				"TALLOC CORRUPT unknown chunk=%p flags=%lx size=%ld"
+				" during=%s",
+				(void *)ptr, (unsigned long)tc->flags,
+				(long)tc->size, macsurf_talloc_free_ctx);
+			TALLOC_ABORT("Bad talloc magic value - unknown value");
 		}
 	}
 	return tc;

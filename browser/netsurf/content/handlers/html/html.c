@@ -2039,7 +2039,18 @@ static void html_reconvert_free_old(void)
 		 * would have handed to the next click. Pair this number with the
 		 * "MISSED(float/marker)=N" line from H1. */
 		before = macsurf_box_backlink_cleared;
-		talloc_free(g_reconvert_old_bctx);
+		/* fixes907 -- name this free so a TALLOC_ABORT during it is
+		 * attributable; log the root so it correlates with the
+		 * content-destroy free-layout bctx=%p on nav-away. */
+		{
+			extern const char *macsurf_talloc_free_ctx;
+			macsurf_debug_log_writef(
+				"TALLOC-INFO reconvert-free old_bctx=%p",
+				(void *)g_reconvert_old_bctx);
+			macsurf_talloc_free_ctx = "reconvert-old-tree";
+			talloc_free(g_reconvert_old_bctx);
+			macsurf_talloc_free_ctx = "(none)";
+		}
 		g_reconvert_old_bctx = NULL;
 		macsurf_debug_log_writef(
 			"WORK reconvert: old tree freed -- %ld stale backlinks retracted"
@@ -2694,11 +2705,24 @@ static void html_destroy_iframe(struct content_html_iframe *iframe)
 
 static void html_free_layout(html_content *htmlc)
 {
+	extern const char *macsurf_talloc_free_ctx;
+
 	if (htmlc->bctx != NULL) {
 		/* freeing talloc context should let the entire box
 		 * set be destroyed
 		 */
+		/* fixes907 -- label this free so a TALLOC_ABORT during it names the
+		 * path. The hardware crash fires on nav-away right after NAV DONE,
+		 * i.e. destroying a page whose box tree was rebuilt by reconvert; if
+		 * the double-free lands here the reconverted live tree still holds an
+		 * already-freed (double-linked) box. bctx=%p correlates with the
+		 * reconvert "old tree" pointer. */
+		macsurf_debug_log_writef(
+			"TALLOC-INFO free-layout bctx=%p (during=content-destroy)",
+			(void *)htmlc->bctx);
+		macsurf_talloc_free_ctx = "content-destroy-bctx";
 		talloc_free(htmlc->bctx);
+		macsurf_talloc_free_ctx = "(none)";
 	}
 }
 

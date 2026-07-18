@@ -637,6 +637,10 @@ macsurf_log_is_crash_report(const char *m)
 	if (strstr(m, "ABORT") != NULL) return 1;
 	if (strstr(m, "NOMEM") != NULL) return 1;
 	if (strstr(m, "CORRUPT") != NULL) return 1;
+	/* fixes907 -- talloc heap corruption + the reconvert double-free hunt's
+	 * tree-free breadcrumbs. A legitimate crash-forensics class, so it stays
+	 * in the permanent crash-only gate (not behind a verbose macro). */
+	if (strstr(m, "TALLOC") != NULL) return 1;
 	/* fixes765 (2.0 release): keep ONLY the one-line-per-launch #207
 	 * partition-bounds diagnostic (still useful if a field user with a
 	 * high-RAM Mac reports a blank page). All the other RECON reconnaissance
