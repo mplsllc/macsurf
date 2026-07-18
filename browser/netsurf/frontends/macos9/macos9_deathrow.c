@@ -148,17 +148,18 @@ macos9_deathrow_drain(void)
 		}
 	}
 
-	/* fixes901 — poll-level flush of the fixes552 deferred-CONTENT list
-	 * (macos9_content_drain_deferred). It is normally drained by the box-convert
-	 * wrapper per batch, but that call is suppressed during a reconvert, so
-	 * drain it here once the reconvert is done. Runs only at op_depth==0 and
-	 * !in_progress; its content_destroy()s re-enqueue onto THIS table, which the
-	 * loop below then frees. Normally the list is empty (a no-op). */
-	{
-		extern void macos9_content_drain_deferred(void);
-		macos9_content_drain_deferred();
-	}
-
+	/* fixes906 — REMOVED the fixes901 poll-level macos9_content_drain_deferred()
+	 * call that used to sit here. It ran content_destroy() (broadcasts,
+	 * callbacks, frees) BEFORE dr_in_drain was set, so a re-entrant
+	 * macos9_deathrow_drain (via that callback chain) saw dr_in_drain==0,
+	 * proceeded, and drained dr_table -- then the outer drain drained it AGAIN
+	 * -> double-free -> corrupted free list -> the Block_link crash in the
+	 * death-row hlcache teardown (CW stack, iMac). It was also redundant: with
+	 * the SYNCHRONOUS reconvert (fixes903) the convert wrapper
+	 * (convert_xml_to_box) drains the deferred-content list itself after the
+	 * build, with in_progress already cleared by html_reconvert_done. So the
+	 * death row must ONLY ever run its own dr_table free -- never re-enter
+	 * content teardown. */
 	dr_in_drain = 1;
 
 	for (i = 0; i < dr_count; i++) {
