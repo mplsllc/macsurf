@@ -4,12 +4,6 @@
 
 <p align="center"><strong>The modern web, on a 25-year-old Mac.</strong></p>
 
-<p align="center"><strong>
-  Submit logs directly from your mac! Link tested on IE 5 and Netscape 4.77/7. Also includes a link
-  to a much more comprensive logger verson of MacSurf.
-  - <a href="http://macsurf.org/debugs.html">http://macsurf.org/debugs.html</a></strong>
-</p>
-
 <p align="center">
   A native web browser for Classic Mac OS 9 on PowerPC — real CSS3, modern JavaScript, and HTTPS, running on a G3 iMac. No proxy, no second machine.
 </p>
