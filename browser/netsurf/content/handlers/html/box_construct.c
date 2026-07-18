@@ -2342,11 +2342,27 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 	 * ~10x fewer round-trips. Bigger batches also mean FEWER yield windows, so
 	 * the per-batch liveness guards run less often, not more (no added UAF
 	 * exposure). This does NOT touch the JS reconvert path (still disabled). */
-	/* fixes895 — during a re-convert only, drop the batch to 20 so the durable
-	 * per-batch position marker localizes a crash to a 20-node window instead of
-	 * 100. Cold page loads keep 100 (no perf regression on normal navigation). */
+	/* fixes902 — a RECONVERT runs to completion in ONE uninterrupted pass (no
+	 * self-reschedule), i.e. an ATOMIC box build.
+	 *
+	 * The reconvert yielded every N nodes purely for UI responsiveness during
+	 * the initial LOAD -- but a reconvert runs on an ALREADY-LOADED page (the
+	 * quiesce guard requires base.active==0 to start), and the object fetches it
+	 * starts are ASYNC (html_fetch_object registers them; they do not block the
+	 * build -- their callbacks fire later in the poll). Every inter-batch yield
+	 * therefore opened a window where an async fetch-object callback, a
+	 * death-row/deferred free, or a scheduled continuation ran against the
+	 * HALF-REBUILT tree -- the box-node-60/80 crash the hunt kept chasing head
+	 * to head (fixes901 gated the drains; the callback was next). Removing the
+	 * explicit yield closes the ENTIRE class at once: the build finishes, then
+	 * html_reconvert_done runs, THEN the poll delivers callbacks/drains on the
+	 * COMPLETE tree. Cost: the event loop blocks for the ~loaded-page box build
+	 * (~hundreds of ms); acceptable and far better than the crash, and Layer 2
+	 * (incremental) removes the whole-tree rebuild anyway. Cold LOADS keep the
+	 * 100-node yield (they genuinely wait on network and must stay responsive).
+	 * The cap is a large finite backstop, not a live yield point on real pages. */
 	const uint32_t max_processed_before_yield =
-			macsurf_reconvert_in_progress ? 20 : 100;
+			macsurf_reconvert_in_progress ? 0x7FFFFFFFu : 100;
 
 	/* fixes519: validate the content BEFORE any access to it — the log line
 	 * below dereferences ctx->content.  convert_xml_to_box is static and is
