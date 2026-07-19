@@ -654,14 +654,38 @@ html_object_callback(hlcache_handle *object,
 					  false,
 					  c->base.available_width,
 					  c->base.available_height);
-		} else if (event->type == CONTENT_MSG_READY) {
+		} else {
 			/* fixes797 (#235): still inside the throttle window.
 			 * The DONE-only guaranteed reflow will never fire for
 			 * these READY-only images, so dropping here would leave
 			 * a late-linked <img> squashed until the next nav. Defer
 			 * one coalesced reflow to just past the window instead
 			 * (cancel any pending, reschedule) so the trailing link
-			 * always gets sized -- and only once, no #208 storm. */
+			 * always gets sized -- and only once, no #208 storm.
+			 *
+			 * fixes916 — this was `else if (READY)`, which left a
+			 * hole: the enclosing condition admits DONE *and* READY,
+			 * so a DONE landing inside the window matched NEITHER
+			 * branch and its reflow was dropped silently, leaving the
+			 * image at unsized dimensions.
+			 *
+			 * That hole is what squashes macintoshgarden.org on a
+			 * CACHED revisit. Hardware timeline (2026-07-19):
+			 *   cold  visit: reconvert seq=1 runs BEFORE NAV DONE, so
+			 *                the page's own completion reflow follows
+			 *                and sizes everything -> images correct.
+			 *   cached visit: page completes FIRST, then reconvert
+			 *                seq=2 rebuilds the tree, frees every
+			 *                image object (H2) and re-fetches. From
+			 *                cache those images complete instantly as
+			 *                DONE, not READY, while the reconvert's
+			 *                own full layout_document has just set a
+			 *                long throttle window -> dropped -> squashed.
+			 * The cache only decides the TIMING; the hole is the bug.
+			 *
+			 * Deferring for DONE as well costs nothing extra: the
+			 * schedule is cancel-then-reschedule, so a burst of image
+			 * completions still collapses to ONE reflow. */
 			int delay = (int)(c->base.reformat_time - ms_now) + 50;
 			guit->misc->schedule(-1, html_object_deferred_reflow, c);
 			guit->misc->schedule(delay,
