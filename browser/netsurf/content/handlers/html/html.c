@@ -2115,6 +2115,8 @@ static void html_reconvert_done(html_content *c, bool success)
 		html_reconvert_free_old();   /* don't leak the deferred old tree */
 		/* fixes895 — disarm the hunt: the async span is over. */
 		macsurf_reconvert_in_progress = 0;
+		macsurf_debug_log_writef("LIFE reconvert in_progress=0 seq=%ld (done-failed)",
+				(long) macsurf_reconvert_seq);
 		macsurf_debug_log_reconv_flush(0);
 		macsurf_reconv_pos_set("reconvert-idle-FAILED",
 				(long) macsurf_reconvert_seq, 0, "");
@@ -2148,6 +2150,8 @@ static void html_reconvert_done(html_content *c, bool success)
 	macsurf_debug_log_writef(
 			"WORK reconvert #%ld: first-paint OK", (long) macsurf_reconvert_seq);
 	macsurf_reconvert_in_progress = 0;
+	macsurf_debug_log_writef("LIFE reconvert in_progress=0 seq=%ld (done-ok)",
+			(long) macsurf_reconvert_seq);
 	macsurf_debug_log_reconv_flush(0);
 	macsurf_reconv_pos_set("reconvert-idle", (long) macsurf_reconvert_seq,
 			0, "");
@@ -2204,6 +2208,8 @@ nserror html_reconvert(html_content *c)
 	 * Every exit path below (dom_to_box-failed here, both branches of _done)
 	 * disarms it. */
 	macsurf_reconvert_in_progress = 1;
+	macsurf_debug_log_writef("LIFE reconvert in_progress=1 seq=%ld (start)",
+			(long) macsurf_reconvert_seq);
 	macsurf_debug_log_reconv_flush(1);
 	macsurf_reconv_pos_set("reconvert-START", (long) macsurf_reconvert_seq,
 			0, "");
@@ -2285,6 +2291,8 @@ nserror html_reconvert(html_content *c)
 		html_reconvert_free_old();
 		/* fixes895 — disarm: html_reconvert_done will never run. */
 		macsurf_reconvert_in_progress = 0;
+		macsurf_debug_log_writef("LIFE reconvert in_progress=0 seq=%ld (doc-element-failed)",
+				(long) macsurf_reconvert_seq);
 		macsurf_debug_log_reconv_flush(0);
 		return NSERROR_DOM;
 	}
@@ -2304,6 +2312,8 @@ nserror html_reconvert(html_content *c)
 		html_reconvert_free_old();   /* dom_to_box failed: _done won't run */
 		/* fixes895 — disarm: html_reconvert_done will never run. */
 		macsurf_reconvert_in_progress = 0;
+		macsurf_debug_log_writef("LIFE reconvert in_progress=0 seq=%ld (dom_to_box-failed)",
+				(long) macsurf_reconvert_seq);
 		macsurf_debug_log_reconv_flush(0);
 	}
 	dom_node_unref(html);
