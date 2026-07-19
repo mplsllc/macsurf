@@ -24,6 +24,15 @@
 /* Operation-depth counter (see header). 0 == quiescent. */
 int macos9_op_depth = 0;
 
+/* fixes914 -- the death-row entry currently being torn down, or NULL when the
+ * drain is not inside a teardown. Two plain stores per entry, no I/O: a crash
+ * reporter that can still run (talloc's TALLOC_ABORT does) prints these so a
+ * teardown that never returns names itself. Replaces the fixes911 per-entry
+ * log lines, which cost a FlushVol each and still missed the victim when it
+ * fell past the line cap. */
+void *macos9_deathrow_cur_ptr = NULL;
+void *macos9_deathrow_cur_fn = NULL;
+
 /*
  * Fixed record table. Sized far above the live-content count of any real
  * page (a 50-avatar 68kmla thread is ~hundreds). The table is drained
@@ -232,11 +241,29 @@ macos9_deathrow_drain(void)
 		}
 #endif
 
+		/* fixes914 — record the victim in RAM, cost-free.
+		 *
+		 * fixes911 logged every entry so a teardown that never returns could
+		 * be named, then fixes913 turned that off because it cost 3035 log
+		 * lines (a FlushVol each) in one session. Both were the wrong shape:
+		 * the 2026-07-19 wild-pointer abort landed on entry 33, one past the
+		 * 32-line cap, so we paid for 32 flushed lines and still did not name
+		 * the victim.
+		 *
+		 * Two plain stores instead. Any crash reporter that can still run --
+		 * talloc's abort does, it is how we saw this at all -- reads them and
+		 * names the entry, with no I/O on the hot path. */
+		macos9_deathrow_cur_ptr = r->ptr;
+		macos9_deathrow_cur_fn = (void *) r->teardown;
+
 		/* Free for real. Mark the slot free FIRST so a teardown
 		 * that re-enqueues (sub-resource frees) can reuse it. */
 		r->active = 0;
 		r->teardown(r->ptr);
 		freed++;
+
+		macos9_deathrow_cur_ptr = NULL;
+		macos9_deathrow_cur_fn = NULL;
 	}
 
 	if (freed > 0) {

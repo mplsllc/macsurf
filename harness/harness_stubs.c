@@ -68,3 +68,11 @@ void macos9_schedule_cancel_owner(void *p) { (void)p; }
 struct content;
 struct selection *selection_create(struct content *c) { (void)c; return (struct selection *)malloc(1); }
 void selection_destroy(struct selection *s) { free(s); }
+
+/* fixes914 -- macos9_deathrow.c is a Mac-only frontend file and is NOT linked
+ * into the harness, but talloc.c (which IS) reads these to name the death-row
+ * entry being torn down in its corruption abort. Define them here so the
+ * harness links; they stay NULL, which is exactly the "not inside a death-row
+ * teardown" reading the field is meant to convey. */
+void *macos9_deathrow_cur_ptr = NULL;
+void *macos9_deathrow_cur_fn = NULL;

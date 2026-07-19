@@ -172,13 +172,21 @@ static inline struct talloc_chunk *talloc_chunk_from_ptr(const void *ptr)
 			 * (from the box_talloc_destructor ring); during= is the path
 			 * doing the second (double) free right now. */
 			extern const char *macsurf_box_freed_lookup(void *box);
+			extern void *macos9_deathrow_cur_ptr;
+			extern void *macos9_deathrow_cur_fn;
+			/* fixes914 -- name the death-row entry being torn down, if
+			 * any. The 2026-07-19 abort fired inside a 32+ entry drain
+			 * and we could not say which entry; these two globals cost
+			 * nothing on the hot path and answer it. dr=(nil) means the
+			 * fault was NOT inside a death-row teardown. */
 			macsurf_debug_log_writef(
 				"TALLOC CORRUPT double-free chunk=%p size=%ld"
-				" name=%s during=%s first-free=%s",
+				" name=%s during=%s first-free=%s dr=%p drfn=%p",
 				(void *)ptr, (long)tc->size,
 				tc->name ? tc->name : "?",
 				macsurf_talloc_free_ctx,
-				macsurf_box_freed_lookup((void *)ptr));
+				macsurf_box_freed_lookup((void *)ptr),
+				macos9_deathrow_cur_ptr, macos9_deathrow_cur_fn);
 			TALLOC_ABORT("Bad talloc magic value - double free");
 		} else {
 			/* fixes907 -- magic wrong / never a chunk: name may be garbage,
