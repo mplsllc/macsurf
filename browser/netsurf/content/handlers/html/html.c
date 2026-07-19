@@ -2279,6 +2279,35 @@ nserror html_reconvert(html_content *c)
 	g_reconvert_old_bctx = c->bctx;
 	c->bctx = NULL;
 	c->layout = NULL;
+
+	/* fixes915 — THE IFRAME LIST DIES WITH THE OLD bctx. Drop it here.
+	 *
+	 * content_html_iframe records are talloc CHILDREN of bctx
+	 * (box_special.c: talloc(content->bctx, struct content_html_iframe), and
+	 * iframe->name via talloc_strdup(content->bctx, ...)). So
+	 * html_reconvert_free_old's talloc_free(g_reconvert_old_bctx) frees every
+	 * record on this list -- but box construction only ever PREPENDS
+	 * (content->iframe = iframe), so without this the list becomes
+	 *     [new iframes] -> [freed old iframes]
+	 * with the dead tail still linked. Nothing walks it until teardown, and
+	 * then html_destroy_iframe reads iframe->name out of recycled memory and
+	 * hands it to talloc_free.
+	 *
+	 * That is the 2026-07-19 iMac crash, caught in the CodeWarrior debugger:
+	 *   macos9_poll -> macos9_deathrow_drain -> content_deathrow_teardown ->
+	 *   content_destroy_now -> html_destroy -> html_destroy_iframe ->
+	 *   talloc_free -> talloc_chunk_from_ptr
+	 * with ptr=0x2D6E6F74 -- which is not a pointer at all but the ASCII
+	 * bytes "-not", i.e. text that had been allocated into the freed record.
+	 * It reproduced on macintoshgarden.org, a page that reconverts.
+	 *
+	 * Dropping the head leaks nothing: box_iframes_talloc_destructor
+	 * (box_special.c) does the nsurl_unref(f->url) when talloc frees each
+	 * record with the old context. The browser-window side re-links against
+	 * the rebuilt list on the next reformat (fixes905), which is exactly why
+	 * that repair kept finding stale boxes -- it was matching against a list
+	 * with dead entries in it. */
+	c->iframe = NULL;
 	macsurf_debug_log_writef(
 		"WORK reconvert #%ld: old bctx deferred layout=NULL",
 		(long) macsurf_reconvert_seq);
