@@ -44,6 +44,21 @@ int macos9_op_depth = 0;
  * before falling back to the drained= total alone. See the call site. */
 #define MACOS9_DEATHROW_TRACE_MAX 32
 
+/* fixes913 — per-ENTRY tracing is OFF by default. fixes911 turned it on to name
+ * the victim of a teardown that never returns, and it worked, but the cost was
+ * mispriced: one hardware session emitted 3035 of its 3289 log lines here, and
+ * debug builds FlushVol every kept line (~10-50ms of HFS sync each) -- tens of
+ * seconds of stall across a session, on a browser already reported as sluggish.
+ *
+ * It also answered its question. The reconvert-window guard check it existed to
+ * test came back CLEAN on that log (zero death-row frees inside an
+ * in_progress=1..0 window, every seq balanced), so the per-entry stream is now
+ * paying a large cost to re-confirm a negative. The per-drain "drained=" total
+ * stays -- it is one line per drain and still shows the shape of the churn.
+ *
+ * Re-enable by defining this when a teardown crash needs its victim named. */
+/* #define MACOS9_DEATHROW_TRACE_ENTRIES 1 */
+
 struct deathrow_rec {
 	void *ptr;
 	void (*teardown)(void *ptr);
@@ -208,12 +223,14 @@ macos9_deathrow_drain(void)
 		 * the worst case; the drained= total below still reports everything,
 		 * so a bomb past the cap shows up as a large count with the tail
 		 * unnamed, which is the signal to raise it. */
+#ifdef MACOS9_DEATHROW_TRACE_ENTRIES
 		if (freed < MACOS9_DEATHROW_TRACE_MAX) {
 			macsurf_debug_log_writef(
 				"LIFE deathrow free slot=%d ptr=%p fn=%p pin=%p",
 				i, r->ptr, (void *) r->teardown,
 				(void *) r->pin_key);
 		}
+#endif
 
 		/* Free for real. Mark the slot free FIRST so a teardown
 		 * that re-enqueues (sub-resource frees) can reuse it. */
