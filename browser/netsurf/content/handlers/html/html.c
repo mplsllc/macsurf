@@ -2018,6 +2018,35 @@ extern void macsurf_reconv_pos_set(const char *phase, long seq, long node_ix,
 extern void macsurf_reconv_pos_flush(void);
 extern long macsurf_free_mem(void);
 
+/*
+ * fixes910 (Phase 0) — opaque dom_node refcount shims for the macos9 frontend's
+ * reconvert pending table.
+ *
+ * The frontend records WHICH node a JS binding mutated so later phases can do
+ * less work than a full rebuild. It holds that node across the ~400ms debounce,
+ * and JS may remove and free the node inside that window — so the reference is
+ * mandatory, not defensive. Storing a raw dom_node* there would be the same
+ * stale-pointer shape as the box_for_node and iframe->box crashes.
+ *
+ * These live here rather than in the frontend because frontends/macos9 carries a
+ * STUB dom/dom.h that shadows the real header under CW8's access paths; the
+ * frontend therefore keeps the node as void* and never dereferences it.
+ */
+void *macsurf_reconvert_node_ref(void *n)
+{
+	if (n == NULL) {
+		return NULL;
+	}
+	return (void *) dom_node_ref((dom_node *) n);
+}
+
+void macsurf_reconvert_node_unref(void *n)
+{
+	if (n != NULL) {
+		dom_node_unref((dom_node *) n);
+	}
+}
+
 static void html_reconvert_free_old(void)
 {
 	extern unsigned long macsurf_box_backlink_cleared;

@@ -27,6 +27,7 @@
 
 #include "macos9.h"
 #include "macsurf_debug.h"
+#include "macos9_reconvert.h"
 
 #include "netsurf/content.h"		/* content_get_type, CONTENT_HTML */
 #include "content/hlcache.h"		/* hlcache_handle_get_content     */
@@ -82,7 +83,22 @@ static unsigned long g_last_reconvert_tick = 0;
 struct macos9_reconvert_pending {
 	struct content *c;
 	unsigned long   token;
+	/* fixes910 Phase 0 — WHAT changed. `node` is an opaque, REFERENCED
+	 * dom_node (never dereferenced on this side; see macos9_reconvert.h for
+	 * why the ref is mandatory across the debounce). `multi` means more than
+	 * one distinct node/kind mutated before we fired, so precision is gone
+	 * and the consumer must assume the whole document — which is exactly
+	 * what it does today regardless. Recorded only; no consumer yet. */
+	void           *node;
+	int             kind;
+	int             multi;
 };
+
+/* fixes910 Phase 0 — implemented in content/handlers/html/html.c, where the real
+ * dom headers are safe to include (the frontend's dom/dom.h is a stub that
+ * shadows them under CW8's access paths). */
+extern void *macsurf_reconvert_node_ref(void *n);
+extern void macsurf_reconvert_node_unref(void *n);
 
 static struct macos9_reconvert_pending g_pending[RECONVERT_MAX_PENDING];
 static int g_pending_overflow = 0;
@@ -97,10 +113,38 @@ extern int macos9_content_token_valid(struct content *c, unsigned long token);
 #define macos9_content_token_valid(c, t) (1)
 #endif
 
-/* Record c as dirty. Idempotent per content, so a burst of mutations on one
- * document occupies one slot rather than filling the table. */
+/* fixes910 Phase 0 — drop this slot's node reference. Idempotent; must be
+ * called on EVERY path that releases a slot, or we leak a dom_node (which pins
+ * its whole document subtree alive). */
 static void
-macos9_reconvert_pending_add(struct content *c)
+macos9_reconvert_slot_drop_node(int i)
+{
+	if (g_pending[i].node != NULL) {
+		macsurf_reconvert_node_unref(g_pending[i].node);
+		g_pending[i].node = NULL;
+	}
+	g_pending[i].kind = MACOS9_DOMMUT_UNKNOWN;
+}
+
+/* fixes910 Phase 0 — clear a slot completely (content + node ref). */
+static void
+macos9_reconvert_slot_clear(int i)
+{
+	macos9_reconvert_slot_drop_node(i);
+	g_pending[i].c = NULL;
+	g_pending[i].token = 0;
+	g_pending[i].multi = 0;
+}
+
+/* Record c as dirty. Idempotent per content, so a burst of mutations on one
+ * document occupies one slot rather than filling the table.
+ *
+ * fixes910 Phase 0 — additionally records WHICH node changed, degrading safely:
+ * a second DISTINCT mutation collapses the slot to `multi` and forgets the node,
+ * so a consumer can only ever be MORE conservative than the truth, never less.
+ * Behaviour is unchanged today — nothing reads these fields yet. */
+static void
+macos9_reconvert_pending_add(struct content *c, void *node, int kind)
 {
 	int i;
 	int freeslot = -1;
@@ -113,6 +157,20 @@ macos9_reconvert_pending_add(struct content *c)
 			 * generation, and the newer one is what we want to
 			 * validate against at fire time. */
 			g_pending[i].token = macos9_content_token(c);
+
+			/* Merge this mutation into what the slot already holds.
+			 * Same node AND same kind = the same logical edit
+			 * repeating (a textContent loop), so stay precise;
+			 * anything else means we can no longer name one site. */
+			if (g_pending[i].multi) {
+				return;			/* already coarse */
+			}
+			if (node == NULL || g_pending[i].node == NULL ||
+			    g_pending[i].node != node ||
+			    g_pending[i].kind != kind) {
+				g_pending[i].multi = 1;
+				macos9_reconvert_slot_drop_node(i);
+			}
 			return;
 		}
 		if (g_pending[i].c == NULL && freeslot < 0)
@@ -124,6 +182,11 @@ macos9_reconvert_pending_add(struct content *c)
 	}
 	g_pending[freeslot].c = c;
 	g_pending[freeslot].token = macos9_content_token(c);
+	/* Take the reference HERE, not at the call site: this is the only place
+	 * that decides the pointer is worth keeping past the debounce. */
+	g_pending[freeslot].node = macsurf_reconvert_node_ref(node);
+	g_pending[freeslot].kind = (node != NULL) ? kind : MACOS9_DOMMUT_UNKNOWN;
+	g_pending[freeslot].multi = (node == NULL) ? 1 : 0;
 }
 
 /* fixes489 — master gate for JS-triggered re-convert.
@@ -270,8 +333,7 @@ macos9_reconvert_cb(void *p)
 		 * WRONG document. */
 		if (!macos9_content_is_live(c) ||
 		    !macos9_content_token_valid(c, g_pending[i].token)) {
-			g_pending[i].c = NULL;
-			g_pending[i].token = 0;
+			macos9_reconvert_slot_clear(i);
 			continue;
 		}
 
@@ -286,8 +348,7 @@ macos9_reconvert_cb(void *p)
 			busy = 1;
 			continue;
 		}
-		g_pending[i].c = NULL;
-		g_pending[i].token = 0;
+		macos9_reconvert_slot_clear(i);
 		did_one = 1;
 	}
 
@@ -319,6 +380,14 @@ macos9_reconvert_cb(void *p)
  * schedule.c dedups identical (cb, param) so a burst collapses to one fire. */
 void
 macos9_js_mark_dom_dirty(struct content *c)
+{
+	/* fixes910 Phase 0 — "something changed, no idea what": always the full
+	 * rebuild, exactly as before. */
+	macos9_js_mark_dom_dirty_node(c, NULL, MACOS9_DOMMUT_UNKNOWN);
+}
+
+void
+macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 {
 	/* fixes489 — master switch. Still here as an emergency global
 	 * kill (macsurf_js_set_reconvert_enabled(0)); nothing currently calls
@@ -362,7 +431,7 @@ macos9_js_mark_dom_dirty(struct content *c)
 	 * macsurf_js_set_reconvert_enabled(0) remains the emergency global kill. */
 	macsurf_debug_log_writef("WORK reconvert: dirty-mark scheduling c=%p",
 			(void *) c);
-	macos9_reconvert_pending_add(c);
+	macos9_reconvert_pending_add(c, node, kind);
 	/* fixes421 — two crash vectors closed in html_reconvert:
 	 * (1) DOUBLE-BUFFER: old bctx deferred past dom_to_box so the re-cascade
 	 *     can share already-interned styles rather than free-then-reintern

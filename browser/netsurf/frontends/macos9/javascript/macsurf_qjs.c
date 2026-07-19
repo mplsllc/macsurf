@@ -1223,7 +1223,8 @@ extern dom_exception macsurf_dom_characterdata_set_data_s(dom_node *node,
 		const char *data);
 
 /* macos9_reconvert.c — deferred re-convert after DOM mutation */
-extern void macos9_js_mark_dom_dirty(struct content *c);
+/* fixes910 Phase 0 -- mutation kinds + the node-carrying entry point. */
+#include "macos9_reconvert.h"
 
 /* ---- Global document/content pointers (set in js_newthread) ---- */
 static dom_document  *g_qjs_document = NULL;
@@ -1675,7 +1676,8 @@ static JSValue qjs_el_setAttribute_data(JSContext *ctx,
 	JS_FreeCString(ctx, val_cstr);
 	if (name_ds && val_ds) {
 		macsurf_dom_element_set_attribute(el, name_ds, val_ds);
-		if (g_qjs_content) macos9_js_mark_dom_dirty(g_qjs_content);
+		if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
+				(void *) el, MACOS9_DOMMUT_SETATTRIBUTE);
 	}
 	if (name_ds) macsurf_dom_string_unref(name_ds);
 	if (val_ds)  macsurf_dom_string_unref(val_ds);
@@ -1754,7 +1756,8 @@ static JSValue qjs_el_set_text_content_data(JSContext *ctx,
 	if (ds) {
 		macsurf_dom_node_set_text_content((dom_node *)el, ds);
 		macsurf_dom_string_unref(ds);
-		if (g_qjs_content) macos9_js_mark_dom_dirty(g_qjs_content);
+		if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
+				(void *) el, MACOS9_DOMMUT_TEXTCONTENT);
 	}
 	return JS_UNDEFINED;
 }
@@ -1902,7 +1905,8 @@ static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
 		macsurf_dom_node_unref(src_parent);
 	macsurf_dom_node_unref((dom_node *) frag);
 
-	if (g_qjs_content) macos9_js_mark_dom_dirty(g_qjs_content);
+	if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
+			(void *) el, MACOS9_DOMMUT_INNERHTML);
 	return JS_UNDEFINED;
 }
 
@@ -2051,7 +2055,8 @@ static JSValue qjs_el_append_child_data(JSContext *ctx,
 	err = qjs_dom_mut_check(ctx, "appendChild", exc, (dom_node *)el,
 			(dom_node *)child_el);
 	if (JS_IsException(err)) return err;
-	if (g_qjs_content) macos9_js_mark_dom_dirty(g_qjs_content);
+	if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
+			(void *) el, MACOS9_DOMMUT_APPENDCHILD);
 	return JS_DupValue(ctx, argv[0]);
 }
 
@@ -2080,7 +2085,8 @@ static JSValue qjs_el_remove_child_data(JSContext *ctx,
 	err = qjs_dom_mut_check(ctx, "removeChild", exc, (dom_node *)el,
 			(dom_node *)child_el);
 	if (JS_IsException(err)) return err;
-	if (g_qjs_content) macos9_js_mark_dom_dirty(g_qjs_content);
+	if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
+			(void *) el, MACOS9_DOMMUT_REMOVECHILD);
 	return JS_DupValue(ctx, argv[0]);
 }
 
@@ -2112,7 +2118,8 @@ static JSValue qjs_el_insert_before_data(JSContext *ctx,
 	err = qjs_dom_mut_check(ctx, "insertBefore", exc, (dom_node *)el,
 			(dom_node *)new_el);
 	if (JS_IsException(err)) return err;
-	if (g_qjs_content) macos9_js_mark_dom_dirty(g_qjs_content);
+	if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
+			(void *) el, MACOS9_DOMMUT_INSERTBEFORE);
 	return JS_DupValue(ctx, argv[0]);
 }
 
@@ -2136,7 +2143,8 @@ static JSValue qjs_el_remove_attribute_data(JSContext *ctx,
 		/* fixes843b — this real DOM mutation never marked dirty, so
 		 * el.removeAttribute(...) (a common show/hide idiom) never
 		 * triggered a repaint. Match setAttribute's behaviour. */
-		if (g_qjs_content) macos9_js_mark_dom_dirty(g_qjs_content);
+		if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
+				(void *) el, MACOS9_DOMMUT_REMOVEATTRIBUTE);
 		macsurf_dom_string_unref(name_ds);
 	}
 	return JS_UNDEFINED;
@@ -2879,7 +2887,8 @@ static JSValue qjs_text_set_data_data(JSContext *ctx, JSValueConst this_val,
 	if (v == NULL) return JS_UNDEFINED;
 	macsurf_dom_characterdata_set_data_s(n, v);
 	JS_FreeCString(ctx, v);
-	if (g_qjs_content) macos9_js_mark_dom_dirty(g_qjs_content);
+	if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
+			(void *) n, MACOS9_DOMMUT_CHARDATA);
 	return JS_UNDEFINED;
 }
 
