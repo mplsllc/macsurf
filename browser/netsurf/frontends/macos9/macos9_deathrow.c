@@ -40,6 +40,10 @@ int macos9_op_depth = 0;
  * continuation-orphan leak to chase, not normal operation. */
 #define MACOS9_DEATHROW_STALE_PASSES 120
 
+/* fixes911 — how many individual "LIFE deathrow free" lines one drain may emit
+ * before falling back to the drained= total alone. See the call site. */
+#define MACOS9_DEATHROW_TRACE_MAX 32
+
 struct deathrow_rec {
 	void *ptr;
 	void (*teardown)(void *ptr);
@@ -127,6 +131,7 @@ void
 macos9_deathrow_drain(void)
 {
 	int i;
+	int freed = 0;	/* fixes911 — lifecycle trail */
 
 	/* Only at the quiescent point, and never re-entrantly. */
 	if (macos9_op_depth != 0 || dr_in_drain) {
@@ -184,10 +189,41 @@ macos9_deathrow_drain(void)
 			continue;
 		}
 
+		/* fixes911 — name the victim BEFORE calling into it.
+		 *
+		 * The 2026-07-19 hardware bomb (unmapped memory at an MSL pool
+		 * header) died INSIDE a teardown, three frames below here:
+		 * llcache_object_deathrow_teardown -> destroy_now -> nsurl_unref ->
+		 * lwc_string_destroy -> free. Logging after the call, or only a
+		 * per-drain summary, records nothing when the teardown never
+		 * returns -- which is exactly the case worth recording. Written
+		 * before the call, the last LIFE line on disk IS the entry that
+		 * killed us (debug builds FlushVol every kept line, fixes911).
+		 *
+		 * CAPPED per drain: debug builds FlushVol every kept line (~10-50ms
+		 * of HFS sync each), and navigating away from a heavy page can queue
+		 * a hundred-plus sub-resource frees in one turn -- naming every one
+		 * would add seconds to the very navigation that already feels slow.
+		 * The cap keeps the common (small) drain fully named while bounding
+		 * the worst case; the drained= total below still reports everything,
+		 * so a bomb past the cap shows up as a large count with the tail
+		 * unnamed, which is the signal to raise it. */
+		if (freed < MACOS9_DEATHROW_TRACE_MAX) {
+			macsurf_debug_log_writef(
+				"LIFE deathrow free slot=%d ptr=%p fn=%p pin=%p",
+				i, r->ptr, (void *) r->teardown,
+				(void *) r->pin_key);
+		}
+
 		/* Free for real. Mark the slot free FIRST so a teardown
 		 * that re-enqueues (sub-resource frees) can reuse it. */
 		r->active = 0;
 		r->teardown(r->ptr);
+		freed++;
+	}
+
+	if (freed > 0) {
+		macsurf_debug_log_writef("LIFE deathrow drained=%d", freed);
 	}
 
 	dr_in_drain = 0;

@@ -641,6 +641,14 @@ macsurf_log_is_crash_report(const char *m)
 	 * tree-free breadcrumbs. A legitimate crash-forensics class, so it stays
 	 * in the permanent crash-only gate (not behind a verbose macro). */
 	if (strstr(m, "TALLOC") != NULL) return 1;
+	/* fixes911 -- coarse LIFECYCLE trail. The crash-only gate kept NAV + FAIL
+	 * and essentially nothing else, so a post-mortem log showed WHERE we
+	 * navigated but never what the engine was doing when it died: the
+	 * death-row drain crash arrived with an ordinary NAV as its last line.
+	 * "LIFE " lines are deliberately COARSE (per drain / per teardown phase,
+	 * never per object), so they stay affordable now that debug builds
+	 * FlushVol every kept line. */
+	if (strstr(m, "LIFE ") != NULL) return 1;
 	/* fixes765 (2.0 release): keep ONLY the one-line-per-launch #207
 	 * partition-bounds diagnostic (still useful if a field user with a
 	 * high-RAM Mac reports a blank page). All the other RECON reconnaissance
@@ -909,6 +917,27 @@ do_write:
 	macsurf_debug_log_buffer_flush();
 	if (g_log_vref != 0) (void)FlushVol(NULL, g_log_vref);
 #else
+#ifdef MACSURF_DEBUG
+	/* fixes911 — DEBUG builds flush EVERY kept line straight to disk.
+	 *
+	 * The buffered path (fixes261) and the 250-line eager budget (fixes704)
+	 * were both tuned when this channel emitted ~3000 lines per load, where
+	 * per-line HFS sync cost seconds. The crash-only gate (fixes675/765) now
+	 * keeps ~10-300 lines for a whole SESSION, so the throughput argument is
+	 * gone -- but the cost stayed: past line 250 the tail sat in a 4 KB buffer
+	 * and a hard crash took it. That is precisely backwards, because the tail
+	 * is the only part that matters after a bomb. A real example: an unmapped-
+	 * memory exception in the death-row drain (MSL pool header smashed) left a
+	 * log whose last line was an ordinary NAV, with nothing about what the
+	 * drain was doing.
+	 *
+	 * At the gate's volume, per-line FlushVol is affordable, and a debug build
+	 * should buy durability with it. RELEASE builds keep the old budget +
+	 * buffered path below. */
+	macsurf_debug_log_buffer_flush();
+	if (g_log_vref != 0) (void)FlushVol(NULL, g_log_vref);
+	if (g_log_eager_left > 0) g_log_eager_left--;
+#else
 	/* fixes704 — flush the first LOG_EAGER_LINES lines straight to disk so a
 	 * freeze/hang during startup still leaves the very beginning on disk.
 	 * After the budget is spent we return to the fast buffered path. */
@@ -922,7 +951,8 @@ do_write:
 		macsurf_debug_log_buffer_flush();
 		if (g_log_vref != 0) (void)FlushVol(NULL, g_log_vref);
 	}
-#endif
+#endif /* MACSURF_DEBUG (fixes911) */
+#endif /* MACSURF_NUCLEAR_LOG */
 
 	/*
 	 * fixes96 — per-write FlushVol REMOVED. It was synchronously
