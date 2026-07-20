@@ -135,22 +135,27 @@ static void macos9_reconvert_census_dump(void)
 	if (g_mut_total == 0) {
 		return;
 	}
+	/* fixes927 — %ld with (long) casts, NOT %lu. macsurf_debug_log_writef is a
+	 * hand-rolled formatter (macsurf_debug_log.c), not MSL vsnprintf: it
+	 * understands %d, %ld, %p, %s and %% ONLY. An unsupported specifier is
+	 * emitted literally, which is exactly what fixes925/926 did -- the whole
+	 * census round printed its format string and produced no data. */
 	macsurf_debug_log_writef(
-		"LIFE mutcensus total=%lu setattr=%lu rmattr=%lu text=%lu "
-		"innerhtml=%lu append=%lu remove=%lu insert=%lu chardata=%lu "
-		"unknown=%lu CLASS=%lu STYLE=%lu",
-		g_mut_total,
-		g_mut_counts[MACOS9_DOMMUT_SETATTRIBUTE],
-		g_mut_counts[MACOS9_DOMMUT_REMOVEATTRIBUTE],
-		g_mut_counts[MACOS9_DOMMUT_TEXTCONTENT],
-		g_mut_counts[MACOS9_DOMMUT_INNERHTML],
-		g_mut_counts[MACOS9_DOMMUT_APPENDCHILD],
-		g_mut_counts[MACOS9_DOMMUT_REMOVECHILD],
-		g_mut_counts[MACOS9_DOMMUT_INSERTBEFORE],
-		g_mut_counts[MACOS9_DOMMUT_CHARDATA],
-		g_mut_counts[MACOS9_DOMMUT_UNKNOWN],
-		g_mut_counts[MACOS9_DOMMUT_SETATTR_CLASS],
-		g_mut_counts[MACOS9_DOMMUT_SETATTR_STYLE]);
+		"LIFE mutcensus total=%ld setattr=%ld rmattr=%ld text=%ld "
+		"innerhtml=%ld append=%ld remove=%ld insert=%ld chardata=%ld "
+		"unknown=%ld CLASS=%ld STYLE=%ld",
+		(long) g_mut_total,
+		(long) g_mut_counts[MACOS9_DOMMUT_SETATTRIBUTE],
+		(long) g_mut_counts[MACOS9_DOMMUT_REMOVEATTRIBUTE],
+		(long) g_mut_counts[MACOS9_DOMMUT_TEXTCONTENT],
+		(long) g_mut_counts[MACOS9_DOMMUT_INNERHTML],
+		(long) g_mut_counts[MACOS9_DOMMUT_APPENDCHILD],
+		(long) g_mut_counts[MACOS9_DOMMUT_REMOVECHILD],
+		(long) g_mut_counts[MACOS9_DOMMUT_INSERTBEFORE],
+		(long) g_mut_counts[MACOS9_DOMMUT_CHARDATA],
+		(long) g_mut_counts[MACOS9_DOMMUT_UNKNOWN],
+		(long) g_mut_counts[MACOS9_DOMMUT_SETATTR_CLASS],
+		(long) g_mut_counts[MACOS9_DOMMUT_SETATTR_STYLE]);
 	memset(g_mut_counts, 0, sizeof(g_mut_counts));
 	g_mut_total = 0;
 }

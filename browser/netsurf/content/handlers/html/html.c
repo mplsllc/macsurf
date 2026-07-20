@@ -2320,8 +2320,8 @@ nserror html_reconvert(html_content *c)
 	 * after our free — causing a use-after-free in html_object_done.
 	 * Wait until active reaches 0 before touching the object list. */
 	if (c->base.active > 0) {
-		macsurf_debug_log_writef("reconvert: defer — %u fetches active",
-				c->base.active);
+		macsurf_debug_log_writef("reconvert: defer — %ld fetches active",
+				(long) c->base.active);
 		return NSERROR_NEED_DATA;
 	}
 

@@ -205,9 +205,10 @@ macos9_deathrow_drain(void)
 			if (r->stale_logged == 0 &&
 			    r->pin_passes >= MACOS9_DEATHROW_STALE_PASSES) {
 				macsurf_debug_log_writef(
-					"deathrow: STALE PIN ptr=%p content=%p passes=%u",
+					/* fixes927 — %ld, not %u (unsupported). */
+					"deathrow: STALE PIN ptr=%p content=%p passes=%ld",
 					r->ptr, (void *)r->pin_key,
-					r->pin_passes);
+					(long) r->pin_passes);
 				r->stale_logged = 1;
 			}
 			continue;
