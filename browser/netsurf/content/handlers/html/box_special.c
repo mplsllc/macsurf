@@ -1040,7 +1040,7 @@ box_embed(dom_node *n,
 
 	/* start fetch */
 	box->flags |= IS_REPLACED;
-	return html_fetch_object(content, params->data, box, CONTENT_ANY, false, n);
+	return html_fetch_object_node(content, params->data, box, CONTENT_ANY, false, n);
 }
 
 
@@ -1492,7 +1492,7 @@ void macsurf_lazyimg_viewport_changed(int scroll_y, int viewport_h)
 			box_coords(box, &bx, &by);
 			if (bh < 0) bh = 0;
 			if (by + bh >= vp_top && by <= vp_bot) {
-				(void) html_fetch_object(e->content, e->url,
+				(void) html_fetch_object_node(e->content, e->url,
 						box, image_types, false, e->node);
 				dom_node_unref(e->node);
 				nsurl_unref(e->url);
@@ -1576,7 +1576,7 @@ box_image(dom_node *n,
 	if (macsurf_lazyimg_defer(content, n, url)) {
 		ok = true;
 	} else {
-		ok = html_fetch_object(content, url, box, image_types, false, n);
+		ok = html_fetch_object_node(content, url, box, image_types, false, n);
 	}
 	nsurl_unref(url);
 
@@ -1718,7 +1718,7 @@ box_input(dom_node *n,
 				 */
 				if (nsurl_compare(url, content->base_url,
 						NSURL_COMPLETE) == false) {
-					if (!html_fetch_object(content,
+					if (!html_fetch_object_node(content,
 							       url,
 							       box,
 							       image_types,
@@ -1998,7 +1998,7 @@ box_object(dom_node *n,
 
 	/* start fetch (MIME type is ok or not specified) */
 	box->flags |= IS_REPLACED;
-	if (!html_fetch_object(content,
+	if (!html_fetch_object_node(content,
 			       params->data ? params->data : params->classid,
 			       box,
 			       CONTENT_ANY,

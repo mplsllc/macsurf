@@ -43,11 +43,21 @@ struct nsurl;
  * \param background this is a background image
  * \return true on success, false on memory exhaustion
  */
-/* fixes917 (step 1) -- `n` is the DOM node this object is fetched for, recorded
- * on the entry (refcounted) so a later step can re-resolve the box via
- * box_for_node() after a reconvert rebuilds the tree instead of re-fetching.
- * Pass NULL when there is no originating element. Recorded only today. */
-bool html_fetch_object(struct html_content *c, struct nsurl *url, struct box *box, content_type permitted_types, bool background, struct dom_node *n);
+bool html_fetch_object(struct html_content *c, struct nsurl *url, struct box *box, content_type permitted_types, bool background);
+
+/*
+ * fixes918 -- as html_fetch_object, plus `n`: the DOM node this object is being
+ * fetched for. Recorded on the entry (refcounted) so a later step can re-resolve
+ * the box via box_for_node() after a reconvert rebuilds the tree, instead of
+ * throwing the object away and re-fetching. Nothing reads it yet.
+ *
+ * This is a NEW entry point rather than a sixth parameter on html_fetch_object:
+ * CW8 resolves a flat namespace across ~55 access paths, so widening an already
+ * exported signature makes every declaration of it a hard redeclaration error if
+ * any one of them is not in lockstep. Adding an overload keeps the old symbol
+ * valid and callable, which is the safer shape in this build.
+ */
+bool html_fetch_object_node(struct html_content *c, struct nsurl *url, struct box *box, content_type permitted_types, bool background, struct dom_node *n);
 
 /**
  * release memory of content objects associated with a HTML content

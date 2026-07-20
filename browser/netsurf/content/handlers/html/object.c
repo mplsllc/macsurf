@@ -929,6 +929,20 @@ html_fetch_object(html_content *c,
 		  nsurl *url,
 		  struct box *box,
 		  content_type permitted_types,
+		  bool background)
+{
+	/* fixes918 -- unchanged 5-arg entry point, kept so the exported signature
+	 * never moves. Callers with no originating element land here. */
+	return html_fetch_object_node(c, url, box, permitted_types,
+			background, NULL);
+}
+
+/* exported interface documented in html/object.h */
+bool
+html_fetch_object_node(html_content *c,
+		  nsurl *url,
+		  struct box *box,
+		  content_type permitted_types,
 		  bool background,
 		  struct dom_node *n)
 {
