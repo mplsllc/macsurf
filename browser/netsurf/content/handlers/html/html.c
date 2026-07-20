@@ -2577,6 +2577,28 @@ static void html_reformat(struct content *c, int width, int height)
 		return;
 	}
 
+	/* fixes930 — did the fixes929 URL->size memo actually do anything?
+	 * stored= grew means images are completing and recording their size;
+	 * hit= grew means box_image found a size and the box was laid out as a
+	 * replaced element rather than as its alt text. A revisit that still
+	 * squishes with hit=0 means the memo is not filling; with hit>0 it means
+	 * the size is reaching the box and the fault is downstream. One line per
+	 * layout, and only when a counter moved. */
+	{
+		extern void macsurf_imgdims_stats(int *stored, int *hit,
+				int *miss);
+		static int last_s = -1, last_h = -1, last_m = -1;
+		int st = 0, hi = 0, mi = 0;
+
+		macsurf_imgdims_stats(&st, &hi, &mi);
+		if (st != last_s || hi != last_h || mi != last_m) {
+			macsurf_debug_log_writef(
+				"LIFE imgdims stored=%d hit=%d miss=%d",
+				st, hi, mi);
+			last_s = st; last_h = hi; last_m = mi;
+		}
+	}
+
 	/* fixes445: clear hover/active tracking on reformat. The dyn_hover_node
 	 * pointer survives layout but box_construct.c seeds its context from
 	 * these fields; stale values after a CONTENT_MSG_ERROR-driven reformat

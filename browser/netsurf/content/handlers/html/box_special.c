@@ -1481,6 +1481,23 @@ struct imgdims_slot {
 
 static struct imgdims_slot g_imgdims[IMGDIMS_SLOTS];
 
+/* fixes930 — fixes929 shipped with NO observability, so a "still squished"
+ * report could not distinguish (a) the memo never filling, (b) box_image never
+ * consulting it, (c) it working and something downstream overriding the size.
+ * Three counters, read once per layout. No per-image logging: that is the
+ * fixes911 mistake (a FlushVol per entry) which had to be undone twice. */
+static int g_imgdims_stored = 0;
+static int g_imgdims_hit = 0;
+static int g_imgdims_miss = 0;
+
+void macsurf_imgdims_stats(int *stored, int *hit, int *miss);
+void macsurf_imgdims_stats(int *stored, int *hit, int *miss)
+{
+	*stored = g_imgdims_stored;
+	*hit = g_imgdims_hit;
+	*miss = g_imgdims_miss;
+}
+
 static unsigned long imgdims_hash(const char *sp, unsigned long *len_out)
 {
 	unsigned long h = 2166136261UL;	/* FNV-1a */
@@ -1515,6 +1532,7 @@ void macsurf_imgdims_remember(struct nsurl *url, int w, int h)
 	sl->len = len;
 	sl->w = w;
 	sl->h = h;
+	g_imgdims_stored++;
 }
 
 int macsurf_imgdims_lookup(struct nsurl *url, int *w, int *h);
@@ -1534,8 +1552,10 @@ int macsurf_imgdims_lookup(struct nsurl *url, int *w, int *h)
 	hash = imgdims_hash(sp, &len);
 	sl = &g_imgdims[hash % IMGDIMS_SLOTS];
 	if (sl->w <= 0 || sl->hash != hash || sl->len != len) {
+		g_imgdims_miss++;
 		return 0;
 	}
+	g_imgdims_hit++;
 	*w = sl->w;
 	*h = sl->h;
 	return 1;
