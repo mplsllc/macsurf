@@ -2047,6 +2047,141 @@ void macsurf_reconvert_node_unref(void *n)
 	}
 }
 
+/* fixes921 — runtime kill switch for the re-link (step 4). 0 restores the old
+ * free-and-re-fetch behaviour exactly -- but still through
+ * html_object_free_objects, so the fallback can never lose the fixes429/501x
+ * teardown ordering. */
+static int g_object_relink_enabled = 1;
+
+/**
+ * fixes921 — re-attach surviving image objects to the rebuilt box tree.
+ *
+ * Called from html_reconvert_done AFTER dom_to_box and BEFORE
+ * html_reconvert_free_old, i.e. while the old tree is still alive, so each
+ * entry's old box still carries the DOM node we key on. Replaces the blanket
+ * html_object_free_objects the reconvert used to do at H2, which is what made
+ * every reconvert lose its images (box->object goes NULL and layout only sizes
+ * an <img> at `if (b->object && !(b->flags & REPLACE_DIM))`).
+ *
+ * DELIBERATELY static, and deliberately retires through the EXISTING
+ * html_object_free_objects rather than a new helper: fixes918 and fixes921's
+ * first cut both died on `undefined: <new symbol>` at link time. In this build
+ * a new cross-TU symbol is a liability, so the partition below hands the
+ * doomed entries to a function html.c already calls -- which is also exactly
+ * the teardown we want (cancel the refresh schedule, NULL box->object before
+ * release per fixes429, release the handle to DETACH the hlcache user and
+ * disarm its callback per fixes501x, then free). No new symbol, and one
+ * teardown implementation.
+ *
+ * Safe to leave stale object->box across the rebuild window ONLY because the
+ * reconvert build is SYNCHRONOUS (fixes903): no event-loop turn happens
+ * between H2 and here, so no hlcache callback can fire and dereference one.
+ */
+static void html_reconvert_relink_objects(html_content *c)
+{
+	struct content_html_object *keep = NULL;
+	struct content_html_object *drop = NULL;
+	struct content_html_object *o;
+	unsigned int n_keep = 0;
+	int relinked = 0, inflight = 0, retired = 0;
+
+	if (c == NULL) {
+		return;
+	}
+
+	o = c->object_list;
+	while (o != NULL) {
+		/* read next BEFORE re-linking o into either list */
+		struct content_html_object *next = o->next;
+		struct box *newbox = NULL;
+		struct dom_node *node = NULL;
+
+		/* SCOPE: images only. <object>/<embed>/applet/generated content /
+		 * list-style-image / CSS backgrounds carry object_params, which is
+		 * talloc'd against the OLD bctx and read back through
+		 * object->box->object_params, so they must not outlive it.
+		 * permitted_types is set at fetch time and needs no content deref,
+		 * so in-flight entries classify correctly too. */
+		if (g_object_relink_enabled == 0 ||
+		    o->permitted_types != CONTENT_IMAGE ||
+		    o->background) {
+			o->next = drop; drop = o; retired++;
+			o = next;
+			continue;
+		}
+
+		/* The key is already on the OLD box -- no extra state needed.
+		 * box->node is set for every element box, and box_for_node is an
+		 * O(1) DOM user-data read that dom_to_box has just repointed at
+		 * the NEW box. */
+		if (o->box != NULL) {
+			node = o->box->node;
+		}
+		newbox = (node != NULL) ? box_for_node(node) : NULL;
+
+		if (newbox == NULL) {
+			/* Node gone, or normalise merged/dropped its box. Cannot be
+			 * linked and must not be left alone: an in-flight entry
+			 * still has an armed callback. Retiring releases the handle,
+			 * which disarms it. */
+			o->next = drop; drop = o; retired++;
+			o = next;
+			continue;
+		}
+
+		o->box = newbox;
+
+		if (o->content != NULL &&
+		    content_get_status(o->content) == CONTENT_STATUS_DONE) {
+			/* Completed: link it, so layout sizes the box from the
+			 * object's intrinsic dimensions instead of leaving it at the
+			 * line-height. Mirrors html_object_done's LINK half only --
+			 * its first-completion bookkeeping (the base.active
+			 * decrement) must not be repeated here. */
+			struct box *b;
+
+			newbox->object = o->content;
+			if (newbox->type == BOX_TABLE) {
+				newbox->type = BOX_BLOCK;
+			}
+			if (!(newbox->flags & REPLACE_DIM)) {
+				for (b = newbox; b != NULL; b = b->parent) {
+					b->max_width = UNKNOWN_MAX_WIDTH;
+				}
+				while (newbox->next != NULL &&
+				       (newbox->next->flags & CLONE)) {
+					newbox->next = newbox->next->next;
+				}
+			}
+			relinked++;
+		} else {
+			/* Still in flight: box re-resolved so the eventual
+			 * html_object_done writes into a LIVE box, but completion
+			 * still owns box->object. Its reflow is guaranteed by
+			 * fixes916. */
+			inflight++;
+		}
+
+		o->next = keep; keep = o; n_keep++;
+		o = next;
+	}
+
+	/* Retire the doomed entries through the existing teardown, then restore
+	 * the survivors. num_objects has never been decremented anywhere, so set
+	 * it from the surviving count rather than trusting it. */
+	c->object_list = drop;
+	(void) html_object_free_objects(c);
+	c->object_list = keep;
+	c->num_objects = n_keep;
+
+	if (relinked || inflight || retired) {
+		macsurf_debug_log_writef(
+			"LIFE objects relinked=%d inflight=%d retired=%d",
+			relinked, inflight, retired);
+	}
+}
+
+
 static void html_reconvert_free_old(void)
 {
 	extern unsigned long macsurf_box_backlink_cleared;
@@ -2112,12 +2247,7 @@ static void html_reconvert_done(html_content *c, bool success)
 	if ((success == false) || (c->aborted)) {
 		macsurf_debug_log_writef("WORK reconvert #%ld: FAILED/aborted",
 				(long) macsurf_reconvert_seq);
-		/* fixes921 — re-attach surviving objects while the OLD tree is still
-		 * alive: each entry's old box still carries the DOM node we key on.
-		 * On the failure path no new tree exists, so every node fails to
-		 * resolve and the pass degenerates to retiring everything -- exactly
-		 * the old H2 behaviour. */
-		html_object_relink_after_reconvert(c);
+		html_reconvert_relink_objects(c);
 		html_reconvert_free_old();   /* don't leak the deferred old tree */
 		/* fixes895 — disarm the hunt: the async span is over. */
 		macsurf_reconvert_in_progress = 0;
@@ -2132,12 +2262,7 @@ static void html_reconvert_done(html_content *c, bool success)
 
 	/* New tree is live + laid out — NOW free the old one. Shared styles
 	 * survive via their refcount held by the new tree. */
-	/* fixes921 — re-attach surviving objects while the OLD tree is still
-	 * alive: each entry's old box still carries the DOM node we key on.
-	 * On the failure path no new tree exists, so every node fails to
-	 * resolve and the pass degenerates to retiring everything -- exactly
-	 * the old H2 behaviour. */
-	html_object_relink_after_reconvert(c);
+	html_reconvert_relink_objects(c);
 	html_reconvert_free_old();
 	macsurf_reconv_pos_set("after-free_old", (long) macsurf_reconvert_seq,
 			0, "");
@@ -2248,7 +2373,7 @@ nserror html_reconvert(html_content *c)
 	 * ~10 O(document) passes a reconvert runs.
 	 *
 	 * The entries are instead carried across the rebuild and re-attached to
-	 * the new boxes by html_object_relink_after_reconvert(), called from
+	 * the new boxes by html_reconvert_relink_objects(), called from
 	 * html_reconvert_done once dom_to_box has built the tree and BEFORE
 	 * html_reconvert_free_old drops the old one. Everything that pass does
 	 * not re-link (non-image entries, and any node that no longer resolves

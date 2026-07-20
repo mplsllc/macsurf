@@ -3104,148 +3104,128 @@ int main(void)
 
 	free(html_src_big);
 
-	/* --- Test 31 (fixes921): the reconvert object RE-LINK pass -----------------
+	/* --- Test 31 (fixes921): the reconvert object RE-LINK ---------------------
 	 *
-	 * Covers exactly what fixes921 newly wrote, none of which needs a completed
-	 * fetch:
-	 *   - the iterator RETIRES entries mid-walk (frees the node it is standing
-	 *     on) -- the use-after-free surface this change introduces;
-	 *   - html_object_retire's single-entry unlink via `prev` -- object_list was
-	 *     prepend-only with no such operation before;
-	 *   - num_objects accounting (never decremented before fixes921);
-	 *   - box re-resolution through box_for_node;
-	 *   - image-only scoping (non-image entries must be retired, not carried).
+	 * Drives a REAL reconvert with fabricated entries on object_list, so the
+	 * re-link runs in situ (it is static in html.c -- deliberately, after two
+	 * link failures on new cross-TU symbols).
 	 *
-	 * NOT covered here: the armed-callback disarm inside retire. That is
-	 * html_object_free_objects' loop body lifted verbatim -- pre-existing,
-	 * shipped code -- and the harness cannot reach an armed callback at all
-	 * (html_fetch_object SEGVs in llcache_handle_get_url; the fetch stack is
-	 * never initialised). Measured, not assumed. Hardware covers it.
+	 * Covers what fixes921 newly wrote, none of which needs a completed fetch:
+	 * the partition walk, box re-resolution via box_for_node, image-only
+	 * scoping, retirement through html_object_free_objects, and num_objects
+	 * (never decremented anywhere before this).
 	 *
-	 * The kill switch doubles as the NEGATIVE CONTROL: with re-link disabled the
-	 * survivor must NOT survive. If both halves report the same thing, the test
-	 * is not discriminating and is worthless. */
+	 * The MIXED entry set is what makes it discriminating, so no kill-switch
+	 * toggle is needed: a pass that did nothing would leave the non-image and
+	 * node-gone entries alive; a pass that retired everything would lose the
+	 * image. Only correct behaviour satisfies both halves.
+	 *
+	 * NOT covered: the armed-callback disarm inside the teardown. Measured, not
+	 * assumed -- a spike showed html_fetch_object SEGVs in llcache_handle_get_url
+	 * because the harness never initialises the fetch stack, so an armed
+	 * callback is unreachable here. That code is unchanged from what already
+	 * ships; hardware covers it. */
 	fprintf(stderr, "\n=== Test 31: reconvert object re-link (fixes921) ===\n");
 	{
 		extern struct box *box_for_node(dom_node *n);
-		extern void html_object_relink_after_reconvert(html_content *c);
-		extern int macsurf_object_relink_enabled;
-		dom_nodelist *divs = NULL;
-		dom_string *dtag = NULL;
-		uint32_t dlen = 0;
+		dom_nodelist *ps = NULL;
+		dom_string *ptag = NULL;
+		uint32_t plen = 0;
 		dom_node *keep_node = NULL, *gone_node = NULL;
-		struct box *keep_box = NULL;
-		int pass;
+		struct box *old_box = NULL;
+		struct content_html_object *img, *gone, *notimg;
+		static struct box gone_box;   /* static: must outlive the reconvert */
+		int rc;
 
-		/* two real element boxes to key on */
-		if (dom_string_create((const uint8_t *)"p", 1, &dtag) != DOM_NO_ERR ||
-		    dom_document_get_elements_by_tag_name(document, dtag, &divs)
-				!= DOM_NO_ERR || divs == NULL) {
-			fprintf(stderr, "FAIL: Test 31 could not list <p>\n");
+		if (dom_string_create((const uint8_t *)"p", 1, &ptag) != DOM_NO_ERR ||
+		    dom_document_get_elements_by_tag_name(document, ptag, &ps)
+				!= DOM_NO_ERR || ps == NULL) {
+			fprintf(stderr, "FAIL: Test 31 could not list <p>\n"); return 1;
+		}
+		dom_nodelist_get_length(ps, &plen);
+		if (plen < 1) { fprintf(stderr, "FAIL: Test 31 needs a <p>\n"); return 1; }
+		dom_nodelist_item(ps, 0, &keep_node);
+		old_box = keep_node ? box_for_node(keep_node) : NULL;
+		if (old_box == NULL) {
+			fprintf(stderr, "FAIL: Test 31 <p> has no box\n"); return 1;
+		}
+		/* detached element: never in the tree, so box_for_node -> NULL */
+		if (dom_document_create_element(document, ptag,
+				(dom_element **)&gone_node) != DOM_NO_ERR ||
+				gone_node == NULL) {
+			fprintf(stderr, "FAIL: Test 31 detached node\n"); return 1;
+		}
+		memset(&gone_box, 0, sizeof(gone_box));
+		gone_box.node = gone_node;
+
+		img    = calloc(1, sizeof(*img));
+		gone   = calloc(1, sizeof(*gone));
+		notimg = calloc(1, sizeof(*notimg));
+		if (img == NULL || gone == NULL || notimg == NULL) {
+			fprintf(stderr, "FAIL: Test 31 calloc\n"); return 1;
+		}
+		img->parent    = (struct content *)&htmlc;
+		img->box = old_box;    img->permitted_types = CONTENT_IMAGE;
+		gone->parent   = (struct content *)&htmlc;
+		gone->box = &gone_box; gone->permitted_types = CONTENT_IMAGE;
+		notimg->parent = (struct content *)&htmlc;
+		notimg->box = old_box; notimg->permitted_types = CONTENT_ANY;
+
+		/* order so a retire lands at head, middle and tail of the walk */
+		gone->next = img; img->next = notimg; notimg->next = NULL;
+		htmlc.object_list = gone;
+		htmlc.num_objects = 3;
+
+		htmlc.box_conversion_context = NULL;
+		htmlc.aborted = false;
+		htmlc.base.active = 0;
+		rc = html_reconvert_content((struct content *)&htmlc);
+		if (rc != 0) {
+			fprintf(stderr, "FAIL: Test 31 reconvert did not queue (rc=%d)\n", rc);
 			return 1;
 		}
-		dom_nodelist_get_length(divs, &dlen);
-		if (dlen < 1) {
-			fprintf(stderr, "FAIL: Test 31 needs at least one <p>\n");
+		harness_pump_all(100000);
+
+		if (htmlc.object_list == NULL || htmlc.object_list->next != NULL) {
+			fprintf(stderr, "FAIL: Test 31 expected exactly ONE surviving "
+				"entry, got %s\n",
+				htmlc.object_list ? "more than one" : "none");
 			return 1;
 		}
-		dom_nodelist_item(divs, 0, &keep_node);
-		keep_box = keep_node ? box_for_node(keep_node) : NULL;
-		if (keep_box == NULL) {
-			fprintf(stderr, "FAIL: Test 31 <p> has no box\n");
+		if (htmlc.object_list->permitted_types != CONTENT_IMAGE) {
+			fprintf(stderr, "FAIL: Test 31 survivor is not the image entry\n");
 			return 1;
 		}
-		/* a DETACHED element: never in the tree, so box_for_node gives NULL --
-		 * the "node gone" canary, without needing to mutate the document */
-		if (dom_document_create_element(document, dtag, (dom_element **)&gone_node)
-				!= DOM_NO_ERR || gone_node == NULL) {
-			fprintf(stderr, "FAIL: Test 31 could not create detached node\n");
+		if (htmlc.object_list->box == NULL) {
+			fprintf(stderr, "FAIL: Test 31 survivor lost its box\n");
 			return 1;
 		}
-
-		for (pass = 0; pass < 2; pass++) {
-			struct content_html_object *a, *b, *cno;
-			struct box gone_box;
-			int relink_on = (pass == 0) ? 1 : 0;
-			unsigned int n_before;
-			int survived;
-
-			memset(&gone_box, 0, sizeof(gone_box));
-			gone_box.node = gone_node;   /* resolves to NULL */
-
-			/* Fabricated entries. content==NULL throughout: retire skips the
-			 * handle-release arm, so this exercises the NEW logic only. */
-			a   = calloc(1, sizeof(*a));   /* image, resolvable -> survives */
-			b   = calloc(1, sizeof(*b));   /* image, node gone  -> retired  */
-			cno = calloc(1, sizeof(*cno)); /* NON-image         -> retired  */
-			if (a == NULL || b == NULL || cno == NULL) {
-				fprintf(stderr, "FAIL: Test 31 calloc\n"); return 1;
-			}
-			a->parent = (struct content *)&htmlc;
-			a->box = keep_box; a->permitted_types = CONTENT_IMAGE;
-			b->parent = (struct content *)&htmlc;
-			b->box = &gone_box; b->permitted_types = CONTENT_IMAGE;
-			cno->parent = (struct content *)&htmlc;
-			cno->box = keep_box; cno->permitted_types = CONTENT_ANY;
-
-			/* order b, a, cno so a retire happens at the HEAD, in the MIDDLE
-			 * and at the TAIL across the walk -- prev handling and the
-			 * free-while-walking hazard both get hit */
-			b->next = a; a->next = cno; cno->next = NULL;
-			htmlc.object_list = b;
-			htmlc.num_objects = 3;
-			n_before = htmlc.num_objects;
-
-			macsurf_object_relink_enabled = relink_on;
-			html_object_relink_after_reconvert(&htmlc);
-
-			survived = (htmlc.object_list != NULL &&
-					htmlc.object_list->next == NULL);
-
-			if (relink_on) {
-				if (!survived || htmlc.object_list->box != keep_box) {
-					fprintf(stderr, "FAIL: Test 31 image entry did not "
-						"survive/re-resolve (list=%p)\n",
-						(void *)htmlc.object_list);
-					return 1;
-				}
-				if (htmlc.num_objects != n_before - 2) {
-					fprintf(stderr, "FAIL: Test 31 num_objects %u, "
-						"expected %u\n", htmlc.num_objects,
-						n_before - 2);
-					return 1;
-				}
-				fprintf(stderr, "  relink ON : survivor kept, 2 retired, "
-					"num_objects %u->%u\n", n_before, htmlc.num_objects);
-			} else {
-				/* NEGATIVE CONTROL: nothing may survive */
-				if (htmlc.object_list != NULL) {
-					fprintf(stderr, "FAIL: Test 31 negative control -- "
-						"entries survived with re-link DISABLED, so "
-						"the test cannot tell the two apart\n");
-					return 1;
-				}
-				fprintf(stderr, "  relink OFF: all retired (control holds)\n");
-			}
-			/* drain whatever remains so the next pass starts clean */
-			while (htmlc.object_list != NULL) {
-				extern void html_object_retire(html_content *,
-						struct content_html_object *,
-						struct content_html_object *);
-				html_object_retire(&htmlc, htmlc.object_list, NULL);
-			}
+		if (htmlc.object_list->box != box_for_node(keep_node)) {
+			fprintf(stderr, "FAIL: Test 31 survivor box not re-resolved to "
+				"the rebuilt tree\n");
+			return 1;
 		}
+		if (htmlc.num_objects != 1) {
+			fprintf(stderr, "FAIL: Test 31 num_objects=%u expected 1\n",
+					htmlc.num_objects);
+			return 1;
+		}
+		fprintf(stderr, "  image kept + re-resolved; node-gone and non-image "
+			"retired; num_objects 3->%u\n", htmlc.num_objects);
 
-		macsurf_object_relink_enabled = 1;
-		dom_node_unref(gone_node);
-		dom_nodelist_unref(divs);
-		dom_string_unref(dtag);
-		htmlc.object_list = NULL;
+		while (htmlc.object_list != NULL) {
+			struct content_html_object *nx = htmlc.object_list->next;
+			free(htmlc.object_list);
+			htmlc.object_list = nx;
+		}
 		htmlc.num_objects = 0;
+		dom_node_unref(gone_node);
+		dom_nodelist_unref(ps);
+		dom_string_unref(ptag);
 	}
-	fprintf(stderr, "=== Test 31 PASS: re-link keeps resolvable image objects, "
-		"retires node-gone and non-image entries, unlinks correctly "
-		"mid-walk, and the disabled-path control discriminates ===\n");
+	fprintf(stderr, "=== Test 31 PASS: reconvert keeps and re-resolves image "
+		"objects, retires node-gone and non-image entries, and fixes the "
+		"num_objects leak ===\n");
 
 	return 0;
 }
