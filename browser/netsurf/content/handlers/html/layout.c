@@ -339,15 +339,18 @@ layout_get_object_dimensions(struct box *box,
 			     int min_width, int max_width,
 			     int min_height, int max_height)
 {
-	assert(box->object != NULL);
+	/* fixes929 — box->object may legitimately be NULL now: the intrinsic
+	 * size can come from box->obj_w/obj_h (remembered from a previous load
+	 * of the same URL) before the fetch has completed. */
+	assert(box->object != NULL || box->obj_w > 0);
 	assert(width != NULL && height != NULL);
 
 	if (*width == AUTO && *height == AUTO) {
 		/* No given dimensions */
 
 		bool scaled = false;
-		int intrinsic_width = content_get_width(box->object);
-		int intrinsic_height = content_get_height(box->object);
+		int intrinsic_width = lh__box_intrinsic_w(box);
+		int intrinsic_height = lh__box_intrinsic_h(box);
 
 		/* use intrinsic dimensions */
 		*width = intrinsic_width;
@@ -389,8 +392,8 @@ layout_get_object_dimensions(struct box *box,
 	} else if (*width == AUTO) {
 		/* Have given height; width is calculated from the given height
 		 * and ratio of intrinsic dimensions */
-		int intrinsic_width = content_get_width(box->object);
-		int intrinsic_height = content_get_height(box->object);
+		int intrinsic_width = lh__box_intrinsic_w(box);
+		int intrinsic_height = lh__box_intrinsic_h(box);
 
 		if (intrinsic_height != 0)
 			*width = (*height * intrinsic_width) /
@@ -406,8 +409,8 @@ layout_get_object_dimensions(struct box *box,
 	} else if (*height == AUTO) {
 		/* Have given width; height is calculated from the given width
 		 * and ratio of intrinsic dimensions */
-		int intrinsic_width = content_get_width(box->object);
-		int intrinsic_height = content_get_height(box->object);
+		int intrinsic_width = lh__box_intrinsic_w(box);
+		int intrinsic_height = lh__box_intrinsic_h(box);
 
 		if (min_width >  0 && min_width > *width)
 			*width = min_width;
@@ -927,8 +930,8 @@ layout_minmax_line(struct box *first,
 			height = AUTO;
 		}
 
-		if (b->object || (b->flags & REPLACE_DIM)) {
-			if (b->object) {
+		if (lh__box_is_object(b)) {
+			if (b->object || b->obj_w > 0) {
 				int temp_height = height;
 				layout_get_object_dimensions(b,
 						&width, &temp_height,
@@ -1915,8 +1918,9 @@ layout_block_find_dimensions(const css_unit_ctx *unit_len_ctx,
 			style, &width, &height, &max_width, &min_width,
 			&max_height, &min_height, margin, padding, border);
 
-	if (box->object && !(box->flags & REPLACE_DIM) &&
-			content_get_type(box->object) != CONTENT_HTML) {
+	if ((box->object || box->obj_w > 0) && !(box->flags & REPLACE_DIM) &&
+			(box->object == NULL ||
+			 content_get_type(box->object) != CONTENT_HTML)) {
 		/* block-level replaced element, see 10.3.4 and 10.6.2 */
 		layout_get_object_dimensions(box, &width, &height,
 				min_width, max_width, min_height, max_height);
@@ -3636,8 +3640,9 @@ layout_float_find_dimensions(
 		padding[BOTTOM] += scrollbar_width_x;
 	}
 
-	if (box->object && !(box->flags & REPLACE_DIM) &&
-			content_get_type(box->object) != CONTENT_HTML) {
+	if ((box->object || box->obj_w > 0) && !(box->flags & REPLACE_DIM) &&
+			(box->object == NULL ||
+			 content_get_type(box->object) != CONTENT_HTML)) {
 		/* Floating replaced element, with intrinsic width or height.
 		 * See 10.3.6 and 10.6.2 */
 		layout_get_object_dimensions(box, &width, &height,
@@ -4139,7 +4144,8 @@ layout_line(struct box *first,
 				&max_height, &min_height,
 				NULL, NULL, NULL);
 
-		if (b->object && !(b->flags & REPLACE_DIM)) {
+		if ((b->object || b->obj_w > 0) &&
+		    !(b->flags & REPLACE_DIM)) {
 			layout_get_object_dimensions(b, &b->width, &b->height,
 					min_width, max_width,
 					min_height, max_height);

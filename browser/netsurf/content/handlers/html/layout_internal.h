@@ -158,10 +158,29 @@ static inline bool lh__box_is_inline_content(const struct box *b)
 	       lh__box_is_inline_level(b);
 }
 
+/**
+ * fixes929 — an image's intrinsic size, from the live content object if it is
+ * linked, else from the size remembered for its URL at box-construct time.
+ * These are the ONLY two sources of intrinsic size in the engine.
+ */
+static inline int lh__box_intrinsic_w(const struct box *b)
+{
+	return (b->object != NULL) ? content_get_width(b->object) : b->obj_w;
+}
+
+static inline int lh__box_intrinsic_h(const struct box *b)
+{
+	return (b->object != NULL) ? content_get_height(b->object) : b->obj_h;
+}
+
 /** Layout helper: Check whether box is an object. */
 static inline bool lh__box_is_object(const struct box *b)
 {
-	return b->object ||
+	/* fixes929 — obj_w>0 means we know the intrinsic size even though the
+	 * content object is not linked right now (not fetched yet, or retired
+	 * by a reconvert). Without this the box falls to the inline-text path
+	 * and is sized by its alt string. */
+	return b->object || b->obj_w > 0 ||
 	       (b->flags & (IFRAME | REPLACE_DIM));
 }
 

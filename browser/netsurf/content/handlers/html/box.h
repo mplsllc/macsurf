@@ -313,6 +313,7 @@ struct box {
 	 */
 	int height;
 
+
 	/* These four variables determine the maximum extent of a box's
 	 * descendants. They are relative to the x,y coordinates of the box.
 	 *
@@ -508,6 +509,25 @@ struct box {
 	unsigned flex_layout_gen;
 	int flex_layout_width;
 	int flex_layout_height;
+
+	/**
+	 * fixes929 — the image's INTRINSIC pixel size, known independently of
+	 * whether `object` is currently linked. 0 = unknown.
+	 *
+	 * Before this, `content_get_width(box->object)` was the ONLY source of
+	 * an image's natural size in the whole engine, so the instant
+	 * box->object was NULL the <img> stopped being a replaced element at
+	 * all (lh__box_is_object does not test IS_REPLACED) and was laid out as
+	 * inline text: height = line_height(style), width = the measured alt
+	 * string. That is the squish, exactly.
+	 *
+	 * Populated at box-construct time from the URL->size memo in
+	 * box_special.c, so a revisit or a reconvert knows the size BEFORE the
+	 * fetch is even started -- which is what every real browser does and
+	 * what the width/height attributes exist for.
+	 */
+	int obj_w;
+	int obj_h;
 
 };
 

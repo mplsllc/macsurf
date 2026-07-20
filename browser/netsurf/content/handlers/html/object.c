@@ -133,6 +133,9 @@ html_object_failed(struct box *box, html_content *content, bool background)
  * Update a box whose content has completed rendering.
  */
 
+/* fixes929 — the URL->size memo, hosted in box_special.c. */
+extern void macsurf_imgdims_remember(struct nsurl *url, int w, int h);
+
 static void
 html_object_done(struct box *box,
 		 hlcache_handle *object,
@@ -146,6 +149,25 @@ html_object_done(struct box *box,
 	}
 
 	box->object = object;
+
+	/* fixes929 — remember this URL's intrinsic size, and stamp it on the
+	 * box. Both matter: the memo lets a FUTURE box (a reconvert rebuild, or
+	 * the next visit) size itself before its fetch completes, and obj_w/h on
+	 * this box keeps it correctly sized if the object is later retired.
+	 * Nothing else in the engine retained an image's size -- the source
+	 * bytes are freed at convert and images are not disk-cached. */
+	{
+		struct content *oc = hlcache_handle_get_content(object);
+		int ow = content__get_width(oc);
+		int oh = content__get_height(oc);
+
+		if (ow > 0 && oh > 0) {
+			box->obj_w = ow;
+			box->obj_h = oh;
+			macsurf_imgdims_remember(
+					hlcache_handle_get_url(object), ow, oh);
+		}
+	}
 
 	/* Normalise the box type, now it has been replaced. */
 	switch (box->type) {

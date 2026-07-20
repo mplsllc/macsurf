@@ -1433,6 +1433,114 @@ struct lazyimg_entry {
 	nsurl               *url;
 	struct lazyimg_entry *next;
 };
+
+/*
+ * fixes929 — URL -> intrinsic pixel size memo.
+ *
+ * THE PROBLEM. content_get_width(box->object) was the only source of an
+ * image's natural size anywhere in the engine, so a box whose object was not
+ * linked *right now* had no size at all: lh__box_is_object does not test
+ * IS_REPLACED, so the <img> stopped being a replaced element and layout sized
+ * it as inline text -- height = line_height, width = the measured alt string.
+ * That is the squish. Three ordinary situations produce it:
+ *
+ *   1. Lazy loading. box_image NEVER fetches; it always defers to the queue
+ *      below, which drains only from a paint. So at first layout EVERY image
+ *      on the page has box->object == NULL.
+ *   2. A reconvert. It rebuilds the box tree and its relink pass retires any
+ *      object it cannot re-key, releasing the handle; the reformat then runs
+ *      on the SAME stack, before anything can be re-fetched.
+ *   3. A revisit. hlcache_clean destroys an image content the moment its last
+ *      user goes away, and llcache_handle_drop_source_data has already freed
+ *      the bytes, so nothing anywhere remembers the size -- images are not
+ *      disk-cached either. The second visit starts from zero knowledge.
+ *
+ * A window resize "fixed" it only by forcing invalidate -> paint -> lazy drain
+ * -> re-fetch -> completion -> reflow, i.e. by walking the whole chain again.
+ *
+ * THE FIX. Remember the size against the URL and hand it to the box at
+ * construct time, so the box knows how big the image will be BEFORE the fetch
+ * starts. That is what width/height attributes do, what REPLACE_DIM already
+ * does when an author supplies them, and what every real browser does with its
+ * image cache. It makes the squish unreachable regardless of fetch timing
+ * instead of racing it.
+ *
+ * Direct-mapped, fixed 512 entries, no allocation and no eviction policy --
+ * this must be cheap on a G3 and must never fail. A hash collision costs a
+ * wrong FIRST size that the real object corrects on arrival, so exactness is
+ * not required; a stored length check makes collisions rarer still.
+ */
+#define IMGDIMS_SLOTS 512
+
+struct imgdims_slot {
+	unsigned long hash;
+	unsigned long len;
+	int w;
+	int h;
+};
+
+static struct imgdims_slot g_imgdims[IMGDIMS_SLOTS];
+
+static unsigned long imgdims_hash(const char *sp, unsigned long *len_out)
+{
+	unsigned long h = 2166136261UL;	/* FNV-1a */
+	unsigned long n = 0;
+
+	while (sp[n] != '\0') {
+		h ^= (unsigned long) (unsigned char) sp[n];
+		h *= 16777619UL;
+		n++;
+	}
+	*len_out = n;
+	return h;
+}
+
+void macsurf_imgdims_remember(struct nsurl *url, int w, int h);
+void macsurf_imgdims_remember(struct nsurl *url, int w, int h)
+{
+	const char *sp;
+	unsigned long hash, len;
+	struct imgdims_slot *sl;
+
+	if (url == NULL || w <= 0 || h <= 0) {
+		return;
+	}
+	sp = nsurl_access(url);
+	if (sp == NULL) {
+		return;
+	}
+	hash = imgdims_hash(sp, &len);
+	sl = &g_imgdims[hash % IMGDIMS_SLOTS];
+	sl->hash = hash;
+	sl->len = len;
+	sl->w = w;
+	sl->h = h;
+}
+
+int macsurf_imgdims_lookup(struct nsurl *url, int *w, int *h);
+int macsurf_imgdims_lookup(struct nsurl *url, int *w, int *h)
+{
+	const char *sp;
+	unsigned long hash, len;
+	struct imgdims_slot *sl;
+
+	if (url == NULL) {
+		return 0;
+	}
+	sp = nsurl_access(url);
+	if (sp == NULL) {
+		return 0;
+	}
+	hash = imgdims_hash(sp, &len);
+	sl = &g_imgdims[hash % IMGDIMS_SLOTS];
+	if (sl->w <= 0 || sl->hash != hash || sl->len != len) {
+		return 0;
+	}
+	*w = sl->w;
+	*h = sl->h;
+	return 1;
+}
+
 static struct lazyimg_entry *g_lazyimg_head = NULL;
 
 #define LAZYIMG_MARGIN 600   /* preload band above/below viewport (px) */
@@ -1626,6 +1734,18 @@ box_image(dom_node *n,
 
 	/* start fetch */
 	box->flags |= IS_REPLACED;
+
+	/* fixes929 — if this URL has been loaded before (this page, an earlier
+	 * visit, or the tree we are rebuilding), we already know how big it is.
+	 * Give the box that size NOW, before the fetch is even queued, so the
+	 * first layout is correct and stays correct however the fetch goes. */
+	{
+		int mw = 0, mh = 0;
+		if (macsurf_imgdims_lookup(url, &mw, &mh)) {
+			box->obj_w = mw;
+			box->obj_h = mh;
+		}
+	}
 	/* fixes738 — viewport-gated deferral: queue the image; the paint-path
 	 * hook (macsurf_lazyimg_viewport_changed) fetches it once its box is
 	 * on-screen. Fall back to an immediate fetch if the queue alloc fails. */

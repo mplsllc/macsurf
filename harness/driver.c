@@ -35,7 +35,11 @@
 #include "utils/nsurl.h"
 #include "content/urldb.h"
 #include "content/handlers/html/box.h"
-#include "content/handlers/html/html.h"	/* fixes921 Test 31: struct content_html_object */
+#include "content/handlers/html/html.h"
+#include "content/handlers/html/private.h"		/* html_content, for layout_internal.h */
+#include "content/handlers/html/layout_internal.h"	/* fixes929 Test 32 */
+extern void macsurf_imgdims_remember(struct nsurl *url, int w, int h);
+extern int macsurf_imgdims_lookup(struct nsurl *url, int *w, int *h);	/* fixes921 Test 31: struct content_html_object */
 #include "content/handlers/html/private.h"
 #include "content/handlers/html/box_construct.h"
 #include "content/handlers/javascript/js.h"
@@ -3226,6 +3230,85 @@ int main(void)
 	fprintf(stderr, "=== Test 31 PASS: reconvert keeps and re-resolves image "
 		"objects, retires node-gone and non-image entries, and fixes the "
 		"num_objects leak ===\n");
+
+	/* --- Test 32 (fixes929): an image knows its size WITHOUT its object ----
+	 *
+	 * The squish: content_get_width(box->object) was the engine's only source
+	 * of an image's intrinsic size, so the moment box->object was NULL the
+	 * <img> stopped being a replaced element (lh__box_is_object does not test
+	 * IS_REPLACED) and layout sized it as inline text -- line-height tall,
+	 * alt-string wide. box->object is NULL far more often than it looks:
+	 * every lazy image before its first paint, every object a reconvert
+	 * retires, and every image on a revisit after hlcache_clean reaped it.
+	 *
+	 * Test the two halves that make the size survive: the URL->size memo, and
+	 * the box-level predicate that decides "replaced element or inline text".
+	 * The three PASSES here are the exact states that produced the squish.
+	 */
+	fprintf(stderr, "\n=== Test 32: image size survives a NULL object (fixes929) ===\n");
+	{
+		nsurl *ua = NULL, *ub = NULL;
+		int w = 0, h = 0;
+		struct box tb;
+
+		if (nsurl_create("http://example.org/photo.png", &ua) != NSERROR_OK ||
+		    nsurl_create("http://example.org/other.png", &ub) != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 32 nsurl_create\n"); return 1;
+		}
+
+		/* An unknown URL must MISS -- otherwise a hit proves nothing. */
+		if (macsurf_imgdims_lookup(ua, &w, &h) != 0) {
+			fprintf(stderr, "FAIL: Test 32 unknown URL reported a size\n");
+			return 1;
+		}
+
+		macsurf_imgdims_remember(ua, 640, 480);
+
+		if (macsurf_imgdims_lookup(ua, &w, &h) == 0 || w != 640 || h != 480) {
+			fprintf(stderr, "FAIL: Test 32 memo lost the size (got %dx%d)\n",
+					w, h);
+			return 1;
+		}
+		/* A DIFFERENT url must not inherit it -- a memo that answers every
+		 * query would "pass" the line above while sizing every image wrong. */
+		w = h = 0;
+		if (macsurf_imgdims_lookup(ub, &w, &h) != 0) {
+			fprintf(stderr, "FAIL: Test 32 memo answered for a foreign URL "
+					"(%dx%d)\n", w, h);
+			return 1;
+		}
+		fprintf(stderr, "  memo: miss -> remember -> hit 640x480, no cross-URL bleed\n");
+
+		/* The predicate layout branches on. With no object and no
+		 * REPLACE_DIM this returned false, which is what sent the <img>
+		 * down the inline-text path and produced the squish. */
+		memset(&tb, 0, sizeof(tb));
+		tb.type = BOX_INLINE;
+		if (lh__box_is_object(&tb) != false) {
+			fprintf(stderr, "FAIL: Test 32 sizeless box claims to be an object\n");
+			return 1;
+		}
+		tb.obj_w = 640;
+		tb.obj_h = 480;
+		if (lh__box_is_object(&tb) == false) {
+			fprintf(stderr, "FAIL: Test 32 box with a known intrinsic size is "
+					"NOT treated as replaced -- this is the squish\n");
+			return 1;
+		}
+		if (lh__box_intrinsic_w(&tb) != 640 ||
+		    lh__box_intrinsic_h(&tb) != 480) {
+			fprintf(stderr, "FAIL: Test 32 intrinsic accessors gave %dx%d\n",
+					lh__box_intrinsic_w(&tb),
+					lh__box_intrinsic_h(&tb));
+			return 1;
+		}
+		fprintf(stderr, "  box: object=NULL + obj_w/h -> replaced, 640x480\n");
+
+		nsurl_unref(ua);
+		nsurl_unref(ub);
+	}
+	fprintf(stderr, "=== Test 32 PASS: a known image size survives a NULL "
+		"object, so lazy/retired/revisited images lay out correctly ===\n");
 
 	return 0;
 }
