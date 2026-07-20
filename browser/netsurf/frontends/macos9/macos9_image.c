@@ -140,6 +140,30 @@ struct macos9_qt_image_content {
  * the LRU. */
 #define MACOS9_IMG_MAX_DECODED_BYTES (16L * 1024L * 1024L)
 
+/* fixes931 — keep the COMPRESSED source for small images instead of freeing it
+ * at convert, so a return-visit can re-decode.
+ *
+ * THE SQUISH. content_get_width(box->object) is the only source of an image's
+ * intrinsic size, and an image with NO width/height attribute (macintoshgarden's
+ * <img class="icon"> social icons) has no other size to fall back on. On the
+ * first visit the GIF decodes, GraphicsImportGetNaturalBounds gives the size,
+ * layout is correct -- and then llcache_handle_drop_source_data frees the bytes
+ * (fixes426b/162: a 1-2 MB hero JPEG must not sit in the RAM cache twice).
+ *
+ * On a RETURN visit the hlcache content was destroyed (hlcache_clean is eager),
+ * so a fresh content is built from the surviving llcache object -- which now has
+ * ZERO bytes. The re-decode opens no importer, GetNaturalBounds never runs,
+ * c->width stays 0, and the box collapses to line-height: the squish. Images
+ * WITH width/height attributes are immune (REPLACE_DIM carries their size in the
+ * HTML), which is exactly why only the attribute-less icons squish while the
+ * sized game thumbnails on the same page are fine.
+ *
+ * The memory optimisation only ever mattered for BIG images. An icon is ~1-4 KB;
+ * keeping it costs nothing and makes the revisit re-decode succeed at the source
+ * -- a real byte-accurate size, not a remembered guess. Anything above the
+ * threshold still drops, so the hero-JPEG win is untouched. */
+#define MACOS9_IMG_KEEP_SOURCE_MAX (48L * 1024L)
+
 /* fixes162 — LRU list of all decoded macos9_qt_image_content
  * entries. lru_head is MRU (most recently redrawn), lru_tail is LRU
  * (oldest, eviction candidate). lru_total_bytes mirrors the sum of
@@ -1550,8 +1574,12 @@ macos9_qt_image_convert(struct content *c)
 		/* fixes426b — free llcache's raw-bytes copy now that the
 		 * image is accepted for deferred decode. qti->compressed
 		 * holds its own copy; source_data in llcache is redundant
-		 * and keeping it ties up 1-2MB per image on the Mac heap. */
-		llcache_handle_drop_source_data(c->llcache);
+		 * and keeping it ties up 1-2MB per image on the Mac heap.
+		 * fixes931 — but KEEP it for small images so a return-visit can
+		 * re-decode at the source (the squish class). */
+		if (src_size > MACOS9_IMG_KEEP_SOURCE_MAX) {
+			llcache_handle_drop_source_data(c->llcache);
+		}
 		return true;
 	}
 	/* (non-PNG falls through to the QT importer path below) */
@@ -1649,7 +1677,11 @@ macos9_qt_image_convert(struct content *c)
 	content_set_ready(c);
 	content_set_done(c);
 	content_set_status(c, "");
-	llcache_handle_drop_source_data(c->llcache);
+	/* fixes931 — keep small sources so a revisit re-decodes (the squish);
+	 * still drop big ones (the 1-2 MB hero-JPEG memory win). */
+	if (src_size > MACOS9_IMG_KEEP_SOURCE_MAX) {
+		llcache_handle_drop_source_data(c->llcache);
+	}
 	return true;
 }
 
