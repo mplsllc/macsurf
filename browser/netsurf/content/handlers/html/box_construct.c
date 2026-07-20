@@ -670,7 +670,7 @@ box_construct_generate(struct box_construct_ctx *ctx,
 					if (html_fetch_object(ctx->content,
 							url, gen,
 							image_types,
-							true) == false) {
+							true, n) == false) {
 						nsurl_unref(url);
 						return;
 					}
@@ -1096,7 +1096,7 @@ box_construct_marker(struct box *box,
 				      url,
 				      marker,
 				      image_types,
-				      false) ==	false) {
+				      false, ctx->n) ==	false) {
 			nsurl_unref(url);
 			return false;
 		}
@@ -1479,7 +1479,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 					      url,
 					      box,
 					      image_types,
-					      true) == false) {
+					      true, ctx->n) == false) {
 				nsurl_unref(url);
 				return false;
 			}

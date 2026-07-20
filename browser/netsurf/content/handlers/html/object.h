@@ -43,7 +43,11 @@ struct nsurl;
  * \param background this is a background image
  * \return true on success, false on memory exhaustion
  */
-bool html_fetch_object(struct html_content *c, struct nsurl *url, struct box *box, content_type permitted_types, bool background);
+/* fixes917 (step 1) -- `n` is the DOM node this object is fetched for, recorded
+ * on the entry (refcounted) so a later step can re-resolve the box via
+ * box_for_node() after a reconvert rebuilds the tree instead of re-fetching.
+ * Pass NULL when there is no originating element. Recorded only today. */
+bool html_fetch_object(struct html_content *c, struct nsurl *url, struct box *box, content_type permitted_types, bool background, struct dom_node *n);
 
 /**
  * release memory of content objects associated with a HTML content

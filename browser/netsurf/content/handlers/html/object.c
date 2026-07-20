@@ -906,6 +906,14 @@ nserror html_object_free_objects(html_content *html)
 			}
 			/* fixes501x: NULL before release. */
 			safe_hlcache_handle_release(&victim->content);
+			}
+
+		/* fixes917 (step 1) -- drop the node ref. Outside the
+		 * `victim->content != NULL` arm above: an entry can carry a node
+		 * with no content (retrieve failed), and it still owns the ref. */
+		if (victim->node != NULL) {
+			dom_node_unref(victim->node);
+			victim->node = NULL;
 		}
 
 		html->object_list = victim->next;
@@ -921,7 +929,8 @@ html_fetch_object(html_content *c,
 		  nsurl *url,
 		  struct box *box,
 		  content_type permitted_types,
-		  bool background)
+		  bool background,
+		  struct dom_node *n)
 {
 	struct content_html_object *object;
 	hlcache_handle_callback object_callback;
@@ -988,6 +997,12 @@ html_fetch_object(html_content *c,
 	object->box = box;
 	object->permitted_types = permitted_types;
 	object->background = background;
+	/* fixes917 (step 1) -- record the originating node, refcounted.
+	 * box->node is NOT usable here: convert_special_elements (which runs
+	 * box_image and friends) is called at box_construct.c:1345, well before
+	 * box->node is assigned at :1438, so it is still NULL at fetch time.
+	 * Hence the explicit parameter. Released in html_object_free_objects. */
+	object->node = (n != NULL) ? dom_node_ref(n) : NULL;
 
 	error = hlcache_handle_retrieve(url,
 					HLCACHE_RETRIEVE_SNIFF_TYPE,

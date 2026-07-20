@@ -1040,7 +1040,7 @@ box_embed(dom_node *n,
 
 	/* start fetch */
 	box->flags |= IS_REPLACED;
-	return html_fetch_object(content, params->data, box, CONTENT_ANY, false);
+	return html_fetch_object(content, params->data, box, CONTENT_ANY, false, n);
 }
 
 
@@ -1493,7 +1493,7 @@ void macsurf_lazyimg_viewport_changed(int scroll_y, int viewport_h)
 			if (bh < 0) bh = 0;
 			if (by + bh >= vp_top && by <= vp_bot) {
 				(void) html_fetch_object(e->content, e->url,
-						box, image_types, false);
+						box, image_types, false, e->node);
 				dom_node_unref(e->node);
 				nsurl_unref(e->url);
 				free(e);
@@ -1576,7 +1576,7 @@ box_image(dom_node *n,
 	if (macsurf_lazyimg_defer(content, n, url)) {
 		ok = true;
 	} else {
-		ok = html_fetch_object(content, url, box, image_types, false);
+		ok = html_fetch_object(content, url, box, image_types, false, n);
 	}
 	nsurl_unref(url);
 
@@ -1722,7 +1722,7 @@ box_input(dom_node *n,
 							       url,
 							       box,
 							       image_types,
-							       false)) {
+							       false, n)) {
 						nsurl_unref(url);
 						goto no_memory;
 					}
@@ -2002,7 +2002,7 @@ box_object(dom_node *n,
 			       params->data ? params->data : params->classid,
 			       box,
 			       CONTENT_ANY,
-			       false))
+			       false, n))
 		return false;
 
 	*convert_children = false;

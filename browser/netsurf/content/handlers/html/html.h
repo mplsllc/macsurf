@@ -118,6 +118,26 @@ struct content_html_object {
 	/** Bitmap of acceptable content types */
 	content_type permitted_types;
 	bool background;  /**< This object is a background image. */
+
+	/**
+	 * fixes917 (Phase 1 step 1) -- the DOM node this object was fetched
+	 * for, refcounted. Recorded only; nothing reads it yet.
+	 *
+	 * `box` above is the ONLY link back to the tree, and it has exactly one
+	 * writer (html_fetch_object) and no re-linker -- so it goes stale the
+	 * moment a reconvert rebuilds the box tree, which is why every reconvert
+	 * currently has to free this whole list and re-fetch. Keying on the node
+	 * instead lets a later step re-resolve the box via box_for_node() after
+	 * a rebuild rather than throwing the object away.
+	 *
+	 * This mirrors the lazy-image queue (box_special.c, fixes674b), which
+	 * holds a dom_node + url and re-resolves every use for exactly this
+	 * reason: a raw box* went stale through box_normalise and faulted
+	 * box_coords. Same hazard, same remedy.
+	 *
+	 * NULL for objects with no originating element.
+	 */
+	struct dom_node *node;
 };
 
 
