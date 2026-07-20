@@ -143,7 +143,7 @@ static bool html_process_inserted_img(html_content *htmlc, dom_node *node)
 	dom_string_unref(src);
 
 	/* Speculatively fetch the image */
-	success = html_fetch_object_node(htmlc, url, NULL, CONTENT_IMAGE, false, node);
+	success = html_fetch_object(htmlc, url, NULL, CONTENT_IMAGE, false);
 	nsurl_unref(url);
 
 	return success;
