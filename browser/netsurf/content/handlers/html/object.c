@@ -44,6 +44,7 @@
 #include "html/private.h"
 #include "html/interaction.h"
 #include "html/box.h"
+#include "html/box_construct.h"	/* fixes921: box_for_node */
 #include "html/box_inspect.h"
 #include "html/object.h"
 #include "macos9_deathrow.h"
@@ -133,10 +134,26 @@ html_object_failed(struct box *box, html_content *content, bool background)
  * Update a box whose content has completed rendering.
  */
 
+/**
+ * fixes921 — the LINK HALF of html_object_done, on its own.
+ *
+ * Attaches an already-fetched object to a box: the pointer, the replaced-box
+ * type normalisation, and the ancestor min/max-width invalidation that makes
+ * the next layout size the box from the object's intrinsic dimensions
+ * (layout.c only does that at `if (b->object && !(b->flags & REPLACE_DIM))`).
+ *
+ * Split out because the reconvert re-link pass has to do exactly this work for
+ * an object that ALREADY completed, and must NOT repeat html_object_done's
+ * first-completion bookkeeping (the base.active decrement and fetch-state
+ * handling live in html_object_callback around it). Running the whole of
+ * html_object_done there would double-count. Idempotent by construction: every
+ * statement here is an assignment or a re-derivation, so calling it twice on
+ * the same box is harmless.
+ */
 static void
-html_object_done(struct box *box,
-		 hlcache_handle *object,
-		 bool background)
+html_object_link_box(struct box *box,
+		     hlcache_handle *object,
+		     bool background)
 {
 	struct box *b;
 
@@ -168,6 +185,15 @@ html_object_done(struct box *box,
 			box->next = box->next->next;
 		}
 	}
+}
+
+
+static void
+html_object_done(struct box *box,
+		 hlcache_handle *object,
+		 bool background)
+{
+	html_object_link_box(box, object, background);
 }
 
 
@@ -881,37 +907,178 @@ nserror html_object_close_objects(html_content *html)
 
 
 /* exported interface documented in html/object.h */
+/**
+ * fixes921 — retire ONE object entry: the whole teardown, unlink included.
+ *
+ * This is html_object_free_objects' loop body lifted out verbatim, because that
+ * sequence encodes two crash lessons and must never be re-derived by hand:
+ * cancel the pending html_object_refresh (it is scheduled on the ENTRY, so
+ * content_destroy's by-owner cancel cannot reach it), NULL box->object only
+ * while it still points at this content (fixes429), then release the handle
+ * (fixes501x) — which also DETACHES the hlcache user, disarming the callback,
+ * which is what makes retiring a still-in-flight entry safe.
+ *
+ * `prev` is the entry before `victim`, or NULL if it is the head. The list is
+ * singly-linked and prepend-only, so there was no single-entry unlink before
+ * this; callers walking the list must therefore track prev, and must read
+ * victim->next BEFORE calling (this frees victim).
+ *
+ * Also decrements num_objects, which the old loop never did — the count has
+ * been growing monotonically across every reconvert. Putting it here means
+ * every teardown path gets it right, not just the new one.
+ */
+void
+html_object_retire(html_content *html,
+		   struct content_html_object *victim,
+		   struct content_html_object *prev)
+{
+	if (html == NULL || victim == NULL) {
+		return;
+	}
+
+	if (victim->content != NULL) {
+		NSLOG(netsurf, INFO, "object %p", victim->content);
+
+		if (content_get_type(victim->content) == CONTENT_HTML) {
+			guit->misc->schedule(-1, html_object_refresh, victim);
+		}
+		/* fixes429: null box->object before releasing the handle.
+		 * hlcache_handle_release frees the handle immediately;
+		 * the freed block's first bytes become a free-list
+		 * chain pointer, making handle->entry appear non-NULL.
+		 * get_mouse_action_node then passes the null-guard but
+		 * crashes dereferencing the chain pointer as an entry.
+		 * Same root cause as fixes428 (CONTENT_MSG_ERROR path). */
+		if (!victim->background &&
+		    victim->box != NULL &&
+		    victim->box->object == victim->content) {
+			victim->box->object = NULL;
+		}
+		/* fixes501x: NULL before release. */
+		safe_hlcache_handle_release(&victim->content);
+	}
+
+	/* unlink */
+	if (prev == NULL) {
+		html->object_list = victim->next;
+	} else {
+		prev->next = victim->next;
+	}
+	if (html->num_objects > 0) {
+		html->num_objects--;
+	}
+
+	free(victim);
+}
+
+
 nserror html_object_free_objects(html_content *html)
 {
+	/* fixes921 — one teardown implementation, shared with the reconvert
+	 * re-link pass. Always retires the head, so prev is always NULL. */
 	while (html->object_list != NULL) {
-		struct content_html_object *victim = html->object_list;
-
-		if (victim->content != NULL) {
-			NSLOG(netsurf, INFO, "object %p", victim->content);
-
-			if (content_get_type(victim->content) == CONTENT_HTML) {
-				guit->misc->schedule(-1, html_object_refresh, victim);
-			}
-			/* fixes429: null box->object before releasing the handle.
-			 * hlcache_handle_release frees the handle immediately;
-			 * the freed block's first bytes become a free-list
-			 * chain pointer, making handle->entry appear non-NULL.
-			 * get_mouse_action_node then passes the null-guard but
-			 * crashes dereferencing the chain pointer as an entry.
-			 * Same root cause as fixes428 (CONTENT_MSG_ERROR path). */
-			if (!victim->background &&
-			    victim->box != NULL &&
-			    victim->box->object == victim->content) {
-				victim->box->object = NULL;
-			}
-			/* fixes501x: NULL before release. */
-			safe_hlcache_handle_release(&victim->content);
-		}
-
-		html->object_list = victim->next;
-		free(victim);
+		html_object_retire(html, html->object_list, NULL);
 	}
 	return NSERROR_OK;
+}
+
+
+/* fixes921 — runtime kill switch for the re-link pass ONLY (step 4).
+ *
+ * 0 restores the old behaviour exactly: the reconvert frees every object and
+ * the rebuild re-fetches. It does NOT disable html_object_retire — both paths
+ * share that one corrected teardown, so flipping this can never fall back to a
+ * hand-rolled free and lose the fixes429/fixes501x ordering. */
+int macsurf_object_relink_enabled = 1;
+
+
+/* exported interface documented in html/object.h */
+void html_object_relink_after_reconvert(html_content *c)
+{
+	struct content_html_object *o;
+	struct content_html_object *prev = NULL;
+	int relinked = 0, deferred = 0, retired = 0;
+
+	if (c == NULL) {
+		return;
+	}
+
+	o = c->object_list;
+	while (o != NULL) {
+		/* Read next BEFORE any retire: retiring frees `o`, and reading
+		 * o->next afterwards is the same use-after-free class this whole
+		 * change exists to remove -- here, in the iterator itself. */
+		struct content_html_object *next = o->next;
+		struct box *newbox = NULL;
+		struct dom_node *node = NULL;
+
+		/* SCOPE: images only. object_list also holds <object>/<embed>,
+		 * <input type=image>, applet, generated content, list-style-image
+		 * and CSS backgrounds. Those carry object_params, which is talloc'd
+		 * against the OLD bctx and dies with it, and are read back through
+		 * object->box->object_params -- so they stay on the retire-and-
+		 * re-fetch path rather than being carried across a rebuild.
+		 * permitted_types is set at fetch time and needs no content deref,
+		 * so it classifies in-flight entries correctly too. */
+		if (macsurf_object_relink_enabled == 0 ||
+		    o->permitted_types != CONTENT_IMAGE ||
+		    o->background) {
+			html_object_retire(c, o, prev);
+			retired++;
+			o = next;
+			continue;
+		}
+
+		/* The node key is already on the OLD box -- no extra state needed.
+		 * box->node is set for every element box (box_construct.c) and the
+		 * old tree is still ALIVE here: html_reconvert_free_old runs after
+		 * us (the fixes421 double-buffer). box_for_node then reads the DOM
+		 * user-data, which dom_to_box has just repointed at the NEW box. */
+		if (o->box != NULL) {
+			node = o->box->node;
+		}
+		newbox = (node != NULL) ? box_for_node(node) : NULL;
+
+		if (newbox == NULL) {
+			/* Node gone, or normalise merged/dropped its box. Cannot
+			 * be linked (no box) and cannot be left alone (an
+			 * in-flight entry still has an armed callback that would
+			 * fire into the freed old tree). Retire -- the handle
+			 * release inside disarms it. */
+			html_object_retire(c, o, prev);
+			retired++;
+			o = next;
+			continue;
+		}
+
+		o->box = newbox;
+
+		if (o->content != NULL &&
+		    content_get_status(o->content) == CONTENT_STATUS_DONE) {
+			/* Completed: link it now, so layout sizes the box from
+			 * the object's intrinsic dimensions instead of leaving it
+			 * at the line-height (the squish). */
+			html_object_link_box(newbox, o->content, o->background);
+			relinked++;
+		} else {
+			/* Still in flight: box re-resolved so the eventual
+			 * html_object_done writes into a LIVE box, but do NOT
+			 * touch box->object -- completion still owns that write.
+			 * Its reflow is guaranteed by fixes916, which defers a
+			 * coalesced reflow for any completion the throttle would
+			 * otherwise drop. */
+			deferred++;
+		}
+
+		prev = o;
+		o = next;
+	}
+
+	if (relinked || deferred || retired) {
+		macsurf_debug_log_writef(
+			"LIFE objects relinked=%d inflight=%d retired=%d",
+			relinked, deferred, retired);
+	}
 }
 
 

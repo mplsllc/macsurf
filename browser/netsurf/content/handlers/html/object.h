@@ -46,6 +46,25 @@ struct nsurl;
 bool html_fetch_object(struct html_content *c, struct nsurl *url, struct box *box, content_type permitted_types, bool background);
 
 /**
+ * fixes921 -- retire ONE object entry (teardown + unlink + num_objects).
+ * `prev` is the entry before `victim`, or NULL for the head. Frees victim, so
+ * callers walking the list must read victim->next first.
+ */
+void html_object_retire(struct html_content *html, struct content_html_object *victim, struct content_html_object *prev);
+
+/**
+ * fixes921 -- re-attach surviving image objects to the rebuilt box tree.
+ *
+ * Called from html_reconvert_done AFTER dom_to_box and BEFORE
+ * html_reconvert_free_old, i.e. while the old tree is still alive so each
+ * entry's old box (and therefore its DOM node) is still readable. Replaces the
+ * blanket html_object_free_objects the reconvert used to do: image entries are
+ * carried across the rebuild instead of being released and re-fetched;
+ * everything else is retired exactly as before.
+ */
+void html_object_relink_after_reconvert(struct html_content *c);
+
+/**
  * release memory of content objects associated with a HTML content
  *
  * The content objects contents should have been previously closed

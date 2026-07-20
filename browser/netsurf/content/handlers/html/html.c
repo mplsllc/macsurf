@@ -2112,6 +2112,12 @@ static void html_reconvert_done(html_content *c, bool success)
 	if ((success == false) || (c->aborted)) {
 		macsurf_debug_log_writef("WORK reconvert #%ld: FAILED/aborted",
 				(long) macsurf_reconvert_seq);
+		/* fixes921 — re-attach surviving objects while the OLD tree is still
+		 * alive: each entry's old box still carries the DOM node we key on.
+		 * On the failure path no new tree exists, so every node fails to
+		 * resolve and the pass degenerates to retiring everything -- exactly
+		 * the old H2 behaviour. */
+		html_object_relink_after_reconvert(c);
 		html_reconvert_free_old();   /* don't leak the deferred old tree */
 		/* fixes895 — disarm the hunt: the async span is over. */
 		macsurf_reconvert_in_progress = 0;
@@ -2126,6 +2132,12 @@ static void html_reconvert_done(html_content *c, bool success)
 
 	/* New tree is live + laid out — NOW free the old one. Shared styles
 	 * survive via their refcount held by the new tree. */
+	/* fixes921 — re-attach surviving objects while the OLD tree is still
+	 * alive: each entry's old box still carries the DOM node we key on.
+	 * On the failure path no new tree exists, so every node fails to
+	 * resolve and the pass degenerates to retiring everything -- exactly
+	 * the old H2 behaviour. */
+	html_object_relink_after_reconvert(c);
 	html_reconvert_free_old();
 	macsurf_reconv_pos_set("after-free_old", (long) macsurf_reconvert_seq,
 			0, "");
@@ -2226,7 +2238,29 @@ nserror html_reconvert(html_content *c)
 	c->dyn_hover_node = NULL;
 	c->dyn_active_node = NULL;
 	html_reconvert_clear_node_boxes(c);          /* H1: stale node boxes */
-	html_object_free_objects(c);                 /* H2: object_list fetches */
+	/* fixes921 — H2 NO LONGER FREES THE OBJECT LIST.
+	 *
+	 * Releasing every image handle here is what made a reconvert lose its
+	 * images: box->object goes NULL, and layout only sizes an <img> at
+	 * `if (b->object && !(b->flags & REPLACE_DIM))`, so any box whose object
+	 * has not re-linked keeps its line-height -- the squish. Anything still
+	 * in flight was aborted outright. It is also the most expensive of the
+	 * ~10 O(document) passes a reconvert runs.
+	 *
+	 * The entries are instead carried across the rebuild and re-attached to
+	 * the new boxes by html_object_relink_after_reconvert(), called from
+	 * html_reconvert_done once dom_to_box has built the tree and BEFORE
+	 * html_reconvert_free_old drops the old one. Everything that pass does
+	 * not re-link (non-image entries, and any node that no longer resolves
+	 * to a box) it retires there, so nothing leaks.
+	 *
+	 * Safe to leave stale object->box pointers across this window ONLY
+	 * because the reconvert build is SYNCHRONOUS (fixes903): no event-loop
+	 * turn happens between here and the re-link, so no hlcache callback can
+	 * fire and dereference one. */
+	macsurf_debug_log_writef(
+		"WORK reconvert #%ld: H2 objects carried (relink deferred)",
+		(long) macsurf_reconvert_seq);
 	macsurf_debug_log_writef(
 		"WORK reconvert #%ld: H2 objects freed active=%d",
 		(long) macsurf_reconvert_seq, (int) c->base.active);

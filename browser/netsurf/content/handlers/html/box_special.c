@@ -1527,6 +1527,24 @@ void macsurf_lazyimg_viewport_changed(int scroll_y, int viewport_h)
 		} else {
 			int bx = 0, by = 0;
 			int bh = box->height;
+
+			/* fixes921 — this node's box already has its object, so
+			 * there is nothing to fetch. Happens after a reconvert:
+			 * the rebuild re-queues every <img> via box_image, but
+			 * html_object_relink_after_reconvert has already
+			 * re-attached the surviving object to the new box. Without
+			 * this the drain would fetch it a second time and build a
+			 * duplicate content_html_object (html_fetch_object has no
+			 * URL dedupe of its own), which is the very churn the
+			 * re-link exists to remove. Drop the entry, do not fetch. */
+			if (box->object != NULL) {
+				dom_node_unref(e->node);
+				nsurl_unref(e->url);
+				free(e);
+				e = next;
+				continue;
+			}
+
 			box_coords(box, &bx, &by);
 			if (bh < 0) bh = 0;
 			if (by + bh >= vp_top && by <= vp_bot) {
