@@ -598,6 +598,16 @@ html_object_callback(hlcache_handle *object,
 		break;
 	}
 
+	/* fixes923 (diagnostic) — which branch does an image completion take,
+	 * and does a reflow ACTUALLY run? The cached-revisit squish survives
+	 * fixes916, and a window resize (the one unconditional reflow) fixes
+	 * it, so a reflow is being dropped somewhere on this path. Rather
+	 * than infer which gate, record it. One line per IMAGE completion
+	 * only, so volume is bounded by images-per-page. */
+	{
+		const char *fx_why = "none";
+		int fx_log = (box != NULL);
+
 	if (c->base.active == 0 &&
 	    (event->type == CONTENT_MSG_LOADING ||
 	     event->type == CONTENT_MSG_DONE ||
@@ -613,6 +623,7 @@ html_object_callback(hlcache_handle *object,
 		 * the next navigation. Its intrinsic dimensions are known at
 		 * convert, so one reflow here sizes the box. active==0 keeps
 		 * this coalesced (fires once per completed batch -- no storm). */
+		fx_why = "branch1-reflow";
 		content__reformat(&c->base, false, c->base.available_width,
 				c->base.available_height);
 		if (c->base.status == CONTENT_STATUS_READY)
@@ -650,6 +661,7 @@ html_object_callback(hlcache_handle *object,
 			 *  between reformats so reformat the page to
 			 *  display newly fetched objects
 			 */
+			fx_why = "throttle-open-reflow";
 			content__reformat(&c->base,
 					  false,
 					  c->base.available_width,
@@ -687,9 +699,23 @@ html_object_callback(hlcache_handle *object,
 			 * schedule is cancel-then-reschedule, so a burst of image
 			 * completions still collapses to ONE reflow. */
 			int delay = (int)(c->base.reformat_time - ms_now) + 50;
+			fx_why = "throttled-deferred";
 			guit->misc->schedule(-1, html_object_deferred_reflow, c);
 			guit->misc->schedule(delay,
 					html_object_deferred_reflow, c);
+		}
+	}
+
+		/* fx_why == "none" means NEITHER branch matched: the completion
+		 * produced no reflow at all and the box keeps its pre-load size.
+		 * That is the squish, and the fields say which gate did it. */
+		if (fx_log && o != NULL && o->permitted_types == CONTENT_IMAGE) {
+			macsurf_debug_log_writef(
+				"LIFE imgdone %s ev=%d active=%d st=%d repdim=%d obj=%p",
+				fx_why, (int) event->type, (int) c->base.active,
+				(int) c->base.status,
+				(int) ((box->flags & REPLACE_DIM) ? 1 : 0),
+				(void *) box->object);
 		}
 	}
 
