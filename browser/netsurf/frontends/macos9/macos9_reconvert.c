@@ -127,7 +127,7 @@ extern int macos9_content_token_valid(struct content *c, unsigned long token);
  * emitted ONCE PER RECONVERT (a handful per page), never per mutation. fixes911
  * is the cautionary tale -- 3035 flushed lines to re-confirm a negative.
  */
-static unsigned long g_mut_counts[MACOS9_DOMMUT_CHARDATA + 1];
+static unsigned long g_mut_counts[MACOS9_DOMMUT_SETATTR_STYLE + 1];
 static unsigned long g_mut_total = 0;
 
 static void macos9_reconvert_census_dump(void)
@@ -138,7 +138,7 @@ static void macos9_reconvert_census_dump(void)
 	macsurf_debug_log_writef(
 		"LIFE mutcensus total=%lu setattr=%lu rmattr=%lu text=%lu "
 		"innerhtml=%lu append=%lu remove=%lu insert=%lu chardata=%lu "
-		"unknown=%lu",
+		"unknown=%lu CLASS=%lu STYLE=%lu",
 		g_mut_total,
 		g_mut_counts[MACOS9_DOMMUT_SETATTRIBUTE],
 		g_mut_counts[MACOS9_DOMMUT_REMOVEATTRIBUTE],
@@ -148,7 +148,9 @@ static void macos9_reconvert_census_dump(void)
 		g_mut_counts[MACOS9_DOMMUT_REMOVECHILD],
 		g_mut_counts[MACOS9_DOMMUT_INSERTBEFORE],
 		g_mut_counts[MACOS9_DOMMUT_CHARDATA],
-		g_mut_counts[MACOS9_DOMMUT_UNKNOWN]);
+		g_mut_counts[MACOS9_DOMMUT_UNKNOWN],
+		g_mut_counts[MACOS9_DOMMUT_SETATTR_CLASS],
+		g_mut_counts[MACOS9_DOMMUT_SETATTR_STYLE]);
 	memset(g_mut_counts, 0, sizeof(g_mut_counts));
 	g_mut_total = 0;
 }
@@ -474,7 +476,7 @@ macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 	macsurf_debug_log_writef("WORK reconvert: dirty-mark scheduling c=%p",
 			(void *) c);
 	/* fixes925 — census: RAM only, no I/O on the mutation path. */
-	if (kind >= 0 && kind <= MACOS9_DOMMUT_CHARDATA) {
+	if (kind >= 0 && kind <= MACOS9_DOMMUT_SETATTR_STYLE) {
 		g_mut_counts[kind]++;
 	} else {
 		g_mut_counts[MACOS9_DOMMUT_UNKNOWN]++;

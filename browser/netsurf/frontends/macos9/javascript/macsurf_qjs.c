@@ -1659,6 +1659,7 @@ static JSValue qjs_el_setAttribute_data(JSContext *ctx,
 	dom_element *el;
 	const char *name_cstr, *val_cstr;
 	dom_string *name_ds, *val_ds;
+	int attr_kind;	/* fixes926 */
 
 	(void)this_val; (void)magic;
 	el = (dom_element *)qjs_get_node(func_data[0]);
@@ -1672,12 +1673,21 @@ static JSValue qjs_el_setAttribute_data(JSContext *ctx,
 	}
 	name_ds = qjs_make_domstr(name_cstr);
 	val_ds  = qjs_make_domstr(val_cstr);
+	/* fixes926 — classify BEFORE the name is freed. Only class/style could
+	 * ever be answered by a recascade rather than a box rebuild; every other
+	 * attribute is baked at box construction or reaches nothing. */
+	attr_kind = MACOS9_DOMMUT_SETATTRIBUTE;
+	if (strcmp(name_cstr, "class") == 0) {
+		attr_kind = MACOS9_DOMMUT_SETATTR_CLASS;
+	} else if (strcmp(name_cstr, "style") == 0) {
+		attr_kind = MACOS9_DOMMUT_SETATTR_STYLE;
+	}
 	JS_FreeCString(ctx, name_cstr);
 	JS_FreeCString(ctx, val_cstr);
 	if (name_ds && val_ds) {
 		macsurf_dom_element_set_attribute(el, name_ds, val_ds);
 		if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
-				(void *) el, MACOS9_DOMMUT_SETATTRIBUTE);
+				(void *) el, attr_kind);
 	}
 	if (name_ds) macsurf_dom_string_unref(name_ds);
 	if (val_ds)  macsurf_dom_string_unref(val_ds);
@@ -2131,12 +2141,20 @@ static JSValue qjs_el_remove_attribute_data(JSContext *ctx,
 	dom_element *el;
 	const char *name_cstr;
 	dom_string *name_ds;
+	int rm_kind;	/* fixes926 */
 	(void)this_val; (void)magic;
 	el = (dom_element *)qjs_get_node(func_data[0]);
 	if (el == NULL || argc < 1) return JS_UNDEFINED;
 	name_cstr = JS_ToCString(ctx, argv[0]);
 	if (name_cstr == NULL) return JS_UNDEFINED;
 	name_ds = qjs_make_domstr(name_cstr);
+	/* fixes926 — classify before the free (see setAttribute). */
+	rm_kind = MACOS9_DOMMUT_REMOVEATTRIBUTE;
+	if (strcmp(name_cstr, "class") == 0) {
+		rm_kind = MACOS9_DOMMUT_SETATTR_CLASS;
+	} else if (strcmp(name_cstr, "style") == 0) {
+		rm_kind = MACOS9_DOMMUT_SETATTR_STYLE;
+	}
 	JS_FreeCString(ctx, name_cstr);
 	if (name_ds) {
 		macsurf_dom_element_remove_attribute(el, name_ds);
@@ -2144,7 +2162,7 @@ static JSValue qjs_el_remove_attribute_data(JSContext *ctx,
 		 * el.removeAttribute(...) (a common show/hide idiom) never
 		 * triggered a repaint. Match setAttribute's behaviour. */
 		if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
-				(void *) el, MACOS9_DOMMUT_REMOVEATTRIBUTE);
+				(void *) el, rm_kind);
 		macsurf_dom_string_unref(name_ds);
 	}
 	return JS_UNDEFINED;

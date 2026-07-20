@@ -51,7 +51,16 @@ enum macos9_dommut_kind {
 	MACOS9_DOMMUT_APPENDCHILD,
 	MACOS9_DOMMUT_REMOVECHILD,
 	MACOS9_DOMMUT_INSERTBEFORE,
-	MACOS9_DOMMUT_CHARDATA
+	MACOS9_DOMMUT_CHARDATA,
+	/* fixes926 — split the setattr bucket by ATTRIBUTE NAME. The Phase 2
+	 * question is not "how many setAttribute calls" but "how many of them
+	 * could be answered by a recascade instead of a rebuild", and only
+	 * class/style can be. Everything else is either baked at box
+	 * construction (src/type/colspan/rowspan/title/id/href...) or reaches
+	 * nothing at all. Classified at the JS call site where the name is
+	 * already in hand, so this costs one strcmp on the mutation path. */
+	MACOS9_DOMMUT_SETATTR_CLASS,
+	MACOS9_DOMMUT_SETATTR_STYLE
 };
 
 /*
