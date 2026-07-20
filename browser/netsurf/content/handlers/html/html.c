@@ -2084,6 +2084,17 @@ static void html_reconvert_relink_objects(html_content *c)
 	struct content_html_object *o;
 	unsigned int n_keep = 0;
 	int relinked = 0, inflight = 0, retired = 0;
+	/* fixes928 — PARTITION the retirements. relinked=0/retired=12 on
+	 * macintoshgarden and relinked=0/retired=80 on hackaday, while 68kmla
+	 * relinked 12 in the same session, is the squish -- but "retired" alone
+	 * cannot say WHICH branch dropped them, and the two candidates want
+	 * opposite fixes: the scope gate rejecting real <img> (fix the gate) vs
+	 * box_for_node not resolving (fix the ordering/keying). Reading settled
+	 * neither: image_types IS CONTENT_IMAGE, so the gate should pass, and
+	 * nothing NULLs o->box, so the key should be readable. Four counters on
+	 * the line already being emitted -- no new lines, no I/O. */
+	int rt_disabled = 0, rt_nonimage = 0, rt_background = 0;
+	int rt_nobox = 0, rt_nonode = 0, rt_unresolved = 0;
 
 	if (c == NULL) {
 		return;
@@ -2105,6 +2116,9 @@ static void html_reconvert_relink_objects(html_content *c)
 		if (g_object_relink_enabled == 0 ||
 		    o->permitted_types != CONTENT_IMAGE ||
 		    o->background) {
+			if (g_object_relink_enabled == 0) rt_disabled++;
+			else if (o->permitted_types != CONTENT_IMAGE) rt_nonimage++;
+			else rt_background++;
 			o->next = drop; drop = o; retired++;
 			o = next;
 			continue;
@@ -2120,6 +2134,9 @@ static void html_reconvert_relink_objects(html_content *c)
 		newbox = (node != NULL) ? box_for_node(node) : NULL;
 
 		if (newbox == NULL) {
+			if (o->box == NULL) rt_nobox++;
+			else if (node == NULL) rt_nonode++;
+			else rt_unresolved++;
 			/* Node gone, or normalise merged/dropped its box. Cannot be
 			 * linked and must not be left alone: an in-flight entry
 			 * still has an armed callback. Retiring releases the handle,
@@ -2175,9 +2192,18 @@ static void html_reconvert_relink_objects(html_content *c)
 	c->num_objects = n_keep;
 
 	if (relinked || inflight || retired) {
+		/* fixes928 — the why= partition sums to retired= by construction.
+		 * Which term is non-zero picks the fix: nonimage/background means
+		 * the SCOPE gate is rejecting real images; unresolved means
+		 * box_for_node cannot find the new box (ordering or keying);
+		 * nobox/nonode means the entry lost its key before we got here. */
 		macsurf_debug_log_writef(
-			"LIFE objects relinked=%d inflight=%d retired=%d",
-			relinked, inflight, retired);
+			"LIFE objects relinked=%d inflight=%d retired=%d"
+			" why: disabled=%d nonimage=%d background=%d"
+			" nobox=%d nonode=%d unresolved=%d",
+			relinked, inflight, retired,
+			rt_disabled, rt_nonimage, rt_background,
+			rt_nobox, rt_nonode, rt_unresolved);
 	}
 }
 
