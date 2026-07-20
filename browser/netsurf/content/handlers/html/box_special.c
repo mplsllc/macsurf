@@ -1440,7 +1440,45 @@ static struct lazyimg_entry *g_lazyimg_head = NULL;
 static bool macsurf_lazyimg_defer(html_content *content, struct dom_node *node,
 		nsurl *url)
 {
-	struct lazyimg_entry *e = malloc(sizeof(*e));
+	struct lazyimg_entry *e;
+
+	/*
+	 * fixes920 — DEDUPE by (content, node). Without this the same image is
+	 * queued twice and fetched twice.
+	 *
+	 * g_lazyimg_head is a file-scope global that NOTHING clears on a
+	 * reconvert: entries are only removed when the drain fetches them, or
+	 * when their content stops being live. A reconvert rebuilds the BOX tree
+	 * but leaves the DOM alone, so box_image runs again over the very same
+	 * dom_nodes while the previous entries for those nodes are still queued.
+	 * Both then survive to the next paint, both re-resolve the same node via
+	 * box_for_node, and both call html_fetch_object — which has no URL dedupe
+	 * of its own (it allocates a fresh content_html_object every call), so
+	 * one <img> ends up with two object entries and two base.active counts.
+	 *
+	 * The node pointer is a sound key precisely because the DOM persists
+	 * across a reconvert; that is the same property the queue already relies
+	 * on to re-resolve boxes (fixes674b).
+	 *
+	 * O(queue) per deferred image, and the queue only holds images not yet
+	 * fetched, so this is a pointer compare over a short list — cheaper than
+	 * the duplicate fetch it prevents.
+	 */
+	for (e = g_lazyimg_head; e != NULL; e = e->next) {
+		if (e->content == content && e->node == node) {
+			/* Same element re-queued. Keep ONE entry, but adopt the
+			 * newer URL: JS may have changed src between passes.
+			 * Ref before unref in case they are the same object. */
+			if (e->url != url) {
+				nsurl_ref(url);
+				nsurl_unref(e->url);
+				e->url = url;
+			}
+			return true;
+		}
+	}
+
+	e = malloc(sizeof(*e));
 	if (e == NULL) return false;
 	e->content = content;
 	e->node = node;
