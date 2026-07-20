@@ -828,6 +828,7 @@ html_create_html_data(html_content *c, const http_parameter *params)
 	c->universal = NULL;
 	c->num_objects = 0;
 	c->object_list = NULL;
+	c->img_eager_budget = 10;	/* fixes932 — eager above-the-fold images */
 	c->forms = NULL;
 	c->imagemaps = NULL;
 	c->bw = NULL;

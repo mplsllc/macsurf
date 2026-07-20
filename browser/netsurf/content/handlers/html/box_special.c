@@ -1768,8 +1768,18 @@ box_image(dom_node *n,
 	}
 	/* fixes738 — viewport-gated deferral: queue the image; the paint-path
 	 * hook (macsurf_lazyimg_viewport_changed) fetches it once its box is
-	 * on-screen. Fall back to an immediate fetch if the queue alloc fails. */
-	if (macsurf_lazyimg_defer(content, n, url)) {
+	 * on-screen. Fall back to an immediate fetch if the queue alloc fails.
+	 *
+	 * fixes932 — but EAGERLY fetch the first N images in DOM order (the
+	 * above-the-fold approximation, since layout has not run yet so the box
+	 * position is unknown). Those load with the document and are sized by
+	 * the page's own completion reflow, instead of waiting for a paint to
+	 * drain the queue. The long tail still defers, keeping the fixes738 win
+	 * for galleries and below-fold thumbnails. */
+	if (content->img_eager_budget > 0) {
+		content->img_eager_budget--;
+		ok = html_fetch_object(content, url, box, image_types, false);
+	} else if (macsurf_lazyimg_defer(content, n, url)) {
 		ok = true;
 	} else {
 		ok = html_fetch_object(content, url, box, image_types, false);

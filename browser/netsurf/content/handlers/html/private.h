@@ -232,6 +232,23 @@ typedef struct html_content {
 	 */
 	struct form_control *visible_select_menu;
 
+	/**
+	 * fixes932 — eager-fetch budget for images.
+	 *
+	 * fixes738 made box_image defer EVERY image to the viewport-gated lazy
+	 * queue, which only fetches on a paint. That is too aggressive at the top
+	 * of the page: the first, above-the-fold images then wait for a paint
+	 * cycle instead of loading with the document, and depend on the
+	 * post-DONE drain to size themselves. box construction runs before
+	 * layout, so exact viewport position is unknown; the first N images in
+	 * DOM order are the standard above-the-fold approximation. This counts
+	 * down from that N as box_image fetches them eagerly; the long tail
+	 * (galleries, below-fold thumbnails) still defers, preserving the
+	 * fixes738 win. Initialised once per document in html_create_html_data,
+	 * so a reconvert (budget already 0) defers everything, as it should.
+	 */
+	int img_eager_budget;
+
 } html_content;
 
 /**
