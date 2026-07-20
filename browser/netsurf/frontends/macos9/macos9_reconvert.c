@@ -113,6 +113,46 @@ extern int macos9_content_token_valid(struct content *c, unsigned long token);
 #define macos9_content_token_valid(c, t) (1)
 #endif
 
+/*
+ * fixes925 (census) — WHAT KIND of DOM mutation are real pages actually doing?
+ *
+ * Phase 2 wants to skip the reconvert for mutations that cannot change
+ * geometry, and the size of that win depends entirely on the mix: a page whose
+ * mutations are mostly setAttribute(class) wants a cascade-only path, one doing
+ * textContent on leaves wants the html_texty_element_update path, and one doing
+ * appendChild may have no win at all. Rather than classify from reading code,
+ * measure it on hackaday / 68kmla / facebook.
+ *
+ * Priced deliberately: counting is two instructions in RAM, and the log line is
+ * emitted ONCE PER RECONVERT (a handful per page), never per mutation. fixes911
+ * is the cautionary tale -- 3035 flushed lines to re-confirm a negative.
+ */
+static unsigned long g_mut_counts[MACOS9_DOMMUT_CHARDATA + 1];
+static unsigned long g_mut_total = 0;
+
+static void macos9_reconvert_census_dump(void)
+{
+	if (g_mut_total == 0) {
+		return;
+	}
+	macsurf_debug_log_writef(
+		"LIFE mutcensus total=%lu setattr=%lu rmattr=%lu text=%lu "
+		"innerhtml=%lu append=%lu remove=%lu insert=%lu chardata=%lu "
+		"unknown=%lu",
+		g_mut_total,
+		g_mut_counts[MACOS9_DOMMUT_SETATTRIBUTE],
+		g_mut_counts[MACOS9_DOMMUT_REMOVEATTRIBUTE],
+		g_mut_counts[MACOS9_DOMMUT_TEXTCONTENT],
+		g_mut_counts[MACOS9_DOMMUT_INNERHTML],
+		g_mut_counts[MACOS9_DOMMUT_APPENDCHILD],
+		g_mut_counts[MACOS9_DOMMUT_REMOVECHILD],
+		g_mut_counts[MACOS9_DOMMUT_INSERTBEFORE],
+		g_mut_counts[MACOS9_DOMMUT_CHARDATA],
+		g_mut_counts[MACOS9_DOMMUT_UNKNOWN]);
+	memset(g_mut_counts, 0, sizeof(g_mut_counts));
+	g_mut_total = 0;
+}
+
 /* fixes910 Phase 0 — drop this slot's node reference. Idempotent; must be
  * called on EVERY path that releases a slot, or we leak a dom_node (which pins
  * its whole document subtree alive). */
@@ -337,6 +377,8 @@ macos9_reconvert_cb(void *p)
 			continue;
 		}
 
+		/* fixes925 — dump the census for the batch this reconvert answers. */
+		macos9_reconvert_census_dump();
 		rc = html_reconvert_content(c);	/* 0 = queued, !=0 = busy */
 		macsurf_debug_log_writef(
 			"WORK reconvert: html_reconvert_content rc=%d c=%p", rc,
@@ -431,6 +473,14 @@ macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 	 * macsurf_js_set_reconvert_enabled(0) remains the emergency global kill. */
 	macsurf_debug_log_writef("WORK reconvert: dirty-mark scheduling c=%p",
 			(void *) c);
+	/* fixes925 — census: RAM only, no I/O on the mutation path. */
+	if (kind >= 0 && kind <= MACOS9_DOMMUT_CHARDATA) {
+		g_mut_counts[kind]++;
+	} else {
+		g_mut_counts[MACOS9_DOMMUT_UNKNOWN]++;
+	}
+	g_mut_total++;
+
 	macos9_reconvert_pending_add(c, node, kind);
 	/* fixes421 — two crash vectors closed in html_reconvert:
 	 * (1) DOUBLE-BUFFER: old bctx deferred past dom_to_box so the re-cascade
