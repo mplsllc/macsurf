@@ -38,6 +38,7 @@
 
 #include "macsurf_memory.h"
 #include "macsurf_debug_log.h"
+#include "macsurf_osver.h"     /* fixes936 -- macsurf_os_is_osx() */
 
 #ifdef __MACOS9__
 #include <Memory.h>
@@ -340,7 +341,27 @@ void macsurf_heap_bounds_init(void)
 	 * Toolbox return can never NARROW the window and false-reject valid
 	 * pointers (which would re-create the blank page). Require a sane
 	 * partition >= 8 MB. */
-	if (err == noErr && hi > lo && (hi - lo) >= 0x00800000UL) {
+	/* fixes936 (OS X tier 1): on Mac OS X the Process Manager's
+	 * processLocation/processSize describe a Classic-style application
+	 * PARTITION that does not exist -- a Carbon app there is a real BSD
+	 * process whose malloc arena the Mach VM places wherever it likes.
+	 * Narrowing to that window would false-reject every valid heap pointer
+	 * (the #207 blank page) and, worse, if processLocation comes back 0 with
+	 * a plausible processSize, the >= 8 MB test below PASSES and installs
+	 * lo=0 -- which simultaneously makes macsurf_ptr_is_heap(NULL) return
+	 * TRUE, defeating the guard's whole purpose. Force accept-all on OS X.
+	 *
+	 * Still record exactly what the Toolbox returned: that is the forensic
+	 * value we came for, and it is how we learn what OS X actually reports.
+	 * The line carries the literal "RECON HEAP BOUNDS", so it needs no new
+	 * whitelist entry in macsurf_debug_log.c. */
+	if (macsurf_os_is_osx()) {
+		macsurf_debug_log_writef(
+			"RECON HEAP BOUNDS OSX %d.%d lo=%p hi=%p err=%d "
+			"-- forced fail-open accept-all",
+			macsurf_os_major(), macsurf_os_minor(),
+			(void *)lo, (void *)hi, (int)err);
+	} else if (err == noErr && hi > lo && (hi - lo) >= 0x00800000UL) {
 		g_ptr_lo = lo;
 		g_ptr_hi = hi;
 		g_ptr_bounds_ok = 1;

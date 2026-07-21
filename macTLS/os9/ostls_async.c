@@ -85,6 +85,11 @@ typedef void (*OTNotifyProcPtr)(void *, OTEventCode, OTResult, void *);
 #define T_EXDATA        0x00000008L
 #define T_DISCONNECT    0x00000010L
 #define T_ORDREL        0x00000080L
+/* fixes936 — added by fixes686 (Path B) to the notifier without updating this
+ * stub block, so the non-CW8 syntax check has failed on this file ever since.
+ * Values confirmed against Universal Interfaces OpenTransport.h. */
+#define T_GODATA        0x00000100L
+#define kOTSyncIdleEvent 0x20000011L
 /* OT endpoint-state values (OTGetEndpointState) */
 #define T_OUTCON        3
 #define T_DATAXFER      5
@@ -105,6 +110,14 @@ static OTResult OTGetEndpointState(EndpointRef e){(void)e;return T_DATAXFER;}
 static OSStatus OTCloseProvider(EndpointRef e){(void)e;return noErr;}
 static long OTInitDNSAddress(DNSAddress *d,const char *s){(void)d;(void)s;return 0;}
 static void OTInitInetAddress(InetAddress *a, InetPort p, InetHost h){(void)a;(void)p;(void)h;}
+/* fixes936 — async/non-blocking configuration + Thread Manager yield, used by
+ * the fixes686 (Path B) notifier. Missing since fixes686; C89 implicit
+ * declaration hid them as warnings rather than errors, but a future
+ * -Werror=implicit-function-declaration (GCC 14+ default) would break them. */
+static OSStatus OTSetAsynchronous(EndpointRef e){(void)e;return noErr;}
+static OSStatus OTSetNonBlocking(EndpointRef e){(void)e;return noErr;}
+static OSStatus OTUseSyncIdleEvents(EndpointRef e,Boolean b){(void)e;(void)b;return noErr;}
+static OSErr YieldToAnyThread(void){return noErr;}
 /* fixes252 — TCP_NODELAY option stubs for Retro68 syntax check */
 typedef struct { unsigned long len; unsigned long level; unsigned long name; unsigned long status; unsigned long value[1]; } TOption;
 typedef struct { TNetbuf opt; long flags; } TOptMgmt;

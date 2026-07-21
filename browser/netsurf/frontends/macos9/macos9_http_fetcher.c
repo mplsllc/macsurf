@@ -10,6 +10,7 @@
 #include "content/urldb.h"	/* fixes367 (#167) — cookie jar: urldb_get_cookie */
 #include "macos9_useragent.h"	/* fixes368 (#167) — per-host UA table */
 #include "macsurf_debug.h"
+#include "macsurf_osver.h"	/* fixes936 (OS X tier 1) — macsurf_os_is_osx() */
 #ifdef __MACOS9__
 #include <Files.h>
 #include <Folders.h>
@@ -174,6 +175,10 @@ struct macos9_fetch_ctx {
 	char caller_hdrs[2048];
 };
 static struct macos9_fetch_ctx f_slots[MAX_F];
+
+/* fixes936 (OS X tier 1) — one-shot latch for the "RECON OT http done" line
+ * emitted from the MFS_DONE arm of macos9_http_poll. */
+static int g_recon_ot_http_done = 0;
 
 /* fixes172 — body capture appender. Called from the three places
  * where FETCH_DATA fires (mfs_parse_headers initial-body branch,
@@ -1352,6 +1357,29 @@ static void macos9_http_poll(lwc_string *s) {
 			fetch_msg m; m.type=FETCH_FINISHED;
 			c->state=MFS_NOTIFIED; fetch_send_callback(&m,c->parent);
 			macsurf_debug_log_writef("http: done body=%ld len=%ld status=%d ka=%d", c->body_bytes, c->content_length, c->status, c->keep_alive_ok);
+			/* fixes936 (OS X tier 1) — the plain-HTTP arm of the OT health
+			 * probe, one line at the first completed HTTP fetch.
+			 *
+			 * This exists to DISAMBIGUATE two failure hypotheses that look
+			 * identical without it. If HTTPS dies on OS X, this line says
+			 * whether Open Transport itself is fine (-> the fault is macTLS:
+			 * entropy, clock/cert validity, cipher path) or OT is dead
+			 * (-> the keep-OT-over-sockets decision genuinely needs revisiting,
+			 * despite OT being documented as present through 10.4).
+			 *
+			 * There is no OSTLSDiagnostics here -- this path never touches
+			 * macTLS -- so the payload is the fetch's own outcome. pool_key is
+			 * the bounded "host:port" string; this ctx has no host field. */
+			if (!g_recon_ot_http_done) {
+				g_recon_ot_http_done = 1;
+				macsurf_debug_log_writef(
+					"RECON OT http done osx=%d body=%ld len=%ld status=%d "
+					"ka=%d key=%s",
+					macsurf_os_is_osx(), c->body_bytes,
+					c->content_length, c->status, c->keep_alive_ok,
+					c->pool_key[0] ? c->pool_key : "(unset)");
+				macsurf_debug_log_flush();
+			}
 			macsurf_profile_stamp("fetch-finished");
 			/* fixes369 (#167) — page-weight accounting. */
 			macsurf_profile_add_bytes(c->body_bytes);

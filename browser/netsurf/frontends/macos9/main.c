@@ -12,6 +12,7 @@
 #include "macsurf_debug.h"
 #include "macsurf_memory.h"    /* macsurf_recon_mem() */
 #include "macsurf_timebase.h"
+#include "macsurf_osver.h"     /* fixes936 -- macsurf_os_is_osx() */
 
 #ifdef __MACOS9__
 #include <OpenTransport.h>
@@ -1414,6 +1415,28 @@ void macos9_poll(void) {
 		if (hb_now - hb_last > 120) {
 			hb_last = hb_now;
 			macsurf_debug_log_writef("evloop: hb tick=%ld", (long)hb_now);
+			/* fixes936 (OS X tier 1): piggyback the live-connection Open
+			 * Transport snapshot on this same ~2s throttle.
+			 *
+			 * This is the emit that covers the HANG case, and it is the whole
+			 * reason the RECON OT summary isn't teardown-only: a notifier that
+			 * never fires, or a connect that never returns, means the
+			 * connection NEVER reaches teardown, so a teardown-only diagnostic
+			 * is the one least likely to print exactly when it matters.
+			 *
+			 * The walk lives in the TLS fetcher's own TU so OSTLSConnection
+			 * stays private to it -- no registration hook, no shared mutable
+			 * state here. Self-throttling and capped PER CONNECTION (not per
+			 * session) inside that function, so a later hang always gets its
+			 * lines even if an earlier slow fetch already spent a budget.
+			 *
+			 * Bare extern at point of use: macos9_tls_fetcher.c exports no
+			 * header, matching how every macsurf_ptr_is_heap consumer declares
+			 * it (macsurf_memory.h:93-95 sanctions this). */
+			{
+				extern void macos9_https_recon_ot_tick(void);
+				macos9_https_recon_ot_tick();
+			}
 		}
 	}
 	/* fixes234a — revert sleep=0 (fixes234). On Carbon CFM, sleep=0 in
@@ -1625,6 +1648,15 @@ int main(void) {
 	 * (~33 ms) elapse here at startup; acceptable cost. */
 	macsurf_tb_calibrate();
 	macsurf_debug_log_init();
+	/* fixes936 (OS X tier 1): settle OS 9 vs Mac OS X BEFORE anything consumes
+	 * the answer. macsurf_heap_bounds_init() below is the FIRST consumer -- on
+	 * OS X the Process Manager partition window it reads is fiction and must
+	 * not be allowed to narrow the pointer guards (that would re-create the
+	 * #207 blank page on purpose). Emits the one-shot "RECON OS" line, so it
+	 * has to run AFTER the log is open. This call site sits OUTSIDE the
+	 * #ifdef __MACOS9__ block that opens further down; the Mac-only guard
+	 * lives inside the module, so the Linux syntax check sees a no-op. */
+	macsurf_osver_init();
 	/* fixes719 (#207): capture the REAL application-partition pointer window
 	 * from the Process Manager NOW -- after the log is up (so RECON HEAP
 	 * BOUNDS is recorded) and before ANY string interning / URL parse /
@@ -1666,6 +1698,19 @@ int main(void) {
 		MS_LOG("InitOT OK");
 	}
 	g_ostls_ot_context = macos9_ot_context;
+	/* fixes936 (OS X tier 1): the InitOT OK/FAIL MS_LOG above is not enough.
+	 * "InitOT FAIL" survives the crash-only gate but "InitOT OK" does NOT, so
+	 * a successful OT init is invisible and indistinguishable from a crash
+	 * before this point. Open Transport IS present on Mac OS X 10.0-10.4
+	 * (deprecated at 10.4, not removed), so this line is the first thing that
+	 * tells us whether the networking stack even came up on the 10.3 test
+	 * machine. NOTE: this prints on OS 9 too (it is not conditioned on
+	 * osx=) -- that is expected on both platforms, not an anomaly. Shares the
+	 * "RECON OT" whitelist entry with the fetcher emitters. */
+	macsurf_debug_log_writef("RECON OT init ok=%d ctx=%p osx=%d",
+		(macos9_ot_context != NULL) ? 1 : 0,
+		(void *)macos9_ot_context,
+		macsurf_os_is_osx());
 	/* macEntropy: fold the persisted seed in before any handshake, so the
 	 * first HTTPS fetch after a cold boot isn't drawing on a thin pool. */
 	OSTLS_LoadSeed();

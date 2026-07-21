@@ -30,6 +30,7 @@
 #include "macos9_useragent.h"	/* fixes368 (#167) — per-host UA table */
 #include "macos9_blocklist.h"	/* fixes856 (#285) — tracker/ad blocklist */
 #include "macsurf_debug.h"
+#include "macsurf_osver.h"	/* fixes936 (OS X tier 1) — macsurf_os_is_osx() */
 
 #include <string.h>
 #include <stdlib.h>
@@ -1276,6 +1277,86 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	fetch_free(p);
 }
 
+/* fixes936 (OS X tier 1) — one-shot latch for the completed-fetch summary. */
+static int g_recon_ot_done = 0;
+
+/*
+ * fixes936 (OS X tier 1) — live Open Transport snapshot, called from the
+ * event-loop heartbeat in main.c (~2 s throttle) via a bare extern.
+ *
+ * Lives HERE, not in main.c, so OSTLSConnection stays private to this TU:
+ * the event loop holds no connection pointer and should not be given one.
+ * We walk our own slot array exactly like macos9_https_fetcher_active() does.
+ *
+ * WHY THIS EXISTS: the failure it detects (a notifier that never fires, so
+ * ot_recv_nodata climbs while zero bytes are delivered) is precisely the case
+ * where the connection NEVER reaches teardown -- so the completed-fetch
+ * summary below would never print. A hang is only readable if something
+ * brackets it.
+ *
+ * Capped PER CONNECTION, not per session: a per-session budget could be spent
+ * by an early slow-but-successful fetch and then print nothing for the later
+ * hang, which is the only event this is for. Each slot gets its own budget,
+ * reset when the slot leaves the live set.
+ */
+#define RECON_OT_TICK_MAX 6   /* snapshots per connection; a stall is obvious
+                               * once the counters fail to move across 2-3 */
+
+void macos9_https_recon_ot_tick(void)
+{
+	static unsigned char tick_budget[MAX_HTTPS_F];
+	int i;
+	int live = 0;
+	int first = -1;
+
+	for (i = 0; i < MAX_HTTPS_F; i++) {
+		int st = https_slots[i].state;
+		if (st != HS_IDLE && st != HS_DONE && st != HS_FAIL) {
+			live++;
+			/* Lowest-index live slot that still has budget AND a real
+			 * connection. Skipping exhausted slots matters: otherwise a
+			 * long-lived slot 0 would spend its budget and then mask a
+			 * genuinely hung slot 3 forever. */
+			if (first < 0 &&
+			    https_slots[i].conn != NULL &&
+			    tick_budget[i] < RECON_OT_TICK_MAX) {
+				first = i;
+			}
+		} else {
+			/* Slot left the live set -- rearm its budget for next time. */
+			tick_budget[i] = 0;
+		}
+	}
+
+	if (first < 0) return;   /* nothing in flight, or all budgets spent */
+	tick_budget[first]++;
+
+	{
+		OSTLSDiagnostics od;
+		memset(&od, 0, sizeof od);
+		OSTLS_GetDiagnostics(https_slots[first].conn, &od);
+		/* Lowest-index live slot, deliberately: it is deterministic AND it
+		 * converges on the interesting one -- in a hang the other slots
+		 * complete and go HS_IDLE, leaving the stuck connection as the only
+		 * live slot. slot=/n= make a changing pick visible rather than
+		 * looking like interleaved corruption.
+		 *
+		 * No host= here on purpose: this variant must stay well inside
+		 * macsurf_debug_log_writef's silent 255-byte truncation. */
+		macsurf_debug_log_writef(
+			"RECON OT live slot=%d n=%d st=%d osx=%d ot_err=%ld "
+			"snd=%ld/%ld zero=%ld flow=%ld rcv=%ld/%ld nod=%ld pumps=%ld",
+			first, live, (int)https_slots[first].state,
+			macsurf_os_is_osx(),
+			(long)od.ot_err,
+			(long)od.ot_send_calls, (long)od.ot_send_bytes,
+			(long)od.ot_send_zero,  (long)od.ot_send_flow,
+			(long)od.ot_recv_calls, (long)od.ot_recv_bytes,
+			(long)od.ot_recv_nodata,
+			(long)od.pump_calls);
+	}
+}
+
 static void hctx_finish(struct macos9_https_ctx *c)
 {
 	struct fetch *p;
@@ -1285,6 +1366,46 @@ static void hctx_finish(struct macos9_https_ctx *c)
 
 	macsurf_debug_log_writef("https: done body=%ld status=%d",
 		c->body_bytes, c->status);
+
+	/* fixes936 (OS X tier 1) — ONE Open Transport health line per session,
+	 * taken at the first HTTPS fetch that actually COMPLETES.
+	 *
+	 * Why the SUCCESS path and not the failure path: hctx_fail already dumps
+	 * the full OSTLSDiagnostics across five "FAIL diag" lines, all of which
+	 * survive the crash-only gate because they contain "FAIL". So a broken
+	 * network is already legible. The success path is the blind spot -- the
+	 * "https: done ..." line above matches NO whitelist keyword, so today a
+	 * working fetch and a fetch that never started produce an IDENTICAL
+	 * (empty) log. That is what this closes, and it is why the ABSENCE of
+	 * this line is itself a reading: nothing ever completed.
+	 *
+	 * Read it as: snd/rcv byte counts non-zero and nod= modest -> OT is
+	 * genuinely moving bytes on this host OS. flow= climbing -> the
+	 * kOTFlowErr / T_GODATA async notifier path is exercised and works.
+	 * zero= climbing with rcv=0 -> OT took the endpoint but isn't moving data.
+	 *
+	 * host= is LAST on purpose: macsurf_debug_log_writef truncates SILENTLY
+	 * at 255 bytes, and a truncated counter reads as a real value, so the
+	 * counters must all precede anything variable-length. */
+	if (!g_recon_ot_done && c->conn != NULL) {
+		OSTLSDiagnostics od;
+		g_recon_ot_done = 1;
+		memset(&od, 0, sizeof od);
+		OSTLS_GetDiagnostics(c->conn, &od);
+		macsurf_debug_log_writef(
+			"RECON OT done osx=%d ot_err=%ld snd=%ld/%ld zero=%ld flow=%ld "
+			"rcv=%ld/%ld nod=%ld pumps=%ld suite=%d host=%s",
+			macsurf_os_is_osx(),
+			(long)od.ot_err,
+			(long)od.ot_send_calls, (long)od.ot_send_bytes,
+			(long)od.ot_send_zero,  (long)od.ot_send_flow,
+			(long)od.ot_recv_calls, (long)od.ot_recv_bytes,
+			(long)od.ot_recv_nodata,
+			(long)od.pump_calls,
+			(int)od.cipher_suite,
+			c->host[0] ? c->host : "(unset)");
+		macsurf_debug_log_flush();
+	}
 	macsurf_profile_stamp("fetch-finished");
 	/* fixes369 (#167) — page-weight accounting: fold this completed
 	 * sub-resource's body size + 1 into the per-load totals. */

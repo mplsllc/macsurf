@@ -659,6 +659,26 @@ macsurf_log_is_crash_report(const char *m)
 	/* fixes769 (#232) — let the mime-recon lines through the crash-only
 	 * gate so a downloaded-instead-of-rendered page is diagnosable. */
 	if (strstr(m, "RECON MIME") != NULL) return 1;
+	/* fixes936 (OS X tier 1) — the OS X bring-up lines.
+	 *
+	 * THIS GATE MATCHES LITERAL SUBSTRINGS, NOT A "RECON" PREFIX. Nine RECON
+	 * families are emitted in tree today (MEM, SELNULL, CLAMP, DL, RX, TLS,
+	 * PAINT, OVL, filegadget) and ALL nine are dropped right here. That is
+	 * deliberate, not an oversight: RECON RX fires every ~2 s per in-flight
+	 * fetch and RECON OVL / RECON PAINT fire per draw, so "simplifying" this
+	 * to strncmp(m, "RECON ", 6) would bury the very lines we are adding.
+	 * Add exact literals only. (Two stale in-tree comments -- near the RECON
+	 * RX emitter in macos9_tls_fetcher.c and RECON OVL in plotters.c --
+	 * claim "RECON survives the filter". They are wrong; don't trust them.)
+	 *
+	 *   "RECON OS" -- one line per launch: host OS version (macsurf_osver.c).
+	 *   "RECON OT" -- OT init (main.c), a capped per-connection live snapshot
+	 *                 from the event-loop heartbeat, and one summary at the
+	 *                 first COMPLETED fetch of each scheme.
+	 *
+	 * Retire both entries when the OS X tier closes. */
+	if (strstr(m, "RECON OS") != NULL) return 1;
+	if (strstr(m, "RECON OT") != NULL) return 1;
 	/* WORK: dedicated development channel for whatever feature/bug is
 	 * currently under work. fixes893 (2.0.5 release): gated behind
 	 * MACSURF_WORK_LOG (see the note at the passthrough in

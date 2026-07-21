@@ -9,7 +9,7 @@ generated, and wired into the build.
 |---|---|
 | [puffpuff.png](../puffpuff.png) | Source 512×512 RGBA icon artwork |
 | [tools/png_to_mac_icon_rez.py](../tools/png_to_mac_icon_rez.py) | PNG → Mac icon family generator (Rez text **and** binary `.rsrc`) |
-| [browser/netsurf/frontends/macos9/MacSurf.r](../browser/netsurf/frontends/macos9/MacSurf.r) | Canonical Rez source — declares `'carb'` and `#include`s `MacSurfIcon.r` |
+| [browser/netsurf/frontends/macos9/MacSurf.r](../browser/netsurf/frontends/macos9/MacSurf.r) | Canonical Rez source — declares `'carb'`, `'vers'`, `'plst'` and `#include`s `MacSurfIcon.r` |
 | [browser/netsurf/frontends/macos9/MacSurfIcon.r](../browser/netsurf/frontends/macos9/MacSurfIcon.r) | Generated Rez source: ICN#/icl4/icl8/ics#/ics4/ics8 + FREF + BNDL |
 | [browser/netsurf/frontends/macos9/MacSurf.rsrc](../browser/netsurf/frontends/macos9/MacSurf.rsrc) | Pre-built binary resource fork — what CW8 links into the binary when the Rez step is skipped |
 
@@ -26,6 +26,28 @@ generated, and wired into the build.
 | `ics8` | 128 | 256 | 16×16 8-bit small colour |
 | `FREF` | 128 | 7 | File type `'APPL'` → icon local-ID 0 |
 | `BNDL` | 128 | 28 | Creator `'MPLS'` binding `ICN#` 128 + `FREF` 128 |
+| `vers` | 1, 2 | 26 | Finder Get Info version string (#219) |
+| `plst` | 0 | 604 | Resource-fork `Info.plist` — CFBundle identity under Mac OS X 10.0–10.4 LaunchServices (fixes936) |
+
+### About `'plst'` (Mac OS X)
+
+MacSurf is a Carbon **CFM/PEF** binary, which Mac OS X 10.0–10.4 launches
+natively via `LaunchCFMApp`. `'carb'` alone is enough for OS X to recognise
+the fragment as Carbon and launch it rather than punting it to the Classic
+environment — but with no `'plst'` the app has no CFBundle identity, so
+LaunchServices gives it no Dock name, no document-type binding and no
+URL-scheme claim. `'plst' 0` *is* that Info.plist for an unbundled app; it
+supersedes `'carb' 0` on OS X, and the two coexist, so shipping both keeps
+OS 9 and OS X correct from a single artifact.
+
+Deliberately **no `CFBundleIconFile`** — that key names an `.icns` inside a
+bundle and an unbundled CFM app has nowhere to put one, so expect the Dock to
+show the name but a generic icon. The `ICN#`/`icl8` family still drives the
+Finder icon on OS 9.
+
+Note that **LaunchServices caches Info.plist data aggressively**: during
+testing the Dock name may not update after a rebuild without touching the app
+or re-registering it. A stale name is not evidence the resource is wrong.
 
 **Creator code is uppercase `'MPLS'`.** Classic Mac type and creator
 codes are case-sensitive; do not change this to `'mpls'` or similar.

@@ -568,6 +568,57 @@ def build_vers_resource(short_ver: str, long_ver: str,
             + pstr(short_ver) + pstr(long_ver))
 
 
+def build_plst_resource(bundle_name: str, identifier: str, short_ver: str,
+                        creator: str = "MPLS",
+                        pkg_type: str = "APPL") -> bytes:
+    """Binary payload for a 'plst' (0) resource — the resource-fork Info.plist.
+
+    fixes936 (OS X tier 1). MacSurf is a Carbon CFM/PEF binary, which Mac OS X
+    10.0-10.4 launches natively via LaunchCFMApp. The 'carb' (0) marker is
+    enough for OS X to recognise the fragment as Carbon and launch it rather
+    than punting to the Classic environment — but with no 'plst' the app has
+    no CFBundle identity at all, so LaunchServices gives it no Dock name, no
+    document-type binding and no URL-scheme claim.
+
+    'plst' (0) is exactly that Info.plist, carried in the resource fork for an
+    unbundled app; it supersedes 'carb' (0) on OS X while the two coexist
+    happily (both are siblings of the linker-emitted 'cfrg' (0)), so shipping
+    both keeps OS 9 and OS X correct from one artifact.
+
+    The payload is the raw XML bytes — no length prefix, no NUL terminator.
+
+    Deliberately NO CFBundleIconFile: that key names an .icns inside a bundle,
+    and an unbundled CFM app has nowhere to put one. The Dock therefore shows
+    the name from CFBundleName but a generic icon; the 'ICN#'/'icl8' family
+    still drives the Finder icon on OS 9. Adding the key without the file
+    would just be a dangling reference.
+    """
+    plist = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" '
+        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+        '<plist version="1.0">\n'
+        '<dict>\n'
+        '\t<key>CFBundleName</key>\n'
+        '\t<string>%s</string>\n'
+        '\t<key>CFBundleIdentifier</key>\n'
+        '\t<string>%s</string>\n'
+        '\t<key>CFBundleVersion</key>\n'
+        '\t<string>%s</string>\n'
+        '\t<key>CFBundleShortVersionString</key>\n'
+        '\t<string>%s</string>\n'
+        '\t<key>CFBundleSignature</key>\n'
+        '\t<string>%s</string>\n'
+        '\t<key>CFBundlePackageType</key>\n'
+        '\t<string>%s</string>\n'
+        '\t<key>CFBundleInfoDictionaryVersion</key>\n'
+        '\t<string>6.0</string>\n'
+        '</dict>\n'
+        '</plist>\n'
+    ) % (bundle_name, identifier, short_ver, short_ver, creator, pkg_type)
+    return plist.encode("utf-8")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -591,6 +642,10 @@ def main() -> int:
                          "(default: 2.0)")
     ap.add_argument("--version-long", default=None,
                     help="long Get Info string (default: 'MacSurf <version>')")
+    ap.add_argument("--bundle-id", default="org.macsurf.MacSurf",
+                    help="CFBundleIdentifier for the 'plst' (0) Info.plist "
+                         "read by Mac OS X LaunchServices "
+                         "(default: org.macsurf.MacSurf)")
     args = ap.parse_args()
 
     if len(args.creator) != 4:
@@ -655,6 +710,17 @@ def main() -> int:
                                major_bcd=_major, minor_bug_bcd=_minor_bug)
     fork.add(b"vers", 1, vers)
     fork.add(b"vers", 2, vers)
+    # 'plst' (0) — resource-fork Info.plist, so Mac OS X 10.0-10.4 gives the
+    # CFM app a real CFBundle identity instead of launching it anonymously
+    # (fixes936). Version string is kept in lockstep with 'vers' above.
+    plst = build_plst_resource(
+        bundle_name=vlong.split(" ")[0] if vlong else "MacSurf",
+        identifier=args.bundle_id,
+        short_ver=args.version,
+        creator=args.creator,
+        pkg_type=args.file_type,
+    )
+    fork.add(b"plst", 0, plst)
     blob = fork.build()
     os.makedirs(os.path.dirname(args.rsrc) or ".", exist_ok=True)
     with open(args.rsrc, "wb") as f:
@@ -673,6 +739,8 @@ def main() -> int:
         "  ics8  (%d)  %4d bytes  -- 16x16 8-bit small\n"
         "  FREF  (%d)  %4d bytes  -- file type %s\n"
         "  BNDL  (%d)  %4d bytes  -- creator %s\n"
+        "  vers  (1,2) %4d bytes  -- Get Info version %s\n"
+        "  plst  (0)   %4d bytes  -- OS X Info.plist, id %s\n"
         % (args.icon_id,
            0,
            args.icon_id, len(fam.icn_pound),
@@ -682,7 +750,9 @@ def main() -> int:
            args.icon_id, len(fam.ics4),
            args.icon_id, len(fam.ics8),
            args.icon_id, len(fref), args.file_type,
-           args.icon_id, len(bndl), args.creator))
+           args.icon_id, len(bndl), args.creator,
+           len(vers), args.version,
+           len(plst), args.bundle_id))
     return 0
 
 

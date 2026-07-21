@@ -7,6 +7,11 @@
  *                      treats the binary as classic PEF and CarbonLib
  *                      never loads, so any *InContext OT call crashes.
  *
+ *   'plst' (0)       — resource-fork Info.plist (fixes936). Gives the CFM
+ *                      binary a CFBundle identity under Mac OS X 10.0-10.4
+ *                      LaunchServices (Dock name, doc/URL claims). Ignored
+ *                      by OS 9; coexists with 'carb'.
+ *
  *   icon family at ID 128
  *     ICN# (128)     — 32x32 1-bit icon + 1-bit mask
  *     icl4 (128)     — 32x32 4-bit colour
@@ -40,6 +45,49 @@
 type 'carb' {};
 
 resource 'carb' (0) {};
+
+/* 'plst' (0) — resource-fork Info.plist (fixes936, OS X tier 1). Mac OS X
+ * 10.0-10.4 launches this CFM/PEF binary natively via LaunchCFMApp; 'carb'
+ * above is enough for it to be recognised as Carbon rather than punted to
+ * Classic, but WITHOUT a 'plst' the app has no CFBundle identity, so
+ * LaunchServices gives it no Dock name, no document-type binding and no
+ * URL-scheme claim. 'plst' (0) supersedes 'carb' (0) on OS X and the two
+ * coexist, so shipping both keeps OS 9 and OS X correct from one artifact.
+ *
+ * The type is declared locally for the same reason as 'carb'/'vers' below.
+ * 'data' emits the raw bytes with no length prefix or terminator, which is
+ * what LaunchServices expects.
+ *
+ * No CFBundleIconFile: that key names an .icns inside a bundle and an
+ * unbundled CFM app has nowhere to put one, so the Dock shows the name but a
+ * generic icon. The ICN#/icl8 family still drives the Finder icon on OS 9.
+ *
+ * As with 'vers', the app build LINKS the binary MacSurf.rsrc (no Rez step),
+ * so this is the canonical record — regenerate both with
+ * tools/png_to_mac_icon_rez.py. */
+data 'plst' (0) {
+	"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+	"<!DOCTYPE plist PUBLIC \"-//Apple Computer//DTD PLIST 1.0//EN\" "
+	"\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+	"<plist version=\"1.0\">\n"
+	"<dict>\n"
+	"\t<key>CFBundleName</key>\n"
+	"\t<string>MacSurf</string>\n"
+	"\t<key>CFBundleIdentifier</key>\n"
+	"\t<string>org.macsurf.MacSurf</string>\n"
+	"\t<key>CFBundleVersion</key>\n"
+	"\t<string>2.0.5</string>\n"
+	"\t<key>CFBundleShortVersionString</key>\n"
+	"\t<string>2.0.5</string>\n"
+	"\t<key>CFBundleSignature</key>\n"
+	"\t<string>MPLS</string>\n"
+	"\t<key>CFBundlePackageType</key>\n"
+	"\t<string>APPL</string>\n"
+	"\t<key>CFBundleInfoDictionaryVersion</key>\n"
+	"\t<string>6.0</string>\n"
+	"</dict>\n"
+	"</plist>\n"
+};
 
 /* 'vers' (1) + (2) — Finder "Get Info" version (#219). Without a 'vers' (1)
  * Get Info shows "N/A". The type is defined locally (like 'carb' above) to
