@@ -15,6 +15,7 @@
 #endif
 #include "macsurf_debug.h"
 #include "macsurf_memory.h"    /* macsurf_recon_mem() */
+#include "macsurf_osver.h"     /* fixes938 -- macsurf_os_is_osx() */
 
 #ifdef __MACOS9__
 #include <MacWindows.h>
@@ -504,15 +505,30 @@ void macos9_window_te_deactivate_url(struct gui_window *g) { if(!g||!g->url_te||
  * each keystroke) then scrolls the caret into view. Only the right edge is
  * stretched; left is kept at the view edge so a freshly-set URL shows from
  * the start (resets any horizontal scroll left over from a prior long URL). */
+/* fixes938 — lock the TEHandle across the master-pointer write.
+ *
+ * This dereferenced an UNLOCKED relocatable handle and then wrote through the
+ * resulting TERec*, which is out of step with the rest of this file (the text
+ * handles at the TEGetText sites are HLock/HUnlock'd properly). Nothing
+ * allocates between the deref and the writes today, so this is latent rather
+ * than the cause of the OS X TESetText crash -- but it is exactly the shape
+ * of bug that becomes real the moment someone adds an allocating call here,
+ * and Mac OS X's allocator is far more willing to move blocks than OS 9's.
+ * HGetState/HSetState rather than a bare HLock/HUnlock so a caller that
+ * already locked the handle stays locked on return. */
 static void set_url_te_geometry(TEHandle te, const Rect *view) {
 	TERec *p;
 	Rect d;
+	SignedByte st;
 	if (te == NULL || view == NULL) return;
+	st = HGetState((Handle)te);
+	HLock((Handle)te);
 	p = *te;
 	d = *view;
 	d.right = (short)(view->left + 8000);
 	p->viewRect = *view;
 	p->destRect = d;
+	HSetState((Handle)te, st);
 }
 
 static void set_url_te_text(struct gui_window *g, const char *u) {
@@ -1282,12 +1298,45 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 	TextFont(kFontIDGeneva); TextSize(12); TextFace(0);
 	compute_url_te_rect(&g->url_rect,&b); g->url_te=TENew(&b,&b);
 	if(g->url_te) {
-		set_url_te_geometry(g->url_te, &b);   /* fixes756 (#229) wide destRect */
-		TEAutoView(true, g->url_te);          /* enable TESelView caret auto-scroll */
+		/* fixes938 (OS X tier 1c) — BISECT the TextEdit setup on Mac OS X.
+		 *
+		 * fixes937's breadcrumbs put the 10.3 crash exactly here: startup
+		 * reached "BOOT launch: create empty window, defer home nav", then
+		 * EXC_BAD_ACCESS at 0x74140001 with the backtrace
+		 *   macos9_window_create -> TESetText -> TECalText -> StdExit
+		 *     -> RGBForeColor -> SetPortRGBForeColor -> InternalColor2Index
+		 * i.e. TextEdit called into the port's colour machinery while
+		 * recalculating, and that faulted. The port is the window's own
+		 * (SetPortWindowPort above) and WRefCon was set before TENew, so the
+		 * documented TENew/WRefCon gotcha is already satisfied.
+		 *
+		 * Two calls here go BEYOND stock TextEdit usage and both run
+		 * immediately before the fault, so they are the bisect candidates:
+		 *   - set_url_te_geometry() forces an 8000px-wide destRect
+		 *     (fixes756 #229, for URL-bar horizontal scrolling)
+		 *   - TEAutoView(true) enables auto-scroll, which makes TextEdit
+		 *     DRAW/scroll during TESetText -- and drawing is what reaches
+		 *     RGBForeColor.
+		 * Skip both on OS X only. If TESetText then survives, one of these
+		 * is the trigger and we re-add them individually. If it still dies,
+		 * TextEdit itself is unusable here and tier 1d gates the field off.
+		 *
+		 * OS 9 behaviour is byte-for-byte unchanged. */
+		if (!macsurf_os_is_osx()) {
+			set_url_te_geometry(g->url_te, &b);   /* fixes756 (#229) wide destRect */
+			TEAutoView(true, g->url_te);          /* enable TESelView caret auto-scroll */
+		} else {
+			MS_LOG("BOOT te: OSX minimal path (no wide destRect, no autoview)");
+		}
+		MS_LOG("BOOT te: pre TESetText");
 		TESetText(MACSURF_HOME_URL,(long)strlen(MACSURF_HOME_URL),g->url_te);
+		MS_LOG("BOOT te: post TESetText");
 		TECalText(g->url_te);
+		MS_LOG("BOOT te: post TECalText");
 		TEActivate(g->url_te);
+		MS_LOG("BOOT te: post TEActivate");
 		TESetSelect(0, 32767, g->url_te);  /* select-all so first keystroke replaces */
+		MS_LOG("BOOT te: post TESetSelect");
 	}
 	GetWindowPortBounds(g->window,&b); b.right=(short)(b.right-b.left); b.bottom=(short)(b.bottom-b.top); b.left=0; b.top=0;
 	InvalWindowRect(g->window,&b);
