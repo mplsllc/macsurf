@@ -1360,7 +1360,67 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 			RGBBackColor(&bg_wht);
 			MS_LOG("BOOT te: gdevice+colors set");
 		} else {
-			MS_LOG("BOOT te: OSX -- colour calls SKIPPED (probe build)");
+			/* fixes943 (OS X tier 1g) — CAPABILITY TEST, one-shot.
+			 *
+			 * fixes942's probe produced the first hard fact of this hunt:
+			 *   BOOT te: win=003450C0 port=003450C0 maindev=0008109C
+			 * and 0x0008109C is EXACTLY r4 in every crash dump (938, 939,
+			 * 941, 942 -- all identical). So GetMainDevice()'s handle is the
+			 * argument reaching InternalColor2Index, and dereferencing it
+			 * yields 0x74140001, which is unmapped. The main SCREEN's classic
+			 * GDevice has no usable colour/inverse table under Quartz.
+			 *
+			 * The question that decides the whole OS X port: is classic QD
+			 * colour broken PROCESS-WIDE, or only for the screen device?
+			 * MacSurf already renders into offscreen 32-bit GWorlds and
+			 * CopyBits them to the window (macos9_paint_gw), and those
+			 * GWorlds demonstrably work here -- the favicon and toolbar icons
+			 * decoded into them earlier this very launch. A GWorld carries
+			 * its OWN GDevice, created by us rather than by Quartz.
+			 *
+			 * So: make a tiny 32-bit GWorld, switch to ITS device, and call
+			 * RGBForeColor. Every line is flushed BEFORE the risky call, so
+			 * whichever line is last on disk names the answer:
+			 *   "SURVIVED" -> colour works offscreen; the fix is to keep all
+			 *                 RGB work on the GWorld and never touch the
+			 *                 window port's colour, which matches how the
+			 *                 renderer is already built.
+			 *   crash here -> classic QD colour is dead process-wide, and OS X
+			 *                 needs a different drawing strategy entirely.
+			 * Either way this is a measurement, not another guess. */
+			GWorldPtr probe_gw = NULL;
+			CGrafPtr save_port;
+			GDHandle save_dev;
+			Rect probe_r;
+			OSErr probe_err;
+
+			GetGWorld(&save_port, &save_dev);
+			SetRect(&probe_r, 0, 0, 8, 8);
+			probe_err = NewGWorld(&probe_gw, 32, &probe_r, NULL, NULL, 0);
+			macsurf_debug_log_writef("BOOT te: probe NewGWorld err=%d gw=%p",
+				(int)probe_err, (void *)probe_gw);
+			macsurf_debug_log_flush();
+
+			if (probe_err == noErr && probe_gw != NULL) {
+				GDHandle gwdev = GetGWorldDevice(probe_gw);
+				macsurf_debug_log_writef("BOOT te: probe gwdev=%p maindev=%p",
+					(void *)gwdev, (void *)maindev);
+				macsurf_debug_log_flush();
+
+				SetGWorld((CGrafPtr)probe_gw, gwdev);
+				MS_LOG("BOOT te: probe -> RGBForeColor on GWorld NOW");
+				macsurf_debug_log_flush();
+
+				fg_blk.red = 0; fg_blk.green = 0; fg_blk.blue = 0;
+				RGBForeColor(&fg_blk);
+
+				MS_LOG("BOOT te: probe RGBForeColor on GWorld SURVIVED");
+				macsurf_debug_log_flush();
+
+				SetGWorld(save_port, save_dev);
+				DisposeGWorld(probe_gw);
+			}
+			MS_LOG("BOOT te: OSX -- window-port colour calls SKIPPED");
 		}
 	}
 	/* fixes302 — set the URL field font (Geneva 12) before TENew so the
