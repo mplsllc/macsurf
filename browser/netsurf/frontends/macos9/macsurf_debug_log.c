@@ -679,6 +679,27 @@ macsurf_log_is_crash_report(const char *m)
 	 * Retire both entries when the OS X tier closes. */
 	if (strstr(m, "RECON OS") != NULL) return 1;
 	if (strstr(m, "RECON OT") != NULL) return 1;
+	/* fixes937 (OS X tier 1b) — the startup breadcrumb trail.
+	 *
+	 * fixes936 shipped to the 10.3 iMac and the app "opens and immediately
+	 * crashes", but the log simply STOPPED after "RECON OT init" -- which
+	 * proved nothing, because every startup milestone after it was dropped
+	 * right here: "macEntropy: seed loaded", "Appearance OK", "EnterMovies
+	 * OK", "menus installed", "netsurf_init done", ... none match a keyword.
+	 * Both DIAG lines are dropped too (the main.c comment claiming "'DIAG'
+	 * survives the crash-only gate" is stale and wrong), and "evloop: hb" is
+	 * killed twice over -- unwhitelisted AND explicitly dropped by the perf
+	 * filter in macsurf_debug_log_write.
+	 *
+	 * So those existing markers were re-prefixed "BOOT " rather than adding a
+	 * parallel set of new log calls, and this single literal lets the whole
+	 * trail through. Since the log FlushVols every kept line inside
+	 * LOG_EAGER_LINES, the last "BOOT " line on disk after a crash names the
+	 * step that was executing.
+	 *
+	 * ~22 one-shot lines per launch, startup only. Retire with the OS X
+	 * tier. */
+	if (strstr(m, "BOOT ") != NULL) return 1;
 	/* WORK: dedicated development channel for whatever feature/bug is
 	 * currently under work. fixes893 (2.0.5 release): gated behind
 	 * MACSURF_WORK_LOG (see the note at the passthrough in

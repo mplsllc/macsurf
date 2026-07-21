@@ -1404,6 +1404,19 @@ static void macos9_handle_activate(const EventRecord *event) {
 
 void macos9_poll(void) {
 	EventRecord ev;
+	/* fixes937 (OS X tier 1b): one-shot proof that the event loop was
+	 * actually REACHED. Everything between InitOT and here is otherwise
+	 * invisible in a shipped build -- the per-milestone MS_LOGs are now
+	 * "BOOT " prefixed and whitelisted, but this is the one that separates
+	 * "died during startup" from "started, then died in the loop". */
+	{
+		static int loop_marked = 0;
+		if (!loop_marked) {
+			loop_marked = 1;
+			MS_LOG("BOOT event loop entered");
+			macsurf_debug_log_flush();
+		}
+	}
 	/* fixes583 DIAG: main-event-loop heartbeat (throttled ~2s). If the
 	 * browser freezes and THIS stops while 'qjs: interrupt hb' keeps pulsing,
 	 * the loop is blocked inside js_exec (runaway JS). If this keeps pulsing
@@ -1714,7 +1727,7 @@ int main(void) {
 	/* macEntropy: fold the persisted seed in before any handshake, so the
 	 * first HTTPS fetch after a cold boot isn't drawing on a thin pool. */
 	OSTLS_LoadSeed();
-	MS_LOG("macEntropy: seed loaded");
+	MS_LOG("BOOT macEntropy: seed loaded");
 	/* fixes413 -- prove on-device whether the macTLS SHA-384 core (fixes411)
 	 * is live and correct. If this logs FAIL, every Sectigo/SHA-384 cert
 	 * chain will be rejected; if it never logs at all, the macTLS library
@@ -1723,7 +1736,7 @@ int main(void) {
 		extern int OSTLS_SHA384_KAT(void);
 		int kr = OSTLS_SHA384_KAT();
 		if (kr == 0) {
-			MS_LOG("macTLS SHA-384 KAT: PASS (single+multiblock)");
+			MS_LOG("BOOT macTLS SHA-384 KAT: PASS (single+multiblock)");
 		} else if (kr == 1) {
 			MS_LOG("macTLS SHA-384 KAT: FAIL abc (single-block)");
 		} else if (kr == 2) {
@@ -1733,7 +1746,7 @@ int main(void) {
 		}
 	}
 	RegisterAppearanceClient();
-	MS_LOG("Appearance OK");
+	MS_LOG("BOOT Appearance OK");
 
 	/* fixes78: QuickTime startup. Required before any
 	 * GraphicsImportComponent / Movies.h API call. Without this,
@@ -1743,7 +1756,7 @@ int main(void) {
 	{
 		OSErr qt_err = EnterMovies();
 		if (qt_err == noErr) {
-			MS_LOG("EnterMovies OK");
+			MS_LOG("BOOT EnterMovies OK");
 		} else {
 			MS_LOG("EnterMovies FAIL");
 		}
@@ -1778,11 +1791,11 @@ int main(void) {
 		 * (headings, page titles) still get smooth AA edges. Dial up to
 		 * 14 or 16 if body still looks fuzzy on the target hardware. */
 		(void)SetAntiAliasedTextEnabled(true, 12);
-		MS_LOG("font quality: outline on, AA floor=12pt, fract off");
+		MS_LOG("BOOT font quality: outline on, AA floor=12pt, fract off");
 	}
 
 	macos9_init_menus();
-	MS_LOG("menus installed");
+	MS_LOG("BOOT menus installed");
 	/* fixes294 — decode the baked-in default favicon PNG into a GWorld
 	 * that lives for the life of the process.  Must happen AFTER
 	 * EnterMovies (which initialises QT but we use lodepng for this) and
@@ -1790,11 +1803,13 @@ int main(void) {
 	 * dependency).  Idempotent and best-effort: paint helper bails if
 	 * load failed. */
 	macos9_window_load_default_favicon();
-	MS_LOG("default favicon loaded");
+	MS_LOG("BOOT default favicon loaded");
 	/* fixes297 — toolbar button icons.  Best-effort; any failure
 	 * leaves the corresponding button text-only. */
 	macos9_window_load_toolbar_icons();
+	MS_LOG("BOOT toolbar icons loaded");
 #endif
+	MS_LOG("BOOT mac-only init block done");
 	memset(&macos9_table, 0, sizeof(macos9_table));
 	macos9_table.window = macos9_window_table;
 	macos9_table.utf8 = macos9_utf8_table;
@@ -1810,9 +1825,9 @@ int main(void) {
 		macos9_table.fetch = &macos9_fetch_table;
 	}
 	netsurf_register(&macos9_table);
-	MS_LOG("netsurf_register done");
+	MS_LOG("BOOT netsurf_register done");
 	nsoption_init(NULL, NULL, NULL);
-	MS_LOG("nsoption_init done");
+	MS_LOG("BOOT nsoption_init done");
 	/* fixes78: image content handler (QuickTime Graphics Importers) is
 	 * now registered in macos9_image.c. Enable image fetches so <img>
 	 * elements actually trigger network fetches and decode through the
@@ -1870,13 +1885,13 @@ int main(void) {
 	 * back-button skip both. Kept conservative (not 32MB) to avoid the fixes430
 	 * heap-exhaustion on heavy forum indexes and to stay safe on 64MB Macs. */
 	nsoption_set_int(memory_cache_size, 32 * 1024 * 1024);
-	MS_LOG("images enabled, author_css on, fetcher 128/16, mem cache 32MB");
+	MS_LOG("BOOT images enabled, author_css on, fetcher 128/16, mem cache 32MB");
 #ifdef __MACOS9__
 	macsurf_debug_log_writef("DIAG pre-netsurf_init: free=%ld maxblk=%ld",
 		(long)FreeMem(), (long)MaxBlock());
 #endif
 	netsurf_init(NULL);
-	MS_LOG("netsurf_init done");
+	MS_LOG("BOOT netsurf_init done");
 	/* fixes721b — MacSurf loads no Messages file, so core message tokens
 	 * render as the raw token (e.g. an <input type=file> showed a white box
 	 * reading "Form_Drop"). Register the handful of form-gadget labels core
@@ -1906,15 +1921,15 @@ int main(void) {
 	 * login etc.) from disk now that urldb is up. Best-effort no-op on
 	 * first run. */
 	macos9_cookies_load();
-	MS_LOG("cookies loaded");
+	MS_LOG("BOOT cookies loaded");
 #ifdef WITH_QUICKJS
 	js_initialise();
-	MS_LOG("js_initialise done");
+	MS_LOG("BOOT js_initialise done");
 #endif
 	{
 		extern nserror macos9_http_fetcher_register(void);
 		macos9_http_fetcher_register();
-		MS_LOG("http_fetcher registered");
+		MS_LOG("BOOT http_fetcher registered");
 	}
 	{
 		struct browser_window *bw = NULL;
@@ -1928,7 +1943,7 @@ int main(void) {
 			 * macos9_deferred_home_load above. */
 			extern nserror macos9_schedule(int t,
 				void (*callback)(void *p), void *p);
-			MS_LOG("launch: create empty window, defer home nav");
+			MS_LOG("BOOT launch: create empty window, defer home nav");
 			browser_window_create(BW_CREATE_HISTORY | BW_CREATE_FOREGROUND,
 				NULL, NULL, NULL, &bw);
 			macsurf_debug_log_writef(
@@ -1936,15 +1951,15 @@ int main(void) {
 				(long)macsurf_monotonic_ms());
 			if (bw != NULL) {
 				macos9_schedule(0, macos9_deferred_home_load, bw);
-				MS_LOG("launch: home nav scheduled (deferred)");
+				MS_LOG("BOOT launch: home nav scheduled (deferred)");
 			}
 		}
 		if (bw == NULL) {
-			MS_LOG("launch: fallback create_initial_window");
+			MS_LOG("BOOT launch: fallback create_initial_window");
 			macos9_create_initial_window();
 		}
 	}
-	MS_LOG("initial window created");
+	MS_LOG("BOOT initial window created");
 #ifdef __MACOS9__
 	macsurf_debug_log_writef("DIAG post-window: free=%ld maxblk=%ld",
 		(long)FreeMem(), (long)MaxBlock());
@@ -1964,11 +1979,11 @@ int main(void) {
 	macos9_font_vmetric_probe_run();
 #endif
 	while (!macos9_done) macos9_poll();
-	MS_LOG("event loop exited");
+	MS_LOG("BOOT event loop exited");
 	/* fixes368 (#167) — persist the cookie jar BEFORE netsurf_exit tears
 	 * urldb down, so this session's Facebook login survives the relaunch. */
 	macos9_cookies_save();
-	MS_LOG("cookies saved");
+	MS_LOG("BOOT cookies saved");
 	macos9_quitting = (bool)1;
 #ifdef WITH_QUICKJS
 	/* fixes717 (#207 log) — finalise the JS heap BEFORE netsurf_exit.
@@ -1982,7 +1997,7 @@ int main(void) {
 	/* macEntropy: persist this session's accumulated entropy so the next
 	 * cold boot starts warm. Must run before OT teardown. */
 	OSTLS_SaveSeed();
-	MS_LOG("macEntropy: seed saved");
+	MS_LOG("BOOT macEntropy: seed saved");
 	if (macos9_ot_context) CloseOpenTransportInContext(macos9_ot_context);
 	return 0;
 }
