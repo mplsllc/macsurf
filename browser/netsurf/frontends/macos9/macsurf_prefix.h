@@ -97,39 +97,62 @@ void macsurf_assert_failed_(const char *expr, const char *file, int line);
 #define TARGET_API_MAC_CARBON 1
 #endif
 
+/*
+ * fixes951b — SUPPRESS <Endian.h> and supply its big-endian typedefs here.
+ *
+ * REPLACES fixes951a, which was wrong and broke the whole build (6582 errors,
+ * 30 files, nothing compiled). fixes951a did "#include <Endian.h>" from this
+ * prefix. That does NOT reach the SDK header:
+ *
+ *   browser/libparserutils/src/utils/endian.h  IS on a CW8 access path
+ *   (MacSurfSource/libparserutils/src/utils), HFS is CASE-INSENSITIVE, and
+ *   AlwaysSearchUserPaths=true searches USER paths BEFORE system paths.
+ *
+ * So every "#include <Endian.h>" in this project -- including the one inside
+ * the SDK's own Events.h -- resolves to libparserutils' endian.h, which uses
+ * "static inline" and is not C89/CW8-clean. Injecting it from the prefix put
+ * it into every translation unit at once. This is exactly the documented
+ * sys/time.h interception trap in CLAUDE.md, and it also explains the ORIGINAL
+ * fixes951 cascade: libparserutils' header guards itself with
+ * "parserutils_endian_h_", never __ENDIAN__, so Events.h's own
+ * "#ifndef __ENDIAN__ #include <Endian.h>" fetched the wrong file, left
+ * __ENDIAN__ unset, and BigEndianLong was never defined.
+ *
+ * Fix: claim __ENDIAN__ ourselves so no Toolbox header can pull the shadowed
+ * file, then provide the seven types the SDK would have. This is the same
+ * suppress-and-supply pattern macos9.h already uses for __ALIASES__,
+ * __KEYCHAINCORE__ and __INTERNETCONFIG__.
+ *
+ * Values are the SDK's big-endian branch verbatim (PPC is big-endian, so each
+ * is a plain typedef; the struct-wrapped forms are the little-endian branch
+ * and cannot apply here). Nothing can depend on Endian.h's byte-swap
+ * FUNCTIONS, because that header has never once been reachable in this
+ * project -- the shadow has always won.
+ *
+ * The guard is claimed BEFORE MacTypes.h (which may include Endian.h), while
+ * the typedefs come AFTER it, since Fixed/UnsignedFixed/OSType come from
+ * MacTypes.h.
+ */
+#ifdef __MWERKS__
+  #ifndef __ENDIAN__
+    #define __ENDIAN__
+  #endif
+#endif
+
 /* Force MacTypes.h first for true/false enum */
 #ifdef __MWERKS__
   #ifndef __MACTYPES__
     #include <MacTypes.h>
   #endif
-  /*
-   * fixes951a — pull in Endian.h immediately after MacTypes.h.
-   *
-   * Turning on Carbon (above) flips TARGET_API_MAC_OS8 to 0, which changes
-   * which branch Events.h takes:
-   *
-   *     #if TARGET_OS_MAC && TARGET_API_MAC_OS8
-   *     typedef UInt32 KeyMap[4];          <- what we used to get
-   *     #else
-   *     typedef BigEndianLong KeyMap[4];   <- what Carbon builds get
-   *     #endif
-   *
-   * BigEndianLong lives in Endian.h (on big-endian PPC it is simply
-   * "typedef long BigEndianLong"). In the include order this project produces
-   * -- Carbon.h -> CoreServices.h -> StringCompare.h -> TypeSelect.h ->
-   * Events.h -- it was not defined by the time Events.h needed it, so the
-   * KeyMap typedef failed and took 100 errors with it across Events.h,
-   * StringCompare.h, TypeSelect.h and TextUtils.h. Every one of them cascaded
-   * from that single missing type; none were in our own code.
-   *
-   * Including it here, from the prefix, guarantees the type exists in EVERY
-   * translation unit before any Toolbox header can want it -- the same
-   * force-it-early tactic the MacTypes.h include above uses, and safe because
-   * Endian.h needs only MacTypes.h (Fixed, OSType), which precedes it.
-   */
-  #ifndef __ENDIAN__
-    #include <Endian.h>
-  #endif
+  /* fixes951b — the BigEndian* types Carbon's Events.h needs for KeyMap[4].
+   * See the note above for why we define these instead of including them. */
+  typedef long            BigEndianLong;
+  typedef unsigned long   BigEndianUnsignedLong;
+  typedef short           BigEndianShort;
+  typedef unsigned short  BigEndianUnsignedShort;
+  typedef Fixed           BigEndianFixed;
+  typedef UnsignedFixed   BigEndianUnsignedFixed;
+  typedef OSType          BigEndianOSType;
 #endif
 
 /* Float64: MacTypes.h owns this on CW8 (defines it as 'short double').
