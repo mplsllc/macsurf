@@ -82,7 +82,6 @@ extern const struct plotter_table macos9_plotters;
 #ifdef __MACOS9__
 /* fixes77c -- CW8's Quickdraw.h omits the Carbon accessor prototype. The
  * symbol is in CarbonLib 1.0+, so an explicit declaration is enough. */
-extern const BitMap *GetPortBitMapForCopyBits(CGrafPtr port);
 #endif
 
 /* fixes366j -- heap-state probes for per-reformat leak / fragmentation

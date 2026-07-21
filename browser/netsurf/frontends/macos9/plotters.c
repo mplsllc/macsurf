@@ -529,7 +529,10 @@ macos9_plot_clip(const struct redraw_context *ctx, const struct rect *clip)
 	RectRgn(content_rgn, &gw->content_rect);
 
 	SectRgn(new_clip, content_rgn, new_clip);
-	effective = (**new_clip).rgnBBox;
+	/* fixes951c — RgnHandle is opaque under Carbon (OPAQUE_TOOLBOX_STRUCTS);
+	 * (**rgn).rgnBBox is no longer legal. GetRegionBounds is the accessor
+	 * and returns the same rect. */
+	GetRegionBounds(new_clip, &effective);
 
 	/* fixes91: gated — see macsurf_prefix.h MACSURF_VERBOSE_PLOTLOG. */
 #ifdef MACSURF_VERBOSE_PLOTLOG
@@ -2518,7 +2521,7 @@ do_blit:
 						(short)(tile_y + height));
 					CopyMask((BitMap *)*pm,
 						&mask_bm,
-						&((GrafPtr)save_port)->portBits,
+						GetPortBitMapForCopyBits((CGrafPtr)save_port),
 						&src_rect, &src_rect,
 						&tile_dst);
 					if (++tile_count >= tile_cap)
@@ -2537,7 +2540,7 @@ do_blit:
 						(short)(tile_x + width),
 						(short)(tile_y + height));
 					CopyBits((BitMap *)*pm,
-						&((GrafPtr)save_port)->portBits,
+						GetPortBitMapForCopyBits((CGrafPtr)save_port),
 						&src_rect, &tile_dst,
 						srcCopy, NULL);
 					if (++tile_count >= tile_cap)

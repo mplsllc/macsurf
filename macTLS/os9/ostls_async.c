@@ -71,6 +71,11 @@ typedef struct {
     long servtype, flags;
 } TEndpointInfo;
 typedef void (*OTNotifyProcPtr)(void *, OTEventCode, OTResult, void *);
+/* fixes951c — under a real Carbon build OPAQUE_UPP_TYPES makes OTNotifyUPP an
+ * opaque type built by NewOTNotifyUPP(), not a bare function pointer. Mirror
+ * that here so the Linux syntax check matches CW8. */
+typedef OTNotifyProcPtr OTNotifyUPP;
+#define NewOTNotifyUPP(fn) ((OTNotifyUPP)(fn))
 /* `pascal` is already a Retro68 built-in calling-convention keyword;
  * do not redefine. */
 #define noErr            0
@@ -95,7 +100,7 @@ typedef void (*OTNotifyProcPtr)(void *, OTEventCode, OTResult, void *);
 #define T_DATAXFER      5
 #define T_OUTREL        6
 static OTConfigurationRef OTCreateConfiguration(const char *s){(void)s;return (OTConfigurationRef)1;}
-static OSStatus OTAsyncOpenEndpointInContext(OTConfigurationRef c,unsigned long f,TEndpointInfo *i,OTNotifyProcPtr p,void *x,void *ctx){(void)c;(void)f;(void)i;(void)p;(void)x;(void)ctx;return noErr;}
+static OSStatus OTAsyncOpenEndpointInContext(OTConfigurationRef c,unsigned long f,TEndpointInfo *i,OTNotifyUPP p,void *x,void *ctx){(void)c;(void)f;(void)i;(void)p;(void)x;(void)ctx;return noErr;}
 static OSStatus OTBind(EndpointRef e,TBind *r,TBind *o){(void)e;(void)r;(void)o;return noErr;}
 static OSStatus OTConnect(EndpointRef e,TCall *c,void *r){(void)e;(void)c;(void)r;return noErr;}
 static OTResult OTSnd(EndpointRef e,void *b,long n,long f){(void)e;(void)b;(void)f;return n;}
@@ -292,6 +297,12 @@ struct OSTLSConnection {
  *
  * Touches only the volatile nf_* fields on the connection.
  */
+/* fixes951c — ONE notifier UPP for the process. NewOTNotifyUPP allocates a
+ * routine descriptor; creating one per connection would leak one every time
+ * a socket is opened. Built lazily at first use, never disposed (it lives as
+ * long as the process needs OT). */
+static OTNotifyUPP g_ostls_notifier_upp = NULL;
+
 static pascal void
 ostls_notifier(void *context, OTEventCode event,
                OTResult result, void *cookie)
@@ -531,9 +542,11 @@ OSTLS_Start(OSTLSConnection *conn)
      * the notifier when the endpoint is ready; that handler stashes
      * the EndpointRef into conn->ep.
      */
+    if (g_ostls_notifier_upp == NULL)
+        g_ostls_notifier_upp = NewOTNotifyUPP(ostls_notifier);
     OTMemzero(&conn->ep_info, sizeof conn->ep_info);
     oterr = OTAsyncOpenEndpointInContext(cfg, 0, &conn->ep_info,
-                                         (OTNotifyProcPtr)ostls_notifier,
+                                         g_ostls_notifier_upp,
                                          conn,
                                          g_ostls_ot_context);
     if (oterr != noErr) {
@@ -1429,9 +1442,11 @@ ostls_fallback_to_tls12(OSTLSConnection *conn)
     if (cfg == NULL || cfg == (OTConfigurationRef)-1L) {
         return ostls_fail(conn, (OSErr)kOSTLSAsync_OTConfigFail, noErr, 0);
     }
+    if (g_ostls_notifier_upp == NULL)
+        g_ostls_notifier_upp = NewOTNotifyUPP(ostls_notifier);
     OTMemzero(&conn->ep_info, sizeof conn->ep_info);
     oterr = OTAsyncOpenEndpointInContext(cfg, 0, &conn->ep_info,
-                                         (OTNotifyProcPtr)ostls_notifier,
+                                         g_ostls_notifier_upp,
                                          conn, g_ostls_ot_context);
     if (oterr != noErr) {
         return ostls_fail(conn, (OSErr)kOSTLSAsync_OTOpenFail, oterr, 0);

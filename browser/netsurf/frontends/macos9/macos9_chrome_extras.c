@@ -1298,7 +1298,6 @@ static void chrome_mgr_header(const Rect *content, const char *title, int icon)
 		if (icon >= 1 && icon <= 2) {
 			mgr_icon_ensure(icon);
 			if (s_mgr_ic_gw[icon] != NULL) {
-				extern const BitMap *GetPortBitMapForCopyBits(CGrafPtr port);
 				GrafPtr gp;
 				Rect ir;
 				short isz = MACOS9_MGR_ICON_SIZE;
@@ -2661,7 +2660,7 @@ static void about_draw(GWorldPtr off, WindowRef win, const Rect *content,
 	RGBForeColor(black);
 	RGBBackColor(white);
 	CopyBits((BitMap *)*offpm,
-		&((GrafPtr)GetWindowPort(win))->portBits,
+		GetPortBitMapForCopyBits(GetWindowPort(win)),
 		content, content, srcCopy, NULL);
 }
 #endif /* __MACOS9__ */

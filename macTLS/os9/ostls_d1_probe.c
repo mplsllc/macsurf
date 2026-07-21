@@ -187,7 +187,7 @@ OSTLS_D1_AsyncNotifier_Probe(const char *target_host_port,
     /* Kick off async open. The notifier will receive T_OPENCOMPLETE
      * with the new EndpointRef in `cookie`. */
     oterr = OTAsyncOpenEndpointInContext(cfg, 0, &st.ep_info,
-                                         (OTNotifyProcPtr)d1_notifier,
+                                         NewOTNotifyUPP(d1_notifier),
                                          &st,
                                          g_ostls_ot_context);
     if (oterr != noErr) {

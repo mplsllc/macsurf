@@ -1434,8 +1434,6 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 		 * SetStdCProcs is NOT behind that gate (plain InterfaceLib call with
 		 * ONEWORDINLINE), so it is deliberately not re-declared here -- doing
 		 * so could conflict with the inline form. */
-		extern CQDProcsPtr GetPortGrafProcs(CGrafPtr port);
-		extern void SetPortGrafProcs(CGrafPtr port, CQDProcsPtr procs);
 		CGrafPtr sp;
 		GDHandle sd;
 		CGrafPtr wp;
@@ -1925,7 +1923,6 @@ void macos9_window_load_default_favicon(void)
 void macos9_window_draw_favicon(struct gui_window *g)
 {
 #ifdef __MACOS9__
-	extern const BitMap *GetPortBitMapForCopyBits(CGrafPtr port);
 	GWorldPtr saved_port;
 	GDHandle saved_gdh;
 	const BitMap *src_bm;
@@ -2256,7 +2253,6 @@ static void paint_toolbar_icon(WindowRef window, ControlRef ctrl,
 		GWorldPtr src_gw, const Rect *src_rect)
 {
 #ifdef __MACOS9__
-	extern const BitMap *GetPortBitMapForCopyBits(CGrafPtr port);
 	Rect ctrl_bounds;
 	Rect dst_rect;
 	short icon_w, icon_h;
@@ -2355,7 +2351,6 @@ static void paint_toolbar_icon(WindowRef window, ControlRef ctrl,
 static void macos9_window_draw_loader(struct gui_window *g)
 {
 #ifdef __MACOS9__
-	extern const BitMap *GetPortBitMapForCopyBits(CGrafPtr port);
 	GrafPtr   saved_port;
 	CGrafPtr  win_port;
 	Rect      slot;
