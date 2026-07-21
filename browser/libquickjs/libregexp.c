@@ -28,7 +28,8 @@
 #include <string.h>
 #include <assert.h>
 #include <stddef.h>
-#include <alloca.h>
+/* fixes940 — <alloca.h> removed: MSL ships none on CW8, and the sole alloca()
+ * call site (lre_exec) now uses a fixed StackInt[STACK_SIZE_MAX] local. */
 
 #include "cutils.h"
 #include "libregexp.h"
@@ -2494,8 +2495,17 @@ int lre_exec(uint8_t **capture,
              int cbuf_type, void *opaque)
 {
     REExecContext s_s, *s = &s_s;
-    int re_flags, i, alloca_size, ret;
-    StackInt *stack_buf;
+    int re_flags, i, ret;
+    /* fixes940 — was: StackInt *stack_buf; ... stack_buf = alloca(size).
+     * MSL ships no <alloca.h> on CW8, and the allocation was never actually
+     * variable: stack_size_max is read from a single bytecode header BYTE and
+     * the compiler side rejects anything over STACK_SIZE_MAX (255) at
+     * compute_stack_size(). So the true ceiling is 255 * sizeof(uintptr_t) =
+     * 1020 bytes on PPC32 -- a fixed buffer, just spelled as a dynamic one.
+     * A plain local array is exact, needs no header, needs no compiler
+     * intrinsic, and is SAFER here: alloca has no failure mode, so on a
+     * classic Mac an over-large request silently walks off the stack. */
+    StackInt stack_buf[STACK_SIZE_MAX];
 
     re_flags = lre_get_flags(bc_buf);
     s->multi_line = (re_flags & LRE_FLAG_MULTILINE) != 0;
@@ -2520,8 +2530,6 @@ int lre_exec(uint8_t **capture,
 
     for(i = 0; i < s->capture_count * 2; i++)
         capture[i] = NULL;
-    alloca_size = s->stack_size_max * sizeof(stack_buf[0]);
-    stack_buf = alloca(alloca_size);
     ret = lre_exec_backtrack(s, capture, stack_buf, 0, bc_buf + RE_HEADER_LEN,
                              cbuf + (cindex << cbuf_type), false);
     lre_realloc(s->opaque, s->state_stack, 0);
