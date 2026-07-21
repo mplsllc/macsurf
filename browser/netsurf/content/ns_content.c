@@ -1087,6 +1087,37 @@ bool content_is_shareable(struct content *c)
 
 
 /* exported interface documented in content/protected.h */
+/*
+ * fixes954 — is this message safe to REPLAY with no data?
+ *
+ * The deferred-broadcast queue (see content_broadcast below) stores only the
+ * message TYPE. hlcache_content_callback zero-fills the event and copies data
+ * only when a pointer is supplied, so a replayed message arrives with an
+ * all-zero union rather than a wild one. That is safe ONLY for handlers which
+ * never look inside it -- any handler that pulls a POINTER out of the zeroed
+ * union and dereferences it gets NULL.
+ *
+ * Audited against every case in browser_window_callback: of 25 message types,
+ * exactly THREE never touch event->data. Every other case reads
+ * event->data.<something>, and several of those are pointers used
+ * immediately -- data.chain (cert_chain_dup), data.log.msg, data.redirect.from
+ * (urldb_add_url), data.errordata.errormsg.
+ *
+ * NOTE the comment that used to sit in content_broadcast claimed
+ * "READY/DONE/STATUS/REDRAW" tolerate NULL data. That was WRONG about STATUS
+ * and REDRAW -- both dereference the union, and both are among the most
+ * frequently broadcast messages in the engine. Queueing them was the crash:
+ *   browser_window_callback <- hlcache_content_callback <- content_broadcast
+ *     <- content_broadcast <- hlcache_broadcast_catchup <- macos9_schedule_run
+ * reproducible on Mac OS X, NULL dereference, ~10 s into a page load.
+ */
+static int content_broadcast_replay_safe(content_msg msg)
+{
+	return msg == CONTENT_MSG_LOADING ||
+	       msg == CONTENT_MSG_READY ||
+	       msg == CONTENT_MSG_DONE;
+}
+
 void content_broadcast(struct content *c, content_msg msg,
 		       const union content_msg_data *data)
 {
@@ -1120,8 +1151,10 @@ void content_broadcast(struct content *c, content_msg msg,
 	 * The content's status field is already updated by the caller before
 	 * it broadcasts, so only the NOTIFICATION is delayed, never the state
 	 * transition.  Data pointers are not stored (often stack-allocated and
-	 * invalid by replay time); replay always passes NULL data, which the
-	 * READY/DONE/STATUS/REDRAW paths tolerate.
+	 * invalid by replay time), so replay always passes NULL data -- and
+	 * fixes954 restricts the queue to the messages that actually survive
+	 * that.  See content_broadcast_replay_safe(); the previous claim here
+	 * that STATUS and REDRAW tolerate it was wrong and was the crash.
 	 *
 	 * Pending is last-wins for terminal messages: DONE/ERROR overwrite a
 	 * stored READY/STATUS so a deferred load still reaches completion, but
@@ -1135,7 +1168,26 @@ void content_broadcast(struct content *c, content_msg msg,
 		/* Append to the FIFO, preserving order.  Dedup only against the
 		 * immediately-previous queued message so repeated REDRAW/STATUS
 		 * don't flood the queue, while READY-then-DONE is kept intact. */
-		if (c->broadcast_pending_count >= CONTENT_BROADCAST_PENDING_MAX) {
+		if (!content_broadcast_replay_safe(msg)) {
+			/* fixes954 — cannot be replayed without its data, so it
+			 * is dropped rather than queued.  Dropping a NOTIFICATION
+			 * is survivable: the caller already applied the state
+			 * change before broadcasting, and a dropped STATUS/REDRAW
+			 * costs at most a stale status line or a repaint that the
+			 * next paint cycle makes good.  Replaying it with a zeroed
+			 * union is NOT survivable -- the handler dereferences a
+			 * NULL out of it.
+			 * KNOWN COST: a dropped CONTENT_MSG_ERROR means a failed
+			 * load is not reported, so the throbber can spin on.  That
+			 * is a bug, but a far smaller one than the crash it
+			 * replaces, and it only arises for an error that lands
+			 * during a reentrant broadcast.  Storing the data for the
+			 * messages that need it is the real fix and is a larger
+			 * change. */
+			macsurf_debug_log_writef(
+				"content_broadcast: msg=%d not replay-safe, dropped c=%p",
+				(int)msg, (void *)c);
+		} else if (c->broadcast_pending_count >= CONTENT_BROADCAST_PENDING_MAX) {
 			macsurf_debug_log_writef(
 				"content_broadcast: pending FIFO full, drop msg=%d c=%p",
 				(int)msg, (void *)c);
