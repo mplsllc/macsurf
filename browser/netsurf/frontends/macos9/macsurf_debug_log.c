@@ -659,59 +659,14 @@ macsurf_log_is_crash_report(const char *m)
 	/* fixes769 (#232) — let the mime-recon lines through the crash-only
 	 * gate so a downloaded-instead-of-rendered page is diagnosable. */
 	if (strstr(m, "RECON MIME") != NULL) return 1;
-	/* fixes936 (OS X tier 1) — the OS X bring-up lines.
-	 *
-	 * THIS GATE MATCHES LITERAL SUBSTRINGS, NOT A "RECON" PREFIX. Nine RECON
-	 * families are emitted in tree today (MEM, SELNULL, CLAMP, DL, RX, TLS,
-	 * PAINT, OVL, filegadget) and ALL nine are dropped right here. That is
-	 * deliberate, not an oversight: RECON RX fires every ~2 s per in-flight
-	 * fetch and RECON OVL / RECON PAINT fire per draw, so "simplifying" this
-	 * to strncmp(m, "RECON ", 6) would bury the very lines we are adding.
-	 * Add exact literals only. (Two stale in-tree comments -- near the RECON
-	 * RX emitter in macos9_tls_fetcher.c and RECON OVL in plotters.c --
-	 * claim "RECON survives the filter". They are wrong; don't trust them.)
-	 *
-	 *   "RECON OS" -- one line per launch: host OS version (macsurf_osver.c).
-	 *   "RECON OT" -- OT init (main.c), a capped per-connection live snapshot
-	 *                 from the event-loop heartbeat, and one summary at the
-	 *                 first COMPLETED fetch of each scheme.
-	 *
-	 * Retire both entries when the OS X tier closes. */
+	/* fixes953 — the ONE bring-up line kept for release. MacSurf now runs on
+	 * two operating systems, so every bug report has to say which. This is a
+	 * single line per launch reporting the host OS version; the rest of the
+	 * OS X bring-up channels (BOOT / RECON OT / RECON GDEV / PROBE) are
+	 * retired now that the tier has closed. Their emitters remain in the
+	 * source but no longer pass this gate, so re-enabling any of them is a
+	 * one-line change if a new OS X problem needs chasing. */
 	if (strstr(m, "RECON OS") != NULL) return 1;
-	if (strstr(m, "RECON OT") != NULL) return 1;
-	/* fixes944 — one line per launch recording which GDevice colour resolves
-	 * through. On OS X 10.3 GetMainDevice() returns a device with an unmapped
-	 * colour table (0x74140001), so every RGBForeColor made while it is
-	 * current dies in InternalColor2Index; macos9_safe_gdevice() substitutes a
-	 * GWorld-backed device. This line is how we confirm the substitution
-	 * actually happened rather than silently falling back. */
-	if (strstr(m, "RECON GDEV") != NULL) return 1;
-	/* fixes945 — short-lived OS X bring-up probes ("PROBE qd: ..."). These
-	 * bracket a call that is EXPECTED to fault, so each is flushed before the
-	 * risky op and the last one on disk names the failing case. Retire with
-	 * the OS X tier; they are one-shot and startup-only. */
-	if (strstr(m, "PROBE ") != NULL) return 1;
-	/* fixes937 (OS X tier 1b) — the startup breadcrumb trail.
-	 *
-	 * fixes936 shipped to the 10.3 iMac and the app "opens and immediately
-	 * crashes", but the log simply STOPPED after "RECON OT init" -- which
-	 * proved nothing, because every startup milestone after it was dropped
-	 * right here: "macEntropy: seed loaded", "Appearance OK", "EnterMovies
-	 * OK", "menus installed", "netsurf_init done", ... none match a keyword.
-	 * Both DIAG lines are dropped too (the main.c comment claiming "'DIAG'
-	 * survives the crash-only gate" is stale and wrong), and "evloop: hb" is
-	 * killed twice over -- unwhitelisted AND explicitly dropped by the perf
-	 * filter in macsurf_debug_log_write.
-	 *
-	 * So those existing markers were re-prefixed "BOOT " rather than adding a
-	 * parallel set of new log calls, and this single literal lets the whole
-	 * trail through. Since the log FlushVols every kept line inside
-	 * LOG_EAGER_LINES, the last "BOOT " line on disk after a crash names the
-	 * step that was executing.
-	 *
-	 * ~22 one-shot lines per launch, startup only. Retire with the OS X
-	 * tier. */
-	if (strstr(m, "BOOT ") != NULL) return 1;
 	/* WORK: dedicated development channel for whatever feature/bug is
 	 * currently under work. fixes893 (2.0.5 release): gated behind
 	 * MACSURF_WORK_LOG (see the note at the passthrough in

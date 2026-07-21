@@ -1427,28 +1427,11 @@ void macos9_poll(void) {
 		if (hb_now - hb_last > 120) {
 			hb_last = hb_now;
 			macsurf_debug_log_writef("evloop: hb tick=%ld", (long)hb_now);
-			/* fixes936 (OS X tier 1): piggyback the live-connection Open
-			 * Transport snapshot on this same ~2s throttle.
-			 *
-			 * This is the emit that covers the HANG case, and it is the whole
-			 * reason the RECON OT summary isn't teardown-only: a notifier that
-			 * never fires, or a connect that never returns, means the
-			 * connection NEVER reaches teardown, so a teardown-only diagnostic
-			 * is the one least likely to print exactly when it matters.
-			 *
-			 * The walk lives in the TLS fetcher's own TU so OSTLSConnection
-			 * stays private to it -- no registration hook, no shared mutable
-			 * state here. Self-throttling and capped PER CONNECTION (not per
-			 * session) inside that function, so a later hang always gets its
-			 * lines even if an earlier slow fetch already spent a budget.
-			 *
-			 * Bare extern at point of use: macos9_tls_fetcher.c exports no
-			 * header, matching how every macsurf_ptr_is_heap consumer declares
-			 * it (macsurf_memory.h:93-95 sanctions this). */
-			{
-				extern void macos9_https_recon_ot_tick(void);
-				macos9_https_recon_ot_tick();
-			}
+			/* fixes953 — the live OT snapshot that used to run here is retired.
+			 * It walked all 64 fetch slots every ~2s to catch an OS X hang that
+			 * is now fixed, and its output no longer passes the crash-only log
+			 * gate anyway. macos9_https_recon_ot_tick() is left in the fetcher
+			 * for the next investigation; nothing calls it. */
 		}
 	}
 	/* fixes234a — revert sleep=0 (fixes234). On Carbon CFM, sleep=0 in
