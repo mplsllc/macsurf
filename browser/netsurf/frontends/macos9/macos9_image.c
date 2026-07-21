@@ -2166,7 +2166,16 @@ macos9_qt_image_get_internal(const struct content *c, void *context)
 
 	nat_w = (int)c->width;
 	nat_h = (int)c->height;
-	if (nat_w <= 0 || nat_h <= 0) return NULL;
+	if (nat_w <= 0 || nat_h <= 0) {
+		/* fixes933 — DIAGNOSTIC. This is a prime "load then disappear"
+		 * suspect: a content whose width was decoded fine on the first
+		 * paint but reads 0 now paints NOTHING. If this fires for an image
+		 * that was visible, c->width was cleared between paints. */
+		macsurf_debug_log_writef(
+			"WORK getint ZERO-NAT c=%p w=%d h=%d",
+			(void *)c, nat_w, nat_h);
+		return NULL;
+	}
 
 	if (qti->is_png_deferred) {
 		/* PNG path — decode from compressed bytes at natural size. */
@@ -2204,9 +2213,12 @@ macos9_qt_image_get_internal(const struct content *c, void *context)
 		derr = macos9_qt_decode_to_bitmap(qti->importer,
 			nat_w, nat_h, qti->wants_alpha, &new_bitmap);
 		if (derr != NSERROR_OK || new_bitmap == NULL) {
+			/* fixes933 — WORK-gated so it survives the failures-only
+			 * filter: a re-decode that fails here (importer gone, or
+			 * source dropped) is exactly a visible image vanishing. */
 			macsurf_debug_log_writef(
-				"get_internal: qt natural decode FAIL nat=%dx%d",
-				nat_w, nat_h);
+				"WORK getint QT-REDECODE-FAIL nat=%dx%d imp=%p",
+				nat_w, nat_h, (void *)qti->importer);
 			return NULL;
 		}
 		qti->bitmap = new_bitmap;

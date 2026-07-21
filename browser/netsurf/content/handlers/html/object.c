@@ -166,6 +166,17 @@ html_object_done(struct box *box,
 			box->obj_h = oh;
 			macsurf_imgdims_remember(
 					hlcache_handle_get_url(object), ow, oh);
+		} else {
+			/* fixes933 — DIAGNOSTIC. stored=0 across a whole session is
+			 * impossible if this path sees a real width: the deferred
+			 * decoder refuses to paint a 0-width content, so a rendered
+			 * image MUST have c->width>0 by the time it is DONE, and this
+			 * runs at DONE. If ow<=0 here, either html_object_done is not
+			 * the completion path for these images or c->width is genuinely
+			 * 0 at DONE. Anomaly-gated, so silent on a healthy image. */
+			macsurf_debug_log_writef(
+				"WORK objdone ZERO-DIM w=%d h=%d rd=%d",
+				ow, oh, (int)((box->flags & REPLACE_DIM) != 0));
 		}
 	}
 
