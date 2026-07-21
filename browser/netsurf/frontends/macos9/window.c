@@ -1297,6 +1297,42 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 	 * "URL field unresponsive on initial window" regression. */
 	ShowWindow(g->window); SelectWindow(g->window);
 	SetPortWindowPort(g->window);
+	/* fixes941 (OS X tier 1e) — establish the graphics DEVICE and the port's
+	 * RGB fore/back colour before any TextEdit call.
+	 *
+	 * SetPortWindowPort() above sets the current PORT but NOT the current
+	 * GDevice. Verified: GetMainDevice/SetGDevice appear nowhere in this
+	 * frontend, and on-screen drawing only ever uses SetPortWindowPort (20
+	 * sites) while SetGWorld (port AND device, 17 sites) is used solely
+	 * around offscreen GWorld work. So at this point the current GDevice is
+	 * simply whatever was left current -- on OS 9 harmlessly the screen, on
+	 * Mac OS X potentially no valid classic GDevice at all.
+	 *
+	 * That matters because the 10.3 crash is inside InternalColor2Index,
+	 * reached via RGBForeColor <- StdExit <- TECalText <- TESetText, and
+	 * Color2Index resolves an RGBColor through the CURRENT GDevice's inverse
+	 * table. A bad GDevice there faults exactly as observed (identical
+	 * registers every launch, since the stale device is identical too).
+	 *
+	 * Setting fg=black/bg=white explicitly is the same house rule the
+	 * plot_bitmap blits already follow (see the CopyBits colorizing note in
+	 * CLAUDE.md): never assume the port's colour state, because it is
+	 * whatever the last drawing operation left behind. Unconditional rather
+	 * than OS-X-gated -- it is correct on OS 9 too, and platform divergence
+	 * is its own hazard.
+	 *
+	 * CAVEAT: GetMainDevice() is the MAIN screen. On a multi-monitor setup a
+	 * window on a secondary display would want that display's device; fine
+	 * for the single-display test machines, revisit if multi-monitor matters. */
+	{
+		RGBColor fg_blk, bg_wht;
+		SetGWorld(GetWindowPort(g->window), GetMainDevice());
+		fg_blk.red = 0; fg_blk.green = 0; fg_blk.blue = 0;
+		bg_wht.red = 0xFFFF; bg_wht.green = 0xFFFF; bg_wht.blue = 0xFFFF;
+		RGBForeColor(&fg_blk);
+		RGBBackColor(&bg_wht);
+		MS_LOG("BOOT te: gdevice+colors set");
+	}
 	/* fixes302 — set the URL field font (Geneva 12) before TENew so the
 	 * TERec captures it; TextEdit measures and draws with the stored font. */
 	TextFont(kFontIDGeneva); TextSize(12); TextFace(0);
