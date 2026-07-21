@@ -231,7 +231,7 @@ Login flow (all pure HTML, handled by core `form.c` + fixes367 cookies + fixes31
 `browser/netsurf/frontends/macos9/macsurf_prefix.h` is injected before every compilation unit. It currently defines:
 - `__MACOS9__ 1`
 - `NO_IPV6 1`
-- `TARGET_API_MAC_CARBON 1`
+- `TARGET_API_MAC_CARBON 1` — **added fixes951, and it MUST stay above the `#include <MacTypes.h>` below it.** Until fixes951 this was NOT in the prefix at all; it was set in `macos9.h:27`, which is far too late — the prefix's `MacTypes.h` include pulls in `ConditionalMacros.h`, which computes `OPAQUE_TOOLBOX_STRUCTS` / `ACCESSOR_CALLS_ARE_FUNCTIONS` / `OPAQUE_UPP_TYPES` at that moment and then guards itself. The result was that MacSurf compiled as a **non-Carbon build against Carbon headers** for its entire history. Survivable on OS 9 (CarbonLib's layouts are close to classic); fatal on OS X, where it produced the all-NULL `grafProcs` and bad GDevice behind every fixes942-949 crash.
 - `#include <MacTypes.h>` (first line, must stay first to prevent bool/true/false conflict)
 
 `WITHOUT_DUKTAPE` is **no longer defined**, Duktape is linked into the base build. See [JavaScript Engine](#javascript-engine) below.

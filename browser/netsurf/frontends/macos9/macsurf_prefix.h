@@ -55,6 +55,48 @@ void macsurf_assert_failed_(const char *expr, const char *file, int line);
 #define _CINTTYPES
 #define _CSTDBOOL
 
+/*
+ * fixes951 — DECLARE THIS A CARBON BUILD, and do it BEFORE MacTypes.h.
+ *
+ * MacSurf has been compiling as a NON-Carbon (classic) app against Carbon
+ * headers, while linking CarbonLib and calling Carbon APIs. Proven, not
+ * inferred: two CW8 build errors this session showed
+ * ACCESSOR_CALLS_ARE_FUNCTIONS == 0 (the Carbon accessor prototypes for
+ * GetPortBitMapForCopyBits / GetPortGrafProcs / SetPortGrafProcs were
+ * invisible), and ConditionalMacros.h documents that flag -- along with
+ * OPAQUE_TOOLBOX_STRUCTS and OPAQUE_UPP_TYPES -- as "default: false, TRUE FOR
+ * CARBON BUILDS".
+ *
+ * The ordering is what did it. This prefix is injected into EVERY translation
+ * unit and includes <MacTypes.h> immediately below, which pulls in
+ * ConditionalMacros.h; that header computes the whole Carbon triplet at that
+ * moment and then guards itself. TARGET_API_MAC_CARBON was only being set
+ * later, in macos9.h:27-29, by which time the decision was already made and
+ * unchangeable. So every file compiled with classic struct layouts.
+ *
+ * On Mac OS 9 that is survivable -- CarbonLib's structures are close enough to
+ * classic that the browser has shipped and worked for a year, which is exactly
+ * why this went unnoticed. On Mac OS X the real Carbon structures differ, so
+ * reading a window port yields garbage: an all-NULL grafProcs table
+ * (measured: procs0-7 all 00000000), a GDevice whose colour table is unmapped,
+ * and StdRectWithPort faulting inside CheckPortPictureRecording. Every OS X
+ * crash from fixes942 through fixes949 traces back here.
+ *
+ * NOTE the knock-on effects, which are the point rather than a side effect:
+ *   OPAQUE_TOOLBOX_STRUCTS   -> direct GrafPort/WindowRecord field access is
+ *                               now illegal; use the accessors.
+ *   ACCESSOR_CALLS_ARE_FUNCTIONS -> those accessors are finally declared, so
+ *                               the local externs this frontend carries for
+ *                               them become redundant (harmless if the
+ *                               signatures match; remove once confirmed).
+ *   OPAQUE_UPP_TYPES         -> UPPs become opaque. Given the fixes147 UPP /
+ *                               MixedMode history, watch the scroll-bar and
+ *                               event paths closely on OS 9.
+ */
+#ifndef TARGET_API_MAC_CARBON
+#define TARGET_API_MAC_CARBON 1
+#endif
+
 /* Force MacTypes.h first for true/false enum */
 #ifdef __MWERKS__
   #ifndef __MACTYPES__
