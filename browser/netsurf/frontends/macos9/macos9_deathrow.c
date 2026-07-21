@@ -91,6 +91,33 @@ macos9_deathrow_add(void *ptr, void (*teardown)(void *ptr),
 		return;
 	}
 
+	/* fixes955 — REFUSE a pointer already on the row.
+	 *
+	 * Until now the only thing stopping the same object being queued twice
+	 * was the caller's dr_queued flag -- which lives INSIDE the object being
+	 * freed. That makes idempotence depend on every caller getting its own
+	 * bookkeeping right, and on that field being initialised (it was not:
+	 * hlcache's main entry path used malloc, see fixes955 in hlcache.c).
+	 * Queue a pointer twice and the drain frees it twice; a double free
+	 * corrupts the MSL free list and the crash lands INSIDE free(), far from
+	 * the cause -- which is exactly the shape seen here:
+	 *   free <- hlcache_node_deathrow_teardown <- macos9_deathrow_drain
+	 * and the same shape fixes906 recorded ("double-free -> corrupted free
+	 * list -> the Block_link crash in the death-row hlcache teardown").
+	 *
+	 * The row is the single choke point every deferred free passes through,
+	 * so enforcing uniqueness HERE closes the whole class no matter which
+	 * caller is buggy. Linear scan over <=1024 slots on a free is cheap
+	 * against a corrupted heap. */
+	for (i = 0; i < dr_count; i++) {
+		if (dr_table[i].active != 0 && dr_table[i].ptr == ptr) {
+			macsurf_debug_log_writef(
+				"deathrow: DUPLICATE ptr=%p already queued slot=%d -- refused",
+				ptr, i);
+			return;
+		}
+	}
+
 	/* Find a free slot up to the high-water mark, else extend. */
 	for (i = 0; i < dr_count; i++) {
 		if (dr_table[i].active == 0) {

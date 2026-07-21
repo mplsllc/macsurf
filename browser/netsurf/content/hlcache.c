@@ -404,7 +404,18 @@ static nserror hlcache_find_content(hlcache_retrieval_ctx *ctx,
 
 	if (entry == NULL) {
 		/* No existing entry, so need to create one */
-		entry = malloc(sizeof(hlcache_entry));
+		/* fixes955 — calloc, NOT malloc. This is the main cache-entry
+		 * creation path (every normal page load), and hlcache_entry
+		 * carries dr_queued, the flag that makes the death row
+		 * idempotent. dr_queued is never explicitly zeroed anywhere in
+		 * this file -- the other two allocation sites use calloc and get
+		 * away with it. Left uninitialised here, a garbage non-zero value
+		 * makes hlcache_entry_deferred_free() believe the entry is
+		 * already queued and return early, so the entry is never freed at
+		 * all; a garbage zero works by luck. next/prev are likewise left
+		 * to the insert path. Zero the whole record and stop depending on
+		 * whatever the allocator last left there. */
+		entry = calloc(1, sizeof(hlcache_entry));
 		if (entry == NULL)
 			return NSERROR_NOMEM;
 
