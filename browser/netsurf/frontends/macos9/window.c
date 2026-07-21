@@ -1442,6 +1442,12 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 		macsurf_debug_log_flush();
 
 		if (g_safe_gdev_gw != NULL) {
+			/* fixes946a — GetPortBitMapForCopyBits is in no header this build
+			 * sees, so without a declaration C89 defaults it to returning int
+			 * and the assignment below is an illegal conversion. Declared
+			 * locally exactly as the other three call sites in this file do
+			 * (see :1915, :2246, :2345) rather than inventing a header. */
+			extern const BitMap *GetPortBitMapForCopyBits(CGrafPtr port);
 			const BitMap *srcbm;
 			const BitMap *dstbm;
 			Rect sr;
