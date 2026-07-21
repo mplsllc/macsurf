@@ -686,6 +686,11 @@ macsurf_log_is_crash_report(const char *m)
 	 * GWorld-backed device. This line is how we confirm the substitution
 	 * actually happened rather than silently falling back. */
 	if (strstr(m, "RECON GDEV") != NULL) return 1;
+	/* fixes945 — short-lived OS X bring-up probes ("PROBE qd: ..."). These
+	 * bracket a call that is EXPECTED to fault, so each is flushed before the
+	 * risky op and the last one on disk names the failing case. Retire with
+	 * the OS X tier; they are one-shot and startup-only. */
+	if (strstr(m, "PROBE ") != NULL) return 1;
 	/* fixes937 (OS X tier 1b) — the startup breadcrumb trail.
 	 *
 	 * fixes936 shipped to the 10.3 iMac and the app "opens and immediately

@@ -1385,6 +1385,60 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 			(void *)wport, (void *)usedev);
 		macsurf_debug_log_flush();
 	}
+	/* fixes945 (OS X tier 2a) — characterise the WINDOW PORT, one shot.
+	 *
+	 * fixes944 fixed colour and moved us three calls further: TESetText,
+	 * TECalText and TEActivate now all pass. TESetSelect then dies
+	 * differently -- KERN_PROTECTION_FAILURE at 0x00000000, i.e. a call
+	 * THROUGH A NULL POINTER, via
+	 *   DoHilite -> HiliteOneLine -> GetLineWidth -> CallTextWidthHook
+	 *     -> DefaultTextWidthHook -> TextWidth -> CallTextWidth -> 0x0
+	 * The NULL is inside QuickDraw's TextWidth, not TextEdit: TextWidth
+	 * dispatches through the port's text-measurement bottleneck
+	 * (grafProcs->txMeasProc) and that entry is NULL on this port.
+	 *
+	 * Combined with the poisoned colour table, the pattern is no longer a
+	 * series of one-off bugs: the WINDOW PORT is not a usable classic
+	 * QuickDraw port under LaunchCFMApp on 10.3, while a GWorld we allocate
+	 * ourselves is fine. This frontend never calls SetStdProcs/SetPortGrafProcs
+	 * (grep: zero hits), so the procs are whatever Carbon handed us.
+	 *
+	 * Before committing to a containment design -- draw ALL chrome offscreen
+	 * and CopyBits, which is a real refactor -- measure the claim. TextWidth
+	 * is the cheapest classic-QD text op there is. Run it on the GWorld first
+	 * (expected fine), then on the window port (expected to fault), flushing
+	 * before each so the last line on disk names the answer.
+	 *
+	 * If the window port survives TextWidth, the NULL hook is TextEdit-side
+	 * and far narrower than feared. If it faults, the window port cannot be
+	 * drawn to directly at all and everything must composite offscreen. */
+	if (macsurf_os_is_osx()) {
+		short tw;
+		CGrafPtr sp;
+		GDHandle sd;
+
+		GetGWorld(&sp, &sd);
+
+		if (g_safe_gdev_gw != NULL) {
+			SetGWorld((CGrafPtr)g_safe_gdev_gw, g_safe_gdev);
+			TextFont(kFontIDGeneva); TextSize(12); TextFace(0);
+			MS_LOG("PROBE qd: TextWidth on GWORLD now");
+			macsurf_debug_log_flush();
+			tw = TextWidth("Xy", 0, 2);
+			macsurf_debug_log_writef("PROBE qd: GWORLD TextWidth ok = %d", (int)tw);
+			macsurf_debug_log_flush();
+		}
+
+		SetPortWindowPort(g->window);
+		TextFont(kFontIDGeneva); TextSize(12); TextFace(0);
+		MS_LOG("PROBE qd: TextWidth on WINDOW PORT now");
+		macsurf_debug_log_flush();
+		tw = TextWidth("Xy", 0, 2);
+		macsurf_debug_log_writef("PROBE qd: WINDOW TextWidth ok = %d", (int)tw);
+		macsurf_debug_log_flush();
+
+		SetGWorld(sp, sd);
+	}
 	/* fixes302 — set the URL field font (Geneva 12) before TENew so the
 	 * TERec captures it; TextEdit measures and draws with the stored font. */
 	TextFont(kFontIDGeneva); TextSize(12); TextFace(0);
