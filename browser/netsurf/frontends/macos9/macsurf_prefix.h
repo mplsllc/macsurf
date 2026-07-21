@@ -102,6 +102,34 @@ void macsurf_assert_failed_(const char *expr, const char *file, int line);
   #ifndef __MACTYPES__
     #include <MacTypes.h>
   #endif
+  /*
+   * fixes951a — pull in Endian.h immediately after MacTypes.h.
+   *
+   * Turning on Carbon (above) flips TARGET_API_MAC_OS8 to 0, which changes
+   * which branch Events.h takes:
+   *
+   *     #if TARGET_OS_MAC && TARGET_API_MAC_OS8
+   *     typedef UInt32 KeyMap[4];          <- what we used to get
+   *     #else
+   *     typedef BigEndianLong KeyMap[4];   <- what Carbon builds get
+   *     #endif
+   *
+   * BigEndianLong lives in Endian.h (on big-endian PPC it is simply
+   * "typedef long BigEndianLong"). In the include order this project produces
+   * -- Carbon.h -> CoreServices.h -> StringCompare.h -> TypeSelect.h ->
+   * Events.h -- it was not defined by the time Events.h needed it, so the
+   * KeyMap typedef failed and took 100 errors with it across Events.h,
+   * StringCompare.h, TypeSelect.h and TextUtils.h. Every one of them cascaded
+   * from that single missing type; none were in our own code.
+   *
+   * Including it here, from the prefix, guarantees the type exists in EVERY
+   * translation unit before any Toolbox header can want it -- the same
+   * force-it-early tactic the MacTypes.h include above uses, and safe because
+   * Endian.h needs only MacTypes.h (Fixed, OSType), which precedes it.
+   */
+  #ifndef __ENDIAN__
+    #include <Endian.h>
+  #endif
 #endif
 
 /* Float64: MacTypes.h owns this on CW8 (defines it as 'short double').
