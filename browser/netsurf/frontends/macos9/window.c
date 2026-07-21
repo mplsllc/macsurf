@@ -276,24 +276,9 @@ GDHandle macos9_safe_gdevice(void)
 #endif
 }
 
-/*
- * fixes948 — report whether a Toolbox import actually resolved.
- *
- * A CFM function designator yields a pointer to its transition vector, whose
- * FIRST word is the code address. If either the vector or that code word is
- * NULL the import never resolved, and calling the function branches to 0 --
- * which is precisely the crash fixes946 hit on PaintRect.
- *
- * Read-only by construction: it inspects, never calls. Flushed per line so a
- * fault inside the probe itself still identifies which symbol was being read.
- */
-static void probe_sym(const char *name, void *fp)
-{
-	void *code = NULL;
-	if (fp != NULL) code = ((void **)fp)[0];
-	macsurf_debug_log_writef("PROBE sym %s tv=%p code=%p", name, fp, code);
-	macsurf_debug_log_flush();
-}
+/* fixes949 — standard QuickDraw bottleneck procs. FILE-STATIC because
+ * SetPortGrafProcs stores the pointer: the table must outlive the call. */
+static CQDProcs g_std_cprocs;
 
 /* fixes294 — shift TE field's left by +20 to leave room for the favicon. */
 /* fixes302 — TextEdit rect inside the url field.
@@ -1404,47 +1389,74 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 			(void *)wport, (void *)usedev);
 		macsurf_debug_log_flush();
 	}
-	/* fixes948 (OS X tier 2c) — WHICH CarbonLib imports failed to resolve?
+	/* fixes949 (OS X tier 2d) — read the port's bottleneck procs, then install
+	 * real ones.
 	 *
-	 * fixes946 produced a result that invalidates the previous diagnosis. The
-	 * PaintRect probe crashed with:
-	 *   #0 0x00000000
-	 *   #1 macos9_window_create + 1240
-	 * PaintRect is not in the stack. There are NO QuickDraw frames at all --
-	 * our code branched straight to address 0. So the SYMBOL resolved to NULL;
-	 * QuickDraw never ran.
+	 * fixes948 killed my linkage theory: ALL ten probed imports resolved with
+	 * valid transition vectors and code addresses (PaintRect code=91588324,
+	 * TextWidth code=9158B5BC, ...). Nothing is unresolved.
 	 *
-	 * That is not "the window port is in a bad state", which is what fixes942
-	 * through 946 assumed. It is a CFM LINKAGE failure: calls into a shared
-	 * library go through a transition vector, and an unresolved soft import
-	 * leaves that vector NULL, so calling it branches to 0. The project already
-	 * has this class of bug on record ("direct OT calls crash (TOC)").
+	 * Which re-validates the earlier reading and explains the misleading
+	 * backtrace. On PPC a LEAF function that branches through a NULL pointer
+	 * before establishing a stack frame appears as "#1 caller -> #0 0x0" with
+	 * itself absent. So PaintRect DID run; it dispatched through the port's
+	 * grafProcs and that entry was NULL. TextWidth showed a frame only because
+	 * it faulted deeper (CallTextWidth+144).
 	 *
-	 * It also re-reads the earlier crashes consistently:
-	 *   RGBForeColor  -- RESOLVED and ran; died inside InternalColor2Index
-	 *   TextWidth     -- RESOLVED and ran; died at CallTextWidth calling NULL
-	 *   PaintRect     -- NEVER RAN; the call itself went to 0
-	 * i.e. some Toolbox entry points are present and some are missing, and the
-	 * missing ones are what we have been chasing.
+	 * In classic QuickDraw a NULL grafProcs means "use the standard procs" and
+	 * is perfectly normal. A NON-NULL table full of NULL entries is not, and it
+	 * would explain both drawing failures at once -- PaintRect via rectProc,
+	 * TextWidth via txMeasProc -- while GWorlds stay fine, since NewGWorld
+	 * builds its own port.
 	 *
-	 * So: read the pointers instead of calling them. For a CFM import, the
-	 * function designator yields its transition vector; the first word of that
-	 * vector is the code address. Either being NULL means the import did not
-	 * resolve. Purely read-only -- nothing here can branch to a bad address --
-	 * and each line is flushed so a fault in the probe itself is still located.
+	 * So: log the table and its first eight entries BEFORE touching anything,
+	 * then install a standard set with SetStdCProcs + SetPortGrafProcs and
+	 * retry the plainest possible draw. The before-state is captured either
+	 * way, so even if installing procs fixes it we still know what was wrong.
 	 *
-	 * NOTE PaintRect/PenNormal are NOT called here any more, only inspected. */
+	 * g_std_cprocs is FILE-STATIC on purpose: SetPortGrafProcs stores the
+	 * pointer, so the table must outlive this function. A local would leave the
+	 * port pointing at dead stack. */
 	if (macsurf_os_is_osx()) {
-		probe_sym("PenNormal",    (void *)PenNormal);
-		probe_sym("PaintRect",    (void *)PaintRect);
-		probe_sym("CopyBits",     (void *)CopyBits);
-		probe_sym("TextWidth",    (void *)TextWidth);
-		probe_sym("RGBForeColor", (void *)RGBForeColor);
-		probe_sym("ForeColor",    (void *)ForeColor);
-		probe_sym("SetPortWindowPort", (void *)SetPortWindowPort);
-		probe_sym("NewGWorld",    (void *)NewGWorld);
-		probe_sym("TENew",        (void *)TENew);
-		probe_sym("TESetSelect",  (void *)TESetSelect);
+		CGrafPtr sp;
+		GDHandle sd;
+		CGrafPtr wp;
+		CQDProcsPtr gp;
+		Rect pr;
+
+		GetGWorld(&sp, &sd);
+		wp = GetWindowPort(g->window);
+		SetPortWindowPort(g->window);
+
+		gp = GetPortGrafProcs(wp);
+		macsurf_debug_log_writef("PROBE qd: grafProcs=%p", (void *)gp);
+		macsurf_debug_log_flush();
+		if (gp != NULL) {
+			void **w = (void **)gp;
+			macsurf_debug_log_writef("PROBE qd: procs0-3 %p %p %p %p",
+				w[0], w[1], w[2], w[3]);
+			macsurf_debug_log_writef("PROBE qd: procs4-7 %p %p %p %p",
+				w[4], w[5], w[6], w[7]);
+			macsurf_debug_log_flush();
+		}
+
+		MS_LOG("PROBE qd: SetStdCProcs now");
+		macsurf_debug_log_flush();
+		SetStdCProcs(&g_std_cprocs);
+		macsurf_debug_log_writef("PROBE qd: SetStdCProcs ok, first=%p",
+			((void **)&g_std_cprocs)[0]);
+		macsurf_debug_log_flush();
+
+		SetPortGrafProcs(wp, &g_std_cprocs);
+		MS_LOG("PROBE qd: procs installed -- PaintRect now");
+		macsurf_debug_log_flush();
+		SetRect(&pr, 4, 4, 24, 14);
+		PenNormal();
+		PaintRect(&pr);
+		MS_LOG("PROBE qd: PaintRect SURVIVED with std procs");
+		macsurf_debug_log_flush();
+
+		SetGWorld(sp, sd);
 	}
 	/* fixes302 — set the URL field font (Geneva 12) before TENew so the
 	 * TERec captures it; TextEdit measures and draws with the stored font. */
