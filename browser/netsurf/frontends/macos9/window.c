@@ -215,6 +215,67 @@ void macos9_frontend_viewport(int *w, int *h)
  * a reformat after JS DOM mutation. */
 struct browser_window *macos9_gw_bw(struct gui_window *g) { return g ? g->bw : NULL; }
 static void set_status_text(struct gui_window *g, const char *m) { if(!m) g->status[0]=0; else { strncpy(g->status,m,127); g->status[127]=0; } }
+/*
+ * fixes944 (OS X tier 2) — a GDevice that is actually usable for colour.
+ *
+ * Root cause, finally measured rather than guessed. On Mac OS X 10.3 the
+ * SCREEN device returned by GetMainDevice() has no usable colour/inverse
+ * table: dereferencing it yields 0x74140001, which is unmapped. Every
+ * RGBForeColor resolves its colour index through the CURRENT GDevice, so any
+ * colour call made while the screen device is current dies inside
+ * InternalColor2Index. That is the whole OS X crash -- it looked like a
+ * TextEdit bug only because TESetText happened to be the first caller.
+ *
+ * The evidence chain:
+ *   fixes942  BOOT te: maindev=0008109C   <- and 0x0008109C is EXACTLY r4 in
+ *                                            every crash dump (938/939/941/942)
+ *   fixes943  probe gwdev=002FF378 ... RGBForeColor on GWorld SURVIVED
+ *
+ * So classic QuickDraw colour is NOT broken here -- only Quartz's stand-in for
+ * the screen GDevice is. A GWorld we allocate ourselves gets a real GDevice
+ * (in the app heap, 0x002F.., beside our other allocations) and colour works
+ * against it perfectly.
+ *
+ * SetGWorld() takes port and device INDEPENDENTLY, so we can keep drawing into
+ * the window's port while resolving colour through a device that is not
+ * poisoned. This owns one tiny 32-bit GWorld for the life of the process,
+ * purely to have a valid GDevice to point at.
+ *
+ * On Mac OS 9 this returns GetMainDevice() and nothing changes.
+ */
+static GWorldPtr g_safe_gdev_gw = NULL;   /* owns the device; never drawn into */
+static GDHandle  g_safe_gdev    = NULL;   /* cached; NULL until first use      */
+
+GDHandle macos9_safe_gdevice(void)
+{
+#ifdef __MACOS9__
+	if (!macsurf_os_is_osx()) return GetMainDevice();
+
+	if (g_safe_gdev == NULL) {
+		CGrafPtr save_port;
+		GDHandle save_dev;
+		Rect r;
+		OSErr e;
+
+		GetGWorld(&save_port, &save_dev);
+		SetRect(&r, 0, 0, 8, 8);
+		e = NewGWorld(&g_safe_gdev_gw, 32, &r, NULL, NULL, 0);
+		if (e == noErr && g_safe_gdev_gw != NULL) {
+			g_safe_gdev = GetGWorldDevice(g_safe_gdev_gw);
+		}
+		SetGWorld(save_port, save_dev);
+		macsurf_debug_log_writef("RECON GDEV safe=%p main=%p err=%d",
+			(void *)g_safe_gdev, (void *)GetMainDevice(), (int)e);
+		macsurf_debug_log_flush();
+	}
+	/* Fail open to the screen device: on OS 9 that is simply correct, and on
+	 * OS X a failed NewGWorld leaves us no better option than before. */
+	return (g_safe_gdev != NULL) ? g_safe_gdev : GetMainDevice();
+#else
+	return NULL;
+#endif
+}
+
 /* fixes294 — shift TE field's left by +20 to leave room for the favicon. */
 /* fixes302 — TextEdit rect inside the url field.
  *   left  = 2px bevel + 16px favicon + 6px gap  -> text never touches the
@@ -1297,131 +1358,32 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 	 * "URL field unresponsive on initial window" regression. */
 	ShowWindow(g->window); SelectWindow(g->window);
 	SetPortWindowPort(g->window);
-	/* fixes941 (OS X tier 1e) — establish the graphics DEVICE and the port's
-	 * RGB fore/back colour before any TextEdit call.
+	/* fixes944 (OS X tier 2) — window port, but a GDevice whose colour table
+	 * is real. See macos9_safe_gdevice() above for the full evidence chain; in
+	 * short, GetMainDevice() on 10.3 hands back a GDevice with an unmapped
+	 * colour table, and EVERY RGBForeColor resolves through the CURRENT device,
+	 * so any colour call made while the screen device is current dies inside
+	 * InternalColor2Index. fixes943 proved a GWorld's own device works fine.
 	 *
-	 * SetPortWindowPort() above sets the current PORT but NOT the current
-	 * GDevice. Verified: GetMainDevice/SetGDevice appear nowhere in this
-	 * frontend, and on-screen drawing only ever uses SetPortWindowPort (20
-	 * sites) while SetGWorld (port AND device, 17 sites) is used solely
-	 * around offscreen GWorld work. So at this point the current GDevice is
-	 * simply whatever was left current -- on OS 9 harmlessly the screen, on
-	 * Mac OS X potentially no valid classic GDevice at all.
-	 *
-	 * That matters because the 10.3 crash is inside InternalColor2Index,
-	 * reached via RGBForeColor <- StdExit <- TECalText <- TESetText, and
-	 * Color2Index resolves an RGBColor through the CURRENT GDevice's inverse
-	 * table. A bad GDevice there faults exactly as observed (identical
-	 * registers every launch, since the stale device is identical too).
-	 *
-	 * Setting fg=black/bg=white explicitly is the same house rule the
-	 * plot_bitmap blits already follow (see the CopyBits colorizing note in
-	 * CLAUDE.md): never assume the port's colour state, because it is
-	 * whatever the last drawing operation left behind. Unconditional rather
-	 * than OS-X-gated -- it is correct on OS 9 too, and platform divergence
-	 * is its own hazard.
-	 *
-	 * CAVEAT: GetMainDevice() is the MAIN screen. On a multi-monitor setup a
-	 * window on a secondary display would want that display's device; fine
-	 * for the single-display test machines, revisit if multi-monitor matters. */
-	/* fixes942 (OS X tier 1f) — PROBE, not a fix.
-	 *
-	 * fixes941's result was decisive and it cleared TextEdit completely. With
-	 * the explicit colour setup added, the 10.3 backtrace became
-	 *   macos9_window_create -> RGBForeColor -> SetPortRGBForeColor
-	 *     -> InternalColor2Index   (EXC_BAD_ACCESS at 0x74140001)
-	 * with NO TextEdit frames at all. So RGBForeColor faults on this window's
-	 * port given a plain black RGBColor; TESetText was merely the first thing
-	 * that happened to call it. Gating the URL field off -- the planned next
-	 * step -- would have moved the crash to the next RGBForeColor, and
-	 * plotters.c issues one for every text run, rect and border. This is the
-	 * renderer's foundation, not a widget bug.
-	 *
-	 * Note SetGWorld() itself SURVIVED both times, and r3 (first argument at
-	 * the fault) is NULL -- so something here is handing back an unusable
-	 * value rather than crashing outright. Log all three before touching them
-	 * instead of guessing which. Skip the colour calls on OS X so the launch
-	 * can proceed far enough to show whether anything else is reachable. */
+	 * SetGWorld() takes port and device independently, so the window stays the
+	 * drawing target while colour resolves through the good device. Setting
+	 * fg/bg explicitly is the same house rule the plot_bitmap blits follow
+	 * (CLAUDE.md's CopyBits-colorizing note): never assume the port's colour
+	 * state. On OS 9 macos9_safe_gdevice() IS GetMainDevice(), so this is
+	 * exactly the behaviour that has always shipped. */
 	{
 		RGBColor fg_blk, bg_wht;
 		CGrafPtr wport = GetWindowPort(g->window);
-		GDHandle maindev = GetMainDevice();
+		GDHandle usedev = macos9_safe_gdevice();
 
-		macsurf_debug_log_writef("BOOT te: win=%p port=%p maindev=%p osx=%d",
-			(void *)g->window, (void *)wport, (void *)maindev,
-			macsurf_os_is_osx());
+		SetGWorld(wport, usedev);
+		fg_blk.red = 0; fg_blk.green = 0; fg_blk.blue = 0;
+		bg_wht.red = 0xFFFF; bg_wht.green = 0xFFFF; bg_wht.blue = 0xFFFF;
+		RGBForeColor(&fg_blk);
+		RGBBackColor(&bg_wht);
+		macsurf_debug_log_writef("BOOT te: port=%p dev=%p colours SET ok",
+			(void *)wport, (void *)usedev);
 		macsurf_debug_log_flush();
-
-		if (!macsurf_os_is_osx()) {
-			SetGWorld(wport, maindev);
-			fg_blk.red = 0; fg_blk.green = 0; fg_blk.blue = 0;
-			bg_wht.red = 0xFFFF; bg_wht.green = 0xFFFF; bg_wht.blue = 0xFFFF;
-			RGBForeColor(&fg_blk);
-			RGBBackColor(&bg_wht);
-			MS_LOG("BOOT te: gdevice+colors set");
-		} else {
-			/* fixes943 (OS X tier 1g) — CAPABILITY TEST, one-shot.
-			 *
-			 * fixes942's probe produced the first hard fact of this hunt:
-			 *   BOOT te: win=003450C0 port=003450C0 maindev=0008109C
-			 * and 0x0008109C is EXACTLY r4 in every crash dump (938, 939,
-			 * 941, 942 -- all identical). So GetMainDevice()'s handle is the
-			 * argument reaching InternalColor2Index, and dereferencing it
-			 * yields 0x74140001, which is unmapped. The main SCREEN's classic
-			 * GDevice has no usable colour/inverse table under Quartz.
-			 *
-			 * The question that decides the whole OS X port: is classic QD
-			 * colour broken PROCESS-WIDE, or only for the screen device?
-			 * MacSurf already renders into offscreen 32-bit GWorlds and
-			 * CopyBits them to the window (macos9_paint_gw), and those
-			 * GWorlds demonstrably work here -- the favicon and toolbar icons
-			 * decoded into them earlier this very launch. A GWorld carries
-			 * its OWN GDevice, created by us rather than by Quartz.
-			 *
-			 * So: make a tiny 32-bit GWorld, switch to ITS device, and call
-			 * RGBForeColor. Every line is flushed BEFORE the risky call, so
-			 * whichever line is last on disk names the answer:
-			 *   "SURVIVED" -> colour works offscreen; the fix is to keep all
-			 *                 RGB work on the GWorld and never touch the
-			 *                 window port's colour, which matches how the
-			 *                 renderer is already built.
-			 *   crash here -> classic QD colour is dead process-wide, and OS X
-			 *                 needs a different drawing strategy entirely.
-			 * Either way this is a measurement, not another guess. */
-			GWorldPtr probe_gw = NULL;
-			CGrafPtr save_port;
-			GDHandle save_dev;
-			Rect probe_r;
-			OSErr probe_err;
-
-			GetGWorld(&save_port, &save_dev);
-			SetRect(&probe_r, 0, 0, 8, 8);
-			probe_err = NewGWorld(&probe_gw, 32, &probe_r, NULL, NULL, 0);
-			macsurf_debug_log_writef("BOOT te: probe NewGWorld err=%d gw=%p",
-				(int)probe_err, (void *)probe_gw);
-			macsurf_debug_log_flush();
-
-			if (probe_err == noErr && probe_gw != NULL) {
-				GDHandle gwdev = GetGWorldDevice(probe_gw);
-				macsurf_debug_log_writef("BOOT te: probe gwdev=%p maindev=%p",
-					(void *)gwdev, (void *)maindev);
-				macsurf_debug_log_flush();
-
-				SetGWorld((CGrafPtr)probe_gw, gwdev);
-				MS_LOG("BOOT te: probe -> RGBForeColor on GWorld NOW");
-				macsurf_debug_log_flush();
-
-				fg_blk.red = 0; fg_blk.green = 0; fg_blk.blue = 0;
-				RGBForeColor(&fg_blk);
-
-				MS_LOG("BOOT te: probe RGBForeColor on GWorld SURVIVED");
-				macsurf_debug_log_flush();
-
-				SetGWorld(save_port, save_dev);
-				DisposeGWorld(probe_gw);
-			}
-			MS_LOG("BOOT te: OSX -- window-port colour calls SKIPPED");
-		}
 	}
 	/* fixes302 — set the URL field font (Geneva 12) before TENew so the
 	 * TERec captures it; TextEdit measures and draws with the stored font. */

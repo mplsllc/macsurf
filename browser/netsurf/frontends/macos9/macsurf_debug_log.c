@@ -679,6 +679,13 @@ macsurf_log_is_crash_report(const char *m)
 	 * Retire both entries when the OS X tier closes. */
 	if (strstr(m, "RECON OS") != NULL) return 1;
 	if (strstr(m, "RECON OT") != NULL) return 1;
+	/* fixes944 — one line per launch recording which GDevice colour resolves
+	 * through. On OS X 10.3 GetMainDevice() returns a device with an unmapped
+	 * colour table (0x74140001), so every RGBForeColor made while it is
+	 * current dies in InternalColor2Index; macos9_safe_gdevice() substitutes a
+	 * GWorld-backed device. This line is how we confirm the substitution
+	 * actually happened rather than silently falling back. */
+	if (strstr(m, "RECON GDEV") != NULL) return 1;
 	/* fixes937 (OS X tier 1b) — the startup breadcrumb trail.
 	 *
 	 * fixes936 shipped to the 10.3 iMac and the app "opens and immediately
