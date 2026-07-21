@@ -203,6 +203,10 @@ void macsurf_recon_clamp(const char *field, long value)
 }
 
 /* ------------------------------------------------------------------ */
+/* fixes956 — observed-allocator-window recorder; defined lower, forward-
+ * declared here because the three wrappers below all call it. */
+static void macsurf_obs_note(void *p, size_t size);
+
 /* macsurf_safe_alloc                                                  */
 /* ------------------------------------------------------------------ */
 void *macsurf_safe_alloc(size_t size)
@@ -220,6 +224,7 @@ void *macsurf_safe_alloc(size_t size)
      * calloc is deliberately NOT poisoned: zeroed memory is its contract. */
     memset(p, MACSURF_POISON_ALLOC_BYTE, size);
 #endif
+    macsurf_obs_note(p, size);          /* fixes956 */
     return p;
 }
 
@@ -231,7 +236,7 @@ void *macsurf_safe_calloc(size_t count, size_t size)
     void *p;
     if (count == 0 || size == 0) { count = 1; size = 1; }
     p = calloc(count, size);
-    if (p != NULL) return p;
+    if (p != NULL) { macsurf_obs_note(p, count * size); return p; }  /* fixes956 */
     macsurf_oom_panic(count * size);
     return NULL; /* unreachable */
 }
@@ -254,7 +259,7 @@ void *macsurf_safe_realloc(void *ptr, size_t size)
         return macsurf_safe_alloc(size);
 
     p = realloc(ptr, size);
-    if (p != NULL) return p;
+    if (p != NULL) { macsurf_obs_note(p, size); return p; }  /* fixes956 */
 
     /* Original pointer is still valid, but we are about to
      * ExitToShell so the leak is irrelevant -- stopping the
@@ -301,6 +306,32 @@ void *macsurf_safe_realloc(void *ptr, size_t size)
 static unsigned long g_ptr_lo = 0x00001000UL;   /* fail-open: reject NULL page */
 static unsigned long g_ptr_hi = 0xFFFFFFFFUL;   /* fail-open until init narrows */
 static int           g_ptr_bounds_ok = 0;
+
+/* fixes956 — OBSERVED allocator window. Every heap object in the app is
+ * handed out by macsurf_safe_alloc/_calloc/_realloc below (the prefix #defines
+ * malloc/calloc/realloc to them), so recording the lowest and highest address
+ * they ever return gives a real heap window on ANY platform, with no
+ * GetProcessInformation call. On OS X, where GetProcessInformation returns a
+ * useless partition and macsurf_ptr_is_heap was forced fail-open (fixes936),
+ * this window re-arms the wild-pointer guards (fixes499g/572/576, dom_string.c)
+ * that keep the content/DOM teardown paths from dereferencing a reused-as-text
+ * pointer -- the exact "ute(" (0x75746528) crash seen on 68kmla under OS X 10.3,
+ * which OS 9 survives ONLY because its hardcoded range guard rejects the same
+ * value. Monotonic (never shrinks); a freed address staying in-window is fine,
+ * because liveness is checked separately -- this window's only job is to reject
+ * gross garbage (text/code pointers ~2 GB, far above any real heap). */
+static unsigned long g_obs_lo = 0xFFFFFFFFUL;
+static unsigned long g_obs_hi = 0x00000000UL;
+
+static void macsurf_obs_note(void *p, size_t size)
+{
+	unsigned long a = (unsigned long)p;
+	unsigned long e;
+	if (p == NULL) return;
+	if (a < g_obs_lo) g_obs_lo = a;
+	e = a + (unsigned long)size;
+	if (e > g_obs_hi) g_obs_hi = e;
+}
 
 void macsurf_heap_bounds_init(void)
 {
@@ -382,7 +413,25 @@ void macsurf_heap_bounds_init(void)
 int macsurf_ptr_is_heap(const void *p)
 {
 	unsigned long a = (unsigned long)p;
-	return (a >= g_ptr_lo) && (a < g_ptr_hi);
+
+	/* Process Manager window. On OS 9 this is the real narrowed partition
+	 * and is authoritative; on OS X it is the fail-open 0x1000..0xFFFFFFFF
+	 * default, so it rejects only NULL/tiny. */
+	if (a < g_ptr_lo || a >= g_ptr_hi)
+		return 0;
+
+	/* fixes956 — when the PM window did NOT narrow (OS X), also require the
+	 * pointer to fall inside the observed allocator window. This is the OS X
+	 * substitute for OS 9's real partition bounds, and it is what re-rejects
+	 * a reused-as-text handle (e.g. 0x75746528). Skipped entirely on OS 9
+	 * (g_ptr_bounds_ok == 1), so OS 9 behaviour is byte-for-byte unchanged.
+	 * Guarded on g_obs_hi > g_obs_lo so a check before the first allocation
+	 * (there are none this early) can never reject a real pointer. */
+	if (!g_ptr_bounds_ok && g_obs_hi > g_obs_lo) {
+		if (a < g_obs_lo || a >= g_obs_hi)
+			return 0;
+	}
+	return 1;
 }
 
 /* FLOOR-ONLY test — for pointers that may legitimately live OUTSIDE the
