@@ -15,7 +15,11 @@
 #endif
 #include "macsurf_debug.h"
 #include "macsurf_memory.h"    /* macsurf_recon_mem() */
-#include "macsurf_osver.h"     /* fixes938 -- macsurf_os_is_osx() */
+#include "macsurf_osver.h"     /* macsurf_os_is_osx() -- no call sites here as
+                                * of fixes939 (the OS X TE bisect was reverted
+                                * once both suspects were cleared); kept because
+                                * gating the URL field is the tier-1e fallback
+                                * if the antialiasing gate does not fix it. */
 
 #ifdef __MACOS9__
 #include <MacWindows.h>
@@ -1322,12 +1326,14 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 		 * TextEdit itself is unusable here and tier 1d gates the field off.
 		 *
 		 * OS 9 behaviour is byte-for-byte unchanged. */
-		if (!macsurf_os_is_osx()) {
-			set_url_te_geometry(g->url_te, &b);   /* fixes756 (#229) wide destRect */
-			TEAutoView(true, g->url_te);          /* enable TESelView caret auto-scroll */
-		} else {
-			MS_LOG("BOOT te: OSX minimal path (no wide destRect, no autoview)");
-		}
+		/* fixes939 — RESTORED unconditionally. fixes938 gated these two off
+		 * on OS X and 10.3 crashed anyway, with an identical backtrace and
+		 * identical registers, so both are proven innocent. Putting them back
+		 * returns OS X to the same code path as OS 9 and leaves the
+		 * antialiased-text global (see main.c) as the single remaining
+		 * difference between the two platforms. */
+		set_url_te_geometry(g->url_te, &b);   /* fixes756 (#229) wide destRect */
+		TEAutoView(true, g->url_te);          /* enable TESelView caret auto-scroll */
 		MS_LOG("BOOT te: pre TESetText");
 		TESetText(MACSURF_HOME_URL,(long)strlen(MACSURF_HOME_URL),g->url_te);
 		MS_LOG("BOOT te: post TESetText");
