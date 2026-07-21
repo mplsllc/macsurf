@@ -2167,12 +2167,14 @@ macos9_qt_image_get_internal(const struct content *c, void *context)
 	nat_w = (int)c->width;
 	nat_h = (int)c->height;
 	if (nat_w <= 0 || nat_h <= 0) {
-		/* fixes933 — DIAGNOSTIC. This is a prime "load then disappear"
-		 * suspect: a content whose width was decoded fine on the first
-		 * paint but reads 0 now paints NOTHING. If this fires for an image
-		 * that was visible, c->width was cleared between paints. */
+		/* fixes933/934 — a prime "load then disappear" suspect: a content
+		 * whose width decoded fine on the first paint but reads 0 now paints
+		 * NOTHING, so c->width was cleared between paints (a rebuilt/zero-byte
+		 * content, e.g. after hlcache_clean eviction + source-drop). Retagged
+		 * WORK->LIFE (fixes934): the WORK channel is compiled off, so the
+		 * fixes933 line never reached disk. Anomaly-gated, silent when healthy. */
 		macsurf_debug_log_writef(
-			"WORK getint ZERO-NAT c=%p w=%d h=%d",
+			"LIFE img getint ZERO-NAT c=%p w=%d h=%d",
 			(void *)c, nat_w, nat_h);
 		return NULL;
 	}

@@ -2600,6 +2600,43 @@ static void html_reformat(struct content *c, int width, int height)
 		}
 	}
 
+	/* fixes934 — the LIFE img ledger. Construct census (how images enter the
+	 * fetch system) + object ledger (link set/nulled, and the memo-mystery
+	 * disambiguator done_ok/done_zero). One line each per reformat, only when
+	 * a counter moved. Read positionally against NAV / mutcensus / LIFE
+	 * objects: a `nulled` jump right after a mutcensus line is the beacon
+	 * reconvert blanking a painted image; done_ok=0 with rendered images means
+	 * html_object_done is not the completion sink (the imgdims stored=0 cause). */
+	{
+		extern void macsurf_img_ctor_stats(long *total, long *eager,
+				long *lazy, long *rdim, long *dropobj);
+		extern void macsurf_img_object_stats(long *done_ok,
+				long *done_zero, long *set, long *nulled);
+		static long lc_t = -1, lc_e = -1, lc_l = -1, lc_r = -1, lc_d = -1;
+		static long lo_ok = -1, lo_z = -1, lo_s = -1, lo_n = -1;
+		long ct = 0, ce = 0, cl = 0, cr = 0, cd = 0;
+		long ook = 0, oz = 0, os = 0, on = 0;
+
+		macsurf_img_ctor_stats(&ct, &ce, &cl, &cr, &cd);
+		if (ct != lc_t || ce != lc_e || cl != lc_l ||
+		    cr != lc_r || cd != lc_d) {
+			macsurf_debug_log_writef(
+				"LIFE img ctor total=%ld eager=%ld lazy=%ld"
+				" rdim=%ld lazydropobj=%ld",
+				ct, ce, cl, cr, cd);
+			lc_t = ct; lc_e = ce; lc_l = cl; lc_r = cr; lc_d = cd;
+		}
+
+		macsurf_img_object_stats(&ook, &oz, &os, &on);
+		if (ook != lo_ok || oz != lo_z || os != lo_s || on != lo_n) {
+			macsurf_debug_log_writef(
+				"LIFE img obj doneok=%ld donezero=%ld"
+				" set=%ld nulled=%ld",
+				ook, oz, os, on);
+			lo_ok = ook; lo_z = oz; lo_s = os; lo_n = on;
+		}
+	}
+
 	/* fixes445: clear hover/active tracking on reformat. The dyn_hover_node
 	 * pointer survives layout but box_construct.c seeds its context from
 	 * these fields; stale values after a CONTENT_MSG_ERROR-driven reformat

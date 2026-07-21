@@ -1490,6 +1490,31 @@ static int g_imgdims_stored = 0;
 static int g_imgdims_hit = 0;
 static int g_imgdims_miss = 0;
 
+/* fixes934 — LIFE img construct census. How does each <img> enter the fetch
+ * system: eager (loads with the document) vs lazy (deferred to the paint-gated
+ * queue), and how many arrive already sized from CSS (REPLACE_DIM). Plus the
+ * lazy-drain "already had an object, dropped without fetching" counter, the
+ * highest-signal dedupe-vs-reconvert probe. Session-cumulative; emitted once
+ * per reformat from html_reformat via macsurf_img_ctor_stats, only when moved.
+ * Coarse by design (the fixes911 per-image-FlushVol lesson). */
+static long g_img_ctor_total = 0;
+static long g_img_ctor_eager = 0;
+static long g_img_ctor_lazy = 0;
+static long g_img_ctor_replacedim = 0;
+static long g_img_lazy_dropobj = 0; /* drain drop: box->object already set */
+
+void macsurf_img_ctor_stats(long *total, long *eager, long *lazy,
+		long *rdim, long *dropobj);
+void macsurf_img_ctor_stats(long *total, long *eager, long *lazy,
+		long *rdim, long *dropobj)
+{
+	*total = g_img_ctor_total;
+	*eager = g_img_ctor_eager;
+	*lazy = g_img_ctor_lazy;
+	*rdim = g_img_ctor_replacedim;
+	*dropobj = g_img_lazy_dropobj;
+}
+
 void macsurf_imgdims_stats(int *stored, int *hit, int *miss);
 void macsurf_imgdims_stats(int *stored, int *hit, int *miss)
 {
@@ -1666,6 +1691,7 @@ void macsurf_lazyimg_viewport_changed(int scroll_y, int viewport_h)
 			 * URL dedupe of its own), which is the very churn the
 			 * re-link exists to remove. Drop the entry, do not fetch. */
 			if (box->object != NULL) {
+				g_img_lazy_dropobj++; /* fixes934 */
 				dom_node_unref(e->node);
 				nsurl_unref(e->url);
 				free(e);
@@ -1690,8 +1716,11 @@ void macsurf_lazyimg_viewport_changed(int scroll_y, int viewport_h)
 	}
 	g_lazyimg_head = keep;
 	if (n_fetched || n_kept) {
+		/* fixes934 — retagged RECON LAZY -> LIFE img lazy so the drain is
+		 * visible on a default build (RECON LAZY was not on the crash-only
+		 * whitelist, so it never reached disk). */
 		macsurf_debug_log_writef(
-			"RECON LAZY viewport fetched=%d kept=%d scroll=%d vh=%d",
+			"LIFE img lazy fetched=%d kept=%d scroll=%d vh=%d",
 			n_fetched, n_kept, scroll_y, viewport_h);
 	}
 }
@@ -1776,12 +1805,16 @@ box_image(dom_node *n,
 	 * the page's own completion reflow, instead of waiting for a paint to
 	 * drain the queue. The long tail still defers, keeping the fixes738 win
 	 * for galleries and below-fold thumbnails. */
+	g_img_ctor_total++; /* fixes934 — construct census */
 	if (content->img_eager_budget > 0) {
 		content->img_eager_budget--;
+		g_img_ctor_eager++;
 		ok = html_fetch_object(content, url, box, image_types, false);
 	} else if (macsurf_lazyimg_defer(content, n, url)) {
+		g_img_ctor_lazy++;
 		ok = true;
 	} else {
+		g_img_ctor_eager++; /* alloc-fail fallback fetches immediately */
 		ok = html_fetch_object(content, url, box, image_types, false);
 	}
 	nsurl_unref(url);
@@ -1796,6 +1829,7 @@ box_image(dom_node *n,
 		/* We know the dimensions the image will be shown at
 		 * before it's fetched. */
 		box->flags |= REPLACE_DIM;
+		g_img_ctor_replacedim++; /* fixes934 */
 	}
 
 	return ok;

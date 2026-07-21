@@ -136,6 +136,30 @@ html_object_failed(struct box *box, html_content *content, bool background)
 /* fixes929 — the URL->size memo, hosted in box_special.c. */
 extern void macsurf_imgdims_remember(struct nsurl *url, int w, int h);
 
+/* fixes934 — LIFE img object ledger. Coarse, session-cumulative counters,
+ * emitted once per reformat from html_reformat (via macsurf_img_object_stats)
+ * and only when one moved. NOT per-image: fixes911's per-entry FlushVol had to
+ * be undone twice. These answer the two open questions the WORK-gated probes
+ * could not (the WORK channel is compiled off): (1) why is imgdims stored=0 --
+ * does html_object_done ever see a positive width? (done_ok vs done_zero);
+ * (2) what blanks a painted image -- box->object going NULL (set vs nulled,
+ * correlate a nulled jump against the reconvert/mutcensus lines). */
+static long g_img_objdone_ok = 0;   /* completion saw width>0 (memo would fill) */
+static long g_img_objdone_zero = 0; /* completion saw width<=0 (the anomaly) */
+static long g_img_obj_set = 0;      /* box->object set non-NULL */
+static long g_img_obj_nulled = 0;   /* box->object set NULL (error/replace/free) */
+
+void macsurf_img_object_stats(long *done_ok, long *done_zero,
+		long *set, long *nulled);
+void macsurf_img_object_stats(long *done_ok, long *done_zero,
+		long *set, long *nulled)
+{
+	*done_ok = g_img_objdone_ok;
+	*done_zero = g_img_objdone_zero;
+	*set = g_img_obj_set;
+	*nulled = g_img_obj_nulled;
+}
+
 static void
 html_object_done(struct box *box,
 		 hlcache_handle *object,
@@ -149,6 +173,7 @@ html_object_done(struct box *box,
 	}
 
 	box->object = object;
+	g_img_obj_set++; /* fixes934 — link half of the LIFE img ledger */
 
 	/* fixes929 — remember this URL's intrinsic size, and stamp it on the
 	 * box. Both matter: the memo lets a FUTURE box (a reconvert rebuild, or
@@ -166,16 +191,21 @@ html_object_done(struct box *box,
 			box->obj_h = oh;
 			macsurf_imgdims_remember(
 					hlcache_handle_get_url(object), ow, oh);
+			g_img_objdone_ok++;
 		} else {
-			/* fixes933 — DIAGNOSTIC. stored=0 across a whole session is
-			 * impossible if this path sees a real width: the deferred
-			 * decoder refuses to paint a 0-width content, so a rendered
-			 * image MUST have c->width>0 by the time it is DONE, and this
-			 * runs at DONE. If ow<=0 here, either html_object_done is not
-			 * the completion path for these images or c->width is genuinely
-			 * 0 at DONE. Anomaly-gated, so silent on a healthy image. */
+			/* fixes933/934 — the memo-mystery disambiguator. imgdims
+			 * stored=0 across a whole session is impossible if this path
+			 * sees a real width: the deferred decoder refuses to paint a
+			 * 0-width content, so a rendered image MUST have c->width>0 by
+			 * the time it is DONE, and this runs at DONE. If ow<=0 here,
+			 * either html_object_done is not the completion path for these
+			 * images or c->width is genuinely 0 at DONE. Retagged WORK->LIFE
+			 * (fixes934) because the WORK channel is compiled off, so the
+			 * fixes933 WORK line never reached disk. Anomaly-gated: silent on
+			 * a healthy image. */
+			g_img_objdone_zero++;
 			macsurf_debug_log_writef(
-				"WORK objdone ZERO-DIM w=%d h=%d rd=%d",
+				"LIFE img objdone ZERO-DIM w=%d h=%d rd=%d",
 				ow, oh, (int)((box->flags & REPLACE_DIM) != 0));
 		}
 	}
@@ -379,6 +409,7 @@ html_object_callback(hlcache_handle *object,
 		 * freed memory and get_mouse_action_node crashes dereferencing it. */
 		if (!o->background && box != NULL && box->object == object) {
 			box->object = NULL;
+			g_img_obj_nulled++; /* fixes934 — error unlink */
 		}
 
 		/* fixes515: NULL before release. */
@@ -763,6 +794,7 @@ static bool html_replace_object(struct content_html_object *object, nsurl *url)
 		safe_hlcache_handle_release(&object->content); /* fixes515 */
 
 		object->box->object = NULL;
+		g_img_obj_nulled++; /* fixes934 — replace unlink */
 	}
 
 	/* initialise fetch */
@@ -936,6 +968,7 @@ nserror html_object_free_objects(html_content *html)
 			    victim->box != NULL &&
 			    victim->box->object == victim->content) {
 				victim->box->object = NULL;
+				g_img_obj_nulled++; /* fixes934 — free/retire unlink */
 			}
 			/* fixes501x: NULL before release. */
 			safe_hlcache_handle_release(&victim->content);
