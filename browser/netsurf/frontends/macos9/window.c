@@ -276,6 +276,25 @@ GDHandle macos9_safe_gdevice(void)
 #endif
 }
 
+/*
+ * fixes948 — report whether a Toolbox import actually resolved.
+ *
+ * A CFM function designator yields a pointer to its transition vector, whose
+ * FIRST word is the code address. If either the vector or that code word is
+ * NULL the import never resolved, and calling the function branches to 0 --
+ * which is precisely the crash fixes946 hit on PaintRect.
+ *
+ * Read-only by construction: it inspects, never calls. Flushed per line so a
+ * fault inside the probe itself still identifies which symbol was being read.
+ */
+static void probe_sym(const char *name, void *fp)
+{
+	void *code = NULL;
+	if (fp != NULL) code = ((void **)fp)[0];
+	macsurf_debug_log_writef("PROBE sym %s tv=%p code=%p", name, fp, code);
+	macsurf_debug_log_flush();
+}
+
 /* fixes294 — shift TE field's left by +20 to leave room for the favicon. */
 /* fixes302 — TextEdit rect inside the url field.
  *   left  = 2px bevel + 16px favicon + 6px gap  -> text never touches the
@@ -1385,89 +1404,47 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 			(void *)wport, (void *)usedev);
 		macsurf_debug_log_flush();
 	}
-	/* fixes946 (OS X tier 2b) — what CAN the window port do? The pivotal probe.
+	/* fixes948 (OS X tier 2c) — WHICH CarbonLib imports failed to resolve?
 	 *
-	 * fixes945 settled the question it asked, definitively:
-	 *   PROBE qd: GWORLD TextWidth ok = 14      <- GWorld: fine
-	 *   PROBE qd: TextWidth on WINDOW PORT now  <- window: crash, call through NULL
-	 * with the backtrace bottoming out in our own bare TextWidth, no TextEdit
-	 * involved. Two independent classic-QD facilities -- colour (fixes942/944)
-	 * and text measurement -- both fail on the window port and both work on a
-	 * GWorld we allocate. The window port is not a usable classic QuickDraw
-	 * drawing target under LaunchCFMApp on 10.3.
+	 * fixes946 produced a result that invalidates the previous diagnosis. The
+	 * PaintRect probe crashed with:
+	 *   #0 0x00000000
+	 *   #1 macos9_window_create + 1240
+	 * PaintRect is not in the stack. There are NO QuickDraw frames at all --
+	 * our code branched straight to address 0. So the SYMBOL resolved to NULL;
+	 * QuickDraw never ran.
 	 *
-	 * That makes ONE question decide whether OS X is viable at all: can we get
-	 * pixels onto the screen by any means? MacSurf's content renderer already
-	 * draws into an offscreen GWorld and CopyBits to the window, so if CopyBits
-	 * survives, the port is a big-but-tractable refactor -- move the chrome
-	 * offscreen too. If CopyBits also faults, nothing can reach the screen
-	 * through QuickDraw and OS X needs a Quartz/CGContext frontend, which is a
-	 * different project.
+	 * That is not "the window port is in a bad state", which is what fixes942
+	 * through 946 assumed. It is a CFM LINKAGE failure: calls into a shared
+	 * library go through a transition vector, and an unresolved soft import
+	 * leaves that vector NULL, so calling it branches to 0. The project already
+	 * has this class of bug on record ("direct OT calls crash (TOC)").
 	 *
-	 * Three escalating capabilities, each flushed before the risky call so the
-	 * last line on disk is the answer:
-	 *   1. PaintRect      -- plainest possible drawing: pen pattern, no text,
-	 *                        no RGB, no colour-table lookup.
-	 *   2. ForeColor()    -- the CLASSIC 8-colour call. Unlike RGBForeColor it
-	 *                        sets a constant and needs no inverse table, so it
-	 *                        may well work where RGBForeColor does not. That
-	 *                        matters: the CopyBits-colorizing rule in CLAUDE.md
-	 *                        requires resetting fg/bg before every blit, and on
-	 *                        OS X we cannot use RGBForeColor to do it.
-	 *   3. CopyBits       -- GWorld -> window. The one that decides the port.
+	 * It also re-reads the earlier crashes consistently:
+	 *   RGBForeColor  -- RESOLVED and ran; died inside InternalColor2Index
+	 *   TextWidth     -- RESOLVED and ran; died at CallTextWidth calling NULL
+	 *   PaintRect     -- NEVER RAN; the call itself went to 0
+	 * i.e. some Toolbox entry points are present and some are missing, and the
+	 * missing ones are what we have been chasing.
 	 *
-	 * NOTE the window-port TextWidth from fixes945 is deliberately NOT repeated:
-	 * it is known to fault and would abort the run before these execute. */
+	 * So: read the pointers instead of calling them. For a CFM import, the
+	 * function designator yields its transition vector; the first word of that
+	 * vector is the code address. Either being NULL means the import did not
+	 * resolve. Purely read-only -- nothing here can branch to a bad address --
+	 * and each line is flushed so a fault in the probe itself is still located.
+	 *
+	 * NOTE PaintRect/PenNormal are NOT called here any more, only inspected. */
 	if (macsurf_os_is_osx()) {
-		CGrafPtr sp;
-		GDHandle sd;
-		Rect pr;
-
-		GetGWorld(&sp, &sd);
-		SetPortWindowPort(g->window);
-
-		SetRect(&pr, 4, 4, 24, 14);
-		MS_LOG("PROBE qd: PaintRect on WINDOW now");
-		macsurf_debug_log_flush();
-		PenNormal();
-		PaintRect(&pr);
-		MS_LOG("PROBE qd: WINDOW PaintRect SURVIVED");
-		macsurf_debug_log_flush();
-
-		MS_LOG("PROBE qd: ForeColor(black) on WINDOW now");
-		macsurf_debug_log_flush();
-		ForeColor((long)blackColor);
-		BackColor((long)whiteColor);
-		MS_LOG("PROBE qd: WINDOW ForeColor SURVIVED");
-		macsurf_debug_log_flush();
-
-		if (g_safe_gdev_gw != NULL) {
-			/* fixes946a — GetPortBitMapForCopyBits is in no header this build
-			 * sees, so without a declaration C89 defaults it to returning int
-			 * and the assignment below is an illegal conversion. Declared
-			 * locally exactly as the other three call sites in this file do
-			 * (see :1915, :2246, :2345) rather than inventing a header. */
-			extern const BitMap *GetPortBitMapForCopyBits(CGrafPtr port);
-			const BitMap *srcbm;
-			const BitMap *dstbm;
-			Rect sr;
-
-			SetRect(&sr, 0, 0, 8, 8);
-			srcbm = GetPortBitMapForCopyBits((CGrafPtr)g_safe_gdev_gw);
-			dstbm = GetPortBitMapForCopyBits(GetWindowPort(g->window));
-			macsurf_debug_log_writef("PROBE qd: CopyBits src=%p dst=%p",
-				(void *)srcbm, (void *)dstbm);
-			macsurf_debug_log_flush();
-			if (srcbm != NULL && dstbm != NULL) {
-				MS_LOG("PROBE qd: CopyBits GWorld->WINDOW now");
-				macsurf_debug_log_flush();
-				CopyBits(srcbm, dstbm, &sr, &pr, srcCopy, NULL);
-				MS_LOG("PROBE qd: WINDOW CopyBits SURVIVED");
-				macsurf_debug_log_flush();
-			}
-		}
-
-		SetGWorld(sp, sd);
+		probe_sym("PenNormal",    (void *)PenNormal);
+		probe_sym("PaintRect",    (void *)PaintRect);
+		probe_sym("CopyBits",     (void *)CopyBits);
+		probe_sym("TextWidth",    (void *)TextWidth);
+		probe_sym("RGBForeColor", (void *)RGBForeColor);
+		probe_sym("ForeColor",    (void *)ForeColor);
+		probe_sym("SetPortWindowPort", (void *)SetPortWindowPort);
+		probe_sym("NewGWorld",    (void *)NewGWorld);
+		probe_sym("TENew",        (void *)TENew);
+		probe_sym("TESetSelect",  (void *)TESetSelect);
 	}
 	/* fixes302 — set the URL field font (Geneva 12) before TENew so the
 	 * TERec captures it; TextEdit measures and draws with the stored font. */
