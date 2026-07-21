@@ -1789,40 +1789,15 @@ int main(void) {
 		 * body text. Floor at 12 keeps body bitmap-crisp; larger sizes
 		 * (headings, page titles) still get smooth AA edges. Dial up to
 		 * 14 or 16 if body still looks fuzzy on the target hardware. */
-		/* fixes939 (OS X tier 1d) — do NOT enable classic QuickDraw
-		 * antialiased text on Mac OS X.
-		 *
-		 * fixes938 cleared the two TextEdit-specific suspects: with the wide
-		 * destRect and TEAutoView both skipped, 10.3 still died in TESetText
-		 * -> TECalText -> StdExit -> RGBForeColor -> InternalColor2Index,
-		 * with BYTE-IDENTICAL registers across all three runs (fault
-		 * 0x74140001, r4=0008109c, r7=r8=00010001, r3=NULL). Identical
-		 * registers every launch means a deterministic path off a
-		 * process-GLOBAL setting, not heap garbage -- which points here.
-		 *
-		 * The fit: antialiasing is inherently a colour-blend operation, so an
-		 * AA text path is exactly what reaches RGBForeColor from inside a
-		 * TextEdit recalc. And the floor is 12pt while the URL field is set
-		 * to TextSize(12) in macos9_window_create -- so that field is the
-		 * FIRST text in the whole app at an AA-eligible size, which is why
-		 * this is the first thing to crash rather than something earlier.
-		 *
-		 * SetAntiAliasedTextEnabled is a Mac OS 8.5+ classic-QuickDraw call
-		 * and is already known to be version-fragile (9.1 implements it
-		 * weakly above 8pt -- see the 9.1-vs-9.2.2 note in CLAUDE.md).
-		 * Nothing is lost by skipping it on OS X: OS X antialiases text at
-		 * the system level regardless, so this is a no-op-to-better visual
-		 * outcome there, not a downgrade.
-		 *
-		 * SetOutlinePreferred above is deliberately LEFT ON -- it only
-		 * chooses the glyph source and does no colour work, and keeping it
-		 * makes this a single-variable experiment. */
-		if (!macsurf_os_is_osx()) {
-			(void)SetAntiAliasedTextEnabled(true, 12);
-			MS_LOG("BOOT font quality: outline on, AA floor=12pt, fract off");
-		} else {
-			MS_LOG("BOOT font quality: outline on, AA SKIPPED (OS X)");
-		}
+		/* fixes952 — antialiasing is enabled on BOTH platforms again.
+		 * fixes939 skipped this on OS X on my hypothesis that classic QD
+		 * antialiasing was causing the TESetText crash. That was wrong: the
+		 * real cause was TARGET_API_MAC_CARBON never being set (fixes951),
+		 * and the AA skip made no difference to the crash. Keeping a
+		 * platform split built on a disproven theory would just mean OS X
+		 * renders text worse than OS 9 for no reason. */
+		(void)SetAntiAliasedTextEnabled(true, 12);
+		MS_LOG("BOOT font quality: outline on, AA floor=12pt, fract off");
 	}
 
 	macos9_init_menus();
