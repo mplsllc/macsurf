@@ -1324,14 +1324,44 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 	 * CAVEAT: GetMainDevice() is the MAIN screen. On a multi-monitor setup a
 	 * window on a secondary display would want that display's device; fine
 	 * for the single-display test machines, revisit if multi-monitor matters. */
+	/* fixes942 (OS X tier 1f) — PROBE, not a fix.
+	 *
+	 * fixes941's result was decisive and it cleared TextEdit completely. With
+	 * the explicit colour setup added, the 10.3 backtrace became
+	 *   macos9_window_create -> RGBForeColor -> SetPortRGBForeColor
+	 *     -> InternalColor2Index   (EXC_BAD_ACCESS at 0x74140001)
+	 * with NO TextEdit frames at all. So RGBForeColor faults on this window's
+	 * port given a plain black RGBColor; TESetText was merely the first thing
+	 * that happened to call it. Gating the URL field off -- the planned next
+	 * step -- would have moved the crash to the next RGBForeColor, and
+	 * plotters.c issues one for every text run, rect and border. This is the
+	 * renderer's foundation, not a widget bug.
+	 *
+	 * Note SetGWorld() itself SURVIVED both times, and r3 (first argument at
+	 * the fault) is NULL -- so something here is handing back an unusable
+	 * value rather than crashing outright. Log all three before touching them
+	 * instead of guessing which. Skip the colour calls on OS X so the launch
+	 * can proceed far enough to show whether anything else is reachable. */
 	{
 		RGBColor fg_blk, bg_wht;
-		SetGWorld(GetWindowPort(g->window), GetMainDevice());
-		fg_blk.red = 0; fg_blk.green = 0; fg_blk.blue = 0;
-		bg_wht.red = 0xFFFF; bg_wht.green = 0xFFFF; bg_wht.blue = 0xFFFF;
-		RGBForeColor(&fg_blk);
-		RGBBackColor(&bg_wht);
-		MS_LOG("BOOT te: gdevice+colors set");
+		CGrafPtr wport = GetWindowPort(g->window);
+		GDHandle maindev = GetMainDevice();
+
+		macsurf_debug_log_writef("BOOT te: win=%p port=%p maindev=%p osx=%d",
+			(void *)g->window, (void *)wport, (void *)maindev,
+			macsurf_os_is_osx());
+		macsurf_debug_log_flush();
+
+		if (!macsurf_os_is_osx()) {
+			SetGWorld(wport, maindev);
+			fg_blk.red = 0; fg_blk.green = 0; fg_blk.blue = 0;
+			bg_wht.red = 0xFFFF; bg_wht.green = 0xFFFF; bg_wht.blue = 0xFFFF;
+			RGBForeColor(&fg_blk);
+			RGBBackColor(&bg_wht);
+			MS_LOG("BOOT te: gdevice+colors set");
+		} else {
+			MS_LOG("BOOT te: OSX -- colour calls SKIPPED (probe build)");
+		}
 	}
 	/* fixes302 — set the URL field font (Geneva 12) before TENew so the
 	 * TERec captures it; TextEdit measures and draws with the stored font. */
