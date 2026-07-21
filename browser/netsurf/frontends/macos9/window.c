@@ -1418,6 +1418,24 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 	 * pointer, so the table must outlive this function. A local would leave the
 	 * port pointing at dead stack. */
 	if (macsurf_os_is_osx()) {
+		/* fixes949a — GetPortGrafProcs/SetPortGrafProcs are Carbon ACCESSORS,
+		 * declared in Quickdraw.h behind "#if ACCESSOR_CALLS_ARE_FUNCTIONS",
+		 * which is 0 in this build. So their prototypes are invisible, C89
+		 * defaults them to returning int, and assigning that to CQDProcsPtr is
+		 * an illegal conversion (the error at window.c:1431).
+		 *
+		 * GetPortBitMapForCopyBits sits behind the SAME gate and this file
+		 * already works around it with local externs at :1915, :2246 and :2345
+		 * -- and that binary links and runs, which is what makes this the
+		 * proven fix rather than a guess. Signatures copied verbatim from the
+		 * SDK on the Mac (.../CIncludes/Quickdraw.h):
+		 *     EXTERN_API( CQDProcsPtr ) GetPortGrafProcs(CGrafPtr port);
+		 *     EXTERN_API( void ) SetPortGrafProcs(CGrafPtr port, CQDProcsPtr procs);
+		 * SetStdCProcs is NOT behind that gate (plain InterfaceLib call with
+		 * ONEWORDINLINE), so it is deliberately not re-declared here -- doing
+		 * so could conflict with the inline form. */
+		extern CQDProcsPtr GetPortGrafProcs(CGrafPtr port);
+		extern void SetPortGrafProcs(CGrafPtr port, CQDProcsPtr procs);
 		CGrafPtr sp;
 		GDHandle sd;
 		CGrafPtr wp;
