@@ -1385,57 +1385,81 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 			(void *)wport, (void *)usedev);
 		macsurf_debug_log_flush();
 	}
-	/* fixes945 (OS X tier 2a) — characterise the WINDOW PORT, one shot.
+	/* fixes946 (OS X tier 2b) — what CAN the window port do? The pivotal probe.
 	 *
-	 * fixes944 fixed colour and moved us three calls further: TESetText,
-	 * TECalText and TEActivate now all pass. TESetSelect then dies
-	 * differently -- KERN_PROTECTION_FAILURE at 0x00000000, i.e. a call
-	 * THROUGH A NULL POINTER, via
-	 *   DoHilite -> HiliteOneLine -> GetLineWidth -> CallTextWidthHook
-	 *     -> DefaultTextWidthHook -> TextWidth -> CallTextWidth -> 0x0
-	 * The NULL is inside QuickDraw's TextWidth, not TextEdit: TextWidth
-	 * dispatches through the port's text-measurement bottleneck
-	 * (grafProcs->txMeasProc) and that entry is NULL on this port.
+	 * fixes945 settled the question it asked, definitively:
+	 *   PROBE qd: GWORLD TextWidth ok = 14      <- GWorld: fine
+	 *   PROBE qd: TextWidth on WINDOW PORT now  <- window: crash, call through NULL
+	 * with the backtrace bottoming out in our own bare TextWidth, no TextEdit
+	 * involved. Two independent classic-QD facilities -- colour (fixes942/944)
+	 * and text measurement -- both fail on the window port and both work on a
+	 * GWorld we allocate. The window port is not a usable classic QuickDraw
+	 * drawing target under LaunchCFMApp on 10.3.
 	 *
-	 * Combined with the poisoned colour table, the pattern is no longer a
-	 * series of one-off bugs: the WINDOW PORT is not a usable classic
-	 * QuickDraw port under LaunchCFMApp on 10.3, while a GWorld we allocate
-	 * ourselves is fine. This frontend never calls SetStdProcs/SetPortGrafProcs
-	 * (grep: zero hits), so the procs are whatever Carbon handed us.
+	 * That makes ONE question decide whether OS X is viable at all: can we get
+	 * pixels onto the screen by any means? MacSurf's content renderer already
+	 * draws into an offscreen GWorld and CopyBits to the window, so if CopyBits
+	 * survives, the port is a big-but-tractable refactor -- move the chrome
+	 * offscreen too. If CopyBits also faults, nothing can reach the screen
+	 * through QuickDraw and OS X needs a Quartz/CGContext frontend, which is a
+	 * different project.
 	 *
-	 * Before committing to a containment design -- draw ALL chrome offscreen
-	 * and CopyBits, which is a real refactor -- measure the claim. TextWidth
-	 * is the cheapest classic-QD text op there is. Run it on the GWorld first
-	 * (expected fine), then on the window port (expected to fault), flushing
-	 * before each so the last line on disk names the answer.
+	 * Three escalating capabilities, each flushed before the risky call so the
+	 * last line on disk is the answer:
+	 *   1. PaintRect      -- plainest possible drawing: pen pattern, no text,
+	 *                        no RGB, no colour-table lookup.
+	 *   2. ForeColor()    -- the CLASSIC 8-colour call. Unlike RGBForeColor it
+	 *                        sets a constant and needs no inverse table, so it
+	 *                        may well work where RGBForeColor does not. That
+	 *                        matters: the CopyBits-colorizing rule in CLAUDE.md
+	 *                        requires resetting fg/bg before every blit, and on
+	 *                        OS X we cannot use RGBForeColor to do it.
+	 *   3. CopyBits       -- GWorld -> window. The one that decides the port.
 	 *
-	 * If the window port survives TextWidth, the NULL hook is TextEdit-side
-	 * and far narrower than feared. If it faults, the window port cannot be
-	 * drawn to directly at all and everything must composite offscreen. */
+	 * NOTE the window-port TextWidth from fixes945 is deliberately NOT repeated:
+	 * it is known to fault and would abort the run before these execute. */
 	if (macsurf_os_is_osx()) {
-		short tw;
 		CGrafPtr sp;
 		GDHandle sd;
+		Rect pr;
 
 		GetGWorld(&sp, &sd);
+		SetPortWindowPort(g->window);
+
+		SetRect(&pr, 4, 4, 24, 14);
+		MS_LOG("PROBE qd: PaintRect on WINDOW now");
+		macsurf_debug_log_flush();
+		PenNormal();
+		PaintRect(&pr);
+		MS_LOG("PROBE qd: WINDOW PaintRect SURVIVED");
+		macsurf_debug_log_flush();
+
+		MS_LOG("PROBE qd: ForeColor(black) on WINDOW now");
+		macsurf_debug_log_flush();
+		ForeColor((long)blackColor);
+		BackColor((long)whiteColor);
+		MS_LOG("PROBE qd: WINDOW ForeColor SURVIVED");
+		macsurf_debug_log_flush();
 
 		if (g_safe_gdev_gw != NULL) {
-			SetGWorld((CGrafPtr)g_safe_gdev_gw, g_safe_gdev);
-			TextFont(kFontIDGeneva); TextSize(12); TextFace(0);
-			MS_LOG("PROBE qd: TextWidth on GWORLD now");
-			macsurf_debug_log_flush();
-			tw = TextWidth("Xy", 0, 2);
-			macsurf_debug_log_writef("PROBE qd: GWORLD TextWidth ok = %d", (int)tw);
-			macsurf_debug_log_flush();
-		}
+			const BitMap *srcbm;
+			const BitMap *dstbm;
+			Rect sr;
 
-		SetPortWindowPort(g->window);
-		TextFont(kFontIDGeneva); TextSize(12); TextFace(0);
-		MS_LOG("PROBE qd: TextWidth on WINDOW PORT now");
-		macsurf_debug_log_flush();
-		tw = TextWidth("Xy", 0, 2);
-		macsurf_debug_log_writef("PROBE qd: WINDOW TextWidth ok = %d", (int)tw);
-		macsurf_debug_log_flush();
+			SetRect(&sr, 0, 0, 8, 8);
+			srcbm = GetPortBitMapForCopyBits((CGrafPtr)g_safe_gdev_gw);
+			dstbm = GetPortBitMapForCopyBits(GetWindowPort(g->window));
+			macsurf_debug_log_writef("PROBE qd: CopyBits src=%p dst=%p",
+				(void *)srcbm, (void *)dstbm);
+			macsurf_debug_log_flush();
+			if (srcbm != NULL && dstbm != NULL) {
+				MS_LOG("PROBE qd: CopyBits GWorld->WINDOW now");
+				macsurf_debug_log_flush();
+				CopyBits(srcbm, dstbm, &sr, &pr, srcCopy, NULL);
+				MS_LOG("PROBE qd: WINDOW CopyBits SURVIVED");
+				macsurf_debug_log_flush();
+			}
+		}
 
 		SetGWorld(sp, sd);
 	}
