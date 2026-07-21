@@ -187,7 +187,30 @@ static inline bool lh__box_is_object(const struct box *b)
 /** Layout helper: Check whether box is replaced. */
 static inline bool lh__box_is_replace(const struct box *b)
 {
+	/* fixes935 — IS_REPLACED is authoritative for the replaced-vs-inline
+	 * decision. An <img> (and <object>/<embed>/<canvas>/inline-SVG) IS a
+	 * replaced element by virtue of being one, so it must NEVER fall to the
+	 * inline-text branch (line-height tall, alt-string wide = the squish)
+	 * just because every size source is momentarily empty (object not
+	 * fetched yet, obj_w memo missed, no CSS width/height). When sizeless it
+	 * takes the replaced fallback (the 1em placeholder at layout.c ~4161 /
+	 * AUTO width in minmax), then resizes the instant a size arrives.
+	 *
+	 * Deliberately added HERE, not in lh__box_is_object: every
+	 * layout_get_object_dimensions() call is guarded by (object || obj_w>0)
+	 * via lh__box_is_object, whose assert(object || obj_w>0) would fire on a
+	 * sizeless box. Keeping lh__box_is_object unchanged keeps those guards
+	 * intact; only the text-vs-replaced fork (layout.c:805/4067/4702) flips,
+	 * and all three flip together so sizing and positioning stay consistent.
+	 *
+	 * No alt-text regression: html_object_failed (fixes347, object.c) already
+	 * CLEARS IS_REPLACED on a foreground fetch failure, so a genuinely-failed
+	 * (404) image still flows its alt text. Only a loading / not-yet-linked
+	 * image keeps IS_REPLACED, and that is exactly the box that must show a
+	 * replaced placeholder rather than squish. loading -> placeholder,
+	 * failed -> alt text, done -> intrinsic size. */
 	return b->gadget ||
+	       (b->flags & IS_REPLACED) ||
 	       lh__box_is_object(b);
 }
 
