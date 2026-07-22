@@ -1069,6 +1069,41 @@ html_fetch_object(html_content *c,
 		return error != NSERROR_NOMEM;
 	}
 
+	/* fixes966 — Stage 0b measurement. TEMPORARY: remove once the
+	 * speculative-fetch question is settled.
+	 *
+	 * Question: does html_process_inserted_img's speculative fetch (the only
+	 * caller that passes box == NULL, dom_event.c) earn its keep, or does
+	 * hlcache fold it into the box-construction fetch for the same URL
+	 * anyway?
+	 *
+	 * `hit` is the discriminator and it is exact: hlcache_handle_retrieve has
+	 * just returned, so a NON-NULL content means the entry already existed --
+	 * this retrieve reused it. NULL means a fresh retrieval started.
+	 *
+	 * Reading the result on hardware, per URL:
+	 *   spec=1 hit=0  then  spec=0 hit=1   -> the speculative fetch primed the
+	 *                                         cache; it works, and the gap
+	 *                                         between the two timestamps is
+	 *                                         the latency it actually buys.
+	 *   spec=1 hit=0  then  spec=0 hit=0   -> no dedupe: two independent
+	 *                                         fetches for one image.
+	 *   no spec= lines at all               -> the path never fires on this
+	 *                                         page and the question is moot.
+	 *
+	 * "LIFE " prefix because WORK-prefixed lines are dropped unless
+	 * MACSURF_WORK_LOG is defined, which it is not, anywhere in the tree. */
+	{
+		struct content *probe_c = (object->content != NULL)
+			? hlcache_handle_get_content(object->content) : NULL;
+		macsurf_debug_log_writef(
+			"LIFE objfetch spec=%d bg=%d hit=%d url=%.100s",
+			(box == NULL) ? 1 : 0,
+			background ? 1 : 0,
+			(probe_c != NULL) ? 1 : 0,
+			nsurl_access(url));
+	}
+
 	/* add to content object list */
 	object->next = c->object_list;
 	c->object_list = object;
