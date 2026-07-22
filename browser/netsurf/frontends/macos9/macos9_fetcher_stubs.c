@@ -366,6 +366,7 @@ struct stub_fetch_ctx {
 	 * tells me the wrong thing", which is the hardest kind of report to act
 	 * on.  The reason travels with the fetch that produced the page. */
 	char fail_reason[192];
+	char fail_site[512];   /* fixes957c — failed URL, from the multipart */
 	bool started;
 	bool aborted;
 	bool done;
@@ -625,6 +626,10 @@ stub_setup_scheme(struct fetch *parent_fetch, struct nsurl *url,
 			}
 			failed_url[i] = '\0';
 		}
+		if (failed_url[0] == '\0' && ctx->fail_site[0] != '\0') {
+			strncpy(failed_url, ctx->fail_site, sizeof failed_url - 1);
+			failed_url[sizeof failed_url - 1] = '\0';
+		}
 
 		/* fixes957 — if the fetcher told us WHY, say so instead of
 		 * offering three guesses.  A rejected certificate is the case
@@ -873,10 +878,15 @@ stub_setup_about(struct fetch *parent_fetch, struct nsurl *url,
 	(void)post_urlenc; (void)headers;
 
 	v = stub_setup_scheme(parent_fetch, url, SCH_ABOUT);
-	if (v != NULL && post_multipart != NULL) {
+	if (v != NULL) {
 		struct stub_fetch_ctx *actx = (struct stub_fetch_ctx *)v;
-		const char *why = fetch_multipart_data_find(post_multipart,
-							    "reason");
+		const char *why = (post_multipart != NULL)
+			? fetch_multipart_data_find(post_multipart, "reason")
+			: NULL;
+		const char *site = (post_multipart != NULL)
+			? fetch_multipart_data_find(post_multipart, "siteurl")
+			: NULL;
+
 		if (why != NULL) {
 			size_t wn = strlen(why);
 			if (wn >= sizeof actx->fail_reason)
@@ -884,6 +894,33 @@ stub_setup_about(struct fetch *parent_fetch, struct nsurl *url,
 			memcpy(actx->fail_reason, why, wn);
 			actx->fail_reason[wn] = '\0';
 		}
+		/* fixes957c — the failed URL comes from the SAME multipart.
+		 * The page has always parsed it out of the request path as
+		 * "url=", but core never puts it there: it posts it as
+		 * "siteurl" (browser_window__handle_fetcherror). So the URL box
+		 * has been rendering empty. Prefer the real value. */
+		if (site != NULL) {
+			size_t sn = strlen(site);
+			if (sn >= sizeof actx->fail_site)
+				sn = sizeof actx->fail_site - 1;
+			memcpy(actx->fail_site, site, sn);
+			actx->fail_site[sn] = '\0';
+		}
+
+		/* fixes957c — hardware showed the fetcher classifying an
+		 * expired cert correctly and the reason reaching core
+		 * ("NAV: ERROR ... msg=certificate expired or not yet valid"),
+		 * yet the page still rendering the generic text -- i.e. this
+		 * setup saw no reason. Says plainly whether the multipart
+		 * arrived at all, which distinguishes "core did not pass it"
+		 * from "this page was served from cache and setup never ran"
+		 * (the error-page URL is identical for every failure, so a
+		 * cache hit would reuse whichever page was built first). */
+		macsurf_debug_log_writef(
+			"WORK fetcherror setup mp=%d reason=%s site=%s",
+			(post_multipart != NULL) ? 1 : 0,
+			(why != NULL) ? why : "(none)",
+			(site != NULL) ? site : "(none)");
 	}
 	return v;
 }
