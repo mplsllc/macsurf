@@ -1658,7 +1658,7 @@ static void hctx_finish(struct macos9_https_ctx *c)
 	 * Deliberately fails the fetch rather than salvaging: the bytes already
 	 * handed over cannot be recalled, so a caller that treated this as a
 	 * warning would render a silently-incomplete page. */
-	if (c->gz != NULL) {
+	if (c->gz != NULL && macos9_gunzip_total_in(c->gz) > 0) {
 		if (macos9_gunzip_finish(c->gz) != MACOS9_GUNZIP_DONE) {
 			macsurf_debug_log_writef(
 				"https: FAIL gzip incomplete host=%s: %s",
@@ -1886,7 +1886,14 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 			 * -wrapped, and guessing wrong renders binary garbage.
 			 * We do not advertise it, so a compliant server will
 			 * not send it. */
+			/* fixes965b — never attach a decoder to a response that
+			 * cannot carry a body. A 304 or 204 legitimately sends
+			 * Content-Encoding with zero bytes after it, and a 3xx
+			 * usually sends an empty (or tiny) body it does not
+			 * expect anyone to read. */
 			if (c->gz == NULL &&
+			    c->status != 204 && c->status != 304 &&
+			    !(c->status >= 300 && c->status <= 399) &&
 			    strncasecmp(p, "Content-Encoding:", 17) == 0) {
 				char *v = p + 17; while (*v == ' ') v++;
 				if (strncasecmp(v, "gzip", 4) == 0 ||
