@@ -91,6 +91,16 @@ struct svg_paint_state {
 	 * side determines the apparent transparency. */
 	float fill_opacity;
 	float stroke_opacity;
+	/* fixes960b (#258) — stroke-dasharray, reduced to the two dash
+	 * classes the plotter can actually draw. 0 = solid, 1 = dashed,
+	 * 2 = dotted. SVG's real dasharray is a list of on/off run lengths
+	 * along the path; QuickDraw has no along-path dash, so fixes960
+	 * renders dashes with a screen-space pen pattern and the exact run
+	 * lengths cannot be honoured. Classifying by the first run length
+	 * (short runs read as dots, longer ones as dashes) puts a dashed
+	 * line where the author asked for one, which is the visible
+	 * difference; matching the precise cadence is not reachable here. */
+	int stroke_dash;
 };
 
 /* fixes201 — SVG V2 gradient table.
@@ -782,6 +792,35 @@ static void svg__update_style(dom_node *node, struct svg_paint_state *st,
 		dom_string_unref(ds);
 	}
 
+	/* fixes960b (#258) — stroke-dasharray attribute.
+	 *
+	 * Reduced to solid / dashed / dotted, because that is the whole range
+	 * the plotter can express: QuickDraw dashes come from a screen-space
+	 * pen pattern (fixes960), not from walking the path, so the actual run
+	 * lengths cannot be reproduced. Classify on the first run length --
+	 * runs of 2 user units or less read as dots, anything longer as dashes.
+	 * "none" (and an unparseable value) stays solid.
+	 *
+	 * This is an approximation and is meant to be: the visible defect was
+	 * a dashed outline drawn as a solid one, which changes what the picture
+	 * MEANS (a cut line, a placeholder, a selection). Getting the cadence
+	 * exactly right is worth much less than getting dashed-vs-solid right. */
+	v = svg__attr(node, "stroke-dasharray", &ds);
+	if (v != NULL) {
+		const char *dp = v;
+		while (*dp == ' ' || *dp == '\t') dp++;
+		if (strncmp(dp, "none", 4) == 0) {
+			st->stroke_dash = 0;
+		} else {
+			size_t consumed = 0;
+			float run = svg__atof(dp, &consumed);
+			if (consumed > 0 && run > 0.0f) {
+				st->stroke_dash = (run <= 2.0f) ? 2 : 1;
+			}
+		}
+		dom_string_unref(ds);
+	}
+
 	/* style="fill:X; stroke:Y; stroke-width:Z" minimal parse */
 	v = svg__attr(node, "style", &ds);
 	if (v != NULL) {
@@ -902,7 +941,18 @@ static void svg__init_plot_style(plot_style_t *p,
 	if (st->stroke_present && st->stroke_width > 0.0f) {
 		float sw = st->stroke_width *
 			(c->scale_x < c->scale_y ? c->scale_x : c->scale_y);
-		p->stroke_type = PLOT_OP_TYPE_SOLID;
+		/* fixes960b (#258) — honour stroke-dasharray now that the
+		 * plotter can actually draw dashed and dotted strokes
+		 * (fixes960). This was unconditionally solid before because the
+		 * plotter ignored the distinction, so parsing the attribute
+		 * would have bought nothing. */
+		if (st->stroke_dash == 2) {
+			p->stroke_type = PLOT_OP_TYPE_DOT;
+		} else if (st->stroke_dash == 1) {
+			p->stroke_type = PLOT_OP_TYPE_DASH;
+		} else {
+			p->stroke_type = PLOT_OP_TYPE_SOLID;
+		}
 		p->stroke_colour = st->stroke & 0x00ffffff;   /* fixes626, as fill */
 		if (sw < 1.0f) sw = 1.0f;
 		p->stroke_width = (plot_style_fixed)sw << PLOT_STYLE_RADIX;
@@ -2240,6 +2290,7 @@ nserror macos9_svg_paint_inline(struct box *box,
 		st.stroke_width = 1.0f;
 		st.fill_opacity = 1.0f;
 		st.stroke_opacity = 1.0f;
+		st.stroke_dash = 0;   /* fixes960b (#258) — solid unless asked */
 
 		/* Read style attributes set on the <svg> itself. */
 		svg__update_style((dom_node *)box->node, &st, c.grads);
@@ -2422,6 +2473,7 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 		st.fill_opacity = 1.0f;
 		st.stroke_present = 0;
 		st.stroke_opacity = 1.0f;
+		st.stroke_dash = 0;   /* fixes960b (#258) — solid unless asked */
 		if (svg__tag_attr(tag, tend, "fill", av, sizeof(av))) {
 			colour col;
 			int none = 0;
