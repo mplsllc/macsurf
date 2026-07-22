@@ -169,6 +169,32 @@ html_object_done(struct box *box,
 
 	if (background) {
 		box->background = object;
+		/* fixes971 (lifecycle finding 4) — record the image's intrinsic
+		 * size in the URL-keyed memo for backgrounds too, then return.
+		 *
+		 * Backgrounds were 70 of the 101 objects on hackaday and took
+		 * this early return BEFORE the memo store below, which is why
+		 * imgdims read stored=0 all session. `object` here is the
+		 * background IMAGE's completed handle, so its content width/height
+		 * are the real intrinsic dimensions -- the same values the
+		 * foreground branch stores a few lines down.
+		 *
+		 * Deliberately does NOT stamp box->obj_w/obj_h the way the
+		 * foreground branch does: for a background the box is the ELEMENT
+		 * carrying the wallpaper, not the image, so stamping would size
+		 * the element by its background -- confidently wrong layout, worse
+		 * than an honest miss. The memo is keyed by URL, so it still helps
+		 * any foreground <img> of the same URL, and any rebuilt box, size
+		 * itself before its own fetch completes. */
+		{
+			struct content *bc = hlcache_handle_get_content(object);
+			int bw = content__get_width(bc);
+			int bh = content__get_height(bc);
+			if (bw > 0 && bh > 0) {
+				macsurf_imgdims_remember(
+					hlcache_handle_get_url(object), bw, bh);
+			}
+		}
 		return;
 	}
 
