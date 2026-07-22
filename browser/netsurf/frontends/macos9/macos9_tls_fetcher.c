@@ -28,7 +28,8 @@
 #include "content/fetchers.h"
 #include "content/urldb.h"	/* fixes367 (#167) — cookie jar: urldb_get_cookie */
 #include "macos9_useragent.h"	/* fixes368 (#167) — per-host UA table */
-#include "macos9_blocklist.h"	/* fixes856 (#285) — tracker/ad blocklist */
+#include "macos9_blocklist.h"
+#include "macos9_gzip.h"	/* fixes965 — streaming Content-Encoding: gzip */	/* fixes856 (#285) — tracker/ad blocklist */
 #include "macsurf_debug.h"
 #include "macsurf_osver.h"	/* fixes936 (OS X tier 1) — macsurf_os_is_osx() */
 
@@ -141,6 +142,10 @@ enum hs_state {
 };
 
 struct macos9_https_ctx {
+	/* fixes965 — non-NULL when the response carried Content-Encoding:
+	 * gzip. Body bytes are pushed through it and the DECOMPRESSED output
+	 * is what reaches NetSurf and the disk cache. */
+	struct macos9_gunzip *gz;
 	struct fetch    *parent;
 	struct nsurl    *url;
 	char             host[256];
@@ -900,6 +905,12 @@ static unsigned long now_ticks(void)
 #endif
 }
 
+/* fixes965 — forward declarations: the header-parse loop creates the gzip
+ * decoder well before feed_body and its helpers are defined. */
+static void hctx_gz_emit(void *cbctx, const char *data, long len);
+static void hctx_deliver(struct macos9_https_ctx *c, const char *data, long len);
+static int hctx_body_out(struct macos9_https_ctx *c, const char *data, long len);
+
 static void hctx_clear(struct macos9_https_ctx *c)
 {
 	macsurf_debug_log_writef("https_teardown: host=%s state=%d",
@@ -914,6 +925,7 @@ static void hctx_clear(struct macos9_https_ctx *c)
 		macsurf_debug_log_writef("https_teardown: OT closed host=%s",
 			c->host[0] ? c->host : "(null)");
 	}
+	if (c->gz) { macos9_gunzip_destroy(c->gz); c->gz = NULL; }   /* fixes965 */
 	if (c->cache_capture) { free(c->cache_capture); c->cache_capture = NULL; }
 	c->cache_cap_len = 0;
 	c->cache_cap_cap = 0;
@@ -946,6 +958,7 @@ static void hctx_reset_for_retry(struct macos9_https_ctx *c)
 	if (c->hdr_buf) { free(c->hdr_buf); c->hdr_buf = NULL; }
 	c->hdr_len = 0;
 	c->hdr_cap = 0;
+	if (c->gz) { macos9_gunzip_destroy(c->gz); c->gz = NULL; }   /* fixes965 */
 	if (c->cache_capture) { free(c->cache_capture); c->cache_capture = NULL; }
 	c->cache_cap_len = 0;
 	c->cache_cap_cap = 0;
@@ -1633,6 +1646,33 @@ static void hctx_finish(struct macos9_https_ctx *c)
 
 	if (c->state == HS_FAIL || c->state == HS_DONE) return;
 
+	/* fixes965 — verify the gzip trailer before calling the body complete.
+	 *
+	 * Without this a TRUNCATED gzip response would look like a successful
+	 * short page: everything decoded so far has already been delivered
+	 * (that is what streaming means), and nothing would ever check the
+	 * CRC32/ISIZE that says whether the stream actually ended. The Linux
+	 * test covers exactly this -- a halved body must report
+	 * "gzip stream truncated" rather than succeeding.
+	 *
+	 * Deliberately fails the fetch rather than salvaging: the bytes already
+	 * handed over cannot be recalled, so a caller that treated this as a
+	 * warning would render a silently-incomplete page. */
+	if (c->gz != NULL) {
+		if (macos9_gunzip_finish(c->gz) != MACOS9_GUNZIP_DONE) {
+			macsurf_debug_log_writef(
+				"https: FAIL gzip incomplete host=%s: %s",
+				c->host[0] ? c->host : "(unset)",
+				macos9_gunzip_status(c->gz));
+			hctx_fail(c, "https: gzip stream incomplete");
+			return;
+		}
+		macsurf_debug_log_writef("LIFE gzip ok host=%s in=%ld out=%ld",
+			c->host[0] ? c->host : "(unset)",
+			macos9_gunzip_total_in(c->gz),
+			macos9_gunzip_total_out(c->gz));
+	}
+
 	macsurf_debug_log_writef("https: done body=%ld status=%d",
 		c->body_bytes, c->status);
 
@@ -1830,6 +1870,38 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 			if (strncasecmp(p, "Transfer-Encoding:", 18) == 0) {
 				char *v = p + 18; while (*v == ' ') v++;
 				if (strncasecmp(v, "chunked", 7) == 0) c->chunked = 1;
+			}
+			/* fixes965 — Content-Encoding: gzip.
+			 *
+			 * Distinct from Transfer-Encoding above and layered
+			 * INSIDE it: a response can be both chunked and gzip,
+			 * in which case chunk framing is removed first and the
+			 * de-chunked bytes are what the decoder sees. feed_body
+			 * already runs in that order, so routing the decoder at
+			 * hctx_body_out (after chunk decode, before delivery)
+			 * gets both cases right with one seam.
+			 *
+			 * Only gzip. "deflate" is not accepted: servers
+			 * disagree about whether it means raw DEFLATE or zlib
+			 * -wrapped, and guessing wrong renders binary garbage.
+			 * We do not advertise it, so a compliant server will
+			 * not send it. */
+			if (c->gz == NULL &&
+			    strncasecmp(p, "Content-Encoding:", 17) == 0) {
+				char *v = p + 17; while (*v == ' ') v++;
+				if (strncasecmp(v, "gzip", 4) == 0 ||
+				    strncasecmp(v, "x-gzip", 6) == 0) {
+					c->gz = macos9_gunzip_create(
+						hctx_gz_emit, c);
+					if (c->gz == NULL) {
+						macsurf_debug_log_writef(
+							"https: FAIL gzip alloc host=%s",
+							c->host[0] ? c->host : "(unset)");
+					} else {
+						macsurf_debug_log_writef(
+							"LIFE gzip host=%s", c->host);
+					}
+				}
 			}
 			/* fixes231 — disable pool when server says close. */
 			if (strncasecmp(p, "Connection:", 11) == 0) {
@@ -2053,6 +2125,56 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 	return 1;
 }
 
+/* fixes965 — the single place body bytes reach NetSurf and the disk cache.
+ *
+ * Extracted from feed_body's two branches (chunked / raw), which were doing
+ * the identical three steps, so that gzip has exactly one seam to sit in.
+ * Whatever arrives here is what the page is made of: for a gzip response
+ * these are the DECOMPRESSED bytes, which is what makes the cache correct --
+ * a cached body must render identically to a fresh one, and storing the
+ * compressed form would mean a cache hit replayed gzip bytes to a content
+ * handler that never asked for them. Same reasoning as fixes770 relabelling
+ * text/plain before the cache-eligibility check rather than after. */
+static void hctx_deliver(struct macos9_https_ctx *c, const char *data, long len)
+{
+	fetch_msg msg;
+	if (len <= 0) return;
+	msg.type = FETCH_DATA;
+	msg.data.header_or_data.buf = (const uint8_t *)data;
+	msg.data.header_or_data.len = (size_t)len;
+	fetch_send_callback(&msg, c->parent);
+	hctx_cache_capture(c, data, len);
+}
+
+/* fixes965 — gunzip output callback. */
+static void hctx_gz_emit(void *cbctx, const char *data, long len)
+{
+	hctx_deliver((struct macos9_https_ctx *)cbctx, data, len);
+}
+
+/* fixes965 — route body bytes through the decoder when one is active.
+ * Returns 0 on success, -1 if the gzip stream is bad (caller fails the fetch).
+ *
+ * NOTE the accounting split that matters: the CALLER still adds the RAW byte
+ * count to c->body_bytes, because body_bytes is compared against
+ * content_length, and Content-Length describes the COMPRESSED entity. Adding
+ * decompressed lengths there would end the body early or never at all. */
+static int hctx_body_out(struct macos9_https_ctx *c, const char *data, long len)
+{
+	if (len <= 0) return 0;
+	if (c->gz == NULL) {
+		hctx_deliver(c, data, len);
+		return 0;
+	}
+	if (macos9_gunzip_push(c->gz, data, len) == MACOS9_GUNZIP_ERROR) {
+		macsurf_debug_log_writef("https: FAIL gzip decode host=%s: %s",
+			c->host[0] ? c->host : "(unset)",
+			macos9_gunzip_status(c->gz));
+		return -1;
+	}
+	return 0;
+}
+
 /* Pump body bytes — either chunked-decoded or raw. Returns 1 if body
  * is complete, 0 if more bytes expected. */
 static int feed_body(struct macos9_https_ctx *c, const char *buf, long n)
@@ -2142,12 +2264,12 @@ static int feed_body(struct macos9_https_ctx *c, const char *buf, long n)
 				return 1;
 			}
 			if (out_w > 0) {
-				msg.type = FETCH_DATA;
-				msg.data.header_or_data.buf = (const uint8_t*)decode_out;
-				msg.data.header_or_data.len = out_w;
-				fetch_send_callback(&msg, c->parent);
 				c->body_bytes += out_w;
-				hctx_cache_capture(c, decode_out, (long)out_w);
+				if (hctx_body_out(c, decode_out,
+						  (long)out_w) < 0) {
+					hctx_fail(c, "https: gzip decode error");
+					return 1;
+				}
 			}
 			if (in_c == 0 && out_w == 0) break;	/* would-loop guard */
 			in += in_c;
@@ -2162,12 +2284,11 @@ static int feed_body(struct macos9_https_ctx *c, const char *buf, long n)
 			deliver = c->content_length - c->body_bytes;
 		}
 		if (deliver > 0) {
-			msg.type = FETCH_DATA;
-			msg.data.header_or_data.buf = (const uint8_t*)buf;
-			msg.data.header_or_data.len = (size_t)deliver;
-			fetch_send_callback(&msg, c->parent);
 			c->body_bytes += deliver;
-			hctx_cache_capture(c, buf, deliver);
+			if (hctx_body_out(c, buf, deliver) < 0) {
+				hctx_fail(c, "https: gzip decode error");
+				return 1;
+			}
 		}
 		if (c->content_length >= 0 &&
 		    c->body_bytes >= c->content_length) return 1;
@@ -2463,7 +2584,7 @@ static int build_request(struct macos9_https_ctx *c)
 			"User-Agent: %s\r\n"
 			"Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
 			"Accept-Language: en-US,en;q=0.5\r\n"
-			"Accept-Encoding: identity\r\n"
+			"Accept-Encoding: gzip\r\n"
 			"%s"                        /* cookie_hdr  */
 			"%s"                        /* caller_hdrs (fixes835) */
 			"%s"                        /* synth       (fixes835) */
@@ -2480,7 +2601,7 @@ static int build_request(struct macos9_https_ctx *c)
 			"User-Agent: %s\r\n"
 			"Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
 			"Accept-Language: en-US,en;q=0.5\r\n"
-			"Accept-Encoding: identity\r\n"
+			"Accept-Encoding: gzip\r\n"
 			"%s"                    /* cookie_hdr  */
 			"%s"                    /* caller_hdrs (fixes835) */
 			"%s"                    /* synth       (fixes835) */
