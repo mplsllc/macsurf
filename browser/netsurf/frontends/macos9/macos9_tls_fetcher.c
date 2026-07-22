@@ -1323,6 +1323,54 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 		fetch_set_tainted_tls(c->parent, true);
 	}
 
+	/* fixes963 — macTLS reported a CLOCK failure. Two very different
+	 * situations arrive here as the same code, and they need opposite
+	 * responses, so decide with the date rather than assuming.
+	 *
+	 * kOSTLSAsync_ClockBefore2000 (2002) is returned from OSTLS_Start and
+	 * from the handshake entry, and BOTH sites collapse *every*
+	 * OSTLS_GetBearSSLTime failure into it (ostls_async.c:521-531 and
+	 * :740-743), not just a pre-2000 clock. So:
+	 *
+	 *   - date really is pre-2000: the dead-PRAM case. The connection dies
+	 *     before any certificate is seen, so br_err is 0 and neither
+	 *     cert_rejected() nor peer_auth_failed() fires -- meaning fixes957b's
+	 *     believed-date message, which was WRITTEN for this case, never
+	 *     reached the user. Say it here instead.
+	 *
+	 *   - date is sane: the time helper failed for some other reason and is
+	 *     being misreported as a clock problem. A hardware log from
+	 *     2026-07-21 shows macintoshgarden.org and lite.duckduckgo.com
+	 *     failing this way REPEATEDLY on a Mac whose clock was demonstrably
+	 *     correct (the same session printed date=2026-07-21 on another
+	 *     fetch), so this is a real open bug and possibly a live cause of
+	 *     failed page loads. Do not show the user clock advice for it --
+	 *     mark it loudly instead so the next log identifies it. */
+	if (!no_downgrade && (int)diag.os_err == 2002) {
+		char clk[24];
+		clk[0] = '\0';
+		macos9_believed_date(clk, sizeof clk);
+		if (clk[0] != '\0' && strncmp(clk, "20", 2) != 0) {
+			static char clock_why[192];
+			sprintf(clock_why,
+				"this Mac's clock reads %s, which is before "
+				"2000 -- set the date in the Date & Time control "
+				"panel, then reload", clk);
+			why = clock_why;
+			c->err = why;
+			no_downgrade = 1;   /* nothing to gain from cleartext */
+			macsurf_debug_log_writef(
+				"https: clock INVALID date=%s host=%s", clk,
+				c->host[0] ? c->host : "(unset)");
+		} else {
+			macsurf_debug_log_writef(
+				"https: FAIL time-helper reported clock-bad but "
+				"date reads %s host=%s -- NOT a clock problem",
+				clk[0] ? clk : "(unreadable)",
+				c->host[0] ? c->host : "(unset)");
+		}
+	}
+
 	if (is_auth_fail && !is_cert_fail) {
 		/* Deliberately NOT worded as a certificate problem: the
 		 * certificate was fine, the peer just could not prove it holds
