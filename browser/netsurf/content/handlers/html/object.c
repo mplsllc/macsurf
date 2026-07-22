@@ -994,6 +994,15 @@ html_fetch_object(html_content *c,
 	hlcache_child_context child;
 	nserror error;
 
+	/* fixes970 SANITY: unconditional, first statement, fixed string (no
+	 * format specifiers), LIFE prefix so the crash-only gate keeps it. If
+	 * this line does NOT appear in the log after a build+run, object.c did
+	 * not recompile -- nothing about the code path or the log filter can
+	 * explain its absence, because this runs on every entry and cannot be
+	 * mis-formatted or filtered. Remove once the stale-object question is
+	 * settled. */
+	macsurf_debug_log_write("LIFE SANITY970 html_fetch_object entered");
+
 	/* fixes533: registry-membership liveness check FIRST, before any field of
 	 * `c` is read.  The box walk that reaches here runs inside a
 	 * convert_xml_to_box callback the scheduler already DEQUEUED before
