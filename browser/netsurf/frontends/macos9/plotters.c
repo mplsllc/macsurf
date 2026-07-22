@@ -613,12 +613,68 @@ macos9_plot_disc(const struct redraw_context *ctx,
 	return NSERROR_OK;
 }
 
+#ifdef __MACOS9__
+/* fixes960 — dashed and dotted strokes.
+ *
+ * The core has always ASKED for these: redraw_border.c sets
+ * PLOT_OP_TYPE_DASH / PLOT_OP_TYPE_DOT for CSS `border-style: dashed` and
+ * `dotted`, and redraw.c does the same for <hr> rules. This plotter only ever
+ * tested `stroke_type != PLOT_OP_TYPE_NONE`, so every dashed and dotted border
+ * on the web has rendered SOLID in MacSurf.
+ *
+ * QuickDraw has no along-path dash, but it has a pen pattern, which is what
+ * every classic Mac app used for this. The subtlety: the pattern is sampled in
+ * SCREEN space, 8x8. A pattern whose rows are all identical (e.g. 0xCC eight
+ * times) draws a horizontal dashed line correctly but makes a 1px-wide
+ * VERTICAL line sample a single column -- which is either always-on (solid) or
+ * always-off (the border vanishes entirely). So the pattern has to alternate
+ * on BOTH axes:
+ *
+ *   dash  0xCC,0xCC,0x33,0x33,...  2 on / 2 off horizontally, and the row pairs
+ *                                  flip, so a vertical line also gets 2 on /
+ *                                  2 off.
+ *   dot   0xAA,0x55,...            classic 50% checkerboard: 1 on / 1 off in
+ *                                  both axes.
+ *
+ * Diagonals come out stippled rather than truly dashed. That is the standard
+ * QuickDraw compromise and reads correctly at border weights.
+ *
+ * Returns 1 if it changed the pen, so the caller knows to restore it. Leaving
+ * a pen pattern set would tint every later stroke -- the same class of bug as
+ * the CopyBits foreground-colour leak documented in CLAUDE.md. */
+static int macos9_stroke_pen_set(plot_operation_type_t t)
+{
+	static const Pattern pat_dash =
+		{ { 0xCC, 0xCC, 0x33, 0x33, 0xCC, 0xCC, 0x33, 0x33 } };
+	static const Pattern pat_dot =
+		{ { 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55 } };
+
+	if (t == PLOT_OP_TYPE_DASH) {
+		PenPat(&pat_dash);
+		return 1;
+	}
+	if (t == PLOT_OP_TYPE_DOT) {
+		PenPat(&pat_dot);
+		return 1;
+	}
+	return 0;
+}
+
+static void macos9_stroke_pen_reset(int changed)
+{
+	if (changed) PenNormal();
+}
+#endif
+
 static nserror
 macos9_plot_line(const struct redraw_context *ctx,
 		 const plot_style_t *pstyle,
 		 const struct rect *line)
 {
 	RGBColor rgb;
+#ifdef __MACOS9__
+	int pen_changed;
+#endif
 	(void)ctx;
 	if (pstyle == NULL || line == NULL) return NSERROR_OK;
 	macos9_colour_to_rgb(pstyle->stroke_colour, &rgb);
@@ -626,10 +682,12 @@ macos9_plot_line(const struct redraw_context *ctx,
 #ifdef __MACOS9__
 	{
 		RgnHandle saved_clip = macos9_push_clip();
+		pen_changed = macos9_stroke_pen_set(pstyle->stroke_type);
 #endif
 	MoveTo((short)line->x0, (short)line->y0);
 	LineTo((short)line->x1, (short)line->y1);
 #ifdef __MACOS9__
+		macos9_stroke_pen_reset(pen_changed);
 		macos9_pop_clip(saved_clip);
 	}
 #endif
@@ -1766,9 +1824,15 @@ opacity_done:
 #ifdef __MACOS9__
 		{
 			RgnHandle saved_clip = macos9_push_clip();
+			/* fixes960 — honour dashed/dotted here too, so a
+			 * framed rect matches the dashed edges drawn by the
+			 * line plotter instead of boxing them in solid. */
+			int pen_changed =
+				macos9_stroke_pen_set(pstyle->stroke_type);
 #endif
 		FrameRect(&r);
 #ifdef __MACOS9__
+			macos9_stroke_pen_reset(pen_changed);
 			macos9_pop_clip(saved_clip);
 		}
 #endif
