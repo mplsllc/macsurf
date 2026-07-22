@@ -1097,7 +1097,7 @@ html_fetch_object(html_content *c,
 		struct content *probe_c = (object->content != NULL)
 			? hlcache_handle_get_content(object->content) : NULL;
 		macsurf_debug_log_writef(
-			"LIFE objfetch spec=%d bg=%d hit=%d url=%.100s",
+			"LIFE objfetch spec=%d bg=%d hit=%d url=%s",
 			(box == NULL) ? 1 : 0,
 			background ? 1 : 0,
 			(probe_c != NULL) ? 1 : 0,
