@@ -1026,32 +1026,42 @@ static void hctx_cache_capture(struct macos9_https_ctx *c,
  * RSA intermediate signing FB's leaf) didn't verify; INVALID_ALGORITHM (26)
  * = a signature algorithm we don't offer/handle. BearSSL: SSL errors 0-31,
  * X.509 errors are 32+, fatal-alert ranges at 256/512. */
-/* fixes957 — last TLS failure classification, for the about:query/fetcherror
- * page.  NetSurf core does pass the fetcher's error string through to the
- * error page as a "reason" multipart field (browser_window.c
- * browser_window__handle_fetcherror), but the macos9 about: handler builds its
- * body from the request PATH only and never sees that field -- so the reason
- * would be dropped on the floor.  Rather than re-plumb core, the fetcher
- * records the classification here and macos9_fetcher_stubs.c reads it back
- * when it renders the page.  Same cross-TU accessor pattern the fetchers
- * already use for macos9_https_host_is_dead / _url_is_terminal.
+/* fixes957 — what date does this Mac think it is?
  *
- * Session-scoped and deliberately last-writer-wins: the error page is rendered
- * immediately after the failure that caused it. */
-static int g_last_tls_fail_cert = 0;
-static int g_last_tls_fail_time_class = 0;
-
-int macos9_tls_last_fail_was_cert(void);
-int macos9_tls_last_fail_was_time_class(void);
-
-int macos9_tls_last_fail_was_cert(void)
+ * Written into the failure reason (below) so about:query/fetcherror can show
+ * it.  This lives HERE, not in the about: fetcher, for two reasons: this TU
+ * already has the Toolbox, and macos9_fetcher_stubs.c does not (adding Carbon
+ * to it would drag in the header chains macos9.h spends 60 lines suppressing).
+ * One code path builds the date line for every case that needs it.
+ *
+ * Mac seconds are from 1904-01-01; 1904-01-01 to 1970-01-01 is 24107 days, so
+ * shift into days-since-1970 and run the standard civil-from-days conversion
+ * (all long arithmetic -- no 64-bit multiply, which CW8 PPC miscompiles). */
+static void macos9_believed_date(char *out, size_t cap)
 {
-	return g_last_tls_fail_cert;
-}
+	long z, era, doe, yoe, y, doy, mp, d, m;
+	unsigned long secs = 0;
 
-int macos9_tls_last_fail_was_time_class(void)
-{
-	return g_last_tls_fail_time_class;
+	if (out == NULL || cap < 11) return;
+	out[0] = '\0';
+#ifdef __MACOS9__
+	GetDateTime(&secs);
+#endif
+	if (secs == 0) return;
+
+	z = (long)(secs / 86400UL) - 24107L;
+	z += 719468L;
+	era = (z >= 0 ? z : z - 146096L) / 146097L;
+	doe = z - era * 146097L;
+	yoe = (doe - doe / 1460L + doe / 36524L - doe / 146096L) / 365L;
+	y   = yoe + era * 400L;
+	doy = doe - (365L * yoe + yoe / 4L - yoe / 100L);
+	mp  = (5L * doy + 2L) / 153L;
+	d   = doy - (153L * mp + 2L) / 5L + 1L;
+	m   = mp + (mp < 10L ? 3L : -9L);
+	if (m <= 2L) y++;
+
+	sprintf(out, "%ld-%02ld-%02ld", y, m, d);
 }
 
 static const char *ostls_br_err_name(int e)
@@ -1267,14 +1277,50 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	 * validated the chain, refused it, and MacSurf then refetched the same
 	 * page over http:// as if nothing had happened.  Record it loudly and
 	 * let the fetch fail. */
-	g_last_tls_fail_cert = is_cert_fail;
-	g_last_tls_fail_time_class = is_cert_fail ? cert_time_class(&diag) : 0;
 	if (is_cert_fail) {
+		/* Replace the generic "handshake/transport failed" with a reason
+		 * that says WHAT was wrong and what date this Mac believes it is.
+		 * Core forwards this verbatim to about:query/fetcherror as the
+		 * "reason" multipart field, so the page can explain itself instead
+		 * of offering three generic guesses.
+		 *
+		 * Static buffer: OS 9 is cooperative and fetch_send_callback ->
+		 * fetch_multipart_data_new_kv copies the string immediately, so it
+		 * cannot outlive the next failure. */
+		static char cert_why[192];
+		char believed[24];
+
+		believed[0] = '\0';
+		macos9_believed_date(believed, sizeof believed);
+
+		if (cert_time_class(&diag)) {
+			/* 54 covers expired AND not-yet-valid, so this fires
+			 * whether the clock is behind (dead PRAM -> 1904/1956)
+			 * or ahead.  Deliberately NOT decided here: we state the
+			 * ambiguity and print the date, and the user -- who can
+			 * see their own calendar -- settles it.  A heuristic
+			 * anchored to the build date would rot as the binary
+			 * ages and would start giving clock advice for genuinely
+			 * expired certificates. */
+			sprintf(cert_why,
+				"certificate expired or not yet valid; this Mac's "
+				"date reads %s",
+				believed[0] ? believed : "(unreadable)");
+		} else {
+			sprintf(cert_why,
+				"certificate rejected (%s); this Mac's date reads %s",
+				ostls_br_err_name((int)diag.br_err),
+				believed[0] ? believed : "(unreadable)");
+		}
+		why = cert_why;
+		c->err = why;   /* keep ctx state and the callback in step */
+
 		macsurf_debug_log_writef(
-			"https: cert INVALID br_err=%d(%s) host=%s -- refusing "
-			"http fallback", (int)diag.br_err,
+			"https: cert INVALID br_err=%d(%s) host=%s date=%s -- "
+			"refusing http fallback", (int)diag.br_err,
 			ostls_br_err_name((int)diag.br_err),
-			c->host[0] ? c->host : "(unset)");
+			c->host[0] ? c->host : "(unset)",
+			believed[0] ? believed : "?");
 	}
 
 	if (c->aborted == 0 &&
@@ -1351,7 +1397,22 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	 * retry cost. The list is per-session and fixes244 refuses to persist
 	 * any host that ever succeeded, so a transient failure self-heals
 	 * next session. */
+	/* fixes957 — a REJECTED CERTIFICATE must NOT dead-host the origin, and
+	 * this is stated explicitly rather than left to fall out of the string
+	 * comparison below (the cert path now rewrites `why`, so these strcmps
+	 * would silently stop matching -- correct, but not something the next
+	 * reader should have to deduce).
+	 *
+	 * Why it matters: the commonest cause is a wrong clock, and we now tell
+	 * the user so. If the host were dead-hosted, the user would set the date
+	 * in Date & Time, reload, and get an instant fast-fail with no network
+	 * activity at all -- making the advice we just gave them look wrong. The
+	 * cost of not dead-hosting is that every subresource re-attempts its
+	 * handshake while the clock is broken; on a machine where nothing loads
+	 * anyway that is the right trade, and it self-corrects the moment the
+	 * clock is fixed, with no clock-change detection needed. */
 	if (why != NULL && c->pool_key[0] != '\0' && !https_worked &&
+	    !is_cert_fail &&
 	    (strcmp(why, "https: connection timed out") == 0 ||
 	     strcmp(why, "https: peer closed before complete") == 0 ||
 	     strcmp(why, "https: handshake/transport failed") == 0)) {

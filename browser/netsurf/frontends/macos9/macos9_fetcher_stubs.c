@@ -350,6 +350,22 @@ struct stub_fetch_ctx {
 	struct fetch *parent;
 	stub_scheme scheme;
 	char path[1024];
+	/* fixes957 — the failing fetcher's own error string, for
+	 * about:query/fetcherror.  NetSurf core already forwards it:
+	 * browser_window__handle_fetcherror() posts "siteurl" and "reason" as
+	 * multipart data to the error page.  Every stub setup used to
+	 * (void)post_multipart and throw both away, so the page could only ever
+	 * print three generic guesses.
+	 *
+	 * Carried PER FETCH rather than in a global on purpose.  A page load has
+	 * concurrent subresource fetches, so a global "last failure class" is
+	 * last-write-wins: a tracker or image failing after the document failed
+	 * would hand the error page a classification from a different
+	 * connection, and the page would confidently give advice for the wrong
+	 * error.  That would be intermittent and would surface as "sometimes
+	 * tells me the wrong thing", which is the hardest kind of report to act
+	 * on.  The reason travels with the fetch that produced the page. */
+	char fail_reason[192];
 	bool started;
 	bool aborted;
 	bool done;
@@ -610,30 +626,81 @@ stub_setup_scheme(struct fetch *parent_fetch, struct nsurl *url,
 			failed_url[i] = '\0';
 		}
 
-		rn = sprintf(ctx->body_buf,
-		    "<html><head><title>Couldn't load page</title>"
-		    "<style>body{font-family:Geneva,sans-serif;"
-		    "background:#dddddd;color:#222222;padding:48px;}"
-		    "h1{color:#003366;margin-bottom:24px;font-size:24pt;}"
-		    "p{font-size:14pt;line-height:1.5;}"
-		    "tt{background:#ffffff;padding:6px 10px;"
-		    "border:1px solid #999999;color:#003366;}"
-		    "ul{font-size:12pt;color:#444444;}"
-		    "a{color:#003366;}</style></head>"
-		    "<body><h1>Couldn't load that page.</h1>"
-		    "<p>MacSurf tried to reach:</p>"
-		    "<p><tt>%.512s</tt></p>"
-		    "<p>This usually means:</p>"
-		    "<ul>"
-		    "<li>The server didn't respond, or is offline.</li>"
-		    "<li>The site's TLS handshake rejected the connection "
-		    "(some sites block older clients).</li>"
-		    "<li>The network connection timed out.</li>"
-		    "</ul>"
-		    "<p>You can <a href=\"%.512s\">retry the same URL</a>, "
-		    "or pick another page from your bookmarks.</p>"
-		    "</body></html>",
-		    failed_url, failed_url);
+		/* fixes957 — if the fetcher told us WHY, say so instead of
+		 * offering three guesses.  A rejected certificate is the case
+		 * that matters: MacSurf now refuses to fall back to cleartext
+		 * when a certificate fails to validate, so this page is what a
+		 * user with a dead PRAM battery sees on every HTTPS site, and
+		 * "the server didn't respond" would send them hunting in
+		 * entirely the wrong place.
+		 *
+		 * The reason string already carries the date the Mac believes it
+		 * is (built once in macos9_tls_fetcher.c).  We show it and let
+		 * the user judge: we deliberately do not claim the clock IS
+		 * wrong, because a genuinely expired certificate on a correctly
+		 * set Mac produces the same X.509 error, and any heuristic that
+		 * tried to tell them apart would rot as this binary ages. */
+		{
+			const char *why = ctx->fail_reason;
+			int is_cert = (strstr(why, "certificate") != NULL);
+			int is_time = (strstr(why, "expired or not yet valid")
+				       != NULL);
+
+			rn = sprintf(ctx->body_buf,
+			    "<html><head><title>Couldn't load page</title>"
+			    "<style>body{font-family:Geneva,sans-serif;"
+			    "background:#dddddd;color:#222222;padding:48px;}"
+			    "h1{color:#003366;margin-bottom:24px;font-size:24pt;}"
+			    "p{font-size:14pt;line-height:1.5;}"
+			    "tt{background:#ffffff;padding:6px 10px;"
+			    "border:1px solid #999999;color:#003366;}"
+			    "ul{font-size:12pt;color:#444444;}"
+			    "a{color:#003366;}</style></head>"
+			    "<body><h1>%s</h1>"
+			    "<p>MacSurf tried to reach:</p>"
+			    "<p><tt>%.512s</tt></p>"
+			    "%s"
+			    "<p>You can <a href=\"%.512s\">retry the same URL</a>, "
+			    "or pick another page from your bookmarks.</p>"
+			    "</body></html>",
+			    is_cert ? "That site's certificate didn't check out."
+				    : "Couldn't load that page.",
+			    failed_url,
+			    is_time ?
+			      "<p>The certificate is expired or not yet valid, so "
+			      "MacSurf did <b>not</b> load the page over an "
+			      "unencrypted connection.</p>"
+			      "<p>A Mac whose clock is wrong sees valid "
+			      "certificates as expired. If the date below looks "
+			      "wrong, set it in the Date &amp; Time control "
+			      "panel and reload; if it looks right, the "
+			      "certificate really has expired.</p>"
+			    : is_cert ?
+			      "<p>MacSurf checked the site's certificate, could "
+			      "not verify it, and did <b>not</b> fall back to an "
+			      "unencrypted connection.</p>"
+			    :
+			      "<p>This usually means:</p><ul>"
+			      "<li>The server didn't respond, or is offline.</li>"
+			      "<li>The site's TLS handshake rejected the "
+			      "connection (some sites block older clients).</li>"
+			      "<li>The network connection timed out.</li></ul>",
+			    failed_url);
+
+			/* The raw reason last, in small type: it names the
+			 * X.509 error and the believed date, which is what a
+			 * bug report needs and what the log will corroborate. */
+			if (rn > 0 && why[0] != '\0') {
+				char *tail = strstr(ctx->body_buf, "</body>");
+				if (tail != NULL) {
+					int tn = sprintf(tail,
+					    "<p style=\"font-size:11pt;"
+					    "color:#666666\">%.180s</p>"
+					    "</body></html>", why);
+					if (tn > 0) rn = (int)(tail - ctx->body_buf) + tn;
+				}
+			}
+		}
 		if (rn > 0 && (size_t)rn < sizeof(ctx->body_buf)) {
 			ctx->body_used = (size_t)rn;
 		}
@@ -797,9 +864,28 @@ stub_setup_about(struct fetch *parent_fetch, struct nsurl *url,
 		 const struct fetch_multipart_data *post_multipart,
 		 const char **headers)
 {
+	/* fixes957 — capture the "reason" the failing fetcher reported.  Core
+	 * posts it here (browser_window__handle_fetcherror); it used to be
+	 * discarded with the (void) below, which is why about:query/fetcherror
+	 * could only ever offer three generic guesses. */
+	void *v;
 	(void)only_2xx; (void)downgrade_tls;
-	(void)post_urlenc; (void)post_multipart; (void)headers;
-	return stub_setup_scheme(parent_fetch, url, SCH_ABOUT);
+	(void)post_urlenc; (void)headers;
+
+	v = stub_setup_scheme(parent_fetch, url, SCH_ABOUT);
+	if (v != NULL && post_multipart != NULL) {
+		struct stub_fetch_ctx *actx = (struct stub_fetch_ctx *)v;
+		const char *why = fetch_multipart_data_find(post_multipart,
+							    "reason");
+		if (why != NULL) {
+			size_t wn = strlen(why);
+			if (wn >= sizeof actx->fail_reason)
+				wn = sizeof actx->fail_reason - 1;
+			memcpy(actx->fail_reason, why, wn);
+			actx->fail_reason[wn] = '\0';
+		}
+	}
+	return v;
 }
 
 static void *
