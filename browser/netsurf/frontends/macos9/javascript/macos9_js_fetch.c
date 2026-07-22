@@ -306,6 +306,46 @@ xhr_follow_redirect(struct qjs_xhr_slot *s, const char *target)
 		macos9_schedule(0, xhr_deliver, s);
 		return;
 	}
+
+	/* fixes961 — never follow an https -> http redirect from JS.
+	 *
+	 * This is not a hypothetical. When an HTTPS fetch fails for a
+	 * non-certificate reason, hctx_fail synthesises a REAL FETCH_REDIRECT
+	 * to the http:// equivalent with http code 301 (the retro HTTP-only
+	 * fallback, fixes249b/317). That is a considered trade for a top-level
+	 * page the user typed, but it is the wrong answer for an XHR: this
+	 * function only checked the hop cap, so a
+	 * fetch('https://site/api/session') that hit a transient TLS failure
+	 * was silently reissued over port 80 -- and the fetcher attaches
+	 * cookies via urldb_get_cookie on the way out, so the session token
+	 * goes across in the clear. The page's own JS never sees that it
+	 * happened.
+	 *
+	 * Downgrades are refused here rather than in the fetcher because the
+	 * fetcher's fallback is legitimate for the navigation case; it is
+	 * following it from script, with credentials, that is not. */
+	{
+		/* Compared as strings rather than via corestring_lwc_https:
+		 * corestrings.h is not on this TU's include list, and pulling
+		 * it in for two comparisons is not worth the header churn on a
+		 * flat-namespace CW8 build. */
+		const char *cur = nsurl_access(s->url);
+		const char *nxt = nsurl_access(joined);
+		int downgrade = (cur != NULL && nxt != NULL &&
+				 strncmp(cur, "https://", 8) == 0 &&
+				 strncmp(nxt, "http://", 7) == 0);
+
+		if (downgrade) {
+			macsurf_debug_log_writef(
+				"LIFE xhr INVALID https->http redirect refused: %s",
+				nsurl_access(joined));
+			nsurl_unref(joined);
+			s->is_error = 1;
+			macos9_schedule(0, xhr_deliver, s);
+			return;
+		}
+	}
+
 	nsurl_unref(s->url);
 	s->url = joined;
 	s->redirect_hops++;
