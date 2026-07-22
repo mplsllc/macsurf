@@ -3310,5 +3310,194 @@ int main(void)
 	fprintf(stderr, "=== Test 32 PASS: a known image size survives a NULL "
 		"object, so lazy/retired/revisited images lay out correctly ===\n");
 
+	/* --- Test 33 (lifecycle Stage 1): a BACKGROUND object survives reconvert
+	 *
+	 * The disappear bug's largest class: html_reconvert_relink_objects retired
+	 * every o->background unconditionally (background=70 of 101 on hackaday),
+	 * so a CSS background image was destroyed on every DOM mutation. The fix
+	 * relinks it to the rebuilt box instead of retiring it.
+	 *
+	 * Modelled on Test 31 but with a single background entry whose box is a
+	 * live node in the tree. RED before the fix (the entry is retired ->
+	 * object_list empty); GREEN after (it survives and re-resolves its box).
+	 * Content-pointer wiring needs a real fetch and is hardware-covered, same
+	 * scope caveat Test 31 records; this asserts survival + box re-resolution,
+	 * which is what the relink itself is responsible for. */
+	fprintf(stderr, "\n=== Test 33: background object survives reconvert "
+		"(lifecycle Stage 1) ===\n");
+	{
+		extern struct box *box_for_node(dom_node *n);
+		dom_nodelist *ps = NULL;
+		dom_string *ptag = NULL;
+		uint32_t plen = 0;
+		dom_node *keep_node = NULL;
+		struct box *old_box = NULL;
+		struct content_html_object *bg;
+		int rc;
+
+		if (dom_string_create((const uint8_t *)"p", 1, &ptag) != DOM_NO_ERR ||
+		    dom_document_get_elements_by_tag_name(document, ptag, &ps)
+				!= DOM_NO_ERR || ps == NULL) {
+			fprintf(stderr, "FAIL: Test 33 could not list <p>\n"); return 1;
+		}
+		dom_nodelist_get_length(ps, &plen);
+		if (plen < 1) { fprintf(stderr, "FAIL: Test 33 needs a <p>\n"); return 1; }
+		dom_nodelist_item(ps, 0, &keep_node);
+		old_box = keep_node ? box_for_node(keep_node) : NULL;
+		if (old_box == NULL) {
+			fprintf(stderr, "FAIL: Test 33 <p> has no box\n"); return 1;
+		}
+
+		bg = calloc(1, sizeof(*bg));
+		if (bg == NULL) { fprintf(stderr, "FAIL: Test 33 calloc\n"); return 1; }
+		bg->parent = (struct content *)&htmlc;
+		bg->box = old_box;
+		bg->permitted_types = CONTENT_IMAGE;
+		bg->background = true;   /* the class that was unconditionally retired */
+		bg->next = NULL;
+		htmlc.object_list = bg;
+		htmlc.num_objects = 1;
+
+		htmlc.box_conversion_context = NULL;
+		htmlc.aborted = false;
+		htmlc.base.active = 0;
+		rc = html_reconvert_content((struct content *)&htmlc);
+		if (rc != 0) {
+			fprintf(stderr, "FAIL: Test 33 reconvert did not queue (rc=%d)\n", rc);
+			return 1;
+		}
+		harness_pump_all(100000);
+
+		if (htmlc.object_list == NULL) {
+			fprintf(stderr, "FAIL: Test 33 background object was RETIRED "
+				"(the disappear bug) -- expected it to survive\n");
+			return 1;
+		}
+		if (htmlc.object_list->next != NULL) {
+			fprintf(stderr, "FAIL: Test 33 expected exactly one survivor\n");
+			return 1;
+		}
+		if (htmlc.object_list->background != true) {
+			fprintf(stderr, "FAIL: Test 33 survivor lost its background flag\n");
+			return 1;
+		}
+		if (htmlc.object_list->box == NULL) {
+			fprintf(stderr, "FAIL: Test 33 survivor lost its box\n");
+			return 1;
+		}
+		if (htmlc.object_list->box != box_for_node(keep_node)) {
+			fprintf(stderr, "FAIL: Test 33 survivor box not re-resolved to "
+				"the rebuilt tree\n");
+			return 1;
+		}
+		if (htmlc.num_objects != 1) {
+			fprintf(stderr, "FAIL: Test 33 num_objects=%u expected 1\n",
+					htmlc.num_objects);
+			return 1;
+		}
+		fprintf(stderr, "  background kept + re-resolved; num_objects stayed 1\n");
+
+		while (htmlc.object_list != NULL) {
+			struct content_html_object *nx = htmlc.object_list->next;
+			free(htmlc.object_list);
+			htmlc.object_list = nx;
+		}
+		htmlc.num_objects = 0;
+		dom_nodelist_unref(ps);
+		dom_string_unref(ptag);
+	}
+	fprintf(stderr, "=== Test 33 PASS: a CSS background image survives a "
+		"reconvert instead of being retired ===\n");
+
+	/* --- Test 34 (lifecycle Stage 1): reconvert DEDUPES duplicate objects
+	 *
+	 * Keeping objects instead of retiring them would leak without this: a
+	 * reconvert re-runs box construction, which prepends a fresh object for
+	 * every image already on the list. Two objects for the same (box,
+	 * background) display slot must collapse to one, or the list grows every
+	 * reconvert. Simulates that by putting TWO foreground image objects on the
+	 * same box (the "new" one at the head, the "old" at the tail) plus one
+	 * background pair, and asserts each slot survives exactly once. */
+	fprintf(stderr, "\n=== Test 34: reconvert dedupes duplicate objects "
+		"(lifecycle Stage 1) ===\n");
+	{
+		extern struct box *box_for_node(dom_node *n);
+		dom_nodelist *ps = NULL;
+		dom_string *ptag = NULL;
+		uint32_t plen = 0;
+		dom_node *keep_node = NULL;
+		struct box *old_box = NULL;
+		struct content_html_object *fg_new, *fg_old, *bg_new, *bg_old;
+		int fg = 0, bg = 0;
+		struct content_html_object *w;
+
+		if (dom_string_create((const uint8_t *)"p", 1, &ptag) != DOM_NO_ERR ||
+		    dom_document_get_elements_by_tag_name(document, ptag, &ps)
+				!= DOM_NO_ERR || ps == NULL) {
+			fprintf(stderr, "FAIL: Test 34 could not list <p>\n"); return 1;
+		}
+		dom_nodelist_get_length(ps, &plen);
+		if (plen < 1) { fprintf(stderr, "FAIL: Test 34 needs a <p>\n"); return 1; }
+		dom_nodelist_item(ps, 0, &keep_node);
+		old_box = keep_node ? box_for_node(keep_node) : NULL;
+		if (old_box == NULL) {
+			fprintf(stderr, "FAIL: Test 34 <p> has no box\n"); return 1;
+		}
+
+		fg_new = calloc(1, sizeof(*fg_new));
+		fg_old = calloc(1, sizeof(*fg_old));
+		bg_new = calloc(1, sizeof(*bg_new));
+		bg_old = calloc(1, sizeof(*bg_old));
+		if (!fg_new || !fg_old || !bg_new || !bg_old) {
+			fprintf(stderr, "FAIL: Test 34 calloc\n"); return 1;
+		}
+		fg_new->parent = fg_old->parent = (struct content *)&htmlc;
+		bg_new->parent = bg_old->parent = (struct content *)&htmlc;
+		fg_new->box = fg_old->box = old_box;
+		bg_new->box = bg_old->box = old_box;
+		fg_new->permitted_types = fg_old->permitted_types = CONTENT_IMAGE;
+		bg_new->permitted_types = bg_old->permitted_types = CONTENT_IMAGE;
+		bg_new->background = bg_old->background = true;
+		/* head..tail: new fg, new bg, old fg, old bg (new prepended) */
+		fg_new->next = bg_new; bg_new->next = fg_old;
+		fg_old->next = bg_old; bg_old->next = NULL;
+		htmlc.object_list = fg_new;
+		htmlc.num_objects = 4;
+
+		htmlc.box_conversion_context = NULL;
+		htmlc.aborted = false;
+		htmlc.base.active = 0;
+		if (html_reconvert_content((struct content *)&htmlc) != 0) {
+			fprintf(stderr, "FAIL: Test 34 reconvert did not queue\n"); return 1;
+		}
+		harness_pump_all(100000);
+
+		for (w = htmlc.object_list; w != NULL; w = w->next) {
+			if (w->background) bg++; else fg++;
+		}
+		if (fg != 1 || bg != 1) {
+			fprintf(stderr, "FAIL: Test 34 expected 1 fg + 1 bg survivor, "
+				"got fg=%d bg=%d (dedupe failed -> leak)\n", fg, bg);
+			return 1;
+		}
+		if (htmlc.num_objects != 2) {
+			fprintf(stderr, "FAIL: Test 34 num_objects=%u expected 2\n",
+					htmlc.num_objects);
+			return 1;
+		}
+		fprintf(stderr, "  4 objects (2 duplicated slots) -> 2 survivors\n");
+
+		while (htmlc.object_list != NULL) {
+			struct content_html_object *nx = htmlc.object_list->next;
+			free(htmlc.object_list);
+			htmlc.object_list = nx;
+		}
+		htmlc.num_objects = 0;
+		dom_nodelist_unref(ps);
+		dom_string_unref(ptag);
+	}
+	fprintf(stderr, "=== Test 34 PASS: duplicate objects for one display slot "
+		"collapse to one, so keeping objects cannot leak ===\n");
+
 	return 0;
 }

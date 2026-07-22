@@ -2114,12 +2114,21 @@ static void html_reconvert_relink_objects(html_content *c)
 		 * object->box->object_params, so they must not outlive it.
 		 * permitted_types is set at fetch time and needs no content deref,
 		 * so in-flight entries classify correctly too. */
+		/* fixes972 (lifecycle Stage 1) — backgrounds are no longer
+		 * retired here. The old gate excluded o->background on the theory
+		 * (comment above) that backgrounds carry object_params talloc'd
+		 * against the OLD bctx. That is false for CSS backgrounds:
+		 * box->object_params is set only by box_embed / box_object, i.e.
+		 * <embed>/<object>, which are CONTENT_ANY and so are already
+		 * retired by the permitted_types check below. A CSS background is
+		 * CONTENT_IMAGE with object_params == NULL, so it is safe to relink
+		 * -- and retiring it was the single largest class of the disappear
+		 * bug (background=70 of 101 on hackaday). It now falls through to
+		 * box re-resolution and attaches to newbox->background. */
 		if (g_object_relink_enabled == 0 ||
-		    o->permitted_types != CONTENT_IMAGE ||
-		    o->background) {
+		    o->permitted_types != CONTENT_IMAGE) {
 			if (g_object_relink_enabled == 0) rt_disabled++;
-			else if (o->permitted_types != CONTENT_IMAGE) rt_nonimage++;
-			else rt_background++;
+			else rt_nonimage++;
 			o->next = drop; drop = o; retired++;
 			o = next;
 			continue;
@@ -2149,6 +2158,41 @@ static void html_reconvert_relink_objects(html_content *c)
 
 		o->box = newbox;
 
+		/* fixes972 (lifecycle Stage 1) — DEDUPE, so keeping objects
+		 * instead of retiring them cannot leak.
+		 *
+		 * A reconvert re-runs box construction, which calls
+		 * html_fetch_object again for every image/background in the new
+		 * tree and PREPENDS the new objects onto object_list. Without
+		 * this, relinking the OLD objects too would leave two objects per
+		 * image on every reconvert -- disappearance traded for an
+		 * unbounded list (Stage 0a). A box holds at most one foreground
+		 * object and one background, so (box, background-flag) is the
+		 * identity of a display slot. New objects are at the head and are
+		 * walked first, so the survivor is the fresh fetch; the older
+		 * duplicate at the tail is retired, releasing its handle.
+		 *
+		 * O(n^2) over the kept list, but n is the object count of one
+		 * document (~100) and this runs once per reconvert, so it is not
+		 * a hot path. */
+		{
+			struct content_html_object *k;
+			int dup = 0;
+			for (k = keep; k != NULL; k = k->next) {
+				if (k->box == newbox &&
+				    (k->background ? 1 : 0) ==
+				    (o->background ? 1 : 0)) {
+					dup = 1;
+					break;
+				}
+			}
+			if (dup) {
+				o->next = drop; drop = o; retired++;
+				o = next;
+				continue;
+			}
+		}
+
 		if (o->content != NULL &&
 		    content_get_status(o->content) == CONTENT_STATUS_DONE) {
 			/* Completed: link it, so layout sizes the box from the
@@ -2158,17 +2202,26 @@ static void html_reconvert_relink_objects(html_content *c)
 			 * decrement) must not be repeated here. */
 			struct box *b;
 
-			newbox->object = o->content;
-			if (newbox->type == BOX_TABLE) {
-				newbox->type = BOX_BLOCK;
-			}
-			if (!(newbox->flags & REPLACE_DIM)) {
-				for (b = newbox; b != NULL; b = b->parent) {
-					b->max_width = UNKNOWN_MAX_WIDTH;
+			if (o->background) {
+				/* fixes972 — a background attaches to the box's
+				 * background slot, not its object slot, and needs
+				 * none of the replaced-box (table/dim/clone)
+				 * handling below, which is specific to <img>-style
+				 * replaced content occupying the box itself. */
+				newbox->background = o->content;
+			} else {
+				newbox->object = o->content;
+				if (newbox->type == BOX_TABLE) {
+					newbox->type = BOX_BLOCK;
 				}
-				while (newbox->next != NULL &&
-				       (newbox->next->flags & CLONE)) {
-					newbox->next = newbox->next->next;
+				if (!(newbox->flags & REPLACE_DIM)) {
+					for (b = newbox; b != NULL; b = b->parent) {
+						b->max_width = UNKNOWN_MAX_WIDTH;
+					}
+					while (newbox->next != NULL &&
+					       (newbox->next->flags & CLONE)) {
+						newbox->next = newbox->next->next;
+					}
 				}
 			}
 			relinked++;
