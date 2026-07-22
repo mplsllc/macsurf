@@ -1187,7 +1187,7 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 			lwc_string_unref(bl_host);
 			if (macos9_host_is_tracker(bl_z)) {
 				macsurf_debug_log_writef(
-					"WORK blocked tracker host=%s (http)",
+					"LIFE blocked tracker host=%s (http)",
 					bl_z);
 				c->err = "http: tracker/ad host blocked";
 				c->state = MFS_FAIL;

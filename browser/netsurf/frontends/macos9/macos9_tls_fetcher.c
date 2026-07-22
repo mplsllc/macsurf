@@ -1134,6 +1134,39 @@ static int cert_rejected(struct macos9_https_ctx *c, const OSTLSDiagnostics *dia
 	return (e >= 33 && e <= 62) ? 1 : 0;
 }
 
+/* fixes962 — did the PEER FAIL TO AUTHENTICATE ITSELF, as distinct from
+ * presenting a certificate we refused?
+ *
+ * fixes957 keyed the no-downgrade decision on the X.509 band alone (33..62),
+ * which is the space of "a chain reached the validator and was refused". That
+ * is correct about what it means and incomplete about what matters. Consider
+ * an on-path attacker who replays the target's REAL, currently-valid,
+ * correctly-named certificate chain but does not hold the private key:
+ *
+ *   - X.509 validation passes. br_err never enters 33..62.
+ *   - The handshake dies later, at CertificateVerify, because the peer cannot
+ *     sign the transcript: BR_ERR_BAD_SIGNATURE (27), raised at
+ *     ostls_tls13_handshake.c:2181 and :2231.
+ *
+ * Under fixes957 that produced is_cert_fail == 0 and the cleartext refetch ran
+ * -- against precisely the adversary the change was written to stop. Same hole
+ * for the TLS 1.2 ServerKeyExchange signature and for a tampered Finished
+ * (BR_ERR_BAD_FINISHED, 24), which is a MAC failure over the whole handshake.
+ *
+ * These are kept SEPARATE from cert_rejected() rather than folded into one
+ * band because the user-facing message must differ: "this certificate has
+ * expired" is wrong and misleading for a Finished MAC failure. */
+static int peer_auth_failed(struct macos9_https_ctx *c,
+			    const OSTLSDiagnostics *diag)
+{
+	int e;
+	if (c == NULL || c->conn == NULL || diag == NULL) return 0;
+	e = (int)diag->br_err;
+	/* 24 BAD_FINISHED, 26 INVALID_ALGORITHM, 27 BAD_SIGNATURE,
+	 * 28 WRONG_KEY_USAGE -- see macTLS/bearssl/inc/bearssl_ssl.h. */
+	return (e == 24 || e == 26 || e == 27 || e == 28) ? 1 : 0;
+}
+
 /* fixes957 — a cert rejection whose cause is PLAUSIBLY THE MAC'S CLOCK.
  * BR_ERR_X509_EXPIRED (54) covers both "expired" and "not yet valid", so it
  * is what a Mac reports whether its clock is years behind (dead PRAM battery
@@ -1170,6 +1203,8 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	 * fetched once here and reused rather than queried twice. */
 	OSTLSDiagnostics diag;
 	int is_cert_fail;
+	int is_auth_fail;   /* fixes962 — peer could not prove it owns the key */
+	int no_downgrade;   /* fixes962 — either of the above forbids cleartext */
 
 	if (c->state == HS_FAIL || c->state == HS_DONE) return;
 
@@ -1178,6 +1213,8 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 		OSTLS_GetDiagnostics(c->conn, &diag);
 	}
 	is_cert_fail = cert_rejected(c, &diag);
+	is_auth_fail = peer_auth_failed(c, &diag);
+	no_downgrade = (is_cert_fail || is_auth_fail);
 
 	https_worked = (c->state == HS_HEADERS || c->state == HS_BODY);
 	if (https_worked)
@@ -1277,6 +1314,34 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	 * validated the chain, refused it, and MacSurf then refetched the same
 	 * page over http:// as if nothing had happened.  Record it loudly and
 	 * let the fetch fail. */
+	/* fixes962 — a transport that failed peer authentication or certificate
+	 * validation is tainted, whatever happens next. This is the caller
+	 * fixes958 added the API for: llcache_hsts_update_policy now adopts it
+	 * and stops believing a Strict-Transport-Security header that arrived
+	 * over a connection we could not authenticate. */
+	if (no_downgrade && c->parent != NULL) {
+		fetch_set_tainted_tls(c->parent, true);
+	}
+
+	if (is_auth_fail && !is_cert_fail) {
+		/* Deliberately NOT worded as a certificate problem: the
+		 * certificate was fine, the peer just could not prove it holds
+		 * the matching private key. Telling the user their clock or the
+		 * site's cert is at fault would send them somewhere useless. */
+		static char auth_why[192];
+		sprintf(auth_why,
+			"the site could not prove it owns its certificate "
+			"(TLS %s) -- refusing to continue unencrypted",
+			ostls_br_err_name((int)diag.br_err));
+		why = auth_why;
+		c->err = why;
+		macsurf_debug_log_writef(
+			"https: peer auth INVALID br_err=%d(%s) host=%s -- "
+			"refusing http fallback", (int)diag.br_err,
+			ostls_br_err_name((int)diag.br_err),
+			c->host[0] ? c->host : "(unset)");
+	}
+
 	if (is_cert_fail) {
 		/* Replace the generic "handshake/transport failed" with a reason
 		 * that says WHAT was wrong and what date this Mac believes it is.
@@ -1325,7 +1390,7 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 
 	if (c->aborted == 0 &&
 	    !https_worked &&   /* fixes718: HTTPS answered — don't fall back to http */
-	    !is_cert_fail &&   /* fixes957: cert rejection fails closed */
+	    !no_downgrade &&   /* fixes957/962: cert or peer-auth failure fails closed */
 	    !host_is_fb_asset(c->host) &&
 	    c->url != NULL && c->pool_key[0] != '\0' &&
 	    !terminal_url_check(nsurl_access(c->url)) &&
@@ -1412,7 +1477,7 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	 * anyway that is the right trade, and it self-corrects the moment the
 	 * clock is fixed, with no clock-change detection needed. */
 	if (why != NULL && c->pool_key[0] != '\0' && !https_worked &&
-	    !is_cert_fail &&
+	    !no_downgrade &&
 	    (strcmp(why, "https: connection timed out") == 0 ||
 	     strcmp(why, "https: peer closed before complete") == 0 ||
 	     strcmp(why, "https: handshake/transport failed") == 0)) {
@@ -2510,7 +2575,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		 * for the origins deliberately NOT in the table. */
 		if (c->url != NULL && macos9_host_is_tracker(c->host)) {
 			macsurf_debug_log_writef(
-				"WORK blocked tracker host=%s", c->host);
+				"LIFE blocked tracker host=%s", c->host);
 			(void)terminal_url_add(nsurl_access(c->url));
 			hctx_fail(c, "https: tracker/ad host blocked");
 			return;
@@ -2671,14 +2736,17 @@ static void hctx_poll(struct macos9_https_ctx *c)
 	}
 
 	if (ev == kOSTLSEventFailed) {
+		/* fixes962 — hoisted out of the logging block below so the
+		 * no-retry check further down can reuse the same read instead of
+		 * querying a connection the retry path is about to dispose. */
+		OSTLSDiagnostics fd;
+		memset(&fd, 0, sizeof fd);
 		/* fixes701 (#206) — surface the exact macTLS failure so a hardware
 		 * log pinpoints why a P-384/HRR handshake dies. br_err is the tls13
 		 * hs->error; hs_fail=TLS13_FAIL_* names the step (6=ECDH math,
 		 * 5=group mismatch, 7=keygen, 3=no key_share, ...); hs_state is the
 		 * tls13 handshake state. "TLS-FAIL" survives the crash-only gate. */
 		if (c->conn != NULL) {
-			OSTLSDiagnostics fd;
-			memset(&fd, 0, sizeof fd);
 			OSTLS_GetDiagnostics(c->conn, &fd);
 			macsurf_debug_log_writef(
 				"https: TLS-FAIL host=%s br_err=%d hs_fail=%d hs_state=%d "
@@ -2688,6 +2756,31 @@ static void hctx_poll(struct macos9_https_ctx *c)
 				(int)fd.os_err, (long)fd.ot_err,
 				(long)fd.br_state_last,
 				(int)fd.cipher_suite);
+		}
+		/* fixes962 — NEVER retry a certificate rejection or a peer
+		 * authentication failure, and go straight to hctx_fail while
+		 * br_err is still readable.
+		 *
+		 * Two separate bugs, one fix. First: hctx_reset_for_retry
+		 * disposes the connection that HOLDS br_err, so attempt 2 begins
+		 * with br_err = 0. If hctx_fail is then reached by any other
+		 * route -- the watchdog, an OSTLS_New failure, a peer reset --
+		 * cert_rejected() sees 0, the cleartext fallback runs, and there
+		 * is no "cert INVALID" line to show it happened. The security
+		 * decision was being thrown away by a retry meant for flaky
+		 * CDNs. Second: a rejected certificate is deterministic, so the
+		 * retry could never have helped; on a Mac with a wrong clock,
+		 * where every host fails this way, it cost three full ECDHE
+		 * handshakes per URL instead of one.
+		 *
+		 * fd is already populated above for the diagnostic dump. */
+		if (cert_rejected(c, &fd) || peer_auth_failed(c, &fd)) {
+			macsurf_debug_log_writef(
+				"https: no retry, peer INVALID br_err=%d(%s) host=%s",
+				(int)fd.br_err, ostls_br_err_name((int)fd.br_err),
+				c->host[0] ? c->host : "(unset)");
+			hctx_fail(c, "https: handshake/transport failed");
+			return;
 		}
 		/* fixes228 — retry once on early-stage handshake failure.
 		 * CF / Google CDN sometimes drop the first connection but
