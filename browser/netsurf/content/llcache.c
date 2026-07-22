@@ -1029,18 +1029,95 @@ static nserror get_referer_header(nsurl *url, nsurl *referer, char **header_out)
 		match2 = false;
 	}
 	if (match == true || (match1 == true && match2 == true)) {
-		const size_t len = SLEN("Referer: ") +
-			nsurl_length(referer) + 1;
+		/* fixes959 — trim the referrer across origins.
+		 *
+		 * This used to send the ENTIRE referring URL, path and query
+		 * included, to any host the scheme rules allowed. On a browser
+		 * whose selling point is that it does not spy on you, that
+		 * leaks the exact page you were reading -- and any session
+		 * token, search term or article id sitting in its query string
+		 * -- to every third-party origin a page pulls a resource from.
+		 *
+		 * Behaviour now matches the modern browser default
+		 * (strict-origin-when-cross-origin):
+		 *
+		 *   same origin  -> full URL, unchanged. Sites legitimately use
+		 *                   this for their own analytics and paging.
+		 *   cross origin -> scheme://host[:port]/ only. The other end
+		 *                   still learns which site linked to it, which
+		 *                   is what referrers are actually for, and
+		 *                   nothing about which page.
+		 *   https -> http-> nothing, as before (handled above).
+		 *
+		 * Deliberately not made an option: an option nobody finds is
+		 * not privacy, and no site needs a cross-origin path. */
+		bool same_origin = nsurl_compare(url, referer,
+				NSURL_SCHEME | NSURL_HOST | NSURL_PORT);
 
-		header = malloc(len);
-		if (header == NULL) {
-			res = NSERROR_NOMEM;
+		if (same_origin == true) {
+			const size_t len = SLEN("Referer: ") +
+				nsurl_length(referer) + 1;
+
+			header = malloc(len);
+			if (header == NULL) {
+				res = NSERROR_NOMEM;
+			} else {
+				snprintf(header, len, "Referer: %s",
+					 nsurl_access(referer));
+
+				*header_out = header;
+				res = NSERROR_OK;
+			}
 		} else {
-			snprintf(header, len, "Referer: %s",
-				 nsurl_access(referer));
+			lwc_string *ref_host;
+			lwc_string *ref_port;
 
-			*header_out = header;
-			res = NSERROR_OK;
+			ref_host = nsurl_get_component(referer, NSURL_HOST);
+			if (ref_host == NULL) {
+				/* No host to build an origin from: send
+				 * nothing rather than fall back to the full
+				 * URL. Failing closed is the whole point.
+				 * NSERROR_INVALID, not OK -- OK would leave
+				 * *header_out unset for the caller to read. */
+				lwc_string_unref(scheme);
+				lwc_string_unref(ref_scheme);
+				return NSERROR_INVALID;
+			}
+			ref_port = nsurl_get_component(referer, NSURL_PORT);
+
+			{
+				const size_t len = SLEN("Referer: ") +
+					lwc_string_length(ref_scheme) +
+					SLEN("://") +
+					lwc_string_length(ref_host) +
+					SLEN(":") +
+					(ref_port != NULL ?
+					 lwc_string_length(ref_port) : 0) +
+					SLEN("/") + 1;
+
+				header = malloc(len);
+				if (header == NULL) {
+					res = NSERROR_NOMEM;
+				} else {
+					if (ref_port != NULL) {
+						snprintf(header, len,
+							"Referer: %s://%s:%s/",
+							lwc_string_data(ref_scheme),
+							lwc_string_data(ref_host),
+							lwc_string_data(ref_port));
+					} else {
+						snprintf(header, len,
+							"Referer: %s://%s/",
+							lwc_string_data(ref_scheme),
+							lwc_string_data(ref_host));
+					}
+					*header_out = header;
+					res = NSERROR_OK;
+				}
+			}
+
+			if (ref_port != NULL) lwc_string_unref(ref_port);
+			lwc_string_unref(ref_host);
 		}
 	}
 
