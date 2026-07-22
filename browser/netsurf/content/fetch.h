@@ -261,6 +261,28 @@ nserror fetch_set_http_code(struct fetch *fetch, http_response_code http_code);
 void fetch_set_cookie(struct fetch *fetch, const char *data);
 
 /**
+ * Mark this fetch's TLS transport as tainted (#307).
+ *
+ * "Tainted" means the transport was degraded or its certificate was not
+ * trusted, so anything the server asserts over it must not be believed --
+ * most importantly a Strict-Transport-Security header, which llcache
+ * ignores on a tainted transport (llcache_hsts_update_policy).
+ *
+ * Upstream only ever set this from inside llcache itself, on its own
+ * TLS-downgrade retry paths. Those paths cannot fire for the macos9
+ * fetchers (which never emit FETCH_CERT_ERR), so before this existed no
+ * MacSurf transport could ever be marked tainted and HSTS/mixed-content
+ * handling silently assumed every connection was clean. Fetchers that
+ * degrade a connection themselves now have a way to say so.
+ */
+void fetch_set_tainted_tls(struct fetch *fetch, bool tainted);
+
+/**
+ * Query whether this fetch's TLS transport was marked tainted.
+ */
+bool fetch_get_tainted_tls(struct fetch *fetch);
+
+/**
  * Query whether a fetch is "verifiable" (top-level / user-initiated
  * navigation, including a login POST) versus a sub-resource fetch. The
  * macos9 fetchers use this to key Sec-Fetch request metadata. NULL-safe

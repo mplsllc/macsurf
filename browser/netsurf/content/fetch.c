@@ -97,6 +97,7 @@ struct fetch {
 	int fetcherd;           /**< Fetcher descriptor for this fetch */
 	void *fetcher_handle;	/**< The handle for the fetcher. */
 	bool fetch_is_active;	/**< This fetch is active. */
+	bool tainted_tls;	/**< Transport was degraded (see fetch_set_tainted_tls) */
 	fetch_msg_type last_msg;/**< The last message sent for this fetch */
 	struct fetch *r_prev;	/**< Previous active fetch in ::fetch_ring. */
 	struct fetch *r_next;	/**< Next active fetch in ::fetch_ring. */
@@ -813,6 +814,23 @@ nserror fetch_set_http_code(struct fetch *fetch, http_response_code http_code)
 	fetch->http_code = http_code;
 
 	return NSERROR_OK;
+}
+
+
+/* exported interface documented in content/fetch.h */
+void fetch_set_tainted_tls(struct fetch *fetch, bool tainted)
+{
+	if (fetch == NULL) return;
+	NSLOG(fetch, DEBUG, "Marking TLS transport tainted=%d", tainted);
+	fetch->tainted_tls = tainted;
+}
+
+
+/* exported interface documented in content/fetch.h */
+bool fetch_get_tainted_tls(struct fetch *fetch)
+{
+	if (fetch == NULL) return false;
+	return fetch->tainted_tls;
 }
 
 

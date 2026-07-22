@@ -2561,6 +2561,23 @@ static nserror llcache_hsts_update_policy(llcache_object *object)
 	}
 	lwc_string_unref(scheme);
 
+	/* #307 — adopt a taint the FETCHER itself reported.
+	 *
+	 * object->fetch.tainted_tls is only ever set by llcache's own
+	 * TLS-downgrade retry paths, and those cannot fire for the macos9
+	 * fetchers: they never emit FETCH_CERT_ERR, so llcache never learns a
+	 * certificate was refused or a connection was degraded. The result was
+	 * that no MacSurf transport could ever be tainted, and this function
+	 * therefore trusted a Strict-Transport-Security header from a
+	 * connection the fetcher already knew was not clean.
+	 *
+	 * Checked here rather than at fetch teardown because that is where the
+	 * struct fetch is still alive and where the answer is needed. */
+	if (object->fetch.fetch != NULL &&
+	    fetch_get_tainted_tls(object->fetch.fetch)) {
+		object->fetch.tainted_tls = true;
+	}
+
 	if (object->fetch.tainted_tls) {
 		/* Transport is tainted: ignore */
 		return NSERROR_OK;
