@@ -1026,6 +1026,34 @@ static void hctx_cache_capture(struct macos9_https_ctx *c,
  * RSA intermediate signing FB's leaf) didn't verify; INVALID_ALGORITHM (26)
  * = a signature algorithm we don't offer/handle. BearSSL: SSL errors 0-31,
  * X.509 errors are 32+, fatal-alert ranges at 256/512. */
+/* fixes957 — last TLS failure classification, for the about:query/fetcherror
+ * page.  NetSurf core does pass the fetcher's error string through to the
+ * error page as a "reason" multipart field (browser_window.c
+ * browser_window__handle_fetcherror), but the macos9 about: handler builds its
+ * body from the request PATH only and never sees that field -- so the reason
+ * would be dropped on the floor.  Rather than re-plumb core, the fetcher
+ * records the classification here and macos9_fetcher_stubs.c reads it back
+ * when it renders the page.  Same cross-TU accessor pattern the fetchers
+ * already use for macos9_https_host_is_dead / _url_is_terminal.
+ *
+ * Session-scoped and deliberately last-writer-wins: the error page is rendered
+ * immediately after the failure that caused it. */
+static int g_last_tls_fail_cert = 0;
+static int g_last_tls_fail_time_class = 0;
+
+int macos9_tls_last_fail_was_cert(void);
+int macos9_tls_last_fail_was_time_class(void);
+
+int macos9_tls_last_fail_was_cert(void)
+{
+	return g_last_tls_fail_cert;
+}
+
+int macos9_tls_last_fail_was_time_class(void)
+{
+	return g_last_tls_fail_time_class;
+}
+
 static const char *ostls_br_err_name(int e)
 {
 	switch (e) {
@@ -1070,6 +1098,47 @@ static const char *ostls_br_err_name(int e)
 	return "?";
 }
 
+/* fixes957 — is this BearSSL error a CERTIFICATE REJECTION (as opposed to a
+ * transport/handshake failure)?
+ *
+ * BearSSL packs every X.509 validation error into 33..62 (32 is X509_OK; see
+ * bearssl_x509.h).  A code in that band means the server DID speak TLS and
+ * presented a certificate we refused: expired, not-yet-valid, self-signed,
+ * hostname mismatch, untrusted root.  Everything OUTSIDE the band means we
+ * never got a usable certificate at all -- no TLS on the port, a macTLS
+ * incompatibility, a truncated connection.
+ *
+ * That distinction is the whole point.  hctx_fail's http:// fallback exists
+ * for the outside-the-band case (fixes249b/317: retro HTTP-only hosts reached
+ * by typing a bare hostname).  Applying it to a REJECTED CERTIFICATE is a
+ * silent downgrade to cleartext -- MacSurf validating a cert, refusing it,
+ * and then fetching the same page in the clear anyway.  Nothing else in the
+ * browser misrepresents itself that way, and it is exactly what a packet
+ * capture would expose.  So: cert rejections fail closed, everything else
+ * keeps today's behaviour. */
+static int cert_rejected(struct macos9_https_ctx *c, const OSTLSDiagnostics *diag)
+{
+	int e;
+	if (c == NULL || c->conn == NULL || diag == NULL) return 0;
+	e = (int)diag->br_err;
+	return (e >= 33 && e <= 62) ? 1 : 0;
+}
+
+/* fixes957 — a cert rejection whose cause is PLAUSIBLY THE MAC'S CLOCK.
+ * BR_ERR_X509_EXPIRED (54) covers both "expired" and "not yet valid", so it
+ * is what a Mac reports whether its clock is years behind (dead PRAM battery
+ * -> 1904/1956) or years ahead.  53 is TIME_UNKNOWN.  We deliberately do NOT
+ * try to decide whether the clock is really wrong -- see the note on the
+ * error page, which states the ambiguity and prints the believed date so the
+ * user (who can see their own calendar) decides. */
+static int cert_time_class(const OSTLSDiagnostics *diag)
+{
+	int e;
+	if (diag == NULL) return 0;
+	e = (int)diag->br_err;
+	return (e == 53 || e == 54) ? 1 : 0;
+}
+
 static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 {
 	struct fetch *p;
@@ -1085,8 +1154,20 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	 * HTTP-only / macTLS-incompatible hosts fail at HS_TLSING (pre-response),
 	 * so https_worked stays 0 and the existing fallback/dead-host path runs. */
 	int https_worked;
+	/* fixes957 — hoisted to function scope (was local to the diag-dump
+	 * block below).  The http-fallback gate now has to consult br_err to
+	 * tell a rejected certificate from a dead port, so the diagnostics are
+	 * fetched once here and reused rather than queried twice. */
+	OSTLSDiagnostics diag;
+	int is_cert_fail;
 
 	if (c->state == HS_FAIL || c->state == HS_DONE) return;
+
+	memset(&diag, 0, sizeof diag);
+	if (c->conn != NULL) {
+		OSTLS_GetDiagnostics(c->conn, &diag);
+	}
+	is_cert_fail = cert_rejected(c, &diag);
 
 	https_worked = (c->state == HS_HEADERS || c->state == HS_BODY);
 	if (https_worked)
@@ -1109,9 +1190,6 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 		(int)c->port,
 		c->path[0] ? c->path : "(unset)");
 	if (c->conn != NULL) {
-		OSTLSDiagnostics diag;
-		memset(&diag, 0, sizeof diag);
-		OSTLS_GetDiagnostics(c->conn, &diag);
 		/* fixes227 — macsurf_debug_log_writef supports only %d %ld %p %s %%
 		 * (see project_macsurf_debug_log_specifiers memory). Cipher
 		 * gets printed as decimal; 0xCCA9 = 52393 (ChaCha20-Poly1305),
@@ -1183,8 +1261,25 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	 * doesn't stick"). host_is_fb_asset covers facebook.com/fbcdn.net/
 	 * fbsbx.com/cdninstagram.com on a dot boundary. A transient TLS glitch
 	 * on FB surfaces FETCH_ERROR (retryable) instead. */
+	/* fixes957 — a REJECTED CERTIFICATE never falls back to cleartext.
+	 * This is the one case where the old unconditional fallback turned a
+	 * successful security decision into a silent downgrade: BearSSL
+	 * validated the chain, refused it, and MacSurf then refetched the same
+	 * page over http:// as if nothing had happened.  Record it loudly and
+	 * let the fetch fail. */
+	g_last_tls_fail_cert = is_cert_fail;
+	g_last_tls_fail_time_class = is_cert_fail ? cert_time_class(&diag) : 0;
+	if (is_cert_fail) {
+		macsurf_debug_log_writef(
+			"https: cert INVALID br_err=%d(%s) host=%s -- refusing "
+			"http fallback", (int)diag.br_err,
+			ostls_br_err_name((int)diag.br_err),
+			c->host[0] ? c->host : "(unset)");
+	}
+
 	if (c->aborted == 0 &&
 	    !https_worked &&   /* fixes718: HTTPS answered — don't fall back to http */
+	    !is_cert_fail &&   /* fixes957: cert rejection fails closed */
 	    !host_is_fb_asset(c->host) &&
 	    c->url != NULL && c->pool_key[0] != '\0' &&
 	    !terminal_url_check(nsurl_access(c->url)) &&

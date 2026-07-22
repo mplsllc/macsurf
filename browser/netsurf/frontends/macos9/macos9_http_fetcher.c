@@ -9,6 +9,7 @@
 #include "content/fetchers.h"
 #include "content/urldb.h"	/* fixes367 (#167) — cookie jar: urldb_get_cookie */
 #include "macos9_useragent.h"	/* fixes368 (#167) — per-host UA table */
+#include "macos9_blocklist.h"	/* fixes957 (#285) — tracker/ad blocklist (http side) */
 #include "macsurf_debug.h"
 #include "macsurf_osver.h"	/* fixes936 (OS X tier 1) — macsurf_os_is_osx() */
 #ifdef __MACOS9__
@@ -1159,6 +1160,41 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 	/* fixes91 — MFS_QUEUED means NetSurf hasn't dispatched yet (ops.start
 	 * unfired); don't open OT until then. */
 	if(c->state==MFS_QUEUED) return;
+	/* fixes957 (#285) — refuse trackers / ad networks / consent platforms on
+	 * CLEARTEXT origins too.
+	 *
+	 * fixes856 added the blocklist but wired it into the HTTPS fetcher only:
+	 * this file has always included macos9_useragent.h and never
+	 * macos9_blocklist.h, so every http:// tracker request sailed straight
+	 * through the browser's headline privacy feature.
+	 *
+	 * Gated HERE rather than in ops.start for two reasons: mfs_open() on the
+	 * next line is what actually opens the OT endpoint, so a blocked host
+	 * costs no socket, no request and no response; and failing from inside
+	 * ops.start would mean self-freeing a handle NetSurf core is still
+	 * dispatching (see the fetcher self-free rules in CLAUDE.md).  Setting
+	 * MFS_FAIL lets the existing terminal path emit one FETCH_ERROR and do
+	 * the cleanup exactly as every other failure does.  This mirrors the
+	 * HTTPS fetcher's gate, which is likewise in the poll loop. */
+	if (c->state == MFS_INIT && c->url != NULL) {
+		lwc_string *bl_host = nsurl_get_component(c->url, NSURL_HOST);
+		if (bl_host != NULL) {
+			char bl_z[256];
+			size_t bl_n = lwc_string_length(bl_host);
+			if (bl_n >= sizeof bl_z) bl_n = sizeof bl_z - 1;
+			memcpy(bl_z, lwc_string_data(bl_host), bl_n);
+			bl_z[bl_n] = '\0';
+			lwc_string_unref(bl_host);
+			if (macos9_host_is_tracker(bl_z)) {
+				macsurf_debug_log_writef(
+					"WORK blocked tracker host=%s (http)",
+					bl_z);
+				c->err = "http: tracker/ad host blocked";
+				c->state = MFS_FAIL;
+				return;
+			}
+		}
+	}
 	if(c->state==MFS_INIT) { if(mfs_open(c)) c->state=MFS_HEADERS; else c->state=MFS_FAIL; return; }
 	/* fixes172 — cache-hit fast path. mfs_open set cache_hit=1 and
 	 * populated the body buffer; we deliver headers, the body, and
