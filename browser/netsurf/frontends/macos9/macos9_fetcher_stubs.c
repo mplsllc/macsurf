@@ -569,9 +569,15 @@ stub_can_fetch(const struct nsurl *url)
 	return true;
 }
 
+/* fixes957d — fail_reason/fail_site are the "reason" and "siteurl" fields core
+ * posts to about:query/fetcherror, and they MUST be handed in here rather than
+ * written onto the returned context afterwards: this function builds the error
+ * page body, so anything stored after it returns is too late to appear on the
+ * page.  NULL for every scheme that has no such data. */
 static void *
 stub_setup_scheme(struct fetch *parent_fetch, struct nsurl *url,
-		  stub_scheme scheme)
+		  stub_scheme scheme,
+		  const char *fail_reason, const char *fail_site)
 {
 	struct stub_fetch_ctx *ctx;
 	const char *url_str;
@@ -584,6 +590,21 @@ stub_setup_scheme(struct fetch *parent_fetch, struct nsurl *url,
 
 	ctx->parent = parent_fetch;
 	ctx->scheme = scheme;
+
+	if (fail_reason != NULL) {
+		size_t n = strlen(fail_reason);
+		if (n >= sizeof ctx->fail_reason)
+			n = sizeof ctx->fail_reason - 1;
+		memcpy(ctx->fail_reason, fail_reason, n);
+		ctx->fail_reason[n] = '\0';
+	}
+	if (fail_site != NULL) {
+		size_t n = strlen(fail_site);
+		if (n >= sizeof ctx->fail_site)
+			n = sizeof ctx->fail_site - 1;
+		memcpy(ctx->fail_site, fail_site, n);
+		ctx->fail_site[n] = '\0';
+	}
 
 	url_str = nsurl_access(url);
 	url_len = strlen(url_str);
@@ -859,7 +880,7 @@ stub_setup_resource(struct fetch *parent_fetch, struct nsurl *url,
 {
 	(void)only_2xx; (void)downgrade_tls;
 	(void)post_urlenc; (void)post_multipart; (void)headers;
-	return stub_setup_scheme(parent_fetch, url, SCH_RESOURCE);
+	return stub_setup_scheme(parent_fetch, url, SCH_RESOURCE, NULL, NULL);
 }
 
 static void *
@@ -872,57 +893,41 @@ stub_setup_about(struct fetch *parent_fetch, struct nsurl *url,
 	/* fixes957 — capture the "reason" the failing fetcher reported.  Core
 	 * posts it here (browser_window__handle_fetcherror); it used to be
 	 * discarded with the (void) below, which is why about:query/fetcherror
-	 * could only ever offer three generic guesses. */
-	void *v;
+	 * could only ever offer three generic guesses.
+	 *
+	 * fixes957d — read BOTH fields out of the multipart and hand them to
+	 * stub_setup_scheme, which is where the page body is composed.  fixes957
+	 * and fixes957c wrote them onto the context AFTER that call returned, so
+	 * the body had already been built against the calloc'd empty strings and
+	 * always came out generic with an empty URL box -- which is exactly what
+	 * hardware showed while the log proved the reason had reached core
+	 * intact ("NAV: ERROR ... msg=certificate expired or not yet valid").
+	 * Not a caching problem and not a core plumbing problem: llcache marks
+	 * every POST uncachable (llcache_object_retrieve), so this page is
+	 * re-fetched and re-built on every failure, and fetch_start passes the
+	 * multipart straight through to ops.setup.
+	 *
+	 * The values stay per-fetch, in the context, deliberately: a page load
+	 * has concurrent subresource fetches, so a global "last failure reason"
+	 * is last-write-wins and a tracker or image failing after the document
+	 * would give the page a classification from a different connection. */
+	const char *why;
+	const char *site;
+
 	(void)only_2xx; (void)downgrade_tls;
 	(void)post_urlenc; (void)headers;
 
-	v = stub_setup_scheme(parent_fetch, url, SCH_ABOUT);
-	if (v != NULL) {
-		struct stub_fetch_ctx *actx = (struct stub_fetch_ctx *)v;
-		const char *why = (post_multipart != NULL)
-			? fetch_multipart_data_find(post_multipart, "reason")
-			: NULL;
-		const char *site = (post_multipart != NULL)
-			? fetch_multipart_data_find(post_multipart, "siteurl")
-			: NULL;
+	why = (post_multipart != NULL)
+		? fetch_multipart_data_find(post_multipart, "reason")
+		: NULL;
+	/* The failed URL comes from the SAME multipart.  The page has always
+	 * parsed it out of the request path as "url=", but core never puts it
+	 * there: it posts it as "siteurl".  Prefer the real value. */
+	site = (post_multipart != NULL)
+		? fetch_multipart_data_find(post_multipart, "siteurl")
+		: NULL;
 
-		if (why != NULL) {
-			size_t wn = strlen(why);
-			if (wn >= sizeof actx->fail_reason)
-				wn = sizeof actx->fail_reason - 1;
-			memcpy(actx->fail_reason, why, wn);
-			actx->fail_reason[wn] = '\0';
-		}
-		/* fixes957c — the failed URL comes from the SAME multipart.
-		 * The page has always parsed it out of the request path as
-		 * "url=", but core never puts it there: it posts it as
-		 * "siteurl" (browser_window__handle_fetcherror). So the URL box
-		 * has been rendering empty. Prefer the real value. */
-		if (site != NULL) {
-			size_t sn = strlen(site);
-			if (sn >= sizeof actx->fail_site)
-				sn = sizeof actx->fail_site - 1;
-			memcpy(actx->fail_site, site, sn);
-			actx->fail_site[sn] = '\0';
-		}
-
-		/* fixes957c — hardware showed the fetcher classifying an
-		 * expired cert correctly and the reason reaching core
-		 * ("NAV: ERROR ... msg=certificate expired or not yet valid"),
-		 * yet the page still rendering the generic text -- i.e. this
-		 * setup saw no reason. Says plainly whether the multipart
-		 * arrived at all, which distinguishes "core did not pass it"
-		 * from "this page was served from cache and setup never ran"
-		 * (the error-page URL is identical for every failure, so a
-		 * cache hit would reuse whichever page was built first). */
-		macsurf_debug_log_writef(
-			"WORK fetcherror setup mp=%d reason=%s site=%s",
-			(post_multipart != NULL) ? 1 : 0,
-			(why != NULL) ? why : "(none)",
-			(site != NULL) ? site : "(none)");
-	}
-	return v;
+	return stub_setup_scheme(parent_fetch, url, SCH_ABOUT, why, site);
 }
 
 static void *
@@ -934,7 +939,7 @@ stub_setup_file(struct fetch *parent_fetch, struct nsurl *url,
 {
 	(void)only_2xx; (void)downgrade_tls;
 	(void)post_urlenc; (void)post_multipart; (void)headers;
-	return stub_setup_scheme(parent_fetch, url, SCH_FILE);
+	return stub_setup_scheme(parent_fetch, url, SCH_FILE, NULL, NULL);
 }
 
 /* fixes352a (#96) — data: URL fetcher. Pre-fix this returned an empty
@@ -1046,7 +1051,7 @@ stub_setup_javascript(struct fetch *parent_fetch, struct nsurl *url,
 {
 	(void)only_2xx; (void)downgrade_tls;
 	(void)post_urlenc; (void)post_multipart; (void)headers;
-	return stub_setup_scheme(parent_fetch, url, SCH_JAVASCRIPT);
+	return stub_setup_scheme(parent_fetch, url, SCH_JAVASCRIPT, NULL, NULL);
 }
 
 static bool
