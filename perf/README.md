@@ -54,15 +54,21 @@ table but aren't double-counted in the bar.
 ## Site-compatibility benchmark (multi-site, scored)
 
 `bench.py` turns a captured log into a **scored, honest, per-site** record and
-regenerates **`wiki/Site-Compatibility.md`** — the public progress tracker on
-the GitHub wiki.
+regenerates **`perf/site-compatibility.md`**.
+
+> **Not published.** This used to render a public GitHub wiki page. That page was
+> withdrawn (2026-07-21): it had gone stale at 2 scored sites, and it reported
+> **mactrove.com as grade F "can't load yet"** when mactrove is the project's
+> canonical working render target. A stale honest page is still misleading. The
+> record is now local-only until a fresh hardware bench run produces real numbers
+> across the target list.
 
 ```sh
 # score the last cycle for a site you just loaded on the G3, then rebuild the page
 perf/bench.py capture "forclaude/MacSurf Debug.log" \
     --url https://68kmla.org/bb/ --label "fixes404" --login works
 
-# rebuild the wiki page from accumulated data only
+# rebuild the local record from accumulated data only
 perf/bench.py render
 ```
 
@@ -71,4 +77,4 @@ perf/bench.py render
 - Scoring is out of 100 from the log alone (render 40 / css 20 / images 15 / speed 15 / clean 10) — transparent, no subjective judgement. A site that can't load is scored `F` and listed honestly, not hidden.
 - `--login works|partial|fails` annotates login state per site (the one thing the log can't auto-detect yet).
 
-**The loop:** load each target on the G3 → pull the log → `bench.py capture … --url <site>` → commit. The wiki page updates so anyone can watch each site's grade climb over releases.
+**The loop:** load each target on the G3 → pull the log → `bench.py capture … --url <site>` → commit. Once the target list has real coverage, the record is worth publishing again — until then it stays in-repo.

@@ -3,9 +3,10 @@
 MacSurf site-compatibility benchmark.
 
 Turns a captured `MacSurf Debug.log` into a SCORED, honest, per-site record and
-regenerates the wiki tracker page (wiki/Site-Compatibility.md) that the whole
-world can watch progress on. Builds on the existing loggers — no new Mac-side
-code required:
+regenerates a LOCAL compatibility record (perf/site-compatibility.md). This is
+no longer published: the old public wiki page went stale and misreported working
+sites as failures, so it was withdrawn until a fresh hardware bench run exists.
+Builds on the existing loggers — no new Mac-side code required:
 
   - PROFILE line  -> total_bytes, subresources           (page weight)
   - SITE line     -> boxes/text/img_ok/img_fail/css_ok…   (render quality)
@@ -20,7 +21,7 @@ Two modes:
   perf/bench.py capture "forclaude/MacSurf Debug.log" \
       --url https://68kmla.org/bb/ --label "fixes404" [--login works]
 
-  # 2. render: rebuild wiki/Site-Compatibility.md from bench.csv + sites.csv
+  # 2. render: rebuild perf/site-compatibility.md from bench.csv + sites.csv
   perf/bench.py render
 
 `capture` auto-runs `render` afterward. Untested sites from perf/sites.csv are
@@ -42,7 +43,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 BENCH_CSV = os.path.join(HERE, "bench.csv")
 SITES_CSV = os.path.join(HERE, "sites.csv")
-WIKI_PAGE = os.path.join(ROOT, "wiki", "Site-Compatibility.md")
+WIKI_PAGE = os.path.join(HERE, "site-compatibility.md")
 
 # ---- scoring weights (transparent + tunable) -------------------------------
 W_RENDER = 40   # did real content lay out + paint
@@ -367,7 +368,7 @@ def main():
     c.add_argument("--login", default="", choices=["", "works", "partial", "fails", "n/a"])
     c.add_argument("--notes", default="")
     c.set_defaults(func=cmd_capture)
-    r = sub.add_parser("render", help="rebuild wiki/Site-Compatibility.md")
+    r = sub.add_parser("render", help="rebuild perf/site-compatibility.md")
     r.set_defaults(func=cmd_render)
     args = ap.parse_args()
     args.func(args)

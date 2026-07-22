@@ -38,7 +38,7 @@ echo "==> Provisioning $REPO"
 echo "--> Enabling repo features (issues/wiki/discussions/projects)"
 gh api -X PATCH "repos/$REPO" \
   -F has_issues=true \
-  -F has_wiki=true \
+  -F has_wiki=false \
   -F has_discussions=true \
   -F has_projects=true \
   --jq '"   features now: issues=\(.has_issues) wiki=\(.has_wiki) discussions=\(.has_discussions) projects=\(.has_projects)"'
