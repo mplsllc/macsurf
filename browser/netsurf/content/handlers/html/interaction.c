@@ -1778,8 +1778,21 @@ mouse_action_drag_none(html_content *html,
 					? "  <-- MISMATCH: clicking a tree the last reconvert did not install"
 					: "");
 		}
-		fire_generic_dom_event(corestring_dom_click, mas.node, true, true);
-		/* fixes882 -- READ THIS BEFORE DEBUGGING A CLICK.
+		/* fixes989 — this IS the dispatch, and its return value IS the
+		 * preventDefault answer: fire_dom_event returns false when the
+		 * event was cancelled. Now that addEventListener registers with
+		 * libdom (macsurf_qjs.c), this reaches real JS handlers. */
+		js_default_prevented = fire_generic_dom_event(
+			corestring_dom_click, mas.node, true, true) ? 0 : 1;
+		/* fixes882/989 -- READ THIS BEFORE DEBUGGING A CLICK.
+		 *
+		 * fixes989 CLOSED what the rest of this comment describes: JS
+		 * addEventListener now registers a marker listener with libdom
+		 * (macsurf_qjs.c, "the event bridge"), so the dispatch above
+		 * reaches real handlers and its return value carries
+		 * preventDefault. The history is kept because it explains the
+		 * shape of the fix and why the harness could not see the bug.
+		 *
 		 *
 		 * This comment used to claim the call below "dispatches the click
 		 * through the QuickJS shadow-DOM event layer so page scripts that use
@@ -1804,12 +1817,6 @@ mouse_action_drag_none(html_content *html,
 		 * Note the S0 harness dispatches events SYNTHETICALLY through
 		 * el.dispatchEvent, which is the path that works -- so it reports
 		 * healthy while hardware ignores every click. */
-		{
-			extern int macsurf_qjs_dispatch_dom_click(
-					struct dom_node *node);
-			js_default_prevented =
-				macsurf_qjs_dispatch_dom_click(mas.node);
-		}
 		if (js_default_prevented != 0 &&
 		    (mas.result.action == ACTION_NAVIGATE ||
 		     mas.result.action == ACTION_SUBMIT)) {

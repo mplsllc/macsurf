@@ -141,6 +141,10 @@ static bool fire_dom_event(dom_event *event, dom_node *target)
 	return result;
 }
 
+/* fixes990 — the layout extent as it stood BEFORE the 1,000,000 clamp, so the
+ * split-scrollbar diagnostic can see the value the clamp destroys. */
+static int g_macsurf_pre_clamp_dx1 = 0;
+
 /* Exported interface, see html_internal.h */
 bool fire_generic_dom_event(dom_string *type, dom_node *target,
 		bool bubbles, bool cancelable)
@@ -2952,6 +2956,18 @@ static void html_reformat(struct content *c, int width, int height)
 	 * ~2.1-billion-px content width (the "split scrollbar": a giant empty
 	 * canvas beside the real page). Mirrors the documented redraw.c
 	 * +-200000 defensive-clamp gotcha. */
+	/* fixes990 — remember the PRE-clamp extent. The diagnostic below is
+	 * gated on `descendant_x1 > 1000000`, but this clamp runs first and
+	 * pins it to exactly 1000000, so that gate has never once been true:
+	 * the box walk that exists to name the split-scrollbar culprit has
+	 * been dead code since it was written. Worse, the clamp does not fix
+	 * the symptom -- a 1,000,000px canvas is still a giant empty page with
+	 * a spurious horizontal scrollbar -- it only removes the INT_MAX
+	 * signature everyone greps for. */
+	{
+		int pre_dx1 = (layout != NULL) ? (int)layout->descendant_x1 : 0;
+		g_macsurf_pre_clamp_dx1 = pre_dx1;
+	}
 	if (layout->descendant_x1 > 1000000)
 		layout->descendant_x1 = 1000000;
 	if (layout->descendant_y1 > 1000000)
@@ -2976,9 +2992,19 @@ static void html_reformat(struct content *c, int width, int height)
 	 * garbage (the leak source, not the ancestors that merely inherit the
 	 * bad descendant_x1). Iterative + bounded so it can't blow the OS 9
 	 * stack. One-shot per session. */
-	if (layout != NULL && (layout->descendant_x1 > 1000000 ||
-			layout->descendant_x1 < -1000000)) {
+	if (layout != NULL && (g_macsurf_pre_clamp_dx1 > 1000000 ||
+			g_macsurf_pre_clamp_dx1 < -1000000 ||
+			(c->width > 20000 && c->width > width * 4))) {
 		static int td_garbage_dumped = 0;
+		/* fixes990 — announce it whether or not the walk has run before,
+		 * so a RECURRENCE is visible and not just the first instance.
+		 * "LIFE " because the failures-only gate drops everything else,
+		 * which is why this has been invisible. Anomaly-gated, so a
+		 * healthy page logs nothing. */
+		macsurf_debug_log_writef(
+			"LIFE SPLIT c_w=%d in_w=%d dx1_preclamp=%d dx1=%d lyt_w=%d",
+			(int)c->width, width, g_macsurf_pre_clamp_dx1,
+			(int)layout->descendant_x1, (int)layout->width);
 		if (td_garbage_dumped == 0) {
 			struct box *stack[256];
 			int sp = 0;
@@ -2994,7 +3020,7 @@ static void html_reformat(struct content *c, int width, int height)
 						bx->x > 1000000 ||
 						bx->x < -1000000) {
 					macsurf_debug_log_writef(
-						"GARBAGEBOX type=%d x=%d w=%d dx1=%d mL=%d mR=%d",
+						"LIFE GARBAGEBOX type=%d x=%d w=%d dx1=%d mL=%d mR=%d",
 						(int)bx->type, (int)bx->x,
 						(int)bx->width,
 						(int)bx->descendant_x1,

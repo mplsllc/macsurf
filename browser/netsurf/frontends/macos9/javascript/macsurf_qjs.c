@@ -2633,14 +2633,13 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"while(n&&n.matches){if(n.matches(sel))return n;n=n.parentNode;}"
 		"return null;};"
 		/* event handling */
-		"el.addEventListener=function(t,fn,opts){"
-		"if(!el._L)el._L={};"
-		"if(!el._L[t])el._L[t]=[];"
-		"el._L[t].push(fn);};"
-		"el.removeEventListener=function(t,fn){"
-		"if(!el._L||!el._L[t])return;"
-		"var a=el._L[t];"
-		"var i;for(i=0;i<a.length;i++){if(a[i]===fn){a.splice(i,1);return;}}};"
+		/* fixes989 — addEventListener / removeEventListener are NATIVE
+		 * now (qjs_el_add_event_listener_data). They must not be defined
+		 * here: this helper string is evaluated AFTER the natives are
+		 * installed, so a JS definition would silently shadow them and
+		 * the libdom registration would never happen. dispatchEvent
+		 * stays JS -- the native listener callback calls it, so the
+		 * _L/_H firing logic has exactly one implementation. */
 		/* fixes872 (#300) — fire the addEventListener list (_L) AND the on*
 		 * handler (_H, set through the prototype accessors) exactly once each.
 		 * Both routes are real and pages use both; dispatchEvent firing only _L
@@ -2764,11 +2763,312 @@ static void qjs_install_node_traversal(JSContext *ctx, JSValue obj)
 }
 
 /* Install all native C functions and JS helpers on an element object */
+/* ==================================================================== */
+/* fixes989 (#264/#300) — the event bridge                              */
+/* ==================================================================== */
+/*
+ * Before this, a real mouse click reached NOTHING. interaction.c did a real
+ * libdom dispatch via fire_generic_dom_event, but nothing in the tree ever
+ * called dom_event_target_add_event_listener, so it dispatched into an empty
+ * listener set; and the only other route, macsurf_qjs_dispatch_dom_click, was
+ * a stub returning 0. JS kept its own registries (_L for addEventListener, _H
+ * for on* properties) that libdom knew nothing about. That is why pages
+ * rendered correctly and ignored every click.
+ *
+ * THE DESIGN, and its one important property: libdom never holds a JSValue.
+ *
+ * addEventListener still fills the SAME _L registry as before -- JS owns the
+ * callbacks -- and additionally registers a single shared marker listener with
+ * libdom for (node, type, capture). That listener carries no JS state at all.
+ * When libdom dispatches, the callback reads the event's currentTarget,
+ * resolves that node to its ONE stable wrapper through the wrapper cache
+ * (qjs_wrap_lookup -- this is what makes the whole approach possible: `_L` set
+ * through any reference to a node is visible through every other), and calls
+ * that wrapper's existing dispatchEvent to fire _L and _H for this node.
+ * libdom therefore owns PROPAGATION; JS owns the callbacks; neither owns the
+ * other's memory.
+ *
+ * What that buys: when the JS realm is rebuilt (navigation, js_newthread) the
+ * registries vanish with it and the marker listeners simply resolve to no
+ * wrapper and no-op. There is no teardown ordering to get right, nothing to
+ * unregister before freeing a runtime, and no second owner of a callback --
+ * which is the whole hazard class that #283/#304 came from.
+ *
+ * ONE listener object serves every registration: libdom keys its own storage
+ * by (type, listener, capture) per node, so registering the same listener on
+ * many nodes and types is correct, and removal matches on the same pointer.
+ */
+
+static dom_event_listener *g_qjs_dom_listener = NULL;
+
+/* The callback needs a JSContext and only has the wrapper entry's runtime.
+ * Resolve it through the live-heap list rather than g_heap: with an iframe
+ * there are several runtimes and g_heap is merely the newest. */
+static JSContext *qjs_ctx_for_runtime(JSRuntime *rt)
+{
+	struct jsheap *h;
+	if (rt == NULL) return NULL;
+	for (h = g_heap_list; h != NULL; h = h->next) {
+		if (h->rt == rt) return h->ctx;
+	}
+	return NULL;
+}
+
+/* preventDefault / stopPropagation are wired straight to the REAL dom_event,
+ * so fire_generic_dom_event's existing return value carries the answer and
+ * interaction.c needs no separate channel. The event pointer travels as an
+ * integer in func_data because the event outlives neither the dispatch nor
+ * this closure -- both are torn down when the dispatch returns. */
+static JSValue qjs_ev_prevent_default_data(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv,
+		int magic, JSValueConst *func_data)
+{
+	int64_t p = 0;
+	(void)this_val; (void)argc; (void)argv; (void)magic;
+	if (JS_ToInt64(ctx, &p, func_data[0]) == 0 && p != 0) {
+		dom_event_prevent_default((dom_event *)(size_t)p);
+	}
+	return JS_UNDEFINED;
+}
+
+static JSValue qjs_ev_stop_propagation_data(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv,
+		int magic, JSValueConst *func_data)
+{
+	int64_t p = 0;
+	(void)this_val; (void)argc; (void)argv; (void)magic;
+	if (JS_ToInt64(ctx, &p, func_data[0]) == 0 && p != 0) {
+		dom_event_stop_propagation((dom_event *)(size_t)p);
+	}
+	return JS_UNDEFINED;
+}
+
+static void qjs_dom_listener_cb(dom_event *evt, void *pw)
+{
+	dom_event_target *ct = NULL;
+	dom_event_target *tt = NULL;
+	dom_node *node;
+	struct qjs_wrap_entry *hit;
+	JSContext *ctx;
+	dom_string *type_ds = NULL;
+	JSValue evobj, disp, ret, pd;
+	JSValue callargv[1];
+
+	(void)pw;
+	if (evt == NULL) return;
+	if (dom_event_get_current_target(evt, &ct) != DOM_NO_ERR) return;
+	if (ct == NULL) return;
+	node = (dom_node *)ct;          /* getter took a ref; we own it */
+
+	hit = qjs_wrap_lookup(node);
+	if (hit == NULL) {
+		/* No wrapper: this node was never touched by script, or the realm
+		 * has been rebuilt and its wrappers drained. Nothing to run. */
+		macsurf_dom_node_unref(node);
+		return;
+	}
+	ctx = qjs_ctx_for_runtime(hit->rt);
+	if (ctx == NULL) {
+		macsurf_dom_node_unref(node);
+		return;
+	}
+	if (dom_event_get_type(evt, &type_ds) != DOM_NO_ERR || type_ds == NULL) {
+		macsurf_dom_node_unref(node);
+		return;
+	}
+
+	evobj = JS_NewObject(ctx);
+	JS_SetPropertyStr(ctx, evobj, "type",
+		JS_NewStringLen(ctx, dom_string_data(type_ds),
+				(size_t)dom_string_length(type_ds)));
+	JS_SetPropertyStr(ctx, evobj, "currentTarget",
+		JS_DupValue(ctx, hit->val));
+	if (dom_event_get_target(evt, &tt) == DOM_NO_ERR && tt != NULL) {
+		struct qjs_wrap_entry *th = qjs_wrap_lookup((dom_node *)tt);
+		if (th != NULL) {
+			JS_SetPropertyStr(ctx, evobj, "target",
+				JS_DupValue(ctx, th->val));
+			JS_SetPropertyStr(ctx, evobj, "srcElement",
+				JS_DupValue(ctx, th->val));
+		}
+		macsurf_dom_node_unref((dom_node *)tt);
+	}
+	pd = JS_NewInt64(ctx, (long long)(size_t)evt);
+	JS_SetPropertyStr(ctx, evobj, "preventDefault",
+		JS_NewCFunctionData(ctx, qjs_ev_prevent_default_data,
+				0, 0, 1, &pd));
+	JS_SetPropertyStr(ctx, evobj, "stopPropagation",
+		JS_NewCFunctionData(ctx, qjs_ev_stop_propagation_data,
+				0, 0, 1, &pd));
+	JS_SetPropertyStr(ctx, evobj, "stopImmediatePropagation",
+		JS_NewCFunctionData(ctx, qjs_ev_stop_propagation_data,
+				0, 0, 1, &pd));
+	JS_FreeValue(ctx, pd);   /* NewCFunctionData took its own reference */
+
+	/* Fire this node's _L + _H through the one implementation that exists. */
+	disp = JS_GetPropertyStr(ctx, hit->val, "dispatchEvent");
+	if (JS_IsFunction(ctx, disp)) {
+		callargv[0] = evobj;
+		ret = JS_Call(ctx, disp, hit->val, 1,
+				(JSValueConst *)callargv);
+		if (JS_IsException(ret)) {
+			JSValue ex = JS_GetException(ctx);
+			const char *msg = JS_ToCString(ctx, ex);
+			macsurf_debug_log_writef(
+				"LIFE jsevent handler threw: %s",
+				msg ? msg : "?");
+			if (msg) JS_FreeCString(ctx, msg);
+			JS_FreeValue(ctx, ex);
+		}
+		JS_FreeValue(ctx, ret);
+	}
+	JS_FreeValue(ctx, disp);
+	JS_FreeValue(ctx, evobj);
+	macsurf_dom_string_unref(type_ds);
+	macsurf_dom_node_unref(node);
+}
+
+static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv,
+		int magic, JSValueConst *func_data)
+{
+	dom_node *node;
+	const char *type_c;
+	JSValue L, arr, lenv;
+	uint32_t len = 0;
+	int capture = 0;
+	int fresh = 0;
+	(void)this_val; (void)magic;
+
+	node = qjs_get_node(func_data[0]);
+	if (node == NULL || argc < 2 || !JS_IsFunction(ctx, argv[1])) {
+		return JS_UNDEFINED;
+	}
+	type_c = JS_ToCString(ctx, argv[0]);
+	if (type_c == NULL) return JS_UNDEFINED;
+
+	/* third argument is capture, or an options object carrying it. Parsed
+	 * and HONOURED now; the old JS shim accepted and discarded it. */
+	if (argc >= 3) {
+		if (JS_IsBool(argv[2])) {
+			capture = JS_ToBool(ctx, argv[2]);
+		} else if (JS_IsObject(argv[2])) {
+			JSValue c = JS_GetPropertyStr(ctx, argv[2], "capture");
+			capture = JS_ToBool(ctx, c);
+			JS_FreeValue(ctx, c);
+		}
+	}
+
+	/* JS-side registry, unchanged shape: el._L[type] is an array of fns. */
+	L = JS_GetPropertyStr(ctx, func_data[0], "_L");
+	if (!JS_IsObject(L)) {
+		JS_FreeValue(ctx, L);
+		L = JS_NewObject(ctx);
+		JS_SetPropertyStr(ctx, func_data[0], "_L", JS_DupValue(ctx, L));
+	}
+	arr = JS_GetPropertyStr(ctx, L, type_c);
+	if (JS_IsUndefined(arr) || JS_IsNull(arr)) {
+		JS_FreeValue(ctx, arr);
+		arr = JS_NewArray(ctx);
+		JS_SetPropertyStr(ctx, L, type_c, JS_DupValue(ctx, arr));
+		fresh = 1;   /* first listener of this type on this node */
+	}
+	lenv = JS_GetPropertyStr(ctx, arr, "length");
+	JS_ToUint32(ctx, &len, lenv);
+	JS_FreeValue(ctx, lenv);
+	JS_SetPropertyUint32(ctx, arr, len, JS_DupValue(ctx, argv[1]));
+	JS_FreeValue(ctx, arr);
+	JS_FreeValue(ctx, L);
+
+	/* Register with libdom ONCE per (node, type). Repeat registrations of
+	 * the same type would each add a dispatch of the whole _L list. */
+	if (fresh) {
+		if (g_qjs_dom_listener == NULL) {
+			(void)dom_event_listener_create(qjs_dom_listener_cb,
+					NULL, &g_qjs_dom_listener);
+		}
+		if (g_qjs_dom_listener != NULL) {
+			dom_string *type_ds = qjs_make_domstr(type_c);
+			if (type_ds != NULL) {
+				(void)dom_event_target_add_event_listener(
+					node, type_ds, g_qjs_dom_listener,
+					capture ? true : false);
+				macsurf_dom_string_unref(type_ds);
+			}
+		}
+	}
+	JS_FreeCString(ctx, type_c);
+	return JS_UNDEFINED;
+}
+
+static JSValue qjs_el_remove_event_listener_data(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv,
+		int magic, JSValueConst *func_data)
+{
+	const char *type_c;
+	JSValue L, arr, lenv, item;
+	uint32_t len = 0, i;
+	(void)this_val; (void)magic;
+
+	if (argc < 2) return JS_UNDEFINED;
+	type_c = JS_ToCString(ctx, argv[0]);
+	if (type_c == NULL) return JS_UNDEFINED;
+
+	L = JS_GetPropertyStr(ctx, func_data[0], "_L");
+	if (JS_IsObject(L)) {
+		arr = JS_GetPropertyStr(ctx, L, type_c);
+		if (JS_IsObject(arr)) {
+			lenv = JS_GetPropertyStr(ctx, arr, "length");
+			JS_ToUint32(ctx, &len, lenv);
+			JS_FreeValue(ctx, lenv);
+			for (i = 0; i < len; i++) {
+				item = JS_GetPropertyUint32(ctx, arr, i);
+				if (JS_VALUE_GET_PTR(item) ==
+				    JS_VALUE_GET_PTR(argv[1])) {
+					JSValue sp = JS_GetPropertyStr(ctx, arr,
+							"splice");
+					if (JS_IsFunction(ctx, sp)) {
+						JSValue sargv[2];
+						JSValue r;
+						sargv[0] = JS_NewUint32(ctx, i);
+						sargv[1] = JS_NewInt32(ctx, 1);
+						r = JS_Call(ctx, sp, arr, 2,
+							(JSValueConst *)sargv);
+						JS_FreeValue(ctx, r);
+						JS_FreeValue(ctx, sargv[0]);
+						JS_FreeValue(ctx, sargv[1]);
+					}
+					JS_FreeValue(ctx, sp);
+					JS_FreeValue(ctx, item);
+					break;
+				}
+				JS_FreeValue(ctx, item);
+			}
+		}
+		JS_FreeValue(ctx, arr);
+	}
+	JS_FreeValue(ctx, L);
+	JS_FreeCString(ctx, type_c);
+	/* The libdom registration is deliberately LEFT in place: it is keyed by
+	 * (node, type) not by callback, and with an empty _L the callback runs
+	 * and finds nothing. Removing it here would break a second listener of
+	 * the same type that is still registered. */
+	return JS_UNDEFINED;
+}
+
 static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 {
 	JSValue data[1];
 	JSValue f;
 	data[0] = JS_DupValue(ctx, obj);
+
+	/* fixes989 — the event bridge. Installed BEFORE the JS helper string is
+	 * evaluated at the end of this function, and deliberately not defined
+	 * there, so nothing shadows them. */
+	f = JS_NewCFunctionData(ctx, qjs_el_add_event_listener_data, 3, 0, 1, data);
+	JS_SetPropertyStr(ctx, obj, "addEventListener", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_remove_event_listener_data, 2, 0, 1, data);
+	JS_SetPropertyStr(ctx, obj, "removeEventListener", f);
 
 	/* Core DOM methods */
 	f = JS_NewCFunctionData(ctx, qjs_el_getAttribute_data, 1, 0, 1, data);
@@ -6709,6 +7009,10 @@ unsigned char js_fire_event(struct jsthread *thread, const char *type,
  * rebuilt. Return 0 ("JS did not call preventDefault") so the browser's
  * navigation / form submit proceeds unchanged; per-element onclick handlers
  * still fire via fire_generic_dom_event at the call site. */
+/* fixes989 — retained as a no-op ONLY for ABI: nothing calls it any more.
+ * interaction.c now takes preventDefault from fire_generic_dom_event's return
+ * value, because the dispatch it already performed is the real one. Delete
+ * this once no build references the symbol. */
 int macsurf_qjs_dispatch_dom_click(struct dom_node *target)
 {
 	(void)target;
