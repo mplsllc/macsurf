@@ -2097,6 +2097,7 @@ static void html_reconvert_relink_objects(html_content *c)
 	int rt_disabled = 0, rt_nonimage = 0, rt_background = 0;
 	int rt_nobox = 0, rt_nonode = 0, rt_unresolved = 0;
 	int rt_dedup = 0;   /* fixes973b — duplicate display slot collapsed */
+	int kept_nobox = 0; /* fixes976 — box-less entries CARRIED, not retired */
 
 	if (c == NULL) {
 		return;
@@ -2145,8 +2146,51 @@ static void html_reconvert_relink_objects(html_content *c)
 		newbox = (node != NULL) ? box_for_node(node) : NULL;
 
 		if (newbox == NULL) {
-			if (o->box == NULL) rt_nobox++;
-			else if (node == NULL) rt_nonode++;
+			if (o->box == NULL && o->content != NULL) {
+				/* fixes976 (lifecycle Stage 1) — KEEP a box-less
+				 * entry instead of retiring it.
+				 *
+				 * These are speculative fetches
+				 * (html_process_inserted_img, box == NULL) whose
+				 * image box construction DEFERRED to the lazy
+				 * viewport queue rather than fetching -- the
+				 * hardware log for fixes975 shows exactly that
+				 * shape: 87 images constructed, 30 eager, 57
+				 * lazy, and every un-adopted speculative URL is
+				 * one of the deferred ones. Retiring them threw
+				 * away a fully fetched image that the lazy drain
+				 * was about to ask for again, so scrolling paid
+				 * the network cost a second time.
+				 *
+				 * Keeping them is BOUNDED, which is what makes
+				 * this safe without the reaper: fixes975's
+				 * creation-time dedupe refuses to start a second
+				 * speculative fetch for a URL any entry already
+				 * holds, so there can never be more than one
+				 * box-less entry per distinct URL in a document
+				 * (27 on hackaday's front page). They cannot
+				 * accumulate per reconvert, which was the whole
+				 * reason retirement existed. The lazy drain then
+				 * ADOPTS one the moment its image scrolls into
+				 * view (it fetches with a box, which is
+				 * html_fetch_object's adoption case), so the
+				 * image appears immediately instead of starting
+				 * a fresh fetch.
+				 *
+				 * Counted separately, not as `nobox`: `retired`
+				 * and its partition must keep meaning
+				 * "destroyed", or the acceptance criterion stops
+				 * measuring anything. A box-less entry whose
+				 * handle is gone (content == NULL, i.e. its
+				 * fetch errored) is NOT kept -- it can never be
+				 * adopted, so it is pure dead weight, and
+				 * excluding it keeps the bound tight. */
+				kept_nobox++;
+				o->next = keep; keep = o; n_keep++;
+				o = next;
+				continue;
+			}
+			if (node == NULL) rt_nonode++;
 			else rt_unresolved++;
 			/* Node gone, or normalise merged/dropped its box. Cannot be
 			 * linked and must not be left alone: an in-flight entry
@@ -2282,9 +2326,10 @@ static void html_reconvert_relink_objects(html_content *c)
 		 * nobox/nonode means the entry lost its key before we got here. */
 		macsurf_debug_log_writef(
 			"LIFE objects relinked=%d inflight=%d retired=%d"
+			" spec=%d"
 			" why: disabled=%d nonimage=%d background=%d"
 			" nobox=%d nonode=%d unresolved=%d dedup=%d",
-			relinked, inflight, retired,
+			relinked, inflight, retired, kept_nobox,
 			rt_disabled, rt_nonimage, rt_background,
 			rt_nobox, rt_nonode, rt_unresolved, rt_dedup);
 	}

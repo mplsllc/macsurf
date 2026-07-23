@@ -3649,5 +3649,99 @@ int main(void)
 	fprintf(stderr, "=== Test 35 PASS: a URL the document already holds is "
 		"adopted, not fetched a second time ===\n");
 
+	/* --- Test 36 (lifecycle Stage 1): a box-less entry SURVIVES a reconvert
+	 *
+	 * The fixes975 hardware log showed 87 images constructed, 30 eager and
+	 * 57 handed to the lazy viewport queue -- and every speculative URL that
+	 * was never adopted was one of the deferred ones. The reconvert retired
+	 * those box-less entries (nobox=9), throwing away a fetched image that
+	 * the lazy drain was about to ask for again, so scrolling paid for it
+	 * twice.
+	 *
+	 * fixes976 keeps them. That is only safe because fixes975 bounds them:
+	 * creation-time dedupe refuses a second speculative fetch for a held
+	 * URL, so there is at most one box-less entry per distinct URL and they
+	 * cannot accumulate per reconvert.
+	 *
+	 * Asserts the keep, and the one exclusion: a box-less entry whose handle
+	 * is gone (its fetch errored) is dead weight and must still be retired.
+	 * The mixed entry set is what makes it discriminating -- a pass that
+	 * kept everything would keep the errored one too, and a pass that
+	 * retired everything would lose the live one.
+	 *
+	 * Negative control, measured not assumed: with the keep branch removed
+	 * the run dies at hlcache.c:1029 in hlcache_handle_release, because
+	 * retirement releases the handle and this fixture's is a stand-in. So
+	 * the control fails deterministically, at the exact line reached only by
+	 * retiring the entry -- but it fails by crashing, not by assertion, the
+	 * same fetch-stack limitation Tests 31 and 35 record. */
+	fprintf(stderr, "\n=== Test 36: box-less speculative entry survives "
+		"reconvert (lifecycle Stage 1) ===\n");
+	{
+		struct content_html_object *live, *dead;
+		int n_live = 0, n_dead = 0, n = 0;
+		struct content_html_object *w;
+
+		live = calloc(1, sizeof(*live));
+		dead = calloc(1, sizeof(*dead));
+		if (live == NULL || dead == NULL) {
+			fprintf(stderr, "FAIL: Test 36 calloc\n"); return 1;
+		}
+		live->parent = dead->parent = (struct content *)&htmlc;
+		live->permitted_types = dead->permitted_types = CONTENT_IMAGE;
+		live->box = dead->box = NULL;          /* both still speculative */
+		/* live still holds a handle; dead's fetch errored and released it */
+		live->content = (struct hlcache_handle *)calloc(1, 256);
+		if (live->content == NULL) {
+			fprintf(stderr, "FAIL: Test 36 calloc handle\n"); return 1;
+		}
+		dead->content = NULL;
+		live->next = dead; dead->next = NULL;
+		htmlc.object_list = live;
+		htmlc.num_objects = 2;
+
+		htmlc.box_conversion_context = NULL;
+		htmlc.aborted = false;
+		htmlc.base.active = 0;
+		if (html_reconvert_content((struct content *)&htmlc) != 0) {
+			fprintf(stderr, "FAIL: Test 36 reconvert did not queue\n");
+			return 1;
+		}
+		harness_pump_all(100000);
+
+		for (w = htmlc.object_list; w != NULL; w = w->next) {
+			n++;
+			if (w->content != NULL) n_live++; else n_dead++;
+		}
+		if (n_live != 1) {
+			fprintf(stderr, "FAIL: Test 36 the box-less entry with a live "
+				"handle was RETIRED -- the lazy drain will refetch it "
+				"(survivors: %d live, %d dead)\n", n_live, n_dead);
+			return 1;
+		}
+		if (n_dead != 0) {
+			fprintf(stderr, "FAIL: Test 36 kept a box-less entry whose "
+				"fetch had already errored -- it can never be adopted\n");
+			return 1;
+		}
+		if (htmlc.num_objects != 1) {
+			fprintf(stderr, "FAIL: Test 36 num_objects=%u expected 1\n",
+					htmlc.num_objects);
+			return 1;
+		}
+		fprintf(stderr, "  box-less + live handle kept; box-less + dead "
+			"handle retired\n");
+
+		while (htmlc.object_list != NULL) {
+			struct content_html_object *nx = htmlc.object_list->next;
+			free(htmlc.object_list->content);
+			free(htmlc.object_list);
+			htmlc.object_list = nx;
+		}
+		htmlc.num_objects = 0;
+	}
+	fprintf(stderr, "=== Test 36 PASS: a speculative entry survives the "
+		"reconvert, so the lazy drain adopts it instead of refetching ===\n");
+
 	return 0;
 }
