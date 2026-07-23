@@ -211,6 +211,10 @@ struct macos9_https_ctx {
 	long             cache_cap_len;
 	long             cache_cap_cap;
 	int              cache_overflow;
+	/* fixes987 — streaming-store handle (0 = not caching this response).
+	 * Replaces cache_capture as the live path; the buffer fields stay only
+	 * because hctx_clear still frees them defensively. */
+	int              cache_stream;
 	char            *cache_hit_body;
 	long             cache_hit_len;
 	char             cache_hit_mime[128];
@@ -935,6 +939,14 @@ static void hctx_clear(struct macos9_https_ctx *c)
 	if (c->cache_capture) { free(c->cache_capture); c->cache_capture = NULL; }
 	c->cache_cap_len = 0;
 	c->cache_cap_cap = 0;
+	/* fixes987 — any stream still open here never reached FETCH_FINISHED,
+	 * so it is an abort: close and DELETE. This is the single teardown
+	 * point every failure path already funnels through, which is why the
+	 * file handle can be owned across the fetch at all. */
+	if (c->cache_stream != 0) {
+		macos9_cache_stream_end(c->cache_stream, 0);
+		c->cache_stream = 0;
+	}
 	if (c->cache_hit_body) { free(c->cache_hit_body); c->cache_hit_body = NULL; }
 	c->cache_hit_len = 0;
 	c->cache_hdrs[0] = '\0';       /* fixes981 */
@@ -972,6 +984,10 @@ static void hctx_reset_for_retry(struct macos9_https_ctx *c)
 	c->cache_cap_cap = 0;
 	c->cache_overflow = 0;
 	c->cache_eligible = 0;
+	if (c->cache_stream != 0) {       /* fixes987 */
+		macos9_cache_stream_end(c->cache_stream, 0);
+		c->cache_stream = 0;
+	}
 	c->req_len = 0;
 	c->req_sent = 0;
 	/* fixes312 (#144) — keep post_body intact so the retry sends the
@@ -1729,16 +1745,11 @@ static void hctx_finish(struct macos9_https_ctx *c)
 	macsurf_profile_add_bytes(c->body_bytes);
 	macsurf_profile_count_resource();
 
-	/* fixes218 — write to disk before tearing down the slot. */
-	if (c->cache_eligible && !c->cache_overflow &&
-	    c->cache_capture != NULL && c->cache_cap_len > 0 &&
-	    c->url != NULL) {
-		const char *u = nsurl_access(c->url);
-		if (u != NULL) {
-			macos9_cache_store_hdrs(u, c->status, c->mime,
-					c->cache_hdrs,
-				c->cache_capture, c->cache_cap_len);
-		}
+	/* fixes987 — the body is already on disk; commit patches in its
+	 * length, which is what makes the file readable at all. */
+	if (c->cache_stream != 0) {
+		macos9_cache_stream_end(c->cache_stream, 1);
+		c->cache_stream = 0;
 	}
 
 	c->state = HS_DONE;
@@ -2169,6 +2180,15 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 	    !host_is_fb_asset(c->host) &&
 	    macos9_cache_mime_eligible(c->status, c->mime)) {
 		c->cache_eligible = 1;
+		/* fixes987 — open the cache file now, so the body can be
+		 * written through as it arrives. */
+		if (c->url != NULL) {
+			const char *cu_ = nsurl_access(c->url);
+			if (cu_ != NULL) {
+				c->cache_stream = macos9_cache_stream_begin(
+					cu_, c->status, c->mime, c->cache_hdrs);
+			}
+		}
 	}
 
 	if (c->chunked) OSTLS_HTTP_ChunkDecoderInit(&c->chunk);
@@ -2206,7 +2226,12 @@ static void hctx_deliver(struct macos9_https_ctx *c, const char *data, long len)
 	msg.data.header_or_data.buf = (const uint8_t *)data;
 	msg.data.header_or_data.len = (size_t)len;
 	fetch_send_callback(&msg, c->parent);
-	hctx_cache_capture(c, data, len);
+	/* fixes987 — write through instead of accumulating. */
+	if (c->cache_stream != 0) {
+		if (!macos9_cache_stream_data(c->cache_stream, data, len)) {
+			c->cache_stream = 0;   /* already closed + deleted */
+		}
+	}
 }
 
 /* fixes965 — gunzip output callback. */

@@ -427,6 +427,194 @@ void macos9_cache_capture_hdr(const char *line, char *dst, size_t cap)
 	dst[used + ll + 2] = '\0';
 }
 
+/* ---- fixes987: streaming store ---- */
+
+#ifdef __MACOS9__
+struct cache_stream {
+	int    used;
+	short  ref;
+	FSSpec spec;
+	long   len;
+};
+static struct cache_stream g_streams[MACSURF_CACHE_STREAMS];
+
+/* Close and forget a slot. Deletes the file unless it was committed. */
+static void cache_stream_drop(struct cache_stream *st, int commit)
+{
+	if (!st->used) return;
+	if (st->ref != 0) {
+		FSClose(st->ref);
+		st->ref = 0;
+	}
+	if (!commit) {
+		(void)FSpDelete(&st->spec);
+	}
+	st->used = 0;
+	st->len = 0;
+}
+#endif
+
+int macos9_cache_stream_begin(const char *url, int status, const char *mime,
+		const char *hdrs)
+{
+#ifdef __MACOS9__
+	OSErr err;
+	short vRef;
+	long dirID;
+	unsigned char fname[32];
+	short ref = 0;
+	unsigned char hdr[24];
+	long count;
+	size_t mime_len;
+	size_t hdrs_len;
+	int i;
+	struct cache_stream *st = NULL;
+
+	if (url == NULL || mime == NULL) return 0;
+	if (!macos9_cache_mime_eligible(status, mime)) return 0;
+
+	for (i = 0; i < MACSURF_CACHE_STREAMS; i++) {
+		if (!g_streams[i].used) { st = &g_streams[i]; break; }
+	}
+	if (st == NULL) return 0;   /* all slots busy: skip caching, no harm */
+
+	if (cache_dir_get(&vRef, &dirID) != noErr) return 0;
+	cache_filename_for_url(url, fname);
+	err = FSMakeFSSpec(vRef, dirID, fname, &st->spec);
+	if (err == fnfErr) {
+		err = FSpCreate(&st->spec, '????', '????', smSystemScript);
+		if (err != noErr) return 0;
+		err = FSMakeFSSpec(vRef, dirID, fname, &st->spec);
+	}
+	if (err != noErr) return 0;
+	if (FSpOpenDF(&st->spec, fsRdWrPerm, &ref) != noErr) return 0;
+	SetFPos(ref, fsFromStart, 0);
+
+	mime_len = strlen(mime);
+	if (mime_len > 127) mime_len = 127;
+	hdrs_len = (hdrs != NULL) ? strlen(hdrs) : 0;
+	if (hdrs_len > MACSURF_CACHE_HDRS_MAX - 1) hdrs_len = 0;
+
+	hdr[0] = MACSURF_CACHE_MAGIC0; hdr[1] = MACSURF_CACHE_MAGIC1;
+	hdr[2] = MACSURF_CACHE_MAGIC2; hdr[3] = MACSURF_CACHE_MAGIC3;
+	hdr[4] = MACSURF_CACHE_MAGIC4; hdr[5] = MACSURF_CACHE_MAGIC5;
+	hdr[6] = MACSURF_CACHE_MAGIC6; hdr[7] = MACSURF_CACHE_MAGIC7;
+	cache_write_be32(hdr + 8,  (unsigned long)status);
+	cache_write_be32(hdr + 12, (unsigned long)mime_len);
+	/* body length is 0 until the commit patches it -- that is the
+	 * integrity guard, not an oversight. */
+	cache_write_be32(hdr + 16, 0UL);
+	cache_write_be32(hdr + 20, (unsigned long)hdrs_len);
+
+	count = sizeof(hdr);
+	if (FSWrite(ref, &count, hdr) != noErr) { FSClose(ref); return 0; }
+	if (mime_len > 0) {
+		count = (long)mime_len;
+		if (FSWrite(ref, &count, mime) != noErr) { FSClose(ref); return 0; }
+	}
+	if (hdrs_len > 0) {
+		count = (long)hdrs_len;
+		if (FSWrite(ref, &count, hdrs) != noErr) { FSClose(ref); return 0; }
+	}
+
+	st->used = 1;
+	st->ref = ref;
+	st->len = 0;
+	return (int)(st - g_streams) + 1;
+#else
+	(void)url; (void)status; (void)mime; (void)hdrs;
+	return 0;
+#endif
+}
+
+int macos9_cache_stream_data(int h, const char *buf, long len)
+{
+#ifdef __MACOS9__
+	struct cache_stream *st;
+	long count;
+
+	if (h <= 0 || h > MACSURF_CACHE_STREAMS) return 0;
+	st = &g_streams[h - 1];
+	if (!st->used) return 0;
+	if (buf == NULL || len <= 0) return 1;
+
+	if (st->len + len > MACSURF_CACHE_MAX_BYTES) {
+		/* over the per-file cap: give up on this one entirely rather
+		 * than keep a partial body around. */
+		cache_stream_drop(st, 0);
+		return 0;
+	}
+	count = len;
+	if (FSWrite(st->ref, &count, buf) != noErr) {
+		cache_stream_drop(st, 0);
+		return 0;
+	}
+	st->len += len;
+	return 1;
+#else
+	(void)h; (void)buf; (void)len;
+	return 0;
+#endif
+}
+
+void macos9_cache_stream_end(int h, int commit)
+{
+#ifdef __MACOS9__
+	struct cache_stream *st;
+	unsigned char lenbuf[4];
+	long count;
+
+	if (h <= 0 || h > MACSURF_CACHE_STREAMS) return;
+	st = &g_streams[h - 1];
+	if (!st->used) return;
+
+	if (!commit || st->len <= 0) {
+		cache_stream_drop(st, 0);
+		return;
+	}
+
+	/* Patch the real body length in, LAST, then trim. Until this write
+	 * lands the file reads as body_len == 0 and lookup rejects it. */
+	cache_write_be32(lenbuf, (unsigned long)st->len);
+	if (SetFPos(st->ref, fsFromStart, 16) != noErr) {
+		cache_stream_drop(st, 0);
+		return;
+	}
+	count = 4;
+	if (FSWrite(st->ref, &count, lenbuf) != noErr) {
+		cache_stream_drop(st, 0);
+		return;
+	}
+	SetFPos(st->ref, fsFromLEOF, 0);
+	{
+		long eof = 0;
+		GetEOF(st->ref, &eof);
+		(void)eof;
+	}
+	g_store_n++;
+	macsurf_debug_log_writef(
+		"LIFE CACHE stream url=(slot %d) len=%ld n=%ld",
+		h, st->len, g_store_n);
+	{
+		long body = st->len;
+		cache_stream_drop(st, 1);
+		macsurf_http_skip_next_cache = 0;
+		/* same remembered-total budget accounting as the buffered
+		 * store; see macos9_cache_sweep. */
+		if (g_cache_total < 0) {
+			g_cache_total = macos9_cache_sweep();
+		} else {
+			g_cache_total += 24 + body;
+			if (g_cache_total > CACHE_TOTAL_BUDGET) {
+				g_cache_total = macos9_cache_sweep();
+			}
+		}
+	}
+#else
+	(void)h; (void)commit;
+#endif
+}
+
 void macos9_cache_store(const char *url, int status, const char *mime,
 		const char *body_ptr, long body_len)
 {

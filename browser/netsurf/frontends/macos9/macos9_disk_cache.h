@@ -69,6 +69,34 @@ int macos9_cache_mime_eligible(int status, const char *mime);
  * call this per header line while parsing a response they intend to cache. */
 void macos9_cache_capture_hdr(const char *line, char *dst, size_t cap);
 
+/* fixes987 — STREAMING store. The body is written to the cache file as it
+ * arrives instead of being accumulated in RAM and written at the end.
+ *
+ * Measured, not assumed: with the buffered store, ten text stores totalling
+ * ~355 KB cost 3 ticks (50 ms) of file I/O -- writing is essentially free.
+ * What was NOT free was the buffer: fixes985 cached images, which meant
+ * doubling-realloc growth up to 727 KB per image, several alive at once, on
+ * the same 128 MB heap the decoder and its GWorlds compete for. Cold hackaday
+ * went 14.7s -> 36s. Since the I/O is free and the RAM is not, write through
+ * and hold nothing.
+ *
+ * Integrity comes free with the ordering: the body length is patched into the
+ * header LAST, so a file left behind by a crash or an abort reads back with
+ * body_len == 0, which macos9_cache_lookup already rejects. A truncated body
+ * can never be served as a complete one.
+ *
+ * Handle is a small positive int (0 = not caching, no slot, ineligible).
+ * Every begin must be matched by an end, commit or not; end(0) closes and
+ * deletes. Slots are a fixed arena -- at most MACSURF_CACHE_STREAMS
+ * cacheable responses can be in flight, and a begin beyond that simply
+ * declines to cache, which costs a refetch and nothing else. */
+#define MACSURF_CACHE_STREAMS 8
+
+int  macos9_cache_stream_begin(const char *url, int status, const char *mime,
+		const char *hdrs);
+int  macos9_cache_stream_data(int h, const char *buf, long len);
+void macos9_cache_stream_end(int h, int commit);
+
 /* fixes981 — store/lookup carrying the freshness header block. The plain
  * macos9_cache_store / macos9_cache_lookup remain, as wrappers passing no
  * headers, so any caller that does not care is unaffected.

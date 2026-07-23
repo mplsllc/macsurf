@@ -152,6 +152,9 @@ struct macos9_fetch_ctx {
 	 *                    loop and the slot transitions straight to
 	 *                    MFS_DONE. */
 	int cache_eligible;
+	/* fixes987 — streaming-store handle (0 = not caching this response).
+	 * Replaces cache_capture as the live path. */
+	int cache_stream;
 	char *cache_capture;
 	long cache_cap_len;
 	long cache_cap_cap;
@@ -896,7 +899,11 @@ process_chunked_bytes(struct macos9_fetch_ctx *c, const char *b, long len)
 				msg.data.header_or_data.len = (size_t)deliver;
 				fetch_send_callback(&msg, c->parent);
 				/* fixes172 — capture chunked-decoded body. */
-				cache_capture_append(c, b + pos, deliver);
+				/* fixes987 */
+				if (c->cache_stream != 0 &&
+				    !macos9_cache_stream_data(c->cache_stream,
+						b + pos, deliver))
+					c->cache_stream = 0;
 				c->body_bytes += deliver;
 				pos += deliver;
 				c->chunk_remaining -= deliver;
@@ -1161,6 +1168,14 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 	if (c->post_body == NULL &&
 	    macos9_cache_mime_eligible(c->status, c->mime)) {
 		c->cache_eligible = 1;
+		/* fixes987 — open the cache file up front and write through. */
+		if (c->url != NULL) {
+			const char *cu_ = nsurl_access(c->url);
+			if (cu_ != NULL) {
+				c->cache_stream = macos9_cache_stream_begin(
+					cu_, c->status, c->mime, c->cache_hdrs);
+			}
+		}
 	}
 	c->state=MFS_BODY;
 	if(sep+4 < c->h_buf+c->h_len) {
@@ -1177,7 +1192,11 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 				msg.data.header_or_data.len=(size_t)deliver;
 				fetch_send_callback(&msg,c->parent);
 				/* fixes172 — also capture for the disk cache. */
-				cache_capture_append(c, sep+4, deliver);
+				/* fixes987 */
+				if (c->cache_stream != 0 &&
+				    !macos9_cache_stream_data(c->cache_stream,
+						sep+4, deliver))
+					c->cache_stream = 0;
 				c->body_bytes += deliver;
 			}
 			if (c->content_length >= 0 && c->body_bytes >= c->content_length) {
@@ -1352,7 +1371,11 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 					m.data.header_or_data.len=(size_t)deliver;
 					fetch_send_callback(&m,c->parent);
 					/* fixes172 — capture for disk cache. */
-					cache_capture_append(c, b, deliver);
+					/* fixes987 */
+					if (c->cache_stream != 0 &&
+					    !macos9_cache_stream_data(
+						c->cache_stream, b, deliver))
+						c->cache_stream = 0;
 					c->body_bytes += deliver;
 				}
 				if (c->content_length >= 0 && c->body_bytes >= c->content_length) {
@@ -1499,17 +1522,11 @@ static void macos9_http_poll(lwc_string *s) {
 			 * the response is a cacheable MIME type with
 			 * status 200; cache_overflow is set if the body
 			 * exceeded MACSURF_CACHE_MAX_BYTES. */
-			if (c->cache_eligible && !c->cache_overflow &&
-					!c->cache_hit &&
-					c->cache_capture != NULL &&
-					c->cache_cap_len > 0) {
-				const char *u = nsurl_access(c->url);
-				if (u != NULL) {
-					macos9_cache_store_hdrs(u, c->status,
-						c->mime, c->cache_hdrs,
-						c->cache_capture,
-						c->cache_cap_len);
-				}
+			/* fixes987 — body already on disk; commit patches
+			 * in its length, which is what makes it readable. */
+			if (c->cache_stream != 0) {
+				macos9_cache_stream_end(c->cache_stream, 1);
+				c->cache_stream = 0;
 			}
 			/* fixes99 — pool the endpoint right now, while it is
 			 * known idle and the next fetch may already be queued. */
@@ -1896,6 +1913,12 @@ static void macos9_http_free(void *ctx) {
 		c->url = NULL;
 	}
 	/* fixes172 — release cache state. */
+	/* fixes987 — a stream still open at slot teardown never reached
+	 * FETCH_FINISHED: close and DELETE, so no truncated body survives. */
+	if (c->cache_stream != 0) {
+		macos9_cache_stream_end(c->cache_stream, 0);
+		c->cache_stream = 0;
+	}
 	if (c->cache_capture) { free(c->cache_capture); c->cache_capture = NULL; }
 	c->cache_cap_len = 0;
 	c->cache_cap_cap = 0;
