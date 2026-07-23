@@ -3056,6 +3056,138 @@ static JSValue qjs_el_remove_event_listener_data(JSContext *ctx,
 	return JS_UNDEFINED;
 }
 
+/* fixes995 (#264) — inline on* HTML attributes.
+ *
+ * `<a onclick="...">` in MARKUP has never done anything: the attribute was
+ * never compiled, so the handler did not exist in any registry and no dispatch
+ * could reach it. That is separate from `el.onclick = fn` in script, which has
+ * worked for a while (the _H accessors, fixes872) -- markup and script were
+ * two different worlds and only one of them was wired.
+ *
+ * Compiled at INSERTION, from the DOMNodeInserted hook that already exists in
+ * dom_event.c, so it covers parsed markup and JS-inserted markup alike with no
+ * new traversal. The compiled function lands in the SAME _H slot the script
+ * accessors use, which gives correct replace-semantics for free: assigning
+ * el.onclick later overwrites the markup handler, exactly as it should.
+ * Registering the shared libdom listener for the type is what makes a real
+ * click reach it (fixes989).
+ *
+ * The handler body is wrapped as a function of `event`, matching what browsers
+ * do; `this` is bound to the element by dispatchEvent's `.call(el, ev)`.
+ */
+void macsurf_qjs_bind_inline_handlers(struct dom_node *node);
+void macsurf_qjs_bind_inline_handlers(struct dom_node *node)
+{
+	static const char *const names[] = {
+		"onclick", "onchange", "onsubmit", "oninput", "onfocus",
+		"onblur", "onmouseover", "onmouseout", "onmousedown",
+		"onmouseup", "onkeydown", "onkeyup", "onkeypress", "ondblclick"
+	};
+	const int n_names = (int)(sizeof(names) / sizeof(names[0]));
+	JSContext *ctx;
+	JSValue wrapper, H, fnv, src;
+	dom_string *val = NULL;
+	dom_string *nm = NULL;
+	int i;
+	int bound = 0;
+
+	if (node == NULL || g_heap == NULL) return;
+	ctx = g_heap->ctx;
+	if (ctx == NULL) return;
+
+	for (i = 0; i < n_names; i++) {
+		const char *type;
+		char body_buf[16];
+		int has = 0;
+
+		nm = qjs_make_domstr(names[i]);
+		if (nm == NULL) continue;
+		if (macsurf_dom_element_has_attribute((dom_element *)node,
+				nm, &has) != DOM_NO_ERR || has == 0) {
+			macsurf_dom_string_unref(nm);
+			continue;
+		}
+		val = NULL;
+		if (macsurf_dom_element_get_attribute((dom_element *)node,
+				nm, &val) != DOM_NO_ERR || val == NULL) {
+			macsurf_dom_string_unref(nm);
+			continue;
+		}
+		macsurf_dom_string_unref(nm);
+		(void)body_buf;
+
+		/* Compile: (function(event){ <attr value> }) */
+		{
+			const char *b = dom_string_data(val);
+			size_t blen = (size_t)dom_string_length(val);
+			size_t need = blen + 32;
+			char *srcbuf = (char *)malloc(need);
+			if (srcbuf == NULL) {
+				macsurf_dom_string_unref(val);
+				continue;
+			}
+			strcpy(srcbuf, "(function(event){");
+			memcpy(srcbuf + 17, b, blen);
+			strcpy(srcbuf + 17 + blen, "})");
+			src = JS_Eval(ctx, srcbuf, 17 + blen + 2,
+					"<inline-handler>", JS_EVAL_TYPE_GLOBAL);
+			free(srcbuf);
+		}
+		macsurf_dom_string_unref(val);
+		if (JS_IsException(src)) {
+			JSValue ex = JS_GetException(ctx);
+			JS_FreeValue(ctx, ex);
+			JS_FreeValue(ctx, src);
+			continue;
+		}
+		if (!JS_IsFunction(ctx, src)) {
+			JS_FreeValue(ctx, src);
+			continue;
+		}
+		fnv = src;
+
+		/* Wrapper on demand: only elements that actually carry an on*
+		 * attribute get one, so this does not wrap the whole document. */
+		macsurf_dom_node_ref(node);
+		wrapper = qjs_wrap_element(ctx, (dom_element *)node);
+		if (!JS_IsObject(wrapper)) {
+			JS_FreeValue(ctx, fnv);
+			JS_FreeValue(ctx, wrapper);
+			continue;
+		}
+		H = JS_GetPropertyStr(ctx, wrapper, "_H");
+		if (!JS_IsObject(H)) {
+			JS_FreeValue(ctx, H);
+			H = JS_NewObject(ctx);
+			JS_SetPropertyStr(ctx, wrapper, "_H",
+					JS_DupValue(ctx, H));
+		}
+		type = names[i] + 2;            /* "onclick" -> "click" */
+		JS_SetPropertyStr(ctx, H, type, fnv);   /* takes fnv */
+		JS_FreeValue(ctx, H);
+		JS_FreeValue(ctx, wrapper);
+
+		/* Make a REAL event reach it. */
+		if (g_qjs_dom_listener == NULL) {
+			(void)dom_event_listener_create(qjs_dom_listener_cb,
+					NULL, &g_qjs_dom_listener);
+		}
+		if (g_qjs_dom_listener != NULL) {
+			dom_string *tds = qjs_make_domstr(type);
+			if (tds != NULL) {
+				(void)dom_event_target_add_event_listener(
+					node, tds, g_qjs_dom_listener, false);
+				macsurf_dom_string_unref(tds);
+			}
+		}
+		bound++;
+	}
+	if (bound > 0) {
+		macsurf_debug_log_writef(
+			"LIFE jsevent inline bound=%d", bound);
+	}
+}
+
 static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 {
 	JSValue data[1];

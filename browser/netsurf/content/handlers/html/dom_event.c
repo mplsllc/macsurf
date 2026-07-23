@@ -639,6 +639,20 @@ dom_default_action_DOMNodeInserted_cb(struct dom_event *evt, void *pw)
 			tag_type = DOM_HTML_ELEMENT_TYPE__UNKNOWN;
 		}
 
+		/* fixes995 (#264) — compile inline on* attributes for EVERY
+		 * inserted element, before the tag-specific handling below.
+		 * `<a onclick="...">` in markup has never done anything: the
+		 * attribute was never compiled, so no registry held it and no
+		 * dispatch could reach it. Doing it here covers parsed markup
+		 * and JS-inserted markup alike, with no new traversal. */
+#ifdef WITH_QUICKJS
+		{
+			extern void macsurf_qjs_bind_inline_handlers(
+					struct dom_node *node);
+			macsurf_qjs_bind_inline_handlers((struct dom_node *)node);
+		}
+#endif
+
 		switch (tag_type) {
 		case DOM_HTML_ELEMENT_TYPE_BASE:
 			html_process_inserted_base(htmlc, (dom_node *)node);
