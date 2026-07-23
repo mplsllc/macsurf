@@ -263,17 +263,121 @@ int macos9_cache_mime_eligible(int status, const char *mime)
 	if (strncmp(mime, "application/xhtml", 17) == 0) return 1;
 	if (strncmp(mime, "application/javascript", 22) == 0) return 1;
 	if (strncmp(mime, "application/json", 16) == 0) return 1;
-	/* fixes679: reverted to old cache style — images and downloadable
-	 * webfonts are NO LONGER disk-cached (fixes665 backed out). Only small
-	 * text bodies are eligible, so the cache can't balloon with 4MB image
-	 * blobs and the directory-budget sweep is unnecessary. */
+	/* fixes985 — images and downloadable webfonts are cacheable again.
+	 *
+	 * fixes665 added them; fixes679 took them out again while #207 (the
+	 * blank screen) was being chased, as one of several suspects eliminated
+	 * at once. #207's real cause turned out to be somewhere else entirely --
+	 * hardcoded pointer-ceiling guards rejecting valid pointers when the
+	 * partition maps high (fixes716-719) -- so the reason for the revert has
+	 * not applied for a long time, and the cost of keeping it has now been
+	 * measured: 228 image retrievals in a nine-navigation session, none of
+	 * them able to survive a relaunch, on a 400 MHz machine over TLS.
+	 *
+	 * These are the ideal candidates: large, static, and unchanged for
+	 * months. The bound that makes it safe is the directory budget below,
+	 * which came out with them in fixes679 and comes back with them here. */
+	if (strncmp(mime, "image/", 6) == 0) return 1;
+	if (strncmp(mime, "font/", 5) == 0) return 1;
+	if (strncmp(mime, "application/font", 16) == 0) return 1;
+	if (strncmp(mime, "application/x-font", 18) == 0) return 1;
+	if (strncmp(mime, "application/vnd.ms-fontobject", 29) == 0) return 1;
 	return 0;
 }
 
-/* fixes679: the fixes665 whole-directory total-size budget + LRU eviction
- * sweep was removed with the revert to the old cache style. Only small text
- * bodies are cached now (see macos9_cache_mime_eligible), so the cache can't
- * grow without bound and needs no directory sweep. */
+/* fixes985 — total-size budget + LRU eviction, restored from fixes665 with
+ * one change that matters on this hardware.
+ *
+ * fixes665 swept once per 2 MB stored. A sweep is a full PBGetCatInfo walk of
+ * the cache directory, which with a few thousand entries is seconds on a G3 --
+ * and with images cacheable, 2 MB accumulates every dozen or so images, so
+ * that cadence would put a directory scan in the middle of page loads.
+ *
+ * Instead the total is REMEMBERED. One scan on the first store (which also
+ * trims a cache left over-budget by a previous session), then each store adds
+ * its own size to a running figure and a scan happens only when that figure
+ * crosses the budget. Overwriting an existing entry double-counts, so the
+ * running figure drifts HIGH -- deliberately the safe direction: it triggers a
+ * scan slightly early and the scan replaces the estimate with the truth.
+ *
+ * The LRU key is the modification date, which is what HFS gives us for free.
+ * That is approximate: a file read on every page but never rewritten ages like
+ * a cold one. Writing on every read to fix it would cost a catalog update per
+ * cache hit, which is a worse trade -- and an evicted entry costs one refetch,
+ * not correctness. Documented rather than hidden. */
+#define CACHE_TOTAL_BUDGET   (64L * 1024L * 1024L)   /* 64 MB on-disk cap */
+#define CACHE_EVICT_BATCH    64   /* oldest files trimmed per sweep */
+
+static long g_cache_total = -1;   /* -1 = unknown, forces the first scan */
+
+static long macos9_cache_sweep(void)
+{
+#ifdef __MACOS9__
+	/* One directory pass: sum the cache and keep the CACHE_EVICT_BATCH
+	 * oldest files (ascending by modification date); if over budget, delete
+	 * oldest-first until back under. Bounded to one scan and at most BATCH
+	 * deletes per call, so a very large legacy cache converges over several
+	 * sweeps instead of stalling. Statics keep the batch arrays off the
+	 * stack. Returns the resulting total. */
+	static Str63 names[CACHE_EVICT_BATCH];
+	static unsigned long dats[CACHE_EVICT_BATCH];
+	static long sizes[CACHE_EVICT_BATCH];
+	CInfoPBRec pb;
+	Str63 nm;
+	short vRef, idx;
+	long dirID, total = 0;
+	int nk = 0, k, j;
+	int evicted = 0;
+
+	if (cache_dir_get(&vRef, &dirID) != noErr) return 0;
+	for (idx = 1; ; idx++) {
+		unsigned long d;
+		long sz;
+		memset(&pb, 0, sizeof(pb));
+		pb.hFileInfo.ioNamePtr = nm;
+		pb.hFileInfo.ioVRefNum = vRef;
+		pb.hFileInfo.ioDirID = dirID;
+		pb.hFileInfo.ioFDirIndex = idx;
+		if (PBGetCatInfoSync(&pb) != noErr) break;
+		if (pb.hFileInfo.ioFlAttrib & ioDirMask) continue;
+		sz = pb.hFileInfo.ioFlLgLen;
+		d = (unsigned long)pb.hFileInfo.ioFlMdDat;
+		total += sz;
+		if (nk < CACHE_EVICT_BATCH) {
+			k = nk++;
+		} else if (d < dats[CACHE_EVICT_BATCH - 1]) {
+			k = CACHE_EVICT_BATCH - 1;
+		} else {
+			continue;
+		}
+		while (k > 0 && dats[k - 1] > d) {
+			dats[k] = dats[k - 1];
+			sizes[k] = sizes[k - 1];
+			memcpy(names[k], names[k - 1], names[k - 1][0] + 1);
+			k--;
+		}
+		dats[k] = d;
+		sizes[k] = sz;
+		memcpy(names[k], nm, nm[0] + 1);
+	}
+	if (total <= CACHE_TOTAL_BUDGET) return total;
+	for (j = 0; j < nk && total > CACHE_TOTAL_BUDGET; j++) {
+		FSSpec spec;
+		if (FSMakeFSSpec(vRef, dirID, names[j], &spec) == noErr &&
+		    FSpDelete(&spec) == noErr) {
+			total -= sizes[j];
+			evicted++;
+		}
+	}
+	macsurf_debug_log_writef(
+		"LIFE CACHE sweep evicted=%d total=%ld budget=%ld",
+		evicted, total, (long)CACHE_TOTAL_BUDGET);
+	return total;
+#else
+	return 0;
+#endif
+}
+
 
 /* fixes981 — the freshness/validator headers a disk hit must carry.
  *
@@ -414,7 +518,16 @@ void macos9_cache_store_hdrs(const char *url, int status, const char *mime,
 		"LIFE CACHE store url=%s mime=%s len=%ld hdrs=%ld",
 		url, mime, body_len, (long)hdrs_len);
 	macsurf_http_skip_next_cache = 0;
-	/* fixes679: budget-sweep call removed with the old-cache-style revert. */
+	/* fixes985 — remembered-total budget enforcement; see macos9_cache_sweep. */
+	if (g_cache_total < 0) {
+		g_cache_total = macos9_cache_sweep();
+	} else {
+		g_cache_total += (long)sizeof(hdr) + (long)mime_len +
+				(long)hdrs_len + body_len;
+		if (g_cache_total > CACHE_TOTAL_BUDGET) {
+			g_cache_total = macos9_cache_sweep();
+		}
+	}
 #else
 	(void)url; (void)status; (void)mime; (void)hdrs;
 	(void)body_ptr; (void)body_len;
