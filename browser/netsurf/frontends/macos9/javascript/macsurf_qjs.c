@@ -2928,6 +2928,54 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 	macsurf_dom_node_unref(node);
 }
 
+/* fixes996 — the single place a node is registered with libdom.
+ *
+ * THREE routes can put a handler on a node and every one of them must
+ * register, or a real click never reaches it: addEventListener (fixes989),
+ * an inline on* attribute in markup (fixes995), and `el.onclick = fn` from
+ * script -- which is the one that was missed. Hardware found it: t.html test 3
+ * stayed grey while 1 and 2 went green.
+ *
+ * The on* setter is a JS accessor (qjs_el_install_proto) that only writes _H,
+ * so nothing told libdom the node cared about the type. Factoring registration
+ * to here and calling it from all three closes the class rather than the
+ * instance: the next route added gets it by calling one function. */
+static void qjs_dom_register_listener(dom_node *node, const char *type,
+		int capture)
+{
+	dom_string *tds;
+	if (node == NULL || type == NULL || type[0] == '\0') return;
+	if (g_qjs_dom_listener == NULL) {
+		(void)dom_event_listener_create(qjs_dom_listener_cb, NULL,
+				&g_qjs_dom_listener);
+	}
+	if (g_qjs_dom_listener == NULL) return;
+	tds = qjs_make_domstr(type);
+	if (tds == NULL) return;
+	(void)dom_event_target_add_event_listener(node, tds,
+			g_qjs_dom_listener, capture ? true : false);
+	macsurf_dom_string_unref(tds);
+}
+
+/* fixes996 — exposed to the on* setter, which is JS and cannot reach libdom.
+ * Idempotent by libdom's own keying: registering the same (type, listener,
+ * capture) twice is not additive, so re-assigning el.onclick is harmless. */
+static JSValue qjs_el_reg_event_data(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv,
+		int magic, JSValueConst *func_data)
+{
+	dom_node *node;
+	const char *type_c;
+	(void)this_val; (void)magic;
+	node = qjs_get_node(func_data[0]);
+	if (node == NULL || argc < 1) return JS_UNDEFINED;
+	type_c = JS_ToCString(ctx, argv[0]);
+	if (type_c == NULL) return JS_UNDEFINED;
+	qjs_dom_register_listener(node, type_c, 0);
+	JS_FreeCString(ctx, type_c);
+	return JS_UNDEFINED;
+}
+
 static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
 		JSValueConst this_val, int argc, JSValueConst *argv,
 		int magic, JSValueConst *func_data)
@@ -2983,19 +3031,7 @@ static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
 	/* Register with libdom ONCE per (node, type). Repeat registrations of
 	 * the same type would each add a dispatch of the whole _L list. */
 	if (fresh) {
-		if (g_qjs_dom_listener == NULL) {
-			(void)dom_event_listener_create(qjs_dom_listener_cb,
-					NULL, &g_qjs_dom_listener);
-		}
-		if (g_qjs_dom_listener != NULL) {
-			dom_string *type_ds = qjs_make_domstr(type_c);
-			if (type_ds != NULL) {
-				(void)dom_event_target_add_event_listener(
-					node, type_ds, g_qjs_dom_listener,
-					capture ? true : false);
-				macsurf_dom_string_unref(type_ds);
-			}
-		}
+		qjs_dom_register_listener(node, type_c, capture);
 	}
 	JS_FreeCString(ctx, type_c);
 	return JS_UNDEFINED;
@@ -3167,19 +3203,8 @@ void macsurf_qjs_bind_inline_handlers(struct dom_node *node)
 		JS_FreeValue(ctx, H);
 		JS_FreeValue(ctx, wrapper);
 
-		/* Make a REAL event reach it. */
-		if (g_qjs_dom_listener == NULL) {
-			(void)dom_event_listener_create(qjs_dom_listener_cb,
-					NULL, &g_qjs_dom_listener);
-		}
-		if (g_qjs_dom_listener != NULL) {
-			dom_string *tds = qjs_make_domstr(type);
-			if (tds != NULL) {
-				(void)dom_event_target_add_event_listener(
-					node, tds, g_qjs_dom_listener, false);
-				macsurf_dom_string_unref(tds);
-			}
-		}
+		/* Make a REAL event reach it (fixes996 — shared helper). */
+		qjs_dom_register_listener(node, type, 0);
 		bound++;
 	}
 	if (bound > 0) {
@@ -3201,6 +3226,9 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 	JS_SetPropertyStr(ctx, obj, "addEventListener", f);
 	f = JS_NewCFunctionData(ctx, qjs_el_remove_event_listener_data, 2, 0, 1, data);
 	JS_SetPropertyStr(ctx, obj, "removeEventListener", f);
+	/* fixes996 — the on* setter (a JS accessor) calls this to register. */
+	f = JS_NewCFunctionData(ctx, qjs_el_reg_event_data, 1, 0, 1, data);
+	JS_SetPropertyStr(ctx, obj, "__msRegEvent", f);
 
 	/* Core DOM methods */
 	f = JS_NewCFunctionData(ctx, qjs_el_getAttribute_data, 1, 0, 1, data);
@@ -4411,7 +4439,11 @@ static void qjs_el_install_proto(JSContext *ctx)
 		"Object.defineProperty(p,'on'+k,{configurable:true,enumerable:false,"
 		"get:function(){return (this._H&&this._H[k])||null;},"
 		"set:function(v){if(!this._H)this._H={};"
-		"this._H[k]=(typeof v==='function')?v:null;}});"
+		"this._H[k]=(typeof v==='function')?v:null;"
+		/* fixes996 -- tell libdom this node wants the event, or a real
+		 * click never dispatches here and _H is never read. */
+		"if(v&&this.__msRegEvent){try{this.__msRegEvent(k);}catch(e){}}"
+		"}});"
 		"})(n[i]);}"
 		"return p;})()";
 	JSValue proto;
