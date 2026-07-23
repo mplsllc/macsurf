@@ -277,11 +277,13 @@ int macos9_cache_mime_eligible(int status, const char *mime)
 	 * These are the ideal candidates: large, static, and unchanged for
 	 * months. The bound that makes it safe is the directory budget below,
 	 * which came out with them in fixes679 and comes back with them here. */
+#if MACSURF_CACHE_IMAGES
 	if (strncmp(mime, "image/", 6) == 0) return 1;
 	if (strncmp(mime, "font/", 5) == 0) return 1;
 	if (strncmp(mime, "application/font", 16) == 0) return 1;
 	if (strncmp(mime, "application/x-font", 18) == 0) return 1;
 	if (strncmp(mime, "application/vnd.ms-fontobject", 29) == 0) return 1;
+#endif
 	return 0;
 }
 
@@ -309,6 +311,8 @@ int macos9_cache_mime_eligible(int status, const char *mime)
 #define CACHE_EVICT_BATCH    64   /* oldest files trimmed per sweep */
 
 static long g_cache_total = -1;   /* -1 = unknown, forces the first scan */
+static long g_store_ticks = 0;    /* fixes986 — cumulative time IN the store */
+static long g_store_n = 0;
 
 static long macos9_cache_sweep(void)
 {
@@ -443,10 +447,13 @@ void macos9_cache_store_hdrs(const char *url, int status, const char *mime,
 	long count;
 	size_t mime_len;
 	size_t hdrs_len;
+	long   t0;
 
 	if (url == NULL || body_ptr == NULL) return;
 	if (body_len <= 0 || body_len > MACSURF_CACHE_MAX_BYTES) return;
 	if (!macos9_cache_mime_eligible(status, mime)) return;
+
+	t0 = (long)TickCount();   /* fixes986 */
 
 	err = cache_dir_get(&vRef, &dirID);
 	if (err != noErr) return;
@@ -514,9 +521,24 @@ void macos9_cache_store_hdrs(const char *url, int status, const char *mime,
 	 * been invisible on every default build -- which is why fixes981 could
 	 * not be checked from a log and had to be verified by reading the cache
 	 * files off the machine. Same trap as the 304 lines in fixes979b. */
-	macsurf_debug_log_writef(
-		"LIFE CACHE store url=%s mime=%s len=%ld hdrs=%ld",
-		url, mime, body_len, (long)hdrs_len);
+	/* fixes986 — how long does a store actually TAKE? The cold-load
+	 * regression could not be attributed from the log, because the gaps
+	 * between log lines measure where the poll loop was, not what cost time:
+	 * a gap after a CACHE line is mostly the wait for the NEXT fetch. So
+	 * measure the store directly. TickCount is 60 Hz and a single store may
+	 * well read 0, which is why the CUMULATIVE figure is the one to read --
+	 * across a page's worth of stores it answers "are these seconds or
+	 * milliseconds?" without any inference. */
+	{
+		long dt = (long)TickCount() - t0;
+		g_store_ticks += dt;
+		g_store_n++;
+		macsurf_debug_log_writef(
+			"LIFE CACHE store url=%s mime=%s len=%ld hdrs=%ld"
+			" t=%ld tot=%ld n=%ld",
+			url, mime, body_len, (long)hdrs_len,
+			dt, g_store_ticks, g_store_n);
+	}
 	macsurf_http_skip_next_cache = 0;
 	/* fixes985 — remembered-total budget enforcement; see macos9_cache_sweep. */
 	if (g_cache_total < 0) {

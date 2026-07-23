@@ -18,6 +18,25 @@
 
 #include <stddef.h>
 
+/* fixes986 — image/font caching is OFF again, one round after fixes985
+ * turned it on, because hardware said so: hackaday's cold load went from
+ * ~11s to ~33s and the maintainer called it out immediately. 68kmla, which
+ * has far fewer images, stayed fine -- which is the shape of a per-image
+ * cost, not a fixed one.
+ *
+ * The suspect is the design, not the switch. A cacheable response is
+ * buffered WHOLE in RAM (hctx_cache_capture, doubling realloc) purely so it
+ * can be written to a file at FETCH_FINISHED. That is cheap for 20 KB of
+ * CSS and expensive for ninety images on a 128 MB machine, where the churn
+ * lands on the same heap the decoder and its GWorlds are competing for.
+ *
+ * So this is a switch, not a revert: the fixes981 header machinery, the
+ * budget sweep and the format all stay: they are verified and they are what
+ * made returning to a cached page much faster. Flip this to 1 once the store
+ * streams to disk as chunks arrive instead of buffering first -- and only on
+ * a measurement, which fixes986 also adds (LIFE CACHE store ... tot=). */
+#define MACSURF_CACHE_IMAGES 0
+
 /* Single-response cap. Bigger bodies are served live, not cached.
  * fixes985: 1MB -> 2MB, now that images and webfonts are cacheable again.
  * Deliberately not fixes665's 4MB: this cap also bounds the fetcher's
@@ -25,7 +44,7 @@
  * already covers essentially every image on the web while asking half as
  * much of a 128MB machine mid-page-load. The whole-directory bound is
  * CACHE_TOTAL_BUDGET in macos9_disk_cache.c. */
-#define MACSURF_CACHE_MAX_BYTES (2L * 1024L * 1024L)
+#define MACSURF_CACHE_MAX_BYTES (1L * 1024L * 1024L)
 
 /* When non-zero, the next cache_lookup short-circuits to "miss" so
  * the Reload button forces a fresh fetch. cache_store clears the flag
