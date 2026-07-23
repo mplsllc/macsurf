@@ -405,8 +405,13 @@ void macos9_cache_store_hdrs(const char *url, int status, const char *mime,
 	 * magic check at next lookup — which is exactly the "miss" path
 	 * (refetch from network). No data corruption risk. */
 
+	/* fixes984 — "LIFE " prefix. The perf filter drops bare CACHE lines by
+	 * default (macsurf_debug_log.c), so this and the hit line below have
+	 * been invisible on every default build -- which is why fixes981 could
+	 * not be checked from a log and had to be verified by reading the cache
+	 * files off the machine. Same trap as the 304 lines in fixes979b. */
 	macsurf_debug_log_writef(
-		"CACHE store url=%s mime=%s len=%ld hdrs=%ld",
+		"LIFE CACHE store url=%s mime=%s len=%ld hdrs=%ld",
 		url, mime, body_len, (long)hdrs_len);
 	macsurf_http_skip_next_cache = 0;
 	/* fixes679: budget-sweep call removed with the old-cache-style revert. */
@@ -543,8 +548,12 @@ int macos9_cache_lookup_hdrs(const char *url, char **body_out,
 		memcpy(hdrs_out, hdrs_buf, n);
 		hdrs_out[n] = '\0';
 	}
+	/* fixes984 — "LIFE " prefix; see the store line. hdrs=N on a HIT is the
+	 * half that was never observable: it is the proof that the persisted
+	 * freshness headers are actually being replayed to llcache, not merely
+	 * written to disk. */
 	macsurf_debug_log_writef(
-		"CACHE hit url=%s mime=%s len=%ld status=%d hdrs=%ld",
+		"LIFE CACHE hit url=%s mime=%s len=%ld status=%d hdrs=%ld",
 		url, mime_buf, (long)body_len, (int)status_v, (long)hdrs_len);
 	return 1;
 #else
