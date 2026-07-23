@@ -418,7 +418,37 @@ box_handle_scrollbars(struct content *c,
 					      full_height);
 		}
 	}
+	/* fixes992 — WHO puts a scrollbar in the middle of the page?
+	 *
+	 * The reported "split viewport with an extra scroll bar" is NOT the
+	 * fixes625 canvas blowup: the fixes990 gate (canvas over twice the
+	 * viewport) did not fire on the page that shows it, with the
+	 * diagnostic confirmed present in the binary. So the scrollbar belongs
+	 * to a BOX -- an overflow container -- and this is where those are
+	 * made. Anomaly-scoped by construction: only a box that actually gets a
+	 * horizontal scrollbar logs, and the numbers say whether the overflow
+	 * is real (full_width really exceeds visible_width, so the content is
+	 * genuinely too wide) or whether it was forced by overflow:scroll with
+	 * nothing actually overflowing.
+	 *
+	 * Capped per session so a page full of legitimate overflow containers
+	 * cannot flood the log; the handful on the reported page arrive first.
+	 * Note MacSurf has no min-content/max-content solver, so a container
+	 * whose intrinsic width is over-estimated is a live candidate for a
+	 * scrollbar that no other browser draws. */
 	if (bottom) {
+		static int hbar_logged = 0;
+		if (hbar_logged < 12) {
+			hbar_logged++;
+			macsurf_debug_log_writef(
+				"LIFE HBAR type=%d x=%d w=%d vis_w=%d full_w=%d"
+				" dx0=%d dx1=%d new=%d",
+				(int)box->type, (int)box->x, (int)box->width,
+				visible_width, full_width,
+				(int)box->descendant_x0,
+				(int)box->descendant_x1,
+				(box->scroll_x == NULL) ? 1 : 0);
+		}
 		if (box->scroll_x == NULL) {
 			data = malloc(sizeof(struct html_scrollbar_data));
 			if (data == NULL) {
