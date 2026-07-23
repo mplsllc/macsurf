@@ -31,8 +31,35 @@
  * resume normal cache behaviour. Defined in macos9_disk_cache.c. */
 extern int macsurf_http_skip_next_cache;
 
+/* fixes981 — cap on the persisted freshness/validator header block.
+ * Cache-Control + ETag + Last-Modified + Expires + Date + Age is typically
+ * 150-250 bytes; a response whose block would exceed this keeps whatever fit
+ * whole (a truncated header is worse than a missing one). */
+#define MACSURF_CACHE_HDRS_MAX 512
+
 /* Returns 1 if this (status, mime) pair is worth persisting. */
 int macos9_cache_mime_eligible(int status, const char *mime);
+
+/* fixes981 — copy the response headers llcache needs in order to reason
+ * about freshness (Date, Age, Expires, Cache-Control) and to revalidate
+ * (ETag, Last-Modified) out of a full header line. Appends "Name: value\r\n"
+ * to dst when the line is one of those, ignores it otherwise. dst is always
+ * NUL-terminated; a line that would overflow is skipped whole. Both fetchers
+ * call this per header line while parsing a response they intend to cache. */
+void macos9_cache_capture_hdr(const char *line, char *dst, size_t cap);
+
+/* fixes981 — store/lookup carrying the freshness header block. The plain
+ * macos9_cache_store / macos9_cache_lookup remain, as wrappers passing no
+ * headers, so any caller that does not care is unaffected.
+ *
+ * On-disk format is unchanged for old files: the 24-byte header's last field
+ * was written as zero and is now the header-block length, so a file written
+ * by an older build reads back as "no headers" and still serves. */
+void macos9_cache_store_hdrs(const char *url, int status, const char *mime,
+		const char *hdrs, const char *body_ptr, long body_len);
+int macos9_cache_lookup_hdrs(const char *url, char **body_out,
+		long *body_len_out, char *mime_out, int mime_cap,
+		int *status_out, char *hdrs_out, int hdrs_cap);
 
 /* Try to satisfy a fetch from the on-disk cache. Returns 1 on hit,
  * 0 on miss / I/O error. On hit, *body_out is a malloc'd buffer the

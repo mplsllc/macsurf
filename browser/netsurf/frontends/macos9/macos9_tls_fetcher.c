@@ -215,6 +215,12 @@ struct macos9_https_ctx {
 	long             cache_hit_len;
 	char             cache_hit_mime[128];
 	int              cache_hit_status;
+	/* fixes981 — freshness/validator headers: captured while parsing a
+	 * response we intend to cache, replayed verbatim on a hit so llcache
+	 * sees the same Date/Cache-Control/ETag it would have seen from the
+	 * network. */
+	char             cache_hdrs[MACSURF_CACHE_HDRS_MAX];
+	char             cache_hit_hdrs[MACSURF_CACHE_HDRS_MAX];
 
 	/* fixes228 — auto-retry on benign peer-close. CF and Google CDN
 	 * close TLS connections aggressively after handshake; one retry
@@ -931,6 +937,8 @@ static void hctx_clear(struct macos9_https_ctx *c)
 	c->cache_cap_cap = 0;
 	if (c->cache_hit_body) { free(c->cache_hit_body); c->cache_hit_body = NULL; }
 	c->cache_hit_len = 0;
+	c->cache_hdrs[0] = '\0';       /* fixes981 */
+	c->cache_hit_hdrs[0] = '\0';
 	/* fixes312 (#144) — release captured POST body. */
 	if (c->post_body) { free(c->post_body); c->post_body = NULL; }
 	c->post_body_len = 0;
@@ -1727,7 +1735,8 @@ static void hctx_finish(struct macos9_https_ctx *c)
 	    c->url != NULL) {
 		const char *u = nsurl_access(c->url);
 		if (u != NULL) {
-			macos9_cache_store(u, c->status, c->mime,
+			macos9_cache_store_hdrs(u, c->status, c->mime,
+					c->cache_hdrs,
 				c->cache_capture, c->cache_cap_len);
 		}
 	}
@@ -1859,6 +1868,11 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 			if (n_header_lines < 64) {
 				header_lines[n_header_lines++] = p;
 			}
+			/* fixes981 — freshness/validator headers, kept for the
+			 * disk copy. Cheap enough to run for every response;
+			 * only used if this one turns out cacheable. */
+			macos9_cache_capture_hdr(p, c->cache_hdrs,
+					sizeof c->cache_hdrs);
 			if (strncasecmp(p, "Content-Type:", 13) == 0) {
 				char *v = p + 13; while (*v == ' ') v++;
 				strncpy(c->mime, v, 127); c->mime[127] = 0;
@@ -2733,6 +2747,31 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		c->status = c->cache_hit_status;
 		fetch_set_http_code(c->parent, c->status);
 
+		/* fixes981 — replay the stored freshness/validator headers
+		 * FIRST, so llcache builds this object's cache data exactly as
+		 * it would from a network response: it can then decide the copy
+		 * is fresh (serve, no request), or stale-but-validatable (one
+		 * conditional request, 304, no body). Without them a disk hit
+		 * was served unconditionally forever AND could never be
+		 * revalidated -- measured as reval=14 cond=0. Each stored line
+		 * is CRLF-terminated; FETCH_HEADER wants one line at a time. */
+		if (c->cache_hit_hdrs[0] != '\0') {
+			char *hp = c->cache_hit_hdrs;
+			while (*hp != '\0') {
+				char *eol = strstr(hp, "\r\n");
+				if (eol == NULL) break;
+				*eol = '\0';
+				if (hp[0] != '\0') {
+					msg.type = FETCH_HEADER;
+					msg.data.header_or_data.buf =
+						(const uint8_t *)hp;
+					msg.data.header_or_data.len = strlen(hp);
+					fetch_send_callback(&msg, c->parent);
+				}
+				hp = eol + 2;
+			}
+		}
+
 		if (c->cache_hit_mime[0] != 0) {
 			rn = sprintf(ct_line, "Content-Type: %s",
 				c->cache_hit_mime);
@@ -3485,14 +3524,27 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 		 * a stale login page (dead CSRF tokens, no Set-Cookie) is what
 		 * broke login. Always hit the network for FB hosts. This also
 		 * evicts any FB pages a pre-fixes374 build already cached. */
+		/* fixes981 — a CONDITIONAL request must never be answered
+		 * from our own disk copy. Once a disk hit carries real
+		 * Cache-Control/ETag (above), llcache can decide the copy is
+		 * stale and ask "has this changed?" -- and serving the same
+		 * stale bytes back answers nothing, leaves the object just as
+		 * stale, and asks again on the next request. The conditional
+		 * headers ARE the signal that core already holds this body, so
+		 * the only useful answer comes from the network. caller_hdrs is
+		 * captured earlier in this same setup(), so it is populated. */
 		if (c->post_body == NULL &&
 		    url_str != NULL &&
 		    !host_is_fb_asset(c->host) &&
-		    macos9_cache_lookup(url_str, &c->cache_hit_body,
+		    !macos9_hdr_has_ci(c->caller_hdrs, "if-none-match:") &&
+		    !macos9_hdr_has_ci(c->caller_hdrs, "if-modified-since:") &&
+		    macos9_cache_lookup_hdrs(url_str, &c->cache_hit_body,
 				&c->cache_hit_len,
 				c->cache_hit_mime,
 				sizeof(c->cache_hit_mime),
-				&c->cache_hit_status)) {
+				&c->cache_hit_status,
+				c->cache_hit_hdrs,
+				sizeof(c->cache_hit_hdrs))) {
 			c->state = HS_CACHEHIT;
 			strncpy(c->mime, c->cache_hit_mime,
 				sizeof(c->mime) - 1);

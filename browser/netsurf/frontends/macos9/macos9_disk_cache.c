@@ -275,8 +275,58 @@ int macos9_cache_mime_eligible(int status, const char *mime)
  * bodies are cached now (see macos9_cache_mime_eligible), so the cache can't
  * grow without bound and needs no directory sweep. */
 
+/* fixes981 — the freshness/validator headers a disk hit must carry.
+ *
+ * A disk hit used to hand core ONLY a Content-Type, so llcache had no Date,
+ * no Cache-Control, no ETag and no Last-Modified for it. Two consequences,
+ * both measured: the cached copy was served unconditionally and indefinitely
+ * (nothing could ever mark it stale), and because there was no validator it
+ * could never be revalidated cheaply either -- hardware showed reval=14 with
+ * cond=0, i.e. fourteen objects needed checking and not one had anything to
+ * check WITH. Persisting these six lines is what lets llcache make the
+ * decision instead of the disk cache making it by omission.
+ *
+ * Exactly the set llcache_fetch_process_header consumes (llcache.c:793-846):
+ * Age, Date, ETag, Expires, Cache-Control, Last-Modified. */
+void macos9_cache_capture_hdr(const char *line, char *dst, size_t cap)
+{
+	static const char *const keep[] = {
+		"age:", "date:", "etag:", "expires:",
+		"cache-control:", "last-modified:"
+	};
+	size_t nk = sizeof(keep) / sizeof(keep[0]);
+	size_t used;
+	size_t ll;
+	size_t j;
+	int wanted = 0;
+
+	if (dst == NULL || cap == 0 || line == NULL || line[0] == '\0') return;
+	for (j = 0; j < nk; j++) {
+		if (strncasecmp(line, keep[j], strlen(keep[j])) == 0) {
+			wanted = 1;
+			break;
+		}
+	}
+	if (!wanted) return;
+
+	used = strlen(dst);
+	ll = strlen(line);
+	/* skip whole rather than truncate: a half header is worse than none */
+	if (used + ll + 2 + 1 > cap) return;
+	memcpy(dst + used, line, ll);
+	dst[used + ll] = '\r';
+	dst[used + ll + 1] = '\n';
+	dst[used + ll + 2] = '\0';
+}
+
 void macos9_cache_store(const char *url, int status, const char *mime,
 		const char *body_ptr, long body_len)
+{
+	macos9_cache_store_hdrs(url, status, mime, NULL, body_ptr, body_len);
+}
+
+void macos9_cache_store_hdrs(const char *url, int status, const char *mime,
+		const char *hdrs, const char *body_ptr, long body_len)
 {
 #ifdef __MACOS9__
 	OSErr err;
@@ -288,6 +338,7 @@ void macos9_cache_store(const char *url, int status, const char *mime,
 	unsigned char hdr[24];
 	long count;
 	size_t mime_len;
+	size_t hdrs_len;
 
 	if (url == NULL || body_ptr == NULL) return;
 	if (body_len <= 0 || body_len > MACSURF_CACHE_MAX_BYTES) return;
@@ -310,6 +361,8 @@ void macos9_cache_store(const char *url, int status, const char *mime,
 
 	mime_len = strlen(mime);
 	if (mime_len > 127) mime_len = 127;
+	hdrs_len = (hdrs != NULL) ? strlen(hdrs) : 0;
+	if (hdrs_len > MACSURF_CACHE_HDRS_MAX - 1) hdrs_len = 0;
 
 	hdr[0] = MACSURF_CACHE_MAGIC0;
 	hdr[1] = MACSURF_CACHE_MAGIC1;
@@ -322,7 +375,9 @@ void macos9_cache_store(const char *url, int status, const char *mime,
 	cache_write_be32(hdr + 8,  (unsigned long)status);
 	cache_write_be32(hdr + 12, (unsigned long)mime_len);
 	cache_write_be32(hdr + 16, (unsigned long)body_len);
-	cache_write_be32(hdr + 20, 0UL);
+	/* fixes981 — was always written as 0; now the header-block length, so
+	 * a file written by an older build reads back as "no headers". */
+	cache_write_be32(hdr + 20, (unsigned long)hdrs_len);
 
 	count = sizeof(hdr);
 	FSWrite(ref, &count, hdr);
@@ -330,9 +385,14 @@ void macos9_cache_store(const char *url, int status, const char *mime,
 		count = (long)mime_len;
 		FSWrite(ref, &count, mime);
 	}
+	if (hdrs_len > 0) {
+		count = (long)hdrs_len;
+		FSWrite(ref, &count, hdrs);
+	}
 	count = body_len;
 	FSWrite(ref, &count, body_ptr);
-	SetEOF(ref, (long)sizeof(hdr) + (long)mime_len + body_len);
+	SetEOF(ref, (long)sizeof(hdr) + (long)mime_len + (long)hdrs_len +
+			body_len);
 	FSClose(ref);
 	/* fixes248 — FlushVol REMOVED. Same rationale as fixes96 on the
 	 * log writer: synchronous volume flush costs 10-50 ms per call on
@@ -346,18 +406,27 @@ void macos9_cache_store(const char *url, int status, const char *mime,
 	 * (refetch from network). No data corruption risk. */
 
 	macsurf_debug_log_writef(
-		"CACHE store url=%s mime=%s len=%ld",
-		url, mime, body_len);
+		"CACHE store url=%s mime=%s len=%ld hdrs=%ld",
+		url, mime, body_len, (long)hdrs_len);
 	macsurf_http_skip_next_cache = 0;
 	/* fixes679: budget-sweep call removed with the old-cache-style revert. */
 #else
-	(void)url; (void)status; (void)mime; (void)body_ptr; (void)body_len;
+	(void)url; (void)status; (void)mime; (void)hdrs;
+	(void)body_ptr; (void)body_len;
 #endif
 }
 
 int macos9_cache_lookup(const char *url, char **body_out,
 		long *body_len_out, char *mime_out, int mime_cap,
 		int *status_out)
+{
+	return macos9_cache_lookup_hdrs(url, body_out, body_len_out,
+			mime_out, mime_cap, status_out, NULL, 0);
+}
+
+int macos9_cache_lookup_hdrs(const char *url, char **body_out,
+		long *body_len_out, char *mime_out, int mime_cap,
+		int *status_out, char *hdrs_out, int hdrs_cap)
 {
 #ifdef __MACOS9__
 	OSErr err;
@@ -371,12 +440,15 @@ int macos9_cache_lookup(const char *url, char **body_out,
 	unsigned long status_v;
 	unsigned long mime_len;
 	unsigned long body_len;
+	unsigned long hdrs_len;
 	char mime_buf[128];
+	char hdrs_buf[MACSURF_CACHE_HDRS_MAX];
 	char *body;
 
 	*body_out = NULL;
 	*body_len_out = 0;
 	if (mime_out != NULL && mime_cap > 0) mime_out[0] = '\0';
+	if (hdrs_out != NULL && hdrs_cap > 0) hdrs_out[0] = '\0';
 	*status_out = 0;
 
 	if (url == NULL) return 0;
@@ -410,8 +482,11 @@ int macos9_cache_lookup(const char *url, char **body_out,
 	status_v = cache_read_be32(hdr + 8);
 	mime_len = cache_read_be32(hdr + 12);
 	body_len = cache_read_be32(hdr + 16);
+	/* fixes981 — 0 in a file written before the header block existed. */
+	hdrs_len = cache_read_be32(hdr + 20);
 	if (mime_len > 127 || body_len == 0 ||
-			body_len > MACSURF_CACHE_MAX_BYTES) {
+			body_len > MACSURF_CACHE_MAX_BYTES ||
+			hdrs_len > MACSURF_CACHE_HDRS_MAX - 1) {
 		FSClose(ref);
 		return 0;
 	}
@@ -425,6 +500,16 @@ int macos9_cache_lookup(const char *url, char **body_out,
 		}
 	}
 	mime_buf[mime_len] = '\0';
+
+	if (hdrs_len > 0) {
+		count = (long)hdrs_len;
+		if (FSRead(ref, &count, hdrs_buf) != noErr ||
+				count != (long)hdrs_len) {
+			FSClose(ref);
+			return 0;
+		}
+	}
+	hdrs_buf[hdrs_len] = '\0';
 
 	body = (char *)malloc(body_len);
 	if (body == NULL) {
@@ -452,13 +537,20 @@ int macos9_cache_lookup(const char *url, char **body_out,
 		memcpy(mime_out, mime_buf, n);
 		mime_out[n] = '\0';
 	}
+	if (hdrs_out != NULL && hdrs_cap > 0) {
+		size_t n = hdrs_len;
+		if (n >= (size_t)hdrs_cap) n = (size_t)hdrs_cap - 1;
+		memcpy(hdrs_out, hdrs_buf, n);
+		hdrs_out[n] = '\0';
+	}
 	macsurf_debug_log_writef(
-		"CACHE hit url=%s mime=%s len=%ld status=%d",
-		url, mime_buf, (long)body_len, (int)status_v);
+		"CACHE hit url=%s mime=%s len=%ld status=%d hdrs=%ld",
+		url, mime_buf, (long)body_len, (int)status_v, (long)hdrs_len);
 	return 1;
 #else
 	(void)url; (void)body_out; (void)body_len_out;
 	(void)mime_out; (void)mime_cap; (void)status_out;
+	(void)hdrs_out; (void)hdrs_cap;
 	return 0;
 #endif
 }

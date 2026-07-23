@@ -160,6 +160,10 @@ struct macos9_fetch_ctx {
 	char *cache_hit_body;
 	long cache_hit_len;
 	char cache_hit_mime[128];
+	/* fixes981 — freshness/validator headers for the disk copy; see the
+	 * TLS fetcher for the rationale. */
+	char cache_hdrs[MACSURF_CACHE_HDRS_MAX];
+	char cache_hit_hdrs[MACSURF_CACHE_HDRS_MAX];
 	int cache_hit_status;
 	/* fixes312 (#144) — POST body. NULL → GET. Copy is heap-owned and
 	 * freed in mfs_close (slot-recycle path). */
@@ -433,14 +437,25 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		const char *url_str = nsurl_access(c->url);
 		/* fixes312 (#144) — POSTs are non-idempotent; never serve
 		 * from cache and never cache the response. */
+		/* fixes981 — never answer a CONDITIONAL request from disk;
+		 * see the TLS fetcher for the full rationale. Serving the same
+		 * stale bytes back to a revalidation answers nothing and the
+		 * object stays stale forever. */
 		if (url_str != NULL && c->cache_hit == 0 &&
 				c->post_body == NULL &&
+				!macos9_hdr_has_ci(c->caller_hdrs,
+					"if-none-match:") &&
+				!macos9_hdr_has_ci(c->caller_hdrs,
+					"if-modified-since:") &&
 				macsurf_http_skip_next_cache == 0) {
-			if (macos9_cache_lookup(url_str, &c->cache_hit_body,
+			if (macos9_cache_lookup_hdrs(url_str,
+					&c->cache_hit_body,
 					&c->cache_hit_len,
 					c->cache_hit_mime,
 					sizeof(c->cache_hit_mime),
-					&c->cache_hit_status)) {
+					&c->cache_hit_status,
+					c->cache_hit_hdrs,
+					sizeof(c->cache_hit_hdrs))) {
 				c->cache_hit = 1;
 				/* Populate the mime field expected by the
 				 * existing finished-emit code. */
@@ -986,6 +1001,8 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 			char *v=p+11; while(*v==' ')v++;
 			if(strncasecmp(v,"close",5)==0) c->keep_alive_ok = 0;
 		}
+		/* fixes981 — freshness/validator headers for the disk copy. */
+		macos9_cache_capture_hdr(p, c->cache_hdrs, sizeof c->cache_hdrs);
 		/* fixes98 — capture Location: for 3xx auto-follow. */
 		if(strncasecmp(p,"Location:",9)==0) {
 			char *v=p+9; size_t lv;
@@ -1245,6 +1262,25 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 		long hlen;
 		/* Synthetic Content-Type header so NetSurf core sees the
 		 * MIME type the cached file was stored with. */
+		/* fixes981 — replay the stored freshness/validator headers
+		 * before Content-Type, so llcache builds this object's cache
+		 * data as if it had come off the network. */
+		if (c->cache_hit_hdrs[0] != '\0') {
+			char *hp = c->cache_hit_hdrs;
+			while (*hp != '\0') {
+				char *eol = strstr(hp, "\r\n");
+				if (eol == NULL) break;
+				*eol = '\0';
+				if (hp[0] != '\0') {
+					cm.type = FETCH_HEADER;
+					cm.data.header_or_data.buf =
+						(const uint8_t *)hp;
+					cm.data.header_or_data.len = strlen(hp);
+					fetch_send_callback(&cm, c->parent);
+				}
+				hp = eol + 2;
+			}
+		}
 		if (c->cache_hit_mime[0] != '\0') {
 			/* mime is capped at 127, "Content-Type: " is 14
 			 * chars; hline is 160; sprintf is bounded. */
@@ -1469,7 +1505,8 @@ static void macos9_http_poll(lwc_string *s) {
 					c->cache_cap_len > 0) {
 				const char *u = nsurl_access(c->url);
 				if (u != NULL) {
-					macos9_cache_store(u, c->status, c->mime,
+					macos9_cache_store_hdrs(u, c->status,
+						c->mime, c->cache_hdrs,
 						c->cache_capture,
 						c->cache_cap_len);
 				}
