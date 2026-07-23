@@ -729,6 +729,12 @@ def build_icns_resource(img: "Image.Image") -> bytes:
     return b"icns" + struct.pack(">I", len(body) + 8) + body
 
 
+# The classic custom-icon resource id (kCustomIconResource). Mac OS X reads a
+# file's icon from here when kHasCustomIcon is set in its Finder flags; Mac OS
+# 9 does the same, but understands ICN#/icl8 rather than 'icns'.
+CUSTOM_ICON_ID = -16455
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -837,25 +843,36 @@ def main() -> int:
         pkg_type=args.file_type,
     )
     fork.add(b"plst", 0, plst)
-    # 'icns' — the Mac OS X icon (fixes982). Emitted at TWO ids on purpose,
-    # because which one Panther reads for an UNBUNDLED CFM app is exactly the
-    # thing that cannot be settled from Linux:
-    #   icon-id (128) — the id BNDL already maps the icon family to, which is
-    #                   what Icon Services resolves through type/creator.
-    #   -16455        — kCustomIconResource, the documented custom-icon slot;
-    #                   needs the file's kHasCustomIcon Finder flag set to be
-    #                   preferred, which is a Finder-side action, not ours.
-    # Both are ignored by Mac OS 9, so carrying both costs disk and nothing
-    # else, and it means the maintainer gets a result from one hardware run
-    # instead of a bisect.
+    # The CUSTOM ICON set, at -16455 (fixes982/983). Hardware settled which of
+    # the two candidate ids Mac OS X 10.3 actually reads for an unbundled CFM
+    # app, so the speculative copy at icon-id is gone: it is -16455, the
+    # documented kCustomIconResource slot, and it is consulted only when the
+    # application file's kHasCustomIcon Finder flag is set. Nothing in the
+    # toolchain sets that flag, so MacSurf sets it on itself at startup
+    # (macsurf_claim_custom_icon, main.c).
+    #
+    # BOTH icon forms go in this slot, and that pairing is the point:
+    #   'icns'                    read by Mac OS X -> the OS X artwork
+    #   ICN#/icl4/icl8/ics#/...   read by Mac OS 9 -> the SAME classic artwork
+    #                             it already draws
+    # The classic half is not decoration. Once kHasCustomIcon is set, OS 9's
+    # Finder looks HERE instead of at the BNDL family; with only an 'icns'
+    # present it would find nothing it understands and draw a generic icon --
+    # trading a new OS X icon for a regression on the platform that was
+    # already right. Emitting the same family twice costs ~2 KB.
     icns = None
     if args.osx_icon:
         osx_src = Image.open(args.osx_icon)
         if osx_src.mode != "RGBA":
             osx_src = osx_src.convert("RGBA")
         icns = build_icns_resource(osx_src)
-        fork.add(b"icns", args.icon_id, icns)
-        fork.add(b"icns", -16455, icns)
+        fork.add(b"icns", CUSTOM_ICON_ID, icns)
+        fork.add(b"ICN#", CUSTOM_ICON_ID, fam.icn_pound)
+        fork.add(b"icl4", CUSTOM_ICON_ID, fam.icl4)
+        fork.add(b"icl8", CUSTOM_ICON_ID, fam.icl8)
+        fork.add(b"ics#", CUSTOM_ICON_ID, fam.ics_pound)
+        fork.add(b"ics4", CUSTOM_ICON_ID, fam.ics4)
+        fork.add(b"ics8", CUSTOM_ICON_ID, fam.ics8)
     blob = fork.build()
     os.makedirs(os.path.dirname(args.rsrc) or ".", exist_ok=True)
     with open(args.rsrc, "wb") as f:
@@ -890,12 +907,15 @@ def main() -> int:
            len(plst), args.bundle_id))
     if icns is not None:
         sys.stdout.write(
-            "  icns  (%d,-16455) %d bytes each -- OS X icon from %s\n"
-            "        (Mac OS 9 ignores 'icns'; the ICN#/icl8 family above is\n"
-            "         still what Finder draws there. NOT in the Rez text: a\n"
-            "         50 KB blob as hex would swamp the file for no gain --\n"
-            "         the binary fork is the artifact CW8 links.)\n"
-            % (args.icon_id, len(icns), args.osx_icon))
+            "  icns  (%d) %5d bytes  -- OS X custom icon from %s\n"
+            "  ICN#/icl4/icl8/ics#/ics4/ics8 (%d)  -- the SAME classic family\n"
+            "        as ID %d, so Mac OS 9's custom-icon lookup finds the icon\n"
+            "        it already drew. Needs kHasCustomIcon on the app file;\n"
+            "        MacSurf sets that itself at startup (fixes983).\n"
+            "        The 'icns' is NOT in the Rez text: 50 KB as hex would\n"
+            "        swamp the file, and the binary fork is what CW8 links.\n"
+            % (CUSTOM_ICON_ID, len(icns), args.osx_icon,
+               CUSTOM_ICON_ID, args.icon_id))
     return 0
 
 

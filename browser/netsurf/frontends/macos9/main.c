@@ -18,6 +18,8 @@
 #include <OpenTransport.h>
 #include <OpenTptInternet.h>
 #include <Movies.h>
+#include <Processes.h>   /* fixes983 -- our own FSSpec, for the icon claim */
+#include <Files.h>       /* fixes983 -- FSpGetFInfo / FSpSetFInfo */
 OTClientContextPtr macos9_ot_context = NULL;
 /* macTLS expects this symbol; aliased to our OT context after init. */
 OTClientContextPtr g_ostls_ot_context = NULL;
@@ -1636,6 +1638,76 @@ static void macos9_deferred_home_load(void *pw)
 	nsurl_unref(home);
 }
 
+
+/* fixes983 -- claim the custom-icon bit on our own application file.
+ *
+ * MacSurf ships one artifact with two icons: the classic ICN#/icl8 family for
+ * Mac OS 9 and an 'icns' for Mac OS X (fixes982). Shipping the 'icns' was not
+ * enough and the reason is this flag. Mac OS X only consults a file's
+ * custom-icon resource (-16455) when kHasCustomIcon is set in its Finder
+ * flags; with the flag clear it falls back to the BNDL icon family, which is
+ * the OS 9 artwork -- exactly what hardware showed ("it was reading the os9
+ * icon fine ... it's the same old one right now"). Measured before changing
+ * anything: the built app read flags=0x0100, and setting 0x0400 by hand on
+ * that same binary produced the OS X icon immediately.
+ *
+ * Nothing in the toolchain sets the flag. CodeWarrior writes the type and
+ * creator but not the Finder flags, and doing it by hand after every build is
+ * the kind of step that is forgotten once and then debugged for an hour. So
+ * the application asserts it about itself, which is the same spirit as the
+ * 'vers' and 'plst' resources: identity the app carries rather than relies on
+ * someone to attach.
+ *
+ * Write-once: returns immediately if the bit is already set, so this touches
+ * the file on the first launch after an install and never again. Silent on
+ * every failure -- a read-only volume or a locked file simply means the icon
+ * stays as it was, which is cosmetic and must never be a launch failure.
+ *
+ * Safe on Mac OS 9 ONLY because fixes983 also emits the CLASSIC icon family
+ * at -16455 alongside the 'icns'. With the flag set and no classic family
+ * there, OS 9's Finder would look for a custom icon, find nothing it
+ * understands, and draw a generic one -- trading the OS X icon for a
+ * regression on the platform that was already right.
+ */
+#ifndef kHasCustomIcon
+#define kHasCustomIcon 0x0400
+#endif
+
+static void macsurf_claim_custom_icon(void)
+{
+#ifdef __MACOS9__
+	ProcessSerialNumber psn;
+	ProcessInfoRec      info;
+	FSSpec              appSpec;
+	FInfo               fi;
+	OSErr               err;
+
+	psn.highLongOfPSN = 0;
+	psn.lowLongOfPSN  = kCurrentProcess;
+	memset(&info, 0, sizeof(info));
+	info.processInfoLength = sizeof(ProcessInfoRec);
+	info.processName = NULL;
+	info.processAppSpec = &appSpec;
+	if (GetProcessInformation(&psn, &info) != noErr) {
+		return;
+	}
+	if (FSpGetFInfo(&appSpec, &fi) != noErr) {
+		return;
+	}
+	if ((fi.fdFlags & kHasCustomIcon) != 0) {
+		return;   /* already claimed -- nothing to write */
+	}
+	fi.fdFlags |= kHasCustomIcon;
+	err = FSpSetFInfo(&appSpec, &fi);
+	/* %d only: macsurf_debug_log_writef's hand-rolled formatter supports
+	 * %d/%ld/%p/%s/%% and nothing else -- a %X here would print garbage. */
+	macsurf_debug_log_writef(
+		"LIFE icon custom-icon claimed err=%d flags=%d",
+		(int)err, (int)fi.fdFlags);
+#endif
+}
+
+
 int main(void) {
 	/* fixes477: calibrate PPC time base register (mftb) first so
 	 * macsurf_monotonic_ms() and performance.now() have a valid
@@ -1729,6 +1801,8 @@ int main(void) {
 	}
 	RegisterAppearanceClient();
 	MS_LOG("BOOT Appearance OK");
+
+	macsurf_claim_custom_icon();   /* fixes983 */
 
 	/* fixes78: QuickTime startup. Required before any
 	 * GraphicsImportComponent / Movies.h API call. Without this,
