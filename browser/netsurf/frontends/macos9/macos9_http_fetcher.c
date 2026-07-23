@@ -1038,7 +1038,8 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 	 * path (remove from queues, then free). */
 	if (notmod) {
 		struct fetch *parent_save;
-		macsurf_debug_log_writef("http: 304 not-modified url=%s",
+		/* fixes979b — "LIFE " prefix so the failures-only gate keeps it. */
+		macsurf_debug_log_writef("LIFE 304 not-modified url=%s",
 			(c->url != NULL) ? nsurl_access(c->url) : "?");
 		msg.type = FETCH_NOTMODIFIED;
 		fetch_send_callback(&msg, c->parent);

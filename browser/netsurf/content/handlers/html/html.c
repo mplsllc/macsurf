@@ -2826,16 +2826,18 @@ static void html_reformat(struct content *c, int width, int height)
 	 * revisit is what image disk caching would be for. */
 	{
 		extern void macsurf_llcache_stats(long *fresh, long *reval,
-				long *miss, long *notmod);
-		static long ll_f = -1, ll_r = -1, ll_m = -1, ll_n = -1;
-		long lf = 0, lr = 0, lm = 0, ln = 0;
+				long *miss, long *notmod, long *cond);
+		static long ll_f = -1, ll_r = -1, ll_m = -1, ll_n = -1, ll_c = -1;
+		long lf = 0, lr = 0, lm = 0, ln = 0, lc = 0;
 
-		macsurf_llcache_stats(&lf, &lr, &lm, &ln);
-		if (lf != ll_f || lr != ll_r || lm != ll_m || ln != ll_n) {
+		macsurf_llcache_stats(&lf, &lr, &lm, &ln, &lc);
+		if (lf != ll_f || lr != ll_r || lm != ll_m || ln != ll_n ||
+		    lc != ll_c) {
 			macsurf_debug_log_writef(
-				"LIFE llc fresh=%ld reval=%ld miss=%ld notmod=%ld",
-				lf, lr, lm, ln);
-			ll_f = lf; ll_r = lr; ll_m = lm; ll_n = ln;
+				"LIFE llc fresh=%ld reval=%ld miss=%ld notmod=%ld"
+				" cond=%ld",
+				lf, lr, lm, ln, lc);
+			ll_f = lf; ll_r = lr; ll_m = lm; ll_n = ln; ll_c = lc;
 		}
 	}
 

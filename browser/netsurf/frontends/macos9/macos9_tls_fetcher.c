@@ -2088,8 +2088,12 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		 * beside the status line. */
 		if (c->status == 304 && c->post_body == NULL) {
 			struct fetch *parent_save;
+			/* fixes979b — "LIFE " prefix, or the failures-only gate
+			 * drops it: the gate matches literal strings, and a
+			 * line that never reaches disk is worse than no line,
+			 * because it reads like instrumentation that exists. */
 			macsurf_debug_log_writef(
-				"https: 304 not-modified host=%s path=%s",
+				"LIFE 304 not-modified host=%s path=%s",
 				c->host, c->path);
 			msg.type = FETCH_NOTMODIFIED;
 			fetch_send_callback(&msg, c->parent);

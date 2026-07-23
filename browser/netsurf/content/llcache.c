@@ -1128,6 +1128,41 @@ static nserror get_referer_header(nsurl *url, nsurl *referer, char **header_out)
 	return res;
 }
 
+/* fixes979 — the memory-cache ledger. Cheap counters, no per-request log
+ * line; emitted changed-only once per reformat from html_reformat, the same
+ * shape as the fixes934/978 ledgers.
+ *
+ *   fresh   served entirely from the in-memory object, no request at all
+ *   reval   a held object needed freshness validation, so a CONDITIONAL
+ *           request was started (fixes979 restored If-None-Match /
+ *           If-Modified-Since; before that this was a full body refetch)
+ *   miss    nothing held, full fetch
+ *   notmod  a 304 came back and the held bytes were reused
+ *   cond    requests that actually carried a validator (fixes979b)
+ *
+ * Read them together. reval ~= cond ~= notmod is revalidation working, and
+ * costing a round trip instead of a body. reval >> cond means most held
+ * objects have neither an ETag nor a Last-Modified, so a full refetch is the
+ * only option -- an argument for disk caching, NOT for conditional requests.
+ * cond >> notmod means we ask and servers answer with full bodies anyway. */
+static long g_llc_fresh = 0;
+static long g_llc_reval = 0;
+static long g_llc_miss = 0;
+static long g_llc_notmod = 0;
+static long g_llc_cond = 0;
+
+void macsurf_llcache_stats(long *fresh, long *reval, long *miss, long *notmod,
+		long *cond);
+void macsurf_llcache_stats(long *fresh, long *reval, long *miss, long *notmod,
+		long *cond)
+{
+	*fresh = g_llc_fresh;
+	*reval = g_llc_reval;
+	*miss = g_llc_miss;
+	*notmod = g_llc_notmod;
+	*cond = g_llc_cond;
+}
+
 /**
  * (Re)fetch an object
  *
@@ -1255,6 +1290,16 @@ static nserror llcache_object_refetch(llcache_object *object)
 				rfc1123_date(object->cache.last_modified));
 
 		header_idx++;
+	}
+
+	/* fixes979b — did this request actually carry a validator? reval says
+	 * how often an object needed revalidating; cond says how often we had
+	 * something to revalidate WITH. reval >> cond means most held objects
+	 * have neither an ETag nor a Last-Modified, so a full refetch is not a
+	 * bug but the only option -- and that is the disk-cache / heuristic-
+	 * freshness argument, not a conditional-request one. */
+	if (header_idx > 0) {
+		g_llc_cond++;
 	}
 
 	/* Referer header */
@@ -2274,34 +2319,6 @@ llcache_object_fetch_persistent(llcache_object *object,
  * \param result	  Pointer to location to receive retrieved object
  * \return NSERROR_OK on success, appropriate error otherwise
  */
-/* fixes979 — the memory-cache ledger. Cheap counters, no per-request log
- * line; emitted changed-only once per reformat from html_reformat, the same
- * shape as the fixes934/978 ledgers.
- *
- *   fresh   served entirely from the in-memory object, no request at all
- *   reval   a held object needed freshness validation, so a CONDITIONAL
- *           request was started (fixes979 restored If-None-Match /
- *           If-Modified-Since; before that this was a full body refetch)
- *   miss    nothing held, full fetch
- *   notmod  a 304 came back and the held bytes were reused
- *
- * reval ~= notmod means revalidation is working and costing a round trip
- * instead of a body. reval >> notmod means servers are answering our
- * conditionals with full bodies anyway, and the next question is why. */
-static long g_llc_fresh = 0;
-static long g_llc_reval = 0;
-static long g_llc_miss = 0;
-static long g_llc_notmod = 0;
-
-void macsurf_llcache_stats(long *fresh, long *reval, long *miss, long *notmod);
-void macsurf_llcache_stats(long *fresh, long *reval, long *miss, long *notmod)
-{
-	*fresh = g_llc_fresh;
-	*reval = g_llc_reval;
-	*miss = g_llc_miss;
-	*notmod = g_llc_notmod;
-}
-
 static nserror
 llcache_object_retrieve_from_cache(nsurl *url,
 				   uint32_t flags,
