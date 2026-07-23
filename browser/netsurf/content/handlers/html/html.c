@@ -2792,6 +2792,33 @@ static void html_reformat(struct content *c, int width, int height)
 		}
 	}
 
+	/* fixes978 — the object-fetch ledger, replacing the per-fetch objfetch /
+	 * objadopt probes of fixes966-977 (one write, and one volume flush, per
+	 * fetch). adopt+renode+specdup is the count of fetches PREVENTED; `fetch`
+	 * is the count that can still reach the network. Read it against the
+	 * `LIFE objects` relink line: `fetch` climbing while `renode` stays flat
+	 * on a page that reconverts means node-keyed adoption has stopped
+	 * matching, which is what fixes975-977 are exposed to. */
+	{
+		extern void macsurf_obj_fetch_stats(long *fetch, long *spec,
+				long *bg, long *adopt, long *renode,
+				long *specdup);
+		static long lf_f = -1, lf_s = -1, lf_b = -1;
+		static long lf_a = -1, lf_r = -1, lf_d = -1;
+		long ff = 0, fs = 0, fb = 0, fa = 0, fr = 0, fd = 0;
+
+		macsurf_obj_fetch_stats(&ff, &fs, &fb, &fa, &fr, &fd);
+		if (ff != lf_f || fs != lf_s || fb != lf_b ||
+		    fa != lf_a || fr != lf_r || fd != lf_d) {
+			macsurf_debug_log_writef(
+				"LIFE obj fetch=%ld spec=%ld bg=%ld"
+				" adopt=%ld renode=%ld specdup=%ld",
+				ff, fs, fb, fa, fr, fd);
+			lf_f = ff; lf_s = fs; lf_b = fb;
+			lf_a = fa; lf_r = fr; lf_d = fd;
+		}
+	}
+
 	/* fixes445: clear hover/active tracking on reformat. The dyn_hover_node
 	 * pointer survives layout but box_construct.c seeds its context from
 	 * these fields; stale values after a CONTENT_MSG_ERROR-driven reformat

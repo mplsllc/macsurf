@@ -168,6 +168,46 @@ void macsurf_img_object_stats(long *done_ok, long *done_zero,
 	*nulled = g_img_obj_nulled;
 }
 
+/* fixes978 — the object-fetch ledger, replacing the per-fetch `LIFE objfetch`
+ * and `LIFE objadopt` lines the fixes966-977 rounds were measured with.
+ *
+ * Those answered their questions and are gone: they cost one log write per
+ * fetch (111 in a four-page session), and every write flushes the volume. The
+ * counters below carry the same signal at one changed-only line per reformat,
+ * the shape the fixes934 img ledger already uses.
+ *
+ * What each says, so a future reader can act on a moved number:
+ *   fetch   real retrievals started -- the only ones that can touch the network
+ *   spec    of those, speculative (box == NULL, html_process_inserted_img)
+ *   bg      of those, CSS backgrounds
+ *   adopt   a box claimed a box-less entry instead of refetching (fixes975)
+ *   renode  a rebuilt box reclaimed its own element's entry (fixes977)
+ *   specdup a redundant speculative fetch was suppressed (fixes975)
+ * adopt+renode+specdup is the number of fetches PREVENTED. If `fetch` climbs
+ * against a flat `renode` on a page that reconverts, node-keyed adoption has
+ * stopped matching -- which is the regression these three rounds are exposed
+ * to. Per-URL detail is deliberately not kept; re-add a temporary line if a
+ * question needs it. */
+static long g_obj_fetch_started = 0;
+static long g_obj_fetch_spec = 0;
+static long g_obj_fetch_bg = 0;
+static long g_obj_adopt_box = 0;
+static long g_obj_adopt_renode = 0;
+static long g_obj_adopt_specdup = 0;
+
+void macsurf_obj_fetch_stats(long *fetch, long *spec, long *bg,
+		long *adopt, long *renode, long *specdup);
+void macsurf_obj_fetch_stats(long *fetch, long *spec, long *bg,
+		long *adopt, long *renode, long *specdup)
+{
+	*fetch = g_obj_fetch_started;
+	*spec = g_obj_fetch_spec;
+	*bg = g_obj_fetch_bg;
+	*adopt = g_obj_adopt_box;
+	*renode = g_obj_adopt_renode;
+	*specdup = g_obj_adopt_specdup;
+}
+
 static void
 html_object_done(struct box *box,
 		 hlcache_handle *object,
@@ -1203,9 +1243,7 @@ html_fetch_object(html_content *c,
 
 			if (box == NULL) {
 				/* Redundant speculative fetch. */
-				macsurf_debug_log_writef(
-					"LIFE objadopt spec-dup done=%d url=%s",
-					done, nsurl_access(url));
+				g_obj_adopt_specdup++;   /* fixes978 */
 				return true;
 			}
 
@@ -1224,10 +1262,11 @@ html_fetch_object(html_content *c,
 				 * both decrement. Balance it. */
 				c->base.active++;
 			}
-			macsurf_debug_log_writef(
-				"LIFE objadopt %s done=%d url=%s",
-				was_counted ? "renode" : "box",
-				done, nsurl_access(url));
+			if (was_counted) {   /* fixes978 */
+				g_obj_adopt_renode++;
+			} else {
+				g_obj_adopt_box++;
+			}
 			return true;
 		}
 	}
@@ -1270,40 +1309,12 @@ html_fetch_object(html_content *c,
 		return error != NSERROR_NOMEM;
 	}
 
-	/* fixes966 — Stage 0b measurement. TEMPORARY: remove once the
-	 * speculative-fetch question is settled.
-	 *
-	 * Question: does html_process_inserted_img's speculative fetch (the only
-	 * caller that passes box == NULL, dom_event.c) earn its keep, or does
-	 * hlcache fold it into the box-construction fetch for the same URL
-	 * anyway?
-	 *
-	 * `hit` is the discriminator and it is exact: hlcache_handle_retrieve has
-	 * just returned, so a NON-NULL content means the entry already existed --
-	 * this retrieve reused it. NULL means a fresh retrieval started.
-	 *
-	 * Reading the result on hardware, per URL:
-	 *   spec=1 hit=0  then  spec=0 hit=1   -> the speculative fetch primed the
-	 *                                         cache; it works, and the gap
-	 *                                         between the two timestamps is
-	 *                                         the latency it actually buys.
-	 *   spec=1 hit=0  then  spec=0 hit=0   -> no dedupe: two independent
-	 *                                         fetches for one image.
-	 *   no spec= lines at all               -> the path never fires on this
-	 *                                         page and the question is moot.
-	 *
-	 * "LIFE " prefix because WORK-prefixed lines are dropped unless
-	 * MACSURF_WORK_LOG is defined, which it is not, anywhere in the tree. */
-	{
-		struct content *probe_c = (object->content != NULL)
-			? hlcache_handle_get_content(object->content) : NULL;
-		macsurf_debug_log_writef(
-			"LIFE objfetch spec=%d bg=%d hit=%d url=%s",
-			(box == NULL) ? 1 : 0,
-			background ? 1 : 0,
-			(probe_c != NULL) ? 1 : 0,
-			nsurl_access(url));
-	}
+	/* fixes978 — ledger, not a log line. The fixes966 per-fetch probe that
+	 * lived here has been answered (Stage 0b: the speculative fetch earns
+	 * its keep, keep it) and removed; see macsurf_obj_fetch_stats. */
+	g_obj_fetch_started++;
+	if (box == NULL) g_obj_fetch_spec++;
+	if (background) g_obj_fetch_bg++;
 
 	/* add to content object list */
 	object->next = c->object_list;
