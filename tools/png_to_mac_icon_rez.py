@@ -619,6 +619,116 @@ def build_plst_resource(bundle_name: str, identifier: str, short_ver: str,
     return plist.encode("utf-8")
 
 
+# ---------------------------------------------------------------------------
+# 'icns' — the Mac OS X icon (fixes982)
+# ---------------------------------------------------------------------------
+#
+# WHY a second icon at all. MacSurf ships ONE artifact for OS 9 and OS X, and
+# the classic ICN#/icl4/icl8 family above tops out at 32x32 8-bit. That is what
+# OS 9 wants and all it can use; on OS X the Dock scales it up and it looks
+# like what it is. An 'icns' resource is the OS X-side icon: Classic Mac OS has
+# no idea what the type means and ignores it outright, so adding one cannot
+# change the OS 9 appearance -- the same binary simply looks right on both.
+#
+# Element types are the ones Mac OS X 10.0-10.4 understands. The PNG-payload
+# types (ic07..ic14) are 10.7+ and are deliberately NOT emitted: on Panther
+# they would be dead weight at best.
+#
+#   is32 / s8mk   16x16    24-bit RLE colour + 8-bit mask
+#   il32 / l8mk   32x32
+#   ih32 / h8mk   48x48
+#   it32 / t8mk   128x128  (it32 carries a 4-byte zero header)
+#
+# The RLE is icns' own variant, per channel, R then G then B with the alpha
+# channel carried separately in the *8mk element:
+#   byte >= 0x80 : run   -- (byte - 125) copies of the ONE following byte
+#                           (so a run encodes 3..130 pixels)
+#   byte <  0x80 : literal -- (byte + 1) following bytes (1..128)
+# Runs of 1 or 2 are not worth encoding as runs and are emitted as literals,
+# which is what every decoder expects to see.
+
+
+def _icns_rle_channel(data: bytes) -> bytes:
+    """RLE-compress one channel of an icns 24-bit element."""
+    out = bytearray()
+    i = 0
+    n = len(data)
+    while i < n:
+        # count the run at i
+        run = 1
+        while i + run < n and data[i + run] == data[i] and run < 130:
+            run += 1
+        if run >= 3:
+            out.append(0x80 | (run - 3))
+            out.append(data[i])
+            i += run
+            continue
+        # otherwise gather a literal span, stopping before a >=3 run
+        start = i
+        lit = bytearray()
+        while i < n and len(lit) < 128:
+            run = 1
+            while i + run < n and data[i + run] == data[i] and run < 3:
+                run += 1
+            if run >= 3:
+                break
+            lit.append(data[i])
+            i += 1
+        out.append(len(lit) - 1)
+        out.extend(lit)
+    return bytes(out)
+
+
+def _icns_rle_unpack(data: bytes, expect: int) -> bytes:
+    """Inverse of _icns_rle_channel -- used by the self-check, not shipping."""
+    out = bytearray()
+    i = 0
+    while i < len(data) and len(out) < expect:
+        b = data[i]
+        i += 1
+        if b & 0x80:
+            out.extend(bytes([data[i]]) * ((b & 0x7F) + 3))
+            i += 1
+        else:
+            out.extend(data[i:i + b + 1])
+            i += b + 1
+    return bytes(out)
+
+
+def _icns_colour_element(img: "Image.Image", size: int, it32: bool) -> bytes:
+    """24-bit RLE colour element (is32/il32/ih32/it32) for one size."""
+    im = img.resize((size, size), Image.LANCZOS).convert("RGBA")
+    px = im.load()
+    chans = []
+    for c in range(3):
+        chans.append(bytes(px[x, y][c]
+                           for y in range(size) for x in range(size)))
+    body = b"".join(_icns_rle_channel(ch) for ch in chans)
+    return (b"\x00\x00\x00\x00" + body) if it32 else body
+
+
+def _icns_mask_element(img: "Image.Image", size: int) -> bytes:
+    """8-bit alpha mask element (s8mk/l8mk/h8mk/t8mk). Uncompressed."""
+    im = img.resize((size, size), Image.LANCZOS).convert("RGBA")
+    px = im.load()
+    return bytes(px[x, y][3] for y in range(size) for x in range(size))
+
+
+def build_icns_resource(img: "Image.Image") -> bytes:
+    """Assemble a Mac OS X 10.0-10.4 'icns' blob from an RGBA image."""
+    elements = []
+    for tag, size, it32 in ((b"is32", 16, False), (b"il32", 32, False),
+                            (b"ih32", 48, False), (b"it32", 128, True)):
+        elements.append((tag, _icns_colour_element(img, size, it32)))
+    for tag, size in ((b"s8mk", 16), (b"l8mk", 32),
+                      (b"h8mk", 48), (b"t8mk", 128)):
+        elements.append((tag, _icns_mask_element(img, size)))
+
+    body = b"".join(tag + struct.pack(">I", len(data) + 8) + data
+                    for tag, data in elements)
+    return b"icns" + struct.pack(">I", len(body) + 8) + body
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -642,6 +752,12 @@ def main() -> int:
                          "(default: 2.0)")
     ap.add_argument("--version-long", default=None,
                     help="long Get Info string (default: 'MacSurf <version>')")
+    ap.add_argument("--osx-icon", default=None,
+                    help="PNG for the Mac OS X-only 'icns' icon (e.g. "
+                         "img/elin-circle.png). Classic Mac OS does not know "
+                         "the 'icns' type and ignores it, so this cannot "
+                         "change the OS 9 icon -- one artifact, right on both. "
+                         "Omit to emit no 'icns' at all.")
     ap.add_argument("--bundle-id", default="org.macsurf.MacSurf",
                     help="CFBundleIdentifier for the 'plst' (0) Info.plist "
                          "read by Mac OS X LaunchServices "
@@ -721,6 +837,25 @@ def main() -> int:
         pkg_type=args.file_type,
     )
     fork.add(b"plst", 0, plst)
+    # 'icns' — the Mac OS X icon (fixes982). Emitted at TWO ids on purpose,
+    # because which one Panther reads for an UNBUNDLED CFM app is exactly the
+    # thing that cannot be settled from Linux:
+    #   icon-id (128) — the id BNDL already maps the icon family to, which is
+    #                   what Icon Services resolves through type/creator.
+    #   -16455        — kCustomIconResource, the documented custom-icon slot;
+    #                   needs the file's kHasCustomIcon Finder flag set to be
+    #                   preferred, which is a Finder-side action, not ours.
+    # Both are ignored by Mac OS 9, so carrying both costs disk and nothing
+    # else, and it means the maintainer gets a result from one hardware run
+    # instead of a bisect.
+    icns = None
+    if args.osx_icon:
+        osx_src = Image.open(args.osx_icon)
+        if osx_src.mode != "RGBA":
+            osx_src = osx_src.convert("RGBA")
+        icns = build_icns_resource(osx_src)
+        fork.add(b"icns", args.icon_id, icns)
+        fork.add(b"icns", -16455, icns)
     blob = fork.build()
     os.makedirs(os.path.dirname(args.rsrc) or ".", exist_ok=True)
     with open(args.rsrc, "wb") as f:
@@ -753,6 +888,14 @@ def main() -> int:
            args.icon_id, len(bndl), args.creator,
            len(vers), args.version,
            len(plst), args.bundle_id))
+    if icns is not None:
+        sys.stdout.write(
+            "  icns  (%d,-16455) %d bytes each -- OS X icon from %s\n"
+            "        (Mac OS 9 ignores 'icns'; the ICN#/icl8 family above is\n"
+            "         still what Finder draws there. NOT in the Rez text: a\n"
+            "         50 KB blob as hex would swamp the file for no gain --\n"
+            "         the binary fork is the artifact CW8 links.)\n"
+            % (args.icon_id, len(icns), args.osx_icon))
     return 0
 
 
