@@ -118,6 +118,18 @@ struct content_html_object {
 	/** Bitmap of acceptable content types */
 	content_type permitted_types;
 	bool background;  /**< This object is a background image. */
+	/** fixes975 — the URL this object was fetched for, owned (nsurl_ref'd
+	 * at fetch, unref'd in html_object_free_objects). This is the key the
+	 * creation-time adoption in html_fetch_object matches on, so a URL the
+	 * document is already fetching is never fetched a second time.
+	 *
+	 * Held here rather than read back from the hlcache handle because a
+	 * handle whose retrieval has not yet resolved has no content and
+	 * reports its URL only by walking hlcache's private retrieval ring --
+	 * i.e. exactly the in-flight case adoption exists to catch. Deliberately
+	 * LAST in the struct: only html_fetch_object allocates one of these, so
+	 * appending keeps every existing field at its current offset. */
+	struct nsurl *url;
 };
 
 

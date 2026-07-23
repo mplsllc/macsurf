@@ -3499,5 +3499,155 @@ int main(void)
 	fprintf(stderr, "=== Test 34 PASS: duplicate objects for one display slot "
 		"collapse to one, so keeping objects cannot leak ===\n");
 
+	/* --- Test 35 (lifecycle Stage 1): creation-time URL ADOPTION
+	 *
+	 * html_fetch_object had no URL dedupe of its own, so the speculative
+	 * fetch fired by html_process_inserted_img (box == NULL) and the fetch
+	 * fired later by box construction for the SAME <img> were two
+	 * independent fetches for one image. The Stage 0b hardware probe
+	 * measured it: 22 of 32 speculative URLs were fetched twice, and one
+	 * thumbnail five times. fixes975 matches on the URL at creation:
+	 *
+	 *   another speculative fetch for a held URL  -> do nothing
+	 *   a BOX fetch for a URL a box-less entry holds -> adopt that entry
+	 *
+	 * Both cases return before hlcache_handle_retrieve, which is also what
+	 * makes them testable here: the harness never initialises the fetch
+	 * stack (see Test 31's note), so a call that does NOT dedupe reaches
+	 * llcache and dies. That is the negative control -- a build without the
+	 * adoption block does not fail this test politely, it SEGVs in
+	 * llcache_handle_get_url. Verified by removing the block and re-running.
+	 *
+	 * The entries are hand-built, as in Tests 31/33/34, with a zeroed stand-in
+	 * hlcache_handle: entry == NULL reads back as "no content yet", i.e.
+	 * exactly the in-flight speculative case, so adoption takes its
+	 * not-yet-DONE branch and must balance c->base.active for the DONE the
+	 * box callback will later consume.
+	 *
+	 * NOT covered (same scope caveat as Test 31): a second box wanting the
+	 * same URL must NOT steal the first box's object. That path deliberately
+	 * falls through to a real fetch, which the harness cannot reach. It rests
+	 * on the `box != NULL && cand->box != NULL` guard in the match loop. */
+	fprintf(stderr, "\n=== Test 35: html_fetch_object adopts instead of "
+		"refetching (lifecycle Stage 1) ===\n");
+	{
+		extern struct box *box_for_node(dom_node *n);
+		extern bool html_fetch_object(html_content *c, nsurl *url,
+				struct box *box, content_type permitted_types,
+				bool background);
+		dom_nodelist *ps = NULL;
+		dom_string *ptag = NULL;
+		uint32_t plen = 0;
+		dom_node *keep_node = NULL;
+		struct box *bx = NULL;
+		struct content_html_object *spec;
+		nsurl *u = NULL;
+		int active_before;
+		int n = 0;
+		struct content_html_object *w;
+
+		if (nsurl_create("http://example.org/img/spec.png", &u)
+				!= NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 35 nsurl_create\n"); return 1;
+		}
+		if (dom_string_create((const uint8_t *)"p", 1, &ptag) != DOM_NO_ERR ||
+		    dom_document_get_elements_by_tag_name(document, ptag, &ps)
+				!= DOM_NO_ERR || ps == NULL) {
+			fprintf(stderr, "FAIL: Test 35 could not list <p>\n"); return 1;
+		}
+		dom_nodelist_get_length(ps, &plen);
+		if (plen < 1) { fprintf(stderr, "FAIL: Test 35 needs a <p>\n"); return 1; }
+		dom_nodelist_item(ps, 0, &keep_node);
+		bx = keep_node ? box_for_node(keep_node) : NULL;
+		if (bx == NULL) {
+			fprintf(stderr, "FAIL: Test 35 <p> has no box\n"); return 1;
+		}
+
+		/* the speculative entry html_process_inserted_img would have made */
+		spec = calloc(1, sizeof(*spec));
+		if (spec == NULL) { fprintf(stderr, "FAIL: Test 35 calloc\n"); return 1; }
+		spec->parent = (struct content *)&htmlc;
+		spec->box = NULL;                       /* no box yet -- the point */
+		spec->permitted_types = CONTENT_IMAGE;
+		spec->background = false;
+		spec->url = u;
+		nsurl_ref(u);
+		/* stand-in for an unresolved retrieval: non-NULL handle, no content */
+		spec->content = (struct hlcache_handle *)calloc(1, 256);
+		if (spec->content == NULL) {
+			fprintf(stderr, "FAIL: Test 35 calloc handle\n"); return 1;
+		}
+		spec->next = NULL;
+		htmlc.object_list = spec;
+		htmlc.num_objects = 1;
+		htmlc.aborted = false;
+		htmlc.base.active = 0;
+
+		/* (a) a second SPECULATIVE fetch for the same URL must do nothing */
+		if (html_fetch_object(&htmlc, u, NULL, CONTENT_IMAGE, false)
+				== false) {
+			fprintf(stderr, "FAIL: Test 35 speculative re-fetch reported "
+				"failure\n");
+			return 1;
+		}
+		for (n = 0, w = htmlc.object_list; w != NULL; w = w->next) n++;
+		if (n != 1) {
+			fprintf(stderr, "FAIL: Test 35 speculative re-fetch created a "
+				"duplicate entry (%d entries)\n", n);
+			return 1;
+		}
+		if (htmlc.object_list->box != NULL) {
+			fprintf(stderr, "FAIL: Test 35 speculative re-fetch must not "
+				"assign a box\n");
+			return 1;
+		}
+		if (htmlc.base.active != 0) {
+			fprintf(stderr, "FAIL: Test 35 speculative re-fetch moved "
+				"base.active to %d\n", (int)htmlc.base.active);
+			return 1;
+		}
+		fprintf(stderr, "  second speculative fetch: no new entry, no fetch\n");
+
+		/* (b) box construction claims it instead of fetching again */
+		active_before = (int)htmlc.base.active;
+		if (html_fetch_object(&htmlc, u, bx, CONTENT_IMAGE, false) == false) {
+			fprintf(stderr, "FAIL: Test 35 box fetch reported failure\n");
+			return 1;
+		}
+		for (n = 0, w = htmlc.object_list; w != NULL; w = w->next) n++;
+		if (n != 1) {
+			fprintf(stderr, "FAIL: Test 35 box fetch created a SECOND entry "
+				"for a URL already held (%d entries) -- this is the "
+				"double fetch\n", n);
+			return 1;
+		}
+		if (htmlc.object_list->box != bx) {
+			fprintf(stderr, "FAIL: Test 35 box fetch did not adopt the "
+				"speculative entry (box=%p want %p)\n",
+				(void *)htmlc.object_list->box, (void *)bx);
+			return 1;
+		}
+		if ((int)htmlc.base.active != active_before + 1) {
+			fprintf(stderr, "FAIL: Test 35 adoption left base.active at %d, "
+				"expected %d -- the DONE decrement would unbalance it\n",
+				(int)htmlc.base.active, active_before + 1);
+			return 1;
+		}
+		fprintf(stderr, "  box fetch: adopted the in-flight entry, "
+			"base.active balanced\n");
+
+		free(htmlc.object_list->content);
+		nsurl_unref(htmlc.object_list->url);
+		free(htmlc.object_list);
+		htmlc.object_list = NULL;
+		htmlc.num_objects = 0;
+		htmlc.base.active = 0;
+		nsurl_unref(u);
+		dom_nodelist_unref(ps);
+		dom_string_unref(ptag);
+	}
+	fprintf(stderr, "=== Test 35 PASS: a URL the document already holds is "
+		"adopted, not fetched a second time ===\n");
+
 	return 0;
 }

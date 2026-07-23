@@ -53,6 +53,14 @@ extern int macsurf_ptr_is_heap(const void *);
 /* break reference loop */
 static void html_object_refresh(void *p);
 
+/* fixes975 — forward decl so the no-box callback can hand an ADOPTED object
+ * (one that has since acquired a box, see html_fetch_object) to the box
+ * callback, which is the only one that links the content into the box and
+ * keeps c->base.active balanced. */
+static nserror html_object_callback(hlcache_handle *object,
+				    const hlcache_event *event,
+				    void *pw);
+
 /* fixes533: out-of-band live-content registry (anti-UAF).  html_fetch_object
  * is reached by a re-entrant box walk, and html_object_refresh is scheduled
  * with a content_html_object* (NOT the content), so the by-owner scheduler
@@ -278,6 +286,20 @@ html_object_nobox_callback(hlcache_handle *object,
 	 * registry membership (never dereferences it) before touching chobject. */
 	if (macos9_content_is_live(chobject->parent) == 0) {
 		return NSERROR_OK;
+	}
+
+	/* fixes975 (lifecycle Stage 1) — ADOPTION. This entry started as a
+	 * speculative, box-less fetch (html_process_inserted_img), but box
+	 * construction has since claimed it for a real box instead of starting a
+	 * second fetch for the same URL. From that moment the box callback is
+	 * the correct handler: it is the one that calls html_object_done (so the
+	 * arriving image actually lands in the box), decrements c->base.active
+	 * (which the adoption incremented), and drives the completion reflow.
+	 * Re-registering with hlcache is not possible without releasing the
+	 * handle -- which would be a second fetch, the exact thing adoption
+	 * exists to avoid -- so the dispatch is made here instead. */
+	if (chobject->box != NULL) {
+		return html_object_callback(object, event, pw);
 	}
 
 	switch (event->type) {
@@ -1000,6 +1022,14 @@ nserror html_object_free_objects(html_content *html)
 			safe_hlcache_handle_release(&victim->content);
 		}
 
+		/* fixes975 — release the adoption key. NULL-safe by
+		 * construction: only html_fetch_object sets it, and it sets it
+		 * on every entry it creates. */
+		if (victim->url != NULL) {
+			nsurl_unref(victim->url);
+			victim->url = NULL;
+		}
+
 		html->object_list = victim->next;
 		free(victim);
 	}
@@ -1019,15 +1049,6 @@ html_fetch_object(html_content *c,
 	hlcache_handle_callback object_callback;
 	hlcache_child_context child;
 	nserror error;
-
-	/* fixes970 SANITY: unconditional, first statement, fixed string (no
-	 * format specifiers), LIFE prefix so the crash-only gate keeps it. If
-	 * this line does NOT appear in the log after a build+run, object.c did
-	 * not recompile -- nothing about the code path or the log filter can
-	 * explain its absence, because this runs on every entry and cannot be
-	 * mis-formatted or filtered. Remove once the stale-object question is
-	 * settled. */
-	macsurf_debug_log_write("LIFE SANITY970 html_fetch_object entered");
 
 	/* fixes533: registry-membership liveness check FIRST, before any field of
 	 * `c` is read.  The box walk that reaches here runs inside a
@@ -1072,6 +1093,106 @@ html_fetch_object(html_content *c,
 	}
 	child.quirks = c->base.quirks;
 
+	/* fixes975 (lifecycle Stage 1) — CREATION-TIME URL ADOPTION.
+	 *
+	 * Until now html_fetch_object had no URL dedupe of its own: every call
+	 * allocated a fresh content_html_object and started a fresh retrieval,
+	 * even for a URL this document was already fetching. Two call sites
+	 * worked around that locally (the lazy-image queue's by-node dedupe,
+	 * fixes920, and its box->object check, fixes921), and the Stage 0b
+	 * hardware probe measured what the rest cost: 22 of 32 speculatively
+	 * fetched URLs were fetched a SECOND time by box construction, and one
+	 * thumbnail was fetched five times (4 speculative + 1 box).
+	 *
+	 * The duplication is structural. html_process_inserted_img fires on
+	 * every <img> insertion -- during parse as well as on JS mutation -- and
+	 * deliberately fetches with box == NULL, because no box exists yet.
+	 * Nothing ever assigned that object a box afterwards, so box
+	 * construction could only start again from scratch, and the next
+	 * reconvert retired the box-less entry (nobox=31 on hackaday), released
+	 * its handle and let hlcache_clean evict the content it had primed.
+	 *
+	 * So: match on the URL at creation, and there are two cases.
+	 *
+	 *   box == NULL (another speculative fetch): the document already holds
+	 *   this URL. Nothing to do -- do not start a second fetch.
+	 *
+	 *   box != NULL and a BOX-LESS entry holds this URL: adopt it. The
+	 *   speculative fetch keeps its head start (that is what Stage 0b said
+	 *   to preserve) and becomes this box's object, instead of being a
+	 *   duplicate that the next reconvert retires.
+	 *
+	 * Only ever adopts an entry with box == NULL, so an image used by two
+	 * boxes still gets an object per box -- the second box does not steal
+	 * the first box's object. Restricted to CONTENT_IMAGE on both sides:
+	 * <object>/<embed> are CONTENT_ANY and carry object_params talloc'd
+	 * against a particular box tree, which must not be re-pointed here.
+	 *
+	 * `content != NULL` is the liveness test and it is exact: both object
+	 * callbacks NULL the handle on CONTENT_MSG_ERROR, so a non-NULL handle
+	 * is in flight or complete, never failed. It is also why the status is
+	 * only consulted for the DONE/not-DONE split -- a nascent retrieval has
+	 * no content yet and reads back as CONTENT_STATUS_ERROR, which here
+	 * simply means "not DONE, so wait for the event".
+	 */
+	if (permitted_types == CONTENT_IMAGE) {
+		struct content_html_object *cand;
+		struct content_html_object *dup = NULL;
+
+		for (cand = c->object_list; cand != NULL; cand = cand->next) {
+			nsurl *cu;
+
+			if (cand->content == NULL)
+				continue;
+			if (cand->permitted_types != CONTENT_IMAGE)
+				continue;
+			if ((cand->background ? 1 : 0) !=
+					(background ? 1 : 0))
+				continue;
+			if (box != NULL && cand->box != NULL)
+				continue;
+			cu = cand->url;
+			if (cu == NULL)
+				continue;
+			if (cu != url &&
+			    nsurl_compare(cu, url, NSURL_COMPLETE) == false)
+				continue;
+			dup = cand;
+			break;
+		}
+
+		if (dup != NULL) {
+			int done = (content_get_status(dup->content) ==
+					CONTENT_STATUS_DONE);
+
+			if (box == NULL) {
+				/* Redundant speculative fetch. */
+				macsurf_debug_log_writef(
+					"LIFE objadopt spec-dup done=%d url=%s",
+					done, nsurl_access(url));
+				return true;
+			}
+
+			dup->box = box;
+			if (done) {
+				/* Already decoded: link it now. No event is
+				 * still owed, so base.active must NOT move --
+				 * the box callback's decrement will never
+				 * run for this entry. */
+				html_object_done(box, dup->content, background);
+			} else {
+				/* In flight: the (now adopted) callback path
+				 * ends in html_object_callback, whose
+				 * DONE/ERROR arms both decrement. Balance it. */
+				c->base.active++;
+			}
+			macsurf_debug_log_writef(
+				"LIFE objadopt box done=%d url=%s",
+				done, nsurl_access(url));
+			return true;
+		}
+	}
+
 	object = calloc(1, sizeof(struct content_html_object));
 	if (object == NULL) {
 		return false;
@@ -1089,6 +1210,11 @@ html_fetch_object(html_content *c,
 	object->box = box;
 	object->permitted_types = permitted_types;
 	object->background = background;
+	/* fixes975 — own the key the adoption above matches on. Ref'd for as
+	 * long as the entry lives; released in html_object_free_objects, which
+	 * is the single teardown every retirement path already funnels through. */
+	object->url = url;
+	nsurl_ref(url);
 
 	error = hlcache_handle_retrieve(url,
 					HLCACHE_RETRIEVE_SNIFF_TYPE,
@@ -1100,6 +1226,7 @@ html_fetch_object(html_content *c,
 					object->permitted_types,
 					&object->content);
 	if (error != NSERROR_OK) {
+		nsurl_unref(object->url);   /* fixes975 */
 		free(object);
 		return error != NSERROR_NOMEM;
 	}
