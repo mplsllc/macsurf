@@ -608,6 +608,85 @@ macos9_font_position(const struct plot_font_style *fstyle,
  *   E4-ED    U+4000-U+D7AF  ideographs/Hangul
  *   EF A4..  U+F900-U+FAFF  compat          EF BC..  U+FF00-U+FFEF  fullwidth
  */
+/* fixes994 — kinsoku shori: the two rules that make Japanese look wrong when
+ * they are missing, rather than merely unpolished.
+ *
+ * UAX #14 forbids a line BEGINNING with closing punctuation (a full stop or a
+ * closing bracket stranded alone at the start of a line is the classic
+ * giveaway), and forbids a line ENDING with an opening bracket. Small kana
+ * (っゃゅょ etc.) and the prolonged sound mark are in the same class as
+ * closing punctuation: they modify the character before them and must never
+ * lead a line.
+ *
+ * fixes993 made CJK breakable at all, which is what stopped the page blowing
+ * out. This decides WHERE the break lands. Both sets are small and closed, so
+ * a table beats a property lookup.
+ *
+ * Consequence for the minimum-width calculation in layout.c: a no-break-before
+ * character is glued to its predecessor, so a true minimum cluster can be two
+ * or three characters rather than one. layout.c still counts one character per
+ * word, which UNDER-estimates the minimum slightly. That is the safe
+ * direction -- it permits a marginally narrower shrink-to-fit than is strictly
+ * legal, never a wider page -- and it keeps the expensive path (run over every
+ * text box on every reflow) as cheap as it is today.
+ */
+static unsigned long macos9_cjk_cp_at(const char *s, size_t len, size_t i)
+{
+        unsigned char c0, c1, c2;
+        if (s == NULL || i + 2 >= len) return 0UL;
+        c0 = (unsigned char)s[i];
+        if ((c0 & 0xF0) != 0xE0) return 0UL;   /* only the 3-byte plane */
+        c1 = (unsigned char)s[i + 1];
+        c2 = (unsigned char)s[i + 2];
+        return ((unsigned long)(c0 & 0x0F) << 12) |
+               ((unsigned long)(c1 & 0x3F) << 6) |
+               (unsigned long)(c2 & 0x3F);
+}
+
+/* Must not START a line. */
+static int macos9_cjk_no_break_before(unsigned long cp)
+{
+        switch (cp) {
+        /* full stops, commas, middle dot */
+        case 0x3001UL: case 0x3002UL: case 0x30FBUL:
+        case 0xFF0CUL: case 0xFF0EUL: case 0xFF61UL: case 0xFF64UL:
+        /* closing brackets and quotes */
+        case 0x300DUL: case 0x300FUL: case 0x3011UL: case 0x3015UL:
+        case 0x3017UL: case 0x3019UL: case 0x301BUL:
+        case 0x3009UL: case 0x300BUL:
+        case 0xFF09UL: case 0xFF3DUL: case 0xFF5DUL: case 0xFF63UL:
+        /* sentence-final marks */
+        case 0xFF01UL: case 0xFF1FUL: case 0xFF1AUL: case 0xFF1BUL:
+        /* prolonged sound mark, iteration marks */
+        case 0x30FCUL: case 0x3005UL: case 0x303BUL:
+        /* small kana (hiragana) */
+        case 0x3041UL: case 0x3043UL: case 0x3045UL: case 0x3047UL:
+        case 0x3049UL: case 0x3063UL: case 0x3083UL: case 0x3085UL:
+        case 0x3087UL: case 0x308EUL: case 0x3095UL: case 0x3096UL:
+        /* small kana (katakana) */
+        case 0x30A1UL: case 0x30A3UL: case 0x30A5UL: case 0x30A7UL:
+        case 0x30A9UL: case 0x30C3UL: case 0x30E3UL: case 0x30E5UL:
+        case 0x30E7UL: case 0x30EEUL: case 0x30F5UL: case 0x30F6UL:
+                return 1;
+        default:
+                return 0;
+        }
+}
+
+/* Must not END a line. */
+static int macos9_cjk_no_break_after(unsigned long cp)
+{
+        switch (cp) {
+        case 0x300CUL: case 0x300EUL: case 0x3010UL: case 0x3014UL:
+        case 0x3016UL: case 0x3018UL: case 0x301AUL:
+        case 0x3008UL: case 0x300AUL:
+        case 0xFF08UL: case 0xFF3BUL: case 0xFF5BUL: case 0xFF62UL:
+                return 1;
+        default:
+                return 0;
+        }
+}
+
 static int macos9_cjk_starts_at(const char *s, size_t len, size_t i)
 {
         unsigned char c0, c1;
@@ -683,8 +762,23 @@ macos9_font_split(const struct plot_font_style *fstyle,
                  * BEFORE it. Only i > 0: offset 0 reads to core as "cannot
                  * split here" (fixes788), which would loop. */
                 if (i > 0 && macos9_cjk_starts_at(string, fit_offset, i)) {
-                        last_cjk = i;
-                        have_cjk = 1;
+                        /* fixes994 — kinsoku shori. Breaking HERE would put
+                         * string[i] at the start of the next line and the
+                         * character before it at the end of this one, so
+                         * reject the pair the rules forbid. i >= 3 because
+                         * every character in both sets is 3-byte UTF-8. */
+                        int ok = 1;
+                        if (macos9_cjk_no_break_before(
+                                        macos9_cjk_cp_at(string, fit_offset, i)))
+                                ok = 0;
+                        if (ok && i >= 3 &&
+                            macos9_cjk_no_break_after(macos9_cjk_cp_at(
+                                        string, fit_offset, i - 3)))
+                                ok = 0;
+                        if (ok) {
+                                last_cjk = i;
+                                have_cjk = 1;
+                        }
                 }
         }
 
