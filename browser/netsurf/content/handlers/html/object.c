@@ -1138,6 +1138,13 @@ html_fetch_object(html_content *c,
 	if (permitted_types == CONTENT_IMAGE) {
 		struct content_html_object *cand;
 		struct content_html_object *dup = NULL;
+		/* fixes977 — the ELEMENT this fetch is for. box->node is assigned
+		 * (box_construct.c, dom_node_ref'd) before either fetch site runs,
+		 * so it is readable here for both the background fetch and
+		 * box_image, and the DOM node itself survives a reconvert -- which
+		 * is what makes it a stable identity for a rebuilt box. */
+		struct dom_node *want_node =
+			(box != NULL) ? box->node : NULL;
 
 		for (cand = c->object_list; cand != NULL; cand = cand->next) {
 			nsurl *cu;
@@ -1149,8 +1156,32 @@ html_fetch_object(html_content *c,
 			if ((cand->background ? 1 : 0) !=
 					(background ? 1 : 0))
 				continue;
-			if (box != NULL && cand->box != NULL)
-				continue;
+			if (box != NULL && cand->box != NULL) {
+				/* fixes977 — an entry that already has a box is
+				 * adoptable only if it is THIS SAME ELEMENT's
+				 * entry being rebuilt: same node, same slot,
+				 * same URL. That is the reconvert case, and it
+				 * was the whole of the residue fixes975 left --
+				 * construction mints a new object for every
+				 * background on every reconvert (122 background
+				 * fetches, dedup=35 per cycle on hackaday) and
+				 * the relink then collapses the duplicate it
+				 * just made. Adopting instead never starts the
+				 * second fetch.
+				 *
+				 * Node identity, not "does its box look stale":
+				 * a URL used by several elements (hackaday's
+				 * sprite is the background of 54 boxes) must
+				 * never let one element take another's object,
+				 * and a staleness heuristic would allow exactly
+				 * that. Two boxes cannot share a node within one
+				 * construction pass, so the match can only ever
+				 * pair a box from the OLD tree with its rebuilt
+				 * self. */
+				if (want_node == NULL ||
+				    cand->box->node != want_node)
+					continue;
+			}
 			cu = cand->url;
 			if (cu == NULL)
 				continue;
@@ -1164,6 +1195,11 @@ html_fetch_object(html_content *c,
 		if (dup != NULL) {
 			int done = (content_get_status(dup->content) ==
 					CONTENT_STATUS_DONE);
+			/* fixes977 — was this entry counted in base.active?
+			 * html_fetch_object increments exactly when it creates
+			 * an entry WITH a box, so a box-less entry is not
+			 * counted and a boxed one already is. */
+			int was_counted = (dup->box != NULL);
 
 			if (box == NULL) {
 				/* Redundant speculative fetch. */
@@ -1175,19 +1211,22 @@ html_fetch_object(html_content *c,
 
 			dup->box = box;
 			if (done) {
-				/* Already decoded: link it now. No event is
-				 * still owed, so base.active must NOT move --
-				 * the box callback's decrement will never
-				 * run for this entry. */
+				/* Already decoded: link it into the (possibly
+				 * rebuilt) box now. No event is still owed, so
+				 * base.active must NOT move -- the box
+				 * callback's decrement will never run for this
+				 * entry. */
 				html_object_done(box, dup->content, background);
-			} else {
-				/* In flight: the (now adopted) callback path
-				 * ends in html_object_callback, whose
-				 * DONE/ERROR arms both decrement. Balance it. */
+			} else if (was_counted == 0) {
+				/* In flight and not yet counted: the (now
+				 * adopted) callback path ends in
+				 * html_object_callback, whose DONE/ERROR arms
+				 * both decrement. Balance it. */
 				c->base.active++;
 			}
 			macsurf_debug_log_writef(
-				"LIFE objadopt box done=%d url=%s",
+				"LIFE objadopt %s done=%d url=%s",
+				was_counted ? "renode" : "box",
 				done, nsurl_access(url));
 			return true;
 		}

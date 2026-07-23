@@ -3743,5 +3743,132 @@ int main(void)
 	fprintf(stderr, "=== Test 36 PASS: a speculative entry survives the "
 		"reconvert, so the lazy drain adopts it instead of refetching ===\n");
 
+	/* --- Test 37 (lifecycle Stage 1): node-keyed adoption across a rebuild
+	 *
+	 * fixes975 only adopted BOX-LESS entries, so the reconvert case stayed:
+	 * construction mints a new object for every background on every
+	 * reconvert (122 background fetches, dedup=35 per cycle on hackaday) and
+	 * the relink then collapses the duplicate it just made. fixes977 adopts
+	 * an entry that already has a box when it is THIS SAME ELEMENT's entry
+	 * being rebuilt -- same node, same slot, same URL -- so the second fetch
+	 * never starts.
+	 *
+	 * The two halves that must both hold, and the reason node identity was
+	 * chosen over any "does its box look stale" test:
+	 *   (a) same node  -> adopt, re-pointing the entry at the rebuilt box;
+	 *   (b) DIFFERENT node, same URL -> do NOT adopt. hackaday's sprite is
+	 *       the background of 54 boxes; one element must never take
+	 *       another's object.
+	 *
+	 * (b) is asserted the only way the harness can: the non-adopting path
+	 * falls through to a fetch stack that does not exist here, so it dies in
+	 * llcache. That is the same limitation Tests 31/35/36 record -- and it
+	 * is now the third test to pay it, which is the argument for giving the
+	 * harness a real fetch stack. Here (b) is checked structurally instead,
+	 * by pointing the candidate at a different node and confirming the entry
+	 * is NOT re-pointed before the call would reach llcache: not possible,
+	 * so (b) rests on the `cand->box->node != want_node` guard being the
+	 * only way past the loop. Only (a) is executed. */
+	fprintf(stderr, "\n=== Test 37: node-keyed adoption re-points an entry "
+		"at its rebuilt box (lifecycle Stage 1) ===\n");
+	{
+		extern struct box *box_for_node(dom_node *n);
+		extern bool html_fetch_object(html_content *c, nsurl *url,
+				struct box *box, content_type permitted_types,
+				bool background);
+		dom_nodelist *ps = NULL;
+		dom_string *ptag = NULL;
+		uint32_t plen = 0;
+		dom_node *keep_node = NULL;
+		struct box *old_box = NULL;
+		static struct box rebuilt;   /* stands in for the new tree's box */
+		struct content_html_object *bg;
+		nsurl *u = NULL;
+		int n = 0;
+		int active_before;
+		struct content_html_object *w;
+
+		if (nsurl_create("http://example.org/img/sprite.png", &u)
+				!= NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 37 nsurl_create\n"); return 1;
+		}
+		if (dom_string_create((const uint8_t *)"p", 1, &ptag) != DOM_NO_ERR ||
+		    dom_document_get_elements_by_tag_name(document, ptag, &ps)
+				!= DOM_NO_ERR || ps == NULL) {
+			fprintf(stderr, "FAIL: Test 37 could not list <p>\n"); return 1;
+		}
+		dom_nodelist_get_length(ps, &plen);
+		if (plen < 1) { fprintf(stderr, "FAIL: Test 37 needs a <p>\n"); return 1; }
+		dom_nodelist_item(ps, 0, &keep_node);
+		old_box = keep_node ? box_for_node(keep_node) : NULL;
+		if (old_box == NULL || old_box->node == NULL) {
+			fprintf(stderr, "FAIL: Test 37 <p> has no box/node\n"); return 1;
+		}
+
+		/* the entry as it stands after the previous convert: linked to a
+		 * box in the tree that is about to be replaced */
+		bg = calloc(1, sizeof(*bg));
+		if (bg == NULL) { fprintf(stderr, "FAIL: Test 37 calloc\n"); return 1; }
+		bg->parent = (struct content *)&htmlc;
+		bg->box = old_box;
+		bg->permitted_types = CONTENT_IMAGE;
+		bg->background = true;
+		bg->url = u;
+		nsurl_ref(u);
+		bg->content = (struct hlcache_handle *)calloc(1, 256);
+		if (bg->content == NULL) {
+			fprintf(stderr, "FAIL: Test 37 calloc handle\n"); return 1;
+		}
+		bg->next = NULL;
+		htmlc.object_list = bg;
+		htmlc.num_objects = 1;
+		htmlc.aborted = false;
+		htmlc.base.active = 1;   /* a boxed entry is already counted */
+
+		/* box construction on the rebuilt tree: same element, same URL */
+		memset(&rebuilt, 0, sizeof(rebuilt));
+		rebuilt.node = old_box->node;
+		active_before = (int)htmlc.base.active;
+		if (html_fetch_object(&htmlc, u, &rebuilt, CONTENT_IMAGE, true)
+				== false) {
+			fprintf(stderr, "FAIL: Test 37 rebuild fetch reported "
+				"failure\n");
+			return 1;
+		}
+		for (n = 0, w = htmlc.object_list; w != NULL; w = w->next) n++;
+		if (n != 1) {
+			fprintf(stderr, "FAIL: Test 37 the rebuild started a SECOND "
+				"fetch for the same element (%d entries) -- this is "
+				"dedup=35\n", n);
+			return 1;
+		}
+		if (htmlc.object_list->box != &rebuilt) {
+			fprintf(stderr, "FAIL: Test 37 entry was not re-pointed at "
+				"the rebuilt box\n");
+			return 1;
+		}
+		if ((int)htmlc.base.active != active_before) {
+			fprintf(stderr, "FAIL: Test 37 re-pointing moved base.active "
+				"%d -> %d; an already-counted entry must not be "
+				"counted twice\n",
+				active_before, (int)htmlc.base.active);
+			return 1;
+		}
+		fprintf(stderr, "  same node + same URL: re-pointed, no second "
+			"fetch, base.active untouched\n");
+
+		free(htmlc.object_list->content);
+		nsurl_unref(htmlc.object_list->url);
+		free(htmlc.object_list);
+		htmlc.object_list = NULL;
+		htmlc.num_objects = 0;
+		htmlc.base.active = 0;
+		nsurl_unref(u);
+		dom_nodelist_unref(ps);
+		dom_string_unref(ptag);
+	}
+	fprintf(stderr, "=== Test 37 PASS: a rebuilt box adopts its own "
+		"element's object instead of fetching it again ===\n");
+
 	return 0;
 }
