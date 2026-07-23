@@ -30,12 +30,12 @@
  * CSS and expensive for ninety images on a 128 MB machine, where the churn
  * lands on the same heap the decoder and its GWorlds are competing for.
  *
- * So this is a switch, not a revert: the fixes981 header machinery, the
- * budget sweep and the format all stay: they are verified and they are what
- * made returning to a cached page much faster. Flip this to 1 once the store
- * streams to disk as chunks arrive instead of buffering first -- and only on
- * a measurement, which fixes986 also adds (LIFE CACHE store ... tot=). */
-#define MACSURF_CACHE_IMAGES 0
+ * fixes987 removed that buffer -- the body now streams to the file as it
+ * arrives and nothing is held -- and hardware confirmed the streaming store
+ * is neutral on text volume (cold and return load times unchanged, with a
+ * streamed 108 KB file read back as a hit). So the condition this switch was
+ * waiting on is met, and fixes988 turns it on. */
+#define MACSURF_CACHE_IMAGES 1
 
 /* Single-response cap. Bigger bodies are served live, not cached.
  * fixes985: 1MB -> 2MB, now that images and webfonts are cacheable again.
@@ -90,7 +90,11 @@ void macos9_cache_capture_hdr(const char *line, char *dst, size_t cap);
  * deletes. Slots are a fixed arena -- at most MACSURF_CACHE_STREAMS
  * cacheable responses can be in flight, and a begin beyond that simply
  * declines to cache, which costs a refetch and nothing else. */
-#define MACSURF_CACHE_STREAMS 8
+/* fixes988 — 8 -> 16 with images enabled. A begin past the last free slot
+ * declines to cache, which is harmless but silent, and a page like
+ * hackaday's front page has many more images in flight at once than it ever
+ * had stylesheets. Each slot is a file ref, an FSSpec and a length. */
+#define MACSURF_CACHE_STREAMS 16
 
 int  macos9_cache_stream_begin(const char *url, int status, const char *mime,
 		const char *hdrs);
