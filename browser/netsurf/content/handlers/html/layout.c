@@ -677,6 +677,81 @@ static inline bool box_has_percentage_max_width(struct box *b)
 	return ((type == CSS_MAX_WIDTH_SET) && (unit == CSS_UNIT_PCT));
 }
 
+/* fixes993 — CJK line-break opportunities.
+ *
+ * NetSurf finds break opportunities by scanning for ' '. Japanese, Chinese and
+ * Korean text has no spaces, so an entire CJK paragraph is ONE unbreakable
+ * word: the minimum width below becomes the width of the whole paragraph, the
+ * containing block cannot shrink to fit, the content overflows, and the canvas
+ * grows to hold it -- a narrow column of content beside a huge empty area with
+ * a horizontal scrollbar. That is the "split viewport" reported on a 68kmla
+ * thread carrying a Japanese reply, and it reproduces in STOCK NetSurf 3.11 on
+ * Linux, so it is upstream rather than a MacSurf regression.
+ *
+ * UAX #14 gives CJK ideographs and kana break class ID: a break is permitted
+ * between any two of them. That is what every other browser does, and just
+ * that much turns the paragraph from one enormous word into one word per
+ * character, which is all the minimum-width calculation needs.
+ *
+ * Deliberately NOT full UAX #14. The refinement that matters visually is
+ * kinsoku shori -- not starting a line with closing punctuation, nor ending
+ * one with an opening bracket -- which affects WHERE the break lands, not
+ * whether the page is usable. Layout correctness first.
+ */
+static bool ms_is_cjk_cp(unsigned long cp)
+{
+	if (cp >= 0x2E80UL && cp <= 0x303EUL) return true;  /* radicals, punct */
+	if (cp >= 0x3041UL && cp <= 0x33FFUL) return true;  /* kana, compat    */
+	if (cp >= 0x3400UL && cp <= 0x4DBFUL) return true;  /* ext A           */
+	if (cp >= 0x4E00UL && cp <= 0x9FFFUL) return true;  /* unified         */
+	if (cp >= 0xA000UL && cp <= 0xA4CFUL) return true;  /* Yi              */
+	if (cp >= 0xAC00UL && cp <= 0xD7AFUL) return true;  /* Hangul          */
+	if (cp >= 0xF900UL && cp <= 0xFAFFUL) return true;  /* compat ideo     */
+	if (cp >= 0xFF00UL && cp <= 0xFF60UL) return true;  /* fullwidth       */
+	if (cp >= 0xFFE0UL && cp <= 0xFFE6UL) return true;  /* fullwidth signs */
+	return false;
+}
+
+/* Decode one UTF-8 codepoint at s[i]; returns its byte length (>=1). A
+ * malformed or truncated sequence reports length 1 and a non-CJK codepoint, so
+ * a bad string degrades to today's behaviour rather than running off the end. */
+static size_t ms_utf8_decode(const char *s, size_t len, size_t i,
+		unsigned long *cp)
+{
+	unsigned char c0 = (unsigned char)s[i];
+	if (c0 < 0x80) { *cp = c0; return 1; }
+	if ((c0 & 0xE0) == 0xC0 && i + 1 < len) {
+		*cp = ((unsigned long)(c0 & 0x1F) << 6) |
+		      (unsigned long)((unsigned char)s[i+1] & 0x3F);
+		return 2;
+	}
+	if ((c0 & 0xF0) == 0xE0 && i + 2 < len) {
+		*cp = ((unsigned long)(c0 & 0x0F) << 12) |
+		      ((unsigned long)((unsigned char)s[i+1] & 0x3F) << 6) |
+		      (unsigned long)((unsigned char)s[i+2] & 0x3F);
+		return 3;
+	}
+	if ((c0 & 0xF8) == 0xF0 && i + 3 < len) {
+		*cp = ((unsigned long)(c0 & 0x07) << 18) |
+		      ((unsigned long)((unsigned char)s[i+1] & 0x3F) << 12) |
+		      ((unsigned long)((unsigned char)s[i+2] & 0x3F) << 6) |
+		      (unsigned long)((unsigned char)s[i+3] & 0x3F);
+		return 4;
+	}
+	*cp = 0;
+	return 1;
+}
+
+/* True if a CJK codepoint begins at s[i]. */
+static bool ms_cjk_at(const char *s, size_t len, size_t i)
+{
+	unsigned long cp = 0;
+	if (i >= len) return false;
+	if ((unsigned char)s[i] < 0x80) return false;   /* fast path: ASCII */
+	(void)ms_utf8_decode(s, len, i, &cp);
+	return ms_is_cjk_cp(cp);
+}
+
 /**
  * Calculate minimum and maximum width of a line.
  *
@@ -872,17 +947,32 @@ layout_minmax_line(struct box *first,
 				 * calculate it.  (It's only needed if we're
 				 * shrinking-to-fit.) */
 				/* min = widest single word */
+				/* fixes993 — min = widest single word, where a
+				 * CJK character is a word of its own. Without
+				 * that a space-free Japanese paragraph counts
+				 * as ONE word and min becomes its whole width,
+				 * which is the split-viewport bug. */
 				i = 0;
-				do {
-					for (j = i; j != b->length &&
-							b->text[j] != ' '; j++)
-						;
+				while (i < b->length) {
+					if (b->text[i] == ' ') { i++; continue; }
+					if (ms_cjk_at(b->text, b->length, i)) {
+						unsigned long cp = 0;
+						j = i + ms_utf8_decode(b->text,
+							b->length, i, &cp);
+					} else {
+						for (j = i; j != b->length &&
+							b->text[j] != ' ' &&
+							!ms_cjk_at(b->text,
+								b->length, j);
+							j++)
+							;
+					}
 					font_func->width(&fstyle, b->text + i,
 							 j - i, &width);
 					if (min < width)
 						min = width;
-					i = j + 1;
-				} while (j != b->length);
+					i = j;
+				}
 			}
 
 			*line_has_height = true;

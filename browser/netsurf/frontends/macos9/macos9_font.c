@@ -600,6 +600,32 @@ macos9_font_position(const struct plot_font_style *fstyle,
         return NSERROR_OK;
 }
 
+/* fixes993 — does a CJK codepoint begin at s[i]? See the long note in
+ * layout.c: CJK has no spaces, so without treating every ideograph/kana as a
+ * break opportunity a whole paragraph is one unbreakable word. Byte-wise UTF-8
+ * test, no decoder needed for the ranges that matter:
+ *   E2 BA..  U+2E80-U+2FFF  radicals        E3 ..    U+3000-U+33FF  kana/punct
+ *   E4-ED    U+4000-U+D7AF  ideographs/Hangul
+ *   EF A4..  U+F900-U+FAFF  compat          EF BC..  U+FF00-U+FFEF  fullwidth
+ */
+static int macos9_cjk_starts_at(const char *s, size_t len, size_t i)
+{
+        unsigned char c0, c1;
+        if (s == NULL || i >= len) return 0;
+        c0 = (unsigned char)s[i];
+        if (c0 < 0xE2 || c0 > 0xEF) return 0;      /* not a CJK-range lead */
+        if (i + 2 >= len) return 0;                /* truncated: leave alone */
+        c1 = (unsigned char)s[i + 1];
+        if (c0 == 0xE2) return (c1 >= 0xBA) ? 1 : 0;          /* U+2E80+   */
+        if (c0 == 0xE3) return 1;                              /* U+3000+   */
+        if (c0 >= 0xE4 && c0 <= 0xED) return 1;                /* U+4000+   */
+        if (c0 == 0xEF) {
+                if (c1 >= 0xA4 && c1 <= 0xAB) return 1;        /* U+F900+   */
+                if (c1 >= 0xBC && c1 <= 0xBD) return 1;        /* U+FF00+   */
+        }
+        return 0;
+}
+
 static nserror
 macos9_font_split(const struct plot_font_style *fstyle,
                   const char *string,
@@ -616,6 +642,11 @@ macos9_font_split(const struct plot_font_style *fstyle,
         /* #251 soft-hyphen (U+00AD = 0xC2 0xAD) break opportunity. */
         size_t last_shy = 0;   /* byte offset AFTER a soft hyphen that fits */
         int have_shy = 0;
+        /* fixes993 — byte offset of the LAST CJK character that fits. UAX #14
+         * permits a break between two ideographs/kana, and without it a
+         * space-free Japanese paragraph never splits, so the line runs off. */
+        size_t last_cjk = 0;
+        int have_cjk = 0;
         /* CSS_HYPHENS_NONE == 1 (css_hyphens_e); allow shy breaks otherwise
          * (inherit/manual/auto). Avoids a libcss include in the font code. */
         int allow_shy = (fstyle != NULL && fstyle->hyphens != 1);
@@ -648,6 +679,13 @@ macos9_font_split(const struct plot_font_style *fstyle,
                         last_shy = i + 2;   /* break AFTER the soft hyphen */
                         have_shy = 1;
                 }
+                /* fixes993 — a CJK character here means a break is permitted
+                 * BEFORE it. Only i > 0: offset 0 reads to core as "cannot
+                 * split here" (fixes788), which would loop. */
+                if (i > 0 && macos9_cjk_starts_at(string, fit_offset, i)) {
+                        last_cjk = i;
+                        have_cjk = 1;
+                }
         }
 
         /* #251: prefer whichever break fits the most content (rightmost). A
@@ -655,6 +693,16 @@ macos9_font_split(const struct plot_font_style *fstyle,
          * fragment ends with it and paints a trailing '-' (macos9_utf8_to_
          * macroman); core sees a non-space at that offset so reserves no
          * box->space, exactly right for a hyphenation break. */
+        /* fixes993 — CJK wins when it is the rightmost break that fits, so a
+         * mixed sentence still breaks nearest the edge. char_offset lands ON
+         * the character and the byte there is not a space, so core reserves no
+         * box->space -- correct for a CJK break, as for a hyphenation one. */
+        if (have_cjk && (have_space == 0 || last_cjk > last_space) &&
+                        (have_shy == 0 || last_cjk > last_shy)) {
+                *char_offset = last_cjk;
+                macos9_font_width(fstyle, string, last_cjk, actual_x);
+                return NSERROR_OK;
+        }
         if (have_shy && (have_space == 0 || last_shy > last_space)) {
                 *char_offset = last_shy;
                 macos9_font_width(fstyle, string, last_shy, actual_x);
