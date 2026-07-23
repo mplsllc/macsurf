@@ -273,13 +273,18 @@ int macos9_hdr_has_ci(const char *hay, const char *needle)
  * ready-to-splice buffer, "Name: value\r\n" per KEPT header. Dropped:
  * every header the fetcher emits itself (Host, User-Agent, the Accept
  * family, Content-Length, Content-Type, Connection), all hop-by-hop
- * headers, and Cookie (the jar wins). ALSO
- * dropped: If-None-Match / If-Modified-Since — core's llcache emits these to
- * revalidate a stale object, but NEITHER macos9 fetcher has a 304 branch
- * (no FETCH_NOTMODIFIED, unlike curl.c), so a conditional GET that draws a
- * 304 would be delivered as an empty body and blank the cached resource
- * (fixes835: caught in adversarial review — worst on revalidated images/
- * fonts like forum avatars). We can't answer 304, so we must not ask.
+ * headers, and Cookie (the jar wins).
+ *
+ * fixes979 — If-None-Match / If-Modified-Since are KEPT again. fixes835
+ * dropped them for a real reason ("we can't answer 304, so we must not
+ * ask"): neither fetcher had a FETCH_NOTMODIFIED branch, so a 304 arrived as
+ * an empty body and blanked the cached resource, worst on revalidated images
+ * and fonts. Both fetchers now have that branch, so the premise is gone --
+ * and the workaround was expensive. Without conditional headers an llcache
+ * object needing freshness validation can only be revalidated by refetching
+ * the WHOLE body over TLS, on a 400 MHz machine, even when the bytes we hold
+ * are still good. Asking is the entire point of holding them.
+ *
  * KEPT: Referer, Sec-Fetch-*, Origin, etc. dst is always NUL-terminated; a
  * header that would overflow is skipped whole, never truncated. */
 void macos9_capture_extra_headers(const char **h, char *dst, size_t cap)
@@ -289,7 +294,7 @@ void macos9_capture_extra_headers(const char **h, char *dst, size_t cap)
 		"proxy-connection:", "transfer-encoding:", "te:",
 		"trailer:", "upgrade:", "content-length:", "content-type:",
 		"accept-encoding:", "user-agent:", "accept:",
-		"accept-language:", "if-none-match:", "if-modified-since:"
+		"accept-language:"
 	};
 	size_t nd = sizeof(drop) / sizeof(drop[0]);
 	size_t used = 0;

@@ -2274,6 +2274,34 @@ llcache_object_fetch_persistent(llcache_object *object,
  * \param result	  Pointer to location to receive retrieved object
  * \return NSERROR_OK on success, appropriate error otherwise
  */
+/* fixes979 — the memory-cache ledger. Cheap counters, no per-request log
+ * line; emitted changed-only once per reformat from html_reformat, the same
+ * shape as the fixes934/978 ledgers.
+ *
+ *   fresh   served entirely from the in-memory object, no request at all
+ *   reval   a held object needed freshness validation, so a CONDITIONAL
+ *           request was started (fixes979 restored If-None-Match /
+ *           If-Modified-Since; before that this was a full body refetch)
+ *   miss    nothing held, full fetch
+ *   notmod  a 304 came back and the held bytes were reused
+ *
+ * reval ~= notmod means revalidation is working and costing a round trip
+ * instead of a body. reval >> notmod means servers are answering our
+ * conditionals with full bodies anyway, and the next question is why. */
+static long g_llc_fresh = 0;
+static long g_llc_reval = 0;
+static long g_llc_miss = 0;
+static long g_llc_notmod = 0;
+
+void macsurf_llcache_stats(long *fresh, long *reval, long *miss, long *notmod);
+void macsurf_llcache_stats(long *fresh, long *reval, long *miss, long *notmod)
+{
+	*fresh = g_llc_fresh;
+	*reval = g_llc_reval;
+	*miss = g_llc_miss;
+	*notmod = g_llc_notmod;
+}
+
 static nserror
 llcache_object_retrieve_from_cache(nsurl *url,
 				   uint32_t flags,
@@ -2334,6 +2362,7 @@ llcache_object_retrieve_from_cache(nsurl *url,
 	}
 
 	if ((newest != NULL) && (llcache_object_is_fresh(newest))) {
+		g_llc_fresh++;   /* fixes979 ledger */
 		/* Found a suitable object, and it's still fresh */
 		nslog_log(__FILE__, "", __LINE__, "Found fresh %p", newest);
 
@@ -2389,6 +2418,7 @@ llcache_object_retrieve_from_cache(nsurl *url,
 			/* Record candidate, so we can fall back if it is still fresh */
 			newest->candidate_count++;
 			obj->candidate = newest;
+			g_llc_reval++;   /* fixes979 ledger */
 
 			/* Attempt to kick-off fetch */
 			error = llcache_object_fetch(obj, flags, referer, post,
@@ -2424,6 +2454,7 @@ llcache_object_retrieve_from_cache(nsurl *url,
 	}
 
 	/* Attempt to kick-off fetch */
+	g_llc_miss++;   /* fixes979 ledger */
 	error = llcache_object_fetch(obj, flags, referer, post,
 			redirect_count, hsts_in_use);
 	if (error != NSERROR_OK) {
@@ -2875,6 +2906,7 @@ static nserror llcache_object_cache_update(llcache_object *object)
 static nserror llcache_fetch_notmodified(llcache_object *object,
 		llcache_object **replacement)
 {
+	g_llc_notmod++;   /* fixes979 ledger */
 	/* There may be no candidate if the server erroneously responded
 	 * to an unconditional request with a 304 Not Modified response.
 	 * In this case, we simply retain the initial object, having

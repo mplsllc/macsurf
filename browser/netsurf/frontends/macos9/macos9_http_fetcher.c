@@ -924,6 +924,17 @@ process_chunked_bytes(struct macos9_fetch_ctx *c, const char *b, long len)
 
 static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 	char *sep = strstr(c->h_buf, "\r\n\r\n"), *p, *cur; long cur_len; fetch_msg msg;
+	/* fixes979 — 304 Not Modified. Set once the status line is parsed;
+	 * while it is on, no header is forwarded, mirroring curl.c
+	 * (fetch_curl_process_headers answers a conditional GET with
+	 * FETCH_NOTMODIFIED alone). llcache_fetch_notmodified moves the users
+	 * onto the candidate object and refreshes ITS cache data, so replaying
+	 * these headers would apply them to the object being discarded.
+	 * Set-Cookie is still captured below -- only the forwarding is
+	 * suppressed. GET only: a 304 answering a POST is malformed, and
+	 * treating it as "your cached copy is fine" would serve the wrong
+	 * thing for a form submission. */
+	int notmod = 0;
 	if(!sep) return;
 	/* fixes641 (#193): do NOT NUL sep's '\r'. mfs_find_line is length-bounded
 	 * by cur_len and NULs each line's own '\r'; the old `*sep=0` clobbered the
@@ -934,9 +945,12 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 	p = mfs_find_line(&cur, &cur_len);
 	if(p && strncmp(p,"HTTP/",5)==0) {
 		char *sp=strchr(p,' '); if(sp) c->status=atoi(sp+1);
+		if (c->status == 304 && c->post_body == NULL) notmod = 1;
 		/* UNLOCK HISTORY: NetSurf core needs the status line reported as a header */
-		msg.type=FETCH_HEADER; msg.data.header_or_data.buf=(const uint8_t*)p;
-		msg.data.header_or_data.len=strlen(p); fetch_send_callback(&msg,c->parent);
+		if (!notmod) {
+			msg.type=FETCH_HEADER; msg.data.header_or_data.buf=(const uint8_t*)p;
+			msg.data.header_or_data.len=strlen(p); fetch_send_callback(&msg,c->parent);
+		}
 	}
 	fetch_set_http_code(c->parent, c->status);
 	while((p = mfs_find_line(&cur, &cur_len)) != NULL) {
@@ -1013,8 +1027,31 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 				macsurf_debug_log_writef("http: stored cookie '%s'", nm);
 			}
 		}
-		msg.type=FETCH_HEADER; msg.data.header_or_data.buf=(const uint8_t*)p;
-		msg.data.header_or_data.len=strlen(p); fetch_send_callback(&msg,c->parent);
+		if (!notmod) {
+			msg.type=FETCH_HEADER; msg.data.header_or_data.buf=(const uint8_t*)p;
+			msg.data.header_or_data.len=strlen(p); fetch_send_callback(&msg,c->parent);
+		}
+	}
+	/* fixes979 — the 304 answer itself. Before the 3xx branch below, which
+	 * would otherwise see a 304 as a redirect the moment a server sent a
+	 * stray Location. Terminal: same teardown contract as the redirect
+	 * path (remove from queues, then free). */
+	if (notmod) {
+		struct fetch *parent_save;
+		macsurf_debug_log_writef("http: 304 not-modified url=%s",
+			(c->url != NULL) ? nsurl_access(c->url) : "?");
+		msg.type = FETCH_NOTMODIFIED;
+		fetch_send_callback(&msg, c->parent);
+		/* same teardown as the redirect path below, verbatim: mark
+		 * notified, drop keep-alive (we are closing without draining a
+		 * body we never expect), then remove-from-queues AND free --
+		 * both are required, see macos9_http_poll. */
+		c->state = MFS_NOTIFIED;
+		c->keep_alive_ok = 0;
+		parent_save = c->parent;
+		fetch_remove_from_queues(parent_save);
+		fetch_free(parent_save);
+		return;
 	}
 	/* fixes98 — 3xx with Location: hand the redirect target to llcache
 	 * via FETCH_REDIRECT and stop the body delivery. We don't bother

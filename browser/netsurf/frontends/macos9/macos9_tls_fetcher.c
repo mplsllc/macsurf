@@ -2062,6 +2062,44 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 				c->host, c->path, c->status);
 		}
 
+		/* fixes979 — 304 Not Modified.
+		 *
+		 * Until now NEITHER fetcher had this branch, and because of
+		 * that macos9_capture_extra_headers deliberately STRIPPED
+		 * If-None-Match / If-Modified-Since ("we can't answer 304, so
+		 * we must not ask"). The consequence is the expensive half: an
+		 * llcache object that needs freshness validation could only be
+		 * revalidated by refetching the WHOLE body over TLS, on a
+		 * 400 MHz machine, even when the bytes on disk were still good.
+		 * With the branch here the conditional headers go back, and a
+		 * revalidation costs a request and an empty response.
+		 *
+		 * Mirrors curl.c exactly (fetch_curl_process_headers): send
+		 * FETCH_NOTMODIFIED and stop, WITHOUT forwarding the response
+		 * headers -- llcache_fetch_notmodified moves the users onto the
+		 * candidate object and refreshes its cache data itself, so a
+		 * header replay here would apply to the wrong object. GET only,
+		 * same guard as curl: a 304 answering a POST is malformed, and
+		 * treating it as "your cached copy is fine" would serve the
+		 * wrong thing for a form submission.
+		 *
+		 * Cookies from the 304 have already been captured by the parse
+		 * loop above -- that is why this sits after it rather than
+		 * beside the status line. */
+		if (c->status == 304 && c->post_body == NULL) {
+			struct fetch *parent_save;
+			macsurf_debug_log_writef(
+				"https: 304 not-modified host=%s path=%s",
+				c->host, c->path);
+			msg.type = FETCH_NOTMODIFIED;
+			fetch_send_callback(&msg, c->parent);
+			parent_save = c->parent;
+			hctx_clear(c);
+			fetch_remove_from_queues(parent_save);
+			fetch_free(parent_save);
+			return 2;	/* terminal */
+		}
+
 		/* Now forward all headers, substituting Content-Type when
 		 * force_download is true. */
 		for (i = 0; i < n_header_lines; i++) {

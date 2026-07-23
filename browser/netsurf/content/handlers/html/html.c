@@ -2819,6 +2819,26 @@ static void html_reformat(struct content *c, int width, int height)
 		}
 	}
 
+	/* fixes979 — the memory-cache ledger, read against the one above.
+	 * `fetch` there counts retrievals ASKED FOR; `miss` here counts the ones
+	 * that actually went to the network. A page revisit that shows fresh
+	 * climbing and miss flat is the cache doing its job; miss climbing on a
+	 * revisit is what image disk caching would be for. */
+	{
+		extern void macsurf_llcache_stats(long *fresh, long *reval,
+				long *miss, long *notmod);
+		static long ll_f = -1, ll_r = -1, ll_m = -1, ll_n = -1;
+		long lf = 0, lr = 0, lm = 0, ln = 0;
+
+		macsurf_llcache_stats(&lf, &lr, &lm, &ln);
+		if (lf != ll_f || lr != ll_r || lm != ll_m || ln != ll_n) {
+			macsurf_debug_log_writef(
+				"LIFE llc fresh=%ld reval=%ld miss=%ld notmod=%ld",
+				lf, lr, lm, ln);
+			ll_f = lf; ll_r = lr; ll_m = lm; ll_n = ln;
+		}
+	}
+
 	/* fixes445: clear hover/active tracking on reformat. The dyn_hover_node
 	 * pointer survives layout but box_construct.c seeds its context from
 	 * these fields; stale values after a CONTENT_MSG_ERROR-driven reformat
