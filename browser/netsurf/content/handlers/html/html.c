@@ -2096,6 +2096,7 @@ static void html_reconvert_relink_objects(html_content *c)
 	 * the line already being emitted -- no new lines, no I/O. */
 	int rt_disabled = 0, rt_nonimage = 0, rt_background = 0;
 	int rt_nobox = 0, rt_nonode = 0, rt_unresolved = 0;
+	int rt_dedup = 0;   /* fixes973b — duplicate display slot collapsed */
 
 	if (c == NULL) {
 		return;
@@ -2158,38 +2159,66 @@ static void html_reconvert_relink_objects(html_content *c)
 
 		o->box = newbox;
 
-		/* fixes972 (lifecycle Stage 1) — DEDUPE, so keeping objects
-		 * instead of retiring them cannot leak.
+		/* fixes972/973b (lifecycle Stage 1) — DEDUPE, preferring the
+		 * DECODED copy, so keeping objects neither leaks nor twitches.
 		 *
 		 * A reconvert re-runs box construction, which calls
 		 * html_fetch_object again for every image/background in the new
-		 * tree and PREPENDS the new objects onto object_list. Without
-		 * this, relinking the OLD objects too would leave two objects per
-		 * image on every reconvert -- disappearance traded for an
-		 * unbounded list (Stage 0a). A box holds at most one foreground
-		 * object and one background, so (box, background-flag) is the
-		 * identity of a display slot. New objects are at the head and are
-		 * walked first, so the survivor is the fresh fetch; the older
-		 * duplicate at the tail is retired, releasing its handle.
+		 * tree and PREPENDS the new (in-flight, re-fetching) objects onto
+		 * object_list; the old (DONE, already-decoded) objects are at the
+		 * tail. A box holds at most one foreground object and one
+		 * background, so (box, background-flag) is a display slot, and two
+		 * objects for one slot must collapse to one -- otherwise keeping
+		 * them all trades disappearance for an unbounded list (Stage 0a).
 		 *
-		 * O(n^2) over the kept list, but n is the object count of one
-		 * document (~100) and this runs once per reconvert, so it is not
-		 * a hot path. */
+		 * fixes972 kept the FIRST seen (the new in-flight head) and
+		 * retired the DONE tail. That is exactly backwards and caused the
+		 * hardware "twitch": every reconvert threw away the decoded image
+		 * and blanked the box until the redundant re-fetch completed.
+		 * fixes973b keeps whichever copy is DONE: if the just-arrived o is
+		 * DONE and the already-kept k is not, unlink and retire k (its
+		 * redundant in-flight fetch is aborted when its handle releases --
+		 * the same established path the nobox retirements use) and let o
+		 * proceed as the linked survivor. Otherwise retire o. The decoded
+		 * image never leaves the box, and the double-fetch is cancelled.
+		 *
+		 * O(n^2) over the kept list; n is one document's object count
+		 * (~100), once per reconvert -- not a hot path. */
 		{
-			struct content_html_object *k;
-			int dup = 0;
-			for (k = keep; k != NULL; k = k->next) {
-				if (k->box == newbox &&
-				    (k->background ? 1 : 0) ==
+			struct content_html_object *k = NULL, *kprev = NULL;
+			struct content_html_object *kk, *kkprev = NULL;
+			for (kk = keep; kk != NULL; kkprev = kk, kk = kk->next) {
+				if (kk->box == newbox &&
+				    (kk->background ? 1 : 0) ==
 				    (o->background ? 1 : 0)) {
-					dup = 1;
-					break;
+					k = kk; kprev = kkprev; break;
 				}
 			}
-			if (dup) {
-				o->next = drop; drop = o; retired++;
-				o = next;
-				continue;
+			if (k != NULL) {
+				int o_done = (o->content != NULL &&
+					content_get_status(o->content) ==
+						CONTENT_STATUS_DONE);
+				int k_done = (k->content != NULL &&
+					content_get_status(k->content) ==
+						CONTENT_STATUS_DONE);
+				if (o_done && !k_done) {
+					/* o (decoded) wins: unlink k from keep
+					 * and retire its redundant in-flight
+					 * fetch; o falls through and links below. */
+					if (kprev != NULL)
+						kprev->next = k->next;
+					else
+						keep = k->next;
+					n_keep--;
+					k->next = drop; drop = k;
+					retired++; rt_dedup++;
+				} else {
+					/* k is at least as good: retire o. */
+					o->next = drop; drop = o;
+					retired++; rt_dedup++;
+					o = next;
+					continue;
+				}
 			}
 		}
 
@@ -2254,10 +2283,10 @@ static void html_reconvert_relink_objects(html_content *c)
 		macsurf_debug_log_writef(
 			"LIFE objects relinked=%d inflight=%d retired=%d"
 			" why: disabled=%d nonimage=%d background=%d"
-			" nobox=%d nonode=%d unresolved=%d",
+			" nobox=%d nonode=%d unresolved=%d dedup=%d",
 			relinked, inflight, retired,
 			rt_disabled, rt_nonimage, rt_background,
-			rt_nobox, rt_nonode, rt_unresolved);
+			rt_nobox, rt_nonode, rt_unresolved, rt_dedup);
 	}
 }
 
