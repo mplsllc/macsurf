@@ -2245,6 +2245,34 @@ static void html_reconvert_relink_objects(html_content *c)
 				int k_done = (k->content != NULL &&
 					content_get_status(k->content) ==
 						CONTENT_STATUS_DONE);
+				/* fixes977 — prefer-DONE is only right when both
+				 * copies are the SAME image. If the URLs differ,
+				 * the element's image CHANGED (JS rewrote src or
+				 * the background), and the list is ordered
+				 * new-first, so k is this rebuild's copy and o is
+				 * the stale one. Preferring DONE there keeps
+				 * showing the old image forever: every reconvert
+				 * finds the old copy DONE and the new one still
+				 * in flight, so the new one never wins. Latent
+				 * since fixes973b and only reachable through this
+				 * branch, which fixes977's node-keyed adoption
+				 * now leaves as the changed-URL case alone --
+				 * i.e. exactly the case the rule got wrong.
+				 * o->url is NULL only on a hand-built entry
+				 * (harness); treat that as "same" and keep the
+				 * old behaviour. */
+				int same_url = (o->url == NULL || k->url == NULL ||
+					o->url == k->url ||
+					nsurl_compare(o->url, k->url,
+						NSURL_COMPLETE) != false);
+				if (same_url == 0) {
+					/* image changed: k (the rebuild's copy)
+					 * wins regardless of who is decoded. */
+					o->next = drop; drop = o;
+					retired++; rt_dedup++;
+					o = next;
+					continue;
+				}
 				if (o_done && !k_done) {
 					/* o (decoded) wins: unlink k from keep
 					 * and retire its redundant in-flight
