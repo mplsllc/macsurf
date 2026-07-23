@@ -2994,13 +2994,19 @@ static void html_reformat(struct content *c, int width, int height)
 	 * stack. One-shot per session. */
 	if (layout != NULL && (g_macsurf_pre_clamp_dx1 > 1000000 ||
 			g_macsurf_pre_clamp_dx1 < -1000000 ||
-			(c->width > 20000 && c->width > width * 4))) {
+			(c->width > 3000 && c->width > width * 2))) {
 		static int td_garbage_dumped = 0;
 		/* fixes990 — announce it whether or not the walk has run before,
 		 * so a RECURRENCE is visible and not just the first instance.
 		 * "LIFE " because the failures-only gate drops everything else,
 		 * which is why this has been invisible. Anomaly-gated, so a
-		 * healthy page logs nothing. */
+		 * healthy page logs nothing.
+		 *
+		 * fixes990b — the width gate is deliberately GENEROUS (twice the
+		 * viewport and over 3000px, rather than 20000): a page that is
+		 * legitimately twice its viewport wide is already worth seeing,
+		 * and the cost of a false positive is one log line, while the
+		 * cost of a gate set too high is another whole round. */
 		macsurf_debug_log_writef(
 			"LIFE SPLIT c_w=%d in_w=%d dx1_preclamp=%d dx1=%d lyt_w=%d",
 			(int)c->width, width, g_macsurf_pre_clamp_dx1,
