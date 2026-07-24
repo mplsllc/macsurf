@@ -33,6 +33,11 @@
 /* fixes879 — Test 22 exercises the real cookie jar directly (urldb.c and
  * nsurl*.c are both compiled into the harness). */
 #include "utils/nsurl.h"
+/* Test 38 (Phase 0 control) — corestring_dom_click, for dispatching through
+ * fire_generic_dom_event() the way html_mouse_action() does. corestrings.c is
+ * already in the harness link set (EXTRA_SRC) and corestrings_init() already
+ * runs at startup. */
+#include "utils/corestrings.h"
 #include "content/urldb.h"
 #include "content/handlers/html/box.h"
 #include "content/handlers/html/html.h"
@@ -3960,6 +3965,224 @@ int main(void)
 	}
 	fprintf(stderr, "=== Test 37 PASS: a rebuilt box adopts its own "
 		"element's object instead of fetching it again ===\n");
+
+	/* --- Test 38 (PHASE 0 CONTROL): the REAL libdom dispatch path ----------
+	 *
+	 * THIS TEST IS EXPECTED TO FAIL until Phase 1b/1c land. That is its job.
+	 *
+	 * Every existing event test in this file dispatches through
+	 * el.dispatchEvent -- the path that already worked -- which is exactly why
+	 * the suite reports 37/37 healthy while hardware ignores every click. The
+	 * recorded false-green traps (a bare `make` compiling nothing and printing
+	 * all-PASS from a stale binary) mean a green suite proves nothing until
+	 * something has been shown to go red. So this dispatches the way real mouse
+	 * input does -- fire_generic_dom_event(), the same call
+	 * html_mouse_action() makes at interaction.c:1785 -- and asserts the two
+	 * things the audit says are broken:
+	 *
+	 *   A. docFired == 0
+	 *      document.addEventListener never reaches libdom. The handler list
+	 *      lives in the JS-only document._listeners registry
+	 *      (macsurf_qjs.c:5180) that libdom knows nothing about, so a real
+	 *      click never reaches $(document).on('click', ...) -- the dominant
+	 *      pattern in jQuery, XenForo (XF.activate) and WordPress.
+	 *
+	 *   B. targetType != 'object'
+	 *      qjs_dom_listener_cb (macsurf_qjs.c:2969) looks the target up in the
+	 *      wrap table and, on a miss, simply does not set the property.
+	 *      Delegation handlers universally begin e.target.matches(...) /
+	 *      e.target.closest(...), which throws on undefined and takes the
+	 *      handler down with it.
+	 *
+	 * PART 1 IS A POSITIVE CONTROL and it must PASS today. Without it, a red
+	 * Part 2 is ambiguous between "document registration is broken" (the
+	 * claim) and "libdom dispatch does not reach JS in this harness at all"
+	 * (a harness defect). Part 1 registers an element-level listener the
+	 * normal way and dispatches at that same element, so it exercises the
+	 * identical C entry point over a path that is known to work.
+	 *
+	 * The two parts deliberately use DIFFERENT nodes. Part 1 must look its
+	 * node up from script, which creates a wrap-table entry -- and Part 2's
+	 * whole point is a node that has NO entry, so it uses a node no script in
+	 * this file ever touches. #li22 and #li23 exist only in build_large_doc's
+	 * <ul> and are referenced nowhere else.
+	 */
+	fprintf(stderr, "\n=== Test 38 (PHASE 0 CONTROL): real libdom dispatch "
+			"-> document delegation + event.target ===\n");
+	{
+		dom_string *id22 = NULL, *id23 = NULL;
+		dom_element *el22 = NULL, *el23 = NULL;
+		unsigned char ok;
+		int part1_ok = 0;
+
+		if (dom_string_create((const uint8_t *)"li22", 4, &id22) != DOM_NO_ERR ||
+		    dom_string_create((const uint8_t *)"li23", 4, &id23) != DOM_NO_ERR) {
+			fprintf(stderr, "FAIL: t38 dom_string_create\n");
+			return 1;
+		}
+		dom_document_get_element_by_id(document, id22, &el22);
+		dom_document_get_element_by_id(document, id23, &el23);
+		dom_string_unref(id22);
+		dom_string_unref(id23);
+		if (el22 == NULL || el23 == NULL) {
+			fprintf(stderr, "FAIL: t38 fixture missing #li22/#li23 "
+					"(el22=%p el23=%p) -- build_large_doc changed?\n",
+					(void *)el22, (void *)el23);
+			return 1;
+		}
+
+		/* ---- Part 1: POSITIVE CONTROL. Element-level listener, script
+		 * looks the node up itself (which is what creates its wrapper). */
+		{
+			const char *setup1 =
+				"globalThis.__t38={elFired:0,docFired:0,"
+					"targetType:'never-ran'};"
+				"var t=globalThis.__t38;"
+				"var e=document.getElementById('li22');"
+				"if(!e)throw new Error('li22 not reachable from script');"
+				"e.addEventListener('click',function(){t.elFired++;});";
+			ok = js_exec(thread, (const unsigned char *)setup1,
+					strlen(setup1), "t38-setup1.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: t38 part 1 setup threw\n");
+				return 1;
+			}
+		}
+		(void)fire_generic_dom_event(corestring_dom_click,
+				(dom_node *)el22, true, true);
+		{
+			/* The control question is only "does the real libdom dispatch
+			 * reach JS at all", because that is what makes a red Part 2
+			 * interpretable. Assert >= 1, not == 1 -- the exact count is a
+			 * SEPARATE finding, checked below, and folding it in here would
+			 * block Part 2 from ever running. */
+			const char *chk1 =
+				"if(globalThis.__t38.elFired<1)"
+					"throw new Error('CONTROL BROKEN: an element-level "
+						"addEventListener handler did NOT fire at all from "
+						"fire_generic_dom_event. Part 2 below cannot be "
+						"interpreted until this passes -- a red Part 2 would "
+						"mean the harness cannot dispatch at all, not that "
+						"document delegation is broken.');";
+			ok = js_exec(thread, (const unsigned char *)chk1,
+					strlen(chk1), "t38-chk1.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: Test 38 positive control is broken -- "
+						"fix the harness before reading Part 2\n");
+				return 1;
+			}
+			part1_ok = 1;
+			fprintf(stderr, "  part 1 OK (control): element-level listener "
+					"fires from the real libdom dispatch\n");
+		}
+
+		/* ---- Part 1b: THE DOUBLE-FIRE. Found by this control on its first
+		 * run; it was not in the audit.
+		 *
+		 * ONE addEventListener('click', fn) on the target fires TWICE per
+		 * dispatch. libdom's event-path walk
+		 * (browser/libdom/src/core/node.c:2549) starts at the target itself,
+		 * so targets[0] IS the target; the target is then dispatched once in
+		 * the AT_TARGET phase (matching clause 3 of the filter in
+		 * events/event_target.c:235, `evt->target == evt->current &&
+		 * phase == DOM_AT_TARGET`) and AGAIN in the bubble pass, where
+		 * targets[0] matches clause 2 (`le->capture == false &&
+		 * phase == DOM_BUBBLING_PHASE`). Per spec the target must be visited
+		 * exactly once.
+		 *
+		 * This is live on hardware: interaction.c:1785 calls
+		 * fire_generic_dom_event(corestring_dom_click, mas.node, true, true),
+		 * so since fixes989 wired addEventListener to libdom, every
+		 * element-level click handler on the clicked element has run twice per
+		 * click -- double form submits, double toggles, double counters.
+		 *
+		 * NOT a MacSurf double-registration: qjs_el_add_event_listener_data
+		 * only calls qjs_dom_register_listener when `fresh` (the first
+		 * listener of that type on that node), and this test registers one. */
+		{
+			const char *chk1b =
+				"if(globalThis.__t38.elFired!==1)"
+					"throw new Error('ASSERT FAIL (C): ONE "
+						"addEventListener(\"click\") handler fired '+"
+						"globalThis.__t38.elFired+' times for ONE dispatch. "
+						"libdom visits the target twice -- once at AT_TARGET "
+						"and again as targets[0] in the bubble pass "
+						"(core/node.c:2549 builds the path starting AT the "
+						"target; events/event_target.c:235 then matches both "
+						"the AT_TARGET clause and the non-capture BUBBLING "
+						"clause). Live on hardware via interaction.c:1785: "
+						"every click handler on the clicked element runs "
+						"twice.');";
+			ok = js_exec(thread, (const unsigned char *)chk1b,
+					strlen(chk1b), "t38-chk1b.js");
+			if (!ok) {
+				fprintf(stderr, "  part 1b RED: target double-fire (see "
+						"assertion above) -- continuing to part 2 so the "
+						"round reports all three findings\n");
+			} else {
+				fprintf(stderr, "  part 1b OK: target visited exactly once\n");
+			}
+		}
+
+		/* ---- Part 2: THE FAILING CONTROL. Document-level delegation, and
+		 * event.target for a node script has never looked up. */
+		{
+			const char *setup2 =
+				"var t=globalThis.__t38;"
+				"document.addEventListener('click',function(ev){"
+					"t.docFired++;"
+					"t.targetType=(ev===undefined||ev===null)?'no-event':"
+						"(ev.target===undefined?'undefined':"
+						"(ev.target===null?'null':'object'));"
+				"});";
+			ok = js_exec(thread, (const unsigned char *)setup2,
+					strlen(setup2), "t38-setup2.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: t38 part 2 setup threw\n");
+				return 1;
+			}
+		}
+		(void)fire_generic_dom_event(corestring_dom_click,
+				(dom_node *)el23, true, true);
+		{
+			const char *chk2 =
+				"var t=globalThis.__t38;"
+				"if(t.docFired===0)"
+					"throw new Error('ASSERT FAIL (A): a document-level "
+						"click listener did NOT fire from the real libdom "
+						"dispatch. document.addEventListener stores into the "
+						"JS-only document._listeners registry (macsurf_qjs.c "
+						":5180) and never calls qjs_dom_register_listener, so "
+						"libdom has no listener on the document node and a "
+						"real mouse click can never reach "
+						"$(document).on(\"click\", ...) -- the dominant "
+						"pattern in jQuery, XenForo and WordPress.');"
+				"if(t.targetType!=='object')"
+					"throw new Error('ASSERT FAIL (B): ev.target was \"'+"
+						"t.targetType+'\", not an object, for a node script "
+						"never looked up. qjs_dom_listener_cb "
+						"(macsurf_qjs.c:2969) looks the target up in the wrap "
+						"table and skips the property on a miss, so every "
+						"delegation handler that begins e.target.matches(...) "
+						"or e.target.closest(...) throws and dies.');";
+			ok = js_exec(thread, (const unsigned char *)chk2,
+					strlen(chk2), "t38-chk2.js");
+			if (!ok) {
+				fprintf(stderr,
+					"=== Test 38 FAILED AS EXPECTED (Phase 0 control) ===\n"
+					"    The positive control passed (part1_ok=%d), so the "
+					"harness CAN dispatch through the real libdom path.\n"
+					"    What is red is the diagnosis under test: document "
+					"delegation and event.target.\n"
+					"    This turns green when Phase 1b + 1c land. Until "
+					"then a red suite here is the CORRECT result.\n",
+					part1_ok);
+				return 1;
+			}
+		}
+		fprintf(stderr, "=== Test 38 PASS: document delegation and "
+				"event.target work from the real libdom dispatch ===\n");
+	}
 
 	return 0;
 }
