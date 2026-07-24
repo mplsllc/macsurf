@@ -735,10 +735,18 @@ html_proceed_to_done(html_content *html)
 			 * page in the same state a real browser would.
 			 * js_fire_window_load is idempotent per realm: object.c can
 			 * call this function repeatedly as subresources land. */
+			/* fixes1022 — quiesced by default: firing load woke
+			 * dotdotdot/slick-class widgets that measure-then-
+			 * mutate, and without Phase 3's synchronous layout they
+			 * degrade the page (truncated articles, collapsed
+			 * slider, a 1s re-truncation ticker). Re-enable in the
+			 * round that ships forced layout. */
+#ifdef MACSURF_JS_FIRE_LOAD
 			if (html->js_thread != NULL) {
 				js_fire_window_load(html->js_thread,
 						html->document);
 			}
+#endif
 			content_set_done(&html->base);
 			html_pagemap_dump(html, "done"); /* fixes1015 */
 			return NSERROR_OK;
@@ -2772,6 +2780,7 @@ static void html_reconvert_done(html_content *c, bool success)
 	 * geometry settled, is the standard hook through which they converge.
 	 * Height-change-gated so a layout that stabilised goes quiet instead
 	 * of ping-ponging with the reconvert debounce forever. */
+#ifdef MACSURF_JS_FIRE_LOAD   /* fixes1022: same quiesce as the load fire */
 	{
 		static int last_resize_h = -1;
 		if (c->js_thread != NULL &&
@@ -2784,6 +2793,7 @@ static void html_reconvert_done(html_content *c, bool success)
 					c->document, NULL);
 		}
 	}
+#endif
 	macsurf_reconv_pos_set("reconvert-idle", (long) macsurf_reconvert_seq,
 			0, "");
 	macsurf_reconv_pos_flush();

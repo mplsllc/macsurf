@@ -1874,17 +1874,23 @@ extern long g_geom_audit; /* defined below, near the metric accessors */
  * per-session budgets died mid-page-one and 68kmla was never covered. */
 void macsurf_qjs_audit_reset(void)
 {
-	/* fixes1020 — SKELETON budgets. Every line is a synchronous write +
-	 * volume flush and the picture is nearly complete; keep just enough
-	 * to see a new page's opening moves. The full-audit values (250/80/
-	 * 30/80/120/100, fixes1017) go back in only when hunting something
-	 * specific. */
+	/* fixes1022 — audit OFF by default (every line is a flushed write);
+	 * define MACSURF_JS_AUDIT to get the fixes1020 skeleton back. */
+#ifdef MACSURF_JS_AUDIT
 	g_mut_audit_budget = 60;
 	g_evreg_audit = 20;
 	g_evmiss_audit = 10;
 	g_evfire_audit = 20;
 	g_mslife_audit = 60;
 	g_geom_audit = 30;
+#else
+	g_mut_audit_budget = 0;
+	g_evreg_audit = 0;
+	g_evmiss_audit = 0;
+	g_evfire_audit = 0;
+	g_mslife_audit = 0;
+	g_geom_audit = 0;
+#endif
 }
 
 static void qjs_mut_audit(const char *op, dom_node *target,
@@ -3506,6 +3512,7 @@ void macsurf_qjs_fire_scroll(void)
 {
 	extern double macos9_micros(void);
 	double now;
+	if (!MACSURF_JS_VIEW_EVENTS) return;   /* fixes1022 quiesce */
 	if (g_qjs_document == NULL) return;
 	if (!macsurf_qjs_event_type_live("scroll")) return;
 	now = macos9_micros();
@@ -3525,6 +3532,7 @@ void macsurf_qjs_fire_scroll(void)
 void macsurf_qjs_fire_resize(void);
 void macsurf_qjs_fire_resize(void)
 {
+	if (!MACSURF_JS_VIEW_EVENTS) return;   /* fixes1022 quiesce */
 	if (g_qjs_document == NULL) return;
 	if (!macsurf_qjs_event_type_live("resize")) return;
 	(void) fire_generic_dom_event(corestring_dom_resize,
@@ -3654,10 +3662,29 @@ static const char *qjs_css_display_name(uint8_t v)
  * the way the pre-1011 engine did (undefined / all-zero rect) -- the shape a
  * decade of pages demonstrably tolerates -- never a fabricated real-looking
  * number. When it returns 1, answers come from the real box tree. */
+/* fixes1022 — QUIESCE SWITCHES. The fixes1011-1019 batch woke behaviours
+ * real pages have never seen from this engine: real geometry answers, the
+ * window load event, scroll/resize dispatch. The hardware verdict is that
+ * on-load measure-then-mutate widgets (dotdotdot truncating every article,
+ * slick collapsing the slider) make pages WORSE without the synchronous-
+ * layout contract (Phase 3) underneath them -- partial lifecycle support is
+ * worse than none, the fixes1010 lesson at page scale. Default 0 restores
+ * the fixes1008-era JS-OBSERVABLE surface while keeping every crash guard
+ * and correctness fix since. Re-enable ONE AT A TIME, each in the round
+ * that ships the engine support it depends on. The harness builds with
+ * these ON so the full surface stays tested. */
+#ifndef MACSURF_JS_GEOMETRY
+#define MACSURF_JS_GEOMETRY 0
+#endif
+#ifndef MACSURF_JS_VIEW_EVENTS
+#define MACSURF_JS_VIEW_EVENTS 0
+#endif
+
 static int qjs_geometry_settled(void)
 {
 	extern int macsurf_reconvert_in_progress;
 
+	if (!MACSURF_JS_GEOMETRY) return 0;
 	if (g_qjs_content == NULL) return 0;
 	if (macos9_content_is_live(g_qjs_content) == 0) return 0;
 	if (g_qjs_content->status != CONTENT_STATUS_DONE) return 0;
