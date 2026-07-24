@@ -1873,7 +1873,7 @@ static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
 {
 	dom_element *el;
 	dom_node *child, *next, *removed, *append_result;
-	dom_node *src_parent, *html_el, *body_el;
+	dom_node *src_parent, *html_el, *body_el, *head_el;
 	dom_hubbub_parser_params params;
 	dom_hubbub_parser *parser = NULL;
 	dom_hubbub_error herr;
@@ -1922,6 +1922,40 @@ static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
 	src_parent = (dom_node *) frag;
 	html_el = qjs_find_child_element_by_tag((dom_node *) frag, "html");
 	if (html_el != NULL) {
+		/* fixes1007 — TAKE <head>'s CHILDREN TOO, and take them FIRST.
+		 *
+		 * This binding's fragment parser has no context-element support
+		 * (fixes846): it wraps the markup in an implied <html><head>/<body>
+		 * exactly as if parsing a whole page. So markup that STARTS with a
+		 * head-only element -- <script>, <style>, <link>, <meta>, <title> --
+		 * has it placed in <head>, and descending straight to <body> dropped
+		 * it on the floor, silently.
+		 *
+		 * Measured: `div.innerHTML = '<script src=...></script>'` produced
+		 * ZERO children and empty textContent. That is not a corner case --
+		 * it is what document.write() hands us on hackaday (its ad script
+		 * writes a <script> tag), and it is a common innerHTML pattern in its
+		 * own right.
+		 *
+		 * Head first, then body, so source order survives the round trip.
+		 * The move loop below re-fetches first_child each iteration, so it is
+		 * safe to run it twice over different parents. */
+		head_el = qjs_find_child_element_by_tag(html_el, "head");
+		if (head_el != NULL) {
+			child = NULL;
+			macsurf_dom_node_get_first_child(head_el, &child);
+			while (child != NULL) {
+				append_result = NULL;
+				macsurf_dom_node_append_child((dom_node *) el,
+						child, &append_result);
+				if (append_result != NULL)
+					macsurf_dom_node_unref(append_result);
+				macsurf_dom_node_unref(child);
+				child = NULL;
+				macsurf_dom_node_get_first_child(head_el, &child);
+			}
+			macsurf_dom_node_unref(head_el);
+		}
 		body_el = qjs_find_child_element_by_tag(html_el, "body");
 		if (body_el != NULL) {
 			src_parent = body_el;
@@ -5341,6 +5375,72 @@ static void register_browser_globals(JSContext *ctx)
 			 * it). The live-HTMLCollection semantics of the real DOM are not
 			 * reproduced; a static array is what every caller here actually
 			 * uses. */
+			/* fixes1007 — document.write / writeln.
+			 *
+			 * Did not exist AT ALL (zero occurrences in this file), and
+			 * on hardware it is the TOP remaining JS exception on a real
+			 * page: hackaday's ad script does
+			 *     OA_spc+="'><"+"/script>";document.write(OA_spc);
+			 * and dies with "TypeError: not a function", taking the rest
+			 * of that script with it. Still everywhere in ad, analytics
+			 * and legacy code.
+			 *
+			 * Deliberately does NOT re-enter hubbub's tokenizer. Doing
+			 * that mid-parse is the classic source of parser corruption
+			 * and this tree has already paid for parser re-entrancy once
+			 * (the fixes512 deferred-unpause machinery). Instead the
+			 * written markup goes through the REAL fragment parser that
+			 * innerHTML= already uses (fixes846,
+			 * dom_hubbub_fragment_parser_create) and the resulting nodes
+			 * are inserted at the current insertion point -- immediately
+			 * after document.currentScript, which is where a parser would
+			 * have put them.
+			 *
+			 * A <script> written this way becomes a real script element in
+			 * the document, so dom_SCRIPT_showed_up picks it up and
+			 * fetches/executes it exactly like any dynamically injected
+			 * script (fixes868/869). That is the whole point: the ad
+			 * script above is writing a script tag.
+			 *
+			 * currentScript is null for anything deferred or async, which
+			 * is not an edge case -- fall back to <body>. Children are
+			 * collected BEFORE any move, because moving mutates the
+			 * sibling chain being walked.
+			 *
+			 * NOT implemented: post-load document.open()'s full document
+			 * replace. Real browsers blank the page there, which is almost
+			 * always a site bug being punished; blanking it here on a
+			 * mistaken read would be a far worse failure than ignoring it.
+			 * open() returns the document and close() is a no-op, and this
+			 * comment is the record that the omission is deliberate. */
+			"document.write=function(){"
+				"var s='',i;"
+				"for(i=0;i<arguments.length;i++)s+=String(arguments[i]);"
+				"if(!s)return;"
+				"var ref=document.currentScript||null;"
+				"var parent=(ref&&ref.parentNode)||document.body||"
+					"document.documentElement;"
+				"if(!parent)return;"
+				"var anchor=(ref&&ref.parentNode===parent)?"
+					"ref.nextSibling:null;"
+				"var holder=document.createElement('div');"
+				"if(!holder)return;"
+				"try{holder.innerHTML=s;}catch(e){return;}"
+				"var kids=[],c=holder.firstChild;"
+				"while(c){kids.push(c);c=c.nextSibling;}"
+				"for(i=0;i<kids.length;i++){try{"
+					"if(anchor)parent.insertBefore(kids[i],anchor);"
+					"else parent.appendChild(kids[i]);"
+				"}catch(e){}}"
+			"};"
+			"document.writeln=function(){"
+				"var a=[],i;"
+				"for(i=0;i<arguments.length;i++)a.push(String(arguments[i]));"
+				"a.push('\\n');"
+				"document.write(a.join(''));"
+			"};"
+			"document.open=function(){return document;};"
+			"document.close=function(){};"
 			"document.getElementsByTagName=function(t){"
 				"return document.querySelectorAll(String(t));};"
 			"document.getElementsByClassName=function(c){"

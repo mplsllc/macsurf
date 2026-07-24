@@ -4428,5 +4428,101 @@ int main(void)
 				"event.target work from the real libdom dispatch ===\n");
 	}
 
+	/* --- Test 39: document.write + head-element fragments (fixes1007) ------
+	 *
+	 * Hardware picked this one, not the audit. With fixes1006 in, the TOP
+	 * remaining JS exception on hackaday.com is
+	 *   TypeError: not a function   at <eval> (?inline script?:2:1480)
+	 * and that offset is `document.write(OA_spc)` in its ad script.
+	 * document.write did not exist at all -- zero occurrences in
+	 * macsurf_qjs.c.
+	 *
+	 * Writing it surfaced a SECOND, more general bug: the fragment parser has
+	 * no context-element support, so it wraps markup in an implied
+	 * <html><head>/<body>, and the innerHTML descent took <body>'s children
+	 * ONLY. Markup starting with a head-only element -- <script>, <style>,
+	 * <link>, <meta> -- was silently dropped. Measured before the fix:
+	 * `div.innerHTML = '<script src=...></script>'` gave ZERO children.
+	 * That is an innerHTML bug in its own right; document.write just made it
+	 * visible, because a written <script> is exactly what the ad code emits.
+	 */
+	fprintf(stderr, "\n=== Test 39: document.write + head-element fragments ===\n");
+	{
+		const char *probe =
+			"globalThis.__t39={};var r=globalThis.__t39;"
+			/* (a) the innerHTML half, independent of document.write */
+			"var h=document.createElement('div');"
+			"h.innerHTML='<script id=\"zz\" src=\"http://e.invalid/a.js\">"
+				"<\\/script>';"
+			"r.ihKids=0;var n=h.firstChild;"
+			"while(n){r.ihKids++;n=n.nextSibling;}"
+			/* (b) document.write itself */
+			"r.isFn=(typeof document.write==='function');"
+			"r.isLnFn=(typeof document.writeln==='function');"
+			"if(r.isFn){"
+				"document.currentScript=null;"   /* force the <body> fallback */
+				"document.write('<p id=\"dw1\">written</p>"
+					"<span id=\"dw2\">two</span>');"
+				"var e=document.getElementById('dw1');"
+				"r.p=!!e;r.s=!!document.getElementById('dw2');"
+				"r.text=e?(e.textContent||''):'';"
+				"r.tag=e?String(e.tagName).toLowerCase():'';"
+				"document.write('<script id=\"dw3\" "
+					"src=\"http://example.invalid/x.js\"><\\/script>');"
+				"var s3=document.getElementById('dw3');"
+				"r.script=!!s3;"
+				"r.scriptSrc=s3?(s3.getAttribute('src')||''):'';"
+			"}";
+		unsigned char ok = js_exec(thread, (const unsigned char *)probe,
+				strlen(probe), "t39-probe.js");
+		if (!ok) { fprintf(stderr, "FAIL: t39 probe threw\n"); return 1; }
+		{
+			const char *chk =
+				"var r=globalThis.__t39;"
+				"if(r.ihKids<1)"
+					"throw new Error('ASSERT FAIL: innerHTML with a leading "
+						"<script> produced '+r.ihKids+' children. The "
+						"fragment parser puts head-only elements (script, "
+						"style, link, meta) in the implied <head>, and the "
+						"descent took <body> only -- so they were dropped "
+						"silently.');"
+				"if(!r.isFn)"
+					"throw new Error('ASSERT FAIL: document.write is not a "
+						"function -- the TOP JS exception on real "
+						"hackaday.com.');"
+				"if(!r.isLnFn)"
+					"throw new Error('ASSERT FAIL: document.writeln missing');"
+				"if(!r.p||!r.s)"
+					"throw new Error('ASSERT FAIL: written markup did not "
+						"reach the tree (p='+r.p+' span='+r.s+') -- it must "
+						"be PARSED into elements, not inserted as text.');"
+				"if(r.tag!=='p')"
+					"throw new Error('ASSERT FAIL: written node is a \"'+"
+						"r.tag+'\", expected a real <p>');"
+				"if(r.text!=='written')"
+					"throw new Error('ASSERT FAIL: written text is \"'+"
+						"r.text+'\"');"
+				"if(!r.script)"
+					"throw new Error('ASSERT FAIL: a written <script> did not "
+						"become a script element, so dom_SCRIPT_showed_up can "
+						"never fetch it -- which is exactly what the hackaday "
+						"ad script writes.');"
+				"if(r.scriptSrc.indexOf('example.invalid')<0)"
+					"throw new Error('ASSERT FAIL: written script lost its "
+						"src (got \"'+r.scriptSrc+'\")');";
+			ok = js_exec(thread, (const unsigned char *)chk,
+					strlen(chk), "t39-chk.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: document.write / head-element "
+						"fragments are not usable\n");
+				return 1;
+			}
+		}
+		fprintf(stderr, "  head-element fragments survive; markup parses into "
+				"real elements; a written <script> keeps its src\n");
+	}
+	fprintf(stderr, "=== Test 39 PASS: document.write + head-element "
+			"fragments ===\n");
+
 	return 0;
 }
