@@ -444,8 +444,11 @@ static void harness_dump_boxes(struct box *b, int depth, int maxdepth)
 	if (b == NULL || depth > maxdepth) return;
 	harness_box_brief(b, nm, sizeof nm);
 	box_coords(b, &x, &y);
-	fprintf(stderr, "%*s%-34s type=%d x=%d y=%d w=%d h=%d\n",
-			depth * 2, "", nm, (int)b->type, x, y,
+	fprintf(stderr, "%*s%-34s type=%d disp=%d x=%d y=%d w=%d h=%d\n",
+			depth * 2, "", nm, (int)b->type,
+			(b->style != NULL) ?
+				(int)css_computed_display_static(b->style) : -1,
+			x, y,
 			(b->width  >= 1000000 || b->width  < 0) ? -1 : b->width,
 			(b->height >= 1000000 || b->height < 0) ? -1 : b->height);
 	for (b = b->children; b != NULL; b = b->next)
@@ -529,6 +532,16 @@ int main(int argc, char **argv)
 		guit = &nt;
 	}
 	memset(g_nsoptions_storage, 0, sizeof(g_nsoptions_storage));
+	/* fixes1026 — the option table was left ALL ZERO, so every boolean
+	 * option read false regardless of its documented default. That silently
+	 * disabled author_level_css (inline style="" attributes are skipped
+	 * entirely in box_get_style when it is false) and background_images.
+	 * The fixture's own `style="float:left"` divs were therefore never
+	 * floats, so fixes889's float coverage has never actually existed. */
+	if (argc >= 4 && strcmp(argv[1], "--layout") == 0) {
+		nsoptions[NSOPTION_author_level_css].value.b = true;
+		nsoptions[NSOPTION_background_images].value.b = true;
+	}
 
 	corestrings_init();
 
@@ -569,6 +582,19 @@ int main(int argc, char **argv)
 
 	/* --- build a minimal but real html_content --- */
 	memset(&htmlc, 0, sizeof(htmlc));
+	/* fixes1026 — EVERY run needs a base URL. box_get_style passes
+	 * nsurl_access(c->base_url) to nscss_create_inline_style for any
+	 * element carrying style="", and box_construct joins relative
+	 * hrefs against it. It was never set because author_level_css read
+	 * false from the zeroed option table, so that path was dead. */
+	{
+		nsurl *burl = NULL;
+		if (nsurl_create("http://local/page.html", &burl) != NSERROR_OK) {
+			fprintf(stderr, "FAIL: base nsurl_create\n");
+			return 1;
+		}
+		htmlc.base_url = burl;
+	}
 	htmlc.document = document;
 	htmlc.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
 	htmlc.enable_scripting = true;
@@ -629,16 +655,34 @@ int main(int argc, char **argv)
 			fprintf(stderr, "FAIL: css_stylesheet_create\n");
 			return 1;
 		}
-		if (css_stylesheet_append_data(ua_sheet,
-				(const uint8_t *)ua_css, strlen(ua_css)) != CSS_OK &&
-		    css_stylesheet_append_data(ua_sheet,
-				(const uint8_t *)ua_css, strlen(ua_css)) != CSS_NEEDDATA) {
-			fprintf(stderr, "FAIL: css_stylesheet_append_data\n");
-			return 1;
+		{
+			/* fixes1026 — this used to call append_data TWICE via
+			 * the && short-circuit (the second call was the test
+			 * for its own success), feeding the parser the sheet
+			 * body a second time mid-parse. Harmless for a 60-byte
+			 * literal, not for a real 5 KB default.css. */
+			css_error ae = css_stylesheet_append_data(ua_sheet,
+					(const uint8_t *)ua_css, strlen(ua_css));
+			css_error de;
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: ua append=%d\n", (int)ae);
+				return 1;
+			}
+			de = css_stylesheet_data_done(ua_sheet);
+			if (layout_html != NULL)
+				fprintf(stderr, "ua sheet: append=%d done=%d\n",
+						(int)ae, (int)de);
 		}
-		css_stylesheet_data_done(ua_sheet);
+		/* fixes1026 — MEDIA "screen", NOT NULL. html_css.c:783 passes
+		 * "screen" for every sheet it appends; NULL here meant the
+		 * sheet matched no medium at all, so the whole cascade
+		 * silently produced initial values -- every element came out
+		 * display:inline and the entire document collapsed into one
+		 * inline run. The harness has therefore NEVER exercised
+		 * CSS-driven box construction, which is exactly why Test 43
+		 * had to inject geometry by hand. */
 		if (css_select_ctx_append_sheet(select_ctx, ua_sheet,
-				CSS_ORIGIN_UA, NULL) != CSS_OK) {
+				CSS_ORIGIN_UA, "screen") != CSS_OK) {
 			fprintf(stderr, "FAIL: css_select_ctx_append_sheet\n");
 			return 1;
 		}
@@ -661,26 +705,29 @@ int main(int argc, char **argv)
 		if (css_stylesheet_create(&ap, &sheet) != CSS_OK) {
 			fprintf(stderr, "FAIL: author sheet create\n"); return 1;
 		}
-		(void) css_stylesheet_append_data(sheet,
-				(const uint8_t *)layout_css, strlen(layout_css));
-		css_stylesheet_data_done(sheet);
+		{
+			css_error ae = css_stylesheet_append_data(sheet,
+					(const uint8_t *)layout_css,
+					strlen(layout_css));
+			css_error de = css_stylesheet_data_done(sheet);
+			fprintf(stderr, "author sheet: append=%d done=%d\n",
+					(int)ae, (int)de);
+		}
 		if (css_select_ctx_append_sheet(select_ctx, sheet,
-				CSS_ORIGIN_AUTHOR, NULL) != CSS_OK) {
+				CSS_ORIGIN_AUTHOR, "screen") != CSS_OK) {
 			fprintf(stderr, "FAIL: author sheet append\n"); return 1;
 		}
 		fprintf(stderr, "author stylesheet appended (%ld bytes)\n",
 				(long)strlen(layout_css));
-		/* box_construct resolves relative hrefs/background-images
-		 * against the content's base URL; without one nsurl_join
-		 * asserts. */
-		{
-			nsurl *burl = NULL;
-			if (nsurl_create("http://local/page.html", &burl)
-					== NSERROR_OK)
-				htmlc.base_url = burl;
-		}
 	}
 
+	/* fixes1026 — MEDIA TYPE. html.c:1129 sets this on every real content;
+	 * the harness left it 0, so sheets appended for "screen" matched
+	 * nothing and the ENTIRE cascade produced initial values. Every
+	 * element came out display:inline, which is why the harness has never
+	 * once exercised CSS-driven box construction. */
+	if (layout_html != NULL)
+		htmlc.media.type = CSS_MEDIA_SCREEN;
 	htmlc.media.width = INTTOFIX(g_layout_width);
 	htmlc.media.height = INTTOFIX(600);
 	htmlc.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
@@ -693,6 +740,13 @@ int main(int argc, char **argv)
 	if (lwc_intern_string("*", 1, &htmlc.universal) != lwc_error_ok) {
 		fprintf(stderr, "FAIL: lwc_intern_string universal\n");
 		return 1;
+	}
+
+	if (layout_html != NULL) {
+		uint32_t nsheets = 0;
+		css_select_ctx_count_sheets(select_ctx, &nsheets);
+		fprintf(stderr, "select_ctx holds %u sheet(s)\n",
+				(unsigned)nsheets);
 	}
 
 	htmlc.base.status = CONTENT_STATUS_LOADING;
