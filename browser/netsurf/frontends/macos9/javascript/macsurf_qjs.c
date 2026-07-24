@@ -1964,12 +1964,47 @@ static JSValue qjs_el_get_parent_node_data(JSContext *ctx,
 	dom_node *parent = NULL;
 	dom_node_type ntype = 0;
 	(void)this_val; (void)argc; (void)argv; (void)magic;
-	el = (dom_element *)qjs_get_node(func_data[0]);
-	if (el == NULL) return JS_NULL;
-	macsurf_dom_node_get_parent_node((dom_node *)el, &parent);
-	if (parent == NULL) return JS_NULL;
-	macsurf_dom_node_get_node_type(parent, &ntype);
-	if (ntype != 1) { macsurf_dom_node_unref(parent); return JS_NULL; }
+	/* fixes1004 — WHICH null?
+	 *
+	 * preamble.min.js still throws "cannot read property 'removeChild' of
+	 * null" at hiddenscroll, which does appendChild(b) then
+	 * b.parentNode.removeChild(b). fixes1002 fixed the MOCK-body path, and
+	 * the error survived, so the real libdom path returns null too -- but
+	 * this getter has THREE ways to do that and they want three different
+	 * fixes:
+	 *   node   the wrapper has lost its node (a lifetime bug)
+	 *   parent the append genuinely did not attach (a mutation bug)
+	 *   type   the parent is not an ELEMENT, e.g. a fragment or the
+	 *          document itself, and the ntype != 1 filter below discards a
+	 *          perfectly good parent (a filter bug)
+	 * Guessing a third time is worse than asking. Capped so a page that
+	 * legitimately reads parentNode on detached nodes cannot flood. */
+	{
+		static int pn_logged = 0;
+		el = (dom_element *)qjs_get_node(func_data[0]);
+		if (el == NULL) {
+			if (pn_logged < 8) { pn_logged++;
+				macsurf_debug_log_write(
+					"LIFE parentNode NULL why=node"); }
+			return JS_NULL;
+		}
+		macsurf_dom_node_get_parent_node((dom_node *)el, &parent);
+		if (parent == NULL) {
+			if (pn_logged < 8) { pn_logged++;
+				macsurf_debug_log_write(
+					"LIFE parentNode NULL why=parent (not attached)"); }
+			return JS_NULL;
+		}
+		macsurf_dom_node_get_node_type(parent, &ntype);
+		if (ntype != 1) {
+			if (pn_logged < 8) { pn_logged++;
+				macsurf_debug_log_writef(
+					"LIFE parentNode NULL why=type ntype=%d",
+					(int)ntype); }
+			macsurf_dom_node_unref(parent);
+			return JS_NULL;
+		}
+	}
 	return qjs_wrap_element_full(ctx, (dom_element *)parent);
 }
 
