@@ -643,6 +643,13 @@ void html_pagemap_dump(html_content *c, const char *when)
 	static int nav_dumps = 0;
 
 	if (c == NULL || c->document == NULL) return;
+#ifndef MACSURF_JS_AUDIT
+	/* fixes1024 — the pagemap is DIAGNOSTIC and every line is a synchronous
+	 * write + volume flush: 460 of them in the last hardware session. Off
+	 * with the rest of the audit unless MACSURF_JS_AUDIT is defined. */
+	(void) when;
+	return;
+#endif
 	if (strcmp(when, "ready") == 0) nav_dumps = 0;
 	if (nav_dumps >= 3) return;  /* fixes1020: ready + done + 1 reconvert */
 	if (macsurf_pagemap_dumps >= MACSURF_PAGEMAP_MAX_DUMPS) return;

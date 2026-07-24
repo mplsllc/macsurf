@@ -45,6 +45,24 @@ extern struct browser_window *macos9_gw_bw(struct gui_window *g);
 
 /* Debounce: fire this long after the last DOM mutation. ~24 ticks at 60Hz. */
 #define RECONVERT_DEBOUNCE_MS	400
+
+/* fixes1024 — BACK OFF A COSMETIC TICKER.
+ *
+ * Hardware, hackaday, JS quiesced: NINE full box-tree reconverts of a
+ * ~5000px page in one session, each answering a census of `total=2..4,
+ * CLASS=2 STYLE=2` and NOTHING else. That is a widget's interval handler
+ * toggling a class every ~900 ticks, and each toggle bought a complete
+ * teardown+rebuild+relayout. It is the single largest avoidable cost on the
+ * page and it never stops, because a timer does not care that the last
+ * rebuild changed nothing.
+ *
+ * A class/style-only mutation still needs a reconvert in this engine (there
+ * is no recascade-only path yet -- that is the real fix and its own round),
+ * so the safe lever is CADENCE: while consecutive batches are cosmetic-only,
+ * double the debounce, capped. Any STRUCTURAL mutation (append/remove/
+ * insert/innerHTML/textContent) resets it to 400ms immediately, so real
+ * content changes stay as responsive as they are today. */
+#define RECONVERT_DEBOUNCE_MAX_MS	6400
 /* Floor: minimum ticks between two re-convert starts (~600ms at 60Hz). FB's
  * feed hydration mutates every ~300ms; this keeps the G3 from livelocking. */
 #define RECONVERT_FLOOR_TICKS	36UL
@@ -102,6 +120,15 @@ extern void macsurf_reconvert_node_unref(void *n);
 
 static struct macos9_reconvert_pending g_pending[RECONVERT_MAX_PENDING];
 static int g_pending_overflow = 0;
+
+/* fixes1024 — current debounce, doubled while only cosmetic batches arrive. */
+static int g_reconvert_debounce_ms = RECONVERT_DEBOUNCE_MS;
+
+static int macos9_reconvert_kind_is_cosmetic(int kind)
+{
+	return (kind == MACOS9_DOMMUT_SETATTR_CLASS ||
+		kind == MACOS9_DOMMUT_SETATTR_STYLE);
+}
 
 #ifdef __MACOS9__
 extern int macos9_content_is_live(struct content *c);
@@ -508,6 +535,24 @@ macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 	}
 	g_mut_total++;
 
+	/* fixes1024 — cadence control, decided by WHAT changed. */
+	if (macos9_reconvert_kind_is_cosmetic(kind)) {
+		if (g_reconvert_debounce_ms < RECONVERT_DEBOUNCE_MAX_MS) {
+			g_reconvert_debounce_ms *= 2;
+			if (g_reconvert_debounce_ms > RECONVERT_DEBOUNCE_MAX_MS)
+				g_reconvert_debounce_ms =
+					RECONVERT_DEBOUNCE_MAX_MS;
+			macsurf_debug_log_writef(
+				"LIFE reconvert cosmetic-only, debounce -> %dms",
+				g_reconvert_debounce_ms);
+		}
+	} else if (g_reconvert_debounce_ms != RECONVERT_DEBOUNCE_MS) {
+		g_reconvert_debounce_ms = RECONVERT_DEBOUNCE_MS;
+		macsurf_debug_log_writef(
+			"LIFE reconvert structural, debounce reset -> %dms",
+			g_reconvert_debounce_ms);
+	}
+
 	macos9_reconvert_pending_add(c, node, kind);
 	/* fixes421 — two crash vectors closed in html_reconvert:
 	 * (1) DOUBLE-BUFFER: old bctx deferred past dom_to_box so the re-cascade
@@ -519,5 +564,6 @@ macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 	 * fixes843 — a third vector closed: the OLD tree's text-node
 	 * dom_strings are now pinned across the teardown+rebuild window
 	 * (html_reconvert_pin_text_strings in html.c). */
-	(void) macos9_schedule(RECONVERT_DEBOUNCE_MS, macos9_reconvert_cb, NULL);
+	(void) macos9_schedule(g_reconvert_debounce_ms, macos9_reconvert_cb,
+			NULL);
 }
