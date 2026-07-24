@@ -3440,14 +3440,41 @@ static const char *qjs_css_display_name(uint8_t v)
 	}
 }
 
+/* fixes1014 — is the box tree in a state where geometry answers are TRUE?
+ *
+ * The DONE gate (fixes1012) is crash-correct but it created a WINDOW OF LIES:
+ * DOMContentLoaded fires from html_box_convert_done BEFORE content_set_ready,
+ * so every script that initialises at ready -- jQuery $(function(){}), every
+ * slider, every widget that sizes itself -- measured during a period where the
+ * gate forced every read to 0. Zero is not a harmless degradation: scripts
+ * WRITE their measurements back as inline styles, and width:0 written once at
+ * init survives forever. That is how whole sections vanished from hackaday /
+ * 68kmla front pages (the fixes1011 regression): pre-1011 the same reads gave
+ * `undefined`, which propagates as NaN and makes the style write a NO-OP.
+ *
+ * So the rule is split: when this returns 0, geometry accessors must answer
+ * the way the pre-1011 engine did (undefined / all-zero rect) -- the shape a
+ * decade of pages demonstrably tolerates -- never a fabricated real-looking
+ * number. When it returns 1, answers come from the real box tree. */
+static int qjs_geometry_settled(void)
+{
+	extern int macsurf_reconvert_in_progress;
+
+	if (g_qjs_content == NULL) return 0;
+	if (macos9_content_is_live(g_qjs_content) == 0) return 0;
+	if (g_qjs_content->status != CONTENT_STATUS_DONE) return 0;
+	if (macsurf_reconvert_in_progress) return 0;
+	return 1;
+}
+
 /* The box for a wrapper, or NULL. box_for_node hands back a raw pointer stored
  * on the DOM node, which can be stale across a reconvert -- the same hazard
  * the click path guards. Callers here only ever READ scalar fields from it and
- * degrade to zeros, so a stale-but-mapped box yields wrong numbers rather than
- * a fault; an unmapped one is rejected by macsurf_ptr_is_heap. */
+ * degrade safely (see qjs_geometry_settled), so a stale-but-mapped box yields
+ * wrong numbers rather than a fault; an unmapped one is rejected by
+ * macsurf_ptr_is_heap. */
 static struct box *qjs_box_for(JSValueConst v)
 {
-	extern int macsurf_reconvert_in_progress;
 	dom_node *n;
 	struct box *b;
 
@@ -3471,14 +3498,8 @@ static struct box *qjs_box_for(JSValueConst v)
 	 *
 	 * A script measuring during teardown or mid-reconvert is not exotic: it
 	 * is what a resize handler, a scroll handler or an IntersectionObserver
-	 * callback does, and those fire exactly when the tree is churning.
-	 *
-	 * Degrades to zeros, which is the same answer a not-yet-laid-out element
-	 * gives in a real browser -- and infinitely better than a fault. */
-	if (g_qjs_content == NULL) return NULL;
-	if (macos9_content_is_live(g_qjs_content) == 0) return NULL;
-	if (g_qjs_content->status != CONTENT_STATUS_DONE) return NULL;
-	if (macsurf_reconvert_in_progress) return NULL;
+	 * callback does, and those fire exactly when the tree is churning. */
+	if (!qjs_geometry_settled()) return NULL;
 
 	n = qjs_get_node(v);
 	if (n == NULL) return NULL;
@@ -3559,10 +3580,15 @@ static JSValue qjs_el_get_rect(JSContext *ctx, JSValueConst this_val,
 			b->border[LEFT].width + b->border[RIGHT].width;
 		h = qjs_sane(b->height) + b->padding[TOP] + b->padding[BOTTOM] +
 			b->border[TOP].width + b->border[BOTTOM].width;
+		/* Viewport coordinates: document position minus scroll. */
+		x -= macsurf_qjs_scroll_x();
+		y -= macsurf_qjs_scroll_y();
 	}
-	/* Viewport coordinates: document position minus scroll. */
-	x -= macsurf_qjs_scroll_x();
-	y -= macsurf_qjs_scroll_y();
+	/* fixes1014 — no box (hidden element, or geometry not settled yet):
+	 * the LITERAL all-zero rect, exactly what a real browser answers for
+	 * display:none and what this engine answered for everything pre-1011.
+	 * Subtracting the scroll here produced top=-scroll_y, a fabricated
+	 * "above the viewport" position no browser ever reports. */
 
 	r = JS_NewObject(ctx);
 	JS_SetPropertyStr(ctx, r, "x", JS_NewInt32(ctx, x));
@@ -3594,6 +3620,16 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 	int v = 0;
 	int bx = 0, by = 0, px = 0, py = 0;
 	(void)this_val; (void)argc; (void)argv;
+
+	/* fixes1014 — before the tree is settled (DOMContentLoaded runs BEFORE
+	 * content_set_ready, so this window covers every ready-time init on
+	 * every page), answer `undefined`, the pre-1011 shape: it propagates as
+	 * NaN and a NaN style write is a no-op. Answering 0 here is what erased
+	 * whole page sections -- scripts wrote the fabricated 0 back as inline
+	 * width/height and the damage outlived the measurement. Once settled, a
+	 * missing box really does mean "not rendered" and 0 is the true answer
+	 * (jQuery :hidden relies on it). */
+	if (!qjs_geometry_settled()) return JS_UNDEFINED;
 
 	b = qjs_box_for(func_data[0]);
 	if (b == NULL) return JS_NewInt32(ctx, 0);

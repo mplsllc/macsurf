@@ -4965,6 +4965,47 @@ box_coords(bx, &cx, &cy);
 		}
 		fprintf(stderr, "  rect/offset/client match the box tree; computed "
 				"style reads the cascade with units\n");
+
+		/* fixes1014 — THE UNSETTLED WINDOW. DOMContentLoaded fires from
+		 * html_box_convert_done BEFORE content_set_ready, so every
+		 * ready-time init on every page measures while the box tree cannot
+		 * be trusted. The fixes1012 gate answered 0 there -- a fabricated
+		 * real-looking number that scripts wrote back as inline width:0,
+		 * which erased whole page sections (the fixes1011 hardware
+		 * regression on hackaday/68kmla). The contract now: unsettled
+		 * metrics are UNDEFINED (NaN-propagating, so a style write is a
+		 * no-op -- the pre-1011 shape pages tolerated for years) and the
+		 * rect is the LITERAL zero rect. This control goes red if the gate
+		 * ever answers 0 again. */
+		htmlc.base.status = CONTENT_STATUS_READY;
+		{
+			const char *pre =
+				"var e=document.getElementById('feed');"
+				"if(e.offsetWidth!==undefined)"
+					"throw new Error('ASSERT FAIL: unsettled offsetWidth "
+						"is '+e.offsetWidth+' -- must be undefined. A "
+						"fabricated 0 gets written back as inline width:0 "
+						"and ERASES page sections; undefined propagates as "
+						"NaN and the write is a no-op.');"
+				"if(e.clientHeight!==undefined||e.scrollWidth!==undefined)"
+					"throw new Error('ASSERT FAIL: unsettled "
+						"clientHeight/scrollWidth not undefined');"
+				"var rc=e.getBoundingClientRect();"
+				"if(rc.left!==0||rc.top!==0||rc.width!==0||rc.height!==0)"
+					"throw new Error('ASSERT FAIL: unsettled rect ('+"
+						"rc.left+','+rc.top+') '+rc.width+'x'+rc.height+"
+						"' -- must be the literal zero rect');";
+			ok = js_exec(thread, (const unsigned char *)pre,
+					strlen(pre), "t43-unsettled.js");
+			htmlc.base.status = CONTENT_STATUS_DONE;
+			if (!ok) {
+				fprintf(stderr, "FAIL: Test 43 -- the unsettled window "
+						"answered a fabricated value\n");
+				return 1;
+			}
+		}
+		fprintf(stderr, "  unsettled window answers undefined / zero-rect, "
+				"never a fabricated 0\n");
 	}
 	fprintf(stderr, "=== Test 43 PASS: layout visible to JS ===\n");
 
