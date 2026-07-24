@@ -236,6 +236,26 @@ macos9_reconvert_pending_add(struct content *c, void *node, int kind)
 	g_pending[freeslot].multi = (node == NULL) ? 1 : 0;
 }
 
+/* fixes1016 — is a JS DOM mutation awaiting its reconvert for this content?
+ *
+ * The audit round proved the failure this answers: slick measured its slides
+ * IN THE GAP between innerHTML= and the debounced reconvert, got "no box"
+ * (a lie -- the elements are visible content that simply has no box YET),
+ * wrote the resulting zeros back as inline sizes, and the featured carousel
+ * collapsed. The JS geometry layer uses this to answer `undefined` (which
+ * NaN-propagates into a no-op) instead of a fabricated 0 in that window.
+ * void* so the JS glue can call it without the content type in scope. */
+int macos9_reconvert_pending_for(void *cv)
+{
+	int i;
+	if (cv == NULL) return 0;
+	if (g_pending_overflow) return 1;
+	for (i = 0; i < RECONVERT_MAX_PENDING; i++) {
+		if (g_pending[i].c == (struct content *)cv) return 1;
+	}
+	return 0;
+}
+
 /* fixes489 — master gate for JS-triggered re-convert.
  *
  * The re-convert path (fixes384/421) rebuilds the box tree from the

@@ -614,6 +614,18 @@ void html_pagemap_dump(html_content *c, const char *when)
 	macsurf_debug_log_writef(
 		"LIFE pagemap[%s] ---- body sections (tag#id.class kids box y w h disp)",
 		when);
+	/* fixes1016 — the <html> element's own line first: its CLASS LIST is
+	 * where page-state machines live (Typekit's wf-loading/wf-active,
+	 * XenForo's has-js, no-js themes), and whether those ever resolve is
+	 * exactly what the audit needs to answer. */
+	{
+		dom_element *he = NULL;
+		if (dom_document_get_document_element(c->document, &he)
+				== DOM_NO_ERR && he != NULL) {
+			(void) html_pagemap_line((dom_node *)he, 0);
+			dom_node_unref((dom_node *)he);
+		}
+	}
 	if (dom_node_get_first_child(body, &ch) != DOM_NO_ERR) ch = NULL;
 	while (ch != NULL && shown < 40) {
 		dom_node_type t2 = (dom_node_type)0;

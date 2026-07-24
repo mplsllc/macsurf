@@ -1863,6 +1863,24 @@ static void qjs_node_brief(dom_node *n, char *out, int cap)
 /* One line per DOM mutation: op, target identity, and the value/detail.
  * Budgeted per session; the first page load is what matters. */
 static long g_mut_audit_budget = 500;
+static long g_evreg_audit = 250;
+static long g_evmiss_audit = 60;
+static long g_evfire_audit = 300;
+static long g_mslife_audit = 250;
+extern long g_geom_audit; /* defined below, near the metric accessors */
+
+/* fixes1016 -- refill every audit budget at each new JS realm (= each
+ * navigation), so page 2 and the iframes are audited too; the fixes1015
+ * per-session budgets died mid-page-one and 68kmla was never covered. */
+void macsurf_qjs_audit_reset(void)
+{
+	g_mut_audit_budget = 500;
+	g_evreg_audit = 250;
+	g_evmiss_audit = 60;
+	g_evfire_audit = 300;
+	g_mslife_audit = 250;
+	g_geom_audit = 200;
+}
 
 static void qjs_mut_audit(const char *op, dom_node *target,
 		const char *arg, const char *val)
@@ -3759,7 +3777,7 @@ static JSValue qjs_el_get_rect(JSContext *ctx, JSValueConst this_val,
 
 /* fixes1015 — geometry-read audit: what measuring code actually SEES is the
  * question three rounds have argued about from theory. Budgeted. */
-static long g_geom_audit = 150;
+long g_geom_audit = 200; /* fixes1016: non-static, reset per navigation */
 
 static const char *qjs_metric_name(int magic);
 
@@ -3808,6 +3826,20 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 
 	b = qjs_box_for(func_data[0]);
 	if (b == NULL) {
+		/* fixes1016 — no box while a mutation awaits its reconvert is
+		 * NOT "hidden", it is "not measured yet": a real browser reflows
+		 * synchronously and answers truly. We cannot (Phase 3's forced
+		 * pass is its own risky round), so answer undefined -- the
+		 * NaN-propagating no-op -- rather than a fabricated 0. This is
+		 * exactly how slick collapsed the hackaday featured carousel:
+		 * it measured its just-inserted slides, got 0, and wrote it
+		 * back as inline sizes. */
+		extern int macos9_reconvert_pending_for(void *cv);
+		if (macos9_reconvert_pending_for(g_qjs_content)) {
+			qjs_geom_audit(qjs_metric_name(magic), func_data[0],
+					"undefined (mutation pending)");
+			return JS_UNDEFINED;
+		}
 		qjs_geom_audit(qjs_metric_name(magic), func_data[0],
 				"0 (no box)");
 		return JS_NewInt32(ctx, 0);
@@ -4101,10 +4133,9 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 		 * has been rebuilt and its wrappers drained. Nothing to run.
 		 * fixes1015 — this silent drop IS a lost handler if the node ever
 		 * had one; make it visible. */
-		static long bm = 60;
-		if (bm > 0) {
+		if (g_evmiss_audit > 0) {
 			char nb[80];
-			bm--;
+			g_evmiss_audit--;
 			qjs_node_brief(node, nb, (int)sizeof nb);
 			macsurf_debug_log_writef(
 				"LIFE evfire MISS (no wrapper) target=%s", nb);
@@ -4123,10 +4154,9 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 	}
 	/* fixes1015 — every real dispatch that reaches script, with identity. */
 	{
-		static long bf = 300;
-		if (bf > 0) {
+		if (g_evfire_audit > 0) {
 			char nb[80];
-			bf--;
+			g_evfire_audit--;
 			qjs_node_brief(node, nb, (int)sizeof nb);
 			macsurf_debug_log_writef("LIFE evfire %s at %s",
 					dom_string_data(type_ds), nb);
@@ -4539,15 +4569,12 @@ static void qjs_dom_register_listener(dom_node *node, const char *type,
 	if (qjs_reg_seen(node, type, capture)) return;
 	/* fixes1015 — audit every NEW libdom registration with its target, so
 	 * "the page wired itself up" is checkable listener by listener. */
-	{
-		static long b = 250;
-		if (b > 0) {
-			char nb[80];
-			b--;
-			qjs_node_brief(node, nb, (int)sizeof nb);
-			macsurf_debug_log_writef("LIFE evreg %s cap=%d on %s",
-					type, capture, nb);
-		}
+	if (g_evreg_audit > 0) {
+		char nb[80];
+		g_evreg_audit--;
+		qjs_node_brief(node, nb, (int)sizeof nb);
+		macsurf_debug_log_writef("LIFE evreg %s cap=%d on %s",
+				type, capture, nb);
 	}
 	if (g_qjs_dom_listener == NULL) {
 		(void)dom_event_listener_create(qjs_dom_listener_cb, NULL,
@@ -6574,10 +6601,9 @@ static JSValue qjs_crypto_get_random_values(JSContext *ctx,
 static JSValue qjs_ms_life(JSContext *ctx,
 	JSValueConst this_val, int argc, JSValueConst *argv)
 {
-	static long b = 250;
 	const char *s;
 	(void)this_val;
-	if (b <= 0 || argc < 1) return JS_UNDEFINED;
+	if (g_mslife_audit <= 0 || argc < 1) return JS_UNDEFINED;
 	s = JS_ToCString(ctx, argv[0]);
 	if (s != NULL) {
 		char vb[160];
@@ -6587,7 +6613,7 @@ static JSValue qjs_ms_life(JSContext *ctx,
 			i++;
 		}
 		vb[i] = '\0';
-		b--;
+		g_mslife_audit--;
 		macsurf_debug_log_writef("LIFE js %s", vb);
 		JS_FreeCString(ctx, s);
 	}
@@ -8400,6 +8426,7 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 	struct jsheap *heap;
 	if (out_heap == NULL) return NSERROR_BAD_PARAMETER;
 	*out_heap = NULL;
+	macsurf_qjs_audit_reset(); /* fixes1016 — audit each page fully */
 	heap = (struct jsheap *)calloc(1, sizeof(*heap));
 	if (heap == NULL) return NSERROR_NOMEM;
 
