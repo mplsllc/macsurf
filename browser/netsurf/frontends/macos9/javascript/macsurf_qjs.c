@@ -27,6 +27,12 @@
 #include "macsurf_timebase.h"
 #include "macos9_js_fetch.h"
 #include "content/handlers/html/private.h"
+/* fixes1011 (Phase 3) — the box tree, for the layout metrics. box.h defines
+ * struct box and the LEFT/RIGHT/TOP/BOTTOM edge indices; box_inspect.h has
+ * box_coords(); box_construct.h has box_for_node(). */
+#include "content/handlers/html/box.h"
+#include "content/handlers/html/box_inspect.h"
+#include "content/handlers/html/box_construct.h"
 #include "utils/libdom.h"
 /* fixes879 — document.cookie against the real jar. urldb owns NetSurf's
  * RFC-6265 cookie store; content_protected.h is what makes c->llcache visible
@@ -434,6 +440,62 @@ extern void macos9_window_reload(struct gui_window *g);
 extern struct gui_window *initial_win;
 extern void macos9_gw_set_title(struct gui_window *gw, const char *title);
 #endif
+
+/* fixes1011 — defined further down, beside the rest of the Phase 3 layout
+ * code; used here by the JS-facing wrappers. */
+static int macsurf_qjs_scroll_x(void);
+static int macsurf_qjs_scroll_y(void);
+static int macsurf_qjs_viewport_w(void);
+static int macsurf_qjs_viewport_h(void);
+
+/* fixes1011 — thin JS wrappers over the viewport/scroll accessors. */
+static JSValue qjs_js_viewport_w(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	(void)this_val; (void)argc; (void)argv;
+	return JS_NewInt32(ctx, macsurf_qjs_viewport_w());
+}
+
+static JSValue qjs_js_viewport_h(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	(void)this_val; (void)argc; (void)argv;
+	return JS_NewInt32(ctx, macsurf_qjs_viewport_h());
+}
+
+static JSValue qjs_js_scroll_x(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	(void)this_val; (void)argc; (void)argv;
+	return JS_NewInt32(ctx, macsurf_qjs_scroll_x());
+}
+
+static JSValue qjs_js_scroll_y(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	(void)this_val; (void)argc; (void)argv;
+	return JS_NewInt32(ctx, macsurf_qjs_scroll_y());
+}
+
+/* Really scrolls. window.scrollTo/scrollBy were no-ops, so every "back to
+ * top" control and every scroll restoration silently did nothing. */
+static JSValue qjs_js_scroll_to(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	int32_t x = 0, y = 0;
+	(void)this_val;
+	if (argc >= 1) JS_ToInt32(ctx, &x, argv[0]);
+	if (argc >= 2) JS_ToInt32(ctx, &y, argv[1]);
+	if (x < 0) x = 0;
+	if (y < 0) y = 0;
+#ifdef __MACOS9__
+	{
+		struct gui_window *gw = macos9_window_list_head();
+		if (gw != NULL) macos9_window_scroll_to(gw, (int)x, (int)y);
+	}
+#endif
+	return JS_UNDEFINED;
+}
 
 static JSValue qjs_location_get(JSContext *ctx, JSValueConst this_val,
 		int argc, JSValueConst *argv)
@@ -3239,6 +3301,405 @@ void macsurf_qjs_clear_event_detail(void)
 	g_qjs_ev_key = g_qjs_ev_mods = 0;
 }
 
+/* ===================================================================
+ * fixes1011 (Phase 3) — LAYOUT, VISIBLE TO JAVASCRIPT.
+ *
+ * getComputedStyle returned only inline `style` values, getBoundingClientRect
+ * returned all zeros, and offsetWidth/clientHeight/scrollTop existed only on
+ * the MOCK fallback elements -- never on real wrappers. Any script that
+ * MEASURES therefore computed garbage from zeros: sticky headers, dropdown and
+ * tooltip positioning, lightboxes, carousels, "is this in view" checks, and
+ * every responsive-JS branch.
+ *
+ * This is the failure mode that does NOT throw. A missing method dies loudly
+ * and gets found in one round (see fixes1007's document.write, fixes1009's
+ * getElementsByTagName). Zeros propagate silently into arithmetic and the page
+ * merely looks wrong, which is why this survived long after the throwing bugs
+ * were gone.
+ *
+ * All of it reads the REAL box tree via box_for_node + box_coords and the REAL
+ * cascade via css_computed_*, both of which already existed -- nothing new is
+ * computed, it was simply never exposed.
+ *
+ * STALENESS POLICY, and it is a deliberate choice: a box can be absent (not
+ * yet laid out, display:none, or mid-reconvert). We return the LAST KNOWN
+ * geometry, i.e. zeros only when there has never been a box. We do NOT force a
+ * synchronous layout pass here. Forcing one inside a JS handler would reflow
+ * under native callers that hold `struct box *` across the dispatch --
+ * html_mouse_action alone holds six -- and that is the Class 1/Class 3 crash
+ * shape arriving by a new route. Measure-after-mutate therefore reads
+ * pre-mutation geometry for one frame, which is wrong in the same direction a
+ * real browser is wrong when you read before a reflow, and is survivable.
+ * Forcing layout is its own round with its own guard flag.
+ * =================================================================== */
+
+/* Viewport scroll + size, from the front window's gui_window.
+ *
+ * Guarded on __MACOS9__ because macos9_window_list_head() is Carbon-side; the
+ * Linux harness has no window, and 0/viewport-default is the right answer
+ * there (its box tree is laid out at a fixed 800x600). */
+static int macsurf_qjs_scroll_x(void)
+{
+#ifdef __MACOS9__
+	struct gui_window *gw = macos9_window_list_head();
+	if (gw != NULL) return gw->scroll_x;
+#endif
+	return 0;
+}
+
+static int macsurf_qjs_scroll_y(void)
+{
+#ifdef __MACOS9__
+	struct gui_window *gw = macos9_window_list_head();
+	if (gw != NULL) return gw->scroll_y;
+#endif
+	return 0;
+}
+
+static int macsurf_qjs_viewport_w(void)
+{
+#ifdef __MACOS9__
+	struct gui_window *gw = macos9_window_list_head();
+	if (gw != NULL) {
+		int w = gw->content_rect.right - gw->content_rect.left;
+		if (w > 0) return w;
+	}
+#endif
+	return 949;   /* matches the innerWidth the shim has always reported */
+}
+
+static int macsurf_qjs_viewport_h(void)
+{
+#ifdef __MACOS9__
+	struct gui_window *gw = macos9_window_list_head();
+	if (gw != NULL) {
+		int h = gw->content_rect.bottom - gw->content_rect.top;
+		if (h > 0) return h;
+	}
+#endif
+	return 613;
+}
+
+/* CSS display keyword. Only the values a script is likely to test are named;
+ * anything else answers "block", which is what an unknown block-level box
+ * behaves as. `none` is the one that must never be wrong -- see
+ * qjs_get_computed_style. */
+static const char *qjs_css_display_name(uint8_t v)
+{
+	switch (v) {
+	case CSS_DISPLAY_NONE:         return "none";
+	case CSS_DISPLAY_INLINE:       return "inline";
+	case CSS_DISPLAY_INLINE_BLOCK: return "inline-block";
+	case CSS_DISPLAY_FLEX:         return "flex";
+	case CSS_DISPLAY_INLINE_FLEX:  return "inline-flex";
+	case CSS_DISPLAY_GRID:         return "grid";
+	case CSS_DISPLAY_INLINE_GRID:  return "inline-grid";
+	case CSS_DISPLAY_TABLE:        return "table";
+	case CSS_DISPLAY_TABLE_CELL:   return "table-cell";
+	case CSS_DISPLAY_TABLE_ROW:    return "table-row";
+	case CSS_DISPLAY_LIST_ITEM:    return "list-item";
+	default:                       return "block";
+	}
+}
+
+/* The box for a wrapper, or NULL. box_for_node hands back a raw pointer stored
+ * on the DOM node, which can be stale across a reconvert -- the same hazard
+ * the click path guards. Callers here only ever READ scalar fields from it and
+ * degrade to zeros, so a stale-but-mapped box yields wrong numbers rather than
+ * a fault; an unmapped one is rejected by macsurf_ptr_is_heap. */
+static struct box *qjs_box_for(JSValueConst v)
+{
+	dom_node *n = qjs_get_node(v);
+	struct box *b;
+	if (n == NULL) return NULL;
+	b = box_for_node(n);
+	if (b == NULL) return NULL;
+	if (!macsurf_ptr_is_heap((const void *)b)) return NULL;
+	return b;
+}
+
+/* fixes1011 — SANITIZE THE SENTINEL BEFORE IT REACHES JAVASCRIPT.
+ *
+ * Every box is born width = UNKNOWN_WIDTH (INT_MAX) as a "not laid out yet"
+ * marker, and this fork's failure-tolerant layout paths zero a failed box's
+ * HEIGHT but never its WIDTH -- that asymmetry is the entire split-scrollbar
+ * bug (fixes625), where INT_MAX rode up the ancestor chain and made the
+ * document 2147483647 wide.
+ *
+ * Caught here by the harness on its first run: #feed reported a border-box of
+ * 2147483647x0. Without this, el.offsetWidth hands a page INT_MAX for any
+ * element whose layout has not resolved, and measuring code computes nonsense
+ * from it -- silently, because it is a plausible number, not an error.
+ *
+ * Same rule layout_get_box_bbox applies: anything negative, INT_MAX, or past
+ * a sane ceiling is "unknown", and unknown is 0. Zero is honest -- it is what
+ * a not-yet-laid-out element measures in a real browser too. */
+#define QJS_LAYOUT_SANE_MAX 1000000
+
+static int qjs_sane(int v)
+{
+	if (v < 0) return 0;
+	if (v >= QJS_LAYOUT_SANE_MAX) return 0;
+	return v;
+}
+
+/* Document coordinates of a box's border edge. */
+static void qjs_box_origin(struct box *b, int *ox, int *oy)
+{
+	int x = 0, y = 0;
+	box_coords(b, &x, &y);
+	*ox = x;
+	*oy = y;
+}
+
+static JSValue qjs_el_get_rect(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv, int magic, JSValueConst *func_data)
+{
+	struct box *b;
+	JSValue r;
+	int x = 0, y = 0, w = 0, h = 0;
+	(void)this_val; (void)argc; (void)argv; (void)magic;
+
+	b = qjs_box_for(func_data[0]);
+	if (b != NULL) {
+		qjs_box_origin(b, &x, &y);
+		/* Border-box, matching getBoundingClientRect: content plus padding
+		 * plus border on each side. */
+		w = qjs_sane(b->width) + b->padding[LEFT] + b->padding[RIGHT] +
+			b->border[LEFT].width + b->border[RIGHT].width;
+		h = qjs_sane(b->height) + b->padding[TOP] + b->padding[BOTTOM] +
+			b->border[TOP].width + b->border[BOTTOM].width;
+	}
+	/* Viewport coordinates: document position minus scroll. */
+	x -= macsurf_qjs_scroll_x();
+	y -= macsurf_qjs_scroll_y();
+
+	r = JS_NewObject(ctx);
+	JS_SetPropertyStr(ctx, r, "x", JS_NewInt32(ctx, x));
+	JS_SetPropertyStr(ctx, r, "y", JS_NewInt32(ctx, y));
+	JS_SetPropertyStr(ctx, r, "left", JS_NewInt32(ctx, x));
+	JS_SetPropertyStr(ctx, r, "top", JS_NewInt32(ctx, y));
+	JS_SetPropertyStr(ctx, r, "right", JS_NewInt32(ctx, x + w));
+	JS_SetPropertyStr(ctx, r, "bottom", JS_NewInt32(ctx, y + h));
+	JS_SetPropertyStr(ctx, r, "width", JS_NewInt32(ctx, w));
+	JS_SetPropertyStr(ctx, r, "height", JS_NewInt32(ctx, h));
+	return r;
+}
+
+/* One accessor for every box-derived metric, selected by `magic`, so there is
+ * a single place that knows how a metric maps onto the box tree. */
+#define QJS_M_OFFW   0
+#define QJS_M_OFFH   1
+#define QJS_M_CLIW   2
+#define QJS_M_CLIH   3
+#define QJS_M_OFFT   4
+#define QJS_M_OFFL   5
+#define QJS_M_SCRW   6
+#define QJS_M_SCRH   7
+
+static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv, int magic, JSValueConst *func_data)
+{
+	struct box *b;
+	int v = 0;
+	int bx = 0, by = 0, px = 0, py = 0;
+	(void)this_val; (void)argc; (void)argv;
+
+	b = qjs_box_for(func_data[0]);
+	if (b == NULL) return JS_NewInt32(ctx, 0);
+
+	bx = b->border[LEFT].width + b->border[RIGHT].width;
+	by = b->border[TOP].width + b->border[BOTTOM].width;
+	px = b->padding[LEFT] + b->padding[RIGHT];
+	py = b->padding[TOP] + b->padding[BOTTOM];
+
+	switch (magic) {
+	case QJS_M_OFFW: v = qjs_sane(b->width) + px + bx; break;
+	case QJS_M_OFFH: v = qjs_sane(b->height) + py + by; break;
+	/* clientWidth/Height EXCLUDE the border and include padding. */
+	case QJS_M_CLIW: v = qjs_sane(b->width) + px; break;
+	case QJS_M_CLIH: v = qjs_sane(b->height) + py; break;
+	case QJS_M_OFFT: {
+		int x = 0, y = 0, pxo = 0, pyo = 0;
+		qjs_box_origin(b, &x, &y);
+		if (b->parent != NULL) qjs_box_origin(b->parent, &pxo, &pyo);
+		v = y - pyo;
+		break;
+	}
+	case QJS_M_OFFL: {
+		int x = 0, y = 0, pxo = 0, pyo = 0;
+		qjs_box_origin(b, &x, &y);
+		if (b->parent != NULL) qjs_box_origin(b->parent, &pxo, &pyo);
+		v = x - pxo;
+		break;
+	}
+	/* scrollWidth/Height are the DESCENDANT extent -- how big the content
+	 * is, not how big the box is. That distinction is the entire point of
+	 * the property: overflow checks compare it against clientWidth. */
+	case QJS_M_SCRW:
+		v = qjs_sane(b->descendant_x1) > 0 ? qjs_sane(b->descendant_x1)
+			: (qjs_sane(b->width) + px);
+		break;
+	case QJS_M_SCRH:
+		v = qjs_sane(b->descendant_y1) > 0 ? qjs_sane(b->descendant_y1)
+			: (qjs_sane(b->height) + py);
+		break;
+	default: v = 0; break;
+	}
+	if (v < 0) v = 0;
+	return JS_NewInt32(ctx, v);
+}
+
+/* fixes1011 — getComputedStyle, over the REAL cascade.
+ *
+ * It returned only what was in the inline `style` attribute, so
+ *   getComputedStyle(el).display === 'none'
+ * -- one of the most-executed lines on the web -- was false for everything
+ * hidden by a stylesheet, a class, or the UA sheet. Scripts that toggle
+ * visibility by reading it first therefore made the wrong decision every time,
+ * silently.
+ *
+ * Reads box->style through the css_computed_* accessors. Only the properties
+ * scripts actually read are covered rather than all 155: display, visibility,
+ * position, width/height, color/background-color, font-size/family/weight,
+ * line-height, opacity, overflow, z-index, text-align, float. Anything else
+ * falls back to the inline value, which is what the old implementation always
+ * did -- so this is strictly additive, never a regression.
+ *
+ * SERIALIZATION MATTERS as much as the value. getComputedStyle().width is
+ * "100px" (a string with units), offsetWidth is a number, and colours are
+ * "rgb(r, g, b)". Handing back a bare number where a string is expected makes
+ * parseInt() succeed and string comparisons fail, which is the sort of wrong
+ * that produces NaN three lines later instead of an error here. */
+static void qjs_cs_px(JSContext *ctx, JSValue o, const char *name, int px)
+{
+	char buf[32];
+	sprintf(buf, "%dpx", px);
+	JS_SetPropertyStr(ctx, o, name, JS_NewString(ctx, buf));
+}
+
+static void qjs_cs_colour(JSContext *ctx, JSValue o, const char *name,
+		css_color c)
+{
+	char buf[40];
+	/* libcss packs colour as 0xAARRGGBB. */
+	sprintf(buf, "rgb(%d, %d, %d)",
+		(int)((c >> 16) & 0xff), (int)((c >> 8) & 0xff), (int)(c & 0xff));
+	JS_SetPropertyStr(ctx, o, name, JS_NewString(ctx, buf));
+}
+
+static JSValue qjs_get_computed_style(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	JSValue out, inline_style;
+	struct box *b = NULL;
+	(void)this_val;
+
+	out = JS_NewObject(ctx);
+	if (argc >= 1 && JS_IsObject(argv[0])) {
+		b = qjs_box_for(argv[0]);
+	}
+
+	if (b != NULL && b->style != NULL) {
+		css_computed_style *s = b->style;
+		css_fixed len = 0;
+		css_unit unit = CSS_UNIT_PX;
+		css_color col = 0;
+		uint8_t v;
+
+		v = css_computed_display_static(s);
+		JS_SetPropertyStr(ctx, out, "display",
+			JS_NewString(ctx, qjs_css_display_name(v)));
+		v = css_computed_visibility(s);
+		JS_SetPropertyStr(ctx, out, "visibility",
+			JS_NewString(ctx,
+				v == CSS_VISIBILITY_HIDDEN ? "hidden" :
+				v == CSS_VISIBILITY_COLLAPSE ? "collapse" : "visible"));
+		v = css_computed_position(s);
+		JS_SetPropertyStr(ctx, out, "position",
+			JS_NewString(ctx,
+				v == CSS_POSITION_ABSOLUTE ? "absolute" :
+				v == CSS_POSITION_RELATIVE ? "relative" :
+				v == CSS_POSITION_FIXED ? "fixed" : "static"));
+		v = css_computed_overflow_x(s);
+		JS_SetPropertyStr(ctx, out, "overflow",
+			JS_NewString(ctx,
+				v == CSS_OVERFLOW_HIDDEN ? "hidden" :
+				v == CSS_OVERFLOW_SCROLL ? "scroll" :
+				v == CSS_OVERFLOW_AUTO ? "auto" : "visible"));
+		v = css_computed_float(s);
+		JS_SetPropertyStr(ctx, out, "float",
+			JS_NewString(ctx,
+				v == CSS_FLOAT_LEFT ? "left" :
+				v == CSS_FLOAT_RIGHT ? "right" : "none"));
+		v = css_computed_text_align(s);
+		JS_SetPropertyStr(ctx, out, "textAlign",
+			JS_NewString(ctx,
+				v == CSS_TEXT_ALIGN_CENTER ? "center" :
+				v == CSS_TEXT_ALIGN_RIGHT ? "right" :
+				v == CSS_TEXT_ALIGN_JUSTIFY ? "justify" : "left"));
+
+		css_computed_color(s, &col);
+		qjs_cs_colour(ctx, out, "color", col);
+		col = 0;
+		css_computed_background_color(s, &col);
+		qjs_cs_colour(ctx, out, "backgroundColor", col);
+
+		if (css_computed_font_size(s, &len, &unit) == CSS_FONT_SIZE_DIMENSION) {
+			qjs_cs_px(ctx, out, "fontSize", FIXTOINT(len));
+		}
+		v = css_computed_font_weight(s);
+		JS_SetPropertyStr(ctx, out, "fontWeight",
+			JS_NewString(ctx,
+				(v == CSS_FONT_WEIGHT_BOLD ||
+				 v == CSS_FONT_WEIGHT_BOLDER ||
+				 v >= CSS_FONT_WEIGHT_600) ? "bold" : "normal"));
+
+		{
+			int32_t z = 0;
+			if (css_computed_z_index(s, &z) == CSS_Z_INDEX_SET) {
+				JS_SetPropertyStr(ctx, out, "zIndex",
+					JS_NewInt32(ctx, (int)z));
+			} else {
+				JS_SetPropertyStr(ctx, out, "zIndex",
+					JS_NewString(ctx, "auto"));
+			}
+		}
+		{
+			css_fixed o = 0;
+			if (css_computed_opacity(s, &o) == CSS_OPACITY_SET) {
+				JS_SetPropertyStr(ctx, out, "opacity",
+					JS_NewFloat64(ctx, FIXTOFLT(o)));
+			} else {
+				JS_SetPropertyStr(ctx, out, "opacity",
+					JS_NewString(ctx, "1"));
+			}
+		}
+		/* Used width/height come from the BOX, not the cascade -- the
+		 * cascade may say `auto` while the box knows the resolved pixels,
+		 * and "used value" is what getComputedStyle is specified to give. */
+		qjs_cs_px(ctx, out, "width", qjs_sane(b->width));
+		qjs_cs_px(ctx, out, "height", qjs_sane(b->height));
+		qjs_cs_px(ctx, out, "marginTop", b->margin[TOP]);
+		qjs_cs_px(ctx, out, "marginRight", b->margin[RIGHT]);
+		qjs_cs_px(ctx, out, "marginBottom", b->margin[BOTTOM]);
+		qjs_cs_px(ctx, out, "marginLeft", b->margin[LEFT]);
+		qjs_cs_px(ctx, out, "paddingTop", b->padding[TOP]);
+		qjs_cs_px(ctx, out, "paddingRight", b->padding[RIGHT]);
+		qjs_cs_px(ctx, out, "paddingBottom", b->padding[BOTTOM]);
+		qjs_cs_px(ctx, out, "paddingLeft", b->padding[LEFT]);
+	}
+
+	/* Inline style wins where the cascade gave us nothing, preserving the
+	 * old behaviour for every property not covered above. */
+	inline_style = JS_UNDEFINED;
+	if (argc >= 1 && JS_IsObject(argv[0])) {
+		inline_style = JS_GetPropertyStr(ctx, argv[0], "style");
+	}
+	JS_SetPropertyStr(ctx, out, "__inline", inline_style);
+	return out;
+}
+
 /* fixes1006 — call obj.dispatchEvent(ev), swallowing (but LOGGING) a throw.
  * One bad handler must never abort propagation to the rest, and a silent
  * catch is how "site loads, does nothing, no log" happens. `what` names the
@@ -4213,6 +4674,85 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 			JS_FreeValue(ctx, args2[0]);
 		}
 		JS_FreeValue(ctx, fn2);
+	}
+
+	/* fixes1011 (Phase 3) — REAL layout metrics, replacing the zero stubs.
+	 *
+	 * Installed AFTER the JS helper string, which defines the zero-returning
+	 * getBoundingClientRect -- these must win, and the ordering is the only
+	 * thing that makes them win. */
+	{
+		JSValue d2[1];
+		JSValue g;
+		d2[0] = JS_DupValue(ctx, obj);
+
+		g = JS_NewCFunctionData(ctx, qjs_el_get_rect, 0, 0, 1, d2);
+		JS_SetPropertyStr(ctx, obj, "getBoundingClientRect", g);
+
+		/* Each metric is a getter, because page code reads them as
+		 * properties (el.offsetWidth), never as calls. */
+		{
+			static const struct { const char *name; int magic; } mm[] = {
+				{ "offsetWidth",  QJS_M_OFFW },
+				{ "offsetHeight", QJS_M_OFFH },
+				{ "clientWidth",  QJS_M_CLIW },
+				{ "clientHeight", QJS_M_CLIH },
+				{ "offsetTop",    QJS_M_OFFT },
+				{ "offsetLeft",   QJS_M_OFFL },
+				{ "scrollWidth",  QJS_M_SCRW },
+				{ "scrollHeight", QJS_M_SCRH }
+			};
+			size_t i;
+			for (i = 0; i < sizeof mm / sizeof mm[0]; i++) {
+				JSAtom a = JS_NewAtom(ctx, mm[i].name);
+				JSValue fn = JS_NewCFunctionData(ctx, qjs_el_metric,
+						0, mm[i].magic, 1, d2);
+				JS_DefinePropertyGetSet(ctx, obj, a, fn, JS_UNDEFINED,
+						JS_PROP_CONFIGURABLE);
+				JS_FreeAtom(ctx, a);
+			}
+		}
+		JS_FreeValue(ctx, d2[0]);
+	}
+	{
+		/* getClientRects wraps the single rect; scrollTop/Left are the
+		 * window's scroll for now (per-element scrollers are not modelled),
+		 * and the SETTER really moves the view rather than recording a
+		 * number, which is what a "scroll to top" button needs. */
+		static const char *lay_src =
+			"(function(el){"
+			"el.getClientRects=function(){"
+				"return [el.getBoundingClientRect()];};"
+			"Object.defineProperty(el,'scrollTop',{configurable:true,"
+				"get:function(){return (typeof window!=='undefined')?"
+					"(window.scrollY||0):0;},"
+				"set:function(v){if(typeof window!=='undefined'&&"
+					"window.scrollTo)window.scrollTo(window.scrollX||0,v|0);}});"
+			"Object.defineProperty(el,'scrollLeft',{configurable:true,"
+				"get:function(){return (typeof window!=='undefined')?"
+					"(window.scrollX||0):0;},"
+				"set:function(v){if(typeof window!=='undefined'&&"
+					"window.scrollTo)window.scrollTo(v|0,window.scrollY||0);}});"
+			"Object.defineProperty(el,'offsetParent',{configurable:true,"
+				"get:function(){var p=el.parentNode;"
+				"while(p&&p.nodeType===1){"
+					"if(p===document.body)return p;p=p.parentNode;}"
+				"return (typeof document!=='undefined')?document.body:null;}});"
+			"el.scrollIntoView=function(){"
+				"var r=el.getBoundingClientRect();"
+				"if(typeof window!=='undefined'&&window.scrollTo)"
+					"window.scrollTo(window.scrollX||0,"
+						"(window.scrollY||0)+r.top);};"
+			"})";
+		JSValue fn3, a3[1];
+		fn3 = JS_Eval(ctx, lay_src, strlen(lay_src), "<el-layout>",
+				JS_EVAL_TYPE_GLOBAL);
+		if (!JS_IsException(fn3)) {
+			a3[0] = JS_DupValue(ctx, obj);
+			JS_Call(ctx, fn3, JS_UNDEFINED, 1, a3);
+			JS_FreeValue(ctx, a3[0]);
+		}
+		JS_FreeValue(ctx, fn3);
 	}
 
 	/* fixes878 — last, so nothing above can clobber it. */
@@ -5768,6 +6308,16 @@ static void register_browser_globals(JSContext *ctx)
 	/* --- monotonic clock for performance.now() --- */
 	qjs_set_func(ctx, global, "__macsurf_monotonic_ms", qjs_monotonic_ms, 0);
 
+	/* fixes1011 (Phase 3) — the viewport/scroll natives the window geometry
+	 * accessors above are built on. Installed before the eval blocks that
+	 * reference them. */
+	qjs_set_func(ctx, global, "__viewportW", qjs_js_viewport_w, 0);
+	qjs_set_func(ctx, global, "__viewportH", qjs_js_viewport_h, 0);
+	qjs_set_func(ctx, global, "__scrollX",   qjs_js_scroll_x, 0);
+	qjs_set_func(ctx, global, "__scrollY",   qjs_js_scroll_y, 0);
+	qjs_set_func(ctx, global, "__scrollTo",  qjs_js_scroll_to, 2);
+	qjs_set_func(ctx, global, "__gcsNative", qjs_get_computed_style, 1);
+
 	/* --- alert / confirm / prompt --- */
 	qjs_set_func(ctx, global, "alert",   qjs_alert,   1);
 	qjs_set_func(ctx, global, "confirm", qjs_confirm, 1);
@@ -6242,9 +6792,21 @@ static void register_browser_globals(JSContext *ctx)
 
 	/* --- window event helpers, scroll, getComputedStyle, matchMedia --- */
 	macsurf_qjs__safe_eval(ctx,
-		"this.scrollTo=function(){};"
-		"this.scrollBy=function(){};"
-		"this.scroll=function(){};"
+		/* fixes1011 — these were no-ops, so every "back to top" button and
+		 * every scroll restoration silently did nothing. Accepts both the
+		 * (x, y) and the ({top, left, behavior}) forms; `behavior:'smooth'`
+		 * is honoured as an instant jump, which is the honest degradation. */
+		"this.scrollTo=function(a,b){"
+			"var x,y;"
+			"if(a&&typeof a==='object'){x=a.left;y=a.top;}else{x=a;y=b;}"
+			"__scrollTo((x===undefined?__scrollX():x)|0,"
+				"(y===undefined?__scrollY():y)|0);};"
+		"this.scrollBy=function(a,b){"
+			"var dx,dy;"
+			"if(a&&typeof a==='object'){dx=a.left;dy=a.top;}else{dx=a;dy=b;}"
+			"__scrollTo((__scrollX()+((dx|0)||0))|0,"
+				"(__scrollY()+((dy|0)||0))|0);};"
+		"this.scroll=this.scrollTo;"
 		"this._winListeners={};"
 		/* fixes1006 (1b) — window has no DOM node, so register against the
 		 * DOCUMENT node and let qjs_dom_listener_cb fan out to
@@ -6286,24 +6848,57 @@ static void register_browser_globals(JSContext *ctx)
 				"try{console.error('WORK winevt THREW type='+t+': '+"
 					"((e&&e.message)||e));}catch(_){}"
 			"}});return true;};"
+		/* fixes1011 — the REAL getComputedStyle. __gcsNative reads the
+		 * cascade + box (installed in qjs_dom_install); this wrapper adds
+		 * getPropertyValue with dash-to-camel mapping and falls back to the
+		 * inline style for anything the native side does not cover, which is
+		 * exactly what this function used to do for EVERYTHING. */
 		"this.getComputedStyle=function(el){"
-			"return {"
-				"getPropertyValue:function(p){"
-					"if(el&&el.style&&el.style.getPropertyValue)"
-						"return el.style.getPropertyValue(p);"
-					"return '';},"
-				"cssText:''"
-			"};};"
+			"var c=(typeof __gcsNative==='function')?__gcsNative(el):null;"
+			"var inl=(el&&el.style)?el.style:null;"
+			"var o=c||{};"
+			"o.getPropertyValue=function(p){"
+				"var k=String(p).replace(/-([a-z])/g,function(m,x){"
+					"return x.toUpperCase();});"
+				"if(o[k]!==undefined&&typeof o[k]!=='function')return ''+o[k];"
+				"if(inl&&inl.getPropertyValue)return inl.getPropertyValue(p);"
+				"return '';};"
+			"o.setProperty=function(p,v){if(inl&&inl.setProperty)"
+				"inl.setProperty(p,v);};"
+			"o.cssText=(inl&&inl.cssText)||'';"
+			"return o;};"
 		"this.matchMedia=function(q){"
 			"return {matches:false,media:q||'',"
 				"addListener:function(){},removeListener:function(){},"
 				"addEventListener:function(){},removeEventListener:function(){}};};"
 		"this.requestIdleCallback=function(fn){return setTimeout(fn,0);};"
 		"this.cancelIdleCallback=function(id){clearTimeout(id);};"
-		"this.innerWidth=949;this.innerHeight=613;"
-		"this.outerWidth=949;this.outerHeight=613;"
-		"this.scrollY=0;this.scrollX=0;"
-		"this.pageYOffset=0;this.pageXOffset=0;"
+		/* fixes1011 — LIVE viewport + scroll, not frozen constants.
+		 *
+		 * innerWidth/innerHeight were hardcoded 949x613 and scrollX/scrollY
+		 * were permanently 0, so responsive-JS branches always took the same
+		 * path regardless of the real window, and any "have we scrolled past
+		 * the header" test was permanently false. These are accessors now,
+		 * reading the front window each time.
+		 *
+		 * scrollTo/scrollBy really scroll -- they were no-ops, so every
+		 * "back to top" control and every scroll-restoration did nothing. */
+		"Object.defineProperty(this,'innerWidth',{configurable:true,"
+			"get:function(){return __viewportW();}});"
+		"Object.defineProperty(this,'innerHeight',{configurable:true,"
+			"get:function(){return __viewportH();}});"
+		"Object.defineProperty(this,'outerWidth',{configurable:true,"
+			"get:function(){return __viewportW();}});"
+		"Object.defineProperty(this,'outerHeight',{configurable:true,"
+			"get:function(){return __viewportH();}});"
+		"Object.defineProperty(this,'scrollX',{configurable:true,"
+			"get:function(){return __scrollX();}});"
+		"Object.defineProperty(this,'scrollY',{configurable:true,"
+			"get:function(){return __scrollY();}});"
+		"Object.defineProperty(this,'pageXOffset',{configurable:true,"
+			"get:function(){return __scrollX();}});"
+		"Object.defineProperty(this,'pageYOffset',{configurable:true,"
+			"get:function(){return __scrollY();}});"
 		"this.devicePixelRatio=1;"
 		"this.screen={width:1024,height:768,availWidth:1024,availHeight:740,colorDepth:24};"
 		"this.performance={"

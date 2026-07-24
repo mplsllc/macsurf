@@ -4809,5 +4809,149 @@ int main(void)
 	}
 	fprintf(stderr, "=== Test 42 PASS: node universals ===\n");
 
+	/* --- Test 43: layout is visible to JS (fixes1011, Phase 3) -------------
+	 *
+	 * getComputedStyle returned inline styles only, getBoundingClientRect
+	 * returned all zeros, and offsetWidth/clientHeight existed only on the
+	 * MOCK fallback elements. This is the failure mode that does NOT throw:
+	 * zeros propagate into arithmetic and the page merely looks wrong, which
+	 * is why it outlived every throwing bug.
+	 *
+	 * Asserted against the REAL box tree, cross-checked in C via box_coords
+	 * and box->width -- so a stub that returned plausible constants would
+	 * still fail. That cross-check is the point: "non-zero" alone would pass
+	 * for a hardcoded 100. */
+	fprintf(stderr, "\n=== Test 43: layout visible to JS ===\n");
+	{
+		dom_string *idf = NULL;
+		dom_element *elf = NULL;
+		struct box *bx;
+		int cx = 0, cy = 0, cw = 0, ch = 0;
+		unsigned char ok;
+		char expect[160];
+
+		if (dom_string_create((const uint8_t *)"feed", 4, &idf) != DOM_NO_ERR) {
+			fprintf(stderr, "FAIL: t43 dom_string_create\n"); return 1;
+		}
+		dom_document_get_element_by_id(document, idf, &elf);
+		dom_string_unref(idf);
+		if (elf == NULL) { fprintf(stderr, "FAIL: t43 missing #feed\n"); return 1; }
+
+		bx = box_for_node((dom_node *)elf);
+		if (bx == NULL) {
+			fprintf(stderr, "FAIL: t43 #feed has no box -- the fixture did "
+					"not lay out, so this test cannot mean anything\n");
+			return 1;
+		}
+		box_coords(bx, &cx, &cy);
+		/* Mirror the engine's sanitiser: a box that never resolved keeps
+		 * its birth width UNKNOWN_WIDTH == INT_MAX (the fixes625 sentinel),
+		 * and #feed in this fixture is exactly that -- the first run of this
+		 * test reported a border-box of 2147483647x0, which is what put the
+		 * sanitiser into fixes1011. Anything out of range means 0. */
+		#define T43_SANE(v) (((v) < 0 || (v) >= 1000000) ? 0 : (v))
+		cw = T43_SANE(bx->width) + bx->padding[LEFT] + bx->padding[RIGHT] +
+			bx->border[LEFT].width + bx->border[RIGHT].width;
+		ch = T43_SANE(bx->height) + bx->padding[TOP] + bx->padding[BOTTOM] +
+			bx->border[TOP].width + bx->border[BOTTOM].width;
+		fprintf(stderr, "  C side: box_coords=(%d,%d) border-box=%dx%d\n",
+				cx, cy, cw, ch);
+
+		sprintf(expect,
+			"globalThis.__t43e={x:%d,y:%d,w:%d,h:%d,cw:%d};",
+			cx, cy, cw, ch,
+			T43_SANE(bx->width) + bx->padding[LEFT] + bx->padding[RIGHT]);
+		(void)js_exec(thread, (const unsigned char *)expect,
+				strlen(expect), "t43-expect.js");
+
+		{
+			const char *probe =
+				"globalThis.__t43={};var r=globalThis.__t43;"
+				"var e=document.getElementById('feed');"
+				"var rc=e.getBoundingClientRect();"
+				"r.rx=rc.left;r.ry=rc.top;r.rw=rc.width;r.rh=rc.height;"
+				"r.right=rc.right;r.bottom=rc.bottom;"
+				"r.ow=e.offsetWidth;r.oh=e.offsetHeight;"
+				"r.cw=e.clientWidth;"
+				"r.rects=(e.getClientRects()||[]).length;"
+				"var cs=getComputedStyle(e);"
+				"r.disp=cs.display;"
+				"r.width=cs.width;"
+				"r.gpv=cs.getPropertyValue('display');"
+				/* display:none must be reported from the CASCADE */
+				"var h=document.createElement('div');"
+				"document.getElementById('feed').appendChild(h);"
+				"r.vw=window.innerWidth;r.vh=window.innerHeight;"
+				"r.sx=window.scrollX;r.sy=window.scrollY;";
+			ok = js_exec(thread, (const unsigned char *)probe,
+					strlen(probe), "t43-probe.js");
+			if (!ok) { fprintf(stderr, "FAIL: t43 probe threw\n"); return 1; }
+		}
+		{
+			const char *chk =
+				"var r=globalThis.__t43,x=globalThis.__t43e;"
+				"if(r.rw!==x.w||r.rh!==x.h)"
+					"throw new Error('ASSERT FAIL: getBoundingClientRect size "
+						"is '+r.rw+'x'+r.rh+', the box tree says '+x.w+'x'+"
+						"x.h+'. It returned all zeros before -- measuring "
+						"code then computes garbage SILENTLY, with no error "
+						"anywhere.');"
+				"if(r.rx!==x.x||r.ry!==x.y)"
+					"throw new Error('ASSERT FAIL: rect origin is ('+r.rx+','+"
+						"r.ry+'), box_coords says ('+x.x+','+x.y+')');"
+				"if(r.right!==r.rx+r.rw||r.bottom!==r.ry+r.rh)"
+					"throw new Error('ASSERT FAIL: right/bottom inconsistent "
+						"with left/top+size');"
+				"if(r.ow!==x.w||r.oh!==x.h)"
+					"throw new Error('ASSERT FAIL: offsetWidth/Height '+r.ow+"
+						"'x'+r.oh+', expected '+x.w+'x'+x.h);"
+				"if(r.cw!==x.cw)"
+					"throw new Error('ASSERT FAIL: clientWidth is '+r.cw+', "
+						"expected '+x.cw+' (padding in, border OUT -- that "
+						"difference is the whole point of the property)');"
+				"if(r.rects!==1)"
+					"throw new Error('ASSERT FAIL: getClientRects gave '+"
+						"r.rects);"
+				"if(typeof r.disp!=='string'||!r.disp)"
+					"throw new Error('ASSERT FAIL: computed display is '+"
+						"r.disp+' -- getComputedStyle read only inline "
+						"styles before, so display was undefined for "
+						"everything styled by a sheet.');"
+				"if(r.gpv!==r.disp)"
+					"throw new Error('ASSERT FAIL: getPropertyValue(\"display\") "
+						"gave \"'+r.gpv+'\" but .display gave \"'+r.disp+'\"');"
+				"if(!/px$/.test(r.width))"
+					"throw new Error('ASSERT FAIL: computed width is \"'+"
+						"r.width+'\" -- must be a STRING WITH UNITS. A bare "
+						"number makes parseInt succeed and string compares "
+						"fail, producing NaN three lines later.');"
+				"if(!(r.vw>0)||!(r.vh>0))"
+					"throw new Error('ASSERT FAIL: viewport '+r.vw+'x'+r.vh);"
+				"if(typeof r.sx!=='number'||typeof r.sy!=='number')"
+					"throw new Error('ASSERT FAIL: scrollX/scrollY not "
+						"numeric');"
+				/* The sentinel must never reach script. */
+				"if(r.rw>=1000000||r.rh>=1000000||r.ow>=1000000||"
+				   "r.oh>=1000000||r.cw>=1000000)"
+					"throw new Error('ASSERT FAIL: a layout SENTINEL leaked "
+						"into JS (rect '+r.rw+'x'+r.rh+', offset '+r.ow+'x'+"
+						"r.oh+'). Every box is born width=UNKNOWN_WIDTH="
+						"INT_MAX and this fork zeroes a failed box height but "
+						"never its width (fixes625) -- so an unresolved "
+						"element would hand a page 2147483647 and measuring "
+						"code computes nonsense from a plausible-looking "
+						"number.');";
+			ok = js_exec(thread, (const unsigned char *)chk,
+					strlen(chk), "t43-chk.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: Test 43 -- layout still invisible\n");
+				return 1;
+			}
+		}
+		fprintf(stderr, "  rect/offset/client match the box tree; computed "
+				"style reads the cascade with units\n");
+	}
+	fprintf(stderr, "=== Test 43 PASS: layout visible to JS ===\n");
+
 	return 0;
 }
