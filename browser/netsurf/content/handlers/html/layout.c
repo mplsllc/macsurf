@@ -7226,8 +7226,9 @@ bool layout_document(html_content *content, int width, int height)
 	 * tag crash records with the page being laid out. */
 	{
 		void macsurf_layout_set_current_url(const char *);
-		const char *u = nsurl_access(content_get_url(&content->base));
-		macsurf_layout_set_current_url(u);
+		nsurl *cu = content_get_url(&content->base);
+		macsurf_layout_set_current_url(
+				(cu != NULL) ? nsurl_access(cu) : "(no url)");
 	}
 
 	/* fixes171 — reset the watchdog counters at the start of every

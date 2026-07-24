@@ -1630,6 +1630,15 @@ nsurl *content_get_url(struct content *c)
 {
 	CONTENT_CHECK_RETURN(c, NULL);
 
+	/* fixes1025 — a content that is not (or no longer) backed by the
+	 * low-level cache has no URL, and llcache_handle_get_url dereferences
+	 * its argument without checking. Every caller here already handles a
+	 * NULL nsurl; a crash inside the accessor is never the better answer.
+	 * Same guard macos9_reconvert_host_allowed and the fixes846 JS path
+	 * already apply for the same reason. */
+	if (c->llcache == NULL)
+		return NULL;
+
 	return llcache_handle_get_url(c->llcache);
 }
 

@@ -28,6 +28,8 @@
 #include "desktop/gui_table.h"
 #include "netsurf/misc.h"
 #include "netsurf/content_type.h"
+#include "netsurf/plot_style.h"   /* fixes1025: plot_font_style, PLOT_STYLE_SCALE */
+#include "netsurf/layout.h"       /* fixes1025: gui_layout_table */
 
 #include "content/content_protected.h"
 /* fixes879 — Test 22 exercises the real cookie jar directly (urldb.c and
@@ -301,10 +303,161 @@ static char *build_large_doc(int n)
 
 /* ------------------------------------------------------------------ */
 
-int main(void)
+/* fixes1025 — LAYOUT MODE. Run MacSurf's OWN layout over an arbitrary
+ * html+css pair on Linux and dump the resulting box geometry:
+ *
+ *     ./reconvert_harness --layout page.html page.css 993
+ *
+ * Why this exists: hackaday's article river renders at 562px in MacSurf
+ * where Chrome and STOCK NetSurf 3.11 both give ~1900px for the identical
+ * markup and stylesheet. That difference is in our fork's layout, and every
+ * previous attempt to find it cost a hardware round-trip per hypothesis.
+ * The harness already compiles layout.c / layout_flex.c / layout_grid.c --
+ * it simply never called layout_document, so every box kept its birth
+ * width and the whole layer was untested here. Now it is bisectable in
+ * seconds, locally, against a known-good reference. */
+static const char *g_layout_html_path = NULL;
+static const char *g_layout_css_path = NULL;
+static int g_layout_width = 993;
+
+
+/* fixes1025 — a synthetic font table for LAYOUT MODE.
+ *
+ * layout_minmax_line dereferences content->font_func, which the harness never
+ * set (it never called layout). Metrics are proportional-ish rather than real
+ * QuickDraw: width scales with the style's font size, which is all the
+ * STRUCTURAL question needs -- whether our layout collapses a block is not a
+ * question about glyph widths. Line counts will differ slightly from Chrome;
+ * block heights and containment will not. */
+static int harness_char_w(const struct plot_font_style *fstyle)
+{
+	int px = (fstyle != NULL) ? (int)(fstyle->size / PLOT_STYLE_SCALE) : 16;
+	int w;
+	if (px <= 0) px = 16;
+	w = (px * 55) / 100;          /* ~0.55em average advance */
+	return (w > 0) ? w : 1;
+}
+
+static nserror harness_font_width(const struct plot_font_style *fstyle,
+		const char *string, size_t length, int *width)
+{
+	(void)string;
+	*width = (int)length * harness_char_w(fstyle);
+	return NSERROR_OK;
+}
+
+static nserror harness_font_position(const struct plot_font_style *fstyle,
+		const char *string, size_t length, int x,
+		size_t *char_offset, int *actual_x)
+{
+	int cw = harness_char_w(fstyle);
+	size_t n = (x < 0) ? 0 : (size_t)(x / cw);
+	(void)string;
+	if (n > length) n = length;
+	*char_offset = n;
+	*actual_x = (int)n * cw;
+	return NSERROR_OK;
+}
+
+static nserror harness_font_split(const struct plot_font_style *fstyle,
+		const char *string, size_t length, int x,
+		size_t *char_offset, int *actual_x)
+{
+	int cw = harness_char_w(fstyle);
+	size_t fit = (x < 0) ? 0 : (size_t)(x / cw);
+	size_t i, last_space = 0;
+	if (fit >= length) {
+		*char_offset = length;
+		*actual_x = (int)length * cw;
+		return NSERROR_OK;
+	}
+	for (i = 0; i < fit && i < length; i++)
+		if (string[i] == ' ') last_space = i;
+	/* Core's contract: offset lands ON the space, and 0 means "cannot
+	 * split here" (fixes788). */
+	*char_offset = last_space;
+	*actual_x = (int)last_space * cw;
+	return NSERROR_OK;
+}
+
+static struct gui_layout_table harness_layout_table = {
+	harness_font_width,
+	harness_font_position,
+	harness_font_split
+};
+
+static char *harness_slurp(const char *path)
+{
+	FILE *f = fopen(path, "rb");
+	long n;
+	char *buf;
+	if (f == NULL) return NULL;
+	fseek(f, 0, SEEK_END); n = ftell(f); fseek(f, 0, SEEK_SET);
+	buf = (char *)malloc((size_t)n + 1);
+	if (buf == NULL) { fclose(f); return NULL; }
+	if (fread(buf, 1, (size_t)n, f) != (size_t)n) { free(buf); fclose(f); return NULL; }
+	buf[n] = '\0';
+	fclose(f);
+	return buf;
+}
+
+/* Identity of a box, for the dump. */
+static void harness_box_brief(struct box *b, char *out, size_t cap)
+{
+	const char *tag = "?";
+	out[0] = '\0';
+    if (b->node != NULL) {
+		dom_string *nm = NULL;
+		if (dom_node_get_node_name(b->node, &nm) == DOM_NO_ERR && nm != NULL) {
+			snprintf(out, cap, "%s", dom_string_data(nm));
+			dom_string_unref(nm);
+			tag = NULL;
+		}
+	}
+	if (tag != NULL) {
+		static const char *tn[] = {"BLOCK","INLINE_CONTAINER","INLINE",
+			"TABLE","TABLE_ROW","TABLE_CELL","TABLE_ROW_GROUP",
+			"FLOAT_LEFT","FLOAT_RIGHT","INLINE_BLOCK","BR","TEXT",
+			"INLINE_END","INLINE_FLEX","FLEX","GRID","INLINE_GRID"};
+		int t = (int)b->type;
+		snprintf(out, cap, "<%s>", (t >= 0 && t < 17) ? tn[t] : "box");
+	}
+	if (b->node != NULL) {
+		dom_string *cls = NULL;
+		dom_string *key = NULL;
+		if (dom_string_create((const uint8_t *)"class", 5, &key) == DOM_NO_ERR) {
+			if (dom_element_get_attribute((dom_element *)b->node, key,
+					&cls) == DOM_NO_ERR && cls != NULL) {
+				size_t l = strlen(out);
+				snprintf(out + l, cap - l, ".%.28s", dom_string_data(cls));
+				dom_string_unref(cls);
+			}
+			dom_string_unref(key);
+		}
+	}
+}
+
+static void harness_dump_boxes(struct box *b, int depth, int maxdepth)
+{
+	char nm[80];
+	int x = 0, y = 0;
+	if (b == NULL || depth > maxdepth) return;
+	harness_box_brief(b, nm, sizeof nm);
+	box_coords(b, &x, &y);
+	fprintf(stderr, "%*s%-34s type=%d x=%d y=%d w=%d h=%d\n",
+			depth * 2, "", nm, (int)b->type, x, y,
+			(b->width  >= 1000000 || b->width  < 0) ? -1 : b->width,
+			(b->height >= 1000000 || b->height < 0) ? -1 : b->height);
+	for (b = b->children; b != NULL; b = b->next)
+		harness_dump_boxes(b, depth + 1, maxdepth);
+}
+
+int main(int argc, char **argv)
 {
 	char *html_src_big = build_large_doc(300);
 	const char *html_src = html_src_big;
+	char *layout_html = NULL;
+	char *layout_css = NULL;
 
 	dom_hubbub_parser_params params;
 	dom_hubbub_parser *parser = NULL;
@@ -347,7 +500,24 @@ int main(void)
 		"}"
 		"})();";
 
-	fprintf(stderr, "=== S0 harness: reconvert dom_string UAF repro ===\n");
+	if (argc >= 4 && strcmp(argv[1], "--layout") == 0) {
+		g_layout_html_path = argv[2];
+		g_layout_css_path  = argv[3];
+		if (argc >= 5) g_layout_width = atoi(argv[4]);
+		layout_html = harness_slurp(g_layout_html_path);
+		layout_css  = harness_slurp(g_layout_css_path);
+		if (layout_html == NULL || layout_css == NULL) {
+			fprintf(stderr, "FAIL: cannot read %s / %s\n",
+					g_layout_html_path, g_layout_css_path);
+			return 1;
+		}
+		html_src = layout_html;
+		fprintf(stderr, "=== LAYOUT MODE: %s + %s at width %d ===\n",
+				g_layout_html_path, g_layout_css_path,
+				g_layout_width);
+	} else {
+		fprintf(stderr, "=== S0 harness: reconvert dom_string UAF repro ===\n");
+	}
 
 	/* --- wire the scheduler + option table before anything touches them --- */
 	memset(&g_misc_table, 0, sizeof(g_misc_table));
@@ -419,6 +589,30 @@ int main(void)
 		const char *ua_css =
 			"html,body,div,span,p{display:block}"
 			"span{display:inline}";
+		char *ua_real = NULL;
+
+		/* fixes1025 — LAYOUT MODE needs the REAL UA sheet. The tiny
+		 * inline one above declares display:block for five elements
+		 * only, so main/aside/ul/li/h2 come out INLINE and the whole
+		 * document collapses into one inline run -- a harness artifact
+		 * that would read exactly like the bug being hunted. */
+		if (layout_html != NULL) {
+			ua_real = harness_slurp(
+				"../browser/netsurf/resources/default.css");
+			if (ua_real == NULL)
+				ua_real = harness_slurp(
+					"browser/netsurf/resources/default.css");
+			if (ua_real != NULL) {
+				ua_css = ua_real;
+				fprintf(stderr, "UA sheet: real default.css "
+						"(%ld bytes)\n",
+						(long)strlen(ua_real));
+			} else {
+				fprintf(stderr, "WARNING: real default.css not "
+						"found -- layout numbers are "
+						"NOT trustworthy\n");
+			}
+		}
 
 		memset(&params, 0, sizeof(params));
 		params.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
@@ -450,10 +644,47 @@ int main(void)
 		}
 	}
 
-	htmlc.media.width = INTTOFIX(800);
+	/* fixes1025 — LAYOUT MODE: the page's own stylesheet, as AUTHOR origin. */
+	if (layout_css != NULL) {
+		css_stylesheet_params ap;
+		css_stylesheet *sheet = NULL;
+		memset(&ap, 0, sizeof(ap));
+		ap.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		ap.level = CSS_LEVEL_3;
+		ap.charset = "UTF-8";
+		ap.url = "http://local/page.css";
+		ap.title = "author";
+		ap.allow_quirks = false;
+		ap.inline_style = false;
+		ap.resolve = harness_css_resolve_url;
+		ap.resolve_pw = NULL;
+		if (css_stylesheet_create(&ap, &sheet) != CSS_OK) {
+			fprintf(stderr, "FAIL: author sheet create\n"); return 1;
+		}
+		(void) css_stylesheet_append_data(sheet,
+				(const uint8_t *)layout_css, strlen(layout_css));
+		css_stylesheet_data_done(sheet);
+		if (css_select_ctx_append_sheet(select_ctx, sheet,
+				CSS_ORIGIN_AUTHOR, NULL) != CSS_OK) {
+			fprintf(stderr, "FAIL: author sheet append\n"); return 1;
+		}
+		fprintf(stderr, "author stylesheet appended (%ld bytes)\n",
+				(long)strlen(layout_css));
+		/* box_construct resolves relative hrefs/background-images
+		 * against the content's base URL; without one nsurl_join
+		 * asserts. */
+		{
+			nsurl *burl = NULL;
+			if (nsurl_create("http://local/page.html", &burl)
+					== NSERROR_OK)
+				htmlc.base_url = burl;
+		}
+	}
+
+	htmlc.media.width = INTTOFIX(g_layout_width);
 	htmlc.media.height = INTTOFIX(600);
 	htmlc.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
-	htmlc.unit_len_ctx.viewport_width = INTTOFIX(800);
+	htmlc.unit_len_ctx.viewport_width = INTTOFIX(g_layout_width);
 	htmlc.unit_len_ctx.viewport_height = INTTOFIX(600);
 	htmlc.unit_len_ctx.device_dpi = INTTOFIX(90);
 	htmlc.unit_len_ctx.font_size_default = INTTOFIX(16);
@@ -493,6 +724,28 @@ int main(void)
 	}
 	fprintf(stderr, "initial box tree built OK, layout=%p\n",
 			(void *)htmlc.layout);
+
+	/* fixes1025 — LAYOUT MODE: run MacSurf's real layout and dump geometry. */
+	if (layout_html != NULL) {
+		extern bool layout_document(struct html_content *content,
+				int width, int height);
+		bool lok;
+		htmlc.font_func = &harness_layout_table;
+		htmlc.base.status = CONTENT_STATUS_DONE;
+		htmlc.base.available_width = g_layout_width;
+		htmlc.base.available_height = 600;
+		lok = layout_document(&htmlc, g_layout_width, 600);
+		fprintf(stderr, "\n=== layout_document -> %s ===\n",
+				lok ? "OK" : "FAILED");
+		if (htmlc.layout != NULL) {
+			fprintf(stderr, "root: w=%d h=%d desc_y1=%d\n",
+					htmlc.layout->width, htmlc.layout->height,
+					htmlc.layout->descendant_y1);
+		}
+		fprintf(stderr, "\n=== BOX TREE (MacSurf layout) ===\n");
+		harness_dump_boxes(htmlc.layout, 0, 7);
+		return 0;
+	}
 
 	htmlc.base.status = CONTENT_STATUS_DONE;
 
