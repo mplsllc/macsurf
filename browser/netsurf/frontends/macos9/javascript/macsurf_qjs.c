@@ -3409,13 +3409,60 @@ static const char *qjs_css_display_name(uint8_t v)
  * a fault; an unmapped one is rejected by macsurf_ptr_is_heap. */
 static struct box *qjs_box_for(JSValueConst v)
 {
-	dom_node *n = qjs_get_node(v);
+	extern int macsurf_reconvert_in_progress;
+	dom_node *n;
 	struct box *b;
+
+	/* fixes1012 — THE DOCUMENTED CRASH-SAFETY CHECKLIST, which fixes1011
+	 * satisfied only one third of.
+	 *
+	 * box_special.c:1417 records the rules for walking the box tree from
+	 * outside layout, each one bought with a G3 crash:
+	 *   1. re-resolve via box_for_node, never hold a raw box*  (fixes674b:
+	 *      a stale box* went bad via normalisation and box_coords FAULTED
+	 *      walking the parent chain)
+	 *   2. only walk when the content is CONTENT_STATUS_DONE  (fixes674c: a
+	 *      walk mid-construction hit a renormalising parent chain -> UAF)
+	 *   3. registry-guarded liveness, pointer-membership only, no deref
+	 *
+	 * fixes1011 did (1) and checked the box pointer was in-heap, but did
+	 * NEITHER (2) NOR (3) -- and qjs_box_origin calls box_coords(), which is
+	 * precisely the parent-chain walk that faulted in 674b. Every
+	 * getBoundingClientRect / offsetWidth / getComputedStyle from script was
+	 * therefore one mid-reconvert measurement away from the same crash.
+	 *
+	 * A script measuring during teardown or mid-reconvert is not exotic: it
+	 * is what a resize handler, a scroll handler or an IntersectionObserver
+	 * callback does, and those fire exactly when the tree is churning.
+	 *
+	 * Degrades to zeros, which is the same answer a not-yet-laid-out element
+	 * gives in a real browser -- and infinitely better than a fault. */
+	if (g_qjs_content == NULL) return NULL;
+	if (macos9_content_is_live(g_qjs_content) == 0) return NULL;
+	if (g_qjs_content->status != CONTENT_STATUS_DONE) return NULL;
+	if (macsurf_reconvert_in_progress) return NULL;
+
+	n = qjs_get_node(v);
 	if (n == NULL) return NULL;
 	b = box_for_node(n);
 	if (b == NULL) return NULL;
 	if (!macsurf_ptr_is_heap((const void *)b)) return NULL;
 	return b;
+}
+
+/* box_coords walks parent pointers to the root. A stale link anywhere in that
+ * chain is a fault, so validate every hop and give up rather than follow a
+ * wild pointer. Bounded too: a corrupted tree can be cyclic, and an unbounded
+ * walk there hangs the cooperative event loop with no crash to diagnose. */
+static int qjs_box_chain_ok(struct box *b)
+{
+	int depth = 0;
+	while (b != NULL) {
+		if (!macsurf_ptr_is_heap((const void *)b)) return 0;
+		if (++depth > 512) return 0;
+		b = b->parent;
+	}
+	return 1;
 }
 
 /* fixes1011 — SANITIZE THE SENTINEL BEFORE IT REACHES JAVASCRIPT.
@@ -3447,6 +3494,11 @@ static int qjs_sane(int v)
 static void qjs_box_origin(struct box *b, int *ox, int *oy)
 {
 	int x = 0, y = 0;
+	*ox = 0;
+	*oy = 0;
+	/* fixes1012 — validate the whole chain BEFORE box_coords walks it. This
+	 * is the call that faulted in fixes674b. */
+	if (!qjs_box_chain_ok(b)) return;
 	box_coords(b, &x, &y);
 	*ox = x;
 	*oy = y;

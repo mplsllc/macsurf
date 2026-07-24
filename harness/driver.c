@@ -4843,7 +4843,22 @@ int main(void)
 					"not lay out, so this test cannot mean anything\n");
 			return 1;
 		}
-		box_coords(bx, &cx, &cy);
+		/* THE HARNESS HAS NO LAYOUT PASS. It runs dom_to_box (box
+		 * construction) but never layout_document, so every box keeps its
+		 * birth width UNKNOWN_WIDTH == INT_MAX and nothing has real geometry.
+		 * A comparison of 0 against 0 would pass even with every accessor
+		 * stubbed out, so this INJECTS known geometry into a real box and
+		 * asserts JS reads exactly that back. That tests the read path --
+		 * box_for_node -> box_coords -> the metric arithmetic -- which is the
+		 * part that is ours. Whether layout produces the right numbers is
+		 * layout's own business and is not what this test is for. */
+		bx->width = 300;
+		bx->height = 40;
+		bx->padding[LEFT] = 5; bx->padding[RIGHT] = 7;
+		bx->padding[TOP] = 2;  bx->padding[BOTTOM] = 3;
+		bx->border[LEFT].width = 1; bx->border[RIGHT].width = 1;
+		bx->border[TOP].width = 1;  bx->border[BOTTOM].width = 1;
+box_coords(bx, &cx, &cy);
 		/* Mirror the engine's sanitiser: a box that never resolved keeps
 		 * its birth width UNKNOWN_WIDTH == INT_MAX (the fixes625 sentinel),
 		 * and #feed in this fixture is exactly that -- the first run of this
