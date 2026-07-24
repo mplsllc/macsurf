@@ -2659,7 +2659,19 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"el.scrollIntoViewIfNeeded=function(){};"
 		"el.focus=function(){};"
 		"el.blur=function(){};"
-		"el.click=function(){};"
+		/* fixes997 — el.click() synthesises a real dispatch instead of
+		 * being a no-op. Frameworks use it to trigger a control
+		 * programmatically (and the hidden-file-input pattern depends
+		 * on it entirely). Routed through this element's own
+		 * dispatchEvent so _L and _H both fire exactly as a real click
+		 * does -- one firing implementation, not a second one that can
+		 * drift. Deliberately does NOT perform the default action: a
+		 * synthetic click on a link navigating would be a surprising
+		 * side effect to introduce here, and no page tested needs it. */
+		"el.click=function(){"
+		"if(this.dispatchEvent)this.dispatchEvent({type:'click',"
+		"target:this,currentTarget:this,"
+		"preventDefault:function(){},stopPropagation:function(){}});};"
 		/* fixes878 — the node-oriented traversal surface used to be hardcoded
 		 * HERE, as five lines of constants:
 		 *     el.cloneNode=function(){return el;};

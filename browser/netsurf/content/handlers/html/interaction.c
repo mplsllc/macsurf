@@ -1829,6 +1829,43 @@ mouse_action_drag_none(html_content *html,
 	 */
 	switch (mas.result.action) {
 	case ACTION_SUBMIT:
+		/* fixes997 (#264) — fire a real `submit` event at the FORM and
+		 * let a handler cancel it.
+		 *
+		 * Nothing in the tree dispatched this event at all:
+		 * corestring_dom_submit was used only to RECOGNISE
+		 * <input type=submit> in form.c, so a `submit` listener could
+		 * never run and preventDefault on it could never be honoured.
+		 * The form posted regardless -- caught by t.html test 12, which
+		 * navigated to the SHOULD-NOT-SUBMIT URL while test 6 (the same
+		 * question for a link) passed. Intercepting submit is how every
+		 * validating form on the web works, so this is the difference
+		 * between a form that validates and one that silently posts.
+		 *
+		 * The click-level preventDefault (checked above) already
+		 * suppresses ACTION_SUBMIT; this is the SEPARATE, and more
+		 * commonly used, submit-level hook.
+		 *
+		 * form->node is the form's DOM node. If it is missing, submit
+		 * as before rather than swallowing the action -- failing open
+		 * keeps a form working, failing closed would break every form
+		 * on a page whose node we could not resolve. */
+		{
+			bool go = true;
+			if (mas.gadget.control->form != NULL &&
+			    mas.gadget.control->form->node != NULL) {
+				go = fire_generic_dom_event(
+					corestring_dom_submit,
+					(dom_node *)mas.gadget.control->form->node,
+					true, true);
+			}
+			if (!go) {
+				macsurf_debug_log_write(
+					"LIFE jsevent submit preventDefault "
+					"-- form NOT submitted");
+				break;
+			}
+		}
 		res = form_submit(content_get_url(c),
 				  browser_window_find_target(bw,
 							     mas.gadget.target,
