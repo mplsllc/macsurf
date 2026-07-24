@@ -119,6 +119,11 @@ static const char *html_types[] = {
 	"text/html"
 };
 
+/* fixes1015 — defined below, next to html_proceed_to_done; called from
+ * html_box_convert_done (ready), html_proceed_to_done (done) and
+ * html_reconvert_done (reconvert). */
+void html_pagemap_dump(html_content *c, const char *when);
+
 /**
  * Fire an event at the DOM
  *
@@ -430,11 +435,225 @@ static void html_box_convert_done(html_content *c, bool success)
 	}
 
 	content_set_ready(&c->base);
+	html_pagemap_dump(c, "ready"); /* fixes1015 */
 
 	html_proceed_to_done(c);
 
 	dom_node_unref(html);
 }
+
+/* ====================================================================== */
+/* fixes1015 — PAGEMAP: the DOM <-> box-tree <-> render audit.
+ *
+ * "Entire sections are missing" has four different causes with four different
+ * fixes, and aggregate logs cannot tell them apart:
+ *   (a) the section was REMOVED from the DOM by script;
+ *   (b) it is in the DOM but built NO BOX (display:none, or conversion drop);
+ *   (c) it has a box with HEIGHT 0 (layout failure / collapsed);
+ *   (d) it renders but its own content is empty.
+ * This walks <body>'s element children after each settle point (ready, done,
+ * every reconvert) and prints one line per section: identity, DOM child
+ * count, box presence, position/size, computed display. Reading two dumps
+ * side by side answers which class a vanished section fell into.
+ * All LIFE-prefixed; budgeted per session. */
+
+#define MACSURF_PAGEMAP_MAX_DUMPS 40
+
+static long macsurf_pagemap_dumps = 0;
+
+static void html_pagemap_append(char *out, int cap, int *pos,
+		const char *s, int maxn, char sep, int dot_spaces)
+{
+	int i = 0;
+	if (s == NULL || s[0] == '\0') return;
+	if (sep != '\0' && *pos < cap - 1) out[(*pos)++] = sep;
+	while (s[i] != '\0' && i < maxn && *pos < cap - 1) {
+		char ch = s[i];
+		if (ch == '\r' || ch == '\n' || ch == '\t') ch = ' ';
+		if (dot_spaces && ch == ' ') ch = '.';
+		out[(*pos)++] = ch;
+		i++;
+	}
+	out[*pos] = '\0';
+}
+
+/* "TAG#id.class" (truncated). Element nodes only; caller checks the type. */
+static void html_pagemap_brief(dom_node *n, char *out, int cap)
+{
+	static dom_string *s_id = NULL;
+	static dom_string *s_class = NULL;
+	dom_string *ds = NULL;
+	dom_exception exc;
+	int pos = 0;
+
+	out[0] = '\0';
+	if (s_id == NULL)
+		(void) dom_string_create((const uint8_t *)"id", 2, &s_id);
+	if (s_class == NULL)
+		(void) dom_string_create((const uint8_t *)"class", 5, &s_class);
+
+	exc = dom_node_get_node_name(n, &ds);
+	if (exc == DOM_NO_ERR && ds != NULL) {
+		html_pagemap_append(out, cap, &pos, dom_string_data(ds), 12,
+				'\0', 0);
+		dom_string_unref(ds);
+	}
+	if (s_id != NULL) {
+		ds = NULL;
+		exc = dom_element_get_attribute((dom_element *)n, s_id, &ds);
+		if (exc == DOM_NO_ERR && ds != NULL) {
+			html_pagemap_append(out, cap, &pos, dom_string_data(ds),
+					24, '#', 0);
+			dom_string_unref(ds);
+		}
+	}
+	if (s_class != NULL) {
+		ds = NULL;
+		exc = dom_element_get_attribute((dom_element *)n, s_class, &ds);
+		if (exc == DOM_NO_ERR && ds != NULL) {
+			html_pagemap_append(out, cap, &pos, dom_string_data(ds),
+					36, '.', 1);
+			dom_string_unref(ds);
+		}
+	}
+}
+
+#define HTML_PAGEMAP_SANE(v) (((v) < 0 || (v) >= 1000000) ? 0 : (v))
+
+/* One line for one element. Returns 1 when the element looks WRONG (no box,
+ * or a box with zero height) so the caller can descend a level to localize. */
+static int html_pagemap_line(dom_node *n, int depth)
+{
+	char brief[88];
+	struct box *b;
+	dom_node *ch = NULL;
+	dom_node *nx = NULL;
+	int kids = 0;
+	int x = 0, y = 0, w = 0, h = 0;
+	const char *disp = "-";
+	int suspicious;
+
+	html_pagemap_brief(n, brief, (int)sizeof brief);
+
+	if (dom_node_get_first_child(n, &ch) != DOM_NO_ERR) ch = NULL;
+	while (ch != NULL) {
+		dom_node_type t2 = (dom_node_type)0;
+		if (dom_node_get_node_type(ch, &t2) == DOM_NO_ERR &&
+				t2 == DOM_ELEMENT_NODE)
+			kids++;
+		nx = NULL;
+		if (dom_node_get_next_sibling(ch, &nx) != DOM_NO_ERR) nx = NULL;
+		dom_node_unref(ch);
+		ch = nx;
+	}
+
+	b = box_for_node(n);
+	if (b != NULL) {
+		box_coords(b, &x, &y);
+		w = HTML_PAGEMAP_SANE(b->width);
+		h = HTML_PAGEMAP_SANE(b->height);
+		if (b->style != NULL) {
+			disp = (css_computed_display_static(b->style) ==
+					CSS_DISPLAY_NONE) ? "NONE" : "ok";
+		}
+	}
+	suspicious = (b == NULL || h == 0);
+	macsurf_debug_log_writef(
+			"LIFE pagemap %s%s kids=%d box=%d y=%d w=%d h=%d disp=%s",
+			(depth > 0) ? "  > " : "",
+			brief, kids, (b != NULL) ? 1 : 0, y, w, h, disp);
+	return suspicious;
+}
+
+void html_pagemap_dump(html_content *c, const char *when)
+{
+	dom_element *root = NULL;
+	dom_node *body = NULL;
+	dom_node *ch = NULL;
+	dom_node *nx = NULL;
+	int shown = 0;
+
+	if (c == NULL || c->document == NULL) return;
+	if (macsurf_pagemap_dumps >= MACSURF_PAGEMAP_MAX_DUMPS) return;
+	macsurf_pagemap_dumps++;
+
+	/* find <body>: documentElement's first element child named BODY */
+	if (dom_document_get_document_element(c->document, &root) != DOM_NO_ERR
+			|| root == NULL) {
+		macsurf_debug_log_writef("LIFE pagemap[%s] NO documentElement",
+				when);
+		return;
+	}
+	if (dom_node_get_first_child((dom_node *)root, &ch) != DOM_NO_ERR)
+		ch = NULL;
+	while (ch != NULL) {
+		dom_node_type t2 = (dom_node_type)0;
+		dom_string *nm = NULL;
+		if (dom_node_get_node_type(ch, &t2) == DOM_NO_ERR &&
+				t2 == DOM_ELEMENT_NODE &&
+				dom_node_get_node_name(ch, &nm) == DOM_NO_ERR &&
+				nm != NULL) {
+			int is_body = (strcasecmp(dom_string_data(nm), "body")
+					== 0);
+			dom_string_unref(nm);
+			if (is_body) { body = ch; break; }
+		} else if (nm != NULL) {
+			dom_string_unref(nm);
+		}
+		nx = NULL;
+		if (dom_node_get_next_sibling(ch, &nx) != DOM_NO_ERR) nx = NULL;
+		dom_node_unref(ch);
+		ch = nx;
+	}
+	dom_node_unref((dom_node *)root);
+	if (body == NULL) {
+		macsurf_debug_log_writef("LIFE pagemap[%s] NO body", when);
+		return;
+	}
+
+	macsurf_debug_log_writef(
+		"LIFE pagemap[%s] ---- body sections (tag#id.class kids box y w h disp)",
+		when);
+	if (dom_node_get_first_child(body, &ch) != DOM_NO_ERR) ch = NULL;
+	while (ch != NULL && shown < 40) {
+		dom_node_type t2 = (dom_node_type)0;
+		if (dom_node_get_node_type(ch, &t2) == DOM_NO_ERR &&
+				t2 == DOM_ELEMENT_NODE) {
+			shown++;
+			if (html_pagemap_line(ch, 0)) {
+				/* looks wrong: descend one level to localize */
+				dom_node *gc = NULL;
+				dom_node *gn = NULL;
+				int sub = 0;
+				if (dom_node_get_first_child(ch, &gc) != DOM_NO_ERR)
+					gc = NULL;
+				while (gc != NULL && sub < 8) {
+					dom_node_type t3 = (dom_node_type)0;
+					if (dom_node_get_node_type(gc, &t3) ==
+							DOM_NO_ERR &&
+							t3 == DOM_ELEMENT_NODE) {
+						(void) html_pagemap_line(gc, 1);
+						sub++;
+					}
+					gn = NULL;
+					if (dom_node_get_next_sibling(gc, &gn)
+							!= DOM_NO_ERR)
+						gn = NULL;
+					dom_node_unref(gc);
+					gc = gn;
+				}
+			}
+		}
+		nx = NULL;
+		if (dom_node_get_next_sibling(ch, &nx) != DOM_NO_ERR) nx = NULL;
+		dom_node_unref(ch);
+		ch = nx;
+	}
+	macsurf_debug_log_writef("LIFE pagemap[%s] ---- end (%d sections)",
+			when, shown);
+	dom_node_unref(body);
+}
+/* ====================================================================== */
 
 /* Documented in html_internal.h */
 nserror
@@ -458,6 +677,7 @@ html_proceed_to_done(html_content *html)
 						html->document);
 			}
 			content_set_done(&html->base);
+			html_pagemap_dump(html, "done"); /* fixes1015 */
 			return NSERROR_OK;
 		}
 		break;
@@ -2476,6 +2696,7 @@ static void html_reconvert_done(html_content *c, bool success)
 	macsurf_debug_log_writef("LIFE reconvert in_progress=0 seq=%ld (done-ok)",
 			(long) macsurf_reconvert_seq);
 	macsurf_debug_log_reconv_flush(0);
+	html_pagemap_dump(c, "reconvert"); /* fixes1015 */
 	macsurf_reconv_pos_set("reconvert-idle", (long) macsurf_reconvert_seq,
 			0, "");
 	macsurf_reconv_pos_flush();

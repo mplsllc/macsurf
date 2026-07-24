@@ -1762,6 +1762,125 @@ static JSValue qjs_el_getAttribute_data(JSContext *ctx,
 	return ret;
 }
 
+/* ====================================================================== */
+/* fixes1015 — THE FULL JS/DOM AUDIT TRAIL.
+ *
+ * Multiple rounds have died guessing what a page did from aggregate counters
+ * (mutcensus counts mutations but not WHAT mutated; the event gate counts
+ * types but not targets; geometry reads were invisible). This block gives
+ * every audit line an IDENTITY: which element, which value, which listener,
+ * which read. All LIFE-prefixed (anything else is dropped by the failures-only
+ * gate), all budgeted so a runaway page cannot flood the log forever -- the
+ * budgets are sized to cover the whole first page load, which is the part
+ * that has been going wrong.
+ *
+ * This is diagnostic instrumentation: when the current bug class is closed,
+ * the budgets can be dropped, but the helpers should stay -- identity-free
+ * logging is how we got here. */
+
+/* Copy src into dst (cap includes the NUL), mapping CR/LF/TAB to spaces --
+ * the log is CR-terminated, so an embedded newline would split the line. */
+static void qjs_audit_copy(char *dst, int cap, const char *src)
+{
+	int i = 0;
+	if (cap <= 0) return;
+	if (src != NULL) {
+		while (i < cap - 1 && src[i] != '\0') {
+			char ch = src[i];
+			if (ch == '\r' || ch == '\n' || ch == '\t') ch = ' ';
+			dst[i] = ch;
+			i++;
+		}
+	}
+	dst[i] = '\0';
+}
+
+/* "TAG#id.class" for an element (id/class truncated), "(ntypeN)" otherwise.
+ * NEVER touches a vtable on a non-element (the fixes846 lesson). */
+static void qjs_node_brief(dom_node *n, char *out, int cap)
+{
+	dom_node_type nt;
+	dom_string *ds;
+	dom_string *nds;
+	int pos = 0;
+
+	if (cap <= 0) return;
+	out[0] = '\0';
+	if (n == NULL) { qjs_audit_copy(out, cap, "(null)"); return; }
+	nt = (dom_node_type)0;
+	if (macsurf_dom_node_get_node_type(n, &nt) != DOM_NO_ERR) {
+		qjs_audit_copy(out, cap, "(?)");
+		return;
+	}
+	if ((int)nt != 1) {  /* 1 == ELEMENT; 3 text, 9 document, 11 fragment */
+		char tmp[16];
+		sprintf(tmp, "(ntype%d)", (int)nt);
+		qjs_audit_copy(out, cap, tmp);
+		return;
+	}
+	ds = NULL;
+	if (macsurf_dom_element_get_tag_name((dom_element *)n, &ds) == DOM_NO_ERR
+			&& ds != NULL) {
+		const char *d = dom_string_data(ds);
+		int i = 0;
+		while (d[i] != '\0' && i < 12 && pos < cap - 1)
+			out[pos++] = d[i++];
+		macsurf_dom_string_unref(ds);
+	}
+	nds = qjs_make_domstr("id");
+	if (nds != NULL) {
+		ds = NULL;
+		if (macsurf_dom_element_get_attribute((dom_element *)n, nds, &ds)
+				== DOM_NO_ERR && ds != NULL) {
+			const char *d = dom_string_data(ds);
+			int i = 0;
+			if (d[0] != '\0' && pos < cap - 1) out[pos++] = '#';
+			while (d[i] != '\0' && i < 24 && pos < cap - 1)
+				out[pos++] = d[i++];
+			macsurf_dom_string_unref(ds);
+		}
+		macsurf_dom_string_unref(nds);
+	}
+	nds = qjs_make_domstr("class");
+	if (nds != NULL) {
+		ds = NULL;
+		if (macsurf_dom_element_get_attribute((dom_element *)n, nds, &ds)
+				== DOM_NO_ERR && ds != NULL) {
+			const char *d = dom_string_data(ds);
+			int i = 0;
+			if (d[0] != '\0' && pos < cap - 1) out[pos++] = '.';
+			while (d[i] != '\0' && i < 32 && pos < cap - 1) {
+				out[pos++] = (d[i] == ' ') ? '.' : d[i];
+				i++;
+			}
+			macsurf_dom_string_unref(ds);
+		}
+		macsurf_dom_string_unref(nds);
+	}
+	out[pos] = '\0';
+}
+
+/* One line per DOM mutation: op, target identity, and the value/detail.
+ * Budgeted per session; the first page load is what matters. */
+static long g_mut_audit_budget = 500;
+
+static void qjs_mut_audit(const char *op, dom_node *target,
+		const char *arg, const char *val)
+{
+	char tb[80];
+	char vb[100];
+	if (g_mut_audit_budget <= 0) return;
+	g_mut_audit_budget--;
+	qjs_node_brief(target, tb, (int)sizeof tb);
+	qjs_audit_copy(vb, (int)sizeof vb, val);
+	macsurf_debug_log_writef("LIFE mut %s %s %s %s",
+			op, tb, (arg != NULL) ? arg : "", vb);
+	if (g_mut_audit_budget == 0)
+		macsurf_debug_log_writef("LIFE mut audit budget exhausted "
+				"(further mutations counted in mutcensus only)");
+}
+/* ====================================================================== */
+
 static JSValue qjs_el_setAttribute_data(JSContext *ctx,
 		JSValueConst this_val, int argc, JSValueConst *argv,
 		int magic, JSValueConst *func_data)
@@ -1792,6 +1911,8 @@ static JSValue qjs_el_setAttribute_data(JSContext *ctx,
 	} else if (strcmp(name_cstr, "style") == 0) {
 		attr_kind = MACOS9_DOMMUT_SETATTR_STYLE;
 	}
+	/* fixes1015 — audit WHO sets WHAT to WHAT. */
+	qjs_mut_audit("setattr", (dom_node *)el, name_cstr, val_cstr);
 	JS_FreeCString(ctx, name_cstr);
 	JS_FreeCString(ctx, val_cstr);
 	if (name_ds && val_ds) {
@@ -1872,6 +1993,7 @@ static JSValue qjs_el_set_text_content_data(JSContext *ctx,
 	s = JS_ToCString(ctx, argv[0]);
 	if (s == NULL) return JS_UNDEFINED;
 	ds = qjs_make_domstr(s);
+	qjs_mut_audit("textContent=", (dom_node *)el, NULL, s); /* fixes1015 */
 	JS_FreeCString(ctx, s);
 	if (ds) {
 		macsurf_dom_node_set_text_content((dom_node *)el, ds);
@@ -1978,6 +2100,12 @@ static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
 			(const uint8_t *) html_src, html_len);
 	dom_hubbub_parser_completed(parser);
 	dom_hubbub_parser_destroy(parser);
+	/* fixes1015 — audit with the markup head while the string is alive. */
+	{
+		char lenbuf[24];
+		sprintf(lenbuf, "len=%ld", (long)html_len);
+		qjs_mut_audit("innerHTML=", (dom_node *)el, lenbuf, html_src);
+	}
 	JS_FreeCString(ctx, html_src);
 
 	/* Clear existing children before inserting the parsed content --
@@ -2244,6 +2372,11 @@ static JSValue qjs_el_append_child_data(JSContext *ctx,
 	err = qjs_dom_mut_check(ctx, "appendChild", exc, (dom_node *)el,
 			(dom_node *)child_el);
 	if (JS_IsException(err)) return err;
+	{	/* fixes1015 */
+		char cb[80];
+		qjs_node_brief((dom_node *)child_el, cb, (int)sizeof cb);
+		qjs_mut_audit("appendChild", (dom_node *)el, "<-", cb);
+	}
 	if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
 			(void *) el, MACOS9_DOMMUT_APPENDCHILD);
 	return JS_DupValue(ctx, argv[0]);
@@ -2274,6 +2407,12 @@ static JSValue qjs_el_remove_child_data(JSContext *ctx,
 	err = qjs_dom_mut_check(ctx, "removeChild", exc, (dom_node *)el,
 			(dom_node *)child_el);
 	if (JS_IsException(err)) return err;
+	{	/* fixes1015 — REMOVALS are the prime suspect for vanishing
+		 * sections; identity here is the whole point of the audit. */
+		char cb[80];
+		qjs_node_brief((dom_node *)child_el, cb, (int)sizeof cb);
+		qjs_mut_audit("removeChild", (dom_node *)el, "->", cb);
+	}
 	if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
 			(void *) el, MACOS9_DOMMUT_REMOVECHILD);
 	return JS_DupValue(ctx, argv[0]);
@@ -2307,6 +2446,11 @@ static JSValue qjs_el_insert_before_data(JSContext *ctx,
 	err = qjs_dom_mut_check(ctx, "insertBefore", exc, (dom_node *)el,
 			(dom_node *)new_el);
 	if (JS_IsException(err)) return err;
+	{	/* fixes1015 */
+		char cb[80];
+		qjs_node_brief((dom_node *)new_el, cb, (int)sizeof cb);
+		qjs_mut_audit("insertBefore", (dom_node *)el, "<-", cb);
+	}
 	if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
 			(void *) el, MACOS9_DOMMUT_INSERTBEFORE);
 	return JS_DupValue(ctx, argv[0]);
@@ -2334,6 +2478,7 @@ static JSValue qjs_el_remove_attribute_data(JSContext *ctx,
 	} else if (strcmp(name_cstr, "style") == 0) {
 		rm_kind = MACOS9_DOMMUT_SETATTR_STYLE;
 	}
+	qjs_mut_audit("rmattr", (dom_node *)el, name_cstr, NULL); /* fixes1015 */
 	JS_FreeCString(ctx, name_cstr);
 	if (name_ds) {
 		macsurf_dom_element_remove_attribute(el, name_ds);
@@ -3563,6 +3708,10 @@ static void qjs_box_origin(struct box *b, int *ox, int *oy)
 	*oy = y;
 }
 
+/* fixes1015 — defined just below, used by get_rect above its definition. */
+static void qjs_geom_audit(const char *what, JSValueConst wrapper,
+		const char *result);
+
 static JSValue qjs_el_get_rect(JSContext *ctx, JSValueConst this_val,
 		int argc, JSValueConst *argv, int magic, JSValueConst *func_data)
 {
@@ -3589,6 +3738,12 @@ static JSValue qjs_el_get_rect(JSContext *ctx, JSValueConst this_val,
 	 * display:none and what this engine answered for everything pre-1011.
 	 * Subtracting the scroll here produced top=-scroll_y, a fabricated
 	 * "above the viewport" position no browser ever reports. */
+	{	/* fixes1015 */
+		char rb[64];
+		sprintf(rb, "x=%d y=%d w=%d h=%d%s", x, y, w, h,
+				(b == NULL) ? " (no box)" : "");
+		qjs_geom_audit("getRect", func_data[0], rb);
+	}
 
 	r = JS_NewObject(ctx);
 	JS_SetPropertyStr(ctx, r, "x", JS_NewInt32(ctx, x));
@@ -3600,6 +3755,22 @@ static JSValue qjs_el_get_rect(JSContext *ctx, JSValueConst this_val,
 	JS_SetPropertyStr(ctx, r, "width", JS_NewInt32(ctx, w));
 	JS_SetPropertyStr(ctx, r, "height", JS_NewInt32(ctx, h));
 	return r;
+}
+
+/* fixes1015 — geometry-read audit: what measuring code actually SEES is the
+ * question three rounds have argued about from theory. Budgeted. */
+static long g_geom_audit = 150;
+
+static const char *qjs_metric_name(int magic);
+
+static void qjs_geom_audit(const char *what, JSValueConst wrapper,
+		const char *result)
+{
+	char nb[80];
+	if (g_geom_audit <= 0) return;
+	g_geom_audit--;
+	qjs_node_brief(qjs_get_node(wrapper), nb, (int)sizeof nb);
+	macsurf_debug_log_writef("LIFE geom %s %s -> %s", what, nb, result);
 }
 
 /* One accessor for every box-derived metric, selected by `magic`, so there is
@@ -3629,10 +3800,18 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 	 * width/height and the damage outlived the measurement. Once settled, a
 	 * missing box really does mean "not rendered" and 0 is the true answer
 	 * (jQuery :hidden relies on it). */
-	if (!qjs_geometry_settled()) return JS_UNDEFINED;
+	if (!qjs_geometry_settled()) {
+		qjs_geom_audit(qjs_metric_name(magic), func_data[0],
+				"undefined (unsettled)");
+		return JS_UNDEFINED;
+	}
 
 	b = qjs_box_for(func_data[0]);
-	if (b == NULL) return JS_NewInt32(ctx, 0);
+	if (b == NULL) {
+		qjs_geom_audit(qjs_metric_name(magic), func_data[0],
+				"0 (no box)");
+		return JS_NewInt32(ctx, 0);
+	}
 
 	bx = b->border[LEFT].width + b->border[RIGHT].width;
 	by = b->border[TOP].width + b->border[BOTTOM].width;
@@ -3673,7 +3852,27 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 	default: v = 0; break;
 	}
 	if (v < 0) v = 0;
+	{	/* fixes1015 */
+		char rb[24];
+		sprintf(rb, "%d", v);
+		qjs_geom_audit(qjs_metric_name(magic), func_data[0], rb);
+	}
 	return JS_NewInt32(ctx, v);
+}
+
+static const char *qjs_metric_name(int magic)
+{
+	switch (magic) {
+	case QJS_M_OFFW: return "offsetWidth";
+	case QJS_M_OFFH: return "offsetHeight";
+	case QJS_M_CLIW: return "clientWidth";
+	case QJS_M_CLIH: return "clientHeight";
+	case QJS_M_OFFT: return "offsetTop";
+	case QJS_M_OFFL: return "offsetLeft";
+	case QJS_M_SCRW: return "scrollWidth";
+	case QJS_M_SCRH: return "scrollHeight";
+	default:         return "metric?";
+	}
 }
 
 /* fixes1011 — getComputedStyle, over the REAL cascade.
@@ -3724,6 +3923,20 @@ static JSValue qjs_get_computed_style(JSContext *ctx, JSValueConst this_val,
 	out = JS_NewObject(ctx);
 	if (argc >= 1 && JS_IsObject(argv[0])) {
 		b = qjs_box_for(argv[0]);
+	}
+	/* fixes1015 — what did getComputedStyle actually answer? */
+	if (argc >= 1 && JS_IsObject(argv[0])) {
+		if (b != NULL && b->style != NULL) {
+			char rb[48];
+			sprintf(rb, "disp=%s w=%d",
+				qjs_css_display_name(
+					css_computed_display_static(b->style)),
+				qjs_sane(b->width));
+			qjs_geom_audit("computedStyle", argv[0], rb);
+		} else {
+			qjs_geom_audit("computedStyle", argv[0],
+				"inline-only (no box/style)");
+		}
 	}
 
 	if (b != NULL && b->style != NULL) {
@@ -3885,7 +4098,17 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 	hit = qjs_wrap_lookup(node);
 	if (hit == NULL) {
 		/* No wrapper: this node was never touched by script, or the realm
-		 * has been rebuilt and its wrappers drained. Nothing to run. */
+		 * has been rebuilt and its wrappers drained. Nothing to run.
+		 * fixes1015 — this silent drop IS a lost handler if the node ever
+		 * had one; make it visible. */
+		static long bm = 60;
+		if (bm > 0) {
+			char nb[80];
+			bm--;
+			qjs_node_brief(node, nb, (int)sizeof nb);
+			macsurf_debug_log_writef(
+				"LIFE evfire MISS (no wrapper) target=%s", nb);
+		}
 		macsurf_dom_node_unref(node);
 		return;
 	}
@@ -3897,6 +4120,17 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 	if (dom_event_get_type(evt, &type_ds) != DOM_NO_ERR || type_ds == NULL) {
 		macsurf_dom_node_unref(node);
 		return;
+	}
+	/* fixes1015 — every real dispatch that reaches script, with identity. */
+	{
+		static long bf = 300;
+		if (bf > 0) {
+			char nb[80];
+			bf--;
+			qjs_node_brief(node, nb, (int)sizeof nb);
+			macsurf_debug_log_writef("LIFE evfire %s at %s",
+					dom_string_data(type_ds), nb);
+		}
 	}
 
 	/* fixes1008 (1d) — a REAL Event instance, not an ad-hoc object.
@@ -4303,6 +4537,18 @@ static void qjs_dom_register_listener(dom_node *node, const char *type,
 	/* fixes1008 — once per (node, type, capture). See qjs_reg_seen: libdom
 	 * appends duplicates and replays the whole handler list per entry. */
 	if (qjs_reg_seen(node, type, capture)) return;
+	/* fixes1015 — audit every NEW libdom registration with its target, so
+	 * "the page wired itself up" is checkable listener by listener. */
+	{
+		static long b = 250;
+		if (b > 0) {
+			char nb[80];
+			b--;
+			qjs_node_brief(node, nb, (int)sizeof nb);
+			macsurf_debug_log_writef("LIFE evreg %s cap=%d on %s",
+					type, capture, nb);
+		}
+	}
 	if (g_qjs_dom_listener == NULL) {
 		(void)dom_event_listener_create(qjs_dom_listener_cb, NULL,
 				&g_qjs_dom_listener);
@@ -6321,6 +6567,33 @@ static JSValue qjs_crypto_get_random_values(JSContext *ctx,
 	return JS_DupValue(ctx, argv[0]);   /* spec: returns the same array */
 }
 
+/* fixes1015 — __msLife: a LIFE-prefixed log line callable from the JS shims.
+ * console.error's WORK routing is compiled out of shipping builds, which is
+ * exactly how earlier shim diagnostics went dark. This one survives the
+ * failures-only gate by construction. Budgeted. */
+static JSValue qjs_ms_life(JSContext *ctx,
+	JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	static long b = 250;
+	const char *s;
+	(void)this_val;
+	if (b <= 0 || argc < 1) return JS_UNDEFINED;
+	s = JS_ToCString(ctx, argv[0]);
+	if (s != NULL) {
+		char vb[160];
+		int i = 0;
+		while (i < (int)sizeof(vb) - 1 && s[i] != '\0') {
+			vb[i] = (s[i] == '\r' || s[i] == '\n') ? ' ' : s[i];
+			i++;
+		}
+		vb[i] = '\0';
+		b--;
+		macsurf_debug_log_writef("LIFE js %s", vb);
+		JS_FreeCString(ctx, s);
+	}
+	return JS_UNDEFINED;
+}
+
 static JSValue qjs_crypto_random_uuid(JSContext *ctx,
 	JSValueConst this_val, int argc, JSValueConst *argv)
 {
@@ -6449,6 +6722,7 @@ static void register_browser_globals(JSContext *ctx)
 	qjs_set_func(ctx, global, "__scrollY",   qjs_js_scroll_y, 0);
 	qjs_set_func(ctx, global, "__scrollTo",  qjs_js_scroll_to, 2);
 	qjs_set_func(ctx, global, "__gcsNative", qjs_get_computed_style, 1);
+	qjs_set_func(ctx, global, "__msLife",    qjs_ms_life, 1); /* fixes1015 */
 
 	/* --- alert / confirm / prompt --- */
 	qjs_set_func(ctx, global, "alert",   qjs_alert,   1);
@@ -6884,8 +7158,13 @@ static void register_browser_globals(JSContext *ctx)
 	 * real timer arena (setTimeout), asynchronously, exactly as a browser
 	 * delivers observer records. */
 	macsurf_qjs__safe_eval(ctx,
+		/* fixes1015 — MutationObserver/ResizeObserver are NO-OPS; a page
+		 * that waits on one waits forever. Log each observe() so that
+		 * failure mode is visible instead of silent. */
 		"function _Observer(cb){this._cb=cb;}"
-		"_Observer.prototype.observe=function(){};"
+		"_Observer.prototype.observe=function(t){"
+			"try{__msLife('WANT Mutation/ResizeObserver.observe '"
+			"+((t&&(t.id||t.tagName))||'?')+' (NO-OP)');}catch(_){}};"
 		"_Observer.prototype.unobserve=function(){};"
 		"_Observer.prototype.disconnect=function(){};"
 		"_Observer.prototype.takeRecords=function(){return [];};"
@@ -6901,6 +7180,9 @@ static void register_browser_globals(JSContext *ctx)
 		"}"
 		"IntersectionObserver.prototype.observe=function(el){"
 			"if(!el)return;"
+			"try{__msLife('WANT IntersectionObserver.observe '"
+			"+((el.id||el.tagName)||'?')+' (always intersecting)');}"
+			"catch(_){}"
 			"this._targets.push(el);"
 			"var self=this;"
 			"setTimeout(function(){"
@@ -6999,7 +7281,12 @@ static void register_browser_globals(JSContext *ctx)
 				"inl.setProperty(p,v);};"
 			"o.cssText=(inl&&inl.cssText)||'';"
 			"return o;};"
+		/* fixes1015 — ours answers matches:false unconditionally, so any
+		 * rendering that branches on a media query silently takes the
+		 * false path. Log which queries the page actually asked. */
 		"this.matchMedia=function(q){"
+			"try{__msLife('WANT matchMedia \"'+q+'\" (answered false)');}"
+			"catch(_){}"
 			"return {matches:false,media:q||'',"
 				"addListener:function(){},removeListener:function(){},"
 				"addEventListener:function(){},removeEventListener:function(){}};};"
@@ -9133,6 +9420,15 @@ unsigned char js_exec(struct jsthread *thread,
 		return 0;
 	}
 	JS_FreeValue(thread->ctx, val);
+	/* fixes1015 — pair every `LIFE js src` with an OUTCOME, so a clean run
+	 * is distinguishable from a script that never finished. Failures already
+	 * log above; this is the missing success half of the audit. */
+	{
+		char sname[48];
+		qjs_short_name(name, sname, (int)sizeof(sname));
+		macsurf_debug_log_writef("LIFE js done ok [%s len=%ld]",
+				sname, (long)txtlen);
+	}
 	return 1;
 }
 

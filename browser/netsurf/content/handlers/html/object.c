@@ -767,8 +767,19 @@ html_object_callback(hlcache_handle *object,
 		 * this coalesced (fires once per completed batch -- no storm). */
 		content__reformat(&c->base, false, c->base.available_width,
 				c->base.available_height);
+		/* fixes1015 — THE READY->DONE TRANSITION EVERY REAL PAGE TAKES,
+		 * and it skipped the `load` event for its entire existence. On any
+		 * page with images, base.active stays >0 until the last object
+		 * lands, so the transition happens HERE -- not in
+		 * html_proceed_to_done, which is where fixes881 put the one and
+		 * only js_fire_window_load. Hardware logs show it plainly:
+		 * `domready fired` on every page, `window load fired` on NONE.
+		 * Every $(window).on('load') section initialiser, every slider
+		 * setPosition-on-load, every deferred builder therefore never ran.
+		 * Route through html_proceed_to_done (active==0 and READY are both
+		 * guaranteed by the guard above) so `load` finally fires. */
 		if (c->base.status == CONTENT_STATUS_READY)
-			content_set_done(&c->base);
+			html_proceed_to_done(c);
 	} else if (nsoption_bool(incremental_reflow) &&
 		   (event->type == CONTENT_MSG_DONE ||
 		    event->type == CONTENT_MSG_READY) &&
