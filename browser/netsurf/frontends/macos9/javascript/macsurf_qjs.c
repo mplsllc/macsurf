@@ -1874,15 +1874,17 @@ extern long g_geom_audit; /* defined below, near the metric accessors */
  * per-session budgets died mid-page-one and 68kmla was never covered. */
 void macsurf_qjs_audit_reset(void)
 {
-	/* fixes1017 — halved: the fixes1016 build spent ~1000 flushed log
-	 * writes on the hackaday load alone (+15s wall-clock on the iMac).
-	 * These still cover the decisive first stretch of every page. */
-	g_mut_audit_budget = 250;
-	g_evreg_audit = 80;
-	g_evmiss_audit = 30;
-	g_evfire_audit = 80;
-	g_mslife_audit = 120;
-	g_geom_audit = 100;
+	/* fixes1020 — SKELETON budgets. Every line is a synchronous write +
+	 * volume flush and the picture is nearly complete; keep just enough
+	 * to see a new page's opening moves. The full-audit values (250/80/
+	 * 30/80/120/100, fixes1017) go back in only when hunting something
+	 * specific. */
+	g_mut_audit_budget = 60;
+	g_evreg_audit = 20;
+	g_evmiss_audit = 10;
+	g_evfire_audit = 20;
+	g_mslife_audit = 60;
+	g_geom_audit = 30;
 }
 
 static void qjs_mut_audit(const char *op, dom_node *target,
@@ -3481,11 +3483,41 @@ void macsurf_qjs_clear_event_detail(void);
  * bubble to window through the 1b fan-out). Gated like the rest, so a page
  * with no scroll listener pays nothing on a machine where scrolling is
  * already the most performance-sensitive thing there is. */
+/* fixes1020 — THROTTLE. This fired a full libdom dispatch (Event object +
+ * every jQuery scroll handler on the page) per SCROLL NOTCH, which is what
+ * made scrolling crawl on real pages the moment fixes1013 wired it. 4 Hz
+ * leading edge plus one TRAILING fire, so handlers that check the final
+ * position ("has it scrolled into view") still see it after the throttle
+ * window closes. A page with no scroll listener still pays nothing. */
+static double g_scroll_last_us = 0.0;
+static int g_scroll_trailing = 0;
+
 void macsurf_qjs_fire_scroll(void);
+
+static void qjs_scroll_trailing_cb(void *p)
+{
+	(void)p;
+	g_scroll_trailing = 0;
+	g_scroll_last_us = 0.0;   /* let the trailing fire through */
+	macsurf_qjs_fire_scroll();
+}
+
 void macsurf_qjs_fire_scroll(void)
 {
+	extern double macos9_micros(void);
+	double now;
 	if (g_qjs_document == NULL) return;
 	if (!macsurf_qjs_event_type_live("scroll")) return;
+	now = macos9_micros();
+	if (now - g_scroll_last_us < 250000.0) {
+		if (!g_scroll_trailing) {
+			g_scroll_trailing = 1;
+			(void) macos9_schedule(300, qjs_scroll_trailing_cb,
+					NULL);
+		}
+		return;
+	}
+	g_scroll_last_us = now;
 	(void) fire_generic_dom_event(corestring_dom_scroll,
 			(dom_node *) g_qjs_document, true, false);
 }

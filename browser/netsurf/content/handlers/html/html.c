@@ -632,7 +632,7 @@ void html_pagemap_dump(html_content *c, const char *when)
 
 	if (c == NULL || c->document == NULL) return;
 	if (strcmp(when, "ready") == 0) nav_dumps = 0;
-	if (nav_dumps >= 6) return;
+	if (nav_dumps >= 3) return;  /* fixes1020: ready + done + 1 reconvert */
 	if (macsurf_pagemap_dumps >= MACSURF_PAGEMAP_MAX_DUMPS) return;
 	macsurf_pagemap_dumps++;
 	nav_dumps++;
