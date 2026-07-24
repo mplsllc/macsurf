@@ -2884,6 +2884,40 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 			"return 4;};"
 		"el.isEqualNode=function(o){return o===el;};"
 		"el.isSameNode=function(o){return o===el;};"
+		/* fixes1009 — ELEMENT-SCOPED getElementsBy*.
+		 *
+		 * These existed on `document` (fixes873) but NOT on elements, and
+		 * hardware named it: with fixes1008 in, the only two JS exceptions
+		 * left on hackaday.com were both
+		 *   TypeError: not a function   at ...:17:41
+		 * which is `container.getElementsByTagName('ul')[0]` in the WordPress
+		 * navigation script. The bundle also calls .getElementsByClassName
+		 * three times.
+		 *
+		 * Same delegation document uses: querySelectorAll is element-scoped
+		 * and already native (fixes871), and a bare tag or .class IS a
+		 * compound selector -- so this is the same query, and there is one
+		 * matcher rather than a second subtly-different walker. Returns a
+		 * static array, not a live HTMLCollection; every caller here
+		 * indexes or iterates, which an array serves. */
+		"el.getElementsByTagName=function(t){"
+			"return el.querySelectorAll(String(t));};"
+		"el.getElementsByClassName=function(c){"
+			"return el.querySelectorAll('.'+String(c).split(/\\s+/)"
+				".filter(function(x){return !!x;}).join('.'));};"
+		"el.getElementsByName=function(n){"
+			"return el.querySelectorAll('[name=\"'+String(n)+'\"]');};"
+		/* Cheap neighbours, same round: each is one line and each throws
+		 * rather than degrading when absent. */
+		"el.hasChildNodes=function(){return !!el.firstChild;};"
+		"el.getRootNode=function(){var n=el;"
+			"while(n&&n.parentNode)n=n.parentNode;return n||el;};"
+		"el.toggleAttribute=function(n,f){"
+			"var has=!!(el.hasAttribute&&el.hasAttribute(n));"
+			"var want=(f===undefined)?!has:!!f;"
+			"if(want)el.setAttribute(n,'');else el.removeAttribute(n);"
+			"return want;};"
+		"el.normalize=function(){};"
 		/* Form-control state. `checked` and `selected` are properties in the
 		 * DOM but attributes here, which is the honest approximation until
 		 * they are wired to struct form_control; `disabled` reflects. */

@@ -4662,5 +4662,76 @@ int main(void)
 	}
 	fprintf(stderr, "=== Test 40 PASS: event model + DOM surface ===\n");
 
+	/* --- Test 41: element-scoped getElementsBy* (fixes1009) ----------------
+	 *
+	 * Hardware named this one. With fixes1008 in, the ONLY two JS exceptions
+	 * left on hackaday.com were both
+	 *   TypeError: not a function   at <bundle>:17:41
+	 * and line 17 col 41 of that bundle is
+	 *   container.getElementsByTagName('ul')[0]
+	 * -- the WordPress navigation script. getElementsBy* existed on document
+	 * but never on elements.
+	 *
+	 * Asserts SCOPING, not just presence: a document-wide fallback would
+	 * satisfy "is a function" while returning the wrong nodes, which is the
+	 * more dangerous failure because it looks like it works. */
+	fprintf(stderr, "\n=== Test 41: element-scoped getElementsBy* ===\n");
+	{
+		const char *probe =
+			"globalThis.__t41={};var r=globalThis.__t41;"
+			"var host=document.createElement('div');"
+			"var inner=document.createElement('ul');"
+			"inner.className='wanted';"
+			"host.appendChild(inner);"
+			"var other=document.createElement('ul');"
+			"other.className='wanted';"
+			"var far=document.getElementById('feed');"
+			"if(far)far.appendChild(other);"   /* OUTSIDE host, in the doc */
+			"r.isFn=(typeof host.getElementsByTagName==='function');"
+			"r.isCls=(typeof host.getElementsByClassName==='function');"
+			"r.byTag=r.isFn?host.getElementsByTagName('ul').length:-1;"
+			"r.byCls=r.isCls?host.getElementsByClassName('wanted').length:-1;"
+			"r.hasKids=(typeof host.hasChildNodes==='function')?"
+				"host.hasChildNodes():null;"
+			"r.toggle=(typeof host.toggleAttribute==='function')?"
+				"(host.toggleAttribute('hidden'),host.hasAttribute('hidden')):null;";
+		unsigned char ok = js_exec(thread, (const unsigned char *)probe,
+				strlen(probe), "t41-probe.js");
+		if (!ok) { fprintf(stderr, "FAIL: t41 probe threw\n"); return 1; }
+		{
+			const char *chk =
+				"var r=globalThis.__t41;"
+				"if(!r.isFn)"
+					"throw new Error('ASSERT FAIL: element.getElementsByTagName "
+						"is not a function -- the exact throw hackaday hit at "
+						"bundle:17:41, container.getElementsByTagName(\"ul\").');"
+				"if(!r.isCls)"
+					"throw new Error('ASSERT FAIL: "
+						"element.getElementsByClassName missing');"
+				"if(r.byTag!==1)"
+					"throw new Error('ASSERT FAIL: getElementsByTagName "
+						"returned '+r.byTag+' , expected exactly 1 -- it must "
+						"be SCOPED to the element. A document-wide fallback "
+						"would also be \"a function\" while returning the "
+						"wrong nodes, which is worse than throwing.');"
+				"if(r.byCls!==1)"
+					"throw new Error('ASSERT FAIL: getElementsByClassName "
+						"returned '+r.byCls+', expected 1 (scoped)');"
+				"if(r.hasKids!==true)"
+					"throw new Error('ASSERT FAIL: hasChildNodes');"
+				"if(r.toggle!==true)"
+					"throw new Error('ASSERT FAIL: toggleAttribute');";
+			ok = js_exec(thread, (const unsigned char *)chk,
+					strlen(chk), "t41-chk.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: Test 41 -- element-scoped "
+						"getElementsBy*\n");
+				return 1;
+			}
+		}
+		fprintf(stderr, "  scoped to the element, not the document\n");
+	}
+	fprintf(stderr, "=== Test 41 PASS: element-scoped getElementsBy* ===\n");
+
 	return 0;
 }
