@@ -1064,10 +1064,18 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 
 		/* fixes586 — bound the callback so a runaway script can't hang
 		 * (the interrupt handler checks g_qjs_script_deadline). */
-		prevdl = g_qjs_script_deadline;
-		mydl = macsurf_qjs_get_now() + (double)QJS_TIMER_TIMEOUT_MS;
-		if (prevdl == 0.0 || mydl < prevdl)
-			g_qjs_script_deadline = mydl;
+		/* fixes1001 — this armed the deadline DIRECTLY instead of going
+		 * through qjs_deadline_push, so fixes999's "0 == no deadline"
+		 * never reached it. With QJS_TIMER_TIMEOUT_MS == 0 it computed
+		 * `now + 0`, i.e. a deadline ALREADY EXPIRED, and the interrupt
+		 * handler aborted every timer callback on its first check --
+		 * "InternalError: interrupted" twice inside 67ms on hardware,
+		 * far too fast to be the Cmd-. it looked like. Every setTimeout
+		 * on the page was being killed the instant it ran.
+		 *
+		 * Use the shared push, which is the whole point of having one. */
+		prevdl = qjs_deadline_push((double)QJS_TIMER_TIMEOUT_MS);
+		mydl = g_qjs_script_deadline;
 		/* fixes876 — HTML spec calls timer callbacks with `this` = the window.
 		 * JS_UNDEFINED left strict-mode callbacks with `this === undefined`. */
 		this_obj = JS_GetGlobalObject(qctx);
@@ -1082,8 +1090,13 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 			JS_FreeValue(qctx, exc);
 			/* Deadline-abort of a still-live (repeating) timer: kill
 			 * it so the rogue interval can never re-freeze the UI. */
+			/* fixes1001 — mydl == 0 means NO deadline is armed, and
+			 * `now >= 0` is always true: without this guard every
+			 * repeating timer that merely THREW would be killed as
+			 * if it had timed out. Only a real deadline can retire
+			 * a timer. */
 			if (t->live && t->id == due_id[k] && t->ctx == qctx &&
-			    macsurf_qjs_get_now() >= mydl) {
+			    mydl != 0.0 && macsurf_qjs_get_now() >= mydl) {
 				macsurf_debug_log_writef(
 					"qjs: TIMER TIMEOUT -- repeating timer KILLED");
 				timer_slot_clear(t, 1);

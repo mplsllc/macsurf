@@ -66,7 +66,17 @@ void *macos9_deathrow_cur_fn = NULL;
  * stays -- it is one line per drain and still shows the shape of the churn.
  *
  * Re-enable by defining this when a teardown crash needs its victim named. */
-/* #define MACOS9_DEATHROW_TRACE_ENTRIES 1 */
+/* fixes1001 — RE-ENABLED, which is exactly the condition the line above
+ * describes: a teardown crash needs its victim named. Hardware died with
+ *   free <- hlcache_node_deathrow_teardown <- macos9_deathrow_drain
+ * (EXC_BAD_ACCESS at 0x00000008 -- a corrupted MSL free list, i.e. a double
+ * free or a stale pointer), and the last log line was a ledger, so the object
+ * that killed it is unknown. The trail is written BEFORE the teardown call, so
+ * the last line on disk IS the victim.
+ *
+ * Costs log volume and FlushVol time; turn it back off once the crash is
+ * named. */
+#define MACOS9_DEATHROW_TRACE_ENTRIES 1
 
 struct deathrow_rec {
 	void *ptr;
