@@ -1076,7 +1076,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		if (JS_IsException(ret)) {
 			JSValue exc = JS_GetException(qctx);
 			const char *str = JS_ToCString(qctx, exc);
-			macsurf_debug_log_writef("qjs timer exc: %s",
+			macsurf_debug_log_writef("LIFE qjs timer exc: %s",
 					str ? str : "?");
 			if (str) JS_FreeCString(qctx, str);
 			JS_FreeValue(qctx, exc);
@@ -7159,7 +7159,7 @@ unsigned char js_exec(struct jsthread *thread,
 		{
 			char sname[48];
 			qjs_short_name(name, sname, (int)sizeof(sname));
-			macsurf_debug_log_writef("WORK qjs exec err: %s [%s len=%ld]",
+			macsurf_debug_log_writef("LIFE qjs exec err: %s [%s len=%ld]",
 				estr ? estr : "?", sname, (long)txtlen);
 		}
 		if (estr) JS_FreeCString(thread->ctx, estr);
@@ -7184,7 +7184,7 @@ unsigned char js_exec(struct jsthread *thread,
 					 * truncated stack is worth even less than none. */
 					char sname[48];
 					qjs_short_name(name, sname, (int)sizeof(sname));
-					macsurf_debug_log_writef("WORK qjs stack: %s [%s]",
+					macsurf_debug_log_writef("LIFE qjs stack: %s [%s]",
 						ss, sname);
 					JS_FreeCString(thread->ctx, ss);
 				}
@@ -7458,7 +7458,7 @@ unsigned char js_fire_script_load(struct jsthread *thread,
 	if (JS_IsException(ret)) {
 		JSValue exc = JS_GetException(ctx);
 		const char *s = JS_ToCString(ctx, exc);
-		macsurf_debug_log_writef("WORK script %s handler exc: %s",
+		macsurf_debug_log_writef("LIFE script %s handler exc: %s",
 				ok ? "load" : "error", s ? s : "?");
 		if (s) JS_FreeCString(ctx, s);
 		JS_FreeValue(ctx, exc);
@@ -7626,7 +7626,7 @@ void macsurf_qjs_pump_all(void)
 					if (jctx != NULL) {
 						JSValue exc = JS_GetException(jctx);
 						const char *s = JS_ToCString(jctx, exc);
-						macsurf_debug_log_writef("WORK job exc: %s",
+						macsurf_debug_log_writef("LIFE job exc: %s",
 								s ? s : "?");
 						if (s) JS_FreeCString(jctx, s);
 						JS_FreeValue(jctx, exc);
