@@ -270,8 +270,11 @@ dom_exception _dom_event_target_dispatch(dom_event_target *et,
 				 * JS-local path -- and asserted a boolean, so none of them
 				 * could observe a count of 2.
 				 *
-				 * Reported upstream to NetSurf; if taken, this patch can
-				 * be dropped on the next vendor bump.
+				 * NOT YET reported upstream to NetSurf -- it is a
+				 * genuine spec bug in their tree and worth one message
+				 * to netsurf-dev / bugs.netsurf-browser.org. If they
+				 * take it, this patch can be dropped on the next vendor
+				 * bump instead of being carried forever.
 				 * ================================================= */
 				if ((le->capture &&
 						phase == DOM_CAPTURING_PHASE &&
