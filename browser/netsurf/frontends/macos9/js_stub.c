@@ -96,4 +96,9 @@ void macsurf_qjs_clear_event_detail(void)
 {
 }
 
+/* fixes1013 — scroll/resize fan-out; nothing to dispatch with no engine. */
+void macsurf_qjs_fire_scroll(void) { }
+void macsurf_qjs_fire_resize(void) { }
+void macsurf_qjs_page_js_summary(void) { }
+
 #endif /* !WITH_QUICKJS */

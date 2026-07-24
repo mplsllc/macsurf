@@ -33,6 +33,8 @@
 #include "content/handlers/html/box.h"
 #include "content/handlers/html/box_inspect.h"
 #include "content/handlers/html/box_construct.h"
+/* fixes1013 — corestring_dom_scroll / _resize for the scroll/resize fan-out. */
+#include "utils/corestrings.h"
 #include "utils/libdom.h"
 /* fixes879 — document.cookie against the real jar. urldb owns NetSurf's
  * RFC-6265 cookie store; content_protected.h is what makes c->llcache visible
@@ -3295,6 +3297,42 @@ void macsurf_qjs_set_event_detail(int x, int y, int button, int key, int mods)
 }
 
 void macsurf_qjs_clear_event_detail(void);
+/* fixes1013 — SCROLL AND RESIZE, dispatched at last.
+ *
+ * These were the one part of the 1f fan-out with no libdom path: they do not
+ * originate in interaction.c at all, they come from the frontend's own scroll
+ * and window-resize handling. Leaving them out had a consequence far past
+ * "some handlers do not fire":
+ *
+ * fixes1011 made getBoundingClientRect return REAL geometry. Before that it
+ * returned zeros, so every site's own lazy-load test -- rect.top <
+ * innerHeight -- was true for EVERY image and the whole page loaded eagerly,
+ * by accident. With real geometry those tests correctly answer "below the
+ * fold", and the images then wait for a scroll event that never came. So
+ * making layout correct BROKE lazy images, and this is the missing half.
+ *
+ * Dispatched at the document (scroll targets the scrolling element; both
+ * bubble to window through the 1b fan-out). Gated like the rest, so a page
+ * with no scroll listener pays nothing on a machine where scrolling is
+ * already the most performance-sensitive thing there is. */
+void macsurf_qjs_fire_scroll(void);
+void macsurf_qjs_fire_scroll(void)
+{
+	if (g_qjs_document == NULL) return;
+	if (!macsurf_qjs_event_type_live("scroll")) return;
+	(void) fire_generic_dom_event(corestring_dom_scroll,
+			(dom_node *) g_qjs_document, true, false);
+}
+
+void macsurf_qjs_fire_resize(void);
+void macsurf_qjs_fire_resize(void)
+{
+	if (g_qjs_document == NULL) return;
+	if (!macsurf_qjs_event_type_live("resize")) return;
+	(void) fire_generic_dom_event(corestring_dom_resize,
+			(dom_node *) g_qjs_document, true, false);
+}
+
 void macsurf_qjs_clear_event_detail(void)
 {
 	g_qjs_ev_x = g_qjs_ev_y = g_qjs_ev_button = 0;
@@ -4157,6 +4195,10 @@ struct qjs_reg_entry {
 };
 
 static struct qjs_reg_entry *s_reg_buckets[QJS_REG_BUCKETS];
+/* fixes1013 — how many distinct (node, type, capture) registrations the page
+ * made. A page that ran its scripts but wired up nothing looks very different
+ * from one that never ran them, and this is the number that separates them. */
+static int s_reg_n_registered = 0;
 
 /* Returns 1 if this (node, type, capture) was ALREADY registered. */
 static int qjs_reg_seen(dom_node *node, const char *type, int capture)
@@ -4179,6 +4221,7 @@ static int qjs_reg_seen(dom_node *node, const char *type, int capture)
 	e->type[QJS_REG_TYPELEN - 1] = '\0';
 	e->next = s_reg_buckets[h];
 	s_reg_buckets[h] = e;
+	s_reg_n_registered++;
 	return 0;
 }
 
@@ -4197,6 +4240,7 @@ static void qjs_reg_clear(void)
 		}
 		s_reg_buckets[i] = NULL;
 	}
+	s_reg_n_registered = 0;
 }
 
 /* fixes996 — the single place a node is registered with libdom.
@@ -8698,6 +8742,76 @@ qjs_eval_cstr(JSContext *ctx, const char *src, const char *tag)
  * is effectively unused. */
 #define QJS_TRANSPILE_CAP (256 * 1024)
 
+/* fixes1013 — COUNT WHAT ACTUALLY RAN.
+ *
+ * "Zero JS exceptions" was being read as "JavaScript works", and it is not
+ * evidence of that at all: it is equally consistent with no script executing.
+ * The failure paths were LIFE-prefixed in fixes1000 but every SUCCESS
+ * breadcrumb stayed WORK-prefixed, and WORK is compiled out of shipping
+ * builds -- so a hardware log could show errors and could NOT show whether a
+ * single script ever reached QuickJS. That asymmetry made the log actively
+ * misleading rather than merely incomplete.
+ *
+ * These are session-cumulative and emitted once per page in the summary
+ * below, so the cost is one line per navigation, not one per script. */
+static long g_js_exec_count = 0;
+static long g_js_exec_bytes = 0;
+static long g_js_exec_fail = 0;
+
+/* One LIFE line per page answering "did the page's JavaScript run, and did it
+ * do anything" without needing a verbose build. Called from
+ * js_fire_window_load. */
+void macsurf_qjs_page_js_summary(void);
+void macsurf_qjs_page_js_summary(void)
+{
+	JSContext *ctx = (g_heap != NULL) ? g_heap->ctx : NULL;
+	int has_jq = 0, has_xf = 0, doc_l = 0, win_l = 0, node_l = 0;
+
+	if (ctx != NULL) {
+		JSValue g = JS_GetGlobalObject(ctx);
+		JSValue v;
+
+		v = JS_GetPropertyStr(ctx, g, "jQuery");
+		has_jq = !JS_IsUndefined(v) && !JS_IsNull(v);
+		JS_FreeValue(ctx, v);
+		v = JS_GetPropertyStr(ctx, g, "XF");
+		has_xf = !JS_IsUndefined(v) && !JS_IsNull(v);
+		JS_FreeValue(ctx, v);
+
+		/* Listener counts say whether the page WIRED ITSELF UP, which is
+		 * the thing that actually distinguishes "scripts ran" from
+		 * "scripts ran and the page is now interactive". */
+		{
+			static const char *cnt_src =
+				"(function(){var d=0,w=0;try{"
+				"var L=document._listeners||{};for(var k in L)"
+				"d+=(L[k]&&L[k].length)||0;"
+				"var W=this._winListeners||{};for(var j in W)"
+				"w+=(W[j]&&W[j].length)||0;"
+				"}catch(e){}return d*10000+w;})()";
+			JSValue r = JS_Eval(ctx, cnt_src, strlen(cnt_src),
+					"<jssum>", JS_EVAL_TYPE_GLOBAL);
+			if (!JS_IsException(r)) {
+				int32_t n = 0;
+				JS_ToInt32(ctx, &n, r);
+				doc_l = n / 10000;
+				win_l = n % 10000;
+			} else {
+				JS_FreeValue(ctx, JS_GetException(ctx));
+			}
+			JS_FreeValue(ctx, r);
+		}
+		JS_FreeValue(ctx, g);
+	}
+	node_l = s_reg_n_registered;
+
+	macsurf_debug_log_writef(
+		"LIFE JS PAGE: scripts=%ld bytes=%ld failed=%ld "
+		"jquery=%d xf=%d doclisten=%d winlisten=%d nodelisten=%d",
+		g_js_exec_count, g_js_exec_bytes, g_js_exec_fail,
+		has_jq, has_xf, doc_l, win_l, node_l);
+}
+
 unsigned char js_exec(struct jsthread *thread,
 		const unsigned char *txt, size_t txtlen,
 		const char *name)
@@ -8712,7 +8826,7 @@ unsigned char js_exec(struct jsthread *thread,
 	 * is ever logged. Make that visible too, so "zero js activity" in a
 	 * hardware log can be told apart from "no thread was ever wired". */
 	if (thread == NULL || thread->ctx == NULL) {
-		macsurf_debug_log_writef("WORK js exec: no thread/ctx [%s]",
+		macsurf_debug_log_writef("LIFE js exec: NO THREAD/CTX [%s]",
 				name ? name : "(anon)");
 		return 0;
 	}
@@ -8786,7 +8900,9 @@ unsigned char js_exec(struct jsthread *thread,
 			dhead[di] = (b >= 32 && b < 127) ? (char)b : '.';
 		}
 		dhead[dn] = '\0';
-		macsurf_debug_log_writef("WORK js src [%s] len=%ld sum=%p head=%s",
+		g_js_exec_count++;
+		g_js_exec_bytes += (long)txtlen;
+		macsurf_debug_log_writef("LIFE js src [%s] len=%ld sum=%p head=%s",
 			name ? name : "?", (long)txtlen, (void *)dsum, dhead);
 	}
 
@@ -8939,7 +9055,8 @@ unsigned char js_exec(struct jsthread *thread,
 		{
 			char sname[48];
 			qjs_short_name(name, sname, (int)sizeof(sname));
-			macsurf_debug_log_writef("LIFE qjs exec err: %s [%s len=%ld]",
+			g_js_exec_fail++;
+		macsurf_debug_log_writef("LIFE qjs exec err: %s [%s len=%ld]",
 				estr ? estr : "?", sname, (long)txtlen);
 		}
 		if (estr) JS_FreeCString(thread->ctx, estr);
@@ -9068,7 +9185,7 @@ unsigned char js_fire_dom_ready(struct jsthread *thread, struct dom_document *do
 	 * ctx distinguishes the realms: the main page and the iframe are separate
 	 * heaps, so two different ctx values must appear here. Only one = the
 	 * iframe never gets DOMContentLoaded. */
-	macsurf_debug_log_writef("WORK domready fired ctx=%p doc=%p",
+	macsurf_debug_log_writef("LIFE domready fired ctx=%p doc=%p",
 			(void *)thread->ctx, (void *)doc);
 	return 1;
 }
@@ -9106,8 +9223,11 @@ unsigned char js_fire_window_load(struct jsthread *thread, struct dom_document *
 		return 0;
 	}
 	macsurf_qjs__safe_eval(thread->ctx, s_window_load_src);
-	macsurf_debug_log_writef("WORK window load fired ctx=%p doc=%p",
+	macsurf_debug_log_writef("LIFE window load fired ctx=%p doc=%p",
 			(void *)thread->ctx, (void *)doc);
+	/* fixes1013 — one line per page saying whether the JS actually ran and
+	 * wired anything up. See macsurf_qjs_page_js_summary. */
+	macsurf_qjs_page_js_summary();
 	return 1;
 }
 

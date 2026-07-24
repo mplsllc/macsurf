@@ -482,7 +482,34 @@ void macos9_window_scroll_to(struct gui_window *g, int nx, int ny) {
 	if(mx < 0) mx = 0; if(my < 0) my = 0;
 	if(nx < 0) nx = 0; if(nx > mx) nx = mx;
 	if(ny < 0) ny = 0; if(ny > my) ny = my;
-	g->scroll_x=nx; g->scroll_y=ny; macos9_window_update_scrollbars(g); macos9_window_invalidate_content(g);
+	{
+		/* fixes1013 — fire `scroll` at the page, but only on a real
+		 * CHANGE. This is the single choke point every scroll path routes
+		 * through (arrow keys, scroll-bar drag, core set_scroll, End,
+		 * window.scrollTo), which makes it the one correct place -- and
+		 * also means it is called with unchanged values often enough that
+		 * dispatching unconditionally would fire a burst of no-op events
+		 * during a drag.
+		 *
+		 * Why this matters beyond "scroll handlers now work": fixes1011
+		 * made getBoundingClientRect return real geometry, so a site's own
+		 * lazy-load test (rect.top < innerHeight) began correctly answering
+		 * "below the fold" for images it used to load eagerly by accident
+		 * when every rect was zero. Those images then wait for a scroll
+		 * event -- which nothing fired. Hence "images loaded fine before".
+		 *
+		 * AFTER the scrollbar/invalidate work, so a handler that measures
+		 * sees the new position, and the gate inside means a page with no
+		 * scroll listener pays nothing. */
+		int moved = (g->scroll_x != nx) || (g->scroll_y != ny);
+		g->scroll_x = nx; g->scroll_y = ny;
+		macos9_window_update_scrollbars(g);
+		macos9_window_invalidate_content(g);
+		if (moved) {
+			extern void macsurf_qjs_fire_scroll(void);
+			macsurf_qjs_fire_scroll();
+		}
+	}
 }
 void macos9_window_scroll_by(struct gui_window *g, int dx, int dy) { if(g) macos9_window_scroll_to(g, g->scroll_x+dx, g->scroll_y+dy); }
 
