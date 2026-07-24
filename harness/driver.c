@@ -4117,10 +4117,159 @@ int main(void)
 					strlen(chk1b), "t38-chk1b.js");
 			if (!ok) {
 				fprintf(stderr, "  part 1b RED: target double-fire (see "
-						"assertion above) -- continuing to part 2 so the "
-						"round reports all three findings\n");
+						"assertion above) -- continuing so the round reports "
+						"every finding in one run\n");
 			} else {
 				fprintf(stderr, "  part 1b OK: target visited exactly once\n");
+			}
+		}
+
+		/* ---- Part 1c: THE CAPTURE MIRROR.
+		 *
+		 * The capture loop at core/node.c:2601 runs targetnr = ntargets down
+		 * to 1, i.e. it accesses targets[ntargets-1] .. targets[0] -- and
+		 * targets[0] IS the target. So a capture:true listener on the target
+		 * fires in the CAPTURE pass (clause 1) and AGAIN at AT_TARGET (clause
+		 * 3, which ignores the capture flag entirely).
+		 *
+		 * That makes the bug symmetric, and it makes the fix two clauses
+		 * rather than one: BOTH the capture and the bubble clause must
+		 * additionally require evt->target != evt->current. Per DOM spec the
+		 * capture and bubble passes cover ANCESTORS ONLY; the target is
+		 * visited exactly once, in AT_TARGET, where capture and non-capture
+		 * listeners both run in registration order.
+		 *
+		 * Uses #li21 so it cannot interfere with part 1b's node. */
+		{
+			dom_string *id21 = NULL;
+			dom_element *el21 = NULL;
+			if (dom_string_create((const uint8_t *)"li21", 4, &id21) != DOM_NO_ERR) {
+				fprintf(stderr, "FAIL: t38 dom_string_create li21\n");
+				return 1;
+			}
+			dom_document_get_element_by_id(document, id21, &el21);
+			dom_string_unref(id21);
+			if (el21 == NULL) {
+				fprintf(stderr, "FAIL: t38 fixture missing #li21\n");
+				return 1;
+			}
+			{
+				const char *setup1c =
+					"globalThis.__t38.capFired=0;"
+					"var t=globalThis.__t38;"
+					"var e=document.getElementById('li21');"
+					"e.addEventListener('click',function(){t.capFired++;},true);";
+				ok = js_exec(thread, (const unsigned char *)setup1c,
+						strlen(setup1c), "t38-setup1c.js");
+				if (!ok) {
+					fprintf(stderr, "FAIL: t38 part 1c setup threw\n");
+					return 1;
+				}
+			}
+			(void)fire_generic_dom_event(corestring_dom_click,
+					(dom_node *)el21, true, true);
+			{
+				const char *chk1c =
+					"if(globalThis.__t38.capFired!==1)"
+						"throw new Error('ASSERT FAIL (D): a capture:true "
+							"listener ON THE TARGET fired '+"
+							"globalThis.__t38.capFired+' times for ONE "
+							"dispatch. The capture loop (core/node.c:2601) "
+							"walks targets[ntargets-1]..targets[0] and "
+							"targets[0] IS the target, so it fires in the "
+							"capture pass AND again at AT_TARGET. The bug is "
+							"SYMMETRIC: the fix must exclude the target from "
+							"BOTH the capture and the bubble pass, not just "
+							"the bubble pass.');";
+				ok = js_exec(thread, (const unsigned char *)chk1c,
+						strlen(chk1c), "t38-chk1c.js");
+				if (!ok) {
+					fprintf(stderr, "  part 1c RED: capture mirror -- the fix "
+							"is two clauses, not one\n");
+				} else {
+					fprintf(stderr, "  part 1c OK: capture listener on the "
+							"target fires exactly once\n");
+				}
+			}
+		}
+
+		/* ---- Part 1d: IT IS NOT CLICK-SPECIFIC.
+		 *
+		 * The double-visit is in the PATH WALK, not in the event type, so
+		 * every type dispatched through this entry point is affected. The
+		 * claim in the round writeup is "every element-level handler since
+		 * fixes989", and that deserves an assertion rather than an inference
+		 * -- double form submit is the most user-visible instance of this bug.
+		 *
+		 * interaction.c dispatches exactly three types today: click (:1785),
+		 * submit (:1857) and keydown (:2024). All three are checked here, on
+		 * separate nodes so they cannot interfere. */
+		{
+			static const char *const ids[3] = { "li20", "li19", "li18" };
+			dom_string *types_ds[3];
+			dom_element *els[3];
+			int i;
+
+			types_ds[0] = corestring_dom_click;
+			types_ds[1] = corestring_dom_submit;
+			types_ds[2] = corestring_dom_keydown;
+
+			for (i = 0; i < 3; i++) {
+				dom_string *idn = NULL;
+				els[i] = NULL;
+				if (dom_string_create((const uint8_t *)ids[i], 4, &idn)
+						!= DOM_NO_ERR) {
+					fprintf(stderr, "FAIL: t38 dom_string_create %s\n", ids[i]);
+					return 1;
+				}
+				dom_document_get_element_by_id(document, idn, &els[i]);
+				dom_string_unref(idn);
+				if (els[i] == NULL) {
+					fprintf(stderr, "FAIL: t38 fixture missing #%s\n", ids[i]);
+					return 1;
+				}
+			}
+			{
+				const char *setup1d =
+					"globalThis.__t38.n={click:0,submit:0,keydown:0};"
+					"var t=globalThis.__t38.n;"
+					"document.getElementById('li20')"
+						".addEventListener('click',function(){t.click++;});"
+					"document.getElementById('li19')"
+						".addEventListener('submit',function(){t.submit++;});"
+					"document.getElementById('li18')"
+						".addEventListener('keydown',function(){t.keydown++;});";
+				ok = js_exec(thread, (const unsigned char *)setup1d,
+						strlen(setup1d), "t38-setup1d.js");
+				if (!ok) {
+					fprintf(stderr, "FAIL: t38 part 1d setup threw\n");
+					return 1;
+				}
+			}
+			for (i = 0; i < 3; i++) {
+				(void)fire_generic_dom_event(types_ds[i],
+						(dom_node *)els[i], true, true);
+			}
+			{
+				const char *chk1d =
+					"var n=globalThis.__t38.n;"
+					"if(n.click!==1||n.submit!==1||n.keydown!==1)"
+						"throw new Error('ASSERT FAIL (E): the double-visit is "
+							"not click-specific -- click='+n.click+' submit='+"
+							"n.submit+' keydown='+n.keydown+', each from ONE "
+							"dispatch. All three are the types interaction.c "
+							"dispatches today (:1785 click, :1857 submit, "
+							":2024 keydown), so on hardware a form with a "
+							"submit handler submits TWICE.');";
+				ok = js_exec(thread, (const unsigned char *)chk1d,
+						strlen(chk1d), "t38-chk1d.js");
+				if (!ok) {
+					fprintf(stderr, "  part 1d RED: click/submit/keydown all "
+							"double-fire -- double form submit confirmed\n");
+				} else {
+					fprintf(stderr, "  part 1d OK: click/submit/keydown each "
+							"fire exactly once\n");
+				}
 			}
 		}
 

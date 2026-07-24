@@ -227,11 +227,59 @@ dom_exception _dom_event_target_dispatch(dom_event_target *et,
 			if (dom_string_isequal(le->type, evt->type)) {
 				assert(le->listener->handler != NULL);
 
-				if ((le->capture && 
-						phase == DOM_CAPTURING_PHASE) ||
-				    (le->capture == false && 
-						phase == DOM_BUBBLING_PHASE) ||
-				    (evt->target == evt->current && 
+				/* ==== MACSURF LOCAL PATCH (fixes1005) ============
+				 * grep MACSURF LOCAL PATCH before updating vendored
+				 * libdom -- this is not upstream and a vendor bump
+				 * will silently revert it.
+				 *
+				 * THE TARGET WAS VISITED TWICE, IN BOTH DIRECTIONS.
+				 *
+				 * node.c's path walk builds targets[] starting AT the
+				 * target (`for (; target != NULL; target =
+				 * target->parent)`), so targets[0] IS the target. The
+				 * capture loop then runs targets[ntargets-1]..targets[0]
+				 * and the bubble loop runs targets[0]..targets[ntargets-1]
+				 * -- both include the target -- and the AT_TARGET call
+				 * visits it a third time. Net effect before this patch:
+				 *   non-capture listener on target: AT_TARGET + BUBBLING
+				 *   capture     listener on target: CAPTURING + AT_TARGET
+				 * i.e. EVERY listener on the target fired exactly twice.
+				 *
+				 * Per DOM spec the capture and bubble passes cover
+				 * ANCESTORS ONLY; the target is visited exactly once, in
+				 * AT_TARGET, where capture and non-capture listeners both
+				 * run in registration order. So both the capture and the
+				 * bubble clause gain `evt->target != evt->current`. It is
+				 * deliberately fixed HERE rather than by trimming
+				 * targets[] in node.c: the capture pass legitimately needs
+				 * the target in the array (a descendant's dispatch must
+				 * still see it as an ancestor), and the phase filter is
+				 * the single place that decides what a phase means.
+				 *
+				 * Why MacSurf and not upstream: nothing in this tree ever
+				 * called dom_event_target_add_event_listener until
+				 * fixes989 wired JS addEventListener to libdom, so the
+				 * double-visit was inert for the whole life of the port.
+				 * Since fixes989 it has been live on hardware -- double
+				 * form submits, double toggles, double counters, on every
+				 * click, submit and keydown (interaction.c:1785/1857/2024).
+				 *
+				 * Found by harness Test 38, the Phase 0 control, which is
+				 * also its regression test (parts 1b/1c/1d). Every prior
+				 * event test dispatched through el.dispatchEvent -- the
+				 * JS-local path -- and asserted a boolean, so none of them
+				 * could observe a count of 2.
+				 *
+				 * Reported upstream to NetSurf; if taken, this patch can
+				 * be dropped on the next vendor bump.
+				 * ================================================= */
+				if ((le->capture &&
+						phase == DOM_CAPTURING_PHASE &&
+						evt->target != evt->current) ||
+				    (le->capture == false &&
+						phase == DOM_BUBBLING_PHASE &&
+						evt->target != evt->current) ||
+				    (evt->target == evt->current &&
 						phase == DOM_AT_TARGET)) {
 					le->listener->handler(evt, 
 							le->listener->pw);
