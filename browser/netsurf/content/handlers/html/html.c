@@ -2748,6 +2748,30 @@ static void html_reconvert_done(html_content *c, bool success)
 			(long) macsurf_reconvert_seq);
 	macsurf_debug_log_reconv_flush(0);
 	html_pagemap_dump(c, "reconvert"); /* fixes1015 */
+
+	/* fixes1019 — a reconvert that CHANGED the document height fires one
+	 * `resize` at window. The featured-slider class of widget (slick,
+	 * dotdotdot, masonry) reshapes the DOM and then MEASURES to size
+	 * itself; in this engine those init-time reads honestly answer
+	 * undefined (fixes1016 -- the boxes do not exist until this deferred
+	 * reconvert), so the widget lays out nothing and NOTHING EVER TELLS IT
+	 * TO TRY AGAIN. `resize` is the re-measure trigger every such library
+	 * already binds; firing it here, with the new box tree live and
+	 * geometry settled, is the standard hook through which they converge.
+	 * Height-change-gated so a layout that stabilised goes quiet instead
+	 * of ping-ponging with the reconvert debounce forever. */
+	{
+		static int last_resize_h = -1;
+		if (c->js_thread != NULL &&
+				(int)c->base.height != last_resize_h) {
+			last_resize_h = (int)c->base.height;
+			macsurf_debug_log_writef(
+				"LIFE reconvert height %d -> resize fired",
+				(int)c->base.height);
+			(void) js_fire_event(c->js_thread, "resize",
+					c->document, NULL);
+		}
+	}
 	macsurf_reconv_pos_set("reconvert-idle", (long) macsurf_reconvert_seq,
 			0, "");
 	macsurf_reconv_pos_flush();
