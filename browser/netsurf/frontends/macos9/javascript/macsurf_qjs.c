@@ -1488,6 +1488,11 @@ static void qjs_wrap_remove(dom_node *node)
  * drop the node ref AND the owner-document keepalive ref, THEN clear the entry.
  * Never touches e->val — the JS object may already be gone after JS_FreeContext;
  * the matching finalizer (if it runs later) finds no map entry and no-ops. */
+/* fixes1008 — defined further down (next to qjs_dom_register_listener, which
+ * is what feeds them), used here at realm teardown. */
+static void qjs_reg_clear(void);
+static void qjs_evgate_reset(void);
+
 static void qjs_wrap_drain(JSRuntime *rt)
 {
 	unsigned int i;
@@ -1529,6 +1534,12 @@ static void qjs_wrap_drain(JSRuntime *rt)
 	 * B). rt keys the ownership; g_qjs_document is no longer consulted here (it
 	 * is a single stale-prone global — the reason the old owner_doc match was
 	 * unreliable). */
+	/* fixes1008 — the registration set and the event-type gate are both keyed
+	 * to this realm's nodes, so they die with it. Leaving the set behind
+	 * would let a RECYCLED node address look already-registered, and its
+	 * listeners would silently never reach libdom. */
+	qjs_reg_clear();
+	qjs_evgate_reset();
 	macsurf_debug_log_writef(
 		"WORK wrapmap drain freed=%d kept-foreign=%d heap=%p",
 		cleaned, kept, (void *)g_heap);
@@ -2748,13 +2759,143 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		 * handler (_H, set through the prototype accessors) exactly once each.
 		 * Both routes are real and pages use both; dispatchEvent firing only _L
 		 * is why js_fire_script_load had to call el['on'+type] separately. */
-		"el.dispatchEvent=function(ev){"
+		/* fixes1008 (1e) — this is now __msFireLocal, the LOCAL firing of
+		 * one node's own listeners. `dispatchEvent` itself is a native that
+		 * routes through libdom so synthetic events bubble to ancestors and
+		 * the document, and returns false when cancelled; it calls back here
+		 * (via the re-entrancy guard) to do the actual firing, so there is
+		 * still exactly ONE place that walks _L and _H.
+		 *
+		 * fixes1008 also stops swallowing handler errors silently: a throwing
+		 * handler must not abort the others, but it must be VISIBLE, or
+		 * "site loads and does nothing" has no log line to explain it. */
+		"el.__msFireLocal=function(ev){"
 		"var t=ev&&ev.type||'';"
 		"if(el._L&&el._L[t]){"
 		"var a=el._L[t].slice();"
-		"var i;for(i=0;i<a.length;i++){try{a[i].call(el,ev);}catch(e){}}}"
-		"if(el._H&&el._H[t]){try{el._H[t].call(el,ev);}catch(e){}}"
+		"var i;for(i=0;i<a.length;i++){"
+		/* stopImmediatePropagation, observed BETWEEN handlers -- see
+		 * qjs_ev_stop_immediate_data. Checked before each call so the
+		 * handler that set it still completes. */
+		"if(ev&&ev.__msStopNow)return true;"
+		"try{a[i].call(el,ev);}"
+		"catch(e){try{console.error('LIFE jsevent listener threw ['+t+']: '+"
+		"((e&&e.message)||e));}catch(_){}}}}"
+		"if(ev&&ev.__msStopNow)return true;"
+		"if(el._H&&el._H[t]){try{el._H[t].call(el,ev);}"
+		"catch(e){try{console.error('LIFE jsevent on'+t+' threw: '+"
+		"((e&&e.message)||e));}catch(_){}}}"
 		"return true;};"
+		/* fixes1008 (2b) — THE MISSING DOM SURFACE.
+		 *
+		 * Every one of these was simply absent, and each is common enough
+		 * that its absence throws rather than degrades: a script calling
+		 * el.remove() or el.replaceChild() gets "not a function" and dies on
+		 * the spot, exactly like document.write did (fixes1007).
+		 *
+		 * All are built on the native primitives that already exist
+		 * (appendChild / removeChild / insertBefore / __setInnerHTML /
+		 * parentNode / children), so there is no second mutation path that
+		 * can drift from the real one, and each still routes through
+		 * qjs_dom_mut_check and the reconvert dirty-mark. */
+		"el.remove=function(){"
+			"var p=el.parentNode;if(p&&p.removeChild)p.removeChild(el);};"
+		"el.replaceChild=function(nw,old){"
+			"if(!nw||!old)return old;"
+			"el.insertBefore(nw,old);el.removeChild(old);return old;};"
+		"el.append=function(){var i;for(i=0;i<arguments.length;i++){"
+			"var a=arguments[i];"
+			"el.appendChild(typeof a==='string'?"
+				"document.createTextNode(a):a);}};"
+		"el.prepend=function(){var i,f=el.firstChild;"
+			"for(i=0;i<arguments.length;i++){var a=arguments[i];"
+			"el.insertBefore(typeof a==='string'?"
+				"document.createTextNode(a):a,f);}};"
+		"el.before=function(){var p=el.parentNode;if(!p)return;var i;"
+			"for(i=0;i<arguments.length;i++){var a=arguments[i];"
+			"p.insertBefore(typeof a==='string'?"
+				"document.createTextNode(a):a,el);}};"
+		"el.after=function(){var p=el.parentNode;if(!p)return;"
+			"var r=el.nextSibling,i;"
+			"for(i=0;i<arguments.length;i++){var a=arguments[i];"
+			"var n=(typeof a==='string')?document.createTextNode(a):a;"
+			"if(r)p.insertBefore(n,r);else p.appendChild(n);}};"
+		"el.replaceWith=function(){"
+			"el.before.apply(el,arguments);el.remove();};"
+		/* insertAdjacent* -- the four spec positions, on the real fragment
+		 * parser (so a written <script> is a real script element, same as
+		 * document.write). */
+		"el.insertAdjacentElement=function(pos,n){"
+			"if(!n)return null;pos=String(pos).toLowerCase();"
+			"if(pos==='beforebegin')el.before(n);"
+			"else if(pos==='afterbegin')el.prepend(n);"
+			"else if(pos==='beforeend')el.appendChild(n);"
+			"else if(pos==='afterend')el.after(n);"
+			"return n;};"
+		"el.insertAdjacentHTML=function(pos,html){"
+			"var h=document.createElement('div');"
+			"try{h.innerHTML=String(html);}catch(e){return;}"
+			"var kids=[],c=h.firstChild;"
+			"while(c){kids.push(c);c=c.nextSibling;}"
+			"var i;"
+			"if(String(pos).toLowerCase()==='afterbegin'||"
+			   "String(pos).toLowerCase()==='beforebegin'){"
+				"for(i=kids.length-1;i>=0;i--)"
+					"el.insertAdjacentElement(pos,kids[i]);"
+			"}else{"
+				"for(i=0;i<kids.length;i++)"
+					"el.insertAdjacentElement(pos,kids[i]);"
+			"}};"
+		"el.insertAdjacentText=function(pos,t){"
+			"el.insertAdjacentElement(pos,document.createTextNode(String(t)));};"
+		/* isConnected: walk to the root and ask whether it is the document
+		 * element. Cheaper and more honest than a flag we would have to keep
+		 * in sync through every mutation. */
+		"Object.defineProperty(el,'isConnected',{configurable:true,"
+			"get:function(){var n=el;"
+			"while(n&&n.parentNode)n=n.parentNode;"
+			"return !!(n&&(n===document||n===document.documentElement||"
+				"n.nodeType===9));}});"
+		"Object.defineProperty(el,'ownerDocument',{configurable:true,"
+			"get:function(){return document;}});"
+		/* attributes / getAttributeNames: reconstructed from the reflected
+		 * set plus data-*. Not a live NamedNodeMap -- callers iterate it,
+		 * which a static array serves. */
+		"el.getAttributeNames=function(){"
+			"var out=[],i,ks=['id','class','style','src','href','type',"
+				"'name','rel','target','alt','title','placeholder',"
+				"'action','method','width','height','media','value',"
+				"'disabled','checked','readonly','required'];"
+			"for(i=0;i<ks.length;i++)"
+				"if(el.hasAttribute&&el.hasAttribute(ks[i]))out.push(ks[i]);"
+			"return out;};"
+		"Object.defineProperty(el,'attributes',{configurable:true,"
+			"get:function(){var ns=el.getAttributeNames(),out=[],i;"
+			"for(i=0;i<ns.length;i++)out.push({name:ns[i],"
+				"value:el.getAttribute(ns[i])});"
+			"out.getNamedItem=function(n){var j;"
+				"for(j=0;j<out.length;j++)if(out[j].name===n)return out[j];"
+				"return null;};"
+			"return out;}});"
+		"el.compareDocumentPosition=function(o){"
+			"if(!o||o===el)return 0;"
+			"if(el.contains&&el.contains(o))return 20;"
+			"if(o.contains&&o.contains(el))return 10;"
+			"return 4;};"
+		"el.isEqualNode=function(o){return o===el;};"
+		"el.isSameNode=function(o){return o===el;};"
+		/* Form-control state. `checked` and `selected` are properties in the
+		 * DOM but attributes here, which is the honest approximation until
+		 * they are wired to struct form_control; `disabled` reflects. */
+		"(function(){var bp=['checked','disabled','readOnly','required',"
+			"'selected','multiple','autofocus'];var i;"
+			"for(i=0;i<bp.length;i++)(function(p){"
+			"var a=p.toLowerCase();"
+			"Object.defineProperty(el,p,{configurable:true,"
+			"get:function(){return !!(el.hasAttribute&&el.hasAttribute(a));},"
+			"set:function(v){if(v)el.setAttribute(a,a);"
+				"else if(el.removeAttribute)el.removeAttribute(a);}});"
+			"})(bp[i]);})();"
 		/* misc */
 		"el.getBoundingClientRect=function(){"
 		"return{top:0,left:0,right:0,bottom:0,width:0,height:0,x:0,y:0};};"
@@ -2959,6 +3100,90 @@ static JSValue qjs_ev_stop_propagation_data(JSContext *ctx,
 	return JS_UNDEFINED;
 }
 
+/* fixes1008 (1d) — the REAL stopImmediatePropagation.
+ *
+ * It was aliased to qjs_ev_stop_propagation_data, which stops the walk moving
+ * to the next NODE but lets the remaining listeners on the CURRENT node run.
+ * That is the difference the method exists to express, and libdom implements
+ * it properly (evt->stop_now breaks the listener loop in
+ * _dom_event_target_dispatch). Code that calls this is deliberately trying to
+ * suppress its siblings -- a validation handler cancelling the rest of a
+ * chain -- so silently running them anyway is a wrong answer, not a missing
+ * feature. */
+static JSValue qjs_ev_stop_immediate_data(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv,
+		int magic, JSValueConst *func_data)
+{
+	int64_t p = 0;
+	(void)argc; (void)argv; (void)magic;
+	if (JS_ToInt64(ctx, &p, func_data[0]) == 0 && p != 0) {
+		dom_event_stop_immediate_propagation((dom_event *)(size_t)p);
+	}
+	/* libdom's stop_now breaks ITS listener loop -- but all of a node's JS
+	 * handlers live inside ONE libdom entry (the shared g_qjs_dom_listener),
+	 * so __msFireLocal is already running and would happily finish walking
+	 * el._L. The flag is what lets it break between handlers, which is the
+	 * whole observable difference from stopPropagation. */
+	if (JS_IsObject(this_val)) {
+		JS_SetPropertyStr(ctx, (JSValue)this_val, "__msStopNow",
+				JS_NewBool(ctx, 1));
+	}
+	return JS_UNDEFINED;
+}
+
+/* preventDefault must also be OBSERVABLE: `e.defaultPrevented` is read by
+ * plenty of code that wants to know whether an earlier handler already
+ * cancelled. Sets the flag on the event object as well as on the dom_event. */
+static JSValue qjs_ev_prevent_default2_data(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv,
+		int magic, JSValueConst *func_data)
+{
+	int64_t p = 0;
+	(void)argc; (void)argv; (void)magic;
+	if (JS_ToInt64(ctx, &p, func_data[0]) == 0 && p != 0) {
+		dom_event_prevent_default((dom_event *)(size_t)p);
+	}
+	if (JS_IsObject(this_val)) {
+		JS_SetPropertyStr(ctx, (JSValue)this_val, "defaultPrevented",
+				JS_NewBool(ctx, 1));
+	}
+	return JS_UNDEFINED;
+}
+
+/* fixes1008 (1d) — the UI detail for the event currently being dispatched.
+ *
+ * interaction.c fills these immediately before fire_generic_dom_event() and
+ * clears them after, so a handler reading e.clientX gets the real pointer
+ * position rather than undefined (which it computes NaN from). Globals rather
+ * than a widened signature: fire_generic_dom_event is core NetSurf API called
+ * from several places, and widening an exported signature is the CW8 flat-
+ * namespace trap (reference_cw8_no_signature_widening).
+ *
+ * ZEROED between dispatches by macsurf_qjs_clear_event_detail(), so a stale
+ * click's coordinates can never leak into an unrelated later event. */
+static int g_qjs_ev_x = 0;
+static int g_qjs_ev_y = 0;
+static int g_qjs_ev_button = 0;
+static int g_qjs_ev_key = 0;
+static int g_qjs_ev_mods = 0;
+
+void macsurf_qjs_set_event_detail(int x, int y, int button, int key, int mods);
+void macsurf_qjs_set_event_detail(int x, int y, int button, int key, int mods)
+{
+	g_qjs_ev_x = x;
+	g_qjs_ev_y = y;
+	g_qjs_ev_button = button;
+	g_qjs_ev_key = key;
+	g_qjs_ev_mods = mods;
+}
+
+void macsurf_qjs_clear_event_detail(void);
+void macsurf_qjs_clear_event_detail(void)
+{
+	g_qjs_ev_x = g_qjs_ev_y = g_qjs_ev_button = 0;
+	g_qjs_ev_key = g_qjs_ev_mods = 0;
+}
+
 /* fixes1006 — call obj.dispatchEvent(ev), swallowing (but LOGGING) a throw.
  * One bad handler must never abort propagation to the rest, and a silent
  * catch is how "site loads, does nothing, no log" happens. `what` names the
@@ -2970,7 +3195,17 @@ static void qjs_fire_dispatch(JSContext *ctx, JSValueConst obj,
 	JSValue argv[1];
 
 	if (JS_IsUndefined(obj) || JS_IsNull(obj)) return;
-	fn = JS_GetPropertyStr(ctx, obj, "dispatchEvent");
+	/* fixes1008 (1e) — __msFireLocal FIRST. Elements now have a NATIVE
+	 * dispatchEvent that starts a fresh libdom dispatch; calling it from
+	 * inside the libdom callback would recurse without end. __msFireLocal is
+	 * the local _L/_H firing that the callback actually wants. document and
+	 * window have no __msFireLocal (they are not element wrappers), so they
+	 * fall through to their JS dispatchEvent shims, which is correct. */
+	fn = JS_GetPropertyStr(ctx, obj, "__msFireLocal");
+	if (!JS_IsFunction(ctx, fn)) {
+		JS_FreeValue(ctx, fn);
+		fn = JS_GetPropertyStr(ctx, obj, "dispatchEvent");
+	}
 	if (JS_IsFunction(ctx, fn)) {
 		argv[0] = evobj;
 		ret = JS_Call(ctx, fn, obj, 1, (JSValueConst *)argv);
@@ -3022,10 +3257,125 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 		return;
 	}
 
-	evobj = JS_NewObject(ctx);
+	/* fixes1008 (1d) — a REAL Event instance, not an ad-hoc object.
+	 *
+	 * This used to be a bare JS_NewObject with `type`, `target` and three
+	 * methods bolted on. Consequences that all show up in real library code:
+	 * `ev instanceof Event` was false; `bubbles`, `cancelable`, `eventPhase`,
+	 * `defaultPrevented`, `timeStamp` and `isTrusted` were all undefined; and
+	 * a mouse handler reading `e.clientX` or a key handler reading `e.key`
+	 * got undefined and computed NaN from it.
+	 *
+	 * Built via `new Event(type)` so the prototype chain is right, then the
+	 * real values are written over the constructor's defaults from the actual
+	 * dom_event. Falls back to a plain object if the constructor is somehow
+	 * missing, because an event with no prototype still beats no dispatch. */
+	{
+		JSValue global = JS_GetGlobalObject(ctx);
+		JSValue ctor = JS_GetPropertyStr(ctx, global, "Event");
+		evobj = JS_UNDEFINED;
+		if (JS_IsFunction(ctx, ctor)) {
+			JSValue targ[1];
+			targ[0] = JS_NewStringLen(ctx, dom_string_data(type_ds),
+					(size_t)dom_string_length(type_ds));
+			evobj = JS_CallConstructor(ctx, ctor, 1,
+					(JSValueConst *)targ);
+			JS_FreeValue(ctx, targ[0]);
+			if (JS_IsException(evobj)) {
+				JS_FreeValue(ctx, JS_GetException(ctx));
+				evobj = JS_UNDEFINED;
+			}
+		}
+		JS_FreeValue(ctx, ctor);
+		JS_FreeValue(ctx, global);
+		if (JS_IsUndefined(evobj)) evobj = JS_NewObject(ctx);
+	}
 	JS_SetPropertyStr(ctx, evobj, "type",
 		JS_NewStringLen(ctx, dom_string_data(type_ds),
 				(size_t)dom_string_length(type_ds)));
+
+	/* Real flags off the real dom_event. eventPhase in particular must be
+	 * AT_TARGET for the target's own visit -- before fixes1005 the spurious
+	 * second visit reported BUBBLING, and a count-only test would not have
+	 * noticed the phase was wrong. */
+	{
+		bool b = false;
+		dom_event_flow_phase ph = 0;
+		if (dom_event_get_bubbles(evt, &b) == DOM_NO_ERR)
+			JS_SetPropertyStr(ctx, evobj, "bubbles", JS_NewBool(ctx, b));
+		b = false;
+		if (dom_event_get_cancelable(evt, &b) == DOM_NO_ERR)
+			JS_SetPropertyStr(ctx, evobj, "cancelable", JS_NewBool(ctx, b));
+		if (dom_event_get_event_phase(evt, &ph) == DOM_NO_ERR)
+			JS_SetPropertyStr(ctx, evobj, "eventPhase",
+					JS_NewInt32(ctx, (int)ph));
+		JS_SetPropertyStr(ctx, evobj, "defaultPrevented",
+				JS_NewBool(ctx, 0));
+		JS_SetPropertyStr(ctx, evobj, "timeStamp",
+				JS_NewFloat64(ctx, macsurf_qjs_get_now()));
+		/* isTrusted is TRUE only here -- this is the native UI path.
+		 * Anything from `new Event` / dispatchEvent reports false, and some
+		 * libraries branch on it to reject synthetic input. */
+		JS_SetPropertyStr(ctx, evobj, "isTrusted", JS_NewBool(ctx, 1));
+	}
+
+	/* Mouse and keyboard details, from the values the frontend already has.
+	 * macsurf_qjs_set_event_detail() is filled in by interaction.c right
+	 * before the dispatch; zeroed otherwise so a stale click's coordinates
+	 * can never leak into an unrelated event. */
+	{
+		const char *t = dom_string_data(type_ds);
+		size_t tl = (size_t)dom_string_length(type_ds);
+		int is_mouse = (tl >= 5 && strncmp(t, "mouse", 5) == 0) ||
+			(tl == 5 && strncmp(t, "click", 5) == 0) ||
+			(tl == 8 && strncmp(t, "dblclick", 8) == 0) ||
+			(tl == 11 && strncmp(t, "contextmenu", 11) == 0);
+		int is_key = (tl >= 3 && strncmp(t, "key", 3) == 0);
+		if (is_mouse) {
+			JS_SetPropertyStr(ctx, evobj, "clientX",
+					JS_NewInt32(ctx, g_qjs_ev_x));
+			JS_SetPropertyStr(ctx, evobj, "clientY",
+					JS_NewInt32(ctx, g_qjs_ev_y));
+			JS_SetPropertyStr(ctx, evobj, "pageX",
+					JS_NewInt32(ctx, g_qjs_ev_x));
+			JS_SetPropertyStr(ctx, evobj, "pageY",
+					JS_NewInt32(ctx, g_qjs_ev_y));
+			JS_SetPropertyStr(ctx, evobj, "screenX",
+					JS_NewInt32(ctx, g_qjs_ev_x));
+			JS_SetPropertyStr(ctx, evobj, "screenY",
+					JS_NewInt32(ctx, g_qjs_ev_y));
+			JS_SetPropertyStr(ctx, evobj, "button",
+					JS_NewInt32(ctx, g_qjs_ev_button));
+			JS_SetPropertyStr(ctx, evobj, "buttons",
+					JS_NewInt32(ctx, g_qjs_ev_button ? 1 : 0));
+			JS_SetPropertyStr(ctx, evobj, "detail", JS_NewInt32(ctx, 1));
+		} else if (is_key) {
+			char kb[8];
+			int n = 0;
+			if (g_qjs_ev_key >= 32 && g_qjs_ev_key < 127) {
+				kb[n++] = (char)g_qjs_ev_key;
+			}
+			kb[n] = '\0';
+			JS_SetPropertyStr(ctx, evobj, "key", JS_NewString(ctx, kb));
+			JS_SetPropertyStr(ctx, evobj, "code", JS_NewString(ctx, kb));
+			JS_SetPropertyStr(ctx, evobj, "keyCode",
+					JS_NewInt32(ctx, g_qjs_ev_key));
+			JS_SetPropertyStr(ctx, evobj, "which",
+					JS_NewInt32(ctx, g_qjs_ev_key));
+			JS_SetPropertyStr(ctx, evobj, "charCode",
+					JS_NewInt32(ctx, g_qjs_ev_key));
+		}
+		if (is_mouse || is_key) {
+			JS_SetPropertyStr(ctx, evobj, "shiftKey",
+				JS_NewBool(ctx, (g_qjs_ev_mods & 1) != 0));
+			JS_SetPropertyStr(ctx, evobj, "ctrlKey",
+				JS_NewBool(ctx, (g_qjs_ev_mods & 2) != 0));
+			JS_SetPropertyStr(ctx, evobj, "altKey",
+				JS_NewBool(ctx, (g_qjs_ev_mods & 4) != 0));
+			JS_SetPropertyStr(ctx, evobj, "metaKey",
+				JS_NewBool(ctx, (g_qjs_ev_mods & 8) != 0));
+		}
+	}
 	JS_SetPropertyStr(ctx, evobj, "currentTarget",
 		JS_DupValue(ctx, hit->val));
 	/* fixes1006 (1c) — event.target, WRAPPED ON DEMAND.
@@ -3069,13 +3419,15 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 	}
 	pd = JS_NewInt64(ctx, (long long)(size_t)evt);
 	JS_SetPropertyStr(ctx, evobj, "preventDefault",
-		JS_NewCFunctionData(ctx, qjs_ev_prevent_default_data,
+		JS_NewCFunctionData(ctx, qjs_ev_prevent_default2_data,
 				0, 0, 1, &pd));
 	JS_SetPropertyStr(ctx, evobj, "stopPropagation",
 		JS_NewCFunctionData(ctx, qjs_ev_stop_propagation_data,
 				0, 0, 1, &pd));
+	/* fixes1008 (1d) — its OWN implementation now, not the stopPropagation
+	 * alias. See qjs_ev_stop_immediate_data. */
 	JS_SetPropertyStr(ctx, evobj, "stopImmediatePropagation",
-		JS_NewCFunctionData(ctx, qjs_ev_stop_propagation_data,
+		JS_NewCFunctionData(ctx, qjs_ev_stop_immediate_data,
 				0, 0, 1, &pd));
 	JS_FreeValue(ctx, pd);   /* NewCFunctionData took its own reference */
 
@@ -3109,23 +3461,8 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 			qjs_fire_dispatch(ctx, global, evobj, "window");
 		}
 
-		disp = JS_GetPropertyStr(ctx, hit->val, "dispatchEvent");
-		if (JS_IsFunction(ctx, disp)) {
-			callargv[0] = evobj;
-			ret = JS_Call(ctx, disp, hit->val, 1,
-					(JSValueConst *)callargv);
-			if (JS_IsException(ret)) {
-				JSValue ex = JS_GetException(ctx);
-				const char *msg = JS_ToCString(ctx, ex);
-				macsurf_debug_log_writef(
-					"LIFE jsevent handler threw: %s",
-					msg ? msg : "?");
-				if (msg) JS_FreeCString(ctx, msg);
-				JS_FreeValue(ctx, ex);
-			}
-			JS_FreeValue(ctx, ret);
-		}
-		JS_FreeValue(ctx, disp);
+		qjs_fire_dispatch(ctx, hit->val, evobj,
+				is_doc ? "document" : "element");
 
 		if (is_doc && !capturing) {
 			qjs_fire_dispatch(ctx, global, evobj, "window");
@@ -3135,6 +3472,163 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 	JS_FreeValue(ctx, evobj);
 	macsurf_dom_string_unref(type_ds);
 	macsurf_dom_node_unref(node);
+}
+
+/* ===================================================================
+ * fixes1008 (1a) — THE REGISTERED-TYPE GATE.
+ *
+ * 1f fans out mousedown/mouseup/mouseover/mouseout/dblclick/keyup/... from
+ * interaction.c. Without a gate, every hover transition on a page where
+ * nothing listens would build an Event object and hit the wrap table on
+ * every mouse move, on a G3. That is the difference between usable and
+ * molasses, so the gate lands BEFORE the fan-out, not after.
+ *
+ * SET-ONLY, NEVER CLEARED. A count would have to be decremented on
+ * removeEventListener, and a bare bitmask cleared there cannot know whether
+ * another listener of the same type survives -- it would go dark while a
+ * live listener remained, which is a silent "handlers stopped working" bug.
+ * Set-only is entirely adequate because realms are per-navigation: the set
+ * dies with the page. The cost of a stale bit is one wasted dispatch into an
+ * empty listener list, which is cheap and correct.
+ *
+ * FED FROM THE SINGLE CHOKEPOINT. All three registration routes --
+ * addEventListener, inline on* attributes (macsurf_qjs_bind_inline_handlers),
+ * and el.onclick= (__msRegEvent) -- already funnel through
+ * qjs_dom_register_listener, so the increment goes there rather than at three
+ * call sites. A missed one would mean markup handlers silently never firing.
+ *
+ * GOVERNS NATIVE UI FAN-OUT ONLY. el.dispatchEvent(new Event('foo')) must
+ * always dispatch regardless of this set, or synthetic events on custom types
+ * break. Do not "optimise" that by consulting the gate there.
+ * =================================================================== */
+#define QJS_EVGATE_SLOTS 64
+
+static const char *s_evgate[QJS_EVGATE_SLOTS];
+static int s_evgate_n = 0;
+
+static void qjs_evgate_add(const char *type)
+{
+	int i;
+	if (type == NULL || type[0] == '\0') return;
+	for (i = 0; i < s_evgate_n; i++) {
+		if (strcmp(s_evgate[i], type) == 0) return;
+	}
+	if (s_evgate_n >= QJS_EVGATE_SLOTS) return;   /* full: fail OPEN below */
+	{
+		char *dup = (char *)malloc(strlen(type) + 1);
+		if (dup == NULL) return;
+		strcpy(dup, type);
+		s_evgate[s_evgate_n++] = dup;
+	}
+}
+
+static void qjs_evgate_reset(void)
+{
+	int i;
+	for (i = 0; i < s_evgate_n; i++) free((void *)s_evgate[i]);
+	s_evgate_n = 0;
+}
+
+/* Exported for interaction.c. Returns non-zero if ANY listener of this type
+ * has been registered in this realm.
+ *
+ * FAILS OPEN in two cases, both deliberate: before any script has run
+ * (s_evgate_n == 0, e.g. a page with no JS at all -- dispatching a handful of
+ * events into an empty set costs nothing and a closed gate here would be
+ * indistinguishable from a broken engine), and when the table is full. A gate
+ * that fails closed silently deletes user interaction, which is exactly the
+ * bug class this whole batch exists to remove. */
+int macsurf_qjs_event_type_live(const char *type);
+int macsurf_qjs_event_type_live(const char *type)
+{
+	int i;
+	if (type == NULL) return 1;
+	if (s_evgate_n == 0) return 1;
+	if (s_evgate_n >= QJS_EVGATE_SLOTS) return 1;
+	for (i = 0; i < s_evgate_n; i++) {
+		if (strcmp(s_evgate[i], type) == 0) return 1;
+	}
+	return 0;
+}
+
+/* ===================================================================
+ * fixes1008 — REGISTRATION DEDUPE, at the chokepoint.
+ *
+ * libdom does NOT dedupe (node, type): dom_event_target_add_event_listener
+ * appends another listener_entry every time, and _dom_event_target_dispatch
+ * loops over ALL of them -- so N registrations replay the node's whole _L/_H
+ * list N times. We pass the same shared g_qjs_dom_listener every time, so the
+ * duplicates are pure loss.
+ *
+ * THREE routes register and they could not see each other:
+ *   addEventListener   guarded by `fresh` (first listener of that type in _L)
+ *   el.onclick=        __msRegEvent, NO guard
+ *   inline on* markup  macsurf_qjs_bind_inline_handlers, NO guard
+ * so `s.onload = fn` plus addEventListener('load') on the same node produced
+ * two entries and fired onload TWICE -- caught by harness Test 13, which is
+ * the dynamic-loader idiom, where a promise resolving twice is exactly the
+ * hang this engine spent fixes868/869 fixing.
+ *
+ * The document had the same shape and got a JS-side __msRegOnce in fixes1006.
+ * This replaces per-route guards with one C-side set keyed by
+ * (node, type, capture), which is where it always belonged: every route funnels
+ * through qjs_dom_register_listener, so one check covers all of them, elements
+ * and document alike.
+ *
+ * FAILS OPEN on malloc failure -- a duplicate dispatch is survivable, a missing
+ * registration means the handler never runs at all.
+ * =================================================================== */
+#define QJS_REG_BUCKETS 64
+#define QJS_REG_TYPELEN 32
+
+struct qjs_reg_entry {
+	dom_node *node;
+	char type[QJS_REG_TYPELEN];
+	int capture;
+	struct qjs_reg_entry *next;
+};
+
+static struct qjs_reg_entry *s_reg_buckets[QJS_REG_BUCKETS];
+
+/* Returns 1 if this (node, type, capture) was ALREADY registered. */
+static int qjs_reg_seen(dom_node *node, const char *type, int capture)
+{
+	unsigned int h = (unsigned int)(((size_t)node >> 3) &
+			(QJS_REG_BUCKETS - 1));
+	struct qjs_reg_entry *e = s_reg_buckets[h];
+	while (e != NULL) {
+		if (e->node == node && e->capture == capture &&
+		    strcmp(e->type, type) == 0) {
+			return 1;
+		}
+		e = e->next;
+	}
+	e = (struct qjs_reg_entry *)malloc(sizeof(struct qjs_reg_entry));
+	if (e == NULL) return 0;
+	e->node = node;
+	e->capture = capture;
+	strncpy(e->type, type, QJS_REG_TYPELEN - 1);
+	e->type[QJS_REG_TYPELEN - 1] = '\0';
+	e->next = s_reg_buckets[h];
+	s_reg_buckets[h] = e;
+	return 0;
+}
+
+/* Realm teardown: the nodes are going away, so the set must go with them or a
+ * recycled node address would look pre-registered and its listeners would
+ * never reach libdom. Called from qjs_wrap_drain. */
+static void qjs_reg_clear(void)
+{
+	unsigned int i;
+	for (i = 0; i < QJS_REG_BUCKETS; i++) {
+		struct qjs_reg_entry *e = s_reg_buckets[i];
+		while (e != NULL) {
+			struct qjs_reg_entry *n = e->next;
+			free(e);
+			e = n;
+		}
+		s_reg_buckets[i] = NULL;
+	}
 }
 
 /* fixes996 — the single place a node is registered with libdom.
@@ -3154,6 +3648,13 @@ static void qjs_dom_register_listener(dom_node *node, const char *type,
 {
 	dom_string *tds;
 	if (node == NULL || type == NULL || type[0] == '\0') return;
+	/* fixes1008 (1a) — the gate's single feed point. All three registration
+	 * routes reach here, so this one line covers addEventListener, inline
+	 * on* attributes and el.onclick= alike. */
+	qjs_evgate_add(type);
+	/* fixes1008 — once per (node, type, capture). See qjs_reg_seen: libdom
+	 * appends duplicates and replays the whole handler list per entry. */
+	if (qjs_reg_seen(node, type, capture)) return;
 	if (g_qjs_dom_listener == NULL) {
 		(void)dom_event_listener_create(qjs_dom_listener_cb, NULL,
 				&g_qjs_dom_listener);
@@ -3223,6 +3724,100 @@ static JSValue qjs_doc_reg_event(JSContext *ctx, JSValueConst this_val,
 	qjs_dom_register_listener((dom_node *)g_qjs_document, type_c, capture);
 	JS_FreeCString(ctx, type_c);
 	return JS_UNDEFINED;
+}
+
+/* fixes1008 (1e) — el.dispatchEvent, routed through libdom so it BUBBLES.
+ *
+ * The JS implementation fired only that node's own _L/_H and returned true
+ * unconditionally. Two things were wrong with that and both are load-bearing:
+ * a synthetic event never reached ancestors or the document (so a framework
+ * that triggers a control programmatically and relies on delegation to catch
+ * it saw nothing), and cancellation was unobservable, because dispatchEvent
+ * must return FALSE when a cancelable event was cancelled.
+ *
+ * Routing through dom_event_target_dispatch_event means the ONE dispatch
+ * implementation serves both real input and synthetic events -- no second
+ * path to drift. el.click() (fixes997) bubbles for free as a result.
+ *
+ * RE-ENTRANCY: qjs_dom_listener_cb calls dispatchEvent on the wrapper it
+ * looked up, so dispatching through libdom from inside dispatchEvent would
+ * recurse forever. g_qjs_in_dispatch is the guard -- while a native dispatch
+ * is in flight, this falls back to the local _L/_H firing, which is exactly
+ * what the callback wants from it.
+ *
+ * The type is taken from ev.type; a plain object works as well as a real
+ * Event, because that is what page code passes. */
+static int g_qjs_in_dispatch = 0;
+
+static JSValue qjs_el_dispatch_event_data(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv,
+		int magic, JSValueConst *func_data)
+{
+	dom_node *node;
+	JSValue tv, local;
+	const char *type_c;
+	dom_string *tds;
+	dom_event *evt = NULL;
+	bool ok_flag = true;
+	bool bubbles = true, cancelable = true;
+	(void)this_val; (void)magic;
+
+	node = qjs_get_node(func_data[0]);
+	if (node == NULL || argc < 1 || !JS_IsObject(argv[0])) {
+		return JS_NewBool(ctx, 1);
+	}
+
+	/* Re-entrant (we are inside qjs_dom_listener_cb): fire locally. */
+	if (g_qjs_in_dispatch) {
+		local = JS_GetPropertyStr(ctx, func_data[0], "__msFireLocal");
+		if (JS_IsFunction(ctx, local)) {
+			JSValue r = JS_Call(ctx, local, func_data[0], 1, argv);
+			JS_FreeValue(ctx, local);
+			if (JS_IsException(r)) return r;
+			JS_FreeValue(ctx, r);
+		} else {
+			JS_FreeValue(ctx, local);
+		}
+		return JS_NewBool(ctx, 1);
+	}
+
+	tv = JS_GetPropertyStr(ctx, argv[0], "type");
+	type_c = JS_ToCString(ctx, tv);
+	JS_FreeValue(ctx, tv);
+	if (type_c == NULL) return JS_NewBool(ctx, 1);
+
+	{
+		JSValue b = JS_GetPropertyStr(ctx, argv[0], "bubbles");
+		if (!JS_IsUndefined(b)) bubbles = JS_ToBool(ctx, b) ? true : false;
+		JS_FreeValue(ctx, b);
+		b = JS_GetPropertyStr(ctx, argv[0], "cancelable");
+		if (!JS_IsUndefined(b)) cancelable = JS_ToBool(ctx, b) ? true : false;
+		JS_FreeValue(ctx, b);
+	}
+
+	tds = qjs_make_domstr(type_c);
+	JS_FreeCString(ctx, type_c);
+	if (tds == NULL) return JS_NewBool(ctx, 1);
+
+	if (dom_event_create(&evt) != DOM_NO_ERR) {
+		macsurf_dom_string_unref(tds);
+		return JS_NewBool(ctx, 1);
+	}
+	if (dom_event_init(evt, tds, bubbles, cancelable) != DOM_NO_ERR) {
+		dom_event_unref(evt);
+		macsurf_dom_string_unref(tds);
+		return JS_NewBool(ctx, 1);
+	}
+	macsurf_dom_string_unref(tds);
+
+	g_qjs_in_dispatch = 1;
+	(void)dom_event_target_dispatch_event(node, evt, &ok_flag);
+	g_qjs_in_dispatch = 0;
+	dom_event_unref(evt);
+
+	/* false when a cancelable event was cancelled -- the whole point of the
+	 * return value, and previously always true. */
+	return JS_NewBool(ctx, ok_flag ? 1 : 0);
 }
 
 static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
@@ -3475,6 +4070,12 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 	JS_SetPropertyStr(ctx, obj, "addEventListener", f);
 	f = JS_NewCFunctionData(ctx, qjs_el_remove_event_listener_data, 2, 0, 1, data);
 	JS_SetPropertyStr(ctx, obj, "removeEventListener", f);
+	/* fixes1008 (1e) — native dispatchEvent, so synthetic events bubble.
+	 * Installed BEFORE the JS helper string is evaluated; that string now
+	 * defines __msFireLocal instead of dispatchEvent, so nothing shadows
+	 * this. */
+	f = JS_NewCFunctionData(ctx, qjs_el_dispatch_event_data, 1, 0, 1, data);
+	JS_SetPropertyStr(ctx, obj, "dispatchEvent", f);
 	/* fixes996 — the on* setter (a JS accessor) calls this to register. */
 	f = JS_NewCFunctionData(ctx, qjs_el_reg_event_data, 1, 0, 1, data);
 	JS_SetPropertyStr(ctx, obj, "__msRegEvent", f);
@@ -5446,8 +6047,17 @@ static void register_browser_globals(JSContext *ctx)
 			"document.getElementsByClassName=function(c){"
 				"return document.querySelectorAll('.'+String(c).split(/\\s+/)"
 					".filter(function(x){return !!x;}).join('.'));};"
-			"document.getElementsByName=document.getElementsByName||"
-				"function(){return [];};"
+			/* fixes1008 (2b) — was a hardcoded [] , which is a WRONG
+			 * ANSWER rather than a missing method: a caller gets an
+			 * empty list and concludes the elements do not exist. Radio
+			 * groups and legacy form code use it constantly. Delegates
+			 * to the same compound matcher getElementsByTagName and
+			 * getElementsByClassName already use (fixes873). */
+			"document.getElementsByName=function(n){"
+				"return document.querySelectorAll('[name=\"'+"
+					"String(n)+'\"]');};"
+			"document.createComment=function(t){"
+				"return document.createTextNode('');};"
 			"document.querySelectorAll=document.querySelectorAll||"
 				"function(){return [];};"
 			/* fixes1006 (1b) — tell libdom, or a real click never
@@ -6482,6 +7092,24 @@ void js_finalise(void)
  * let/const/class redeclaration collisions across page loads).  Returns the
  * new context, or NULL on failure (runtime left intact).  Mirrors the former
  * inline chain in js_newheap byte-for-byte. */
+/* fixes1008 (1g) — see the install site in qjs_build_context.
+ *
+ * is_handled means a rejection that was already caught (or caught later);
+ * those are normal control flow and must NOT be logged, or a page using
+ * try/catch around a fetch fills the log with non-problems. Only genuinely
+ * unhandled ones are reported. */
+static void qjs_promise_rejection_tracker(JSContext *ctx, JSValueConst promise,
+		JSValueConst reason, bool is_handled, void *opaque)
+{
+	const char *msg;
+	(void)promise; (void)opaque;
+	if (is_handled) return;
+	msg = JS_ToCString(ctx, reason);
+	macsurf_debug_log_writef("LIFE js unhandled rejection: %s",
+			msg ? msg : "(no reason)");
+	if (msg) JS_FreeCString(ctx, msg);
+}
+
 static JSContext *qjs_build_context(struct jsheap *heap)
 {
 	JSContext *ctx;
@@ -6501,6 +7129,21 @@ static JSContext *qjs_build_context(struct jsheap *heap)
 	MS_LOG("qjs intr: AToB");        JS_AddIntrinsicAToB(ctx);
 	MS_LOG("qjs intr: Performance"); JS_AddPerformance(ctx);
 	MS_LOG("qjs intr: all done");
+
+	/* fixes1008 (1g) — UNHANDLED PROMISE REJECTIONS, made visible.
+	 *
+	 * "Site loads, does nothing, no log" is the failure mode this whole batch
+	 * exists to eliminate, and an unhandled rejection is its purest form: a
+	 * loader chain that rejects three .then()s deep simply stops, leaving no
+	 * exception, no error, and nothing on disk to explain it. QuickJS will
+	 * tell us -- it just needs a tracker installed, and nothing ever
+	 * installed one.
+	 *
+	 * LIFE-prefixed because the WORK channel is compiled out of shipping
+	 * builds; a diagnostic nobody can read is the trap that has already cost
+	 * this project four rounds. */
+	JS_SetHostPromiseRejectionTracker(heap->rt,
+			qjs_promise_rejection_tracker, NULL);
 
 	MS_LOG("qjs: setup_globals");   macsurf_qjs_setup_globals(ctx);
 	MS_LOG("qjs: browser_globals"); register_browser_globals(ctx);
@@ -7655,11 +8298,6 @@ unsigned char js_fire_event(struct jsthread *thread, const char *type,
  * interaction.c now takes preventDefault from fire_generic_dom_event's return
  * value, because the dispatch it already performed is the real one. Delete
  * this once no build references the symbol. */
-int macsurf_qjs_dispatch_dom_click(struct dom_node *target)
-{
-	(void)target;
-	return 0;
-}
 
 /* GATE 3: dispatch DOMContentLoaded then load into the JS *document*'s
  * registered listeners (document._listeners, installed by the shim at

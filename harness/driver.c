@@ -4524,5 +4524,143 @@ int main(void)
 	fprintf(stderr, "=== Test 39 PASS: document.write + head-element "
 			"fragments ===\n");
 
+	/* --- Test 40: the Phase 1 event model + DOM surface (fixes1008) --------
+	 *
+	 * Covers, in one place, what a page actually needs from the event model.
+	 * Every assertion is a COUNT or a VALUE, never a boolean -- the libdom
+	 * target double-fire hid for ~15 rounds behind `if (fired)`. */
+	fprintf(stderr, "\n=== Test 40: Event objects, bubbling dispatch, "
+			"stopImmediatePropagation, DOM surface ===\n");
+	{
+		dom_string *idl = NULL;
+		dom_element *ell = NULL;
+		unsigned char ok;
+
+		if (dom_string_create((const uint8_t *)"li16", 4, &idl) != DOM_NO_ERR) {
+			fprintf(stderr, "FAIL: t40 dom_string_create\n"); return 1;
+		}
+		dom_document_get_element_by_id(document, idl, &ell);
+		dom_string_unref(idl);
+		if (ell == NULL) { fprintf(stderr, "FAIL: t40 missing #li16\n"); return 1; }
+
+		{
+			const char *setup =
+				"globalThis.__t40={};var r=globalThis.__t40;"
+				"r.n=0;r.sib=0;r.phase=-1;r.trusted=null;r.isEv=null;"
+				"r.bub=null;r.cancel=null;r.ts=0;"
+				"var e=document.getElementById('li16');"
+				/* two listeners: the first stops the second immediately */
+				"e.addEventListener('click',function(ev){"
+					"r.n++;"
+					"r.isEv=(ev instanceof Event);"
+					"r.phase=ev.eventPhase;r.trusted=ev.isTrusted;"
+					"r.bub=ev.bubbles;r.cancel=ev.cancelable;"
+					"r.ts=ev.timeStamp;"
+					"if(ev.stopImmediatePropagation)ev.stopImmediatePropagation();"
+				"});"
+				"e.addEventListener('click',function(){r.sib++;});"
+				/* synthetic dispatch must BUBBLE to the document */
+				"r.doc=0;"
+				"document.addEventListener('synth',function(){r.doc++;});"
+				"r.ret=e.dispatchEvent({type:'synth',bubbles:true,"
+					"cancelable:true});"
+				/* DOM surface */
+				"var host=document.createElement('div');"
+				"var a=document.createElement('span');"
+				"host.appendChild(a);"
+				"r.hasRemove=(typeof a.remove==='function');"
+				"a.remove();r.afterRemove=host.children.length;"
+				"host.insertAdjacentHTML('beforeend','<b id=\"iah\">x</b>');"
+				"r.iah=(host.children.length===1);"
+				"r.iahTag=host.children.length?"
+					"String(host.children[0].tagName).toLowerCase():'';"
+				"var d2=document.createElement('i');"
+				"host.append(d2);r.appended=(host.children.length===2);"
+				"r.conn=document.getElementById('li16').isConnected;"
+				"r.detached=host.isConnected;"
+				"r.owner=(document.getElementById('li16').ownerDocument===document);"
+				"var inp=document.createElement('input');"
+				"inp.checked=true;r.checked=inp.checked;"
+				"inp.checked=false;r.unchecked=inp.checked;";
+			ok = js_exec(thread, (const unsigned char *)setup,
+					strlen(setup), "t40-setup.js");
+			if (!ok) { fprintf(stderr, "FAIL: t40 setup threw\n"); return 1; }
+		}
+
+		(void)fire_generic_dom_event(corestring_dom_click,
+				(dom_node *)ell, true, true);
+
+		{
+			const char *chk =
+				"var r=globalThis.__t40;"
+				"if(r.n!==1)"
+					"throw new Error('ASSERT FAIL: listener ran '+r.n+' times, "
+						"expected 1');"
+				"if(r.sib!==0)"
+					"throw new Error('ASSERT FAIL: stopImmediatePropagation "
+						"did not stop the sibling listener (it ran '+r.sib+' "
+						"times). It was aliased to stopPropagation, which "
+						"stops the next NODE but lets the rest of THIS "
+						"node run -- the exact distinction the method "
+						"exists for.');"
+				"if(r.isEv!==true)"
+					"throw new Error('ASSERT FAIL: the event is not an "
+						"instance of Event -- it was an ad-hoc object, so "
+						"instanceof checks in library code fail.');"
+				"if(r.phase!==2)"
+					"throw new Error('ASSERT FAIL: eventPhase is '+r.phase+', "
+						"expected 2 (AT_TARGET). Before fixes1005 the "
+						"spurious second visit reported BUBBLING, and a "
+						"count-only test would not have caught it.');"
+				"if(r.trusted!==true)"
+					"throw new Error('ASSERT FAIL: isTrusted is '+r.trusted+' "
+						"for a NATIVE dispatch; must be true here and false "
+						"for dispatchEvent.');"
+				"if(r.bub!==true||r.cancel!==true)"
+					"throw new Error('ASSERT FAIL: bubbles/cancelable missing "
+						"(bubbles='+r.bub+' cancelable='+r.cancel+')');"
+				"if(!(r.ts>0))"
+					"throw new Error('ASSERT FAIL: timeStamp is '+r.ts);"
+				"if(r.doc!==1)"
+					"throw new Error('ASSERT FAIL: el.dispatchEvent did not "
+						"BUBBLE to the document (fired '+r.doc+'). It used "
+						"to fire only the node own _L/_H, so a framework "
+						"triggering a control and relying on delegation saw "
+						"nothing.');"
+				"if(r.ret!==true)"
+					"throw new Error('ASSERT FAIL: dispatchEvent returned '+"
+						"r.ret+' for an uncancelled event, expected true');"
+				"if(!r.hasRemove)throw new Error('ASSERT FAIL: el.remove missing');"
+				"if(r.afterRemove!==0)"
+					"throw new Error('ASSERT FAIL: el.remove() left '+"
+						"r.afterRemove+' children');"
+				"if(!r.iah||r.iahTag!=='b')"
+					"throw new Error('ASSERT FAIL: insertAdjacentHTML gave "
+						"tag \"'+r.iahTag+'\"');"
+				"if(!r.appended)throw new Error('ASSERT FAIL: append() failed');"
+				"if(r.conn!==true)"
+					"throw new Error('ASSERT FAIL: isConnected false for an "
+						"in-document node');"
+				"if(r.detached!==false)"
+					"throw new Error('ASSERT FAIL: isConnected true for a "
+						"detached node');"
+				"if(!r.owner)throw new Error('ASSERT FAIL: ownerDocument wrong');"
+				"if(r.checked!==true||r.unchecked!==false)"
+					"throw new Error('ASSERT FAIL: input.checked does not "
+						"round-trip (set true -> '+r.checked+', set false -> "
+						"'+r.unchecked+')');";
+			ok = js_exec(thread, (const unsigned char *)chk,
+					strlen(chk), "t40-chk.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: Test 40 -- event model / DOM surface\n");
+				return 1;
+			}
+		}
+		fprintf(stderr, "  real Event instances (phase/isTrusted/bubbles/"
+				"timeStamp), stopImmediatePropagation stops siblings, "
+				"synthetic dispatch bubbles to document, DOM surface live\n");
+	}
+	fprintf(stderr, "=== Test 40 PASS: event model + DOM surface ===\n");
+
 	return 0;
 }

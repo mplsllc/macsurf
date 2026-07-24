@@ -1778,45 +1778,86 @@ mouse_action_drag_none(html_content *html,
 					? "  <-- MISMATCH: clicking a tree the last reconvert did not install"
 					: "");
 		}
+		/* fixes1008 (1f) — THE REST OF THE MOUSE EVENTS.
+		 *
+		 * Only click/submit/keydown were ever dispatched, so a page that
+		 * opens a menu on mousedown, validates on mouseup, or shows a
+		 * preview on dblclick did nothing at all. These fire at the same
+		 * node and through the same path as click.
+		 *
+		 * Every one is GATED on macsurf_qjs_event_type_live(): with no
+		 * listener registered for the type, we return before building an
+		 * Event or touching the wrap table. On a G3 that is the difference
+		 * between usable and molasses -- see the gate's comment in
+		 * macsurf_qjs.c. The gate fails OPEN, so a page with no JS behaves
+		 * exactly as before.
+		 *
+		 * macsurf_qjs_set_event_detail() hands over the pointer position,
+		 * button and modifiers so a handler reading e.clientX gets a real
+		 * number instead of undefined (which it computes NaN from), and
+		 * clears afterwards so a stale click cannot leak into a later,
+		 * unrelated event. */
+		macsurf_qjs_set_event_detail(x, y,
+				(mouse & BROWSER_MOUSE_CLICK_2) ? 2 : 0, 0, 0);
+
+		if (mouse & (BROWSER_MOUSE_PRESS_1 | BROWSER_MOUSE_PRESS_2)) {
+			if (macsurf_qjs_event_type_live("mousedown")) {
+				(void) fire_generic_dom_event(
+					corestring_dom_mousedown, mas.node,
+					true, true);
+			}
+		}
+
 		/* fixes989 — this IS the dispatch, and its return value IS the
 		 * preventDefault answer: fire_dom_event returns false when the
 		 * event was cancelled. Now that addEventListener registers with
 		 * libdom (macsurf_qjs.c), this reaches real JS handlers. */
 		js_default_prevented = fire_generic_dom_event(
 			corestring_dom_click, mas.node, true, true) ? 0 : 1;
-		/* fixes882/989 -- READ THIS BEFORE DEBUGGING A CLICK.
+
+		/* mouseup follows click here rather than preceding it because this
+		 * frontend delivers CLICK as a single combined event -- there is no
+		 * separate release callback to hang it off. Ordering within one
+		 * physical click is therefore approximate; what matters is that
+		 * handlers bound to mouseup run at all, which they previously did
+		 * not. */
+		if (macsurf_qjs_event_type_live("mouseup")) {
+			(void) fire_generic_dom_event(corestring_dom_mouseup,
+					mas.node, true, true);
+		}
+		if ((mouse & BROWSER_MOUSE_DOUBLE_CLICK) &&
+		    macsurf_qjs_event_type_live("dblclick")) {
+			(void) fire_generic_dom_event(corestring_dom_dblclick,
+					mas.node, true, true);
+		}
+		if ((mouse & BROWSER_MOUSE_CLICK_2) &&
+		    macsurf_qjs_event_type_live("contextmenu")) {
+			(void) fire_generic_dom_event(corestring_dom_contextmenu,
+					mas.node, true, true);
+		}
+		macsurf_qjs_clear_event_detail();
+		/* fixes1008 -- READ THIS BEFORE DEBUGGING A CLICK.
 		 *
-		 * fixes989 CLOSED what the rest of this comment describes: JS
-		 * addEventListener now registers a marker listener with libdom
-		 * (macsurf_qjs.c, "the event bridge"), so the dispatch above
-		 * reaches real handlers and its return value carries
-		 * preventDefault. The history is kept because it explains the
-		 * shape of the fix and why the harness could not see the bug.
+		 * The long history that used to live here described a dispatch that
+		 * reached nothing, and it is now wrong in every particular, so it has
+		 * been replaced rather than extended. What is true today:
 		 *
+		 *   - fire_generic_dom_event above is a REAL libdom dispatch and it
+		 *     reaches real JS handlers. All three registration routes
+		 *     (addEventListener, el.onclick=, inline on* markup) funnel through
+		 *     qjs_dom_register_listener, which registers with libdom.
+		 *   - document and window are real event targets too (fixes1006), so
+		 *     $(document).on('click', sel, fn) delegation works.
+		 *   - js_default_prevented below is live: the return value carries
+		 *     preventDefault, and the branch that reads it is NOT dead code.
+		 *   - macsurf_qjs_dispatch_dom_click is GONE (fixes1008). It was a stub
+		 *     returning 0 and it read like a second dispatch path.
 		 *
-		 * This comment used to claim the call below "dispatches the click
-		 * through the QuickJS shadow-DOM event layer so page scripts that use
-		 * element-level AND document-level (XenForo-style) delegation actually
-		 * run". It does not, and never did. macsurf_qjs_dispatch_dom_click is
-		 * `{ (void)target; return 0; }` -- a stub. So:
-		 *
-		 *   - NO JS click listener of any kind runs from real mouse input.
-		 *     Not addEventListener('click'), not el.onclick, not delegation.
-		 *   - js_default_prevented below is therefore provably always 0, and
-		 *     the branch that reads it is dead code.
-		 *
-		 * The fire_generic_dom_event above IS a real libdom dispatch, and
-		 * libdom implements capture/target/bubble correctly -- but nothing in
-		 * the tree ever calls dom_event_target_add_event_listener, so it
-		 * dispatches into an empty listener set. The JS side keeps its own
-		 * parallel registries (el._L / el._H / document._listeners /
-		 * _winListeners) that libdom knows nothing about.
-		 *
-		 * This is the true cause of "renders perfectly, ignores every click"
-		 * (#300). Fixing it is the event-model phase, not a comment change.
-		 * Note the S0 harness dispatches events SYNTHETICALLY through
-		 * el.dispatchEvent, which is the path that works -- so it reports
-		 * healthy while hardware ignores every click. */
+		 * The one trap worth keeping: the S0 harness historically dispatched
+		 * through el.dispatchEvent, the JS-local path, which is why it reported
+		 * healthy for years while hardware ignored every click. Harness Test 38
+		 * exists to dispatch the way this function does, and any new event test
+		 * must do the same or it proves nothing. */
 		if (js_default_prevented != 0 &&
 		    (mas.result.action == ACTION_NAVIGATE ||
 		     mas.result.action == ACTION_SUBMIT)) {
@@ -2020,9 +2061,53 @@ bool html_keypress(struct content *c, uint32_t key)
 	 * `event.preventDefault()` then we won't handle the event when
 	 * we're not supposed to.
 	 */
-	if (html->layout != NULL && html->layout->node != NULL) {
-		fire_dom_keyboard_event(corestring_dom_keydown,
-				html->layout->node, true, true, key);
+	/* fixes1008 (1f) — AT THE FOCUSED ELEMENT, and keyup/keypress too.
+	 *
+	 * This is item 4 of the upstream TODO immediately above. Every keyboard
+	 * event fired at html->layout->node -- the ROOT -- so e.target was always
+	 * <html> and a per-field handler (`input.addEventListener('keydown')`,
+	 * or delegation testing e.target) could never match. Bubbling from the
+	 * focused element reaches document-level handlers too, so this is
+	 * strictly better for both styles.
+	 *
+	 * focus_owner is a union discriminated by focus_type; the textarea and
+	 * content members are both `struct box *`, and box->node is the element.
+	 * Falls back to the root only when nothing is focused.
+	 *
+	 * keyup/keypress are gated and dispatched alongside keydown. This
+	 * frontend delivers a single key event, so keyup is synthesised at the
+	 * same moment rather than on a real release -- handlers that merely need
+	 * to RUN work; anything timing press-to-release does not, and that is the
+	 * honest limit of what the platform hands us. */
+	{
+		dom_node *ktarget = NULL;
+		struct box *fbox = NULL;
+
+		if (html->focus_type == HTML_FOCUS_TEXTAREA) {
+			fbox = html->focus_owner.textarea;
+		} else if (html->focus_type == HTML_FOCUS_CONTENT) {
+			fbox = html->focus_owner.content;
+		}
+		if (fbox != NULL && fbox->node != NULL) {
+			ktarget = fbox->node;
+		} else if (html->layout != NULL) {
+			ktarget = html->layout->node;
+		}
+
+		if (ktarget != NULL) {
+			macsurf_qjs_set_event_detail(0, 0, 0, (int) key, 0);
+			fire_dom_keyboard_event(corestring_dom_keydown,
+					ktarget, true, true, key);
+			if (macsurf_qjs_event_type_live("keypress")) {
+				fire_dom_keyboard_event(corestring_dom_keypress,
+						ktarget, true, true, key);
+			}
+			if (macsurf_qjs_event_type_live("keyup")) {
+				fire_dom_keyboard_event(corestring_dom_keyup,
+						ktarget, true, true, key);
+			}
+			macsurf_qjs_clear_event_detail();
+		}
 	}
 #ifdef __MACOS9__
 	/* fixes160b — was "key=0x%lx". The minimal formatter in

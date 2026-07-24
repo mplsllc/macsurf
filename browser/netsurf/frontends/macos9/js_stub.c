@@ -74,12 +74,26 @@ void js_event_cleanup(jsthread *thread, struct dom_event *evt)
 	(void)thread; (void)evt;
 }
 
-/* Bridge called from content/handlers/html/interaction.c on a real click.
- * No JS engine -> nothing to dispatch, and nothing ever prevents default. */
-int macsurf_qjs_dispatch_dom_click(struct dom_node *target)
+/* fixes1008 — event-bridge hooks for the no-JS build.
+ *
+ * event_type_live() returns 1 (FAILS OPEN) to match the engine's own
+ * behaviour: the gate exists to skip pointless work, never to suppress
+ * dispatch. With no JS engine the dispatch reaches an empty listener set and
+ * costs nothing anyway, and returning 0 here would bake "gate closed" into the
+ * one build where it can never be reopened. */
+int macsurf_qjs_event_type_live(const char *type)
 {
-	(void)target;
-	return 0;
+	(void)type;
+	return 1;
+}
+
+void macsurf_qjs_set_event_detail(int x, int y, int button, int key, int mods)
+{
+	(void)x; (void)y; (void)button; (void)key; (void)mods;
+}
+
+void macsurf_qjs_clear_event_detail(void)
+{
 }
 
 #endif /* !WITH_QUICKJS */

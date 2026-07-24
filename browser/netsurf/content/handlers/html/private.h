@@ -375,6 +375,28 @@ nserror html_css_fetcher_add_item(dom_string *data, struct nsurl *base_url,
  * Construct an event and fire it at the DOM
  *
  */
+/* fixes1008 (1a/1d) — the JS event bridge's two host hooks.
+ *
+ * macsurf_qjs_event_type_live(): has ANY listener for this type been
+ * registered in this realm? interaction.c consults it before building an
+ * Event or touching the wrap table, so a hover on a page that listens for
+ * nothing costs nothing. FAILS OPEN (returns 1) before any script has run and
+ * if its table is full -- a gate that fails closed silently deletes user
+ * interaction, which is the bug class this batch exists to remove.
+ *
+ * macsurf_qjs_set_event_detail(): pointer position / button / key / modifiers
+ * for the event about to be dispatched, so a handler reading e.clientX or
+ * e.key gets a real value rather than undefined. Globals rather than widening
+ * fire_generic_dom_event, which is core API called from several places --
+ * widening an exported signature is the CW8 flat-namespace trap. Always pair
+ * with macsurf_qjs_clear_event_detail() so one event's detail cannot leak into
+ * the next.
+ *
+ * All three are no-op stubs in js_stub.c for the WITHOUT_QUICKJS build. */
+int macsurf_qjs_event_type_live(const char *type);
+void macsurf_qjs_set_event_detail(int x, int y, int button, int key, int mods);
+void macsurf_qjs_clear_event_detail(void);
+
 bool fire_generic_dom_event(dom_string *type, dom_node *target,
 		    bool bubbles, bool cancelable);
 

@@ -25,6 +25,9 @@
 #include <dom/dom.h>
 
 #include "utils/config.h"
+/* fixes1008 (1f) — corestring_dom_input / corestring_dom_change, for the
+ * input/change dispatch on TEXTAREA_MSG_TEXT_MODIFIED below. */
+#include "utils/corestrings.h"
 #include "utils/log.h"
 #include "utils/messages.h"
 #include "netsurf/keypress.h"
@@ -269,6 +272,29 @@ static void box_textarea_callback(void *data, struct textarea_msg *msg)
 		form_gadget_update_value(gadget,
 					 strndup(msg->data.modified.text,
 						 msg->data.modified.len));
+		/* fixes1008 (1f) — `input` and `change`.
+		 *
+		 * Neither was ever dispatched, so every form that validates as you
+		 * type, every character counter, every search-as-you-type box and
+		 * every framework two-way binding did nothing at all. The value
+		 * already syncs to the DOM here (form_gadget_update_value ->
+		 * form_gadget_sync_with_dom), so by this point e.target.value reads
+		 * correctly from a handler -- the events were the only missing part.
+		 *
+		 * Both fire because sites bind to either; `input` is the per-keystroke
+		 * one and `change` is nominally on commit, but this frontend has no
+		 * separate commit signal, so firing both here is the honest
+		 * approximation. Gated, so a page with no listeners pays nothing. */
+		if (box != NULL && box->node != NULL) {
+			if (macsurf_qjs_event_type_live("input")) {
+				(void) fire_generic_dom_event(corestring_dom_input,
+						box->node, true, false);
+			}
+			if (macsurf_qjs_event_type_live("change")) {
+				(void) fire_generic_dom_event(corestring_dom_change,
+						box->node, true, false);
+			}
+		}
 		break;
 	}
 }
