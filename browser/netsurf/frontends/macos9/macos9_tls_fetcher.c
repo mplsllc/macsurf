@@ -599,6 +599,41 @@ static int terminal_url_check(const char *url)
 	return 0;
 }
 
+/* fixes1003 — a USER navigation is a retry, so clear both fail sets.
+ *
+ * The dead-host list and the terminal-URL set exist to collapse a subresource
+ * storm inside ONE page load (fixes554: dozens of jsdelivr URLs each looping
+ * fast-fail -> http -> 301). For that they are right. Applied to the page the
+ * user actually asked for, they are a trap: hardware hit ONE transient TLS
+ * timeout on 68kmla.org (215-byte ClientHello sent, 54,081 recv calls, zero
+ * bytes back — the host answers fine from elsewhere), and after that the URL
+ * was terminal and the host dead for the WHOLE SESSION. Every reload
+ * fast-failed without touching the network, then fell back to http and hit
+ * "redirect loop: https host unreachable". A site that would have worked on
+ * the next attempt was unreachable until quit.
+ *
+ * Clicking Go/Reload on a top-level URL is an explicit "try again", and that
+ * is exactly the signal these sets lack. Clearing them there costs at most one
+ * re-attempt per navigation on a genuinely dead host — which then re-populates
+ * the sets in the same load and collapses the storm as before. The intra-load
+ * protection is unchanged; only the ACROSS-navigation memory goes.
+ *
+ * Deliberately not a TTL: a timer would guess at how long "transient" lasts,
+ * while the user's own retry is unambiguous. */
+void macos9_https_clear_fail_sets(void);
+void macos9_https_clear_fail_sets(void)
+{
+	int had_dead = dead_hosts_count;
+	int had_term = terminal_urls_count;
+	dead_hosts_count = 0;
+	terminal_urls_count = 0;
+	if (had_dead != 0 || had_term != 0) {
+		macsurf_debug_log_writef(
+			"LIFE navretry: cleared dead-hosts=%d terminal-urls=%d",
+			had_dead, had_term);
+	}
+}
+
 /* Add url to the terminal set.  Returns 1 if NEWLY added (caller logs the
  * TERMINAL FAIL line exactly once per URL), 0 if already present or untracked. */
 static int terminal_url_add(const char *url)

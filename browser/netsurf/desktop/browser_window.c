@@ -3988,6 +3988,24 @@ browser_window__navigate_internal(struct browser_window *bw,
 		((params != NULL) && (params->url != NULL)) ?
 			nsurl_access(params->url) : "(null)");
 
+	/* fixes1003 — a top-level navigation IS a retry: clear the TLS
+	 * fetcher's dead-host and terminal-URL sets. Those exist to collapse a
+	 * subresource storm within one page load; carried ACROSS navigations
+	 * they made a single transient timeout permanent, so reloading a site
+	 * that failed once could never recover it (68kmla, hardware). Skipped
+	 * for about: URLs so navigating to the error page itself does not clear
+	 * the state that produced it. See macos9_https_clear_fail_sets. */
+#ifdef __MACOS9__
+	if ((params != NULL) && (params->url != NULL)) {
+		lwc_string *sch = nsurl_get_component(params->url, NSURL_SCHEME);
+		if (sch != corestring_lwc_about) {
+			extern void macos9_https_clear_fail_sets(void);
+			macos9_https_clear_fail_sets();
+		}
+		if (sch != NULL) lwc_string_unref(sch);
+	}
+#endif
+
 	/* All our special URIs are in the about: scheme */
 	scheme = nsurl_get_component(params->url, NSURL_SCHEME);
 	if (scheme != corestring_lwc_about) {
