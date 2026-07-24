@@ -2925,6 +2925,35 @@ static JSValue qjs_ev_stop_propagation_data(JSContext *ctx,
 	return JS_UNDEFINED;
 }
 
+/* fixes1006 — call obj.dispatchEvent(ev), swallowing (but LOGGING) a throw.
+ * One bad handler must never abort propagation to the rest, and a silent
+ * catch is how "site loads, does nothing, no log" happens. `what` names the
+ * target in the log line. */
+static void qjs_fire_dispatch(JSContext *ctx, JSValueConst obj,
+		JSValue evobj, const char *what)
+{
+	JSValue fn, ret;
+	JSValue argv[1];
+
+	if (JS_IsUndefined(obj) || JS_IsNull(obj)) return;
+	fn = JS_GetPropertyStr(ctx, obj, "dispatchEvent");
+	if (JS_IsFunction(ctx, fn)) {
+		argv[0] = evobj;
+		ret = JS_Call(ctx, fn, obj, 1, (JSValueConst *)argv);
+		if (JS_IsException(ret)) {
+			JSValue ex = JS_GetException(ctx);
+			const char *msg = JS_ToCString(ctx, ex);
+			macsurf_debug_log_writef(
+				"LIFE jsevent %s handler threw: %s",
+				what, msg ? msg : "?");
+			if (msg) JS_FreeCString(ctx, msg);
+			JS_FreeValue(ctx, ex);
+		}
+		JS_FreeValue(ctx, ret);
+	}
+	JS_FreeValue(ctx, fn);
+}
+
 static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 {
 	dom_event_target *ct = NULL;
@@ -2965,15 +2994,44 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 				(size_t)dom_string_length(type_ds)));
 	JS_SetPropertyStr(ctx, evobj, "currentTarget",
 		JS_DupValue(ctx, hit->val));
+	/* fixes1006 (1c) — event.target, WRAPPED ON DEMAND.
+	 *
+	 * This used to be lookup-only: on a wrap-table miss it simply did not set
+	 * the property, so `event.target` was `undefined` for any node script had
+	 * never touched. Delegation handlers universally open with
+	 * `e.target.matches(...)` or `e.target.closest(...)`, which throws on
+	 * undefined and takes the handler down -- so delegation was dead in the
+	 * field even where the listener itself was reached. It passed in t.html
+	 * only because every node there had been through getElementById and so
+	 * already had a wrapper.
+	 *
+	 * LOOKUP FIRST, wrap only on a miss. That order is load-bearing now that
+	 * the document is in the table: qjs_wrap_any_node deliberately returns
+	 * JS_NULL for nodeType 9 (minting a wrapper for a node shape whose vtable
+	 * does not match was the fixes846 ASan overflow), so going straight to it
+	 * would yield `e.target === null` for every document-targeted event --
+	 * DOMContentLoaded, readystatechange, document.dispatchEvent -- and
+	 * `e.target === document` is a check libraries make.
+	 *
+	 * REF DISCIPLINE: the getter hands us an owned ref. qjs_wrap_any_node
+	 * CONSUMES one, so the miss path must NOT unref afterwards; the hit path
+	 * must. Getting this backwards is a double-unref on every dispatch. */
 	if (dom_event_get_target(evt, &tt) == DOM_NO_ERR && tt != NULL) {
 		struct qjs_wrap_entry *th = qjs_wrap_lookup((dom_node *)tt);
+		JSValue tv;
 		if (th != NULL) {
-			JS_SetPropertyStr(ctx, evobj, "target",
-				JS_DupValue(ctx, th->val));
-			JS_SetPropertyStr(ctx, evobj, "srcElement",
-				JS_DupValue(ctx, th->val));
+			tv = JS_DupValue(ctx, th->val);
+			macsurf_dom_node_unref((dom_node *)tt);
+		} else {
+			tv = qjs_wrap_any_node(ctx, (dom_node *)tt);
 		}
-		macsurf_dom_node_unref((dom_node *)tt);
+		if (!JS_IsNull(tv) && !JS_IsUndefined(tv)) {
+			JS_SetPropertyStr(ctx, evobj, "target",
+				JS_DupValue(ctx, tv));
+			JS_SetPropertyStr(ctx, evobj, "srcElement", tv);
+		} else {
+			JS_FreeValue(ctx, tv);
+		}
 	}
 	pd = JS_NewInt64(ctx, (long long)(size_t)evt);
 	JS_SetPropertyStr(ctx, evobj, "preventDefault",
@@ -2988,23 +3046,58 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 	JS_FreeValue(ctx, pd);   /* NewCFunctionData took its own reference */
 
 	/* Fire this node's _L + _H through the one implementation that exists. */
-	disp = JS_GetPropertyStr(ctx, hit->val, "dispatchEvent");
-	if (JS_IsFunction(ctx, disp)) {
-		callargv[0] = evobj;
-		ret = JS_Call(ctx, disp, hit->val, 1,
-				(JSValueConst *)callargv);
-		if (JS_IsException(ret)) {
-			JSValue ex = JS_GetException(ctx);
-			const char *msg = JS_ToCString(ctx, ex);
-			macsurf_debug_log_writef(
-				"LIFE jsevent handler threw: %s",
-				msg ? msg : "?");
-			if (msg) JS_FreeCString(ctx, msg);
-			JS_FreeValue(ctx, ex);
+	{
+		/* fixes1006 (1b) — WINDOW FAN-OUT, and the order matters in BOTH
+		 * directions.
+		 *
+		 * `window` has no DOM node, so its listeners are registered against
+		 * the document node and delivered here. Per spec window is the
+		 * OUTERMOST target: it runs BEFORE the document while capturing and
+		 * AFTER it while bubbling. A single "always last" fan-out would be
+		 * wrong for capture, which is exactly the phase jQuery's focusin
+		 * workaround relies on.
+		 *
+		 * Only the document entry fans out -- element hits dispatch once. */
+		int is_doc = (g_qjs_document != NULL &&
+				node == (dom_node *)g_qjs_document);
+		int capturing = 0;
+		JSValue global = JS_UNDEFINED;
+		if (is_doc) {
+			dom_event_flow_phase ph = 0;
+			if (dom_event_get_event_phase(evt, &ph) == DOM_NO_ERR &&
+			    ph == DOM_CAPTURING_PHASE) {
+				capturing = 1;
+			}
+			global = JS_GetGlobalObject(ctx);
 		}
-		JS_FreeValue(ctx, ret);
+
+		if (is_doc && capturing) {
+			qjs_fire_dispatch(ctx, global, evobj, "window");
+		}
+
+		disp = JS_GetPropertyStr(ctx, hit->val, "dispatchEvent");
+		if (JS_IsFunction(ctx, disp)) {
+			callargv[0] = evobj;
+			ret = JS_Call(ctx, disp, hit->val, 1,
+					(JSValueConst *)callargv);
+			if (JS_IsException(ret)) {
+				JSValue ex = JS_GetException(ctx);
+				const char *msg = JS_ToCString(ctx, ex);
+				macsurf_debug_log_writef(
+					"LIFE jsevent handler threw: %s",
+					msg ? msg : "?");
+				if (msg) JS_FreeCString(ctx, msg);
+				JS_FreeValue(ctx, ex);
+			}
+			JS_FreeValue(ctx, ret);
+		}
+		JS_FreeValue(ctx, disp);
+
+		if (is_doc && !capturing) {
+			qjs_fire_dispatch(ctx, global, evobj, "window");
+		}
+		if (is_doc) JS_FreeValue(ctx, global);
 	}
-	JS_FreeValue(ctx, disp);
 	JS_FreeValue(ctx, evobj);
 	macsurf_dom_string_unref(type_ds);
 	macsurf_dom_node_unref(node);
@@ -3054,6 +3147,46 @@ static JSValue qjs_el_reg_event_data(JSContext *ctx,
 	type_c = JS_ToCString(ctx, argv[0]);
 	if (type_c == NULL) return JS_UNDEFINED;
 	qjs_dom_register_listener(node, type_c, 0);
+	JS_FreeCString(ctx, type_c);
+	return JS_UNDEFINED;
+}
+
+/* fixes1006 (1b) — the DOCUMENT/WINDOW registration hook.
+ *
+ * document.addEventListener and window.addEventListener stored their handlers
+ * in JS-only registries (document._listeners / _winListeners) that libdom knew
+ * nothing about. Nothing ever called dom_event_target_add_event_listener for
+ * them, so a real mouse click dispatched into an empty listener set at the
+ * document and never reached $(document).on('click', ...) -- the dominant
+ * pattern in jQuery, XenForo (XF.activate), WordPress and every
+ * delegation-based app. The registries themselves are fine and stay; only the
+ * REGISTRATION was missing.
+ *
+ * `window` has no DOM node of its own, so its listeners register against the
+ * document node too and are fanned out separately in qjs_dom_listener_cb,
+ * which is where the capture/bubble ordering is applied.
+ *
+ * Idempotent by libdom's own keying: (node, type, listener, capture) twice is
+ * not additive, so re-registering the same type is harmless. */
+static JSValue qjs_doc_reg_event(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	const char *type_c;
+	int capture = 0;
+	(void)this_val;
+	if (g_qjs_document == NULL || argc < 1) return JS_UNDEFINED;
+	type_c = JS_ToCString(ctx, argv[0]);
+	if (type_c == NULL) return JS_UNDEFINED;
+	if (argc >= 2) {
+		if (JS_IsBool(argv[1])) {
+			capture = JS_ToBool(ctx, argv[1]);
+		} else if (JS_IsObject(argv[1])) {
+			JSValue c = JS_GetPropertyStr(ctx, argv[1], "capture");
+			capture = JS_ToBool(ctx, c);
+			JS_FreeValue(ctx, c);
+		}
+	}
+	qjs_dom_register_listener((dom_node *)g_qjs_document, type_c, capture);
 	JS_FreeCString(ctx, type_c);
 	return JS_UNDEFINED;
 }
@@ -4598,6 +4731,46 @@ static void qjs_dom_install(JSContext *ctx)
 					JS_PROP_CONFIGURABLE);
 			JS_FreeAtom(ctx, atom);
 		}
+		/* fixes1006 (1b) — make `document` a REAL event target.
+		 *
+		 * Two halves. First the registration hook the JS shims call, so
+		 * document.addEventListener / window.addEventListener reach
+		 * dom_event_target_add_event_listener. */
+		qjs_set_func(ctx, doc, "__msRegDocEvent", qjs_doc_reg_event, 2);
+
+		/* Second: put the JS `document` object in the wrap table, keyed by
+		 * the document dom_node, so qjs_dom_listener_cb's qjs_wrap_lookup
+		 * finds it and can call its dispatchEvent.
+		 *
+		 * DO NOT mint a wrapper for the document via qjs_wrap_element /
+		 * qjs_wrap_any_node -- those read through an ELEMENT vtable and a
+		 * document is a different, smaller shape; that mismatch was the
+		 * fixes846 ASan global-buffer-overflow. Registering the object that
+		 * already exists is safe by construction because the callback only
+		 * ever calls dispatchEvent on it, never an element-only operation.
+		 *
+		 * The entry is deliberately WEAK: no JS_DupValue on the value. The
+		 * document object is a property of the realm global, so
+		 * JS_FreeContext frees it, and drain (which runs AFTER
+		 * JS_FreeContext) must never touch that value. It is also the one
+		 * entry with no finalizer -- JS_GetOpaque(v, s_el_class_id) is NULL
+		 * for it -- so nothing removes it on its own and every table walker
+		 * must tolerate a non-element entry.
+		 *
+		 * The NODE ref is taken, because drain unrefs e->node. owner_doc is
+		 * NULL: the document cannot be its own keepalive. */
+		if (g_qjs_document != NULL &&
+		    qjs_wrap_lookup((dom_node *)g_qjs_document) == NULL) {
+			macsurf_dom_node_ref((dom_node *)g_qjs_document);
+			if (qjs_wrap_insert((dom_node *)g_qjs_document, NULL,
+					doc, JS_GetRuntime(ctx)) == 0) {
+				/* malloc failed: give the ref straight back so
+				 * the table and the refcount stay consistent. */
+				macsurf_dom_node_unref(
+					(dom_node *)g_qjs_document);
+			}
+		}
+
 		/* Native section accessors used by the body/head/documentElement
 		 * getters installed in JS below. */
 		qjs_set_func(ctx, doc, "__getDocumentElement",
@@ -5177,11 +5350,31 @@ static void register_browser_globals(JSContext *ctx)
 				"function(){return [];};"
 			"document.querySelectorAll=document.querySelectorAll||"
 				"function(){return [];};"
+			/* fixes1006 (1b) — tell libdom, or a real click never
+			 * arrives. The _listeners registry is unchanged; the
+			 * missing half was the registration. __msRegDocEvent is
+			 * the native hook installed by qjs_dom_install (absent
+			 * for the pre-document window, hence the typeof guard). */
+			/* ONCE PER TYPE. libdom does not dedupe (node, type) --
+			 * every registration appends another listener_entry, and
+			 * _dom_event_target_dispatch loops over ALL of them, so N
+			 * registrations replay the whole _listeners array N times.
+			 * Measured: 3 registrations of 'click' ran one delegation
+			 * handler 4 times. Elements already guard this with
+			 * `fresh` in qjs_el_add_event_listener_data; document and
+			 * window share the document node, so they share one gate. */
+			"document._reg={};"
+			"document.__msRegOnce=function(t,opt){"
+				"if(document._reg[t])return;"
+				"document._reg[t]=1;"
+				"if(typeof document.__msRegDocEvent==='function'){"
+					"try{document.__msRegDocEvent(t,opt);}catch(e){}}};"
 			"document.addEventListener=document.addEventListener||"
-				"function(t,fn){"
+				"function(t,fn,opt){"
 					"if(!document._listeners)document._listeners={};"
 					"if(!document._listeners[t])document._listeners[t]=[];"
-					"document._listeners[t].push(fn);};"
+					"document._listeners[t].push(fn);"
+					"document.__msRegOnce(t,opt);};"
 			"document.removeEventListener=document.removeEventListener||"
 				"function(t,fn){"
 					"var L=document._listeners&&document._listeners[t];if(!L)return;"
@@ -5270,9 +5463,17 @@ static void register_browser_globals(JSContext *ctx)
 		"this.scrollBy=function(){};"
 		"this.scroll=function(){};"
 		"this._winListeners={};"
-		"this.addEventListener=function(t,fn){"
+		/* fixes1006 (1b) — window has no DOM node, so register against the
+		 * DOCUMENT node and let qjs_dom_listener_cb fan out to
+		 * _winListeners with the right capture/bubble ordering. Without
+		 * this, window click/scroll/keydown handlers never fired from real
+		 * input at all. */
+		"this.addEventListener=function(t,fn,opt){"
 			"if(!this._winListeners[t])this._winListeners[t]=[];"
-			"this._winListeners[t].push(fn);};"
+			"this._winListeners[t].push(fn);"
+			"if(typeof document!=='undefined'&&"
+			   "typeof document.__msRegOnce==='function'){"
+				"try{document.__msRegOnce(t,opt);}catch(e){}}};"
 		"this.removeEventListener=function(t,fn){"
 			"var arr=this._winListeners[t];if(!arr)return;"
 			"for(var i=0;i<arr.length;i++)if(arr[i]===fn){arr.splice(i,1);return;}};"

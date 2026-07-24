@@ -4329,6 +4329,101 @@ int main(void)
 				return 1;
 			}
 		}
+		/* ---- Part 3: THE REAL DELEGATION PATTERN, end to end.
+		 *
+		 * Parts 1-2 prove the mechanism. This proves the thing sites
+		 * actually write -- jQuery's $(document).on('click', sel, fn),
+		 * XenForo's XF.activate, every WordPress admin script:
+		 *
+		 *   document.addEventListener('click', function (e) {
+		 *       var t = e.target.closest('.js-thing');
+		 *       if (!t) return;
+		 *       ...
+		 *   });
+		 *
+		 * Both halves had to be true at once for this to work, which is why
+		 * it is asserted as one test rather than two: the listener has to
+		 * REACH the document (1b) AND e.target has to be a real wrapper with
+		 * real methods on a node script never looked up (1c). Either one
+		 * missing and this is dead -- undefined.closest throws, or the
+		 * handler never runs at all.
+		 *
+		 * Also asserts window listeners fire (they registered against the
+		 * document node and fan out separately) and that e.target is the
+		 * node that was actually clicked, not an ancestor. */
+		{
+			dom_string *id17 = NULL;
+			dom_element *el17 = NULL;
+			if (dom_string_create((const uint8_t *)"li17", 4, &id17) != DOM_NO_ERR) {
+				fprintf(stderr, "FAIL: t38 dom_string_create li17\n");
+				return 1;
+			}
+			dom_document_get_element_by_id(document, id17, &el17);
+			dom_string_unref(id17);
+			if (el17 == NULL) {
+				fprintf(stderr, "FAIL: t38 fixture missing #li17\n");
+				return 1;
+			}
+			{
+				const char *setup3 =
+					"var t=globalThis.__t38;"
+					"t.dele=0;t.deleId='';t.win=0;t.threw='';"
+					"document.addEventListener('click',function(e){"
+						"try{"
+							"var n=e.target.closest('li');"
+							"if(!n)return;"
+							"t.dele++;t.deleId=n.getAttribute('id')||'';"
+						"}catch(err){t.threw=String(err&&err.message||err);}"
+					"});"
+					"window.addEventListener('click',function(){t.win++;});";
+				ok = js_exec(thread, (const unsigned char *)setup3,
+						strlen(setup3), "t38-setup3.js");
+				if (!ok) {
+					fprintf(stderr, "FAIL: t38 part 3 setup threw\n");
+					return 1;
+				}
+			}
+			(void)fire_generic_dom_event(corestring_dom_click,
+					(dom_node *)el17, true, true);
+			{
+				const char *chk3 =
+					"var t=globalThis.__t38;"
+					"if(t.threw)"
+						"throw new Error('ASSERT FAIL (F): the delegation "
+							"handler THREW: '+t.threw+' -- this is the "
+							"e.target.closest(...) pattern every framework "
+							"opens with.');"
+					"if(t.dele!==1)"
+						"throw new Error('ASSERT FAIL (F): the delegation "
+							"handler ran '+t.dele+' times, expected 1. "
+							"$(document).on(\"click\", sel, fn) is the "
+							"dominant pattern on the web; if this is 0 the "
+							"listener never reached the document, and the "
+							"page renders perfectly and ignores every "
+							"click.');"
+					"if(t.deleId!=='li17')"
+						"throw new Error('ASSERT FAIL (F): closest() resolved "
+							"to \"'+t.deleId+'\", expected li17 -- e.target "
+							"is not the node that was clicked.');"
+					"if(t.win!==1)"
+						"throw new Error('ASSERT FAIL (G): a window click "
+							"listener fired '+t.win+' times, expected 1. "
+							"window has no DOM node, so its listeners "
+							"register against the document node and fan out "
+							"in qjs_dom_listener_cb.');";
+				ok = js_exec(thread, (const unsigned char *)chk3,
+						strlen(chk3), "t38-chk3.js");
+				if (!ok) {
+					fprintf(stderr, "FAIL: Test 38 part 3 -- real delegation "
+							"is still broken\n");
+					return 1;
+				}
+			}
+			fprintf(stderr, "  part 3 OK: $(document).on-style delegation "
+					"works -- e.target.closest('li') resolved li17, and "
+					"window listeners fire\n");
+		}
+
 		fprintf(stderr, "=== Test 38 PASS: document delegation and "
 				"event.target work from the real libdom dispatch ===\n");
 	}
