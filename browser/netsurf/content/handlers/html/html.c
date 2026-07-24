@@ -520,8 +520,15 @@ static void html_pagemap_brief(dom_node *n, char *out, int cap)
 
 #define HTML_PAGEMAP_SANE(v) (((v) < 0 || (v) >= 1000000) ? 0 : (v))
 
-/* One line for one element. Returns 1 when the element looks WRONG (no box,
- * or a box with zero height) so the caller can descend a level to localize. */
+/* fixes1017 — per-dump line budget: the walk is recursive now (three levels,
+ * always descending containers), so a hard cap bounds the worst page. */
+static int macsurf_pagemap_line_budget = 0;
+
+/* One line for one element; returns its element-child count so the walk can
+ * decide whether to descend. fixes1017: the fixes1016 dump only descended
+ * into sections that LOOKED broken, but the hackaday miss is a subtree whose
+ * top-level numbers look plausible -- the interesting depth is #content /
+ * #primary / main / widget level, so descend unconditionally instead. */
 static int html_pagemap_line(dom_node *n, int depth)
 {
 	char brief[88];
@@ -531,7 +538,7 @@ static int html_pagemap_line(dom_node *n, int depth)
 	int kids = 0;
 	int x = 0, y = 0, w = 0, h = 0;
 	const char *disp = "-";
-	int suspicious;
+	static const char *pfx[3] = { "", "> ", ">> " };
 
 	html_pagemap_brief(n, brief, (int)sizeof brief);
 
@@ -557,12 +564,45 @@ static int html_pagemap_line(dom_node *n, int depth)
 					CSS_DISPLAY_NONE) ? "NONE" : "ok";
 		}
 	}
-	suspicious = (b == NULL || h == 0);
+	macsurf_pagemap_line_budget--;
 	macsurf_debug_log_writef(
 			"LIFE pagemap %s%s kids=%d box=%d y=%d w=%d h=%d disp=%s",
-			(depth > 0) ? "  > " : "",
+			pfx[(depth < 0) ? 0 : ((depth > 2) ? 2 : depth)],
 			brief, kids, (b != NULL) ? 1 : 0, y, w, h, disp);
-	return suspicious;
+	return kids;
+}
+
+/* Recursive section walk: print, then descend into element children while
+ * depth and the line budget allow. SCRIPT/STYLE subtrees are skipped -- they
+ * can never render and only burn budget. */
+static void html_pagemap_walk(dom_node *n, int depth)
+{
+	dom_node *ch = NULL;
+	dom_node *nx = NULL;
+	int kids;
+	dom_string *nm = NULL;
+
+	if (macsurf_pagemap_line_budget <= 0) return;
+	if (dom_node_get_node_name(n, &nm) == DOM_NO_ERR && nm != NULL) {
+		int skip = (strcasecmp(dom_string_data(nm), "script") == 0 ||
+				strcasecmp(dom_string_data(nm), "style") == 0);
+		dom_string_unref(nm);
+		if (skip) return;
+	}
+	kids = html_pagemap_line(n, depth);
+	if (depth >= 2 || kids == 0) return;
+	if (dom_node_get_first_child(n, &ch) != DOM_NO_ERR) ch = NULL;
+	while (ch != NULL && macsurf_pagemap_line_budget > 0) {
+		dom_node_type t2 = (dom_node_type)0;
+		if (dom_node_get_node_type(ch, &t2) == DOM_NO_ERR &&
+				t2 == DOM_ELEMENT_NODE) {
+			html_pagemap_walk(ch, depth + 1);
+		}
+		nx = NULL;
+		if (dom_node_get_next_sibling(ch, &nx) != DOM_NO_ERR) nx = NULL;
+		dom_node_unref(ch);
+		ch = nx;
+	}
 }
 
 void html_pagemap_dump(html_content *c, const char *when)
@@ -573,9 +613,20 @@ void html_pagemap_dump(html_content *c, const char *when)
 	dom_node *nx = NULL;
 	int shown = 0;
 
+	/* fixes1017 — per-NAVIGATION dump cap (a fresh "ready" refills it), so
+	 * the dotdotdot-style 1s reconvert ticker cannot spend the whole
+	 * session budget re-dumping an unchanged page: ready + done + the
+	 * first four reconverts tell the story. Session cap stays as the
+	 * absolute backstop. */
+	static int nav_dumps = 0;
+
 	if (c == NULL || c->document == NULL) return;
+	if (strcmp(when, "ready") == 0) nav_dumps = 0;
+	if (nav_dumps >= 6) return;
 	if (macsurf_pagemap_dumps >= MACSURF_PAGEMAP_MAX_DUMPS) return;
 	macsurf_pagemap_dumps++;
+	nav_dumps++;
+	macsurf_pagemap_line_budget = 70;
 
 	/* find <body>: documentElement's first element child named BODY */
 	if (dom_document_get_document_element(c->document, &root) != DOM_NO_ERR
@@ -627,34 +678,12 @@ void html_pagemap_dump(html_content *c, const char *when)
 		}
 	}
 	if (dom_node_get_first_child(body, &ch) != DOM_NO_ERR) ch = NULL;
-	while (ch != NULL && shown < 40) {
+	while (ch != NULL && macsurf_pagemap_line_budget > 0) {
 		dom_node_type t2 = (dom_node_type)0;
 		if (dom_node_get_node_type(ch, &t2) == DOM_NO_ERR &&
 				t2 == DOM_ELEMENT_NODE) {
 			shown++;
-			if (html_pagemap_line(ch, 0)) {
-				/* looks wrong: descend one level to localize */
-				dom_node *gc = NULL;
-				dom_node *gn = NULL;
-				int sub = 0;
-				if (dom_node_get_first_child(ch, &gc) != DOM_NO_ERR)
-					gc = NULL;
-				while (gc != NULL && sub < 8) {
-					dom_node_type t3 = (dom_node_type)0;
-					if (dom_node_get_node_type(gc, &t3) ==
-							DOM_NO_ERR &&
-							t3 == DOM_ELEMENT_NODE) {
-						(void) html_pagemap_line(gc, 1);
-						sub++;
-					}
-					gn = NULL;
-					if (dom_node_get_next_sibling(gc, &gn)
-							!= DOM_NO_ERR)
-						gn = NULL;
-					dom_node_unref(gc);
-					gc = gn;
-				}
-			}
+			html_pagemap_walk(ch, 0);
 		}
 		nx = NULL;
 		if (dom_node_get_next_sibling(ch, &nx) != DOM_NO_ERR) nx = NULL;

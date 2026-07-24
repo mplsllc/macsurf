@@ -1874,12 +1874,15 @@ extern long g_geom_audit; /* defined below, near the metric accessors */
  * per-session budgets died mid-page-one and 68kmla was never covered. */
 void macsurf_qjs_audit_reset(void)
 {
-	g_mut_audit_budget = 500;
-	g_evreg_audit = 250;
-	g_evmiss_audit = 60;
-	g_evfire_audit = 300;
-	g_mslife_audit = 250;
-	g_geom_audit = 200;
+	/* fixes1017 — halved: the fixes1016 build spent ~1000 flushed log
+	 * writes on the hackaday load alone (+15s wall-clock on the iMac).
+	 * These still cover the decisive first stretch of every page. */
+	g_mut_audit_budget = 250;
+	g_evreg_audit = 80;
+	g_evmiss_audit = 30;
+	g_evfire_audit = 80;
+	g_mslife_audit = 120;
+	g_geom_audit = 100;
 }
 
 static void qjs_mut_audit(const char *op, dom_node *target,
