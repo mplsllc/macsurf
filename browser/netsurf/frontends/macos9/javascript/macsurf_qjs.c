@@ -121,6 +121,31 @@ double macsurf_qjs_get_now(void);
  * mechanism the user already controls.
  *
  * Set MACSURF_JS_TIMEOUT_MS to a non-zero value to restore a budget. */
+/* fixes1022 — QUIESCE SWITCHES. The fixes1011-1019 batch woke behaviours
+ * real pages have never seen from this engine: real geometry answers, the
+ * window load event, scroll/resize dispatch. The hardware verdict is that
+ * on-load measure-then-mutate widgets (dotdotdot truncating every article,
+ * slick collapsing the slider) make pages WORSE without the synchronous-
+ * layout contract (Phase 3) underneath them -- partial lifecycle support is
+ * worse than none, the fixes1010 lesson at page scale. Default 0 restores
+ * the fixes1008-era JS-OBSERVABLE surface while keeping every crash guard
+ * and correctness fix since. Re-enable ONE AT A TIME, each in the round
+ * that ships the engine support it depends on. The harness builds with
+ * these ON so the full surface stays tested.
+ *
+ * fixes1023 — THESE LIVE AT THE TOP OF THE FILE ON PURPOSE. fixes1022 put
+ * them beside their first CONSUMER at ~3676, which is 160 lines BELOW two
+ * use sites in macsurf_qjs_fire_scroll/_resize; the preprocessor leaves an
+ * undefined macro as a bare identifier, so CW8 reported "undefined" at both
+ * and the build died. Same class as the TARGET_API_MAC_CARBON prefix bug:
+ * a config define is only worth what it is defined BEFORE. */
+#ifndef MACSURF_JS_GEOMETRY
+#define MACSURF_JS_GEOMETRY 0
+#endif
+#ifndef MACSURF_JS_VIEW_EVENTS
+#define MACSURF_JS_VIEW_EVENTS 0
+#endif
+
 #ifndef MACSURF_JS_TIMEOUT_MS
 #define MACSURF_JS_TIMEOUT_MS 0
 #endif
@@ -3662,24 +3687,6 @@ static const char *qjs_css_display_name(uint8_t v)
  * the way the pre-1011 engine did (undefined / all-zero rect) -- the shape a
  * decade of pages demonstrably tolerates -- never a fabricated real-looking
  * number. When it returns 1, answers come from the real box tree. */
-/* fixes1022 — QUIESCE SWITCHES. The fixes1011-1019 batch woke behaviours
- * real pages have never seen from this engine: real geometry answers, the
- * window load event, scroll/resize dispatch. The hardware verdict is that
- * on-load measure-then-mutate widgets (dotdotdot truncating every article,
- * slick collapsing the slider) make pages WORSE without the synchronous-
- * layout contract (Phase 3) underneath them -- partial lifecycle support is
- * worse than none, the fixes1010 lesson at page scale. Default 0 restores
- * the fixes1008-era JS-OBSERVABLE surface while keeping every crash guard
- * and correctness fix since. Re-enable ONE AT A TIME, each in the round
- * that ships the engine support it depends on. The harness builds with
- * these ON so the full surface stays tested. */
-#ifndef MACSURF_JS_GEOMETRY
-#define MACSURF_JS_GEOMETRY 0
-#endif
-#ifndef MACSURF_JS_VIEW_EVENTS
-#define MACSURF_JS_VIEW_EVENTS 0
-#endif
-
 static int qjs_geometry_settled(void)
 {
 	extern int macsurf_reconvert_in_progress;

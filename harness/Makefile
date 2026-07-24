@@ -122,8 +122,31 @@ reconvert_harness: $(ALL_OBJ)
 
 -include $(ALL_OBJ:.o=.d)
 
-.PHONY: all run clean
+.PHONY: all run clean check-macdefault
 all: reconvert_harness
+
+# fixes1023 — COMPILE THE MAC'S ACTUAL CONFIGURATION.
+#
+# The harness forces the fixes1022 quiesce switches ON, so it can never see a
+# break that only exists with them OFF -- which is exactly what shipped in
+# fixes1022: the switch #defines sat 160 lines BELOW two use sites, so with
+# them off the preprocessor left bare identifiers and CW8 died on "undefined".
+# Neither Linux check caught it: plain gcc cannot get past line 37 of this
+# file (macos9.h needs Carbon), and the harness had the switches defined.
+#
+# This target compiles the gated sources with the SAME command line the
+# harness uses MINUS the four -D switches, i.e. the configuration the Mac
+# actually builds. Syntax-only, seconds to run.
+#
+# Verified with a control: renaming one #define makes it report
+#   error: 'MACSURF_JS_VIEW_EVENTS' undeclared
+# Run it before every drop that touches a switch or its use sites.
+MACDEFAULT_STRIP := -DMACSURF_JS_GEOMETRY=1 -DMACSURF_JS_VIEW_EVENTS=1 \
+                    -DMACSURF_JS_FIRE_LOAD=1 -DMACSURF_JS_AUDIT=1
+check-macdefault:
+	@echo "== compiling glue in the MAC's config (quiesce switches OFF) =="
+	@$(CC) -fsyntax-only $(filter-out $(MACDEFAULT_STRIP),$(CFLAGS)) \
+		-DWITH_QUICKJS $(INC) build/macsurf_qjs.c && echo "   OK"
 
 # Kept as aliases: `make link` / `make objs` are in muscle memory and in older
 # notes. They now mean the same thing as the default goal instead of being the
