@@ -538,7 +538,7 @@ static int html_pagemap_line(dom_node *n, int depth)
 	int kids = 0;
 	int x = 0, y = 0, w = 0, h = 0;
 	const char *disp = "-";
-	static const char *pfx[3] = { "", "> ", ">> " };
+	static const char *pfx[5] = { "", "> ", ">> ", ">>> ", ">>>> " };
 
 	html_pagemap_brief(n, brief, (int)sizeof brief);
 
@@ -567,20 +567,26 @@ static int html_pagemap_line(dom_node *n, int depth)
 	macsurf_pagemap_line_budget--;
 	macsurf_debug_log_writef(
 			"LIFE pagemap %s%s kids=%d box=%d y=%d w=%d h=%d disp=%s",
-			pfx[(depth < 0) ? 0 : ((depth > 2) ? 2 : depth)],
+			pfx[(depth < 0) ? 0 : ((depth > 4) ? 4 : depth)],
 			brief, kids, (b != NULL) ? 1 : 0, y, w, h, disp);
 	return kids;
 }
 
 /* Recursive section walk: print, then descend into element children while
  * depth and the line budget allow. SCRIPT/STYLE subtrees are skipped -- they
- * can never render and only burn budget. */
+ * can never render and only burn budget. fixes1018: depth 4, which is what
+ * reaches main#main's children on a standard WordPress tree (body > #page >
+ * #content > #primary > main > widgets) -- the fixes1017 dump stopped at
+ * #primary and could not name WHICH widget was short. display:none subtrees
+ * print their own line but are not descended (children of a none are
+ * definitionally 0x0 and only burn the budget). */
 static void html_pagemap_walk(dom_node *n, int depth)
 {
 	dom_node *ch = NULL;
 	dom_node *nx = NULL;
 	int kids;
 	dom_string *nm = NULL;
+	struct box *b;
 
 	if (macsurf_pagemap_line_budget <= 0) return;
 	if (dom_node_get_node_name(n, &nm) == DOM_NO_ERR && nm != NULL) {
@@ -590,7 +596,11 @@ static void html_pagemap_walk(dom_node *n, int depth)
 		if (skip) return;
 	}
 	kids = html_pagemap_line(n, depth);
-	if (depth >= 2 || kids == 0) return;
+	if (depth >= 4 || kids == 0) return;
+	b = box_for_node(n);
+	if (b != NULL && b->style != NULL &&
+			css_computed_display_static(b->style) == CSS_DISPLAY_NONE)
+		return;
 	if (dom_node_get_first_child(n, &ch) != DOM_NO_ERR) ch = NULL;
 	while (ch != NULL && macsurf_pagemap_line_budget > 0) {
 		dom_node_type t2 = (dom_node_type)0;
@@ -626,7 +636,7 @@ void html_pagemap_dump(html_content *c, const char *when)
 	if (macsurf_pagemap_dumps >= MACSURF_PAGEMAP_MAX_DUMPS) return;
 	macsurf_pagemap_dumps++;
 	nav_dumps++;
-	macsurf_pagemap_line_budget = 70;
+	macsurf_pagemap_line_budget = 90;
 
 	/* find <body>: documentElement's first element child named BODY */
 	if (dom_document_get_document_element(c->document, &root) != DOM_NO_ERR
