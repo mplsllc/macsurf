@@ -529,7 +529,7 @@ static int macsurf_pagemap_line_budget = 0;
  * into sections that LOOKED broken, but the hackaday miss is a subtree whose
  * top-level numbers look plausible -- the interesting depth is #content /
  * #primary / main / widget level, so descend unconditionally instead. */
-static int html_pagemap_line(dom_node *n, int depth)
+static int html_pagemap_line(dom_node *n, int depth, int *susp_out)
 {
 	char brief[88];
 	struct box *b;
@@ -569,6 +569,13 @@ static int html_pagemap_line(dom_node *n, int depth)
 			"LIFE pagemap %s%s kids=%d box=%d y=%d w=%d h=%d disp=%s",
 			pfx[(depth < 0) ? 0 : ((depth > 4) ? 4 : depth)],
 			brief, kids, (b != NULL) ? 1 : 0, y, w, h, disp);
+	/* fixes1021 -- "this subtree looks broken": boxless, flat, or a
+	 * container squashed to less than a text line. The walk uses it to
+	 * keep descending PAST the normal depth cap, straight into e.g. the
+	 * 22px-tall slider, where the ordinary dump kept stopping one level
+	 * above the answer. */
+	if (susp_out != NULL)
+		*susp_out = (b == NULL || h == 0 || (h < 30 && kids > 0));
 	return kids;
 }
 
@@ -595,8 +602,13 @@ static void html_pagemap_walk(dom_node *n, int depth)
 		dom_string_unref(nm);
 		if (skip) return;
 	}
-	kids = html_pagemap_line(n, depth);
-	if (depth >= 4 || kids == 0) return;
+	{
+		int susp = 0;
+		kids = html_pagemap_line(n, depth, &susp);
+		if (kids == 0) return;
+		if (depth >= 8) return;
+		if (depth >= 4 && !susp) return;
+	}
 	b = box_for_node(n);
 	if (b != NULL && b->style != NULL &&
 			css_computed_display_static(b->style) == CSS_DISPLAY_NONE)
@@ -683,7 +695,7 @@ void html_pagemap_dump(html_content *c, const char *when)
 		dom_element *he = NULL;
 		if (dom_document_get_document_element(c->document, &he)
 				== DOM_NO_ERR && he != NULL) {
-			(void) html_pagemap_line((dom_node *)he, 0);
+			(void) html_pagemap_line((dom_node *)he, 0, NULL);
 			dom_node_unref((dom_node *)he);
 		}
 	}
