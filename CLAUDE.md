@@ -360,9 +360,31 @@ When a change introduces a new `.c` file, mention it plainly so the user can add
 **Do not re-derive this list from prose.** `git ls-files --others --exclude-standard '*.c' '*.h'` (the preflight above) is the authority on what is untracked, and it should be **empty**. The tracked `MacSurf.mcp` is separately stale and cannot answer membership questions either way — `lodepng` appears zero times in it, yet PNG decoding demonstrably works. Never conclude "X isn't built" from the repo copy of the `.mcp`.
 
 ### Shipping discipline
-- Deliverables for a fix round are: delta tar with full tree preserved, `MacSurf.mcp` add/remove list, and `Access Paths.xml` add/remove list.
-- Standard transfer path is: build `fixesNN.tar`, then `scp -P 2222 -i ~/.ssh/macsurf_push -o StrictHostKeyChecking=no fixesNN.tar patrick@localhost:Documents/MacFiles/fixesNN.tar`.
-- Do not stop at "tar created locally" when the user asked to send it.
+
+**CURRENT DELIVERY PATH — the iMac, and ONLY the iMac (2026-07-24).** Do not build or send a tar
+unless the maintainer asks for one:
+
+```
+./forclaude/drop-to-imac.sh <fixnum> <repo-relative-path>...
+```
+
+It CR-converts, stamps a strictly-increasing future mtime keyed to the fix number, scp's each file
+straight into `/Projects/MacSurfSource/` (`browser/X` → `X`, `macTLS/X` → `macTLS/X`), and verifies
+size + CR/LF counts on the far side. **LF must be 0 on every file** or CodeWarrior chokes. Requires
+the reverse tunnel up and `Host imac` in `~/.ssh/config` (Panther = OpenSSH 3.6, so legacy crypto,
+`scp -O -P 2223`). See [[reference_imac_osx_access]].
+
+- Still state the deliverable list per round: files sent (with a count), `MacSurf.mcp` add/remove,
+  and `Access Paths.xml` add/remove.
+- Do not stop at "dropped locally" when the maintainer asked to send it — and read the script's
+  own far-side verification rather than assuming the scp worked.
+
+**The tar path is RETIRED, not deleted.** `tools/ship_fix.sh` (build `fixesNN.tar`, CR-convert,
+whole-day future stamp, `SHIP=1` to `scp -P 2222 -i ~/.ssh/macsurf_push` →
+`Documents/MacFiles/fixesNN.tar`) is kept and still works — it is the OS 9 laptop route and the
+fallback if the iMac tunnel is down. It is simply not the default any more. Sending BOTH is how the
+two destinations drift: they are separate machines with separate trees, and a fix that lands in one
+is not in the other.
 
 
 ## JavaScript Engine
