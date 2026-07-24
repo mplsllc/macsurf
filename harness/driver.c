@@ -4733,5 +4733,81 @@ int main(void)
 	}
 	fprintf(stderr, "=== Test 41 PASS: element-scoped getElementsBy* ===\n");
 
+	/* --- Test 42: node universals on EVERY shape (fixes1010) ---------------
+	 *
+	 * fixes1009 added getRootNode to elements only, and that ALONE broke
+	 * jQuery. jQuery feature-detects `getRootNode` on a probe element and, if
+	 * it is present, swaps isAttached for a version that calls
+	 * e.getRootNode() on arbitrary nodes -- including text nodes, which did
+	 * not have it. Hardware caught it as the last remaining exception on
+	 * hackaday, at jQuery's isAttached.
+	 *
+	 * The general rule, and the reason this test exists: a feature-detect
+	 * makes a PARTIAL implementation worse than none at all. Anything a
+	 * library probes for must exist on every shape it can then be called on.
+	 * So this asserts the universals on element, TEXT and document alike. */
+	fprintf(stderr, "\n=== Test 42: node universals on every wrapper shape ===\n");
+	{
+		const char *probe =
+			"globalThis.__t42={};var r=globalThis.__t42;"
+			"var host=document.getElementById('feed');"
+			"var t=document.createTextNode('hi');"
+			"host.appendChild(t);"
+			"r.elRoot=(typeof host.getRootNode==='function');"
+			"r.txRoot=(typeof t.getRootNode==='function');"
+			"r.docRoot=(typeof document.getRootNode==='function');"
+			"r.txOwner=(t.ownerDocument===document);"
+			"r.elOwner=(host.ownerDocument===document);"
+			"r.txConn=t.isConnected;"
+			"r.elConn=host.isConnected;"
+			"r.docContains=(typeof document.contains==='function');"
+			"r.containsEl=document.contains(host);"
+			/* jQuery's actual isAttached, replayed verbatim */
+			"r.jq=null;"
+			"try{r.jq=(document.contains(t.ownerDocument===document?host:t)||"
+				"t.getRootNode()===t.ownerDocument);}"
+			"catch(e){r.jq='THREW: '+((e&&e.message)||e);}";
+		unsigned char ok = js_exec(thread, (const unsigned char *)probe,
+				strlen(probe), "t42-probe.js");
+		if (!ok) { fprintf(stderr, "FAIL: t42 probe threw\n"); return 1; }
+		{
+			const char *chk =
+				"var r=globalThis.__t42;"
+				"if(!r.elRoot||!r.txRoot||!r.docRoot)"
+					"throw new Error('ASSERT FAIL: getRootNode missing "
+						"(element='+r.elRoot+' text='+r.txRoot+' document='+"
+						"r.docRoot+'). A feature-detect makes a PARTIAL "
+						"implementation worse than none: jQuery probes for "
+						"it on an element and then calls it on text nodes.');"
+				"if(!r.txOwner||!r.elOwner)"
+					"throw new Error('ASSERT FAIL: ownerDocument wrong "
+						"(text='+r.txOwner+' element='+r.elOwner+')');"
+				"if(r.txConn!==true||r.elConn!==true)"
+					"throw new Error('ASSERT FAIL: isConnected wrong for "
+						"in-document nodes (text='+r.txConn+' element='+"
+						"r.elConn+')');"
+				"if(!r.docContains)"
+					"throw new Error('ASSERT FAIL: document.contains missing. "
+						"jQuery GUARDS this call, so it does not throw -- it "
+						"silently answers \"detached\" for every element, "
+						"which is worse than throwing.');"
+				"if(r.containsEl!==true)"
+					"throw new Error('ASSERT FAIL: document.contains(el) is "
+						"'+r.containsEl+' for an in-document element');"
+				"if(r.jq!==true)"
+					"throw new Error('ASSERT FAIL: jQuery isAttached gives '+"
+						"r.jq);";
+			ok = js_exec(thread, (const unsigned char *)chk,
+					strlen(chk), "t42-chk.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: Test 42 -- node universals\n");
+				return 1;
+			}
+		}
+		fprintf(stderr, "  getRootNode/ownerDocument/isConnected on element, "
+				"text and document; jQuery isAttached resolves\n");
+	}
+	fprintf(stderr, "=== Test 42 PASS: node universals ===\n");
+
 	return 0;
 }

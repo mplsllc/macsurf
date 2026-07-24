@@ -2851,13 +2851,6 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		/* isConnected: walk to the root and ask whether it is the document
 		 * element. Cheaper and more honest than a flag we would have to keep
 		 * in sync through every mutation. */
-		"Object.defineProperty(el,'isConnected',{configurable:true,"
-			"get:function(){var n=el;"
-			"while(n&&n.parentNode)n=n.parentNode;"
-			"return !!(n&&(n===document||n===document.documentElement||"
-				"n.nodeType===9));}});"
-		"Object.defineProperty(el,'ownerDocument',{configurable:true,"
-			"get:function(){return document;}});"
 		/* attributes / getAttributeNames: reconstructed from the reflected
 		 * set plus data-*. Not a live NamedNodeMap -- callers iterate it,
 		 * which a static array serves. */
@@ -2910,8 +2903,6 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		/* Cheap neighbours, same round: each is one line and each throws
 		 * rather than degrading when absent. */
 		"el.hasChildNodes=function(){return !!el.firstChild;};"
-		"el.getRootNode=function(){var n=el;"
-			"while(n&&n.parentNode)n=n.parentNode;return n||el;};"
 		"el.toggleAttribute=function(n,f){"
 			"var has=!!(el.hasAttribute&&el.hasAttribute(n));"
 			"var want=(f===undefined)?!has:!!f;"
@@ -3010,6 +3001,36 @@ static void qjs_install_node_traversal(JSContext *ctx, JSValue obj)
 	JSValue f;
 	static const char *nav_src =
 		"(function(el){"
+		/* fixes1010 — NODE-LEVEL UNIVERSALS, on EVERY wrapper shape.
+		 *
+		 * getRootNode / ownerDocument / isConnected were added to
+		 * qjs_el_install_js_helpers in fixes1009, which runs for ELEMENTS
+		 * ONLY -- text, CDATA, comment and fragment wrappers get this
+		 * function instead. That asymmetry immediately bit, and in the
+		 * nastiest way: adding a method CHANGED WHICH CODE PATH jQuery
+		 * TAKES.
+		 *
+		 * jQuery feature-detects `J.getRootNode` on a probe element and, if
+		 * present, swaps its isAttached implementation for
+		 *     ce.contains(e.ownerDocument,e) || e.getRootNode(Z)===e.ownerDocument
+		 * Before fixes1009 the detect was false and the simple branch ran.
+		 * After it, the detect passed on an element and jQuery then called
+		 * e.getRootNode() on nodes that had no such method -- a TypeError
+		 * that did not exist before I added the method. Hardware caught it as
+		 * the last remaining exception on hackaday.
+		 *
+		 * The lesson is general enough to state: a feature-detect makes a
+		 * PARTIAL implementation worse than none. Anything a library probes
+		 * for must exist on every shape it can then be called on, so these
+		 * live here -- the one surface element, text and fragment all get. */
+		"el.getRootNode=function(){var n=el;"
+		"while(n&&n.parentNode)n=n.parentNode;return n||el;};"
+		"Object.defineProperty(el,'ownerDocument',{configurable:true,"
+		"get:function(){return typeof document!=='undefined'?document:null;}});"
+		"Object.defineProperty(el,'isConnected',{configurable:true,"
+		"get:function(){var n=el;while(n&&n.parentNode)n=n.parentNode;"
+		"return !!(n&&(n===document||n===document.documentElement||"
+		"n.nodeType===9));}});"
 		"Object.defineProperty(el,'firstChild',{"
 		"get:function(){return el.__getFirstChild();},configurable:true});"
 		"Object.defineProperty(el,'lastChild',{"
@@ -6092,6 +6113,24 @@ static void register_browser_globals(JSContext *ctx)
 					"String(n)+'\"]');};"
 			"document.createComment=function(t){"
 				"return document.createTextNode('');};"
+			/* fixes1010 — the same universals on `document`.
+			 *
+			 * jQuery's isAttached is ce.contains(e.ownerDocument, e), and
+			 * its contains() does `a.contains ? a.contains(bup) : ...` with
+			 * a = the document. The guard means a missing document.contains
+			 * does not throw -- it silently answers "not attached", which is
+			 * worse: jQuery then treats every element as detached and skips
+			 * work it should do. Delegate to documentElement, which has the
+			 * real native contains. */
+			"document.contains=function(n){"
+				"if(!n)return false;"
+				"if(n===document||n===document.documentElement)return true;"
+				"var de=document.documentElement;"
+				"return !!(de&&de.contains&&de.contains(n));};"
+			"document.getRootNode=function(){return document;};"
+			"Object.defineProperty(document,'isConnected',{"
+				"configurable:true,get:function(){return true;}});"
+			"document.ownerDocument=null;"
 			"document.querySelectorAll=document.querySelectorAll||"
 				"function(){return [];};"
 			/* fixes1006 (1b) — tell libdom, or a real click never
