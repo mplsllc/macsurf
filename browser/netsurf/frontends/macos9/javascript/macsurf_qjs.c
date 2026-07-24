@@ -99,12 +99,29 @@ static struct jsheap *g_heap_list = NULL;
  * cooperative event loop indefinitely.  0 == no deadline (init / internal
  * evals run unbounded).  Set around the top-level JS_Eval in js_exec. */
 double macsurf_qjs_get_now(void);
-#define QJS_SCRIPT_TIMEOUT_MS 20000
+/* fixes999 — the deadlines are OFF by default. They were runaway guards, and
+ * on a 400 MHz G3 a legitimately heavy bundle can exceed a 20s budget, so the
+ * guard fires on WORKING code and reports as a browser bug: the script is
+ * aborted mid-init, half a framework exists, and the page fails in a way that
+ * looks like a missing feature. That is the opposite of what a limit is for,
+ * and it makes real sites untestable.
+ *
+ * Safe to remove because the ESCAPE HATCH IS REAL AND INDEPENDENT: the
+ * interrupt handler polls WaitNextEvent for Cmd-. every ~200ms regardless of
+ * any deadline (see qjs_interrupt_handler), so a genuinely runaway script is
+ * still abortable by hand. The deadline was a second, blunter copy of a
+ * mechanism the user already controls.
+ *
+ * Set MACSURF_JS_TIMEOUT_MS to a non-zero value to restore a budget. */
+#ifndef MACSURF_JS_TIMEOUT_MS
+#define MACSURF_JS_TIMEOUT_MS 0
+#endif
+#define QJS_SCRIPT_TIMEOUT_MS MACSURF_JS_TIMEOUT_MS
 /* fixes586 — timer/event callbacks get a shorter budget: a callback that
  * burns 8s of straight CPU is pathological, and the UI is frozen while it
  * runs.  (Top-level scripts keep the 20s budget: big bundles on a G3 are
  * legitimately slow.) */
-#define QJS_TIMER_TIMEOUT_MS 8000
+#define QJS_TIMER_TIMEOUT_MS MACSURF_JS_TIMEOUT_MS
 static double g_qjs_script_deadline = 0.0;
 
 /* fixes586 — THE tinkerdifferent hard-freeze.  The deadline was armed ONLY
@@ -122,7 +139,12 @@ static double g_qjs_script_deadline = 0.0;
 static double qjs_deadline_push(double budget_ms)
 {
 	double prev = g_qjs_script_deadline;
-	double want = macsurf_qjs_get_now() + budget_ms;
+	double want;
+	/* fixes999 — budget 0 means NO deadline: leave whatever is armed alone
+	 * (normally nothing) so the script runs to completion. */
+	if (budget_ms <= 0.0)
+		return prev;
+	want = macsurf_qjs_get_now() + budget_ms;
 	if (prev == 0.0 || want < prev)
 		g_qjs_script_deadline = want;
 	return prev;
@@ -6934,8 +6956,16 @@ unsigned char js_exec(struct jsthread *thread,
 		}
 	}
 
-	/* Hard size cap */
-	if (txtlen > 4194304UL) {
+	/* fixes999 — the size cap is OFF by default (was 4 MB, and it SKIPPED the
+	 * script outright rather than failing it, so a big bundle silently did
+	 * not exist). Facebook-class bundles pass 4 MB, and a skipped bundle is
+	 * indistinguishable from an engine that cannot run it -- which is exactly
+	 * the confusion this batch has been unwinding. Set MACSURF_JS_MAX_BYTES
+	 * to restore a ceiling. */
+#ifndef MACSURF_JS_MAX_BYTES
+#define MACSURF_JS_MAX_BYTES 0UL
+#endif
+	if (MACSURF_JS_MAX_BYTES != 0UL && txtlen > MACSURF_JS_MAX_BYTES) {
 		/* fixes847 (#167 S1 census gap) — WORK-prefixed: this line was
 		 * plain macsurf_debug_log_writef, silently dropped by the
 		 * failures-only release filter (only WORK/NAV/FAIL/etc. survive
@@ -6997,7 +7027,26 @@ unsigned char js_exec(struct jsthread *thread,
 	 * (the stubs are jQuery-independent), so its Sizzle crash is isolated to
 	 * its own eval and does not block the editor. This was the fixes476-481
 	 * mechanism that made real forum replies post on 68kmla under Duktape. */
-	if (name != NULL) {
+	/* fixes998 — MACSURF_XF_STUBS: the master switch for all of the above.
+	 *
+	 * Default 0 = the REAL bundles run. The substitution above is training
+	 * wheels from fixes648, fitted when the engine genuinely could not run
+	 * them, and its stated cause (preamble's div.parentNode reading null)
+	 * predates fixes846 (real DOM mutation), fixes878 (real libdom traversal)
+	 * and fixes989-997 (the event model) -- every one of which rebuilt the
+	 * surface it blames. Left on, it GUARANTEES the reply editor can never
+	 * work: the real Froala bundle is skipped and s_xf_editor_stub fakes a
+	 * bare textarea, which is exactly the "white box with no editor" reported
+	 * on 68kmla.
+	 *
+	 * Kept behind a switch rather than deleted so the fallback is one line if
+	 * the real bundles turn out to break something worse than they fix -- the
+	 * stubs are the only thing that ever made a forum reply post here
+	 * (fixes476-481, under Duktape). */
+#ifndef MACSURF_XF_STUBS
+#define MACSURF_XF_STUBS 0
+#endif
+	if (MACSURF_XF_STUBS && name != NULL) {
 		const char *stub = NULL;
 		const char *tag = NULL;
 		if (strstr(name, "editor-compiled") != NULL) {

@@ -968,6 +968,97 @@ int main(void)
 			"(fixes855); any remaining throw is the known traversal gap "
 			"(cloneNode/firstChild/lastChild/childNodes) ===\n");
 
+	/* --- Test 7b (DIAGNOSTIC): the REAL XenForo bundles, unstubbed
+	 *
+	 * js_exec SUBSTITUTES ES5 stubs for preamble.min.js, core-compiled.js and
+	 * editor-compiled.js (fixes648), and an EMPTY string for lightbox / xfmg /
+	 * attachment_manager / token_input / prefix_menu (fixes670). So the real
+	 * bundles have never run on this engine: the "white box with no editor"
+	 * reported on 68kmla IS s_xf_editor_stub, which only sets display:block +
+	 * minHeight on the textarea. Froala is absent because it was never
+	 * executed.
+	 *
+	 * The justification was a documented cascade -- preamble's
+	 * `div.parentNode` hiddenscroll probe reading null and throwing. That
+	 * premise PREDATES fixes846 (real DOM mutation), fixes878 (real libdom
+	 * traversal) and fixes989-997 (the event model), all of which rebuilt the
+	 * exact surface it blames; CLAUDE.md flags the entry as needing a re-test
+	 * before being used as a starting point.
+	 *
+	 * So run the REAL bundles against the CURRENT engine and report what
+	 * happens, rather than asking hardware for another log or deleting the
+	 * stubs on a hope. DIAGNOSTIC: prints outcomes, never fails the run --
+	 * the question is "what breaks now", not "is it already perfect".
+	 *
+	 * Bundles live in harness/ (fetched from 68kmla.org). Absent -> skip. --- */
+	fprintf(stderr, "\n=== Test 7b (DIAGNOSTIC): the REAL XenForo bundles ===\n");
+	{
+		static const char *const xf_files[2] = {
+			"preamble.min.js", "core-compiled.js"
+		};
+		const char *xf_probe =
+			"globalThis.__xf='XF='+(typeof XF)"
+			"+' XF.Element='+((typeof XF!=='undefined'&&XF)?typeof XF.Element:'n/a')"
+			"+' XF.ready='+((typeof XF!=='undefined'&&XF)?typeof XF.ready:'n/a')"
+			"+' jQuery='+(typeof jQuery)"
+			"+' htmlClass='+((document.documentElement&&"
+				"document.documentElement.className)||'(none)');";
+		const char *xf_report =
+			"console.log('  XF-PROBE: '+globalThis.__xf);";
+		int fi;
+
+		for (fi = 0; fi < 2; fi++) {
+			FILE *bf = fopen(xf_files[fi], "rb");
+			char *raw, *wrapped;
+			long blen;
+			size_t rd, wn;
+			const char *pre  = "globalThis.__xfErr='';try{";
+			const char *post = "}catch(e){globalThis.__xfErr=String((e&&e.message)||e);}";
+			unsigned char xok;
+
+			if (bf == NULL) {
+				fprintf(stderr, "  SKIP %s (not present)\n", xf_files[fi]);
+				continue;
+			}
+			fseek(bf, 0, SEEK_END); blen = ftell(bf); fseek(bf, 0, SEEK_SET);
+			raw = (char *)malloc((size_t)blen + 1);
+			if (raw == NULL) { fclose(bf); continue; }
+			rd = fread(raw, 1, (size_t)blen, bf);
+			raw[rd] = '\0';
+			fclose(bf);
+
+			wn = strlen(pre) + rd + strlen(post) + 1;
+			wrapped = (char *)malloc(wn);
+			if (wrapped == NULL) { free(raw); continue; }
+			strcpy(wrapped, pre);
+			memcpy(wrapped + strlen(pre), raw, rd);
+			strcpy(wrapped + strlen(pre) + rd, post);
+
+			fprintf(stderr, "  --- running REAL %s (%ld bytes) ---\n",
+					xf_files[fi], blen);
+			xok = js_exec(thread, (const unsigned char *)wrapped,
+					strlen(wrapped), xf_files[fi]);
+			fprintf(stderr, "  js_exec ok=%d\n", (int)xok);
+			harness_pump_all(200000);
+			{
+				const char *ejs =
+					"console.log('  THREW: '+"
+					"(globalThis.__xfErr||'(no throw)'));";
+				(void)js_exec(thread, (const unsigned char *)ejs,
+						strlen(ejs), "xf-err.js");
+			}
+			free(raw);
+			free(wrapped);
+		}
+
+		(void)js_exec(thread, (const unsigned char *)xf_probe,
+				strlen(xf_probe), "xf-probe.js");
+		(void)js_exec(thread, (const unsigned char *)xf_report,
+				strlen(xf_report), "xf-report.js");
+		harness_pump_all(100000);
+	}
+	fprintf(stderr, "=== Test 7b done (diagnostic) ===\n");
+
 	/* --- Test 8 (fixes861, #289): EVERY heap's timers must fire, not just the
 	 * newest.  js_newheap() runs per browser_window AND per (i)frame, and the
 	 * browser's one pump (main.c -> macsurf_qjs_pump_all) used to pump only
