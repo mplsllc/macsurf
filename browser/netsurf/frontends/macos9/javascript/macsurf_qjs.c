@@ -5063,6 +5063,50 @@ static void register_browser_globals(JSContext *ctx)
 			 * override at this exact spot was dead code, always clobbered
 			 * by qjs_dom_install running right after this function, but
 			 * misleadingly suggested a no-op fragment was live; removed). */
+			/* fixes1002 (#264) — document.implementation.
+			 *
+			 * It did not exist AT ALL, and jQuery 3.x reads
+			 * `document.implementation.createHTMLDocument` during its
+			 * own init. Hardware (now that fixes1000 made JS errors
+			 * visible) shows exactly that:
+			 *   TypeError: cannot read property 'createHTMLDocument'
+			 *   of undefined  [hackaday _static bundle]
+			 * followed by ReferenceError: jQuery is not defined in
+			 * every script after it. So ONE missing property takes
+			 * jQuery down and every jQuery-dependent script with it --
+			 * which on hackaday is the entire comment/reply chain.
+			 *
+			 * createHTMLDocument returns a detached document used as a
+			 * scratch parser. A minimal object with the shape jQuery
+			 * touches (documentElement / head / body / createElement)
+			 * is enough to clear init; it is not a real second
+			 * document, and it is honest about that rather than
+			 * pretending -- anything that tries to PARSE into it gets
+			 * an empty document rather than wrong content.
+			 *
+			 * hasFeature() answers true: it is the legacy probe and
+			 * the spec now requires exactly that. */
+			"if(!document.implementation)document.implementation={"
+				"hasFeature:function(){return true;},"
+				"createHTMLDocument:function(t){"
+					"var d={};"
+					"d.nodeType=9;"
+					"d.title=String(t||'');"
+					"d.createElement=function(n){"
+						"return document.createElement(n);};"
+					"d.createTextNode=function(x){"
+						"return document.createTextNode(x);};"
+					"d.documentElement=document.createElement('html');"
+					"d.head=document.createElement('head');"
+					"d.body=document.createElement('body');"
+					"d.getElementsByTagName=function(){return [];};"
+					"d.querySelectorAll=function(){return [];};"
+					"d.querySelector=function(){return null;};"
+					"return d;},"
+				"createDocumentType:function(){return {};},"
+				"createDocument:function(){"
+					"return document.implementation."
+					"createHTMLDocument('');}};"
 			"document.createTextNode=document.createTextNode||function(t){"
 				"var n=document.__createTextNodeNative?"
 					"document.__createTextNodeNative(String(t)):null;"
@@ -5779,7 +5823,31 @@ static void register_browser_globals(JSContext *ctx)
 		"var vh=(typeof g.innerHeight==='number'&&g.innerHeight)||600;"
 		"var mkEl=function(){return {clientWidth:vw,clientHeight:vh,offsetWidth:vw,offsetHeight:vh,scrollWidth:vw,scrollHeight:vh,scrollTop:0,scrollLeft:0,offsetTop:0,offsetLeft:0,style:{},className:'',nodeType:1,"
 		"getBoundingClientRect:function(){return {top:0,left:0,right:vw,bottom:vh,width:vw,height:vh,x:0,y:0};},"
-		"appendChild:function(c){return c;},removeChild:function(c){return c;},insertBefore:function(c){return c;},"
+		/* fixes1002 (#182) — the mock's appendChild used to be
+		 * `function(c){return c;}`: it returned the child WITHOUT
+		 * attaching it, so c.parentNode stayed null. That is the whole
+		 * XenForo cascade, now visible on hardware thanks to fixes1000:
+		 *   TypeError: cannot read property 'removeChild' of null
+		 *   at hiddenscroll (preamble.min.js:4:427)
+		 * because the probe does appendChild(b) ... b.parentNode.
+		 * removeChild(b) -- the universal append-measure-remove idiom.
+		 * This mock is reached when a script runs BEFORE <body> exists
+		 * (#182), so document.body has no real node to give.
+		 *
+		 * defineProperty, not assignment: on a REAL element wrapper
+		 * parentNode is a getter-only accessor from the prototype, so
+		 * `c.parentNode = this` silently does nothing (or throws under
+		 * strict mode). An own data property shadows the accessor for
+		 * this one node, which is exactly the scope wanted -- and it is
+		 * reverted on removeChild, so nothing leaks a fake parent after
+		 * the probe finishes. Wrapped in try/catch because a frozen or
+		 * exotic object must not take the page down. */
+		"appendChild:function(c){if(c){try{Object.defineProperty(c,'parentNode',"
+			"{value:this,writable:true,configurable:true});}catch(e){}}return c;},"
+		"removeChild:function(c){if(c){try{Object.defineProperty(c,'parentNode',"
+			"{value:null,writable:true,configurable:true});}catch(e){}}return c;},"
+		"insertBefore:function(c){if(c){try{Object.defineProperty(c,'parentNode',"
+			"{value:this,writable:true,configurable:true});}catch(e){}}return c;},"
 		"setAttribute:function(){},getAttribute:function(){return null;},removeAttribute:function(){},hasAttribute:function(){return false;},"
 		"addEventListener:function(){},removeEventListener:function(){},contains:function(){return false;},"
 		"querySelector:function(){return null;},querySelectorAll:function(){return [];},"
