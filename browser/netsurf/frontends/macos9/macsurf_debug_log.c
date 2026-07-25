@@ -1353,8 +1353,15 @@ macsurf_profile_emit_phases(const char *url)
 	total = g_accum_tls_us + g_accum_net_us + g_accum_parse_us +
 		g_accum_cascade_us + g_accum_layout_us + g_accum_paint_us +
 		g_accum_js_us;
+	/* fixes1035 — "LIFE " PREFIX, because the gate drops everything else.
+	 * The PERFACC whitelist below in macsurf_log_is_crash_report sits
+	 * inside #ifdef MACSURF_PERF_LOG, which is not defined, so this line
+	 * has been written and then discarded on every load. That is the
+	 * documented trap in CLAUDE.md -- "prefix anything that must survive
+	 * with LIFE" -- and this is the fourth instrument in this batch to hit
+	 * it. The prefix does not depend on any build flag. */
 	macsurf_debug_log_writef(
-		"PERFACC tls=%ldus net=%ldus ttfb=%ldus parse=%ldus cascade=%ldus "
+		"LIFE PERFACC tls=%ldus net=%ldus ttfb=%ldus parse=%ldus cascade=%ldus "
 		"layout=%ldus paint=%ldus js=%ldus reflows=%ld total=%ldus",
 		g_accum_tls_us, g_accum_net_us,
 		(g_perf_ttfb_us < 0) ? -1L : g_perf_ttfb_us,
