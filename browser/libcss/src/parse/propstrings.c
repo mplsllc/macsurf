@@ -271,6 +271,7 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("hanging-punctuation"),
 	SMAP("background-clip"),   /* #255 */
 	SMAP("justify-items"),   /* #279 */
+	SMAP("appearance"),   /* #80 */
 	SMAP("inherit"),
 	SMAP("unset"),
 	SMAP("important"),

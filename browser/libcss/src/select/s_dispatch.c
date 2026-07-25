@@ -662,5 +662,9 @@ struct prop_table prop_dispatch[CSS_N_PROPERTIES] = {
 	{
 	        PROPERTY_FUNCS(justify_items),   /* #279, not inherited */
 	        0,
+	},
+	{
+	        PROPERTY_FUNCS(appearance),   /* #80, not inherited */
+	        0,
 	}
 	};

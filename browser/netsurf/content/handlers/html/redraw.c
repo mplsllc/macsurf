@@ -1025,6 +1025,52 @@ static bool html_redraw_accent_colour(struct box *box, colour *out)
 }
 
 
+/**
+ * fixes1052 (#80) — should this gadget paint its BUILT-IN widget?
+ *
+ * `appearance: none` means the element is drawn from its own CSS box instead
+ * of the platform control. MacSurf never used the Carbon Control Manager for
+ * form controls in the first place (Draw1Control is browser chrome only) --
+ * checkboxes and radios are already painted by our own plotters right here --
+ * so honouring it is a matter of NOT painting the built-in mark and letting
+ * the normal background/border path draw the box, rather than building a new
+ * synthetic renderer.
+ *
+ * Defaults to true on a NULL style so a control can never silently vanish.
+ */
+static bool html_redraw_widget_is_native(struct box *box)
+{
+	if (box == NULL || box->style == NULL)
+		return true;
+	return css_computed_appearance(box->style) != CSS_APPEARANCE_NONE;
+}
+
+/**
+ * fixes1052 (#80) — does this gadget get the normal CSS box painted?
+ *
+ * Text-ish controls always did (they are drawn as a styled box already). A
+ * checkbox or radio joins them ONLY under `appearance: none`: with the
+ * built-in mark suppressed there is nothing else to draw, so the element
+ * needs its background, border and border-radius like any other box.
+ *
+ * Gating on appearance rather than admitting them unconditionally keeps the
+ * default rendering byte-identical -- a page that never mentions appearance
+ * cannot change.
+ */
+static bool html_redraw_gadget_takes_css_box(struct box *b)
+{
+	if (b == NULL || b->gadget == NULL)
+		return false;
+	if (b->gadget->type == GADGET_TEXTAREA ||
+			b->gadget->type == GADGET_TEXTBOX ||
+			b->gadget->type == GADGET_PASSWORD)
+		return true;
+	if (b->gadget->type == GADGET_CHECKBOX ||
+			b->gadget->type == GADGET_RADIO)
+		return !html_redraw_widget_is_native(b);
+	return false;
+}
+
 static bool html_redraw_checkbox(int x, int y, int width, int height,
 		bool selected, bool accent_set, colour accent_col,
 		const struct redraw_context *ctx)
@@ -4260,10 +4306,7 @@ bool html_redraw_box(const html_content *html, struct box *box,
 			bg_box->type != BOX_INLINE_END &&
 			(bg_box->type != BOX_INLINE || bg_box->object ||
 			bg_box->flags & IFRAME || box->flags & REPLACE_DIM ||
-			(bg_box->gadget != NULL &&
-			(bg_box->gadget->type == GADGET_TEXTAREA ||
-			bg_box->gadget->type == GADGET_TEXTBOX ||
-			bg_box->gadget->type == GADGET_PASSWORD)))) {
+			html_redraw_gadget_takes_css_box(bg_box))) {
 		/* find intersection of clip box and border edge */
 		struct rect p;
 		p.x0 = x - border_left < r.x0 ? r.x0 : x - border_left;
@@ -4311,10 +4354,7 @@ bool html_redraw_box(const html_content *html, struct box *box,
 	    box->type != BOX_INLINE_END &&
 	    (box->type != BOX_INLINE || box->object ||
 	     box->flags & IFRAME || box->flags & REPLACE_DIM ||
-	     (box->gadget != NULL &&
-	      (box->gadget->type == GADGET_TEXTAREA ||
-	       box->gadget->type == GADGET_TEXTBOX ||
-	       box->gadget->type == GADGET_PASSWORD))) &&
+	     html_redraw_gadget_takes_css_box(box)) &&
 	    (border_top || border_right || border_bottom || border_left)) {
 #ifdef __MACOS9__
 		/* fixes620: html_redraw_background (above) updated
@@ -4740,7 +4780,8 @@ bool html_redraw_box(const html_content *html, struct box *box,
 				x + padding_left,
 				y + padding_top, &r, ctx);
 
-	} else if (box->gadget && box->gadget->type == GADGET_CHECKBOX) {
+	} else if (box->gadget && box->gadget->type == GADGET_CHECKBOX &&
+			html_redraw_widget_is_native(box)) {
 		colour accent_col = 0;
 		bool accent_set = html_redraw_accent_colour(box, &accent_col);
 		if (!html_redraw_checkbox(x + padding_left, y + padding_top,
@@ -4748,7 +4789,8 @@ bool html_redraw_box(const html_content *html, struct box *box,
 				accent_set, accent_col, ctx))
 			return false;
 
-	} else if (box->gadget && box->gadget->type == GADGET_RADIO) {
+	} else if (box->gadget && box->gadget->type == GADGET_RADIO &&
+			html_redraw_widget_is_native(box)) {
 		colour accent_col = 0;
 		bool accent_set = html_redraw_accent_colour(box, &accent_col);
 		if (!html_redraw_radio(x + padding_left, y + padding_top,

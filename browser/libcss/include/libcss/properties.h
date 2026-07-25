@@ -175,6 +175,7 @@ enum css_properties_e {
 	CSS_PROP_HANGING_PUNCTUATION            = 0x09E,
 	CSS_PROP_BACKGROUND_CLIP                = 0x09F,
 	CSS_PROP_JUSTIFY_ITEMS                  = 0x0A0,
+	CSS_PROP_APPEARANCE                     = 0x0A1,
 	CSS_N_PROPERTIES
 };
 
@@ -219,6 +220,15 @@ enum css_box_decoration_break_e {
 };
 
 /* fixes356 (#78): image-rendering. Inherits; initial = auto. */
+/* fixes1052 (#80): appearance. Only the two values that matter for
+ * rendering -- `none` suppresses the built-in widget painting so the
+ * element is drawn from its own CSS box (background/border/radius). */
+enum css_appearance_e {
+	CSS_APPEARANCE_INHERIT                  = 0x0,
+	CSS_APPEARANCE_AUTO                     = 0x1,
+	CSS_APPEARANCE_NONE                     = 0x2
+};
+
 enum css_image_rendering_e {
 	CSS_IMAGE_RENDERING_INHERIT             = 0x0,
 	CSS_IMAGE_RENDERING_AUTO                = 0x1,

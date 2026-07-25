@@ -351,6 +351,9 @@ int32_t css_computed_tab_size(const css_computed_style *style);
  * decide whether to skip box-filter pre-downscale. */
 uint8_t css_computed_image_rendering(const css_computed_style *style);
 
+/* fixes1052 (#80): appearance. Returns CSS_APPEARANCE_AUTO when unset. */
+uint8_t css_computed_appearance(const css_computed_style *style);
+
 /* fixes357 (#44): text-decoration extended.
  * text-decoration-color: returns CSS_TEXT_DECORATION_COLOR_* (default
  * CURRENT_COLOR); *color receives css_color when return == COLOR. */

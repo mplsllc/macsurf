@@ -196,7 +196,8 @@ const css_prop_handler property_handlers[LAST_PROP + 1 - FIRST_PROP] =
 	css__parse_text_justify,
 	css__parse_hanging_punctuation,
 	css__parse_background_clip,   /* #255 */
-	css__parse_justify_items   /* #279 */
+	css__parse_justify_items,   /* #279 */
+	css__parse_appearance   /* #80 */
 };
 
 /** Mapping from property bytecode index to bytecode unit class mask. */

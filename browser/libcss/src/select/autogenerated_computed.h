@@ -413,6 +413,10 @@ struct css_computed_style_i {
 	 * pixel-art and crisp-edge content renders with pure
 	 * nearest-neighbor (plotter wiring queued separately). */
 	int32_t image_rendering;
+	/* fixes1052 (#80): appearance (CSS_APPEARANCE_*). Scalar tail, not a
+	 * bits[] slot -- keyword-valued so it is byte-deterministic across
+	 * cascade paths, and appending here shifts no existing field. */
+	int32_t appearance;
 	/* fixes357 (#44): text-decoration extended sub-properties.
 	 *   text_decoration_color_status: CSS_TEXT_DECORATION_COLOR_*
 	 *   text_decoration_color: resolved css_color (valid when

@@ -668,6 +668,18 @@ int32_t css_computed_tab_size(const css_computed_style *style)
 	return v;
 }
 
+/* fixes1052 (#80): appearance. Clamped to the known range so a corrupt or
+ * uninitialised value can never make a control vanish -- out of range reads
+ * as AUTO, i.e. the historical built-in widget painting. */
+uint8_t css_computed_appearance(const css_computed_style *style)
+{
+	int32_t v = style->i.appearance;
+	if (v < CSS_APPEARANCE_AUTO || v > CSS_APPEARANCE_NONE) {
+		return CSS_APPEARANCE_AUTO;
+	}
+	return (uint8_t) v;
+}
+
 uint8_t css_computed_image_rendering(const css_computed_style *style)
 {
 	int32_t v = style->i.image_rendering;
