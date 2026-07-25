@@ -741,8 +741,19 @@ int main(int argc, char **argv)
 	 * nothing and the ENTIRE cascade produced initial values. Every
 	 * element came out display:inline, which is why the harness has never
 	 * once exercised CSS-driven box construction. */
-	if (layout_html != NULL)
-		htmlc.media.type = CSS_MEDIA_SCREEN;
+	/* fixes1041 — UNCONDITIONAL. fixes1026 set this only in LAYOUT MODE, so
+	 * every one of the 47 JS/DOM tests still ran with media.type 0 and
+	 * therefore with a DEAD CASCADE: the UA sheet is appended for "screen" a
+	 * few lines above, matched nothing, and every element came out at its
+	 * initial value. getComputedStyle(div#feed).display answered "inline"
+	 * (the CSS initial) while the UA sheet says div{display:block}.
+	 *
+	 * Test 43 could not catch it: its only assertion on the computed value is
+	 * `typeof r.disp !== 'string' || !r.disp`, which passes on any non-empty
+	 * string INCLUDING the initial. Same shape as the fixes1005 double-fire
+	 * ("did it fire" vs "how many times") and #264 ("did it bubble" vs "in
+	 * what order"). Assert the VALUE, not the type. */
+	htmlc.media.type = CSS_MEDIA_SCREEN;
 	htmlc.media.width = INTTOFIX(g_layout_width);
 	htmlc.media.height = INTTOFIX(600);
 	htmlc.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
