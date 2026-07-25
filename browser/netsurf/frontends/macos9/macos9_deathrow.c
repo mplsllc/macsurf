@@ -279,7 +279,12 @@ macos9_deathrow_drain(void)
 		 * the worst case; the drained= total below still reports everything,
 		 * so a bomb past the cap shows up as a large count with the tail
 		 * unnamed, which is the signal to raise it. */
-#ifdef MACOS9_DEATHROW_TRACE_ENTRIES
+/* fixes1033 — #if, NOT #ifdef. fixes1032 set this to 0 to silence 2195
+ * flushed writes per session and the guard happily kept compiling it in,
+ * because #ifdef tests DEFINEDNESS, not value. The hardware log after that
+ * "cleanup" still carried every line. Same family as the fixes1022 switch
+ * bug: a config knob is only worth what the guard actually reads. */
+#if MACOS9_DEATHROW_TRACE_ENTRIES
 		if (freed < MACOS9_DEATHROW_TRACE_MAX) {
 			macsurf_debug_log_writef(
 				"LIFE deathrow free slot=%d ptr=%p fn=%p pin=%p",
