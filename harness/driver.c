@@ -5600,5 +5600,104 @@ box_coords(bx, &cx, &cy);
 	}
 	fprintf(stderr, "=== Test 45 PASS: the real dotdotdot preserves the entry ===\n");
 
+	/* --- Test 46: DOM SPEC CONFORMANCE SWEEP -----------------------------
+	 *
+	 * fixes1031 was a one-line deviation from the DOM spec (textContent=""
+	 * must add no Text node) that silently DESTROYED page content on any
+	 * jQuery site, and nothing caught it for as long as it existed because
+	 * every symptom looked like a layout or font bug. This sweep hunts its
+	 * siblings: the primitives real libraries lean on, each asserted
+	 * against what the spec actually says rather than against "did it
+	 * throw". Counts, not booleans -- a duplicated or dropped node is
+	 * invisible to a truthiness check. */
+	fprintf(stderr, "\n=== Test 46: DOM spec conformance sweep ===\n");
+	{
+		const char *sweep =
+			"globalThis.__t46=[];var F=globalThis.__t46;"
+			"function chk(name,got,want){if(got!==want)"
+				"F.push(name+': got '+got+' want '+want);}"
+			"var host=document.getElementById('feed');"
+			"function mk(html){var d=document.createElement('div');"
+				"if(html)d.innerHTML=html;host.appendChild(d);return d;}"
+
+			/* textContent: empty adds NO node; non-empty adds exactly one */
+			"var a=mk('<b>x</b><i>y</i>');a.textContent='';"
+			"chk('textContent-empty-childNodes',a.childNodes.length,0);"
+			"var a2=mk('<b>x</b>');a2.textContent='hi';"
+			"chk('textContent-set-childNodes',a2.childNodes.length,1);"
+			"chk('textContent-set-value',a2.textContent,'hi');"
+
+			/* innerHTML='' empties completely */
+			"var b=mk('<b>x</b><i>y</i>');b.innerHTML='';"
+			"chk('innerHTML-empty',b.childNodes.length,0);"
+
+			/* innerHTML REPLACES, never appends */
+			"var c=mk('<b>x</b>');c.innerHTML='<i>y</i>';"
+			"chk('innerHTML-replaces',c.children.length,1);"
+
+			/* insertBefore(node,null) == appendChild (Preact's only insert) */
+			"var d=mk('<b>x</b>');var nn=document.createElement('i');"
+			"d.insertBefore(nn,null);"
+			"chk('insertBefore-null-appends',d.children.length,2);"
+			"chk('insertBefore-null-is-last',d.children[1]===nn,true);"
+
+			/* appendChild/removeChild return the node */
+			"var e=mk('');var f1=document.createElement('b');"
+			"chk('appendChild-returns',e.appendChild(f1)===f1,true);"
+			"chk('removeChild-returns',e.removeChild(f1)===f1,true);"
+
+			/* appendChild MOVES an already-parented node, never copies */
+			"var g1=mk('<b>x</b>');var g2=mk('');"
+			"g2.appendChild(g1.children[0]);"
+			"chk('appendChild-moves-src',g1.children.length,0);"
+			"chk('appendChild-moves-dst',g2.children.length,1);"
+
+			/* a DocumentFragment inserts its CHILDREN and is left empty */
+			"var h=mk('');var fr=document.createDocumentFragment();"
+			"fr.appendChild(document.createElement('b'));"
+			"fr.appendChild(document.createElement('i'));"
+			"h.appendChild(fr);"
+			"chk('fragment-children-moved',h.children.length,2);"
+			"chk('fragment-emptied',fr.childNodes.length,0);"
+
+			/* cloneNode: shallow carries nothing, deep carries all */
+			"var k=mk('<b>x</b><i>y</i>');"
+			"chk('cloneNode-shallow',k.cloneNode(false).childNodes.length,0);"
+			"chk('cloneNode-deep',k.cloneNode(true).children.length,2);"
+			"chk('cloneNode-not-self',k.cloneNode(true)===k,false);"
+
+			/* element traversal skips text nodes; childNodes does not */
+			"var m=mk('');m.innerHTML='text<b>x</b>more';"
+			"chk('childNodes-counts-text',m.childNodes.length,3);"
+			"chk('children-skips-text',m.children.length,1);"
+			"chk('firstElementChild-skips-text',"
+				"m.firstElementChild===m.children[0],true);"
+			"chk('lastElementChild',m.lastElementChild===m.children[0],true);"
+			"chk('childElementCount',m.childElementCount,1);"
+
+			/* removing a child updates the parent link both ways */
+			"var n=mk('<b>x</b>');var nc=n.children[0];n.removeChild(nc);"
+			"chk('removeChild-clears-parent',nc.parentNode,null);"
+			"chk('removeChild-updates-count',n.children.length,0);";
+		unsigned char ok46 = js_exec(thread, (const unsigned char *)sweep,
+				strlen(sweep), "t46.js");
+		if (!ok46) { fprintf(stderr, "FAIL: t46 sweep threw\n"); return 1; }
+	}
+	{
+		const char *rep =
+			"var F=globalThis.__t46;"
+			"if(F.length)throw new Error('DOM SPEC DEVIATIONS ('+F.length+"
+				"'): '+F.join(' | '));";
+		unsigned char ok46b = js_exec(thread, (const unsigned char *)rep,
+				strlen(rep), "t46-chk.js");
+		if (!ok46b) {
+			fprintf(stderr, "FAIL: Test 46 -- DOM spec deviations found "
+					"(each one is a candidate for silently breaking a "
+					"real site, the way textContent did)\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 46 PASS: DOM spec conformance sweep clean ===\n");
+
 	return 0;
 }
