@@ -441,14 +441,22 @@ static void harness_dump_boxes(struct box *b, int depth, int maxdepth)
 {
 	char nm[80];
 	int x = 0, y = 0;
+	int fszq = -1;
 	if (b == NULL || depth > maxdepth) return;
 	harness_box_brief(b, nm, sizeof nm);
 	box_coords(b, &x, &y);
-	fprintf(stderr, "%*s%-34s type=%d disp=%d x=%d y=%d w=%d h=%d\n",
+	{
+		css_fixed fsq = 0; css_unit fuq = CSS_UNIT_PX;
+		if (b->style != NULL &&
+				css_computed_font_size(b->style, &fsq, &fuq) ==
+				CSS_FONT_SIZE_DIMENSION)
+			fszq = (int)FIXTOINT(fsq);
+	}
+	fprintf(stderr, "%*s%-34s type=%d disp=%d fs=%d x=%d y=%d w=%d h=%d\n",
 			depth * 2, "", nm, (int)b->type,
 			(b->style != NULL) ?
 				(int)css_computed_display_static(b->style) : -1,
-			x, y,
+			fszq, x, y,
 			(b->width  >= 1000000 || b->width  < 0) ? -1 : b->width,
 			(b->height >= 1000000 || b->height < 0) ? -1 : b->height);
 	for (b = b->children; b != NULL; b = b->next)
@@ -797,7 +805,7 @@ int main(int argc, char **argv)
 					htmlc.layout->descendant_y1);
 		}
 		fprintf(stderr, "\n=== BOX TREE (MacSurf layout) ===\n");
-		harness_dump_boxes(htmlc.layout, 0, 7);
+		harness_dump_boxes(htmlc.layout, 0, 12);
 		return 0;
 	}
 

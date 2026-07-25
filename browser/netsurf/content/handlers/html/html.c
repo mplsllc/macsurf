@@ -457,6 +457,20 @@ static void html_box_convert_done(html_content *c, bool success)
  * side by side answers which class a vanished section fell into.
  * All LIFE-prefixed; budgeted per session. */
 
+/* fixes1028 — THE RIVER PROBE, on for this round only.
+ *
+ * Chrome, at MacSurf's own 993px viewport, gives hackaday's article river
+ * ASIDE#recent-posts-2 h=1893 with each LI 206-236 tall. MacSurf's OWN
+ * layout, run over the same markup and the same 79 KB stylesheet on Linux,
+ * gives MAIN h=1736 -- correct within the harness's synthetic font metrics.
+ * The device gives 562. So the difference is something only the device has:
+ * real font metrics, the CSS preprocessor, or the media queries at that
+ * viewport. This prints the computed FONT SIZE beside every box so those
+ * are distinguishable: text boxes present with a tiny font is a font-size
+ * bug, text boxes absent is a construction bug, and correct font with short
+ * boxes is neither. */
+#define MACSURF_PAGEMAP 1
+
 #define MACSURF_PAGEMAP_MAX_DUMPS 40
 
 static long macsurf_pagemap_dumps = 0;
@@ -537,6 +551,7 @@ static int html_pagemap_line(dom_node *n, int depth, int *susp_out)
 	dom_node *nx = NULL;
 	int kids = 0;
 	int x = 0, y = 0, w = 0, h = 0;
+	int fsz = -1;
 	const char *disp = "-";
 	static const char *pfx[5] = { "", "> ", ">> ", ">>> ", ">>>> " };
 
@@ -560,15 +575,23 @@ static int html_pagemap_line(dom_node *n, int depth, int *susp_out)
 		w = HTML_PAGEMAP_SANE(b->width);
 		h = HTML_PAGEMAP_SANE(b->height);
 		if (b->style != NULL) {
+			css_fixed fs = 0;
+			css_unit fu = CSS_UNIT_PX;
 			disp = (css_computed_display_static(b->style) ==
 					CSS_DISPLAY_NONE) ? "NONE" : "ok";
+			/* fixes1028 — the computed font size, in whatever unit
+			 * the cascade settled on. A correct page here reads
+			 * ~17px on body text and ~30px on the river's h2. */
+			if (css_computed_font_size(b->style, &fs, &fu) ==
+					CSS_FONT_SIZE_DIMENSION)
+				fsz = (int)FIXTOINT(fs);
 		}
 	}
 	macsurf_pagemap_line_budget--;
 	macsurf_debug_log_writef(
-			"LIFE pagemap %s%s kids=%d box=%d y=%d w=%d h=%d disp=%s",
+			"LIFE pagemap %s%s kids=%d box=%d y=%d w=%d h=%d fs=%d disp=%s",
 			pfx[(depth < 0) ? 0 : ((depth > 4) ? 4 : depth)],
-			brief, kids, (b != NULL) ? 1 : 0, y, w, h, disp);
+			brief, kids, (b != NULL) ? 1 : 0, y, w, h, fsz, disp);
 	/* fixes1021 -- "this subtree looks broken": boxless, flat, or a
 	 * container squashed to less than a text line. The walk uses it to
 	 * keep descending PAST the normal depth cap, straight into e.g. the
@@ -606,8 +629,11 @@ static void html_pagemap_walk(dom_node *n, int depth)
 		int susp = 0;
 		kids = html_pagemap_line(n, depth, &susp);
 		if (kids == 0) return;
+		/* fixes1028 — depth 6 unconditionally: the river's own LI and
+		 * its h2/p sit at body>#page>#content>#primary>main>aside>ul>li,
+		 * and every earlier dump stopped above them. */
 		if (depth >= 8) return;
-		if (depth >= 4 && !susp) return;
+		if (depth >= 6 && !susp) return;
 	}
 	b = box_for_node(n);
 	if (b != NULL && b->style != NULL &&
@@ -643,10 +669,12 @@ void html_pagemap_dump(html_content *c, const char *when)
 	static int nav_dumps = 0;
 
 	if (c == NULL || c->document == NULL) return;
-#ifndef MACSURF_JS_AUDIT
+#if !defined(MACSURF_JS_AUDIT) && !defined(MACSURF_PAGEMAP)
 	/* fixes1024 — the pagemap is DIAGNOSTIC and every line is a synchronous
-	 * write + volume flush: 460 of them in the last hardware session. Off
-	 * with the rest of the audit unless MACSURF_JS_AUDIT is defined. */
+	 * write + volume flush. Off unless explicitly asked for.
+	 * fixes1028 — MACSURF_PAGEMAP is its own gate (defined below, ON for
+	 * this round) so the river probe reaches the field without turning the
+	 * whole JS audit back on. */
 	(void) when;
 	return;
 #endif
@@ -655,7 +683,7 @@ void html_pagemap_dump(html_content *c, const char *when)
 	if (macsurf_pagemap_dumps >= MACSURF_PAGEMAP_MAX_DUMPS) return;
 	macsurf_pagemap_dumps++;
 	nav_dumps++;
-	macsurf_pagemap_line_budget = 90;
+	macsurf_pagemap_line_budget = 130;
 
 	/* find <body>: documentElement's first element child named BODY */
 	if (dom_document_get_document_element(c->document, &root) != DOM_NO_ERR
