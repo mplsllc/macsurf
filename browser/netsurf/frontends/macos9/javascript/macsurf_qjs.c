@@ -1936,7 +1936,14 @@ void macsurf_qjs_audit_reset(void)
 	 * removal audit cleared removeChild entirely (120 lines, every one a
 	 * Typekit font probe or a jQuery feature-detect element). The census
 	 * in the same window reports text=35, and the river has 7 entries. */
+	/* fixes1032 — OFF with the rest of the audit. These three named the
+	 * deleter (fixes1029-1031); they cost a flushed write per mutation and
+	 * are not wanted in a baseline. */
+#ifdef MACSURF_JS_AUDIT
 	g_rm_audit_budget = 260;
+#else
+	g_rm_audit_budget = 0;
+#endif
 }
 
 static void qjs_mut_audit(const char *op, dom_node *target,
@@ -9625,13 +9632,17 @@ unsigned char js_exec(struct jsthread *thread,
 	JS_FreeValue(thread->ctx, val);
 	/* fixes1015 — pair every `LIFE js src` with an OUTCOME, so a clean run
 	 * is distinguishable from a script that never finished. Failures already
-	 * log above; this is the missing success half of the audit. */
+	 * log above; this is the missing success half of the audit.
+	 * fixes1032 — behind the audit switch: one flushed write per script,
+	 * ~18 per page on a real site. */
+#ifdef MACSURF_JS_AUDIT
 	{
 		char sname[48];
 		qjs_short_name(name, sname, (int)sizeof(sname));
 		macsurf_debug_log_writef("LIFE js done ok [%s len=%ld]",
 				sname, (long)txtlen);
 	}
+#endif
 	return 1;
 }
 

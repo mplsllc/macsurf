@@ -542,15 +542,17 @@ macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 			if (g_reconvert_debounce_ms > RECONVERT_DEBOUNCE_MAX_MS)
 				g_reconvert_debounce_ms =
 					RECONVERT_DEBOUNCE_MAX_MS;
-			macsurf_debug_log_writef(
-				"LIFE reconvert cosmetic-only, debounce -> %dms",
-				g_reconvert_debounce_ms);
+			/* fixes1032 — log only on reaching the CAP. The
+			 * cosmetic/structural pair flapped 108 times in one
+			 * session, which is 108 flushed writes to say the
+			 * cadence is working. */
+			if (g_reconvert_debounce_ms == RECONVERT_DEBOUNCE_MAX_MS)
+				macsurf_debug_log_writef(
+					"LIFE reconvert cosmetic-only, debounce "
+					"capped at %dms", g_reconvert_debounce_ms);
 		}
 	} else if (g_reconvert_debounce_ms != RECONVERT_DEBOUNCE_MS) {
-		g_reconvert_debounce_ms = RECONVERT_DEBOUNCE_MS;
-		macsurf_debug_log_writef(
-			"LIFE reconvert structural, debounce reset -> %dms",
-			g_reconvert_debounce_ms);
+		g_reconvert_debounce_ms = RECONVERT_DEBOUNCE_MS;   /* silent */
 	}
 
 	macos9_reconvert_pending_add(c, node, kind);

@@ -1715,7 +1715,10 @@ void macsurf_lazyimg_viewport_changed(int scroll_y, int viewport_h)
 		e = next;
 	}
 	g_lazyimg_head = keep;
-	if (n_fetched || n_kept) {
+	/* fixes1032 — only when something was actually FETCHED. Logging on
+	 * `kept` too meant one flushed write per scroll notch: 107 lines in one
+	 * session saying nothing happened. */
+	if (n_fetched) {
 		/* fixes934 — retagged RECON LAZY -> LIFE img lazy so the drain is
 		 * visible on a default build (RECON LAZY was not on the crash-only
 		 * whitelist, so it never reached disk). */

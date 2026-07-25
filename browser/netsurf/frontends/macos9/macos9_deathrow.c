@@ -75,8 +75,17 @@ void *macos9_deathrow_cur_fn = NULL;
  * the last line on disk IS the victim.
  *
  * Costs log volume and FlushVol time; turn it back off once the crash is
- * named. */
-#define MACOS9_DEATHROW_TRACE_ENTRIES 1
+ * named.
+ *
+ * fixes1032 — OFF. It was 980 flushed writes in one hardware session, the
+ * single largest source in the log and a real cost on the very navigation
+ * this is meant to diagnose. The teardown crash it was armed for
+ * (hlcache_handle_deferred_free <- hlcache_handle_release <- html_close) is
+ * STILL OPEN, so this is a deliberate trade for a clean performance
+ * baseline, not a claim the crash is solved: put the 1 back the next time
+ * it bites and the last line on disk is still the victim. The `drained=N`
+ * ledger below stays on either way. */
+#define MACOS9_DEATHROW_TRACE_ENTRIES 0
 
 struct deathrow_rec {
 	void *ptr;

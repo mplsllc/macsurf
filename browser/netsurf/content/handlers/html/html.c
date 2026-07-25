@@ -469,8 +469,9 @@ static void html_box_convert_done(html_content *c, bool success)
  * are distinguishable: text boxes present with a tiny font is a font-size
  * bug, text boxes absent is a construction bug, and correct font with short
  * boxes is neither. */
-#define MACSURF_PAGEMAP 1
-
+/* fixes1032 — OFF. It did its job: it is what showed entry-intro kids=0 and
+ * turned a layout hunt into a DOM-deletion hunt. Define MACSURF_PAGEMAP (or
+ * MACSURF_JS_AUDIT) to bring it back for the next structural question. */
 #define MACSURF_PAGEMAP_MAX_DUMPS 40
 
 static long macsurf_pagemap_dumps = 0;
