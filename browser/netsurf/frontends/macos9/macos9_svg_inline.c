@@ -2517,14 +2517,50 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 	sc.vb_y = vb[1];
 	sc.vb_w = vb[2];
 	sc.vb_h = vb[3];
-	sc.scale_x = (float)w / vb[2];
-	sc.scale_y = (float)h / vb[3];
-	sc.m[0] = sc.scale_x;
-	sc.m[1] = 0.0f;
-	sc.m[2] = 0.0f;
-	sc.m[3] = sc.scale_y;
-	sc.m[4] = (float)x - vb[0] * sc.scale_x;
-	sc.m[5] = (float)y - vb[1] * sc.scale_y;
+
+	/* fixes1044 (#280) — preserveAspectRatio="xMidYMid meet", the SVG
+	 * DEFAULT, instead of an independent per-axis stretch.
+	 *
+	 * scale_x and scale_y were computed separately (w/vb_w and h/vb_h), so
+	 * any SVG whose viewBox aspect differs from the destination box was
+	 * distorted. puffy.svg is 1051x874 (1.20:1) painted into a square <img>,
+	 * so it was squashed ~20% horizontally relative to vertical.
+	 *
+	 * "meet" = scale uniformly by the SMALLER ratio so the whole graphic
+	 * fits, then centre the leftover (xMid/YMid). This is what every browser
+	 * does when a viewBox and a differently-shaped box meet, and it is what
+	 * the Chrome reference render of this file shows. */
+	{
+		float sx = (float)w / vb[2];
+		float sy = (float)h / vb[3];
+		float s = (sx < sy) ? sx : sy;
+
+		sc.scale_x = s;
+		sc.scale_y = s;
+		sc.m[0] = s;
+		sc.m[1] = 0.0f;
+		sc.m[2] = 0.0f;
+		sc.m[3] = s;
+		/* centre the scaled viewBox inside the destination rect */
+		sc.m[4] = (float)x + ((float)w - vb[2] * s) * 0.5f
+				- vb[0] * s;
+		sc.m[5] = (float)y + ((float)h - vb[3] * s) * 0.5f
+				- vb[1] * s;
+
+		/* fixes1044 — the numbers, once per paint. If the graphic is
+		 * still cropped after this, the destination rect handed to us is
+		 * wrong (data->width/height vs the SVG's own intrinsic size) and
+		 * that is a different fix in macos9_svg_src_redraw; this line
+		 * says which of the two it is without another guess. Ints only:
+		 * macsurf_debug_log_writef has no float specifier. */
+		macsurf_debug_log_writef(
+			"WORK svg-fit: dest=%dx%d at %d,%d vb=%dx%d off %d,%d "
+			"scale/1000=%d (sx=%d sy=%d)",
+			w, h, x, y,
+			(int)vb[2], (int)vb[3], (int)vb[0], (int)vb[1],
+			(int)(s * 1000.0f),
+			(int)(sx * 1000.0f), (int)(sy * 1000.0f));
+	}
 	sc.plot_ctx = ctx;
 	sc.grads = NULL;
 	sc.base_url = NULL;
