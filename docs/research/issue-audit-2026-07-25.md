@@ -42,8 +42,8 @@ and #262 is the one genuine remainder (the `innerHTML` GET serializer).
 | 222 | XMLHttpRequest undefined | Native XHR `:7732-7860` over the slot arena; async delivery `macos9_js_fetch.c:300/380-404`. Test 3 |
 | 261 | getElementsBy* are `[]` stubs | doc `:7315-7327` (fixes873), element-scoped `:3298-3304` (fixes1009). Test 41 |
 | 263 | node traversal missing | `qjs_wrap_text_node:5415-5520`, installers `:3440-3466` (fixes878). Tests 21, 42, 46 |
-| 264 | flat event model, no UI bridge | **Both halves.** Bridge `:3481-3520` (fixes989); `addEventListener`/`dispatchEvent` `:5196-5210`; `macsurf_qjs_dispatch_dom_click` **deleted** — survives only in a comment at `:3487`. Tests 38, 40 |
-| 280 | external SVG never paints | `macos9_image.c:2426-2446` `macos9_svg_src_redraw` → `macos9_svg_paint_standalone` (fixes823); handler `:2471-2473` |
+| 264 | flat event model, no UI bridge | **VERDICT WAS WRONG** — the bridge half was done, but phase ORDERING was broken. Hardware refuted the close; fixed by fixes1040. See §11 |
+| 280 | external SVG never paints | **VERDICT WAS WRONG** — hardware shows a black silhouette (`<img>`) and a blank box (CSS background). Still open. See §11 |
 | 303 | reconvert fenced to facebook.com | fixes874 `de52fd60`; generation-token pending set `macos9_reconvert.c:72-110` |
 | 307 | fetchers never set tainted_tls | fixes958 `e0fa8b9d` + fixes962; caller `macos9_tls_fetcher.c:1395`, read `llcache.c:2702-2706` |
 | 108 | Mac-side duplicate source trees | Obsoleted by `drop-to-imac.sh` → one canonical `/Projects/MacSurfSource/` |
@@ -288,3 +288,41 @@ failure signature is the fixes159 class: a silent crash mid-reformat with the la
    `css_internal_select.h:67`, i.e. the whole select-state array.
 
 Anything that only *appends* to the tail of a struct, or changes a function body, does not need it.
+
+---
+
+## 11. Hardware pass — what the audit got wrong
+
+The maintainer ran t.html on real hardware the same day. **Two of the audit's ALREADY-DONE
+verdicts were wrong**, and both were wrong the same way: a verdict reached by *reading code*
+(or by trusting a green harness test) rather than by running the thing.
+
+| # | Audit said | Hardware said | Outcome |
+|---|---|---|---|
+| **264** | ALREADY-DONE (Tests 38, 40) | `order=[cap,bubble,target]` | **Refuted.** Reopened, root-caused, fixed by **fixes1040**, re-verified green |
+| **280** | ALREADY-DONE (fixes823) | black silhouette + blank box | **Refuted.** Still open |
+| 104, 222 | ALREADY-DONE | first run `pending…`, second run `status=200 bytes=8477` | Correct after all — the first screenshot caught them mid-flight. Reopened in error, re-closed |
+| 29, 126, 182, 261, 263, 303 | ALREADY-DONE | all green | Confirmed |
+
+### The lesson, and it is not "run on hardware more"
+
+**A passing test only proves what it asserts.** #264 was closed because Tests 38 and 40 passed —
+but Test 40 asserts that events *fire* and that they *bubble*, and both remain true while the
+ordering is wrong. **Not one of the 37 `addEventListener` calls in `harness/driver.c` used the
+capture phase**, so no test in the suite could observe phase ordering at all.
+
+This is the fixes1005 double-fire lesson one level up. That bug hid for ~15 rounds because every
+test asked "did it fire" instead of "how many times". This one hid because every test asked
+"did it bubble" instead of "in what order". Before closing an issue on a green test, read what
+the test actually asserts and check it covers the issue's *whole* claim.
+
+Test 47 now pins the ordering, and was confirmed red on the exact string hardware reported
+before the fix went in.
+
+### New issue found by the same run
+
+**#310 — `className` change after first paint does not re-cascade.** Three independent rows set
+`className` and `textContent` in one callback: the text updated, the class-driven background did
+not, while a sibling setting `.style.background` did repaint. The dirty-mark path is present and
+correct (`macsurf_qjs.c:2980-2983` → `:2040-2042` → `macos9_reconvert.c:127-131`), so the failure
+is downstream in the re-cascade. Likely contributor to #204 (XenForo `.has-js` nav).
