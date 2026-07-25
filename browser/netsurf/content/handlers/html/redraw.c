@@ -1321,12 +1321,104 @@ extern void macos9_set_gradient_angle(uint16_t angle);
 static colour html_redraw_opaque_backdrop(struct box *box, colour page_default);
 static colour html_redraw_precomposite_rgba(colour fill, colour backdrop);
 
+/**
+ * fixes1048 (#280) — resolve the background TILE size from background-size.
+ *
+ * Extracted so the SAME answer serves both consumers. It previously existed
+ * only as an inline block next to the plot call, which ran AFTER
+ * background-position had already been resolved -- so position centred the
+ * image's NATURAL size while the tile was drawn at its RESOLVED size. Per CSS
+ * the position applies to the sized image, so the two disagreed and a
+ * contained 1051x874 SVG in a 96px box landed at -306,-226.
+ *
+ * \param style   the background box's computed style (may be NULL)
+ * \param nat_w   image natural width  (>= 1 enforced)
+ * \param nat_h   image natural height (>= 1 enforced)
+ * \param area_w  background positioning area width, device px
+ * \param area_h  background positioning area height, device px
+ * \param scale   render scale
+ * \param tile_w  out: tile width, device px
+ * \param tile_h  out: tile height, device px
+ *
+ * Integer math (no int64) per the CW8 PPC long-long codegen gotcha.
+ */
+static void html_redraw_bg_tile_size(const css_computed_style *style,
+		int nat_w, int nat_h, int area_w, int area_h, float scale,
+		int *tile_w, int *tile_h)
+{
+	int32_t bgsz;
+	int16_t wc;
+	int16_t hc;
+
+	if (nat_w < 1) nat_w = 1;
+	if (nat_h < 1) nat_h = 1;
+	if (area_w < 1) area_w = 1;
+	if (area_h < 1) area_h = 1;
+
+	/* default (unset) keeps the historical behaviour: tile at the image's
+	 * own size, scaled. */
+	*tile_w = (int)ceilf((float)nat_w * scale);
+	*tile_h = (int)ceilf((float)nat_h * scale);
+
+	if (style == NULL)
+		return;
+	bgsz = css_computed_background_size(style);
+	if (bgsz == 0)
+		return;
+
+	wc = (int16_t)((bgsz >> 16) & 0xFFFF);
+	hc = (int16_t)(bgsz & 0xFFFF);
+
+	if (wc == -1 || hc == -1) {
+		/* cover: scale to the MAX ratio so the image covers the area */
+		if (nat_w * area_h > nat_h * area_w) {
+			*tile_h = area_h;
+			*tile_w = (nat_w * area_h) / nat_h;
+		} else {
+			*tile_w = area_w;
+			*tile_h = (nat_h * area_w) / nat_w;
+		}
+	} else if (wc == -2 || hc == -2) {
+		/* contain: scale to the MIN ratio so the image fits inside */
+		if (nat_w * area_h < nat_h * area_w) {
+			*tile_h = area_h;
+			*tile_w = (nat_w * area_h) / nat_h;
+		} else {
+			*tile_w = area_w;
+			*tile_h = (nat_h * area_w) / nat_w;
+		}
+	} else {
+		/* per-axis explicit, or auto preserving aspect from the other */
+		if (wc > 0) {
+			*tile_w = (int)((float)wc * scale);
+		} else if (hc > 0) {
+			*tile_w = (int)((float)hc * (float)nat_w /
+					(float)nat_h * scale);
+		} else {
+			*tile_w = (int)ceilf((float)nat_w * scale);
+		}
+		if (hc > 0) {
+			*tile_h = (int)((float)hc * scale);
+		} else if (wc > 0) {
+			*tile_h = (int)((float)wc * (float)nat_h /
+					(float)nat_w * scale);
+		} else {
+			*tile_h = (int)ceilf((float)nat_h * scale);
+		}
+	}
+
+	if (*tile_w < 1) *tile_w = 1;
+	if (*tile_h < 1) *tile_h = 1;
+}
+
 static bool html_redraw_background(int x, int y, struct box *box, float scale,
 		const struct rect *clip, colour *background_colour,
 		struct box *background,
 		const css_unit_ctx *unit_len_ctx,
 		const struct redraw_context *ctx)
 {
+	int bg_tile_w = 0;   /* fixes1048 — resolved ONCE, used by both the */
+	int bg_tile_h = 0;   /* background-position math and the plot call. */
 	bool repeat_x = false;
 	bool repeat_y = false;
 	bool plot_colour = true;
@@ -1772,13 +1864,31 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 			break;
 		}
 
+		/* fixes1048 (#280) — resolve the TILE size BEFORE position.
+		 *
+		 * Percentage background-position aligns the SIZED image inside
+		 * the positioning area, so it needs the post-background-size
+		 * dimensions. This used content_get_width/height -- the NATURAL
+		 * size -- so `center` on a contained 1051x874 SVG in a 96px box
+		 * shifted it by (96-1051)/2 = -477 while the tile was drawn 96
+		 * wide. Size and position disagreed and the image landed far
+		 * outside its box (hardware: dest=96x79 at -306,-226).
+		 *
+		 * `width`/`height` are still the positioning area here; they are
+		 * overwritten with the image's own size further down. */
+		html_redraw_bg_tile_size(background->style,
+				content_get_width(background->background),
+				content_get_height(background->background),
+				(int)ceilf(width * scale),
+				(int)ceilf(height * scale),
+				scale, &bg_tile_w, &bg_tile_h);
+
 		/* handle background-position */
 		css_computed_background_position(background->style,
 				&hpos, &hunit, &vpos, &vunit);
 		if (hunit == CSS_UNIT_PCT) {
-			x += (width -
-				content_get_width(background->background)) *
-				scale * FIXTOFLT(hpos) / 100.;
+			x += ((int)ceilf(width * scale) - bg_tile_w) *
+				FIXTOFLT(hpos) / 100.;
 		} else {
 			x += (int) (FIXTOFLT(css_unit_len2device_px(
 					background->style, unit_len_ctx,
@@ -1786,9 +1896,8 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 		}
 
 		if (vunit == CSS_UNIT_PCT) {
-			y += (height -
-				content_get_height(background->background)) *
-				scale * FIXTOFLT(vpos) / 100.;
+			y += ((int)ceilf(height * scale) - bg_tile_h) *
+				FIXTOFLT(vpos) / 100.;
 		} else {
 			y += (int) (FIXTOFLT(css_unit_len2device_px(
 					background->style, unit_len_ctx,
@@ -2013,21 +2122,11 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 		}
 		/* and plot the image */
 		if (plot_content) {
-			/* fixes1047 (#280) — capture the background POSITIONING
-			 * AREA before `width`/`height` are overwritten with the
-			 * image's natural size on the next two lines.
-			 *
-			 * The background-size block below derived its box_w/box_h
-			 * from `width`/`height`, which by then were the CONTENT's
-			 * dimensions -- so `contain` scaled the image to fit
-			 * ITSELF and computed tile == natural size, a no-op. On
-			 * hardware that painted a 1051x874 SVG at 1:1 from a
-			 * negative origin, over the top of the correctly-fitted
-			 * <img> beside it. The inline path never had this bug
-			 * because it takes box_w from the box rect (b.x1 - b.x0). */
-			int bg_area_w = (int)ceilf(width * scale);
-			int bg_area_h = (int)ceilf(height * scale);
-
+			/* fixes1048 — the positioning-area capture that fixes1047
+			 * added here is gone: the tile size is now resolved
+			 * up-front (before background-position needs it), so
+			 * nothing downstream of this overwrite has to measure the
+			 * box any more. */
 			width = content_get_width(background->background);
 			height = content_get_height(background->background);
 
@@ -2075,111 +2174,15 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 						background->style) ==
 						CSS_IMAGE_RENDERING_CRISP_EDGES));
 
-				/* fixes191b -- background-size consumer.
-				 *
-				 * The default (unset / 0) keeps the historical
-				 * MacSurf behaviour where each "tile" is the
-				 * box size (one tile fills the box). When set,
-				 * resolve to a tile dimension per axis:
-				 *
-				 *   auto (0)  - use natural image dimension
-				 *               (or aspect-preserved when the
-				 *                other axis has an explicit size)
-				 *   +N px     - tile that many pixels (scaled)
-				 *   cover (-1)- scale to MAX(box/nat ratios)
-				 *               so the image covers the box.
-				 *   contain (-2)- scale to MIN ratio so the
-				 *               image fits inside the box.
-				 *
-				 * Integer math (no int64) per CW8 PPC long-long
-				 * codegen gotcha. */
-				if (background->style != NULL) {
-					int32_t bgsz = css_computed_background_size(
-							background->style);
-					if (bgsz != 0) {
-						int16_t wc = (int16_t)(
-							(bgsz >> 16) & 0xFFFF);
-						int16_t hc = (int16_t)(
-							bgsz & 0xFFFF);
-						int nat_w =
-							content_get_width(
-							background->background);
-						int nat_h =
-							content_get_height(
-							background->background);
-						/* fixes1047 (#280) — the POSITIONING
-						 * AREA, captured before `width`/
-						 * `height` became the image's own
-						 * size. Using those made every
-						 * ratio 1:1 and contain/cover a
-						 * no-op. */
-						int box_w = bg_area_w;
-						int box_h = bg_area_h;
-						int tile_w = box_w;
-						int tile_h = box_h;
-						if (nat_w < 1) nat_w = 1;
-						if (nat_h < 1) nat_h = 1;
-						if (wc == -1 || hc == -1) {
-							/* cover */
-							if (nat_w * box_h >
-							  nat_h * box_w) {
-								tile_h = box_h;
-								tile_w = (nat_w *
-								  box_h) / nat_h;
-							} else {
-								tile_w = box_w;
-								tile_h = (nat_h *
-								  box_w) / nat_w;
-							}
-						} else if (wc == -2 ||
-								hc == -2) {
-							/* contain */
-							if (nat_w * box_h <
-							  nat_h * box_w) {
-								tile_h = box_h;
-								tile_w = (nat_w *
-								  box_h) / nat_h;
-							} else {
-								tile_w = box_w;
-								tile_h = (nat_h *
-								  box_w) / nat_w;
-							}
-						} else {
-							/* per-axis explicit
-							 * or auto. */
-							if (wc > 0) {
-								tile_w = (int)(
-								(float)wc *
-								scale);
-							} else if (hc > 0) {
-								tile_w = (int)(
-								(float)hc *
-								(float)nat_w /
-								(float)nat_h *
-								scale);
-							} else {
-								tile_w = nat_w;
-							}
-							if (hc > 0) {
-								tile_h = (int)(
-								(float)hc *
-								scale);
-							} else if (wc > 0) {
-								tile_h = (int)(
-								(float)wc *
-								(float)nat_h /
-								(float)nat_w *
-								scale);
-							} else {
-								tile_h = nat_h;
-							}
-						}
-						if (tile_w < 1) tile_w = 1;
-						if (tile_h < 1) tile_h = 1;
-						bg_data.width = tile_w;
-						bg_data.height = tile_h;
-					}
-				}
+				/* fixes1048 (#280) — the tile size was resolved up-front by
+				 * html_redraw_bg_tile_size (before background-position,
+				 * which needs it). The block that used to live here ran
+				 * AFTER position and measured the image against ITSELF,
+				 * because `width`/`height` are overwritten with the image's
+				 * natural size just above -- so contain/cover were no-ops
+				 * (fixes1047) and position disagreed with the drawn size. */
+				bg_data.width = bg_tile_w;
+				bg_data.height = bg_tile_h;
 
 				/* fixes1046 (#280) — name the ROUTE and the numbers.
 				 * Hardware shows an SVG painted twice: once fitted
