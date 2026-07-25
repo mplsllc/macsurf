@@ -100,6 +100,11 @@ void macsurf_qjs_clear_event_detail(void)
 void macsurf_qjs_fire_scroll(void) { }
 void macsurf_qjs_fire_resize(void) { }
 void macsurf_qjs_page_js_summary(void) { }
+/* fixes1037 — INSIDE the guard. Appended below the #endif first time
+ * round, so with WITH_QUICKJS on (the normal build) this file and
+ * macsurf_qjs.c both defined it and CW8 reported a multiply-defined
+ * symbol. Everything in this file is a no-engine fallback and belongs
+ * above the #endif; nothing here may ever be defined unconditionally. */
+void macsurf_qjs_emit_timer_profile(void) { }
 
 #endif /* !WITH_QUICKJS */
-void macsurf_qjs_emit_timer_profile(void) { }
