@@ -1927,7 +1927,16 @@ void macsurf_qjs_audit_reset(void)
 	g_mslife_audit = 0;
 	g_geom_audit = 0;
 #endif
-	g_rm_audit_budget = 120;
+	/* fixes1030 — the three ways script can DELETE page content:
+	 * removeChild, textContent= and innerHTML=. All three now log their
+	 * target's identity on this shared budget, independent of
+	 * MACSURF_JS_AUDIT, because hackaday's article entries reach the box
+	 * tree ALREADY EMPTY (kids=0 at the `ready` dump) while the same
+	 * markup parsed without script keeps all four children -- and the
+	 * removal audit cleared removeChild entirely (120 lines, every one a
+	 * Typekit font probe or a jQuery feature-detect element). The census
+	 * in the same window reports text=35, and the river has 7 entries. */
+	g_rm_audit_budget = 260;
 }
 
 static void qjs_mut_audit(const char *op, dom_node *target,
@@ -2059,7 +2068,13 @@ static JSValue qjs_el_set_text_content_data(JSContext *ctx,
 	s = JS_ToCString(ctx, argv[0]);
 	if (s == NULL) return JS_UNDEFINED;
 	ds = qjs_make_domstr(s);
-	qjs_mut_audit("textContent=", (dom_node *)el, NULL, s); /* fixes1015 */
+	if (g_rm_audit_budget > 0) {	/* fixes1030 */
+		char pb[80], vb[64];
+		g_rm_audit_budget--;
+		qjs_node_brief((dom_node *)el, pb, (int)sizeof pb);
+		qjs_audit_copy(vb, (int)sizeof vb, s);
+		macsurf_debug_log_writef("LIFE tc %s <- \"%s\"", pb, vb);
+	}
 	JS_FreeCString(ctx, s);
 	if (ds) {
 		macsurf_dom_node_set_text_content((dom_node *)el, ds);
@@ -2167,10 +2182,13 @@ static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
 	dom_hubbub_parser_completed(parser);
 	dom_hubbub_parser_destroy(parser);
 	/* fixes1015 — audit with the markup head while the string is alive. */
-	{
-		char lenbuf[24];
-		sprintf(lenbuf, "len=%ld", (long)html_len);
-		qjs_mut_audit("innerHTML=", (dom_node *)el, lenbuf, html_src);
+	if (g_rm_audit_budget > 0) {	/* fixes1030 */
+		char pb[80], vb[64];
+		g_rm_audit_budget--;
+		qjs_node_brief((dom_node *)el, pb, (int)sizeof pb);
+		qjs_audit_copy(vb, (int)sizeof vb, html_src);
+		macsurf_debug_log_writef("LIFE ih %s len=%ld <- \"%s\"",
+				pb, (long)html_len, vb);
 	}
 	JS_FreeCString(ctx, html_src);
 
