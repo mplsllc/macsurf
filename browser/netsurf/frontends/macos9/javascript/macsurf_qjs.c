@@ -2075,9 +2075,60 @@ static JSValue qjs_el_set_text_content_data(JSContext *ctx,
 		qjs_audit_copy(vb, (int)sizeof vb, s);
 		macsurf_debug_log_writef("LIFE tc %s <- \"%s\"", pb, vb);
 	}
+	/* fixes1031 — textContent = "" MUST LEAVE NO TEXT NODE BEHIND.
+	 *
+	 * DOM says: "Let node be null. If the given value is not the empty
+	 * string, set node to a new Text node whose data is the given value",
+	 * then replace all children with node. Empty string therefore means
+	 * REMOVE EVERYTHING AND ADD NOTHING. libdom's set_text_content adds an
+	 * empty Text node instead, and that one stray node is what has been
+	 * destroying real pages:
+	 *
+	 * jQuery's buildFragment -- the path behind $(html), .append(html),
+	 * .wrapInner(), .wrapAll() and much else -- clears its scratch
+	 * fragment with `fragment.textContent = ""` before collecting the
+	 * parsed nodes. With an empty Text node left in place, EVERY
+	 * jQuery(htmlString) comes back one node longer than it should, with
+	 * that text node FIRST. jQuery.wrapAll then does
+	 *
+	 *     wrap = jQuery( html, ... ).eq( 0 ).clone( true );
+	 *
+	 * so `wrap` is the stray TEXT NODE rather than the wrapper element,
+	 * and the subsequent `.append( this )` moves the element's entire
+	 * contents into a text node -- which cannot hold children. The content
+	 * is gone.
+	 *
+	 * That is hackaday's article river: the dotdotdot plugin calls
+	 * wrapInner() on every entry, and each entry reaches the box tree with
+	 * kids=0. Locally reproduced with the real plugin (harness Test 45).
+	 * The blast radius is far wider than one site -- wrapAll/wrapInner are
+	 * ordinary jQuery, and a leading phantom text node also perturbs
+	 * .eq(0), .first(), :first-child logic and index arithmetic anywhere a
+	 * fragment is built from markup. */
 	JS_FreeCString(ctx, s);
 	if (ds) {
-		macsurf_dom_node_set_text_content((dom_node *)el, ds);
+		if (dom_string_length(ds) == 0) {
+			/* Empty: remove every child, add nothing. */
+			dom_node *ch = NULL;
+			if (macsurf_dom_node_get_first_child((dom_node *)el, &ch)
+					!= DOM_NO_ERR)
+				ch = NULL;
+			while (ch != NULL) {
+				dom_node *nx = NULL;
+				dom_node *removed = NULL;
+				if (macsurf_dom_node_get_next_sibling(ch, &nx)
+						!= DOM_NO_ERR)
+					nx = NULL;
+				if (macsurf_dom_node_remove_child((dom_node *)el,
+						ch, &removed) == DOM_NO_ERR &&
+						removed != NULL)
+					macsurf_dom_node_unref(removed);
+				macsurf_dom_node_unref(ch);
+				ch = nx;
+			}
+		} else {
+			macsurf_dom_node_set_text_content((dom_node *)el, ds);
+		}
 		macsurf_dom_string_unref(ds);
 		if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
 				(void *) el, MACOS9_DOMMUT_TEXTCONTENT);
@@ -5168,6 +5219,31 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 			"configurable:true});"
 			"Object.defineProperty(el,'children',{"
 			"get:function(){return el.__getChildren();},"
+			"configurable:true});"
+			/* fixes1031 — firstElementChild / lastElementChild /
+			 * childElementCount. nextElementSibling and
+			 * previousElementSibling were here; their two siblings were
+			 * not, and jQuery's wrapAll walks firstElementChild:
+			 *
+			 *   wrap.map(function(){ var e=this;
+			 *       while (e.firstElementChild) e=e.firstElementChild;
+			 *       return e; }).append(this);
+			 *
+			 * so wrapInner() -- and therefore the dotdotdot truncation
+			 * plugin hackaday runs over every article entry -- lost the
+			 * content it was re-parenting. Derived from `children` so
+			 * they cannot disagree with it. */
+			"Object.defineProperty(el,'firstElementChild',{"
+			"get:function(){var c=el.__getChildren();"
+				"return (c&&c.length)?c[0]:null;},"
+			"configurable:true});"
+			"Object.defineProperty(el,'lastElementChild',{"
+			"get:function(){var c=el.__getChildren();"
+				"return (c&&c.length)?c[c.length-1]:null;},"
+			"configurable:true});"
+			"Object.defineProperty(el,'childElementCount',{"
+			"get:function(){var c=el.__getChildren();"
+				"return (c&&c.length)?c.length:0;},"
 			"configurable:true});"
 			"})";
 		JSValue fn2, args2[1];

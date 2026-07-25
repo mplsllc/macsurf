@@ -386,6 +386,8 @@ static struct gui_layout_table harness_layout_table = {
 	harness_font_split
 };
 
+static nsurl *g_base_url = NULL;
+
 static char *harness_slurp(const char *path)
 {
 	FILE *f = fopen(path, "rb");
@@ -553,6 +555,21 @@ int main(int argc, char **argv)
 
 	corestrings_init();
 
+	/* fixes1026 — EVERY run needs a base URL. box_get_style passes
+	 * nsurl_access(c->base_url) to nscss_create_inline_style for any
+	 * element carrying style="", and box_construct joins relative
+	 * hrefs against it. It was never set because author_level_css read
+	 * false from the zeroed option table, so that path was dead. */
+	{
+		if (nsurl_create("http://local/page.html", &g_base_url) !=
+				NSERROR_OK) {
+			fprintf(stderr, "FAIL: base nsurl_create\n");
+			return 1;
+		}
+		htmlc.base_url = g_base_url;
+	}
+
+
 	/* --- parse a real document through the real hubbub/dom parser --- */
 	memset(&params, 0, sizeof(params));
 	params.enc = NULL;
@@ -590,19 +607,9 @@ int main(int argc, char **argv)
 
 	/* --- build a minimal but real html_content --- */
 	memset(&htmlc, 0, sizeof(htmlc));
-	/* fixes1026 — EVERY run needs a base URL. box_get_style passes
-	 * nsurl_access(c->base_url) to nscss_create_inline_style for any
-	 * element carrying style="", and box_construct joins relative
-	 * hrefs against it. It was never set because author_level_css read
-	 * false from the zeroed option table, so that path was dead. */
-	{
-		nsurl *burl = NULL;
-		if (nsurl_create("http://local/page.html", &burl) != NSERROR_OK) {
-			fprintf(stderr, "FAIL: base nsurl_create\n");
-			return 1;
-		}
-		htmlc.base_url = burl;
-	}
+	/* fixes1026 — restore after the memset: it is needed BEFORE the parse
+	 * (script/link tags join against it) and again for box construction. */
+	htmlc.base_url = g_base_url;
 	htmlc.document = document;
 	htmlc.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
 	htmlc.enable_scripting = true;
@@ -5323,6 +5330,275 @@ box_coords(bx, &cx, &cy);
 				"never a fabricated 0\n");
 	}
 	fprintf(stderr, "=== Test 43 PASS: layout visible to JS ===\n");
+
+	/* --- Test 44: the dotdotdot pattern (deep clone + re-append) --------
+	 *
+	 * hackaday's article entries reach the box tree EMPTY (kids=0). The
+	 * removal audit cleared removeChild; the culprit is the jQuery
+	 * dotdotdot plugin, whose core move is:
+	 *
+	 *     $inr = $dot.wrapInner('<div class="dotdotdot" />').children();
+	 *     $inr.contents().detach().end().append( orgContent.clone(true) );
+	 *
+	 * i.e. EMPTY the element, then restore its content from a DEEP CLONE
+	 * of what was there. If cloneNode(true) does not carry the subtree, or
+	 * the clone cannot be appended, the content is destroyed -- which is
+	 * exactly kids=0. Seven runs were logged on hardware, one per entry.
+	 *
+	 * Asserts the whole round trip, counting nodes at each step rather than
+	 * testing a boolean, so a clone that is merely SHALLOW fails here. */
+	fprintf(stderr, "\n=== Test 44: deep clone + re-append (the dotdotdot pattern) ===\n");
+	{
+		const char *src =
+			"globalThis.__t44={};var r=globalThis.__t44;"
+			"var host=document.getElementById('feed');"
+			"var box=document.createElement('div');"
+			"box.innerHTML='<span class=\"a\">one</span>"
+				"<em>two</em><p>three</p>';"
+			"host.appendChild(box);"
+			"r.before=box.children.length;"
+			/* snapshot the children the way jQuery does */
+			"var org=[];for(var i=0;i<box.childNodes.length;i++)"
+				"org.push(box.childNodes[i]);"
+			"r.org=org.length;"
+			/* deep-clone each, as orgContent.clone(true) does */
+			"var clones=[];for(var j=0;j<org.length;j++)"
+				"clones.push(org[j].cloneNode(true));"
+			"r.clones=clones.length;"
+			"r.cloneKids=0;"
+			"for(var k=0;k<clones.length;k++){"
+				"if(clones[k].childNodes)r.cloneKids+=clones[k].childNodes.length;}"
+			/* empty it, exactly as jQuery .empty() does */
+			"box.textContent='';"
+			"r.afterEmpty=box.children.length;"
+			/* restore from the clones */
+			"for(var m=0;m<clones.length;m++)box.appendChild(clones[m]);"
+			"r.restored=box.children.length;"
+			"r.text=box.textContent||'';";
+		unsigned char ok44 = js_exec(thread, (const unsigned char *)src,
+				strlen(src), "t44.js");
+		if (!ok44) { fprintf(stderr, "FAIL: t44 setup threw\n"); return 1; }
+	}
+	{
+		const char *chk =
+			"var r=globalThis.__t44;"
+			"if(r.before!==3)throw new Error('ASSERT FAIL: setup built '+"
+				"r.before+' children, expected 3');"
+			"if(r.clones!==r.org)throw new Error('ASSERT FAIL: cloned '+"
+				"r.clones+' of '+r.org+' nodes');"
+			"if(r.cloneKids<3)throw new Error('ASSERT FAIL: the deep clones "
+				"carry only '+r.cloneKids+' descendant nodes -- a SHALLOW "
+				"clone. dotdotdot restores content from clone(true), so a "
+				"shallow clone DELETES the page content it was restoring.');"
+			"if(r.afterEmpty!==0)throw new Error('ASSERT FAIL: emptying "
+				"left '+r.afterEmpty+' children');"
+			"if(r.restored!==3)throw new Error('ASSERT FAIL: restored '+"
+				"r.restored+' children from clones, expected 3 -- this is "
+				"hackaday entry-intro kids=0 reproduced.');"
+			"if(r.text.indexOf('one')<0||r.text.indexOf('three')<0)"
+				"throw new Error('ASSERT FAIL: restored text is ['+r.text+"
+					"'] -- the subtree did not survive the round trip');";
+		unsigned char ok44b = js_exec(thread, (const unsigned char *)chk,
+				strlen(chk), "t44-chk.js");
+		if (!ok44b) {
+			fprintf(stderr, "FAIL: Test 44 -- the dotdotdot round trip "
+					"loses content\n");
+			return 1;
+		}
+	}
+	/* Part 2: the SAME round trip on PARSER-BUILT content. dotdotdot acts
+	 * on markup that came from hubbub, not from script, and a clone path
+	 * can easily work for one and not the other. */
+	{
+		const char *src2 =
+			"globalThis.__t44b={};var r=globalThis.__t44b;"
+			"var box=document.getElementById('lst');"   /* parser-built <ul> */
+			"r.before=box.children.length;"
+			"var org=[];for(var i=0;i<box.childNodes.length;i++)"
+				"org.push(box.childNodes[i]);"
+			"var clones=[];for(var j=0;j<org.length;j++)"
+				"clones.push(org[j].cloneNode(true));"
+			"r.cloneKids=0;"
+			"for(var k=0;k<clones.length;k++){"
+				"if(clones[k].childNodes)r.cloneKids+=clones[k].childNodes.length;}"
+			"box.textContent='';"
+			"r.afterEmpty=box.children.length;"
+			"for(var m=0;m<clones.length;m++)box.appendChild(clones[m]);"
+			"r.restored=box.children.length;"
+			"r.text=box.textContent||'';";
+		unsigned char o2 = js_exec(thread, (const unsigned char *)src2,
+				strlen(src2), "t44b.js");
+		if (!o2) { fprintf(stderr, "FAIL: t44b setup threw\n"); return 1; }
+	}
+	{
+		const char *chk2 =
+			"var r=globalThis.__t44b;"
+			"if(r.before<2)throw new Error('ASSERT FAIL: parser subtree had '+"
+				"r.before+' children');"
+			"if(r.cloneKids<r.before)throw new Error('ASSERT FAIL: deep clones "
+				"of PARSER-BUILT nodes carry only '+r.cloneKids+' descendants "
+				"for '+r.before+' items -- shallow. This is the dotdotdot "
+				"content loss.');"
+			"if(r.restored!==r.before)throw new Error('ASSERT FAIL: restored '+"
+				"r.restored+' of '+r.before+' parser-built children');"
+			"if(r.text.indexOf('item')<0)throw new Error('ASSERT FAIL: restored "
+				"text lost its content: ['+r.text+']');";
+		unsigned char o2b = js_exec(thread, (const unsigned char *)chk2,
+				strlen(chk2), "t44b-chk.js");
+		if (!o2b) {
+			fprintf(stderr, "FAIL: Test 44b -- parser-built content does not "
+					"survive the dotdotdot round trip\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 44 PASS: deep clone + re-append preserves the subtree "
+			"(script-built AND parser-built) ===\n");
+
+	/* --- Test 45: the REAL dotdotdot, on a real article entry ----------
+	 *
+	 * Hardware shows every hackaday DIV.entry-intro reaching the box tree
+	 * with kids=0, while the SAME page parsed and laid out here keeps them
+	 * at h=181..262. The only ingredient the device adds is the page's own
+	 * JavaScript, and the log names dotdotdot running exactly seven times
+	 * -- once per entry -- immediately before. Rather than ask for another
+	 * hardware round, run the actual plugin (extracted from hackaday's own
+	 * bundle) against an entry of the same shape and see whether the
+	 * content survives. This is the method that ended fixes998. */
+	fprintf(stderr, "\n=== Test 45: the REAL dotdotdot plugin on an article entry ===\n");
+	{
+		FILE *bf = fopen("hackaday-bundle.js", "rb");
+		if (bf == NULL) {
+			fprintf(stderr, "SKIP: hackaday-bundle.js not present\n");
+		} else {
+			char *bsrc, *wrapped;
+			long blen; size_t rd, wn;
+			const char *pre = "globalThis.__ddErr='';try{";
+			const char *post = "}catch(e){globalThis.__ddErr="
+					"String((e&&e.message)||e);}";
+			unsigned char ok45;
+
+			fseek(bf, 0, SEEK_END); blen = ftell(bf); fseek(bf, 0, SEEK_SET);
+			bsrc = (char *)malloc((size_t)blen + 1);
+			rd = fread(bsrc, 1, (size_t)blen, bf);
+			bsrc[rd] = '\0';
+			fclose(bf);
+			wn = strlen(pre) + rd + strlen(post) + 1;
+			wrapped = (char *)malloc(wn);
+			strcpy(wrapped, pre);
+			memcpy(wrapped + strlen(pre), bsrc, rd);
+			strcpy(wrapped + strlen(pre) + rd, post);
+			ok45 = js_exec(thread, (const unsigned char *)wrapped,
+					strlen(wrapped), "hackaday-bundle.js");
+			fprintf(stderr, "js_exec(hackaday bundle, %ld bytes) ok=%d\n",
+					blen, (int)ok45);
+			free(bsrc); free(wrapped);
+
+			{
+				const char *setup =
+					"globalThis.__t45={};var r=globalThis.__t45;"
+					"r.err=globalThis.__ddErr||'';"
+					"r.hasPlugin=(typeof jQuery!=='undefined'&&"
+						"!!(jQuery.fn&&jQuery.fn.dotdotdot));"
+					"if(r.hasPlugin){"
+					  "var host=document.getElementById('feed');"
+					  "var e=document.createElement('div');"
+					  "e.className='entry-intro';"
+					  "e.innerHTML='<a class=\"entries-image-holder\">"
+						"<div class=\"entry-image\"></div></a>"
+						"<h2><a>E-ink Writing Deck Rocks A Typewriter "
+						"Aesthetic</a></h2>"
+						"<div class=\"recent-post-meta\"><p>By Zoe</p></div>"
+						"<p>Some excerpt text that is long enough to be "
+						"truncated by a plugin that truncates things.</p>';"
+					  "host.appendChild(e);"
+					  "r.before=e.children.length;"
+					  "r.textBefore=(e.textContent||'').length;"
+					  "try{jQuery(e).dotdotdot();}catch(x){"
+						"r.threw=String((x&&x.message)||x);}"
+					  "r.after=e.children.length;"
+					  "r.textAfter=(e.textContent||'').length;"
+					  /* which jQuery primitive lost it? */
+					  "var e2=document.createElement('div');"
+					  "e2.innerHTML='<b>x</b><i>y</i>';"
+					  "host.appendChild(e2);"
+					  "r.contentsLen=jQuery(e2).contents().length;"
+					  "r.childNodesLen=e2.childNodes.length;"
+					  "r.cloneOK=(jQuery(e2).contents().clone(true)||[]).length;"
+					  "jQuery(e2).wrapInner('<div class=\"w\" />');"
+					  "r.afterWrap=e2.children.length;"
+					  "r.wrapKids=e2.children[0]?e2.children[0].children.length:-1;"
+					  /* the primitives jQuery.wrapAll depends on */
+					  "var e3=document.createElement('div');"
+					  "e3.innerHTML='<b>x</b><i>y</i>';host.appendChild(e3);"
+					  "r.ownerDoc=(typeof e3.ownerDocument);"
+					  "r.firstEC=(typeof e3.firstElementChild);"
+					  "var w=document.createElement('div');"
+					  "var fc=e3.childNodes[0];"
+					  "r.fcParent=(fc&&fc.parentNode)?'yes':'no';"
+					  "try{e3.insertBefore(w,fc);r.ibThrew='';}"
+						"catch(x){r.ibThrew=String((x&&x.message)||x);}"
+					  "r.ibKids=e3.children.length;"
+					  "r.ibFirst=(e3.children[0]===w)?'wrapper':'other';"
+					  /* does jQuery build the wrapper at all? */
+					  "var t=document.createElement('div');"
+					  "t.innerHTML='<div class=\"w\" />';"
+					  "r.rawIH=t.childNodes.length;"
+					  "r.rawIHkids=t.children.length;"
+					  "r.jqMake=jQuery('<div class=\"w\" />').length;"
+					  "r.jqMakeClone=jQuery('<div class=\"w\" />').eq(0)"
+						".clone(true).length;"
+					  "var mk=jQuery('<div class=\"w\" />');var nn=[];"
+					  "for(var q=0;q<mk.length;q++){var n0=mk[q];"
+						"nn.push((n0&&n0.nodeName)+':'+(n0&&n0.nodeType)+':k'+"
+						"((n0&&n0.childNodes)?n0.childNodes.length:-1));}"
+					  "r.mkNames=nn.join(',');"
+					  /* wrapAll directly */
+					  "var e4=document.createElement('div');"
+					  "e4.innerHTML='<b>x</b><i>y</i>';host.appendChild(e4);"
+					  "try{jQuery(e4).contents().wrapAll('<div class=\"w\" />');"
+						"r.waThrew='';}catch(x){r.waThrew=String((x&&x.message)||x);}"
+					  "r.waKids=e4.children.length;"
+					  "r.waText=(e4.textContent||'').length;"
+					"}";
+				(void) js_exec(thread, (const unsigned char *)setup,
+						strlen(setup), "t45-setup.js");
+			}
+			{
+				const char *chk =
+					"var r=globalThis.__t45;"
+					"var D=' [DIAG contents='+r.contentsLen+' childNodes='+"
+						"r.childNodesLen+' clone='+r.cloneOK+' afterWrap='+"
+						"r.afterWrap+' wrapKids='+r.wrapKids+"
+						"' ownerDoc='+r.ownerDoc+' firstElementChild='+r.firstEC+"
+						"' fcParent='+r.fcParent+' insertBeforeThrew='+"
+						"(r.ibThrew||'no')+' ibKids='+r.ibKids+"
+						"' ibFirst='+r.ibFirst+' rawInnerHTMLkids='+r.rawIH+"
+						"'/'+r.rawIHkids+' jQueryMake='+r.jqMake+"
+						"' jQueryMakeClone='+r.jqMakeClone+' made=['+r.mkNames+']"
+						" wrapAllKids='+r.waKids+' wrapAllText='+r.waText+"
+						"' wrapAllThrew='+(r.waThrew||'no')+']';"
+					"if(!r.hasPlugin)throw new Error('SKIP-AS-FAIL: the "
+						"bundle did not register jQuery.fn.dotdotdot; "
+						"bundle error was ['+r.err+']');"
+					"if(r.threw)throw new Error('ASSERT FAIL: dotdotdot threw: '"
+						"+r.threw);"
+					"if(r.after===0)throw new Error('ASSERT FAIL: dotdotdot "
+						"EMPTIED the entry (children '+r.before+' -> 0). This "
+						"is hackaday entry-intro kids=0, reproduced locally.'+D);"
+					"if(r.textAfter===0)throw new Error('ASSERT FAIL: dotdotdot "
+						"removed all text ('+r.textBefore+' chars -> 0)');";
+				unsigned char ok45b = js_exec(thread,
+						(const unsigned char *)chk, strlen(chk),
+						"t45-chk.js");
+				if (!ok45b) {
+					fprintf(stderr, "FAIL: Test 45 -- the real dotdotdot "
+							"destroys the entry\n");
+					return 1;
+				}
+			}
+		}
+	}
+	fprintf(stderr, "=== Test 45 PASS: the real dotdotdot preserves the entry ===\n");
 
 	return 0;
 }
