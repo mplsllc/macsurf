@@ -2013,6 +2013,21 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 		}
 		/* and plot the image */
 		if (plot_content) {
+			/* fixes1047 (#280) — capture the background POSITIONING
+			 * AREA before `width`/`height` are overwritten with the
+			 * image's natural size on the next two lines.
+			 *
+			 * The background-size block below derived its box_w/box_h
+			 * from `width`/`height`, which by then were the CONTENT's
+			 * dimensions -- so `contain` scaled the image to fit
+			 * ITSELF and computed tile == natural size, a no-op. On
+			 * hardware that painted a 1051x874 SVG at 1:1 from a
+			 * negative origin, over the top of the correctly-fitted
+			 * <img> beside it. The inline path never had this bug
+			 * because it takes box_w from the box rect (b.x1 - b.x0). */
+			int bg_area_w = (int)ceilf(width * scale);
+			int bg_area_h = (int)ceilf(height * scale);
+
 			width = content_get_width(background->background);
 			height = content_get_height(background->background);
 
@@ -2092,10 +2107,14 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 						int nat_h =
 							content_get_height(
 							background->background);
-						int box_w = (int)ceilf(
-							width * scale);
-						int box_h = (int)ceilf(
-							height * scale);
+						/* fixes1047 (#280) — the POSITIONING
+						 * AREA, captured before `width`/
+						 * `height` became the image's own
+						 * size. Using those made every
+						 * ratio 1:1 and contain/cover a
+						 * no-op. */
+						int box_w = bg_area_w;
+						int box_h = bg_area_h;
 						int tile_w = box_w;
 						int tile_h = box_h;
 						if (nat_w < 1) nat_w = 1;
