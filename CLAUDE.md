@@ -1,4 +1,11 @@
-# ⚠️ READ THIS FIRST: MacSurf STATE (updated 2026-07-21)
+# ⚠️ READ THIS FIRST: MacSurf STATE (updated 2026-07-25)
+
+**Active branch is `3.0`, at ~fixes1039.** Shipped release is still **2.0** (`v2.0`,
+asset `MacSurf2.sit`); the tree is far ahead of it. Remotes are **origin + github only**.
+Delivery and testing are the **10.3 iMac ONLY** — `./forclaude/drop-to-imac.sh <fixnum>
+<paths...>`; the log lives at `/Projects/MacSurfBuilds/MacSurfData/MacSurf Debug.log`
+(pull with `ssh imac "cat '<path>'"`, scp breaks on the space). **The JavaScript section
+immediately below is the current work and the most load-bearing part of this file.**
 
 **MacSurf now runs on Mac OS X 10.0–10.4 from the SAME Carbon CFM binary — both platforms maintainer-verified 2026-07-21.** OS X 10.3: full render of 68kmla.org over HTTPS/TLS 1.3, "works exactly the same". OS 9: "No regression, loads exactly the same". No Mach-O target, no second build, no Classic.
 
@@ -7,6 +14,105 @@
 **Trust `git status` + the git facts, not prose.** Active branch is **`master`** — `css-coverage` and `revamp` were merged in and DELETED on local + origin + github, so master is the sole development line; remotes are **origin + github only** (codeberg dropped 2026-07-10) and carry only `master` + the stale `password-manager`. Shipped release is **2.0** (`v2.0`); the tree has since moved through the 2.0.5 batch (fixes876-894), the OS X work (fixes936-951c), and is **ahead of any tagged release**.
 
 **GOTCHA (cost a 6582-error build):** `#include <Endian.h>` does NOT reach the SDK — `browser/libparserutils/src/utils/endian.h` is on an access path, HFS is **case-insensitive**, and `AlwaysSearchUserPaths=true` searches user paths first. It guards itself with `parserutils_endian_h_`, never `__ENDIAN__`, so the SDK header has never been reachable. Same class as the documented `sys/time.h` trap.
+
+# ⚠️ JAVASCRIPT STATE (updated 2026-07-25, branch `3.0`, ~fixes1039)
+
+**The engine runs a full modern WordPress stack with ZERO JS exceptions.** Hardware,
+2026-07-25: hackaday.com front page + an article page + the cross-origin Jetpack comment
+iframe, all clean. jQuery 3.7.1, slick, dotdotdot, Typekit and the XenForo bundles all
+execute. **Do not open a rendering investigation by assuming a script threw** — check
+first; it almost certainly did not.
+
+**THE LESSON OF THIS BATCH: pages break on LYING ANSWERS, not missing APIs.**
+Libraries feature-detect around gaps. What they cannot defend against is a confident
+wrong answer. Every content-loss bug found in fixes1005→1031 was that shape, and the
+worst was ONE LINE:
+
+- **`textContent = ""` left a phantom empty Text node** (fixes1031). DOM says a Text
+  node is created *only if the value is not the empty string*. jQuery's `buildFragment`
+  — behind `$(html)`, `.append(html)`, `.wrapInner()`, `.wrapAll()` — clears its scratch
+  fragment with exactly `fragment.textContent = ""`, so **every `jQuery(htmlString)`
+  returned one node too many, text node FIRST**. `wrapAll` takes `.eq(0)` as the wrapper,
+  got the text node, and moved the element's whole contents into something that cannot
+  hold children. hackaday's dotdotdot called `wrapInner()` on all 7 article entries;
+  every one reached the box tree with `kids=0`. **Days were spent measuring boxes that
+  had already been emptied.** #309.
+- Others of the same family: geometry answering a fabricated `0` (fixes1014/1016 → answer
+  `undefined`, which NaN-propagates into a no-op), `window load` never firing at all
+  (fixes1015), libdom visiting the event target **twice** (fixes1005, upstream bug).
+
+**DIAGNOSTIC ORDER for "the page renders wrong" — cheapest first:**
+1. **Is the content even in the DOM?** `MACSURF_PAGEMAP` prints per-section
+   `tag#id.class kids box y w h fs disp`. `kids=0` on a container means script deleted
+   it — stop looking at layout. This is what cracked #309 after everything else failed.
+2. **Run it locally.** `./harness/reconvert_harness --layout page.html page.css 993`
+   runs MacSurf's OWN parser + cascade + layout over any html/css pair and dumps the box
+   tree with computed display and font size. It proved the layout engine correct on the
+   exact page that looked broken.
+3. **Run the REAL bundle in the harness** (Test 45 does this with hackaday's own JS).
+   Do not ask for another hardware log to answer a question the harness can answer.
+4. Only then suspect CSS or layout.
+
+**PER-FEATURE QUIESCE SWITCHES (fixes1022) — all default OFF on the Mac:**
+`MACSURF_JS_GEOMETRY` (rect/metrics/computed-style), `MACSURF_JS_VIEW_EVENTS`
+(scroll/resize dispatch), `MACSURF_JS_FIRE_LOAD` (the window `load` event),
+`MACSURF_JS_AUDIT` (LIFE audit channels), `MACSURF_PAGEMAP`. **The harness Makefile
+forces them ON**, so the full surface stays tested on Linux while the Mac ships quiesced.
+`make -C harness check-macdefault` compiles the Mac's actual configuration — a
+switch-off-only break is invisible to a normal harness run (that shipped twice: fixes1022
+put defines below their uses, fixes1037 put a stub below its `#endif`).
+**Re-enable ONE per round.** Geometry must not return before the synchronous-layout pass
+(#265) or measure-then-mutate widgets damage pages again.
+
+**Why they exist:** fixes998→1015 turned on four capability classes with no hardware gate
+between them — all script limits off (998/999), the event model (1006/1008), real
+geometry (1011), and `window load` firing for the first time in the browser's history
+(1015). Individually defensible; together they let widgets run that had never run, and
+partial support made pages WORSE than none. See [[project_js_bigbang_regression]].
+
+**PERFORMANCE, measured 2026-07-25 (not guessed — three theories were wrong first):**
+`LIFE PERFACC` at NAV DONE gives `tls/net/parse/cascade/layout/paint/js` + reflows;
+`LIFE JSTIME` splits timer CPU out of the JS total. hackaday front page:
+**js=25.4s of a 31s load (96%)**, while cascade+layout+paint together are ~1.2s and
+reflows=8. Timer callbacks are only 0.6s of that — **it is top-level bundle execution**,
+not intervals spinning, not reconvert churn, not logging. The perf answer is therefore a
+per-script budget or bytecode caching. **NOTE: script size cap and execution deadline are
+both OFF** (fixes998/999, `MACSURF_JS_MAX_BYTES` / `MACSURF_JS_TIMEOUT_MS` both 0).
+
+**WHAT REAL PAGES ASK FOR THAT WE FAKE** — the `WANT` channel (fixes1039, always on) logs
+each: `matchMedia` (we answer **false to every query**, so every responsive branch takes
+the same path regardless of the real viewport — the top candidate), MutationObserver and
+ResizeObserver (`.observe` is a no-op, so a page waiting on one waits forever),
+IntersectionObserver (always intersecting). Also still open: `<script type="module">` is
+**silently dropped** in script.c with no log line at all.
+
+**DOM conformance is otherwise clean.** Harness Test 46 asserts 20 spec behaviours in
+counts, not booleans — textContent empty/non-empty, innerHTML empties and replaces,
+`insertBefore(node,null)` ≡ appendChild, append/remove return values, appendChild MOVES
+rather than copies, DocumentFragment inserts its children and is left empty, cloneNode
+shallow/deep, text-node traversal rules, removeChild clearing parentNode. All pass. The
+serializer is the known remaining hole: **`innerHTML` GET still returns `textContent`**
+and `outerHTML` is a synthesized string with no setter (#262).
+
+**Harness: 46 tests, ASan-clean.** Notables: Test 38 dispatches through the REAL libdom
+path (not `el.dispatchEvent`); Test 43 layout visibility; Test 45 the real dotdotdot
+plugin from hackaday's own bundle; Test 46 the conformance sweep. **Assert counts, never
+booleans** — the libdom double-fire hid for ~15 rounds because every test asked "did it
+fire" instead of "how many times".
+
+**HARNESS TRAPS, all found the hard way in this batch:**
+- The harness force-includes no prefix file, so anything `macsurf_prefix.h` provides is
+  MISSING here — and the stub generator will invent a function for a missing **macro**.
+  `N_ELEMENTS` became `void N_ELEMENTS(void){}`, which made libcss reject **every**
+  pseudo-class and pseudo-element selector at parse time, in every harness run there has
+  ever been (fixes1027). It reported a MacSurf clearfix bug that did not exist.
+- CSS needs `media.type = CSS_MEDIA_SCREEN` **and** sheets appended with `"screen"`, or
+  the whole cascade silently yields initial values (fixes1026).
+- Plain `gcc -fsyntax-only` cannot check `frontends/macos9/*.c` at all — it dies inside
+  the includes (macos9.h needs Carbon) and never reaches the body. Comparing its error
+  COUNT to a baseline compares two compiles that never happened.
+
+*Below is the pre-846 history — unchanged.*
 
 **fixes846 (2026-07-16) — S3: native XMLHttpRequest/fetch + real DOM mutation, shipped, HW-unverified.** The S1 census (fixes843b/845) proved with hardware logs that real, logged-in Facebook JS never received a single byte of real response data — `fetch()` was a synchronous fake thenable always resolving `{ok:false,status:0}`, and `XMLHttpRequest` didn't exist at all until fixes845's logging-only stub. fixes846 replaces both with the real thing:
 - **New file `macos9_js_fetch.c`/`.h`** (flag for `MacSurf.mcp`) — a fixed-size, index-addressed XHR slot arena (mirrors the timer-arena JSValue-lifetime pattern) over `fetch_start()` (the same raw entry point `macos9_webfont.c` uses), so cookies/UA/Sec-Fetch all apply automatically. Real `FETCH_REDIRECT` following (303/POST-redirect method downgrade, hop cap), real body/header accumulation, delivery always deferred via `macos9_schedule()` — never called back into JS synchronously from inside the fetch callback. `caller_hdrs` cap raised 512→2048 in both fetchers (FB's `X-FB-*` GraphQL header set overflows 512).
