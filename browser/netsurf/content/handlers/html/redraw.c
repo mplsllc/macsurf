@@ -1061,14 +1061,22 @@ static bool html_redraw_gadget_takes_css_box(struct box *b)
 {
 	if (b == NULL || b->gadget == NULL)
 		return false;
-	if (b->gadget->type == GADGET_TEXTAREA ||
-			b->gadget->type == GADGET_TEXTBOX ||
-			b->gadget->type == GADGET_PASSWORD)
-		return true;
+
+	/* Checkbox and radio are the only OPAQUE widgets: while they paint
+	 * their built-in mark the CSS box must not show at all. Chrome does
+	 * the same -- `input[type=checkbox]{background:green;border:2px}`
+	 * renders an untouched native checkbox (verified against the same
+	 * page this fix was written from). Under appearance:none there is no
+	 * widget left, so the element becomes an ordinary box. */
 	if (b->gadget->type == GADGET_CHECKBOX ||
 			b->gadget->type == GADGET_RADIO)
 		return !html_redraw_widget_is_native(b);
-	return false;
+
+	/* Everything else is stylable in a real browser and stays so here:
+	 * text/password/textarea are already drawn as styled boxes, and
+	 * button/submit/reset/file/select take author background and border
+	 * (a styled <button> is one of the most common things on the web). */
+	return true;
 }
 
 static bool html_redraw_checkbox(int x, int y, int width, int height,
@@ -4304,9 +4312,10 @@ bool html_redraw_box(const html_content *html, struct box *box,
 	if (!empty_cell_hide && bg_box && bg_box->type != BOX_BR &&
 			bg_box->type != BOX_TEXT &&
 			bg_box->type != BOX_INLINE_END &&
+			(bg_box->gadget != NULL ?
+			html_redraw_gadget_takes_css_box(bg_box) :
 			(bg_box->type != BOX_INLINE || bg_box->object ||
-			bg_box->flags & IFRAME || box->flags & REPLACE_DIM ||
-			html_redraw_gadget_takes_css_box(bg_box))) {
+			bg_box->flags & IFRAME || box->flags & REPLACE_DIM))) {
 		/* find intersection of clip box and border edge */
 		struct rect p;
 		p.x0 = x - border_left < r.x0 ? r.x0 : x - border_left;
@@ -4352,9 +4361,10 @@ bool html_redraw_box(const html_content *html, struct box *box,
 	if (!empty_cell_hide && box->style &&
 	    box->type != BOX_TEXT &&
 	    box->type != BOX_INLINE_END &&
-	    (box->type != BOX_INLINE || box->object ||
-	     box->flags & IFRAME || box->flags & REPLACE_DIM ||
-	     html_redraw_gadget_takes_css_box(box)) &&
+	    (box->gadget != NULL ?
+	     html_redraw_gadget_takes_css_box(box) :
+	     (box->type != BOX_INLINE || box->object ||
+	      box->flags & IFRAME || box->flags & REPLACE_DIM)) &&
 	    (border_top || border_right || border_bottom || border_left)) {
 #ifdef __MACOS9__
 		/* fixes620: html_redraw_background (above) updated
