@@ -1621,6 +1621,30 @@ browser_window_callback(hlcache_handle *c, const hlcache_event *event, void *pw)
 			nsurl *du = hlcache_handle_get_url(c);
 			macsurf_debug_log_writef("NAV: DONE url=%s",
 				(du != NULL) ? nsurl_access(du) : "(null)");
+			/* fixes1034 — emit the phase breakdown HERE.
+			 *
+			 * The PERFACC accumulators (tls/net/parse/cascade/
+			 * layout/paint/js, fixes640) are all still summing
+			 * correctly and the log gate whitelists the line, but
+			 * the emit hangs off a poll-loop latch keyed on
+			 * browser_window_stop_available going true->false, and
+			 * the hardware logs contain ZERO PERFACC lines -- so
+			 * the one instrument that could say where 46 seconds
+			 * go has been dark. NAV: DONE fires on every load in
+			 * every log, which makes it the honest hook.
+			 *
+			 * Deliberately NOT deleting the poll-loop emit: it is
+			 * armed at nav-start and guarded by
+			 * perf_summary_emitted, so whichever fires first wins
+			 * and the accumulators are zeroed by the emit itself.
+			 * Fixing the latch is a separate question from being
+			 * able to measure at all. */
+			{
+				extern void macsurf_profile_emit_phases(
+						const char *url);
+				macsurf_profile_emit_phases(
+					(du != NULL) ? nsurl_access(du) : "?");
+			}
 		}
 		res = browser_window_content_done(bw);
 		break;
