@@ -5699,5 +5699,56 @@ box_coords(bx, &cx, &cy);
 	}
 	fprintf(stderr, "=== Test 46 PASS: DOM spec conformance sweep clean ===\n");
 
+	/* --- Test 47: event PHASE ORDERING (#264) ------------------------------
+	 * THE CAPTURE BLIND SPOT. Before this test there were 37
+	 * addEventListener calls in this file and not one passed capture=true,
+	 * so no test could observe that the three phases come out in the wrong
+	 * ORDER. Test 40 asserted that events fire and that they bubble; both
+	 * are true even when the ordering is wrong. Hardware (t.html,
+	 * 2026-07-25) reported [cap,bubble,target] and #264 had already been
+	 * closed on Test 40 + Test 38 passing.
+	 *
+	 * Root cause this pins: qjs_el_add_event_listener_data registers with
+	 * libdom ONCE per (node, type) carrying the FIRST listener's capture
+	 * flag, and __msFireLocal then fires that node's whole _L[type] array
+	 * regardless of which phase libdom is currently in. A node holding both
+	 * a capture and a non-capture listener therefore fires BOTH during the
+	 * capture pass, before the target is ever reached.
+	 *
+	 * Assert the ORDER, not the occurrence -- same lesson as the fixes1005
+	 * double-fire, one level up. */
+	fprintf(stderr, "\n=== Test 47: capture/target/bubble ordering ===\n");
+	{
+		const char *ord =
+			"var host=document.body||document.documentElement;"
+			"var outer=document.createElement('div');"
+			"var inner=document.createElement('span');"
+			"outer.appendChild(inner);host.appendChild(outer);"
+			"globalThis.__t47=[];"
+			/* registration order is deliberately cap, target, bubble so a
+			 * naive "fire _L in insertion order" cannot pass by accident */
+			"outer.addEventListener('click',function(){__t47.push('cap');},true);"
+			"inner.addEventListener('click',function(){__t47.push('target');},false);"
+			"outer.addEventListener('click',function(){__t47.push('bubble');},false);"
+			"inner.dispatchEvent(new Event('click',{bubbles:true}));"
+			"host.removeChild(outer);";
+		unsigned char ok47 = js_exec(thread, (const unsigned char *)ord,
+				strlen(ord), "t47.js");
+		if (!ok47) { fprintf(stderr, "FAIL: t47 dispatch threw\n"); return 1; }
+	}
+	{
+		const char *rep =
+			"var o=globalThis.__t47.join(',');"
+			"if(o!=='cap,target,bubble')"
+			"throw new Error('phase order was ['+o+'], want [cap,target,bubble]');";
+		unsigned char ok47b = js_exec(thread, (const unsigned char *)rep,
+				strlen(rep), "t47-chk.js");
+		if (!ok47b) {
+			fprintf(stderr, "FAIL: Test 47 -- event phase ordering (#264)\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 47 PASS: capture/target/bubble ordering ===\n");
+
 	return 0;
 }

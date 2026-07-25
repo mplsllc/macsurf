@@ -3171,20 +3171,43 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		 * fixes1008 also stops swallowing handler errors silently: a throwing
 		 * handler must not abort the others, but it must be VISIBLE, or
 		 * "site loads and does nothing" has no log line to explain it. */
+		/* fixes1040 (#264) — PHASE FILTER. libdom walks capture (ancestors)
+		 * -> AT_TARGET -> bubble (ancestors) and calls back here once per
+		 * node it visits. Firing the node's whole _L list on every callback
+		 * threw away the phase: a node carrying both a capture and a
+		 * non-capture listener ran BOTH during the capture pass, so a
+		 * capture+bubble ancestor beat the target itself and hardware saw
+		 * [cap,bubble,target]. Fire only the listeners whose capture flag
+		 * (el._LC, index-aligned with el._L) matches the current phase.
+		 *
+		 * eventPhase: 1=CAPTURING 2=AT_TARGET 3=BUBBLING. 0/absent means a
+		 * LOCAL-ONLY fire -- the re-entrancy fallback in
+		 * qjs_el_dispatch_event_data, js_fire_script_load, and the native
+		 * UI fan-out all reach us that way -- and there the pre-existing
+		 * fire-everything behaviour is the correct one. AT_TARGET runs both
+		 * kinds in registration order, matching event_target.c:285-286. */
 		"el.__msFireLocal=function(ev){"
 		"var t=ev&&ev.type||'';"
+		"var ph=(ev&&ev.eventPhase)||0;"
 		"if(el._L&&el._L[t]){"
 		"var a=el._L[t].slice();"
+		"var c=(el._LC&&el._LC[t])?el._LC[t].slice():null;"
 		"var i;for(i=0;i<a.length;i++){"
 		/* stopImmediatePropagation, observed BETWEEN handlers -- see
 		 * qjs_ev_stop_immediate_data. Checked before each call so the
 		 * handler that set it still completes. */
 		"if(ev&&ev.__msStopNow)return true;"
+		"if(ph===1||ph===3){"
+		"var cap=c?!!c[i]:false;"
+		"if(ph===1?!cap:cap)continue;"
+		"}"
 		"try{a[i].call(el,ev);}"
 		"catch(e){try{console.error('LIFE jsevent listener threw ['+t+']: '+"
 		"((e&&e.message)||e));}catch(_){}}}}"
 		"if(ev&&ev.__msStopNow)return true;"
-		"if(el._H&&el._H[t]){try{el._H[t].call(el,ev);}"
+		/* on* handlers are non-capture by definition, so they must never
+		 * run in the capturing phase. */
+		"if(ph!==1&&el._H&&el._H[t]){try{el._H[t].call(el,ev);}"
 		"catch(e){try{console.error('LIFE jsevent on'+t+' threw: '+"
 		"((e&&e.message)||e));}catch(_){}}}"
 		"return true;};"
@@ -4955,10 +4978,11 @@ static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
 {
 	dom_node *node;
 	const char *type_c;
-	JSValue L, arr, lenv;
+	JSValue L, arr, lenv, C, carr, R, seen;
 	uint32_t len = 0;
 	int capture = 0;
 	int fresh = 0;
+	char key[160];
 	(void)this_val; (void)magic;
 
 	node = qjs_get_node(func_data[0]);
@@ -4992,7 +5016,10 @@ static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
 		JS_FreeValue(ctx, arr);
 		arr = JS_NewArray(ctx);
 		JS_SetPropertyStr(ctx, L, type_c, JS_DupValue(ctx, arr));
-		fresh = 1;   /* first listener of this type on this node */
+		/* fixes1040 (#264) — no longer sets `fresh` here. The libdom
+		 * registration is keyed per (type, capture) via _LR below, which
+		 * is now the single source of truth; setting it here as well
+		 * would register a second time for the same pair. */
 	}
 	lenv = JS_GetPropertyStr(ctx, arr, "length");
 	JS_ToUint32(ctx, &len, lenv);
@@ -5001,13 +5028,98 @@ static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
 	JS_FreeValue(ctx, arr);
 	JS_FreeValue(ctx, L);
 
-	/* Register with libdom ONCE per (node, type). Repeat registrations of
-	 * the same type would each add a dispatch of the whole _L list. */
+	/* fixes1040 (#264) — el._LC[type] is the index-aligned array of capture
+	 * flags for el._L[type]. The flag has to survive to DISPATCH time:
+	 * __msFireLocal must fire only the listeners belonging to the phase
+	 * libdom is currently in, and until now it had no way to tell them
+	 * apart. removeEventListener splices this in lockstep with _L. */
+	C = JS_GetPropertyStr(ctx, func_data[0], "_LC");
+	if (!JS_IsObject(C)) {
+		JS_FreeValue(ctx, C);
+		C = JS_NewObject(ctx);
+		JS_SetPropertyStr(ctx, func_data[0], "_LC", JS_DupValue(ctx, C));
+	}
+	carr = JS_GetPropertyStr(ctx, C, type_c);
+	if (JS_IsUndefined(carr) || JS_IsNull(carr)) {
+		JS_FreeValue(ctx, carr);
+		carr = JS_NewArray(ctx);
+		JS_SetPropertyStr(ctx, C, type_c, JS_DupValue(ctx, carr));
+	}
+	JS_SetPropertyUint32(ctx, carr, len, JS_NewBool(ctx, capture));
+	JS_FreeValue(ctx, carr);
+	JS_FreeValue(ctx, C);
+
+	/* fixes1040 (#264) — register with libdom once per (node, type, CAPTURE),
+	 * not once per (node, type).
+	 *
+	 * The old rule registered only for the FIRST listener of a type and
+	 * carried whichever capture flag that one happened to have. A node
+	 * holding both a capture and a non-capture listener was therefore known
+	 * to libdom under ONE phase only, and because __msFireLocal then fired
+	 * the whole _L list, both listeners ran in that phase. On hardware that
+	 * produced [cap,bubble,target] for a capture+bubble outer with a target
+	 * inner -- the bubble listener firing during the CAPTURE pass, before
+	 * the target was reached. Harness Test 47 pins the ordering. */
+	key[0] = '\0';
+	if (strlen(type_c) < sizeof(key) - 3) {
+		strcpy(key, type_c);
+		/* octal escape, not \x01: a hex escape would swallow the letter */
+		strcat(key, capture ? "\001C" : "\001B");
+		R = JS_GetPropertyStr(ctx, func_data[0], "_LR");
+		if (!JS_IsObject(R)) {
+			JS_FreeValue(ctx, R);
+			R = JS_NewObject(ctx);
+			JS_SetPropertyStr(ctx, func_data[0], "_LR",
+					JS_DupValue(ctx, R));
+		}
+		seen = JS_GetPropertyStr(ctx, R, key);
+		if (JS_IsUndefined(seen) || JS_IsNull(seen)) {
+			fresh = 1;
+			JS_SetPropertyStr(ctx, R, key, JS_NewBool(ctx, 1));
+		}
+		JS_FreeValue(ctx, seen);
+		JS_FreeValue(ctx, R);
+	} else {
+		/* pathological type name: register rather than silently drop */
+		fresh = 1;
+	}
+
 	if (fresh) {
 		qjs_dom_register_listener(node, type_c, capture);
 	}
 	JS_FreeCString(ctx, type_c);
 	return JS_UNDEFINED;
+}
+
+/* fixes1040 (#264) — splice el._LC[type] at `idx`, keeping the capture-flag
+ * array index-aligned with el._L[type] after a removeEventListener. Silent
+ * no-op when the element has no _LC yet (a listener registered before this
+ * change, or an element that only ever used on* handlers). */
+static void qjs_lc_splice_at(JSContext *ctx, JSValueConst el,
+		const char *type_c, uint32_t idx)
+{
+	JSValue C, carr, sp;
+
+	C = JS_GetPropertyStr(ctx, el, "_LC");
+	if (!JS_IsObject(C)) { JS_FreeValue(ctx, C); return; }
+
+	carr = JS_GetPropertyStr(ctx, C, type_c);
+	if (JS_IsObject(carr)) {
+		sp = JS_GetPropertyStr(ctx, carr, "splice");
+		if (JS_IsFunction(ctx, sp)) {
+			JSValue sargv[2];
+			JSValue r;
+			sargv[0] = JS_NewUint32(ctx, idx);
+			sargv[1] = JS_NewInt32(ctx, 1);
+			r = JS_Call(ctx, sp, carr, 2, (JSValueConst *)sargv);
+			JS_FreeValue(ctx, r);
+			JS_FreeValue(ctx, sargv[0]);
+			JS_FreeValue(ctx, sargv[1]);
+		}
+		JS_FreeValue(ctx, sp);
+	}
+	JS_FreeValue(ctx, carr);
+	JS_FreeValue(ctx, C);
 }
 
 static JSValue qjs_el_remove_event_listener_data(JSContext *ctx,
@@ -5049,6 +5161,14 @@ static JSValue qjs_el_remove_event_listener_data(JSContext *ctx,
 					}
 					JS_FreeValue(ctx, sp);
 					JS_FreeValue(ctx, item);
+					/* fixes1040 (#264) — splice the capture-flag
+					 * array at the SAME index. _LC is index-
+					 * aligned with _L; letting them drift would
+					 * make every later listener dispatch in the
+					 * wrong phase, which is a subtler version of
+					 * the bug this whole change fixes. */
+					qjs_lc_splice_at(ctx, func_data[0],
+							type_c, i);
 					break;
 				}
 				JS_FreeValue(ctx, item);
