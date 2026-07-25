@@ -1165,15 +1165,33 @@ static void svg__paint_ellipse_like(dom_node *node,
 		while (i < n) {
 			float op = buf[i++];
 			tmp[j++] = op;
+			/* fixes1046 — read each point into LOCALS first.
+			 *
+			 * This was:
+			 *     tmp[j++] = svg__map_x(c, buf[i++], buf[i++]);
+			 *     tmp[j++] = svg__map_y(c, buf[i++], buf[i++]);
+			 * which is wrong twice over. Argument evaluation order is
+			 * UNSPECIFIED in C, so the two buf[i++] could be passed as
+			 * (y, x); and the pair of calls consumes FOUR floats per
+			 * point instead of two, so map_y read the NEXT token's
+			 * opcode as a coordinate and every point after the first
+			 * was garbage. Inline <circle>/<ellipse> have therefore
+			 * never rendered correctly -- it went unnoticed because the
+			 * <path> route (which every hand-written test SVG uses)
+			 * does its own mapping and never touches this walk. */
 			if (op == (float)PLOTTER_PATH_MOVE ||
 					op == (float)PLOTTER_PATH_LINE) {
-				tmp[j++] = svg__map_x(c, buf[i++], buf[i++]);
-				tmp[j++] = svg__map_y(c, buf[i++], buf[i++]);
+				float px = buf[i++];
+				float py = buf[i++];
+				tmp[j++] = svg__map_x(c, px, py);
+				tmp[j++] = svg__map_y(c, px, py);
 			} else if (op == (float)PLOTTER_PATH_BEZIER) {
 				int k;
 				for (k = 0; k < 3; k++) {
-					tmp[j++] = svg__map_x(c, buf[i++], buf[i++]);
-					tmp[j++] = svg__map_y(c, buf[i++], buf[i++]);
+					float px = buf[i++];
+					float py = buf[i++];
+					tmp[j++] = svg__map_x(c, px, py);
+					tmp[j++] = svg__map_y(c, px, py);
 				}
 			}
 			/* CLOSE has no args */

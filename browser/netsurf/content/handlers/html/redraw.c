@@ -2162,6 +2162,26 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 					}
 				}
 
+				/* fixes1046 (#280) — name the ROUTE and the numbers.
+				 * Hardware shows an SVG painted twice: once fitted
+				 * (96x96) and once at intrinsic size 1:1 at a
+				 * negative origin, and the second overdraws the
+				 * first. Both background paths and the object path
+				 * now say which one they are and what they decided,
+				 * so the next run identifies the culprit instead of
+				 * another round of reading. "LIFE " prefix -- "WORK "
+				 * is gated off (macsurf_debug_log.c:677). */
+				macsurf_debug_log_writef(
+					"LIFE bg-block: bgsz=%ld dest=%dx%d at %d,%d "
+					"rep=%d,%d",
+					(long) (box->style != NULL ?
+						css_computed_background_size(
+							box->style) : 0),
+					bg_data.width, bg_data.height,
+					bg_data.x, bg_data.y,
+					(int) bg_data.repeat_x,
+					(int) bg_data.repeat_y);
+
 				/* We just continue if redraw fails */
 				content_redraw(background->background,
 						&bg_data, &r, ctx);
@@ -2712,6 +2732,15 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 					bg_data.height = tile_h;
 				}
 			}
+
+			/* fixes1046 (#280) — see the block-path note above. */
+			macsurf_debug_log_writef(
+				"LIFE bg-inline: bgsz=%ld dest=%dx%d at %d,%d rep=%d,%d",
+				(long) (box->style != NULL ?
+					css_computed_background_size(box->style) : 0),
+				bg_data.width, bg_data.height,
+				bg_data.x, bg_data.y,
+				(int) bg_data.repeat_x, (int) bg_data.repeat_y);
 
 			/* We just continue if redraw fails */
 			content_redraw(box->background, &bg_data, &r, ctx);
@@ -4634,6 +4663,12 @@ bool html_redraw_box(const html_content *html, struct box *box,
 		 * (line ~2393 above), so a `cover` rect that overflows the
 		 * cell is hardware-clipped by QuickDraw on draw. */
 		html_redraw_apply_object_fit(box, &obj_data);
+
+		/* fixes1046 (#280) — the <img> route, for comparison with the
+		 * two background routes above. */
+		macsurf_debug_log_writef(
+			"LIFE obj-draw: dest=%dx%d at %d,%d",
+			obj_data.width, obj_data.height, obj_data.x, obj_data.y);
 
 		if (!content_redraw(box->object, &obj_data, &r, ctx)) {
 			/* fixes291 (#101): prefer the <img> `alt` text as the
