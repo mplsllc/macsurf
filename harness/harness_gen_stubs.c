@@ -97,7 +97,18 @@ void macsurf__site_rgov_skip_font(void){}
 void macsurf__site_rgov_skip_img(void){}
 void macsurf__site_rgov_skip_other(void){}
 void macsurf__site_rgov_skip_script(void){}
-void N_ELEMENTS(void){}
+/* fixes1027 -- N_ELEMENTS is a MACRO, not a function. The stub generator saw
+ * an undefined symbol (libcss's parse/language.c uses N_ELEMENTS without
+ * including libcss's own utils.h, and the harness force-includes no prefix,
+ * so it compiled as an implicit call under -w) and dutifully stubbed it to a
+ * no-op. Result: in parseSelectorSpecific,
+ *     for (lut_idx = 0; lut_idx < N_ELEMENTS(pseudo_lut); lut_idx++)
+ *     if (lut_idx == N_ELEMENTS(pseudo_lut)) return CSS_INVALID;
+ * never entered the loop and always took the invalid branch, so EVERY
+ * pseudo-class and pseudo-element selector -- :hover, :link, :visited,
+ * :first-child, ::before, ::after -- was rejected at parse time in every
+ * harness run there has ever been. The real macro now comes from
+ * include/macsurf_safe_alloc_decls.h, mirroring macsurf_prefix.h:325. */
 void netsurf_mkdir_all(void){}
 void netsurf_mkpath(void){}
 void netsurf_recursive_rm(void){}
