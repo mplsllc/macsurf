@@ -2448,6 +2448,78 @@ static int svg__style_prop(const char *style, const char *prop,
 	return 0;
 }
 
+/* fixes1049 — group-transform stack depth for the standalone walker. */
+#define SVG_G_DEPTH_MAX 16
+
+/* fixes1049 (#280) — parse the translate out of a transform="..." attribute.
+ *
+ * The standalone painter walked <path> tags and painted their raw `d` data,
+ * ignoring transform entirely. puffy.svg (Inkscape, and this is the norm for
+ * exported art) wraps its artwork in FOUR groups each carrying
+ * transform="translate(-446.89148,-271.529)", so every path was drawn ~447
+ * user-units right and ~272 down of where it belongs. After the viewBox fit
+ * that is a visible offset, and it differs per cell because each cell has its
+ * own scale -- which is exactly the "not aligned the same, not centred"
+ * hardware report.
+ *
+ * Handles translate(x[,y]) and the translation column of matrix(a,b,c,d,e,f),
+ * which together cover essentially all exported SVG. Rotation/skew are NOT
+ * applied -- svg_ctx carries an affine m[], but the standalone walker has no
+ * element tree to compose them down, so a rotated group would need the real
+ * inline renderer. Returns 1 if anything was found.
+ */
+static int svg__transform_translate(const char *tv, float *tx, float *ty)
+{
+	const char *p;
+	size_t used = 0;
+
+	*tx = 0.0f;
+	*ty = 0.0f;
+	if (tv == NULL)
+		return 0;
+
+	p = strstr(tv, "translate");
+	if (p != NULL) {
+		p = strchr(p, '(');
+		if (p == NULL)
+			return 0;
+		p++;
+		while (*p == ' ' || *p == '\t') p++;
+		*tx = svg__atof(p, &used);
+		if (used == 0) return 0;
+		p += used;
+		while (*p == ' ' || *p == ',' || *p == '\t') p++;
+		if (*p != '\0' && *p != ')') {
+			*ty = svg__atof(p, &used);
+			if (used == 0) *ty = 0.0f;
+		}
+		return 1;
+	}
+
+	p = strstr(tv, "matrix");
+	if (p != NULL) {
+		int k;
+		float v[6];
+		p = strchr(p, '(');
+		if (p == NULL)
+			return 0;
+		p++;
+		for (k = 0; k < 6; k++) {
+			while (*p == ' ' || *p == ',' || *p == '\t') p++;
+			if (*p == '\0' || *p == ')') break;
+			v[k] = svg__atof(p, &used);
+			if (used == 0) break;
+			p += used;
+		}
+		if (k == 6) {
+			*tx = v[4];
+			*ty = v[5];
+			return 1;
+		}
+	}
+	return 0;
+}
+
 nserror macos9_svg_paint_standalone(const char *src, size_t len,
 		int x, int y, int w, int h,
 		const struct redraw_context *ctx)
@@ -2590,14 +2662,82 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 	sc.grads = NULL;
 	sc.base_url = NULL;
 
+	/* fixes1049 (#280) — walk <g>/</g> as well as <path>, carrying the
+	 * accumulated group translate. The old walk jumped straight from one
+	 * <path> to the next and never saw the enclosing groups, so every
+	 * transform="translate(...)" on them was silently discarded.
+	 *
+	 * gtx/gty[d] is the CUMULATIVE translate at depth d, so a nested group
+	 * adds to its parent rather than replacing it. Depth is clamped; a
+	 * document deeper than the stack keeps painting at the deepest tracked
+	 * translate rather than bailing, which degrades instead of vanishing. */
+	{
+	float gtx[SVG_G_DEPTH_MAX];
+	float gty[SVG_G_DEPTH_MAX];
+	int gdepth = 0;
+
+	gtx[0] = 0.0f;
+	gty[0] = 0.0f;
+
 	/* Walk every <path> tag; paint d with the path's own fill. */
 	p = root_end;
 	while (paths < 64) {
-		const char *tag = strstr(p, "<path");
+		const char *tag;
 		const char *tend;
+		const char *g_open;
+		const char *g_close;
 		struct svg_paint_state st;
 		plot_style_t pstyle;
+		float ptx;
+		float pty;
 		int n;
+
+		tag = strstr(p, "<path");
+
+		/* Consume any group open/close that comes BEFORE the next
+		 * <path>, so the translate in effect is correct when we
+		 * reach it. */
+		for (;;) {
+			g_open = strstr(p, "<g");
+			/* "<g" must be the whole element name, not "<glyph" */
+			while (g_open != NULL && g_open[2] != '\0' &&
+					g_open[2] != ' ' && g_open[2] != '>' &&
+					g_open[2] != '\t' && g_open[2] != '\n') {
+				g_open = strstr(g_open + 2, "<g");
+			}
+			g_close = strstr(p, "</g>");
+
+			/* stop once both are past the next <path> */
+			if ((g_open == NULL || (tag != NULL && g_open > tag)) &&
+			    (g_close == NULL || (tag != NULL && g_close > tag)))
+				break;
+			if (g_open == NULL && g_close == NULL)
+				break;
+
+			if (g_close != NULL &&
+					(g_open == NULL || g_close < g_open)) {
+				if (gdepth > 0)
+					gdepth--;
+				p = g_close + 4;
+			} else {
+				const char *gend = strchr(g_open, '>');
+				float tx = 0.0f;
+				float ty = 0.0f;
+				if (gend == NULL)
+					break;
+				if (svg__tag_attr(g_open, gend, "transform",
+						av, sizeof(av)))
+					(void)svg__transform_translate(av,
+							&tx, &ty);
+				if (gdepth + 1 < SVG_G_DEPTH_MAX) {
+					gtx[gdepth + 1] = gtx[gdepth] + tx;
+					gty[gdepth + 1] = gty[gdepth] + ty;
+					gdepth++;
+				}
+				p = gend + 1;
+			}
+			tag = strstr(p, "<path");
+		}
 
 		if (tag == NULL)
 			break;
@@ -2654,9 +2794,32 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 				st.fill_present = 0;
 		}
 
+		/* fixes1049 — group translate plus this path's own transform,
+		 * folded into the affine as a pre-translate in USER space:
+		 *   map(u + t) = m0*(u+t) + m4 = m0*u + (m0*t + m4)
+		 * so shifting m[4]/m[5] by m[0]*tx / m[3]*ty is exact. Saved
+		 * and restored around the paint so it cannot leak to the next
+		 * path. */
+		ptx = gtx[gdepth];
+		pty = gty[gdepth];
+		if (svg__tag_attr(tag, tend, "transform", av, sizeof(av))) {
+			float ttx = 0.0f;
+			float tty = 0.0f;
+			if (svg__transform_translate(av, &ttx, &tty)) {
+				ptx += ttx;
+				pty += tty;
+			}
+		}
+
 		if (st.fill_present &&
 				svg__tag_attr(tag, tend, "d", d_local,
 					sizeof(d_local))) {
+			float save_m4 = sc.m[4];
+			float save_m5 = sc.m[5];
+
+			sc.m[4] += sc.m[0] * ptx;
+			sc.m[5] += sc.m[3] * pty;
+
 			svg__init_plot_style(&pstyle, &st, &sc);
 			n = svg__path_parse(d_local, &sc, pbuf,
 					MACOS9_SVG_PATH_MAX);
@@ -2664,9 +2827,13 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 				sc.plot_ctx->plot->path(sc.plot_ctx, &pstyle,
 						pbuf, (unsigned int)n, NULL);
 			}
+
+			sc.m[4] = save_m4;
+			sc.m[5] = save_m5;
 		}
 		paths++;
 		p = tend + 1;
+	}
 	}
 
 	free(buf0);
