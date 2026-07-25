@@ -1888,6 +1888,9 @@ static void qjs_node_brief(dom_node *n, char *out, int cap)
 /* One line per DOM mutation: op, target identity, and the value/detail.
  * Budgeted per session; the first page load is what matters. */
 static long g_mut_audit_budget = 500;
+/* fixes1029 — removals get their own budget, independent of the audit
+ * switch: they are the one mutation class that can DELETE page content. */
+static long g_rm_audit_budget = 120;
 static long g_evreg_audit = 250;
 static long g_evmiss_audit = 60;
 static long g_evfire_audit = 300;
@@ -1900,7 +1903,15 @@ extern long g_geom_audit; /* defined below, near the metric accessors */
 void macsurf_qjs_audit_reset(void)
 {
 	/* fixes1022 — audit OFF by default (every line is a flushed write);
-	 * define MACSURF_JS_AUDIT to get the fixes1020 skeleton back. */
+	 * define MACSURF_JS_AUDIT to get the fixes1020 skeleton back.
+	 *
+	 * fixes1029 — EXCEPT the removal audit, which is on for this round.
+	 * The device's pagemap shows every DIV.entry-intro on hackaday with
+	 * kids=0 -- the article titles, bylines and excerpts are GONE from the
+	 * DOM -- while the same markup parsed in the harness has them, and the
+	 * census reports a burst of remove=56. So a script is emptying the
+	 * entries and we need its victims named. Removal-only keeps the volume
+	 * to roughly one line per removed node instead of the full audit. */
 #ifdef MACSURF_JS_AUDIT
 	g_mut_audit_budget = 60;
 	g_evreg_audit = 20;
@@ -1916,6 +1927,7 @@ void macsurf_qjs_audit_reset(void)
 	g_mslife_audit = 0;
 	g_geom_audit = 0;
 #endif
+	g_rm_audit_budget = 120;
 }
 
 static void qjs_mut_audit(const char *op, dom_node *target,
@@ -2461,11 +2473,12 @@ static JSValue qjs_el_remove_child_data(JSContext *ctx,
 	err = qjs_dom_mut_check(ctx, "removeChild", exc, (dom_node *)el,
 			(dom_node *)child_el);
 	if (JS_IsException(err)) return err;
-	{	/* fixes1015 — REMOVALS are the prime suspect for vanishing
-		 * sections; identity here is the whole point of the audit. */
-		char cb[80];
+	if (g_rm_audit_budget > 0) {	/* fixes1015/1029 */
+		char cb[80], pb[80];
+		g_rm_audit_budget--;
 		qjs_node_brief((dom_node *)child_el, cb, (int)sizeof cb);
-		qjs_mut_audit("removeChild", (dom_node *)el, "->", cb);
+		qjs_node_brief((dom_node *)el, pb, (int)sizeof pb);
+		macsurf_debug_log_writef("LIFE rm %s -> %s", pb, cb);
 	}
 	if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
 			(void *) el, MACOS9_DOMMUT_REMOVECHILD);
