@@ -157,6 +157,20 @@ double macsurf_qjs_get_now(void);
 #define QJS_TIMER_TIMEOUT_MS MACSURF_JS_TIMEOUT_MS
 static double g_qjs_script_deadline = 0.0;
 
+/* fixes1037 — timer-callback CPU, separate from top-level script eval. */
+static long   g_timer_fires = 0;
+static long   g_timer_us    = 0;
+static double g_timer_t0    = 0.0;
+
+void macsurf_qjs_emit_timer_profile(void);
+void macsurf_qjs_emit_timer_profile(void)
+{
+	macsurf_debug_log_writef(
+		"LIFE JSTIME timers=%ld timer_us=%ld", g_timer_fires, g_timer_us);
+	g_timer_fires = 0;
+	g_timer_us = 0;
+}
+
 /* fixes586 — THE tinkerdifferent hard-freeze.  The deadline was armed ONLY
  * around the top-level JS_Eval in js_exec; setTimeout/setInterval callbacks
  * (macsurf_qjs_run_timers -> JS_Call) and event dispatches (js_fire_event /
@@ -1163,12 +1177,31 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		 * on the page was being killed the instant it ran.
 		 *
 		 * Use the shared push, which is the whole point of having one. */
+		/* fixes1037 — TIMER time, counted separately from script time.
+		 * PERFACC says JS is 96% of a hackaday load (34.4s of 35.9s;
+		 * 57.7s on a slower run) while layout+cascade+paint together
+		 * are 1.4s. That is far more than executing ~250KB of bundles
+		 * once, so the question is whether it is the bundles at all or
+		 * timers spinning: dotdotdot installs a 500ms watch interval
+		 * and slick has autoplay, and a re-firing timer is a RENDERING
+		 * problem too because each pass churns the DOM. One
+		 * accumulator and one counter settle it. */
+		{
+			extern double macos9_micros(void);
+			g_timer_fires++;
+			g_timer_t0 = macos9_micros();
+		}
 		prevdl = qjs_deadline_push((double)QJS_TIMER_TIMEOUT_MS);
 		mydl = g_qjs_script_deadline;
 		/* fixes876 — HTML spec calls timer callbacks with `this` = the window.
 		 * JS_UNDEFINED left strict-mode callbacks with `this === undefined`. */
 		this_obj = JS_GetGlobalObject(qctx);
 		ret = JS_Call(qctx, fn, this_obj, call_nargs, call_args);
+		{	/* fixes1037 */
+			extern double macos9_micros(void);
+			double dt = macos9_micros() - g_timer_t0;
+			if (dt > 0.0) g_timer_us += (long)dt;
+		}
 		JS_FreeValue(qctx, this_obj);
 		if (JS_IsException(ret)) {
 			JSValue exc = JS_GetException(qctx);

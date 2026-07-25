@@ -102,3 +102,4 @@ void macsurf_qjs_fire_resize(void) { }
 void macsurf_qjs_page_js_summary(void) { }
 
 #endif /* !WITH_QUICKJS */
+void macsurf_qjs_emit_timer_profile(void) { }
