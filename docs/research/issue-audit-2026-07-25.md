@@ -188,10 +188,7 @@ because it needs the maintainer's confirmation, not engineering time.
 wontfix splits, refresh #267 with the measured 161/136/~25 and the fixes1039 WANT list.
 Makes every other estimate trustworthy. **~21 issues off the board.**
 
-**BATCH A — Form controls (XL, now the genuine hardest).** #80 + #90 (merge) + #113.
-`appearance:none` → synthetic CSS-painted controls → hit/key handling → modern input types ride
-the same painter. CLAUDE.md already calls this "its own dedicated round". **This is the hardest
-remaining batch now that intrinsic sizing has been de-scoped (§6.1-6.2).**
+**BATCH A — Form controls (#80 + #90 merged, + #113). Re-scoped from XL to M/L — see §9.**
 
 **BATCH B — Intrinsic-sizing keyword (M, no longer a prerequisite).** `width/height/min-*/max-*:
 min-content|max-content|fit-content` via free code point 3. Independent; schedule on its merits.
@@ -222,3 +219,44 @@ NULL at `window.c:2701`.
 
 **PARK (record-only):** #34, #37, #66, #75, #81, #83, #88, #163, #259, #269, #98, #156, #245,
 #248. All "never parsed" or platform-hostile, all XL, none load-bearing on a real page today.
+
+---
+
+## 9. #80 `appearance` — re-scoped from XL to M/L
+
+CLAUDE.md's premise for this issue is **wrong**, and it is the reason #80 has been sized as
+"its own dedicated round" for months:
+
+> *"form controls render via Carbon Control Manager (`Draw1Control`); `appearance:none` means
+> synthetic CSS-painted controls + new click/key handling"*
+
+**Form controls do not go through the Control Manager at all.** Verified:
+
+- `Draw1Control` appears in `frontends/macos9/window.c` **only for browser chrome** — scrollbars
+  (`:464-465`) and the back/forward/stop/reload/home buttons (`:1202-1206`). Zero form-control uses.
+- Gadgets are painted by NetSurf's **own plotters** in `content/handlers/html/redraw.c`:
+  `html_redraw_checkbox` (`:4718`), `html_redraw_radio` (`:4726`), `html_redraw_file` (`:4734`).
+  `html_redraw_checkbox` is pure `ctx->plot->rectangle` + plot styles — and fixes829/#252 already
+  threads a **CSS-derived** `accent-color` into its fill/stroke.
+
+**So the synthetic painter already exists.** What is actually missing is narrower:
+
+1. **`appearance` is not parsed anywhere** — zero hits in `libcss/src/parse/properties/`, zero in
+   `libcss/include/libcss/properties.h`, zero in the `cssh_css.c` preprocessor. It needs a real
+   property add. **But it is keyword-valued**, so it takes the scalar-tail hatch (§5) — an
+   `int32_t appearance` appended after `z_index`, **no bit pressure, no `bits[17]`**.
+2. **CSS background/border already apply to text-ish gadgets but not to the rest.** Both the
+   background gate (`redraw.c:4239-4242`) and the border gate (`:4290-4293`) whitelist exactly
+   `GADGET_TEXTAREA` / `GADGET_TEXTBOX` / `GADGET_PASSWORD`. `GADGET_CHECKBOX` and `GADGET_RADIO`
+   appear **only** at their paint sites (`:4718`, `:4726`) and in neither whitelist — which is
+   precisely why you cannot style a checkbox today.
+3. **`appearance:none` then reduces to two edits**: gate the `html_redraw_checkbox`/`_radio` calls
+   on `appearance != none`, and extend those two whitelists so the normal box painter (background,
+   border, border-radius — all already implemented) takes over.
+
+**Revised plan:** one property-add round (mechanical, no bit pressure) + one redraw round. Hit/key
+handling is *not* in scope for `appearance:none` on checkbox/radio — they are already hit-tested as
+boxes. #113's modern input types then ride the same painter, as originally planned.
+
+**Net effect of §6.1, §6.2 and §9 together: the three batches that were sized XL are all M/L.
+There is no XL work left in the CSS/layout tracker.**
