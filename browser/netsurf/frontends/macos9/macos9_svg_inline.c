@@ -2354,6 +2354,82 @@ static int svg__tag_attr(const char *tag, const char *tag_end,
  * gradients in standalone files are deferred -- the inline renderer
  * has them but walks a live DOM, which an external file doesn't have.
  * Documented in #280. */
+/* fixes1043 (#280) — pull one property out of a raw style="a:1;b:2" string.
+ *
+ * The standalone painter walks TEXT, not a DOM, so it cannot use the
+ * dom_node-based style parser this file already has for inline SVG. It only
+ * ever read the `fill` PRESENTATION ATTRIBUTE, and every path that did not
+ * carry one fell back to the SVG default of opaque black.
+ *
+ * Real-world SVG almost never uses the attribute. puffy.svg (Inkscape, and
+ * typical of exported art) has ZERO `fill="..."` attributes and 28
+ * `style="...fill:#xxxxxx..."` declarations -- so all 25 of its paths painted
+ * black and the image rendered as a solid silhouette, which is exactly what
+ * hardware showed.
+ *
+ * Returns 1 and fills `out` (NUL-terminated) when found. Value is trimmed of
+ * surrounding space; the search is on a ';'-delimited key boundary so
+ * "fill-opacity" cannot be mistaken for "fill". */
+static int svg__style_prop(const char *style, const char *prop,
+		char *out, size_t outsz)
+{
+	size_t plen;
+	const char *p = style;
+
+	if (style == NULL || prop == NULL || out == NULL || outsz == 0)
+		return 0;
+	plen = strlen(prop);
+
+	while (*p != '\0') {
+		const char *key_start;
+		const char *key_end;
+		const char *val_start;
+		const char *val_end;
+
+		while (*p == ' ' || *p == ';' || *p == '\t')
+			p++;
+		if (*p == '\0')
+			break;
+
+		key_start = p;
+		while (*p != '\0' && *p != ':' && *p != ';')
+			p++;
+		key_end = p;
+		if (*p != ':') {
+			/* malformed chunk with no colon -- skip it */
+			continue;
+		}
+		/* trim trailing space off the KEY: "fill : #abc" is legal CSS,
+		 * and without this the key reads as "fill " and never matches. */
+		while (key_end > key_start &&
+				(key_end[-1] == ' ' || key_end[-1] == '\t'))
+			key_end--;
+		p++;
+		while (*p == ' ' || *p == '\t')
+			p++;
+		val_start = p;
+		while (*p != '\0' && *p != ';')
+			p++;
+		val_end = p;
+
+		/* trim trailing space off the value */
+		while (val_end > val_start &&
+				(val_end[-1] == ' ' || val_end[-1] == '\t'))
+			val_end--;
+
+		if ((size_t)(key_end - key_start) == plen &&
+				strncmp(key_start, prop, plen) == 0) {
+			size_t n = (size_t)(val_end - val_start);
+			if (n >= outsz)
+				n = outsz - 1;
+			memcpy(out, val_start, n);
+			out[n] = '\0';
+			return 1;
+		}
+	}
+	return 0;
+}
+
 nserror macos9_svg_paint_standalone(const char *src, size_t len,
 		int x, int y, int w, int h,
 		const struct redraw_context *ctx)
@@ -2362,6 +2438,7 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 	const char *root;
 	const char *root_end;
 	char av[128];
+	char sv[512];   /* fixes1043 — raw style="..." text for svg__style_prop */
 	float vb[4];
 	int have_vb = 0;
 	struct svg_ctx sc;
@@ -2483,6 +2560,37 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 				else
 					st.fill = col;
 			}
+		}
+
+		/* fixes1043 (#280) — style="fill:..." AFTER the presentation
+		 * attribute, because per SVG a style declaration overrides it.
+		 * Without this every path from an exported SVG (which uses style=
+		 * and no fill= at all) kept the opaque-black default and the whole
+		 * image painted as a silhouette. */
+		if (svg__tag_attr(tag, tend, "style", sv, sizeof(sv))) {
+			char pv[64];
+			if (svg__style_prop(sv, "fill", pv, sizeof(pv))) {
+				colour col;
+				int none = 0;
+				if (svg__parse_colour(pv, &col, &none)) {
+					if (none)
+						st.fill_present = 0;
+					else {
+						st.fill = col;
+						st.fill_present = 1;
+					}
+				}
+			}
+			if (svg__style_prop(sv, "fill-opacity", pv, sizeof(pv))) {
+				size_t used = 0;
+				float fo = svg__atof(pv, &used);
+				if (used > 0 && fo >= 0.0f && fo <= 1.0f)
+					st.fill_opacity = fo;
+			}
+			/* display:none on the element itself must not paint. */
+			if (svg__style_prop(sv, "display", pv, sizeof(pv)) &&
+					strncmp(pv, "none", 4) == 0)
+				st.fill_present = 0;
 		}
 
 		if (st.fill_present &&
