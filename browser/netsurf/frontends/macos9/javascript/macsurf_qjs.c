@@ -1957,9 +1957,26 @@ void macsurf_qjs_audit_reset(void)
 	g_evreg_audit = 0;
 	g_evmiss_audit = 0;
 	g_evfire_audit = 0;
-	g_mslife_audit = 0;
 	g_geom_audit = 0;
 #endif
+	/* fixes1039 — the WANT channel stays ON, independent of the audit.
+	 *
+	 * The engine now runs hackaday's whole stack -- front page, article
+	 * page and the Jetpack comment iframe -- with ZERO exceptions. So the
+	 * remaining rendering failures are not crashes; they are the
+	 * capabilities we STUB, where the page asks a question, gets a
+	 * confident wrong answer, and quietly takes the other branch. That is
+	 * the fixes1031 shape again (a lie, not a gap) and it is invisible by
+	 * construction.
+	 *
+	 * __msLife carries exactly those: every matchMedia query (we answer
+	 * `false` to all of them), every MutationObserver/ResizeObserver
+	 * .observe (no-ops), every IntersectionObserver target (always
+	 * intersecting). It fires only when a page ASKS for something stubbed,
+	 * so a page that wants nothing pays nothing -- a handful of lines
+	 * rather than the hundreds the full audit emits. This is the
+	 * implement-next list, written by real sites instead of by me. */
+	g_mslife_audit = 60;
 	/* fixes1030 — the three ways script can DELETE page content:
 	 * removeChild, textContent= and innerHTML=. All three now log their
 	 * target's identity on this shared budget, independent of
