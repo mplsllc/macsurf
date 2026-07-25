@@ -19,8 +19,12 @@ Baseline at time of audit: harness **46/46 PASS**, `make -C harness check-macdef
 | **OPEN** — genuinely outstanding | 54 |
 | **WONTFIX** — 3 upheld, 2 split | 5 |
 
-**~21 issues can leave the board with zero code**, on the maintainer's confirmation.
-Three of the six `priority: high` issues (#222, #262, #264) are in that set.
+**Outcome so far: 92 → 80 open.** Twelve closed on this audit — nine on an objective bar (passing
+harness test, an issue-naming commit, or local verification vs Chrome) and three (#108, #137, #220)
+on the maintainer's explicit call. Ten more are staged on t.html for the hardware pass.
+
+Three of the six `priority: high` issues turned out to be already-done: #222 and #264 are closed,
+and #262 is the one genuine remainder (the `innerHTML` GET serializer).
 
 ---
 
@@ -260,3 +264,27 @@ boxes. #113's modern input types then ride the same painter, as originally plann
 
 **Net effect of §6.1, §6.2 and §9 together: the three batches that were sized XL are all M/L.
 There is no XL work left in the CSS/layout tracker.**
+
+---
+
+## 10. Remove Object Code — when it is actually required
+
+#137 (the "RoC automation" issue) was closed 2026-07-25 as no longer relevant: `drop-to-imac.sh`
+stamps a strictly-increasing future mtime per fix number, so CW8 always rebuilds a dropped file,
+and header-only misses are handled by touching the `.c`. This section is the surviving record of
+the cases where a **full object wipe is still mandatory**, since the issue that tracked them is gone.
+
+Both are struct-layout changes that shift field offsets under already-compiled objects. The
+failure signature is the fixes159 class: a silent crash mid-reformat with the last log line
+`content broadcast READY`, *not* a compile error.
+
+1. **Extending `css_computed_style_i.bits[]`** (e.g. `[16]` → `[17]`). `bits[]` is the **first**
+   member of the struct, so adding a word shifts *every* subsequent field by 4 bytes. Any `.o`
+   compiled against the old layout reads every property at the wrong offset.
+   *(This is a further argument for the scalar-tail hatch in §5 — appending an `int32_t` after
+   `z_index` shifts nothing and needs no wipe.)*
+2. **Bumping `CSS_PSEUDO_ELEMENT_COUNT`** (`libcss/src/select/select.h:30`, currently 5 — needed by
+   #164 `::marker`). It resizes `props[CSS_N_PROPERTIES][CSS_PSEUDO_ELEMENT_COUNT]` in
+   `css_internal_select.h:67`, i.e. the whole select-state array.
+
+Anything that only *appends* to the tail of a struct, or changes a function body, does not need it.
