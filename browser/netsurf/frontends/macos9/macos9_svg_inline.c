@@ -2520,6 +2520,56 @@ static int svg__transform_translate(const char *tv, float *tx, float *ty)
 	return 0;
 }
 
+/* fixes1050 (#280) — one numeric attribute off a raw tag. */
+static float svg__tag_attr_float(const char *tag, const char *tend,
+		const char *name, float def)
+{
+	char buf[64];
+	size_t used = 0;
+	float v;
+
+	if (!svg__tag_attr(tag, tend, name, buf, sizeof(buf)))
+		return def;
+	v = svg__atof(buf, &used);
+	if (used == 0)
+		return def;
+	return v;
+}
+
+/* fixes1050 (#280) — next drawable shape at or after p, and which kind.
+ *
+ * The walker only ever looked for <path>, so puffy.svg's three <circle>
+ * elements -- the grey/navy/white stack that makes up the eye -- never
+ * painted at all, leaving a solid dark eye. Returns the EARLIEST of the
+ * shapes so document order (and therefore paint order) is preserved; drawing
+ * all paths then all circles would put the highlights under the iris. */
+#define SVG_SHAPE_PATH    1
+#define SVG_SHAPE_CIRCLE  2
+#define SVG_SHAPE_ELLIPSE 3
+
+static const char *svg__next_shape(const char *p, int *kind)
+{
+	const char *best = NULL;
+	const char *t;
+
+	*kind = 0;
+
+	t = strstr(p, "<path");
+	if (t != NULL) { best = t; *kind = SVG_SHAPE_PATH; }
+
+	t = strstr(p, "<circle");
+	if (t != NULL && (best == NULL || t < best)) {
+		best = t; *kind = SVG_SHAPE_CIRCLE;
+	}
+
+	t = strstr(p, "<ellipse");
+	if (t != NULL && (best == NULL || t < best)) {
+		best = t; *kind = SVG_SHAPE_ELLIPSE;
+	}
+
+	return best;
+}
+
 nserror macos9_svg_paint_standalone(const char *src, size_t len,
 		int x, int y, int w, int h,
 		const struct redraw_context *ctx)
@@ -2686,13 +2736,14 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 		const char *tend;
 		const char *g_open;
 		const char *g_close;
+		int shape_kind = 0;
 		struct svg_paint_state st;
 		plot_style_t pstyle;
 		float ptx;
 		float pty;
 		int n;
 
-		tag = strstr(p, "<path");
+		tag = svg__next_shape(p, &shape_kind);
 
 		/* Consume any group open/close that comes BEFORE the next
 		 * <path>, so the translate in effect is correct when we
@@ -2736,7 +2787,7 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 				}
 				p = gend + 1;
 			}
-			tag = strstr(p, "<path");
+			tag = svg__next_shape(p, &shape_kind);
 		}
 
 		if (tag == NULL)
@@ -2811,21 +2862,87 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 			}
 		}
 
-		if (st.fill_present &&
-				svg__tag_attr(tag, tend, "d", d_local,
-					sizeof(d_local))) {
+		if (st.fill_present) {
 			float save_m4 = sc.m[4];
 			float save_m5 = sc.m[5];
 
 			sc.m[4] += sc.m[0] * ptx;
 			sc.m[5] += sc.m[3] * pty;
-
 			svg__init_plot_style(&pstyle, &st, &sc);
-			n = svg__path_parse(d_local, &sc, pbuf,
-					MACOS9_SVG_PATH_MAX);
+			n = 0;
+
+			if (shape_kind == SVG_SHAPE_PATH) {
+				if (svg__tag_attr(tag, tend, "d", d_local,
+						sizeof(d_local))) {
+					n = svg__path_parse(d_local, &sc, pbuf,
+							MACOS9_SVG_PATH_MAX);
+					/* svg__path_parse maps as it goes */
+					if (n > 0) {
+						sc.plot_ctx->plot->path(
+							sc.plot_ctx, &pstyle,
+							pbuf, (unsigned int)n,
+							NULL);
+					}
+					n = 0;   /* already plotted */
+				}
+			} else {
+				/* fixes1050 — <circle> / <ellipse>. Emitted in
+				 * USER space by the shared emitter, then mapped
+				 * here, because that emitter (unlike
+				 * svg__path_parse) does not map for you. */
+				float cx = svg__tag_attr_float(tag, tend,
+						"cx", 0.0f);
+				float cy = svg__tag_attr_float(tag, tend,
+						"cy", 0.0f);
+				float rx;
+				float ry;
+
+				if (shape_kind == SVG_SHAPE_CIRCLE) {
+					rx = svg__tag_attr_float(tag, tend,
+							"r", 0.0f);
+					ry = rx;
+				} else {
+					rx = svg__tag_attr_float(tag, tend,
+							"rx", 0.0f);
+					ry = svg__tag_attr_float(tag, tend,
+							"ry", 0.0f);
+				}
+
+				if (rx > 0.0f && ry > 0.0f) {
+					n = svg__emit_ellipse_path(pbuf,
+						MACOS9_SVG_PATH_MAX,
+						cx, cy, rx, ry);
+				}
+			}
+
 			if (n > 0) {
+				/* map the user-space buffer in place */
+				int i2 = 0;
+				int j2 = 0;
+				static float mbuf[MACOS9_SVG_PATH_MAX];
+				while (i2 < n) {
+					float op = pbuf[i2++];
+					int pts;
+					mbuf[j2++] = op;
+					if (op == (float)PLOTTER_PATH_MOVE ||
+					    op == (float)PLOTTER_PATH_LINE)
+						pts = 1;
+					else if (op ==
+						(float)PLOTTER_PATH_BEZIER)
+						pts = 3;
+					else
+						pts = 0;   /* CLOSE */
+					while (pts-- > 0) {
+						float ux = pbuf[i2++];
+						float uy = pbuf[i2++];
+						mbuf[j2++] = svg__map_x(&sc,
+								ux, uy);
+						mbuf[j2++] = svg__map_y(&sc,
+								ux, uy);
+					}
+				}
 				sc.plot_ctx->plot->path(sc.plot_ctx, &pstyle,
-						pbuf, (unsigned int)n, NULL);
+						mbuf, (unsigned int)j2, NULL);
 			}
 
 			sc.m[4] = save_m4;
