@@ -1677,6 +1677,52 @@ dom_exception _dom_element_set_attr(struct dom_element *element,
 		if (err != DOM_NO_ERR)
 			return err;
 
+		/* ==== MACSURF LOCAL PATCH (fixes1042, #310) ==================
+		 * grep MACSURF LOCAL PATCH before updating vendored libdom --
+		 * this is not upstream and a vendor bump will silently revert it.
+		 *
+		 * REFRESH THE CACHED CLASS LIST ON AN ATTRIBUTE *UPDATE*.
+		 *
+		 * dom_element caches the parsed class list in ele->classes, and
+		 * the selector engine matches against THAT, not against the
+		 * attribute string. Upstream calls _dom_element_create_classes
+		 * from exactly one place -- _dom_element_attr_list_node_create
+		 * -- which runs only when the class attribute node is FIRST
+		 * created. This branch (attribute exists, replace its value)
+		 * never refreshed it, so every class change after the first was
+		 * invisible to selector matching, while getAttribute('class')
+		 * kept returning the new value correctly.
+		 *
+		 * Hardware signature: el.className='a' restyles; el.className='b'
+		 * then does nothing. That is every classList.add/remove toggle
+		 * after the first one -- the dominant way real sites express
+		 * visual state (is-open, active, selected, has-js).
+		 *
+		 * Latent for the entire life of the port: nothing re-set class at
+		 * runtime until JS became real. Same shape as the fixes1005
+		 * double-fire -- an upstream bug that only activates once we
+		 * become its first real caller.
+		 *
+		 * Reads the value back off the attr (rather than using `value`
+		 * directly) to mirror the upstream call site exactly, including
+		 * its NUL-termination assumption. A NULL value clears the cache
+		 * via the "" path rather than dereferencing NULL, which
+		 * _dom_element_create_classes would do on its first loop.
+		 * ============================================================= */
+		if (namespace == NULL && doc != NULL &&
+				dom_string_isequal(name, doc->class_string)) {
+			dom_string *cls = NULL;
+			err = dom_attr_get_value(match->attr, &cls);
+			if (err == DOM_NO_ERR) {
+				err = _dom_element_create_classes(element,
+					(cls != NULL) ? dom_string_data(cls) : "");
+				if (cls != NULL)
+					dom_string_unref(cls);
+				if (err != DOM_NO_ERR)
+					return err;
+			}
+		}
+
 		success = true;
 		err = _dom_dispatch_subtree_modified_event(doc,
 				(dom_event_target *) e, &success);

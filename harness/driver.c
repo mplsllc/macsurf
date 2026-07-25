@@ -629,7 +629,13 @@ int main(int argc, char **argv)
 		css_stylesheet *ua_sheet = NULL;
 		const char *ua_css =
 			"html,body,div,span,p{display:block}"
-			"span{display:inline}";
+			"span{display:inline}"
+			/* #310 (Test 48) — two CLASS rules so a class change is
+			 * observable through the cascade. Class beats the bare element
+			 * selector on specificity. Both keep a box: display:none would
+			 * remove it and geometry would answer undefined (fixes1014). */
+			".t48a{display:inline-block}"
+			".t48b{display:flex}";
 		char *ua_real = NULL;
 
 		/* fixes1025 — LAYOUT MODE needs the REAL UA sheet. The tiny
@@ -5760,6 +5766,90 @@ box_coords(bx, &cx, &cy);
 		}
 	}
 	fprintf(stderr, "=== Test 47 PASS: capture/target/bubble ordering ===\n");
+
+	/* --- Test 48: a className change must re-cascade EVERY time (#310) -----
+	 * Hardware (t.html, 2026-07-25) showed rows whose className changed after
+	 * first paint keep their OLD styling, while textContent on the same
+	 * element updated and a sibling's .style.background repainted.
+	 *
+	 * The signature that cracked it: the FIRST class change applied, the
+	 * SECOND did not. libdom caches the parsed class list in ele->classes and
+	 * the selector engine matches against that cache, but upstream only
+	 * refreshed it when the class attribute node was first CREATED -- never
+	 * when an existing one's value was replaced (fixes1042, element.c).
+	 *
+	 * So this test MUST make two consecutive changes. One change passes even
+	 * with the bug present.
+	 *
+	 * The baseline assertion is also the live-cascade canary: before fixes1041
+	 * it read "inline" (the CSS initial) for a div the UA sheet calls block,
+	 * because media.type was set only in layout mode. */
+	fprintf(stderr, "\n=== Test 48: className re-cascades on EVERY change ===\n");
+#define T48_RECONVERT() do { \
+		htmlc.base.status = CONTENT_STATUS_DONE; \
+		htmlc.reflowing = false; \
+		htmlc.box_conversion_context = NULL; \
+		htmlc.aborted = false; \
+		htmlc.base.active = 0; \
+		(void) html_reconvert_content((struct content *)&htmlc); \
+		harness_pump_all(100000); \
+	} while (0)
+	{
+		const char *q = "var e0=document.getElementById('feed');"
+			"if(!e0)throw new Error('t48 fixture #feed is gone');"
+			"globalThis.__t48z=getComputedStyle(e0).display;";
+		if (!js_exec(thread,(const unsigned char*)q,strlen(q),"t48-0.js")) {
+			fprintf(stderr,"FAIL: t48 baseline threw\n"); return 1; }
+	}
+	{
+		const char *q = "document.getElementById('feed').className='t48a';";
+		if (!js_exec(thread,(const unsigned char*)q,strlen(q),"t48-1.js")) {
+			fprintf(stderr,"FAIL: t48 flip-1 threw\n"); return 1; }
+	}
+	T48_RECONVERT();
+	{
+		const char *q = "globalThis.__t48a=getComputedStyle("
+			"document.getElementById('feed')).display;";
+		if (!js_exec(thread,(const unsigned char*)q,strlen(q),"t48-2.js")) {
+			fprintf(stderr,"FAIL: t48 probe-1 threw\n"); return 1; }
+	}
+	{
+		const char *q = "document.getElementById('feed').className='t48b';";
+		if (!js_exec(thread,(const unsigned char*)q,strlen(q),"t48-3.js")) {
+			fprintf(stderr,"FAIL: t48 flip-2 threw\n"); return 1; }
+	}
+	T48_RECONVERT();
+	{
+		const char *q = "globalThis.__t48b=getComputedStyle("
+			"document.getElementById('feed')).display;"
+			"globalThis.__t48cls=document.getElementById('feed')"
+			".getAttribute('class');"
+			"document.getElementById('feed').className='';";
+		if (!js_exec(thread,(const unsigned char*)q,strlen(q),"t48-4.js")) {
+			fprintf(stderr,"FAIL: t48 probe-2 threw\n"); return 1; }
+	}
+	{
+		const char *q =
+			"var z=globalThis.__t48z,a=globalThis.__t48a,"
+			"b=globalThis.__t48b,c=globalThis.__t48cls;"
+			"if(z!=='block')"
+			"throw new Error('CASCADE IS DEAD: bare #feed display is \"'+z+"
+				"'\", want \"block\" from div{display:block}. Check "
+				"media.type is CSS_MEDIA_SCREEN unconditionally "
+				"(fixes1041) -- nothing below means anything.');"
+			"if(a!=='inline-block')"
+			"throw new Error('FIRST class change lost: display is \"'+a+"
+				"'\", want \"inline-block\"');"
+			"if(b!=='flex')"
+			"throw new Error('SECOND class change lost: display is \"'+b+"
+				"'\", want \"flex\" (class attr correctly reads \"'+c+"
+				"'\") -- libdom ele->classes cache went stale, see "
+				"fixes1042 in libdom element.c (#310)');";
+		if (!js_exec(thread,(const unsigned char*)q,strlen(q),"t48-chk.js")) {
+			fprintf(stderr,"FAIL: Test 48 -- className re-cascade (#310)\n");
+			return 1; }
+	}
+	fprintf(stderr, "=== Test 48 PASS: className re-cascades on every change ===\n");
 
 	return 0;
 }
