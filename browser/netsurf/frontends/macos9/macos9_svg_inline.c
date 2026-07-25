@@ -2547,14 +2547,21 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 		sc.m[5] = (float)y + ((float)h - vb[3] * s) * 0.5f
 				- vb[1] * s;
 
-		/* fixes1044 — the numbers, once per paint. If the graphic is
-		 * still cropped after this, the destination rect handed to us is
-		 * wrong (data->width/height vs the SVG's own intrinsic size) and
-		 * that is a different fix in macos9_svg_src_redraw; this line
-		 * says which of the two it is without another guess. Ints only:
-		 * macsurf_debug_log_writef has no float specifier. */
+		/* fixes1045 — the numbers, once per paint. If the graphic is
+		 * still cropped, the destination rect handed to us is wrong
+		 * (data->width/height vs the content's own intrinsic size, in
+		 * macos9_svg_src_redraw) rather than the fit maths; this says
+		 * which without another guess. Ints only: macsurf_debug_log_writef
+		 * has no float specifier.
+		 *
+		 * PREFIX IS "LIFE ", NOT "WORK ". fixes1044 shipped this as
+		 * "WORK svg-fit" and NOTHING reached disk: the WORK passthrough in
+		 * macsurf_debug_log.c:676 is behind #ifdef MACSURF_WORK_LOG, which
+		 * fixes893 left undefined for release builds. "LIFE " passes the
+		 * gate unconditionally (:651). Absence of a log line does not mean
+		 * the code did not run. */
 		macsurf_debug_log_writef(
-			"WORK svg-fit: dest=%dx%d at %d,%d vb=%dx%d off %d,%d "
+			"LIFE svg-fit: dest=%dx%d at %d,%d vb=%dx%d off %d,%d "
 			"scale/1000=%d (sx=%d sy=%d)",
 			w, h, x, y,
 			(int)vb[2], (int)vb[3], (int)vb[0], (int)vb[1],
