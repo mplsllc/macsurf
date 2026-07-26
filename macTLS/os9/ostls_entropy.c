@@ -449,3 +449,53 @@ OSTLS_InjectEntropy(br_ssl_engine_context *eng)
     }
     return 0;
 }
+
+/* fixes1069 — arbitrary-length extraction for callers outside the TLS
+ * handshake, added for crypto.getRandomValues()/randomUUID().
+ *
+ * Those two shipped on a clock-seeded xorshift whose own comment said it was
+ * "NOT cryptographic-grade" and pointed here for the real thing. A weak PRNG
+ * behind crypto.* is not a missing feature, it is a WRONG ANSWER: a page
+ * generating a session token or a v4 UUID gets predictable bytes and no
+ * indication anything is off.
+ *
+ * Own domain-separation tag, so this stream is independent of the TLS seed
+ * ('macExtr') and of the persisted seed. pool_extract already ratchets --
+ * it folds each output back into the live pool -- so successive blocks are
+ * independent without any extra stirring here. Fresh stack/clock noise is
+ * still folded in once per call for callers that never ran CollectEntropy. */
+void
+OSTLS_RandomBytes(void *out, unsigned long len)
+{
+    static const unsigned char rand_tag[8] =
+        { 'm', 'a', 'c', 'E', 'r', 'n', 'd', 0 };
+    unsigned char blk[OSTLS_SEED_BYTES];
+    unsigned char *p;
+    unsigned long i, n;
+    int local_var;
+    unsigned long stackaddr;
+    UnsignedWide usec;
+
+    if (out == NULL || len == 0UL) return;
+    p = (unsigned char *)out;
+    pool_ensure_init();
+
+    stackaddr = (unsigned long)(void *)&local_var;
+    pool_update(&stackaddr, sizeof stackaddr);
+#ifdef __MWERKS__
+    Microseconds(&usec);
+#else
+    usec.hi = 0; usec.lo = 0;
+#endif
+    pool_update(&usec, sizeof usec);
+
+    while (len > 0UL) {
+        pool_extract(rand_tag, sizeof rand_tag, blk);
+        n = (len < (unsigned long) OSTLS_SEED_BYTES) ?
+                len : (unsigned long) OSTLS_SEED_BYTES;
+        for (i = 0UL; i < n; i++) p[i] = blk[i];
+        p += n;
+        len -= n;
+    }
+    for (i = 0UL; i < (unsigned long) OSTLS_SEED_BYTES; i++) blk[i] = 0;
+}

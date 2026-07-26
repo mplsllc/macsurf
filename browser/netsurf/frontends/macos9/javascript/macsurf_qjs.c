@@ -6870,43 +6870,31 @@ static void qjs_dom_install(JSContext *ctx)
  * QuickJS ships no `crypto` global, so any script that touches it (uuid
  * libraries, cache-busting, the Cloudflare beacon captured in the
  * SuperLogger log) throws "crypto.getRandomValues() not supported" and
- * aborts the whole script. Fill requests from a clock-seeded xorshift
- * generator, re-stirred with a fresh high-resolution timestamp (and
- * stack-address noise) on every call. This is NOT cryptographic-grade;
- * the goal is that these scripts RUN instead of crashing (DIRECTIVE #2).
- * If a page ever needs real CSPRNG output, back this with macEntropy's
- * pool (OSTLS_*), which is already linked and hardware-verified.
+ * aborts the whole script. fixes717 filled them from a clock-seeded
+ * xorshift so those scripts RAN instead of crashing (DIRECTIVE #2).
+ *
+ * fixes1069 — that generator is gone; both entry points now draw from
+ * macEntropy, exactly as the fixes717 comment here prescribed ("If a page
+ * ever needs real CSPRNG output, back this with macEntropy's pool
+ * (OSTLS_*), which is already linked and hardware-verified").
+ *
+ * The upgrade matters because a weak PRNG behind crypto.* is not a missing
+ * feature, it is a WRONG ANSWER — the failure mode this engine has paid for
+ * repeatedly. A page minting a session token, a CSRF nonce or a v4 UUID got
+ * bytes derived from the tick count and a stack address, with nothing to
+ * feature-detect: crypto.getRandomValues was present and answered.
+ *
+ * macEntropy is the same pool that seeds every TLS handshake — SHA-256
+ * based, seeded from OT packet jitter, key/mouse timing and a seed file
+ * persisted across launches, with a statistical self-test. OSTLS_RandomBytes
+ * (fixes1069) extracts under its own domain-separation tag, so this stream
+ * is independent of the TLS seed.
+ *
+ * Declared locally rather than including macTLS/os9/ostls_entropy.h: that
+ * header pulls the BearSSL engine types, and main.c already reaches
+ * macEntropy this same way (see OSTLS_StirEntropy there).
  * ==================================================================== */
-static unsigned long qjs_rng_s[2] = { 0UL, 0UL };
-
-static void qjs_rng_stir(void)
-{
-	unsigned long t = (unsigned long)macsurf_monotonic_ms();
-	unsigned long a = (unsigned long)(size_t)&t;   /* stack-address noise */
-	static unsigned long ctr = 0UL;
-	ctr += 0x9E3779B9UL;
-	if (qjs_rng_s[0] == 0UL && qjs_rng_s[1] == 0UL) {
-		qjs_rng_s[0] = t ^ 0x85EBCA6BUL ^ ctr;
-		qjs_rng_s[1] = a ^ 0xC2B2AE35UL;
-		if (qjs_rng_s[0] == 0UL) qjs_rng_s[0] = 1UL;
-		if (qjs_rng_s[1] == 0UL) qjs_rng_s[1] = 1UL;
-	} else {
-		qjs_rng_s[0] ^= (t + ctr) & 0xFFFFFFFFUL;
-		qjs_rng_s[1] ^= ((a << 1) + 0x27D4EB2FUL) & 0xFFFFFFFFUL;
-	}
-}
-
-static unsigned long qjs_rng_next(void)
-{
-	unsigned long s1 = qjs_rng_s[0];
-	unsigned long s0 = qjs_rng_s[1];
-	qjs_rng_s[0] = s0;
-	s1 ^= (s1 << 13) & 0xFFFFFFFFUL;
-	s1 ^= s1 >> 17;
-	s1 ^= s0 ^ (s0 >> 5);
-	qjs_rng_s[1] = s1 & 0xFFFFFFFFUL;
-	return (s1 + s0) & 0xFFFFFFFFUL;
-}
+extern void OSTLS_RandomBytes(void *out, unsigned long len);
 
 static JSValue qjs_crypto_get_random_values(JSContext *ctx,
 	JSValueConst this_val, int argc, JSValueConst *argv)
@@ -6914,9 +6902,6 @@ static JSValue qjs_crypto_get_random_values(JSContext *ctx,
 	size_t byte_off = 0, byte_len = 0, bpe = 0, ab_size = 0;
 	JSValue ab;
 	uint8_t *ptr;
-	size_t i;
-	unsigned long r = 0UL;
-	int rb = 0;
 
 	(void)this_val;
 	if (argc < 1)
@@ -6936,13 +6921,7 @@ static JSValue qjs_crypto_get_random_values(JSContext *ctx,
 		return JS_ThrowRangeError(ctx,
 			"crypto.getRandomValues: array exceeds 65536 bytes");
 	}
-	qjs_rng_stir();
-	for (i = 0; i < byte_len; i++) {
-		if (rb == 0) { r = qjs_rng_next(); rb = 4; }
-		ptr[byte_off + i] = (uint8_t)(r & 0xFFUL);
-		r >>= 8;
-		rb--;
-	}
+	OSTLS_RandomBytes(ptr + byte_off, (unsigned long) byte_len);
 	JS_FreeValue(ctx, ab);
 	return JS_DupValue(ctx, argv[0]);   /* spec: returns the same array */
 }
@@ -6979,17 +6958,10 @@ static JSValue qjs_crypto_random_uuid(JSContext *ctx,
 	static const char hex[] = "0123456789abcdef";
 	unsigned char b[16];
 	char out[37];
-	unsigned long r = 0UL;
-	int rb = 0, i, p;
+	int i, p;
 
 	(void)this_val; (void)argc; (void)argv;
-	qjs_rng_stir();
-	for (i = 0; i < 16; i++) {
-		if (rb == 0) { r = qjs_rng_next(); rb = 4; }
-		b[i] = (unsigned char)(r & 0xFFUL);
-		r >>= 8;
-		rb--;
-	}
+	OSTLS_RandomBytes(b, 16UL);
 	b[6] = (unsigned char)((b[6] & 0x0F) | 0x40);   /* version 4 */
 	b[8] = (unsigned char)((b[8] & 0x3F) | 0x80);   /* RFC 4122 variant */
 	p = 0;

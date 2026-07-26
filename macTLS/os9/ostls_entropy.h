@@ -97,4 +97,13 @@ void OSTLS_StirEntropy(const void *data, unsigned long len);
  */
 int OSTLS_EntropySelfTest(unsigned long *out_fp);
 
+/*
+ * fixes1069 — fill out[0..len) with pool output, for callers outside the
+ * TLS handshake (crypto.getRandomValues / crypto.randomUUID). Uses its own
+ * domain-separation tag, so this stream is independent of the TLS seed and
+ * of the persisted seed file. Any length; the pool ratchets between blocks.
+ * No-op if out is NULL or len is 0.
+ */
+void OSTLS_RandomBytes(void *out, unsigned long len);
+
 #endif /* OSTLS_ENTROPY_H */

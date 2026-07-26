@@ -94,3 +94,36 @@ void *macos9_deathrow_cur_fn = NULL;
  */
 void download_set_next_filename(const char *name);
 void download_set_next_filename(const char *name) { (void) name; }
+
+/*
+ * fixes1069 — OSTLS_RandomBytes lives in macTLS (macTLS/os9/ostls_entropy.c),
+ * which this harness does not link: it is Mac Toolbox code (FSSpec seed file,
+ * Microseconds, OT jitter). macsurf_qjs.c calls it for crypto.getRandomValues
+ * and crypto.randomUUID, so the harness needs the symbol.
+ *
+ * Deliberately NOT a copy of macEntropy: duplicating a CSPRNG here would mean
+ * the harness exercises different bytes than the Mac while looking identical,
+ * and the pool's real sources do not exist on Linux anyway. This fills with a
+ * plainly-labelled xorshift so the JS surface is callable and array lengths /
+ * return values stay testable.
+ *
+ * Safe under reference_harness_build_trap because it is strictly WEAKER than
+ * the real thing and no test asserts on randomness quality — a harness pass
+ * can never certify entropy. The Mac's real path is compile-checked by
+ * `make check-macdefault`.
+ */
+void OSTLS_RandomBytes(void *out, unsigned long len);
+void OSTLS_RandomBytes(void *out, unsigned long len)
+{
+	static unsigned long s = 0x9E3779B9UL;
+	unsigned char *p = (unsigned char *) out;
+	unsigned long i;
+
+	if (out == NULL || len == 0UL) return;
+	for (i = 0UL; i < len; i++) {
+		s ^= (s << 13) & 0xFFFFFFFFUL;
+		s ^= s >> 17;
+		s ^= (s << 5) & 0xFFFFFFFFUL;
+		p[i] = (unsigned char) (s & 0xFFUL);
+	}
+}
