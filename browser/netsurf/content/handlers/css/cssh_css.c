@@ -4781,6 +4781,146 @@ macsurf__cc_trim(const char *buf, size_t from, size_t to,
 	*out_to = to;
 }
 
+
+/* fixes1055 — ASCII case-insensitive compare, n bytes.
+ *
+ * CSS property names and keywords are case-INSENSITIVE per spec, but this
+ * file has only ever used case-sensitive strncmp, and strncasecmp is POSIX
+ * rather than C89 so it is not guaranteed under CW8. Hand-rolled to stay
+ * portable and to avoid depending on locale (tolower() is locale-sensitive;
+ * CSS is defined on ASCII).
+ */
+static int macsurf__ci_eq(const char *a, const char *b, size_t n)
+{
+	size_t k;
+	for (k = 0; k < n; k++) {
+		char ca = a[k];
+		char cb = b[k];
+		if (ca >= 'A' && ca <= 'Z') ca = (char)(ca - 'A' + 'a');
+		if (cb >= 'A' && cb <= 'Z') cb = (char)(cb - 'A' + 'a');
+		if (ca != cb) return 0;
+	}
+	return 1;
+}
+
+/**
+ * fixes1055 (#274) — expand `word-break: break-word` to its SPEC definition.
+ *
+ * CSS Text 3 defines the legacy keyword exactly:
+ *
+ *   "word-break: break-word  has the same effect as word-break: normal and
+ *    overflow-wrap: anywhere, REGARDLESS of the actual value of the
+ *    overflow-wrap property."
+ *
+ * so emitting that pair is the definition, not an approximation.
+ *
+ * Doing it here rather than in libcss is also the cheaper AND safer route:
+ * css_word_break_e is bit-packed with 2 bits (MASK 0x180) and a fifth value
+ * would need a third bit, but bits[16] is completely full (0 free bits across
+ * all 16 words). overflow-wrap:anywhere is already parsed and already consumed
+ * by the line breaker (layout.c:4536 treats it as break-word), so the pair
+ * lands on machinery that works today.
+ *
+ * Before this the declaration was simply INVALID and dropped, so an
+ * overflowing word never broke at all.
+ */
+static char *
+macsurf__rewrite_word_break_alias(const char *data, size_t in_size,
+		size_t *out_size_p)
+{
+	static const char PROP[] = "word-break";
+	static const char VAL[] = "break-word";
+	static const char REPL[] = "word-break:normal;overflow-wrap:anywhere";
+	char *out;
+	size_t cap;
+	size_t out_pos = 0;
+	size_t i = 0;
+	int changed = 0;
+
+	if (data == NULL || in_size == 0) return NULL;
+
+	cap = in_size * 2 + 256;
+	out = (char *)malloc(cap);
+	if (out == NULL) return NULL;
+
+	while (i < in_size) {
+		size_t j;
+		size_t colon;
+		size_t vstart;
+		size_t vend;
+
+		/* only look at a property name sitting at a declaration
+		 * boundary, so `-ms-word-break` and the like are left alone */
+		if ((i == 0 || data[i - 1] == ';' || data[i - 1] == '{' ||
+				data[i - 1] == ' ' || data[i - 1] == '\t' ||
+				data[i - 1] == '\n' || data[i - 1] == '\r') &&
+				i + sizeof(PROP) - 1 < in_size &&
+				macsurf__ci_eq(data + i, PROP, sizeof(PROP) - 1)) {
+
+			j = i + sizeof(PROP) - 1;
+			while (j < in_size && (data[j] == ' ' || data[j] == '\t'))
+				j++;
+			if (j < in_size && data[j] == ':') {
+				colon = j;
+				vstart = colon + 1;
+				while (vstart < in_size && (data[vstart] == ' ' ||
+						data[vstart] == '\t' ||
+						data[vstart] == '\n' ||
+						data[vstart] == '\r'))
+					vstart++;
+				vend = vstart;
+				while (vend < in_size && data[vend] != ';' &&
+						data[vend] != '}')
+					vend++;
+				/* trim trailing space off the value */
+				while (vend > vstart && (data[vend - 1] == ' ' ||
+						data[vend - 1] == '\t' ||
+						data[vend - 1] == '\n' ||
+						data[vend - 1] == '\r'))
+					vend--;
+
+				if (vend - vstart == sizeof(VAL) - 1 &&
+						macsurf__ci_eq(data + vstart, VAL,
+							sizeof(VAL) - 1)) {
+					while (out_pos + sizeof(REPL) >= cap) {
+						char *bigger;
+						cap *= 2;
+						bigger = (char *)realloc(out, cap);
+						if (bigger == NULL) {
+							free(out);
+							return NULL;
+						}
+						out = bigger;
+					}
+					memcpy(out + out_pos, REPL,
+							sizeof(REPL) - 1);
+					out_pos += sizeof(REPL) - 1;
+					i = vend;   /* ';' / '}' copied next pass */
+					changed = 1;
+					continue;
+				}
+			}
+		}
+
+		if (out_pos + 1 >= cap) {
+			char *bigger;
+			cap *= 2;
+			bigger = (char *)realloc(out, cap);
+			if (bigger == NULL) { free(out); return NULL; }
+			out = bigger;
+		}
+		out[out_pos++] = data[i++];
+	}
+
+	if (changed == 0) {
+		free(out);
+		return NULL;
+	}
+
+	*out_size_p = out_pos;
+	return out;
+}
+
 static char *
 macsurf__rewrite_grid_alignment(const char *data, size_t in_size,
 		size_t *out_size_p)
@@ -5523,6 +5663,13 @@ char *macsurf__rewrite_inline_style(const char *data, size_t in_size,
 		src = (const char *)cur; src_size = cur_size;
 	}
 
+	next = macsurf__rewrite_word_break_alias(src, src_size, &next_size);
+	if (next != NULL) {
+		if (cur != NULL) free(cur);
+		cur = next; cur_size = next_size;
+		src = (const char *)cur; src_size = cur_size;
+	}
+
 	next = macsurf__rewrite_grid_alignment(src, src_size, &next_size);
 	if (next != NULL) {
 		if (cur != NULL) free(cur);
@@ -5576,6 +5723,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	char *rewritten_lshort = NULL;   /* #247 phase 2 */
 	char *rewritten_at_rules = NULL;   /* fixes273 — @supports/@layer */
 	char *rewritten_grid_align = NULL; /* fixes274 grid alignment */
+	char *rewritten_word_break = NULL; /* fixes1055 (#274) */
 	char *rewritten_grid_flow = NULL;  /* fixes275 grid-auto-flow */
 	char *rewritten_logical = NULL;    /* fixes277 logical properties */
 	char *rewritten_calc = NULL;       /* fixes280 calc() arithmetic */
@@ -5664,6 +5812,22 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	 * justify-* longhands with text-align so cell content aligns
 	 * visually. Runs early so subsequent property-rewrite passes
 	 * see the expanded declarations. */
+	/* fixes1055 (#274) — word-break:break-word is a legacy alias for
+	 * word-break:normal + overflow-wrap:anywhere (CSS Text 3). Expand it
+	 * here as well as in the inline-style chain: THIS is the path external
+	 * and <style> sheets take, and the inline one only ever sees style=""
+	 * attributes. Runs first so later passes see the expanded pair. */
+	{
+		size_t wb_size = 0;
+		rewritten_word_break = macsurf__rewrite_word_break_alias(data,
+				(size_t)size, &wb_size);
+		if (rewritten_word_break != NULL &&
+				wb_size <= (size_t)0x7fffffff) {
+			data = (const char *)rewritten_word_break;
+			size = (unsigned int)wb_size;
+		}
+	}
+
 	{
 		size_t ga_size = 0;
 		rewritten_grid_align = macsurf__rewrite_grid_alignment(data,
@@ -5946,6 +6110,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	if (rewritten_rows != NULL) free(rewritten_rows);
 	if (rewritten != NULL) free(rewritten);
 	if (rewritten_at_rules != NULL) free(rewritten_at_rules);   /* fixes273 */
+	if (rewritten_word_break != NULL) free(rewritten_word_break); /* fixes1055 */
 	if (rewritten_grid_align != NULL) free(rewritten_grid_align); /* fixes274 */
 	if (rewritten_grid_flow != NULL) free(rewritten_grid_flow); /* fixes275 */
 	if (rewritten_logical != NULL) free(rewritten_logical); /* fixes277 */
