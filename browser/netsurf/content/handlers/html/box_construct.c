@@ -216,6 +216,8 @@ struct box_construct_props {
 	struct nsurl *href;
 	/** Current frame target, or NULL if none */
 	const char *target;
+	/** fixes1063 (#114): enclosing <a> carries the `download` attribute */
+	bool download;
 	/** Current title attribute, or NULL if none */
 	const char *title;
 	/** Identity of the current block-level container */
@@ -320,6 +322,9 @@ box_extract_properties(dom_node *n, struct box_construct_props *props)
 				props->parent_style = parent_box->style;
 				props->href = parent_box->href;
 				props->target = parent_box->target;
+				/* fixes1063 (#114) — travels with href. */
+				props->download = (parent_box->flags &
+						LINK_DOWNLOAD) != 0;
 				props->title = parent_box->title;
 
 				dom_node_unref(parent_node);
@@ -1232,6 +1237,10 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	box = box_create(styles, styles->styles[CSS_PSEUDO_ELEMENT_NONE], false,
 			props.href, props.target, props.title, id,
 			ctx->bctx);
+	/* fixes1063 (#114) — carry the enclosing <a>'s `download` down with
+	 * href. box_special sets it on the anchor's own box below. */
+	if (box != NULL && props.download)
+		box->flags |= LINK_DOWNLOAD;
 	if (box == NULL) {
 		/* fixes895 — box_create/talloc_zero returned NULL. During a
 		 * reconvert this is the H1 smoking gun: the double-buffer keeps a
@@ -1598,6 +1607,8 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 					NULL, ctx->bctx);
 			if (flt == NULL)
 				return false;
+			if (props.download)   /* fixes1063 (#114) */
+				flt->flags |= LINK_DOWNLOAD;
 
 			if (css_computed_float(box->style) == CSS_FLOAT_LEFT)
 				flt->type = BOX_FLOAT_LEFT;
@@ -2037,6 +2048,12 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 				(css_computed_style *) props.parent_style,
 				false, props.href, props.target, props.title,
 				NULL, ctx->bctx);
+		/* fixes1063 (#114) — THE case this exists for: a TEXT box
+		 * carries href but has NO DOM node, and the anchor's own inline
+		 * box is zero-width so a click never lands on it. Without this
+		 * the flag is unreachable from a text link. */
+		if (box != NULL && props.download)
+			box->flags |= LINK_DOWNLOAD;
 		if (box == NULL) {
 			free(text);
 			return false;
@@ -2242,6 +2259,8 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 				(css_computed_style *) props.parent_style,
 				false, props.href, props.target, props.title,
 				NULL, ctx->bctx);
+			if (box != NULL && props.download)   /* fixes1063 */
+				box->flags |= LINK_DOWNLOAD;
 			if (box == NULL) {
 				free(text);
 				return false;

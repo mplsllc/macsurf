@@ -723,6 +723,30 @@ box_a(dom_node *n,
 		}
 	}
 
+	/* fixes1063 (#114) — HTML5 `download`: save the target rather than
+	 * navigate to it. Recorded as a box flag here, beside href/target,
+	 * because it has to reach the box the user actually CLICKS.
+	 *
+	 * Reading it from the DOM at click time does not work, and the box tree
+	 * is why: for `<a>text</a>` the anchor's own BOX_INLINE is zero-width
+	 * (so a click never lands on it) and the BOX_TEXT that IS clicked
+	 * carries href but node == NULL. There is no DOM node to walk up from,
+	 * and box->parent leads to the anonymous BOX_INLINE_CONTAINER, not the
+	 * anchor -- text and the <a> are SIBLINGS in the box tree. An <img>
+	 * inside the link works either way, which is exactly why fixes1060 and
+	 * fixes1061 both looked right and both failed on plain text links.
+	 *
+	 * Carried down with href by box_construct_props, so every box that
+	 * inherits the link inherits this too. */
+	{
+		dom_string *dl = NULL;
+		err = dom_element_get_attribute(n, corestring_dom_download, &dl);
+		if (err == DOM_NO_ERR && dl != NULL) {
+			box->flags |= LINK_DOWNLOAD;
+			dom_string_unref(dl);
+		}
+	}
+
 	/* target frame [16.3] */
 	err = dom_element_get_attribute(n, corestring_dom_target, &s);
 	if (err == DOM_NO_ERR && s != NULL) {

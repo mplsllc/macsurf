@@ -555,6 +555,27 @@ int main(int argc, char **argv)
 
 	corestrings_init();
 
+	/* fixes1062 — the presentational-hint table.
+	 *
+	 * css_hint_init() allocates hint_ctx.hints and is called from the text/css
+	 * content-handler registration (cssh_css.c:6731), which this harness never
+	 * runs. Without it hint_ctx.hints is NULL and css_hint_width/height write
+	 * straight through it:
+	 *
+	 *   struct css_hint *hint = &hint_ctx.hints[hint_ctx.len];
+	 *   parse_dimension(..., &hint->data.length.value, ...)
+	 *
+	 * so ANY element carrying a presentational attribute -- width, height,
+	 * bgcolor, border, align -- segfaulted in the cascade. That is
+	 * <img width=..>, <table border=1>, <td bgcolor=..>: ordinary markup this
+	 * harness could not lay out AT ALL. No test happened to use one until an
+	 * <a download> repro did, and ASan named it immediately: WRITE to the zero
+	 * page in parse_dimension (hints.c:239). */
+	if (css_hint_init() != NSERROR_OK) {
+		fprintf(stderr, "FAIL: css_hint_init\n");
+		return 1;
+	}
+
 	/* fixes1026 — EVERY run needs a base URL. box_get_style passes
 	 * nsurl_access(c->base_url) to nscss_create_inline_style for any
 	 * element carrying style="", and box_construct joins relative

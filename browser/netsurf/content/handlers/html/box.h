@@ -92,7 +92,12 @@ typedef enum {
 	CONVERT_CHILDREN = 1 << 11,  /* wanted children converting */
 	IS_REPLACED = 1 << 12,	/* box is a replaced element */
 	MULTICOL_HINT = 1 << 13,	/* fixes182b: block declares CSS multi-col */
-	SVG_INLINE = 1 << 14	/* fixes195: <svg> root; render via DOM walk */
+	SVG_INLINE = 1 << 14,	/* fixes195: <svg> root; render via DOM walk */
+	LINK_DOWNLOAD = 1 << 15	/* fixes1063 (#114): enclosing <a> has `download`;
+				 * propagates with href so an inline TEXT box,
+				 * which carries no DOM node of its own, still
+				 * knows the click should save rather than
+				 * navigate */
 } box_flags;
 
 
