@@ -551,6 +551,21 @@ int main(int argc, char **argv)
 	if (argc >= 4 && strcmp(argv[1], "--layout") == 0) {
 		nsoptions[NSOPTION_author_level_css].value.b = true;
 		nsoptions[NSOPTION_background_images].value.b = true;
+		/* fixes1066 — foreground_images, the SAME trap fixes1026 fixed
+		 * for the other two. box_image() bails at box_special.c:1792
+		 * BEFORE it sets IS_REPLACED/REPLACE_DIM or resolves any
+		 * dimensions:
+		 *
+		 *   if (nsoption_bool(foreground_images) == false) return true;
+		 *
+		 * so with the option false every <img> laid out as an empty
+		 * inline box, w=0, regardless of its width/height attributes or
+		 * CSS. Chasing #226's collapsed avatar box that looked exactly
+		 * like the reported product bug -- it was the harness. With it
+		 * on, a synthetic .structItem row lays out correctly: the avatar
+		 * box is 48x48 with IS_REPLACED|REPLACE_DIM and the title cell
+		 * starts beside it, not beneath. */
+		nsoptions[NSOPTION_foreground_images].value.b = true;
 	}
 
 	corestrings_init();
