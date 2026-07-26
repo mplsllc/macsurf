@@ -1997,17 +1997,76 @@ void form_select_menu_callback(void *client_data,
 }
 
 
+/**
+ * fixes1054 (#80) — clear same-name FORM-LESS radios, walking the box tree.
+ *
+ * A radio outside any <form> has no form owner, so it is not on any
+ * form->controls list and cannot be found the way the form case finds its
+ * siblings. Per HTML5 that is still a real radio button group: the group is
+ * "input elements with type=radio, the SAME form owner, and the same name",
+ * and a null form owner is a perfectly good group key.
+ *
+ * The box tree is the right place to look because it is exactly the set of
+ * controls that are laid out and paintable, and each box carries the gadget
+ * we need to clear plus the box we need to repaint.
+ *
+ * Depth-bounded; walks children, next siblings and floats so a radio inside a
+ * float or a table cell is still found.
+ */
+static void form__clear_formless_radio_group(struct html_content *html,
+		struct box *b, struct form_control *radio, int depth)
+{
+	struct box *c;
+
+	if (b == NULL || depth > 256)
+		return;
+
+	if (b->gadget != NULL &&
+			b->gadget != radio &&
+			b->gadget->type == GADGET_RADIO &&
+			b->gadget->form == NULL &&
+			b->gadget->selected &&
+			b->gadget->name != NULL &&
+			radio->name != NULL &&
+			b->gadget->name[0] != '\0' &&
+			radio->name[0] != '\0' &&
+			strcmp(b->gadget->name, radio->name) == 0) {
+		b->gadget->selected = false;
+		dom_html_input_element_set_checked(b->gadget->node, false);
+		html__redraw_a_box(html, b->gadget->box);
+	}
+
+	for (c = b->children; c != NULL; c = c->next)
+		form__clear_formless_radio_group(html, c, radio, depth + 1);
+	for (c = b->float_children; c != NULL; c = c->next_float)
+		form__clear_formless_radio_group(html, c, radio, depth + 1);
+}
+
 /* private interface described in html/form_internal.h */
 void form_radio_set(struct form_control *radio)
 {
 	struct form_control *control;
 
 	assert(radio);
-	if (!radio->form)
-		return;
 
 	if (radio->selected)
 		return;
+
+	/* fixes1054 (#80) — a radio with NO form owner used to return here and
+	 * do nothing at all: it never became selected and never repainted, so
+	 * clicking one appeared completely dead while checkboxes beside it
+	 * worked (their handler does not consult the form). Radios outside a
+	 * <form> are valid HTML and common in script-driven UIs. Group them by
+	 * name across the box tree instead of bailing. */
+	if (radio->form == NULL) {
+		form__clear_formless_radio_group(radio->html,
+				radio->html != NULL ? radio->html->layout : NULL,
+				radio, 0);
+		radio->selected = true;
+		dom_html_input_element_set_checked(radio->node, true);
+		html__redraw_a_box(radio->html, radio->box);
+		return;
+	}
 
 	/* Clear selected state for other controls in
 	 * the same radio button group */
