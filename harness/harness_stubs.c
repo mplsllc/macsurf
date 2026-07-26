@@ -76,3 +76,21 @@ void selection_destroy(struct selection *s) { free(s); }
  * teardown" reading the field is meant to convey. */
 void *macos9_deathrow_cur_ptr = NULL;
 void *macos9_deathrow_cur_fn = NULL;
+
+/* fixes1064 (#114) — download subsystem stub.
+ *
+ * The harness does not build desktop/download.c (it has no download UI and no
+ * gui_download_table), but interaction.c now calls this on an <a download>
+ * click. No-op here: the harness never dispatches a real click, and the Mac
+ * build links the real one from desktop/download.c, which IS in MacSurf.mcp --
+ * that is why downloads work on hardware.
+ *
+ * Deliberately a stub rather than pulling download.c into the harness: adding
+ * it drags in the llcache/gui download plumbing for no test benefit, and a
+ * stub that is MORE permissive than the real thing is the trap this harness
+ * has been bitten by before (reference_harness_build_trap). This one is
+ * strictly less capable and cannot mask a product bug -- nothing here asserts
+ * on the suggested filename.
+ */
+void download_set_next_filename(const char *name);
+void download_set_next_filename(const char *name) { (void) name; }

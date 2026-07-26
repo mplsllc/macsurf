@@ -49,6 +49,7 @@
 #include "desktop/scrollbar.h"
 #include "desktop/selection.h"
 #include "desktop/textarea.h"
+#include "desktop/download.h"
 #include "javascript/js.h"
 #include "desktop/gui_internal.h"
 
@@ -1607,6 +1608,46 @@ default_mouse_action(html_content *html,
 
 
 /**
+ * fixes1064 (#114) — hand the next download the name from <a download="name">.
+ *
+ * Walks the clicked box's inline container for the sibling box that carries
+ * both the same href and a DOM node -- that is the anchor element itself.
+ * Falls back to the clicked box if it happens to have a node (an <img> inside
+ * the link does). Silent no-op if the attribute is absent or empty, which is
+ * the bare `download` form: the URL-derived default is correct there.
+ */
+static void html_download_suggest_name(struct box *clicked)
+{
+	struct box *anchor = NULL;
+	dom_string *val = NULL;
+
+	if (clicked == NULL)
+		return;
+
+	if (clicked->node != NULL) {
+		anchor = clicked;
+	} else if (clicked->parent != NULL) {
+		struct box *c;
+		for (c = clicked->parent->children; c != NULL; c = c->next) {
+			if (c->node != NULL && c->href == clicked->href) {
+				anchor = c;
+				break;
+			}
+		}
+	}
+	if (anchor == NULL || anchor->node == NULL)
+		return;
+
+	if (dom_element_get_attribute(anchor->node,
+			corestring_dom_download, &val) == DOM_NO_ERR &&
+			val != NULL) {
+		download_set_next_filename(
+				(const char *) dom_string_data(val));
+		dom_string_unref(val);
+	}
+}
+
+/**
  * handle non dragging mouse actions
  */
 static nserror
@@ -1931,6 +1972,13 @@ mouse_action_drag_none(html_content *html,
 		 * purely to download into it would leave an empty one behind. */
 		if (mas.link.box != NULL &&
 				(mas.link.box->flags & LINK_DOWNLOAD) != 0) {
+			/* fixes1064 (#114) — the suggested filename lives on the
+			 * anchor ELEMENT, and the clicked box is usually the
+			 * node-less TEXT box. The anchor's box is its SIBLING in
+			 * the same inline container (see the box-tree note in
+			 * box_special.c), and that one does carry the node -- so
+			 * the value is already reachable without new plumbing. */
+			html_download_suggest_name(mas.link.box);
 			res = browser_window_navigate(bw,
 					mas.link.url,
 					content_get_url(c),

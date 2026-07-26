@@ -72,6 +72,35 @@ static char *download_parse_filename(const char *filename)
  * \param url  URL of item being fetched
  * \return Default filename, or NULL on memory exhaustion
  */
+/* fixes1064 (#114) — suggested filename from <a download="name">.
+ *
+ * A one-shot set at click time and consumed by the next context creation,
+ * mirroring macos9_http_mark_next_as_document / macsurf_http_skip_next_cache.
+ * Done this way because the alternative is widening
+ * browser_window_navigate -> browser_window_download -> download_context_create
+ * to carry a filename, and every declaration of an exported symbol has to move
+ * in lockstep under CW8's flat namespace -- see the fixes917/918/919 revert.
+ *
+ * Cleared on read so a suggestion can never leak onto an unrelated later
+ * download.
+ */
+static char *download_next_suggested = NULL;
+
+void download_set_next_filename(const char *name)
+{
+	free(download_next_suggested);
+	download_next_suggested = NULL;
+	if (name != NULL && name[0] != '\0')
+		download_next_suggested = strdup(name);
+}
+
+static char *download_take_suggested(void)
+{
+	char *n = download_next_suggested;
+	download_next_suggested = NULL;
+	return n;
+}
+
 static char *download_default_filename(nsurl *url)
 {
 	char *nice;
@@ -141,6 +170,12 @@ static nserror download_context_process_headers(download_context *ctx)
 
 	ctx->mime_type = lwc_string_ref(content_type->media_type);
 	ctx->total_length = length;
+	if (ctx->filename == NULL) {
+		/* fixes1064 (#114) — <a download="name"> is a SUGGESTION, so a
+		 * server-supplied Content-Disposition still wins; this only
+		 * beats the URL-derived default. */
+		ctx->filename = download_take_suggested();
+	}
 	if (ctx->filename == NULL) {
 		ctx->filename = download_default_filename(
 				llcache_handle_get_url(ctx->llcache));

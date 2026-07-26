@@ -43,6 +43,18 @@ typedef struct download_context download_context;
  * This must only be called by the core browser window fetch infrastructure.
  * Ownership of the download context object created is passed to the frontend.
  */
+/**
+ * fixes1064 (#114) — suggest a filename for the NEXT download context.
+ *
+ * Consumed once by download_context_create and cleared, so a suggestion
+ * cannot leak onto an unrelated later download. A server-supplied
+ * Content-Disposition still takes precedence; this only beats the
+ * URL-derived default.
+ *
+ * \param name  suggested filename, or NULL/"" to clear
+ */
+void download_set_next_filename(const char *name);
+
 nserror download_context_create(struct llcache_handle *llcache,
 		struct gui_window *parent);
 
