@@ -2794,6 +2794,40 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 			}
 		}
 
+		/* fixes1058 (#258) — the remaining PRESENTATION ATTRIBUTES.
+		 *
+		 * The standalone painter only ever read `fill`, so it could not
+		 * stroke AT ALL and ignored fill-opacity unless it arrived via
+		 * style=. The inline painter has honoured these for a while
+		 * (fill-opacity :770, stroke-opacity :783, fixes305); this
+		 * brings <img src="*.svg"> to the same level. Attributes first,
+		 * style= overrides below, per SVG precedence. */
+		if (svg__tag_attr(tag, tend, "fill-opacity", av, sizeof(av))) {
+			size_t used = 0;
+			float fo = svg__atof(av, &used);
+			if (used > 0 && fo >= 0.0f && fo <= 1.0f)
+				st.fill_opacity = fo;
+		}
+		if (svg__tag_attr(tag, tend, "stroke", av, sizeof(av))) {
+			colour col;
+			int none = 0;
+			if (svg__parse_colour(av, &col, &none)) {
+				st.stroke_present = none ? 0 : 1;
+				if (!none) st.stroke = col;
+			}
+		}
+		if (svg__tag_attr(tag, tend, "stroke-width", av, sizeof(av))) {
+			size_t used = 0;
+			float sw = svg__atof(av, &used);
+			if (used > 0 && sw >= 0.0f) st.stroke_width = sw;
+		}
+		if (svg__tag_attr(tag, tend, "stroke-opacity", av, sizeof(av))) {
+			size_t used = 0;
+			float so = svg__atof(av, &used);
+			if (used > 0 && so >= 0.0f && so <= 1.0f)
+				st.stroke_opacity = so;
+		}
+
 		/* fixes1043 (#280) — style="fill:..." AFTER the presentation
 		 * attribute, because per SVG a style declaration overrides it.
 		 * Without this every path from an exported SVG (which uses style=
@@ -2819,10 +2853,34 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 				if (used > 0 && fo >= 0.0f && fo <= 1.0f)
 					st.fill_opacity = fo;
 			}
+			/* fixes1058 (#258) — stroke via style=, mirroring the
+			 * attribute handling above. */
+			if (svg__style_prop(sv, "stroke", pv, sizeof(pv))) {
+				colour col;
+				int none = 0;
+				if (svg__parse_colour(pv, &col, &none)) {
+					st.stroke_present = none ? 0 : 1;
+					if (!none) st.stroke = col;
+				}
+			}
+			if (svg__style_prop(sv, "stroke-width", pv, sizeof(pv))) {
+				size_t used = 0;
+				float sw = svg__atof(pv, &used);
+				if (used > 0 && sw >= 0.0f) st.stroke_width = sw;
+			}
+			if (svg__style_prop(sv, "stroke-opacity", pv,
+					sizeof(pv))) {
+				size_t used = 0;
+				float so = svg__atof(pv, &used);
+				if (used > 0 && so >= 0.0f && so <= 1.0f)
+					st.stroke_opacity = so;
+			}
 			/* display:none on the element itself must not paint. */
 			if (svg__style_prop(sv, "display", pv, sizeof(pv)) &&
-					strncmp(pv, "none", 4) == 0)
+					strncmp(pv, "none", 4) == 0) {
 				st.fill_present = 0;
+				st.stroke_present = 0;
+			}
 		}
 
 		/* fixes1049 — group translate plus this path's own transform,
@@ -2842,7 +2900,10 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 			}
 		}
 
-		if (st.fill_present) {
+		/* fixes1058 (#258) — paint when EITHER paint is active. The gate
+		 * was fill-only, so a stroke-only shape -- very common in icon
+		 * sets -- drew nothing at all. */
+		if (st.fill_present || st.stroke_present) {
 			float save_m4 = sc.m[4];
 			float save_m5 = sc.m[5];
 
