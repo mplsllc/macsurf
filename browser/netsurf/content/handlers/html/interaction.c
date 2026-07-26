@@ -1606,6 +1606,91 @@ default_mouse_action(html_content *html,
 
 
 /**
+ * fixes1060 (#114) — does this link carry the HTML5 `download` attribute?
+ *
+ * `<a href="x.zip" download>` must SAVE the target rather than navigate to it.
+ * NetSurf already has the whole mechanism: BW_NAVIGATE_DOWNLOAD is honoured by
+ * browser_window_navigate (browser_window.c:3604) and routes to
+ * browser_window_download, and this frontend has a real gui_download_table
+ * (macos9_download.c, wired at main.c:1882). Only the attribute was never read.
+ *
+ * Read from the DOM at click time rather than captured onto struct box:
+ * `download` is rare, a click is not hot, and box->href PROPAGATES to
+ * descendants -- so the box handed to us may be an <img> inside the anchor
+ * rather than the <a> itself. Walking up to the nearest ancestor <a> is both
+ * correct for that case and avoids widening struct box, which every page pays
+ * for in memory.
+ *
+ * Depth-bounded. Returns false on any DOM error, so a failure navigates
+ * normally rather than silently swallowing the click.
+ */
+static bool html_link_is_download(struct box *box)
+{
+	dom_node *n = NULL;
+	dom_string *dl_name = NULL;
+	bool found = false;
+	int depth = 0;
+
+	/* find the nearest box that actually carries a DOM node */
+	while (box != NULL && box->node == NULL)
+		box = box->parent;
+	if (box == NULL)
+		return false;
+
+	if (dom_string_create((const uint8_t *) "download", 8,
+			&dl_name) != DOM_NO_ERR)
+		return false;
+
+	n = box->node;
+	dom_node_ref(n);
+
+	while (n != NULL && depth++ < 32) {
+		dom_node_type type = 0;
+		dom_node *parent = NULL;
+
+		if (dom_node_get_node_type(n, &type) == DOM_NO_ERR &&
+				type == DOM_ELEMENT_NODE) {
+			dom_string *tag = NULL;
+			if (dom_node_get_node_name(n, &tag) == DOM_NO_ERR &&
+					tag != NULL) {
+				bool is_a = dom_string_caseless_lwc_isequal(tag,
+						corestring_lwc_a);
+				dom_string_unref(tag);
+				if (is_a) {
+					/* dom_element_get_attribute, not
+					 * has_attribute: get_attribute is what
+					 * core uses everywhere (box_special.c:727)
+					 * and has_attribute is only ever reached
+					 * through the frontend's dispatch wrapper
+					 * (macsurf_dom_dispatch.c:177). A present
+					 * boolean attribute yields a non-NULL
+					 * (possibly empty) string. */
+					dom_string *v = NULL;
+					if (dom_element_get_attribute(n,
+							dl_name, &v) ==
+								DOM_NO_ERR &&
+							v != NULL) {
+						found = true;
+						dom_string_unref(v);
+					}
+					break;   /* nearest <a> decides */
+				}
+			}
+		}
+
+		if (dom_node_get_parent_node(n, &parent) != DOM_NO_ERR)
+			break;
+		dom_node_unref(n);
+		n = parent;
+	}
+
+	if (n != NULL)
+		dom_node_unref(n);
+	dom_string_unref(dl_name);
+	return found;
+}
+
+/**
  * handle non dragging mouse actions
  */
 static nserror
@@ -1916,6 +2001,22 @@ mouse_action_drag_none(html_content *html,
 		break;
 
 	case ACTION_NAVIGATE:
+		/* fixes1060 (#114) — <a download> saves instead of navigating.
+		 * Same call, plus the flag browser_window_navigate already
+		 * honours; no new download path to drift from the real one.
+		 * Target resolution is skipped for a download: opening a window
+		 * only to immediately download into it is what _blank downloads
+		 * do in other browsers, and it would leave a blank window. */
+		if (html_link_is_download(mas.link.box)) {
+			res = browser_window_navigate(bw,
+					mas.link.url,
+					content_get_url(c),
+					BW_NAVIGATE_DOWNLOAD,
+					NULL,
+					NULL,
+					NULL);
+			break;
+		}
 		res = browser_window_navigate(
 				browser_window_find_target(bw,
 							   mas.link.target,
