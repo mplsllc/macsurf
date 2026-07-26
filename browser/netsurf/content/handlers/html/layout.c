@@ -4248,7 +4248,7 @@ layout_line(struct box *first,
 
 			/* We reformat the iframe browser window to new
 			 * dimensions in pass 2 */
-		} else {
+		} else if (b->gadget != NULL) {
 			/* form control with no object */
 			if (b->width == AUTO)
 				b->width = FIXTOINT(css_unit_len2device_px(
@@ -4260,6 +4260,32 @@ layout_line(struct box *first,
 						b->style,
 						&content->unit_len_ctx, INTTOFIX(1),
 						CSS_UNIT_EM));
+		} else {
+			/* fixes1068 (#226) — a replaced element with no object
+			 * and no known intrinsic size: a lazy <img> whose fetch
+			 * has not landed and whose URL missed the imgdims memo
+			 * (fixes929 fills obj_w on a hit, which takes the
+			 * aspect-preserving branch above).
+			 *
+			 * Upstream NetSurf never reaches here for an image —
+			 * it has no deferred loading, so every <img> owns an
+			 * object by layout time and this branch is only ever
+			 * the form control its comment describes. MacSurf added
+			 * lazy loading (fixes738/932) and images silently
+			 * inherited the 1em fallback, so an unsized lazy image
+			 * became a 1em SQUARE regardless of its real shape.
+			 * Measured in the harness: 15x15, collapsing a row that
+			 * should be 48 down to 19.
+			 *
+			 * Reserve nothing rather than guess a square. When the
+			 * object arrives layout re-runs through
+			 * layout_get_object_dimensions with the true intrinsic
+			 * size, which is also what a 0-sized box lets the memo
+			 * correct on the next visit. */
+			if (b->width == AUTO)
+				b->width = 0;
+			if (b->height == AUTO)
+				b->height = 0;
 		}
 
 		/* Reformat object to new box size */
