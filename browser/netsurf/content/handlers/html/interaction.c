@@ -1624,24 +1624,38 @@ default_mouse_action(html_content *html,
  * Depth-bounded. Returns false on any DOM error, so a failure navigates
  * normally rather than silently swallowing the click.
  */
-static bool html_link_is_download(struct box *box)
+static bool html_link_is_download(dom_node *start)
 {
 	dom_node *n = NULL;
 	dom_string *dl_name = NULL;
 	bool found = false;
 	int depth = 0;
 
-	/* find the nearest box that actually carries a DOM node */
-	while (box != NULL && box->node == NULL)
-		box = box->parent;
-	if (box == NULL)
+	/* fixes1061 (#114) — walk the DOM, NOT the box tree.
+	 *
+	 * The first version started from mas.link.box and climbed box->parent.
+	 * That works for an <img> (its box carries the <img> node, whose DOM
+	 * parent is the <a>) and fails for TEXT, which is exactly what hardware
+	 * showed: only the icon downloaded.
+	 *
+	 * The reason is the box tree's shape. A text run is NOT nested under the
+	 * anchor's inline box -- BOX_TEXT hangs off an anonymous
+	 * BOX_INLINE_CONTAINER and is a SIBLING of the <a>'s BOX_INLINE. So
+	 * box->parent climbs past the anchor into the containing block and never
+	 * sees it.
+	 *
+	 * mas.node is the clicked DOM node (set at :936, defaulting to <html>),
+	 * which is the same axis link_box_for_ancestor already uses for split
+	 * anchors. DOM ancestry always reaches the <a> from either a text node
+	 * or a replaced element. */
+	if (start == NULL)
 		return false;
 
 	if (dom_string_create((const uint8_t *) "download", 8,
 			&dl_name) != DOM_NO_ERR)
 		return false;
 
-	n = box->node;
+	n = start;
 	dom_node_ref(n);
 
 	while (n != NULL && depth++ < 32) {
@@ -2007,7 +2021,7 @@ mouse_action_drag_none(html_content *html,
 		 * Target resolution is skipped for a download: opening a window
 		 * only to immediately download into it is what _blank downloads
 		 * do in other browsers, and it would leave a blank window. */
-		if (html_link_is_download(mas.link.box)) {
+		if (html_link_is_download(mas.node)) {
 			res = browser_window_navigate(bw,
 					mas.link.url,
 					content_get_url(c),
