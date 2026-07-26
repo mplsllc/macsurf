@@ -1957,15 +1957,89 @@ macos9_plot_path(const struct redraw_context *ctx,
 #ifdef __MACOS9__
 	ClosePoly();
 	if (has_started) {
+		/* fixes1059 (#258) — this block used to PaintPoly/FramePoly with
+		 * nothing but a foreground colour, discarding two fields the
+		 * caller had already computed correctly:
+		 *
+		 *  - pstyle->stroke_width was never applied, so QuickDraw's
+		 *    default 1x1 pen drew EVERY svg stroke as a hairline no
+		 *    matter what stroke-width said. plot_rectangle and the
+		 *    border code have honoured PenSize since fixes170; only this
+		 *    path missed it, which is why it never showed outside SVG.
+		 *  - pstyle->opacity was ignored, so fill-opacity /
+		 *    stroke-opacity painted fully solid.
+		 *
+		 * Both now use the same idioms as macos9_plot_rectangle: PenSize
+		 * from the fixed-point width, and the fixes49 stipple buckets for
+		 * opacity. Pen state is restored with PenNormal() so a wide pen
+		 * cannot leak into the next primitive. */
+		plot_style_fixed op = pstyle->opacity;
+		bool stipple = false;
+		Pattern stipple_pat;
+
+		/* fixes49/fixes223: 0 means "never set" for the many callers
+		 * that memset their plot_style, NOT transparent. */
+		if (op == 0) op = (plot_style_fixed)PLOT_STYLE_SCALE;
+		if (op < (plot_style_fixed)(PLOT_STYLE_SCALE / 20)) {
+			/* < 5% — paint nothing at all */
+			KillPoly(poly);
+			return NSERROR_OK;
+		}
+		if (op < (plot_style_fixed)((PLOT_STYLE_SCALE * 35) / 100)) {
+			GetIndPattern(&stipple_pat, sysPatListID, 2);
+			stipple = true;
+		} else if (op < (plot_style_fixed)((PLOT_STYLE_SCALE * 60) / 100)) {
+			GetIndPattern(&stipple_pat, sysPatListID, 3);
+			stipple = true;
+		} else if (op < (plot_style_fixed)((PLOT_STYLE_SCALE * 85) / 100)) {
+			GetIndPattern(&stipple_pat, sysPatListID, 4);
+			stipple = true;
+		}
+
 		if (pstyle->fill_type != PLOT_OP_TYPE_NONE) {
 			macos9_colour_to_rgb(pstyle->fill_colour, &rgb);
 			RGBForeColor(&rgb);
-			PaintPoly(poly);
+			if (stipple) {
+				/* fixes220 — force a white backdrop first: the
+				 * pattern paints FG on 1 bits and BG on 0 bits,
+				 * and a stale black BackColor turns a 50%
+				 * stipple into dark grey instead of a
+				 * translucent wash.
+				 *
+				 * PenPat + PaintPoly rather than FillPoly:
+				 * PaintPoly fills with the CURRENT pen pattern,
+				 * so this is the same result using calls this
+				 * frontend already proves it has. FillPoly
+				 * appears nowhere else in the tree and CW8's
+				 * Carbon headers are not worth gambling on for
+				 * an equivalent operation. */
+				RGBColor wht;
+				wht.red = 0xFFFF; wht.green = 0xFFFF;
+				wht.blue = 0xFFFF;
+				RGBBackColor(&wht);
+				PenPat(&stipple_pat);
+				PaintPoly(poly);
+				PenNormal();
+			} else {
+				PaintPoly(poly);
+			}
 		}
 		if (pstyle->stroke_type != PLOT_OP_TYPE_NONE) {
+			short pw = (short)(pstyle->stroke_width >>
+					PLOT_STYLE_RADIX);
+			if (pw < 1) pw = 1;
 			macos9_colour_to_rgb(pstyle->stroke_colour, &rgb);
 			RGBForeColor(&rgb);
+			PenSize(pw, pw);
+			if (stipple) {
+				RGBColor wht;
+				wht.red = 0xFFFF; wht.green = 0xFFFF;
+				wht.blue = 0xFFFF;
+				RGBBackColor(&wht);
+				PenPat(&stipple_pat);
+			}
 			FramePoly(poly);
+			PenNormal();   /* restore 1x1 pen AND solid pattern */
 		}
 	}
 	KillPoly(poly);
