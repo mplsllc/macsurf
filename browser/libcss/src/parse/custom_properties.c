@@ -263,10 +263,20 @@ void css__cp_entry_list_destroy(css_cp_entry *head)
  * Spec-correct behaviour would scope per element. For mactrove's
  * single-`--header-tile`-element case this works exactly right.
  *
- * Cleanup: TODO — clear on page navigation. Until then, entries
- * accumulate across page loads; the impact is one entry per inline
- * custom-prop per page, typically negligible. Last-writer-wins inside
- * a single page is the intended semantics.
+ * Cleanup: DONE (fixes267) — css_inline_extras_clear() is called from
+ * html_create() in content/handlers/html/html.c, so the table no longer
+ * accumulates across page loads. Last-writer-wins inside a single page
+ * remains the intended semantics.
+ *
+ * KNOWN SCOPING DEFECT (fixes1056, #305): html_create runs for EVERY html
+ * content, and an iframe is an html content. So loading an iframe clears the
+ * PARENT document's inline custom properties, and any later re-cascade of the
+ * parent resolves those var() references against nothing. The clear belongs on
+ * top-level navigation, not on every document create -- the frontend already
+ * has that exact signal in macos9_http_mark_next_as_document() (fixes161a).
+ * Not moved yet because that marker's call sites need auditing first: if any
+ * navigation path does not go through it, moving the clear there would let the
+ * table accumulate again, which is the bug fixes267 fixed.
  */
 static css_cp_entry *g_inline_extras_head = NULL;
 
