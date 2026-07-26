@@ -4754,10 +4754,41 @@ bool html_redraw_box(const html_content *html, struct box *box,
 				long want = (long) dh * nw;
 				long diff = got > want ? got - want : want - got;
 				if (want > 0 && diff * 20 > want) {
+					/* fixes1067 (#226) — name the BRANCH.
+					 *
+					 * fixes1065 proved distortion is real
+					 * (13x painted=9x21 from natural=64x64)
+					 * but not where it comes from. Two
+					 * candidates, and 1em would not give 21:
+					 *
+					 *  a) layout.c:4251 -- a replaced element
+					 *     with no object yet and no
+					 *     REPLACE_DIM falls into the "form
+					 *     control with no object" branch and
+					 *     takes 1em x 1em
+					 *  b) the paint rect here is built from a
+					 *     line box rather than box->width/height
+					 *
+					 * box= vs painted= separates them: if box
+					 * already carries the wrong size it is (a)
+					 * in layout; if box is right and painted
+					 * is wrong it is (b) here. flags/obj say
+					 * which layout branch was taken.
+					 *
+					 * Two harness gaps (fixes1062, fixes1066)
+					 * meant this could not be reproduced
+					 * locally at all -- hence measuring on the
+					 * real page instead of guessing. */
 					macsurf_debug_log_writef(
 						"LIFE img-aspect: painted=%dx%d "
-						"natural=%dx%d (STRETCHED)",
-						dw, dh, nw, nh);
+						"natural=%dx%d box=%dx%d "
+						"rdim=%d isrep=%d obj=%d objw=%d",
+						dw, dh, nw, nh,
+						box->width, box->height,
+						(box->flags & REPLACE_DIM) ? 1 : 0,
+						(box->flags & IS_REPLACED) ? 1 : 0,
+						box->object ? 1 : 0,
+						box->obj_w);
 				}
 			}
 		}
