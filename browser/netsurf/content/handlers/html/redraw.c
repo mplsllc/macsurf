@@ -4728,6 +4728,39 @@ bool html_redraw_box(const html_content *html, struct box *box,
 		 * cell is hardware-clipped by QuickDraw on draw. */
 		html_redraw_apply_object_fit(box, &obj_data);
 
+		/* fixes1065 (#306) — is a replaced element being ASPECT-DISTORTED?
+		 *
+		 * #306 asks one question about the 68kMLA header logo (natural
+		 * 100x36, HTML width="100" height="36"): once the mobile-only
+		 * max-width cap stops matching at desktop width, is the image
+		 * merely BIGGER -- correct desktop behaviour, which a real browser
+		 * also does -- or is it also STRETCHED? Only hardware can answer
+		 * it, because nothing decodes an image in the Linux harness.
+		 *
+		 * Self-filtering on purpose: logs ONLY when the painted aspect
+		 * differs from the intrinsic aspect by more than 5%, so an
+		 * ordinary page is silent and any line that appears IS the bug.
+		 * Integer cross-multiply, no float, no division by zero.
+		 *
+		 * Comes out once #306 is settled. */
+		{
+			int nw = content_get_width(box->object);
+			int nh = content_get_height(box->object);
+			int dw = obj_data.width;
+			int dh = obj_data.height;
+			if (nw > 0 && nh > 0 && dw > 0 && dh > 0) {
+				/* dw/dh == nw/nh  <=>  dw*nh == dh*nw */
+				long got  = (long) dw * nh;
+				long want = (long) dh * nw;
+				long diff = got > want ? got - want : want - got;
+				if (want > 0 && diff * 20 > want) {
+					macsurf_debug_log_writef(
+						"LIFE img-aspect: painted=%dx%d "
+						"natural=%dx%d (STRETCHED)",
+						dw, dh, nw, nh);
+				}
+			}
+		}
 
 		if (!content_redraw(box->object, &obj_data, &r, ctx)) {
 			/* fixes291 (#101): prefer the <img> `alt` text as the
