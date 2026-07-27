@@ -201,12 +201,42 @@ static void qjs_deadline_pop(double prev)
 	g_qjs_script_deadline = prev;
 }
 
+/* fixes1071 — WHERE does a slow script actually spend its time?
+ *
+ * The fixes1070 hardware log found ONE 72KB script (hackaday's navigation.js
+ * concat bundle) running for 24.7 SECONDS against 74ms of compile. Run-bound,
+ * so bytecode caching cannot help it -- but "run" still spans two completely
+ * different failure modes with different fixes:
+ *
+ *   - the QuickJS INTERPRETER is grinding through a genuinely huge number of
+ *     bytecode ops (the script is doing real work, or looping); or
+ *   - execution keeps leaving the interpreter to call NATIVE code -- our DOM
+ *     bindings -- and the cost is ours, not QuickJS's.
+ *
+ * Two counters separate them, and both are free:
+ *
+ *   ops   -- QuickJS calls this interrupt handler every
+ *            JS_INTERRUPT_COUNTER_INIT (=10000) bytecode ops, so counting
+ *            invocations yields the op count to within 10k. The handler was
+ *            already being called and already reads the clock; one increment
+ *            adds nothing.
+ *   ncalls -- every JS->C call passes through js_call_c_function in quickjs.c
+ *            (patched there, one increment).
+ *
+ * Divide by run_us. A G3 interprets on the order of a million ops/sec; if the
+ * measured rate is far below that, the interpreter is NOT where the time went
+ * and the native side is the place to look. */
+long macsurf_qjs_ncalls = 0;		/* incremented by quickjs.c */
+static long g_qjs_interrupts = 0;	/* x10000 = bytecode ops    */
+
 static int qjs_interrupt_handler(JSRuntime *rt, void *opaque)
 {
 	static double hb_last = 0.0;
 	static double wne_last = 0.0;   /* fixes690 (#209): WNE poll throttle */
 	double now;
 	(void)rt; (void)opaque;
+
+	g_qjs_interrupts++;
 
 	/* fixes690: QuickJS fires this handler every JS_INTERRUPT_COUNTER_INIT
 	 * (=10000) bytecode ops. macsurf_qjs_get_now() (Microseconds/mftb) is
@@ -1419,6 +1449,15 @@ static long g_perf_gc_runs    = 0;
  * JSPHASE line is the flag that says so out loud. */
 static int g_perf_gc_armed = 0;
 
+/* fixes1071 — wrapper-helper compile census. Declared HERE, above the perf
+ * emitters that read them, rather than beside qjs_helper_fn where they are
+ * written: C89 needs the declaration before every use, and the JSWHERE emit
+ * sits earlier in the file than the wrapper code. See qjs_helper_fn for what
+ * these mean and why they exist. */
+static long g_wrap_installs   = 0;
+static long g_helper_compiles = 0;
+static long g_helper_bytes    = 0;
+
 /* fixes1070 — called from JS_RunGC in quickjs.c (both copies: the CW8 build's
  * browser/libquickjs and the Linux harness's quickjs-macos9). GC has no public
  * hook, and it is triggered from inside allocation rather than by us, so there
@@ -1544,6 +1583,15 @@ void macsurf_qjs_run_gc(struct jsheap *heap)
 	JS_RunGC(heap->rt);
 }
 
+/* fixes1071 — wrapper/helper-compile census, for harness Test 50. */
+void macsurf_qjs_wrap_stats(long *wraps, long *hcompiles, long *hbytes);
+void macsurf_qjs_wrap_stats(long *wraps, long *hcompiles, long *hbytes)
+{
+	if (wraps != NULL)     *wraps     = g_wrap_installs;
+	if (hcompiles != NULL) *hcompiles = g_helper_compiles;
+	if (hbytes != NULL)    *hbytes    = g_helper_bytes;
+}
+
 void macsurf_qjs_perf_totals(long *evals, long *compile_us, long *run_us,
 		long *gc_us, long *gc_runs, int *gc_armed);
 void macsurf_qjs_perf_totals(long *evals, long *compile_us, long *run_us,
@@ -1572,6 +1620,29 @@ void macsurf_qjs_emit_js_profile(void)
 		"gc=%ldus gcruns=%ld gcarmed=%d",
 		g_perf_evals, g_perf_bytes, g_perf_compile_us, g_perf_run_us,
 		g_perf_gc_us, g_perf_gc_runs, g_perf_gc_armed);
+
+	/* fixes1071 — WHERE the run time went, and whether the wrapper-helper
+	 * cache is holding.
+	 *
+	 *   ops     estimated bytecode ops (interrupts x 10000). Divide by
+	 *           JSPHASE run= for ops/sec: a rate far under ~1M/s on this
+	 *           hardware means the interpreter is NOT the bottleneck.
+	 *   ncalls  every JS->C call (our bindings + QuickJS built-ins).
+	 *   wraps   element wrappers built this navigation.
+	 *   hcomp   helper-source COMPILES. Before fixes1071 this equalled
+	 *           4 x wraps; it should now be a small constant per context.
+	 *   hbytes  helper source bytes actually compiled. If this starts
+	 *           tracking wraps again, the cache is broken -- that is the
+	 *           regression this line exists to catch. */
+	macsurf_debug_log_writef(
+		"LIFE JSWHERE ops=%ld ncalls=%ld wraps=%ld hcomp=%ld hbytes=%ld",
+		g_qjs_interrupts * 10000L, macsurf_qjs_ncalls,
+		g_wrap_installs, g_helper_compiles, g_helper_bytes);
+	g_qjs_interrupts  = 0;
+	macsurf_qjs_ncalls = 0;
+	g_wrap_installs   = 0;
+	g_helper_compiles = 0;
+	g_helper_bytes    = 0;
 
 	for (i = 0; i < QJS_PERF_SLOTS; i++) {
 		if (g_perf_slot[i].name[0] != '\0') order[used++] = i;
@@ -3207,6 +3278,70 @@ static JSValue qjs_el_qs_data(JSContext *ctx,
 }
 
 /* Install JS-side helpers on element object (classList, style proxy, misc) */
+/* ------------------------------------------------------------------
+ * fixes1071 — COMPILE THE WRAPPER HELPERS ONCE, NOT PER ELEMENT.
+ *
+ * Every element wrapper installed four JS helper blocks, and each one was a
+ * JS_Eval of a fixed C string literal -- i.e. QuickJS parsed and code-generated
+ * the same ~13.9 KB of JavaScript again for every single element the page
+ * touched:
+ *
+ *     <el-helpers>  10810 bytes   classList/style/dataset/matches/closest/...
+ *     <node-nav>     1123 bytes   firstChild/nextSibling/... traversal
+ *     <el-props>      841 bytes   textContent property
+ *     <el-layout>    1084 bytes   offsetWidth/offsetHeight/...
+ *
+ * The fixes1070 hardware log priced compilation on this machine at 2.17us per
+ * source byte (jQuery: 101134 bytes in 219008us), so that is ~30ms of pure
+ * recompilation PER WRAPPER. It is also why hackaday looked "run-bound" with a
+ * trivial compile total: this compile happens inside a C binding during script
+ * execution, so every microsecond of it was charged to run_us.
+ *
+ * hackaday's navigation.js -- ONE 72KB script measured at 24.7 SECONDS, half
+ * the entire page load -- walks the nav tree touching element after element.
+ * ~800 wrappers is the whole 24.7s.
+ *
+ * The source is a compile-time constant, so the compiled function is reusable.
+ * Cache it and JS_Call the same function object per wrapper.
+ *
+ * KEYED PER CONTEXT, and that is not incidental: every iframe gets its own
+ * JSRuntime here, and a JSValue is only valid against the runtime that created
+ * it. A single file-static JSValue would hand iframe B a function object owned
+ * by iframe A's runtime -- the exact cross-runtime trap this codebase has
+ * already been bitten by. Stashing it on the context's own global object makes
+ * the cache per-context by construction and frees it with the context, with no
+ * teardown hook to forget. Defined non-enumerable so page code walking
+ * `for (k in window)` cannot see it.
+ * ------------------------------------------------------------------ */
+
+static JSValue qjs_helper_fn(JSContext *ctx, const char *key,
+		const char *src, const char *fname)
+{
+	JSValue g;
+	JSValue fn;
+
+	g = JS_GetGlobalObject(ctx);
+	fn = JS_GetPropertyStr(ctx, g, key);
+	if (JS_IsFunction(ctx, fn)) {
+		JS_FreeValue(ctx, g);
+		return fn;		/* cache hit; caller owns this ref */
+	}
+	JS_FreeValue(ctx, fn);
+
+	fn = JS_Eval(ctx, src, strlen(src), fname, JS_EVAL_TYPE_GLOBAL);
+	g_helper_compiles++;
+	g_helper_bytes += (long)strlen(src);
+	if (JS_IsException(fn)) {
+		JS_FreeValue(ctx, g);
+		return fn;		/* caller reports; unchanged behaviour */
+	}
+	/* Store a DUP: the global keeps one reference, the caller gets the
+	 * other and frees it exactly as it did when this was a fresh eval. */
+	JS_DefinePropertyValueStr(ctx, g, key, JS_DupValue(ctx, fn), 0);
+	JS_FreeValue(ctx, g);
+	return fn;
+}
+
 static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 {
 	static const char *src =
@@ -3649,7 +3784,7 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		 * runs AFTER this one and so has the last word. */
 		"})";
 	JSValue fn, args[1];
-	fn = JS_Eval(ctx, src, strlen(src), "<el-helpers>", JS_EVAL_TYPE_GLOBAL);
+	fn = qjs_helper_fn(ctx, "__ms_h_el", src, "<el-helpers>");
 	if (!JS_IsException(fn)) {
 		args[0] = JS_DupValue(ctx, obj);
 		JS_Call(ctx, fn, JS_UNDEFINED, 1, args);
@@ -3751,7 +3886,7 @@ static void qjs_install_node_traversal(JSContext *ctx, JSValue obj)
 
 	JS_FreeValue(ctx, data[0]);
 
-	fn = JS_Eval(ctx, nav_src, strlen(nav_src), "<node-nav>", JS_EVAL_TYPE_GLOBAL);
+	fn = qjs_helper_fn(ctx, "__ms_h_nav", nav_src, "<node-nav>");
 	if (!JS_IsException(fn)) {
 		args[0] = JS_DupValue(ctx, obj);
 		JS_Call(ctx, fn, JS_UNDEFINED, 1, args);
@@ -5636,6 +5771,7 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 	JS_FreeValue(ctx, data[0]);
 
 	/* JS-side helpers: classList, style, dataset, matches, closest, etc. */
+	g_wrap_installs++;	/* fixes1071 — see qjs_helper_fn */
 	qjs_el_install_js_helpers(ctx, obj);
 
 	/* Wire textContent as a property using the C getter/setter helpers */
@@ -5685,8 +5821,7 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 			"configurable:true});"
 			"})";
 		JSValue fn2, args2[1];
-		fn2 = JS_Eval(ctx, tc_src, strlen(tc_src), "<el-props>",
-			JS_EVAL_TYPE_GLOBAL);
+		fn2 = qjs_helper_fn(ctx, "__ms_h_props", tc_src, "<el-props>");
 		if (!JS_IsException(fn2)) {
 			args2[0] = JS_DupValue(ctx, obj);
 			JS_Call(ctx, fn2, JS_UNDEFINED, 1, args2);
@@ -5764,8 +5899,7 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 						"(window.scrollY||0)+r.top);};"
 			"})";
 		JSValue fn3, a3[1];
-		fn3 = JS_Eval(ctx, lay_src, strlen(lay_src), "<el-layout>",
-				JS_EVAL_TYPE_GLOBAL);
+		fn3 = qjs_helper_fn(ctx, "__ms_h_lay", lay_src, "<el-layout>");
 		if (!JS_IsException(fn3)) {
 			a3[0] = JS_DupValue(ctx, obj);
 			JS_Call(ctx, fn3, JS_UNDEFINED, 1, a3);

@@ -6098,5 +6098,82 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 49 PASS: compile/run split and GC hook measure "
 		"the right things ===\n");
 
+	/* --- Test 50: wrapper helpers compile ONCE, not once per element -----
+	 * fixes1070's hardware log found ONE 72KB script (hackaday's
+	 * navigation.js concat bundle) running 24.7 SECONDS -- half the entire
+	 * page load. Root cause: every element wrapper JS_Eval'd four fixed C
+	 * string literals totalling ~13.9 KB of JavaScript, so QuickJS parsed
+	 * and code-generated the same source again for every element the page
+	 * touched. At the 2.17us/byte compile rate that log priced, that is
+	 * ~30ms per wrapper, and a script walking ~800 elements IS the 24.7s.
+	 *
+	 * It hid because the recompilation happens inside a C binding during
+	 * script execution, so it was charged to run_us and read as "the script
+	 * is slow" rather than "we recompile our own helpers 800 times".
+	 *
+	 * The invariant is simple and is the only honest way to state the fix:
+	 * helper compiles must NOT scale with wrapper count. Asserting "the
+	 * page got faster" would be a timing test on an ASan -O0 build; this
+	 * asserts the mechanism, in counts. */
+	fprintf(stderr, "\n=== Test 50: wrapper helpers compile once, not per "
+		"element ===\n");
+	{
+		extern void macsurf_qjs_wrap_stats(long *wraps, long *hcompiles,
+				long *hbytes);
+		long w0 = 0, c0 = 0, b0 = 0, w1 = 0, c1 = 0, b1 = 0;
+		const char *walk =
+			"var host=document.getElementById('feed');"
+			"if(!host)throw new Error('t50 fixture #feed is gone');"
+			"var i,d;"
+			"for(i=0;i<120;i++){d=document.createElement('div');"
+			"d.className='t50row';d.textContent='r'+i;"
+			"host.appendChild(d);}"
+			"var all=host.querySelectorAll('.t50row');"
+			"if(all.length<120)throw new Error('t50 built '+all.length"
+			"+' rows, want >=120');"
+			/* Touch each one so a wrapper is genuinely built per
+			 * element -- the whole point is per-element wrapping. */
+			"var n=0;for(i=0;i<all.length;i++){"
+			"if(all[i].className==='t50row')n++;}"
+			"globalThis.__t50n=n;";
+
+		macsurf_qjs_wrap_stats(&w0, &c0, &b0);
+		if (!js_exec(thread, (const unsigned char *)walk, strlen(walk),
+				"t50-walk.js")) {
+			fprintf(stderr, "FAIL: Test 50 -- fixture threw\n");
+			return 1;
+		}
+		macsurf_qjs_wrap_stats(&w1, &c1, &b1);
+		fprintf(stderr, "  t50 wraps +%ld  helper-compiles +%ld  "
+			"helper-bytes +%ld\n", w1 - w0, c1 - c0, b1 - b0);
+
+		if (w1 - w0 < 100) {
+			fprintf(stderr, "FAIL: Test 50 -- only %ld element "
+				"wrappers were built; the fixture is not "
+				"exercising per-element wrapping and the test "
+				"below would pass vacuously.\n", w1 - w0);
+			return 1;
+		}
+		/* THE assertion: compiles must not scale with wrappers. Four
+		 * helper blocks exist, so four compiles per fresh context is
+		 * the ceiling -- and this context is already warm from Tests
+		 * 1-49, so the honest expectation here is zero. Allow the
+		 * four-block ceiling so the test is not brittle about which
+		 * test warmed the cache first. */
+		if (c1 - c0 > 4) {
+			fprintf(stderr, "FAIL: Test 50 -- %ld element wrappers "
+				"caused %ld helper compiles (%ld bytes). Helper "
+				"compiles must NOT scale with wrapper count: the "
+				"sources are compile-time constants and are "
+				"cached per context by qjs_helper_fn. This is "
+				"the hackaday navigation.js regression -- 24.7s "
+				"on one script, half the page load.\n",
+				w1 - w0, c1 - c0, b1 - b0);
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 50 PASS: helper compiles do not scale with "
+		"wrapper count ===\n");
+
 	return 0;
 }
