@@ -106,5 +106,10 @@ void macsurf_qjs_page_js_summary(void) { }
  * symbol. Everything in this file is a no-engine fallback and belongs
  * above the #endif; nothing here may ever be defined unconditionally. */
 void macsurf_qjs_emit_timer_profile(void) { }
+/* fixes1070 — likewise INSIDE the guard, per the note above. The GC hook has
+ * no stub here on purpose: its only caller is quickjs.c, which is not built
+ * when WITH_QUICKJS is off, so a stub would be dead weight rather than a
+ * fallback. */
+void macsurf_qjs_emit_js_profile(void) { }
 
 #endif /* !WITH_QUICKJS */

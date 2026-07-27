@@ -1359,6 +1359,267 @@ static void qjs_short_name(const char *name, char *out, int cap)
 	if (out[0] == '\0' && cap > 6) strcpy(out, "(anon)");
 }
 
+/* ------------------------------------------------------------------
+ * fixes1070 — JS PHASE + PER-SCRIPT PROFILE
+ *
+ * Measured 2026-07-25, hackaday front page: js = 25.4s of a 31s load, while
+ * cascade+layout+paint together are ~1.2s. fixes1037 already split timer CPU
+ * out (0.6s), which proved it is TOP-LEVEL BUNDLE EXECUTION rather than
+ * intervals spinning. That is as far as one lump accumulator can take us, and
+ * it is not far enough to choose a fix:
+ *
+ *   - if COMPILE dominates, the answer is bytecode caching -- JS_WriteObject
+ *     the compiled function into the existing disk cache (macos9_disk_cache.c,
+ *     which already streams and already survives relaunch) and JS_ReadObject
+ *     it back. Big win, self-contained, no JS semantics touched.
+ *   - if RUN dominates, caching buys nothing at all and the answer is a
+ *     per-script budget, or making our own DOM bindings cheaper.
+ *
+ * Those are opposite pieces of work, and 25 seconds is too much to spend
+ * guessing which. So: bracket compile and run separately, and keep a small
+ * top-N table naming the scripts that actually cost the time. Both are
+ * accumulate-into-statics and emit-once-per-navigation -- the shape CLAUDE.md
+ * settled on after per-event logging repeatedly polluted the very measurement
+ * it was taken for (the fixes347d var() trace was 95.5% of one load's log).
+ * ------------------------------------------------------------------ */
+
+#define QJS_PERF_SLOTS 8
+#define QJS_PERF_NAME  32
+
+struct qjs_perf_slot {
+	char name[QJS_PERF_NAME];
+	long bytes;
+	long compile_us;
+	long run_us;
+	long evals;
+};
+static struct qjs_perf_slot g_perf_slot[QJS_PERF_SLOTS];
+static long g_perf_evals      = 0;	/* top-level evals this navigation  */
+static long g_perf_bytes      = 0;	/* source bytes compiled            */
+static long g_perf_compile_us = 0;	/* parse + codegen, summed          */
+static long g_perf_run_us     = 0;	/* bytecode execution, summed       */
+static long g_perf_gc_us      = 0;	/* JS_RunGC, summed (see note below)*/
+static long g_perf_gc_runs    = 0;
+
+/* fixes1070 — is automatic cycle-GC ARMED? Set by js_newheap alongside the
+ * JS_SetGCThreshold call, so the log can never present gc=0 as "collection is
+ * free" when the truth is "collection never runs".
+ *
+ * It does not run: fixes593 pushed the threshold to 1GB, past the 128MB memory
+ * cap, to work around a heap-corruption freeze on tinkerdifferent that was
+ * suspected to be the cycle collector double-freeing an over-released ref.
+ * That was a diagnostic that shipped, and the underlying refcount bug was never
+ * found, so GC has been off ever since.
+ *
+ * That matters HERE because it is a live perf hypothesis, not just history:
+ * with the collector off, every cyclic object a page creates survives the whole
+ * navigation and the heap only grows toward the 128MB cap. On a bundle-heavy
+ * page that is steadily worse allocator behaviour and locality across the same
+ * 25s of script execution this round is trying to explain. gcarmed=0 in the
+ * JSPHASE line is the flag that says so out loud. */
+static int g_perf_gc_armed = 0;
+
+/* fixes1070 — called from JS_RunGC in quickjs.c (both copies: the CW8 build's
+ * browser/libquickjs and the Linux harness's quickjs-macos9). GC has no public
+ * hook, and it is triggered from inside allocation rather than by us, so there
+ * is nowhere else to measure it.
+ *
+ * NOTE FOR READING THE LOG: gc is a SUBSET of compile+run, not a third bucket
+ * to add to them. A collection runs nested inside whichever eval allocated the
+ * object that tripped the threshold, so its microseconds are already counted
+ * there. compile+run+gc would double-count. */
+void macsurf_qjs_gc_note(long us);
+void macsurf_qjs_gc_note(long us)
+{
+	g_perf_gc_runs++;
+	if (us > 0) g_perf_gc_us += us;
+}
+
+static void qjs_perf_note_script(const char *name, long bytes,
+		long compile_us, long run_us)
+{
+	char sn[QJS_PERF_NAME];
+	int i;
+	int victim;
+	long victim_cost;
+	long cost;
+
+	g_perf_evals++;
+	if (bytes > 0)      g_perf_bytes      += bytes;
+	if (compile_us > 0) g_perf_compile_us += compile_us;
+	if (run_us > 0)     g_perf_run_us     += run_us;
+
+	qjs_short_name(name, sn, (int)sizeof(sn));
+
+	/* Same script evaluated twice (or an inline <script> sharing the
+	 * document's name) merges into one row rather than consuming a second
+	 * slot -- otherwise a page with many small inline scripts evicts the
+	 * one big bundle we are trying to find. */
+	for (i = 0; i < QJS_PERF_SLOTS; i++) {
+		if (g_perf_slot[i].name[0] != '\0' &&
+		    strcmp(g_perf_slot[i].name, sn) == 0) {
+			g_perf_slot[i].bytes      += bytes;
+			g_perf_slot[i].compile_us += compile_us;
+			g_perf_slot[i].run_us     += run_us;
+			g_perf_slot[i].evals++;
+			return;
+		}
+	}
+	for (i = 0; i < QJS_PERF_SLOTS; i++) {
+		if (g_perf_slot[i].name[0] == '\0') {
+			strcpy(g_perf_slot[i].name, sn);
+			g_perf_slot[i].bytes      = bytes;
+			g_perf_slot[i].compile_us = compile_us;
+			g_perf_slot[i].run_us     = run_us;
+			g_perf_slot[i].evals      = 1;
+			return;
+		}
+	}
+	/* Table full: evict the cheapest row, but only if this script beats
+	 * it. Keeps the N most expensive scripts, which is the whole point. */
+	victim = 0;
+	victim_cost = g_perf_slot[0].compile_us + g_perf_slot[0].run_us;
+	for (i = 1; i < QJS_PERF_SLOTS; i++) {
+		long c = g_perf_slot[i].compile_us + g_perf_slot[i].run_us;
+		if (c < victim_cost) { victim_cost = c; victim = i; }
+	}
+	cost = compile_us + run_us;
+	if (cost > victim_cost) {
+		strcpy(g_perf_slot[victim].name, sn);
+		g_perf_slot[victim].bytes      = bytes;
+		g_perf_slot[victim].compile_us = compile_us;
+		g_perf_slot[victim].run_us     = run_us;
+		g_perf_slot[victim].evals      = 1;
+	}
+}
+
+/* fixes1070 — read-back accessors, so the harness can assert on what this
+ * instrument MEASURED rather than merely that it emitted something.
+ *
+ * The standing rule here is "assert counts, never booleans", and it exists
+ * because a boolean check cannot see a double-fire (the libdom double-dispatch
+ * hid for ~15 rounds behind "did it fire?"). The same trap applies to a
+ * profiler with even less excuse: compile and run brackets that were
+ * accidentally swapped would still produce two plausible non-zero numbers, and
+ * every conclusion drawn from them would be backwards. Exposing the slots lets
+ * harness Test 49 run one compile-heavy and one run-heavy script and check
+ * that the split lands on the right side of the seam.
+ *
+ * Returns 1 if slot i is in use, 0 otherwise. Any out pointer may be NULL. */
+int macsurf_qjs_perf_slot(int i, char *name, int cap, long *bytes,
+		long *compile_us, long *run_us, long *evals);
+int macsurf_qjs_perf_slot(int i, char *name, int cap, long *bytes,
+		long *compile_us, long *run_us, long *evals)
+{
+	if (i < 0 || i >= QJS_PERF_SLOTS) return 0;
+	if (g_perf_slot[i].name[0] == '\0') return 0;
+	if (name != NULL && cap > 0) {
+		int j = 0;
+		while (j < cap - 1 && g_perf_slot[i].name[j] != '\0') {
+			name[j] = g_perf_slot[i].name[j]; j++;
+		}
+		name[j] = '\0';
+	}
+	if (bytes != NULL)      *bytes      = g_perf_slot[i].bytes;
+	if (compile_us != NULL) *compile_us = g_perf_slot[i].compile_us;
+	if (run_us != NULL)     *run_us     = g_perf_slot[i].run_us;
+	if (evals != NULL)      *evals      = g_perf_slot[i].evals;
+	return 1;
+}
+
+/* fixes1070 — run a collection explicitly, and therefore measurably.
+ *
+ * Automatic GC is disarmed (see g_perf_gc_armed), so JS_RunGC currently has no
+ * caller at all in a normal load and the timing hook in quickjs.c would be
+ * dead code that nothing could verify. This gives it one, and it is the entry
+ * point a future round would use if collection is ever re-armed at a safe
+ * quiescent point rather than mid-allocation -- which is the shape that would
+ * dodge the fixes593 freeze while getting the memory back.
+ *
+ * Nothing on the load path calls this today; it changes no behaviour. */
+void macsurf_qjs_run_gc(struct jsheap *heap);
+void macsurf_qjs_run_gc(struct jsheap *heap)
+{
+	if (heap == NULL || heap->rt == NULL) return;
+	JS_RunGC(heap->rt);
+}
+
+void macsurf_qjs_perf_totals(long *evals, long *compile_us, long *run_us,
+		long *gc_us, long *gc_runs, int *gc_armed);
+void macsurf_qjs_perf_totals(long *evals, long *compile_us, long *run_us,
+		long *gc_us, long *gc_runs, int *gc_armed)
+{
+	if (gc_armed != NULL)   *gc_armed   = g_perf_gc_armed;
+	if (evals != NULL)      *evals      = g_perf_evals;
+	if (compile_us != NULL) *compile_us = g_perf_compile_us;
+	if (run_us != NULL)     *run_us     = g_perf_run_us;
+	if (gc_us != NULL)      *gc_us      = g_perf_gc_us;
+	if (gc_runs != NULL)    *gc_runs    = g_perf_gc_runs;
+}
+
+/* Emitted once per navigation from the NAV: DONE hook in browser_window.c,
+ * beside the existing PERFACC / JSTIME lines. */
+void macsurf_qjs_emit_js_profile(void);
+void macsurf_qjs_emit_js_profile(void)
+{
+	int i;
+	int rank;
+	int order[QJS_PERF_SLOTS];
+	int used = 0;
+
+	macsurf_debug_log_writef(
+		"LIFE JSPHASE evals=%ld bytes=%ld compile=%ldus run=%ldus "
+		"gc=%ldus gcruns=%ld gcarmed=%d",
+		g_perf_evals, g_perf_bytes, g_perf_compile_us, g_perf_run_us,
+		g_perf_gc_us, g_perf_gc_runs, g_perf_gc_armed);
+
+	for (i = 0; i < QJS_PERF_SLOTS; i++) {
+		if (g_perf_slot[i].name[0] != '\0') order[used++] = i;
+	}
+	/* Selection sort by total cost, descending. N is 8; a sort here costs
+	 * nothing and a log read should not have to rank rows by eye. */
+	for (rank = 0; rank < used; rank++) {
+		int best = rank;
+		long best_cost = g_perf_slot[order[rank]].compile_us +
+				 g_perf_slot[order[rank]].run_us;
+		int j;
+		for (j = rank + 1; j < used; j++) {
+			long c = g_perf_slot[order[j]].compile_us +
+				 g_perf_slot[order[j]].run_us;
+			if (c > best_cost) { best_cost = c; best = j; }
+		}
+		if (best != rank) {
+			int t = order[rank]; order[rank] = order[best];
+			order[best] = t;
+		}
+	}
+	for (rank = 0; rank < used; rank++) {
+		struct qjs_perf_slot *s = &g_perf_slot[order[rank]];
+		macsurf_debug_log_writef(
+			"LIFE JSTOP%d %s b=%ld c=%ldus r=%ldus n=%ld",
+			rank + 1, s->name, s->bytes, s->compile_us,
+			s->run_us, s->evals);
+	}
+
+	/* Zero for the next navigation, exactly as the PERFACC accumulators do
+	 * -- every hardware log we pull covers two or more loads, and carrying
+	 * one page's bundles into the next page's table would misattribute the
+	 * cost to whichever site happened to be loaded second. */
+	for (i = 0; i < QJS_PERF_SLOTS; i++) {
+		g_perf_slot[i].name[0]    = '\0';
+		g_perf_slot[i].bytes      = 0;
+		g_perf_slot[i].compile_us = 0;
+		g_perf_slot[i].run_us     = 0;
+		g_perf_slot[i].evals      = 0;
+	}
+	g_perf_evals      = 0;
+	g_perf_bytes      = 0;
+	g_perf_compile_us = 0;
+	g_perf_run_us     = 0;
+	g_perf_gc_us      = 0;
+	g_perf_gc_runs    = 0;
+}
+
 /* fixes870 (#297) — createElementNS, Preact's only element factory. */
 extern dom_exception macsurf_dom_document_create_element_ns_s(dom_document *doc,
 		const char *ns, const char *qname, dom_element **element);
@@ -8831,6 +9092,10 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 	 * is torn down wholesale on nav, so uncollected cycles never accumulate.
 	 * (If this proves it, the real refcount bug gets fixed and GC re-armed.) */
 	JS_SetGCThreshold(heap->rt, (size_t)0x40000000UL);  /* 1GB > 128MB cap */
+	/* fixes1070 — record that the collector is OFF so the perf log says so.
+	 * Set beside the call it describes: a flag that can drift from the
+	 * threshold it reports is worse than no flag. See g_perf_gc_armed. */
+	g_perf_gc_armed = 0;
 
 	JS_SetInterruptHandler(heap->rt, qjs_interrupt_handler, NULL);
 
@@ -9697,13 +9962,52 @@ unsigned char js_exec(struct jsthread *thread,
 	 * re-entrant exec can never erase an outer deadline. */
 	{
 		/* fixes640 — accumulate JS execution CPU per top-level eval. */
+		/* fixes1070 — and SPLIT it into compile vs run.
+		 *
+		 * JS_Eval is compile-then-run in one call, so the fixes640
+		 * bracket could only ever produce one number. QuickJS exposes
+		 * the seam: JS_Eval with JS_EVAL_FLAG_COMPILE_ONLY returns the
+		 * compiled function object, and JS_EvalFunction runs it. This
+		 * is not a behaviour change -- quickjs.c's __JS_EvalInternal
+		 * ends in exactly `if (COMPILE_ONLY) ret = fun_obj; else ret =
+		 * JS_EvalFunctionInternal(ctx, fun_obj, this_obj, var_refs,
+		 * sf)`, and for JS_EVAL_TYPE_GLOBAL (not _DIRECT) it has
+		 * already set var_refs = NULL and sf = NULL, which is
+		 * precisely what JS_EvalFunction passes. Same this_obj
+		 * (ctx->global_obj) on both paths too. The two forms are
+		 * equivalent for this call site; only the timing differs.
+		 *
+		 * JS_EvalFunction CONSUMES fun_obj on every path (JS_CallFree
+		 * on the bytecode path, JS_FreeValue otherwise), so there is
+		 * no leak and nothing to free here. */
 		extern double macos9_micros(void);
 		extern void macsurf_profile_accum_js(long us);
 		double prevdl = qjs_deadline_push((double)QJS_SCRIPT_TIMEOUT_MS);
 		double t_js = macos9_micros();
-		val = JS_Eval(thread->ctx, src, txtlen,
-				name ? name : "<script>", JS_EVAL_TYPE_GLOBAL);
-		macsurf_profile_accum_js((long)(macos9_micros() - t_js));
+		double t_mid;
+		long c_us;
+		long r_us = 0;
+		JSValue fn;
+
+		fn = JS_Eval(thread->ctx, src, txtlen,
+				name ? name : "<script>",
+				JS_EVAL_TYPE_GLOBAL |
+				JS_EVAL_FLAG_COMPILE_ONLY);
+		t_mid = macos9_micros();
+		c_us = (long)(t_mid - t_js);
+		if (JS_IsException(fn)) {
+			/* Syntax error: fn IS the exception value, which is
+			 * what plain JS_Eval would have returned. Propagate it
+			 * unchanged so the error reporting below is identical
+			 * to before -- a failed compile must not start looking
+			 * like a different kind of failure. */
+			val = fn;
+		} else {
+			val = JS_EvalFunction(thread->ctx, fn);
+			r_us = (long)(macos9_micros() - t_mid);
+		}
+		macsurf_profile_accum_js(c_us + r_us);
+		qjs_perf_note_script(name, (long)txtlen, c_us, r_us);
 		qjs_deadline_pop(prevdl);
 	}
 	free(src);

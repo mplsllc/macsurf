@@ -1643,11 +1643,18 @@ browser_window_callback(hlcache_handle *c, const hlcache_event *event, void *pw)
 				extern void macsurf_profile_emit_phases(
 						const char *url);
 				extern void macsurf_qjs_emit_timer_profile(void);
+				extern void macsurf_qjs_emit_js_profile(void);
 				macsurf_profile_emit_phases(
 					(du != NULL) ? nsurl_access(du) : "?");
 				/* fixes1037 — split the JS total: how much of it is
 				 * timer callbacks, and how many fired. */
 				macsurf_qjs_emit_timer_profile();
+				/* fixes1070 — and split the REST of the JS total:
+				 * compile vs run vs GC, plus the top-N scripts by
+				 * cost. js has measured 96% of the accounted load
+				 * with no way to see which script or which half of
+				 * the engine was responsible. */
+				macsurf_qjs_emit_js_profile();
 			}
 		}
 		res = browser_window_content_done(bw);

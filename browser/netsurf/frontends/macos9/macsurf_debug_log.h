@@ -116,6 +116,20 @@ void macsurf_profile_accum_paint(long us);
 void macsurf_profile_accum_js(long us);
 void macsurf_profile_note_reflow(void);   /* +1 per full html_reformat pass */
 long macsurf_profile_get_js_us(void);     /* for parse to subtract nested inline JS */
+
+/* fixes1070 — emit_phases now writes THREE lines, not one:
+ *
+ *   LIFE PERFWALL wall= acct= unacct= unacctpct=
+ *   LIFE PERFN    per-phase CALL COUNTS (us/N is the interesting number)
+ *   LIFE PERFACC  the existing per-phase microsecond totals
+ *
+ * PERFWALL is the one to read first. `acct` is what PERFACC's `total=` has
+ * always been -- the sum of the INSTRUMENTED phases -- and `wall` is the real
+ * elapsed navigation. Until this landed there was no way to know how much of a
+ * page load fell outside every bucket, so a phase reported as "96% of the
+ * load" was really 96% of an unknown fraction of it. A large `unacct` means
+ * optimising any measured phase cannot move the wall clock, and the next round
+ * belongs on whatever fills the gap. */
 void macsurf_profile_emit_phases(const char *url);
 
 /* fixes720 — read the current log into a caller buffer (for File > Send Debug

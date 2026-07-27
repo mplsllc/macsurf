@@ -12,7 +12,19 @@ void *macsurf_safe_realloc(void*p,size_t n){return realloc(p,n);}
 int macsurf_ptr_is_heap(const void*p){(void)p;return 1;}
 double macsurf_monotonic_ms(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return t.tv_sec*1000.0+t.tv_nsec/1e6;}
 unsigned long macsurf_get_ticks(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (unsigned long)(t.tv_sec*60+t.tv_nsec/16666666);}
-unsigned long macos9_micros(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (unsigned long)(t.tv_sec*1000000+t.tv_nsec/1000);}
+/* fixes1070 — this stub returned `unsigned long`. The REAL macos9_micros
+ * (main.c:122) returns DOUBLE, and every caller declares it that way with a
+ * local `extern double macos9_micros(void);` (macsurf_qjs.c, html.c,
+ * cssh_select.c, macos9_tls_fetcher.c). An integer return comes back in rax
+ * while the caller reads xmm0, so every timing this harness has ever taken
+ * was uninitialised-register garbage rather than a measurement.
+ *
+ * Nothing asserted on those numbers, so it stayed invisible — the exact
+ * harness false-signal class already documented for N_ELEMENTS and
+ * foreground_images. It matters now: the perf brackets added this round are
+ * meant to be developed and sanity-checked here before hardware sees them,
+ * and garbage in equals confident nonsense out. Match the real signature. */
+double macos9_micros(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return t.tv_sec*1000000.0+t.tv_nsec/1000.0;}
 /* guit + nsoptions[] are now REAL, properly-typed globals in driver.c
  * (driver.c needs a working guit->misc->schedule to pump box construction,
  * and box_get_style reads nsoptions[NSOPTION_author_level_css] at runtime —

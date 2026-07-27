@@ -1234,6 +1234,22 @@ static long g_accum_js_us      = 0;	/* js_exec, summed                  */
 static long g_accum_reflows    = 0;	/* full html_reformat passes        */
 static long g_perf_ttfb_us     = -1;	/* first fetch-finished = TTFB     */
 
+/* fixes1070 — CALL COUNTS for every phase, taken for free inside the existing
+ * accum_* adders (no new call sites, no new brackets).
+ *
+ * The us totals alone cannot distinguish "one expensive pass" from "500 cheap
+ * ones", and those two want completely different fixes. cascade=3.4s could be
+ * 1800 css_select_style calls at 1.9ms (per-call cost is the problem) or 12
+ * recascades of a huge sheet (the reflow count is the problem). us/N answers
+ * it in one division at read time. */
+static long g_n_tls     = 0;
+static long g_n_net     = 0;
+static long g_n_parse   = 0;
+static long g_n_cascade = 0;
+static long g_n_layout  = 0;
+static long g_n_paint   = 0;
+static long g_n_js      = 0;
+
 static void macsurf_profile_note_milestone(const char *label, int delta_us_i);
 
 #ifdef __MACOS9__
@@ -1273,6 +1289,9 @@ macsurf_profile_reset(void)
 	g_accum_js_us      = 0;
 	g_accum_reflows    = 0;
 	g_perf_ttfb_us     = -1;
+	/* fixes1070 — the call counts reset with the times they divide. */
+	g_n_tls = 0; g_n_net = 0; g_n_parse = 0; g_n_cascade = 0;
+	g_n_layout = 0; g_n_paint = 0; g_n_js = 0;
 }
 
 void
@@ -1323,13 +1342,17 @@ macsurf_profile_note_milestone(const char *label, int delta_us_i)
 /* fixes640 — phase-time adders. Each brackets a choke function with
  * macos9_micros() and passes the elapsed microsecond delta. Guarded
  * non-negative (a clock hiccup or reset mid-bracket can't corrupt the sum). */
-void macsurf_profile_accum_tls(long us)     { if (us > 0) g_accum_tls_us     += us; }
-void macsurf_profile_accum_net(long us)     { if (us > 0) g_accum_net_us     += us; }
-void macsurf_profile_accum_parse(long us)   { if (us > 0) g_accum_parse_us   += us; }
-void macsurf_profile_accum_cascade(long us) { if (us > 0) g_accum_cascade_us += us; }
-void macsurf_profile_accum_layout(long us)  { if (us > 0) g_accum_layout_us  += us; }
-void macsurf_profile_accum_paint(long us)   { if (us > 0) g_accum_paint_us   += us; }
-void macsurf_profile_accum_js(long us)      { if (us > 0) g_accum_js_us      += us; }
+/* fixes1070 — the count is incremented UNCONDITIONALLY, before the us>0
+ * guard. A phase that ran but measured 0us (sub-microsecond, or a clock
+ * hiccup) still happened, and a count of 0 next to a non-zero total would be
+ * a lie of exactly the kind this engine has paid for repeatedly. */
+void macsurf_profile_accum_tls(long us)     { g_n_tls++;     if (us > 0) g_accum_tls_us     += us; }
+void macsurf_profile_accum_net(long us)     { g_n_net++;     if (us > 0) g_accum_net_us     += us; }
+void macsurf_profile_accum_parse(long us)   { g_n_parse++;   if (us > 0) g_accum_parse_us   += us; }
+void macsurf_profile_accum_cascade(long us) { g_n_cascade++; if (us > 0) g_accum_cascade_us += us; }
+void macsurf_profile_accum_layout(long us)  { g_n_layout++;  if (us > 0) g_accum_layout_us  += us; }
+void macsurf_profile_accum_paint(long us)   { g_n_paint++;   if (us > 0) g_accum_paint_us   += us; }
+void macsurf_profile_accum_js(long us)      { g_n_js++;      if (us > 0) g_accum_js_us      += us; }
 void macsurf_profile_note_reflow(void)      { g_accum_reflows++; }
 
 /* fixes640a (review blocker): inline <script> executes SYNCHRONOUSLY inside
@@ -1349,10 +1372,74 @@ void
 macsurf_profile_emit_phases(const char *url)
 {
 	long total;
+	long wall_us;
+	long unacct_us;
+	long unacct_pct;
 	(void)url;
 	total = g_accum_tls_us + g_accum_net_us + g_accum_parse_us +
 		g_accum_cascade_us + g_accum_layout_us + g_accum_paint_us +
 		g_accum_js_us;
+
+	/* fixes1070 — WALL CLOCK, and therefore the UNACCOUNTED bucket.
+	 *
+	 * This is the hole that made every prior perf conclusion provisional.
+	 * PERFACC's `total=` is the SUM OF THE INSTRUMENTED PHASES, not elapsed
+	 * time, and CLAUDE.md already records a PERFACC total=10s on a load the
+	 * maintainer timed at 20-30s. Connection-open waits, poll spinning,
+	 * inter-fetch gaps and every uninstrumented path land in NO bucket, so
+	 * "js is 96% of the load" has really been "js is 96% of the part we
+	 * happen to measure" -- and the unmeasured part may be the larger one.
+	 *
+	 * g_profile_t0 is stamped by macsurf_profile_reset() at nav start
+	 * (window.c:716 / main.c), and this function runs at the load-complete
+	 * edge, so the delta is the honest per-navigation wall clock.
+	 *
+	 * Read `unacct` FIRST. If it is small, the phase percentages are real
+	 * and the JS split below is where the work is. If it is large, no amount
+	 * of optimising a measured phase will move the page load, and the next
+	 * job is instrumenting whatever is eating the gap -- not tuning JS. */
+#ifdef __MACOS9__
+	{
+		UnsignedWide now;
+		double d;
+		Microseconds(&now);
+		d = profile_us_from_wide(&now) -
+		    profile_us_from_wide(&g_profile_t0);
+		/* Not reset this load, or the clock went backwards: report
+		 * -1 rather than a fabricated number. A wrong answer here
+		 * would misdirect the whole perf effort. */
+		if (g_profile_t0_set == 0 || d < 0.0 || d > 2.0e9)
+			wall_us = -1;
+		else
+			wall_us = (long)(d + 0.5);
+	}
+#else
+	wall_us = -1;
+#endif
+	if (wall_us < 0) {
+		unacct_us = -1;
+		unacct_pct = -1;
+	} else {
+		unacct_us = wall_us - total;
+		if (unacct_us < 0) unacct_us = 0;
+		/* Integer percent; wall_us > 0 guaranteed by the branch when
+		 * unacct_us > 0, but guard the divide anyway. */
+		unacct_pct = (wall_us > 0) ?
+			(long)((unacct_us / (double)wall_us) * 100.0 + 0.5) : 0;
+	}
+	macsurf_debug_log_writef(
+		"LIFE PERFWALL wall=%ldus acct=%ldus unacct=%ldus unacctpct=%ld",
+		wall_us, total, unacct_us, unacct_pct);
+
+	/* fixes1070 — per-phase CALL COUNTS, so us/N is available at read time.
+	 * Emitted as its own line: the PERFACC line below is already ~160 bytes
+	 * and macsurf_debug_log_writef hard-caps output at 255, which has
+	 * silently truncated instrumentation in this codebase before. */
+	macsurf_debug_log_writef(
+		"LIFE PERFN tls=%ld net=%ld parse=%ld cascade=%ld layout=%ld "
+		"paint=%ld js=%ld reflows=%ld",
+		g_n_tls, g_n_net, g_n_parse, g_n_cascade, g_n_layout,
+		g_n_paint, g_n_js, g_accum_reflows);
 	/* fixes1035 — "LIFE " PREFIX, because the gate drops everything else.
 	 * The PERFACC whitelist below in macsurf_log_is_crash_report sits
 	 * inside #ifdef MACSURF_PERF_LOG, which is not defined, so this line
@@ -1382,6 +1469,14 @@ macsurf_profile_emit_phases(const char *url)
 	g_accum_js_us      = 0;
 	g_accum_reflows    = 0;
 	g_perf_ttfb_us     = -1;
+	/* fixes1070 — clear the counts with the times, same rationale. */
+	g_n_tls = 0; g_n_net = 0; g_n_parse = 0; g_n_cascade = 0;
+	g_n_layout = 0; g_n_paint = 0; g_n_js = 0;
+	/* Restamp t0 so a SECOND navigation's wall clock measures that
+	 * navigation, not the time since the first one started. Without this
+	 * the wall number is honest only for the first load in a session --
+	 * and every hardware log we pull has two or more. */
+	g_profile_t0_set = 0;
 }
 
 /* fixes369 (#167) — page-weight + resource-count accounting. */

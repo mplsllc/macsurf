@@ -5887,5 +5887,216 @@ box_coords(bx, &cx, &cy);
 	}
 	fprintf(stderr, "=== Test 48 PASS: className re-cascades on every change ===\n");
 
+	/* --- Test 49: the perf instrument must MEASURE, not merely emit -------
+	 * fixes1070 added a compile-vs-run split to js_exec, a per-script cost
+	 * table and a GC hook, because `js=25.4s` as a single number cannot say
+	 * whether the fix is bytecode caching (compile-bound) or something else
+	 * entirely (run-bound). Those are opposite pieces of work.
+	 *
+	 * A profiler is unusually easy to ship broken: swap the two brackets and
+	 * it still produces two plausible non-zero numbers, and every decision
+	 * taken from them is backwards. So this test does not ask "are the
+	 * numbers non-zero" -- it runs one script engineered to be COMPILE-heavy
+	 * and RUN-trivial, and one engineered to be the exact opposite, then
+	 * checks the split lands on the correct side of the seam for each. That
+	 * assertion fails if the brackets are swapped, if either bracket is
+	 * dropped, or if the per-script table misattributes a row.
+	 *
+	 * It also covers the eviction rule, the eval count, and the GC hook in
+	 * quickjs.c's JS_RunGC -- which is a patch to a vendored file and
+	 * therefore the single most likely thing to be lost in a future
+	 * QuickJS update. If that patch goes missing, gcruns stays 0 and this
+	 * test says so instead of the GC column silently reading zero forever. */
+	fprintf(stderr, "\n=== Test 49: JS perf split measures the right halves ===\n");
+	{
+		extern void macsurf_qjs_emit_js_profile(void);
+		extern int  macsurf_qjs_perf_slot(int i, char *name, int cap,
+				long *bytes, long *compile_us, long *run_us,
+				long *evals);
+		extern void macsurf_qjs_perf_totals(long *evals,
+				long *compile_us, long *run_us, long *gc_us,
+				long *gc_runs, int *gc_armed);
+		extern void macsurf_qjs_run_gc(struct jsheap *heap);
+		char *big;
+		long evals = 0, tc = 0, tr = 0, gcus = 0, gcruns = 0;
+		int gcarmed = -1;
+		long c_compile = -1, c_run = -1, r_compile = -1, r_run = -1;
+		int i;
+		int rows = 0;
+
+		/* Earlier tests have already run dozens of scripts through
+		 * js_exec. Emit (which resets) so this test measures only its
+		 * own three, and so the emit path itself is exercised. */
+		macsurf_qjs_emit_js_profile();
+		macsurf_qjs_perf_totals(&evals, &tc, &tr, &gcus, &gcruns,
+				&gcarmed);
+		if (evals != 0) {
+			fprintf(stderr, "FAIL: Test 49 -- emit did not reset "
+				"the per-navigation counters (evals=%ld, want 0). "
+				"Carrying one page's scripts into the next page's "
+				"table misattributes cost to whichever site loaded "
+				"second.\n", evals);
+			return 1;
+		}
+
+		/* COMPILE-heavy, RUN-trivial: ~4000 function declarations that
+		 * are never called. QuickJS must parse and codegen every one;
+		 * executing the program only creates the bindings. */
+		big = (char *)malloc(4000 * 64 + 64);
+		if (big == NULL) {
+			fprintf(stderr, "FAIL: Test 49 -- OOM building fixture\n");
+			return 1;
+		}
+		big[0] = '\0';
+		{
+			char *w = big;
+			for (i = 0; i < 4000; i++) {
+				w += sprintf(w, "function t49f%d(a,b){return "
+					"a*%d+b-%d;}\n", i, i + 1, i);
+			}
+		}
+		if (!js_exec(thread, (const unsigned char *)big, strlen(big),
+				"t49-compile.js")) {
+			fprintf(stderr, "FAIL: Test 49 -- compile-heavy fixture "
+				"threw\n");
+			free(big); return 1;
+		}
+		free(big);
+
+		/* RUN-heavy, COMPILE-trivial: a few dozen bytes of source, a
+		 * couple of million bytecode iterations. */
+		{
+			const char *q = "var s=0;for(var i=0;i<2000000;i++)"
+				"s+=i;globalThis.__t49r=s;";
+			if (!js_exec(thread, (const unsigned char *)q,
+					strlen(q), "t49-run.js")) {
+				fprintf(stderr, "FAIL: Test 49 -- run-heavy "
+					"fixture threw\n");
+				return 1;
+			}
+		}
+
+		/* Allocation-heavy. NOT to trip automatic GC -- automatic GC is
+		 * DISARMED (js_newheap pushes JS_SetGCThreshold to 1GB, past
+		 * the 128MB memory cap, a fixes593 workaround for a suspected
+		 * cycle-collector double-free that was never root-caused). The
+		 * first version of this test asserted 200k allocations produce
+		 * a collection, and it failed -- correctly. gcruns=0 on a real
+		 * page load is the truth, not a broken hook, which is exactly
+		 * why the JSPHASE line carries gcarmed. */
+		{
+			const char *q = "var a=[];for(var i=0;i<200000;i++)"
+				"a.push({x:i,y:'v'+i});a=null;";
+			if (!js_exec(thread, (const unsigned char *)q,
+					strlen(q), "t49-gc.js")) {
+				fprintf(stderr, "FAIL: Test 49 -- gc fixture "
+					"threw\n");
+				return 1;
+			}
+		}
+
+		macsurf_qjs_perf_totals(&evals, &tc, &tr, &gcus, &gcruns,
+				&gcarmed);
+		if (evals != 3) {
+			fprintf(stderr, "FAIL: Test 49 -- eval COUNT is %ld, "
+				"want exactly 3. A count, not a boolean: a "
+				"double-counted eval reads as plausible work and "
+				"inflates every per-script row.\n", evals);
+			return 1;
+		}
+
+		for (i = 0; i < 16; i++) {
+			char nm[40];
+			long b = 0, c = 0, r = 0, n = 0;
+			if (!macsurf_qjs_perf_slot(i, nm, (int)sizeof(nm), &b,
+					&c, &r, &n))
+				continue;
+			rows++;
+			fprintf(stderr, "  t49 slot %s b=%ld c=%ldus r=%ldus "
+				"n=%ld\n", nm, b, c, r, n);
+			if (strcmp(nm, "t49-compile.js") == 0) {
+				c_compile = c; c_run = r;
+			} else if (strcmp(nm, "t49-run.js") == 0) {
+				r_compile = c; r_run = r;
+			}
+		}
+		if (rows != 3) {
+			fprintf(stderr, "FAIL: Test 49 -- per-script table has "
+				"%d rows, want 3 (one per script this test "
+				"ran).\n", rows);
+			return 1;
+		}
+		if (c_compile < 0 || r_compile < 0) {
+			fprintf(stderr, "FAIL: Test 49 -- per-script table lost "
+				"a row (compile-heavy found=%d run-heavy "
+				"found=%d)\n", c_compile >= 0, r_compile >= 0);
+			return 1;
+		}
+
+		/* THE assertion. Not "both are non-zero" -- which a swapped
+		 * pair of brackets passes -- but "each script's time landed on
+		 * the side it was built to be heavy on". */
+		if (!(c_compile > c_run)) {
+			fprintf(stderr, "FAIL: Test 49 -- 4000 uncalled function "
+				"declarations measured compile=%ldus run=%ldus. "
+				"Compile must dominate; it does not. The compile "
+				"and run brackets in js_exec are swapped or one "
+				"is missing.\n", c_compile, c_run);
+			return 1;
+		}
+		if (!(r_run > r_compile)) {
+			fprintf(stderr, "FAIL: Test 49 -- a 2M-iteration loop in "
+				"~40 bytes of source measured compile=%ldus "
+				"run=%ldus. Run must dominate; it does not. The "
+				"compile and run brackets in js_exec are swapped "
+				"or one is missing.\n", r_compile, r_run);
+			return 1;
+		}
+		if (tc <= 0 || tr <= 0) {
+			fprintf(stderr, "FAIL: Test 49 -- JSPHASE totals are "
+				"compile=%ldus run=%ldus; both must be positive "
+				"after the fixtures above.\n", tc, tr);
+			return 1;
+		}
+		/* Automatic GC is off, so nothing above can have collected. If
+		 * this is ever non-zero, the fixes593 threshold has been
+		 * changed or lost and the perf picture changes with it. */
+		if (gcruns != 0 || gcarmed != 0) {
+			fprintf(stderr, "FAIL: Test 49 -- expected automatic GC "
+				"to be DISARMED (gcruns=0 gcarmed=0), got "
+				"gcruns=%ld gcarmed=%d. Either js_newheap's "
+				"JS_SetGCThreshold(1GB) workaround from fixes593 "
+				"was changed, or g_perf_gc_armed drifted from it. "
+				"Re-arming GC is a real decision with real perf "
+				"consequences -- make it deliberately.\n",
+				gcruns, gcarmed);
+			return 1;
+		}
+
+		/* Now prove the timing hook itself works, independently of
+		 * whether anything calls it during a load. Without this the
+		 * hook in quickjs.c is unreachable code that no test can
+		 * distinguish from a missing patch -- and it IS a patch to a
+		 * vendored file, so a future QuickJS update is exactly how it
+		 * would get silently dropped. */
+		macsurf_qjs_run_gc(heap);
+		macsurf_qjs_perf_totals(NULL, NULL, NULL, &gcus, &gcruns, NULL);
+		if (gcruns != 1) {
+			fprintf(stderr, "FAIL: Test 49 -- one explicit "
+				"macsurf_qjs_run_gc produced gcruns=%ld, want "
+				"exactly 1. The timing hook in JS_RunGC "
+				"(quickjs.c, a VENDORED file patched in BOTH "
+				"browser/libquickjs and quickjs-macos9) is "
+				"missing or fires more than once per "
+				"collection.\n", gcruns);
+			return 1;
+		}
+		fprintf(stderr, "  t49 totals evals=%ld compile=%ldus run=%ldus "
+			"gc=%ldus gcruns=%ld gcarmed=%d\n",
+			evals, tc, tr, gcus, gcruns, gcarmed);
+	}
+	fprintf(stderr, "=== Test 49 PASS: compile/run split and GC hook measure "
+		"the right things ===\n");
+
 	return 0;
 }
