@@ -143,10 +143,42 @@ all: reconvert_harness
 # Run it before every drop that touches a switch or its use sites.
 MACDEFAULT_STRIP := -DMACSURF_JS_GEOMETRY=1 -DMACSURF_JS_VIEW_EVENTS=1 \
                     -DMACSURF_JS_FIRE_LOAD=1 -DMACSURF_JS_AUDIT=1
-check-macdefault:
+check-macdefault: check-c89
 	@echo "== compiling glue in the MAC's config (quiesce switches OFF) =="
 	@$(CC) -fsyntax-only $(filter-out $(MACDEFAULT_STRIP),$(CFLAGS)) \
 		-DWITH_QUICKJS $(INC) build/macsurf_qjs.c && echo "   OK"
+
+# fixes1071a — MIXED DECLARATIONS, the one C89 rule this harness cannot see.
+#
+# CodeWarrior compiles the shipped tree as C89: every declaration must precede
+# every statement in its block. This harness builds with -std=gnu99, so a
+# statement placed above a declaration compiles clean here and is REJECTED on
+# the Mac. fixes1071 shipped exactly that -- one `macsurf_qjs_ncalls++;` put
+# immediately after the opening brace of js_call_c_function -- and CW8 answered
+# with ~55 errors cascading down the function. Nothing on Linux could have
+# caught it, which is why it is a Makefile target now and not a habit.
+#
+# -Wdeclaration-after-statement is the exact detector, and the baseline is
+# ZERO warnings across both files, so this is a zero-noise gate: any hit is
+# ours. Verified as a real control -- reinstating the fixes1071 placement makes
+# this target fail.
+#
+# quickjs.c genuinely needs C99 to compile, so we do NOT build it as C89; we
+# only ask GCC to point at mixed declarations, which is the rule CW8 enforces.
+#
+# NOTE the absence of -w. The first version of this target had it (copied from
+# CFLAGS) and reported "OK" with the bug deliberately reinstated: -w inhibits
+# ALL warnings and beats a later -W flag, so the gate was measuring nothing and
+# its zero baseline was itself a false green. Caught only because the control
+# was run. -Werror=<name> makes exactly this one diagnostic fatal and leaves
+# any incidental warning as non-fatal noise.
+C89CHK := -fsyntax-only -std=gnu99 -Werror=declaration-after-statement
+check-c89:
+	@echo "== C89 mixed-declaration check (CW8 rule; -std=gnu99 cannot see it) =="
+	@$(CC) $(C89CHK) -I$(QJS) $(QJSFLAGS) $(QJS)/quickjs.c \
+		&& echo "   quickjs.c OK"
+	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) -DWITH_QUICKJS $(INC) \
+		build/macsurf_qjs.c && echo "   macsurf_qjs.c OK"
 
 # Kept as aliases: `make link` / `make objs` are in muscle memory and in older
 # notes. They now mean the same thing as the default goal instead of being the
