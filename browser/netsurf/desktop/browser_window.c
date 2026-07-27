@@ -4023,6 +4023,30 @@ browser_window__navigate_internal(struct browser_window *bw,
 		((params != NULL) && (params->url != NULL)) ?
 			nsurl_access(params->url) : "(null)");
 
+	/* fixes1072 — anchor the wall clock HERE, beside the line that already
+	 * marks every navigation.
+	 *
+	 * fixes1070's PERFWALL read g_profile_t0, which is stamped by
+	 * macsurf_profile_reset() at window.c:716 -- the URL-BAR path only. A
+	 * link click reaches browser_window_navigate directly from core and
+	 * never touches it, so t0 was left over from the PREVIOUS load and
+	 * `wall` measured time-since-the-last-navigation-ended, idle included.
+	 * Hardware: a whats-new load that took 680 ticks (~11.3s) reported
+	 * wall=483s and unacct=97%, because the machine had sat idle for eight
+	 * minutes beforehand. The first load of a session matched, which is
+	 * precisely why it looked correct.
+	 *
+	 * This is its own clock rather than a macsurf_profile_reset() call:
+	 * macsurf_profile_stamp() auto-resets g_profile_t0 whenever the flag is
+	 * clear, so any stamp firing between navigations could move it again.
+	 * A dedicated t0 written only here cannot be perturbed by anything
+	 * else. This comment is the whole contract -- if a future round wants
+	 * to know what `wall` spans, it spans this line to the emit. */
+	{
+		extern void macsurf_profile_nav_begin(void);
+		macsurf_profile_nav_begin();
+	}
+
 	/* fixes1003 — a top-level navigation IS a retry: clear the TLS
 	 * fetcher's dead-host and terminal-URL sets. Those exist to collapse a
 	 * subresource storm within one page load; carried ACROSS navigations

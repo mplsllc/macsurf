@@ -1200,8 +1200,12 @@ macsurf_debug_log_tracef(const char *fmt, ...)
 
 #ifdef __MACOS9__
 static UnsignedWide g_profile_t0 = { 0, 0 };
+/* fixes1072 — the NAVIGATION wall clock, deliberately separate from
+ * g_profile_t0. See macsurf_profile_nav_begin(). */
+static UnsignedWide g_nav_t0 = { 0, 0 };
 #endif
 static int g_profile_t0_set = 0;
+static int g_nav_t0_set = 0;
 
 /* fixes369 (#167) — per-load page-weight + resource-count accounting, the
  * size dimension the timing stamps lacked. Reset at nav start with the
@@ -1292,6 +1296,26 @@ macsurf_profile_reset(void)
 	/* fixes1070 — the call counts reset with the times they divide. */
 	g_n_tls = 0; g_n_net = 0; g_n_parse = 0; g_n_cascade = 0;
 	g_n_layout = 0; g_n_paint = 0; g_n_js = 0;
+}
+
+/* fixes1072 — stamp the navigation wall clock. Called from the NAV: START
+ * site in browser_window.c, which is the ONE hook every navigation passes
+ * through (URL bar, link click, internal redirect, back/forward, the
+ * about:query error pages). macsurf_profile_reset() is not that hook: it sits
+ * on the URL-bar path only, so before this existed a link click measured its
+ * wall clock from the end of the PREVIOUS navigation and reported the idle
+ * time in between as unaccounted.
+ *
+ * Deliberately not folded into macsurf_profile_reset(): macsurf_profile_stamp()
+ * auto-resets g_profile_t0 whenever its flag is clear, so that clock can move
+ * between navigations. This one is written here and nowhere else. */
+void
+macsurf_profile_nav_begin(void)
+{
+#ifdef __MACOS9__
+	Microseconds(&g_nav_t0);
+#endif
+	g_nav_t0_set = 1;
 }
 
 void
@@ -1390,9 +1414,19 @@ macsurf_profile_emit_phases(const char *url)
 	 * "js is 96% of the load" has really been "js is 96% of the part we
 	 * happen to measure" -- and the unmeasured part may be the larger one.
 	 *
-	 * g_profile_t0 is stamped by macsurf_profile_reset() at nav start
-	 * (window.c:716 / main.c), and this function runs at the load-complete
-	 * edge, so the delta is the honest per-navigation wall clock.
+	 * fixes1072 CORRECTION: this originally read g_profile_t0, on the belief
+	 * that macsurf_profile_reset() runs at every nav start. It does not --
+	 * it is on the URL-BAR path only (window.c:716), so a LINK CLICK left t0
+	 * from the previous load and `wall` measured the idle gap between
+	 * navigations as well. Hardware caught it: an 11.3s whats-new load
+	 * reported wall=483s / unacct=97% after the machine had sat idle eight
+	 * minutes. The first load of a session was always correct, which is
+	 * exactly why it read as plausible. Now uses g_nav_t0, stamped at the
+	 * NAV: START site every navigation passes through.
+	 *
+	 * Sanity-check `wall` against the log's own [tick] column when a number
+	 * looks surprising -- 60 ticks per second. That cross-check is what
+	 * found this.
 	 *
 	 * Read `unacct` FIRST. If it is small, the phase percentages are real
 	 * and the JS split below is where the work is. If it is large, no amount
@@ -1403,12 +1437,14 @@ macsurf_profile_emit_phases(const char *url)
 		UnsignedWide now;
 		double d;
 		Microseconds(&now);
+		/* fixes1072 — g_nav_t0 (stamped at NAV: START), NOT
+		 * g_profile_t0. See macsurf_profile_nav_begin(). */
 		d = profile_us_from_wide(&now) -
-		    profile_us_from_wide(&g_profile_t0);
-		/* Not reset this load, or the clock went backwards: report
+		    profile_us_from_wide(&g_nav_t0);
+		/* No navigation started, or the clock went backwards: report
 		 * -1 rather than a fabricated number. A wrong answer here
 		 * would misdirect the whole perf effort. */
-		if (g_profile_t0_set == 0 || d < 0.0 || d > 2.0e9)
+		if (g_nav_t0_set == 0 || d < 0.0 || d > 2.0e9)
 			wall_us = -1;
 		else
 			wall_us = (long)(d + 0.5);
@@ -1472,11 +1508,15 @@ macsurf_profile_emit_phases(const char *url)
 	/* fixes1070 — clear the counts with the times, same rationale. */
 	g_n_tls = 0; g_n_net = 0; g_n_parse = 0; g_n_cascade = 0;
 	g_n_layout = 0; g_n_paint = 0; g_n_js = 0;
-	/* Restamp t0 so a SECOND navigation's wall clock measures that
-	 * navigation, not the time since the first one started. Without this
-	 * the wall number is honest only for the first load in a session --
-	 * and every hardware log we pull has two or more. */
-	g_profile_t0_set = 0;
+	/* fixes1072 — clear the NAV clock, not the profile clock. The emit
+	 * fires twice per load (NAV: DONE and the poll-loop latch, whichever
+	 * gets there first); the second one has no navigation of its own to
+	 * measure and must say wall=-1 rather than repeat the first's number
+	 * or invent a new one. Clearing g_profile_t0_set here was the fixes1070
+	 * version and was wrong twice over: it perturbed the stamp clock, and
+	 * it did nothing about the real bug, which was that g_profile_t0 was
+	 * never anchored to a link-click navigation in the first place. */
+	g_nav_t0_set = 0;
 }
 
 /* fixes369 (#167) — page-weight + resource-count accounting. */
@@ -1527,6 +1567,7 @@ void macsurf_profile_reset(void)
 	macos9_plotter_diag_counters_reset();
 }
 void macsurf_profile_stamp(const char *label) { (void)label; }
+void macsurf_profile_nav_begin(void) {}	/* fixes1072 */
 void macsurf_profile_add_bytes(long n) { (void)n; }
 void macsurf_profile_count_resource(void) {}
 void macsurf_profile_emit(const char *url) { (void)url; }

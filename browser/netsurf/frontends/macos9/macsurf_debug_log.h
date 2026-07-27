@@ -81,6 +81,11 @@ void macsurf_debug_log_tracef(const char *fmt, ...);
  * never invoked.
  */
 void macsurf_profile_reset(void);
+/* fixes1072 — stamp the per-NAVIGATION wall clock that PERFWALL reports.
+ * Called from the NAV: START site in browser_window.c, the one hook every
+ * navigation type passes through. NOT the same clock as macsurf_profile_reset
+ * (URL-bar path only) and not perturbed by macsurf_profile_stamp. */
+void macsurf_profile_nav_begin(void);
 void macsurf_profile_stamp(const char *label);
 
 /* fixes369 (#167) — per-load page-weight + resource-count measurement,
