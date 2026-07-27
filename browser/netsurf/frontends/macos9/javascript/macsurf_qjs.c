@@ -139,8 +139,25 @@ double macsurf_qjs_get_now(void);
  * undefined macro as a bare identifier, so CW8 reported "undefined" at both
  * and the build died. Same class as the TARGET_API_MAC_CARBON prefix bug:
  * a config define is only worth what it is defined BEFORE. */
+/* fixes1073 (#265) — GEOMETRY IS ON.
+ *
+ * It was quiesced by fixes1022 for a good reason: fixes998-1021 turned on four
+ * capability classes with no hardware gate between them, and partial geometry
+ * made pages WORSE than none -- a widget that measures, gets a fabricated 0 and
+ * writes it back as an inline size destroys content that would have rendered
+ * fine untouched.
+ *
+ * What has changed is that the precondition now exists. fixes1073 gives
+ * geometry a forced synchronous layout (qjs_geometry_flush ->
+ * macos9_reconvert_flush_now), so a measurement taken after a mutation
+ * describes the page as it is rather than as it was, and every path that cannot
+ * safely reflow still answers `undefined` -- never a fabricated number. That
+ * was the standing condition on re-enabling this, and it is met.
+ *
+ * The switch stays here, and stays a switch. If this regresses, one define
+ * turns it off without touching anything else. */
 #ifndef MACSURF_JS_GEOMETRY
-#define MACSURF_JS_GEOMETRY 0
+#define MACSURF_JS_GEOMETRY 1
 #endif
 #ifndef MACSURF_JS_VIEW_EVENTS
 #define MACSURF_JS_VIEW_EVENTS 0
@@ -1635,9 +1652,34 @@ void macsurf_qjs_emit_js_profile(void)
 	 *           tracking wraps again, the cache is broken -- that is the
 	 *           regression this line exists to catch. */
 	macsurf_debug_log_writef(
-		"LIFE JSWHERE ops=%ld ncalls=%ld wraps=%ld hcomp=%ld hbytes=%ld",
+		"LIFE JSWHERE branches=%ld ncalls=%ld wraps=%ld hcomp=%ld "
+		"hbytes=%ld",
 		g_qjs_interrupts * 10000L, macsurf_qjs_ncalls,
 		g_wrap_installs, g_helper_compiles, g_helper_bytes);
+
+	/* fixes1073 (#265) — the forced-layout census.
+	 *
+	 *   flush     synchronous reflows script actually forced by measuring
+	 *   declined  geometry reads that could NOT reflow (unsafe window, or
+	 *             the per-navigation budget spent) and so answered
+	 *             `undefined` -- the fixes1016 fallback
+	 *   us        what the flushes cost, so the price of the measure/mutate
+	 *             contract is visible rather than buried in the js total
+	 *
+	 * `declined` is the number that matters. Small means the contract is
+	 * being honoured and widgets are getting real answers. Large means
+	 * pages are thrashing or the budget is too tight, and the next round is
+	 * incremental layout rather than a bigger budget. */
+	{
+		extern void macos9_reconvert_sync_stats(long *f, long *d,
+				long *us);
+		extern void macos9_reconvert_sync_reset(void);
+		long sf = 0, sd = 0, su = 0;
+		macos9_reconvert_sync_stats(&sf, &sd, &su);
+		macsurf_debug_log_writef(
+			"LIFE JSSYNC flush=%ld declined=%ld us=%ld", sf, sd, su);
+		macos9_reconvert_sync_reset();
+	}
 	g_qjs_interrupts  = 0;
 	macsurf_qjs_ncalls = 0;
 	g_wrap_installs   = 0;
@@ -4245,6 +4287,25 @@ static const char *qjs_css_display_name(uint8_t v)
  * the way the pre-1011 engine did (undefined / all-zero rect) -- the shape a
  * decade of pages demonstrably tolerates -- never a fabricated real-looking
  * number. When it returns 1, answers come from the real box tree. */
+/* fixes1073 (#265) — force layout before answering, the measure/mutate contract.
+ *
+ * Called at the top of every geometry entry point. If script has mutated the
+ * DOM and the box tree has not caught up, rebuild and lay out RIGHT HERE so the
+ * answer describes what the page actually looks like now. No-ops when nothing
+ * is dirty, and refuses (leaving the fixes1016 `undefined`) whenever a flush
+ * would be unsafe -- see macos9_reconvert_flush_now for the guard stack.
+ *
+ * This is the whole difference between a browser that a widget can lay itself
+ * out against and one that hands back nothing and gets laid out wrong. */
+static void qjs_geometry_flush(void)
+{
+	extern int macos9_reconvert_flush_now(void *cv);
+
+	if (!MACSURF_JS_GEOMETRY) return;
+	if (g_qjs_content == NULL) return;
+	(void) macos9_reconvert_flush_now((void *) g_qjs_content);
+}
+
 static int qjs_geometry_settled(void)
 {
 	extern int macsurf_reconvert_in_progress;
@@ -4365,6 +4426,7 @@ static JSValue qjs_el_get_rect(JSContext *ctx, JSValueConst this_val,
 	int x = 0, y = 0, w = 0, h = 0;
 	(void)this_val; (void)argc; (void)argv; (void)magic;
 
+	qjs_geometry_flush();	/* fixes1073 (#265) */
 	b = qjs_box_for(func_data[0]);
 	if (b != NULL) {
 		qjs_box_origin(b, &x, &y);
@@ -4445,6 +4507,7 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 	 * width/height and the damage outlived the measurement. Once settled, a
 	 * missing box really does mean "not rendered" and 0 is the true answer
 	 * (jQuery :hidden relies on it). */
+	qjs_geometry_flush();	/* fixes1073 (#265) */
 	if (!qjs_geometry_settled()) {
 		qjs_geom_audit(qjs_metric_name(magic), func_data[0],
 				"undefined (unsettled)");
@@ -4579,6 +4642,7 @@ static JSValue qjs_get_computed_style(JSContext *ctx, JSValueConst this_val,
 	struct box *b = NULL;
 	(void)this_val;
 
+	qjs_geometry_flush();	/* fixes1073 (#265) */
 	out = JS_NewObject(ctx);
 	if (argc >= 1 && JS_IsObject(argv[0])) {
 		b = qjs_box_for(argv[0]);

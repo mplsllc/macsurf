@@ -98,6 +98,16 @@ static unsigned long g_last_reconvert_tick = 0;
  * dropping the work. */
 #define RECONVERT_MAX_PENDING 8
 
+/* fixes1073 (#265) — forced synchronous layouts allowed per navigation.
+ *
+ * Each one is a full reconvert + layout (~100ms measured), so this is the
+ * ceiling on what a measure-then-mutate loop can cost before geometry falls
+ * back to `undefined`. 24 covers every real init sequence seen in the hardware
+ * logs with room to spare; a page that exhausts it is thrashing, and the
+ * declined counter in LIFE JSSYNC says so rather than hiding it. Raise only
+ * with a log that shows a legitimate page being cut off. */
+#define MACOS9_SYNC_FLUSH_MAX 24
+
 struct macos9_reconvert_pending {
 	struct content *c;
 	unsigned long   token;
@@ -364,6 +374,130 @@ macsurf_js_set_reconvert_enabled(int enabled)
 {
 	g_reconvert_enabled = enabled ? 1 : 0;
 }
+
+/* ------------------------------------------------------------------
+ * fixes1073 (#265) — THE FORCED SYNCHRONOUS LAYOUT PASS.
+ *
+ * The measure/mutate contract is the one every modern component is built on:
+ * change the DOM, then immediately ask how big something is. A real browser
+ * answers by reflowing right there and telling the truth.
+ *
+ * This engine could not, so it declined instead: fixes1016 made geometry return
+ * `undefined` whenever a mutation was awaiting its debounced reconvert, on the
+ * reasoning that `undefined` NaN-propagates into a no-op while a fabricated 0
+ * gets written back as an inline size and destroys the page (which is exactly
+ * how slick collapsed hackaday's featured carousel). That was the right call
+ * for a lie, but declining is still a wrong answer -- the elements ARE visible
+ * content, they simply have no box YET. Every widget that measures before
+ * laying itself out gets nothing and lays itself out wrong.
+ *
+ * This closes it. Flushing is possible at all because fixes903 made the
+ * reconvert build SYNCHRONOUS: html_reconvert_content runs teardown, dom_to_box,
+ * html_reconvert_done, content__reformat and layout_document to completion
+ * before returning, with no event-loop re-entry. So on return the box tree is
+ * rebuilt and laid out, and geometry can read the truth.
+ *
+ * SAFETY. Rebuilding the box tree frees the old one, so this must never run
+ * while anything is walking it. The layers, outermost first:
+ *   - in_flush: re-entrancy. A geometry read inside a reconvert (via a
+ *     mutation callback) must not start a second one.
+ *   - macos9_paint_gw: a redraw is on the stack walking boxes. fixes903's whole
+ *     hunt was crashes from exactly this window.
+ *   - macsurf_reconvert_in_progress: a reconvert is already mid-flight.
+ *   - html_reconvert's own preconditions, which it enforces itself and which
+ *     are the reason it returns non-zero: status != DONE, c->reflowing (never
+ *     free boxes mid-layout), a convert already in flight, or sub-resource
+ *     fetches still active (fixes421's use-after-free).
+ * A refusal at any layer degrades to the fixes1016 behaviour -- `undefined` --
+ * which is safe by construction.
+ *
+ * BUDGET. Layout here costs ~100ms, so a script that mutates and measures in a
+ * loop would force one full reconvert per iteration. Browsers have the same
+ * hazard (it is called layout thrashing) and survive it because their layout is
+ * cheap; ours is not. The budget bounds a pathological page to a known cost and
+ * then degrades to `undefined`, and the counters say out loud how often real
+ * pages hit it -- which is the number that decides whether the next round needs
+ * incremental layout. A silent cap would read as "nothing to see here".
+ * ------------------------------------------------------------------ */
+static int  g_sync_flush_budget = MACOS9_SYNC_FLUSH_MAX;
+static long g_sync_flushes      = 0;	/* flushes actually run, this nav  */
+static long g_sync_declined     = 0;	/* asked, refused (guard or budget) */
+static long g_sync_us           = 0;	/* cumulative cost of the flushes   */
+
+void
+macos9_reconvert_sync_stats(long *flushes, long *declined, long *us)
+{
+	if (flushes != NULL)  *flushes  = g_sync_flushes;
+	if (declined != NULL) *declined = g_sync_declined;
+	if (us != NULL)       *us       = g_sync_us;
+}
+
+void
+macos9_reconvert_sync_reset(void)
+{
+	g_sync_flush_budget = MACOS9_SYNC_FLUSH_MAX;
+	g_sync_flushes  = 0;
+	g_sync_declined = 0;
+	g_sync_us       = 0;
+}
+
+int
+macos9_reconvert_flush_now(void *cv)
+{
+	static int in_flush = 0;
+	extern int macsurf_reconvert_in_progress;
+	extern struct gui_window *macos9_paint_gw;
+	extern double macos9_micros(void);
+	struct content *c = (struct content *) cv;
+	double t0;
+	int i;
+	int rc;
+
+	if (c == NULL)
+		return 0;
+	/* Nothing dirty: the box tree already answers for the current DOM. */
+	if (!macos9_reconvert_pending_for(cv))
+		return 0;
+
+	if (in_flush || macos9_paint_gw != NULL ||
+	    macsurf_reconvert_in_progress || !g_reconvert_enabled ||
+	    !macos9_content_is_live(c)) {
+		g_sync_declined++;
+		return 0;
+	}
+	if (g_sync_flush_budget <= 0) {
+		g_sync_declined++;
+		return 0;
+	}
+
+	in_flush = 1;
+	t0 = macos9_micros();
+	rc = html_reconvert_content(c);	/* SYNCHRONOUS -- see fixes903 */
+	in_flush = 0;
+
+	if (rc != 0) {
+		/* Busy for a reason html_reconvert owns (mid-layout, convert in
+		 * flight, fetches active). Leave the slot pending so the
+		 * debounced path still runs it, and answer undefined. */
+		g_sync_declined++;
+		return 0;
+	}
+
+	g_sync_us += (long)(macos9_micros() - t0);
+	g_sync_flushes++;
+	g_sync_flush_budget--;
+
+	/* This flush answered every pending mutation for c, so retire its
+	 * slots -- otherwise the debounced callback rebuilds the same tree
+	 * again for work already done. */
+	for (i = 0; i < RECONVERT_MAX_PENDING; i++) {
+		if (g_pending[i].c == c)
+			macos9_reconvert_slot_clear(i);
+	}
+	g_last_reconvert_tick = (unsigned long) TickCount();
+	return 1;
+}
+
 
 /* The live front-window HTML content, or NULL. Never derefs a stale pointer. */
 static struct content *

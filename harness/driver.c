@@ -5212,6 +5212,35 @@ int main(int argc, char **argv)
 		dom_string_unref(idf);
 		if (elf == NULL) { fprintf(stderr, "FAIL: t43 missing #feed\n"); return 1; }
 
+		/* fixes1073 (#265) — SETTLE FIRST, then inject.
+		 *
+		 * This test injects known geometry straight into a real box and
+		 * asserts JS reads it back, which is the only way to test the
+		 * read path in a harness that has no layout pass. That works
+		 * only if the box survives until the probe.
+		 *
+		 * Geometry now forces a synchronous reconvert when a mutation is
+		 * outstanding, and earlier tests leave mutations pending (the
+		 * harness stubs macos9_schedule to a no-op, so the debounced
+		 * reconvert never fires here and the pending set only grows).
+		 * So the probe below would rebuild the tree, free the box we
+		 * just wrote into, and read a fresh one -- which is the feature
+		 * behaving correctly and the test measuring the wrong thing.
+		 *
+		 * Draining here makes the probe's own flush a no-op, so the
+		 * injected values survive and the assertions still describe the
+		 * read path. Re-resolve the box AFTER, because the drain may
+		 * have replaced the tree. */
+		htmlc.base.status = CONTENT_STATUS_DONE;
+		htmlc.reflowing = false;
+		htmlc.box_conversion_context = NULL;
+		htmlc.aborted = false;
+		htmlc.base.active = 0;
+		{
+			extern int macos9_reconvert_flush_now(void *cv);
+			(void) macos9_reconvert_flush_now((void *)&htmlc);
+		}
+
 		bx = box_for_node((dom_node *)elf);
 		if (bx == NULL) {
 			fprintf(stderr, "FAIL: t43 #feed has no box -- the fixture did "
@@ -6174,6 +6203,166 @@ box_coords(bx, &cx, &cy);
 	}
 	fprintf(stderr, "=== Test 50 PASS: helper compiles do not scale with "
 		"wrapper count ===\n");
+
+	/* --- Test 51: geometry answers POST-mutation truth (#265) ------------
+	 * The measure/mutate contract: change the DOM, then immediately ask how
+	 * big something is. Every modern component is built on it, and a real
+	 * browser answers by reflowing right there.
+	 *
+	 * This engine could not, so fixes1016 made it decline -- geometry
+	 * returned `undefined` whenever a mutation was awaiting its debounced
+	 * reconvert. That was correct as far as it went (a fabricated 0 gets
+	 * written back as an inline size and destroys the page; `undefined`
+	 * NaN-propagates into a harmless no-op), but declining is still a wrong
+	 * answer, and it is why widgets that measure before laying themselves
+	 * out get nothing and lay themselves out wrong.
+	 *
+	 * fixes1073 forces a synchronous reconvert+layout at the geometry entry
+	 * points. This test asserts the observable consequence: measuring
+	 * straight after a mutation, with NO manual reconvert in between, must
+	 * report the NEW height.
+	 *
+	 * It is a real control. With MACSURF_JS_GEOMETRY=0, or with the flush
+	 * removed, h1 comes back undefined and the assertion below fires. */
+	fprintf(stderr, "\n=== Test 51: geometry reflows before answering "
+		"(#265) ===\n");
+	{
+		extern void macos9_reconvert_sync_stats(long *f, long *d,
+				long *us);
+		long f0 = 0, d0 = 0, u0 = 0;
+
+		/* The flush needs the same preconditions html_reconvert
+		 * enforces for itself: a finished document, no layout or
+		 * convert in flight, no active fetches. */
+		htmlc.base.status = CONTENT_STATUS_DONE;
+		htmlc.reflowing = false;
+		htmlc.box_conversion_context = NULL;
+		htmlc.aborted = false;
+		htmlc.base.active = 0;
+
+		{
+			const char *q =
+				"var h=document.getElementById('feed');"
+				"if(!h)throw new Error('t51 fixture #feed is gone');"
+				"h.innerHTML='';"
+				"globalThis.__t51a=h.offsetHeight;";
+			if (!js_exec(thread, (const unsigned char *)q,
+					strlen(q), "t51-base.js")) {
+				fprintf(stderr, "FAIL: Test 51 -- baseline threw\n");
+				return 1;
+			}
+		}
+		harness_pump_all(100000);
+		htmlc.base.status = CONTENT_STATUS_DONE;
+		htmlc.reflowing = false;
+		htmlc.box_conversion_context = NULL;
+		htmlc.base.active = 0;
+
+		macos9_reconvert_sync_stats(&f0, &d0, &u0);
+
+		/* Mutate and measure in ONE script, with no reconvert driven
+		 * between them. This is the whole point -- a pumped reconvert
+		 * would make the test pass without the feature. */
+		{
+			const char *q =
+				"var h=document.getElementById('feed');"
+				"var i,d;"
+				"for(i=0;i<40;i++){d=document.createElement('div');"
+				"d.style.height='20px';d.id='t51row'+i;"
+				"d.textContent='row'+i;h.appendChild(d);}"
+				"globalThis.__t51b=h.offsetHeight;";
+			if (!js_exec(thread, (const unsigned char *)q,
+					strlen(q), "t51-measure.js")) {
+				fprintf(stderr, "FAIL: Test 51 -- measure "
+					"fixture threw\n");
+				return 1;
+			}
+		}
+		{
+			long f1 = 0, d1 = 0, u1 = 0;
+			dom_string *rid = NULL;
+			dom_element *rel = NULL;
+
+			/* (1) The behavioural change: geometry must ANSWER a
+			 * measurement taken straight after a mutation, not
+			 * decline it. Before fixes1073 this was `undefined`. */
+			{
+				const char *q =
+					"var b=globalThis.__t51b;"
+					"if(b===undefined)"
+					"throw new Error('geometry DECLINED after a "
+						"mutation (offsetHeight undefined) -- the "
+						"forced synchronous layout did not run. "
+						"Check MACSURF_JS_GEOMETRY is 1 and that "
+						"qjs_geometry_flush reaches "
+						"macos9_reconvert_flush_now (#265).');"
+					"if(typeof b!=='number')"
+					"throw new Error('offsetHeight is '+(typeof b)+"
+						"', want number');";
+				if (!js_exec(thread, (const unsigned char *)q,
+						strlen(q), "t51-chk.js")) {
+					fprintf(stderr, "FAIL: Test 51 -- measure/"
+						"mutate contract (#265)\n");
+					return 1;
+				}
+			}
+
+			/* (2) A flush was actually recorded. Without this the
+			 * assertion above could pass on a tree that happened to
+			 * be clean rather than on the feature. */
+			macos9_reconvert_sync_stats(&f1, &d1, &u1);
+			fprintf(stderr, "  t51 forced flushes +%ld declined +%ld "
+				"cost +%ldus\n", f1 - f0, d1 - d0, u1 - u0);
+			if (f1 - f0 < 1) {
+				fprintf(stderr, "FAIL: Test 51 -- the answer was "
+					"right but NO forced flush was recorded "
+					"(+%ld), so the test is passing on a "
+					"stale-but-lucky box tree rather than on "
+					"the feature.\n", f1 - f0);
+				return 1;
+			}
+
+			/* (3) The flush picked up THIS mutation: a div created
+			 * by script moments ago must now own a box. Box
+			 * construction happens only in dom_to_box, so the only
+			 * way this element has one is the forced reconvert.
+			 *
+			 * This is what the height assertion would be on
+			 * hardware. The harness never runs layout_document --
+			 * content__reformat dispatches through
+			 * c->handler->reformat and this fixture has no handler
+			 * -- so every box keeps its birth width and heights read
+			 * 0 here regardless. Asserting the tree was rebuilt is
+			 * the honest harness-side proxy; the pixel assertion
+			 * belongs to a hardware log. */
+			if (dom_string_create((const uint8_t *)"t51row7", 7,
+					&rid) != DOM_NO_ERR) {
+				fprintf(stderr, "FAIL: t51 dom_string_create\n");
+				return 1;
+			}
+			dom_document_get_element_by_id(document, rid, &rel);
+			dom_string_unref(rid);
+			if (rel == NULL) {
+				fprintf(stderr, "FAIL: Test 51 -- #t51row7 is not "
+					"in the DOM; the fixture did not append\n");
+				return 1;
+			}
+			if (box_for_node((dom_node *)rel) == NULL) {
+				fprintf(stderr, "FAIL: Test 51 -- a script-created "
+					"element has NO box after a forced flush. "
+					"The reconvert ran but did not rebuild from "
+					"the mutated DOM, so geometry answered "
+					"against a tree that does not contain the "
+					"element being measured (#265).\n");
+				return 1;
+			}
+			dom_node_unref((dom_node *)rel);
+			fprintf(stderr, "  t51 script-created #t51row7 owns a box "
+				"after the forced flush\n");
+		}
+	}
+	fprintf(stderr, "=== Test 51 PASS: geometry reflows before answering "
+		"===\n");
 
 	return 0;
 }

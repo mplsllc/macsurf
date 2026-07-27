@@ -127,3 +127,11 @@ void OSTLS_RandomBytes(void *out, unsigned long len)
 		p[i] = (unsigned char) (s & 0xFFUL);
 	}
 }
+
+/* fixes1073 (#265) — macos9_animation.c is a Mac-only frontend file and is NOT
+ * linked into the harness, but macos9_reconvert_flush_now reads this to refuse
+ * a forced synchronous layout while a redraw is walking the box tree. NULL is
+ * exactly the right reading here: the harness has no paint loop, so no redraw
+ * is ever on the stack and the flush is always allowed to proceed -- which is
+ * what makes Test 51 able to exercise it at all. */
+struct gui_window *macos9_paint_gw = NULL;
