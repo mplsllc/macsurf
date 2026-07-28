@@ -6434,5 +6434,65 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 52 PASS: reflected attributes via the shared "
 		"prototype ===\n");
 
+	/* --- Test 53: text nodes must NOT inherit element properties ---------
+	 * The control for fixes1081, and the test whose absence let fixes1080
+	 * ship a 13-second regression.
+	 *
+	 * qjs_wrap_text_node and qjs_wrap_fragment build their objects with the
+	 * SAME class id as elements, so the class prototype is shared by all
+	 * three. fixes1079/1080 moved element-only accessors onto it, which gave
+	 * every text node `children`, `firstElementChild`, `src`, `checked` and
+	 * the rest. Hardware went 20s -> 33.5s: not because the work got slower,
+	 * but because libraries feature-detect these and a text node that claims
+	 * to have `children` sends them down element code paths.
+	 *
+	 * This is the fixes1010 lesson from the opposite direction. There a
+	 * method was present on elements and MISSING on text nodes; here a
+	 * property that must not exist on text nodes was PRESENT. Both break the
+	 * same way, and neither throws -- which is why only a test that asks
+	 * about the SHAPE of a text node can catch it. */
+	fprintf(stderr, "\n=== Test 53: text nodes do not inherit element "
+		"properties ===\n");
+	{
+		const char *q =
+			"var t=document.createTextNode('hello');"
+			"var bad=[];"
+			"var probe=['children','firstElementChild',"
+				"'lastElementChild','childElementCount',"
+				"'src','href','checked','disabled','readOnly',"
+				"'offsetParent','scrollIntoView','getClientRects'];"
+			"var i;for(i=0;i<probe.length;i++){"
+				"if(probe[i] in t)bad.push(probe[i]);}"
+			"if(bad.length)"
+			"throw new Error('a TEXT NODE exposes element-only "
+				"properties ['+bad.join(',')+']. It shares "
+				"s_el_class_id with elements, so anything put on "
+				"the CLASS prototype reaches it -- element "
+				"accessors belong on the element-only prototype "
+				"(fixes1081). Libraries feature-detect these and "
+				"will take element paths on text nodes.');"
+			/* And the surface it SHOULD have still works. */
+			"if(t.nodeType!==3)"
+			"throw new Error('text node nodeType is '+t.nodeType);"
+			"if(typeof t.getRootNode!=='function')"
+			"throw new Error('text node lost getRootNode -- node-nav "
+				"must stay on every wrapper shape (fixes1010)');"
+			/* An element still has them, i.e. we did not overcorrect. */
+			"var e=document.createElement('div');"
+			"if(!('children' in e))"
+			"throw new Error('an ELEMENT lost children -- the "
+				"element prototype is not being applied');"
+			"if(!('src' in e))"
+			"throw new Error('an ELEMENT lost src');";
+		if (!js_exec(thread, (const unsigned char *)q, strlen(q),
+				"t53.js")) {
+			fprintf(stderr, "FAIL: Test 53 -- text/element prototype "
+				"separation (fixes1081)\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 53 PASS: text nodes do not inherit element "
+		"properties ===\n");
+
 	return 0;
 }

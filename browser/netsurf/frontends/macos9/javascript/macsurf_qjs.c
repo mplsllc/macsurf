@@ -2185,6 +2185,19 @@ static JSValue qjs_wrap_element(JSContext *ctx, dom_element *el)
 		macsurf_dom_node_unref(node);   /* consume transferred ref */
 		return JS_NULL;
 	}
+	/* fixes1081 — ELEMENTS ONLY get the element accessor prototype. Text and
+	 * fragment wrappers share this class id and must NOT inherit `children`,
+	 * `firstElementChild`, `src` and friends. One prototype assignment
+	 * replaces the 34 per-element property descriptors fixes1079/1080
+	 * removed. See qjs_el_install_proto_helpers. */
+	{
+		JSValue g  = JS_GetGlobalObject(ctx);
+		JSValue ep = JS_GetPropertyStr(ctx, g, "__ms_elproto");
+		if (JS_IsObject(ep))
+			JS_SetPrototype(ctx, obj, ep);
+		JS_FreeValue(ctx, ep);
+		JS_FreeValue(ctx, g);
+	}
 	JS_SetOpaque(obj, el);                  /* adopt the transferred node ref */
 
 	/* Keepalive: own one ref on the current document so it outlives this
@@ -3573,6 +3586,29 @@ static void qjs_el_install_proto_helpers(JSContext *ctx)
 	JSValue fn;
 	JSValue proto;
 
+	/* fixes1081 — the ELEMENT-ONLY prototype, not the class prototype.
+	 *
+	 * qjs_wrap_text_node and qjs_wrap_fragment build their objects with the
+	 * SAME s_el_class_id as elements (the wrap table, qjs_get_node and the
+	 * finalizer are all generic over any dom_node stored under it), so the
+	 * class prototype is shared by elements, text nodes and fragments.
+	 * fixes1079/1080 installed element-only accessors there, which handed
+	 * every text node `children`, `firstElementChild`, `textContent`, `src`,
+	 * `checked`, `offsetParent` and the rest. Hardware: hackaday 20s -> 33.5s,
+	 * with navigation.js going 6.06s -> 16.18s while wrapus barely moved --
+	 * i.e. the install saving was real but the pages started taking different,
+	 * much slower paths.
+	 *
+	 * That is the fixes1010 lesson arriving from the other direction. There
+	 * the danger was a method present on elements and MISSING on text nodes;
+	 * here it is a property that must not exist on text nodes being PRESENT.
+	 * Both break the same way, because libraries feature-detect and branch.
+	 *
+	 * So: a dedicated prototype whose own prototype is the class prototype.
+	 * Elements are re-pointed at it; text and fragment wrappers keep the
+	 * class prototype and therefore keep exactly the surface they had. The
+	 * on* handler table stays on the class proto, shared by all three, which
+	 * is correct -- every shape can take events. */
 	proto = JS_GetClassProto(ctx, s_el_class_id);
 	if (JS_IsException(proto) || JS_IsUndefined(proto) || JS_IsNull(proto)) {
 		JS_FreeValue(ctx, proto);
@@ -3582,9 +3618,20 @@ static void qjs_el_install_proto_helpers(JSContext *ctx)
 			JS_EVAL_TYPE_GLOBAL);
 	if (!JS_IsException(fn)) {
 		JSValue args[1];
-		args[0] = JS_DupValue(ctx, proto);
-		JS_FreeValue(ctx, JS_Call(ctx, fn, JS_UNDEFINED, 1, args));
-		JS_FreeValue(ctx, args[0]);
+		JSValue ep = JS_NewObjectProto(ctx, proto);	/* fixes1081 */
+		if (!JS_IsException(ep)) {
+			JSValue g = JS_GetGlobalObject(ctx);
+			args[0] = JS_DupValue(ctx, ep);
+			JS_FreeValue(ctx, JS_Call(ctx, fn, JS_UNDEFINED, 1,
+					args));
+			JS_FreeValue(ctx, args[0]);
+			/* Stash for qjs_element_proto(); non-enumerable so page
+			 * code walking the global cannot see it. */
+			JS_DefinePropertyValueStr(ctx, g, "__ms_elproto",
+					JS_DupValue(ctx, ep), 0);
+			JS_FreeValue(ctx, g);
+		}
+		JS_FreeValue(ctx, ep);
 	} else {
 		JSValue ex = JS_GetException(ctx);
 		const char *msg = JS_ToCString(ctx, ex);
