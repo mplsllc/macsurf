@@ -101,6 +101,40 @@ static int box_talloc_destructor(struct box *b)
 		macsurf_box_freed_note(b, macsurf_talloc_free_ctx);
 	}
 
+	/* fixes1076 — free an ORPHAN form control here, not only in
+	 * box_free_box.
+	 *
+	 * box_free_box frees box->gadget, but a RECONVERT does not go through
+	 * it: html_reconvert_free_old() bulk-frees the whole old tree with
+	 * talloc_free(old_bctx), which runs this destructor per chunk and
+	 * nothing else. So every gadget on the old tree was simply dropped.
+	 *
+	 * It only leaks for controls with no owning <form>, and that is not a
+	 * coincidence -- it is the same asymmetry from both ends.
+	 * html_forms_get_control_for_node reuses an existing control only if it
+	 * can find it by walking c->forms; parse_* calls form_add_control ONLY
+	 * when the element has a <form>, and invent_fake_gadget links its
+	 * control nowhere. So a form-owned control is found and REUSED across a
+	 * reconvert (no garbage), while an orphan is unreachable, rebuilt every
+	 * time, and never freed by anything on any path.
+	 *
+	 * That shape is exactly the modern-page case: a JS-driven comment box or
+	 * editor whose controls are not inside a <form>. fixes1073's forced
+	 * synchronous layout multiplies reconverts, so this stops being
+	 * theoretical.
+	 *
+	 * Safe to call unconditionally on an orphan: form_free_control unlinks
+	 * from control->form first (form.c), and an orphan has none. Guarded on
+	 * CLONE for the same reason box_free_box is -- a cloned box shares the
+	 * pointer with its original and must not free it. Form-OWNED controls
+	 * are deliberately untouched here: they are reused across reconverts and
+	 * freed with their form at content destroy. */
+	if (b->gadget != NULL && b->gadget->form == NULL &&
+	    !(b->flags & CLONE)) {
+		form_free_control(b->gadget);
+		b->gadget = NULL;
+	}
+
 	if ((b->flags & STYLE_OWNED) && b->style != NULL) {
 		css_computed_style_destroy(b->style);
 		b->style = NULL;
@@ -337,8 +371,14 @@ void box_free(struct box *box)
 void box_free_box(struct box *box)
 {
 	if (!(box->flags & CLONE)) {
-		if (box->gadget)
+		/* fixes1076 — NULL it. box_free_box ends in talloc_free(box),
+		 * which runs box_talloc_destructor, which now also frees an
+		 * orphan gadget; without clearing the pointer here that path
+		 * would free the same control twice. */
+		if (box->gadget) {
 			form_free_control(box->gadget);
+			box->gadget = NULL;
+		}
 		if (box->scroll_x != NULL)
 			scrollbar_destroy(box->scroll_x);
 		if (box->scroll_y != NULL)
