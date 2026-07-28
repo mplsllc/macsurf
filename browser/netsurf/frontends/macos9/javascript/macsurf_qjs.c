@@ -2222,7 +2222,22 @@ static JSValue qjs_wrap_element(JSContext *ctx, dom_element *el)
 
 	/* Install methods ONCE per node (folded in from qjs_wrap_element_full so
 	 * cache hits skip the heavy re-install). */
-	qjs_el_install_native_attrs(ctx, obj);
+	/* fixes1080 — time the WHOLE per-element install, not one sub-call.
+	 *
+	 * fixes1078 bracketed only qjs_el_install_js_helpers, so the el-props
+	 * and el-layout blocks -- 13 more descriptors and closures per element,
+	 * installed a few lines further down in the same function -- were
+	 * invisible to it. Moving them to the shared prototype therefore
+	 * produced no change in the number, which reads as "that did nothing"
+	 * when it was really "the instrument cannot see it". Bracket the call
+	 * site instead: everything the wrapper build does is inside it. */
+	{
+		extern double macos9_micros(void);
+		double wt0 = macos9_micros();
+		g_wrap_installs++;
+		qjs_el_install_native_attrs(ctx, obj);
+		g_wrap_us += (long)(macos9_micros() - wt0);
+	}
 	return obj;
 }
 
@@ -3504,6 +3519,56 @@ static void qjs_el_install_proto_helpers(JSContext *ctx)
 		"set:function(v){if(v)this.setAttribute(a,a);"
 			"else if(this.removeAttribute)this.removeAttribute(a);}});"
 		"})(bp[_i]);}"
+		/* fixes1080 — the el-props accessor set, was installed per
+		 * element (8 descriptors, 8 closures). Every one delegates
+		 * straight to a native __ method on the instance, so `this` is
+		 * all they ever needed. */
+		"Object.defineProperty(P,'textContent',{configurable:true,"
+		"get:function(){return this.__getTextContent();},"
+		"set:function(v){this.__setTextContent(String(v));}});"
+		"Object.defineProperty(P,'parentNode',{configurable:true,"
+		"get:function(){return this.__getParentNode();}});"
+		"Object.defineProperty(P,'nextElementSibling',{configurable:true,"
+		"get:function(){return this.__getNextElementSibling();}});"
+		"Object.defineProperty(P,'previousElementSibling',{configurable:true,"
+		"get:function(){return this.__getPreviousElementSibling();}});"
+		"Object.defineProperty(P,'children',{configurable:true,"
+		"get:function(){return this.__getChildren();}});"
+		/* Derived from children so they cannot disagree with it
+		 * (fixes1031 — jQuery wrapAll walks firstElementChild). */
+		"Object.defineProperty(P,'firstElementChild',{configurable:true,"
+		"get:function(){var c=this.__getChildren();"
+			"return (c&&c.length)?c[0]:null;}});"
+		"Object.defineProperty(P,'lastElementChild',{configurable:true,"
+		"get:function(){var c=this.__getChildren();"
+			"return (c&&c.length)?c[c.length-1]:null;}});"
+		"Object.defineProperty(P,'childElementCount',{configurable:true,"
+		"get:function(){var c=this.__getChildren();"
+			"return (c&&c.length)?c.length:0;}});"
+		/* fixes1080 — the el-layout set, likewise per element before
+		 * (2 methods + 3 accessors + 5 closures). */
+		"P.getClientRects=function(){"
+			"return [this.getBoundingClientRect()];};"
+		"Object.defineProperty(P,'scrollTop',{configurable:true,"
+			"get:function(){return (typeof window!=='undefined')?"
+				"(window.scrollY||0):0;},"
+			"set:function(v){if(typeof window!=='undefined'&&"
+				"window.scrollTo)window.scrollTo(window.scrollX||0,v|0);}});"
+		"Object.defineProperty(P,'scrollLeft',{configurable:true,"
+			"get:function(){return (typeof window!=='undefined')?"
+				"(window.scrollX||0):0;},"
+			"set:function(v){if(typeof window!=='undefined'&&"
+				"window.scrollTo)window.scrollTo(v|0,window.scrollY||0);}});"
+		"Object.defineProperty(P,'offsetParent',{configurable:true,"
+			"get:function(){var p=this.parentNode;"
+			"while(p&&p.nodeType===1){"
+				"if(p===document.body)return p;p=p.parentNode;}"
+			"return (typeof document!=='undefined')?document.body:null;}});"
+		"P.scrollIntoView=function(){"
+			"var r=this.getBoundingClientRect();"
+			"if(typeof window!=='undefined'&&window.scrollTo)"
+				"window.scrollTo(window.scrollX||0,"
+					"(window.scrollY||0)+r.top);};"
 		"})";
 	JSValue fn;
 	JSValue proto;
@@ -6009,72 +6074,12 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 	JS_FreeValue(ctx, data[0]);
 
 	/* JS-side helpers: classList, style, dataset, matches, closest, etc. */
-	/* fixes1071/1078 — see qjs_helper_fn. Bracket the whole per-element
-	 * helper install: this is the cost the prototype migration would
-	 * remove. */
-	{
-		extern double macos9_micros(void);
-		double wt0 = macos9_micros();
-		g_wrap_installs++;
-		qjs_el_install_js_helpers(ctx, obj);
-		g_wrap_us += (long)(macos9_micros() - wt0);
-	}
+	qjs_el_install_js_helpers(ctx, obj);
 
 	/* Wire textContent as a property using the C getter/setter helpers */
-	{
-		static const char *tc_src =
-			"(function(el){"
-			"Object.defineProperty(el,'textContent',{"
-			"get:function(){return el.__getTextContent();},"
-			"set:function(v){el.__setTextContent(String(v));},"
-			"configurable:true});"
-			"Object.defineProperty(el,'parentNode',{"
-			"get:function(){return el.__getParentNode();},"
-			"configurable:true});"
-			"Object.defineProperty(el,'nextElementSibling',{"
-			"get:function(){return el.__getNextElementSibling();},"
-			"configurable:true});"
-			"Object.defineProperty(el,'previousElementSibling',{"
-			"get:function(){return el.__getPreviousElementSibling();},"
-			"configurable:true});"
-			"Object.defineProperty(el,'children',{"
-			"get:function(){return el.__getChildren();},"
-			"configurable:true});"
-			/* fixes1031 — firstElementChild / lastElementChild /
-			 * childElementCount. nextElementSibling and
-			 * previousElementSibling were here; their two siblings were
-			 * not, and jQuery's wrapAll walks firstElementChild:
-			 *
-			 *   wrap.map(function(){ var e=this;
-			 *       while (e.firstElementChild) e=e.firstElementChild;
-			 *       return e; }).append(this);
-			 *
-			 * so wrapInner() -- and therefore the dotdotdot truncation
-			 * plugin hackaday runs over every article entry -- lost the
-			 * content it was re-parenting. Derived from `children` so
-			 * they cannot disagree with it. */
-			"Object.defineProperty(el,'firstElementChild',{"
-			"get:function(){var c=el.__getChildren();"
-				"return (c&&c.length)?c[0]:null;},"
-			"configurable:true});"
-			"Object.defineProperty(el,'lastElementChild',{"
-			"get:function(){var c=el.__getChildren();"
-				"return (c&&c.length)?c[c.length-1]:null;},"
-			"configurable:true});"
-			"Object.defineProperty(el,'childElementCount',{"
-			"get:function(){var c=el.__getChildren();"
-				"return (c&&c.length)?c.length:0;},"
-			"configurable:true});"
-			"})";
-		JSValue fn2, args2[1];
-		fn2 = qjs_helper_fn(ctx, "__ms_h_props", tc_src, "<el-props>");
-		if (!JS_IsException(fn2)) {
-			args2[0] = JS_DupValue(ctx, obj);
-			JS_Call(ctx, fn2, JS_UNDEFINED, 1, args2);
-			JS_FreeValue(ctx, args2[0]);
-		}
-		JS_FreeValue(ctx, fn2);
-	}
+	/* fixes1080 — <el-props> MOVED to qjs_el_install_proto_helpers.
+	 * It ran here per element; every accessor in it delegates to a
+	 * native __ method on the instance, so `this` was all it needed. */
 
 	/* fixes1011 (Phase 3) — REAL layout metrics, replacing the zero stubs.
 	 *
@@ -6114,45 +6119,9 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 		}
 		JS_FreeValue(ctx, d2[0]);
 	}
-	{
-		/* getClientRects wraps the single rect; scrollTop/Left are the
-		 * window's scroll for now (per-element scrollers are not modelled),
-		 * and the SETTER really moves the view rather than recording a
-		 * number, which is what a "scroll to top" button needs. */
-		static const char *lay_src =
-			"(function(el){"
-			"el.getClientRects=function(){"
-				"return [el.getBoundingClientRect()];};"
-			"Object.defineProperty(el,'scrollTop',{configurable:true,"
-				"get:function(){return (typeof window!=='undefined')?"
-					"(window.scrollY||0):0;},"
-				"set:function(v){if(typeof window!=='undefined'&&"
-					"window.scrollTo)window.scrollTo(window.scrollX||0,v|0);}});"
-			"Object.defineProperty(el,'scrollLeft',{configurable:true,"
-				"get:function(){return (typeof window!=='undefined')?"
-					"(window.scrollX||0):0;},"
-				"set:function(v){if(typeof window!=='undefined'&&"
-					"window.scrollTo)window.scrollTo(v|0,window.scrollY||0);}});"
-			"Object.defineProperty(el,'offsetParent',{configurable:true,"
-				"get:function(){var p=el.parentNode;"
-				"while(p&&p.nodeType===1){"
-					"if(p===document.body)return p;p=p.parentNode;}"
-				"return (typeof document!=='undefined')?document.body:null;}});"
-			"el.scrollIntoView=function(){"
-				"var r=el.getBoundingClientRect();"
-				"if(typeof window!=='undefined'&&window.scrollTo)"
-					"window.scrollTo(window.scrollX||0,"
-						"(window.scrollY||0)+r.top);};"
-			"})";
-		JSValue fn3, a3[1];
-		fn3 = qjs_helper_fn(ctx, "__ms_h_lay", lay_src, "<el-layout>");
-		if (!JS_IsException(fn3)) {
-			a3[0] = JS_DupValue(ctx, obj);
-			JS_Call(ctx, fn3, JS_UNDEFINED, 1, a3);
-			JS_FreeValue(ctx, a3[0]);
-		}
-		JS_FreeValue(ctx, fn3);
-	}
+	/* fixes1080 — <el-layout> MOVED to qjs_el_install_proto_helpers.
+	 * It ran here per element; every accessor in it delegates to a
+	 * native __ method on the instance, so `this` was all it needed. */
 
 	/* fixes878 — last, so nothing above can clobber it. */
 	qjs_install_node_traversal(ctx, obj);
