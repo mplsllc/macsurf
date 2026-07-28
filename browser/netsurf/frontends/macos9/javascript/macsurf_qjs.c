@@ -1475,6 +1475,18 @@ static long g_wrap_installs   = 0;
 static long g_helper_compiles = 0;
 static long g_helper_bytes    = 0;
 
+/* fixes1077 — geometry read census, so the cost of answering is measurable
+ * rather than inferred. reads = every geometry entry; us = what they cost. */
+static long g_geom_reads = 0;
+static long g_geom_us    = 0;
+
+void macsurf_qjs_geom_stats(long *reads, long *us);
+void macsurf_qjs_geom_stats(long *reads, long *us)
+{
+	if (reads != NULL) *reads = g_geom_reads;
+	if (us != NULL)    *us    = g_geom_us;
+}
+
 /* fixes1070 — called from JS_RunGC in quickjs.c (both copies: the CW8 build's
  * browser/libquickjs and the Linux harness's quickjs-macos9). GC has no public
  * hook, and it is triggered from inside allocation rather than by us, so there
@@ -1696,6 +1708,14 @@ void macsurf_qjs_emit_js_profile(void)
 				"LIFE JSSYNCWHY notdone=%ld active=%ld paint=%ld "
 				"inprog=%ld budget=%ld busy=%ld",
 				rnd, rac, rpa, rip, rbu, rbz);
+		}
+		{	/* fixes1077 — how many measurements, and what they cost. */
+			long gr = 0, gu = 0;
+			macsurf_qjs_geom_stats(&gr, &gu);
+			macsurf_debug_log_writef(
+				"LIFE JSGEOM reads=%ld gateus=%ld", gr, gu);
+			g_geom_reads = 0;
+			g_geom_us = 0;
 		}
 		macos9_reconvert_sync_reset();
 	}
@@ -4319,21 +4339,58 @@ static const char *qjs_css_display_name(uint8_t v)
 static void qjs_geometry_flush(void)
 {
 	extern int macos9_reconvert_flush_now(void *cv);
+	extern double macos9_micros(void);
+	double t0;
 
 	if (!MACSURF_JS_GEOMETRY) return;
 	if (g_qjs_content == NULL) return;
+	/* fixes1077 — count and time every geometry entry. This is the number
+	 * that says whether answering is affordable; before it existed the
+	 * 13-second cost of enabling geometry could only be inferred from the
+	 * difference between two hardware logs. */
+	t0 = macos9_micros();
+	g_geom_reads++;
 	(void) macos9_reconvert_flush_now((void *) g_qjs_content);
+	g_geom_us += (long)(macos9_micros() - t0);
 }
 
 static int qjs_geometry_settled(void)
 {
 	extern int macsurf_reconvert_in_progress;
+	/* fixes1077 — CACHE THE LIVENESS SCAN.
+	 *
+	 * macos9_content_is_live() walks a 256-entry table, and this predicate
+	 * runs on every single geometry read a page performs. Enabling geometry
+	 * (fixes1073) therefore put a 256-iteration scan in front of every
+	 * measurement: hackaday's navigation.js went 5.96s -> 19.04s while the
+	 * forced reflow never fired once, so the whole cost bought nothing.
+	 *
+	 * The answer cannot change unless the content registry changes, and the
+	 * registry now bumps an epoch whenever it does. Cache against (epoch,
+	 * content) and rescan only when one moves -- which is a handful of times
+	 * per navigation instead of tens of thousands. */
+	extern unsigned long macos9_content_registry_epoch;
+	static unsigned long cached_epoch = (unsigned long)-1;
+	static void *cached_c = NULL;
+	static int cached_live = 0;
 
 	if (!MACSURF_JS_GEOMETRY) return 0;
 	if (g_qjs_content == NULL) return 0;
-	if (macos9_content_is_live(g_qjs_content) == 0) return 0;
-	if (g_qjs_content->status != CONTENT_STATUS_DONE) return 0;
 	if (macsurf_reconvert_in_progress) return 0;
+
+	if (cached_epoch != macos9_content_registry_epoch ||
+	    cached_c != (void *)g_qjs_content) {
+		cached_epoch = macos9_content_registry_epoch;
+		cached_c = (void *)g_qjs_content;
+		cached_live = macos9_content_is_live(g_qjs_content);
+	}
+	if (cached_live == 0) return 0;
+
+	/* Read ->status only AFTER liveness, never before: on a freed content
+	 * that dereference is exactly the use-after-free the registry exists to
+	 * prevent. The cache does not weaken that -- an unregister bumps the
+	 * epoch, so a freed content can never be reported live from cache. */
+	if (g_qjs_content->status != CONTENT_STATUS_DONE) return 0;
 	return 1;
 }
 

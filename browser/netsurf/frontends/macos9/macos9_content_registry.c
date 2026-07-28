@@ -43,6 +43,20 @@ static unsigned long macos9_content_gen_next = 1;
 /* Count of occupied slots, maintained for cheap logging only. */
 static int macos9_content_live_count = 0;
 
+/* fixes1077 — registry EPOCH, bumped on every register/unregister.
+ *
+ * macos9_content_is_live() is a linear scan of a 256-entry table. That was
+ * fine while its callers were rare (a reconvert, a teardown), but fixes1073
+ * put it on the JS geometry path, where it runs on EVERY getBoundingClientRect
+ * / offsetWidth / getComputedStyle a page performs. hackaday's navigation.js
+ * measures relentlessly and went from 5.96s to 19.04s the moment geometry was
+ * enabled -- with the forced reflow never once firing, so the cost was pure
+ * gate overhead buying nothing.
+ *
+ * The answer cannot change unless the table changes, so a caller can cache its
+ * result against this counter and rescan only when it actually moves. */
+unsigned long macos9_content_registry_epoch = 0;
+
 
 /**
  * Find the slot index holding c, or -1 if absent.
@@ -87,6 +101,7 @@ macos9_content_register(struct content *c)
 			macos9_content_table[i].c = c;
 			macos9_content_table[i].gen = g;
 			macos9_content_live_count++;
+			macos9_content_registry_epoch++;	/* fixes1077 */
 			return;
 		}
 	}
@@ -117,6 +132,7 @@ macos9_content_unregister(struct content *c)
 	macos9_content_table[idx].gen = 0;
 	if (macos9_content_live_count > 0)
 		macos9_content_live_count--;
+	macos9_content_registry_epoch++;		/* fixes1077 */
 }
 
 
