@@ -98,15 +98,6 @@ static unsigned long g_last_reconvert_tick = 0;
  * dropping the work. */
 #define RECONVERT_MAX_PENDING 8
 
-/* fixes1073 (#265) — forced synchronous layouts allowed per navigation.
- *
- * Each one is a full reconvert + layout (~100ms measured), so this is the
- * ceiling on what a measure-then-mutate loop can cost before geometry falls
- * back to `undefined`. 24 covers every real init sequence seen in the hardware
- * logs with room to spare; a page that exhausts it is thrashing, and the
- * declined counter in LIFE JSSYNC says so rather than hiding it. Raise only
- * with a log that shows a legitimate page being cut off. */
-#define MACOS9_SYNC_FLUSH_MAX 24
 
 struct macos9_reconvert_pending {
 	struct content *c;
@@ -419,10 +410,33 @@ macsurf_js_set_reconvert_enabled(int enabled)
  * pages hit it -- which is the number that decides whether the next round needs
  * incremental layout. A silent cap would read as "nothing to see here".
  * ------------------------------------------------------------------ */
-static int  g_sync_flush_budget = MACOS9_SYNC_FLUSH_MAX;
 static long g_sync_flushes      = 0;	/* flushes actually run, this nav  */
 static long g_sync_declined     = 0;	/* asked, refused (guard or budget) */
 static long g_sync_us           = 0;	/* cumulative cost of the flushes   */
+
+/* fixes1075 — WHY a flush was refused, because the first hardware log of
+ * fixes1073 reported declined=660 flush=0 on hackaday and the instrument could
+ * not say which guard was firing. A refusal count with no reason attached is
+ * the same shape of unhelpful as `js=25s` with no compile/run split. */
+static long g_sync_r_notdone  = 0;	/* content not CONTENT_STATUS_DONE   */
+static long g_sync_r_active   = 0;	/* sub-resource fetches still in air */
+static long g_sync_r_paint    = 0;	/* a redraw is walking the box tree  */
+static long g_sync_r_inprog   = 0;	/* reconvert already in flight       */
+static long g_sync_r_budget   = 0;	/* time budget for this nav spent    */
+static long g_sync_r_busy     = 0;	/* html_reconvert refused, other     */
+
+/* fixes1075 — budget by TIME, not by count.
+ *
+ * fixes1073 allowed 24 forced layouts per navigation on an estimate of ~100ms
+ * each. Hardware measured 1.08s each (the Jetpack comment iframe spent 4.34s on
+ * four of them), which makes that ceiling a 26-second worst case -- exactly the
+ * regression this whole effort is trying not to cause.
+ *
+ * A count cannot bound a cost whose per-unit price is unknown and varies with
+ * page size. Cumulative microseconds can, and it degrades where it should: a
+ * page gets as many reflows as fit in the budget, cheap ones get more of them,
+ * and once spent geometry falls back to `undefined` and JSSYNC says so. */
+#define MACOS9_SYNC_BUDGET_US 2000000L
 
 void
 macos9_reconvert_sync_stats(long *flushes, long *declined, long *us)
@@ -432,13 +446,29 @@ macos9_reconvert_sync_stats(long *flushes, long *declined, long *us)
 	if (us != NULL)       *us       = g_sync_us;
 }
 
+/* fixes1075 — the per-reason breakdown behind `declined`. See the counters'
+ * declarations for what each one means and which of them would change the
+ * next round's target. */
+void
+macos9_reconvert_sync_reasons(long *notdone, long *active, long *paint,
+		long *inprog, long *budget, long *busy)
+{
+	if (notdone != NULL) *notdone = g_sync_r_notdone;
+	if (active != NULL)  *active  = g_sync_r_active;
+	if (paint != NULL)   *paint   = g_sync_r_paint;
+	if (inprog != NULL)  *inprog  = g_sync_r_inprog;
+	if (budget != NULL)  *budget  = g_sync_r_budget;
+	if (busy != NULL)    *busy    = g_sync_r_busy;
+}
+
 void
 macos9_reconvert_sync_reset(void)
 {
-	g_sync_flush_budget = MACOS9_SYNC_FLUSH_MAX;
 	g_sync_flushes  = 0;
 	g_sync_declined = 0;
 	g_sync_us       = 0;
+	g_sync_r_notdone = 0; g_sync_r_active = 0; g_sync_r_paint = 0;
+	g_sync_r_inprog = 0;  g_sync_r_budget = 0; g_sync_r_busy = 0;
 }
 
 int
@@ -459,15 +489,35 @@ macos9_reconvert_flush_now(void *cv)
 	if (!macos9_reconvert_pending_for(cv))
 		return 0;
 
-	if (in_flush || macos9_paint_gw != NULL ||
-	    macsurf_reconvert_in_progress || !g_reconvert_enabled ||
-	    !macos9_content_is_live(c)) {
-		g_sync_declined++;
-		return 0;
+	/* fixes1075 — attribute the refusal. Ordered most-specific first so the
+	 * counter names the ACTUAL blocker rather than whichever guard happens
+	 * to be listed earliest. */
+	if (in_flush || macsurf_reconvert_in_progress) {
+		g_sync_r_inprog++; g_sync_declined++; return 0;
 	}
-	if (g_sync_flush_budget <= 0) {
-		g_sync_declined++;
-		return 0;
+	if (macos9_paint_gw != NULL) {
+		g_sync_r_paint++; g_sync_declined++; return 0;
+	}
+	if (!g_reconvert_enabled || !macos9_content_is_live(c)) {
+		g_sync_r_busy++; g_sync_declined++; return 0;
+	}
+	/* These two are html_reconvert's own preconditions, checked here only so
+	 * the refusal can be NAMED. html_reconvert enforces them regardless.
+	 *   notdone: the document has not finished loading. Script init -- which
+	 *     is when widgets measure -- runs inside this window, so if this is
+	 *     the dominant reason then geometry is dead exactly when it matters
+	 *     and the gate itself is the next problem, not the budget.
+	 *   active: sub-resource fetches still in flight. Rebuilding now would
+	 *     free an object list that html_object_callback still points into
+	 *     (the fixes421 use-after-free). */
+	if (c->status != CONTENT_STATUS_DONE) {
+		g_sync_r_notdone++; g_sync_declined++; return 0;
+	}
+	if (c->active > 0) {
+		g_sync_r_active++; g_sync_declined++; return 0;
+	}
+	if (g_sync_us >= MACOS9_SYNC_BUDGET_US) {
+		g_sync_r_budget++; g_sync_declined++; return 0;
 	}
 
 	in_flush = 1;
@@ -476,16 +526,17 @@ macos9_reconvert_flush_now(void *cv)
 	in_flush = 0;
 
 	if (rc != 0) {
-		/* Busy for a reason html_reconvert owns (mid-layout, convert in
-		 * flight, fetches active). Leave the slot pending so the
-		 * debounced path still runs it, and answer undefined. */
+		/* Busy for a reason html_reconvert owns that we did not screen
+		 * for above (mid-layout, a convert already in flight). Leave the
+		 * slot pending so the debounced path still runs it, and answer
+		 * undefined. */
+		g_sync_r_busy++;
 		g_sync_declined++;
 		return 0;
 	}
 
 	g_sync_us += (long)(macos9_micros() - t0);
 	g_sync_flushes++;
-	g_sync_flush_budget--;
 
 	/* This flush answered every pending mutation for c, so retire its
 	 * slots -- otherwise the debounced callback rebuilds the same tree

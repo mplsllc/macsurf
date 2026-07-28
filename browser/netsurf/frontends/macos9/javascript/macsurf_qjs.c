@@ -1678,6 +1678,25 @@ void macsurf_qjs_emit_js_profile(void)
 		macos9_reconvert_sync_stats(&sf, &sd, &su);
 		macsurf_debug_log_writef(
 			"LIFE JSSYNC flush=%ld declined=%ld us=%ld", sf, sd, su);
+		/* fixes1075 — and WHY the declines happened. fixes1073's first
+		 * hardware log read `flush=0 declined=660` on hackaday, which
+		 * says the feature never ran but not which guard stopped it.
+		 * `notdone` dominating would mean geometry is gated out of the
+		 * entire page-load window -- i.e. exactly when scripts
+		 * initialise and measure -- and the gate, not the budget, is the
+		 * next thing to fix. */
+		if (sd > 0) {
+			extern void macos9_reconvert_sync_reasons(long *nd,
+					long *ac, long *pa, long *ip,
+					long *bu, long *bz);
+			long rnd = 0, rac = 0, rpa = 0, rip = 0, rbu = 0, rbz = 0;
+			macos9_reconvert_sync_reasons(&rnd, &rac, &rpa, &rip,
+					&rbu, &rbz);
+			macsurf_debug_log_writef(
+				"LIFE JSSYNCWHY notdone=%ld active=%ld paint=%ld "
+				"inprog=%ld budget=%ld busy=%ld",
+				rnd, rac, rpa, rip, rbu, rbz);
+		}
 		macos9_reconvert_sync_reset();
 	}
 	g_qjs_interrupts  = 0;
