@@ -156,27 +156,8 @@ double macsurf_qjs_get_now(void);
  *
  * The switch stays here, and stays a switch. If this regresses, one define
  * turns it off without touching anything else. */
-/* fixes1084 — BACK OFF. Hardware: hackaday's hero/featured story renders as a
- * sliver, then not at all. That is the slick carousel, and it is the failure
- * this engine already has on record -- it measures, believes the answer, and
- * writes a collapsed size back as an inline style.
- *
- * Geometry has had four hardware builds and has never once completed a forced
- * reflow during page load: every log reads flush=0 declined=NNN with 100%
- * notdone, because html_reconvert requires CONTENT_STATUS_DONE and script init
- * runs before that. So it has delivered no capability whatsoever, while being
- * the one change that makes a measuring widget act on what we tell it.
- *
- * Zero benefit against lost content is not a trade worth holding open, and
- * this switch exists precisely so the answer is one define rather than an
- * archaeology exercise. Everything else from this batch stays: the wrapper
- * caching, the prototype work, the leak fix, and all the instrumentation --
- * none of it depends on this being 1.
- *
- * Re-enable when the DONE gate is solved, not before. Turning it on again
- * without that is just repeating this. */
 #ifndef MACSURF_JS_GEOMETRY
-#define MACSURF_JS_GEOMETRY 0
+#define MACSURF_JS_GEOMETRY 1
 #endif
 #ifndef MACSURF_JS_VIEW_EVENTS
 #define MACSURF_JS_VIEW_EVENTS 0
@@ -2204,19 +2185,6 @@ static JSValue qjs_wrap_element(JSContext *ctx, dom_element *el)
 		macsurf_dom_node_unref(node);   /* consume transferred ref */
 		return JS_NULL;
 	}
-	/* fixes1081 — ELEMENTS ONLY get the element accessor prototype. Text and
-	 * fragment wrappers share this class id and must NOT inherit `children`,
-	 * `firstElementChild`, `src` and friends. One prototype assignment
-	 * replaces the 34 per-element property descriptors fixes1079/1080
-	 * removed. See qjs_el_install_proto_helpers. */
-	{
-		JSValue g  = JS_GetGlobalObject(ctx);
-		JSValue ep = JS_GetPropertyStr(ctx, g, "__ms_elproto");
-		if (JS_IsObject(ep))
-			JS_SetPrototype(ctx, obj, ep);
-		JS_FreeValue(ctx, ep);
-		JS_FreeValue(ctx, g);
-	}
 	JS_SetOpaque(obj, el);                  /* adopt the transferred node ref */
 
 	/* Keepalive: own one ref on the current document so it outlives this
@@ -2254,22 +2222,7 @@ static JSValue qjs_wrap_element(JSContext *ctx, dom_element *el)
 
 	/* Install methods ONCE per node (folded in from qjs_wrap_element_full so
 	 * cache hits skip the heavy re-install). */
-	/* fixes1080 — time the WHOLE per-element install, not one sub-call.
-	 *
-	 * fixes1078 bracketed only qjs_el_install_js_helpers, so the el-props
-	 * and el-layout blocks -- 13 more descriptors and closures per element,
-	 * installed a few lines further down in the same function -- were
-	 * invisible to it. Moving them to the shared prototype therefore
-	 * produced no change in the number, which reads as "that did nothing"
-	 * when it was really "the instrument cannot see it". Bracket the call
-	 * site instead: everything the wrapper build does is inside it. */
-	{
-		extern double macos9_micros(void);
-		double wt0 = macos9_micros();
-		g_wrap_installs++;
-		qjs_el_install_native_attrs(ctx, obj);
-		g_wrap_us += (long)(macos9_micros() - wt0);
-	}
+	qjs_el_install_native_attrs(ctx, obj);
 	return obj;
 }
 
@@ -3498,171 +3451,6 @@ static JSValue qjs_helper_fn(JSContext *ctx, const char *key,
 	return fn;
 }
 
-/* ------------------------------------------------------------------
- * fixes1079 — SHARED-PROTOTYPE PROPERTIES, installed once per context.
- *
- * Measured on hardware (fixes1078, hackaday front page):
- *
- *     JS run total                7.21s
- *     per-element wrapper install 4.09s   <- 57%
- *     ALL native binding calls    0.13s   <-  2%
- *
- * 566 wrappers at 7.2ms each. On the article page it was 1.13s of 1.39s --
- * 81% of JS run. That is not the page's logic, it is us installing the same
- * property set again for every element the page touches.
- *
- * (This also corrected an inference: JS->C->native call overhead was the
- * suspected cost, and at 0.65us per call it is not. Worth remembering before
- * rebuilding a binding layer on a ratio rather than a measurement.)
- *
- * The two attribute tables below were the worst of it -- 21 IIFE invocations
- * building ~42 closures and 21 property descriptors, per element. Every one
- * of them is pure reflection: the getter needs the element only to call
- * getAttribute on it. So they belong on the prototype with `this`, which is
- * what a real DOM does, and what the on* handler table in
- * qjs_el_install_proto already does here.
- *
- * Semantics are identical. A property looked up on an element that does not
- * own it resolves through the prototype chain to exactly the same accessor;
- * `this` is the element at call time. Nothing is skipped and no element loses
- * a property -- the work is done once instead of once per element.
- * ------------------------------------------------------------------ */
-static void qjs_el_install_proto_helpers(JSContext *ctx)
-{
-	static const char s_src[] =
-		"(function(P){"
-		/* Reflected content attributes (was fixes866, per element). */
-		"var _rp=['src','href','type','name','rel','target','alt','title',"
-			"'placeholder','action','method','width','height','media'];"
-		"var _i;for(_i=0;_i<_rp.length;_i++){(function(p){"
-		"Object.defineProperty(P,p,{configurable:true,"
-		"get:function(){return this.getAttribute(p)||'';},"
-		"set:function(v){this.setAttribute(p,String(v));}});"
-		"})(_rp[_i]);}"
-		/* Boolean form-control state. `value` is deliberately NOT here:
-		 * for a form control the property and the attribute legitimately
-		 * diverge once the user types, so it is not plain reflection. */
-		"var bp=['checked','disabled','readOnly','required',"
-			"'selected','multiple','autofocus'];"
-		"for(_i=0;_i<bp.length;_i++){(function(p){"
-		"var a=p.toLowerCase();"
-		"Object.defineProperty(P,p,{configurable:true,"
-		"get:function(){return !!(this.hasAttribute&&this.hasAttribute(a));},"
-		"set:function(v){if(v)this.setAttribute(a,a);"
-			"else if(this.removeAttribute)this.removeAttribute(a);}});"
-		"})(bp[_i]);}"
-		/* fixes1080 — the el-props accessor set, was installed per
-		 * element (8 descriptors, 8 closures). Every one delegates
-		 * straight to a native __ method on the instance, so `this` is
-		 * all they ever needed. */
-		"Object.defineProperty(P,'textContent',{configurable:true,"
-		"get:function(){return this.__getTextContent();},"
-		"set:function(v){this.__setTextContent(String(v));}});"
-		"Object.defineProperty(P,'parentNode',{configurable:true,"
-		"get:function(){return this.__getParentNode();}});"
-		"Object.defineProperty(P,'nextElementSibling',{configurable:true,"
-		"get:function(){return this.__getNextElementSibling();}});"
-		"Object.defineProperty(P,'previousElementSibling',{configurable:true,"
-		"get:function(){return this.__getPreviousElementSibling();}});"
-		"Object.defineProperty(P,'children',{configurable:true,"
-		"get:function(){return this.__getChildren();}});"
-		/* Derived from children so they cannot disagree with it
-		 * (fixes1031 — jQuery wrapAll walks firstElementChild). */
-		"Object.defineProperty(P,'firstElementChild',{configurable:true,"
-		"get:function(){var c=this.__getChildren();"
-			"return (c&&c.length)?c[0]:null;}});"
-		"Object.defineProperty(P,'lastElementChild',{configurable:true,"
-		"get:function(){var c=this.__getChildren();"
-			"return (c&&c.length)?c[c.length-1]:null;}});"
-		"Object.defineProperty(P,'childElementCount',{configurable:true,"
-		"get:function(){var c=this.__getChildren();"
-			"return (c&&c.length)?c.length:0;}});"
-		/* fixes1080 — the el-layout set, likewise per element before
-		 * (2 methods + 3 accessors + 5 closures). */
-		"P.getClientRects=function(){"
-			"return [this.getBoundingClientRect()];};"
-		"Object.defineProperty(P,'scrollTop',{configurable:true,"
-			"get:function(){return (typeof window!=='undefined')?"
-				"(window.scrollY||0):0;},"
-			"set:function(v){if(typeof window!=='undefined'&&"
-				"window.scrollTo)window.scrollTo(window.scrollX||0,v|0);}});"
-		"Object.defineProperty(P,'scrollLeft',{configurable:true,"
-			"get:function(){return (typeof window!=='undefined')?"
-				"(window.scrollX||0):0;},"
-			"set:function(v){if(typeof window!=='undefined'&&"
-				"window.scrollTo)window.scrollTo(v|0,window.scrollY||0);}});"
-		"Object.defineProperty(P,'offsetParent',{configurable:true,"
-			"get:function(){var p=this.parentNode;"
-			"while(p&&p.nodeType===1){"
-				"if(p===document.body)return p;p=p.parentNode;}"
-			"return (typeof document!=='undefined')?document.body:null;}});"
-		"P.scrollIntoView=function(){"
-			"var r=this.getBoundingClientRect();"
-			"if(typeof window!=='undefined'&&window.scrollTo)"
-				"window.scrollTo(window.scrollX||0,"
-					"(window.scrollY||0)+r.top);};"
-		"})";
-	JSValue fn;
-	JSValue proto;
-
-	/* fixes1081 — the ELEMENT-ONLY prototype, not the class prototype.
-	 *
-	 * qjs_wrap_text_node and qjs_wrap_fragment build their objects with the
-	 * SAME s_el_class_id as elements (the wrap table, qjs_get_node and the
-	 * finalizer are all generic over any dom_node stored under it), so the
-	 * class prototype is shared by elements, text nodes and fragments.
-	 * fixes1079/1080 installed element-only accessors there, which handed
-	 * every text node `children`, `firstElementChild`, `textContent`, `src`,
-	 * `checked`, `offsetParent` and the rest. Hardware: hackaday 20s -> 33.5s,
-	 * with navigation.js going 6.06s -> 16.18s while wrapus barely moved --
-	 * i.e. the install saving was real but the pages started taking different,
-	 * much slower paths.
-	 *
-	 * That is the fixes1010 lesson arriving from the other direction. There
-	 * the danger was a method present on elements and MISSING on text nodes;
-	 * here it is a property that must not exist on text nodes being PRESENT.
-	 * Both break the same way, because libraries feature-detect and branch.
-	 *
-	 * So: a dedicated prototype whose own prototype is the class prototype.
-	 * Elements are re-pointed at it; text and fragment wrappers keep the
-	 * class prototype and therefore keep exactly the surface they had. The
-	 * on* handler table stays on the class proto, shared by all three, which
-	 * is correct -- every shape can take events. */
-	proto = JS_GetClassProto(ctx, s_el_class_id);
-	if (JS_IsException(proto) || JS_IsUndefined(proto) || JS_IsNull(proto)) {
-		JS_FreeValue(ctx, proto);
-		return;
-	}
-	fn = JS_Eval(ctx, s_src, strlen(s_src), "<el-proto-helpers>",
-			JS_EVAL_TYPE_GLOBAL);
-	if (!JS_IsException(fn)) {
-		JSValue args[1];
-		JSValue ep = JS_NewObjectProto(ctx, proto);	/* fixes1081 */
-		if (!JS_IsException(ep)) {
-			JSValue g = JS_GetGlobalObject(ctx);
-			args[0] = JS_DupValue(ctx, ep);
-			JS_FreeValue(ctx, JS_Call(ctx, fn, JS_UNDEFINED, 1,
-					args));
-			JS_FreeValue(ctx, args[0]);
-			/* Stash for qjs_element_proto(); non-enumerable so page
-			 * code walking the global cannot see it. */
-			JS_DefinePropertyValueStr(ctx, g, "__ms_elproto",
-					JS_DupValue(ctx, ep), 0);
-			JS_FreeValue(ctx, g);
-		}
-		JS_FreeValue(ctx, ep);
-	} else {
-		JSValue ex = JS_GetException(ctx);
-		const char *msg = JS_ToCString(ctx, ex);
-		macsurf_debug_log_writef("LIFE qjs el-proto-helpers ERR: %s",
-				msg ? msg : "?");
-		if (msg) JS_FreeCString(ctx, msg);
-		JS_FreeValue(ctx, ex);
-	}
-	JS_FreeValue(ctx, fn);
-	JS_FreeValue(ctx, proto);
-}
-
 static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 {
 	static const char *src =
@@ -3730,11 +3518,16 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		 * `value` is deliberately left as-is above: for form controls the
 		 * property and the attribute legitimately diverge once the user types,
 		 * so it is not a plain reflection and is not touched here. */
-		/* fixes1079 — the reflected-attribute table MOVED to the shared
-		 * prototype (qjs_el_install_proto_helpers). It ran here, per
-		 * element: 14 IIFE invocations building 28 closures and 14
-		 * property descriptors, for every element a page touched. See
-		 * that function for the measurement that justified the move. */
+		"(function(){"
+		"var _rp=['src','href','type','name','rel','target','alt','title',"
+			"'placeholder','action','method','width','height','media'];"
+		"var _i;for(_i=0;_i<_rp.length;_i++){(function(p){"
+		"Object.defineProperty(el,p,{"
+		"get:function(){return el.getAttribute(p)||'';},"
+		"set:function(v){el.setAttribute(p,String(v));},"
+		"configurable:true});"
+		"})(_rp[_i]);}"
+		"})();"
 		/* name property */
 		"Object.defineProperty(el,'name',{"
 		"get:function(){return el.getAttribute('name')||'';},"
@@ -4049,9 +3842,15 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		/* Form-control state. `checked` and `selected` are properties in the
 		 * DOM but attributes here, which is the honest approximation until
 		 * they are wired to struct form_control; `disabled` reflects. */
-		/* fixes1079 — the form-control reflection table MOVED to the
-		 * shared prototype, same reason as the attribute table above:
-		 * 7 more IIFEs and 14 more closures per element. */
+		"(function(){var bp=['checked','disabled','readOnly','required',"
+			"'selected','multiple','autofocus'];var i;"
+			"for(i=0;i<bp.length;i++)(function(p){"
+			"var a=p.toLowerCase();"
+			"Object.defineProperty(el,p,{configurable:true,"
+			"get:function(){return !!(el.hasAttribute&&el.hasAttribute(a));},"
+			"set:function(v){if(v)el.setAttribute(a,a);"
+				"else if(el.removeAttribute)el.removeAttribute(a);}});"
+			"})(bp[i]);})();"
 		/* misc */
 		"el.getBoundingClientRect=function(){"
 		"return{top:0,left:0,right:0,bottom:0,width:0,height:0,x:0,y:0};};"
@@ -6140,12 +5939,72 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 	JS_FreeValue(ctx, data[0]);
 
 	/* JS-side helpers: classList, style, dataset, matches, closest, etc. */
-	qjs_el_install_js_helpers(ctx, obj);
+	/* fixes1071/1078 — see qjs_helper_fn. Bracket the whole per-element
+	 * helper install: this is the cost the prototype migration would
+	 * remove. */
+	{
+		extern double macos9_micros(void);
+		double wt0 = macos9_micros();
+		g_wrap_installs++;
+		qjs_el_install_js_helpers(ctx, obj);
+		g_wrap_us += (long)(macos9_micros() - wt0);
+	}
 
 	/* Wire textContent as a property using the C getter/setter helpers */
-	/* fixes1080 — <el-props> MOVED to qjs_el_install_proto_helpers.
-	 * It ran here per element; every accessor in it delegates to a
-	 * native __ method on the instance, so `this` was all it needed. */
+	{
+		static const char *tc_src =
+			"(function(el){"
+			"Object.defineProperty(el,'textContent',{"
+			"get:function(){return el.__getTextContent();},"
+			"set:function(v){el.__setTextContent(String(v));},"
+			"configurable:true});"
+			"Object.defineProperty(el,'parentNode',{"
+			"get:function(){return el.__getParentNode();},"
+			"configurable:true});"
+			"Object.defineProperty(el,'nextElementSibling',{"
+			"get:function(){return el.__getNextElementSibling();},"
+			"configurable:true});"
+			"Object.defineProperty(el,'previousElementSibling',{"
+			"get:function(){return el.__getPreviousElementSibling();},"
+			"configurable:true});"
+			"Object.defineProperty(el,'children',{"
+			"get:function(){return el.__getChildren();},"
+			"configurable:true});"
+			/* fixes1031 — firstElementChild / lastElementChild /
+			 * childElementCount. nextElementSibling and
+			 * previousElementSibling were here; their two siblings were
+			 * not, and jQuery's wrapAll walks firstElementChild:
+			 *
+			 *   wrap.map(function(){ var e=this;
+			 *       while (e.firstElementChild) e=e.firstElementChild;
+			 *       return e; }).append(this);
+			 *
+			 * so wrapInner() -- and therefore the dotdotdot truncation
+			 * plugin hackaday runs over every article entry -- lost the
+			 * content it was re-parenting. Derived from `children` so
+			 * they cannot disagree with it. */
+			"Object.defineProperty(el,'firstElementChild',{"
+			"get:function(){var c=el.__getChildren();"
+				"return (c&&c.length)?c[0]:null;},"
+			"configurable:true});"
+			"Object.defineProperty(el,'lastElementChild',{"
+			"get:function(){var c=el.__getChildren();"
+				"return (c&&c.length)?c[c.length-1]:null;},"
+			"configurable:true});"
+			"Object.defineProperty(el,'childElementCount',{"
+			"get:function(){var c=el.__getChildren();"
+				"return (c&&c.length)?c.length:0;},"
+			"configurable:true});"
+			"})";
+		JSValue fn2, args2[1];
+		fn2 = qjs_helper_fn(ctx, "__ms_h_props", tc_src, "<el-props>");
+		if (!JS_IsException(fn2)) {
+			args2[0] = JS_DupValue(ctx, obj);
+			JS_Call(ctx, fn2, JS_UNDEFINED, 1, args2);
+			JS_FreeValue(ctx, args2[0]);
+		}
+		JS_FreeValue(ctx, fn2);
+	}
 
 	/* fixes1011 (Phase 3) — REAL layout metrics, replacing the zero stubs.
 	 *
@@ -6185,9 +6044,45 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 		}
 		JS_FreeValue(ctx, d2[0]);
 	}
-	/* fixes1080 — <el-layout> MOVED to qjs_el_install_proto_helpers.
-	 * It ran here per element; every accessor in it delegates to a
-	 * native __ method on the instance, so `this` was all it needed. */
+	{
+		/* getClientRects wraps the single rect; scrollTop/Left are the
+		 * window's scroll for now (per-element scrollers are not modelled),
+		 * and the SETTER really moves the view rather than recording a
+		 * number, which is what a "scroll to top" button needs. */
+		static const char *lay_src =
+			"(function(el){"
+			"el.getClientRects=function(){"
+				"return [el.getBoundingClientRect()];};"
+			"Object.defineProperty(el,'scrollTop',{configurable:true,"
+				"get:function(){return (typeof window!=='undefined')?"
+					"(window.scrollY||0):0;},"
+				"set:function(v){if(typeof window!=='undefined'&&"
+					"window.scrollTo)window.scrollTo(window.scrollX||0,v|0);}});"
+			"Object.defineProperty(el,'scrollLeft',{configurable:true,"
+				"get:function(){return (typeof window!=='undefined')?"
+					"(window.scrollX||0):0;},"
+				"set:function(v){if(typeof window!=='undefined'&&"
+					"window.scrollTo)window.scrollTo(v|0,window.scrollY||0);}});"
+			"Object.defineProperty(el,'offsetParent',{configurable:true,"
+				"get:function(){var p=el.parentNode;"
+				"while(p&&p.nodeType===1){"
+					"if(p===document.body)return p;p=p.parentNode;}"
+				"return (typeof document!=='undefined')?document.body:null;}});"
+			"el.scrollIntoView=function(){"
+				"var r=el.getBoundingClientRect();"
+				"if(typeof window!=='undefined'&&window.scrollTo)"
+					"window.scrollTo(window.scrollX||0,"
+						"(window.scrollY||0)+r.top);};"
+			"})";
+		JSValue fn3, a3[1];
+		fn3 = qjs_helper_fn(ctx, "__ms_h_lay", lay_src, "<el-layout>");
+		if (!JS_IsException(fn3)) {
+			a3[0] = JS_DupValue(ctx, obj);
+			JS_Call(ctx, fn3, JS_UNDEFINED, 1, a3);
+			JS_FreeValue(ctx, a3[0]);
+		}
+		JS_FreeValue(ctx, fn3);
+	}
 
 	/* fixes878 — last, so nothing above can clobber it. */
 	qjs_install_node_traversal(ctx, obj);
@@ -7357,14 +7252,6 @@ static void qjs_dom_install(JSContext *ctx)
 
 	/* fixes872 (#300) — before any element is wrapped in this realm. */
 	qjs_el_install_proto(ctx);
-	/* fixes1079 — and the reflected-attribute tables, once per context
-	 * rather than once per element. Must run before any element is
-	 * wrapped, for the same reason install_proto must: an element wrapped
-	 * beforehand would inherit a prototype that does not carry them yet.
-	 * qjs_dom_install runs twice per context (build, then when the real
-	 * document is wired) and this is idempotent -- redefining a
-	 * configurable accessor with an identical one is a no-op in effect. */
-	qjs_el_install_proto_helpers(ctx);
 	if (!JS_IsUndefined(doc) && !JS_IsNull(doc)) {
 		qjs_set_func(ctx, doc, "getElementById",
 				qjs_getElementById, 1);
