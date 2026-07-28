@@ -1474,6 +1474,22 @@ static int g_perf_gc_armed = 0;
 static long g_wrap_installs   = 0;
 static long g_helper_compiles = 0;
 static long g_helper_bytes    = 0;
+/* fixes1078 — what the per-element wrapper install COSTS to execute.
+ *
+ * fixes1071 cached the helper COMPILE, but every wrapper still runs all four
+ * helper functions, and they do dozens of Object.defineProperty calls with
+ * closures captured over `el`. That is per-element work a real DOM does once
+ * on a shared prototype. hackaday builds 566 wrappers; if this number is
+ * seconds, migrating the helpers to qjs_el_install_proto is the single
+ * biggest JS win available and it costs no capability at all. */
+static long g_wrap_us         = 0;
+/* fixes1078 — time spent INSIDE native bindings, sampled 1-in-64 by
+ * js_call_c_function and scaled. ncalls x an assumed per-call cost is how the
+ * 25us figure was inferred; this measures it instead. Sampled because timing
+ * every call would add two Microseconds() traps to the hottest path in the
+ * engine and change the thing being measured. */
+long macsurf_qjs_native_us    = 0;
+long macsurf_qjs_native_samp  = 0;
 
 /* fixes1077 — geometry read census, so the cost of answering is measurable
  * rather than inferred. reads = every geometry entry; us = what they cost. */
@@ -1668,6 +1684,18 @@ void macsurf_qjs_emit_js_profile(void)
 		"hbytes=%ld",
 		g_qjs_interrupts * 10000L, macsurf_qjs_ncalls,
 		g_wrap_installs, g_helper_compiles, g_helper_bytes);
+	/* fixes1078 — SPLIT the JS run time three ways: per-element wrapper
+	 * install, time inside native bindings, and by subtraction whatever is
+	 * left (real interpretation). nativeus is the 1-in-64 sample scaled
+	 * back up, so treat it as an estimate with roughly sqrt(samples)
+	 * accuracy -- ample for deciding where seconds live. */
+	macsurf_debug_log_writef(
+		"LIFE JSCOST wrapus=%ld nativeus=%ld nsamp=%ld",
+		g_wrap_us, macsurf_qjs_native_us * 64L,
+		macsurf_qjs_native_samp);
+	g_wrap_us = 0;
+	macsurf_qjs_native_us = 0;
+	macsurf_qjs_native_samp = 0;
 
 	/* fixes1073 (#265) — the forced-layout census.
 	 *
@@ -5911,8 +5939,16 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 	JS_FreeValue(ctx, data[0]);
 
 	/* JS-side helpers: classList, style, dataset, matches, closest, etc. */
-	g_wrap_installs++;	/* fixes1071 — see qjs_helper_fn */
-	qjs_el_install_js_helpers(ctx, obj);
+	/* fixes1071/1078 — see qjs_helper_fn. Bracket the whole per-element
+	 * helper install: this is the cost the prototype migration would
+	 * remove. */
+	{
+		extern double macos9_micros(void);
+		double wt0 = macos9_micros();
+		g_wrap_installs++;
+		qjs_el_install_js_helpers(ctx, obj);
+		g_wrap_us += (long)(macos9_micros() - wt0);
+	}
 
 	/* Wire textContent as a property using the C getter/setter helpers */
 	{
