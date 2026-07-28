@@ -3582,6 +3582,65 @@ static void qjs_el_install_proto_helpers(JSContext *ctx)
 			"if(typeof window!=='undefined'&&window.scrollTo)"
 				"window.scrollTo(window.scrollX||0,"
 					"(window.scrollY||0)+r.top);};"
+		/* fixes1082 — 20 element METHODS moved off the per-element install.
+		 * Each was one closure allocation plus a property store for every
+		 * element a page touched; on the prototype it is one of each, total.
+		 * `var el=this` keeps every body verbatim -- including the inner
+		 * closures some of them create, which a naive el->this rewrite would
+		 * have silently rebound. */
+		"P.remove=function(){var el=this;var p=el.parentNode;if(p&&p.removeChil"
+		"d)p.removeChild(el);};"
+		"P.replaceChild=function(nw,old){var el=this;if(!nw||!old)return old;el"
+		".insertBefore(nw,old);el.removeChild(old);return old;};"
+		"P.append=function(){var el=this;var i;for(i=0;i<arguments.length;i++){"
+		"var a=arguments[i];el.appendChild(typeof a==='string'?document.createT"
+		"extNode(a):a);}};"
+		"P.prepend=function(){var el=this;var i,f=el.firstChild;for(i=0;i<argum"
+		"ents.length;i++){var a=arguments[i];el.insertBefore(typeof a==='string"
+		"'?document.createTextNode(a):a,f);}};"
+		"P.before=function(){var el=this;var p=el.parentNode;if(!p)return;var i"
+		";for(i=0;i<arguments.length;i++){var a=arguments[i];p.insertBefore(typ"
+		"eof a==='string'?document.createTextNode(a):a,el);}};"
+		"P.after=function(){var el=this;var p=el.parentNode;if(!p)return;var r="
+		"el.nextSibling,i;for(i=0;i<arguments.length;i++){var a=arguments[i];va"
+		"r n=(typeof a==='string')?document.createTextNode(a):a;if(r)p.insertBe"
+		"fore(n,r);else p.appendChild(n);}};"
+		"P.insertAdjacentElement=function(pos,n){var el=this;if(!n)return null;"
+		"pos=String(pos).toLowerCase();if(pos==='beforebegin')el.before(n);else"
+		" if(pos==='afterbegin')el.prepend(n);else if(pos==='beforeend')el.appe"
+		"ndChild(n);else if(pos==='afterend')el.after(n);return n;};"
+		"P.insertAdjacentHTML=function(pos,html){var el=this;var h=document.cre"
+		"ateElement('div');try{h.innerHTML=String(html);}catch(e){return;}var k"
+		"ids=[],c=h.firstChild;while(c){kids.push(c);c=c.nextSibling;}var i;if("
+		"String(pos).toLowerCase()==='afterbegin'||String(pos).toLowerCase()==="
+		"'beforebegin'){for(i=kids.length-1;i>=0;i--)el.insertAdjacentElement(p"
+		"os,kids[i]);}else{for(i=0;i<kids.length;i++)el.insertAdjacentElement(p"
+		"os,kids[i]);}};"
+		"P.getAttributeNames=function(){var el=this;var out=[],i,ks=['id','clas"
+		"s','style','src','href','type','name','rel','target','alt','title','pl"
+		"aceholder','action','method','width','height','media','value','disable"
+		"d','checked','readonly','required'];for(i=0;i<ks.length;i++)if(el.hasA"
+		"ttribute&&el.hasAttribute(ks[i]))out.push(ks[i]);return out;};"
+		"P.compareDocumentPosition=function(o){var el=this;if(!o||o===el)return"
+		" 0;if(el.contains&&el.contains(o))return 20;if(o.contains&&o.contains("
+		"el))return 10;return 4;};"
+		"P.isEqualNode=function(o){var el=this;return o===el;};"
+		"P.getElementsByTagName=function(t){var el=this;return el.querySelector"
+		"All(String(t));};"
+		"P.getElementsByClassName=function(c){var el=this;return el.querySelect"
+		"orAll('.'+String(c).split(/\\s+/).filter(function(x){return !!x;}).joi"
+		"n('.'));};"
+		"P.hasChildNodes=function(){var el=this;return !!el.firstChild;};"
+		"P.toggleAttribute=function(n,f){var el=this;var has=!!(el.hasAttribute"
+		"&&el.hasAttribute(n));var want=(f===undefined)?!has:!!f;if(want)el.set"
+		"Attribute(n,'');else el.removeAttribute(n);return want;};"
+		"P.getBoundingClientRect=function(){var el=this;return{top:0,left:0,rig"
+		"ht:0,bottom:0,width:0,height:0,x:0,y:0};};"
+		"P.getClientRects=function(){var el=this;return[this.getBoundingClientR"
+		"ect()];};"
+		"P.scrollIntoView=function(){var el=this;};"
+		"P.scrollIntoViewIfNeeded=function(){var el=this;};"
+		"P.focus=function(){var el=this;};"
 		"})";
 	JSValue fn;
 	JSValue proto;
@@ -3916,54 +3975,11 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		 * parentNode / children), so there is no second mutation path that
 		 * can drift from the real one, and each still routes through
 		 * qjs_dom_mut_check and the reconvert dirty-mark. */
-		"el.remove=function(){"
-			"var p=el.parentNode;if(p&&p.removeChild)p.removeChild(el);};"
-		"el.replaceChild=function(nw,old){"
-			"if(!nw||!old)return old;"
-			"el.insertBefore(nw,old);el.removeChild(old);return old;};"
-		"el.append=function(){var i;for(i=0;i<arguments.length;i++){"
-			"var a=arguments[i];"
-			"el.appendChild(typeof a==='string'?"
-				"document.createTextNode(a):a);}};"
-		"el.prepend=function(){var i,f=el.firstChild;"
-			"for(i=0;i<arguments.length;i++){var a=arguments[i];"
-			"el.insertBefore(typeof a==='string'?"
-				"document.createTextNode(a):a,f);}};"
-		"el.before=function(){var p=el.parentNode;if(!p)return;var i;"
-			"for(i=0;i<arguments.length;i++){var a=arguments[i];"
-			"p.insertBefore(typeof a==='string'?"
-				"document.createTextNode(a):a,el);}};"
-		"el.after=function(){var p=el.parentNode;if(!p)return;"
-			"var r=el.nextSibling,i;"
-			"for(i=0;i<arguments.length;i++){var a=arguments[i];"
-			"var n=(typeof a==='string')?document.createTextNode(a):a;"
-			"if(r)p.insertBefore(n,r);else p.appendChild(n);}};"
 		"el.replaceWith=function(){"
 			"el.before.apply(el,arguments);el.remove();};"
 		/* insertAdjacent* -- the four spec positions, on the real fragment
 		 * parser (so a written <script> is a real script element, same as
 		 * document.write). */
-		"el.insertAdjacentElement=function(pos,n){"
-			"if(!n)return null;pos=String(pos).toLowerCase();"
-			"if(pos==='beforebegin')el.before(n);"
-			"else if(pos==='afterbegin')el.prepend(n);"
-			"else if(pos==='beforeend')el.appendChild(n);"
-			"else if(pos==='afterend')el.after(n);"
-			"return n;};"
-		"el.insertAdjacentHTML=function(pos,html){"
-			"var h=document.createElement('div');"
-			"try{h.innerHTML=String(html);}catch(e){return;}"
-			"var kids=[],c=h.firstChild;"
-			"while(c){kids.push(c);c=c.nextSibling;}"
-			"var i;"
-			"if(String(pos).toLowerCase()==='afterbegin'||"
-			   "String(pos).toLowerCase()==='beforebegin'){"
-				"for(i=kids.length-1;i>=0;i--)"
-					"el.insertAdjacentElement(pos,kids[i]);"
-			"}else{"
-				"for(i=0;i<kids.length;i++)"
-					"el.insertAdjacentElement(pos,kids[i]);"
-			"}};"
 		"el.insertAdjacentText=function(pos,t){"
 			"el.insertAdjacentElement(pos,document.createTextNode(String(t)));};"
 		/* isConnected: walk to the root and ask whether it is the document
@@ -3972,14 +3988,6 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		/* attributes / getAttributeNames: reconstructed from the reflected
 		 * set plus data-*. Not a live NamedNodeMap -- callers iterate it,
 		 * which a static array serves. */
-		"el.getAttributeNames=function(){"
-			"var out=[],i,ks=['id','class','style','src','href','type',"
-				"'name','rel','target','alt','title','placeholder',"
-				"'action','method','width','height','media','value',"
-				"'disabled','checked','readonly','required'];"
-			"for(i=0;i<ks.length;i++)"
-				"if(el.hasAttribute&&el.hasAttribute(ks[i]))out.push(ks[i]);"
-			"return out;};"
 		"Object.defineProperty(el,'attributes',{configurable:true,"
 			"get:function(){var ns=el.getAttributeNames(),out=[],i;"
 			"for(i=0;i<ns.length;i++)out.push({name:ns[i],"
@@ -3988,12 +3996,6 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 				"for(j=0;j<out.length;j++)if(out[j].name===n)return out[j];"
 				"return null;};"
 			"return out;}});"
-		"el.compareDocumentPosition=function(o){"
-			"if(!o||o===el)return 0;"
-			"if(el.contains&&el.contains(o))return 20;"
-			"if(o.contains&&o.contains(el))return 10;"
-			"return 4;};"
-		"el.isEqualNode=function(o){return o===el;};"
 		"el.isSameNode=function(o){return o===el;};"
 		/* fixes1009 — ELEMENT-SCOPED getElementsBy*.
 		 *
@@ -4011,21 +4013,10 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		 * matcher rather than a second subtly-different walker. Returns a
 		 * static array, not a live HTMLCollection; every caller here
 		 * indexes or iterates, which an array serves. */
-		"el.getElementsByTagName=function(t){"
-			"return el.querySelectorAll(String(t));};"
-		"el.getElementsByClassName=function(c){"
-			"return el.querySelectorAll('.'+String(c).split(/\\s+/)"
-				".filter(function(x){return !!x;}).join('.'));};"
 		"el.getElementsByName=function(n){"
 			"return el.querySelectorAll('[name=\"'+String(n)+'\"]');};"
 		/* Cheap neighbours, same round: each is one line and each throws
 		 * rather than degrading when absent. */
-		"el.hasChildNodes=function(){return !!el.firstChild;};"
-		"el.toggleAttribute=function(n,f){"
-			"var has=!!(el.hasAttribute&&el.hasAttribute(n));"
-			"var want=(f===undefined)?!has:!!f;"
-			"if(want)el.setAttribute(n,'');else el.removeAttribute(n);"
-			"return want;};"
 		"el.normalize=function(){};"
 		/* Form-control state. `checked` and `selected` are properties in the
 		 * DOM but attributes here, which is the honest approximation until
@@ -4034,12 +4025,6 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		 * shared prototype, same reason as the attribute table above:
 		 * 7 more IIFEs and 14 more closures per element. */
 		/* misc */
-		"el.getBoundingClientRect=function(){"
-		"return{top:0,left:0,right:0,bottom:0,width:0,height:0,x:0,y:0};};"
-		"el.getClientRects=function(){return[this.getBoundingClientRect()];};"
-		"el.scrollIntoView=function(){};"
-		"el.scrollIntoViewIfNeeded=function(){};"
-		"el.focus=function(){};"
 		"el.blur=function(){};"
 		/* fixes997 — el.click() synthesises a real dispatch instead of
 		 * being a no-op. Frameworks use it to trigger a control
