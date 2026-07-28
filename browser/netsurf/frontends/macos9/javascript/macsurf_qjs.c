@@ -156,8 +156,27 @@ double macsurf_qjs_get_now(void);
  *
  * The switch stays here, and stays a switch. If this regresses, one define
  * turns it off without touching anything else. */
+/* fixes1084 — BACK OFF. Hardware: hackaday's hero/featured story renders as a
+ * sliver, then not at all. That is the slick carousel, and it is the failure
+ * this engine already has on record -- it measures, believes the answer, and
+ * writes a collapsed size back as an inline style.
+ *
+ * Geometry has had four hardware builds and has never once completed a forced
+ * reflow during page load: every log reads flush=0 declined=NNN with 100%
+ * notdone, because html_reconvert requires CONTENT_STATUS_DONE and script init
+ * runs before that. So it has delivered no capability whatsoever, while being
+ * the one change that makes a measuring widget act on what we tell it.
+ *
+ * Zero benefit against lost content is not a trade worth holding open, and
+ * this switch exists precisely so the answer is one define rather than an
+ * archaeology exercise. Everything else from this batch stays: the wrapper
+ * caching, the prototype work, the leak fix, and all the instrumentation --
+ * none of it depends on this being 1.
+ *
+ * Re-enable when the DONE gate is solved, not before. Turning it on again
+ * without that is just repeating this. */
 #ifndef MACSURF_JS_GEOMETRY
-#define MACSURF_JS_GEOMETRY 1
+#define MACSURF_JS_GEOMETRY 0
 #endif
 #ifndef MACSURF_JS_VIEW_EVENTS
 #define MACSURF_JS_VIEW_EVENTS 0
