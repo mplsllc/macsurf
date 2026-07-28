@@ -6364,5 +6364,75 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 51 PASS: geometry reflows before answering "
 		"===\n");
 
+	/* --- Test 52: reflected attributes work from the PROTOTYPE (fixes1079) -
+	 * fixes1078 measured per-element wrapper install at 4.09s of a 7.21s JS
+	 * run on hardware -- 57%, and 81% on the article page. The bulk was two
+	 * reflection tables installed per element: 21 IIFEs building ~42
+	 * closures and 21 property descriptors, for every element a page
+	 * touches. They are pure reflection (the getter needs the element only
+	 * to call getAttribute on it), so they moved to the shared prototype.
+	 *
+	 * The risk of that move is semantic, not structural: an accessor that
+	 * captured `el` and now uses `this` is wrong if `this` is not the
+	 * element at call time, and a property that stopped being installed at
+	 * all fails silently -- `el.src = url` would just create a plain
+	 * property and never set the attribute, which is precisely the fixes866
+	 * bug that made hackaday's reply box never load.
+	 *
+	 * So assert the ROUND TRIP through the prototype, on a freshly created
+	 * element, including the camelCase case (readOnly -> readonly) where the
+	 * property and attribute names differ. */
+	fprintf(stderr, "\n=== Test 52: reflected attributes via the shared "
+		"prototype ===\n");
+	{
+		const char *q =
+			"var e=document.createElement('input');"
+			/* Inherited, not own: the whole point of the move. */
+			"if(Object.prototype.hasOwnProperty.call(e,'src'))"
+			"throw new Error('src is an OWN property of a fresh "
+				"element -- it is still being installed per "
+				"element, so fixes1079 did not take effect');"
+			/* property -> attribute */
+			"e.src='http://example.com/a.js';"
+			"if(e.getAttribute('src')!=='http://example.com/a.js')"
+			"throw new Error('setting .src did not write the "
+				"attribute (got '+e.getAttribute('src')+') -- an "
+				"injected <script> would silently run as empty "
+				"inline, the fixes866 bug');"
+			/* attribute -> property */
+			"e.setAttribute('alt','hello');"
+			"if(e.alt!=='hello')"
+			"throw new Error('.alt did not read the attribute back, "
+				"got '+e.alt);"
+			/* camelCase boolean: readOnly reflects readonly */
+			"e.readOnly=true;"
+			"if(!e.hasAttribute('readonly'))"
+			"throw new Error('.readOnly=true did not set the "
+				"readonly attribute -- the toLowerCase() mapping "
+				"was lost in the move to the prototype');"
+			"if(e.readOnly!==true)"
+			"throw new Error('.readOnly read back '+e.readOnly);"
+			"e.readOnly=false;"
+			"if(e.hasAttribute('readonly'))"
+			"throw new Error('.readOnly=false did not remove the "
+				"attribute');"
+			/* `this` must be the element, not the prototype: two
+			 * distinct elements must not share a value. */
+			"var f=document.createElement('input');"
+			"f.src='http://example.com/b.js';"
+			"if(e.src===f.src)"
+			"throw new Error('two elements report the same .src ('+"
+				"e.src+') -- the accessor is bound to the "
+				"prototype rather than to `this`');";
+		if (!js_exec(thread, (const unsigned char *)q, strlen(q),
+				"t52.js")) {
+			fprintf(stderr, "FAIL: Test 52 -- prototype-reflected "
+				"attributes (fixes1079)\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 52 PASS: reflected attributes via the shared "
+		"prototype ===\n");
+
 	return 0;
 }

@@ -3451,6 +3451,87 @@ static JSValue qjs_helper_fn(JSContext *ctx, const char *key,
 	return fn;
 }
 
+/* ------------------------------------------------------------------
+ * fixes1079 — SHARED-PROTOTYPE PROPERTIES, installed once per context.
+ *
+ * Measured on hardware (fixes1078, hackaday front page):
+ *
+ *     JS run total                7.21s
+ *     per-element wrapper install 4.09s   <- 57%
+ *     ALL native binding calls    0.13s   <-  2%
+ *
+ * 566 wrappers at 7.2ms each. On the article page it was 1.13s of 1.39s --
+ * 81% of JS run. That is not the page's logic, it is us installing the same
+ * property set again for every element the page touches.
+ *
+ * (This also corrected an inference: JS->C->native call overhead was the
+ * suspected cost, and at 0.65us per call it is not. Worth remembering before
+ * rebuilding a binding layer on a ratio rather than a measurement.)
+ *
+ * The two attribute tables below were the worst of it -- 21 IIFE invocations
+ * building ~42 closures and 21 property descriptors, per element. Every one
+ * of them is pure reflection: the getter needs the element only to call
+ * getAttribute on it. So they belong on the prototype with `this`, which is
+ * what a real DOM does, and what the on* handler table in
+ * qjs_el_install_proto already does here.
+ *
+ * Semantics are identical. A property looked up on an element that does not
+ * own it resolves through the prototype chain to exactly the same accessor;
+ * `this` is the element at call time. Nothing is skipped and no element loses
+ * a property -- the work is done once instead of once per element.
+ * ------------------------------------------------------------------ */
+static void qjs_el_install_proto_helpers(JSContext *ctx)
+{
+	static const char s_src[] =
+		"(function(P){"
+		/* Reflected content attributes (was fixes866, per element). */
+		"var _rp=['src','href','type','name','rel','target','alt','title',"
+			"'placeholder','action','method','width','height','media'];"
+		"var _i;for(_i=0;_i<_rp.length;_i++){(function(p){"
+		"Object.defineProperty(P,p,{configurable:true,"
+		"get:function(){return this.getAttribute(p)||'';},"
+		"set:function(v){this.setAttribute(p,String(v));}});"
+		"})(_rp[_i]);}"
+		/* Boolean form-control state. `value` is deliberately NOT here:
+		 * for a form control the property and the attribute legitimately
+		 * diverge once the user types, so it is not plain reflection. */
+		"var bp=['checked','disabled','readOnly','required',"
+			"'selected','multiple','autofocus'];"
+		"for(_i=0;_i<bp.length;_i++){(function(p){"
+		"var a=p.toLowerCase();"
+		"Object.defineProperty(P,p,{configurable:true,"
+		"get:function(){return !!(this.hasAttribute&&this.hasAttribute(a));},"
+		"set:function(v){if(v)this.setAttribute(a,a);"
+			"else if(this.removeAttribute)this.removeAttribute(a);}});"
+		"})(bp[_i]);}"
+		"})";
+	JSValue fn;
+	JSValue proto;
+
+	proto = JS_GetClassProto(ctx, s_el_class_id);
+	if (JS_IsException(proto) || JS_IsUndefined(proto) || JS_IsNull(proto)) {
+		JS_FreeValue(ctx, proto);
+		return;
+	}
+	fn = JS_Eval(ctx, s_src, strlen(s_src), "<el-proto-helpers>",
+			JS_EVAL_TYPE_GLOBAL);
+	if (!JS_IsException(fn)) {
+		JSValue args[1];
+		args[0] = JS_DupValue(ctx, proto);
+		JS_FreeValue(ctx, JS_Call(ctx, fn, JS_UNDEFINED, 1, args));
+		JS_FreeValue(ctx, args[0]);
+	} else {
+		JSValue ex = JS_GetException(ctx);
+		const char *msg = JS_ToCString(ctx, ex);
+		macsurf_debug_log_writef("LIFE qjs el-proto-helpers ERR: %s",
+				msg ? msg : "?");
+		if (msg) JS_FreeCString(ctx, msg);
+		JS_FreeValue(ctx, ex);
+	}
+	JS_FreeValue(ctx, fn);
+	JS_FreeValue(ctx, proto);
+}
+
 static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 {
 	static const char *src =
@@ -3518,16 +3599,11 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		 * `value` is deliberately left as-is above: for form controls the
 		 * property and the attribute legitimately diverge once the user types,
 		 * so it is not a plain reflection and is not touched here. */
-		"(function(){"
-		"var _rp=['src','href','type','name','rel','target','alt','title',"
-			"'placeholder','action','method','width','height','media'];"
-		"var _i;for(_i=0;_i<_rp.length;_i++){(function(p){"
-		"Object.defineProperty(el,p,{"
-		"get:function(){return el.getAttribute(p)||'';},"
-		"set:function(v){el.setAttribute(p,String(v));},"
-		"configurable:true});"
-		"})(_rp[_i]);}"
-		"})();"
+		/* fixes1079 — the reflected-attribute table MOVED to the shared
+		 * prototype (qjs_el_install_proto_helpers). It ran here, per
+		 * element: 14 IIFE invocations building 28 closures and 14
+		 * property descriptors, for every element a page touched. See
+		 * that function for the measurement that justified the move. */
 		/* name property */
 		"Object.defineProperty(el,'name',{"
 		"get:function(){return el.getAttribute('name')||'';},"
@@ -3842,15 +3918,9 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		/* Form-control state. `checked` and `selected` are properties in the
 		 * DOM but attributes here, which is the honest approximation until
 		 * they are wired to struct form_control; `disabled` reflects. */
-		"(function(){var bp=['checked','disabled','readOnly','required',"
-			"'selected','multiple','autofocus'];var i;"
-			"for(i=0;i<bp.length;i++)(function(p){"
-			"var a=p.toLowerCase();"
-			"Object.defineProperty(el,p,{configurable:true,"
-			"get:function(){return !!(el.hasAttribute&&el.hasAttribute(a));},"
-			"set:function(v){if(v)el.setAttribute(a,a);"
-				"else if(el.removeAttribute)el.removeAttribute(a);}});"
-			"})(bp[i]);})();"
+		/* fixes1079 — the form-control reflection table MOVED to the
+		 * shared prototype, same reason as the attribute table above:
+		 * 7 more IIFEs and 14 more closures per element. */
 		/* misc */
 		"el.getBoundingClientRect=function(){"
 		"return{top:0,left:0,right:0,bottom:0,width:0,height:0,x:0,y:0};};"
@@ -7252,6 +7322,14 @@ static void qjs_dom_install(JSContext *ctx)
 
 	/* fixes872 (#300) — before any element is wrapped in this realm. */
 	qjs_el_install_proto(ctx);
+	/* fixes1079 — and the reflected-attribute tables, once per context
+	 * rather than once per element. Must run before any element is
+	 * wrapped, for the same reason install_proto must: an element wrapped
+	 * beforehand would inherit a prototype that does not carry them yet.
+	 * qjs_dom_install runs twice per context (build, then when the real
+	 * document is wired) and this is idempotent -- redefining a
+	 * configurable accessor with an identical one is a no-op in effect. */
+	qjs_el_install_proto_helpers(ctx);
 	if (!JS_IsUndefined(doc) && !JS_IsNull(doc)) {
 		qjs_set_func(ctx, doc, "getElementById",
 				qjs_getElementById, 1);
