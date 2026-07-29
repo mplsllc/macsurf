@@ -472,6 +472,25 @@ static void html_box_convert_done(html_content *c, bool success)
 /* fixes1032 — OFF. It did its job: it is what showed entry-intro kids=0 and
  * turned a layout hunt into a DOM-deletion hunt. Define MACSURF_PAGEMAP (or
  * MACSURF_JS_AUDIT) to bring it back for the next structural question. */
+/* fixes1086 — BACK ON, for exactly that: the next structural question.
+ *
+ * hackaday's hero/featured story does not render. It survived reverting the
+ * whole prototype migration AND turning geometry off, and the page is back to
+ * 22s, so it predates every JS change made today and is not a symptom of any
+ * of them. I have already guessed twice at this and been wrong twice.
+ *
+ * CLAUDE.md's diagnostic order exists for this and starts in one place: is the
+ * content even in the DOM? PAGEMAP prints per-section
+ *     tag#id.class kids box y w h fs disp
+ * so the answer is one line of log rather than another theory. kids=0 on the
+ * hero container means script deleted it and layout is innocent -- which is
+ * precisely what this channel established last time it was on. A real box with
+ * height 0 means the opposite. Those two want completely different fixes and
+ * nothing else distinguishes them.
+ *
+ * Capped at 40 dumps, one per section, so it is a handful of lines rather than
+ * a firehose. Turn it off again once the hero is understood. */
+#define MACSURF_PAGEMAP 1
 #define MACSURF_PAGEMAP_MAX_DUMPS 40
 
 static long macsurf_pagemap_dumps = 0;
