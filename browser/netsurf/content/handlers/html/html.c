@@ -430,39 +430,11 @@ static void html_box_convert_done(html_content *c, bool success)
 	 * Guarded by js_thread (JS-less pages skip it) and fires once per
 	 * navigation (JS-side __ms_ready_fired; the JS realm is rebuilt per
 	 * document load so the flag resets automatically). */
-	/* fixes1088 (#265) — READY BEFORE DOMContentLoaded, not after.
-	 *
-	 * These two were the wrong way round, and it is why every ready-time
-	 * measurement on every page got nothing. The comment above is correct:
-	 * by this point dom_to_box has run and the initial box tree EXISTS. But
-	 * content_set_ready came three lines later, so throughout
-	 * js_fire_dom_ready -- which is when slick, dotdotdot and every other
-	 * ready-time init runs -- the status still read CONTENT_STATUS_LOADING.
-	 *
-	 * Hardware named it exactly once the gate was instrumented:
-	 *     JSGEOM    reads=658 ready=95 done=0 unstable=565
-	 *     JSGEOMANS undef=232 zero=0 real=2
-	 *     geomgate REFUSE status status=0   (0 == LOADING, layout=NULL)
-	 * 658 measurements, 2 real answers. hackaday's featured slider sets
-	 * .slick-list height from a measurement, got nothing, and collapsed to
-	 * a 15px sliver.
-	 *
-	 * Setting READY first simply makes the status agree with what is
-	 * already true. It does not expose an unbuilt tree: the tree is built
-	 * above, and the geometry gate additionally requires that no layout or
-	 * conversion is in flight (macsurf_html_tree_stable), so an unstable
-	 * moment is still refused on its own merits rather than on a stale
-	 * status field.
-	 *
-	 * It also matches what the platform means: DOMContentLoaded says
-	 * "parsing finished and the document is displayable", which is the
-	 * definition of READY here. Firing it while still claiming LOADING was
-	 * the contradiction. */
-	content_set_ready(&c->base);
-
 	if (c->js_thread != NULL) {
 		js_fire_dom_ready(c->js_thread, c->document);
 	}
+
+	content_set_ready(&c->base);
 	html_pagemap_dump(c, "ready"); /* fixes1015 */
 
 	html_proceed_to_done(c);
