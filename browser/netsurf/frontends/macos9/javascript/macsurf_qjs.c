@@ -1495,6 +1495,23 @@ long macsurf_qjs_native_samp  = 0;
  * rather than inferred. reads = every geometry entry; us = what they cost. */
 static long g_geom_reads = 0;
 static long g_geom_us    = 0;
+/* fixes1087 — WHERE in the load a measurement was answered, and how often we
+ * still refuse. `ready` is the whole point: before this it was structurally
+ * zero, because the gate demanded DONE. If it stays zero the gate did not
+ * actually open. */
+static long g_geom_at_ready = 0;
+static long g_geom_at_done  = 0;
+static long g_geom_unstable = 0;
+/* fixes1087 — WHAT the page got back. A refusal and a confidently wrong
+ * number fail differently and want different fixes, so count them apart:
+ *   undef  refused (unsettled, or a mutation pending with no box)
+ *   zero   answered 0 -- "not rendered". True for a hidden element, and a
+ *          LIE for one whose box simply has not been built yet. This is the
+ *          number that collapses a carousel, so it is the one to watch.
+ *   real   answered from a real box. */
+static long g_geom_undef = 0;
+static long g_geom_zero  = 0;
+static long g_geom_real  = 0;
 
 void macsurf_qjs_geom_stats(long *reads, long *us);
 void macsurf_qjs_geom_stats(long *reads, long *us)
@@ -1741,9 +1758,19 @@ void macsurf_qjs_emit_js_profile(void)
 			long gr = 0, gu = 0;
 			macsurf_qjs_geom_stats(&gr, &gu);
 			macsurf_debug_log_writef(
-				"LIFE JSGEOM reads=%ld gateus=%ld", gr, gu);
+				"LIFE JSGEOM reads=%ld gateus=%ld ready=%ld "
+				"done=%ld unstable=%ld",
+				gr, gu, g_geom_at_ready, g_geom_at_done,
+				g_geom_unstable);
+			macsurf_debug_log_writef(
+				"LIFE JSGEOMANS undef=%ld zero=%ld real=%ld",
+				g_geom_undef, g_geom_zero, g_geom_real);
+			g_geom_undef = 0; g_geom_zero = 0; g_geom_real = 0;
 			g_geom_reads = 0;
 			g_geom_us = 0;
+			g_geom_at_ready = 0;
+			g_geom_at_done = 0;
+			g_geom_unstable = 0;
 		}
 		macos9_reconvert_sync_reset();
 	}
@@ -4414,11 +4441,38 @@ static int qjs_geometry_settled(void)
 	}
 	if (cached_live == 0) return 0;
 
-	/* Read ->status only AFTER liveness, never before: on a freed content
-	 * that dereference is exactly the use-after-free the registry exists to
-	 * prevent. The cache does not weaken that -- an unregister bumps the
-	 * epoch, so a freed content can never be reported live from cache. */
-	if (g_qjs_content->status != CONTENT_STATUS_DONE) return 0;
+	/* fixes1087 (#265) — ask whether the TREE is stable, not whether the
+	 * load has finished.
+	 *
+	 * The old test was `status != CONTENT_STATUS_DONE -> refuse`, and
+	 * hardware showed it refusing every measurement taken during page load:
+	 * declined=660 with notdone at 100%, four builds running. Script init
+	 * happens before DONE, so every measure-then-layout widget got nothing.
+	 * hackaday's featured slider is the visible casualty -- PAGEMAP has it
+	 * slick-initialized with 5 slides and the track collapsed to h=15,
+	 * because slick sets .slick-list height from a measurement and its
+	 * slides are floated inside an overflow:hidden box with no natural
+	 * height. It asked, we refused, it never set the height.
+	 *
+	 * macsurf_html_tree_stable checks the thing DONE was standing in for:
+	 * a tree exists, no layout pass is running, no dom_to_box walk is in
+	 * flight. That is strictly more precise -- a DONE content is ALSO
+	 * unsafe mid-reconvert, which the status test never caught.
+	 *
+	 * Called only after the liveness check above, never before: on a freed
+	 * content that dereference is the use-after-free the registry exists to
+	 * prevent, and the epoch cache cannot report a freed content live. */
+	{
+		extern int macsurf_html_tree_stable(struct content *c);
+		if (!macsurf_html_tree_stable(g_qjs_content)) {
+			g_geom_unstable++;
+			return 0;
+		}
+		if (g_qjs_content->status == CONTENT_STATUS_DONE)
+			g_geom_at_done++;
+		else
+			g_geom_at_ready++;
+	}
 	return 1;
 }
 
@@ -4613,6 +4667,7 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 	 * (jQuery :hidden relies on it). */
 	qjs_geometry_flush();	/* fixes1073 (#265) */
 	if (!qjs_geometry_settled()) {
+		g_geom_undef++;			/* fixes1087 */
 		qjs_geom_audit(qjs_metric_name(magic), func_data[0],
 				"undefined (unsettled)");
 		return JS_UNDEFINED;
@@ -4630,15 +4685,40 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 		 * back as inline sizes. */
 		extern int macos9_reconvert_pending_for(void *cv);
 		if (macos9_reconvert_pending_for(g_qjs_content)) {
+			g_geom_undef++;		/* fixes1087 */
 			qjs_geom_audit(qjs_metric_name(magic), func_data[0],
 					"undefined (mutation pending)");
 			return JS_UNDEFINED;
 		}
+		/* fixes1087 — NEVER fabricate 0 before the load is DONE.
+		 *
+		 * Opening the gate to CONTENT_STATUS_READY lets a widget measure
+		 * elements that already have boxes, which is the whole point. But
+		 * it also means reaching here for an element whose box has simply
+		 * not been built yet, and answering 0 for that is the fixes1014
+		 * failure verbatim: the script writes the fabricated 0 back as an
+		 * inline width/height and the content is erased for good.
+		 *
+		 * 0 is only the TRUE answer once the document is DONE -- there a
+		 * missing box really does mean "not rendered", which is what
+		 * jQuery's :hidden relies on. Before that, `undefined` is the
+		 * honest answer and NaN-propagates into a no-op.
+		 *
+		 * Harness Test 43 asserts exactly this and caught the first cut of
+		 * this change fabricating a value in the unsettled window. */
+		if (g_qjs_content->status != CONTENT_STATUS_DONE) {
+			g_geom_undef++;
+			qjs_geom_audit(qjs_metric_name(magic), func_data[0],
+					"undefined (no box, not DONE)");
+			return JS_UNDEFINED;
+		}
+		g_geom_zero++;			/* fixes1087 — the dangerous one */
 		qjs_geom_audit(qjs_metric_name(magic), func_data[0],
 				"0 (no box)");
 		return JS_NewInt32(ctx, 0);
 	}
 
+	g_geom_real++;				/* fixes1087 */
 	bx = b->border[LEFT].width + b->border[RIGHT].width;
 	by = b->border[TOP].width + b->border[BOTTOM].width;
 	px = b->padding[LEFT] + b->padding[RIGHT];

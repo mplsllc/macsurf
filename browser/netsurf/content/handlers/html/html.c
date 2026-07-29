@@ -3071,6 +3071,73 @@ nserror html_reconvert(html_content *c)
  * re-convert without the full html_content type in scope. Returns the nserror
  * as int: 0 = NSERROR_OK (re-convert queued), non-zero = busy/skip (the caller
  * should re-arm). */
+/* fixes1087 (#265) — is the box tree safe to READ from outside layout?
+ *
+ * The JS geometry layer gated on CONTENT_STATUS_DONE, and hardware showed
+ * that refusing 100% of measurements taken during page load: every log reads
+ * declined=NNN with notdone at 100%. Script init runs before DONE, so every
+ * measure-then-layout widget got nothing. hackaday's featured slider is the
+ * concrete casualty -- PAGEMAP shows it slick-initialized with 5 slides and
+ * the track collapsed to h=15, because slick sets .slick-list height from a
+ * measurement and its slides are floated inside an overflow:hidden box with
+ * no natural height.
+ *
+ * DONE was always a proxy for the thing that actually matters, which is "a
+ * box tree exists and nothing is rebuilding it right now". That is checkable
+ * directly, and it is true for most of the load:
+ *   !reflowing              not inside layout_document
+ *   box_conversion_context  NULL = no dom_to_box walk in flight
+ *   status READY or DONE    converted at least once (LOADING has no tree)
+ *
+ * Deliberately NOT testing layout != NULL. html_reconvert nulls c->layout and
+ * then calls dom_to_box within the same synchronous call, so the gap is not
+ * observable from JS, and the whole window is already covered by the
+ * box_conversion_context test below. Requiring it only rejects a content whose
+ * root pointer is momentarily unset while its boxes are perfectly readable via
+ * box_for_node -- which is how every caller reaches them anyway.
+ *
+ * This is NOT a relaxation of the fixes674c rule. That rule forbids walking a
+ * tree that is being CONSTRUCTED, and the two middle checks are exactly how
+ * construction is detected -- more precisely than status ever did, since a
+ * DONE content is also mid-rebuild during a reconvert. Callers must still
+ * re-resolve through box_for_node rather than holding a box*, which is the
+ * other half of the fixes1012 checklist and unchanged.
+ *
+ * Takes struct content so the macos9 JS glue can call it without needing
+ * html_content in scope. */
+int macsurf_html_tree_stable(struct content *c);
+int macsurf_html_tree_stable(struct content *c)
+{
+	html_content *htmlc = (html_content *) c;
+
+	static long budget = 12;	/* fixes1087 — bounded; one per cause */
+	const char *why = NULL;
+
+	if (c == NULL)
+		return 0;
+	if (c->status != CONTENT_STATUS_READY &&
+	    c->status != CONTENT_STATUS_DONE)
+		why = "status";
+	else if (htmlc->reflowing)
+		why = "reflowing";
+	else if (htmlc->box_conversion_context != NULL)
+		why = "converting";
+	if (why != NULL) {
+		/* Name the blocker. A refusal count with no cause attached is
+		 * what made the DONE gate survive four hardware builds -- the
+		 * log said geometry was refusing but never which condition, so
+		 * it read as a to-do rather than the thing to fix. */
+		if (budget > 0) {
+			budget--;
+			macsurf_debug_log_writef(
+				"LIFE geomgate REFUSE %s status=%d layout=%p",
+				why, (int) c->status, (void *) htmlc->layout);
+		}
+		return 0;
+	}
+	return 1;
+}
+
 int html_reconvert_content(struct content *c)
 {
 	return (int) html_reconvert((html_content *) c);

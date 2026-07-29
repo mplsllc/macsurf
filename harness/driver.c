@@ -5383,22 +5383,50 @@ box_coords(bx, &cx, &cy);
 		 * ever answers 0 again. */
 		htmlc.base.status = CONTENT_STATUS_READY;
 		{
+			/* fixes1087 — CONTRACT NARROWED, not dropped.
+			 *
+			 * This asserted that CONTENT_STATUS_READY answers undefined
+			 * for EVERYTHING. That was over-broad, and hackaday's
+			 * featured slider is the bill: PAGEMAP shows it
+			 * slick-initialized with 5 slides and the track collapsed to
+			 * h=15, because slick sets .slick-list height from a
+			 * measurement and every measurement it took during load was
+			 * refused (declined=660, notdone 100%).
+			 *
+			 * What fixes1011 actually got wrong was fabricating 0 for an
+			 * element with NO BOX -- scripts wrote that back as inline
+			 * width:0 and erased page sections. That is still forbidden
+			 * and still asserted below. Refusing to answer for an element
+			 * that HAS a laid-out box was never what bought the safety;
+			 * it was collateral, and it is what starves every
+			 * measure-then-layout widget on the web. */
 			const char *pre =
 				"var e=document.getElementById('feed');"
-				"if(e.offsetWidth!==undefined)"
-					"throw new Error('ASSERT FAIL: unsettled offsetWidth "
-						"is '+e.offsetWidth+' -- must be undefined. A "
-						"fabricated 0 gets written back as inline width:0 "
-						"and ERASES page sections; undefined propagates as "
-						"NaN and the write is a no-op.');"
-				"if(e.clientHeight!==undefined||e.scrollWidth!==undefined)"
-					"throw new Error('ASSERT FAIL: unsettled "
-						"clientHeight/scrollWidth not undefined');"
+				"if(typeof e.offsetWidth!=='number')"
+					"throw new Error('ASSERT FAIL: READY offsetWidth is '+"
+						"e.offsetWidth+' for an element WITH a box -- it "
+						"must be measurable during load or every "
+						"measure-then-layout widget gets nothing and "
+						"collapses (slick, dotdotdot).');"
+				"if(!(e.offsetWidth>0))"
+					"throw new Error('ASSERT FAIL: READY offsetWidth is '+"
+						"e.offsetWidth+', want the real box width');"
 				"var rc=e.getBoundingClientRect();"
-				"if(rc.left!==0||rc.top!==0||rc.width!==0||rc.height!==0)"
-					"throw new Error('ASSERT FAIL: unsettled rect ('+"
-						"rc.left+','+rc.top+') '+rc.width+'x'+rc.height+"
-						"' -- must be the literal zero rect');";
+				"if(!(rc.width>0))"
+					"throw new Error('ASSERT FAIL: READY rect is '+rc.width+"
+						"'x'+rc.height+' for a boxed element');"
+				/* The fixes1011 guard, unchanged in substance: an element
+				 * with no box must NOT be handed a fabricated number. */
+				"var d=document.createElement('div');"
+				"if(d.offsetWidth!==undefined)"
+					"throw new Error('ASSERT FAIL: an element with NO box "
+						"answered '+d.offsetWidth+' before DONE -- must be "
+						"undefined. A fabricated 0 gets written back as "
+						"inline width:0 and ERASES page sections; undefined "
+						"propagates as NaN and the write is a no-op.');"
+				"if(d.clientHeight!==undefined||d.scrollWidth!==undefined)"
+					"throw new Error('ASSERT FAIL: unboxed clientHeight/"
+						"scrollWidth not undefined before DONE');";
 			ok = js_exec(thread, (const unsigned char *)pre,
 					strlen(pre), "t43-unsettled.js");
 			htmlc.base.status = CONTENT_STATUS_DONE;
