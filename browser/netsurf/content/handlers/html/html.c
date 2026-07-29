@@ -2835,11 +2835,41 @@ static void html_reconvert_done(html_content *c, bool success)
 	 * geometry settled, is the standard hook through which they converge.
 	 * Height-change-gated so a layout that stabilised goes quiet instead
 	 * of ping-ponging with the reconvert debounce forever. */
-#ifdef MACSURF_JS_FIRE_LOAD   /* fixes1022: same quiesce as the load fire */
+/* fixes1090 — ITS OWN SWITCH, and ON.
+ *
+ * fixes1022 quiesced this under MACSURF_JS_FIRE_LOAD, which is not defined
+ * on the Mac. So fixes1019 -- which was written for, and verified against,
+ * exactly this widget -- was compiled out three commits after it shipped,
+ * and hackaday's featured slider has been collapsed ever since. It was
+ * bundled in with the `load` quiesce despite being a different mechanism
+ * entirely: `load` is a page-lifecycle event that fires once and had never
+ * fired before; this is one narrow, height-gated convergence hook.
+ *
+ * That the two shared a switch is what hid it. The slider was investigated
+ * for days as a geometry problem, a prototype problem and a DOM-deletion
+ * problem, and the actual cause was a fix we already had, switched off by
+ * an unrelated flag.
+ *
+ * Why it is safe to enable on its own: it fires ONE resize per reconvert
+ * that CHANGED the document height. A stabilised layout goes quiet instead
+ * of ping-ponging with the reconvert debounce, and a page that never
+ * reconverts never sees it at all. */
+#ifndef MACSURF_JS_RECONVERT_RESIZE
+#define MACSURF_JS_RECONVERT_RESIZE 1
+#endif
+#if MACSURF_JS_RECONVERT_RESIZE
 	{
+		/* fixes1090 — track the height PER CONTENT. last_resize_h was a
+		 * bare static shared across every document in the session, so a
+		 * page whose height happened to match the previous page's would
+		 * silently skip its convergence resize. Keyed on the content
+		 * pointer, a new document always gets its first fire. */
+		static void *last_resize_c = NULL;
 		static int last_resize_h = -1;
 		if (c->js_thread != NULL &&
-				(int)c->base.height != last_resize_h) {
+				((void *)c != last_resize_c ||
+				 (int)c->base.height != last_resize_h)) {
+			last_resize_c = (void *)c;
 			last_resize_h = (int)c->base.height;
 			macsurf_debug_log_writef(
 				"LIFE reconvert height %d -> resize fired",
