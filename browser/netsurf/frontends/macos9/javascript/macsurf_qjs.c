@@ -2538,12 +2538,24 @@ static void qjs_collect_by_tag(JSContext *ctx, dom_node *node,
 #define QJS_SEL_MAX_COMPOUND 4
 #define QJS_SEL_MAX_CLASS    4
 #define QJS_SEL_NAME         64
+#define QJS_SEL_MAX_ATTR     4
+
+/* fixes1090c — attribute selectors, e.g. img[data-lazy]. `op` is 0 for bare
+ * presence ([attr]) or one of '=' '~' '^' '$' '*' matching the CSS operator
+ * of the same shorthand (~= word, ^= prefix, $= suffix, *= substring). */
+struct qjs_sel_attr {
+	char name[QJS_SEL_NAME];
+	char op;
+	char val[QJS_SEL_NAME];
+};
 
 struct qjs_sel_compound {
 	char tag[32];                                 /* "" = any, or lowercase */
 	char cls[QJS_SEL_MAX_CLASS][QJS_SEL_NAME];
 	int  ncls;
 	char id[QJS_SEL_NAME];                        /* "" = none */
+	struct qjs_sel_attr attr[QJS_SEL_MAX_ATTR];
+	int  nattr;
 };
 
 struct qjs_sel {
@@ -6738,10 +6750,92 @@ static void qjs_sel_parse(const char *sel, struct qjs_sel *out)
 					strcpy(c->id, buf);
 					started = 1;
 				}
-			} else if (*p == '[' || *p == ':' || *p == '>' || *p == ','
+			} else if (*p == '[') {
+				/* fixes1090c — attribute selectors, e.g.
+				 * img[data-lazy] or a[href^="https:"]. These were
+				 * previously swallowed whole (falling back to
+				 * tag-only), which made `img[data-lazy]` match EVERY
+				 * <img>, lazy or not -- confirmed against the real
+				 * hackaday slick.js bundle in the harness: it made
+				 * loadImages() run jQuery's deprecated .load(fn)
+				 * event shorthand (removed in jQuery 3.x) against
+				 * ordinary images, throwing and aborting the theme's
+				 * init script before it reached the slider at all.
+				 * Parse [name], [name=val], [name~=val], [name^=val],
+				 * [name$=val], [name*=val], quoted or not. Anything
+				 * else inside the brackets (namespaces, the i/s
+				 * case-sensitivity flag, etc.) still degrades to
+				 * approx for that one attribute only. */
+				p++; /* skip '[' */
+				while (*p == ' ' || *p == '\t') p++;
+				if (c->nattr >= QJS_SEL_MAX_ATTR) {
+					out->approx = 1;
+				} else {
+					struct qjs_sel_attr *a = &c->attr[c->nattr];
+					int k = 0;
+					memset(a, 0, sizeof(*a));
+					while (k < QJS_SEL_NAME - 1 && *p != '\0' &&
+					       *p != ']' && *p != '=' && *p != '~' &&
+					       *p != '^' && *p != '$' && *p != '*' &&
+					       *p != ' ' && *p != '\t') {
+						a->name[k++] = *p++;
+					}
+					a->name[k] = '\0';
+					while (*p == ' ' || *p == '\t') p++;
+					if (k == 0) {
+						out->approx = 1;
+					} else if (*p == ']' || *p == '\0') {
+						a->op = 0; /* bare [attr] presence */
+						c->nattr++;
+						started = 1;
+					} else if (*p == '~' || *p == '^' || *p == '$' ||
+						   *p == '*') {
+						a->op = *p++;
+						if (*p == '=') p++; else out->approx = 1;
+					} else if (*p == '=') {
+						a->op = '=';
+						p++;
+					} else {
+						/* e.g. namespaced |= or |attr -- unknown,
+						 * drop just this attribute constraint. */
+						out->approx = 1;
+						a->op = 0;
+						a->name[0] = '\0';
+					}
+					if (a->name[0] != '\0' && a->op != 0) {
+						int vk = 0;
+						char quote = 0;
+						while (*p == ' ' || *p == '\t') p++;
+						if (*p == '"' || *p == '\'') {
+							quote = *p++;
+						}
+						if (quote) {
+							while (vk < QJS_SEL_NAME - 1 &&
+							       *p != '\0' && *p != quote) {
+								a->val[vk++] = *p++;
+							}
+							if (*p == quote) p++;
+						} else {
+							while (vk < QJS_SEL_NAME - 1 &&
+							       *p != '\0' && *p != ']' &&
+							       *p != ' ' && *p != '\t') {
+								a->val[vk++] = *p++;
+							}
+						}
+						a->val[vk] = '\0';
+						c->nattr++;
+						started = 1;
+					}
+				}
+				/* Swallow to the closing ']' (also any trailing
+				 * case-flag / stray syntax we did not parse above). */
+				while (*p != '\0' && *p != ']') p++;
+				if (*p == ']') p++;
+			} else if (*p == ':' || *p == '>' || *p == ','
 				   || *p == '+' || *p == '~') {
 				/* Unsupported: swallow the rest of this compound and
-				 * fall back to whatever tag/class/id we already have. */
+				 * fall back to whatever tag/class/id/attr we already
+				 * have. */
 				out->approx = 1;
 				while (*p != '\0' && *p != ' ' && *p != '\t') p++;
 			} else {
@@ -6809,6 +6903,48 @@ static int qjs_compound_match(dom_node *node, const struct qjs_sel_compound *c)
 			return 0;
 		for (i = 0; i < c->ncls; i++) {
 			if (!qjs_class_has(buf, c->cls[i])) return 0;
+		}
+	}
+
+	/* fixes1090c — [attr] / [attr=val] / [attr~=val] / [attr^=val] /
+	 * [attr$=val] / [attr*=val]. A dropped/unparsed attribute (name
+	 * cleared by the parser) imposes no constraint, same degrade as an
+	 * overflowed class list. */
+	for (i = 0; i < c->nattr; i++) {
+		const struct qjs_sel_attr *a = &c->attr[i];
+		char buf[256];
+		size_t bl, vl;
+
+		if (a->name[0] == '\0') continue;
+		if (!qjs_attr_str((dom_element *)node, a->name, buf,
+				(int)sizeof(buf))) {
+			return 0; /* attribute not present at all */
+		}
+		bl = strlen(buf);
+		vl = strlen(a->val);
+		switch (a->op) {
+		case 0: /* bare presence: qjs_attr_str already confirmed it */
+			break;
+		case '=':
+			if (strcmp(buf, a->val) != 0) return 0;
+			break;
+		case '~':
+			if (!qjs_class_has(buf, a->val)) return 0;
+			break;
+		case '^':
+			if (vl == 0 || vl > bl || strncmp(buf, a->val, vl) != 0)
+				return 0;
+			break;
+		case '$':
+			if (vl == 0 || vl > bl ||
+					strcmp(buf + (bl - vl), a->val) != 0)
+				return 0;
+			break;
+		case '*':
+			if (vl == 0 || strstr(buf, a->val) == NULL) return 0;
+			break;
+		default:
+			break;
 		}
 	}
 	return 1;

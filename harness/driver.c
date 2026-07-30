@@ -5710,6 +5710,106 @@ box_coords(bx, &cx, &cy);
 	}
 	fprintf(stderr, "=== Test 45 PASS: the real dotdotdot preserves the entry ===\n");
 
+	/* --- Test 54: attribute selectors, and the REAL slick.js that needs
+	 * them -----------------------------------------------------------
+	 *
+	 * Root-caused the "hackaday featured slider doesn't load at all"
+	 * report: qjs_sel_parse (the hand-rolled matcher behind
+	 * querySelectorAll/jQuery's qsa fast path) swallowed `[...]`
+	 * attribute selectors whole and fell back to whatever tag/class/id
+	 * preceded them. `img[data-lazy]` therefore degraded to bare `img`
+	 * and matched EVERY image, lazy or not. hackaday's own theme script
+	 * (in the harness's real hackaday-bundle.js) hits this directly:
+	 * slick's init -> setSlideClasses -> lazyLoad -> loadImages selects
+	 * `img[data-lazy]` and calls jQuery's deprecated `.load(fn)` event
+	 * shorthand on each match -- removed in jQuery 3.x, where `.load()`
+	 * is ONLY the AJAX method, so a bare function argument throws
+	 * (`e.indexOf is not a function`) inside jQuery itself. Confirmed
+	 * with rawH=0/no-op images BEFORE the fix: the throw aborted the
+	 * whole `.slick()` call synchronously, so the theme's IIFE never
+	 * even reached the slider's own setup, let alone anything after it
+	 * in the same script. fixes1090c parses [attr]/[attr=val]/
+	 * [attr~=val]/[attr^=val]/[attr$=val]/[attr*=val] for real instead
+	 * of discarding them. */
+	fprintf(stderr, "\n=== Test 54: attribute selectors + real slick.js ===\n");
+	{
+		const char *setup =
+			"globalThis.__t54={};var r=globalThis.__t54;"
+			"var host=document.getElementById('feed');"
+			"var m1=document.createElement('div');"
+			"m1.innerHTML='<img id=\"withattr\" data-lazy=\"x.png\">"
+				"<img id=\"noattr\">"
+				"<a id=\"pfx\" href=\"https://example.com/x\"></a>"
+				"<a id=\"nopfx\" href=\"http://example.com/x\"></a>';"
+			"host.appendChild(m1);"
+			"r.qsaPresence=m1.querySelectorAll('img[data-lazy]').length;"
+			"r.qsaEquals=m1.querySelectorAll('img[id=\"withattr\"]').length;"
+			"r.qsaPrefix=m1.querySelectorAll("
+				"'a[href^=\"https://\"]').length;"
+			"r.jqPresence=jQuery('img[data-lazy]',m1).length;"
+			"var fs=document.createElement('div');"
+			"fs.className='featured-slides';"
+			"for(var i=0;i<3;i++){"
+			"  var s=document.createElement('div');"
+			"  s.innerHTML='<a><img></a><h2>Story '+i+'</h2>';"
+			"  fs.appendChild(s);"
+			"}"
+			"host.appendChild(fs);"
+			"r.lazyImgLenBefore=jQuery('img[data-lazy]',fs).length;"
+			"try{"
+			"  jQuery('.featured-slides').slick({autoplay:true,speed:300,"
+			"    arrows:false,dots:true,pauseOnHover:true});"
+			"  r.slickThrew='';"
+			"}catch(e){r.slickThrew=String((e&&e.message)||e);}"
+			"r.slickInitialized=jQuery('.featured-slides')"
+				".hasClass('slick-initialized');";
+		unsigned char ok54 = js_exec(thread, (const unsigned char *)setup,
+				strlen(setup), "t54-setup.js");
+		if (!ok54) {
+			fprintf(stderr, "FAIL: Test 54 -- setup script itself threw\n");
+			return 1;
+		}
+		{
+			const char *chk =
+				"var r=globalThis.__t54;"
+				"if(r.qsaPresence!==1)throw new Error('ASSERT FAIL: "
+					"img[data-lazy] matched '+r.qsaPresence+"
+					"' images, want 1 (the one WITH the attribute) -- "
+					"attribute-presence selectors are not filtering');"
+				"if(r.qsaEquals!==1)throw new Error('ASSERT FAIL: "
+					"img[id=\"withattr\"] matched '+r.qsaEquals+"
+					"', want 1');"
+				"if(r.qsaPrefix!==1)throw new Error('ASSERT FAIL: "
+					"a[href^=\"https://\"] matched '+r.qsaPrefix+"
+					"', want 1 (only the https link)');"
+				"if(r.jqPresence!==1)throw new Error('ASSERT FAIL: "
+					"jQuery(\"img[data-lazy]\") matched '+r.jqPresence+"
+					"', want 1 -- jQuery relies on the same native "
+					"matcher');"
+				"if(r.lazyImgLenBefore!==0)throw new Error('ASSERT "
+					"FAIL: img[data-lazy] inside .featured-slides "
+					"matched '+r.lazyImgLenBefore+' plain <img> "
+					"elements with no data-lazy attribute at all');"
+				"if(r.slickThrew)throw new Error('ASSERT FAIL: the "
+					"REAL slick.js threw during init: '+r.slickThrew+"
+					"' -- this is what aborted hackaday\\'s theme "
+					"script before the slider (or anything after it "
+					"in the same IIFE) ever ran');"
+				"if(!r.slickInitialized)throw new Error('ASSERT FAIL: "
+					"slick did not reach slick-initialized');";
+			unsigned char ok54b = js_exec(thread, (const unsigned char *)chk,
+					strlen(chk), "t54-chk.js");
+			if (!ok54b) {
+				fprintf(stderr, "FAIL: Test 54 -- attribute selectors "
+						"still broken, or the real slider still "
+						"throws\n");
+				return 1;
+			}
+		}
+	}
+	fprintf(stderr, "=== Test 54 PASS: attribute selectors match for real; "
+			"hackaday's own slick.js init no longer throws ===\n");
+
 	/* --- Test 46: DOM SPEC CONFORMANCE SWEEP -----------------------------
 	 *
 	 * fixes1031 was a one-line deviation from the DOM spec (textContent=""
