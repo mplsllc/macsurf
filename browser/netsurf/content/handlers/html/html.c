@@ -699,7 +699,17 @@ void html_pagemap_dump(html_content *c, const char *when)
 	return;
 #endif
 	if (strcmp(when, "ready") == 0) nav_dumps = 0;
-	if (nav_dumps >= 3) return;  /* fixes1020: ready + done + 1 reconvert */
+	/* fixes1092 — widened 3 -> 6 for this round ONLY. The 1090b/1090c
+	 * fixes (attribute selectors so slick's init IIFE stops throwing;
+	 * firing `load` so slick's unconditional load-time setPosition runs)
+	 * both land their EFFECT on reconvert #2 (triggered by the
+	 * resize+load fire) and #3 (slick's own follow-up DOM mutation from
+	 * setPosition) -- neither ever got dumped under the old cap of
+	 * "ready + done + first reconvert only", so there was no way to see
+	 * whether the featured-slides height actually converged or stayed
+	 * collapsed. Revert to 3 once this is settled -- the log-line-cost
+	 * argument in the comment above still applies to the steady state. */
+	if (nav_dumps >= 6) return;  /* fixes1092: ready + done + first 4 reconverts */
 	if (macsurf_pagemap_dumps >= MACSURF_PAGEMAP_MAX_DUMPS) return;
 	macsurf_pagemap_dumps++;
 	nav_dumps++;
