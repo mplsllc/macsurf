@@ -2876,6 +2876,31 @@ static void html_reconvert_done(html_content *c, bool success)
 				(int)c->base.height);
 			(void) js_fire_event(c->js_thread, "resize",
 					c->document, NULL);
+			/* fixes1090b — `resize` alone was still a no-op for the
+			 * hackaday slider: the REAL slick.js (harness/
+			 * hackaday-bundle.js:933-942) gates its resize handler on
+			 * `$(window).width() !== _.windowWidth` before it will call
+			 * `_.setPosition()` (the actual re-measure). Our synthetic
+			 * resize never changes the reported window width, so that
+			 * branch is permanently false and setPosition never runs --
+			 * confirmed by reading the bundled source, not guessed.
+			 * slick's ONLY unconditional re-measure hooks are its
+			 * one-shot init() call (which fired too early here, while
+			 * the box tree was still unsettled, and measured garbage)
+			 * and `$(window).on('load', _.setPosition)`
+			 * (hackaday-bundle.js:944) -- and window `load` never fires
+			 * on the Mac at all (MACSURF_JS_FIRE_LOAD is off). Dispatch
+			 * `load` here too, under the exact same gate as `resize`:
+			 * once per content, only when a reconvert actually changed
+			 * the document height. This does NOT touch readyState or
+			 * the once-per-navigation `__ms_load_fired` idempotency
+			 * flag in js_fire_window_load -- it is a second plain
+			 * window.dispatchEvent, scoped identically to the resize
+			 * fire above, so it carries the same safety argument
+			 * fixes1090 already made and does not reopen the
+			 * MACSURF_JS_FIRE_LOAD switch or its history. */
+			(void) js_fire_event(c->js_thread, "load",
+					c->document, NULL);
 		}
 	}
 #endif
