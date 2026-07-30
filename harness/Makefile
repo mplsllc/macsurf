@@ -179,6 +179,14 @@ check-c89:
 		&& echo "   quickjs.c OK"
 	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) -DWITH_QUICKJS $(INC) \
 		build/macsurf_qjs.c && echo "   macsurf_qjs.c OK"
+# fixes1093 — html.c joins the gate. It was never covered, yet it is the other
+# file this project edits constantly (the pagemap, the reconvert resize/load
+# fire, and now the slider probe all live here) and it ships to CW8 as C89
+# exactly like macsurf_qjs.c does. The pre-existing implicit-declaration
+# warnings below are NOT suppressed on purpose: -w is what made this target a
+# false green once already, and implicit decls are their own CW8 hazard class.
+	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) $(INC) \
+		$(NS)/content/handlers/html/html.c && echo "   html.c OK"
 
 # Kept as aliases: `make link` / `make objs` are in muscle memory and in older
 # notes. They now mean the same thing as the default goal instead of being the

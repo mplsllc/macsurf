@@ -5810,6 +5810,35 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 54 PASS: attribute selectors match for real; "
 			"hackaday's own slick.js init no longer throws ===\n");
 
+	/* --- Test 55: the fixes1093 SLIDER PROBE actually walks ---------------
+	 *
+	 * A diagnostic that silently prints nothing is worse than none: it
+	 * reads as "the widget is fine" when it means "the probe is broken",
+	 * and this project has now lost rounds to exactly that (fixes1090's
+	 * compiled-out resize, fixes1022's defines-below-uses). Test 54 leaves
+	 * a real .featured-slides subtree in the document, so drive the probe
+	 * over it and assert it emits subtree lines rather than its
+	 * NOT-IN-DOM branch. "ready" resets the probe's per-nav budget, which
+	 * Test 54's own reconverts have otherwise exhausted by now. */
+	fprintf(stderr, "\n=== Test 55: the slider probe walks a real subtree ===\n");
+	{
+		extern void html_slider_probe(html_content *c, const char *when);
+		extern long macsurf_probe_slider_lines; /* fixes1093 counter */
+		long before = macsurf_probe_slider_lines;
+		html_slider_probe(&htmlc, "ready");
+		if (macsurf_probe_slider_lines <= before) {
+			fprintf(stderr, "FAIL: Test 55 -- the slider probe emitted "
+					"NO subtree lines over a .featured-slides that "
+					"Test 54 demonstrably built. The probe would have "
+					"gone to hardware printing nothing and been read "
+					"as 'the slider is fine'.\n");
+			return 1;
+		}
+		fprintf(stderr, "  probe emitted %ld subtree lines\n",
+				macsurf_probe_slider_lines - before);
+	}
+	fprintf(stderr, "=== Test 55 PASS: the slider probe reaches the subtree ===\n");
+
 	/* --- Test 46: DOM SPEC CONFORMANCE SWEEP -----------------------------
 	 *
 	 * fixes1031 was a one-line deviation from the DOM spec (textContent=""

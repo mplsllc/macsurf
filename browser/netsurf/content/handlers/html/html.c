@@ -123,6 +123,9 @@ static const char *html_types[] = {
  * html_box_convert_done (ready), html_proceed_to_done (done) and
  * html_reconvert_done (reconvert). */
 void html_pagemap_dump(html_content *c, const char *when);
+/* fixes1093 — the targeted `.featured-slides` subtree probe. Same three call
+ * sites as the pagemap. */
+void html_slider_probe(html_content *c, const char *when);
 
 /**
  * Fire an event at the DOM
@@ -436,6 +439,7 @@ static void html_box_convert_done(html_content *c, bool success)
 
 	content_set_ready(&c->base);
 	html_pagemap_dump(c, "ready"); /* fixes1015 */
+	html_slider_probe(c, "ready"); /* fixes1093 */
 
 	html_proceed_to_done(c);
 
@@ -673,6 +677,216 @@ static void html_pagemap_walk(dom_node *n, int depth)
 	}
 }
 
+/* ====================================================================== */
+/* fixes1093 — THE SLIDER PROBE.
+ *
+ * Three rounds have now guessed at why hackaday's featured slider collapses,
+ * and every one of them was argued from code-reading rather than a number off
+ * the device. This probe exists to end that.
+ *
+ * What the theme actually does (harness/hackaday-bundle.js:2672-2684):
+ *
+ *     var sliderHeight = $($('.featured-slides div')[0]).height();
+ *     $('.featured-slides').slick({ ..., onInit: function() {
+ *         $('.slick-slide').css('height', sliderHeight);
+ *         ...
+ *     }});
+ *
+ * and slick's own setHeight() (line 278) is a NO-OP here, because it is
+ * gated on `adaptiveHeight === true` and the default is false (line 99) and
+ * the theme does not pass it. So slick NEVER sizes the list itself: the
+ * ENTIRE height of this widget comes from that one `sliderHeight` number,
+ * measured ONCE before .slick() runs, applied ONCE in a callback that never
+ * fires again. Chrome gets 404.489px; we render h=15 then h=1.
+ *
+ * That means exactly two outcomes are possible, and one line of output tells
+ * them apart:
+ *
+ *   st=...height:404px...   -> the measurement WORKED and layout is dropping
+ *                              an inline height. A layout/CSS bug. Nothing to
+ *                              do with geometry settling, resize, or `load`.
+ *   st=(none) / height:NaN  -> jQuery's .height() answered undefined/NaN at
+ *                              measure time (the fixes1014/1016 unsettled
+ *                              contract), so .css() no-opped. A geometry-
+ *                              timing bug, and NO later resize/load event can
+ *                              repair it because onInit never re-runs.
+ *
+ * Everything else this round could have shipped is a guess until that field
+ * is read. The probe prints the whole `.featured-slides` subtree at FULL
+ * depth (the pagemap flattens everything past depth 4, which is why the
+ * slick-list/track/slide nesting has been invisible in every log so far),
+ * with each node's inline style attribute, its box geometry, and its
+ * cascaded height. */
+#define MACSURF_SLIDER_MAX_DUMPS 6
+
+static int macsurf_slider_line_budget = 0;
+
+/* fixes1093 — every subtree line this probe emits, counted. Harness Test 55
+ * asserts on it: a probe that silently walks nothing reads as "the widget is
+ * fine" when it means "the probe is broken", which is how the compiled-out
+ * fixes1019 resize hid for ten rounds. */
+long macsurf_probe_slider_lines = 0;
+
+/* Read an attribute into a caller buffer, whitespace-flattened. */
+static void html_slider_attr(dom_node *n, const char *name, char *out, int cap)
+{
+	dom_string *nm = NULL;
+	dom_string *v = NULL;
+	const char *p;
+	int i = 0;
+
+	out[0] = '\0';
+	if (dom_string_create((const uint8_t *)name, (size_t)strlen(name), &nm)
+			!= DOM_NO_ERR || nm == NULL)
+		return;
+	if (dom_element_get_attribute((dom_element *)n, nm, &v) == DOM_NO_ERR &&
+			v != NULL) {
+		p = dom_string_data(v);
+		while (p != NULL && *p != '\0' && i < cap - 1) {
+			char ch = *p++;
+			if (ch == '\r' || ch == '\n' || ch == '\t') ch = ' ';
+			out[i++] = ch;
+		}
+		dom_string_unref(v);
+	}
+	out[i] = '\0';
+	dom_string_unref(nm);
+}
+
+/* Depth-first search for the first element whose class carries `cls`. Returns
+ * a REF'd node, or NULL. */
+static dom_node *html_slider_find(dom_node *n, const char *cls, int depth)
+{
+	dom_node *ch = NULL;
+	dom_node *nx = NULL;
+	dom_node *found = NULL;
+	dom_node_type t = (dom_node_type)0;
+	char buf[160];
+
+	if (depth > 24) return NULL;
+
+	if (dom_node_get_node_type(n, &t) == DOM_NO_ERR &&
+			t == DOM_ELEMENT_NODE) {
+		html_slider_attr(n, "class", buf, (int)sizeof buf);
+		if (strstr(buf, cls) != NULL) {
+			dom_node_ref(n);
+			return n;
+		}
+	}
+
+	if (dom_node_get_first_child(n, &ch) != DOM_NO_ERR) ch = NULL;
+	while (ch != NULL && found == NULL) {
+		dom_node_type t2 = (dom_node_type)0;
+		if (dom_node_get_node_type(ch, &t2) == DOM_NO_ERR &&
+				t2 == DOM_ELEMENT_NODE) {
+			found = html_slider_find(ch, cls, depth + 1);
+		}
+		nx = NULL;
+		if (dom_node_get_next_sibling(ch, &nx) != DOM_NO_ERR) nx = NULL;
+		dom_node_unref(ch);
+		ch = nx;
+	}
+	if (ch != NULL) dom_node_unref(ch);
+	return found;
+}
+
+static void html_slider_walk(dom_node *n, int depth)
+{
+	dom_node *ch = NULL;
+	dom_node *nx = NULL;
+	struct box *b;
+	char brief[64];
+	char st[96];
+	int x = 0, y = 0, w = 0, h = 0;
+	const char *disp = "-";
+	const char *ht = "none";
+	int hv_px = 0;
+
+	if (macsurf_slider_line_budget <= 0) return;
+	if (depth > 12) return;
+
+	html_pagemap_brief(n, brief, (int)sizeof brief);
+	html_slider_attr(n, "style", st, (int)sizeof st);
+
+	b = box_for_node(n);
+	if (b != NULL) {
+		box_coords(b, &x, &y);
+		w = HTML_PAGEMAP_SANE(b->width);
+		h = HTML_PAGEMAP_SANE(b->height);
+		if (b->style != NULL) {
+			css_fixed hval = 0;
+			css_unit hunit = CSS_UNIT_PX;
+			disp = (css_computed_display_static(b->style) ==
+					CSS_DISPLAY_NONE) ? "NONE" : "ok";
+			if (css_computed_height(b->style, &hval, &hunit) ==
+					CSS_HEIGHT_SET) {
+				ht = (hunit == CSS_UNIT_PX) ? "set" : "setU";
+				hv_px = (int) FIXTOINT(hval);
+			} else {
+				ht = "auto";
+			}
+		}
+	}
+
+	macsurf_slider_line_budget--;
+	macsurf_probe_slider_lines++;
+	macsurf_debug_log_writef(
+		"LIFE SLIDER d=%d %s box=%d y=%d w=%d h=%d disp=%s cssh=%s(%d) st=[%s]",
+		depth, brief, (b != NULL) ? 1 : 0, y, w, h, disp, ht, hv_px,
+		(st[0] == '\0') ? "(none)" : st);
+
+	if (dom_node_get_first_child(n, &ch) != DOM_NO_ERR) ch = NULL;
+	while (ch != NULL && macsurf_slider_line_budget > 0) {
+		dom_node_type t2 = (dom_node_type)0;
+		if (dom_node_get_node_type(ch, &t2) == DOM_NO_ERR &&
+				t2 == DOM_ELEMENT_NODE) {
+			html_slider_walk(ch, depth + 1);
+		}
+		nx = NULL;
+		if (dom_node_get_next_sibling(ch, &nx) != DOM_NO_ERR) nx = NULL;
+		dom_node_unref(ch);
+		ch = nx;
+	}
+	if (ch != NULL) dom_node_unref(ch);
+}
+
+void html_slider_probe(html_content *c, const char *when)
+{
+	static int nav_dumps = 0;
+	dom_element *root = NULL;
+	dom_node *slider = NULL;
+
+	if (c == NULL || c->document == NULL) return;
+	if (strcmp(when, "ready") == 0) nav_dumps = 0;
+	if (nav_dumps >= MACSURF_SLIDER_MAX_DUMPS) return;
+	nav_dumps++;
+
+	if (dom_document_get_document_element(c->document, &root) != DOM_NO_ERR
+			|| root == NULL)
+		return;
+
+	slider = html_slider_find((dom_node *)root, "featured-slides", 0);
+	dom_node_unref((dom_node *)root);
+
+	if (slider == NULL) {
+		/* Not a finding to skip past: if the container is absent from
+		 * the DOM entirely then no amount of measuring explains the
+		 * collapse, and the hunt moves to whether it was ever parsed. */
+		macsurf_debug_log_writef(
+			"LIFE SLIDER[%s] .featured-slides NOT IN DOM", when);
+		return;
+	}
+
+	macsurf_slider_line_budget = 50;
+	macsurf_debug_log_writef(
+		"LIFE SLIDER[%s] ---- subtree (d, tag, box, geom, cssh, inline style)",
+		when);
+	html_slider_walk(slider, 0);
+	macsurf_debug_log_writef("LIFE SLIDER[%s] ---- end", when);
+	dom_node_unref(slider);
+}
+/* ====================================================================== */
+
 void html_pagemap_dump(html_content *c, const char *when)
 {
 	dom_element *root = NULL;
@@ -699,17 +913,11 @@ void html_pagemap_dump(html_content *c, const char *when)
 	return;
 #endif
 	if (strcmp(when, "ready") == 0) nav_dumps = 0;
-	/* fixes1092 — widened 3 -> 6 for this round ONLY. The 1090b/1090c
-	 * fixes (attribute selectors so slick's init IIFE stops throwing;
-	 * firing `load` so slick's unconditional load-time setPosition runs)
-	 * both land their EFFECT on reconvert #2 (triggered by the
-	 * resize+load fire) and #3 (slick's own follow-up DOM mutation from
-	 * setPosition) -- neither ever got dumped under the old cap of
-	 * "ready + done + first reconvert only", so there was no way to see
-	 * whether the featured-slides height actually converged or stayed
-	 * collapsed. Revert to 3 once this is settled -- the log-line-cost
-	 * argument in the comment above still applies to the steady state. */
-	if (nav_dumps >= 6) return;  /* fixes1092: ready + done + first 4 reconverts */
+	/* fixes1093 — stays at 3. The whole-page pagemap is context; the
+	 * targeted html_slider_probe carries this round's question and has its
+	 * own (larger) per-nav budget, so there is no reason to spend log
+	 * volume re-dumping the entire document. */
+	if (nav_dumps >= 3) return;  /* fixes1020: ready + done + 1 reconvert */
 	if (macsurf_pagemap_dumps >= MACSURF_PAGEMAP_MAX_DUMPS) return;
 	macsurf_pagemap_dumps++;
 	nav_dumps++;
@@ -814,6 +1022,7 @@ html_proceed_to_done(html_content *html)
 #endif
 			content_set_done(&html->base);
 			html_pagemap_dump(html, "done"); /* fixes1015 */
+			html_slider_probe(html, "done"); /* fixes1093 */
 			return NSERROR_OK;
 		}
 		break;
@@ -2833,6 +3042,7 @@ static void html_reconvert_done(html_content *c, bool success)
 			(long) macsurf_reconvert_seq);
 	macsurf_debug_log_reconv_flush(0);
 	html_pagemap_dump(c, "reconvert"); /* fixes1015 */
+	html_slider_probe(c, "reconvert"); /* fixes1093 */
 
 	/* fixes1019 — a reconvert that CHANGED the document height fires one
 	 * `resize` at window. The featured-slider class of widget (slick,
