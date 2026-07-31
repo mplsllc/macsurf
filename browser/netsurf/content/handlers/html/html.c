@@ -3397,6 +3397,37 @@ nserror html_reconvert(html_content *c)
 		return NSERROR_NEED_DATA;        /* never free boxes mid-layout */
 	if (c->box_conversion_context != NULL)
 		return NSERROR_NEED_DATA;        /* one re-convert in flight    */
+	/* fixes1105 (#265) — THE reconvert bug, proven on hardware.
+	 *
+	 * Without a select context there is no cascade, and libcss rejects the
+	 * very first css_select_style() call with CSS_BADPARM (its guard is
+	 * `ctx == NULL || node == NULL || ...`). That first call is for the
+	 * ROOT <html> element, so box_construct_element bails at its
+	 * `box_get_style() == NULL` check, dom_to_box reports failure, and the
+	 * ENTIRE document rebuild is thrown away. Every element would fail
+	 * identically; the root simply gets there first.
+	 *
+	 * select_ctx is created ONCE, in html_finish_conversion(), which runs
+	 * when the document finishes parsing. Script that mutates the DOM
+	 * DURING parse schedules a reconvert before that point, so the
+	 * reconvert runs against select_ctx == NULL.
+	 *
+	 * Hardware, hackaday.com (fixes1104 log): 103 reconverts, 103 failures,
+	 * `selctx=00000000` on every one, and ALL 103 land BEFORE the
+	 * content_ready that follows finish_conversion -- zero failures after
+	 * it. Not one reconvert has ever succeeded on that page.
+	 *
+	 * NEED_DATA is the correct answer, not an error: it is what every other
+	 * precondition here returns, and it leaves the caller's debounce free to
+	 * retry once the context exists. The mutations are not lost -- the
+	 * initial conversion is still to come and builds the tree from the
+	 * mutated DOM. */
+	if (c->select_ctx == NULL) {
+		macsurf_debug_log_writef(
+			"LIFE reconvert: defer — no select_ctx yet (pre-"
+			"finish_conversion); cascade would fail CSS_BADPARM");
+		return NSERROR_NEED_DATA;
+	}
 	/* fixes421 — quiesce guard: if sub-resource fetches (images, CSS) are
 	 * still in flight, html_object_callback holds a pw pointer into
 	 * object_list entries that html_object_free_objects is about to free.

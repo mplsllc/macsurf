@@ -6456,6 +6456,85 @@ box_coords(bx, &cx, &cy);
 	}
 	fprintf(stderr, "=== Test 61 PASS: XHR headers parse per-line ===\n");
 
+	/* --- Test 62: NO RECONVERT WITHOUT A SELECT CONTEXT (#265) ----------
+	 *
+	 * THE #265 bug, reproduced. select_ctx is created once, in
+	 * html_finish_conversion(). Script that mutates the DOM during parse
+	 * schedules a reconvert before that happens, so the reconvert runs with
+	 * select_ctx == NULL. libcss then rejects the first css_select_style()
+	 * with CSS_BADPARM (guard: `ctx == NULL || ...`), that first call being
+	 * for the ROOT <html> element, so box_construct_element bails on
+	 * box_get_style()==NULL and the WHOLE rebuild is discarded.
+	 *
+	 * Hardware (fixes1104): 103 reconverts, 103 failures, selctx=00000000
+	 * every time, all 103 before content_ready and none after.
+	 *
+	 * Assert COUNTS, not booleans: "did it fail" cannot distinguish a
+	 * reconvert that was correctly DEFERRED from one that ran and blew up.
+	 * The control is the pre-fix state (a NULL select_ctx must still be
+	 * refused) -- and, crucially, the restored context must still convert,
+	 * or the "fix" would just be disabling reconverts entirely. */
+	fprintf(stderr, "\n=== Test 62: reconvert needs a select context ===\n");
+	{
+		css_select_ctx *saved = htmlc.select_ctx;
+		nserror rc_null, rc_live;
+		long fails_null, fails_live;
+
+		htmlc.reflowing = false;
+		htmlc.box_conversion_context = NULL;
+		htmlc.aborted = false;
+		htmlc.base.status = CONTENT_STATUS_DONE;
+		htmlc.base.active = 0;
+
+		/* 1. The bug's exact precondition: no select context yet. */
+		htmlc.select_ctx = NULL;
+		harness_boxbuild_fail_count_reset();
+		rc_null = html_reconvert_content((struct content *)&htmlc);
+		(void) harness_pump_all(5000);
+		fails_null = harness_boxbuild_fail_count();
+
+		if (rc_null == NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 62 -- a reconvert was ACCEPTED "
+				"with select_ctx==NULL. Every element's cascade will "
+				"return CSS_BADPARM, the root <html> first, and the "
+				"whole rebuild is discarded.\n");
+			htmlc.select_ctx = saved;
+			return 1;
+		}
+		if (fails_null != 0) {
+			fprintf(stderr, "FAIL: Test 62 -- the reconvert was refused "
+				"but still reached box construction %ld time(s). It "
+				"must not start at all.\n", fails_null);
+			htmlc.select_ctx = saved;
+			return 1;
+		}
+
+		/* 2. The other half: with a real context it must still WORK.
+		 *    Without this a blanket "never reconvert" would pass part 1. */
+		htmlc.select_ctx = saved;
+		harness_boxbuild_fail_count_reset();
+		rc_live = html_reconvert_content((struct content *)&htmlc);
+		(void) harness_pump_all(20000);
+		fails_live = harness_boxbuild_fail_count();
+
+		if (rc_live != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 62 -- reconvert refused (err=%d) "
+				"even WITH a live select_ctx. The guard is too broad: "
+				"it would disable reconverts entirely rather than "
+				"deferring them.\n", (int) rc_live);
+			return 1;
+		}
+		if (fails_live != 0) {
+			fprintf(stderr, "FAIL: Test 62 -- reconvert ran with a live "
+				"select_ctx but still hit %ld box-build failure(s).\n",
+				fails_live);
+			return 1;
+		}
+		fprintf(stderr, "  => NULL ctx deferred (0 box builds attempted); "
+				"live ctx converts clean\n");
+	}
+	fprintf(stderr, "=== Test 62 PASS: reconvert gated on select context ===\n");
+
 	/* --- Test 46: DOM SPEC CONFORMANCE SWEEP -----------------------------
 	 *
 	 * fixes1031 was a one-line deviation from the DOM spec (textContent=""

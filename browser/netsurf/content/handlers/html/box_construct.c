@@ -38,6 +38,20 @@
 #include "utils/utils.h"
 #include "netsurf/misc.h"
 #include "css/select.h"
+
+/* fixes1105 (#265) -- harness-visible count of box-build failures, so
+ * Test 62 can assert that a refused reconvert never REACHES box
+ * construction. Counting is the point: a boolean cannot tell a correctly
+ * deferred reconvert from one that ran and failed. Compiled out entirely
+ * off-harness, so the Mac build is unchanged. */
+#ifdef MACSURF_HARNESS
+long macsurf_boxbuild_fail_count = 0;
+void harness_boxbuild_fail_bump(void) { macsurf_boxbuild_fail_count++; }
+long harness_boxbuild_fail_count(void) { return macsurf_boxbuild_fail_count; }
+void harness_boxbuild_fail_count_reset(void) { macsurf_boxbuild_fail_count = 0; }
+#else
+#define harness_boxbuild_fail_bump() ((void)0)
+#endif
 #include "content/hlcache.h"		/* fixes520: hlcache_content_is_live */
 #include "desktop/gui_internal.h"
 
@@ -1248,7 +1262,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	styles = box_get_style(ctx->content, props.parent_style, root_style,
 			ctx->n);
 	if (styles == NULL)
-		{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1197, (void*)ctx->n); return false; }
+		{ harness_boxbuild_fail_bump(); macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1197, (void*)ctx->n); return false; }
 
 	/* fixes24-33 diagnostic probes removed; cascade is healthy
 	 * and any future investigation should re-add probes scoped
