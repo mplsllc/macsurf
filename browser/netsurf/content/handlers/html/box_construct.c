@@ -38,20 +38,6 @@
 #include "utils/utils.h"
 #include "netsurf/misc.h"
 #include "css/select.h"
-
-/* fixes1105 (#265) -- harness-visible count of box-build failures, so
- * Test 62 can assert that a refused reconvert never REACHES box
- * construction. Counting is the point: a boolean cannot tell a correctly
- * deferred reconvert from one that ran and failed. Compiled out entirely
- * off-harness, so the Mac build is unchanged. */
-#ifdef MACSURF_HARNESS
-long macsurf_boxbuild_fail_count = 0;
-void harness_boxbuild_fail_bump(void) { macsurf_boxbuild_fail_count++; }
-long harness_boxbuild_fail_count(void) { return macsurf_boxbuild_fail_count; }
-void harness_boxbuild_fail_count_reset(void) { macsurf_boxbuild_fail_count = 0; }
-#else
-#define harness_boxbuild_fail_bump() ((void)0)
-#endif
 #include "content/hlcache.h"		/* fixes520: hlcache_content_is_live */
 #include "desktop/gui_internal.h"
 
@@ -415,22 +401,17 @@ box_get_style(html_content *c,
 	css_stylesheet *inline_style = NULL;
 	css_select_results *styles;
 	nscss_select_ctx ctx;
-	int had_inline = 0;	/* fixes1101 -- s is unref'd but not nulled below */
 
 	/* Firstly, construct inline stylesheet, if any */
 	if (nsoption_bool(author_level_css)) {
 		dom_exception err;
 		err = dom_element_get_attribute(n, corestring_dom_style, &s);
 		if (err != DOM_NO_ERR) {
-			macsurf_debug_log_writef(
-				"WORK bgs FAIL why=style-attr-read n=%p err=%d",
-				(void *)n, (int)err);
 			return NULL;
 		}
 	}
 
 	if (s != NULL) {
-		had_inline = 1;
 		inline_style = nscss_create_inline_style(
 				(const uint8_t *) dom_string_data(s),
 				dom_string_byte_length(s),
@@ -440,11 +421,8 @@ box_get_style(html_content *c,
 
 		dom_string_unref(s);
 
-		if (inline_style == NULL) {
-			macsurf_debug_log_writef(
-				"WORK bgs FAIL why=inline-style-parse n=%p", (void *)n);
+		if (inline_style == NULL)
 			return NULL;
-		}
 	}
 
 	/* Populate selection context */
@@ -462,58 +440,12 @@ box_get_style(html_content *c,
 	ctx.dyn_focus_node = c->dyn_focus_node;
 
 	/* Select style for element */
-	/* fixes1103 (#265) -- fixes1102 armed all three NULL exits inside
-	 * nscss_get_style, and hardware came back with why=cascade-null firing
-	 * 50/50 while NOT ONE of those three lines appeared. The delivered
-	 * cssh_select.c is byte-identical to the local file (md5 verified both
-	 * sides), so the instrumentation IS in the built source. That means the
-	 * NULL is NOT coming from the three paths I armed, and I have been
-	 * reasoning about the wrong function. Bracket the call itself: if ENTER
-	 * prints and EXIT prints styles=0 with no cascade-FAIL line between
-	 * them, nscss_get_style has a NULL return path I have not found; if
-	 * ENTER never prints, this call site is not the one running. */
-	macsurf_debug_log_writef(
-		"WORK bgs ENTER n=%p ctx.ctx=%p inline=%p parent=%p root=%p",
-		(void *)n, (void *)ctx.ctx, (void *)inline_style,
-		(void *)parent_style, (void *)root_style);
 	styles = nscss_get_style(&ctx, n, &c->media, &c->unit_len_ctx,
 			inline_style);
-	macsurf_debug_log_writef("WORK bgs EXIT n=%p styles=%p",
-		(void *)n, (void *)styles);
 
 	/* No longer need inline style */
 	if (inline_style != NULL)
 		css_stylesheet_destroy(inline_style);
-
-	/* fixes1101 (#265) -- nscss_get_style() returning NULL is the last
-	 * unnamed way box_construct_element can fail, and hardware says ONE
-	 * node (the same pointer 92/92) fails here every reconvert. Report the
-	 * element's identity, not just its address, so the next log says WHICH
-	 * element the cascade cannot style. had_inline distinguishes "the
-	 * element carries a style="" attribute" (what slick writes onto every
-	 * slide) from a plain cascade failure. */
-	if (styles == NULL) {
-		dom_string *tag = NULL, *idv = NULL, *clsv = NULL;
-		(void) dom_element_get_tag_name(n, &tag);
-		(void) dom_element_get_attribute(n, corestring_dom_id, &idv);
-		(void) dom_element_get_attribute(n, corestring_dom_class, &clsv);
-		/* fixes1102 -- the log line is hard-capped at 255 bytes, and
-		 * hackaday's Typekit loader piles ~190 chars of wf-*-loading
-		 * classes onto <html>, which pushed had_inline off the end of
-		 * 104 of 106 lines. Put the short, decisive fields FIRST and let
-		 * the class list be the thing that truncates. */
-		macsurf_debug_log_writef(
-			"WORK bgs FAIL why=cascade-null n=%p tag=%s had_inline=%d "
-			"id=%s class=%s",
-			(void *)n,
-			tag != NULL ? dom_string_data(tag) : "(none)",
-			had_inline,
-			idv != NULL ? dom_string_data(idv) : "(none)",
-			clsv != NULL ? dom_string_data(clsv) : "(none)");
-		if (tag != NULL) dom_string_unref(tag);
-		if (idv != NULL) dom_string_unref(idv);
-		if (clsv != NULL) dom_string_unref(clsv);
-	}
 
 	return styles;
 }
@@ -1262,7 +1194,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	styles = box_get_style(ctx->content, props.parent_style, root_style,
 			ctx->n);
 	if (styles == NULL)
-		{ harness_boxbuild_fail_bump(); macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1197, (void*)ctx->n); return false; }
+		return false;
 
 	/* fixes24-33 diagnostic probes removed; cascade is healthy
 	 * and any future investigation should re-add probes scoped
@@ -1271,7 +1203,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	/* Extract title attribute, if present */
 	err = dom_element_get_attribute(ctx->n, corestring_dom_title, &title0);
 	if (err != DOM_NO_ERR)
-		{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1206, (void*)ctx->n); return false; }
+		return false;
 
 	if (title0 != NULL) {
 		char *t = squash_whitespace(dom_string_data(title0));
@@ -1279,20 +1211,20 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		dom_string_unref(title0);
 
 		if (t == NULL)
-			{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1214, (void*)ctx->n); return false; }
+			return false;
 
 		props.title = talloc_strdup(ctx->bctx, t);
 
 		free(t);
 
 		if (props.title == NULL)
-			{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1221, (void*)ctx->n); return false; }
+			return false;
 	}
 
 	/* Extract id attribute, if present */
 	err = dom_element_get_attribute(ctx->n, corestring_dom_id, &s);
 	if (err != DOM_NO_ERR)
-		{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1227, (void*)ctx->n); return false; }
+		return false;
 
 	if (s != NULL) {
 		err = dom_string_intern(s, &id);
@@ -1326,7 +1258,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 				(long) macsurf_reconvert_seq,
 				(long) g_reconv_node_ix, macsurf_free_mem());
 		}
-		{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1261, (void*)ctx->n); return false; }
+		return false;
 	}
 
 	/* If this is the root box, add it to the context */
@@ -1336,7 +1268,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	/* Deal with colspan/rowspan */
 	err = dom_element_get_attribute(ctx->n, corestring_dom_colspan, &s);
 	if (err != DOM_NO_ERR)
-		{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1271, (void*)ctx->n); return false; }
+		return false;
 
 	if (s != NULL) {
 		const char *val = dom_string_data(s);
@@ -1350,7 +1282,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 
 	err = dom_element_get_attribute(ctx->n, corestring_dom_rowspan, &s);
 	if (err != DOM_NO_ERR)
-		{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1285, (void*)ctx->n); return false; }
+		return false;
 
 	if (s != NULL) {
 		const char *val = dom_string_data(s);
@@ -1423,7 +1355,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 				     ctx->content,
 				     box,
 				     convert_children) == false) {
-		{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1358, (void*)ctx->n); return false; }
+		return false;
 	}
 
 	/* fixes547: convert_special_elements above yields (box_image ->
@@ -1508,7 +1440,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 				"WORK reconvert #%ld: set_user_data FAIL node_ix=%ld exc=%d",
 				(long) macsurf_reconvert_seq,
 				(long) g_reconv_node_ix, (int) err);
-		{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1443, (void*)ctx->n); return false; }
+		return false;
 	}
 
 	/* Attach box to DOM node */
@@ -1531,7 +1463,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		props.inline_container = box_create(NULL, NULL, false, NULL,
 				NULL, NULL, NULL, ctx->bctx);
 		if (props.inline_container == NULL)
-			{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1466, (void*)ctx->n); return false; }
+			return false;
 
 		props.inline_container->type = BOX_INLINE_CONTAINER;
 
@@ -1558,7 +1490,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 					      image_types,
 					      true) == false) {
 				nsurl_unref(url);
-				{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1493, (void*)ctx->n); return false; }
+				return false;
 			}
 			nsurl_unref(url);
 		}
@@ -1660,7 +1592,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 			/* List item: compute marker */
 			if (box_construct_marker(box, props.title, ctx,
 					props.containing_block) == false)
-				{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1595, (void*)ctx->n); return false; }
+				return false;
 		}
 
 		if (props.node_is_root == false &&
@@ -1674,7 +1606,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 					props.href, props.target, props.title,
 					NULL, ctx->bctx);
 			if (flt == NULL)
-				{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1609, (void*)ctx->n); return false; }
+				return false;
 			if (props.download)   /* fixes1063 (#114) */
 				flt->flags |= LINK_DOWNLOAD;
 
@@ -2518,7 +2450,6 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 	 * does not touch the DOM tree. */
 	if (ctx->content->aborted) {
 		macsurf_debug_log_writef("box: convert_xml ABORTED early ctx=%p", (void*)ctx);
-		macsurf_debug_log_writef("WORK boxbuild FAIL site=%s ctx=%p content=%p", "L2453", (void*)ctx, (void*)ctx->content);
 		ctx->cb(ctx->content, false);
 		dom_node_unref(ctx->n);
 		free(ctx);
@@ -2602,7 +2533,6 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 				return;
 			}
 			if (bce_ok == false) {
-				macsurf_debug_log_writef("WORK boxbuild FAIL site=%s ctx=%p content=%p", "L2536", (void*)ctx, (void*)ctx->content);
 				ctx->cb(ctx->content, false);
 				dom_node_unref(ctx->n);
 				free(ctx);
@@ -2618,7 +2548,6 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 
 			err = dom_node_get_node_type(next, &type);
 			if (err != DOM_NO_ERR) {
-				macsurf_debug_log_writef("WORK boxbuild FAIL site=%s ctx=%p content=%p", "L2551", (void*)ctx, (void*)ctx->content);
 				ctx->cb(ctx->content, false);
 				dom_node_unref(next);
 				free(ctx);
@@ -2646,7 +2575,6 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 					macsurf_reconv_pos_flush();
 				}
 				if (box_construct_text(ctx) == false) {
-					macsurf_debug_log_writef("WORK boxbuild FAIL site=%s ctx=%p content=%p", "L2578", (void*)ctx, (void*)ctx->content);
 					ctx->cb(ctx->content, false);
 					dom_node_unref(ctx->n);
 					free(ctx);
@@ -2688,7 +2616,6 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 			/** \todo Remove box_normalise_block */
 			if (box_normalise_block(&root, ctx->root_box,
 					ctx->content) == false) {
-				macsurf_debug_log_writef("WORK boxbuild FAIL site=%s ctx=%p content=%p", "L2619", (void*)ctx, (void*)ctx->content);
 				ctx->cb(ctx->content, false);
 			} else {
 				ctx->content->layout = root.children;
