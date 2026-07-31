@@ -448,8 +448,24 @@ box_get_style(html_content *c,
 	ctx.dyn_focus_node = c->dyn_focus_node;
 
 	/* Select style for element */
+	/* fixes1103 (#265) -- fixes1102 armed all three NULL exits inside
+	 * nscss_get_style, and hardware came back with why=cascade-null firing
+	 * 50/50 while NOT ONE of those three lines appeared. The delivered
+	 * cssh_select.c is byte-identical to the local file (md5 verified both
+	 * sides), so the instrumentation IS in the built source. That means the
+	 * NULL is NOT coming from the three paths I armed, and I have been
+	 * reasoning about the wrong function. Bracket the call itself: if ENTER
+	 * prints and EXIT prints styles=0 with no cascade-FAIL line between
+	 * them, nscss_get_style has a NULL return path I have not found; if
+	 * ENTER never prints, this call site is not the one running. */
+	macsurf_debug_log_writef(
+		"WORK bgs ENTER n=%p ctx.ctx=%p inline=%p parent=%p root=%p",
+		(void *)n, (void *)ctx.ctx, (void *)inline_style,
+		(void *)parent_style, (void *)root_style);
 	styles = nscss_get_style(&ctx, n, &c->media, &c->unit_len_ctx,
 			inline_style);
+	macsurf_debug_log_writef("WORK bgs EXIT n=%p styles=%p",
+		(void *)n, (void *)styles);
 
 	/* No longer need inline style */
 	if (inline_style != NULL)
