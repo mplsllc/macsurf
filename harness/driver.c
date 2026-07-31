@@ -6169,6 +6169,69 @@ box_coords(bx, &cx, &cy);
 	}
 	fprintf(stderr, "=== Test 58 PASS: phases attribute and sum ===\n");
 
+	/* --- Test 59: measuring during LOADING, the case the header needs (C3) --
+	 *
+	 * This is the ONLY case that fixes hackaday's featured slider, and neither
+	 * Round B nor C1 touches it. The theme runs at end-of-body -- hardware has
+	 * the bundle at tick 48579 and domready at 49060 -- so it measures while
+	 * status is LOADING and c->layout is still NULL. Geometry answers
+	 * undefined there, jQuery's `parseFloat(x)||0` turns that into 0, and the
+	 * theme bakes `height:0px` onto every .slick-slide in a one-shot onInit
+	 * that never runs again. Every log since fixes1093 shows exactly that.
+	 *
+	 * A real browser answers truly because offsetHeight forces layout of what
+	 * has been parsed so far. We can do the same: html_reconvert already
+	 * builds a first tree from scratch (this harness does it 59 times a run
+	 * with layout=(nil)), and html_reconvert_done touches no content status,
+	 * so it is not structurally unsafe mid-parse.
+	 *
+	 * Written RED first, deliberately: with the gates as Round B left them
+	 * this must fail, because LOADING is refused. If it passes before the gate
+	 * changes then it is not testing what it claims. */
+	fprintf(stderr, "\n=== Test 59: geometry during LOADING (#265 Round C3) ===\n");
+	{
+		extern int macos9_reconvert_flush_now(void *cv);
+		extern void macos9_reconvert_sync_stats(long *f, long *d, long *us);
+		extern void macos9_reconvert_sync_reset(void);
+		extern void macos9_js_mark_dom_dirty(struct content *c);
+		long f0 = 0, d0 = 0, u0 = 0, f1 = 0, d1 = 0, u1 = 0;
+
+		htmlc.reflowing = false;
+		htmlc.box_conversion_context = NULL;
+		htmlc.aborted = false;
+		htmlc.object_list = NULL;
+		htmlc.num_objects = 0;
+
+		/* Exactly the shape hardware reports: mid-parse, no tree yet,
+		 * the html fetch itself still counted active. */
+		htmlc.base.status = CONTENT_STATUS_LOADING;
+		htmlc.base.active = 1;
+		macos9_js_mark_dom_dirty((struct content *)&htmlc);
+
+		macos9_reconvert_sync_reset();
+		macos9_reconvert_sync_stats(&f0, &d0, &u0);
+		(void) macos9_reconvert_flush_now((void *)&htmlc);
+		macos9_reconvert_sync_stats(&f1, &d1, &u1);
+
+		fprintf(stderr, "  LOADING + layout=NULL: flush %ld -> %ld, "
+				"declined %ld -> %ld\n", f0, f1, d0, d1);
+
+		htmlc.base.status = CONTENT_STATUS_DONE;
+		htmlc.base.active = 0;
+
+		if (f1 <= f0) {
+			fprintf(stderr, "FAIL: Test 59 -- no flush during LOADING. This "
+				"is the window every end-of-body script measures in, so "
+				"geometry still answers undefined there, jQuery still "
+				"coerces it to 0, and hackaday's slider still gets "
+				"height:0px. Round B/C1 do not reach this case.\n");
+			return 1;
+		}
+		fprintf(stderr, "  => a script measuring mid-parse can be answered "
+				"from a freshly built tree\n");
+	}
+	fprintf(stderr, "=== Test 59 PASS: LOADING-window geometry is reachable ===\n");
+
 	/* --- Test 46: DOM SPEC CONFORMANCE SWEEP -----------------------------
 	 *
 	 * fixes1031 was a one-line deviation from the DOM spec (textContent=""

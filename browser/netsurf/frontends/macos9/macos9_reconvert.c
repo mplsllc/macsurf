@@ -524,7 +524,12 @@ macos9_reconvert_flush_now(void *cv)
 	 * box tree exists -- and the active-fetch hazard is now the narrow
 	 * "in-flight entry the reconvert would FREE", not "any fetch at all".
 	 * See the fixes1094 comments in html_reconvert. */
-	if (c->status != CONTENT_STATUS_READY &&
+	/* fixes1096 (#265 Round C3) — LOADING too. Mirrors html_reconvert; see
+	 * the safety argument there. This is the window `notdone` was counting
+	 * (565 of 1247 declines on hardware) and the one the featured slider
+	 * measures in. */
+	if (c->status != CONTENT_STATUS_LOADING &&
+	    c->status != CONTENT_STATUS_READY &&
 	    c->status != CONTENT_STATUS_DONE) {
 		g_sync_r_notdone++; g_sync_declined++; return 0;
 	}

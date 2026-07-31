@@ -3344,7 +3344,35 @@ nserror html_reconvert(html_content *c)
 	 * are still landing and re-laying-out the page. */
 	{
 		content_status st = content__get_status(&c->base);
-		if (st != CONTENT_STATUS_READY && st != CONTENT_STATUS_DONE)
+		/* fixes1096 (#265 Round C3) — LOADING is allowed too, and this is
+		 * the case the hackaday header actually needs.
+		 *
+		 * End-of-body scripts measure mid-parse: hardware has the theme
+		 * bundle at tick 48579 with domready at 49060, status LOADING and
+		 * c->layout still NULL. Geometry answers undefined there, jQuery's
+		 * parseFloat(x)||0 turns it into 0, and the theme bakes height:0px
+		 * onto every slide in a one-shot onInit. A real browser answers
+		 * truly because offsetHeight forces layout of what has been parsed;
+		 * this lets us do the same.
+		 *
+		 * Safe here for reasons that are checked, not assumed:
+		 *   - html_reconvert_done touches NO content status, so it cannot
+		 *     mis-advance the load lifecycle from under the parser;
+		 *   - the box_conversion_context guard below already refuses while
+		 *     the initial dom_to_box is in flight, so this can only run in
+		 *     the parse window BEFORE that starts;
+		 *   - scripts execute between parser tokens, so the DOM is in a
+		 *     consistent state whenever this is reachable from JS;
+		 *   - building a first tree from scratch is a path already exercised
+		 *     constantly (the harness does it with layout=(nil) 59 times a
+		 *     run), not a new one.
+		 *
+		 * The cost question is real and unresolved -- C1 measured build at
+		 * 3.57s of a 4.01s reconvert -- but it is bounded by the existing
+		 * pending-mutation short-circuit and the sync budget, and it is the
+		 * subject of C2. */
+		if (st != CONTENT_STATUS_LOADING &&
+		    st != CONTENT_STATUS_READY && st != CONTENT_STATUS_DONE)
 			return NSERROR_NEED_DATA;
 	}
 	if (c->reflowing)
