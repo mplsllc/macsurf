@@ -332,11 +332,31 @@ css_select_results *nscss_get_style(nscss_select_ctx *ctx, dom_node *n,
 		 * the log could say "the cascade failed" but never why.
 		 * CSS_NOMEM (2) means libcss hit the allocator; anything else is
 		 * a real selector/parse fault and a different bug entirely. */
+		/* fixes1104 (#265) -- err=2 is CSS_BADPARM, NOT CSS_NOMEM
+		 * (CSS_NOMEM is 1). So this is not a memory-footprint bug at
+		 * all. css_select_style's guard has exactly five causes:
+		 *
+		 *   ctx==NULL | node==NULL | result==NULL | handler==NULL
+		 *   | handler->handler_version != CSS_SELECT_HANDLER_VERSION_1
+		 *
+		 * Four are already eliminated from the fixes1102 log and the
+		 * source: node printed non-NULL, result is &styles (a stack
+		 * address, never NULL), handler is &selection_handler (a static),
+		 * and that static's first field IS CSS_SELECT_HANDLER_VERSION_1.
+		 * That leaves ctx == NULL -- the select context -- which is
+		 * consistent with html.c:1261, where the ONLY creation site is
+		 * skipped whenever select_ctx is already non-NULL, and with
+		 * html_reconvert_content never rebuilding it.
+		 *
+		 * Print it, so the next log proves that rather than inferring
+		 * it. */
 		macsurf_debug_log_writef(
-			"WORK cascade FAIL why=select_style err=%d styles=%p n=%p "
-			"inline=%p",
-			(int)error, (void *)styles, (void *)n,
-			(void *)inline_style);
+			"WORK cascade FAIL why=select_style err=%d ctx=%p "
+			"selctx=%p ver=%d n=%p styles=%p inline=%p",
+			(int)error, (void *)ctx,
+			(void *)(ctx != NULL ? ctx->ctx : NULL),
+			(int)selection_handler.handler_version,
+			(void *)n, (void *)styles, (void *)inline_style);
 		/* Failed selecting partial style -- bail out */
 		return NULL;
 	}
