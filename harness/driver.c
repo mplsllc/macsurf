@@ -5381,6 +5381,38 @@ box_coords(bx, &cx, &cy);
 		 * no-op -- the pre-1011 shape pages tolerated for years) and the
 		 * rect is the LITERAL zero rect. This control goes red if the gate
 		 * ever answers 0 again. */
+		/* fixes1094 (#265 Round B) — RE-DRAIN, for the reason this test
+		 * already documents above.
+		 *
+		 * The drain further up ran while status was DONE. Round B lets the
+		 * synchronous flush run at READY too, so the probe below can now
+		 * trigger its own reconvert -- which frees the box this test
+		 * injected geometry into and hands back a fresh one whose birth
+		 * width is UNKNOWN_WIDTH (qjs_sane -> 0). That is the feature
+		 * working; without this drain the test measures the rebuild rather
+		 * than the read path, and reports `READY offsetWidth is 0`.
+		 *
+		 * Drain with the mutations retired FIRST, then re-resolve and
+		 * re-inject, so the probe's own flush is a no-op and every
+		 * assertion below still means what it meant. */
+		{
+			extern int macos9_reconvert_flush_now(void *cv);
+			htmlc.base.status = CONTENT_STATUS_DONE;
+			(void) macos9_reconvert_flush_now((void *)&htmlc);
+			(void) harness_pump_all(20000);
+			bx = box_for_node((dom_node *)elf);
+			if (bx == NULL) {
+				fprintf(stderr, "FAIL: t43 #feed lost its box across the "
+						"Round B re-drain\n");
+				return 1;
+			}
+			bx->x = 11; bx->y = 22;
+			bx->width = 640; bx->height = 480;
+			bx->padding[LEFT] = bx->padding[RIGHT] = 0;
+			bx->padding[TOP] = bx->padding[BOTTOM] = 0;
+			bx->border[LEFT].width = bx->border[RIGHT].width = 0;
+			bx->border[TOP].width = bx->border[BOTTOM].width = 0;
+		}
 		htmlc.base.status = CONTENT_STATUS_READY;
 		{
 			/* fixes1087 — CONTRACT NARROWED, not dropped.
@@ -5942,6 +5974,102 @@ box_coords(bx, &cx, &cy);
 		free(img_flight);
 	}
 	fprintf(stderr, "=== Test 56 PASS: in-flight images survive a reconvert ===\n");
+
+	/* --- Test 57: the sync flush must actually FIRE at READY (#265 Round B) --
+	 *
+	 * Round B's whole claim is that geometry can be answered before the load
+	 * finishes. Hardware measured the opposite on hackaday --
+	 * `JSSYNC flush=0 declined=630`, `JSSYNCWHY notdone=630` -- i.e. the
+	 * forced-layout path built in fixes1073 had never once run, because both
+	 * gates demanded CONTENT_STATUS_DONE.
+	 *
+	 * A flush counter that stays 0 is indistinguishable from a feature that
+	 * is compiled out, which is precisely how the fixes1019 resize hid for
+	 * ten rounds. So assert the COUNT, not a boolean: with a mutation
+	 * outstanding and status READY, a flush must happen.
+	 *
+	 * Also asserts the narrowed active-guard from Round A in the same run: an
+	 * in-flight IMAGE must NOT block the flush (it is carried, never freed),
+	 * while an in-flight NON-image must (it is dropped and freed). */
+	fprintf(stderr, "\n=== Test 57: sync flush fires at READY (#265 Round B) ===\n");
+	{
+		extern void macos9_reconvert_sync_stats(long *f, long *d, long *us);
+		extern void macos9_reconvert_sync_reset(void);
+		extern int macos9_reconvert_flush_now(void *cv);
+		extern void macos9_js_mark_dom_dirty(struct content *c);
+		struct content_html_object *blocker;
+		struct content_html_object *saved_list = htmlc.object_list;
+		unsigned int saved_n = htmlc.num_objects;
+		void *dummy_handle;
+		long f0 = 0, d0 = 0, u0 = 0, f1 = 0, d1 = 0, u1 = 0;
+
+		htmlc.reflowing = false;
+		htmlc.box_conversion_context = NULL;
+		htmlc.aborted = false;
+
+		/* (a) READY + a pending mutation + NO objects -> must FLUSH. */
+		htmlc.base.status = CONTENT_STATUS_READY;
+		htmlc.base.active = 1;          /* the html fetch itself, as on a real load */
+		htmlc.object_list = NULL;
+		htmlc.num_objects = 0;
+		macos9_js_mark_dom_dirty((struct content *)&htmlc);
+		macos9_reconvert_sync_reset();
+		macos9_reconvert_sync_stats(&f0, &d0, &u0);
+		(void) macos9_reconvert_flush_now((void *)&htmlc);
+		macos9_reconvert_sync_stats(&f1, &d1, &u1);
+		fprintf(stderr, "  READY + active=1, no objects: flush %ld -> %ld, "
+				"declined %ld -> %ld\n", f0, f1, d0, d1);
+		if (f1 <= f0) {
+			fprintf(stderr, "FAIL: Test 57 -- no flush at READY. Round B "
+				"changed nothing: geometry is still dead for the whole "
+				"load window, which is when every widget measures.\n");
+			return 1;
+		}
+
+		/* (b) an in-flight NON-image must still block (Round A: it is the
+		 *     one entry class a reconvert really does free). */
+		dummy_handle = calloc(1, 256);
+		blocker = calloc(1, sizeof(*blocker));
+		if (blocker == NULL || dummy_handle == NULL) {
+			fprintf(stderr, "FAIL: Test 57 calloc\n"); return 1;
+		}
+		blocker->parent = (struct content *)&htmlc;
+		blocker->permitted_types = CONTENT_ANY;
+		blocker->content = (struct hlcache_handle *)dummy_handle;
+		blocker->next = NULL;
+		htmlc.object_list = blocker;
+		htmlc.num_objects = 1;
+		macos9_js_mark_dom_dirty((struct content *)&htmlc);
+		macos9_reconvert_sync_reset();
+		macos9_reconvert_sync_stats(&f0, &d0, &u0);
+		(void) macos9_reconvert_flush_now((void *)&htmlc);
+		macos9_reconvert_sync_stats(&f1, &d1, &u1);
+		fprintf(stderr, "  READY + in-flight NON-image: flush %ld -> %ld, "
+				"declined %ld -> %ld\n", f0, f1, d0, d1);
+		if (f1 > f0) {
+			fprintf(stderr, "FAIL: Test 57 -- flushed with an in-flight "
+				"non-image object present. That entry is DROPPED and "
+				"FREED by the partition while html_object_callback may "
+				"still hold it: the fixes421 use-after-free, re-opened.\n");
+			return 1;
+		}
+		if (d1 <= d0) {
+			fprintf(stderr, "FAIL: Test 57 -- neither flushed nor declined; "
+				"the guard is not being reached at all, so this case "
+				"proves nothing.\n");
+			return 1;
+		}
+		fprintf(stderr, "  => flushes at READY, still defers for the entry "
+				"class that is genuinely freed\n");
+
+		htmlc.object_list = saved_list;
+		htmlc.num_objects = saved_n;
+		htmlc.base.status = CONTENT_STATUS_DONE;
+		htmlc.base.active = 0;
+		free(blocker);
+		free(dummy_handle);
+	}
+	fprintf(stderr, "=== Test 57 PASS: flush fires at READY, guard still covers the hazard ===\n");
 
 	/* --- Test 46: DOM SPEC CONFORMANCE SWEEP -----------------------------
 	 *

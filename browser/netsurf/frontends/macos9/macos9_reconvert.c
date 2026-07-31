@@ -36,6 +36,8 @@
 
 /* core re-convert trigger: 0 = NSERROR_OK (queued), non-zero = busy/skip. */
 extern int html_reconvert_content(struct content *c);
+/* fixes1094 (#265 Round B) — see html.c. */
+extern int macsurf_html_has_droppable_inflight(struct content *c);
 /* browser_window -> current content handle. */
 extern struct hlcache_handle *browser_window_get_content(
 		struct browser_window *bw);
@@ -510,10 +512,23 @@ macos9_reconvert_flush_now(void *cv)
 	 *   active: sub-resource fetches still in flight. Rebuilding now would
 	 *     free an object list that html_object_callback still points into
 	 *     (the fixes421 use-after-free). */
-	if (c->status != CONTENT_STATUS_DONE) {
+	/* fixes1094 (#265 Round B) — mirror html_reconvert's relaxed
+	 * preconditions. These are screened here ONLY so a refusal can be named;
+	 * html_reconvert enforces them regardless, so if the two drift this side
+	 * silently declines work the other would have accepted. That is exactly
+	 * what hid the problem before: hardware read notdone=630 of 630 declines
+	 * with flush=0, because this DONE test ran first and the guard below was
+	 * never even evaluated.
+	 *
+	 * READY (not DONE) is the real precondition -- READY is when the first
+	 * box tree exists -- and the active-fetch hazard is now the narrow
+	 * "in-flight entry the reconvert would FREE", not "any fetch at all".
+	 * See the fixes1094 comments in html_reconvert. */
+	if (c->status != CONTENT_STATUS_READY &&
+	    c->status != CONTENT_STATUS_DONE) {
 		g_sync_r_notdone++; g_sync_declined++; return 0;
 	}
-	if (c->active > 0) {
+	if (c->active > 0 && macsurf_html_has_droppable_inflight(c)) {
 		g_sync_r_active++; g_sync_declined++; return 0;
 	}
 	if (g_sync_us >= MACOS9_SYNC_BUDGET_US) {

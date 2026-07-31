@@ -2647,6 +2647,49 @@ static int g_object_relink_enabled = 1;
  * reconvert build is SYNCHRONOUS (fixes903): no event-loop turn happens
  * between H2 and here, so no hlcache callback can fire and dereference one.
  */
+/* fixes1094 (#265 Round B) — is there an in-flight object this reconvert would
+ * FREE?
+ *
+ * The fixes421 guard blocks a reconvert whenever `base.active > 0`, on the
+ * grounds that html_object_callback holds a pw into entries
+ * html_object_free_objects is about to free. That was true when a reconvert
+ * freed the object list wholesale. Since fixes921/972/976 it does not:
+ * html_reconvert_relink_objects PARTITIONS the list and retires only the
+ * doomed entries.
+ *
+ * Harness Test 56 drives the real reconvert over an in-flight image and finds
+ * it CARRIED, not freed -- so blocking on it protects nothing. What IS still
+ * dropped, in flight or not, is a non-CONTENT_IMAGE entry (<object>/<embed>/
+ * applet are CONTENT_ANY). That, and only that, is the hazard the guard has
+ * left to cover.
+ *
+ * This predicate MUST mirror the drop condition in the partition below. It is
+ * deliberately defined immediately above it so the two are read together; if
+ * that condition changes, this one changes with it. It is intentionally
+ * CONSERVATIVE: `content != NULL` means "a handle exists", which is a superset
+ * of "a fetch is outstanding", so a completed-but-unreleased non-image entry
+ * also defers. Deferring an unnecessary reconvert costs a frame; freeing a
+ * live callback's entry costs a crash. */
+static int html_reconvert_has_droppable_inflight(html_content *c)
+{
+	struct content_html_object *o;
+	int n = 0;
+
+	if (c == NULL)
+		return 0;
+	for (o = c->object_list; o != NULL; o = o->next) {
+		/* Mirrors the drop branch of html_reconvert_relink_objects. */
+		if (g_object_relink_enabled == 0 ||
+		    o->permitted_types != CONTENT_IMAGE) {
+			if (o->content != NULL)
+				return 1;
+		}
+		if (++n > 4096)		/* corrupt/cyclic list: fail safe */
+			return 1;
+	}
+	return 0;
+}
+
 static void html_reconvert_relink_objects(html_content *c)
 {
 	struct content_html_object *keep = NULL;
@@ -3140,9 +3183,25 @@ nserror html_reconvert(html_content *c)
 
 	if ((c == NULL) || (c->document == NULL) || (c->aborted))
 		return NSERROR_OK;
-	/* Only re-convert AFTER the initial load is DONE. */
-	if (content__get_status(&c->base) != CONTENT_STATUS_DONE)
-		return NSERROR_NEED_DATA;
+	/* fixes1094 (#265 Round B) — READY is now enough; it no longer has to be
+	 * DONE.
+	 *
+	 * DONE means "the load finished". What a reconvert actually needs is "a
+	 * box tree exists and nothing is walking it", which is READY onwards --
+	 * READY is set by html_box_convert_done, i.e. precisely when the first
+	 * tree has been built. The reflowing / box_conversion_context guards
+	 * below enforce the rest, and they are the real preconditions.
+	 *
+	 * This does NOT reach the case #265 ultimately needs (a script measuring
+	 * during LOADING, when c->layout is still NULL and there is no tree to
+	 * rebuild) -- that is Round C and needs first-tree construction. It does
+	 * open the window between READY and DONE, which is where sub-resources
+	 * are still landing and re-laying-out the page. */
+	{
+		content_status st = content__get_status(&c->base);
+		if (st != CONTENT_STATUS_READY && st != CONTENT_STATUS_DONE)
+			return NSERROR_NEED_DATA;
+	}
 	if (c->reflowing)
 		return NSERROR_NEED_DATA;        /* never free boxes mid-layout */
 	if (c->box_conversion_context != NULL)
@@ -3152,10 +3211,26 @@ nserror html_reconvert(html_content *c)
 	 * object_list entries that html_object_free_objects is about to free.
 	 * In cooperative MT the callback fires on the next event-loop pass —
 	 * after our free — causing a use-after-free in html_object_done.
-	 * Wait until active reaches 0 before touching the object list. */
-	if (c->base.active > 0) {
-		macsurf_debug_log_writef("reconvert: defer — %ld fetches active",
-				(long) c->base.active);
+	 *
+	 * fixes1094 (#265 Round B) — NARROWED to the entries that are still
+	 * actually freed. `base.active > 0` was far too coarse for two reasons,
+	 * and together they made it block every reconvert on a loading page:
+	 *
+	 *   1. base.active counts the HTML content's OWN fetch (set to 1 in
+	 *      html_create, decremented at the end of html_convert), so it is
+	 *      >= 1 for the whole of LOADING regardless of any object.
+	 *   2. The sub-resource fetches it otherwise counts are overwhelmingly
+	 *      IMAGES, and since fixes976 an in-flight image is CARRIED across a
+	 *      reconvert, never freed (harness Test 56 proves this against the
+	 *      real path).
+	 *
+	 * So block on the hazard itself -- an in-flight entry the partition would
+	 * DROP -- rather than on a proxy that is almost never true for the reason
+	 * it cites. */
+	if (c->base.active > 0 && html_reconvert_has_droppable_inflight(c)) {
+		macsurf_debug_log_writef(
+			"LIFE reconvert: defer — %ld active, droppable in flight",
+			(long) c->base.active);
 		return NSERROR_NEED_DATA;
 	}
 
@@ -3416,6 +3491,17 @@ int macsurf_html_tree_stable(struct content *c)
 int html_reconvert_content(struct content *c)
 {
 	return (int) html_reconvert((html_content *) c);
+}
+
+/* fixes1094 (#265 Round B) — content* wrapper so the macos9 sync-flush gate can
+ * screen on the SAME hazard html_reconvert does. Kept as a thin wrapper next to
+ * html_reconvert_content for the same reason that one exists: the frontend must
+ * not know the html_content layout. If this and html_reconvert's own guard ever
+ * disagree, the flush declines work the reconvert would have accepted -- which
+ * is the drift that produced notdone=630/630 with flush=0 on hardware. */
+int macsurf_html_has_droppable_inflight(struct content *c)
+{
+	return html_reconvert_has_droppable_inflight((html_content *) c);
 }
 
 static void html_reformat(struct content *c, int width, int height)
