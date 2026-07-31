@@ -326,6 +326,17 @@ css_select_results *nscss_get_style(nscss_select_ctx *ctx, dom_node *n,
 	}
 
 	if (error != CSS_OK || styles == NULL) {
+		/* fixes1102 (#265) -- this is where the root <html> element dies
+		 * on hackaday, 106/106 reconverts, taking the whole document
+		 * rebuild with it. The css_error was being DISCARDED here, so
+		 * the log could say "the cascade failed" but never why.
+		 * CSS_NOMEM (2) means libcss hit the allocator; anything else is
+		 * a real selector/parse fault and a different bug entirely. */
+		macsurf_debug_log_writef(
+			"WORK cascade FAIL why=select_style err=%d styles=%p n=%p "
+			"inline=%p",
+			(int)error, (void *)styles, (void *)n,
+			(void *)inline_style);
 		/* Failed selecting partial style -- bail out */
 		return NULL;
 	}
@@ -339,6 +350,9 @@ css_select_results *nscss_get_style(nscss_select_ctx *ctx, dom_node *n,
 				styles->styles[CSS_PSEUDO_ELEMENT_NONE],
 				unit_len_ctx, &composed);
 		if (error != CSS_OK) {
+			macsurf_debug_log_writef(
+				"WORK cascade FAIL why=compose-parent err=%d n=%p",
+				(int)error, (void *)n);
 			css_select_results_destroy(styles);
 			return NULL;
 		}
@@ -370,6 +384,9 @@ css_select_results *nscss_get_style(nscss_select_ctx *ctx, dom_node *n,
 				styles->styles[pseudo_element],
 				unit_len_ctx, &composed);
 		if (error != CSS_OK) {
+			macsurf_debug_log_writef(
+				"WORK cascade FAIL why=compose-pseudo err=%d pe=%d n=%p",
+				(int)error, (int)pseudo_element, (void *)n);
 			/* TODO: perhaps this shouldn't be quite so
 			 * catastrophic? */
 			css_select_results_destroy(styles);

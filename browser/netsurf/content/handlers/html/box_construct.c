@@ -467,14 +467,19 @@ box_get_style(html_content *c,
 		(void) dom_element_get_tag_name(n, &tag);
 		(void) dom_element_get_attribute(n, corestring_dom_id, &idv);
 		(void) dom_element_get_attribute(n, corestring_dom_class, &clsv);
+		/* fixes1102 -- the log line is hard-capped at 255 bytes, and
+		 * hackaday's Typekit loader piles ~190 chars of wf-*-loading
+		 * classes onto <html>, which pushed had_inline off the end of
+		 * 104 of 106 lines. Put the short, decisive fields FIRST and let
+		 * the class list be the thing that truncates. */
 		macsurf_debug_log_writef(
-			"WORK bgs FAIL why=cascade-null n=%p tag=%s id=%s class=%s "
-			"had_inline=%d",
+			"WORK bgs FAIL why=cascade-null n=%p tag=%s had_inline=%d "
+			"id=%s class=%s",
 			(void *)n,
 			tag != NULL ? dom_string_data(tag) : "(none)",
+			had_inline,
 			idv != NULL ? dom_string_data(idv) : "(none)",
-			clsv != NULL ? dom_string_data(clsv) : "(none)",
-			had_inline);
+			clsv != NULL ? dom_string_data(clsv) : "(none)");
 		if (tag != NULL) dom_string_unref(tag);
 		if (idv != NULL) dom_string_unref(idv);
 		if (clsv != NULL) dom_string_unref(clsv);
