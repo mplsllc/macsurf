@@ -5839,6 +5839,110 @@ box_coords(bx, &cx, &cy);
 	}
 	fprintf(stderr, "=== Test 55 PASS: the slider probe reaches the subtree ===\n");
 
+	/* --- Test 56: WHAT THE fixes421 active-GUARD ACTUALLY PROTECTS (#265 A) --
+	 *
+	 * html_reconvert refuses outright while `c->base.active > 0`, citing a
+	 * use-after-free: html_object_callback holds a pw into object_list
+	 * entries that html_object_free_objects is about to free. That guard is
+	 * blocker #2 for #265 (synchronous layout on measure), and it is the one
+	 * with a real crash behind it, so it cannot be deleted on a reading.
+	 *
+	 * Test 31 already characterises the partition for entries with NO fetch
+	 * outstanding (content == NULL): image+resolvable-box kept, node-gone and
+	 * non-image retired. It cannot answer the #265 question, because the
+	 * entry that matters is the one with a LIVE fetch -- box == NULL and
+	 * content != NULL -- which is the fixes976 "carry, do not retire" branch
+	 * and the exact shape base.active counts.
+	 *
+	 * If an in-flight IMAGE is CARRIED, a reconvert cannot free it, so the
+	 * guard does not need to block on it -- and images are essentially all of
+	 * base.active on a real page, which is the difference between #265 being
+	 * reachable and not.
+	 *
+	 * HARNESS LIMIT, stated because it bounds the claim: hlcache is never
+	 * initialised here, so actually RELEASING a handle dereferences the NULL
+	 * hlcache global. The in-flight entry therefore carries a non-NULL dummy
+	 * handle purely to select the fixes976 branch; if the partition instead
+	 * DROPPED it, release would run and this test dies loudly rather than
+	 * silently passing. The non-image control keeps content == NULL so its
+	 * (expected) retire stays on the safe path. This proves carry-vs-drop,
+	 * NOT that release itself is UAF-free -- that needs a live fetcher and is
+	 * Round B. */
+	fprintf(stderr, "\n=== Test 56: in-flight objects across a reconvert (#265 Round A) ===\n");
+	{
+		extern struct box *box_for_node(dom_node *n);
+		struct content_html_object *img_flight, *nonimg, *w;
+		struct content_html_object *saved_list = htmlc.object_list;
+		unsigned int saved_n = htmlc.num_objects;
+		void *dummy_handle = calloc(1, 256);
+		int saw_flight = 0, saw_nonimg = 0, n = 0;
+
+		img_flight = calloc(1, sizeof(*img_flight));
+		nonimg     = calloc(1, sizeof(*nonimg));
+		if (img_flight == NULL || nonimg == NULL || dummy_handle == NULL) {
+			fprintf(stderr, "FAIL: Test 56 calloc\n"); return 1;
+		}
+
+		/* (1) IMAGE still fetching: no box yet, handle outstanding. This is
+		 *     what base.active is counting on a loading page. */
+		img_flight->parent = (struct content *)&htmlc;
+		img_flight->box = NULL;
+		img_flight->permitted_types = CONTENT_IMAGE;
+		img_flight->content = (struct hlcache_handle *)dummy_handle;
+
+		/* (2) non-image control: must still be retired (CONTENT_ANY). */
+		nonimg->parent = (struct content *)&htmlc;
+		nonimg->box = NULL;
+		nonimg->permitted_types = CONTENT_ANY;
+		nonimg->content = NULL;
+
+		img_flight->next = nonimg;
+		nonimg->next = NULL;
+		htmlc.object_list = img_flight;
+		htmlc.num_objects = 2;
+
+		macsurf_js_set_reconvert_enabled(1);
+		(void) html_reconvert_content((struct content *)&htmlc);
+		(void) harness_pump_all(20000);
+
+		for (w = htmlc.object_list; w != NULL; w = w->next) {
+			if (w == img_flight) saw_flight = 1;
+			if (w == nonimg)     saw_nonimg = 1;
+			if (++n > 4096) break;
+		}
+		fprintf(stderr, "  in-flight IMAGE  survived: %s\n",
+				saw_flight ? "YES (carried)" : "NO (dropped+freed)");
+		fprintf(stderr, "  non-image        survived: %s\n",
+				saw_nonimg ? "yes" : "no (retired, as expected)");
+
+		if (!saw_flight) {
+			fprintf(stderr, "FAIL: Test 56 -- an in-flight IMAGE was dropped "
+				"by the reconvert. The fixes421 active-guard is then "
+				"load-bearing for images, which dominate base.active, and "
+				"#265 cannot narrow it. Round A answer: guard must stay.\n");
+			return 1;
+		}
+		if (saw_nonimg) {
+			fprintf(stderr, "FAIL: Test 56 -- the non-image control was NOT "
+				"retired, so this run is not exercising the partition at "
+				"all and the in-flight result above is meaningless.\n");
+			return 1;
+		}
+		fprintf(stderr, "  => in-flight IMAGE entries are CARRIED, not freed: "
+				"the active-guard need not block on image fetches\n");
+
+		htmlc.object_list = saved_list;
+		htmlc.num_objects = saved_n;
+		/* We own img_flight again now that it is off the list -- free it
+		 * and its dummy handle directly rather than through
+		 * html_object_free_objects, which would try to release the handle
+		 * against the uninitialised harness hlcache. Keeps the tracked
+		 * 42-allocation leak baseline honest. */
+		free(dummy_handle);
+		free(img_flight);
+	}
+	fprintf(stderr, "=== Test 56 PASS: in-flight images survive a reconvert ===\n");
+
 	/* --- Test 46: DOM SPEC CONFORMANCE SWEEP -----------------------------
 	 *
 	 * fixes1031 was a one-line deviation from the DOM spec (textContent=""
