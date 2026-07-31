@@ -1194,7 +1194,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	styles = box_get_style(ctx->content, props.parent_style, root_style,
 			ctx->n);
 	if (styles == NULL)
-		return false;
+		{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1197, (void*)ctx->n); return false; }
 
 	/* fixes24-33 diagnostic probes removed; cascade is healthy
 	 * and any future investigation should re-add probes scoped
@@ -1203,7 +1203,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	/* Extract title attribute, if present */
 	err = dom_element_get_attribute(ctx->n, corestring_dom_title, &title0);
 	if (err != DOM_NO_ERR)
-		return false;
+		{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1206, (void*)ctx->n); return false; }
 
 	if (title0 != NULL) {
 		char *t = squash_whitespace(dom_string_data(title0));
@@ -1211,20 +1211,20 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		dom_string_unref(title0);
 
 		if (t == NULL)
-			return false;
+			{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1214, (void*)ctx->n); return false; }
 
 		props.title = talloc_strdup(ctx->bctx, t);
 
 		free(t);
 
 		if (props.title == NULL)
-			return false;
+			{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1221, (void*)ctx->n); return false; }
 	}
 
 	/* Extract id attribute, if present */
 	err = dom_element_get_attribute(ctx->n, corestring_dom_id, &s);
 	if (err != DOM_NO_ERR)
-		return false;
+		{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1227, (void*)ctx->n); return false; }
 
 	if (s != NULL) {
 		err = dom_string_intern(s, &id);
@@ -1258,7 +1258,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 				(long) macsurf_reconvert_seq,
 				(long) g_reconv_node_ix, macsurf_free_mem());
 		}
-		return false;
+		{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1261, (void*)ctx->n); return false; }
 	}
 
 	/* If this is the root box, add it to the context */
@@ -1268,7 +1268,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	/* Deal with colspan/rowspan */
 	err = dom_element_get_attribute(ctx->n, corestring_dom_colspan, &s);
 	if (err != DOM_NO_ERR)
-		return false;
+		{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1271, (void*)ctx->n); return false; }
 
 	if (s != NULL) {
 		const char *val = dom_string_data(s);
@@ -1282,7 +1282,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 
 	err = dom_element_get_attribute(ctx->n, corestring_dom_rowspan, &s);
 	if (err != DOM_NO_ERR)
-		return false;
+		{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1285, (void*)ctx->n); return false; }
 
 	if (s != NULL) {
 		const char *val = dom_string_data(s);
@@ -1355,7 +1355,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 				     ctx->content,
 				     box,
 				     convert_children) == false) {
-		return false;
+		{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1358, (void*)ctx->n); return false; }
 	}
 
 	/* fixes547: convert_special_elements above yields (box_image ->
@@ -1440,7 +1440,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 				"WORK reconvert #%ld: set_user_data FAIL node_ix=%ld exc=%d",
 				(long) macsurf_reconvert_seq,
 				(long) g_reconv_node_ix, (int) err);
-		return false;
+		{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1443, (void*)ctx->n); return false; }
 	}
 
 	/* Attach box to DOM node */
@@ -1463,7 +1463,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		props.inline_container = box_create(NULL, NULL, false, NULL,
 				NULL, NULL, NULL, ctx->bctx);
 		if (props.inline_container == NULL)
-			return false;
+			{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1466, (void*)ctx->n); return false; }
 
 		props.inline_container->type = BOX_INLINE_CONTAINER;
 
@@ -1490,7 +1490,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 					      image_types,
 					      true) == false) {
 				nsurl_unref(url);
-				return false;
+				{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1493, (void*)ctx->n); return false; }
 			}
 			nsurl_unref(url);
 		}
@@ -1592,7 +1592,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 			/* List item: compute marker */
 			if (box_construct_marker(box, props.title, ctx,
 					props.containing_block) == false)
-				return false;
+				{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1595, (void*)ctx->n); return false; }
 		}
 
 		if (props.node_is_root == false &&
@@ -1606,7 +1606,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 					props.href, props.target, props.title,
 					NULL, ctx->bctx);
 			if (flt == NULL)
-				return false;
+				{ macsurf_debug_log_writef("WORK bce FAIL line=%d n=%p", (int)1609, (void*)ctx->n); return false; }
 			if (props.download)   /* fixes1063 (#114) */
 				flt->flags |= LINK_DOWNLOAD;
 
