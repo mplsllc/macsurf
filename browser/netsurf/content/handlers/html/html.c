@@ -3667,7 +3667,32 @@ int macsurf_html_tree_stable(struct content *c)
 
 	if (c == NULL)
 		return 0;
-	if (c->status != CONTENT_STATUS_READY &&
+	/* fixes1097 (#265 Round C3b) — THE THIRD GATE.
+	 *
+	 * fixes1096 opened the two gates that BUILD a tree during LOADING
+	 * (html_reconvert and macos9_reconvert_flush_now) and hardware answered
+	 * notdone=0, flush=155 -- the builds ran. And `real` stayed at 2, because
+	 * THIS predicate, which decides whether an answer may be GIVEN, still
+	 * demanded READY. So 155 trees were built and every reading was thrown
+	 * away: unstable=565, the exact count that used to be notdone.
+	 *
+	 * The condition that matters is "is there a tree and is it still", not
+	 * "has the load finished" -- reflowing and box_conversion_context below
+	 * are the real tests, and a LOADING document that satisfies both has a
+	 * perfectly readable tree. Requiring a status as well was the DONE-gate
+	 * assumption surviving one level deeper than anyone looked.
+	 *
+	 * NOT gated on c->layout != NULL, though the first draft was. That is
+	 * redundant and, worse, too coarse: qjs_box_for already re-resolves
+	 * PER ELEMENT via box_for_node and answers undefined when that element
+	 * has no box, which is the precise version of the same check. The global
+	 * form also refuses legitimate reads after a FAILED build, where layout
+	 * is NULL but the boxes are still alive on the deferred-free path -- the
+	 * harness reproduces exactly that (reconvert DONE-ENTRY success=0,
+	 * layout=(nil), boxes readable), and Test 43 went red on it. Mid-build
+	 * and mid-layout remain guarded below, which is what actually matters. */
+	if (c->status != CONTENT_STATUS_LOADING &&
+	    c->status != CONTENT_STATUS_READY &&
 	    c->status != CONTENT_STATUS_DONE)
 		why = "status";
 	else if (htmlc->reflowing)

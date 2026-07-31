@@ -6232,6 +6232,95 @@ box_coords(bx, &cx, &cy);
 	}
 	fprintf(stderr, "=== Test 59 PASS: LOADING-window geometry is reachable ===\n");
 
+	/* --- Test 60: measuring during LOADING must ANSWER, not just flush -----
+	 *
+	 * Test 59 asserts a flush HAPPENS during LOADING. That was necessary and
+	 * not sufficient, and shipping on it cost a hardware round: fixes1096
+	 * opened the two gates that BUILD a tree and hardware came back
+	 * notdone=0, flush=155 -- and JSGEOMANS real=2, unchanged. 155 trees were
+	 * built and every reading was discarded, because a THIRD gate
+	 * (macsurf_html_tree_stable, which decides whether an answer may be
+	 * given) still demanded READY. The count that used to be `notdone`
+	 * simply became `unstable`.
+	 *
+	 * So assert the thing the page actually depends on: a script measuring a
+	 * boxed element mid-parse gets a REAL NUMBER. A flush counter cannot see
+	 * this failure -- it was 155 and everything was still broken. */
+	fprintf(stderr, "\n=== Test 60: LOADING answers a real number (#265 C3b) ===\n");
+	{
+		extern void macos9_js_mark_dom_dirty(struct content *c);
+		unsigned char ok;
+
+		htmlc.reflowing = false;
+		htmlc.box_conversion_context = NULL;
+		htmlc.aborted = false;
+		htmlc.object_list = NULL;
+		htmlc.num_objects = 0;
+		htmlc.base.status = CONTENT_STATUS_DONE;
+		htmlc.base.active = 0;
+		(void) html_reconvert_content((struct content *)&htmlc);
+		(void) harness_pump_all(20000);
+
+		/* Now put the content back into the shape a mid-parse script sees:
+		 * LOADING, html fetch active, a tree present from the build above. */
+		htmlc.base.status = CONTENT_STATUS_LOADING;
+		htmlc.base.active = 1;
+		{
+			struct box *fb;
+			dom_string *idf = NULL;
+			dom_element *elf = NULL;
+			if (dom_string_create((const uint8_t *)"feed", 4, &idf)
+					!= DOM_NO_ERR) {
+				fprintf(stderr, "FAIL: t60 dom_string_create\n"); return 1;
+			}
+			dom_document_get_element_by_id(document, idf, &elf);
+			dom_string_unref(idf);
+			if (elf == NULL) {
+				fprintf(stderr, "FAIL: t60 missing #feed\n"); return 1;
+			}
+			fb = box_for_node((dom_node *)elf);
+			if (fb == NULL) {
+				fprintf(stderr, "FAIL: t60 #feed has no box after the "
+						"build, so this test cannot mean anything\n");
+				return 1;
+			}
+			fb->x = 5; fb->y = 7; fb->width = 321; fb->height = 123;
+			fb->padding[LEFT] = fb->padding[RIGHT] = 0;
+			fb->padding[TOP] = fb->padding[BOTTOM] = 0;
+			fb->border[LEFT].width = fb->border[RIGHT].width = 0;
+			fb->border[TOP].width = fb->border[BOTTOM].width = 0;
+		}
+
+		{
+			const char *chk =
+				"var e=document.getElementById('feed');"
+				"var w=e.offsetWidth;"
+				"if(typeof w!=='number')"
+					"throw new Error('ASSERT FAIL: mid-parse offsetWidth is '"
+						"+w+' (typeof '+(typeof w)+') for an element WITH a "
+						"box. jQuery turns that into a hard 0 via "
+						"parseFloat(x)||0, which is exactly how the hackaday "
+						"theme bakes height:0px onto every slide.');"
+				"if(w!==321)"
+					"throw new Error('ASSERT FAIL: mid-parse offsetWidth is '"
+						"+w+', want the real box width 321');";
+			ok = js_exec(thread, (const unsigned char *)chk,
+					strlen(chk), "t60.js");
+		}
+		htmlc.base.status = CONTENT_STATUS_DONE;
+		htmlc.base.active = 0;
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 60 -- a script measuring during "
+				"LOADING still gets no real answer. Building the tree is "
+				"not enough; the gate that decides whether an answer may "
+				"be GIVEN must accept a LOADING document that has one.\n");
+			return 1;
+		}
+		fprintf(stderr, "  => mid-parse measurement returns the real box "
+				"width, not undefined\n");
+	}
+	fprintf(stderr, "=== Test 60 PASS: LOADING geometry answers truly ===\n");
+
 	/* --- Test 46: DOM SPEC CONFORMANCE SWEEP -----------------------------
 	 *
 	 * fixes1031 was a one-line deviation from the DOM spec (textContent=""
