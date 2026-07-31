@@ -6321,6 +6321,141 @@ box_coords(bx, &cx, &cy);
 	}
 	fprintf(stderr, "=== Test 60 PASS: LOADING geometry answers truly ===\n");
 
+	/* --- Test 61: XHR RESPONSE HEADERS SURVIVE THE ACCUMULATOR ----------
+	 *
+	 * Both fetchers emit ONE bare header line per FETCH_HEADER: find_line()
+	 * / mfs_find_line() NUL each line's own '\r' and send len=strlen(p), so
+	 * no terminator ever reaches the callback. macos9_js_fetch.c's
+	 * xhr_accum() is a pure byte-append, so before fixes1098 every header
+	 * fused into ONE line starting with the "HTTP/1.1 200 OK" status line.
+	 * The prelude's getResponseHeader() splits on /\r\n|\n/, found a single
+	 * line, and compared the name against "HTTP/1.1 200 OK" -- so EVERY
+	 * lookup returned null and getAllResponseHeaders() returned one mash.
+	 *
+	 * null reads as "that header isn't present", not as an error, so a
+	 * caller silently takes its no-such-header branch. That is the LYING
+	 * ANSWER shape from the fixes1005->1031 batch, not a missing API.
+	 *
+	 * Assert COUNTS and exact values, never truthiness: a boolean cannot
+	 * tell a correctly-parsed header from a mashed one that happens to be
+	 * non-empty. The control is the pre-fix byte-stream (no terminators),
+	 * which MUST still parse to zero recoverable headers. */
+	fprintf(stderr, "\n=== Test 61: XHR response headers survive accum ===\n");
+	{
+		unsigned char ok;
+		char accum_js[2048];
+		const char *hdr_lines[4];
+		const char *raw;
+		const char *p;
+		char esc[1024];
+		size_t ei = 0;
+
+		extern const char *macos9_js_fetch_test_accum_headers(
+				const char *const *lines, int nlines);
+
+		/* EXACTLY what both fetchers emit: one BARE line per FETCH_HEADER,
+		 * '\r' already NUL'd and len=strlen(p). No terminators. */
+		hdr_lines[0] = "HTTP/1.1 200 OK";
+		hdr_lines[1] = "Content-Type: application/json; charset=utf-8";
+		hdr_lines[2] = "X-Frame-Options: SAMEORIGIN";
+		hdr_lines[3] = "Set-Cookie: sid=abc; HttpOnly";
+
+		/* Drive the REAL shipping accumulator, not a reimplementation.
+		 * This is the whole point of the test: a version that builds the
+		 * header string in JS passes with OR without the fix. */
+		raw = macos9_js_fetch_test_accum_headers(hdr_lines, 4);
+
+		for (p = raw; *p != '\0' && ei + 4 < sizeof(esc); p++) {
+			if (*p == '\r')      { esc[ei++] = '\\'; esc[ei++] = 'r'; }
+			else if (*p == '\n') { esc[ei++] = '\\'; esc[ei++] = 'n'; }
+			else if (*p == '\'') { esc[ei++] = '\\'; esc[ei++] = '\''; }
+			else if (*p == '\\') { esc[ei++] = '\\'; esc[ei++] = '\\'; }
+			else                 { esc[ei++] = *p; }
+		}
+		esc[ei] = '\0';
+
+		fprintf(stderr, "  accumulator produced %lu bytes\n",
+				(unsigned long) strlen(raw));
+
+		snprintf(accum_js, sizeof(accum_js),
+			"var fixed='%s';"
+			/* The control: the same headers with terminators stripped,
+			 * i.e. the exact pre-fixes1098 accumulator output. */
+			"var broken='HTTP/1.1 200 OK'+"
+				"'Content-Type: application/json; charset=utf-8'+"
+				"'X-Frame-Options: SAMEORIGIN'+"
+				"'Set-Cookie: sid=abc; HttpOnly';"
+			"function mk(raw){var x=new XMLHttpRequest();"
+				"x.__responseHeadersRaw=raw;return x;}"
+			"var f=mk(fixed), b=mk(broken);", esc);
+		{
+		char full_js[4096];
+		const char *chk =
+
+			/* 1. Case-insensitive lookup returns the EXACT value. */
+			"var ct=f.getResponseHeader('content-type');"
+			"if(ct!=='application/json; charset=utf-8')"
+				"throw new Error('ASSERT FAIL: content-type is '+ct+', want "
+					"the exact value. A null here is the lying answer: the "
+					"caller reads it as header-absent and takes its fallback "
+					"branch without ever erroring.');"
+
+			/* 2. Every distinct header is individually recoverable --
+			 *    a count, so a fused string cannot pass by being truthy. */
+			"var names=['content-type','x-frame-options','set-cookie'],"
+				"got=0,i;"
+			"for(i=0;i<names.length;i++)"
+				"if(f.getResponseHeader(names[i])!==null)got++;"
+			"if(got!==3)"
+				"throw new Error('ASSERT FAIL: recovered '+got+'/3 headers. "
+					"Fewer than 3 means lines fused and only the first "
+					"name is addressable.');"
+
+			/* 3. The status line is NOT addressable as a header name. */
+			"if(f.getResponseHeader('HTTP/1.1 200 OK')!==null)"
+				"throw new Error('ASSERT FAIL: the status line parsed as a "
+					"header -- the split is not landing on line boundaries.');"
+
+			/* 4. A genuinely absent header still returns null. */
+			"if(f.getResponseHeader('x-not-sent')!==null)"
+				"throw new Error('ASSERT FAIL: absent header did not "
+					"return null.');"
+
+			/* 5. getAllResponseHeaders() yields one line per header. */
+			"var lines=f.getAllResponseHeaders().split(/\\r\\n|\\n/)"
+				".filter(function(s){return s.length>0;});"
+			"if(lines.length!==4)"
+				"throw new Error('ASSERT FAIL: getAllResponseHeaders gave '"
+					"+lines.length+' lines, want 4 (status + 3 headers).');"
+
+			/* 6. THE CONTROL: the pre-fix stream must still fail, or this
+			 *    test proves nothing about the fix. */
+			"if(b.getResponseHeader('content-type')!==null)"
+				"throw new Error('ASSERT FAIL: the unterminated control "
+					"PARSED. This test can no longer detect the bug it "
+					"exists to catch.');"
+			"var bl=b.getAllResponseHeaders().split(/\\r\\n|\\n/)"
+				".filter(function(s){return s.length>0;});"
+			"if(bl.length!==1)"
+				"throw new Error('ASSERT FAIL: control split into '+bl.length"
+					"+' lines, want exactly 1 mashed line.');";
+
+		snprintf(full_js, sizeof(full_js), "%s%s", accum_js, chk);
+		ok = js_exec(thread, (const unsigned char *)full_js,
+				strlen(full_js), "t61.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 61 -- XHR response headers do not "
+				"survive the accumulator. getResponseHeader() returning "
+				"null for a header that WAS sent is a lying answer: callers "
+				"read it as absent and take the wrong branch silently.\n");
+			return 1;
+		}
+		fprintf(stderr, "  => all 3 headers individually addressable; "
+				"unterminated control still fails as designed\n");
+		}
+	}
+	fprintf(stderr, "=== Test 61 PASS: XHR headers parse per-line ===\n");
+
 	/* --- Test 46: DOM SPEC CONFORMANCE SWEEP -----------------------------
 	 *
 	 * fixes1031 was a one-line deviation from the DOM spec (textContent=""

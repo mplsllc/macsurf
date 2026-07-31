@@ -220,6 +220,58 @@ xhr_accum(char **buf, long *len, long *cap, long max_bytes, int *poisoned,
 	(*buf)[*len] = '\0';
 }
 
+/* Accumulate ONE response header line, re-adding the terminator the fetchers
+ * strip.
+ *
+ * fixes1098: every FETCH_HEADER carries a single BARE header line. Both
+ * fetchers parse with find_line()/mfs_find_line(), which NUL each line's own
+ * '\r' and then send len=strlen(p) -- so no '\r' and no '\n' ever reach this
+ * callback. xhr_accum() is a pure byte-append, so without re-adding a
+ * terminator every header fused into ONE line beginning with the
+ * "HTTP/1.1 200 OK" status line. The prelude's getResponseHeader() splits on
+ * /\r\n|\n/, found exactly one line, and compared each requested name against
+ * "HTTP/1.1 200 OK" -- so EVERY lookup returned null and
+ * getAllResponseHeaders() returned a single mashed string.
+ *
+ * null is not an error: it reads as "that header was not sent", so a caller
+ * silently takes its no-such-header branch. That is the LYING ANSWER shape
+ * from the fixes1005->1031 batch -- pages break on confident wrong answers,
+ * not on missing APIs -- which is why this is worth a named function rather
+ * than an inline two-liner.
+ *
+ * CRLF is what the spec requires getAllResponseHeaders() to join with. */
+static void
+xhr_accum_header_line(struct qjs_xhr_slot *s, const unsigned char *b, long l)
+{
+	if (s == NULL) return;
+	xhr_accum(&s->hdr_buf, &s->hdr_len, &s->hdr_cap,
+			QJS_XHR_MAX_HDR_BYTES, &s->hdr_poisoned, b, l);
+	xhr_accum(&s->hdr_buf, &s->hdr_len, &s->hdr_cap,
+			QJS_XHR_MAX_HDR_BYTES, &s->hdr_poisoned,
+			(const unsigned char *) "\r\n", 2L);
+}
+
+/* Harness-only hook: drives the REAL accumulator above over a caller-supplied
+ * sequence of bare header lines and returns the exact bytes JS would see in
+ * __responseHeadersRaw. Exists so harness Test 61 tests the shipping code path
+ * instead of a reimplementation of it -- a test that builds the header string
+ * itself passes with or without this fix and therefore proves nothing. */
+const char *
+macos9_js_fetch_test_accum_headers(const char *const *lines, int nlines)
+{
+	static struct qjs_xhr_slot t;
+	int i;
+
+	if (t.hdr_buf != NULL) { free(t.hdr_buf); t.hdr_buf = NULL; }
+	t.hdr_len = 0; t.hdr_cap = 0; t.hdr_poisoned = 0;
+
+	for (i = 0; i < nlines; i++) {
+		xhr_accum_header_line(&t, (const unsigned char *) lines[i],
+				(long) strlen(lines[i]));
+	}
+	return (t.hdr_buf != NULL) ? t.hdr_buf : "";
+}
+
 /* ---- deferred JS delivery (never called from inside xhr_fetch_cb) ---- */
 
 static void
@@ -373,8 +425,7 @@ xhr_fetch_cb(const fetch_msg *msg, void *pw)
 	case FETCH_HEADER: {
 		const unsigned char *b = msg->data.header_or_data.buf;
 		long l = (long) msg->data.header_or_data.len;
-		xhr_accum(&s->hdr_buf, &s->hdr_len, &s->hdr_cap,
-				QJS_XHR_MAX_HDR_BYTES, &s->hdr_poisoned, b, l);
+		xhr_accum_header_line(s, b, l);
 		break;
 	}
 	case FETCH_DATA: {
