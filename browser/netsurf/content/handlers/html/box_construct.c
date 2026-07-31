@@ -2450,6 +2450,7 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 	 * does not touch the DOM tree. */
 	if (ctx->content->aborted) {
 		macsurf_debug_log_writef("box: convert_xml ABORTED early ctx=%p", (void*)ctx);
+		macsurf_debug_log_writef("WORK boxbuild FAIL site=%s ctx=%p content=%p", "L2453", (void*)ctx, (void*)ctx->content);
 		ctx->cb(ctx->content, false);
 		dom_node_unref(ctx->n);
 		free(ctx);
@@ -2533,6 +2534,7 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 				return;
 			}
 			if (bce_ok == false) {
+				macsurf_debug_log_writef("WORK boxbuild FAIL site=%s ctx=%p content=%p", "L2536", (void*)ctx, (void*)ctx->content);
 				ctx->cb(ctx->content, false);
 				dom_node_unref(ctx->n);
 				free(ctx);
@@ -2548,6 +2550,7 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 
 			err = dom_node_get_node_type(next, &type);
 			if (err != DOM_NO_ERR) {
+				macsurf_debug_log_writef("WORK boxbuild FAIL site=%s ctx=%p content=%p", "L2551", (void*)ctx, (void*)ctx->content);
 				ctx->cb(ctx->content, false);
 				dom_node_unref(next);
 				free(ctx);
@@ -2575,6 +2578,7 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 					macsurf_reconv_pos_flush();
 				}
 				if (box_construct_text(ctx) == false) {
+					macsurf_debug_log_writef("WORK boxbuild FAIL site=%s ctx=%p content=%p", "L2578", (void*)ctx, (void*)ctx->content);
 					ctx->cb(ctx->content, false);
 					dom_node_unref(ctx->n);
 					free(ctx);
@@ -2616,6 +2620,7 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 			/** \todo Remove box_normalise_block */
 			if (box_normalise_block(&root, ctx->root_box,
 					ctx->content) == false) {
+				macsurf_debug_log_writef("WORK boxbuild FAIL site=%s ctx=%p content=%p", "L2619", (void*)ctx, (void*)ctx->content);
 				ctx->cb(ctx->content, false);
 			} else {
 				ctx->content->layout = root.children;

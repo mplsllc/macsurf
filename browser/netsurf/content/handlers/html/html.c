@@ -3168,8 +3168,26 @@ static void html_reconvert_done(html_content *c, bool success)
 	macsurf_profile_stamp("reconvert-done");
 
 	if ((success == false) || (c->aborted)) {
-		macsurf_debug_log_writef("WORK reconvert #%ld: FAILED/aborted",
-				(long) macsurf_reconvert_seq);
+		/* fixes1099 (#265) — say WHY, on the line that survives the gate.
+		 *
+		 * The cause used to live on the DONE-ENTRY line above, which
+		 * carries no crash keyword and is therefore DROPPED by
+		 * macsurf_log_is_crash_report(); this line survives only because
+		 * it contains the literal "FAIL". So hardware logs showed 141
+		 * consecutive reconvert failures with the reason systematically
+		 * filtered out, and #265 was diagnosed off timing counters for
+		 * rounds while the answer was being written and thrown away.
+		 *
+		 * success==false means dom_to_box returned an error; aborted
+		 * means the content was torn down under us. They are DIFFERENT
+		 * bugs with different fixes, and the old line could not tell them
+		 * apart. Keep both flags on the surviving line, always. */
+		macsurf_debug_log_writef(
+			"WORK reconvert #%ld: FAILED/aborted success=%d aborted=%d "
+			"layout=%p bctx=%p",
+				(long) macsurf_reconvert_seq, (int) success,
+				(int) c->aborted, (void *) c->layout,
+				(void *) c->box_conversion_context);
 		{	/* fixes1095 */
 			double t0 = html_reconv_now();
 			html_reconvert_relink_objects(c);
