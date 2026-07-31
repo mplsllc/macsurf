@@ -401,17 +401,22 @@ box_get_style(html_content *c,
 	css_stylesheet *inline_style = NULL;
 	css_select_results *styles;
 	nscss_select_ctx ctx;
+	int had_inline = 0;	/* fixes1101 -- s is unref'd but not nulled below */
 
 	/* Firstly, construct inline stylesheet, if any */
 	if (nsoption_bool(author_level_css)) {
 		dom_exception err;
 		err = dom_element_get_attribute(n, corestring_dom_style, &s);
 		if (err != DOM_NO_ERR) {
+			macsurf_debug_log_writef(
+				"WORK bgs FAIL why=style-attr-read n=%p err=%d",
+				(void *)n, (int)err);
 			return NULL;
 		}
 	}
 
 	if (s != NULL) {
+		had_inline = 1;
 		inline_style = nscss_create_inline_style(
 				(const uint8_t *) dom_string_data(s),
 				dom_string_byte_length(s),
@@ -421,8 +426,11 @@ box_get_style(html_content *c,
 
 		dom_string_unref(s);
 
-		if (inline_style == NULL)
+		if (inline_style == NULL) {
+			macsurf_debug_log_writef(
+				"WORK bgs FAIL why=inline-style-parse n=%p", (void *)n);
 			return NULL;
+		}
 	}
 
 	/* Populate selection context */
@@ -446,6 +454,31 @@ box_get_style(html_content *c,
 	/* No longer need inline style */
 	if (inline_style != NULL)
 		css_stylesheet_destroy(inline_style);
+
+	/* fixes1101 (#265) -- nscss_get_style() returning NULL is the last
+	 * unnamed way box_construct_element can fail, and hardware says ONE
+	 * node (the same pointer 92/92) fails here every reconvert. Report the
+	 * element's identity, not just its address, so the next log says WHICH
+	 * element the cascade cannot style. had_inline distinguishes "the
+	 * element carries a style="" attribute" (what slick writes onto every
+	 * slide) from a plain cascade failure. */
+	if (styles == NULL) {
+		dom_string *tag = NULL, *idv = NULL, *clsv = NULL;
+		(void) dom_element_get_tag_name(n, &tag);
+		(void) dom_element_get_attribute(n, corestring_dom_id, &idv);
+		(void) dom_element_get_attribute(n, corestring_dom_class, &clsv);
+		macsurf_debug_log_writef(
+			"WORK bgs FAIL why=cascade-null n=%p tag=%s id=%s class=%s "
+			"had_inline=%d",
+			(void *)n,
+			tag != NULL ? dom_string_data(tag) : "(none)",
+			idv != NULL ? dom_string_data(idv) : "(none)",
+			clsv != NULL ? dom_string_data(clsv) : "(none)",
+			had_inline);
+		if (tag != NULL) dom_string_unref(tag);
+		if (idv != NULL) dom_string_unref(idv);
+		if (clsv != NULL) dom_string_unref(clsv);
+	}
 
 	return styles;
 }
