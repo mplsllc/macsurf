@@ -6071,6 +6071,104 @@ box_coords(bx, &cx, &cy);
 	}
 	fprintf(stderr, "=== Test 57 PASS: flush fires at READY, guard still covers the hazard ===\n");
 
+	/* --- Test 58: the phase timer must ATTRIBUTE, not just emit (#265 C1) ---
+	 *
+	 * Round C1 exists to answer one question: of the ~1.7s a synchronous
+	 * reconvert costs, which phase owns it? That answer decides whether Round
+	 * C is "make a flush cheaper" or "make flushes rarer" -- opposite work --
+	 * so a timer that reports plausible-but-wrong numbers is worse than none.
+	 *
+	 * Two properties, both asserted as COUNTS:
+	 *   1. the phases do not EXCEED the wall-clock of the reconvert that
+	 *      produced them. `build` brackets the synchronous
+	 *      html_reconvert_done, so relink/freeold/reformat run INSIDE it and
+	 *      are subtracted back out; drop that subtraction and their time is
+	 *      counted twice, making the sum overshoot real elapsed time. Note
+	 *      the report line's own `total=` is computed AS the sum of parts, so
+	 *      "parts sum to total" is true by construction and proves nothing --
+	 *      an external clock is the only thing that can catch this;
+	 *   2. `build` is non-zero after a real reconvert -- if the instrument
+	 *      were not wired into the dom_to_box path at all, every bucket but
+	 *      that one would still look sane and the line would still print. */
+	fprintf(stderr, "\n=== Test 58: reconvert phase attribution (#265 Round C1) ===\n");
+	{
+		extern void html_reconvert_phase_stats(int ph, long *us, long *n);
+		extern void html_reconvert_phase_reset(void);
+		static const char *nm[8] = { "h1","h3","css","pin","build",
+					     "relink","freeold","reformat" };
+		long before_n = 0, after_n = 0;
+		long v[8], v0[8];
+		long sum = 0, sum0 = 0, delta = 0, wall = 0;
+		struct timespec ts0, ts1;
+		int i;
+
+		for (i = 0; i < 8; i++) {
+			html_reconvert_phase_stats(i, &v0[i], NULL);
+			sum0 += v0[i];
+		}
+		html_reconvert_phase_stats(0, NULL, &before_n);
+		htmlc.base.status = CONTENT_STATUS_DONE;
+		htmlc.base.active = 0;
+		htmlc.reflowing = false;
+		htmlc.box_conversion_context = NULL;
+		htmlc.aborted = false;
+		clock_gettime(CLOCK_MONOTONIC, &ts0);
+		(void) html_reconvert_content((struct content *)&htmlc);
+		(void) harness_pump_all(20000);
+		clock_gettime(CLOCK_MONOTONIC, &ts1);
+		wall = (long)((ts1.tv_sec - ts0.tv_sec) * 1000000L +
+				(ts1.tv_nsec - ts0.tv_nsec) / 1000L);
+		html_reconvert_phase_stats(0, NULL, &after_n);
+
+		if (after_n <= before_n) {
+			fprintf(stderr, "FAIL: Test 58 -- the reconvert counter did not "
+				"advance, so no reconvert ran and the phase numbers below "
+				"describe nothing.\n");
+			return 1;
+		}
+		for (i = 0; i < 8; i++) {
+			html_reconvert_phase_stats(i, &v[i], NULL);
+			if (v[i] < 0) {
+				fprintf(stderr, "FAIL: Test 58 -- phase %d out of range\n", i);
+				return 1;
+			}
+			sum += v[i];
+		}
+		for (i = 0; i < 8; i++)
+			fprintf(stderr, "  %-8s %ldus\n", nm[i], v[i]);
+		delta = sum - sum0;
+		fprintf(stderr, "  n=%ld sum=%ldus  (this reconvert: phases=%ldus "
+				"wall=%ldus)\n", after_n, sum, delta, wall);
+
+		/* Double-counting shows up as phases exceeding real elapsed time.
+		 * Slack is generous because wall includes harness_pump_all and ASan
+		 * overhead OUTSIDE the instrumented phases, which can only make wall
+		 * larger -- so an overshoot is a genuine signal, not noise. */
+		if (wall > 0 && delta > wall) {
+			fprintf(stderr, "FAIL: Test 58 -- phases total %ldus for a "
+				"reconvert that took %ldus of wall clock. Time is being "
+				"counted twice: relink/freeold/reformat run inside the "
+				"build bracket and must be subtracted back out of it.\n",
+				delta, wall);
+			return 1;
+		}
+
+		if (v[4] <= 0) {
+			fprintf(stderr, "FAIL: Test 58 -- build=0 after a real reconvert. "
+				"dom_to_box is the single largest cost on hardware and the "
+				"instrument is not measuring it, so Round C would be "
+				"optimising whichever bucket happened to be non-zero.\n");
+			return 1;
+		}
+		if (sum <= 0) {
+			fprintf(stderr, "FAIL: Test 58 -- every phase is zero; the clock "
+				"is not being read (cf. fixes1070, where an int-returning "
+				"macos9_micros made every harness timing garbage).\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 58 PASS: phases attribute and sum ===\n");
+
 	/* --- Test 46: DOM SPEC CONFORMANCE SWEEP -----------------------------
 	 *
 	 * fixes1031 was a one-line deviation from the DOM spec (textContent=""

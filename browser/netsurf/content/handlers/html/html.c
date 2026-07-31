@@ -2552,6 +2552,135 @@ static void html_reconvert_release_pinned_strings(void)
 	g_reconvert_pinned_strings = NULL;
 }
 
+/* ====================================================================== */
+/* fixes1095 (#265 Round C1) — WHERE THE 1.7 SECONDS GOES.
+ *
+ * Round B made the synchronous flush legal before DONE and hardware answered:
+ * `JSSYNC flush=2 declined=1247 us=3353022` -- it fires, it works
+ * (JSGEOMANS real went 2 -> 100), and it costs ~1.7s PER FLUSH, which blew the
+ * 2s budget and turned into 522 further declines. Cost, not safety, is now the
+ * blocker for Round C.
+ *
+ * The cost is NOT cascade or layout: PERFACC for the whole navigation reads
+ * cascade=1.34s layout=0.81s (2.15s total) while two flushes alone cost 3.35s.
+ * It is the reconvert's own teardown and box construction -- roughly ten
+ * O(document) passes. Which one dominates decides whether Round C is "make a
+ * flush cheaper" or "make flushes rarer", and those want opposite work.
+ *
+ * A census of mutation KINDS already refuted the obvious guess (a layout-only
+ * fast path for class/style-only batches): hardware shows structural=1827 vs
+ * cosmetic=903, with only 1 of 6 batches purely cosmetic. So the next guess is
+ * not worth shipping either. Time the phases instead -- this is the fixes986
+ * lesson, where a real timer inside the thing settled in one round what three
+ * rounds of log-reading could not.
+ *
+ * Cumulative per navigation, emitted once, so a 5-reconvert page yields one
+ * comparable line rather than 5x9 noise. Reset per navigation alongside the
+ * other LIFE counters. */
+#define RECONV_PH_H1        0	/* clear stale node->box backlinks   */
+#define RECONV_PH_H3        1	/* forms + imagemap + selection      */
+#define RECONV_PH_CSS       2	/* release pass-1 libcss node data   */
+#define RECONV_PH_PIN       3	/* pin live text-node dom_strings    */
+#define RECONV_PH_BUILD     4	/* dom_to_box (synchronous, fixes903) */
+#define RECONV_PH_RELINK    5	/* re-attach carried objects          */
+#define RECONV_PH_FREEOLD   6	/* drop the previous box tree         */
+#define RECONV_PH_REFORMAT  7	/* content__reformat inside _done     */
+#define RECONV_PH_N         8
+
+static long g_reconv_ph_us[RECONV_PH_N];
+static long g_reconv_ph_n = 0;
+
+static const char *g_reconv_ph_name[RECONV_PH_N] = {
+	"h1", "h3", "css", "pin", "build", "relink", "freeold", "reformat"
+};
+
+/* Sampled with the SAME clock every other MacSurf timer uses. macos9_micros
+ * returns double -- an integer extern here would read xmm0 as rax and produce
+ * garbage, which is exactly the fixes1070 harness bug. */
+static double html_reconv_now(void)
+{
+	extern double macos9_micros(void);
+	return macos9_micros();
+}
+
+static void html_reconv_ph_add(int ph, double t0)
+{
+	if (ph < 0 || ph >= RECONV_PH_N)
+		return;
+	g_reconv_ph_us[ph] += (long)(html_reconv_now() - t0);
+}
+
+void html_reconvert_phase_reset(void);
+void html_reconvert_phase_reset(void)
+{
+	int i;
+	for (i = 0; i < RECONV_PH_N; i++)
+		g_reconv_ph_us[i] = 0;
+	g_reconv_ph_n = 0;
+}
+
+/* fixes1095 — read the phase accumulators. Mirrors macos9_reconvert_sync_stats,
+ * which exists for the same reason: a counter only anyone can READ can be
+ * asserted on, and an instrument nothing asserts on is how a false green
+ * survives (N_ELEMENTS, foreground_images, the fixes1070 clock). */
+void html_reconvert_phase_stats(int ph, long *us, long *n);
+void html_reconvert_phase_stats(int ph, long *us, long *n)
+{
+	if (us != NULL)
+		*us = (ph >= 0 && ph < RECONV_PH_N) ? g_reconv_ph_us[ph] : -1;
+	if (n != NULL)
+		*n = g_reconv_ph_n;
+}
+
+void html_reconvert_phase_report(void);
+void html_reconvert_phase_report(void)
+{
+	char line[224];
+	int i;
+	int pos = 0;
+	long total = 0;
+
+	if (g_reconv_ph_n == 0)
+		return;			/* no reconvert this navigation */
+
+	for (i = 0; i < RECONV_PH_N; i++)
+		total += g_reconv_ph_us[i];
+
+	/* Hand-rolled: macsurf_debug_log_writef caps at 255 bytes and supports a
+	 * fixed specifier set, so build the variable part here and emit once. */
+	for (i = 0; i < RECONV_PH_N; i++) {
+		const char *nm = g_reconv_ph_name[i];
+		long v = g_reconv_ph_us[i];
+		int k;
+		char num[16];
+		int nl = 0;
+
+		if (pos > (int)sizeof(line) - 24)
+			break;
+		for (k = 0; nm[k] != '\0' && pos < (int)sizeof(line) - 2; k++)
+			line[pos++] = nm[k];
+		line[pos++] = '=';
+		if (v == 0) {
+			num[nl++] = '0';
+		} else {
+			long q = v;
+			char rev[16];
+			int rl = 0;
+			while (q > 0 && rl < 15) { rev[rl++] = (char)('0' + (q % 10)); q /= 10; }
+			while (rl > 0 && nl < 15) num[nl++] = rev[--rl];
+		}
+		for (k = 0; k < nl && pos < (int)sizeof(line) - 2; k++)
+			line[pos++] = num[k];
+		if (i + 1 < RECONV_PH_N && pos < (int)sizeof(line) - 2)
+			line[pos++] = ' ';
+	}
+	line[pos] = '\0';
+
+	macsurf_debug_log_writef("LIFE RECONVPHASE n=%ld total=%ldus %s",
+			g_reconv_ph_n, total, line);
+}
+/* ====================================================================== */
+
 /* Dedicated re-convert completion. Unlike html_box_convert_done it does NOT
  * destroy the parser (already gone) or re-fire content_set_ready /
  * proceed_to_done (the content is already DONE). It re-extracts image maps
@@ -3041,8 +3170,14 @@ static void html_reconvert_done(html_content *c, bool success)
 	if ((success == false) || (c->aborted)) {
 		macsurf_debug_log_writef("WORK reconvert #%ld: FAILED/aborted",
 				(long) macsurf_reconvert_seq);
-		html_reconvert_relink_objects(c);
-		html_reconvert_free_old();   /* don't leak the deferred old tree */
+		{	/* fixes1095 */
+			double t0 = html_reconv_now();
+			html_reconvert_relink_objects(c);
+			html_reconv_ph_add(RECONV_PH_RELINK, t0);
+			t0 = html_reconv_now();
+			html_reconvert_free_old(); /* don't leak the deferred old tree */
+			html_reconv_ph_add(RECONV_PH_FREEOLD, t0);
+		}
 		/* fixes895 — disarm the hunt: the async span is over. */
 		macsurf_reconvert_in_progress = 0;
 		macsurf_debug_log_writef("LIFE reconvert in_progress=0 seq=%ld (done-failed)",
@@ -3056,8 +3191,14 @@ static void html_reconvert_done(html_content *c, bool success)
 
 	/* New tree is live + laid out — NOW free the old one. Shared styles
 	 * survive via their refcount held by the new tree. */
-	html_reconvert_relink_objects(c);
-	html_reconvert_free_old();
+	{	/* fixes1095 */
+		double t0 = html_reconv_now();
+		html_reconvert_relink_objects(c);
+		html_reconv_ph_add(RECONV_PH_RELINK, t0);
+		t0 = html_reconv_now();
+		html_reconvert_free_old();
+		html_reconv_ph_add(RECONV_PH_FREEOLD, t0);
+	}
 	macsurf_reconv_pos_set("after-free_old", (long) macsurf_reconvert_seq,
 			0, "");
 	macsurf_reconv_pos_flush();
@@ -3074,8 +3215,12 @@ static void html_reconvert_done(html_content *c, bool success)
 	macsurf_reconv_pos_set("content__reformat", (long) macsurf_reconvert_seq,
 			0, "");
 	macsurf_reconv_pos_flush();
-	content__reformat(&c->base, false,
-			c->base.available_width, c->base.available_height);
+	{	/* fixes1095 — REFORMAT (cascade + layout + first paint) */
+		double t0 = html_reconv_now();
+		content__reformat(&c->base, false,
+				c->base.available_width, c->base.available_height);
+		html_reconv_ph_add(RECONV_PH_REFORMAT, t0);
+	}
 
 	/* fixes895 — the full cycle repainted without a crash. Disarm. */
 	macsurf_debug_log_writef(
@@ -3271,7 +3416,12 @@ nserror html_reconvert(html_content *c)
 	 * fixes445 clears them in html_reformat. */
 	c->dyn_hover_node = NULL;
 	c->dyn_active_node = NULL;
-	html_reconvert_clear_node_boxes(c);          /* H1: stale node boxes */
+	{	/* fixes1095 — H1 */
+		double t0 = html_reconv_now();
+		g_reconv_ph_n++;
+		html_reconvert_clear_node_boxes(c);  /* H1: stale node boxes */
+		html_reconv_ph_add(RECONV_PH_H1, t0);
+	}
 	/* fixes921 — H2 NO LONGER FREES THE OBJECT LIST.
 	 *
 	 * Releasing every image handle here is what made a reconvert lose its
@@ -3298,11 +3448,15 @@ nserror html_reconvert(html_content *c)
 	macsurf_debug_log_writef(
 		"WORK reconvert #%ld: H2 objects freed active=%d",
 		(long) macsurf_reconvert_seq, (int) c->base.active);
-	html_reconvert_detach_forms(c);              /* H3: form box pointers */
-	imagemap_destroy(c);                         /* rebuilt in done       */
-	if (c->sel != NULL)
-		selection_destroy(c->sel);
-	c->sel = selection_create((struct content *) c);
+	{	/* fixes1095 — H3 */
+		double t0 = html_reconv_now();
+		html_reconvert_detach_forms(c);      /* H3: form box pointers */
+		imagemap_destroy(c);                 /* rebuilt in done       */
+		if (c->sel != NULL)
+			selection_destroy(c->sel);
+		c->sel = selection_create((struct content *) c);
+		html_reconv_ph_add(RECONV_PH_H3, t0);
+	}
 	macsurf_debug_log_writef(
 		"WORK reconvert #%ld: H3 forms+imagemap+selection reset",
 		(long) macsurf_reconvert_seq);
@@ -3317,7 +3471,9 @@ nserror html_reconvert(html_content *c)
 	 * real reconvert-crash fix (Layer 1); the fixes889-898 guards were
 	 * scaffolding around this un-restored precondition. */
 	{
+		double t0 = html_reconv_now();	/* fixes1095 — CSS */
 		long ncleared = html_reconvert_reset_css_state(c);
+		html_reconv_ph_add(RECONV_PH_CSS, t0);
 		macsurf_debug_log_writef(
 			"WORK reconvert #%ld: CSS reset -- node_data cleared=%ld,"
 			" root_style=NULL", (long) macsurf_reconvert_seq, ncleared);
@@ -3329,7 +3485,9 @@ nserror html_reconvert(html_content *c)
 	 * the fixes489 UAF stayed open. Walk c->document, the real source
 	 * box_construct_text reads. */
 	{
+		double t0 = html_reconv_now();	/* fixes1095 — PIN */
 		long pinned = html_reconvert_pin_text_strings(c->document);
+		html_reconv_ph_add(RECONV_PH_PIN, t0);
 		macsurf_debug_log_writef(
 			"WORK reconvert #%ld: pinned %ld DOM text-node strings",
 			(long) macsurf_reconvert_seq, pinned);
@@ -3400,8 +3558,24 @@ nserror html_reconvert(html_content *c)
 	macsurf_reconv_pos_set("pre-dom_to_box", (long) macsurf_reconvert_seq,
 			0, "");
 	macsurf_reconv_pos_flush();
-	error = dom_to_box(html, c, html_reconvert_done,
-			&c->box_conversion_context);
+	{	/* fixes1095 — BUILD. Synchronous (fixes903), so this bracket also
+		 * contains html_reconvert_done, i.e. relink/freeold/reformat. Those
+		 * subtract themselves out below so `build` reads as construction
+		 * alone. */
+		double t0 = html_reconv_now();
+		long inner0 = g_reconv_ph_us[RECONV_PH_RELINK] +
+			g_reconv_ph_us[RECONV_PH_FREEOLD] +
+			g_reconv_ph_us[RECONV_PH_REFORMAT];
+		long spent;
+		error = dom_to_box(html, c, html_reconvert_done,
+				&c->box_conversion_context);
+		spent = (long)(html_reconv_now() - t0) -
+			((g_reconv_ph_us[RECONV_PH_RELINK] +
+			  g_reconv_ph_us[RECONV_PH_FREEOLD] +
+			  g_reconv_ph_us[RECONV_PH_REFORMAT]) - inner0);
+		if (spent < 0) spent = 0;
+		g_reconv_ph_us[RECONV_PH_BUILD] += spent;
+	}
 	if (error != NSERROR_OK) {
 		macsurf_debug_log_writef(
 			"WORK reconvert #%ld: dom_to_box FAILED err=%d",

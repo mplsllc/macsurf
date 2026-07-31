@@ -1735,6 +1735,18 @@ void macsurf_qjs_emit_js_profile(void)
 		macos9_reconvert_sync_stats(&sf, &sd, &su);
 		macsurf_debug_log_writef(
 			"LIFE JSSYNC flush=%ld declined=%ld us=%ld", sf, sd, su);
+		/* fixes1095 (#265 Round C1) — and WHERE that `us` went. Round B
+		 * measured flush=2 us=3353022, i.e. ~1.7s per synchronous
+		 * reconvert, which exhausted the 2s budget and produced 522
+		 * further declines. Cost is now the blocker, and it is NOT
+		 * cascade/layout (PERFACC has those at 2.15s for the WHOLE
+		 * navigation while two flushes alone cost 3.35s) -- it is the
+		 * reconvert's own O(document) teardown and box construction.
+		 * Emitted next to JSSYNC so the two are read together. */
+		{
+			extern void html_reconvert_phase_report(void);
+			html_reconvert_phase_report();
+		}
 		/* fixes1075 — and WHY the declines happened. fixes1073's first
 		 * hardware log read `flush=0 declined=660` on hackaday, which
 		 * says the feature never ran but not which guard stopped it.
@@ -1773,6 +1785,10 @@ void macsurf_qjs_emit_js_profile(void)
 			g_geom_unstable = 0;
 		}
 		macos9_reconvert_sync_reset();
+		{	/* fixes1095 — per-navigation, like every counter here. */
+			extern void html_reconvert_phase_reset(void);
+			html_reconvert_phase_reset();
+		}
 	}
 	g_qjs_interrupts  = 0;
 	macsurf_qjs_ncalls = 0;
