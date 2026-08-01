@@ -385,6 +385,25 @@ extern int   memcmp(const void *, const void *, size_t);
 #define WITH_QUICKJS 1
 #endif
 
+/* fixes1107 (#265) — re-enable the window `load` event.
+ *
+ * fixes1022 quiesced this (html.c:1017) pending "the round that ships forced
+ * layout" (html.c:1011-1016), because firing `load` without it woke
+ * measure-then-mutate widgets (dotdotdot/slick) that got a stale layout and
+ * degraded the page. fixes1073 shipped that synchronous layout pass and is
+ * ON. js_fire_window_load itself (macsurf_qjs.c:10752) is idempotent per
+ * realm (__ms_load_fired) and already fires unconditionally today from a
+ * second, narrower site (fixes1090's reconvert-height-change hook at
+ * html.c:3310) — this define is what lets the REAL page-lifecycle site
+ * (html.c:1017, the READY->DONE transition once every subresource has
+ * settled) fire too, which is what pages that gate on `window.onload`
+ * directly (not through a reconvert) are waiting for. The harness has run
+ * with this ON unconditionally since fixes1023 (harness/Makefile:32,145);
+ * this only changes the Mac's default. */
+#ifndef MACSURF_JS_FIRE_LOAD
+#define MACSURF_JS_FIRE_LOAD 1
+#endif
+
 /* fixes305a: enable the file-backed diagnostic log channel by default.
  * macsurf_debug_log.c and macsurf_debug.c gate their real bodies on
  * MACSURF_DEBUG; without this define, macsurf_debug_log_init() is the
