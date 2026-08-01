@@ -159,8 +159,21 @@ double macsurf_qjs_get_now(void);
 #ifndef MACSURF_JS_GEOMETRY
 #define MACSURF_JS_GEOMETRY 1
 #endif
+/* fixes1108 (#265) — ON. Only macsurf_qjs_fire_scroll has a live call site
+ * (window.c:509-510, the single scroll choke point: arrow keys, scrollbar
+ * drag, core set_scroll, End, window.scrollTo all route through it). It
+ * already only dispatches on a real position CHANGE (the `moved` guard at
+ * window.c:504), carries its own leading+250ms-trailing debounce
+ * (g_scroll_last_us/g_scroll_trailing, macsurf_qjs.c:4271-4286), and is
+ * listener-gated (macsurf_qjs_event_type_live, fails OPEN when nothing is
+ * registered so an empty listener table costs nothing). macsurf_qjs_fire_resize
+ * has zero call sites anywhere in the tree, so this define does not newly
+ * activate resize dispatch on its own -- it only unblocks the scroll path,
+ * which fixes1011's real getBoundingClientRect() made load-bearing (a
+ * lazy-load `rect.top < innerHeight` check now answers truly and needs a
+ * real scroll event to re-fire). */
 #ifndef MACSURF_JS_VIEW_EVENTS
-#define MACSURF_JS_VIEW_EVENTS 0
+#define MACSURF_JS_VIEW_EVENTS 1
 #endif
 
 #ifndef MACSURF_JS_TIMEOUT_MS
