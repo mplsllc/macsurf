@@ -7639,6 +7639,32 @@ static void qjs_dom_install(JSContext *ctx)
 			"toggle:function(c,f){if(f===true)this.add(c);else if(f===false)this.remove(c);else if(this.contains(c))this.remove(c);else this.add(c);return this.contains(c);},"
 			"replace:function(o,n){this.remove(o);this.add(n);},"
 			"toString:function(){return attrs['class']||'';}};};"
+			/* fixes1112 (#265) -- THE FIX, proven on hardware first (fixes1111).
+			 *
+			 * appendChild/removeChild/insertBefore below used to set
+			 * c.parentNode via a PLAIN ASSIGNMENT. On a real element wrapper
+			 * parentNode is a getter-only accessor (~6121, no setter), so the
+			 * assignment silently no-ops in sloppy mode and a later read of
+			 * c.parentNode falls through to the REAL native getter, which
+			 * correctly reports the child was never attached to the real DOM
+			 * -- because it never was; only mkfb's own `kids` array knew
+			 * about it. Hardware, 68kmla.org (fixes1111's probe):
+			 * "mkfb.appendChild tag=BODY childtag=div real=1" immediately
+			 * preceded the "removeChild of null" throw every single time --
+			 * a REAL wrapper div appended into the fake body created before
+			 * <body> exists (preamble.min.js runs mid-parse; see the
+			 * "reconvert: defer" line at the identical timestamp).
+			 *
+			 * setPN mirrors the OTHER mock's already-working fix (fixes1002,
+			 * ~9084-9089): Object.defineProperty, not assignment, so it
+			 * shadows the getter-only accessor on real wrappers instead of
+			 * being swallowed by it. Also correct for a fake child (another
+			 * mkfb element, which has no accessor to fight -- defineProperty
+			 * behaves like a normal set there). */
+			"function setPN(c,v){if(!c)return;try{"
+			"Object.defineProperty(c,'parentNode',"
+			"{value:v,writable:true,configurable:true});"
+			"}catch(e){c.parentNode=v;}}"
 			"var el={nodeType:1,tagName:(tag||'div').toUpperCase(),"
 			"clientWidth:vw,clientHeight:vh,offsetWidth:vw,offsetHeight:vh,"
 			"scrollWidth:vw,scrollHeight:vh,scrollTop:0,scrollLeft:0,"
@@ -7648,25 +7674,13 @@ static void qjs_dom_install(JSContext *ctx)
 			"setAttribute:function(n,v){attrs[n]=String(v);},"
 			"removeAttribute:function(n){delete attrs[n];},"
 			"hasAttribute:function(n){return attrs[n]!==undefined;},"
-			/* fixes1111 (#265) -- WHICH child does the fake body's appendChild
-			 * actually receive? c.parentNode=this is a PLAIN ASSIGNMENT; on a
-			 * real element wrapper parentNode is a getter-only accessor
-			 * (macsurf_qjs.c ~6121, no setter), so this silently no-ops in
-			 * sloppy mode and c.parentNode reads back through the REAL native
-			 * getter afterward, which correctly reports the child was never
-			 * attached to the real DOM. Logging real=1/0 makes this provable
-			 * instead of inferred. */
-			"appendChild:function(c){if(c){"
-			"try{__msLife('mkfb.appendChild tag='+(this.tagName||'?')+"
-			"' childtag='+(c.tagName||'?')+' real='+"
-			"(typeof c.__getParentNode==='function'?1:0));}catch(e){}"
-			"c.parentNode=this;kids.push(c);"
+			"appendChild:function(c){if(c){setPN(c,this);kids.push(c);"
 			"this.firstChild=kids[0];this.lastChild=kids[kids.length-1];}return c;},"
 			"removeChild:function(c){var i=kids.indexOf(c);if(i>=0){kids.splice(i,1);"
-			"if(c)c.parentNode=null;this.firstChild=kids[0]||null;"
+			"setPN(c,null);this.firstChild=kids[0]||null;"
 			"this.lastChild=kids[kids.length-1]||null;}return c;},"
 			"insertBefore:function(c,r){var i=kids.indexOf(r);"
-			"if(i<0)i=kids.length;kids.splice(i,0,c);if(c)c.parentNode=this;"
+			"if(i<0)i=kids.length;kids.splice(i,0,c);setPN(c,this);"
 			"this.firstChild=kids[0]||null;this.lastChild=kids[kids.length-1]||null;return c;},"
 			"contains:function(){return false;},"
 			"addEventListener:function(){},removeEventListener:function(){},"
