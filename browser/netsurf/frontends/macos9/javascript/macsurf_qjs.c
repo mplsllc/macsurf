@@ -2937,9 +2937,32 @@ static JSValue qjs_el_get_parent_node_data(JSContext *ctx,
 		}
 		macsurf_dom_node_get_parent_node((dom_node *)el, &parent);
 		if (parent == NULL) {
-			if (pn_logged < 8) { pn_logged++;
-				macsurf_debug_log_write(
-					"LIFE parentNode NULL why=parent (not attached)"); }
+			if (pn_logged < 8) {
+				/* fixes1109 (#265) -- WHICH node has no parent, and what
+				 * tag is it? el is the wrapper's underlying dom_element,
+				 * the same pointer identity appendChild's own qjs_get_node
+				 * resolves for its child argument -- if a later reconvert
+				 * or GC has freed/reused it, this pointer alone will not
+				 * prove that, but the tag name pins down WHAT was being
+				 * asked about (hiddenscroll's probe div vs something
+				 * else), which the prior bare log line could not. */
+				char tagbuf[24];
+				dom_string *tn = NULL;
+				pn_logged++;
+				tagbuf[0] = '\0';
+				if (macsurf_dom_element_get_tag_name(el, &tn) == DOM_NO_ERR
+						&& tn != NULL) {
+					const char *ts = dom_string_data(tn);
+					size_t i;
+					for (i = 0; i < sizeof(tagbuf) - 1 && ts[i]; i++)
+						tagbuf[i] = ts[i];
+					tagbuf[i] = '\0';
+					macsurf_dom_string_unref(tn);
+				}
+				macsurf_debug_log_writef(
+					"LIFE parentNode NULL why=parent (not attached) "
+					"el=%p tag=%s", (void *)el, tagbuf);
+			}
 			return JS_NULL;
 		}
 		macsurf_dom_node_get_node_type(parent, &ntype);
