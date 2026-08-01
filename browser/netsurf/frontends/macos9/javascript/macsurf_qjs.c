@@ -2426,6 +2426,13 @@ static long g_evmiss_audit = 60;
 static long g_evfire_audit = 300;
 static long g_mslife_audit = 250;
 extern long g_geom_audit; /* defined below, near the metric accessors */
+/* fixes1110 -- parentNode "not attached" diagnostic budget (fixes1004,
+ * tag name added fixes1109). Was a function-local `static int`, so the cap
+ * was PROCESS-lifetime: hackaday's 8 fires exhausted it before 68kmla ever
+ * loaded in the same session, and the 68kmla-specific tag was never seen.
+ * Reset alongside the other audit budgets in macsurf_qjs_audit_reset() so
+ * every navigation gets its own 8. */
+static int g_pn_logged = 0;
 
 /* fixes1016 -- refill every audit budget at each new JS realm (= each
  * navigation), so page 2 and the iframes are audited too; the fixes1015
@@ -2500,6 +2507,7 @@ void macsurf_qjs_audit_reset(void)
 #else
 	g_rm_audit_budget = 0;
 #endif
+	g_pn_logged = 0; /* fixes1110 — per-navigation, not per-process */
 }
 
 static void qjs_mut_audit(const char *op, dom_node *target,
@@ -2927,17 +2935,16 @@ static JSValue qjs_el_get_parent_node_data(JSContext *ctx,
 	 * Guessing a third time is worse than asking. Capped so a page that
 	 * legitimately reads parentNode on detached nodes cannot flood. */
 	{
-		static int pn_logged = 0;
 		el = (dom_element *)qjs_get_node(func_data[0]);
 		if (el == NULL) {
-			if (pn_logged < 8) { pn_logged++;
+			if (g_pn_logged < 8) { g_pn_logged++;
 				macsurf_debug_log_write(
 					"LIFE parentNode NULL why=node"); }
 			return JS_NULL;
 		}
 		macsurf_dom_node_get_parent_node((dom_node *)el, &parent);
 		if (parent == NULL) {
-			if (pn_logged < 8) {
+			if (g_pn_logged < 8) {
 				/* fixes1109 (#265) -- WHICH node has no parent, and what
 				 * tag is it? el is the wrapper's underlying dom_element,
 				 * the same pointer identity appendChild's own qjs_get_node
@@ -2948,7 +2955,7 @@ static JSValue qjs_el_get_parent_node_data(JSContext *ctx,
 				 * else), which the prior bare log line could not. */
 				char tagbuf[24];
 				dom_string *tn = NULL;
-				pn_logged++;
+				g_pn_logged++;
 				tagbuf[0] = '\0';
 				if (macsurf_dom_element_get_tag_name(el, &tn) == DOM_NO_ERR
 						&& tn != NULL) {
@@ -2967,7 +2974,7 @@ static JSValue qjs_el_get_parent_node_data(JSContext *ctx,
 		}
 		macsurf_dom_node_get_node_type(parent, &ntype);
 		if (ntype != 1) {
-			if (pn_logged < 8) { pn_logged++;
+			if (g_pn_logged < 8) { g_pn_logged++;
 				macsurf_debug_log_writef(
 					"LIFE parentNode NULL why=type ntype=%d",
 					(int)ntype); }
