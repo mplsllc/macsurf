@@ -7648,7 +7648,19 @@ static void qjs_dom_install(JSContext *ctx)
 			"setAttribute:function(n,v){attrs[n]=String(v);},"
 			"removeAttribute:function(n){delete attrs[n];},"
 			"hasAttribute:function(n){return attrs[n]!==undefined;},"
-			"appendChild:function(c){if(c){c.parentNode=this;kids.push(c);"
+			/* fixes1111 (#265) -- WHICH child does the fake body's appendChild
+			 * actually receive? c.parentNode=this is a PLAIN ASSIGNMENT; on a
+			 * real element wrapper parentNode is a getter-only accessor
+			 * (macsurf_qjs.c ~6121, no setter), so this silently no-ops in
+			 * sloppy mode and c.parentNode reads back through the REAL native
+			 * getter afterward, which correctly reports the child was never
+			 * attached to the real DOM. Logging real=1/0 makes this provable
+			 * instead of inferred. */
+			"appendChild:function(c){if(c){"
+			"try{__msLife('mkfb.appendChild tag='+(this.tagName||'?')+"
+			"' childtag='+(c.tagName||'?')+' real='+"
+			"(typeof c.__getParentNode==='function'?1:0));}catch(e){}"
+			"c.parentNode=this;kids.push(c);"
 			"this.firstChild=kids[0];this.lastChild=kids[kids.length-1];}return c;},"
 			"removeChild:function(c){var i=kids.indexOf(c);if(i>=0){kids.splice(i,1);"
 			"if(c)c.parentNode=null;this.firstChild=kids[0]||null;"
@@ -7691,7 +7703,9 @@ static void qjs_dom_install(JSContext *ctx)
 			"if(!_fbHtml)_fbHtml=mkfb('html');return _fbHtml;}});"
 			"Object.defineProperty(d,'body',{configurable:true,"
 			"get:function(){var n=d.__getBody();if(n)return n;"
-			"if(!_fbBody)_fbBody=mkfb('body');return _fbBody;}});"
+			"if(!_fbBody){try{__msLife('document.body fell back to mkfb "
+			"(no real body yet)');}catch(e){}_fbBody=mkfb('body');}"
+			"return _fbBody;}});"
 			"Object.defineProperty(d,'head',{configurable:true,"
 			"get:function(){var n=d.__getHead();if(n)return n;"
 			"if(!_fbHead)_fbHead=mkfb('head');return _fbHead;}});"
