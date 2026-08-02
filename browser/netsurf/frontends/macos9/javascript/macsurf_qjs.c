@@ -7665,10 +7665,25 @@ static void qjs_dom_install(JSContext *ctx)
 			"Object.defineProperty(c,'parentNode',"
 			"{value:v,writable:true,configurable:true});"
 			"}catch(e){c.parentNode=v;}}"
+			/* fixes1113 (#265) -- the SECOND throw right behind fixes1112's
+			 * fix, hardware-confirmed same session: "cannot read property
+			 * 'fake' of undefined" at preamble.min.js's cleanup helper `c()`,
+			 * which unconditionally reads `f.body.dataset.fake`. mkfb had no
+			 * `dataset` at all -- real wrapper elements get one via a
+			 * getter/proxy (~3680), but nothing gave mkfb's fake elements
+			 * the property real code assumes every element has. A plain
+			 * object is correct here (not the getter/proxy machinery real
+			 * elements need): mkfb elements are short-lived JS-only mocks,
+			 * nothing else in this file reads or writes their dataset, and
+			 * `dataset.fake` reading `undefined` (falsy) instead of throwing
+			 * is exactly right -- the fake-body-creation branch that would
+			 * have set dataset.fake='true' never runs anyway (document.body
+			 * already resolves truthy via mkfb itself, short-circuiting
+			 * that branch, same shape as the fixes1112 root cause). */
 			"var el={nodeType:1,tagName:(tag||'div').toUpperCase(),"
 			"clientWidth:vw,clientHeight:vh,offsetWidth:vw,offsetHeight:vh,"
 			"scrollWidth:vw,scrollHeight:vh,scrollTop:0,scrollLeft:0,"
-			"offsetTop:0,offsetLeft:0,style:{},parentNode:null,"
+			"offsetTop:0,offsetLeft:0,style:{},parentNode:null,dataset:{},"
 			"childNodes:kids,firstChild:null,lastChild:null,"
 			"getAttribute:function(n){return attrs[n]!==undefined?attrs[n]:null;},"
 			"setAttribute:function(n,v){attrs[n]=String(v);},"
