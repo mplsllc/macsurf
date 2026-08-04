@@ -1405,6 +1405,7 @@ static void macos9_handle_activate(const EventRecord *event) {
 
 void macos9_poll(void) {
 	EventRecord ev;
+	{ static int _once=0; if(!_once){_once=1;SysBeep(4);} }  /* Retro68: 4 beeps = loop entered */
 	/* fixes937 (OS X tier 1b): one-shot proof that the event loop was
 	 * actually REACHED. Everything between InitOT and here is otherwise
 	 * invisible in a shipped build -- the per-milestone MS_LOGs are now
@@ -1954,6 +1955,7 @@ int main(void) {
 		(long)FreeMem(), (long)MaxBlock());
 #endif
 	netsurf_init(NULL);
+	SysBeep(3);  /* Retro68: 3 beeps = netsurf_init done */
 	MS_LOG("BOOT netsurf_init done");
 	/* fixes721b — MacSurf loads no Messages file, so core message tokens
 	 * render as the raw token (e.g. an <input type=file> showed a white box
@@ -2023,6 +2025,19 @@ int main(void) {
 		}
 	}
 	MS_LOG("BOOT initial window created");
+		/* Retro68: check window list, set title, stall 3s */
+		{
+			WindowRef fw = FrontWindow();
+			if (macos9_window_list_head() != NULL) {
+				SysBeep(1);  /* single = window registered */
+				if (fw) {
+					SetWTitle(fw, "\pMS: post-create");
+					{ EventRecord e; WaitNextEvent(0, &e, 30, NULL); }
+				}
+			} else {
+				SysBeep(1); SysBeep(1); SysBeep(1);  /* triple = list empty */
+			}
+		}
 #ifdef __MACOS9__
 	macsurf_debug_log_writef("DIAG post-window: free=%ld maxblk=%ld",
 		(long)FreeMem(), (long)MaxBlock());
