@@ -1,0 +1,2 @@
+/home/patrick/Retro68/toolchain/bin/powerpc-apple-macos-ar qc libmacsurf_quickjs.a CMakeFiles/macsurf_quickjs.dir/browser/libquickjs/dtoa.c.obj CMakeFiles/macsurf_quickjs.dir/browser/libquickjs/libregexp.c.obj CMakeFiles/macsurf_quickjs.dir/browser/libquickjs/libunicode.c.obj CMakeFiles/macsurf_quickjs.dir/browser/libquickjs/quickjs.c.obj
+/home/patrick/Retro68/toolchain/bin/powerpc-apple-macos-ranlib libmacsurf_quickjs.a

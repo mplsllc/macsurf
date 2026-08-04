@@ -1,0 +1,2 @@
+/home/patrick/Retro68/toolchain/bin/powerpc-apple-macos-ar qc libmacsurf_wapcaplet.a CMakeFiles/macsurf_wapcaplet.dir/browser/libwapcaplet/src/libwapcaplet.c.obj
+/home/patrick/Retro68/toolchain/bin/powerpc-apple-macos-ranlib libmacsurf_wapcaplet.a

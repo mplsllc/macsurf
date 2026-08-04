@@ -1,0 +1,2 @@
+/home/patrick/Retro68/toolchain/bin/powerpc-apple-macos-ar qc libmacsurf_nsbmp.a CMakeFiles/macsurf_nsbmp.dir/browser/libnsbmp/src/libnsbmp.c.obj
+/home/patrick/Retro68/toolchain/bin/powerpc-apple-macos-ranlib libmacsurf_nsbmp.a

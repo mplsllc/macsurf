@@ -1,0 +1,17 @@
+/home/patrick/Webs/macsurf/build2/CMakeFiles/macsurf_parserutils.dir
+/home/patrick/Webs/macsurf/build2/CMakeFiles/macsurf_hubbub.dir
+/home/patrick/Webs/macsurf/build2/CMakeFiles/macsurf_wapcaplet.dir
+/home/patrick/Webs/macsurf/build2/CMakeFiles/macsurf_nsbmp.dir
+/home/patrick/Webs/macsurf/build2/CMakeFiles/macsurf_nsgif.dir
+/home/patrick/Webs/macsurf/build2/CMakeFiles/macsurf_css.dir
+/home/patrick/Webs/macsurf/build2/CMakeFiles/macsurf_dom.dir
+/home/patrick/Webs/macsurf/build2/CMakeFiles/macsurf_quickjs.dir
+/home/patrick/Webs/macsurf/build2/CMakeFiles/macsurf_bearssl.dir
+/home/patrick/Webs/macsurf/build2/CMakeFiles/macsurf_mactls.dir
+/home/patrick/Webs/macsurf/build2/CMakeFiles/macsurf_netsurf_utils.dir
+/home/patrick/Webs/macsurf/build2/CMakeFiles/macsurf_netsurf_content.dir
+/home/patrick/Webs/macsurf/build2/CMakeFiles/macsurf_netsurf_desktop.dir
+/home/patrick/Webs/macsurf/build2/CMakeFiles/MacSurf.dir
+/home/patrick/Webs/macsurf/build2/CMakeFiles/MacSurf_APPL.dir
+/home/patrick/Webs/macsurf/build2/CMakeFiles/edit_cache.dir
+/home/patrick/Webs/macsurf/build2/CMakeFiles/rebuild_cache.dir

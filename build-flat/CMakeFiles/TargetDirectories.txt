@@ -1,0 +1,4 @@
+/home/patrick/Webs/macsurf/build-flat/CMakeFiles/MacSurf.dir
+/home/patrick/Webs/macsurf/build-flat/CMakeFiles/MacSurf_APPL.dir
+/home/patrick/Webs/macsurf/build-flat/CMakeFiles/edit_cache.dir
+/home/patrick/Webs/macsurf/build-flat/CMakeFiles/rebuild_cache.dir

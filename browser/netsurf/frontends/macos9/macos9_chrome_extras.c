@@ -34,7 +34,9 @@
 #include "manager_icons_data.h" /* fixes745 — History/Bookmark banner icons */
 
 #ifdef __MACOS9__
+#ifndef __RETRO68__
 #include <Carbon.h>
+#endif
 #endif
 
 extern struct browser_window *macos9_gw_bw(struct gui_window *g);

@@ -11,7 +11,9 @@
 
 /* true/false come from MacTypes.h as enum constants */
 #ifndef bool
+#ifndef __RETRO68__
 typedef unsigned char bool;
+#endif
 #endif
 
 /*

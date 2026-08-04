@@ -296,3 +296,8 @@ short InstallConsole(short fd)        { (void)fd; return 0; }
 void  RemoveConsole(void)             { }
 long  WriteCharsToConsole(char *buf, long n) { (void)buf; return n; }
 long  ReadCharsFromConsole(char *buf, long n) { (void)buf; (void)n; return 0; }
+
+/* Retro68 stubs for excluded desktop/ files */
+#include "netsurf/misc.h"
+nserror save_pdf(const char *path) { (void)path; return NSERROR_NOT_IMPLEMENTED; }
+struct gui_file_table *default_file_table = NULL;

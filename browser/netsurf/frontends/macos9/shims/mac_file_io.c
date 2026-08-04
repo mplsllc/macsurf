@@ -9,10 +9,15 @@
 #include "mac_file_io.h"
 #include <stdarg.h>
 #include <string.h>
+#include <fcntl.h>
 
 #ifdef __MACOS9__
 #include <Files.h>
 #include <TextUtils.h>
+#endif
+#ifdef __RETRO68__
+#include <Files.h>
+#include <Errors.h>
 #endif
 
 #define MAC_FD_SLOT_FREE 0
@@ -117,7 +122,7 @@ int mac_open(const char *path, int flags, ...)
 
 	/* Handle O_TRUNC */
 	if (flags & O_TRUNC) {
-		FSSetForkSize(refnum, fsFromStart, 0);
+		FSSetForkSize(refnum, fsFromStart, (ByteCount)0);
 	}
 
 	fd = fd_alloc();

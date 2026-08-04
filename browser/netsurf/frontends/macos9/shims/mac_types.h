@@ -175,7 +175,9 @@ size_t		mac_strftime(char *s, size_t max, const char *fmt,
 #endif
 
 #ifndef bool
+#ifndef __RETRO68__
 typedef unsigned char bool;
+#endif
 #endif
 
 /* On non-Mac hosts (Linux cross-check), provide true/false if

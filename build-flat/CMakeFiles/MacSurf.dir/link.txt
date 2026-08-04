@@ -1,0 +1,1 @@
+/home/patrick/Retro68/toolchain/bin/powerpc-apple-macos-gcc -carbon -Wl,-gc-sections @CMakeFiles/MacSurf.dir/objects1.rsp -o MacSurf.xcoff  -lm 

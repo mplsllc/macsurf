@@ -169,6 +169,92 @@ void macsurf_assert_failed_(const char *expr, const char *file, int line);
 #include <stdlib.h>
 #include <stdio.h>
 
+#ifdef __RETRO68__
+/* Include <time.h> early and lock time_t to prevent conflicts with
+ * sys/_timespec.h (pulled in by signal.h in netsurf.c). */
+#include <time.h>
+#ifndef __time_t_defined
+#define __time_t_defined
+#endif
+#ifndef _TIME_T_DECLARED
+#define _TIME_T_DECLARED
+#endif
+/* Suppress 17 CG headers + fp.h */
+#ifndef __CGAFFINETRANSFORM__
+#define __CGAFFINETRANSFORM__
+#endif
+#ifndef __CGBASE__
+#define __CGBASE__
+#endif
+#ifndef __CGBITMAPCONTEXT__
+#define __CGBITMAPCONTEXT__
+#endif
+#ifndef __CGCOLORSPACE__
+#define __CGCOLORSPACE__
+#endif
+#ifndef __CGCONTEXT__
+#define __CGCONTEXT__
+#endif
+#ifndef __CGDATACONSUMER__
+#define __CGDATACONSUMER__
+#endif
+#ifndef __CGDATAPROVIDER__
+#define __CGDATAPROVIDER__
+#endif
+#ifndef __CGDIRECTDISPLAY__
+#define __CGDIRECTDISPLAY__
+#endif
+#ifndef __CGDIRECTPALETTE__
+#define __CGDIRECTPALETTE__
+#endif
+#ifndef __CGERROR__
+#define __CGERROR__
+#endif
+#ifndef __CGFONT__
+#define __CGFONT__
+#endif
+#ifndef __CGGEOMETRY__
+#define __CGGEOMETRY__
+#endif
+#ifndef __CGIMAGE__
+#define __CGIMAGE__
+#endif
+#ifndef __CGPDFCONTEXT__
+#define __CGPDFCONTEXT__
+#endif
+#ifndef __CGPDFDOCUMENT__
+#define __CGPDFDOCUMENT__
+#endif
+#ifndef __CGREMOTEOPERATION__
+#define __CGREMOTEOPERATION__
+#endif
+#ifndef __CGWINDOWLEVEL__
+#define __CGWINDOWLEVEL__
+#endif
+#ifndef __COREGRAPHICS__
+#define __COREGRAPHICS__
+#endif
+#ifndef __FP__
+#define __FP__
+#endif
+typedef void * CGContextRef;
+typedef void * CGColorSpaceRef;
+typedef void * CGImageRef;
+/* Universal MacTypes for UnsignedWide, Point, Boolean, etc. */
+#include "/home/patrick/Retro68/toolchain/universal/CIncludes/MacTypes.h"
+extern void Microseconds(UnsignedWide *tickCount);
+/* newlib lacks iconv */
+typedef void *iconv_t;
+static iconv_t iconv_open_(const char *t, const char *f) { (void)t;(void)f; return (iconv_t)-1; }
+static size_t iconv_(iconv_t cd, char **ib, size_t *il, char **ob, size_t *ol)
+    { (void)cd;(void)ib;(void)il;(void)ob;(void)ol; return (size_t)-1; }
+static int iconv_close_(iconv_t cd) { (void)cd; return -1; }
+#define iconv_open iconv_open_
+#define iconv iconv_
+#define iconv_close iconv_close_
+#endif /* __RETRO68__ */
+
+
 /* Bulletproof allocator intercept -- prevents NULL-write-to-$0000
  * crash on fragmented heaps. Must come AFTER <stdlib.h> so MSL's
  * declarations parse before the macros rename the symbols.
@@ -279,9 +365,6 @@ typedef bool(nslog_ensure_t)(FILE *fptr);
 #define restrict
 #endif
 
-#ifndef isascii
-#define isascii(c) ((unsigned)(c) <= 0x7F)
-#endif
 
 /* MSL <string.h> is sometimes shadowed by internal lib string.h on the
  * user access paths. Forward-declare the standard string routines so
@@ -324,8 +407,20 @@ extern int   memcmp(const void *, const void *, size_t);
 #ifndef N_ELEMENTS
 #define N_ELEMENTS(x) (sizeof((x)) / sizeof((x)[0]))
 #endif
+#ifndef SLEN
+#define SLEN(x) (sizeof((x)) - 1)
+#endif
 #ifndef NOF_ELEMENTS
 #define NOF_ELEMENTS(x) (sizeof((x)) / sizeof((x)[0]))
+#endif
+#ifndef SIZE_MAX
+#define SIZE_MAX ((size_t)-1)
+#endif
+#ifndef UINT32_MAX
+#define UINT32_MAX 0xffffffffUL
+#endif
+#ifndef INT64_MIN
+#define INT64_MIN (-INT64_MAX-1)
 #endif
 #ifndef UNUSED
 #define UNUSED(x) ((void)(x))
@@ -341,9 +436,6 @@ extern int   memcmp(const void *, const void *, size_t);
 /* fallthrough — defined in netsurf/utils/utils.h with C++/C2x detection,
  * but on CW8 the wrong utils.h often wins and fallthrough stays undefined.
  * Make it a harmless no-op globally. */
-#ifndef fallthrough
-#define fallthrough do {} while(0)
-#endif
 
 /* netsurf/inttypes.h's PRI* macros sometimes don't reach every TU.
  * Provide CW8-compatible fallbacks (no z/Z modifiers — CW8 MSL printf

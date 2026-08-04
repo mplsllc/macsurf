@@ -1,0 +1,174 @@
+/* -----------------------------------------------------------------------
+ * MacSurf.r — Rez source for the MacSurf Classic Mac OS application
+ *
+ * What this file describes (in order):
+ *   'carb' (0)       — CarbonLib loader marker. Required, even though the
+ *                      resource itself carries zero bytes. Without it CFM
+ *                      treats the binary as classic PEF and CarbonLib
+ *                      never loads, so any *InContext OT call crashes.
+ *
+ *   'plst' (0)       — resource-fork Info.plist (fixes936). Gives the CFM
+ *                      binary a CFBundle identity under Mac OS X 10.0-10.4
+ *                      LaunchServices (Dock name, doc/URL claims). Ignored
+ *                      by OS 9; coexists with 'carb'.
+ *
+ *   icon family at ID 128
+ *     ICN# (128)     — 32x32 1-bit icon + 1-bit mask
+ *     icl4 (128)     — 32x32 4-bit colour
+ *     icl8 (128)     — 32x32 8-bit colour
+ *     ics# (128)     — 16x16 1-bit small icon + mask
+ *     ics4 (128)     — 16x16 4-bit small colour
+ *     ics8 (128)     — 16x16 8-bit small colour
+ *
+ *   FREF (128)       — file type 'APPL' mapped to icon local-ID 0
+ *   BNDL (128)       — creator 'MPLS' binding ICN# 128 + FREF 128
+ *
+ * Build paths:
+ *   * Mac side (Rez under CodeWarrior 8): MacSurf.r is the canonical
+ *     source.  This file #includes MacSurfIcon.r which carries the
+ *     data blocks generated from puffpuff.png.
+ *   * Linux cross-build: tools/png_to_mac_icon_rez.py emits a binary
+ *     MacSurf.rsrc fork directly. Both paths produce the same set of
+ *     resources; keep MacSurf.r and MacSurf.rsrc in sync by running
+ *     the script after editing puffpuff.png.
+ *
+ * Creator code is uppercase 'MPLS'. Classic Mac type/creator codes
+ * are case-sensitive; do not change this to 'mpls' or similar.
+ * ----------------------------------------------------------------------- */
+
+#include "Types.r"
+
+/* 'carb' resource type. The CarbonLib loader looks up this type by
+ * name only; the resource has no payload.  Keeping the type local
+ * (rather than relying on a system .r) avoids a build dependency on
+ * CarbonAccessors.r / SysTypes.r in the CW8 install. */
+type 'carb' {};
+
+resource 'carb' (0) {};
+
+/* 'plst' (0) — resource-fork Info.plist (fixes936, OS X tier 1). Mac OS X
+ * 10.0-10.4 launches this CFM/PEF binary natively via LaunchCFMApp; 'carb'
+ * above is enough for it to be recognised as Carbon rather than punted to
+ * Classic, but WITHOUT a 'plst' the app has no CFBundle identity, so
+ * LaunchServices gives it no Dock name, no document-type binding and no
+ * URL-scheme claim. 'plst' (0) supersedes 'carb' (0) on OS X and the two
+ * coexist, so shipping both keeps OS 9 and OS X correct from one artifact.
+ *
+ * The type is declared locally for the same reason as 'carb'/'vers' below.
+ * 'data' emits the raw bytes with no length prefix or terminator, which is
+ * what LaunchServices expects.
+ *
+ * No CFBundleIconFile: that key names an .icns inside a bundle and an
+ * unbundled CFM app has nowhere to put one, so the Dock shows the name but a
+ * generic icon. The ICN#/icl8 family still drives the Finder icon on OS 9.
+ *
+ * As with 'vers', the app build LINKS the binary MacSurf.rsrc (no Rez step),
+ * so this is the canonical record — regenerate both with
+ * tools/png_to_mac_icon_rez.py. */
+data 'plst' (0) {
+	"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+	"<!DOCTYPE plist PUBLIC \"-//Apple Computer//DTD PLIST 1.0//EN\" "
+	"\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+	"<plist version=\"1.0\">\n"
+	"<dict>\n"
+	"\t<key>CFBundleName</key>\n"
+	"\t<string>MacSurf</string>\n"
+	"\t<key>CFBundleIdentifier</key>\n"
+	"\t<string>org.macsurf.MacSurf</string>\n"
+	"\t<key>CFBundleVersion</key>\n"
+	"\t<string>2.0.5</string>\n"
+	"\t<key>CFBundleShortVersionString</key>\n"
+	"\t<string>2.0.5</string>\n"
+	"\t<key>CFBundleSignature</key>\n"
+	"\t<string>MPLS</string>\n"
+	"\t<key>CFBundlePackageType</key>\n"
+	"\t<string>APPL</string>\n"
+	"\t<key>CFBundleInfoDictionaryVersion</key>\n"
+	"\t<string>6.0</string>\n"
+	"</dict>\n"
+	"</plist>\n"
+};
+
+/* 'vers' (1) + (2) — Finder "Get Info" version (#219). Without a 'vers' (1)
+ * Get Info shows "N/A". The type is defined locally (like 'carb' above) to
+ * avoid a SysTypes.r build dependency. The app build LINKS the binary
+ * MacSurf.rsrc (no Rez step), so this is the canonical record — regenerate
+ * both with tools/png_to_mac_icon_rez.py --version <x>. */
+type 'vers' {
+	hex byte;                              /* major revision, BCD          */
+	hex byte;                              /* minor + bugfix, BCD          */
+	hex byte  development = 0x20,          /* release stage                */
+	          alpha = 0x40, beta = 0x60,
+	          final = 0x80, release = 0x80;
+	hex byte;                              /* non-release revision         */
+	integer   verUS = 0;                   /* region code                  */
+	pstring;                               /* short version string         */
+	pstring;                               /* long "Get Info" string       */
+};
+
+resource 'vers' (1) {
+	0x02, 0x05, final, 0x00, verUS,
+	"2.0.5",
+	"MacSurf 2.0.5"
+};
+
+resource 'vers' (2) {
+	0x02, 0x05, final, 0x00, verUS,
+	"2.0.5",
+	"MacSurf 2.0.5"
+};
+
+/* ── Retro68 overrides ───────────────────────────────────────────────
+ * The Retro68 template (RetroCarbonAPPL.r) provides default SIZE and
+ * cfrg resources with conservative values (1 MB heap, 0 stack = 64 KB
+ * default). MacSurf needs much larger heap and stack. These OVERRIDE the
+ * template because they come after it on the Rez command line.
+ *
+ * SIZE:  192 MB preferred / 128 MB minimum (matches CW8 project).
+ *        On OS X this is a request; the system may grant less.
+ * cfrg:  2 MB stack. QuickJS and the CSS cascade use deep call stacks.
+ *        The default 64 KB overflows during startup of a 3 MB binary. */
+
+/* ── Retro68 SIZE + cfrg ─────────────────────────────────────────────
+ * Match the CW8 project's validated partition: 224 MB pref / 128 MB
+ * minimum / 16 MB stack. Source: CLAUDE.md + project_partition_lean_sizing.
+ * The Retro68 template defaults (1 MB heap, 64 KB stack) are fatal for
+ * a 5 MB binary with QuickJS + libcss. */
+
+resource 'SIZE' (-1) {
+	reserved,
+	acceptSuspendResumeEvents,
+	reserved,
+	canBackground,
+	doesActivateOnFGSwitch,
+	backgroundAndForeground,
+	dontGetFrontClicks,
+	ignoreChildDiedEvents,
+	is32BitCompatible,
+	isHighLevelEventAware,
+	onlyLocalHLEvents,
+	notStationeryAware,
+	dontUseTextEditServices,
+	reserved,
+	reserved,
+	reserved,
+	224 * 1024 * 1024,    /* preferred: 224 MB */
+	128 * 1024 * 1024     /* minimum: 128 MB */
+};
+
+resource 'cfrg' (0) {
+	{
+		kPowerPCCFragArch,
+		kIsCompleteCFrag,
+		kNoVersionNum, kNoVersionNum,
+		16 * 1024 * 1024,   /* 16 MB stack (matches CW8) */
+		kNoAppSubFolder,
+		kApplicationCFrag,
+		kDataForkCFragLocator, kZeroOffset, kCFragGoesToEOF,
+		"MacSurf Retro68"
+	}
+};
+
+/* Icon family data blocks from MacSurfIcon.r. FREF and BNDL as raw hex
+ * because Retro68 Rez doesn't support these complex type definitions. */
+#include "MacSurfIcon.r"

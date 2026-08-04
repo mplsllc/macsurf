@@ -1,0 +1,6 @@
+# Hashes of file build rules.
+346b79d3542b3d990e8e2e04046cf485 CMakeFiles/MacSurf_APPL
+3d4c6210a1f161c2831e812907b2047e MacSurf.bin
+5a869d9ab146ba7e54b1f71cea3dabdf MacSurf.pef
+0c9fa104d8f87619058f765682474be4 MacSurf.r.rsrc.bin
+e8641e88e3916fd14973568953192cbf MacSurfIcon.r.rsrc.bin

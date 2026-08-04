@@ -1,0 +1,212 @@
+
+---
+events:
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/CMakeDetermineSystem.cmake:228 (message)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      The target system is: RetroCarbon - 1 - 
+      The host system is: Linux - 6.8.0-101-generic - x86_64
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "/usr/share/cmake-3.28/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "/usr/share/cmake-3.28/Modules/CMakeDetermineCCompiler.cmake:123 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Compiling the C compiler identification source file "CMakeCCompilerId.c" succeeded.
+      Compiler: /home/patrick/Retro68/toolchain/bin/powerpc-apple-macos-gcc 
+      Build flags: 
+      Id flags:  
+      
+      The output was:
+      0
+      
+      
+      Compilation of the C compiler identification source "CMakeCCompilerId.c" produced "a.out"
+      
+      The C compiler identification is GNU, found in:
+        /home/patrick/Webs/macsurf/build3/CMakeFiles/3.28.3/CompilerIdC/a.out
+      
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/CMakeDetermineCompilerABI.cmake:57 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    checks:
+      - "Detecting C compiler ABI info"
+    directories:
+      source: "/home/patrick/Webs/macsurf/build3/CMakeFiles/CMakeScratch/TryCompile-aQAFPk"
+      binary: "/home/patrick/Webs/macsurf/build3/CMakeFiles/CMakeScratch/TryCompile-aQAFPk"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: "-carbon"
+      CMAKE_MODULE_PATH: "/home/patrick/Retro68/toolchain/powerpc-apple-macos/cmake;/home/patrick/Retro68/toolchain/powerpc-apple-macos/cmake"
+    buildResult:
+      variable: "CMAKE_C_ABI_COMPILED"
+      cached: true
+      stdout: |
+        Change Dir: '/home/patrick/Webs/macsurf/build3/CMakeFiles/CMakeScratch/TryCompile-aQAFPk'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_a037b/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_a037b.dir/build.make CMakeFiles/cmTC_a037b.dir/build
+        gmake[1]: Entering directory '/home/patrick/Webs/macsurf/build3/CMakeFiles/CMakeScratch/TryCompile-aQAFPk'
+        Building C object CMakeFiles/cmTC_a037b.dir/CMakeCCompilerABI.c.obj
+        /home/patrick/Retro68/toolchain/bin/powerpc-apple-macos-gcc -DTARGET_API_MAC_CARBON=1  -v -o CMakeFiles/cmTC_a037b.dir/CMakeCCompilerABI.c.obj -c /usr/share/cmake-3.28/Modules/CMakeCCompilerABI.c
+        Using built-in specs.
+        COLLECT_GCC=/home/patrick/Retro68/toolchain/bin/powerpc-apple-macos-gcc
+        Target: powerpc-apple-macos
+        Configured with: /home/patrick/Retro68/gcc/configure --target=powerpc-apple-macos --prefix=/home/patrick/Retro68/toolchain --enable-languages=c,c++ --disable-libssp --disable-lto MAKEINFO=missing
+        Thread model: aix
+        Supported LTO compression algorithms: zlib zstd
+        gcc version 12.2.0 (GCC) 
+        COLLECT_GCC_OPTIONS='-D' 'TARGET_API_MAC_CARBON=1' '-v' '-o' 'CMakeFiles/cmTC_a037b.dir/CMakeCCompilerABI.c.obj' '-c' '-dumpdir' 'CMakeFiles/cmTC_a037b.dir/'
+         /home/patrick/Retro68/toolchain/libexec/gcc/powerpc-apple-macos/12.2.0/cc1 -quiet -v -Wno-trigraphs -D TARGET_API_MAC_CARBON=1 /usr/share/cmake-3.28/Modules/CMakeCCompilerABI.c -quiet -dumpdir CMakeFiles/cmTC_a037b.dir/ -dumpbase CMakeCCompilerABI.c.c -dumpbase-ext .c -version -o /tmp/cc7EoJFa.s
+        GNU C17 (GCC) version 12.2.0 (powerpc-apple-macos)
+        	compiled by GNU C version 13.3.0, GMP version 6.3.0, MPFR version 4.2.1, MPC version 1.3.1, isl version none
+        GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
+        ignoring nonexistent directory "/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/sys-include"
+        #include "..." search starts here:
+        #include <...> search starts here:
+         /home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/include
+         /home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/include-fixed
+         /home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/include
+        End of search list.
+        GNU C17 (GCC) version 12.2.0 (powerpc-apple-macos)
+        	compiled by GNU C version 13.3.0, GMP version 6.3.0, MPFR version 4.2.1, MPC version 1.3.1, isl version none
+        GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
+        Compiler executable checksum: 74dfb8435558fd787b9ab19b555d52e0
+        COLLECT_GCC_OPTIONS='-D' 'TARGET_API_MAC_CARBON=1' '-v' '-o' 'CMakeFiles/cmTC_a037b.dir/CMakeCCompilerABI.c.obj' '-c' '-dumpdir' 'CMakeFiles/cmTC_a037b.dir/'
+         /home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/bin/as -o CMakeFiles/cmTC_a037b.dir/CMakeCCompilerABI.c.obj /tmp/cc7EoJFa.s
+        COMPILER_PATH=/home/patrick/Retro68/toolchain/libexec/gcc/powerpc-apple-macos/12.2.0/:/home/patrick/Retro68/toolchain/libexec/gcc/powerpc-apple-macos/12.2.0/:/home/patrick/Retro68/toolchain/libexec/gcc/powerpc-apple-macos/:/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/:/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/:/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/bin/
+        LIBRARY_PATH=/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/:/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/lib/
+        COLLECT_GCC_OPTIONS='-D' 'TARGET_API_MAC_CARBON=1' '-v' '-o' 'CMakeFiles/cmTC_a037b.dir/CMakeCCompilerABI.c.obj' '-c' '-dumpdir' 'CMakeFiles/cmTC_a037b.dir/CMakeCCompilerABI.c.'
+        Linking C executable cmTC_a037b
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_a037b.dir/link.txt --verbose=1
+        /home/patrick/Retro68/toolchain/bin/powerpc-apple-macos-gcc -carbon -v CMakeFiles/cmTC_a037b.dir/CMakeCCompilerABI.c.obj -o cmTC_a037b 
+        Using built-in specs.
+        COLLECT_GCC=/home/patrick/Retro68/toolchain/bin/powerpc-apple-macos-gcc
+        COLLECT_LTO_WRAPPER=/home/patrick/Retro68/toolchain/libexec/gcc/powerpc-apple-macos/12.2.0/lto-wrapper
+        Target: powerpc-apple-macos
+        Configured with: /home/patrick/Retro68/gcc/configure --target=powerpc-apple-macos --prefix=/home/patrick/Retro68/toolchain --enable-languages=c,c++ --disable-libssp --disable-lto MAKEINFO=missing
+        Thread model: aix
+        Supported LTO compression algorithms: zlib zstd
+        gcc version 12.2.0 (GCC) 
+        COMPILER_PATH=/home/patrick/Retro68/toolchain/libexec/gcc/powerpc-apple-macos/12.2.0/:/home/patrick/Retro68/toolchain/libexec/gcc/powerpc-apple-macos/12.2.0/:/home/patrick/Retro68/toolchain/libexec/gcc/powerpc-apple-macos/:/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/:/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/:/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/bin/
+        LIBRARY_PATH=/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/:/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/lib/
+        COLLECT_GCC_OPTIONS='-carbon' '-v' '-o' 'cmTC_a037b' '-dumpdir' 'cmTC_a037b.'
+         /home/patrick/Retro68/toolchain/libexec/gcc/powerpc-apple-macos/12.2.0/collect2 -btextro -bhalt:4 -bnodelcsect --no-check-sections -undefined=_consolewrite -o cmTC_a037b -L/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0 -L/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/lib CMakeFiles/cmTC_a037b.dir/CMakeCCompilerABI.c.obj --start-group -lgcc -lc -lretrocrt-carbon -lCarbonLib --end-group
+        COLLECT_GCC_OPTIONS='-carbon' '-v' '-o' 'cmTC_a037b' '-dumpdir' 'cmTC_a037b.'
+        gmake[1]: Leaving directory '/home/patrick/Webs/macsurf/build3/CMakeFiles/CMakeScratch/TryCompile-aQAFPk'
+        
+      exitCode: 0
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/CMakeDetermineCompilerABI.cmake:127 (message)"
+      - "/usr/share/cmake-3.28/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Parsed C implicit include dir info: rv=done
+        found start of include info
+        found start of implicit include info
+          add: [/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/include]
+          add: [/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/include-fixed]
+          add: [/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/include]
+        end of search list found
+        collapse include dir [/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/include] ==> [/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/include]
+        collapse include dir [/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/include-fixed] ==> [/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/include-fixed]
+        collapse include dir [/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/include] ==> [/home/patrick/Retro68/toolchain/powerpc-apple-macos/include]
+        implicit include dirs: [/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/include;/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/include-fixed;/home/patrick/Retro68/toolchain/powerpc-apple-macos/include]
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/CMakeDetermineCompilerABI.cmake:159 (message)"
+      - "/usr/share/cmake-3.28/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Parsed C implicit link information:
+        link line regex: [^( *|.*[/\\])(powerpc-apple-macos-ld|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
+        ignore line: [Change Dir: '/home/patrick/Webs/macsurf/build3/CMakeFiles/CMakeScratch/TryCompile-aQAFPk']
+        ignore line: []
+        ignore line: [Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_a037b/fast]
+        ignore line: [/usr/bin/gmake  -f CMakeFiles/cmTC_a037b.dir/build.make CMakeFiles/cmTC_a037b.dir/build]
+        ignore line: [gmake[1]: Entering directory '/home/patrick/Webs/macsurf/build3/CMakeFiles/CMakeScratch/TryCompile-aQAFPk']
+        ignore line: [Building C object CMakeFiles/cmTC_a037b.dir/CMakeCCompilerABI.c.obj]
+        ignore line: [/home/patrick/Retro68/toolchain/bin/powerpc-apple-macos-gcc -DTARGET_API_MAC_CARBON=1  -v -o CMakeFiles/cmTC_a037b.dir/CMakeCCompilerABI.c.obj -c /usr/share/cmake-3.28/Modules/CMakeCCompilerABI.c]
+        ignore line: [Using built-in specs.]
+        ignore line: [COLLECT_GCC=/home/patrick/Retro68/toolchain/bin/powerpc-apple-macos-gcc]
+        ignore line: [Target: powerpc-apple-macos]
+        ignore line: [Configured with: /home/patrick/Retro68/gcc/configure --target=powerpc-apple-macos --prefix=/home/patrick/Retro68/toolchain --enable-languages=c c++ --disable-libssp --disable-lto MAKEINFO=missing]
+        ignore line: [Thread model: aix]
+        ignore line: [Supported LTO compression algorithms: zlib zstd]
+        ignore line: [gcc version 12.2.0 (GCC) ]
+        ignore line: [COLLECT_GCC_OPTIONS='-D' 'TARGET_API_MAC_CARBON=1' '-v' '-o' 'CMakeFiles/cmTC_a037b.dir/CMakeCCompilerABI.c.obj' '-c' '-dumpdir' 'CMakeFiles/cmTC_a037b.dir/']
+        ignore line: [ /home/patrick/Retro68/toolchain/libexec/gcc/powerpc-apple-macos/12.2.0/cc1 -quiet -v -Wno-trigraphs -D TARGET_API_MAC_CARBON=1 /usr/share/cmake-3.28/Modules/CMakeCCompilerABI.c -quiet -dumpdir CMakeFiles/cmTC_a037b.dir/ -dumpbase CMakeCCompilerABI.c.c -dumpbase-ext .c -version -o /tmp/cc7EoJFa.s]
+        ignore line: [GNU C17 (GCC) version 12.2.0 (powerpc-apple-macos)]
+        ignore line: [	compiled by GNU C version 13.3.0  GMP version 6.3.0  MPFR version 4.2.1  MPC version 1.3.1  isl version none]
+        ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
+        ignore line: [ignoring nonexistent directory "/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/sys-include"]
+        ignore line: [#include "..." search starts here:]
+        ignore line: [#include <...> search starts here:]
+        ignore line: [ /home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/include]
+        ignore line: [ /home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/include-fixed]
+        ignore line: [ /home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/include]
+        ignore line: [End of search list.]
+        ignore line: [GNU C17 (GCC) version 12.2.0 (powerpc-apple-macos)]
+        ignore line: [	compiled by GNU C version 13.3.0  GMP version 6.3.0  MPFR version 4.2.1  MPC version 1.3.1  isl version none]
+        ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
+        ignore line: [Compiler executable checksum: 74dfb8435558fd787b9ab19b555d52e0]
+        ignore line: [COLLECT_GCC_OPTIONS='-D' 'TARGET_API_MAC_CARBON=1' '-v' '-o' 'CMakeFiles/cmTC_a037b.dir/CMakeCCompilerABI.c.obj' '-c' '-dumpdir' 'CMakeFiles/cmTC_a037b.dir/']
+        ignore line: [ /home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/bin/as -o CMakeFiles/cmTC_a037b.dir/CMakeCCompilerABI.c.obj /tmp/cc7EoJFa.s]
+        ignore line: [COMPILER_PATH=/home/patrick/Retro68/toolchain/libexec/gcc/powerpc-apple-macos/12.2.0/:/home/patrick/Retro68/toolchain/libexec/gcc/powerpc-apple-macos/12.2.0/:/home/patrick/Retro68/toolchain/libexec/gcc/powerpc-apple-macos/:/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/:/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/:/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/bin/]
+        ignore line: [LIBRARY_PATH=/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/:/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/lib/]
+        ignore line: [COLLECT_GCC_OPTIONS='-D' 'TARGET_API_MAC_CARBON=1' '-v' '-o' 'CMakeFiles/cmTC_a037b.dir/CMakeCCompilerABI.c.obj' '-c' '-dumpdir' 'CMakeFiles/cmTC_a037b.dir/CMakeCCompilerABI.c.']
+        ignore line: [Linking C executable cmTC_a037b]
+        ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_a037b.dir/link.txt --verbose=1]
+        ignore line: [/home/patrick/Retro68/toolchain/bin/powerpc-apple-macos-gcc -carbon -v CMakeFiles/cmTC_a037b.dir/CMakeCCompilerABI.c.obj -o cmTC_a037b ]
+        ignore line: [Using built-in specs.]
+        ignore line: [COLLECT_GCC=/home/patrick/Retro68/toolchain/bin/powerpc-apple-macos-gcc]
+        ignore line: [COLLECT_LTO_WRAPPER=/home/patrick/Retro68/toolchain/libexec/gcc/powerpc-apple-macos/12.2.0/lto-wrapper]
+        ignore line: [Target: powerpc-apple-macos]
+        ignore line: [Configured with: /home/patrick/Retro68/gcc/configure --target=powerpc-apple-macos --prefix=/home/patrick/Retro68/toolchain --enable-languages=c c++ --disable-libssp --disable-lto MAKEINFO=missing]
+        ignore line: [Thread model: aix]
+        ignore line: [Supported LTO compression algorithms: zlib zstd]
+        ignore line: [gcc version 12.2.0 (GCC) ]
+        ignore line: [COMPILER_PATH=/home/patrick/Retro68/toolchain/libexec/gcc/powerpc-apple-macos/12.2.0/:/home/patrick/Retro68/toolchain/libexec/gcc/powerpc-apple-macos/12.2.0/:/home/patrick/Retro68/toolchain/libexec/gcc/powerpc-apple-macos/:/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/:/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/:/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/bin/]
+        ignore line: [LIBRARY_PATH=/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/:/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/lib/]
+        ignore line: [COLLECT_GCC_OPTIONS='-carbon' '-v' '-o' 'cmTC_a037b' '-dumpdir' 'cmTC_a037b.']
+        link line: [ /home/patrick/Retro68/toolchain/libexec/gcc/powerpc-apple-macos/12.2.0/collect2 -btextro -bhalt:4 -bnodelcsect --no-check-sections -undefined=_consolewrite -o cmTC_a037b -L/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0 -L/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/lib CMakeFiles/cmTC_a037b.dir/CMakeCCompilerABI.c.obj --start-group -lgcc -lc -lretrocrt-carbon -lCarbonLib --end-group]
+          arg [/home/patrick/Retro68/toolchain/libexec/gcc/powerpc-apple-macos/12.2.0/collect2] ==> ignore
+          arg [-btextro] ==> ignore
+          arg [-bhalt:4] ==> ignore
+          arg [-bnodelcsect] ==> ignore
+          arg [--no-check-sections] ==> ignore
+          arg [-undefined=_consolewrite] ==> ignore
+          arg [-o] ==> ignore
+          arg [cmTC_a037b] ==> ignore
+          arg [-L/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0] ==> dir [/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0]
+          arg [-L/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/lib] ==> dir [/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/lib]
+          arg [CMakeFiles/cmTC_a037b.dir/CMakeCCompilerABI.c.obj] ==> ignore
+          arg [--start-group] ==> ignore
+          arg [-lgcc] ==> lib [gcc]
+          arg [-lc] ==> lib [c]
+          arg [-lretrocrt-carbon] ==> lib [retrocrt-carbon]
+          arg [-lCarbonLib] ==> lib [CarbonLib]
+          arg [--end-group] ==> ignore
+        collapse library dir [/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0] ==> [/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0]
+        collapse library dir [/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0/../../../../powerpc-apple-macos/lib] ==> [/home/patrick/Retro68/toolchain/powerpc-apple-macos/lib]
+        implicit libs: [gcc;c;retrocrt-carbon;CarbonLib]
+        implicit objs: []
+        implicit dirs: [/home/patrick/Retro68/toolchain/lib/gcc/powerpc-apple-macos/12.2.0;/home/patrick/Retro68/toolchain/powerpc-apple-macos/lib]
+        implicit fwks: []
+      
+      
+...

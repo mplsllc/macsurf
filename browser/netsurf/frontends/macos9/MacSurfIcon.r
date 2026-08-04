@@ -161,14 +161,4 @@ data 'ics8' (128, "MacSurf icon") {
 	$"000000002BFA8081FB56F70000000000"
 };
 
-resource 'FREF' (128, "MacSurf APPL") {
-	'APPL', 0, ""
-};
 
-resource 'BNDL' (128, "MacSurf BNDL") {
-	'MPLS', 0,
-	{
-		'ICN#', { 0, 128 },
-		'FREF', { 0, 128 }
-	}
-};

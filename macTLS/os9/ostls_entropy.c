@@ -57,13 +57,20 @@ unsigned long OSTLS_EntropySampleCount(void);
 #include <Files.h>
 #include <Folders.h>
 #include <Script.h>             /* smRoman */
+#elif defined(__RETRO68__)
+/* Retro68: Universal Interfaces provide all Mac types via macsurf_prefix.h
+ * (MacTypes.h). Pull in the specific headers needed for File Manager, etc. */
+#include <stdint.h>
+#include <Files.h>
+#include <Errors.h>
+#include <Script.h>
+#include <Folders.h>
 #else
+/* Linux / non-Mac host (syntax check only). */
 #include <stdint.h>
 typedef uint32_t UInt32;
 typedef struct { UInt32 hi; UInt32 lo; } UnsignedWide;
 typedef struct { short v; short h; } Point;
-/* Non-CW8 stubs so the file parses under the Retro68 syntax check; no
- * File Manager exists on Linux, so these no-op. Mirrors ostls_log.c. */
 typedef long OSStatus;
 typedef struct {
     short vRefNum;

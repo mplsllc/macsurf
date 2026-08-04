@@ -24,7 +24,7 @@ struct rect;
 #include <stdlib.h>
 #include <stdint.h>
 
-#ifdef __MACOS__
+#if defined(__MACOS__) || defined(macintosh)
 	#ifndef TARGET_API_MAC_CARBON
 		#define TARGET_API_MAC_CARBON 1
 	#endif
@@ -81,7 +81,123 @@ struct rect;
 	#define __POWER__
 	#endif
 
-	#include <Carbon.h>
+	/* Retro68 CG suppress */
+#ifdef __RETRO68__
+#ifndef __CGAFFINETRANSFORM__
+#define __CGAFFINETRANSFORM__
+#endif
+#ifndef __CGBASE__
+#define __CGBASE__
+#endif
+#ifndef __CGBITMAPCONTEXT__
+#define __CGBITMAPCONTEXT__
+#endif
+#ifndef __CGCOLORSPACE__
+#define __CGCOLORSPACE__
+#endif
+#ifndef __CGCONTEXT__
+#define __CGCONTEXT__
+#endif
+#ifndef __CGDATACONSUMER__
+#define __CGDATACONSUMER__
+#endif
+#ifndef __CGDATAPROVIDER__
+#define __CGDATAPROVIDER__
+#endif
+#ifndef __CGDIRECTDISPLAY__
+#define __CGDIRECTDISPLAY__
+#endif
+#ifndef __CGDIRECTPALETTE__
+#define __CGDIRECTPALETTE__
+#endif
+#ifndef __CGERROR__
+#define __CGERROR__
+#endif
+#ifndef __CGFONT__
+#define __CGFONT__
+#endif
+#ifndef __CGGEOMETRY__
+#define __CGGEOMETRY__
+#endif
+#ifndef __CGIMAGE__
+#define __CGIMAGE__
+#endif
+#ifndef __CGPDFCONTEXT__
+#define __CGPDFCONTEXT__
+#endif
+#ifndef __CGPDFDOCUMENT__
+#define __CGPDFDOCUMENT__
+#endif
+#ifndef __CGREMOTEOPERATION__
+#define __CGREMOTEOPERATION__
+#endif
+#ifndef __CGWINDOWLEVEL__
+#define __CGWINDOWLEVEL__
+#endif
+typedef void * CGContextRef;
+typedef void * CGColorSpaceRef;
+typedef void * CGImageRef;
+#endif
+
+/* Retro68 CG suppress */
+#ifdef __RETRO68__
+#ifndef __CGAFFINETRANSFORM__
+#define __CGAFFINETRANSFORM__
+#endif
+#ifndef __CGBASE__
+#define __CGBASE__
+#endif
+#ifndef __CGBITMAPCONTEXT__
+#define __CGBITMAPCONTEXT__
+#endif
+#ifndef __CGCOLORSPACE__
+#define __CGCOLORSPACE__
+#endif
+#ifndef __CGCONTEXT__
+#define __CGCONTEXT__
+#endif
+#ifndef __CGDATACONSUMER__
+#define __CGDATACONSUMER__
+#endif
+#ifndef __CGDATAPROVIDER__
+#define __CGDATAPROVIDER__
+#endif
+#ifndef __CGDIRECTDISPLAY__
+#define __CGDIRECTDISPLAY__
+#endif
+#ifndef __CGDIRECTPALETTE__
+#define __CGDIRECTPALETTE__
+#endif
+#ifndef __CGERROR__
+#define __CGERROR__
+#endif
+#ifndef __CGFONT__
+#define __CGFONT__
+#endif
+#ifndef __CGGEOMETRY__
+#define __CGGEOMETRY__
+#endif
+#ifndef __CGIMAGE__
+#define __CGIMAGE__
+#endif
+#ifndef __CGPDFCONTEXT__
+#define __CGPDFCONTEXT__
+#endif
+#ifndef __CGPDFDOCUMENT__
+#define __CGPDFDOCUMENT__
+#endif
+#ifndef __CGREMOTEOPERATION__
+#define __CGREMOTEOPERATION__
+#endif
+#ifndef __CGWINDOWLEVEL__
+#define __CGWINDOWLEVEL__
+#endif
+typedef void * CGContextRef;
+typedef void * CGColorSpaceRef;
+typedef void * CGImageRef;
+#endif
+
+#include <Carbon.h>
 	#include <Quickdraw.h>
 	#include <QDOffscreen.h>
 	#include <TextEdit.h>

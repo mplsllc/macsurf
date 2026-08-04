@@ -55,7 +55,8 @@ typedef unsigned long InetHost;
 #define true 1
 #define false 0
 #endif
-typedef int Boolean;
+#ifdef __MWERKS__
+#endif
 typedef struct { OTByteCount maxlen, len; UInt8 *buf; } TNetbuf;
 typedef struct { TNetbuf addr; TNetbuf opt; long qlen; } TBind;
 typedef struct { TNetbuf addr; TNetbuf opt; TNetbuf udata; long sequence; } TCall;

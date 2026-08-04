@@ -1,0 +1,2 @@
+/home/patrick/Retro68/toolchain/bin/powerpc-apple-macos-ar qc libmacsurf_nsgif.a CMakeFiles/macsurf_nsgif.dir/browser/libnsgif/src/gif.c.obj CMakeFiles/macsurf_nsgif.dir/browser/libnsgif/src/lzw.c.obj
+/home/patrick/Retro68/toolchain/bin/powerpc-apple-macos-ranlib libmacsurf_nsgif.a

@@ -25,7 +25,9 @@
  * do NOT redefine them as macros.
  */
 #ifndef bool
+#ifndef __RETRO68__
 typedef unsigned char bool;
+#endif
 #endif
 
 typedef unsigned long lwc_refcounter;

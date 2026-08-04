@@ -5,3 +5,4 @@
 
 /* Extra stubs for missing libNS functions in Carbon */
 void macos9_extra_stub_init(void) { }
+void closedir(void *p){} void *opendir(const char *n){return 0;}
