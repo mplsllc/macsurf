@@ -1,6 +1,7 @@
 /* MacSurf Retro68 SIZE resource — overrides Retro68 template default (1 MB).
  * Must be listed AFTER RetroCarbonAPPL.r in the Rez command line so it wins.
  * Sizes are in BYTES. */
+#include "Types.r"
 resource 'SIZE' (-1) {
     reserved,
     acceptSuspendResumeEvents,

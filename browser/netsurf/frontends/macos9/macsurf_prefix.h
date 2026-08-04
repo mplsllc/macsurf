@@ -170,12 +170,15 @@ void macsurf_assert_failed_(const char *expr, const char *file, int line);
 #include <stdio.h>
 
 #ifdef __RETRO68__
-#ifndef __MACTYPES__
-struct UnsignedWide { unsigned long hi; unsigned long lo; };
-typedef struct UnsignedWide UnsignedWide;
+#include <MacTypes.h>
+/* Suppress Classic Mac OS fp.h (SANE numerics) to prevent type conflicts
+ * with newlib <math.h> on isnan/__isnanf/__isnand. The SDK's fp.h declares
+ * these with 'long' return types (Classic SANE API); newlib declares them
+ * with 'int' (standard C99). MacSurf uses no SANE functions directly. */
+#ifndef __FP__
+#define __FP__
 #endif
 extern void Microseconds(UnsignedWide *tickCount);
-typedef unsigned char Boolean;
 #ifndef __cplusplus
 #define bool _Bool
 #define true 1
