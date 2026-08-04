@@ -170,6 +170,27 @@ void macsurf_assert_failed_(const char *expr, const char *file, int line);
 #include <stdio.h>
 
 #ifdef __RETRO68__
+/* Local UnsignedWide + Boolean (Multiversal MacTypes lacks them).
+ * Guard with __MACTYPES__ for frontend TUs that include Carbon.h. */
+#ifndef __MACTYPES__
+struct UnsignedWide { unsigned long hi; unsigned long lo; };
+typedef struct UnsignedWide UnsignedWide;
+#endif
+extern void Microseconds(UnsignedWide *tickCount);
+typedef unsigned char Boolean;
+/* iconv stubs */
+typedef void *iconv_t;
+static iconv_t iconv_open_(const char *t, const char *f) { (void)t;(void)f; return (iconv_t)-1; }
+static size_t iconv_(iconv_t cd, char **ib, size_t *il, char **ob, size_t *ol)
+    { (void)cd;(void)ib;(void)il;(void)ob;(void)ol; return (size_t)-1; }
+static int iconv_close_(iconv_t cd) { (void)cd; return -1; }
+#define iconv_open iconv_open_
+#define iconv iconv_
+#define iconv_close iconv_close_
+#endif
+
+
+#ifdef __RETRO68__
 /* Include <time.h> early and lock time_t to prevent conflicts with
  * sys/_timespec.h (pulled in by signal.h in netsurf.c). */
 #include <time.h>
@@ -410,8 +431,14 @@ extern int   memcmp(const void *, const void *, size_t);
 #ifndef SLEN
 #define SLEN(x) (sizeof((x)) - 1)
 #endif
+#ifndef SLEN
+#define SLEN(x) (sizeof((x)) - 1)
+#endif
 #ifndef NOF_ELEMENTS
 #define NOF_ELEMENTS(x) (sizeof((x)) / sizeof((x)[0]))
+#endif
+#ifndef INT64_MIN
+#define INT64_MIN (-INT64_MAX-1)
 #endif
 #ifndef SIZE_MAX
 #define SIZE_MAX ((size_t)-1)
