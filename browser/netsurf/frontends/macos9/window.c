@@ -1402,7 +1402,21 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 		RGBColor fg_blk, bg_wht;
 		CGrafPtr wport = GetWindowPort(g->window);
 		GDHandle usedev = macos9_safe_gdevice();
+		CGrafPtr saved_port;
+		GDHandle saved_dev;
 
+		/* fixes944 (see above) — SetGWorld to a GWorld device whose
+		 * colour table is mapped, so RGBForeColor/RGBBackColor survive.
+		 * BUT that device has no font scaler — its textWidthProc is
+		 * NULL — so any subsequent TextFont/TextWidth/TESetSelect
+		 * walking into the font machinery through this GDevice will
+		 * execute a NULL function pointer inside Carbon.framework
+		 * (CallTextWidth + 144 → 0x0).  Save the original port+device,
+		 * set up colour, then RESTORE the screen device immediately
+		 * so font measurement works.  The colour state (fg=black,
+		 * bg=white) persists because it is held in the port, not
+		 * the GDevice. */
+		GetGWorld(&saved_port, &saved_dev);
 		SetGWorld(wport, usedev);
 		fg_blk.red = 0; fg_blk.green = 0; fg_blk.blue = 0;
 		bg_wht.red = 0xFFFF; bg_wht.green = 0xFFFF; bg_wht.blue = 0xFFFF;
@@ -1411,6 +1425,7 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 		macsurf_debug_log_writef("BOOT te: port=%p dev=%p colours SET ok",
 			(void *)wport, (void *)usedev);
 		macsurf_debug_log_flush();
+		SetGWorld(saved_port, saved_dev);
 	}
 	/* fixes302 — set the URL field font (Geneva 12) before TENew so the
 	 * TERec captures it; TextEdit measures and draws with the stored font. */
