@@ -176,6 +176,11 @@ typedef struct UnsignedWide UnsignedWide;
 #endif
 extern void Microseconds(UnsignedWide *tickCount);
 typedef unsigned char Boolean;
+#ifndef __cplusplus
+#define bool _Bool
+#define true 1
+#define false 0
+#endif
 typedef void *iconv_t;
 static iconv_t iconv_open_(const char *t, const char *f) { (void)t;(void)f; return (iconv_t)-1; }
 static size_t iconv_(iconv_t cd, char **ib, size_t *il, char **ob, size_t *ol)
