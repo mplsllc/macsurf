@@ -170,8 +170,7 @@ void macsurf_assert_failed_(const char *expr, const char *file, int line);
 #include <stdio.h>
 
 #ifdef __RETRO68__
-/* Local UnsignedWide + Boolean (Multiversal MacTypes lacks them).
- * Guard with __MACTYPES__ for frontend TUs that include Carbon.h. */
+/* Local type definitions (Multiversal MacTypes lacks these) */
 #ifndef __MACTYPES__
 struct UnsignedWide { unsigned long hi; unsigned long lo; };
 typedef struct UnsignedWide UnsignedWide;
@@ -188,6 +187,7 @@ static int iconv_close_(iconv_t cd) { (void)cd; return -1; }
 #define iconv iconv_
 #define iconv_close iconv_close_
 #endif
+
 
 
 #ifdef __RETRO68__
@@ -262,7 +262,6 @@ typedef void * CGContextRef;
 typedef void * CGColorSpaceRef;
 typedef void * CGImageRef;
 /* Universal MacTypes for UnsignedWide, Point, Boolean, etc. */
-#include "/home/patrick/Retro68/toolchain/universal/CIncludes/MacTypes.h"
 extern void Microseconds(UnsignedWide *tickCount);
 /* newlib lacks iconv */
 typedef void *iconv_t;
