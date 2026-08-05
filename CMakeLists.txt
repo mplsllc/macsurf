@@ -73,7 +73,7 @@ macsurf_static_lib(macsurf_netsurf_content ${NETSURF_CONTENT_SOURCES})
 macsurf_static_lib(macsurf_netsurf_desktop ${NETSURF_DESKTOP_SOURCES})
 
 set(REZ_INCLUDE_PATH "${RETRO68_RINCLUDES}:${FRONTEND_DIR}" CACHE STRING "Rez")
-add_application(MacSurf TYPE APPL CREATOR MPLS ${FRONTEND_CORE_SOURCES} ${FRONTEND_JS_SOURCES} /home/patrick/Retro68/libretro/malloc.c ${FRONTEND_DIR}/MacSurf.r ${FRONTEND_DIR}/MacSurfIcon.r ${FRONTEND_DIR}/MacSurfSize.r)
+add_application(MacSurf TYPE APPL CREATOR MPLS ${FRONTEND_CORE_SOURCES} ${FRONTEND_JS_SOURCES} ${FRONTEND_DIR}/retro68_malloc.c ${FRONTEND_DIR}/MacSurf.r ${FRONTEND_DIR}/MacSurfIcon.r ${FRONTEND_DIR}/MacSurfSize.r)
 target_include_directories(MacSurf PRIVATE ${COMMON_INCLUDES})
 target_include_directories(MacSurf SYSTEM PRIVATE ${UNIVERSAL_CINCLUDES})
 target_compile_definitions(MacSurf PRIVATE ${COMMON_DEFS})
