@@ -1187,16 +1187,7 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 									 * throttled to ~20fps so a big page's box-walk
 									 * doesn't stall the drag. handle_update only reads
 									 * event->message, so a synthetic updateEvt is safe. */
-									nowt = TickCount();
-									if (nowt - last_draw_tick >= 3) {
-										EventRecord uev;
-										last_draw_tick = nowt;
-										uev.what = updateEvt;
-										uev.message =
-											(long)(unsigned long)gw->window;
-										macos9_handle_update(&uev);
-									}
-								}
+								macos9_throttled_repaint(gw, &last_draw_tick);
 							}
 							GetMouse(&relp);
 							rx_ns = (int)relp.h - gw->content_rect.left + gw->scroll_x;

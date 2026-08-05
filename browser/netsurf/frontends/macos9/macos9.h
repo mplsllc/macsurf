@@ -336,6 +336,11 @@ struct gui_window *macos9_create_initial_window(void);
 extern struct gui_window *initial_win;
 void macos9_handle_mouse_down(const EventRecord *event);
 void macos9_handle_key_down(const EventRecord *event);
+void macos9_handle_update(const EventRecord *event);
+/* Throttled repaint during tight StillDown() drag loops (scrollbar + text
+ * selection). Only paints if >= N ticks have elapsed since *last_tick;
+ * updates *last_tick when it does.  gw may be NULL (no-op). */
+void macos9_throttled_repaint(struct gui_window *gw, unsigned long *last_tick);
 void macos9_poll_mouse_hover(void);
 void macos9_poll(void);
 extern nserror macos9_schedule(int t, void (*callback)(void *p), void *p);

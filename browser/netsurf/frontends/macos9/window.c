@@ -532,7 +532,6 @@ void macos9_window_handle_scrollbar_click(struct gui_window *g, ControlRef c, sh
 		 * on real hardware — see the gotcha in CLAUDE.md). Instead poll the
 		 * thumb ourselves: map the mouse to a value, scroll, and repaint the
 		 * content live (throttled), all with the safe proc-384 control. */
-		extern void macos9_handle_update(const EventRecord *event);
 		Rect cb;
 		short arrow = 16;
 		unsigned long lastdraw = 0;
@@ -558,16 +557,7 @@ void macos9_window_handle_scrollbar_click(struct gui_window *g, ControlRef c, sh
 					macos9_window_scroll_to(g, g->scroll_x, (int)val);
 				else
 					macos9_window_scroll_to(g, (int)val, g->scroll_y);
-				{
-					unsigned long nowt = TickCount();
-					if (nowt - lastdraw >= 2) {
-						EventRecord uev;
-						lastdraw = nowt;
-						uev.what = updateEvt;
-						uev.message = (long)(unsigned long)g->window;
-						macos9_handle_update(&uev);
-					}
-				}
+				macos9_throttled_repaint(g, &lastdraw);
 			}
 		}
 		cur = GetControlValue(c);
@@ -583,6 +573,23 @@ void macos9_window_handle_scrollbar_click(struct gui_window *g, ControlRef c, sh
 	if (c == g->vscroll) macos9_window_scroll_to(g, g->scroll_x, cur);
 	else                 macos9_window_scroll_to(g, cur, g->scroll_y);
 #endif
+}
+
+/* Shared by scrollbar drag + text-selection drag loops: repaint the window
+ * if >= 2 ticks have passed since *last_tick.  Updates *last_tick on paint.
+ * Extracted from the two StillDown() polling sites that duplicated this. */
+void macos9_throttled_repaint(struct gui_window *gw, unsigned long *last_tick)
+{
+	unsigned long nowt;
+	if (gw == NULL || last_tick == NULL) return;
+	nowt = TickCount();
+	if (nowt - *last_tick >= 2) {
+		EventRecord uev;
+		*last_tick = nowt;
+		uev.what = updateEvt;
+		uev.message = (long)(unsigned long)gw->window;
+		macos9_handle_update(&uev);
+	}
 }
 
 void macos9_urlsug_hide(struct gui_window *g);   /* fixes763 fwd — defined below */
