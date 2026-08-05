@@ -1045,52 +1045,6 @@ static void hctx_reset_for_retry(struct macos9_https_ctx *c)
 
 /* fixes218 — append body bytes to the per-fetch capture buffer.
  * Same geometric-growth + overflow-latch discipline as the HTTP
- * fetcher's cache_capture_append. */
-static void hctx_cache_capture(struct macos9_https_ctx *c,
-		const char *buf, long len)
-{
-	long want;
-	long cap;
-	char *grown;
-
-	if (c == NULL || buf == NULL || len <= 0) return;
-	if (c->cache_overflow) return;
-	if (!c->cache_eligible) return;
-
-	want = c->cache_cap_len + len;
-	if (want > MACSURF_CACHE_MAX_BYTES) {
-		c->cache_overflow = 1;
-		if (c->cache_capture != NULL) {
-			free(c->cache_capture);
-			c->cache_capture = NULL;
-			c->cache_cap_len = 0;
-			c->cache_cap_cap = 0;
-		}
-		return;
-	}
-
-	if (want > c->cache_cap_cap) {
-		cap = c->cache_cap_cap == 0 ? 4096 : c->cache_cap_cap * 2;
-		while (cap < want) cap *= 2;
-		if (cap > MACSURF_CACHE_MAX_BYTES) cap = MACSURF_CACHE_MAX_BYTES;
-		grown = (char *)realloc(c->cache_capture, cap);
-		if (grown == NULL) {
-			c->cache_overflow = 1;
-			if (c->cache_capture != NULL) {
-				free(c->cache_capture);
-				c->cache_capture = NULL;
-				c->cache_cap_len = 0;
-				c->cache_cap_cap = 0;
-			}
-			return;
-		}
-		c->cache_capture = grown;
-		c->cache_cap_cap = cap;
-	}
-
-	memcpy(c->cache_capture + c->cache_cap_len, buf, len);
-	c->cache_cap_len += len;
-}
 
 /* fixes369b (#167) — decode a BearSSL error code (OSTLSDiagnostics.br_err)
  * to its name so a failed handshake is diagnosable from the log at a glance

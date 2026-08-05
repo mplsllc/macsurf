@@ -341,6 +341,8 @@ void macos9_handle_update(const EventRecord *event);
  * selection). Only paints if >= N ticks have elapsed since *last_tick;
  * updates *last_tick when it does.  gw may be NULL (no-op). */
 void macos9_throttled_repaint(struct gui_window *gw, unsigned long *last_tick);
+void macos9_drag_autoscroll(struct gui_window *gw, Point curp,
+		unsigned long *last_scroll_tick);
 void macos9_poll_mouse_hover(void);
 void macos9_poll(void);
 extern nserror macos9_schedule(int t, void (*callback)(void *p), void *p);

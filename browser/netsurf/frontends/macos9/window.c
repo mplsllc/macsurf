@@ -511,6 +511,27 @@ void macos9_window_scroll_to(struct gui_window *g, int nx, int ny) {
 }
 void macos9_window_scroll_by(struct gui_window *g, int dx, int dy) { if(g) macos9_window_scroll_to(g, g->scroll_x+dx, g->scroll_y+dy); }
 
+/* Auto-scroll during text-selection drag: if the cursor is near the top or
+ * bottom edge of the content area, scroll the page (throttled).  Extracted
+ * from the 9-level-deep StillDown() loop in main.c:macos9_handle_mouse_down. */
+void macos9_drag_autoscroll(struct gui_window *gw, Point curp,
+		unsigned long *last_scroll_tick)
+{
+	int edge = 0;
+	if (gw == NULL || last_scroll_tick == NULL) return;
+	if (curp.v < gw->content_rect.top + 6)
+		edge = -1;
+	else if (curp.v > gw->content_rect.bottom - 6)
+		edge = 1;
+	if (edge != 0) {
+		unsigned long st = TickCount();
+		if (st - *last_scroll_tick >= 2) {
+			*last_scroll_tick = st;
+			macos9_window_scroll_by(gw, 0, edge * 40);
+		}
+	}
+}
+
 void macos9_window_handle_scrollbar_click(struct gui_window *g, ControlRef c, short p, void *lp) {
 #ifdef __MACOS9__
 	Point pt;

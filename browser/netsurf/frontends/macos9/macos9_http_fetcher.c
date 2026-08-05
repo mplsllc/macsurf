@@ -191,53 +191,6 @@ static int g_recon_ot_http_done = 0;
  * mfs_poll_one plain-body branch, process_chunked_bytes CS_DATA
  * branch). Geometric growth from 4 KB up to MACSURF_CACHE_MAX_BYTES;
  * overflow latches and frees the partial buffer. */
-static void cache_capture_append(struct macos9_fetch_ctx *c,
-		const char *buf, long len)
-{
-	long want;
-	long cap;
-	char *grown;
-
-	if (c == NULL || buf == NULL || len <= 0) return;
-	if (c->cache_overflow) return;
-	if (!c->cache_eligible) return;
-
-	want = c->cache_cap_len + len;
-	if (want > MACSURF_CACHE_MAX_BYTES) {
-		c->cache_overflow = 1;
-		if (c->cache_capture != NULL) {
-			free(c->cache_capture);
-			c->cache_capture = NULL;
-			c->cache_cap_len = 0;
-			c->cache_cap_cap = 0;
-		}
-		return;
-	}
-
-	if (want > c->cache_cap_cap) {
-		cap = c->cache_cap_cap == 0 ? 4096 : c->cache_cap_cap * 2;
-		while (cap < want) cap *= 2;
-		if (cap > MACSURF_CACHE_MAX_BYTES) cap = MACSURF_CACHE_MAX_BYTES;
-		grown = (char *)realloc(c->cache_capture, cap);
-		if (grown == NULL) {
-			/* realloc failed — abandon caching for this fetch
-			 * but don't disturb live delivery. */
-			c->cache_overflow = 1;
-			if (c->cache_capture != NULL) {
-				free(c->cache_capture);
-				c->cache_capture = NULL;
-				c->cache_cap_len = 0;
-				c->cache_cap_cap = 0;
-			}
-			return;
-		}
-		c->cache_capture = grown;
-		c->cache_cap_cap = cap;
-	}
-
-	memcpy(c->cache_capture + c->cache_cap_len, buf, (size_t)len);
-	c->cache_cap_len = want;
-}
 
 /* fixes161a — resource governor classes. Used by the URL classifier
  * and the per-class active-fetch caps. Each new fetch is classified
