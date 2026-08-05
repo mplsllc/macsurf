@@ -1484,6 +1484,12 @@ long g_perf_gc_runs    = 0;  /* exported for audit */
  * JSPHASE line is the flag that says so out loud. */
 int g_perf_gc_armed = 0;  /* exported for audit */
 
+/* fixes1013 — JS execution census, referenced by js_exec/js_exec_module.
+ * Defined here (above their first use) and exported for the audit TU. */
+long g_js_exec_count = 0;  /* exported for audit */
+long g_js_exec_bytes = 0;  /* exported for audit */
+long g_js_exec_fail  = 0;  /* exported for audit */
+
 /* fixes1071 — wrapper-helper compile census. Declared HERE, above the perf
  * emitters that read them, rather than beside qjs_helper_fn where they are
  * written: C89 needs the declaration before every use, and the JSWHERE emit
