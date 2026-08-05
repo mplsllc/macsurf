@@ -1004,6 +1004,27 @@ html_process_script(void *ctx, dom_node *node)
 	if (exc != DOM_NO_ERR || mimetype == NULL) {
 		mimetype = dom_string_ref(corestring_dom_text_javascript);
 	}
+	/* fixes1117 (#265) — <script type="module"> is silently dropped
+	 * because "module" doesn't match any registered content-factory
+	 * MIME type, so select_script_handler returns NULL and the script
+	 * body is never passed to js_exec. Remap it to text/javascript so
+	 * the script executes as a regular script. Not strictly correct
+	 * (real modules have their own scope, strict mode, and import/
+	 * export), but executing is drastically better than silently
+	 * dropping — the silent drop is invisible, produces no log line,
+	 * and page authors frequently use type="module" on bundles that
+	 * don't actually use module-specific features. */
+	{
+		const char *mt = dom_string_data(mimetype);
+		static int logged = 0;
+		if (mt != NULL && strcmp(mt, "module") == 0) {
+			if (logged < 5) { logged++;
+				NSLOG(netsurf, INFO,
+					"module script remapped to text/javascript"); }
+			dom_string_unref(mimetype);
+			mimetype = dom_string_ref(corestring_dom_text_javascript);
+		}
+	}
 
 	exc = dom_element_get_attribute(node, corestring_dom_src, &src);
 	if (exc != DOM_NO_ERR || src == NULL) {
