@@ -1904,6 +1904,13 @@ int main(void) {
 	 * fixes316 wired up is dead-code from NetSurf's perspective because
 	 * html_script_exec returns early without ever calling js_exec. */
 	nsoption_set_bool(enable_javascript, true);
+	/* fixes1115b (#265) -- enable <select> dropdown menus. The core
+	 * form-control <select> handler (textarea.c / forms.c form_select_*
+	 * callbacks) is gated on this option; without it, <select> elements
+	 * render as empty rectangles and dropdowns never open. The Amiga and
+	 * framebuffer frontends set this to true (gui.c:1056, gui.c:2238
+	 * respectively); the macos9 frontend never did. One line. */
+	nsoption_set_bool(core_select_menu, true);
 	/* fixes91: raise concurrent-fetch caps. NetSurf defaults are
 	 * max_fetchers=24 / max_fetchers_per_host=5. With our HTTP fetcher's
 	 * MFS_INIT-at-setup state-machine, slots stay non-IDLE past the

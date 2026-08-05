@@ -109,6 +109,15 @@ static const struct macos9_ua_rule macos9_ua_rules[] = {
 	 * (goto/acct/pw), no JS needed, so core form.c handles it.
 	 */
 	{ "news.ycombinator.com",
+	  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36" },
+	/*
+	 * fixes1115 -- emaculation.com is behind Cloudflare bot-detection.
+	 * The honest MacSurf UA triggers HTTP 403 with a JS challenge page,
+	 * confirmed on hardware 2026-08-05: st=403, cdn-cgi/challenge-platform.
+	 * A Chrome UA MAY bypass it (proven HN pattern); if not, TLS fingerprint
+	 * (BearSSL) is the next suspect. Test and revert if no difference.
+	 */
+	{ "emaculation.com",
 	  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36" }
 	/* add more host->UA overrides here */
 	/*
