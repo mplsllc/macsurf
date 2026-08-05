@@ -11014,68 +11014,37 @@ unsigned char js_exec_module(struct jsthread *thread,
 			name, src, txtlen);
 	}
 
-	/* Compile as a module. JS_EVAL_TYPE_MODULE triggers the
-	 * module loader for any import statements, which checks the
-	 * pre-registered source list and disk cache. */
-	val = JS_Eval(ctx, src, txtlen,
-		name ? name : "<module>",
-		JS_EVAL_TYPE_MODULE |
-		JS_EVAL_FLAG_COMPILE_ONLY);
-	free(src);
-
-	if (JS_IsException(val)) {
-		JSValue exc = JS_GetException(ctx);
-		const char *estr = JS_ToCString(ctx, exc);
-		macsurf_debug_log_writef(
-			"LIFE qjs exec module err: %s [%s len=%ld]",
-			estr ? estr : "?", name ? name : "<module>",
-			(long)txtlen);
-		if (estr) JS_FreeCString(ctx, estr);
-		JS_FreeValue(ctx, exc);
-		JS_FreeValue(ctx, val);
-		return 0;
-	}
-
-	/* Resolve dependencies (runs the loader for each import) */
-	if (JS_ResolveModule(ctx, val) != 0) {
-		JSValue exc = JS_GetException(ctx);
-		const char *estr = JS_ToCString(ctx, exc);
-		macsurf_debug_log_writef(
-			"LIFE qjs exec module resolve err: %s [%s]",
-			estr ? estr : "?", name ? name : "<module>");
-		if (estr) JS_FreeCString(ctx, estr);
-		JS_FreeValue(ctx, exc);
-		JS_FreeValue(ctx, val);
-		return 0;
-	}
-
-	/* Drain pending jobs (module evaluation is queued as a job) */
+	/* Compile and execute as a module in one call (same pattern
+	 * as js_exec's JS_EVAL_TYPE_GLOBAL).  JS_EVAL_TYPE_MODULE
+	 * compiles with strict mode + import/export, resolves
+	 * dependencies via the loader callback, and executes. */
 	{
-		JSRuntime *rt = JS_GetRuntime(ctx);
-		JSContext *jctx;
-		int drained = 0;
+		extern double macos9_micros(void);
+		double t0 = macos9_micros();
+		val = JS_Eval(ctx, src, txtlen,
+			name ? name : "<module>",
+			JS_EVAL_TYPE_MODULE);
+		free(src);
 
-		while (JS_IsJobPending(rt) && drained < 32) {
-			drained++;
-			if (JS_ExecutePendingJob(rt, &jctx) < 0) {
-				macsurf_debug_log_writef(
-					"LIFE qjs exec module job err: fatal");
-				break;
-			}
+		ok = !JS_IsException(val);
+		if (!ok) {
+			JSValue exc = JS_GetException(ctx);
+			const char *estr = JS_ToCString(ctx, exc);
+			macsurf_debug_log_writef(
+				"LIFE qjs exec module err: %s [%s len=%ld]",
+				estr ? estr : "?",
+				name ? name : "<module>",
+				(long)txtlen);
+			if (estr) JS_FreeCString(ctx, estr);
+			JS_FreeValue(ctx, exc);
 		}
-	}
-
-	ok = !JS_IsException(val);
-	if (!ok) {
-		JSValue exc = JS_GetException(ctx);
-		const char *estr = JS_ToCString(ctx, exc);
+		JS_FreeValue(ctx, val);
 		macsurf_debug_log_writef(
-			"LIFE qjs exec module final err: %s [%s]",
-			estr ? estr : "?", name ? name : "<module>");
-		if (estr) JS_FreeCString(ctx, estr);
-		JS_FreeValue(ctx, exc);
+			"LIFE qjs exec module done ok=%d us=%ld [%s]",
+			(int)ok,
+			(long)(macos9_micros() - t0),
+			name ? name : "<module>");
 	}
-	JS_FreeValue(ctx, val);
 
 	/* Update page stats (same as js_exec) */
 	g_js_exec_count++;

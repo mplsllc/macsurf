@@ -1014,7 +1014,7 @@ html_process_script(void *ctx, dom_node *node)
 	/* Check for type="module" NOW, before the src attribute fetch,
 	 * so we can detect inline module scripts. */
 	{
-		const char *mt = dom_string_data(mimetype);
+		const char *mt = (const char *)dom_string_data(mimetype);
 		if (mt != NULL && strcmp(mt, "module") == 0) {
 				macsurf_debug_log_writef(
 					"LIFE script: module script found");
@@ -1031,12 +1031,22 @@ html_process_script(void *ctx, dom_node *node)
 					node, &modsrc);
 				if (mexc == DOM_NO_ERR &&
 						modsrc != NULL) {
+					macsurf_debug_log_writef(
+						"LIFE script: module exec inline "
+						"len=%ld",
+						(long)dom_string_byte_length(
+							modsrc));
 					js_exec_module(c->js_thread,
 						(const unsigned char *)
 							dom_string_data(modsrc),
 						dom_string_byte_length(modsrc),
 						"?inline module?");
 					dom_string_unref(modsrc);
+				} else {
+					macsurf_debug_log_writef(
+						"LIFE script: module inline "
+						"FAILED mexc=%d modsrc=%p",
+						(int)mexc, (void *)modsrc);
 				}
 				dom_string_unref(mimetype);
 				return DOM_HUBBUB_OK;
