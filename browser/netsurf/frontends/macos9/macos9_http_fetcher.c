@@ -578,7 +578,7 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		 * the suffix match in macos9_user_agent_for_host works; cookie_hdr holds
 		 * the stored cookies for this URL as a ready-to-splice header.
 		 * ua_var/ck_var lengths feed the oversize-request guards below. */
-		char cookie_hdr[6144];
+		char cookie_hdr[MACSURF_COOKIE_HDR_CAP];
 		char host_z[256];
 		const char *ua;
 		char *cookie_str;

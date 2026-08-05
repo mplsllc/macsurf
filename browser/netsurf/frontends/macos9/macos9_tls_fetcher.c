@@ -64,14 +64,16 @@
  * "header buffer overflow" and the whole page fell back to fetcherror.
  * fixes422 — bumped 16384→65536: 68kmla.org/bb/ sends >16 KB of headers
  * (XenForo CSP + security headers grew past the old cap). Buffer is grown
- * on demand so this is only a ceiling, not a per-fetch allocation. */
-#define HDR_BUF_MAX        65536
+ * on demand so this is only a ceiling, not a per-fetch allocation.
+ * See macos9_useragent.h for the shared constant (MACSURF_HDR_BUF_MAX). */
+#define HDR_BUF_MAX  MACSURF_HDR_BUF_MAX
 /* fixes234 — bumped from 1024 to 8192. With sleep=0 in main.c we poll
  * ~hundreds of times per second, but at 1 KB per drain the body delivery
  * rate ceilinged at ~60 KB/s and a 59 KB mactrove home page took ~2.5 s
  * of dead pump time. 8 KB matches BearSSL's typical record size; one
- * Pump+Read cycle now drains 6-8× more decrypted body per pass. */
-#define READ_CHUNK         8192
+ * Pump+Read cycle now drains 6-8× more decrypted body per pass.
+ * See macos9_useragent.h for the shared constant (MACSURF_READ_CHUNK). */
+#define READ_CHUNK    MACSURF_READ_CHUNK
 /* fixes234 — bumped pump steps from 8 to 32. Each "step" is one BearSSL
  * engine state transition; on a single core G3 yielding every 8 steps
  * means we cycle through OS 9 cooperative-multitask hand-offs faster
@@ -2566,7 +2568,7 @@ static int build_request(struct macos9_https_ctx *c)
 	 * Facebook's HttpOnly session cookies — c_user/xs — are sent; this
 	 * matches curl.c's fetcher). NULL when the jar has nothing for this
 	 * origin. Secure cookies are returned here because c->url is https. */
-	char  cookie_hdr[6144];
+	char  cookie_hdr[MACSURF_COOKIE_HDR_CAP];
 	char *cookie_str;
 	int   verifiable;      /* fixes835 (#167 M1) */
 	char  synth[512];      /* fixes835 — Sec-Fetch + Origin, built below */

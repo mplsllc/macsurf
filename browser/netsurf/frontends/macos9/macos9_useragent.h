@@ -25,6 +25,24 @@
 
 #include <stddef.h>	/* size_t (fixes835 header-capture helper) */
 
+/* === Shared fetch buffer-size constants ==================================
+ *
+ * These were historically inline magic numbers in each fetcher, bumped
+ * independently as header/cookie sizes grew.  Centralised here so a single
+ * change reaches both the HTTP and HTTPS fetchers.
+ *
+ * Sizes chosen for worst-case real pages (Facebook's X-FB-* GraphQL set
+ * overflows 512, a login 302 can carry 6+ Set-Cookie lines, etc.).
+ * ======================================================================= */
+
+#define MACSURF_HDR_BUF_MAX      65536  /* response header accumulation cap   */
+#define MACSURF_READ_CHUNK        8192  /* OT read size per poll tick         */
+#define MACSURF_COOKIE_HDR_CAP    6144  /* worst-case Cookie: request header  */
+#define MACSURF_CALLER_HDRS_CAP   2048  /* XHR/Fetch extra request headers    */
+#define MACSURF_REDIRECT_URL_CAP  1024  /* Location: header value buffer      */
+
+/* === Function declarations ============================================= */
+
 /* MacSurf's honest default User-Agent (every host not in the override
  * table). Exposed so callers / diagnostics can reference it. */
 const char *macos9_user_agent_default(void);
