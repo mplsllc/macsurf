@@ -1754,8 +1754,10 @@ int main(void) {
 	 * at each startup milestone so a launch-time failure shows how far init
 	 * got and whether the heap starved/fragmented. 'DIAG' survives the
 	 * crash-only gate (fixes675). Remove for release. */
-	macsurf_debug_log_writef("DIAG boot: free=%ld maxblk=%ld",
-		(long)FreeMem(), (long)MaxBlock());
+	if (!macsurf_os_is_osx()) {
+		macsurf_debug_log_writef("DIAG boot: free=%ld maxblk=%ld",
+			(long)FreeMem(), (long)MaxBlock());
+	}
 #endif
 #ifdef __MACOS9__
 #ifndef kInitOTForApplicationMask
@@ -1954,8 +1956,8 @@ int main(void) {
 	nsoption_set_int(memory_cache_size, 32 * 1024 * 1024);
 	MS_LOG("BOOT images enabled, author_css on, fetcher 128/16, mem cache 32MB");
 #ifdef __MACOS9__
-	macsurf_debug_log_writef("DIAG pre-netsurf_init: free=%ld maxblk=%ld",
-		(long)FreeMem(), (long)MaxBlock());
+	if (!macsurf_os_is_osx()) { macsurf_debug_log_writef("DIAG pre-netsurf_init: free=%ld maxblk=%ld",
+		(long)FreeMem(), (long)MaxBlock()); }
 #endif
 	netsurf_init(NULL);
 	SysBeep(3);  /* Retro68: 3 beeps = netsurf_init done */
@@ -1978,8 +1980,8 @@ int main(void) {
 		messages_add_key_value("FormTextbox", "Text field");
 	}
 #ifdef __MACOS9__
-	macsurf_debug_log_writef("DIAG post-netsurf_init: free=%ld maxblk=%ld",
-		(long)FreeMem(), (long)MaxBlock());
+	if (!macsurf_os_is_osx()) { macsurf_debug_log_writef("DIAG post-netsurf_init: free=%ld maxblk=%ld",
+		(long)FreeMem(), (long)MaxBlock()); }
 #endif
 	/* fixes711 (#207): snapshot the heap just after core init, before the
 	 * first page. Compared against RECON MEM boot this shows how much
@@ -2042,8 +2044,8 @@ int main(void) {
 			}
 		}
 #ifdef __MACOS9__
-	macsurf_debug_log_writef("DIAG post-window: free=%ld maxblk=%ld",
-		(long)FreeMem(), (long)MaxBlock());
+	if (!macsurf_os_is_osx()) { macsurf_debug_log_writef("DIAG post-window: free=%ld maxblk=%ld",
+		(long)FreeMem(), (long)MaxBlock()); }
 #endif
 	/* fixes247 — font probes (fixes144a / fixes153) gated behind a
 	 * startup flag, default off. They were extremely useful when
