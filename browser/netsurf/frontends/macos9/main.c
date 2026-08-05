@@ -1710,51 +1710,35 @@ static void macsurf_claim_custom_icon(void)
 
 
 int main(void) {
-	SysBeep(1);  /* Retro68: 1 beep = CRT survived, main reached */
-	{
-		void *p = malloc(64);
-		SysBeep(p ? 1 : 2);   /* 1 beep = malloc lived; 2 beeps = NULL */
-		if (p) {
-			void *q = realloc(p, 128);
-			SysBeep(q ? 1 : 2);   /* 1 beep = realloc lived; 2 beeps = NULL */
-			free(q ? q : p);
-		}
-	}
-	/* fixes477: calibrate PPC time base register (mftb) first so
-	 * macsurf_monotonic_ms() and performance.now() have a valid
-	 * baseline from the first JS eval.  Two TickCount boundaries
-	 * (~33 ms) elapse here at startup; acceptable cost. */
+	SysBeep(1);  /* #1 — CRT survived, main reached */
+
+	/* --- allocator smoke test (proven working) --- */
+	{ void *p = malloc(64); void *q = p ? realloc(p, 128) : NULL; free(q ? q : p); }
+
+	/* --- bisection beeps: report LAST beep heard --- */
+
+	SysBeep(1);  /* #2 */
 	macsurf_tb_calibrate();
+	SysBeep(1);  /* #3 */
 	macsurf_debug_log_init();
-	/* fixes936 (OS X tier 1): settle OS 9 vs Mac OS X BEFORE anything consumes
-	 * the answer. macsurf_heap_bounds_init() below is the FIRST consumer -- on
-	 * OS X the Process Manager partition window it reads is fiction and must
-	 * not be allowed to narrow the pointer guards (that would re-create the
-	 * #207 blank page on purpose). Emits the one-shot "RECON OS" line, so it
-	 * has to run AFTER the log is open. This call site sits OUTSIDE the
-	 * #ifdef __MACOS9__ block that opens further down; the Mac-only guard
-	 * lives inside the module, so the Linux syntax check sees a no-op. */
+	SysBeep(1);  /* #4 */
 	macsurf_osver_init();
-	/* fixes719 (#207): capture the REAL application-partition pointer window
-	 * from the Process Manager NOW -- after the log is up (so RECON HEAP
-	 * BOUNDS is recorded) and before ANY string interning / URL parse /
-	 * content fetch (netsurf_init and later). Every hardcoded
-	 * 0x01000000/0x20000000/0x28000000 pointer-range guard tests against
-	 * this window instead, so a partition mapped high (>0x28000000 on a
-	 * higher-RAM Mac) no longer makes those guards reject valid heap
-	 * pointers -> the blank-screen bug. Must stay before netsurf_init. */
+	SysBeep(1);  /* #5 */
 	macsurf_heap_bounds_init();
-	/* fixes366a -- start the profile clock so initial-page-load timing
-	 * has a t0. macsurf_profile_stamp(label) anywhere downstream will
-	 * produce a meaningful delta. The nav-time reset
-	 * (macos9_window_navigate) refreshes t0 on each URL submit. */
+	SysBeep(1);  /* #6 */
 	macsurf_profile_reset();
+	SysBeep(1);  /* #7 */
 	MS_LOG("== MacSurf start ==");
-	/* fixes711 (#207): earliest possible RECON snapshot -- VM on/off +
-	 * heap/temp/purge -- flushed immediately so even an early blank leaves
-	 * the baseline (and the VM state that labels this whole run) on disk. */
+	SysBeep(1);  /* #8 */
 	macsurf_recon_mem("boot");
-	macsurf_profile_stamp("main: log init done");
+	SysBeep(1);  /* #9 */
+
+	/* STOP here — infinite WaitNextEvent loop so we know all inits survived */
+	for (;;) {
+		EventRecord e;
+		WaitNextEvent(everyEvent, &e, 30, NULL);
+	}
+
 #ifdef __MACOS9__
 	/* fixes680 (#207): DIAG memory/lifecycle trace. FreeMem = total free
 	 * bytes in the app partition, MaxBlock = largest contiguous block. Logged
