@@ -1710,6 +1710,7 @@ static void macsurf_claim_custom_icon(void)
 
 
 int main(void) {
+	SysBeep(1);  /* Retro68: 1 beep = CRT survived, main reached */
 	/* fixes477: calibrate PPC time base register (mftb) first so
 	 * macsurf_monotonic_ms() and performance.now() have a valid
 	 * baseline from the first JS eval.  Two TickCount boundaries
