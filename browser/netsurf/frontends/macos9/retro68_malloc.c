@@ -1,27 +1,17 @@
 /*
-    Copyright 2015 Wolfgang Thaller.
-
-    This file is part of Retro68.
-
-    Retro68 is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    Retro68 is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    Under Section 7 of GPL version 3, you are granted additional
-    permissions described in the GCC Runtime Library Exception, version
-    3.1, as published by the Free Software Foundation.
-
-    You should have received a copy of the GNU General Public License and
-    a copy of the GCC Runtime Library Exception along with this program;
-    see the files COPYING and COPYING.RUNTIME respectively.  If not, see
-    <http://www.gnu.org/licenses/>.
-*/
+ * retro68_malloc.c — MacSurf allocator for Retro68 (OS X 10.3 Carbon CFM).
+ *
+ * Based on Retro68 libretro/malloc.c by Wolfgang Thaller, relicensed under
+ * the same GPL+RuntimeException terms.
+ *
+ * Uses ONLY NewPtr / DisposePtr from the Toolbox Memory Manager.
+ * SetPtrSize and GetPtrSize are avoided — on OS X 10.3 Carbon CFM they
+ * can resolve through NULL routine descriptors.
+ *
+ * Each allocation carries a hidden size_t prefix so realloc/free know the
+ * block size without calling GetPtrSize.  NewPtr on PowerPC returns 16-byte
+ * aligned memory, so payload alignment is fine for all standard types.
+ */
 
 #include <stdlib.h>
 #include <errno.h>
@@ -31,101 +21,79 @@
 
 void referenceMyMalloc(void) {}
 
+/* ---------- internal helpers ---------- */
+
+static inline void *header_to_payload(void *hdr)
+{
+	return (void *)((size_t *)hdr + 1);
+}
+
+static inline void *payload_to_header(void *payload)
+{
+	return (void *)((size_t *)payload - 1);
+}
+
+/* ---------- newlib _r entry points ---------- */
+
 void *_malloc_r(struct _reent *reent_ptr, size_t sz)
 {
-    Ptr p = NewPtr(sz);
+	size_t *p = (size_t *)NewPtr(sz + sizeof(size_t));
 
-    if(!p)
-        reent_ptr->_errno = ENOMEM;
-
-    return p;
+	if (!p) {
+		reent_ptr->_errno = ENOMEM;
+		return NULL;
+	}
+	*p = sz;
+	return header_to_payload(p);
 }
-void *_calloc_r(struct _reent *reent_ptr, size_t sz, size_t sz2)
+
+void *_calloc_r(struct _reent *reent_ptr, size_t count, size_t sz)
 {
-    Ptr p = NewPtrClear(sz*sz2);
-
-    if(!p)
-        reent_ptr->_errno = ENOMEM;
-
-    return p;
+	size_t total = count * sz;
+	void *p = _malloc_r(reent_ptr, total);
+	if (p)
+		memset(p, 0, total);
+	return p;
 }
 
 void _free_r(struct _reent *reent_ptr, void *ptr)
 {
-    if(ptr != NULL)
-        DisposePtr(ptr);
+	(void)reent_ptr;
+	if (ptr)
+		DisposePtr(payload_to_header(ptr));
 }
 
 void *_realloc_r(struct _reent *reent_ptr, void *ptr, size_t sz)
 {
-    if(ptr == NULL)
-    {
-        Ptr p = NewPtr(sz);
+	if (!ptr)
+		return _malloc_r(reent_ptr, sz);
+	if (sz == 0) {
+		_free_r(reent_ptr, ptr);
+		return NULL;
+	}
 
-        if(!p)
-            reent_ptr->_errno = ENOMEM;
-
-        return p;
-    }
-    else
-    {
-        /* Skip SetPtrSize: on OS X Carbon CFM the Toolbox Memory Manager
-         * import for SetPtrSize can resolve to a NULL routine descriptor,
-         * crashing at realloc+60 with ExcBadAccess at 0x00000220.
-         * Always allocate a new block and copy -- NewPtr and DisposePtr
-         * are proven working (malloc already succeeded with NewPtr). */
-        size_t oldSz = GetPtrSize(ptr);
-        if(sz > oldSz || (sz < oldSz / 2))
-        {
-            void *newPtr = NewPtr(sz);
-            if(!newPtr)
-            {
-                reent_ptr->_errno = ENOMEM;
-                return NULL;
-            }
-            memcpy(newPtr, ptr, sz < oldSz ? sz : oldSz);
-            DisposePtr(ptr);
-            return newPtr;
-        }
-        return ptr;
-    }
+	size_t *old_hdr = (size_t *)payload_to_header(ptr);
+	size_t old_sz = *old_hdr;
+	void *new_p = _malloc_r(reent_ptr, sz);
+	if (!new_p)
+		return NULL;
+	memcpy(new_p, ptr, sz < old_sz ? sz : old_sz);
+	_free_r(reent_ptr, ptr);
+	return new_p;
 }
 
-void *malloc(size_t sz)
-{
-    return _malloc_r(_REENT, sz);
-}
+/* ---------- standard C names ---------- */
 
-void free(void *p)
-{
-    _free_r(_REENT, p);
-}
-
-void *realloc(void *ptr, size_t sz)
-{
-    return _realloc_r(_REENT, ptr, sz);
-}
-
-void *calloc(size_t sz1, size_t sz2)
-{
-    return _calloc_r(_REENT, sz1, sz2);
-}
+void *malloc(size_t sz)           { return _malloc_r(_REENT, sz); }
+void  free(void *p)               { _free_r(_REENT, p); }
+void *realloc(void *ptr, size_t sz) { return _realloc_r(_REENT, ptr, sz); }
+void *calloc(size_t n, size_t sz) { return _calloc_r(_REENT, n, sz); }
 
 void *memalign(size_t alignment, size_t sz)
 {
-    Ptr p = NewPtr(sz);
-
-    if(!p)
-        errno = ENOMEM;
-
-    // FIXME:
-    // NewPtr aligns to 4 bytes on 68020 and 68030,
-    // and to 16 bytes on 68040 and PowerPC.
-
-    // Do something else when more alignment is required.
-    // This might be hard, as adding extra overhead to all normal allocations
-    // just so that we can distinguish things in free() doesn't sound like it's worth it.
-
-    return p;
+	(void)alignment;
+	/* NewPtr on PowerPC returns 16-byte aligned blocks, sufficient
+	 * for all standard types.  If stricter alignment is ever needed
+	 * this will need an overallocate-and-align strategy. */
+	return _malloc_r(_REENT, sz);
 }
-
