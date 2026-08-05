@@ -108,22 +108,8 @@ static void netsurf_lwc_iterator(lwc_string *str, void *pw)
 }
 
 /* exported interface documented in netsurf/netsurf.h */
-
-#ifdef __RETRO68__
-#include <Sound.h>
-static volatile int _ms_probe_stop = 1;
-static void ms_probe(int n) {
-    SysBeep(1);
-    while(_ms_probe_stop) {}  /* set _ms_probe_stop=0 to continue past */
-    (void)n;
-}
-#else
-static void ms_probe(int n) { (void)n; }
-#endif
-
 nserror netsurf_init(const char *store_path)
 {
-	return NSERROR_OK;
 	nserror ret;
 	struct hlcache_parameters hlcache_parameters;
 	struct image_cache_parameters image_cache_parameters;
@@ -151,18 +137,14 @@ nserror netsurf_init(const char *store_path)
 #endif
 
 	/* corestrings init */
-	#if 0
 	ret = corestrings_init();
-	if (ret != NSERROR_OK) return ret;
 	if (ret != NSERROR_OK)
 		return ret;
 
 	ret = nscolour_update();
 	if (ret != NSERROR_OK)
 		return ret;
-#endif
 
-	ms_probe(2);
 	/* set up cache limits based on the memory cache size option */
 	hlcache_parameters.llcache.limit = nsoption_int(memory_cache_size);
 
