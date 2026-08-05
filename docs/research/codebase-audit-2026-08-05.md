@@ -207,43 +207,30 @@ Different purpose (frontend shim for CW8 vs core nsutils), but same basename —
 
 These can be done immediately with no behavioral change:
 
-1. **Remove `js_stub.c` from the build.** The `#ifndef WITH_QUICKJS` guard makes it compile to nothing. MacSurf always builds with QuickJS. Remove from `MacSurf.mcp` (user). Remove from git. **Risk: zero.**
+1. ✅ **Remove `js_stub.c` from the build.** The `#ifndef WITH_QUICKJS` guard makes it compile to nothing. MacSurf always builds with QuickJS. Remove from `MacSurf.mcp` (user). Remove from git. **Risk: zero.** *(Done: Phase 1, `f453f3f1`)*
 
 2. **Consolidate `macsurf_http_skip_next_cache` into a context struct.** Pass it through the fetch context rather than as a bare global extern across 4 files. Add accessors. **Risk: very low** (single-writer flag).
 
-3. **Move mid-file `#include`s to file top** in `macsurf_qjs.c` (lines 1901, 9395). The includes at 1901 (`macos9_reconvert.h`) and 9395 (`content/content_factory.h`, `content/content_protected.h`) work where they are but signal incomplete refactoring. **Risk: low** (content_protected.h at line 45 is the early include; the duplicate at 9396 can just be removed).
+3. ✅ **Move mid-file `#include`s to file top** in `macsurf_qjs.c` (lines 1901, 9395). The includes at 1901 (`macos9_reconvert.h`) and 9395 (`content/content_factory.h`, `content/content_protected.h`) work where they are but signal incomplete refactoring. **Risk: low** (content_protected.h at line 45 is the early include; the duplicate at 9396 can just be removed). *(Done: Phase 1, `f453f3f1`)*
 
-4. **Extract `macsurf_qjs_page_js_summary()`** (518 lines) and `macsurf_qjs_emit_js_profile()` (232 lines) into `macsurf_qjs_audit.c`. Both are diagnostic-only functions that reference the performance counters. **Risk: very low** — pure extraction.
+4. ✅ **Extract diagnostic functions** into `macsurf_qjs_audit.c`. 8 functions extracted: `emit_timer_profile`, `geom_stats`, `gc_note`, `wrap_stats`, `perf_totals`, `emit_js_profile`, `audit_reset`, `page_js_summary` (396 lines). ~30 counters made file-scope for cross-TU access. `macsurf_qjs.c`: 11,497 → 11,126 lines. *(Done: Phase 2, `b5e2c9f3` + fixes)*
 
-5. **Remove `macos9_wheel.c` from the build** or reduce to a 5-line doc comment. The 73% comment density reflects a retired feature whose sole purpose is historical record. **Risk: zero** — no code path reaches it (`macos9_wheel_install()` is a documented no-op).
+5. ✅ **Remove `macos9_wheel.c` from the build** or reduce to a 5-line doc comment. The 73% comment density reflects a retired feature whose sole purpose is historical record. **Risk: zero** — no code path reaches it (`macos9_wheel_install()` is a documented no-op). *(Done: Phase 1, `f453f3f1`)*
 
 ### Phase 2: Structural Refactors (3-5 rounds, MEDIUM risk)
 
 These change code structure without changing behavior:
 
-6. **Extract shared fetcher cache layer into `macos9_fetch_cache.c`.**
-   - Move `cache_capture_append`/`hctx_cache_capture` → `macos9_cache_capture_append(ctx, data, len)`
-   - Move cache-hit replay → `macos9_cache_hit_replay(ctx, ops)`
-   - Move cache-eligibility check → `macos9_cache_is_eligible(ctx)`
-   - Both fetchers call the same functions; ~150 lines deduplicated.
-   - **Risk: medium** — cache hit/miss is the most performance-critical path.
+6. ◐ **Extract shared fetcher cache layer.** Partially done — shared `macos9_find_line()` extracted (`be4cbc57`); shared request-header helpers done in prior cleanup (`533da123`/`9b59b481`). Cache accumulator + cache-hit replay remain (tightly coupled to context structs, needs shared struct refactor).
 
 7. **Table-drive `register_browser_globals()`** in `macsurf_qjs.c`.
    - Define a `{name, type, getter, setter, flags}` registration table (~100 entries)
    - Replace the 1,417-line function with a loop over the table
    - **Risk: medium** — must preserve property descriptor flags and inheritance chain. Test with harness Test 45 (hackaday real bundle).
 
-8. **Extract shared fetcher header parser** into `macos9_fetch_headers.c`.
-   - The header-parse loops in both fetchers share structure and the identical `fixes641` bug story
-   - A shared `macos9_parse_response_headers(ctx, buf, len, callback)` would serve both
-   - The current `cleanup` branch commits (`533da123` — "wire fetchers to shared request-header helpers") are the first step; finish the job
-   - **Risk: medium** — header parsing touches cookie capture, content-type forwarding, cache control.
+8. ◐ **Extract shared fetcher header parser.** Partially done — shared cookie + Sec-Fetch header helpers extracted (`533da123`/`9b59b481`); shared buffer constants (`854233ae`). Header parse loops still duplicated (different context structs).
 
-9. **Flatten mouse/scroll handlers with guard clauses + state machines.**
-   - `macos9_handle_mouse_down` (main.c:919-1243, depth 8-9): extract drag-tracking into `macos9_track_drag()` 
-   - `macos9_window_handle_scrollbar_click` (window.c:514-586, depth 7-8): same pattern, same fix
-   - Both reimplement StillDown() polling with manual throttling — unify into one `macos9_drag_tracker` utility
-   - **Risk: medium** — input handling is latency-sensitive; test on real G3/G4 hardware.
+9. ◐ **Flatten mouse/scroll handlers.** Partially done — shared `macos9_throttled_repaint()` extracted (`ebc502c2`), duplicate TickCount/updateEvt pattern removed from both StillDown() loops, nesting reduced by 2 levels. Full drag-tracker extraction + StillDown() utility remain.
 
 ### Phase 3: Deep Architecture (defer, HIGH risk/effort)
 
