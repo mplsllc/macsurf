@@ -76,6 +76,10 @@ struct jsheap {
 	 * page with an iframe; g_heap is only ever the most-RECENTLY-created one.
 	 * See the note on macsurf_qjs_pump_all(). */
 	struct jsheap *next;
+	/* fixes1117b (#265) — per-heap module source registry for ES module
+	 * imports. The module loader callback checks this list before trying the
+	 * disk cache.  Populated by js_exec_module for inline scripts. */
+	struct module_registry *module_reg;
 };
 
 struct jsthread {
@@ -9704,6 +9708,168 @@ static JSMallocFunctions macsurf_qjs_mf = {
 	qjs_safe_usable_size
 };
 
+/* ================================================================
+ * fixes1117b (#265) — MODULE SEMANTICS (JS_SetModuleLoaderFunc)
+ *
+ * QuickJS supports real ES modules via JS_EVAL_TYPE_MODULE +
+ * JS_SetModuleLoaderFunc.  The normalize callback resolves relative
+ * import specifiers against the importing module's URL; the loader
+ * callback fetches and compiles the module source.  Both are registered
+ * on the JSRuntime in js_newheap.
+ * ================================================================ */
+
+/* Simple linked list of pre-registered module sources (inline scripts
+ * whose text is already available before JS_Eval is called). */
+struct module_entry {
+	struct module_entry *next;
+	char   *name;    /* module URL (malloc'd) */
+	char   *source;  /* source text (malloc'd, NUL-terminated) */
+	size_t  srclen;
+};
+
+/* Module registry lives per heap; opaque pointer in the loader. */
+struct module_registry {
+	struct module_entry *head;
+};
+
+/* Normalize: resolve import specifier against base module name.
+ * Returns a malloc'd string that QuickJS will free via JS_FreeCString. */
+static char *qjs_module_normalize(JSContext *ctx,
+	const char *base_name, const char *name, void *opaque)
+{
+	const char *last_slash;
+	size_t base_len, name_len, dot;
+	char *result;
+	(void)opaque; (void)ctx;
+
+	if (name == NULL) return NULL;
+
+	/* Absolute URL or already fully qualified */
+	if (name[0] == '/' || strncmp(name, "http://", 7) == 0 ||
+			strncmp(name, "https://", 8) == 0) {
+		return strdup(name);
+	}
+
+	/* Relative: resolve against base_name's directory */
+	last_slash = base_name ? strrchr(base_name, '/') : NULL;
+	if (last_slash == NULL) return strdup(name);
+
+	base_len = (size_t)(last_slash - base_name) + 1; /* include the / */
+	name_len = strlen(name);
+
+	result = (char *)malloc(base_len + name_len + 1);
+	if (result == NULL) return NULL;
+	memcpy(result, base_name, base_len);
+	memcpy(result + base_len, name, name_len + 1);
+
+	/* Append .js if no extension (Node/bundler compat) */
+	dot = name_len;
+	while (dot > 0 && name[dot - 1] != '.') dot--;
+	if (dot == 0 && name_len > 0) {
+		char *ext = (char *)malloc(base_len + name_len + 4);
+		if (ext != NULL) {
+			memcpy(ext, result, base_len + name_len);
+			memcpy(ext + base_len + name_len, ".js\0", 4);
+			free(result);
+			result = ext;
+		}
+	}
+
+	return result;
+}
+
+/* Loader: fetch and compile a module given its normalized name.
+ * Checks the pre-registered source list first (inline scripts),
+ * then tries disk cache, then fails. Called synchronously by
+ * QuickJS during JS_ResolveModule / import resolution. */
+static JSModuleDef *qjs_module_loader(JSContext *ctx,
+	const char *module_name, void *opaque)
+{
+	struct module_registry *reg;
+	struct module_entry *e;
+	JSValue val;
+
+	reg = (struct module_registry *)opaque;
+
+	/* 1. Check pre-registered sources (inline scripts) */
+	if (reg != NULL && module_name != NULL) {
+		for (e = reg->head; e != NULL; e = e->next) {
+			if (e->name != NULL &&
+					strcmp(e->name, module_name) == 0) {
+				val = JS_Eval(ctx, e->source, e->srclen,
+					module_name,
+					JS_EVAL_TYPE_MODULE |
+					JS_EVAL_FLAG_COMPILE_ONLY);
+				if (!JS_IsException(val))
+					return (JSModuleDef *)
+						JS_VALUE_GET_PTR(val);
+				JS_FreeValue(ctx, JS_GetException(ctx));
+				return NULL;
+			}
+		}
+	}
+
+#ifdef __MACOS9__
+	/* 2. Try disk cache */
+	{
+		extern int macos9_cache_lookup(const char *url,
+			char **body, long *body_len);
+		char *body = NULL;
+		long blen = 0;
+
+		if (macos9_cache_lookup(module_name, &body, &blen) == 1
+				&& body != NULL && blen > 0) {
+			val = JS_Eval(ctx, body, (size_t)blen,
+				module_name,
+				JS_EVAL_TYPE_MODULE |
+				JS_EVAL_FLAG_COMPILE_ONLY);
+			free(body);
+			if (!JS_IsException(val))
+				return (JSModuleDef *)
+					JS_VALUE_GET_PTR(val);
+			JS_FreeValue(ctx, JS_GetException(ctx));
+		}
+	}
+#else
+	(void)ctx;
+#endif
+
+	return NULL; /* module not found */
+}
+
+/* Pre-register a module source so the loader can find it during
+ * import resolution. Called before JS_Eval for inline module scripts. */
+static void qjs_module_register(struct module_registry *reg,
+	const char *name, const char *source, size_t srclen)
+{
+	struct module_entry *e;
+	if (reg == NULL || name == NULL || source == NULL) return;
+	e = (struct module_entry *)calloc(1, sizeof(*e));
+	if (e == NULL) return;
+	e->name = strdup(name);
+	e->source = (char *)malloc(srclen + 1);
+	if (e->source != NULL) {
+		memcpy(e->source, source, srclen);
+		e->source[srclen] = '\0';
+		e->srclen = srclen;
+	}
+	e->next = reg->head;
+	reg->head = e;
+}
+
+static void qjs_module_registry_free(struct module_registry *reg)
+{
+	struct module_entry *e, *next;
+	if (reg == NULL) return;
+	for (e = reg->head; e != NULL; e = next) {
+		next = e->next;
+		free(e->name);
+		free(e->source);
+		free(e);
+	}
+	reg->head = NULL;
+}
+
 nserror js_newheap(int timeout, struct jsheap **out_heap)
 {
 	struct jsheap *heap;
@@ -9795,6 +9961,18 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 	g_perf_gc_armed = 0;
 
 	JS_SetInterruptHandler(heap->rt, qjs_interrupt_handler, NULL);
+
+	/* fixes1117b (#265) -- ES module loader. Registered on the
+	 * JSRuntime (not per-context) so it is available for every
+	 * context created from this runtime. */
+	heap->module_reg = (struct module_registry *)
+		calloc(1, sizeof(struct module_registry));
+	if (heap->module_reg != NULL) {
+		JS_SetModuleLoaderFunc(heap->rt,
+			qjs_module_normalize,
+			qjs_module_loader,
+			(void *)heap->module_reg);
+	}
 
 	/* Register element class before any context is created */
 	qjs_dom_init_class(heap->rt);
@@ -9893,6 +10071,8 @@ void js_destroyheap(struct jsheap *heap)
 		}
 	}
 	if (g_heap == heap) g_heap = NULL;
+	qjs_module_registry_free(heap->module_reg);
+	free(heap->module_reg);
 	if (heap->rt  != NULL) JS_FreeRuntime(heap->rt);
 	free(heap);
 }
@@ -10787,6 +10967,113 @@ unsigned char js_exec(struct jsthread *thread,
 	}
 #endif
 	return 1;
+}
+
+/* fixes1117b (#265) — execute a script as an ES module.
+ *
+ * Compiles the source with JS_EVAL_TYPE_MODULE (which parses import/
+ * export, enforces strict mode, and provides a separate module scope),
+ * then resolves dependencies and executes.  For a module with imports,
+ * the loader callback handles fetching those modules synchronously.
+ *
+ * Returns 1 on success, 0 on compile/resolve/execute failure.
+ * Caller is responsible for NUL-terminating src. */
+unsigned char js_exec_module(struct jsthread *thread,
+	const unsigned char *txt, size_t txtlen, const char *name)
+{
+	JSValue val;
+	JSContext *ctx;
+	char *src;
+	int ok;
+
+	if (thread == NULL || thread->ctx == NULL) {
+		macsurf_debug_log_writef(
+			"LIFE js exec module: NO THREAD/CTX [%s]",
+			name ? name : "(anon)");
+		return 0;
+	}
+	if (txt == NULL || txtlen == 0) return 1;
+	ctx = thread->ctx;
+
+	/* Copy and NUL-terminate (same as js_exec) */
+	src = (char *)malloc(txtlen + 1);
+	if (src == NULL) {
+		macsurf_debug_log_writef(
+			"js: OOM copying module src [%s len=%ld]",
+			name ? name : "(anon)", (long)txtlen);
+		return 0;
+	}
+	memcpy(src, txt, txtlen);
+	src[txtlen] = '\0';
+
+	/* Compile as a module. JS_EVAL_TYPE_MODULE triggers the
+	 * module loader for any import statements, which checks the
+	 * pre-registered source list and disk cache. */
+	val = JS_Eval(ctx, src, txtlen,
+		name ? name : "<module>",
+		JS_EVAL_TYPE_MODULE |
+		JS_EVAL_FLAG_COMPILE_ONLY);
+	free(src);
+
+	if (JS_IsException(val)) {
+		JSValue exc = JS_GetException(ctx);
+		const char *estr = JS_ToCString(ctx, exc);
+		macsurf_debug_log_writef(
+			"LIFE qjs exec module err: %s [%s len=%ld]",
+			estr ? estr : "?", name ? name : "<module>",
+			(long)txtlen);
+		if (estr) JS_FreeCString(ctx, estr);
+		JS_FreeValue(ctx, exc);
+		JS_FreeValue(ctx, val);
+		return 0;
+	}
+
+	/* Resolve dependencies (runs the loader for each import) */
+	if (JS_ResolveModule(ctx, val) != 0) {
+		JSValue exc = JS_GetException(ctx);
+		const char *estr = JS_ToCString(ctx, exc);
+		macsurf_debug_log_writef(
+			"LIFE qjs exec module resolve err: %s [%s]",
+			estr ? estr : "?", name ? name : "<module>");
+		if (estr) JS_FreeCString(ctx, estr);
+		JS_FreeValue(ctx, exc);
+		JS_FreeValue(ctx, val);
+		return 0;
+	}
+
+	/* Drain pending jobs (module evaluation is queued as a job) */
+	{
+		JSRuntime *rt = JS_GetRuntime(ctx);
+		JSContext *jctx;
+		int drained = 0;
+
+		while (JS_IsJobPending(rt) && drained < 32) {
+			drained++;
+			if (JS_ExecutePendingJob(rt, &jctx) < 0) {
+				macsurf_debug_log_writef(
+					"LIFE qjs exec module job err: fatal");
+				break;
+			}
+		}
+	}
+
+	ok = !JS_IsException(val);
+	if (!ok) {
+		JSValue exc = JS_GetException(ctx);
+		const char *estr = JS_ToCString(ctx, exc);
+		macsurf_debug_log_writef(
+			"LIFE qjs exec module final err: %s [%s]",
+			estr ? estr : "?", name ? name : "<module>");
+		if (estr) JS_FreeCString(ctx, estr);
+		JS_FreeValue(ctx, exc);
+	}
+	JS_FreeValue(ctx, val);
+
+	/* Update page stats (same as js_exec) */
+	g_js_exec_count++;
+	g_js_exec_bytes += txtlen;
+
+	return ok ? 1 : 0;
 }
 
 unsigned char js_fire_event(struct jsthread *thread, const char *type,

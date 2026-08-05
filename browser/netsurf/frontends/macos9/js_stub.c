@@ -57,6 +57,16 @@ unsigned char js_exec(jsthread *thread,
 	return 0;
 }
 
+/* fixes1117b (#265) — no-op stub for WITHOUT_QUICKJS builds.
+ * Matches the js_exec stub signature. */
+unsigned char js_exec_module(jsthread *thread,
+		const unsigned char *txt, unsigned long txtlen,
+		const char *name)
+{
+	(void)thread; (void)txt; (void)txtlen; (void)name;
+	return 0;
+}
+
 unsigned char js_fire_event(jsthread *thread, const char *type,
 		struct dom_document *doc, struct dom_node *target)
 {

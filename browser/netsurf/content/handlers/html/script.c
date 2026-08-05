@@ -48,6 +48,12 @@
 
 extern int macsurf_ptr_is_heap(const void *);
 
+/* fixes1117b (#265) — execute a script as an ES module. Defined in
+ * frontends/macos9/javascript/macsurf_qjs.c, linked via the MacSurf.mcp
+ * build. Returns 1 on success, 0 on compile/resolve/execute failure. */
+extern unsigned char js_exec_module(struct jsthread *thread,
+	const unsigned char *txt, size_t txtlen, const char *name);
+
 typedef bool (script_handler_t)(struct jsthread *jsthread, const uint8_t *data, size_t size, const char *name);
 
 /* fixes535: out-of-band live-content registry (anti-UAF).  The three
@@ -1004,25 +1010,48 @@ html_process_script(void *ctx, dom_node *node)
 	if (exc != DOM_NO_ERR || mimetype == NULL) {
 		mimetype = dom_string_ref(corestring_dom_text_javascript);
 	}
-	/* fixes1117 (#265) — <script type="module"> is silently dropped
-	 * because "module" doesn't match any registered content-factory
-	 * MIME type, so select_script_handler returns NULL and the script
-	 * body is never passed to js_exec. Remap it to text/javascript so
-	 * the script executes as a regular script. Not strictly correct
-	 * (real modules have their own scope, strict mode, and import/
-	 * export), but executing is drastically better than silently
-	 * dropping — the silent drop is invisible, produces no log line,
-	 * and page authors frequently use type="module" on bundles that
-	 * don't actually use module-specific features. */
+
+	/* Check for type="module" NOW, before the src attribute fetch,
+	 * so we can detect inline module scripts. */
 	{
 		const char *mt = dom_string_data(mimetype);
-		static int logged = 0;
 		if (mt != NULL && strcmp(mt, "module") == 0) {
-			if (logged < 5) { logged++;
-				NSLOG(netsurf, INFO,
-					"module script remapped to text/javascript"); }
+			/* Get src to decide inline vs external */
+			exc = dom_element_get_attribute(node,
+				corestring_dom_src, &src);
+
+			if (exc != DOM_NO_ERR || src == NULL) {
+				/* INLINE module: execute with real module
+				 * semantics via js_exec_module. */
+				dom_string *modsrc;
+				dom_exception mexc;
+				mexc = dom_node_get_text_content(
+					node, &modsrc);
+				if (mexc == DOM_NO_ERR &&
+						modsrc != NULL) {
+					js_exec_module(c->js_thread,
+						dom_string_data(modsrc),
+						dom_string_byte_length(modsrc),
+						"?inline module?");
+					dom_string_unref(modsrc);
+				}
+				dom_string_unref(mimetype);
+				return DOM_HUBBUB_OK;
+			}
+
+			/* EXTERNAL module: remap and let the regular
+			 * src-script path handle it. js_exec_module
+			 * threading through the async callback is
+			 * deferred; external module scripts get
+			 * regular-script treatment for now (still a
+			 * massive improvement over the silent drop). */
 			dom_string_unref(mimetype);
-			mimetype = dom_string_ref(corestring_dom_text_javascript);
+			mimetype = dom_string_ref(
+				corestring_dom_text_javascript);
+			err = exec_src_script(c, node, mimetype, src);
+			dom_string_unref(src);
+			dom_string_unref(mimetype);
+			return err;
 		}
 	}
 
