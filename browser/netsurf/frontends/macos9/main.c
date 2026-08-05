@@ -1174,7 +1174,6 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 									}
 								}
 								if (dragging && (cx_ns != last_cx || cy_ns != last_cy)) {
-									unsigned long nowt;
 									last_cx = cx_ns; last_cy = cy_ns;
 									browser_window_mouse_track(gw->bw,
 										BROWSER_MOUSE_DRAG_ON | BROWSER_MOUSE_HOLDING_1 | mods,
@@ -1187,8 +1186,8 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 									 * throttled to ~20fps so a big page's box-walk
 									 * doesn't stall the drag. handle_update only reads
 									 * event->message, so a synthetic updateEvt is safe. */
-								macos9_throttled_repaint(gw, &last_draw_tick);
-							}
+									macos9_throttled_repaint(gw, &last_draw_tick);
+								}
 							GetMouse(&relp);
 							rx_ns = (int)relp.h - gw->content_rect.left + gw->scroll_x;
 							ry_ns = (int)relp.v - gw->content_rect.top  + gw->scroll_y;
