@@ -5,9 +5,7 @@
 #include "utils/nsurl.h"
 #include "netsurf/types.h"
 #include "netsurf/window.h"
-#include "netsurf/mouse.h"
 #include "netsurf/browser_window.h"
-#include "desktop/browser_history.h"
 #include "macos9.h"
 #include "macsurf_config.h"
 #ifdef __MACOS9__

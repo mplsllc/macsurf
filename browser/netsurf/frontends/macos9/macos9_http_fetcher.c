@@ -1,7 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <ctype.h>
 #include "utils/ns_errors.h"
 #include "utils/log.h"
 #include "utils/nsurl.h"
@@ -14,7 +13,6 @@
 #include "macsurf_osver.h"	/* fixes936 (OS X tier 1) — macsurf_os_is_osx() */
 #ifdef __MACOS9__
 #include <Files.h>
-#include <Folders.h>
 #include <Script.h>
 #include <OpenTransport.h>
 #include <OpenTptInternet.h>

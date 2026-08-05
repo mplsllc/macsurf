@@ -8,7 +8,6 @@
  *   - Robust UTF-8 handling.
  */
 
-#include <stdlib.h>
 #include <string.h>
 
 #include "utils/ns_errors.h"

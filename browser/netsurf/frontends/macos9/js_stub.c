@@ -10,6 +10,10 @@
  * an .mcp edit.
  */
 
+#ifdef WITH_QUICKJS
+#error "js_stub.c is compiled but WITH_QUICKJS is defined — this file provides no-op stubs for a no-JS build, but QuickJS IS active. Remove js_stub.c from MacSurf.mcp."
+#endif
+
 
 
 #include <stddef.h>

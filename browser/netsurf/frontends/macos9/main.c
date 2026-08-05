@@ -43,6 +43,14 @@ extern void OSTLS_StirEntropy(const void *data, unsigned long len);
  * to avoid pulling macos9_disk_cache.h's includes into main.c. */
 extern void macos9_cookies_load(void);
 extern void macos9_cookies_save(void);
+/* Event-loop callbacks — declared here to avoid pulling internal headers
+ * into main.c. Each is called from macos9_poll() once per loop pass. */
+extern bool   macos9_schedule_run(void);
+extern void   fetch_pump(void);
+extern int    macos9_op_depth;
+extern void   macos9_animation_tick(void);
+extern void   macsurf_qjs_pump_all(void);
+extern void   macos9_deathrow_drain(void);
 /* JS init: js_initialise/js_finalise are declared in the shared content js.h
  * and provided by the QuickJS engine glue (macsurf_qjs.c). */
 #ifdef WITH_QUICKJS
@@ -1459,7 +1467,7 @@ void macos9_poll(void) {
 		}
 	}
 	if (!macos9_quitting) {
-		{ extern bool macos9_schedule_run(void); macos9_schedule_run(); }
+		{ macos9_schedule_run(); }
 		/* fixes90: unconditional fetcher pump. NetSurf core's
 		 * scheduler-driven fetcher_poll only re-arms while a fetch
 		 * is active; after the first nav's HTTP fetch finishes,
@@ -1467,11 +1475,7 @@ void macos9_poll(void) {
 		 * and synchronous cache-hit broadcasts. Pumping here
 		 * keeps queued jobs dispatching and per-scheme polls
 		 * running every loop iteration. */
-		{ extern void fetch_pump(void); extern int macos9_op_depth;
-		  /* Stage 1: fetch_pump drives fetch completions, which drive
-		   * convert/teardown -- engine work. Mark the depth so the
-		   * death-row drain below cannot free mid-pump. */
-		  macos9_op_depth++; fetch_pump(); macos9_op_depth--; }
+		{ macos9_op_depth++; fetch_pump(); macos9_op_depth--; }
 		macos9_windows_te_idle(); macos9_windows_process_deferred();
 		/* fixes725 — nav-button hover highlight: track the pointer over the
 		 * front window's toolbar (cheap; only repaints on a hover change). */
@@ -1502,20 +1506,17 @@ void macos9_poll(void) {
 			}
 		}
 		macos9_poll_mouse_hover();
-		{ extern void macos9_animation_tick(void);
-		  macos9_animation_tick(); }
+		{ macos9_animation_tick(); }
 		/* fixes321 (#103) — drive setTimeout / setInterval. */
 #ifdef WITH_QUICKJS
-		{ extern void macsurf_qjs_pump_all(void);
-		  macsurf_qjs_pump_all(); }
+		{ macsurf_qjs_pump_all(); }
 #endif
 		/* Stage 1 (fixes565): the one quiescent drain point. schedule_run /
 		 * fetch_pump / event dispatch have all returned, so nothing
 		 * walk/convert/redraw is on the stack. macos9_deathrow_drain()
 		 * itself no-ops unless macos9_op_depth==0, so a nested poll
 		 * (should one ever exist) cannot free mid-operation. */
-		{ extern void macos9_deathrow_drain(void);
-		  macos9_deathrow_drain(); }
+		{ macos9_deathrow_drain(); }
 	}
 }
 

@@ -178,8 +178,6 @@ extern struct content *hlcache_handle_get_content(
 #ifdef __MACOS9__
 #include <Quickdraw.h>
 #include <QuickdrawText.h>
-#include <Fonts.h>
-#include <TextUtils.h>
 #else
 /* Linux cross-check stubs — match Mac toolbox shapes loosely. */
 typedef struct { short top, left, bottom, right; } MacRect;
