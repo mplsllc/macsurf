@@ -2572,27 +2572,10 @@ static int build_request(struct macos9_https_ctx *c)
 	char *cookie_str;
 	int   verifiable;      /* fixes835 (#167 M1) */
 	char  synth[512];      /* fixes835 — Sec-Fetch + Origin, built below */
-	cookie_hdr[0] = '\0';
 	cookie_str = (c->url != NULL) ? urldb_get_cookie(c->url, true) : NULL;
 	if (cookie_str != NULL) {
-		size_t cl;
 		/* fixes378 — drop any stuck noscript=1 before it reaches FB. */
 		cookie_strip_noscript(cookie_str);
-		cl = strlen(cookie_str);
-		/* "Cookie: " (8) + value + "\r\n" (2) + NUL (1) = cl + 11 */
-		if (cl > 0 && cl + 11 <= sizeof cookie_hdr) {
-			strcpy(cookie_hdr, "Cookie: ");
-			strcat(cookie_hdr, cookie_str);
-			strcat(cookie_hdr, "\r\n");
-		} else {
-			/* Refuse to truncate — a half cookie header is worse
-			 * than none (FB would reject the session). Logged so
-			 * the cap can be raised if a real jar ever exceeds it. */
-			macsurf_debug_log_writef(
-				"https: cookie hdr too big cl=%ld cap=%ld",
-				(long)cl,
-				(long)sizeof cookie_hdr);
-		}
 		/* fixes368c (#167) — names only, never values. */
 		{
 			char cknames[256];
@@ -2609,8 +2592,9 @@ static int build_request(struct macos9_https_ctx *c)
 				macsurf_debug_log_writef("WORK fbcksent %s", cknames);
 			}
 		}
-		free(cookie_str);
 	}
+	macos9_build_cookie_header(cookie_hdr, sizeof cookie_hdr, cookie_str);
+	if (cookie_str != NULL) free(cookie_str);
 	/* fixes368a (#167) — one request-summary line per fetch: the host, the
 	 * User-Agent we chose for it, and the Cookie: header size. The UA is the
 	 * key Facebook diagnostic — if FB serves the wrong page or 301-bounces,
@@ -2635,39 +2619,8 @@ static int build_request(struct macos9_https_ctx *c)
 	 * This is the https fetcher, so Origin is always https and c->host has
 	 * no port (FB is :443). */
 	verifiable = fetch_get_verifiable(c->parent);
-	synth[0] = '\0';
-	if (!macos9_hdr_has_ci(c->caller_hdrs, "sec-fetch-")) {
-		if (verifiable && c->post_body != NULL) {
-			strcpy(synth,
-				"Sec-Fetch-Dest: document\r\n"
-				"Sec-Fetch-Mode: navigate\r\n"
-				"Sec-Fetch-Site: same-origin\r\n"
-				"Sec-Fetch-User: ?1\r\n"
-				"Upgrade-Insecure-Requests: 1\r\n");
-		} else if (verifiable) {
-			strcpy(synth,
-				"Sec-Fetch-Dest: document\r\n"
-				"Sec-Fetch-Mode: navigate\r\n"
-				"Sec-Fetch-Site: none\r\n"
-				"Sec-Fetch-User: ?1\r\n"
-				"Upgrade-Insecure-Requests: 1\r\n");
-		} else {
-			strcpy(synth,
-				"Sec-Fetch-Dest: empty\r\n"
-				"Sec-Fetch-Mode: no-cors\r\n"
-				"Sec-Fetch-Site: same-origin\r\n");
-		}
-	}
-	if (c->post_body != NULL &&
-	    !macos9_hdr_has_ci(c->caller_hdrs, "origin:")) {
-		char   org[320];
-		size_t sl;
-		size_t ol;
-		sprintf(org, "Origin: https://%s\r\n", c->host);
-		sl = strlen(synth);
-		ol = strlen(org);
-		if (sl + ol < sizeof synth) strcat(synth, org);
-	}
+	macos9_build_sec_fetch(synth, sizeof synth, verifiable,
+		(c->post_body != NULL), "https", c->host);
 	/* fixes836 (#167 M1 diag) — dump the shape of a Facebook POST (the login
 	 * submit) so we can see EXACTLY what goes on the wire when FB says "wrong
 	 * password". WORK-prefixed so it survives the failures-only log gate.

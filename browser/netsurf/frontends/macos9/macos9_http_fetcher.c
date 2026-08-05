@@ -608,19 +608,9 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		ua_var = strlen(ua);
 		cookie_hdr[0] = '\0';
 		cookie_str = (c->url != NULL) ? urldb_get_cookie(c->url, true) : NULL;
-		if (cookie_str != NULL) {
-			size_t cl = strlen(cookie_str);
-			if (cl + 11 <= sizeof(cookie_hdr)) {
-				strcpy(cookie_hdr, "Cookie: ");
-				strcat(cookie_hdr, cookie_str);
-				strcat(cookie_hdr, "\r\n");
-			} else {
-				macsurf_debug_log_writef(
-					"mfs_open: cookie hdr too big cl=%ld",
-					(long)cl);
-			}
-			free(cookie_str);
-		}
+		macos9_build_cookie_header(cookie_hdr, sizeof cookie_hdr, cookie_str);
+		if (cookie_str != NULL) free(cookie_str);
+
 		ck_var = strlen(cookie_hdr);
 		/* fixes835 (#167 Facebook M1) — mirror of the HTTPS fetcher's
 		 * Sec-Fetch + Origin synthesis, keyed on request kind; scheme is
@@ -628,41 +618,8 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		 * the metadata is browser-standard for any http site). A caller that
 		 * already supplied its own Sec-Fetch/Origin wins. */
 		verifiable = fetch_get_verifiable(c->parent);
-		synth[0] = '\0';
-		if (!macos9_hdr_has_ci(c->caller_hdrs, "sec-fetch-")) {
-			if (verifiable && c->post_body != NULL) {
-				strcpy(synth,
-					"Sec-Fetch-Dest: document\r\n"
-					"Sec-Fetch-Mode: navigate\r\n"
-					"Sec-Fetch-Site: same-origin\r\n"
-					"Sec-Fetch-User: ?1\r\n"
-					"Upgrade-Insecure-Requests: 1\r\n");
-			} else if (verifiable) {
-				strcpy(synth,
-					"Sec-Fetch-Dest: document\r\n"
-					"Sec-Fetch-Mode: navigate\r\n"
-					"Sec-Fetch-Site: none\r\n"
-					"Sec-Fetch-User: ?1\r\n"
-					"Upgrade-Insecure-Requests: 1\r\n");
-			} else {
-				strcpy(synth,
-					"Sec-Fetch-Dest: empty\r\n"
-					"Sec-Fetch-Mode: no-cors\r\n"
-					"Sec-Fetch-Site: same-origin\r\n");
-			}
-		}
-		if (c->post_body != NULL &&
-		    !macos9_hdr_has_ci(c->caller_hdrs, "origin:")) {
-			char   org[320];
-			size_t sl2;
-			size_t ol2;
-			sprintf(org, "Origin: http://%s\r\n", host_z);
-			sl2 = strlen(synth);
-			ol2 = strlen(org);
-			if (sl2 + ol2 < sizeof synth) strcat(synth, org);
-		}
-		xh_var = strlen(c->caller_hdrs);
-		sf_var = strlen(synth);
+		macos9_build_sec_fetch(synth, sizeof synth, verifiable,
+		(c->post_body != NULL), "http", host_z);
 		/* fixes368a (#167) — one request-summary line per fetch: host, the
 		 * chosen UA, and Cookie: header size (bytes only, never values).
 		 * Mirrors the HTTPS fetcher so the troubleshooting trace reads the
