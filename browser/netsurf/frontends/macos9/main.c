@@ -1711,6 +1711,15 @@ static void macsurf_claim_custom_icon(void)
 
 int main(void) {
 	SysBeep(1);  /* Retro68: 1 beep = CRT survived, main reached */
+	{
+		void *p = malloc(64);
+		SysBeep(p ? 1 : 2);   /* 1 beep = malloc lived; 2 beeps = NULL */
+		if (p) {
+			void *q = realloc(p, 128);
+			SysBeep(q ? 1 : 2);   /* 1 beep = realloc lived; 2 beeps = NULL */
+			free(q ? q : p);
+		}
+	}
 	/* fixes477: calibrate PPC time base register (mftb) first so
 	 * macsurf_monotonic_ms() and performance.now() have a valid
 	 * baseline from the first JS eval.  Two TickCount boundaries
