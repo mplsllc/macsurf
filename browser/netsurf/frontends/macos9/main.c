@@ -1918,6 +1918,7 @@ int main(void) {
 #if MS_PROBE_FONT_QUALITY || MS_PROBE_MENUS || MS_PROBE_ICONS
 	MS_LOG("BOOT mac-only init block done");
 #endif
+	if (!macsurf_os_is_osx()) {
 	memset(&macos9_table, 0, sizeof(macos9_table));
 	macos9_table.window = macos9_window_table;
 	macos9_table.utf8 = macos9_utf8_table;
@@ -1995,6 +1996,7 @@ int main(void) {
 	 * heap-exhaustion on heavy forum indexes and to stay safe on 64MB Macs. */
 	nsoption_set_int(memory_cache_size, 32 * 1024 * 1024);
 	MS_LOG("BOOT images enabled, author_css on, fetcher 128/16, mem cache 32MB");
+	SysBeep(1);  /* after all nsoption_set_* calls */
 #ifdef __MACOS9__
 	if (!macsurf_os_is_osx()) { macsurf_debug_log_writef("DIAG pre-netsurf_init: free=%ld maxblk=%ld",
 		(long)FreeMem(), (long)MaxBlock()); }
@@ -2101,6 +2103,8 @@ int main(void) {
 	macos9_font_metric_probe_run();
 	macos9_font_vmetric_probe_run();
 #endif
+	} /* !os_is_osx: netsurf path skipped on OS X */
+	while (!macos9_done) macos9_poll();
 #endif /* MS_PROBE_NETSURF */
 	while (!macos9_done) macos9_poll();
 	MS_LOG("BOOT event loop exited");
