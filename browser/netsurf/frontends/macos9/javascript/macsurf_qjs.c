@@ -1296,11 +1296,21 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 /* document.title getter/setter                                         */
 /* ------------------------------------------------------------------ */
 
+/* fixes1114 (#265) — document.title getter was hardcoded to return "".
+ * The setter wrote the real title straight to the Mac window title bar
+ * (via macos9_gw_set_title) but never cached it, so the getter had nothing
+ * to return even though the page had already set it.
+ *
+ * fixes1114b: matchMedia is now a real evaluator (replaces hardcoded false,
+ * see the JS block below). Both fixes are in this single file, no prefix
+ * touch — normal incremental rebuild. */
+static char g_last_title[512] = "";
+
 static JSValue qjs_document_title_get(JSContext *ctx, JSValueConst this_val,
 		int argc, JSValueConst *argv)
 {
 	(void)this_val; (void)argc; (void)argv;
-	return JS_NewString(ctx, "");
+	return JS_NewString(ctx, g_last_title);
 }
 
 static JSValue qjs_document_title_set(JSContext *ctx, JSValueConst this_val,
@@ -1310,10 +1320,16 @@ static JSValue qjs_document_title_set(JSContext *ctx, JSValueConst this_val,
 #ifdef __MACOS9__
 	if (argc > 0) {
 		const char *title = JS_ToCString(ctx, argv[0]);
-		if (title && initial_win != NULL) {
-			macos9_gw_set_title(initial_win, title);
+		if (title != NULL) {
+			size_t n = strlen(title);
+			if (n >= sizeof(g_last_title)) n = sizeof(g_last_title) - 1;
+			memcpy(g_last_title, title, n);
+			g_last_title[n] = '\0';
+			if (initial_win != NULL) {
+				macos9_gw_set_title(initial_win, title);
+			}
+			JS_FreeCString(ctx, title);
 		}
-		if (title) JS_FreeCString(ctx, title);
 	}
 #else
 	(void)argc; (void)argv;
@@ -8533,12 +8549,53 @@ static void register_browser_globals(JSContext *ctx)
 		/* fixes1015 — ours answers matches:false unconditionally, so any
 		 * rendering that branches on a media query silently takes the
 		 * false path. Log which queries the page actually asked. */
+		/* fixes1114b (#265) — REAL matchMedia evaluator, not hardcoded false.
+		 *
+		 * The old stub answered {matches:false} to EVERY query, which is a
+		 * lying answer: a page's (min-width:800px) check got `false` and the
+		 * page served its mobile layout on a 949px-wide window.
+		 *
+		 * Unknown queries still log via __msLife (matching the old WANT
+		 * behavior) so the hardware log tells us which queries real pages
+		 * use next. Known-query evaluation is at call time so
+		 * this.innerWidth/this.innerHeight (set a few lines below) are
+		 * already available. */
 		"this.matchMedia=function(q){"
-			"try{__msLife('WANT matchMedia \"'+q+'\" (answered false)');}"
-			"catch(_){}"
-			"return {matches:false,media:q||'',"
+			"var m={matches:false,media:q||'',"
 				"addListener:function(){},removeListener:function(){},"
-				"addEventListener:function(){},removeEventListener:function(){}};};"
+				"addEventListener:function(){},removeEventListener:function(){}};"
+			"if(!q)return m;"
+			"var s=q.replace(/[\\t\\n\\r ]/g,'');"
+			"try{"
+				/* display-mode */
+				"if(s==='(display-mode:standalone)'||s==='(display-mode:fullscreen)')return m;"
+				"if(s==='(display-mode:browser)'){m.matches=true;return m;}"
+				/* prefers-color-scheme (Mac OS 9 is always light) */
+				"if(s==='(prefers-color-scheme:dark)')return m;"
+				"if(s==='(prefers-color-scheme:light)'){m.matches=true;return m;}"
+				/* max/min width (viewport is 949px) */
+				"if(s.indexOf('(max-width:')===0){var n=parseInt(s.slice(11));"
+					"m.matches=(n>0&&this.innerWidth<=n);return m;}"
+				"if(s.indexOf('(min-width:')===0){var n=parseInt(s.slice(11));"
+					"m.matches=(n>0&&this.innerWidth>=n);return m;}"
+				/* max/min height (viewport is 613px) */
+				"if(s.indexOf('(max-height:')===0){var n=parseInt(s.slice(12));"
+					"m.matches=(n>0&&this.innerHeight<=n);return m;}"
+				"if(s.indexOf('(min-height:')===0){var n=parseInt(s.slice(12));"
+					"m.matches=(n>0&&this.innerHeight>=n);return m;}"
+				/* pointer (desktop = fine) */
+				"if(s==='(pointer:fine)'){m.matches=true;return m;}"
+				/* hover (desktop = hover) */
+				"if(s==='(hover:hover)'){m.matches=true;return m;}"
+				/* prefers-reduced-motion */
+				"if(s==='(prefers-reduced-motion:reduce)')return m;"
+				"if(s==='(prefers-reduced-motion:no-preference)'){m.matches=true;return m;}"
+				/* unknown — log so we can add it */
+				"try{__msLife('WANT matchMedia \"'+q+'\" (unknown, answered false)');}catch(e){}"
+			"}catch(e){"
+				"try{__msLife('WANT matchMedia \"'+q+'\" (parse error)');}catch(e2){}"
+			"}"
+			"return m;};"
 		"this.requestIdleCallback=function(fn){return setTimeout(fn,0);};"
 		"this.cancelIdleCallback=function(id){clearTimeout(id);};"
 		/* fixes1011 — LIVE viewport + scroll, not frozen constants.
