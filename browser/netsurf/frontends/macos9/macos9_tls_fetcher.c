@@ -3517,6 +3517,10 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 		MS_LOG("https_setup: no host");
 		c->state = HS_IDLE;
 		nsurl_unref(c->url); c->url = NULL;
+		if (c->post_body != NULL) {
+			free(c->post_body);
+			c->post_body = NULL;
+		}
 		return NULL;
 	}
 	hs = lwc_string_data(host_lwc);

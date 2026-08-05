@@ -1351,7 +1351,14 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 			 * h_buf must see network data terminated cleanly even when
 			 * the origin sent no CRLF-CRLF yet. */
 			long nl=c->h_len+n;
-			if(nl+1>c->h_cap) { long nc=c->h_cap==0?4096:c->h_cap*2; while(nc<nl+1)nc*=2; c->h_buf=realloc(c->h_buf,nc); if(c->h_buf) c->h_cap=nc; }
+			if (nl + 1 > c->h_cap) {
+				long nc;
+				char *nb;
+				nc = c->h_cap == 0 ? 4096 : c->h_cap * 2;
+				while (nc < nl + 1) nc *= 2;
+				nb = (char *)realloc(c->h_buf, nc);
+				if (nb) { c->h_buf = nb; c->h_cap = nc; }
+			}
 			if(!c->h_buf) { c->err="OOM"; c->state=MFS_FAIL; return; }
 			memcpy(c->h_buf+c->h_len,b,(size_t)n); c->h_len=nl;
 			c->h_buf[c->h_len]='\0';
