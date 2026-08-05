@@ -750,3 +750,22 @@ fail:
 	*out_len = 0L;
 	return NULL;
 }
+
+/* Shared by both fetchers: find the next CRLF-terminated line in a buffer.
+ * NUL-terminates at '\r', advances *buf past the '\n', and decrements *len.
+ * Returns pointer to the start of the line, or NULL if no complete line. */
+char *macos9_find_line(char **buf, long *len)
+{
+	char *p = *buf;
+	long  n = *len;
+	long  i;
+	for (i = 0; i + 1 < n; i++) {
+		if (p[i] == '\r' && p[i+1] == '\n') {
+			p[i] = 0;
+			*buf = p + i + 2;
+			*len = n - (i + 2);
+			return p;
+		}
+	}
+	return NULL;
+}

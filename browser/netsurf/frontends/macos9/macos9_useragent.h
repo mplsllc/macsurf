@@ -68,4 +68,9 @@ void macos9_build_sec_fetch(char *synth, size_t cap,
 		int verifiable, int is_post,
 		const char *scheme, const char *host);
 
+/* Shared line-finder (cleanup 2026-08-05, impl in macos9_fetch.c).
+ * Find next CRLF-terminated line in a buffer. NUL-terminates at '\r',
+ * advances *buf past '\n', decrements *len. Returns start of line or NULL. */
+char *macos9_find_line(char **buf, long *len);
+
 #endif /* MACOS9_USERAGENT_H */

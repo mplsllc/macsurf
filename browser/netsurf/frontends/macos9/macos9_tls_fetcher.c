@@ -1818,21 +1818,6 @@ static void hctx_finish(struct macos9_https_ctx *c)
 	fetch_free(p);
 }
 
-static char *find_line(char **buf, long *len)
-{
-	char *p = *buf;
-	long  n = *len;
-	long  i;
-	for (i = 0; i + 1 < n; i++) {
-		if (p[i] == '\r' && p[i+1] == '\n') {
-			p[i] = 0;
-			*buf = p + i + 2;
-			*len = n - (i + 2);
-			return p;
-		}
-	}
-	return NULL;
-}
 
 /* Parse the accumulated header block. Returns 1 if headers were
  * fully parsed (\r\n\r\n found), 0 if we need more bytes. On parse
@@ -1862,9 +1847,9 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 
 	/* fixes641 (#193): do NOT NUL the '\r' at sep. sep points at the '\r'
 	 * that ENDS the last header line (the first '\r' of the terminating
-	 * \r\n\r\n). find_line is length-bounded by cur_len below (it does not
+	 * \r\n\r\n). macos9_find_line is length-bounded by cur_len below (it does not
 	 * need a NUL terminator) and NULs each line's own '\r' as it emits it.
-	 * The old `*sep = 0` clobbered the final header's '\r' so find_line
+	 * The old `*sep = 0` clobbered the final header's '\r' so macos9_find_line
 	 * could never match its \r\n -> the LAST header line was silently
 	 * dropped. When that last header is Set-Cookie (login 302), the session
 	 * cookie was lost and logins never stuck. body_off uses sep+4 pointer
@@ -1873,7 +1858,7 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 	cur_len = (long)(sep - c->hdr_buf) + 2;
 	*body_off = (long)((sep + 4) - c->hdr_buf);
 
-	p = find_line(&cur, &cur_len);
+	p = macos9_find_line(&cur, &cur_len);
 	if (p && strncmp(p, "HTTP/", 5) == 0) {
 		char *sp = strchr(p, ' ');
 		if (sp) c->status = atoi(sp + 1);
@@ -1911,7 +1896,7 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		static const char forced_html_ct[] =
 			"Content-Type: text/html; charset=utf-8";
 
-		while ((p = find_line(&cur, &cur_len)) != NULL) {
+		while ((p = macos9_find_line(&cur, &cur_len)) != NULL) {
 			if (p[0] == 0) break;
 			if (n_header_lines < 64) {
 				header_lines[n_header_lines++] = p;

@@ -369,14 +369,6 @@ ep_pool_return(const char *key, EndpointRef ep)
 }
 #endif /* __MACOS9__ */
 
-static char *mfs_find_line(char **buf, long *len) {
-	char *start = *buf, *p = *buf, *end = *buf + *len;
-	while(p < end-1) {
-		if(p[0]=='\r' && p[1]=='\n') { *p = 0; *buf = p + 2; *len = (long)(end - *buf); return start; }
-		p++;
-	}
-	return NULL;
-}
 
 static void mfs_close(struct macos9_fetch_ctx *c) {
 #ifdef __MACOS9__
@@ -913,13 +905,13 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 	 * thing for a form submission. */
 	int notmod = 0;
 	if(!sep) return;
-	/* fixes641 (#193): do NOT NUL sep's '\r'. mfs_find_line is length-bounded
+	/* fixes641 (#193): do NOT NUL sep's '\r'. macos9_find_line is length-bounded
 	 * by cur_len and NULs each line's own '\r'; the old `*sep=0` clobbered the
 	 * final header's terminating '\r' so the LAST header (e.g. Set-Cookie on a
 	 * login 302) was dropped -> sessions never stuck. Same fix as the TLS
 	 * fetcher's parse_headers. */
 	cur = c->h_buf; cur_len = (long)(sep - c->h_buf) + 2;
-	p = mfs_find_line(&cur, &cur_len);
+	p = macos9_find_line(&cur, &cur_len);
 	if(p && strncmp(p,"HTTP/",5)==0) {
 		char *sp=strchr(p,' '); if(sp) c->status=atoi(sp+1);
 		if (c->status == 304 && c->post_body == NULL) notmod = 1;
@@ -930,7 +922,7 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 		}
 	}
 	fetch_set_http_code(c->parent, c->status);
-	while((p = mfs_find_line(&cur, &cur_len)) != NULL) {
+	while((p = macos9_find_line(&cur, &cur_len)) != NULL) {
 		if(p[0]==0) break;
 		if(strncasecmp(p,"Content-Type:",13)==0) {
 			char *v=p+13; while(*v==' ')v++;
