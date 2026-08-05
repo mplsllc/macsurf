@@ -1405,6 +1405,7 @@ static void macos9_handle_activate(const EventRecord *event) {
 
 void macos9_poll(void) {
 	EventRecord ev;
+
 	{ static int _once=0; if(!_once){_once=1;SysBeep(4);} }  /* Retro68: 4 beeps = loop entered */
 	/* fixes937 (OS X tier 1b): one-shot proof that the event loop was
 	 * actually REACHED. Everything between InitOT and here is otherwise
@@ -1747,6 +1748,7 @@ int main(void) {
 	 * heap/temp/purge -- flushed immediately so even an early blank leaves
 	 * the baseline (and the VM state that labels this whole run) on disk. */
 	macsurf_recon_mem("boot");
+	SysBeep(1);  /* survival check: reached after seven inits */
 	macsurf_profile_stamp("main: log init done");
 #ifdef __MACOS9__
 	/* fixes680 (#207): DIAG memory/lifecycle trace. FreeMem = total free
@@ -1760,10 +1762,24 @@ int main(void) {
 	}
 #endif
 #ifdef __MACOS9__
+#define MS_PROBE_INITCURSOR   0
+#define MS_PROBE_OT_INIT      0
+#define MS_PROBE_OT_CONTEXT   0
+#define MS_PROBE_OSTLS_SEED   0
+#define MS_PROBE_OSTLS_KAT    0
+#define MS_PROBE_APPEARANCE   0
+#define MS_PROBE_QUICKTIME    0
+#define MS_PROBE_FONT_QUALITY 0
+#define MS_PROBE_MENUS        0
+#define MS_PROBE_ICONS        0
+#define MS_PROBE_NETSURF      0
 #ifndef kInitOTForApplicationMask
 #define kInitOTForApplicationMask 0x00000002
 #endif
+#if MS_PROBE_INITCURSOR
 	InitCursor();
+#endif
+#if MS_PROBE_OT_INIT
 	if (InitOpenTransportInContext(kInitOTForApplicationMask, &macos9_ot_context) != noErr) {
 		MS_LOG("InitOT FAIL");
 		macos9_ot_context = NULL;
@@ -1771,6 +1787,7 @@ int main(void) {
 		MS_LOG("InitOT OK");
 	}
 	g_ostls_ot_context = macos9_ot_context;
+#endif
 	/* fixes936 (OS X tier 1): the InitOT OK/FAIL MS_LOG above is not enough.
 	 * "InitOT FAIL" survives the crash-only gate but "InitOT OK" does NOT, so
 	 * a successful OT init is invisible and indistinguishable from a crash
@@ -1780,18 +1797,23 @@ int main(void) {
 	 * machine. NOTE: this prints on OS 9 too (it is not conditioned on
 	 * osx=) -- that is expected on both platforms, not an anomaly. Shares the
 	 * "RECON OT" whitelist entry with the fetcher emitters. */
+#if MS_PROBE_OT_CONTEXT
 	macsurf_debug_log_writef("RECON OT init ok=%d ctx=%p osx=%d",
 		(macos9_ot_context != NULL) ? 1 : 0,
 		(void *)macos9_ot_context,
 		macsurf_os_is_osx());
+#endif
 	/* macEntropy: fold the persisted seed in before any handshake, so the
 	 * first HTTPS fetch after a cold boot isn't drawing on a thin pool. */
+#if MS_PROBE_OSTLS_SEED
 	OSTLS_LoadSeed();
 	MS_LOG("BOOT macEntropy: seed loaded");
+#endif
 	/* fixes413 -- prove on-device whether the macTLS SHA-384 core (fixes411)
 	 * is live and correct. If this logs FAIL, every Sectigo/SHA-384 cert
 	 * chain will be rejected; if it never logs at all, the macTLS library
 	 * in this binary is not the one carrying fixes411. */
+#if MS_PROBE_OSTLS_KAT
 	{
 		extern int OSTLS_SHA384_KAT(void);
 		int kr = OSTLS_SHA384_KAT();
@@ -1805,16 +1827,22 @@ int main(void) {
 			MS_LOG("macTLS SHA-384 KAT: FAIL 112a (two-block pad)");
 		}
 	}
+#endif
+#if MS_PROBE_APPEARANCE
 	RegisterAppearanceClient();
 	MS_LOG("BOOT Appearance OK");
+#endif
 
+#if MS_PROBE_APPEARANCE
 	macsurf_claim_custom_icon();   /* fixes983 */
+#endif
 
 	/* fixes78: QuickTime startup. Required before any
 	 * GraphicsImportComponent / Movies.h API call. Without this,
 	 * GetGraphicsImporterForDataRef may still return a valid component
 	 * for the format-identification phase but GraphicsImportDraw silently
 	 * no-ops because the QT drawing subsystem isn't online. */
+#if MS_PROBE_QUICKTIME
 	{
 		OSErr qt_err = EnterMovies();
 		if (qt_err == noErr) {
@@ -1823,7 +1851,9 @@ int main(void) {
 			MS_LOG("EnterMovies FAIL");
 		}
 	}
+#endif
 
+#if MS_PROBE_FONT_QUALITY
 	/* fixes51 -- font quality upgrades, system-wide.
 	 *
 	 * SetOutlinePreferred(true) tells QuickDraw to render text from
@@ -1862,23 +1892,32 @@ int main(void) {
 		(void)SetAntiAliasedTextEnabled(true, 12);
 		MS_LOG("BOOT font quality: outline on, AA floor=12pt, fract off");
 	}
+#endif /* MS_PROBE_FONT_QUALITY */
 
+#if MS_PROBE_MENUS
 	macos9_init_menus();
 	MS_LOG("BOOT menus installed");
+#endif
 	/* fixes294 — decode the baked-in default favicon PNG into a GWorld
 	 * that lives for the life of the process.  Must happen AFTER
 	 * EnterMovies (which initialises QT but we use lodepng for this) and
 	 * AFTER menus install (purely conventional ordering, no real
 	 * dependency).  Idempotent and best-effort: paint helper bails if
 	 * load failed. */
+#if MS_PROBE_ICONS
 	macos9_window_load_default_favicon();
 	MS_LOG("BOOT default favicon loaded");
+#endif
 	/* fixes297 — toolbar button icons.  Best-effort; any failure
 	 * leaves the corresponding button text-only. */
+#if MS_PROBE_ICONS
 	macos9_window_load_toolbar_icons();
 	MS_LOG("BOOT toolbar icons loaded");
 #endif
+#endif
+#if MS_PROBE_FONT_QUALITY || MS_PROBE_MENUS || MS_PROBE_ICONS
 	MS_LOG("BOOT mac-only init block done");
+#endif
 	memset(&macos9_table, 0, sizeof(macos9_table));
 	macos9_table.window = macos9_window_table;
 	macos9_table.utf8 = macos9_utf8_table;
@@ -1894,6 +1933,7 @@ int main(void) {
 		macos9_table.fetch = &macos9_fetch_table;
 	}
 	netsurf_register(&macos9_table);
+#if MS_PROBE_NETSURF
 	MS_LOG("BOOT netsurf_register done");
 	nsoption_init(NULL, NULL, NULL);
 	MS_LOG("BOOT nsoption_init done");
@@ -2061,6 +2101,7 @@ int main(void) {
 	macos9_font_metric_probe_run();
 	macos9_font_vmetric_probe_run();
 #endif
+#endif /* MS_PROBE_NETSURF */
 	while (!macos9_done) macos9_poll();
 	MS_LOG("BOOT event loop exited");
 	/* fixes368 (#167) — persist the cookie jar BEFORE netsurf_exit tears
