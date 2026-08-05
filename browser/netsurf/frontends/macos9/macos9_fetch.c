@@ -575,6 +575,70 @@ macos9_word_wrap(const char *text, long text_len,
 	return count;
 }
 
+/* === Shared request-header helpers (cleanup 2026-08-05) ==============
+ *
+ * These replace ~30 lines of cookie-header assembly and ~35 lines of
+ * Sec-Fetch synthesis that were duplicated verbatim in both fetchers.
+ * Called from build_request (TLS) and mfs_open (HTTP).
+ * ===================================================================== */
+
+#include "macsurf_debug.h"	/* for the "cookie hdr too big" log line */
+
+void macos9_build_cookie_header(char *cookie_hdr, size_t cap,
+		const char *cookie_str)
+{
+	cookie_hdr[0] = '\0';
+	if (cookie_str != NULL) {
+		size_t cl = strlen(cookie_str);
+		if (cl > 0 && cl + 11 <= cap) {
+			strcpy(cookie_hdr, "Cookie: ");
+			strcat(cookie_hdr, cookie_str);
+			strcat(cookie_hdr, "\r\n");
+		} else if (cl > 0) {
+			macsurf_debug_log_writef(
+				"cookie hdr too big cl=%ld cap=%ld",
+				(long)cl, (long)cap);
+		}
+	}
+}
+
+void macos9_build_sec_fetch(char *synth, size_t cap,
+		int verifiable, int is_post,
+		const char *scheme, const char *host)
+{
+	synth[0] = '\0';
+	if (verifiable && is_post) {
+		snprintf(synth, cap,
+			"Sec-Fetch-Dest: document\r\n"
+			"Sec-Fetch-Mode: navigate\r\n"
+			"Sec-Fetch-Site: same-origin\r\n"
+			"Sec-Fetch-User: ?1\r\n"
+			"Upgrade-Insecure-Requests: 1\r\n");
+	} else if (verifiable) {
+		snprintf(synth, cap,
+			"Sec-Fetch-Dest: document\r\n"
+			"Sec-Fetch-Mode: navigate\r\n"
+			"Sec-Fetch-Site: none\r\n"
+			"Sec-Fetch-User: ?1\r\n"
+			"Upgrade-Insecure-Requests: 1\r\n");
+	} else {
+		snprintf(synth, cap,
+			"Sec-Fetch-Dest: empty\r\n"
+			"Sec-Fetch-Mode: no-cors\r\n"
+			"Sec-Fetch-Site: same-origin\r\n");
+	}
+	/* Append Origin: if needed and there's room */
+	if (is_post && host != NULL && scheme != NULL) {
+		char   org[320];
+		size_t sl;
+		size_t ol;
+		snprintf(org, sizeof org, "Origin: %s://%s\r\n", scheme, host);
+		sl = strlen(synth);
+		ol = strlen(org);
+		if (sl + ol < cap) strcat(synth, org);
+	}
+}
+
 int macos9_ot_init(void) { return 0; }
 const char *macos9_ot_get_error(void) { return NULL; }
 

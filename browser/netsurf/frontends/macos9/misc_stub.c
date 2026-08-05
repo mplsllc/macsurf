@@ -220,42 +220,11 @@ unsigned char get_macsurf_gradient(const void *style, int *integer)
 
 /* === fixes12 additions: previously-missing globals === */
 
-#include <string.h>
-
-/* lwc_string_caseless_hash_value — declared extern in libwapcaplet.h but
- * not defined in our libwapcaplet.c port.
- *
- * CRITICAL: this MUST return the same value as
- *   lwc_string_hash_value(str->insensitive)
- * because libcss's selector hash uses lwc_string_hash_value of the
- * insensitive intern at INSERT time (via _hash_name() in select/hash.c),
- * and then uses lwc_string_caseless_hash_value at FIND time. The two
- * must agree or every find lands in a different bucket than insert,
- * and the selector hash silently returns no matches.
- *
- * The previous implementation used a (h*31+lowered_c) hash, which
- * disagreed with libwapcaplet's FNV-1a-style lwc__calculate_lcase_hash.
- * Every CSS selector in every parsed sheet was unreachable as a result;
- * css_select_style consulted an empty hash and returned libcss initial
- * values for every element. No UA or author CSS ever took effect. */
-#include <libwapcaplet/libwapcaplet.h>
-
-extern lwc_error lwc__intern_caseless_string(lwc_string *str);
-
-lwc_error lwc_string_caseless_hash_value(lwc_string *str, lwc_hash *hash)
-{
-	lwc_error err;
-
-	if (str == NULL || hash == NULL) return lwc_error_range;
-
-	if (str->insensitive == NULL) {
-		err = lwc__intern_caseless_string(str);
-		if (err != lwc_error_ok) return err;
-	}
-
-	*hash = lwc_string_hash_value(str->insensitive);
-	return lwc_error_ok;
-}
+/* lwc_string_caseless_hash_value — moved to macsurf_lwc_compat.c
+ * (2026-08-05 cleanup).  That function was the single most critical
+ * piece of code in this file: a wrong hash broke every CSS selector
+ * in every parsed sheet.  It now lives in its own TU so it is
+ * discoverable and auditable on its own. */
 
 /* clamp — NetSurf utility, may not be linked */
 int clamp(int v, int lo, int hi)

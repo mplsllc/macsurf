@@ -59,4 +59,13 @@ const char *macos9_user_agent_for_host(const char *host);
 int  macos9_hdr_has_ci(const char *hay, const char *needle);
 void macos9_capture_extra_headers(const char **h, char *dst, size_t cap);
 
+/* Shared request-header helpers (cleanup 2026-08-05, impl in macos9_fetch.c).
+ * Replace the ~30-line cookie assembly and ~35-line Sec-Fetch synthesis
+ * blocks that were duplicated in both fetchers. */
+void macos9_build_cookie_header(char *cookie_hdr, size_t cap,
+		const char *cookie_str);
+void macos9_build_sec_fetch(char *synth, size_t cap,
+		int verifiable, int is_post,
+		const char *scheme, const char *host);
+
 #endif /* MACOS9_USERAGENT_H */
