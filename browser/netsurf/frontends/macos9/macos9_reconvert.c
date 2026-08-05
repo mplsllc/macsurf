@@ -69,8 +69,22 @@ extern struct browser_window *macos9_gw_bw(struct gui_window *g);
  * feed hydration mutates every ~300ms; this keeps the G3 from livelocking. */
 #define RECONVERT_FLOOR_TICKS	36UL
 
+/* R1.4 — mark-to-fire window that counts as "deferred". Anything past this is
+ * slow but CORRECT (cosmetic cadence escalation to 6400ms, floor re-arms, busy
+ * re-arms), and a log line says so instead of reading as "never rendered". */
+#define RECONVERT_DEFER_REPORT_MS	2000UL
+
 /* TickCount() of the last re-convert start (0 = none yet). */
 static unsigned long g_last_reconvert_tick = 0;
+
+/* R1.4 — TickCount() of the FIRST dirty mark of the current batch (0 = no
+ * batch in flight). The debounced callback measures the mark-to-fire window
+ * against this and emits `LIFE RECONVERT DEFERRED` when it grows past
+ * RECONVERT_DEFER_REPORT_MS. Reset whenever the batch is fully consumed (a
+ * fire that ran the work, a drain without work, or a sync flush that emptied
+ * the table). g_defer_reported latches the line to once per batch. */
+static unsigned long g_first_mark_tick = 0;
+static int g_defer_reported = 0;
 
 /* fixes874 (#303) — the PENDING set: which contents actually mutated.
  *
@@ -284,6 +298,25 @@ int macos9_reconvert_pending_for(void *cv)
 		if (g_pending[i].c == (struct content *)cv) return 1;
 	}
 	return 0;
+}
+
+/* R1.4 — how many dirty marks are queued right now: occupied slots, plus one
+ * for overflow (more distinct contents than the table holds, which the
+ * callback's front-content fallback will rebuild). The overflow tail is only
+ * visible here — its own log line is WORK-prefixed and drops on release
+ * builds. */
+static int
+macos9_reconvert_pending_count(void)
+{
+	int i;
+	int n = 0;
+	for (i = 0; i < RECONVERT_MAX_PENDING; i++) {
+		if (g_pending[i].c != NULL)
+			n++;
+	}
+	if (g_pending_overflow)
+		n++;
+	return n;
 }
 
 /* fixes489 — master gate for JS-triggered re-convert.
@@ -565,6 +598,14 @@ macos9_reconvert_flush_now(void *cv)
 		if (g_pending[i].c == c)
 			macos9_reconvert_slot_clear(i);
 	}
+	/* R1.4 — if this flush drained the batch, restart the batch clock;
+	 * otherwise the next mark would inherit the old batch's age and
+	 * falsely report DEFERRED. Overflow keeps the batch alive: marks
+	 * beyond the table still await the front-content fallback rebuild. */
+	if (g_pending_overflow == 0 && macos9_reconvert_pending_count() == 0) {
+		g_first_mark_tick = 0;
+		g_defer_reported = 0;
+	}
 	g_last_reconvert_tick = (unsigned long) TickCount();
 	return 1;
 }
@@ -605,6 +646,22 @@ macos9_reconvert_cb(void *p)
 	(void) p;	/* dedup key only — value is never dereferenced */
 
 	now = (unsigned long) TickCount();
+
+	/* R1.4 — defer diagnostic. A batch whose mark-to-fire window grew well
+	 * past the base debounce (cosmetic cadence escalation to 6400ms, floor
+	 * re-arms, busy re-arms) is SLOW, not stuck; without this line a
+	 * deferred render reads as "never rendered" in a triage log. Reported
+	 * once per batch, even if the callback keeps re-arming. */
+	if (g_first_mark_tick != 0 && !g_defer_reported) {
+		unsigned long elapsed_ms = (now - g_first_mark_tick) *
+			1000UL / 60UL;
+		if (elapsed_ms > RECONVERT_DEFER_REPORT_MS) {
+			macsurf_debug_log_writef("LIFE RECONVERT DEFERRED %ld %ld",
+				(long) elapsed_ms,
+				(long) macos9_reconvert_pending_count());
+			g_defer_reported = 1;
+		}
+	}
 
 	/* min-interval FLOOR: if a re-convert started very recently, re-arm
 	 * rather than start another. Bounds cost on a mutating feed. */
@@ -674,6 +731,13 @@ macos9_reconvert_cb(void *p)
 	if (busy) {
 		(void) macos9_schedule(RECONVERT_DEBOUNCE_MS,
 				macos9_reconvert_cb, p);
+	} else {
+		/* R1.4 — batch consumed: the work ran (did_one), or the table
+		 * drained without it (a sync flush answered the marks, or every
+		 * slot died). While busy re-arms, the clock keeps running so the
+		 * deferred window stays the TRUE mark-to-render time. */
+		g_first_mark_tick = 0;
+		g_defer_reported = 0;
 	}
 }
 
@@ -759,6 +823,14 @@ macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 	} else if (g_reconvert_debounce_ms != RECONVERT_DEBOUNCE_MS) {
 		g_reconvert_debounce_ms = RECONVERT_DEBOUNCE_MS;   /* silent */
 	}
+
+	/* R1.4 — start the batch clock on the first mark of a batch. A
+	 * non-zero tick means a batch is in flight, so later marks in the
+	 * burst keep the ORIGINAL first-mark time; the callback measures the
+	 * mark-to-fire window against this (see the RECONVERT DEFERRED
+	 * diagnostic there) and resets it when the batch is consumed. */
+	if (g_first_mark_tick == 0)
+		g_first_mark_tick = (unsigned long) TickCount();
 
 	macos9_reconvert_pending_add(c, node, kind);
 	/* fixes421 — two crash vectors closed in html_reconvert:

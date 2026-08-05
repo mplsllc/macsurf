@@ -82,6 +82,37 @@ extern long g_js_exec_count;
 extern long g_js_exec_bytes;
 extern long g_js_exec_fail;
 
+/* R1.3 — per-script census, the `LIFE SCRIPT CENSUS` lines.
+ *
+ * One entry per script execution, written by qjs_census_note() in
+ * macsurf_qjs.c at the point the outcome is known (js_exec's compile/run
+ * split, js_exec_module's single eval).  macsurf_qjs_page_js_summary()
+ * emits one LIFE SCRIPT CENSUS line per entry right after the JS PAGE
+ * line, then clears the array — the clear happens THERE and not in
+ * macsurf_qjs_audit_reset(), because js_newheap (which calls audit_reset)
+ * runs per browser_window AND per (i)frame, and an iframe created
+ * mid-parse would wipe the main document's entries before the page
+ * summary ever emitted them. */
+#define SCRIPT_CENSUS_MAX    128
+#define SCRIPT_CENSUS_NAME   64
+#define SCRIPT_CENSUS_INLINE   0
+#define SCRIPT_CENSUS_EXTERNAL 1
+#define SCRIPT_CENSUS_MODULE   2
+
+struct script_census_entry {
+	char name[SCRIPT_CENSUS_NAME];  /* qjs_short_name()ed at record time */
+	long size;                      /* source bytes */
+	long compile_us;                /* parse + codegen */
+	long run_us;                    /* bytecode execution */
+	unsigned char type;             /* SCRIPT_CENSUS_* above */
+	unsigned char defer_async;      /* bit0=defer, bit1=async; 0 = "-" */
+	unsigned char compiled;         /* 0=fail, 1=ok */
+	unsigned char completed;        /* 0=fail, 1=ok */
+};
+extern struct script_census_entry g_script_census[SCRIPT_CENSUS_MAX];
+extern long g_script_census_count;  /* entries recorded this page */
+extern long g_script_census_full;   /* executions dropped when array filled */
+
 /* Listener registration count (for page_js_summary) */
 extern int s_reg_n_registered;
 

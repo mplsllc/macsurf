@@ -333,6 +333,46 @@ double macsurf_qjs_get_now(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* Exception logging helper — logs message + stack, one call per site  */
+/* ------------------------------------------------------------------ */
+
+/* fixes1125 — every JS entry point that catches an exception should log
+ * BOTH the message and the stack, with a LIFE prefix that survives the
+ * failures-only release filter.  Before this, five paths logged only the
+ * message, one silently dropped the exception, and macsurf_qjs__safe_eval
+ * used no LIFE prefix at all.  One call per catch site replaces ~12
+ * lines of repeated get-exception / get-message / get-stack / free
+ * that had drifted apart over time. */
+static void qjs_short_name(const char *name, char *out, int cap);
+
+static void qjs_log_exc(JSContext *ctx, JSValueConst exc,
+		const char *what, const char *name)
+{
+	const char *msg;
+	JSValue stk;
+	const char *ss;
+	char sname[48];
+
+	msg = JS_ToCString(ctx, exc);
+	macsurf_debug_log_writef("LIFE qjs %s: %s [%s]",
+			what, msg ? msg : "?",
+			name ? name : "?");
+	if (msg) JS_FreeCString(ctx, msg);
+
+	stk = JS_GetPropertyStr(ctx, exc, "stack");
+	if (JS_IsString(stk)) {
+		ss = JS_ToCString(ctx, stk);
+		if (ss != NULL) {
+			qjs_short_name(name, sname, (int)sizeof(sname));
+			macsurf_debug_log_writef("LIFE qjs stack: %s [%s]",
+					ss, sname);
+			JS_FreeCString(ctx, ss);
+		}
+	}
+	JS_FreeValue(ctx, stk);
+}
+
+/* ------------------------------------------------------------------ */
 /* Safe eval — logs on error, never propagates exception               */
 /* ------------------------------------------------------------------ */
 
@@ -348,10 +388,7 @@ void macsurf_qjs__safe_eval(JSContext *qctx, const char *src)
 	qjs_deadline_pop(prevdl);
 	if (JS_IsException(val)) {
 		JSValue exc = JS_GetException(qctx);
-		const char *str = JS_ToCString(qctx, exc);
-		macsurf_debug_log_writef("qjs init eval failed: %s",
-				str ? str : "(null)");
-		if (str) JS_FreeCString(qctx, str);
+		qjs_log_exc(qctx, exc, "init eval failed", "<init>");
 		JS_FreeValue(qctx, exc);
 	}
 	JS_FreeValue(qctx, val);
@@ -1264,10 +1301,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		JS_FreeValue(qctx, this_obj);
 		if (JS_IsException(ret)) {
 			JSValue exc = JS_GetException(qctx);
-			const char *str = JS_ToCString(qctx, exc);
-			macsurf_debug_log_writef("LIFE qjs timer exc: %s",
-					str ? str : "?");
-			if (str) JS_FreeCString(qctx, str);
+			qjs_log_exc(qctx, exc, "timer exc", "setTimeout");
 			JS_FreeValue(qctx, exc);
 			/* Deadline-abort of a still-live (repeating) timer: kill
 			 * it so the rogue interval can never re-freeze the UI. */
@@ -1490,6 +1524,13 @@ long g_js_exec_count = 0;  /* exported for audit */
 long g_js_exec_bytes = 0;  /* exported for audit */
 long g_js_exec_fail  = 0;  /* exported for audit */
 
+/* R1.3 — per-script census backing the `LIFE SCRIPT CENSUS` lines.  Written
+ * by qjs_census_note() (below), emitted and cleared by the page summary in
+ * macsurf_qjs_audit.c. */
+struct script_census_entry g_script_census[SCRIPT_CENSUS_MAX];
+long g_script_census_count = 0;  /* exported for audit */
+long g_script_census_full  = 0;  /* exported for audit */
+
 /* fixes1071 — wrapper-helper compile census. Declared HERE, above the perf
  * emitters that read them, rather than beside qjs_helper_fn where they are
  * written: C89 needs the declaration before every use, and the JSWHERE emit
@@ -1594,6 +1635,40 @@ static void qjs_perf_note_script(const char *name, long bytes,
 		g_perf_slot[victim].run_us     = run_us;
 		g_perf_slot[victim].evals      = 1;
 	}
+}
+
+/* R1.3 — record one script execution for the page census.
+ *
+ * Called from js_exec and js_exec_module once per execution, at the point
+ * the outcome is known.  defer/async is NOT reachable at these call sites
+ * (the core's html_script type never crosses the js_exec boundary), so it
+ * stays 0 ("-") until a round threads it through.  `compiled`/`completed`
+ * are 0/1 flags: a compile failure is compiled=0 completed=0 (nothing
+ * ran); a run failure is compiled=1 completed=0; a clean run is 1/1.
+ *
+ * The array is cleared by the page summary's emit, not here — see
+ * macsurf_qjs_audit.h for why (per-(i)frame audit_reset). */
+static void qjs_census_note(const char *name, long bytes,
+		unsigned char type, unsigned char compiled,
+		unsigned char completed, long compile_us, long run_us)
+{
+	char sn[SCRIPT_CENSUS_NAME];
+	struct script_census_entry *e;
+
+	if (g_script_census_count >= SCRIPT_CENSUS_MAX) {
+		g_script_census_full++;
+		return;
+	}
+	e = &g_script_census[g_script_census_count++];
+	qjs_short_name(name, sn, (int)sizeof(sn));
+	strcpy(e->name, sn);
+	e->size       = bytes;
+	e->compile_us = compile_us;
+	e->run_us     = run_us;
+	e->type       = type;
+	e->defer_async = 0;   /* not available at this call site yet */
+	e->compiled  = compiled;
+	e->completed = completed;
 }
 
 /* fixes1070 — read-back accessors, so the harness can assert on what this
@@ -4774,11 +4849,7 @@ static void qjs_fire_dispatch(JSContext *ctx, JSValueConst obj,
 		ret = JS_Call(ctx, fn, obj, 1, (JSValueConst *)argv);
 		if (JS_IsException(ret)) {
 			JSValue ex = JS_GetException(ctx);
-			const char *msg = JS_ToCString(ctx, ex);
-			macsurf_debug_log_writef(
-				"LIFE jsevent %s handler threw: %s",
-				what, msg ? msg : "?");
-			if (msg) JS_FreeCString(ctx, msg);
+			qjs_log_exc(ctx, ex, "event handler threw", what);
 			JS_FreeValue(ctx, ex);
 		}
 		JS_FreeValue(ctx, ret);
@@ -6987,6 +7058,205 @@ static void qjs_dom_init_class(JSRuntime *rt)
 	JS_NewClass(rt, s_el_class_id, &s_el_class);
 }
 
+/* ====================================================================== */
+/* R1.2 -- the WANT probe: every miss on the global object, in one place  */
+/* ====================================================================== */
+/* A prototype-level probe above the realm global: 'X' in window, typeof  */
+/* X, window.X and a bare X reference all funnel through the exotic       */
+/* has/get handlers below whenever the global itself has no such own      */
+/* property.  The name is logged once per page (deduped), split into      */
+/* WANT (capitalised = constructor/Web-API-looking names) and WANTLOW     */
+/* (the rest), minus the UMD/module denylist.  This is the                */
+/* implement-next list, written by real sites instead of by hand.         */
+/*                                                                        */
+/* QuickJS semantics note: an exotic's has_property/get_property          */
+/* SHORT-CIRCUIT the engine's prototype walk (quickjs.h: "The following   */
+/* methods can be emulated with the previous ones, so they are usually    */
+/* not needed" -- only Proxy implements them upstream).  Returning 0 /    */
+/* undefined unconditionally would therefore cut the global's chain off   */
+/* BEFORE Object.prototype: window.hasOwnProperty, window.toString,       */
+/* 'x' in window would all answer lies.  The handlers instead log, then   */
+/* continue the lookup on the probe's OWN prototype (the global's former  */
+/* prototype) and return that answer, so the chain stays intact.          */
+/*                                                                        */
+/* The one divergence this causes: a BARE reference to a missing global   */
+/* (no typeof, no window.X) returns undefined instead of throwing         */
+/* ReferenceError -- the exotic's get_property return bypasses the        */
+/* engine's throw_ref_error check, and the handler cannot tell a bare     */
+/* reference from a window.X read.  Verified against a no-probe baseline  */
+/* in the harness: typeof/in/window.X are unchanged; only the             */
+/* try/catch-bare-read pattern of a missing name loses its throw.         */
+/* ====================================================================== */
+
+#define QJS_WANT_BUCKETS 64
+
+struct qjs_want_ent {
+	struct qjs_want_ent *next;
+	char *name;
+};
+
+static struct qjs_want_ent *g_want_set[QJS_WANT_BUCKETS];
+static JSClassID g_want_class_id = 0;
+
+/* UMD/module-system probes that will never be implemented; do not log. */
+static const char *const g_want_deny[] = {
+	"define", "module", "exports", "require", "global", "process"
+};
+
+static JSValue want_get_property(JSContext *ctx, JSValueConst obj,
+		JSAtom atom, JSValueConst receiver);
+static int want_has_property(JSContext *ctx, JSValueConst obj, JSAtom atom);
+
+static JSClassExoticMethods g_want_exotic = {
+	NULL, NULL, NULL, NULL,          /* own-property trio + define */
+	want_has_property,               /* has_property */
+	want_get_property,               /* get_property */
+	NULL                             /* set_property */
+};
+
+static JSClassDef g_want_class = {
+	"MacSurfWantProbe",              /* class_name */
+	NULL, NULL, NULL,                /* finalizer, gc_mark, call */
+	&g_want_exotic                   /* exotic */
+};
+
+static unsigned qjs_want_hash(const char *s)
+{
+	unsigned h = 5381;
+	while (*s != '\0') {
+		h = (h << 5) + h + (unsigned)(unsigned char)*s;
+		s++;
+	}
+	return h & (QJS_WANT_BUCKETS - 1);
+}
+
+/* First occurrence of a name per page is logged, the rest are silent.
+ * Returns 1 if a line was written, 0 if filtered or already seen. */
+static int qjs_want_report(const char *name)
+{
+	unsigned h, i;
+	struct qjs_want_ent *e, *n;
+
+	for (i = 0; i < (sizeof g_want_deny / sizeof g_want_deny[0]); i++) {
+		if (strcmp(name, g_want_deny[i]) == 0) return 0;
+	}
+	h = qjs_want_hash(name);
+	for (e = g_want_set[h]; e != NULL; e = e->next) {
+		if (strcmp(e->name, name) == 0) return 0;
+	}
+	n = (struct qjs_want_ent *)malloc(sizeof *n);
+	if (n == NULL) return 0;
+	n->name = strdup(name);
+	if (n->name == NULL) {
+		free(n);
+		return 0;
+	}
+	n->next = g_want_set[h];
+	g_want_set[h] = n;
+	/* Capitalised = constructor/Web-API-looking -> WANT, else WANTLOW.
+	 * The URL slot is empty for now (no document URL handy in the
+	 * handler); the per-page reset is what groups a page's entries. */
+	if (name[0] >= 'A' && name[0] <= 'Z') {
+		macsurf_debug_log_writef("LIFE WANT %s []", name);
+	} else {
+		macsurf_debug_log_writef("LIFE WANTLOW %s []", name);
+	}
+	return 1;
+}
+
+/* Clear the per-page dedupe set.  Called from macsurf_qjs_audit_reset()
+ * (each navigation/realm build) so every page gets its own first-use log. */
+void qjs_want_reset(void)
+{
+	unsigned i;
+
+	for (i = 0; i < QJS_WANT_BUCKETS; i++) {
+		struct qjs_want_ent *e = g_want_set[i];
+		while (e != NULL) {
+			struct qjs_want_ent *next = e->next;
+			free(e->name);
+			free(e);
+			e = next;
+		}
+		g_want_set[i] = NULL;
+	}
+}
+
+static int want_has_property(JSContext *ctx, JSValueConst obj, JSAtom atom)
+{
+	const char *name;
+	int ret;
+	JSValue proto;
+
+	name = JS_AtomToCString(ctx, atom);
+	if (name != NULL) {
+		qjs_want_report(name);
+		JS_FreeCString(ctx, name);
+	}
+	/* Answer from the probe's own prototype (the global's former
+	 * prototype) so Object.prototype members stay reachable. */
+	proto = JS_GetPrototype(ctx, obj);
+	ret = JS_HasProperty(ctx, proto, atom);
+	JS_FreeValue(ctx, proto);
+	return ret;
+}
+
+static JSValue want_get_property(JSContext *ctx, JSValueConst obj,
+		JSAtom atom, JSValueConst receiver)
+{
+	const char *name;
+	JSValue proto;
+	JSValue v;
+
+	(void)receiver;
+	name = JS_AtomToCString(ctx, atom);
+	if (name != NULL) {
+		qjs_want_report(name);
+		JS_FreeCString(ctx, name);
+	}
+	/* Same as want_has_property: continue the walk on the probe's own
+	 * prototype so the chain above the probe stays intact. */
+	proto = JS_GetPrototype(ctx, obj);
+	v = JS_GetProperty(ctx, proto, atom);
+	JS_FreeValue(ctx, proto);
+	return v;
+}
+
+/* Give the realm global a probe prototype.  Called once per realm from
+ * register_browser_globals AFTER every shim block has run, so the census
+ * only ever sees what page scripts ask for, never the `typeof g.X` checks
+ * our own setup ran. */
+static void qjs_install_want_probe(JSContext *ctx)
+{
+	JSRuntime *rt;
+	JSValue global;
+	JSValue old_proto;
+	JSValue exotic;
+
+	rt = JS_GetRuntime(ctx);
+	if (g_want_class_id == 0) {
+		JS_NewClassID(rt, &g_want_class_id);
+	}
+	/* Per-runtime registration (classes live in the runtime's class
+	 * array, exactly like qjs_dom_init_class).  Re-registering the same
+	 * runtime is a benign error. */
+	JS_NewClass(rt, g_want_class_id, &g_want_class);
+
+	global = JS_GetGlobalObject(ctx);
+	old_proto = JS_GetPrototype(ctx, global);
+	exotic = JS_NewObjectProtoClass(ctx, old_proto, g_want_class_id);
+	if (!JS_IsException(exotic)) {
+		JS_SetPrototype(ctx, global, exotic);
+		/* Gotcha #4 -- installing a prototype above the global changes
+		 * Object.getPrototypeOf(globalThis); this line is the marker
+		 * that the probe (and that change) is live. */
+		macsurf_debug_log_writef("LIFE WANT probe installed");
+	}
+	JS_FreeValue(ctx, global);
+	JS_FreeValue(ctx, old_proto);
+	JS_FreeValue(ctx, exotic);
+}
+
 /* ---- Wire getElementById/querySelectorAll on the document object ---- */
 /* ================================================================== */
 /* register_browser_globals — installs the browser runtime globals    */
@@ -9049,6 +9319,13 @@ static void register_browser_globals(JSContext *ctx)
 		"}"
 		"})(this);");
 
+	/* R1.2 — the WANT probe goes in LAST: every shim block above runs its
+	 * own `typeof g.X` feature checks, and those would log their own
+	 * stubbed names into the census if the probe were live yet.  Page
+	 * scripts run after this point, so everything the probe sees from
+	 * here on is a real "the page asked for X" signal. */
+	qjs_install_want_probe(ctx);
+
 	JS_FreeValue(ctx, global);
 }
 
@@ -10488,6 +10765,10 @@ unsigned char js_exec(struct jsthread *thread,
 		 * no leak and nothing to free here. */
 		extern double macos9_micros(void);
 		extern void macsurf_profile_accum_js(long us);
+		/* R1.3 — the core names inline scripts "?inline script?"; every
+		 * other name is a URL, i.e. an external script. */
+		unsigned char ctype = (name != NULL && name[0] == '?')
+				? SCRIPT_CENSUS_INLINE : SCRIPT_CENSUS_EXTERNAL;
 		double prevdl = qjs_deadline_push((double)QJS_SCRIPT_TIMEOUT_MS);
 		double t_js = macos9_micros();
 		double t_mid;
@@ -10508,9 +10789,17 @@ unsigned char js_exec(struct jsthread *thread,
 			 * to before -- a failed compile must not start looking
 			 * like a different kind of failure. */
 			val = fn;
+			/* R1.3 — compile failed; nothing ran. */
+			qjs_census_note(name, (long)txtlen, ctype,
+					0, 0, c_us, 0);
 		} else {
 			val = JS_EvalFunction(thread->ctx, fn);
 			r_us = (long)(macos9_micros() - t_mid);
+			/* R1.3 — compiled ok; ran to completion or threw. */
+			qjs_census_note(name, (long)txtlen, ctype,
+					JS_IsException(val) ? 0 : 1,
+					JS_IsException(val) ? 0 : 1,
+					c_us, r_us);
 		}
 		macsurf_profile_accum_js(c_us + r_us);
 		qjs_perf_note_script(name, (long)txtlen, c_us, r_us);
@@ -10650,29 +10939,29 @@ unsigned char js_exec_module(struct jsthread *thread,
 	{
 		extern double macos9_micros(void);
 		double t0 = macos9_micros();
+		long mus;
 		val = JS_Eval(ctx, src, txtlen,
 			name ? name : "<module>",
 			JS_EVAL_TYPE_MODULE);
 		free(src);
 
 		ok = !JS_IsException(val);
+		mus = (long)(macos9_micros() - t0);
+		/* R1.3 — a module is compiled, resolved and executed in the one
+		 * JS_Eval call, so a failure cannot be attributed to a phase
+		 * here; the whole time lands in run_us. */
+		qjs_census_note(name, (long)txtlen, SCRIPT_CENSUS_MODULE,
+				ok ? 1 : 0, ok ? 1 : 0, 0, mus);
 		if (!ok) {
 			JSValue exc = JS_GetException(ctx);
-			const char *estr = JS_ToCString(ctx, exc);
-			macsurf_debug_log_writef(
-				"LIFE qjs exec module err: %s [%s len=%ld]",
-				estr ? estr : "?",
-				name ? name : "<module>",
-				(long)txtlen);
-			if (estr) JS_FreeCString(ctx, estr);
+			qjs_log_exc(ctx, exc, "exec module err",
+				name ? name : "<module>");
 			JS_FreeValue(ctx, exc);
 		}
 		JS_FreeValue(ctx, val);
 		macsurf_debug_log_writef(
 			"LIFE qjs exec module done ok=%d us=%ld [%s]",
-			(int)ok,
-			(long)(macos9_micros() - t0),
-			name ? name : "<module>");
+			(int)ok, mus, name ? name : "<module>");
 	}
 
 	/* Update page stats (same as js_exec) */
@@ -10919,7 +11208,14 @@ unsigned char js_fire_script_load(struct jsthread *thread,
 
 	fn = JS_Eval(ctx, s_fire_src, strlen(s_fire_src),
 			"<script-load>", JS_EVAL_TYPE_GLOBAL);
-	if (JS_IsException(fn)) { JS_FreeValue(ctx, fn); return 0; }
+	if (JS_IsException(fn)) {
+		JSValue exc = JS_GetException(ctx);
+		qjs_log_exc(ctx, exc, "script load setup",
+			ok ? "load" : "error");
+		JS_FreeValue(ctx, exc);
+		JS_FreeValue(ctx, fn);
+		return 0;
+	}
 
 	macsurf_dom_node_ref(node);	/* the wrap consumes this one */
 	el = qjs_wrap_element(ctx, (dom_element *)node);
@@ -10934,10 +11230,9 @@ unsigned char js_fire_script_load(struct jsthread *thread,
 	ret = JS_Call(ctx, fn, JS_UNDEFINED, 2, (JSValueConst *)args);
 	if (JS_IsException(ret)) {
 		JSValue exc = JS_GetException(ctx);
-		const char *s = JS_ToCString(ctx, exc);
-		macsurf_debug_log_writef("LIFE script %s handler exc: %s",
-				ok ? "load" : "error", s ? s : "?");
-		if (s) JS_FreeCString(ctx, s);
+		qjs_log_exc(ctx, exc,
+			ok ? "script load handler exc" : "script error handler exc",
+			ok ? "load" : "error");
 		JS_FreeValue(ctx, exc);
 	}
 	JS_FreeValue(ctx, ret);

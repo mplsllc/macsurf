@@ -320,6 +320,7 @@ void macsurf_qjs_audit_reset(void)
 	g_rm_audit_budget = 0;
 #endif
 	g_pn_logged = 0; /* fixes1110 — per-navigation, not per-process */
+	qjs_want_reset(); /* R1.2 — per-page WANT dedupe set */
 }
 
 /* ---- Page JS summary ---- */
@@ -334,10 +335,12 @@ void macsurf_qjs_audit_reset(void)
  * misleading rather than merely incomplete.
  *
  * These are session-cumulative and emitted once per page in the summary
- * below, so the cost is one line per navigation, not one per script. */
-static long g_js_exec_count = 0;
-static long g_js_exec_bytes = 0;
-static long g_js_exec_fail = 0;
+ * below, so the cost is one line per navigation, not one per script.
+ *
+ * The counters are DEFINED in macsurf_qjs.c (beside qjs_perf_note_script)
+ * and declared extern in macsurf_qjs_audit.h; this TU only reads them.
+ * The Phase 2 extraction briefly left static copies here, which shadowed
+ * the real counters and made the summary read zeroes forever. */
 
 /* One LIFE line per page answering "did the page's JavaScript run, and did it
  * do anything" without needing a verbose build. Called from
@@ -391,6 +394,39 @@ void macsurf_qjs_page_js_summary(void)
 		"jquery=%d xf=%d doclisten=%d winlisten=%d nodelisten=%d",
 		g_js_exec_count, g_js_exec_bytes, g_js_exec_fail,
 		has_jq, has_xf, doc_l, win_l, node_l);
+
+	/* R1.3 — the per-script census: one LIFE SCRIPT CENSUS line per
+	 * execution, in record order, then clear so the next emit starts
+	 * fresh.  Cleared HERE rather than in macsurf_qjs_audit_reset() —
+	 * js_newheap (which calls audit_reset) runs per browser_window AND
+	 * per (i)frame, so an iframe created mid-parse would wipe the main
+	 * document's entries before this summary ever emitted them. */
+	{
+		static const char *census_type[3] = { "inline", "external",
+				"module" };
+		long i;
+		for (i = 0; i < g_script_census_count; i++) {
+			struct script_census_entry *e = &g_script_census[i];
+			const char *da = "-";
+			if (e->defer_async == 3) da = "DA";
+			else if (e->defer_async == 2) da = "A";
+			else if (e->defer_async == 1) da = "D";
+			macsurf_debug_log_writef(
+				"LIFE SCRIPT CENSUS %s %ld %s %s %s %ld %s",
+				(e->type < 3) ? census_type[e->type] : "?",
+				e->size, da,
+				e->compiled ? "ok" : "FAIL",
+				e->completed ? "ok" : "FAIL",
+				e->compile_us + e->run_us, e->name);
+		}
+		if (g_script_census_full > 0) {
+			macsurf_debug_log_writef(
+				"LIFE SCRIPT CENSUS (overflow: %ld more "
+				"executions not listed)", g_script_census_full);
+		}
+		g_script_census_count = 0;
+		g_script_census_full  = 0;
+	}
 }
 
 #endif /* WITH_QUICKJS */

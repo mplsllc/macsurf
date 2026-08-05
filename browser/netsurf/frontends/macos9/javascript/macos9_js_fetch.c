@@ -279,10 +279,12 @@ xhr_deliver(void *p)
 {
 	struct qjs_xhr_slot *s = (struct qjs_xhr_slot *) p;
 	JSContext *ctx;
-	JSValue fn, ret, exc;
+	JSValue fn, ret, exc, stk;
 	const char *body;
 	const char *hdrs;
 	const char *url_str;
+	const char *msg = NULL;
+	const char *ss = NULL;
 
 	if (s == NULL || !s->used) return;
 	ctx = s->ctx;
@@ -313,10 +315,23 @@ xhr_deliver(void *p)
 		ret = JS_Call(ctx, fn, s->xhr_obj, 0, NULL);
 		if (JS_IsException(ret)) {
 			exc = JS_GetException(ctx);
-			JS_FreeValue(ctx, exc);
+			msg = JS_ToCString(ctx, exc);
 			macsurf_debug_log_writef(
-					"WORK qjs xhr deliver threw url=%s",
-					url_str);
+					"LIFE qjs xhr deliver threw: %s url=%s",
+					msg ? msg : "?", url_str);
+			if (msg) JS_FreeCString(ctx, msg);
+			stk = JS_GetPropertyStr(ctx, exc, "stack");
+			if (JS_IsString(stk)) {
+				ss = JS_ToCString(ctx, stk);
+				if (ss != NULL) {
+					macsurf_debug_log_writef(
+						"LIFE qjs xhr deliver stack: %s url=%s",
+						ss, url_str);
+					JS_FreeCString(ctx, ss);
+				}
+			}
+			JS_FreeValue(ctx, stk);
+			JS_FreeValue(ctx, exc);
 		}
 		JS_FreeValue(ctx, ret);
 	}

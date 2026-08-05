@@ -78,8 +78,10 @@ harn_of = $(OBJ)/$(notdir $(1:.c=.o))
 
 # Glue splits on ONE flag: the QuickJS-facing files need -DWITH_QUICKJS (it gates
 # the whole engine, see macsurf_prefix.h), the rest must NOT have it.
-GLUE_QJS_SRC   := build/macsurf_qjs.c build/macsurf_dom_dispatch.c build/macos9_js_fetch.c
-GLUE_PLAIN_SRC := build/macos9_reconvert.c build/macos9_content_registry.c build/misc_stub.c
+GLUE_QJS_SRC   := build/macsurf_qjs.c build/macsurf_dom_dispatch.c \
+                  build/macos9_js_fetch.c build/macsurf_qjs_audit.c
+GLUE_PLAIN_SRC := build/macos9_reconvert.c build/macos9_content_registry.c \
+                  build/misc_stub.c build/macsurf_lwc_compat.c
 
 # $(sort) dedupes: dedup.sh's `core` set and EXTRA_SRC both name corestrings.c,
 # and two rules for one object is a "overriding recipe" warning at best.
@@ -179,6 +181,8 @@ check-c89:
 		&& echo "   quickjs.c OK"
 	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) -DWITH_QUICKJS $(INC) \
 		build/macsurf_qjs.c && echo "   macsurf_qjs.c OK"
+	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) -DWITH_QUICKJS $(INC) \
+		build/macsurf_qjs_audit.c && echo "   macsurf_qjs_audit.c OK"
 # fixes1093 — html.c joins the gate. It was never covered, yet it is the other
 # file this project edits constantly (the pagemap, the reconvert resize/load
 # fire, and now the slider probe all live here) and it ships to CW8 as C89
