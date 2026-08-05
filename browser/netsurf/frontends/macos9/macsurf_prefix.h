@@ -198,13 +198,23 @@ static int iconv_close_(iconv_t cd) { (void)cd; return -1; }
 /* Bulletproof allocator intercept -- prevents NULL-write-to-$0000
  * crash on fragmented heaps. Must come AFTER <stdlib.h> so MSL's
  * declarations parse before the macros rename the symbols.
- * macsurf_memory.c #undefs these to call MSL directly. */
+ * macsurf_memory.c #undefs these to call MSL directly.
+ *
+ * CW8 / MSL only.  Retro68 links newlib, whose malloc/realloc are
+ * robust and whose CRT init calls allocators before the Toolbox
+ * is available -- intercepting them would crash in static init. */
+#ifndef __RETRO68__
 extern void *macsurf_safe_alloc(size_t size);
 extern void *macsurf_safe_calloc(size_t count, size_t size);
 extern void *macsurf_safe_realloc(void *ptr, size_t size);
 #define malloc  macsurf_safe_alloc
 #define calloc  macsurf_safe_calloc
 #define realloc macsurf_safe_realloc
+#else
+extern void *macsurf_safe_alloc(size_t size);
+extern void *macsurf_safe_calloc(size_t count, size_t size);
+extern void *macsurf_safe_realloc(void *ptr, size_t size);
+#endif
 
 /* POSIX types foundation */
 #ifndef __RETRO68__
