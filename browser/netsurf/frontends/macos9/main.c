@@ -1717,21 +1717,21 @@ int main(void) {
 
 	/* --- bisection beeps: report LAST beep heard --- */
 
-	SysBeep(1);  /* #2 */
-	macsurf_tb_calibrate();
-	SysBeep(1);  /* #3 */
+	SysBeep(1);  /* #2 — before any init calls */
+	/* macsurf_tb_calibrate SKIPPED */ // macsurf_tb_calibrate();
+	SysBeep(1);  /* #3 — after macsurf_tb_calibrate */
 	macsurf_debug_log_init();
-	SysBeep(1);  /* #4 */
+	SysBeep(1);  /* #4 — after macsurf_debug_log_init */
 	macsurf_osver_init();
-	SysBeep(1);  /* #5 */
+	SysBeep(1);  /* #5 — after macsurf_osver_init */
 	macsurf_heap_bounds_init();
-	SysBeep(1);  /* #6 */
+	SysBeep(1);  /* #6 — after macsurf_heap_bounds_init */
 	macsurf_profile_reset();
-	SysBeep(1);  /* #7 */
+	SysBeep(1);  /* #7 — after macsurf_profile_reset */
 	MS_LOG("== MacSurf start ==");
-	SysBeep(1);  /* #8 */
+	SysBeep(1);  /* #8 — after MS_LOG */
 	macsurf_recon_mem("boot");
-	SysBeep(1);  /* #9 */
+	SysBeep(1);  /* #9 — after macsurf_recon_mem */
 
 	/* STOP here — infinite WaitNextEvent loop so we know all inits survived */
 	for (;;) {
