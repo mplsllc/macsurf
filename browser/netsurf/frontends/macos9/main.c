@@ -1772,7 +1772,7 @@ int main(void) {
 #define MS_PROBE_FONT_QUALITY 0
 #define MS_PROBE_MENUS        0
 #define MS_PROBE_ICONS        0
-#define MS_PROBE_NETSURF      0
+#define MS_PROBE_NETSURF      1
 #ifndef kInitOTForApplicationMask
 #define kInitOTForApplicationMask 0x00000002
 #endif
