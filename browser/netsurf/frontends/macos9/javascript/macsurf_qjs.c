@@ -8427,9 +8427,12 @@ static void register_browser_globals(JSContext *ctx)
 		 * that waits on one waits forever. Log each observe() so that
 		 * failure mode is visible instead of silent. */
 		"function _Observer(cb){this._cb=cb;}"
-		"_Observer.prototype.observe=function(t){"
+		"_Observer.prototype.observe=function(t,opts){"
 			"try{__msLife('WANT Mutation/ResizeObserver.observe '"
-			"+((t&&(t.id||t.tagName))||'?')+' (NO-OP)');}catch(_){}};"
+			"+((t&&(t.id||t.tagName))||'?')+' (NO-OP)');}catch(_){}"
+			"var self=this;"
+			"try{setTimeout(function(){try{self._cb([],self);}catch(e){}},0);}catch(e){}"
+		"};"
 		"_Observer.prototype.unobserve=function(){};"
 		"_Observer.prototype.disconnect=function(){};"
 		"_Observer.prototype.takeRecords=function(){return [];};"
