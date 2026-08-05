@@ -198,7 +198,7 @@ static double g_qjs_script_deadline = 0.0;
 long   g_timer_fires = 0;  /* exported for audit */
 long   g_timer_us    = 0;  /* exported for audit */
 static double g_timer_t0    = 0.0;
-}
+
 
 /* fixes586 — THE tinkerdifferent hard-freeze.  The deadline was armed ONLY
  * around the top-level JS_Eval in js_exec; setTimeout/setInterval callbacks
@@ -1458,16 +1458,6 @@ static void qjs_short_name(const char *name, char *out, int cap)
  * it was taken for (the fixes347d var() trace was 95.5% of one load's log).
  * ------------------------------------------------------------------ */
 
-#define QJS_PERF_SLOTS 8
-#define QJS_PERF_NAME  32
-
-struct qjs_perf_slot {
-	char name[QJS_PERF_NAME];
-	long bytes;
-	long compile_us;
-	long run_us;
-	long evals;
-};
 struct qjs_perf_slot g_perf_slot[QJS_PERF_SLOTS];  /* exported for audit */
 long g_perf_evals      = 0;  /* exported for audit */	/* top-level evals this navigation  */
 long g_perf_bytes      = 0;  /* exported for audit */	/* source bytes compiled            */
@@ -1540,7 +1530,7 @@ long g_geom_unstable = 0;  /* exported for audit */
 long g_geom_undef = 0;  /* exported for audit */
 long g_geom_zero  = 0;  /* exported for audit */
 long g_geom_real  = 0;  /* exported for audit */
-}
+
 
 static void qjs_perf_note_script(const char *name, long bytes,
 		long compile_us, long run_us)
@@ -1651,9 +1641,9 @@ void macsurf_qjs_run_gc(struct jsheap *heap)
 	JS_RunGC(heap->rt);
 }
 
-}
-}
-}
+/* fixes1071 — wrapper/helper-compile census, for harness Test 50. */
+
+
 
 /* fixes870 (#297) — createElementNS, Preact's only element factory. */
 extern dom_exception macsurf_dom_document_create_element_ns_s(dom_document *doc,
@@ -1688,8 +1678,6 @@ void qjs_set_content(struct content *c)   { g_qjs_content  = c; }
  * whatever it needs synchronously, not hold this across an async gap. */
 struct content *qjs_get_content(void) { return g_qjs_content; }
 
-/* Accessor for macsurf_qjs_audit.c — returns the current heap's JSContext
- * or NULL if no heap exists.  Avoids exposing struct jsheap layout. */
 JSContext *macsurf_qjs_current_ctx(void)
 {
 	return (g_heap != NULL) ? g_heap->ctx : NULL;
@@ -2235,7 +2223,7 @@ extern long g_geom_audit; /* defined below, near the metric accessors */
  * Reset alongside the other audit budgets in macsurf_qjs_audit_reset() so
  * every navigation gets its own 8. */
 int g_pn_logged = 0;  /* exported for audit */
-}
+
 
 static void qjs_mut_audit(const char *op, dom_node *target,
 		const char *arg, const char *val)
@@ -10262,6 +10250,7 @@ qjs_eval_cstr(JSContext *ctx, const char *src, const char *tag)
 /* Transpile budget (legacy): QuickJS handles ES6+ natively, so this path
  * is effectively unused. */
 #define QJS_TRANSPILE_CAP (256 * 1024)
+
 
 unsigned char js_exec(struct jsthread *thread,
 		const unsigned char *txt, size_t txtlen,
