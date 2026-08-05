@@ -281,6 +281,13 @@ int nsmkdir(const char *path, int mode)
 	return 0;
 }
 
+#include "stat.h"
+int stat(const char *path, struct stat *buf)
+{
+	(void)path; (void)buf;
+	return -1; /* not implemented; caller falls back */
+}
+
 /* nsu_base64_encode_url — already defined at line 58 above. */
 
 /* Console stubs for MSL_C_Carbon.Lib's __read_console / __write_console.
