@@ -11006,6 +11006,14 @@ unsigned char js_exec_module(struct jsthread *thread,
 	memcpy(src, txt, txtlen);
 	src[txtlen] = '\0';
 
+	/* Pre-register this module so imports from OTHER modules
+	 * can find it via the loader callback. */
+	if (thread->heap != NULL && thread->heap->module_reg != NULL
+			&& name != NULL) {
+		qjs_module_register(thread->heap->module_reg,
+			name, src, txtlen);
+	}
+
 	/* Compile as a module. JS_EVAL_TYPE_MODULE triggers the
 	 * module loader for any import statements, which checks the
 	 * pre-registered source list and disk cache. */

@@ -1016,6 +1016,8 @@ html_process_script(void *ctx, dom_node *node)
 	{
 		const char *mt = dom_string_data(mimetype);
 		if (mt != NULL && strcmp(mt, "module") == 0) {
+				macsurf_debug_log_writef(
+					"LIFE script: module script found");
 			/* Get src to decide inline vs external */
 			exc = dom_element_get_attribute(node,
 				corestring_dom_src, &src);
@@ -1030,7 +1032,8 @@ html_process_script(void *ctx, dom_node *node)
 				if (mexc == DOM_NO_ERR &&
 						modsrc != NULL) {
 					js_exec_module(c->js_thread,
-						dom_string_data(modsrc),
+						(const unsigned char *)
+							dom_string_data(modsrc),
 						dom_string_byte_length(modsrc),
 						"?inline module?");
 					dom_string_unref(modsrc);
