@@ -8,13 +8,10 @@
  *
  * Keep the file in the project file list so toggling JS off doesn't require
  * an .mcp edit.
+ *
+ * TODO: This file compiles to nothing in the normal QuickJS build
+ * (WITH_QUICKJS is always defined). Remove from MacSurf.mcp when convenient.
  */
-
-#ifdef WITH_QUICKJS
-#error "js_stub.c is compiled but WITH_QUICKJS is defined — this file provides no-op stubs for a no-JS build, but QuickJS IS active. Remove js_stub.c from MacSurf.mcp."
-#endif
-
-
 
 #include <stddef.h>
 #include "utils/ns_errors.h"
