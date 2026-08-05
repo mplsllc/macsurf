@@ -2073,6 +2073,109 @@ static void qjs_el_finalizer(JSRuntime *rt, JSValue val)
 
 static JSClassDef s_el_class = { "MacSurfElement", qjs_el_finalizer };
 
+/* Look up a DOM constructor stub's .prototype by name and return it as an
+ * owned JSValue (caller frees); JS_NULL when the constructor does not exist
+ * (the caller then keeps the wrapper class proto, which still answers
+ * instanceof HTMLElement/Element/Node through the class proto chain, see
+ * qjs_el_install_proto). */
+static JSValue qjs_ctor_proto_by_name(JSContext *ctx, const char *ctor_name)
+{
+	JSValue g, ctor, proto;
+
+	g = JS_GetGlobalObject(ctx);
+	if (JS_IsException(g)) return JS_NULL;
+	ctor = JS_GetPropertyStr(ctx, g, ctor_name);
+	JS_FreeValue(ctx, g);
+	if (JS_IsException(ctor) || !JS_IsFunction(ctx, ctor)) {
+		JS_FreeValue(ctx, ctor);
+		return JS_NULL;
+	}
+	proto = JS_GetPropertyStr(ctx, ctor, "prototype");
+	JS_FreeValue(ctx, ctor);
+	if (JS_IsException(proto) || !JS_IsObject(proto)) {
+		JS_FreeValue(ctx, proto);
+		return JS_NULL;
+	}
+	return proto;
+}
+
+/* fixes1127 -- the per-tag DOM constructor prototype for a freshly-wrapped
+ * element, so `el instanceof HTMLDivElement` / `HTMLElement` / `Element` /
+ * `Node` answer truthfully.  The DOM constructors are JS stubs; each per-tag
+ * stub's .prototype has its __proto__ re-pointed at the wrapper class proto
+ * (qjs_el_install_proto), so setting the wrapper object's OWN proto to the
+ * tag's constructor prototype puts the whole family in the wrapper's chain
+ * while keeping the on* accessors (which live on the class proto) reachable.
+ *
+ * Live driver: XenForo core-compiled.js measureScrollBar calls
+ * XF.createElement("div", {className:"scrollMeasure"}, m.body), which gates
+ * its append behind `b instanceof HTMLElement`; with the stubs disconnected
+ * every element answered false, the probe div was never appended, and
+ * `b.parentNode.removeChild(b)` threw "cannot read property 'removeChild' of
+ * null" -- blocking XF.Element registration and the editor.
+ *
+ * Returns an owned JSValue (caller frees) or JS_NULL when the tag has no
+ * constructor (wrapper keeps the class proto; per-tag instanceof stays false
+ * exactly as before, family instanceof still true). */
+static JSValue qjs_dom_ctor_proto(JSContext *ctx, const char *tag_lc)
+{
+	char name[48];
+	int i, n;
+
+	if (tag_lc == NULL || tag_lc[0] == '\0') return JS_NULL;
+
+	/* CamelCase exceptions the naive "HTML"+tag+"Element" build gets wrong. */
+	if (strcmp(tag_lc, "svg") == 0) {
+		strcpy(name, "SVGSVGElement");
+	} else if (strcmp(tag_lc, "textarea") == 0) {
+		strcpy(name, "HTMLTextAreaElement");
+	} else if (strcmp(tag_lc, "ul") == 0) {
+		strcpy(name, "HTMLUListElement");
+	} else if (strcmp(tag_lc, "ol") == 0) {
+		strcpy(name, "HTMLOListElement");
+	} else if (strcmp(tag_lc, "dl") == 0) {
+		strcpy(name, "HTMLDListElement");
+	} else if (strcmp(tag_lc, "p") == 0) {
+		strcpy(name, "HTMLParagraphElement");
+	} else if (strcmp(tag_lc, "a") == 0) {
+		strcpy(name, "HTMLAnchorElement");
+	} else if (strcmp(tag_lc, "tr") == 0) {
+		strcpy(name, "HTMLTableRowElement");
+	} else if (strcmp(tag_lc, "td") == 0 || strcmp(tag_lc, "th") == 0) {
+		strcpy(name, "HTMLTableCellElement");
+	} else if (strcmp(tag_lc, "caption") == 0) {
+		strcpy(name, "HTMLTableCaptionElement");
+	} else if (strcmp(tag_lc, "col") == 0) {
+		strcpy(name, "HTMLTableColElement");
+	} else {
+		n = 4;	/* "HTML" */
+		strcpy(name, "HTML");
+		name[n] = (tag_lc[0] >= 'a' && tag_lc[0] <= 'z')
+			? (char)(tag_lc[0] - 'a' + 'A') : tag_lc[0];
+		n++;
+		for (i = 1; tag_lc[i] != '\0' && n < (int)sizeof(name) - 8; i++)
+			name[n++] = tag_lc[i];
+		strcpy(name + n, "Element");
+	}
+	return qjs_ctor_proto_by_name(ctx, name);
+}
+
+/* Point a freshly-wrapped object's prototype at a constructor's prototype
+ * when the constructor exists; leave the wrapper class proto otherwise.
+ * Node-shape-accurate for elements (per-tag), text/comment (Text /
+ * CharacterData / Comment) and fragments (DocumentFragment) -- a text node
+ * must NOT answer instanceof HTMLElement, which is what the shared class
+ * proto alone would do after fixes1127's p.__proto__ link. */
+static void qjs_wrap_set_family_proto(JSContext *ctx, JSValue obj,
+		const char *ctor_name)
+{
+	JSValue tp = qjs_ctor_proto_by_name(ctx, ctor_name);
+	if (JS_IsObject(tp)) {
+		JS_SetPrototype(ctx, obj, tp);
+	}
+	JS_FreeValue(ctx, tp);
+}
+
 /* Build (or reuse) the ONE JS wrapper object for a dom_element*.
  *
  * Ref contract (consume / single-owner / single-release): the caller passes an
@@ -2141,6 +2244,18 @@ static JSValue qjs_wrap_element(JSContext *ctx, dom_element *el)
 	tag_lc[i] = '\0';
 	if (tag_ds) macsurf_dom_string_unref(tag_ds);
 
+	/* fixes1127 -- route the wrapper through its tag's constructor
+	 * prototype so instanceof answers truthfully for the whole DOM family
+	 * (HTMLDivElement -> HTMLElement -> Element -> Node via the class proto
+	 * chain).  On a miss the wrapper keeps the class proto, which still
+	 * answers instanceof HTMLElement/Element/Node. */
+	{
+		JSValue tp = qjs_dom_ctor_proto(ctx, tag_lc);
+		if (JS_IsObject(tp)) {
+			JS_SetPrototype(ctx, obj, tp);
+		}
+		JS_FreeValue(ctx, tp);
+	}
 	JS_SetPropertyStr(ctx, obj, "tagName",  JS_NewString(ctx, tag_lc));
 	JS_SetPropertyStr(ctx, obj, "nodeName", JS_NewString(ctx, tag_lc));
 	JS_SetPropertyStr(ctx, obj, "nodeType", JS_NewInt32(ctx, 1));
@@ -6159,6 +6274,13 @@ static JSValue qjs_wrap_text_node(JSContext *ctx, dom_text *tn)
 		else if (wt == 4) wname = "#cdata-section";
 		JS_SetPropertyStr(ctx, obj, "nodeType", JS_NewInt32(ctx, (int) wt));
 		JS_SetPropertyStr(ctx, obj, "nodeName", JS_NewString(ctx, wname));
+		/* fixes1127 -- real family prototype: text/comment/CDATA wrappers
+		 * answer instanceof Text/CharacterData/Node truthfully and must NOT
+		 * answer instanceof HTMLElement (the shared class proto alone would
+		 * route them there after the fixes1127 p.__proto__ link -- a lying
+		 * answer that sends node-skipping loops down element paths). */
+		qjs_wrap_set_family_proto(ctx, obj,
+			(wt == 8) ? "Comment" : (wt == 4) ? "CharacterData" : "Text");
 	}
 	JS_SetPropertyStr(ctx, obj, "__ptr",
 		JS_NewInt64(ctx, (long long) (size_t) tn));
@@ -6350,6 +6472,11 @@ static JSValue qjs_wrap_fragment(JSContext *ctx, dom_document_fragment *frag)
 	 * children. Base dom_node vtable ops only, which is exactly why this is
 	 * safe on the fragment's smaller shape (fixes846). */
 	qjs_install_node_traversal(ctx, obj);
+
+	/* fixes1127 -- real family prototype: a fragment answers instanceof
+	 * DocumentFragment/Node, never HTMLElement (same lying-answer reasoning
+	 * as the text-node wrapper). */
+	qjs_wrap_set_family_proto(ctx, obj, "DocumentFragment");
 
 	return obj;
 }
@@ -7494,6 +7621,50 @@ static void qjs_el_install_proto(JSContext *ctx)
 		"if(v&&this.__msRegEvent){try{this.__msRegEvent(k);}catch(e){}}"
 		"}});"
 		"})(n[i]);}"
+		/* fixes1127 -- the DOM constructor family chain, so
+		 * `el instanceof HTMLElement` / Element / Node and the per-tag
+		 * constructors answer truthfully on real wrappers.
+		 *
+		 * The DOM constructors (HTMLElement, HTMLDivElement, ...) are
+		 * empty-function stubs installed by setup_globals; their
+		 * .prototype objects are chained to each other there (Element ->
+		 * Node, HTMLElement -> Element, Text -> CharacterData -> Node,
+		 * DocumentFragment -> Node).  THIS class proto p is the piece
+		 * that connects the wrapper world to that family:
+		 *   p.__proto__ = HTMLElement.prototype  -- every wrapper whose
+		 *     chain includes p (the default for an element wrapper)
+		 *     answers instanceof HTMLElement/Element/Node.
+		 *   X.prototype.__proto__ = p for each per-tag HTML* constructor
+		 *     -- a wrapper whose own proto is HTMLDivElement.prototype
+		 *     keeps p (and with it the on* accessors) in its chain while
+		 *     also answering instanceof HTMLDivElement.
+		 *
+		 * Live driver: XenForo core-compiled.js measureScrollBar calls
+		 * XF.createElement("div", {className:"scrollMeasure"}, m.body),
+		 * which gates its append behind `b instanceof HTMLElement`.
+		 * With the family disconnected the gate is false, the probe div
+		 * is never appended, and `b.parentNode.removeChild(b)` throws
+		 * "cannot read property 'removeChild' of null" -- blocking
+		 * XF.Element registration and the editor. */
+		"if(typeof HTMLElement!=='undefined'&&HTMLElement.prototype){"
+			"try{p.__proto__=HTMLElement.prototype;}catch(e){}}"
+		"var ht=['HTMLUnknownElement','HTMLHtmlElement','HTMLHeadElement',"
+			"'HTMLBodyElement','HTMLDivElement','HTMLSpanElement',"
+			"'HTMLParagraphElement','HTMLAnchorElement','HTMLImageElement',"
+			"'HTMLCanvasElement','HTMLInputElement','HTMLButtonElement',"
+			"'HTMLTextAreaElement','HTMLSelectElement','HTMLOptionElement',"
+			"'HTMLFormElement','HTMLLabelElement','HTMLUListElement',"
+			"'HTMLOListElement','HTMLLIElement','HTMLTableElement',"
+			"'HTMLTableRowElement','HTMLTableCellElement','HTMLScriptElement',"
+			"'HTMLStyleElement','HTMLLinkElement','HTMLMetaElement',"
+			"'HTMLIFrameElement','HTMLVideoElement','HTMLAudioElement',"
+			"'HTMLMediaElement','HTMLSourceElement','HTMLPictureElement',"
+			"'HTMLTemplateElement','HTMLSlotElement','HTMLBRElement',"
+			"'HTMLHRElement','HTMLPreElement','HTMLDListElement',"
+			"'SVGSVGElement'];"
+		"for(i=0;i<ht.length;i++){"
+			"var c=(typeof globalThis!=='undefined'?globalThis:this)[ht[i]];"
+			"if(c&&c.prototype){try{c.prototype.__proto__=p;}catch(e){}}}"
 		"return p;})()";
 	JSValue proto;
 
@@ -7696,6 +7867,22 @@ static void qjs_dom_install(JSContext *ctx)
 			"getBoundingClientRect:function(){return{top:0,left:0,right:vw,bottom:vh,width:vw,height:vh,x:0,y:0};}};"
 			"el.className='';"
 			"Object.defineProperty(el,'classList',{get:(function(){var c=cls(el);return function(){return c;};})(),configurable:true});"
+			/* fixes1127 -- fake elements must pass the SAME instanceof gates
+			 * real wrappers now do, or XF.createElement's
+			 * `b instanceof HTMLElement && b.appendChild(f)` skips the append
+			 * for a pre-body document.body -- the measureScrollBar
+			 * removeChild-of-null throw fixes1112 fixed for the direct-append
+			 * path, hit through a different gate this time.  setPrototypeOf
+			 * (not __proto__ assignment) so the per-tag prototype's chain
+			 * (routed through the wrapper class proto by qjs_el_install_proto)
+			 * is what the fake inherits; own members are unaffected. */
+			"if(typeof HTMLElement!=='undefined'){"
+			"var _ct={};_ct.body=HTMLBodyElement;_ct.html=HTMLHtmlElement;"
+			"_ct.head=HTMLHeadElement;_ct.div=HTMLDivElement;"
+			"_ct['#fragment']=DocumentFragment;"
+			"var _cp=(tag==='#fragment')?DocumentFragment:"
+			"(_ct[String(tag||'').toLowerCase()]||HTMLUnknownElement);"
+			"if(_cp&&_cp.prototype){try{Object.setPrototypeOf(el,_cp.prototype);}catch(e){}}}"
 			"return el;}"
 			"d.createElement=function(tag){"
 			"var n=d.__createElementNative?d.__createElementNative(tag):null;"
@@ -9268,6 +9455,36 @@ static void register_browser_globals(JSContext *ctx)
 		"if(typeof g[names[i]]==='undefined'){"
 		"g[names[i]]=function(){};"
 		"}"
+		"}"
+		/* fixes1127 -- chain the family BELOW the wrapper class proto.
+		 * qjs_el_install_proto re-points each per-tag HTML* constructor's
+		 * .prototype.__proto__ at the wrapper class proto p (so a wrapper
+		 * whose own proto is HTMLDivElement.prototype keeps p and the
+		 * on* accessors in its chain); the links here are the parts the
+		 * class proto itself routes through: p -> HTMLElement ->
+		 * Element -> Node, and the Text/CharacterData/DocumentFragment
+		 * families that are NOT elements.  Real wrappers get their own
+		 * prototype per node shape in qjs_wrap_element /
+		 * qjs_wrap_text_node / qjs_wrap_fragment. */
+		"if(g.Node){"
+		"if(g.Element&&g.Element.prototype)"
+			"g.Element.prototype.__proto__=g.Node.prototype;"
+		"if(g.CharacterData&&g.CharacterData.prototype)"
+			"g.CharacterData.prototype.__proto__=g.Node.prototype;"
+		"if(g.DocumentFragment&&g.DocumentFragment.prototype)"
+			"g.DocumentFragment.prototype.__proto__=g.Node.prototype;"
+		"}"
+		"if(g.Element&&g.Element.prototype){"
+		"if(g.HTMLElement&&g.HTMLElement.prototype)"
+			"g.HTMLElement.prototype.__proto__=g.Element.prototype;"
+		"if(g.SVGElement&&g.SVGElement.prototype)"
+			"g.SVGElement.prototype.__proto__=g.Element.prototype;"
+		"}"
+		"if(g.CharacterData&&g.CharacterData.prototype){"
+		"if(g.Text&&g.Text.prototype)"
+			"g.Text.prototype.__proto__=g.CharacterData.prototype;"
+		"if(g.Comment&&g.Comment.prototype)"
+			"g.Comment.prototype.__proto__=g.CharacterData.prototype;"
 		"}"
 		"})(this);");
 

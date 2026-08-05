@@ -7258,5 +7258,84 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 53 PASS: text nodes do not inherit element "
 		"properties ===\n");
 
+	/* --- Test 63: instanceof answers truthfully for the DOM constructor
+	 * family (fixes1127) ------------------------------------------------
+	 * XenForo core-compiled.js measureScrollBar calls
+	 * XF.createElement("div", {className:"scrollMeasure"}, m.body), which
+	 * gates its append behind `b instanceof HTMLElement`. The DOM
+	 * constructors are JS stubs; before fixes1127 no wrapper answered
+	 * instanceof HTMLElement, so the probe div was never appended and
+	 * `b.parentNode.removeChild(b)` threw "cannot read property 'removeChild'
+	 * of null" -- blocking XF.Element registration and the whole editor.
+	 *
+	 * Assert the family answers truthfully for every wrapper shape:
+	 * elements (including per-tag identity), text, and fragments -- and that
+	 * the instanceof-gated append-remove idiom completes without throwing.
+	 * Counts asserts by construction: each assert that fails throws. */
+	fprintf(stderr, "\n=== Test 63: instanceof answers truthfully for the "
+		"DOM constructor family ===\n");
+	{
+		const char *q =
+			"function assert(c,m){if(!c)throw new Error('ASSERT FAIL: '+m);}"
+			"var div=document.createElement('div');"
+			"assert(div instanceof HTMLElement,"
+				"'div instanceof HTMLElement');"
+			"assert(div instanceof HTMLDivElement,"
+				"'div instanceof HTMLDivElement');"
+			"assert(div instanceof Element,'div instanceof Element');"
+			"assert(div instanceof Node,'div instanceof Node');"
+			"assert(!(div instanceof HTMLBodyElement),"
+				"'div must not be instanceof HTMLBodyElement');"
+			"var body=document.body;"
+			"assert(body&&body instanceof HTMLElement,"
+				"'document.body instanceof HTMLElement');"
+			"assert(body instanceof HTMLBodyElement,"
+				"'document.body instanceof HTMLBodyElement');"
+			"var sp=document.createElement('span');"
+			"assert(sp instanceof HTMLSpanElement,"
+				"'span instanceof HTMLSpanElement');"
+			"assert(!(sp instanceof HTMLDivElement),"
+				"'span must not be instanceof HTMLDivElement');"
+			"var abbr=document.createElement('abbr');"
+			"assert(abbr instanceof HTMLElement,"
+				"'unknown-tag element still instanceof HTMLElement');"
+			"var t=document.createTextNode('x');"
+			"assert(t instanceof Text,'text instanceof Text');"
+			"assert(t instanceof CharacterData,"
+				"'text instanceof CharacterData');"
+			"assert(t instanceof Node,'text instanceof Node');"
+			"assert(!(t instanceof HTMLElement),"
+				"'text must NOT be instanceof HTMLElement');"
+			"assert(!(t instanceof Element),"
+				"'text must NOT be instanceof Element');"
+			"var frag=document.createDocumentFragment();"
+			"assert(frag instanceof DocumentFragment,"
+				"'fragment instanceof DocumentFragment');"
+			"assert(frag instanceof Node,'fragment instanceof Node');"
+			"assert(!(frag instanceof HTMLElement),"
+				"'fragment must NOT be instanceof HTMLElement');"
+			/* THE BUG SHAPE: XF.createElement's instanceof-gated append. */
+			"var b=document.createElement('div');"
+			"if(body instanceof HTMLElement)body.appendChild(b);"
+			"assert(b.parentNode,"
+				"'parentNode set after instanceof-gated append');"
+			"b.parentNode.removeChild(b);"
+			"assert(!b.parentNode,"
+				"'parentNode cleared after removeChild');"
+			/* on* handlers must survive the prototype rerouting (fixes872). */
+			"var h=document.createElement('div');"
+			"h.onclick=function(){};"
+			"assert(h._H&&h._H.click,"
+				"'on* handler still works on a rerouted wrapper');";
+		if (!js_exec(thread, (const unsigned char *)q, strlen(q),
+				"t63.js")) {
+			fprintf(stderr, "FAIL: Test 63 -- instanceof DOM constructor "
+				"family (fixes1127)\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 63 PASS: instanceof answers truthfully "
+		"for the DOM constructor family ===\n");
+
 	return 0;
 }
