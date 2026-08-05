@@ -43,6 +43,8 @@
 #include "utils/nsurl.h"
 #include "content/urldb.h"
 #include "content/content_protected.h"
+#include "content/content_factory.h"
+#include "macos9_reconvert.h"
 
 extern int macsurf_ptr_is_heap(const void *);
 
@@ -1895,10 +1897,6 @@ extern dom_exception macsurf_dom_characterdata_get_data(dom_node *node,
 		dom_string **data);
 extern dom_exception macsurf_dom_characterdata_set_data_s(dom_node *node,
 		const char *data);
-
-/* macos9_reconvert.c — deferred re-convert after DOM mutation */
-/* fixes910 Phase 0 -- mutation kinds + the node-carrying entry point. */
-#include "macos9_reconvert.h"
 
 /* ---- Global document/content pointers (set in js_newthread) ---- */
 static dom_document  *g_qjs_document = NULL;
@@ -9391,9 +9389,6 @@ void macsurf_qjs_setup_globals(JSContext *qctx)
 /* ------------------------------------------------------------------ */
 /* Content-handler registration (mirrors macsurf_js.c)                 */
 /* ------------------------------------------------------------------ */
-
-#include "content/content_factory.h"
-#include "content/content_protected.h"
 
 static nserror macsurf_qjs__content_create(
 		const struct content_handler *handler,
