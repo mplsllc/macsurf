@@ -437,13 +437,15 @@ macsurf_js_set_reconvert_enabled(int enabled)
  * A refusal at any layer degrades to the fixes1016 behaviour -- `undefined` --
  * which is safe by construction.
  *
- * BUDGET. Layout here costs ~100ms, so a script that mutates and measures in a
- * loop would force one full reconvert per iteration. Browsers have the same
- * hazard (it is called layout thrashing) and survive it because their layout is
- * cheap; ours is not. The budget bounds a pathological page to a known cost and
- * then degrades to `undefined`, and the counters say out loud how often real
- * pages hit it -- which is the number that decides whether the next round needs
- * incremental layout. A silent cap would read as "nothing to see here".
+ * BUDGET. Layout here costs ~1.6s on a heavy page (hardware-measured), so a
+ * script that mutates and measures in a loop would force one full reconvert
+ * per iteration. Browsers have the same hazard (it is called layout thrashing)
+ * and survive it because their layout is cheap; ours is not. The budget bounds
+ * a pathological page to a known cost (MACOS9_SYNC_BUDGET_US, 30s of
+ * cumulative flush time per nav) and then degrades to `undefined`, and the
+ * counters say out loud how often real pages hit it -- which is the number
+ * that decides whether the next round needs incremental layout. A silent cap
+ * would read as "nothing to see here".
  * ------------------------------------------------------------------ */
 static long g_sync_flushes      = 0;	/* flushes actually run, this nav  */
 static long g_sync_declined     = 0;	/* asked, refused (guard or budget) */
@@ -470,8 +472,20 @@ static long g_sync_r_busy     = 0;	/* html_reconvert refused, other     */
  * A count cannot bound a cost whose per-unit price is unknown and varies with
  * page size. Cumulative microseconds can, and it degrades where it should: a
  * page gets as many reflows as fit in the budget, cheap ones get more of them,
- * and once spent geometry falls back to `undefined` and JSSYNC says so. */
-#define MACOS9_SYNC_BUDGET_US 2000000L
+ * and once spent geometry falls back to `undefined` and JSSYNC says so.
+ *
+ * fixes1126 (#265) — 2s was an order of magnitude too tight. Hardware on
+ * hackaday: the first TWO flushes cost 3.27s, so the budget was spent before
+ * slick finished its opening measure burst and every later measurement
+ * declined (budget=703 of 1240, flush=2). The per-flush price on that page is
+ * ~1.6s (the reconvert's O(document) rebuild) -- that is the number to budget
+ * against: 30s buys ~18 real reflows per navigation, enough for a widget's
+ * whole init measure/mutate loop, while a genuinely pathological layout-thrash
+ * page is still bounded and stays user-abortable: the JS interrupt handler
+ * polls WaitNextEvent for Cmd-. every ~200ms between bytecodes, i.e. between
+ * flushes (qjs_interrupt_handler), and the per-navigation reset bounds it to
+ * one navigation's worth of cost. */
+#define MACOS9_SYNC_BUDGET_US 30000000L
 
 void
 macos9_reconvert_sync_stats(long *flushes, long *declined, long *us)
@@ -506,6 +520,34 @@ macos9_reconvert_sync_reset(void)
 	g_sync_r_inprog = 0;  g_sync_r_budget = 0; g_sync_r_busy = 0;
 }
 
+/* fixes1126 (#265) — a transient flush refusal must not strand the pending
+ * rebuild behind the escalating cosmetic debounce. fixes1024 doubles the
+ * debounce (400ms -> 6400ms) while only cosmetic mutations arrive, and a
+ * measure/mutate widget's style writes ARE cosmetic -- so the async rebuild
+ * can be 13+ seconds away (`LIFE RECONVERT DEFERRED 13900` on hardware) while
+ * the sync flush path declines every read. That is the busy=537 story from
+ * the hackaday log: the flush cannot run (no select_ctx yet, mid-layout, ...),
+ * and the work waits behind a debounce that keeps doubling.
+ *
+ * Pull the work forward instead: the scheduler dedups on (cb, param), so a
+ * burst of refusals costs one pending entry and the fire lands
+ * RECONVERT_SYNC_RETRY_MS after the LAST refusal, at the next JS yield. The
+ * retry runs the SAME debounced callback the mutations already scheduled, so
+ * the liveness tokens, the min-interval floor and the multi-content walk all
+ * apply unchanged. Refusals that cannot clear do not retry: a dead content
+ * (!live), a terminal status (notdone), and the spent time budget -- the
+ * debounced callback still runs those at its own cadence. */
+#define RECONVERT_SYNC_RETRY_MS 80
+
+static void macos9_reconvert_cb(void *p);	/* defined below */
+
+static void
+macos9_reconvert_sync_retry(void)
+{
+	(void) macos9_schedule(RECONVERT_SYNC_RETRY_MS, macos9_reconvert_cb,
+			NULL);
+}
+
 int
 macos9_reconvert_flush_now(void *cv)
 {
@@ -528,10 +570,22 @@ macos9_reconvert_flush_now(void *cv)
 	 * counter names the ACTUAL blocker rather than whichever guard happens
 	 * to be listed earliest. */
 	if (in_flush || macsurf_reconvert_in_progress) {
-		g_sync_r_inprog++; g_sync_declined++; return 0;
+		/* A reconvert is on the stack or mid-flight. No tree is safe to
+		 * read -- the old one is being torn down -- so the answer is
+		 * undefined, and there is no way to "wait" for it here: the
+		 * flush is synchronous and JS cannot yield mid-read. The work
+		 * is not stranded though: the in-flight reconvert will clear it,
+		 * and the retry catches the case where it cannot. */
+		g_sync_r_inprog++; g_sync_declined++;
+		macos9_reconvert_sync_retry();
+		return 0;
 	}
 	if (macos9_paint_gw != NULL) {
-		g_sync_r_paint++; g_sync_declined++; return 0;
+		/* A redraw is walking the box tree; a flush will be safe on the
+		 * next event-loop pass, so retry then. */
+		g_sync_r_paint++; g_sync_declined++;
+		macos9_reconvert_sync_retry();
+		return 0;
 	}
 	if (!g_reconvert_enabled || !macos9_content_is_live(c)) {
 		g_sync_r_busy++; g_sync_declined++; return 0;
@@ -567,7 +621,11 @@ macos9_reconvert_flush_now(void *cv)
 		g_sync_r_notdone++; g_sync_declined++; return 0;
 	}
 	if (c->active > 0 && macsurf_html_has_droppable_inflight(c)) {
-		g_sync_r_active++; g_sync_declined++; return 0;
+		/* Transient: the in-flight entry a rebuild would free completes
+		 * shortly. Retry on the next pass. */
+		g_sync_r_active++; g_sync_declined++;
+		macos9_reconvert_sync_retry();
+		return 0;
 	}
 	if (g_sync_us >= MACOS9_SYNC_BUDGET_US) {
 		g_sync_r_budget++; g_sync_declined++; return 0;
@@ -580,11 +638,15 @@ macos9_reconvert_flush_now(void *cv)
 
 	if (rc != 0) {
 		/* Busy for a reason html_reconvert owns that we did not screen
-		 * for above (mid-layout, a convert already in flight). Leave the
-		 * slot pending so the debounced path still runs it, and answer
+		 * for above (mid-layout, a convert already in flight, or -- the
+		 * dominant case on hardware -- no select_ctx yet, which arrives
+		 * at finish_conversion). Leave the slot pending and pull the
+		 * rebuild forward: the retry fires shortly after the JS burst
+		 * yields, by which time the blocker may have cleared. Answer
 		 * undefined. */
 		g_sync_r_busy++;
 		g_sync_declined++;
+		macos9_reconvert_sync_retry();
 		return 0;
 	}
 
