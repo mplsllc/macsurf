@@ -8031,6 +8031,14 @@ static void qjs_dom_install(JSContext *ctx)
 			"get:function(){return (typeof window!=='undefined')?window:globalThis;}});"
 			"Object.defineProperty(d,'parentWindow',{configurable:true,"
 			"get:function(){return (typeof window!=='undefined')?window:globalThis;}});"
+			/* fixes1131b — XF LazyHandlerLoader is called with the DOCUMENT
+			 * (nodeType=9) as its container; documents lack .matches/.closest
+			 * (element-only in the DOM spec).  No-ops: a document never matches
+			 * a CSS selector and has no ancestor. */
+			"Object.defineProperty(d,'matches',{configurable:true,"
+			"value:function(){return false;}});"
+			"Object.defineProperty(d,'closest',{configurable:true,"
+			"value:function(){return null;}});"
 			"})";
 			JSValue fn, args[1];
 			fn = JS_Eval(ctx, sec_src, strlen(sec_src),
