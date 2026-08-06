@@ -1436,6 +1436,29 @@ int main(int argc, char **argv)
 		(void)js_exec(thread, (const unsigned char *)xf_report,
 				strlen(xf_report), "xf-report.js");
 		harness_pump_all(100000);
+
+		/* DIAGNOSTIC probe: call XF.activate(document), which is what
+		 * XF's own init does, and which drives loadLazyHandlers. */
+		{
+			const char *act_js =
+				"globalThis.__xfErr3='';"
+				"try{"
+				"XF.config.url=XF.config.url||{};"
+				"XF.config.url.js='https://x.test/js/__SENTINEL__?_v=1';"
+				"XF.config.jsMt={};"
+				"var __d=document.createElement('div');"
+				"__d.setAttribute('data-xf-init','emoji-completer');"
+				"document.body.appendChild(__d);"
+				"XF.LazyHandlerLoader.loadLazyHandlers(__d);}"
+				"catch(e){globalThis.__xfErr3="
+				"'NEWEL: name='+(e&&e.name)+' msg='+(e&&e.message)+"
+				"' stack='+(e&&e.stack);}"
+				"console.log('ACTIVATE-ERR2: '+"
+				"(globalThis.__xfErr3||'(no throw newel)'));";
+			(void)js_exec(thread, (const unsigned char *)act_js,
+					strlen(act_js), "xf-activate.js");
+			harness_pump_all(100000);
+		}
 	}
 	fprintf(stderr, "=== Test 7b done (diagnostic) ===\n");
 

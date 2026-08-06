@@ -2708,6 +2708,21 @@ void *macsurf_reconvert_last_layout = NULL;
  * extern in box_construct.c. */
 int macsurf_reconvert_in_progress = 0;
 
+/* fixes1127 — reentrancy depth for html_reconvert() itself, DISTINCT from
+ * macsurf_reconvert_in_progress above. That flag is deliberately cleared
+ * (line ~3228, in html_reconvert_done) BEFORE the synchronous resize/load JS
+ * fire, for reasons unrelated to this guard (JS-freeze gating in
+ * macsurf_qjs_pump_all, death-row drain suppression) -- so it cannot be
+ * reused to detect a NESTED html_reconvert() call triggered from inside that
+ * resize/load handler. This counter is incremented only once html_reconvert()
+ * has passed its other busy guards and committed to a rebuild, and stays
+ * non-zero for the entire synchronous span through html_reconvert_done
+ * (dom_to_box's callback), so a reentrant call arriving from page JS run
+ * during that span sees depth > 0 and defers instead of touching the shared
+ * single-instance state (g_walk_content/g_walk_gen in box_construct.c,
+ * g_reconvert_old_bctx, c->box_conversion_context) a second time. */
+static int g_html_reconvert_depth = 0;
+
 /* fixes895 — durable "furthest position" marker + phase-scoped eager flush,
  * defined in macsurf_debug_log.c (local extern, matching this file's existing
  * `extern void macsurf_debug_log_writef` pattern). */
@@ -3379,6 +3394,27 @@ nserror html_reconvert(html_content *c)
 		return NSERROR_NEED_DATA;        /* never free boxes mid-layout */
 	if (c->box_conversion_context != NULL)
 		return NSERROR_NEED_DATA;        /* one re-convert in flight    */
+	/* fixes1127 — reentrancy guard. box_conversion_context above only blocks
+	 * a SECOND reconvert while the first is still mid-dom_to_box; it does NOT
+	 * block one triggered from INSIDE html_reconvert_done's synchronous
+	 * resize/load JS fire, because that fire happens after
+	 * macsurf_reconvert_in_progress is already cleared and after
+	 * c->box_conversion_context is about to be cleared by dom_to_box's own
+	 * completion path. See the g_html_reconvert_depth comment at its
+	 * declaration. NEED_DATA here is the same "try again later" signal every
+	 * other guard in this function already returns, and it is picked up by
+	 * the existing fixes1126 debounced retry (macos9_reconvert_sync_retry,
+	 * 80ms) in macos9_reconvert.c -- the mutation is not lost, just deferred
+	 * to run after the outer reconvert has fully unwound. */
+	macsurf_debug_log_writef(
+		"LIFE reconvert depth=%d entering", g_html_reconvert_depth);
+	if (g_html_reconvert_depth > 0) {
+		macsurf_debug_log_writef(
+			"LIFE reconvert REENTRANT BLOCKED depth=%d",
+			g_html_reconvert_depth);
+		return NSERROR_NEED_DATA;
+	}
+	g_html_reconvert_depth++;
 	/* fixes1105 (#265) — THE reconvert bug, proven on hardware.
 	 *
 	 * Without a select context there is no cascade, and libcss rejects the
@@ -3408,6 +3444,7 @@ nserror html_reconvert(html_content *c)
 		macsurf_debug_log_writef(
 			"LIFE reconvert: defer — no select_ctx yet (pre-"
 			"finish_conversion); cascade would fail CSS_BADPARM");
+		g_html_reconvert_depth--;	/* fixes1127 */
 		return NSERROR_NEED_DATA;
 	}
 	/* fixes421 — quiesce guard: if sub-resource fetches (images, CSS) are
@@ -3435,6 +3472,7 @@ nserror html_reconvert(html_content *c)
 		macsurf_debug_log_writef(
 			"LIFE reconvert: defer — %ld active, droppable in flight",
 			(long) c->base.active);
+		g_html_reconvert_depth--;	/* fixes1127 */
 		return NSERROR_NEED_DATA;
 	}
 
@@ -3608,6 +3646,7 @@ nserror html_reconvert(html_content *c)
 		macsurf_debug_log_writef("LIFE reconvert in_progress=0 seq=%ld (doc-element-failed)",
 				(long) macsurf_reconvert_seq);
 		macsurf_debug_log_reconv_flush(0);
+		g_html_reconvert_depth--;	/* fixes1127 */
 		return NSERROR_DOM;
 	}
 	macsurf_debug_log_writef(
@@ -3646,6 +3685,10 @@ nserror html_reconvert(html_content *c)
 				(long) macsurf_reconvert_seq);
 		macsurf_debug_log_reconv_flush(0);
 	}
+	/* fixes1127 — dom_to_box is synchronous (fixes903): whether it succeeded
+	 * (html_reconvert_done, including its resize/load JS fire, already ran
+	 * inside the call above) or failed, the reentrant span is over now. */
+	g_html_reconvert_depth--;
 	dom_node_unref(html);
 	return error;
 }
