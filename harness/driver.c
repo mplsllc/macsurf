@@ -1470,6 +1470,54 @@ int main(int argc, char **argv)
 					strlen(act_js), "xf-activate.js");
 			harness_pump_all(100000);
 		}
+
+		/* RAW arm — the MAC path, no try{} wrap: the real bundles at true
+		 * global scope, exactly as js_exec runs them on hardware. The
+		 * wrapped arm above puts `const XF={}` inside a try BLOCK (block
+		 * scope), so window.XF=XF goes through the probe's setter trap.
+		 * Raw, `const XF` is a GLOBAL lexical binding — if that changes
+		 * what window.XF=XF hits on this engine, the XF LAZY probe lines
+		 * will not appear for the raw arm even though they do for the
+		 * wrapped one. DIAGNOSTIC: prints, never fails. */
+		{
+			static const char *const raw_files[2] = {
+				"preamble.min.js", "core-compiled.js"
+			};
+			int fi;
+			for (fi = 0; fi < 2; fi++) {
+				FILE *bf = fopen(raw_files[fi], "rb");
+				char *raw;
+				long blen;
+				size_t rd;
+				if (bf == NULL) {
+					fprintf(stderr, "  SKIP raw %s (not present)\n",
+							raw_files[fi]);
+					continue;
+				}
+				fseek(bf, 0, SEEK_END); blen = ftell(bf);
+				fseek(bf, 0, SEEK_SET);
+				raw = (char *)malloc((size_t)blen + 1);
+				if (raw == NULL) { fclose(bf); continue; }
+				rd = fread(raw, 1, (size_t)blen, bf);
+				raw[rd] = '\0';
+				fclose(bf);
+				fprintf(stderr, "  --- RAW %s (%ld bytes, MAC path) ---\n",
+						raw_files[fi], blen);
+				{
+					unsigned char xok = js_exec(thread,
+							(const unsigned char *)raw,
+							strlen(raw), raw_files[fi]);
+					fprintf(stderr, "  RAW js_exec ok=%d\n", (int)xok);
+				}
+				{
+					extern void macsurf_qjs_pump_all(void);
+					int pump;
+					for (pump = 0; pump < 8; pump++)
+						macsurf_qjs_pump_all();
+				}
+				free(raw);
+			}
+		}
 	}
 	fprintf(stderr, "=== Test 7b done (diagnostic) ===\n");
 
@@ -7370,6 +7418,211 @@ box_coords(bx, &cx, &cy);
 	}
 	fprintf(stderr, "=== Test 63 PASS: instanceof answers truthfully "
 		"for the DOM constructor family ===\n");
+
+	/* --- Test 64: geometry settles ONCE per JS execution (#265) ----------
+	 *
+	 * Hardware: hackaday's slick init did 1280 geometry reads interleaved
+	 * with DOM writes; every read found a pending mutation and attempted a
+	 * synchronous flush (~1.2 s each), 25 succeeded, the 30 s budget
+	 * expired, and the remaining 1255 reads were DECLINED and answered
+	 * undefined/0 -- so the slider baked width:0px/height:0px into every
+	 * slide (`LIFE JSSYNC flush=25 declined=1255 us=30680059`).
+	 *
+	 * The fix: settle-once-per-JS-execution. One flush per burst is all a
+	 * script needs -- the box tree cannot change while JS is not running
+	 * (cooperative model) -- so after the first read settles, subsequent
+	 * reads of the SAME burst answer from the settled tree without paying
+	 * for another reconvert. The flag is cleared at every execution
+	 * boundary (pump_all top, js_exec top, per timer, per event dispatch),
+	 * NOT on DOM mutation: clearing on mutation re-arms the flag on the
+	 * first write after a settle, which keeps ~1280 flush attempts and the
+	 * budget still breaks.
+	 *
+	 * Asserted as COUNTS, per the house rule:
+	 *   (1) one burst doing 3 appends interleaved with 3 reads must record
+	 *       EXACTLY ONE flush (old behaviour: 3), and every read must
+	 *       answer a number -- the skip must answer from the settled tree,
+	 *       not refuse;
+	 *   (2) after a pump (JS yielded), the next burst's first read flushes
+	 *       again -- the flag must not leak across executions;
+	 *   (3) two back-to-back js_exec calls with NO pump between (the
+	 *       harness's own execution shape) still each flush -- the
+	 *       js_exec-top clear is the boundary that makes this work.
+	 *
+	 * Control: with the settle flag removed, (1) records +3 flushes and
+	 * this test fails on the exact-count assertion. */
+	fprintf(stderr, "\n=== Test 64: geometry settles once per JS execution "
+		"(#265) ===\n");
+	{
+		extern void macos9_reconvert_sync_stats(long *f, long *d,
+				long *us);
+		extern void macos9_reconvert_sync_reset(void);
+		extern int macos9_reconvert_flush_now(void *cv);
+		long f0 = 0, d0 = 0, u0 = 0, f1 = 0, d1 = 0, u1 = 0;
+		unsigned char ok;
+
+		/* Same preconditions Test 51 needs: a finished document, no
+		 * layout/convert in flight, no active fetches. */
+		htmlc.base.status = CONTENT_STATUS_DONE;
+		htmlc.reflowing = false;
+		htmlc.box_conversion_context = NULL;
+		htmlc.aborted = false;
+		htmlc.base.active = 0;
+		/* Drain any leftover pending marks from earlier tests, then pump
+		 * so the settle flag (if a later test ever set it) starts 0. */
+		(void) macos9_reconvert_flush_now((void *)&htmlc);
+		(void) harness_pump_all(100000);
+
+		/* (1) 3 appends interleaved with 3 reads in ONE burst. */
+		{
+			const char *q =
+				"var f=document.getElementById('feed');"
+				"if(!f)throw new Error('t64 fixture #feed is gone');"
+				"var i,d,out=[];"
+				"for(i=0;i<3;i++){"
+					"d=document.createElement('div');"
+					"d.id='t64row'+i;d.textContent='r'+i;"
+					"f.appendChild(d);"
+					"out.push(f.offsetHeight);"
+				"}"
+				"globalThis.__t64out=out;";
+			macos9_reconvert_sync_reset();
+			macos9_reconvert_sync_stats(&f0, &d0, &u0);
+			if (!js_exec(thread, (const unsigned char *)q, strlen(q),
+					"t64-burst.js")) {
+				fprintf(stderr, "FAIL: Test 64 -- burst fixture "
+					"threw\n");
+				return 1;
+			}
+			macos9_reconvert_sync_stats(&f1, &d1, &u1);
+			fprintf(stderr, "  burst of 3 reads: flushes +%ld, "
+				"declined +%ld, cost +%ldus\n",
+				f1 - f0, d1 - d0, u1 - u0);
+			if (f1 - f0 != 1) {
+				fprintf(stderr, "FAIL: Test 64 -- 3 reads in one "
+					"burst recorded +%ld flushes, want exactly 1. "
+					"Old behaviour was +3 (each read a 1.2s "
+					"reconvert); the settle-once flag is not "
+					"skipping the 2nd and 3rd reads.\n",
+					f1 - f0);
+				return 1;
+			}
+		}
+
+		/* Every read answered a number: the skip must serve the settled
+		 * tree, not decline (a decline would make the answer undefined). */
+		{
+			const char *q =
+				"var out=globalThis.__t64out;"
+				"if(!out||out.length!==3)"
+				"throw new Error('t64 answers missing');"
+				"var i;for(i=0;i<3;i++){"
+					"if(typeof out[i]!=='number')"
+					"throw new Error('t64 read '+(i+1)+' answered '"
+						"+out[i]+' (typeof '+(typeof out[i])+') -- "
+						"the settled-tree skip must ANSWER, not "
+						"decline.');"
+				"}";
+			ok = js_exec(thread, (const unsigned char *)q, strlen(q),
+					"t64-ans.js");
+		}
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 64 -- a settled-burst read "
+				"was not answered from the settled tree\n");
+			return 1;
+		}
+
+		/* (2) A pump = JS yielded = the next burst starts fresh: its
+		 * first read must flush again. */
+		(void) harness_pump_all(100000);
+		{
+			const char *q =
+				"var f=document.getElementById('feed');"
+				"var d=document.createElement('div');"
+				"d.id='t64after';f.appendChild(d);"
+				"globalThis.__t64h=f.offsetHeight;"
+				"if(typeof globalThis.__t64h!=='number')"
+				"throw new Error('t64 post-pump read declined');";
+			macos9_reconvert_sync_reset();
+			macos9_reconvert_sync_stats(&f0, &d0, &u0);
+			if (!js_exec(thread, (const unsigned char *)q, strlen(q),
+					"t64-after.js")) {
+				fprintf(stderr, "FAIL: Test 64 -- post-pump burst "
+					"threw\n");
+				return 1;
+			}
+			macos9_reconvert_sync_stats(&f1, &d1, &u1);
+			fprintf(stderr, "  post-pump burst: flushes +%ld\n",
+				f1 - f0);
+			if (f1 - f0 != 1) {
+				fprintf(stderr, "FAIL: Test 64 -- a burst AFTER a "
+					"pump recorded +%ld flushes, want 1. The "
+					"settle flag leaked across the yield "
+					"(pump_all-top clear missing).\n",
+					f1 - f0);
+				return 1;
+			}
+		}
+
+		/* (3) Back-to-back js_exec with NO pump between (the harness's
+		 * own shape -- and the shape script loads take on hardware): each
+		 * execution is its own burst, so each first read flushes. */
+		{
+			const char *q =
+				"var f=document.getElementById('feed');"
+				"var d=document.createElement('div');"
+				"d.id='t64b2';f.appendChild(d);"
+				"globalThis.__t64h2=f.offsetHeight;";
+			macos9_reconvert_sync_reset();
+			macos9_reconvert_sync_stats(&f0, &d0, &u0);
+			if (!js_exec(thread, (const unsigned char *)q, strlen(q),
+					"t64-b2.js")) {
+				fprintf(stderr, "FAIL: Test 64 -- exec B threw\n");
+				return 1;
+			}
+			macos9_reconvert_sync_stats(&f1, &d1, &u1);
+			fprintf(stderr, "  exec B (no pump): flushes +%ld\n",
+				f1 - f0);
+			if (f1 - f0 != 1) {
+				fprintf(stderr, "FAIL: Test 64 -- exec B recorded "
+					"+%ld flushes, want 1: the js_exec-top "
+					"settle clear is missing, so a prior burst's "
+					"settle silenced this execution's flush.\n",
+					f1 - f0);
+				return 1;
+			}
+		}
+
+		/* And a THIRD exec, still no pump: the js_exec-top clear must
+		 * keep working burst after burst, not just once. */
+		{
+			const char *q =
+				"var f=document.getElementById('feed');"
+				"var d=document.createElement('div');"
+				"d.id='t64b3';f.appendChild(d);"
+				"globalThis.__t64h3=f.offsetHeight;";
+			macos9_reconvert_sync_reset();
+			macos9_reconvert_sync_stats(&f0, &d0, &u0);
+			if (!js_exec(thread, (const unsigned char *)q, strlen(q),
+					"t64-b3.js")) {
+				fprintf(stderr, "FAIL: Test 64 -- exec C threw\n");
+				return 1;
+			}
+			macos9_reconvert_sync_stats(&f1, &d1, &u1);
+			fprintf(stderr, "  exec C (no pump): flushes +%ld\n",
+				f1 - f0);
+			if (f1 - f0 != 1) {
+				fprintf(stderr, "FAIL: Test 64 -- exec C recorded "
+					"+%ld flushes, want 1.\n", f1 - f0);
+				return 1;
+			}
+		}
+
+		htmlc.base.status = CONTENT_STATUS_DONE;
+		htmlc.base.active = 0;
+	}
+	fprintf(stderr, "=== Test 64 PASS: geometry settles once per JS "
+		"execution ===\n");
 
 	return 0;
 }

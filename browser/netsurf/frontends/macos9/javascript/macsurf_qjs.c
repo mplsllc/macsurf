@@ -376,6 +376,12 @@ static void qjs_log_exc(JSContext *ctx, JSValueConst exc,
 /* Safe eval — logs on error, never propagates exception               */
 /* ------------------------------------------------------------------ */
 
+/* #265 — settle-once-per-JS-execution geometry. Defined with the
+ * geometry census counters further down; forward-declared here because
+ * safe_eval and the timer loop (the two earliest execution boundaries)
+ * both precede it. See the definition for the full rationale. */
+static void qjs_geom_settle_begin(void);
+
 void macsurf_qjs__safe_eval(JSContext *qctx, const char *src)
 {
 	/* fixes586 — safe_eval runs PAGE event listeners (js_fire_event /
@@ -383,7 +389,17 @@ void macsurf_qjs__safe_eval(JSContext *qctx, const char *src)
 	 * it needs the runaway deadline too.  Internal setup evals are tiny and
 	 * never notice it. */
 	double prevdl = qjs_deadline_push((double)QJS_SCRIPT_TIMEOUT_MS);
-	JSValue val = JS_Eval(qctx, src, strlen(src),
+	JSValue val;
+
+	/* #265 — every event dispatch (js_fire_event / js_fire_dom_ready /
+	 * js_fire_window_load / script onload) is a fresh JS execution, so the
+	 * settle-once geometry flag must not leak into it from the burst that
+	 * just yielded. Cleared before ANY JS runs, not just on success: a
+	 * failed dispatch still ends the previous execution. (C89: all
+	 * declarations above, so this call sits after them but before the
+	 * JS_Eval below.) */
+	qjs_geom_settle_begin();
+	val = JS_Eval(qctx, src, strlen(src),
 			"<init>", JS_EVAL_TYPE_GLOBAL);
 	qjs_deadline_pop(prevdl);
 	if (JS_IsException(val)) {
@@ -1247,6 +1263,12 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		 * the JS_DupValue below cross-runtime. */
 		if (!qjs_timer_owned_by(t, qctx) || t->id != due_id[k]) continue;
 
+		/* #265 — a timer callback is its own JS execution burst: clear the
+		 * settle-once geometry flag so its first read settles fresh. Two
+		 * callbacks in one pump are two executions and may legitimately
+		 * need two flushes (the DOM can change between them). */
+		qjs_geom_settle_begin();
+
 		/* fixes876 — snapshot fn AND the extra args BEFORE the slot can be
 		 * cleared below: timer_slot_clear() blanks t->args, and the callback
 		 * itself may evict/reuse this slot reentrantly. */
@@ -1577,6 +1599,46 @@ long g_geom_unstable = 0;  /* exported for audit */
 long g_geom_undef = 0;  /* exported for audit */
 long g_geom_zero  = 0;  /* exported for audit */
 long g_geom_real  = 0;  /* exported for audit */
+
+/* #265 (hackaday slider) — SETTLE-ONCE-PER-JS-EXECUTION geometry flag.
+ *
+ * Every geometry read used to call macos9_reconvert_flush_now(), a FULL
+ * synchronous html_reconvert() (~1.2 s) whenever the DOM carried any
+ * pending dirty marks. slick's setDimensions interleaves reads and DOM
+ * writes, so of its 1280 reads, 1255 found marks: 25 flushes consumed
+ * the whole 30 s sync budget and every later read was DECLINED and
+ * answered undefined/0, baking width:0px/height:0px into every slide.
+ * Hardware: `LIFE JSSYNC flush=25 declined=1255 us=30680059`.
+ *
+ * The box tree cannot change while JS is not running (cooperative
+ * model), so one flush per JS execution answers every read of that
+ * burst: the reads between mutations answer from the settled tree.
+ * Once a flush has run (or nothing was pending), skip the flush and
+ * answer from the current box tree.
+ *
+ * Deliberate deviation from the "clear on every DOM mutation" draft:
+ * clearing here on macos9_js_mark_dom_dirty_node would re-arm the flag
+ * on the FIRST write after a settle, so every subsequent read would
+ * attempt a flush again -- declined=1255 proves reads and mutations
+ * interleave 1:1, so that design keeps ~1280 flush ATTEMPTS and the
+ * budget still breaks. Clearing only at JS-execution boundaries
+ * (qjs_geom_settle_begin: top of macsurf_qjs_pump_all, top of js_exec,
+ * per timer callback, per safe_eval) is the only thing that cuts the
+ * flush count below the budget.
+ *
+ * Content-keyed (iframes have their own content): a settle in one
+ * runtime must not silence flushes for another. A DECLINED flush leaves
+ * the flag 0 so the next read retries -- today's retry semantics are
+ * preserved. qjs_geometry_settled() still independently gates every
+ * read on tree stability/liveness. */
+static int g_geom_settled = 0;
+static void *g_geom_settled_c = NULL;
+
+static void qjs_geom_settle_begin(void)
+{
+	g_geom_settled = 0;
+	g_geom_settled_c = NULL;
+}
 
 
 static void qjs_perf_note_script(const char *name, long bytes,
@@ -4385,6 +4447,7 @@ static const char *qjs_css_display_name(uint8_t v)
 static void qjs_geometry_flush(void)
 {
 	extern int macos9_reconvert_flush_now(void *cv);
+	extern int macos9_reconvert_pending_for(void *cv);
 	extern double macos9_micros(void);
 	double t0;
 
@@ -4394,9 +4457,34 @@ static void qjs_geometry_flush(void)
 	 * that says whether answering is affordable; before it existed the
 	 * 13-second cost of enabling geometry could only be inferred from the
 	 * difference between two hardware logs. */
-	t0 = macos9_micros();
 	g_geom_reads++;
-	(void) macos9_reconvert_flush_now((void *) g_qjs_content);
+
+	/* #265 — settle-once-per-execution (see the flag comment above the
+	 * counters): one flush per JS burst is all a script needs, so once
+	 * settled, answer from the current box tree without paying for
+	 * another reconvert. Content-keyed so an iframe runtime's settle
+	 * cannot silence the parent's flushes. */
+	if (g_geom_settled && g_geom_settled_c == (void *) g_qjs_content)
+		return;
+
+	/* Nothing pending: the box tree already answers for the current DOM.
+	 * Settle without even paying for the flush call. */
+	if (!macos9_reconvert_pending_for(g_qjs_content)) {
+		g_geom_settled = 1;
+		g_geom_settled_c = (void *) g_qjs_content;
+		return;
+	}
+
+	/* Pending marks: flush synchronously (the fixes1073 forced reflow).
+	 * Return 1 means a flush ran and consumed this content's slots --
+	 * settled. Return 0 is a DECLINED flush (budget, in-progress, ...):
+	 * leave the flag 0 so the next read retries, preserving today's
+	 * retry semantics. */
+	t0 = macos9_micros();
+	if (macos9_reconvert_flush_now((void *) g_qjs_content)) {
+		g_geom_settled = 1;
+		g_geom_settled_c = (void *) g_qjs_content;
+	}
 	g_geom_us += (long)(macos9_micros() - t0);
 }
 
@@ -4983,6 +5071,14 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 	JSValue evobj, disp, ret, pd;
 	JSValue callargv[1];
 
+	/* #265 — a libdom-originated dispatch (fire_generic_dom_event from
+	 * interaction.c, i.e. a real click) is a C->JS execution boundary:
+	 * the WNE loop runs event handlers BEFORE macsurf_qjs_pump_all in the
+	 * same pass, so without this clear the previous pass's settle would
+	 * leak into the click handler's first geometry read. Page-initiated
+	 * el.dispatchEvent does NOT reach here (it fires __msFireLocal
+	 * directly), so mid-burst dispatches are untouched. */
+	qjs_geom_settle_begin();
 	(void)pw;
 	if (evt == NULL) return;
 	if (dom_event_get_current_target(evt, &ct) != DOM_NO_ERR) return;
@@ -7916,6 +8012,25 @@ static void qjs_dom_install(JSContext *ctx)
 			"Object.defineProperty(d,'head',{configurable:true,"
 			"get:function(){var n=d.__getHead();if(n)return n;"
 			"if(!_fbHead)_fbHead=mkfb('head');return _fbHead;}});"
+			/* (XF-probe round, FormData crash) -- document must answer
+			 * "defaultView" (and the IE-era parentWindow) with the global
+			 * object.  editor-compiled.js (Froala v4, the 68kmla reply box)
+			 * does `this.win = "defaultView" in this.doc ?
+			 * this.doc.defaultView : this.doc.parentWindow` then reads
+			 * `a.win.FormData` in _init -- with neither getter present,
+			 * "defaultView" in doc is false, parentWindow is undefined, and
+			 * every editor construction dies with "cannot read property
+			 * 'FormData' of undefined" (hw log: LIFE qjs timer exc at
+			 * 93248 and 191241, one per nav).  window IS the global object
+			 * here (register_browser_globals aliases it), and FormData is
+			 * set on the global by the FormData block, so returning window
+			 * is exactly what the spec's document.defaultView must be.
+			 * (These getters run at CALL time, so `window` -- assigned
+			 * later in register_browser_globals -- is always defined.) */
+			"Object.defineProperty(d,'defaultView',{configurable:true,"
+			"get:function(){return (typeof window!=='undefined')?window:globalThis;}});"
+			"Object.defineProperty(d,'parentWindow',{configurable:true,"
+			"get:function(){return (typeof window!=='undefined')?window:globalThis;}});"
 			"})";
 			JSValue fn, args[1];
 			fn = JS_Eval(ctx, sec_src, strlen(sec_src),
@@ -9613,13 +9728,28 @@ static void register_browser_globals(JSContext *ctx)
 	 * collector f) 14x/session on 68kmla.org, which blocks lazy handler
 	 * init and leaves the post-thread button dead.
 	 *
-	 * v3, timer-free: a setter trap on globalThis.XF wraps the real
+	 * v4, timer-free.  A setter trap on globalThis.XF wraps the real
 	 * machinery the moment XF is assigned; a microtask queued from the
 	 * setter drains between scripts (after the preamble's IIFE added
 	 * XF.ready); XF.ready/XF.activate are wrapped so the bundle's own
 	 * ready(XF.onPageLoad) call at core-compiled:216 re-arms install
 	 * once the REAL LazyHandlerLoader exists (line 107); DOMContentLoaded
-	 * is the backstop.  NO setTimeout/setInterval anywhere: a probe timer
+	 * (listener on BOTH document and window -- js_fire_dom_ready
+	 * dispatches at both) is the backstop.
+	 *
+	 * v4 addition -- the trap is NOT the only arming path: hardware
+	 * showed ZERO 'XF LAZY' lines though the harness (same bundles, same
+	 * engine, same trap) arms fine, i.e. the setter appears to never fire
+	 * on the Mac, and the trap's getter then shadows globalThis.XF with
+	 * undefined forever.  retry() therefore ALSO reads `typeof XF` --
+	 * identifier resolution reaches the preamble's `const XF={}` GLOBAL
+	 * LEXICAL binding, visible regardless of the property trap -- and
+	 * falls back to window.XF/globalThis.XF.  So the DOMContentLoaded
+	 * backstop arms install() even on a realm where the setter never
+	 * fires, and install() runs before XF's own domready handler fires
+	 * loadLazyHandlers (this listener registered before any page script).
+	 *
+	 * NO setTimeout/setInterval anywhere: a probe timer
 	 * would land in the timer arena, go gen-stale on realm teardown and
 	 * abort the harness at JS_FreeRuntime (gc_obj_list leak).
 	 *
@@ -9739,7 +9869,28 @@ static void register_browser_globals(JSContext *ctx)
 		"	life('installed');"
 		"	return true;"
 		"}"
-		"function retry(){install();}"
+		"function retry(){"
+		"	/* v4 -- never depend on the setter trap ALONE.  Observed on"
+		"	 * hardware: zero 'XF LAZY' lines though the harness (same bundles,"
+		"	 * same engine, same trap) arms fine -- the setter appears to never"
+		"	 * fire on the Mac.  With the trap's getter shadowing globalThis.XF,"
+		"	 * every read of window.XF/globalThis.XF then returns undefined"
+		"	 * forever and the probe is permanently mute: haveXf is only ever"
+		"	 * set by the setter.  The rescue: the preamble declares"
+		"	 * `const XF={}` -- a GLOBAL LEXICAL binding, which identifier"
+		"	 * resolution in this closure reaches through the lexical"
+		"	 * environment REGARDLESS of the property trap.  Read THAT first;"
+		"	 * the window.XF/globalThis.XF reads cover the property-assignment"
+		"	 * case (they work whenever the setter fired, i.e. the harness). */"
+		"	if(!haveXf||!xfVal){"
+		"		try{"
+		"			if(typeof XF!=='undefined'&&XF){xfVal=XF;haveXf=true;}"
+		"			else if(typeof window!=='undefined'&&window.XF){xfVal=window.XF;haveXf=true;}"
+		"			else if(typeof globalThis!=='undefined'&&globalThis.XF){xfVal=globalThis.XF;haveXf=true;}"
+		"		}catch(e){}"
+		"	}"
+		"	install();"
+		"}"
 		"try{"
 		"	Object.defineProperty(globalThis,'XF',{"
 		"		configurable:true,enumerable:true,"
@@ -9762,6 +9913,9 @@ static void register_browser_globals(JSContext *ctx)
 		"	}"
 		"	if(typeof document!=='undefined'&&document.addEventListener){"
 		"		try{document.addEventListener('DOMContentLoaded',function(){retry();});}catch(e){}"
+		"	}"
+		"	if(typeof window!=='undefined'&&window.addEventListener){"
+		"		try{window.addEventListener('DOMContentLoaded',function(){retry();});}catch(e){}"
 		"	}"
 		"}catch(e){}"
 		"})();");
@@ -11002,6 +11156,13 @@ unsigned char js_exec(struct jsthread *thread,
 	}
 	if (txt == NULL || txtlen == 0) return 1;
 
+	/* #265 — each js_exec is one JS execution burst: settle-once geometry
+	 * must start fresh so the burst's FIRST read settles and the rest of
+	 * its reads are answered from the settled tree (and so a previous
+	 * burst's settle cannot silence THIS burst's first flush -- the harness
+	 * calls js_exec directly with no pump in between). */
+	qjs_geom_settle_begin();
+
 	/* fixes587 BISECTION DIAG: short-circuit ALL script execution. With this
 	 * on, no JS_Eval / thrown exception / build_backtrace / DOM-wrapper /
 	 * timer work runs at all — the scripts are treated as clean no-ops so the
@@ -11360,6 +11521,10 @@ unsigned char js_exec_module(struct jsthread *thread,
 	if (txt == NULL || txtlen == 0) return 1;
 	ctx = thread->ctx;
 
+	/* #265 — module execution is a JS execution burst like js_exec:
+	 * settle-once geometry starts fresh here too. */
+	qjs_geom_settle_begin();
+
 	/* Copy and NUL-terminate (same as js_exec) */
 	src = (char *)malloc(txtlen + 1);
 	if (src == NULL) {
@@ -11697,6 +11862,11 @@ unsigned char js_fire_script_load(struct jsthread *thread,
 	if (thread == NULL || thread->ctx == NULL || node == NULL) return 0;
 	ctx = thread->ctx;
 
+	/* #265 — firing a script onload/onerror handler is a C->JS event
+	 * dispatch: a fresh execution burst, so settle-once geometry must not
+	 * leak in from the script burst that just finished. */
+	qjs_geom_settle_begin();
+
 	fn = JS_Eval(ctx, s_fire_src, strlen(s_fire_src),
 			"<script-load>", JS_EVAL_TYPE_GLOBAL);
 	if (JS_IsException(fn)) {
@@ -11780,6 +11950,14 @@ void macsurf_qjs_pump_all(void)
 	struct jsheap *h = g_heap_list;
 	static int s_last_heaps = -1;
 	int heaps = 0;
+	/* #265 — settle-once geometry: JS has just yielded to the event loop,
+	 * so the next burst (timer, microtask, event, script) starts fresh and
+	 * its first read gets a real flush. MUST precede the reconvert-freeze
+	 * gate below: while frozen, JS does not run, but when it unfreezes
+	 * after a rebuild the old settle must not survive into the new burst.
+	 * The per-callback clear in macsurf_qjs_run_timers still covers
+	 * multiple timers within one pump. */
+	qjs_geom_settle_begin();
 	/* fixes898 — FREEZE JS while a reconvert box walk is in flight.
 	 *
 	 * The reconvert rebuilds the box tree from the DOM across MANY cooperative
