@@ -9606,6 +9606,140 @@ static void register_browser_globals(JSContext *ctx)
 		"}"
 		"})(this);");
 
+	/* --- XF LazyHandlerLoader diagnostic (68kmla post-thread button) ---
+	 *
+	 * "LIFE qjs timer exc: TypeError: not a function [setTimeout]" at
+	 * core-compiled.js:108:31, 14+ per session on 68kmla.org.  The live
+	 * 68kmla bundle is byte-identical to the harness copy; the only call
+	 * at col 31 on line 108 is e.matches(k) inside LazyHandlerLoader's
+	 * collector f() -- so a container arrived whose wrapper lacks
+	 * .matches (or .querySelectorAll, or documentElement for a Document).
+	 * The post-thread button stays unclickable because the lazy JS files
+	 * never load and its data-xf-init handler never initialises.
+	 *
+	 * The probe wraps the real machinery, installed by a 5ms poll (plus
+	 * an XF.ready hook) once the bundle has defined it.  The bundle's own
+	 * FIRST synchronous XF.activate call is unavoidably missed, but the
+	 * per-session throws are timer-driven (qjs timer exc), so the wrapper
+	 * catches them.  Logs container identity (nodeType/tag/class/
+	 * typeof matches/typeof querySelectorAll/documentElement) + the
+	 * data-xf-init and data-xf-click names found on it + a registered-
+	 * name census (collected by wrapping XF.Element.register), and the
+	 * throw with its stack.  Also wraps XF.Element.applyHandler (the
+	 * `new k(...)` site) and XF.ClassMapper.prototype.getObjectFrom
+	 * Identifier so a handler whose constructor resolves to a string or
+	 * false (its class file never defined it) is named.  Everything via
+	 * __msLife (LIFE js prefix, survives the failures-only gate; the
+	 * 250-line audit budget bounds the output). */
+	macsurf_qjs__safe_eval(ctx,
+		"(function(){"
+		"function life(s){try{__msLife('XF LAZY '+s);}catch(e){}}"
+		"var names=[],lastN=-1;"
+		"function regDump(){"
+			"if(names.length!==lastN){"
+				"lastN=names.length;"
+				"return ' regN='+names.length"
+					"+(names.length?' reg='+names.slice(0,120).join(','):'');"
+			"}"
+			"return '';"
+		"}"
+		"function install(){"
+			"if(typeof XF==='undefined'||!XF)return false;"
+			"var LL=XF.LazyHandlerLoader;"
+			"if(!LL||typeof LL.loadLazyHandlers!=='function')return false;"
+			"if(LL.__msProbed)return true;"
+			"LL.__msProbed=true;"
+			/* collect handler names as the lazy JS files register them */
+			"if(XF.Element&&typeof XF.Element.register==='function'"
+				"&&!XF.Element.__msRegProbed){"
+				"XF.Element.__msRegProbed=true;"
+				"var origReg=XF.Element.register;"
+				"XF.Element.register=function(n,c){"
+					"names.push(String(n));"
+					"return origReg.apply(this,arguments);};"
+			"}"
+			/* wrap loadLazyHandlers: container identity + names + throw */
+			"var origLL=LL.loadLazyHandlers;"
+			"LL.loadLazyHandlers=function(c){"
+				"var info='?';"
+				"try{"
+					"var t=(c&&c.nodeType!==undefined)?String(c.nodeType):typeof c;"
+					"var tag=(c&&c.tagName)?String(c.tagName):"
+						"(c&&c.nodeType===9?'DOCUMENT':String(c));"
+					"var cls=(c&&c.className)?"
+						"' .'+String(c.className).split(' ').join(' .'):'';"
+					"var mt=(c)?typeof c.matches:'null-container';"
+					"var qsa=(c)?typeof c.querySelectorAll:'null-container';"
+					"var docEl='-';"
+					"if(c&&c.nodeType===9)docEl="
+						"(c.documentElement&&c.documentElement.tagName)||'NULL';"
+					"var found='';"
+					"if(c&&qsa==='function'){"
+						"var els=c.querySelectorAll('[data-xf-init]');"
+						"var i,v,arr=[];"
+						"for(i=0;i<els.length;i++){"
+							"v=els[i].getAttribute('data-xf-init');"
+							"if(v)arr.push('init:'+v);}"
+						"els=c.querySelectorAll('[data-xf-click]');"
+						"for(i=0;i<els.length;i++){"
+							"v=els[i].getAttribute('data-xf-click');"
+							"if(v)arr.push('click:'+v);}"
+						"found=' found='+arr.join(',');"
+					"}"
+					"info='nodeType='+t+' tag='+tag+cls+' matches='+mt"
+						" +' qsa='+qsa+' docEl='+docEl+found;"
+				"}catch(e){info='LOGERR';}"
+				"life('call '+info+regDump());"
+				"try{return origLL.apply(this,arguments);}"
+				"catch(e){"
+					"life('THROW '+info+' msg='+((e&&e.message)||e)"
+						" +' stack='+String((e&&e.stack)||'')"
+						".split('\\n').slice(0,3).join(' | '));"
+					"throw e;}"
+			"};"
+			/* the `new k(...)` site -- log only non-function ctors */
+			"if(XF.Element&&typeof XF.Element.applyHandler==='function'"
+				"&&!XF.Element.__msProbedAH){"
+				"XF.Element.__msProbedAH=true;"
+				"var origAH=XF.Element.applyHandler;"
+				"XF.Element.applyHandler=function(el,name,opts){"
+					"var kt='?';"
+					"try{kt=typeof XF.Element.getObjectFromIdentifier(String(name));}"
+						"catch(e){kt='err';}"
+					"if(kt!=='function')life('APPLY '+name+' ctor='+kt);"
+					"return origAH.apply(this,arguments);};"
+			"}"
+			/* name->ctor resolution -- log only broken states */
+			"if(XF.ClassMapper&&XF.ClassMapper.prototype&&typeof "
+				"XF.ClassMapper.prototype.getObjectFromIdentifier==='function'"
+				"&&!XF.ClassMapper.prototype.__msProbed){"
+				"XF.ClassMapper.prototype.__msProbed=true;"
+				"var origG=XF.ClassMapper.prototype.getObjectFromIdentifier;"
+				"XF.ClassMapper.prototype.getObjectFromIdentifier=function(name){"
+					"var r=origG.apply(this,arguments);"
+					"if((r||r===false)&&typeof r!=='string'&&typeof r!=='function')"
+						"life('CLASSMAP '+name+' -> '+typeof r+' NONCTOR');"
+					"return r;};"
+			"}"
+			"life('installed');"
+			"return true;"
+		"}"
+		"if(install())return;"
+		"if(typeof XF!=='undefined'&&XF&&XF.ready){"
+			"try{XF.ready(function(){install();});}catch(e){}"
+		"}"
+		"var _pollN=0;"
+		"(function poll(){"
+			"if(_pollN>=40){life('poll gave up after 200ms');return;}"
+			"_pollN++;"
+			"if(install())return;"
+			/* only poll if XF is actually defined (skipping non-XF pages entirely) */
+			"if(typeof XF==='undefined')return;"
+			"if(typeof setTimeout==='function')setTimeout(poll,5);"
+			"else{try{install();}catch(e){}}"
+		"})();"
+		"})();");
+
 	/* R1.2 — the WANT probe goes in LAST: every shim block above runs its
 	 * own `typeof g.X` feature checks, and those would log their own
 	 * stubbed names into the census if the probe were live yet.  Page
@@ -11346,6 +11480,50 @@ unsigned char js_fire_dom_ready(struct jsthread *thread, struct dom_document *do
 	macsurf_debug_log_writef("LIFE domready fired ctx=%p doc=%p",
 			(void *)thread->ctx, (void *)doc);
 	return 1;
+}
+
+/* fixes1096 — THE SLIDER PROBE, JS HALF.
+ *
+ * html.c's C-side probe (html_slider_probe) reads the DOM through libdom and
+ * can name what exists around .featured-slides; it cannot see what the
+ * PAGE'S OWN scripts see. This half runs in the page realm at the same probe
+ * points ("ready" / "done" / "reconvert" -- html.c splices the label in) and
+ * asks the questions only JS can: does jQuery exist, does jQuery.fn.slick,
+ * and what does document.querySelector answer for the theme's featured
+ * classes. A libdom walk and the engine's querySelector can disagree when
+ * script rebuilt the tree, which is itself a finding.
+ *
+ * Emitted through __msLife so the lines carry the LIFE prefix and survive the
+ * failures-only release filter; __msLife's per-navigation budget (60) covers
+ * this (2 lines per probe point, <=6 probe points per navigation).
+ * All reads, no mutations: safe to run at any probe point. */
+void js_fire_slider_probe(struct jsthread *thread, const char *when)
+{
+	static const char s_fmt[] =
+		"(function(){try{"
+		"if(typeof document==='undefined'||!document.querySelector)return;"
+		"var L='%s';"
+		"var fs=document.querySelector('.featured-slides');"
+		"var fg=document.querySelector('.featured-grid');"
+		"var si=document.querySelector('.slick-initialized');"
+		"var se=document.querySelector('section.featured');"
+		"__msLife('SLIDER DOM['+L+'] fs='+(fs?'PRESENT':'MISSING')"
+		" +' fg='+(fg?'PRESENT':'MISSING')"
+		" +' si='+(si?'PRESENT':'MISSING')"
+		" +' sec='+(se?'PRESENT kids='+se.children.length:'MISSING'));"
+		"if(typeof jQuery!=='undefined'&&jQuery.fn){"
+		"__msLife('SLIDER LIB['+L+'] jq='+typeof jQuery"
+		" +' slick='+typeof jQuery.fn.slick);"
+		"}else{"
+		"__msLife('SLIDER LIB['+L+'] jq='+typeof jQuery+' (no fn)');"
+		"}"
+		"}catch(e){}})();";
+	char src[1024];
+
+	if (thread == NULL || thread->ctx == NULL) return;
+	if (when == NULL) when = "?";
+	sprintf(src, s_fmt, when);
+	macsurf_qjs__safe_eval(thread->ctx, src);
 }
 
 /* fixes881 (Phase 0.7) — readyState='complete' + `load` at document AND window.

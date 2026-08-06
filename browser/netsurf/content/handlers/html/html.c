@@ -753,9 +753,26 @@ static void html_slider_attr(dom_node *n, const char *name, char *out, int cap)
 	dom_string_unref(nm);
 }
 
-/* Depth-first search for the first element whose class carries `cls`. Returns
- * a REF'd node, or NULL. */
-static dom_node *html_slider_find(dom_node *n, const char *cls, int depth)
+/* fixes1096 — tag-name filter for html_slider_find (case-insensitive).
+ * Lets the probe ask for "the section whose class carries 'featured'"
+ * instead of whatever element happens to match the class first. */
+static int html_slider_is_tag(dom_node *n, const char *tag)
+{
+	dom_string *nm = NULL;
+	int m = 0;
+
+	if (dom_node_get_node_name(n, &nm) == DOM_NO_ERR && nm != NULL) {
+		m = (strcasecmp(dom_string_data(nm), tag) == 0);
+		dom_string_unref(nm);
+	}
+	return m;
+}
+
+/* Depth-first search for the first element whose class carries `cls` (and,
+ * when `tag` is non-NULL, whose tag name is `tag`). Returns a REF'd node, or
+ * NULL. */
+static dom_node *html_slider_find(dom_node *n, const char *cls,
+		const char *tag, int depth)
 {
 	dom_node *ch = NULL;
 	dom_node *nx = NULL;
@@ -768,7 +785,8 @@ static dom_node *html_slider_find(dom_node *n, const char *cls, int depth)
 	if (dom_node_get_node_type(n, &t) == DOM_NO_ERR &&
 			t == DOM_ELEMENT_NODE) {
 		html_slider_attr(n, "class", buf, (int)sizeof buf);
-		if (strstr(buf, cls) != NULL) {
+		if (strstr(buf, cls) != NULL &&
+				(tag == NULL || html_slider_is_tag(n, tag))) {
 			dom_node_ref(n);
 			return n;
 		}
@@ -779,7 +797,7 @@ static dom_node *html_slider_find(dom_node *n, const char *cls, int depth)
 		dom_node_type t2 = (dom_node_type)0;
 		if (dom_node_get_node_type(ch, &t2) == DOM_NO_ERR &&
 				t2 == DOM_ELEMENT_NODE) {
-			found = html_slider_find(ch, cls, depth + 1);
+			found = html_slider_find(ch, cls, tag, depth + 1);
 		}
 		nx = NULL;
 		if (dom_node_get_next_sibling(ch, &nx) != DOM_NO_ERR) nx = NULL;
@@ -865,15 +883,94 @@ void html_slider_probe(html_content *c, const char *when)
 			|| root == NULL)
 		return;
 
-	slider = html_slider_find((dom_node *)root, "featured-slides", 0);
+	slider = html_slider_find((dom_node *)root, "featured-slides", NULL, 0);
 	dom_node_unref((dom_node *)root);
 
 	if (slider == NULL) {
 		/* Not a finding to skip past: if the container is absent from
 		 * the DOM entirely then no amount of measuring explains the
 		 * collapse, and the hunt moves to whether it was ever parsed. */
+		dom_element *root2 = NULL;
+		dom_node *sec = NULL;
+		dom_node *fg = NULL;
+		dom_node *si = NULL;
+		dom_node *ch = NULL;
+		dom_node *nx = NULL;
+		int kids = 0;
+		int slines = 0;
+
 		macsurf_debug_log_writef(
 			"LIFE SLIDER[%s] .featured-slides NOT IN DOM", when);
+
+		/* fixes1096 — WHY is it missing? One "NOT IN DOM" line cannot
+		 * tell three worlds apart:
+		 *   (a) the markup never arrived or was never parsed;
+		 *   (b) the markup WAS there and a script removed it;
+		 *   (c) the theme never emits it for this page shape.
+		 * Presence of the surrounding section.featured, of the theme's
+		 * other featured classes, and of slick's own 'slick-initialized'
+		 * marker splits them: section present + slides absent means a
+		 * script deleted the slides; slick-init present anywhere means
+		 * slick ran on SOME element; everything absent means the HTML
+		 * itself never arrived. */
+		if (dom_document_get_document_element(c->document, &root2)
+				!= DOM_NO_ERR || root2 == NULL)
+			return;
+
+		sec = html_slider_find((dom_node *)root2, "featured", "section", 0);
+		if (sec == NULL)
+			sec = html_slider_find((dom_node *)root2, "featured", NULL, 0);
+		fg = html_slider_find((dom_node *)root2, "featured-grid", NULL, 0);
+		si = html_slider_find((dom_node *)root2, "slick-initialized",
+				NULL, 0);
+
+		macsurf_debug_log_writef(
+			"LIFE SLIDER[%s] C-side: section.featured=%s"
+			" featured-grid=%s slick-initialized=%s",
+			when, sec ? "PRESENT" : "MISSING",
+			fg ? "PRESENT" : "MISSING", si ? "PRESENT" : "MISSING");
+
+		/* Name what actually sits where the slider should have been:
+		 * one level of element children, tagged and classed. */
+		if (sec != NULL) {
+			macsurf_debug_log_writef(
+				"LIFE SLIDER[%s] section children:", when);
+			if (dom_node_get_first_child(sec, &ch) != DOM_NO_ERR)
+				ch = NULL;
+			while (ch != NULL && slines < 16) {
+				dom_node_type t2 = (dom_node_type)0;
+				dom_node *nx2 = NULL;
+				if (dom_node_get_node_type(ch, &t2) == DOM_NO_ERR &&
+						t2 == DOM_ELEMENT_NODE) {
+					char brief[88];
+					html_pagemap_brief(ch, brief,
+							(int)sizeof brief);
+					macsurf_debug_log_writef(
+						"LIFE SLIDER[%s]   %s", when, brief);
+					slines++;
+					kids++;
+				}
+				if (dom_node_get_next_sibling(ch, &nx2) != DOM_NO_ERR)
+					nx2 = NULL;
+				dom_node_unref(ch);
+				ch = nx2;
+			}
+			if (ch != NULL) dom_node_unref(ch);
+			macsurf_debug_log_writef(
+				"LIFE SLIDER[%s]   (%d element children)", when, kids);
+		}
+
+		if (sec != NULL) dom_node_unref(sec);
+		if (fg != NULL) dom_node_unref(fg);
+		if (si != NULL) dom_node_unref(si);
+		dom_node_unref((dom_node *)root2);
+
+		/* JS half of the probe: what do the page's OWN scripts see --
+		 * jQuery and jQuery.fn.slick existence, plus the same featured
+		 * classes answered through the engine's querySelector (which can
+		 * differ from a libdom walk if script rebuilt the tree). */
+		if (c->js_thread != NULL)
+			js_fire_slider_probe(c->js_thread, when);
 		return;
 	}
 
@@ -884,6 +981,11 @@ void html_slider_probe(html_content *c, const char *when)
 	html_slider_walk(slider, 0);
 	macsurf_debug_log_writef("LIFE SLIDER[%s] ---- end", when);
 	dom_node_unref(slider);
+
+	/* JS half of the probe, also when the subtree IS present: the widget
+	 * can be in the DOM and still dead if jQuery.fn.slick never landed. */
+	if (c->js_thread != NULL)
+		js_fire_slider_probe(c->js_thread, when);
 }
 /* ====================================================================== */
 
