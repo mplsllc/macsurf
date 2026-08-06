@@ -461,6 +461,7 @@ static long g_sync_r_paint    = 0;	/* a redraw is walking the box tree  */
 static long g_sync_r_inprog   = 0;	/* reconvert already in flight       */
 static long g_sync_r_budget   = 0;	/* time budget for this nav spent    */
 static long g_sync_r_busy     = 0;	/* html_reconvert refused, other     */
+static long g_sync_r_priority = 0;	/* fixes1133 — priority flush (budget bypassed) */
 
 /* fixes1075 — budget by TIME, not by count.
  *
@@ -518,6 +519,7 @@ macos9_reconvert_sync_reset(void)
 	g_sync_us       = 0;
 	g_sync_r_notdone = 0; g_sync_r_active = 0; g_sync_r_paint = 0;
 	g_sync_r_inprog = 0;  g_sync_r_budget = 0; g_sync_r_busy = 0;
+		g_sync_r_priority = 0;
 }
 
 /* fixes1126 (#265) — a transient flush refusal must not strand the pending
@@ -628,9 +630,13 @@ macos9_reconvert_flush_now(void *cv)
 		return 0;
 	}
 	if (g_sync_us >= MACOS9_SYNC_BUDGET_US) {
-		g_sync_r_budget++; g_sync_declined++; return 0;
+		/* fixes1133 - priority flush: first-of-burst skips the budget. g_geom_priority_flush is exported from macsurf_qjs.c. Settle-once limits to 1/burst. */
+		extern int g_geom_priority_flush;
+		if (!g_geom_priority_flush) {
+			g_sync_r_budget++; g_sync_declined++; return 0;
+		}
+		g_sync_r_priority++;
 	}
-
 	in_flush = 1;
 	t0 = macos9_micros();
 	rc = html_reconvert_content(c);	/* SYNCHRONOUS -- see fixes903 */

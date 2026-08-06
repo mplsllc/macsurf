@@ -1634,6 +1634,15 @@ long g_geom_real  = 0;  /* exported for audit */
 static int g_geom_settled = 0;
 static void *g_geom_settled_c = NULL;
 
+/* fixes1133 (#265) — priority-flush gate: the FIRST flush attempt after a
+ * settle reset (one per JS execution burst) skips the cumulative time budget
+ * so every script gets at least one real answer. The settle-once mechanism
+ * already guarantees at most one flush per burst, and each flush costs ~1.6s
+ * of wall-clock during which JS is frozen (macsurf_reconvert_in_progress),
+ * so the physical ceiling is the same ~18 flushes per 30s the budget aims for.
+ * Exported for macos9_reconvert_flush_now(). */
+int g_geom_priority_flush = 0;
+
 static void qjs_geom_settle_begin(void)
 {
 	g_geom_settled = 0;
@@ -4480,11 +4489,17 @@ static void qjs_geometry_flush(void)
 	 * settled. Return 0 is a DECLINED flush (budget, in-progress, ...):
 	 * leave the flag 0 so the next read retries, preserving today's
 	 * retry semantics. */
+	/* fixes1133 — first flush of a JS burst bypasses the budget so
+	 * every script gets at least one real answer. Set before the call,
+	 * cleared unconditionally after; the budget gate in
+	 * macos9_reconvert_flush_now reads it. */
+	g_geom_priority_flush = 1;
 	t0 = macos9_micros();
 	if (macos9_reconvert_flush_now((void *) g_qjs_content)) {
 		g_geom_settled = 1;
 		g_geom_settled_c = (void *) g_qjs_content;
 	}
+	g_geom_priority_flush = 0;
 	g_geom_us += (long)(macos9_micros() - t0);
 }
 
