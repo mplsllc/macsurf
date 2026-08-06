@@ -1420,6 +1420,17 @@ int main(int argc, char **argv)
 					strlen(wrapped), xf_files[fi]);
 			fprintf(stderr, "  js_exec ok=%d\n", (int)xok);
 			harness_pump_all(200000);
+			/* The REAL browser pumps the QuickJS job queue (promise
+			 * microtasks) between scripts from the WNE poll loop;
+			 * harness_pump_all drains only the scheduler, so the XF
+			 * probe's setter-queued Promise retries never run here.
+			 * Mirror the Mac: pump the engine after every exec. */
+			{
+				extern void macsurf_qjs_pump_all(void);
+				int pump;
+				for (pump = 0; pump < 8; pump++)
+					macsurf_qjs_pump_all();
+			}
 			{
 				const char *ejs =
 					"console.log('  THREW: '+"

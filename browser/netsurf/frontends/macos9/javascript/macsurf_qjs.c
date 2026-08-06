@@ -9608,136 +9608,162 @@ static void register_browser_globals(JSContext *ctx)
 
 	/* --- XF LazyHandlerLoader diagnostic (68kmla post-thread button) ---
 	 *
-	 * "LIFE qjs timer exc: TypeError: not a function [setTimeout]" at
-	 * core-compiled.js:108:31, 14+ per session on 68kmla.org.  The live
-	 * 68kmla bundle is byte-identical to the harness copy; the only call
-	 * at col 31 on line 108 is e.matches(k) inside LazyHandlerLoader's
-	 * collector f() -- so a container arrived whose wrapper lacks
-	 * .matches (or .querySelectorAll, or documentElement for a Document).
-	 * The post-thread button stays unclickable because the lazy JS files
-	 * never load and its data-xf-init handler never initialises.
+	 * Answers: WHAT throws "TypeError: not a function [setTimeout]" at
+	 * core-compiled.js:108 (e.matches(k) inside LazyHandlerLoader's
+	 * collector f) 14x/session on 68kmla.org, which blocks lazy handler
+	 * init and leaves the post-thread button dead.
 	 *
-	 * The probe wraps the real machinery, installed by a 5ms poll (plus
-	 * an XF.ready hook) once the bundle has defined it.  The bundle's own
-	 * FIRST synchronous XF.activate call is unavoidably missed, but the
-	 * per-session throws are timer-driven (qjs timer exc), so the wrapper
-	 * catches them.  Logs container identity (nodeType/tag/class/
-	 * typeof matches/typeof querySelectorAll/documentElement) + the
-	 * data-xf-init and data-xf-click names found on it + a registered-
-	 * name census (collected by wrapping XF.Element.register), and the
-	 * throw with its stack.  Also wraps XF.Element.applyHandler (the
-	 * `new k(...)` site) and XF.ClassMapper.prototype.getObjectFrom
-	 * Identifier so a handler whose constructor resolves to a string or
-	 * false (its class file never defined it) is named.  Everything via
-	 * __msLife (LIFE js prefix, survives the failures-only gate; the
-	 * 250-line audit budget bounds the output). */
+	 * v3, timer-free: a setter trap on globalThis.XF wraps the real
+	 * machinery the moment XF is assigned; a microtask queued from the
+	 * setter drains between scripts (after the preamble's IIFE added
+	 * XF.ready); XF.ready/XF.activate are wrapped so the bundle's own
+	 * ready(XF.onPageLoad) call at core-compiled:216 re-arms install
+	 * once the REAL LazyHandlerLoader exists (line 107); DOMContentLoaded
+	 * is the backstop.  NO setTimeout/setInterval anywhere: a probe timer
+	 * would land in the timer arena, go gen-stale on realm teardown and
+	 * abort the harness at JS_FreeRuntime (gc_obj_list leak).
+	 *
+	 * Logs (all "XF LAZY " via __msLife, so they ride the LIFE gate):
+	 *  installed                        -- probe armed on this realm
+	 *  call nodeType=.. tag=.. .cls matches=fn qsa=fn docEl=.. found=init:a,click:b regN=7 reg=a,b
+	 *                                     -- per loadLazyHandlers call: the
+	 *                                     container identity + every
+	 *                                     data-xf-init/data-xf-click name
+	 *                                     under it + handler census
+	 *  THROW <same> msg=.. stack=..     -- the caught exception, rethrown
+	 *  APPLY <name> ctor=<type>         -- applyHandler resolved a non-ctor
+	 *  CLASSMAP <name> -> <type> NONCTOR -- getObjectFromIdentifier returned a
+	 *                                     non-function (the new k(...) site)
+	 *                                     -- the line-108 "not a function"
+	 *                                     signature when the registered ctor
+	 *                                     is bogus
+	 */
 	macsurf_qjs__safe_eval(ctx,
 		"(function(){"
 		"function life(s){try{__msLife('XF LAZY '+s);}catch(e){}}"
 		"var names=[],lastN=-1;"
 		"function regDump(){"
-			"if(names.length!==lastN){"
-				"lastN=names.length;"
-				"return ' regN='+names.length"
-					"+(names.length?' reg='+names.slice(0,120).join(','):'');"
-			"}"
-			"return '';"
+		"	if(names.length!==lastN){"
+		"		lastN=names.length;"
+		"		return ' regN='+names.length+(names.length?' reg='+names.slice(0,120).join(','):'');"
+		"	}"
+		"	return '';"
+		"}"
+		"var xfVal=undefined,haveXf=false;"
+		"function tryWrapReady(XF){"
+		"	if(typeof XF.ready!=='function'||XF.ready.__msProbed)return;"
+		"	XF.ready.__msProbed=true;"
+		"	var orig=XF.ready;"
+		"	XF.ready=function(f){install();return orig.apply(this,arguments);};"
+		"}"
+		"function tryWrapActivate(XF){"
+		"	if(typeof XF.activate!=='function'||XF.activate.__msProbed)return;"
+		"	XF.activate.__msProbed=true;"
+		"	var orig=XF.activate;"
+		"	XF.activate=function(el){install();return orig.apply(this,arguments);};"
 		"}"
 		"function install(){"
-			"if(typeof XF==='undefined'||!XF)return false;"
-			"var LL=XF.LazyHandlerLoader;"
-			"if(!LL||typeof LL.loadLazyHandlers!=='function')return false;"
-			"if(LL.__msProbed)return true;"
-			"LL.__msProbed=true;"
-			/* collect handler names as the lazy JS files register them */
-			"if(XF.Element&&typeof XF.Element.register==='function'"
-				"&&!XF.Element.__msRegProbed){"
-				"XF.Element.__msRegProbed=true;"
-				"var origReg=XF.Element.register;"
-				"XF.Element.register=function(n,c){"
-					"names.push(String(n));"
-					"return origReg.apply(this,arguments);};"
-			"}"
-			/* wrap loadLazyHandlers: container identity + names + throw */
-			"var origLL=LL.loadLazyHandlers;"
-			"LL.loadLazyHandlers=function(c){"
-				"var info='?';"
-				"try{"
-					"var t=(c&&c.nodeType!==undefined)?String(c.nodeType):typeof c;"
-					"var tag=(c&&c.tagName)?String(c.tagName):"
-						"(c&&c.nodeType===9?'DOCUMENT':String(c));"
-					"var cls=(c&&c.className)?"
-						"' .'+String(c.className).split(' ').join(' .'):'';"
-					"var mt=(c)?typeof c.matches:'null-container';"
-					"var qsa=(c)?typeof c.querySelectorAll:'null-container';"
-					"var docEl='-';"
-					"if(c&&c.nodeType===9)docEl="
-						"(c.documentElement&&c.documentElement.tagName)||'NULL';"
-					"var found='';"
-					"if(c&&qsa==='function'){"
-						"var els=c.querySelectorAll('[data-xf-init]');"
-						"var i,v,arr=[];"
-						"for(i=0;i<els.length;i++){"
-							"v=els[i].getAttribute('data-xf-init');"
-							"if(v)arr.push('init:'+v);}"
-						"els=c.querySelectorAll('[data-xf-click]');"
-						"for(i=0;i<els.length;i++){"
-							"v=els[i].getAttribute('data-xf-click');"
-							"if(v)arr.push('click:'+v);}"
-						"found=' found='+arr.join(',');"
-					"}"
-					"info='nodeType='+t+' tag='+tag+cls+' matches='+mt"
-						" +' qsa='+qsa+' docEl='+docEl+found;"
-				"}catch(e){info='LOGERR';}"
-				"life('call '+info+regDump());"
-				"try{return origLL.apply(this,arguments);}"
-				"catch(e){"
-					"life('THROW '+info+' msg='+((e&&e.message)||e)"
-						" +' stack='+String((e&&e.stack)||'')"
-						".split('\\n').slice(0,3).join(' | '));"
-					"throw e;}"
-			"};"
-			/* the `new k(...)` site -- log only non-function ctors */
-			"if(XF.Element&&typeof XF.Element.applyHandler==='function'"
-				"&&!XF.Element.__msProbedAH){"
-				"XF.Element.__msProbedAH=true;"
-				"var origAH=XF.Element.applyHandler;"
-				"XF.Element.applyHandler=function(el,name,opts){"
-					"var kt='?';"
-					"try{kt=typeof XF.Element.getObjectFromIdentifier(String(name));}"
-						"catch(e){kt='err';}"
-					"if(kt!=='function')life('APPLY '+name+' ctor='+kt);"
-					"return origAH.apply(this,arguments);};"
-			"}"
-			/* name->ctor resolution -- log only broken states */
-			"if(XF.ClassMapper&&XF.ClassMapper.prototype&&typeof "
-				"XF.ClassMapper.prototype.getObjectFromIdentifier==='function'"
-				"&&!XF.ClassMapper.prototype.__msProbed){"
-				"XF.ClassMapper.prototype.__msProbed=true;"
-				"var origG=XF.ClassMapper.prototype.getObjectFromIdentifier;"
-				"XF.ClassMapper.prototype.getObjectFromIdentifier=function(name){"
-					"var r=origG.apply(this,arguments);"
-					"if((r||r===false)&&typeof r!=='string'&&typeof r!=='function')"
-						"life('CLASSMAP '+name+' -> '+typeof r+' NONCTOR');"
-					"return r;};"
-			"}"
-			"life('installed');"
-			"return true;"
+		"	if(!haveXf||!xfVal)return false;"
+		"	var XF=xfVal;"
+		"	tryWrapReady(XF);"
+		"	tryWrapActivate(XF);"
+		"	var LL=XF.LazyHandlerLoader;"
+		"	if(!LL||typeof LL.loadLazyHandlers!=='function')return false;"
+		"	if(LL.__msProbed)return true;"
+		"	LL.__msProbed=true;"
+		"	if(XF.Element&&typeof XF.Element.register==='function'&&!XF.Element.__msRegProbed){"
+		"		XF.Element.__msRegProbed=true;"
+		"		var origReg=XF.Element.register;"
+		"		XF.Element.register=function(n,c){"
+		"			names.push(String(n));"
+		"			return origReg.apply(this,arguments);"
+		"		};"
+		"	}"
+		"	var origLL=LL.loadLazyHandlers;"
+		"	LL.loadLazyHandlers=function(c){"
+		"		var info='?';"
+		"		try{"
+		"			var t=(c&&c.nodeType!==undefined)?String(c.nodeType):typeof c;"
+		"			var tag=(c&&c.tagName)?String(c.tagName):(c&&c.nodeType===9?'DOCUMENT':String(c));"
+		"			var cls=(c&&c.className)?' .'+String(c.className).split(' ').join(' .'):'';"
+		"			var mt=(c)?typeof c.matches:'null-container';"
+		"			var qsa=(c)?typeof c.querySelectorAll:'null-container';"
+		"			var docEl='-';"
+		"			if(c&&c.nodeType===9)docEl=(c.documentElement&&c.documentElement.tagName)||'NULL';"
+		"			var found='';"
+		"			if(c&&qsa==='function'){"
+		"				var els=c.querySelectorAll('[data-xf-init]');"
+		"				var i,v,arr=[];"
+		"				for(i=0;i<els.length;i++){"
+		"					v=els[i].getAttribute('data-xf-init');"
+		"					if(v)arr.push('init:'+v);"
+		"				}"
+		"				els=c.querySelectorAll('[data-xf-click]');"
+		"				for(i=0;i<els.length;i++){"
+		"					v=els[i].getAttribute('data-xf-click');"
+		"					if(v)arr.push('click:'+v);"
+		"				}"
+		"				found=' found='+arr.join(',');"
+		"			}"
+		"			info='nodeType='+t+' tag='+tag+cls+' matches='+mt+' qsa='+qsa+' docEl='+docEl+found;"
+		"		}catch(e){info='LOGERR';}"
+		"		life('call '+info+regDump());"
+		"		try{return origLL.apply(this,arguments);}"
+		"		catch(e){"
+		"			life('THROW '+info+' msg='+((e&&e.message)||e)"
+		"				+' stack='+String((e&&e.stack)||'').split('\\n').slice(0,3).join(' | '));"
+		"			throw e;"
+		"		}"
+		"	};"
+		"	if(XF.Element&&typeof XF.Element.applyHandler==='function'&&!XF.Element.__msProbedAH){"
+		"		XF.Element.__msProbedAH=true;"
+		"		var origAH=XF.Element.applyHandler;"
+		"		XF.Element.applyHandler=function(el,name,opts){"
+		"			var kt='?';"
+		"			try{kt=typeof XF.Element.getObjectFromIdentifier(String(name));}catch(e){kt='err';}"
+		"			if(kt!=='function')life('APPLY '+name+' ctor='+kt);"
+		"			return origAH.apply(this,arguments);"
+		"		};"
+		"	}"
+		"	if(XF.ClassMapper&&XF.ClassMapper.prototype&&"
+		"		typeof XF.ClassMapper.prototype.getObjectFromIdentifier==='function'&&"
+		"		!XF.ClassMapper.prototype.__msProbed){"
+		"		XF.ClassMapper.prototype.__msProbed=true;"
+		"		var origG=XF.ClassMapper.prototype.getObjectFromIdentifier;"
+		"		XF.ClassMapper.prototype.getObjectFromIdentifier=function(name){"
+		"			var r=origG.apply(this,arguments);"
+		"			if(r!=null&&typeof r!=='function')life('CLASSMAP '+name+' -> '+typeof r+' NONCTOR');"
+		"			return r;"
+		"		};"
+		"	}"
+		"	life('installed');"
+		"	return true;"
 		"}"
-		"if(install())return;"
-		"if(typeof XF!=='undefined'&&XF&&XF.ready){"
-			"try{XF.ready(function(){install();});}catch(e){}"
-		"}"
-		"var _pollN=0;"
-		"(function poll(){"
-			"if(_pollN>=40){life('poll gave up after 200ms');return;}"
-			"_pollN++;"
-			"if(install())return;"
-			/* only poll if XF is actually defined (skipping non-XF pages entirely) */
-			"if(typeof XF==='undefined')return;"
-			"if(typeof setTimeout==='function')setTimeout(poll,5);"
-			"else{try{install();}catch(e){}}"
-		"})();"
+		"function retry(){install();}"
+		"try{"
+		"	Object.defineProperty(globalThis,'XF',{"
+		"		configurable:true,enumerable:true,"
+		"		get:function(){return xfVal;},"
+		"		set:function(v){"
+		"			xfVal=v;haveXf=!!v;retry();"
+		"			/* retry again after the assigning script completes: the"
+		"			 * preamble assigns XF EMPTY, then its IIFE adds ready/Feature;"
+		"			 * a microtask queued here drains between scripts, when XF is"
+		"			 * fully populated. (An eval-time microtask is NOT enough --"
+		"			 * it drains before any page script runs.) */"
+		"			if(v&&typeof Promise!=='undefined'&&typeof Promise.resolve==='function'){"
+		"				Promise.resolve().then(function(){retry();});"
+		"			}"
+		"		}"
+		"	});"
+		"	if(typeof XF!=='undefined'&&XF){xfVal=XF;haveXf=true;retry();}"
+		"	if(typeof Promise!=='undefined'&&typeof Promise.resolve==='function'){"
+		"		Promise.resolve().then(function(){retry();});"
+		"	}"
+		"	if(typeof document!=='undefined'&&document.addEventListener){"
+		"		try{document.addEventListener('DOMContentLoaded',function(){retry();});}catch(e){}"
+		"	}"
+		"}catch(e){}"
 		"})();");
 
 	/* R1.2 — the WANT probe goes in LAST: every shim block above runs its
