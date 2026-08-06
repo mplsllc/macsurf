@@ -4673,6 +4673,13 @@ static JSValue qjs_el_get_rect(JSContext *ctx, JSValueConst this_val,
 			b->border[LEFT].width + b->border[RIGHT].width;
 		h = qjs_sane(b->height) + b->padding[TOP] + b->padding[BOTTOM] +
 			b->border[TOP].width + b->border[BOTTOM].width;
+		/* fixes1132 — same sentinel-height→descendant-extent
+		 * fallback as qjs_el_metric's QJS_M_OFFH above. */
+		if (h <= 1 && qjs_sane(b->descendant_y1) > h + 10)
+			h = qjs_sane(b->descendant_y1)
+				+ b->padding[TOP] + b->padding[BOTTOM]
+				+ b->border[TOP].width
+				+ b->border[BOTTOM].width;
 		/* Viewport coordinates: document position minus scroll. */
 		x -= macsurf_qjs_scroll_x();
 		y -= macsurf_qjs_scroll_y();
@@ -4805,7 +4812,16 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 
 	switch (magic) {
 	case QJS_M_OFFW: v = qjs_sane(b->width) + px + bx; break;
-	case QJS_M_OFFH: v = qjs_sane(b->height) + py + by; break;
+	case QJS_M_OFFH:
+		v = qjs_sane(b->height) + py + by;
+		/* fixes1132 — slick sets height:0px as a measurement reset
+		 * then reads outerHeight(). b->height is 1 (explicit 0px
+		 * clamped), but descendant_y1 is the real content extent
+		 * (250+). When the explicit height is a clear sentinel (≤1)
+		 * and content is meaningfully taller, answer content. */
+		if (v <= 1 && qjs_sane(b->descendant_y1) > v + 10)
+			v = qjs_sane(b->descendant_y1) + py + by;
+		break;
 	/* clientWidth/Height EXCLUDE the border and include padding. */
 	case QJS_M_CLIW: v = qjs_sane(b->width) + px; break;
 	case QJS_M_CLIH: v = qjs_sane(b->height) + py; break;
