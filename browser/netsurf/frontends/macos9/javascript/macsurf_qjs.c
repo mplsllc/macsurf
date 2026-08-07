@@ -4676,6 +4676,26 @@ static JSValue qjs_el_get_rect(JSContext *ctx, JSValueConst this_val,
 
 	qjs_geometry_flush();	/* fixes1073 (#265) */
 	b = qjs_box_for(func_data[0]);
+#if !MACSURF_JS_GEOMETRY
+	/* fixes1136 Option B: geometry OFF — return viewport-sized rect
+	 * (branch-2 style).  Same rationale as qjs_el_metric above:
+	 * a non-zero rect keeps measure-then-mutate widgets from collapsing. */
+	if (b == NULL) {
+		int vw = macsurf_qjs_viewport_w();
+		int vh = macsurf_qjs_viewport_h();
+		qjs_geom_audit("getRect", func_data[0], "vp (geom off)");
+		r = JS_NewObject(ctx);
+		JS_SetPropertyStr(ctx, r, "x", JS_NewInt32(ctx, 0));
+		JS_SetPropertyStr(ctx, r, "y", JS_NewInt32(ctx, 0));
+		JS_SetPropertyStr(ctx, r, "left", JS_NewInt32(ctx, 0));
+		JS_SetPropertyStr(ctx, r, "top", JS_NewInt32(ctx, 0));
+		JS_SetPropertyStr(ctx, r, "right", JS_NewInt32(ctx, vw));
+		JS_SetPropertyStr(ctx, r, "bottom", JS_NewInt32(ctx, vh));
+		JS_SetPropertyStr(ctx, r, "width", JS_NewInt32(ctx, vw));
+		JS_SetPropertyStr(ctx, r, "height", JS_NewInt32(ctx, vh));
+		return r;
+	}
+#endif
 	if (b != NULL) {
 		qjs_box_origin(b, &x, &y);
 		/* Border-box, matching getBoundingClientRect: content plus padding
@@ -4763,6 +4783,22 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 	 * missing box really does mean "not rendered" and 0 is the true answer
 	 * (jQuery :hidden relies on it). */
 	qjs_geometry_flush();	/* fixes1073 (#265) */
+#if !MACSURF_JS_GEOMETRY
+	/* fixes1136 Option B: geometry OFF — return viewport dimensions
+	 * (branch-2 style).  Returning undefined was the first attempt, but
+	 * jQuery's parseFloat(undefined)||0 manufactures 0, which collapses
+	 * overflow:hidden containers with floated children (slick carousels,
+	 * dotdotdot truncation).  A large non-zero answer lets measure-then-
+	 * mutate widgets compute a reasonable height and the page stays
+	 * visible — wrong dimensions, but visible content. */
+	{
+		int vp = (magic == QJS_M_OFFH || magic == QJS_M_CLIH ||
+			  magic == QJS_M_SCRH || magic == QJS_M_OFFT)
+			 ? macsurf_qjs_viewport_h() : macsurf_qjs_viewport_w();
+		qjs_geom_audit(qjs_metric_name(magic), func_data[0], "vp (geom off)");
+		return JS_NewInt32(ctx, vp);
+	}
+#endif
 	if (!qjs_geometry_settled()) {
 		g_geom_undef++;			/* fixes1087 */
 		qjs_geom_audit(qjs_metric_name(magic), func_data[0],
@@ -11223,10 +11259,11 @@ unsigned char js_exec(struct jsthread *thread,
 	 * the confusion this batch has been unwinding. Set MACSURF_JS_MAX_BYTES
 	 * to restore a ceiling. */
 #ifndef MACSURF_JS_MAX_BYTES
-/* fixes1136 (Option B): 128 KB script size cap.  Rejects heavy application
- * bundles while letting jQuery (~87 KB), slick (~42 KB), and other small
- * enhancement scripts through.  Set to 0 to disarm. */
-#define MACSURF_JS_MAX_BYTES 131072UL
+/* fixes1136 (Option B): 256 KB script size cap.  Lets XenForo core-compiled.js
+ * (~176 KB) and similar framework bundles through while still rejecting the
+ * heaviest application bundles (>256 KB).  The 8s execution deadline provides
+ * the primary safety net.  Set to 0 to disarm. */
+#define MACSURF_JS_MAX_BYTES 262144UL
 #endif
 	if (MACSURF_JS_MAX_BYTES != 0UL && txtlen > MACSURF_JS_MAX_BYTES) {
 		/* fixes847 (#167 S1 census gap) — WORK-prefixed: this line was
