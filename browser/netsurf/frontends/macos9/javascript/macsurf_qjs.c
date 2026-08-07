@@ -9242,21 +9242,166 @@ static void register_browser_globals(JSContext *ctx)
 		"};"
 		"this.XMLHttpRequest=XMLHttpRequest;");
 
-	/* --- fetch() (fixes846) --- *
+	/* --- Headers / Request / Response (fixes1140) --- *
+	 *
+	 * THE 68kmla "Post thread" BUTTON. Hardware named it exactly:
+	 *
+	 *   LIFE CLICK tag=A live=1 prevented=1 xfclick=overlay
+	 *              href=/bb/forums/-/create-thread
+	 *   LIFE WANT Request []
+	 *   LIFE js unhandled rejection: TypeError: not a function
+	 *
+	 * The click routing was never broken -- `prevented=1` means XenForo's
+	 * delegated handler matched the node and CLAIMED the click. It then did
+	 * `new Request(...)` to load the overlay, `Request` did not exist, the
+	 * Promise rejected, and the overlay silently never opened. One missing
+	 * constructor, three rounds of blaming geometry.
+	 *
+	 * fetch() has existed since fixes846 but ONLY in its `fetch(url, opts)`
+	 * form; the Fetch API's three classes were never added, so any caller
+	 * using the spec's object form hit a wall. These are ordinary
+	 * spec-shaped implementations, defined BEFORE fetch so it can accept a
+	 * Request and a Headers.
+	 *
+	 * Header names are case-insensitive per spec, so the store is keyed on
+	 * the lowercased name while `forEach` reports the name as given. */
+	macsurf_qjs__safe_eval(ctx,
+		"(function(){"
+		"function Headers(init){"
+			"this._h={};"
+			"if(init){"
+				"if(init instanceof Headers){"
+					"var self=this;"
+					"init.forEach(function(v,k){self.append(k,v);});"
+				"}else if(Object.prototype.toString.call(init)==='[object Array]'){"
+					"for(var i=0;i<init.length;i++)"
+						"if(init[i]&&init[i].length>=2)"
+							"this.append(init[i][0],init[i][1]);"
+				"}else{"
+					"for(var k in init)"
+						"if(Object.prototype.hasOwnProperty.call(init,k))"
+							"this.append(k,init[k]);"
+				"}"
+			"}"
+		"}"
+		"Headers.prototype.append=function(n,v){"
+			"n=String(n).toLowerCase();"
+			"if(this._h[n]===undefined)this._h[n]=String(v);"
+			"else this._h[n]=this._h[n]+', '+String(v);};"
+		"Headers.prototype.set=function(n,v){"
+			"this._h[String(n).toLowerCase()]=String(v);};"
+		"Headers.prototype.get=function(n){"
+			"var v=this._h[String(n).toLowerCase()];"
+			"return v===undefined?null:v;};"
+		"Headers.prototype.has=function(n){"
+			"return this._h[String(n).toLowerCase()]!==undefined;};"
+		"Headers.prototype['delete']=function(n){"
+			"delete this._h[String(n).toLowerCase()];};"
+		"Headers.prototype.forEach=function(fn,thisArg){"
+			"for(var k in this._h)"
+				"if(Object.prototype.hasOwnProperty.call(this._h,k))"
+					"fn.call(thisArg,this._h[k],k,this);};"
+		"Headers.prototype.keys=function(){"
+			"var a=[];this.forEach(function(v,k){a.push(k);});return a;};"
+		"Headers.prototype.values=function(){"
+			"var a=[];this.forEach(function(v){a.push(v);});return a;};"
+		"Headers.prototype.entries=function(){"
+			"var a=[];this.forEach(function(v,k){a.push([k,v]);});return a;};"
+		"this.Headers=Headers;"
+		"})();");
+
+	macsurf_qjs__safe_eval(ctx,
+		"(function(){"
+		"function Request(input,init){"
+			"init=init||{};"
+			"if(input&&typeof input==='object'&&input.url!==undefined){"
+				"this.url=String(input.url);"
+				"this.method=init.method||input.method||'GET';"
+				"this.headers=new Headers(init.headers||input.headers);"
+				"this.body=init.body!==undefined?init.body:input.body;"
+				"this.credentials=init.credentials||input.credentials||'same-origin';"
+				"this.mode=init.mode||input.mode||'cors';"
+			"}else{"
+				"this.url=String(input);"
+				"this.method=init.method||'GET';"
+				"this.headers=new Headers(init.headers);"
+				"this.body=init.body;"
+				"this.credentials=init.credentials||'same-origin';"
+				"this.mode=init.mode||'cors';"
+			"}"
+			"this.method=String(this.method).toUpperCase();"
+			"this.cache=init.cache||'default';"
+			"this.redirect=init.redirect||'follow';"
+			"this.referrer=init.referrer||'about:client';"
+			"this.signal=init.signal||null;"
+			"this.bodyUsed=false;"
+		"}"
+		"Request.prototype.clone=function(){return new Request(this);};"
+		"this.Request=Request;"
+		"})();");
+
+	macsurf_qjs__safe_eval(ctx,
+		"(function(){"
+		"function Response(body,init){"
+			"init=init||{};"
+			"this._body=body===undefined||body===null?'':String(body);"
+			"this.status=init.status===undefined?200:init.status;"
+			"this.statusText=init.statusText===undefined?'':String(init.statusText);"
+			"this.ok=this.status>=200&&this.status<300;"
+			"this.headers=new Headers(init.headers);"
+			"this.url=init.url||'';"
+			"this.type=init.type||'basic';"
+			"this.redirected=false;"
+			"this.bodyUsed=false;"
+		"}"
+		"Response.prototype.text=function(){"
+			"this.bodyUsed=true;return Promise.resolve(this._body);};"
+		"Response.prototype.json=function(){"
+			"this.bodyUsed=true;"
+			"try{return Promise.resolve(JSON.parse(this._body));}"
+			"catch(e){return Promise.reject(e);}};"
+		"Response.prototype.clone=function(){"
+			"return new Response(this._body,{status:this.status,"
+				"statusText:this.statusText,headers:this.headers,"
+				"url:this.url});};"
+		"Response.error=function(){"
+			"var r=new Response('',{status:0});r.type='error';return r;};"
+		"this.Response=Response;"
+		"})();");
+
+	/* --- fetch() (fixes846, Request/Headers-aware since fixes1140) --- *
 	 * A real Promise (QuickJS's native Promise is already an intrinsic --
 	 * JS_AddIntrinsicPromise, see qjs_build_context) wrapping the real
 	 * async XHR above. Replaces the fake synchronous thenable that always
-	 * resolved {ok:false,status:0} regardless of what happened. */
+	 * resolved {ok:false,status:0} regardless of what happened.
+	 *
+	 * fixes1140: accepts the spec's `fetch(new Request(...))` form as well
+	 * as `fetch(url, opts)`, resolves a real Response instance, and reads
+	 * headers from a Headers object (whose values are NOT enumerable via
+	 * `for in`, which is why the old loop silently sent none). */
 	macsurf_qjs__safe_eval(ctx,
 		"this.fetch=function(url,opts){"
 			"opts=opts||{};"
+			"if(url&&typeof url==='object'&&url.url!==undefined){"
+				"var rq=url;"
+				"url=rq.url;"
+				"if(opts.method===undefined)opts.method=rq.method;"
+				"if(opts.headers===undefined)opts.headers=rq.headers;"
+				"if(opts.body===undefined)opts.body=rq.body;"
+				"if(opts.credentials===undefined)opts.credentials=rq.credentials;"
+			"}"
 			"return new Promise(function(resolve,reject){"
 				"try{"
 					"var xhr=new XMLHttpRequest();"
 					"xhr.open(opts.method||'GET',url,true);"
 					"if(opts.headers){"
-						"for(var h in opts.headers)"
-							"xhr.setRequestHeader(h,opts.headers[h]);"
+						"if(typeof opts.headers.forEach==='function'){"
+							"opts.headers.forEach(function(v,k){"
+								"xhr.setRequestHeader(k,v);});"
+						"}else{"
+							"for(var h in opts.headers)"
+								"xhr.setRequestHeader(h,opts.headers[h]);"
+						"}"
 					"}"
 					"xhr.onreadystatechange=function(){"
 						"if(xhr.readyState!==4)return;"
@@ -9265,18 +9410,29 @@ static void register_browser_globals(JSContext *ctx)
 							"__workLogFetch(String(url),ok,xhr.status);"
 						"if(xhr.status===0){reject(new Error('Network error'));return;}"
 						"var respText=xhr.responseText||'';"
-						"var resp={"
-							"ok:ok,status:xhr.status,statusText:xhr.statusText||'',"
-							"url:xhr.responseURL||String(url),"
-							"headers:{"
-								"get:function(n){return xhr.getResponseHeader(n);}"
-							"},"
-							"text:function(){return Promise.resolve(respText);},"
-							"json:function(){"
-								"try{return Promise.resolve(JSON.parse(respText));}"
-								"catch(e){return Promise.reject(e);}"
+						/* fixes1140 — a real Response instance, so
+						 * `r instanceof Response` holds and `r.headers`
+						 * is a real Headers. Response headers are parsed
+						 * from getAllResponseHeaders() when available. */
+						"var hdrs=new Headers();"
+						"try{"
+							"var raw=xhr.getAllResponseHeaders&&xhr.getAllResponseHeaders();"
+							"if(raw){"
+								"var lines=String(raw).split(/\\r?\\n/);"
+								"for(var li=0;li<lines.length;li++){"
+									"var ci=lines[li].indexOf(':');"
+									"if(ci>0)hdrs.append("
+										"lines[li].substr(0,ci).trim(),"
+										"lines[li].substr(ci+1).trim());"
+								"}"
 							"}"
-						"};"
+						"}catch(he){}"
+						"var resp=new Response(respText,{"
+							"status:xhr.status,"
+							"statusText:xhr.statusText||'',"
+							"headers:hdrs,"
+							"url:xhr.responseURL||String(url)"
+						"});"
 						"resolve(resp);"
 					"};"
 					"xhr.send(opts.body===undefined?null:opts.body);"
