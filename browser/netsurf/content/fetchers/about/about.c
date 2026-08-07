@@ -368,6 +368,10 @@ struct about_handlers about_handler_list[] = {
 		fetch_about_choices_handler,
 		false
 	},
+#ifndef __MACOS9__
+	/* about:testament needs a generated testament.h and its handler source
+	 * is excluded from the Mac builds; leaving the row in referenced a
+	 * handler nothing defines. */
 	{
 		"testament",
 		SLEN("testament"),
@@ -375,6 +379,7 @@ struct about_handlers about_handler_list[] = {
 		fetch_about_testament_handler,
 		false
 	},
+#endif
 	{
 		"about",
 		SLEN("about"),
@@ -396,6 +401,11 @@ struct about_handlers about_handler_list[] = {
 		fetch_about_logo_handler,
 		true
 	},
+#ifndef __MACOS9__
+	/* about:imagecache reports on content/handlers/image/image_cache.c,
+	 * which the Mac builds replace wholesale with
+	 * frontends/macos9/macos9_image.c, so neither the handler nor the
+	 * cache it describes exists here. */
 	{
 		/* details about the image cache */
 		"imagecache",
@@ -404,6 +414,7 @@ struct about_handlers about_handler_list[] = {
 		fetch_about_imagecache_handler,
 		true
 	},
+#endif
 	{
 		/* The default blank page */
 		"blank",

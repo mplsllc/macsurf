@@ -22,7 +22,7 @@
 #ifndef OSTLS_MUL64_PROBE_H
 #define OSTLS_MUL64_PROBE_H
 
-#ifdef __MWERKS__
+#if defined(__MWERKS__) || defined(__RETRO68__)  /* Mac target, either toolchain */
 #include <Types.h>      /* OSErr */
 #else
 typedef short OSErr;

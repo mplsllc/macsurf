@@ -1,6 +1,43 @@
 #!/bin/bash
-# Apply all needed Retro68 compatibility fixes to MacSurf source tree
-# Run before each build: ./tools/apply_retro68_fixes.sh
+#
+# OBSOLETE — DO NOT RUN. Kept only as the record of what it used to do.
+#
+# Every step below has been folded into the tree, where it is tracked,
+# reviewable and compiled like any other source. Running this now would
+# re-apply sed/python rewrites on top of the real versions.
+#
+# Where each step went:
+#   1  QuickJS generated headers        -> committed under browser/libquickjs/
+#   2  resource.c escaped quotes        -> fixed in the file
+#   3  macTLS Boolean guard             -> in the file
+#   4  macTLS entropy Retro68 path      -> in the file; the __MWERKS__ gates
+#                                          across macTLS/os9 are now
+#                                          "Mac target, either toolchain"
+#   5  generated POSIX/Toolbox stubs    -> macos9_retro68_compat.c.
+#                                          NOTE: this step was BROKEN. It
+#                                          redefined netsurf_version, which
+#                                          desktop/version.c already defines,
+#                                          so the file it generated could
+#                                          never have been part of a link that
+#                                          succeeded. Its opendir() also
+#                                          returned NULL unconditionally,
+#                                          papering over the fact that
+#                                          shims/mac_dirent.c -- which has
+#                                          real Carbon code -- was simply
+#                                          never compiled.
+#   6  fallthrough macro removal        -> macsurf_prefix.h
+#   7  isascii macro removal            -> macsurf_prefix.h
+#   8  SLEN + limits                    -> macsurf_prefix.h
+#   9  Universal MacTypes include       -> macsurf_prefix.h
+#  10  MacSurfIcon.r FREF/BNDL as data  -> NOT MIGRATED. This is the one
+#                                          outstanding item; the built binary
+#                                          currently carries no FREF or BNDL,
+#                                          so the Finder icon does not bind.
+#  11  utils/time.h symlink             -> committed as a symlink
+#  12  iconv stubs                      -> macsurf_prefix.h
+#
+exit 1
+
 set -e
 
 echo "=== Applying Retro68 compatibility fixes ==="

@@ -49,7 +49,7 @@ void OSTLS_StirEntropy(const void *data, unsigned long len);
 void OSTLS_CollectEntropy(void);
 unsigned long OSTLS_EntropySampleCount(void);
 
-#ifdef __MWERKS__
+#if defined(__MWERKS__) || defined(__RETRO68__)  /* Mac target, either toolchain */
 #include <Types.h>
 #include <Events.h>
 #include <Timer.h>
@@ -262,7 +262,7 @@ OSTLS_CollectEntropy(void)
     UnsignedWide usec;
     Point mouse;
 
-#ifdef __MWERKS__
+#if defined(__MWERKS__) || defined(__RETRO68__)  /* Mac target, either toolchain */
     ticks = (UInt32)TickCount();
     Microseconds(&usec);
     GetMouse(&mouse);
@@ -289,7 +289,7 @@ OSTLS_StirTimer(unsigned long hint)
     UInt32 ticks;
     UnsignedWide usec;
 
-#ifdef __MWERKS__
+#if defined(__MWERKS__) || defined(__RETRO68__)  /* Mac target, either toolchain */
     ticks = (UInt32)TickCount();
     Microseconds(&usec);
 #else
@@ -435,7 +435,7 @@ OSTLS_InjectEntropy(br_ssl_engine_context *eng)
      * even a caller that never ran CollectEntropy gets some live noise. */
     stackaddr = (unsigned long)(void *)&local_var;
     pool_update(&stackaddr, sizeof stackaddr);
-#ifdef __MWERKS__
+#if defined(__MWERKS__) || defined(__RETRO68__)  /* Mac target, either toolchain */
     Microseconds(&usec);
 #else
     usec.hi = 0; usec.lo = 0;
@@ -489,7 +489,7 @@ OSTLS_RandomBytes(void *out, unsigned long len)
 
     stackaddr = (unsigned long)(void *)&local_var;
     pool_update(&stackaddr, sizeof stackaddr);
-#ifdef __MWERKS__
+#if defined(__MWERKS__) || defined(__RETRO68__)  /* Mac target, either toolchain */
     Microseconds(&usec);
 #else
     usec.hi = 0; usec.lo = 0;

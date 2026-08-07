@@ -39,6 +39,16 @@
 #include "utils/utils.h"
 #include "utils/nsoption.h"
 
+/* macsurf_prefix.h suppresses utils/log.h globally (it carries GNU
+ * __attribute__ and GCC-varargs NSLOG, neither of which CW8 accepts), so the
+ * #include above is a no-op on the Mac builds and this declaration is lost.
+ * utils/log.c still defines it. nserror is in scope by here via
+ * utils/ns_errors.h, which is why the declaration lives at this point rather
+ * than in the prefix. */
+#ifdef __MACOS9__
+extern nserror nslog_set_filter_by_options(void);
+#endif
+
 /** Length of buffer used to read lines from input file */
 #define NSOPTION_MAX_LINE_LEN 1024
 

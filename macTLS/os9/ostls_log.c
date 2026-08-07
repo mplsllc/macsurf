@@ -22,7 +22,7 @@
 #include <stdarg.h>
 #include <string.h>
 
-#ifdef __MWERKS__
+#if defined(__MWERKS__) || defined(__RETRO68__)  /* Mac target, either toolchain */
 #include <Files.h>
 #include <Folders.h>
 #include <Script.h>             /* smRoman */

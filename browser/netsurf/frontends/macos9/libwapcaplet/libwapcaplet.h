@@ -59,6 +59,18 @@ extern void lwc_string_destroy(lwc_string *str);
 
 extern lwc_error lwc__intern_caseless_string(lwc_string *str);
 
+/* libdom's dom_string.c calls this. It was missing here, and because this
+ * shim claims the REAL header's guard (libwapcaplet_h_) the real declaration
+ * can never be reached to supply it -- so the call compiled as an implicit
+ * int-returning function. Signature matches
+ * browser/libwapcaplet/include/libwapcaplet/libwapcaplet.h verbatim. */
+extern lwc_error lwc_string_tolower(lwc_string *str, lwc_string **ret);
+
+/* libcss's media-query parser (src/parse/mq.c) calls this one; same story. */
+extern lwc_error lwc_intern_substring(lwc_string *str,
+                                      size_t soffset, size_t slen,
+                                      lwc_string **ret);
+
 extern void lwc_iterate_strings(lwc_iteration_callback_fn cb, void *pw);
 
 /* --- lwc_string_ref --- */
@@ -107,5 +119,27 @@ lwc_string_caseless_isequal(lwc_string *str1, lwc_string *str2,
 
 /* --- lwc_string_hash_value --- */
 #define lwc_string_hash_value(str) ((str)->hash)
+
+/* --- lwc_string_caseless_hash_value ---
+ * libcss's selector hash (src/select/hash.c) and cascade (css_select.c) both
+ * call this. Unlike the plain hash it is a real function, not an accessor
+ * macro, because the caseless hash is computed lazily on first use. */
+extern lwc_error lwc_string_caseless_hash_value(lwc_string *str,
+                                                lwc_hash *hash);
+
+/* --- macsurf_ptr_is_heap ---
+ * MacSurf's own addition to libwapcaplet (the #207 pointer-window guard).
+ * Declared in the real header; the shim shadows it, so it has to be repeated
+ * here or every caller sees an implicit declaration. */
+extern int macsurf_ptr_is_heap(const void *);
+
+/* --- lwc__assert_and_expr ---
+ * The real header defines this with a GCC statement-expression
+ * ({assert(...); expr;}) when assertions are on, and as plain (expr)
+ * otherwise. Only the second form is portable to CW8, and it is what the
+ * shipping build has always effectively used. */
+#ifndef lwc__assert_and_expr
+#define lwc__assert_and_expr(str, expr) (expr)
+#endif
 
 #endif /* libwapcaplet_h_ */

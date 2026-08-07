@@ -33,7 +33,7 @@
 #ifndef OSTLS_LOG_H
 #define OSTLS_LOG_H
 
-#ifdef __MWERKS__
+#if defined(__MWERKS__) || defined(__RETRO68__)  /* Mac target, either toolchain */
 #include <Types.h>
 #else
 #ifndef OSTLS_OSERR_DEFINED

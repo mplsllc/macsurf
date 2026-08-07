@@ -37,7 +37,7 @@
 #ifndef OSTLS_TIME_H
 #define OSTLS_TIME_H
 
-#ifdef __MWERKS__
+#if defined(__MWERKS__) || defined(__RETRO68__)  /* Mac target, either toolchain */
 #include <Types.h>      /* OSErr, UInt32 */
 #else
 /* Guard against duplicate typedefs when multiple ostls_*.h are

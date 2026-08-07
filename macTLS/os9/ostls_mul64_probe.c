@@ -32,7 +32,7 @@
 
 #include "ostls_mul64_probe.h"
 
-#ifdef __MWERKS__
+#if defined(__MWERKS__) || defined(__RETRO68__)  /* Mac target, either toolchain */
 #include <Types.h>      /* noErr */
 #else
 #define noErr 0

@@ -19,7 +19,7 @@
 #include "bearssl_ssl.h"
 #include "bearssl_x509.h"
 
-#ifdef __MWERKS__
+#if defined(__MWERKS__) || defined(__RETRO68__)  /* Mac target, either toolchain */
 #include <Types.h>
 #else
 typedef short OSErr;

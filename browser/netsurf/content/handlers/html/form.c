@@ -50,6 +50,10 @@
 #include "desktop/knockout.h"
 #include "desktop/scrollbar.h"
 #include "desktop/textarea.h"
+/* browser_window_set_status() lives here, not in the public
+ * netsurf/browser_window.h included above; the form-validation path below
+ * calls it, and without this it compiled as an implicit declaration. */
+#include "desktop/browser_private.h"
 
 #include "html/html.h"
 #include "html/private.h"

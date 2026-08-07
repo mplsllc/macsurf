@@ -29,7 +29,7 @@
 #ifndef OSTLS_FETCH_H
 #define OSTLS_FETCH_H
 
-#ifdef __MWERKS__
+#if defined(__MWERKS__) || defined(__RETRO68__)  /* Mac target, either toolchain */
 #include <MacTypes.h>      /* OSErr, UInt16, UInt32 */
 #else
 #ifndef OSTLS_OSERR_DEFINED

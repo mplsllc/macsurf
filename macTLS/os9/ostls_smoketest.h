@@ -30,7 +30,7 @@
 #ifndef OSTLS_SMOKETEST_H
 #define OSTLS_SMOKETEST_H
 
-#ifdef __MWERKS__
+#if defined(__MWERKS__) || defined(__RETRO68__)  /* Mac target, either toolchain */
 #include <Types.h>      /* OSErr */
 #else
 typedef short OSErr;

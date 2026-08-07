@@ -16,7 +16,7 @@
 #ifndef OSTLS_TLS13_OTPROBE_H
 #define OSTLS_TLS13_OTPROBE_H
 
-#ifdef __MWERKS__
+#if defined(__MWERKS__) || defined(__RETRO68__)  /* Mac target, either toolchain */
 #include <Types.h>          /* OSErr */
 #else
 #include "ostls_time.h"     /* provides OSErr (guarded) on the Retro68 path */

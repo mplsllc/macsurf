@@ -24,6 +24,14 @@
 #ifndef NETSURF_HTML_LAYOUT_INTERNAL_H
 #define NETSURF_HTML_LAYOUT_INTERNAL_H
 
+/* content_get_width() / content_get_height(), used by the
+ * lh__box_intrinsic_w/h helpers below. This header was relying on every
+ * includer having pulled netsurf/content.h in first; layout_flex.c and
+ * layout_grid.c do not, so both helpers compiled against implicit
+ * declarations -- and an implicit int return is exactly wrong for the
+ * intrinsic-size path (see the fixes929 note on those helpers). */
+#include "netsurf/content.h"
+
 #define AUTO INT_MIN
 
 /* fixes271b — struct box_multicol_segment and struct box_multicol_data

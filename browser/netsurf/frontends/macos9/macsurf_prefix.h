@@ -178,6 +178,22 @@ void macsurf_assert_failed_(const char *expr, const char *file, int line);
 #ifndef __FP__
 #define __FP__
 #endif
+/* Same suppress-and-supply pattern for the two Universal Interfaces headers
+ * that re-typedef C library types. Both sit ahead of newlib on the include
+ * path, so whichever TU reaches them first wins and the other loses:
+ *   fcntl.h    -- "typedef int ssize_t; typedef long off_t;"
+ *   SizeTDef.h -- "typedef unsigned int size_t" for any non-MWERKS compiler
+ * newlib has already defined all three by this point. Pull the O_* constants
+ * from newlib's own copy (reachable as <sys/fcntl.h>, a name Apple does not
+ * also ship, so there is no collision), then claim both guards so the
+ * Universal versions can never be dragged in by a Toolbox header. */
+#include <sys/fcntl.h>
+#ifndef __FCNTL__
+#define __FCNTL__
+#endif
+#ifndef __SIZETDEF__
+#define __SIZETDEF__
+#endif
 extern void Microseconds(UnsignedWide *tickCount);
 #ifndef __cplusplus
 #define bool _Bool
@@ -279,6 +295,19 @@ extern void *macsurf_safe_realloc(void *ptr, size_t size);
 /* log.h is suppressed by NETSURF_LOG_H above (it has GNU __attribute__ and
  * GCC-varargs NSLOG).  Provide the typedef log.c needs so it can compile. */
 typedef bool(nslog_ensure_t)(FILE *fptr);
+
+/* Same reason: a few core files (utils/messages.c, utils/ns_hashtable.c,
+ * desktop/browser.c) call nslog_log() DIRECTLY rather than through the NSLOG
+ * macro, so suppressing log.h leaves it undeclared and the call compiles as
+ * an implicit int-returning function.  log.c still defines it, so only the
+ * declaration is missing.  Declared without log.h's
+ * __attribute__((format(printf,4,5))), which CW8 does not accept. */
+extern void nslog_log(const char *file, const char *func, int ln,
+		      const char *format, ...);
+/* nslog_set_filter_by_options() has the same problem but returns nserror,
+ * which utils/errors.h has not defined this early -- the prefix is injected
+ * ahead of every header.  It is declared in utils/nsoption.c instead, after
+ * that file's own includes. */
 
 /* nsoption.c / options.h expect these to be defined. */
 #ifndef NETSURF_BUILTIN_LOG_FILTER

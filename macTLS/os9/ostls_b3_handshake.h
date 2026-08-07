@@ -26,7 +26,7 @@
 #ifndef OSTLS_B3_HANDSHAKE_H
 #define OSTLS_B3_HANDSHAKE_H
 
-#ifdef __MWERKS__
+#if defined(__MWERKS__) || defined(__RETRO68__)  /* Mac target, either toolchain */
 #include <Types.h>      /* OSErr */
 #else
 #ifndef OSTLS_OSERR_DEFINED

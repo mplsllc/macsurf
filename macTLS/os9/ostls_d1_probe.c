@@ -18,7 +18,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifdef __MWERKS__
+#if defined(__MWERKS__) || defined(__RETRO68__)  /* Mac target, either toolchain */
 #include <Types.h>
 #include <Events.h>
 #include <Files.h>
@@ -39,7 +39,7 @@ typedef unsigned long UInt32;
 #define true 1
 #define false 0
 #endif
-#ifdef __MWERKS__
+#if defined(__MWERKS__) || defined(__RETRO68__)  /* Mac target, either toolchain */
 #endif
 typedef struct { OTByteCount maxlen, len; UInt8 *buf; } TNetbuf;
 typedef struct { TNetbuf addr; TNetbuf opt; long qlen; } TBind;

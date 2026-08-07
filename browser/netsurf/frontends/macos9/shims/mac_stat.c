@@ -7,6 +7,7 @@
  */
 
 #include "mac_stat.h"
+#include "mac_int64.h"
 #include <string.h>
 
 /*
@@ -51,7 +52,7 @@ int mac_stat(const char *path, struct stat *buf)
 		return -1;
 
 	/* Size (data fork logical size) */
-	buf->st_size = (off_t)info.dataLogicalSize;
+	buf->st_size = (off_t)MAC_S64_LOW(info.dataLogicalSize);
 
 	/* Modification time: Mac epoch (1904) → Unix epoch (1970) */
 	mac_secs = (UInt32)(info.contentModDate.lowSeconds);
@@ -88,7 +89,7 @@ int mac_fstat(int fd, struct stat *buf)
 	if (err != noErr)
 		return -1;
 
-	buf->st_size = (off_t)fork_size;
+	buf->st_size = (off_t)MAC_S64_LOW(fork_size);
 	buf->st_mode = S_IFREG | 0644;
 
 	/* Try to get mod time from the FSRef */
@@ -115,6 +116,14 @@ int mac_access(const char *path, int mode)
 
 	err = FSPathMakeRef((const UInt8 *)path, &ref, NULL);
 	return (err == noErr) ? 0 : -1;
+}
+
+/* POSIX spelling, declared in nsutils/unistd.h (which is what a bare
+ * #include <unistd.h> resolves to in this tree). NetSurf's filepath.c is
+ * the caller. */
+int access(const char *path, int mode)
+{
+	return mac_access(path, mode);
 }
 
 #else /* Linux stubs */

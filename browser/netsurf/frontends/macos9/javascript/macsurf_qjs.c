@@ -1025,7 +1025,10 @@ static JSValue qjs_setinterval(JSContext *ctx, JSValueConst this_val,
 static JSValue qjs_cleartimeout(JSContext *ctx, JSValueConst this_val,
 		int argc, JSValueConst *argv)
 {
-	int target_id;
+	/* int32_t, not int: JS_ToInt32 takes int32_t*, and on Mac PPC
+	 * int32_t is long -- CW8 treats int* and long* as incompatible
+	 * types outright, so this is the portable spelling. */
+	int32_t target_id;
 	struct qjs_timer *t;
 
 	(void)this_val;
@@ -4505,6 +4508,10 @@ static int qjs_geometry_settled(void)
 	 * content) and rescan only when one moves -- which is a handful of times
 	 * per navigation instead of tens of thousands. */
 	extern unsigned long macos9_content_registry_epoch;
+	/* Declared in macos9_content_registry.h, which this file does not
+	 * include; without this the call below is an implicit declaration, so
+	 * the compiler assumes int(...) and the prototype goes unchecked. */
+	extern int macos9_content_is_live(struct content *c);
 	static unsigned long cached_epoch = (unsigned long)-1;
 	static void *cached_c = NULL;
 	static int cached_live = 0;

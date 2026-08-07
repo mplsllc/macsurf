@@ -66,6 +66,14 @@
 #include <libcss/unit.h>	/* css_unit_len2device_px (fixes656) */
 #include <libcss/fpmath.h>	/* FIXTOINT (fixes656) */
 
+/* Frontend diagnostic channel (frontends/macos9/macsurf_debug_log.c). This
+ * file calls both spellings from several places; two of them carried a
+ * block-scope extern, which does not cover the earlier call sites, so those
+ * were compiling as implicit declarations. Declared once at file scope
+ * instead of including the frontend header from core code. */
+extern void macsurf_debug_log_write(const char *msg);
+extern void macsurf_debug_log_writef(const char *fmt, ...);
+
 /**
  * Get pointer shape for given box
  *

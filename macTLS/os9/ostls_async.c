@@ -15,6 +15,7 @@
  */
 
 #include "ostls_async.h"
+#include "ostls_log.h"               /* OSTLS_LogLine / OSTLS_LogLinef     */
 #include "ostls_b3_anchors.h"
 #include "ostls_time.h"
 #include "ostls_entropy.h"
@@ -29,13 +30,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef __MWERKS__
+#if defined(__MWERKS__) || defined(__RETRO68__)  /* Mac target, either toolchain */
 #include <Types.h>
 #include <Memory.h>            /* NewPtrClear, DisposePtr */
 #include <Events.h>            /* TickCount */
 #include <Files.h>
 #include <OpenTransport.h>
 #include <OpenTptInternet.h>
+#include <Threads.h>           /* YieldToAnyThread -- the cooperative yield
+                                * the kOTSyncIdleEvent notifier depends on */
 extern OTClientContextPtr g_ostls_ot_context;
 #else
 /*
@@ -55,7 +58,7 @@ typedef unsigned long InetHost;
 #define true 1
 #define false 0
 #endif
-#ifdef __MWERKS__
+#if defined(__MWERKS__) || defined(__RETRO68__)  /* Mac target, either toolchain */
 #endif
 typedef struct { OTByteCount maxlen, len; UInt8 *buf; } TNetbuf;
 typedef struct { TNetbuf addr; TNetbuf opt; long qlen; } TBind;

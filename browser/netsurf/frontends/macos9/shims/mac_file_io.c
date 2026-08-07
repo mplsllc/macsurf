@@ -7,6 +7,7 @@
  */
 
 #include "mac_file_io.h"
+#include "mac_int64.h"
 #include <stdarg.h>
 #include <string.h>
 #include <fcntl.h>
@@ -122,7 +123,7 @@ int mac_open(const char *path, int flags, ...)
 
 	/* Handle O_TRUNC */
 	if (flags & O_TRUNC) {
-		FSSetForkSize(refnum, fsFromStart, (ByteCount)0);
+		FSSetForkSize(refnum, fsFromStart, MAC_S64_ZERO);
 	}
 
 	fd = fd_alloc();
@@ -158,7 +159,7 @@ ssize_t mac_read(int fd, void *buf, size_t count)
 	if (fd < 0 || fd >= MAC_FD_TABLE_SIZE || !fd_table[fd].in_use)
 		return -1;
 
-	err = FSReadFork(fd_table[fd].refnum, fsAtMark, 0,
+	err = FSReadFork(fd_table[fd].refnum, fsAtMark, MAC_S64_ZERO,
 			 (ByteCount)count, buf, &actual);
 
 	if (err == noErr || err == eofErr)
@@ -175,7 +176,7 @@ ssize_t mac_write(int fd, const void *buf, size_t count)
 	if (fd < 0 || fd >= MAC_FD_TABLE_SIZE || !fd_table[fd].in_use)
 		return -1;
 
-	err = FSWriteFork(fd_table[fd].refnum, fsAtMark, 0,
+	err = FSWriteFork(fd_table[fd].refnum, fsAtMark, MAC_S64_ZERO,
 			  (ByteCount)count, buf, &actual);
 
 	if (err == noErr)
