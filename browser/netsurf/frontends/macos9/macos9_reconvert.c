@@ -141,6 +141,15 @@ static int g_pending_overflow = 0;
 /* fixes1024 — current debounce, doubled while only cosmetic batches arrive. */
 static int g_reconvert_debounce_ms = RECONVERT_DEBOUNCE_MS;
 
+/* fixes1135 — cap consecutive cosmetic-only reconverts. A JS timer that
+ * toggles a style every N seconds produces infinite O(document) rebuilds:
+ * each reconvert costs ~1.5s, during which the JS pump is frozen. After
+ * MAX_CONSECUTIVE cosmetic-only rebuilds, suppress further ones until a
+ * structural mutation (append/remove/innerHTML/textContent) resets the
+ * counter. Reset per navigation. */
+#define RECONVERT_COSMETIC_MAX_CONSECUTIVE 2
+static int g_consecutive_cosmetic = 0;
+
 static int macos9_reconvert_kind_is_cosmetic(int kind)
 {
 	return (kind == MACOS9_DOMMUT_SETATTR_CLASS ||
@@ -523,6 +532,7 @@ macos9_reconvert_sync_reset(void)
 	g_sync_us       = 0;
 	g_sync_r_notdone = 0; g_sync_r_active = 0; g_sync_r_paint = 0;
 	g_sync_r_inprog = 0;  g_sync_r_budget = 0; g_sync_r_busy = 0;
+	g_consecutive_cosmetic = 0;
 }
 
 /* fixes1126 (#265) — a transient flush refusal must not strand the pending
@@ -762,6 +772,45 @@ macos9_reconvert_cb(void *p)
 
 		/* fixes925 — dump the census for the batch this reconvert answers. */
 		macos9_reconvert_census_dump();
+
+		/* fixes1135 — cosmetic-only batch: if we have already run
+		 * MAX_CONSECUTIVE cosmetic rebuilds in a row without a
+		 * structural mutation, suppress this one. The timer-driven
+		 * style churn (slick autoplay, CSS animation polyfills)
+		 * produces infinite O(document) rebuilds that cost ~1.5s
+		 * each. The page still renders correctly — the styles were
+		 * already applied by the JS setAttribute, and the next
+		 * structural mutation forces a real rebuild. */
+		{
+			int cosm;
+			int any_structural = 0;
+			for (cosm = 0;
+			     cosm <= MACOS9_DOMMUT_SETATTR_STYLE; cosm++) {
+				if (cosm == MACOS9_DOMMUT_SETATTR_CLASS ||
+				    cosm == MACOS9_DOMMUT_SETATTR_STYLE)
+					continue;
+				if (g_mut_counts[cosm] > 0) {
+					any_structural = 1;
+					break;
+				}
+			}
+			if (!any_structural &&
+			    g_consecutive_cosmetic >=
+			    RECONVERT_COSMETIC_MAX_CONSECUTIVE) {
+				macsurf_debug_log_writef(
+					"LIFE reconvert cosmetic-suppress "
+					"consec=%d cap=%d",
+					g_consecutive_cosmetic,
+					RECONVERT_COSMETIC_MAX_CONSECUTIVE);
+				macos9_reconvert_slot_clear(i);
+				memset(g_mut_counts, 0,
+					sizeof(g_mut_counts));
+				g_mut_total = 0;
+				did_one = 1;
+				continue;
+			}
+		}
+
 		rc = html_reconvert_content(c);	/* 0 = queued, !=0 = busy */
 		macsurf_debug_log_writef(
 			"WORK reconvert: html_reconvert_content rc=%d c=%p", rc,
@@ -775,6 +824,26 @@ macos9_reconvert_cb(void *p)
 		}
 		macos9_reconvert_slot_clear(i);
 		did_one = 1;
+
+		/* fixes1135 — track consecutive cosmetic-only reconverts. */
+		{
+			int cosm;
+			int any_structural = 0;
+			for (cosm = 0;
+			     cosm <= MACOS9_DOMMUT_SETATTR_STYLE; cosm++) {
+				if (cosm == MACOS9_DOMMUT_SETATTR_CLASS ||
+				    cosm == MACOS9_DOMMUT_SETATTR_STYLE)
+					continue;
+				if (g_mut_counts[cosm] > 0) {
+					any_structural = 1;
+					break;
+				}
+			}
+			if (!any_structural)
+				g_consecutive_cosmetic++;
+			else
+				g_consecutive_cosmetic = 0;
+		}
 	}
 
 	/* Overflow fallback: more distinct frames mutated than the table holds,
@@ -890,6 +959,10 @@ macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 	} else if (g_reconvert_debounce_ms != RECONVERT_DEBOUNCE_MS) {
 		g_reconvert_debounce_ms = RECONVERT_DEBOUNCE_MS;   /* silent */
 	}
+	/* fixes1135 -- structural mutation resets the cosmetic-suppression
+	 * counter so the page can converge after the animation stops. */
+	if (!macos9_reconvert_kind_is_cosmetic(kind))
+		g_consecutive_cosmetic = 0;
 
 	/* R1.4 — start the batch clock on the first mark of a batch. A
 	 * non-zero tick means a batch is in flight, so later marks in the
