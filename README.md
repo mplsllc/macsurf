@@ -31,7 +31,7 @@ A tested build on [**macsurf.org**](https://macsurf.org), free for everyone, wit
 
 ### ⭐ Weekly, for supporters
 
-In-progress builds land in **Beta-Box** every week, ahead of every stable release, with dev notes along the way.
+In-progress builds land in **Beta-Box** ahead of every stable release, with dev notes along the way.
 
 [**Become a supporter →**](https://github.com/sponsors/mplsllc)
 
@@ -45,7 +45,7 @@ In-progress builds land in **Beta-Box** every week, ahead of every stable releas
 <p align="center">
   <a href="https://ko-fi.com/macsurf" target="_blank"><img src="https://img.shields.io/badge/Ko--fi-Support-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white" alt="Support on Ko-fi" height="40"></a>
   &nbsp;
-  <a href="https://www.patreon.com/cw/MacSurf" target="_blank"><img src="https://img.shields.io/badge/Patreon-Support-FF424D?style=for-the-badge&logo=patreon&logoColor=white" alt="Support on Patreon" height="40"></a>
+  <a href="https://www.patreon.com/MacSurf" target="_blank"><img src="https://img.shields.io/badge/Patreon-Support-FF424D?style=for-the-badge&logo=patreon&logoColor=white" alt="Support on Patreon" height="40"></a>
   &nbsp;
   <a href="https://github.com/sponsors/mplsllc" target="_blank"><img src="https://img.shields.io/badge/GitHub-Sponsor-DB61A2?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="Sponsor on GitHub" height="40"></a>
 </p>
@@ -54,7 +54,7 @@ In-progress builds land in **Beta-Box** every week, ahead of every stable releas
 <p align="center">
   <a href="https://discord.gg/mrwZK8zHr2" target="_blank"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join our Discord" height="40"></a>
   &nbsp;
-  <a href="https://bsky.app/profile/macsurfos9.bsky.social" target="_blank"><img src="https://img.shields.io/badge/Bluesky-Follow-0285FF?style=for-the-badge&logo=bluesky&logoColor=white" alt="Follow on Bluesky" height="40"></a>
+  <a href="https://bsky.app/profile/mp.ls" target="_blank"><img src="https://img.shields.io/badge/Bluesky-Follow-0285FF?style=for-the-badge&logo=bluesky&logoColor=white" alt="Follow on Bluesky" height="40"></a>
 </p>
 
 <p align="center"><strong>Thanks to our supporters:</strong> Shlooom, Kestral, Mothra (Patreon) &middot; kilgeist, Turuun, Rogue (Ko-Fi)</p>
