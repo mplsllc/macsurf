@@ -1854,8 +1854,75 @@ mouse_action_drag_none(html_content *html,
 		 * preventDefault answer: fire_dom_event returns false when the
 		 * event was cancelled. Now that addEventListener registers with
 		 * libdom (macsurf_qjs.c), this reaches real JS handlers. */
-		js_default_prevented = fire_generic_dom_event(
-			corestring_dom_click, mas.node, true, true) ? 0 : 1;
+		/* fixes1139 DIAG — WHY THE CLICK DID NOTHING.
+		 *
+		 * 68kmla's "Post thread" is not a plain link: XenForo renders
+		 * <a href="..." data-xf-click="overlay"> and binds ONE delegated
+		 * click listener on document that matches the attribute, calls
+		 * preventDefault, and opens an AJAX overlay. Three different
+		 * failures look identical from the outside (nothing happens):
+		 *
+		 *   live=0            -> no click listener registered at all
+		 *   live=1 prevented=0 -> the listener ran but did not match this
+		 *                         node, so XF never claimed the click
+		 *   live=1 prevented=1 -> XF DID claim it; the overlay/AJAX step
+		 *                         is what failed, not the event routing
+		 *
+		 * The node's tag + href + data-xf-click are logged so the answer
+		 * is readable without a second round. LIFE-prefixed: the existing
+		 * `WORK click:` line above is dropped by the release log gate. */
+		{
+			int live_click = macsurf_qjs_event_type_live("click");
+			char tag[24];
+			char href[96];
+			char xfc[40];
+			tag[0] = href[0] = xfc[0] = '\0';
+			if (mas.node != NULL) {
+				dom_string *ds = NULL;
+				static dom_string *s_href = NULL;
+				static dom_string *s_xfc = NULL;
+				if (s_href == NULL)
+					(void) dom_string_create(
+						(const uint8_t *)"href", 4, &s_href);
+				if (s_xfc == NULL)
+					(void) dom_string_create(
+						(const uint8_t *)"data-xf-click",
+						13, &s_xfc);
+				if (dom_node_get_node_name(mas.node, &ds) == DOM_NO_ERR &&
+						ds != NULL) {
+					strncpy(tag, dom_string_data(ds),
+							sizeof tag - 1);
+					tag[sizeof tag - 1] = '\0';
+					dom_string_unref(ds);
+				}
+				ds = NULL;
+				if (s_href != NULL && dom_element_get_attribute(
+						(dom_element *)mas.node, s_href,
+						&ds) == DOM_NO_ERR && ds != NULL) {
+					strncpy(href, dom_string_data(ds),
+							sizeof href - 1);
+					href[sizeof href - 1] = '\0';
+					dom_string_unref(ds);
+				}
+				ds = NULL;
+				if (s_xfc != NULL && dom_element_get_attribute(
+						(dom_element *)mas.node, s_xfc,
+						&ds) == DOM_NO_ERR && ds != NULL) {
+					strncpy(xfc, dom_string_data(ds),
+							sizeof xfc - 1);
+					xfc[sizeof xfc - 1] = '\0';
+					dom_string_unref(ds);
+				}
+			}
+			js_default_prevented = fire_generic_dom_event(
+				corestring_dom_click, mas.node, true, true) ? 0 : 1;
+			macsurf_debug_log_writef(
+				"LIFE CLICK tag=%s live=%d prevented=%d xfclick=%s href=%s",
+				tag[0] ? tag : "(none)", live_click,
+				js_default_prevented,
+				xfc[0] ? xfc : "-",
+				href[0] ? href : "-");
+		}
 
 		/* mouseup follows click here rather than preceding it because this
 		 * frontend delivers CLICK as a single combined event -- there is no

@@ -4247,6 +4247,87 @@ static void html_reformat(struct content *c, int width, int height)
 		}
 	}
 
+	/* fixes1139 DIAG — THE GIANT EMPTY SPACE.
+	 *
+	 * Hardware, 68kmla: the document reports h=7750 while the visible content
+	 * (DIV.p-body) ends at y=4683 -- roughly 3000px of blank canvas below the
+	 * page, and the scrollbar scrolls into it. c->height comes from
+	 * layout->descendant_y1 just above, so ONE box is overhanging; the SPLIT
+	 * walk above answers the same question for the X axis and this is its Y
+	 * twin.
+	 *
+	 * Gate: the deepest box bottom is found first, then the walk names every
+	 * box whose own bottom edge lands in the last 15% of the document -- the
+	 * boxes that actually DEFINE the bottom. A page whose content genuinely
+	 * reaches its full height names its real last elements (cheap, one-shot);
+	 * a page with phantom space names the overhanging box directly.
+	 *
+	 * Iterative + bounded (no recursion, 256-deep stack, 14-line cap) so it
+	 * cannot blow the OS 9 stack. One-shot per navigation. */
+	if (layout != NULL && c->height > 0) {
+		static void *tall_dumped_c = NULL;
+		if ((void *)c != tall_dumped_c) {
+			struct box *stack[256];
+			int sp = 0;
+			int found = 0;
+			int deep_content = 0;
+			int cut;
+			/* Pass 1: deepest bottom of a box that CARRIES content
+			 * (text, or a replaced object/image). That is where the
+			 * page visibly ends. */
+			stack[sp++] = layout;
+			while (sp > 0) {
+				struct box *bx = stack[--sp];
+				struct box *ch;
+				if (bx == NULL) continue;
+				if ((bx->text != NULL || bx->object != NULL)) {
+					int bot = (int)bx->y + (int)bx->height;
+					if (bot > deep_content && bot < 1000000)
+						deep_content = bot;
+				}
+				for (ch = bx->children; ch != NULL && sp < 256;
+						ch = ch->next)
+					stack[sp++] = ch;
+			}
+			cut = (int)c->height - ((int)c->height / 7);
+			macsurf_debug_log_writef(
+				"LIFE TALL c_h=%d dy1=%d content_bottom=%d gap=%d",
+				(int)c->height, (int)layout->descendant_y1,
+				deep_content, (int)c->height - deep_content);
+			/* Pass 2: name the boxes defining the bottom. */
+			sp = 0;
+			stack[sp++] = layout;
+			while (sp > 0 && found < 14) {
+				struct box *bx = stack[--sp];
+				struct box *ch;
+				int bot;
+				if (bx == NULL) continue;
+				bot = (int)bx->y + (int)bx->height;
+				if (bot >= cut && bot < 1000000) {
+					char nm[64];
+					nm[0] = '\0';
+					if (bx->node != NULL)
+						html_pagemap_brief(bx->node, nm,
+								(int)sizeof nm);
+					macsurf_debug_log_writef(
+						"LIFE TALLBOX %s type=%d y=%d h=%d bot=%d dy1=%d txt=%d obj=%d kids=%d",
+						nm[0] ? nm : "(no node)",
+						(int)bx->type, (int)bx->y,
+						(int)bx->height, bot,
+						(int)bx->descendant_y1,
+						bx->text != NULL,
+						bx->object != NULL,
+						bx->children != NULL);
+					found++;
+				}
+				for (ch = bx->children; ch != NULL && sp < 256;
+						ch = ch->next)
+					stack[sp++] = ch;
+			}
+			tall_dumped_c = (void *)c;
+		}
+	}
+
 	/* fixes160a — SITE summary line. Emits one compact, grep-friendly
 	 * line per page reformat with the box-tree counters stashed at
 	 * box_convert time plus the just-computed content dimensions and
