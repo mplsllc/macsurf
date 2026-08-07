@@ -273,16 +273,12 @@ void macsurf_qjs_audit_reset(void)
 	g_evreg_audit = 0;
 	g_evmiss_audit = 0;
 	g_evfire_audit = 0;
-	/* fixes1092 — geometry-only audit, ON for this round, independent of
-	 * the other MACSURF_JS_AUDIT channels (which stay off — this page has
-	 * enough DOM/event traffic that the full audit would drown the budget
-	 * before slick's own height reads ever got logged). Answers the open
-	 * question from fixes1090b/1090c: is `.featured-slides div`'s height
-	 * read as settled or unsettled at the moment the theme script measures
-	 * it, and what does slick's own setPosition() read on the reconverts
-	 * the resize/load fire triggers. Revert to 0 once that's answered —
-	 * `LIFE geom` is a flushed write per call like every other audit line. */
-	g_geom_audit = 40;
+	/* fixes1092/fixes1136 — geometry audit OFF.  MACSURF_JS_GEOMETRY is
+	 * disabled (Option B) pending incremental layout; geometry reads return
+	 * undefined and the sync-flush infrastructure is dormant.  The audit
+	 * channel is harmless (it would emit zeros) but there is nothing to
+	 * audit.  Restore to 40+ when geometry is re-enabled. */
+	g_geom_audit = 0;
 #endif
 	/* fixes1039 — the WANT channel stays ON, independent of the audit.
 	 *

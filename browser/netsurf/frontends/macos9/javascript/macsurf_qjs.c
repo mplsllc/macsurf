@@ -161,10 +161,18 @@ double macsurf_qjs_get_now(void);
  * safely reflow still answers `undefined` -- never a fabricated number. That
  * was the standing condition on re-enabling this, and it is met.
  *
- * The switch stays here, and stays a switch. If this regresses, one define
- * turns it off without touching anything else. */
+ * The switch stays here, and stays a switch.
+ *
+ * fixes1136 (Option B, js-strategic-audit-2026-08-06): OFF.  Real geometry
+ * requires incremental layout -- without it the O(document) sync flush costs
+ * ~1.6s per measurement burst, pages with measure-then-mutate widgets (slick,
+ * dotdotdot) get 0.4% real answers, and JS consumes 96% of page-load time.
+ * Return undefined (the branch-2 / pre-fixes1011 shape) until incremental
+ * layout lands (MacSurf 4.0).  The entire sync-flush / settle-once / budget /
+ * guard / retry infrastructure stays in the binary and is re-enabled by
+ * flipping this one define back to 1. */
 #ifndef MACSURF_JS_GEOMETRY
-#define MACSURF_JS_GEOMETRY 1
+#define MACSURF_JS_GEOMETRY 0
 #endif
 /* fixes1108 (#265) — ON. Only macsurf_qjs_fire_scroll has a live call site
  * (window.c:509-510, the single scroll choke point: arrow keys, scrollbar
@@ -184,7 +192,10 @@ double macsurf_qjs_get_now(void);
 #endif
 
 #ifndef MACSURF_JS_TIMEOUT_MS
-#define MACSURF_JS_TIMEOUT_MS 0
+/* fixes1136 (Option B): 8s execution deadline.  A 400 MHz G3 can execute
+ * ~40-80 KB of JS in 8s -- enough for form validation and small widgets;
+ * not enough for 232 KB application bundles.  Set to 0 to disarm. */
+#define MACSURF_JS_TIMEOUT_MS 8000
 #endif
 #define QJS_SCRIPT_TIMEOUT_MS MACSURF_JS_TIMEOUT_MS
 /* fixes586 — timer/event callbacks get a shorter budget: a callback that
@@ -11212,7 +11223,10 @@ unsigned char js_exec(struct jsthread *thread,
 	 * the confusion this batch has been unwinding. Set MACSURF_JS_MAX_BYTES
 	 * to restore a ceiling. */
 #ifndef MACSURF_JS_MAX_BYTES
-#define MACSURF_JS_MAX_BYTES 0UL
+/* fixes1136 (Option B): 128 KB script size cap.  Rejects heavy application
+ * bundles while letting jQuery (~87 KB), slick (~42 KB), and other small
+ * enhancement scripts through.  Set to 0 to disarm. */
+#define MACSURF_JS_MAX_BYTES 131072UL
 #endif
 	if (MACSURF_JS_MAX_BYTES != 0UL && txtlen > MACSURF_JS_MAX_BYTES) {
 		/* fixes847 (#167 S1 census gap) — WORK-prefixed: this line was
@@ -11222,8 +11236,9 @@ unsigned char js_exec(struct jsthread *thread,
 		 * showing zero js activity of ANY kind on facebook.com could not
 		 * be told apart from "a bundle silently hit this cap" without
 		 * this being visible. */
-		macsurf_debug_log_writef("WORK js skip [%s len=%ld > 4MB]",
-			name ? name : "(anon)", (long)txtlen);
+		macsurf_debug_log_writef("WORK js skip [%s len=%ld > %ld]",
+			name ? name : "(anon)", (long)txtlen,
+			(long)MACSURF_JS_MAX_BYTES);
 		return 0;
 	}
 
