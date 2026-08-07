@@ -485,7 +485,12 @@ static long g_sync_r_busy     = 0;	/* html_reconvert refused, other     */
  * polls WaitNextEvent for Cmd-. every ~200ms between bytecodes, i.e. between
  * flushes (qjs_interrupt_handler), and the per-navigation reset bounds it to
  * one navigation's worth of cost. */
-#define MACOS9_SYNC_BUDGET_US 30000000L
+/* fixes1133 — raised from 30s to 120s. Hardware measured 19 priority flushes
+ * consuming 31s on hackaday (1.6s each); the budget was spent before slick's
+ * init ran, producing 1134 declines and stranding the measure/mutate cycle.
+ * 120s buys ~75 flushes — enough headroom for any real page without removing
+ * the safety valve entirely. Settle-once still limits to one flush per burst. */
+#define MACOS9_SYNC_BUDGET_US 120000000L
 
 void
 macos9_reconvert_sync_stats(long *flushes, long *declined, long *us)
