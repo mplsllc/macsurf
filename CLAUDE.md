@@ -1,6 +1,6 @@
-# ⚠️ READ THIS FIRST: MacSurf STATE (updated 2026-07-25)
+# ⚠️ READ THIS FIRST: MacSurf STATE (updated 2026-08-07)
 
-**Active branch is `3.0`, at ~fixes1039.** Shipped release is still **2.0** (`v2.0`,
+**Active branch is `master`, at ~fixes1136.** Shipped release is still **2.0** (`v2.0`,
 asset `MacSurf2.sit`); the tree is far ahead of it. Remotes are **origin + github only**.
 Delivery and testing are the **10.3 iMac ONLY** — `./forclaude/drop-to-imac.sh <fixnum>
 <paths...>`; the log lives at `/Projects/MacSurfBuilds/MacSurfData/MacSurf Debug.log`
@@ -15,90 +15,64 @@ immediately below is the current work and the most load-bearing part of this fil
 
 **GOTCHA (cost a 6582-error build):** `#include <Endian.h>` does NOT reach the SDK — `browser/libparserutils/src/utils/endian.h` is on an access path, HFS is **case-insensitive**, and `AlwaysSearchUserPaths=true` searches user paths first. It guards itself with `parserutils_endian_h_`, never `__ENDIAN__`, so the SDK header has never been reachable. Same class as the documented `sys/time.h` trap.
 
-# ⚠️ JAVASCRIPT STATE (updated 2026-07-25, branch `3.0`, ~fixes1039)
+# ⚠️ JAVASCRIPT STATE (updated 2026-08-07, fixes1136 — Option B)
 
-**The engine runs a full modern WordPress stack with ZERO JS exceptions.** Hardware,
-2026-07-25: hackaday.com front page + an article page + the cross-origin Jetpack comment
-iframe, all clean. jQuery 3.7.1, slick, dotdotdot, Typekit and the XenForo bundles all
-execute. **Do not open a rendering investigation by assuming a script threw** — check
-first; it almost certainly did not.
+**Geometry is OFF. Script limits are ON.** This is a strategic retreat per
+`docs/research/js-strategic-audit-2026-08-06.md`.  The engine (QuickJS) runs modern JS
+correctly, but real geometry requires incremental layout — without it, every DOM
+mutation costs O(document) (~1.6s), JS is 96% of load time, and measure-then-mutate
+widgets collapse pages.  Branch 2's fake-geometry approach was wrong-but-stable; real
+geometry on an architecture that can't answer is wrong-AND-destructive.
 
-**THE LESSON OF THIS BATCH: pages break on LYING ANSWERS, not missing APIs.**
+**The sync-flush infrastructure (~2,000 lines) is DORMANT, not deleted.** It is gated
+behind `MACSURF_JS_GEOMETRY` (now 0) and re-enabled by flipping that one define back
+to 1 — which is the correct thing to do when incremental layout lands (MacSurf 4.0).
+
+**Current defaults (fixes1136):**
+
+| Switch | Value | Effect |
+|---|---|---|
+| `MACSURF_JS_GEOMETRY` | **0 (OFF)** | All geometry reads return `undefined` |
+| `MACSURF_JS_VIEW_EVENTS` | 1 (ON) | Scroll/resize events dispatch |
+| `MACSURF_JS_FIRE_LOAD` | 1 (ON, in prefix) | `window.load` fires |
+| `MACSURF_JS_MAX_BYTES` | **131072 (128 KB)** | Scripts larger than 128 KB are skipped |
+| `MACSURF_JS_TIMEOUT_MS` | **8000 (8s)** | Scripts exceeding 8s are aborted |
+| `MACSURF_JS_AUDIT` | 0 (OFF) | Full audit channels silent |
+| `MACSURF_PAGEMAP` | 0 (OFF) | Per-section box-tree dump silent |
+
+**The harness forces all switches ON** (`-DMACSURF_JS_GEOMETRY=1 ...`) so the full
+geometry/sync-flush surface stays tested on Linux while the Mac ships quiesced.
+`make -C harness check-macdefault` compiles the Mac's actual configuration (switches
+OFF) to catch ordering breaks.
+
+**THE LESSON OF THE fixes998→1135 SPRINT: pages break on LYING ANSWERS, not missing APIs.**
 Libraries feature-detect around gaps. What they cannot defend against is a confident
-wrong answer. Every content-loss bug found in fixes1005→1031 was that shape, and the
-worst was ONE LINE:
+wrong answer — or a right answer that triggers an O(document) rebuild and exhausts a
+budget. Every content-loss bug in this range was that shape. The final lesson:
+**partial browser support is WORSE than none.** Branch 2's fake geometry was wrong but
+stable; master's real geometry on an architecture without incremental layout is wrong
+AND destructive. The 161 commits from fixes998→1135 produced no page that renders
+better than branch 2. The full post-mortem is at
+`docs/research/js-strategic-audit-2026-08-06.md`.
 
-- **`textContent = ""` left a phantom empty Text node** (fixes1031). DOM says a Text
-  node is created *only if the value is not the empty string*. jQuery's `buildFragment`
-  — behind `$(html)`, `.append(html)`, `.wrapInner()`, `.wrapAll()` — clears its scratch
-  fragment with exactly `fragment.textContent = ""`, so **every `jQuery(htmlString)`
-  returned one node too many, text node FIRST**. `wrapAll` takes `.eq(0)` as the wrapper,
-  got the text node, and moved the element's whole contents into something that cannot
-  hold children. hackaday's dotdotdot called `wrapInner()` on all 7 article entries;
-  every one reached the box tree with `kids=0`. **Days were spent measuring boxes that
-  had already been emptied.** #309.
-- Others of the same family: geometry answering a fabricated `0` (fixes1014/1016 → answer
-  `undefined`, which NaN-propagates into a no-op), `window load` never firing at all
-  (fixes1015), libdom visiting the event target **twice** (fixes1005, upstream bug).
+**The sync-flush infrastructure (~2,000 lines in `macos9_reconvert.c` +
+`macsurf_qjs.c`) is DORMANT, not deleted.** It is gated behind `MACSURF_JS_GEOMETRY`
+(now 0): `qjs_geometry_flush()` returns immediately, so `macos9_reconvert_flush_now()`
+never fires, and the budget/guard/retry/settle-once machinery stays in the binary but
+inert. Flip `MACSURF_JS_GEOMETRY` back to 1 to re-enable when incremental layout lands
+(MacSurf 4.0).
 
 **DIAGNOSTIC ORDER for "the page renders wrong" — cheapest first:**
 1. **Is the content even in the DOM?** `MACSURF_PAGEMAP` prints per-section
    `tag#id.class kids box y w h fs disp`. `kids=0` on a container means script deleted
-   it — stop looking at layout. This is what cracked #309 after everything else failed.
-2. **Run it locally.** `./harness/reconvert_harness --layout page.html page.css 993`
-   runs MacSurf's OWN parser + cascade + layout over any html/css pair and dumps the box
-   tree with computed display and font size. It proved the layout engine correct on the
-   exact page that looked broken.
-3. **Run the REAL bundle in the harness** (Test 45 does this with hackaday's own JS).
-   Do not ask for another hardware log to answer a question the harness can answer.
-4. Only then suspect CSS or layout.
-
-**PER-FEATURE QUIESCE SWITCHES (fixes1022) — all default OFF on the Mac:**
-`MACSURF_JS_GEOMETRY` (rect/metrics/computed-style), `MACSURF_JS_VIEW_EVENTS`
-(scroll/resize dispatch), `MACSURF_JS_FIRE_LOAD` (the window `load` event),
-`MACSURF_JS_AUDIT` (LIFE audit channels), `MACSURF_PAGEMAP`. **The harness Makefile
-forces them ON**, so the full surface stays tested on Linux while the Mac ships quiesced.
-`make -C harness check-macdefault` compiles the Mac's actual configuration — a
-switch-off-only break is invisible to a normal harness run (that shipped twice: fixes1022
-put defines below their uses, fixes1037 put a stub below its `#endif`).
-**Re-enable ONE per round.** Geometry must not return before the synchronous-layout pass
-(#265) or measure-then-mutate widgets damage pages again.
-
-**Why they exist:** fixes998→1015 turned on four capability classes with no hardware gate
-between them — all script limits off (998/999), the event model (1006/1008), real
-geometry (1011), and `window load` firing for the first time in the browser's history
-(1015). Individually defensible; together they let widgets run that had never run, and
-partial support made pages WORSE than none. See [[project_js_bigbang_regression]].
-
-**PERFORMANCE, measured 2026-07-25 (not guessed — three theories were wrong first):**
-`LIFE PERFACC` at NAV DONE gives `tls/net/parse/cascade/layout/paint/js` + reflows;
-`LIFE JSTIME` splits timer CPU out of the JS total. hackaday front page:
-**js=25.4s of a 31s load (96%)**, while cascade+layout+paint together are ~1.2s and
-reflows=8. Timer callbacks are only 0.6s of that — **it is top-level bundle execution**,
-not intervals spinning, not reconvert churn, not logging. The perf answer is therefore a
-per-script budget or bytecode caching. **NOTE: script size cap and execution deadline are
-both OFF** (fixes998/999, `MACSURF_JS_MAX_BYTES` / `MACSURF_JS_TIMEOUT_MS` both 0).
-
-**WHAT REAL PAGES ASK FOR THAT WE FAKE** — the `WANT` channel (fixes1039, always on) logs
-each: `matchMedia` (we answer **false to every query**, so every responsive branch takes
-the same path regardless of the real viewport — the top candidate), MutationObserver and
-ResizeObserver (`.observe` is a no-op, so a page waiting on one waits forever),
-IntersectionObserver (always intersecting). Also still open: `<script type="module">` is
-**silently dropped** in script.c with no log line at all.
-
-**DOM conformance is otherwise clean.** Harness Test 46 asserts 20 spec behaviours in
-counts, not booleans — textContent empty/non-empty, innerHTML empties and replaces,
-`insertBefore(node,null)` ≡ appendChild, append/remove return values, appendChild MOVES
-rather than copies, DocumentFragment inserts its children and is left empty, cloneNode
-shallow/deep, text-node traversal rules, removeChild clearing parentNode. All pass. The
-serializer is the known remaining hole: **`innerHTML` GET still returns `textContent`**
-and `outerHTML` is a synthesized string with no setter (#262).
-
-**Harness: 46 tests, ASan-clean.** Notables: Test 38 dispatches through the REAL libdom
-path (not `el.dispatchEvent`); Test 43 layout visibility; Test 45 the real dotdotdot
-plugin from hackaday's own bundle; Test 46 the conformance sweep. **Assert counts, never
-booleans** — the libdom double-fire hid for ~15 rounds because every test asked "did it
-fire" instead of "how many times".
+   it — stop looking at layout.
+2. **Is the page trying to run a heavy bundle?** The log shows `WORK js skip [name
+   len=N > 131072]` — if a site's core bundle exceeds 128 KB, the page is running
+   without its JS. That is often a feature (no carousels, no dynamic layout), but
+   may break login forms or navigation that depend on JS.
+3. **Run it locally.** `./harness/reconvert_harness --layout page.html page.css 993`
+4. **Run the REAL bundle in the harness.** Test 45 does this with hackaday's own JS.
+5. Only then suspect CSS or layout.
 
 **HARNESS TRAPS, all found the hard way in this batch:**
 - The harness force-includes no prefix file, so anything `macsurf_prefix.h` provides is
