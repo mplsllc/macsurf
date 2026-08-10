@@ -9892,6 +9892,19 @@ static void register_browser_globals(JSContext *ctx)
 			"g.CharacterData.prototype.__proto__=g.Node.prototype;"
 		"if(g.DocumentFragment&&g.DocumentFragment.prototype)"
 			"g.DocumentFragment.prototype.__proto__=g.Node.prototype;"
+		/* fixes1146 — Node type constants. XenForo core-compiled.js
+		 * accesses Node.ELEMENT_NODE during initialization; without
+		 * these every instanceof check and nodeType comparison that
+		 * uses the named constants throws. */
+		"g.Node.ELEMENT_NODE=1;"
+		"g.Node.ATTRIBUTE_NODE=2;"
+		"g.Node.TEXT_NODE=3;"
+		"g.Node.CDATA_SECTION_NODE=4;"
+		"g.Node.PROCESSING_INSTRUCTION_NODE=7;"
+		"g.Node.COMMENT_NODE=8;"
+		"g.Node.DOCUMENT_NODE=9;"
+		"g.Node.DOCUMENT_TYPE_NODE=10;"
+		"g.Node.DOCUMENT_FRAGMENT_NODE=11;"
 		"}"
 		"if(g.Element&&g.Element.prototype){"
 		"if(g.HTMLElement&&g.HTMLElement.prototype)"
