@@ -1273,6 +1273,9 @@ static void html_get_dimensions(html_content *htmlc)
 	htmlc->unit_len_ctx.viewport_width  = w;
 	htmlc->unit_len_ctx.viewport_height = h;
 	htmlc->unit_len_ctx.device_dpi = device_dpi;
+	macsurf_debug_log_writef(
+		"LIFE VPORT finish: w=%d h=%d",
+		(int)FIXTOINT(w), (int)FIXTOINT(h));
 
 	/** \todo Change nsoption font sizes to px. */
 	f_size = FDIV(FMUL(F_96, FDIV(INTTOFIX(nsoption_int(font_size)), F_10)), F_72);
@@ -4063,10 +4066,43 @@ static void html_reformat(struct content *c, int width, int height)
 
 	htmlc->reflowing = true;
 
-	htmlc->unit_len_ctx.viewport_width = css_unit_device2css_px(
-			INTTOFIX(width), htmlc->unit_len_ctx.device_dpi);
-	htmlc->unit_len_ctx.viewport_height = css_unit_device2css_px(
-			INTTOFIX(height), htmlc->unit_len_ctx.device_dpi);
+	/* fixes1150 — viewport_height must be the WINDOW height, not the
+		 * document height. The width/height params of html_reformat are the
+		 * available_width/available_height from the content struct, which
+		 * may be stale or set to the document dimensions. For viewport-
+		 * relative CSS units (vh, vw) to work correctly, we need the real
+		 * frontend viewport. */
+	#ifdef __MACOS9__
+		{
+			extern void macos9_frontend_viewport(int *vw, int *vh);
+			int vw = 0, vh = 0;
+			macos9_frontend_viewport(&vw, &vh);
+			if (vw > 0 && vh > 0) {
+				htmlc->unit_len_ctx.viewport_width =
+					css_unit_device2css_px(
+					INTTOFIX(vw),
+					htmlc->unit_len_ctx.device_dpi);
+				htmlc->unit_len_ctx.viewport_height =
+					css_unit_device2css_px(
+					INTTOFIX(vh),
+					htmlc->unit_len_ctx.device_dpi);
+			} else {
+				htmlc->unit_len_ctx.viewport_width =
+					css_unit_device2css_px(
+					INTTOFIX(width),
+					htmlc->unit_len_ctx.device_dpi);
+				htmlc->unit_len_ctx.viewport_height =
+					css_unit_device2css_px(
+					INTTOFIX(height),
+					htmlc->unit_len_ctx.device_dpi);
+			}
+		}
+	#else
+		htmlc->unit_len_ctx.viewport_width = css_unit_device2css_px(
+				INTTOFIX(width), htmlc->unit_len_ctx.device_dpi);
+		htmlc->unit_len_ctx.viewport_height = css_unit_device2css_px(
+				INTTOFIX(height), htmlc->unit_len_ctx.device_dpi);
+	#endif
 	htmlc->unit_len_ctx.root_style = htmlc->layout->style;
 
 	/* Collapse fix (Phase 1): force ONE tree-wide minmax recompute on the
