@@ -333,6 +333,21 @@ macos9_schedule(int t, void (*callback)(void *p), void *p)
 	return NSERROR_OK;
 }
 
+/* fixes1148 — check whether a (callback, p) pair is already queued,
+ * without modifying the queue. Used by the reconvert path to avoid
+ * rescheduling on every DOM mutation when the callback is already
+ * pending. */
+int macos9_sched_is_queued(void (*callback)(void *p), void *p)
+{
+	struct sched_entry *entry;
+
+	for (entry = sched_queue; entry != NULL; entry = entry->next) {
+		if (entry->callback == callback && entry->p == p)
+			return 1;
+	}
+	return 0;
+}
+
 bool
 macos9_schedule_run(void)
 {

@@ -973,16 +973,29 @@ macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 		g_first_mark_tick = (unsigned long) TickCount();
 
 	macos9_reconvert_pending_add(c, node, kind);
-	/* fixes421 — two crash vectors closed in html_reconvert:
-	 * (1) DOUBLE-BUFFER: old bctx deferred past dom_to_box so the re-cascade
-	 *     can share already-interned styles rather than free-then-reintern
-	 *     (the libcss arena UAF / 0x2710 crash).
-	 * (2) QUIESCE GUARD: html_reconvert bails with NSERROR_NEED_DATA while
-	 *     base.active > 0 so html_object_callback's pw pointer is never freed
-	 *     under it; macos9_reconvert_cb re-arms and retries.
-	 * fixes843 — a third vector closed: the OLD tree's text-node
-	 * dom_strings are now pinned across the teardown+rebuild window
-	 * (html_reconvert_pin_text_strings in html.c). */
-	(void) macos9_schedule(g_reconvert_debounce_ms, macos9_reconvert_cb,
-			NULL);
+	macos9_reconvert_pending_add(c, node, kind);
+	/* fixes1148 — DON'T reschedule if already queued.
+	 *
+	 * The old code called macos9_schedule() on EVERY mutation, which
+	 * sched_remove()'d the existing entry and re-inserted a new one at
+	 * now+debounce. A continuous mutation stream (job.php polling at
+	 * ~120 req/s) therefore pushed the reconvert out FOREVER — each
+	 * new mark reset the clock. The pending table already accumulates
+	 * all the work; when the FIRST schedule eventually fires, it
+	 * processes every slot. Rescheduling on each mark only DELAYS
+	 * the work without changing what work is done.
+	 *
+	 * Only the FIRST mark in a burst schedules; later marks just
+	 * add to the pending slots that the same callback will consume.
+	 * The debounce still escalates for cosmetic-only bursts, but
+	 * structural mutations reset it and the callback handles all
+	 * accumulated work at once. */
+	{
+		extern int macos9_sched_is_queued(
+			void (*callback)(void *p), void *p);
+		if (!macos9_sched_is_queued(macos9_reconvert_cb, NULL)) {
+			(void) macos9_schedule(g_reconvert_debounce_ms,
+					macos9_reconvert_cb, NULL);
+		}
+	}
 }

@@ -348,6 +348,10 @@ void macos9_poll(void);
 extern nserror macos9_schedule(int t, void (*callback)(void *p), void *p);
 /* fixes517: cancel ALL scheduled callbacks owned by p (universal anti-UAF). */
 extern void macos9_schedule_cancel_owner(void *p);
+/* fixes1148: check whether (callback, p) is already queued, without
+ * modifying the queue.  Used by the reconvert path to avoid
+ * rescheduling on every DOM mutation. */
+extern int macos9_sched_is_queued(void (*callback)(void *p), void *p);
 short macos9_font_id_from_style(const struct plot_font_style *fstyle);
 void  macos9_font_metric_probe_run(void); /* fixes144a -- diagnostic probe */
 void  macos9_font_vmetric_probe_run(void); /* fixes153 -- FontInfo dump */
