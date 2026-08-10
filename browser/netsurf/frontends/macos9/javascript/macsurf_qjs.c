@@ -10083,7 +10083,7 @@ static void register_browser_globals(JSContext *ctx)
 		"firstChild:function(){return null;},"
 		"lastChild:function(){return null;},"
 		"previousSibling:function(){return null;},"
-		"nextSibling:function(){return null;}};};}"
+		"nextSibling:function(){return null;}};return tw;};}"
 		"if(typeof g.document.createNodeIterator!=='function'){"
 		"g.document.createNodeIterator=function(root,whatToShow,filter){"
 		"return g.document.createTreeWalker(root,whatToShow,filter);};}"
