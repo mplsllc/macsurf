@@ -10280,6 +10280,49 @@ static void register_browser_globals(JSContext *ctx)
 		JS_FreeValue(ctx, node);
 	}
 
+	/* fixes1147b — verify DOM constructors survived setup + add
+	 * XF compatibility aliases.  XF's minified code accesses
+	 * HTML_Element (underscore) and HTMLGElement; these are not
+	 * real spec names but the code tries instanceof checks on
+	 * them.  Emit a one-line census at context creation so the
+	 * hardware log confirms every constructor is callable. */
+	{
+		static const char *const ctor_names[] = {
+			"Node", "Element", "HTMLElement",
+			"HTMLDivElement", "HTMLSpanElement",
+			"HTMLInputElement", "HTMLTextAreaElement",
+			"HTMLButtonElement", "HTMLFormElement",
+			"HTMLAnchorElement", "HTMLImageElement",
+			NULL
+		};
+		int all_ok = 1;
+		const char *const *cn;
+		for (cn = ctor_names; *cn != NULL; cn++) {
+			JSValue cv = JS_GetPropertyStr(ctx, global, *cn);
+			int is_func = JS_IsFunction(ctx, cv);
+			if (!is_func) {
+				macsurf_debug_log_writef(
+					"LIFE CTOR MISS %s", *cn);
+				all_ok = 0;
+			}
+			JS_FreeValue(ctx, cv);
+		}
+		/* XF compatibility: HTML_Element alias */
+		{
+			JSValue html_el = JS_GetPropertyStr(ctx, global,
+				"HTMLElement");
+			if (JS_IsFunction(ctx, html_el)) {
+				JS_SetPropertyStr(ctx, global,
+					"HTML_Element", html_el);
+			}
+			JS_FreeValue(ctx, html_el);
+		}
+		if (all_ok) {
+			macsurf_debug_log_writef(
+				"LIFE CTOR census: all present");
+		}
+	}
+
 	/* R1.2 — the WANT probe goes in LAST: every shim block above runs its
 	 * own `typeof g.X` feature checks, and those would log their own
 	 * stubbed names into the census if the probe were live yet.  Page
