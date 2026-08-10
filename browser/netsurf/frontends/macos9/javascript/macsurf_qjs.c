@@ -9874,7 +9874,6 @@ static void register_browser_globals(JSContext *ctx)
 		"isSupported:true,version:'macsurf',"
 		"removed:[]};"
 		"}"
-		"}"
 		/* fixes1127 -- chain the family BELOW the wrapper class proto.
 		 * qjs_el_install_proto re-points each per-tag HTML* constructor's
 		 * .prototype.__proto__ at the wrapper class proto p (so a wrapper
