@@ -11405,19 +11405,41 @@ unsigned char js_exec(struct jsthread *thread,
  * the primary safety net.  Set to 0 to disarm. */
 #define MACSURF_JS_MAX_BYTES 262144UL
 #endif
-	if (MACSURF_JS_MAX_BYTES != 0UL && txtlen > MACSURF_JS_MAX_BYTES) {
-		/* fixes847 (#167 S1 census gap) — WORK-prefixed: this line was
-		 * plain macsurf_debug_log_writef, silently dropped by the
-		 * failures-only release filter (only WORK/NAV/FAIL/etc. survive
-		 * it — see the log-visibility-traps gotcha). A hardware log
-		 * showing zero js activity of ANY kind on facebook.com could not
-		 * be told apart from "a bundle silently hit this cap" without
-		 * this being visible. */
-		g_js_skip_count++;
-		macsurf_debug_log_writef("LIFE js skip [%s len=%ld > %ld]",
-			name ? name : "(anon)", (long)txtlen,
-			(long)MACSURF_JS_MAX_BYTES);
-		return 0;
+	/* fixes1143 — per-script size-cap bypass for essential bundles.
+	 * Editor bundles that exceed the cap are let through; the 30s
+	 * execution deadline bounds them instead. */
+	{
+		static const char *const bypass[] = {
+			"editor-compiled.js",
+			NULL
+		};
+		int cap_bypass = 0;
+		if (name != NULL) {
+			const char *const *bp;
+			for (bp = bypass; *bp != NULL; bp++) {
+				if (strstr(name, *bp) != NULL) {
+					cap_bypass = 1;
+					break;
+				}
+			}
+		}
+		if (!cap_bypass &&
+		    MACSURF_JS_MAX_BYTES != 0UL &&
+		    txtlen > MACSURF_JS_MAX_BYTES) {
+			g_js_skip_count++;
+			macsurf_debug_log_writef(
+				"LIFE js skip [%s len=%ld > %ld]",
+				name ? name : "(anon)", (long)txtlen,
+				(long)MACSURF_JS_MAX_BYTES);
+			return 0;
+		}
+		if (cap_bypass &&
+		    MACSURF_JS_MAX_BYTES != 0UL &&
+		    txtlen > MACSURF_JS_MAX_BYTES) {
+			macsurf_debug_log_writef(
+				"LIFE js bypass [%s len=%ld]",
+				name ? name : "(anon)", (long)txtlen);
+		}
 	}
 
 	/* fixes523 DIAGNOSTIC: fingerprint the exact bytes handed to QuickJS so
