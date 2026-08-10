@@ -14,6 +14,10 @@
   <em>MacSurf 2.0.5 on a Power Mac G3 iMac, rendering <a href="https://hackaday.com/">hackaday.com</a> at full desktop width over native HTTPS.</em>
 </p>
 
+<p align="center">
+  <strong><a href="https://www.patreon.com/MacSurf/posts/macsurf-state-of-166060679">📋 State of MacSurf — read the full story</a></strong>
+</p>
+
 ---
 
 <table>
