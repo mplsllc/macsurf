@@ -9852,6 +9852,17 @@ static void register_browser_globals(JSContext *ctx)
 		"g[names[i]]=function(){};"
 		"}"
 		"}"
+		/* fixes1144 — NodeFilter constants. Froala editor 4.2.1
+		 * accesses NodeFilter.SHOW_TEXT in its TreeWalker init;
+		 * NodeFilter must be an object with the spec's constant
+		 * values, not a constructor stub. */
+		"if(typeof g.NodeFilter==='undefined'){"
+		"g.NodeFilter={FILTER_ACCEPT:1,FILTER_REJECT:2,FILTER_SKIP:3,"
+		"SHOW_ALL:-1,SHOW_ELEMENT:1,SHOW_ATTRIBUTE:2,SHOW_TEXT:4,"
+		"SHOW_CDATA_SECTION:8,SHOW_PROCESSING_INSTRUCTION:64,"
+		"SHOW_COMMENT:128,SHOW_DOCUMENT:256,"
+		"SHOW_DOCUMENT_TYPE:512,SHOW_DOCUMENT_FRAGMENT:1024};"
+		"}"
 		/* fixes1127 -- chain the family BELOW the wrapper class proto.
 		 * qjs_el_install_proto re-points each per-tag HTML* constructor's
 		 * .prototype.__proto__ at the wrapper class proto p (so a wrapper
