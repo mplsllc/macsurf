@@ -174,6 +174,13 @@ double macsurf_qjs_get_now(void);
 #ifndef MACSURF_JS_GEOMETRY
 #define MACSURF_JS_GEOMETRY 0
 #endif
+/* fixes1141 — AUDIT ON for the hardware baseline round. Enables per-script
+ * timing, failure reasons, audit budgets, and the LIFE js done ok lines.
+ * The counters (g_js_skip_count, g_js_timeout_count) always increment
+ * regardless of this switch; this gates only the log emissions. */
+#ifndef MACSURF_JS_AUDIT
+#define MACSURF_JS_AUDIT 1
+#endif
 /* fixes1108 (#265) — ON. Only macsurf_qjs_fire_scroll has a live call site
  * (window.c:509-510, the single scroll choke point: arrow keys, scrollbar
  * drag, core set_scroll, End, window.scrollTo all route through it). It
@@ -299,6 +306,7 @@ static int qjs_interrupt_handler(JSRuntime *rt, void *opaque)
 	/* Deadline check runs EVERY invocation (cheap): a runaway script is
 	 * still bounded to the ~20s eval timeout regardless of the WNE throttle. */
 	if (g_qjs_script_deadline != 0.0 && now > g_qjs_script_deadline) {
+		g_js_timeout_count++;
 		macsurf_debug_log_writef("qjs: DEADLINE hit, aborting script");
 		return 1;
 	}
@@ -1556,6 +1564,8 @@ int g_perf_gc_armed = 0;  /* exported for audit */
 long g_js_exec_count = 0;  /* exported for audit */
 long g_js_exec_bytes = 0;  /* exported for audit */
 long g_js_exec_fail  = 0;  /* exported for audit */
+long g_js_skip_count = 0;  /* fixes1141 — scripts skipped (size cap) */
+long g_js_timeout_count = 0;  /* fixes1141 — scripts aborted (deadline) */
 
 /* R1.3 — per-script census backing the `LIFE SCRIPT CENSUS` lines.  Written
  * by qjs_census_note() (below), emitted and cleared by the page summary in
@@ -11393,7 +11403,8 @@ unsigned char js_exec(struct jsthread *thread,
 		 * showing zero js activity of ANY kind on facebook.com could not
 		 * be told apart from "a bundle silently hit this cap" without
 		 * this being visible. */
-		macsurf_debug_log_writef("WORK js skip [%s len=%ld > %ld]",
+		g_js_skip_count++;
+		macsurf_debug_log_writef("LIFE js skip [%s len=%ld > %ld]",
 			name ? name : "(anon)", (long)txtlen,
 			(long)MACSURF_JS_MAX_BYTES);
 		return 0;

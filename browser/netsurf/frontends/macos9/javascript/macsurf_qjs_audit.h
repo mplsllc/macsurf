@@ -81,6 +81,8 @@ extern int  g_pn_logged;
 extern long g_js_exec_count;
 extern long g_js_exec_bytes;
 extern long g_js_exec_fail;
+extern long g_js_skip_count;     /* fixes1141 — scripts skipped (size cap) */
+extern long g_js_timeout_count;  /* fixes1141 — scripts aborted (deadline) */
 
 /* R1.3 — per-script census, the `LIFE SCRIPT CENSUS` lines.
  *

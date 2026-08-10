@@ -386,9 +386,10 @@ void macsurf_qjs_page_js_summary(void)
 	node_l = s_reg_n_registered;
 
 	macsurf_debug_log_writef(
-		"LIFE JS PAGE: scripts=%ld bytes=%ld failed=%ld "
+		"LIFE JS PAGE: scripts=%ld bytes=%ld failed=%ld skipped=%ld timed_out=%ld "
 		"jquery=%d xf=%d doclisten=%d winlisten=%d nodelisten=%d",
 		g_js_exec_count, g_js_exec_bytes, g_js_exec_fail,
+		g_js_skip_count, g_js_timeout_count,
 		has_jq, has_xf, doc_l, win_l, node_l);
 
 	/* R1.3 — the per-script census: one LIFE SCRIPT CENSUS line per
