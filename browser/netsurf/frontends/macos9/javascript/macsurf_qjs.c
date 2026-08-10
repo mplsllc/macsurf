@@ -9863,6 +9863,18 @@ static void register_browser_globals(JSContext *ctx)
 		"SHOW_COMMENT:128,SHOW_DOCUMENT:256,"
 		"SHOW_DOCUMENT_TYPE:512,SHOW_DOCUMENT_FRAGMENT:1024};"
 		"}"
+		/* fixes1145 — DOMPurify stub. Froala 4.2.1 requires
+		 * window.DOMPurify.sanitize() for XSS sanitization before
+		 * enabling rich-text mode. Without it the editor degrades
+		 * to a plain textarea. On MacSurf, innerHTML already does
+		 * not execute scripts, so sanitize is a safe pass-through. */
+		"if(typeof g.DOMPurify==='undefined'){"
+		"g.DOMPurify={sanitize:function(d,c){return d||'';},"
+		"addHook:function(){},removeHook:function(){},"
+		"isSupported:true,version:'macsurf',"
+		"removed:[]};"
+		"}"
+		"}"
 		/* fixes1127 -- chain the family BELOW the wrapper class proto.
 		 * qjs_el_install_proto re-points each per-tag HTML* constructor's
 		 * .prototype.__proto__ at the wrapper class proto p (so a wrapper
