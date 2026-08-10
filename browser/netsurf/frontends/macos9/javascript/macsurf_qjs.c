@@ -10167,6 +10167,38 @@ static void register_browser_globals(JSContext *ctx)
 		"}catch(e){}"
 		"})();");
 
+	/* fixes1146 — ensure Node constants are set from C.  The JS-side
+	 * safe_eval above sets them inside `if(g.Node)`, but Node may be
+	 * undefined in timer callbacks or iframe contexts.  Setting them
+	 * here with the C API guarantees they survive regardless of how
+	 * the page accesses Node. */
+	{
+		JSValue node = JS_GetPropertyStr(ctx, global, "Node");
+		if (!JS_IsUndefined(node) && !JS_IsNull(node)) {
+			JS_SetPropertyStr(ctx, node,
+				"ELEMENT_NODE", JS_NewInt32(ctx, 1));
+			JS_SetPropertyStr(ctx, node,
+				"ATTRIBUTE_NODE", JS_NewInt32(ctx, 2));
+			JS_SetPropertyStr(ctx, node,
+				"TEXT_NODE", JS_NewInt32(ctx, 3));
+			JS_SetPropertyStr(ctx, node,
+				"CDATA_SECTION_NODE", JS_NewInt32(ctx, 4));
+			JS_SetPropertyStr(ctx, node,
+				"PROCESSING_INSTRUCTION_NODE",
+				JS_NewInt32(ctx, 7));
+			JS_SetPropertyStr(ctx, node,
+				"COMMENT_NODE", JS_NewInt32(ctx, 8));
+			JS_SetPropertyStr(ctx, node,
+				"DOCUMENT_NODE", JS_NewInt32(ctx, 9));
+			JS_SetPropertyStr(ctx, node,
+				"DOCUMENT_TYPE_NODE", JS_NewInt32(ctx, 10));
+			JS_SetPropertyStr(ctx, node,
+				"DOCUMENT_FRAGMENT_NODE",
+				JS_NewInt32(ctx, 11));
+		}
+		JS_FreeValue(ctx, node);
+	}
+
 	/* R1.2 — the WANT probe goes in LAST: every shim block above runs its
 	 * own `typeof g.X` feature checks, and those would log their own
 	 * stubbed names into the census if the probe were live yet.  Page
