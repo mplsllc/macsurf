@@ -2,7 +2,7 @@
   <img src="img/bannerlogo.png" alt="MacSurf" width="460">
 </p>
 
-<p"><strong>The modern web, on a 25-year-old Mac.</strong></p>
+<p><strong>The modern web, on a 25-year-old Mac.</strong></p>
 
 <p>
   A native web browser for Classic Mac OS 9 on PowerPC: real CSS3, modern JavaScript, and HTTPS, running on a G3 iMac. No proxy, no second machine.
