@@ -398,6 +398,21 @@ void macos9_run_spacing(const struct plot_font_style *fstyle,
  * the Carbon desk scrap (MacRoman, no UTF-8 conversion on this path). */
 void macos9_url_te_edit(struct gui_window *g, short edit_item);
 
+/* Preferences window: Apple menu item 2 ("Preferences...", Cmd-,).
+ * Must match the AppendMenu calls in main.c — About(1), Prefs(2),
+ * separator(3). */
+#define ITEM_APPLE_PREFS 2
+
+struct nsoption_s;
+/* Preferences (macos9_prefs.c): boot baseline + persistence + window. */
+void macos9_prefs_show(void);
+void macos9_prefs_apply_defaults(void);
+nserror macos9_prefs_set_defaults(struct nsoption_s *defs);
+void macos9_prefs_load(void);
+void macos9_prefs_save(void);
+const char *macos9_home_url(void);
+void macos9_prefs_apply_live(void);
+
 /* MACSURF_HOME_URL canonical definition is in macsurf_config.h.
  * Old frogfind default removed per fixes301. */
 #define MACSURF_URL_MAX 1024

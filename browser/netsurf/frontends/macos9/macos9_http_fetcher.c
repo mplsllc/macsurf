@@ -7,6 +7,7 @@
 #include "content/fetch.h"
 #include "content/fetchers.h"
 #include "content/urldb.h"	/* fixes367 (#167) — cookie jar: urldb_get_cookie */
+#include "utils/nsoption.h"	/* preferences: accept_cookies / do_not_track */
 #include "macos9_useragent.h"	/* fixes368 (#167) — per-host UA table */
 #include "macos9_blocklist.h"	/* fixes957 (#285) — tracker/ad blocklist (http side) */
 #include "macsurf_debug.h"
@@ -558,9 +559,25 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		ua = macos9_user_agent_for_host(host_z);
 		ua_var = strlen(ua);
 		cookie_hdr[0] = '\0';
-		cookie_str = (c->url != NULL) ? urldb_get_cookie(c->url, true) : NULL;
-		macos9_build_cookie_header(cookie_hdr, sizeof cookie_hdr, cookie_str);
-		if (cookie_str != NULL) free(cookie_str);
+		if (nsoption_bool(accept_cookies) && c->url != NULL) {
+			cookie_str = urldb_get_cookie(c->url, true);
+			macos9_build_cookie_header(cookie_hdr, sizeof cookie_hdr,
+				cookie_str);
+			if (cookie_str != NULL) free(cookie_str);
+		} else {
+			cookie_str = NULL;
+		}
+		/* preferences: Do Not Track. The core option exists but only
+		 * curl.c (not built) consumed it — this fetcher builds its
+		 * own request headers, so emit DNT: 1 here. Rides the
+		 * cookie slot: the request template's cookie %s is the only
+		 * optional privacy header in it, and the ck_var length
+		 * guard below is computed after this append. */
+		if (nsoption_bool(do_not_track)) {
+			size_t clen = strlen(cookie_hdr);
+			if (clen + 8 < sizeof cookie_hdr)
+				strcpy(cookie_hdr + clen, "DNT: 1\r\n");
+		}
 
 		ck_var = strlen(cookie_hdr);
 		/* fixes835 (#167 Facebook M1) — mirror of the HTTPS fetcher's
@@ -929,6 +946,9 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 		 * carries its session cookies into urldb. Mirrors curl.c. */
 		if(strncasecmp(p,"Set-Cookie:",11)==0) {
 			char *v=p+11; while(*v==' '||*v=='\t')v++;
+			/* preferences: accept_cookies master switch (the jar
+			 * is always wired, this gates what enters it). */
+			if (!nsoption_bool(accept_cookies)) continue;
 			fetch_set_cookie(c->parent, v);
 			/* fixes750 (#213) — a login POST that stores a Set-Cookie
 			 * establishes a session: force the redirect target fresh

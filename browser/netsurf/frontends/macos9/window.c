@@ -6,6 +6,7 @@
 #include "netsurf/types.h"
 #include "netsurf/window.h"
 #include "netsurf/browser_window.h"
+#include "utils/nsoption.h"    /* preferences: window_width/height */
 #include "macos9.h"
 #include "macsurf_config.h"
 #ifdef __MACOS9__
@@ -1220,7 +1221,7 @@ void macos9_window_forward(struct gui_window *g) { if(g&&g->bw&&browser_window_h
 extern int macsurf_http_skip_next_cache;
 void macos9_window_stop(struct gui_window *g) { if(g&&g->bw) { browser_window_stop(g->bw); macos9_window_update_button_states(g); } }  /* fixes724 */
 void macos9_window_reload(struct gui_window *g) { if(g&&g->bw) { macsurf_http_skip_next_cache = 1; browser_window_reload(g->bw, true); } }
-void macos9_window_home(struct gui_window *g) { macos9_window_navigate(g, MACSURF_HOME_URL); }
+void macos9_window_home(struct gui_window *g) { macos9_window_navigate(g, macos9_home_url()); }
 
 void macos9_window_update_button_states(struct gui_window *g) {
 #ifdef __MACOS9__
@@ -1356,6 +1357,13 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 		sh = (short)(sb.bottom - sb.top);
 		want_w = 1024;
 		want_h = 768;
+		/* preferences (macos9_prefs.c): user-set default new-window
+		 * size; 0 = the built-in 1024x768 default. Still clamped to
+		 * the screen below. */
+		if (nsoption_int(window_width) > 0)
+			want_w = (short)nsoption_int(window_width);
+		if (nsoption_int(window_height) > 0)
+			want_h = (short)nsoption_int(window_height);
 		/* fixes859 (#287) — left 40 -> 8 and the right margin 20 -> 8.
 		 * On the 1024x768 baseline this window used to open 964 wide, and
 		 * after the 15px scrollbar that left a 949px viewport -- confirmed
@@ -1476,7 +1484,7 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 		set_url_te_geometry(g->url_te, &b);   /* fixes756 (#229) wide destRect */
 		TEAutoView(true, g->url_te);          /* enable TESelView caret auto-scroll */
 		MS_LOG("BOOT te: pre TESetText");
-		TESetText(MACSURF_HOME_URL,(long)strlen(MACSURF_HOME_URL),g->url_te);
+		TESetText(macos9_home_url(),(long)strlen(macos9_home_url()),g->url_te);
 		MS_LOG("BOOT te: post TESetText");
 		TECalText(g->url_te);
 		MS_LOG("BOOT te: post TECalText");

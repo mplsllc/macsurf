@@ -27,6 +27,7 @@
 #include "content/fetch.h"
 #include "content/fetchers.h"
 #include "content/urldb.h"	/* fixes367 (#167) — cookie jar: urldb_get_cookie */
+#include "utils/nsoption.h"	/* preferences: accept_cookies / do_not_track */
 #include "macos9_useragent.h"	/* fixes368 (#167) — per-host UA table */
 #include "macos9_blocklist.h"
 #include "macos9_gzip.h"	/* fixes965 — streaming Content-Encoding: gzip */	/* fixes856 (#285) — tracker/ad blocklist */
@@ -2052,7 +2053,10 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 					macsurf_debug_log_writef(
 						"https: refused 'noscript' Set-Cookie "
 						"(we have JS) for %s", c->host);
-				} else {
+				} else if (nsoption_bool(accept_cookies)) {
+					/* preferences: accept_cookies master switch —
+					 * the jar is always wired, this gates what
+					 * enters it. */
 					fetch_set_cookie(c->parent, v);
 					/* fixes658 (#193) login cache-staleness fix. A login is a POST
 					 * whose response sets session cookies then 303/302-redirects to a
@@ -2585,7 +2589,10 @@ static int build_request(struct macos9_https_ctx *c)
 	char *cookie_str;
 	int   verifiable;      /* fixes835 (#167 M1) */
 	char  synth[512];      /* fixes835 — Sec-Fetch + Origin, built below */
-	cookie_str = (c->url != NULL) ? urldb_get_cookie(c->url, true) : NULL;
+	/* preferences: accept_cookies master switch — the jar is always
+	 * wired; this gates reading it into the request. */
+	cookie_str = (nsoption_bool(accept_cookies) && c->url != NULL)
+		? urldb_get_cookie(c->url, true) : NULL;
 	if (cookie_str != NULL) {
 		/* fixes378 — drop any stuck noscript=1 before it reaches FB. */
 		cookie_strip_noscript(cookie_str);
@@ -2608,6 +2615,15 @@ static int build_request(struct macos9_https_ctx *c)
 	}
 	macos9_build_cookie_header(cookie_hdr, sizeof cookie_hdr, cookie_str);
 	if (cookie_str != NULL) free(cookie_str);
+	/* preferences: Do Not Track — the core option exists but only
+	 * curl.c (not built) consumed it; this fetcher builds its own
+	 * request headers, so emit DNT: 1 here (rides the cookie slot,
+	 * which is the request template's only optional privacy header). */
+	if (nsoption_bool(do_not_track)) {
+		size_t clen = strlen(cookie_hdr);
+		if (clen + 8 < sizeof cookie_hdr)
+			strcpy(cookie_hdr + clen, "DNT: 1\r\n");
+	}
 	/* fixes368a (#167) — one request-summary line per fetch: the host, the
 	 * User-Agent we chose for it, and the Cookie: header size. The UA is the
 	 * key Facebook diagnostic — if FB serves the wrong page or 301-bounces,
