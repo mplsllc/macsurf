@@ -110,6 +110,7 @@ struct qjs_xhr_slot {
 	int status;
 	int redirect_hops;
 	int is_error;			/* network-level failure, not an HTTP status */
+	int beacon;			/* sendBeacon slot: no JS delivery, no ctx */
 };
 
 static struct qjs_xhr_slot s_xhr_arena[QJS_XHR_MAX];
@@ -287,6 +288,10 @@ xhr_deliver(void *p)
 	const char *ss = NULL;
 
 	if (s == NULL || !s->used) return;
+	/* sendBeacon slots are fire-and-forget: nothing to deliver, and no
+	 * JSValue/ctx to touch (the realm may be long gone). The fetch is
+	 * over, so just release the C-side allocations. */
+	if (s->beacon) { xhr_slot_wipe(s); return; }
 	ctx = s->ctx;
 	if (ctx == NULL) { xhr_slot_release(s); return; }
 
@@ -690,6 +695,114 @@ qjs_xhr_native_abort(JSContext *ctx, JSValueConst this_val,
 	return JS_UNDEFINED;
 }
 
+/* ---- navigator.sendBeacon: fire-and-forget POST ----
+ *
+ * Analytics (Google Analytics, gtag, etc.) call sendBeacon on page unload
+ * and the data was silently lost while it returned false. This is a real
+ * POST over the SAME slot arena + fetch_start() path as XHR, but with the
+ * delivery half removed: no JS callback ever fires, and the slot carries
+ * no ctx affinity so a navigation (macos9_js_fetch_flush) does NOT abort
+ * an in-flight beacon -- surviving unload is the entire point of the API.
+ * The slot simply wipes itself when the fetch terminates (xhr_deliver's
+ * beacon branch), including the redirect case (redirects ARE followed for
+ * beacons; a 301/302/303 downgrades POST to GET per xhr_apply_redirect_
+ * method, which is the fetch spec's behaviour). */
+static JSValue
+qjs_beacon_send(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	struct qjs_xhr_slot *s;
+	const char *url_c;
+	const char *body_c = NULL;
+	nsurl *url = NULL;
+	nserror err;
+
+	(void) this_val;
+
+	if (argc < 1) return JS_FALSE;
+
+	url_c = JS_ToCString(ctx, argv[0]);
+	if (url_c == NULL) return JS_FALSE;
+
+	/* Resolve against the document base, same as xhr's initial send
+	 * (fixes865): analytics targets are commonly root-relative. */
+	{
+		struct content *bc = qjs_get_content();
+		nsurl *base = NULL;
+		if (bc != NULL && bc->llcache != NULL) {
+			base = content_get_url(bc);	/* borrowed */
+		}
+		if (base != NULL) {
+			err = nsurl_join(base, url_c, &url);
+		} else {
+			err = nsurl_create(url_c, &url);
+		}
+	}
+	if (err != NSERROR_OK || url == NULL) {
+		JS_FreeCString(ctx, url_c);
+		return JS_FALSE;
+	}
+	/* sendBeacon only transports over http(s); any other scheme is an
+	 * invalid URL for it. */
+	{
+		const char *surl = nsurl_access(url);
+		if (surl == NULL ||
+		    (strncmp(surl, "http://", 7) != 0 &&
+		     strncmp(surl, "https://", 8) != 0)) {
+			nsurl_unref(url);
+			JS_FreeCString(ctx, url_c);
+			return JS_FALSE;
+		}
+	}
+
+	s = xhr_slot_alloc();
+	if (s == NULL) {
+		nsurl_unref(url);
+		JS_FreeCString(ctx, url_c);
+		macsurf_debug_log_writef("WORK beacon send: arena full, url=%s",
+				url_c);
+		return JS_FALSE;
+	}
+
+	s->beacon = 1;
+	s->ctx = NULL;			/* flush() skips beacons: keep flying */
+	s->xhr_obj = JS_UNDEFINED;
+	s->url = url;
+	strcpy(s->method, "POST");
+
+	if (argc > 1 && !JS_IsNull(argv[1]) && !JS_IsUndefined(argv[1])) {
+		body_c = JS_ToCString(ctx, argv[1]);
+		if (body_c != NULL) {
+			s->body_len = (long) strlen(body_c);
+			s->body = (char *) malloc((size_t) s->body_len + 1);
+			if (s->body != NULL) {
+				memcpy(s->body, body_c, (size_t) s->body_len + 1);
+			}
+			JS_FreeCString(ctx, body_c);
+		}
+	}
+
+	/* sendBeacon's default media type for a string body is text/plain.
+	 * strlen+1, not a hardcoded 24: "Content-Type: text/plain" is 25
+	 * chars, and a 24-byte malloc let strcpy write 2 bytes past the end
+	 * (caught by the harness ASan build). */
+	s->req_headers[0] = (char *) malloc(
+			strlen("Content-Type: text/plain") + 1);
+	if (s->req_headers[0] != NULL)
+		strcpy(s->req_headers[0], "Content-Type: text/plain");
+	s->req_headers[1] = NULL;
+
+	macsurf_debug_log_writef("WORK beacon send url=%s bytes=%ld",
+			url_c, (long) s->body_len);
+	JS_FreeCString(ctx, url_c);
+
+	if (xhr_start_fetch(s) != 0) {
+		xhr_slot_release(s);
+		return JS_FALSE;
+	}
+	return JS_TRUE;
+}
+
 void
 macos9_js_fetch_install(JSContext *ctx, JSValueConst global)
 {
@@ -699,6 +812,10 @@ macos9_js_fetch_install(JSContext *ctx, JSValueConst global)
 	JS_SetPropertyStr(ctx, global, "__xhrNativeAbort",
 			JS_NewCFunction(ctx, qjs_xhr_native_abort,
 					"__xhrNativeAbort", 1));
+	/* navigator.sendBeacon backend. */
+	JS_SetPropertyStr(ctx, global, "__beaconSend",
+			JS_NewCFunction(ctx, qjs_beacon_send,
+					"__beaconSend", 2));
 }
 
 void

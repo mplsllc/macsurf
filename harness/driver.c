@@ -1348,6 +1348,103 @@ int main(int argc, char **argv)
 	fprintf(stderr, "=== Test 5b PASS: t.html DOM-child chain works on Linux "
 			"=== \n");
 
+	/* --- Test 5c: navigator.sendBeacon (real fire-and-forget POST over
+	 * the XHR slot arena) + localStorage/sessionStorage. On Linux the
+	 * storage natives are compiled out (__storageLoad returns null,
+	 * __storageSave is a no-op), so this exercises the shim surface +
+	 * in-memory behaviour; the persistence write itself is __MACOS9__-
+	 * only. sendBeacon returns false here whenever no fetcher can carry
+	 * the request (no network in the harness) — the assertion is the
+	 * boolean contract + no-throw, and that every invalid URL answers
+	 * false. --- */
+	fprintf(stderr, "\n=== Test 5c: sendBeacon + storage surface ===\n");
+	{
+		const char *storage_js =
+			"(function(){"
+			"function assert(c,m){if(!c)throw new Error('ASSERT FAIL: '+m);}"
+			"assert(typeof navigator.sendBeacon==='function',"
+			"'sendBeacon is a function: '+typeof navigator.sendBeacon);"
+			"var r1=navigator.sendBeacon('https://example.invalid/beacon',"
+			"'a=1&b=2');"
+			"assert(typeof r1==='boolean','sendBeacon returns boolean, got '"
+			"+typeof r1);"
+			"var r2=navigator.sendBeacon('http://example.invalid/x','d');"
+			"assert(typeof r2==='boolean','sendBeacon http returns boolean');"
+			"var r3=navigator.sendBeacon('', 'x');"
+			"assert(r3===false,'sendBeacon empty url returns false');"
+			"var r4=navigator.sendBeacon('ftp://example.invalid/x');"
+			"assert(r4===false,'sendBeacon non-http scheme returns false');"
+			"var r5=navigator.sendBeacon();"
+			"assert(r5===false,'sendBeacon no args returns false');"
+			"assert(typeof localStorage==='object'&&localStorage!==null,"
+			"'localStorage exists');"
+			"assert(typeof localStorage.length==='number',"
+			"'localStorage.length is a number');"
+			"localStorage.clear();"
+			"assert(localStorage.length===0,'clear empties');"
+			"assert(localStorage.getItem('k')===null,"
+			"'getItem missing returns null');"
+			"localStorage.setItem('k','v1');"
+			"assert(localStorage.getItem('k')==='v1',"
+			"'setItem/getItem round-trip: '+localStorage.getItem('k'));"
+			"assert(localStorage.length===1,'length after set');"
+			"localStorage.setItem('k',42);"
+			"assert(localStorage.getItem('k')==='42',"
+			"'setItem coerces to string: '+localStorage.getItem('k'));"
+			"localStorage.setItem('k2','v2');"
+			"assert(localStorage.key(0)!==null&&localStorage.key(1)!==null,"
+			"'key(i) enumerates');"
+			"localStorage.removeItem('k');"
+			"assert(localStorage.getItem('k')===null&&"
+			"localStorage.length===1,'removeItem deletes');"
+			"localStorage.clear();"
+			"assert(localStorage.length===0,'clear after remove');"
+			"assert(localStorage._persist===true,"
+			"'localStorage persistence flag set');"
+			"assert(typeof __storageLoad==='function'&&"
+			"typeof __storageSave==='function',"
+			"'storage natives installed');"
+			"var ld=__storageLoad();"
+			"assert(ld===null||typeof ld==='string',"
+			"'__storageLoad returns null or string on Linux, got '"
+			"+typeof ld);"
+			"var saved='';"
+			"var realSave=__storageSave;"
+			"__storageSave=function(j){saved=j;return realSave(j);};"
+			"localStorage.setItem('spy','yes');"
+			"assert(saved.indexOf('\"spy\":\"yes\"')>=0,"
+			"'setItem triggers __storageSave with the JSON map: '+saved);"
+			"localStorage.removeItem('spy');"
+			"assert(saved.indexOf('\"spy\"')<0,"
+			"'removeItem triggers __storageSave: '+saved);"
+			"localStorage.clear();"
+			"assert(saved==='{}','clear saves empty map: '+saved);"
+			"__storageSave=realSave;"
+			"assert(typeof sessionStorage==='object',"
+			"'sessionStorage exists');"
+			"assert(sessionStorage._persist!==true,"
+			"'sessionStorage does NOT persist');"
+			"sessionStorage.setItem('s','t');"
+			"assert(sessionStorage.getItem('s')==='t',"
+			"'sessionStorage round-trip');"
+			"assert(localStorage.getItem('s')===null,"
+			"'local/session storage are independent');"
+			"sessionStorage.clear();"
+			"assert(sessionStorage.length===0,'sessionStorage clear');"
+			"})();";
+		unsigned char ok = js_exec(thread,
+				(const unsigned char *)storage_js,
+				strlen(storage_js), "driver-storage.js");
+		fprintf(stderr, "js_exec(storage+beacon) ok=%d\n", (int)ok);
+		if (!ok) {
+			fprintf(stderr, "FAIL: sendBeacon/storage test threw "
+					"(see the assert message above)\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 5c PASS: sendBeacon + storage surface "
+			"=== \n");
+
 	/* --- Test 6 (fixes854, #283): THE hackaday.com crash — a timer JSValue
 	 * must never be freed against a foreign JSRuntime.
 	 *

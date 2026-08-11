@@ -8644,6 +8644,247 @@ static JSValue qjs_work_log_xhr(JSContext *ctx, JSValueConst this_val,
 	return JS_UNDEFINED;
 }
 
+/* ------------------------------------------------------------------ */
+/* localStorage / sessionStorage persistence                            */
+/* ------------------------------------------------------------------ */
+
+/* localStorage/sessionStorage used to be pure in-memory JS objects, lost
+ * on every navigation (the realm is rebuilt per page load). localStorage
+ * now persists per origin to MacSurfData/LocalStorage/<l_<origin>_<hash>
+ * .json, one file per origin, holding the JSON key-value map. The _Storage
+ * shim (further down) calls __storageLoad when the realm is built and
+ * __storageSave after every setItem/removeItem/clear. sessionStorage
+ * deliberately stays in-memory: per spec it is per-tab, and with one
+ * realm per navigation it already behaves as a fresh session on each
+ * page load.
+ *
+ * Non-Mac builds (Linux harness / syntax check) compile the file I/O out:
+ * __storageLoad returns null and __storageSave is a no-op, so the harness
+ * keeps the old in-memory behaviour exactly. */
+
+#define MACSURF_STORAGE_MAX_BYTES (1024L * 1024L)
+#define MACSURF_STORAGE_ORIGIN_MAX 15   /* HFS filenames cap at 31 chars */
+
+/* FNV-1a, same family as the disk cache's URL hash. */
+static unsigned long
+macsurf_storage_hash(const char *s)
+{
+	unsigned long h = 2166136261UL;
+	while (*s != '\0') {
+		h ^= (unsigned char) *s;
+		h *= 16777619UL;
+		s++;
+	}
+	return h;
+}
+
+/* Build the HFS-safe per-origin filename for a page URL. The origin is
+ * scheme://host[:non-default-port]; characters that are not filename-safe
+ * are replaced, the name part is capped at MACSURF_STORAGE_ORIGIN_MAX
+ * chars, and an 8-hex hash suffix keeps distinct origins from colliding
+ * (the disk cache uses the same hash-for-filename pattern). Result is a
+ * Str63-style Pascal string: fname[0] = length, fname[1..] = bytes. */
+static void
+macsurf_storage_fname(const char *url, unsigned char *fname)
+{
+	const char *hex = "0123456789abcdef";
+	const char *p;
+	char tmp[31];
+	int i = 2;
+	int j;
+	unsigned long h;
+
+	tmp[0] = 'l';
+	tmp[1] = '_';
+	if (url != NULL) {
+		p = url;
+		if (strncmp(p, "https://", 8) == 0) p += 8;
+		else if (strncmp(p, "http://", 7) == 0) p += 7;
+		else if ((p = strstr(p, "://")) != NULL) p += 3;
+		while (*p != '\0' && *p != '/' && *p != '?' && *p != '#' &&
+		       i < MACSURF_STORAGE_ORIGIN_MAX + 2) {
+			char c = *p;
+			if (c >= 'A' && c <= 'Z') c = (char) (c - 'A' + 'a');
+			if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+			    c == '.' || c == '_' || c == '-') {
+				tmp[i++] = c;
+			} else {
+				tmp[i++] = '_';
+			}
+			p++;
+		}
+	}
+	tmp[i++] = '_';
+	h = macsurf_storage_hash((url != NULL) ? url : "");
+	for (j = 0; j < 8; j++) {
+		tmp[i + j] = hex[(h >> (28 - j * 4)) & 0xF];
+	}
+	i += 8;
+	tmp[i++] = '.';
+	tmp[i++] = 'j';
+	tmp[i++] = 's';
+	tmp[i++] = 'o';
+	tmp[i++] = 'n';
+	tmp[i] = '\0';
+	fname[0] = (unsigned char) i;
+	memcpy(fname + 1, tmp, (size_t) i);
+}
+
+#ifdef __MACOS9__
+
+/* Resolve (creating as needed) the per-origin storage file under
+ * MacSurfData/LocalStorage/, via the shared macos9_data_dir_get() helper
+ * (macos9_disk_cache.c) so every MacSurfData subfolder lives in the same
+ * place. Same FSMakeFSSpec/FSpCreate pattern as the disk cache's store. */
+static OSErr
+macsurf_storage_spec(const char *url, FSSpec *out)
+{
+	OSErr err;
+	short vRef;
+	long dirID;
+	unsigned char fname[32];
+
+	err = macos9_data_dir_get("LocalStorage", &vRef, &dirID);
+	if (err != noErr) {
+		macsurf_debug_log_writef("DIAG LocalStorage dir FAIL err=%d",
+				(int)err);
+		return err;
+	}
+	macsurf_storage_fname(url, fname);
+	err = FSMakeFSSpec(vRef, dirID, fname, out);
+	if (err == fnfErr) {
+		err = FSpCreate(out, '????', '????', smSystemScript);
+		if (err != noErr) return err;
+		err = FSMakeFSSpec(vRef, dirID, fname, out);
+	}
+	return err;
+}
+
+#endif /* __MACOS9__ */
+
+/* __storageLoad() -> JSON string of the current origin's saved map, or
+ * null when there is nothing persisted (or anything failed). Called by
+ * the _Storage shim at realm build; returning null is the no-data case,
+ * never an error. */
+static JSValue
+qjs_storage_load(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+#ifdef __MACOS9__
+	struct content *c;
+	const char *url;
+	FSSpec spec;
+	short ref = 0;
+	long eof = 0;
+	long count;
+	char *buf;
+	JSValue out;
+	OSErr err;
+
+	(void) this_val; (void) argc; (void) argv;
+
+	c = qjs_get_content();
+	if (c == NULL || c->llcache == NULL) return JS_NULL;
+	url = nsurl_access(content_get_url(c));
+	if (url == NULL) return JS_NULL;
+
+	err = macsurf_storage_spec(url, &spec);
+	if (err != noErr) return JS_NULL;
+	if (FSpOpenDF(&spec, fsRdPerm, &ref) != noErr) return JS_NULL;
+	if (GetEOF(ref, &eof) != noErr || eof <= 0 ||
+	    eof > MACSURF_STORAGE_MAX_BYTES) {
+		FSClose(ref);
+		return JS_NULL;
+	}
+	count = eof;
+	buf = (char *) malloc((size_t) count + 1);
+	if (buf == NULL) {
+		FSClose(ref);
+		return JS_NULL;
+	}
+	if (FSRead(ref, &count, buf) != noErr || count != eof) {
+		free(buf);
+		FSClose(ref);
+		return JS_NULL;
+	}
+	FSClose(ref);
+	buf[count] = '\0';
+	out = JS_NewStringLen(ctx, buf, (size_t) count);
+	free(buf);
+	return out;
+#else
+	(void) ctx; (void) this_val; (void) argc; (void) argv;
+	return JS_NULL;
+#endif
+}
+
+/* __storageSave(json) — rewrite the current origin's storage file with the
+ * given JSON. Overwrite-from-start + SetEOF truncation, so a shorter map
+ * never leaves stale trailing bytes that would break JSON.parse on load. */
+static JSValue
+qjs_storage_save(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+#ifdef __MACOS9__
+	struct content *c;
+	const char *url;
+	const char *s;
+	FSSpec spec;
+	short ref = 0;
+	long count;
+	OSErr err;
+
+	(void) this_val;
+
+	if (argc < 1 || !JS_IsString(argv[0])) return JS_UNDEFINED;
+	s = JS_ToCString(ctx, argv[0]);
+	if (s == NULL) return JS_UNDEFINED;
+
+	c = qjs_get_content();
+	if (c == NULL || c->llcache == NULL) {
+		JS_FreeCString(ctx, s);
+		return JS_UNDEFINED;
+	}
+	url = nsurl_access(content_get_url(c));
+	if (url == NULL) {
+		JS_FreeCString(ctx, s);
+		return JS_UNDEFINED;
+	}
+
+	count = (long) strlen(s);
+	if (count > MACSURF_STORAGE_MAX_BYTES) {
+		/* over the per-file cap: drop the write, like the cache's cap. */
+		JS_FreeCString(ctx, s);
+		return JS_UNDEFINED;
+	}
+
+	err = macsurf_storage_spec(url, &spec);
+	if (err != noErr) {
+		JS_FreeCString(ctx, s);
+		return JS_UNDEFINED;
+	}
+	if (FSpOpenDF(&spec, fsRdWrPerm, &ref) != noErr) {
+		JS_FreeCString(ctx, s);
+		return JS_UNDEFINED;
+	}
+	SetFPos(ref, fsFromStart, 0);
+	if (count > 0) {
+		if (FSWrite(ref, &count, s) != noErr) {
+			FSClose(ref);
+			JS_FreeCString(ctx, s);
+			return JS_UNDEFINED;
+		}
+	}
+	(void) SetEOF(ref, count);
+	FSClose(ref);
+	JS_FreeCString(ctx, s);
+	return JS_UNDEFINED;
+#else
+	(void) ctx; (void) this_val; (void) argc; (void) argv;
+	return JS_UNDEFINED;
+#endif
+}
+
 static void register_browser_globals(JSContext *ctx)
 {
 	JSValue global = JS_GetGlobalObject(ctx);
@@ -8696,6 +8937,11 @@ static void register_browser_globals(JSContext *ctx)
 	qjs_set_func(ctx, global, "__scrollTo",  qjs_js_scroll_to, 2);
 	qjs_set_func(ctx, global, "__gcsNative", qjs_get_computed_style, 1);
 	qjs_set_func(ctx, global, "__msLife",    qjs_ms_life, 1); /* fixes1015 */
+	/* localStorage persistence backend, consumed by the _Storage shim
+	 * below (register_browser_globals runs per navigation, so the saved
+	 * map is reloaded on every realm build). */
+	qjs_set_func(ctx, global, "__storageLoad", qjs_storage_load, 0);
+	qjs_set_func(ctx, global, "__storageSave", qjs_storage_save, 1);
 
 	/* --- alert / confirm / prompt --- */
 	qjs_set_func(ctx, global, "alert",   qjs_alert,   1);
@@ -9836,19 +10082,47 @@ static void register_browser_globals(JSContext *ctx)
 			"});"
 		"};");
 
-	/* --- localStorage / sessionStorage --- */
+	/* --- localStorage / sessionStorage ---
+	 * localStorage persists per origin: the saved JSON map is loaded via
+	 * __storageLoad at realm build and rewritten via __storageSave after
+	 * every mutation (setItem/removeItem/clear). sessionStorage stays
+	 * in-memory on purpose (per-spec it is per-tab, and with one realm per
+	 * navigation it reads as a fresh session on each page load). Non-Mac
+	 * builds have no __storage* natives, so the harness keeps the old
+	 * in-memory behaviour exactly. */
 	macsurf_qjs__safe_eval(ctx,
 		"function _Storage(){this._m={};}"
 		"_Storage.prototype.getItem=function(k){"
 			"return k in this._m?this._m[k]:null;};"
-		"_Storage.prototype.setItem=function(k,v){this._m[k]=String(v);};"
-		"_Storage.prototype.removeItem=function(k){delete this._m[k];};"
-		"_Storage.prototype.clear=function(){this._m={};};"
+		"_Storage.prototype.setItem=function(k,v){"
+			"this._m[k]=String(v);this._save();};"
+		"_Storage.prototype.removeItem=function(k){"
+			"delete this._m[k];this._save();};"
+		"_Storage.prototype.clear=function(){"
+			"this._m={};this._save();};"
+		"_Storage.prototype._save=function(){"
+			"if(!this._persist||typeof __storageSave!=='function')return;"
+			"try{__storageSave(JSON.stringify(this._m));}catch(e){}"
+		"};"
 		"_Storage.prototype.key=function(i){"
 			"var ks=Object.keys(this._m);return ks[i]||null;};"
 		"Object.defineProperty(_Storage.prototype,'length',{"
 			"get:function(){return Object.keys(this._m).length;}});"
 		"this.localStorage=new _Storage();"
+		"this.localStorage._persist=true;"
+		"if(typeof __storageLoad==='function'){"
+			"try{"
+				"var _ld=__storageLoad();"
+				"if(_ld){"
+					"var _o=JSON.parse(_ld);"
+					"var _k;"
+					"for(_k in _o){"
+						"if(Object.prototype.hasOwnProperty.call(_o,_k))"
+							"this.localStorage._m[_k]=_o[_k];"
+					"}"
+				"}"
+			"}catch(e){}"
+		"}"
 		"this.sessionStorage=new _Storage();");
 
 	/* --- URL / URLSearchParams --- */
@@ -9998,7 +10272,18 @@ static void register_browser_globals(JSContext *ctx)
 			"navigator.product='MacSurf';"
 			"navigator.productSub='20260531';"
 			"navigator.javaEnabled=function(){return false;};"
-			"navigator.sendBeacon=function(){return false;};"
+			"navigator.sendBeacon=function(url,data){"
+				"if(typeof url==='undefined'||url===null)return false;"
+				"var d='';"
+				"if(typeof data!=='undefined'&&data!==null){"
+					"try{d=String(data);}catch(e){return false;}"
+				"}"
+				"if(typeof __beaconSend==='function'){"
+					"try{return !!__beaconSend(String(url),d);}"
+					"catch(e){return false;}"
+				"}"
+				"return false;"
+			"};"
 		"}");
 
 	/* --- ES6+ polyfills (Array.from, Set, Map, Image, FB module system) --- */
@@ -10060,7 +10345,20 @@ static void register_browser_globals(JSContext *ctx)
 		"MImage.prototype.addEventListener=function(){};"
 		"g.Image=MImage;"
 		"}"
-		"if(typeof g.navigator!=='undefined'&&typeof g.navigator.sendBeacon!=='function'){g.navigator.sendBeacon=function(){return false;};}"
+		"if(typeof g.navigator!=='undefined'&&typeof g.navigator.sendBeacon!=='function'){"
+			"g.navigator.sendBeacon=function(url,data){"
+				"if(typeof url==='undefined'||url===null)return false;"
+				"var d='';"
+				"if(typeof data!=='undefined'&&data!==null){"
+					"try{d=String(data);}catch(e){return false;}"
+				"}"
+				"if(typeof g.__beaconSend==='function'){"
+					"try{return !!g.__beaconSend(String(url),d);}"
+					"catch(e){return false;}"
+				"}"
+				"return false;"
+			"};"
+		"}"
 		"if(typeof g.__d==='undefined'){"
 		"var registry={},cache={};"
 		"g.__d=function(name,deps,factory){"

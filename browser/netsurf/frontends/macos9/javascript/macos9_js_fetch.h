@@ -12,9 +12,9 @@
 
 #include "quickjs.h"
 
-/* Registers __xhrNativeSend / __xhrNativeAbort on `global`. Called once
- * from register_browser_globals() per realm (js_newthread rebuilds the
- * realm every navigation, so this runs again each time). */
+/* Registers __xhrNativeSend / __xhrNativeAbort / __beaconSend on `global`.
+ * Called once from register_browser_globals() per realm (js_newthread
+ * rebuilds the realm every navigation, so this runs again each time). */
 void macos9_js_fetch_install(JSContext *ctx, JSValueConst global);
 
 /* Aborts every in-flight XHR, frees its dup'd JSValue against old_ctx, and
