@@ -2132,25 +2132,13 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 				force_download, c->status);
 		}
 
-		/* fixes770 (#232) — MacSurf has no standalone text/plain content
-		 * handler (misc_stub.c stubs textplain_init), so a text/plain
-		 * response has no handler and NetSurf routes it to the
-		 * DOWNLOADER: an HN 429 "rate limited" page, robots.txt, or a
-		 * .txt file all dump to disk instead of displaying. Browsers
-		 * show text/plain INLINE. Until the real textplain.c handler is
-		 * ported (#233), relabel text/plain as text/html so it renders
-		 * through the HTML pipeline. Prose / error pages read fine;
-		 * embedded markup is imperfect (unescaped) — acceptable stopgap.
-		 * Skipped when a real attachment already forced a download. */
-		if (!force_download &&
-		    strncasecmp(c->mime, "text/plain", 10) == 0) {
-			strcpy(c->mime, "text/html");
-			force_html = 1;
-			macsurf_debug_log_writef(
-				"RECON MIME text/plain->text/html (no textplain "
-				"handler) host=%s path=%s st=%d",
-				c->host, c->path, c->status);
-		}
+		/* fixes770's text/plain->text/html relabel REMOVED (#233,
+		 * fixes1137): the real textplain.c handler is wired, so a
+		 * text/plain response keeps its own mime and the content
+		 * factory routes it to textplain instead of the downloader.
+		 * (hlcache's mimesniff still upgrades a body that looks like
+		 * HTML, per the WHATWG sniffing algorithm — standard browser
+		 * behaviour.) */
 
 		/* fixes979 — 304 Not Modified.
 		 *
@@ -2201,9 +2189,6 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 			if (force_download &&
 			    strncasecmp(line, "Content-Type:", 13) == 0) {
 				line = forced_ct;
-			} else if (force_html &&
-			    strncasecmp(line, "Content-Type:", 13) == 0) {
-				line = forced_html_ct;   /* fixes770 (#232) */
 			}
 			msg.type = FETCH_HEADER;
 			msg.data.header_or_data.buf = (const uint8_t *)line;
@@ -2281,8 +2266,8 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
  * these are the DECOMPRESSED bytes, which is what makes the cache correct --
  * a cached body must render identically to a fresh one, and storing the
  * compressed form would mean a cache hit replayed gzip bytes to a content
- * handler that never asked for them. Same reasoning as fixes770 relabelling
- * text/plain before the cache-eligibility check rather than after. */
+ * handler that never asked for them. (The fixes770 text/plain relabel that
+ * used to sit before the cache-eligibility check is gone — fixes1137/#233.) */
 static void hctx_deliver(struct macos9_https_ctx *c, const char *data, long len)
 {
 	fetch_msg msg;
@@ -3199,6 +3184,16 @@ static void hctx_poll(struct macos9_https_ctx *c)
 			if (written > 0) {
 				c->post_body_sent += written;
 				c->progress_ticks = now_ticks();
+				/* fixes1159 (#240) — the POST is on the wire:
+				 * refresh the per-host disk-cache bypass window
+				 * from here, so the deadline counts from
+				 * transmission rather than from when the fetch
+				 * queued (see macos9_disk_cache.c). */
+				if (c->url != NULL) {
+					const char *au = nsurl_access(c->url);
+					if (au != NULL)
+						macos9_cache_arm_post_bypass(au);
+				}
 			}
 		}
 		if (c->req_sent >= c->req_len &&
@@ -3491,6 +3486,18 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 		} else if (body != NULL) {
 			free(body);
 		}
+	}
+	/* fixes1159 (#240) — ANY POST (not just login) arms the per-host
+	 * disk-cache bypass window (macos9_disk_cache.c), so the fetch that
+	 * follows a post-redirect — or any same-origin GET in the next few
+	 * seconds — cannot be answered from a cache that predates the POST.
+	 * A forum edit flow POSTs then 302s back to the thread page; serving
+	 * the cached pre-edit copy hides the edit and the next edit
+	 * re-derives from the stale base (data loss). Re-armed on the wire
+	 * at the body send below, so the deadline counts from transmission. */
+	if (c->post_body != NULL) {
+		const char *au = nsurl_access(c->url);
+		if (au != NULL) macos9_cache_arm_post_bypass(au);
 	}
 
 	host_lwc = nsurl_get_component(u, NSURL_HOST);

@@ -191,6 +191,12 @@ check-c89:
 # false green once already, and implicit decls are their own CW8 hazard class.
 	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) $(INC) \
 		$(NS)/content/handlers/html/html.c && echo "   html.c OK"
+# fixes1137 — textplain.c joins the gate. It ships to CW8 as C89 exactly
+# like html.c (designated initializers converted to memset + member
+# assignment in textplain_init, the html_init pattern) and is edited by
+# this project now that #233 wires the real text/plain handler.
+	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) $(INC) \
+		$(NS)/content/handlers/text/textplain.c && echo "   textplain.c OK"
 
 # Kept as aliases: `make link` / `make objs` are in muscle memory and in older
 # notes. They now mean the same thing as the default goal instead of being the

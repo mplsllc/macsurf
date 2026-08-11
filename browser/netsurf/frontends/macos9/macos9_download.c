@@ -484,11 +484,10 @@ macos9_download_create(struct download_context *ctx,
 	total_ll = download_context_get_total_length(ctx);
 	/* fixes767 (#133) — a navigation became a DOWNLOAD instead of rendering.
 	 * Log the MIME (RECON survives the failures-only gate) so a "site X
-	 * downloaded instead of showing" report (e.g. Hacker News login) reveals
-	 * the exact content-type that had no handler. text/plain is the prime
-	 * suspect: MacSurf has no textplain handler (misc_stub.c), so any
-	 * text/plain response — including HN's rate-limit "Sorry." 429 — falls
-	 * through to here. */
+	 * downloaded instead of showing" report reveals the exact content-type
+	 * that had no handler. text/plain now renders inline via the real
+	 * textplain handler (#233, fixes1137); reaching here with a text/plain
+	 * mime means Content-Disposition: attachment forced it. */
 	macsurf_debug_log_writef("RECON DL mime=%s file=%s",
 		mime ? mime : "(null)", suggested ? suggested : "(null)");
 	if (total_ll > 0xFFFFFFFFu)
