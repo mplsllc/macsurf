@@ -670,6 +670,59 @@ int macos9_https_url_is_terminal(const char *url)
 	return terminal_url_check(url);
 }
 
+/* fixes1160 (#183) — is this URL's path an image resource?  Suffix-based,
+ * case-insensitive, checked against the path portion only (everything before
+ * '?' or '#').  Mirrors the MACOS9_RC_IMAGE set in macos9_http_fetcher.c's
+ * macos9_classify_url.  Used in hctx_fail to decide whether a failed first
+ * HTTPS attempt should be terminally failed (per-URL alt-text, no http
+ * fallback, no re-queue) instead of bounced through the wasteful
+ * http -> 301 -> https round-trip: under connection pressure a working
+ * host's image handshakes stall with zero bytes received, the http fallback
+ * 301s right back to https, and every image pays the round-trip. */
+static int macos9_url_is_image(const char *url)
+{
+	const char *dot = NULL;
+	const char *suffix;
+	int n, i, len;
+	char c4, c3, c2, c1;
+
+	if (url == NULL) return 0;
+	n = (int)strlen(url);
+	for (i = 0; i < n; i++) {
+		if (url[i] == '?' || url[i] == '#') { n = i; break; }
+	}
+	for (i = 0; i < n; i++) {
+		if (url[i] == '.') dot = url + i;
+	}
+	if (dot == NULL) return 0;
+	suffix = dot + 1;
+	len = n - (int)(suffix - url);
+	if (len < 3 || len > 4) return 0;
+
+	if (len == 4) {
+		c4 = (char)(suffix[0] | 0x20);
+		c3 = (char)(suffix[1] | 0x20);
+		c2 = (char)(suffix[2] | 0x20);
+		c1 = (char)(suffix[3] | 0x20);
+		if (c4=='j' && c3=='p' && c2=='e' && c1=='g') return 1; /* jpeg */
+		if (c4=='w' && c3=='e' && c2=='b' && c1=='p') return 1; /* webp */
+		if (c4=='t' && c3=='i' && c2=='f' && c1=='f') return 1; /* tiff */
+		if (c4=='a' && c3=='v' && c2=='i' && c1=='f') return 1; /* avif */
+		return 0;
+	}
+	c3 = (char)(suffix[0] | 0x20);
+	c2 = (char)(suffix[1] | 0x20);
+	c1 = (char)(suffix[2] | 0x20);
+	if (c3=='j' && c2=='p' && c1=='g') return 1; /* jpg */
+	if (c3=='p' && c2=='n' && c1=='g') return 1; /* png */
+	if (c3=='g' && c2=='i' && c1=='f') return 1; /* gif */
+	if (c3=='b' && c2=='m' && c1=='p') return 1; /* bmp */
+	if (c3=='i' && c2=='c' && c1=='o') return 1; /* ico */
+	if (c3=='s' && c2=='v' && c1=='g') return 1; /* svg */
+	if (c3=='t' && c2=='i' && c1=='f') return 1; /* tif */
+	return 0;
+}
+
 static void dead_host_add(const char *key)
 {
 	int i;
@@ -1476,46 +1529,82 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 			fetch_msg rm;
 			struct fetch *parent_save;
 			int n;
-			/* fixes262 — write the redirect URL into c->redirect_url
-			 * (the per-ctx field that the parse_headers 3xx path
-			 * already uses) instead of a stack buffer. NetSurf's
-			 * llcache holds the pointer past our return, so a stack
-			 * buffer goes dangling and NetSurf routes to
-			 * about:fetcherror instead of following the redirect. */
-			n = sprintf(c->redirect_url, "http://%s", u + 8);
-			if (n > 0 && (size_t)n < sizeof c->redirect_url) {
-				macsurf_debug_log_writef(
-					"https: auto-upgrade FALLBACK -> %s",
-					c->redirect_url);
-				/* fixes263 — NetSurf's llcache_fetch_redirect
-				 * reads fetch_http_code() and rejects redirects
-				 * whose code isn't a recognized 3xx (301/302/
-				 * 303/307/308). Default is 0 → "unsupported
-				 * redirect" → NSERROR_BAD_REDIRECT → the new
-				 * fetch never starts. Set 301 (Moved
-				 * Permanently) so llcache treats this as a
-				 * normal redirect: change method to GET if
-				 * we were posting, follow the new URL. */
-				(void)fetch_set_http_code(c->parent, 301);
-				rm.type = FETCH_REDIRECT;
-				rm.data.redirect = c->redirect_url;
-				fetch_send_callback(&rm, c->parent);
-				parent_save = c->parent;
-				c->parent = NULL; /* fixes447: null before OT teardown */
-				/* fixes448: dead-host the :443 key before the HTTP
-				 * fallback fires.  Without this, the chain
-				 * HTTPS-fail -> HTTP -> server 301 -> HTTPS loops
-				 * forever because the second HTTPS attempt is not
-				 * blocked.  Cert failures (X509_NOT_TRUSTED) are
-				 * session-permanent; success_host_check still guards
-				 * against poisoning hosts that actually worked. */
-				if (c->pool_key[0] != '\0') {
-					dead_host_add(c->pool_key);
+			/* fixes1160 (#183) — image subresources under connection
+			 * pressure: the first HTTPS attempt stalls at the handshake
+			 * with ZERO bytes received from the peer (ot_recv_calls==0
+			 * — the burst exhausted OT endpoint capacity, not a dead
+			 * host) and the no-progress watchdog times it out. Falling
+			 * back to http here is pure waste: a host that speaks HTTPS
+			 * 301s the http request straight back to https, so every
+			 * image pays failed-TLS + http-301 + second-TLS (seconds
+			 * each — 68kmla.org's post-thread images, where the host is
+			 * in success_hosts and is therefore never dead-hosted, so
+			 * EVERY image hits this path). Terminal-fail the IMAGE URL
+			 * instead: it renders alt text, fails once, and is never
+			 * retried or scheme-bounced (the terminal set makes any core
+			 * re-issue an instant fast-fail). Deliberately NOT applied to
+			 * documents/CSS/JS (losing a stylesheet is worse than a
+			 * round-trip), and NOT applied to failures where the peer
+			 * actually sent bytes (a genuinely http-only retro host's
+			 * mixed-content image must keep the http fallback). */
+			if (macos9_url_is_image(u) &&
+			    why != NULL &&
+			    strcmp(why, "https: connection timed out") == 0 &&
+			    diag.ot_recv_calls == 0) {
+				if (terminal_url_add(u)) {
+					macsurf_debug_log_writef(
+						"image: TERMINAL FAIL url=%s — "
+						"timeout 0 peer bytes, no http "
+						"fallback (round-trip)", u);
 				}
-				hctx_clear(c);
-				fetch_remove_from_queues(parent_save);
-				fetch_free(parent_save);
-				return;
+				/* skip the fallback: fall through to the dead-host
+				 * registration + FETCH_ERROR below. */
+			} else {
+				/* fixes262 — write the redirect URL into
+				 * c->redirect_url (the per-ctx field that the
+				 * parse_headers 3xx path already uses) instead of
+				 * a stack buffer. NetSurf's llcache holds the
+				 * pointer past our return, so a stack buffer goes
+				 * dangling and NetSurf routes to
+				 * about:fetcherror instead of following the
+				 * redirect. */
+				n = sprintf(c->redirect_url, "http://%s", u + 8);
+				if (n > 0 && (size_t)n < sizeof c->redirect_url) {
+					macsurf_debug_log_writef(
+						"https: auto-upgrade FALLBACK -> %s",
+						c->redirect_url);
+					/* fixes263 — NetSurf's llcache_fetch_redirect
+					 * reads fetch_http_code() and rejects redirects
+					 * whose code isn't a recognized 3xx (301/302/
+					 * 303/307/308). Default is 0 → "unsupported
+					 * redirect" → NSERROR_BAD_REDIRECT → the new
+					 * fetch never starts. Set 301 (Moved
+					 * Permanently) so llcache treats this as a
+					 * normal redirect: change method to GET if
+					 * we were posting, follow the new URL. */
+					(void)fetch_set_http_code(c->parent, 301);
+					rm.type = FETCH_REDIRECT;
+					rm.data.redirect = c->redirect_url;
+					fetch_send_callback(&rm, c->parent);
+					parent_save = c->parent;
+					c->parent = NULL; /* fixes447: null before OT
+					                   * teardown */
+					/* fixes448: dead-host the :443 key before the
+					 * HTTP fallback fires.  Without this, the chain
+					 * HTTPS-fail -> HTTP -> server 301 -> HTTPS
+					 * loops forever because the second HTTPS attempt
+					 * is not blocked.  Cert failures
+					 * (X509_NOT_TRUSTED) are session-permanent;
+					 * success_host_check still guards against
+					 * poisoning hosts that actually worked. */
+					if (c->pool_key[0] != '\0') {
+						dead_host_add(c->pool_key);
+					}
+					hctx_clear(c);
+					fetch_remove_from_queues(parent_save);
+					fetch_free(parent_save);
+					return;
+				}
 			}
 		}
 	}
