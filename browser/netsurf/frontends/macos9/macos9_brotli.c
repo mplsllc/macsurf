@@ -1010,6 +1010,10 @@ OR:
 #define brotli_reg_t uint32_t
 #endif
 
+/* CW8 (__MWERKS__) PPC is big-endian — define BEFORE the ladder. */
+#if defined(__MWERKS__)
+#define BROTLI_BUILD_BIG_ENDIAN 1
+#endif
 #if defined(BROTLI_BUILD_BIG_ENDIAN)
 #define BROTLI_BIG_ENDIAN 1
 #elif defined(BROTLI_BUILD_LITTLE_ENDIAN)
@@ -3401,10 +3405,6 @@ BROTLI_INTERNAL BROTLI_BOOL BrotliDecoderHuffmanTreeGroupInit(
  * bitstream reader. The harness on x86 Linux is unaffected: gcc defines
  * __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, which the ladder checks after
  * the BROTLI_BUILD_* pins. */
-#if defined(__MWERKS__)
-#define BROTLI_BUILD_BIG_ENDIAN 1
-#endif
-
 /* <<<< generated: internal sources (google/brotli), dependency order >>>>
 
 /* ========== common/constants.c ========== */
