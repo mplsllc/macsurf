@@ -431,12 +431,12 @@ static void prefs_banner(const Rect *content, const char *title)
 }
 
 static ControlRef prefs_ctrl(WindowRef win, const Rect *r,
-		const char *title, short proc)
+		const char *title, SInt16 proc)
 {
 	unsigned char pstr[256];
 	ControlRef c;
 	c_to_pstring(title, pstr);
-	if (NewControl(win, r, pstr, 1, 0, 0, 0, proc, 0) != noErr)
+	if (NewControl(win, r, pstr, 1, 0, 0, 0, (SInt16)proc, 0) != noErr)
 		return NULL;
 	return c;
 }

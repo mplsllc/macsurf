@@ -594,11 +594,20 @@ BROTLI_DEC_API void BrotliDecoderDestroyInstance(BrotliDecoderState* state);
  *          allocation failed, or @p decoded_buffer is not large enough;
  * @returns ::BROTLI_DECODER_RESULT_SUCCESS otherwise
  */
+#ifndef __MWERKS__
 BROTLI_DEC_API BrotliDecoderResult BrotliDecoderDecompress(
     size_t encoded_size,
     const uint8_t encoded_buffer[BROTLI_ARRAY_PARAM(encoded_size)],
     size_t* decoded_size,
     uint8_t decoded_buffer[BROTLI_ARRAY_PARAM(*decoded_size)]);
+#else
+/* CW8 C89 can't parse the VLA-syntax prototype — provide a simplified one. */
+BROTLI_DEC_API BrotliDecoderResult BrotliDecoderDecompress(
+    size_t encoded_size,
+    const uint8_t *encoded_buffer,
+    size_t *decoded_size,
+    uint8_t *decoded_buffer);
+#endif
 
 /**
  * Decompresses the input stream to the output stream.
