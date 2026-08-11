@@ -4105,6 +4105,11 @@ static void qjs_install_node_traversal(JSContext *ctx, JSValue obj)
 		args[0] = JS_DupValue(ctx, obj);
 		JS_Call(ctx, fn, JS_UNDEFINED, 1, args);
 		JS_FreeValue(ctx, args[0]);
+	} else {
+		const char *msg = JS_ToCString(ctx, fn);
+		macsurf_debug_log_writef(
+			"LIFE nav_src eval FAIL: %s", msg ? msg : "?");
+		if (msg) JS_FreeCString(ctx, msg);
 	}
 	JS_FreeValue(ctx, fn);
 }
