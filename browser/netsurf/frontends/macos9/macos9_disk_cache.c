@@ -61,6 +61,163 @@ extern long macos9_heap_max_block(void);
  * normal cache behaviour. */
 int macsurf_http_skip_next_cache = 0;
 
+/* ---- fixes1159 (#240): per-host POST-staleness window ---- */
+
+/* A POST makes the same-origin disk cache suspect: the classic forum flow
+ * POSTs an edit then 302-redirects back to the thread page, whose cached
+ * copy predates the edit. Serving that copy hides the edit, and the next
+ * edit then re-derives from the stale base (data loss). So every POST arms
+ * a short "no disk cache for this origin" window: host-scoped (the redirect
+ * GET to the same host must bypass), time-bounded (a few seconds — TLS
+ * handshakes and server-side edit processing still fit inside), refreshed
+ * on every POST send.
+ *
+ * Deliberately NOT the bare macsurf_http_skip_next_cache global: that
+ * one-shot is Reload / URL-bar / login semantics — global across ALL hosts
+ * and cleared by the first store. POST staleness needs per-origin scope
+ * that also survives the POST fetch's teardown (the 302 target is a NEW
+ * fetch in a NEW slot, so any state carried on the POST's own ctx would
+ * be lost), so it lives here as a small fixed table shared by both
+ * fetchers. */
+#define MACSURF_SKIPCACHE_WINDOW_TICKS (5 * 60) /* 5 s at 60 Hz */
+
+#define MACSURF_SKIPCACHE_ORIGINS 8
+
+struct macsurf_post_bypass {
+	unsigned long deadline;   /* TickCount() deadline; 0 = free slot */
+	char origin[64];          /* lowercased host[:non-default-port] */
+};
+static struct macsurf_post_bypass g_post_bypass[MACSURF_SKIPCACHE_ORIGINS];
+
+static unsigned long macsurf_cache_now(void)
+{
+#ifdef __MACOS9__
+	return (unsigned long)TickCount();
+#else
+	/* Non-Mac builds (Linux syntax check / harness): no TickCount, so a
+	 * monotonically increasing counter keeps the window logic alive. */
+	static unsigned long n = 0;
+	return ++n;
+#endif
+}
+
+/* Extract the origin key — "host[:port]", lowercased, scheme-default
+ * port dropped — from a URL string. Returns 1 on success, 0 when the
+ * URL has no usable host (about:/data:/scheme-less etc.). Keys match
+ * whenever a POST and its follow-up GET are to the same origin,
+ * regardless of explicit vs default port spelling. */
+static int macsurf_origin_from_url(const char *url, char *out, size_t cap)
+{
+	const char *p, *h, *e, *q;
+	size_t n;
+	int default_port;
+
+	if (url == NULL || cap == 0) return 0;
+	if (strncmp(url, "https://", 8) == 0) {
+		p = url + 8; default_port = 443;
+	} else if (strncmp(url, "http://", 7) == 0) {
+		p = url + 7; default_port = 80;
+	} else {
+		p = strstr(url, "://");
+		p = (p != NULL) ? p + 3 : url;
+		default_port = 0;
+	}
+	h = p;
+	e = h;
+	while (*e != '\0' && *e != '/' && *e != '?' && *e != '#' &&
+	       *e != ':') {
+		e++;
+	}
+	n = (size_t)(e - h);
+	if (n == 0) { out[0] = '\0'; return 0; }
+	if (n >= cap) n = cap - 1;   /* absurdly long host: truncate */
+	for (p = h; p < h + n; p++) {
+		out[p - h] = (char)((*p >= 'A' && *p <= 'Z') ?
+				(*p - 'A' + 'a') : *p);
+	}
+	out[n] = '\0';
+	/* Optional ":port" — kept only when it is not the scheme default,
+	 * so "http://h/x" and "http://h:80/x" key alike. */
+	if (e[0] == ':' && n + 8 < cap) {
+		long portv = 0;
+		size_t i;
+		q = e + 1;
+		while (*q >= '0' && *q <= '9' &&
+		       (size_t)(q - (e + 1)) < 5) {
+			q++;
+		}
+		if (q > e + 1) {
+			for (i = 0; i < (size_t)(q - (e + 1)); i++) {
+				portv = portv * 10 + (e[1 + i] - '0');
+			}
+			if (portv != (long)default_port) {
+				out[n++] = ':';
+				for (i = 0; i < (size_t)(q - (e + 1)); i++) {
+					out[n++] = e[1 + i];
+				}
+				out[n] = '\0';
+			}
+		}
+	}
+	return 1;
+}
+
+/* Arm (or refresh) the bypass window for the origin of url. Called by both
+ * fetchers when a POST fetch is set up and again when the POST body hits
+ * the wire, so the deadline counts from transmission, not from queuing. */
+void macos9_cache_arm_post_bypass(const char *url)
+{
+	char origin[64];
+	unsigned long deadline;
+	int i, slot = -1;
+
+	if (!macsurf_origin_from_url(url, origin, sizeof origin)) return;
+	deadline = macsurf_cache_now() + MACSURF_SKIPCACHE_WINDOW_TICKS;
+	for (i = 0; i < MACSURF_SKIPCACHE_ORIGINS; i++) {
+		if (g_post_bypass[i].deadline != 0 &&
+		    strcmp(g_post_bypass[i].origin, origin) == 0) {
+			g_post_bypass[i].deadline = deadline;
+			return;
+		}
+	}
+	for (i = 0; i < MACSURF_SKIPCACHE_ORIGINS; i++) {
+		if (g_post_bypass[i].deadline == 0) { slot = i; break; }
+	}
+	if (slot < 0) slot = 0;   /* table full: oldest slot wins */
+	strcpy(g_post_bypass[slot].origin, origin);
+	g_post_bypass[slot].deadline = deadline;
+}
+
+/* Returns 1 when an unexpired POST-bypass window covers url's origin. */
+int macos9_cache_post_bypass_active(const char *url)
+{
+	char origin[64];
+	unsigned long now;
+	int i;
+
+	if (!macsurf_origin_from_url(url, origin, sizeof origin)) return 0;
+	now = macsurf_cache_now();
+	for (i = 0; i < MACSURF_SKIPCACHE_ORIGINS; i++) {
+		if (g_post_bypass[i].deadline != 0 &&
+		    strcmp(g_post_bypass[i].origin, origin) == 0) {
+			/* Wrap-safe: the deadline is at most WINDOW ticks
+			 * ahead of the now it was computed from, so the
+			 * modular difference is <= WINDOW exactly while
+			 * inside the window (and astronomically larger
+			 * after it — 32-bit TickCount wraps every ~828 days
+			 * and a stale deadline near the wrap reads as far
+			 * in the future, which merely costs one extra
+			 * network fetch, never a wrong cache hit). */
+			if ((unsigned long)(g_post_bypass[i].deadline - now) <=
+			    (unsigned long)MACSURF_SKIPCACHE_WINDOW_TICKS) {
+				return 1;
+			}
+			g_post_bypass[i].deadline = 0;   /* expired */
+		}
+	}
+	return 0;
+}
+
 /* ---- file-local helpers ---- */
 
 /* FNV-1a 32-bit. Cheap, well-distributed, no allocation. */
@@ -781,6 +938,11 @@ int macos9_cache_lookup_hdrs(const char *url, char **body_out,
 
 	if (url == NULL) return 0;
 	if (macsurf_http_skip_next_cache) return 0;
+	/* fixes1159 (#240) — per-host POST window: a recent POST to this
+	 * origin means the disk copy may predate the edit; go to network.
+	 * Belt-and-braces behind the fetchers' own gate checks, so any
+	 * other lookup caller (webfont, SVG sprites) is covered too. */
+	if (macos9_cache_post_bypass_active(url)) return 0;
 
 	err = cache_dir_get(&vRef, &dirID);
 	if (err != noErr) return 0;

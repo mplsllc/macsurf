@@ -52,6 +52,26 @@
  * resume normal cache behaviour. Defined in macos9_disk_cache.c. */
 extern int macsurf_http_skip_next_cache;
 
+/* fixes1159 (#240) — per-host POST-staleness window. After ANY POST to a
+ * host, disk-cache GETs to that same origin are skipped for a few seconds,
+ * so the post-redirect page cannot come back from a cache that predates
+ * the edit (forum flows: POST edit -> 302 -> GET thread, where the cached
+ * thread is the pre-edit copy — serving it hides the edit and the next
+ * edit re-derives from the stale base, i.e. data loss). Host-scoped, so
+ * other origins' cached sub-resources are unaffected; time-bounded, so
+ * the collateral is a few fresh fetches; refreshed on every POST send.
+ *
+ * macsurf_http_skip_next_cache (above) is the older one-shot GLOBAL
+ * bypass for Reload / URL-bar nav / login and is deliberately unchanged;
+ * this is the POST-specific, host-scoped state.
+ *
+ * Both functions take a full URL and key on the origin parsed from it
+ * (lowercased host, scheme-default port dropped), so a POST on
+ * "https://host/thread" and the redirect GET on "https://host/thread?new"
+ * — or on the same host spelled with an explicit :443 — match. */
+void macos9_cache_arm_post_bypass(const char *url);
+int  macos9_cache_post_bypass_active(const char *url);
+
 /* fixes981 — cap on the persisted freshness/validator header block.
  * Cache-Control + ETag + Last-Modified + Expires + Date + Age is typically
  * 150-250 bytes; a response whose block would exceed this keeps whatever fit

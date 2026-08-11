@@ -393,7 +393,13 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 					"if-none-match:") &&
 				!macos9_hdr_has_ci(c->caller_hdrs,
 					"if-modified-since:") &&
-				macsurf_http_skip_next_cache == 0) {
+				macsurf_http_skip_next_cache == 0 &&
+				/* fixes1159 (#240) — a recent POST to this
+				 * origin arms a short disk-cache bypass so the
+				 * post-redirect GET serves the edited page, not
+				 * the stale pre-POST copy. See
+				 * macos9_disk_cache.c. */
+				!macos9_cache_post_bypass_active(url_str)) {
 			if (macos9_cache_lookup_hdrs(url_str,
 					&c->cache_hit_body,
 					&c->cache_hit_len,
@@ -694,6 +700,14 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		long sent = 0;
 		long want = (long)c->post_body_len;
 		long retries = 0;
+		/* fixes1159 (#240) — the POST is on the wire: refresh the
+		 * per-host disk-cache bypass window from here, so the deadline
+		 * counts from transmission rather than from when the fetch
+		 * queued (see macos9_disk_cache.c). */
+		if (c->url != NULL) {
+			const char *au = nsurl_access(c->url);
+			if (au != NULL) macos9_cache_arm_post_bypass(au);
+		}
 		for (;;) {
 			r = OTSnd(c->ep, c->post_body + sent, want - sent, 0);
 			if (r > 0) {
@@ -880,19 +894,10 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 		if(strncasecmp(p,"Content-Type:",13)==0) {
 			char *v=p+13; while(*v==' ')v++;
 			strncpy(c->mime,v,127); c->mime[127]=0;
-			/* fixes770 (#232) — no standalone text/plain content
-			 * handler, so a text/plain response downloads instead of
-			 * displaying. Browsers show it inline. Relabel as
-			 * text/html so it renders through the HTML pipeline
-			 * (mirrors the TLS fetcher). Substitute the forwarded
-			 * header too so NetSurf's content factory agrees. */
-			if(strncasecmp(c->mime,"text/plain",10)==0) {
-				strcpy(c->mime,"text/html");
-				p=(char*)"Content-Type: text/html; charset=utf-8";
-				macsurf_debug_log_writef(
-					"RECON MIME text/plain->text/html (http) "
-					"st=%d", c->status);
-			}
+			/* fixes770's text/plain->text/html relabel REMOVED
+			 * (#233, fixes1137): the real textplain.c handler is
+			 * wired, so text/plain goes to the content factory
+			 * as itself. */
 		}
 		/* fixes91 — parse Content-Length so we know when the body
 		 * ends without waiting for the server to close. */
@@ -1781,6 +1786,18 @@ static void *macos9_http_setup(struct fetch *p, struct nsurl *u, bool o, bool d,
 		} else if (body != NULL) {
 			free(body);
 		}
+	}
+	/* fixes1159 (#240) — ANY POST (not just login) arms the per-host
+	 * disk-cache bypass window (see macos9_disk_cache.c), so the fetch
+	 * that follows a post-redirect — or any same-origin GET in the next
+	 * few seconds — cannot be answered from a cache that predates the
+	 * POST. A forum edit flow POSTs then 302s back to the thread page;
+	 * serving the cached pre-edit copy hides the edit and the next edit
+	 * re-derives from the stale base (data loss). Re-armed on the wire
+	 * at the body send below, so the deadline counts from transmission. */
+	if (f_slots[slot_index].post_body != NULL) {
+		const char *au = nsurl_access(f_slots[slot_index].url);
+		if (au != NULL) macos9_cache_arm_post_bypass(au);
 	}
 	/* fetch_active_peak: high-water-mark across the page load.
 	 * +1 because this allocation hasn't been counted yet. */
