@@ -2,19 +2,19 @@
   <img src="img/bannerlogo.png" alt="MacSurf" width="460">
 </p>
 
-<p align="center"><strong>The modern web, on a 25-year-old Mac.</strong></p>
+<p"><strong>The modern web, on a 25-year-old Mac.</strong></p>
 
-<p align="center">
+<p>
   A native web browser for Classic Mac OS 9 on PowerPC: real CSS3, modern JavaScript, and HTTPS, running on a G3 iMac. No proxy, no second machine.
 </p>
 
-<p align="center">
+<p>
   <img src="screenshots/2.0.5-hackaday-imac.jpg" alt="MacSurf 2.0.5 rendering hackaday.com on a Power Macintosh G3 iMac" width="760">
   <br>
   <em>MacSurf 2.0.5 on a Power Mac G3 iMac, rendering <a href="https://hackaday.com/">hackaday.com</a> at full desktop width over native HTTPS.</em>
 </p>
 
-<p align="center">
+<p>
   <strong><a href="https://www.patreon.com/MacSurf/posts/macsurf-state-of-166060679">📋 State of MacSurf — read the full story</a></strong>
 </p>
 
@@ -22,9 +22,9 @@
 
 <table>
 <tr>
-<td width="50%" valign="top" align="center">
+<td width="50%" valign="top">
 
-<p align="center"><strong>Follow along</strong></p>
+<p><strong>Follow along</strong></p>
 <p align="center">
   <a href="https://discord.gg/mrwZK8zHr2" target="_blank"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join our Discord" height="40"></a>
   &nbsp;
