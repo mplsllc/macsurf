@@ -539,8 +539,8 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		size_t ck_var;
 		int    verifiable;   /* fixes835 (#167 M1) */
 		char   synth[512];   /* fixes835 — Sec-Fetch + Origin */
-		size_t xh_var;       /* fixes835 — strlen(caller_hdrs) for the guard */
-		size_t sf_var;       /* fixes835 — strlen(synth) for the guard */
+		size_t xh_var = 0; /* fixes835 — strlen(caller_hdrs) for the guard */
+		size_t sf_var = 0; /* fixes835 — strlen(synth) for the guard */
 		/* fixes721 — POST Content-Type: multipart (with boundary) for a
 		 * file upload, else the urlencoded default. Assigned HERE, after
 		 * all declarations, so CW8 C89 (decls-before-statements) is happy. */
