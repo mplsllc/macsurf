@@ -24,36 +24,6 @@
 <tr>
 <td width="50%" valign="top" align="center">
 
-### 🆓 Free monthly stable
-
-A tested build on [**macsurf.org**](https://macsurf.org), free for everyone, with real hardware testing behind it.
-
-**Next stable: August 22, 2026**
-
-</td>
-<td width="50%" valign="top" align="center">
-
-### ⭐ Weekly, for supporters
-
-In-progress builds land in **Beta-Box** ahead of every stable release, with dev notes along the way.
-
-[**Become a supporter →**](https://github.com/sponsors/mplsllc)
-
-</td>
-</tr>
-</table>
-
-<p align="center"><sub>Every project stays free as source. Build it yourself and you never need Beta-Box. You are paying for the build and the cadence, not for access.</sub></p>
-
-<p align="center"><strong>Support development</strong></p>
-<p align="center">
-  <a href="https://ko-fi.com/macsurf" target="_blank"><img src="https://img.shields.io/badge/Ko--fi-Support-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white" alt="Support on Ko-fi" height="40"></a>
-  &nbsp;
-  <a href="https://www.patreon.com/MacSurf" target="_blank"><img src="https://img.shields.io/badge/Patreon-Support-FF424D?style=for-the-badge&logo=patreon&logoColor=white" alt="Support on Patreon" height="40"></a>
-  &nbsp;
-  <a href="https://github.com/sponsors/mplsllc" target="_blank"><img src="https://img.shields.io/badge/GitHub-Sponsor-DB61A2?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="Sponsor on GitHub" height="40"></a>
-</p>
-
 <p align="center"><strong>Follow along</strong></p>
 <p align="center">
   <a href="https://discord.gg/mrwZK8zHr2" target="_blank"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join our Discord" height="40"></a>
