@@ -198,6 +198,12 @@ check-c89:
 # this project now that #233 wires the real text/plain handler.
 	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) $(INC) \
 		$(NS)/content/handlers/text/textplain.c && echo "   textplain.c OK"
+# fixes1167 — the WOFF2 reconstructor + vendored Brotli decoder ship to CW8
+# as C89 exactly like html.c (WOFF2 support). They join the same gate.
+	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) $(INC) \
+		build/macos9_woff2.c && echo "   macos9_woff2.c OK"
+	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) $(INC) \
+		build/macos9_brotli.c && echo "   macos9_brotli.c OK"
 
 # Kept as aliases: `make link` / `make objs` are in muscle memory and in older
 # notes. They now mean the same thing as the default goal instead of being the
