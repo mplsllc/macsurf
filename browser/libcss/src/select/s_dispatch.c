@@ -444,6 +444,10 @@ struct prop_table prop_dispatch[CSS_N_PROPERTIES] = {
 		0,
 	},
 	{
+		PROPERTY_FUNCS(row_gap),
+		0,
+	},
+	{
 		PROPERTY_FUNCS(column_rule_color),
 		0,
 	},

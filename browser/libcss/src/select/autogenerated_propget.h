@@ -3597,4 +3597,19 @@ static inline uint8_t get_z_index(const css_computed_style *style, int32_t
 #undef Z_INDEX_SHIFT
 #undef Z_INDEX_MASK
 
+/* row-gap: scalar tail, mirrors get_column_gap (same 7-bit encoding). */
+static inline uint8_t get_row_gap(const css_computed_style *style, css_fixed
+		*length, css_unit *unit)
+{
+	uint32_t bits = (uint32_t)style->i.row_gap_status;
+
+	/* 7bits: uuuuutt : unit | type */
+	if ((bits & 0x3) == CSS_COLUMN_GAP_SET) {
+		*length = style->i.row_gap;
+		*unit = (css_unit)(bits >> 2);
+	}
+
+	return (bits & 0x3);
+}
+
 #endif
