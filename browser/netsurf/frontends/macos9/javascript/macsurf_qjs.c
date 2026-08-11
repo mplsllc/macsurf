@@ -2789,12 +2789,8 @@ static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
 
 	(void) this_val; (void) magic;
 	el = (dom_element *) qjs_get_node(func_data[0]);
-	if (el == NULL || argc < 1) return JS_UNDEFINED;
-	if (g_qjs_document == NULL) {
-		macsurf_debug_log_writef(
-			"LIFE innerHTML: g_qjs_document is NULL, cannot parse");
+	if (el == NULL || argc < 1 || g_qjs_document == NULL)
 		return JS_UNDEFINED;
-	}
 	html_src = JS_ToCStringLen(ctx, &html_len, argv[0]);
 	if (html_src == NULL) return JS_UNDEFINED;
 
@@ -4105,11 +4101,6 @@ static void qjs_install_node_traversal(JSContext *ctx, JSValue obj)
 		args[0] = JS_DupValue(ctx, obj);
 		JS_Call(ctx, fn, JS_UNDEFINED, 1, args);
 		JS_FreeValue(ctx, args[0]);
-	} else {
-		const char *msg = JS_ToCString(ctx, fn);
-		macsurf_debug_log_writef(
-			"LIFE nav_src eval FAIL: %s", msg ? msg : "?");
-		if (msg) JS_FreeCString(ctx, msg);
 	}
 	JS_FreeValue(ctx, fn);
 }
@@ -10061,15 +10052,14 @@ static void register_browser_globals(JSContext *ctx)
 		 * descendants in preorder, respecting the whatToShow flags. */
 		"if(typeof g.document.createTreeWalker!=='function'){"
 		"g.document.createTreeWalker=function(root,whatToShow,filter){"
-		"var first=true;"
+		"var node=root, first=true;"
 		"return{"
 		"root:root,whatToShow:whatToShow||0,filter:filter||null,"
 		"currentNode:root,"
 		"nextNode:function(){"
 		"var n;"
 		"if(first){first=false;"
-		"if(whatToShow&1&&root.nodeType===1)n=root;"
-		"else if(whatToShow&4&&root.nodeType===3)n=root;"
+		"n=(whatToShow&4&&root.nodeType===3)?root:null;"
 		"if(!n)n=this._next(root);"
 		"if(n)this.currentNode=n;return n;"
 		"}else{"
@@ -10098,7 +10088,7 @@ static void register_browser_globals(JSContext *ctx)
 		"firstChild:function(){return null;},"
 		"lastChild:function(){return null;},"
 		"previousSibling:function(){return null;},"
-		"nextSibling:function(){return null;}};return tw;};}"
+		"nextSibling:function(){return null;}};};}"
 		"if(typeof g.document.createNodeIterator!=='function'){"
 		"g.document.createNodeIterator=function(root,whatToShow,filter){"
 		"return g.document.createTreeWalker(root,whatToShow,filter);};}"

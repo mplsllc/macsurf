@@ -770,9 +770,6 @@ macos9_reconvert_cb(void *p)
 			continue;
 		}
 
-		/* fixes925 — dump the census for the batch this reconvert answers. */
-		macos9_reconvert_census_dump();
-
 		/* fixes1135 — cosmetic-only batch: if we have already run
 		 * MAX_CONSECUTIVE cosmetic rebuilds in a row without a
 		 * structural mutation, suppress this one. The timer-driven
@@ -844,6 +841,13 @@ macos9_reconvert_cb(void *p)
 			else
 				g_consecutive_cosmetic = 0;
 		}
+
+		/* fixes925 — dump the census for the batch this reconvert answers.
+		 * fixes1158 — AFTER both fixes1135 readers: the dump zeroes
+		 * g_mut_counts, so it must not run before the cosmetic-suppression
+		 * check or the consecutive-cosmetic tracker, both of which decide
+		 * from those counts. */
+		macos9_reconvert_census_dump();
 	}
 
 	/* Overflow fallback: more distinct frames mutated than the table holds,
@@ -972,7 +976,6 @@ macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 	if (g_first_mark_tick == 0)
 		g_first_mark_tick = (unsigned long) TickCount();
 
-	macos9_reconvert_pending_add(c, node, kind);
 	macos9_reconvert_pending_add(c, node, kind);
 	/* fixes1148 — DON'T reschedule if already queued.
 	 *

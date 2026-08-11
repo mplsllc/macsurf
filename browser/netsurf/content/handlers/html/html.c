@@ -3544,7 +3544,37 @@ nserror html_reconvert(html_content *c)
 	 * precondition here returns, and it leaves the caller's debounce free to
 	 * retry once the context exists. The mutations are not lost -- the
 	 * initial conversion is still to come and builds the tree from the
-	 * mutated DOM. */
+	 * mutated DOM.
+	 *
+	 * fixes1158 — LAZY CREATION: if the base stylesheet has already landed
+	 * (stylesheets[STYLESHEET_BASE].sheet != NULL), create the selection
+	 * context HERE — the same html_css_new_selection_context call
+	 * finish_conversion uses — so the reconvert can proceed instead of
+	 * deferring for the rest of the load (hardware: every pre-finish
+	 * reconvert on hackaday deferred, 103/103). finish_conversion's own
+	 * select_ctx != NULL guard then skips its creation + dom_to_box exactly
+	 * as it does for a stylesheet re-entry, and the tree built by this
+	 * reconvert stands. Only while the base sheet is still in flight — or
+	 * when the creation itself fails — does the NEED_DATA defer below
+	 * remain. */
+	if (c->select_ctx == NULL &&
+	    c->stylesheets != NULL &&
+	    c->stylesheets[STYLESHEET_BASE].sheet != NULL) {
+		error = html_css_new_selection_context(c, &c->select_ctx);
+		if (error != NSERROR_OK) {
+			/* creation failed (OOM etc.) — same transient defer as
+			 * every other precondition; the debounced retry tries
+			 * again once the sheet state settles. */
+			macsurf_debug_log_writef(
+				"LIFE reconvert: lazy select_ctx create failed err=%d",
+				(int) error);
+			g_html_reconvert_depth--;	/* fixes1127 */
+			return NSERROR_NEED_DATA;
+		}
+		macsurf_debug_log_writef(
+			"LIFE reconvert: select_ctx created lazily (pre-"
+			"finish_conversion), proceeding");
+	}
 	if (c->select_ctx == NULL) {
 		macsurf_debug_log_writef(
 			"LIFE reconvert: defer — no select_ctx yet (pre-"
