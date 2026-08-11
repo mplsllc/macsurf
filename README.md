@@ -1,4 +1,4 @@
-<p align="center">
+<p>
   <img src="img/bannerlogo.png" alt="MacSurf" width="460">
 </p>
 
