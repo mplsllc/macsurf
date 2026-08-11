@@ -2677,15 +2677,21 @@ static inline css_error set_width(css_computed_style *style, uint8_t type,
 	
 	/* 7bits: uuuuutt : unit | type */
 	if ((orig_bits & 0x3) == CSS_WIDTH_SET) {
-		if ((orig_bits & 0x7c) >> 2 == CSS_UNIT_CALC) {
+		if (((orig_bits & 0x7c) >> 2 == CSS_UNIT_CALC) ||
+		    ((orig_bits & 0x7c) >> 2 == CSS_UNIT_MIN) ||
+		    ((orig_bits & 0x7c) >> 2 == CSS_UNIT_MAX) ||
+		    ((orig_bits & 0x7c) >> 2 == CSS_UNIT_CLAMP)) {
 			lwc_string_unref(style->i.width.calc);
 		}
 	}
-	
+
 	*bits = (*bits & ~WIDTH_MASK) | ((((uint32_t)type & 0x3) | (unit << 2))
 			<< WIDTH_SHIFT);
-	
-	if (unit == CSS_UNIT_CALC) {
+
+	if (unit == CSS_UNIT_CALC ||
+	    unit == CSS_UNIT_MIN ||
+	    unit == CSS_UNIT_MAX ||
+	    unit == CSS_UNIT_CLAMP) {
 		style->i.width.calc = lwc_string_ref(length.calc);
 	} else {
 		style->i.width.value = length.value;

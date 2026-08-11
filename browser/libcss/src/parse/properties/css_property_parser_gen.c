@@ -346,9 +346,9 @@ void output_calc(FILE *outputf, struct keyval *parseid, struct keyval_list *kvli
 
 	fprintf(outputf,
 		"if ((token->type == CSS_TOKEN_FUNCTION) && "
-		"(lwc_string_caseless_isequal(token->idata, c->strings[CALC], &match) == lwc_error_ok && match))"
+		"(css__calc_function(c, token) != CSS_CALC_FUNC_NONE))"
 		" {\n"
-		"\t\terror = css__parse_calc(c, vector, ctx, result, buildOPV(%s, 0, %s), %s);\n"
+		"\t\terror = css__parse_calc(c, vector, ctx, result, buildOPV(%s, 0, %s), %s, css__calc_function(c, token));\n"
 		"\t} else ",
 		parseid->val,
 		ckv->val,

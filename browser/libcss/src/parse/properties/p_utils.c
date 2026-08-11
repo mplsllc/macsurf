@@ -2051,11 +2051,72 @@ css__parse_calc_sum(css_language *c,
 }
 
 /* Documented in utils.h */
+enum css_calc_func_e css__calc_function(css_language *c,
+		const css_token *token)
+{
+	bool match;
+
+	if (token == NULL || token->type != CSS_TOKEN_FUNCTION) {
+		return CSS_CALC_FUNC_NONE;
+	}
+
+	if (lwc_string_caseless_isequal(token->idata,
+			c->strings[CALC], &match) == lwc_error_ok &&
+			match) {
+		return CSS_CALC_FUNC_CALC;
+	}
+	if (lwc_string_caseless_isequal(token->idata,
+			c->strings[MIN], &match) == lwc_error_ok &&
+			match) {
+		return CSS_CALC_FUNC_MIN;
+	}
+	if (lwc_string_caseless_isequal(token->idata,
+			c->strings[MAX], &match) == lwc_error_ok &&
+			match) {
+		return CSS_CALC_FUNC_MAX;
+	}
+	if (lwc_string_caseless_isequal(token->idata,
+			c->strings[CLAMP], &match) == lwc_error_ok &&
+			match) {
+		return CSS_CALC_FUNC_CLAMP;
+	}
+
+	return CSS_CALC_FUNC_NONE;
+}
+
+/**
+ * Parse one more comma-separated calc argument: consume the comma and
+ * parse a sum into the result buffer.
+ *
+ * The sum parsers reject ',' themselves, so a comma always terminates an
+ * argument and this helper can be used freely.
+ */
+static css_error
+css__parse_calc_comma_arg(css_language *c,
+		enum css_properties_e property,
+		const parserutils_vector *vector, int *ctx,
+		parserutils_buffer *result)
+{
+	const css_token *token;
+
+	consumeWhitespace(vector, ctx);
+	token = parserutils_vector_peek(vector, *ctx);
+	if (!tokenIsChar(token, ',')) {
+		return CSS_INVALID;
+	}
+	parserutils_vector_iterate(vector, ctx);
+	consumeWhitespace(vector, ctx);
+
+	return css__parse_calc_sum(c, property, vector, ctx, result);
+}
+
+/* Documented in utils.h */
 css_error css__parse_calc(css_language *c,
 		const parserutils_vector *vector, int32_t *ctx,
 		css_style *result,
 		css_code_t OPV,
-		uint32_t unit)
+		uint32_t unit,
+		enum css_calc_func_e func)
 {
 	int32_t orig_ctx = *ctx;
 	const css_token *token;
@@ -2093,9 +2154,90 @@ css_error css__parse_calc(css_language *c,
 	if (error != CSS_OK)
 		goto cleanup;
 
-	error = css__parse_calc_sum(c, property, vector, ctx, calc_buffer);
-	if (error != CSS_OK)
+	/* Parse the argument list for the particular math function.  Each
+	 * variant leaves the expression ending with a terminal operator
+	 * (CALC_MIN/CALC_MAX/CALC_CLAMP) whose value identifies which
+	 * function produced it: the cascade sniffs that terminal operator
+	 * to recover the css_unit for the computed style. */
+	switch (func) {
+	case CSS_CALC_FUNC_CALC:
+		/* Exactly one sum:  calc(sum) */
+		error = css__parse_calc_sum(c, property, vector, ctx,
+				calc_buffer);
+		if (error != CSS_OK)
+			goto cleanup;
+		break;
+
+	case CSS_CALC_FUNC_MIN: /* Fall through */
+	case CSS_CALC_FUNC_MAX:
+	{
+		/* One or more comma-separated sums; each additional
+		 * argument folds into the running result with a
+		 * terminal MIN/MAX operator. */
+		css_code_t func_op = (func == CSS_CALC_FUNC_MIN) ?
+				CALC_MIN : CALC_MAX;
+
+		error = css__parse_calc_sum(c, property, vector, ctx,
+				calc_buffer);
+		if (error != CSS_OK)
+			goto cleanup;
+
+		for (;;) {
+			consumeWhitespace(vector, ctx);
+			token = parserutils_vector_peek(vector, *ctx);
+			if (tokenIsChar(token, ')')) {
+				break;
+			}
+
+			error = css__parse_calc_comma_arg(c, property,
+					vector, ctx, calc_buffer);
+			if (error != CSS_OK)
+				goto cleanup;
+
+			error = css_error_from_parserutils_error(
+				parserutils_buffer_append(calc_buffer,
+					(const uint8_t *)&func_op,
+					sizeof(func_op)));
+			if (error != CSS_OK)
+				goto cleanup;
+		}
+		break;
+	}
+
+	case CSS_CALC_FUNC_CLAMP:
+	{
+		/* Exactly three comma-separated sums:
+		 * clamp(minimum, preferred, maximum) */
+		css_code_t func_op = CALC_CLAMP;
+
+		error = css__parse_calc_sum(c, property, vector, ctx,
+				calc_buffer);
+		if (error != CSS_OK)
+			goto cleanup;
+
+		error = css__parse_calc_comma_arg(c, property, vector,
+				ctx, calc_buffer);
+		if (error != CSS_OK)
+			goto cleanup;
+
+		error = css__parse_calc_comma_arg(c, property, vector,
+				ctx, calc_buffer);
+		if (error != CSS_OK)
+			goto cleanup;
+
+		error = css_error_from_parserutils_error(
+			parserutils_buffer_append(calc_buffer,
+				(const uint8_t *)&func_op,
+				sizeof(func_op)));
+		if (error != CSS_OK)
+			goto cleanup;
+		break;
+	}
+
+	default:
+		error = CSS_INVALID;
 		goto cleanup;
+	}
 
 	consumeWhitespace(vector, ctx);
 	token = parserutils_vector_peek(vector, *ctx);

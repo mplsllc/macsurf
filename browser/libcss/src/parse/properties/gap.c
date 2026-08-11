@@ -81,12 +81,12 @@ static css_error parse_gap_value(css_language *c,
 				prop, 0, COLUMN_GAP_NORMAL);
 
 	} else if ((token->type == CSS_TOKEN_FUNCTION) &&
-			(lwc_string_caseless_isequal(
-			token->idata, c->strings[CALC],
-			&match) == lwc_error_ok && match)) {
+			(css__calc_function(c, token) !=
+			CSS_CALC_FUNC_NONE)) {
 		error = css__parse_calc(c, vector, ctx, result,
 				buildOPV(prop, 0, COLUMN_GAP_CALC),
-				UNIT_PX);
+				UNIT_PX,
+				css__calc_function(c, token));
 
 	} else {
 		css_fixed length = 0;

@@ -1144,6 +1144,82 @@ int main(int argc, char **argv)
 	fprintf(stderr, "=== Test 5 PASS: IntersectionObserver delivers an "
 			"isIntersecting entry asynchronously ===\n");
 
+	/* --- Test 5b (t.html repro): the EXACT three failing tests from the
+	 * Mac's t.html run, verbatim, plus discriminating probes. On the Mac all
+	 * three FAIL while the mutcensus proves the libdom writes succeeded. If
+	 * they pass here, the divergence is Mac-only; if they fail, we have a
+	 * Linux repro. --- */
+	fprintf(stderr, "\n=== Test 5b: exact t.html DOM-child tests ===\n");
+	{
+		const char *thtml_js =
+			"var __f=0,__p=0,__res='';"
+			"function T(n,fn){"
+			"try{var o=fn();if(o===true||o===undefined){__p++;}"
+			"else{__f++;__res+='FAIL '+n+': '+o+'\\n';}}"
+			"catch(e){__f++;__res+='FAIL '+n+': '+e.message+'\\n';}"
+			"}"
+			"T('innerHTML detached',function(){"
+				"var d=document.createElement('div');"
+				"d.innerHTML='<p>hi</p>';"
+				"return d.firstChild&&d.firstChild.tagName==='P';});"
+			"T('appendChild works',function(){"
+				"var d=document.createElement('div');"
+				"var p=document.createElement('p');"
+				"d.appendChild(p);"
+				"return d.firstChild===p;});"
+			"T('innerHTML attached',function(){"
+				"var d=document.createElement('div');"
+				"document.body.appendChild(d);"
+				"d.innerHTML='<p>hi</p>';"
+				"var ok=d.firstChild&&d.firstChild.tagName==='P';"
+				"document.body.removeChild(d);"
+				"return ok;});"
+			/* discriminating probes */
+			"var d=document.createElement('div');"
+			"var p=document.createElement('p');"
+			"d.appendChild(p);"
+			"var pr={};"
+			"pr.fc=d.firstChild;"
+			"pr.fc_is_p=(pr.fc===p);"
+			"pr.fc_type=(pr.fc?pr.fc.nodeType:-1);"
+			"pr.cn_len=d.childNodes.length;"
+			"pr.kids_len=d.children.length;"
+			"pr.has=d.hasChildNodes();"
+			"pr.fc_tag=(pr.fc&&pr.fc.tagName)||'';"
+			"pr.cn0=(d.childNodes[0]===p);"
+			"pr.parent=(p.parentNode===d);"
+			"globalThis.__pr=pr;"
+			"globalThis.__thtml_res=__res;"
+			"globalThis.__thtml_f=__f;"
+			"globalThis.__thtml_p=__p;";
+		const char *thtml_chk =
+			"var r=globalThis.__thtml_res;var f=globalThis.__thtml_f;"
+			"if(f>0)throw new Error('ASSERT FAIL: t.html tests failed:\\n'+r);"
+			"var pr=globalThis.__pr;"
+			"if(!pr.fc_is_p)throw new Error('ASSERT FAIL: firstChild!==appended p');"
+			"if(pr.fc_type!==1)throw new Error('ASSERT FAIL: firstChild nodeType='+pr.fc_type);"
+			"if(pr.cn_len!==1)throw new Error('ASSERT FAIL: childNodes.length='+pr.cn_len);"
+			"if(pr.kids_len!==1)throw new Error('ASSERT FAIL: children.length='+pr.kids_len);"
+			"if(!pr.has)throw new Error('ASSERT FAIL: hasChildNodes()=false');"
+			"if(!pr.cn0)throw new Error('ASSERT FAIL: childNodes[0]!==p');"
+			"if(!pr.parent)throw new Error('ASSERT FAIL: p.parentNode!==d');";
+		unsigned char ok;
+
+		ok = js_exec(thread, (const unsigned char *)thtml_js,
+				strlen(thtml_js), "driver-thtml.js");
+		if (!ok) { fprintf(stderr, "FAIL: t.html arm threw\n"); return 1; }
+		ok = js_exec(thread, (const unsigned char *)thtml_chk,
+				strlen(thtml_chk), "driver-thtml-chk.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: exact t.html DOM-child tests failed\n");
+			return 1;
+		}
+		fprintf(stderr, "exact t.html tests + firstChild/childNodes/"
+				"children/hasChildNodes all PASS\n");
+	}
+	fprintf(stderr, "=== Test 5b PASS: t.html DOM-child chain works on Linux "
+			"=== \n");
+
 	/* --- Test 6 (fixes854, #283): THE hackaday.com crash — a timer JSValue
 	 * must never be freed against a foreign JSRuntime.
 	 *

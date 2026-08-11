@@ -84,8 +84,8 @@ css_error css__parse_margin_side(css_language *c,
 				op,
 				0,MARGIN_AUTO);
 
-	} else if ((token->type == CSS_TOKEN_FUNCTION) && (lwc_string_caseless_isequal(token->idata, c->strings[CALC], &match) == lwc_error_ok && match)) {
-		error = css__parse_calc(c, vector, ctx, result, buildOPV(op, 0, MARGIN_CALC), UNIT_PX);
+	} else if ((token->type == CSS_TOKEN_FUNCTION) && (css__calc_function(c, token) != CSS_CALC_FUNC_NONE)) {
+		error = css__parse_calc(c, vector, ctx, result, buildOPV(op, 0, MARGIN_CALC), UNIT_PX, css__calc_function(c, token));
 	} else {
 		css_fixed length = 0;
 		uint32_t unit = 0;

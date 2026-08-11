@@ -285,12 +285,17 @@ static inline css_fixed css_unit__px_per_unit(
 	case CSS_UNIT_VW:
 		return FDIV(viewport_width, F_100);
 
-	case CSS_UNIT_CALC:
+	case CSS_UNIT_CALC: /* Fall through */
+	case CSS_UNIT_MIN:  /* Fall through */
+	case CSS_UNIT_MAX:  /* Fall through */
+	case CSS_UNIT_CLAMP:
 	{
-		/* The length is a pointer to the calc expression bytecode,
-		 * interned in the sheet's string table.  It is recovered by
-		 * the cascade, which bit-casts the lwc_string pointer into
-		 * the css_fixed length slot.  (32-bit targets.) */
+		/* The length is a pointer to the calc-family expression
+		 * bytecode, interned in the sheet's string table.  It is
+		 * recovered by the cascade, which bit-casts the lwc_string
+		 * pointer into the css_fixed length slot.  (32-bit
+		 * targets.)  For min()/max()/clamp() the terminal bytecode
+		 * operator selects the min/max/clamp evaluation. */
 		lwc_string *expr = (lwc_string *)length;
 		css_unit u = CSS_UNIT_PX;
 		css_fixed v = 0;
@@ -338,7 +343,10 @@ css_fixed css_unit_len2px_mq(
 			ctx,
 			ctx->pw);
 
-	if (unit == CSS_UNIT_CALC) {
+	if (unit == CSS_UNIT_CALC ||
+	    unit == CSS_UNIT_MIN ||
+	    unit == CSS_UNIT_MAX ||
+	    unit == CSS_UNIT_CLAMP) {
 		/* px_per_unit holds the fully resolved value in CSS
 		 * pixels; it must not be multiplied by length again. */
 		return px_per_unit;
@@ -372,7 +380,10 @@ css_fixed css_unit_len2css_px(
 			ctx,
 			ctx->pw);
 
-	if (unit == CSS_UNIT_CALC) {
+	if (unit == CSS_UNIT_CALC ||
+	    unit == CSS_UNIT_MIN ||
+	    unit == CSS_UNIT_MAX ||
+	    unit == CSS_UNIT_CLAMP) {
 		/* px_per_unit holds the fully resolved value in CSS
 		 * pixels; it must not be multiplied by length again. */
 		return px_per_unit;
@@ -406,7 +417,10 @@ css_fixed css_unit_len2device_px(
 			ctx,
 			ctx->pw);
 
-	if (unit == CSS_UNIT_CALC) {
+	if (unit == CSS_UNIT_CALC ||
+	    unit == CSS_UNIT_MIN ||
+	    unit == CSS_UNIT_MAX ||
+	    unit == CSS_UNIT_CLAMP) {
 		/* px_per_unit holds the fully resolved value in CSS
 		 * pixels; it must not be multiplied by length again. */
 		return css_unit_css2device_px(px_per_unit, ctx->device_dpi);

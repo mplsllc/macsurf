@@ -75,8 +75,8 @@ css_error css__parse_order(css_language *c,
 		error = css_stylesheet_style_unset(result,
 				CSS_PROP_ORDER);
 
-	} else if ((token->type == CSS_TOKEN_FUNCTION) && (lwc_string_caseless_isequal(token->idata, c->strings[CALC], &match) == lwc_error_ok && match)) {
-		error = css__parse_calc(c, vector, ctx, result, buildOPV(CSS_PROP_ORDER, 0, ORDER_CALC), UNIT_CALC_NUMBER);
+	} else if ((token->type == CSS_TOKEN_FUNCTION) && (css__calc_function(c, token) != CSS_CALC_FUNC_NONE)) {
+		error = css__parse_calc(c, vector, ctx, result, buildOPV(CSS_PROP_ORDER, 0, ORDER_CALC), UNIT_CALC_NUMBER, css__calc_function(c, token));
 	} else if (token->type == CSS_TOKEN_NUMBER) {
 		css_fixed num = 0;
 		size_t consumed = 0;

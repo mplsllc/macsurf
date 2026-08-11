@@ -553,14 +553,17 @@ class CSSGroup:
 
             t.append()
 
-            # Ensure any existing calc() values are freed
+            # Ensure any existing calc()/min()/max()/clamp() values are freed
             if p.has_calc:
                 type_mask, shift_list, bits_comment = p.get_bits()
                 t.append(bits_comment)
                 t.append('if ((orig_bits & {}) == {}) {{'.format(type_mask, p.condition))
                 t.indent(1)
                 for i, v in enumerate(list(reversed(shift_list))):
-                    t.append('if ((orig_bits & 0x{:x}) >> {} == CSS_UNIT_CALC) {{'.format(v[2], v[1]))
+                    t.append('if (((orig_bits & 0x{:x}) >> {} == CSS_UNIT_CALC) ||'.format(v[2], v[1]))
+                    t.append('    ((orig_bits & 0x{:x}) >> {} == CSS_UNIT_MIN) ||'.format(v[2], v[1]))
+                    t.append('    ((orig_bits & 0x{:x}) >> {} == CSS_UNIT_MAX) ||'.format(v[2], v[1]))
+                    t.append('    ((orig_bits & 0x{:x}) >> {} == CSS_UNIT_CLAMP)) {{'.format(v[2], v[1]))
                     t.indent(1)
                     t.append('lwc_string_unref(style->i.{}.calc);'.format(p.name))
                     t.indent(-1)
@@ -636,7 +639,10 @@ class CSSGroup:
 
                 elif not v.is_ptr:
                     if p.has_calc:
-                        t.append('if (unit == CSS_UNIT_CALC) {')
+                        t.append('if (unit == CSS_UNIT_CALC ||')
+                        t.append('    unit == CSS_UNIT_MIN ||')
+                        t.append('    unit == CSS_UNIT_MAX ||')
+                        t.append('    unit == CSS_UNIT_CLAMP) {')
                         t.append('\tstyle->i.{}.calc = lwc_string_ref({}.calc);'.format(
                                  p.name + v.suffix, v.name + v.suffix))
                         t.append('} else {')

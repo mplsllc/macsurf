@@ -1078,7 +1078,10 @@ uint8_t css_computed_width_px(
 		break;
 	case CSS_WIDTH_SET:
 		switch (unit) {
-		case CSS_UNIT_CALC:
+		case CSS_UNIT_CALC: /* Fall through */
+		case CSS_UNIT_MIN:  /* Fall through */
+		case CSS_UNIT_MAX:  /* Fall through */
+		case CSS_UNIT_CLAMP:
 			if (css_calculator_calculate(
 					style->calc, unit_ctx,
 					available_px, value.calc,
@@ -1119,7 +1122,10 @@ uint8_t css_computed_width(const css_computed_style *style,
 	length_.value = 0;
 	ret = get_width(style, &length_, unit);
 	if (ret == CSS_WIDTH_SET) {
-		if (*unit == CSS_UNIT_CALC) {
+		if (*unit == CSS_UNIT_CALC ||
+		    *unit == CSS_UNIT_MIN ||
+		    *unit == CSS_UNIT_MAX ||
+		    *unit == CSS_UNIT_CLAMP) {
 			return CSS_WIDTH_AUTO;
 		}
 		*length = length_.value;
