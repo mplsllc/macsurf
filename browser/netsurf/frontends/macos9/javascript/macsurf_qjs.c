@@ -3236,6 +3236,37 @@ static JSValue qjs_el_get_inner_html_data(JSContext *ctx,
 	el = (dom_element *) qjs_get_node(func_data[0]);
 	if (el == NULL) return JS_NewString(ctx, "");
 	memset(&b, 0, sizeof(b));
+	/* innerHTML is the markup of the element's DESCENDANTS only — the
+	 * element's own tag and attributes belong to outerHTML. Serialize the
+	 * children, not the element itself (a harness round-trip test caught
+	 * the element-once version wrapping the re-parse in a stray child). */
+	r = qjs_ih_serialize_children(&b, (dom_node *) el);
+	if (r != 0 || b.data == NULL) {
+		if (b.data) free(b.data);
+		return JS_NewString(ctx, "");
+	}
+	ret = JS_NewStringLen(ctx, b.data, b.len);
+	free(b.data);
+	return ret;
+}
+
+/* fixes1168 (#262) — __getOuterHTML: same serializer, but the element
+ * ITSELF (tag + attributes + children). The old JS-side outerHTML stub
+ * wrapped innerHTML in the bare tag name, silently dropping every
+ * attribute — a lying answer for the clone/echo patterns that read it. */
+static JSValue qjs_el_get_outer_html_data(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv,
+		int magic, JSValueConst *func_data)
+{
+	dom_element *el;
+	struct qjs_ih_buf b;
+	int r;
+	JSValue ret;
+
+	(void) this_val; (void) argc; (void) argv; (void) magic;
+	el = (dom_element *) qjs_get_node(func_data[0]);
+	if (el == NULL) return JS_NewString(ctx, "");
+	memset(&b, 0, sizeof(b));
 	r = qjs_ih_serialize_node(&b, (dom_node *) el);
 	if (r != 0 || b.data == NULL) {
 		if (b.data) free(b.data);
@@ -3996,11 +4027,13 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"el.__setInnerHTML(String(v));"
 		"else el.textContent=String(v).replace(/<[^>]*>/g,'');},"
 		"configurable:true});"
-		/* outerHTML — real markup now; the tag name is lowercased for the
-		 * serialized form because tagName is uppercase per #299. */
+		/* outerHTML — real markup now (fixes1168 #262): the native
+		 * serializer emits the element itself with its attributes; the
+		 * old tag-wrapping stub dropped them. */
 		"Object.defineProperty(el,'outerHTML',{"
-		"get:function(){var t=String(el.tagName).toLowerCase();"
-			"return '<'+t+'>'+el.innerHTML+'</'+t+'>';},"
+		"get:function(){return (typeof el.__getOuterHTML==='function')"
+			"?el.__getOuterHTML():'<'+String(el.tagName).toLowerCase()+'>'"
+			"+el.innerHTML+'</'+String(el.tagName).toLowerCase()+'>';},"
 		"configurable:true});"
 		/* dataset proxy */
 		"(function(){"
@@ -6460,6 +6493,10 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 	 * to serialize the child tree to markup (see qjs_el_get_inner_html_data). */
 	f = JS_NewCFunctionData(ctx, qjs_el_get_inner_html_data, 0, 0, 1, data);
 	JS_SetPropertyStr(ctx, obj, "__getInnerHTML", f);
+	/* fixes1168 (#262) — real outerHTML read-back: same serializer over the
+	 * element itself (tag + attributes + children). */
+	f = JS_NewCFunctionData(ctx, qjs_el_get_outer_html_data, 0, 0, 1, data);
+	JS_SetPropertyStr(ctx, obj, "__getOuterHTML", f);
 
 	/* Traversal */
 	f = JS_NewCFunctionData(ctx, qjs_el_get_parent_node_data, 0, 0, 1, data);
