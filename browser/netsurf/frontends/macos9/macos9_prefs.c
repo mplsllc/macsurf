@@ -430,16 +430,14 @@ static void prefs_banner(const Rect *content, const char *title)
 	RGBForeColor(&saved_fg);
 }
 
-static ControlRef prefs_ctrl(WindowRef win, const Rect *r,
-		const char *title, SInt16 proc)
-{
-	unsigned char pstr[256];
-	ControlRef c;
-	c_to_pstring(title, pstr);
-	if (NewControl(win, r, pstr, 1, 0, 0, 0, (SInt16)proc, 0) != noErr)
-		return NULL;
-	return c;
-}
+/* One-shot macro: build a Pascal-string titled control.
+ * CW8 requires the procID to be a literal enum constant at each call site
+ * (a variable, even cast, fails the anonymous-enum type check) so there
+ * is no shared helper — each caller inlines the two-step conversion. */
+#define PS_CTRL(ctrl, win, rect, ctitle, proc) \
+	do { unsigned char _ps[256]; c_to_pstring((ctitle), _ps); \
+	     (ctrl) = NewControl((win), (rect), _ps, 1, 0, 0, 0, (proc), 0); \
+	} while(0)
 
 static MenuHandle prefs_popup_menu(const struct prefs_popup_def *def,
 		short id)
@@ -1004,59 +1002,59 @@ void macos9_prefs_show(void)
 	TextSize(12);
 
 	/* bottom row */
-	pw.btn_defaults = prefs_ctrl(pw.win, &s_btn_defaults_rect,
+	PS_CTRL(pw.btn_defaults, pw.win, &s_btn_defaults_rect,
 		"Defaults", kControlPushButtonProc);
-	pw.btn_cancel = prefs_ctrl(pw.win, &s_btn_cancel_rect,
+	PS_CTRL(pw.btn_cancel, pw.win, &s_btn_cancel_rect,
 		"Cancel", kControlPushButtonProc);
-	pw.btn_ok = prefs_ctrl(pw.win, &s_btn_ok_rect,
+	PS_CTRL(pw.btn_ok, pw.win, &s_btn_ok_rect,
 		"OK", kControlPushButtonProc);
 	/* category picker */
 	pw.m_cat = prefs_cat_menu();
-	pw.pp_cat = prefs_ctrl(pw.win, &s_pp_cat_rect,
+	PS_CTRL(pw.pp_cat, pw.win, &s_pp_cat_rect,
 		"", kControlPopupButtonProc);
 	prefs_popup_attach(pw.pp_cat, pw.m_cat);
 	/* Appearance */
 	pw.m_font = prefs_popup_menu(&s_popup_font, PREFS_MENU_ID_FONT);
-	pw.pp_font = prefs_ctrl(pw.win, &s_pp_font_rect,
+	PS_CTRL(pw.pp_font, pw.win, &s_pp_font_rect,
 		"", kControlPopupButtonProc);
 	prefs_popup_attach(pw.pp_font, pw.m_font);
 	pw.m_minfont = prefs_popup_menu(&s_popup_minfont, PREFS_MENU_ID_MINFONT);
-	pw.pp_minfont = prefs_ctrl(pw.win, &s_pp_minfont_rect,
+	PS_CTRL(pw.pp_minfont, pw.win, &s_pp_minfont_rect,
 		"", kControlPopupButtonProc);
 	prefs_popup_attach(pw.pp_minfont, pw.m_minfont);
-	pw.ck_fg = prefs_ctrl(pw.win, &s_ck_fg_rect,
+	PS_CTRL(pw.ck_fg, pw.win, &s_ck_fg_rect,
 		"Fetch foreground images", kControlCheckBoxProc);
-	pw.ck_bg = prefs_ctrl(pw.win, &s_ck_bg_rect,
+	PS_CTRL(pw.ck_bg, pw.win, &s_ck_bg_rect,
 		"Fetch background images", kControlCheckBoxProc);
-	pw.ck_anim = prefs_ctrl(pw.win, &s_ck_anim_rect,
+	PS_CTRL(pw.ck_anim, pw.win, &s_ck_anim_rect,
 		"Animate images", kControlCheckBoxProc);
 	/* Content */
-	pw.ck_js = prefs_ctrl(pw.win, &s_ck_js_rect,
+	PS_CTRL(pw.ck_js, pw.win, &s_ck_js_rect,
 		"Enable JavaScript", kControlCheckBoxProc);
-	pw.ck_css = prefs_ctrl(pw.win, &s_ck_css_rect,
+	PS_CTRL(pw.ck_css, pw.win, &s_ck_css_rect,
 		"Apply author CSS", kControlCheckBoxProc);
-	pw.ck_ads = prefs_ctrl(pw.win, &s_ck_ads_rect,
+	PS_CTRL(pw.ck_ads, pw.win, &s_ck_ads_rect,
 		"Block advertisements", kControlCheckBoxProc);
-	pw.ck_popups = prefs_ctrl(pw.win, &s_ck_popups_rect,
+	PS_CTRL(pw.ck_popups, pw.win, &s_ck_popups_rect,
 		"Block pop-up windows", kControlCheckBoxProc);
 	/* Privacy */
-	pw.ck_dnt = prefs_ctrl(pw.win, &s_ck_dnt_rect,
+	PS_CTRL(pw.ck_dnt, pw.win, &s_ck_dnt_rect,
 		"Send Do Not Track request", kControlCheckBoxProc);
-	pw.ck_ref = prefs_ctrl(pw.win, &s_ck_ref_rect,
+	PS_CTRL(pw.ck_ref, pw.win, &s_ck_ref_rect,
 		"Send Referer header", kControlCheckBoxProc);
-	pw.ck_cookies = prefs_ctrl(pw.win, &s_ck_cookies_rect,
+	PS_CTRL(pw.ck_cookies, pw.win, &s_ck_cookies_rect,
 		"Store and send cookies", kControlCheckBoxProc);
-	pw.btn_cache = prefs_ctrl(pw.win, &s_btn_cache_rect,
+	PS_CTRL(pw.btn_cache, pw.win, &s_btn_cache_rect,
 		"Clear Cache...", kControlPushButtonProc);
-	pw.btn_hist = prefs_ctrl(pw.win, &s_btn_hist_rect,
+	PS_CTRL(pw.btn_hist, pw.win, &s_btn_hist_rect,
 		"Clear History...", kControlPushButtonProc);
 	/* Network */
 	pw.m_fetch = prefs_popup_menu(&s_popup_fetch, PREFS_MENU_ID_FETCH);
-	pw.pp_fetch = prefs_ctrl(pw.win, &s_pp_fetch_rect,
+	PS_CTRL(pw.pp_fetch, pw.win, &s_pp_fetch_rect,
 		"", kControlPopupButtonProc);
 	prefs_popup_attach(pw.pp_fetch, pw.m_fetch);
 	pw.m_perhost = prefs_popup_menu(&s_popup_perhost, PREFS_MENU_ID_PERHOST);
-	pw.pp_perhost = prefs_ctrl(pw.win, &s_pp_perhost_rect,
+	PS_CTRL(pw.pp_perhost, pw.win, &s_pp_perhost_rect,
 		"", kControlPopupButtonProc);
 	prefs_popup_attach(pw.pp_perhost, pw.m_perhost);
 	/* General text fields (TENew uses the current port) */
