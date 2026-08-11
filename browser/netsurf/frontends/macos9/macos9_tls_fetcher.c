@@ -1932,12 +1932,12 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		char *header_lines[64];
 		int   n_header_lines = 0;
 		int   force_download = 0;
-		int   force_html = 0;   /* fixes770 (#232) */
 		int   i;
 		static const char forced_ct[] =
 			"Content-Type: application/octet-stream";
-		static const char forced_html_ct[] =
-			"Content-Type: text/html; charset=utf-8";
+		/* fixes770's forced_html_ct REMOVED (#233, fixes1137): the real
+		 * textplain.c handler is wired, so text/plain is forwarded as
+		 * itself and the content factory routes it to textplain. */
 
 		while ((p = macos9_find_line(&cur, &cur_len)) != NULL) {
 			if (p[0] == 0) break;
@@ -3585,6 +3585,11 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 		    !host_is_fb_asset(c->host) &&
 		    !macos9_hdr_has_ci(c->caller_hdrs, "if-none-match:") &&
 		    !macos9_hdr_has_ci(c->caller_hdrs, "if-modified-since:") &&
+		    /* fixes1159 (#240) — a recent POST to this origin arms a
+		     * short disk-cache bypass (macos9_disk_cache.c), so the
+		     * post-redirect GET serves the edited page, not the stale
+		     * pre-POST copy. */
+		    !macos9_cache_post_bypass_active(url_str) &&
 		    macos9_cache_lookup_hdrs(url_str, &c->cache_hit_body,
 				&c->cache_hit_len,
 				c->cache_hit_mime,
