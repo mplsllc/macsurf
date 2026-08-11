@@ -1964,6 +1964,7 @@ css__parse_calc_product(css_language *c,
 			break;
 		} else if (
 				tokenIsChar(token, ')') ||
+				tokenIsChar(token, ',') ||
 				tokenIsChar(token, '+') ||
 				tokenIsChar(token, '-'))
 			break;
@@ -2023,6 +2024,8 @@ css__parse_calc_sum(css_language *c,
 			error = CSS_INVALID;
 			break;
 		} else if (tokenIsChar(token, ')'))
+			break;
+		else if (tokenIsChar(token, ','))
 			break;
 		else if (tokenIsChar(token, '+'))
 			operator = CALC_ADD;
