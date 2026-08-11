@@ -488,6 +488,59 @@ static void harness_dump_boxes(struct box *b, int depth, int maxdepth)
 		harness_dump_boxes(b, depth + 1, maxdepth);
 }
 
+/* fixes1169 (#226) — Test 66 helpers. Class-token membership read from the
+ * box's OWN node via dom_element_get_attribute, token-exact so "node-extra"
+ * does not match "node-extra-icon" and "avatar" does not match
+ * "avatar-u2-s". */
+static bool t66_cls_has(struct box *b, const char *cls)
+{
+	dom_string *key = NULL;
+	dom_string *val = NULL;
+	const char *p;
+	size_t len = strlen(cls);
+	bool found = false;
+
+	if (b == NULL || b->node == NULL)
+		return false;
+	if (dom_string_create((const uint8_t *)"class", 5, &key) != DOM_NO_ERR)
+		return false;
+	if (dom_element_get_attribute((dom_element *)b->node, key, &val) ==
+			DOM_NO_ERR && val != NULL) {
+		p = dom_string_data(val);
+		while (*p != '\0' && !found) {
+			const char *sp = strchr(p, ' ');
+			size_t tok = (sp != NULL) ? (size_t)(sp - p) : strlen(p);
+
+			if (tok == len && strncmp(p, cls, len) == 0)
+				found = true;
+			if (sp == NULL)
+				break;
+			p = sp + 1;
+		}
+		dom_string_unref(val);
+	}
+	dom_string_unref(key);
+	return found;
+}
+
+/* Record the FIRST box whose class list holds each token. */
+static void t66_walk(struct box *b,
+		int *row_h, int *icon_h, int *avatar_h, int *img_h)
+{
+	if (b == NULL)
+		return;
+	if (t66_cls_has(b, "node-extra") && *row_h < 0)
+		*row_h = b->height;
+	else if (t66_cls_has(b, "node-extra-icon") && *icon_h < 0)
+		*icon_h = b->height;
+	else if (t66_cls_has(b, "avatar") && *avatar_h < 0)
+		*avatar_h = b->height;
+	else if (t66_cls_has(b, "avatar-u2-s") && *img_h < 0)
+		*img_h = b->height;
+	for (b = b->children; b != NULL; b = b->next)
+		t66_walk(b, row_h, icon_h, avatar_h, img_h);
+}
+
 int main(int argc, char **argv)
 {
 	char *html_src_big = build_large_doc(300);
@@ -8096,6 +8149,257 @@ box_coords(bx, &cx, &cy);
 		fprintf(stderr, "=== Test 65 PASS: WOFF2 reconstruction (%u checks, "
 			"sfnt-valid + byte-identical to libwoff2dec) ===\n", t65_pass);
 	}
+
+	/* --- Test 66 (fixes1169, #226): an inline-flex avatar must height the
+	 * flex row it sits in ------------------------------------------------
+	 *
+	 * XenForo 2.2 thread lists (68kmla.org) build each row as
+	 * .node-extra{display:flex} > .node-extra-icon > a.avatar{
+	 * display:inline-flex;width:48px;height:48px} > img{width:100%;
+	 * height:100%}. layout_line's y-placement loop counted the margin
+	 * boxes of BOX_INLINE (replaced) and BOX_INLINE_BLOCK toward the line
+	 * height but forgot BOX_INLINE_FLEX (and BOX_INLINE_GRID), so the
+	 * avatar contributed ZERO height to its line box: the icon cell
+	 * measured the text line (19px at 15px font), the flex row cross-sized
+	 * to that, and the 48px avatar hung out the bottom, overlapping the
+	 * next row's title. Fix (layout.c): the same used_height/y accounting
+	 * for BOX_INLINE_FLEX/BOX_INLINE_GRID as inline-block.
+	 *
+	 * This test runs the REAL layout over the REAL markup/CSS and asserts
+	 * the resulting heights. Pre-fix it fails: row/icon measured 19. */
+	fprintf(stderr,
+		"\n=== Test 66: inline-flex avatar heights the flex row (#226) ===\n");
+	{
+		static const char *t66_html =
+			"<!DOCTYPE html><html><head></head><body>"
+			"<div class=\"node-extra\">"
+			"<div class=\"node-extra-icon\">"
+			"<a class=\"avatar avatar--s\" href=\"#\">"
+			"<img class=\"avatar-u2-s\" src=\"x.jpg\" "
+			"width=\"48\" height=\"48\" loading=\"lazy\" alt=\"u2\">"
+			"</a></div>"
+			"<div class=\"node-extra-row\">"
+			"<a class=\"node-extra-title\" href=\"#\">"
+			"Thread title text here</a></div>"
+			"</div></body></html>";
+		static const char *t66_css =
+			".node-extra { display: flex; }"
+			".node-extra-icon { flex: 0 0 auto; padding-right: 8px; }"
+			".avatar { display: inline-flex; justify-content: center;"
+			" align-items: center; border-radius: 50%;"
+			" vertical-align: top; overflow: hidden; }"
+			".avatar--s { width: 48px; height: 48px; }"
+			".avatar img { text-indent: 100%; overflow: hidden;"
+			" white-space: nowrap; word-wrap: normal; display: block;"
+			" border-radius: inherit; width: 100%; height: 100%; }"
+			"img { max-width: 100%; height: auto; }"
+			"body { font-size: 15px; }";
+		struct html_content t66c;
+		dom_hubbub_parser *t66p = NULL;
+		dom_document *t66doc = NULL;
+		dom_node *t66root = NULL;
+		css_select_ctx *t66ctx = NULL;
+		css_stylesheet *t66ua = NULL;
+		css_stylesheet *t66auth = NULL;
+		dom_hubbub_parser_params t66params;
+		css_stylesheet_params t66sp;
+		void *t66_box_ctx = NULL;
+		int t66_row_h = -1, t66_icon_h = -1;
+		int t66_avatar_h = -1, t66_img_h = -1;
+		nserror t66err;
+		dom_exception t66derr;
+		css_error t66cerr;
+
+		memset(&t66params, 0, sizeof(t66params));
+		t66params.enc = NULL;
+		t66params.fix_enc = true;
+		t66params.enable_script = false;
+		t66params.daf = NULL;
+		t66derr = dom_hubbub_parser_create(&t66params, &t66p,
+				&t66doc);
+		if (t66derr != DOM_HUBBUB_OK || t66p == NULL ||
+				t66doc == NULL) {
+			fprintf(stderr, "FAIL: Test 66 parser create %d\n",
+					(int)t66derr);
+			return 1;
+		}
+		t66derr = dom_hubbub_parser_parse_chunk(t66p,
+				(const uint8_t *)t66_html, strlen(t66_html));
+		if (t66derr != DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 66 parse chunk %d\n",
+					(int)t66derr);
+			return 1;
+		}
+		t66derr = dom_hubbub_parser_completed(t66p);
+		if (t66derr != DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 66 parse done %d\n",
+					(int)t66derr);
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t66p);
+
+		memset(&t66c, 0, sizeof(t66c));
+		t66c.base_url = g_base_url;
+		t66c.document = t66doc;
+		t66c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t66c.enable_scripting = false;
+		if (css_select_ctx_create(&t66ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 66 select_ctx\n");
+			return 1;
+		}
+		t66c.select_ctx = t66ctx;
+
+		/* UA sheet: the same tiny default the main fixture uses. */
+		memset(&t66sp, 0, sizeof(t66sp));
+		t66sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t66sp.level = CSS_LEVEL_3;
+		t66sp.charset = "UTF-8";
+		t66sp.url = "resource:default.css";
+		t66sp.title = "default";
+		t66sp.allow_quirks = false;
+		t66sp.inline_style = false;
+		t66sp.resolve = harness_css_resolve_url;
+		t66sp.resolve_pw = NULL;
+		t66cerr = css_stylesheet_create(&t66sp, &t66ua);
+		if (t66cerr != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 66 UA sheet\n");
+			return 1;
+		}
+		{
+			const char *ua_css =
+				"html,body,div,span,p{display:block}"
+				"span{display:inline}";
+			css_error ae = css_stylesheet_append_data(t66ua,
+					(const uint8_t *)ua_css, strlen(ua_css));
+
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 66 UA append=%d\n",
+						(int)ae);
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t66ua);
+		}
+		if (css_select_ctx_append_sheet(t66ctx, t66ua,
+				CSS_ORIGIN_UA, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 66 UA append sheet\n");
+			return 1;
+		}
+
+		/* Author sheet: the real XenForo avatar rules. */
+		memset(&t66sp, 0, sizeof(t66sp));
+		t66sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t66sp.level = CSS_LEVEL_3;
+		t66sp.charset = "UTF-8";
+		t66sp.url = "http://local/page.css";
+		t66sp.title = "author";
+		t66sp.allow_quirks = false;
+		t66sp.inline_style = false;
+		t66sp.resolve = harness_css_resolve_url;
+		t66sp.resolve_pw = NULL;
+		t66cerr = css_stylesheet_create(&t66sp, &t66auth);
+		if (t66cerr != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 66 author sheet\n");
+			return 1;
+		}
+		{
+			css_error ae = css_stylesheet_append_data(t66auth,
+					(const uint8_t *)t66_css,
+					strlen(t66_css));
+
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 66 author append=%d\n",
+						(int)ae);
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t66auth);
+		}
+		if (css_select_ctx_append_sheet(t66ctx, t66auth,
+				CSS_ORIGIN_AUTHOR, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 66 author append sheet\n");
+			return 1;
+		}
+
+		/* media + unit_len_ctx, mirroring the main fixture so the
+		 * cascade matches a real page. */
+		t66c.media.type = CSS_MEDIA_SCREEN;
+		t66c.media.width = INTTOFIX(993);
+		t66c.media.height = INTTOFIX(600);
+		t66c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t66c.unit_len_ctx.viewport_width = INTTOFIX(993);
+		t66c.unit_len_ctx.viewport_height = INTTOFIX(600);
+		t66c.unit_len_ctx.device_dpi = INTTOFIX(90);
+		t66c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t66c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t66c.universal) !=
+				lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 66 universal\n");
+			return 1;
+		}
+
+		t66c.base.status = CONTENT_STATUS_LOADING;
+		t66c.base.active = 0;
+		t66c.base.handler = &g_dummy_handler;
+
+		t66derr = dom_document_get_document_element(t66doc,
+				(void *)&t66root);
+		if (t66derr != DOM_NO_ERR || t66root == NULL) {
+			fprintf(stderr, "FAIL: Test 66 doc element\n");
+			return 1;
+		}
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t66err = dom_to_box(t66root, &t66c, initial_build_cb,
+				&t66_box_ctx);
+		dom_node_unref(t66root);
+		if (t66err != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 66 dom_to_box nerr=%d\n",
+					(int)t66err);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 66 initial build done=%d "
+					"ok=%d\n", g_initial_build_done,
+					(int)g_initial_build_ok);
+			return 1;
+		}
+
+		/* run the REAL layout at the same width as the --layout
+		 * reproduction. */
+		{
+			extern bool layout_document(struct html_content *content,
+					int width, int height);
+			bool t66lok;
+
+			t66c.font_func = &harness_layout_table;
+			t66c.base.status = CONTENT_STATUS_DONE;
+			t66c.base.available_width = 993;
+			t66c.base.available_height = 600;
+			t66lok = layout_document(&t66c, 993, 600);
+			if (!t66lok) {
+				fprintf(stderr, "FAIL: Test 66 layout_document\n");
+				return 1;
+			}
+		}
+		t66_walk(t66c.layout, &t66_row_h, &t66_icon_h,
+				&t66_avatar_h, &t66_img_h);
+		fprintf(stderr, "  row h=%d icon h=%d avatar h=%d img h=%d\n",
+				t66_row_h, t66_icon_h, t66_avatar_h, t66_img_h);
+		if (t66_row_h != 48 || t66_icon_h != 48 ||
+				t66_avatar_h != 48 || t66_img_h != 48) {
+			fprintf(stderr, "FAIL: Test 66 -- inline-flex avatar did "
+					"not height the flex row: row=%d icon=%d "
+					"avatar=%d img=%d (all should be 48; "
+					"pre-fixes1169 the row was 19 and the avatar "
+					"hung below it, overlapping the next row's "
+					"title)\n",
+					t66_row_h, t66_icon_h, t66_avatar_h,
+					t66_img_h);
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 66 PASS: inline-flex avatar heights the "
+			"flex row (row/icon/avatar/img all 48) ===\n");
 
 	return 0;
 }
