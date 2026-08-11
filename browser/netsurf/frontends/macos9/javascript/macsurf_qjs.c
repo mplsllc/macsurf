@@ -2789,8 +2789,12 @@ static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
 
 	(void) this_val; (void) magic;
 	el = (dom_element *) qjs_get_node(func_data[0]);
-	if (el == NULL || argc < 1 || g_qjs_document == NULL)
+	if (el == NULL || argc < 1) return JS_UNDEFINED;
+	if (g_qjs_document == NULL) {
+		macsurf_debug_log_writef(
+			"LIFE innerHTML: g_qjs_document is NULL, cannot parse");
 		return JS_UNDEFINED;
+	}
 	html_src = JS_ToCStringLen(ctx, &html_len, argv[0]);
 	if (html_src == NULL) return JS_UNDEFINED;
 
