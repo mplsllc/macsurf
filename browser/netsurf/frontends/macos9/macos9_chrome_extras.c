@@ -447,25 +447,25 @@ static int macsurf_bmk_menu_n = 0;
 extern long macos9_bookmarks_load(char *out_buf, long buf_cap);
 extern void macos9_bookmarks_save(const char *buf, long len);
 
-/* Serialize the in-memory set to the on-disk file. Grammar (fixes693):
+/* Serialize the in-memory set to a heap buffer (caller frees; NULL + *out_len
+ * 0 when empty). Grammar (fixes693):
  *   F<TAB>id<TAB>parent<TAB>name        — a folder
  *   B<TAB>id<TAB>parent<TAB>url<TAB>label — a bookmark
  * A legacy line (no sigil, "url<TAB>label") is still READ as a root bookmark
  * by _restore, so old "MacSurf Bookmarks" files load unchanged; the writer
- * always emits the new grammar. Buffer heap-allocated — never on the stack. */
-static void macsurf_bookmarks_persist(void)
+ * always emits the new grammar. Buffer heap-allocated — never on the stack.
+ * Shared by _persist (disk save) and the manager's Export button. */
+static char *macsurf_bookmarks_serialize(long *out_len)
 {
 	char *buf;
 	size_t cap, pos = 0;
 	int i;
-	if (macsurf_bookmark_count <= 0) {
-		macos9_bookmarks_save("", 0);
-		return;
-	}
+	*out_len = 0;
+	if (macsurf_bookmark_count <= 0) return NULL;
 	cap = (size_t)macsurf_bookmark_count *
 		(MACSURF_BMK_URL_MAX + MACSURF_BMK_LBL_MAX + 48) + 8;
 	buf = (char *)malloc(cap);
-	if (buf == NULL) return;
+	if (buf == NULL) return NULL;
 	for (i = 0; i < macsurf_bookmark_count; i++) {
 		struct macsurf_bookmark *b = &macsurf_bookmarks[i];
 		size_t ll = strlen(b->label);
@@ -486,7 +486,20 @@ static void macsurf_bookmarks_persist(void)
 		memcpy(buf + pos, b->label, ll); pos += ll;
 		buf[pos++] = '\n';
 	}
-	macos9_bookmarks_save(buf, (long)pos);
+	*out_len = (long)pos;
+	return buf;
+}
+
+static void macsurf_bookmarks_persist(void)
+{
+	char *buf;
+	long len;
+	buf = macsurf_bookmarks_serialize(&len);
+	if (buf == NULL) {
+		macos9_bookmarks_save("", 0);
+		return;
+	}
+	macos9_bookmarks_save(buf, len);
 	free(buf);
 }
 
@@ -507,6 +520,74 @@ static int macsurf_bmk_split(char *line, char **fields, int maxf)
 	return n;
 }
 
+/* Append ONE parsed record to the store. line is NUL-terminated and
+ * TAB-delimited; grammar as in _serialize, plus the legacy "url<TAB>label"
+ * root-bookmark form. Shared by _restore (fresh array) and the Import path
+ * (appends to whatever is already in the array). Returns 1 if appended. */
+static int macsurf_bmk_append_line(char *line)
+{
+	struct macsurf_bookmark *b;
+	const char *url = "";
+	const char *label = "";
+	int rec_id = 0, rec_parent = 0, is_folder = 0, legacy = 0;
+	size_t ul, ll;
+	if (line[0] == '\0') return 0;
+	if (macsurf_bookmark_count >= MACSURF_BOOKMARKS_MAX) return 0;
+
+	if (line[0] == 'F' && line[1] == '\t') {
+		char *f[4];
+		if (macsurf_bmk_split(line, f, 4) >= 4) {
+			is_folder = 1;
+			rec_id = atoi(f[1]); rec_parent = atoi(f[2]);
+			label = f[3];
+		} else return 0;
+	} else if (line[0] == 'B' && line[1] == '\t') {
+		char *f[5];
+		int nf = macsurf_bmk_split(line, f, 5);
+		if (nf >= 4) {
+			rec_id = atoi(f[1]); rec_parent = atoi(f[2]);
+			url = f[3];
+			label = (nf >= 5) ? f[4] : "";
+		} else return 0;
+	} else {
+		/* legacy "url<TAB>label" — root bookmark, id assigned below */
+		char *tab = strchr(line, '\t');
+		legacy = 1;
+		if (tab != NULL) { *tab = '\0'; url = line; label = tab + 1; }
+		else { url = line; label = ""; }
+	}
+
+	if (!is_folder) {
+		int dupi;
+		ul = strlen(url);
+		if (ul == 0 || ul >= MACSURF_BMK_URL_MAX) return 0;
+		/* matches macos9_bookmark_add + macsurf_bmk_import_record: the
+		 * store can never hold two records with the same URL, so a
+		 * re-import of an export never doubles entries. */
+		for (dupi = 0; dupi < macsurf_bookmark_count; dupi++)
+			if (!macsurf_bookmarks[dupi].is_folder &&
+			    strcmp(macsurf_bookmarks[dupi].url, url) == 0)
+				return 0;
+	}
+	ll = strlen(label);
+	if (ll >= MACSURF_BMK_LBL_MAX) ll = MACSURF_BMK_LBL_MAX - 1;
+
+	b = &macsurf_bookmarks[macsurf_bookmark_count];
+	b->is_folder = is_folder;
+	b->parent_id = rec_parent;
+	if (legacy || rec_id <= 0) b->id = macsurf_bookmark_next_id++;
+	else {
+		b->id = rec_id;
+		if (rec_id >= macsurf_bookmark_next_id)
+			macsurf_bookmark_next_id = rec_id + 1;
+	}
+	if (is_folder) b->url[0] = '\0';
+	else { memcpy(b->url, url, strlen(url)); b->url[strlen(url)] = '\0'; }
+	memcpy(b->label, label, ll); b->label[ll] = '\0';
+	macsurf_bookmark_count++;
+	return 1;
+}
+
 /* Parse the on-disk file back into the array. Silent no-op on failure. */
 static void macsurf_bookmarks_restore(void)
 {
@@ -525,58 +606,9 @@ static void macsurf_bookmarks_restore(void)
 	while (*p != '\0' && macsurf_bookmark_count < MACSURF_BOOKMARKS_MAX) {
 		char *line = p;
 		char *nl = strchr(p, '\n');
-		struct macsurf_bookmark *b;
-		const char *url = "";
-		const char *label = "";
-		int rec_id = 0, rec_parent = 0, is_folder = 0, legacy = 0;
-		size_t ul, ll;
 		if (nl != NULL) { *nl = '\0'; p = nl + 1; }
 		else { p = line + strlen(line); }
-		if (line[0] == '\0') continue;
-
-		if (line[0] == 'F' && line[1] == '\t') {
-			char *f[4];
-			if (macsurf_bmk_split(line, f, 4) >= 4) {
-				is_folder = 1;
-				rec_id = atoi(f[1]); rec_parent = atoi(f[2]);
-				label = f[3];
-			} else continue;
-		} else if (line[0] == 'B' && line[1] == '\t') {
-			char *f[5];
-			int nf = macsurf_bmk_split(line, f, 5);
-			if (nf >= 4) {
-				rec_id = atoi(f[1]); rec_parent = atoi(f[2]);
-				url = f[3];
-				label = (nf >= 5) ? f[4] : "";
-			} else continue;
-		} else {
-			/* legacy "url<TAB>label" — root bookmark, id assigned below */
-			char *tab = strchr(line, '\t');
-			legacy = 1;
-			if (tab != NULL) { *tab = '\0'; url = line; label = tab + 1; }
-			else { url = line; label = ""; }
-		}
-
-		if (!is_folder) {
-			ul = strlen(url);
-			if (ul == 0 || ul >= MACSURF_BMK_URL_MAX) continue;
-		}
-		ll = strlen(label);
-		if (ll >= MACSURF_BMK_LBL_MAX) ll = MACSURF_BMK_LBL_MAX - 1;
-
-		b = &macsurf_bookmarks[macsurf_bookmark_count];
-		b->is_folder = is_folder;
-		b->parent_id = rec_parent;
-		if (legacy || rec_id <= 0) b->id = macsurf_bookmark_next_id++;
-		else {
-			b->id = rec_id;
-			if (rec_id >= macsurf_bookmark_next_id)
-				macsurf_bookmark_next_id = rec_id + 1;
-		}
-		if (is_folder) b->url[0] = '\0';
-		else { memcpy(b->url, url, strlen(url)); b->url[strlen(url)] = '\0'; }
-		memcpy(b->label, label, ll); b->label[ll] = '\0';
-		macsurf_bookmark_count++;
+		(void)macsurf_bmk_append_line(line);
 	}
 	free(buf);
 }
@@ -601,6 +633,23 @@ int macos9_bookmark_rename(int id, const char *new_label)
 	if (ln >= MACSURF_BMK_LBL_MAX) ln = MACSURF_BMK_LBL_MAX - 1;
 	memcpy(macsurf_bookmarks[i].label, new_label, ln);
 	macsurf_bookmarks[i].label[ln] = '\0';
+	macsurf_bookmarks_persist();
+	macos9_bookmark_menu_rebuild();
+	return 1;
+}
+
+/* Set a bookmark's URL (folders have none). Rejects empty/oversized values.
+ * Returns 1 on success. */
+int macos9_bookmark_set_url(int id, const char *new_url)
+{
+	int i = macsurf_bmk_find(id);
+	size_t ul;
+	if (i < 0 || new_url == NULL) return 0;
+	if (macsurf_bookmarks[i].is_folder) return 0;
+	ul = strlen(new_url);
+	if (ul == 0 || ul >= MACSURF_BMK_URL_MAX) return 0;
+	memcpy(macsurf_bookmarks[i].url, new_url, ul);
+	macsurf_bookmarks[i].url[ul] = '\0';
 	macsurf_bookmarks_persist();
 	macos9_bookmark_menu_rebuild();
 	return 1;
@@ -659,6 +708,405 @@ int macos9_bookmark_new_folder(const char *name, int parent_id)
 	macsurf_bookmarks_persist();
 	macos9_bookmark_menu_rebuild();
 	return b->id;
+}
+
+/* ====================================================================
+ * IMPORT (manager-window "Import Bookmarks...").
+ *
+ * Accepts either our own TAB grammar or a Netscape-format HTML export
+ * (the format every browser's "Export bookmarks" produces). All parsing
+ * is plain C over an explicit [buf, buf+len) range — no NUL needed, no
+ * case-insensitive libc (ANSI C89 only).
+ * ==================================================================== */
+
+/* Case-insensitive substring search (ANSI C89). */
+static const char *macsurf_stristr(const char *hay, const char *needle)
+{
+	size_t hl = strlen(hay);
+	size_t nl = strlen(needle);
+	size_t i, j;
+	if (nl == 0) return hay;
+	if (nl > hl) return NULL;
+	for (i = 0; i + nl <= hl; i++) {
+		for (j = 0; j < nl; j++) {
+			char a = hay[i + j], b = needle[j];
+			if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+			if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+			if (a != b) break;
+		}
+		if (j == nl) return hay + i;
+	}
+	return NULL;
+}
+
+/* Does the tag name at p (the char after '<') match `tag` case-insensitively,
+ * bounded by '>' / whitespace / '/'? */
+static int bmk_tag_is(const char *p, const char *tag)
+{
+	size_t tl = strlen(tag);
+	size_t i;
+	for (i = 0; i < tl; i++) {
+		char a = p[i], b = tag[i];
+		if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+		if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+		if (a != b) return 0;
+	}
+	if (p[tl] == '\0' || p[tl] == '>' || p[tl] == ' ' || p[tl] == '\t' ||
+	    p[tl] == '\n' || p[tl] == '\r' || p[tl] == '/') return 1;
+	return 0;
+}
+
+/* Extract attribute `attr` from an opening-tag string (p = after '<').
+ * Case-insensitive attribute NAME; the value is verbatim (URLs are
+ * case-sensitive). Handles "x=y" quoted or bare. Returns 1 on success. */
+static int bmk_attr_get(const char *p, const char *attr, char *out, int cap)
+{
+	size_t al = strlen(attr);
+	size_t n;
+	if (cap <= 1) return 0;
+	for (;;) {
+		const char *nm;
+		size_t nml = 0;
+		size_t i;
+		while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+		nm = p;
+		while (p[nml] != '\0' && p[nml] != '=' && p[nml] != '>' &&
+		       p[nml] != ' ' && p[nml] != '\t' && p[nml] != '\n' &&
+		       p[nml] != '\r' && p[nml] != '/') nml++;
+		if (nml == 0) break;
+		p += nml;
+		while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+		if (*p != '=') continue;      /* bare name, no value — skip */
+		p++;
+		while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+		if (nml == al) {
+			int eq = 1;
+			for (i = 0; i < nml; i++) {
+				char ca = nm[i], cb = attr[i];
+				if (ca >= 'A' && ca <= 'Z') ca = (char)(ca - 'A' + 'a');
+				if (cb >= 'A' && cb <= 'Z') cb = (char)(cb - 'A' + 'a');
+				if (ca != cb) { eq = 0; break; }
+			}
+			if (eq) {
+				n = 0;
+				if (*p == '"' || *p == '\'') {
+					char qc = *p++;
+					while (*p != '\0' && *p != qc && n + 1 < (size_t)cap)
+						out[n++] = *p++;
+					out[n] = '\0';
+				} else {
+					while (*p != '\0' && *p != '>' && *p != ' ' &&
+					       *p != '\t' && *p != '\n' && *p != '\r' &&
+					       n + 1 < (size_t)cap) out[n++] = *p++;
+					out[n] = '\0';
+				}
+				return 1;
+			}
+		}
+		/* not our attribute — skip this value, keep scanning */
+		if (*p == '"' || *p == '\'') {
+			char qc = *p++;
+			while (*p != '\0' && *p != qc) p++;
+			if (*p == qc) p++;
+		} else {
+			while (*p != '\0' && *p != '>' && *p != ' ' && *p != '\t' &&
+			       *p != '\n' && *p != '\r') p++;
+		}
+	}
+	return 0;
+}
+
+/* Copy a text run [s, end) into out, decoding the HTML entities Netscape
+ * exports use (&amp; &lt; &gt; &quot; &apos; &#NN; &#xHH;) and collapsing
+ * whitespace. Writes at most cap-1 chars, NUL-terminates. */
+static void bmk_text_run(const char *s, const char *end, char *out, int cap)
+{
+	size_t n = 0;
+	int pending_space = 0;
+	while (s < end && n + 1 < (size_t)cap) {
+		if (*s == '&') {
+			const char *t = s + 1;
+			if (t + 4 <= end && t[0] == 'a' && t[1] == 'm' &&
+			    t[2] == 'p' && t[3] == ';') {
+				if (pending_space && n > 0 && n + 1 < (size_t)cap)
+					out[n++] = ' ';
+				pending_space = 0;
+				out[n++] = '&'; s = t + 4; continue;
+			}
+			if (t + 3 <= end && t[0] == 'l' && t[1] == 't' &&
+			    t[2] == ';') {
+				if (pending_space && n > 0 && n + 1 < (size_t)cap)
+					out[n++] = ' ';
+				pending_space = 0;
+				out[n++] = '<'; s = t + 3; continue;
+			}
+			if (t + 3 <= end && t[0] == 'g' && t[1] == 't' &&
+			    t[2] == ';') {
+				if (pending_space && n > 0 && n + 1 < (size_t)cap)
+					out[n++] = ' ';
+				pending_space = 0;
+				out[n++] = '>'; s = t + 3; continue;
+			}
+			if (t + 5 <= end && t[0] == 'q' && t[1] == 'u' &&
+			    t[2] == 'o' && t[3] == 't' && t[4] == ';') {
+				if (pending_space && n > 0 && n + 1 < (size_t)cap)
+					out[n++] = ' ';
+				pending_space = 0;
+				out[n++] = '"'; s = t + 5; continue;
+			}
+			if (t + 5 <= end && t[0] == 'a' && t[1] == 'p' &&
+			    t[2] == 'o' && t[3] == 's' && t[4] == ';') {
+				if (pending_space && n > 0 && n + 1 < (size_t)cap)
+					out[n++] = ' ';
+				pending_space = 0;
+				out[n++] = '\''; s = t + 5; continue;
+			}
+			if (t + 2 <= end && t[0] == '#') {
+				char *ep = NULL;
+				long v;
+				if (t[1] == 'x' || t[1] == 'X') v = strtol(t + 2, &ep, 16);
+				else v = strtol(t + 1, &ep, 10);
+				if (ep != NULL && *ep == ';' && v > 0 && v < 256) {
+					if (pending_space && n > 0 &&
+					    n + 1 < (size_t)cap) out[n++] = ' ';
+					pending_space = 0;
+					out[n++] = (char)v;
+					s = ep + 1;
+					continue;
+				}
+			}
+			if (pending_space && n > 0 && n + 1 < (size_t)cap)
+				out[n++] = ' ';
+			pending_space = 0;
+			out[n++] = '&';
+			s++;
+			continue;
+		}
+		if (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') {
+			pending_space = 1;
+			s++;
+			continue;
+		}
+		if (pending_space && n > 0 && n + 1 < (size_t)cap) out[n++] = ' ';
+		pending_space = 0;
+		out[n++] = *s;
+		s++;
+	}
+	if (pending_space && n > 0 && n + 1 < (size_t)cap) out[n++] = ' ';
+	out[n] = '\0';
+}
+
+/* Add an imported bookmark under `parent` (0 = root). Dedupes by URL across
+ * the whole store so re-importing a file never doubles entries. Returns the
+ * new id, or 0 when skipped/full. */
+static int macsurf_bmk_import_record(const char *url, const char *label,
+		int parent)
+{
+	struct macsurf_bookmark *b;
+	size_t ul, ll;
+	int i;
+	if (url == NULL || url[0] == '\0') return 0;
+	ul = strlen(url);
+	if (ul >= MACSURF_BMK_URL_MAX) return 0;
+	if (macsurf_bookmark_count >= MACSURF_BOOKMARKS_MAX) return 0;
+	for (i = 0; i < macsurf_bookmark_count; i++)
+		if (!macsurf_bookmarks[i].is_folder &&
+		    strcmp(macsurf_bookmarks[i].url, url) == 0) return 0;
+	b = &macsurf_bookmarks[macsurf_bookmark_count];
+	b->id = macsurf_bookmark_next_id++;
+	b->parent_id = parent;
+	b->is_folder = 0;
+	memcpy(b->url, url, ul); b->url[ul] = '\0';
+	ll = (label != NULL) ? strlen(label) : 0;
+	if (ll >= MACSURF_BMK_LBL_MAX) ll = MACSURF_BMK_LBL_MAX - 1;
+	if (ll > 0) memcpy(b->label, label, ll);
+	b->label[ll] = '\0';
+	macsurf_bookmark_count++;
+	return b->id;
+}
+
+/* Create an imported folder under `parent`. Returns the new folder id, or 0
+ * when the store is full. */
+static int macsurf_bmk_import_folder(const char *name, int parent)
+{
+	struct macsurf_bookmark *b;
+	size_t ln;
+	if (macsurf_bookmark_count >= MACSURF_BOOKMARKS_MAX) return 0;
+	b = &macsurf_bookmarks[macsurf_bookmark_count];
+	b->id = macsurf_bookmark_next_id++;
+	b->parent_id = parent;
+	b->is_folder = 1;
+	b->url[0] = '\0';
+	ln = (name != NULL) ? strlen(name) : 0;
+	if (ln >= MACSURF_BMK_LBL_MAX) ln = MACSURF_BMK_LBL_MAX - 1;
+	if (ln > 0) memcpy(b->label, name, ln);
+	b->label[ln] = '\0';
+	macsurf_bookmark_count++;
+	return b->id;
+}
+
+/* Import a Netscape-format HTML bookmark file over the explicit range
+ * [in, in+len). <DT><A HREF="u">label</A> → bookmark; <DT><H3>name</H3>
+ * followed by <DL>…</DL> → folder with children; </DL> pops. Returns the
+ * number of records added. */
+static int macsurf_bmk_import_html(const char *in, long len)
+{
+	const char *end = in + len;
+	const char *p = in;
+	int fstack[32];
+	int fsp = 0;
+	int added = 0;
+	char pend_name[MACSURF_BMK_LBL_MAX];
+	int have_pend = 0;
+	pend_name[0] = '\0';
+
+	while (p < end) {
+		const char *lt = memchr(p, '<', (size_t)(end - p));
+		const char *gt;
+		const char *txt_end;
+		if (lt == NULL) break;
+		p = lt + 1;
+		if (p >= end) break;
+		if (*p == '!') {
+			/* comment / doctype — skip to '>' */
+			gt = memchr(p, '>', (size_t)(end - p));
+			if (gt == NULL) break;
+			p = gt + 1;
+			continue;
+		}
+		if (*p == '/') {
+			/* closing tag */
+			if (bmk_tag_is(p + 1, "dl") && fsp > 0) {
+				int pid = fstack[--fsp];
+				if (have_pend) {   /* folder with no <DL>: create */
+					if (macsurf_bmk_import_folder(pend_name,
+							pid) != 0) added++;
+					have_pend = 0;
+				}
+			}
+			gt = memchr(p, '>', (size_t)(end - p));
+			if (gt == NULL) break;
+			p = gt + 1;
+			continue;
+		}
+		if (bmk_tag_is(p, "a")) {
+			char href[MACSURF_BMK_URL_MAX];
+			char label[MACSURF_BMK_LBL_MAX];
+			int parent = (fsp > 0) ? fstack[fsp - 1] : 0;
+			gt = memchr(p, '>', (size_t)(end - p));
+			if (gt == NULL) break;
+			txt_end = gt + 1;
+			{
+				const char *lt2 = memchr(txt_end, '<',
+					(size_t)(end - txt_end));
+				if (lt2 != NULL) txt_end = lt2;
+			}
+			if (bmk_attr_get(p, "href", href, (int)sizeof href) &&
+			    href[0] != '\0') {
+				bmk_text_run(gt + 1, txt_end, label,
+					(int)sizeof label);
+				if (macsurf_bmk_import_record(href, label,
+						parent) != 0) added++;
+			}
+			p = txt_end;
+			continue;
+		}
+		if (bmk_tag_is(p, "h3")) {
+			gt = memchr(p, '>', (size_t)(end - p));
+			if (gt == NULL) break;
+			txt_end = gt + 1;
+			{
+				const char *lt2 = memchr(txt_end, '<',
+					(size_t)(end - txt_end));
+				if (lt2 != NULL) txt_end = lt2;
+			}
+			bmk_text_run(gt + 1, txt_end, pend_name,
+				(int)sizeof pend_name);
+			have_pend = 1;
+			p = txt_end;
+			continue;
+		}
+		if (bmk_tag_is(p, "dl")) {
+			int parent = (fsp > 0) ? fstack[fsp - 1] : 0;
+			if (have_pend) {
+				int fid = macsurf_bmk_import_folder(pend_name,
+					parent);
+				if (fid != 0) {
+					if (fsp < 32) fstack[fsp++] = fid;
+					added++;
+				}
+				have_pend = 0;
+			} else if (fsp < 32) {
+				fstack[fsp++] = parent;
+			}
+			gt = memchr(p, '>', (size_t)(end - p));
+			if (gt == NULL) break;
+			p = gt + 1;
+			continue;
+		}
+		/* any other tag (dt, p, hr, meta, h1, ...) — skip it */
+		gt = memchr(p, '>', (size_t)(end - p));
+		if (gt == NULL) break;
+		p = gt + 1;
+	}
+	if (have_pend) {   /* folder with no <DL> — create at stack top */
+		int parent = (fsp > 0) ? fstack[fsp - 1] : 0;
+		if (macsurf_bmk_import_folder(pend_name, parent) != 0) added++;
+	}
+	return added;
+}
+
+/* Import from a buffer: our own TAB grammar, or a Netscape HTML export.
+ * Appends to the store (no reset), persists, rebuilds the menu. Returns the
+ * number of records added. Grammar sniff: the first non-blank line containing
+ * a TAB means our format (HTML exports have none). */
+int macos9_bookmarks_import_buffer(const char *buf, long len)
+{
+	const char *end;
+	const char *p;
+	int tab_grammar = 0;
+	int added = 0;
+	if (buf == NULL || len <= 0) return 0;
+	end = buf + len;
+	p = buf;
+	while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r'))
+		p++;
+	if (p < end) {
+		const char *nl = memchr(p, '\n', (size_t)(end - p));
+		const char *line_end = (nl != NULL) ? nl : end;
+		if (memchr(p, '\t', (size_t)(line_end - p)) != NULL)
+			tab_grammar = 1;
+	}
+	if (tab_grammar) {
+		char *copy = (char *)malloc((size_t)(end - buf) + 1);
+		char *q, *line;
+		if (copy == NULL) return 0;
+		memcpy(copy, buf, (size_t)(end - buf));
+		copy[end - buf] = '\0';
+		q = copy;
+		while (*q != '\0' && macsurf_bookmark_count < MACSURF_BOOKMARKS_MAX) {
+			line = q;
+			{
+				char *nl = strchr(q, '\n');
+				if (nl != NULL) { *nl = '\0'; q = nl + 1; }
+				else q = line + strlen(line);
+			}
+			{
+				size_t ll2 = strlen(line);   /* strip CRLF \r */
+				if (ll2 > 0 && line[ll2 - 1] == '\r')
+					line[ll2 - 1] = '\0';
+			}
+			if (macsurf_bmk_append_line(line)) added++;
+		}
+		free(copy);
+	} else {
+		added = macsurf_bmk_import_html(buf, len);
+	}
+	if (added > 0) {
+		macsurf_bookmarks_persist();
+		macos9_bookmark_menu_rebuild();
+	}
+	return added;
 }
 
 /* fixes707 — hierarchical Bookmarks menu. Folders were previously skipped
@@ -1047,6 +1495,19 @@ void macos9_history_clear(void)
 	macos9_history_menu_rebuild();
 }
 
+/* Delete ONE history entry by store index (manager-window Delete button).
+ * Shifts the tail down, persists, rebuilds the menu. */
+void macos9_history_delete_entry(int i)
+{
+	int j;
+	if (i < 0 || i >= macsurf_hist_n) return;
+	for (j = i; j < macsurf_hist_n - 1; j++)
+		macsurf_hist[j] = macsurf_hist[j + 1];
+	macsurf_hist_n--;
+	macsurf_history_persist();
+	macos9_history_menu_rebuild();
+}
+
 /* fixes706 — Clear Cache menu handler: wipe the disk cache (cached bodies +
  * the old deadhosts.txt) and the in-memory dead-host state, then report the
  * count. Bookmarks / history / cookies (MacSurfData root) are untouched. */
@@ -1149,6 +1610,43 @@ void macos9_history_init(void)
  * which crashes on real G3/G4 hardware (see CLAUDE.md Known Gotchas).
  * ==================================================================== */
 #ifdef __MACOS9__
+
+/* chrome_confirm_delete lives in the bookmark-manager section below; the
+ * History window (defined first) needs it for its Delete button. */
+static int chrome_confirm_delete(const char *msg);
+
+/* Read the TE's text into out (NUL-terminated). */
+static void chrome_te_get_text(TEHandle te, char *out, int cap)
+{
+	CharsHandle h = TEGetText(te);
+	long len = (*te)->teLength;
+	if (len > (long)cap - 1) len = (long)cap - 1;
+	if (len > 0) {
+		HLock((Handle)h);
+		memcpy(out, *(char **)h, (size_t)len);
+		HUnlock((Handle)h);
+	}
+	out[len] = '\0';
+}
+
+/* Draw the "Find:" label + a bordered search field. chrome_mgr_header leaves
+ * TextSize(15) in effect for the row/button text, so the 12pt label restores
+ * it. labx is the label's left edge in window-local coords. */
+static void chrome_draw_search_field(const Rect *r, short labx)
+{
+	RGBColor blk;
+	RGBColor saved_fg;
+	blk.red = blk.green = blk.blue = 0;
+	GetForeColor(&saved_fg);
+	EraseRect(r);
+	FrameRect(r);
+	RGBForeColor(&blk);
+	TextSize(12);
+	MoveTo(labx, (short)(r->top + 14));
+	DrawString("\pFind:");
+	TextSize(15);
+	RGBForeColor(&saved_fg);
+}
 
 /* One rendered line: a day header, or a visit (hidx into macsurf_hist[]). */
 struct hw_row {
@@ -1386,16 +1884,22 @@ static void chrome_day_header(long ts, long today_day, char *out)
 		(int)dtr.day, (int)dtr.year);
 }
 
-/* (Re)build the flat display-row list from the store. Returns row count. */
-static int hw_build_rows(struct hw_row *rows, int cap, long today_day)
+/* (Re)build the flat display-row list from the store. `filter` (may be NULL
+ * or empty) keeps only entries whose title OR url matches (case-insensitive
+ * substring). Returns row count. */
+static int hw_build_rows(struct hw_row *rows, int cap, long today_day,
+		const char *filter)
 {
 	int i, n = 0;
 	long prev_day = 0x7FFFFFFFL;
+	int have_filter = (filter != NULL && filter[0] != '\0');
 	for (i = 0; i < macsurf_hist_n && n < cap - 1; i++) {
 		long day = macsurf_hist[i].ts / 86400L;
 		const char *ttl = macsurf_hist[i].title;
 		const char *url = macsurf_hist[i].url;
-		if (i == 0 || day != prev_day) {
+		if (have_filter && macsurf_stristr(ttl, filter) == NULL &&
+		    macsurf_stristr(url, filter) == NULL) continue;
+		if (n == 0 || day != prev_day) {
 			rows[n].is_header = 1;
 			rows[n].hidx = -1;
 			chrome_day_header(macsurf_hist[i].ts, today_day, rows[n].text);
@@ -1440,7 +1944,7 @@ static int hw_prev_entry(struct hw_row *rows, int from)
 void macos9_history_window_show(struct gui_window *g)
 {
 	WindowRef win;
-	Rect wb, list, up, dn, clr, go, done;
+	Rect wb, list, up, dn, clr, del, go, done, search_rect;
 	GrafPtr saved_port;
 	EventRecord ev;
 	struct hw_row *rows;
@@ -1453,9 +1957,13 @@ void macos9_history_window_show(struct gui_window *g)
 	int last_click_row = -1;
 	unsigned long last_click_time = 0;
 	int dirty = 1;
+	TEHandle te_search = NULL;
+	int search_focus = 0;
+	char filter[128];
 
 	if (g == NULL) return;
 	go_url[0] = '\0';
+	filter[0] = '\0';
 
 	{
 		unsigned long secs = 0;
@@ -1480,16 +1988,27 @@ void macos9_history_window_show(struct gui_window *g)
 	TextFont(1);   /* application font (Geneva) */
 	TextSize(12);  /* fixes742 — larger row text */
 
-	/* content is 520 x 400 local; list sits below the 40px title banner */
-	SetRect(&list, 8, 44, 512, 356);
-	SetRect(&up,   494, 44,  512, 66);
-	SetRect(&dn,   494, 334, 512, 356);
-	SetRect(&clr,  8,   364, 128, 388);
-	SetRect(&go,   300, 364, 380, 388);
-	SetRect(&done, 420, 364, 512, 388);
+	/* content is 520 x 400 local. Search field + list below the 34px
+	 * title banner; the filter narrows rows to title/URL matches. */
+	SetRect(&search_rect, 48, 40, 512, 60);
+	SetRect(&list, 8, 64, 512, 344);
+	SetRect(&up,   494, 64,  512, 86);
+	SetRect(&dn,   494, 322, 512, 344);
+	SetRect(&clr,  8,   352, 128, 376);
+	SetRect(&del,  132, 352, 192, 376);
+	SetRect(&go,   300, 352, 380, 376);
+	SetRect(&done, 420, 352, 512, 376);
 	vis = (list.bottom - list.top - 4) / row_h;
 
-	nrows = hw_build_rows(rows, cap, today_day);
+	te_search = TENew(&search_rect, &search_rect);
+	if (te_search == NULL) {
+		SetPort(saved_port);
+		DisposeWindow(win);
+		free(rows);
+		return;
+	}
+
+	nrows = hw_build_rows(rows, cap, today_day, filter);
 	sel = hw_next_entry(rows, nrows, 0);
 
 	ShowWindow(win);
@@ -1533,10 +2052,28 @@ void macos9_history_window_show(struct gui_window *g)
 			if (PtInRect(lp, &done)) { done_flag = 1; break; }
 			if (PtInRect(lp, &clr)) {
 				macos9_history_clear();
-				nrows = hw_build_rows(rows, cap, today_day);
+				nrows = hw_build_rows(rows, cap, today_day, filter);
 				sel = hw_next_entry(rows, nrows, 0);
 				scroll_top = 0;
 				last_click_row = -1;
+				break;
+			}
+			if (PtInRect(lp, &del)) {
+				if (sel >= 0 && sel < nrows && !rows[sel].is_header) {
+					int hi = rows[sel].hidx;
+					if (hi >= 0 && hi < macsurf_hist_n &&
+					    chrome_confirm_delete(
+						"Delete this history entry?")) {
+						macos9_history_delete_entry(hi);
+						nrows = hw_build_rows(rows, cap,
+							today_day, filter);
+						if (sel >= nrows) sel = nrows - 1;
+						if (nrows == 0) sel = -1;
+						if (scroll_top > nrows - vis)
+							scroll_top = nrows - vis;
+						if (scroll_top < 0) scroll_top = 0;
+					}
+				}
 				break;
 			}
 			if (PtInRect(lp, &go)) {
@@ -1561,8 +2098,20 @@ void macos9_history_window_show(struct gui_window *g)
 				if (scroll_top > maxtop) scroll_top = maxtop;
 				break;
 			}
+			if (PtInRect(lp, &search_rect)) {
+				if (!search_focus) {
+					search_focus = 1;
+					TEActivate(te_search);
+				}
+				TEClick(lp, false, te_search);
+				break;
+			}
 			if (PtInRect(lp, &list)) {
 				int idx = scroll_top + (lp.v - (list.top + 2)) / row_h;
+				if (search_focus) {
+					search_focus = 0;
+					TEDeactivate(te_search);
+				}
 				if (idx >= 0 && idx < nrows && !rows[idx].is_header) {
 					if (idx == last_click_row &&
 					    (ev.when - last_click_time) <= GetDblTime()) {
@@ -1585,6 +2134,72 @@ void macos9_history_window_show(struct gui_window *g)
 			if ((ev.modifiers & cmdKey) &&
 			    (ch == '.' || ch == 'w' || ch == 'W')) {
 				done_flag = 1;
+			} else if (search_focus && ch == 0x09) {
+				/* Tab leaves the search field */
+				search_focus = 0;
+				TEDeactivate(te_search);
+			} else if (search_focus && ch == 0x1B) {
+				/* Esc clears the filter first, then closes */
+				if (filter[0] != '\0') {
+					filter[0] = '\0';
+					TESetSelect(0, 32767, te_search);
+					TESetText("", 0, te_search);
+					nrows = hw_build_rows(rows, cap,
+						today_day, filter);
+					scroll_top = 0;
+					sel = hw_next_entry(rows, nrows, 0);
+				} else {
+					done_flag = 1;
+				}
+			} else if (search_focus && (ch == 0x0D || ch == 0x03)) {
+				/* Return in the field = Go */
+				if (sel >= 0 && sel < nrows && !rows[sel].is_header) {
+					int hi = rows[sel].hidx;
+					if (hi >= 0 && hi < macsurf_hist_n) {
+						strcpy(go_url, macsurf_hist[hi].url);
+						done_flag = 1;
+					}
+				}
+			} else if (search_focus) {
+				int was_empty = (filter[0] == '\0');
+				if (ch == 0x1F || ch == 0x1E || ch == 0x0C ||
+				    ch == 0x0B || ch == 0x01 || ch == 0x04) {
+					/* list navigation still works while typing */
+					if (ch == 0x1F) {
+						int ns = hw_next_entry(rows, nrows,
+							(sel < 0) ? 0 : sel + 1);
+						if (ns >= 0) sel = ns;
+					} else if (ch == 0x1E) {
+						int ps = hw_prev_entry(rows,
+							(sel <= 0) ? 0 : sel - 1);
+						if (ps >= 0) sel = ps;
+					} else if (ch == 0x0C) {
+						scroll_top += vis - 1;
+					} else if (ch == 0x0B) {
+						scroll_top -= vis - 1;
+					} else if (ch == 0x01) {
+						scroll_top = 0;
+						sel = hw_next_entry(rows, nrows, 0);
+					} else {
+						sel = hw_prev_entry(rows, nrows - 1);
+						scroll_top = nrows - vis;
+					}
+				} else if ((ch >= 0x20 && ch < 0x7F) || ch == 0x08) {
+					/* printable / backspace — edit, re-filter */
+					TEKey(ch, te_search);
+					chrome_te_get_text(te_search, filter,
+						(int)sizeof filter);
+					nrows = hw_build_rows(rows, cap,
+						today_day, filter);
+					if (was_empty || nrows == 0) scroll_top = 0;
+					sel = hw_next_entry(rows, nrows, 0);
+				} else {
+					TEKey(ch, te_search);
+				}
+			} else if (ch == 0x09) {
+				/* Tab enters the search field */
+				search_focus = 1;
+				TEActivate(te_search);
 			} else if (ch == 0x1B) {          /* Esc */
 				done_flag = 1;
 			} else if (ch == 0x0D || ch == 0x03) { /* Return / Enter */
@@ -1643,6 +2258,9 @@ void macos9_history_window_show(struct gui_window *g)
 			GetClip(saveclip);
 			{ Rect content; SetRect(&content, 0, 0, 520, 400);
 			  chrome_mgr_header(&content, "History", 1); }
+			/* search field (label + frame, then the TE's text) */
+			chrome_draw_search_field(&search_rect, 6);
+			TEUpdate(&search_rect, te_search);
 			EraseRect(&list);
 			FrameRect(&list);
 			ClipRect(&list);
@@ -1677,9 +2295,24 @@ void macos9_history_window_show(struct gui_window *g)
 						st.red = 0xFDFD; st.green = 0xF8F8; st.blue = 0xEFEF;
 						RGBForeColor(&st); PaintRect(&tr);
 					}
+					/* per-site favicon dot — green = visited. V1 has no
+					 * per-host icon cache, so the dot is a fixed colour
+					 * (window.c's per-window favicon GWorlds are private). */
+					{
+						Rect dot;
+						RGBColor grn;
+						dot.left = (short)(list.left + 7);
+						dot.top = (short)(y + 7);
+						dot.right = (short)(dot.left + 7);
+						dot.bottom = (short)(dot.top + 7);
+						grn.red = 0x3030; grn.green = 0xE0E0;
+						grn.blue = 0x3030;
+						RGBForeColor(&grn);
+						PaintOval(&dot);
+					}
 					if (r == sel) RGBForeColor(&wht);
 					else RGBForeColor(&blk);
-					MoveTo((short)(list.left + 18), (short)(y + 14));
+					MoveTo((short)(list.left + 22), (short)(y + 14));
 					DrawText(rows[r].text, 0, len);
 					RGBForeColor(&blk);
 				}
@@ -1694,17 +2327,20 @@ void macos9_history_window_show(struct gui_window *g)
 			MoveTo(dn.left + 6, dn.top + 15); DrawString("\pv");
 			/* buttons */
 			chrome_draw_button(&clr, "\pClear History");
+			chrome_draw_button(&del, "\pDelete");
 			chrome_draw_button(&go, "\pGo");
 			chrome_draw_button(&done, "\pDone");
 			if (nrows == 0) {
 				MoveTo(list.left + 12, list.top + 24);
-				DrawString("\p(No history yet)");
+				DrawString((filter[0] != '\0') ? "\p(No matches)"
+					: "\p(No history yet)");
 			}
 			dirty = 0;
 		}
 	}
 
 	SetPort(saved_port);
+	TEDispose(te_search);
 	DisposeWindow(win);
 	free(rows);
 
@@ -1841,6 +2477,177 @@ static int chrome_prompt_text(const char *title, const char *initial,
 	return accepted && out[0] != '\0';
 }
 
+/* Two-field text prompt (Name / URL) — the Edit Bookmark dialog. Tab moves
+ * between the fields; Return accepts. Returns 1 with both fields filled in
+ * (out_name non-empty; out_url may be empty — macos9_bookmark_set_url does
+ * the real validation), else 0. */
+static int chrome_prompt_text2(const char *title, const char *init_name,
+		const char *init_url, char *out_name, int namecap,
+		char *out_url, int urlcap)
+{
+	WindowRef win;
+	Rect wb, name_rect, url_rect, ok_rect, cancel_rect;
+	TEHandle te_name, te_url;
+	EventRecord ev;
+	GrafPtr saved;
+	Str255 pt;
+	int done = 0, accepted = 0;
+	int active_field = 0;   /* 0 = name, 1 = url */
+
+	SetRect(&wb, 200, 170, 560, 310);
+	if (CreateNewWindow(kDocumentWindowClass, kWindowCloseBoxAttribute,
+			&wb, &win) != noErr || win == NULL)
+		return 0;
+	c_to_pstring(title, pt);
+	SetWTitle(win, pt);
+	GetPort(&saved);
+	SetPortWindowPort(win);
+	TextFont(1);
+	TextSize(10);
+
+	SetRect(&name_rect, 60, 30, 348, 50);
+	SetRect(&url_rect,  60, 62, 348, 82);
+	te_name = TENew(&name_rect, &name_rect);
+	if (te_name == NULL) { SetPort(saved); DisposeWindow(win); return 0; }
+	te_url = TENew(&url_rect, &url_rect);
+	if (te_url == NULL) {
+		TEDispose(te_name);
+		SetPort(saved);
+		DisposeWindow(win);
+		return 0;
+	}
+	if (init_name != NULL && init_name[0] != '\0') {
+		TESetText(init_name, (long)strlen(init_name), te_name);
+		TESetSelect(0, 32767, te_name);
+	}
+	if (init_url != NULL && init_url[0] != '\0') {
+		TESetText(init_url, (long)strlen(init_url), te_url);
+		TESetSelect(0, 32767, te_url);
+	}
+	SetRect(&ok_rect, 260, 100, 348, 124);
+	SetRect(&cancel_rect, 150, 100, 250, 124);
+
+	ShowWindow(win);
+	SelectWindow(win);
+	TEActivate(te_name);
+
+	while (!done) {
+		WaitNextEvent(everyEvent, &ev, 20, NULL);
+		switch (ev.what) {
+		case mouseDown: {
+			WindowRef which;
+			short part = FindWindow(ev.where, &which);
+			if (which != win) break;
+			if (part == inDrag) {
+				Rect db; BitMap sb;
+				GetQDGlobalsScreenBits(&sb);
+				db = sb.bounds;
+				DragWindow(win, ev.where, &db);
+			} else if (part == inGoAway) {
+				if (TrackGoAway(win, ev.where)) done = 1;
+			} else if (part == inContent) {
+				Point lp = ev.where;
+				GlobalToLocal(&lp);
+				if (PtInRect(lp, &ok_rect)) { accepted = 1; done = 1; }
+				else if (PtInRect(lp, &cancel_rect)) done = 1;
+				else if (PtInRect(lp, &name_rect)) {
+					active_field = 0;
+					TEDeactivate(te_url);
+					TEActivate(te_name);
+					TEClick(lp, false, te_name);
+				} else if (PtInRect(lp, &url_rect)) {
+					active_field = 1;
+					TEDeactivate(te_name);
+					TEActivate(te_url);
+					TEClick(lp, false, te_url);
+				}
+			}
+			break;
+		}
+		case keyDown:
+		case autoKey: {
+			char ch = (char)(ev.message & charCodeMask);
+			if (ch == '\r' || ch == 0x03) { accepted = 1; done = 1; }
+			else if (ch == 0x1B) done = 1;
+			else if ((ev.modifiers & cmdKey) && ch == '.') done = 1;
+			else if (ch == 0x09) {   /* Tab switches fields */
+				if (active_field == 0) {
+					active_field = 1;
+					TEDeactivate(te_name);
+					TEActivate(te_url);
+					TESetSelect(0, 32767, te_url);
+				} else {
+					active_field = 0;
+					TEDeactivate(te_url);
+					TEActivate(te_name);
+					TESetSelect(0, 32767, te_name);
+				}
+			} else if (active_field == 0) TEKey(ch, te_name);
+			else TEKey(ch, te_url);
+			break;
+		}
+		case updateEvt:
+			if ((WindowRef)ev.message == win) {
+				RGBColor blk;
+				BeginUpdate(win);
+				blk.red = blk.green = blk.blue = 0;
+				RGBForeColor(&blk);
+				TextSize(10);
+				MoveTo(10, 42); DrawString("\pName:");
+				MoveTo(10, 74); DrawString("\pURL:");
+				EraseRect(&name_rect); FrameRect(&name_rect);
+				TEUpdate(&name_rect, te_name);
+				EraseRect(&url_rect); FrameRect(&url_rect);
+				TEUpdate(&url_rect, te_url);
+				EraseRect(&ok_rect); FrameRect(&ok_rect);
+				MoveTo(ok_rect.left + 34, ok_rect.top + 16);
+				DrawString("\pOK");
+				EraseRect(&cancel_rect); FrameRect(&cancel_rect);
+				MoveTo(cancel_rect.left + 26, cancel_rect.top + 16);
+				DrawString("\pCancel");
+				EndUpdate(win);
+			}
+			break;
+		case nullEvent:
+			TEIdle(te_name);
+			TEIdle(te_url);
+			break;
+		default:
+			break;
+		}
+	}
+
+	if (accepted) {
+		CharsHandle h = TEGetText(te_name);
+		long len = (*te_name)->teLength;
+		if (len > (long)namecap - 1) len = (long)namecap - 1;
+		if (len > 0) {
+			HLock((Handle)h);
+			memcpy(out_name, *(char **)h, (size_t)len);
+			HUnlock((Handle)h);
+		}
+		out_name[len] = '\0';
+		h = TEGetText(te_url);
+		len = (*te_url)->teLength;
+		if (len > (long)urlcap - 1) len = (long)urlcap - 1;
+		if (len > 0) {
+			HLock((Handle)h);
+			memcpy(out_url, *(char **)h, (size_t)len);
+			HUnlock((Handle)h);
+		}
+		out_url[len] = '\0';
+	} else {
+		out_name[0] = '\0';
+		out_url[0] = '\0';
+	}
+
+	TEDispose(te_name);
+	TEDispose(te_url);
+	SetPort(saved);
+	DisposeWindow(win);
+	return accepted && out_name[0] != '\0';
+}
+
 /* Caution alert with Delete / Cancel. Returns 1 if the user confirms. */
 static int chrome_confirm_delete(const char *msg)
 {
@@ -1870,15 +2677,19 @@ struct bw_row {
 };
 
 /* Build the two-level display list: root bookmarks, then each folder and
- * the bookmarks parented to it. Returns row count. */
-static int bw_build_rows(struct bw_row *rows, int cap)
+ * the bookmarks parented to it. `filter` (may be NULL or empty) keeps only
+ * labels/URLs matching the case-insensitive substring. Returns row count. */
+static int bw_build_rows(struct bw_row *rows, int cap, const char *filter)
 {
 	int i, j, n = 0;
+	int have_filter = (filter != NULL && filter[0] != '\0');
 	for (i = 0; i < macsurf_bookmark_count && n < cap; i++) {
 		struct macsurf_bookmark *b = &macsurf_bookmarks[i];
 		const char *s;
 		size_t ln;
 		if (b->is_folder || b->parent_id != 0) continue;
+		if (have_filter && macsurf_stristr(b->label, filter) == NULL &&
+		    macsurf_stristr(b->url, filter) == NULL) continue;
 		rows[n].bidx = (short)i; rows[n].is_folder = 0; rows[n].depth = 0;
 		s = (b->label[0] != '\0') ? b->label : b->url;
 		ln = strlen(s); if (ln > 150) ln = 150;
@@ -1890,6 +2701,8 @@ static int bw_build_rows(struct bw_row *rows, int cap)
 		const char *nm;
 		size_t ln;
 		if (!f->is_folder) continue;
+		if (have_filter && macsurf_stristr(f->label, filter) == NULL)
+			continue;
 		nm = (f->label[0] != '\0') ? f->label : "(folder)";
 		strcpy(rows[n].text, "> ");
 		ln = strlen(nm); if (ln > 150) ln = 150;
@@ -1900,6 +2713,8 @@ static int bw_build_rows(struct bw_row *rows, int cap)
 			struct macsurf_bookmark *b = &macsurf_bookmarks[j];
 			const char *s;
 			if (b->is_folder || b->parent_id != f->id) continue;
+			if (have_filter && macsurf_stristr(b->label, filter) == NULL &&
+			    macsurf_stristr(b->url, filter) == NULL) continue;
 			rows[n].bidx = (short)j; rows[n].is_folder = 0; rows[n].depth = 1;
 			s = (b->label[0] != '\0') ? b->label : b->url;
 			ln = strlen(s); if (ln > 150) ln = 150;
@@ -1908,6 +2723,29 @@ static int bw_build_rows(struct bw_row *rows, int cap)
 		}
 	}
 	return n;
+}
+
+/* Swap a record with the nearest array slot sharing its (parent, folder)
+ * status, in the given direction (+1 = toward the end of the array). The
+ * visible order of siblings within a folder/root level therefore follows
+ * the buttons. Returns 1 on a swap. */
+static int bw_move_sibling(int bidx, int dir)
+{
+	struct macsurf_bookmark tmp;
+	int j;
+	if (bidx < 0 || bidx >= macsurf_bookmark_count) return 0;
+	for (j = bidx + dir; j >= 0 && j < macsurf_bookmark_count; j += dir) {
+		if (macsurf_bookmarks[j].parent_id ==
+				macsurf_bookmarks[bidx].parent_id &&
+		    macsurf_bookmarks[j].is_folder ==
+				macsurf_bookmarks[bidx].is_folder) {
+			tmp = macsurf_bookmarks[bidx];
+			macsurf_bookmarks[bidx] = macsurf_bookmarks[j];
+			macsurf_bookmarks[j] = tmp;
+			return 1;
+		}
+	}
+	return 0;
 }
 
 /* fixes708 — move a bookmark into a folder via a POPUP picker (replaces the
@@ -2014,10 +2852,178 @@ static int bw_try_drag(struct bw_row *rows, int nrows, int src_row,
 	return did_move;
 }
 
+/* ---- Import / Export file plumbing (FSSpec I/O, mirroring
+ * macos9_disk_cache.c; Navigation Services picker mirrors the proven
+ * fixes721 file-gadget pattern in window.c) ---- */
+
+extern int macos9_fsspec_to_path(const FSSpec *spec, char *out, long cap);
+
+/* Read an entire file into a heap buffer (caller frees via DisposePtr).
+ * Returns the byte count, or -1 on any failure. Capped at 1 MB. */
+static long chrome_fsspec_read_all(const FSSpec *spec, char **out)
+{
+	short ref;
+	long len;
+	long got;
+	char *buf;
+	OSErr err;
+	*out = NULL;
+	if (FSpOpenDF(spec, fsRdPerm, &ref) != noErr) return -1;
+	if (GetEOF(ref, &len) != noErr || len <= 0) { FSClose(ref); return -1; }
+	if (len > 1024L * 1024L) len = 1024L * 1024L;
+	buf = (char *)NewPtr(len);
+	if (buf == NULL) { FSClose(ref); return -1; }
+	got = len;
+	err = FSRead(ref, &got, buf);
+	FSClose(ref);
+	if (err != noErr) { DisposePtr(buf); return -1; }
+	if (got <= 0) { DisposePtr(buf); return -1; }
+	*out = buf;
+	return got;
+}
+
+/* Write bytes to a file (creating it if missing) at vRefNum/dirID/name.
+ * Returns 0 on success. */
+static OSErr chrome_fsspec_write_all(short vRef, long dirID,
+		ConstStr255Param name, const char *data, long len)
+{
+	FSSpec spec;
+	short ref;
+	OSErr err;
+	err = FSMakeFSSpec(vRef, dirID, name, &spec);
+	if (err == fnfErr) {
+		err = FSpCreate(&spec, 'MPLS', 'TEXT', smSystemScript);
+		if (err == noErr)
+			err = FSMakeFSSpec(vRef, dirID, name, &spec);
+	}
+	if (err != noErr) return err;
+	err = FSpOpenDF(&spec, fsRdWrPerm, &ref);
+	if (err != noErr) return err;
+	err = SetEOF(ref, 0);
+	if (err == noErr && len > 0) {
+		long wrote = len;
+		err = FSWrite(ref, &wrote, data);
+	}
+	if (err == noErr) err = SetEOF(ref, len);
+	FSClose(ref);
+	if (err == noErr) FlushVol(NULL, vRef);
+	return err;
+}
+
+/* Import Bookmarks... — Navigation Services open dialog, then feed the
+ * chosen file to the plain-C import parser. Reports the count. */
+static void bw_import_bookmarks(void)
+{
+	NavDialogOptions opts;
+	NavReplyRecord reply;
+	OSErr err, aeerr;
+	FSSpec spec;
+	AEKeyword kw;
+	DescType dt;
+	Size sz;
+	char *data;
+	long len;
+	int added;
+	Str255 pmsg;
+	char msg[240];
+
+	if (NavGetDefaultDialogOptions(&opts) != noErr) return;
+	err = NavGetFile(NULL, &reply, &opts, NULL, NULL, NULL, NULL, NULL);
+	if (err != noErr) return;
+	if (!reply.validRecord) { NavDisposeReply(&reply); return; }
+	/* CarbonLib replies may carry typeFSS or typeFSRef; try both. */
+	aeerr = AEGetNthPtr(&reply.selection, 1, typeFSS, &kw, &dt,
+			&spec, sizeof spec, &sz);
+	if (aeerr != noErr) {
+		FSRef ref;
+		OSErr e2 = AEGetNthPtr(&reply.selection, 1, typeFSRef, &kw, &dt,
+				&ref, sizeof ref, &sz);
+		if (e2 == noErr)
+			e2 = FSGetCatalogInfo(&ref, kFSCatInfoNone, NULL, NULL,
+					&spec, NULL);
+		aeerr = e2;
+	}
+	NavDisposeReply(&reply);
+	if (aeerr != noErr) return;
+	len = chrome_fsspec_read_all(&spec, &data);
+	if (len <= 0) return;
+	added = macos9_bookmarks_import_buffer(data, len);
+	DisposePtr(data);
+	sprintf(msg, "Imported %d bookmark%s.", added,
+		(added == 1) ? "" : "s");
+	c_to_pstring(msg, pmsg);
+	{
+		SInt16 item;
+		StandardAlert(kAlertNoteAlert, pmsg, "\p", NULL, &item);
+	}
+}
+
+/* Export Bookmarks... — write the store in the on-disk TAB grammar to
+ * MacSurfData/"MacSurf Bookmarks Export.txt" and report the full path
+ * (Navigation Services Put is avoided: NavPutFile fails with -5699
+ * under CarbonLib — see macos9_download.c). */
+static void bw_export_bookmarks(void)
+{
+	char *data;
+	long len;
+	short vRef;
+	long dirID;
+	Str255 name;
+	Str255 pmsg;
+	char msg[240];
+	SInt16 item;
+	OSErr err;
+
+	data = macsurf_bookmarks_serialize(&len);
+	if (data == NULL) {
+		c_to_pstring("No bookmarks to export.", pmsg);
+		StandardAlert(kAlertNoteAlert, pmsg, "\p", NULL, &item);
+		return;
+	}
+	if (macos9_data_dir_get(NULL, &vRef, &dirID) != noErr) {
+		free(data);
+		return;
+	}
+	c_to_pstring("MacSurf Bookmarks Export.txt", name);
+	{
+		long nrec = 0;
+		long k;
+		for (k = 0; k < len; k++)
+			if (data[k] == '\n') nrec++;
+		err = chrome_fsspec_write_all(vRef, dirID, name, data, len);
+		free(data);
+		if (err != noErr) {
+			c_to_pstring("Could not write the export file.", pmsg);
+			StandardAlert(kAlertNoteAlert, pmsg, "\p", NULL, &item);
+			return;
+		}
+		{
+			FSSpec spec;
+			char path[1024];
+			size_t pl;
+			if (FSMakeFSSpec(vRef, dirID, name, &spec) != noErr ||
+			    macos9_fsspec_to_path(&spec, path,
+				(long)sizeof path) != 0)
+				strcpy(path, "MacSurfData");
+			/* msg is 240 bytes — never let the path blow it */
+			pl = strlen(path);
+			if (pl > 180) {
+				strcpy(path + 177, "...");
+				pl = 180;
+			}
+			sprintf(msg, "Exported %ld bookmark%s to:\n%s", nrec,
+				(nrec == 1) ? "" : "s", path);
+			c_to_pstring(msg, pmsg);
+			StandardAlert(kAlertNoteAlert, pmsg, "\p", NULL, &item);
+		}
+	}
+}
+
 void macos9_bookmark_window_show(struct gui_window *g)
 {
 	WindowRef win;
-	Rect wb, list, up, dn, nf, rn, del, mv, go, done;
+	Rect wb, list, up, dn, nf, rn, del, mv, upbtn, dnbtn;
+	Rect imp, exp, go, done, search_rect;
 	GrafPtr saved_port;
 	EventRecord ev;
 	struct bw_row *rows;
@@ -2026,15 +3032,20 @@ void macos9_bookmark_window_show(struct gui_window *g)
 	int row_h = 20, vis;              /* fixes742 — taller rows, more padding */
 	int done_flag = 0, dirty = 1;
 	char go_url[MACSURF_BMK_URL_MAX];
+	int moved_id = 0;
+	TEHandle te_search = NULL;
+	int search_focus = 0;
+	char filter[128];
 
 	if (g == NULL) return;
 	go_url[0] = '\0';
+	filter[0] = '\0';
 
 	cap = macsurf_bookmark_count * 2 + 4;
 	rows = (struct bw_row *)malloc((size_t)cap * sizeof(struct bw_row));
 	if (rows == NULL) return;
 
-	SetRect(&wb, 110, 90, 670, 490);
+	SetRect(&wb, 110, 90, 750, 490);
 	if (CreateNewWindow(kDocumentWindowClass, kWindowCloseBoxAttribute,
 			&wb, &win) != noErr || win == NULL) {
 		free(rows);
@@ -2047,19 +3058,33 @@ void macos9_bookmark_window_show(struct gui_window *g)
 	TextFont(1);
 	TextSize(12);  /* fixes742 — larger row text */
 
-	/* content is 560 x 400 local; list sits below the 40px title banner */
-	SetRect(&list, 8, 44, 552, 356);
-	SetRect(&up,   534, 44,  552, 66);
-	SetRect(&dn,   534, 334, 552, 356);
-	SetRect(&nf,   8,   364, 92,  388);
-	SetRect(&rn,   98,  364, 170, 388);
-	SetRect(&del,  176, 364, 240, 388);
-	SetRect(&mv,   246, 364, 302, 388);
-	SetRect(&go,   430, 364, 486, 388);
-	SetRect(&done, 492, 364, 552, 388);
+	/* content is 640 x 400 local. Search field + tree list below the 34px
+	 * title banner; the filter narrows rows to label/URL matches. */
+	SetRect(&search_rect, 46, 40, 552, 60);
+	SetRect(&list, 8, 64, 552, 344);
+	SetRect(&up,   534, 64,  552, 86);
+	SetRect(&dn,   534, 322, 552, 344);
+	SetRect(&nf,   8,   352, 88,  376);
+	SetRect(&rn,   92,  352, 148, 376);
+	SetRect(&del,  152, 352, 208, 376);
+	SetRect(&mv,   212, 352, 260, 376);
+	SetRect(&upbtn, 264, 352, 330, 376);
+	SetRect(&dnbtn, 334, 352, 414, 376);
+	SetRect(&imp,  418, 352, 474, 376);
+	SetRect(&exp,  478, 352, 534, 376);
+	SetRect(&go,   538, 352, 580, 376);
+	SetRect(&done, 584, 352, 632, 376);
 	vis = (list.bottom - list.top - 4) / row_h;
 
-	nrows = bw_build_rows(rows, cap);
+	te_search = TENew(&search_rect, &search_rect);
+	if (te_search == NULL) {
+		SetPort(saved_port);
+		DisposeWindow(win);
+		free(rows);
+		return;
+	}
+
+	nrows = bw_build_rows(rows, cap, filter);
 	sel = (nrows > 0) ? 0 : -1;
 
 	ShowWindow(win);
@@ -2120,11 +3145,34 @@ void macos9_bookmark_window_show(struct gui_window *g)
 			if (PtInRect(lp, &rn)) {
 				if (sel >= 0 && sel < nrows) {
 					int bi = rows[sel].bidx;
-					char name[MACSURF_BMK_LBL_MAX];
-					if (bi >= 0 && bi < macsurf_bookmark_count &&
-					    chrome_prompt_text("Rename",
-						macsurf_bookmarks[bi].label, name, sizeof name))
-						macos9_bookmark_rename(macsurf_bookmarks[bi].id, name);
+					if (bi >= 0 && bi < macsurf_bookmark_count) {
+						if (macsurf_bookmarks[bi].is_folder) {
+							char name[MACSURF_BMK_LBL_MAX];
+							if (chrome_prompt_text("Rename Folder",
+								macsurf_bookmarks[bi].label,
+								name, sizeof name))
+								macos9_bookmark_rename(
+									macsurf_bookmarks[bi].id,
+									name);
+						} else {
+							/* Edit Bookmark: label AND url in one
+							 * two-field dialog. */
+							char name[MACSURF_BMK_LBL_MAX];
+							char url[MACSURF_BMK_URL_MAX];
+							if (chrome_prompt_text2("Edit Bookmark",
+								macsurf_bookmarks[bi].label,
+								macsurf_bookmarks[bi].url,
+								name, (int)sizeof name,
+								url, (int)sizeof url)) {
+								macos9_bookmark_rename(
+									macsurf_bookmarks[bi].id,
+									name);
+								macos9_bookmark_set_url(
+									macsurf_bookmarks[bi].id,
+									url);
+							}
+						}
+					}
 				}
 				rebuilt = 1; break;
 			}
@@ -2149,6 +3197,34 @@ void macos9_bookmark_window_show(struct gui_window *g)
 				}
 				rebuilt = 1; break;
 			}
+			if (PtInRect(lp, &upbtn)) {
+				if (sel >= 0 && sel < nrows) {
+					int bi = rows[sel].bidx;
+					if (bi >= 0 && bi < macsurf_bookmark_count) {
+						int mid = macsurf_bookmarks[bi].id;
+						if (bw_move_sibling(bi, -1)) moved_id = mid;
+					}
+				}
+				rebuilt = 1; break;
+			}
+			if (PtInRect(lp, &dnbtn)) {
+				if (sel >= 0 && sel < nrows) {
+					int bi = rows[sel].bidx;
+					if (bi >= 0 && bi < macsurf_bookmark_count) {
+						int mid = macsurf_bookmarks[bi].id;
+						if (bw_move_sibling(bi, 1)) moved_id = mid;
+					}
+				}
+				rebuilt = 1; break;
+			}
+			if (PtInRect(lp, &imp)) {
+				bw_import_bookmarks();
+				rebuilt = 1; break;
+			}
+			if (PtInRect(lp, &exp)) {
+				bw_export_bookmarks();
+				rebuilt = 1; break;
+			}
 			if (PtInRect(lp, &go)) {
 				if (sel >= 0 && sel < nrows && !rows[sel].is_folder) {
 					int bi = rows[sel].bidx;
@@ -2159,8 +3235,20 @@ void macos9_bookmark_window_show(struct gui_window *g)
 				}
 				break;
 			}
+			if (PtInRect(lp, &search_rect)) {
+				if (!search_focus) {
+					search_focus = 1;
+					TEActivate(te_search);
+				}
+				TEClick(lp, false, te_search);
+				break;
+			}
 			if (PtInRect(lp, &list)) {
 				int idx = scroll_top + (lp.v - (list.top + 2)) / row_h;
+				if (search_focus) {
+					search_focus = 0;
+					TEDeactivate(te_search);
+				}
 				if (idx >= 0 && idx < nrows) {
 					sel = idx;
 					/* fixes710 — drag a bookmark onto a folder to
@@ -2179,6 +3267,60 @@ void macos9_bookmark_window_show(struct gui_window *g)
 			if ((ev.modifiers & cmdKey) &&
 			    (ch == '.' || ch == 'w' || ch == 'W')) {
 				done_flag = 1;
+			} else if (search_focus && ch == 0x09) {
+				/* Tab leaves the search field */
+				search_focus = 0;
+				TEDeactivate(te_search);
+			} else if (search_focus && ch == 0x1B) {
+				/* Esc clears the filter first, then closes */
+				if (filter[0] != '\0') {
+					filter[0] = '\0';
+					TESetSelect(0, 32767, te_search);
+					TESetText("", 0, te_search);
+					nrows = bw_build_rows(rows, cap, filter);
+					scroll_top = 0;
+					sel = (nrows > 0) ? 0 : -1;
+				} else {
+					done_flag = 1;
+				}
+			} else if (search_focus && (ch == 0x0D || ch == 0x03)) {
+				/* Return in the field = Go */
+				if (sel >= 0 && sel < nrows && !rows[sel].is_folder) {
+					int bi = rows[sel].bidx;
+					if (bi >= 0 && bi < macsurf_bookmark_count) {
+						strcpy(go_url, macsurf_bookmarks[bi].url);
+						done_flag = 1;
+					}
+				}
+			} else if (search_focus) {
+				int was_empty = (filter[0] == '\0');
+				if (ch == 0x1F || ch == 0x1E || ch == 0x0C ||
+				    ch == 0x0B || ch == 0x01 || ch == 0x04) {
+					/* list navigation still works while typing */
+					if (ch == 0x1F) { if (sel < nrows - 1) sel++; }
+					else if (ch == 0x1E) { if (sel > 0) sel--; }
+					else if (ch == 0x0C) { scroll_top += vis - 1; }
+					else if (ch == 0x0B) { scroll_top -= vis - 1; }
+					else if (ch == 0x01) {
+						scroll_top = 0; sel = (nrows > 0) ? 0 : -1;
+					} else {
+						sel = nrows - 1; scroll_top = nrows - vis;
+					}
+				} else if ((ch >= 0x20 && ch < 0x7F) || ch == 0x08) {
+					/* printable / backspace — edit, re-filter */
+					TEKey(ch, te_search);
+					chrome_te_get_text(te_search, filter,
+						(int)sizeof filter);
+					nrows = bw_build_rows(rows, cap, filter);
+					if (was_empty || nrows == 0) scroll_top = 0;
+					sel = (nrows > 0) ? 0 : -1;
+				} else {
+					TEKey(ch, te_search);
+				}
+			} else if (ch == 0x09) {
+				/* Tab enters the search field */
+				search_focus = 1;
+				TEActivate(te_search);
 			} else if (ch == 0x1B) {
 				done_flag = 1;
 			} else if (ch == 0x0D || ch == 0x03) {
@@ -2219,7 +3361,22 @@ void macos9_bookmark_window_show(struct gui_window *g)
 		}
 
 		if (rebuilt) {
-			nrows = bw_build_rows(rows, cap);
+			int r;
+			nrows = bw_build_rows(rows, cap, filter);
+			if (moved_id != 0) {
+				/* Move Up/Down swapped structs — keep the moved
+				 * bookmark selected by its stable id. */
+				sel = -1;
+				for (r = 0; r < nrows; r++) {
+					int bi = rows[r].bidx;
+					if (bi >= 0 && bi < macsurf_bookmark_count &&
+					    macsurf_bookmarks[bi].id == moved_id) {
+						sel = r;
+						break;
+					}
+				}
+				moved_id = 0;
+			}
 			if (sel >= nrows) sel = nrows - 1;
 			if (nrows == 0) sel = -1;
 			if (scroll_top > nrows - vis) {
@@ -2236,8 +3393,10 @@ void macos9_bookmark_window_show(struct gui_window *g)
 			Rect tr;
 			int r, y;
 			GetClip(saveclip);
-			{ Rect content; SetRect(&content, 0, 0, 560, 400);
+			{ Rect content; SetRect(&content, 0, 0, 640, 400);
 			  chrome_mgr_header(&content, "Bookmarks", 2); }
+			chrome_draw_search_field(&search_rect, 6);
+			TEUpdate(&search_rect, te_search);
 			EraseRect(&list);
 			FrameRect(&list);
 			ClipRect(&list);
@@ -2288,16 +3447,24 @@ void macos9_bookmark_window_show(struct gui_window *g)
 			chrome_draw_button(&rn, "\pRename");
 			chrome_draw_button(&del, "\pDelete");
 			chrome_draw_button(&mv, "\pMove");
+			chrome_draw_button(&upbtn, "\pMove Up");
+			chrome_draw_button(&dnbtn, "\pMove Down");
+			chrome_draw_button(&imp, "\pImport...");
+			chrome_draw_button(&exp, "\pExport...");
 			chrome_draw_button(&go, "\pGo");
 			chrome_draw_button(&done, "\pDone");
 			if (nrows == 0) {
 				MoveTo(list.left + 12, list.top + 24);
-				DrawString("\p(No bookmarks yet)");
+				if (filter[0] != '\0')
+					DrawString("\p(No matches)");
+				else
+					DrawString("\p(No bookmarks yet)");
 			}
 			dirty = 0;
 		}
 	}
 
+	TEDispose(te_search);
 	SetPort(saved_port);
 	DisposeWindow(win);
 	free(rows);

@@ -254,9 +254,13 @@ long macos9_bookmarks_load(char *out_buf, long buf_cap);
 void macos9_bookmarks_save(const char *buf, long len);
 /* fixes693 — bookmark folders + rename (used by the management UI). */
 int  macos9_bookmark_rename(int id, const char *new_label);
+int  macos9_bookmark_set_url(int id, const char *new_url);
 int  macos9_bookmark_delete(int id);
 int  macos9_bookmark_new_folder(const char *name, int parent_id);
 int  macos9_bookmark_set_parent(int id, int parent_id);
+/* fixes1162b — bookmarks Import (Netscape HTML or the native tab grammar)
+ * and Export (native tab grammar). */
+int  macos9_bookmarks_import_buffer(const char *buf, long len);
 /* fixes700 (#50) — modal Bookmark manager window (folders, rename, delete,
  * move, go). */
 void macos9_bookmark_window_show(struct gui_window *g);
@@ -267,6 +271,7 @@ void macos9_history_menu_rebuild(void);
 void macos9_history_navigate(struct gui_window *g, int menu_item);
 void macos9_history_record(struct gui_window *g, const char *title);
 void macos9_history_clear(void);
+void macos9_history_delete_entry(int index);
 long macos9_history_load(char *out_buf, long buf_cap);
 void macos9_history_save(const char *buf, long len);
 /* fixes699 (#47) — modal History manager window (day-grouped, clearable). */
