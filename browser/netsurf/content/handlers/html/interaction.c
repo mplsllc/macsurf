@@ -1085,6 +1085,13 @@ get_mouse_action_node(html_content *html,
 			man->link.is_imagemap = false;
 		}
 	}
+	/* fixes1179 — click probe: log every click showing link status and box info */
+	{ extern void macsurf_debug_log_writef(const char *fmt, ...);
+	macsurf_debug_log_writef("LIFE CLICK link=%s node=%p box=%p type=%d w=%d h=%d",
+		man->link.url ? "YES" : "no", (void *)man->node, (void *)man->link.box,
+		man->link.box ? (int)man->link.box->type : -1,
+		man->link.box ? man->link.box->width : -1,
+		man->link.box ? man->link.box->height : -1); }
 
 	/* fixes657: the fixes655 GLOBAL nearest-<a>-within-48px fallback was
 	 * removed here — it grabbed the closest link to ANY click, so clicking
