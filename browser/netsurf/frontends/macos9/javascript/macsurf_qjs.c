@@ -1828,6 +1828,15 @@ extern dom_exception macsurf_dom_characterdata_get_data(dom_node *node,
 		dom_string **data);
 extern dom_exception macsurf_dom_characterdata_set_data_s(dom_node *node,
 		const char *data);
+/* fixes1168 (#262) — attribute enumeration for the innerHTML serializer
+ * (macsurf_dom_dispatch.c wrappers around the static-inline libdom
+ * vtable dispatchers). */
+extern dom_exception macsurf_dom_node_get_attributes(dom_node *node,
+		dom_namednodemap **result);
+extern dom_exception macsurf_dom_attr_get_name(dom_node *attr,
+		dom_string **name);
+extern dom_exception macsurf_dom_attr_get_value(dom_node *attr,
+		dom_string **value);
 
 /* ---- Global document/content pointers (set in js_newthread) ---- */
 static dom_document  *g_qjs_document = NULL;
@@ -2279,6 +2288,7 @@ static JSValue qjs_wrap_element(JSContext *ctx, dom_element *el)
 	dom_string *tag_ds = NULL;
 	const char *tag_str = "";
 	char tag_lc[32];
+	char tag_uc[32];
 	int i;
 
 	if (el == NULL) return JS_NULL;
@@ -2323,8 +2333,10 @@ static JSValue qjs_wrap_element(JSContext *ctx, dom_element *el)
 	for (i = 0; i < 31 && tag_str[i]; i++) {
 		char c = tag_str[i];
 		tag_lc[i] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
+		tag_uc[i] = (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
 	}
 	tag_lc[i] = '\0';
+	tag_uc[i] = '\0';
 	if (tag_ds) macsurf_dom_string_unref(tag_ds);
 
 	/* fixes1127 -- route the wrapper through its tag's constructor
@@ -2339,7 +2351,12 @@ static JSValue qjs_wrap_element(JSContext *ctx, dom_element *el)
 		}
 		JS_FreeValue(ctx, tp);
 	}
-	JS_SetPropertyStr(ctx, obj, "tagName",  JS_NewString(ctx, tag_lc));
+	/* fixes1168 (#299) — tagName is UPPERCASE for HTML elements, matching
+	 * every real browser (nodeName is the qualified name — also uppercase
+	 * per spec — but is left as-is here to limit the blast radius to what
+	 * #299 asked for). The lowercase form still feeds the constructor
+	 * prototype lookup above. */
+	JS_SetPropertyStr(ctx, obj, "tagName",  JS_NewString(ctx, tag_uc));
 	JS_SetPropertyStr(ctx, obj, "nodeName", JS_NewString(ctx, tag_lc));
 	JS_SetPropertyStr(ctx, obj, "nodeType", JS_NewInt32(ctx, 1));
 	JS_SetPropertyStr(ctx, obj, "__ptr",
@@ -2902,6 +2919,331 @@ static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
 	if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
 			(void *) el, MACOS9_DOMMUT_INNERHTML);
 	return JS_UNDEFINED;
+}
+
+/* ---- innerHTML read-back: real HTML serializer (fixes1168, #262) ----
+ * The innerHTML GETTER previously returned el.textContent — every tag
+ * stripped, so jQuery .html() and any read-modify-write pattern
+ *     el.innerHTML = el.innerHTML + more
+ * got plain text back and silently corrupted content on the next write.
+ * __getInnerHTML mirrors __setInnerHTML: a C serializer walking the real
+ * child nodes, emitting elements (lowercase tag, attributes), escaped text,
+ * and comments. Void elements (br/img/input/...) get no end tag; script and
+ * style children are emitted RAW like browsers do (their content is not
+ * entity-decoded on re-parse, so escaping would corrupt it).
+ *
+ * Attributes are enumerated from the real namednodemap (not a fixed list)
+ * so src/href/class/id/style/type/name/value/checked/disabled/selected and
+ * every data-* attribute come through without a per-attribute whitelist to
+ * rot. */
+
+struct qjs_ih_buf {
+	char *data;
+	size_t len;
+	size_t cap;
+};
+
+static int qjs_ih_reserve(struct qjs_ih_buf *b, size_t extra)
+{
+	size_t need;
+	size_t ncap;
+	char *nd;
+
+	if (extra > (size_t) -1 - b->len) return -1;
+	need = b->len + extra;
+	if (need <= b->cap) return 0;
+	ncap = b->cap ? b->cap : 256;
+	while (ncap < need) {
+		if (ncap > (size_t) -1 / 2) { ncap = need; break; }
+		ncap *= 2;
+	}
+	nd = (char *) malloc(ncap);
+	if (nd == NULL) return -1;
+	if (b->data) {
+		memcpy(nd, b->data, b->len);
+		free(b->data);
+	}
+	b->data = nd;
+	b->cap = ncap;
+	return 0;
+}
+
+static int qjs_ih_append(struct qjs_ih_buf *b, const char *s, size_t n)
+{
+	if (qjs_ih_reserve(b, n)) return -1;
+	memcpy(b->data + b->len, s, n);
+	b->len += n;
+	return 0;
+}
+
+static int qjs_ih_append_cstr(struct qjs_ih_buf *b, const char *s)
+{
+	return qjs_ih_append(b, s, strlen(s));
+}
+
+/* Escape & < > for text content (and attribute values via
+ * qjs_ih_append_esc_attr, which also escapes the quote that will delimit
+ * them). UTF-8 bytes pass through untouched — escaping is byte-wise and the
+ * characters escaped are single ASCII bytes, so multibyte sequences can
+ * never be split. */
+static int qjs_ih_append_esc(struct qjs_ih_buf *b, const char *s, size_t n)
+{
+	size_t i;
+	for (i = 0; i < n; i++) {
+		char c = s[i];
+		switch (c) {
+		case '&':
+			if (qjs_ih_append_cstr(b, "&amp;")) return -1;
+			break;
+		case '<':
+			if (qjs_ih_append_cstr(b, "&lt;")) return -1;
+			break;
+		case '>':
+			if (qjs_ih_append_cstr(b, "&gt;")) return -1;
+			break;
+		default:
+			if (qjs_ih_append(b, &c, 1)) return -1;
+			break;
+		}
+	}
+	return 0;
+}
+
+static int qjs_ih_append_esc_attr(struct qjs_ih_buf *b, const char *s,
+		size_t n)
+{
+	size_t i;
+	for (i = 0; i < n; i++) {
+		char c = s[i];
+		switch (c) {
+		case '&':
+			if (qjs_ih_append_cstr(b, "&amp;")) return -1;
+			break;
+		case '<':
+			if (qjs_ih_append_cstr(b, "&lt;")) return -1;
+			break;
+		case '>':
+			if (qjs_ih_append_cstr(b, "&gt;")) return -1;
+			break;
+		case '"':
+			if (qjs_ih_append_cstr(b, "&quot;")) return -1;
+			break;
+		default:
+			if (qjs_ih_append(b, &c, 1)) return -1;
+			break;
+		}
+	}
+	return 0;
+}
+
+static int qjs_ih_is_void(const char *tag)
+{
+	static const char *const voids[] = {
+		"area", "base", "br", "col", "embed", "hr", "img", "input",
+		"link", "meta", "source", "track", "wbr", NULL
+	};
+	int i;
+	for (i = 0; voids[i] != NULL; i++) {
+		if (strcmp(tag, voids[i]) == 0) return 1;
+	}
+	return 0;
+}
+
+static int qjs_ih_serialize_element(struct qjs_ih_buf *b, dom_element *el);
+static int qjs_ih_serialize_node(struct qjs_ih_buf *b, dom_node *node)
+{
+	dom_node_type ntype = 0;
+	dom_string *ds = NULL;
+	int r = 0;
+
+	macsurf_dom_node_get_node_type(node, &ntype);
+	if (ntype == 1) {
+		return qjs_ih_serialize_element(b, (dom_element *) node);
+	}
+	if (ntype == 3 || ntype == 4) {	/* text / CDATA */
+		if (macsurf_dom_characterdata_get_data(node, &ds) == DOM_NO_ERR
+				&& ds != NULL) {
+			r = qjs_ih_append_esc(b, dom_string_data(ds),
+					(size_t) dom_string_length(ds));
+			macsurf_dom_string_unref(ds);
+		}
+		return r;
+	}
+	if (ntype == 8) {	/* comment */
+		if (qjs_ih_append_cstr(b, "<!--")) return -1;
+		if (macsurf_dom_characterdata_get_data(node, &ds) == DOM_NO_ERR
+				&& ds != NULL) {
+			r = qjs_ih_append(b, dom_string_data(ds),
+					(size_t) dom_string_length(ds));
+			macsurf_dom_string_unref(ds);
+			if (r) return -1;
+		}
+		return qjs_ih_append_cstr(b, "-->");
+	}
+	return 0;	/* document / fragment / other: no markup of their own */
+}
+
+/* Walk every child, serializing each. Drains the sibling chain even after an
+ * error so no ref is leaked. */
+static int qjs_ih_serialize_children(struct qjs_ih_buf *b, dom_node *parent)
+{
+	dom_node *child = NULL, *next = NULL;
+	int r = 0;
+
+	macsurf_dom_node_get_first_child(parent, &child);
+	while (child != NULL) {
+		next = NULL;
+		macsurf_dom_node_get_next_sibling(child, &next);
+		if (r == 0) r = qjs_ih_serialize_node(b, child);
+		macsurf_dom_node_unref(child);
+		child = next;
+	}
+	return r;
+}
+
+/* Raw-text children (script/style): emit the data UNESCAPED. Browsers do
+ * this because script/style content is raw text on re-parse — &lt; would
+ * NOT decode back to <, so escaping would change what re-parsing reads. */
+static int qjs_ih_serialize_raw_children(struct qjs_ih_buf *b,
+		dom_node *parent)
+{
+	dom_node *child = NULL, *next = NULL;
+	dom_node_type nt = 0;
+	int r = 0;
+
+	macsurf_dom_node_get_first_child(parent, &child);
+	while (child != NULL) {
+		next = NULL;
+		macsurf_dom_node_get_next_sibling(child, &next);
+		if (r == 0) {
+			nt = 0;
+			macsurf_dom_node_get_node_type(child, &nt);
+			if (nt == 3 || nt == 4) {
+				dom_string *ds = NULL;
+				if (macsurf_dom_characterdata_get_data(child, &ds)
+						== DOM_NO_ERR && ds != NULL) {
+					r = qjs_ih_append(b, dom_string_data(ds),
+							(size_t) dom_string_length(ds));
+					macsurf_dom_string_unref(ds);
+				}
+			}
+		}
+		macsurf_dom_node_unref(child);
+		child = next;
+	}
+	return r;
+}
+
+/* Attributes: enumerate the element's real namednodemap. The map and each
+ * item node / name / value come back ref'd; everything is unref'd here. */
+static int qjs_ih_serialize_attrs(struct qjs_ih_buf *b, dom_element *el)
+{
+	dom_namednodemap *map = NULL;
+	dom_ulong len = 0;
+	dom_ulong i;
+	int r = 0;
+
+	if (macsurf_dom_node_get_attributes((dom_node *) el, &map) != DOM_NO_ERR
+			|| map == NULL)
+		return 0;
+	if (dom_namednodemap_get_length(map, &len) != DOM_NO_ERR) len = 0;
+	for (i = 0; i < len && r == 0; i++) {
+		dom_node *an = NULL;
+		dom_string *aname = NULL;
+		dom_string *aval = NULL;
+		if (dom_namednodemap_item(map, i, &an) != DOM_NO_ERR || an == NULL)
+			continue;
+		if (macsurf_dom_attr_get_name(an, &aname) != DOM_NO_ERR
+				|| aname == NULL) {
+			macsurf_dom_node_unref(an);
+			continue;
+		}
+		r = qjs_ih_append(b, " ", 1);
+		if (!r) r = qjs_ih_append(b, dom_string_data(aname),
+				(size_t) dom_string_length(aname));
+		if (!r) r = qjs_ih_append_cstr(b, "=\"");
+		if (!r) {
+			if (macsurf_dom_attr_get_value(an, &aval) == DOM_NO_ERR
+					&& aval != NULL) {
+				r = qjs_ih_append_esc_attr(b,
+						dom_string_data(aval),
+						(size_t) dom_string_length(aval));
+				macsurf_dom_string_unref(aval);
+			}
+		}
+		if (!r) r = qjs_ih_append(b, "\"", 1);
+		macsurf_dom_string_unref(aname);
+		macsurf_dom_node_unref(an);
+	}
+	dom_namednodemap_unref(map);
+	return r;
+}
+
+static int qjs_ih_serialize_element(struct qjs_ih_buf *b, dom_element *el)
+{
+	dom_string *tname = NULL;
+	const char *tag = "";
+	char tag_lc[64];
+	int i;
+	int r = 0;
+	int raw = 0;
+
+	if (macsurf_dom_element_get_tag_name(el, &tname) != DOM_NO_ERR
+			|| tname == NULL)
+		return 0;
+	tag = dom_string_data(tname);
+	for (i = 0; i < 63 && tag[i]; i++) {
+		char c = tag[i];
+		tag_lc[i] = (c >= 'A' && c <= 'Z') ? (char) (c + 32) : c;
+	}
+	tag_lc[i] = '\0';
+
+	raw = (strcmp(tag_lc, "script") == 0 || strcmp(tag_lc, "style") == 0);
+
+	r = qjs_ih_append(b, "<", 1);
+	if (!r) r = qjs_ih_append_cstr(b, tag_lc);
+	if (!r) r = qjs_ih_serialize_attrs(b, el);
+	if (!r) r = qjs_ih_append(b, ">", 1);
+	if (!r && qjs_ih_is_void(tag_lc) == 0) {
+		if (raw) {
+			r = qjs_ih_serialize_raw_children(b, (dom_node *) el);
+		} else {
+			r = qjs_ih_serialize_children(b, (dom_node *) el);
+		}
+		if (!r) {
+			r = qjs_ih_append_cstr(b, "</");
+			if (!r) r = qjs_ih_append_cstr(b, tag_lc);
+			if (!r) r = qjs_ih_append(b, ">", 1);
+		}
+	}
+	macsurf_dom_string_unref(tname);
+	return r;
+}
+
+/* fixes1168 (#262) — __getInnerHTML: serialize the element's children to
+ * markup. Mirrors __setInnerHTML (qjs_el_set_inner_html_data): a C function
+ * registered on the element wrapper, resolving its node via func_data[0]. */
+static JSValue qjs_el_get_inner_html_data(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv,
+		int magic, JSValueConst *func_data)
+{
+	dom_element *el;
+	struct qjs_ih_buf b;
+	int r;
+	JSValue ret;
+
+	(void) this_val; (void) argc; (void) argv; (void) magic;
+	el = (dom_element *) qjs_get_node(func_data[0]);
+	if (el == NULL) return JS_NewString(ctx, "");
+	memset(&b, 0, sizeof(b));
+	r = qjs_ih_serialize_node(&b, (dom_node *) el);
+	if (r != 0 || b.data == NULL) {
+		if (b.data) free(b.data);
+		return JS_NewString(ctx, "");
+	}
+	ret = JS_NewStringLen(ctx, b.data, b.len);
+	free(b.data);
+	return ret;
 }
 
 /* ---- parentNode ---- */
@@ -3642,20 +3984,23 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		/* innerHTML= (fixes846, #167 S3) — real HTML fragment parse via
 		 * __setInnerHTML (dom_hubbub_fragment_parser_create), builds
 		 * actual child elements instead of stripping all markup to text.
-		 * Read side is still textContent-shaped (no serializer back to
-		 * markup exists in this engine); good enough for the
-		 * write-then-read-back-as-text patterns that exist, wrong for
-		 * code that expects its own markup echoed back verbatim. */
+		 * Read side (fixes1168, #262) is a real serializer via
+		 * __getInnerHTML (qjs_el_get_inner_html_data), so .html() and
+		 * read-modify-write patterns get markup back; textContent remains
+		 * the fallback if a wrapper lacks the native helper. */
 		"Object.defineProperty(el,'innerHTML',{"
-		"get:function(){return el.textContent||'';},"
+		"get:function(){return (typeof el.__getInnerHTML==='function')"
+			"?el.__getInnerHTML():(el.textContent||'');},"
 		"set:function(v){"
 		"if(typeof el.__setInnerHTML==='function')"
 		"el.__setInnerHTML(String(v));"
 		"else el.textContent=String(v).replace(/<[^>]*>/g,'');},"
 		"configurable:true});"
-		/* outerHTML stub */
+		/* outerHTML — real markup now; the tag name is lowercased for the
+		 * serialized form because tagName is uppercase per #299. */
 		"Object.defineProperty(el,'outerHTML',{"
-		"get:function(){return '<'+el.tagName+'>'+el.innerHTML+'</'+el.tagName+'>';},"
+		"get:function(){var t=String(el.tagName).toLowerCase();"
+			"return '<'+t+'>'+el.innerHTML+'</'+t+'>';},"
 		"configurable:true});"
 		/* dataset proxy */
 		"(function(){"
@@ -3723,7 +4068,7 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"var ok=true;"
 		"var rest=s;"
 		"var tagM=rest.match(/^([a-zA-Z][a-zA-Z0-9]*)/);"
-		"if(tagM){if(el.tagName!==tagM[1].toLowerCase())ok=false;"
+		"if(tagM){if(el.tagName!==tagM[1].toUpperCase())ok=false;"
 		"rest=rest.substr(tagM[1].length);}"
 		"var re=/([#.:]|\\[)[^#.:\\[\\]]*(\\])?/g;"
 		"var m;while(ok&&(m=re.exec(rest))){"
@@ -6111,6 +6456,10 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 	/* fixes846 (#167 S3) — real innerHTML= via HTML fragment parsing. */
 	f = JS_NewCFunctionData(ctx, qjs_el_set_inner_html_data, 1, 0, 1, data);
 	JS_SetPropertyStr(ctx, obj, "__setInnerHTML", f);
+	/* fixes1168 (#262) — real innerHTML read-back: the JS getter calls this
+	 * to serialize the child tree to markup (see qjs_el_get_inner_html_data). */
+	f = JS_NewCFunctionData(ctx, qjs_el_get_inner_html_data, 0, 0, 1, data);
+	JS_SetPropertyStr(ctx, obj, "__getInnerHTML", f);
 
 	/* Traversal */
 	f = JS_NewCFunctionData(ctx, qjs_el_get_parent_node_data, 0, 0, 1, data);

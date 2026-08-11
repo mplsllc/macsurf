@@ -13,6 +13,8 @@
 #include <dom/core/document.h>
 #include <dom/core/string.h>
 #include <dom/core/characterdata.h>
+#include <dom/core/namednodemap.h>
+#include <dom/core/attr.h>
 
 void macsurf_dom_node_ref(dom_node *node)
 {
@@ -302,6 +304,30 @@ dom_exception macsurf_dom_node_clone_node(dom_node *node, int deep,
     dom_node **result)
 {
     return dom_node_clone_node(node, (bool) (deep != 0), result);
+}
+
+/* fixes1168 (#262) — attribute enumeration for the innerHTML serializer.
+ * dom_node_get_attributes / dom_attr_get_name / dom_attr_get_value are
+ * static-inline vtable dispatchers in the libdom headers; CW8 cannot link
+ * them from other TUs (same reason every other accessor here is wrapped).
+ * The namednodemap itself (get_length/item/unref) is a real exported
+ * function in namednodemap.c and is called directly by the caller. */
+dom_exception macsurf_dom_node_get_attributes(dom_node *node,
+    dom_namednodemap **result)
+{
+    return dom_node_get_attributes(node, result);
+}
+
+dom_exception macsurf_dom_attr_get_name(dom_node *attr,
+    dom_string **name)
+{
+    return dom_attr_get_name((dom_attr *) attr, name);
+}
+
+dom_exception macsurf_dom_attr_get_value(dom_node *attr,
+    dom_string **value)
+{
+    return dom_attr_get_value((dom_attr *) attr, value);
 }
 
 /* fixes878 — node.contains(). Non-virtual in libdom (see the comment at
