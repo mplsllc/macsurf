@@ -3392,6 +3392,19 @@ BROTLI_INTERNAL BROTLI_BOOL BrotliDecoderHuffmanTreeGroupInit(
 #define BROTLI_INLINE
 #endif
 
+/* PPC is big-endian, and CW8 defines none of the compiler macros the
+ * upstream platform.h endianness ladder consults (__BYTE_ORDER__ is a gcc
+ * extension; the OS_MACOSX/OS_LINUX branches exist only where those defines
+ * are supplied by the build system). Without this pin, BROTLI_BIG_ENDIAN
+ * stays 0 on the Mac and the BROTLI_UNALIGNED_LOAD*LE macros take the
+ * straight-read little-endian path — silent garbage output from the
+ * bitstream reader. The harness on x86 Linux is unaffected: gcc defines
+ * __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, which the ladder checks after
+ * the BROTLI_BUILD_* pins. */
+#if defined(__MWERKS__)
+#define BROTLI_BUILD_BIG_ENDIAN 1
+#endif
+
 /* <<<< generated: internal sources (google/brotli), dependency order >>>>
 
 /* ========== common/constants.c ========== */

@@ -9,9 +9,10 @@
  *
  *   1. Resolve a CSS font-family -> @font-face src URL (via the core accessor
  *      html_macsurf_font_face_url, which owns the select ctx) and fetch +
- *      disk-cache the font file. The core resolver prefers a RAW sfnt src
- *      (.ttf / .otf, format "truetype"/"opentype") over WOFF so we never need
- *      zlib inflate; WOFF2 (Brotli) is out of scope.
+ *      disk-cache the font file. A WOFF2 body ("wOF2" magic) is converted to a
+ *      standard sfnt in place by the vendored Brotli + WOFF2 reconstructor
+ *      (macos9_woff2.c) before parsing; WOFF1 stays rejected (no zlib inflate
+ *      on OS 9).
  *   2. Parse the sfnt table directory + head/maxp/hhea/hmtx/cmap/loca/glyf.
  *      cmap format 12 is required (icon fonts live in the Supplementary PUA,
  *      U+F0000+, beyond format-4's BMP range).
@@ -46,6 +47,7 @@
 
 #include "macos9_disk_cache.h"
 #include "macos9_webfont.h"
+#include "macos9_woff2.h"
 #include "macsurf_debug.h"
 
 extern struct gui_window *macos9_window_list_head(void);
@@ -380,8 +382,27 @@ webfont_parse(struct webfont_slot *slot)
 
 	if (f == NULL || flen < 12)
 		return;
-	/* Accept only raw sfnt (0x00010000 TrueType, or 'OTTO'/'true'/'ttcf').
-	 * A WOFF/WOFF2 body starting 'wOFF'/'wOF2' would misparse — reject. */
+	/* A WOFF2 body ("wOF2") is Brotli-inflated and reconstructed into a
+	 * standard sfnt by macos9_woff2.c; then we parse it exactly like any
+	 * raw .ttf/.otf below.  WOFF1 ("wOFF", zlib) stays rejected — there is
+	 * no zlib inflate on OS 9. */
+	if (memcmp(f, "wOF2", 4) == 0) {
+		unsigned char *ttf = NULL;
+		long ttf_len = 0;
+
+		if (!macos9_woff2_to_ttf(f, (long) flen, &ttf, &ttf_len)) {
+			free(ttf);
+			macsurf_debug_log_writef("webfont: wof2 convert failed (%ld bytes), skip", flen);
+			return;
+		}
+		macsurf_debug_log_writef("webfont: wof2 ok %ld -> %ld bytes", flen, ttf_len);
+		free(slot->data);
+		slot->data = (char *) ttf;
+		slot->len = ttf_len;
+		f = (const wf_u8 *) slot->data;
+		flen = (wf_u32) slot->len;
+	}
+	/* Accept only raw sfnt (0x00010000 TrueType, or 'OTTO'/'true'/'ttcf'). */
 	{
 		wf_u32 ver = wf_rd32(f);
 		if (ver != 0x00010000UL &&

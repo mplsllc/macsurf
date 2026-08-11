@@ -81,7 +81,8 @@ harn_of = $(OBJ)/$(notdir $(1:.c=.o))
 GLUE_QJS_SRC   := build/macsurf_qjs.c build/macsurf_dom_dispatch.c \
                   build/macos9_js_fetch.c build/macsurf_qjs_audit.c
 GLUE_PLAIN_SRC := build/macos9_reconvert.c build/macos9_content_registry.c \
-                  build/misc_stub.c build/macsurf_lwc_compat.c
+                  build/misc_stub.c build/macsurf_lwc_compat.c \
+                  build/macos9_woff2.c build/macos9_brotli.c
 
 # $(sort) dedupes: dedup.sh's `core` set and EXTRA_SRC both name corestrings.c,
 # and two rules for one object is a "overriding recipe" warning at best.

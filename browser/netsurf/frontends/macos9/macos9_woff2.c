@@ -37,10 +37,6 @@
 #include <stdint.h>
 
 #include "macos9_brotli.h"
-#include <stdio.h>
-#define W2_DBG(x) do { if (getenv("W2DBG")) fprintf(stderr, x); } while (0)
-#define W2_DBG1(x,a) do { if (getenv("W2DBG")) fprintf(stderr, x, (a)); } while (0)
-#define W2_DBG2(x,a,b) do { if (getenv("W2DBG")) fprintf(stderr, x, (a), (b)); } while (0)
 #include "macos9_woff2.h"
 
 typedef uint8_t  w2_u8;
@@ -344,13 +340,22 @@ static int w2_read_255us16(struct w2_buf *b, unsigned int *value)
 static w2_u32 w2_compute_ulong_sum(const w2_u8 *buf, size_t size)
 {
 	w2_u32 checksum = 0;
+	size_t aligned_size = size & ~(size_t) 3;
 	size_t i;
 
-	for (i = 0; i < size; i += 4) {
+	for (i = 0; i < aligned_size; i += 4) {
 		checksum += ((w2_u32) buf[i] << 24) |
 			    ((w2_u32) buf[i + 1] << 16) |
 			    ((w2_u32) buf[i + 2] << 8) |
 			    (w2_u32) buf[i + 3];
+	}
+	/* The final partial u32 is treated as padded with zeros (never read
+	 * past the end): matching ComputeULongSum in the reference decoder. */
+	if (size != aligned_size) {
+		w2_u32 v = 0;
+		for (i = aligned_size; i < size; i++)
+			v |= (w2_u32) buf[i] << (24 - 8 * (i & 3));
+		checksum += v;
 	}
 	return checksum;
 }
@@ -853,17 +858,20 @@ static void w2_compute_bbox(unsigned int n_points,
 	offset = w2_store16(dst, offset, y_max);
 }
 
-/* Measure a composite glyph's component list (no data copy). */
-static int w2_size_of_composite(struct w2_buf *stream, size_t *size,
+/* Measure a composite glyph's component list (no data copy). Takes the
+ * stream BY VALUE, matching the reference decoder: the walk must not
+ * advance the caller's stream — the caller reads composite_size bytes of
+ * real data afterward, and double-advancing misaligns every later glyph. */
+static int w2_size_of_composite(struct w2_buf stream, size_t *size,
 		int *have_instructions)
 {
-	size_t start_offset = stream->off;
+	size_t start_offset = stream.off;
 	int we_have_instructions = 0;
 	w2_u16 flags = W2_MORE_COMPONENTS;
 
 	while (flags & W2_MORE_COMPONENTS) {
 		size_t arg_size;
-		if (!w2_buf_read_u16(stream, &flags))
+		if (!w2_buf_read_u16(&stream, &flags))
 			return 0;
 		if (flags & W2_WE_HAVE_INSTRUCTIONS)
 			we_have_instructions = 1;
@@ -878,10 +886,10 @@ static int w2_size_of_composite(struct w2_buf *stream, size_t *size,
 			arg_size += 4;
 		else if (flags & W2_WE_HAVE_A_TWO_BY_TWO)
 			arg_size += 8;
-		if (!w2_buf_read(stream, NULL, arg_size))
+		if (!w2_buf_read(&stream, NULL, arg_size))
 			return 0;
 	}
-	*size = stream->off - start_offset;
+	*size = stream.off - start_offset;
 	*have_instructions = we_have_instructions;
 	return 1;
 }
@@ -941,7 +949,6 @@ static int w2_reconstruct_glyf(const w2_u8 *data, struct w2_table *glyf_table,
 	w2_u8 *glyph_buf;
 	size_t glyph_buf_size;
 	w2_u32 glyf_check = 0;
-	int w2_fail_site = 0;
 	w2_u16 n_contours = 0;
 	int have_bbox = 0;
 
@@ -1006,12 +1013,12 @@ static int w2_reconstruct_glyf(const w2_u8 *data, struct w2_table *glyf_table,
 	for (i = 0; i < info->num_glyphs; i++) {
 		size_t glyph_size = 0;
 		w2_u32 *n_points_vec = NULL;
-		W2_DBG2("glyph %u at outlen %zu\n", (unsigned int) i, (size_t) out->len);
 
+		have_bbox = 0;   /* per-glyph, like the reference's loop-local */
 		if (bbox_bitmap[i >> 3] & (0x80 >> (i & 7)))
 			have_bbox = 1;
 		if (!w2_buf_read_u16(&n_contour_stream, &n_contours))
-			{ w2_fail_site = 1; goto glyf_fail; }
+			{ goto glyf_fail; }
 
 		if (n_contours == 0xffff) {
 			/* composite glyph */
@@ -1022,30 +1029,30 @@ static int w2_reconstruct_glyf(const w2_u8 *data, struct w2_table *glyf_table,
 			w2_u8 *nb;
 
 			if (!have_bbox)
-				{ w2_fail_site = 2; goto glyf_fail; }  /* composites must carry a bbox */
-			if (!w2_size_of_composite(&composite_stream,
+				{ goto glyf_fail; }  /* composites must carry a bbox */
+			if (!w2_size_of_composite(composite_stream,
 					&composite_size, &have_instructions))
-				{ w2_fail_site = 3; goto glyf_fail; }
+				{ goto glyf_fail; }
 			if (have_instructions &&
 					!w2_read_255us16(&glyph_stream,
 						&instruction_size))
-				{ w2_fail_site = 4; goto glyf_fail; }
+				{ goto glyf_fail; }
 
 			size_needed = 12 + composite_size + instruction_size;
 			if (glyph_buf_size < size_needed) {
 				nb = (w2_u8 *) realloc(glyph_buf, size_needed);
 				if (nb == NULL)
-					{ w2_fail_site = 5; goto glyf_fail; }
+					{ goto glyf_fail; }
 				glyph_buf = nb;
 				glyph_buf_size = size_needed;
 			}
 			glyph_size = w2_store16(glyph_buf, glyph_size, n_contours);
 			if (!w2_buf_read(&bbox_stream, glyph_buf + glyph_size, 8))
-				{ w2_fail_site = 6; goto glyf_fail; }
+				{ goto glyf_fail; }
 			glyph_size += 8;
 			if (!w2_buf_read(&composite_stream,
 					glyph_buf + glyph_size, composite_size))
-				{ w2_fail_site = 7; goto glyf_fail; }
+				{ goto glyf_fail; }
 			glyph_size += composite_size;
 			if (have_instructions) {
 				glyph_size = w2_store16(glyph_buf, glyph_size,
@@ -1053,7 +1060,7 @@ static int w2_reconstruct_glyf(const w2_u8 *data, struct w2_table *glyf_table,
 				if (!w2_buf_read(&instruction_stream,
 						glyph_buf + glyph_size,
 						instruction_size))
-					{ w2_fail_site = 8; goto glyf_fail; }
+					{ goto glyf_fail; }
 				glyph_size += instruction_size;
 			}
 		} else if (n_contours > 0) {
@@ -1073,20 +1080,20 @@ static int w2_reconstruct_glyf(const w2_u8 *data, struct w2_table *glyf_table,
 			n_points_vec = (w2_u32 *) malloc((size_t) n_contours *
 					sizeof(w2_u32));
 			if (n_points_vec == NULL)
-				{ w2_fail_site = 9; goto glyf_fail; }
+				{ goto glyf_fail; }
 			for (j = 0; j < n_contours; j++) {
 				if (!w2_read_255us16(&n_points_stream,
 						&n_points_contour))
-					{ w2_fail_site = 10; goto glyf_fail; }
+					{ goto glyf_fail; }
 				n_points_vec[j] = n_points_contour;
 				if (total_n_points + n_points_contour <
 						total_n_points)
-					{ w2_fail_site = 11; goto glyf_fail; }
+					{ goto glyf_fail; }
 				total_n_points += n_points_contour;
 			}
 			flag_size = total_n_points;
 			if (flag_size > flag_stream.len - flag_stream.off)
-				{ w2_fail_site = 12; goto glyf_fail; }
+				{ goto glyf_fail; }
 			flags_buf = flag_stream.d + flag_stream.off;
 			triplet_buf = glyph_stream.d + glyph_stream.off;
 			triplet_size = glyph_stream.len - glyph_stream.off;
@@ -1094,30 +1101,30 @@ static int w2_reconstruct_glyf(const w2_u8 *data, struct w2_table *glyf_table,
 					(size_t) total_n_points *
 					sizeof(struct w2_point));
 			if (points == NULL)
-				{ w2_fail_site = 13; goto glyf_fail; }
+				{ goto glyf_fail; }
 			if (!w2_triplet_decode(flags_buf, triplet_buf,
 					triplet_size, total_n_points, points,
 					&triplet_bytes_consumed)) {
 				free(points);
-				w2_fail_site = 14; goto glyf_fail;
+				goto glyf_fail;
 			}
 			if (!w2_buf_read(&flag_stream, NULL, flag_size)) {
 				free(points);
-				w2_fail_site = 15; goto glyf_fail;
+				goto glyf_fail;
 			}
 			if (!w2_buf_read(&glyph_stream, NULL,
 					triplet_bytes_consumed)) {
 				free(points);
-				w2_fail_site = 16; goto glyf_fail;
+				goto glyf_fail;
 			}
 			if (!w2_read_255us16(&glyph_stream, &instruction_size)) {
 				free(points);
-				w2_fail_site = 17; goto glyf_fail;
+				goto glyf_fail;
 			}
 			if (total_n_points >= (1u << 27) ||
 					instruction_size >= (1u << 30)) {
 				free(points);
-				w2_fail_site = 18; goto glyf_fail;
+				goto glyf_fail;
 			}
 			size_needed = 12 + 2 * n_contours +
 					5 * total_n_points + instruction_size;
@@ -1126,7 +1133,7 @@ static int w2_reconstruct_glyf(const w2_u8 *data, struct w2_table *glyf_table,
 						size_needed);
 				if (nb == NULL) {
 					free(points);
-					w2_fail_site = 19; goto glyf_fail;
+					goto glyf_fail;
 				}
 				glyph_buf = nb;
 				glyph_buf_size = size_needed;
@@ -1137,7 +1144,7 @@ static int w2_reconstruct_glyf(const w2_u8 *data, struct w2_table *glyf_table,
 				if (!w2_buf_read(&bbox_stream,
 						glyph_buf + glyph_size, 8)) {
 					free(points);
-					w2_fail_site = 20; goto glyf_fail;
+					goto glyf_fail;
 				}
 			} else {
 				w2_compute_bbox(total_n_points, points, glyph_buf);
@@ -1149,7 +1156,7 @@ static int w2_reconstruct_glyf(const w2_u8 *data, struct w2_table *glyf_table,
 					end_point += (int) n_points_vec[j];
 					if (end_point >= 65536) {
 						free(points);
-						w2_fail_site = 21; goto glyf_fail;
+						goto glyf_fail;
 					}
 					glyph_size = w2_store16(glyph_buf,
 							glyph_size, end_point);
@@ -1161,14 +1168,14 @@ static int w2_reconstruct_glyf(const w2_u8 *data, struct w2_table *glyf_table,
 					glyph_buf + glyph_size,
 					instruction_size)) {
 				free(points);
-				w2_fail_site = 22; goto glyf_fail;
+				goto glyf_fail;
 			}
 			glyph_size += instruction_size;
 			if (!w2_store_points(total_n_points, points, n_contours,
 					instruction_size, glyph_buf, glyph_buf_size,
 					&glyph_size)) {
 				free(points);
-				w2_fail_site = 23; goto glyf_fail;
+				goto glyf_fail;
 			}
 			free(points);
 		}
@@ -1179,16 +1186,16 @@ static int w2_reconstruct_glyf(const w2_u8 *data, struct w2_table *glyf_table,
 
 		loca_values[i] = (w2_u32) (out->len - glyf_start);
 		if (!w2_out_append(out, glyph_buf, glyph_size))
-			{ w2_fail_site = 24; goto glyf_fail; }
+			{ goto glyf_fail; }
 		if (!w2_out_pad4(out))
-			{ w2_fail_site = 25; goto glyf_fail; }
+			{ goto glyf_fail; }
 		glyf_check += w2_compute_ulong_sum(glyph_buf, glyph_size);
 		if (n_contours > 0) {
 			struct w2_buf x_min_buf;
 			w2_s16 x_min;
 			w2_buf_init(&x_min_buf, glyph_buf + 2, 2);
 			if (!w2_buf_read_s16(&x_min_buf, &x_min))
-				{ w2_fail_site = 26; goto glyf_fail; }
+				{ goto glyf_fail; }
 			info->x_mins[i] = x_min;
 		}
 	}
@@ -1210,17 +1217,6 @@ static int w2_reconstruct_glyf(const w2_u8 *data, struct w2_table *glyf_table,
 	return 1;
 
 glyf_fail:
-	if (getenv("W2DBG"))
-		fprintf(stderr, "glyf_fail site %d at glyph %u outlen %zu nc=%d have_bbox=%d\n",
-			w2_fail_site, (unsigned int) i, (size_t) out->len, (int) n_contours, (int) have_bbox);
-	fprintf(stderr, "  nc=%zu np=%zu flag=%zu glyph=%zu comp=%zu bbox=%zu ins=%zu\n",
-		n_contour_stream.len - n_contour_stream.off,
-		n_points_stream.len - n_points_stream.off,
-		flag_stream.len - flag_stream.off,
-		glyph_stream.len - glyph_stream.off,
-		composite_stream.len - composite_stream.off,
-		bbox_stream.len - bbox_stream.off,
-		instruction_stream.len - instruction_stream.off);
 	free(glyph_buf);
 	free(loca_values);
 	free(info->x_mins);
@@ -1533,76 +1529,3 @@ fail:
 		free(o.d);
 	return 0;
 }
-
-#ifdef W2_SELF_TEST
-/* Debug self-test main: stage-by-stage execution with prints. */
-#include <stdio.h>
-int main(int argc, char **argv)
-{
-	FILE *f;
-	long sz;
-	unsigned char *src;
-	struct w2_hdr hdr;
-	struct w2_out o;
-	struct w2_tag_off *entries;
-	w2_u32 header_checksum = 0;
-	w2_u8 *uncompressed;
-	size_t uncompressed_size;
-	int brotli_ok;
-
-	if (argc < 2) return 2;
-	f = fopen(argv[1], "rb");
-	if (f == NULL) return 2;
-	fseek(f, 0, SEEK_END); sz = ftell(f); fseek(f, 0, SEEK_SET);
-	src = (unsigned char *) malloc((size_t) sz);
-	if (fread(src, 1, (size_t) sz, f) != (size_t) sz) return 2;
-	fclose(f);
-
-	memset(&hdr, 0, sizeof(hdr));
-	memset(&o, 0, sizeof(o));
-	printf("stage: header parse...\n");
-	if (!w2_read_woff2_header(src, (size_t) sz, &hdr)) {
-		printf("FAIL: header parse (len=%ld)\n", sz);
-		return 1;
-	}
-	printf("  flavor=%08x num_tables=%u compressed_off=%zu compressed_len=%u uncompressed=%zu\n",
-			hdr.flavor, hdr.num_tables, hdr.compressed_offset,
-			hdr.compressed_length, hdr.uncompressed_size);
-	{
-		size_t i;
-		for (i = 0; i < hdr.num_tables; i++)
-			printf("  table %2u tag=%08x flags=%08x src=%u len=%u dst=%u\n",
-					(unsigned int) i, hdr.tables[i].tag,
-					hdr.tables[i].flags, hdr.tables[i].src_offset,
-					hdr.tables[i].src_length, hdr.tables[i].dst_length);
-	}
-	printf("stage: brotli...\n");
-	uncompressed = (w2_u8 *) malloc(hdr.uncompressed_size);
-	uncompressed_size = hdr.uncompressed_size;
-	brotli_ok = (BrotliDecoderDecompress(hdr.compressed_length,
-			src + hdr.compressed_offset, &uncompressed_size,
-			uncompressed) == 1);
-	printf("  brotli result=%d got=%zu want=%zu\n", brotli_ok,
-			uncompressed_size, hdr.uncompressed_size);
-	if (!brotli_ok || uncompressed_size != hdr.uncompressed_size)
-		return 1;
-	printf("  brotli stream head: %02x %02x %02x %02x\n",
-			uncompressed[0], uncompressed[1], uncompressed[2], uncompressed[3]);
-	printf("stage: write_headers...\n");
-	entries = (struct w2_tag_off *) malloc(hdr.num_tables *
-			sizeof(struct w2_tag_off));
-	if (!w2_write_headers(&hdr, &o, entries, &header_checksum)) {
-		printf("FAIL: write_headers\n");
-		return 1;
-	}
-	printf("  header %zu bytes checksum=%08x\n", o.len, header_checksum);
-	printf("stage: reconstruct_font...\n");
-	if (!w2_reconstruct_font(uncompressed, hdr.uncompressed_size,
-			&hdr, entries, header_checksum, &o)) {
-		printf("FAIL: reconstruct_font (out len %zu)\n", o.len);
-		return 1;
-	}
-	printf("OK: output %zu bytes\n", o.len);
-	return 0;
-}
-#endif
