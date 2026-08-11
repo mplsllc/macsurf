@@ -3042,7 +3042,7 @@ static int qjs_ih_is_void(const char *tag)
 {
 	static const char *const voids[] = {
 		"area", "base", "br", "col", "embed", "hr", "img", "input",
-		"link", "meta", "source", "track", "wbr", NULL
+		"link", "meta", "param", "source", "track", "wbr", NULL
 	};
 	int i;
 	for (i = 0; voids[i] != NULL; i++) {
