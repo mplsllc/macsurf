@@ -48,9 +48,12 @@ nserror image_cache_fini(void) { return NSERROR_OK; }
  * dom_namespace_initialise has no real definition we link, so stub it. */
 nserror dom_namespace_initialise(void) { return NSERROR_OK; }
 
-/* textplain handler not yet linked. image_init lives in macos9_image.c
- * (fixes78 -- QuickTime Graphics Importers handler). */
-nserror textplain_init(void) { return NSERROR_OK; }
+/* textplain_init (#233) lives in the REAL handler,
+ * content/handlers/text/textplain.c — it must be in MacSurf.mcp.
+ * This stub was removed (fixes1137) so the real one links without a
+ * duplicate-symbol collision in CW8's flat namespace.
+ * image_init lives in macos9_image.c (fixes78 -- QuickTime Graphics
+ * Importers handler). */
 
 /* nsutils base64 — used only by ssl_certs.c for cert query strings.
  * MacSurf handles TLS natively via macTLS, so cert-chain queries never fire.
