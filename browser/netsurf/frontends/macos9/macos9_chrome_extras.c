@@ -961,7 +961,7 @@ static int macsurf_bmk_import_html(const char *in, long len)
 	pend_name[0] = '\0';
 
 	while (p < end) {
-		const char *lt = memchr(p, '<', (size_t)(end - p));
+		const char *lt = (const char *)memchr(p, '<', (size_t)(end - p));
 		const char *gt;
 		const char *txt_end;
 		if (lt == NULL) break;
@@ -969,7 +969,7 @@ static int macsurf_bmk_import_html(const char *in, long len)
 		if (p >= end) break;
 		if (*p == '!') {
 			/* comment / doctype — skip to '>' */
-			gt = memchr(p, '>', (size_t)(end - p));
+			gt = (const char *)memchr(p, '>', (size_t)(end - p));
 			if (gt == NULL) break;
 			p = gt + 1;
 			continue;
@@ -984,7 +984,7 @@ static int macsurf_bmk_import_html(const char *in, long len)
 					have_pend = 0;
 				}
 			}
-			gt = memchr(p, '>', (size_t)(end - p));
+			gt = (const char *)memchr(p, '>', (size_t)(end - p));
 			if (gt == NULL) break;
 			p = gt + 1;
 			continue;
@@ -993,11 +993,11 @@ static int macsurf_bmk_import_html(const char *in, long len)
 			char href[MACSURF_BMK_URL_MAX];
 			char label[MACSURF_BMK_LBL_MAX];
 			int parent = (fsp > 0) ? fstack[fsp - 1] : 0;
-			gt = memchr(p, '>', (size_t)(end - p));
+			gt = (const char *)memchr(p, '>', (size_t)(end - p));
 			if (gt == NULL) break;
 			txt_end = gt + 1;
 			{
-				const char *lt2 = memchr(txt_end, '<',
+				const char *lt2 = (const char *)memchr(txt_end, '<',
 					(size_t)(end - txt_end));
 				if (lt2 != NULL) txt_end = lt2;
 			}
@@ -1012,11 +1012,11 @@ static int macsurf_bmk_import_html(const char *in, long len)
 			continue;
 		}
 		if (bmk_tag_is(p, "h3")) {
-			gt = memchr(p, '>', (size_t)(end - p));
+			gt = (const char *)memchr(p, '>', (size_t)(end - p));
 			if (gt == NULL) break;
 			txt_end = gt + 1;
 			{
-				const char *lt2 = memchr(txt_end, '<',
+				const char *lt2 = (const char *)memchr(txt_end, '<',
 					(size_t)(end - txt_end));
 				if (lt2 != NULL) txt_end = lt2;
 			}
@@ -1039,13 +1039,13 @@ static int macsurf_bmk_import_html(const char *in, long len)
 			} else if (fsp < 32) {
 				fstack[fsp++] = parent;
 			}
-			gt = memchr(p, '>', (size_t)(end - p));
+			gt = (const char *)memchr(p, '>', (size_t)(end - p));
 			if (gt == NULL) break;
 			p = gt + 1;
 			continue;
 		}
 		/* any other tag (dt, p, hr, meta, h1, ...) — skip it */
-		gt = memchr(p, '>', (size_t)(end - p));
+		gt = (const char *)memchr(p, '>', (size_t)(end - p));
 		if (gt == NULL) break;
 		p = gt + 1;
 	}
@@ -1072,7 +1072,7 @@ int macos9_bookmarks_import_buffer(const char *buf, long len)
 	while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r'))
 		p++;
 	if (p < end) {
-		const char *nl = memchr(p, '\n', (size_t)(end - p));
+		const char *nl = (const char *)memchr(p, '\n', (size_t)(end - p));
 		const char *line_end = (nl != NULL) ? nl : end;
 		if (memchr(p, '\t', (size_t)(line_end - p)) != NULL)
 			tab_grammar = 1;
