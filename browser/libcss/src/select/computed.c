@@ -1078,10 +1078,7 @@ uint8_t css_computed_width_px(
 		break;
 	case CSS_WIDTH_SET:
 		switch (unit) {
-		case CSS_UNIT_CALC: /* Fall through */
-		case CSS_UNIT_MIN:  /* Fall through */
-		case CSS_UNIT_MAX:  /* Fall through */
-		case CSS_UNIT_CLAMP:
+		case CSS_UNIT_CALC:
 			if (css_calculator_calculate(
 					style->calc, unit_ctx,
 					available_px, value.calc,
@@ -1122,10 +1119,7 @@ uint8_t css_computed_width(const css_computed_style *style,
 	length_.value = 0;
 	ret = get_width(style, &length_, unit);
 	if (ret == CSS_WIDTH_SET) {
-		if (*unit == CSS_UNIT_CALC ||
-		    *unit == CSS_UNIT_MIN ||
-		    *unit == CSS_UNIT_MAX ||
-		    *unit == CSS_UNIT_CLAMP) {
+		if (*unit == CSS_UNIT_CALC) {
 			return CSS_WIDTH_AUTO;
 		}
 		*length = length_.value;
@@ -1314,12 +1308,6 @@ uint8_t css_computed_column_gap(const css_computed_style *style,
 		css_fixed *length, css_unit *unit)
 {
 	return get_column_gap(style, length, unit);
-}
-
-uint8_t css_computed_row_gap(const css_computed_style *style,
-		css_fixed *length, css_unit *unit)
-{
-	return get_row_gap(style, length, unit);
 }
 
 uint8_t css_computed_column_rule_color(const css_computed_style *style,

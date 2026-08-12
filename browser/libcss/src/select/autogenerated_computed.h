@@ -445,21 +445,6 @@ struct css_computed_style_i {
 	 * bits15..29 c2 RGB555, bits0..14 c1 RGB555). Appended at struct
 	 * end per project_libcss_struct_mid_insert_crash. */
 	int32_t macsurf_dotgrid;
-	/* row-gap (real row_gap support): the bits[16] array is FULL
-	 * (justify-items took the last slot), so row-gap lives in a scalar
-	 * tail instead -- self-aligning int32_t + css_fixed per the
-	 * fixes151b memcmp/padding discipline, appended at struct end so
-	 * no existing field offset shifts.
-	 *
-	 * row_gap_status packs the same 7 bits column-gap keeps in
-	 * bits[7]: bits 1..0 = type (CSS_COLUMN_GAP_INHERIT/SET/NORMAL),
-	 * bits 6..2 = unit. row_gap holds the length, meaningful only
-	 * when type == CSS_COLUMN_GAP_SET. set_row_gap always writes both
-	 * words together, so every cascade/compose/clone/initial path
-	 * leaves byte-deterministic memory for the arena interner's
-	 * memcmp. */
-	int32_t row_gap_status;
-	css_fixed row_gap;
 };
 
 struct css_computed_style {

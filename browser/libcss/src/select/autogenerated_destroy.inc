@@ -42,7 +42,6 @@
 /* set_column_count(style, 0, 0, CSS_UNIT_PX); */
 /* set_column_fill(style, 0, 0, CSS_UNIT_PX); */
 /* set_column_gap(style, 0, 0, CSS_UNIT_PX); */
-/* set_row_gap(style, 0, 0, CSS_UNIT_PX); */
 /* set_column_rule_color(style, 0, 0, CSS_UNIT_PX); */
 /* set_column_rule_style(style, 0, 0, CSS_UNIT_PX); */
 /* set_column_rule_width(style, 0, 0, CSS_UNIT_PX); */

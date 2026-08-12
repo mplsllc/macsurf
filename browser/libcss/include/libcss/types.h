@@ -111,16 +111,7 @@ typedef enum css_unit {
 	CSS_UNIT_HZ                 = 0x1b,
 	CSS_UNIT_KHZ                = 0x1c,
 
-	CSS_UNIT_CALC               = 0x1d, /**< Un-resolved calc() */
-
-	CSS_UNIT_MIN                = 0x1e, /**< Un-resolved min() */
-	CSS_UNIT_MAX                = 0x1f, /**< Un-resolved max() */
-
-	/* CSS_UNIT_CLAMP sits in the free middle slot (0x12): the computed
-	 * style packs units into 5 bits (max value 31), and 0x1e/0x1f are
-	 * the only free slots after CSS_UNIT_CALC.  0x12/0x13/0x14 are the
-	 * free middle slots (0x15 is PCT). */
-	CSS_UNIT_CLAMP              = 0x12  /**< Un-resolved clamp() */
+	CSS_UNIT_CALC               = 0x1d  /**< Un-resolved calc() */
 } css_unit;
 
 /**

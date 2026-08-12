@@ -238,33 +238,7 @@ css_error css__comma_list_to_style(css_language *c,
 		css_style *result);
 
 /**
- * Which math function a calc-family invocation token names.
- *
- * The parse_calc callers have already consumed the FUNCTION token, so the
- * function type is passed in separately rather than re-derived from the
- * token.
- */
-enum css_calc_func_e {
-	CSS_CALC_FUNC_NONE = 0, /**< Not a math function (calc/min/max/clamp) */
-	CSS_CALC_FUNC_CALC,     /**< calc() */
-	CSS_CALC_FUNC_MIN,      /**< min() */
-	CSS_CALC_FUNC_MAX,      /**< max() */
-	CSS_CALC_FUNC_CLAMP     /**< clamp() */
-};
-
-/**
- * Identify which math function (calc/min/max/clamp) a FUNCTION token
- * names, or CSS_CALC_FUNC_NONE if it is not one of them.
- *
- * \param[in] c      Parsing context
- * \param[in] token  The token to test
- * \return the function kind (CSS_CALC_FUNC_NONE if not a math function)
- */
-enum css_calc_func_e css__calc_function(css_language *c,
-		const css_token *token);
-
-/**
- * Parse a CSS calc()/min()/max()/clamp() invocation
+ * Parse a CSS calc() invocation
  *
  * Calc can generate a number of kinds of units, so we have to tell the
  * parser the kind of unit we're aiming for (e.g. UNIT_PX, UNIT_ANGLE, etc.)
@@ -275,7 +249,6 @@ enum css_calc_func_e css__calc_function(css_language *c,
  * \param[in] result   Pointer to location to receive resulting style
  * \param[in] OPV      The CSS property we are calculating for
  * \param[in] unit     The kind of unit which we want to come out of this calc()
- * \param[in] func     The math function kind (from css__calc_function)
  * \return CSS_OK on success,
  *         CSS_NOMEM on memory exhaustion,
            CSS_INVALID if the input is not valid
@@ -287,6 +260,5 @@ css_error css__parse_calc(css_language *c,
 		const parserutils_vector *vector, int32_t *ctx,
 		css_style *result,
 		css_code_t OPV,
-		uint32_t unit,
-		enum css_calc_func_e func);
+		uint32_t unit);
 #endif

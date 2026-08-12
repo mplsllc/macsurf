@@ -19,41 +19,6 @@
 /******************************************************************************
  * Utilities below here							      *
  ******************************************************************************/
-
-/**
- * Recover the computed-style unit for a calc-family expression.
- *
- * The expression bytecode (an interned lwc string) is executed linearly and
- * ends with CALC_FINISH; the parser emits a terminal MIN/MAX/CLAMP operator
- * for those functions, so the last opcode before the finish marker records
- * which function produced the expression.  Everything else is a plain
- * calc().
- *
- * \param[in] expr  The interned expression bytecode string.
- * \return the computed-style unit (CSS_UNIT_MIN/MAX/CLAMP/CALC).
- */
-static css_unit css__calc_expr_unit(lwc_string *expr)
-{
-	css_code_t *codeptr = (css_code_t *)(void *)lwc_string_data(expr);
-	css_code_t last = 0;
-
-	while (*codeptr != CALC_FINISH) {
-		last = *codeptr;
-		codeptr++;
-	}
-
-	switch (last) {
-	case CALC_MIN:
-		return CSS_UNIT_MIN;
-	case CALC_MAX:
-		return CSS_UNIT_MAX;
-	case CALC_CLAMP:
-		return CSS_UNIT_CLAMP;
-	default:
-		return CSS_UNIT_CALC;
-	}
-}
-
 css_error css__cascade_bg_border_color(uint32_t opv, css_style *style,
 		css_select_state *state,
 		css_error (*fun)(css_computed_style *, uint8_t, css_color))
@@ -228,7 +193,6 @@ css_error css__cascade_border_width(uint32_t opv, css_style *style,
 	uint16_t value = CSS_BORDER_WIDTH_INHERIT;
 	css_fixed length = 0;
 	uint32_t unit = UNIT_PX;
-	bool is_calc = false;
 
 	if (hasFlagValue(opv) == false) {
 		switch (getValue(opv)) {
@@ -249,33 +213,16 @@ css_error css__cascade_border_width(uint32_t opv, css_style *style,
 			value = CSS_BORDER_WIDTH_THICK;
 			break;
 		case BORDER_WIDTH_CALC:
-		{
-			uint32_t snum = 0;
-			lwc_string *calc_expr = NULL;
-
-			value = CSS_BORDER_WIDTH_WIDTH;
 			advance_bytecode(style, sizeof(unit));
-			snum = *((uint32_t *) style->bytecode);
-			advance_bytecode(style, sizeof(snum));
-			css__stylesheet_string_get(style->sheet, snum, &calc_expr);
-			/* Bit-cast the interned expression pointer into the
-			 * css_fixed length slot; unit.c recovers it and
-			 * resolves the calc.  Safe on 32-bit targets. */
-			length = (css_fixed)calc_expr;
-			is_calc = true;
-			break;
-		}
+			advance_bytecode(style, sizeof(unit)); /* TODO */
+			return CSS_OK;
 		default:
 			assert(0 && "Invalid value");
 			break;
 		}
 	}
 
-	if (is_calc == false) {
-		unit = css__to_css_unit(unit);
-	} else {
-		unit = css__calc_expr_unit((lwc_string *)length);
-	}
+	unit = css__to_css_unit(unit);
 
 	if (css__outranks_existing(getOpcode(opv), isImportant(opv), state,
 			getFlagValue(opv))) {
@@ -293,7 +240,6 @@ css_error css__cascade_length_auto(uint32_t opv, css_style *style,
 	uint16_t value = CSS_BOTTOM_INHERIT;
 	css_fixed length = 0;
 	uint32_t unit = UNIT_PX;
-	bool is_calc = false;
 
 	if (hasFlagValue(opv) == false) {
 		switch (getValue(opv)) {
@@ -308,33 +254,16 @@ css_error css__cascade_length_auto(uint32_t opv, css_style *style,
 			value = CSS_BOTTOM_AUTO;
 			break;
 		case BOTTOM_CALC:
-		{
-			uint32_t snum = 0;
-			lwc_string *calc_expr = NULL;
-
-			value = CSS_BOTTOM_SET;
 			advance_bytecode(style, sizeof(unit));
-			snum = *((uint32_t *) style->bytecode);
-			advance_bytecode(style, sizeof(snum));
-			css__stylesheet_string_get(style->sheet, snum, &calc_expr);
-			/* Bit-cast the interned expression pointer into the
-			 * css_fixed length slot; unit.c recovers it and
-			 * resolves the calc.  Safe on 32-bit targets. */
-			length = (css_fixed)calc_expr;
-			is_calc = true;
-			break;
-		}
+			advance_bytecode(style, sizeof(unit)); /* TODO */
+			return CSS_OK;
 		default:
 			assert(0 && "Invalid value");
 			break;
 		}
 	}
 
-	if (is_calc == false) {
-		unit = css__to_css_unit(unit);
-	} else {
-		unit = css__calc_expr_unit((lwc_string *)length);
-	}
+	unit = css__to_css_unit(unit);
 
 	if (css__outranks_existing(getOpcode(opv), isImportant(opv), state,
 			getFlagValue(opv))) {
@@ -372,8 +301,8 @@ css_error css__cascade_length_auto_calc(uint32_t opv, css_style *style,
 			advance_bytecode(style, sizeof(unit)); /* TODO: Skip unit, not sure what to do */
 			snum = *((uint32_t *) style->bytecode);
 			advance_bytecode(style, sizeof(snum));
+			unit = CSS_UNIT_CALC;
 			css__stylesheet_string_get(style->sheet, snum, &length.calc);
-			unit = css__calc_expr_unit(length.calc);
 			break;
 		default:
 			assert(0 && "Invalid value");
@@ -397,7 +326,6 @@ css_error css__cascade_length_normal(uint32_t opv, css_style *style,
 	uint16_t value = CSS_LETTER_SPACING_INHERIT;
 	css_fixed length = 0;
 	uint32_t unit = UNIT_PX;
-	bool is_calc = false;
 
 	if (hasFlagValue(opv) == false) {
 		switch (getValue(opv)) {
@@ -412,33 +340,16 @@ css_error css__cascade_length_normal(uint32_t opv, css_style *style,
 			value = CSS_LETTER_SPACING_NORMAL;
 			break;
 		case LETTER_SPACING_CALC:
-		{
-			uint32_t snum = 0;
-			lwc_string *calc_expr = NULL;
-
-			value = CSS_LETTER_SPACING_SET;
 			advance_bytecode(style, sizeof(unit));
-			snum = *((uint32_t *) style->bytecode);
-			advance_bytecode(style, sizeof(snum));
-			css__stylesheet_string_get(style->sheet, snum, &calc_expr);
-			/* Bit-cast the interned expression pointer into the
-			 * css_fixed length slot; unit.c recovers it and
-			 * resolves the calc.  Safe on 32-bit targets. */
-			length = (css_fixed)calc_expr;
-			is_calc = true;
-			break;
-		}
+			advance_bytecode(style, sizeof(unit)); /* TODO */
+			return CSS_OK;
 		default:
 			assert(0 && "Invalid value");
 			break;
 		}
 	}
 
-	if (is_calc == false) {
-		unit = css__to_css_unit(unit);
-	} else {
-		unit = css__calc_expr_unit((lwc_string *)length);
-	}
+	unit = css__to_css_unit(unit);
 
 	if (css__outranks_existing(getOpcode(opv), isImportant(opv), state,
 			getFlagValue(opv))) {
@@ -456,7 +367,6 @@ css_error css__cascade_length_none(uint32_t opv, css_style *style,
 	uint16_t value = CSS_MAX_HEIGHT_INHERIT;
 	css_fixed length = 0;
 	uint32_t unit = UNIT_PX;
-	bool is_calc = false;
 
 	if (hasFlagValue(opv) == false) {
 		switch (getValue(opv)) {
@@ -471,33 +381,16 @@ css_error css__cascade_length_none(uint32_t opv, css_style *style,
 			value = CSS_MAX_HEIGHT_NONE;
 			break;
 		case MAX_HEIGHT_CALC:
-		{
-			uint32_t snum = 0;
-			lwc_string *calc_expr = NULL;
-
-			value = CSS_MAX_HEIGHT_SET;
 			advance_bytecode(style, sizeof(unit));
-			snum = *((uint32_t *) style->bytecode);
-			advance_bytecode(style, sizeof(snum));
-			css__stylesheet_string_get(style->sheet, snum, &calc_expr);
-			/* Bit-cast the interned expression pointer into the
-			 * css_fixed length slot; unit.c recovers it and
-			 * resolves the calc.  Safe on 32-bit targets. */
-			length = (css_fixed)calc_expr;
-			is_calc = true;
-			break;
-		}
+			advance_bytecode(style, sizeof(unit)); /* TODO */
+			return CSS_OK;
 		default:
 			assert(0 && "Invalid value");
 			break;
 		}
 	}
 
-	if (is_calc == false) {
-		unit = css__to_css_unit(unit);
-	} else {
-		unit = css__calc_expr_unit((lwc_string *)length);
-	}
+	unit = css__to_css_unit(unit);
 
 	if (css__outranks_existing(getOpcode(opv), isImportant(opv), state,
 			getFlagValue(opv))) {
@@ -515,7 +408,6 @@ css_error css__cascade_length(uint32_t opv, css_style *style,
 	uint16_t value = CSS_MIN_HEIGHT_INHERIT;
 	css_fixed length = 0;
 	uint32_t unit = UNIT_PX;
-	bool is_calc = false;
 
 	if (hasFlagValue(opv) == false) {
 		switch (getValue(opv)) {
@@ -527,33 +419,16 @@ css_error css__cascade_length(uint32_t opv, css_style *style,
 			advance_bytecode(style, sizeof(unit));
 			break;
 		case MIN_HEIGHT_CALC:
-		{
-			uint32_t snum = 0;
-			lwc_string *calc_expr = NULL;
-
-			value = CSS_MIN_HEIGHT_SET;
 			advance_bytecode(style, sizeof(unit));
-			snum = *((uint32_t *) style->bytecode);
-			advance_bytecode(style, sizeof(snum));
-			css__stylesheet_string_get(style->sheet, snum, &calc_expr);
-			/* Bit-cast the interned expression pointer into the
-			 * css_fixed length slot; unit.c recovers it and
-			 * resolves the calc.  Safe on 32-bit targets. */
-			length = (css_fixed)calc_expr;
-			is_calc = true;
-			break;
-		}
+			advance_bytecode(style, sizeof(unit)); /* TODO */
+			return CSS_OK;
 		default:
 			assert(0 && "Invalid value");
 			break;
 		}
 	}
 
-	if (is_calc == false) {
-		unit = css__to_css_unit(unit);
-	} else {
-		unit = css__calc_expr_unit((lwc_string *)length);
-	}
+	unit = css__to_css_unit(unit);
 
 	/** \todo lose fun != NULL once all properties have set routines */
 	if (fun != NULL && css__outranks_existing(getOpcode(opv),

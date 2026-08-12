@@ -123,8 +123,8 @@ css_error css__parse_volume(css_language *c,
 				CSS_PROP_VOLUME,
 				0,VOLUME_X_LOUD);
 
-	} else if ((token->type == CSS_TOKEN_FUNCTION) && (css__calc_function(c, token) != CSS_CALC_FUNC_NONE)) {
-		error = css__parse_calc(c, vector, ctx, result, buildOPV(CSS_PROP_VOLUME, 0, VOLUME_CALC), UNIT_CALC_ANY, css__calc_function(c, token));
+	} else if ((token->type == CSS_TOKEN_FUNCTION) && (lwc_string_caseless_isequal(token->idata, c->strings[CALC], &match) == lwc_error_ok && match)) {
+		error = css__parse_calc(c, vector, ctx, result, buildOPV(CSS_PROP_VOLUME, 0, VOLUME_CALC), UNIT_CALC_ANY);
 	} else if (token->type == CSS_TOKEN_NUMBER) {
 		css_fixed num = 0;
 		size_t consumed = 0;

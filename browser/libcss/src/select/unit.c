@@ -12,7 +12,6 @@
 
 #include "propget.h"
 #include "css_internal_unit.h"
-#include "calc.h"
 
 #include "macsurf_debug.h"
 
@@ -183,10 +182,6 @@ static inline css_fixed css_unit__font_size_px(
 /**
  * Get the number of CSS pixels for a given unit.
  *
- * For CSS_UNIT_CALC, the length is a pointer to the calc expression
- * bytecode (interned in the sheet's string table), and the full resolved
- * value in CSS pixels is returned rather than a per-unit multiplier.
- *
  * \param[in] measure            Client callback for font measuring.
  * \param[in] ref_style          Reference style.  (Element or parent, or NULL).
  * \param[in] root_style         Root element style or NULL.
@@ -195,12 +190,8 @@ static inline css_fixed css_unit__font_size_px(
  * \param[in] viewport_height    Viewport height in CSS pixels.
  * \param[in] viewport_width     Viewport width in CSS pixels.
  * \param[in] unit               The unit to convert from.
- * \param[in] length             Length value, or calc expression pointer
- *                               for CSS_UNIT_CALC.
- * \param[in] ctx                Unit conversion context, for calc.
  * \param[in] pw                 Client private word for measure callback.
- * \return Number of CSS pixels equivalent to the given unit, or the
- *         resolved value in CSS pixels for a calc() expression.
+ * \return Number of CSS pixels equivalent to the given unit.
  */
 static inline css_fixed css_unit__px_per_unit(
 		const css_unit_len_measure measure,
@@ -211,8 +202,6 @@ static inline css_fixed css_unit__px_per_unit(
 		const css_fixed viewport_height,
 		const css_fixed viewport_width,
 		const css_unit unit,
-		const css_fixed length,
-		const css_unit_ctx *ctx,
 		void *pw)
 {
 	switch (css_unit__map_viewport_units(
@@ -285,38 +274,6 @@ static inline css_fixed css_unit__px_per_unit(
 	case CSS_UNIT_VW:
 		return FDIV(viewport_width, F_100);
 
-	case CSS_UNIT_CALC: /* Fall through */
-	case CSS_UNIT_MIN:  /* Fall through */
-	case CSS_UNIT_MAX:  /* Fall through */
-	case CSS_UNIT_CLAMP:
-	{
-		/* The length is a pointer to the calc-family expression
-		 * bytecode, interned in the sheet's string table.  It is
-		 * recovered by the cascade, which bit-casts the lwc_string
-		 * pointer into the css_fixed length slot.  (32-bit
-		 * targets.)  For min()/max()/clamp() the terminal bytecode
-		 * operator selects the min/max/clamp evaluation. */
-		lwc_string *expr = (lwc_string *)length;
-		css_unit u = CSS_UNIT_PX;
-		css_fixed v = 0;
-
-		if (ref_style == NULL || ref_style->calc == NULL ||
-				ctx == NULL || expr == NULL) {
-			return 0;
-		}
-
-		/* The calculator normalises every operand to CSS pixels
-		 * (percentages resolve against "available", which is
-		 * unknown here: a calc containing % fails and resolves
-		 * to 0).  The returned value is the fully resolved
-		 * length in CSS pixels, not a per-unit multiplier. */
-		if (css_calculator_calculate(ref_style->calc, ctx, -1,
-				expr, ref_style, &u, &v) != CSS_OK) {
-			return 0;
-		}
-		return v;
-	}
-
 	default:
 		return 0;
 	}
@@ -339,18 +296,7 @@ css_fixed css_unit_len2px_mq(
 			ctx->viewport_height,
 			ctx->viewport_width,
 			unit,
-			length,
-			ctx,
 			ctx->pw);
-
-	if (unit == CSS_UNIT_CALC ||
-	    unit == CSS_UNIT_MIN ||
-	    unit == CSS_UNIT_MAX ||
-	    unit == CSS_UNIT_CLAMP) {
-		/* px_per_unit holds the fully resolved value in CSS
-		 * pixels; it must not be multiplied by length again. */
-		return px_per_unit;
-	}
 
 	/* Ensure we round px_per_unit to the nearest whole number of pixels:
 	 * the use of FIXTOINT() below will truncate. */
@@ -376,18 +322,7 @@ css_fixed css_unit_len2css_px(
 			ctx->viewport_height,
 			ctx->viewport_width,
 			unit,
-			length,
-			ctx,
 			ctx->pw);
-
-	if (unit == CSS_UNIT_CALC ||
-	    unit == CSS_UNIT_MIN ||
-	    unit == CSS_UNIT_MAX ||
-	    unit == CSS_UNIT_CLAMP) {
-		/* px_per_unit holds the fully resolved value in CSS
-		 * pixels; it must not be multiplied by length again. */
-		return px_per_unit;
-	}
 
 	/* Ensure we round px_per_unit to the nearest whole number of pixels:
 	 * the use of FIXTOINT() below will truncate. */
@@ -413,18 +348,7 @@ css_fixed css_unit_len2device_px(
 			ctx->viewport_height,
 			ctx->viewport_width,
 			unit,
-			length,
-			ctx,
 			ctx->pw);
-
-	if (unit == CSS_UNIT_CALC ||
-	    unit == CSS_UNIT_MIN ||
-	    unit == CSS_UNIT_MAX ||
-	    unit == CSS_UNIT_CLAMP) {
-		/* px_per_unit holds the fully resolved value in CSS
-		 * pixels; it must not be multiplied by length again. */
-		return css_unit_css2device_px(px_per_unit, ctx->device_dpi);
-	}
 
 	px_per_unit = css_unit_css2device_px(px_per_unit, ctx->device_dpi);
 

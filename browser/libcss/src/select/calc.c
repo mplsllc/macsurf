@@ -268,52 +268,6 @@ css_error css_calculator_calculate(css_calculator *calc,
 			CALC_PUSH(u_left, v_left);
 			break;
 		}
-		case CALC_MIN: /* fallthrough */
-		case CALC_MAX: {
-			/* Every operand has been normalised (lengths to px,
-			 * angles to deg, etc.), so direct fixed comparisons
-			 * are valid; the unit of the selected operand
-			 * propagates. */
-			unit u_left, u_right;
-			css_fixed v_left, v_right;
-			CALC_POP(u_right, v_right);
-			CALC_POP(u_left, v_left);
-
-			if (op == CALC_MIN) {
-				if (v_right < v_left) {
-					v_left = v_right;
-					u_left = u_right;
-				}
-			} else {
-				if (v_right > v_left) {
-					v_left = v_right;
-					u_left = u_right;
-				}
-			}
-
-			CALC_PUSH(u_left, v_left);
-			break;
-		}
-		case CALC_CLAMP: {
-			/* clamp(lo, val, hi): the stack holds lo first, then
-			 * val, then hi.  Below lo -> lo; above hi -> hi. */
-			unit u_lo, u_val, u_hi;
-			css_fixed v_lo, v_val, v_hi;
-			CALC_POP(u_hi, v_hi);
-			CALC_POP(u_val, v_val);
-			CALC_POP(u_lo, v_lo);
-
-			if (v_val < v_lo) {
-				v_val = v_lo;
-				u_val = u_lo;
-			} else if (v_val > v_hi) {
-				v_val = v_hi;
-				u_val = u_hi;
-			}
-
-			CALC_PUSH(u_val, v_val);
-			break;
-		}
 		case CALC_FINISH: /* Should not happen */
 		default:
 			return CSS_INVALID;

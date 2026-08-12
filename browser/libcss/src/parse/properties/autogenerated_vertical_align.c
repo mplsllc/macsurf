@@ -139,8 +139,8 @@ css_error css__parse_vertical_align(css_language *c,
 				CSS_PROP_VERTICAL_ALIGN,
 				0,VERTICAL_ALIGN_TEXT_BOTTOM);
 
-	} else if ((token->type == CSS_TOKEN_FUNCTION) && (css__calc_function(c, token) != CSS_CALC_FUNC_NONE)) {
-		error = css__parse_calc(c, vector, ctx, result, buildOPV(CSS_PROP_VERTICAL_ALIGN, 0, VERTICAL_ALIGN_CALC), UNIT_PX, css__calc_function(c, token));
+	} else if ((token->type == CSS_TOKEN_FUNCTION) && (lwc_string_caseless_isequal(token->idata, c->strings[CALC], &match) == lwc_error_ok && match)) {
+		error = css__parse_calc(c, vector, ctx, result, buildOPV(CSS_PROP_VERTICAL_ALIGN, 0, VERTICAL_ALIGN_CALC), UNIT_PX);
 	} else {
 		css_fixed length = 0;
 		uint32_t unit = 0;

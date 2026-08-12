@@ -162,15 +162,6 @@ static size_t dump_css_unit(css_fixed val, css_unit unit, char *ptr, size_t len)
 	case CSS_UNIT_CALC:
 		ret += snprintf(ptr + ret, len - ret, "calc()");
 		break;
-	case CSS_UNIT_MIN:
-		ret += snprintf(ptr + ret, len - ret, "min()");
-		break;
-	case CSS_UNIT_MAX:
-		ret += snprintf(ptr + ret, len - ret, "max()");
-		break;
-	case CSS_UNIT_CLAMP:
-		ret += snprintf(ptr + ret, len - ret, "clamp()");
-		break;
 	}
 
 	return ret;

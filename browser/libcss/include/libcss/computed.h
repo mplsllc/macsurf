@@ -650,10 +650,6 @@ uint8_t css_computed_column_gap(
 		const css_computed_style *style,
 		css_fixed *length, css_unit *unit);
 
-uint8_t css_computed_row_gap(
-		const css_computed_style *style,
-		css_fixed *length, css_unit *unit);
-
 uint8_t css_computed_column_rule_color(
 		const css_computed_style *style,
 		css_color *color);

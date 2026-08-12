@@ -2677,21 +2677,15 @@ static inline css_error set_width(css_computed_style *style, uint8_t type,
 	
 	/* 7bits: uuuuutt : unit | type */
 	if ((orig_bits & 0x3) == CSS_WIDTH_SET) {
-		if (((orig_bits & 0x7c) >> 2 == CSS_UNIT_CALC) ||
-		    ((orig_bits & 0x7c) >> 2 == CSS_UNIT_MIN) ||
-		    ((orig_bits & 0x7c) >> 2 == CSS_UNIT_MAX) ||
-		    ((orig_bits & 0x7c) >> 2 == CSS_UNIT_CLAMP)) {
+		if ((orig_bits & 0x7c) >> 2 == CSS_UNIT_CALC) {
 			lwc_string_unref(style->i.width.calc);
 		}
 	}
-
+	
 	*bits = (*bits & ~WIDTH_MASK) | ((((uint32_t)type & 0x3) | (unit << 2))
 			<< WIDTH_SHIFT);
-
-	if (unit == CSS_UNIT_CALC ||
-	    unit == CSS_UNIT_MIN ||
-	    unit == CSS_UNIT_MAX ||
-	    unit == CSS_UNIT_CLAMP) {
+	
+	if (unit == CSS_UNIT_CALC) {
 		style->i.width.calc = lwc_string_ref(length.calc);
 	} else {
 		style->i.width.value = length.value;
@@ -2763,19 +2757,5 @@ static inline css_error set_z_index(css_computed_style *style, uint8_t type,
 #undef Z_INDEX_INDEX
 #undef Z_INDEX_SHIFT
 #undef Z_INDEX_MASK
-
-/* row-gap: scalar tail (bits[16] is full). Mirrors set_column_gap's
- * type/unit encoding but stores both words in _i scalars so arena
- * interning's memcmp sees deterministic bytes on every cascade path. */
-static inline css_error set_row_gap(css_computed_style *style, uint8_t type,
-		css_fixed length, css_unit unit)
-{
-	/* 7bits: uuuuutt : unit | type */
-	style->i.row_gap_status = ((uint32_t)type & 0x3) | (unit << 2);
-
-	style->i.row_gap = length;
-
-	return CSS_OK;
-}
 
 #endif
