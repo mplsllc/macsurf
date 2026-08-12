@@ -1109,7 +1109,6 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 							macos9_window_te_activate_url(gw);
 							if (gw->url_te) { TEClick(p, (event->modifiers & shiftKey) != 0, gw->url_te); TESelView(gw->url_te); } /* fixes756 (#229) */
 						} else if (ctrl == NULL && PtInRect(p, &gw->content_rect) && gw->bw) {
-						macsurf_debug_log_writef("LIFE INCONTENT bw=%p", (void *)(gw->bw));
 							/* fixes763: dropdown is hidden by the
 							 * macos9_window_te_deactivate_url() call below. */
 							/* Click in content area — dispatch to NetSurf so
@@ -1124,6 +1123,7 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 							Point curp;
 							unsigned long last_draw_tick = 0; /* fixes747 */
 							unsigned long last_scroll_tick = 0; /* fixes749 #216 */
+							macsurf_debug_log_writef("LIFE INCONTENT bw=%p", (void *)(gw->bw));
 							macos9_window_te_deactivate_url(gw);
 							if (event->modifiers & shiftKey)
 								mods |= BROWSER_MOUSE_MOD_1;
