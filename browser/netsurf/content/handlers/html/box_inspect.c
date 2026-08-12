@@ -140,14 +140,23 @@ box_contains_point(const css_unit_ctx *unit_len_ctx,
 		/* Not inside clip area */
 		return false;
 	}
-	if (x >= -box->border[LEFT].width &&
-	    x < box->padding[LEFT] + box->width +
-	    box->padding[RIGHT] + box->border[RIGHT].width &&
-	    y >= -box->border[TOP].width &&
-	    y < box->padding[TOP] + box->height +
-	    box->padding[BOTTOM] + box->border[BOTTOM].width) {
-		*physically = true;
-		return true;
+	/* fixes1180 — inline boxes have zero width because text
+	 * siblings carry the real width.  Don't reject them solely
+	 * on width; let the overflow-visibility descendant-bounds
+	 * check below decide. */
+	if (!(box->width == 0 && (box->type == BOX_INLINE ||
+		box->type == BOX_INLINE_BLOCK ||
+		box->type == BOX_INLINE_FLEX ||
+		box->type == BOX_INLINE_GRID))) {
+	    if (x >= -box->border[LEFT].width &&
+		x < box->padding[LEFT] + box->width +
+		box->padding[RIGHT] + box->border[RIGHT].width &&
+		y >= -box->border[TOP].width &&
+		y < box->padding[TOP] + box->height +
+		box->padding[BOTTOM] + box->border[BOTTOM].width) {
+			*physically = true;
+			return true;
+	    }
 	}
 	if (box->list_marker && box->list_marker->x - box->x <= x +
 	    box->list_marker->border[LEFT].width &&
