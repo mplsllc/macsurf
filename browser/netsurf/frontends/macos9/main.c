@@ -1105,6 +1105,7 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 							macos9_urlsug_hide(gw);   /* fixes763 dismiss stale suggestions */
 							macos9_window_te_activate_url(gw);
 							if (gw->url_te) { TEClick(p, (event->modifiers & shiftKey) != 0, gw->url_te); TESelView(gw->url_te); } /* fixes756 (#229) */
+						macsurf_debug_log_writef("LIFE INCONTENT ctrl=%p bw=%p inContent=%d inURL=%d", (void *)ctrl, (void *)(gw->bw), (int)PtInRect(p, &gw->content_rect), (int)PtInRect(p, &gw->url_rect));
 						} else if (ctrl == NULL && PtInRect(p, &gw->content_rect) && gw->bw) {
 							/* fixes763: dropdown is hidden by the
 							 * macos9_window_te_deactivate_url() call below. */
