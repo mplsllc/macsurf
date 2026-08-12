@@ -924,8 +924,8 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 #ifdef __MACOS9__
 	WindowRef win;
 	short part = FindWindow(event->where, &win);
-	macsurf_debug_log_writef("LIFE MOUSE part=%d win=%p", (int)part, (void *)win);
 	struct gui_window *gw;
+	macsurf_debug_log_writef("LIFE MOUSE part=%d win=%p", (int)part, (void *)win);
 	/* fixes645 (#199): route clicks on the modeless download-manager
 	 * window (drag / close / select) — it is not a gui_window. */
 	if (macos9_download_mgr_is(win)) {
