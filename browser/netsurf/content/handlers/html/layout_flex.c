@@ -297,11 +297,11 @@ static struct flex_ctx *layout_flex_ctx__create(
 	ctx->horizontal = lh__flex_main_is_horizontal(flex);
 	ctx->main_reversed = lh__flex_direction_reversed(flex);
 
-	/* fixes148 -- resolve column-gap to device pixels once per
-	 * container. CSS_COLUMN_GAP_NORMAL => 0 for flex (per spec).
-	 * main_gap and cross_gap are equal for now because row-gap
-	 * shares storage with column-gap; when row-gap lands as its
-	 * own property, split this into two independent reads. */
+	/* Resolve the gaps to device pixels once per container.
+	 * CSS_COLUMN_GAP_NORMAL => 0 for flex (per spec).
+	 * Per CSS Flexbox: column-gap sizes the gap between items on the
+	 * main axis, row-gap the gap between flex lines on the cross axis.
+	 * row-gap is its own property now (independent storage). */
 	{
 		css_fixed gap_len = 0;
 		css_unit gap_unit = CSS_UNIT_PX;
@@ -317,7 +317,21 @@ static struct flex_ctx *layout_flex_ctx__create(
 		} else {
 			ctx->main_gap = 0;
 		}
-		ctx->cross_gap = ctx->main_gap;
+
+		gap_len = 0;
+		gap_unit = CSS_UNIT_PX;
+		gap_type = css_computed_row_gap(flex->style,
+				&gap_len, &gap_unit);
+		if (gap_type == CSS_COLUMN_GAP_SET) {
+			ctx->cross_gap = FIXTOINT(css_unit_len2device_px(
+					flex->style, ctx->unit_len_ctx,
+					gap_len, gap_unit));
+			if (ctx->cross_gap < 0) {
+				ctx->cross_gap = 0;
+			}
+		} else {
+			ctx->cross_gap = 0;
+		}
 	}
 
 	return ctx;

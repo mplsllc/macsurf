@@ -107,6 +107,7 @@ PROPERTY_FUNCS(color);
 PROPERTY_FUNCS(column_count);
 PROPERTY_FUNCS(column_fill);
 PROPERTY_FUNCS(column_gap);
+PROPERTY_FUNCS(row_gap);
 PROPERTY_FUNCS(column_rule_color);
 PROPERTY_FUNCS(column_rule_style);
 PROPERTY_FUNCS(column_rule_width);

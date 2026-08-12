@@ -8,6 +8,21 @@
 #include "select/dispatch.h"
 #include "select/properties/properties.h"
 
+/* CW8 needs explicit extern declarations of row_gap functions before
+ * they appear in the struct initializer.  Other properties' functions
+ * are declared in select/properties/properties.h but row_gap was added
+ * after that header was last shipped. */
+extern css_error css__cascade_row_gap(uint32_t opv, css_style *style,
+		css_select_state *state);
+extern css_error css__set_row_gap_from_hint(const css_hint *hint,
+		css_computed_style *style);
+extern css_error css__initial_row_gap(css_select_state *state);
+extern css_error css__copy_row_gap(const css_computed_style *from,
+		css_computed_style *to);
+extern css_error css__compose_row_gap(const css_computed_style *parent,
+		const css_computed_style *child,
+		css_computed_style *result);
+
 /**
  * Dispatch table for properties, indexed by opcode
  */
@@ -441,6 +456,10 @@ struct prop_table prop_dispatch[CSS_N_PROPERTIES] = {
 	},
 	{
 		PROPERTY_FUNCS(column_gap),
+		0,
+	},
+	{
+		PROPERTY_FUNCS(row_gap),
 		0,
 	},
 	{

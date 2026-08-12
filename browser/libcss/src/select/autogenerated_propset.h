@@ -2758,4 +2758,18 @@ static inline css_error set_z_index(css_computed_style *style, uint8_t type,
 #undef Z_INDEX_SHIFT
 #undef Z_INDEX_MASK
 
+/* row-gap: scalar tail (bits[16] is full). Mirrors set_column_gap's
+ * type/unit encoding but stores both words in _i scalars so arena
+ * interning's memcmp sees deterministic bytes on every cascade path. */
+static inline css_error set_row_gap(css_computed_style *style, uint8_t type,
+		css_fixed length, css_unit unit)
+{
+	/* 7bits: uuuuutt : unit | type */
+	style->i.row_gap_status = ((uint32_t)type & 0x3) | (unit << 2);
+
+	style->i.row_gap = length;
+
+	return CSS_OK;
+}
+
 #endif

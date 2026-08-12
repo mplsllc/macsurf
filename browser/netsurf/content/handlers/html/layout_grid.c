@@ -528,16 +528,22 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 	if (container_width > LAYOUT_SAFE_MAX)
 		container_width = LAYOUT_SAFE_MAX;
 
-	/* column-gap applies between adjacent columns. fixes148 already
-	 * wired -macsurf-column-gap as the storage; reuse it here. */
+	/* column-gap applies between adjacent columns. */
 	if (css_computed_column_gap(grid->style, &gap_len, &gap_unit) ==
 			CSS_COLUMN_GAP_SET) {
 		col_gap = (int)FIXTOINT(css_unit_len2device_px(grid->style,
 				unit_len_ctx, gap_len, gap_unit));
 		if (col_gap < 0) col_gap = 0;
 	}
-	/* row-gap shares column-gap storage (fixes148). Use the same. */
-	row_gap = col_gap;
+	/* row-gap applies between adjacent rows; its own property. */
+	gap_len = 0;
+	gap_unit = CSS_UNIT_PX;
+	if (css_computed_row_gap(grid->style, &gap_len, &gap_unit) ==
+			CSS_COLUMN_GAP_SET) {
+		row_gap = (int)FIXTOINT(css_unit_len2device_px(grid->style,
+				unit_len_ctx, gap_len, gap_unit));
+		if (row_gap < 0) row_gap = 0;
+	}
 
 	/* fixes117: explicit track widths from grid-template-columns
 	 * (rewritten by cssh_css.c preprocessor and parsed by

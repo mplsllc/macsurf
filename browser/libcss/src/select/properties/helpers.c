@@ -57,6 +57,7 @@ static uint8_t css__calc_slot_for_prop(uint32_t prop)
 	case CSS_PROP_PADDING_BOTTOM:		return 25;
 	case CSS_PROP_PADDING_LEFT:		return 26;
 	case CSS_PROP_TEXT_INDENT:		return 27;
+	case CSS_PROP_ROW_GAP:			return 28;
 	default:				return 0xFF;
 	}
 }
