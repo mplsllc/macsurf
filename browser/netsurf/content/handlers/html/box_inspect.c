@@ -141,22 +141,27 @@ box_contains_point(const css_unit_ctx *unit_len_ctx,
 		return false;
 	}
 	/* fixes1180 — inline boxes have zero width because text
-	 * siblings carry the real width.  Don't reject them solely
-	 * on width; let the overflow-visibility descendant-bounds
-	 * check below decide. */
-	if (!(box->width == 0 && (box->type == BOX_INLINE ||
+	 * siblings carry the real width.  For these, the y-axis
+	 * check alone suffices — let the box fall through so its
+	 * text siblings and the split-anchor fallback can match. */
+	if (box->width == 0 && (box->type == BOX_INLINE ||
 		box->type == BOX_INLINE_BLOCK ||
 		box->type == BOX_INLINE_FLEX ||
-		box->type == BOX_INLINE_GRID))) {
-	    if (x >= -box->border[LEFT].width &&
-		x < box->padding[LEFT] + box->width +
-		box->padding[RIGHT] + box->border[RIGHT].width &&
-		y >= -box->border[TOP].width &&
-		y < box->padding[TOP] + box->height +
-		box->padding[BOTTOM] + box->border[BOTTOM].width) {
-			*physically = true;
+		box->type == BOX_INLINE_GRID)) {
+		if (y >= -box->border[TOP].width &&
+		    y < box->padding[TOP] + box->height +
+		    box->padding[BOTTOM] + box->border[BOTTOM].width) {
+			*physically = false;
 			return true;
-	    }
+		}
+	} else if (x >= -box->border[LEFT].width &&
+	    x < box->padding[LEFT] + box->width +
+	    box->padding[RIGHT] + box->border[RIGHT].width &&
+	    y >= -box->border[TOP].width &&
+	    y < box->padding[TOP] + box->height +
+	    box->padding[BOTTOM] + box->border[BOTTOM].width) {
+		*physically = true;
+		return true;
 	}
 	if (box->list_marker && box->list_marker->x - box->x <= x +
 	    box->list_marker->border[LEFT].width &&
