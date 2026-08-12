@@ -29,7 +29,7 @@
 #include "utils/ns_errors.h"
 #include "utils/talloc.h"
 #include "utils/nsurl.h"
-/* fixes889 — corestring_dom___ns_key_box_node_data (the box<->node backlink)
+/* fixes889 - corestring_dom___ns_key_box_node_data (the box<->node backlink)
  * and the WORK diagnostic channel. */
 #include "utils/corestrings.h"
 #include "macsurf_debug_log.h"
@@ -44,7 +44,7 @@
 #include "html/box_manipulate.h"
 
 
-/* fixes889 — how many boxes retracted their own node backlink on the way out.
+/* fixes889 - how many boxes retracted their own node backlink on the way out.
  * Reported per reconvert / teardown. A NON-ZERO count that the old
  * children/next-only walk in html_reconvert_clear_node_boxes could not have
  * reached (floats, list markers) is the dangling box_for_node() pointer behind
@@ -101,7 +101,7 @@ static int box_talloc_destructor(struct box *b)
 		macsurf_box_freed_note(b, macsurf_talloc_free_ctx);
 	}
 
-	/* fixes1076 — free an ORPHAN form control here, not only in
+	/* fixes1076 - free an ORPHAN form control here, not only in
 	 * box_free_box.
 	 *
 	 * box_free_box frees box->gadget, but a RECONVERT does not go through
@@ -151,7 +151,7 @@ static int box_talloc_destructor(struct box *b)
 	lwc_string_unref(b->id);
 
 	if (b->node != NULL) {
-		/* fixes889 — THE CHOKE POINT. Clear this node's back-pointer to
+		/* fixes889 - THE CHOKE POINT. Clear this node's back-pointer to
 		 * THIS box before dropping our ref.
 		 *
 		 * box_for_node() reads a raw `struct box *` stored as user data on
@@ -196,7 +196,7 @@ static int box_talloc_destructor(struct box *b)
 		data = scrollbar_get_data(b->scroll_x);
 		scrollbar_destroy(b->scroll_x);
 		free(data);
-		b->scroll_x = NULL;   /* fixes499f — idempotent: a second
+		b->scroll_x = NULL;   /* fixes499f - idempotent: a second
 		                       * teardown pass must skip the freed bar
 		                       * rather than re-destroy a stale pointer. */
 	}
@@ -371,7 +371,7 @@ void box_free(struct box *box)
 void box_free_box(struct box *box)
 {
 	if (!(box->flags & CLONE)) {
-		/* fixes1076 — NULL it. box_free_box ends in talloc_free(box),
+		/* fixes1076 - NULL it. box_free_box ends in talloc_free(box),
 		 * which runs box_talloc_destructor, which now also frees an
 		 * orphan gadget; without clearing the pointer here that path
 		 * would free the same control twice. */
@@ -458,7 +458,7 @@ box_handle_scrollbars(struct content *c,
 					      full_height);
 		}
 	}
-	/* fixes992 — WHO puts a scrollbar in the middle of the page?
+	/* fixes992 - WHO puts a scrollbar in the middle of the page?
 	 *
 	 * The reported "split viewport with an extra scroll bar" is NOT the
 	 * fixes625 canvas blowup: the fixes990 gate (canvas over twice the

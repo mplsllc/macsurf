@@ -11,18 +11,18 @@
  * `-macsurf-grid-col-span: <packed_int>` declaration. The packed int
  * encodes four placement fields:
  *
- *   bits  0..7  col_span    — 0=unset, 1..254 literal, 255 "fill row"
- *   bits  8..15 col_start   — 0=auto, 1..254 explicit grid line
- *   bits 16..23 row_start   — 0=auto, 1..254 explicit grid line
- *   bits 24..31 row_span    — 0=unset, 1..254 literal, 255 "fill"
+ *   bits  0..7  col_span    - 0=unset, 1..254 literal, 255 "fill row"
+ *   bits  8..15 col_start   - 0=auto, 1..254 explicit grid line
+ *   bits 16..23 row_start   - 0=auto, 1..254 explicit grid line
+ *   bits 24..31 row_span    - 0=unset, 1..254 literal, 255 "fill"
  *
  * Bytecode payload after appendOPV(SET): one int32 holding the packed
  * value verbatim. Storage in css_computed_style_i.macsurf_grid_col_span
  * (int32_t).
  *
- * fixes151 — original col-span only; values were a positive integer
+ * fixes151 - original col-span only; values were a positive integer
  *           clamped to 1..255 (uint8 semantics).
- * fixes158 — full int32 placement; no clamping. Source CSS that only
+ * fixes158 - full int32 placement; no clamping. Source CSS that only
  *           sets col-span still lands cleanly in the low byte.
  */
 
@@ -100,7 +100,7 @@ css_error css__parse_macsurf_grid_col_span(css_language *c,
 
 	if (col_span == 0 && col_start == 0 && row_start == 0 &&
 			row_span == 0) {
-		/* All zero — preprocessor only emits this when nothing was
+		/* All zero - preprocessor only emits this when nothing was
 		 * recognised; treat as invalid so libcss drops the decl. */
 		*ctx = orig_ctx;
 		return CSS_INVALID;

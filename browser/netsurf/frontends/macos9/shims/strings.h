@@ -1,5 +1,5 @@
 /*
- * MacSurf shim — shims/strings.h
+ * MacSurf shim  -  shims/strings.h
  *
  * <strings.h> is the POSIX header that declares strcasecmp / strncasecmp.
  * CW8/MSL does not provide it: on the Mac those functions live in

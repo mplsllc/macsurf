@@ -180,7 +180,7 @@ struct object_params {
 };
 
 
-/* fixes271b — multicol redraw metadata. Defined here (not in
+/* fixes271b - multicol redraw metadata. Defined here (not in
  * layout_internal.h) so the single source of truth lives with the
  * struct box that owns the multicol_data pointer below. The Mac-side
  * box.h has had these definitions since fixes199h; aligning Linux to
@@ -487,14 +487,14 @@ struct box {
 	struct browser_window *iframe;
 
 	/**
-	 * Multi-column redraw metadata, or NULL. fixes271b — defined
+	 * Multi-column redraw metadata, or NULL. fixes271b - defined
 	 * here to match the Mac-side box.h that has carried this since
 	 * fixes199h.
 	 */
 	struct box_multicol_data *multicol_data;
 
 	/**
-	 * fixes851 (#167) — flex/grid item re-layout memo. The flex and
+	 * fixes851 (#167) - flex/grid item re-layout memo. The flex and
 	 * grid layout algorithms lay each item out 2-3 times per pass
 	 * (base-size measurement, main placement, cross placement), and
 	 * because a flex item can itself be a flex/grid container, that
@@ -516,7 +516,7 @@ struct box {
 	int flex_layout_height;
 
 	/**
-	 * fixes929 — the image's INTRINSIC pixel size, known independently of
+	 * fixes929 - the image's INTRINSIC pixel size, known independently of
 	 * whether `object` is currently linked. 0 = unknown.
 	 *
 	 * Before this, `content_get_width(box->object)` was the ONLY source of

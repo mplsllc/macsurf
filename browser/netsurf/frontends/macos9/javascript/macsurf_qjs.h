@@ -1,5 +1,5 @@
 /*
- * MacSurf — macsurf_qjs.h
+ * MacSurf  -  macsurf_qjs.h
  *
  * QuickJS engine glue.  Implements the internal interface so macsurf_qjs.c
  * can satisfy the NetSurf js_thread API when WITH_QUICKJS is defined.
@@ -39,7 +39,7 @@ void macsurf_qjs__safe_eval(JSContext *qctx, const char *src);
 /* Timer callbacks wired to setTimeout/setInterval. */
 void macsurf_qjs_run_timers(struct jscontext *ctx);
 
-/* Fatal handler — called when the engine hits an unrecoverable error. */
+/* Fatal handler  -  called when the engine hits an unrecoverable error. */
 void macsurf_qjs_fatal(JSRuntime *rt, const char *msg);
 
 /* Get current time as ms since epoch (uses macsurf_monotonic_ms). */
@@ -48,12 +48,12 @@ double macsurf_qjs_get_now(void);
 /* DOM bindings + browser globals entry point. */
 void macsurf_qjs_setup_globals(JSContext *qctx);
 
-/* R1.2 -- WANT probe: clear the per-page global-miss dedupe set.  Called
+/* R1.2 - WANT probe: clear the per-page global-miss dedupe set.  Called
  * from macsurf_qjs_audit_reset() on each navigation/realm build so every
  * page gets its own first-use `LIFE WANT` lines. */
 void qjs_want_reset(void);
 
-/* Current page's struct content* (opaque here — macos9_js_fetch.c only
+/* Current page's struct content* (opaque here  -  macos9_js_fetch.c only
  * needs it to read the page URL as a fetch_start() referer), or NULL if
  * no page is wired in yet. See g_qjs_content's comment in macsurf_qjs.c
  * for its lifetime rules: snapshot what you need synchronously, it can

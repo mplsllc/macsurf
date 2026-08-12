@@ -259,7 +259,7 @@ enum css_text_decoration_style_e {
  *   N>0 = explicit integer pixels (1..1000)
  * V2 will reserve negative sentinels for percent / length-with-unit. */
 
-/* fixes275 (#65) — -macsurf-grid-flow: encodes grid-auto-flow.
+/* fixes275 (#65) - -macsurf-grid-flow: encodes grid-auto-flow.
  * row = default sparse row-major auto-placement
  * column = column-major placement
  * row_dense = row-major with backfill (dense packing)
@@ -457,7 +457,7 @@ enum css_word_break_e {
 	CSS_WORD_BREAK_KEEP_ALL			= 0x3
 };
 
-/* #251 — text-align-last. start/end are logical; layout maps them to
+/* #251 - text-align-last. start/end are logical; layout maps them to
  * left/right for horizontal-tb LTR. */
 enum css_text_align_last_e {
 	CSS_TEXT_ALIGN_LAST_INHERIT		= 0x0,
@@ -470,7 +470,7 @@ enum css_text_align_last_e {
 	CSS_TEXT_ALIGN_LAST_END			= 0x7
 };
 
-/* #251 — hyphens. auto is treated as manual (no dictionary). */
+/* #251 - hyphens. auto is treated as manual (no dictionary). */
 enum css_hyphens_e {
 	CSS_HYPHENS_INHERIT			= 0x0,
 	CSS_HYPHENS_NONE			= 0x1,
@@ -478,7 +478,7 @@ enum css_hyphens_e {
 	CSS_HYPHENS_AUTO			= 0x3
 };
 
-/* #251 — text-justify. */
+/* #251 - text-justify. */
 enum css_text_justify_e {
 	CSS_TEXT_JUSTIFY_INHERIT		= 0x0,
 	CSS_TEXT_JUSTIFY_AUTO			= 0x1,
@@ -487,7 +487,7 @@ enum css_text_justify_e {
 	CSS_TEXT_JUSTIFY_INTER_CHARACTER	= 0x4
 };
 
-/* #251 — hanging-punctuation (single-value V1; combos collapse to the
+/* #251 - hanging-punctuation (single-value V1; combos collapse to the
  * strongest single value). */
 enum css_hanging_punctuation_e {
 	CSS_HANGING_PUNCTUATION_INHERIT		= 0x0,
@@ -498,7 +498,7 @@ enum css_hanging_punctuation_e {
 	CSS_HANGING_PUNCTUATION_ALLOW_END	= 0x5
 };
 
-/* #255 — background-clip. 'text' (gradient text) deferred; box-model values
+/* #255 - background-clip. 'text' (gradient text) deferred; box-model values
  * only. Layout/redraw insets the background paint rect to the named box. */
 enum css_background_clip_e {
 	CSS_BACKGROUND_CLIP_INHERIT		= 0x0,
@@ -507,7 +507,7 @@ enum css_background_clip_e {
 	CSS_BACKGROUND_CLIP_CONTENT_BOX		= 0x3
 };
 
-/* #279 — justify-items (grid inline-axis item alignment). V1 = 2-bit slot:
+/* #279 - justify-items (grid inline-axis item alignment). V1 = 2-bit slot:
  * stretch (default) / start / center. 'end' + 'normal'/'baseline' deferred
  * (center is the common case). 'normal' and 'legacy' map to STRETCH. */
 enum css_justify_items_e {

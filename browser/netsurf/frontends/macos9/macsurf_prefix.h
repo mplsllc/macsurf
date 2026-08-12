@@ -6,7 +6,7 @@
 #define MACSURF_PREFIX_H
 
 /* ============================================================
- * fixes173 — Non-fatal assertions.
+ * fixes173  -  Non-fatal assertions.
  *
  * NetSurf core ships with hundreds of assert(...) calls in
  * layout, CSS cascade, libdom, hubbub, etc. With NDEBUG not
@@ -56,15 +56,15 @@ void macsurf_assert_failed_(const char *expr, const char *file, int line);
 #define _CSTDBOOL
 
 /*
- * fixes951 — DECLARE THIS A CARBON BUILD, and do it BEFORE MacTypes.h.
+ * fixes951  -  DECLARE THIS A CARBON BUILD, and do it BEFORE MacTypes.h.
  *
  * MacSurf has been compiling as a NON-Carbon (classic) app against Carbon
  * headers, while linking CarbonLib and calling Carbon APIs. Proven, not
  * inferred: two CW8 build errors this session showed
  * ACCESSOR_CALLS_ARE_FUNCTIONS == 0 (the Carbon accessor prototypes for
  * GetPortBitMapForCopyBits / GetPortGrafProcs / SetPortGrafProcs were
- * invisible), and ConditionalMacros.h documents that flag -- along with
- * OPAQUE_TOOLBOX_STRUCTS and OPAQUE_UPP_TYPES -- as "default: false, TRUE FOR
+ * invisible), and ConditionalMacros.h documents that flag - along with
+ * OPAQUE_TOOLBOX_STRUCTS and OPAQUE_UPP_TYPES - as "default: false, TRUE FOR
  * CARBON BUILDS".
  *
  * The ordering is what did it. This prefix is injected into EVERY translation
@@ -74,7 +74,7 @@ void macsurf_assert_failed_(const char *expr, const char *file, int line);
  * later, in macos9.h:27-29, by which time the decision was already made and
  * unchangeable. So every file compiled with classic struct layouts.
  *
- * On Mac OS 9 that is survivable -- CarbonLib's structures are close enough to
+ * On Mac OS 9 that is survivable - CarbonLib's structures are close enough to
  * classic that the browser has shipped and worked for a year, which is exactly
  * why this went unnoticed. On Mac OS X the real Carbon structures differ, so
  * reading a window port yields garbage: an all-NULL grafProcs table
@@ -98,7 +98,7 @@ void macsurf_assert_failed_(const char *expr, const char *file, int line);
 #endif
 
 /*
- * fixes951b — SUPPRESS <Endian.h> and supply its big-endian typedefs here.
+ * fixes951b  -  SUPPRESS <Endian.h> and supply its big-endian typedefs here.
  *
  * REPLACES fixes951a, which was wrong and broke the whole build (6582 errors,
  * 30 files, nothing compiled). fixes951a did "#include <Endian.h>" from this
@@ -108,8 +108,8 @@ void macsurf_assert_failed_(const char *expr, const char *file, int line);
  *   (MacSurfSource/libparserutils/src/utils), HFS is CASE-INSENSITIVE, and
  *   AlwaysSearchUserPaths=true searches USER paths BEFORE system paths.
  *
- * So every "#include <Endian.h>" in this project -- including the one inside
- * the SDK's own Events.h -- resolves to libparserutils' endian.h, which uses
+ * So every "#include <Endian.h>" in this project - including the one inside
+ * the SDK's own Events.h - resolves to libparserutils' endian.h, which uses
  * "static inline" and is not C89/CW8-clean. Injecting it from the prefix put
  * it into every translation unit at once. This is exactly the documented
  * sys/time.h interception trap in CLAUDE.md, and it also explains the ORIGINAL
@@ -127,7 +127,7 @@ void macsurf_assert_failed_(const char *expr, const char *file, int line);
  * is a plain typedef; the struct-wrapped forms are the little-endian branch
  * and cannot apply here). Nothing can depend on Endian.h's byte-swap
  * FUNCTIONS, because that header has never once been reachable in this
- * project -- the shadow has always won.
+ * project - the shadow has always won.
  *
  * The guard is claimed BEFORE MacTypes.h (which may include Endian.h), while
  * the typedefs come AFTER it, since Fixed/UnsignedFixed/OSType come from
@@ -144,7 +144,7 @@ void macsurf_assert_failed_(const char *expr, const char *file, int line);
   #ifndef __MACTYPES__
     #include <MacTypes.h>
   #endif
-  /* fixes951b — the BigEndian* types Carbon's Events.h needs for KeyMap[4].
+  /* fixes951b  -  the BigEndian* types Carbon's Events.h needs for KeyMap[4].
    * See the note above for why we define these instead of including them. */
   typedef long            BigEndianLong;
   typedef unsigned long   BigEndianUnsignedLong;
@@ -169,7 +169,7 @@ void macsurf_assert_failed_(const char *expr, const char *file, int line);
 #include <stdlib.h>
 #include <stdio.h>
 
-/* Bulletproof allocator intercept -- prevents NULL-write-to-$0000
+/* Bulletproof allocator intercept - prevents NULL-write-to-$0000
  * crash on fragmented heaps. Must come AFTER <stdlib.h> so MSL's
  * declarations parse before the macros rename the symbols.
  * macsurf_memory.c #undefs these to call MSL directly. */
@@ -212,7 +212,7 @@ extern void *macsurf_safe_realloc(void *ptr, size_t size);
   extern char *ctime(const time_t *);
   extern size_t strftime(char *, size_t, const char *, const struct tm *);
   #endif
-  /* Block MSL <time.h> entirely — its struct tm conflicts. */
+  /* Block MSL <time.h> entirely  -  its struct tm conflicts. */
   #ifndef _TIME_H
   #define _TIME_H
   #endif
@@ -253,7 +253,7 @@ typedef bool(nslog_ensure_t)(FILE *fptr);
 #endif
 
 #ifdef __MWERKS__
-/* Block MSL's stat.h variants — our shim defines struct stat. */
+/* Block MSL's stat.h variants  -  our shim defines struct stat. */
 #ifndef _STAT_H
 #define _STAT_H
 #endif
@@ -331,14 +331,14 @@ extern int   memcmp(const void *, const void *, size_t);
 #define UNUSED(x) ((void)(x))
 #endif
 
-/* FLEX_ARRAY_LEN_DECL — defined in netsurf/utils/utils.h, but if a
+/* FLEX_ARRAY_LEN_DECL  -  defined in netsurf/utils/utils.h, but if a
  * libcss/libdom/libhubbub utils.h wins on the access path it won't
  * be visible. CW8 accepts an empty flex array length. */
 #ifndef FLEX_ARRAY_LEN_DECL
 #define FLEX_ARRAY_LEN_DECL
 #endif
 
-/* fallthrough — defined in netsurf/utils/utils.h with C++/C2x detection,
+/* fallthrough  -  defined in netsurf/utils/utils.h with C++/C2x detection,
  * but on CW8 the wrong utils.h often wins and fallthrough stays undefined.
  * Make it a harmless no-op globally. */
 #ifndef fallthrough
@@ -346,7 +346,7 @@ extern int   memcmp(const void *, const void *, size_t);
 #endif
 
 /* netsurf/inttypes.h's PRI* macros sometimes don't reach every TU.
- * Provide CW8-compatible fallbacks (no z/Z modifiers — CW8 MSL printf
+ * Provide CW8-compatible fallbacks (no z/Z modifiers  -  CW8 MSL printf
  * doesn't accept them; use long-equivalents). */
 #ifndef PRIsizet
 #define PRIsizet "lu"
@@ -385,7 +385,7 @@ extern int   memcmp(const void *, const void *, size_t);
 #define WITH_QUICKJS 1
 #endif
 
-/* fixes1107 (#265) — re-enable the window `load` event.
+/* fixes1107 (#265)  -  re-enable the window `load` event.
  *
  * fixes1022 quiesced this (html.c:1017) pending "the round that ships forced
  * layout" (html.c:1011-1016), because firing `load` without it woke
@@ -394,7 +394,7 @@ extern int   memcmp(const void *, const void *, size_t);
  * ON. js_fire_window_load itself (macsurf_qjs.c:10752) is idempotent per
  * realm (__ms_load_fired) and already fires unconditionally today from a
  * second, narrower site (fixes1090's reconvert-height-change hook at
- * html.c:3310) — this define is what lets the REAL page-lifecycle site
+ * html.c:3310)  -  this define is what lets the REAL page-lifecycle site
  * (html.c:1017, the READY->DONE transition once every subresource has
  * settled) fire too, which is what pages that gate on `window.onload`
  * directly (not through a reconvert) are waiting for. The harness has run
@@ -418,7 +418,7 @@ extern int   memcmp(const void *, const void *, size_t);
 
 /* fixes91: verbose per-paint plotter logs. The plot_clip writef at
  * plotters.c:243 fires for every QuickDraw clip operation, which on a
- * real Drupal page emits ~30,000 log lines per redraw — every line
+ * real Drupal page emits ~30,000 log lines per redraw  -  every line
  * forces an HFS FlushVol, costing 5-15% of session time. Off by default;
  * define MACSURF_VERBOSE_PLOTLOG only for layout debugging. */
 /* #define MACSURF_VERBOSE_PLOTLOG 1 */
@@ -432,7 +432,7 @@ extern int   memcmp(const void *, const void *, size_t);
 #define _ALIGNED
 #endif
 
-/* macTLS Phase 1 — pull in BearSSL's CW8 build configuration so every
+/* macTLS Phase 1  -  pull in BearSSL's CW8 build configuration so every
  * vendored BearSSL TU compiles with the right BR_* macros (32-bit
  * arithmetic, no autodetected platform paths, no GCC/MSC builtins, no
  * OS-side entropy/time). The prefix is __MWERKS__-gated internally so

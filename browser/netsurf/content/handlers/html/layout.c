@@ -76,14 +76,14 @@
 #include "html/macsurf_dom_compat.h"
 #include "html/table.h"
 
-/* fixes161e — per-redraw call counter generation. Bumped at the top of
+/* fixes161e - per-redraw call counter generation. Bumped at the top of
  * layout_document(). Each LAYOUTPHASE probe site captures its own static
  * counter + last-seen seq, resets when seq changes. Lets us cap probes
  * per-redraw without resetting state from layout_document itself. */
 long macsurf_layout_seq = 0;
 
 /* ============================================================
- * fixes171 — Layout Watchdog state + breadcrumb.
+ * fixes171 - Layout Watchdog state + breadcrumb.
  *
  * Global counters declared extern in layout_safe.h. The watchdog
  * is reset at the top of layout_document so per-page state never
@@ -95,7 +95,7 @@ long macsurf_layout_seq = 0;
 int macsurf_layout_depth = 0;
 long macsurf_layout_calls = 0;
 int macsurf_layout_aborted = 0;
-/* fixes851 (#167) — reformat-pass generation for the flex/grid item
+/* fixes851 (#167) - reformat-pass generation for the flex/grid item
  * re-layout memo (struct box::flex_layout_gen). Bumped once per
  * html_reformat traversal (in macsurf_layout_watchdog_reset, which already
  * runs at the top of every layout_document), so a box's cached gen only
@@ -103,7 +103,7 @@ int macsurf_layout_aborted = 0;
  * without any tree walk. Starts at 1 so a freshly talloc_zero'd box
  * (gen 0) never spuriously hits. */
 unsigned macsurf_layout_pass_gen = 1;
-/* fixes851 — runtime kill-switch for the flex/grid re-layout memo. On by
+/* fixes851 - runtime kill-switch for the flex/grid re-layout memo. On by
  * default. A diagnostic (the S0 harness's cache-vs-no-cache equivalence
  * test) or a field escape hatch can set it to 0 to fall back to the
  * always-re-layout behaviour if the memo is ever suspected of changing a
@@ -235,7 +235,7 @@ void macsurf_layout_watchdog_reset(void)
 	macsurf_layout_depth = 0;
 	macsurf_layout_calls = 0;
 	macsurf_layout_aborted = 0;
-	/* fixes851 — new pass: invalidate every box's flex/grid re-layout
+	/* fixes851 - new pass: invalidate every box's flex/grid re-layout
 	 * memo by advancing the generation (skip 0, the talloc_zero sentinel). */
 	macsurf_layout_pass_gen++;
 	if (macsurf_layout_pass_gen == 0)
@@ -259,7 +259,7 @@ void macsurf_layout_set_current_url(const char *url)
 /* Write one breadcrumb line to both the debug log and (best-
  * effort) a dedicated MacSurf Crashes file. The dedicated file
  * uses fopen + fflush so even a forced-restart leaves a record.
- * Failures are silent — breadcrumb is diagnostic, not load-
+ * Failures are silent - breadcrumb is diagnostic, not load-
  * bearing. */
 void macsurf_layout_breadcrumb(const char *phase, const void *box)
 {
@@ -339,7 +339,7 @@ layout_get_object_dimensions(struct box *box,
 			     int min_width, int max_width,
 			     int min_height, int max_height)
 {
-	/* fixes929 — box->object may legitimately be NULL now: the intrinsic
+	/* fixes929 - box->object may legitimately be NULL now: the intrinsic
 	 * size can come from box->obj_w/obj_h (remembered from a previous load
 	 * of the same URL) before the fetch has completed. */
 	assert(box->object != NULL || box->obj_w > 0);
@@ -485,7 +485,7 @@ static void layout_minmax_table(struct box *table,
 	}
 	col = table->col;
 
-	/* fixes573: table-layout:fixed — column widths come from the declared
+	/* fixes573: table-layout:fixed - column widths come from the declared
 	 * widths (first row / <col>) only; CONTENT must not size columns (it
 	 * overflows). Without this, a fixed sidebar column (XenForo
 	 * .p-body-sidebar width:250px) gets its min/max inflated by its
@@ -677,7 +677,7 @@ static inline bool box_has_percentage_max_width(struct box *b)
 	return ((type == CSS_MAX_WIDTH_SET) && (unit == CSS_UNIT_PCT));
 }
 
-/* fixes993 — CJK line-break opportunities.
+/* fixes993 - CJK line-break opportunities.
  *
  * NetSurf finds break opportunities by scanning for ' '. Japanese, Chinese and
  * Korean text has no spaces, so an entire CJK paragraph is ONE unbreakable
@@ -947,7 +947,7 @@ layout_minmax_line(struct box *first,
 				 * calculate it.  (It's only needed if we're
 				 * shrinking-to-fit.) */
 				/* min = widest single word */
-				/* fixes993 — min = widest single word, where a
+				/* fixes993 - min = widest single word, where a
 				 * CJK character is a word of its own. Without
 				 * that a space-free Japanese paragraph counts
 				 * as ONE word and min becomes its whole width,
@@ -1176,14 +1176,14 @@ layout_minmax_inline_container(struct box *inline_container,
  * \post  block->min_width and block->max_width filled in,
  *        0 <= block->min_width <= block->max_width
  */
-/* fixes173 — watchdog wrapper for layout_minmax_block. This
+/* fixes173 - watchdog wrapper for layout_minmax_block. This
  * function is RECURSIVE (it calls itself via child walks deep
  * inside the body) and was NOT gated by fixes171's watchdog.
  * Apple's 256 KB body has thousands of nested boxes; min-max
  * width computation on deep nesting was the unguarded path.
  *
  * The assertion that block->type is in a known set is also
- * removed for safety — an unexpected type now produces a
+ * removed for safety - an unexpected type now produces a
  * safe zero-min-max box instead of crashing. Real browsers
  * degrade. */
 static void layout_minmax_block_inner(struct box *block,
@@ -1320,7 +1320,7 @@ static void layout_minmax_block_inner(
 		block->flags |= HAS_HEIGHT;
 	}
 
-	/* fixes470 — form text inputs (text, password) need intrinsic width
+	/* fixes470 - form text inputs (text, password) need intrinsic width
 	 * for flex/grid layout. HTML5 input types (email, search, url, tel)
 	 * map to GADGET_TEXTBOX. Size attribute default = 20 chars.
 	 * Calculate per-char width from font and use as the box's intrinsic
@@ -1370,10 +1370,10 @@ static void layout_minmax_block_inner(
 			min = html_get_box_tree(block->object)->min_width;
 			max = html_get_box_tree(block->object)->max_width;
 		} else {
-			/* fixes194 — replaced element (img / embed / object).
+			/* fixes194 - replaced element (img / embed / object).
 			 *
 			 * Old behaviour set min = max = content_get_width(object)
-			 * — the natural pixel width of the source bitmap (e.g.
+			 * - the natural pixel width of the source bitmap (e.g.
 			 * 1058 for mactrove's logo PNG). Inside a flex/grid
 			 * container, that natural width then propagated up via
 			 * fixes176's intrinsic-main-size walk, blowing the
@@ -1504,7 +1504,7 @@ static void layout_minmax_block_inner(
 		assert(0);
 	}
 
-	/* fixes622: CSS overflow — a box whose overflow-x is other than
+	/* fixes622: CSS overflow - a box whose overflow-x is other than
 	 * `visible` (hidden / scroll / auto) has an automatic minimum
 	 * content size of 0 (CSS Box Sizing 3 §4; Overflow 3). Its content
 	 * is clipped or scrolled, so it must NOT force the box (or its
@@ -1567,7 +1567,7 @@ static void layout_minmax_block_inner(
 			 * a shrink-to-fit float around it (XenForo
 			 * .notice-image) then reserves the full 1387 and shoves
 			 * the following .notice-content far to the right. Text
-			 * is intentionally NOT clamped here — a long word may
+			 * is intentionally NOT clamped here - a long word may
 			 * legitimately overflow max-width. */
 			if (val >= 0 && block->object != NULL &&
 					content_get_type(block->object) !=
@@ -2141,7 +2141,7 @@ static void layout_move_children(struct box *box, int x, int y)
 static bool layout_inline_container(struct box *inline_container, int width,
 		struct box *cont, int cx, int cy, html_content *content);
 
-/* fixes268 (#17) — count how many columns the given items[start..end]
+/* fixes268 (#17) - count how many columns the given items[start..end]
  * would occupy if packed with the supplied target column height.
  * Matches the greedy packing logic in layout_multicol_inner (move to
  * next column when adding the next item would overflow target). */
@@ -2165,13 +2165,13 @@ static int multicol_count_columns_at_target(
 	return cols_used;
 }
 
-/* fixes268 (#17) — compute the per-segment column target height.
+/* fixes268 (#17) - compute the per-segment column target height.
  *
  * Starting heuristic: max(tallest_item, ceil(total/count)). For
  * column-fill:auto the viewport height becomes the target (fill first
  * column to viewport, overflow into the rest). For column-fill:balance
  * we then bisect downward to find the smallest target that still fits
- * in `count` columns — gives tighter, more visually balanced output
+ * in `count` columns - gives tighter, more visually balanced output
  * than the heuristic alone, especially for non-uniform item heights.
  * Iteration cap (6) keeps PPC cost bounded. */
 static int multicol_compute_target_height(
@@ -2559,7 +2559,7 @@ static bool layout_multicol_context(
 	for (item_index = 0; item_index < child_count; item_index++) {
 		if (span_all_flags[item_index] != 0) {
 			if (segment_items > 0) {
-				/* fixes268 (#17) — bisection-refined target. */
+				/* fixes268 (#17) - bisection-refined target. */
 				target_height = multicol_compute_target_height(
 					outer_heights,
 					segment_starts[segment_count],
@@ -2585,7 +2585,7 @@ static bool layout_multicol_context(
 		}
 	}
 	if (segment_items > 0) {
-		/* fixes268 (#17) — bisection-refined target. */
+		/* fixes268 (#17) - bisection-refined target. */
 		target_height = multicol_compute_target_height(
 			outer_heights,
 			segment_starts[segment_count],
@@ -2722,7 +2722,7 @@ static bool layout_multicol_context(
 }
 
 
-/* fixes171 — Watchdog wrapper for layout_table. */
+/* fixes171 - Watchdog wrapper for layout_table. */
 static bool layout_table_inner(struct box *table, int available_width,
 		html_content *content);
 
@@ -2775,7 +2775,7 @@ static bool layout_table_inner(
 	css_fixed value = 0;
 	css_unit unit = CSS_UNIT_PX;
 
-	/* fixes161e — per-call TABLE marker capped at first 100 calls
+	/* fixes161e - per-call TABLE marker capped at first 100 calls
 	 * per redraw. fixes161d used %u which the writef formatter does
 	 * not support (printed literally as "cols=%u"); fixed to %d. */
 	{
@@ -3098,7 +3098,7 @@ static bool layout_table_inner(
 		auto_width = max_width;
 	}
 
-	/* fixes572 TBLDIAG — one-round diagnostic for the two-column collapse.
+	/* fixes572 TBLDIAG - one-round diagnostic for the two-column collapse.
 	 * Logs the exact inputs the distribution below consumes, for multi-
 	 * column tables only, capped per layout pass. Zero behaviour change. */
 	if (columns >= 2) {
@@ -3189,7 +3189,7 @@ static bool layout_table_inner(
 		table_width = auto_width;
 	}
 
-	/* fixes572 TBLDIAG — final column widths after distribution (same cap
+	/* fixes572 TBLDIAG - final column widths after distribution (same cap
 	 * discipline as the pre-distribution block above). */
 	if (columns >= 2) {
 		static long tbl_fin_calls = 0;
@@ -3836,7 +3836,7 @@ layout_float_find_dimensions(
  */
 static bool layout_float(struct box *b, int width, html_content *content)
 {
-	/* fixes173 — old code asserted box type. Downgrade to a safe
+	/* fixes173 - old code asserted box type. Downgrade to a safe
 	 * skip so an unexpected type doesn't crash a whole page. */
 	if (b == NULL) return false;
 	if (b->type != BOX_TABLE && b->type != BOX_BLOCK &&
@@ -4261,13 +4261,13 @@ layout_line(struct box *first,
 						&content->unit_len_ctx, INTTOFIX(1),
 						CSS_UNIT_EM));
 		} else {
-			/* fixes1068 (#226) — a replaced element with no object
+			/* fixes1068 (#226) - a replaced element with no object
 			 * and no known intrinsic size: a lazy <img> whose fetch
 			 * has not landed and whose URL missed the imgdims memo
 			 * (fixes929 fills obj_w on a hit, which takes the
 			 * aspect-preserving branch above).
 			 *
-			 * Upstream NetSurf never reaches here for an image —
+			 * Upstream NetSurf never reaches here for an image -
 			 * it has no deferred loading, so every <img> owns an
 			 * object by layout time and this branch is only ever
 			 * the form control its comment describes. MacSurf added
@@ -4540,7 +4540,7 @@ layout_line(struct box *first,
 					 &w);
 
 			/* fixes202: word-break: break-all / overflow-wrap:
-			 * break-word|anywhere — when no whitespace break
+			 * break-word|anywhere - when no whitespace break
 			 * fits the available width, fall back to a
 			 * character-level break. position() returns the
 			 * char offset where the cursor crosses x, which is
@@ -4828,19 +4828,8 @@ layout_line(struct box *first,
 				used_height = d->height;
 			}
 		} else if ((d->type == BOX_INLINE) ||
-				d->type == BOX_INLINE_BLOCK ||
-				d->type == BOX_INLINE_FLEX ||
-				d->type == BOX_INLINE_GRID) {
-			/* replaced inlines, inline-blocks, inline-flex and
-			 * inline-grid: their margin boxes participate in the
-			 * line box height, exactly like an inline-block
-			 * (CSS 2.1 s10.8; CSS Inline Layout). fixes1169 --
-			 * BOX_INLINE_FLEX/BOX_INLINE_GRID were missing here,
-			 * so an inline-flex avatar contributed zero height to
-			 * its line: the flex row cross-sized to the text line
-			 * (19-21px) while the avatar (24-48px) hung below and
-			 * overlapped the next row (#226, 68kmla thread
-			 * list). */
+				d->type == BOX_INLINE_BLOCK) {
+			/* replaced inlines and inline-blocks */
 			d->x += x0;
 			d->y = *y + d->border[TOP].width + d->margin[TOP];
 			h = d->margin[TOP] + d->border[TOP].width +
@@ -4925,14 +4914,14 @@ layout_line(struct box *first,
  * \param content  memory pool for any new boxes
  * \return true on success, false on memory exhaustion
  */
-/* fixes173 — watchdog wrapper for layout_inline_container. Apple
+/* fixes173 - watchdog wrapper for layout_inline_container. Apple
  * ships 256 KB of HTML, most of it inline content (paragraphs,
  * links, spans). The inline-container layout walker is the most-
  * called layout function on text-heavy pages and was the most
  * obvious un-gated recursive path remaining after fixes171.
  *
  * The assertion that the box is BOX_INLINE_CONTAINER is also
- * downgraded to a safe early-return — a wrong-type box here
+ * downgraded to a safe early-return - a wrong-type box here
  * previously crashed; now it produces a zero-height continuation. */
 static bool layout_inline_container_inner(struct box *inline_container,
 		int width, struct box *cont, int cx, int cy,
@@ -5022,7 +5011,7 @@ static bool layout_inline_container_inner(struct box *inline_container,
 
 
 /* Documented in layout_intertnal.h */
-/* fixes171 — Forward decl for the watchdog wrapper below. The
+/* fixes171 - Forward decl for the watchdog wrapper below. The
  * real body of layout_block_context lives in
  * layout_block_context_inner; the public entry point is the
  * wrapper that runs the watchdog gate + paired exit. */
@@ -5064,7 +5053,7 @@ static bool layout_block_context_inner(
 	bool in_margin = false;
 	css_fixed gadget_size;
 	css_unit gadget_unit; /* Checkbox / radio buttons */
-	/* fixes161f — function-scope phase counters shared by all
+	/* fixes161f - function-scope phase counters shared by all
 	 * LAYOUTPHASE markers in this function. Entry/pre-loop/per-child/
 	 * exit markers all use macsurf_lbc_calls so we can correlate
 	 * "block #N entry" with "block #N pre-loop" etc. in the log. */
@@ -5076,7 +5065,7 @@ static bool layout_block_context_inner(
 	}
 	macsurf_lbc_calls++;
 	if (macsurf_lbc_calls <= 200) {
-		/* fixes161e — entry probe. The last LAYOUTPHASE block line
+		/* fixes161e - entry probe. The last LAYOUTPHASE block line
 		 * in the truncated apple log will name the exact box where
 		 * layout_block_context died. */
 		macsurf_debug_log_writef(
@@ -5210,7 +5199,7 @@ static bool layout_block_context_inner(
 	if (box)
 		box->y = block->padding[TOP];
 
-	/* fixes161f — pre-loop phase marker. Fires for the first 50 calls
+	/* fixes161f - pre-loop phase marker. Fires for the first 50 calls
 	 * per redraw. If "block #N entry" prints but "block #N pre-loop"
 	 * does not, apple crashes between entry and the while(box) loop
 	 * (object/gadget/replace_dim special cases). */
@@ -5253,7 +5242,7 @@ static bool layout_block_context_inner(
 				box->type == BOX_TABLE ||
 				box->type == BOX_INLINE_CONTAINER);
 
-		/* fixes161f — per-child marker inside the while(box) loop.
+		/* fixes161f - per-child marker inside the while(box) loop.
 		 * Capped at 30 total iterations per redraw so the log doesn't
 		 * blow up; combined with the 50-call cap on entry that's still
 		 * 30 leaf lines max. If "block #N pre-loop" fires and a few
@@ -5438,7 +5427,7 @@ static bool layout_block_context_inner(
 			cy = y;
 		}
 
-		/* fixes182b — detect CSS multi-column. Plain BOX_BLOCK with
+		/* fixes182b - detect CSS multi-column. Plain BOX_BLOCK with
 		 * column-count or column-width set must establish a new
 		 * formatting context just like flex/grid, otherwise the
 		 * normal inline-flow path leaves children full-width. */
@@ -5725,7 +5714,7 @@ static bool layout_block_context_inner(
 				block->padding[BOTTOM], block->padding[LEFT]);
 	}
 
-	/* fixes161f — function-exit phase marker. If "block #N pre-loop"
+	/* fixes161f - function-exit phase marker. If "block #N pre-loop"
 	 * prints but "block #N done" does not, apple crashes inside the
 	 * while(box) loop (which is most of the function body). The earlier
 	 * "block #N child=..." markers further narrow which child. */
@@ -6123,7 +6112,7 @@ layout__list_item_is_numerical(
 /**
  * Layout list markers.
  *
- * fixes163 — degenerate-tree hardening for huffpost.
+ * fixes163 - degenerate-tree hardening for huffpost.
  *
  * Huffpost crashes inside this function when called on a doc that
  * laid out to c_h=0 (the htmlbody-fill branch in layout_document
@@ -6722,7 +6711,7 @@ layout_position_absolute(struct box *box,
 	struct box *c;
 
 	for (c = box->children; c; c = c->next) {
-		/* fixes163b — symmetric NULL-style guard. The else-if and
+		/* fixes163b - symmetric NULL-style guard. The else-if and
 		 * float branches below already gate on c->style; this first
 		 * branch was the lone holdout reading css_computed_position
 		 * unconditionally. Real modern pages can produce block / table
@@ -7194,7 +7183,7 @@ static void layout_calculate_descendant_bboxes(
 			 * overflow:hidden. The old test required BOTH overflow-x
 			 * AND overflow-y hidden before skipping the child's
 			 * contribution, so a box with overflow-x:hidden and
-			 * overflow-y:visible (XenForo .hScroller-scroll — the nav
+			 * overflow-y:visible (XenForo .hScroller-scroll - the nav
 			 * bar: white-space:nowrap; overflow-x:hidden) let its
 			 * ~1380px of non-wrapping content expand the whole
 			 * document width, forcing a horizontal page scroll into
@@ -7253,13 +7242,13 @@ bool layout_document(html_content *content, int width, int height)
 	bool ret;
 	struct box *doc = content->layout;
 	const struct gui_layout_table *font_func = content->font_func;
-	int doc_h_after_block;        /* fixes164 — see partial-layout gate below */
+	int doc_h_after_block;        /* fixes164 - see partial-layout gate below */
 
 	NSLOG(layout, DEBUG, "Doing layout to %ix%i of %s",
 			width, height, nsurl_access(content_get_url(
 					&content->base)));
 
-	/* fixes171 — capture the URL so the watchdog breadcrumb can
+	/* fixes171 - capture the URL so the watchdog breadcrumb can
 	 * tag crash records with the page being laid out. */
 	{
 		void macsurf_layout_set_current_url(const char *);
@@ -7268,13 +7257,13 @@ bool layout_document(html_content *content, int width, int height)
 				(cu != NULL) ? nsurl_access(cu) : "(no url)");
 	}
 
-	/* fixes171 — reset the watchdog counters at the start of every
+	/* fixes171 - reset the watchdog counters at the start of every
 	 * html_reformat traversal so the per-page depth / iteration
 	 * budgets are exactly that: per page. */
 	macsurf_layout_watchdog_reset();
 	macsurf_layout_breadcrumb("DOC entry", (void *)doc);
 
-	/* fixes161e — precise layout crash locator. Bump the redraw seq
+	/* fixes161e - precise layout crash locator. Bump the redraw seq
 	 * first so all inner probes reset their per-redraw counters.
 	 * [DOC pre-block] / [DOC post-block] bracket the root call into
 	 * layout_block_context so apple's crash signature (entry then
@@ -7309,7 +7298,7 @@ bool layout_document(html_content *content, int width, int height)
 		(int)ret, (void *)doc,
 		(int)doc->width, (int)doc->height);
 
-	/* fixes167d — partial-layout policy update. Previously
+	/* fixes167d - partial-layout policy update. Previously
 	 * (fixes164/fixes165) any layout_block_context that returned
 	 * doc->height==0 caused the document tail (abs/rel/bbox) to be
 	 * skipped globally and bbox descendant recursion to be skipped
@@ -7327,7 +7316,7 @@ bool layout_document(html_content *content, int width, int height)
 	 *
 	 * New policy: run abs/rel/bbox whenever layout_block_context
 	 * returned true. If it returned false, treat that as the only
-	 * catastrophic signal — set a safe doc bbox and skip the tail.
+	 * catastrophic signal - set a safe doc bbox and skip the tail.
 	 * doc->height==0 is no longer interpreted as failure; it's a
 	 * legitimate state for an empty document and the htmlbody-fill
 	 * block below grows it before bbox runs.
@@ -7336,7 +7325,7 @@ bool layout_document(html_content *content, int width, int height)
 	 * `ret` alone. */
 	doc_h_after_block = (int)doc->height;
 
-	/* fixes161f — tail-fixup pre/post markers. */
+	/* fixes161f - tail-fixup pre/post markers. */
 	macsurf_debug_log_writef(
 		"LAYOUTPHASE doc tail pre-htmlbody doc_h=%d height=%d children=%p",
 		(int)doc->height, height, (void *)doc->children);
@@ -7365,7 +7354,7 @@ bool layout_document(html_content *content, int width, int height)
 	layout_lists(content, doc);
 	macsurf_debug_log_writef("LAYOUTPHASE doc tail post-lists");
 
-	/* fixes167d — gate now hangs on `ret` alone. doc_h_after_block is
+	/* fixes167d - gate now hangs on `ret` alone. doc_h_after_block is
 	 * kept in the log for diagnostics but no longer gates the tail.
 	 * The local flex-fallback in layout_flex.c guarantees a walkable
 	 * tree even when individual flex containers cannot complete spec
@@ -7400,7 +7389,7 @@ bool layout_document(html_content *content, int width, int height)
 		doc->descendant_y1 = doc->height;
 	}
 
-	/* fixes161d — see entry probe. */
+	/* fixes161d - see entry probe. */
 	macsurf_debug_log_writef(
 		"LAYOUTPHASE document exit ret=%d c_w=%d c_h=%d",
 		(int)ret, (int)doc->width, (int)doc->height);

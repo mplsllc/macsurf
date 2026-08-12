@@ -1,5 +1,5 @@
 /*
- * MacSurf stub -- css/utils.h
+ * MacSurf stub - css/utils.h
  * C89-compatible stub for CodeWarrior 8 / GCC PPC Mac OS 9.
  *
  * Provides the same symbols as content/handlers/css/utils.h:
@@ -14,7 +14,7 @@
 
 #include <libcss/libcss.h>
 
-/* netsurf/css.h macros -- inlined here to avoid search-path issues */
+/* netsurf/css.h macros - inlined here to avoid search-path issues */
 #ifndef nscss_color_to_ns
 #define nscss_color_to_ns(c) \
         ( ((~(c)) & 0xff000000)        | \
@@ -40,7 +40,7 @@
 extern css_fixed nscss_screen_dpi;
 
 /*
- * Wrapper for css_computed_display -- maps unsupported grid values
+ * Wrapper for css_computed_display - maps unsupported grid values
  * to block/inline-block equivalents.
  */
 static uint8_t ns_computed_display(
@@ -60,7 +60,7 @@ static uint8_t ns_computed_display(
 }
 
 /*
- * Static variant -- calls css_computed_display_static instead.
+ * Static variant - calls css_computed_display_static instead.
  */
 static uint8_t ns_computed_display_static(
         const css_computed_style *style)
@@ -79,7 +79,7 @@ static uint8_t ns_computed_display_static(
 }
 
 /*
- * Wrapper for css_computed_min_height -- converts AUTO to SET 0px.
+ * Wrapper for css_computed_min_height - converts AUTO to SET 0px.
  */
 static uint8_t ns_computed_min_height(
         const css_computed_style *style,
@@ -96,7 +96,7 @@ static uint8_t ns_computed_min_height(
 }
 
 /*
- * Wrapper for css_computed_min_width -- converts AUTO to SET 0px.
+ * Wrapper for css_computed_min_width - converts AUTO to SET 0px.
  */
 static uint8_t ns_computed_min_width(
         const css_computed_style *style,

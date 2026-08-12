@@ -1,4 +1,4 @@
-/* about_logo_data.h — fixes726: crisp 64x64 puffin for the About box,
+/* about_logo_data.h  -  fixes726: crisp 64x64 puffin for the About box,
  * downscaled Lanczos from puffpuff.png (512x512). Decoded at runtime to
  * a colour GWorld + 1-bit mask and CopyMask'd over the animated gradient
  * (replaces the pixelated PlotIconID 32->52 upscale). 6731 bytes. */

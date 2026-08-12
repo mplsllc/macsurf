@@ -301,7 +301,7 @@ struct content {
 	 * walk is active.  A broadcast that arrives while ANY content is mid-
 	 * walk (tracked by the module-global content_broadcast_active flag) is
 	 * deferred: its message is appended to broadcast_pending[] and replayed
-	 * in FIFO order once the active walk unwinds — inline for this content,
+	 * in FIFO order once the active walk unwinds - inline for this content,
 	 * or via hlcache's catch-up pump for others.  FIFO (not a single slot)
 	 * so a deferred READY then DONE replay in the right order; collapsing
 	 * them would make browser_window see DONE without the READY that

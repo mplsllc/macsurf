@@ -41,12 +41,12 @@
 #include "html/private.h"
 #include "html/box_inspect.h"
 #include "html/layout_internal.h"
-/* fixes168 — shared sanitizers (layout-wide). flex's own FLEX_SAFE_*
+/* fixes168 - shared sanitizers (layout-wide). flex's own FLEX_SAFE_*
  * helpers stay for back-compat with the fixes167 call sites; new
  * code uses the layout_dim_* shared API. */
 #include "html/layout_safe.h"
 
-/* fixes471/fixes565 — all six flex main-axis space/position sites use
+/* fixes471/fixes565 - all six flex main-axis space/position sites use
  * lh__box_is_flex_out_of_flow() instead of lh__box_is_absolute(). sticky is
  * out-of-flow on a ROW main axis (fixes471: a sticky item must not consume a
  * column slot -> preserves 68kmla/mactrove multi-column) but IN flow on a
@@ -54,11 +54,11 @@
  * siblings like .p-sectionLinks don't slide up under it). See
  * layout_internal.h. */
 
-/* fixes161d — diagnostic-only macsurf_debug_log_writef for the
+/* fixes161d - diagnostic-only macsurf_debug_log_writef for the
  * LAYOUTPHASE flex marker. Compiles to a no-op in release builds. */
 #include "macsurf_debug.h"
 
-/* fixes167 — flex survival caps. Apple and HuffPost both reach the
+/* fixes167 - flex survival caps. Apple and HuffPost both reach the
  * flex code with degenerate inputs: AUTO main availability on a
  * nested column-direction container, child counts that exceed any
  * realistic page (broken sub-resources), or items the engine cannot
@@ -80,7 +80,7 @@
 #define FLEX_MAX_ITEMS 512
 #define FLEX_MAX_LINES 512
 
-/* fixes167a — finite-dimension sanitizer. Replace AUTO, negative,
+/* fixes167a - finite-dimension sanitizer. Replace AUTO, negative,
  * or absurdly large with the caller-supplied fallback. After this
  * call the return value is in [0, FLEX_SAFE_MAX]. */
 static int flex_safe_dim(int v, int fallback)
@@ -91,7 +91,7 @@ static int flex_safe_dim(int v, int fallback)
 	return v;
 }
 
-/* fixes167a — fallback that's known to be in range. Used when the
+/* fixes167a - fallback that's known to be in range. Used when the
  * caller has nothing better. */
 static int flex_safe_fallback_dim(int fallback)
 {
@@ -100,7 +100,7 @@ static int flex_safe_fallback_dim(int fallback)
 	return fallback;
 }
 
-/* fixes176 — intrinsic main-axis size for a flex item.
+/* fixes176 - intrinsic main-axis size for a flex item.
  *
  * Apple-style global navs (and many other real-world horizontal flex
  * containers) reach the flex code with available_main == 0 because the
@@ -152,7 +152,7 @@ static int flex_item_intrinsic_main_size(struct box *b,
 	/* Vertical main axis. If the item already has a concrete height
 	 * (set by layout_find_dimensions from a non-auto height property,
 	 * or by a recursive layout_flex_item pass), use it. Otherwise
-	 * don't synthesise — column-direction intrinsic sizing is harder
+	 * don't synthesise - column-direction intrinsic sizing is harder
 	 * and the existing AUTO->b->height path in the caller will pick
 	 * the right value after layout_flex_item runs. */
 	if (b->height == AUTO) return 0;
@@ -385,7 +385,7 @@ static bool layout_flex_item(
 	bool success;
 	struct box *b = item->box;
 
-	/* fixes851 (#167) — re-layout memo. A flex container lays each item
+	/* fixes851 (#167) - re-layout memo. A flex container lays each item
 	 * out up to 3x per pass (base-size measure, main placement, cross
 	 * placement), and a flex item can itself be a flex/grid container, so
 	 * this per-level multiplier compounds through nesting into an O(3^d)
@@ -433,7 +433,7 @@ static bool layout_flex_item(
 		break;
 	case BOX_GRID:
 	case BOX_INLINE_GRID:
-		/* fixes174 — grid children of flex containers are real.
+		/* fixes174 - grid children of flex containers are real.
 		 * Apple's homepage uses flex > grid > flex/card constantly.
 		 * Previously this fell into the default branch and aborted
 		 * the whole flex subtree, collapsing the page. Dispatch
@@ -443,7 +443,7 @@ static bool layout_flex_item(
 		b->float_container = NULL;
 		break;
 	default:
-		/* fixes174 — degrade unknown types to zero-height. The
+		/* fixes174 - degrade unknown types to zero-height. The
 		 * old assert(0) crashed; the new behaviour matches every
 		 * other layout function in the engine. */
 		b->height = 0;
@@ -455,7 +455,7 @@ static bool layout_flex_item(
 		NSLOG(flex, ERROR, "box %p: layout failed", b);
 	}
 
-	/* fixes851 — record the memo only on a successful layout, snapshotting
+	/* fixes851 - record the memo only on a successful layout, snapshotting
 	 * the box's post-layout width AND height so a later re-entry can tell
 	 * whether anything perturbed it since (see the skip check above). A
 	 * failed/degraded item is left un-memoed so it is retried, not pinned. */
@@ -489,7 +489,7 @@ static inline bool layout_flex__base_and_main_sizes(
 	NSLOG(flex, DEEPDEBUG, "box %p: delta_outer_main: %i",
 			b, delta_outer_main);
 
-	/* fixes167b — defensive: caller passes a sanitized available_width
+	/* fixes167b - defensive: caller passes a sanitized available_width
 	 * but min/max widths from a degenerate minmax pass can still be
 	 * AUTO or absurd. Clamp before they get folded into base_size. */
 	if (content_min_width == AUTO || content_min_width < 0 ||
@@ -504,17 +504,17 @@ static inline bool layout_flex__base_and_main_sizes(
 		delta_outer_main = 0;
 	}
 
-	/* fixes614 — CSS Flexbox automatic minimum size (§4.5): a flex item
+	/* fixes614 - CSS Flexbox automatic minimum size (§4.5): a flex item
 	 * whose min-width is auto has an automatic minimum equal to the SMALLER
 	 * of its min-content size and its specified (or max) main size when
 	 * that is definite. NetSurf used b->min_width (min-content) as an
 	 * unconditional floor (see the max(base_size, content_min_width) clamp
 	 * below), so a horizontal item whose min-content exceeds the available
-	 * width could never shrink to its own width:calc(...) — it inflated and
+	 * width could never shrink to its own width:calc(...) - it inflated and
 	 * forced following items to wrap (tinkerdifferent: content column at
 	 * min-content ~970 pushed the 250px sidebar below instead of beside).
 	 * When the item has a resolvable definite main-axis width (css calc/%
-	 * included — css_computed_width_px resolves it), clamp the min floor
+	 * included - css_computed_width_px resolves it), clamp the min floor
 	 * down to it so the item can honour its specified width. Auto-width
 	 * items (px_st != SET) keep the min-content floor unchanged. */
 	if (ctx->horizontal && b->style != NULL && content_min_width > 0) {
@@ -554,7 +554,7 @@ static inline bool layout_flex__base_and_main_sizes(
 		}
 
 		if (!layout_flex_item(ctx, item, b->width)) {
-			/* fixes613f — tolerate (see the matching site in
+			/* fixes613f - tolerate (see the matching site in
 			 * place_line_items_main): degrade the failed item to
 			 * zero content height rather than collapsing the whole
 			 * container. */
@@ -570,7 +570,7 @@ static inline bool layout_flex__base_and_main_sizes(
 		}
 	}
 
-	/* fixes176 — intrinsic main-size fallback. When the container
+	/* fixes176 - intrinsic main-size fallback. When the container
 	 * is indefinite (available_width <= 0), layout_find_dimensions
 	 * sized this item against zero and basis-auto read b->width back
 	 * as 0. The minmax pass already populated b->max_width with the
@@ -588,7 +588,7 @@ static inline bool layout_flex__base_and_main_sizes(
 	item->base_size += delta_outer_main;
 
 	if (ctx->horizontal) {
-		/* fixes176 — only clamp to available_width when there
+		/* fixes176 - only clamp to available_width when there
 		 * actually is one. With available_width <= 0 the legacy
 		 * min() would just zero the intrinsic fallback again,
 		 * defeating the whole point. content_min_width is still
@@ -637,7 +637,7 @@ static bool layout_flex_ctx__populate_item_data(
 	struct box *b;
 	int safe_avail;
 
-	/* fixes167b — sanitize available_width once; it feeds every
+	/* fixes167b - sanitize available_width once; it feeds every
 	 * child's base-size math and percentage flex-basis resolution.
 	 * AUTO would propagate as INT_MIN through arithmetic. */
 	safe_avail = flex_safe_dim(available_width, 0);
@@ -645,7 +645,7 @@ static bool layout_flex_ctx__populate_item_data(
 	for (b = flex->children; b != NULL; b = b->next) {
 		struct flex_item_data *item;
 
-		/* fixes167b — cap; broken DOM with thousands of flex
+		/* fixes167b - cap; broken DOM with thousands of flex
 		 * children shouldn't bring down the redraw. */
 		if (i >= ctx->item.count) {
 			macsurf_debug_log_writef(
@@ -665,11 +665,11 @@ static bool layout_flex_ctx__populate_item_data(
 				b->type != BOX_INLINE_FLEX &&
 				b->type != BOX_GRID &&
 				b->type != BOX_INLINE_GRID) {
-			/* fixes174 — was rejecting BOX_GRID/INLINE_GRID and
+			/* fixes174 - was rejecting BOX_GRID/INLINE_GRID and
 			 * collapsing every Apple-style flex>grid container.
 			 * Now we accept grid types and dispatch them through
 			 * layout_grid in layout_flex_item_layout. Anything
-			 * still here is genuinely unknown — degrade to a
+			 * still here is genuinely unknown - degrade to a
 			 * zero-height slot rather than failing the parent. */
 			macsurf_debug_log_writef(
 				"FLEXSAFE unsupported child type=%d flex=%p"
@@ -694,7 +694,7 @@ static bool layout_flex_ctx__populate_item_data(
 				b->margin, b->padding, b->border);
 		b->float_container = NULL;
 
-		/* fixes123: CSS Sizing 3 — for replaced elements where one
+		/* fixes123: CSS Sizing 3 - for replaced elements where one
 		 * dimension is auto and the other is concrete, fill in the
 		 * auto dim from the intrinsic aspect ratio BEFORE flex sizing
 		 * runs. Without this, the flex algorithm substitutes natural
@@ -725,7 +725,7 @@ static bool layout_flex_ctx__populate_item_data(
 		css_computed_flex_shrink(b->style, &item->shrink);
 		css_computed_flex_grow(b->style, &item->grow);
 
-		/* fixes167b — pass the sanitized available width. A
+		/* fixes167b - pass the sanitized available width. A
 		 * per-child base-size failure (return false from the
 		 * recursive layout_flex_item it kicks off for column
 		 * direction) is treated as a fallback signal for the
@@ -738,7 +738,7 @@ static bool layout_flex_ctx__populate_item_data(
 			return false;
 		}
 
-		/* fixes167b — sanitize the per-item state that the line
+		/* fixes167b - sanitize the per-item state that the line
 		 * collector reads. main_size and target_main_size feed
 		 * arithmetic against available_main; AUTO/negative would
 		 * propagate. */
@@ -1432,7 +1432,7 @@ static bool layout_flex__place_line_items_main(
 			}
 
 			if (!layout_flex_item(ctx, item, b->width)) {
-				/* fixes613f — tolerate a single item's content
+				/* fixes613f - tolerate a single item's content
 				 * layout failure instead of aborting the whole
 				 * flex container to block flow. Mirrors the block
 				 * fallback's fixes168c (zero-height the failed
@@ -1440,7 +1440,7 @@ static bool layout_flex__place_line_items_main(
 				 * narrow sub-box that fails layout_block_context
 				 * (observed: a 31px BOX_BLOCK in the node rows)
 				 * collapsed EVERY flex on the page to stacked
-				 * blocks — the 2-column and the node-row layouts.
+				 * blocks - the 2-column and the node-row layouts.
 				 * Degrade just the failed item, keep the line. */
 				b->height = 0;
 			}
@@ -1583,13 +1583,13 @@ static void layout_flex__place_line_items_cross(struct flex_ctx *ctx,
 		case CSS_ALIGN_SELF_STRETCH:
 			if (lh__box_size_cross_is_auto(ctx->horizontal, b) &&
 					b->object == NULL) {
-				/* fixes119 — CSS Sizing Level 3: replaced
+				/* fixes119 - CSS Sizing Level 3: replaced
 				 * elements with intrinsic aspect ratio are
 				 * NOT stretched on the cross axis even when
 				 * align-self defaults to stretch. Without
 				 * this guard, an <img> with CSS height: auto
 				 * inside a flex line gets its height forced
-				 * to the line height — visible on mactrove
+				 * to the line height - visible on mactrove
 				 * as the 1058x245 logo crushed to 1058x28
 				 * because the flex header line is 28px tall
 				 * (cross_free_space = 28-245 = -217 added to
@@ -1657,7 +1657,7 @@ static void layout_flex__place_lines(struct flex_ctx *ctx)
 	    ctx->available_cross > ctx->cross_size &&
 	    ctx->line.count > 0) {
 		ac_free = ctx->available_cross - ctx->cross_size;
-		/* STRETCH (default) distributes evenly across all lines —
+		/* STRETCH (default) distributes evenly across all lines -
 		 * the existing extra/extra_remainder path. fixes41 only
 		 * overrides this when align-content is not STRETCH. */
 		if (ac_v == CSS_ALIGN_CONTENT_STRETCH ||
@@ -1732,7 +1732,7 @@ static void layout_flex__place_lines(struct flex_ctx *ctx)
 }
 
 /**
- * fixes167c — block-flow fallback for an unsafe flex container.
+ * fixes167c - block-flow fallback for an unsafe flex container.
  *
  * Stacks the flex container's children top-to-bottom as a vertical
  * block flow. Used when the spec flex algorithm cannot produce a
@@ -1810,7 +1810,7 @@ static bool layout_flex_fallback_block(struct box *flex, int available_width,
 			break;
 		case BOX_GRID:
 		case BOX_INLINE_GRID:
-			/* fixes168c — flex fallback now dispatches grid
+			/* fixes168c - flex fallback now dispatches grid
 			 * children through layout_grid, which has its own
 			 * fallback (fixes168b). Previously these went into
 			 * the default case and stayed unlaid-out. */
@@ -1819,14 +1819,14 @@ static bool layout_flex_fallback_block(struct box *flex, int available_width,
 			c->float_container = NULL;
 			break;
 		default:
-			/* Unsupported child type — give it a zero-height
+			/* Unsupported child type - give it a zero-height
 			 * slot, don't crash the flex fallback. */
 			c->height = 0;
 			ok = true;
 			break;
 		}
 		if (!ok) {
-			/* fixes168c — child layout itself failed inside the
+			/* fixes168c - child layout itself failed inside the
 			 * flex fallback. Convert to a zero-height continuation
 			 * rather than abort the whole flex subtree. */
 			c->height = 0;
@@ -1873,7 +1873,7 @@ static bool layout_flex_fallback_block(struct box *flex, int available_width,
  * \param[in] content          memory pool for any new boxes
  * \return  true on success, false on memory exhaustion
  */
-/* fixes171 — Watchdog wrapper for layout_flex. The original body
+/* fixes171 - Watchdog wrapper for layout_flex. The original body
  * is renamed to layout_flex_inner; this wrapper applies the depth
  * + iteration gate and pairs the exit. */
 static bool layout_flex_inner(struct box *flex, int available_width,
@@ -1900,7 +1900,7 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 	struct flex_ctx *ctx;
 	bool success = false;
 
-	/* fixes161e — per-call FLEX marker capped at first 200 calls per
+	/* fixes161e - per-call FLEX marker capped at first 200 calls per
 	 * redraw. Counter resets when macsurf_layout_seq changes
 	 * (incremented in layout_document). Child count walks flex->children
 	 * once; capped at 999 as a safety. Prime suspect for both apple and
@@ -1949,7 +1949,7 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 			flex->margin, flex->padding, flex->border);
 
 	{
-		/* fixes176 — containing-block-width fallback.
+		/* fixes176 - containing-block-width fallback.
 		 *
 		 * Apple's global <nav> hits this point with both
 		 * available_width and flex->width resolving to 0 because
@@ -2006,7 +2006,7 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 		ctx->available_cross = available_width;
 	}
 
-	/* fixes167a — sanitize available_main and available_cross before
+	/* fixes167a - sanitize available_main and available_cross before
 	 * they reach the base-size pass. Apple's nested column-direction
 	 * flex container reaches this point with available_main = AUTO
 	 * (INT_MIN); subsequent arithmetic against it overflows or
@@ -2042,7 +2042,7 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 	NSLOG(flex, DEEPDEBUG, "box %p: available_cross: %i",
 			flex, ctx->available_cross);
 
-	/* fixes167b — cap on per-container item count. If the DOM
+	/* fixes167b - cap on per-container item count. If the DOM
 	 * produced more children than FLEX_MAX_ITEMS we cannot safely
 	 * base-size them all; fall back to block flow immediately. */
 	if (ctx->item.count > FLEX_MAX_ITEMS) {
@@ -2074,7 +2074,7 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 		}
 	}
 
-	/* fixes167b — populate now returns bool. A failing child kicks
+	/* fixes167b - populate now returns bool. A failing child kicks
 	 * the whole container into block-flow fallback. */
 	if (!layout_flex_ctx__populate_item_data(ctx, flex, available_width)) {
 		layout_flex_ctx__destroy(ctx);
@@ -2116,7 +2116,7 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 				content);
 	}
 
-	/* fixes167b — runaway line count guard. The collector is bounded
+	/* fixes167b - runaway line count guard. The collector is bounded
 	 * by item count, but a degenerate wrap pattern can still produce
 	 * one line per item. Cap at FLEX_MAX_LINES; over the cap, fall
 	 * back to block. */
@@ -2182,7 +2182,7 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 
 	success = true;
 
-	/* fixes167b — note: failure paths above destroy ctx and return
+	/* fixes167b - note: failure paths above destroy ctx and return
 	 * through layout_flex_fallback_block; control only reaches here
 	 * on the success path, so 'cleanup:' is no longer needed as a
 	 * label. The exit FLEXPHASE probe still fires for the success

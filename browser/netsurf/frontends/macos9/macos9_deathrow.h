@@ -1,6 +1,6 @@
 /*
- * MacSurf — Mac OS 9 frontend for NetSurf
- * macos9_deathrow.h — Stage 1 quiescent-point deferred-free.
+ * MacSurf  -  Mac OS 9 frontend for NetSurf
+ * macos9_deathrow.h  -  Stage 1 quiescent-point deferred-free.
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.

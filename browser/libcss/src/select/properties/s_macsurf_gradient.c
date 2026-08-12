@@ -67,10 +67,10 @@ css_error css__cascade_macsurf_gradient(uint32_t opv, css_style *style,
 	uint32_t packed = 0;
 	bool horizontal = false;
 	bool radial = false;
-	/* fixes345 — radial size+position tail. */
+	/* fixes345 - radial size+position tail. */
 	bool rad_set = false;
 	int32_t rad_sx = -1, rad_sy = -1, rad_px = -1, rad_py = -1;
-	/* fixes365b — extended-linear (diagonal / 3-stop) descriptor. */
+	/* fixes365b - extended-linear (diagonal / 3-stop) descriptor. */
 	bool ext_set = false;
 	int32_t ext_angle = 0;
 	int32_t ext_pos0 = 0, ext_pos1 = 0, ext_pos2 = 0;
@@ -98,7 +98,7 @@ css_error css__cascade_macsurf_gradient(uint32_t opv, css_style *style,
 					(long)c1, (long)c2);
 			}
 #endif
-			/* fixes345 — radial bytecode tail: 5 uint32 with
+			/* fixes345 - radial bytecode tail: 5 uint32 with
 			 * [set_flag, sx, sy, px, py]. */
 			{
 				uint32_t rad_flag =
@@ -118,14 +118,14 @@ css_error css__cascade_macsurf_gradient(uint32_t opv, css_style *style,
 				advance_bytecode(style, sizeof(uint32_t));
 				rad_set = (rad_flag != 0);
 			}
-			/* fixes360 — extend fixes348's alpha-aware downgrade
+			/* fixes360 - extend fixes348's alpha-aware downgrade
 			 * to the radial-gradient case. The same painter
 			 * limitation applies to radial as to linear: alpha is
 			 * ignored, so a radial like
 			 *   radial-gradient(rgba(220,184,94,.20),
 			 *                   transparent 62%)
 			 * (macsurf.org's body::before glow) paints as opaque
-			 * gold blending to opaque BLACK — exactly the gold-to-
+			 * gold blending to opaque BLACK - exactly the gold-to-
 			 * black bands visible in the regression screenshots
 			 * (june2.jpg, june5.jpg). Same drop conditions as the
 			 * linear case: either stop alpha < 0xC0, OR both <
@@ -154,7 +154,7 @@ css_error css__cascade_macsurf_gradient(uint32_t opv, css_style *style,
 			}
 #endif
 			break;
-		case 0x0180: /* fixes365b — extended linear (diagonal /
+		case 0x0180: /* fixes365b - extended linear (diagonal /
 		              * 3-stop with positions). Tail layout:
 		              *   [c1, last, angle, p0, p1, p2, col0,
 		              *    col1, col2] = 9 words. */
@@ -227,7 +227,7 @@ css_error css__cascade_macsurf_gradient(uint32_t opv, css_style *style,
 			advance_bytecode(style, sizeof(css_color));
 			packed = macsurf_gradient_pack(c1, c2, horizontal,
 					false);
-			/* fixes348 — alpha-aware downgrade.
+			/* fixes348 - alpha-aware downgrade.
 			 *
 			 * The gradient painter in plotters.c ignores alpha
 			 * (it interpolates RGB only). When the source CSS is
@@ -238,7 +238,7 @@ css_error css__cascade_macsurf_gradient(uint32_t opv, css_style *style,
 			 * 0x7F-0x80 and c2's alpha is 0x00. Painted opaquely
 			 * this becomes a HARSH BLACK-TO-WHITE gradient because
 			 * transparent's rgb is 0x000000 and the white stop's
-			 * rgb is 0xFFFFFF — exactly the black-to-white box
+			 * rgb is 0xFFFFFF - exactly the black-to-white box
 			 * artefact users see "where images should be".
 			 *
 			 * Until the painter learns to alpha-composite over the
@@ -254,7 +254,7 @@ css_error css__cascade_macsurf_gradient(uint32_t opv, css_style *style,
 			 *     opaque colours.
 			 *
 			 *   - OR both stops have alpha < 0xFF and one is fully
-			 *     transparent (alpha = 0) — the classic pinstripe
+			 *     transparent (alpha = 0) - the classic pinstripe
 			 *     overlay shape.
 			 *
 			 * Fully-opaque gradients are unaffected; this only
@@ -272,10 +272,10 @@ css_error css__cascade_macsurf_gradient(uint32_t opv, css_style *style,
 				}
 			}
 #ifdef MACSURF_DEBUG
-			/* fixes318 (#147) probe — log raw bytecode values so
+			/* fixes318 (#147) probe - log raw bytecode values so
 			 * we can see on hardware whether c1 / c2 actually
 			 * differ, or whether one slot reads as the other.
-			 * Custom logger only supports %d %ld %p %s %% — emit
+			 * Custom logger only supports %d %ld %p %s %% - emit
 			 * as decimal longs and decode visually. */
 			{
 				extern void macsurf_debug_log_writef(
@@ -294,7 +294,7 @@ css_error css__cascade_macsurf_gradient(uint32_t opv, css_style *style,
 
 	if (css__outranks_existing(getOpcode(opv), isImportant(opv), state,
 			getFlagValue(opv))) {
-		/* fixes344b — capture the full ARGB of both stops into the
+		/* fixes344b - capture the full ARGB of both stops into the
 		 * outer struct's macsurf_gradient_full side-channel so the
 		 * painter can do per-pixel alpha blending. Only allocates
 		 * when at least one stop is non-opaque (alpha < 0xFF);
@@ -323,7 +323,7 @@ css_error css__cascade_macsurf_gradient(uint32_t opv, css_style *style,
 				}
 			}
 		}
-		/* fixes345 — stash radial size+position when set. */
+		/* fixes345 - stash radial size+position when set. */
 		if (radial && rad_set) {
 			int32_t *rad = (int32_t *)malloc(4 * sizeof(int32_t));
 			if (rad != NULL) {
@@ -343,7 +343,7 @@ css_error css__cascade_macsurf_gradient(uint32_t opv, css_style *style,
 				state->computed->macsurf_gradient_radial = NULL;
 			}
 		}
-		/* fixes365b — extended-linear side-channel allocation. */
+		/* fixes365b - extended-linear side-channel allocation. */
 		if (ext_set) {
 			int32_t *ext = (int32_t *)malloc(7 * sizeof(int32_t));
 			if (ext != NULL) {
@@ -400,7 +400,7 @@ css_error css__copy_macsurf_gradient(
 	err = set_macsurf_gradient(to, type, (css_color)color);
 	if (err != CSS_OK) return err;
 
-	/* fixes344b — also propagate the full-ARGB side-channel. */
+	/* fixes344b - also propagate the full-ARGB side-channel. */
 	if (to->macsurf_gradient_full != NULL) {
 		free(to->macsurf_gradient_full);
 		to->macsurf_gradient_full = NULL;
@@ -415,7 +415,7 @@ css_error css__copy_macsurf_gradient(
 		}
 	}
 
-	/* fixes345 — also propagate the radial size+position. */
+	/* fixes345 - also propagate the radial size+position. */
 	if (to->macsurf_gradient_radial != NULL) {
 		free(to->macsurf_gradient_radial);
 		to->macsurf_gradient_radial = NULL;
@@ -429,7 +429,7 @@ css_error css__copy_macsurf_gradient(
 		}
 	}
 
-	/* fixes365b — propagate the extended-linear descriptor. */
+	/* fixes365b - propagate the extended-linear descriptor. */
 	if (to->macsurf_gradient_stops != NULL) {
 		free(to->macsurf_gradient_stops);
 		to->macsurf_gradient_stops = NULL;

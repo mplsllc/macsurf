@@ -1,5 +1,5 @@
 /*
- * MacSurf wrapper — dom/bindings/hubbub/errors.h
+ * MacSurf wrapper - dom/bindings/hubbub/errors.h
  * Self-contained: inlines both the DOM binding error enum AND the
  * HUBBUB_* constants it references, so no dependency on the libhubbub
  * errors.h (which CW8 can't reliably find via the access paths).

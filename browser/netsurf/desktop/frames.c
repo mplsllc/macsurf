@@ -184,7 +184,7 @@ void browser_window_handle_scrollbars(struct browser_window *bw)
 /* exported function documented in desktop/frames.h */
 nserror browser_window_invalidate_iframe(struct browser_window *bw)
 {
-	/* fixes905 (MacSurf) — belt-and-suspenders: never feed box_coords a NULL
+	/* fixes905 (MacSurf) - belt-and-suspenders: never feed box_coords a NULL
 	 * or absent iframe box. recalculate_iframes re-links bw->box on every
 	 * reformat, so the primary fix keeps it current; this only guards the
 	 * degenerate case (no box yet / detached parent) so a stale broadcast can
@@ -302,7 +302,7 @@ void browser_window_recalculate_iframes(struct browser_window *bw)
 	struct browser_window *window;
 	int index;
 
-	/* fixes905 (MacSurf) — RE-LINK each iframe window to its box in the
+	/* fixes905 (MacSurf) - RE-LINK each iframe window to its box in the
 	 * parent's CURRENT box tree before anything touches window->box.
 	 *
 	 * window->box is set ONCE, at browser_window_create_iframes, and NULLed

@@ -723,7 +723,7 @@ box_a(dom_node *n,
 		}
 	}
 
-	/* fixes1063 (#114) — HTML5 `download`: save the target rather than
+	/* fixes1063 (#114) - HTML5 `download`: save the target rather than
 	 * navigate to it. Recorded as a box flag here, beside href/target,
 	 * because it has to reach the box the user actually CLICKS.
 	 *
@@ -802,7 +802,7 @@ box_body(dom_node *n,
 	 * Upstream NetSurf read <body> unconditionally and so cleared the
 	 * canvas to the default white on pages that set the page colour on
 	 * <html> (e.g. tinkerdifferent's `html{background:#2d3238}` with a
-	 * transparent <body>) — the whole page rendered light instead of
+	 * transparent <body>) - the whole page rendered light instead of
 	 * dark. The box-paint path already honours this precedence in
 	 * html_redraw_find_bg_box; this mirrors it for the canvas clear. */
 	if (content->background_colour != NS_TRANSPARENT) {
@@ -823,7 +823,7 @@ box_body(dom_node *n,
 /**
  * Document root element handler [<html>].
  *
- * Capture the root background for the page canvas (CSS 2.1 §14.2 — the
+ * Capture the root background for the page canvas (CSS 2.1 §14.2 - the
  * root element's background propagates to the viewport and wins over the
  * <body> background). Runs before box_body in DOM order.
  */
@@ -835,7 +835,7 @@ box_html(dom_node *n,
 {
 	css_color color;
 
-	/* fixes628: base/canvas background — capture the FIRST non-transparent
+	/* fixes628: base/canvas background - capture the FIRST non-transparent
 	 * root <html> background and keep it; a later re-convert cannot revert
 	 * it. On tinkerdifferent MacSurf re-converts the same content and the
 	 * SECOND convert reads the root background as the light UA/system-
@@ -1255,7 +1255,7 @@ box_iframe(dom_node *n,
 }
 
 
-/* fixes168b — Lazy-image source resolver. Modern sites routinely ship
+/* fixes168b - Lazy-image source resolver. Modern sites routinely ship
  * <img src="placeholder"> or <img src=""> and store the real URL on
  * data-src / data-original / data-lazy-src / srcset, expecting JS to
  * promote it at runtime. MacSurf has no such JS, so we promote those
@@ -1370,7 +1370,7 @@ box_image_resolve_url(dom_node *n, html_content *content, nsurl **out_url)
 		s = NULL;
 	}
 
-	/* src missing / empty / placeholder — try data-* attributes. */
+	/* src missing / empty / placeholder - try data-* attributes. */
 	if (!box_get_attribute(n, "data-src", content->bctx, &fallback))
 		return false;
 	if (fallback == NULL || fallback[0] == '\0' ||
@@ -1428,17 +1428,17 @@ box_image_resolve_url(dom_node *n, html_content *content, nsurl **out_url)
 }
 
 
-/* fixes738 (perf): viewport-gated deferred image loading — re-adds & EXTENDS the
+/* fixes738 (perf): viewport-gated deferred image loading - re-adds & EXTENDS the
  * reverted fixes673-674c. Originally only loading="lazy" images were deferred;
  * now ALL <img> objects are queued at box-construct time and fetched only once
  * their box is within (viewport + margin), driven from the frontend paint path
  * (macsurf_lazyimg_viewport_changed, after each browser_window_redraw). On a big
  * forum page (68kmla: 6.7MB + 1.6MB inline attachments, dozens of below-fold
- * avatars) this stops the off-screen images from blocking the load — the page
+ * avatars) this stops the off-screen images from blocking the load - the page
  * reaches DONE on text, images stream in on paint/scroll, never-seen images are
  * never fetched.
  *
- * CRASH SAFETY (the prior version was reverted for a G3 crash — treat with care):
+ * CRASH SAFETY (the prior version was reverted for a G3 crash - treat with care):
  *  - Hold the DOM node (refcounted, stable), NOT a raw box* (fixes674b: box* went
  *    stale via normalisation → box_coords faulted). Re-resolve via box_for_node
  *    every paint.
@@ -1459,7 +1459,7 @@ struct lazyimg_entry {
 };
 
 /*
- * fixes929 — URL -> intrinsic pixel size memo.
+ * fixes929 - URL -> intrinsic pixel size memo.
  *
  * THE PROBLEM. content_get_width(box->object) was the only source of an
  * image's natural size anywhere in the engine, so a box whose object was not
@@ -1505,7 +1505,7 @@ struct imgdims_slot {
 
 static struct imgdims_slot g_imgdims[IMGDIMS_SLOTS];
 
-/* fixes930 — fixes929 shipped with NO observability, so a "still squished"
+/* fixes930 - fixes929 shipped with NO observability, so a "still squished"
  * report could not distinguish (a) the memo never filling, (b) box_image never
  * consulting it, (c) it working and something downstream overriding the size.
  * Three counters, read once per layout. No per-image logging: that is the
@@ -1514,7 +1514,7 @@ static int g_imgdims_stored = 0;
 static int g_imgdims_hit = 0;
 static int g_imgdims_miss = 0;
 
-/* fixes934 — LIFE img construct census. How does each <img> enter the fetch
+/* fixes934 - LIFE img construct census. How does each <img> enter the fetch
  * system: eager (loads with the document) vs lazy (deferred to the paint-gated
  * queue), and how many arrive already sized from CSS (REPLACE_DIM). Plus the
  * lazy-drain "already had an object, dropped without fetching" counter, the
@@ -1620,7 +1620,7 @@ static bool macsurf_lazyimg_defer(html_content *content, struct dom_node *node,
 	struct lazyimg_entry *e;
 
 	/*
-	 * fixes920 — DEDUPE by (content, node). Without this the same image is
+	 * fixes920 - DEDUPE by (content, node). Without this the same image is
 	 * queued twice and fetched twice.
 	 *
 	 * g_lazyimg_head is a file-scope global that NOTHING clears on a
@@ -1629,7 +1629,7 @@ static bool macsurf_lazyimg_defer(html_content *content, struct dom_node *node,
 	 * but leaves the DOM alone, so box_image runs again over the very same
 	 * dom_nodes while the previous entries for those nodes are still queued.
 	 * Both then survive to the next paint, both re-resolve the same node via
-	 * box_for_node, and both call html_fetch_object — which has no URL dedupe
+	 * box_for_node, and both call html_fetch_object - which has no URL dedupe
 	 * of its own (it allocates a fresh content_html_object every call), so
 	 * one <img> ends up with two object entries and two base.active counts.
 	 *
@@ -1638,7 +1638,7 @@ static bool macsurf_lazyimg_defer(html_content *content, struct dom_node *node,
 	 * on to re-resolve boxes (fixes674b).
 	 *
 	 * O(queue) per deferred image, and the queue only holds images not yet
-	 * fetched, so this is a pointer compare over a short list — cheaper than
+	 * fetched, so this is a pointer compare over a short list - cheaper than
 	 * the duplicate fetch it prevents.
 	 */
 	for (e = g_lazyimg_head; e != NULL; e = e->next) {
@@ -1705,7 +1705,7 @@ void macsurf_lazyimg_viewport_changed(int scroll_y, int viewport_h)
 			int bx = 0, by = 0;
 			int bh = box->height;
 
-			/* fixes921 — this node's box already has its object, so
+			/* fixes921 - this node's box already has its object, so
 			 * there is nothing to fetch. Happens after a reconvert:
 			 * the rebuild re-queues every <img> via box_image, but
 			 * html_object_relink_after_reconvert has already
@@ -1739,11 +1739,11 @@ void macsurf_lazyimg_viewport_changed(int scroll_y, int viewport_h)
 		e = next;
 	}
 	g_lazyimg_head = keep;
-	/* fixes1032 — only when something was actually FETCHED. Logging on
+	/* fixes1032 - only when something was actually FETCHED. Logging on
 	 * `kept` too meant one flushed write per scroll notch: 107 lines in one
 	 * session saying nothing happened. */
 	if (n_fetched) {
-		/* fixes934 — retagged RECON LAZY -> LIFE img lazy so the drain is
+		/* fixes934 - retagged RECON LAZY -> LIFE img lazy so the drain is
 		 * visible on a default build (RECON LAZY was not on the crash-only
 		 * whitelist, so it never reached disk). */
 		macsurf_debug_log_writef(
@@ -1799,7 +1799,7 @@ box_image(dom_node *n,
 	if (box->usemap && box->usemap[0] == '#')
 		box->usemap++;
 
-	/* fixes168b — resolve src with data-src / data-original /
+	/* fixes168b - resolve src with data-src / data-original /
 	 * data-lazy-src / data-srcset / srcset fallback chain so lazy-
 	 * loaded modern images become real URLs at box-construct time. */
 	if (box_image_resolve_url(n, content, &url) == false)
@@ -1811,7 +1811,7 @@ box_image(dom_node *n,
 	/* start fetch */
 	box->flags |= IS_REPLACED;
 
-	/* fixes929 — if this URL has been loaded before (this page, an earlier
+	/* fixes929 - if this URL has been loaded before (this page, an earlier
 	 * visit, or the tree we are rebuilding), we already know how big it is.
 	 * Give the box that size NOW, before the fetch is even queued, so the
 	 * first layout is correct and stays correct however the fetch goes. */
@@ -1822,17 +1822,17 @@ box_image(dom_node *n,
 			box->obj_h = mh;
 		}
 	}
-	/* fixes738 — viewport-gated deferral: queue the image; the paint-path
+	/* fixes738 - viewport-gated deferral: queue the image; the paint-path
 	 * hook (macsurf_lazyimg_viewport_changed) fetches it once its box is
 	 * on-screen. Fall back to an immediate fetch if the queue alloc fails.
 	 *
-	 * fixes932 — but EAGERLY fetch the first N images in DOM order (the
+	 * fixes932 - but EAGERLY fetch the first N images in DOM order (the
 	 * above-the-fold approximation, since layout has not run yet so the box
 	 * position is unknown). Those load with the document and are sized by
 	 * the page's own completion reflow, instead of waiting for a paint to
 	 * drain the queue. The long tail still defers, keeping the fixes738 win
 	 * for galleries and below-fold thumbnails. */
-	g_img_ctor_total++; /* fixes934 — construct census */
+	g_img_ctor_total++; /* fixes934 - construct census */
 	if (content->img_eager_budget > 0) {
 		content->img_eager_budget--;
 		g_img_ctor_eager++;

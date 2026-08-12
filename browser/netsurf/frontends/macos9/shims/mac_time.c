@@ -1,6 +1,6 @@
 /*
- * MacSurf — Mac OS 9 frontend for NetSurf
- * mac_time.c — POSIX time function shim using Mac OS 9 DateTimeUtils
+ * MacSurf  -  Mac OS 9 frontend for NetSurf
+ * mac_time.c  -  POSIX time function shim using Mac OS 9 DateTimeUtils
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.
@@ -212,7 +212,7 @@ long mac_mktime(struct mac_tm *tm)
 #endif /* __MACOS9__ */
 
 /*
- * mac_strftime — manual format string implementation
+ * mac_strftime  -  manual format string implementation
  * Supports: %Y %m %d %H %M %S %A %B %a %b
  * Shared between Mac OS 9 and Linux (pure C, no Toolbox calls).
  */
@@ -302,7 +302,7 @@ size_t mac_strftime(char *s, size_t max, const char *fmt,
 			s[pos++] = '%';
 			continue;
 		default:
-			/* Unknown specifier — emit literal */
+			/* Unknown specifier  -  emit literal */
 			s[pos++] = '%';
 			if (pos < max - 1)
 				s[pos++] = *p;
@@ -323,7 +323,7 @@ size_t mac_strftime(char *s, size_t max, const char *fmt,
 }
 
 /*
- * gettimeofday — POSIX wrapper expected by NetSurf core.
+ * gettimeofday  -  POSIX wrapper expected by NetSurf core.
  * Delegates to mac_gettimeofday internally.
  */
 struct timeval;

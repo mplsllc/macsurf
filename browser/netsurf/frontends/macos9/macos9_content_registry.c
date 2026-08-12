@@ -1,6 +1,6 @@
 /*
- * MacSurf -- Mac OS 9 frontend for NetSurf
- * macos9_content_registry.c -- live-content pointer registry (anti-UAF)
+ * MacSurf - Mac OS 9 frontend for NetSurf
+ * macos9_content_registry.c - live-content pointer registry (anti-UAF)
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.
@@ -8,7 +8,7 @@
  * See macos9_content_registry.h for the rationale.  Fixed-capacity array of
  * (content pointer, generation) slots.  No malloc; all operations are O(N)
  * linear scans over a small table, which is cheap because the live-content
- * count on OS 9 is tiny (a page plus its sub-resources -- tens, not
+ * count on OS 9 is tiny (a page plus its sub-resources - tens, not
  * thousands).  C89 / CW8-clean: all declarations at the top of their block,
  * no // comments, no C99 features.
  */
@@ -21,7 +21,7 @@
 /* Capacity ceiling.  A loaded page plus its CSS / image / iframe / script
  * sub-contents rarely exceeds a few dozen live contents at once; 256 leaves
  * generous headroom.  If the table ever fills, register() logs and the new
- * content is simply not tracked -- it then behaves as it did before this
+ * content is simply not tracked - it then behaves as it did before this
  * registry existed (field-based guards remain as the fallback), so an
  * overflow degrades safety gracefully rather than crashing. */
 #define MACOS9_CONTENT_REGISTRY_CAP 256
@@ -43,14 +43,14 @@ static unsigned long macos9_content_gen_next = 1;
 /* Count of occupied slots, maintained for cheap logging only. */
 static int macos9_content_live_count = 0;
 
-/* fixes1077 — registry EPOCH, bumped on every register/unregister.
+/* fixes1077  -  registry EPOCH, bumped on every register/unregister.
  *
  * macos9_content_is_live() is a linear scan of a 256-entry table. That was
  * fine while its callers were rare (a reconvert, a teardown), but fixes1073
  * put it on the JS geometry path, where it runs on EVERY getBoundingClientRect
  * / offsetWidth / getComputedStyle a page performs. hackaday's navigation.js
  * measures relentlessly and went from 5.96s to 19.04s the moment geometry was
- * enabled -- with the forced reflow never once firing, so the cost was pure
+ * enabled - with the forced reflow never once firing, so the cost was pure
  * gate overhead buying nothing.
  *
  * The answer cannot change unless the table changes, so a caller can cache its

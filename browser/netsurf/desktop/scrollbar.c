@@ -28,7 +28,7 @@
 
 #include "utils/log.h"
 #include "utils/messages.h"
-#include "macsurf_debug_log.h"     /* fixes890 — WORK channel */
+#include "macsurf_debug_log.h"     /* fixes890 - WORK channel */
 #include "utils/utils.h"
 #include "utils/nscolour.h"
 #include "utils/nsoption.h"
@@ -90,7 +90,7 @@ struct scrollbar {
 /*
  * Exported interface.  Documented in desktop/scrollbar.h
  */
-/* fixes890 — LIVE-SCROLLBAR REGISTRY.
+/* fixes890 - LIVE-SCROLLBAR REGISTRY.
  *
  * Hardware crash, on hover (not click):
  *   macos9_poll_mouse_hover -> browser_window_mouse_track -> html_mouse_action
@@ -206,7 +206,7 @@ scrollbar_create(bool horizontal,
  */
 void scrollbar_destroy(struct scrollbar *s)
 {
-	/* fixes499f — NULL guard. scrollbar_destroy must be a no-op on a NULL
+	/* fixes499f - NULL guard. scrollbar_destroy must be a no-op on a NULL
 	 * scrollbar: it is reached during content teardown
 	 * (content_remove_user -> scrollbar_destroy) where a box's scrollbar
 	 * pointer can legitimately be NULL (never created) or already freed by
@@ -218,7 +218,7 @@ void scrollbar_destroy(struct scrollbar *s)
 	if (s == NULL) {
 		return;
 	}
-	/* fixes890 — refuse to destroy a pointer we never handed out (or already
+	/* fixes890 - refuse to destroy a pointer we never handed out (or already
 	 * destroyed). Same reasoning as scrollbar_get_offset: `s->pair` below is
 	 * a dereference, and on a stale pointer it is the crash, not a diagnosis. */
 	if (!scrollbar_is_live(s)) {
@@ -723,7 +723,7 @@ int scrollbar_get_offset(struct scrollbar *s)
 	if (s == NULL) {
 		return 0;
 	}
-	/* fixes890 — THE HARDWARE CRASH SITE.
+	/* fixes890 - THE HARDWARE CRASH SITE.
 	 *
 	 *   box_at_point -> scrollbar_get_offset -> `return s->offset;`
 	 *   with s = 0xEC7D8381 (every field "Invalid pointer" in the debugger)
@@ -1119,7 +1119,7 @@ void scrollbar_make_pair(struct scrollbar *horizontal,
  */
 void *scrollbar_get_data(struct scrollbar *s)
 {
-	/* fixes890 — box_talloc_destructor calls this on box->scroll_x and then
+	/* fixes890 - box_talloc_destructor calls this on box->scroll_x and then
 	 * free()s the result. On a stale pointer that is a read of freed memory
 	 * followed by free() of whatever garbage came back -- a wild free, which
 	 * corrupts the heap and surfaces later as the allocator blowup seen in

@@ -1,11 +1,11 @@
 /*
- * MacSurf — Mac OS 9 frontend for NetSurf
- * macsurf_osver.h — runtime host-OS version detection (OS 9 vs Mac OS X).
+ * MacSurf  -  Mac OS 9 frontend for NetSurf
+ * macsurf_osver.h  -  runtime host-OS version detection (OS 9 vs Mac OS X).
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.
  *
- * fixes936 (OS X tier 1) — MacSurf ships ONE Carbon CFM PowerPC binary, and
+ * fixes936 (OS X tier 1)  -  MacSurf ships ONE Carbon CFM PowerPC binary, and
  * MacSurf.r already carries the 'carb' resource, so the very same fragment
  * launches on Mac OS 8.6/9.x AND on Mac OS X 10.0-10.4 (via LaunchCFMApp).
  * Almost nothing in the frontend needs to know which one it is: QuickDraw,
@@ -19,7 +19,7 @@
  *     process whose malloc arena the Mach VM places where it likes, so that
  *     window is fiction. macsurf_heap_bounds_init() must NOT narrow its
  *     pointer-validity window to it (see macsurf_memory.c) or valid heap
- *     pointers get false-rejected -- issue #207's blank page, on purpose.
+ *     pointers get false-rejected - issue #207's blank page, on purpose.
  *   - FreeMem()/MaxBlock() report a Classic zone, not the process.
  *   - Open Transport IS present on Mac OS X 10.0+ (deprecated only at 10.4,
  *     not removed), so the networking stack stays exactly as it is; we log
@@ -43,8 +43,8 @@
  * The triple can only CONFIRM OS X, never clear it.
  *
  * FAILURE POLICY. Never returns an error, never blocks startup. If Gestalt
- * cannot answer, the module reports Mac OS 9 -- the primary, shipped,
- * hardware-verified platform -- so an unexplained Gestalt failure can never
+ * cannot answer, the module reports Mac OS 9 - the primary, shipped,
+ * hardware-verified platform - so an unexplained Gestalt failure can never
  * silently change OS 9 behaviour. The failure is logged on a line carrying
  * "FAIL", which survives the crash-only log gate with no whitelist entry.
  */
@@ -58,7 +58,7 @@
  * logs) and BEFORE macsurf_heap_bounds_init() (the first consumer of the
  * answer). Idempotent: a second call is a no-op.
  *
- * The probe itself is also lazy -- every accessor below runs it on demand --
+ * The probe itself is also lazy - every accessor below runs it on demand --
  * so an early caller still gets a correct answer even if the init ordering
  * in main() is later disturbed. */
 void macsurf_osver_init(void);

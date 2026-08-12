@@ -6,15 +6,14 @@
 #include "netsurf/types.h"
 #include "netsurf/window.h"
 #include "netsurf/browser_window.h"
-#include "utils/nsoption.h"    /* preferences: window_width/height */
 #include "macos9.h"
 #include "macsurf_config.h"
 #ifdef __MACOS9__
-#include <Scrap.h>	/* fixes376 — desk-scrap I/O for URL-field cut/copy/paste */
+#include <Scrap.h>	/* fixes376  -  desk-scrap I/O for URL-field cut/copy/paste */
 #endif
 #include "macsurf_debug.h"
 #include "macsurf_memory.h"    /* macsurf_recon_mem() */
-#include "macsurf_osver.h"     /* macsurf_os_is_osx() -- no call sites here as
+#include "macsurf_osver.h"     /* macsurf_os_is_osx() - no call sites here as
                                 * of fixes939 (the OS X TE bisect was reverted
                                 * once both suspects were cleared); kept because
                                 * gating the URL field is the tier-1e fallback
@@ -31,13 +30,13 @@
 static struct gui_window *window_list = NULL;
 static struct gui_window *macos9_window_create(struct browser_window *bw, struct gui_window *ex, gui_window_create_flags f);
 
-/* fixes294 — Phase 0 favicon plumbing.
+/* fixes294  -  Phase 0 favicon plumbing.
  *
  * Lessons from the failed fixes292/293 attempts:
  *   - Inserting a Rect field in the middle of struct gui_window caused
  *     CW8 missed-recompile corruption (other .c files reading
  *     content_rect / status_rect at stale offsets).  This attempt
- *     keeps ALL state in file-scope statics — no struct changes at all.
+ *     keeps ALL state in file-scope statics  -  no struct changes at all.
  *   - set_icon callback wiring is harmless on its own (NetSurf core
  *     substitutes an empty default when slot is NULL anyway), but Phase 0
  *     deliberately doesn't wire it.  The static default icon is loaded
@@ -124,7 +123,7 @@ static GWorldPtr macos9_default_favicon_gworld = NULL;
 static Rect macos9_default_favicon_src_rect;
 static int  macos9_default_favicon_loaded = 0;
 
-/* fixes297 — toolbar button icons.  Four 16x16-ish PNGs baked as static
+/* fixes297  -  toolbar button icons.  Four 16x16-ish PNGs baked as static
  * arrays and decoded once at startup into a permanent app-heap GWorld
  * each.  Painted over the existing platinum Carbon buttons after
  * DrawControls so the click target stays the real ControlRef and we
@@ -132,7 +131,7 @@ static int  macos9_default_favicon_loaded = 0;
  * when the icon GWorld failed to load (graceful fallback to text-only
  * button). */
 #include "toolbar_icons_data.h"
-#include "loader_frames_data.h"   /* fixes726 — animated loading spinner frames */
+#include "loader_frames_data.h"   /* fixes726  -  animated loading spinner frames */
 static GWorldPtr macos9_btn_back_gworld = NULL;
 static GWorldPtr macos9_btn_forward_gworld = NULL;
 static GWorldPtr macos9_btn_refresh_gworld = NULL;
@@ -141,27 +140,27 @@ static Rect macos9_btn_back_src_rect;
 static Rect macos9_btn_forward_src_rect;
 static Rect macos9_btn_refresh_src_rect;
 static Rect macos9_btn_home_src_rect;
-/* fixes724 — Stop (X). Coloured when the page is loading (stoppable), the
+/* fixes724  -  Stop (X). Coloured when the page is loading (stoppable), the
  * grey variant when idle (non-active). */
 static GWorldPtr macos9_btn_stop_gworld = NULL;
 static Rect      macos9_btn_stop_src_rect;
 static GWorldPtr macos9_btn_stop_g_gworld = NULL;
 static Rect      macos9_btn_stop_g_src_rect;
-/* fixes297d — disabled-state variants for back / forward (only ones with
+/* fixes297d  -  disabled-state variants for back / forward (only ones with
  * an "unavailable" state at the top of history).  refresh + home are
  * always available so don't need greyed variants. */
 static GWorldPtr macos9_btn_back_g_gworld = NULL;
 static GWorldPtr macos9_btn_forward_g_gworld = NULL;
 static Rect macos9_btn_back_g_src_rect;
 static Rect macos9_btn_forward_g_src_rect;
-/* fixes297e — refresh's "alternate" state for loading animation.  Not a
+/* fixes297e  -  refresh's "alternate" state for loading animation.  Not a
  * disabled-state variant (refresh is always actionable); used to toggle
  * the reload icon during page loads. */
 static GWorldPtr macos9_btn_refresh_g_gworld = NULL;
 static Rect macos9_btn_refresh_g_src_rect;
 static int macos9_reload_animating = 0;
 static int macos9_reload_frame = 0;
-/* fixes726 — decoded loader-animation frames (shared across windows, like the
+/* fixes726  -  decoded loader-animation frames (shared across windows, like the
  * toolbar icons). Populated in macos9_window_load_toolbar_icons; NULL entries
  * are simply skipped so a partial decode degrades gracefully. */
 #ifdef __MACOS9__
@@ -169,15 +168,15 @@ static GWorldPtr macos9_loader_gworld[MACOS9_LOADER_FRAMES];
 static Rect      macos9_loader_src_rect[MACOS9_LOADER_FRAMES];
 static int       macos9_loader_frames_loaded = 0;
 #endif
-/* fixes297f — home dim variant when current page == home URL. */
+/* fixes297f  -  home dim variant when current page == home URL. */
 static GWorldPtr macos9_btn_home_g_gworld = NULL;
 static Rect macos9_btn_home_g_src_rect;
 static int  macos9_toolbar_icons_loaded = 0;
-/* fixes725 — nav button the pointer is currently over (or NULL), for the
+/* fixes725  -  nav button the pointer is currently over (or NULL), for the
  * hover-highlight frame. Set by macos9_window_update_hover. */
 static ControlRef macos9_hovered_btn = NULL;
 
-/* fixes295 Phase 1b — active per-site favicon GWorld.  When NetSurf
+/* fixes295 Phase 1b  -  active per-site favicon GWorld.  When NetSurf
  * resolves a page's <link rel=icon> or default /favicon.ico, set_icon
  * receives the hlcache_handle.  We pull the bitmap via
  * content_get_bitmap (Phase 1a makes this work for PNG natural-size),
@@ -193,7 +192,7 @@ static Rect macos9_active_favicon_src_rect;
 struct gui_window *macos9_find_window(WindowRef w) { struct gui_window *g; for(g=window_list;g;g=g->next) if(g->window==w) return g; return NULL; }
 struct gui_window *macos9_window_list_head(void) { return window_list; }
 
-/* fixes612 — expose the front window's content viewport (device px) so the
+/* fixes612  -  expose the front window's content viewport (device px) so the
  * core html_get_dimensions() media-query path has a real width even when the
  * CONTENT_MSG_GETDIMS broadcast returns nothing (content not yet bound to a
  * browser_window at CSS-select time). Without it media.width is 0, every
@@ -210,19 +209,19 @@ void macos9_frontend_viewport(int *w, int *h)
 	if (w != NULL) *w = vw;
 	if (h != NULL) *h = vh;
 }
-/* fixes320j — accessor so the JS bridge can reach bw to schedule
+/* fixes320j  -  accessor so the JS bridge can reach bw to schedule
  * a reformat after JS DOM mutation. */
 struct browser_window *macos9_gw_bw(struct gui_window *g) { return g ? g->bw : NULL; }
 static void set_status_text(struct gui_window *g, const char *m) { if(!m) g->status[0]=0; else { strncpy(g->status,m,127); g->status[127]=0; } }
 /*
- * fixes944 (OS X tier 2) — a GDevice that is actually usable for colour.
+ * fixes944 (OS X tier 2)  -  a GDevice that is actually usable for colour.
  *
  * Root cause, finally measured rather than guessed. On Mac OS X 10.3 the
  * SCREEN device returned by GetMainDevice() has no usable colour/inverse
  * table: dereferencing it yields 0x74140001, which is unmapped. Every
  * RGBForeColor resolves its colour index through the CURRENT GDevice, so any
  * colour call made while the screen device is current dies inside
- * InternalColor2Index. That is the whole OS X crash -- it looked like a
+ * InternalColor2Index. That is the whole OS X crash - it looked like a
  * TextEdit bug only because TESetText happened to be the first caller.
  *
  * The evidence chain:
@@ -230,7 +229,7 @@ static void set_status_text(struct gui_window *g, const char *m) { if(!m) g->sta
  *                                            every crash dump (938/939/941/942)
  *   fixes943  probe gwdev=002FF378 ... RGBForeColor on GWorld SURVIVED
  *
- * So classic QuickDraw colour is NOT broken here -- only Quartz's stand-in for
+ * So classic QuickDraw colour is NOT broken here - only Quartz's stand-in for
  * the screen GDevice is. A GWorld we allocate ourselves gets a real GDevice
  * (in the app heap, 0x002F.., beside our other allocations) and colour works
  * against it perfectly.
@@ -275,8 +274,8 @@ GDHandle macos9_safe_gdevice(void)
 #endif
 }
 
-/* fixes294 — shift TE field's left by +20 to leave room for the favicon. */
-/* fixes302 — TextEdit rect inside the url field.
+/* fixes294  -  shift TE field's left by +20 to leave room for the favicon. */
+/* fixes302  -  TextEdit rect inside the url field.
  *   left  = 2px bevel + 16px favicon + 6px gap  -> text never touches the
  *           left bevel and clears the favicon.
  *   right = clear the 2px right bevel + a few px margin.
@@ -291,18 +290,18 @@ static void compute_url_te_rect(const Rect *u, Rect *o) {
 	o->bottom = (short)(u->bottom - pad);
 }
 
-/* fixes300 — solid Mac OS 9 Platinum grey (#D6D6D6) toolbar background.
+/* fixes300  -  solid Mac OS 9 Platinum grey (#D6D6D6) toolbar background.
  * Replaces the fixes298 vertical gradient.  Buttons sit directly on this
- * surface with no white "tab" backing — the icon's own colours provide
+ * surface with no white "tab" backing  -  the icon's own colours provide
  * contrast. */
-/* fixes727 — soft vertical toolbar gradient. The old flat #D6D6D6 platinum
+/* fixes727  -  soft vertical toolbar gradient. The old flat #D6D6D6 platinum
  * read as "stock"; a gentle top-lighter/bottom-darker sheen plus a bright top
  * highlight and a bottom shadow bevel make the toolbar read as a raised,
  * designed surface. The gradient centre lands on #D6 (0xD6) at the button band
  * so the icons (matted to #D6) still blend seamlessly. */
 #define MACOS9_TOOLBAR_H   48
-#define MACOS9_TB_TOP_GREY 0xDC   /* 220 — lit top */
-#define MACOS9_TB_BOT_GREY 0xD0   /* 208 — shaded bottom */
+#define MACOS9_TB_TOP_GREY 0xDC   /* 220  -  lit top */
+#define MACOS9_TB_BOT_GREY 0xD0   /* 208  -  shaded bottom */
 
 #ifdef __MACOS9__
 static unsigned short macos9_tb_grey_at(short y)
@@ -355,7 +354,7 @@ void macos9_window_draw_toolbar_bg(struct gui_window *g)
 	bar.bottom = (short)(g->content_rect.top);
 	macos9_tb_fill_gradient(&bar);
 
-	/* fixes727 — depth bevel: a bright highlight along the very top edge and
+	/* fixes727  -  depth bevel: a bright highlight along the very top edge and
 	 * a soft shadow just above the crisp separator at the bottom. */
 	{
 		RGBColor hi  = {0xF0F0, 0xF0F0, 0xF0F0};   /* top highlight */
@@ -380,7 +379,7 @@ void macos9_window_draw_toolbar_bg(struct gui_window *g)
 #endif
 }
 
-/* fixes294 — return the favicon's paint rect inside a given url_rect. */
+/* fixes294  -  return the favicon's paint rect inside a given url_rect. */
 static void compute_favicon_rect(const Rect *u, Rect *o)
 {
 	short top;
@@ -394,14 +393,14 @@ static void compute_favicon_rect(const Rect *u, Rect *o)
 void macos9_window_layout(struct gui_window *g) {
 	Rect c; short w, h, ux, ur, cb, ht; if(!g||!g->window) return;
 	GetWindowBounds(g->window, 33, &c); w=(short)(c.right-c.left); h=(short)(c.bottom-c.top);
-	/* fixes303/fixes723/fixes724 — dense "tool belt", 5 buttons (Back,
+	/* fixes303/fixes723/fixes724  -  dense "tool belt", 5 buttons (Back,
 	 * Forward, Stop, Refresh, Home). 36 wide at a 38-pixel pitch (2px gap),
 	 * so x=4,42,80,118,156 and the home button's right edge is 192. The URL
 	 * field sits 2px past it (x=194) aligned to the button band (y=6..42).
 	 * The 1px separator at y=47 (drawn by macos9_window_draw_toolbar_bg from
 	 * content_rect.top-1) closes the 48px toolbar. */
 	ux=(short)(4 + 4*38 + 36 + 2);
-	/* fixes726/fixes727 — reserve a 40px Netscape-style throbber slot on the
+	/* fixes726/fixes727  -  reserve a 40px Netscape-style throbber slot on the
 	 * far right of the toolbar (8px gap from the URL field). Bigger than the
 	 * 36px buttons so it reads clearly; spans y=4..44 within the 48px bar. */
 	ur=(short)(w - 4 - MACOS9_LOADER_SIZE - 8);
@@ -421,7 +420,7 @@ void macos9_window_invalidate_content(struct gui_window *g) { if(!g||!g->window)
  * boxes with the now-known glyph advances. The main loop coalesces it. */
 void macos9_window_request_reformat(struct gui_window *g) { if(g) g->needs_reformat = 1; }
 
-/* fixes76c -- invalidate a single rect, clipped to content_rect.
+/* fixes76c - invalidate a single rect, clipped to content_rect.
  * x, y are window coords (already include the content_rect.top /
  * scroll offset because redraw.c receives that offset from main.c
  * and walks the box tree adding it). Used by the animation tick to
@@ -473,7 +472,7 @@ void macos9_window_scroll_to(struct gui_window *g, int nx, int ny) {
 	 * scroll_by, scroll-bar drag, core set_scroll, End=0x7FFFFFFF). Without
 	 * the clamp, a left/up arrow at the edge drove scroll NEGATIVE, and the
 	 * paint origin (content_rect.left - scroll_x) then shoved the ENTIRE
-	 * page off-canvas sideways/down — the reported "viewport pushed to a
+	 * page off-canvas sideways/down  -  the reported "viewport pushed to a
 	 * direction" bug. Same max math as macos9_window_update_scrollbars. */
 	vw = g->content_rect.right - g->content_rect.left;
 	vh = g->content_rect.bottom - g->content_rect.top;
@@ -482,10 +481,10 @@ void macos9_window_scroll_to(struct gui_window *g, int nx, int ny) {
 	if(nx < 0) nx = 0; if(nx > mx) nx = mx;
 	if(ny < 0) ny = 0; if(ny > my) ny = my;
 	{
-		/* fixes1013 — fire `scroll` at the page, but only on a real
+		/* fixes1013  -  fire `scroll` at the page, but only on a real
 		 * CHANGE. This is the single choke point every scroll path routes
 		 * through (arrow keys, scroll-bar drag, core set_scroll, End,
-		 * window.scrollTo), which makes it the one correct place -- and
+		 * window.scrollTo), which makes it the one correct place - and
 		 * also means it is called with unchanged values often enough that
 		 * dispatching unconditionally would fire a burst of no-op events
 		 * during a drag.
@@ -495,7 +494,7 @@ void macos9_window_scroll_to(struct gui_window *g, int nx, int ny) {
 		 * lazy-load test (rect.top < innerHeight) began correctly answering
 		 * "below the fold" for images it used to load eagerly by accident
 		 * when every rect was zero. Those images then wait for a scroll
-		 * event -- which nothing fired. Hence "images loaded fine before".
+		 * event - which nothing fired. Hence "images loaded fine before".
 		 *
 		 * AFTER the scrollbar/invalidate work, so a handler that measures
 		 * sees the new position, and the gate inside means a page with no
@@ -548,10 +547,10 @@ void macos9_window_handle_scrollbar_click(struct gui_window *g, ControlRef c, sh
 	case 21: cur += step; break;          /* down/right arrow */
 	case 22: cur -= page; break;          /* page up/left */
 	case 23: cur += page; break;          /* page down/right */
-	case 129: {                            /* thumb drag — LIVE (fixes749 #215) */
+	case 129: {                            /* thumb drag  -  LIVE (fixes749 #215) */
 		/* The old TrackControl(c,pt,NULL) blocked until release, so the view
 		 * only jumped at the end (and the live Appearance CDEF proc-386 crashes
-		 * on real hardware — see the gotcha in CLAUDE.md). Instead poll the
+		 * on real hardware  -  see the gotcha in CLAUDE.md). Instead poll the
 		 * thumb ourselves: map the mouse to a value, scroll, and repaint the
 		 * content live (throttled), all with the safe proc-384 control. */
 		Rect cb;
@@ -614,23 +613,23 @@ void macos9_throttled_repaint(struct gui_window *gw, unsigned long *last_tick)
 	}
 }
 
-void macos9_urlsug_hide(struct gui_window *g);   /* fixes763 fwd — defined below */
+void macos9_urlsug_hide(struct gui_window *g);   /* fixes763 fwd  -  defined below */
 void macos9_window_te_activate_url(struct gui_window *g) { if(!g||!g->url_te||g->url_field_active) return; SetPortWindowPort(g->window); TEActivate(g->url_te); g->url_field_active=1; InvalWindowRect(g->window, &g->url_rect); }
 void macos9_window_te_deactivate_url(struct gui_window *g) { if(!g||!g->url_te||!g->url_field_active) return; macos9_urlsug_hide(g); SetPortWindowPort(g->window); TEDeactivate(g->url_te); g->url_field_active=0; InvalWindowRect(g->window, &g->url_rect); }
 
-/* fixes756 (#229) — give the single-line URL field a WIDE destRect so a long
+/* fixes756 (#229)  -  give the single-line URL field a WIDE destRect so a long
  * URL lays out on one line extending past the visible viewRect instead of
  * wrapping/clipping with no way to reach the end. TESelView (called after
  * each keystroke) then scrolls the caret into view. Only the right edge is
  * stretched; left is kept at the view edge so a freshly-set URL shows from
  * the start (resets any horizontal scroll left over from a prior long URL). */
-/* fixes938 — lock the TEHandle across the master-pointer write.
+/* fixes938  -  lock the TEHandle across the master-pointer write.
  *
  * This dereferenced an UNLOCKED relocatable handle and then wrote through the
  * resulting TERec*, which is out of step with the rest of this file (the text
  * handles at the TEGetText sites are HLock/HUnlock'd properly). Nothing
  * allocates between the deref and the writes today, so this is latent rather
- * than the cause of the OS X TESetText crash -- but it is exactly the shape
+ * than the cause of the OS X TESetText crash - but it is exactly the shape
  * of bug that becomes real the moment someone adds an allocating call here,
  * and Mac OS X's allocator is far more willing to move blocks than OS 9's.
  * HGetState/HSetState rather than a bare HLock/HUnlock so a caller that
@@ -655,13 +654,13 @@ static void set_url_te_text(struct gui_window *g, const char *u) {
 	long new_len;
 	long cur_len;
 	if(!g||!g->url_te||!u) return;
-	/* fixes109 — dedupe. NetSurf core calls gui_window->set_url repeatedly
+	/* fixes109  -  dedupe. NetSurf core calls gui_window->set_url repeatedly
 	 * during navigation (initial, after redirect, on every history nav, on
 	 * some progress events). The old unconditional InvalRect on url_rect
 	 * triggered an updateEvt → browser_window_redraw → draw_url_bar cycle
 	 * on every call, even when the URL string was byte-identical. On a
 	 * loading page the URL bar would visibly pulse for many seconds with
-	 * nothing changing — that was a big part of the "sticky" feeling. Now:
+	 * nothing changing  -  that was a big part of the "sticky" feeling. Now:
 	 * compare against the current TE buffer and skip if equal. */
 	new_len = (long)strlen(u);
 	h = TEGetText(g->url_te);
@@ -675,7 +674,7 @@ static void set_url_te_text(struct gui_window *g, const char *u) {
 	SetPortWindowPort(g->window);
 	TESetText(u, new_len, g->url_te);
 	TECalText(g->url_te);
-	/* fixes756 (#229) — keep the wide destRect and reset scroll to the start
+	/* fixes756 (#229)  -  keep the wide destRect and reset scroll to the start
 	 * so a newly-navigated URL shows the protocol/host, not a stale offset. */
 	{
 		Rect view;
@@ -698,7 +697,7 @@ void macos9_window_navigate(struct gui_window *g, const char *u) {
 	macsurf_recon_mem("nav");
 	if(!g||!u||!u[0]) { MS_LOG("nav: no g or empty u"); return; }
 	if(!g->bw) { MS_LOG("nav: no bw"); return; }
-	/* fixes705 — an explicit user navigation means "load this now": clear any
+	/* fixes705  -  an explicit user navigation means "load this now": clear any
 	 * session dead-host / terminal mark for the target so a host that
 	 * transiently failed earlier this session gets a fresh attempt instead of
 	 * fast-failing to a blank page. Sub-resource fetches don't come through
@@ -726,17 +725,17 @@ void macos9_window_navigate(struct gui_window *g, const char *u) {
 	if(nsurl_create(u,&n)!=NSERROR_OK) { MS_LOG("nav: nsurl_create FAIL"); return; }
 	MS_LOG("nav: calling browser_window_navigate");
 	{
-		/* fixes161a — mark the next http_setup() as DOCUMENT so the
+		/* fixes161a  -  mark the next http_setup() as DOCUMENT so the
 		 * resource governor gives it document-class priority, regardless
 		 * of URL suffix. Single-shot: consumed by the first setup call. */
 		extern void macos9_http_mark_next_as_document(void);
 		extern void macsurf_site_navigation_reset(void);
 		macos9_http_mark_next_as_document();
-		/* fixes168f — clear per-page heavy latch + rgov skip counters
+		/* fixes168f  -  clear per-page heavy latch + rgov skip counters
 		 * so the next page is assessed fresh. */
 		macsurf_site_navigation_reset();
 	}
-	/* fixes366a — reset the profile clock at the navigation entry
+	/* fixes366a  -  reset the profile clock at the navigation entry
 	 * point, BEFORE the fetch starts. Every macsurf_profile_stamp()
 	 * call downstream (TLS, fetch, parse, cascade, layout, paint, JS)
 	 * is then a delta from the moment the user kicked off this nav. */
@@ -748,7 +747,7 @@ void macos9_window_navigate(struct gui_window *g, const char *u) {
 	MS_LOG("nav: done");
 }
 
-/* fixes376 — Cut / Copy / Paste / Select-All on the URL TextEdit field,
+/* fixes376  -  Cut / Copy / Paste / Select-All on the URL TextEdit field,
  * synced with the Carbon desk scrap. The URL field holds MacRoman bytes and
  * the scrap 'TEXT' flavor is MacRoman, so no UTF-8 conversion is needed on
  * this path (that conversion lives only in clipboard.c's core callbacks).
@@ -850,7 +849,7 @@ void macos9_url_te_edit(struct gui_window *g, short edit_item)
 #endif
 }
 
-/* fixes762 — inline address-bar autocomplete from visit history. After a
+/* fixes762  -  inline address-bar autocomplete from visit history. After a
  * forward keystroke, find the most-recent history URL whose host/path (scheme
  * and optional leading "www." stripped) begins with what the user typed, fill
  * the remainder into the field, and SELECT that added tail so the next
@@ -882,7 +881,7 @@ int macos9_url_autocomplete(struct gui_window *g)
 	if (len < 2 || len >= (long)sizeof(typed)) return 0;
 	memcpy(typed, *h, (size_t)len);
 	typed[len] = '\0';
-	if (strstr(typed, "://") != NULL) return 0;   /* explicit URL — don't fight it */
+	if (strstr(typed, "://") != NULL) return 0;   /* explicit URL  -  don't fight it */
 	tl = (size_t)len;
 	n = macos9_history_count();
 	for (i = 0; i < n; i++) {
@@ -1118,7 +1117,7 @@ void macos9_window_address_bar_submit(struct gui_window *g) {
 	long i, j;
 	MS_LOG("URL submit fired");
 	if(!g||!g->url_te) { MS_LOG("submit: no g or url_te"); return; }
-	macos9_urlsug_hide(g);   /* fixes763 — dismiss the suggestion dropdown */
+	macos9_urlsug_hide(g);   /* fixes763  -  dismiss the suggestion dropdown */
 	h=TEGetText(g->url_te); if(!h) { MS_LOG("submit: TEGetText null"); return; }
 	l=GetHandleSize((Handle)h); if(l<=0) { MS_LOG("submit: empty"); return; }
 	if(l>1023) l=1023; HLock((Handle)h); memcpy(r,*h,(size_t)l); HUnlock((Handle)h); r[l]=0;
@@ -1137,7 +1136,7 @@ void macos9_window_address_bar_submit(struct gui_window *g) {
 	{ long k = 0; while (r[k] == ' ') k++; if (k > 0) memmove(r, r+k, (size_t)(j - k + 1)); }
 	macsurf_debug_log_writef("submit: cleaned url='%s'", r);
 	if (r[0] == 0) { MS_LOG("submit: empty after clean"); return; }
-	/* fixes317a — repair single-slash schemes. User typos or TextEdit
+	/* fixes317a  -  repair single-slash schemes. User typos or TextEdit
 	 * slash-mangling occasionally land "https:/example.com/" (one slash)
 	 * in r. The no-scheme check below uses strstr(r,"://") which misses
 	 * the single-slash form, then prepends "https://" → URL becomes
@@ -1155,18 +1154,18 @@ void macos9_window_address_bar_submit(struct gui_window *g) {
 		j++;
 		macsurf_debug_log_writef("submit: repaired single-slash http → '%s'", r);
 	}
-	/* fixes249 — default scheme is https://. Modern web is HTTPS-only;
+	/* fixes249  -  default scheme is https://. Modern web is HTTPS-only;
 	 * defaulting to http meant typed-by-name domains (google.com,
 	 * apple.com, etc.) hit dead http:// endpoints and routed to
 	 * about:fetcherror. Sites that only serve plain HTTP still work
 	 * because fixes317 now ALWAYS attempts the other scheme on failure
 	 * (regardless of what the user typed), one shot per scheme per host
 	 * per navigation, bounce-loop-safe. */
-	/* fixes351 (#99) — proper scheme detection that handles opaque
+	/* fixes351 (#99)  -  proper scheme detection that handles opaque
 	 * schemes (about:, data:, javascript:, mailto:, file:, resource:,
 	 * about:blank, etc.) too, not just hierarchical ones. The previous
 	 * strstr(r,"://") heuristic only saw the `//` after http/https/file/
-	 * ftp etc. and forced an https:// prepend onto everything else —
+	 * ftp etc. and forced an https:// prepend onto everything else  - 
 	 * `about:cache` got mangled to `https://about:cache`, nsurl parsed
 	 * that as host=about, path=cache, fetcher 404'd, page went blank.
 	 *
@@ -1202,7 +1201,7 @@ void macos9_window_address_bar_submit(struct gui_window *g) {
 			strcpy(f, r);
 		}
 	}
-	/* fixes304 — URL-bar Enter bypasses the disk cache for the first
+	/* fixes304  -  URL-bar Enter bypasses the disk cache for the first
 	 * fetch of the new navigation (one-shot, cleared by macos9_cache_store
 	 * after the network response lands). Without this, re-typing a URL on
 	 * a page you just edited server-side keeps serving the stale cached
@@ -1221,7 +1220,7 @@ void macos9_window_forward(struct gui_window *g) { if(g&&g->bw&&browser_window_h
 extern int macsurf_http_skip_next_cache;
 void macos9_window_stop(struct gui_window *g) { if(g&&g->bw) { browser_window_stop(g->bw); macos9_window_update_button_states(g); } }  /* fixes724 */
 void macos9_window_reload(struct gui_window *g) { if(g&&g->bw) { macsurf_http_skip_next_cache = 1; browser_window_reload(g->bw, true); } }
-void macos9_window_home(struct gui_window *g) { macos9_window_navigate(g, macos9_home_url()); }
+void macos9_window_home(struct gui_window *g) { macos9_window_navigate(g, MACSURF_HOME_URL); }
 
 void macos9_window_update_button_states(struct gui_window *g) {
 #ifdef __MACOS9__
@@ -1231,7 +1230,7 @@ void macos9_window_update_button_states(struct gui_window *g) {
 	if(g->stop_btn) { HiliteControl(g->stop_btn, (short)(g->bw && browser_window_stop_available(g->bw)?0:255)); Draw1Control(g->stop_btn); }  /* fixes724 */
 	if(g->reload_btn) { HiliteControl(g->reload_btn, (short)(g->bw && browser_window_has_content(g->bw)?0:255)); Draw1Control(g->reload_btn); }
 	if(g->home_btn) Draw1Control(g->home_btn);
-	/* fixes297c — repaint icon overlay over every freshly-redrawn
+	/* fixes297c  -  repaint icon overlay over every freshly-redrawn
 	 * platinum button.  Without this, every navigation / state-change
 	 * call from NetSurf core flashes the platinum chrome without the
 	 * icon on top.  Cheap (single CopyBits per button).  Same helper
@@ -1256,11 +1255,11 @@ void macos9_windows_te_idle(void) {
 #endif
 }
 
-/* fixes366n — throttle the full-window REPAINT only.
+/* fixes366n  -  throttle the full-window REPAINT only.
  *
  * The mactrove repaint storm (~63 full bw_redraws / homepage load) came
  * from gw_event calling macos9_window_invalidate_all on every arriving
- * subresource (UPDATE_EXTENT / NEW_CONTENT) — layout itself is <1ms
+ * subresource (UPDATE_EXTENT / NEW_CONTENT)  -  layout itself is <1ms
  * (layout_us) and the heap is healthy, the cost is the repeated paints
  * (image blits, ~170ms each). Coalesce those into one repaint per
  * debounce window.
@@ -1269,7 +1268,7 @@ void macos9_windows_te_idle(void) {
  * into a 232s / 660-reformat loop: a reformat fires UPDATE_EXTENT,
  * which 366m had wired to re-arm needs_reformat, so the throttle
  * re-reformatted forever at the debounce cadence. Lesson: the reformat
- * path must stay as the pre-366m baseline — driven by NEW_CONTENT only
+ * path must stay as the pre-366m baseline  -  driven by NEW_CONTENT only
  * and coalesced by NetSurf's own scheduler, which converges. ONLY the
  * repaint is throttled here, and a repaint (invalidate) never fires
  * UPDATE_EXTENT, so there is no feedback loop. */
@@ -1284,7 +1283,7 @@ static void macos9_window_request_repaint(struct gui_window *g) {
 }
 
 /* Repaint the pending window now, bypassing the throttle (load
- * complete — the final frame should not wait out the debounce). */
+ * complete  -  the final frame should not wait out the debounce). */
 static void macos9_window_flush_repaint_now(void) {
 	if (g_repaint_pending_gw != NULL && g_repaint_pending_gw->window != NULL) {
 		macos9_window_invalidate_all(g_repaint_pending_gw);
@@ -1297,7 +1296,7 @@ static void macos9_window_flush_repaint_now(void) {
 
 void macos9_windows_process_deferred(void) {
 	struct gui_window *g;
-	/* reformat deferral — unchanged from the pre-366m baseline (RESIZE
+	/* reformat deferral  -  unchanged from the pre-366m baseline (RESIZE
 	 * sets needs_reformat; NetSurf's scheduler coalesces the actual
 	 * reformats). Must NOT be throttled (366m looped). */
 	for(g=window_list;g;g=g->next) if(g->needs_reformat && g->bw && !g->reformat_in_progress) {
@@ -1357,26 +1356,19 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 		sh = (short)(sb.bottom - sb.top);
 		want_w = 1024;
 		want_h = 768;
-		/* preferences (macos9_prefs.c): user-set default new-window
-		 * size; 0 = the built-in 1024x768 default. Still clamped to
-		 * the screen below. */
-		if (nsoption_int(window_width) > 0)
-			want_w = (short)nsoption_int(window_width);
-		if (nsoption_int(window_height) > 0)
-			want_h = (short)nsoption_int(window_height);
-		/* fixes859 (#287) — left 40 -> 8 and the right margin 20 -> 8.
+		/* fixes859 (#287)  -  left 40 -> 8 and the right margin 20 -> 8.
 		 * On the 1024x768 baseline this window used to open 964 wide, and
-		 * after the 15px scrollbar that left a 949px viewport -- confirmed
+		 * after the 15px scrollbar that left a 949px viewport - confirmed
 		 * exactly by the fixes858 probe (mediaw=949 mediah=609, both
 		 * predicted from these constants).  Desktop CSS breakpoints cluster
 		 * right there: hackaday's is 59.5em = 952 CSS px once em resolves
 		 * correctly (fixes859), so 949 missed the desktop branch BY THREE
-		 * PIXELS and fell back to mobile -- no nav, 42px logo, 2.1rem title.
+		 * PIXELS and fell back to mobile - no nav, 42px logo, 2.1rem title.
 		 * 60px of a 1024px screen was going to margins we do not need; 8+8
 		 * yields a 1008px window -> 993px viewport, clearing 952 with room
 		 * and still leaving the window visibly framed on screen.  top/30
 		 * are left alone: vertical has no breakpoint riding on it.
-		 * NOTE both halves matter -- widening alone does nothing while
+		 * NOTE both halves matter - widening alone does nothing while
 		 * @media still demands 1269px, and the em fix alone still lands 3px
 		 * short in a 949px viewport. */
 		left = 8;
@@ -1396,14 +1388,14 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 	g->bw=bw; if(CreateNewWindow(6, 0x1F, &b, &g->window)!=0) { free(g); return NULL; }
 	SetWRefCon(g->window,(long)g); SetPortWindowPort(g->window); SetWTitle(g->window,(const unsigned char*)"\pMacSurf");
 	g->next=window_list; window_list=g; 
-	/* fixes300/fixes723 — 36x36 square buttons (was 32x32, ~12.5% bigger).
+	/* fixes300/fixes723  -  36x36 square buttons (was 32x32, ~12.5% bigger).
 	 * Vertically centered inside the 48-tall toolbar: top=6, bottom=42,
 	 * height=36. 2px gap → 38px pitch → x=4,42,80,118, home's right edge
 	 * 154, URL bar starts at x=156. paint_toolbar_icon auto-scales the
 	 * 25x25 source to btn-8 = 28x28 centered, 4px padding every side. */
-	/* fixes303 — tight 2px gap between buttons (38px pitch on 36px
+	/* fixes303  -  tight 2px gap between buttons (38px pitch on 36px
 	 * buttons) for a dense Netscape-7-style tool belt. */
-	/* fixes724 — five buttons: Back, Forward, Stop, Refresh, Home. */
+	/* fixes724  -  five buttons: Back, Forward, Stop, Refresh, Home. */
 	x=4; SetRect(&b,x,6,(short)(x+36),42); g->back_btn=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,0,256,(long)g); x=(short)(x+38);
 	SetRect(&b,x,6,(short)(x+36),42); g->forward_btn=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,0,256,(long)g); x=(short)(x+38);
 	SetRect(&b,x,6,(short)(x+36),42); g->stop_btn=NewControl(g->window,&b,(const unsigned char*)"\p",1,0,0,0,256,(long)g); x=(short)(x+38);
@@ -1419,7 +1411,7 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 	 * "URL field unresponsive on initial window" regression. */
 	ShowWindow(g->window); SelectWindow(g->window);
 	SetPortWindowPort(g->window);
-	/* fixes944 (OS X tier 2) — window port, but a GDevice whose colour table
+	/* fixes944 (OS X tier 2)  -  window port, but a GDevice whose colour table
 	 * is real. See macos9_safe_gdevice() above for the full evidence chain; in
 	 * short, GetMainDevice() on 10.3 hands back a GDevice with an unmapped
 	 * colour table, and EVERY RGBForeColor resolves through the CURRENT device,
@@ -1446,12 +1438,12 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 			(void *)wport, (void *)usedev);
 		macsurf_debug_log_flush();
 	}
-	/* fixes302 — set the URL field font (Geneva 12) before TENew so the
+	/* fixes302  -  set the URL field font (Geneva 12) before TENew so the
 	 * TERec captures it; TextEdit measures and draws with the stored font. */
 	TextFont(kFontIDGeneva); TextSize(12); TextFace(0);
 	compute_url_te_rect(&g->url_rect,&b); g->url_te=TENew(&b,&b);
 	if(g->url_te) {
-		/* fixes938 (OS X tier 1c) — BISECT the TextEdit setup on Mac OS X.
+		/* fixes938 (OS X tier 1c)  -  BISECT the TextEdit setup on Mac OS X.
 		 *
 		 * fixes937's breadcrumbs put the 10.3 crash exactly here: startup
 		 * reached "BOOT launch: create empty window, defer home nav", then
@@ -1468,14 +1460,14 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 		 *   - set_url_te_geometry() forces an 8000px-wide destRect
 		 *     (fixes756 #229, for URL-bar horizontal scrolling)
 		 *   - TEAutoView(true) enables auto-scroll, which makes TextEdit
-		 *     DRAW/scroll during TESetText -- and drawing is what reaches
+		 *     DRAW/scroll during TESetText - and drawing is what reaches
 		 *     RGBForeColor.
 		 * Skip both on OS X only. If TESetText then survives, one of these
 		 * is the trigger and we re-add them individually. If it still dies,
 		 * TextEdit itself is unusable here and tier 1d gates the field off.
 		 *
 		 * OS 9 behaviour is byte-for-byte unchanged. */
-		/* fixes939 — RESTORED unconditionally. fixes938 gated these two off
+		/* fixes939  -  RESTORED unconditionally. fixes938 gated these two off
 		 * on OS X and 10.3 crashed anyway, with an identical backtrace and
 		 * identical registers, so both are proven innocent. Putting them back
 		 * returns OS X to the same code path as OS 9 and leaves the
@@ -1484,7 +1476,7 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 		set_url_te_geometry(g->url_te, &b);   /* fixes756 (#229) wide destRect */
 		TEAutoView(true, g->url_te);          /* enable TESelView caret auto-scroll */
 		MS_LOG("BOOT te: pre TESetText");
-		TESetText(macos9_home_url(),(long)strlen(macos9_home_url()),g->url_te);
+		TESetText(MACSURF_HOME_URL,(long)strlen(MACSURF_HOME_URL),g->url_te);
 		MS_LOG("BOOT te: post TESetText");
 		TECalText(g->url_te);
 		MS_LOG("BOOT te: post TECalText");
@@ -1501,14 +1493,14 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 }
 
 void macos9_window_destroy(struct gui_window *g) { struct gui_window **p; for(p=&window_list;*p;p=&(*p)->next) if(*p==g) { *p=g->next; break; }
-	/* fixes523 — kill the reload-icon animation before freeing g.  The
+	/* fixes523  -  kill the reload-icon animation before freeing g.  The
 	 * tick (macos9_reload_anim_tick) reschedules itself every 200ms keyed
 	 * on this gui_window* and is gated only by the global
 	 * macos9_reload_animating flag.  If the window is torn down mid-load
 	 * (navigate away / content abort / close) before GW_EVENT_STOP_THROBBER
 	 * fires, a still-queued tick would fire against this freed g, deref
 	 * g->window / g->reload_btn (freed-struct read, the r4=1 signature),
-	 * and reschedule itself — driving repaint/re-entry against dead
+	 * and reschedule itself  -  driving repaint/re-entry against dead
 	 * content.  Clear the flag and drop EVERY scheduled callback owned by
 	 * g (cancel-by-owner, fixes517) so nothing can fire against it. */
 	macos9_reload_animating = 0;
@@ -1517,13 +1509,13 @@ void macos9_window_destroy(struct gui_window *g) { struct gui_window **p; for(p=
 	if(g->content_gworld) { DisposeGWorld(g->content_gworld); g->content_gworld = NULL; }
 #endif
 	if(g->window) DisposeWindow(g->window); free(g); }
-/* fixes100 — honour NetSurf's per-update dirty rect.
+/* fixes100  -  honour NetSurf's per-update dirty rect.
  *
  * Pre-fixes100 this function logged the supplied rect and then
  * unconditionally InvalWindowRect'd the entire content area. That
  * meant every keystroke (caret blink, textarea text change), every
  * scroll-bar value update, every late image arrival, every layout
- * tweak triggered a full content viewport repaint — on the duck-duck
+ * tweak triggered a full content viewport repaint  -  on the duck-duck
  * search results page that's ~170 DrawText calls and ~600 box-tree
  * visits per character typed, ~200-300ms per keystroke on G3/G4.
  *
@@ -1567,7 +1559,7 @@ static nserror macos9_gw_get_dimensions(struct gui_window *g, int *w, int *h) { 
 static void macos9_window_draw_loader(struct gui_window *g);   /* fixes726 fwd */
 static void macos9_window_draw_progress(struct gui_window *g); /* fixes727 fwd */
 
-/* fixes297e — schedule callback that advances the throbber + progress-bar
+/* fixes297e  -  schedule callback that advances the throbber + progress-bar
  * animation frame and reschedules itself while the page is still loading.
  * Driven by macos9_schedule (NetSurf's timer registry). Param is the
  * gui_window*. */
@@ -1578,7 +1570,7 @@ static void macos9_reload_anim_tick(void *p)
 	struct gui_window *w;
 	int alive;
 	struct hlcache_handle *cur;
-	/* fixes523 — bail BEFORE any deref if our window is gone.  This tick
+	/* fixes523  -  bail BEFORE any deref if our window is gone.  This tick
 	 * reschedules itself off the global macos9_reload_animating flag, so a
 	 * stale entry left in the scheduler would otherwise read a freed
 	 * gui_window* (g->window / g->reload_btn) and requeue forever, driving
@@ -1593,12 +1585,12 @@ static void macos9_reload_anim_tick(void *p)
 	}
 	if (!alive || g == NULL) { macos9_reload_animating = 0; return; }
 	/* If the window's content is dead (no current content), there is
-	 * nothing loading — stop the animation rather than spin against a
+	 * nothing loading  -  stop the animation rather than spin against a
 	 * torn-down hlcache handle. */
 	cur = (g->bw != NULL) ? browser_window_get_content(g->bw) : NULL;
 	if (cur == NULL) { macos9_reload_animating = 0; return; }
 	macos9_reload_frame++;
-	/* fixes726/fixes727 — advance the throbber + progress bar. Draw them
+	/* fixes726/fixes727  -  advance the throbber + progress bar. Draw them
 	 * DIRECTLY (small, self-bracketed regions) instead of invalidating, so
 	 * a per-frame tick does not force a full toolbar chrome repaint. */
 	if (g->window != NULL) {
@@ -1618,12 +1610,12 @@ static void macos9_gw_remove_caret(struct gui_window *g); /* fixes663 fwd */
 static nserror macos9_gw_event(struct gui_window *g, enum gui_window_event e) {
 	struct hlcache_handle *cur = (g && g->bw) ? browser_window_get_content(g->bw) : NULL;
 	macsurf_debug_log_writef("gw_event: e=%d current_content=%p", (int)e, cur);
-	/* fixes663 (#191): a field lost the caret (blur / focus change) — clear
+	/* fixes663 (#191): a field lost the caret (blur / focus change)  -  clear
 	 * it so it does not linger after the user clicks out of the field. */
 	if (e == GW_EVENT_REMOVE_CARET) {
 		macos9_gw_remove_caret(g);
 	}
-	/* fixes726 — right-hand animated loading-spinner hook (was the refresh
+	/* fixes726  -  right-hand animated loading-spinner hook (was the refresh
 	 * button spin). START begins the frame timer; STOP clears it and erases
 	 * the spinner from its slot. */
 	if (e == GW_EVENT_START_THROBBER) {
@@ -1649,13 +1641,13 @@ static nserror macos9_gw_event(struct gui_window *g, enum gui_window_event e) {
 		if(e==GW_EVENT_NEW_CONTENT) {
 			g->scroll_x=0; g->scroll_y=0;
 			g->caret_active=0; /* fixes663: drop a stale caret on navigation */
-			/* reformat on NEW_CONTENT only — the pre-366m semantics.
+			/* reformat on NEW_CONTENT only  -  the pre-366m semantics.
 			 * NetSurf's scheduler coalesces repeated calls and the
 			 * reformat sequence converges. (366m wrongly drove reformat
 			 * from UPDATE_EXTENT too, which a reformat re-fires -> loop.) */
 			if(g->bw) browser_window_schedule_reformat(g->bw);
 		}
-		/* fixes366n — coalesce the repaint storm: request a THROTTLED
+		/* fixes366n  -  coalesce the repaint storm: request a THROTTLED
 		 * full repaint instead of an immediate invalidate_all on every
 		 * event. Scrollbar/button state stay live (cheap, Draw1Control,
 		 * no content invalidate). STOP_THROBBER = load done -> repaint
@@ -1668,7 +1660,7 @@ static nserror macos9_gw_event(struct gui_window *g, enum gui_window_event e) {
 	}
 	return 0;
 }
-/* fixes320h — when JS sets document.title, NetSurf core's reformat
+/* fixes320h  -  when JS sets document.title, NetSurf core's reformat
  * pipeline calls our set_title vtable entry shortly after with the
  * HTML <title> value, overwriting the JS-set title and producing the
  * "title flashes for a split second and resets" symptom.
@@ -1693,21 +1685,21 @@ static void macos9__set_title_impl(struct gui_window *g, const char *t) {
 	p[0] = (unsigned char)out_l;
 	memcpy(p + 1, mac_buf, out_l);
 	SetWTitle(g->window, p);
-	/* fixes698 (#47) — record the visit in the persistent history store.
+	/* fixes698 (#47)  -  record the visit in the persistent history store.
 	 * This is the point where both the committed URL (from the browser
 	 * window) and the human page title are known; macos9_history_record
 	 * pulls the URL itself and ignores non-http(s) schemes. */
 	macos9_history_record(g, t);
 }
 
-/* fixes319 — non-static so the JS bridge can drive document.title from
+/* fixes319  -  non-static so the JS bridge can drive document.title from
  * scripts. Vtable entry path: respects the JS lock. */
 void macos9_gw_set_title(struct gui_window *g, const char *t) {
 	if (g_title_locked_by_js) return;
 	macos9__set_title_impl(g, t);
 }
 
-/* fixes320h — separate entry for the JS bridge so it can claim the
+/* fixes320h  -  separate entry for the JS bridge so it can claim the
  * title without going through the locked vtable path. Sets the lock
  * before applying so subsequent NetSurf core calls are no-ops. */
 void macos9_gw_set_title_from_js(struct gui_window *g, const char *t) {
@@ -1716,7 +1708,7 @@ void macos9_gw_set_title_from_js(struct gui_window *g, const char *t) {
 }
 static nserror macos9_gw_set_url(struct gui_window *g, struct nsurl *u) {
 	const char *s;
-	/* fixes320h — navigation releases the JS title lock so the new
+	/* fixes320h  -  navigation releases the JS title lock so the new
 	 * page's HTML <title> applies through the normal vtable path. */
 	g_title_locked_by_js = 0;
 	/* fixes451: new URL = new page, reset the per-page profile gate */
@@ -1730,16 +1722,16 @@ static nserror macos9_gw_set_url(struct gui_window *g, struct nsurl *u) {
 	/* fixes640b: do NOT call macsurf_profile_reset() here. set_url fires
 	 * MULTIPLE times per load (redirect chains, late URL commits), so a reset
 	 * here wiped the early-phase accumulators (parse/cascade/tls/js) MID-load,
-	 * leaving only the tail (layout/paint) — observed as parse=0 cascade=0 in
+	 * leaving only the tail (layout/paint)  -  observed as parse=0 cascade=0 in
 	 * the first baseline. Per-load freshness is instead guaranteed by zeroing
 	 * the accumulators at the END of macsurf_profile_emit_phases (so the next
-	 * load starts clean regardless of nav type — this also covers the
+	 * load starts clean regardless of nav type  -  this also covers the
 	 * click-nav case the review flagged, without a mid-load wipe). */
 	if(g&&u&&g->url_te&&(s=nsurl_access(u))) set_url_te_text(g,s);
 	return 0;
 }
 static void macos9_gw_set_status(struct gui_window *g, const char *t) {
-	/* fixes109 — dedupe. NetSurf core fires set_status on every fetch
+	/* fixes109  -  dedupe. NetSurf core fires set_status on every fetch
 	 * progress callback, every hover, every link-tracking transition.
 	 * Many of those fire with the same string repeatedly (e.g. "Loading
 	 * https://X..." while bytes accumulate). Unconditional InvalRect on
@@ -1749,9 +1741,9 @@ static void macos9_gw_set_status(struct gui_window *g, const char *t) {
 	 * unless the visible text actually changed. */
 	if (g == NULL || t == NULL) return;
 	if (strcmp(g->status, t) == 0) return;
-	/* fixes369c (#167) — log every DISTINCT status string. This is
+	/* fixes369c (#167)  -  log every DISTINCT status string. This is
 	 * NetSurf core's load-lifecycle narration (Fetching… / Loading N
-	 * objects / Done / error text) — the previously-uninstrumented middle
+	 * objects / Done / error text)  -  the previously-uninstrumented middle
 	 * between the fetcher trace and the bw_redraw counters. If the page
 	 * stalls it shows the last state reached; if it fetches but never
 	 * paints, it shows "Done" with no redraw following. Deduped above, so
@@ -1812,7 +1804,7 @@ static void macos9_gw_set_pointer(struct gui_window *g, enum gui_pointer_shape s
 #endif
 }
 
-/* fixes294 — load the baked-in 16.png once into a GWorld kept alive for
+/* fixes294  -  load the baked-in 16.png once into a GWorld kept alive for
  * the lifetime of the process.  Called from main.c's startup path.
  * Idempotent: if called twice, the second call no-ops.  On any failure
  * the loaded flag stays 0 and the paint helper bails. */
@@ -1888,9 +1880,9 @@ void macos9_window_load_default_favicon(void)
 #endif
 }
 
-/* fixes294 — paint the cached favicon GWorld inside url_rect, called
+/* fixes294  -  paint the cached favicon GWorld inside url_rect, called
  * from draw_url_bar AFTER TEUpdate so the icon is on top of the white
- * field background.  No allocation, no LockPixels — single CopyBits.
+ * field background.  No allocation, no LockPixels  -  single CopyBits.
  * Full GetGWorld/SetGWorld bracket. */
 void macos9_window_draw_favicon(struct gui_window *g)
 {
@@ -1906,7 +1898,7 @@ void macos9_window_draw_favicon(struct gui_window *g)
 
 	if (g == NULL || g->window == NULL) return;
 
-	/* fixes295 Phase 1b — prefer active per-site favicon over default. */
+	/* fixes295 Phase 1b  -  prefer active per-site favicon over default. */
 	if (macos9_active_favicon_gworld != NULL) {
 		src_gworld = macos9_active_favicon_gworld;
 		src_rect_ptr = &macos9_active_favicon_src_rect;
@@ -1932,7 +1924,7 @@ void macos9_window_draw_favicon(struct gui_window *g)
 		return;
 	}
 
-	/* fixes728 — reset fg=black/bg=white before the blit. Classic QuickDraw
+	/* fixes728  -  reset fg=black/bg=white before the blit. Classic QuickDraw
 	 * colorizes CopyBits toward the port foreground (the fixes301j gotcha);
 	 * without this the per-site favicon was tinted by whatever colour the
 	 * previous draw left (the "favicon overlay-coloured after load" bug). The
@@ -1954,7 +1946,7 @@ void macos9_window_draw_favicon(struct gui_window *g)
 #endif
 }
 
-/* fixes295 Phase 1b — release the active per-site favicon GWorld and
+/* fixes295 Phase 1b  -  release the active per-site favicon GWorld and
  * revert to the default.  Called on set_icon(NULL), navigate-away, and
  * window destroy. */
 static void active_favicon_release(void)
@@ -1968,7 +1960,7 @@ static void active_favicon_release(void)
 #endif
 }
 
-/* fixes295 Phase 1b — pull the favicon bitmap from the hlcache_handle,
+/* fixes295 Phase 1b  -  pull the favicon bitmap from the hlcache_handle,
  * bake it into a fresh GWorld at the bitmap's natural size, swap into
  * macos9_active_favicon_gworld replacing any previous per-site icon. */
 static int active_favicon_build(struct hlcache_handle *icon)
@@ -2026,7 +2018,7 @@ static int active_favicon_build(struct hlcache_handle *icon)
 		src_row = buf + row * rowstride;
 		dst_row = (unsigned char *)GetPixBaseAddr(pm) + row * dst_rowbytes;
 		for (col = 0; col < bw; col++) {
-			/* fixes736 — matte transparent favicon pixels to WHITE (the URL
+			/* fixes736  -  matte transparent favicon pixels to WHITE (the URL
 			 * field background) instead of forcing them opaque with the
 			 * under-alpha colour. Site favicons are typically 16x16 with a
 			 * transparent background; the old "force alpha 0xFF" made that
@@ -2061,7 +2053,7 @@ static int active_favicon_build(struct hlcache_handle *icon)
 #endif
 }
 
-/* fixes295 Phase 1b — NetSurf set_icon callback. */
+/* fixes295 Phase 1b  -  NetSurf set_icon callback. */
 static void macos9_gw_set_icon(struct gui_window *g, struct hlcache_handle *icon)
 {
 #ifdef __MACOS9__
@@ -2070,7 +2062,7 @@ static void macos9_gw_set_icon(struct gui_window *g, struct hlcache_handle *icon
 	if (icon == NULL) {
 		active_favicon_release();
 	} else if (!active_favicon_build(icon)) {
-		/* Build failed (bitmap not yet decoded, non-PNG, etc.) — keep
+		/* Build failed (bitmap not yet decoded, non-PNG, etc.)  -  keep
 		 * whatever active we had; will fall back to default if none. */
 	}
 	InvalWindowRect(g->window, &g->url_rect);
@@ -2079,10 +2071,10 @@ static void macos9_gw_set_icon(struct gui_window *g, struct hlcache_handle *icon
 #endif
 }
 
-/* fixes297 — decode a single PNG byte array into a permanent app-heap
+/* fixes297  -  decode a single PNG byte array into a permanent app-heap
  * GWorld + populate the src rect.  Helper for macos9_window_load_toolbar_icons.
  * Returns 1 on success, 0 on failure (out_gw stays NULL, caller skips paint
- * for that button — graceful fallback to text-only). */
+ * for that button  -  graceful fallback to text-only). */
 static int macos9_decode_png_to_gworld(const unsigned char *png_bytes,
 		unsigned long png_len, GWorldPtr *out_gw, Rect *out_src_rect)
 {
@@ -2123,7 +2115,7 @@ static int macos9_decode_png_to_gworld(const unsigned char *png_bytes,
 		SetGWorld(saved_port, saved_gdh);
 		return 0;
 	}
-	/* fixes303 — bake the toolbar-grey background (#D6D6D6) into pixels
+	/* fixes303  -  bake the toolbar-grey background (#D6D6D6) into pixels
 	 * the PNG marked transparent. The buttons are blitted via opaque
 	 * CopyBits srcCopy, so transparent rounded corners would otherwise
 	 * paint whatever RGB the PNG stored under alpha=0 (typically white
@@ -2155,7 +2147,7 @@ static int macos9_decode_png_to_gworld(const unsigned char *png_bytes,
 #endif
 }
 
-/* fixes297 — decode all four toolbar icons.  Best-effort: any failure
+/* fixes297  -  decode all four toolbar icons.  Best-effort: any failure
  * leaves its GWorld NULL and the corresponding button stays text-only. */
 void macos9_window_load_toolbar_icons(void)
 {
@@ -2174,22 +2166,22 @@ void macos9_window_load_toolbar_icons(void)
 	ok += macos9_decode_png_to_gworld(macos9_btn_home_png,
 		macos9_btn_home_png_len,
 		&macos9_btn_home_gworld, &macos9_btn_home_src_rect);
-	/* fixes297d — disabled-state variants */
+	/* fixes297d  -  disabled-state variants */
 	ok += macos9_decode_png_to_gworld(macos9_btn_back_g_png,
 		macos9_btn_back_g_png_len,
 		&macos9_btn_back_g_gworld, &macos9_btn_back_g_src_rect);
 	ok += macos9_decode_png_to_gworld(macos9_btn_forward_g_png,
 		macos9_btn_forward_g_png_len,
 		&macos9_btn_forward_g_gworld, &macos9_btn_forward_g_src_rect);
-	/* fixes297e — refresh loading-state variant */
+	/* fixes297e  -  refresh loading-state variant */
 	ok += macos9_decode_png_to_gworld(macos9_btn_refresh_g_png,
 		macos9_btn_refresh_g_png_len,
 		&macos9_btn_refresh_g_gworld, &macos9_btn_refresh_g_src_rect);
-	/* fixes297f — home dim variant for at-home detection */
+	/* fixes297f  -  home dim variant for at-home detection */
 	ok += macos9_decode_png_to_gworld(macos9_btn_home_g_png,
 		macos9_btn_home_g_png_len,
 		&macos9_btn_home_g_gworld, &macos9_btn_home_g_src_rect);
-	/* fixes724 — Stop (X) coloured + grey */
+	/* fixes724  -  Stop (X) coloured + grey */
 	ok += macos9_decode_png_to_gworld(macos9_btn_stop_png,
 		macos9_btn_stop_png_len,
 		&macos9_btn_stop_gworld, &macos9_btn_stop_src_rect);
@@ -2198,7 +2190,7 @@ void macos9_window_load_toolbar_icons(void)
 		&macos9_btn_stop_g_gworld, &macos9_btn_stop_g_src_rect);
 	macos9_toolbar_icons_loaded = 1;
 	macsurf_debug_log_writef("toolbar icons loaded ok=%d/8", ok);
-	/* fixes726 — decode the animated loader frames. Best-effort per frame;
+	/* fixes726  -  decode the animated loader frames. Best-effort per frame;
 	 * NULL GWorlds are skipped at paint time. */
 	{
 		int i, lok = 0;
@@ -2218,7 +2210,7 @@ void macos9_window_load_toolbar_icons(void)
 #endif
 }
 
-/* fixes297 — paint a single icon GWorld over a control's left edge.
+/* fixes297  -  paint a single icon GWorld over a control's left edge.
  * The icon is centered vertically inside the control's bounds and
  * inset 4px from the left.  Full GetGWorld/SetGWorld bracket. */
 static void paint_toolbar_icon(WindowRef window, ControlRef ctrl,
@@ -2241,7 +2233,7 @@ static void paint_toolbar_icon(WindowRef window, ControlRef ctrl,
 	icon_w = (short)(src_rect->right - src_rect->left);
 	icon_h = (short)(src_rect->bottom - src_rect->top);
 	(void)icon_w; (void)icon_h;
-	/* fixes300 — paint into a fixed 4px-padded box inside the 32x32
+	/* fixes300  -  paint into a fixed 4px-padded box inside the 32x32
 	 * button bounds.  Source icons are mixed sizes (25x25, 35x35);
 	 * CopyBits downscales/upscales as needed so the visible icon is
 	 * always button_size - 8 in each dimension, with 4px breathing
@@ -2266,18 +2258,18 @@ static void paint_toolbar_icon(WindowRef window, ControlRef ctrl,
 	win_port = GetWindowPort(window);
 	if (win_port == NULL) { SetGWorld(saved_port, saved_gdh); return; }
 
-	/* fixes303 — paint the button slot to the exact toolbar grey
+	/* fixes303  -  paint the button slot to the exact toolbar grey
 	 * (#D6D6D6) and skip the per-button frame. Combined with the matted
 	 * icon corners (also #D6D6D6), the buttons no longer have white
-	 * halos OR individual frames — they read as a dense "tool belt"
+	 * halos OR individual frames  -  they read as a dense "tool belt"
 	 * row of icons on the toolbar rather than four chrome buttons. */
 	{
 		RGBColor saved_fg, saved_bg;
 		GetForeColor(&saved_fg); GetBackColor(&saved_bg);
-		/* fixes727 — paint the slot with the toolbar gradient (not a flat
+		/* fixes727  -  paint the slot with the toolbar gradient (not a flat
 		 * grey patch) so the button band matches the surrounding sheen. */
 		macos9_tb_fill_gradient(&ctrl_bounds);
-		/* fixes727 — soft hover highlight: a light rounded plate behind the
+		/* fixes727  -  soft hover highlight: a light rounded plate behind the
 		 * icon when the pointer is over this button (the orange edge is
 		 * added later in macos9_window_draw_toolbar_icons). */
 		if (ctrl == macos9_hovered_btn) {
@@ -2293,7 +2285,7 @@ static void paint_toolbar_icon(WindowRef window, ControlRef ctrl,
 	dst_bm = GetPortBitMapForCopyBits(win_port);
 	src_bm = GetPortBitMapForCopyBits((CGrafPtr)src_gw);
 	if (src_bm != NULL && dst_bm != NULL) {
-		/* fixes729a — force fg=black/bg=white for the blit. Classic
+		/* fixes729a  -  force fg=black/bg=white for the blit. Classic
 		 * QuickDraw colorizes CopyBits toward the port foreground
 		 * (fixes301j); the icons were inheriting whatever colour the
 		 * previous chrome/content draw left, tinting the whole tool belt
@@ -2314,9 +2306,9 @@ static void paint_toolbar_icon(WindowRef window, ControlRef ctrl,
 #endif
 }
 
-/* fixes726/fixes727 — Netscape-style throbber in the far-right toolbar slot
+/* fixes726/fixes727  -  Netscape-style throbber in the far-right toolbar slot
  * (g->loader_rect). It is ALWAYS visible: the full frame set cycles while a
- * page is loading, and it rests on frame 0 (the idle pose) when done — never
+ * page is loading, and it rests on frame 0 (the idle pose) when done  -  never
  * an empty gap. The frame index is macos9_reload_frame, advanced by
  * macos9_reload_anim_tick. Frames are matted to toolbar grey, so blitting one
  * fully erases the previous frame (no separate clear needed). */
@@ -2365,7 +2357,7 @@ static void macos9_window_draw_loader(struct gui_window *g)
 #endif
 }
 
-/* fixes727 — page-load progress bar: a slim orange strip along the bottom edge
+/* fixes727  -  page-load progress bar: a slim orange strip along the bottom edge
  * of the toolbar that creeps forward while a page loads (paired with the
  * throbber). Monotonic time-based creep toward ~92% (no per-byte wiring); the
  * STOP_THROBBER full repaint clears it. Drawn directly from the animation tick
@@ -2394,7 +2386,7 @@ static void macos9_window_draw_progress(struct gui_window *g)
 	strip.bottom = (short)(g->content_rect.top - 1);   /* above the separator */
 	strip.top    = (short)(strip.bottom - 3);          /* 3px tall */
 
-	/* fixes732 — INDETERMINATE sweep. A ~28%-wide orange segment travels
+	/* fixes732  -  INDETERMINATE sweep. A ~28%-wide orange segment travels
 	 * left->right across the track and wraps, so it can never pin at a fake
 	 * percentage (this engine can't compute true load %). Continuous motion
 	 * reads as "still working"; the old creep-to-92%-and-freeze looked stuck
@@ -2429,7 +2421,7 @@ static void macos9_window_draw_progress(struct gui_window *g)
 #endif
 }
 
-/* fixes297 — paint all four toolbar icons over their buttons.  Called
+/* fixes297  -  paint all four toolbar icons over their buttons.  Called
  * after DrawControls in the update handler, so the platinum button
  * backgrounds and labels are already drawn underneath. */
 void macos9_window_draw_toolbar_icons(struct gui_window *g)
@@ -2444,7 +2436,7 @@ void macos9_window_draw_toolbar_icons(struct gui_window *g)
 
 	if (g == NULL || g->window == NULL || !macos9_toolbar_icons_loaded) return;
 
-	/* fixes297d — pick coloured icon when history nav is available,
+	/* fixes297d  -  pick coloured icon when history nav is available,
 	 * greyed icon when not.  Falls back to the coloured icon when the
 	 * grey variant failed to load. */
 	back_avail = (g->bw != NULL) &&
@@ -2469,7 +2461,7 @@ void macos9_window_draw_toolbar_icons(struct gui_window *g)
 
 	paint_toolbar_icon(g->window, g->back_btn, back_gw, back_rect);
 	paint_toolbar_icon(g->window, g->forward_btn, fwd_gw, fwd_rect);
-	/* fixes724 — Stop: orange X while the page is loading (stoppable), grey
+	/* fixes724  -  Stop: orange X while the page is loading (stoppable), grey
 	 * X when idle (non-active). */
 	{
 		int stop_avail = (g->bw != NULL) &&
@@ -2483,17 +2475,17 @@ void macos9_window_draw_toolbar_icons(struct gui_window *g)
 				&macos9_btn_stop_g_src_rect);
 		}
 	}
-	/* fixes725 — refresh is always the coloured icon. The old loading-state
+	/* fixes725  -  refresh is always the coloured icon. The old loading-state
 	 * toggle (fixes297e) is removed; a dedicated animated loader icon on the
 	 * right of the nav bar will replace it. */
 	paint_toolbar_icon(g->window, g->reload_btn,
 		macos9_btn_refresh_gworld, &macos9_btn_refresh_src_rect);
-	/* fixes725 — home is always the coloured icon. The at-home dim variant
+	/* fixes725  -  home is always the coloured icon. The at-home dim variant
 	 * (fixes297f) is removed; it read as a broken greyed-out button. */
 	paint_toolbar_icon(g->window, g->home_btn,
 		macos9_btn_home_gworld, &macos9_btn_home_src_rect);
 
-	/* fixes725 — hover highlight: a 1px rounded accent frame around whichever
+	/* fixes725  -  hover highlight: a 1px rounded accent frame around whichever
 	 * nav button the mouse is over (set by macos9_window_update_hover). A full
 	 * icon repaint above already erased any previous frame. */
 	if (macos9_hovered_btn != NULL &&
@@ -2518,16 +2510,16 @@ void macos9_window_draw_toolbar_icons(struct gui_window *g)
 		SetPort(sp);
 	}
 
-	/* fixes726 — paint the Netscape-style throbber in its right-hand slot. */
+	/* fixes726  -  paint the Netscape-style throbber in its right-hand slot. */
 	macos9_window_draw_loader(g);
-	/* fixes727 — page-load progress bar along the toolbar's bottom edge. */
+	/* fixes727  -  page-load progress bar along the toolbar's bottom edge. */
 	macos9_window_draw_progress(g);
 #else
 	(void)g;
 #endif
 }
 
-/* fixes725 — mouse-over tracking for the nav buttons. Called from the event
+/* fixes725  -  mouse-over tracking for the nav buttons. Called from the event
  * loop's idle pass for the front window. Sets macos9_hovered_btn to whichever
  * nav button the pointer is over (or NULL) and, only when it changes, repaints
  * the toolbar icons so the hover frame appears/moves/clears. */
@@ -2565,12 +2557,12 @@ void macos9_window_update_hover(struct gui_window *g)
 
 /* fixes663 (#191): in-page text caret. NetSurf draws page-field carets ONLY
  * when the field carries TEXTAREA_INTERNAL_CARET; otherwise it delegates the
- * VISIBLE caret to this place_caret gui callback — and, crucially, the same
+ * VISIBLE caret to this place_caret gui callback  -  and, crucially, the same
  * path sets keyboard focus (browser_window_place_caret sets root_bw->focus,
  * which is what browser_window_key_press routes on). The earlier attempt of
  * setting TEXTAREA_INTERNAL_CARET drew a caret but SUPPRESSED the CARET_UPDATE
  * message that drives html_set_focus, so arrows/Tab/copy and blur-cleanup all
- * broke — hence this proper frontend implementation instead. */
+ * broke  -  hence this proper frontend implementation instead. */
 static void macos9_caret_invalidate(struct gui_window *g)
 {
 	struct rect r;
@@ -2620,7 +2612,7 @@ static void macos9_gw_remove_caret(struct gui_window *g)
 }
 
 #ifdef __MACOS9__
-/* fixes721 (#144 file upload) — build a full HFS path "Volume:dir:...:leaf"
+/* fixes721 (#144 file upload)  -  build a full HFS path "Volume:dir:...:leaf"
  * from an FSSpec by walking up parent dir IDs (PBGetCatInfoSync), so the
  * multipart builder can fopen() the file the user picked. Returns 0 on
  * success. fixes838 (#167): un-static'd so cookie persistence can build the
@@ -2663,7 +2655,7 @@ int macos9_fsspec_to_path(const FSSpec *spec, char *out, long cap)
 	return 0;
 }
 
-/* fixes721 — file_gadget_open gui callback. Core calls this when the user
+/* fixes721  -  file_gadget_open gui callback. Core calls this when the user
  * clicks an <input type=file>. Show a Navigation Services Open dialog (the
  * same generation as the fixes313a NavPutFile save dialog, which links under
  * CarbonLib), then hand the chosen file's path to core via
@@ -2684,7 +2676,7 @@ static void macos9_window_file_gadget_open(struct gui_window *gw,
 			struct form_control *, const char *);
 
 	(void)gw;
-	/* fixes721b — "RECON" prefix so these lines survive the crash-only log
+	/* fixes721b  -  "RECON" prefix so these lines survive the crash-only log
 	 * gate (nuclear is off in shipping builds), letting a reporter's log show
 	 * exactly where the picker failed. */
 	if (NavGetDefaultDialogOptions(&opts) != noErr) {

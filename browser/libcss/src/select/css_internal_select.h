@@ -8,7 +8,7 @@
 #ifndef css_select_select_h_
 #define css_select_select_h_
 
-/* Defensive empty define for CW8 — see notes in stylesheet.h. */
+/* Defensive empty define for CW8 - see notes in stylesheet.h. */
 #ifndef _ALIGNED
 #define _ALIGNED
 #endif
@@ -76,12 +76,12 @@ typedef struct css_select_state {
 	const css_media *media;		/* Currently active media spec */
 	const css_unit_ctx *unit_ctx;	/* Unit conversion context. */
 	css_select_results *results;	/* Result set to populate */
-	struct css_select_ctx *select_ctx; /* Owning select context —
+	struct css_select_ctx *select_ctx; /* Owning select context -
 					    * needed by deferred (var())
 					    * resolution to reach other
 					    * sheets. Set at state init. */
 	const css_stylesheet *inline_style;
-	/* fixes264 — inline style sheet for the current element, if any.
+	/* fixes264 - inline style sheet for the current element, if any.
 	 * Per-element scope: holds custom-property declarations from
 	 * style="--name: value" attributes. The select_ctx walks doc-level
 	 * sheets only; without this, var() references in author CSS that

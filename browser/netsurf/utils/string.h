@@ -59,7 +59,7 @@ char *strsep(char **stringp, const char *delim);
 #include <stdarg.h>
 
 /* CW8 cannot resolve includes from headers loaded via access path
- * (any include style — bare or path-prefixed silently fails to open
+ * (any include style - bare or path-prefixed silently fails to open
  * once we're inside this file). Inline the nserror enum directly,
  * guarded by the same guard utils/errors.h uses, so a later real
  * #include "utils/ns_errors.h" from a primary .c source short-circuits. */

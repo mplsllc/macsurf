@@ -48,7 +48,7 @@ typedef struct {
 	lwc_string *height;
 	lwc_string *prefers_color_scheme;
 	lwc_string *orientation;   /* fixes273 (#52) */
-	lwc_string *portrait;      /* fixes273 (#52) — orientation values */
+	lwc_string *portrait;      /* fixes273 (#52) - orientation values */
 	lwc_string *landscape;     /* fixes273 (#52) */
 } css_select_strings;
 

@@ -147,7 +147,7 @@ void font_plot_style_from_css(
 	fstyle->families = families;
 
 	css_computed_font_size(css, &length, &unit);
-	/* fixes859 (#287) — DEVICE PIXELS, not points.
+	/* fixes859 (#287) - DEVICE PIXELS, not points.
 	 *
 	 * This used css_unit_font_size_len2pt(), and the macos9 plotter feeds
 	 * fstyle->size straight to QuickDraw's TextSize() -- which is a POINT
@@ -283,7 +283,7 @@ void font_plot_style_from_css(
 			fstyle->transform_b = (int)0x01000100;
 		}
 	}
-	/* fixes857 (#286) — the white-to-black clamp is GONE.  It used to read:
+	/* fixes857 (#286) - the white-to-black clamp is GONE.  It used to read:
 	 *     rgb = fstyle->foreground & 0x00ffffff;
 	 *     if (rgb == 0x00000000 || rgb == 0x00ffffff)
 	 *             fstyle->foreground = 0x00000000;

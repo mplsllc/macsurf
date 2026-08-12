@@ -18,7 +18,7 @@ struct content;
 struct lwc_string_s;
 
 /* Ensure the @font-face font file for the given CSS font-family is fetched and
- * disk-cached (and, once bytes are held, parsed). Cheap to call per text run —
+ * disk-cached (and, once bytes are held, parsed). Cheap to call per text run  - 
  * does real work only the first time a family is seen. */
 void macos9_webfont_ensure(struct content *content,
 		struct lwc_string_s *family);

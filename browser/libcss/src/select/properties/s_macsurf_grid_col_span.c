@@ -38,7 +38,7 @@ css_error css__cascade_macsurf_grid_col_span(uint32_t opv,
 			advance_bytecode(style, sizeof(css_fixed));
 			/* fixes158: accept the full packed int32 verbatim.
 			 * Negative values are treated as unset. No upper
-			 * clamp — the placement bits in the high bytes are
+			 * clamp - the placement bits in the high bytes are
 			 * load-bearing now. */
 			if (span < 0) span = 0;
 		}
@@ -83,7 +83,7 @@ css_error css__compose_macsurf_grid_col_span(
 {
 	/* fixes158: grid placement is per-item, not inherited from
 	 * parent. Child's value wins outright. (Previously the fixes151
-	 * implementation fell back to parent when child was 0 — harmless
+	 * implementation fell back to parent when child was 0 - harmless
 	 * when col-span was only ever set on grid items, but with full
 	 * placement we MUST NOT inherit `grid-column: 2` from a flex/grid
 	 * parent into all its children.) */

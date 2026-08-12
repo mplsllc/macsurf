@@ -20,7 +20,7 @@
  * Custom-property definitions themselves (e.g. ":root { --platinum-bg:
  * #ddd; }") are captured during parse into each stylesheet's
  * custom_properties list regardless of which selector scope they
- * appeared in (a conscious simplification — treat every --name as
+ * appeared in (a conscious simplification - treat every --name as
  * globally scoped for the owning stylesheet).
  */
 
@@ -145,7 +145,7 @@ const css_cp_entry *css__sheet_find_custom_property(
 void css__cp_entry_list_destroy(css_cp_entry *head);
 
 
-/* fixes267 — doc-global inline-extras custom-property table.
+/* fixes267 - doc-global inline-extras custom-property table.
  * Public API declared in <libcss/select.h>: css_inline_extras_register_sheet()
  * and css_inline_extras_clear(). */
 
@@ -196,7 +196,7 @@ bool css__value_contains_var(const parserutils_vector *vec, int32_t ctx);
  * \param origin_sheet The stylesheet that owns the declaration (used
  *                     for propstrings and as first lookup scope).
  * \param ctx        Select context (provides other sheets).
- * \param state      Current select state — cascade writes into it.
+ * \param state      Current select state - cascade writes into it.
  */
 css_error css__deferred_decl_resolve(const css_deferred_decl *dd,
 		const struct css_stylesheet *origin_sheet,

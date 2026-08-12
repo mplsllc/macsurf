@@ -1,5 +1,5 @@
 /*
- * MacSurf — macsurf_qjs_audit.h
+ * MacSurf  -  macsurf_qjs_audit.h
  *
  * Performance counters and diagnostic emitters for the QuickJS engine.
  * Extracted from macsurf_qjs.c (2026-08-05 cleanup Phase 2).
@@ -81,16 +81,16 @@ extern int  g_pn_logged;
 extern long g_js_exec_count;
 extern long g_js_exec_bytes;
 extern long g_js_exec_fail;
-extern long g_js_skip_count;     /* fixes1141 — scripts skipped (size cap) */
-extern long g_js_timeout_count;  /* fixes1141 — scripts aborted (deadline) */
+extern long g_js_skip_count;     /* fixes1141  -  scripts skipped (size cap) */
+extern long g_js_timeout_count;  /* fixes1141  -  scripts aborted (deadline) */
 
-/* R1.3 — per-script census, the `LIFE SCRIPT CENSUS` lines.
+/* R1.3  -  per-script census, the `LIFE SCRIPT CENSUS` lines.
  *
  * One entry per script execution, written by qjs_census_note() in
  * macsurf_qjs.c at the point the outcome is known (js_exec's compile/run
  * split, js_exec_module's single eval).  macsurf_qjs_page_js_summary()
  * emits one LIFE SCRIPT CENSUS line per entry right after the JS PAGE
- * line, then clears the array — the clear happens THERE and not in
+ * line, then clears the array  -  the clear happens THERE and not in
  * macsurf_qjs_audit_reset(), because js_newheap (which calls audit_reset)
  * runs per browser_window AND per (i)frame, and an iframe created
  * mid-parse would wipe the main document's entries before the page

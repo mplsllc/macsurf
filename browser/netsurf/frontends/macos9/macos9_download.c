@@ -1,8 +1,8 @@
 /*
- * MacSurf — Mac OS 9 frontend for NetSurf
- * macos9_download.c — gui_download_table callbacks + download manager
+ * MacSurf  -  Mac OS 9 frontend for NetSurf
+ * macos9_download.c  -  gui_download_table callbacks + download manager
  *
- * fixes645 — download manager V2.
+ * fixes645  -  download manager V2.
  *
  * ── Why V1 (fixes313) was broken on real hardware ──────────────────
  * V1 opened a modal Navigation Services save dialog (NavPutFile) from
@@ -75,7 +75,7 @@ static void dl_mgr_progress(void);   /* fwd: dl_cancel calls it */
 #endif
 
 #ifdef __MACOS9__
-/* Map a NetSurf MIME string to a Mac type/creator pair. Best-effort —
+/* Map a NetSurf MIME string to a Mac type/creator pair. Best-effort  - 
  * anything not recognised falls back to 'BINA' / '????'. */
 static void
 macos9_download_mime_to_type(const char *mime,
@@ -114,10 +114,10 @@ macos9_download_mime_to_type(const char *mime,
  * This is the LAST stop before FSMakeFSSpec/FSpCreate, so it hard-guards
  * both classic-HFS failure modes itself rather than trusting callers:
  *   - hard-truncate to 31 bytes (HFS leaf limit; a >31 name is paramErr).
- *     NOTE: was 63 (Str63's capacity) — wrong for a filename, and the
+ *     NOTE: was 63 (Str63's capacity)  -  wrong for a filename, and the
  *     source of BadPerimeter/paramErr(-50) reports when a long or
  *     un-truncated name slipped through.
- *   - replace ':' (the HFS path separator — illegal in a leaf), '/', and
+ *   - replace ':' (the HFS path separator  -  illegal in a leaf), '/', and
  *     control chars with '-'.
  * Str63 has room for 31 comfortably. */
 static void
@@ -191,12 +191,12 @@ dl_unique_spec(short vRef, long dirID, char *leaf, size_t leaf_cap,
 		if (strlen(trial) > 31) trial[31] = '\0';
 		macos9_download_cstr_to_p63(trial, pn);
 		err = FSMakeFSSpec(vRef, dirID, pn, out);
-		if (err == fnfErr) {              /* free slot — use it */
+		if (err == fnfErr) {              /* free slot  -  use it */
 			dl_strlcpy(leaf, trial, leaf_cap);
 			return noErr;
 		}
 		if (err != noErr) return err;     /* real error */
-		/* else exists — try next suffix */
+		/* else exists  -  try next suffix */
 	}
 	return dupFNErr;
 }
@@ -326,11 +326,11 @@ static void dl_mgr_show(void)
 	SelectWindow(g_dl_mgr_win);
 }
 
-/* fixes883 — public entry point for the View > Downloads menu item.
+/* fixes883  -  public entry point for the View > Downloads menu item.
  *
  * The download manager is a real Carbon window (live byte counts, per-row
  * Cancel, completed-row eviction), but dl_mgr_show was static and its only
- * caller was the start-a-download path -- so the window was reachable ONLY by
+ * caller was the start-a-download path - so the window was reachable ONLY by
  * starting a download, and there was no way back to it once closed. The
  * plumbing was finished; only discoverability was missing. */
 void macos9_download_mgr_show(void)
@@ -365,7 +365,7 @@ static void dl_list_evict(void)
 		prev = nd;
 		nd = nd->dl_next;
 	}
-	if (victim == NULL) return;      /* all active — keep them */
+	if (victim == NULL) return;      /* all active  -  keep them */
 	if (victim_prev == NULL)
 		g_dl_list = victim->dl_next;
 	else
@@ -482,12 +482,13 @@ macos9_download_create(struct download_context *ctx,
 	suggested = download_context_get_filename(ctx);
 	mime = download_context_get_mime_type(ctx);
 	total_ll = download_context_get_total_length(ctx);
-	/* fixes767 (#133) — a navigation became a DOWNLOAD instead of rendering.
+	/* fixes767 (#133)  -  a navigation became a DOWNLOAD instead of rendering.
 	 * Log the MIME (RECON survives the failures-only gate) so a "site X
-	 * downloaded instead of showing" report reveals the exact content-type
-	 * that had no handler. text/plain now renders inline via the real
-	 * textplain handler (#233, fixes1137); reaching here with a text/plain
-	 * mime means Content-Disposition: attachment forced it. */
+	 * downloaded instead of showing" report (e.g. Hacker News login) reveals
+	 * the exact content-type that had no handler. text/plain is the prime
+	 * suspect: MacSurf has no textplain handler (misc_stub.c), so any
+	 * text/plain response  -  including HN's rate-limit "Sorry." 429  -  falls
+	 * through to here. */
 	macsurf_debug_log_writef("RECON DL mime=%s file=%s",
 		mime ? mime : "(null)", suggested ? suggested : "(null)");
 	if (total_ll > 0xFFFFFFFFu)

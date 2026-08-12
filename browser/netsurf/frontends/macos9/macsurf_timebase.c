@@ -1,14 +1,14 @@
 /*
- * macsurf_timebase.c -- PowerPC Time Base register access.
+ * macsurf_timebase.c - PowerPC Time Base register access.
  *
  * Provides:
- *   macsurf_tb_read()          -- atomic 64-bit TBL/TBU read
- *   macsurf_tb_calibrate()     -- TickCount-boundary frequency calibration
- *   macsurf_tb_to_us()         -- interval to microseconds
- *   macsurf_tb_ticks_per_us()  -- raw calibration value
- *   macsurf_tb_elapsed_ms()    -- ms since calibration (monotonic)
- *   macsurf_date_get_now()  -- Date.now() backend (ms since epoch)
- *   macsurf_monotonic_ms()  -- performance.now() backend (monotonic ms)
+ *   macsurf_tb_read()          - atomic 64-bit TBL/TBU read
+ *   macsurf_tb_calibrate()     - TickCount-boundary frequency calibration
+ *   macsurf_tb_to_us()         - interval to microseconds
+ *   macsurf_tb_ticks_per_us()  - raw calibration value
+ *   macsurf_tb_elapsed_ms()    - ms since calibration (monotonic)
+ *   macsurf_date_get_now()  - Date.now() backend (ms since epoch)
+ *   macsurf_monotonic_ms()  - performance.now() backend (monotonic ms)
  *
  * The PPC Time Base (TBL SPR 268, TBU SPR 269) ticks at bus_speed/4 and
  * is readable from user mode without any Toolbox call.  On a 66 MHz-bus

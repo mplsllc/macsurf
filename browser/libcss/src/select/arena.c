@@ -190,18 +190,18 @@ static inline bool css__arena_style_is_equal(
 		return false;
 	}
 
-	/* fixes365b — diagonal/3-stop gradient extension. */
+	/* fixes365b - diagonal/3-stop gradient extension. */
 	if (!arena__compare_macsurf_gradient_stops(
 			a->macsurf_gradient_stops,
 			b->macsurf_gradient_stops)) {
 		return false;
 	}
 
-	/* fixes361b — second box-shadow scalar. */
+	/* fixes361b - second box-shadow scalar. */
 	if (a->box_shadow_2 != b->box_shadow_2) {
 		return false;
 	}
-	/* fixes362 — third box-shadow scalar. */
+	/* fixes362 - third box-shadow scalar. */
 	if (a->box_shadow_3 != b->box_shadow_3) {
 		return false;
 	}
@@ -285,7 +285,7 @@ enum css_error css__arena_remove_style(struct css_computed_style *style)
 		struct css_computed_style *existing = NULL;
 		struct css_computed_style *prev = NULL;
 
-		/* fixes899 (MacSurf) — unlink by POINTER IDENTITY, not by value.
+		/* fixes899 (MacSurf) - unlink by POINTER IDENTITY, not by value.
 		 * The caller (css_computed_style_destroy) is removing the exact
 		 * style it is about to free(), so that precise pointer must leave
 		 * the table. The old css__arena_style_is_equal() value-match could

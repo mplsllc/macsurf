@@ -8,7 +8,7 @@
  * defined by the time libparserutils' headers get to use them. */
 #include "stdint.h"
 
-/* printf format macros — guarded to avoid redefinition */
+/* printf format macros  -  guarded to avoid redefinition */
 #ifndef PRId16
 #define PRId16 "d"
 #endif
@@ -40,7 +40,7 @@
 #define PRIxPTR "lx"
 #endif
 
-/* size_t/ssize_t format macros — CW8 PPC uses unsigned long for size_t */
+/* size_t/ssize_t format macros  -  CW8 PPC uses unsigned long for size_t */
 #ifndef PRIsizet
 #define PRIsizet "lu"
 #endif

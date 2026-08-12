@@ -4164,7 +4164,7 @@ error:
 
 
 /* exported interface documented in content/urldb.h */
-/* fixes879 — INVARIANT: this function gathers matching cookies in FOUR separate
+/* fixes879 - INVARIANT: this function gathers matching cookies in FOUR separate
  * loops (exact path, path-prefix, `p` itself for Path=/foo, and domain
  * cookies). EVERY one of them must apply the same three filters -- expired,
  * secure-on-insecure, and HttpOnly -- before it does matched_cookies[count++].
@@ -4305,7 +4305,7 @@ char *urldb_get_cookie(nsurl *url, bool include_http_only)
 					 * => ignore */
 					continue;
 
-				/* fixes879 — HttpOnly gate. See the note at the
+				/* fixes879 - HttpOnly gate. See the note at the
 				 * head of the exact-path loop above: this loop
 				 * was missing it, so a path-prefix cookie (i.e.
 				 * the ordinary Path=/ case) was handed out even
@@ -4357,7 +4357,7 @@ char *urldb_get_cookie(nsurl *url, bool include_http_only)
 				 * => ignore */
 				continue;
 
-			/* fixes879 — HttpOnly gate; this loop was missing it. */
+			/* fixes879 - HttpOnly gate; this loop was missing it. */
 			if (c->http_only && !include_http_only)
 				continue;
 
@@ -4395,7 +4395,7 @@ char *urldb_get_cookie(nsurl *url, bool include_http_only)
 				/* secure cookie for insecure host. ignore */
 				continue;
 
-			/* fixes879 — HttpOnly gate; this loop was missing it.
+			/* fixes879 - HttpOnly gate; this loop was missing it.
 			 * Domain cookies are where session tokens usually live,
 			 * so this is the most consequential of the three. */
 			if (c->http_only && !include_http_only)

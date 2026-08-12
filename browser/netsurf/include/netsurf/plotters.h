@@ -38,7 +38,7 @@ typedef unsigned long bitmap_flags_t;
 #define BITMAPF_NONE 0
 #define BITMAPF_REPEAT_X 1
 #define BITMAPF_REPEAT_Y 2
-/* fixes829 (#256): CSS image-rendering:pixelated/crisp-edges — force the
+/* fixes829 (#256): CSS image-rendering:pixelated/crisp-edges - force the
  * plotter to nearest-neighbor scaling (skip the box-filter downscale). */
 #define BITMAPF_NEAREST 4
 

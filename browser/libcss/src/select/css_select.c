@@ -1305,7 +1305,7 @@ css_error css_select_style(css_select_ctx *ctx, void *node,
 	/* So that cascade_style can resolve deferred (var()) declarations
 	 * against custom-property tables in sibling stylesheets. */
 	state.select_ctx = ctx;
-	state.inline_style = inline_style;   /* fixes264 — see header */
+	state.inline_style = inline_style;   /* fixes264 - see header */
 
 	/* Fetch presentational hints */
 	error = handler->node_presentational_hint(pw, node, &nhints, &hints);
@@ -2743,7 +2743,7 @@ css_error match_detail(css_select_ctx *ctx, void *node,
 		} else if (detail->qname.name == ctx->str.after) {
 			*pseudo_element = CSS_PSEUDO_ELEMENT_AFTER;
 		} else if (detail->qname.name == ctx->str.marker) {
-			/* fixes358 (#70) — ::marker V1: hoist styles to the
+			/* fixes358 (#70) - ::marker V1: hoist styles to the
 			 * base element. CSS_PSEUDO_ELEMENT_MARKER doesn't
 			 * exist in the pseudo-element storage (would require
 			 * bumping CSS_PSEUDO_ELEMENT_COUNT and structural
@@ -2757,7 +2757,7 @@ css_error match_detail(css_select_ctx *ctx, void *node,
 		} else if (detail->qname.name == ctx->str.placeholder ||
 				detail->qname.name ==
 				ctx->str.file_selector_button) {
-			/* fixes359 (#71) — ::placeholder and
+			/* fixes359 (#71) - ::placeholder and
 			 * ::file-selector-button V1: accept as known pseudo
 			 * elements so author CSS does not error; mark as
 			 * non-matching so the rules are silently dropped (no

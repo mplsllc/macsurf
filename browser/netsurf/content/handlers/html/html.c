@@ -72,14 +72,14 @@ extern void macos9_schedule_cancel_owner(void *p);
 #endif
 
 long macos9_html_bytes_processed = 0;
-/* fixes560 — per-load reformat sequence counter.  Reset to 0 at
+/* fixes560 - per-load reformat sequence counter.  Reset to 0 at
  * parse-convert-done (start of a page's reformat cycle) and incremented at
  * each html_reformat entry, so the timestamped log shows the reflow storm
  * explicitly: "reformat #1 ... #15" with each one's begin-stamp lets the
  * per-reformat cost (ms_after-ms_before, already in the SITE line) be read
  * against the count.  See project_mactrove_reflow_storm. */
 static long macos9_html_reformat_seq = 0;
-/* fixes848 (#167 perf investigation) — wall-clock span of box construction
+/* fixes848 (#167 perf investigation) - wall-clock span of box construction
  * + per-element CSS cascade (dom_to_box is an incremental, self-rescheduling
  * walk, so its own synchronous return does NOT mean it finished -- the true
  * completion signal is the html_box_convert_done callback). Set at the
@@ -119,11 +119,11 @@ static const char *html_types[] = {
 	"text/html"
 };
 
-/* fixes1015 — defined below, next to html_proceed_to_done; called from
+/* fixes1015 - defined below, next to html_proceed_to_done; called from
  * html_box_convert_done (ready), html_proceed_to_done (done) and
  * html_reconvert_done (reconvert). */
 void html_pagemap_dump(html_content *c, const char *when);
-/* fixes1093 — the targeted `.featured-slides` subtree probe. Same three call
+/* fixes1093 - the targeted `.featured-slides` subtree probe. Same three call
  * sites as the pagemap. */
 void html_slider_probe(html_content *c, const char *when);
 
@@ -149,7 +149,7 @@ static bool fire_dom_event(dom_event *event, dom_node *target)
 	return result;
 }
 
-/* fixes990 — the layout extent as it stood BEFORE the 1,000,000 clamp, so the
+/* fixes990 - the layout extent as it stood BEFORE the 1,000,000 clamp, so the
  * split-scrollbar diagnostic can see the value the clamp destroys. */
 static int g_macsurf_pre_clamp_dx1 = 0;
 
@@ -253,7 +253,7 @@ bool fire_dom_keyboard_event(dom_string *type, dom_node *target,
 	return result;
 }
 
-/* fixes850 (#167 perf investigation) — cheap iterative box-tree counter
+/* fixes850 (#167 perf investigation) - cheap iterative box-tree counter
  * for the WORK log below. Iterative (explicit stack via the sibling/child
  * pointers already on struct box), not recursive: this must not add its
  * own stack-depth risk to a diagnostic for a stack-depth-adjacent
@@ -294,7 +294,7 @@ static void html_box_convert_done(html_content *c, bool success)
 
 	NSLOG(netsurf, INFO, "DOM to box conversion complete (content %p)", c);
 	macsurf_debug_log_writef("fc: box_convert_done entered (success=%d)", (int)success);
-	/* fixes848 (#167 perf investigation) — WORK-prefixed pipeline
+	/* fixes848 (#167 perf investigation) - WORK-prefixed pipeline
 	 * checkpoint. A hardware log against a heavy Facebook page showed
 	 * NAV: content_ready fire and then nothing at all until the app
 	 * appeared to hang -- every intermediate line in this pipeline
@@ -307,7 +307,7 @@ static void html_box_convert_done(html_content *c, bool success)
 		extern double macos9_micros(void);
 		double elapsed_us = (s_convert_start_us > 0.0) ?
 				(macos9_micros() - s_convert_start_us) : -1.0;
-		/* fixes850 (#167 perf investigation) — the fixes849 hardware log
+		/* fixes850 (#167 perf investigation) - the fixes849 hardware log
 		 * showed layout's call count climbing steadily into the millions
 		 * with bounded recursion depth (21-30) -- real work, not a hang,
 		 * but that alone doesn't say whether 1.5M+ calls is proportionate
@@ -447,7 +447,7 @@ static void html_box_convert_done(html_content *c, bool success)
 }
 
 /* ====================================================================== */
-/* fixes1015 — PAGEMAP: the DOM <-> box-tree <-> render audit.
+/* fixes1015 - PAGEMAP: the DOM <-> box-tree <-> render audit.
  *
  * "Entire sections are missing" has four different causes with four different
  * fixes, and aggregate logs cannot tell them apart:
@@ -461,7 +461,7 @@ static void html_box_convert_done(html_content *c, bool success)
  * side by side answers which class a vanished section fell into.
  * All LIFE-prefixed; budgeted per session. */
 
-/* fixes1028 — THE RIVER PROBE, on for this round only.
+/* fixes1028 - THE RIVER PROBE, on for this round only.
  *
  * Chrome, at MacSurf's own 993px viewport, gives hackaday's article river
  * ASIDE#recent-posts-2 h=1893 with each LI 206-236 tall. MacSurf's OWN
@@ -473,10 +473,10 @@ static void html_box_convert_done(html_content *c, bool success)
  * are distinguishable: text boxes present with a tiny font is a font-size
  * bug, text boxes absent is a construction bug, and correct font with short
  * boxes is neither. */
-/* fixes1032 — OFF. It did its job: it is what showed entry-intro kids=0 and
+/* fixes1032 - OFF. It did its job: it is what showed entry-intro kids=0 and
  * turned a layout hunt into a DOM-deletion hunt. Define MACSURF_PAGEMAP (or
  * MACSURF_JS_AUDIT) to bring it back for the next structural question. */
-/* fixes1086 — BACK ON, for exactly that: the next structural question.
+/* fixes1086 - BACK ON, for exactly that: the next structural question.
  *
  * hackaday's hero/featured story does not render. It survived reverting the
  * whole prototype migration AND turning geometry off, and the page is back to
@@ -558,7 +558,7 @@ static void html_pagemap_brief(dom_node *n, char *out, int cap)
 
 #define HTML_PAGEMAP_SANE(v) (((v) < 0 || (v) >= 1000000) ? 0 : (v))
 
-/* fixes1017 — per-dump line budget: the walk is recursive now (three levels,
+/* fixes1017 - per-dump line budget: the walk is recursive now (three levels,
  * always descending containers), so a hard cap bounds the worst page. */
 static int macsurf_pagemap_line_budget = 0;
 
@@ -603,7 +603,7 @@ static int html_pagemap_line(dom_node *n, int depth, int *susp_out)
 			css_unit fu = CSS_UNIT_PX;
 			disp = (css_computed_display_static(b->style) ==
 					CSS_DISPLAY_NONE) ? "NONE" : "ok";
-			/* fixes1028 — the computed font size, in whatever unit
+			/* fixes1028 - the computed font size, in whatever unit
 			 * the cascade settled on. A correct page here reads
 			 * ~17px on body text and ~30px on the river's h2. */
 			if (css_computed_font_size(b->style, &fs, &fu) ==
@@ -653,7 +653,7 @@ static void html_pagemap_walk(dom_node *n, int depth)
 		int susp = 0;
 		kids = html_pagemap_line(n, depth, &susp);
 		if (kids == 0) return;
-		/* fixes1028 — depth 6 unconditionally: the river's own LI and
+		/* fixes1028 - depth 6 unconditionally: the river's own LI and
 		 * its h2/p sit at body>#page>#content>#primary>main>aside>ul>li,
 		 * and every earlier dump stopped above them. */
 		if (depth >= 8) return;
@@ -678,7 +678,7 @@ static void html_pagemap_walk(dom_node *n, int depth)
 }
 
 /* ====================================================================== */
-/* fixes1093 — THE SLIDER PROBE.
+/* fixes1093 - THE SLIDER PROBE.
  *
  * Three rounds have now guessed at why hackaday's featured slider collapses,
  * and every one of them was argued from code-reading rather than a number off
@@ -721,7 +721,7 @@ static void html_pagemap_walk(dom_node *n, int depth)
 
 static int macsurf_slider_line_budget = 0;
 
-/* fixes1093 — every subtree line this probe emits, counted. Harness Test 55
+/* fixes1093 - every subtree line this probe emits, counted. Harness Test 55
  * asserts on it: a probe that silently walks nothing reads as "the widget is
  * fine" when it means "the probe is broken", which is how the compiled-out
  * fixes1019 resize hid for ten rounds. */
@@ -753,7 +753,7 @@ static void html_slider_attr(dom_node *n, const char *name, char *out, int cap)
 	dom_string_unref(nm);
 }
 
-/* fixes1096 — tag-name filter for html_slider_find (case-insensitive).
+/* fixes1096 - tag-name filter for html_slider_find (case-insensitive).
  * Lets the probe ask for "the section whose class carries 'featured'"
  * instead of whatever element happens to match the class first. */
 static int html_slider_is_tag(dom_node *n, const char *tag)
@@ -902,7 +902,7 @@ void html_slider_probe(html_content *c, const char *when)
 		macsurf_debug_log_writef(
 			"LIFE SLIDER[%s] .featured-slides NOT IN DOM", when);
 
-		/* fixes1096 — WHY is it missing? One "NOT IN DOM" line cannot
+		/* fixes1096 - WHY is it missing? One "NOT IN DOM" line cannot
 		 * tell three worlds apart:
 		 *   (a) the markup never arrived or was never parsed;
 		 *   (b) the markup WAS there and a script removed it;
@@ -997,7 +997,7 @@ void html_pagemap_dump(html_content *c, const char *when)
 	dom_node *nx = NULL;
 	int shown = 0;
 
-	/* fixes1017 — per-NAVIGATION dump cap (a fresh "ready" refills it), so
+	/* fixes1017 - per-NAVIGATION dump cap (a fresh "ready" refills it), so
 	 * the dotdotdot-style 1s reconvert ticker cannot spend the whole
 	 * session budget re-dumping an unchanged page: ready + done + the
 	 * first four reconverts tell the story. Session cap stays as the
@@ -1006,16 +1006,16 @@ void html_pagemap_dump(html_content *c, const char *when)
 
 	if (c == NULL || c->document == NULL) return;
 #if !defined(MACSURF_JS_AUDIT) && !defined(MACSURF_PAGEMAP)
-	/* fixes1024 — the pagemap is DIAGNOSTIC and every line is a synchronous
+	/* fixes1024 - the pagemap is DIAGNOSTIC and every line is a synchronous
 	 * write + volume flush. Off unless explicitly asked for.
-	 * fixes1028 — MACSURF_PAGEMAP is its own gate (defined below, ON for
+	 * fixes1028 - MACSURF_PAGEMAP is its own gate (defined below, ON for
 	 * this round) so the river probe reaches the field without turning the
 	 * whole JS audit back on. */
 	(void) when;
 	return;
 #endif
 	if (strcmp(when, "ready") == 0) nav_dumps = 0;
-	/* fixes1093 — stays at 3. The whole-page pagemap is context; the
+	/* fixes1093 - stays at 3. The whole-page pagemap is context; the
 	 * targeted html_slider_probe carries this round's question and has its
 	 * own (larger) per-nav budget, so there is no reason to spend log
 	 * volume re-dumping the entire document. */
@@ -1062,7 +1062,7 @@ void html_pagemap_dump(html_content *c, const char *when)
 	macsurf_debug_log_writef(
 		"LIFE pagemap[%s] ---- body sections (tag#id.class kids box y w h disp)",
 		when);
-	/* fixes1016 — the <html> element's own line first: its CLASS LIST is
+	/* fixes1016 - the <html> element's own line first: its CLASS LIST is
 	 * where page-state machines live (Typekit's wf-loading/wf-active,
 	 * XenForo's has-js, no-js themes), and whether those ever resolve is
 	 * exactly what the audit needs to answer. */
@@ -1100,7 +1100,7 @@ html_proceed_to_done(html_content *html)
 	switch (content__get_status(&html->base)) {
 	case CONTENT_STATUS_READY:
 		if (html->base.active == 0) {
-			/* fixes881 (Phase 0.7) — THE load event, and the only one.
+			/* fixes881 (Phase 0.7) - THE load event, and the only one.
 			 * This is the READY->DONE transition: the box tree exists
 			 * (html_box_convert_done ran) and base.active has fallen to
 			 * 0, so every subresource has settled. That is precisely
@@ -1110,7 +1110,7 @@ html_proceed_to_done(html_content *html)
 			 * page in the same state a real browser would.
 			 * js_fire_window_load is idempotent per realm: object.c can
 			 * call this function repeatedly as subresources land. */
-			/* fixes1022 — quiesced by default: firing load woke
+			/* fixes1022 - quiesced by default: firing load woke
 			 * dotdotdot/slick-class widgets that measure-then-
 			 * mutate, and without Phase 3's synchronous layout they
 			 * degrade the page (truncated articles, collapsed
@@ -1140,18 +1140,18 @@ html_proceed_to_done(html_content *html)
 }
 
 
-/* fixes615 (webfonts, Item 1) — resolve a CSS font-family name to a
+/* fixes615 (webfonts, Item 1) - resolve a CSS font-family name to a
  * downloadable @font-face src URL we can rasterize (raw sfnt / OpenType /
  * WOFF), joined against the document base. Returns a NEW nsurl ref (caller
  * unrefs) or NULL if the family has no usable @font-face URI rule.
  *
  * libcss fully parses @font-face and exposes css_select_font_faces(), but
  * nothing in NetSurf ever calls it, so downloadable webfonts (how modern
- * sites ship icon fonts — FontAwesome, Material Design) never render. This
+ * sites ship icon fonts - FontAwesome, Material Design) never render. This
  * lives in core because it needs the html content's own select ctx / media /
  * unit ctx. The macos9 frontend calls it during paint (see macos9_webfont.c)
- * and fetches the returned URL. WOFF2 (format UNKNOWN) is converted to raw
- * sfnt by the frontend (macos9_woff2.c + Brotli) before parsing. */
+ * and fetches the returned URL. WOFF2 (format UNKNOWN) is skipped - it needs
+ * Brotli, which is out of scope. */
 struct nsurl *html_macsurf_font_face_url(struct content *c, lwc_string *family)
 {
 	html_content *htmlc = (html_content *) c;
@@ -1174,19 +1174,17 @@ struct nsurl *html_macsurf_font_face_url(struct content *c, lwc_string *family)
 		int pass;
 
 		css_font_face_count_srcs(ff, &nsrc);
-		/* Tiered preference: the macos9 rasterizer parses RAW sfnt, so
-		 * prefer a "truetype"/"opentype" src (a bare .ttf/.otf) — libcss
-		 * maps both to _OPENTYPE. Fall back to WOFF2 (format UNKNOWN;
-		 * Brotli-inflated to raw sfnt by macos9_woff2.c), then an
-		 * unhinted src (magic-validated at parse time), then WOFF (zlib;
-		 * still rejected at parse — kept as a future hook).
-		 * Never pick EOT or SVG. Multi-pass so the .ttf wins even when
-		 * the CSS lists woff/woff2 first. */
-		for (pass = 0; pass < 4 && out == NULL; pass++) {
+		/* Tiered preference: the macos9 rasterizer only parses RAW sfnt
+		 * (no zlib inflate), so prefer a "truetype"/"opentype" src (a
+		 * bare .ttf/.otf) - libcss maps both to _OPENTYPE. Fall back to
+		 * an unhinted src (magic-validated at parse time), then WOFF
+		 * (zlib; presently rejected at parse - kept as a future hook).
+		 * Never pick EOT, SVG, or UNKNOWN/woff2 (Brotli, out of scope).
+		 * Two-pass so the .ttf wins even when the CSS lists woff first. */
+		for (pass = 0; pass < 3 && out == NULL; pass++) {
 			css_font_face_format want =
 				(pass == 0) ? CSS_FONT_FACE_FORMAT_OPENTYPE :
-				(pass == 1) ? CSS_FONT_FACE_FORMAT_UNKNOWN :
-				(pass == 2) ? CSS_FONT_FACE_FORMAT_UNSPECIFIED :
+				(pass == 1) ? CSS_FONT_FACE_FORMAT_UNSPECIFIED :
 				              CSS_FONT_FACE_FORMAT_WOFF;
 			for (i = 0; i < nsrc && out == NULL; i++) {
 				const css_font_face_src *src = NULL;
@@ -1225,7 +1223,7 @@ static void html_get_dimensions(html_content *htmlc)
 	 * media.height=21845). */
 	unsigned w = 0;
 	unsigned h = 0;
-	/* MacSurf: C89 unions can't use designated initializers — populate
+	/* MacSurf: C89 unions can't use designated initializers - populate
 	 * the .getdims branch via assignment. */
 	union content_msg_data msg_data;
 
@@ -1237,7 +1235,7 @@ static void html_get_dimensions(html_content *htmlc)
 #ifdef __MACOS9__
 	/* fixes612: if GETDIMS delivered nothing (content not yet bound to a
 	 * browser_window at CSS-select time), w/h are still 0 and every width
-	 * media query collapses to the mobile branch — the reason
+	 * media query collapses to the mobile branch - the reason
 	 * tinkerdifferent's desktop two-column layout never applied. Fall back
 	 * to the real front-window content size (device px) so @media resolves
 	 * against the actual viewport. */
@@ -1265,47 +1263,19 @@ static void html_get_dimensions(html_content *htmlc)
 	 * media queries naturally match the desktop branch. */
 	htmlc->media.width  = w;
 	htmlc->media.height = h;
-	/* fixes273 (#52) — derive orientation from viewport dims so
+	/* fixes273 (#52) - derive orientation from viewport dims so
 	 * @media (orientation: landscape) / (orientation: portrait)
 	 * evaluates correctly. Without this, orientation defaults to
 	 * PORTRAIT (0) regardless of the actual window size. */
 	htmlc->media.orientation = (w > h) ?
 			CSS_MEDIA_ORIENTATION_LANDSCAPE :
 			CSS_MEDIA_ORIENTATION_PORTRAIT;
-#ifdef __MACOS9__
-	/* fixes1151: the unit_len_ctx viewport must be the real frontend
-	 * viewport, not the GETDIMS-derived w/h.  Mirrors the html_reformat
-	 * site (fixes1150): viewport-relative CSS units (vh, vw) and calc()
-	 * vh/vw operands must resolve against the actual front window, which
-	 * GETDIMS can miss when the content is unattached or bound to a
-	 * non-front window at select time.  media.width/height stay on the
-	 * GETDIMS w/h (fixes124: media queries must not be lied to). */
-	{
-		extern void macos9_frontend_viewport(int *vw, int *vh);
-		int vw = 0;
-		int vh = 0;
-
-		macos9_frontend_viewport(&vw, &vh);
-		if (vw > 0 && vh > 0) {
-			htmlc->unit_len_ctx.viewport_width =
-				css_unit_device2css_px(INTTOFIX(vw), device_dpi);
-			htmlc->unit_len_ctx.viewport_height =
-				css_unit_device2css_px(INTTOFIX(vh), device_dpi);
-		} else {
-			htmlc->unit_len_ctx.viewport_width  = w;
-			htmlc->unit_len_ctx.viewport_height = h;
-		}
-	}
-#else
 	htmlc->unit_len_ctx.viewport_width  = w;
 	htmlc->unit_len_ctx.viewport_height = h;
-#endif
 	htmlc->unit_len_ctx.device_dpi = device_dpi;
 	macsurf_debug_log_writef(
-		"LIFE VPORT finish: media w=%d h=%d unit_ctx vw=%d vh=%d",
-		(int)FIXTOINT(w), (int)FIXTOINT(h),
-		(int)FIXTOINT(htmlc->unit_len_ctx.viewport_width),
-		(int)FIXTOINT(htmlc->unit_len_ctx.viewport_height));
+		"LIFE VPORT finish: w=%d h=%d",
+		(int)FIXTOINT(w), (int)FIXTOINT(h));
 
 	/** \todo Change nsoption font sizes to px. */
 	f_size = FDIV(FMUL(F_96, FDIV(INTTOFIX(nsoption_int(font_size)), F_10)), F_72);
@@ -1320,7 +1290,7 @@ static void html_get_dimensions(html_content *htmlc)
 	 * (max-width:900) branch bakes into the cascade and the desktop
 	 * two-column layout never applies even in a 949px window.
 	 *
-	 * fixes858 (#287 probe) — re-prefixed "WORK " so it survives the
+	 * fixes858 (#287 probe) - re-prefixed "WORK " so it survives the
 	 * failures-only log gate (macsurf_debug_log.c drops anything not
 	 * whitelisted; the old prefix meant this line has been invisible on
 	 * every default build), and widened to carry the whole em chain.
@@ -1408,7 +1378,7 @@ void html_finish_conversion(html_content *htmlc)
 	}
 
 
-	/* fixes881 (Phase 0.7) — the `load` fire that used to sit HERE is gone.
+	/* fixes881 (Phase 0.7) - the `load` fire that used to sit HERE is gone.
 	 *
 	 * It ran ~30 lines BEFORE dom_to_box below, so `load` was delivered before
 	 * the box tree existed; js_fire_dom_ready (from html_box_convert_done, i.e.
@@ -1532,7 +1502,7 @@ html_create_html_data(html_content *c, const http_parameter *params)
 	c->universal = NULL;
 	c->num_objects = 0;
 	c->object_list = NULL;
-	c->img_eager_budget = 10;	/* fixes932 — eager above-the-fold images */
+	c->img_eager_budget = 10;	/* fixes932 - eager above-the-fold images */
 	c->forms = NULL;
 	c->imagemaps = NULL;
 	c->bw = NULL;
@@ -1552,20 +1522,20 @@ html_create_html_data(html_content *c, const http_parameter *params)
 
 	c->enable_scripting = nsoption_bool(enable_javascript);
 #ifdef __MACOS9__
-	/* fixes852 (#167) — m.facebook.com is FB's no-JS feature-phone
-	 * surface (KaiOS UA — the reliable login + new-device-checkpoint
+	/* fixes852 (#167) - m.facebook.com is FB's no-JS feature-phone
+	 * surface (KaiOS UA - the reliable login + new-device-checkpoint
 	 * path; see the role split in macos9_fetch.c: KaiOS on m, FF134 on
 	 * www). Phase 1 completed login there with FB's JS effectively inert
 	 * (fetch/XHR were dead stubs). fixes846 made those bundles run for
 	 * real, and on hardware the notification-2FA approval stopped
-	 * completing — the log shows FB's ~550KB of JS executing on the
+	 * completing - the log shows FB's ~550KB of JS executing on the
 	 * two_factor page, ZERO xhr/fetch, ZERO reconvert, and c_user/xs
 	 * never issued (login parked at the checkpoint). The m. surface is
 	 * DESIGNED to work without scripting; running FB's modern JS there
 	 * only invites a JS-app flow that half-works. Force scripting OFF for
 	 * m.facebook.com so the plain-HTML login/checkpoint flow (and any
 	 * <noscript> fallback, which hubbub only parses to real DOM when
-	 * scripting is off — in_head.c:147) run as they did pre-Phase-2.
+	 * scripting is off - in_head.c:147) run as they did pre-Phase-2.
 	 * www.facebook.com (the feed, which NEEDS JS) is unaffected. */
 	if (c->base_url != NULL) {
 		lwc_string *hcomp = nsurl_get_component(c->base_url, NSURL_HOST);
@@ -1753,7 +1723,7 @@ html_create(const content_handler *handler,
 		macsurf__site_blocker = 0;
 	}
 #endif
-	/* fixes267 — clear the doc-global inline-extras custom-property
+	/* fixes267 - clear the doc-global inline-extras custom-property
 	 * table at the start of every new HTML document so element-scoped
 	 * --custom-prop declarations from the previous page don't bleed
 	 * into the new one. */
@@ -1947,7 +1917,7 @@ html_process_data(struct content *c, const char *data, unsigned int size)
 		macos9_html_head_len = copy;
 	}
 	{
-		/* fixes640 — accumulate HTML tokenize CPU per chunk. fixes640a:
+		/* fixes640 - accumulate HTML tokenize CPU per chunk. fixes640a:
 		 * inline <script> runs SYNCHRONOUSLY inside parse_chunk (parser
 		 * script callback -> js_exec), and JS is bracketed separately, so
 		 * subtract the JS that ran during this chunk to keep parse = pure
@@ -2053,7 +2023,7 @@ bool html_can_begin_conversion(html_content *htmlc)
 
 	/* Cannot begin conversion if we're still fetching stuff */
 	macsurf_debug_log_int("active fetches", (long)htmlc->base.active);
-	/* fixes727 — the live fetch count no longer hijacks the title bar; the
+	/* fixes727 - the live fetch count no longer hijacks the title bar; the
 	 * Netscape-style animated puffin throbber (right of the nav bar) now
 	 * signals load activity instead. Keep the file-log line above for
 	 * diagnostics. */
@@ -2241,7 +2211,7 @@ html_begin_conversion(html_content *htmlc)
 	 * <html> BEFORE the cascade. Modernizr/XenForo gate their JS-enabled
 	 * styling behind a .has-js/.js class that a page script normally sets; we
 	 * HAVE JS (QuickJS), so setting it here means the progressive-enhancement
-	 * CSS applies on FIRST paint with no re-cascade — fixing the grey XenForo
+	 * CSS applies on FIRST paint with no re-cascade - fixing the grey XenForo
 	 * account-nav + search boxes and hiding aria-hidden dropdown menus. A
 	 * single "no-js"->"js" pass handles both "has-no-js"->"has-js" and a bare
 	 * "no-js"->"js" token, and only shrinks the string so clen+1 always fits. */
@@ -2432,13 +2402,13 @@ static void html_stop(struct content *c)
  */
 
 /* ----------------------------------------------------------------- */
-/* fixes383 (M2) — JS->DOM->render: re-convert after DOM mutation.     */
+/* fixes383 (M2) - JS->DOM->render: re-convert after DOM mutation.     */
 /* Rebuild the disposable box tree from the (JS-mutated, persistent)   */
 /* DOM and repaint. Guards prevent the three crash hazards the design  */
 /* review caught (docs/research/js-dom-render-plan.md).                */
 /* ----------------------------------------------------------------- */
 
-/* fixes899 (MacSurf) — restore the two initial-build CSS preconditions the
+/* fixes899 (MacSurf) - restore the two initial-build CSS preconditions the
  * reconvert was silently violating (the real reconvert-crash root cause, found
  * by a 3-agent architecture study; Layer 1 of the reconvert-incremental work):
  *
@@ -2491,11 +2461,11 @@ static long html_reconvert_reset_css_state(html_content *c)
 	dom_node *root = NULL;
 	long cleared = 0;
 
-	/* (B) — mirror the initial-build NULL; html_reformat re-sets it after
+	/* (B) - mirror the initial-build NULL; html_reformat re-sets it after
 	 * layout, so this is the correct state at cascade start. */
 	c->unit_len_ctx.root_style = NULL;
 
-	/* (A) — release every element's stale pass-1 libcss node data. */
+	/* (A) - release every element's stale pass-1 libcss node data. */
 	if (c->document != NULL &&
 			dom_document_get_document_element(c->document,
 				(void *) &root) == DOM_NO_ERR && root != NULL) {
@@ -2514,7 +2484,7 @@ static void html_reconvert_clear_node_boxes(html_content *c)
 	struct box *b = c->layout;
 	struct box *root_parent = (b != NULL) ? b->parent : NULL;
 	void *old = NULL;
-	/* fixes889 — DIAGNOSTIC. This walk descends children/next ONLY, but a box
+	/* fixes889 - DIAGNOSTIC. This walk descends children/next ONLY, but a box
 	 * can also be reachable solely via float_children/next_float or
 	 * list_marker (box_construct sets marker->parent and box->list_marker,
 	 * and never puts the marker in children). Those boxes are NOT visited
@@ -2574,7 +2544,7 @@ static void html_reconvert_detach_forms(html_content *c)
 	}
 }
 
-/* fixes843 (#167 S2) — pin the OLD tree's text-node dom_strings across the
+/* fixes843 (#167 S2) - pin the OLD tree's text-node dom_strings across the
  * teardown+rebuild window, the same way fixes421 already defers the OLD box
  * CONTEXT to protect shared/interned CSS styles. The gap fixes421 left open:
  * a JS mutation (React/FB feed churn, or a XenForo script) can drop a live
@@ -2597,7 +2567,7 @@ struct macsurf_pinned_string {
 
 static struct macsurf_pinned_string *g_reconvert_pinned_strings = NULL;
 
-/* fixes896 — pin the DOM's live text-node dom_strings across the reconvert
+/* fixes896 - pin the DOM's live text-node dom_strings across the reconvert
  * teardown+rebuild window. Returns the count pinned.
  *
  * fixes843 INTENDED exactly this but walked the BOX tree for `BOX_TEXT` boxes
@@ -2688,7 +2658,7 @@ static void html_reconvert_release_pinned_strings(void)
 }
 
 /* ====================================================================== */
-/* fixes1095 (#265 Round C1) — WHERE THE 1.7 SECONDS GOES.
+/* fixes1095 (#265 Round C1) - WHERE THE 1.7 SECONDS GOES.
  *
  * Round B made the synchronous flush legal before DONE and hardware answered:
  * `JSSYNC flush=2 declined=1247 us=3353022` -- it fires, it works
@@ -2754,7 +2724,7 @@ void html_reconvert_phase_reset(void)
 	g_reconv_ph_n = 0;
 }
 
-/* fixes1095 — read the phase accumulators. Mirrors macos9_reconvert_sync_stats,
+/* fixes1095 - read the phase accumulators. Mirrors macos9_reconvert_sync_stats,
  * which exists for the same reason: a counter only anyone can READ can be
  * asserted on, and an instrument nothing asserts on is how a false green
  * survives (N_ELEMENTS, foreground_images, the fixes1070 clock). */
@@ -2827,7 +2797,7 @@ void html_reconvert_phase_report(void)
  * Single-window browser => one re-convert at a time; file-scope is safe. */
 static void *g_reconvert_old_bctx = NULL;
 
-/* fixes889 — reconvert sequence + the layout pointer each one installed.
+/* fixes889 - reconvert sequence + the layout pointer each one installed.
  * The click crash (box_for_node -> freed box -> illegal instruction) and a
  * reconvert are invisible to each other in the log today, so there is no way
  * to tell from a crash report whether a reconvert had just swapped the tree
@@ -2836,14 +2806,14 @@ static void *g_reconvert_old_bctx = NULL;
 unsigned long macsurf_reconvert_seq = 0;
 void *macsurf_reconvert_last_layout = NULL;
 
-/* fixes895 — the reconvert-crash hunt gate. Non-zero ONLY between the START of
+/* fixes895 - the reconvert-crash hunt gate. Non-zero ONLY between the START of
  * a re-convert and html_reconvert_done, so the dense per-node breadcrumbs in
  * box_construct.c's shared dom_to_box path fire during a reconvert but NOT on
  * every cold page load (which uses the same convert_xml_to_box_inner). Read via
  * extern in box_construct.c. */
 int macsurf_reconvert_in_progress = 0;
 
-/* fixes1127 — reentrancy depth for html_reconvert() itself, DISTINCT from
+/* fixes1127 - reentrancy depth for html_reconvert() itself, DISTINCT from
  * macsurf_reconvert_in_progress above. That flag is deliberately cleared
  * (line ~3228, in html_reconvert_done) BEFORE the synchronous resize/load JS
  * fire, for reasons unrelated to this guard (JS-freeze gating in
@@ -2858,7 +2828,7 @@ int macsurf_reconvert_in_progress = 0;
  * g_reconvert_old_bctx, c->box_conversion_context) a second time. */
 static int g_html_reconvert_depth = 0;
 
-/* fixes895 — durable "furthest position" marker + phase-scoped eager flush,
+/* fixes895 - durable "furthest position" marker + phase-scoped eager flush,
  * defined in macsurf_debug_log.c (local extern, matching this file's existing
  * `extern void macsurf_debug_log_writef` pattern). */
 extern void macsurf_debug_log_reconv_flush(int on);
@@ -2868,12 +2838,12 @@ extern void macsurf_reconv_pos_flush(void);
 extern long macsurf_free_mem(void);
 
 /*
- * fixes910 (Phase 0) — opaque dom_node refcount shims for the macos9 frontend's
+ * fixes910 (Phase 0) - opaque dom_node refcount shims for the macos9 frontend's
  * reconvert pending table.
  *
  * The frontend records WHICH node a JS binding mutated so later phases can do
  * less work than a full rebuild. It holds that node across the ~400ms debounce,
- * and JS may remove and free the node inside that window — so the reference is
+ * and JS may remove and free the node inside that window - so the reference is
  * mandatory, not defensive. Storing a raw dom_node* there would be the same
  * stale-pointer shape as the box_for_node and iframe->box crashes.
  *
@@ -2896,14 +2866,14 @@ void macsurf_reconvert_node_unref(void *n)
 	}
 }
 
-/* fixes921 — runtime kill switch for the re-link (step 4). 0 restores the old
+/* fixes921 - runtime kill switch for the re-link (step 4). 0 restores the old
  * free-and-re-fetch behaviour exactly -- but still through
  * html_object_free_objects, so the fallback can never lose the fixes429/501x
  * teardown ordering. */
 static int g_object_relink_enabled = 1;
 
 /**
- * fixes921 — re-attach surviving image objects to the rebuilt box tree.
+ * fixes921 - re-attach surviving image objects to the rebuilt box tree.
  *
  * Called from html_reconvert_done AFTER dom_to_box and BEFORE
  * html_reconvert_free_old, i.e. while the old tree is still alive, so each
@@ -2926,7 +2896,7 @@ static int g_object_relink_enabled = 1;
  * reconvert build is SYNCHRONOUS (fixes903): no event-loop turn happens
  * between H2 and here, so no hlcache callback can fire and dereference one.
  */
-/* fixes1094 (#265 Round B) — is there an in-flight object this reconvert would
+/* fixes1094 (#265 Round B) - is there an in-flight object this reconvert would
  * FREE?
  *
  * The fixes421 guard blocks a reconvert whenever `base.active > 0`, on the
@@ -2976,7 +2946,7 @@ static void html_reconvert_relink_objects(html_content *c)
 	struct content_html_object *o;
 	unsigned int n_keep = 0;
 	int relinked = 0, inflight = 0, retired = 0;
-	/* fixes928 — PARTITION the retirements. relinked=0/retired=12 on
+	/* fixes928 - PARTITION the retirements. relinked=0/retired=12 on
 	 * macintoshgarden and relinked=0/retired=80 on hackaday, while 68kmla
 	 * relinked 12 in the same session, is the squish -- but "retired" alone
 	 * cannot say WHICH branch dropped them, and the two candidates want
@@ -2987,8 +2957,8 @@ static void html_reconvert_relink_objects(html_content *c)
 	 * the line already being emitted -- no new lines, no I/O. */
 	int rt_disabled = 0, rt_nonimage = 0, rt_background = 0;
 	int rt_nobox = 0, rt_nonode = 0, rt_unresolved = 0;
-	int rt_dedup = 0;   /* fixes973b — duplicate display slot collapsed */
-	int kept_nobox = 0; /* fixes976 — box-less entries CARRIED, not retired */
+	int rt_dedup = 0;   /* fixes973b - duplicate display slot collapsed */
+	int kept_nobox = 0; /* fixes976 - box-less entries CARRIED, not retired */
 
 	if (c == NULL) {
 		return;
@@ -3007,7 +2977,7 @@ static void html_reconvert_relink_objects(html_content *c)
 		 * object->box->object_params, so they must not outlive it.
 		 * permitted_types is set at fetch time and needs no content deref,
 		 * so in-flight entries classify correctly too. */
-		/* fixes972 (lifecycle Stage 1) — backgrounds are no longer
+		/* fixes972 (lifecycle Stage 1) - backgrounds are no longer
 		 * retired here. The old gate excluded o->background on the theory
 		 * (comment above) that backgrounds carry object_params talloc'd
 		 * against the OLD bctx. That is false for CSS backgrounds:
@@ -3038,7 +3008,7 @@ static void html_reconvert_relink_objects(html_content *c)
 
 		if (newbox == NULL) {
 			if (o->box == NULL && o->content != NULL) {
-				/* fixes976 (lifecycle Stage 1) — KEEP a box-less
+				/* fixes976 (lifecycle Stage 1) - KEEP a box-less
 				 * entry instead of retiring it.
 				 *
 				 * These are speculative fetches
@@ -3094,7 +3064,7 @@ static void html_reconvert_relink_objects(html_content *c)
 
 		o->box = newbox;
 
-		/* fixes972/973b (lifecycle Stage 1) — DEDUPE, preferring the
+		/* fixes972/973b (lifecycle Stage 1) - DEDUPE, preferring the
 		 * DECODED copy, so keeping objects neither leaks nor twitches.
 		 *
 		 * A reconvert re-runs box construction, which calls
@@ -3136,7 +3106,7 @@ static void html_reconvert_relink_objects(html_content *c)
 				int k_done = (k->content != NULL &&
 					content_get_status(k->content) ==
 						CONTENT_STATUS_DONE);
-				/* fixes977 — prefer-DONE is only right when both
+				/* fixes977 - prefer-DONE is only right when both
 				 * copies are the SAME image. If the URLs differ,
 				 * the element's image CHANGED (JS rewrote src or
 				 * the background), and the list is ordered
@@ -3195,7 +3165,7 @@ static void html_reconvert_relink_objects(html_content *c)
 			struct box *b;
 
 			if (o->background) {
-				/* fixes972 — a background attaches to the box's
+				/* fixes972 - a background attaches to the box's
 				 * background slot, not its object slot, and needs
 				 * none of the replaced-box (table/dim/clone)
 				 * handling below, which is specific to <img>-style
@@ -3238,7 +3208,7 @@ static void html_reconvert_relink_objects(html_content *c)
 	c->num_objects = n_keep;
 
 	if (relinked || inflight || retired) {
-		/* fixes928 — the why= partition sums to retired= by construction.
+		/* fixes928 - the why= partition sums to retired= by construction.
 		 * Which term is non-zero picks the fix: nonimage/background means
 		 * the SCOPE gate is rejecting real images; unresolved means
 		 * box_for_node cannot find the new box (ordering or keying);
@@ -3263,7 +3233,7 @@ static void html_reconvert_free_old(void)
 	html_reconvert_release_pinned_strings();
 	if (g_reconvert_old_bctx != NULL) {
 		MS_LOG("reconvert: FREE old tree");
-		/* fixes889 — THE window that matters. This frees the OLD box tree
+		/* fixes889 - THE window that matters. This frees the OLD box tree
 		 * AFTER dom_to_box has already built the new one, so every box
 		 * destructed here belongs to a dead tree while the DOM nodes now
 		 * point at LIVE boxes.
@@ -3302,13 +3272,13 @@ static void html_reconvert_done(html_content *c, bool success)
 	nserror err;
 
 	c->box_conversion_context = NULL;
-	/* fixes895 — the box build finished (or failed); this brackets the dark
+	/* fixes895 - the box build finished (or failed); this brackets the dark
 	 * async span. A crash BEFORE this line was in dom_to_box; a crash AFTER it
 	 * is in free_old / imagemap / reformat / first-paint. */
 	macsurf_reconv_pos_set("html_reconvert_done", (long) macsurf_reconvert_seq,
 			0, "");
 	macsurf_reconv_pos_flush();
-	/* fixes843b (#167 S1 census) — WORK-gated: only reachable via the
+	/* fixes843b (#167 S1 census) - WORK-gated: only reachable via the
 	 * facebook.com-gated path (macos9_js_mark_dom_dirty), so naturally
 	 * rate-limited; not filtered by the failures-only release gate. */
 	macsurf_reconvert_last_layout = (void *) c->layout;
@@ -3328,7 +3298,7 @@ static void html_reconvert_done(html_content *c, bool success)
 			html_reconvert_free_old(); /* don't leak the deferred old tree */
 			html_reconv_ph_add(RECONV_PH_FREEOLD, t0);
 		}
-		/* fixes895 — disarm the hunt: the async span is over. */
+		/* fixes895 - disarm the hunt: the async span is over. */
 		macsurf_reconvert_in_progress = 0;
 		macsurf_debug_log_writef("LIFE reconvert in_progress=0 seq=%ld (done-failed)",
 				(long) macsurf_reconvert_seq);
@@ -3339,7 +3309,7 @@ static void html_reconvert_done(html_content *c, bool success)
 		return;
 	}
 
-	/* New tree is live + laid out — NOW free the old one. Shared styles
+	/* New tree is live + laid out - NOW free the old one. Shared styles
 	 * survive via their refcount held by the new tree. */
 	{	/* fixes1095 */
 		double t0 = html_reconv_now();
@@ -3365,14 +3335,14 @@ static void html_reconvert_done(html_content *c, bool success)
 	macsurf_reconv_pos_set("content__reformat", (long) macsurf_reconvert_seq,
 			0, "");
 	macsurf_reconv_pos_flush();
-	{	/* fixes1095 — REFORMAT (cascade + layout + first paint) */
+	{	/* fixes1095 - REFORMAT (cascade + layout + first paint) */
 		double t0 = html_reconv_now();
 		content__reformat(&c->base, false,
 				c->base.available_width, c->base.available_height);
 		html_reconv_ph_add(RECONV_PH_REFORMAT, t0);
 	}
 
-	/* fixes895 — the full cycle repainted without a crash. Disarm. */
+	/* fixes895 - the full cycle repainted without a crash. Disarm. */
 	macsurf_debug_log_writef(
 			"WORK reconvert #%ld: first-paint OK", (long) macsurf_reconvert_seq);
 	macsurf_reconvert_in_progress = 0;
@@ -3382,7 +3352,7 @@ static void html_reconvert_done(html_content *c, bool success)
 	html_pagemap_dump(c, "reconvert"); /* fixes1015 */
 	html_slider_probe(c, "reconvert"); /* fixes1093 */
 
-	/* fixes1019 — a reconvert that CHANGED the document height fires one
+	/* fixes1019 - a reconvert that CHANGED the document height fires one
 	 * `resize` at window. The featured-slider class of widget (slick,
 	 * dotdotdot, masonry) reshapes the DOM and then MEASURES to size
 	 * itself; in this engine those init-time reads honestly answer
@@ -3393,7 +3363,7 @@ static void html_reconvert_done(html_content *c, bool success)
 	 * geometry settled, is the standard hook through which they converge.
 	 * Height-change-gated so a layout that stabilised goes quiet instead
 	 * of ping-ponging with the reconvert debounce forever. */
-/* fixes1090 — ITS OWN SWITCH, and ON.
+/* fixes1090 - ITS OWN SWITCH, and ON.
  *
  * fixes1022 quiesced this under MACSURF_JS_FIRE_LOAD, which is not defined
  * on the Mac. So fixes1019 -- which was written for, and verified against,
@@ -3417,7 +3387,7 @@ static void html_reconvert_done(html_content *c, bool success)
 #endif
 #if MACSURF_JS_RECONVERT_RESIZE
 	{
-		/* fixes1090 — track the height PER CONTENT. last_resize_h was a
+		/* fixes1090 - track the height PER CONTENT. last_resize_h was a
 		 * bare static shared across every document in the session, so a
 		 * page whose height happened to match the previous page's would
 		 * silently skip its convergence resize. Keyed on the content
@@ -3434,7 +3404,7 @@ static void html_reconvert_done(html_content *c, bool success)
 				(int)c->base.height);
 			(void) js_fire_event(c->js_thread, "resize",
 					c->document, NULL);
-			/* fixes1090b — `resize` alone was still a no-op for the
+			/* fixes1090b - `resize` alone was still a no-op for the
 			 * hackaday slider: the REAL slick.js (harness/
 			 * hackaday-bundle.js:933-942) gates its resize handler on
 			 * `$(window).width() !== _.windowWidth` before it will call
@@ -3478,7 +3448,7 @@ nserror html_reconvert(html_content *c)
 
 	if ((c == NULL) || (c->document == NULL) || (c->aborted))
 		return NSERROR_OK;
-	/* fixes1094 (#265 Round B) — READY is now enough; it no longer has to be
+	/* fixes1094 (#265 Round B) - READY is now enough; it no longer has to be
 	 * DONE.
 	 *
 	 * DONE means "the load finished". What a reconvert actually needs is "a
@@ -3494,7 +3464,7 @@ nserror html_reconvert(html_content *c)
 	 * are still landing and re-laying-out the page. */
 	{
 		content_status st = content__get_status(&c->base);
-		/* fixes1096 (#265 Round C3) — LOADING is allowed too, and this is
+		/* fixes1096 (#265 Round C3) - LOADING is allowed too, and this is
 		 * the case the hackaday header actually needs.
 		 *
 		 * End-of-body scripts measure mid-parse: hardware has the theme
@@ -3529,7 +3499,7 @@ nserror html_reconvert(html_content *c)
 		return NSERROR_NEED_DATA;        /* never free boxes mid-layout */
 	if (c->box_conversion_context != NULL)
 		return NSERROR_NEED_DATA;        /* one re-convert in flight    */
-	/* fixes1127 — reentrancy guard. box_conversion_context above only blocks
+	/* fixes1127 - reentrancy guard. box_conversion_context above only blocks
 	 * a SECOND reconvert while the first is still mid-dom_to_box; it does NOT
 	 * block one triggered from INSIDE html_reconvert_done's synchronous
 	 * resize/load JS fire, because that fire happens after
@@ -3550,7 +3520,7 @@ nserror html_reconvert(html_content *c)
 		return NSERROR_NEED_DATA;
 	}
 	g_html_reconvert_depth++;
-	/* fixes1105 (#265) — THE reconvert bug, proven on hardware.
+	/* fixes1105 (#265) - THE reconvert bug, proven on hardware.
 	 *
 	 * Without a select context there is no cascade, and libcss rejects the
 	 * very first css_select_style() call with CSS_BADPARM (its guard is
@@ -3574,51 +3544,21 @@ nserror html_reconvert(html_content *c)
 	 * precondition here returns, and it leaves the caller's debounce free to
 	 * retry once the context exists. The mutations are not lost -- the
 	 * initial conversion is still to come and builds the tree from the
-	 * mutated DOM.
-	 *
-	 * fixes1158 — LAZY CREATION: if the base stylesheet has already landed
-	 * (stylesheets[STYLESHEET_BASE].sheet != NULL), create the selection
-	 * context HERE — the same html_css_new_selection_context call
-	 * finish_conversion uses — so the reconvert can proceed instead of
-	 * deferring for the rest of the load (hardware: every pre-finish
-	 * reconvert on hackaday deferred, 103/103). finish_conversion's own
-	 * select_ctx != NULL guard then skips its creation + dom_to_box exactly
-	 * as it does for a stylesheet re-entry, and the tree built by this
-	 * reconvert stands. Only while the base sheet is still in flight — or
-	 * when the creation itself fails — does the NEED_DATA defer below
-	 * remain. */
-	if (c->select_ctx == NULL &&
-	    c->stylesheets != NULL &&
-	    c->stylesheets[STYLESHEET_BASE].sheet != NULL) {
-		error = html_css_new_selection_context(c, &c->select_ctx);
-		if (error != NSERROR_OK) {
-			/* creation failed (OOM etc.) — same transient defer as
-			 * every other precondition; the debounced retry tries
-			 * again once the sheet state settles. */
-			macsurf_debug_log_writef(
-				"LIFE reconvert: lazy select_ctx create failed err=%d",
-				(int) error);
-			g_html_reconvert_depth--;	/* fixes1127 */
-			return NSERROR_NEED_DATA;
-		}
-		macsurf_debug_log_writef(
-			"LIFE reconvert: select_ctx created lazily (pre-"
-			"finish_conversion), proceeding");
-	}
+	 * mutated DOM. */
 	if (c->select_ctx == NULL) {
 		macsurf_debug_log_writef(
-			"LIFE reconvert: defer — no select_ctx yet (pre-"
+			"LIFE reconvert: defer - no select_ctx yet (pre-"
 			"finish_conversion); cascade would fail CSS_BADPARM");
 		g_html_reconvert_depth--;	/* fixes1127 */
 		return NSERROR_NEED_DATA;
 	}
-	/* fixes421 — quiesce guard: if sub-resource fetches (images, CSS) are
+	/* fixes421 - quiesce guard: if sub-resource fetches (images, CSS) are
 	 * still in flight, html_object_callback holds a pw pointer into
 	 * object_list entries that html_object_free_objects is about to free.
-	 * In cooperative MT the callback fires on the next event-loop pass —
-	 * after our free — causing a use-after-free in html_object_done.
+	 * In cooperative MT the callback fires on the next event-loop pass -
+	 * after our free - causing a use-after-free in html_object_done.
 	 *
-	 * fixes1094 (#265 Round B) — NARROWED to the entries that are still
+	 * fixes1094 (#265 Round B) - NARROWED to the entries that are still
 	 * actually freed. `base.active > 0` was far too coarse for two reasons,
 	 * and together they made it block every reconvert on a loading page:
 	 *
@@ -3635,7 +3575,7 @@ nserror html_reconvert(html_content *c)
 	 * it cites. */
 	if (c->base.active > 0 && html_reconvert_has_droppable_inflight(c)) {
 		macsurf_debug_log_writef(
-			"LIFE reconvert: defer — %ld active, droppable in flight",
+			"LIFE reconvert: defer - %ld active, droppable in flight",
 			(long) c->base.active);
 		g_html_reconvert_depth--;	/* fixes1127 */
 		return NSERROR_NEED_DATA;
@@ -3653,7 +3593,7 @@ nserror html_reconvert(html_content *c)
 			macsurf_free_mem());
 	}
 
-	/* fixes895 — arm the hunt for the ENTIRE async span (from here through
+	/* fixes895 - arm the hunt for the ENTIRE async span (from here through
 	 * html_reconvert_done). in_progress makes box_construct.c's shared
 	 * dom_to_box path emit its dense per-node breadcrumbs only during a
 	 * reconvert; reconv_flush forces each breadcrumb to disk so a hard bomb
@@ -3669,7 +3609,7 @@ nserror html_reconvert(html_content *c)
 	macsurf_reconv_pos_flush();
 
 	/* HAZARD guards BEFORE freeing the box tree (order matters). */
-	/* fixes891 — clear the stored hover/active DOM nodes. They are cleared on
+	/* fixes891 - clear the stored hover/active DOM nodes. They are cleared on
 	 * reformat (html_reformat) but were NOT cleared on reconvert. They are
 	 * dom_nodes, and the JS mutation that triggered THIS reconvert may have
 	 * removed the very node one of them holds -- leaving a dangling dom_node
@@ -3678,13 +3618,13 @@ nserror html_reconvert(html_content *c)
 	 * fixes445 clears them in html_reformat. */
 	c->dyn_hover_node = NULL;
 	c->dyn_active_node = NULL;
-	{	/* fixes1095 — H1 */
+	{	/* fixes1095 - H1 */
 		double t0 = html_reconv_now();
 		g_reconv_ph_n++;
 		html_reconvert_clear_node_boxes(c);  /* H1: stale node boxes */
 		html_reconv_ph_add(RECONV_PH_H1, t0);
 	}
-	/* fixes921 — H2 NO LONGER FREES THE OBJECT LIST.
+	/* fixes921 - H2 NO LONGER FREES THE OBJECT LIST.
 	 *
 	 * Releasing every image handle here is what made a reconvert lose its
 	 * images: box->object goes NULL, and layout only sizes an <img> at
@@ -3710,7 +3650,7 @@ nserror html_reconvert(html_content *c)
 	macsurf_debug_log_writef(
 		"WORK reconvert #%ld: H2 objects freed active=%d",
 		(long) macsurf_reconvert_seq, (int) c->base.active);
-	{	/* fixes1095 — H3 */
+	{	/* fixes1095 - H3 */
 		double t0 = html_reconv_now();
 		html_reconvert_detach_forms(c);      /* H3: form box pointers */
 		imagemap_destroy(c);                 /* rebuilt in done       */
@@ -3723,7 +3663,7 @@ nserror html_reconvert(html_content *c)
 		"WORK reconvert #%ld: H3 forms+imagemap+selection reset",
 		(long) macsurf_reconvert_seq);
 
-	/* fixes899 — restore the initial-build CSS preconditions BEFORE re-cascade:
+	/* fixes899 - restore the initial-build CSS preconditions BEFORE re-cascade:
 	 * release every element's stale pass-1 libcss node data (so the second
 	 * cascade cannot share freed pass-1 styles) and NULL the stale root_style.
 	 * Placed here while the OLD box tree is still alive, so releasing a
@@ -3733,7 +3673,7 @@ nserror html_reconvert(html_content *c)
 	 * real reconvert-crash fix (Layer 1); the fixes889-898 guards were
 	 * scaffolding around this un-restored precondition. */
 	{
-		double t0 = html_reconv_now();	/* fixes1095 — CSS */
+		double t0 = html_reconv_now();	/* fixes1095 - CSS */
 		long ncleared = html_reconvert_reset_css_state(c);
 		html_reconv_ph_add(RECONV_PH_CSS, t0);
 		macsurf_debug_log_writef(
@@ -3741,13 +3681,13 @@ nserror html_reconvert(html_content *c)
 			" root_style=NULL", (long) macsurf_reconvert_seq, ncleared);
 	}
 
-	/* fixes896 — pin the DOM's live text-node dom_strings across the rebuild
+	/* fixes896 - pin the DOM's live text-node dom_strings across the rebuild
 	 * window. Was fixes843, which walked c->layout (the box tree) for BOX_TEXT
 	 * boxes with a node backlink that box_construct never sets -> pinned 0 ->
 	 * the fixes489 UAF stayed open. Walk c->document, the real source
 	 * box_construct_text reads. */
 	{
-		double t0 = html_reconv_now();	/* fixes1095 — PIN */
+		double t0 = html_reconv_now();	/* fixes1095 - PIN */
 		long pinned = html_reconvert_pin_text_strings(c->document);
 		html_reconv_ph_add(RECONV_PH_PIN, t0);
 		macsurf_debug_log_writef(
@@ -3768,7 +3708,7 @@ nserror html_reconvert(html_content *c)
 	c->bctx = NULL;
 	c->layout = NULL;
 
-	/* fixes915 — THE IFRAME LIST DIES WITH THE OLD bctx. Drop it here.
+	/* fixes915 - THE IFRAME LIST DIES WITH THE OLD bctx. Drop it here.
 	 *
 	 * content_html_iframe records are talloc CHILDREN of bctx
 	 * (box_special.c: talloc(content->bctx, struct content_html_iframe), and
@@ -3806,7 +3746,7 @@ nserror html_reconvert(html_content *c)
 			"WORK reconvert #%ld: doc_element FAILED exc=%d",
 			(long) macsurf_reconvert_seq, (int) exc);
 		html_reconvert_free_old();
-		/* fixes895 — disarm: html_reconvert_done will never run. */
+		/* fixes895 - disarm: html_reconvert_done will never run. */
 		macsurf_reconvert_in_progress = 0;
 		macsurf_debug_log_writef("LIFE reconvert in_progress=0 seq=%ld (doc-element-failed)",
 				(long) macsurf_reconvert_seq);
@@ -3821,7 +3761,7 @@ nserror html_reconvert(html_content *c)
 	macsurf_reconv_pos_set("pre-dom_to_box", (long) macsurf_reconvert_seq,
 			0, "");
 	macsurf_reconv_pos_flush();
-	{	/* fixes1095 — BUILD. Synchronous (fixes903), so this bracket also
+	{	/* fixes1095 - BUILD. Synchronous (fixes903), so this bracket also
 		 * contains html_reconvert_done, i.e. relink/freeold/reformat. Those
 		 * subtract themselves out below so `build` reads as construction
 		 * alone. */
@@ -3844,13 +3784,13 @@ nserror html_reconvert(html_content *c)
 			"WORK reconvert #%ld: dom_to_box FAILED err=%d",
 			(long) macsurf_reconvert_seq, (int) error);
 		html_reconvert_free_old();   /* dom_to_box failed: _done won't run */
-		/* fixes895 — disarm: html_reconvert_done will never run. */
+		/* fixes895 - disarm: html_reconvert_done will never run. */
 		macsurf_reconvert_in_progress = 0;
 		macsurf_debug_log_writef("LIFE reconvert in_progress=0 seq=%ld (dom_to_box-failed)",
 				(long) macsurf_reconvert_seq);
 		macsurf_debug_log_reconv_flush(0);
 	}
-	/* fixes1127 — dom_to_box is synchronous (fixes903): whether it succeeded
+	/* fixes1127 - dom_to_box is synchronous (fixes903): whether it succeeded
 	 * (html_reconvert_done, including its resize/load JS fire, already ran
 	 * inside the call above) or failed, the reentrant span is over now. */
 	g_html_reconvert_depth--;
@@ -3862,7 +3802,7 @@ nserror html_reconvert(html_content *c)
  * re-convert without the full html_content type in scope. Returns the nserror
  * as int: 0 = NSERROR_OK (re-convert queued), non-zero = busy/skip (the caller
  * should re-arm). */
-/* fixes1087 (#265) — is the box tree safe to READ from outside layout?
+/* fixes1087 (#265) - is the box tree safe to READ from outside layout?
  *
  * The JS geometry layer gated on CONTENT_STATUS_DONE, and hardware showed
  * that refusing 100% of measurements taken during page load: every log reads
@@ -3901,12 +3841,12 @@ int macsurf_html_tree_stable(struct content *c)
 {
 	html_content *htmlc = (html_content *) c;
 
-	static long budget = 12;	/* fixes1087 — bounded; one per cause */
+	static long budget = 12;	/* fixes1087 - bounded; one per cause */
 	const char *why = NULL;
 
 	if (c == NULL)
 		return 0;
-	/* fixes1097 (#265 Round C3b) — THE THIRD GATE.
+	/* fixes1097 (#265 Round C3b) - THE THIRD GATE.
 	 *
 	 * fixes1096 opened the two gates that BUILD a tree during LOADING
 	 * (html_reconvert and macos9_reconvert_flush_now) and hardware answered
@@ -3959,7 +3899,7 @@ int html_reconvert_content(struct content *c)
 	return (int) html_reconvert((html_content *) c);
 }
 
-/* fixes1094 (#265 Round B) — content* wrapper so the macos9 sync-flush gate can
+/* fixes1094 (#265 Round B) - content* wrapper so the macos9 sync-flush gate can
  * screen on the SAME hazard html_reconvert does. Kept as a thin wrapper next to
  * html_reconvert_content for the same reason that one exists: the frontend must
  * not know the html_content layout. If this and html_reconvert's own guard ever
@@ -3977,7 +3917,7 @@ static void html_reformat(struct content *c, int width, int height)
 	uint64_t ms_before;
 	uint64_t ms_after;
 	uint64_t ms_interval;
-	/* fixes161c — arm the one-shot cascade probe in select.c so the
+	/* fixes161c - arm the one-shot cascade probe in select.c so the
 	 * next nscss_get_style call (if reformat triggers a recascade or
 	 * dynamic style lookup) logs a stage marker. Defined in select.c. */
 	extern int macsurf__cascade_probe_armed;
@@ -3986,7 +3926,7 @@ static void html_reformat(struct content *c, int width, int height)
 	macsurf_debug_log_writef(
 		"html_reformat #%ld: entry w=%d h=%d",
 		macos9_html_reformat_seq, width, height);
-	/* fixes560 — timestamped begin marker so each reformat in the storm is
+	/* fixes560 - timestamped begin marker so each reformat in the storm is
 	 * bracketed in the profile trail (paired with the layout-done stamp at
 	 * exit); the gap between consecutive reformat-begin stamps is the
 	 * inter-reformat network/idle time, the gap to layout-done is the
@@ -3994,7 +3934,7 @@ static void html_reformat(struct content *c, int width, int height)
 	macsurf_profile_stamp("reformat-begin");
 	macsurf__cascade_probe_armed = 1;
 
-	/* fixes383 (M2, JS->DOM->render) — re-convert null-guard. html_reconvert
+	/* fixes383 (M2, JS->DOM->render) - re-convert null-guard. html_reconvert
 	 * frees the old box tree and nulls layout while the async re-convert is
 	 * in flight; a same-pass deferred reformat must NOT deref layout->style
 	 * below until html_reconvert_done rebuilds it. Bail safely. */
@@ -4004,7 +3944,7 @@ static void html_reformat(struct content *c, int width, int height)
 		return;
 	}
 
-	/* fixes930 — did the fixes929 URL->size memo actually do anything?
+	/* fixes930 - did the fixes929 URL->size memo actually do anything?
 	 * stored= grew means images are completing and recording their size;
 	 * hit= grew means box_image found a size and the box was laid out as a
 	 * replaced element rather than as its alt text. A revisit that still
@@ -4026,7 +3966,7 @@ static void html_reformat(struct content *c, int width, int height)
 		}
 	}
 
-	/* fixes934 — the LIFE img ledger. Construct census (how images enter the
+	/* fixes934 - the LIFE img ledger. Construct census (how images enter the
 	 * fetch system) + object ledger (link set/nulled, and the memo-mystery
 	 * disambiguator done_ok/done_zero). One line each per reformat, only when
 	 * a counter moved. Read positionally against NAV / mutcensus / LIFE
@@ -4063,7 +4003,7 @@ static void html_reformat(struct content *c, int width, int height)
 		}
 	}
 
-	/* fixes978 — the object-fetch ledger, replacing the per-fetch objfetch /
+	/* fixes978 - the object-fetch ledger, replacing the per-fetch objfetch /
 	 * objadopt probes of fixes966-977 (one write, and one volume flush, per
 	 * fetch). adopt+renode+specdup is the count of fetches PREVENTED; `fetch`
 	 * is the count that can still reach the network. Read it against the
@@ -4090,7 +4030,7 @@ static void html_reformat(struct content *c, int width, int height)
 		}
 	}
 
-	/* fixes979 — the memory-cache ledger, read against the one above.
+	/* fixes979 - the memory-cache ledger, read against the one above.
 	 * `fetch` there counts retrievals ASKED FOR; `miss` here counts the ones
 	 * that actually went to the network. A page revisit that shows fresh
 	 * climbing and miss flat is the cache doing its job; miss climbing on a
@@ -4126,7 +4066,7 @@ static void html_reformat(struct content *c, int width, int height)
 
 	htmlc->reflowing = true;
 
-	/* fixes1150 — viewport_height must be the WINDOW height, not the
+	/* fixes1150 - viewport_height must be the WINDOW height, not the
 		 * document height. The width/height params of html_reformat are the
 		 * available_width/available_height from the content struct, which
 		 * may be stale or set to the document dimensions. For viewport-
@@ -4170,13 +4110,13 @@ static void html_reformat(struct content *c, int width, int height)
 	 * were still outstanding (undecoded images / not-yet-active fonts each
 	 * measured at 0) collapses cells to min-content (one char per line) and
 	 * overflows their boxes (spurious scrollbars). This re-measures the whole
-	 * tree against now-settled resources exactly once, deterministically —
+	 * tree against now-settled resources exactly once, deterministically -
 	 * fonts have no completion hook of their own, so the settle pass is what
 	 * covers them. */
 	/* Collapse fix (Phase 1) NEUTRALISED (fixes571). The tree-wide minmax
 	 * resettle diverges from the incremental (object.c spine) recompute: on a
 	 * cache-hit RETURN to a page it recomputes the two-column region as
-	 * STACKED (sidebar pushed below the content) — proven in the log where
+	 * STACKED (sidebar pushed below the content) - proven in the log where
 	 * reformat #3's `MINMAX resettle` grows c_h 4543->4642. That is a worse
 	 * regression than the cold-load char-per-line it was meant to fix, so the
 	 * invalidation is disabled pending a redesign (the latch field, the
@@ -4185,7 +4125,7 @@ static void html_reformat(struct content *c, int width, int height)
 
 	MS_LOG("html_reformat: pre-layout_document");
 	{
-		/* fixes366i/j — bracket one layout_document pass. Count
+		/* fixes366i/j - bracket one layout_document pass. Count
 		 * QuickDraw font-measure calls AND capture heap free / largest
 		 * contiguous block before and after, so we can tell whether the
 		 * escalating per-pass cost (5s -> 239s on a stable 1993-box
@@ -4210,7 +4150,7 @@ static void html_reformat(struct content *c, int width, int height)
 		layout_us = (long)(macos9_micros() - t0);
 		free_after = macos9_heap_free_bytes();
 		max_after = macos9_heap_max_block();
-		/* fixes366k/l — one combined line. layout_us = the ACTUAL time
+		/* fixes366k/l - one combined line. layout_us = the ACTUAL time
 		 * inside layout_document (the layout-done stamp delta is
 		 * misleading; it spans inter-reformat network, dominated by TLS
 		 * handshakes on cross-host image fetches). free/maxblk =
@@ -4225,7 +4165,7 @@ static void html_reformat(struct content *c, int width, int height)
 			macos9_font_measure_calls,
 			macos9_font_measure_chars,
 			free_before, free_after, max_before, max_after);
-		/* fixes640 — feed the honest per-load layout accumulator + reflow
+		/* fixes640 - feed the honest per-load layout accumulator + reflow
 		 * count. layout_us is the ACTUAL time inside layout_document (the
 		 * layout-done stamp delta spans inter-reformat network idle). */
 		{
@@ -4256,7 +4196,7 @@ static void html_reformat(struct content *c, int width, int height)
 	 * ~2.1-billion-px content width (the "split scrollbar": a giant empty
 	 * canvas beside the real page). Mirrors the documented redraw.c
 	 * +-200000 defensive-clamp gotcha. */
-	/* fixes990 — remember the PRE-clamp extent. The diagnostic below is
+	/* fixes990 - remember the PRE-clamp extent. The diagnostic below is
 	 * gated on `descendant_x1 > 1000000`, but this clamp runs first and
 	 * pins it to exactly 1000000, so that gate has never once been true:
 	 * the box walk that exists to name the split-scrollbar culprit has
@@ -4285,7 +4225,7 @@ static void html_reformat(struct content *c, int width, int height)
 		(int)layout->x, (int)layout->y,
 		(int)layout->width, (int)layout->height);
 
-	/* fixes624 DIAG — when descendant_x1 blows up to ~INT_MAX (the
+	/* fixes624 DIAG - when descendant_x1 blows up to ~INT_MAX (the
 	 * tinkerdifferent "split": content is 949 wide but one box overflows
 	 * to 2147483647, making the canvas that wide with empty base beside
 	 * the content), walk the tree and log the boxes whose OWN x/width is
@@ -4296,13 +4236,13 @@ static void html_reformat(struct content *c, int width, int height)
 			g_macsurf_pre_clamp_dx1 < -1000000 ||
 			(c->width > 3000 && c->width > width * 2))) {
 		static int td_garbage_dumped = 0;
-		/* fixes990 — announce it whether or not the walk has run before,
+		/* fixes990 - announce it whether or not the walk has run before,
 		 * so a RECURRENCE is visible and not just the first instance.
 		 * "LIFE " because the failures-only gate drops everything else,
 		 * which is why this has been invisible. Anomaly-gated, so a
 		 * healthy page logs nothing.
 		 *
-		 * fixes990b — the width gate is deliberately GENEROUS (twice the
+		 * fixes990b - the width gate is deliberately GENEROUS (twice the
 		 * viewport and over 3000px, rather than 20000): a page that is
 		 * legitimately twice its viewport wide is already worth seeing,
 		 * and the cost of a false positive is one log line, while the
@@ -4343,7 +4283,7 @@ static void html_reformat(struct content *c, int width, int height)
 		}
 	}
 
-	/* fixes1139 DIAG — THE GIANT EMPTY SPACE.
+	/* fixes1139 DIAG - THE GIANT EMPTY SPACE.
 	 *
 	 * Hardware, 68kmla: the document reports h=7750 while the visible content
 	 * (DIV.p-body) ends at y=4683 -- roughly 3000px of blank canvas below the
@@ -4424,13 +4364,13 @@ static void html_reformat(struct content *c, int width, int height)
 		}
 	}
 
-	/* fixes160a — SITE summary line. Emits one compact, grep-friendly
+	/* fixes160a - SITE summary line. Emits one compact, grep-friendly
 	 * line per page reformat with the box-tree counters stashed at
 	 * box_convert time plus the just-computed content dimensions and
 	 * image success/fail counts. Used by the modern-site gauntlet
 	 * (tests/sites/modern_gauntlet.md). HTTP status/bytes/proxy live
 	 * in the `http: done ...` line earlier in the log against the
-	 * matching URL — not folded in here because there are many fetches
+	 * matching URL - not folded in here because there are many fetches
 	 * per page (HTML, CSS, images) and we'd need URL-matching to pick
 	 * the right one. */
 	{
@@ -4461,9 +4401,9 @@ static void html_reformat(struct content *c, int width, int height)
 		nsurl *u = content_get_url(&htmlc->base);
 		const char *url = (u != NULL) ? nsurl_access(u) : "(null)";
 		const char *blocker_name;
-		const unsigned long css_total_cap = 8192UL * 1024UL; /* fixes448 — keep in sync with MACOS9_CSS_TOTAL_BUDGET in cssh_css.c */
+		const unsigned long css_total_cap = 8192UL * 1024UL; /* fixes448 - keep in sync with MACOS9_CSS_TOTAL_BUDGET in cssh_css.c */
 
-		/* fixes268 (#11) — pick the dominant degradation source by
+		/* fixes268 (#11) - pick the dominant degradation source by
 		 * comparing skip counters. Highest-priority counter wins; ties
 		 * resolved in declaration order. heavy=1 latches when any
 		 * skip counter is non-zero (degradation actually happened). */
@@ -4529,7 +4469,7 @@ static void html_reformat(struct content *c, int width, int height)
 	/* calculate next reflow time at three times what it took to reflow */
 	nsu_getmonotonic_ms(&ms_after);
 
-	/* fixes352 (#107) — stash the last reformat duration so about:perf
+	/* fixes352 (#107) - stash the last reformat duration so about:perf
 	 * can render real numbers instead of a placeholder. Single-threaded
 	 * cooperative app; no overlap between pages. */
 #ifdef __MACOS9__
@@ -4683,7 +4623,7 @@ static void html_destroy(struct content *c)
 	macos9_schedule_cancel_owner(html);
 
 	/* If we're still converting a layout, cancel it.
-	 * fixes499g — NULL the context after cancel so a second html_destroy
+	 * fixes499g - NULL the context after cancel so a second html_destroy
 	 * (the double-destroy via hlcache_clean that this whole crash family
 	 * stems from) does not re-cancel an already-freed conversion context.
 	 * cancel_dom_to_box removes the scheduled convert_xml_to_box entry and
@@ -4850,7 +4790,7 @@ static nserror html_close(struct content *c)
 	htmlc->aborted = true;
 
 	/* fixes518: cancel every scheduled callback keyed on this html_content
-	 * here too — html_close runs on navigate-away BEFORE content_destroy, so
+	 * here too - html_close runs on navigate-away BEFORE content_destroy, so
 	 * a deferred_parser_unpause queued during script load could otherwise
 	 * fire in the window between close and destroy. */
 	macos9_schedule_cancel_owner(htmlc);

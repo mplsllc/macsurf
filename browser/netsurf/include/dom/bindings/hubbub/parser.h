@@ -1,5 +1,5 @@
 /*
- * MacSurf wrapper — dom/bindings/hubbub/parser.h
+ * MacSurf wrapper - dom/bindings/hubbub/parser.h
  *
  * Inlined copy of browser/libdom/bindings/hubbub/parser.h.
  * The original wrapper used #include "../../../../bindings/hubbub/parser.h"

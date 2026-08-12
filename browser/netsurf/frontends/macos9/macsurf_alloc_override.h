@@ -1,5 +1,5 @@
 /*
- * MacSurf -- macsurf_alloc_override.h
+ * MacSurf - macsurf_alloc_override.h
  *
  * Forces inclusion of MSL standard library headers and overrides
  * malloc/calloc/realloc with the safe allocator wrappers.

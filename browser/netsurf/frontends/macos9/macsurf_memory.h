@@ -1,5 +1,5 @@
 /*
- * MacSurf -- macsurf_memory.h
+ * MacSurf - macsurf_memory.h
  *
  * Bulletproof allocation wrappers for the NetSurf / QuickJS
  * integration layer. On Classic Mac OS, a NULL dereference from a
@@ -21,7 +21,7 @@
 
 /*
  * Allocate `size` bytes. Returns a valid pointer on success.
- * On failure this function does NOT return -- it halts the
+ * On failure this function does NOT return - it halts the
  * application with a user-visible alert.
  */
 void *macsurf_safe_alloc(size_t size);
@@ -42,7 +42,7 @@ void *macsurf_safe_realloc(void *ptr, size_t size);
  * fixes711 (#207) blank-screen reconnaissance. Both emit 'RECON'
  * lines that survive the crash-only log gate.
  *
- * macsurf_recon_mem(tag): one flushed line -- VM on/off (Gestalt),
+ * macsurf_recon_mem(tag): one flushed line - VM on/off (Gestalt),
  *   FreeMem, MaxBlock (contiguity), Temp + Purge pools. Call it very
  *   early at launch so an early blank still leaves the baseline, and
  *   again per navigation to snapshot the heap before each page.
@@ -59,7 +59,7 @@ void macsurf_recon_note(const char *where, const void *a,
 /*
  * fixes712a (#207) blank-page harness.
  *
- * Poison bytes. Only malloc is poisoned -- calloc's contract is zeroed
+ * Poison bytes. Only malloc is poisoned - calloc's contract is zeroed
  * memory, and the malloc/calloc distinction is exactly what we're testing.
  * Read back through a 32-bit signed field these become:
  *     0xA5A5A5A5 -> -1515870811   (never-initialised memory)
@@ -74,14 +74,14 @@ void macsurf_recon_note(const char *where, const void *a,
 
 /*
  * Called by the redraw defensive clamp when it finds a garbage box field.
- * Until now that clamp silently overwrote the value -- and a zeroed root
+ * Until now that clamp silently overwrote the value - and a zeroed root
  * height collapses the clip and paints a blank page. Throttled; decodes the
  * poison patterns above. Ungated: it costs nothing unless garbage appears.
  */
 void macsurf_recon_clamp(const char *field, long value);
 
 /*
- * fixes719 (#207) — runtime application-partition pointer bounds. Call
+ * fixes719 (#207)  -  runtime application-partition pointer bounds. Call
  * macsurf_heap_bounds_init() ONCE at startup (in main(), after
  * macsurf_debug_log_init() and before any string interning / URL parse /
  * content fetch) to capture this process's real partition window from the

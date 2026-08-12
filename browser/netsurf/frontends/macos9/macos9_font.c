@@ -67,7 +67,7 @@ static struct content *macos9_wf_current_content(void)
 /* fixes630: if this run is a single Private-Use-Area codepoint in a
  * downloadable @font-face family, return the glyph's advance width in px (also
  * kicks the font fetch on first sight, and re-measures via a reformat once it
- * loads). Returns -1 for ordinary text so normal measurement is untouched —
+ * loads). Returns -1 for ordinary text so normal measurement is untouched  - 
  * ordinary text never starts with a PUA codepoint, so this is a no-op for it. */
 static int macos9_wf_icon_advance(const struct plot_font_style *fstyle,
                 const char *string, size_t length, int size_px)
@@ -208,7 +208,7 @@ macos9_utf8_to_macroman(const char *utf8, size_t len, char *mac_out, size_t max_
                                 case 0x25CF: mac_out[out_len++] = (char)0xA5; break; /* Black circle -> bullet */
                                 case 0x25E6: mac_out[out_len++] = 'o';        break; /* White bullet (circle) */
                                 /* Check / cross */
-                                case 0x2713: mac_out[out_len++] = (char)0xA1; break; /* Check mark — use degree as nearest */
+                                case 0x2713: mac_out[out_len++] = (char)0xA1; break; /* Check mark  -  use degree as nearest */
                                 case 0x2717: mac_out[out_len++] = 'x';        break; /* Ballot X */
                                 /* Common math */
                                 case 0x00D7: mac_out[out_len++] = 'x';        break; /* Multiplication */
@@ -220,7 +220,7 @@ macos9_utf8_to_macroman(const char *utf8, size_t len, char *mac_out, size_t max_
                                 case 0x00A5: mac_out[out_len++] = (char)0xB4; break; /* Yen */
                                 case 0x00A2: mac_out[out_len++] = (char)0xA2; break; /* Cent */
                                 default:
-                                        /* fixes615 — icon-font glyphs
+                                        /* fixes615  -  icon-font glyphs
                                          * (FontAwesome / Material Design) live
                                          * in the Unicode Private Use Area
                                          * (U+E000..U+F8FF). NetSurf has no
@@ -233,7 +233,7 @@ macos9_utf8_to_macroman(const char *utf8, size_t len, char *mac_out, size_t max_
                                          * chars still show '?'. */
                                         if ((ucs4 >= 0xE000 && ucs4 <= 0xF8FF) ||
                                             (ucs4 >= 0xF0000 && ucs4 <= 0x10FFFD)) {
-                                                /* skip — render blank. Covers the
+                                                /* skip  -  render blank. Covers the
                                                  * BMP Private Use Area (FontAwesome,
                                                  * glyphicons) AND Supplementary PUA
                                                  * planes A/B (U+F0000+), where
@@ -251,7 +251,7 @@ macos9_utf8_to_macroman(const char *utf8, size_t len, char *mac_out, size_t max_
         return out_len;
 }
 
-/* fixes376 — MacRoman high half (0x80..0xFF) -> Unicode code point. Standard
+/* fixes376  -  MacRoman high half (0x80..0xFF) -> Unicode code point. Standard
  * Apple "Mac OS Roman" table. Index 0 == byte 0x80. C89 positional
  * initializer; 128 entries. Used by macos9_macroman_to_utf8 (clipboard paste). */
 static const unsigned short macroman_high_to_ucs[128] = {
@@ -334,7 +334,7 @@ macos9_macroman_to_utf8(const unsigned char *mac, size_t len,
         return out_len;
 }
 
-/* fixes366i — per-layout font-measurement profiling counters. Bumped
+/* fixes366i  -  per-layout font-measurement profiling counters. Bumped
  * on every macos9_font_measure call (each does a real QuickDraw
  * TextWidth). html_reformat resets these before layout_document and
  * emits a FONTPROF summary after, so one clean number per layout pass
@@ -366,7 +366,7 @@ macos9_run_spacing(const struct plot_font_style *fstyle,
         *out_ws = ws;
 }
 
-/* fixes609: painted extent of a MacRoman run under the per-char model -- the
+/* fixes609: painted extent of a MacRoman run under the per-char model - the
  * exact right edge the paint path's per-glyph pen walk produces (sum of
  * CharWidth plus the inter-glyph gaps between, but not after, the last
  * glyph). QuickDraw's TextWidth(full) UNDER-counts vs this per-char sum
@@ -474,7 +474,7 @@ macos9_font_measure(const struct plot_font_style *fstyle,
 
 #if MACSURF_FONT_ALIAS_DIAG
         /* fixes157: log measure-side dispatch. Paired with the matching
-         * block in macos9_plot_text — for a multi-segment inline line
+         * block in macos9_plot_text  -  for a multi-segment inline line
          * (e.g. body Helvetica + <code> Monaco), pulling the two adjacent
          * FONTDIAG entries from the log shows whether width and paint
          * resolved the same font_id/size/face for the same fstyle. SMART
@@ -599,7 +599,7 @@ macos9_font_position(const struct plot_font_style *fstyle,
         return NSERROR_OK;
 }
 
-/* fixes993 — does a CJK codepoint begin at s[i]? See the long note in
+/* fixes993  -  does a CJK codepoint begin at s[i]? See the long note in
  * layout.c: CJK has no spaces, so without treating every ideograph/kana as a
  * break opportunity a whole paragraph is one unbreakable word. Byte-wise UTF-8
  * test, no decoder needed for the ranges that matter:
@@ -607,7 +607,7 @@ macos9_font_position(const struct plot_font_style *fstyle,
  *   E4-ED    U+4000-U+D7AF  ideographs/Hangul
  *   EF A4..  U+F900-U+FAFF  compat          EF BC..  U+FF00-U+FFEF  fullwidth
  */
-/* fixes994 — kinsoku shori: the two rules that make Japanese look wrong when
+/* fixes994  -  kinsoku shori: the two rules that make Japanese look wrong when
  * they are missing, rather than merely unpolished.
  *
  * UAX #14 forbids a line BEGINNING with closing punctuation (a full stop or a
@@ -625,8 +625,8 @@ macos9_font_position(const struct plot_font_style *fstyle,
  * character is glued to its predecessor, so a true minimum cluster can be two
  * or three characters rather than one. layout.c still counts one character per
  * word, which UNDER-estimates the minimum slightly. That is the safe
- * direction -- it permits a marginally narrower shrink-to-fit than is strictly
- * legal, never a wider page -- and it keeps the expensive path (run over every
+ * direction - it permits a marginally narrower shrink-to-fit than is strictly
+ * legal, never a wider page - and it keeps the expensive path (run over every
  * text box on every reflow) as cheap as it is today.
  */
 static unsigned long macos9_cjk_cp_at(const char *s, size_t len, size_t i)
@@ -720,7 +720,7 @@ macos9_font_split(const struct plot_font_style *fstyle,
         /* #251 soft-hyphen (U+00AD = 0xC2 0xAD) break opportunity. */
         size_t last_shy = 0;   /* byte offset AFTER a soft hyphen that fits */
         int have_shy = 0;
-        /* fixes993 — byte offset of the LAST CJK character that fits. UAX #14
+        /* fixes993  -  byte offset of the LAST CJK character that fits. UAX #14
          * permits a break between two ideographs/kana, and without it a
          * space-free Japanese paragraph never splits, so the line runs off. */
         size_t last_cjk = 0;
@@ -744,8 +744,8 @@ macos9_font_split(const struct plot_font_style *fstyle,
                 return NSERROR_OK;
         }
 
-        /* The string overflows. Find the last space -- and, when hyphens
-         * allows, the last soft hyphen -- that FITS. */
+        /* The string overflows. Find the last space - and, when hyphens
+         * allows, the last soft hyphen - that FITS. */
         for (i = 0; i < fit_offset; i++) {
                 if (string[i] == ' ') {
                         last_space = i;
@@ -757,11 +757,11 @@ macos9_font_split(const struct plot_font_style *fstyle,
                         last_shy = i + 2;   /* break AFTER the soft hyphen */
                         have_shy = 1;
                 }
-                /* fixes993 — a CJK character here means a break is permitted
+                /* fixes993  -  a CJK character here means a break is permitted
                  * BEFORE it. Only i > 0: offset 0 reads to core as "cannot
                  * split here" (fixes788), which would loop. */
                 if (i > 0 && macos9_cjk_starts_at(string, fit_offset, i)) {
-                        /* fixes994 — kinsoku shori. Breaking HERE would put
+                        /* fixes994  -  kinsoku shori. Breaking HERE would put
                          * string[i] at the start of the next line and the
                          * character before it at the end of this one, so
                          * reject the pair the rules forbid. i >= 3 because
@@ -786,10 +786,10 @@ macos9_font_split(const struct plot_font_style *fstyle,
          * fragment ends with it and paints a trailing '-' (macos9_utf8_to_
          * macroman); core sees a non-space at that offset so reserves no
          * box->space, exactly right for a hyphenation break. */
-        /* fixes993 — CJK wins when it is the rightmost break that fits, so a
+        /* fixes993  -  CJK wins when it is the rightmost break that fits, so a
          * mixed sentence still breaks nearest the edge. char_offset lands ON
          * the character and the byte there is not a space, so core reserves no
-         * box->space -- correct for a CJK break, as for a hyphenation one. */
+         * box->space - correct for a CJK break, as for a hyphenation one. */
         if (have_cjk && (have_space == 0 || last_cjk > last_space) &&
                         (have_shy == 0 || last_cjk > last_shy)) {
                 *char_offset = last_cjk;
@@ -810,7 +810,7 @@ macos9_font_split(const struct plot_font_style *fstyle,
                  * Returning last_space+1 made core see a letter at that
                  * offset, so it treated the break as spaceless: box->space
                  * was forced to 0 and the next fragment packed flush against
-                 * the previous one with no gap -- "software and" rendered as
+                 * the previous one with no gap - "software and" rendered as
                  * "softwareand". actual_x is unchanged: it already measures
                  * width up to (excluding) the space, which is exactly what
                  * core expects paired with char_offset == last_space. */
@@ -818,15 +818,15 @@ macos9_font_split(const struct plot_font_style *fstyle,
                 macos9_font_width(fstyle, string, last_space, actual_x);
         } else {
                 /* #234: no word-boundary (space) break fits within the
-                 * available width x. Return char_offset == 0 -- the standard
-                 * NetSurf "text can't be split here" signal -- and let core
+                 * available width x. Return char_offset == 0 - the standard
+                 * NetSurf "text can't be split here" signal - and let core
                  * decide (layout.c:4462): if this is the FIRST box on the line
                  * it force-fits the word (or char-breaks it when the author set
                  * word-break/overflow-wrap, handled at layout.c:4414);
                  * otherwise the whole word wraps to the next line.
                  *
-                 * The previous code returned `fit_offset` here -- a mid-word
-                 * offset -- so on a nearly-full line (small remaining x) core
+                 * The previous code returned `fit_offset` here - a mid-word
+                 * offset - so on a nearly-full line (small remaining x) core
                  * accepted a mid-word break: "remain" rendered as "remai"+"n"
                  * on reflow. That fixes136a-era aggressive char-break (a
                  * documented deviation from spec) was itself the cause of the
@@ -850,7 +850,7 @@ struct gui_layout_table *macos9_layout_table = &layout_table;
 
 #ifdef __MACOS9__
 /* ============================================================
- * fixes144a -- QuickDraw font-metric diagnostic probe.
+ * fixes144a - QuickDraw font-metric diagnostic probe.
  *
  * Fires once after window creation. Walks 4 fonts x 3 sizes x
  * 2 faces x 9 probe strings, logging TextWidth(full string)
@@ -861,7 +861,7 @@ struct gui_layout_table *macos9_layout_table = &layout_table;
  *
  * Where delta = A - B. Positive delta means TextWidth(full)
  * over-counts vs the per-char sum (rare). Negative delta means
- * TextWidth(full) under-counts -- this is the symptom behind
+ * TextWidth(full) under-counts - this is the symptom behind
  * the "Di" overlap: full-string width is less than the sum of
  * the individual glyphs' painted widths, so DrawText advances
  * the pen into the next glyph's territory.
@@ -924,7 +924,7 @@ macos9_font_metric_probe_run(void)
 
         /* fixes144a2: initial_win is only set by macos9_create_initial_window
          * (the fallback path); the normal BW_CREATE path leaves it NULL. Use
-         * FrontWindow() as the port source instead -- same pattern as
+         * FrontWindow() as the port source instead - same pattern as
          * macos9_font_measure. */
         GetPort(&old_port);
         if (initial_win != NULL && initial_win->window != NULL) {
@@ -1055,7 +1055,7 @@ macos9_font_vmetric_probe_run(void)
                                 TextSize(sz);
                                 TextFace(face);
 
-                                /* Zero out the struct first -- FontInfo
+                                /* Zero out the struct first - FontInfo
                                  * fields are filled by GetFontInfo but
                                  * defensive zero catches the case where
                                  * the toolbox call fails silently. */

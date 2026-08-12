@@ -1,6 +1,6 @@
 /*
- * MacSurf — Mac OS 9 frontend for NetSurf
- * macos9_deathrow.c — Stage 1 quiescent-point deferred-free.
+ * MacSurf  -  Mac OS 9 frontend for NetSurf
+ * macos9_deathrow.c  -  Stage 1 quiescent-point deferred-free.
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.
@@ -24,7 +24,7 @@
 /* Operation-depth counter (see header). 0 == quiescent. */
 int macos9_op_depth = 0;
 
-/* fixes914 -- the death-row entry currently being torn down, or NULL when the
+/* fixes914 - the death-row entry currently being torn down, or NULL when the
  * drain is not inside a teardown. Two plain stores per entry, no I/O: a crash
  * reporter that can still run (talloc's TALLOC_ABORT does) prints these so a
  * teardown that never returns names itself. Replaces the fixes911 per-entry
@@ -49,27 +49,27 @@ void *macos9_deathrow_cur_fn = NULL;
  * continuation-orphan leak to chase, not normal operation. */
 #define MACOS9_DEATHROW_STALE_PASSES 120
 
-/* fixes911 — how many individual "LIFE deathrow free" lines one drain may emit
+/* fixes911  -  how many individual "LIFE deathrow free" lines one drain may emit
  * before falling back to the drained= total alone. See the call site. */
 #define MACOS9_DEATHROW_TRACE_MAX 32
 
-/* fixes913 — per-ENTRY tracing is OFF by default. fixes911 turned it on to name
+/* fixes913  -  per-ENTRY tracing is OFF by default. fixes911 turned it on to name
  * the victim of a teardown that never returns, and it worked, but the cost was
  * mispriced: one hardware session emitted 3035 of its 3289 log lines here, and
- * debug builds FlushVol every kept line (~10-50ms of HFS sync each) -- tens of
+ * debug builds FlushVol every kept line (~10-50ms of HFS sync each) - tens of
  * seconds of stall across a session, on a browser already reported as sluggish.
  *
  * It also answered its question. The reconvert-window guard check it existed to
  * test came back CLEAN on that log (zero death-row frees inside an
  * in_progress=1..0 window, every seq balanced), so the per-entry stream is now
  * paying a large cost to re-confirm a negative. The per-drain "drained=" total
- * stays -- it is one line per drain and still shows the shape of the churn.
+ * stays - it is one line per drain and still shows the shape of the churn.
  *
  * Re-enable by defining this when a teardown crash needs its victim named. */
-/* fixes1001 — RE-ENABLED, which is exactly the condition the line above
+/* fixes1001  -  RE-ENABLED, which is exactly the condition the line above
  * describes: a teardown crash needs its victim named. Hardware died with
  *   free <- hlcache_node_deathrow_teardown <- macos9_deathrow_drain
- * (EXC_BAD_ACCESS at 0x00000008 -- a corrupted MSL free list, i.e. a double
+ * (EXC_BAD_ACCESS at 0x00000008 - a corrupted MSL free list, i.e. a double
  * free or a stale pointer), and the last log line was a ledger, so the object
  * that killed it is unknown. The trail is written BEFORE the teardown call, so
  * the last line on disk IS the victim.
@@ -77,7 +77,7 @@ void *macos9_deathrow_cur_fn = NULL;
  * Costs log volume and FlushVol time; turn it back off once the crash is
  * named.
  *
- * fixes1032 — OFF. It was 980 flushed writes in one hardware session, the
+ * fixes1032  -  OFF. It was 980 flushed writes in one hardware session, the
  * single largest source in the log and a real cost on the very navigation
  * this is meant to diagnose. The teardown crash it was armed for
  * (hlcache_handle_deferred_free <- hlcache_handle_release <- html_close) is
@@ -110,16 +110,16 @@ macos9_deathrow_add(void *ptr, void (*teardown)(void *ptr),
 		return;
 	}
 
-	/* fixes955 — REFUSE a pointer already on the row.
+	/* fixes955  -  REFUSE a pointer already on the row.
 	 *
 	 * Until now the only thing stopping the same object being queued twice
-	 * was the caller's dr_queued flag -- which lives INSIDE the object being
+	 * was the caller's dr_queued flag - which lives INSIDE the object being
 	 * freed. That makes idempotence depend on every caller getting its own
 	 * bookkeeping right, and on that field being initialised (it was not:
 	 * hlcache's main entry path used malloc, see fixes955 in hlcache.c).
 	 * Queue a pointer twice and the drain frees it twice; a double free
 	 * corrupts the MSL free list and the crash lands INSIDE free(), far from
-	 * the cause -- which is exactly the shape seen here:
+	 * the cause - which is exactly the shape seen here:
 	 *   free <- hlcache_node_deathrow_teardown <- macos9_deathrow_drain
 	 * and the same shape fixes906 recorded ("double-free -> corrupted free
 	 * list -> the Block_link crash in the death-row hlcache teardown").
@@ -131,7 +131,7 @@ macos9_deathrow_add(void *ptr, void (*teardown)(void *ptr),
 	for (i = 0; i < dr_count; i++) {
 		if (dr_table[i].active != 0 && dr_table[i].ptr == ptr) {
 			macsurf_debug_log_writef(
-				"deathrow: DUPLICATE ptr=%p already queued slot=%d -- refused",
+				"deathrow: DUPLICATE ptr=%p already queued slot=%d - refused",
 				ptr, i);
 			return;
 		}
@@ -201,20 +201,20 @@ void
 macos9_deathrow_drain(void)
 {
 	int i;
-	int freed = 0;	/* fixes911 — lifecycle trail */
+	int freed = 0;	/* fixes911  -  lifecycle trail */
 
 	/* Only at the quiescent point, and never re-entrantly. */
 	if (macos9_op_depth != 0 || dr_in_drain) {
 		return;
 	}
 
-	/* fixes901 — NEVER free while a reconvert box build is in flight. The
+	/* fixes901  -  NEVER free while a reconvert box build is in flight. The
 	 * reconvert yields between batches, and op_depth returns to 0 in that gap,
-	 * so a deferred free draining here -- e.g. a blocked tracker/image
-	 * content_destroy on hackaday -- ran content teardown against a half-rebuilt
+	 * so a deferred free draining here - e.g. a blocked tracker/image
+	 * content_destroy on hackaday - ran content teardown against a half-rebuilt
 	 * tree (the box-node-80 crash the durable ReconvPos marker points at). Hold
 	 * every deferred free until html_reconvert_done clears the flag; they drain
-	 * on the first poll after. Delaying a deferred free is always safe -- the
+	 * on the first poll after. Delaying a deferred free is always safe - the
 	 * object was already condemned; only the timing changes. */
 	{
 		extern int macsurf_reconvert_in_progress;
@@ -223,17 +223,17 @@ macos9_deathrow_drain(void)
 		}
 	}
 
-	/* fixes906 — REMOVED the fixes901 poll-level macos9_content_drain_deferred()
+	/* fixes906  -  REMOVED the fixes901 poll-level macos9_content_drain_deferred()
 	 * call that used to sit here. It ran content_destroy() (broadcasts,
 	 * callbacks, frees) BEFORE dr_in_drain was set, so a re-entrant
 	 * macos9_deathrow_drain (via that callback chain) saw dr_in_drain==0,
-	 * proceeded, and drained dr_table -- then the outer drain drained it AGAIN
+	 * proceeded, and drained dr_table - then the outer drain drained it AGAIN
 	 * -> double-free -> corrupted free list -> the Block_link crash in the
 	 * death-row hlcache teardown (CW stack, iMac). It was also redundant: with
 	 * the SYNCHRONOUS reconvert (fixes903) the convert wrapper
 	 * (convert_xml_to_box) drains the deferred-content list itself after the
 	 * build, with in_progress already cleared by html_reconvert_done. So the
-	 * death row must ONLY ever run its own dr_table free -- never re-enter
+	 * death row must ONLY ever run its own dr_table free - never re-enter
 	 * content teardown. */
 	dr_in_drain = 1;
 
@@ -251,7 +251,7 @@ macos9_deathrow_drain(void)
 			if (r->stale_logged == 0 &&
 			    r->pin_passes >= MACOS9_DEATHROW_STALE_PASSES) {
 				macsurf_debug_log_writef(
-					/* fixes927 — %ld, not %u (unsupported). */
+					/* fixes927  -  %ld, not %u (unsupported). */
 					"deathrow: STALE PIN ptr=%p content=%p passes=%ld",
 					r->ptr, (void *)r->pin_key,
 					(long) r->pin_passes);
@@ -260,26 +260,26 @@ macos9_deathrow_drain(void)
 			continue;
 		}
 
-		/* fixes911 — name the victim BEFORE calling into it.
+		/* fixes911  -  name the victim BEFORE calling into it.
 		 *
 		 * The 2026-07-19 hardware bomb (unmapped memory at an MSL pool
 		 * header) died INSIDE a teardown, three frames below here:
 		 * llcache_object_deathrow_teardown -> destroy_now -> nsurl_unref ->
 		 * lwc_string_destroy -> free. Logging after the call, or only a
 		 * per-drain summary, records nothing when the teardown never
-		 * returns -- which is exactly the case worth recording. Written
+		 * returns - which is exactly the case worth recording. Written
 		 * before the call, the last LIFE line on disk IS the entry that
 		 * killed us (debug builds FlushVol every kept line, fixes911).
 		 *
 		 * CAPPED per drain: debug builds FlushVol every kept line (~10-50ms
 		 * of HFS sync each), and navigating away from a heavy page can queue
-		 * a hundred-plus sub-resource frees in one turn -- naming every one
+		 * a hundred-plus sub-resource frees in one turn - naming every one
 		 * would add seconds to the very navigation that already feels slow.
 		 * The cap keeps the common (small) drain fully named while bounding
 		 * the worst case; the drained= total below still reports everything,
 		 * so a bomb past the cap shows up as a large count with the tail
 		 * unnamed, which is the signal to raise it. */
-/* fixes1033 — #if, NOT #ifdef. fixes1032 set this to 0 to silence 2195
+/* fixes1033  -  #if, NOT #ifdef. fixes1032 set this to 0 to silence 2195
  * flushed writes per session and the guard happily kept compiling it in,
  * because #ifdef tests DEFINEDNESS, not value. The hardware log after that
  * "cleanup" still carried every line. Same family as the fixes1022 switch
@@ -293,7 +293,7 @@ macos9_deathrow_drain(void)
 		}
 #endif
 
-		/* fixes914 — record the victim in RAM, cost-free.
+		/* fixes914  -  record the victim in RAM, cost-free.
 		 *
 		 * fixes911 logged every entry so a teardown that never returns could
 		 * be named, then fixes913 turned that off because it cost 3035 log
@@ -303,7 +303,7 @@ macos9_deathrow_drain(void)
 		 * the victim.
 		 *
 		 * Two plain stores instead. Any crash reporter that can still run --
-		 * talloc's abort does, it is how we saw this at all -- reads them and
+		 * talloc's abort does, it is how we saw this at all - reads them and
 		 * names the entry, with no I/O on the hot path. */
 		macos9_deathrow_cur_ptr = r->ptr;
 		macos9_deathrow_cur_fn = (void *) r->teardown;

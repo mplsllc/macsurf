@@ -1,5 +1,5 @@
 /*
- * MacSurf stub -- css/css.h
+ * MacSurf stub - css/css.h
  * Minimal C89-compatible stub for CodeWarrior 8 compilation.
  * Licensed under GPL v2.
  */

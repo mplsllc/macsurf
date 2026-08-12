@@ -254,7 +254,7 @@ static bool html_process_inserted_link(html_content *c, dom_node *node)
 static void
 dom_SCRIPT_showed_up(html_content *htmlc, dom_html_script_element *script)
 {
-	/* fixes860 (#288 probe) — same local-extern pattern box_construct.c:2516
+	/* fixes860 (#288 probe) - same local-extern pattern box_construct.c:2516
 	 * uses; the frontend owns the impl and the harness stubs it. */
 	extern void macsurf_debug_log_writef(const char *fmt, ...);
 	dom_exception exc;
@@ -262,7 +262,7 @@ dom_SCRIPT_showed_up(html_content *htmlc, dom_html_script_element *script)
 	dom_hubbub_error res;
 	bool within;
 
-	/* fixes860 (#288 probe) — this whole function reported itself ONLY through
+	/* fixes860 (#288 probe) - this whole function reported itself ONLY through
 	 * NSLOG, which macsurf_prefix.h:148 defines as `do {} while(0)`.  Every
 	 * decision below -- scripting off, flags unreadable, parser-inserted,
 	 * not-in-document, and the html_process_script result itself -- was
@@ -639,7 +639,7 @@ dom_default_action_DOMNodeInserted_cb(struct dom_event *evt, void *pw)
 			tag_type = DOM_HTML_ELEMENT_TYPE__UNKNOWN;
 		}
 
-		/* fixes995 (#264) — compile inline on* attributes for EVERY
+		/* fixes995 (#264) - compile inline on* attributes for EVERY
 		 * inserted element, before the tag-specific handling below.
 		 * `<a onclick="...">` in markup has never done anything: the
 		 * attribute was never compiled, so no registry held it and no

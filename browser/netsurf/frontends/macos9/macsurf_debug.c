@@ -1,5 +1,5 @@
 /*
- * MacSurf — macsurf_debug.c
+ * MacSurf  -  macsurf_debug.c
  *
  * MS_LOG writes to the front window title bar. No DebugStr, no
  * debugger stops. Each checkpoint overwrites the previous one so
@@ -103,10 +103,10 @@ macsurf_debug_probe_append_int(const char *label, long value)
 	macsurf_debug_set_title_force(g_probe_buf);
 }
 
-/* fixes560 — show a labelled integer in the window title bar as a LIVE
+/* fixes560  -  show a labelled integer in the window title bar as a LIVE
  * on-screen diagnostic.  Unlike macsurf_debug_log_int (routed to the file
  * log only since fixes168), this is for counts the user wants to watch on
- * screen — e.g. the active-fetch count during a page load, which updates
+ * screen  -  e.g. the active-fetch count during a page load, which updates
  * each time html_begin_conversion re-runs as a sub-resource fetch
  * completes (5 -> 4 -> ... -> 0).  Clears the probe lock so the value is
  * always visible, but does NOT re-lock, so the real page title (set via
@@ -233,7 +233,7 @@ macsurf_debug_log_int(const char *label, long value)
 		buf[len++] = digits[i];
 	buf[len] = '\0';
 
-	/* fixes168 -- route to file log instead of title bar. Same
+	/* fixes168 - route to file log instead of title bar. Same
 	 * rationale as fixes167's MS_LOG change: diagnostic probes
 	 * scattered across NetSurf core (hlcache.c "unaccept #", etc.)
 	 * shouldn't clobber the window title. Use
@@ -262,7 +262,7 @@ macsurf_debug_log_str(const char *label, const char *value)
 		buf[len++] = value[vi++];
 	buf[len] = '\0';
 
-	/* fixes168 -- file log only, same rationale as log_int. */
+	/* fixes168 - file log only, same rationale as log_int. */
 	macsurf_debug_log_write(buf);
 }
 

@@ -10,7 +10,7 @@
  * registered the HTTP fetcher, so html_css_new_stylesheets failed with
  * NSERROR_NO_FETCH_HANDLER when it tried to fetch resource:default.css
  * (the default user-agent stylesheet) and the entire content pipeline
- * stalled — content_factory_create_content returned NULL,
+ * stalled  -  content_factory_create_content returned NULL,
  * current_content stayed NULL, redraw painted only the white blank.
  */
 

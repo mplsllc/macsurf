@@ -63,7 +63,7 @@ struct html_stylesheet {
 };
 
 
-/** Type of script — hoisted before struct for C89 compatibility. */
+/** Type of script - hoisted before struct for C89 compatibility. */
 enum html_script_type {
 	HTML_SCRIPT_INLINE,
 	HTML_SCRIPT_SYNC,
@@ -82,7 +82,7 @@ struct html_script {
 	} data;	/**< Script data */
 	struct dom_string *mimetype;
 	struct dom_string *encoding;
-	/* fixes869 (#295) — the <script> ELEMENT this entry came from, so a
+	/* fixes869 (#295) - the <script> ELEMENT this entry came from, so a
 	 * `load` / `error` event can be fired AT it once the fetch+exec finishes.
 	 * Nothing here recorded the node before, so there was no way to reach the
 	 * element from html_script_exec, and script.onload could never fire.
@@ -118,7 +118,7 @@ struct content_html_object {
 	/** Bitmap of acceptable content types */
 	content_type permitted_types;
 	bool background;  /**< This object is a background image. */
-	/** fixes975 — the URL this object was fetched for, owned (nsurl_ref'd
+	/** fixes975 - the URL this object was fetched for, owned (nsurl_ref'd
 	 * at fetch, unref'd in html_object_free_objects). This is the key the
 	 * creation-time adoption in html_fetch_object matches on, so a URL the
 	 * document is already fetching is never fetched a second time.

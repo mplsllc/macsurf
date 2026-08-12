@@ -54,7 +54,7 @@
 
 #include "desktop/browser_private.h"
 
-/* fixes161c — Apple post-READY crash probes. MS_LOG comes from the
+/* fixes161c - Apple post-READY crash probes. MS_LOG comes from the
  * macos9 frontend's debug header; included here so scheduled_reformat
  * and browser_window_schedule_reformat can mark their entry points. */
 #include "macsurf_debug.h"
@@ -452,8 +452,8 @@ browser_window_favicon_callback(hlcache_handle *c,
 		if (bw->favicon.current != NULL) {
 			content_close(bw->favicon.current);
 			/* fixes458/501x: null BEFORE release (via safe wrapper) so
-			 * any synchronous callback fired during the release — or
-			 * from bw->favicon.current = c below — cannot see the
+			 * any synchronous callback fired during the release - or
+			 * from bw->favicon.current = c below - cannot see the
 			 * released handle. */
 			safe_hlcache_handle_release(&bw->favicon.current);
 		}
@@ -865,7 +865,7 @@ static nserror browser_window_content_ready(struct browser_window *bw)
 
 	/* close and release the current window content */
 	{
-		/* fixes551 — log the URLs of the content being replaced and the one
+		/* fixes551 - log the URLs of the content being replaced and the one
 		 * taking over, so a switch TO about:query/fetcherror (or any wrong
 		 * page) is visible in the trace, not just opaque pointers. */
 		nsurl *ou = (bw->current_content != NULL) ?
@@ -905,7 +905,7 @@ static nserror browser_window_content_ready(struct browser_window *bw)
 	}
 
 #ifdef __MACOS9__
-	/* fixes268 (#10) — on top-level non-frame navigation, evict the
+	/* fixes268 (#10) - on top-level non-frame navigation, evict the
 	 * decoded-image LRU and schedule an llcache purge for the next
 	 * event-loop tick (after the current llcache iteration unwinds). */
 	if (bw->parent == NULL) {
@@ -1483,7 +1483,7 @@ browser_window__handle_error(struct browser_window *bw,
 	nserror res;
 	nsurl *url = hlcache_handle_get_url(c);
 
-	/* fixes551 — log WHY a content errored BEFORE we replace it with the
+	/* fixes551 - log WHY a content errored BEFORE we replace it with the
 	 * error page.  This is the single line that explains a page which fetched
 	 * fine (even from cache) yet still shows about:query/fetcherror: it names
 	 * the failing URL, the nserror code, the raw fetch message, and whether the
@@ -1621,7 +1621,7 @@ browser_window_callback(hlcache_handle *c, const hlcache_event *event, void *pw)
 			nsurl *du = hlcache_handle_get_url(c);
 			macsurf_debug_log_writef("NAV: DONE url=%s",
 				(du != NULL) ? nsurl_access(du) : "(null)");
-			/* fixes1034 — emit the phase breakdown HERE.
+			/* fixes1034 - emit the phase breakdown HERE.
 			 *
 			 * The PERFACC accumulators (tls/net/parse/cascade/
 			 * layout/paint/js, fixes640) are all still summing
@@ -1646,10 +1646,10 @@ browser_window_callback(hlcache_handle *c, const hlcache_event *event, void *pw)
 				extern void macsurf_qjs_emit_js_profile(void);
 				macsurf_profile_emit_phases(
 					(du != NULL) ? nsurl_access(du) : "?");
-				/* fixes1037 — split the JS total: how much of it is
+				/* fixes1037 - split the JS total: how much of it is
 				 * timer callbacks, and how many fired. */
 				macsurf_qjs_emit_timer_profile();
-				/* fixes1070 — and split the REST of the JS total:
+				/* fixes1070 - and split the REST of the JS total:
 				 * compile vs run vs GC, plus the top-N scripts by
 				 * cost. js has measured 96% of the accounted load
 				 * with no way to see which script or which half of
@@ -2266,8 +2266,6 @@ browser_window_mouse_click_internal(struct browser_window *bw,
 	hlcache_handle *c = bw->current_content;
 	const char *status = NULL;
 	browser_pointer_shape pointer = BROWSER_POINTER_DEFAULT;
-	{ extern void macsurf_debug_log_writef(const char *fmt, ...);
-	macsurf_debug_log_writef("LIFE BWCLICK c=%p", (void *)c); }
 
 	/* fixes501: guard against stale current_content handle.
 	 * On navigation the old hlcache_handle is released and freed, but
@@ -2394,9 +2392,6 @@ browser_window_mouse_click_internal(struct browser_window *bw,
 			}
 
 			/* Pass mouse action to content */
-			{ extern void macsurf_debug_log_writef(const char *fmt, ...);
-			macsurf_debug_log_writef("LIFE CONTENT_MOUSE c=%p type=%d x=%d y=%d",
-				(void *)c, (int)content_get_type(c), x, y); }
 			content_mouse_action(c, bw, mouse, x, y);
 		}
 		break;
@@ -2942,8 +2937,6 @@ browser_window_redraw(struct browser_window *bw,
 	if (!bw->window) {
 		/* Render scrollbars */
 		int off_x, off_y;
-	{ extern void macsurf_debug_log_writef(const char *fmt, ...);
-	macsurf_debug_log_writef("LIFE SCROLLCHK scroll_x=%p scroll_y=%p", (void *)bw->scroll_x, (void *)bw->scroll_y); }
 		if (bw->scroll_x != NULL) {
 			browser_window_get_scrollbar_pos(bw, true,
 							 &off_x, &off_y);
@@ -4023,14 +4016,14 @@ browser_window__navigate_internal(struct browser_window *bw,
 {
 	lwc_string *scheme, *path;
 
-	/* fixes551 — start of every navigation (real pages, internal redirects,
+	/* fixes551 - start of every navigation (real pages, internal redirects,
 	 * and the about:query/* error/login/cert pages), so the NAV trace reads
 	 * START -> (ERROR why | DONE) -> content_ready switch. */
 	macsurf_debug_log_writef("NAV: START url=%s",
 		((params != NULL) && (params->url != NULL)) ?
 			nsurl_access(params->url) : "(null)");
 
-	/* fixes1072 — anchor the wall clock HERE, beside the line that already
+	/* fixes1072 - anchor the wall clock HERE, beside the line that already
 	 * marks every navigation.
 	 *
 	 * fixes1070's PERFWALL read g_profile_t0, which is stamped by
@@ -4054,7 +4047,7 @@ browser_window__navigate_internal(struct browser_window *bw,
 		macsurf_profile_nav_begin();
 	}
 
-	/* fixes1003 — a top-level navigation IS a retry: clear the TLS
+	/* fixes1003 - a top-level navigation IS a retry: clear the TLS
 	 * fetcher's dead-host and terminal-URL sets. Those exist to collapse a
 	 * subresource storm within one page load; carried ACROSS navigations
 	 * they made a single transient timeout permanent, so reloading a site
@@ -4524,7 +4517,7 @@ nserror browser_window_schedule_reformat(struct browser_window *bw)
 	}
 
 	MS_LOG("browser_window_schedule_reformat: entry");
-	/* fixes240 — 50ms coalescing delay (was 0). The scheduler dedups
+	/* fixes240 - 50ms coalescing delay (was 0). The scheduler dedups
 	 * pending entries with the same callback+param, but at delay=0 each
 	 * entry fires within one poll cycle, so resource-arrival bursts
 	 * during page load produce one reformat per resource. A short

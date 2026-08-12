@@ -831,7 +831,7 @@ table_calculate_column_types(const css_unit_ctx *unit_len_ctx, struct box *table
 		col[i].positioned = true;
 	}
 
-	/* fixes184: table-layout: fixed — column widths set by the first row
+	/* fixes184: table-layout: fixed - column widths set by the first row
 	 * (and any <col> elements) only. Later rows do not influence widths. */
 	if (table->style != NULL &&
 	    css_computed_table_layout(table->style) == CSS_TABLE_LAYOUT_FIXED) {
@@ -894,7 +894,7 @@ table_calculate_column_types(const css_unit_ctx *unit_len_ctx, struct box *table
 		}
 first_pass_done:
 
-	/* fixes572 TBLDIAG — log the one-time column typing for multi-column
+	/* fixes572 TBLDIAG - log the one-time column typing for multi-column
 	 * tables (this function runs once per table and its result is cached
 	 * on table->col, so this fires once per table, not per reformat).
 	 * type enum: 0=UNKNOWN 1=FIXED 2=AUTO 3=PERCENT 4=RELATIVE (see

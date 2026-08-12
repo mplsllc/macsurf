@@ -395,7 +395,7 @@ struct llcache_s {
 /** low level cache state */
 static struct llcache_s *llcache = NULL;
 
-/* fixes460: global notify reentrancy guard — see llcache_object_notify_users */
+/* fixes460: global notify reentrancy guard - see llcache_object_notify_users */
 static bool llcache_notify_in_progress = false;
 
 /* forward referenced callback function */
@@ -455,7 +455,7 @@ static nserror llcache_object_user_new(llcache_handle_callback cb, void *pw,
  * \pre User is not attached to an object
  */
 #ifdef __MACOS9__
-/* fixes600 — teardown for a deferred llcache_object_user free. user_destroy is
+/* fixes600 - teardown for a deferred llcache_object_user free. user_destroy is
  * reached synchronously from fetch-completion / error / retrieval-abort
  * callbacks while op_depth>0 and other object/user walks are on the stack; the
  * 16-byte user + 20-byte handle land on the general free-list mid-burst and
@@ -479,7 +479,7 @@ static nserror llcache_object_user_destroy(llcache_object_user *user)
 	assert(user->prev == NULL);
 
 #ifdef __MACOS9__
-	/* fixes600 — defer the free (see llcache_user_deathrow_teardown). The user
+	/* fixes600 - defer the free (see llcache_user_deathrow_teardown). The user
 	 * is already unlinked (asserts above). dr_queued gates double-enqueue; NULL
 	 * pin_key means "free once no walk is on the stack" (op_depth==0), which is
 	 * exactly the protection this node needs. */
@@ -1029,7 +1029,7 @@ static nserror get_referer_header(nsurl *url, nsurl *referer, char **header_out)
 		match2 = false;
 	}
 	if (match == true || (match1 == true && match2 == true)) {
-		/* fixes959 — trim the referrer across origins.
+		/* fixes959 - trim the referrer across origins.
 		 *
 		 * This used to send the ENTIRE referring URL, path and query
 		 * included, to any host the scheme rules allowed. On a browser
@@ -1128,7 +1128,7 @@ static nserror get_referer_header(nsurl *url, nsurl *referer, char **header_out)
 	return res;
 }
 
-/* fixes979 — the memory-cache ledger. Cheap counters, no per-request log
+/* fixes979 - the memory-cache ledger. Cheap counters, no per-request log
  * line; emitted changed-only once per reformat from html_reformat, the same
  * shape as the fixes934/978 ledgers.
  *
@@ -1217,7 +1217,7 @@ static nserror llcache_object_refetch(llcache_object *object)
 	/* fixes518: guard the object pointer itself (not just object->url).
 	 * The crash stack was html_css_process_modified_styles -> ... ->
 	 * llcache_object_refetch with object ~0x00AC3998 (below the heap
-	 * floor) — a freed/stale object.  object->url was then read from wild
+	 * floor) - a freed/stale object.  object->url was then read from wild
 	 * memory and could pass the old url check, crashing deeper in the body
 	 * (stw through NULL r5).  Reject a wild object before any field read. */
 	if (LLCACHE_OBJECT_WILD(object)) {
@@ -1292,7 +1292,7 @@ static nserror llcache_object_refetch(llcache_object *object)
 		header_idx++;
 	}
 
-	/* fixes979b — did this request actually carry a validator? reval says
+	/* fixes979b - did this request actually carry a validator? reval says
 	 * how often an object needed revalidating; cond says how often we had
 	 * something to revalidate WITH. reval >> cond means most held objects
 	 * have neither an ETag nor a Last-Modified, so a full refetch is not a
@@ -1416,7 +1416,7 @@ llcache_object_deathrow_teardown(void *p)
 }
 
 /*
- * fixes573 — defer the llcache object free to the quiescent death-row drain.
+ * fixes573 - defer the llcache object free to the quiescent death-row drain.
  *
  * The old body (now llcache_object_destroy_now) frees cache.etag, headers[],
  * url and source_data, then the object, but NULLs no external reference to
@@ -2686,7 +2686,7 @@ static nserror llcache_hsts_update_policy(llcache_object *object)
 	}
 	lwc_string_unref(scheme);
 
-	/* #307 — adopt a taint the FETCHER itself reported.
+	/* #307 - adopt a taint the FETCHER itself reported.
 	 *
 	 * object->fetch.tainted_tls is only ever set by llcache's own
 	 * TLS-downgrade retry paths, and those cannot fire for the macos9
@@ -3559,7 +3559,7 @@ static void llcache_fetch_callback(const fetch_msg *msg, void *p)
 	switch (msg->type) {
 	case FETCH_HEADER:
 		/* Received a fetch header. fixes97: per-header-line MS_LOG
-		 * dropped — fired 10+ times per response, dominant log
+		 * dropped - fired 10+ times per response, dominant log
 		 * volume contributor. */
 		object->fetch.state = LLCACHE_FETCH_HEADERS;
 

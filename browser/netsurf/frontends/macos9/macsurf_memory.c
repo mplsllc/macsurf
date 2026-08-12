@@ -1,5 +1,5 @@
 /*
- * MacSurf -- macsurf_memory.c
+ * MacSurf - macsurf_memory.c
  *
  * Bulletproof allocation wrappers. See macsurf_memory.h for the
  * contract: macsurf_safe_alloc / _calloc / _realloc NEVER return
@@ -14,7 +14,7 @@
  *
  * The prefix file (macsurf_prefix.h) redirects malloc/calloc/
  * realloc to these functions via object-like macros. This file
- * #undefs those macros so it calls MSL directly -- no recursion.
+ * #undefs those macros so it calls MSL directly - no recursion.
  *
  * C89 / CW8 / MSL compatible. Carbon Toolbox only.
  */
@@ -23,7 +23,7 @@
  * Define MACSURF_POISON to fill every malloc() with 0xA5, reproducing the
  * VM-off "garbage in fresh memory" condition on any machine. Used to prove
  * there is NO uninitialised-heap read on the render path: a full page load
- * completed clean with poison armed. Left off -- it memsets every malloc. */
+ * completed clean with poison armed. Left off - it memsets every malloc. */
 
 /* Restore real allocators before any header pulls in the prefix
  * macros. Must be the very first lines of the file. */
@@ -38,7 +38,7 @@
 
 #include "macsurf_memory.h"
 #include "macsurf_debug_log.h"
-#include "macsurf_osver.h"     /* fixes936 -- macsurf_os_is_osx() */
+#include "macsurf_osver.h"     /* fixes936 - macsurf_os_is_osx() */
 
 #ifdef __MACOS9__
 #include <Memory.h>
@@ -60,7 +60,7 @@ static void c_to_pstr(unsigned char *out, const char *src)
 }
 
 /* ------------------------------------------------------------------ */
-/* Internal: OOM panic -- log, alert, terminate. Never returns.       */
+/* Internal: OOM panic - log, alert, terminate. Never returns.       */
 /* ------------------------------------------------------------------ */
 static void macsurf_oom_panic(size_t size)
 {
@@ -103,7 +103,7 @@ static void macsurf_oom_panic(size_t size)
         StandardAlert(kAlertStopAlert, ptitle, pbody, NULL, &item);
     }
 
-    /* 4. Clean exit -- cooperative-app safe. */
+    /* 4. Clean exit - cooperative-app safe. */
     ExitToShell();
 #else
     /* Non-Mac build: crash loudly so tests catch it. */
@@ -115,11 +115,11 @@ static void macsurf_oom_panic(size_t size)
 /* fixes711 (#207) BLANK-SCREEN RECONNAISSANCE                          */
 /*                                                                      */
 /* Two observers, both routed through the 'RECON' crash-only log gate:  */
-/*   macsurf_recon_mem(tag)  -- one line per call: VM on/off (Gestalt) +*/
+/*   macsurf_recon_mem(tag)  - one line per call: VM on/off (Gestalt) +*/
 /*      FreeMem / MaxBlock (contiguity) / Temp + Purge pools. Labels a  */
 /*      whole run VM-on vs VM-off and shows fragmentation. Flushed so an */
 /*      early blank still leaves the baseline on disk.                  */
-/*   macsurf_recon_note(...) -- called from the libcss selection hot    */
+/*   macsurf_recon_note(...) - called from the libcss selection hot    */
 /*      path when a per-node pointer that must never be NULL is NULL     */
 /*      (the $0000-scribble seen in the G3 StdLog). Logs, throttled, so  */
 /*      the caller can bail safely instead of writing through NULL.     */
@@ -203,7 +203,7 @@ void macsurf_recon_clamp(const char *field, long value)
 }
 
 /* ------------------------------------------------------------------ */
-/* fixes956 — observed-allocator-window recorder; defined lower, forward-
+/* fixes956  -  observed-allocator-window recorder; defined lower, forward-
  * declared here because the three wrappers below all call it. */
 static void macsurf_obs_note(void *p, size_t size);
 
@@ -220,7 +220,7 @@ void *macsurf_safe_alloc(size_t size)
      * a fresh page is zero-filled, so an uninitialised read is silently
      * benign; with VM off it reads whatever the previous process left.
      * Poisoning reproduces the VM-off worst case on ANY machine, VM on or
-     * off -- removing our dependence on a reporter's unlucky heap.
+     * off - removing our dependence on a reporter's unlucky heap.
      * calloc is deliberately NOT poisoned: zeroed memory is its contract. */
     memset(p, MACSURF_POISON_ALLOC_BYTE, size);
 #endif
@@ -248,7 +248,7 @@ void *macsurf_safe_realloc(void *ptr, size_t size)
 {
     void *p;
 
-    /* realloc(ptr, 0) is a free -- NULL return is legal per C89 */
+    /* realloc(ptr, 0) is a free - NULL return is legal per C89 */
     if (size == 0) {
         free(ptr);
         return NULL;
@@ -262,20 +262,20 @@ void *macsurf_safe_realloc(void *ptr, size_t size)
     if (p != NULL) { macsurf_obs_note(p, size); return p; }  /* fixes956 */
 
     /* Original pointer is still valid, but we are about to
-     * ExitToShell so the leak is irrelevant -- stopping the
+     * ExitToShell so the leak is irrelevant - stopping the
      * $0000 write is the only priority. */
     macsurf_oom_panic(size);
     return NULL; /* unreachable */
 }
 
 /* ==================================================================
- * fixes719 (#207) — runtime application-partition pointer bounds.
+ * fixes719 (#207)  -  runtime application-partition pointer bounds.
  *
  * THE BLANK-SCREEN BUG. Dozens of "is this pointer valid?" guards
  * across libwapcaplet, nsurl, libdom, hlcache/llcache, ns_content and
  * browser_window were hardcoded to assume a live heap pointer lives in
  * a FIXED low window (0x01000000..0x20000000, or ..0x28000000). That is
- * false: there is no kernel boundary at 0x28000000 on classic Mac OS —
+ * false: there is no kernel boundary at 0x28000000 on classic Mac OS  - 
  * it is just 640 MB of a flat 32-bit space. WHERE the Process Manager
  * maps MacSurf's partition depends on the machine's RAM. On the dev
  * iMac/minitower the partition lands low (0x10..) so the guards work;
@@ -307,7 +307,7 @@ static unsigned long g_ptr_lo = 0x00001000UL;   /* fail-open: reject NULL page *
 static unsigned long g_ptr_hi = 0xFFFFFFFFUL;   /* fail-open until init narrows */
 static int           g_ptr_bounds_ok = 0;
 
-/* fixes956 — OBSERVED allocator window. Every heap object in the app is
+/* fixes956  -  OBSERVED allocator window. Every heap object in the app is
  * handed out by macsurf_safe_alloc/_calloc/_realloc below (the prefix #defines
  * malloc/calloc/realloc to them), so recording the lowest and highest address
  * they ever return gives a real heap window on ANY platform, with no
@@ -315,10 +315,10 @@ static int           g_ptr_bounds_ok = 0;
  * useless partition and macsurf_ptr_is_heap was forced fail-open (fixes936),
  * this window re-arms the wild-pointer guards (fixes499g/572/576, dom_string.c)
  * that keep the content/DOM teardown paths from dereferencing a reused-as-text
- * pointer -- the exact "ute(" (0x75746528) crash seen on 68kmla under OS X 10.3,
+ * pointer - the exact "ute(" (0x75746528) crash seen on 68kmla under OS X 10.3,
  * which OS 9 survives ONLY because its hardcoded range guard rejects the same
  * value. Monotonic (never shrinks); a freed address staying in-window is fine,
- * because liveness is checked separately -- this window's only job is to reject
+ * because liveness is checked separately - this window's only job is to reject
  * gross garbage (text/code pointers ~2 GB, far above any real heap). */
 static unsigned long g_obs_lo = 0xFFFFFFFFUL;
 static unsigned long g_obs_hi = 0x00000000UL;
@@ -374,12 +374,12 @@ void macsurf_heap_bounds_init(void)
 	 * partition >= 8 MB. */
 	/* fixes936 (OS X tier 1): on Mac OS X the Process Manager's
 	 * processLocation/processSize describe a Classic-style application
-	 * PARTITION that does not exist -- a Carbon app there is a real BSD
+	 * PARTITION that does not exist - a Carbon app there is a real BSD
 	 * process whose malloc arena the Mach VM places wherever it likes.
 	 * Narrowing to that window would false-reject every valid heap pointer
 	 * (the #207 blank page) and, worse, if processLocation comes back 0 with
 	 * a plausible processSize, the >= 8 MB test below PASSES and installs
-	 * lo=0 -- which simultaneously makes macsurf_ptr_is_heap(NULL) return
+	 * lo=0 - which simultaneously makes macsurf_ptr_is_heap(NULL) return
 	 * TRUE, defeating the guard's whole purpose. Force accept-all on OS X.
 	 *
 	 * Still record exactly what the Toolbox returned: that is the forensic
@@ -398,14 +398,14 @@ void macsurf_heap_bounds_init(void)
 		g_ptr_bounds_ok = 1;
 	} else {
 		macsurf_debug_log_writef(
-			"RECON HEAP BOUNDS BAD err=%d -- fail-open accept-all",
+			"RECON HEAP BOUNDS BAD err=%d - fail-open accept-all",
 			(int)err);
 	}
 	macsurf_debug_log_flush();
 #endif
 }
 
-/* STRICT partition test — for malloc'd objects (lwc_string*, interned
+/* STRICT partition test  -  for malloc'd objects (lwc_string*, interned
  * dom_string, nsurl components, llcache_object, hlcache handle/entry/
  * content, content_user nodes, source buffers, parser, qjs dom_node).
  * These always come from MSL malloc / NewPtr backed by the app zone, so
@@ -420,7 +420,7 @@ int macsurf_ptr_is_heap(const void *p)
 	if (a < g_ptr_lo || a >= g_ptr_hi)
 		return 0;
 
-	/* fixes956 — when the PM window did NOT narrow (OS X), also require the
+	/* fixes956  -  when the PM window did NOT narrow (OS X), also require the
 	 * pointer to fall inside the observed allocator window. This is the OS X
 	 * substitute for OS 9's real partition bounds, and it is what re-rejects
 	 * a reused-as-text handle (e.g. 0x75746528). Skipped entirely on OS 9
@@ -434,7 +434,7 @@ int macsurf_ptr_is_heap(const void *p)
 	return 1;
 }
 
-/* FLOOR-ONLY test — for pointers that may legitimately live OUTSIDE the
+/* FLOOR-ONLY test  -  for pointers that may legitimately live OUTSIDE the
  * partition heap window (e.g. a static const vtable or PEF read-only
  * literal in the code fragment). Only rejects NULL/tiny scribble. */
 int macsurf_ptr_is_valid(const void *p)

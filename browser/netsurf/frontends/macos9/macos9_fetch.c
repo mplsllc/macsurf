@@ -34,7 +34,7 @@ extern OTClientContextPtr macos9_ot_context;
 #include "macos9_useragent.h"
 #include "macos9_blocklist.h"
 
-/* fixes368 (#167) — per-host User-Agent table (Classilla "sitecontrol"
+/* fixes368 (#167)  -  per-host User-Agent table (Classilla "sitecontrol"
  * pattern). See macos9_useragent.h. To add a site override, add a
  * { suffix, ua } row; the suffix is matched on a dot boundary against the
  * tail of the host. This is the single source of truth that replaced the
@@ -42,34 +42,34 @@ extern OTClientContextPtr macos9_ot_context;
 static const char MACOS9_UA_DEFAULT[] =
 	"MacSurf/2.0.5 (Macintosh; PPC Mac OS 9)";
 
-/* fixes841 (#167 Facebook) — ONE Facebook device. Every facebook.com origin
+/* fixes841 (#167 Facebook)  -  ONE Facebook device. Every facebook.com origin
  * (www, m, apex) AND the fbcdn.net / facebook.net asset origins present the
  * SAME KaiOS feature-phone UA, so FB sees a single consistent device rather
  * than a new one per UA experiment (fixes835 FF134 desktop, fixes838 Firefox-
- * Android, fixes839 Galaxy-S5 each looked like a DIFFERENT device — that
+ * Android, fixes839 Galaxy-S5 each looked like a DIFFERENT device  -  that
  * re-triggered new-device checkpoints every time and made it impossible to
  * tell whether cookie persistence was working). KaiOS is the string that gets
  * furthest end-to-end: light plain-HTML login form renders, login POST is
  * accepted (302), and the m two_factor checkpoint returns 200 HTML. www under
- * KaiOS 301s to the m mobile surface — fine, that's where the checkpoint
+ * KaiOS 301s to the m mobile surface  -  fine, that's where the checkpoint
  * actually renders (www's is a JS-only 404 route). The "LYF Jio F90M" device
  * label is cosmetic; the device is remembered by the persistent datr cookie
- * (fixes838), not the UA. Do NOT append " MacSurf/..." — FB's KaiOS gate is
+ * (fixes838), not the UA. Do NOT append " MacSurf/..."  -  FB's KaiOS gate is
  * exact. The FF134 desktop-shell UA (fixes835) lives in git history if we
  * revisit the desktop path once login/persistence is nailed down. */
 static const char MACOS9_UA_FB_KAIOS[] =
 	"Mozilla/5.0 (Mobile; LYF/F90M/LYF-F90M-000-02-44-130319; rv:48.0) Gecko/48.0 Firefox/48.0 KAIOS/2.5";
 
-/* fixes842 (#167 Facebook) — desktop Firefox 134, restored for the VIEWING
+/* fixes842 (#167 Facebook)  -  desktop Firefox 134, restored for the VIEWING
  * surface. The fixes841 one-KaiOS-device baseline proved the login stack: a
- * clean account logs in fully on m.facebook.com (KaiOS) — c_user + xs set, no
- * checkpoint, lands on the logged-in home — and the session persists (fixes838
+ * clean account logs in fully on m.facebook.com (KaiOS)  -  c_user + xs set, no
+ * checkpoint, lands on the logged-in home  -  and the session persists (fixes838
  * cookies). BUT the KaiOS logged-in surface refuses the feed ("Facebook is not
- * available on this device — switch to a mobile or desktop device"), HW-seen
+ * available on this device  -  switch to a mobile or desktop device"), HW-seen
  * 2026-07-16. So we split again by ROLE: m.facebook.com stays KaiOS (the
  * reliable no-checkpoint LOGIN surface), while www/apex facebook.com + the
  * fbcdn/facebook.net asset origins use FF134 (the DESKTOP surface that renders
- * the real logged-in shell — the June baseline: nav + group-chats rail; the
+ * the real logged-in shell  -  the June baseline: nav + group-chats rail; the
  * feed itself is JS-built and awaits the JS work). The session cookies
  * (c_user/xs) are domain-wide .facebook.com, so a KaiOS login on m carries
  * straight over to an FF134 view on www. Sec-Fetch is synthesized per request
@@ -86,12 +86,12 @@ static const struct macos9_ua_rule macos9_ua_rules[] = {
 	/*
 	 * fixes842 (#167): split by ROLE (see the MACOS9_UA_FB_FF134 note). The
 	 * m.facebook.com row is MORE SPECIFIC and MUST stay first (first-match-
-	 * wins): it keeps the KaiOS UA — the reliable no-checkpoint LOGIN surface
+	 * wins): it keeps the KaiOS UA  -  the reliable no-checkpoint LOGIN surface
 	 * (a clean account logs straight in, c_user+xs). www/apex facebook.com and
-	 * the fbcdn/facebook.net assets use FF134 — the DESKTOP surface that shows
+	 * the fbcdn/facebook.net assets use FF134  -  the DESKTOP surface that shows
 	 * the logged-in shell (KaiOS logged-in = "not available on this device").
 	 * Session cookies are domain-wide, so login on m carries to viewing on www.
-	 * Do NOT append " MacSurf/..." to the KaiOS UA — FB's gate is exact.
+	 * Do NOT append " MacSurf/..." to the KaiOS UA  -  FB's gate is exact.
 	 */
 	{ "m.facebook.com", MACOS9_UA_FB_KAIOS },
 	{ "facebook.com",   MACOS9_UA_FB_FF134 },
@@ -100,7 +100,7 @@ static const struct macos9_ua_rule macos9_ua_rules[] = {
 	/*
 	 * fixes821: Hacker News UA-gates /login (and other dynamic routes)
 	 * at nginx: the honest "MacSurf/2.0.5 (Macintosh; PPC Mac OS 9)" UA
-	 * gets 429 "Sorry." while a Chrome UA gets the form -- PROVEN by a
+	 * gets 429 "Sorry." while a Chrome UA gets the form - PROVEN by a
 	 * same-IP curl A/B from the maintainer's network (2026-07-14:
 	 * MacSurf-UA 429 / Chrome-UA 200; the Jul-11 Chrome HAR shows the
 	 * full login 200->302 works from that IP). Content routes (/,
@@ -111,7 +111,7 @@ static const struct macos9_ua_rule macos9_ua_rules[] = {
 	{ "news.ycombinator.com",
 	  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36" },
 	/*
-	 * fixes1115 -- emaculation.com is behind Cloudflare bot-detection.
+	 * fixes1115 - emaculation.com is behind Cloudflare bot-detection.
 	 * The honest MacSurf UA triggers HTTP 403 with a JS challenge page,
 	 * confirmed on hardware 2026-08-05: st=403, cdn-cgi/challenge-platform.
 	 * A Chrome UA MAY bypass it (proven HN pattern); if not, TLS fingerprint
@@ -122,8 +122,8 @@ static const struct macos9_ua_rule macos9_ua_rules[] = {
 	/* add more host->UA overrides here */
 	/*
 	 * fixes741: macintoshrepository.org UA override REVERTED. fixes740 proved
-	 * the https->http 301 IS UA-gated — a modern Firefox UA keeps the server
-	 * on https — but the modern site it then serves is heavy and renders
+	 * the https->http 301 IS UA-gated  -  a modern Firefox UA keeps the server
+	 * on https  -  but the modern site it then serves is heavy and renders
 	 * poorly on MacSurf, whereas the default-UA http surface is lighter and
 	 * loads better. So we deliberately let it serve http. Do NOT re-add a
 	 * modern-UA override here.
@@ -155,7 +155,7 @@ const char *macos9_user_agent_for_host(const char *host)
 	return MACOS9_UA_DEFAULT;
 }
 
-/* fixes856 (#285) — tracker / ad-network / consent-platform host blocklist.
+/* fixes856 (#285)  -  tracker / ad-network / consent-platform host blocklist.
  * See macos9_blocklist.h for the full rationale, the measured hackaday.com
  * numbers (~908 KB of 2406 KB = ~38% of the page), the allow-policy for small
  * privacy-respecting analytics (umami/plausible/fathom/...), and the list of
@@ -198,7 +198,7 @@ static const char *const macos9_tracker_hosts[] = {
 	"amplitude.com",
 	"branch.io",
 	/* --- WordPress.com telemetry ONLY.  s0/s1/i0.wp.com serve real assets
-	 * and jetpack.wordpress.com hosts the comment iframe — never add those. */
+	 * and jetpack.wordpress.com hosts the comment iframe  -  never add those. */
 	"stats.wp.com",
 	"pixel.wp.com",
 	/* --- Ad exchanges / servers --- */
@@ -220,7 +220,7 @@ static const char *const macos9_tracker_hosts[] = {
 	"smartadserver.com",
 	"teads.tv",
 	/* --- Social tracking pixels.  NOTE: facebook.net / fbcdn.net / fbsbx.com
-	 * are deliberately ABSENT — #167 loads the real site through them. --- */
+	 * are deliberately ABSENT  -  #167 loads the real site through them. --- */
 	"ads-twitter.com",
 	"analytics.twitter.com",
 	"analytics.tiktok.com",
@@ -258,7 +258,7 @@ int macos9_host_is_tracker(const char *host)
 	return 0;
 }
 
-/* fixes835 (#167 Facebook M1) — case-insensitive substring test. Used by
+/* fixes835 (#167 Facebook M1)  -  case-insensitive substring test. Used by
  * the fetchers to decide whether the caller already supplied a Sec-Fetch
  * / Origin header (which then WINS over the synthesized one). */
 int macos9_hdr_has_ci(const char *hay, const char *needle)
@@ -277,14 +277,14 @@ int macos9_hdr_has_ci(const char *hay, const char *needle)
 	return 0;
 }
 
-/* fixes835 (#167 Facebook M1) — copy NetSurf core's additional request
+/* fixes835 (#167 Facebook M1)  -  copy NetSurf core's additional request
  * headers (a NULL-terminated array of "Name: value" strings) into one
  * ready-to-splice buffer, "Name: value\r\n" per KEPT header. Dropped:
  * every header the fetcher emits itself (Host, User-Agent, the Accept
  * family, Content-Length, Content-Type, Connection), all hop-by-hop
  * headers, and Cookie (the jar wins).
  *
- * fixes979 — If-None-Match / If-Modified-Since are KEPT again. fixes835
+ * fixes979  -  If-None-Match / If-Modified-Since are KEPT again. fixes835
  * dropped them for a real reason ("we can't answer 304, so we must not
  * ask"): neither fetcher had a FETCH_NOTMODIFIED branch, so a 304 arrived as
  * an empty body and blanked the cached resource, worst on revalidated images
@@ -653,7 +653,7 @@ struct gui_fetch_table macos9_fetch_table = {
 };
 
 /* ==================================================================
- * fixes721 (#207 tooling) — multipart/form-data body builder, shared by
+ * fixes721 (#207 tooling)  -  multipart/form-data body builder, shared by
  * the HTTP and HTTPS fetchers so an <input type=file> upload (e.g. the
  * debug-log page) works from MacSurf. NetSurf core hands the fetcher a
  * fetch_multipart_data list; we serialise it into a real

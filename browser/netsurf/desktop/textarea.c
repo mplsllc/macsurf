@@ -914,7 +914,7 @@ static bool textarea_reflow_singleline(struct textarea *ta, size_t b_off,
  * \return true on success false otherwise
  */
 #ifdef __MACOS9__
-/* fixes758 (#212) — DIAGNOSTIC ONLY: per-reflow timing + scope, to find why
+/* fixes758 (#212) - DIAGNOSTIC ONLY: per-reflow timing + scope, to find why
  * typing in a big multiline textarea crawls. Externs kept local so no Mac
  * headers leak into core textarea.c. Remove with the log lines once diagnosed. */
 extern void macsurf_debug_log_writef(const char *fmt, ...);
@@ -2532,7 +2532,7 @@ bool textarea_keypress(struct textarea *ta, uint32_t key)
 					return false;
 			}
 			/* fixes749 (#217): copy doesn't move the caret or change
-			 * text — return before the common textarea_set_caret_internal
+			 * text - return before the common textarea_set_caret_internal
 			 * tail, which would scroll the view to the (possibly
 			 * off-screen) caret. Mirrors NS_KEY_SELECT_ALL above. */
 			return true;

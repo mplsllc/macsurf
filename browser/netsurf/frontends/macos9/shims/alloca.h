@@ -1,10 +1,10 @@
 /*
- * MacSurf stub -- shims/alloca.h
+ * MacSurf stub - shims/alloca.h
  * Stack allocation for CodeWarrior 8 / Mac OS.
  *
  * <alloca.h> is a GNU/Solaris-ism. Metrowerks MSL ships no such header, so
  * every translation unit that reaches an `#include <alloca.h>` fails with
- * "the file 'alloca.h' cannot be opened" -- and because the include failed,
+ * "the file 'alloca.h' cannot be opened" - and because the include failed,
  * alloca() is then undeclared, so C89's implicit-int rule makes it return
  * `int` and every call site dies a second time with
  * "illegal implicit conversion from 'int' to '<type> *'".
@@ -29,11 +29,11 @@
  *
  * NOTE ON THE RISK: if this CodeWarrior install has no __alloca in its PPC
  * runtime either, the failure moves to a LINK error naming __alloca
- * specifically -- unambiguous, and not a silent miscompile. The fallback in
+ * specifically - unambiguous, and not a silent miscompile. The fallback in
  * that case is to remove alloca from the four call sites above rather than to
  * emulate it: a malloc-based alloca would leak, because alloca memory is
  * reclaimed by the function epilogue and none of those sites free anything.
- * (libregexp.c's is trivially convertible -- its size is bounded by
+ * (libregexp.c's is trivially convertible - its size is bounded by
  * STACK_SIZE_MAX=255, i.e. 1020 bytes on PPC32, so a plain local array works.
  * The three quickjs.c sites sit in JS_CallInternal and need more care.)
  *

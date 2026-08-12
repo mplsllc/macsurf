@@ -1,6 +1,6 @@
 /*
- * MacSurf — Mac OS 9 frontend for NetSurf
- * mac_dirent.h — POSIX directory iteration shim using Carbon File Manager
+ * MacSurf  -  Mac OS 9 frontend for NetSurf
+ * mac_dirent.h  -  POSIX directory iteration shim using Carbon File Manager
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.

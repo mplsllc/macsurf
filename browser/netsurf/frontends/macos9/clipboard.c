@@ -1,6 +1,6 @@
 /*
- * MacSurf — Mac OS 9 frontend for NetSurf
- * clipboard.c — All gui_clipboard_table callbacks
+ * MacSurf  -  Mac OS 9 frontend for NetSurf
+ * clipboard.c  -  All gui_clipboard_table callbacks
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.
@@ -124,7 +124,7 @@ macos9_clipboard_set(const char *buffer, size_t length,
 		return;
 	}
 
-	/* fixes743 (#218) — Mac OS apps expect CR line endings on the desk scrap;
+	/* fixes743 (#218)  -  Mac OS apps expect CR line endings on the desk scrap;
 	 * NetSurf hands us text with UNIX LF. Convert in place so pasting into
 	 * SimpleText/other Mac apps doesn't run every line together. NetSurf's
 	 * selection text is LF-only (no CRLF), so a straight \n -> \r is correct. */

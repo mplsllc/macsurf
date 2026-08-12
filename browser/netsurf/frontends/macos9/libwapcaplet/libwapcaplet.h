@@ -1,5 +1,5 @@
 /*
- * MacSurf stub — libwapcaplet/libwapcaplet.h
+ * MacSurf stub  -  libwapcaplet/libwapcaplet.h
  * Minimal C89-compatible stub for CodeWarrior 8 compilation.
  *
  * Symbols stubbed:

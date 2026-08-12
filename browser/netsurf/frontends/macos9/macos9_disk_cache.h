@@ -18,10 +18,10 @@
 
 #include <stddef.h>
 
-/* fixes986 — image/font caching is OFF again, one round after fixes985
+/* fixes986  -  image/font caching is OFF again, one round after fixes985
  * turned it on, because hardware said so: hackaday's cold load went from
  * ~11s to ~33s and the maintainer called it out immediately. 68kmla, which
- * has far fewer images, stayed fine -- which is the shape of a per-image
+ * has far fewer images, stayed fine - which is the shape of a per-image
  * cost, not a fixed one.
  *
  * The suspect is the design, not the switch. A cacheable response is
@@ -30,8 +30,8 @@
  * CSS and expensive for ninety images on a 128 MB machine, where the churn
  * lands on the same heap the decoder and its GWorlds are competing for.
  *
- * fixes987 removed that buffer -- the body now streams to the file as it
- * arrives and nothing is held -- and hardware confirmed the streaming store
+ * fixes987 removed that buffer - the body now streams to the file as it
+ * arrives and nothing is held - and hardware confirmed the streaming store
  * is neutral on text volume (cold and return load times unchanged, with a
  * streamed 108 KB file read back as a hit). So the condition this switch was
  * waiting on is met, and fixes988 turns it on. */
@@ -52,27 +52,7 @@
  * resume normal cache behaviour. Defined in macos9_disk_cache.c. */
 extern int macsurf_http_skip_next_cache;
 
-/* fixes1159 (#240) — per-host POST-staleness window. After ANY POST to a
- * host, disk-cache GETs to that same origin are skipped for a few seconds,
- * so the post-redirect page cannot come back from a cache that predates
- * the edit (forum flows: POST edit -> 302 -> GET thread, where the cached
- * thread is the pre-edit copy — serving it hides the edit and the next
- * edit re-derives from the stale base, i.e. data loss). Host-scoped, so
- * other origins' cached sub-resources are unaffected; time-bounded, so
- * the collateral is a few fresh fetches; refreshed on every POST send.
- *
- * macsurf_http_skip_next_cache (above) is the older one-shot GLOBAL
- * bypass for Reload / URL-bar nav / login and is deliberately unchanged;
- * this is the POST-specific, host-scoped state.
- *
- * Both functions take a full URL and key on the origin parsed from it
- * (lowercased host, scheme-default port dropped), so a POST on
- * "https://host/thread" and the redirect GET on "https://host/thread?new"
- * — or on the same host spelled with an explicit :443 — match. */
-void macos9_cache_arm_post_bypass(const char *url);
-int  macos9_cache_post_bypass_active(const char *url);
-
-/* fixes981 — cap on the persisted freshness/validator header block.
+/* fixes981  -  cap on the persisted freshness/validator header block.
  * Cache-Control + ETag + Last-Modified + Expires + Date + Age is typically
  * 150-250 bytes; a response whose block would exceed this keeps whatever fit
  * whole (a truncated header is worse than a missing one). */
@@ -81,7 +61,7 @@ int  macos9_cache_post_bypass_active(const char *url);
 /* Returns 1 if this (status, mime) pair is worth persisting. */
 int macos9_cache_mime_eligible(int status, const char *mime);
 
-/* fixes981 — copy the response headers llcache needs in order to reason
+/* fixes981  -  copy the response headers llcache needs in order to reason
  * about freshness (Date, Age, Expires, Cache-Control) and to revalidate
  * (ETag, Last-Modified) out of a full header line. Appends "Name: value\r\n"
  * to dst when the line is one of those, ignores it otherwise. dst is always
@@ -89,11 +69,11 @@ int macos9_cache_mime_eligible(int status, const char *mime);
  * call this per header line while parsing a response they intend to cache. */
 void macos9_cache_capture_hdr(const char *line, char *dst, size_t cap);
 
-/* fixes987 — STREAMING store. The body is written to the cache file as it
+/* fixes987  -  STREAMING store. The body is written to the cache file as it
  * arrives instead of being accumulated in RAM and written at the end.
  *
  * Measured, not assumed: with the buffered store, ten text stores totalling
- * ~355 KB cost 3 ticks (50 ms) of file I/O -- writing is essentially free.
+ * ~355 KB cost 3 ticks (50 ms) of file I/O - writing is essentially free.
  * What was NOT free was the buffer: fixes985 cached images, which meant
  * doubling-realloc growth up to 727 KB per image, several alive at once, on
  * the same 128 MB heap the decoder and its GWorlds compete for. Cold hackaday
@@ -107,10 +87,10 @@ void macos9_cache_capture_hdr(const char *line, char *dst, size_t cap);
  *
  * Handle is a small positive int (0 = not caching, no slot, ineligible).
  * Every begin must be matched by an end, commit or not; end(0) closes and
- * deletes. Slots are a fixed arena -- at most MACSURF_CACHE_STREAMS
+ * deletes. Slots are a fixed arena - at most MACSURF_CACHE_STREAMS
  * cacheable responses can be in flight, and a begin beyond that simply
  * declines to cache, which costs a refetch and nothing else. */
-/* fixes988 — 8 -> 16 with images enabled. A begin past the last free slot
+/* fixes988  -  8 -> 16 with images enabled. A begin past the last free slot
  * declines to cache, which is harmless but silent, and a page like
  * hackaday's front page has many more images in flight at once than it ever
  * had stylesheets. Each slot is a file ref, an FSSpec and a length. */
@@ -121,7 +101,7 @@ int  macos9_cache_stream_begin(const char *url, int status, const char *mime,
 int  macos9_cache_stream_data(int h, const char *buf, long len);
 void macos9_cache_stream_end(int h, int commit);
 
-/* fixes981 — store/lookup carrying the freshness header block. The plain
+/* fixes981  -  store/lookup carrying the freshness header block. The plain
  * macos9_cache_store / macos9_cache_lookup remain, as wrappers passing no
  * headers, so any caller that does not care is unaffected.
  *
@@ -148,7 +128,7 @@ int macos9_cache_lookup(const char *url, char **body_out,
 void macos9_cache_store(const char *url, int status, const char *mime,
                         const char *body_ptr, long body_len);
 
-/* fixes238 — persistent dead-host list. The HTTPS fetcher's in-memory
+/* fixes238  -  persistent dead-host list. The HTTPS fetcher's in-memory
  * blocklist (host:port that timed out or peer-closed) is wiped on app
  * restart, so the first attempt to fonts.googleapis.com (or any other
  * fingerprint-blocked host) pays the full no-progress timeout on every
@@ -156,7 +136,7 @@ void macos9_cache_store(const char *url, int status, const char *mime,
  * in the cache folder so subsequent sessions skip the timeout entirely.
  *
  * Format: one "host:port" per line, terminated by '\n'. Empty lines
- * ignored. No timestamp / TTL — call macos9_deadhost_clear() to forget.
+ * ignored. No timestamp / TTL  -  call macos9_deadhost_clear() to forget.
  *
  * macos9_deadhost_load fills out_buf with the file contents, NUL-
  * terminated. Returns bytes read (excluding NUL), 0 on miss or error.
@@ -165,12 +145,12 @@ long macos9_deadhost_load(char *out_buf, long buf_cap);
 void macos9_deadhost_save(const char *buf, long len);
 void macos9_deadhost_clear(void);
 
-/* fixes706 — empty the disk cache (all cached bodies + deadhosts.txt under
+/* fixes706  -  empty the disk cache (all cached bodies + deadhosts.txt under
  * MacSurfData/Cache). Bookmarks/history/cookies at the root are untouched.
  * Returns the count of files deleted. */
 long macos9_cache_clear(void);
 
-/* fixes368 (#167) — cookie-jar persistence across launches so a Facebook
+/* fixes368 (#167)  -  cookie-jar persistence across launches so a Facebook
  * (or any) login survives a relaunch. Call macos9_cookies_load() once at
  * startup (after netsurf_init, before the event loop) and
  * macos9_cookies_save() once at shutdown (before netsurf_exit). Both are

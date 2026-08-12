@@ -1,5 +1,5 @@
 /*
- * MacSurf stub -- sys/utsname.h
+ * MacSurf stub - sys/utsname.h
  * Minimal C89-compatible stub for CodeWarrior 8 compilation.
  */
 

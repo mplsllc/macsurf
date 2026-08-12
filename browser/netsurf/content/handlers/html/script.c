@@ -48,7 +48,7 @@
 
 extern int macsurf_ptr_is_heap(const void *);
 
-/* fixes1117b (#265) — execute a script as an ES module. Defined in
+/* fixes1117b (#265) - execute a script as an ES module. Defined in
  * frontends/macos9/javascript/macsurf_qjs.c, linked via the MacSurf.mcp
  * build. Returns 1 on success, 0 on compile/resolve/execute failure. */
 extern unsigned char js_exec_module(struct jsthread *thread,
@@ -135,7 +135,7 @@ nserror html_script_exec(html_content *c, bool allow_defer)
 			script_handler = select_script_handler(
 					content_get_type(s->data.handle));
 			if (script_handler == NULL) {
-				/* fixes847 (#167 S1 census gap) — this is a silent
+				/* fixes847 (#167 S1 census gap) - this is a silent
 				 * script-execution skip with NO log of any kind
 				 * before this fix: select_script_handler() only
 				 * returns non-NULL for CONTENT_JS (0x40, see
@@ -162,7 +162,7 @@ nserror html_script_exec(html_content *c, bool allow_defer)
 				size_t size;
 				data = content_get_source_data(
 						s->data.handle, &size );
-				/* fixes847 (#167 S1 census gap) — positive
+				/* fixes847 (#167 S1 census gap) - positive
 				 * confirmation a script is actually about to reach
 				 * js_exec, WORK-gated (this whole function had zero
 				 * log lines of any kind before this fix). */
@@ -171,7 +171,7 @@ nserror html_script_exec(html_content *c, bool allow_defer)
 					(long) size,
 					nsurl_access(
 						hlcache_handle_get_url(s->data.handle)));
-				/* fixes873 (#301) — document.currentScript must name THIS
+				/* fixes873 (#301) - document.currentScript must name THIS
 				 * script while it runs. webpack's publicPath runtime reads
 				 * it first thing and throws "Automatic publicPath is not
 				 * supported in this browser" if it (and the
@@ -199,7 +199,7 @@ nserror html_script_exec(html_content *c, bool allow_defer)
 
 				s->already_started = true;
 
-				/* fixes869 (#295) — fire `load` at the element, AFTER
+				/* fixes869 (#295) - fire `load` at the element, AFTER
 				 * the script has run (per spec, and what a loader
 				 * waiting on it expects: the script's own globals must
 				 * exist by the time onload resolves the promise).
@@ -257,7 +257,7 @@ html_process_new_script(html_content *c,
 	nscript->ready_exec = false;
 	nscript->async = false;
 	nscript->defer = false;
-	/* fixes869 (#295) — see struct html_script. Callers that have the element
+	/* fixes869 (#295) - see struct html_script. Callers that have the element
 	 * (exec_src_script) set this; realloc above means every field must be
 	 * initialised here or the new slot inherits garbage. */
 	nscript->node = NULL;
@@ -319,7 +319,7 @@ convert_script_async_cb(hlcache_handle *script,
 		      nsurl_access(hlcache_handle_get_url(script)),
 		      event->data.errordata.errormsg);
 
-		/* fixes869 (#295) — fire `error` at the element so a loader waiting
+		/* fixes869 (#295) - fire `error` at the element so a loader waiting
 		 * on this script REJECTS rather than hanging forever.  A promise that
 		 * never settles is strictly worse than a rejected one: the page gets
 		 * no chance to fall back or report.  Fired BEFORE the release below,
@@ -402,7 +402,7 @@ convert_script_defer_cb(hlcache_handle *script,
 		      nsurl_access(hlcache_handle_get_url(script)),
 		      event->data.errordata.errormsg);
 
-		/* fixes869 (#295) — fire `error` at the element so a loader waiting
+		/* fixes869 (#295) - fire `error` at the element so a loader waiting
 		 * on this script REJECTS rather than hanging forever.  A promise that
 		 * never settles is strictly worse than a rejected one: the page gets
 		 * no chance to fall back or report.  Fired BEFORE the release below,
@@ -465,7 +465,7 @@ deferred_parser_unpause(void *pw)
 	saved_parser = pl->parser;
 	free(pl);   /* our own allocation; consumed regardless of outcome below */
 
-	/* fixes557: ENTRY instrumentation — logged BEFORE the token check and
+	/* fixes557: ENTRY instrumentation - logged BEFORE the token check and
 	 * WITHOUT dereferencing parent (macos9_content_token is address-keyed and
 	 * never reads parent's bytes, so it is safe even on a freed pointer).  This
 	 * is the decisive G3 probe: if this line does NOT appear before the
@@ -478,7 +478,7 @@ deferred_parser_unpause(void *pw)
 		"deferred_unpause: ENTRY parent=%p savedtok=%ld curtok=%ld savedparser=%p",
 		(void *)parent, (long)saved_token, (long)cur_token, saved_parser);
 
-	/* fixes550: GENERATION-TOKEN validation — the actual fix for the
+	/* fixes550: GENERATION-TOKEN validation - the actual fix for the
 	 * deferred_parser_unpause -> dom_hubbub_parser_pause -> hubbub_tokeniser_run
 	 * -> create_element/intern -> wild dom_string (lbzu, r4 wild) crash.
 	 *
@@ -508,18 +508,18 @@ deferred_parser_unpause(void *pw)
 	 * scheduled callback is being dispatched. The token check above confirms
 	 * &parent->base is this exact live occupancy, so the deref is safe. After
 	 * this point the scheduler has dequeued this callback, so there is no
-	 * longer any scheduled resume for this content — regardless of whether the
+	 * longer any scheduled resume for this content - regardless of whether the
 	 * lifetime guards below let us actually unpause (DEAD / aborted / PARSER
 	 * CHANGED / WILD all bail) or we resume successfully. Clearing here (not
 	 * only on the success path) keeps the invariant exact: "unpause_pending"
 	 * means a resume is still scheduled. If any bail returned without clearing,
 	 * the completion check (html_begin_conversion) would wait forever on a
-	 * resume that already decided not to happen — trading Fix A's crash for a
+	 * resume that already decided not to happen - trading Fix A's crash for a
 	 * hang. This stays correct no matter how Fix A's bail logic evolves. */
 	parent->unpause_pending = false;
 
 	/* fixes521: the fixes520 hlcache_content_is_live() gate was removed here
-	 * — a false-negative leaves the parser paused forever (page stuck
+	 * - a false-negative leaves the parser paused forever (page stuck
 	 * "Loading").  The dead/aborted/by-value-parser guards below are the
 	 * retained protection. */
 
@@ -540,14 +540,14 @@ deferred_parser_unpause(void *pw)
 			(void *)parent->parser);
 		return;
 	}
-	/* fixes557: PARSER-IDENTITY check — the second lifetime gate this crash
+	/* fixes557: PARSER-IDENTITY check - the second lifetime gate this crash
 	 * needs.  Static teardown analysis (html_finish_conversion at html.c:341-343,
 	 * also :675-676 / :880-881) shows dom_hubbub_parser_destroy(c->parser);
 	 * c->parser = NULL runs on the NORMAL conversion-completion path while the
 	 * html_content stays LIVE and REGISTERED.  The fixes550 content-generation
 	 * token still validates as live in that window (it keys on &parent->base,
 	 * not on the parser), so a stale unpause can sail past it and re-enter a
-	 * freed hubbub tokeniser / inputstream — the emit_current_tag lbzu r4-wild
+	 * freed hubbub tokeniser / inputstream - the emit_current_tag lbzu r4-wild
 	 * crash, whose freed bytes live INSIDE parser->parser, not inside the
 	 * content struct.  The parser is created once in html_create and only ever
 	 * transitions valid->NULL for a live content (it is never replaced), so
@@ -565,7 +565,7 @@ deferred_parser_unpause(void *pw)
 	/* fixes518: validate parser BY VALUE, not just against NULL.  The crash
 	 * signature is the unpause firing after the html_content was freed and
 	 * its memory reused: parent->parser reads back reuse garbage (observed
-	 * r3=B9921C91) or a small non-NULL value (observed r4=1), NOT NULL — so
+	 * r3=B9921C91) or a small non-NULL value (observed r4=1), NOT NULL - so
 	 * a "== NULL" guard sails straight through and dom_hubbub_parser_pause
 	 * dereferences parser->parser into the tokenizer and dies.  A heap-range
 	 * test rejects NULL, 1, and reuse garbage alike; legitimate parser
@@ -590,14 +590,14 @@ deferred_parser_unpause(void *pw)
 	 * entry (just past the token check). The parser is resumed now; the
 	 * re-drive below completes the parse with the parser no longer paused. */
 
-	/* fixes556 — re-drive post-parse conversion now that the parser has
+	/* fixes556 - re-drive post-parse conversion now that the parser has
 	 * actually resumed.  Upstream NetSurf unpauses the parser and then
 	 * completes the parse in the SAME call (convert_script_*_cb); fixes512
 	 * split that ordering by deferring the unpause to this scheduler tick,
 	 * so the synchronous html_begin_conversion that ran back in the script
 	 * callback saw a still-paused parser.  With the fixes556 change in
 	 * html_begin_conversion that case now returns true (wait) instead of
-	 * spuriously erroring to about:query/fetcherror — but something must
+	 * spuriously erroring to about:query/fetcherror - but something must
 	 * still finish the job once the parser is live again, or the page
 	 * stalls at "Loading".  That is this call.  Gated on
 	 * html_can_begin_conversion so we never start conversion while a
@@ -667,16 +667,16 @@ convert_script_sync_cb(hlcache_handle *script,
 		return NSERROR_OK;
 	}
 
-	/* fixes585 — freeze-proof the scripts[] walks below. tinkerdifferent
+	/* fixes585 - freeze-proof the scripts[] walks below. tinkerdifferent
 	 * hard-freezes here spinning `for (i != parent->scripts_count)` when
 	 * scripts_count holds a garbage value (heap corruption / html_content
-	 * UAF — the same corruptor that cycles sched_queue elsewhere). A real
+	 * UAF - the same corruptor that cycles sched_queue elsewhere). A real
 	 * page has a handful of scripts; anything past a sane ceiling is
 	 * corruption. Bail rather than spin the machine, and log the value so
 	 * we can trace WHEN it goes bad (correlate against the prior op). */
 	if (parent->scripts_count > 1024) {
 		macsurf_debug_log_writef(
-			"sync_cb: CORRUPT scripts_count=%ld parent=%p — bail",
+			"sync_cb: CORRUPT scripts_count=%ld parent=%p - bail",
 			(long)parent->scripts_count, (void *)parent);
 		return NSERROR_OK;
 	}
@@ -713,7 +713,7 @@ convert_script_sync_cb(hlcache_handle *script,
 			const uint8_t *data;
 			size_t size;
 			data = content_get_source_data(s->data.handle, &size );
-			/* fixes847 (#167 S1 census gap) — the sync-script sibling of
+			/* fixes847 (#167 S1 census gap) - the sync-script sibling of
 			 * html_script_exec's RUN log below. */
 			macsurf_debug_log_writef(
 				"WORK script_exec: RUN(sync) bytes=%ld url=%s",
@@ -870,7 +870,7 @@ exec_src_script(html_content *c,
 		return DOM_HUBBUB_NOMEM;
 	}
 
-	/* fixes869 (#295) — remember the element so html_script_exec can fire
+	/* fixes869 (#295) - remember the element so html_script_exec can fire
 	 * `load` at it (and convert_script_async_cb `error`).  Only worth it for a
 	 * JS-INSERTED script: a parser-inserted one has no JS waiting on its
 	 * onload, and skipping those keeps a ref off every <script> on every page.
@@ -1136,7 +1136,7 @@ nserror html_script_free(html_content *html)
 			dom_string_unref(scripts[i].mimetype);
 		}
 
-		/* fixes869 (#295) — release the <script> element ref taken in
+		/* fixes869 (#295) - release the <script> element ref taken in
 		 * exec_src_script.  NULL it first: this teardown is documented above
 		 * as re-entrant (releasing a handle can drive a JS content to DONE and
 		 * call back in), so the same null-before-release discipline the
@@ -1159,7 +1159,7 @@ nserror html_script_free(html_content *html)
 			/* fallthrough */
 		case HTML_SCRIPT_DEFER:
 			if (scripts[i].data.handle != NULL) {
-				/* fixes499e/501x — NULL the handle BEFORE release
+				/* fixes499e/501x - NULL the handle BEFORE release
 				 * (via the safe wrapper). Without this, a second
 				 * teardown pass (html_destroy fired from the scheduler
 				 * after the content's handles were already released
@@ -1178,7 +1178,7 @@ nserror html_script_free(html_content *html)
 		}
 	}
 	free(scripts);
-	/* fixes499e — also NULL the array + count so a duplicate
+	/* fixes499e - also NULL the array + count so a duplicate
 	 * html_script_free / html_destroy can't walk freed `scripts` memory.
 	 * The loop guard (i != scripts_count) then runs zero times. */
 	html->scripts = NULL;

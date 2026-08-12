@@ -1,6 +1,6 @@
 /*
  * Stub curl/curl.h for Mac OS 9 syntax checking.
- * MacSurf does not use cURL — all fetching goes through Open Transport
+ * MacSurf does not use cURL - all fetching goes through Open Transport
  * to the MacSurf proxy via plain HTTP.
  *
  * This stub exists only because content/fetchers/curl.h unconditionally

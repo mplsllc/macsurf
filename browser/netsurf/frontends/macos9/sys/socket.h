@@ -1,5 +1,5 @@
 /*
- * MacSurf stub -- sys/socket.h
+ * MacSurf stub - sys/socket.h
  * Minimal C89-compatible stub for CodeWarrior 8 compilation.
  * Mac OS 9 networking uses Open Transport, not BSD sockets.
  */

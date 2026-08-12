@@ -9,7 +9,7 @@
  * lodepng is already in the build and exports lodepng_inflate(), but it is
  * one-shot: it takes a complete input buffer and allocates the entire output
  * in one call. Both macos9 fetchers deliver FETCH_DATA incrementally, from
- * inside a poll callback that must return promptly -- OS 9 is cooperatively
+ * inside a poll callback that must return promptly - OS 9 is cooperatively
  * scheduled, so a single non-yielding multi-hundred-millisecond inflate of a
  * whole document stalls WaitNextEvent and every other in-flight Open Transport
  * endpoint along with it. Routing gzip through lodepng would also mean holding
@@ -35,7 +35,7 @@
  * push() returns DONE once the trailer has been read and verified; any bytes
  * after that (a second gzip member, or trailing garbage) are ignored.
  * Because output is streamed, a CRC/ISIZE mismatch is only detectable AFTER
- * the data has been handed on -- the caller must treat an ERROR return as
+ * the data has been handed on - the caller must treat an ERROR return as
  * "fail this fetch", not "discard the tail".
  */
 

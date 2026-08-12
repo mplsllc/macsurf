@@ -26,7 +26,7 @@
 
 #define AUTO INT_MIN
 
-/* fixes271b — struct box_multicol_segment and struct box_multicol_data
+/* fixes271b - struct box_multicol_segment and struct box_multicol_data
  * now live in box.h (single source of truth, matching the Mac-side
  * vendored version that has carried them since fixes199h). The _ns
  * suffix variants previously defined here are gone. */
@@ -159,7 +159,7 @@ static inline bool lh__box_is_inline_content(const struct box *b)
 }
 
 /**
- * fixes929 — an image's intrinsic size, from the live content object if it is
+ * fixes929 - an image's intrinsic size, from the live content object if it is
  * linked, else from the size remembered for its URL at box-construct time.
  * These are the ONLY two sources of intrinsic size in the engine.
  */
@@ -176,7 +176,7 @@ static inline int lh__box_intrinsic_h(const struct box *b)
 /** Layout helper: Check whether box is an object. */
 static inline bool lh__box_is_object(const struct box *b)
 {
-	/* fixes929 — obj_w>0 means we know the intrinsic size even though the
+	/* fixes929 - obj_w>0 means we know the intrinsic size even though the
 	 * content object is not linked right now (not fetched yet, or retired
 	 * by a reconvert). Without this the box falls to the inline-text path
 	 * and is sized by its alt string. */
@@ -187,7 +187,7 @@ static inline bool lh__box_is_object(const struct box *b)
 /** Layout helper: Check whether box is replaced. */
 static inline bool lh__box_is_replace(const struct box *b)
 {
-	/* fixes935 — IS_REPLACED is authoritative for the replaced-vs-inline
+	/* fixes935 - IS_REPLACED is authoritative for the replaced-vs-inline
 	 * decision. An <img> (and <object>/<embed>/<canvas>/inline-SVG) IS a
 	 * replaced element by virtue of being one, so it must NEVER fall to the
 	 * inline-text branch (line-height tall, alt-string wide = the squish)
@@ -246,7 +246,7 @@ static inline bool lh__flex_main_is_horizontal(const struct box *flex)
 	}
 }
 
-/* fixes565 — flex out-of-flow test that treats position:sticky correctly.
+/* fixes565 - flex out-of-flow test that treats position:sticky correctly.
  * abs/fixed are always out of flow. sticky is IN flow (reserves main-axis
  * space, like relative) on a COLUMN main axis, so a sticky nav in a
  * flex-direction:column wrapper reserves its height and following siblings

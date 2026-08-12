@@ -8,7 +8,7 @@
 #ifndef dom_hubbub_errors_h_
 #define dom_hubbub_errors_h_
 
-/* fixes316e — inline the HUBBUB_* enum from libhubbub so this file is
+/* fixes316e - inline the HUBBUB_* enum from libhubbub so this file is
  * self-contained. The original libhubbub <hubbub/errors.h> can't be
  * pulled in by name on CW8 because of the HFS case-insensitive collision
  * with Apple's <Errors.h>; mirrors the same inlining parser.h does. */

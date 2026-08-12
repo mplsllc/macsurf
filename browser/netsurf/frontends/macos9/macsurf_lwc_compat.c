@@ -1,5 +1,5 @@
 /*
- * MacSurf — macsurf_lwc_compat.c
+ * MacSurf  -  macsurf_lwc_compat.c
  *
  * Extracted from misc_stub.c (2026-08-05 cleanup).  Provides the ONE
  * genuinely critical function that was buried in a kitchen-sink file:
@@ -20,7 +20,7 @@
  * css_select_style consulted an empty hash and returned libcss initial
  * values for every element. No UA or author CSS ever took effect.
  *
- * This file is NEW in MacSurf.mcp — add it alongside misc_stub.c.
+ * This file is NEW in MacSurf.mcp  -  add it alongside misc_stub.c.
  * Licensed under GPL v2.
  */
 

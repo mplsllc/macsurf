@@ -77,7 +77,7 @@ enum macsurf_object_position_token_kind {
 	MACSURF_OBJECT_POS_TOK_CENTER
 };
 
-/* fixes201 — packed-int32 encoder. Clamps to Q8.6 14-bit signed
+/* fixes201 - packed-int32 encoder. Clamps to Q8.6 14-bit signed
  * range so the value field can't overflow the bitslot. Caller
  * passes h_value / v_value as IEEE float in real units (percent or
  * px). */
@@ -104,7 +104,7 @@ static int32_t macsurf_object_position_pack_xy(
 	return (int32_t)packed;
 }
 
-/* fixes201 — try to read one position component (percentage,
+/* fixes201 - try to read one position component (percentage,
  * length, or NUMBER token where 0 is acceptable). Returns 1 on
  * success and fills *out_value (real units) + *out_is_px (1 if
  * length, 0 if percentage). Returns 0 on non-numeric (so the
@@ -135,7 +135,7 @@ static int macsurf_object_position_read_numeric(
 		if (conv == 0) return 0;
 		u = lwc_string_data(token->idata) + conv;
 		ulen = lwc_string_length(token->idata) - conv;
-		/* Treat non-px units (em / rem / vw / ...) as px for V2 —
+		/* Treat non-px units (em / rem / vw / ...) as px for V2 -
 		 * accurate cross-unit resolution would need the unit_len_ctx
 		 * which isn't available at parse time. */
 		(void)u;

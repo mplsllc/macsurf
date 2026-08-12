@@ -1,6 +1,6 @@
 /*
- * MacSurf — Mac OS 9 frontend for NetSurf
- * mac_types.h — POSIX type definitions and forward declarations
+ * MacSurf  -  Mac OS 9 frontend for NetSurf
+ * mac_types.h  -  POSIX type definitions and forward declarations
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.
@@ -49,9 +49,9 @@ typedef long		ssize_t;
 
 /* mode_t and time_t are provided by MSL's <stat.h> and <time.h>
  * which are included globally via the prefix file.
- * Do NOT redefine them here — causes "illegal name overloading". */
+ * Do NOT redefine them here  -  causes "illegal name overloading". */
 
-/* FSIORefNum — provided by Files.h in Carbon, but we may be parsed
+/* FSIORefNum  -  provided by Files.h in Carbon, but we may be parsed
  * before Files.h is included.  Use short (== SInt16 on PPC). */
 #ifndef __FILES__
 typedef short		FSIORefNum;
@@ -60,7 +60,7 @@ typedef short		FSIORefNum;
 /*
  * fcntl.h constants (O_RDONLY, O_WRONLY, etc.) and
  * sys/stat.h constants (S_IFDIR, S_IFREG, struct stat, etc.)
- * are intentionally NOT defined here — MSL provides them.
+ * are intentionally NOT defined here  -  MSL provides them.
  * Defining them here conflicts with MSL's fcntl.h and stat.h.
  */
 
@@ -92,7 +92,7 @@ typedef short		FSIORefNum;
 #endif
 
 /*
- * struct stat is provided by MSL's stat.h — not defined here.
+ * struct stat is provided by MSL's stat.h  -  not defined here.
  * On CW8, #include <stat.h> in the prefix file provides it.
  * On Linux, pull in the system header so struct stat is visible.
  */

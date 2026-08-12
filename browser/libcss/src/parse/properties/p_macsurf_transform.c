@@ -41,7 +41,7 @@
 #include "parse/properties/properties.h"
 #include "parse/properties/utils.h"
 
-/* Skip the contents of an unrecognised function — read past matching
+/* Skip the contents of an unrecognised function - read past matching
  * parenthesis pair so the outer loop can continue with the next
  * function in the transform list. */
 static void skip_function_args(const parserutils_vector *vector, int32_t *ctx)
@@ -82,7 +82,7 @@ css_error css__parse_macsurf_transform(css_language *c,
 	int got_any = 0;
 	/* fixes610: track whether a translate component used percentage units.
 	 * A % translate resolves against the box's OWN size, which is only
-	 * known at layout/redraw time, so we can't bake it to px here — we flag
+	 * known at layout/redraw time, so we can't bake it to px here - we flag
 	 * it (via a distinct SET opcode value) and store the raw percent number
 	 * in the int8 translate slots for redraw to resolve. */
 	int translate_is_pct = 0;
@@ -247,7 +247,7 @@ css_error css__parse_macsurf_transform(css_language *c,
 			/* fixes73c: scale() arguments are bare CSS numbers, not
 			 * lengths or percentages. css__parse_unit_specifier with
 			 * UNIT_PCT was treating them as percentages and dividing
-			 * by 100 — turning scale(1.5) into scale(0.015) which
+			 * by 100 - turning scale(1.5) into scale(0.015) which
 			 * collapsed everything to ~0. Read the NUMBER token
 			 * directly via css__number_from_lwc_string. */
 			css_fixed sv1 = (css_fixed)(1 << 10);  /* default 1.0 Q22.10 */
@@ -320,7 +320,7 @@ css_error css__parse_macsurf_transform(css_language *c,
 				token = parserutils_vector_iterate(vector, ctx);
 			}
 		} else {
-			/* Unknown / unsupported function — consume to ')' */
+			/* Unknown / unsupported function - consume to ')' */
 			skip_function_args(vector, ctx);
 			got_any = 1;  /* still counts as a valid transform decl */
 		}

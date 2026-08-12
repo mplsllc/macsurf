@@ -116,7 +116,7 @@ static css_error parse_one_shadow(css_language *c,
 /**
  * Parse box-shadow: <shadow> [, <shadow>]*
  *
- * fixes361b — multi-shadow support. Up to 2 shadows are stored: the
+ * fixes361b - multi-shadow support. Up to 2 shadows are stored: the
  * first goes into the existing inner-struct slot via the standard
  * SET=0x0080 path; the second goes into the outer-struct
  * box_shadow_2 side channel; the third (fixes362) goes into
@@ -189,7 +189,7 @@ css_error css__parse_box_shadow(css_language *c,
 				&h[n], &v[n], &blur[n], &spread[n],
 				&inset[n], &color[n]);
 		if (error != CSS_OK) {
-			/* Bail without rolling back the first shadow — the
+			/* Bail without rolling back the first shadow - the
 			 * comma was bad but the first parse is good. */
 			*ctx = comma_ctx;
 			break;
@@ -241,7 +241,7 @@ css_error css__parse_box_shadow(css_language *c,
 		if (error != CSS_OK) return error;
 	}
 
-	/* fixes362 — emit third shadow's 6 fields when n==3. */
+	/* fixes362 - emit third shadow's 6 fields when n==3. */
 	if (n == 3) {
 		error = css__stylesheet_style_vappend(result, 6,
 				h[2], v[2], blur[2], spread[2],

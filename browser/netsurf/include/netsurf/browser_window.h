@@ -43,7 +43,7 @@ struct nsurl;
 struct rect;
 struct redraw_context;
 struct cert_chain;
-/* content_debug enum — guard against duplicate definition */
+/* content_debug enum - guard against duplicate definition */
 #ifndef MACSURF_CONTENT_DEBUG_ENUM
 #define MACSURF_CONTENT_DEBUG_ENUM
 enum content_debug {

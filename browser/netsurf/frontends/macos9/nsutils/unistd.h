@@ -1,5 +1,5 @@
 /*
- * MacSurf stub — nsutils/unistd.h
+ * MacSurf stub  -  nsutils/unistd.h
  * Minimal C89-compatible stub for CodeWarrior 8 compilation.
  *
  * Symbols stubbed:

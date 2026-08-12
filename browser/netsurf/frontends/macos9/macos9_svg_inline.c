@@ -1,5 +1,5 @@
 /*
- * macos9_svg_inline.c -- fixes195 inline SVG renderer (V1).
+ * macos9_svg_inline.c - fixes195 inline SVG renderer (V1).
  *
  * Walks an inline <svg> DOM subtree and paints shapes through the
  * NetSurf plotter table. See macos9_svg_inline.h for full coverage
@@ -83,7 +83,7 @@ struct svg_paint_state {
 	 * none, per SVG. */
 	int fill_present;
 	int stroke_present;
-	/* fixes305 (#36) — fill-opacity / stroke-opacity. Range 0..1; 1.0
+	/* fixes305 (#36)  -  fill-opacity / stroke-opacity. Range 0..1; 1.0
 	 * means fully opaque. Each shape applies whichever is relevant to
 	 * the active paint (fill vs stroke). The plotter has a single
 	 * pstyle->opacity bucket (fixes49 stipple), so when both fill and
@@ -91,7 +91,7 @@ struct svg_paint_state {
 	 * side determines the apparent transparency. */
 	float fill_opacity;
 	float stroke_opacity;
-	/* fixes960b (#258) — stroke-dasharray, reduced to the two dash
+	/* fixes960b (#258)  -  stroke-dasharray, reduced to the two dash
 	 * classes the plotter can actually draw. 0 = solid, 1 = dashed,
 	 * 2 = dotted. SVG's real dasharray is a list of on/off run lengths
 	 * along the path; QuickDraw has no along-path dash, so fixes960
@@ -103,7 +103,7 @@ struct svg_paint_state {
 	int stroke_dash;
 };
 
-/* fixes201 — SVG V2 gradient table.
+/* fixes201  -  SVG V2 gradient table.
  *
  * Pre-walked from the <svg> subtree once per paint. <linearGradient>
  * and <radialGradient> children of <defs> (or anywhere in the tree
@@ -154,7 +154,7 @@ struct svg_ctx {
 	float vb_h;
 	float scale_x;
 	float scale_y;
-	/* fixes201 — full affine matrix applied during point mapping.
+	/* fixes201  -  full affine matrix applied during point mapping.
 	 * Combines the viewBox-to-screen mapping with any element
 	 * transform="..." attribute encountered while walking into a
 	 * subtree. Layout:
@@ -170,12 +170,12 @@ struct svg_ctx {
 	const struct redraw_context *plot_ctx;
 	/* gradient table populated before painting (fixes201). */
 	struct svg_gradient_table *grads;
-	/* fixes577 — page base URL, for resolving external
+	/* fixes577  -  page base URL, for resolving external
 	 * <use href="file.svg#id"> sprite references. May be NULL. */
 	struct nsurl *base_url;
 };
 
-/* fixes201 — 3x3 matrix multiply (only top two rows since the third
+/* fixes201  -  3x3 matrix multiply (only top two rows since the third
  * row is always [0 0 1] for affine 2D). out = a * b. */
 static void svg__matrix_mul(const float *a, const float *b, float *out)
 {
@@ -194,7 +194,7 @@ static void svg__matrix_mul(const float *a, const float *b, float *out)
 	out[5] = r5;
 }
 
-/* fixes201 — set a matrix to identity. */
+/* fixes201  -  set a matrix to identity. */
 static void svg__matrix_identity(float *m)
 {
 	m[0] = 1.0f; m[1] = 0.0f;
@@ -375,7 +375,7 @@ static int svg__parse_colour(const char *s, colour *out, int *none_flag)
 		return 1;
 	}
 
-	/* url(#...) gradient reference -- not supported in V1.
+	/* url(#...) gradient reference - not supported in V1.
 	 * Fall back to black so the shape is at least visible. */
 	if (s[0] == 'u' && s[1] == 'r' && s[2] == 'l' && s[3] == '(') {
 		*out = 0xFF000000;
@@ -453,14 +453,14 @@ static float svg__attr_float(dom_node *node, const char *name,
 /* Coordinate transform                                              */
 /* ----------------------------------------------------------------- */
 
-/* fixes201 — both axes route through the affine matrix. Callers
+/* fixes201  -  both axes route through the affine matrix. Callers
  * MUST pass both x and y because a transform with rotation or skew
  * couples the axes:
  *   screen_x = m[0]*sx + m[2]*sy + m[4]
  *   screen_y = m[1]*sx + m[3]*sy + m[5]
  *
  * For a non-rotated, non-skewed transform (the common case), m[1]
- * and m[2] are zero, so the math reduces to scale_x*sx + tx — no
+ * and m[2] are zero, so the math reduces to scale_x*sx + tx  -  no
  * cost for the unrotated path. */
 static float svg__map_x(const struct svg_ctx *c, float sx, float sy)
 {
@@ -474,7 +474,7 @@ static float svg__map_y(const struct svg_ctx *c, float sx, float sy)
 
 
 /* ----------------------------------------------------------------- */
-/* fixes201 — SVG gradient table                                     */
+/* fixes201  -  SVG gradient table                                     */
 /* ----------------------------------------------------------------- */
 
 /* Look up a gradient by id. Returns NULL if not found. */
@@ -529,7 +529,7 @@ static int svg__try_url_colour(const char *s,
 		*out = g->stops[0].color;
 		return 1;
 	}
-	/* Unresolved url() — fall back to opaque black. */
+	/* Unresolved url()  -  fall back to opaque black. */
 	*out = 0xFF000000;
 	return 1;
 }
@@ -680,7 +680,7 @@ static void svg__pre_walk_gradients(dom_node *parent,
 			/* linearGradient / lineargradient (case-insensitive
 			 * via Hubbub's foreign-content table normalisation).
 			 * Both linearGradient and radialGradient share the
-			 * V2 collector — we don't distinguish at the
+			 * V2 collector  -  we don't distinguish at the
 			 * representative-colour level. */
 			if ((tag_len == 14 || tag_len == 14) &&
 					((tag_s[0] == 'l' || tag_s[0] == 'L') ||
@@ -766,7 +766,7 @@ static void svg__update_style(dom_node *node, struct svg_paint_state *st,
 		dom_string_unref(ds);
 	}
 
-	/* fixes305 (#36) — fill-opacity attribute */
+	/* fixes305 (#36)  -  fill-opacity attribute */
 	v = svg__attr(node, "fill-opacity", &ds);
 	if (v != NULL) {
 		size_t consumed;
@@ -779,7 +779,7 @@ static void svg__update_style(dom_node *node, struct svg_paint_state *st,
 		dom_string_unref(ds);
 	}
 
-	/* fixes305 (#36) — stroke-opacity attribute */
+	/* fixes305 (#36)  -  stroke-opacity attribute */
 	v = svg__attr(node, "stroke-opacity", &ds);
 	if (v != NULL) {
 		size_t consumed;
@@ -792,7 +792,7 @@ static void svg__update_style(dom_node *node, struct svg_paint_state *st,
 		dom_string_unref(ds);
 	}
 
-	/* fixes960b (#258) — stroke-dasharray attribute.
+	/* fixes960b (#258)  -  stroke-dasharray attribute.
 	 *
 	 * Reduced to solid / dashed / dotted, because that is the whole range
 	 * the plotter can express: QuickDraw dashes come from a screen-space
@@ -927,7 +927,7 @@ static void svg__init_plot_style(plot_style_t *p,
 		 * opaque / higher = MORE transparent (see nscss_color_to_ns and
 		 * plotters.c macos9_colour_to_rgb). fixes620 taught
 		 * macos9_colour_to_rgb to composite semi-transparent (rgba)
-		 * fills against the backdrop by reading that top byte -- which
+		 * fills against the backdrop by reading that top byte - which
 		 * made every opaque SVG colour read as ~fully transparent and
 		 * blend away to the backdrop (SVGs vanished/greyed: the
 		 * regression). SVG opacity is carried separately in
@@ -941,7 +941,7 @@ static void svg__init_plot_style(plot_style_t *p,
 	if (st->stroke_present && st->stroke_width > 0.0f) {
 		float sw = st->stroke_width *
 			(c->scale_x < c->scale_y ? c->scale_x : c->scale_y);
-		/* fixes960b (#258) — honour stroke-dasharray now that the
+		/* fixes960b (#258)  -  honour stroke-dasharray now that the
 		 * plotter can actually draw dashed and dotted strokes
 		 * (fixes960). This was unconditionally solid before because the
 		 * plotter ignored the distinction, so parsing the attribute
@@ -959,12 +959,12 @@ static void svg__init_plot_style(plot_style_t *p,
 	} else {
 		p->stroke_type = PLOT_OP_TYPE_NONE;
 	}
-	/* fixes305 (#36) — apply fill-opacity / stroke-opacity to the
+	/* fixes305 (#36)  -  apply fill-opacity / stroke-opacity to the
 	 * single pstyle->opacity bucket the plotter honours (fixes49). When
 	 * fill is the only active paint, use fill_opacity. When stroke is
 	 * the only active paint, use stroke_opacity. When both are present
 	 * we pick the MIN so the least-opaque side wins (most visible
-	 * transparency reduction) — pragmatic V1 for the single-opacity
+	 * transparency reduction)  -  pragmatic V1 for the single-opacity
 	 * plotter API.
 	 *
 	 * fixes305a: when EITHER channel is fully transparent at 0.0, set
@@ -1022,7 +1022,7 @@ static void svg__paint_rect(dom_node *node,
 
 	svg__init_plot_style(&pstyle, st, c);
 
-	/* fixes203 — detect rotation/skew in the affine matrix.
+	/* fixes203  -  detect rotation/skew in the affine matrix.
 	 * For an axis-aligned matrix the off-diagonal entries m[1] and m[2]
 	 * are both zero (pure scale + translate). Anything else means the
 	 * source rectangle becomes a rotated parallelogram in screen
@@ -1047,7 +1047,7 @@ static void svg__paint_rect(dom_node *node,
 		return;
 	}
 
-	/* Rotated / skewed rect — emit as a 4-point closed polygon.
+	/* Rotated / skewed rect  -  emit as a 4-point closed polygon.
 	 * Corner order: TL, TR, BR, BL. The matrix maps each corner
 	 * independently so the polygon honours the full affine. */
 	{
@@ -1165,7 +1165,7 @@ static void svg__paint_ellipse_like(dom_node *node,
 		while (i < n) {
 			float op = buf[i++];
 			tmp[j++] = op;
-			/* fixes1046 — read each point into LOCALS first.
+			/* fixes1046  -  read each point into LOCALS first.
 			 *
 			 * This was:
 			 *     tmp[j++] = svg__map_x(c, buf[i++], buf[i++]);
@@ -1176,7 +1176,7 @@ static void svg__paint_ellipse_like(dom_node *node,
 			 * point instead of two, so map_y read the NEXT token's
 			 * opcode as a coordinate and every point after the first
 			 * was garbage. Inline <circle>/<ellipse> have therefore
-			 * never rendered correctly -- it went unnoticed because the
+			 * never rendered correctly - it went unnoticed because the
 			 * <path> route (which every hand-written test SVG uses)
 			 * does its own mapping and never touches this walk. */
 			if (op == (float)PLOTTER_PATH_MOVE ||
@@ -1271,7 +1271,7 @@ static int svg__emit_arc_as_bezier(const struct svg_ctx *c,
 	if (rx < 0) rx = -rx;
 	if (ry < 0) ry = -ry;
 
-	/* fixes201 V1: use the average radius for both axes — true
+	/* fixes201 V1: use the average radius for both axes  -  true
 	 * ellipse-aware arc requires the full Appendix F.6 transform.
 	 * Most SVG icons use rx == ry (circular arcs) so the average
 	 * is exact; for true ellipses this is an approximation. */
@@ -1288,7 +1288,7 @@ static int svg__emit_arc_as_bezier(const struct svg_ctx *c,
 	half_d = dist_sq;
 	scale = rx * rx - half_d;
 	if (scale < 0.0f) {
-		/* Endpoints are further apart than the diameter — stretch
+		/* Endpoints are further apart than the diameter  -  stretch
 		 * rx/ry until they touch. */
 		float d = (float)((rx * rx) / half_d);
 		if (d < 0) d = -d;
@@ -1320,7 +1320,7 @@ static int svg__emit_arc_as_bezier(const struct svg_ctx *c,
 		cyA = (y1 + y2) * 0.5f + t * dx;
 	}
 
-	/* Compute start angle, sweep. Atan2 approximation — use the
+	/* Compute start angle, sweep. Atan2 approximation  -  use the
 	 * built-in via the C library; libnetsurf already links libm
 	 * but on CW8 we have <math.h> with float ops. */
 	{
@@ -1660,7 +1660,7 @@ static int svg__path_parse(const char *d, const struct svg_ctx *c,
 			break;
 		}
 		default:
-			/* Unsupported command (S, T, A) -- stop parsing
+			/* Unsupported command (S, T, A) - stop parsing
 			 * but emit what we have. */
 			return n;
 		}
@@ -1689,7 +1689,7 @@ static void svg__paint_path(dom_node *node, const struct svg_ctx *c,
 
 
 /* ----------------------------------------------------------------- */
-/* <use> — external sprite reference (fixes577)                      */
+/* <use>  -  external sprite reference (fixes577)                      */
 /* ----------------------------------------------------------------- */
 
 /* Case-insensitive "use" tag test (no corestring for it). */
@@ -1814,7 +1814,7 @@ static void svg__paint_use(dom_node *node, const struct svg_ctx *c,
 /* <text>                                                            */
 /* ----------------------------------------------------------------- */
 
-/* fixes201 — SVG <text> V1.
+/* fixes201  -  SVG <text> V1.
  *
  * Reads x / y / font-size from the element attributes, takes the
  * concatenated text content of immediate text-node children, and
@@ -1959,7 +1959,7 @@ static void svg__paint_poly(dom_node *node, const struct svg_ctx *c,
 /* Walker                                                            */
 /* ----------------------------------------------------------------- */
 
-/* fixes201 — parse one transform function out of an attribute
+/* fixes201  -  parse one transform function out of an attribute
  * string. Returns the number of bytes consumed (including the
  * opening `name(...` and the trailing `)`), and writes the
  * corresponding 6-component matrix into *fn_matrix. Returns 0 on
@@ -2005,7 +2005,7 @@ static size_t svg__parse_one_transform(const char *s,
 			if (*p == ')' || *p == '\0') break;
 			args[n_args] = svg__atof(p, &cs);
 			if (cs == 0) {
-				/* parse error — abort by walking to ')'. */
+				/* parse error  -  abort by walking to ')'. */
 				while (*p && *p != ')') p++;
 				if (*p == ')') p++;
 				svg__matrix_identity(fn_matrix);
@@ -2036,7 +2036,7 @@ static size_t svg__parse_one_transform(const char *s,
 			float ca = (float)cos((double)rad);
 			float sa = (float)sin((double)rad);
 			if (n_args >= 3) {
-				/* rotate(deg, cx, cy) — compose
+				/* rotate(deg, cx, cy)  -  compose
 				 * translate(cx, cy) * rotate * translate(-cx,-cy) */
 				float cx = args[1];
 				float cy = args[2];
@@ -2089,7 +2089,7 @@ static size_t svg__parse_one_transform(const char *s,
 	return (size_t)(p - s);
 }
 
-/* fixes201 — Read the `transform="..."` attribute on a node and
+/* fixes201  -  Read the `transform="..."` attribute on a node and
  * compose its multi-function value into a matrix. Returns 1 if a
  * transform attribute was present (and composed into *out), 0
  * otherwise (caller's matrix stays as-is). */
@@ -2146,7 +2146,7 @@ static void svg__paint_subtree(dom_node *parent,
 			const struct svg_ctx *use_ctx = c;
 			svg__update_style(child, &child_st, c->grads);
 
-			/* fixes201 — compose any transform="..." on the
+			/* fixes201  -  compose any transform="..." on the
 			 * child element into a local ctx that's then used
 			 * for painting that element (and recursively
 			 * inherited for <g> children). The viewBox
@@ -2277,7 +2277,7 @@ nserror macos9_svg_paint_inline(struct box *box,
 	c.scale_x = (float)w / c.vb_w;
 	c.scale_y = (float)h / c.vb_h;
 
-	/* fixes201 — pre-bake the viewBox-to-screen affine matrix at
+	/* fixes201  -  pre-bake the viewBox-to-screen affine matrix at
 	 * root. svg__map_x / svg__map_y apply this for every painted
 	 * shape. <g transform="..."> child elements compose into a
 	 * copy of this matrix during the subtree walk. */
@@ -2288,7 +2288,7 @@ nserror macos9_svg_paint_inline(struct box *box,
 	c.m[4] = (float)c.box_x - c.vb_x * c.scale_x;
 	c.m[5] = (float)c.box_y - c.vb_y * c.scale_y;
 
-	/* fixes201 — gradient pre-walk. Allocated on stack to avoid heap
+	/* fixes201  -  gradient pre-walk. Allocated on stack to avoid heap
 	 * pressure during paint; cap of MACOS9_SVG_MAX_GRADIENTS handles
 	 * the busiest icon sets (mactrove's apple has 1; the full menu
 	 * panel has under 10). */
@@ -2308,7 +2308,7 @@ nserror macos9_svg_paint_inline(struct box *box,
 		st.stroke_width = 1.0f;
 		st.fill_opacity = 1.0f;
 		st.stroke_opacity = 1.0f;
-		st.stroke_dash = 0;   /* fixes960b (#258) — solid unless asked */
+		st.stroke_dash = 0;   /* fixes960b (#258)  -  solid unless asked */
 
 		/* Read style attributes set on the <svg> itself. */
 		svg__update_style((dom_node *)box->node, &st, c.grads);
@@ -2328,7 +2328,7 @@ nserror macos9_svg_paint_inline(struct box *box,
 
 
 /* ----------------------------------------------------------------- */
-/* fixes823 (#280) -- standalone external SVG paint                   */
+/* fixes823 (#280) - standalone external SVG paint                   */
 /* ----------------------------------------------------------------- */
 
 /* Extract attribute `name="..."` from tag text [tag..tag_end); copies the
@@ -2369,10 +2369,10 @@ static int svg__tag_attr(const char *tag, const char *tag_end,
  * V1 shape coverage: <path d="..."> with per-path fill / fill="none"
  * (covers plain icon files: HN's y18.svg logo + triangle.svg vote
  * arrows, FontAwesome-style single-file icons). rect/circle/text/
- * gradients in standalone files are deferred -- the inline renderer
+ * gradients in standalone files are deferred - the inline renderer
  * has them but walks a live DOM, which an external file doesn't have.
  * Documented in #280. */
-/* fixes1043 (#280) — pull one property out of a raw style="a:1;b:2" string.
+/* fixes1043 (#280)  -  pull one property out of a raw style="a:1;b:2" string.
  *
  * The standalone painter walks TEXT, not a DOM, so it cannot use the
  * dom_node-based style parser this file already has for inline SVG. It only
@@ -2381,7 +2381,7 @@ static int svg__tag_attr(const char *tag, const char *tag_end,
  *
  * Real-world SVG almost never uses the attribute. puffy.svg (Inkscape, and
  * typical of exported art) has ZERO `fill="..."` attributes and 28
- * `style="...fill:#xxxxxx..."` declarations -- so all 25 of its paths painted
+ * `style="...fill:#xxxxxx..."` declarations - so all 25 of its paths painted
  * black and the image rendered as a solid silhouette, which is exactly what
  * hardware showed.
  *
@@ -2414,7 +2414,7 @@ static int svg__style_prop(const char *style, const char *prop,
 			p++;
 		key_end = p;
 		if (*p != ':') {
-			/* malformed chunk with no colon -- skip it */
+			/* malformed chunk with no colon - skip it */
 			continue;
 		}
 		/* trim trailing space off the KEY: "fill : #abc" is legal CSS,
@@ -2448,10 +2448,10 @@ static int svg__style_prop(const char *style, const char *prop,
 	return 0;
 }
 
-/* fixes1049 — group-transform stack depth for the standalone walker. */
+/* fixes1049  -  group-transform stack depth for the standalone walker. */
 #define SVG_G_DEPTH_MAX 16
 
-/* fixes1049 (#280) — parse the translate out of a transform="..." attribute.
+/* fixes1049 (#280)  -  parse the translate out of a transform="..." attribute.
  *
  * The standalone painter walked <path> tags and painted their raw `d` data,
  * ignoring transform entirely. puffy.svg (Inkscape, and this is the norm for
@@ -2459,12 +2459,12 @@ static int svg__style_prop(const char *style, const char *prop,
  * transform="translate(-446.89148,-271.529)", so every path was drawn ~447
  * user-units right and ~272 down of where it belongs. After the viewBox fit
  * that is a visible offset, and it differs per cell because each cell has its
- * own scale -- which is exactly the "not aligned the same, not centred"
+ * own scale - which is exactly the "not aligned the same, not centred"
  * hardware report.
  *
  * Handles translate(x[,y]) and the translation column of matrix(a,b,c,d,e,f),
  * which together cover essentially all exported SVG. Rotation/skew are NOT
- * applied -- svg_ctx carries an affine m[], but the standalone walker has no
+ * applied - svg_ctx carries an affine m[], but the standalone walker has no
  * element tree to compose them down, so a rotated group would need the real
  * inline renderer. Returns 1 if anything was found.
  */
@@ -2520,7 +2520,7 @@ static int svg__transform_translate(const char *tv, float *tx, float *ty)
 	return 0;
 }
 
-/* fixes1050 (#280) — one numeric attribute off a raw tag. */
+/* fixes1050 (#280)  -  one numeric attribute off a raw tag. */
 static float svg__tag_attr_float(const char *tag, const char *tend,
 		const char *name, float def)
 {
@@ -2536,10 +2536,10 @@ static float svg__tag_attr_float(const char *tag, const char *tend,
 	return v;
 }
 
-/* fixes1050 (#280) — next drawable shape at or after p, and which kind.
+/* fixes1050 (#280)  -  next drawable shape at or after p, and which kind.
  *
  * The walker only ever looked for <path>, so puffy.svg's three <circle>
- * elements -- the grey/navy/white stack that makes up the eye -- never
+ * elements - the grey/navy/white stack that makes up the eye - never
  * painted at all, leaving a solid dark eye. Returns the EARLIEST of the
  * shapes so document order (and therefore paint order) is preserved; drawing
  * all paths then all circles would put the highlights under the iris. */
@@ -2578,7 +2578,7 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 	const char *root;
 	const char *root_end;
 	char av[128];
-	char sv[512];   /* fixes1043 — raw style="..." text for svg__style_prop */
+	char sv[512];   /* fixes1043  -  raw style="..." text for svg__style_prop */
 	float vb[4];
 	int have_vb = 0;
 	struct svg_ctx sc;
@@ -2613,7 +2613,7 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 
 	/* viewBox, else width/height attrs, else the dest rect 1:1.
 	 * MSL sscanf/atof are untrusted on CW8 (this file already carries
-	 * svg__atof for exactly that reason) -- parse with it. */
+	 * svg__atof for exactly that reason) - parse with it. */
 	if (svg__tag_attr(root, root_end, "viewBox", av, sizeof(av))) {
 		const char *q = av;
 		size_t used = 0;
@@ -2658,7 +2658,7 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 	sc.vb_w = vb[2];
 	sc.vb_h = vb[3];
 
-	/* fixes1044 (#280) — preserveAspectRatio="xMidYMid meet", the SVG
+	/* fixes1044 (#280)  -  preserveAspectRatio="xMidYMid meet", the SVG
 	 * DEFAULT, instead of an independent per-axis stretch.
 	 *
 	 * scale_x and scale_y were computed separately (w/vb_w and h/vb_h), so
@@ -2692,7 +2692,7 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 	sc.grads = NULL;
 	sc.base_url = NULL;
 
-	/* fixes1049 (#280) — walk <g>/</g> as well as <path>, carrying the
+	/* fixes1049 (#280)  -  walk <g>/</g> as well as <path>, carrying the
 	 * accumulated group translate. The old walk jumped straight from one
 	 * <path> to the next and never saw the enclosing groups, so every
 	 * transform="translate(...)" on them was silently discarded.
@@ -2782,7 +2782,7 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 		st.fill_opacity = 1.0f;
 		st.stroke_present = 0;
 		st.stroke_opacity = 1.0f;
-		st.stroke_dash = 0;   /* fixes960b (#258) — solid unless asked */
+		st.stroke_dash = 0;   /* fixes960b (#258)  -  solid unless asked */
 		if (svg__tag_attr(tag, tend, "fill", av, sizeof(av))) {
 			colour col;
 			int none = 0;
@@ -2794,7 +2794,7 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 			}
 		}
 
-		/* fixes1058 (#258) — the remaining PRESENTATION ATTRIBUTES.
+		/* fixes1058 (#258)  -  the remaining PRESENTATION ATTRIBUTES.
 		 *
 		 * The standalone painter only ever read `fill`, so it could not
 		 * stroke AT ALL and ignored fill-opacity unless it arrived via
@@ -2828,7 +2828,7 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 				st.stroke_opacity = so;
 		}
 
-		/* fixes1043 (#280) — style="fill:..." AFTER the presentation
+		/* fixes1043 (#280)  -  style="fill:..." AFTER the presentation
 		 * attribute, because per SVG a style declaration overrides it.
 		 * Without this every path from an exported SVG (which uses style=
 		 * and no fill= at all) kept the opaque-black default and the whole
@@ -2853,7 +2853,7 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 				if (used > 0 && fo >= 0.0f && fo <= 1.0f)
 					st.fill_opacity = fo;
 			}
-			/* fixes1058 (#258) — stroke via style=, mirroring the
+			/* fixes1058 (#258)  -  stroke via style=, mirroring the
 			 * attribute handling above. */
 			if (svg__style_prop(sv, "stroke", pv, sizeof(pv))) {
 				colour col;
@@ -2883,7 +2883,7 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 			}
 		}
 
-		/* fixes1049 — group translate plus this path's own transform,
+		/* fixes1049  -  group translate plus this path's own transform,
 		 * folded into the affine as a pre-translate in USER space:
 		 *   map(u + t) = m0*(u+t) + m4 = m0*u + (m0*t + m4)
 		 * so shifting m[4]/m[5] by m[0]*tx / m[3]*ty is exact. Saved
@@ -2900,9 +2900,9 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 			}
 		}
 
-		/* fixes1058 (#258) — paint when EITHER paint is active. The gate
-		 * was fill-only, so a stroke-only shape -- very common in icon
-		 * sets -- drew nothing at all. */
+		/* fixes1058 (#258)  -  paint when EITHER paint is active. The gate
+		 * was fill-only, so a stroke-only shape - very common in icon
+		 * sets - drew nothing at all. */
 		if (st.fill_present || st.stroke_present) {
 			float save_m4 = sc.m[4];
 			float save_m5 = sc.m[5];
@@ -2927,7 +2927,7 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 					n = 0;   /* already plotted */
 				}
 			} else {
-				/* fixes1050 — <circle> / <ellipse>. Emitted in
+				/* fixes1050  -  <circle> / <ellipse>. Emitted in
 				 * USER space by the shared emitter, then mapped
 				 * here, because that emitter (unlike
 				 * svg__path_parse) does not map for you. */

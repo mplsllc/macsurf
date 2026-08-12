@@ -583,7 +583,7 @@ uint8_t css_computed_macsurf_grid_col_span(
 {
 	/* fixes158: extract the low byte of the packed placement int32.
 	 * Upper bytes are col_start / row_start / row_span and are not
-	 * surfaced through this getter — use
+	 * surfaced through this getter - use
 	 * css_computed_macsurf_grid_placement() for the full value. */
 	int32_t v = style->i.macsurf_grid_col_span;
 	uint32_t lo = (uint32_t)v & 0xFFu;

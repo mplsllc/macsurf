@@ -25,7 +25,7 @@
  *   - positive integer line numbers honoured (1-based, like CSS spec)
  *   - `grid-column: A / B` and `grid-row: A / B` shorthands recognised
  *     by the cssh_css preprocessor; longhand `-start` / `-end` too
- *   - explicit placements DO NOT advance the auto-flow cursor — auto
+ *   - explicit placements DO NOT advance the auto-flow cursor - auto
  *     items continue from where the cursor was, which means an auto
  *     item CAN land in the same cell as an explicit item (last-wins
  *     visually; documented V1 behaviour, no collision avoidance)
@@ -74,22 +74,22 @@
 #include "html/html.h"
 #include "html/private.h"
 #include "html/layout_internal.h"
-/* fixes168 — shared layout-wide dimension sanitizers. Replaces what
+/* fixes168 - shared layout-wide dimension sanitizers. Replaces what
  * used to be flex-only safety helpers. */
 #include "html/layout_safe.h"
 
-/* fixes161d — diagnostic-only macsurf_debug_log_writef for the
+/* fixes161d - diagnostic-only macsurf_debug_log_writef for the
  * LAYOUTPHASE grid marker. Compiles to a no-op in release builds. */
 #include "macsurf_debug.h"
 
 #include "css/utils.h"
 
 
-/* fixes168b — Grid local fallback. When a grid container hits an
+/* fixes168b - Grid local fallback. When a grid container hits an
  * unsafe input (AUTO/INT_MIN propagated through a parent, child
  * count overflow, layout failure in a child) we stack its in-flow
  * children vertically as plain block flow rather than failing the
- * whole document. The original DOM and CSS tree still render —
+ * whole document. The original DOM and CSS tree still render -
  * only the unsupported layout mode degrades locally, exactly the
  * same shape fixes167's flex fallback uses.
  *
@@ -133,7 +133,7 @@ static bool layout_grid_fallback_block(struct box *grid, int available_width,
 			child_avail = LAYOUT_SAFE_MAX;
 
 		/* Per-child layout. If the child cannot lay out cleanly
-		 * we give it a minimal-height slot and continue — never
+		 * we give it a minimal-height slot and continue - never
 		 * crash the whole grid because one child is too modern. */
 		ok = false;
 		switch (c->type) {
@@ -161,7 +161,7 @@ static bool layout_grid_fallback_block(struct box *grid, int available_width,
 			c->float_container = NULL;
 			break;
 		default:
-			/* Unsupported child type — give it a zero-height
+			/* Unsupported child type - give it a zero-height
 			 * slot and keep walking. The DOM stays intact. */
 			c->height = 0;
 			ok = true;
@@ -241,16 +241,16 @@ static bool layout_grid_item(
 		item->float_container = NULL;
 	}
 
-	/* fixes114 — only force cell_width if the child's CSS width is AUTO
+	/* fixes114 - only force cell_width if the child's CSS width is AUTO
 	 * (i.e. the child didn't set its own width). Replaced elements with
-	 * explicit widths — .featured-app__icon { width: 96px; height: 96px; }
-	 * being the canonical mactrove case — were getting their CSS width
+	 * explicit widths - .featured-app__icon { width: 96px; height: 96px; }
+	 * being the canonical mactrove case - were getting their CSS width
 	 * clobbered by cell_width, which is the full container width when
 	 * our V1 grid degenerates to 1 column (because we don't yet parse
 	 * grid-template-columns). End result: a 96×96 app icon stretched to
 	 * 1771×94 across the whole content column. Preserving the explicit
-	 * width — and clamping it to cell_width if the CSS specifies more
-	 * than the cell can hold — fixes that without losing the equal-fill
+	 * width - and clamping it to cell_width if the CSS specifies more
+	 * than the cell can hold - fixes that without losing the equal-fill
 	 * behaviour for items that don't set their own width. */
 	if (dummy_w == AUTO) {
 		/* fixes820 (#278): cell_width is the TRACK width -- the cell's
@@ -320,7 +320,7 @@ static bool layout_grid_item(
 		item->float_container = NULL;
 		break;
 	default:
-		/* Unknown / unsupported item type — treat as zero-size box
+		/* Unknown / unsupported item type - treat as zero-size box
 		 * rather than failing the whole grid. */
 		item->height = 0;
 		success = true;
@@ -342,7 +342,7 @@ static bool layout_grid_item(
 /* fixes158: per-child placement scratch. The two-pass layout assigns
  * (col, row, col_span, row_span) in pass 1 (placement + child layout
  * into the cell width); pass 2 positions each child once row heights
- * are known. Cap at 256 children per grid — anything beyond degrades
+ * are known. Cap at 256 children per grid - anything beyond degrades
  * to fixes151 single-pass auto-flow.
  *
  * Cap at 256 rows so the row_max_height + row_y arrays stay on the
@@ -396,7 +396,7 @@ static void macsurf_grid_mark(unsigned short *occ, int col, int row,
 	}
 }
 
-/* fixes171 — Watchdog wrapper for layout_grid. */
+/* fixes171 - Watchdog wrapper for layout_grid. */
 static bool layout_grid_inner(struct box *grid, int available_width,
 		html_content *content);
 
@@ -447,7 +447,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 	bool has_row_tracks = false;
 	int i;
 
-	/* fixes161e — per-call GRID marker capped at first 100 calls per
+	/* fixes161e - per-call GRID marker capped at first 100 calls per
 	 * redraw. Counter resets when macsurf_layout_seq changes. */
 	{
 		extern long macsurf_layout_seq;
@@ -474,14 +474,14 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 
 	if (grid == NULL) return false;
 	if (grid->style == NULL) {
-		/* fixes168b — no style means we can't compute tracks. Fall
+		/* fixes168b - no style means we can't compute tracks. Fall
 		 * back to block flow so the children still get positions
 		 * instead of failing the whole document. */
 		return layout_grid_fallback_block(grid, available_width,
 				content);
 	}
 
-	/* fixes168a — sanitize available_width at the entry boundary so
+	/* fixes168a - sanitize available_width at the entry boundary so
 	 * no AUTO/INT_MIN/absurd value reaches grid track sizing. */
 	if (layout_dim_is_auto_or_bad(available_width)) {
 		macsurf_debug_log_writef(
@@ -494,7 +494,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 
 	/* Read -macsurf-grid packed value. cols default 1, rows default 0
 	 * (auto). If the property isn't set, fall back to a 1-column
-	 * grid which is visually identical to block layout — the
+	 * grid which is visually identical to block layout - the
 	 * `display: grid` user got what they asked for without crashing. */
 	grid_status = css_computed_macsurf_grid(grid->style, &packed);
 	if (grid_status == CSS_MACSURF_GRID_SET) {
@@ -516,7 +516,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 		container_width = available_width;
 		grid->width = available_width;
 	}
-	/* fixes168a — container_width must be a real pixel value before
+	/* fixes168a - container_width must be a real pixel value before
 	 * it feeds track sizing. AUTO/INT_MIN here would propagate into
 	 * (container_width - total_gap) / cols below and produce
 	 * INT_MIN-sized cells. */
@@ -775,7 +775,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 		col_width = container_width;
 	}
 
-	/* fixes270 (#4) — justify-content on the grid container distributes
+	/* fixes270 (#4) - justify-content on the grid container distributes
 	 * tracks along the inline (horizontal) axis. CSS Grid V2 alignment.
 	 * Only kicks in when the sum of track widths + gaps is less than the
 	 * container width (free space). When tracks already fill the
@@ -902,15 +902,15 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 
 	/* fixes158: three-pass placement.
 	 *
-	 * Pass 0 — pre-mark cells occupied by every child that has an
+	 * Pass 0 - pre-mark cells occupied by every child that has an
 	 *          explicit placement (col_start AND row_start both > 0).
 	 *          Pass 1's auto-flow then skips those cells so the
 	 *          explicit items stay visible.
-	 * Pass 1 — assign each child a (col, row, col_span, row_span).
+	 * Pass 1 - assign each child a (col, row, col_span, row_span).
 	 *          Auto-flow advances row-major through unoccupied cells.
-	 * Pass 2 — lay out each child into its cell width; track per-row
+	 * Pass 2 - lay out each child into its cell width; track per-row
 	 *          max heights.
-	 * Pass 3 — compute row_y once heights are known; position each
+	 * Pass 3 - compute row_y once heights are known; position each
 	 *          child.
 	 *
 	 * Backwards compat: a child with all-zero placement falls into
@@ -1037,7 +1037,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 
 			/* Resolve cell origin. */
 			if (col_start > 0 && row_start > 0) {
-				/* Both explicit — cells were marked in
+				/* Both explicit - cells were marked in
 				 * pass 0. Auto-cursor unaffected. */
 				slot_col = col_start - 1;
 				slot_row = row_start - 1;
@@ -1216,7 +1216,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 			grid->width = this_col_width;
 
 			if (!layout_grid_item(child, this_col_width, content)) {
-				/* fixes168b — child layout failed. Don't abort
+				/* fixes168b - child layout failed. Don't abort
 				 * the whole grid (which would then abort the
 				 * whole document); give this child a zero-height
 				 * slot and keep walking. Other children in the
@@ -1263,7 +1263,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 				child_total_h += child->margin[BOTTOM];
 
 			/* Credit this child's height to the row it occupies.
-			 * Multi-row spans only credit the first row in V1 —
+			 * Multi-row spans only credit the first row in V1 -
 			 * full distribution waits for V2. */
 			if (slot_row >= 0 && slot_row < MACSURF_GRID_ROWS_MAX) {
 				if (child_total_h > row_max_h[slot_row])
@@ -1300,7 +1300,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 			}
 			(void)last_h;
 
-			/* fixes270 (#4) — align-content on the grid container
+			/* fixes270 (#4) - align-content on the grid container
 			 * distributes rows along the block (vertical) axis.
 			 * Mirrors the justify-content logic on the inline
 			 * axis. Only kicks in when there is a definite
@@ -1375,7 +1375,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 								extra_gap;
 						}
 					}
-					/* fixes270a — preserve the CSS-declared
+					/* fixes270a - preserve the CSS-declared
 					 * container height through the grid->height
 					 * assignment at the tail of this function.
 					 * Without this, row_y (natural content
@@ -1392,7 +1392,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 		 *
 		 * fixes178d: honour align-items on the grid container and
 		 * align-self per child (cross-axis = vertical). V1 supports
-		 * stretch (default — no offset), flex-start, flex-end,
+		 * stretch (default - no offset), flex-start, flex-end,
 		 * center, baseline (treated as flex-start). justify-* is not
 		 * shipped in V1 because libcss in this vintage does not
 		 * expose justify-items / justify-self accessors (would
@@ -1511,7 +1511,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 				case CSS_ALIGN_ITEMS_FLEX_START:
 				case CSS_ALIGN_ITEMS_BASELINE:
 				default:
-					/* Top of cell — current behaviour. */
+					/* Top of cell - current behaviour. */
 					break;
 				}
 

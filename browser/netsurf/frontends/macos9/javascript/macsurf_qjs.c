@@ -1,5 +1,5 @@
 /*
- * MacSurf — macsurf_qjs.c
+ * MacSurf  -  macsurf_qjs.c
  *
  * QuickJS engine integration for the NetSurf js_thread API.
  * Parallel to macsurf_js.c (Duktape); activated by WITH_QUICKJS.
@@ -28,16 +28,16 @@
 #include "macsurf_timebase.h"
 #include "macos9_js_fetch.h"
 #include "content/handlers/html/private.h"
-/* fixes1011 (Phase 3) — the box tree, for the layout metrics. box.h defines
+/* fixes1011 (Phase 3)  -  the box tree, for the layout metrics. box.h defines
  * struct box and the LEFT/RIGHT/TOP/BOTTOM edge indices; box_inspect.h has
  * box_coords(); box_construct.h has box_for_node(). */
 #include "content/handlers/html/box.h"
 #include "content/handlers/html/box_inspect.h"
 #include "content/handlers/html/box_construct.h"
-/* fixes1013 — corestring_dom_scroll / _resize for the scroll/resize fan-out. */
+/* fixes1013  -  corestring_dom_scroll / _resize for the scroll/resize fan-out. */
 #include "utils/corestrings.h"
 #include "utils/libdom.h"
-/* fixes879 — document.cookie against the real jar. urldb owns NetSurf's
+/* fixes879  -  document.cookie against the real jar. urldb owns NetSurf's
  * RFC-6265 cookie store; content_protected.h is what makes c->llcache visible
  * for the content_get_url() NULL guard (same include set macos9_js_fetch.c
  * uses for the same guard). */
@@ -60,7 +60,7 @@ struct dom_string;
 struct jsheap {
 	JSRuntime *rt;
 	JSContext *ctx;
-	/* fixes875 (#304) — monotonic generation of `ctx`, bumped every time a new
+	/* fixes875 (#304)  -  monotonic generation of `ctx`, bumped every time a new
 	 * context is built for this heap.  A JSContext* ALONE cannot identify a
 	 * realm: free one and the allocator can hand the same address straight back
 	 * for the next one, so every `slot->ctx == ctx` ownership test in this file
@@ -73,13 +73,13 @@ struct jsheap {
 	 * never repeats, so (ctx, gen) does identify a realm. */
 	unsigned long ctx_gen;
 	int timeout;
-	/* fixes861 (#289) — every live heap, so macsurf_qjs_pump_all() can pump
+	/* fixes861 (#289)  -  every live heap, so macsurf_qjs_pump_all() can pump
 	 * ALL of them.  js_newheap() runs per browser_window AND per (i)frame
 	 * (browser_window.c:3373), so "the heap" has never been a real thing on a
 	 * page with an iframe; g_heap is only ever the most-RECENTLY-created one.
 	 * See the note on macsurf_qjs_pump_all(). */
 	struct jsheap *next;
-	/* fixes1117b (#265) — per-heap module source registry for ES module
+	/* fixes1117b (#265)  -  per-heap module source registry for ES module
 	 * imports. The module loader callback checks this list before trying the
 	 * disk cache.  Populated by js_exec_module for inline scripts. */
 	struct module_registry *module_reg;
@@ -99,13 +99,13 @@ struct jsthread {
  * heap has to walk g_heap_list (fixes861). */
 struct jsheap *g_heap = NULL;  /* exported for audit */
 
-/* fixes861 (#289) — every live heap, newest first.  js_newheap() links,
+/* fixes861 (#289)  -  every live heap, newest first.  js_newheap() links,
  * js_destroyheap() unlinks.  Exists so macsurf_qjs_pump_all() can pump all of
  * them; see the note there for why pumping only g_heap froze iframes. */
 static struct jsheap *g_heap_list = NULL;
 
 /* ------------------------------------------------------------------ */
-/* Interrupt handler — Cmd-. on OS 9                                   */
+/* Interrupt handler  -  Cmd-. on OS 9                                   */
 /* ------------------------------------------------------------------ */
 
 /* fixes522: time-based runaway guard.  g_qjs_script_deadline is the
@@ -114,7 +114,7 @@ static struct jsheap *g_heap_list = NULL;
  * cooperative event loop indefinitely.  0 == no deadline (init / internal
  * evals run unbounded).  Set around the top-level JS_Eval in js_exec. */
 double macsurf_qjs_get_now(void);
-/* fixes999 — the deadlines are OFF by default. They were runaway guards, and
+/* fixes999  -  the deadlines are OFF by default. They were runaway guards, and
  * on a 400 MHz G3 a legitimately heavy bundle can exceed a 20s budget, so the
  * guard fires on WORKING code and reports as a browser bug: the script is
  * aborted mid-init, half a framework exists, and the page fails in a way that
@@ -128,29 +128,29 @@ double macsurf_qjs_get_now(void);
  * mechanism the user already controls.
  *
  * Set MACSURF_JS_TIMEOUT_MS to a non-zero value to restore a budget. */
-/* fixes1022 — QUIESCE SWITCHES. The fixes1011-1019 batch woke behaviours
+/* fixes1022  -  QUIESCE SWITCHES. The fixes1011-1019 batch woke behaviours
  * real pages have never seen from this engine: real geometry answers, the
  * window load event, scroll/resize dispatch. The hardware verdict is that
  * on-load measure-then-mutate widgets (dotdotdot truncating every article,
  * slick collapsing the slider) make pages WORSE without the synchronous-
- * layout contract (Phase 3) underneath them -- partial lifecycle support is
+ * layout contract (Phase 3) underneath them - partial lifecycle support is
  * worse than none, the fixes1010 lesson at page scale. Default 0 restores
  * the fixes1008-era JS-OBSERVABLE surface while keeping every crash guard
  * and correctness fix since. Re-enable ONE AT A TIME, each in the round
  * that ships the engine support it depends on. The harness builds with
  * these ON so the full surface stays tested.
  *
- * fixes1023 — THESE LIVE AT THE TOP OF THE FILE ON PURPOSE. fixes1022 put
+ * fixes1023  -  THESE LIVE AT THE TOP OF THE FILE ON PURPOSE. fixes1022 put
  * them beside their first CONSUMER at ~3676, which is 160 lines BELOW two
  * use sites in macsurf_qjs_fire_scroll/_resize; the preprocessor leaves an
  * undefined macro as a bare identifier, so CW8 reported "undefined" at both
  * and the build died. Same class as the TARGET_API_MAC_CARBON prefix bug:
  * a config define is only worth what it is defined BEFORE. */
-/* fixes1073 (#265) — GEOMETRY IS ON.
+/* fixes1073 (#265)  -  GEOMETRY IS ON.
  *
  * It was quiesced by fixes1022 for a good reason: fixes998-1021 turned on four
  * capability classes with no hardware gate between them, and partial geometry
- * made pages WORSE than none -- a widget that measures, gets a fabricated 0 and
+ * made pages WORSE than none - a widget that measures, gets a fabricated 0 and
  * writes it back as an inline size destroys content that would have rendered
  * fine untouched.
  *
@@ -158,13 +158,13 @@ double macsurf_qjs_get_now(void);
  * geometry a forced synchronous layout (qjs_geometry_flush ->
  * macos9_reconvert_flush_now), so a measurement taken after a mutation
  * describes the page as it is rather than as it was, and every path that cannot
- * safely reflow still answers `undefined` -- never a fabricated number. That
+ * safely reflow still answers `undefined` - never a fabricated number. That
  * was the standing condition on re-enabling this, and it is met.
  *
  * The switch stays here, and stays a switch.
  *
  * fixes1136 (Option B, js-strategic-audit-2026-08-06): OFF.  Real geometry
- * requires incremental layout -- without it the O(document) sync flush costs
+ * requires incremental layout - without it the O(document) sync flush costs
  * ~1.6s per measurement burst, pages with measure-then-mutate widgets (slick,
  * dotdotdot) get 0.4% real answers, and JS consumes 96% of page-load time.
  * Return undefined (the branch-2 / pre-fixes1011 shape) until incremental
@@ -174,14 +174,14 @@ double macsurf_qjs_get_now(void);
 #ifndef MACSURF_JS_GEOMETRY
 #define MACSURF_JS_GEOMETRY 0
 #endif
-/* fixes1141 — AUDIT ON for the hardware baseline round. Enables per-script
+/* fixes1141  -  AUDIT ON for the hardware baseline round. Enables per-script
  * timing, failure reasons, audit budgets, and the LIFE js done ok lines.
  * The counters (g_js_skip_count, g_js_timeout_count) always increment
  * regardless of this switch; this gates only the log emissions. */
 #ifndef MACSURF_JS_AUDIT
 #define MACSURF_JS_AUDIT 1
 #endif
-/* fixes1108 (#265) — ON. Only macsurf_qjs_fire_scroll has a live call site
+/* fixes1108 (#265)  -  ON. Only macsurf_qjs_fire_scroll has a live call site
  * (window.c:509-510, the single scroll choke point: arrow keys, scrollbar
  * drag, core set_scroll, End, window.scrollTo all route through it). It
  * already only dispatches on a real position CHANGE (the `moved` guard at
@@ -190,7 +190,7 @@ double macsurf_qjs_get_now(void);
  * listener-gated (macsurf_qjs_event_type_live, fails OPEN when nothing is
  * registered so an empty listener table costs nothing). macsurf_qjs_fire_resize
  * has zero call sites anywhere in the tree, so this define does not newly
- * activate resize dispatch on its own -- it only unblocks the scroll path,
+ * activate resize dispatch on its own - it only unblocks the scroll path,
  * which fixes1011's real getBoundingClientRect() made load-bearing (a
  * lazy-load `rect.top < innerHeight` check now answers truly and needs a
  * real scroll event to re-fire). */
@@ -205,20 +205,20 @@ double macsurf_qjs_get_now(void);
 #define MACSURF_JS_TIMEOUT_MS 30000
 #endif
 #define QJS_SCRIPT_TIMEOUT_MS MACSURF_JS_TIMEOUT_MS
-/* fixes586 — timer/event callbacks get a shorter budget: a callback that
+/* fixes586  -  timer/event callbacks get a shorter budget: a callback that
  * burns 8s of straight CPU is pathological, and the UI is frozen while it
  * runs.  (Top-level scripts keep the 20s budget: big bundles on a G3 are
  * legitimately slow.) */
 #define QJS_TIMER_TIMEOUT_MS MACSURF_JS_TIMEOUT_MS
 static double g_qjs_script_deadline = 0.0;
 
-/* fixes1037 — timer-callback CPU, separate from top-level script eval. */
+/* fixes1037  -  timer-callback CPU, separate from top-level script eval. */
 long   g_timer_fires = 0;  /* exported for audit */
 long   g_timer_us    = 0;  /* exported for audit */
 static double g_timer_t0    = 0.0;
 
 
-/* fixes586 — THE tinkerdifferent hard-freeze.  The deadline was armed ONLY
+/* fixes586  -  THE tinkerdifferent hard-freeze.  The deadline was armed ONLY
  * around the top-level JS_Eval in js_exec; setTimeout/setInterval callbacks
  * (macsurf_qjs_run_timers -> JS_Call) and event dispatches (js_fire_event /
  * js_fire_dom_ready -> safe_eval) ran with deadline==0 == UNBOUNDED.  A page
@@ -226,7 +226,7 @@ static double g_timer_t0    = 0.0;
  * our partial DOM) therefore froze the machine forever with no crash: the
  * interrupt handler's WNE swallowed all events (dead UI), the deadline never
  * fired (never armed), and the log's last line was merely whatever the event
- * loop logged before the timer pass ran that tick — which is why the freeze
+ * loop logged before the timer pass ran that tick  -  which is why the freeze
  * site appeared to wander between builds.  Fix: push a deadline around EVERY
  * JS entry point.  push never EXTENDS an outer deadline (nest-safe); pop
  * restores the caller's value. */
@@ -234,7 +234,7 @@ static double qjs_deadline_push(double budget_ms)
 {
 	double prev = g_qjs_script_deadline;
 	double want;
-	/* fixes999 — budget 0 means NO deadline: leave whatever is armed alone
+	/* fixes999  -  budget 0 means NO deadline: leave whatever is armed alone
 	 * (normally nothing) so the script runs to completion. */
 	if (budget_ms <= 0.0)
 		return prev;
@@ -248,26 +248,26 @@ static void qjs_deadline_pop(double prev)
 	g_qjs_script_deadline = prev;
 }
 
-/* fixes1071 — WHERE does a slow script actually spend its time?
+/* fixes1071  -  WHERE does a slow script actually spend its time?
  *
  * The fixes1070 hardware log found ONE 72KB script (hackaday's navigation.js
  * concat bundle) running for 24.7 SECONDS against 74ms of compile. Run-bound,
- * so bytecode caching cannot help it -- but "run" still spans two completely
+ * so bytecode caching cannot help it - but "run" still spans two completely
  * different failure modes with different fixes:
  *
  *   - the QuickJS INTERPRETER is grinding through a genuinely huge number of
  *     bytecode ops (the script is doing real work, or looping); or
- *   - execution keeps leaving the interpreter to call NATIVE code -- our DOM
- *     bindings -- and the cost is ours, not QuickJS's.
+ *   - execution keeps leaving the interpreter to call NATIVE code - our DOM
+ *     bindings - and the cost is ours, not QuickJS's.
  *
  * Two counters separate them, and both are free:
  *
- *   ops   -- QuickJS calls this interrupt handler every
+ *   ops   - QuickJS calls this interrupt handler every
  *            JS_INTERRUPT_COUNTER_INIT (=10000) bytecode ops, so counting
  *            invocations yields the op count to within 10k. The handler was
  *            already being called and already reads the clock; one increment
  *            adds nothing.
- *   ncalls -- every JS->C call passes through js_call_c_function in quickjs.c
+ *   ncalls - every JS->C call passes through js_call_c_function in quickjs.c
  *            (patched there, one increment).
  *
  * Divide by run_us. A G3 interprets on the order of a million ops/sec; if the
@@ -352,10 +352,10 @@ double macsurf_qjs_get_now(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Exception logging helper — logs message + stack, one call per site  */
+/* Exception logging helper  -  logs message + stack, one call per site  */
 /* ------------------------------------------------------------------ */
 
-/* fixes1125 — every JS entry point that catches an exception should log
+/* fixes1125  -  every JS entry point that catches an exception should log
  * BOTH the message and the stack, with a LIFE prefix that survives the
  * failures-only release filter.  Before this, five paths logged only the
  * message, one silently dropped the exception, and macsurf_qjs__safe_eval
@@ -392,10 +392,10 @@ static void qjs_log_exc(JSContext *ctx, JSValueConst exc,
 }
 
 /* ------------------------------------------------------------------ */
-/* Safe eval — logs on error, never propagates exception               */
+/* Safe eval  -  logs on error, never propagates exception               */
 /* ------------------------------------------------------------------ */
 
-/* #265 — settle-once-per-JS-execution geometry. Defined with the
+/* #265  -  settle-once-per-JS-execution geometry. Defined with the
  * geometry census counters further down; forward-declared here because
  * safe_eval and the timer loop (the two earliest execution boundaries)
  * both precede it. See the definition for the full rationale. */
@@ -403,14 +403,14 @@ static void qjs_geom_settle_begin(void);
 
 void macsurf_qjs__safe_eval(JSContext *qctx, const char *src)
 {
-	/* fixes586 — safe_eval runs PAGE event listeners (js_fire_event /
+	/* fixes586  -  safe_eval runs PAGE event listeners (js_fire_event /
 	 * js_fire_dom_ready dispatch jQuery-ready + XF init through here), so
 	 * it needs the runaway deadline too.  Internal setup evals are tiny and
 	 * never notice it. */
 	double prevdl = qjs_deadline_push((double)QJS_SCRIPT_TIMEOUT_MS);
 	JSValue val;
 
-	/* #265 — every event dispatch (js_fire_event / js_fire_dom_ready /
+	/* #265  -  every event dispatch (js_fire_event / js_fire_dom_ready /
 	 * js_fire_window_load / script onload) is a fresh JS execution, so the
 	 * settle-once geometry flag must not leak into it from the burst that
 	 * just yielded. Cleared before ANY JS runs, not just on success: a
@@ -580,10 +580,10 @@ static JSValue qjs_prompt(JSContext *ctx, JSValueConst this_val,
 }
 
 /* ------------------------------------------------------------------ */
-/* atob / btoa — QuickJS has no built-in, provide in JS               */
+/* atob / btoa  -  QuickJS has no built-in, provide in JS               */
 /* ------------------------------------------------------------------ */
 
-/* Provided via JS polyfill below — quickjs has atob/btoa as built-ins
+/* Provided via JS polyfill below  -  quickjs has atob/btoa as built-ins
  * in some builds, but our port uses CONFIG_BIGNUM only so we inject
  * pure-JS versions in the polyfill string. */
 
@@ -599,7 +599,7 @@ static JSValue qjs_monotonic_ms(JSContext *ctx, JSValueConst this_val,
 }
 
 /* ------------------------------------------------------------------ */
-/* window.location — backed by macos9 window list                      */
+/* window.location  -  backed by macos9 window list                      */
 /* ------------------------------------------------------------------ */
 
 #ifdef __MACOS9__
@@ -613,14 +613,14 @@ extern struct gui_window *initial_win;
 extern void macos9_gw_set_title(struct gui_window *gw, const char *title);
 #endif
 
-/* fixes1011 — defined further down, beside the rest of the Phase 3 layout
+/* fixes1011  -  defined further down, beside the rest of the Phase 3 layout
  * code; used here by the JS-facing wrappers. */
 static int macsurf_qjs_scroll_x(void);
 static int macsurf_qjs_scroll_y(void);
 static int macsurf_qjs_viewport_w(void);
 static int macsurf_qjs_viewport_h(void);
 
-/* fixes1011 — thin JS wrappers over the viewport/scroll accessors. */
+/* fixes1011  -  thin JS wrappers over the viewport/scroll accessors. */
 static JSValue qjs_js_viewport_w(JSContext *ctx, JSValueConst this_val,
 		int argc, JSValueConst *argv)
 {
@@ -782,16 +782,16 @@ static JSValue qjs_history_go(JSContext *ctx, JSValueConst this_val,
 /* Timer subsystem                                                      */
 /* ------------------------------------------------------------------ */
 
-/* fixes868 (#294) — microtask budget per pump pass.  A .then() can enqueue the
+/* fixes868 (#294)  -  microtask budget per pump pass.  A .then() can enqueue the
  * next job, so draining unbounded lets a promise chain (or a self-scheduling
- * loop) starve the cooperative WaitNextEvent loop and hang the Mac -- the same
+ * loop) starve the cooperative WaitNextEvent loop and hang the Mac - the same
  * failure class as the fixes608 timer cycle.  Leftover jobs simply run on the
  * next poll pass; a real browser's task/microtask split behaves the same way.
  * 256 clears any realistic startup chain (hackaday's loader is ~6 deep) in one
  * pass while bounding the worst case. */
 #define QJS_MAX_JOBS_PER_PUMP 256
 
-/* fixes877 — was 64, which is low for a page running several libraries at once
+/* fixes877  -  was 64, which is low for a page running several libraries at once
  * (jQuery + a carousel + an analytics shim will each hold intervals), and every
  * overflow silently destroys a callback. The arena is a fixed static array, so
  * the cost is purely memory: ~120 B/slot * 256 = ~30 KB against a ~195 MB
@@ -802,16 +802,16 @@ static JSValue qjs_history_go(JSContext *ctx, JSValueConst this_val,
  * recursive, so this is a one-off 2 KB, not a per-depth cost. */
 #define QJS_MAX_TIMERS 256
 
-/* fixes876 — how many trailing setTimeout(fn, delay, ...) arguments a slot can
+/* fixes876  -  how many trailing setTimeout(fn, delay, ...) arguments a slot can
  * carry.  4 covers every real use (rAF's timestamp needs 1); anything beyond is
  * logged and dropped rather than silently truncated. */
 #define QJS_TIMER_MAX_ARGS 4
 
-/* fixes854 (#283) — `ctx` is the OWNER of this slot's `fn`, captured at
+/* fixes854 (#283)  -  `ctx` is the OWNER of this slot's `fn`, captured at
  * setTimeout time, and it is load-bearing, not bookkeeping.  js_newheap()
  * runs per browser_window AND per (i)frame (browser_window.c:3373 "new
  * javascript context for each window/(i)frame"), and every heap gets its
- * OWN JSRuntime (JS_NewRuntime2 in js_newheap) — so a page with an iframe
+ * OWN JSRuntime (JS_NewRuntime2 in js_newheap)  -  so a page with an iframe
  * has TWO runtimes, each with its own shape hash table, sharing this ONE
  * global arena.  A JSValue is only ever valid against the runtime that made
  * it: JS_FreeValue(ctx_B, fn_from_rt_A) decrefs an rt_A object, and when it
@@ -825,10 +825,10 @@ static JSValue qjs_history_go(JSContext *ctx, JSValueConst this_val,
  * This mirrors the XHR slot arena (macos9_js_fetch.c), which captures its
  * owning `ctx` and filters on it in macos9_js_fetch_flush(). */
 struct qjs_timer {
-	/* fixes875 (#304) — the owning realm's generation, captured next to `ctx`.
+	/* fixes875 (#304)  -  the owning realm's generation, captured next to `ctx`.
 	 * `ctx` alone is a recycled address; see struct jsheap's ctx_gen note. A
 	 * slot whose ctx matches but whose gen does NOT belongs to a dead realm at
-	 * a reused address: its `fn` must be ABANDONED, never freed -- the runtime
+	 * a reused address: its `fn` must be ABANDONED, never freed - the runtime
 	 * that owns it is gone, so there is nothing left to free it against. */
 	unsigned long ctx_gen;
 	int        id;
@@ -836,26 +836,26 @@ struct qjs_timer {
 	int        repeating;
 	double     interval_ms;
 	int        live;
-	JSContext *ctx;		/* owner of `fn` AND `args` — see the note above */
+	JSContext *ctx;		/* owner of `fn` AND `args`  -  see the note above */
 	JSValue    fn;
-	/* fixes876 — setTimeout(fn, delay, a, b): the extra arguments, duped at
+	/* fixes876  -  setTimeout(fn, delay, a, b): the extra arguments, duped at
 	 * registration and replayed at every fire.  These carry EXACTLY the same
 	 * cross-runtime lifetime hazard as `fn` above: they are JSValues owned by
 	 * `ctx`'s runtime and may only be duped/passed/freed against it.  Every
 	 * release path therefore goes through timer_slot_clear(), which handles
-	 * `fn` and `args` together -- freeing one and forgetting the other is the
+	 * `fn` and `args` together - freeing one and forgetting the other is the
 	 * bug this arena has already produced twice (fixes854, fixes875). */
 	int        nargs;
 	JSValue    args[QJS_TIMER_MAX_ARGS];
-	/* fixes888 (#304) — the owning JSRuntime, captured at registration.
+	/* fixes888 (#304)  -  the owning JSRuntime, captured at registration.
 	 *
 	 * (ctx, gen) is bookkeeping ABOUT the runtime; this is the runtime. The
-	 * crash is precisely "an rt_A JSValue freed against rt_B" -- free_object
+	 * crash is precisely "an rt_A JSValue freed against rt_B" - free_object
 	 * -> js_free_shape -> js_shape_hash_unlink walks rt_B's bucket chain for a
 	 * shape living in rt_A's table, runs off the end, unmapped memory at
 	 * js_shape_hash_unlink+0004C. Comparing the runtime directly tests the
 	 * exact invariant JS_FreeValue requires, so it holds even when the
-	 * generation bookkeeping is wrong -- which the hardware says it is, since
+	 * generation bookkeeping is wrong - which the hardware says it is, since
 	 * fixes875's gate passed and the free still blew up. */
 	JSRuntime *rt;
 };
@@ -863,21 +863,21 @@ struct qjs_timer {
 static struct qjs_timer s_timer_arena[QJS_MAX_TIMERS];
 static int s_timer_next_id = 1;
 
-/* fixes608 — the timer subsystem is a fixed index-addressed arena with NO
+/* fixes608  -  the timer subsystem is a fixed index-addressed arena with NO
  * intrusive linked list.  The old s_timer_head list could be spliced into a
  * cycle when a timer callback reentrantly called setTimeout (timer_alloc
  * evicting/reusing a slot the run_timers walk still held), and run_timers'
- * `while (t != NULL)` then spun forever — the tinkerdifferent hard-freeze,
+ * `while (t != NULL)` then spun forever  -  the tinkerdifferent hard-freeze,
  * immune to the fixes586 callback deadline because the spin is in the C loop,
  * not inside JS_Call.  Index-based iteration (0..QJS_MAX_TIMERS-1) makes an
  * infinite loop structurally impossible. */
-/* fixes875 (#304) — the generation currently owning `ctx`, or 0 if NO live heap
+/* fixes875 (#304)  -  the generation currently owning `ctx`, or 0 if NO live heap
  * does.  Walks g_heap_list (fixes861), which is the only authority on which
  * realms exist.
  *
  * Zero is the important answer: it means this JSContext* is either dead or
  * belongs to a heap that is gone, so any JSValue tagged with it must be
- * abandoned rather than freed.  Freeing it is what crashes -- see struct
+ * abandoned rather than freed.  Freeing it is what crashes - see struct
  * jsheap's ctx_gen note. */
 static unsigned long qjs_ctx_gen(JSContext *ctx)
 {
@@ -889,7 +889,7 @@ static unsigned long qjs_ctx_gen(JSContext *ctx)
 	return 0;
 }
 
-/* fixes888 (#304) — the LIVE runtime owning `ctx`, or NULL if no live heap does.
+/* fixes888 (#304)  -  the LIVE runtime owning `ctx`, or NULL if no live heap does.
  *
  * Deliberately resolved through g_heap_list rather than JS_GetRuntime(ctx):
  * JS_GetRuntime dereferences the context, and the whole problem here is that
@@ -912,12 +912,12 @@ static int qjs_timer_owned_by(struct qjs_timer *t, JSContext *ctx)
 	return t->ctx_gen == qjs_ctx_gen(ctx) && t->ctx_gen != 0;
 }
 
-/* fixes875 (#304) — never-repeating realm id. Monotonic across the whole
+/* fixes875 (#304)  -  never-repeating realm id. Monotonic across the whole
  * process: the ONLY property required is that a value is never reused, which is
  * exactly what a JSContext* address fails to guarantee. */
 static unsigned long g_ctx_gen_next = 1;
 
-/* fixes876 — the ONE way a timer slot is released.  Every release path in this
+/* fixes876  -  the ONE way a timer slot is released.  Every release path in this
  * file goes through here so that `fn` and `args` can never fall out of step.
  *
  * `free_vals` selects between the two disciplines this arena already needs, and
@@ -934,13 +934,13 @@ static void timer_slot_clear(struct qjs_timer *t, int free_vals)
 {
 	int i;
 
-	/* fixes888 (#304) — FINAL GATE, and the one that actually matters.
+	/* fixes888 (#304)  -  FINAL GATE, and the one that actually matters.
 	 *
 	 * Whatever the caller decided from (ctx, gen), refuse to free unless the
 	 * slot's ctx is STILL LIVE and STILL OWNED BY THE RUNTIME THAT MADE THESE
 	 * VALUES. Every caller's own reasoning is bookkeeping that can be wrong;
 	 * this is the invariant JS_FreeValue actually requires. If it does not
-	 * hold, ABANDON -- leaking into a runtime that is gone (or that never
+	 * hold, ABANDON - leaking into a runtime that is gone (or that never
 	 * owned these values) costs nothing real, and freeing is the crash.
 	 *
 	 * fixes875 tried to close this with (ctx, generation) alone and hardware
@@ -953,7 +953,7 @@ static void timer_slot_clear(struct qjs_timer *t, int free_vals)
 		if (live_rt == NULL || t->rt == NULL || live_rt != t->rt) {
 			macsurf_debug_log_writef(
 				"WORK timer: REFUSING cross-runtime free id=%d ctx=%p "
-				"slot_rt=%p live_rt=%p -- abandoning instead",
+				"slot_rt=%p live_rt=%p - abandoning instead",
 				t->id, (void *) t->ctx, (void *) t->rt,
 				(void *) live_rt);
 			free_vals = 0;
@@ -984,16 +984,16 @@ static struct qjs_timer *timer_alloc(void)
 	}
 	/* All full: evict the FURTHEST-OUT slot.
 	 *
-	 * fixes877 — this loop used `<` on expiry_ms, i.e. it picked the MINIMUM
+	 * fixes877  -  this loop used `<` on expiry_ms, i.e. it picked the MINIMUM
 	 * deadline: the soonest-expiring timer, the one closest to firing and so
 	 * the one most likely to be needed imminently. A page that briefly
 	 * over-filled the arena would silently lose the callback that was about to
-	 * run while keeping ones due much later -- a wrong answer, delivered
+	 * run while keeping ones due much later - a wrong answer, delivered
 	 * quietly. (The old variable name `oldest` disguised it: nearest-future is
 	 * not least-recently-created.) Evicting the furthest-out gives every
 	 * remaining timer the most time to fire before its slot is at risk.
 	 *
-	 * fixes854 (#283) — free against the slot's OWN ctx, never g_heap->ctx.
+	 * fixes854 (#283)  -  free against the slot's OWN ctx, never g_heap->ctx.
 	 * g_heap is just "the most recently created heap"; with an iframe on the
 	 * page the evicted slot can belong to a DIFFERENT heap/runtime, and
 	 * freeing an rt_A JSValue against rt_B corrupts rt_B's shape table (see
@@ -1012,11 +1012,11 @@ static struct qjs_timer *timer_alloc(void)
 	 * never run). It used to be silent, which reads as "everything is fine"
 	 * while a page quietly misbehaves. */
 	macsurf_debug_log_writef(
-		"WORK timer: arena FULL (%d) -- evicting furthest-out id=%d "
+		"WORK timer: arena FULL (%d) - evicting furthest-out id=%d "
 		"(expiry %ld ms out); its callback will never run",
 		QJS_MAX_TIMERS, victim->id,
 		(long)(victim_expiry - macsurf_qjs_get_now()));
-	/* fixes875 (#304) — free ONLY if the slot's realm is still the live one at
+	/* fixes875 (#304)  -  free ONLY if the slot's realm is still the live one at
 	 * that address.  A stale slot from a dead realm whose ctx address has been
 	 * recycled would otherwise be freed against the NEW runtime. */
 	timer_slot_clear(victim,
@@ -1052,7 +1052,7 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	t->interval_ms = delay_ms;
 	t->live = 1;
 
-	/* fixes876 — capture setTimeout(fn, delay, a, b, ...)'s trailing args.
+	/* fixes876  -  capture setTimeout(fn, delay, a, b, ...)'s trailing args.
 	 * Dropping these is why requestAnimationFrame callbacks saw `undefined`
 	 * instead of a DOMHighResTimeStamp, making the ubiquitous `t - last` idiom
 	 * NaN and breaking every animation loop. */
@@ -1060,17 +1060,17 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	if (extra < 0) extra = 0;
 	if (extra > QJS_TIMER_MAX_ARGS) {
 		macsurf_debug_log_writef(
-			"WORK timer: setTimeout extra args %d > cap %d -- dropping %d",
+			"WORK timer: setTimeout extra args %d > cap %d - dropping %d",
 			extra, QJS_TIMER_MAX_ARGS, extra - QJS_TIMER_MAX_ARGS);
 		extra = QJS_TIMER_MAX_ARGS;
 	}
 	t->nargs = extra;
-	/* fixes854 (#283) — capture the owning context alongside the dup.  `fn`
+	/* fixes854 (#283)  -  capture the owning context alongside the dup.  `fn`
 	 * belongs to THIS ctx's runtime and may only ever be duped/called/freed
 	 * against it. */
 	t->ctx = ctx;
 	t->ctx_gen = qjs_ctx_gen(ctx);
-	/* fixes888 (#304) — capture the owning runtime alongside the dup. Safe to
+	/* fixes888 (#304)  -  capture the owning runtime alongside the dup. Safe to
 	 * dereference here: we are executing IN this context, so it is live. */
 	t->rt = JS_GetRuntime(ctx);
 	t->fn = JS_DupValue(ctx, argv[0]);
@@ -1106,7 +1106,7 @@ static JSValue qjs_cleartimeout(JSContext *ctx, JSValueConst this_val,
 		int i;
 		for (i = 0; i < QJS_MAX_TIMERS; i++) {
 			t = &s_timer_arena[i];
-			/* fixes854 (#283) — `t->ctx == ctx` is a correctness gate, not
+			/* fixes854 (#283)  -  `t->ctx == ctx` is a correctness gate, not
 			 * an optimisation: ids come from one global counter shared by
 			 * every heap, so without it a page could clearTimeout an
 			 * IFRAME's id and free that runtime's JSValue against this
@@ -1132,13 +1132,13 @@ static void qjs_flush_timers(JSContext *old_ctx)
 	int i;
 	if (old_ctx == NULL) return;
 
-	/* fixes895 (crash-B hunt) — this is the navigation/realm-teardown path
+	/* fixes895 (crash-B hunt)  -  this is the navigation/realm-teardown path
 	 * that bombs at js_shape_hash_unlink+0004C when an rt_A JSValue is freed
 	 * against rt_B. fixes888's runtime gate in timer_slot_clear should now
 	 * refuse that free, but it is HW-unverified. Arm the durable eager flush
 	 * for the whole flush so every "WORK timer" breadcrumb (including the
 	 * FREE-ALLOWED identity line below and any REFUSING line) is on disk in
-	 * order before the potentially-fatal JS_FreeValue -- and drop a durable
+	 * order before the potentially-fatal JS_FreeValue - and drop a durable
 	 * position marker so a bomb here is unmistakable in MacSurf ReconvPos.txt.
 	 * Disarmed at every return. */
 	macsurf_debug_log_reconv_flush(1);
@@ -1150,7 +1150,7 @@ static void qjs_flush_timers(JSContext *old_ctx)
 		qjs_ctx_gen(old_ctx));
 
 	for (i = 0; i < QJS_MAX_TIMERS; i++) {
-		/* fixes854 (#283) — THE hackaday.com crash.  This used to free every
+		/* fixes854 (#283)  -  THE hackaday.com crash.  This used to free every
 		 * live slot against old_ctx.  The arena is global but heaps are
 		 * per-window/per-iframe and each has its own JSRuntime, so on any
 		 * page with an iframe it freed the IFRAME's timer JSValues against
@@ -1163,27 +1163,27 @@ static void qjs_flush_timers(JSContext *old_ctx)
 		if (!s_timer_arena[i].live || s_timer_arena[i].ctx != old_ctx)
 			continue;
 
-		/* fixes875 (#304) — THE CRASH SITE (unmapped memory exception at
+		/* fixes875 (#304)  -  THE CRASH SITE (unmapped memory exception at
 		 * js_shape_hash_unlink+0004C, reached via
 		 *   js_newthread -> qjs_flush_timers -> JS_FreeValue -> free_object
 		 *   -> js_free_shape -> js_shape_hash_unlink).
 		 *
 		 * The `ctx == old_ctx` test above is a POINTER compare, and a
 		 * JSContext* is a recycled address: JS_FreeContext returns it to the
-		 * allocator and the next JS_NewContext -- for a DIFFERENT heap, with a
-		 * DIFFERENT JSRuntime -- can be handed the same address. A leftover
+		 * allocator and the next JS_NewContext - for a DIFFERENT heap, with a
+		 * DIFFERENT JSRuntime - can be handed the same address. A leftover
 		 * slot from the dead realm then matches the live one, and freeing its
 		 * `fn` here runs js_shape_hash_unlink(rt_NEW, shape_OLD): the bucket
 		 * walk never finds a shape that lives in rt_OLD's table, runs off the
 		 * end of the chain, and dereferences garbage. This is exactly the ABA
-		 * problem fixes550 documents for contents -- pointer identity is not
+		 * problem fixes550 documents for contents - pointer identity is not
 		 * identity once the allocator can reuse the address.
 		 *
 		 * The generation settles it. A mismatch means this slot belongs to a
 		 * DEAD realm, so its `fn` is ABANDONED, not freed: the runtime that
 		 * allocated it is gone, and there is nothing left that can legally free
-		 * it. That leaks the JSValue -- into a runtime that no longer exists,
-		 * i.e. it costs nothing real -- which is the only safe move. */
+		 * it. That leaks the JSValue - into a runtime that no longer exists,
+		 * i.e. it costs nothing real - which is the only safe move. */
 		if (s_timer_arena[i].ctx_gen == 0 ||
 		    s_timer_arena[i].ctx_gen != qjs_ctx_gen(old_ctx)) {
 			macsurf_debug_log_writef(
@@ -1191,12 +1191,12 @@ static void qjs_flush_timers(JSContext *old_ctx)
 				"ctx=%p (dead realm at a recycled address)",
 				i, s_timer_arena[i].ctx_gen, qjs_ctx_gen(old_ctx),
 				(void *) old_ctx);
-			/* free_vals=0: ABANDON — see the note above. */
+			/* free_vals=0: ABANDON  -  see the note above. */
 			timer_slot_clear(&s_timer_arena[i], 0);
 			continue;
 		}
 
-		/* fixes895 (crash-B hunt) — the (ctx,gen) gate ALLOWED this free.
+		/* fixes895 (crash-B hunt)  -  the (ctx,gen) gate ALLOWED this free.
 		 * timer_slot_clear's fixes888 runtime gate gets the final say, but if
 		 * IT is wrong this is the last breadcrumb before the fatal JS_FreeValue.
 		 * Log the full identity (captured slot_rt vs the live rt, gen vs live
@@ -1216,7 +1216,7 @@ static void qjs_flush_timers(JSContext *old_ctx)
 		timer_slot_clear(&s_timer_arena[i], 1);
 	}
 
-	/* fixes895 — flush done without a bomb; disarm the eager flush. */
+	/* fixes895  -  flush done without a bomb; disarm the eager flush. */
 	macsurf_debug_log_reconv_flush(0);
 	macsurf_reconv_pos_set("timer-flush-done", 0, 0, "");
 	macsurf_reconv_pos_flush();
@@ -1236,7 +1236,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 	qctx = ctx->qctx;
 	now = macsurf_qjs_get_now();
 
-	/* fixes608 — snapshot the DUE timers by (slot index, id) BEFORE firing
+	/* fixes608  -  snapshot the DUE timers by (slot index, id) BEFORE firing
 	 * any, then fire from the snapshot.  A callback can reentrantly call
 	 * setTimeout (which may evict+reuse an arena slot) or clearTimeout
 	 * (which frees a slot); the index+id snapshot makes that reentrancy
@@ -1245,13 +1245,13 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 	 * -> the tinkerdifferent hard-freeze). */
 	ndue = 0;
 	for (i = 0; i < QJS_MAX_TIMERS; i++) {
-		/* fixes854 (#283) — only fire timers belonging to THIS context.  The
+		/* fixes854 (#283)  -  only fire timers belonging to THIS context.  The
 		 * arena is shared by every heap (one per window/iframe, each with its
 		 * own JSRuntime), so without this gate the main page's poll would
-		 * JS_DupValue/JS_Call an IFRAME's callback against the main runtime —
+		 * JS_DupValue/JS_Call an IFRAME's callback against the main runtime  - 
 		 * a cross-runtime call on a JSValue rt_main never allocated.  Each
 		 * heap's own run_timers pass fires its own slots. */
-		/* fixes875 (#304) — generation too: a stale slot at a recycled ctx
+		/* fixes875 (#304)  -  generation too: a stale slot at a recycled ctx
 		 * address would otherwise be JS_DupValue'd + JS_Call'd against the
 		 * WRONG runtime. */
 		if (qjs_timer_owned_by(&s_timer_arena[i], qctx) &&
@@ -1276,19 +1276,19 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		/* Revalidate: a prior callback may have cleared this timer, or
 		 * timer_alloc may have evicted+reused this slot for a different
 		 * id.  Only fire if it is still the same live timer. */
-		/* fixes854 (#283) — re-check the owner too: a callback can run
+		/* fixes854 (#283)  -  re-check the owner too: a callback can run
 		 * arbitrary JS, and an eviction may have handed this slot to a
 		 * DIFFERENT heap's setTimeout since we snapshotted, which would make
 		 * the JS_DupValue below cross-runtime. */
 		if (!qjs_timer_owned_by(t, qctx) || t->id != due_id[k]) continue;
 
-		/* #265 — a timer callback is its own JS execution burst: clear the
+		/* #265  -  a timer callback is its own JS execution burst: clear the
 		 * settle-once geometry flag so its first read settles fresh. Two
 		 * callbacks in one pump are two executions and may legitimately
 		 * need two flushes (the DOM can change between them). */
 		qjs_geom_settle_begin();
 
-		/* fixes876 — snapshot fn AND the extra args BEFORE the slot can be
+		/* fixes876  -  snapshot fn AND the extra args BEFORE the slot can be
 		 * cleared below: timer_slot_clear() blanks t->args, and the callback
 		 * itself may evict/reuse this slot reentrantly. */
 		fn = JS_DupValue(qctx, t->fn);
@@ -1302,9 +1302,9 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 			timer_slot_clear(t, 1);
 		}
 
-		/* fixes586 — bound the callback so a runaway script can't hang
+		/* fixes586  -  bound the callback so a runaway script can't hang
 		 * (the interrupt handler checks g_qjs_script_deadline). */
-		/* fixes1001 — this armed the deadline DIRECTLY instead of going
+		/* fixes1001  -  this armed the deadline DIRECTLY instead of going
 		 * through qjs_deadline_push, so fixes999's "0 == no deadline"
 		 * never reached it. With QJS_TIMER_TIMEOUT_MS == 0 it computed
 		 * `now + 0`, i.e. a deadline ALREADY EXPIRED, and the interrupt
@@ -1314,7 +1314,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		 * on the page was being killed the instant it ran.
 		 *
 		 * Use the shared push, which is the whole point of having one. */
-		/* fixes1037 — TIMER time, counted separately from script time.
+		/* fixes1037  -  TIMER time, counted separately from script time.
 		 * PERFACC says JS is 96% of a hackaday load (34.4s of 35.9s;
 		 * 57.7s on a slower run) while layout+cascade+paint together
 		 * are 1.4s. That is far more than executing ~250KB of bundles
@@ -1330,7 +1330,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		}
 		prevdl = qjs_deadline_push((double)QJS_TIMER_TIMEOUT_MS);
 		mydl = g_qjs_script_deadline;
-		/* fixes876 — HTML spec calls timer callbacks with `this` = the window.
+		/* fixes876  -  HTML spec calls timer callbacks with `this` = the window.
 		 * JS_UNDEFINED left strict-mode callbacks with `this === undefined`. */
 		this_obj = JS_GetGlobalObject(qctx);
 		ret = JS_Call(qctx, fn, this_obj, call_nargs, call_args);
@@ -1346,7 +1346,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 			JS_FreeValue(qctx, exc);
 			/* Deadline-abort of a still-live (repeating) timer: kill
 			 * it so the rogue interval can never re-freeze the UI. */
-			/* fixes1001 — mydl == 0 means NO deadline is armed, and
+			/* fixes1001  -  mydl == 0 means NO deadline is armed, and
 			 * `now >= 0` is always true: without this guard every
 			 * repeating timer that merely THREW would be killed as
 			 * if it had timed out. Only a real deadline can retire
@@ -1354,7 +1354,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 			if (t->live && t->id == due_id[k] && t->ctx == qctx &&
 			    mydl != 0.0 && macsurf_qjs_get_now() >= mydl) {
 				macsurf_debug_log_writef(
-					"qjs: TIMER TIMEOUT -- repeating timer KILLED");
+					"qjs: TIMER TIMEOUT - repeating timer KILLED");
 				timer_slot_clear(t, 1);
 			}
 		}
@@ -1370,14 +1370,14 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 /* document.title getter/setter                                         */
 /* ------------------------------------------------------------------ */
 
-/* fixes1114 (#265) — document.title getter was hardcoded to return "".
+/* fixes1114 (#265)  -  document.title getter was hardcoded to return "".
  * The setter wrote the real title straight to the Mac window title bar
  * (via macos9_gw_set_title) but never cached it, so the getter had nothing
  * to return even though the page had already set it.
  *
  * fixes1114b: matchMedia is now a real evaluator (replaces hardcoded false,
  * see the JS block below). Both fixes are in this single file, no prefix
- * touch — normal incremental rebuild. */
+ * touch  -  normal incremental rebuild. */
 static char g_last_title[512] = "";
 
 static JSValue qjs_document_title_get(JSContext *ctx, JSValueConst this_val,
@@ -1412,7 +1412,7 @@ static JSValue qjs_document_title_set(JSContext *ctx, JSValueConst this_val,
 }
 
 /* ================================================================== */
-/* DOM bridge — getElementById, querySelectorAll, getAttribute,        */
+/* DOM bridge  -  getElementById, querySelectorAll, getAttribute,        */
 /*              setAttribute with real libdom write-through.           */
 /* Mirrors macsurf_js_dom.c (Duktape) but in QuickJS idioms.          */
 /* ================================================================== */
@@ -1456,7 +1456,7 @@ extern dom_exception macsurf_dom_node_get_text_content(dom_node *node,
 		dom_string **result);
 extern dom_exception macsurf_dom_node_set_text_content(dom_node *node,
 		dom_string *content);
-/* fixes878 — real cloneNode/contains (macsurf_dom_dispatch.c). `deep` and
+/* fixes878  -  real cloneNode/contains (macsurf_dom_dispatch.c). `deep` and
  * `contains` are int, not bool: this file's C89 build maps bool to Apple's
  * Boolean (see macos9.h), so keeping the shim boundary int-only avoids
  * depending on which bool won in a given TU. */
@@ -1476,7 +1476,7 @@ extern dom_exception macsurf_dom_element_remove_attribute(dom_element *el,
 		dom_string *name);
 extern dom_exception macsurf_dom_document_create_element_s(dom_document *doc,
 		const char *tag, dom_element **element);
-/* fixes873 — shorten a script URL to something a 255-byte log line can afford.
+/* fixes873  -  shorten a script URL to something a 255-byte log line can afford.
  * Keeps the FILENAME (the identifying part) and drops the leading path and the
  * query string, so
  *   https://jetpack.wordpress.com/wp-content/mu-plugins/jetpack-mu-wpcom-plugin/
@@ -1484,7 +1484,7 @@ extern dom_exception macsurf_dom_document_create_element_s(dom_document *doc,
  *   verbum-comments.js?m=1783962184i&minify=false&ver=2af6b658a7893b8bad68
  * becomes "verbum-comments.js". Truncating from the LEFT (the naive `%.40s`)
  * would keep "https://jetpack.wordpress.com/wp-content/" for every script on the
- * page -- i.e. the part that is identical everywhere and identifies nothing. */
+ * page - i.e. the part that is identical everywhere and identifies nothing. */
 static void qjs_short_name(const char *name, char *out, int cap)
 {
 	const char *base;
@@ -1510,7 +1510,7 @@ static void qjs_short_name(const char *name, char *out, int cap)
 }
 
 /* ------------------------------------------------------------------
- * fixes1070 — JS PHASE + PER-SCRIPT PROFILE
+ * fixes1070  -  JS PHASE + PER-SCRIPT PROFILE
  *
  * Measured 2026-07-25, hackaday front page: js = 25.4s of a 31s load, while
  * cascade+layout+paint together are ~1.2s. fixes1037 already split timer CPU
@@ -1518,7 +1518,7 @@ static void qjs_short_name(const char *name, char *out, int cap)
  * intervals spinning. That is as far as one lump accumulator can take us, and
  * it is not far enough to choose a fix:
  *
- *   - if COMPILE dominates, the answer is bytecode caching -- JS_WriteObject
+ *   - if COMPILE dominates, the answer is bytecode caching - JS_WriteObject
  *     the compiled function into the existing disk cache (macos9_disk_cache.c,
  *     which already streams and already survives relaunch) and JS_ReadObject
  *     it back. Big win, self-contained, no JS semantics touched.
@@ -1528,7 +1528,7 @@ static void qjs_short_name(const char *name, char *out, int cap)
  * Those are opposite pieces of work, and 25 seconds is too much to spend
  * guessing which. So: bracket compile and run separately, and keep a small
  * top-N table naming the scripts that actually cost the time. Both are
- * accumulate-into-statics and emit-once-per-navigation -- the shape CLAUDE.md
+ * accumulate-into-statics and emit-once-per-navigation - the shape CLAUDE.md
  * settled on after per-event logging repeatedly polluted the very measurement
  * it was taken for (the fixes347d var() trace was 95.5% of one load's log).
  * ------------------------------------------------------------------ */
@@ -1541,7 +1541,7 @@ long g_perf_run_us     = 0;  /* exported for audit */	/* bytecode execution, sum
 long g_perf_gc_us      = 0;  /* exported for audit */	/* JS_RunGC, summed (see note below)*/
 long g_perf_gc_runs    = 0;  /* exported for audit */
 
-/* fixes1070 — is automatic cycle-GC ARMED? Set by js_newheap alongside the
+/* fixes1070  -  is automatic cycle-GC ARMED? Set by js_newheap alongside the
  * JS_SetGCThreshold call, so the log can never present gc=0 as "collection is
  * free" when the truth is "collection never runs".
  *
@@ -1559,22 +1559,22 @@ long g_perf_gc_runs    = 0;  /* exported for audit */
  * JSPHASE line is the flag that says so out loud. */
 int g_perf_gc_armed = 0;  /* exported for audit */
 
-/* fixes1013 — JS execution census, referenced by js_exec/js_exec_module.
+/* fixes1013  -  JS execution census, referenced by js_exec/js_exec_module.
  * Defined here (above their first use) and exported for the audit TU. */
 long g_js_exec_count = 0;  /* exported for audit */
 long g_js_exec_bytes = 0;  /* exported for audit */
 long g_js_exec_fail  = 0;  /* exported for audit */
-long g_js_skip_count = 0;  /* fixes1141 — scripts skipped (size cap) */
-long g_js_timeout_count = 0;  /* fixes1141 — scripts aborted (deadline) */
+long g_js_skip_count = 0;  /* fixes1141  -  scripts skipped (size cap) */
+long g_js_timeout_count = 0;  /* fixes1141  -  scripts aborted (deadline) */
 
-/* R1.3 — per-script census backing the `LIFE SCRIPT CENSUS` lines.  Written
+/* R1.3  -  per-script census backing the `LIFE SCRIPT CENSUS` lines.  Written
  * by qjs_census_note() (below), emitted and cleared by the page summary in
  * macsurf_qjs_audit.c. */
 struct script_census_entry g_script_census[SCRIPT_CENSUS_MAX];
 long g_script_census_count = 0;  /* exported for audit */
 long g_script_census_full  = 0;  /* exported for audit */
 
-/* fixes1071 — wrapper-helper compile census. Declared HERE, above the perf
+/* fixes1071  -  wrapper-helper compile census. Declared HERE, above the perf
  * emitters that read them, rather than beside qjs_helper_fn where they are
  * written: C89 needs the declaration before every use, and the JSWHERE emit
  * sits earlier in the file than the wrapper code. See qjs_helper_fn for what
@@ -1582,7 +1582,7 @@ long g_script_census_full  = 0;  /* exported for audit */
 long g_wrap_installs   = 0;  /* exported for audit */
 long g_helper_compiles = 0;  /* exported for audit */
 long g_helper_bytes    = 0;  /* exported for audit */
-/* fixes1078 — what the per-element wrapper install COSTS to execute.
+/* fixes1078  -  what the per-element wrapper install COSTS to execute.
  *
  * fixes1071 cached the helper COMPILE, but every wrapper still runs all four
  * helper functions, and they do dozens of Object.defineProperty calls with
@@ -1591,7 +1591,7 @@ long g_helper_bytes    = 0;  /* exported for audit */
  * seconds, migrating the helpers to qjs_el_install_proto is the single
  * biggest JS win available and it costs no capability at all. */
 long g_wrap_us         = 0;  /* exported for audit */
-/* fixes1078 — time spent INSIDE native bindings, sampled 1-in-64 by
+/* fixes1078  -  time spent INSIDE native bindings, sampled 1-in-64 by
  * js_call_c_function and scaled. ncalls x an assumed per-call cost is how the
  * 25us figure was inferred; this measures it instead. Sampled because timing
  * every call would add two Microseconds() traps to the hottest path in the
@@ -1599,21 +1599,21 @@ long g_wrap_us         = 0;  /* exported for audit */
 long macsurf_qjs_native_us    = 0;
 long macsurf_qjs_native_samp  = 0;
 
-/* fixes1077 — geometry read census, so the cost of answering is measurable
+/* fixes1077  -  geometry read census, so the cost of answering is measurable
  * rather than inferred. reads = every geometry entry; us = what they cost. */
 long g_geom_reads = 0;  /* exported for audit */
 long g_geom_us    = 0;  /* exported for audit */
-/* fixes1087 — WHERE in the load a measurement was answered, and how often we
+/* fixes1087  -  WHERE in the load a measurement was answered, and how often we
  * still refuse. `ready` is the whole point: before this it was structurally
  * zero, because the gate demanded DONE. If it stays zero the gate did not
  * actually open. */
 long g_geom_at_ready = 0;  /* exported for audit */
 long g_geom_at_done  = 0;  /* exported for audit */
 long g_geom_unstable = 0;  /* exported for audit */
-/* fixes1087 — WHAT the page got back. A refusal and a confidently wrong
+/* fixes1087  -  WHAT the page got back. A refusal and a confidently wrong
  * number fail differently and want different fixes, so count them apart:
  *   undef  refused (unsettled, or a mutation pending with no box)
- *   zero   answered 0 -- "not rendered". True for a hidden element, and a
+ *   zero   answered 0 - "not rendered". True for a hidden element, and a
  *          LIE for one whose box simply has not been built yet. This is the
  *          number that collapses a carousel, so it is the one to watch.
  *   real   answered from a real box. */
@@ -1621,7 +1621,7 @@ long g_geom_undef = 0;  /* exported for audit */
 long g_geom_zero  = 0;  /* exported for audit */
 long g_geom_real  = 0;  /* exported for audit */
 
-/* #265 (hackaday slider) — SETTLE-ONCE-PER-JS-EXECUTION geometry flag.
+/* #265 (hackaday slider)  -  SETTLE-ONCE-PER-JS-EXECUTION geometry flag.
  *
  * Every geometry read used to call macos9_reconvert_flush_now(), a FULL
  * synchronous html_reconvert() (~1.2 s) whenever the DOM carried any
@@ -1640,7 +1640,7 @@ long g_geom_real  = 0;  /* exported for audit */
  * Deliberate deviation from the "clear on every DOM mutation" draft:
  * clearing here on macos9_js_mark_dom_dirty_node would re-arm the flag
  * on the FIRST write after a settle, so every subsequent read would
- * attempt a flush again -- declined=1255 proves reads and mutations
+ * attempt a flush again - declined=1255 proves reads and mutations
  * interleave 1:1, so that design keeps ~1280 flush ATTEMPTS and the
  * budget still breaks. Clearing only at JS-execution boundaries
  * (qjs_geom_settle_begin: top of macsurf_qjs_pump_all, top of js_exec,
@@ -1649,7 +1649,7 @@ long g_geom_real  = 0;  /* exported for audit */
  *
  * Content-keyed (iframes have their own content): a settle in one
  * runtime must not silence flushes for another. A DECLINED flush leaves
- * the flag 0 so the next read retries -- today's retry semantics are
+ * the flag 0 so the next read retries - today's retry semantics are
  * preserved. qjs_geometry_settled() still independently gates every
  * read on tree stability/liveness. */
 static int g_geom_settled = 0;
@@ -1680,7 +1680,7 @@ static void qjs_perf_note_script(const char *name, long bytes,
 
 	/* Same script evaluated twice (or an inline <script> sharing the
 	 * document's name) merges into one row rather than consuming a second
-	 * slot -- otherwise a page with many small inline scripts evicts the
+	 * slot - otherwise a page with many small inline scripts evicts the
 	 * one big bundle we are trying to find. */
 	for (i = 0; i < QJS_PERF_SLOTS; i++) {
 		if (g_perf_slot[i].name[0] != '\0' &&
@@ -1720,7 +1720,7 @@ static void qjs_perf_note_script(const char *name, long bytes,
 	}
 }
 
-/* R1.3 — record one script execution for the page census.
+/* R1.3  -  record one script execution for the page census.
  *
  * Called from js_exec and js_exec_module once per execution, at the point
  * the outcome is known.  defer/async is NOT reachable at these call sites
@@ -1729,7 +1729,7 @@ static void qjs_perf_note_script(const char *name, long bytes,
  * are 0/1 flags: a compile failure is compiled=0 completed=0 (nothing
  * ran); a run failure is compiled=1 completed=0; a clean run is 1/1.
  *
- * The array is cleared by the page summary's emit, not here — see
+ * The array is cleared by the page summary's emit, not here  -  see
  * macsurf_qjs_audit.h for why (per-(i)frame audit_reset). */
 static void qjs_census_note(const char *name, long bytes,
 		unsigned char type, unsigned char compiled,
@@ -1754,7 +1754,7 @@ static void qjs_census_note(const char *name, long bytes,
 	e->completed = completed;
 }
 
-/* fixes1070 — read-back accessors, so the harness can assert on what this
+/* fixes1070  -  read-back accessors, so the harness can assert on what this
  * instrument MEASURED rather than merely that it emitted something.
  *
  * The standing rule here is "assert counts, never booleans", and it exists
@@ -1788,13 +1788,13 @@ int macsurf_qjs_perf_slot(int i, char *name, int cap, long *bytes,
 	return 1;
 }
 
-/* fixes1070 — run a collection explicitly, and therefore measurably.
+/* fixes1070  -  run a collection explicitly, and therefore measurably.
  *
  * Automatic GC is disarmed (see g_perf_gc_armed), so JS_RunGC currently has no
  * caller at all in a normal load and the timing hook in quickjs.c would be
  * dead code that nothing could verify. This gives it one, and it is the entry
  * point a future round would use if collection is ever re-armed at a safe
- * quiescent point rather than mid-allocation -- which is the shape that would
+ * quiescent point rather than mid-allocation - which is the shape that would
  * dodge the fixes593 freeze while getting the memory back.
  *
  * Nothing on the load path calls this today; it changes no behaviour. */
@@ -1805,21 +1805,21 @@ void macsurf_qjs_run_gc(struct jsheap *heap)
 	JS_RunGC(heap->rt);
 }
 
-/* fixes1071 — wrapper/helper-compile census, for harness Test 50. */
+/* fixes1071  -  wrapper/helper-compile census, for harness Test 50. */
 
 
 
-/* fixes870 (#297) — createElementNS, Preact's only element factory. */
+/* fixes870 (#297)  -  createElementNS, Preact's only element factory. */
 extern dom_exception macsurf_dom_document_create_element_ns_s(dom_document *doc,
 		const char *ns, const char *qname, dom_element **element);
-/* fixes872 — declare the fixes867 owner-document accessor properly. It was being
+/* fixes872  -  declare the fixes867 owner-document accessor properly. It was being
  * called with NO prototype in scope, so C89 implicitly declared it int-returning.
  * Benign by luck here (dom_exception is an enum, i.e. int, and comes back in r3
- * either way) -- but only by luck, and the same omission on a double- or
+ * either way) - but only by luck, and the same omission on a double- or
  * pointer-returning function is a real miscompile. */
 extern dom_exception macsurf_dom_node_get_owner_document(dom_node *node,
 		dom_document **result);
-/* fixes846 (#167 S3) — real createTextNode/createDocumentFragment/text-data. */
+/* fixes846 (#167 S3)  -  real createTextNode/createDocumentFragment/text-data. */
 extern dom_exception macsurf_dom_document_create_text_node_s(dom_document *doc,
 		const char *data, dom_text **text);
 extern dom_exception macsurf_dom_document_create_document_fragment(
@@ -1828,15 +1828,6 @@ extern dom_exception macsurf_dom_characterdata_get_data(dom_node *node,
 		dom_string **data);
 extern dom_exception macsurf_dom_characterdata_set_data_s(dom_node *node,
 		const char *data);
-/* fixes1168 (#262) — attribute enumeration for the innerHTML serializer
- * (macsurf_dom_dispatch.c wrappers around the static-inline libdom
- * vtable dispatchers). */
-extern dom_exception macsurf_dom_node_get_attributes(dom_node *node,
-		dom_namednodemap **result);
-extern dom_exception macsurf_dom_attr_get_name(dom_node *attr,
-		dom_string **name);
-extern dom_exception macsurf_dom_attr_get_value(dom_node *attr,
-		dom_string **value);
 
 /* ---- Global document/content pointers (set in js_newthread) ---- */
 static dom_document  *g_qjs_document = NULL;
@@ -1845,7 +1836,7 @@ static struct content *g_qjs_content = NULL;
 void qjs_set_document(dom_document *doc)  { g_qjs_document = doc; }
 void qjs_set_content(struct content *c)   { g_qjs_content  = c; }
 
-/* fixes846 (#167 S3) — macos9_js_fetch.c's only need for g_qjs_content:
+/* fixes846 (#167 S3)  -  macos9_js_fetch.c's only need for g_qjs_content:
  * read the page URL as a fetch_start() referer at send()-time. See this
  * pointer's staleness rules two comments below; the caller must snapshot
  * whatever it needs synchronously, not hold this across an async gap. */
@@ -1862,14 +1853,14 @@ JSContext *macsurf_qjs_current_ctx(void)
  * stuck to for the session and that reached no jar, persisted nothing, and
  * started every navigation empty. The jar itself is real, RFC-6265 and
  * disk-persistent (urldb.c), and both fetchers have read and written it since
- * fixes367. Only the JS exposure was fake -- so session-detection code, which
+ * fixes367. Only the JS exposure was fake - so session-detection code, which
  * is the thing that reads document.cookie constantly, concluded "logged out" on
  * every page even while the very request that fetched it carried the session
  * cookie.
  *
  * The URL comes from THIS realm's own content (g_qjs_content), NOT from
  * macos9_window_list_head() the way location does: that returns the FIRST
- * window, which for an iframe is a different document entirely -- and cookies
+ * window, which for an iframe is a different document entirely - and cookies
  * are precisely where reading the wrong document's URL would be a security bug
  * rather than a cosmetic one.
  *
@@ -1963,13 +1954,13 @@ static JSClassID s_el_class_id;
  * MacSurf reached this design (fixes541) largely on its own, but the same
  * node-identity map + finalizer-unref + per-wrapper owner-document keepalive
  * discipline was worked out in parallel by sempaisquad in ClassicNetSurf's
- * hand-written quickjs.c -- a concurrent NetSurf-on-OS 9 effort at a different
+ * hand-written quickjs.c - a concurrent NetSurf-on-OS 9 effort at a different
  * scope.  Credit sempaisquad <https://github.com/sempaisquad> as a contributor
  * for the convergent lifecycle pattern.
  *
  * Atomic unit (see docs/research/quickjs-dom-port-phase1.md and
  * teardown-ordering-audit.md): the map, the wrapper, the finalizer and the
- * keepalive are ONE mechanism — they cannot be split.  Why:
+ * keepalive are ONE mechanism  -  they cannot be split.  Why:
  *   - The map gives a node AT MOST ONE wrapper (lookup-then-create), so
  *     el.parentNode === el.parentNode and removeChild/contains identity hold.
  *   - "At most one wrapper" is also what guarantees the finalizer runs EXACTLY
@@ -1977,7 +1968,7 @@ static JSClassID s_el_class_id;
  *     balanced ref/unref sound.
  *   - Single-owner / single-release: each wrapper owns exactly ONE node ref
  *     and ONE owner-document keepalive ref (g_qjs_document captured at wrap
- *     time).  Both are released SOLELY by the finalizer or the realm drain —
+ *     time).  Both are released SOLELY by the finalizer or the realm drain  - 
  *     nothing else unrefs that node.  The keepalive holds the document alive
  *     for as long as ANY wrapper references it, so the document outlives its
  *     wrappers regardless of teardown order (the audit proved ordering alone
@@ -1993,14 +1984,14 @@ struct qjs_wrap_entry {
 	dom_node  *node;       /* key; wrapper's single owned node ref     */
 	dom_node  *owner_doc;  /* keepalive; wrapper's single owned doc ref */
 	JSValue    val;        /* WEAK handle to the wrapper JS object      */
-	JSRuntime *rt;         /* fixes900 — the runtime that created this
+	JSRuntime *rt;         /* fixes900  -  the runtime that created this
 	                        * wrapper; the drain is PER-RUNTIME so an
 	                        * iframe heap-destroy cannot free the parent
 	                        * runtime's wrappers (crash B). */
 	struct qjs_wrap_entry *next;
 };
 
-/* This map is file-static and shared by EVERY runtime -- js_newheap() runs per
+/* This map is file-static and shared by EVERY runtime - js_newheap() runs per
  * window AND per (i)frame, so on a page with an iframe there are multiple live
  * runtimes with entries here at once. It is drained on realm reset and heap
  * destroy, but ONLY for the runtime being torn down (fixes900): draining every
@@ -2038,13 +2029,13 @@ static int qjs_wrap_insert(dom_node *node, dom_node *owner_doc, JSValue val,
 	e->node = node;
 	e->owner_doc = owner_doc;
 	e->val = val;
-	e->rt = rt;             /* fixes900 — owning runtime for the per-rt drain */
+	e->rt = rt;             /* fixes900  -  owning runtime for the per-rt drain */
 	e->next = s_wrap_buckets[h];
 	s_wrap_buckets[h] = e;
 	return 1;
 }
 
-/* Unlink the entry for node (does NOT drop refs — the caller does). */
+/* Unlink the entry for node (does NOT drop refs  -  the caller does). */
 static void qjs_wrap_remove(dom_node *node)
 {
 	unsigned int h = qjs_wrap_hash(node);
@@ -2062,15 +2053,15 @@ static void qjs_wrap_remove(dom_node *node)
 	}
 }
 
-/* Realm-reset / heap-destroy drain — does BOTH halves then clears.  The
+/* Realm-reset / heap-destroy drain  -  does BOTH halves then clears.  The
  * finalizers fired by JS_FreeContext normally empty the map first (each removes
  * its entry and drops node+owner_doc); this is the GUARANTEED, pure-C release
  * for any entry whose finalizer did not run (e.g. wrapper objects still in
  * obj->method reference cycles that JS_FreeContext leaves for JS_FreeRuntime):
  * drop the node ref AND the owner-document keepalive ref, THEN clear the entry.
- * Never touches e->val — the JS object may already be gone after JS_FreeContext;
+ * Never touches e->val  -  the JS object may already be gone after JS_FreeContext;
  * the matching finalizer (if it runs later) finds no map entry and no-ops. */
-/* fixes1008 — defined further down (next to qjs_dom_register_listener, which
+/* fixes1008  -  defined further down (next to qjs_dom_register_listener, which
  * is what feeds them), used here at realm teardown. */
 static void qjs_reg_clear(void);
 static void qjs_evgate_reset(void);
@@ -2085,11 +2076,11 @@ static void qjs_wrap_drain(JSRuntime *rt)
 		struct qjs_wrap_entry *prev = NULL;
 		while (e != NULL) {
 			struct qjs_wrap_entry *next = e->next;
-			/* fixes900 — PER-RUNTIME drain. Only release wrappers created by
+			/* fixes900  -  PER-RUNTIME drain. Only release wrappers created by
 			 * the runtime being torn down. An entry belonging to a DIFFERENT,
 			 * still-live runtime (the classic case: the parent document's
 			 * wrappers while an IFRAME heap is being destroyed) is LEFT LINKED
-			 * -- unref'ing its node + document-keepalive here would free the
+			 * - unref'ing its node + document-keepalive here would free the
 			 * parent's DOM out from under its live runtime, which is crash B
 			 * (fixes867 merely COUNTED these 'foreign' entries and freed them
 			 * anyway). rt==NULL means "drain everything" (final process
@@ -2109,14 +2100,14 @@ static void qjs_wrap_drain(JSRuntime *rt)
 			e = next;
 		}
 	}
-	/* fixes900 — `kept` (wrappers left linked because they belong to another
+	/* fixes900  -  `kept` (wrappers left linked because they belong to another
 	 * live runtime) replaces fixes867's `foreign` counter: a non-zero `kept`
 	 * on an iframe teardown is exactly the parent's wrappers we now correctly
 	 * DECLINE to free. The old code counted them and freed them anyway (crash
 	 * B). rt keys the ownership; g_qjs_document is no longer consulted here (it
-	 * is a single stale-prone global — the reason the old owner_doc match was
+	 * is a single stale-prone global  -  the reason the old owner_doc match was
 	 * unreliable). */
-	/* fixes1008 — the registration set and the event-type gate are both keyed
+	/* fixes1008  -  the registration set and the event-type gate are both keyed
 	 * to this realm's nodes, so they die with it. Leaving the set behind
 	 * would let a RECYCLED node address look already-registered, and its
 	 * listeners would silently never reach libdom. */
@@ -2191,7 +2182,7 @@ static JSValue qjs_ctor_proto_by_name(JSContext *ctx, const char *ctor_name)
 	return proto;
 }
 
-/* fixes1127 -- the per-tag DOM constructor prototype for a freshly-wrapped
+/* fixes1127 - the per-tag DOM constructor prototype for a freshly-wrapped
  * element, so `el instanceof HTMLDivElement` / `HTMLElement` / `Element` /
  * `Node` answer truthfully.  The DOM constructors are JS stubs; each per-tag
  * stub's .prototype has its __proto__ re-pointed at the wrapper class proto
@@ -2204,7 +2195,7 @@ static JSValue qjs_ctor_proto_by_name(JSContext *ctx, const char *ctor_name)
  * its append behind `b instanceof HTMLElement`; with the stubs disconnected
  * every element answered false, the probe div was never appended, and
  * `b.parentNode.removeChild(b)` threw "cannot read property 'removeChild' of
- * null" -- blocking XF.Element registration and the editor.
+ * null" - blocking XF.Element registration and the editor.
  *
  * Returns an owned JSValue (caller frees) or JS_NULL when the tag has no
  * constructor (wrapper keeps the class proto; per-tag instanceof stays false
@@ -2255,7 +2246,7 @@ static JSValue qjs_dom_ctor_proto(JSContext *ctx, const char *tag_lc)
 /* Point a freshly-wrapped object's prototype at a constructor's prototype
  * when the constructor exists; leave the wrapper class proto otherwise.
  * Node-shape-accurate for elements (per-tag), text/comment (Text /
- * CharacterData / Comment) and fragments (DocumentFragment) -- a text node
+ * CharacterData / Comment) and fragments (DocumentFragment) - a text node
  * must NOT answer instanceof HTMLElement, which is what the shared class
  * proto alone would do after fixes1127's p.__proto__ link. */
 static void qjs_wrap_set_family_proto(JSContext *ctx, JSValue obj,
@@ -2278,7 +2269,7 @@ static void qjs_wrap_set_family_proto(JSContext *ctx, JSValue obj,
  *     redundant ref is released here, and a NEW JS reference to the SAME object
  *     is returned (node identity holds).  The wrapper's own ref is untouched.
  * In both cases the wrapper's node ref and doc keepalive are released SOLELY by
- * qjs_el_finalizer / qjs_wrap_drain — nothing else unrefs that node. */
+ * qjs_el_finalizer / qjs_wrap_drain  -  nothing else unrefs that node. */
 static JSValue qjs_wrap_element(JSContext *ctx, dom_element *el)
 {
 	dom_node *node = (dom_node *)el;
@@ -2288,7 +2279,6 @@ static JSValue qjs_wrap_element(JSContext *ctx, dom_element *el)
 	dom_string *tag_ds = NULL;
 	const char *tag_str = "";
 	char tag_lc[32];
-	char tag_uc[32];
 	int i;
 
 	if (el == NULL) return JS_NULL;
@@ -2333,13 +2323,11 @@ static JSValue qjs_wrap_element(JSContext *ctx, dom_element *el)
 	for (i = 0; i < 31 && tag_str[i]; i++) {
 		char c = tag_str[i];
 		tag_lc[i] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
-		tag_uc[i] = (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
 	}
 	tag_lc[i] = '\0';
-	tag_uc[i] = '\0';
 	if (tag_ds) macsurf_dom_string_unref(tag_ds);
 
-	/* fixes1127 -- route the wrapper through its tag's constructor
+	/* fixes1127 - route the wrapper through its tag's constructor
 	 * prototype so instanceof answers truthfully for the whole DOM family
 	 * (HTMLDivElement -> HTMLElement -> Element -> Node via the class proto
 	 * chain).  On a miss the wrapper keeps the class proto, which still
@@ -2351,12 +2339,7 @@ static JSValue qjs_wrap_element(JSContext *ctx, dom_element *el)
 		}
 		JS_FreeValue(ctx, tp);
 	}
-	/* fixes1168 (#299) — tagName is UPPERCASE for HTML elements, matching
-	 * every real browser (nodeName is the qualified name — also uppercase
-	 * per spec — but is left as-is here to limit the blast radius to what
-	 * #299 asked for). The lowercase form still feeds the constructor
-	 * prototype lookup above. */
-	JS_SetPropertyStr(ctx, obj, "tagName",  JS_NewString(ctx, tag_uc));
+	JS_SetPropertyStr(ctx, obj, "tagName",  JS_NewString(ctx, tag_lc));
 	JS_SetPropertyStr(ctx, obj, "nodeName", JS_NewString(ctx, tag_lc));
 	JS_SetPropertyStr(ctx, obj, "nodeType", JS_NewInt32(ctx, 1));
 	JS_SetPropertyStr(ctx, obj, "__ptr",
@@ -2404,19 +2387,19 @@ static JSValue qjs_el_getAttribute_data(JSContext *ctx,
 }
 
 /* ====================================================================== */
-/* fixes1015 — THE FULL JS/DOM AUDIT TRAIL.
+/* fixes1015  -  THE FULL JS/DOM AUDIT TRAIL.
  *
  * Multiple rounds have died guessing what a page did from aggregate counters
  * (mutcensus counts mutations but not WHAT mutated; the event gate counts
  * types but not targets; geometry reads were invisible). This block gives
  * every audit line an IDENTITY: which element, which value, which listener,
  * which read. All LIFE-prefixed (anything else is dropped by the failures-only
- * gate), all budgeted so a runaway page cannot flood the log forever -- the
+ * gate), all budgeted so a runaway page cannot flood the log forever - the
  * budgets are sized to cover the whole first page load, which is the part
  * that has been going wrong.
  *
  * This is diagnostic instrumentation: when the current bug class is closed,
- * the budgets can be dropped, but the helpers should stay -- identity-free
+ * the budgets can be dropped, but the helpers should stay - identity-free
  * logging is how we got here. */
 
 /* Copy src into dst (cap includes the NUL), mapping CR/LF/TAB to spaces --
@@ -2504,7 +2487,7 @@ static void qjs_node_brief(dom_node *n, char *out, int cap)
 /* One line per DOM mutation: op, target identity, and the value/detail.
  * Budgeted per session; the first page load is what matters. */
 long g_mut_audit_budget = 500;  /* exported for audit */
-/* fixes1029 — removals get their own budget, independent of the audit
+/* fixes1029  -  removals get their own budget, independent of the audit
  * switch: they are the one mutation class that can DELETE page content. */
 long g_rm_audit_budget = 120;  /* exported for audit */
 long g_evreg_audit = 250;  /* exported for audit */
@@ -2512,7 +2495,7 @@ long g_evmiss_audit = 60;  /* exported for audit */
 long g_evfire_audit = 300;  /* exported for audit */
 long g_mslife_audit = 250;  /* exported for audit */
 extern long g_geom_audit; /* defined below, near the metric accessors */
-/* fixes1110 -- parentNode "not attached" diagnostic budget (fixes1004,
+/* fixes1110 - parentNode "not attached" diagnostic budget (fixes1004,
  * tag name added fixes1109). Was a function-local `static int`, so the cap
  * was PROCESS-lifetime: hackaday's 8 fires exhausted it before 68kmla ever
  * loaded in the same session, and the 68kmla-specific tag was never seen.
@@ -2559,7 +2542,7 @@ static JSValue qjs_el_setAttribute_data(JSContext *ctx,
 	}
 	name_ds = qjs_make_domstr(name_cstr);
 	val_ds  = qjs_make_domstr(val_cstr);
-	/* fixes926 — classify BEFORE the name is freed. Only class/style could
+	/* fixes926  -  classify BEFORE the name is freed. Only class/style could
 	 * ever be answered by a recascade rather than a box rebuild; every other
 	 * attribute is baked at box construction or reaches nothing. */
 	attr_kind = MACOS9_DOMMUT_SETATTRIBUTE;
@@ -2568,7 +2551,7 @@ static JSValue qjs_el_setAttribute_data(JSContext *ctx,
 	} else if (strcmp(name_cstr, "style") == 0) {
 		attr_kind = MACOS9_DOMMUT_SETATTR_STYLE;
 	}
-	/* fixes1015 — audit WHO sets WHAT to WHAT. */
+	/* fixes1015  -  audit WHO sets WHAT to WHAT. */
 	qjs_mut_audit("setattr", (dom_node *)el, name_cstr, val_cstr);
 	JS_FreeCString(ctx, name_cstr);
 	JS_FreeCString(ctx, val_cstr);
@@ -2587,7 +2570,7 @@ static JSValue qjs_wrap_element_full(JSContext *ctx, dom_element *el);
 static void qjs_collect_by_tag(JSContext *ctx, dom_node *node,
 		const char *tag_lc, JSValue arr, int *count);
 
-/* fixes880 — the CSS-selector matcher's types and entry points. The matcher
+/* fixes880  -  the CSS-selector matcher's types and entry points. The matcher
  * bodies live further down (near qjs_sel_parse); only the type definitions had
  * to move up here, because qjs_el_qsa_data holds a `struct qjs_sel` by value
  * and a forward declaration is not enough for that. Selector support and the
@@ -2597,7 +2580,7 @@ static void qjs_collect_by_tag(JSContext *ctx, dom_node *node,
 #define QJS_SEL_NAME         64
 #define QJS_SEL_MAX_ATTR     4
 
-/* fixes1090c — attribute selectors, e.g. img[data-lazy]. `op` is 0 for bare
+/* fixes1090c  -  attribute selectors, e.g. img[data-lazy]. `op` is 0 for bare
  * presence ([attr]) or one of '=' '~' '^' '$' '*' matching the CSS operator
  * of the same shorthand (~= word, ^= prefix, $= suffix, *= substring). */
 struct qjs_sel_attr {
@@ -2624,7 +2607,7 @@ struct qjs_sel {
 static void qjs_sel_parse(const char *sel, struct qjs_sel *out);
 static void qjs_collect_by_sel(JSContext *ctx, dom_node *node,
 		const struct qjs_sel *s, JSValue arr, int *count);
-/* fixes878 — node-type-dispatching wrapper, defined after the three concrete
+/* fixes878  -  node-type-dispatching wrapper, defined after the three concrete
  * wrappers.  The node-oriented traversal getters below are installed by
  * qjs_el_install_native_attrs, which sits ABOVE qjs_wrap_text_node /
  * qjs_wrap_fragment, so they reach it through this declaration. */
@@ -2669,7 +2652,7 @@ static JSValue qjs_el_set_text_content_data(JSContext *ctx,
 		qjs_audit_copy(vb, (int)sizeof vb, s);
 		macsurf_debug_log_writef("LIFE tc %s <- \"%s\"", pb, vb);
 	}
-	/* fixes1031 — textContent = "" MUST LEAVE NO TEXT NODE BEHIND.
+	/* fixes1031  -  textContent = "" MUST LEAVE NO TEXT NODE BEHIND.
 	 *
 	 * DOM says: "Let node be null. If the given value is not the empty
 	 * string, set node to a new Text node whose data is the given value",
@@ -2678,8 +2661,8 @@ static JSValue qjs_el_set_text_content_data(JSContext *ctx,
 	 * empty Text node instead, and that one stray node is what has been
 	 * destroying real pages:
 	 *
-	 * jQuery's buildFragment -- the path behind $(html), .append(html),
-	 * .wrapInner(), .wrapAll() and much else -- clears its scratch
+	 * jQuery's buildFragment - the path behind $(html), .append(html),
+	 * .wrapInner(), .wrapAll() and much else - clears its scratch
 	 * fragment with `fragment.textContent = ""` before collecting the
 	 * parsed nodes. With an empty Text node left in place, EVERY
 	 * jQuery(htmlString) comes back one node longer than it should, with
@@ -2689,13 +2672,13 @@ static JSValue qjs_el_set_text_content_data(JSContext *ctx,
 	 *
 	 * so `wrap` is the stray TEXT NODE rather than the wrapper element,
 	 * and the subsequent `.append( this )` moves the element's entire
-	 * contents into a text node -- which cannot hold children. The content
+	 * contents into a text node - which cannot hold children. The content
 	 * is gone.
 	 *
 	 * That is hackaday's article river: the dotdotdot plugin calls
 	 * wrapInner() on every entry, and each entry reaches the box tree with
 	 * kids=0. Locally reproduced with the real plugin (harness Test 45).
-	 * The blast radius is far wider than one site -- wrapAll/wrapInner are
+	 * The blast radius is far wider than one site - wrapAll/wrapInner are
 	 * ordinary jQuery, and a leading phantom text node also perturbs
 	 * .eq(0), .first(), :first-child logic and index arithmetic anywhere a
 	 * fragment is built from markup. */
@@ -2773,19 +2756,19 @@ static dom_node *qjs_find_child_element_by_tag(dom_node *parent,
  * Previously: el.textContent = html.replace(/<[^>]*>/g,''), i.e. every tag
  * was stripped and only the text carcass assigned, so any markup-injecting
  * JS (template-string HTML injection, dangerouslySetInnerHTML-style
- * rendering) never built real elements -- confirmed via repo-wide grep that
+ * rendering) never built real elements - confirmed via repo-wide grep that
  * dom_hubbub_fragment_parser_create had ZERO callers anywhere in this
  * codebase before this.
  *
  * This libdom binding's dom_hubbub_fragment_parser_create() has NO context-
- * element parameter (confirmed by reading bindings/hubbub/parser.c) -- it
+ * element parameter (confirmed by reading bindings/hubbub/parser.c) - it
  * just runs a normal from-scratch parse with the fragment standing in for
  * the document node. Per the HTML5 tree-construction algorithm's "before
  * html" / "before head" insertion modes, that means hubbub IMPLICITLY
  * wraps the input in html>head+body, same as parsing a full page. Naively
  * appending the fragment's own children puts a SINGLE implied <html>
  * element into el instead of the real content one level down inside its
- * <body> -- caught by the S0 harness's Test 4 (children.length was 1, not
+ * <body> - caught by the S0 harness's Test 4 (children.length was 1, not
  * the 2 real elements the test HTML actually contains). Fix: descend
  * fragment -> <html> -> <body> and move THAT element's children, not the
  * fragment's. Falls back to the fragment's own children if no <html>/
@@ -2806,8 +2789,12 @@ static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
 
 	(void) this_val; (void) magic;
 	el = (dom_element *) qjs_get_node(func_data[0]);
-	if (el == NULL || argc < 1 || g_qjs_document == NULL)
+	if (el == NULL || argc < 1) return JS_UNDEFINED;
+	if (g_qjs_document == NULL) {
+		macsurf_debug_log_writef(
+			"LIFE innerHTML: g_qjs_document is NULL, cannot parse");
 		return JS_UNDEFINED;
+	}
 	html_src = JS_ToCStringLen(ctx, &html_len, argv[0]);
 	if (html_src == NULL) return JS_UNDEFINED;
 
@@ -2826,7 +2813,7 @@ static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
 			(const uint8_t *) html_src, html_len);
 	dom_hubbub_parser_completed(parser);
 	dom_hubbub_parser_destroy(parser);
-	/* fixes1015 — audit with the markup head while the string is alive. */
+	/* fixes1015  -  audit with the markup head while the string is alive. */
 	if (g_rm_audit_budget > 0) {	/* fixes1030 */
 		char pb[80], vb[64];
 		g_rm_audit_budget--;
@@ -2854,12 +2841,12 @@ static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
 	src_parent = (dom_node *) frag;
 	html_el = qjs_find_child_element_by_tag((dom_node *) frag, "html");
 	if (html_el != NULL) {
-		/* fixes1007 — TAKE <head>'s CHILDREN TOO, and take them FIRST.
+		/* fixes1007  -  TAKE <head>'s CHILDREN TOO, and take them FIRST.
 		 *
 		 * This binding's fragment parser has no context-element support
 		 * (fixes846): it wraps the markup in an implied <html><head>/<body>
 		 * exactly as if parsing a whole page. So markup that STARTS with a
-		 * head-only element -- <script>, <style>, <link>, <meta>, <title> --
+		 * head-only element - <script>, <style>, <link>, <meta>, <title> --
 		 * has it placed in <head>, and descending straight to <body> dropped
 		 * it on the floor, silently.
 		 *
@@ -2897,7 +2884,7 @@ static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
 	}
 
 	/* Move src_parent's children into el one at a time (dom_node_
-	 * append_child MOVES a node already attached elsewhere -- no clone
+	 * append_child MOVES a node already attached elsewhere - no clone
 	 * needed). Re-fetch first_child each iteration since removing/
 	 * appending mutates src_parent's child list. */
 	child = NULL;
@@ -2921,362 +2908,6 @@ static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
 	return JS_UNDEFINED;
 }
 
-/* ---- innerHTML read-back: real HTML serializer (fixes1168, #262) ----
- * The innerHTML GETTER previously returned el.textContent — every tag
- * stripped, so jQuery .html() and any read-modify-write pattern
- *     el.innerHTML = el.innerHTML + more
- * got plain text back and silently corrupted content on the next write.
- * __getInnerHTML mirrors __setInnerHTML: a C serializer walking the real
- * child nodes, emitting elements (lowercase tag, attributes), escaped text,
- * and comments. Void elements (br/img/input/...) get no end tag; script and
- * style children are emitted RAW like browsers do (their content is not
- * entity-decoded on re-parse, so escaping would corrupt it).
- *
- * Attributes are enumerated from the real namednodemap (not a fixed list)
- * so src/href/class/id/style/type/name/value/checked/disabled/selected and
- * every data-* attribute come through without a per-attribute whitelist to
- * rot. */
-
-struct qjs_ih_buf {
-	char *data;
-	size_t len;
-	size_t cap;
-};
-
-static int qjs_ih_reserve(struct qjs_ih_buf *b, size_t extra)
-{
-	size_t need;
-	size_t ncap;
-	char *nd;
-
-	if (extra > (size_t) -1 - b->len) return -1;
-	need = b->len + extra;
-	if (need <= b->cap) return 0;
-	ncap = b->cap ? b->cap : 256;
-	while (ncap < need) {
-		if (ncap > (size_t) -1 / 2) { ncap = need; break; }
-		ncap *= 2;
-	}
-	nd = (char *) malloc(ncap);
-	if (nd == NULL) return -1;
-	if (b->data) {
-		memcpy(nd, b->data, b->len);
-		free(b->data);
-	}
-	b->data = nd;
-	b->cap = ncap;
-	return 0;
-}
-
-static int qjs_ih_append(struct qjs_ih_buf *b, const char *s, size_t n)
-{
-	if (qjs_ih_reserve(b, n)) return -1;
-	memcpy(b->data + b->len, s, n);
-	b->len += n;
-	return 0;
-}
-
-static int qjs_ih_append_cstr(struct qjs_ih_buf *b, const char *s)
-{
-	return qjs_ih_append(b, s, strlen(s));
-}
-
-/* Escape & < > for text content (and attribute values via
- * qjs_ih_append_esc_attr, which also escapes the quote that will delimit
- * them). UTF-8 bytes pass through untouched — escaping is byte-wise and the
- * characters escaped are single ASCII bytes, so multibyte sequences can
- * never be split. */
-static int qjs_ih_append_esc(struct qjs_ih_buf *b, const char *s, size_t n)
-{
-	size_t i;
-	for (i = 0; i < n; i++) {
-		char c = s[i];
-		switch (c) {
-		case '&':
-			if (qjs_ih_append_cstr(b, "&amp;")) return -1;
-			break;
-		case '<':
-			if (qjs_ih_append_cstr(b, "&lt;")) return -1;
-			break;
-		case '>':
-			if (qjs_ih_append_cstr(b, "&gt;")) return -1;
-			break;
-		default:
-			if (qjs_ih_append(b, &c, 1)) return -1;
-			break;
-		}
-	}
-	return 0;
-}
-
-static int qjs_ih_append_esc_attr(struct qjs_ih_buf *b, const char *s,
-		size_t n)
-{
-	size_t i;
-	for (i = 0; i < n; i++) {
-		char c = s[i];
-		switch (c) {
-		case '&':
-			if (qjs_ih_append_cstr(b, "&amp;")) return -1;
-			break;
-		case '<':
-			if (qjs_ih_append_cstr(b, "&lt;")) return -1;
-			break;
-		case '>':
-			if (qjs_ih_append_cstr(b, "&gt;")) return -1;
-			break;
-		case '"':
-			if (qjs_ih_append_cstr(b, "&quot;")) return -1;
-			break;
-		default:
-			if (qjs_ih_append(b, &c, 1)) return -1;
-			break;
-		}
-	}
-	return 0;
-}
-
-static int qjs_ih_is_void(const char *tag)
-{
-	static const char *const voids[] = {
-		"area", "base", "br", "col", "embed", "hr", "img", "input",
-		"link", "meta", "param", "source", "track", "wbr", NULL
-	};
-	int i;
-	for (i = 0; voids[i] != NULL; i++) {
-		if (strcmp(tag, voids[i]) == 0) return 1;
-	}
-	return 0;
-}
-
-static int qjs_ih_serialize_element(struct qjs_ih_buf *b, dom_element *el);
-static int qjs_ih_serialize_node(struct qjs_ih_buf *b, dom_node *node)
-{
-	dom_node_type ntype = 0;
-	dom_string *ds = NULL;
-	int r = 0;
-
-	macsurf_dom_node_get_node_type(node, &ntype);
-	if (ntype == 1) {
-		return qjs_ih_serialize_element(b, (dom_element *) node);
-	}
-	if (ntype == 3 || ntype == 4) {	/* text / CDATA */
-		if (macsurf_dom_characterdata_get_data(node, &ds) == DOM_NO_ERR
-				&& ds != NULL) {
-			r = qjs_ih_append_esc(b, dom_string_data(ds),
-					(size_t) dom_string_length(ds));
-			macsurf_dom_string_unref(ds);
-		}
-		return r;
-	}
-	if (ntype == 8) {	/* comment */
-		if (qjs_ih_append_cstr(b, "<!--")) return -1;
-		if (macsurf_dom_characterdata_get_data(node, &ds) == DOM_NO_ERR
-				&& ds != NULL) {
-			r = qjs_ih_append(b, dom_string_data(ds),
-					(size_t) dom_string_length(ds));
-			macsurf_dom_string_unref(ds);
-			if (r) return -1;
-		}
-		return qjs_ih_append_cstr(b, "-->");
-	}
-	return 0;	/* document / fragment / other: no markup of their own */
-}
-
-/* Walk every child, serializing each. Drains the sibling chain even after an
- * error so no ref is leaked. */
-static int qjs_ih_serialize_children(struct qjs_ih_buf *b, dom_node *parent)
-{
-	dom_node *child = NULL, *next = NULL;
-	int r = 0;
-
-	macsurf_dom_node_get_first_child(parent, &child);
-	while (child != NULL) {
-		next = NULL;
-		macsurf_dom_node_get_next_sibling(child, &next);
-		if (r == 0) r = qjs_ih_serialize_node(b, child);
-		macsurf_dom_node_unref(child);
-		child = next;
-	}
-	return r;
-}
-
-/* Raw-text children (script/style): emit the data UNESCAPED. Browsers do
- * this because script/style content is raw text on re-parse — &lt; would
- * NOT decode back to <, so escaping would change what re-parsing reads. */
-static int qjs_ih_serialize_raw_children(struct qjs_ih_buf *b,
-		dom_node *parent)
-{
-	dom_node *child = NULL, *next = NULL;
-	dom_node_type nt = 0;
-	int r = 0;
-
-	macsurf_dom_node_get_first_child(parent, &child);
-	while (child != NULL) {
-		next = NULL;
-		macsurf_dom_node_get_next_sibling(child, &next);
-		if (r == 0) {
-			nt = 0;
-			macsurf_dom_node_get_node_type(child, &nt);
-			if (nt == 3 || nt == 4) {
-				dom_string *ds = NULL;
-				if (macsurf_dom_characterdata_get_data(child, &ds)
-						== DOM_NO_ERR && ds != NULL) {
-					r = qjs_ih_append(b, dom_string_data(ds),
-							(size_t) dom_string_length(ds));
-					macsurf_dom_string_unref(ds);
-				}
-			}
-		}
-		macsurf_dom_node_unref(child);
-		child = next;
-	}
-	return r;
-}
-
-/* Attributes: enumerate the element's real namednodemap. The map and each
- * item node / name / value come back ref'd; everything is unref'd here. */
-static int qjs_ih_serialize_attrs(struct qjs_ih_buf *b, dom_element *el)
-{
-	dom_namednodemap *map = NULL;
-	dom_ulong len = 0;
-	dom_ulong i;
-	int r = 0;
-
-	if (macsurf_dom_node_get_attributes((dom_node *) el, &map) != DOM_NO_ERR
-			|| map == NULL)
-		return 0;
-	if (dom_namednodemap_get_length(map, &len) != DOM_NO_ERR) len = 0;
-	for (i = 0; i < len && r == 0; i++) {
-		dom_node *an = NULL;
-		dom_string *aname = NULL;
-		dom_string *aval = NULL;
-		if (dom_namednodemap_item(map, i, &an) != DOM_NO_ERR || an == NULL)
-			continue;
-		if (macsurf_dom_attr_get_name(an, &aname) != DOM_NO_ERR
-				|| aname == NULL) {
-			macsurf_dom_node_unref(an);
-			continue;
-		}
-		r = qjs_ih_append(b, " ", 1);
-		if (!r) r = qjs_ih_append(b, dom_string_data(aname),
-				(size_t) dom_string_length(aname));
-		if (!r) r = qjs_ih_append_cstr(b, "=\"");
-		if (!r) {
-			if (macsurf_dom_attr_get_value(an, &aval) == DOM_NO_ERR
-					&& aval != NULL) {
-				r = qjs_ih_append_esc_attr(b,
-						dom_string_data(aval),
-						(size_t) dom_string_length(aval));
-				macsurf_dom_string_unref(aval);
-			}
-		}
-		if (!r) r = qjs_ih_append(b, "\"", 1);
-		macsurf_dom_string_unref(aname);
-		macsurf_dom_node_unref(an);
-	}
-	dom_namednodemap_unref(map);
-	return r;
-}
-
-static int qjs_ih_serialize_element(struct qjs_ih_buf *b, dom_element *el)
-{
-	dom_string *tname = NULL;
-	const char *tag = "";
-	char tag_lc[64];
-	int i;
-	int r = 0;
-	int raw = 0;
-
-	if (macsurf_dom_element_get_tag_name(el, &tname) != DOM_NO_ERR
-			|| tname == NULL)
-		return 0;
-	tag = dom_string_data(tname);
-	for (i = 0; i < 63 && tag[i]; i++) {
-		char c = tag[i];
-		tag_lc[i] = (c >= 'A' && c <= 'Z') ? (char) (c + 32) : c;
-	}
-	tag_lc[i] = '\0';
-
-	raw = (strcmp(tag_lc, "script") == 0 || strcmp(tag_lc, "style") == 0);
-
-	r = qjs_ih_append(b, "<", 1);
-	if (!r) r = qjs_ih_append_cstr(b, tag_lc);
-	if (!r) r = qjs_ih_serialize_attrs(b, el);
-	if (!r) r = qjs_ih_append(b, ">", 1);
-	if (!r && qjs_ih_is_void(tag_lc) == 0) {
-		if (raw) {
-			r = qjs_ih_serialize_raw_children(b, (dom_node *) el);
-		} else {
-			r = qjs_ih_serialize_children(b, (dom_node *) el);
-		}
-		if (!r) {
-			r = qjs_ih_append_cstr(b, "</");
-			if (!r) r = qjs_ih_append_cstr(b, tag_lc);
-			if (!r) r = qjs_ih_append(b, ">", 1);
-		}
-	}
-	macsurf_dom_string_unref(tname);
-	return r;
-}
-
-/* fixes1168 (#262) — __getInnerHTML: serialize the element's children to
- * markup. Mirrors __setInnerHTML (qjs_el_set_inner_html_data): a C function
- * registered on the element wrapper, resolving its node via func_data[0]. */
-static JSValue qjs_el_get_inner_html_data(JSContext *ctx,
-		JSValueConst this_val, int argc, JSValueConst *argv,
-		int magic, JSValueConst *func_data)
-{
-	dom_element *el;
-	struct qjs_ih_buf b;
-	int r;
-	JSValue ret;
-
-	(void) this_val; (void) argc; (void) argv; (void) magic;
-	el = (dom_element *) qjs_get_node(func_data[0]);
-	if (el == NULL) return JS_NewString(ctx, "");
-	memset(&b, 0, sizeof(b));
-	/* innerHTML is the markup of the element's DESCENDANTS only — the
-	 * element's own tag and attributes belong to outerHTML. Serialize the
-	 * children, not the element itself (a harness round-trip test caught
-	 * the element-once version wrapping the re-parse in a stray child). */
-	r = qjs_ih_serialize_children(&b, (dom_node *) el);
-	if (r != 0 || b.data == NULL) {
-		if (b.data) free(b.data);
-		return JS_NewString(ctx, "");
-	}
-	ret = JS_NewStringLen(ctx, b.data, b.len);
-	free(b.data);
-	return ret;
-}
-
-/* fixes1168 (#262) — __getOuterHTML: same serializer, but the element
- * ITSELF (tag + attributes + children). The old JS-side outerHTML stub
- * wrapped innerHTML in the bare tag name, silently dropping every
- * attribute — a lying answer for the clone/echo patterns that read it. */
-static JSValue qjs_el_get_outer_html_data(JSContext *ctx,
-		JSValueConst this_val, int argc, JSValueConst *argv,
-		int magic, JSValueConst *func_data)
-{
-	dom_element *el;
-	struct qjs_ih_buf b;
-	int r;
-	JSValue ret;
-
-	(void) this_val; (void) argc; (void) argv; (void) magic;
-	el = (dom_element *) qjs_get_node(func_data[0]);
-	if (el == NULL) return JS_NewString(ctx, "");
-	memset(&b, 0, sizeof(b));
-	r = qjs_ih_serialize_node(&b, (dom_node *) el);
-	if (r != 0 || b.data == NULL) {
-		if (b.data) free(b.data);
-		return JS_NewString(ctx, "");
-	}
-	ret = JS_NewStringLen(ctx, b.data, b.len);
-	free(b.data);
-	return ret;
-}
-
 /* ---- parentNode ---- */
 static JSValue qjs_el_get_parent_node_data(JSContext *ctx,
 		JSValueConst this_val, int argc, JSValueConst *argv,
@@ -3286,12 +2917,12 @@ static JSValue qjs_el_get_parent_node_data(JSContext *ctx,
 	dom_node *parent = NULL;
 	dom_node_type ntype = 0;
 	(void)this_val; (void)argc; (void)argv; (void)magic;
-	/* fixes1004 — WHICH null?
+	/* fixes1004  -  WHICH null?
 	 *
 	 * preamble.min.js still throws "cannot read property 'removeChild' of
 	 * null" at hiddenscroll, which does appendChild(b) then
 	 * b.parentNode.removeChild(b). fixes1002 fixed the MOCK-body path, and
-	 * the error survived, so the real libdom path returns null too -- but
+	 * the error survived, so the real libdom path returns null too - but
 	 * this getter has THREE ways to do that and they want three different
 	 * fixes:
 	 *   node   the wrapper has lost its node (a lifetime bug)
@@ -3312,10 +2943,10 @@ static JSValue qjs_el_get_parent_node_data(JSContext *ctx,
 		macsurf_dom_node_get_parent_node((dom_node *)el, &parent);
 		if (parent == NULL) {
 			if (g_pn_logged < 8) {
-				/* fixes1109 (#265) -- WHICH node has no parent, and what
+				/* fixes1109 (#265) - WHICH node has no parent, and what
 				 * tag is it? el is the wrapper's underlying dom_element,
 				 * the same pointer identity appendChild's own qjs_get_node
-				 * resolves for its child argument -- if a later reconvert
+				 * resolves for its child argument - if a later reconvert
 				 * or GC has freed/reused it, this pointer alone will not
 				 * prove that, but the tag name pins down WHAT was being
 				 * asked about (hiddenscroll's probe div vs something
@@ -3396,7 +3027,7 @@ static JSValue qjs_el_get_prev_sibling_data(JSContext *ctx,
 	return JS_NULL;
 }
 
-/* fixes867 (#293) — THE BLINDFOLD, removed.
+/* fixes867 (#293)  -  THE BLINDFOLD, removed.
  *
  * appendChild/removeChild/insertBefore each called their libdom op and DROPPED
  * the dom_exception on the floor, then returned the child as if it had been
@@ -3411,7 +3042,7 @@ static JSValue qjs_el_get_prev_sibling_data(JSContext *ctx,
  *   NO_MODIFICATION_ALLOWED_ERR + dispatching_mutation>0
  *       -> the mutation semaphore (node.c:2045): libdom marks the document
  *          read-only while dispatching a mutation event, on the assumption that
- *          "nothing should be listening" -- but NetSurf runs its whole script
+ *          "nothing should be listening" - but NetSurf runs its whole script
  *          engine from that default action.  Architectural fix.
  *   WRONG_DOCUMENT_ERR + childOwner != nodeOwner
  *       -> document identity: g_qjs_document is a process-global set per
@@ -3424,7 +3055,7 @@ static JSValue qjs_el_get_prev_sibling_data(JSContext *ctx,
  *
  * Also THROWS on failure, which is what the DOM spec requires and what lets a
  * page's own error handling see the truth. `seq` is a monotonic insert counter
- * so execution ORDER is visible -- needed before choosing between deferring
+ * so execution ORDER is visible - needed before choosing between deferring
  * script execution (which reorders) and dropping the semaphore (which doesn't).
  */
 extern uint32_t _dom_document_dispatching_mutation(dom_document *doc);
@@ -3440,7 +3071,7 @@ static JSValue qjs_dom_mut_check(JSContext *ctx, const char *op,
 
 	if (exc == DOM_NO_ERR) return JS_UNDEFINED;
 
-	/* Failure path only — these are diagnostic reads, kept off the hot path.
+	/* Failure path only  -  these are diagnostic reads, kept off the hot path.
 	 * get_owner_document hands back an OWNED ref; unref both below. */
 	if (parent != NULL) macsurf_dom_node_get_owner_document(parent, &pdoc);
 	if (child  != NULL) macsurf_dom_node_get_owner_document(child,  &cdoc);
@@ -3507,7 +3138,7 @@ static JSValue qjs_el_remove_child_data(JSContext *ctx,
 	exc = macsurf_dom_node_remove_child((dom_node *)el, (dom_node *)child_el,
 			&result);
 	if (result) macsurf_dom_node_unref(result);
-	/* fixes867 (#293) — same blindfold as appendChild.  removeChild is hit by
+	/* fixes867 (#293)  -  same blindfold as appendChild.  removeChild is hit by
 	 * the SAME mutation semaphore (node.c:989 dispatches DOMNodeRemoval, and
 	 * :744's readonly check guards the removal path too), so a JS remove from
 	 * inside a mutation handler fails just as silently. */
@@ -3547,7 +3178,7 @@ static JSValue qjs_el_insert_before_data(JSContext *ctx,
 	exc = macsurf_dom_node_insert_before((dom_node *)el, (dom_node *)new_el,
 		(dom_node *)ref_el, &result);
 	if (result) macsurf_dom_node_unref(result);
-	/* fixes867 (#293) — same blindfold as appendChild, and this one matters
+	/* fixes867 (#293)  -  same blindfold as appendChild, and this one matters
 	 * most for modern pages: insertBefore(node, null) is Preact's ONLY
 	 * insertion primitive (it never calls appendChild), so a silent rejection
 	 * here means a React/Preact app renders nothing, with no error. */
@@ -3579,7 +3210,7 @@ static JSValue qjs_el_remove_attribute_data(JSContext *ctx,
 	name_cstr = JS_ToCString(ctx, argv[0]);
 	if (name_cstr == NULL) return JS_UNDEFINED;
 	name_ds = qjs_make_domstr(name_cstr);
-	/* fixes926 — classify before the free (see setAttribute). */
+	/* fixes926  -  classify before the free (see setAttribute). */
 	rm_kind = MACOS9_DOMMUT_REMOVEATTRIBUTE;
 	if (strcmp(name_cstr, "class") == 0) {
 		rm_kind = MACOS9_DOMMUT_SETATTR_CLASS;
@@ -3590,7 +3221,7 @@ static JSValue qjs_el_remove_attribute_data(JSContext *ctx,
 	JS_FreeCString(ctx, name_cstr);
 	if (name_ds) {
 		macsurf_dom_element_remove_attribute(el, name_ds);
-		/* fixes843b — this real DOM mutation never marked dirty, so
+		/* fixes843b  -  this real DOM mutation never marked dirty, so
 		 * el.removeAttribute(...) (a common show/hide idiom) never
 		 * triggered a repaint. Match setAttribute's behaviour. */
 		if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
@@ -3632,7 +3263,7 @@ static JSValue qjs_el_has_attribute_data(JSContext *ctx,
  *     while (node.firstChild) node.removeChild(node.firstChild);
  * saw an empty element and no-opped, and every hand-rolled node walk visited
  * nothing. The C plumbing was already here and already used by this file's own
- * tree walkers -- only the JS exposure was fake.
+ * tree walkers - only the JS exposure was fake.
  *
  * magic: 0=firstChild 1=lastChild 2=nextSibling 3=previousSibling
  */
@@ -3663,7 +3294,7 @@ static JSValue qjs_el_get_edge_data(JSContext *ctx,
  * ALL children, unlike `children` which is elements-only. Returns a plain
  * snapshot array, not a live NodeList: length/indexing/forEach work, but it
  * does not update as the tree changes. That is a real (documented) gap, not a
- * silent one -- a live NodeList needs an invalidation hook this binding has no
+ * silent one - a live NodeList needs an invalidation hook this binding has no
  * home for yet. */
 static JSValue qjs_el_get_child_nodes_data(JSContext *ctx,
 		JSValueConst this_val, int argc, JSValueConst *argv,
@@ -3701,7 +3332,7 @@ static JSValue qjs_el_get_child_nodes_data(JSContext *ctx,
 }
 
 /* ---- fixes878: node.cloneNode(deep) ----
- * Was `function(){return el;}` -- it handed back the element ITSELF, so
+ * Was `function(){return el;}` - it handed back the element ITSELF, so
  * parent.appendChild(node.cloneNode(true)) MOVED the original instead of
  * copying it. Pages rendered one relocated node where they meant N copies,
  * with no error anywhere. */
@@ -3777,7 +3408,7 @@ static JSValue qjs_el_get_children_data(JSContext *ctx,
 }
 
 /* ---- element.querySelectorAll (scoped) ---- */
-/* fixes880 — element-scoped querySelectorAll now uses the SAME matcher the
+/* fixes880  -  element-scoped querySelectorAll now uses the SAME matcher the
  * document level has used since fixes871 (qjs_sel_parse + qjs_collect_by_sel).
  *
  * It used to truncate the selector at the first '[', '.', ':' or ' ' and call
@@ -3790,13 +3421,13 @@ static JSValue qjs_el_get_children_data(JSContext *ctx,
  * Neither threw, so a page just quietly did the wrong thing. fixes871 fixed the
  * document level and left this one behind.
  *
- * SCOPE: descendants only -- qjs_collect_by_sel matches the node it is handed,
+ * SCOPE: descendants only - qjs_collect_by_sel matches the node it is handed,
  * which is right for the document walk (document.querySelector('html') must
  * find <html>) but wrong here: per spec the scope element itself never matches
  * its own query. So the walk starts at each CHILD rather than at `el`.
  *
  * Descendant combinators still resolve against the full ancestor chain, above
- * `el` as well -- container.querySelector('div p') matching a <p> whose <div>
+ * `el` as well - container.querySelector('div p') matching a <p> whose <div>
  * ancestor is outside the container is correct per spec, not a leak. */
 static JSValue qjs_el_qsa_data(JSContext *ctx,
 		JSValueConst this_val, int argc, JSValueConst *argv,
@@ -3862,10 +3493,10 @@ static JSValue qjs_el_qs_data(JSContext *ctx,
 
 /* Install JS-side helpers on element object (classList, style proxy, misc) */
 /* ------------------------------------------------------------------
- * fixes1071 — COMPILE THE WRAPPER HELPERS ONCE, NOT PER ELEMENT.
+ * fixes1071  -  COMPILE THE WRAPPER HELPERS ONCE, NOT PER ELEMENT.
  *
  * Every element wrapper installed four JS helper blocks, and each one was a
- * JS_Eval of a fixed C string literal -- i.e. QuickJS parsed and code-generated
+ * JS_Eval of a fixed C string literal - i.e. QuickJS parsed and code-generated
  * the same ~13.9 KB of JavaScript again for every single element the page
  * touched:
  *
@@ -3880,8 +3511,8 @@ static JSValue qjs_el_qs_data(JSContext *ctx,
  * trivial compile total: this compile happens inside a C binding during script
  * execution, so every microsecond of it was charged to run_us.
  *
- * hackaday's navigation.js -- ONE 72KB script measured at 24.7 SECONDS, half
- * the entire page load -- walks the nav tree touching element after element.
+ * hackaday's navigation.js - ONE 72KB script measured at 24.7 SECONDS, half
+ * the entire page load - walks the nav tree touching element after element.
  * ~800 wrappers is the whole 24.7s.
  *
  * The source is a compile-time constant, so the compiled function is reusable.
@@ -3890,7 +3521,7 @@ static JSValue qjs_el_qs_data(JSContext *ctx,
  * KEYED PER CONTEXT, and that is not incidental: every iframe gets its own
  * JSRuntime here, and a JSValue is only valid against the runtime that created
  * it. A single file-static JSValue would hand iframe B a function object owned
- * by iframe A's runtime -- the exact cross-runtime trap this codebase has
+ * by iframe A's runtime - the exact cross-runtime trap this codebase has
  * already been bitten by. Stashing it on the context's own global object makes
  * the cache per-context by construction and frees it with the context, with no
  * teardown hook to forget. Defined non-enumerable so page code walking
@@ -3971,7 +3602,7 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"get:function(){return el.getAttribute('value')||'';},"
 		"set:function(v){el.setAttribute('value',v);},"
 		"configurable:true});"
-		/* fixes866 (#292) — reflect the rest of the common content
+		/* fixes866 (#292)  -  reflect the rest of the common content
 		 * attributes.  className/id/value above were the ONLY reflected
 		 * properties, so `el.src = url` (and .href/.type/...) merely created a
 		 * plain JS property on the wrapper and the DOM attribute was never
@@ -3983,12 +3614,12 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		 *     dom_element_get_attribute(node, corestring_dom_src, &src);
 		 *     if (src == NULL) exec_inline_script(...); else exec_src_script(...);
 		 * so with no src attribute the injected script is run as an INLINE
-		 * script with empty content -- it silently does nothing, no error.
+		 * script with empty content - it silently does nothing, no error.
 		 * That is why hackaday's reply box never loads: its verbum loader
 		 * fetches verbum-comments.js fine (fixes865, ok=1 status=200) and then
 		 * injects it exactly this way.  Harness Test 11 caught it:
 		 *   made=true isNative=true tag=script srcSet=  body=native appended=1
-		 * -- every link works except the src.
+		 * - every link works except the src.
 		 * `value` is deliberately left as-is above: for form controls the
 		 * property and the attribute legitimately diverge once the user types,
 		 * so it is not a plain reflection and is not touched here. */
@@ -4012,28 +3643,23 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"get:function(){return el.getAttribute('type')||'';},"
 		"set:function(v){el.setAttribute('type',v);},"
 		"configurable:true});"
-		/* innerHTML= (fixes846, #167 S3) — real HTML fragment parse via
+		/* innerHTML= (fixes846, #167 S3)  -  real HTML fragment parse via
 		 * __setInnerHTML (dom_hubbub_fragment_parser_create), builds
 		 * actual child elements instead of stripping all markup to text.
-		 * Read side (fixes1168, #262) is a real serializer via
-		 * __getInnerHTML (qjs_el_get_inner_html_data), so .html() and
-		 * read-modify-write patterns get markup back; textContent remains
-		 * the fallback if a wrapper lacks the native helper. */
+		 * Read side is still textContent-shaped (no serializer back to
+		 * markup exists in this engine); good enough for the
+		 * write-then-read-back-as-text patterns that exist, wrong for
+		 * code that expects its own markup echoed back verbatim. */
 		"Object.defineProperty(el,'innerHTML',{"
-		"get:function(){return (typeof el.__getInnerHTML==='function')"
-			"?el.__getInnerHTML():(el.textContent||'');},"
+		"get:function(){return el.textContent||'';},"
 		"set:function(v){"
 		"if(typeof el.__setInnerHTML==='function')"
 		"el.__setInnerHTML(String(v));"
 		"else el.textContent=String(v).replace(/<[^>]*>/g,'');},"
 		"configurable:true});"
-		/* outerHTML — real markup now (fixes1168 #262): the native
-		 * serializer emits the element itself with its attributes; the
-		 * old tag-wrapping stub dropped them. */
+		/* outerHTML stub */
 		"Object.defineProperty(el,'outerHTML',{"
-		"get:function(){return (typeof el.__getOuterHTML==='function')"
-			"?el.__getOuterHTML():'<'+String(el.tagName).toLowerCase()+'>'"
-			"+el.innerHTML+'</'+String(el.tagName).toLowerCase()+'>';},"
+		"get:function(){return '<'+el.tagName+'>'+el.innerHTML+'</'+el.tagName+'>';},"
 		"configurable:true});"
 		/* dataset proxy */
 		"(function(){"
@@ -4091,7 +3717,7 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"Object.defineProperty(el,'style',{get:function(){return sp;},"
 		"configurable:true});"
 		"})();"
-		/* matches — tag, #id, .class, [attr], compound */
+		/* matches  -  tag, #id, .class, [attr], compound */
 		"el.matches=function(sel){"
 		"if(!sel||!sel.trim)return false;"
 		"sel=sel.trim();"
@@ -4101,7 +3727,7 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"var ok=true;"
 		"var rest=s;"
 		"var tagM=rest.match(/^([a-zA-Z][a-zA-Z0-9]*)/);"
-		"if(tagM){if(el.tagName!==tagM[1].toUpperCase())ok=false;"
+		"if(tagM){if(el.tagName!==tagM[1].toLowerCase())ok=false;"
 		"rest=rest.substr(tagM[1].length);}"
 		"var re=/([#.:]|\\[)[^#.:\\[\\]]*(\\])?/g;"
 		"var m;while(ok&&(m=re.exec(rest))){"
@@ -4128,24 +3754,24 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"}}}"
 		"if(ok)return true;}"
 		"return false;};"
-		/* closest — walk parentNode chain */
+		/* closest  -  walk parentNode chain */
 		"el.closest=function(sel){"
 		"var n=el;"
 		"while(n&&n.matches){if(n.matches(sel))return n;n=n.parentNode;}"
 		"return null;};"
 		/* event handling */
-		/* fixes989 — addEventListener / removeEventListener are NATIVE
+		/* fixes989  -  addEventListener / removeEventListener are NATIVE
 		 * now (qjs_el_add_event_listener_data). They must not be defined
 		 * here: this helper string is evaluated AFTER the natives are
 		 * installed, so a JS definition would silently shadow them and
 		 * the libdom registration would never happen. dispatchEvent
-		 * stays JS -- the native listener callback calls it, so the
+		 * stays JS - the native listener callback calls it, so the
 		 * _L/_H firing logic has exactly one implementation. */
-		/* fixes872 (#300) — fire the addEventListener list (_L) AND the on*
+		/* fixes872 (#300)  -  fire the addEventListener list (_L) AND the on*
 		 * handler (_H, set through the prototype accessors) exactly once each.
 		 * Both routes are real and pages use both; dispatchEvent firing only _L
 		 * is why js_fire_script_load had to call el['on'+type] separately. */
-		/* fixes1008 (1e) — this is now __msFireLocal, the LOCAL firing of
+		/* fixes1008 (1e)  -  this is now __msFireLocal, the LOCAL firing of
 		 * one node's own listeners. `dispatchEvent` itself is a native that
 		 * routes through libdom so synthetic events bubble to ancestors and
 		 * the document, and returns false when cancelled; it calls back here
@@ -4155,7 +3781,7 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		 * fixes1008 also stops swallowing handler errors silently: a throwing
 		 * handler must not abort the others, but it must be VISIBLE, or
 		 * "site loads and does nothing" has no log line to explain it. */
-		/* fixes1040 (#264) — PHASE FILTER. libdom walks capture (ancestors)
+		/* fixes1040 (#264)  -  PHASE FILTER. libdom walks capture (ancestors)
 		 * -> AT_TARGET -> bubble (ancestors) and calls back here once per
 		 * node it visits. Firing the node's whole _L list on every callback
 		 * threw away the phase: a node carrying both a capture and a
@@ -4165,9 +3791,9 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		 * (el._LC, index-aligned with el._L) matches the current phase.
 		 *
 		 * eventPhase: 1=CAPTURING 2=AT_TARGET 3=BUBBLING. 0/absent means a
-		 * LOCAL-ONLY fire -- the re-entrancy fallback in
+		 * LOCAL-ONLY fire - the re-entrancy fallback in
 		 * qjs_el_dispatch_event_data, js_fire_script_load, and the native
-		 * UI fan-out all reach us that way -- and there the pre-existing
+		 * UI fan-out all reach us that way - and there the pre-existing
 		 * fire-everything behaviour is the correct one. AT_TARGET runs both
 		 * kinds in registration order, matching event_target.c:285-286. */
 		"el.__msFireLocal=function(ev){"
@@ -4177,7 +3803,7 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"var a=el._L[t].slice();"
 		"var c=(el._LC&&el._LC[t])?el._LC[t].slice():null;"
 		"var i;for(i=0;i<a.length;i++){"
-		/* stopImmediatePropagation, observed BETWEEN handlers -- see
+		/* stopImmediatePropagation, observed BETWEEN handlers - see
 		 * qjs_ev_stop_immediate_data. Checked before each call so the
 		 * handler that set it still completes. */
 		"if(ev&&ev.__msStopNow)return true;"
@@ -4195,7 +3821,7 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"catch(e){try{console.error('LIFE jsevent on'+t+' threw: '+"
 		"((e&&e.message)||e));}catch(_){}}}"
 		"return true;};"
-		/* fixes1008 (2b) — THE MISSING DOM SURFACE.
+		/* fixes1008 (2b)  -  THE MISSING DOM SURFACE.
 		 *
 		 * Every one of these was simply absent, and each is common enough
 		 * that its absence throws rather than degrades: a script calling
@@ -4231,7 +3857,7 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 			"if(r)p.insertBefore(n,r);else p.appendChild(n);}};"
 		"el.replaceWith=function(){"
 			"el.before.apply(el,arguments);el.remove();};"
-		/* insertAdjacent* -- the four spec positions, on the real fragment
+		/* insertAdjacent* - the four spec positions, on the real fragment
 		 * parser (so a written <script> is a real script element, same as
 		 * document.write). */
 		"el.insertAdjacentElement=function(pos,n){"
@@ -4261,7 +3887,7 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		 * element. Cheaper and more honest than a flag we would have to keep
 		 * in sync through every mutation. */
 		/* attributes / getAttributeNames: reconstructed from the reflected
-		 * set plus data-*. Not a live NamedNodeMap -- callers iterate it,
+		 * set plus data-*. Not a live NamedNodeMap - callers iterate it,
 		 * which a static array serves. */
 		"el.getAttributeNames=function(){"
 			"var out=[],i,ks=['id','class','style','src','href','type',"
@@ -4286,7 +3912,7 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 			"return 4;};"
 		"el.isEqualNode=function(o){return o===el;};"
 		"el.isSameNode=function(o){return o===el;};"
-		/* fixes1009 — ELEMENT-SCOPED getElementsBy*.
+		/* fixes1009  -  ELEMENT-SCOPED getElementsBy*.
 		 *
 		 * These existed on `document` (fixes873) but NOT on elements, and
 		 * hardware named it: with fixes1008 in, the only two JS exceptions
@@ -4298,7 +3924,7 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		 *
 		 * Same delegation document uses: querySelectorAll is element-scoped
 		 * and already native (fixes871), and a bare tag or .class IS a
-		 * compound selector -- so this is the same query, and there is one
+		 * compound selector - so this is the same query, and there is one
 		 * matcher rather than a second subtly-different walker. Returns a
 		 * static array, not a live HTMLCollection; every caller here
 		 * indexes or iterates, which an array serves. */
@@ -4338,12 +3964,12 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"el.scrollIntoViewIfNeeded=function(){};"
 		"el.focus=function(){};"
 		"el.blur=function(){};"
-		/* fixes997 — el.click() synthesises a real dispatch instead of
+		/* fixes997  -  el.click() synthesises a real dispatch instead of
 		 * being a no-op. Frameworks use it to trigger a control
 		 * programmatically (and the hidden-file-input pattern depends
 		 * on it entirely). Routed through this element's own
 		 * dispatchEvent so _L and _H both fire exactly as a real click
-		 * does -- one firing implementation, not a second one that can
+		 * does - one firing implementation, not a second one that can
 		 * drift. Deliberately does NOT perform the default action: a
 		 * synthetic click on a link navigating would be a surprising
 		 * side effect to introduce here, and no page tested needs it. */
@@ -4351,14 +3977,14 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"if(this.dispatchEvent)this.dispatchEvent({type:'click',"
 		"target:this,currentTarget:this,"
 		"preventDefault:function(){},stopPropagation:function(){}});};"
-		/* fixes878 — the node-oriented traversal surface used to be hardcoded
+		/* fixes878  -  the node-oriented traversal surface used to be hardcoded
 		 * HERE, as five lines of constants:
 		 *     el.cloneNode=function(){return el;};
 		 *     el.contains=function(n){return false;};
 		 *     el.childNodes=[];
 		 *     el.firstChild=null;el.lastChild=null;
 		 *     el.nextSibling=null;el.previousSibling=null;
-		 * They were not shadowing real natives -- no native of any of those
+		 * They were not shadowing real natives - no native of any of those
 		 * names existed, so these WERE the implementation, and every one of
 		 * them was a wrong answer rather than a missing one. cloneNode handing
 		 * back `el` itself was the worst: it made the universal
@@ -4366,7 +3992,7 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		 *
 		 * cloneNode/contains are now real C natives installed by
 		 * qjs_el_install_native_attrs (which calls this function, so anything
-		 * defined here would overwrite them -- hence their removal, not just
+		 * defined here would overwrite them - hence their removal, not just
 		 * their replacement). firstChild/lastChild/nextSibling/previousSibling/
 		 * childNodes are live accessors installed in the tc_src block, which
 		 * runs AFTER this one and so has the last word. */
@@ -4398,8 +4024,8 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
  * dom_node vtable (get_first_child / get_next_sibling / clone_node / contains),
  * which element, text and fragment all implement. This is the same rule
  * fixes846 arrived at the hard way: qjs_wrap_element reads through the ELEMENT
- * vtable (dom_element_get_tag_name), and reusing it for a fragment -- a
- * different, smaller shape -- was an ASan global-buffer-overflow. Nothing in
+ * vtable (dom_element_get_tag_name), and reusing it for a fragment - a
+ * different, smaller shape - was an ASan global-buffer-overflow. Nothing in
  * this function may touch an element-only operation.
  *
  * `data[0]` holds one ref that JS_NewCFunctionData dups per closure, so it is
@@ -4410,11 +4036,11 @@ static void qjs_install_node_traversal(JSContext *ctx, JSValue obj)
 	JSValue f;
 	static const char *nav_src =
 		"(function(el){"
-		/* fixes1010 — NODE-LEVEL UNIVERSALS, on EVERY wrapper shape.
+		/* fixes1010  -  NODE-LEVEL UNIVERSALS, on EVERY wrapper shape.
 		 *
 		 * getRootNode / ownerDocument / isConnected were added to
 		 * qjs_el_install_js_helpers in fixes1009, which runs for ELEMENTS
-		 * ONLY -- text, CDATA, comment and fragment wrappers get this
+		 * ONLY - text, CDATA, comment and fragment wrappers get this
 		 * function instead. That asymmetry immediately bit, and in the
 		 * nastiest way: adding a method CHANGED WHICH CODE PATH jQuery
 		 * TAKES.
@@ -4424,14 +4050,14 @@ static void qjs_install_node_traversal(JSContext *ctx, JSValue obj)
 		 *     ce.contains(e.ownerDocument,e) || e.getRootNode(Z)===e.ownerDocument
 		 * Before fixes1009 the detect was false and the simple branch ran.
 		 * After it, the detect passed on an element and jQuery then called
-		 * e.getRootNode() on nodes that had no such method -- a TypeError
+		 * e.getRootNode() on nodes that had no such method - a TypeError
 		 * that did not exist before I added the method. Hardware caught it as
 		 * the last remaining exception on hackaday.
 		 *
 		 * The lesson is general enough to state: a feature-detect makes a
 		 * PARTIAL implementation worse than none. Anything a library probes
 		 * for must exist on every shape it can then be called on, so these
-		 * live here -- the one surface element, text and fragment all get. */
+		 * live here - the one surface element, text and fragment all get. */
 		"el.getRootNode=function(){var n=el;"
 		"while(n&&n.parentNode)n=n.parentNode;return n||el;};"
 		"Object.defineProperty(el,'ownerDocument',{configurable:true,"
@@ -4448,7 +4074,7 @@ static void qjs_install_node_traversal(JSContext *ctx, JSValue obj)
 		"get:function(){return el.__getNextSibling();},configurable:true});"
 		"Object.defineProperty(el,'previousSibling',{"
 		"get:function(){return el.__getPreviousSibling();},configurable:true});"
-		/* snapshot array, not a live NodeList -- see qjs_el_get_child_nodes_data */
+		/* snapshot array, not a live NodeList - see qjs_el_get_child_nodes_data */
 		"Object.defineProperty(el,'childNodes',{"
 		"get:function(){return el.__getChildNodes();},configurable:true});"
 		"el.hasChildNodes=function(){return el.__getFirstChild()!==null;};"
@@ -4479,13 +4105,18 @@ static void qjs_install_node_traversal(JSContext *ctx, JSValue obj)
 		args[0] = JS_DupValue(ctx, obj);
 		JS_Call(ctx, fn, JS_UNDEFINED, 1, args);
 		JS_FreeValue(ctx, args[0]);
+	} else {
+		const char *msg = JS_ToCString(ctx, fn);
+		macsurf_debug_log_writef(
+			"LIFE nav_src eval FAIL: %s", msg ? msg : "?");
+		if (msg) JS_FreeCString(ctx, msg);
 	}
 	JS_FreeValue(ctx, fn);
 }
 
 /* Install all native C functions and JS helpers on an element object */
 /* ==================================================================== */
-/* fixes989 (#264/#300) — the event bridge                              */
+/* fixes989 (#264/#300)  -  the event bridge                              */
 /* ==================================================================== */
 /*
  * Before this, a real mouse click reached NOTHING. interaction.c did a real
@@ -4498,12 +4129,12 @@ static void qjs_install_node_traversal(JSContext *ctx, JSValue obj)
  *
  * THE DESIGN, and its one important property: libdom never holds a JSValue.
  *
- * addEventListener still fills the SAME _L registry as before -- JS owns the
- * callbacks -- and additionally registers a single shared marker listener with
+ * addEventListener still fills the SAME _L registry as before - JS owns the
+ * callbacks - and additionally registers a single shared marker listener with
  * libdom for (node, type, capture). That listener carries no JS state at all.
  * When libdom dispatches, the callback reads the event's currentTarget,
  * resolves that node to its ONE stable wrapper through the wrapper cache
- * (qjs_wrap_lookup -- this is what makes the whole approach possible: `_L` set
+ * (qjs_wrap_lookup - this is what makes the whole approach possible: `_L` set
  * through any reference to a node is visible through every other), and calls
  * that wrapper's existing dispatchEvent to fire _L and _H for this node.
  * libdom therefore owns PROPAGATION; JS owns the callbacks; neither owns the
@@ -4539,7 +4170,7 @@ static JSContext *qjs_ctx_for_runtime(JSRuntime *rt)
  * so fire_generic_dom_event's existing return value carries the answer and
  * interaction.c needs no separate channel. The event pointer travels as an
  * integer in func_data because the event outlives neither the dispatch nor
- * this closure -- both are torn down when the dispatch returns. */
+ * this closure - both are torn down when the dispatch returns. */
 static JSValue qjs_ev_prevent_default_data(JSContext *ctx,
 		JSValueConst this_val, int argc, JSValueConst *argv,
 		int magic, JSValueConst *func_data)
@@ -4564,15 +4195,15 @@ static JSValue qjs_ev_stop_propagation_data(JSContext *ctx,
 	return JS_UNDEFINED;
 }
 
-/* fixes1008 (1d) — the REAL stopImmediatePropagation.
+/* fixes1008 (1d)  -  the REAL stopImmediatePropagation.
  *
  * It was aliased to qjs_ev_stop_propagation_data, which stops the walk moving
  * to the next NODE but lets the remaining listeners on the CURRENT node run.
  * That is the difference the method exists to express, and libdom implements
  * it properly (evt->stop_now breaks the listener loop in
  * _dom_event_target_dispatch). Code that calls this is deliberately trying to
- * suppress its siblings -- a validation handler cancelling the rest of a
- * chain -- so silently running them anyway is a wrong answer, not a missing
+ * suppress its siblings - a validation handler cancelling the rest of a
+ * chain - so silently running them anyway is a wrong answer, not a missing
  * feature. */
 static JSValue qjs_ev_stop_immediate_data(JSContext *ctx,
 		JSValueConst this_val, int argc, JSValueConst *argv,
@@ -4583,7 +4214,7 @@ static JSValue qjs_ev_stop_immediate_data(JSContext *ctx,
 	if (JS_ToInt64(ctx, &p, func_data[0]) == 0 && p != 0) {
 		dom_event_stop_immediate_propagation((dom_event *)(size_t)p);
 	}
-	/* libdom's stop_now breaks ITS listener loop -- but all of a node's JS
+	/* libdom's stop_now breaks ITS listener loop - but all of a node's JS
 	 * handlers live inside ONE libdom entry (the shared g_qjs_dom_listener),
 	 * so __msFireLocal is already running and would happily finish walking
 	 * el._L. The flag is what lets it break between handlers, which is the
@@ -4614,7 +4245,7 @@ static JSValue qjs_ev_prevent_default2_data(JSContext *ctx,
 	return JS_UNDEFINED;
 }
 
-/* fixes1008 (1d) — the UI detail for the event currently being dispatched.
+/* fixes1008 (1d)  -  the UI detail for the event currently being dispatched.
  *
  * interaction.c fills these immediately before fire_generic_dom_event() and
  * clears them after, so a handler reading e.clientX gets the real pointer
@@ -4642,7 +4273,7 @@ void macsurf_qjs_set_event_detail(int x, int y, int button, int key, int mods)
 }
 
 void macsurf_qjs_clear_event_detail(void);
-/* fixes1013 — SCROLL AND RESIZE, dispatched at last.
+/* fixes1013  -  SCROLL AND RESIZE, dispatched at last.
  *
  * These were the one part of the 1f fan-out with no libdom path: they do not
  * originate in interaction.c at all, they come from the frontend's own scroll
@@ -4650,8 +4281,8 @@ void macsurf_qjs_clear_event_detail(void);
  * "some handlers do not fire":
  *
  * fixes1011 made getBoundingClientRect return REAL geometry. Before that it
- * returned zeros, so every site's own lazy-load test -- rect.top <
- * innerHeight -- was true for EVERY image and the whole page loaded eagerly,
+ * returned zeros, so every site's own lazy-load test - rect.top <
+ * innerHeight - was true for EVERY image and the whole page loaded eagerly,
  * by accident. With real geometry those tests correctly answer "below the
  * fold", and the images then wait for a scroll event that never came. So
  * making layout correct BROKE lazy images, and this is the missing half.
@@ -4660,7 +4291,7 @@ void macsurf_qjs_clear_event_detail(void);
  * bubble to window through the 1b fan-out). Gated like the rest, so a page
  * with no scroll listener pays nothing on a machine where scrolling is
  * already the most performance-sensitive thing there is. */
-/* fixes1020 — THROTTLE. This fired a full libdom dispatch (Event object +
+/* fixes1020  -  THROTTLE. This fired a full libdom dispatch (Event object +
  * every jQuery scroll handler on the page) per SCROLL NOTCH, which is what
  * made scrolling crawl on real pages the moment fixes1013 wired it. 4 Hz
  * leading edge plus one TRAILING fire, so handlers that check the final
@@ -4717,11 +4348,11 @@ void macsurf_qjs_clear_event_detail(void)
 }
 
 /* ===================================================================
- * fixes1011 (Phase 3) — LAYOUT, VISIBLE TO JAVASCRIPT.
+ * fixes1011 (Phase 3)  -  LAYOUT, VISIBLE TO JAVASCRIPT.
  *
  * getComputedStyle returned only inline `style` values, getBoundingClientRect
  * returned all zeros, and offsetWidth/clientHeight/scrollTop existed only on
- * the MOCK fallback elements -- never on real wrappers. Any script that
+ * the MOCK fallback elements - never on real wrappers. Any script that
  * MEASURES therefore computed garbage from zeros: sticky headers, dropdown and
  * tooltip positioning, lightboxes, carousels, "is this in view" checks, and
  * every responsive-JS branch.
@@ -4733,7 +4364,7 @@ void macsurf_qjs_clear_event_detail(void)
  * were gone.
  *
  * All of it reads the REAL box tree via box_for_node + box_coords and the REAL
- * cascade via css_computed_*, both of which already existed -- nothing new is
+ * cascade via css_computed_*, both of which already existed - nothing new is
  * computed, it was simply never exposed.
  *
  * STALENESS POLICY, and it is a deliberate choice: a box can be absent (not
@@ -4741,7 +4372,7 @@ void macsurf_qjs_clear_event_detail(void)
  * geometry, i.e. zeros only when there has never been a box. We do NOT force a
  * synchronous layout pass here. Forcing one inside a JS handler would reflow
  * under native callers that hold `struct box *` across the dispatch --
- * html_mouse_action alone holds six -- and that is the Class 1/Class 3 crash
+ * html_mouse_action alone holds six - and that is the Class 1/Class 3 crash
  * shape arriving by a new route. Measure-after-mutate therefore reads
  * pre-mutation geometry for one frame, which is wrong in the same direction a
  * real browser is wrong when you read before a reflow, and is survivable.
@@ -4797,7 +4428,7 @@ static int macsurf_qjs_viewport_h(void)
 
 /* CSS display keyword. Only the values a script is likely to test are named;
  * anything else answers "block", which is what an unknown block-level box
- * behaves as. `none` is the one that must never be wrong -- see
+ * behaves as. `none` is the one that must never be wrong - see
  * qjs_get_computed_style. */
 static const char *qjs_css_display_name(uint8_t v)
 {
@@ -4817,12 +4448,12 @@ static const char *qjs_css_display_name(uint8_t v)
 	}
 }
 
-/* fixes1014 — is the box tree in a state where geometry answers are TRUE?
+/* fixes1014  -  is the box tree in a state where geometry answers are TRUE?
  *
  * The DONE gate (fixes1012) is crash-correct but it created a WINDOW OF LIES:
  * DOMContentLoaded fires from html_box_convert_done BEFORE content_set_ready,
- * so every script that initialises at ready -- jQuery $(function(){}), every
- * slider, every widget that sizes itself -- measured during a period where the
+ * so every script that initialises at ready - jQuery $(function(){}), every
+ * slider, every widget that sizes itself - measured during a period where the
  * gate forced every read to 0. Zero is not a harmless degradation: scripts
  * WRITE their measurements back as inline styles, and width:0 written once at
  * init survives forever. That is how whole sections vanished from hackaday /
@@ -4830,16 +4461,16 @@ static const char *qjs_css_display_name(uint8_t v)
  * `undefined`, which propagates as NaN and makes the style write a NO-OP.
  *
  * So the rule is split: when this returns 0, geometry accessors must answer
- * the way the pre-1011 engine did (undefined / all-zero rect) -- the shape a
- * decade of pages demonstrably tolerates -- never a fabricated real-looking
+ * the way the pre-1011 engine did (undefined / all-zero rect) - the shape a
+ * decade of pages demonstrably tolerates - never a fabricated real-looking
  * number. When it returns 1, answers come from the real box tree. */
-/* fixes1073 (#265) — force layout before answering, the measure/mutate contract.
+/* fixes1073 (#265)  -  force layout before answering, the measure/mutate contract.
  *
  * Called at the top of every geometry entry point. If script has mutated the
  * DOM and the box tree has not caught up, rebuild and lay out RIGHT HERE so the
  * answer describes what the page actually looks like now. No-ops when nothing
  * is dirty, and refuses (leaving the fixes1016 `undefined`) whenever a flush
- * would be unsafe -- see macos9_reconvert_flush_now for the guard stack.
+ * would be unsafe - see macos9_reconvert_flush_now for the guard stack.
  *
  * This is the whole difference between a browser that a widget can lay itself
  * out against and one that hands back nothing and gets laid out wrong. */
@@ -4852,13 +4483,13 @@ static void qjs_geometry_flush(void)
 
 	if (!MACSURF_JS_GEOMETRY) return;
 	if (g_qjs_content == NULL) return;
-	/* fixes1077 — count and time every geometry entry. This is the number
+	/* fixes1077  -  count and time every geometry entry. This is the number
 	 * that says whether answering is affordable; before it existed the
 	 * 13-second cost of enabling geometry could only be inferred from the
 	 * difference between two hardware logs. */
 	g_geom_reads++;
 
-	/* #265 — settle-once-per-execution (see the flag comment above the
+	/* #265  -  settle-once-per-execution (see the flag comment above the
 	 * counters): one flush per JS burst is all a script needs, so once
 	 * settled, answer from the current box tree without paying for
 	 * another reconvert. Content-keyed so an iframe runtime's settle
@@ -4890,7 +4521,7 @@ static void qjs_geometry_flush(void)
 static int qjs_geometry_settled(void)
 {
 	extern int macsurf_reconvert_in_progress;
-	/* fixes1077 — CACHE THE LIVENESS SCAN.
+	/* fixes1077  -  CACHE THE LIVENESS SCAN.
 	 *
 	 * macos9_content_is_live() walks a 256-entry table, and this predicate
 	 * runs on every single geometry read a page performs. Enabling geometry
@@ -4900,7 +4531,7 @@ static int qjs_geometry_settled(void)
 	 *
 	 * The answer cannot change unless the content registry changes, and the
 	 * registry now bumps an epoch whenever it does. Cache against (epoch,
-	 * content) and rescan only when one moves -- which is a handful of times
+	 * content) and rescan only when one moves - which is a handful of times
 	 * per navigation instead of tens of thousands. */
 	extern unsigned long macos9_content_registry_epoch;
 	static unsigned long cached_epoch = (unsigned long)-1;
@@ -4919,14 +4550,14 @@ static int qjs_geometry_settled(void)
 	}
 	if (cached_live == 0) return 0;
 
-	/* fixes1087 (#265) — ask whether the TREE is stable, not whether the
+	/* fixes1087 (#265)  -  ask whether the TREE is stable, not whether the
 	 * load has finished.
 	 *
 	 * The old test was `status != CONTENT_STATUS_DONE -> refuse`, and
 	 * hardware showed it refusing every measurement taken during page load:
 	 * declined=660 with notdone at 100%, four builds running. Script init
 	 * happens before DONE, so every measure-then-layout widget got nothing.
-	 * hackaday's featured slider is the visible casualty -- PAGEMAP has it
+	 * hackaday's featured slider is the visible casualty - PAGEMAP has it
 	 * slick-initialized with 5 slides and the track collapsed to h=15,
 	 * because slick sets .slick-list height from a measurement and its
 	 * slides are floated inside an overflow:hidden box with no natural
@@ -4934,7 +4565,7 @@ static int qjs_geometry_settled(void)
 	 *
 	 * macsurf_html_tree_stable checks the thing DONE was standing in for:
 	 * a tree exists, no layout pass is running, no dom_to_box walk is in
-	 * flight. That is strictly more precise -- a DONE content is ALSO
+	 * flight. That is strictly more precise - a DONE content is ALSO
 	 * unsafe mid-reconvert, which the status test never caught.
 	 *
 	 * Called only after the liveness check above, never before: on a freed
@@ -4955,7 +4586,7 @@ static int qjs_geometry_settled(void)
 }
 
 /* The box for a wrapper, or NULL. box_for_node hands back a raw pointer stored
- * on the DOM node, which can be stale across a reconvert -- the same hazard
+ * on the DOM node, which can be stale across a reconvert - the same hazard
  * the click path guards. Callers here only ever READ scalar fields from it and
  * degrade safely (see qjs_geometry_settled), so a stale-but-mapped box yields
  * wrong numbers rather than a fault; an unmapped one is rejected by
@@ -4965,7 +4596,7 @@ static struct box *qjs_box_for(JSValueConst v)
 	dom_node *n;
 	struct box *b;
 
-	/* fixes1012 — THE DOCUMENTED CRASH-SAFETY CHECKLIST, which fixes1011
+	/* fixes1012  -  THE DOCUMENTED CRASH-SAFETY CHECKLIST, which fixes1011
 	 * satisfied only one third of.
 	 *
 	 * box_special.c:1417 records the rules for walking the box tree from
@@ -4978,7 +4609,7 @@ static struct box *qjs_box_for(JSValueConst v)
 	 *   3. registry-guarded liveness, pointer-membership only, no deref
 	 *
 	 * fixes1011 did (1) and checked the box pointer was in-heap, but did
-	 * NEITHER (2) NOR (3) -- and qjs_box_origin calls box_coords(), which is
+	 * NEITHER (2) NOR (3) - and qjs_box_origin calls box_coords(), which is
 	 * precisely the parent-chain walk that faulted in 674b. Every
 	 * getBoundingClientRect / offsetWidth / getComputedStyle from script was
 	 * therefore one mid-reconvert measurement away from the same crash.
@@ -5011,21 +4642,21 @@ static int qjs_box_chain_ok(struct box *b)
 	return 1;
 }
 
-/* fixes1011 — SANITIZE THE SENTINEL BEFORE IT REACHES JAVASCRIPT.
+/* fixes1011  -  SANITIZE THE SENTINEL BEFORE IT REACHES JAVASCRIPT.
  *
  * Every box is born width = UNKNOWN_WIDTH (INT_MAX) as a "not laid out yet"
  * marker, and this fork's failure-tolerant layout paths zero a failed box's
- * HEIGHT but never its WIDTH -- that asymmetry is the entire split-scrollbar
+ * HEIGHT but never its WIDTH - that asymmetry is the entire split-scrollbar
  * bug (fixes625), where INT_MAX rode up the ancestor chain and made the
  * document 2147483647 wide.
  *
  * Caught here by the harness on its first run: #feed reported a border-box of
  * 2147483647x0. Without this, el.offsetWidth hands a page INT_MAX for any
  * element whose layout has not resolved, and measuring code computes nonsense
- * from it -- silently, because it is a plausible number, not an error.
+ * from it - silently, because it is a plausible number, not an error.
  *
  * Same rule layout_get_box_bbox applies: anything negative, INT_MAX, or past
- * a sane ceiling is "unknown", and unknown is 0. Zero is honest -- it is what
+ * a sane ceiling is "unknown", and unknown is 0. Zero is honest - it is what
  * a not-yet-laid-out element measures in a real browser too. */
 #define QJS_LAYOUT_SANE_MAX 1000000
 
@@ -5042,7 +4673,7 @@ static void qjs_box_origin(struct box *b, int *ox, int *oy)
 	int x = 0, y = 0;
 	*ox = 0;
 	*oy = 0;
-	/* fixes1012 — validate the whole chain BEFORE box_coords walks it. This
+	/* fixes1012  -  validate the whole chain BEFORE box_coords walks it. This
 	 * is the call that faulted in fixes674b. */
 	if (!qjs_box_chain_ok(b)) return;
 	box_coords(b, &x, &y);
@@ -5050,7 +4681,7 @@ static void qjs_box_origin(struct box *b, int *ox, int *oy)
 	*oy = y;
 }
 
-/* fixes1015 — defined just below, used by get_rect above its definition. */
+/* fixes1015  -  defined just below, used by get_rect above its definition. */
 static void qjs_geom_audit(const char *what, JSValueConst wrapper,
 		const char *result);
 
@@ -5072,7 +4703,7 @@ static JSValue qjs_el_get_rect(JSContext *ctx, JSValueConst this_val,
 			b->border[LEFT].width + b->border[RIGHT].width;
 		h = qjs_sane(b->height) + b->padding[TOP] + b->padding[BOTTOM] +
 			b->border[TOP].width + b->border[BOTTOM].width;
-		/* fixes1132 — same sentinel-height→descendant-extent
+		/* fixes1132  -  same sentinel-height→descendant-extent
 		 * fallback as qjs_el_metric's QJS_M_OFFH above. */
 		if (h <= 1 && qjs_sane(b->descendant_y1) > h + 10)
 			h = qjs_sane(b->descendant_y1)
@@ -5083,7 +4714,7 @@ static JSValue qjs_el_get_rect(JSContext *ctx, JSValueConst this_val,
 		x -= macsurf_qjs_scroll_x();
 		y -= macsurf_qjs_scroll_y();
 	}
-	/* fixes1014 — no box (hidden element, or geometry not settled yet):
+	/* fixes1014  -  no box (hidden element, or geometry not settled yet):
 	 * the LITERAL all-zero rect, exactly what a real browser answers for
 	 * display:none and what this engine answered for everything pre-1011.
 	 * Subtracting the scroll here produced top=-scroll_y, a fabricated
@@ -5107,7 +4738,7 @@ static JSValue qjs_el_get_rect(JSContext *ctx, JSValueConst this_val,
 	return r;
 }
 
-/* fixes1015 — geometry-read audit: what measuring code actually SEES is the
+/* fixes1015  -  geometry-read audit: what measuring code actually SEES is the
  * question three rounds have argued about from theory. Budgeted. */
 long g_geom_audit = 200; /* fixes1016: non-static, reset per navigation */
 
@@ -5142,11 +4773,11 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 	int bx = 0, by = 0, px = 0, py = 0;
 	(void)this_val; (void)argc; (void)argv;
 
-	/* fixes1014 — before the tree is settled (DOMContentLoaded runs BEFORE
+	/* fixes1014  -  before the tree is settled (DOMContentLoaded runs BEFORE
 	 * content_set_ready, so this window covers every ready-time init on
 	 * every page), answer `undefined`, the pre-1011 shape: it propagates as
 	 * NaN and a NaN style write is a no-op. Answering 0 here is what erased
-	 * whole page sections -- scripts wrote the fabricated 0 back as inline
+	 * whole page sections - scripts wrote the fabricated 0 back as inline
 	 * width/height and the damage outlived the measurement. Once settled, a
 	 * missing box really does mean "not rendered" and 0 is the true answer
 	 * (jQuery :hidden relies on it). */
@@ -5160,11 +4791,11 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 
 	b = qjs_box_for(func_data[0]);
 	if (b == NULL) {
-		/* fixes1016 — no box while a mutation awaits its reconvert is
+		/* fixes1016  -  no box while a mutation awaits its reconvert is
 		 * NOT "hidden", it is "not measured yet": a real browser reflows
 		 * synchronously and answers truly. We cannot (Phase 3's forced
-		 * pass is its own risky round), so answer undefined -- the
-		 * NaN-propagating no-op -- rather than a fabricated 0. This is
+		 * pass is its own risky round), so answer undefined - the
+		 * NaN-propagating no-op - rather than a fabricated 0. This is
 		 * exactly how slick collapsed the hackaday featured carousel:
 		 * it measured its just-inserted slides, got 0, and wrote it
 		 * back as inline sizes. */
@@ -5175,7 +4806,7 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 					"undefined (mutation pending)");
 			return JS_UNDEFINED;
 		}
-		/* fixes1087 — NEVER fabricate 0 before the load is DONE.
+		/* fixes1087  -  NEVER fabricate 0 before the load is DONE.
 		 *
 		 * Opening the gate to CONTENT_STATUS_READY lets a widget measure
 		 * elements that already have boxes, which is the whole point. But
@@ -5184,7 +4815,7 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 		 * failure verbatim: the script writes the fabricated 0 back as an
 		 * inline width/height and the content is erased for good.
 		 *
-		 * 0 is only the TRUE answer once the document is DONE -- there a
+		 * 0 is only the TRUE answer once the document is DONE - there a
 		 * missing box really does mean "not rendered", which is what
 		 * jQuery's :hidden relies on. Before that, `undefined` is the
 		 * honest answer and NaN-propagates into a no-op.
@@ -5197,7 +4828,7 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 					"undefined (no box, not DONE)");
 			return JS_UNDEFINED;
 		}
-		g_geom_zero++;			/* fixes1087 — the dangerous one */
+		g_geom_zero++;			/* fixes1087  -  the dangerous one */
 		qjs_geom_audit(qjs_metric_name(magic), func_data[0],
 				"0 (no box)");
 		return JS_NewInt32(ctx, 0);
@@ -5213,7 +4844,7 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 	case QJS_M_OFFW: v = qjs_sane(b->width) + px + bx; break;
 	case QJS_M_OFFH:
 		v = qjs_sane(b->height) + py + by;
-		/* fixes1132 — slick sets height:0px as a measurement reset
+		/* fixes1132  -  slick sets height:0px as a measurement reset
 		 * then reads outerHeight(). b->height is 1 (explicit 0px
 		 * clamped), but descendant_y1 is the real content extent
 		 * (250+). When the explicit height is a clear sentinel (≤1)
@@ -5238,7 +4869,7 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 		v = x - pxo;
 		break;
 	}
-	/* scrollWidth/Height are the DESCENDANT extent -- how big the content
+	/* scrollWidth/Height are the DESCENDANT extent - how big the content
 	 * is, not how big the box is. That distinction is the entire point of
 	 * the property: overflow checks compare it against clientWidth. */
 	case QJS_M_SCRW:
@@ -5275,11 +4906,11 @@ static const char *qjs_metric_name(int magic)
 	}
 }
 
-/* fixes1011 — getComputedStyle, over the REAL cascade.
+/* fixes1011  -  getComputedStyle, over the REAL cascade.
  *
  * It returned only what was in the inline `style` attribute, so
  *   getComputedStyle(el).display === 'none'
- * -- one of the most-executed lines on the web -- was false for everything
+ * - one of the most-executed lines on the web - was false for everything
  * hidden by a stylesheet, a class, or the UA sheet. Scripts that toggle
  * visibility by reading it first therefore made the wrong decision every time,
  * silently.
@@ -5289,7 +4920,7 @@ static const char *qjs_metric_name(int magic)
  * position, width/height, color/background-color, font-size/family/weight,
  * line-height, opacity, overflow, z-index, text-align, float. Anything else
  * falls back to the inline value, which is what the old implementation always
- * did -- so this is strictly additive, never a regression.
+ * did - so this is strictly additive, never a regression.
  *
  * SERIALIZATION MATTERS as much as the value. getComputedStyle().width is
  * "100px" (a string with units), offsetWidth is a number, and colours are
@@ -5325,7 +4956,7 @@ static JSValue qjs_get_computed_style(JSContext *ctx, JSValueConst this_val,
 	if (argc >= 1 && JS_IsObject(argv[0])) {
 		b = qjs_box_for(argv[0]);
 	}
-	/* fixes1015 — what did getComputedStyle actually answer? */
+	/* fixes1015  -  what did getComputedStyle actually answer? */
 	if (argc >= 1 && JS_IsObject(argv[0])) {
 		if (b != NULL && b->style != NULL) {
 			char rb[48];
@@ -5415,7 +5046,7 @@ static JSValue qjs_get_computed_style(JSContext *ctx, JSValueConst this_val,
 					JS_NewString(ctx, "1"));
 			}
 		}
-		/* Used width/height come from the BOX, not the cascade -- the
+		/* Used width/height come from the BOX, not the cascade - the
 		 * cascade may say `auto` while the box knows the resolved pixels,
 		 * and "used value" is what getComputedStyle is specified to give. */
 		qjs_cs_px(ctx, out, "width", qjs_sane(b->width));
@@ -5440,7 +5071,7 @@ static JSValue qjs_get_computed_style(JSContext *ctx, JSValueConst this_val,
 	return out;
 }
 
-/* fixes1006 — call obj.dispatchEvent(ev), swallowing (but LOGGING) a throw.
+/* fixes1006  -  call obj.dispatchEvent(ev), swallowing (but LOGGING) a throw.
  * One bad handler must never abort propagation to the rest, and a silent
  * catch is how "site loads, does nothing, no log" happens. `what` names the
  * target in the log line. */
@@ -5451,7 +5082,7 @@ static void qjs_fire_dispatch(JSContext *ctx, JSValueConst obj,
 	JSValue argv[1];
 
 	if (JS_IsUndefined(obj) || JS_IsNull(obj)) return;
-	/* fixes1008 (1e) — __msFireLocal FIRST. Elements now have a NATIVE
+	/* fixes1008 (1e)  -  __msFireLocal FIRST. Elements now have a NATIVE
 	 * dispatchEvent that starts a fresh libdom dispatch; calling it from
 	 * inside the libdom callback would recurse without end. __msFireLocal is
 	 * the local _L/_H firing that the callback actually wants. document and
@@ -5486,7 +5117,7 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 	JSValue evobj, disp, ret, pd;
 	JSValue callargv[1];
 
-	/* #265 — a libdom-originated dispatch (fire_generic_dom_event from
+	/* #265  -  a libdom-originated dispatch (fire_generic_dom_event from
 	 * interaction.c, i.e. a real click) is a C->JS execution boundary:
 	 * the WNE loop runs event handlers BEFORE macsurf_qjs_pump_all in the
 	 * same pass, so without this clear the previous pass's settle would
@@ -5504,7 +5135,7 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 	if (hit == NULL) {
 		/* No wrapper: this node was never touched by script, or the realm
 		 * has been rebuilt and its wrappers drained. Nothing to run.
-		 * fixes1015 — this silent drop IS a lost handler if the node ever
+		 * fixes1015  -  this silent drop IS a lost handler if the node ever
 		 * had one; make it visible. */
 		if (g_evmiss_audit > 0) {
 			char nb[80];
@@ -5525,7 +5156,7 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 		macsurf_dom_node_unref(node);
 		return;
 	}
-	/* fixes1015 — every real dispatch that reaches script, with identity. */
+	/* fixes1015  -  every real dispatch that reaches script, with identity. */
 	{
 		if (g_evfire_audit > 0) {
 			char nb[80];
@@ -5536,7 +5167,7 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 		}
 	}
 
-	/* fixes1008 (1d) — a REAL Event instance, not an ad-hoc object.
+	/* fixes1008 (1d)  -  a REAL Event instance, not an ad-hoc object.
 	 *
 	 * This used to be a bare JS_NewObject with `type`, `target` and three
 	 * methods bolted on. Consequences that all show up in real library code:
@@ -5574,7 +5205,7 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 				(size_t)dom_string_length(type_ds)));
 
 	/* Real flags off the real dom_event. eventPhase in particular must be
-	 * AT_TARGET for the target's own visit -- before fixes1005 the spurious
+	 * AT_TARGET for the target's own visit - before fixes1005 the spurious
 	 * second visit reported BUBBLING, and a count-only test would not have
 	 * noticed the phase was wrong. */
 	{
@@ -5592,7 +5223,7 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 				JS_NewBool(ctx, 0));
 		JS_SetPropertyStr(ctx, evobj, "timeStamp",
 				JS_NewFloat64(ctx, macsurf_qjs_get_now()));
-		/* isTrusted is TRUE only here -- this is the native UI path.
+		/* isTrusted is TRUE only here - this is the native UI path.
 		 * Anything from `new Event` / dispatchEvent reports false, and some
 		 * libraries branch on it to reject synthetic input. */
 		JS_SetPropertyStr(ctx, evobj, "isTrusted", JS_NewBool(ctx, 1));
@@ -5657,13 +5288,13 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 	}
 	JS_SetPropertyStr(ctx, evobj, "currentTarget",
 		JS_DupValue(ctx, hit->val));
-	/* fixes1006 (1c) — event.target, WRAPPED ON DEMAND.
+	/* fixes1006 (1c)  -  event.target, WRAPPED ON DEMAND.
 	 *
 	 * This used to be lookup-only: on a wrap-table miss it simply did not set
 	 * the property, so `event.target` was `undefined` for any node script had
 	 * never touched. Delegation handlers universally open with
 	 * `e.target.matches(...)` or `e.target.closest(...)`, which throws on
-	 * undefined and takes the handler down -- so delegation was dead in the
+	 * undefined and takes the handler down - so delegation was dead in the
 	 * field even where the listener itself was reached. It passed in t.html
 	 * only because every node there had been through getElementById and so
 	 * already had a wrapper.
@@ -5673,7 +5304,7 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 	 * JS_NULL for nodeType 9 (minting a wrapper for a node shape whose vtable
 	 * does not match was the fixes846 ASan overflow), so going straight to it
 	 * would yield `e.target === null` for every document-targeted event --
-	 * DOMContentLoaded, readystatechange, document.dispatchEvent -- and
+	 * DOMContentLoaded, readystatechange, document.dispatchEvent - and
 	 * `e.target === document` is a check libraries make.
 	 *
 	 * REF DISCIPLINE: the getter hands us an owned ref. qjs_wrap_any_node
@@ -5703,7 +5334,7 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 	JS_SetPropertyStr(ctx, evobj, "stopPropagation",
 		JS_NewCFunctionData(ctx, qjs_ev_stop_propagation_data,
 				0, 0, 1, &pd));
-	/* fixes1008 (1d) — its OWN implementation now, not the stopPropagation
+	/* fixes1008 (1d)  -  its OWN implementation now, not the stopPropagation
 	 * alias. See qjs_ev_stop_immediate_data. */
 	JS_SetPropertyStr(ctx, evobj, "stopImmediatePropagation",
 		JS_NewCFunctionData(ctx, qjs_ev_stop_immediate_data,
@@ -5712,7 +5343,7 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 
 	/* Fire this node's _L + _H through the one implementation that exists. */
 	{
-		/* fixes1006 (1b) — WINDOW FAN-OUT, and the order matters in BOTH
+		/* fixes1006 (1b)  -  WINDOW FAN-OUT, and the order matters in BOTH
 		 * directions.
 		 *
 		 * `window` has no DOM node, so its listeners are registered against
@@ -5722,7 +5353,7 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 		 * wrong for capture, which is exactly the phase jQuery's focusin
 		 * workaround relies on.
 		 *
-		 * Only the document entry fans out -- element hits dispatch once. */
+		 * Only the document entry fans out - element hits dispatch once. */
 		int is_doc = (g_qjs_document != NULL &&
 				node == (dom_node *)g_qjs_document);
 		int capturing = 0;
@@ -5754,7 +5385,7 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 }
 
 /* ===================================================================
- * fixes1008 (1a) — THE REGISTERED-TYPE GATE.
+ * fixes1008 (1a)  -  THE REGISTERED-TYPE GATE.
  *
  * 1f fans out mousedown/mouseup/mouseover/mouseout/dblclick/keyup/... from
  * interaction.c. Without a gate, every hover transition on a page where
@@ -5764,7 +5395,7 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
  *
  * SET-ONLY, NEVER CLEARED. A count would have to be decremented on
  * removeEventListener, and a bare bitmask cleared there cannot know whether
- * another listener of the same type survives -- it would go dark while a
+ * another listener of the same type survives - it would go dark while a
  * live listener remained, which is a silent "handlers stopped working" bug.
  * Set-only is entirely adequate because realms are per-navigation: the set
  * dies with the page. The cost of a stale bit is one wasted dispatch into an
@@ -5772,7 +5403,7 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
  *
  * FED FROM THE SINGLE CHOKEPOINT. All three registration routes --
  * addEventListener, inline on* attributes (macsurf_qjs_bind_inline_handlers),
- * and el.onclick= (__msRegEvent) -- already funnel through
+ * and el.onclick= (__msRegEvent) - already funnel through
  * qjs_dom_register_listener, so the increment goes there rather than at three
  * call sites. A missed one would mean markup handlers silently never firing.
  *
@@ -5812,7 +5443,7 @@ static void qjs_evgate_reset(void)
  * has been registered in this realm.
  *
  * FAILS OPEN in two cases, both deliberate: before any script has run
- * (s_evgate_n == 0, e.g. a page with no JS at all -- dispatching a handful of
+ * (s_evgate_n == 0, e.g. a page with no JS at all - dispatching a handful of
  * events into an empty set costs nothing and a closed gate here would be
  * indistinguishable from a broken engine), and when the table is full. A gate
  * that fails closed silently deletes user interaction, which is exactly the
@@ -5831,11 +5462,11 @@ int macsurf_qjs_event_type_live(const char *type)
 }
 
 /* ===================================================================
- * fixes1008 — REGISTRATION DEDUPE, at the chokepoint.
+ * fixes1008  -  REGISTRATION DEDUPE, at the chokepoint.
  *
  * libdom does NOT dedupe (node, type): dom_event_target_add_event_listener
  * appends another listener_entry every time, and _dom_event_target_dispatch
- * loops over ALL of them -- so N registrations replay the node's whole _L/_H
+ * loops over ALL of them - so N registrations replay the node's whole _L/_H
  * list N times. We pass the same shared g_qjs_dom_listener every time, so the
  * duplicates are pure loss.
  *
@@ -5844,7 +5475,7 @@ int macsurf_qjs_event_type_live(const char *type)
  *   el.onclick=        __msRegEvent, NO guard
  *   inline on* markup  macsurf_qjs_bind_inline_handlers, NO guard
  * so `s.onload = fn` plus addEventListener('load') on the same node produced
- * two entries and fired onload TWICE -- caught by harness Test 13, which is
+ * two entries and fired onload TWICE - caught by harness Test 13, which is
  * the dynamic-loader idiom, where a promise resolving twice is exactly the
  * hang this engine spent fixes868/869 fixing.
  *
@@ -5854,7 +5485,7 @@ int macsurf_qjs_event_type_live(const char *type)
  * through qjs_dom_register_listener, so one check covers all of them, elements
  * and document alike.
  *
- * FAILS OPEN on malloc failure -- a duplicate dispatch is survivable, a missing
+ * FAILS OPEN on malloc failure - a duplicate dispatch is survivable, a missing
  * registration means the handler never runs at all.
  * =================================================================== */
 #define QJS_REG_BUCKETS 64
@@ -5868,7 +5499,7 @@ struct qjs_reg_entry {
 };
 
 static struct qjs_reg_entry *s_reg_buckets[QJS_REG_BUCKETS];
-/* fixes1013 — how many distinct (node, type, capture) registrations the page
+/* fixes1013  -  how many distinct (node, type, capture) registrations the page
  * made. A page that ran its scripts but wired up nothing looks very different
  * from one that never ran them, and this is the number that separates them. */
 int s_reg_n_registered = 0;  /* exported for audit */
@@ -5916,12 +5547,12 @@ static void qjs_reg_clear(void)
 	s_reg_n_registered = 0;
 }
 
-/* fixes996 — the single place a node is registered with libdom.
+/* fixes996  -  the single place a node is registered with libdom.
  *
  * THREE routes can put a handler on a node and every one of them must
  * register, or a real click never reaches it: addEventListener (fixes989),
  * an inline on* attribute in markup (fixes995), and `el.onclick = fn` from
- * script -- which is the one that was missed. Hardware found it: t.html test 3
+ * script - which is the one that was missed. Hardware found it: t.html test 3
  * stayed grey while 1 and 2 went green.
  *
  * The on* setter is a JS accessor (qjs_el_install_proto) that only writes _H,
@@ -5933,14 +5564,14 @@ static void qjs_dom_register_listener(dom_node *node, const char *type,
 {
 	dom_string *tds;
 	if (node == NULL || type == NULL || type[0] == '\0') return;
-	/* fixes1008 (1a) — the gate's single feed point. All three registration
+	/* fixes1008 (1a)  -  the gate's single feed point. All three registration
 	 * routes reach here, so this one line covers addEventListener, inline
 	 * on* attributes and el.onclick= alike. */
 	qjs_evgate_add(type);
-	/* fixes1008 — once per (node, type, capture). See qjs_reg_seen: libdom
+	/* fixes1008  -  once per (node, type, capture). See qjs_reg_seen: libdom
 	 * appends duplicates and replays the whole handler list per entry. */
 	if (qjs_reg_seen(node, type, capture)) return;
-	/* fixes1015 — audit every NEW libdom registration with its target, so
+	/* fixes1015  -  audit every NEW libdom registration with its target, so
 	 * "the page wired itself up" is checkable listener by listener. */
 	if (g_evreg_audit > 0) {
 		char nb[80];
@@ -5961,7 +5592,7 @@ static void qjs_dom_register_listener(dom_node *node, const char *type,
 	macsurf_dom_string_unref(tds);
 }
 
-/* fixes996 — exposed to the on* setter, which is JS and cannot reach libdom.
+/* fixes996  -  exposed to the on* setter, which is JS and cannot reach libdom.
  * Idempotent by libdom's own keying: registering the same (type, listener,
  * capture) twice is not additive, so re-assigning el.onclick is harmless. */
 static JSValue qjs_el_reg_event_data(JSContext *ctx,
@@ -5980,13 +5611,13 @@ static JSValue qjs_el_reg_event_data(JSContext *ctx,
 	return JS_UNDEFINED;
 }
 
-/* fixes1006 (1b) — the DOCUMENT/WINDOW registration hook.
+/* fixes1006 (1b)  -  the DOCUMENT/WINDOW registration hook.
  *
  * document.addEventListener and window.addEventListener stored their handlers
  * in JS-only registries (document._listeners / _winListeners) that libdom knew
  * nothing about. Nothing ever called dom_event_target_add_event_listener for
  * them, so a real mouse click dispatched into an empty listener set at the
- * document and never reached $(document).on('click', ...) -- the dominant
+ * document and never reached $(document).on('click', ...) - the dominant
  * pattern in jQuery, XenForo (XF.activate), WordPress and every
  * delegation-based app. The registries themselves are fine and stay; only the
  * REGISTRATION was missing.
@@ -6020,7 +5651,7 @@ static JSValue qjs_doc_reg_event(JSContext *ctx, JSValueConst this_val,
 	return JS_UNDEFINED;
 }
 
-/* fixes1008 (1e) — el.dispatchEvent, routed through libdom so it BUBBLES.
+/* fixes1008 (1e)  -  el.dispatchEvent, routed through libdom so it BUBBLES.
  *
  * The JS implementation fired only that node's own _L/_H and returned true
  * unconditionally. Two things were wrong with that and both are load-bearing:
@@ -6030,12 +5661,12 @@ static JSValue qjs_doc_reg_event(JSContext *ctx, JSValueConst this_val,
  * must return FALSE when a cancelable event was cancelled.
  *
  * Routing through dom_event_target_dispatch_event means the ONE dispatch
- * implementation serves both real input and synthetic events -- no second
+ * implementation serves both real input and synthetic events - no second
  * path to drift. el.click() (fixes997) bubbles for free as a result.
  *
  * RE-ENTRANCY: qjs_dom_listener_cb calls dispatchEvent on the wrapper it
  * looked up, so dispatching through libdom from inside dispatchEvent would
- * recurse forever. g_qjs_in_dispatch is the guard -- while a native dispatch
+ * recurse forever. g_qjs_in_dispatch is the guard - while a native dispatch
  * is in flight, this falls back to the local _L/_H firing, which is exactly
  * what the callback wants from it.
  *
@@ -6109,7 +5740,7 @@ static JSValue qjs_el_dispatch_event_data(JSContext *ctx,
 	g_qjs_in_dispatch = 0;
 	dom_event_unref(evt);
 
-	/* false when a cancelable event was cancelled -- the whole point of the
+	/* false when a cancelable event was cancelled - the whole point of the
 	 * return value, and previously always true. */
 	return JS_NewBool(ctx, ok_flag ? 1 : 0);
 }
@@ -6158,7 +5789,7 @@ static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
 		JS_FreeValue(ctx, arr);
 		arr = JS_NewArray(ctx);
 		JS_SetPropertyStr(ctx, L, type_c, JS_DupValue(ctx, arr));
-		/* fixes1040 (#264) — no longer sets `fresh` here. The libdom
+		/* fixes1040 (#264)  -  no longer sets `fresh` here. The libdom
 		 * registration is keyed per (type, capture) via _LR below, which
 		 * is now the single source of truth; setting it here as well
 		 * would register a second time for the same pair. */
@@ -6170,7 +5801,7 @@ static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
 	JS_FreeValue(ctx, arr);
 	JS_FreeValue(ctx, L);
 
-	/* fixes1040 (#264) — el._LC[type] is the index-aligned array of capture
+	/* fixes1040 (#264)  -  el._LC[type] is the index-aligned array of capture
 	 * flags for el._L[type]. The flag has to survive to DISPATCH time:
 	 * __msFireLocal must fire only the listeners belonging to the phase
 	 * libdom is currently in, and until now it had no way to tell them
@@ -6191,7 +5822,7 @@ static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
 	JS_FreeValue(ctx, carr);
 	JS_FreeValue(ctx, C);
 
-	/* fixes1040 (#264) — register with libdom once per (node, type, CAPTURE),
+	/* fixes1040 (#264)  -  register with libdom once per (node, type, CAPTURE),
 	 * not once per (node, type).
 	 *
 	 * The old rule registered only for the FIRST listener of a type and
@@ -6200,7 +5831,7 @@ static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
 	 * to libdom under ONE phase only, and because __msFireLocal then fired
 	 * the whole _L list, both listeners ran in that phase. On hardware that
 	 * produced [cap,bubble,target] for a capture+bubble outer with a target
-	 * inner -- the bubble listener firing during the CAPTURE pass, before
+	 * inner - the bubble listener firing during the CAPTURE pass, before
 	 * the target was reached. Harness Test 47 pins the ordering. */
 	key[0] = '\0';
 	if (strlen(type_c) < sizeof(key) - 3) {
@@ -6233,7 +5864,7 @@ static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
 	return JS_UNDEFINED;
 }
 
-/* fixes1040 (#264) — splice el._LC[type] at `idx`, keeping the capture-flag
+/* fixes1040 (#264)  -  splice el._LC[type] at `idx`, keeping the capture-flag
  * array index-aligned with el._L[type] after a removeEventListener. Silent
  * no-op when the element has no _LC yet (a listener registered before this
  * change, or an element that only ever used on* handlers). */
@@ -6303,7 +5934,7 @@ static JSValue qjs_el_remove_event_listener_data(JSContext *ctx,
 					}
 					JS_FreeValue(ctx, sp);
 					JS_FreeValue(ctx, item);
-					/* fixes1040 (#264) — splice the capture-flag
+					/* fixes1040 (#264)  -  splice the capture-flag
 					 * array at the SAME index. _LC is index-
 					 * aligned with _L; letting them drift would
 					 * make every later listener dispatch in the
@@ -6327,12 +5958,12 @@ static JSValue qjs_el_remove_event_listener_data(JSContext *ctx,
 	return JS_UNDEFINED;
 }
 
-/* fixes995 (#264) — inline on* HTML attributes.
+/* fixes995 (#264)  -  inline on* HTML attributes.
  *
  * `<a onclick="...">` in MARKUP has never done anything: the attribute was
  * never compiled, so the handler did not exist in any registry and no dispatch
  * could reach it. That is separate from `el.onclick = fn` in script, which has
- * worked for a while (the _H accessors, fixes872) -- markup and script were
+ * worked for a while (the _H accessors, fixes872) - markup and script were
  * two different worlds and only one of them was wired.
  *
  * Compiled at INSERTION, from the DOMNodeInserted hook that already exists in
@@ -6438,7 +6069,7 @@ void macsurf_qjs_bind_inline_handlers(struct dom_node *node)
 		JS_FreeValue(ctx, H);
 		JS_FreeValue(ctx, wrapper);
 
-		/* Make a REAL event reach it (fixes996 — shared helper). */
+		/* Make a REAL event reach it (fixes996  -  shared helper). */
 		qjs_dom_register_listener(node, type, 0);
 		bound++;
 	}
@@ -6454,20 +6085,20 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 	JSValue f;
 	data[0] = JS_DupValue(ctx, obj);
 
-	/* fixes989 — the event bridge. Installed BEFORE the JS helper string is
+	/* fixes989  -  the event bridge. Installed BEFORE the JS helper string is
 	 * evaluated at the end of this function, and deliberately not defined
 	 * there, so nothing shadows them. */
 	f = JS_NewCFunctionData(ctx, qjs_el_add_event_listener_data, 3, 0, 1, data);
 	JS_SetPropertyStr(ctx, obj, "addEventListener", f);
 	f = JS_NewCFunctionData(ctx, qjs_el_remove_event_listener_data, 2, 0, 1, data);
 	JS_SetPropertyStr(ctx, obj, "removeEventListener", f);
-	/* fixes1008 (1e) — native dispatchEvent, so synthetic events bubble.
+	/* fixes1008 (1e)  -  native dispatchEvent, so synthetic events bubble.
 	 * Installed BEFORE the JS helper string is evaluated; that string now
 	 * defines __msFireLocal instead of dispatchEvent, so nothing shadows
 	 * this. */
 	f = JS_NewCFunctionData(ctx, qjs_el_dispatch_event_data, 1, 0, 1, data);
 	JS_SetPropertyStr(ctx, obj, "dispatchEvent", f);
-	/* fixes996 — the on* setter (a JS accessor) calls this to register. */
+	/* fixes996  -  the on* setter (a JS accessor) calls this to register. */
 	f = JS_NewCFunctionData(ctx, qjs_el_reg_event_data, 1, 0, 1, data);
 	JS_SetPropertyStr(ctx, obj, "__msRegEvent", f);
 
@@ -6486,17 +6117,9 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 	JS_SetPropertyStr(ctx, obj, "__getTextContent", f);
 	f = JS_NewCFunctionData(ctx, qjs_el_set_text_content_data, 1, 0, 1, data);
 	JS_SetPropertyStr(ctx, obj, "__setTextContent", f);
-	/* fixes846 (#167 S3) — real innerHTML= via HTML fragment parsing. */
+	/* fixes846 (#167 S3)  -  real innerHTML= via HTML fragment parsing. */
 	f = JS_NewCFunctionData(ctx, qjs_el_set_inner_html_data, 1, 0, 1, data);
 	JS_SetPropertyStr(ctx, obj, "__setInnerHTML", f);
-	/* fixes1168 (#262) — real innerHTML read-back: the JS getter calls this
-	 * to serialize the child tree to markup (see qjs_el_get_inner_html_data). */
-	f = JS_NewCFunctionData(ctx, qjs_el_get_inner_html_data, 0, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "__getInnerHTML", f);
-	/* fixes1168 (#262) — real outerHTML read-back: same serializer over the
-	 * element itself (tag + attributes + children). */
-	f = JS_NewCFunctionData(ctx, qjs_el_get_outer_html_data, 0, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "__getOuterHTML", f);
 
 	/* Traversal */
 	f = JS_NewCFunctionData(ctx, qjs_el_get_parent_node_data, 0, 0, 1, data);
@@ -6525,7 +6148,7 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 	JS_FreeValue(ctx, data[0]);
 
 	/* JS-side helpers: classList, style, dataset, matches, closest, etc. */
-	/* fixes1071/1078 — see qjs_helper_fn. Bracket the whole per-element
+	/* fixes1071/1078  -  see qjs_helper_fn. Bracket the whole per-element
 	 * helper install: this is the cost the prototype migration would
 	 * remove. */
 	{
@@ -6556,7 +6179,7 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 			"Object.defineProperty(el,'children',{"
 			"get:function(){return el.__getChildren();},"
 			"configurable:true});"
-			/* fixes1031 — firstElementChild / lastElementChild /
+			/* fixes1031  -  firstElementChild / lastElementChild /
 			 * childElementCount. nextElementSibling and
 			 * previousElementSibling were here; their two siblings were
 			 * not, and jQuery's wrapAll walks firstElementChild:
@@ -6565,8 +6188,8 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 			 *       while (e.firstElementChild) e=e.firstElementChild;
 			 *       return e; }).append(this);
 			 *
-			 * so wrapInner() -- and therefore the dotdotdot truncation
-			 * plugin hackaday runs over every article entry -- lost the
+			 * so wrapInner() - and therefore the dotdotdot truncation
+			 * plugin hackaday runs over every article entry - lost the
 			 * content it was re-parenting. Derived from `children` so
 			 * they cannot disagree with it. */
 			"Object.defineProperty(el,'firstElementChild',{"
@@ -6592,10 +6215,10 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 		JS_FreeValue(ctx, fn2);
 	}
 
-	/* fixes1011 (Phase 3) — REAL layout metrics, replacing the zero stubs.
+	/* fixes1011 (Phase 3)  -  REAL layout metrics, replacing the zero stubs.
 	 *
 	 * Installed AFTER the JS helper string, which defines the zero-returning
-	 * getBoundingClientRect -- these must win, and the ordering is the only
+	 * getBoundingClientRect - these must win, and the ordering is the only
 	 * thing that makes them win. */
 	{
 		JSValue d2[1];
@@ -6670,11 +6293,11 @@ static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
 		JS_FreeValue(ctx, fn3);
 	}
 
-	/* fixes878 — last, so nothing above can clobber it. */
+	/* fixes878  -  last, so nothing above can clobber it. */
 	qjs_install_node_traversal(ctx, obj);
 }
 
-/* Full wrap: identical to qjs_wrap_element now — method install is folded into
+/* Full wrap: identical to qjs_wrap_element now  -  method install is folded into
  * wrap's miss path so it runs exactly once per node and cache hits skip it.
  * Kept as a named entry point for the traversal/mutation call sites. */
 static JSValue qjs_wrap_element_full(JSContext *ctx, dom_element *el)
@@ -6687,12 +6310,12 @@ static JSValue qjs_wrap_element_full(JSContext *ctx, dom_element *el)
  * no native opaque tag, so parent.appendChild(textNode) silently no-opped
  * (qjs_get_node() returned NULL for it, per the census). qjs_get_node() /
  * the wrap table / the finalizer are generic over ANY dom_node* stored
- * under s_el_class_id, so they're reused verbatim here -- what must NOT be
+ * under s_el_class_id, so they're reused verbatim here - what must NOT be
  * reused is qjs_wrap_element's property-install body, which bakes in
  * element-only semantics (tagName read, hardcoded nodeType=1, the full
  * attribute API). A text node gets its own minimal surface instead:
  * nodeType=3, nodeName='#text', and nodeValue/data/textContent backed by
- * the real characterdata (NOT a children walk -- a text node's data IS its
+ * the real characterdata (NOT a children walk - a text node's data IS its
  * content, it has no children). */
 static JSValue qjs_text_get_data_data(JSContext *ctx, JSValueConst this_val,
 		int argc, JSValueConst *argv, int magic, JSValueConst *func_data)
@@ -6737,7 +6360,7 @@ static JSValue qjs_text_append_child_noop(JSContext *ctx,
 	return JS_NULL;
 }
 
-/* fixes878 — qjs_text_clone_node_data is GONE. It was
+/* fixes878  -  qjs_text_clone_node_data is GONE. It was
  *     return JS_DupValue(ctx, func_data[0]);
  * i.e. it handed back the SAME text node, exactly the self-returning bug the
  * element-side cloneNode had; a text node "cloned" into a second parent was
@@ -6777,11 +6400,11 @@ static JSValue qjs_wrap_text_node(JSContext *ctx, dom_text *tn)
 		return obj;
 	}
 
-	/* fixes878 — report the node's REAL type instead of hardcoding #text.
+	/* fixes878  -  report the node's REAL type instead of hardcoding #text.
 	 * This wrapper is now also the landing place for the other CharacterData
 	 * types reachable through firstChild/nextSibling (comment = 8,
 	 * CDATASection = 4), which share CharacterData's data/nodeValue surface and
-	 * so are safe here -- but calling a comment a "#text" of nodeType 3 would
+	 * so are safe here - but calling a comment a "#text" of nodeType 3 would
 	 * be a wrong answer, and comment nodes are load-bearing markers for Preact
 	 * and React. createTextNode still lands on 3/#text exactly as before. */
 	{
@@ -6793,10 +6416,10 @@ static JSValue qjs_wrap_text_node(JSContext *ctx, dom_text *tn)
 		else if (wt == 4) wname = "#cdata-section";
 		JS_SetPropertyStr(ctx, obj, "nodeType", JS_NewInt32(ctx, (int) wt));
 		JS_SetPropertyStr(ctx, obj, "nodeName", JS_NewString(ctx, wname));
-		/* fixes1127 -- real family prototype: text/comment/CDATA wrappers
+		/* fixes1127 - real family prototype: text/comment/CDATA wrappers
 		 * answer instanceof Text/CharacterData/Node truthfully and must NOT
 		 * answer instanceof HTMLElement (the shared class proto alone would
-		 * route them there after the fixes1127 p.__proto__ link -- a lying
+		 * route them there after the fixes1127 p.__proto__ link - a lying
 		 * answer that sends node-skipping loops down element paths). */
 		qjs_wrap_set_family_proto(ctx, obj,
 			(wt == 8) ? "Comment" : (wt == 4) ? "CharacterData" : "Text");
@@ -6804,14 +6427,14 @@ static JSValue qjs_wrap_text_node(JSContext *ctx, dom_text *tn)
 	JS_SetPropertyStr(ctx, obj, "__ptr",
 		JS_NewInt64(ctx, (long long) (size_t) tn));
 
-	/* fixes846 perf — nodeValue/data/textContent/parentNode are wired as
+	/* fixes846 perf  -  nodeValue/data/textContent/parentNode are wired as
 	 * REAL C getter/setter pairs (JS_DefinePropertyGetSet), not an
 	 * Object.defineProperty(...) block run through JS_Eval on every
 	 * single wrap. A reconciler-heavy page (React) calls createTextNode
 	 * per leaf text update; re-lexing/parsing a JS source string on every
 	 * one of those calls is a real, avoidable per-node cost that the
 	 * element-wrapper path (qjs_el_install_native_attrs) also pays today
-	 * -- fixed here for the new text-node path since it's freshly
+	 * - fixed here for the new text-node path since it's freshly
 	 * written; that pre-existing element-side cost is unchanged by this
 	 * fix and is a good target for its own round if profiling confirms
 	 * it matters. */
@@ -6855,10 +6478,10 @@ static JSValue qjs_wrap_text_node(JSContext *ctx, dom_text *tn)
 				"appendChild", 1));
 	JS_FreeValue(ctx, data[0]);
 
-	/* fixes878 — text/comment nodes get the SAME node-level traversal surface
+	/* fixes878  -  text/comment nodes get the SAME node-level traversal surface
 	 * as elements. This is not optional decoration: firstChild lands on the
 	 * text between tags, so `box.firstChild.nextSibling` walks THROUGH a text
-	 * node. Without it that chain dies at the first gap in real markup -- the
+	 * node. Without it that chain dies at the first gap in real markup - the
 	 * first thing Test 21 caught. Base dom_node vtable ops only, so it is safe
 	 * on this shape (see the qjs_install_node_traversal note). */
 	qjs_install_node_traversal(ctx, obj);
@@ -6892,17 +6515,17 @@ static JSValue qjs_create_text_node(JSContext *ctx, JSValueConst this_val,
  * A DocumentFragment needs appendChild/removeChild/insertBefore (dom_node_
  * append_child on a fragment target unwraps its children per DOM spec when
  * the fragment is later appended elsewhere), so it's tempting to just reuse
- * qjs_wrap_element wholesale -- DON'T: the S0 harness caught this as a real
+ * qjs_wrap_element wholesale - DON'T: the S0 harness caught this as a real
  * global-buffer-overflow (ASan, ELEMENT_get_tag_name read through a
  * document_fragment's SMALLER vtable, dom_element_get_tag_name expects the
- * element vtable shape and a fragment's df_vtable doesn't have it -- this
+ * element vtable shape and a fragment's df_vtable doesn't have it - this
  * is exactly the "accidental safety" the design research flagged as
  * unverified, and it turned out not to be safe at all). Same fix pattern
  * as qjs_wrap_text_node: reuse the class id / wrap-table / finalizer
  * (generic over any dom_node*), but only install the operations that are
  * genuinely defined on the BASE dom_node_vtable (append/remove/insertBefore/
- * parentNode/textContent/children -- confirmed via dom/core/node.h, every
- * node subtype's vtable starts with that base) -- never the element-only
+ * parentNode/textContent/children - confirmed via dom/core/node.h, every
+ * node subtype's vtable starts with that base) - never the element-only
  * ones (getAttribute et al, tagName) that live on a DIFFERENT, narrower
  * vtable a fragment doesn't have. */
 static JSValue qjs_wrap_fragment(JSContext *ctx, dom_document_fragment *frag)
@@ -6986,13 +6609,13 @@ static JSValue qjs_wrap_fragment(JSContext *ctx, dom_document_fragment *frag)
 		JS_FreeAtom(ctx, atom);
 	}
 
-	/* fixes878 — fragments need the node surface too: the whole point of a
+	/* fixes878  -  fragments need the node surface too: the whole point of a
 	 * DocumentFragment is to build a subtree and then walk or move its
 	 * children. Base dom_node vtable ops only, which is exactly why this is
 	 * safe on the fragment's smaller shape (fixes846). */
 	qjs_install_node_traversal(ctx, obj);
 
-	/* fixes1127 -- real family prototype: a fragment answers instanceof
+	/* fixes1127 - real family prototype: a fragment answers instanceof
 	 * DocumentFragment/Node, never HTMLElement (same lying-answer reasoning
 	 * as the text-node wrapper). */
 	qjs_wrap_set_family_proto(ctx, obj, "DocumentFragment");
@@ -7004,21 +6627,21 @@ static JSValue qjs_wrap_fragment(JSContext *ctx, dom_document_fragment *frag)
  *
  * The node-oriented traversal surface (firstChild / lastChild / nextSibling /
  * previousSibling / childNodes / cloneNode) reaches nodes that are NOT
- * elements -- text between tags, and the comment markers Preact and React
+ * elements - text between tags, and the comment markers Preact and React
  * depend on. `children` and nextElementSibling can filter to elements and use
  * qjs_wrap_element_full directly; these cannot.
  *
  * Dispatch on the real nodeType and use the wrapper built for that shape.
  * Getting this wrong is not theoretical: fixes846 hit an ASan
  * global-buffer-overflow by reusing the ELEMENT wrapper for a DocumentFragment,
- * whose vtable is a different, smaller shape -- qjs_wrap_element reads through
+ * whose vtable is a different, smaller shape - qjs_wrap_element reads through
  * the element vtable (dom_element_get_tag_name), which a fragment does not
  * have. Unknown types get NULL rather than a guessed wrapper, for the same
  * reason.
  *
  * REF CONTRACT: takes the caller's transferred ref (libdom's get_* / clone
  * return a ref'd node) and hands it to the chosen wrapper, every one of which
- * adopts it -- on a wrap-map hit they unref it and return a dup, so identity
+ * adopts it - on a wrap-map hit they unref it and return a dup, so identity
  * holds. The unknown-type path must therefore unref, or the node leaks. */
 static JSValue qjs_wrap_any_node(JSContext *ctx, dom_node *node)
 {
@@ -7035,7 +6658,7 @@ static JSValue qjs_wrap_any_node(JSContext *ctx, dom_node *node)
 		return qjs_wrap_element_full(ctx, (dom_element *) node);
 	case 3:		/* text */
 	case 4:		/* CDATASection  */
-	case 8:		/* comment -- CharacterData, same data/nodeValue surface */
+	case 8:		/* comment - CharacterData, same data/nodeValue surface */
 		return qjs_wrap_text_node(ctx, (dom_text *) node);
 	case 11:	/* DocumentFragment */
 		return qjs_wrap_fragment(ctx, (dom_document_fragment *) node);
@@ -7050,7 +6673,7 @@ static JSValue qjs_wrap_any_node(JSContext *ctx, dom_node *node)
 /* ---- document.createDocumentFragment (native) ----
  * Replaces the old JS-only mkfb('#fragment') fake (qjs_dom_install) whose
  * children were plain JS objects invisible to qjs_get_node(), so appending
- * it to a real element silently dropped every child -- see the S1 census
+ * it to a real element silently dropped every child - see the S1 census
  * and the removed no-op override in register_browser_globals. */
 static JSValue qjs_create_document_fragment(JSContext *ctx,
 		JSValueConst this_val, int argc, JSValueConst *argv)
@@ -7131,12 +6754,12 @@ static JSValue qjs_getElementById(JSContext *ctx, JSValueConst this_val,
 }
 
 /* ---- document.querySelectorAll (tag-name only for now) ---- */
-/* ==== fixes871 (#298) — compound selector matcher ==========================
+/* ==== fixes871 (#298)  -  compound selector matcher ==========================
  *
  * Before this, the selector code extracted the TAG and nothing else, then called
  * qjs_collect_by_tag(). So `div.foo` matched EVERY div and `.foo` alone matched
  * nothing at all ("class-only sel unsupported"). The comment above the parse
- * loop claimed "support bare tag, tag[attr*=val], tag.class, .class" -- none of
+ * loop claimed "support bare tag, tag[attr*=val], tag.class, .class" - none of
  * that was true beyond the bare tag.
  *
  * A class-only selector is not a nice-to-have here: Preact's Verbum mount is
@@ -7145,8 +6768,8 @@ static JSValue qjs_getElementById(JSContext *ctx, JSValueConst this_val,
  * working loader and a working element factory.
  *
  * Grepping the whole 86,970 B bundle, its ENTIRE selector surface is four
- * literals -- `#comment_parent`, `img`, `.comment-form__verbum`, and
- * `.wp-die-message p` -- and there are no non-literal selector arguments. So
+ * literals - `#comment_parent`, `img`, `.comment-form__verbum`, and
+ * `.wp-die-message p` - and there are no non-literal selector arguments. So
  * tag / .class / #id / descendant is complete for this bundle, not a guess.
  *
  * Supported: `tag`, `*`, `.class`, `#id`, any combination (`div.a.b#c`), and the
@@ -7155,10 +6778,10 @@ static JSValue qjs_getElementById(JSContext *ctx, JSValueConst this_val,
  *
  * NOT supported: `[attr]`, `:pseudo`, `>`, `+`, `~`, `,`. Those keep the OLD
  * tag-only approximation rather than returning empty, so nothing that relies on
- * today's sloppy behaviour regresses -- but the approximation is now explicit
+ * today's sloppy behaviour regresses - but the approximation is now explicit
  * and logged instead of being an unmarked lie in a comment.
  */
-/* fixes880 — the selector TYPES moved up next to the forward declarations, so
+/* fixes880  -  the selector TYPES moved up next to the forward declarations, so
  * the element-scoped qsa (which is defined well above this point) can hold a
  * `struct qjs_sel` by value and reach the same matcher the document level uses.
  * The matcher itself stays here. */
@@ -7257,11 +6880,11 @@ static void qjs_sel_parse(const char *sel, struct qjs_sel *out)
 					started = 1;
 				}
 			} else if (*p == '[') {
-				/* fixes1090c — attribute selectors, e.g.
+				/* fixes1090c  -  attribute selectors, e.g.
 				 * img[data-lazy] or a[href^="https:"]. These were
 				 * previously swallowed whole (falling back to
 				 * tag-only), which made `img[data-lazy]` match EVERY
-				 * <img>, lazy or not -- confirmed against the real
+				 * <img>, lazy or not - confirmed against the real
 				 * hackaday slick.js bundle in the harness: it made
 				 * loadImages() run jQuery's deprecated .load(fn)
 				 * event shorthand (removed in jQuery 3.x) against
@@ -7302,7 +6925,7 @@ static void qjs_sel_parse(const char *sel, struct qjs_sel *out)
 						a->op = '=';
 						p++;
 					} else {
-						/* e.g. namespaced |= or |attr -- unknown,
+						/* e.g. namespaced |= or |attr - unknown,
 						 * drop just this attribute constraint. */
 						out->approx = 1;
 						a->op = 0;
@@ -7412,7 +7035,7 @@ static int qjs_compound_match(dom_node *node, const struct qjs_sel_compound *c)
 		}
 	}
 
-	/* fixes1090c — [attr] / [attr=val] / [attr~=val] / [attr^=val] /
+	/* fixes1090c  -  [attr] / [attr=val] / [attr~=val] / [attr^=val] /
 	 * [attr$=val] / [attr*=val]. A dropped/unparsed attribute (name
 	 * cleared by the parser) imposes no constraint, same degrade as an
 	 * overflowed class list. */
@@ -7457,7 +7080,7 @@ static int qjs_compound_match(dom_node *node, const struct qjs_sel_compound *c)
 }
 
 /* Full match: subject compound against `node`, then each preceding compound
- * against some ancestor, right-to-left (what every real engine does -- it lets
+ * against some ancestor, right-to-left (what every real engine does - it lets
  * a non-matching subject bail before any ancestor walk). */
 static int qjs_sel_match(dom_node *node, const struct qjs_sel *s)
 {
@@ -7539,7 +7162,7 @@ static JSValue qjs_querySelectorAll(JSContext *ctx, JSValueConst this_val,
 	JSValue arr;
 	int count = 0;
 
-	/* fixes886 — `char tag_lc[64]; int i;` used to be declared here, left
+	/* fixes886  -  `char tag_lc[64]; int i;` used to be declared here, left
 	 * behind when fixes871 removed the '#id' fast path that used them. They
 	 * were kept alive only by a `(void)tag_lc; (void)i;` below, and reading an
 	 * uninitialised int that way is what produced CW8's
@@ -7552,7 +7175,7 @@ static JSValue qjs_querySelectorAll(JSContext *ctx, JSValueConst this_val,
 	sel = JS_ToCString(ctx, argv[0]);
 	if (sel == NULL) return arr;
 
-	/* fixes871 (#298) — the fixes864 '#id' fast path that used to sit here is
+	/* fixes871 (#298)  -  the fixes864 '#id' fast path that used to sit here is
 	 * gone: it did strchr(sel,'#') ANYWHERE in the selector, so `#a .b` returned
 	 * #a rather than the .b inside it. Ids are just another compound qualifier
 	 * to the matcher below, which gets `#a .b`, `div#a`, and `.x#a` all right.
@@ -7560,7 +7183,7 @@ static JSValue qjs_querySelectorAll(JSContext *ctx, JSValueConst this_val,
 	 * O(1) and by far the most common call; a qsa returning a 0-or-1 array does
 	 * not justify a second, subtly-different code path.)
 	 *
-	 * fixes871 (#298) — real compound matching (tag/.class/#id/descendant).
+	 * fixes871 (#298)  -  real compound matching (tag/.class/#id/descendant).
 	 * The old code extracted only the tag, so `.comment-form__verbum` (Preact's
 	 * Verbum mount) returned EMPTY and `div.foo` matched every div. */
 	{
@@ -7588,7 +7211,7 @@ static JSValue qjs_querySelectorAll(JSContext *ctx, JSValueConst this_val,
  * FIRST matching element (with one ref held for the caller to hand to
  * qjs_wrap_element, which takes ownership) instead of collecting+wrapping the
  * whole matching set. Same document order as qjs_collect_by_tag, so it returns
- * exactly what qsa[0] would have — without the O(n) walk and the expensive
+ * exactly what qsa[0] would have  -  without the O(n) walk and the expensive
  * per-node wrapper install on every non-first match. */
 static dom_element *qjs_find_first_by_tag(dom_node *node, const char *tag_lc)
 {
@@ -7647,7 +7270,7 @@ static JSValue qjs_querySelector(JSContext *ctx, JSValueConst this_val,
 	sel = JS_ToCString(ctx, argv[0]);
 	if (sel == NULL) return JS_NULL;
 
-	/* fixes864 (#290) — '#id' had no branch at all, so "#commentform" fell
+	/* fixes864 (#290)  -  '#id' had no branch at all, so "#commentform" fell
 	 * through as a TAG NAME, matched nothing, and returned null while
 	 * getElementById('commentform') found it fine.  Silent null, no throw --
 	 * exactly how hackaday's reply box dies:
@@ -7655,7 +7278,7 @@ static JSValue qjs_querySelector(JSContext *ctx, JSValueConst this_val,
 	 * a null `e` skips the whole chain (IntersectionObserver -> loadScript ->
 	 * fetch -> injected <script>) without a single error line.
 	 *
-	 * fixes871 (#298) — that branch did `strchr(sel, '#')` ANYWHERE in the
+	 * fixes871 (#298)  -  that branch did `strchr(sel, '#')` ANYWHERE in the
 	 * selector, so `#a .b` ("the .b inside #a") returned #a: the wrong element,
 	 * confidently. Now the fast path is taken only when the parsed selector
 	 * really is a single id-bearing compound, and the result is still run
@@ -7705,7 +7328,7 @@ static void qjs_dom_init_class(JSRuntime *rt)
 }
 
 /* ====================================================================== */
-/* R1.2 -- the WANT probe: every miss on the global object, in one place  */
+/* R1.2 - the WANT probe: every miss on the global object, in one place  */
 /* ====================================================================== */
 /* A prototype-level probe above the realm global: 'X' in window, typeof  */
 /* X, window.X and a bare X reference all funnel through the exotic       */
@@ -7718,7 +7341,7 @@ static void qjs_dom_init_class(JSRuntime *rt)
 /* QuickJS semantics note: an exotic's has_property/get_property          */
 /* SHORT-CIRCUIT the engine's prototype walk (quickjs.h: "The following   */
 /* methods can be emulated with the previous ones, so they are usually    */
-/* not needed" -- only Proxy implements them upstream).  Returning 0 /    */
+/* not needed" - only Proxy implements them upstream).  Returning 0 /    */
 /* undefined unconditionally would therefore cut the global's chain off   */
 /* BEFORE Object.prototype: window.hasOwnProperty, window.toString,       */
 /* 'x' in window would all answer lies.  The handlers instead log, then   */
@@ -7727,7 +7350,7 @@ static void qjs_dom_init_class(JSRuntime *rt)
 /*                                                                        */
 /* The one divergence this causes: a BARE reference to a missing global   */
 /* (no typeof, no window.X) returns undefined instead of throwing         */
-/* ReferenceError -- the exotic's get_property return bypasses the        */
+/* ReferenceError - the exotic's get_property return bypasses the        */
 /* engine's throw_ref_error check, and the handler cannot tell a bare     */
 /* reference from a window.X read.  Verified against a no-probe baseline  */
 /* in the harness: typeof/in/window.X are unchanged; only the             */
@@ -7893,7 +7516,7 @@ static void qjs_install_want_probe(JSContext *ctx)
 	exotic = JS_NewObjectProtoClass(ctx, old_proto, g_want_class_id);
 	if (!JS_IsException(exotic)) {
 		JS_SetPrototype(ctx, global, exotic);
-		/* Gotcha #4 -- installing a prototype above the global changes
+		/* Gotcha #4 - installing a prototype above the global changes
 		 * Object.getPrototypeOf(globalThis); this line is the marker
 		 * that the probe (and that change) is live. */
 		macsurf_debug_log_writef("LIFE WANT probe installed");
@@ -7905,7 +7528,7 @@ static void qjs_install_want_probe(JSContext *ctx)
 
 /* ---- Wire getElementById/querySelectorAll on the document object ---- */
 /* ================================================================== */
-/* register_browser_globals — installs the browser runtime globals    */
+/* register_browser_globals  -  installs the browser runtime globals    */
 /* ================================================================== */
 
 static void qjs_set_func(JSContext *ctx, JSValue obj,
@@ -7950,12 +7573,12 @@ static JSValue qjs_create_element(JSContext *ctx, JSValueConst this_val,
  *     else if (!a) a = "http://www.w3.org/1999/xhtml";
  *     ...
  *     e = document.createElementNS(a, k, w.is && w)
- * -- createElement is never reached from the reconciler at all, so without this
+ * - createElement is never reached from the reconciler at all, so without this
  * a Preact app (hackaday's Verbum comment form) renders literally nothing.
  *
  * The THIRD ARGUMENT IS A TRAP: `w.is && w` is `undefined` when props.is is
  * unset, but the ENTIRE vnode props object when it is set. It must be tolerated
- * without choking. We deliberately never read argv[2] -- custom elements ("is")
+ * without choking. We deliberately never read argv[2] - custom elements ("is")
  * are not implemented, and per spec an unrecognised `is` is simply ignored.
  * Reading it (e.g. JS_ToCString on an object) is what would break.
  *
@@ -8079,7 +7702,7 @@ static JSValue qjs_get_head(JSContext *ctx, JSValueConst this_val,
 }
 
 /* Wire getElementById/querySelectorAll onto the document object */
-/* ---- fixes872 (#300) — the element PROTOTYPE, carrying the on* handlers ----
+/* ---- fixes872 (#300)  -  the element PROTOTYPE, carrying the on* handlers ----
  *
  * Preact decides an event's name from whether the property EXISTS:
  *     i = t != (t = t.replace(d,"$1")),
@@ -8089,14 +7712,14 @@ static JSValue qjs_get_head(JSContext *ctx, JSValueConst this_val,
  *     n ? (o ? n.u = o.u : (n.u = _, e.addEventListener(t, i?p:m, i)))
  *       : e.removeEventListener(t, i?p:m, i)
  * (verbatim from verbum-comments.js). For onClick: a = "onclick". If
- * `"onclick" in e` is TRUE it registers addEventListener("click") -- correct. If
+ * `"onclick" in e` is TRUE it registers addEventListener("click") - correct. If
  * FALSE it falls to `t.slice(2)` and registers addEventListener("Click"), capital
  * C, which NOTHING ever dispatches. The form then renders perfectly and silently
  * ignores every click, which is about the worst failure shape available: it looks
  * finished.
  *
  * So the entire requirement for Verbum is that `"onclick" in e` be true.
- * `el.onclick =` appears ZERO times in the whole bundle -- Preact keeps handlers
+ * `el.onclick =` appears ZERO times in the whole bundle - Preact keeps handlers
  * in its own `e.l` map and registers ONE dispatcher per type. Proper replace
  * semantics are implemented anyway, for the many sites that DO assign on*.
  *
@@ -8135,12 +7758,12 @@ static void qjs_el_install_proto(JSContext *ctx)
 		"get:function(){return (this._H&&this._H[k])||null;},"
 		"set:function(v){if(!this._H)this._H={};"
 		"this._H[k]=(typeof v==='function')?v:null;"
-		/* fixes996 -- tell libdom this node wants the event, or a real
+		/* fixes996 - tell libdom this node wants the event, or a real
 		 * click never dispatches here and _H is never read. */
 		"if(v&&this.__msRegEvent){try{this.__msRegEvent(k);}catch(e){}}"
 		"}});"
 		"})(n[i]);}"
-		/* fixes1127 -- the DOM constructor family chain, so
+		/* fixes1127 - the DOM constructor family chain, so
 		 * `el instanceof HTMLElement` / Element / Node and the per-tag
 		 * constructors answer truthfully on real wrappers.
 		 *
@@ -8150,11 +7773,11 @@ static void qjs_el_install_proto(JSContext *ctx)
 		 * Node, HTMLElement -> Element, Text -> CharacterData -> Node,
 		 * DocumentFragment -> Node).  THIS class proto p is the piece
 		 * that connects the wrapper world to that family:
-		 *   p.__proto__ = HTMLElement.prototype  -- every wrapper whose
+		 *   p.__proto__ = HTMLElement.prototype  - every wrapper whose
 		 *     chain includes p (the default for an element wrapper)
 		 *     answers instanceof HTMLElement/Element/Node.
 		 *   X.prototype.__proto__ = p for each per-tag HTML* constructor
-		 *     -- a wrapper whose own proto is HTMLDivElement.prototype
+		 *     - a wrapper whose own proto is HTMLDivElement.prototype
 		 *     keeps p (and with it the on* accessors) in its chain while
 		 *     also answering instanceof HTMLDivElement.
 		 *
@@ -8163,7 +7786,7 @@ static void qjs_el_install_proto(JSContext *ctx)
 		 * which gates its append behind `b instanceof HTMLElement`.
 		 * With the family disconnected the gate is false, the probe div
 		 * is never appended, and `b.parentNode.removeChild(b)` throws
-		 * "cannot read property 'removeChild' of null" -- blocking
+		 * "cannot read property 'removeChild' of null" - blocking
 		 * XF.Element registration and the editor. */
 		"if(typeof HTMLElement!=='undefined'&&HTMLElement.prototype){"
 			"try{p.__proto__=HTMLElement.prototype;}catch(e){}}"
@@ -8189,8 +7812,8 @@ static void qjs_el_install_proto(JSContext *ctx)
 
 	/* qjs_dom_install() runs TWICE per context (once at build, once when the
 	 * thread's real document is wired), so bail if the proto is already in
-	 * place. Re-running is not corrupting -- the second proto is identical and
-	 * per-element _H maps are unaffected -- but it would orphan the first proto
+	 * place. Re-running is not corrupting - the second proto is identical and
+	 * per-element _H maps are unaffected - but it would orphan the first proto
 	 * and leave elements wrapped in between pointing at a different (equivalent)
 	 * object, which is a confusing thing to leave lying around for no gain. */
 	proto = JS_GetClassProto(ctx, s_el_class_id);
@@ -8215,7 +7838,7 @@ static void qjs_dom_install(JSContext *ctx)
 	JSValue global = JS_GetGlobalObject(ctx);
 	JSValue doc    = JS_GetPropertyStr(ctx, global, "document");
 
-	/* fixes872 (#300) — before any element is wrapped in this realm. */
+	/* fixes872 (#300)  -  before any element is wrapped in this realm. */
 	qjs_el_install_proto(ctx);
 	if (!JS_IsUndefined(doc) && !JS_IsNull(doc)) {
 		qjs_set_func(ctx, doc, "getElementById",
@@ -8229,16 +7852,16 @@ static void qjs_dom_install(JSContext *ctx)
 		 * window). */
 		qjs_set_func(ctx, doc, "__createElementNative",
 				qjs_create_element, 1);
-		/* fixes870 (#297) — createElementNS: Preact's only element factory. */
+		/* fixes870 (#297)  -  createElementNS: Preact's only element factory. */
 		qjs_set_func(ctx, doc, "__createElementNSNative",
 				qjs_create_element_ns, 3);
-		/* fixes846 (#167 S3) — real createTextNode/createDocumentFragment,
+		/* fixes846 (#167 S3)  -  real createTextNode/createDocumentFragment,
 		 * same native-fast-path/JS-fallback shape as createElement above. */
 		qjs_set_func(ctx, doc, "__createTextNodeNative",
 				qjs_create_text_node, 1);
 		qjs_set_func(ctx, doc, "__createDocumentFragmentNative",
 				qjs_create_document_fragment, 0);
-		/* fixes879 — document.cookie as a REAL accessor pair over the
+		/* fixes879  -  document.cookie as a REAL accessor pair over the
 		 * urldb jar, replacing the `document.cookie=''` data property
 		 * installed in register_browser_globals. Defined here (rather
 		 * than in the JS block) because qjs_dom_install runs once a real
@@ -8255,7 +7878,7 @@ static void qjs_dom_install(JSContext *ctx)
 					JS_PROP_CONFIGURABLE);
 			JS_FreeAtom(ctx, atom);
 		}
-		/* fixes1006 (1b) — make `document` a REAL event target.
+		/* fixes1006 (1b)  -  make `document` a REAL event target.
 		 *
 		 * Two halves. First the registration hook the JS shims call, so
 		 * document.addEventListener / window.addEventListener reach
@@ -8267,7 +7890,7 @@ static void qjs_dom_install(JSContext *ctx)
 		 * finds it and can call its dispatchEvent.
 		 *
 		 * DO NOT mint a wrapper for the document via qjs_wrap_element /
-		 * qjs_wrap_any_node -- those read through an ELEMENT vtable and a
+		 * qjs_wrap_any_node - those read through an ELEMENT vtable and a
 		 * document is a different, smaller shape; that mismatch was the
 		 * fixes846 ASan global-buffer-overflow. Registering the object that
 		 * already exists is safe by construction because the callback only
@@ -8277,8 +7900,8 @@ static void qjs_dom_install(JSContext *ctx)
 		 * document object is a property of the realm global, so
 		 * JS_FreeContext frees it, and drain (which runs AFTER
 		 * JS_FreeContext) must never touch that value. It is also the one
-		 * entry with no finalizer -- JS_GetOpaque(v, s_el_class_id) is NULL
-		 * for it -- so nothing removes it on its own and every table walker
+		 * entry with no finalizer - JS_GetOpaque(v, s_el_class_id) is NULL
+		 * for it - so nothing removes it on its own and every table walker
 		 * must tolerate a non-element entry.
 		 *
 		 * The NODE ref is taken, because drain unrefs e->node. owner_doc is
@@ -8320,7 +7943,7 @@ static void qjs_dom_install(JSContext *ctx)
 			"toggle:function(c,f){if(f===true)this.add(c);else if(f===false)this.remove(c);else if(this.contains(c))this.remove(c);else this.add(c);return this.contains(c);},"
 			"replace:function(o,n){this.remove(o);this.add(n);},"
 			"toString:function(){return attrs['class']||'';}};};"
-			/* fixes1112 (#265) -- THE FIX, proven on hardware first (fixes1111).
+			/* fixes1112 (#265) - THE FIX, proven on hardware first (fixes1111).
 			 *
 			 * appendChild/removeChild/insertBefore below used to set
 			 * c.parentNode via a PLAIN ASSIGNMENT. On a real element wrapper
@@ -8328,7 +7951,7 @@ static void qjs_dom_install(JSContext *ctx)
 			 * assignment silently no-ops in sloppy mode and a later read of
 			 * c.parentNode falls through to the REAL native getter, which
 			 * correctly reports the child was never attached to the real DOM
-			 * -- because it never was; only mkfb's own `kids` array knew
+			 * - because it never was; only mkfb's own `kids` array knew
 			 * about it. Hardware, 68kmla.org (fixes1111's probe):
 			 * "mkfb.appendChild tag=BODY childtag=div real=1" immediately
 			 * preceded the "removeChild of null" throw every single time --
@@ -8340,24 +7963,24 @@ static void qjs_dom_install(JSContext *ctx)
 			 * ~9084-9089): Object.defineProperty, not assignment, so it
 			 * shadows the getter-only accessor on real wrappers instead of
 			 * being swallowed by it. Also correct for a fake child (another
-			 * mkfb element, which has no accessor to fight -- defineProperty
+			 * mkfb element, which has no accessor to fight - defineProperty
 			 * behaves like a normal set there). */
 			"function setPN(c,v){if(!c)return;try{"
 			"Object.defineProperty(c,'parentNode',"
 			"{value:v,writable:true,configurable:true});"
 			"}catch(e){c.parentNode=v;}}"
-			/* fixes1113 (#265) -- the SECOND throw right behind fixes1112's
+			/* fixes1113 (#265) - the SECOND throw right behind fixes1112's
 			 * fix, hardware-confirmed same session: "cannot read property
 			 * 'fake' of undefined" at preamble.min.js's cleanup helper `c()`,
 			 * which unconditionally reads `f.body.dataset.fake`. mkfb had no
-			 * `dataset` at all -- real wrapper elements get one via a
+			 * `dataset` at all - real wrapper elements get one via a
 			 * getter/proxy (~3680), but nothing gave mkfb's fake elements
 			 * the property real code assumes every element has. A plain
 			 * object is correct here (not the getter/proxy machinery real
 			 * elements need): mkfb elements are short-lived JS-only mocks,
 			 * nothing else in this file reads or writes their dataset, and
 			 * `dataset.fake` reading `undefined` (falsy) instead of throwing
-			 * is exactly right -- the fake-body-creation branch that would
+			 * is exactly right - the fake-body-creation branch that would
 			 * have set dataset.fake='true' never runs anyway (document.body
 			 * already resolves truthy via mkfb itself, short-circuiting
 			 * that branch, same shape as the fixes1112 root cause). */
@@ -8386,10 +8009,10 @@ static void qjs_dom_install(JSContext *ctx)
 			"getBoundingClientRect:function(){return{top:0,left:0,right:vw,bottom:vh,width:vw,height:vh,x:0,y:0};}};"
 			"el.className='';"
 			"Object.defineProperty(el,'classList',{get:(function(){var c=cls(el);return function(){return c;};})(),configurable:true});"
-			/* fixes1127 -- fake elements must pass the SAME instanceof gates
+			/* fixes1127 - fake elements must pass the SAME instanceof gates
 			 * real wrappers now do, or XF.createElement's
 			 * `b instanceof HTMLElement && b.appendChild(f)` skips the append
-			 * for a pre-body document.body -- the measureScrollBar
+			 * for a pre-body document.body - the measureScrollBar
 			 * removeChild-of-null throw fixes1112 fixed for the direct-append
 			 * path, hit through a different gate this time.  setPrototypeOf
 			 * (not __proto__ assignment) so the per-tag prototype's chain
@@ -8406,7 +8029,7 @@ static void qjs_dom_install(JSContext *ctx)
 			"d.createElement=function(tag){"
 			"var n=d.__createElementNative?d.__createElementNative(tag):null;"
 			"if(n)return n;return mkfb(tag);};"
-			/* fixes870 (#297) — createElementNS, Preact's only element factory.
+			/* fixes870 (#297)  -  createElementNS, Preact's only element factory.
 			 * Same native-then-fallback shape as createElement above. `opt` is
 			 * accepted and deliberately NEVER forwarded: Preact passes
 			 * `props.is && props`, i.e. undefined OR the entire vnode props
@@ -8435,12 +8058,12 @@ static void qjs_dom_install(JSContext *ctx)
 			"Object.defineProperty(d,'head',{configurable:true,"
 			"get:function(){var n=d.__getHead();if(n)return n;"
 			"if(!_fbHead)_fbHead=mkfb('head');return _fbHead;}});"
-			/* (XF-probe round, FormData crash) -- document must answer
+			/* (XF-probe round, FormData crash) - document must answer
 			 * "defaultView" (and the IE-era parentWindow) with the global
 			 * object.  editor-compiled.js (Froala v4, the 68kmla reply box)
 			 * does `this.win = "defaultView" in this.doc ?
 			 * this.doc.defaultView : this.doc.parentWindow` then reads
-			 * `a.win.FormData` in _init -- with neither getter present,
+			 * `a.win.FormData` in _init - with neither getter present,
 			 * "defaultView" in doc is false, parentWindow is undefined, and
 			 * every editor construction dies with "cannot read property
 			 * 'FormData' of undefined" (hw log: LIFE qjs timer exc at
@@ -8448,13 +8071,13 @@ static void qjs_dom_install(JSContext *ctx)
 			 * here (register_browser_globals aliases it), and FormData is
 			 * set on the global by the FormData block, so returning window
 			 * is exactly what the spec's document.defaultView must be.
-			 * (These getters run at CALL time, so `window` -- assigned
-			 * later in register_browser_globals -- is always defined.) */
+			 * (These getters run at CALL time, so `window` - assigned
+			 * later in register_browser_globals - is always defined.) */
 			"Object.defineProperty(d,'defaultView',{configurable:true,"
 			"get:function(){return (typeof window!=='undefined')?window:globalThis;}});"
 			"Object.defineProperty(d,'parentWindow',{configurable:true,"
 			"get:function(){return (typeof window!=='undefined')?window:globalThis;}});"
-			/* fixes1131b — XF LazyHandlerLoader is called with the DOCUMENT
+			/* fixes1131b  -  XF LazyHandlerLoader is called with the DOCUMENT
 			 * (nodeType=9) as its container; documents lack .matches/.closest
 			 * (element-only in the DOM spec).  No-ops: a document never matches
 			 * a CSS selector and has no ancestor. */
@@ -8487,7 +8110,7 @@ static void qjs_dom_install(JSContext *ctx)
 }
 
 /* ====================================================================
- * fixes717 (#207 diagnostic) — crypto.getRandomValues / crypto.randomUUID
+ * fixes717 (#207 diagnostic)  -  crypto.getRandomValues / crypto.randomUUID
  *
  * QuickJS ships no `crypto` global, so any script that touches it (uuid
  * libraries, cache-busting, the Cloudflare beacon captured in the
@@ -8495,18 +8118,18 @@ static void qjs_dom_install(JSContext *ctx)
  * aborts the whole script. fixes717 filled them from a clock-seeded
  * xorshift so those scripts RAN instead of crashing (DIRECTIVE #2).
  *
- * fixes1069 — that generator is gone; both entry points now draw from
+ * fixes1069  -  that generator is gone; both entry points now draw from
  * macEntropy, exactly as the fixes717 comment here prescribed ("If a page
  * ever needs real CSPRNG output, back this with macEntropy's pool
  * (OSTLS_*), which is already linked and hardware-verified").
  *
  * The upgrade matters because a weak PRNG behind crypto.* is not a missing
- * feature, it is a WRONG ANSWER — the failure mode this engine has paid for
+ * feature, it is a WRONG ANSWER  -  the failure mode this engine has paid for
  * repeatedly. A page minting a session token, a CSRF nonce or a v4 UUID got
  * bytes derived from the tick count and a stack address, with nothing to
  * feature-detect: crypto.getRandomValues was present and answered.
  *
- * macEntropy is the same pool that seeds every TLS handshake — SHA-256
+ * macEntropy is the same pool that seeds every TLS handshake  -  SHA-256
  * based, seeded from OT packet jitter, key/mouse timing and a seed file
  * persisted across launches, with a statistical self-test. OSTLS_RandomBytes
  * (fixes1069) extracts under its own domain-separation tag, so this stream
@@ -8548,7 +8171,7 @@ static JSValue qjs_crypto_get_random_values(JSContext *ctx,
 	return JS_DupValue(ctx, argv[0]);   /* spec: returns the same array */
 }
 
-/* fixes1015 — __msLife: a LIFE-prefixed log line callable from the JS shims.
+/* fixes1015  -  __msLife: a LIFE-prefixed log line callable from the JS shims.
  * console.error's WORK routing is compiled out of shipping builds, which is
  * exactly how earlier shim diagnostics went dark. This one survives the
  * failures-only gate by construction. Budgeted. */
@@ -8596,9 +8219,9 @@ static JSValue qjs_crypto_random_uuid(JSContext *ctx,
 	return JS_NewString(ctx, out);
 }
 
-/* fixes843b (#167 S1 census) — native-side visibility into the fetch()
+/* fixes843b (#167 S1 census)  -  native-side visibility into the fetch()
  * shim (macsurf_qjs.c has no real XMLHttpRequest, so fetch() always
- * synchronously resolves to {ok:false,status:0} -- see the shim below).
+ * synchronously resolves to {ok:false,status:0} - see the shim below).
  * Called from JS right after the try/catch so we can see, per call, the
  * URL requested and what the shim actually returned, WITHOUT needing a
  * real network path to exist yet. WORK-gated so it survives the
@@ -8618,11 +8241,11 @@ static JSValue qjs_work_log_fetch(JSContext *ctx, JSValueConst this_val,
 	return JS_UNDEFINED;
 }
 
-/* fixes845 (#167 S1 census cont'd) — a census round that only instruments
+/* fixes845 (#167 S1 census cont'd)  -  a census round that only instruments
  * the fetch() shim produced ZERO "WORK fetch" lines against real Facebook
  * hardware traffic, home feed included. The fetch() shim's own internal
  * "new XMLHttpRequest()" throws (no real XHR global exists), silently
- * caught -- but that means production JS calling XMLHttpRequest DIRECTLY
+ * caught - but that means production JS calling XMLHttpRequest DIRECTLY
  * (a very common pattern, often preferred over fetch() for compatibility)
  * never touches the fetch shim OR its logging at all; the throw happens
  * wherever the caller's own code is, invisible to the fetch-level census.
@@ -8644,247 +8267,6 @@ static JSValue qjs_work_log_xhr(JSContext *ctx, JSValueConst this_val,
 	return JS_UNDEFINED;
 }
 
-/* ------------------------------------------------------------------ */
-/* localStorage / sessionStorage persistence                            */
-/* ------------------------------------------------------------------ */
-
-/* localStorage/sessionStorage used to be pure in-memory JS objects, lost
- * on every navigation (the realm is rebuilt per page load). localStorage
- * now persists per origin to MacSurfData/LocalStorage/<l_<origin>_<hash>
- * .json, one file per origin, holding the JSON key-value map. The _Storage
- * shim (further down) calls __storageLoad when the realm is built and
- * __storageSave after every setItem/removeItem/clear. sessionStorage
- * deliberately stays in-memory: per spec it is per-tab, and with one
- * realm per navigation it already behaves as a fresh session on each
- * page load.
- *
- * Non-Mac builds (Linux harness / syntax check) compile the file I/O out:
- * __storageLoad returns null and __storageSave is a no-op, so the harness
- * keeps the old in-memory behaviour exactly. */
-
-#define MACSURF_STORAGE_MAX_BYTES (1024L * 1024L)
-#define MACSURF_STORAGE_ORIGIN_MAX 15   /* HFS filenames cap at 31 chars */
-
-/* FNV-1a, same family as the disk cache's URL hash. */
-static unsigned long
-macsurf_storage_hash(const char *s)
-{
-	unsigned long h = 2166136261UL;
-	while (*s != '\0') {
-		h ^= (unsigned char) *s;
-		h *= 16777619UL;
-		s++;
-	}
-	return h;
-}
-
-/* Build the HFS-safe per-origin filename for a page URL. The origin is
- * scheme://host[:non-default-port]; characters that are not filename-safe
- * are replaced, the name part is capped at MACSURF_STORAGE_ORIGIN_MAX
- * chars, and an 8-hex hash suffix keeps distinct origins from colliding
- * (the disk cache uses the same hash-for-filename pattern). Result is a
- * Str63-style Pascal string: fname[0] = length, fname[1..] = bytes. */
-static void
-macsurf_storage_fname(const char *url, unsigned char *fname)
-{
-	const char *hex = "0123456789abcdef";
-	const char *p;
-	char tmp[31];
-	int i = 2;
-	int j;
-	unsigned long h;
-
-	tmp[0] = 'l';
-	tmp[1] = '_';
-	if (url != NULL) {
-		p = url;
-		if (strncmp(p, "https://", 8) == 0) p += 8;
-		else if (strncmp(p, "http://", 7) == 0) p += 7;
-		else if ((p = strstr(p, "://")) != NULL) p += 3;
-		while (*p != '\0' && *p != '/' && *p != '?' && *p != '#' &&
-		       i < MACSURF_STORAGE_ORIGIN_MAX + 2) {
-			char c = *p;
-			if (c >= 'A' && c <= 'Z') c = (char) (c - 'A' + 'a');
-			if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
-			    c == '.' || c == '_' || c == '-') {
-				tmp[i++] = c;
-			} else {
-				tmp[i++] = '_';
-			}
-			p++;
-		}
-	}
-	tmp[i++] = '_';
-	h = macsurf_storage_hash((url != NULL) ? url : "");
-	for (j = 0; j < 8; j++) {
-		tmp[i + j] = hex[(h >> (28 - j * 4)) & 0xF];
-	}
-	i += 8;
-	tmp[i++] = '.';
-	tmp[i++] = 'j';
-	tmp[i++] = 's';
-	tmp[i++] = 'o';
-	tmp[i++] = 'n';
-	tmp[i] = '\0';
-	fname[0] = (unsigned char) i;
-	memcpy(fname + 1, tmp, (size_t) i);
-}
-
-#ifdef __MACOS9__
-
-/* Resolve (creating as needed) the per-origin storage file under
- * MacSurfData/LocalStorage/, via the shared macos9_data_dir_get() helper
- * (macos9_disk_cache.c) so every MacSurfData subfolder lives in the same
- * place. Same FSMakeFSSpec/FSpCreate pattern as the disk cache's store. */
-static OSErr
-macsurf_storage_spec(const char *url, FSSpec *out)
-{
-	OSErr err;
-	short vRef;
-	long dirID;
-	unsigned char fname[32];
-
-	err = macos9_data_dir_get("LocalStorage", &vRef, &dirID);
-	if (err != noErr) {
-		macsurf_debug_log_writef("DIAG LocalStorage dir FAIL err=%d",
-				(int)err);
-		return err;
-	}
-	macsurf_storage_fname(url, fname);
-	err = FSMakeFSSpec(vRef, dirID, fname, out);
-	if (err == fnfErr) {
-		err = FSpCreate(out, '????', '????', smSystemScript);
-		if (err != noErr) return err;
-		err = FSMakeFSSpec(vRef, dirID, fname, out);
-	}
-	return err;
-}
-
-#endif /* __MACOS9__ */
-
-/* __storageLoad() -> JSON string of the current origin's saved map, or
- * null when there is nothing persisted (or anything failed). Called by
- * the _Storage shim at realm build; returning null is the no-data case,
- * never an error. */
-static JSValue
-qjs_storage_load(JSContext *ctx, JSValueConst this_val,
-		int argc, JSValueConst *argv)
-{
-#ifdef __MACOS9__
-	struct content *c;
-	const char *url;
-	FSSpec spec;
-	short ref = 0;
-	long eof = 0;
-	long count;
-	char *buf;
-	JSValue out;
-	OSErr err;
-
-	(void) this_val; (void) argc; (void) argv;
-
-	c = qjs_get_content();
-	if (c == NULL || c->llcache == NULL) return JS_NULL;
-	url = nsurl_access(content_get_url(c));
-	if (url == NULL) return JS_NULL;
-
-	err = macsurf_storage_spec(url, &spec);
-	if (err != noErr) return JS_NULL;
-	if (FSpOpenDF(&spec, fsRdPerm, &ref) != noErr) return JS_NULL;
-	if (GetEOF(ref, &eof) != noErr || eof <= 0 ||
-	    eof > MACSURF_STORAGE_MAX_BYTES) {
-		FSClose(ref);
-		return JS_NULL;
-	}
-	count = eof;
-	buf = (char *) malloc((size_t) count + 1);
-	if (buf == NULL) {
-		FSClose(ref);
-		return JS_NULL;
-	}
-	if (FSRead(ref, &count, buf) != noErr || count != eof) {
-		free(buf);
-		FSClose(ref);
-		return JS_NULL;
-	}
-	FSClose(ref);
-	buf[count] = '\0';
-	out = JS_NewStringLen(ctx, buf, (size_t) count);
-	free(buf);
-	return out;
-#else
-	(void) ctx; (void) this_val; (void) argc; (void) argv;
-	return JS_NULL;
-#endif
-}
-
-/* __storageSave(json) — rewrite the current origin's storage file with the
- * given JSON. Overwrite-from-start + SetEOF truncation, so a shorter map
- * never leaves stale trailing bytes that would break JSON.parse on load. */
-static JSValue
-qjs_storage_save(JSContext *ctx, JSValueConst this_val,
-		int argc, JSValueConst *argv)
-{
-#ifdef __MACOS9__
-	struct content *c;
-	const char *url;
-	const char *s;
-	FSSpec spec;
-	short ref = 0;
-	long count;
-	OSErr err;
-
-	(void) this_val;
-
-	if (argc < 1 || !JS_IsString(argv[0])) return JS_UNDEFINED;
-	s = JS_ToCString(ctx, argv[0]);
-	if (s == NULL) return JS_UNDEFINED;
-
-	c = qjs_get_content();
-	if (c == NULL || c->llcache == NULL) {
-		JS_FreeCString(ctx, s);
-		return JS_UNDEFINED;
-	}
-	url = nsurl_access(content_get_url(c));
-	if (url == NULL) {
-		JS_FreeCString(ctx, s);
-		return JS_UNDEFINED;
-	}
-
-	count = (long) strlen(s);
-	if (count > MACSURF_STORAGE_MAX_BYTES) {
-		/* over the per-file cap: drop the write, like the cache's cap. */
-		JS_FreeCString(ctx, s);
-		return JS_UNDEFINED;
-	}
-
-	err = macsurf_storage_spec(url, &spec);
-	if (err != noErr) {
-		JS_FreeCString(ctx, s);
-		return JS_UNDEFINED;
-	}
-	if (FSpOpenDF(&spec, fsRdWrPerm, &ref) != noErr) {
-		JS_FreeCString(ctx, s);
-		return JS_UNDEFINED;
-	}
-	SetFPos(ref, fsFromStart, 0);
-	if (count > 0) {
-		if (FSWrite(ref, &count, s) != noErr) {
-			FSClose(ref);
-			JS_FreeCString(ctx, s);
-			return JS_UNDEFINED;
-		}
-	}
-	(void) SetEOF(ref, count);
-	FSClose(ref);
-	JS_FreeCString(ctx, s);
-	return JS_UNDEFINED;
-#else
-	(void) ctx; (void) this_val; (void) argc; (void) argv;
-	return JS_UNDEFINED;
-#endif
-}
-
 static void register_browser_globals(JSContext *ctx)
 {
 	JSValue global = JS_GetGlobalObject(ctx);
@@ -8894,7 +8276,7 @@ static void register_browser_globals(JSContext *ctx)
 	JSValue nav_obj;
 	JSValue crypto_obj;
 
-	/* window / self / globalThis aliases — scripts check 'typeof window' */
+	/* window / self / globalThis aliases  -  scripts check 'typeof window' */
 	JS_SetPropertyStr(ctx, global, "window",     JS_DupValue(ctx, global));
 	JS_SetPropertyStr(ctx, global, "self",       JS_DupValue(ctx, global));
 	JS_SetPropertyStr(ctx, global, "globalThis", JS_DupValue(ctx, global));
@@ -8908,16 +8290,16 @@ static void register_browser_globals(JSContext *ctx)
 	qjs_set_func(ctx, console, "debug", qjs_console_debug, 1);
 	JS_SetPropertyStr(ctx, global, "console", console);
 
-	/* fixes843b (#167 S1 census) — see qjs_work_log_fetch's comment. */
+	/* fixes843b (#167 S1 census)  -  see qjs_work_log_fetch's comment. */
 	qjs_set_func(ctx, global, "__workLogFetch", qjs_work_log_fetch, 3);
-	/* fixes845 — see qjs_work_log_xhr's comment. */
+	/* fixes845  -  see qjs_work_log_xhr's comment. */
 	qjs_set_func(ctx, global, "__workLogXHR", qjs_work_log_xhr, 3);
 
-	/* fixes846 (#167 S3) — native XHR/fetch backend over fetch_start().
+	/* fixes846 (#167 S3)  -  native XHR/fetch backend over fetch_start().
 	 * See macos9_js_fetch.c for the full design. */
 	macos9_js_fetch_install(ctx, global);
 
-	/* --- crypto (getRandomValues / randomUUID) — fixes717 --- */
+	/* --- crypto (getRandomValues / randomUUID)  -  fixes717 --- */
 	crypto_obj = JS_NewObject(ctx);
 	qjs_set_func(ctx, crypto_obj, "getRandomValues",
 		qjs_crypto_get_random_values, 1);
@@ -8927,7 +8309,7 @@ static void register_browser_globals(JSContext *ctx)
 	/* --- monotonic clock for performance.now() --- */
 	qjs_set_func(ctx, global, "__macsurf_monotonic_ms", qjs_monotonic_ms, 0);
 
-	/* fixes1011 (Phase 3) — the viewport/scroll natives the window geometry
+	/* fixes1011 (Phase 3)  -  the viewport/scroll natives the window geometry
 	 * accessors above are built on. Installed before the eval blocks that
 	 * reference them. */
 	qjs_set_func(ctx, global, "__viewportW", qjs_js_viewport_w, 0);
@@ -8937,11 +8319,6 @@ static void register_browser_globals(JSContext *ctx)
 	qjs_set_func(ctx, global, "__scrollTo",  qjs_js_scroll_to, 2);
 	qjs_set_func(ctx, global, "__gcsNative", qjs_get_computed_style, 1);
 	qjs_set_func(ctx, global, "__msLife",    qjs_ms_life, 1); /* fixes1015 */
-	/* localStorage persistence backend, consumed by the _Storage shim
-	 * below (register_browser_globals runs per navigation, so the saved
-	 * map is reloaded on every realm build). */
-	qjs_set_func(ctx, global, "__storageLoad", qjs_storage_load, 0);
-	qjs_set_func(ctx, global, "__storageSave", qjs_storage_save, 1);
 
 	/* --- alert / confirm / prompt --- */
 	qjs_set_func(ctx, global, "alert",   qjs_alert,   1);
@@ -8955,14 +8332,14 @@ static void register_browser_globals(JSContext *ctx)
 	qjs_set_func(ctx, global, "clearInterval", qjs_cleartimeout, 1);
 
 	/* --- requestAnimationFrame via setTimeout(fn, 16) --- */
-	/* fixes876 — pass the DOMHighResTimeStamp every rAF callback expects.
+	/* fixes876  -  pass the DOMHighResTimeStamp every rAF callback expects.
 	 * Previously `setTimeout(fn,16)` fired fn with NO arguments, so the
 	 * near-universal `function(t){ var dt = t - last; ... }` idiom saw
 	 * `undefined`, made `dt` NaN, and every animation loop driven off a delta
 	 * silently did nothing (or jumped).
 	 *
 	 * The timestamp MUST be read inside the callback, at FIRE time. Passing it
-	 * as a setTimeout extra arg would freeze it at REGISTRATION time -- each
+	 * as a setTimeout extra arg would freeze it at REGISTRATION time - each
 	 * frame would report ~16ms stale, which is exactly the sort of
 	 * plausible-but-wrong value that is worse than the missing one.
 	 *
@@ -9077,7 +8454,7 @@ static void register_browser_globals(JSContext *ctx)
 			"document.body=document.body||null;"
 			"document.head=document.head||null;"
 			"document.documentElement=document.documentElement||null;"
-			/* fixes855 (#284) — document.nodeType MUST be 9
+			/* fixes855 (#284)  -  document.nodeType MUST be 9
 			 * (DOCUMENT_NODE).  Elements get nodeType 1, text 3 and
 			 * fragments 11 (qjs_wrap_*), but the document itself never got
 			 * one, so `document.nodeType` read `undefined`.  jQuery's
@@ -9085,9 +8462,9 @@ static void register_browser_globals(JSContext *ctx)
 			 *   function V(e){var t,n=e?e.ownerDocument||e:ye;
 			 *     return n!=T && 9===n.nodeType && n.documentElement &&
 			 *            (r=(T=n).documentElement, ...);}
-			 * `9===undefined` is false, so it short-circuits and T -- the
+			 * `9===undefined` is false, so it short-circuits and T - the
 			 * document handle every later `T.createElement(...)` support
-			 * probe uses -- is NEVER assigned.  jQuery then dies on its own
+			 * probe uses - is NEVER assigned.  jQuery then dies on its own
 			 * first assert with "TypeError: cannot read property
 			 * 'createElement' of undefined", taking every dependent bundle
 			 * with it ("ReferenceError: jQuery is not defined").
@@ -9098,11 +8475,11 @@ static void register_browser_globals(JSContext *ctx)
 			 * always returns a node, so nodeType was the only miss. */
 			"document.nodeType=9;"
 			"document.nodeName='#document';"
-			/* fixes881 (Phase 0.7) — 'loading', not 'complete'.
+			/* fixes881 (Phase 0.7)  -  'loading', not 'complete'.
 			 *
 			 * This is realm setup: it runs while the page is still parsing, so
 			 * 'complete' was simply false. It also never became anything else
-			 * -- js_fire_dom_ready set 'complete' again, and 'loading' and
+			 * - js_fire_dom_ready set 'complete' again, and 'loading' and
 			 * 'interactive' appeared nowhere in the file.
 			 *
 			 * The cost was not cosmetic. The near-universal init guard
@@ -9110,33 +8487,33 @@ static void register_browser_globals(JSContext *ctx)
 			 *         addEventListener('DOMContentLoaded', init);
 			 *     else init();
 			 * always took the else branch and ran init() synchronously during
-			 * parse, BEFORE the box tree existed -- so scripts that carefully
+			 * parse, BEFORE the box tree existed - so scripts that carefully
 			 * wait for the DOM got the one thing they were avoiding. Now:
 			 * 'loading' here -> 'interactive' at js_fire_dom_ready ->
 			 * 'complete' at js_fire_window_load. */
 			"document.readyState='loading';"
-			/* fixes879 — `document.cookie=''` used to live here as a plain
+			/* fixes879  -  `document.cookie=''` used to live here as a plain
 			 * data property: writes stuck to the string for the session,
 			 * reached no jar, and every navigation started empty. It is now a
 			 * real accessor pair over urldb, installed by qjs_dom_install once
 			 * a document (and therefore a URL to key the jar by) exists. This
 			 * fallback keeps the property defined for the pre-document window,
-			 * where there is no URL and no correct answer but '' -- but it must
+			 * where there is no URL and no correct answer but '' - but it must
 			 * NOT clobber the real accessor, so only define it if absent. */
 			"if(!('cookie' in document))document.cookie='';"
 			"document.URL=document.URL||(typeof location!=='undefined'?location.href:'');"
 			"document.referrer='';"
 			"document.domain='';"
-			/* fixes846 (#167 S3) — real native-backed nodes, same
+			/* fixes846 (#167 S3)  -  real native-backed nodes, same
 			 * native-fast-path/pre-document-fallback shape as createElement
 			 * (qjs_dom_install installs __createTextNodeNative /
 			 * __createDocumentFragmentNative once a real document is
 			 * wired; createDocumentFragment itself is defined there too,
-			 * so it is NOT redefined here -- an earlier unconditional
+			 * so it is NOT redefined here - an earlier unconditional
 			 * override at this exact spot was dead code, always clobbered
 			 * by qjs_dom_install running right after this function, but
 			 * misleadingly suggested a no-op fragment was live; removed). */
-			/* fixes1002 (#264) — document.implementation.
+			/* fixes1002 (#264)  -  document.implementation.
 			 *
 			 * It did not exist AT ALL, and jQuery 3.x reads
 			 * `document.implementation.createHTMLDocument` during its
@@ -9154,7 +8531,7 @@ static void register_browser_globals(JSContext *ctx)
 			 * touches (documentElement / head / body / createElement)
 			 * is enough to clear init; it is not a real second
 			 * document, and it is honest about that rather than
-			 * pretending -- anything that tries to PARSE into it gets
+			 * pretending - anything that tries to PARSE into it gets
 			 * an empty document rather than wrong content.
 			 *
 			 * hasFeature() answers true: it is the legacy probe and
@@ -9186,7 +8563,7 @@ static void register_browser_globals(JSContext *ctx)
 				"if(n)return n;"
 				"return {nodeValue:String(t),textContent:String(t),"
 					"appendChild:function(){return null;},data:String(t)};};"
-			/* fixes873 (#301) — getElementsByTagName/ClassName were stubs that
+			/* fixes873 (#301)  -  getElementsByTagName/ClassName were stubs that
 			 * returned [] FOREVER. That is what makes webpack's runtime throw
 			 * "Automatic publicPath is not supported in this browser" and take
 			 * the whole bundle down with it:
@@ -9200,13 +8577,13 @@ static void register_browser_globals(JSContext *ctx)
 			 * webpack-built bundle dies before its first line of real code.
 			 *
 			 * querySelectorAll now does real compound matching (fixes871), and a
-			 * bare tag / bare .class IS a compound selector -- so these are the
+			 * bare tag / bare .class IS a compound selector - so these are the
 			 * same query. Delegating keeps ONE matcher instead of a second
 			 * subtly-different walker ('*' included, since the matcher handles
 			 * it). The live-HTMLCollection semantics of the real DOM are not
 			 * reproduced; a static array is what every caller here actually
 			 * uses. */
-			/* fixes1007 — document.write / writeln.
+			/* fixes1007  -  document.write / writeln.
 			 *
 			 * Did not exist AT ALL (zero occurrences in this file), and
 			 * on hardware it is the TOP remaining JS exception on a real
@@ -9223,7 +8600,7 @@ static void register_browser_globals(JSContext *ctx)
 			 * written markup goes through the REAL fragment parser that
 			 * innerHTML= already uses (fixes846,
 			 * dom_hubbub_fragment_parser_create) and the resulting nodes
-			 * are inserted at the current insertion point -- immediately
+			 * are inserted at the current insertion point - immediately
 			 * after document.currentScript, which is where a parser would
 			 * have put them.
 			 *
@@ -9234,7 +8611,7 @@ static void register_browser_globals(JSContext *ctx)
 			 * script above is writing a script tag.
 			 *
 			 * currentScript is null for anything deferred or async, which
-			 * is not an edge case -- fall back to <body>. Children are
+			 * is not an edge case - fall back to <body>. Children are
 			 * collected BEFORE any move, because moving mutates the
 			 * sibling chain being walked.
 			 *
@@ -9277,7 +8654,7 @@ static void register_browser_globals(JSContext *ctx)
 			"document.getElementsByClassName=function(c){"
 				"return document.querySelectorAll('.'+String(c).split(/\\s+/)"
 					".filter(function(x){return !!x;}).join('.'));};"
-			/* fixes1008 (2b) — was a hardcoded [] , which is a WRONG
+			/* fixes1008 (2b)  -  was a hardcoded [] , which is a WRONG
 			 * ANSWER rather than a missing method: a caller gets an
 			 * empty list and concludes the elements do not exist. Radio
 			 * groups and legacy form code use it constantly. Delegates
@@ -9288,12 +8665,12 @@ static void register_browser_globals(JSContext *ctx)
 					"String(n)+'\"]');};"
 			"document.createComment=function(t){"
 				"return document.createTextNode('');};"
-			/* fixes1010 — the same universals on `document`.
+			/* fixes1010  -  the same universals on `document`.
 			 *
 			 * jQuery's isAttached is ce.contains(e.ownerDocument, e), and
 			 * its contains() does `a.contains ? a.contains(bup) : ...` with
 			 * a = the document. The guard means a missing document.contains
-			 * does not throw -- it silently answers "not attached", which is
+			 * does not throw - it silently answers "not attached", which is
 			 * worse: jQuery then treats every element as detached and skips
 			 * work it should do. Delegate to documentElement, which has the
 			 * real native contains. */
@@ -9308,7 +8685,7 @@ static void register_browser_globals(JSContext *ctx)
 			"document.ownerDocument=null;"
 			"document.querySelectorAll=document.querySelectorAll||"
 				"function(){return [];};"
-			/* fixes1006 (1b) — tell libdom, or a real click never
+			/* fixes1006 (1b)  -  tell libdom, or a real click never
 			 * arrives. The _listeners registry is unchanged; the
 			 * missing half was the registration. __msRegDocEvent is
 			 * the native hook installed by qjs_dom_install (absent
@@ -9343,17 +8720,17 @@ static void register_browser_globals(JSContext *ctx)
 					"if(L)L.forEach(function(f){try{f(ev);}catch(e){}});return true;};"
 		"}");
 
-	/* fixes879 — the "navigator extended shims" block that used to sit HERE was
+	/* fixes879  -  the "navigator extended shims" block that used to sit HERE was
 	 * DEAD CODE, every line of it. It is guarded by
 	 *     if (typeof navigator !== 'undefined') { ... }
 	 * but `navigator` is not created until the JS_NewObject/JS_SetPropertyStr
 	 * pair further down this same function, so the guard was always false and
-	 * the whole block was skipped -- silently, since a skipped if is not an
+	 * the whole block was skipped - silently, since a skipped if is not an
 	 * error. Probed at runtime under the harness: cookieEnabled, onLine and
 	 * vendor all read back `undefined`, not the values written here.
 	 *
 	 * That is also why cookieEnabled was never actually `false` as the audit
-	 * recorded -- it simply never existed. Same practical result (undefined is
+	 * recorded - it simply never existed. Same practical result (undefined is
 	 * falsy, so sites concluded "cookies disabled"), different cause, and it
 	 * would have defeated the fix if taken at face value.
 	 *
@@ -9363,13 +8740,13 @@ static void register_browser_globals(JSContext *ctx)
 	 * MutationObserver / ResizeObserver / PerformanceObserver stay no-ops
 	 * (firing them risks feedback loops with our own reconvert/relayout).
 	 * IntersectionObserver is DIFFERENT and must actually fire: modern
-	 * feeds (Facebook) gate their content load on it -- they observe the
+	 * feeds (Facebook) gate their content load on it - they observe the
 	 * feed container and only request/reveal content when the observer
 	 * reports it intersecting the viewport. A no-op observer means the
 	 * "you're visible, load now" signal never arrives, so the feed JS runs
 	 * (confirmed on hardware: ~550KB executed) but issues ZERO fetch/XHR
 	 * and never hydrates. fixes853 (#167): give IntersectionObserver a
-	 * real-enough implementation -- observe() asynchronously delivers a
+	 * real-enough implementation - observe() asynchronously delivers a
 	 * single isIntersecting=true entry for the target (a pragmatic
 	 * "visible on layout" first cut; geometry-accurate viewport testing is
 	 * a later refinement), which is the trigger that lets the feed request
@@ -9377,7 +8754,7 @@ static void register_browser_globals(JSContext *ctx)
 	 * real timer arena (setTimeout), asynchronously, exactly as a browser
 	 * delivers observer records. */
 	macsurf_qjs__safe_eval(ctx,
-		/* fixes1015 — MutationObserver/ResizeObserver are NO-OPS; a page
+		/* fixes1015  -  MutationObserver/ResizeObserver are NO-OPS; a page
 		 * that waits on one waits forever. Log each observe() so that
 		 * failure mode is visible instead of silent. */
 		"function _Observer(cb){this._cb=cb;}"
@@ -9428,7 +8805,7 @@ static void register_browser_globals(JSContext *ctx)
 
 	/* --- window event helpers, scroll, getComputedStyle, matchMedia --- */
 	macsurf_qjs__safe_eval(ctx,
-		/* fixes1011 — these were no-ops, so every "back to top" button and
+		/* fixes1011  -  these were no-ops, so every "back to top" button and
 		 * every scroll restoration silently did nothing. Accepts both the
 		 * (x, y) and the ({top, left, behavior}) forms; `behavior:'smooth'`
 		 * is honoured as an instant jump, which is the honest degradation. */
@@ -9444,7 +8821,7 @@ static void register_browser_globals(JSContext *ctx)
 				"(__scrollY()+((dy|0)||0))|0);};"
 		"this.scroll=this.scrollTo;"
 		"this._winListeners={};"
-		/* fixes1006 (1b) — window has no DOM node, so register against the
+		/* fixes1006 (1b)  -  window has no DOM node, so register against the
 		 * DOCUMENT node and let qjs_dom_listener_cb fan out to
 		 * _winListeners with the right capture/bubble ordering. Without
 		 * this, window click/scroll/keydown handlers never fired from real
@@ -9458,7 +8835,7 @@ static void register_browser_globals(JSContext *ctx)
 		"this.removeEventListener=function(t,fn){"
 			"var arr=this._winListeners[t];if(!arr)return;"
 			"for(var i=0;i<arr.length;i++)if(arr[i]===fn){arr.splice(i,1);return;}};"
-		/* fixes863 (#289 probe) — this used to be a bare
+		/* fixes863 (#289 probe)  -  this used to be a bare
 		 *     if(arr)arr.forEach(function(f){try{f(ev);}catch(e){}});
 		 * so a window listener that THREW was swallowed in total silence,
 		 * and js_fire_dom_ready wraps the whole dispatch in a second bare
@@ -9469,11 +8846,11 @@ static void register_browser_globals(JSContext *ctx)
 		 * loadScript -> fetch.  We have proven the listener is registered
 		 * BEFORE the event fires ([11121] loader runs, [11123] domready), that
 		 * the iframe has its own heap (pump heaps=2) and that it IS pumped
-		 * (fixes861) -- yet fetch never runs.  So either the handler throws
+		 * (fixes861) - yet fetch never runs.  So either the handler throws
 		 * (invisible until now) or it runs and silently does nothing.
 		 * `n=` separates those: n=0 means the loader never registered here at
 		 * all; n>=1 with no THREW line means it ran clean and bailed on its
-		 * own `if(e)` -- i.e. querySelector('#commentform') returned null.
+		 * own `if(e)` - i.e. querySelector('#commentform') returned null.
 		 * console.error routes to MS_LOG, and the "WORK " in the text is what
 		 * gets it past the failures-only gate. */
 		"this.dispatchEvent=function(ev){"
@@ -9484,7 +8861,7 @@ static void register_browser_globals(JSContext *ctx)
 				"try{console.error('WORK winevt THREW type='+t+': '+"
 					"((e&&e.message)||e));}catch(_){}"
 			"}});return true;};"
-		/* fixes1011 — the REAL getComputedStyle. __gcsNative reads the
+		/* fixes1011  -  the REAL getComputedStyle. __gcsNative reads the
 		 * cascade + box (installed in qjs_dom_install); this wrapper adds
 		 * getPropertyValue with dash-to-camel mapping and falls back to the
 		 * inline style for anything the native side does not cover, which is
@@ -9503,10 +8880,10 @@ static void register_browser_globals(JSContext *ctx)
 				"inl.setProperty(p,v);};"
 			"o.cssText=(inl&&inl.cssText)||'';"
 			"return o;};"
-		/* fixes1015 — ours answers matches:false unconditionally, so any
+		/* fixes1015  -  ours answers matches:false unconditionally, so any
 		 * rendering that branches on a media query silently takes the
 		 * false path. Log which queries the page actually asked. */
-		/* fixes1114b (#265) — REAL matchMedia evaluator, not hardcoded false.
+		/* fixes1114b (#265)  -  REAL matchMedia evaluator, not hardcoded false.
 		 *
 		 * The old stub answered {matches:false} to EVERY query, which is a
 		 * lying answer: a page's (min-width:800px) check got `false` and the
@@ -9547,7 +8924,7 @@ static void register_browser_globals(JSContext *ctx)
 				/* prefers-reduced-motion */
 				"if(s==='(prefers-reduced-motion:reduce)')return m;"
 				"if(s==='(prefers-reduced-motion:no-preference)'){m.matches=true;return m;}"
-				/* unknown — log so we can add it */
+				/* unknown  -  log so we can add it */
 				"try{__msLife('WANT matchMedia \"'+q+'\" (unknown, answered false)');}catch(e){}"
 			"}catch(e){"
 				"try{__msLife('WANT matchMedia \"'+q+'\" (parse error)');}catch(e2){}"
@@ -9555,7 +8932,7 @@ static void register_browser_globals(JSContext *ctx)
 			"return m;};"
 		"this.requestIdleCallback=function(fn){return setTimeout(fn,0);};"
 		"this.cancelIdleCallback=function(id){clearTimeout(id);};"
-		/* fixes1011 — LIVE viewport + scroll, not frozen constants.
+		/* fixes1011  -  LIVE viewport + scroll, not frozen constants.
 		 *
 		 * innerWidth/innerHeight were hardcoded 949x613 and scrollX/scrollY
 		 * were permanently 0, so responsive-JS branches always took the same
@@ -9563,7 +8940,7 @@ static void register_browser_globals(JSContext *ctx)
 		 * the header" test was permanently false. These are accessors now,
 		 * reading the front window each time.
 		 *
-		 * scrollTo/scrollBy really scroll -- they were no-ops, so every
+		 * scrollTo/scrollBy really scroll - they were no-ops, so every
 		 * "back to top" control and every scroll-restoration did nothing. */
 		"Object.defineProperty(this,'innerWidth',{configurable:true,"
 			"get:function(){return __viewportW();}});"
@@ -9643,7 +9020,7 @@ static void register_browser_globals(JSContext *ctx)
 	 * querySelector hardcoded to null. Any caller doing the ordinary thing --
 	 *     const t = new DOMParser().parseFromString(s, "text/html");
 	 *     return "" === t.documentElement.textContent.trim() && !t.querySelector("img")
-	 * (verbum-comments.js:1:54379, its "is this comment empty" check) -- throws
+	 * (verbum-comments.js:1:54379, its "is this comment empty" check) - throws
 	 * "cannot read property 'textContent' of null" instead. That one runs at
 	 * MODULE INIT, inside a Preact computed signal, so it kills the bundle on
 	 * every load, not just on submit.
@@ -9651,7 +9028,7 @@ static void register_browser_globals(JSContext *ctx)
 	 * A real parse is cheap now: `innerHTML =` became genuinely real in fixes846
 	 * (dom_hubbub_fragment_parser_create), so parsing into a detached <html>
 	 * element gives a real subtree with real textContent and real element-scoped
-	 * querySelector -- no new native code, no second parser.
+	 * querySelector - no new native code, no second parser.
 	 *
 	 * Not a full Document: no getElementById index, no live collections. It is a
 	 * DOM subtree wearing a document-shaped hat, which is what parseFromString
@@ -9689,7 +9066,7 @@ static void register_browser_globals(JSContext *ctx)
 	 * enough for XenForo's editor-compiled.js attach path and any script
 	 * that just constructs/populates/reads one. value may be a string or
 	 * a Blob/File-like object (see the capability-detection block further
-	 * down -- Blob/File already exist there). filename is only meaningful
+	 * down - Blob/File already exist there). filename is only meaningful
 	 * when value is a Blob/File; append/set's 3rd arg lets a caller name
 	 * it explicitly. Iteration order matches insertion order (spec). */
 	macsurf_qjs__safe_eval(ctx,
@@ -9756,16 +9133,16 @@ static void register_browser_globals(JSContext *ctx)
 
 	/* --- XMLHttpRequest (fixes846, #167 S3) --- *
 	 * REAL, async, backed by macos9_js_fetch.c's native slot arena over
-	 * fetch_start() -- the S1 census (fixes843b/845) proved real Facebook
+	 * fetch_start() - the S1 census (fixes843b/845) proved real Facebook
 	 * JS never received a single byte of real response data through the
 	 * old shim (fixes845), which only ever logged the attempt and failed
 	 * safe with status 0. send() now hands off to __xhrNativeSend(), which
 	 * starts a real fetch and returns a slot id; the C side calls
 	 * __onNativeComplete() (below) once the response is in, from a
-	 * macos9_schedule()-deferred tick -- never synchronously from send()
+	 * macos9_schedule()-deferred tick - never synchronously from send()
 	 * itself, so this matches every other async completion in the engine
 	 * (setTimeout, the reconvert debounce). A synchronous open(...,false)
-	 * is accepted (per spec) but still delivered asynchronously -- true
+	 * is accepted (per spec) but still delivered asynchronously - true
 	 * blocking XHR would need a nested pump loop this cooperative
 	 * scheduler doesn't have, and no real site actually requires it work
 	 * to receive data, only that it doesn't hang or throw. */
@@ -9831,7 +9208,7 @@ static void register_browser_globals(JSContext *ctx)
 			"else{this._fire('load');}"
 			"this._fire('loadend');"
 		"};"
-		/* FormData bodies are not native-fetch-layer aware -- __xhrNativeSend
+		/* FormData bodies are not native-fetch-layer aware - __xhrNativeSend
 		 * just JS_ToCString()s whatever it is handed. Encode multipart/form-data
 		 * here in JS (spec boundary format) rather than teaching the native
 		 * layer a new body type; a plain string/number/etc body passes through
@@ -9893,7 +9270,7 @@ static void register_browser_globals(JSContext *ctx)
 	 *   LIFE WANT Request []
 	 *   LIFE js unhandled rejection: TypeError: not a function
 	 *
-	 * The click routing was never broken -- `prevented=1` means XenForo's
+	 * The click routing was never broken - `prevented=1` means XenForo's
 	 * delegated handler matched the node and CLAIMED the click. It then did
 	 * `new Request(...)` to load the overlay, `Request` did not exist, the
 	 * Promise rejected, and the overlay silently never opened. One missing
@@ -10052,7 +9429,7 @@ static void register_browser_globals(JSContext *ctx)
 							"__workLogFetch(String(url),ok,xhr.status);"
 						"if(xhr.status===0){reject(new Error('Network error'));return;}"
 						"var respText=xhr.responseText||'';"
-						/* fixes1140 — a real Response instance, so
+						/* fixes1140  -  a real Response instance, so
 						 * `r instanceof Response` holds and `r.headers`
 						 * is a real Headers. Response headers are parsed
 						 * from getAllResponseHeaders() when available. */
@@ -10082,47 +9459,19 @@ static void register_browser_globals(JSContext *ctx)
 			"});"
 		"};");
 
-	/* --- localStorage / sessionStorage ---
-	 * localStorage persists per origin: the saved JSON map is loaded via
-	 * __storageLoad at realm build and rewritten via __storageSave after
-	 * every mutation (setItem/removeItem/clear). sessionStorage stays
-	 * in-memory on purpose (per-spec it is per-tab, and with one realm per
-	 * navigation it reads as a fresh session on each page load). Non-Mac
-	 * builds have no __storage* natives, so the harness keeps the old
-	 * in-memory behaviour exactly. */
+	/* --- localStorage / sessionStorage --- */
 	macsurf_qjs__safe_eval(ctx,
 		"function _Storage(){this._m={};}"
 		"_Storage.prototype.getItem=function(k){"
 			"return k in this._m?this._m[k]:null;};"
-		"_Storage.prototype.setItem=function(k,v){"
-			"this._m[k]=String(v);this._save();};"
-		"_Storage.prototype.removeItem=function(k){"
-			"delete this._m[k];this._save();};"
-		"_Storage.prototype.clear=function(){"
-			"this._m={};this._save();};"
-		"_Storage.prototype._save=function(){"
-			"if(!this._persist||typeof __storageSave!=='function')return;"
-			"try{__storageSave(JSON.stringify(this._m));}catch(e){}"
-		"};"
+		"_Storage.prototype.setItem=function(k,v){this._m[k]=String(v);};"
+		"_Storage.prototype.removeItem=function(k){delete this._m[k];};"
+		"_Storage.prototype.clear=function(){this._m={};};"
 		"_Storage.prototype.key=function(i){"
 			"var ks=Object.keys(this._m);return ks[i]||null;};"
 		"Object.defineProperty(_Storage.prototype,'length',{"
 			"get:function(){return Object.keys(this._m).length;}});"
 		"this.localStorage=new _Storage();"
-		"this.localStorage._persist=true;"
-		"if(typeof __storageLoad==='function'){"
-			"try{"
-				"var _ld=__storageLoad();"
-				"if(_ld){"
-					"var _o=JSON.parse(_ld);"
-					"var _k;"
-					"for(_k in _o){"
-						"if(Object.prototype.hasOwnProperty.call(_o,_k))"
-							"this.localStorage._m[_k]=_o[_k];"
-					"}"
-				"}"
-			"}catch(e){}"
-		"}"
 		"this.sessionStorage=new _Storage();");
 
 	/* --- URL / URLSearchParams --- */
@@ -10248,14 +9597,14 @@ static void register_browser_globals(JSContext *ctx)
 	JS_SetPropertyStr(ctx, global, "navigator", nav_obj);
 
 	/* --- navigator extended shims ---
-	 * fixes879 — MUST stay after the JS_SetPropertyStr(global,"navigator")
+	 * fixes879  -  MUST stay after the JS_SetPropertyStr(global,"navigator")
 	 * above. This block lived earlier in the function, where its own
 	 * `typeof navigator !== 'undefined'` guard was always false because
 	 * navigator did not exist yet, so none of it ever ran.
 	 *
 	 * cookieEnabled is now TRUE. It read `undefined` (falsy) before, which was
 	 * accurate while document.cookie was a dead string, but the jar is real,
-	 * persistent and now reachable from script -- and sites gate their login
+	 * persistent and now reachable from script - and sites gate their login
 	 * flow on this exact flag, showing "please enable cookies" instead of the
 	 * page. Leaving it falsy would waste most of the value of wiring
 	 * document.cookie up at all. */
@@ -10272,18 +9621,7 @@ static void register_browser_globals(JSContext *ctx)
 			"navigator.product='MacSurf';"
 			"navigator.productSub='20260531';"
 			"navigator.javaEnabled=function(){return false;};"
-			"navigator.sendBeacon=function(url,data){"
-				"if(typeof url==='undefined'||url===null)return false;"
-				"var d='';"
-				"if(typeof data!=='undefined'&&data!==null){"
-					"try{d=String(data);}catch(e){return false;}"
-				"}"
-				"if(typeof __beaconSend==='function'){"
-					"try{return !!__beaconSend(String(url),d);}"
-					"catch(e){return false;}"
-				"}"
-				"return false;"
-			"};"
+			"navigator.sendBeacon=function(){return false;};"
 		"}");
 
 	/* --- ES6+ polyfills (Array.from, Set, Map, Image, FB module system) --- */
@@ -10345,20 +9683,7 @@ static void register_browser_globals(JSContext *ctx)
 		"MImage.prototype.addEventListener=function(){};"
 		"g.Image=MImage;"
 		"}"
-		"if(typeof g.navigator!=='undefined'&&typeof g.navigator.sendBeacon!=='function'){"
-			"g.navigator.sendBeacon=function(url,data){"
-				"if(typeof url==='undefined'||url===null)return false;"
-				"var d='';"
-				"if(typeof data!=='undefined'&&data!==null){"
-					"try{d=String(data);}catch(e){return false;}"
-				"}"
-				"if(typeof g.__beaconSend==='function'){"
-					"try{return !!g.__beaconSend(String(url),d);}"
-					"catch(e){return false;}"
-				"}"
-				"return false;"
-			"};"
-		"}"
+		"if(typeof g.navigator!=='undefined'&&typeof g.navigator.sendBeacon!=='function'){g.navigator.sendBeacon=function(){return false;};}"
 		"if(typeof g.__d==='undefined'){"
 		"var registry={},cache={};"
 		"g.__d=function(name,deps,factory){"
@@ -10407,14 +9732,14 @@ static void register_browser_globals(JSContext *ctx)
 		"var vh=(typeof g.innerHeight==='number'&&g.innerHeight)||600;"
 		"var mkEl=function(){return {clientWidth:vw,clientHeight:vh,offsetWidth:vw,offsetHeight:vh,scrollWidth:vw,scrollHeight:vh,scrollTop:0,scrollLeft:0,offsetTop:0,offsetLeft:0,style:{},className:'',nodeType:1,"
 		"getBoundingClientRect:function(){return {top:0,left:0,right:vw,bottom:vh,width:vw,height:vh,x:0,y:0};},"
-		/* fixes1002 (#182) — the mock's appendChild used to be
+		/* fixes1002 (#182)  -  the mock's appendChild used to be
 		 * `function(c){return c;}`: it returned the child WITHOUT
 		 * attaching it, so c.parentNode stayed null. That is the whole
 		 * XenForo cascade, now visible on hardware thanks to fixes1000:
 		 *   TypeError: cannot read property 'removeChild' of null
 		 *   at hiddenscroll (preamble.min.js:4:427)
 		 * because the probe does appendChild(b) ... b.parentNode.
-		 * removeChild(b) -- the universal append-measure-remove idiom.
+		 * removeChild(b) - the universal append-measure-remove idiom.
 		 * This mock is reached when a script runs BEFORE <body> exists
 		 * (#182), so document.body has no real node to give.
 		 *
@@ -10422,7 +9747,7 @@ static void register_browser_globals(JSContext *ctx)
 		 * parentNode is a getter-only accessor from the prototype, so
 		 * `c.parentNode = this` silently does nothing (or throws under
 		 * strict mode). An own data property shadows the accessor for
-		 * this one node, which is exactly the scope wanted -- and it is
+		 * this one node, which is exactly the scope wanted - and it is
 		 * reverted on removeChild, so nothing leaks a fake parent after
 		 * the probe finishes. Wrapped in try/catch because a frozen or
 		 * exotic object must not take the page down. */
@@ -10455,7 +9780,7 @@ static void register_browser_globals(JSContext *ctx)
 	 *     URL.createObjectURL) ---
 	 *
 	 * fixes882: MediaSource was listed here and is NOT defined by the block
-	 * below -- the name appears nowhere else in this file, so `MediaSource` is
+	 * below - the name appears nowhere else in this file, so `MediaSource` is
 	 * simply undefined at runtime. The only media-adjacent things installed are
 	 * the bare HTMLVideoElement/HTMLAudioElement/HTMLMediaElement/
 	 * HTMLSourceElement constructors further down, which exist purely so
@@ -10536,7 +9861,7 @@ static void register_browser_globals(JSContext *ctx)
 		"g[names[i]]=function(){};"
 		"}"
 		"}"
-		/* fixes1144 — NodeFilter constants. Froala editor 4.2.1
+		/* fixes1144  -  NodeFilter constants. Froala editor 4.2.1
 		 * accesses NodeFilter.SHOW_TEXT in its TreeWalker init;
 		 * NodeFilter must be an object with the spec's constant
 		 * values, not a constructor stub. */
@@ -10547,7 +9872,7 @@ static void register_browser_globals(JSContext *ctx)
 		"SHOW_COMMENT:128,SHOW_DOCUMENT:256,"
 		"SHOW_DOCUMENT_TYPE:512,SHOW_DOCUMENT_FRAGMENT:1024};"
 		"}"
-		/* fixes1145 — DOMPurify stub. Froala 4.2.1 requires
+		/* fixes1145  -  DOMPurify stub. Froala 4.2.1 requires
 		 * window.DOMPurify.sanitize() for XSS sanitization before
 		 * enabling rich-text mode. Without it the editor degrades
 		 * to a plain textarea. On MacSurf, innerHTML already does
@@ -10558,7 +9883,7 @@ static void register_browser_globals(JSContext *ctx)
 		"isSupported:true,version:'macsurf',"
 		"removed:[]};"
 		"}"
-		/* fixes1127 -- chain the family BELOW the wrapper class proto.
+		/* fixes1127 - chain the family BELOW the wrapper class proto.
 		 * qjs_el_install_proto re-points each per-tag HTML* constructor's
 		 * .prototype.__proto__ at the wrapper class proto p (so a wrapper
 		 * whose own proto is HTMLDivElement.prototype keeps p and the
@@ -10575,7 +9900,7 @@ static void register_browser_globals(JSContext *ctx)
 			"g.CharacterData.prototype.__proto__=g.Node.prototype;"
 		"if(g.DocumentFragment&&g.DocumentFragment.prototype)"
 			"g.DocumentFragment.prototype.__proto__=g.Node.prototype;"
-		/* fixes1146 — Node type constants. XenForo core-compiled.js
+		/* fixes1146  -  Node type constants. XenForo core-compiled.js
 		 * accesses Node.ELEMENT_NODE during initialization; without
 		 * these every instanceof check and nodeType comparison that
 		 * uses the named constants throws. */
@@ -10627,7 +9952,7 @@ static void register_browser_globals(JSContext *ctx)
 	/* --- Selection / Range / getSelection / execCommand stubs --- */
 	macsurf_qjs__safe_eval(ctx,
 		"(function(g){"
-		/* fixes1147 — persistent Selection + full Range stub + contentEditable.
+		/* fixes1147  -  persistent Selection + full Range stub + contentEditable.
 		 * Froala 4.2.1 needs getSelection() to return a STABLE object whose
 		 * getRangeAt(0) returns a non-null Range with all the spec methods,
 		 * and it needs element.contentEditable/isContentEditable to decide
@@ -10697,7 +10022,7 @@ static void register_browser_globals(JSContext *ctx)
 			"}"
 			"return __macsurf_sel;"
 		"};}"
-		/* fixes1147 — element.contentEditable + isContentEditable.
+		/* fixes1147  -  element.contentEditable + isContentEditable.
 		 * Froala 4.2.1 checks these to decide between rich-text (div
 		 * with contenteditable) and plain textarea fallback. */
 		"if(g.Element&&g.Element.prototype){"
@@ -10729,21 +10054,22 @@ static void register_browser_globals(JSContext *ctx)
 		"if(typeof g.document.queryCommandEnabled!=='function'){g.document.queryCommandEnabled=function(){return true;};}"
 		"if(!('activeElement'in g.document)){g.document.activeElement=null;}"
 		"if(typeof g.document.getSelection!=='function'){g.document.getSelection=g.getSelection;}"
-		/* fixes1149 — document methods Froala 4.2.1 requires.
+		/* fixes1149  -  document methods Froala 4.2.1 requires.
 		 * createTreeWalker is the critical one: Froala calls it at
 		 * line 248 and throws 'not a function' without it.
 		 * Return a minimal walker with nextNode() that walks all
 		 * descendants in preorder, respecting the whatToShow flags. */
 		"if(typeof g.document.createTreeWalker!=='function'){"
 		"g.document.createTreeWalker=function(root,whatToShow,filter){"
-		"var node=root, first=true;"
+		"var first=true;"
 		"return{"
 		"root:root,whatToShow:whatToShow||0,filter:filter||null,"
 		"currentNode:root,"
 		"nextNode:function(){"
 		"var n;"
 		"if(first){first=false;"
-		"n=(whatToShow&4&&root.nodeType===3)?root:null;"
+		"if(whatToShow&1&&root.nodeType===1)n=root;"
+		"else if(whatToShow&4&&root.nodeType===3)n=root;"
 		"if(!n)n=this._next(root);"
 		"if(n)this.currentNode=n;return n;"
 		"}else{"
@@ -10772,7 +10098,7 @@ static void register_browser_globals(JSContext *ctx)
 		"firstChild:function(){return null;},"
 		"lastChild:function(){return null;},"
 		"previousSibling:function(){return null;},"
-		"nextSibling:function(){return null;}};};}"
+		"nextSibling:function(){return null;}};return tw;};}"
 		"if(typeof g.document.createNodeIterator!=='function'){"
 		"g.document.createNodeIterator=function(root,whatToShow,filter){"
 		"return g.document.createTreeWalker(root,whatToShow,filter);};}"
@@ -10800,7 +10126,7 @@ static void register_browser_globals(JSContext *ctx)
 		"if(!('domain'in g.document)){g.document.domain='';}"
 		"if(!('doctype'in g.document)){g.document.doctype=null;}"
 		"}"
-		/* fixes1149 — rAF, MouseEvent, and other globals Froala needs. */
+		/* fixes1149  -  rAF, MouseEvent, and other globals Froala needs. */
 		"if(typeof g.requestAnimationFrame!=='function'){"
 		"g.requestAnimationFrame=function(fn){return g.setTimeout(function(){fn(Date.now());},16);};}"
 		"if(typeof g.cancelAnimationFrame!=='function'){"
@@ -10842,16 +10168,16 @@ static void register_browser_globals(JSContext *ctx)
 	 * XF.ready); XF.ready/XF.activate are wrapped so the bundle's own
 	 * ready(XF.onPageLoad) call at core-compiled:216 re-arms install
 	 * once the REAL LazyHandlerLoader exists (line 107); DOMContentLoaded
-	 * (listener on BOTH document and window -- js_fire_dom_ready
+	 * (listener on BOTH document and window - js_fire_dom_ready
 	 * dispatches at both) is the backstop.
 	 *
-	 * v4 addition -- the trap is NOT the only arming path: hardware
+	 * v4 addition - the trap is NOT the only arming path: hardware
 	 * showed ZERO 'XF LAZY' lines though the harness (same bundles, same
 	 * engine, same trap) arms fine, i.e. the setter appears to never fire
 	 * on the Mac, and the trap's getter then shadows globalThis.XF with
 	 * undefined forever.  retry() therefore ALSO reads `typeof XF` --
 	 * identifier resolution reaches the preamble's `const XF={}` GLOBAL
-	 * LEXICAL binding, visible regardless of the property trap -- and
+	 * LEXICAL binding, visible regardless of the property trap - and
 	 * falls back to window.XF/globalThis.XF.  So the DOMContentLoaded
 	 * backstop arms install() even on a realm where the setter never
 	 * fires, and install() runs before XF's own domready handler fires
@@ -10862,17 +10188,17 @@ static void register_browser_globals(JSContext *ctx)
 	 * abort the harness at JS_FreeRuntime (gc_obj_list leak).
 	 *
 	 * Logs (all "XF LAZY " via __msLife, so they ride the LIFE gate):
-	 *  installed                        -- probe armed on this realm
+	 *  installed                        - probe armed on this realm
 	 *  call nodeType=.. tag=.. .cls matches=fn qsa=fn docEl=.. found=init:a,click:b regN=7 reg=a,b
-	 *                                     -- per loadLazyHandlers call: the
+	 *                                     - per loadLazyHandlers call: the
 	 *                                     container identity + every
 	 *                                     data-xf-init/data-xf-click name
 	 *                                     under it + handler census
-	 *  THROW <same> msg=.. stack=..     -- the caught exception, rethrown
-	 *  APPLY <name> ctor=<type>         -- applyHandler resolved a non-ctor
-	 *  CLASSMAP <name> -> <type> NONCTOR -- getObjectFromIdentifier returned a
+	 *  THROW <same> msg=.. stack=..     - the caught exception, rethrown
+	 *  APPLY <name> ctor=<type>         - applyHandler resolved a non-ctor
+	 *  CLASSMAP <name> -> <type> NONCTOR - getObjectFromIdentifier returned a
 	 *                                     non-function (the new k(...) site)
-	 *                                     -- the line-108 "not a function"
+	 *                                     - the line-108 "not a function"
 	 *                                     signature when the registered ctor
 	 *                                     is bogus
 	 */
@@ -10978,14 +10304,14 @@ static void register_browser_globals(JSContext *ctx)
 		"	return true;"
 		"}"
 		"function retry(){"
-		"	/* v4 -- never depend on the setter trap ALONE.  Observed on"
+		"	/* v4 - never depend on the setter trap ALONE.  Observed on"
 		"	 * hardware: zero 'XF LAZY' lines though the harness (same bundles,"
-		"	 * same engine, same trap) arms fine -- the setter appears to never"
+		"	 * same engine, same trap) arms fine - the setter appears to never"
 		"	 * fire on the Mac.  With the trap's getter shadowing globalThis.XF,"
 		"	 * every read of window.XF/globalThis.XF then returns undefined"
 		"	 * forever and the probe is permanently mute: haveXf is only ever"
 		"	 * set by the setter.  The rescue: the preamble declares"
-		"	 * `const XF={}` -- a GLOBAL LEXICAL binding, which identifier"
+		"	 * `const XF={}` - a GLOBAL LEXICAL binding, which identifier"
 		"	 * resolution in this closure reaches through the lexical"
 		"	 * environment REGARDLESS of the property trap.  Read THAT first;"
 		"	 * the window.XF/globalThis.XF reads cover the property-assignment"
@@ -11028,7 +10354,7 @@ static void register_browser_globals(JSContext *ctx)
 		"}catch(e){}"
 		"})();");
 
-	/* fixes1146 — ensure Node constants are set from C.  The JS-side
+	/* fixes1146  -  ensure Node constants are set from C.  The JS-side
 	 * safe_eval above sets them inside `if(g.Node)`, but Node may be
 	 * undefined in timer callbacks or iframe contexts.  Setting them
 	 * here with the C API guarantees they survive regardless of how
@@ -11060,7 +10386,7 @@ static void register_browser_globals(JSContext *ctx)
 		JS_FreeValue(ctx, node);
 	}
 
-	/* fixes1147b — verify DOM constructors survived setup + add
+	/* fixes1147b  -  verify DOM constructors survived setup + add
 	 * XF compatibility aliases.  XF's minified code accesses
 	 * HTML_Element (underscore) and HTMLGElement; these are not
 	 * real spec names but the code tries instanceof checks on
@@ -11103,7 +10429,7 @@ static void register_browser_globals(JSContext *ctx)
 		}
 	}
 
-	/* R1.2 — the WANT probe goes in LAST: every shim block above runs its
+	/* R1.2  -  the WANT probe goes in LAST: every shim block above runs its
 	 * own `typeof g.X` feature checks, and those would log their own
 	 * stubbed names into the census if the probe were live yet.  Page
 	 * scripts run after this point, so everything the probe sees from
@@ -11114,7 +10440,7 @@ static void register_browser_globals(JSContext *ctx)
 }
 
 /* ------------------------------------------------------------------ */
-/* macsurf_qjs_setup_globals — called before register_browser_globals  */
+/* macsurf_qjs_setup_globals  -  called before register_browser_globals  */
 /* to install document / getElementById / createElement / querySelector */
 /* These are thin stubs; real DOM wiring deferred to a later round.    */
 /* ------------------------------------------------------------------ */
@@ -11251,7 +10577,7 @@ void js_finalise(void)
  * let/const/class redeclaration collisions across page loads).  Returns the
  * new context, or NULL on failure (runtime left intact).  Mirrors the former
  * inline chain in js_newheap byte-for-byte. */
-/* fixes1008 (1g) — see the install site in qjs_build_context.
+/* fixes1008 (1g)  -  see the install site in qjs_build_context.
  *
  * is_handled means a rejection that was already caught (or caught later);
  * those are normal control flow and must NOT be logged, or a page using
@@ -11289,13 +10615,13 @@ static JSContext *qjs_build_context(struct jsheap *heap)
 	MS_LOG("qjs intr: Performance"); JS_AddPerformance(ctx);
 	MS_LOG("qjs intr: all done");
 
-	/* fixes1008 (1g) — UNHANDLED PROMISE REJECTIONS, made visible.
+	/* fixes1008 (1g)  -  UNHANDLED PROMISE REJECTIONS, made visible.
 	 *
 	 * "Site loads, does nothing, no log" is the failure mode this whole batch
 	 * exists to eliminate, and an unhandled rejection is its purest form: a
 	 * loader chain that rejects three .then()s deep simply stops, leaving no
 	 * exception, no error, and nothing on disk to explain it. QuickJS will
-	 * tell us -- it just needs a tracker installed, and nothing ever
+	 * tell us - it just needs a tracker installed, and nothing ever
 	 * installed one.
 	 *
 	 * LIFE-prefixed because the WORK channel is compiled out of shipping
@@ -11310,7 +10636,7 @@ static JSContext *qjs_build_context(struct jsheap *heap)
 	return ctx;
 }
 
-/* fixes593 — QuickJS capability self-test. Runs a battery of JS through the
+/* fixes593  -  QuickJS capability self-test. Runs a battery of JS through the
  * engine at first heap creation, BEFORE any page loads, and logs PASS/FAIL +
  * the actual value. Purpose: prove the CW8 QuickJS port is fundamentally sound
  * (correct results) and can survive heavy allocation (the 100k-object test
@@ -11371,11 +10697,11 @@ static void qjs_selftest(JSContext *ctx)
 		"(function(){var a=[];var i;for(i=0;i<100000;i++)a.push({v:i});return a.length;})()",
 		100000);
 
-	/* fixes597 — engine core is proven sound; now hammer the DOM BRIDGE (the
+	/* fixes597  -  engine core is proven sound; now hammer the DOM BRIDGE (the
 	 * layer the real scripts hit that the pure-JS tests above don't): wrapper
 	 * creation, dom_string round-trips, node refcounts. If one of these FREEZES
 	 * with no page loaded, the corruptor is reproduced in the bridge, minimal.
-	 * These may THROW at startup if document isn't wired yet — a logged
+	 * These may THROW at startup if document isn't wired yet  -  a logged
 	 * exception is fine (tells us the bridge needs a live doc); a FREEZE is the
 	 * prize. */
 	macsurf_debug_log_writef("qjs selftest: DOM bridge stress...");
@@ -11395,7 +10721,7 @@ static void qjs_selftest(JSContext *ctx)
 		"(function(){var i;for(i=0;i<2000;i++){document.getElementById('nope');}return 1;})()",
 		1);
 
-	/* fixes598 — the ONE thing every real script does that the tests above
+	/* fixes598  -  the ONE thing every real script does that the tests above
 	 * don't: THROW. All of tinkerdifferent's scripts throw TypeErrors, and
 	 * every freeze window this session sat next to exception handling
 	 * (JS_FreeCString of the message/.stack, build_backtrace). Hammer
@@ -11410,7 +10736,7 @@ static void qjs_selftest(JSContext *ctx)
 		"(function(){var i,n=0;for(i=0;i<2000;i++){try{var z;z.foo();}catch(e){if(e.stack&&e.stack.length>0)n++;}}return n;})()",
 		2000);
 
-	/* fixes599 — the last untested bridge path: LIVE nodes attached to the
+	/* fixes599  -  the last untested bridge path: LIVE nodes attached to the
 	 * document tree (all tests above used DETACHED createElement'd nodes; the
 	 * real scripts wrap live parsed nodes). Attach 2k nodes to the live root and
 	 * query them back through the wrapper/refcount path. Returns -1 if no root
@@ -11425,7 +10751,7 @@ static void qjs_selftest(JSContext *ctx)
 #endif /* MACSURF_QJS_SELFTEST */
 
 /* Bulletproof allocator wrappers for QuickJS JSMallocFunctions.
- * Call macsurf_safe_* directly -- do NOT route through the prefix
+ * Call macsurf_safe_* directly - do NOT route through the prefix
  * malloc macro to avoid any recursion risk. */
 static void *qjs_safe_malloc(void *opaque, size_t size)
 {
@@ -11468,7 +10794,7 @@ static JSMallocFunctions macsurf_qjs_mf = {
 };
 
 /* ================================================================
- * fixes1117b (#265) — MODULE SEMANTICS (JS_SetModuleLoaderFunc)
+ * fixes1117b (#265)  -  MODULE SEMANTICS (JS_SetModuleLoaderFunc)
  *
  * QuickJS supports real ES modules via JS_EVAL_TYPE_MODULE +
  * JS_SetModuleLoaderFunc.  The normalize callback resolves relative
@@ -11634,27 +10960,27 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 	struct jsheap *heap;
 	if (out_heap == NULL) return NSERROR_BAD_PARAMETER;
 	*out_heap = NULL;
-	macsurf_qjs_audit_reset(); /* fixes1016 — audit each page fully */
+	macsurf_qjs_audit_reset(); /* fixes1016  -  audit each page fully */
 	heap = (struct jsheap *)calloc(1, sizeof(*heap));
 	if (heap == NULL) return NSERROR_NOMEM;
 
 	heap->rt = JS_NewRuntime2(&macsurf_qjs_mf, NULL);
 	if (heap->rt == NULL) { free(heap); return NSERROR_NOMEM; }
 
-	/* fixes590 -- ROOT CAUSE of the tinkerdifferent hard-freeze.
+	/* fixes590 - ROOT CAUSE of the tinkerdifferent hard-freeze.
 	 *
 	 * QuickJS guards native-stack overflow (deep JS recursion => deep
 	 * recursive JS_CallInternal C frames, each with its own alloca) via
 	 * rt->stack_limit = stack_top - stack_size.  The default stack_size is
 	 * JS_DEFAULT_STACK_SIZE = 1 MB (quickjs.h), calibrated for a desktop
 	 * process.  js_newheap never called JS_SetMaxStackSize, so that 1 MB
-	 * default stood on OS 9 -- where the native stack is FAR smaller than
+	 * default stood on OS 9 - where the native stack is FAR smaller than
 	 * 1 MB and grows DOWN toward the very same application partition that
 	 * holds the MSL malloc pool.  A jQuery/Sizzle/webpack deep recursion
 	 * therefore overruns the real native stack and overwrites the MSL heap
 	 * free-list metadata LONG before QuickJS's 1 MB guard fires: the guard
 	 * is effectively dead.  Because it clobbers MAPPED heap (not an unmapped
-	 * page) there is no crash -- instead the free-list goes cyclic and the
+	 * page) there is no crash - instead the free-list goes cyclic and the
 	 * next malloc()/free() spins forever (the deterministic freeze; JS-off
 	 * loads fine; disabling build_backtrace only shifted the collision
 	 * threshold, all consistent with a stack-into-heap overrun).
@@ -11662,7 +10988,7 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 	 * Fix: size the guard to the REAL native-stack headroom.  StackSpace()
 	 * is (current SP - ApplLimit); ApplLimit is the fixed ceiling the heap
 	 * cannot grow past, so setting stack_size = StackSpace() - margin puts
-	 * rt->stack_limit at (ApplLimit + margin) -- a fixed address safely above
+	 * rt->stack_limit at (ApplLimit + margin) - a fixed address safely above
 	 * the heap, independent of how deep JS later runs.  QuickJS then throws a
 	 * catchable "RangeError: stack overflow" instead of smashing the heap. */
 #ifdef __MACOS9__
@@ -11673,7 +10999,7 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 		long sp_room = StackSpace();       /* SP - ApplLimit, bytes */
 		long qmax = sp_room - (96L * 1024L); /* margin: non-JS frames + slop */
 		/* fixes593: StackSpace() reads ~107MB on real hw (big partition), so
-		 * the native stack was never the corruptor — set the guard to the real
+		 * the native stack was never the corruptor  -  set the guard to the real
 		 * headroom (no small cap, which would wrongly RangeError legit deep JS)
 		 * with a floor so basic JS still runs if the read is tiny. */
 		if (qmax < 24576L) qmax = 24576L;  /* floor so basic JS still runs */
@@ -11682,14 +11008,14 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 			"qjs: stack guard=%ld (StackSpace=%ld)", qmax, sp_room);
 	}
 #else
-	/* fixes873 — NON-MAC (the Linux ASan harness) — 4 MB, not the 256 KB that
+	/* fixes873  -  NON-MAC (the Linux ASan harness)  -  4 MB, not the 256 KB that
 	 * used to be here.
 	 *
 	 * This branch must MODEL the Mac branch above, and 256 KB modelled nothing:
 	 * the Mac sets the guard to real native headroom, which reads ~107 MB on
 	 * hardware (fixes593), and even QuickJS's own default is 1 MB. At 256 KB the
 	 * harness invented a "RangeError: Maximum call stack size exceeded" inside
-	 * Preact's recursive reconciler for the real verbum bundle -- a failure
+	 * Preact's recursive reconciler for the real verbum bundle - a failure
 	 * hardware cannot have. Same trap as the timebase stub: a harness that
 	 * diverges from the shipping config reports fiction. Too small manufactures
 	 * phantom bugs; too large hides real ones. 4 MB sits well under the 8 MB
@@ -11703,25 +11029,25 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 	 * machine.  Generous (partition free is ~300MB) but capped. */
 	JS_SetMemoryLimit(heap->rt, 128UL * 1024UL * 1024UL);
 
-	/* fixes593 — the heap-corruption freeze on heavy JS pages (tinkerdifferent:
+	/* fixes593  -  the heap-corruption freeze on heavy JS pages (tinkerdifferent:
 	 * all scripts still RUN through QuickJS, but a later malloc/free spins on a
 	 * smashed free-list). Prime suspect is QuickJS's automatic cycle-GC: it only
 	 * fires once malloc_size crosses this threshold (default 256KB), i.e. ONLY
-	 * on heavy pages — exactly the tinkerdifferent-vs-68kmla split — and if any
+	 * on heavy pages  -  exactly the tinkerdifferent-vs-68kmla split  -  and if any
 	 * ref is over-released, the cycle collector double-frees when it walks the
 	 * graph. Push the threshold past the 128MB memory cap so auto-GC never runs
 	 * mid-load. Nothing about which JS runs changes; the per-navigation runtime
 	 * is torn down wholesale on nav, so uncollected cycles never accumulate.
 	 * (If this proves it, the real refcount bug gets fixed and GC re-armed.) */
 	JS_SetGCThreshold(heap->rt, (size_t)0x40000000UL);  /* 1GB > 128MB cap */
-	/* fixes1070 — record that the collector is OFF so the perf log says so.
+	/* fixes1070  -  record that the collector is OFF so the perf log says so.
 	 * Set beside the call it describes: a flag that can drift from the
 	 * threshold it reports is worse than no flag. See g_perf_gc_armed. */
 	g_perf_gc_armed = 0;
 
 	JS_SetInterruptHandler(heap->rt, qjs_interrupt_handler, NULL);
 
-	/* fixes1117b (#265) -- ES module loader. Registered on the
+	/* fixes1117b (#265) - ES module loader. Registered on the
 	 * JSRuntime (not per-context) so it is available for every
 	 * context created from this runtime. */
 	heap->module_reg = (struct module_registry *)
@@ -11747,20 +11073,20 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 		free(heap);
 		return NSERROR_NOMEM;
 	}
-	/* fixes875 (#304) — stamp the realm, then link. qjs_ctx_gen() answers by
+	/* fixes875 (#304)  -  stamp the realm, then link. qjs_ctx_gen() answers by
 	 * walking g_heap_list, so a timer registered before the link would be
 	 * stamped generation 0 and abandoned forever (never fires, silently).
 	 * Nothing between here and the link runs page JS, and JS cannot run any
 	 * earlier either: heap->ctx does not exist until qjs_build_context returns,
-	 * so linking sooner would not help -- the list keys on heap->ctx. */
+	 * so linking sooner would not help - the list keys on heap->ctx. */
 	heap->ctx_gen = g_ctx_gen_next++;
 
 	heap->timeout = timeout;
 
 	g_heap = heap;
-	/* fixes861 (#289) — link into the all-heaps list so this heap's timers
+	/* fixes861 (#289)  -  link into the all-heaps list so this heap's timers
 	 * actually get pumped.  Newest-first; order does not matter.
-	 * fixes875 (#304) — this list is now also the authority qjs_ctx_gen()
+	 * fixes875 (#304)  -  this list is now also the authority qjs_ctx_gen()
 	 * consults to decide which realm owns a ctx, so an unlinked heap means
 	 * "generation 0" = every timer it registers is abandoned and never fires. */
 	heap->next = g_heap_list;
@@ -11770,7 +11096,7 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 
 	/* fixes671 (perf): the fixes593-598 capability self-test runs a heavy JS
 	 * battery (100k object allocs, fib25, 20k string/array ops, 5k DOM ops,
-	 * throw/backtrace stress) SYNCHRONOUSLY at first heap creation — ~17s on a
+	 * throw/backtrace stress) SYNCHRONOUSLY at first heap creation  -  ~17s on a
 	 * real G3 BEFORE the event loop starts, i.e. the entire 'pause on browser
 	 * open'. It was a diagnostic to hunt a QuickJS freeze (long closed) and is
 	 * not needed in normal operation. Gated OFF by default; define
@@ -11790,7 +11116,7 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 void js_destroyheap(struct jsheap *heap)
 {
 	if (heap == NULL) return;
-	/* fixes854 (#283) — drop this heap's timer + XHR slots BEFORE the context
+	/* fixes854 (#283)  -  drop this heap's timer + XHR slots BEFORE the context
 	 * dies.  Both arenas are global while heaps are per-window/per-iframe, so
 	 * a closed iframe used to leave `live` slots behind holding JSValues into
 	 * a freed runtime: the next run_timers pass would JS_Call them, and the
@@ -11804,10 +11130,10 @@ void js_destroyheap(struct jsheap *heap)
 	}
 	if (heap->ctx != NULL) {
 		JS_FreeContext(heap->ctx);
-		/* fixes888 (#304) — same rule as js_newthread: a freed context
+		/* fixes888 (#304)  -  same rule as js_newthread: a freed context
 		 * pointer must never stay visible on g_heap_list. This heap is not
 		 * unlinked until the bottom of this function, and JS_FreeRuntime
-		 * below runs finalizers -- so without this, every qjs_ctx_gen /
+		 * below runs finalizers - so without this, every qjs_ctx_gen /
 		 * qjs_ctx_live_rt scan during that window can match this dead
 		 * heap's dangling ctx and report its generation as live. */
 		heap->ctx = NULL;
@@ -11816,7 +11142,7 @@ void js_destroyheap(struct jsheap *heap)
 	/* fixes541: release any wrappers whose finalizer JS_FreeContext did not
 	 * run (obj->method reference cycles); both halves, then clear. */
 	qjs_wrap_drain(heap->rt);
-	/* fixes888 (#304) — unlink BEFORE JS_FreeRuntime, not after. The runtime
+	/* fixes888 (#304)  -  unlink BEFORE JS_FreeRuntime, not after. The runtime
 	 * teardown runs finalizers, and anything they touch that scans g_heap_list
 	 * must not find this heap: its ctx is already gone and its rt is in the
 	 * middle of being destroyed. fixes861 moved the unlink ahead of free(heap)
@@ -11859,7 +11185,7 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 	if (doc_priv != NULL && heap->ctx != NULL) {
 		JSContext *fresh;
 		qjs_flush_timers(heap->ctx);
-		/* fixes846 (#167 S3) — same load-bearing ordering as the timer
+		/* fixes846 (#167 S3)  -  same load-bearing ordering as the timer
 		 * flush above: abort every in-flight XHR and free its dup'd
 		 * JSValue against the OLD context before it's freed, or a
 		 * response that arrives after navigation would JS_Call into
@@ -11868,13 +11194,13 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 		fresh = qjs_build_context(heap);
 		if (fresh != NULL) {
 			JS_FreeContext(heap->ctx);
-			/* fixes888 (#304) — do NOT leave a freed pointer visible.
+			/* fixes888 (#304)  -  do NOT leave a freed pointer visible.
 			 *
 			 * heap is on g_heap_list the whole time, and qjs_ctx_gen /
 			 * qjs_ctx_live_rt answer by scanning that list for h->ctx == ctx.
 			 * Between JS_FreeContext above and `heap->ctx = fresh` below,
 			 * heap->ctx is a DANGLING pointer still advertising this heap's
-			 * old generation -- so any lookup landing on that address during
+			 * old generation - so any lookup landing on that address during
 			 * the window (qjs_wrap_drain runs finalizers here) gets a
 			 * confident, wrong answer about a realm that no longer exists.
 			 * Worse, the allocator can hand that exact address to the next
@@ -11889,7 +11215,7 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 			 * fresh context wraps anything.  Both halves, then clear. */
 			qjs_wrap_drain(heap->rt);
 			heap->ctx = fresh;
-			/* fixes875 (#304) — a NEW realm, so a NEW generation. This is
+			/* fixes875 (#304)  -  a NEW realm, so a NEW generation. This is
 			 * the reuse that bites: JS_FreeContext just above returned the
 			 * old ctx's memory to the allocator, so `fresh` (or some other
 			 * heap's next context) can legitimately land on that exact
@@ -11908,7 +11234,7 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 	thread->doc_priv = doc_priv;
 	*out_thread = thread;
 	if (doc_priv != NULL) {
-		/* doc_priv is html_content* — extract dom_document*.
+		/* doc_priv is html_content*  -  extract dom_document*.
 		 * html_content is defined in content/handlers/html/private.h;
 		 * same access pattern as macsurf_js.c (Duktape). */
 		html_content *htmlc = (html_content *)doc_priv;
@@ -11934,7 +11260,7 @@ void js_destroythread(struct jsthread *thread)
 }
 
 /* -----------------------------------------------------------------------
- * XenForo stub scripts — ported from macsurf_js.c (Duktape version).
+ * XenForo stub scripts  -  ported from macsurf_js.c (Duktape version).
  * These inject minimal ES5 shims in place of ES6-heavy XF bundles.
  * ----------------------------------------------------------------------- */
 
@@ -12132,7 +11458,7 @@ static const char s_xf_core_stub[] =
 	"if(typeof console!=='undefined')console.log('[ms] core stub end XF.Element='+typeof XF.Element+' XF.Event='+typeof XF.Event);"
 	"})();";
 
-/* fixes476/478/479: editor stub — FroalaEditor shim + XF.Editor registration */
+/* fixes476/478/479: editor stub  -  FroalaEditor shim + XF.Editor registration */
 static const char s_xf_editor_stub[] =
 	"(function(){"
 	"function FroalaEditor(el,opts,cb){"
@@ -12244,7 +11570,7 @@ static const char s_xf_editor_stub[] =
 	"})();";
 
 /* -----------------------------------------------------------------------
- * Transpile cache — avoids re-transpiling the same versioned bundle
+ * Transpile cache  -  avoids re-transpiling the same versioned bundle
  * on every page navigation (editor-compiled.js is 733 KB and takes ~7s).
  * ----------------------------------------------------------------------- */
 #define QJS_ES6_CACHE_MAX 16
@@ -12327,7 +11653,7 @@ unsigned char js_exec(struct jsthread *thread,
 	int ok;
 	char *src;
 
-	/* fixes847 (#167 S1 census gap) — the other half of the js_exec
+	/* fixes847 (#167 S1 census gap)  -  the other half of the js_exec
 	 * visibility fix below: if thread/ctx is NULL, js_exec bails before
 	 * even reaching the entry breadcrumb, and NOTHING about this script
 	 * is ever logged. Make that visible too, so "zero js activity" in a
@@ -12339,16 +11665,16 @@ unsigned char js_exec(struct jsthread *thread,
 	}
 	if (txt == NULL || txtlen == 0) return 1;
 
-	/* #265 — each js_exec is one JS execution burst: settle-once geometry
+	/* #265  -  each js_exec is one JS execution burst: settle-once geometry
 	 * must start fresh so the burst's FIRST read settles and the rest of
 	 * its reads are answered from the settled tree (and so a previous
-	 * burst's settle cannot silence THIS burst's first flush -- the harness
+	 * burst's settle cannot silence THIS burst's first flush - the harness
 	 * calls js_exec directly with no pump in between). */
 	qjs_geom_settle_begin();
 
 	/* fixes587 BISECTION DIAG: short-circuit ALL script execution. With this
 	 * on, no JS_Eval / thrown exception / build_backtrace / DOM-wrapper /
-	 * timer work runs at all — the scripts are treated as clean no-ops so the
+	 * timer work runs at all  -  the scripts are treated as clean no-ops so the
 	 * parser resumes normally. Purpose: split a JS-side heap corruptor from a
 	 * fetch/parse/content-side one on the 100%-deterministic tinkerdifferent
 	 * freeze. If it STILL hard-freezes with this on, the corruptor is NOT in
@@ -12364,10 +11690,10 @@ unsigned char js_exec(struct jsthread *thread,
 		}
 	}
 
-	/* fixes999 — the size cap is OFF by default (was 4 MB, and it SKIPPED the
+	/* fixes999  -  the size cap is OFF by default (was 4 MB, and it SKIPPED the
 	 * script outright rather than failing it, so a big bundle silently did
 	 * not exist). Facebook-class bundles pass 4 MB, and a skipped bundle is
-	 * indistinguishable from an engine that cannot run it -- which is exactly
+	 * indistinguishable from an engine that cannot run it - which is exactly
 	 * the confusion this batch has been unwinding. Set MACSURF_JS_MAX_BYTES
 	 * to restore a ceiling. */
 #ifndef MACSURF_JS_MAX_BYTES
@@ -12377,7 +11703,7 @@ unsigned char js_exec(struct jsthread *thread,
  * the primary safety net.  Set to 0 to disarm. */
 #define MACSURF_JS_MAX_BYTES 262144UL
 #endif
-	/* fixes1143 — per-script size-cap bypass for essential bundles.
+	/* fixes1143  -  per-script size-cap bypass for essential bundles.
 	 * Editor bundles that exceed the cap are let through; the 30s
 	 * execution deadline bounds them instead. */
 	{
@@ -12420,14 +11746,14 @@ unsigned char js_exec(struct jsthread *thread,
 	 * SyntaxError / invalid-UTF-8 on them.  Logs len + 32-bit byte-sum (as
 	 * hex via %p) + first 40 printable bytes; compare to the canonical
 	 * fingerprint.  Remove once the cause is pinned.
-	 * fixes847 (#167 S1 census gap) — WORK-prefixed. This is js_exec's
+	 * fixes847 (#167 S1 census gap)  -  WORK-prefixed. This is js_exec's
 	 * OWN entry breadcrumb, the single line that answers "did any script
-	 * on this page get to QuickJS at all" -- it was plain
+	 * on this page get to QuickJS at all" - it was plain
 	 * macsurf_debug_log_writef, silently dropped by the failures-only
 	 * release filter. A hardware log against real Facebook (2026-07-16,
 	 * fixes846 build) showed real .js bundles downloading (fbresp
 	 * status=200) but ZERO qjs/reconvert/xhr/fetch activity of any kind
-	 * -- with this line gated, that log is genuinely ambiguous between
+	 * - with this line gated, that log is genuinely ambiguous between
 	 * "no script ever executed" and "scripts ran cleanly but never
 	 * touched fetch/XHR/DOM". This makes the next log unambiguous. */
 	{
@@ -12450,13 +11776,13 @@ unsigned char js_exec(struct jsthread *thread,
 
 	/* fixes648 (regression fix): restore the per-bundle XenForo ES5 stub
 	 * substitution that fixes522 removed. QuickJS ran the real preamble /
-	 * core / editor bundles natively, but they CRASH on this engine — the
+	 * core / editor bundles natively, but they CRASH on this engine  -  the
 	 * documented cascade: preamble.min.js's `div.parentNode` hiddenscroll
 	 * probe reads null and throws -> jQuery's Sizzle self-test throws ->
 	 * core-compiled.js dies on jQuery.support -> XF.Element is never
 	 * registered -> editor-compiled.js throws "newHandler of undefined". Net
 	 * effect on hardware: the reply/post editor collapses to a bare one-line
-	 * textarea (has-js never set, Froala never reveals/sizes it) — the "post
+	 * textarea (has-js never set, Froala never reveals/sizes it)  -  the "post
 	 * box is shrunk/missing" report. The ES5 stubs still in this file sidestep
 	 * all of it: s_xf_preamble_stub sets has-js + XF.ready, s_xf_core_stub
 	 * defines XF.Element/XF.create, s_xf_editor_stub reveals+sizes the editor
@@ -12465,20 +11791,20 @@ unsigned char js_exec(struct jsthread *thread,
 	 * (the stubs are jQuery-independent), so its Sizzle crash is isolated to
 	 * its own eval and does not block the editor. This was the fixes476-481
 	 * mechanism that made real forum replies post on 68kmla under Duktape. */
-	/* fixes998 — MACSURF_XF_STUBS: the master switch for all of the above.
+	/* fixes998  -  MACSURF_XF_STUBS: the master switch for all of the above.
 	 *
 	 * Default 0 = the REAL bundles run. The substitution above is training
 	 * wheels from fixes648, fitted when the engine genuinely could not run
 	 * them, and its stated cause (preamble's div.parentNode reading null)
 	 * predates fixes846 (real DOM mutation), fixes878 (real libdom traversal)
-	 * and fixes989-997 (the event model) -- every one of which rebuilt the
+	 * and fixes989-997 (the event model) - every one of which rebuilt the
 	 * surface it blames. Left on, it GUARANTEES the reply editor can never
 	 * work: the real Froala bundle is skipped and s_xf_editor_stub fakes a
 	 * bare textarea, which is exactly the "white box with no editor" reported
 	 * on 68kmla.
 	 *
 	 * Kept behind a switch rather than deleted so the fallback is one line if
-	 * the real bundles turn out to break something worse than they fix -- the
+	 * the real bundles turn out to break something worse than they fix - the
 	 * stubs are the only thing that ever made a forum reply post here
 	 * (fixes476-481, under Duktape). */
 #ifndef MACSURF_XF_STUBS
@@ -12497,7 +11823,7 @@ unsigned char js_exec(struct jsthread *thread,
 		/* fixes670 (perf): these XenForo feature bundles depend on XF internals
 		 * we don't fully provide, so on hardware they PARSE (lightbox-compiled.js
 		 * alone is ~155 KB) and then throw immediately (TypeError: cannot read
-		 * property 'handle'/'extend' of undefined) — a big, pure-waste slice of
+		 * property 'handle'/'extend' of undefined)  -  a big, pure-waste slice of
 		 * the per-page js= time. Substitute an empty no-op so the parse+exec is
 		 * skipped entirely; the features (image lightbox, media gallery, upload,
 		 * token input, prefix menu) don't work either way, so nothing is lost.
@@ -12534,7 +11860,7 @@ unsigned char js_exec(struct jsthread *thread,
 	}
 
 	/* fixes522: accept ALL JavaScript.  Run every script through QuickJS
-	 * natively (ES2023) — no per-filename stubs (preamble/core/editor/
+	 * natively (ES2023)  -  no per-filename stubs (preamble/core/editor/
 	 * upload), no ES6->ES5 transpiler, no transpile cache.  Those were
 	 * legacy crutches; in particular the old transpiler's async/await
 	 * strip silently corrupted minified bundles (turning `asyncFoo()` into
@@ -12543,13 +11869,13 @@ unsigned char js_exec(struct jsthread *thread,
 	 * The deadline (here) + memory limit (js_newheap) keep a misbehaving
 	 * script from hanging or OOMing the machine. */
 	/* fixes524: ROOT CAUSE.  QuickJS JS_Eval REQUIRES a NUL-terminated
-	 * buffer — quickjs.h: "'input' must be zero terminated i.e.
+	 * buffer  -  quickjs.h: "'input' must be zero terminated i.e.
 	 * input[input_len] = '\0'".  The fetched script source from
 	 * content_get_source_data is a raw byte buffer that is NOT
 	 * NUL-terminated, so the lexer ran off the end into uninitialized heap,
 	 * producing SyntaxErrors near end-of-file that varied between runs
-	 * (reading heap garbage).  THIS — not ES6, corruption, or a CW8
-	 * miscompile — is why real bundles never ran; the C-string-literal init
+	 * (reading heap garbage).  THIS  -  not ES6, corruption, or a CW8
+	 * miscompile  -  is why real bundles never ran; the C-string-literal init
 	 * evals were already NUL-terminated, so they worked.  Copy + terminate. */
 	src = (char *)malloc(txtlen + 1);
 	if (src == NULL) {
@@ -12560,17 +11886,17 @@ unsigned char js_exec(struct jsthread *thread,
 	memcpy(src, txt, txtlen);
 	src[txtlen] = '\0';
 
-	/* fixes586 — push/pop (nest-safe) instead of set/clear-to-0, so a
+	/* fixes586  -  push/pop (nest-safe) instead of set/clear-to-0, so a
 	 * re-entrant exec can never erase an outer deadline. */
 	{
-		/* fixes640 — accumulate JS execution CPU per top-level eval. */
-		/* fixes1070 — and SPLIT it into compile vs run.
+		/* fixes640  -  accumulate JS execution CPU per top-level eval. */
+		/* fixes1070  -  and SPLIT it into compile vs run.
 		 *
 		 * JS_Eval is compile-then-run in one call, so the fixes640
 		 * bracket could only ever produce one number. QuickJS exposes
 		 * the seam: JS_Eval with JS_EVAL_FLAG_COMPILE_ONLY returns the
 		 * compiled function object, and JS_EvalFunction runs it. This
-		 * is not a behaviour change -- quickjs.c's __JS_EvalInternal
+		 * is not a behaviour change - quickjs.c's __JS_EvalInternal
 		 * ends in exactly `if (COMPILE_ONLY) ret = fun_obj; else ret =
 		 * JS_EvalFunctionInternal(ctx, fun_obj, this_obj, var_refs,
 		 * sf)`, and for JS_EVAL_TYPE_GLOBAL (not _DIRECT) it has
@@ -12584,7 +11910,7 @@ unsigned char js_exec(struct jsthread *thread,
 		 * no leak and nothing to free here. */
 		extern double macos9_micros(void);
 		extern void macsurf_profile_accum_js(long us);
-		/* R1.3 — the core names inline scripts "?inline script?"; every
+		/* R1.3  -  the core names inline scripts "?inline script?"; every
 		 * other name is a URL, i.e. an external script. */
 		unsigned char ctype = (name != NULL && name[0] == '?')
 				? SCRIPT_CENSUS_INLINE : SCRIPT_CENSUS_EXTERNAL;
@@ -12605,16 +11931,16 @@ unsigned char js_exec(struct jsthread *thread,
 			/* Syntax error: fn IS the exception value, which is
 			 * what plain JS_Eval would have returned. Propagate it
 			 * unchanged so the error reporting below is identical
-			 * to before -- a failed compile must not start looking
+			 * to before - a failed compile must not start looking
 			 * like a different kind of failure. */
 			val = fn;
-			/* R1.3 — compile failed; nothing ran. */
+			/* R1.3  -  compile failed; nothing ran. */
 			qjs_census_note(name, (long)txtlen, ctype,
 					0, 0, c_us, 0);
 		} else {
 			val = JS_EvalFunction(thread->ctx, fn);
 			r_us = (long)(macos9_micros() - t_mid);
-			/* R1.3 — compiled ok; ran to completion or threw. */
+			/* R1.3  -  compiled ok; ran to completion or threw. */
 			qjs_census_note(name, (long)txtlen, ctype,
 					JS_IsException(val) ? 0 : 1,
 					JS_IsException(val) ? 0 : 1,
@@ -12629,21 +11955,21 @@ unsigned char js_exec(struct jsthread *thread,
 	if (!ok) {
 		JSValue exc = JS_GetException(thread->ctx);
 		const char *estr = JS_ToCString(thread->ctx, exc);
-		/* fixes843b (#167 S1 census) — "err" (lowercase) never matched the
+		/* fixes843b (#167 S1 census)  -  "err" (lowercase) never matched the
 		 * crash-only log gate's "ERROR" (uppercase) keyword, so every JS
 		 * exception on every page has been silently invisible in a normal
 		 * build since fixes765. WORK-prefix it so a census build actually
 		 * shows what's throwing. Remove the WORK prefix once the census
-		 * round is done (this is deliberately loud -- one line per failed
+		 * round is done (this is deliberately loud - one line per failed
 		 * script, which is the whole point right now). */
-		/* fixes873 — the MESSAGE goes FIRST, and the script name is shortened.
+		/* fixes873  -  the MESSAGE goes FIRST, and the script name is shortened.
 		 * macsurf_debug_log_writef hard-caps output at 255 bytes, and a modern
 		 * script URL is far longer than that on its own:
 		 *   .../jetpack_vendor/automattic/jetpack-mu-wpcom/src/build/
 		 *   verbum-comments/verbum-comments.js?m=1783962184i&minify=false&ver=...
 		 * so with the name first, the line spent its whole budget on the URL and
 		 * the actual exception was truncated to "Erro". The one thing this line
-		 * exists to say was the one thing it could never say -- and on the
+		 * exists to say was the one thing it could never say - and on the
 		 * biggest script on the page, which is exactly where it's needed. */
 		{
 			char sname[48];
@@ -12669,7 +11995,7 @@ unsigned char js_exec(struct jsthread *thread,
 			if (JS_IsString(stk)) {
 				const char *ss = JS_ToCString(thread->ctx, stk);
 				if (ss != NULL) {
-					/* fixes873 — stack FIRST, short name after: same
+					/* fixes873  -  stack FIRST, short name after: same
 					 * 255-byte-cap trap as the message line above, and a
 					 * truncated stack is worth even less than none. */
 					char sname[48];
@@ -12690,10 +12016,10 @@ unsigned char js_exec(struct jsthread *thread,
 		return 0;
 	}
 	JS_FreeValue(thread->ctx, val);
-	/* fixes1015 — pair every `LIFE js src` with an OUTCOME, so a clean run
+	/* fixes1015  -  pair every `LIFE js src` with an OUTCOME, so a clean run
 	 * is distinguishable from a script that never finished. Failures already
 	 * log above; this is the missing success half of the audit.
-	 * fixes1032 — behind the audit switch: one flushed write per script,
+	 * fixes1032  -  behind the audit switch: one flushed write per script,
 	 * ~18 per page on a real site. */
 #ifdef MACSURF_JS_AUDIT
 	{
@@ -12706,7 +12032,7 @@ unsigned char js_exec(struct jsthread *thread,
 	return 1;
 }
 
-/* fixes1117b (#265) — execute a script as an ES module.
+/* fixes1117b (#265)  -  execute a script as an ES module.
  *
  * Compiles the source with JS_EVAL_TYPE_MODULE (which parses import/
  * export, enforces strict mode, and provides a separate module scope),
@@ -12732,7 +12058,7 @@ unsigned char js_exec_module(struct jsthread *thread,
 	if (txt == NULL || txtlen == 0) return 1;
 	ctx = thread->ctx;
 
-	/* #265 — module execution is a JS execution burst like js_exec:
+	/* #265  -  module execution is a JS execution burst like js_exec:
 	 * settle-once geometry starts fresh here too. */
 	qjs_geom_settle_begin();
 
@@ -12770,7 +12096,7 @@ unsigned char js_exec_module(struct jsthread *thread,
 
 		ok = !JS_IsException(val);
 		mus = (long)(macos9_micros() - t0);
-		/* R1.3 — a module is compiled, resolved and executed in the one
+		/* R1.3  -  a module is compiled, resolved and executed in the one
 		 * JS_Eval call, so a failure cannot be attributed to a phase
 		 * here; the whole time lands in run_us. */
 		qjs_census_note(name, (long)txtlen, SCRIPT_CENSUS_MODULE,
@@ -12801,7 +12127,7 @@ unsigned char js_fire_event(struct jsthread *thread, const char *type,
 	if (thread == NULL || thread->ctx == NULL || type == NULL) return 0;
 	/* Fire window.dispatchEvent(new Event(type)) */
 	{
-		/* fixes603 — buffer/guard mismatch overflow: bytes written are
+		/* fixes603  -  buffer/guard mismatch overflow: bytes written are
 		 * 48(prefix) + tlen + 20(suffix) + 1(NUL) = 69 + tlen, but the guard
 		 * was tlen<80 against a 128-byte buffer, so a 60-79 char event type
 		 * wrote up to 20 bytes past script[]. Enlarged buffer + correct guard. */
@@ -12825,7 +12151,7 @@ unsigned char js_fire_event(struct jsthread *thread, const char *type,
  * rebuilt. Return 0 ("JS did not call preventDefault") so the browser's
  * navigation / form submit proceeds unchanged; per-element onclick handlers
  * still fire via fire_generic_dom_event at the call site. */
-/* fixes989 — retained as a no-op ONLY for ABI: nothing calls it any more.
+/* fixes989  -  retained as a no-op ONLY for ABI: nothing calls it any more.
  * interaction.c now takes preventDefault from fire_generic_dom_event's return
  * value, because the dispatch it already performed is the real one. Delete
  * this once no build references the symbol. */
@@ -12840,7 +12166,7 @@ unsigned char js_fire_event(struct jsthread *thread, const char *type,
  * rebuilt per navigation (js_newthread) so the flag resets automatically. */
 unsigned char js_fire_dom_ready(struct jsthread *thread, struct dom_document *doc)
 {
-	/* fixes881 (Phase 0.7) — 'interactive', not 'complete', and NO load here.
+	/* fixes881 (Phase 0.7)  -  'interactive', not 'complete', and NO load here.
 	 *
 	 * readyState went straight to 'complete' and this same function then fired
 	 * `load` at the document, while html_finish_conversion had ALREADY fired
@@ -12867,14 +12193,14 @@ unsigned char js_fire_dom_ready(struct jsthread *thread, struct dom_document *do
 		return 0;
 	}
 	macsurf_qjs__safe_eval(thread->ctx, s_dom_ready_src);
-	/* fixes862 (#289 probe) — was "qjs: DOMContentLoaded+load fired to
+	/* fixes862 (#289 probe)  -  was "qjs: DOMContentLoaded+load fired to
 	 * document", which the failures-only gate DROPS (macsurf_debug_log.c:
 	 * only "WORK " and genuine failures survive), so this has been invisible
 	 * on every default build. That matters now: hackaday's comment iframe
 	 * loads its form from inside
 	 *     window.addEventListener("DOMContentLoaded", ...)
 	 * so if this never fires for the IFRAME's realm, its entire loader body
-	 * -- querySelector, IntersectionObserver, loadScript, fetch -- never runs,
+	 * - querySelector, IntersectionObserver, loadScript, fetch - never runs,
 	 * which is exactly what the log shows (WORK xhr = 0, no injected script).
 	 * ctx distinguishes the realms: the main page and the iframe are separate
 	 * heaps, so two different ctx values must appear here. Only one = the
@@ -12884,12 +12210,12 @@ unsigned char js_fire_dom_ready(struct jsthread *thread, struct dom_document *do
 	return 1;
 }
 
-/* fixes1096 — THE SLIDER PROBE, JS HALF.
+/* fixes1096  -  THE SLIDER PROBE, JS HALF.
  *
  * html.c's C-side probe (html_slider_probe) reads the DOM through libdom and
  * can name what exists around .featured-slides; it cannot see what the
  * PAGE'S OWN scripts see. This half runs in the page realm at the same probe
- * points ("ready" / "done" / "reconvert" -- html.c splices the label in) and
+ * points ("ready" / "done" / "reconvert" - html.c splices the label in) and
  * asks the questions only JS can: does jQuery exist, does jQuery.fn.slick,
  * and what does document.querySelector answer for the theme's featured
  * classes. A libdom walk and the engine's querySelector can disagree when
@@ -12928,7 +12254,7 @@ void js_fire_slider_probe(struct jsthread *thread, const char *when)
 	macsurf_qjs__safe_eval(thread->ctx, src);
 }
 
-/* fixes881 (Phase 0.7) — readyState='complete' + `load` at document AND window.
+/* fixes881 (Phase 0.7)  -  readyState='complete' + `load` at document AND window.
  *
  * Called from html_proceed_to_done's READY->DONE transition, i.e. once the box
  * tree exists AND base.active has fallen to 0 (every subresource settled) --
@@ -12963,13 +12289,13 @@ unsigned char js_fire_window_load(struct jsthread *thread, struct dom_document *
 	macsurf_qjs__safe_eval(thread->ctx, s_window_load_src);
 	macsurf_debug_log_writef("LIFE window load fired ctx=%p doc=%p",
 			(void *)thread->ctx, (void *)doc);
-	/* fixes1013 — one line per page saying whether the JS actually ran and
+	/* fixes1013  -  one line per page saying whether the JS actually ran and
 	 * wired anything up. See macsurf_qjs_page_js_summary. */
 	macsurf_qjs_page_js_summary();
 	return 1;
 }
 
-/* fixes869 (#295) — fire `load` / `error` AT a <script> element.
+/* fixes869 (#295)  -  fire `load` / `error` AT a <script> element.
  *
  * The universal dynamic-loader idiom is:
  *     const s = document.createElement('script');
@@ -12979,7 +12305,7 @@ unsigned char js_fire_window_load(struct jsthread *thread, struct dom_document *
  * Nothing ever fired those events, so the caller's promise never settled and
  * its chain stalled forever.  HW-confirmed on hackaday after fixes868: the
  * injected wp-polyfill reaches dom_SCRIPT_showed_up (flags=4), runs ASYNC and
- * EXECUTES -- and then `loadWPScript('wp-polyfill').then(() => loadWPScript('verbum'))`
+ * EXECUTES - and then `loadWPScript('wp-polyfill').then(() => loadWPScript('verbum'))`
  * never advances, so verbum-comments.js is never requested.
  *
  * Fires BOTH shapes because they are different registries: `s.onload = fn` is a
@@ -12987,21 +12313,21 @@ unsigned char js_fire_window_load(struct jsthread *thread, struct dom_document *
  * element's own `_L` map that el.dispatchEvent walks.  A loader may use either.
  *
  * Realm: `thread` is the script's OWNING content's js_thread (html_script_exec
- * passes c->js_thread), so this always runs in the right runtime -- passing a
+ * passes c->js_thread), so this always runs in the right runtime - passing a
  * JSValue across runtimes is the fixes854 crash.
  *
  * Ref discipline: qjs_wrap_element CONSUMES an owned ref on both the hit and
  * miss paths, and our caller (struct html_script.node) keeps its own ref for
- * later teardown -- so take a fresh ref FOR the wrap, or the wrapper's adopt
+ * later teardown - so take a fresh ref FOR the wrap, or the wrapper's adopt
  * and html_script_free's unref would both claim the same one. */
-/* fixes873 (#301) — document.currentScript.
+/* fixes873 (#301)  -  document.currentScript.
  *
  * The FIRST thing webpack's publicPath runtime reaches for:
  *     t.currentScript && "SCRIPT" === t.currentScript.tagName.toUpperCase()
  *         && (e = t.currentScript.src)
  * and if that yields nothing it falls to getElementsByTagName("script") and then
  * throws outright. We had no currentScript at all (0 references anywhere), so
- * every webpack bundle -- which is most of the modern web -- threw on its own
+ * every webpack bundle - which is most of the modern web - threw on its own
  * runtime prologue before reaching a single line of application code.
  *
  * Per spec this is set for the duration of a script's execution and restored
@@ -13012,7 +12338,7 @@ unsigned char js_fire_window_load(struct jsthread *thread, struct dom_document *
  * `node` NULL clears it to null, which is also the correct value outside script
  * execution and for a script running from a callback.
  *
- * (The tagName.toUpperCase() above is why #299 -- our lowercase tagName -- does
+ * (The tagName.toUpperCase() above is why #299 - our lowercase tagName - does
  * not bite here. It would bite a bundler that compared tagName directly.)
  */
 void js_set_current_script(struct jsthread *thread, struct dom_node *node)
@@ -13048,11 +12374,11 @@ void js_set_current_script(struct jsthread *thread, struct dom_node *node)
 unsigned char js_fire_script_load(struct jsthread *thread,
 		struct dom_node *node, int ok)
 {
-	/* fixes872 (#300) — dispatchEvent now fires BOTH the addEventListener list
+	/* fixes872 (#300)  -  dispatchEvent now fires BOTH the addEventListener list
 	 * and the on* handler, so this must NOT also call el['on'+type] itself: that
 	 * would run an onload handler TWICE, and a loader whose promise resolves
 	 * there would resolve twice. Only fall back to the direct property call when
-	 * the target has no dispatchEvent at all -- i.e. a JS FALLBACK element (mkfb,
+	 * the target has no dispatchEvent at all - i.e. a JS FALLBACK element (mkfb,
 	 * used before a document is wired), which is a plain object with no
 	 * prototype accessors and no _H map, so on* is a bare expando on it. */
 	static const char s_fire_src[] =
@@ -13073,7 +12399,7 @@ unsigned char js_fire_script_load(struct jsthread *thread,
 	if (thread == NULL || thread->ctx == NULL || node == NULL) return 0;
 	ctx = thread->ctx;
 
-	/* #265 — firing a script onload/onerror handler is a C->JS event
+	/* #265  -  firing a script onload/onerror handler is a C->JS event
 	 * dispatch: a fresh execution burst, so settle-once geometry must not
 	 * leak in from the script burst that just finished. */
 	qjs_geom_settle_begin();
@@ -13127,18 +12453,18 @@ void js_event_cleanup(struct jsthread *thread, struct dom_event *evt)
 	(void)thread; (void)evt;
 }
 
-/* fixes861 (#289) — pump EVERY live heap, not just g_heap.
+/* fixes861 (#289)  -  pump EVERY live heap, not just g_heap.
  *
  * This is the one timer pump in the browser (main.c's event loop calls it).  It
- * used to do `tmp.qctx = g_heap->ctx; run_timers(&tmp);` -- a single heap.  That
+ * used to do `tmp.qctx = g_heap->ctx; run_timers(&tmp);` - a single heap.  That
  * was survivable only while run_timers fired every slot in the global arena
  * regardless of owner: the "wrong" ctx still dragged the other heap's timers
  * along.  fixes854 stopped that (it was freeing/JS_Calling JSValues against a
- * foreign runtime -- the js_shape_hash_unlink crash) and correctly gated every
+ * foreign runtime - the js_shape_hash_unlink crash) and correctly gated every
  * slot on `t->ctx == qctx`.  Correct, but it left this pump single-heap: with
  * g_heap only ever the most-RECENTLY-created heap, and js_newheap() running per
  * window AND per (i)frame (browser_window.c:3373), exactly ONE heap's timers
- * could still fire.  Any page with an iframe had a frozen realm -- and which
+ * could still fire.  Any page with an iframe had a frozen realm - and which
  * one flipped depending on creation order.
  *
  * HW-observed on hackaday.com: the Jetpack comment iframe's dynamic-loader.js
@@ -13146,7 +12472,7 @@ void js_event_cleanup(struct jsthread *thread, struct dom_event *evt)
  * setTimeout(...,0) (see the IntersectionObserver shim).  The iframe's heap was
  * not g_heap, so that timer never ran, the IO callback never delivered,
  * WP_Enqueue_Dynamic_Script.loadScript('verbum') was never called, and
- * verbum-comments.js was never even fetched -- the reply box rendered as an
+ * verbum-comments.js was never even fetched - the reply box rendered as an
  * empty Preact mount (iframe box tree = 6 boxes).  Confirmed by the fixes860
  * probe: every script reaching dom_SCRIPT_showed_up was flags=6
  * (PARSER_INSERTED|NON_BLOCKING) i.e. parser-created and correctly skipped, with
@@ -13161,7 +12487,7 @@ void macsurf_qjs_pump_all(void)
 	struct jsheap *h = g_heap_list;
 	static int s_last_heaps = -1;
 	int heaps = 0;
-	/* #265 — settle-once geometry: JS has just yielded to the event loop,
+	/* #265  -  settle-once geometry: JS has just yielded to the event loop,
 	 * so the next burst (timer, microtask, event, script) starts fresh and
 	 * its first read gets a real flush. MUST precede the reconvert-freeze
 	 * gate below: while frozen, JS does not run, but when it unfreezes
@@ -13169,17 +12495,17 @@ void macsurf_qjs_pump_all(void)
 	 * The per-callback clear in macsurf_qjs_run_timers still covers
 	 * multiple timers within one pump. */
 	qjs_geom_settle_begin();
-	/* fixes898 — FREEZE JS while a reconvert box walk is in flight.
+	/* fixes898  -  FREEZE JS while a reconvert box walk is in flight.
 	 *
 	 * The reconvert rebuilds the box tree from the DOM across MANY cooperative
 	 * poll passes (convert_xml_to_box_inner self-reschedules every 20 nodes).
 	 * This pump runs on every one of those passes and fires setTimeout /
-	 * setInterval callbacks AND Promise microtasks -- all of which mutate the
+	 * setInterval callbacks AND Promise microtasks - all of which mutate the
 	 * DOM. On a page whose JS never idles (hackaday's dirty-mark storm), that
 	 * mutation frees+reuses nodes/strings the in-flight box walk is about to
 	 * read -> box_construct reads recycled memory -> 0x2710 garbage-fn-ptr.
 	 * HW (fixes897) proved it: the crash node VARIES run-to-run (a timing race),
-	 * node pointers are valid, freemem is healthy -- not memory, not a single
+	 * node pointers are valid, freemem is healthy - not memory, not a single
 	 * bad node, but JS racing the walk. fixes896's one-shot text-string pin
 	 * cannot cover nodes CREATED-then-freed during the walk; the only correct
 	 * model is to not interleave mutation with the rebuild (what a real browser
@@ -13210,13 +12536,13 @@ void macsurf_qjs_pump_all(void)
 			s_reconv_was_active = 0;
 		}
 	}
-	/* fixes862 (#289 probe) — fixes861 shipped with NO observable marker, so
+	/* fixes862 (#289 probe)  -  fixes861 shipped with NO observable marker, so
 	 * there was no way to tell from a log whether it was even in the build,
 	 * let alone whether a second (iframe) heap exists to pump. Log the heap
 	 * count, but ONLY when it changes: this runs every event-loop pass, so an
 	 * unconditional line would drown the log. heaps>=2 on an iframe page also
 	 * confirms browser_window_initialise_common (frames.c:232 -> js_newheap)
-	 * really does give iframes their own heap -- an assumption fixes861 rests
+	 * really does give iframes their own heap - an assumption fixes861 rests
 	 * on and which I have not otherwise verified on hardware. */
 	{
 		struct jsheap *c = g_heap_list;
@@ -13236,12 +12562,12 @@ void macsurf_qjs_pump_all(void)
 			tmp.doc_priv = NULL;
 			macsurf_qjs_run_timers(&tmp);
 		}
-		/* fixes868 (#294) — DRAIN THE MICROTASK QUEUE.
+		/* fixes868 (#294)  -  DRAIN THE MICROTASK QUEUE.
 		 *
 		 * QuickJS does not run Promise reactions itself: `resolve(v)` only
 		 * ENQUEUES the .then() callbacks as pending jobs, and the host must
 		 * pump them with JS_ExecutePendingJob().  Nothing in MacSurf ever
-		 * called it -- so since the day Promises were enabled, EVERY promise
+		 * called it - so since the day Promises were enabled, EVERY promise
 		 * chain in the browser has been dead past its first resolve().  Not a
 		 * hackaday bug: it is every modern site, because ~all modern JS is
 		 * promise-driven.
@@ -13249,7 +12575,7 @@ void macsurf_qjs_pump_all(void)
 		 * It hid because the shapes that DO work look like promises but are
 		 * not: xhr.onreadystatechange and setTimeout callbacks are direct
 		 * JS_Calls (which is why the HW log shows `WORK fetch ok=1 status=200`
-		 * -- that line is emitted from onreadystatechange -- while the .then()
+		 * - that line is emitted from onreadystatechange - while the .then()
 		 * on the very same fetch never fires), and a .then() whose promise is
 		 * already settled *inside* the same JS_Eval still needs a job cycle it
 		 * never gets.  On hackaday: fetch resolves, then
@@ -13259,12 +12585,12 @@ void macsurf_qjs_pump_all(void)
 		 * failures (fixes867 proved the failure probe is live).
 		 *
 		 * PER-RUNTIME: jobs belong to a JSRuntime, and every heap has its own
-		 * (fixes854/861), so each is drained separately -- passing one runtime's
+		 * (fixes854/861), so each is drained separately - passing one runtime's
 		 * jobs to another is the cross-runtime crash all over again.
 		 *
 		 * Bounded: a job may enqueue another (a .then() chain), so an unbounded
 		 * `while (JS_IsJobPending)` lets a promise loop starve the cooperative
-		 * event loop -- the same class of hang as the fixes608 timer cycle.
+		 * event loop - the same class of hang as the fixes608 timer cycle.
 		 * QJS_MAX_JOBS_PER_PUMP caps one pass; leftovers run on the next poll,
 		 * which is what a real browser's task/microtask split does anyway. */
 		if (h->rt != NULL) {
@@ -13274,7 +12600,7 @@ void macsurf_qjs_pump_all(void)
 				int r = JS_ExecutePendingJob(h->rt, &jctx);
 				if (r < 0) {
 					/* Uncaught rejection / job threw: surface it, keep
-					 * draining -- one bad job must not stall the queue. */
+					 * draining - one bad job must not stall the queue. */
 					if (jctx != NULL) {
 						JSValue exc = JS_GetException(jctx);
 						const char *s = JS_ToCString(jctx, exc);

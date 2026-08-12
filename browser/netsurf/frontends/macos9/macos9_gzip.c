@@ -850,7 +850,7 @@ int macos9_gunzip_push(struct macos9_gunzip *z, const char *data, long len)
 
 	if (r == MACOS9_GUNZIP_OK) {
 		/* Hand on whatever this chunk produced rather than sitting on
-		 * it until the window wraps -- that is the whole point of
+		 * it until the window wraps - that is the whole point of
 		 * streaming. */
 		gz_flush(z);
 		/* Ratio guard, checked per push rather than per byte so the

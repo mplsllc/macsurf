@@ -140,7 +140,7 @@ static void free_matches(struct textsearch_context *textsearch)
 	struct list_entry *nxt;
 
 	/* fixes501x: NULL-walk guard.  The crash signature was
-	 * free_matches+0x40 lwz r29,0x0004(r31) with r31=NULL — i.e.
+	 * free_matches+0x40 lwz r29,0x0004(r31) with r31=NULL - i.e.
 	 * textsearch->found was NULL when this ran, reached via the
 	 * content_close -> content_textsearch_destroy path during a
 	 * browser_window_content_ready that fires while a *different*

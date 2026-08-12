@@ -62,7 +62,7 @@ css_error css__parse_macsurf_grid_flow(css_language *c,
 	parserutils_vector_iterate(vector, ctx);
 
 	if (val < 1 || val > 4) {
-		/* Anything outside the recognised enum range — drop. */
+		/* Anything outside the recognised enum range - drop. */
 		*ctx = orig_ctx;
 		return CSS_INVALID;
 	}

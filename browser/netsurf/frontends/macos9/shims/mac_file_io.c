@@ -1,6 +1,6 @@
 /*
- * MacSurf — Mac OS 9 frontend for NetSurf
- * mac_file_io.c — POSIX file I/O shim using Carbon File Manager
+ * MacSurf  -  Mac OS 9 frontend for NetSurf
+ * mac_file_io.c  -  POSIX file I/O shim using Carbon File Manager
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.
@@ -62,7 +62,7 @@ int mac_open(const char *path, int flags, ...)
 	err = FSPathMakeRef((const UInt8 *)path, &ref, NULL);
 
 	if (err != noErr && (flags & O_CREAT)) {
-		/* File doesn't exist — create it.
+		/* File doesn't exist  -  create it.
 		 * Find parent directory by truncating at last '/'. */
 		char parent[1024];
 		const char *slash;

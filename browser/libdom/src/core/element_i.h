@@ -8,7 +8,7 @@
 #ifndef dom_internal_core_element_h_
 #define dom_internal_core_element_h_
 
-/* stdbool.h removed for CW8 C89 — prefix provides bool */
+/* stdbool.h removed for CW8 C89 - prefix provides bool */
 
 #include <dom/core/element.h>
 

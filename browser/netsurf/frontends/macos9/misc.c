@@ -1,6 +1,6 @@
 /*
- * MacSurf — Mac OS 9 frontend for NetSurf
- * misc.c — All gui_misc_table callbacks
+ * MacSurf  -  Mac OS 9 frontend for NetSurf
+ * misc.c  -  All gui_misc_table callbacks
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.
@@ -46,7 +46,7 @@ macos9_login(struct nsurl *url, const char *realm,
 static void
 macos9_pdf_password(char **owner_pass, char **user_pass, char *path)
 {
-	/* Not needed — no PDF export */
+	/* Not needed  -  no PDF export */
 }
 
 static nserror

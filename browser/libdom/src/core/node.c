@@ -2048,7 +2048,7 @@ bool _dom_node_readonly_owner(const dom_node_internal *node)
 	return false;
 }
 
-/* fixes867 (#293) — read-only accessor for the mutation semaphore above.
+/* fixes867 (#293) - read-only accessor for the mutation semaphore above.
  *
  * Diagnostic ONLY; it changes no behaviour.  The macos9 JS binding needs it to
  * tell apart the three silent rejections in _dom_node_insert_before, which all

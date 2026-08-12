@@ -8,7 +8,7 @@
 #ifndef css_css__parse_properties_properties_h_
 #define css_css__parse_properties_properties_h_
 
-/* Defensive empty define for CW8 — see notes in stylesheet.h. */
+/* Defensive empty define for CW8 - see notes in stylesheet.h. */
 #ifndef _ALIGNED
 #define _ALIGNED
 #endif

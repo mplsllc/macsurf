@@ -1,6 +1,6 @@
 /*
- * MacSurf — Mac OS 9 frontend for NetSurf
- * macsurf_osver.c — runtime host-OS version detection (OS 9 vs Mac OS X).
+ * MacSurf  -  Mac OS 9 frontend for NetSurf
+ * macsurf_osver.c  -  runtime host-OS version detection (OS 9 vs Mac OS X).
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.
@@ -20,8 +20,8 @@
 #endif
 
 /* Gestalt selectors spelled out locally so this file compiles against ANY
- * vintage of Universal Interfaces. UI 3.4 -- what CW8 ships, and what
- * Retro68's multiversal set matches -- declares gestaltSystemVersion but NOT
+ * vintage of Universal Interfaces. UI 3.4 - what CW8 ships, and what
+ * Retro68's multiversal set matches - declares gestaltSystemVersion but NOT
  * the Major/Minor/BugFix selectors, which Mac OS X 10.4 added.
  *
  * PRIVATE names, deliberately: in UI 3.4 these are enum constants, not
@@ -37,8 +37,8 @@
 #define MACSURF_GESTALT_SYSVER_BUGFIX 0x73797333L  /* 'sys3', Mac OS X 10.4+ */
 #define MACSURF_GESTALT_CARBON        0x63626F6EL  /* 'cbon'                 */
 
-/* File-statics set by osver_probe(). Defaults describe Mac OS 9 -- the
- * primary shipped platform -- so a Gestalt failure degrades to today's
+/* File-statics set by osver_probe(). Defaults describe Mac OS 9 - the
+ * primary shipped platform - so a Gestalt failure degrades to today's
  * behaviour rather than to something new. */
 static int  g_osver_ready  = 0;   /* probe has run (idempotence latch)     */
 static int  g_osver_logged = 0;   /* RECON OS emitted (one-shot latch)     */
@@ -57,7 +57,7 @@ static void osver_probe(void)
 #ifdef __MACOS9__
 	/* SInt32, NOT long: UI 3.4 declares Gestalt(OSType, long *) while
 	 * Retro68 declares Gestalt(OSType, LONGINT *). SInt32 is the only
-	 * spelling that satisfies both -- macsurf_memory.c:145 uses long and
+	 * spelling that satisfies both - macsurf_memory.c:145 uses long and
 	 * the Linux gate flags it as an incompatible pointer type. */
 	SInt32 v;
 	SInt32 maj;
@@ -86,7 +86,7 @@ static void osver_probe(void)
 
 	/* 10.4+ integer selectors. These fail cleanly with
 	 * gestaltUndefSelectorErr (-5551) on OS 9 AND on 10.0-10.3, where the
-	 * BCD decode above is already exact -- so a non-zero g_os_mmb_err is
+	 * BCD decode above is already exact - so a non-zero g_os_mmb_err is
 	 * EXPECTED on the 10.3 test machine and is not a defect.
 	 *
 	 * Deliberately one-way: this block may CONFIRM OS X but can never clear
@@ -126,7 +126,7 @@ void macsurf_osver_init(void)
 #ifdef __MACOS9__
 	/* "RECON OS" MUST be present in macsurf_log_is_crash_report() over in
 	 * macsurf_debug_log.c or this line is silently dropped in a shipped
-	 * build -- that gate matches LITERAL substrings, not a "RECON" prefix.
+	 * build - that gate matches LITERAL substrings, not a "RECON" prefix.
 	 * %p is the only hex specifier macsurf_debug_log_writef has, so the
 	 * packed BCD prints the way a human reads it (e.g. 00001039). */
 	macsurf_debug_log_writef(
@@ -137,7 +137,7 @@ void macsurf_osver_init(void)
 	if (g_os_raw == 0) {
 		/* Carries "FAIL", so it survives the gate with no entry of its own. */
 		macsurf_debug_log_writef(
-			"RECON OS gestalt FAIL err=%d -- assuming Mac OS 9",
+			"RECON OS gestalt FAIL err=%d - assuming Mac OS 9",
 			g_os_sysv_err);
 	}
 	macsurf_debug_log_flush();

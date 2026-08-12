@@ -1,5 +1,5 @@
 /*
- * MacSurf shim — sys/stat.h
+ * MacSurf shim  -  sys/stat.h
  * Inlined copy of shims/stat.h so MSL's <sys/stat.h> isn't pulled in
  * (which chains to time.h with a conflicting struct tm).
  */

@@ -1,5 +1,5 @@
 /*
- * MacSurf stub -- sys/ns_types.h
+ * MacSurf stub - sys/ns_types.h
  * Redirect to mac_types.h which already provides:
  *   off_t, ssize_t, mode_t, time_t, size_t (via stddef.h).
  *

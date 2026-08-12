@@ -47,13 +47,13 @@ static const char css_default[] =
 	/* HTML5 sectioning */
 	"header,footer,nav,section,article,aside,main,figure,"
 	"figcaption,details,summary,hgroup,dialog,picture{display:block}"
-	/* fixes186 + fixes351c — collapse <details> by default.
+	/* fixes186 + fixes351c  -  collapse <details> by default.
 	 *
 	 * Previous rule used `details > *{display:none}` which is the
 	 * standard browser approach, but in MacSurf box_construct.c
 	 * excludes display:none elements from the box tree at construct
 	 * time. After fixes329 added click → toggle [open], calling
-	 * html_recascade_tree refreshed styles on EXISTING boxes — but
+	 * html_recascade_tree refreshed styles on EXISTING boxes  -  but
 	 * the inner div never had a box to start with, so toggling [open]
 	 * flipped the styled details container background to green but
 	 * inner content never appeared.
@@ -98,11 +98,11 @@ static const char css_default[] =
 	 * body{background:#fff;color:#000} painted the body box WHITE over a
 	 * dark author html{background:#2d3238} canvas (box_html captured the
 	 * correct #2d3238 base, but the body box then covered it), and forced
-	 * black body text over the author's light color -- so dark-themed
+	 * black body text over the author's light color - so dark-themed
 	 * sites (tinkerdifferent, any XenForo dark theme) rendered white with
 	 * black hero text. Fix: put the default text colour on the ROOT so a
 	 * dark-theme author html{color:...} is inherited by body, and set NO
-	 * background here. We do NOT add html{background} -- that would defeat
+	 * background here. We do NOT add html{background} - that would defeat
 	 * the CSS body-background->canvas propagation used by sites that set
 	 * their page colour on <body>. Plain pages still render black-on-
 	 * white: the canvas defaults to white (data->background_colour) and
@@ -111,7 +111,7 @@ static const char css_default[] =
 	/* fixes830 (#244): default body font 13px -> 16px to match every
 	 * mainstream browser's default (Chrome/Firefox/Safari all render an
 	 * unstyled page at 16px). 13px made every un-styled page read ~20%
-	 * too small -- the top v2.0 legibility complaint. em-based headings
+	 * too small - the top v2.0 legibility complaint. em-based headings
 	 * (h1=2em etc.) scale proportionally; pages that set their own
 	 * font-size are unaffected (they override this). line-height stays
 	 * 1.33 (comfortable; mainstream 'normal' is ~1.2 but tighter reads
@@ -180,7 +180,7 @@ static const char css_default[] =
 	 * stub strips `u-jsOnly` and sets an inline !important style on the
 	 * real <textarea class="js-editor">). The earlier UA-stylesheet
 	 * reveals (fixes479/492/496b: editorPlaceholder un-hide, textarea
-	 * force-show, container min-heights) were REMOVED — a UA !important
+	 * force-show, container min-heights) were REMOVED  -  a UA !important
 	 * rule cannot override an author !important (`.u-jsOnly{display:none
 	 * !important}`), so they never took effect AND the blanket
 	 * `.formRow,.formRow>*{min-height:200px!important}` risked distorting
@@ -213,7 +213,7 @@ static const char css_default[] =
 	"br[clear=left]{clear:left}"
 	"br[clear=right]{clear:right}"
 	"br[clear=all]{clear:both}"
-	/* fixes272 — HTML5 dir="rtl" / dir="ltr" attribute wiring.
+	/* fixes272  -  HTML5 dir="rtl" / dir="ltr" attribute wiring.
 	 * NetSurf core honours css_computed_direction(...) for inline
 	 * text alignment (layout.c:4326) and RTL positioning resolution
 	 * (layout.c:6340), but the HTML dir attribute doesn't auto-flow
@@ -223,7 +223,7 @@ static const char css_default[] =
 	"[dir=rtl]{direction:rtl;unicode-bidi:embed}"
 	"[dir=ltr]{direction:ltr;unicode-bidi:embed}"
 	"[dir=auto]{unicode-bidi:plaintext}"
-	/* fixes272 — writing-mode parsed but no visual effect in V1
+	/* fixes272  -  writing-mode parsed but no visual effect in V1
 	 * (NetSurf's inline layout is horizontally hard-wired). Parser
 	 * accepts the property cleanly; future layout-direction work
 	 * will activate it. Documented in #35. */
@@ -241,21 +241,21 @@ static const char css_internal[] =
 	"progress,meter{display:inline-block;width:10em;height:1em;"
 	"background:#ccc;border:1px inset #999}"
 	"noscript{display:block}"
-	/* fixes743 (#114) — HTML5 hidden attribute -> display:none generally.
+	/* fixes743 (#114)  -  HTML5 hidden attribute -> display:none generally.
 	 * Non-!important so the content-container rescue rules below re-show
 	 * article/main/section[hidden] (the JS-hydration pattern) via !important;
 	 * a bare <div>/<span>/<button hidden> that JS won't reveal stays hidden. */
 	"[hidden]{display:none}"
-	/* fixes746 (#204) — XenForo header account/search group renders grey. The
+	/* fixes746 (#204)  -  XenForo header account/search group renders grey. The
 	 * container .p-navgroup has TWO rules: an early background:rgba(20,20,20,
 	 * 0.15) overlay and a later background:none reset. MacSurf drops the `none`
 	 * reset AND composites the rgba against the page's #ebebeb (not the blue
-	 * behind it), so rgba(20,20,20,.15) over #ebebeb == #cacaca — exactly the
+	 * behind it), so rgba(20,20,20,.15) over #ebebeb == #cacaca  -  exactly the
 	 * grey seen on the blue bar. Force the group + its iconic links transparent
 	 * so the blue .p-header/.p-nav shows through. */
 	".p-navgroup,.p-navgroup-link--iconic,.p-navgroup-link--search,"
 	".p-navgroup-link--user{background-color:transparent !important;border:0 !important}"
-	/* fixes168c — Modern-web rescue rules. Targeted at JS-required
+	/* fixes168c  -  Modern-web rescue rules. Targeted at JS-required
 	 * overlay patterns and content-hidden-until-hydration patterns.
 	 * Selectors are narrow enough that legitimate uses are extremely
 	 * rare; the rescue payload is unconditional. */
@@ -291,7 +291,7 @@ static const char css_internal[] =
 	 * is the matching rescue for sites that gate real content behind
 	 * a noscript fallback. */
 	".no-js,html.no-js{display:block !important}"
-	/* fixes329 (#110) — HTML5 <details>/<summary> disclosure widget.
+	/* fixes329 (#110)  -  HTML5 <details>/<summary> disclosure widget.
 	 * Closed details collapses everything but its summary. summary
 	 * indicates clickability. Click → toggle handled in
 	 * macos9_js_click.c by toggling the `open` attribute. */
@@ -299,17 +299,17 @@ static const char css_internal[] =
 	" details[open]>*{display:block}"
 	" summary{display:block;cursor:pointer;font-weight:bold;"
 	"padding:2px 0}"
-	/* fixes329 (#114) — HTML5 hidden attribute defaults. Specific
+	/* fixes329 (#114)  -  HTML5 hidden attribute defaults. Specific
 	 * articles/main/section [hidden] rescue rules later in this
 	 * sheet still override. */
 	" [hidden]{display:none}"
-	/* fixes499c — modest post spacing on XenForo message blocks. The old
+	/* fixes499c  -  modest post spacing on XenForo message blocks. The old
 	 * patches forced large min-heights (distorting layout); this is gentle,
-	 * NON-!important breathing room only — author CSS still wins where it
+	 * NON-!important breathing room only  -  author CSS still wins where it
 	 * sets its own. Just enough to separate stacked posts/articles. */
 	" .message,.block-row,article.message{margin-bottom:10px}"
 	" .message-inner,.message-cell--main{padding:6px 0}"
-	/* fixes499d — give the post editor a little vertical breathing room so
+	/* fixes499d  -  give the post editor a little vertical breathing room so
 	 * the "Attach files" button row below the textarea isn't clipped where
 	 * the editor wrapper meets the Options row. The editor textarea has an
 	 * inline fixed height (set by the reveal), so the attach/footer row was
@@ -350,7 +350,7 @@ struct stub_fetch_ctx {
 	struct fetch *parent;
 	stub_scheme scheme;
 	char path[1024];
-	/* fixes957 — the failing fetcher's own error string, for
+	/* fixes957  -  the failing fetcher's own error string, for
 	 * about:query/fetcherror.  NetSurf core already forwards it:
 	 * browser_window__handle_fetcherror() posts "siteurl" and "reason" as
 	 * multipart data to the error page.  Every stub setup used to
@@ -366,20 +366,20 @@ struct stub_fetch_ctx {
 	 * tells me the wrong thing", which is the hardest kind of report to act
 	 * on.  The reason travels with the fetch that produced the page. */
 	char fail_reason[192];
-	char fail_site[512];   /* fixes957c — failed URL, from the multipart */
+	char fail_site[512];   /* fixes957c  -  failed URL, from the multipart */
 	bool started;
 	bool aborted;
 	bool done;
 	struct stub_fetch_ctx *r_next;
 	struct stub_fetch_ctx *r_prev;
-	/* fixes242 — dynamic body for about: pages. about:query/fetcherror
+	/* fixes242  -  dynamic body for about: pages. about:query/fetcherror
 	 * encodes the failed URL in its query string; we generate a friendly
 	 * error page with the URL embedded so users don't see the bare
 	 * white "MacSurf" page on fetch failures. body_used is the length
 	 * actually populated; 0 means use the static fallback in stub_body_for. */
 	char body_buf[2048];
 	size_t body_used;
-	/* fixes352a (#96) — heap-allocated body for data: URLs whose
+	/* fixes352a (#96)  -  heap-allocated body for data: URLs whose
 	 * decoded content can be much larger than body_buf. Owned by ctx
 	 * and freed in stub_free. Only used by SCH_DATA. */
 	unsigned char *dyn_body;
@@ -483,7 +483,7 @@ stub_body_for(const struct stub_fetch_ctx *ctx,
 		return;
 
 	case SCH_ABOUT:
-		/* fixes242 — if setup populated a dynamic body (e.g. an error
+		/* fixes242  -  if setup populated a dynamic body (e.g. an error
 		 * page for about:query/fetcherror), serve it. Otherwise fall
 		 * back to the generic welcome page. */
 		if (ctx->body_used > 0) {
@@ -505,7 +505,7 @@ stub_body_for(const struct stub_fetch_ctx *ctx,
 		return;
 
 	case SCH_DATA:
-		/* fixes352a (#96) — serve the decoded body the setup path
+		/* fixes352a (#96)  -  serve the decoded body the setup path
 		 * stashed in ctx->dyn_body. MIME comes out of ctx->path's
 		 * before-comma section (e.g. "text/plain;charset=utf-8" →
 		 * "text/plain"; default text/plain when none specified or
@@ -569,7 +569,7 @@ stub_can_fetch(const struct nsurl *url)
 	return true;
 }
 
-/* fixes957d — fail_reason/fail_site are the "reason" and "siteurl" fields core
+/* fixes957d  -  fail_reason/fail_site are the "reason" and "siteurl" fields core
  * posts to about:query/fetcherror, and they MUST be handed in here rather than
  * written onto the returned context afterwards: this function builds the error
  * page body, so anything stored after it returns is too late to appear on the
@@ -622,7 +622,7 @@ stub_setup_scheme(struct fetch *parent_fetch, struct nsurl *url,
 	memcpy(ctx->path, url_str, copy);
 	ctx->path[copy] = '\0';
 
-	/* fixes242 — about:query/fetcherror gets a friendly explanation
+	/* fixes242  -  about:query/fetcherror gets a friendly explanation
 	 * page with the failed URL embedded, instead of the bare "MacSurf"
 	 * placeholder that confuses users. The query string carries the
 	 * failed URL as "url=..."; we extract it (URL-encoded, no decode
@@ -652,7 +652,7 @@ stub_setup_scheme(struct fetch *parent_fetch, struct nsurl *url,
 			failed_url[sizeof failed_url - 1] = '\0';
 		}
 
-		/* fixes957 — if the fetcher told us WHY, say so instead of
+		/* fixes957  -  if the fetcher told us WHY, say so instead of
 		 * offering three guesses.  A rejected certificate is the case
 		 * that matters: MacSurf now refuses to fall back to cleartext
 		 * when a certificate fails to validate, so this page is what a
@@ -732,7 +732,7 @@ stub_setup_scheme(struct fetch *parent_fetch, struct nsurl *url,
 		}
 	}
 
-	/* fixes335 (#99 #107) — diagnostic about: pages. */
+	/* fixes335 (#99 #107)  -  diagnostic about: pages. */
 	if (scheme == SCH_ABOUT) {
 		int rn = 0;
 		if (strncmp(ctx->path, "cache", 5) == 0 &&
@@ -890,16 +890,16 @@ stub_setup_about(struct fetch *parent_fetch, struct nsurl *url,
 		 const struct fetch_multipart_data *post_multipart,
 		 const char **headers)
 {
-	/* fixes957 — capture the "reason" the failing fetcher reported.  Core
+	/* fixes957  -  capture the "reason" the failing fetcher reported.  Core
 	 * posts it here (browser_window__handle_fetcherror); it used to be
 	 * discarded with the (void) below, which is why about:query/fetcherror
 	 * could only ever offer three generic guesses.
 	 *
-	 * fixes957d — read BOTH fields out of the multipart and hand them to
+	 * fixes957d  -  read BOTH fields out of the multipart and hand them to
 	 * stub_setup_scheme, which is where the page body is composed.  fixes957
 	 * and fixes957c wrote them onto the context AFTER that call returned, so
 	 * the body had already been built against the calloc'd empty strings and
-	 * always came out generic with an empty URL box -- which is exactly what
+	 * always came out generic with an empty URL box - which is exactly what
 	 * hardware showed while the log proved the reason had reached core
 	 * intact ("NAV: ERROR ... msg=certificate expired or not yet valid").
 	 * Not a caching problem and not a core plumbing problem: llcache marks
@@ -942,7 +942,7 @@ stub_setup_file(struct fetch *parent_fetch, struct nsurl *url,
 	return stub_setup_scheme(parent_fetch, url, SCH_FILE, NULL, NULL);
 }
 
-/* fixes352a (#96) — data: URL fetcher. Pre-fix this returned an empty
+/* fixes352a (#96)  -  data: URL fetcher. Pre-fix this returned an empty
  * body, so any data: navigation (including View Source) silently went
  * nowhere. Now parses the URL per RFC 2397 (subset):
  *
@@ -1078,7 +1078,7 @@ stub_free(void *fetch)
 	struct stub_fetch_ctx *ctx = fetch;
 	if (ctx == NULL) return;
 	stub_ring_remove(ctx);
-	/* fixes352a (#96) — free the heap-allocated data: body if any. */
+	/* fixes352a (#96)  -  free the heap-allocated data: body if any. */
 	if (ctx->dyn_body != NULL) {
 		free(ctx->dyn_body);
 		ctx->dyn_body = NULL;
@@ -1146,7 +1146,7 @@ stub_poll(lwc_string *scheme)
 	(void)scheme;
 	if (stub_ring == NULL) return;
 
-	/* fixes105 — release every stub fetch through
+	/* fixes105  -  release every stub fetch through
 	 * fetch_remove_from_queues + fetch_free, mirroring every
 	 * reference fetcher in NetSurf core (curl.c, file.c, about.c,
 	 * data.c, resource.c, css_fetcher.c, javascript/fetcher.c).
@@ -1156,7 +1156,7 @@ stub_poll(lwc_string *scheme)
 	 * or fetch_free. Every resource:/about:/data:/javascript: fetch
 	 * leaked into NetSurf's fetch_ring permanently. Visible in the
 	 * log as "stub setup; stub start; stub snd; FETCH FINISHED;
-	 * stub fin" pairs on every html_create — two leaks per page
+	 * stub fin" pairs on every html_create  -  two leaks per page
 	 * (resource:default.css + resource:internal.css). Combined with
 	 * the aborted-while-queued stub leak (aborted contexts never get
 	 * past the !ctx->aborted gate in the old dispatch condition) this
@@ -1164,9 +1164,9 @@ stub_poll(lwc_string *scheme)
 	 * wall, paralleling the HTTP fetcher's pre-fixes102 behaviour.
 	 *
 	 * Two cleanup branches now:
-	 * 1. ctx->aborted — caller (NetSurf) wants this fetch gone. No
+	 * 1. ctx->aborted  -  caller (NetSurf) wants this fetch gone. No
 	 *    callbacks (matches curl ops.abort), just remove + free.
-	 * 2. ctx->started && !ctx->done — normal dispatch. stub_send_for
+	 * 2. ctx->started && !ctx->done  -  normal dispatch. stub_send_for
 	 *    emits HEADER/DATA/FINISHED, then remove + free.
 	 *
 	 * After fetch_free returns, ctx is freed memory (fetch_free

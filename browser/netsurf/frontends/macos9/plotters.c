@@ -1,6 +1,6 @@
 /*
- * MacSurf — Mac OS 9 frontend for NetSurf
- * plotters.c — All plotter_table callbacks
+ * MacSurf  -  Mac OS 9 frontend for NetSurf
+ * plotters.c  -  All plotter_table callbacks
  *
  * Phase 5: implement clip, rectangle, text against QuickDraw.
  * Other plotters remain stubs and will be filled in incrementally.
@@ -34,7 +34,7 @@ extern int macos9_bitmap_get_mask_rowbytes(void *bitmap);
 long macos9_plot_text_count = 0;
 long macos9_plot_rect_count = 0;
 
-/* fixes366c — per-paint-pattern log throttles for the fixes365/
+/* fixes366c  -  per-paint-pattern log throttles for the fixes365/
  * fixes366b diagnostic lines emitted from macos9_plot_rectangle.
  * Originally function-scoped statics that capped at 5 per session;
  * hoisted to file scope so macsurf_profile_reset() can zero them
@@ -43,7 +43,7 @@ long macos9_plot_rect_count = 0;
 static int hstripe_paint_seen = 0;
 static int dotgrid_paint_seen = 0;
 static int diag_paint_seen = 0;
-/* fixes366d — log the snapshot values at plot_rectangle entry,
+/* fixes366d  -  log the snapshot values at plot_rectangle entry,
  * regardless of which branch the plotter ends up taking. Tells us
  * whether the one-shot values are reaching the plotter at all, or
  * whether they're being consumed/cleared by an intermediate paint.
@@ -61,14 +61,14 @@ void macos9_plotter_diag_counters_reset(void)
 /* fixes144b: sub-AA draw-spacing experiment. QuickDraw bitmap text
  * below the AA floor (set to 12pt in main.c via
  * SetAntiAliasedTextEnabled) draws adjacent glyphs with no visible
- * separator -- "Di"/"Disc"/"Dill" visually collide at 9-10pt
+ * separator - "Di"/"Disc"/"Dill" visually collide at 9-10pt
  * Helvetica because the D's painted right edge and the i's left edge
  * land in adjacent or shared pixel columns. fixes144a2's diagnostic
  * probe captured 216 measurements and showed every delta=0; this is
  * a paint-resolution artefact, not a metric error. The fix forces
  * the per-char draw path and adds +1px between glyphs ONLY when
  * size < AA floor and the font is proportional. Measurement (macos9_
- * font_measure) is intentionally NOT touched -- layout, wrap, and
+ * font_measure) is intentionally NOT touched - layout, wrap, and
  * text-overflow stay byte-stable, so MacTrove cards / nav labels /
  * inputs don't reflow.
  *
@@ -97,7 +97,7 @@ void macos9_plotter_diag_counters_reset(void)
  * line mixing fonts with different installed metrics (body + inline
  * <code>) stacked lines 2-4px on top of each other. The proper fix
  * is real per-font ascent/descent through gui_layout_table (deferred
- * -- needs NetSurf-core work). This flag is the experiment: ship the
+ * - needs NetSurf-core work). This flag is the experiment: ship the
  * alias dispatch, hardware-probe for inline-mix drift, revert if it
  * reproduces. Set to 0 to fall back to fixes52's behaviour.
  *
@@ -138,11 +138,11 @@ void macos9_plotter_diag_counters_reset(void)
  * logging gated on MACSURF_FONT_ALIAS_DIAG in macos9.h, and further
  * narrowed by MACSURF_FONT_ALIAS_DIAG_SMART which skips the SANS_SERIF
  * (Helvetica-default) firehose. The remaining log lines are non-default
- * family dispatches — exactly the cases where the width-vs-paint
+ * family dispatches  -  exactly the cases where the width-vs-paint
  * divergence would matter. width and paint share macos9_font_id_from_style
  * as the dispatch entry point (verified at macos9_font_measure:163 and
  * plot_text:1311), so by construction they cannot disagree on a single
- * fstyle — but any inline-layout drift between segments will show as
+ * fstyle  -  but any inline-layout drift between segments will show as
  * adjacent-line family/size/face mismatches in the log.
  *
  * Acceptance criteria for this round: FF1-FF5 render visibly distinct
@@ -163,7 +163,7 @@ long macos9_grad_linear_unpack_count = 0;
 #include "macsurf_debug.h"
 #include "macos9_webfont.h"
 
-/* fixes615 (webfonts) — lean externs to reach the current content from the
+/* fixes615 (webfonts)  -  lean externs to reach the current content from the
  * paint path without pulling the full browser_window / hlcache headers into
  * this frontend TU. All opaque pointers. */
 struct browser_window;
@@ -179,7 +179,7 @@ extern struct content *hlcache_handle_get_content(
 #include <Quickdraw.h>
 #include <QuickdrawText.h>
 #else
-/* Linux cross-check stubs — match Mac toolbox shapes loosely. */
+/* Linux cross-check stubs  -  match Mac toolbox shapes loosely. */
 typedef struct { short top, left, bottom, right; } MacRect;
 typedef struct { unsigned short red, green, blue; } RGBColor;
 #define Rect MacRect
@@ -238,7 +238,7 @@ macos9_colour_to_rgb(colour c, RGBColor *out)
 	 * actually blends instead of rendering solid. op = css_alpha =
 	 * 255 - transparency; out = fg*op + backdrop*(255-op) per channel.
 	 * op + t == 255 so this is a true weighted average. Integer math
-	 * only (max 255*255 = 65025, fits in int) -- no long long, CW8
+	 * only (max 255*255 = 65025, fits in int) - no long long, CW8
 	 * safe. t == 0 is the opaque fast path (leaves fg untouched).
 	 * NS_TRANSPARENT (0x01000000) is a sentinel, not an alpha value,
 	 * so it is excluded (guarded upstream; excluding it here keeps the
@@ -252,7 +252,7 @@ macos9_colour_to_rgb(colour c, RGBColor *out)
 		r = (r * op + br * t) / 255u;
 		g = (g * op + bgc * t) / 255u;
 		b = (b * op + bb * t) / 255u;
-		/* fixes751 (#204) PROBE — a dark semi-transparent overlay is the
+		/* fixes751 (#204) PROBE  -  a dark semi-transparent overlay is the
 		 * XenForo .p-navgroup rgba(20,20,20,.15) user-button/search fill.
 		 * Log fg, alpha, the backdrop it composited against, and the
 		 * result. If bd=255,255,255 the button flattened against WHITE
@@ -273,7 +273,7 @@ macos9_colour_to_rgb(colour c, RGBColor *out)
 	}
 
 	/* 8-bit -> 16-bit by replicating the byte (0xAB -> 0xABAB).
-	 * Standard QuickDraw idiom — same trick CopyBits / Picture
+	 * Standard QuickDraw idiom  -  same trick CopyBits / Picture
 	 * recording uses. */
 	out->red   = (unsigned short)((r << 8) | r);
 	out->green = (unsigned short)((g << 8) | g);
@@ -289,7 +289,7 @@ macos9_rect_from_ns(const struct rect *src, Rect *dst)
 	dst->bottom = (short)src->y1;
 }
 
-/* fixes51 -- case-insensitive byte compare for the small set of
+/* fixes51 - case-insensitive byte compare for the small set of
  * CSS font names we recognise. Avoids pulling in tolower / strcasecmp
  * dependencies; names are stable ASCII. */
 static int macos9_name_match(const char *s, size_t n, const char *name)
@@ -310,7 +310,7 @@ short
 macos9_font_id_from_style(const plot_font_style_t *fstyle)
 {
 #if MACSURF_FONT_FAMILY_ALIASES
-	/* fixes145 -- dispatch on generic family. See top-of-file
+	/* fixes145 - dispatch on generic family. See top-of-file
 	 * comment for the alias table and the baseline-drift caveat. */
 	if (fstyle == NULL) {
 		return kFontIDHelvetica;
@@ -327,12 +327,12 @@ macos9_font_id_from_style(const plot_font_style_t *fstyle)
 		return kFontIDHelvetica;
 	}
 #else
-	/* fixes52 -- force Helvetica for every CSS font-family. NetSurf's
+	/* fixes52 - force Helvetica for every CSS font-family. NetSurf's
 	 * inline layout has a baseline-drift bug whenever a single line
 	 * mixes fonts with different installed metrics (e.g. body text
 	 * + <code>); lines stack 2-4 px on top of each other and become
 	 * unreadable. The proper fix is real per-font ascent/descent
-	 * through gui_layout_table (deferred — needs NetSurf-core work).
+	 * through gui_layout_table (deferred  -  needs NetSurf-core work).
 	 * Until then we sidestep the bug by collapsing every CSS family
 	 * to a single font, and pick Helvetica because it ships with a
 	 * full TrueType outline on every Mac OS 9 system (so the
@@ -358,7 +358,7 @@ macos9_face_from_style(const plot_font_style_t *fstyle)
 /* ---- plotters ---- */
 
 #ifdef __MACOS9__
-/* fixes361h — one-shot static for the second box-shadow's packed
+/* fixes361h  -  one-shot static for the second box-shadow's packed
  * value. redraw.c calls macos9_set_box_shadow_2(packed) right before
  * a plot->rectangle that should paint a second-inset bevel; the
  * plotter reads-and-clears so the value can't leak into subsequent
@@ -376,14 +376,14 @@ void macos9_set_box_shadow_2(int32_t packed)
 {
 	macos9_box_shadow_2_oneshot = packed;
 }
-/* fixes362 — third box-shadow one-shot. Platinum convention is two
+/* fixes362  -  third box-shadow one-shot. Platinum convention is two
  * inset bevels (light + dark) followed by one outer drop. */
 void macos9_set_box_shadow_3(int32_t packed)
 {
 	macos9_box_shadow_3_oneshot = packed;
 }
 
-/* fixes364 — horizontal stripe background one-shot. Packed format
+/* fixes364  -  horizontal stripe background one-shot. Packed format
  * mirrors css_computed_macsurf_hstripe_bg: bit 31 = set flag, bits
  * 15..29 = c2 RGB555, bits 0..14 = c1 RGB555. redraw.c sets this
  * before plot_rectangle paints the background fill; the plotter
@@ -395,7 +395,7 @@ void macos9_set_hstripe_bg(int32_t packed)
 	macos9_hstripe_bg_oneshot = packed;
 }
 
-/* fixes365c — two-layer dot-grid background one-shot. Same packed
+/* fixes365c  -  two-layer dot-grid background one-shot. Same packed
  * format as hstripe_bg (bit 31 set, bits 15..29 c2 RGB555, bits 0..14
  * c1 RGB555). redraw.c sets this before plot_rectangle; the plotter
  * reads-and-clears the slot and overrides the flat fill with a 2x2
@@ -406,7 +406,7 @@ void macos9_set_dotgrid(int32_t packed)
 	macos9_dotgrid_oneshot = packed;
 }
 
-/* fixes365b — extended-linear-gradient one-shot statics. redraw.c calls
+/* fixes365b  -  extended-linear-gradient one-shot statics. redraw.c calls
  * macos9_set_gradient_stops() / macos9_set_gradient_angle() right before
  * a plot->rectangle that should paint a diagonal or 3-stop gradient; the
  * plotter reads-and-clears so the values can't leak to subsequent paints
@@ -425,7 +425,7 @@ void macos9_set_gradient_angle(uint16_t angle)
 }
 
 extern struct gui_window *macos9_paint_gw;
-/* fixes77g -- prefer macos9_paint_gw over GetPort+GetWRefCon. The old
+/* fixes77g - prefer macos9_paint_gw over GetPort+GetWRefCon. The old
  * pattern assumed the current port was the window and read gw from the
  * window's WRefCon. When fixes77f's offscreen GWorld back-buffer makes
  * the GWorld the current port mid-redraw, casting it to WindowRef and
@@ -446,8 +446,8 @@ static struct gui_window *macos9_find_gw_for_plot(void)
  * substitutes (out_x, out_y, out_w, out_h) for the element box's (x, y,
  * width, height) so the subsequent bg-position math anchors the image
  * to the viewport instead of the element. The caller does that math in
- * the same coordinate frame NetSurf uses for the rest of paint — window
- * (not page) — so return content_rect.left / content_rect.top, NOT the
+ * the same coordinate frame NetSurf uses for the rest of paint  -  window
+ * (not page)  -  so return content_rect.left / content_rect.top, NOT the
  * page-space scroll offset. The fixes308 diagnostic round revealed the
  * original (scroll_x, scroll_y) values were drifting the image down
  * along with scroll instead of anchoring it.
@@ -527,12 +527,12 @@ macos9_plot_clip(const struct redraw_context *ctx, const struct rect *clip)
 	RectRgn(content_rgn, &gw->content_rect);
 
 	SectRgn(new_clip, content_rgn, new_clip);
-	/* fixes951c — RgnHandle is opaque under Carbon (OPAQUE_TOOLBOX_STRUCTS);
+	/* fixes951c  -  RgnHandle is opaque under Carbon (OPAQUE_TOOLBOX_STRUCTS);
 	 * (**rgn).rgnBBox is no longer legal. GetRegionBounds is the accessor
 	 * and returns the same rect. */
 	GetRegionBounds(new_clip, &effective);
 
-	/* fixes91: gated — see macsurf_prefix.h MACSURF_VERBOSE_PLOTLOG. */
+	/* fixes91: gated  -  see macsurf_prefix.h MACSURF_VERBOSE_PLOTLOG. */
 #ifdef MACSURF_VERBOSE_PLOTLOG
 	macsurf_debug_log_writef("plot_clip in=(%d,%d,%d,%d) content=(%d,%d,%d,%d) effective=(%d,%d,%d,%d)",
 	       r.left, r.top, r.right, r.bottom,
@@ -612,7 +612,7 @@ macos9_plot_disc(const struct redraw_context *ctx,
 }
 
 #ifdef __MACOS9__
-/* fixes960 — dashed and dotted strokes.
+/* fixes960  -  dashed and dotted strokes.
  *
  * The core has always ASKED for these: redraw_border.c sets
  * PLOT_OP_TYPE_DASH / PLOT_OP_TYPE_DOT for CSS `border-style: dashed` and
@@ -624,7 +624,7 @@ macos9_plot_disc(const struct redraw_context *ctx,
  * every classic Mac app used for this. The subtlety: the pattern is sampled in
  * SCREEN space, 8x8. A pattern whose rows are all identical (e.g. 0xCC eight
  * times) draws a horizontal dashed line correctly but makes a 1px-wide
- * VERTICAL line sample a single column -- which is either always-on (solid) or
+ * VERTICAL line sample a single column - which is either always-on (solid) or
  * always-off (the border vanishes entirely). So the pattern has to alternate
  * on BOTH axes:
  *
@@ -638,7 +638,7 @@ macos9_plot_disc(const struct redraw_context *ctx,
  * QuickDraw compromise and reads correctly at border weights.
  *
  * Returns 1 if it changed the pen, so the caller knows to restore it. Leaving
- * a pen pattern set would tint every later stroke -- the same class of bug as
+ * a pen pattern set would tint every later stroke - the same class of bug as
  * the CopyBits foreground-colour leak documented in CLAUDE.md. */
 static int macos9_stroke_pen_set(plot_operation_type_t t)
 {
@@ -738,7 +738,7 @@ static int macos9_cos_q15(int deg)
  *   bits 15..8  translate-x int8 px
  *   bits 7..0   translate-y int8 px
  * Returns rotation in integer degrees (0..359) and translation pixels.
- * Sub-degree precision is dropped — V2 accuracy is 1° per step which is
+ * Sub-degree precision is dropped  -  V2 accuracy is 1° per step which is
  * imperceptible for typical CSS rotations. */
 static void
 macos9_transform_unpack(int transform,
@@ -753,7 +753,7 @@ macos9_transform_unpack(int transform,
 	/* fixes610: rotation is now a 15-bit signed field (bits 30..16); bit
 	 * 31 flags percent-translate. A % translate resolves against the box's
 	 * own size and is applied at the box level in redraw (html_redraw_box),
-	 * so here — the background-fill and text-glyph transform paths — we
+	 * so here  -  the background-fill and text-glyph transform paths  -  we
 	 * zero the translate to avoid double-applying it. Pixel translate
 	 * (is_pct == 0) is unchanged and still applied here as before. */
 	rot_q106 = (int32_t)((((uint32_t)transform) >> 16) & 0x7fff);
@@ -785,7 +785,7 @@ macos9_transform_point(int *px, int *py,
 	int c = macos9_cos_q15(rot_deg);
 	int nx, ny;
 
-	/* Fast exact path for the four cardinal rotations — avoids
+	/* Fast exact path for the four cardinal rotations  -  avoids
 	 * accumulating Q15 rounding error on what should be pixel-perfect
 	 * corners. */
 	switch (rot_deg) {
@@ -811,7 +811,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 {
 	Rect r;
 	RGBColor rgb;
-	/* fixes361h/362 — snapshot the extra-shadow one-shot statics and
+	/* fixes361h/362  -  snapshot the extra-shadow one-shot statics and
 	 * clear them up-front. Any subsequent plot_rectangle call without
 	 * a fresh macos9_set_box_shadow_{2,3} from redraw.c starts at 0,
 	 * so the values can't leak across paints. */
@@ -819,7 +819,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	int32_t bsh3_local;
 	int32_t hstripe_local; /* fixes364 */
 	int32_t dotgrid_local; /* fixes365c */
-	/* fixes365b — extended-linear-gradient one-shots. */
+	/* fixes365b  -  extended-linear-gradient one-shots. */
 	const int32_t *grad_stops_local;
 	uint16_t grad_angle_local;
 
@@ -841,7 +841,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	macos9_gradient_stops_oneshot = NULL; /* fixes365b */
 	macos9_gradient_angle_oneshot = 0; /* fixes365b */
 
-	/* fixes366d/e — log the snapshot values regardless of branch so we
+	/* fixes366d/e  -  log the snapshot values regardless of branch so we
 	 * can tell whether the one-shot pipeline is reaching the plotter
 	 * or being consumed by an intermediate paint.
 	 *
@@ -866,7 +866,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	macos9_rect_from_ns(rectangle, &r);
 
 #ifdef __MACOS9__
-	/* fixes71 -- transform-aware rectangle. When the box has a
+	/* fixes71 - transform-aware rectangle. When the box has a
 	 * non-identity -macsurf-transform, build a 4-corner polygon
 	 * rotated around the rectangle's centre, then fill/frame it.
 	 * Skipped for identity (transform == 0) so the fast path stays
@@ -886,7 +886,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 		/* fixes73 / fixes73b: unpack scale from transform_b. Identity
 		 * sentinel is 0x01000100 = (1.0, 1.0). If transform_b is zero
 		 * (uninitialised plot_style_t struct from a code path that
-		 * predates fixes73), treat it as identity — earlier code did
+		 * predates fixes73), treat it as identity  -  earlier code did
 		 * an early-return here which killed every transformed draw
 		 * whose plot_style went through the zero-fill struct init. */
 		sx_q88 = (int)((((uint32_t)pstyle->transform_b) >> 16) & 0xffff);
@@ -919,12 +919,12 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 			/* fixes73e: widen clip for transformed paint. The standard
 			 * push_clip narrows the clip to (current AND content_rect),
 			 * and NetSurf's redraw tightens the current clip to each
-			 * box's layout slot before plot.rectangle runs -- so a
+			 * box's layout slot before plot.rectangle runs - so a
 			 * scale > 1 fill paints outside the slot and immediately
 			 * gets cut. For transform we want to paint freely within
 			 * the whole content area; save the existing clip, replace
 			 * it with content_rect, then restore. Other plot paths
-			 * keep using the tight clip -- only the transform branch
+			 * keep using the tight clip - only the transform branch
 			 * needs the wider scope. */
 			{
 				struct gui_window *gw;
@@ -973,7 +973,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	/* fixes74b diagnostic: log EVERY non-solid rectangle so we can see
 	 * whether gradients (linear or radial) are reaching the plotter.
 	 * If a swatch with -macsurf-gradient ends up with fill_type=1
-	 * (SOLID) here, the cascade dropped the SET status — parser or
+	 * (SOLID) here, the cascade dropped the SET status  -  parser or
 	 * cascade bug, not plotter. */
 	if (pstyle->fill_type == PLOT_OP_TYPE_LINEAR_GRADIENT ||
 	    pstyle->fill_type == PLOT_OP_TYPE_LINEAR_GRADIENT_H ||
@@ -1035,7 +1035,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 
 	/* box-shadow: paint a slightly-offset grey rect BEHIND the fill.
 	 * QuickDraw has no blur primitive, so we approximate with a
-	 * solid offset rect at 50% grey -- the recognisable Mac OS
+	 * solid offset rect at 50% grey - the recognisable Mac OS
 	 * floating-window shadow look. */
 #ifdef __MACOS9__
 	if ((pstyle->box_shadow != 0 || pstyle->box_shadow_y != 0) &&
@@ -1043,7 +1043,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	    !pstyle->box_shadow_inset) {
 		short hoff = (short)(pstyle->box_shadow   >> PLOT_STYLE_RADIX);
 		short voff = (short)(pstyle->box_shadow_y >> PLOT_STYLE_RADIX);
-		/* fixes48 -- defensive clamp. */
+		/* fixes48 - defensive clamp. */
 		if (hoff < -16) hoff = -16;
 		if (hoff >  16) hoff =  16;
 		if (voff < -16) voff = -16;
@@ -1069,7 +1069,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 			macos9_pop_clip(saved_clip);
 		}
 	}
-	/* fixes362 — outer drop shadow from the box_shadow_3 one-shot
+	/* fixes362  -  outer drop shadow from the box_shadow_3 one-shot
 	 * static. Paints BEFORE the box fill (same timing as the first
 	 * outset shadow above). Common Platinum pattern is two inset
 	 * bevels + one outer drop, with the drop providing a subtle
@@ -1113,7 +1113,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	}
 #endif
 
-	/* fixes365b — diagonal / 3-stop linear gradient. Triggered when the
+	/* fixes365b  -  diagonal / 3-stop linear gradient. Triggered when the
 	 * fill is LINEAR_GRADIENT (cardinal or otherwise) AND the redraw
 	 * side has pushed the extended one-shot descriptor. Iterates the
 	 * box pixel by pixel, computes a per-pixel `t` along the requested
@@ -1316,8 +1316,8 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	}
 #endif
 
-	/* fixes47 -- real vertical linear gradient (top stop -> bottom).
-	 * fixes48 -- horizontal variant fills left-to-right.
+	/* fixes47 - real vertical linear gradient (top stop -> bottom).
+	 * fixes48 - horizontal variant fills left-to-right.
 	 * Both interpolate in 16-bit RGB with 1.8 fixed-point t, all
 	 * 32-bit long math (CW8 PPC long-long codegen is unsafe). */
 #ifdef __MACOS9__
@@ -1369,7 +1369,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 		return NSERROR_OK;
 	}
 
-	/* fixes74 -- radial gradient. fill_colour is the centre colour,
+	/* fixes74 - radial gradient. fill_colour is the centre colour,
 	 * fill_colour2 is the edge colour. Paint the bounding rectangle
 	 * with c2 first, then a stack of progressively smaller ovals from
 	 * the box bounds down toward zero size, each interpolating from
@@ -1391,7 +1391,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 		macos9_colour_to_rgb(pstyle->fill_colour2, &c2);
 		saved_clip = macos9_push_clip();
 		grad_rect = r;
-		/* fixes345 — when the rule carried a size+position prefix
+		/* fixes345  -  when the rule carried a size+position prefix
 		 * (radial_set true), build a smaller grad_rect centered at
 		 * the requested position so the rings draw at the author's
 		 * intended location instead of filling the whole bounding
@@ -1435,7 +1435,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 				long inset_y = (height * i) / (rings * 2);
 				long t = (i * 256L) / (rings - 1);  /* 0..256 */
 				long inv = 256L - t;
-				/* fixes345 — when radial_set, rings inset from
+				/* fixes345  -  when radial_set, rings inset from
 				 * grad_rect (the author-placed ellipse). When
 				 * not set, rings inset from r (existing
 				 * behaviour: fill bounding rect). */
@@ -1471,7 +1471,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	    pstyle->fill_type != PLOT_OP_TYPE_LINEAR_GRADIENT &&
 	    pstyle->fill_type != PLOT_OP_TYPE_LINEAR_GRADIENT_H &&
 	    pstyle->fill_type != PLOT_OP_TYPE_RADIAL_GRADIENT) {
-		/* fixes49 -- opacity bucket. plot_style_fixed value with
+		/* fixes49 - opacity bucket. plot_style_fixed value with
 		 * PLOT_STYLE_SCALE (=1024) for opaque. Below ~5% don't
 		 * paint at all. Between 5% and ~85% paint with a stipple
 		 * pattern that approximates alpha on 8-bit displays:
@@ -1495,7 +1495,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 		 * regression is not from this code path. */
 		if (op == 0) op = (plot_style_fixed)PLOT_STYLE_SCALE; /* uninit -> opaque */
 		if (op < (plot_style_fixed)(PLOT_STYLE_SCALE / 20)) {
-			/* < 5% -- skip painting entirely. */
+			/* < 5% - skip painting entirely. */
 			goto opacity_done;
 		}
 #ifdef __MACOS9__
@@ -1516,12 +1516,12 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 		RGBForeColor(&rgb);
 #ifdef __MACOS9__
 		if (stipple) {
-			/* fixes220 — explicitly set RGBBackColor to white before
+			/* fixes220  -  explicitly set RGBBackColor to white before
 			 * the stipple FillRect. The pattern paints FG at 1 bits
 			 * and BG at 0 bits. If a prior DrawText / image-blit /
 			 * etc. left BackColor at black, a 50% stipple of #cc
 			 * over #00 averages to #66 dark grey instead of the
-			 * intended translucent-over-white look — which is the
+			 * intended translucent-over-white look  -  which is the
 			 * "tables are too dark" bug. */
 			RGBColor wht;
 			RgnHandle saved_clip = macos9_push_clip();
@@ -1530,7 +1530,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 			FillRect(&r, &stipple_pat);
 			macos9_pop_clip(saved_clip);
 		} else if ((hstripe_local & (int32_t)0x80000000) != 0) {
-			/* fixes364 — alternating-row horizontal stripes from
+			/* fixes364  -  alternating-row horizontal stripes from
 			 * `-macsurf-hstripe-bg: c1 c2`. Packed format:
 			 *   bit 31      = set
 			 *   bits 15..29 = c2 RGB555
@@ -1539,7 +1539,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 			 * 3px-period pinstripe from the CSS:
 			 *   #ffffff 0..1px, #cccccc 1..2px, #ffffff 2..3px
 			 * i.e. 2px of c1 (white) then 1px of c2 (gray) per
-			 * period. fixes366g paints that exactly — the 2px
+			 * period. fixes366g paints that exactly  -  the 2px
 			 * approximation used before was 50% gray and read far
 			 * heavier than the genuine subtle Platinum pinstripe. */
 			uint32_t up = (uint32_t)hstripe_local;
@@ -1573,7 +1573,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 			}
 			macos9_pop_clip(saved_clip);
 		} else if ((dotgrid_local & (int32_t)0x80000000) != 0) {
-			/* fixes365c — 2x2 dot-grid pattern from
+			/* fixes365c  -  2x2 dot-grid pattern from
 			 * `-macsurf-dotgrid: c1 c2`. Same packed format as the
 			 * hstripe branch above (bit 31 set, bits 15..29 c2 RGB555,
 			 * bits 0..14 c1 RGB555).
@@ -1625,7 +1625,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 			macos9_pop_clip(saved_clip);
 		}
 #ifdef __MACOS9__
-		/* fixes361 — proper inset box-shadow: paint thin edge lines
+		/* fixes361  -  proper inset box-shadow: paint thin edge lines
 		 * along the inside of the box, NOT a full offset rectangle.
 		 *
 		 * CSS spec inverts the offset direction for inset shadows.
@@ -1694,7 +1694,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 			macos9_pop_clip(saved_clip);
 		}
 
-		/* fixes361h / 362 — second + third inset box-shadows from
+		/* fixes361h / 362  -  second + third inset box-shadows from
 		 * the one-shot statics (snapshot at function entry into
 		 * bsh2_local / bsh3_local). The outset path for bsh3 ran
 		 * BEFORE the fill above; here we paint the inset branches
@@ -1752,7 +1752,7 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 				}
 			}
 
-			/* fixes362 — third inset (when the third shadow is
+			/* fixes362  -  third inset (when the third shadow is
 			 * declared `inset` rather than the typical outer drop). */
 			{
 				int32_t bsh3 = bsh3_local;
@@ -1822,7 +1822,7 @@ opacity_done:
 #ifdef __MACOS9__
 		{
 			RgnHandle saved_clip = macos9_push_clip();
-			/* fixes960 — honour dashed/dotted here too, so a
+			/* fixes960  -  honour dashed/dotted here too, so a
 			 * framed rect matches the dashed edges drawn by the
 			 * line plotter instead of boxing them in solid. */
 			int pen_changed =
@@ -1885,7 +1885,7 @@ macos9_plot_path(const struct redraw_context *ctx,
 		 unsigned int n,
 		 const float transform[6])
 {
-	/* fixes203 — path flattening with fill + stroke.
+	/* fixes203  -  path flattening with fill + stroke.
 	 *
 	 * Pre-fixes203 this function emitted LineTo only, so SVG <path>,
 	 * <ellipse>, <circle>, and the new rotated-rect path emitted by
@@ -1896,7 +1896,7 @@ macos9_plot_path(const struct redraw_context *ctx,
 	 * stroke_type != NONE).
 	 *
 	 * Bezier curves are still approximated by sampling 8 points
-	 * per cubic — the LineTo calls between sample points get
+	 * per cubic  -  the LineTo calls between sample points get
 	 * captured by OpenPoly so the polygon edges follow the curve.
 	 *
 	 * No transform handling: the caller has already baked any
@@ -1947,7 +1947,7 @@ macos9_plot_path(const struct redraw_context *ctx,
 			/* No explicit op needed: ClosePoly below closes the
 			 * outline automatically. For multi-subpath paths
 			 * we'd need to flush the current poly and start a
-			 * new one — out of scope for V1. */
+			 * new one  -  out of scope for V1. */
 		} else {
 			break;
 		}
@@ -1955,7 +1955,7 @@ macos9_plot_path(const struct redraw_context *ctx,
 #ifdef __MACOS9__
 	ClosePoly();
 	if (has_started) {
-		/* fixes1059 (#258) — this block used to PaintPoly/FramePoly with
+		/* fixes1059 (#258)  -  this block used to PaintPoly/FramePoly with
 		 * nothing but a foreground colour, discarding two fields the
 		 * caller had already computed correctly:
 		 *
@@ -1979,7 +1979,7 @@ macos9_plot_path(const struct redraw_context *ctx,
 		 * that memset their plot_style, NOT transparent. */
 		if (op == 0) op = (plot_style_fixed)PLOT_STYLE_SCALE;
 		if (op < (plot_style_fixed)(PLOT_STYLE_SCALE / 20)) {
-			/* < 5% — paint nothing at all */
+			/* < 5%  -  paint nothing at all */
 			KillPoly(poly);
 			return NSERROR_OK;
 		}
@@ -1998,7 +1998,7 @@ macos9_plot_path(const struct redraw_context *ctx,
 			macos9_colour_to_rgb(pstyle->fill_colour, &rgb);
 			RGBForeColor(&rgb);
 			if (stipple) {
-				/* fixes220 — force a white backdrop first: the
+				/* fixes220  -  force a white backdrop first: the
 				 * pattern paints FG on 1 bits and BG on 0 bits,
 				 * and a stale black BackColor turns a 50%
 				 * stipple into dark grey instead of a
@@ -2049,7 +2049,7 @@ macos9_plot_path(const struct redraw_context *ctx,
 
 /* fixes648/650 (Track C1): prepared-GWorld cache on the bitmap
  * (macos9_bitmap.c). Declared HERE, not with the other bitmap externs near the
- * top of the file, because these use GWorldPtr — a type that isn't defined
+ * top of the file, because these use GWorldPtr  -  a type that isn't defined
  * until macos9.h pulls in QDOffscreen.h further down. Placing them before that
  * include broke the parse and cascaded through the Carbon headers. */
 extern GWorldPtr macos9_bitmap_get_prepared(void *bitmap, int render_w,
@@ -2138,7 +2138,7 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 
 	/* fixes648 (Track C1): if this bitmap already has a prepared GWorld for
 	 * this exact render size (+ opaque/mask-presence), reuse it and jump
-	 * straight to the blit — skipping NewGWorld + the RGBA->XRGB byte-swap +
+	 * straight to the blit  -  skipping NewGWorld + the RGBA->XRGB byte-swap +
 	 * the box-filter downscale (the measured ~2.5s/paint prepare cost). The
 	 * cached pixmap is kept LockPixels'd for the entry's whole life. */
 	is_opaque_early = macos9_bitmap_get_opaque((void *)bitmap);
@@ -2167,7 +2167,7 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 	 * gw_small is now NORMAL-only (below), so it can never reclaim a temp
 	 * source. That lets us keep a temp FALLBACK here: normal memory is
 	 * preferred (stable, cache-safe), but if the app heap is tight (a
-	 * RAM-limited G3/iMac) normal can fail -- and fixes829c, by dropping
+	 * RAM-limited G3/iMac) normal can fail - and fixes829c, by dropping
 	 * the old temp fallback, made those failures paint NOTHING (the
 	 * intermittent blank-image regression). Fall back to temp so the
 	 * image still renders; gw_small being normal keeps it crash-free. */
@@ -2214,15 +2214,15 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 		}
 	}
 
-	/* fixes221 — kill switch for fixes203's box-filter pre-downscale.
-	 * fixes257 — flipped ON. The dark-grey-wash investigation that
+	/* fixes221  -  kill switch for fixes203's box-filter pre-downscale.
+	 * fixes257  -  flipped ON. The dark-grey-wash investigation that
 	 * caused fixes221 to disable this turned out to be a separate bug
 	 * (fixes225, inset box-shadow). Box-filter is the right call for
 	 * downscale: CopyMask's nearest-neighbor 1-bit mask scaling drops
 	 * pixels on non-integer ratios, producing the "faded" look that
 	 * has plagued every PNG with transparency since fixes128. With
 	 * box-filter pre-downscaling, the destination receives a properly
-	 * averaged mask that doesn't lose pixels — image is sharper AND
+	 * averaged mask that doesn't lose pixels  -  image is sharper AND
 	 * not faded.
 	 * Set MACSURF_BOX_FILTER_DOWNSCALE = 0 to revert to pure QuickDraw
 	 * nearest-neighbor scaling (the pre-fixes203
@@ -2236,7 +2236,7 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 #define MACSURF_BOX_FILTER_DOWNSCALE 1
 #endif
 
-	/* fixes203 — box-filter pre-downscale for high-quality image
+	/* fixes203  -  box-filter pre-downscale for high-quality image
 	 * rendering. QuickDraw's CopyBits / CopyMask scale via nearest-
 	 * neighbor, which on large downscale ratios (3x+) produces severe
 	 * aliasing (the "rainbow streak" artefact visible on OP1 / OP2 in
@@ -2244,7 +2244,7 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 	 * to ~160×37 by object-fit:contain). Average each src block of
 	 * (sx × sy) pixels into one dst pixel of a target-sized
 	 * intermediate GWorld, then have the existing blit code copy the
-	 * intermediate at 1:1 — no QuickDraw scaling involved.
+	 * intermediate at 1:1  -  no QuickDraw scaling involved.
 	 *
 	 * Mask handling: the 1-bit mask is also box-filtered. Each dst
 	 * mask bit is set when more than half of the source bits in the
@@ -2261,17 +2261,17 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 				(((long)bw << 8) / (long)width);
 		long sy_ratio_q8 = (long)height <= 0 ? 0 :
 				(((long)bh << 8) / (long)height);
-		/* fixes257 — threshold lowered from 3× to 1.5× (q8 = 384).
+		/* fixes257  -  threshold lowered from 3× to 1.5× (q8 = 384).
 		 * Below 1.5× the box-filter cost outweighs the visual win
 		 * (and the CopyMask fade is mild). Above 1.5× the fade is
 		 * visible and box-filter is a clear improvement. mactrove's
-		 * 1058x245 logo at 400x92 is 2.6× — under the old 3× gate
+		 * 1058x245 logo at 400x92 is 2.6×  -  under the old 3× gate
 		 * it stayed faded; under 1.5× it pre-downscales sharply. */
 		/* fixes829b (#256): image-rendering:pixelated/crisp-edges samples
 		 * nearest instead of averaging. We deliberately keep going THROUGH
 		 * the box-filter block (not skipping it) so the prepared-GWorld
 		 * cache stores a render-sized GWorld exactly as the smooth path
-		 * does -- skipping it cached the full-size temp-memory source under
+		 * does - skipping it cached the full-size temp-memory source under
 		 * the render-size key, and the size/handle mismatch crashed
 		 * DisposeGWorld in the cache (fixes829 regression). The nn flag
 		 * (computed at function scope) collapses each source block to its
@@ -2442,7 +2442,7 @@ do_blit:
 		GetPort(&save_port);
 		saved_clip = macos9_push_clip();
 
-		/* fixes301j — reset foreground to black and background to white
+		/* fixes301j  -  reset foreground to black and background to white
 		 * before CopyBits / CopyMask. Classic QuickDraw colorizes the
 		 * transfer with the port's current fg/bg colours; the page draws
 		 * blue link text (RGBForeColor blue) and leaves the port fg blue,
@@ -2469,7 +2469,7 @@ do_blit:
 			mask_rowbytes = pmrb;
 		}
 
-		/* fixes203 — if the box-filter pre-downscale above swapped
+		/* fixes203  -  if the box-filter pre-downscale above swapped
 		 * src_rect from bw×bh to width×height, the original mask
 		 * (sized to bw×bh) no longer matches the small pixmap.
 		 * Box-filter the mask to a fresh dest-sized buffer
@@ -2603,7 +2603,7 @@ do_blit:
 		tile_count = 0;
 		tile_cap = 4096;
 
-		/* fixes190 — Revert fixes188 composite branch. The
+		/* fixes190  -  Revert fixes188 composite branch. The
 		 * destination-readback CopyBits did not behave as
 		 * expected on hardware and consumed PNG transparency.
 		 * Back to the single CopyMask path for all alpha
@@ -2699,7 +2699,7 @@ blit_done:
 			 * bitmap but the box-filtered small-mask couldn't be built
 			 * (calloc failed under heap pressure), this frame already
 			 * blitted a mismatched full-res mask against the W×H source.
-			 * Do NOT cache that broken state — a cache hit would repeat
+			 * Do NOT cache that broken state  -  a cache hit would repeat
 			 * the wrong-transparency blit forever, whereas the transient
 			 * path self-heals on the next repaint once memory frees. */
 			int downscaled = (cache_sw != bw) || (cache_sh != bh);
@@ -2723,7 +2723,7 @@ blit_done:
 				}
 			}
 		}
-		/* fixes203 — release the box-filtered mask buffer (unless the cache
+		/* fixes203  -  release the box-filtered mask buffer (unless the cache
 		 * took ownership of it just above). */
 		if (bf_small_mask != NULL) {
 			free(bf_small_mask);
@@ -2731,7 +2731,7 @@ blit_done:
 	}
 
 	/* fixes648: on a cache hit OR a successful cache store, the GWorld is now
-	 * owned by the bitmap (kept locked) — do NOT unlock/dispose it here. Only
+	 * owned by the bitmap (kept locked)  -  do NOT unlock/dispose it here. Only
 	 * the transient / declined path tears down. */
 	if (!prep_cached) {
 		UnlockPixels(pm);
@@ -2925,7 +2925,7 @@ macos9_plot_text(const struct redraw_context *ctx,
 		sx = (fstyle != NULL) ? fstyle->shadow_x : 0;
 		sy = (fstyle != NULL) ? fstyle->shadow_y : 0;
 
-		/* fixes71/72 -- text-side transform.
+		/* fixes71/72 - text-side transform.
 		 *
 		 * V2 (fixes72): the translate component still moves the
 		 * text origin, but the glyphs themselves continue to
@@ -2946,7 +2946,7 @@ macos9_plot_text(const struct redraw_context *ctx,
 		 * by macos9_run_spacing above, so the measure path applies them
 		 * identically and the two can't drift. */
 
-		/* fixes50 -- text-shadow pass. Paint the same glyphs at
+		/* fixes50 - text-shadow pass. Paint the same glyphs at
 		 * (x+sx, y+sy) in the shadow colour before the main
 		 * pass paints them in the foreground colour. Skip the
 		 * shadow if both offsets are zero. Defensive clamp so

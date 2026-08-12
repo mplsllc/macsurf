@@ -351,7 +351,7 @@ static void parse_minmax(css_language *c,
 		} else if (max_tok->type == CSS_TOKEN_PERCENTAGE) {
 			emit_percentage(max_tok, tracks, n_tracks);
 		} else {
-			/* Unknown ident (auto, min-content, etc.) — fall to fr. */
+			/* Unknown ident (auto, min-content, etc.) - fall to fr. */
 			emit_track(tracks, n_tracks,
 					MACSURF_GRID_TRACK_UNIT_FR,
 					(int32_t)(1 << 8));
@@ -370,7 +370,7 @@ static void parse_minmax(css_language *c,
 		}
 		return;
 	}
-	/* No tokens recognised — emit 1fr as fallback. */
+	/* No tokens recognised - emit 1fr as fallback. */
 	emit_track(tracks, n_tracks, MACSURF_GRID_TRACK_UNIT_FR,
 			(int32_t)(1 << 8));
 }
@@ -403,7 +403,7 @@ static void parse_repeat(css_language *c,
 		}
 		parserutils_vector_iterate(vector, ctx);
 	} else if (t != NULL && t->type == CSS_TOKEN_IDENT) {
-		/* auto-fill / auto-fit / unknown ident — heuristic count. */
+		/* auto-fill / auto-fit / unknown ident - heuristic count. */
 		multiplier = AUTO_FILL_FALLBACK_COLUMNS;
 		parserutils_vector_iterate(vector, ctx);
 	}
@@ -431,7 +431,7 @@ static void parse_repeat(css_language *c,
 	}
 
 	if (n_inner < 1) {
-		/* repeat() with empty inner — emit one auto track. */
+		/* repeat() with empty inner - emit one auto track. */
 		emit_track(tracks, n_tracks, MACSURF_GRID_TRACK_UNIT_FR,
 				(int32_t)(1 << 8));
 		return;
@@ -480,7 +480,7 @@ static void parse_track_list(css_language *c,
 				continue;
 			}
 			if (ch == '[') {
-				/* Line-name list — skip until ']'. */
+				/* Line-name list - skip until ']'. */
 				parserutils_vector_iterate(vector, ctx);
 				while ((t = parserutils_vector_peek(vector,
 						*ctx)) != NULL) {
@@ -515,7 +515,7 @@ static void parse_track_list(css_language *c,
 				parse_minmax(c, vector, ctx, tracks, n_tracks);
 				continue;
 			}
-			/* Other function (fit-content, etc.) — emit as 1fr,
+			/* Other function (fit-content, etc.) - emit as 1fr,
 			 * skip the body. */
 			emit_track(tracks, n_tracks,
 					MACSURF_GRID_TRACK_UNIT_FR,
@@ -550,7 +550,7 @@ static void parse_track_list(css_language *c,
 			continue;
 		}
 
-		/* Unknown token — consume so we don't loop forever. */
+		/* Unknown token - consume so we don't loop forever. */
 		parserutils_vector_iterate(vector, ctx);
 	}
 }
@@ -606,7 +606,7 @@ css_error css__parse_grid_template_columns(css_language *c,
 	parse_track_list(c, vector, ctx, tracks, &n_tracks, false);
 
 	if (n_tracks < 1) {
-		/* Nothing parsed — emit a single 1fr track so the property
+		/* Nothing parsed - emit a single 1fr track so the property
 		 * still computes to SET and downstream code sees a valid
 		 * 1-column grid. */
 		n_tracks = 1;

@@ -1,5 +1,5 @@
 /*
- * MacSurf shim — dirent.h
+ * MacSurf shim  -  dirent.h
  * Self-contained POSIX directory iteration interface for CW8/Mac OS 9.
  *
  * CW8 cannot resolve relative includes from within headers found via

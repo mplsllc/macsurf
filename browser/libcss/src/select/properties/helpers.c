@@ -108,7 +108,7 @@ css_error css__cascade_uri_none(uint32_t opv, css_style *style,
 			break;
 		case BACKGROUND_IMAGE_URI:
 		{
-			/* fixes347f — error-check the URI lookup so a failure
+			/* fixes347f - error-check the URI lookup so a failure
 			 * (sheet/snumber mismatch, out-of-bounds) downgrades
 			 * to NONE rather than silently writing IMAGE with a
 			 * NULL string pointer (which presents as kind=IMAGE
@@ -146,10 +146,10 @@ css_error css__cascade_uri_none(uint32_t opv, css_style *style,
 	}
 #endif
 
-	/* fixes347g — var()-resolved URIs must always land on the pseudo's
+	/* fixes347g - var()-resolved URIs must always land on the pseudo's
 	 * computed style. The outranks gate sometimes drops the URI write
 	 * because of interaction with the post-cascade set_initial fixup
-	 * (css_select.c:1492) — and because CSS_BACKGROUND_IMAGE_NONE and
+	 * (css_select.c:1492) - and because CSS_BACKGROUND_IMAGE_NONE and
 	 * CSS_BACKGROUND_IMAGE_IMAGE share enum value 0x1 (properties.h),
 	 * the post-fixup result presents to the box-construct fetch site
 	 * as kind=IMAGE with a NULL URI, looking exactly like a fetch path

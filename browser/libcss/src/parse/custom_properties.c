@@ -244,7 +244,7 @@ void css__cp_entry_list_destroy(css_cp_entry *head)
 
 
 /* ------------------------------------------------------------------ */
-/* fixes267 — Document-global inline-extras custom-property table     */
+/* fixes267 - Document-global inline-extras custom-property table     */
 /* ------------------------------------------------------------------ */
 /*
  * Aggregates custom-property declarations harvested from EVERY inline
@@ -263,7 +263,7 @@ void css__cp_entry_list_destroy(css_cp_entry *head)
  * Spec-correct behaviour would scope per element. For mactrove's
  * single-`--header-tile`-element case this works exactly right.
  *
- * Cleanup: DONE (fixes267) — css_inline_extras_clear() is called from
+ * Cleanup: DONE (fixes267) - css_inline_extras_clear() is called from
  * html_create() in content/handlers/html/html.c, so the table no longer
  * accumulates across page loads. Last-writer-wins inside a single page
  * remains the intended semantics.
@@ -705,9 +705,9 @@ extern const css_stylesheet *css__select_ctx_sheet_at(
  * sheets override earlier (matches source-order author cascade). When
  * ctx is NULL we fall back to origin_sheet only.
  *
- * fixes264 — also consult the per-element inline_style sheet (when
+ * fixes264 - also consult the per-element inline_style sheet (when
  * provided). Highest priority (CSS spec puts inline-style declarations
- * above author cascade), so checked last — found = hit overwrites any
+ * above author cascade), so checked last - found = hit overwrites any
  * earlier match. Lets `background-image: var(--header-tile)` in an
  * author stylesheet resolve against `style="--header-tile: url(...)"`
  * set inline on the matched element (mactrove's random-header bg). */
@@ -747,7 +747,7 @@ static const css_cp_entry *lookup_var(lwc_string *name,
 			found = hit;   /* inline wins over author cascade */
 	}
 
-	/* fixes267 — doc-global inline-extras table. Aggregates custom
+	/* fixes267 - doc-global inline-extras table. Aggregates custom
 	 * properties from EVERY element's inline style="..." so a parent's
 	 * `style="--header-tile: url(...)"` resolves for child elements
 	 * whose author CSS references `var(--header-tile)`. Highest
@@ -980,7 +980,7 @@ css_error css__deferred_decl_resolve(const css_deferred_decl *dd,
 		return error;
 	}
 	if (!ok) {
-		/* Unresolvable var() — silently drop declaration. */
+		/* Unresolvable var() - silently drop declaration. */
 		free(scratch.items);
 		return CSS_OK;
 	}
@@ -1038,7 +1038,7 @@ css_error css__deferred_decl_resolve(const css_deferred_decl *dd,
 	if (error != CSS_OK) {
 		css__stylesheet_style_destroy(scratch_style);
 		parserutils_vector_destroy(replay);
-		/* Invalid value post-substitution — drop silently. */
+		/* Invalid value post-substitution - drop silently. */
 		return CSS_OK;
 	}
 
@@ -1055,7 +1055,7 @@ css_error css__deferred_decl_resolve(const css_deferred_decl *dd,
 			css__make_style_important(scratch_style);
 	}
 
-	/* fixes347f — apply bytecode through the normal cascade dispatch,
+	/* fixes347f - apply bytecode through the normal cascade dispatch,
 	 * but temporarily bump current_specificity to MAX so the var()-
 	 * resolved write always outranks earlier writes that may have set
 	 * a placeholder value (e.g. UA background-image:none) before this

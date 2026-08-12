@@ -1,11 +1,11 @@
 /*
- * MacSurf — Mac OS 9 frontend for NetSurf
- * macos9_reconvert.h — JS DOM-mutation dirty signal.
+ * MacSurf  -  Mac OS 9 frontend for NetSurf
+ * macos9_reconvert.h  -  JS DOM-mutation dirty signal.
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.
  *
- * fixes910 (incremental-reconvert Phase 0) — carry WHAT changed, not just THAT
+ * fixes910 (incremental-reconvert Phase 0)  -  carry WHAT changed, not just THAT
  * something changed.
  *
  * Until now the signal was `macos9_js_mark_dom_dirty(content)`: a per-document
@@ -13,7 +13,7 @@
  * hand and threw it away, so the reconvert had no choice but to rebuild the whole
  * box tree and re-run every O(document) side-pass for a one-attribute change.
  *
- * Phase 0 changes NOTHING about that behaviour — the reconvert still rebuilds
+ * Phase 0 changes NOTHING about that behaviour  -  the reconvert still rebuilds
  * everything. It only records the node + mutation kind so later phases can
  * decide to do less. Keeping the behaviour change out of this step is
  * deliberate: the rebuild path was just hardware-verified
@@ -52,7 +52,7 @@ enum macos9_dommut_kind {
 	MACOS9_DOMMUT_REMOVECHILD,
 	MACOS9_DOMMUT_INSERTBEFORE,
 	MACOS9_DOMMUT_CHARDATA,
-	/* fixes926 — split the setattr bucket by ATTRIBUTE NAME. The Phase 2
+	/* fixes926  -  split the setattr bucket by ATTRIBUTE NAME. The Phase 2
 	 * question is not "how many setAttribute calls" but "how many of them
 	 * could be answered by a recascade instead of a rebuild", and only
 	 * class/style can be. Everything else is either baked at box
@@ -67,7 +67,7 @@ enum macos9_dommut_kind {
  * Record a DOM mutation on `c`.
  *
  * `node` is the mutated dom_node as an opaque pointer (the PARENT for child-list
- * mutations — that is where layout would change), or NULL if unknown. `kind` is
+ * mutations  -  that is where layout would change), or NULL if unknown. `kind` is
  * a macos9_dommut_kind.
  *
  * Precision is best-effort and degrades safely: if two DISTINCT nodes mutate
@@ -76,7 +76,7 @@ enum macos9_dommut_kind {
  */
 void macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind);
 
-/* Legacy entry point — equivalent to _node(c, NULL, MACOS9_DOMMUT_UNKNOWN),
+/* Legacy entry point  -  equivalent to _node(c, NULL, MACOS9_DOMMUT_UNKNOWN),
  * i.e. "something changed, no idea what". Kept so any caller that cannot name
  * the node still works, and always yields the full rebuild. */
 void macos9_js_mark_dom_dirty(struct content *c);

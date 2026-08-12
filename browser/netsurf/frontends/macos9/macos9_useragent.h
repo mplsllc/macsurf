@@ -1,7 +1,7 @@
 /*
  * MacSurf - macos9_useragent.h
  *
- * fixes368 (#167) — per-host User-Agent selection (the Classilla
+ * fixes368 (#167)  -  per-host User-Agent selection (the Classilla
  * "sitecontrol" / TenFourFox per-site-override pattern, the proven
  * approach on this exact platform). Most sites get MacSurf's honest
  * default UA; a small override table maps specific hosts to a UA that
@@ -54,7 +54,7 @@ const char *macos9_user_agent_default(void);
  * must not be freed or modified; never NULL. */
 const char *macos9_user_agent_for_host(const char *host);
 
-/* fixes835 (#167 M1) — request-header helpers (shared, impl in
+/* fixes835 (#167 M1)  -  request-header helpers (shared, impl in
  * macos9_fetch.c). See that file for the drop-list contract. */
 int  macos9_hdr_has_ci(const char *hay, const char *needle);
 void macos9_capture_extra_headers(const char **h, char *dst, size_t cap);

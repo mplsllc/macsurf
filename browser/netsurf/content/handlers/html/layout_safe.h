@@ -7,12 +7,12 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; version 2 of the License.
  *
- * fixes168 — Layout-wide dimension sanitizers.
+ * fixes168 - Layout-wide dimension sanitizers.
  *
  * The CSS layout engine carries internal sentinels (AUTO == INT_MIN,
  * unresolved-height markers, etc.) through its data structures. These
  * are valid as algorithm states but they must never reach pixel
- * arithmetic, child-layout calls, min/max clamps, or bbox math —
+ * arithmetic, child-layout calls, min/max clamps, or bbox math -
  * once they do, the layout produces INT_MIN x or w values that crash
  * downstream (defensive clamp, plotters, redraw walker) or paint at
  * a single coordinate.
@@ -23,7 +23,7 @@
  * pattern to a shared layout-wide header consumed by block, flex,
  * grid, table.
  *
- * Helpers are static so each TU compiles its own copy — CW8 is happy
+ * Helpers are static so each TU compiles its own copy - CW8 is happy
  * with this and the bodies are tiny. Anyone touching this file:
  * keep the rules cheap (single comparisons, no allocation) because
  * they fire on every dimension before every layout call.
@@ -65,7 +65,7 @@ static int layout_dim_is_auto_or_bad(int v)
 /**
  * Sanitize a width before arithmetic. If v is auto/bad, fall back to
  * the containing-block width (also sanitized). If even that is bad,
- * return 0 — zero-width is the only universally-safe fallback for
+ * return 0 - zero-width is the only universally-safe fallback for
  * width.
  */
 static int layout_dim_sanitize_width(int v, int containing_width)
@@ -131,7 +131,7 @@ static int layout_dim_clamp(int v)
 }
 
 /* ============================================================
- * fixes171 — Layout Watchdog
+ * fixes171 - Layout Watchdog
  *
  * Real browsers solve "page X crashes the layout engine" with two
  * pieces of universal infrastructure that don't depend on knowing
@@ -148,8 +148,8 @@ static int layout_dim_clamp(int v)
  *      browser.
  *
  * When either cap is exceeded, the offending subtree degrades
- * locally to a zero-height block — same shape fixes167/170's
- * fallbacks use — and a latched `macsurf_layout_aborted` flag is
+ * locally to a zero-height block - same shape fixes167/170's
+ * fallbacks use - and a latched `macsurf_layout_aborted` flag is
  * raised so post-layout code can flag the page as degraded if it
  * cares to. Layout continues; the document tail runs; the rest of
  * the page still renders.
@@ -176,10 +176,10 @@ static int layout_dim_clamp(int v)
 extern int macsurf_layout_depth;
 extern long macsurf_layout_calls;
 extern int macsurf_layout_aborted;
-/* fixes851 (#167) — reformat-pass generation for the flex/grid item
+/* fixes851 (#167) - reformat-pass generation for the flex/grid item
  * re-layout memo. See struct box::flex_layout_gen and layout.c. */
 extern unsigned macsurf_layout_pass_gen;
-/* fixes851 — runtime kill-switch for that memo (1 = on, default). */
+/* fixes851 - runtime kill-switch for that memo (1 = on, default). */
 extern int macsurf_flex_layout_cache_enabled;
 
 /* macsurf_layout_watchdog_reset() and macsurf_layout_breadcrumb()
@@ -207,19 +207,19 @@ static int layout_watchdog_enter(const void *box)
 	 * loads whatever it is given. */
 	macsurf_layout_calls++;
 	macsurf_layout_depth++;
-	/* fixes848b (#167 perf investigation) — a hardware log on a heavy
+	/* fixes848b (#167 perf investigation) - a hardware log on a heavy
 	 * Facebook page showed box+cascade finish in ~5s but NO LAYPROF
 	 * line at all after a minute of runtime, meaning layout_document()
 	 * itself is what's taking so long (or is genuinely stuck). Without
 	 * this, "grinding through millions of layout calls on a huge deep
 	 * tree" and "stuck in a real loop somewhere outside the layout call
 	 * graph" (font measurement, a retry loop, etc.) look IDENTICAL from
-	 * the outside — nothing else in this pass logs anything visible.
+	 * the outside - nothing else in this pass logs anything visible.
 	 * This is the single hottest entry point in layout, so the check
 	 * must be nearly free the other 99999/100000 times; only the
 	 * modulo, and only a WORK line every 100k calls. If the next
 	 * hardware log shows this count climbing steadily, it's real (if
-	 * slow) forward progress — an algorithmic complexity problem, not a
+	 * slow) forward progress - an algorithmic complexity problem, not a
 	 * hang. If it stops climbing, that pinpoints the hang outside this
 	 * call graph entirely. */
 	if ((macsurf_layout_calls % 100000L) == 0) {

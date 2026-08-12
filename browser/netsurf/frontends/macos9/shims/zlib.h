@@ -1,5 +1,5 @@
 /*
- * MacSurf stub — zlib.h
+ * MacSurf stub  -  zlib.h
  * Minimal C89-compatible stub for CodeWarrior 8 compilation.
  *
  * Symbols stubbed:

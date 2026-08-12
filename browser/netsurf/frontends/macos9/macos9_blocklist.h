@@ -1,7 +1,7 @@
 /*
  * MacSurf - macos9_blocklist.h
  *
- * fixes856 (#285) — tracker / ad-network host blocklist.
+ * fixes856 (#285)  -  tracker / ad-network host blocklist.
  *
  * RATIONALE (maintainer directive, 2026-07-16): "we need to block trackers and
  * known ad systems as a general rule - if only because of the drag they cause
@@ -19,11 +19,11 @@
  *   tracker/consent total                       ~908 KB  = ~38% of the page
  * None of it draws a single pixel of article content.
  *
- * POLICY — what goes in the table:
+ * POLICY  -  what goes in the table:
  *   BLOCK: analytics suites, ad exchanges/servers, consent-management
  *          platforms (a CMP banner is pure drag on OS 9), session recorders,
  *          and tag managers.
- *   ALLOW: small/privacy-respecting, self-hostable analytics — umami,
+ *   ALLOW: small/privacy-respecting, self-hostable analytics  -  umami,
  *          plausible, fathom, matomo, goatcounter, simpleanalytics, and
  *          Cloudflare Insights.  Per the directive, "small stuff like umami is
  *          ok".  They are a few KB, they do not fingerprint, and macsurf.org's
@@ -31,21 +31,21 @@
  *          anything not named here is allowed by default and nothing is
  *          blocked by accident.
  *
- * DELIBERATELY NOT BLOCKED (would break live work — do not "tidy" these in):
- *   - facebook.net / fbcdn.net / fbsbx.com — #167 is active and the per-host
+ * DELIBERATELY NOT BLOCKED (would break live work  -  do not "tidy" these in):
+ *   - facebook.net / fbcdn.net / fbsbx.com  -  #167 is active and the per-host
  *     UA table (macos9_useragent.h) drives real facebook.com asset loads
  *     through exactly these origins.  A tracking-pixel suffix like
  *     connect.facebook.net would match the same tail and take the real site
  *     with it.
- *   - s0.wp.com / s1.wp.com / i0.wp.com — these serve REAL Jetpack JS/CSS and
+ *   - s0.wp.com / s1.wp.com / i0.wp.com  -  these serve REAL Jetpack JS/CSS and
  *     the Photon image CDN.  Only stats.wp.com / pixel.wp.com are telemetry.
- *   - jetpack.wordpress.com — hosts the comment form iframe (real UI).
+ *   - jetpack.wordpress.com  -  hosts the comment form iframe (real UI).
  *
  * The match is a dot-boundary host SUFFIX, sharing the semantics (and the
  * spoof-guard) of macos9_user_agent_for_host(): "doubleclick.net" matches
  * ad.doubleclick.net but NOT evildoubleclick.net.
  *
- * The implementation lives in macos9_fetch.c — an existing build TU — so
+ * The implementation lives in macos9_fetch.c  -  an existing build TU  -  so
  * adding this costs NO MacSurf.mcp change; both fetchers just include this
  * header, exactly the arrangement fixes368 used for the UA table.
  */

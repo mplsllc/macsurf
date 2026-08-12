@@ -1,5 +1,5 @@
 /*
- * MacSurf — dom/bindings/hubbub/errors.h (netsurf/include mirror)
+ * MacSurf - dom/bindings/hubbub/errors.h (netsurf/include mirror)
  *
  * Duplicate of browser/libdom/include/dom/bindings/hubbub/errors.h so that
  * the browser:netsurf:include: access path (which CW8 always has) can also

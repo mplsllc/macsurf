@@ -1,5 +1,5 @@
 /*
- * MacSurf -- macsurf_debug_log.h  (fixes149)
+ * MacSurf - macsurf_debug_log.h  (fixes149)
  *
  * Persistent file-backed diagnostic channel. Writes one line per
  * log call to "MacSurf Debug.log" on the Desktop, flushing after
@@ -8,7 +8,7 @@
  * hardware we cannot attach a debugger to.
  *
  * Paired with the title-bar MS_LOG channel in macsurf_debug.h.
- * MS_LOG now calls both paths -- title bar for live feedback,
+ * MS_LOG now calls both paths - title bar for live feedback,
  * log file for the durable record.
  *
  * On non-__MACOS9__ builds (Linux cross-check) these calls are
@@ -22,8 +22,8 @@
 void macsurf_debug_log_init(void);
 void macsurf_debug_log_close(void);
 void macsurf_debug_log_write(const char *msg);
-/* fixes96 — explicit volume flush. _write no longer FlushVols per
- * line (~10-50 ms HFS sync per call was destroying perf — ~80
+/* fixes96  -  explicit volume flush. _write no longer FlushVols per
+ * line (~10-50 ms HFS sync per call was destroying perf  -  ~80
  * MS_LOG calls / page load = 1-4 s of disk wait). Call this only
  * after critical messages that must survive a crash. Clean shutdown
  * via _close already flushes the volume implicitly. */
@@ -32,22 +32,22 @@ void macsurf_debug_log_flush(void);
 /*
  * Minimal printf-style helper. Supports only the format specifiers
  * used by MacSurf instrumentation:
- *   %d   -- int, decimal, signed
- *   %ld  -- long, decimal, signed
- *   %p   -- pointer, hex, 8 digits, no 0x prefix
- *   %s   -- const char * (NULL printed as "(null)")
- *   %%   -- literal percent
+ *   %d   - int, decimal, signed
+ *   %ld  - long, decimal, signed
+ *   %p   - pointer, hex, 8 digits, no 0x prefix
+ *   %s   - const char * (NULL printed as "(null)")
+ *   %%   - literal percent
  * Unrecognised specifiers are echoed verbatim. Output is truncated
  * to 255 bytes; no overflow. C89 <stdarg.h> semantics.
  */
 void macsurf_debug_log_writef(const char *fmt, ...);
 
 /*
- * fixes366h -- runtime-gated high-frequency trace channel.
+ * fixes366h - runtime-gated high-frequency trace channel.
  *
  * Same formatting as macsurf_debug_log_writef, but every call is
  * suppressed unless macsurf_debug_log_trace_enabled is non-zero
- * (default 0). Use this -- NOT writef -- for any per-element or
+ * (default 0). Use this - NOT writef - for any per-element or
  * per-property diagnostic that fires inside cascade / layout / paint
  * loops.
  *
@@ -65,14 +65,14 @@ extern int macsurf_debug_log_trace_enabled;
 void macsurf_debug_log_tracef(const char *fmt, ...);
 
 /*
- * fixes366a -- profile timer. Captures a Microseconds() timestamp
+ * fixes366a - profile timer. Captures a Microseconds() timestamp
  * into a static UnsignedWide t0, and on each stamp call writes one
  * log line "[+NNNNNus] LABEL" where N is integer microseconds since
  * t0. Built on top of the existing file-backed log channel so the
  * timing trail survives crashes.
  *
  * Delta is computed in double precision (CW8 PPC miscompiles 64-bit
- * integer arithmetic -- project_cw8_longlong_codegen). PPC's FPU
+ * integer arithmetic - project_cw8_longlong_codegen). PPC's FPU
  * handles this in single-digit cycles.
  *
  * macsurf_profile_reset() is called at startup and at every
@@ -81,14 +81,14 @@ void macsurf_debug_log_tracef(const char *fmt, ...);
  * never invoked.
  */
 void macsurf_profile_reset(void);
-/* fixes1072 — stamp the per-NAVIGATION wall clock that PERFWALL reports.
+/* fixes1072  -  stamp the per-NAVIGATION wall clock that PERFWALL reports.
  * Called from the NAV: START site in browser_window.c, the one hook every
  * navigation type passes through. NOT the same clock as macsurf_profile_reset
  * (URL-bar path only) and not perturbed by macsurf_profile_stamp. */
 void macsurf_profile_nav_begin(void);
 void macsurf_profile_stamp(const char *label);
 
-/* fixes369 (#167) — per-load page-weight + resource-count measurement,
+/* fixes369 (#167)  -  per-load page-weight + resource-count measurement,
  * the size dimension the timing stamps lacked. Reset by
  * macsurf_profile_reset(). The fetchers call _add_bytes() for each chunk
  * of body delivered and _count_resource() once per fetch started; main.c
@@ -98,7 +98,7 @@ void macsurf_profile_add_bytes(long n);
 void macsurf_profile_count_resource(void);
 void macsurf_profile_emit(const char *url);
 
-/* fixes640 — TRUSTWORTHY per-phase timing. Replaces the fixes637/638
+/* fixes640  -  TRUSTWORTHY per-phase timing. Replaces the fixes637/638
  * milestone-subtraction (which produced negative garbage because phases
  * overlap). Each phase brackets its choke function with the existing
  * macos9_micros() double clock and adds the elapsed microsecond delta:
@@ -122,14 +122,14 @@ void macsurf_profile_accum_js(long us);
 void macsurf_profile_note_reflow(void);   /* +1 per full html_reformat pass */
 long macsurf_profile_get_js_us(void);     /* for parse to subtract nested inline JS */
 
-/* fixes1070 — emit_phases now writes THREE lines, not one:
+/* fixes1070  -  emit_phases now writes THREE lines, not one:
  *
  *   LIFE PERFWALL wall= acct= unacct= unacctpct=
  *   LIFE PERFN    per-phase CALL COUNTS (us/N is the interesting number)
  *   LIFE PERFACC  the existing per-phase microsecond totals
  *
  * PERFWALL is the one to read first. `acct` is what PERFACC's `total=` has
- * always been -- the sum of the INSTRUMENTED phases -- and `wall` is the real
+ * always been - the sum of the INSTRUMENTED phases - and `wall` is the real
  * elapsed navigation. Until this landed there was no way to know how much of a
  * page load fell outside every bucket, so a phase reported as "96% of the
  * load" was really 96% of an unknown fraction of it. A large `unacct` means
@@ -137,23 +137,23 @@ long macsurf_profile_get_js_us(void);     /* for parse to subtract nested inline
  * belongs on whatever fills the gap. */
 void macsurf_profile_emit_phases(const char *url);
 
-/* fixes720 — read the current log into a caller buffer (for File > Send Debug
+/* fixes720  -  read the current log into a caller buffer (for File > Send Debug
  * Log). Returns bytes read; out is NUL-terminated. */
 long macsurf_debug_log_read(char *out, long cap);
 
-/* fixes895 (reconvert-crash hunt) — durable single-slot "furthest position"
+/* fixes895 (reconvert-crash hunt)  -  durable single-slot "furthest position"
  * marker + phase-scoped eager flush. Core callers (html.c / box_construct.c)
  * declare these with a local `extern` matching the codebase pattern; the
  * prototypes here keep the definitions honest and let frontend TUs use them.
- *   _reconv_flush(1/0)  — arm/disarm per-line FlushVol of WORK reconvert/timer
+ *   _reconv_flush(1/0)   -  arm/disarm per-line FlushVol of WORK reconvert/timer
  *                         breadcrumbs (bounded to the reconvert window).
- *   _reconv_pos_set()   — RAM-only, safe per node.
- *   _reconv_pos_flush() — rewrite+FlushVol the one line in MacSurf ReconvPos.txt. */
+ *   _reconv_pos_set()    -  RAM-only, safe per node.
+ *   _reconv_pos_flush()  -  rewrite+FlushVol the one line in MacSurf ReconvPos.txt. */
 void macsurf_debug_log_reconv_flush(int on);
 void macsurf_reconv_pos_set(const char *phase, long seq, long node_ix,
 		const char *tag);
 void macsurf_reconv_pos_flush(void);
-/* fixes895 — largest contiguous free block (bytes), -1 off-Mac. For the H1
+/* fixes895  -  largest contiguous free block (bytes), -1 off-Mac. For the H1
  * double-buffer memory-exhaustion hypothesis (watch it approach 0 near the
  * crash node index on heavy pages). */
 long macsurf_free_mem(void);

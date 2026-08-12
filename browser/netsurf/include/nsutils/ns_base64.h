@@ -1,5 +1,5 @@
 /*
- * MacSurf — nsutils/base64.h  (declarations only)
+ * MacSurf - nsutils/base64.h  (declarations only)
  *
  * fixes591: CW8 does not emit `static`-in-header function bodies into the
  * including TU, so nsu_base64_encode/decode_alloc stayed undefined at link.

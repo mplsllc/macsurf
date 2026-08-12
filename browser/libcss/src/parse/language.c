@@ -1426,7 +1426,7 @@ css_error parsePseudo(css_language *c, const parserutils_vector *vector,
 			pseudo_lut[lut_idx].index == NOT))
 		return CSS_INVALID;
 
-	/* fixes360b — reject :is() / :where() / :has() inside :not().
+	/* fixes360b - reject :is() / :where() / :has() inside :not().
 	 * Our V1 parsers for these accept the tokens but the matcher
 	 * returns silent-no-match. When wrapped in :not(), the false-
 	 * match flips to true, causing rules like
@@ -1436,7 +1436,7 @@ css_error parsePseudo(css_language *c, const parserutils_vector *vector,
 	 * (mactrove's platinum.css line 354) to fire on EVERY element,
 	 * collapsing the 2-column grid to 1-column and hiding the main
 	 * content panel. Returning CSS_INVALID here drops the entire
-	 * rule at parse time — matching pre-fixes359 behaviour, since
+	 * rule at parse time - matching pre-fixes359 behaviour, since
 	 * before this round these selectors errored the rule anyway. */
 	if (in_not && (pseudo_lut[lut_idx].index == IS_FN ||
 			pseudo_lut[lut_idx].index == WHERE_FN ||
@@ -1954,7 +1954,7 @@ css_error parseProperty(css_language *c, const css_token *property,
 	/* CSS Custom Properties: if the property name begins with "--",
 	 * capture the raw value tokens and store them on the stylesheet's
 	 * custom-property table. We do not dispatch to any property
-	 * handler — the value is opaque until var() resolution time. */
+	 * handler - the value is opaque until var() resolution time. */
 	if (css__is_custom_property_ident(property)) {
 		css_cp_token *cp_tokens = NULL;
 		uint32_t cp_n = 0;

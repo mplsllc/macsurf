@@ -1,5 +1,5 @@
 /*
- * MacSurf stub — nsutils/time.h
+ * MacSurf stub  -  nsutils/time.h
  * Minimal C89-compatible stub for CodeWarrior 8 compilation.
  *
  * nsutils_ms_t must be unsigned long long (uint64_t) to match

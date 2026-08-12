@@ -1,5 +1,5 @@
 /*
- * MacSurf stub -- sys/select.h
+ * MacSurf stub - sys/select.h
  * Minimal C89-compatible stub for CodeWarrior 8 compilation.
  * Mac OS 9 does not support POSIX select().
  */

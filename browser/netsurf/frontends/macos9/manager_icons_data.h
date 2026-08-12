@@ -1,8 +1,8 @@
-/* manager_icons_data.h — fixes745: History + Bookmark manager banner icons
+/* manager_icons_data.h  -  fixes745: History + Bookmark manager banner icons
  * (from forclaude/history.png + bookmarks.png, 26x26 RGBA, alpha kept for
  * CopyMask compositing over the gold gradient banner). */
 
-/* history.png -> 26x26 — 1155 bytes */
+/* history.png -> 26x26  -  1155 bytes */
 static const unsigned char macos9_mgr_hist_png[] = {
     0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
     0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x1A, 0x00, 0x00, 0x00, 0x1A,
@@ -104,7 +104,7 @@ static const unsigned char macos9_mgr_hist_png[] = {
 };
 static const unsigned long macos9_mgr_hist_png_len = 1155;
 
-/* bookmarks.png -> 26x26 — 654 bytes */
+/* bookmarks.png -> 26x26  -  654 bytes */
 static const unsigned char macos9_mgr_bm_png[] = {
     0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
     0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x1A, 0x00, 0x00, 0x00, 0x1A,

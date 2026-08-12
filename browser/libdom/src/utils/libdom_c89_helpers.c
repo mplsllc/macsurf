@@ -1,5 +1,5 @@
 /*
- * MacSurf — libdom_c89_helpers.c
+ * MacSurf - libdom_c89_helpers.c
  *
  * Out-of-line bodies for functions that were static inline in libdom
  * internal headers.  CW8 C89 mode does not reliably emit per-TU

@@ -1,6 +1,6 @@
 /*
- * MacSurf — Mac OS 9 frontend for NetSurf
- * macos9_bitmap.c — All gui_bitmap_table callbacks
+ * MacSurf  -  Mac OS 9 frontend for NetSurf
+ * macos9_bitmap.c  -  All gui_bitmap_table callbacks
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.
@@ -30,7 +30,7 @@ struct macos9_bitmap {
 	int mask_rowbytes;
 	/* fixes648 (Track C1, #43/#168): cached PREPARED source for repaints.
 	 * macos9_plot_bitmap builds a 32-bit GWorld (RGBA->XRGB byte-swap, plus a
-	 * box-filter downscale when the image is shrunk >=1.5x) on EVERY paint —
+	 * box-filter downscale when the image is shrunk >=1.5x) on EVERY paint  - 
 	 * the measured ~2.5s-per-paint image cost and the scroll-jank cause. We
 	 * keep that finished, ready-to-blit GWorld here so repaints at the same
 	 * render size skip straight to the CopyBits/CopyMask. prep_gw stays
@@ -38,7 +38,7 @@ struct macos9_bitmap {
 	 * when unlocked). prep_mask is the box-filtered dest-sized 1-bit mask for
 	 * the downscaled case (NULL => the blit uses the live `mask`). The cache
 	 * lives ON the bitmap and is disposed in macos9_bitmap_destroy/_modified/
-	 * _set_opaque/_set_mask, so it can NEVER outlive or mismatch its bitmap —
+	 * _set_opaque/_set_mask, so it can NEVER outlive or mismatch its bitmap  - 
 	 * keeping the #168 stale-pointer class OFF this new surface (the GWorld is
 	 * NOT hung on the fragile qti LRU node). A small global byte-budgeted LRU
 	 * bounds total prepared memory; oversize images fall back to the transient
@@ -82,7 +82,7 @@ static void macos9_prep_lru_unlink(struct macos9_bitmap *bm)
 	 * (head=tail=NULL) WITHOUT clearing prep_in_lru / prep_lru_prev / _next
 	 * on the stranded nodes, because it can't safely walk a corrupt chain.
 	 * A stranded MID-list node then has prep_lru_prev pointing at a neighbour
-	 * that may since have been freed — a freed struct's first word becomes a
+	 * that may since have been freed  -  a freed struct's first word becomes a
 	 * free-list chain pointer, MISALIGNED on PPC (e.g. 0xD762FD0E). The old
 	 * code did `bm->prep_lru_prev->prep_lru_next = ...` unconditionally and
 	 * stored through that garbage pointer -> address-error crash at
@@ -109,7 +109,7 @@ static void macos9_prep_lru_unlink(struct macos9_bitmap *bm)
 
 static void macos9_prep_lru_insert_mru(struct macos9_bitmap *bm)
 {
-	/* fixes702: never chain onto a corrupted head — a misaligned head is a
+	/* fixes702: never chain onto a corrupted head  -  a misaligned head is a
 	 * freed struct's free-list word (see macos9_prep_lru_unlink). Drop the
 	 * corrupt list and restart with bm as the sole node rather than storing
 	 * bm's back-pointer through the garbage head. */
@@ -170,7 +170,7 @@ static bool macos9_prep_make_room(long need_bytes)
 			g_prep_lru_tail != NULL) {
 		struct macos9_bitmap *victim = g_prep_lru_tail;
 		if (((unsigned long)victim & 3) != 0) {
-			/* Corrupted tail link — sever the walk, don't deref. */
+			/* Corrupted tail link  -  sever the walk, don't deref. */
 			g_prep_lru_tail = NULL;
 			g_prep_lru_head = NULL;
 			break;
@@ -270,7 +270,7 @@ macos9_bitmap_set_mask(void *bitmap, unsigned char *mask, int mask_rowbytes)
 	if (bm == NULL) return;
 #ifdef __MACOS9__
 	/* fixes648: attaching/replacing the 1-bit mask changes mask-presence and
-	 * the box-filtered prep_mask — drop any prepared entry. */
+	 * the box-filtered prep_mask  -  drop any prepared entry. */
 	macos9_prep_dispose_locked(bm);
 #endif
 	if (bm->mask != NULL) free(bm->mask);
@@ -320,7 +320,7 @@ macos9_bitmap_destroy_now(void *bitmap)
 	 * the prep-LRU before freeing the bitmap, so a cached GWorld can never
 	 * outlive its bitmap. This is the single funnel every LRU-evict / purge /
 	 * display-size re-decode / content-destroy routes through
-	 * (guit->bitmap->destroy) — the whole C1 invalidation safety net. Placed
+	 * (guit->bitmap->destroy)  -  the whole C1 invalidation safety net. Placed
 	 * after the bm-align guard so we never dereference a corrupted bm. */
 	macos9_prep_dispose_locked(bm);
 #endif
@@ -356,7 +356,7 @@ macos9_bitmap_deathrow_teardown(void *p)
  * Public gui_bitmap_table destroy callback (fixes829h, #281).
  *
  * Root cause: NetSurf core (navigation/refresh, hlcache clean) can free a
- * content's bitmap while a redraw is on the stack -- the knockout plot buffer
+ * content's bitmap while a redraw is on the stack - the knockout plot buffer
  * batches raw bitmap pointers during the box-tree walk and replays them at
  * knockout_plot_end, so a bitmap freed mid-redraw is replayed as a freed
  * struct (probe caught bw=<heap ptr>, buf=0x00000003) -> plot_bitmap walked
@@ -365,7 +365,7 @@ macos9_bitmap_deathrow_teardown(void *p)
  *
  * Fix: while macos9_op_depth > 0 (a walk/convert/redraw/broadcast is on the
  * stack) DEFER the free to the quiescent drain (top of macos9_poll), so the
- * bitmap stays live for the rest of the redraw -- the pending knockout replay
+ * bitmap stays live for the rest of the redraw - the pending knockout replay
  * then paints a VALID bitmap instead of a freed one (fixes the crash AND the
  * blank-on-refresh residual). pin_key is NULL: no scheduled continuation
  * references a bitmap, only the redraw stack does, which op_depth covers.
@@ -464,7 +464,7 @@ macos9_bitmap_modified(void *bitmap)
 {
 #ifdef __MACOS9__
 	/* fixes648 (Track C1): in-place pixel mutation (progressive/interlaced
-	 * decode, animated-GIF next frame) invalidates the prepared GWorld — drop
+	 * decode, animated-GIF next frame) invalidates the prepared GWorld  -  drop
 	 * it so the next paint re-prepares from the new pixels. This is exactly
 	 * what the long-standing TODO here asked for. */
 	struct macos9_bitmap *bm = bitmap;

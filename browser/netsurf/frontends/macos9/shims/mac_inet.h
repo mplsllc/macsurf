@@ -1,5 +1,5 @@
 /*
- * mac_inet.h — BSD socket type stubs for Mac OS 9 / NetSurf
+ * mac_inet.h  -  BSD socket type stubs for Mac OS 9 / NetSurf
  *
  * Provides the subset of sys/socket.h, netinet/in.h, and arpa/inet.h
  * types and constants that NetSurf core headers reference. Actual
@@ -51,7 +51,7 @@ struct sockaddr_in {
 	char           sin_zero[8];
 };
 
-/* struct sockaddr — generic */
+/* struct sockaddr  -  generic */
 struct sockaddr {
 	uint8_t  sa_len;
 	uint8_t  sa_family;
@@ -62,7 +62,7 @@ typedef uint32_t socklen_t;
 
 /*
  * Byte-order macros.
- * PowerPC is big-endian — network byte order matches host order.
+ * PowerPC is big-endian  -  network byte order matches host order.
  * Provide correct byte-swap for little-endian cross-compilation.
  */
 #if defined(__BIG_ENDIAN__) || defined(__ppc__) || defined(__POWERPC__)
@@ -93,7 +93,7 @@ static uint32_t ntohl(uint32_t x) {
 #endif
 
 /*
- * fd_set stub — Mac OS 9 uses Open Transport notifiers, not select().
+ * fd_set stub  -  Mac OS 9 uses Open Transport notifiers, not select().
  * This typedef exists solely so fetch.h function signatures parse.
  */
 #ifndef FD_SETSIZE
@@ -110,7 +110,7 @@ typedef struct {
 #define FD_ISSET(fd, set) ((set)->fds_bits[(fd) / (8 * sizeof(unsigned long))] &   (1UL << ((fd) % (8 * sizeof(unsigned long)))))
 
 /*
- * socket() stub — MacSurf overrides gui_fetch_table.socket_open with
+ * socket() stub  -  MacSurf overrides gui_fetch_table.socket_open with
  * an Open Transport implementation, so this default is never called.
  * Exists only so gui_factory.c's gui_default_socket_open() compiles.
  */
@@ -121,7 +121,7 @@ static int socket(int domain, int type, int protocol)
 }
 
 /*
- * inet_aton is NOT provided here — NetSurf's utils/utils.c supplies
+ * inet_aton is NOT provided here  -  NetSurf's utils/utils.c supplies
  * its own fallback when HAVE_INETATON is undefined.
  */
 

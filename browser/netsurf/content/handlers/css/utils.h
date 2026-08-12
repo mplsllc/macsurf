@@ -28,7 +28,7 @@ extern css_fixed nscss_screen_dpi;
 
 /**
  * Helper wrapper for libcss computed display getter. fixes75: GRID and
- * INLINE_GRID now pass through unchanged — the upstream NetSurf wrapper
+ * INLINE_GRID now pass through unchanged - the upstream NetSurf wrapper
  * downgraded them to BLOCK / INLINE_BLOCK because there was no grid
  * layout pass. We have one (layout_grid.c), so let the real value through.
  */

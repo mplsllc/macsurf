@@ -1,6 +1,6 @@
 /*
- * MacSurf — Mac OS 9 frontend for NetSurf
- * mac_time.h — POSIX time function shim using Mac OS 9 DateTimeUtils
+ * MacSurf  -  Mac OS 9 frontend for NetSurf
+ * mac_time.h  -  POSIX time function shim using Mac OS 9 DateTimeUtils
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.

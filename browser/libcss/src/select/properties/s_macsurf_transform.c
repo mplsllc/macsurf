@@ -18,7 +18,7 @@
  *   bits 31..16 scale_x Q8.8 unsigned (0..256.00 range, 1/256 precision)
  *   bits 15..0  scale_y Q8.8 unsigned
  *
- * Identity = 0x01000100 (1.0, 1.0).  Zero scale means scale(0) — element
+ * Identity = 0x01000100 (1.0, 1.0).  Zero scale means scale(0) - element
  * collapses to nothing.  Scale values arrive as Q22.10; shift right by 2
  * to land in Q8.8. */
 static int32_t macsurf_transform_b_pack(css_fixed scale_x, css_fixed scale_y)
@@ -140,7 +140,7 @@ css_error css__initial_macsurf_transform(css_select_state *state)
 	 * transform_b (identity 0x01000100). Without the _b write, every
 	 * cascade chain that doesn't overwrite transform_b sees zero in the
 	 * plotter, which the defensive sx_q88==0 → 256 path then quietly
-	 * coerces back to identity — so scale-only rules looked like they
+	 * coerces back to identity - so scale-only rules looked like they
 	 * never took effect. */
 	set_macsurf_transform_b_raw(state->computed, (int32_t)0x01000100);
 	return set_macsurf_transform(state->computed,

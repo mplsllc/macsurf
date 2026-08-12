@@ -58,7 +58,7 @@ extern void macos9_content_drain_deferred(void);
 #define macos9_content_drain_deferred() ((void)0)
 #endif
 
-/* fixes895 (reconvert-crash hunt) — dense breadcrumbs for the async box-build
+/* fixes895 (reconvert-crash hunt) - dense breadcrumbs for the async box-build
  * window, which is where the reconvert crash kills the session (between
  * "html_reconvert_content rc=0" and "reconvert #N: DONE"). All of it is gated
  * on macsurf_reconvert_in_progress (defined in html.c, non-zero ONLY during a
@@ -77,9 +77,9 @@ extern unsigned long macsurf_reconvert_seq;   /* html.c */
  * dom_to_box). Names the furthest node reached when a bomb hits. */
 static unsigned long g_reconv_node_ix = 0;
 
-/* fixes552 — WRITER-SIDE free guard (closes the free-during-walk window at the
+/* fixes552 - WRITER-SIDE free guard (closes the free-during-walk window at the
  * single writer instead of at every reader).  g_walk_content marks the content
- * whose box walk is CURRENTLY on the stack — set by the convert_xml_to_box
+ * whose box walk is CURRENTLY on the stack - set by the convert_xml_to_box
  * wrapper for the entire batch, INCLUDING the html_fetch_object -> OT yield
  * where a bulk hlcache_clean fires content_destroy.  Both the eviction path
  * (hlcache_clean, fixes553) and content_destroy (ns_content.c) call
@@ -89,7 +89,7 @@ static unsigned long g_reconv_node_ix = 0;
  * defeats ABA: if g_walk_content's address was freed+reused, the token no
  * longer matches and the free proceeds normally.
  *
- * fixes553 — the pin now covers the walked content's ENTIRE tree, not just the
+ * fixes553 - the pin now covers the walked content's ENTIRE tree, not just the
  * content itself; see macos9_box_walk_owns_content below the html/ includes
  * (it walks object_list, which needs the full content_html_object definition). */
 static struct content *g_walk_content = NULL;
@@ -108,7 +108,7 @@ static unsigned long    g_walk_gen     = 0;
 #include "macsurf_debug.h"
 #include "macos9_deathrow.h"
 
-/* fixes553 — extend the fixes552 writer-side free guard from the single walked
+/* fixes553 - extend the fixes552 writer-side free guard from the single walked
  * content to its ENTIRE tree.  The box walk dereferences not just the
  * html_content itself but the sub-resource contents hanging off its object_list
  * (images, iframes, embedded objects) and the DOM document strings the
@@ -119,7 +119,7 @@ static unsigned long    g_walk_gen     = 0;
  * (the reported convert_xml_to_box UAF).
  *
  * Returns non-zero when c is pinned by the live walk:
- *   (a) c is the walked html_content itself — which also covers the DOM
+ *   (a) c is the walked html_content itself - which also covers the DOM
  *       document it owns and the dom_strings the walk dereferences; or
  *   (b) c is a sub-resource content in the walked html_content's object_list.
  *
@@ -322,7 +322,7 @@ box_extract_properties(dom_node *n, struct box_construct_props *props)
 				props->parent_style = parent_box->style;
 				props->href = parent_box->href;
 				props->target = parent_box->target;
-				/* fixes1063 (#114) — travels with href. */
+				/* fixes1063 (#114) - travels with href. */
 				props->download = (parent_box->flags &
 						LINK_DOWNLOAD) != 0;
 				props->title = parent_box->title;
@@ -432,7 +432,7 @@ box_get_style(html_content *c,
 	ctx.universal = c->universal;
 	ctx.root_style = root_style;
 	ctx.parent_style = parent_style;
-	/* fixes130 — propagate dynamic pseudo-class state into the
+	/* fixes130 - propagate dynamic pseudo-class state into the
 	 * select context so :hover / :active / :focus match correctly
 	 * during this cascade pass. */
 	ctx.dyn_hover_node = c->dyn_hover_node;
@@ -652,7 +652,7 @@ box_construct_generate(struct box_construct_ctx *ctx,
 
 		box_add_child(box, gen);
 
-		/* fixes347 — fetch background-image on the pseudo box. The
+		/* fixes347 - fetch background-image on the pseudo box. The
 		 * existing element-level fetch at the bottom of
 		 * box_construct_element fires for elements but NEVER for
 		 * pseudos, so `gen->background` stays NULL forever and the
@@ -1154,7 +1154,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 
 	assert(ctx->n != NULL);
 
-	/* Skip non-rendered metadata elements unconditionally — these never
+	/* Skip non-rendered metadata elements unconditionally - these never
 	 * generate boxes regardless of the cascade's display value. Catches
 	 * the case where the UA stylesheet's display:none rules don't reach
 	 * the cascade and <style>/<script> content leaks into body as text. */
@@ -1237,12 +1237,12 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	box = box_create(styles, styles->styles[CSS_PSEUDO_ELEMENT_NONE], false,
 			props.href, props.target, props.title, id,
 			ctx->bctx);
-	/* fixes1063 (#114) — carry the enclosing <a>'s `download` down with
+	/* fixes1063 (#114) - carry the enclosing <a>'s `download` down with
 	 * href. box_special sets it on the anchor's own box below. */
 	if (box != NULL && props.download)
 		box->flags |= LINK_DOWNLOAD;
 	if (box == NULL) {
-		/* fixes895 — box_create/talloc_zero returned NULL. During a
+		/* fixes895 - box_create/talloc_zero returned NULL. During a
 		 * reconvert this is the H1 smoking gun: the double-buffer keeps a
 		 * whole SECOND box tree alive, so a heavy JS page can exhaust the
 		 * partition here. Durable + flushed so a bomb right after it is
@@ -1432,7 +1432,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 			corestring_dom___ns_key_box_node_data, box, NULL,
 			(void *) &old_box);
 	if (err != DOM_NO_ERR) {
-		/* fixes895 — the box<->node backlink box_for_node() reads could
+		/* fixes895 - the box<->node backlink box_for_node() reads could
 		 * not be installed; a later hover/click on this node would then
 		 * resolve to a stale/absent box. */
 		if (macsurf_reconvert_in_progress)
@@ -1508,7 +1508,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		return true;
 	}
 
-	/* fixes195 — inline <svg> root detection.
+	/* fixes195 - inline <svg> root detection.
 	 *
 	 * If this element is an SVG root, mark the box and tell the
 	 * caller not to descend into the DOM children. The shape
@@ -1518,7 +1518,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	 * HTML layout, which matches SVG semantics (the root <svg>
 	 * draws its viewBox into a single box).
 	 *
-	 * fixes197 — diagnostic instrumentation: log every tag name
+	 * fixes197 - diagnostic instrumentation: log every tag name
 	 * we see so we can confirm <svg> tags actually reach this
 	 * point (e.g. that Hubbub's foreign-content path isn't
 	 * stashing them in a different namespace that
@@ -1538,7 +1538,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 				 * element with given dimensions. Without this,
 				 * lh__box_is_replace() returns false and the
 				 * inline layout path treats the box as non-
-				 * replaced — width collapses to 0 and height
+				 * replaced - width collapses to 0 and height
 				 * collapses to the parent line-height, so the
 				 * macos9 SVG painter (fixes195) is invoked with
 				 * a degenerate 0xN rect and nothing renders.
@@ -1905,7 +1905,7 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 			return false;
 
 #ifdef __MACOS9__
-		/* fixes491 diag — trace the source of "data-xf-init" text nodes.
+		/* fixes491 diag - trace the source of "data-xf-init" text nodes.
 		 * Log the offending character data plus the content-data pointer
 		 * so the node can be tied back to its DOM origin. Remove once the
 		 * leak is root-caused. */
@@ -2048,7 +2048,7 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 				(css_computed_style *) props.parent_style,
 				false, props.href, props.target, props.title,
 				NULL, ctx->bctx);
-		/* fixes1063 (#114) — THE case this exists for: a TEXT box
+		/* fixes1063 (#114) - THE case this exists for: a TEXT box
 		 * carries href but has NO DOM node, and the anchor's own inline
 		 * box is zero-width so a click never lands on it. Without this
 		 * the flag is unreachable from a text link. */
@@ -2101,11 +2101,11 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 				css_computed_white_space(props.parent_style);
 
 		/* fixes307 (#56): pre-wrap and pre-line now diverge from pre.
-		 *   pre       — preserve whitespace + newlines, no wrap.
-		 *   pre-wrap  — preserve whitespace + newlines, wrap (inline
+		 *   pre       - preserve whitespace + newlines, no wrap.
+		 *   pre-wrap  - preserve whitespace + newlines, wrap (inline
 		 *               wrap dispatch at layout.c:667-670 already
-		 *               handles this — PRE_WRAP isn't in no_wrap).
-		 *   pre-line  — collapse runs of internal whitespace to a
+		 *               handles this - PRE_WRAP isn't in no_wrap).
+		 *   pre-line  - collapse runs of internal whitespace to a
 		 *               single space, but keep newlines, and wrap.
 		 * The text walk below splits on \r\n so newlines are kept
 		 * for all three; the new pre-line space-collapse pass below
@@ -2180,8 +2180,8 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 			}
 		}
 
-		/* fixes307 (#56) — pre-line collapses runs of horizontal
-		 * whitespace (spaces, tabs — already converted to spaces
+		/* fixes307 (#56) - pre-line collapses runs of horizontal
+		 * whitespace (spaces, tabs - already converted to spaces
 		 * above) to a single space. Newlines are preserved and
 		 * handled by the \r\n split below. The collapse happens in
 		 * place; text_len shrinks. */
@@ -2319,7 +2319,7 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
  */
 static void convert_xml_to_box(struct box_construct_ctx *ctx); /* fixes552 wrapper, defined just below the inner */
 
-/* fixes895 — copy the node's tag/name into a static buffer for the durable
+/* fixes895 - copy the node's tag/name into a static buffer for the durable
  * position marker. Called once per batch boundary (not per node), so the single
  * transient dom_string it allocates+frees never grows the reconvert peak the H1
  * hypothesis is about. Returns "" on any failure. */
@@ -2354,14 +2354,14 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 	/* fixes668 (perf): raised 10 -> 100. The box walk re-schedules itself
 	 * every max_processed_before_yield nodes; at 10 a ~2200-node forum page
 	 * took ~223 scheduler round-trips (each a full event-loop pass) just to
-	 * build the box tree once — the "box: convert_xml storm" in the log.
+	 * build the box tree once - the "box: convert_xml storm" in the log.
 	 * Image/resource nodes still yield implicitly inside box_construct_element
 	 * (html_fetch_object -> OT), so this only lengthens text-heavy runs to
-	 * ~100 nodes (~a few ms) between explicit yields — imperceptible latency,
+	 * ~100 nodes (~a few ms) between explicit yields - imperceptible latency,
 	 * ~10x fewer round-trips. Bigger batches also mean FEWER yield windows, so
 	 * the per-batch liveness guards run less often, not more (no added UAF
 	 * exposure). This does NOT touch the JS reconvert path (still disabled). */
-	/* fixes902 — a RECONVERT runs to completion in ONE uninterrupted pass (no
+	/* fixes902 - a RECONVERT runs to completion in ONE uninterrupted pass (no
 	 * self-reschedule), i.e. an ATOMIC box build.
 	 *
 	 * The reconvert yielded every N nodes purely for UI responsiveness during
@@ -2383,7 +2383,7 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 	const uint32_t max_processed_before_yield =
 			macsurf_reconvert_in_progress ? 0x7FFFFFFFu : 100;
 
-	/* fixes519: validate the content BEFORE any access to it — the log line
+	/* fixes519: validate the content BEFORE any access to it - the log line
 	 * below dereferences ctx->content.  convert_xml_to_box is static and is
 	 * ONLY ever invoked as a scheduled callback (guit->misc->schedule); it is
 	 * not reachable directly from the window-update handler, so schedule(-1)
@@ -2392,7 +2392,7 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 	 * before the cancel ran.  ctx itself is always valid here (a cancelled
 	 * entry is removed and never fires, and cancel frees ctx), so only the
 	 * content it points at may be gone.  On a dead content do NOT touch its
-	 * DOM — document teardown is underway — just release ctx. */
+	 * DOM - document teardown is underway - just release ctx. */
 	if (ctx == NULL)
 		return;
 	/* fixes533: validate the OWNING content by registry membership BEFORE
@@ -2412,7 +2412,7 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 		return;
 	}
 	/* fixes521: the fixes520 hlcache_content_is_live() gate was removed here
-	 * — it risked false-negatives that abandon a live box conversion (blank
+	 * - it risked false-negatives that abandon a live box conversion (blank
 	 * page).  The field-based dead check below plus the by-value charset gate
 	 * in html_fetch_object are the retained protection. */
 	if (CONTENT_IS_DEAD(&ctx->content->base)) {
@@ -2456,7 +2456,7 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 		return;
 	}
 
-	/* fixes901 — durable marker: THIS batch's _inner actually started. If a
+	/* fixes901 - durable marker: THIS batch's _inner actually started. If a
 	 * reconvert bombs with ReconvPos at "wrapper-pre-drain" (previous batch)
 	 * and never reaches "batch-enter", the death is in the inter-batch poll
 	 * (death-row/deferred drain -- now gated -- or an image-fetch callback);
@@ -2493,7 +2493,7 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 			return;
 		}
 
-		/* fixes897 — per-ELEMENT durable marker for the first 150 nodes of a
+		/* fixes897 - per-ELEMENT durable marker for the first 150 nodes of a
 		 * reconvert (the crash reproduces there: HW fixes896 died in nodes
 		 * 1-20 and 80-100 with freemem healthy, so it is NOT memory and NOT the
 		 * text-string pin -- it is box construction reading a bad node/attr).
@@ -2559,7 +2559,7 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 
 			if (type == DOM_TEXT_NODE) {
 				ctx->n = next;
-				/* fixes897 — per-TEXT durable marker (first 150 nodes).
+				/* fixes897 - per-TEXT durable marker (first 150 nodes).
 				 * Distinguishes a crash in box_construct_text (the
 				 * dom_string read, fixes489 UAF) from one in
 				 * box_construct_element (attr/cascade). */
@@ -2598,7 +2598,7 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 			root.children->parent = &root;
 
 			if (macsurf_reconvert_in_progress) {
-				/* fixes895 — all nodes walked; the crash-relevant
+				/* fixes895 - all nodes walked; the crash-relevant
 				 * remaining steps are box_normalise_block (H3) then
 				 * the ctx->cb = html_reconvert_done. Durable marker so
 				 * a bomb here is not confused with a mid-walk one. */
@@ -2649,7 +2649,7 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 		ctx->content->box_conversion_context = ctx;
 	}
 	if (macsurf_reconvert_in_progress) {
-		/* fixes895 — durable per-batch checkpoint. On a hard bomb the
+		/* fixes895 - durable per-batch checkpoint. On a hard bomb the
 		 * position file names the furthest node reached (20-node window)
 		 * and the tag of the node the NEXT batch will process; freemem
 		 * trends toward 0 near the crash node if this is the H1 double-
@@ -2667,7 +2667,7 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 	guit->misc->schedule(0, (void *)convert_xml_to_box, ctx);
 }
 
-/* fixes552 — wrapper around the per-batch box walk.  Marks this content's walk
+/* fixes552 - wrapper around the per-batch box walk.  Marks this content's walk
  * as ON-STACK for the whole batch (including the html_fetch_object -> OT yield)
  * so content_destroy (ns_content.c) DEFERS freeing it; runs the batch via
  * _inner; then unmarks and drains any deferred frees now that the walk's
@@ -2689,7 +2689,7 @@ static void convert_xml_to_box(struct box_construct_ctx *ctx)
 
 	g_walk_content = NULL;
 	g_walk_gen = 0;
-	/* fixes901 — durable marker for the inter-batch gap. If a reconvert still
+	/* fixes901 - durable marker for the inter-batch gap. If a reconvert still
 	 * bombs with ReconvPos at "wrapper-pre-drain" (not "batch-yield"), the
 	 * schedule/return survived and the death is in the drain or the poll after;
 	 * if it stays at "batch-yield", the death is the schedule/return itself.
@@ -2855,7 +2855,7 @@ dom_to_box(dom_node *n,
 	assert(box_conversion_context != NULL);
 
 	if (macsurf_reconvert_in_progress) {
-		/* fixes895 — start of the re-convert box build. Reset the node
+		/* fixes895 - start of the re-convert box build. Reset the node
 		 * index and mark ENTER so a batch-1 crash (before the first yield
 		 * flush) is still bracketed here rather than at "pre-dom_to_box". */
 		g_reconv_node_ix = 0;
@@ -2901,7 +2901,7 @@ dom_to_box(dom_node *n,
 
 	*box_conversion_context = ctx;
 
-	/* fixes903 — a RECONVERT runs the box build SYNCHRONOUSLY, right here, with
+	/* fixes903 - a RECONVERT runs the box build SYNCHRONOUSLY, right here, with
 	 * NO event-loop re-entry between teardown and repaint.
 	 *
 	 * The initial LOAD schedules the walk (returns to the event loop so the UI

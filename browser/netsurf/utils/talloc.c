@@ -192,7 +192,7 @@ static inline struct talloc_chunk *talloc_chunk_from_ptr(const void *ptr)
 			/* fixes907 -- magic wrong / never a chunk: name may be garbage,
 			 * so log only the numeric fields (no %s). */
 			macsurf_debug_log_writef(
-				/* fixes927 — %ld, not %lx: the hand-rolled
+				/* fixes927 - %ld, not %lx: the hand-rolled
 				 * formatter has no hex and emits an unknown
 				 * specifier literally, so this line was
 				 * printing "flags=%lx" in the very corruption

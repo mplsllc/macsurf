@@ -1,6 +1,6 @@
 /*
- * MacSurf — Mac OS 9 frontend for NetSurf
- * mac_iconv.c — iconv shim using Text Encoding Converter
+ * MacSurf  -  Mac OS 9 frontend for NetSurf
+ * mac_iconv.c  -  iconv shim using Text Encoding Converter
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.
@@ -16,7 +16,7 @@
 #include <TextCommon.h>
 
 /*
- * TEC status/error constants — may not be in all versions of
+ * TEC status/error constants  -  may not be in all versions of
  * TextEncodingConverter.h.  Define fallbacks if missing.
  */
 #ifndef kTECUsedFallbacksStatus

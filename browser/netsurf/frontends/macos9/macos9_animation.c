@@ -24,11 +24,11 @@
 
 #include "macos9.h"
 
-/* Ticks at 60Hz. 6 = ~10 fps -- slower than fixes76a's 20fps so each
+/* Ticks at 60Hz. 6 = ~10 fps - slower than fixes76a's 20fps so each
  * redraw cycle has time to complete on real hardware. */
 #define ANIM_TICK_INTERVAL 6
 
-/* Soft cap. Plenty for typical pages -- 4 animated badges on the test
+/* Soft cap. Plenty for typical pages - 4 animated badges on the test
  * page, MacTrove has none. Overflow is silently dropped (last writer
  * loses); the next tick will re-fill from the next redraw pass. */
 #define ANIM_MAX_RECTS 64

@@ -1,6 +1,6 @@
 /*
- * MacSurf -- Mac OS 9 frontend for NetSurf
- * macos9_content_registry.h -- live-content pointer registry (anti-UAF)
+ * MacSurf - Mac OS 9 frontend for NetSurf
+ * macos9_content_registry.h - live-content pointer registry (anti-UAF)
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.
@@ -31,14 +31,14 @@
  *   - macos9_content_token_valid(c, t) present AND generation still == t
  *
  * Because the table stores the pointer VALUE (not the struct contents), a
- * freed content is simply absent -- no dereference of reused memory occurs.
+ * freed content is simply absent - no dereference of reused memory occurs.
  * The generation token additionally defeats the ABA case: if the allocator
  * hands the same address back to a brand-new content before the stale
  * callback fires, the new content gets a new generation, so a token captured
  * against the old content no longer matches.  Capture the token at schedule
  * time, validate at fire time.
  *
- * Implementation is a fixed-capacity array -- no malloc, no list surgery in
+ * Implementation is a fixed-capacity array - no malloc, no list surgery in
  * the destroy path, C89/CW8-clean, and safe to call from inside a running
  * scheduled callback.
  *

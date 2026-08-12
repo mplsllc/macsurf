@@ -1,11 +1,11 @@
 /*
- * MacSurf shim -- <time.h>
+ * MacSurf shim - <time.h>
  *
  * Top-level interceptor for `#include <time.h>`. The `macos9:` directory
  * is on the CW8 access path (the `macos9:sys:` sub-directory is NOT), so
  * a bare `<time.h>` was falling through to MSL's own <time.h>, whose
  * `ctime`/struct-tm definition collides with the one macsurf_prefix.h
- * already provides (guarded by _STRUCT_TM) -- yielding
+ * already provides (guarded by _STRUCT_TM) - yielding
  * "struct/union/enum/class tag 'tm' redefined" in every core file that
  * includes <time.h> (browser_history.c, global_history.c, cookie_manager.c,
  * urldb.c, frames.c, fs_backing_store.c, event.c, fetch.c ...).

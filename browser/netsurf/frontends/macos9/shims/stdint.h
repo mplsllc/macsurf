@@ -1,5 +1,5 @@
 /*
- * MacSurf stub -- shims/stdint.h
+ * MacSurf stub - shims/stdint.h
  * C89-compatible integer type definitions for CodeWarrior 8.
  *
  * MSL's <stdint.h> pulls in <cstdint> (a C++ header) which causes
@@ -119,7 +119,7 @@ typedef long               intptr_t;
 #define INT64_MAX  9223372036854775807LL
 #endif
 
-/* Format macros for printf — C89 compatible */
+/* Format macros for printf  -  C89 compatible */
 #ifndef PRId32
 #define PRId32  "ld"
 #endif

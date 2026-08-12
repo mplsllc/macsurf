@@ -1,6 +1,6 @@
 /*
- * MacSurf — Mac OS 9 frontend for NetSurf
- * mac_stat.c — POSIX stat/fstat/access shim using Carbon File Manager
+ * MacSurf  -  Mac OS 9 frontend for NetSurf
+ * mac_stat.c  -  POSIX stat/fstat/access shim using Carbon File Manager
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.
@@ -10,7 +10,7 @@
 #include <string.h>
 
 /*
- * Ensure struct stat is available — MSL's stat.h provides it on CW8.
+ * Ensure struct stat is available  -  MSL's stat.h provides it on CW8.
  * The prefix file should also include it, but belt-and-suspenders.
  */
 #ifdef __MWERKS__

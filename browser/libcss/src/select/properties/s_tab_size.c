@@ -70,7 +70,7 @@ css_error css__compose_tab_size(
 		const css_computed_style *child,
 		css_computed_style *result)
 {
-	/* Inherited — child wins, fall back to parent when child unset. */
+	/* Inherited - child wins, fall back to parent when child unset. */
 	int32_t v = child->i.tab_size;
 	if (v == 0) v = parent->i.tab_size;
 	result->i.tab_size = v;

@@ -1,5 +1,5 @@
 /*
- * macos9_svg_inline.h -- fixes195 inline SVG renderer (V1).
+ * macos9_svg_inline.h - fixes195 inline SVG renderer (V1).
  *
  * Renders an inline <svg> element by walking its DOM children and
  * issuing plotter calls for each shape primitive. The root <svg>

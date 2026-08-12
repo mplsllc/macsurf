@@ -28,7 +28,7 @@
 #include <string.h>
 #include <assert.h>
 #include <stddef.h>
-/* fixes940 — <alloca.h> removed: MSL ships none on CW8, and the sole alloca()
+/* fixes940 - <alloca.h> removed: MSL ships none on CW8, and the sole alloca()
  * call site (lre_exec) now uses a fixed StackInt[STACK_SIZE_MAX] local. */
 
 #include "cutils.h"
@@ -2496,7 +2496,7 @@ int lre_exec(uint8_t **capture,
 {
     REExecContext s_s, *s = &s_s;
     int re_flags, i, ret;
-    /* fixes940 — was: StackInt *stack_buf; ... stack_buf = alloca(size).
+    /* fixes940 - was: StackInt *stack_buf; ... stack_buf = alloca(size).
      * MSL ships no <alloca.h> on CW8, and the allocation was never actually
      * variable: stack_size_max is read from a single bytecode header BYTE and
      * the compiler side rejects anything over STACK_SIZE_MAX (255) at

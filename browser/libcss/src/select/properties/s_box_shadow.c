@@ -67,7 +67,7 @@ css_error css__cascade_box_shadow(uint32_t opv, css_style *style,
                         break;
                 case 0x0080: /* SET */
                         value = CSS_BOX_SHADOW_SET;
-                        /* fixes361b — bytecode now starts with a count
+                        /* fixes361b - bytecode now starts with a count
                          * (1 or 2), followed by 6 fields per shadow. */
                         shadow_count = *((css_fixed *) style->bytecode);
                         advance_bytecode(style, sizeof(css_fixed));
@@ -103,7 +103,7 @@ css_error css__cascade_box_shadow(uint32_t opv, css_style *style,
                                 packed2 = box_shadow_pack(h2, v2, i2, c2);
                         }
                         if (shadow_count >= 3) {
-                                /* fixes362 — third shadow into outer-
+                                /* fixes362 - third shadow into outer-
                                  * struct box_shadow_3 side channel. */
                                 css_fixed h3, v3, b3, s3, i3;
                                 css_color c3;
@@ -159,8 +159,8 @@ css_error css__copy_box_shadow(
 		return CSS_OK;
 	}
 
-	/* fixes361b — propagate second shadow alongside the first.
-	 * fixes362 — propagate third shadow too. */
+	/* fixes361b - propagate second shadow alongside the first.
+	 * fixes362 - propagate third shadow too. */
 	to->box_shadow_2 = from->box_shadow_2;
 	to->box_shadow_3 = from->box_shadow_3;
 	return set_box_shadow(to, type, integer);

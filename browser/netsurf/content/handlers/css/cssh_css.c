@@ -93,7 +93,7 @@ typedef struct nscss_content
 
 	struct content_css_data data;	/**< CSS data */
 
-	/* fixes160d — per-sheet byte accumulator and skip latch for the
+	/* fixes160d - per-sheet byte accumulator and skip latch for the
 	 * oversize CSS gate. total_bytes sums the size arguments of every
 	 * nscss_process_data call for this content; when it passes the cap,
 	 * the skip latch is set and all further data is rejected and the
@@ -103,7 +103,7 @@ typedef struct nscss_content
 	int skipped;
 } nscss_content;
 
-/* fixes160d — per-stylesheet byte cap. Apple.com ships four CSS files
+/* fixes160d - per-stylesheet byte cap. Apple.com ships four CSS files
  * in the 200-256 KB range; each one expands into libcss's struct form
  * to several times its source size. With 20 sheets attached to the
  * cascade context, selector matching across 1000+ boxes blows past
@@ -111,18 +111,18 @@ typedef struct nscss_content
  * 128 KB drops the four heaviest Apple sheets, halves the cascade
  * workload, and leaves the small utility sheets in place.
  *
- * fixes161c — raised to 256 KB. The Apple post-READY crash log
+ * fixes161c - raised to 256 KB. The Apple post-READY crash log
  * (2026-05-21) showed two ~149 KB Apple sheets being dropped, leaving
  * the page in a half-styled cascade state that contributed to the
  * downstream crash.
  *
- * fixes174 — raised to 1 MB. Apple's iPhone page ships a 289 KB
+ * fixes174 - raised to 1 MB. Apple's iPhone page ships a 289 KB
  * overview.built.css that was still being dropped at 256 KB,
  * leaving the page unstyled in places. Browsers are supposed to
  * load whatever they're given; the 16 MB Carbon partition has
  * room for it. Now matches the per-entry HTTP cache cap.
  *
- * fixes837 (#167) — raised 1 MB -> 4 MB. This is the SINGLE-SHEET cap;
+ * fixes837 (#167) - raised 1 MB -> 4 MB. This is the SINGLE-SHEET cap;
  * the per-page total is already 8 MB (fixes448). www.facebook.com ships
  * one ~1.4 MB aggregated stylesheet (static.xx.fbcdn.net/....css) that hit
  * the 1 MB single-sheet cap: nscss_process_data broadcast CONTENT_MSG_ERROR
@@ -136,7 +136,7 @@ typedef struct nscss_content
 #define MACOS9_CSS_MAX_BYTES (4096UL * 1024UL)
 
 /*
- * fixes321 — per-page cumulative CSS budget across all sheets. Raised
+ * fixes321 - per-page cumulative CSS budget across all sheets. Raised
  * 384 KB -> 1 MB. Heavy modern sites (developers.google.com/fonts ships
  * ~776 KB of CSS across several sheets) hit the old 384 KB cap, dropped
  * 3 stylesheets, and rendered unstyled (SITE log: blocker=css_budget,
@@ -147,7 +147,7 @@ typedef struct nscss_content
  * dial to turn back down. Keep in sync with the css_total_cap display
  * literal in html.c's SITE logger.
  *
- * fixes448 — raised to 2 MB. XenForo on 68kmla.org ships two aggregated
+ * fixes448 - raised to 2 MB. XenForo on 68kmla.org ships two aggregated
  * css.php bundles totalling ~1.4 MB; the 1 MB cap dropped both, leaving
  * the page unstyled and triggering a BASE sheet NULL crash path.  The
  * ~195 MB Carbon partition has ample headroom. */
@@ -323,7 +323,7 @@ static nserror nscss_create_css_data(struct content_css_data *c,
  * \param size  Number of bytes to process
  * \return true on success, false on failure
  */
-/* fixes115 — count column tracks in a grid-template-columns value
+/* fixes115 - count column tracks in a grid-template-columns value
  * (the substring between `:` and `;`/`}` of the declaration).
  *
  * Handles the dominant patterns mactrove and similar Drupal/CMS themes
@@ -334,7 +334,7 @@ static nserror nscss_create_css_data(struct content_css_data *c,
  *   repeat(auto-fill|auto-fit, ...)            -> 3 * count(inner) (heuristic)
  *   minmax(...) / fit-content(...) / calc(...) -> counts as 1 track
  *
- * Pure text-level parser — does NOT depend on libcss. We rewrite the
+ * Pure text-level parser - does NOT depend on libcss. We rewrite the
  * declaration to `-macsurf-grid: N` before libcss parses the sheet,
  * so the existing -macsurf-grid select/layout path handles it. */
 static int
@@ -398,7 +398,7 @@ macsurf__count_grid_columns_text(const char *p, const char *end)
 				}
 				if (n > 0 && n < 1000) repeat_mult = n;
 			} else {
-				/* auto-fill / auto-fit / unknown — heuristic. */
+				/* auto-fill / auto-fit / unknown - heuristic. */
 				repeat_mult = 3;
 				while (p < end && *p != ',' && *p != ')') p++;
 			}
@@ -431,7 +431,7 @@ macsurf__count_grid_columns_text(const char *p, const char *end)
 }
 
 
-/* fixes115 — case-insensitive 1-byte compare; checks word boundary so
+/* fixes115 - case-insensitive 1-byte compare; checks word boundary so
  * "grid-template-columns" doesn't match `xgrid-template-columns`. */
 static int
 macsurf__match_prop_name(const char *buf, size_t len, size_t pos,
@@ -459,7 +459,7 @@ macsurf__match_prop_name(const char *buf, size_t len, size_t pos,
 }
 
 
-/* fixes117 — extract up to MAX_TRACKS track-width tokens from a
+/* fixes117 - extract up to MAX_TRACKS track-width tokens from a
  * grid-template-columns value, expanding repeat(N, ...) and collapsing
  * minmax()/fit-content()/calc() to a single token. Each emitted token
  * is appended to `out` followed by a single space; the total bytes
@@ -599,7 +599,7 @@ macsurf__emit_flat_tracks(const char *p, const char *end,
 	}
 }
 
-/* fixes117 — emit a track-list rewrite for one grid-template-columns
+/* fixes117 - emit a track-list rewrite for one grid-template-columns
  * declaration. Returns bytes written to `out` (excluding trailing NUL),
  * or 0 if the value couldn't be coerced into a usable track-list (in
  * which case the caller should fall back to the count-only rewrite). */
@@ -641,13 +641,13 @@ macsurf__emit_grid_tracks(const char *p, const char *end,
 				}
 				if (n > 0 && n < 1000) mult = n;
 			} else {
-				/* fixes362 — auto-fill / auto-fit: compute the
+				/* fixes362 - auto-fill / auto-fit: compute the
 				 * column count by reading the minmax(N<unit>, ...)
 				 * min-track-width and dividing a viewport-estimate
 				 * by it. mactrove's /hardware page uses
 				 *   grid-template-columns:
 				 *     repeat(auto-fill, minmax(200px, 1fr));
-				 * on a 949px viewport — that should resolve to 4
+				 * on a 949px viewport - that should resolve to 4
 				 * columns, not the legacy mult=3 fallback. */
 				mult = 3;
 				while (p < end && *p != ',' && *p != ')') p++;
@@ -678,7 +678,7 @@ macsurf__emit_grid_tracks(const char *p, const char *end,
 						}
 						/* mm should point at unit ("px", "em", ...)
 						 * or comma. Treat any non-zero N as a px
-						 * estimate — fine for the common
+						 * estimate - fine for the common
 						 * minmax(NNNpx, 1fr) idiom. */
 						if (min_n > 16 && min_n < 1000) {
 							/* Viewport estimate ~900px. */
@@ -787,7 +787,7 @@ macsurf__emit_grid_tracks(const char *p, const char *end,
 }
 
 
-/* fixes115/117 — rewrite every `grid-template-columns: VALUE` declaration
+/* fixes115/117 - rewrite every `grid-template-columns: VALUE` declaration
  * inside the buffer to `-macsurf-grid: <tracks>` followed by enough
  * spaces to preserve the original byte count. The replacement is shorter
  * because the property name shrinks 22->14 chars; if track-list emission
@@ -891,7 +891,7 @@ macsurf__rewrite_grid_template_columns(const char *data, size_t size)
 }
 
 
-/* fixes150 — rewrite every `grid-template-rows: VALUE` declaration to
+/* fixes150 - rewrite every `grid-template-rows: VALUE` declaration to
  * `-macsurf-grid-rows: <tracks>` in place. Both names are 18 chars so
  * the prefix substitution is byte-for-byte; only the value is reformed
  * via macsurf__emit_grid_tracks (same flat-tokeniser as columns, with
@@ -989,7 +989,7 @@ macsurf__rewrite_grid_template_rows(const char *data, size_t size)
 }
 
 
-/* fixes158 — grid placement rewriter.
+/* fixes158 - grid placement rewriter.
  *
  * Replaces the fixes151 column-only rewriter. Walks `{ ... }` blocks
  * looking for any of:
@@ -1011,7 +1011,7 @@ macsurf__rewrite_grid_template_rows(const char *data, size_t size)
  * Original declarations are stripped from the output. Unrecognised
  * value forms (named lines, negative starts, calc(), keywords) leave
  * that specific declaration in the output untouched and don't update
- * the accumulator — libcss will then drop them as unknown properties.
+ * the accumulator - libcss will then drop them as unknown properties.
  *
  * V1 limitations (documented, not bugs):
  *   - only positive integer line numbers are recognised in the
@@ -1135,7 +1135,7 @@ macsurf__grid_parse_axis_value(const char *p, const char *end,
 		while (cursor < end && (*cursor == ' ' || *cursor == '\t'))
 			cursor++;
 		if (cursor >= end || *cursor != '/') {
-			/* Just "A" — start only, span 1 implicit. */
+			/* Just "A" - start only, span 1 implicit. */
 			*span_out = 1;
 			return true;
 		}
@@ -1162,7 +1162,7 @@ macsurf__grid_parse_axis_value(const char *p, const char *end,
 				*span_out = (uint8_t)s;
 				return true;
 			}
-			/* B <= A or 0 — unsupported, drop */
+			/* B <= A or 0 - unsupported, drop */
 			*start_out = 0;
 			return false;
 		}
@@ -1194,7 +1194,7 @@ macsurf__grid_match_name(const char *buf, size_t len, size_t pos,
  * <row_start> <row_span>;` declaration into out at pos. Grows the
  * buffer as needed.
  *
- * Four space-separated unsigned integers (each 0..255) — avoids the
+ * Four space-separated unsigned integers (each 0..255) - avoids the
  * css_fixed Q22.10 range limit a single packed int32 would hit.
  * Leading `;` guards against the previous declaration lacking its
  * own terminator (legal in CSS for the last decl before `}`). */
@@ -1227,7 +1227,7 @@ macsurf__grid_emit_packed(char **out_p, size_t *cap_p, size_t *pos_p,
 }
 
 
-/* Stub of the legacy fixes151 entry point — preserved so any direct
+/* Stub of the legacy fixes151 entry point - preserved so any direct
  * callers in older code paths still compile, but it now just calls
  * the unified placement rewriter below. */
 static char *
@@ -1419,7 +1419,7 @@ macsurf__rewrite_grid_placement(const char *data, size_t in_size,
 					 * 2-value form:  rs / cs   (span 1)
 					 *
 					 * Named-area form (single ident) is
-					 * NOT supported in V1 — that needs
+					 * NOT supported in V1 - that needs
 					 * grid-template-areas resolution
 					 * which is deferred. A single-token
 					 * ident value falls through with no
@@ -1494,7 +1494,7 @@ macsurf__rewrite_grid_placement(const char *data, size_t in_size,
 
 				/* Skip the declaration in the input (including
 				 * the trailing `;` if present). The closing `}`
-				 * stays in the input — we don't eat it. */
+				 * stays in the input - we don't eat it. */
 				i = val_end;
 				if (i < in_size && data[i] == ';') i++;
 				goto next_iter;
@@ -1551,7 +1551,7 @@ next_iter:
 }
 
 
-/* fixes175 — rewrite every author `text-shadow: VALUE` declaration to
+/* fixes175 - rewrite every author `text-shadow: VALUE` declaration to
  * `-macsurf-text-shadow: VALUE` so the existing vendor parser
  * (p_macsurf_text_shadow.c from fixes50) picks up standard CSS3
  * text-shadow without touching libcss internals.
@@ -1936,7 +1936,7 @@ macsurf__rewrite_text_shadow(const char *data, size_t in_size,
 }
 
 
-/* fixes183 — rewrite standard `transform:` → `-macsurf-transform:` so
+/* fixes183 - rewrite standard `transform:` → `-macsurf-transform:` so
  * author CSS reaches the existing vendor transform paint path (sin/cos
  * LUT rotation, translate, scale composition). Mirrors fixes175 text-shadow
  * pattern. `transform-origin`, `transform-style`, `transform-box` are NOT
@@ -2047,7 +2047,7 @@ macsurf__rewrite_object_position(const char *data, size_t in_size,
 }
 
 
-/* fixes266 — rewrite `background-image: linear-gradient(...)` to
+/* fixes266 - rewrite `background-image: linear-gradient(...)` to
  * `-macsurf-gradient: linear-gradient(...)` so author CSS that uses the
  * standard CSS3 syntax reaches the existing -macsurf-gradient paint path
  * (fixes47/49 linear-gradient, fixes74 radial-gradient).
@@ -2058,7 +2058,7 @@ macsurf__rewrite_object_position(const char *data, size_t in_size,
  *     fall through untouched (libcss continues to drop them).
  *   - Stacked layered backgrounds like `background-image: linear-gradient(a),
  *     linear-gradient(b)` rename to `-macsurf-gradient: ...` but the parser
- *     fails on the trailing `, linear-gradient(...)` — net result: stacked
+ *     fails on the trailing `, linear-gradient(...)` - net result: stacked
  *     gradients drop, same as pre-fix behaviour. Single-layer gradients
  *     paint, which is the strict improvement.
  *   - Does NOT touch `background:` shorthand. Authors who use shorthand for
@@ -2165,7 +2165,7 @@ macsurf__rewrite_background_image_gradient(const char *data, size_t in_size,
 }
 
 
-/* fixes318 (#145) — extract gradient from `background:` shorthand.
+/* fixes318 (#145) - extract gradient from `background:` shorthand.
  *
  * Authors commonly write `background: <colour> linear-gradient(...)` or
  * just `background: linear-gradient(...)` instead of the longhand
@@ -2183,7 +2183,7 @@ macsurf__rewrite_background_image_gradient(const char *data, size_t in_size,
  *      repeat, etc.) are wiped to spaces.
  *
  * Loss: any solid colour or other shorthand parts are dropped. Same
- * loss-budget as fixes266 — single-gradient cases paint correctly,
+ * loss-budget as fixes266 - single-gradient cases paint correctly,
  * stacked or complex shorthand drop. Authors who need the colour can
  * add a separate `background-color:` declaration.
  *
@@ -2209,7 +2209,7 @@ macsurf__rewrite_background_shorthand_gradient(const char *data,
 	size_t i = 0;
 	int changed = 0;
 
-	/* fixes343 — also reserve room for the per-match
+	/* fixes343 - also reserve room for the per-match
 	 * `; background-repeat: no-repeat` (~32 bytes) we now emit. */
 	cap = in_size +
 		(in_size / NEEDLE_LEN + 1) * (DELTA + 32) + 256;
@@ -2283,7 +2283,7 @@ macsurf__rewrite_background_shorthand_gradient(const char *data,
 				    (data[s+13] == 'n' || data[s+13] == 'N') &&
 				    (data[s+14] == 't' || data[s+14] == 'T') &&
 				     data[s+15] == '(') {
-					/* fixes346 — skip if this match is
+					/* fixes346 - skip if this match is
 					 * actually the `linear-gradient(` tail
 					 * of `repeating-linear-gradient(`. Without
 					 * this guard the preprocessor strips the
@@ -2395,7 +2395,7 @@ macsurf__rewrite_background_shorthand_gradient(const char *data,
 			pos += span;
 		}
 
-		/* fixes343 — scan the original shorthand for repeat-x /
+		/* fixes343 - scan the original shorthand for repeat-x /
 		 * repeat-y / no-repeat / repeat keywords and emit a
 		 * `; background-repeat: X` declaration after the gradient.
 		 * Without this, every shorthand-with-gradient lost its
@@ -2492,7 +2492,7 @@ macsurf__rewrite_background_shorthand_gradient(const char *data,
 }
 
 
-/* fixes279 (#27) — strip trailing stacked gradients from
+/* fixes279 (#27) - strip trailing stacked gradients from
  * `-macsurf-gradient:` declarations. Author CSS commonly stacks layered
  * backgrounds like `background-image: linear-gradient(a), linear-gradient(b)`.
  * After fixes266's rename pass we have `-macsurf-gradient: linear-gradient(a),
@@ -2582,7 +2582,7 @@ macsurf__strip_stacked_gradients(const char *data, size_t in_size)
 }
 
 
-/* fixes280 — narrow calc() evaluator for the aspect-ratio padding hack.
+/* fixes280 - narrow calc() evaluator for the aspect-ratio padding hack.
  *
  * Real-world pattern: `padding-top: calc(105 / 478 * 100%)`. mactrove's
  * Platinum theme uses this to maintain a fixed aspect ratio on absolutely-
@@ -2705,7 +2705,7 @@ macsurf__rewrite_calc_aspect(const char *data, size_t in_size)
 		p = macsurf__cc_skip_ws(out, q, p);
 
 		if (p >= q) {
-			/* calc(num) or calc(num%) — already simple, skip. */
+			/* calc(num) or calc(num%) - already simple, skip. */
 			i = close_pos + 1;
 			continue;
 		}
@@ -2766,7 +2766,7 @@ macsurf__rewrite_calc_aspect(const char *data, size_t in_size)
 		{
 			size_t span = close_pos - i + 1;
 			if (rlen > span) {
-				/* Won't fit — leave alone. */
+				/* Won't fit - leave alone. */
 				i = close_pos + 1;
 				continue;
 			}
@@ -2782,7 +2782,7 @@ macsurf__rewrite_calc_aspect(const char *data, size_t in_size)
 }
 
 
-/* fixes364 — emit `-macsurf-hstripe-bg: c1 c2;` for each
+/* fixes364 - emit `-macsurf-hstripe-bg: c1 c2;` for each
  * `repeating-linear-gradient(to bottom, ...)` encountered.
  *
  * Parses the first two distinct hex colors from inside the gradient
@@ -2988,7 +2988,7 @@ macsurf__rewrite_repeating_gradient_hstripe(const char *data, size_t in_size,
 }
 
 
-/* fixes365c — emit `-macsurf-dotgrid: c1 c2;` for mactrove's two-layer
+/* fixes365c - emit `-macsurf-dotgrid: c1 c2;` for mactrove's two-layer
  * 1px-stripe + 2x2 background-size pattern.
  *
  * mactrove's body texture is built from two crossed 1px linear
@@ -3009,7 +3009,7 @@ macsurf__rewrite_repeating_gradient_hstripe(const char *data, size_t in_size,
  * grid, reproducing the dot-grid texture.
  *
  * Colour extraction handles `rgba(R,G,B,A)`, `rgb(R,G,B)`, and `#hex`
- * (3 or 6 digits). The alpha channel is ignored — the Mac plotter is
+ * (3 or 6 digits). The alpha channel is ignored - the Mac plotter is
  * 1-bit transparent, so RGB alone is the visual signal. Out-of-range
  * sizes (4px tiles, 1px tiles, mismatched W/H) skip the insert.
  *
@@ -3405,7 +3405,7 @@ macsurf__rewrite_dotgrid_pattern(const char *data, size_t in_size,
 			macsurf_debug_log_writef("cssh: dotgrid matched c1=%s c2=%s",
 				c1, c2);
 		} else {
-			/* No match — copy block verbatim. */
+			/* No match - copy block verbatim. */
 			insert_len = (brace_close + 1) - i;
 			if (pos + insert_len >= cap) {
 				free(out);
@@ -3426,7 +3426,7 @@ macsurf__rewrite_dotgrid_pattern(const char *data, size_t in_size,
 }
 
 
-/* fixes281 — fallback solid color for repeating-linear-gradient.
+/* fixes281 - fallback solid color for repeating-linear-gradient.
  *
  * mactrove's Platinum theme paints window title bars with
  *   background: repeating-linear-gradient(to bottom,
@@ -3434,12 +3434,12 @@ macsurf__rewrite_dotgrid_pattern(const char *data, size_t in_size,
  *                 #cccccc 1px, #cccccc 2px, ...);
  * to get a horizontal 1-px-stripe pattern. fixes185's current handling
  * is to strip the "repeating-" prefix, leaving a plain linear-gradient
- * whose first two color stops are barely 1px apart — libcss collapses
+ * whose first two color stops are barely 1px apart - libcss collapses
  * that to nearly solid white, and title bars appear empty.
  *
  * V1 fix: detect `repeating-linear-gradient(...)` / `repeating-radial-
  * gradient(...)` (case-insensitive) and replace the entire call with the
- * platinum window-chrome hex `#cccccc`. fixes363 — was `#dddddd` but
+ * platinum window-chrome hex `#cccccc`. fixes363 - was `#dddddd` but
  * that exactly matches `--platinum-bg`, making striped title bars
  * disappear into the page background. `#cccccc` (the platinum chrome
  * variable) gives visible contrast against both page bg (#dddddd) and
@@ -3534,7 +3534,7 @@ macsurf__rewrite_repeating_gradient_solid(const char *data, size_t in_size)
 }
 
 
-/* fixes185 — modern-CSS compatibility preprocessor. Rewrites unsupported
+/* fixes185 - modern-CSS compatibility preprocessor. Rewrites unsupported
  * modern syntax into supported equivalents (or drops it) so author CSS
  * keeps cascading instead of having rules silently dropped by libcss.
  * In-place rewrites only (length-preserving): no new property names,
@@ -3638,7 +3638,7 @@ macsurf__rewrite_modern_compat(const char *data, size_t in_size,
 	memcpy(out, data, in_size);
 	out[in_size] = '\0';
 
-	/* Pass A — :focus-visible -> :focus + spaces */
+	/* Pass A - :focus-visible -> :focus + spaces */
 	i = 0;
 	while (i + FV_LEN <= in_size) {
 		size_t m;
@@ -3665,7 +3665,7 @@ macsurf__rewrite_modern_compat(const char *data, size_t in_size,
 		i += FV_LEN;
 	}
 
-	/* Pass B — :focus-within -> :focus + spaces */
+	/* Pass B - :focus-within -> :focus + spaces */
 	i = 0;
 	while (i + FW_LEN <= in_size) {
 		size_t m;
@@ -3692,7 +3692,7 @@ macsurf__rewrite_modern_compat(const char *data, size_t in_size,
 		i += FW_LEN;
 	}
 
-	/* Pass C — declaration drops: replace `name<ws>:<value>` with spaces,
+	/* Pass C - declaration drops: replace `name<ws>:<value>` with spaces,
 	 * keeping the terminator (`;` or `}`) intact. */
 	for (k = 0; k < N_DROP_PROPS; k++) {
 		const char *name = DROP_PROPS[k];
@@ -3729,7 +3729,7 @@ macsurf__rewrite_modern_compat(const char *data, size_t in_size,
 		}
 	}
 
-	/* Pass D — repeating-*-gradient( -> linear-/radial-gradient( with
+	/* Pass D - repeating-*-gradient( -> linear-/radial-gradient( with
 	 * leading whitespace pad. Left word-boundary check identical to
 	 * macsurf__match_prop_name. */
 	i = 0;
@@ -3778,7 +3778,7 @@ macsurf__rewrite_modern_compat(const char *data, size_t in_size,
 }
 
 
-/* fixes191a — inset shorthand expander.
+/* fixes191a - inset shorthand expander.
  *
  * Rewrite `inset: A [B [C [D]]]` declarations to the four longhands
  * `top:A; right:B; bottom:C; left:D` per CSS Logical Properties.
@@ -3995,7 +3995,7 @@ grow_fail:
 }
 
 
-/* #247 phase 2 — 2-value logical shorthand expander.
+/* #247 phase 2 - 2-value logical shorthand expander.
  *
  * Expands the inline/block-axis 2-value logical shorthands to their
  * physical longhands (horizontal-tb / LTR):
@@ -4206,7 +4206,7 @@ grow_fail:
 }
 
 
-/* fixes273 (Bundle I) — at-rule preprocessor for @supports and @layer.
+/* fixes273 (Bundle I) - at-rule preprocessor for @supports and @layer.
  *
  * libcss in this vintage doesn't parse @supports or @layer rules
  * natively. Without preprocessing, author CSS that wraps modern
@@ -4251,7 +4251,7 @@ macsurf__rewrite_at_rules(const char *data, size_t in_size,
 		bool is_layer = false;
 		size_t name_len = 0;
 
-		/* Skip CSS comments — without this, `/* @supports ... *\/`
+		/* Skip CSS comments - without this, `/* @supports ... *\/`
 		 * comment text falsely triggers the preprocessor and orphans
 		 * the comment opening, which libcss then treats as eating the
 		 * rest of the stylesheet. */
@@ -4278,7 +4278,7 @@ macsurf__rewrite_at_rules(const char *data, size_t in_size,
 			continue;
 		}
 
-		/* Skip CSS string literals — same reason as comments. */
+		/* Skip CSS string literals - same reason as comments. */
 		if (data[i] == '"' || data[i] == '\'') {
 			char quote = data[i];
 			size_t k = i + 1;
@@ -4365,7 +4365,7 @@ macsurf__rewrite_at_rules(const char *data, size_t in_size,
 			}
 
 			/* For @layer in declaration form (ends at ';' before
-			 * any '{') — strip the whole statement. */
+			 * any '{') - strip the whole statement. */
 			if (is_layer) {
 				size_t scan = j;
 				size_t semi = (size_t)-1;
@@ -4476,7 +4476,7 @@ macsurf__rewrite_at_rules(const char *data, size_t in_size,
 }
 
 
-/* fixes274 (Bundle C, #25 + #64) — grid alignment shorthand expansion +
+/* fixes274 (Bundle C, #25 + #64) - grid alignment shorthand expansion +
  * justify-items / justify-self bridge.
  *
  * libcss in this vintage does not expose justify-items / justify-self
@@ -4499,7 +4499,7 @@ macsurf__rewrite_at_rules(const char *data, size_t in_size,
  * Spec-loose: real justify-items affects ONLY cell positioning within the
  * track, not inline content alignment. For pure-text cells they look the
  * same; for cells with mixed content (image + text) the visual may differ.
- * Acceptable V1 — the alternative is libcss surgery, which is the trap
+ * Acceptable V1 - the alternative is libcss surgery, which is the trap
  * zone documented in project memory.
  *
  * Each pass-through can grow the output. We malloc a working buffer and
@@ -4583,7 +4583,7 @@ macsurf__cc_trim(const char *buf, size_t from, size_t to,
 }
 
 
-/* fixes1055 — ASCII case-insensitive compare, n bytes.
+/* fixes1055 - ASCII case-insensitive compare, n bytes.
  *
  * CSS property names and keywords are case-INSENSITIVE per spec, but this
  * file has only ever used case-sensitive strncmp, and strncasecmp is POSIX
@@ -4605,7 +4605,7 @@ static int macsurf__ci_eq(const char *a, const char *b, size_t n)
 }
 
 /**
- * fixes1055 (#274) — expand `word-break: break-word` to its SPEC definition.
+ * fixes1055 (#274) - expand `word-break: break-word` to its SPEC definition.
  *
  * CSS Text 3 defines the legacy keyword exactly:
  *
@@ -4913,7 +4913,7 @@ macsurf__rewrite_grid_alignment(const char *data, size_t in_size,
 			}
 			/* justify axis. justify-content AND justify-items are now
 			 * real libcss properties (justify-items added #279/fixes833
-			 * — it does the actual grid item box positioning), so emit
+			 * - it does the actual grid item box positioning), so emit
 			 * their declarations. justify-SELF is still unknown to libcss
 			 * (per-item override deferred): emitting it is dead weight and
 			 * a downstream stage keying off `justify-self:` corrupts the
@@ -5016,7 +5016,7 @@ macsurf__rewrite_grid_alignment(const char *data, size_t in_size,
 }
 
 
-/* fixes275 (#65) — grid-auto-flow preprocessor.
+/* fixes275 (#65) - grid-auto-flow preprocessor.
  *
  * Rewrites standard CSS `grid-auto-flow: VALUE` declarations to
  * `-macsurf-grid-flow: N` integer values for the vendor property:
@@ -5168,7 +5168,7 @@ macsurf__rewrite_grid_auto_flow(const char *data, size_t in_size,
 		} else if (has_row) {
 			flow_val = 1;
 		} else {
-			/* No recognised keyword — drop and emit nothing. */
+			/* No recognised keyword - drop and emit nothing. */
 			i = end;
 			changed = 1;
 			continue;
@@ -5199,7 +5199,7 @@ macsurf__rewrite_grid_auto_flow(const char *data, size_t in_size,
 }
 
 
-/* fixes277 (#61) — logical properties → physical aliases (LTR-only V1).
+/* fixes277 (#61) - logical properties → physical aliases (LTR-only V1).
  *
  * CSS Logical Properties Level 1 lets authors write direction-agnostic
  * declarations:
@@ -5262,7 +5262,7 @@ static const struct {
 	{ "inset-block-end",      15, "bottom",            6 },
 	{ "inline-size",          11, "width",             5 },
 	{ "block-size",           10, "height",            6 },
-	/* #247: min/max logical sizing — the one gap in the fixes277 table.
+	/* #247: min/max logical sizing - the one gap in the fixes277 table.
 	 * All physical names are shorter, so the in-place space-pad holds. */
 	{ "min-inline-size",      15, "min-width",         9 },
 	{ "max-inline-size",      15, "max-width",         9 },
@@ -5318,7 +5318,7 @@ macsurf__rewrite_logical_properties(const char *data, size_t size)
 }
 
 
-/* fixes202 — inline-style preprocessor.
+/* fixes202 - inline-style preprocessor.
  *
  * External stylesheets and <style> blocks run through nscss_process_data
  * below, which threads the source bytes through a chain of name-rewriting
@@ -5327,7 +5327,7 @@ macsurf__rewrite_logical_properties(const char *data, size_t size)
  * path: box_construct calls nscss_create_inline_style which hands the
  * bytes straight to libcss with no preprocessing. Result: inline
  * declarations like `transform: rotate(30deg)` or `text-shadow: 2px 2px`
- * are unknown to libcss and silently dropped — TS1/TC1-3 on advanced.html
+ * are unknown to libcss and silently dropped - TS1/TC1-3 on advanced.html
  * shipped at fixes201b rendered as plain boxes with no shadow / no
  * rotation / no translation / no scale.
  *
@@ -5338,7 +5338,7 @@ macsurf__rewrite_logical_properties(const char *data, size_t size)
  * use the original buffer in that case.
  *
  * Grid template / inset / modern-compat passes are deliberately
- * omitted — they target stylesheet patterns (selectors, multi-line
+ * omitted - they target stylesheet patterns (selectors, multi-line
  * declarations) that don't appear in inline-style attributes. Adding
  * them is cheap if a future inline declaration needs them. */
 char *macsurf__rewrite_inline_style(const char *data, size_t in_size,
@@ -5522,7 +5522,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	char *rewritten_modern_compat = NULL;
 	char *rewritten_inset = NULL;
 	char *rewritten_lshort = NULL;   /* #247 phase 2 */
-	char *rewritten_at_rules = NULL;   /* fixes273 — @supports/@layer */
+	char *rewritten_at_rules = NULL;   /* fixes273 - @supports/@layer */
 	char *rewritten_grid_align = NULL; /* fixes274 grid alignment */
 	char *rewritten_word_break = NULL; /* fixes1055 (#274) */
 	char *rewritten_grid_flow = NULL;  /* fixes275 grid-auto-flow */
@@ -5542,7 +5542,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	const char *final_data;
 	unsigned int final_size;
 
-	/* fixes160d — oversize CSS gate. Accumulate bytes per sheet; when
+	/* fixes160d - oversize CSS gate. Accumulate bytes per sheet; when
 	 * past MACOS9_CSS_MAX_BYTES, latch the skip flag, broadcast a CSS
 	 * error so NetSurf drops this sheet from the cascade, and refuse
 	 * further data without feeding it to libcss. Subsequent calls
@@ -5562,10 +5562,10 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		return false;
 	}
 
-	/* fixes268 (#9) — total CSS budget across all sheets per page.
+	/* fixes268 (#9) - total CSS budget across all sheets per page.
 	 * The per-sheet cap above protects against a single oversize sheet;
 	 * this guard caps cumulative bytes so a stack of 20+ Drupal vendor
-	 * sheets doesn't exhaust libcss memory. Document order wins — the
+	 * sheets doesn't exhaust libcss memory. Document order wins - the
 	 * site's first stylesheet (typically main) is fully processed and
 	 * later (vendor / module) sheets short-circuit immediately when
 	 * the global cap is hit. Counter is reset per page in html_create
@@ -5592,7 +5592,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		}
 	}
 
-	/* fixes273 (Bundle I) — earliest pass: unwrap / drop @supports
+	/* fixes273 (Bundle I) - earliest pass: unwrap / drop @supports
 	 * and @layer wrappers since libcss in this vintage doesn't parse
 	 * them natively. Inner rules then flow through the rest of the
 	 * preprocessing chain normally. */
@@ -5607,13 +5607,13 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		}
 	}
 
-	/* fixes274 (Bundle C) — grid alignment shorthand expansion +
+	/* fixes274 (Bundle C) - grid alignment shorthand expansion +
 	 * justify-items / justify-self → text-align bridge. Splits
 	 * place-items / place-content shorthands and shadows the
 	 * justify-* longhands with text-align so cell content aligns
 	 * visually. Runs early so subsequent property-rewrite passes
 	 * see the expanded declarations. */
-	/* fixes1055 (#274) — word-break:break-word is a legacy alias for
+	/* fixes1055 (#274) - word-break:break-word is a legacy alias for
 	 * word-break:normal + overflow-wrap:anywhere (CSS Text 3). Expand it
 	 * here as well as in the inline-style chain: THIS is the path external
 	 * and <style> sheets take, and the inline one only ever sees style=""
@@ -5640,7 +5640,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		}
 	}
 
-	/* fixes275 (#65) — grid-auto-flow → -macsurf-grid-flow rewrite. */
+	/* fixes275 (#65) - grid-auto-flow → -macsurf-grid-flow rewrite. */
 	{
 		size_t gf_size = 0;
 		rewritten_grid_flow = macsurf__rewrite_grid_auto_flow(data,
@@ -5652,7 +5652,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		}
 	}
 
-	/* fixes277 (#61) — logical → physical property aliases (LTR). */
+	/* fixes277 (#61) - logical → physical property aliases (LTR). */
 	rewritten_logical = macsurf__rewrite_logical_properties(data,
 			(size_t)size);
 	if (rewritten_logical != NULL) {
@@ -5660,7 +5660,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		/* In-place rewrite: size unchanged. */
 	}
 
-	/* fixes280 — fold calc() arithmetic for simple aspect-ratio
+	/* fixes280 - fold calc() arithmetic for simple aspect-ratio
 	 * padding-hack patterns: calc(N / M * 100%) -> N*100/M %. */
 	rewritten_calc = macsurf__rewrite_calc_aspect(data, (size_t)size);
 	if (rewritten_calc != NULL) {
@@ -5668,7 +5668,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		/* In-place same-size rewrite. */
 	}
 
-	/* fixes364 — emit `-macsurf-hstripe-bg: c1 c2;` for each
+	/* fixes364 - emit `-macsurf-hstripe-bg: c1 c2;` for each
 	 * `repeating-linear-gradient(to bottom, ...)` so the plotter can
 	 * paint real alternating-row stripes for Platinum title bars.
 	 * Runs BEFORE the fixes281+363 solid collapse so it can read the
@@ -5684,7 +5684,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		}
 	}
 
-	/* fixes365c — emit `-macsurf-dotgrid: c1 c2;` for mactrove's
+	/* fixes365c - emit `-macsurf-dotgrid: c1 c2;` for mactrove's
 	 * two-layer 1px-gradient + 2x2 background-size dot-grid texture.
 	 * Runs alongside the hstripe rewriter; the patterns are disjoint
 	 * (hstripe is `repeating-linear-gradient`, dotgrid is two plain
@@ -5695,7 +5695,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 				data, (size_t)size, &dotgrid_size);
 		if (rewritten_dotgrid != NULL &&
 				dotgrid_size <= (size_t)0x7fffffff) {
-			/* fixes365 review fix — release the upstream hstripe
+			/* fixes365 review fix - release the upstream hstripe
 			 * buffer as soon as dotgrid succeeds, matching the
 			 * free-as-you-go pattern used by the grid rewrites
 			 * below. Both buffers were already freed at function
@@ -5710,7 +5710,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		}
 	}
 
-	/* fixes281+363 — collapse repeating-{linear,radial}-gradient(...) to
+	/* fixes281+363 - collapse repeating-{linear,radial}-gradient(...) to
 	 * the platinum chrome #cccccc (was #dddddd; that matched the page bg
 	 * and the title bars disappeared). Visible fallback for striped
 	 * title-bar backgrounds. */
@@ -5721,7 +5721,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		/* In-place same-size rewrite. */
 	}
 
-	/* fixes115 — pre-process the CSS bytes to convert
+	/* fixes115 - pre-process the CSS bytes to convert
 	 * `grid-template-columns: ...` declarations to `-macsurf-grid: N`
 	 * so the existing -macsurf-grid select/layout path picks up
 	 * standard CSS Grid track lists from real-world stylesheets.
@@ -5734,7 +5734,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 	rewritten = macsurf__rewrite_grid_template_columns(data, (size_t)size);
 	rewritten_rows = NULL;
 	if (rewritten != NULL) {
-		/* fixes150 — second pass for grid-template-rows. Same
+		/* fixes150 - second pass for grid-template-rows. Same
 		 * in-place rewrite scheme; runs against the columns-rewritten
 		 * buffer so both passes see the same source layout. */
 		rewritten_rows = macsurf__rewrite_grid_template_rows(
@@ -5748,7 +5748,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 			rewritten ? (const char *)rewritten : data;
 	final_size = size;
 
-	/* fixes178b — between rows and placement: resolve
+	/* fixes178b - between rows and placement: resolve
 	 * grid-template-areas + named grid-area shorthand into the
 	 * numeric 4-value grid-area form that the placement pass below
 	 * already handles. Pass-through on no-op (no template-areas
@@ -5774,7 +5774,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		}
 	}
 
-	/* fixes151 — third pass for `grid-column: VALUE`. This pass needs
+	/* fixes151 - third pass for `grid-column: VALUE`. This pass needs
 	 * a growable output buffer (new property name is longer than the
 	 * source), so it allocates fresh and returns the new size. */
 	rewritten_col_span = macsurf__rewrite_grid_column(final_data,
@@ -5784,7 +5784,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		final_size = (unsigned int)col_span_size;
 	}
 
-	/* fixes175 — fourth pass: rewrite standard `text-shadow:` to the
+	/* fixes175 - fourth pass: rewrite standard `text-shadow:` to the
 	 * vendor `-macsurf-text-shadow:` so author CSS uses the bound
 	 * paint path. Allocates a new growable buffer. */
 	rewritten_text_shadow = macsurf__rewrite_text_shadow(final_data,
@@ -5795,7 +5795,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		final_size = (unsigned int)text_shadow_size;
 	}
 
-	/* fixes183 — fifth pass: rewrite standard `transform:` to the
+	/* fixes183 - fifth pass: rewrite standard `transform:` to the
 	 * vendor `-macsurf-transform:` so author CSS reaches the existing
 	 * paint path. */
 	rewritten_transform = macsurf__rewrite_transform(final_data,
@@ -5806,7 +5806,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		final_size = (unsigned int)transform_size;
 	}
 
-	/* fixes191g — sixth pass: rewrite standard `object-position:` to
+	/* fixes191g - sixth pass: rewrite standard `object-position:` to
 	 * `-macsurf-object-position:` so the keyword-only V1 parser can
 	 * steer replaced-element alignment without touching libcss struct
 	 * layout. */
@@ -5818,7 +5818,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		final_size = (unsigned int)object_position_size;
 	}
 
-	/* fixes185 — seventh pass: modern-CSS compatibility. Rewrites
+	/* fixes185 - seventh pass: modern-CSS compatibility. Rewrites
 	 * `:focus-visible` / `:focus-within` to `:focus`, drops unsupported
 	 * declarations (line-clamp, image-rendering, font-variant-numeric,
 	 * break-inside, outline-offset), and strips the `repeating-` prefix
@@ -5833,7 +5833,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		final_size = (unsigned int)modern_compat_size;
 	}
 
-	/* fixes191a — inset shorthand expansion to top/right/bottom/left.
+	/* fixes191a - inset shorthand expansion to top/right/bottom/left.
 	 * Allocates a growable buffer (output is up to ~5x input for the
 	 * matched declarations). Pass-through on no-op. */
 	rewritten_inset = macsurf__rewrite_inset(final_data,
@@ -5844,7 +5844,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		final_size = (unsigned int)inset_size;
 	}
 
-	/* #247 phase 2 — 2-value logical shorthands (margin-inline: A B, etc.)
+	/* #247 phase 2 - 2-value logical shorthands (margin-inline: A B, etc.)
 	 * to physical longhand pairs. Runs after the inset expander; requires
 	 * ':' after the name so it never touches the -start/-end longhands. */
 	rewritten_lshort = macsurf__rewrite_logical_shorthands(final_data,
@@ -5855,7 +5855,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		final_size = (unsigned int)lshort_size;
 	}
 
-	/* fixes318 (#145) — background: shorthand → -macsurf-gradient:.
+	/* fixes318 (#145) - background: shorthand → -macsurf-gradient:.
 	 * Runs BEFORE fixes266 so by the time fixes266's matcher inspects
 	 * the data, any shorthand-form gradient has already been extracted
 	 * into a longhand `-macsurf-gradient:` declaration. */
@@ -5871,7 +5871,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 		}
 	}
 
-	/* fixes266 — background-image: linear-gradient(...) → -macsurf-gradient:
+	/* fixes266 - background-image: linear-gradient(...) → -macsurf-gradient:
 	 * linear-gradient(...) so author CSS reaches the existing gradient
 	 * paint path. Net +1 byte per match. */
 	{
@@ -5885,7 +5885,7 @@ nscss_process_data(struct content *c, const char *data, unsigned int size)
 			final_size = (unsigned int)bg_grad_size;
 		}
 
-		/* fixes279 (#27) — strip stacked gradients (everything past
+		/* fixes279 (#27) - strip stacked gradients (everything past
 		 * the first depth-0 comma in any -macsurf-gradient value).
 		 * Same-size in-place rewrite; only spaces introduced. */
 		rewritten_strip = macsurf__strip_stacked_gradients(
@@ -5956,7 +5956,7 @@ bool nscss_convert(struct content *c)
 
 	macsurf_debug_log_writef("css: convert content=%p", (void*)css);
 
-	/* fixes160d — sheets dropped by the oversize gate already broadcast
+	/* fixes160d - sheets dropped by the oversize gate already broadcast
 	 * an error in nscss_process_data; bail without trying to convert
 	 * (the libcss sheet was never fed any data after the latch). */
 	if (css->skipped) {
@@ -6514,13 +6514,13 @@ nserror nscss_init(void)
 	css_content_handler.clone = nscss_clone;
 	css_content_handler.matches_quirks = nscss_matches_quirks;
 	css_content_handler.type = nscss_content_type;
-	/* fixes595 — reverted fixes594's no_share=true. Forcing CSS re-conversion
+	/* fixes595 - reverted fixes594's no_share=true. Forcing CSS re-conversion
 	 * DID restore the css_ok=5 double-parse, but as a side effect it shifted
 	 * the fetch-completion timing so box construction ran before the window
 	 * was sized: the layout collapsed to one column (c_w 1322->949). Since
 	 * media.width is correct at select time in the shared (css_ok=3) path and
 	 * the multi-column layout is fine there, the secondary-menu problem is NOT
-	 * the double-parse — it is a per-element style/paint issue, tracked
+	 * the double-parse - it is a per-element style/paint issue, tracked
 	 * separately. Keep CSS shareable. */
 	css_content_handler.no_share = false;
 

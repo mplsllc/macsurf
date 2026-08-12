@@ -1,5 +1,5 @@
 /*
- * MacSurf — macsurf_debug.h
+ * MacSurf  -  macsurf_debug.h
  *
  * Debug instrumentation. MS_LOG writes the message to the front
  * window's title bar so you can see pipeline progress without
@@ -15,7 +15,7 @@
  * implementation). Previously the MS_LOG macro was empty when MACSURF_DEBUG
  * wasn't seen for a given TU; this caused main.c init log lines to silently
  * drop while direct _writef calls in other files (window.c,
- * macos9_http_fetcher.c) still wrote — making the channel look broken in
+ * macos9_http_fetcher.c) still wrote  -  making the channel look broken in
  * an inconsistent way. The _writef path always worked because nobody routed
  * through a macro gate. */
 #include "macsurf_debug_log.h"
@@ -32,9 +32,9 @@ void macsurf_debug_probe_append_int(const char *label, long value);
 void macsurf_debug_probe_reset(void);
 
 /*
- * fixes149 -- MS_LOG was originally dual-channel (title bar + file
+ * fixes149 - MS_LOG was originally dual-channel (title bar + file
  *   log) so pipeline trace could be watched live.
- * fixes167 -- MS_LOG is now file-only. Dual-channel meant every
+ * fixes167 - MS_LOG is now file-only. Dual-channel meant every
  *   pipeline-trace string ("gui inv", "resize done", etc.) clobbered
  *   the window title, making the real page title invisible and
  *   exposing internal strings to the user. The file log is sufficient

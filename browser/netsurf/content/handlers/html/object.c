@@ -53,7 +53,7 @@ extern int macsurf_ptr_is_heap(const void *);
 /* break reference loop */
 static void html_object_refresh(void *p);
 
-/* fixes975 — forward decl so the no-box callback can hand an ADOPTED object
+/* fixes975 - forward decl so the no-box callback can hand an ADOPTED object
  * (one that has since acquired a box, see html_fetch_object) to the box
  * callback, which is the only one that links the content into the box and
  * keeps c->base.active balanced. */
@@ -103,7 +103,7 @@ struct content_html_object *html_get_objects(hlcache_handle *h, unsigned int *n)
 static void
 html_object_failed(struct box *box, html_content *content, bool background)
 {
-	/* fixes347 — formerly a no-op `return;`. That left every box
+	/* fixes347 - formerly a no-op `return;`. That left every box
 	 * with a failed-fetch <img> sitting at IS_REPLACED + box->object
 	 * == NULL forever, so layout fell into the "replaced with no
 	 * object" 1em × 1em fallback and any container relying on the
@@ -118,14 +118,14 @@ html_object_failed(struct box *box, html_content *content, bool background)
 	 * can flow its alt text, and we walk parents invalidating
 	 * max_width so the next layout pass picks up the new flag
 	 * state. Background failures (`background == true`) just leave
-	 * box->background NULL — the box still paints its colour /
+	 * box->background NULL - the box still paints its colour /
 	 * gradient / parent surface, no collapse risk, no recovery
 	 * needed beyond NOT corrupting anything. */
 	struct box *b;
 	(void)content;
 
 	if (background) {
-		/* nothing more to do — element keeps its other backgrounds */
+		/* nothing more to do - element keeps its other backgrounds */
 		return;
 	}
 
@@ -141,10 +141,10 @@ html_object_failed(struct box *box, html_content *content, bool background)
  * Update a box whose content has completed rendering.
  */
 
-/* fixes929 — the URL->size memo, hosted in box_special.c. */
+/* fixes929 - the URL->size memo, hosted in box_special.c. */
 extern void macsurf_imgdims_remember(struct nsurl *url, int w, int h);
 
-/* fixes934 — LIFE img object ledger. Coarse, session-cumulative counters,
+/* fixes934 - LIFE img object ledger. Coarse, session-cumulative counters,
  * emitted once per reformat from html_reformat (via macsurf_img_object_stats)
  * and only when one moved. NOT per-image: fixes911's per-entry FlushVol had to
  * be undone twice. These answer the two open questions the WORK-gated probes
@@ -168,7 +168,7 @@ void macsurf_img_object_stats(long *done_ok, long *done_zero,
 	*nulled = g_img_obj_nulled;
 }
 
-/* fixes978 — the object-fetch ledger, replacing the per-fetch `LIFE objfetch`
+/* fixes978 - the object-fetch ledger, replacing the per-fetch `LIFE objfetch`
  * and `LIFE objadopt` lines the fixes966-977 rounds were measured with.
  *
  * Those answered their questions and are gone: they cost one log write per
@@ -217,7 +217,7 @@ html_object_done(struct box *box,
 
 	if (background) {
 		box->background = object;
-		/* fixes971 (lifecycle finding 4) — record the image's intrinsic
+		/* fixes971 (lifecycle finding 4) - record the image's intrinsic
 		 * size in the URL-keyed memo for backgrounds too, then return.
 		 *
 		 * Backgrounds were 70 of the 101 objects on hackaday and took
@@ -247,9 +247,9 @@ html_object_done(struct box *box,
 	}
 
 	box->object = object;
-	g_img_obj_set++; /* fixes934 — link half of the LIFE img ledger */
+	g_img_obj_set++; /* fixes934 - link half of the LIFE img ledger */
 
-	/* fixes929 — remember this URL's intrinsic size, and stamp it on the
+	/* fixes929 - remember this URL's intrinsic size, and stamp it on the
 	 * box. Both matter: the memo lets a FUTURE box (a reconvert rebuild, or
 	 * the next visit) size itself before its fetch completes, and obj_w/h on
 	 * this box keeps it correctly sized if the object is later retired.
@@ -267,7 +267,7 @@ html_object_done(struct box *box,
 					hlcache_handle_get_url(object), ow, oh);
 			g_img_objdone_ok++;
 		} else {
-			/* fixes933/934 — the memo-mystery disambiguator. imgdims
+			/* fixes933/934 - the memo-mystery disambiguator. imgdims
 			 * stored=0 across a whole session is impossible if this path
 			 * sees a real width: the deferred decoder refuses to paint a
 			 * 0-width content, so a rendered image MUST have c->width>0 by
@@ -328,7 +328,7 @@ html_object_nobox_callback(hlcache_handle *object,
 		return NSERROR_OK;
 	}
 
-	/* fixes975 (lifecycle Stage 1) — ADOPTION. This entry started as a
+	/* fixes975 (lifecycle Stage 1) - ADOPTION. This entry started as a
 	 * speculative, box-less fetch (html_process_inserted_img), but box
 	 * construction has since claimed it for a real box instead of starting a
 	 * second fetch for the same URL. From that moment the box callback is
@@ -443,7 +443,7 @@ html_object_callback(hlcache_handle *object,
 				/* fixes689 (#208): the per-image reflow storm. This
 				 * CONTENT_MSG_READY branch used to fire a full
 				 * content__reformat for EVERY object whose size resolves,
-				 * gated only on parent status — and synchronously, outside
+				 * gated only on parent status - and synchronously, outside
 				 * the 50ms scheduler dedup that coalesces every other
 				 * reformat trigger. On an avatar-heavy forum page that was
 				 * ~15 full layout_document walks per load. Any reformat
@@ -497,7 +497,7 @@ html_object_callback(hlcache_handle *object,
 		 * freed memory and get_mouse_action_node crashes dereferencing it. */
 		if (!o->background && box != NULL && box->object == object) {
 			box->object = NULL;
-			g_img_obj_nulled++; /* fixes934 — error unlink */
+			g_img_obj_nulled++; /* fixes934 - error unlink */
 		}
 
 		/* fixes515: NULL before release. */
@@ -767,7 +767,7 @@ html_object_callback(hlcache_handle *object,
 		 * this coalesced (fires once per completed batch -- no storm). */
 		content__reformat(&c->base, false, c->base.available_width,
 				c->base.available_height);
-		/* fixes1015 — THE READY->DONE TRANSITION EVERY REAL PAGE TAKES,
+		/* fixes1015 - THE READY->DONE TRANSITION EVERY REAL PAGE TAKES,
 		 * and it skipped the `load` event for its entire existence. On any
 		 * page with images, base.active stays >0 until the last object
 		 * lands, so the transition happens HERE -- not in
@@ -826,7 +826,7 @@ html_object_callback(hlcache_handle *object,
 			 * (cancel any pending, reschedule) so the trailing link
 			 * always gets sized -- and only once, no #208 storm.
 			 *
-			 * fixes916 — this was `else if (READY)`, which left a
+			 * fixes916 - this was `else if (READY)`, which left a
 			 * hole: the enclosing condition admits DONE *and* READY,
 			 * so a DONE landing inside the window matched NEITHER
 			 * branch and its reflow was dropped silently, leaving the
@@ -893,7 +893,7 @@ static bool html_replace_object(struct content_html_object *object, nsurl *url)
 		safe_hlcache_handle_release(&object->content); /* fixes515 */
 
 		object->box->object = NULL;
-		g_img_obj_nulled++; /* fixes934 — replace unlink */
+		g_img_obj_nulled++; /* fixes934 - replace unlink */
 	}
 
 	/* initialise fetch */
@@ -1067,13 +1067,13 @@ nserror html_object_free_objects(html_content *html)
 			    victim->box != NULL &&
 			    victim->box->object == victim->content) {
 				victim->box->object = NULL;
-				g_img_obj_nulled++; /* fixes934 — free/retire unlink */
+				g_img_obj_nulled++; /* fixes934 - free/retire unlink */
 			}
 			/* fixes501x: NULL before release. */
 			safe_hlcache_handle_release(&victim->content);
 		}
 
-		/* fixes975 — release the adoption key. NULL-safe by
+		/* fixes975 - release the adoption key. NULL-safe by
 		 * construction: only html_fetch_object sets it, and it sets it
 		 * on every entry it creates. */
 		if (victim->url != NULL) {
@@ -1144,7 +1144,7 @@ html_fetch_object(html_content *c,
 	}
 	child.quirks = c->base.quirks;
 
-	/* fixes975 (lifecycle Stage 1) — CREATION-TIME URL ADOPTION.
+	/* fixes975 (lifecycle Stage 1) - CREATION-TIME URL ADOPTION.
 	 *
 	 * Until now html_fetch_object had no URL dedupe of its own: every call
 	 * allocated a fresh content_html_object and started a fresh retrieval,
@@ -1189,7 +1189,7 @@ html_fetch_object(html_content *c,
 	if (permitted_types == CONTENT_IMAGE) {
 		struct content_html_object *cand;
 		struct content_html_object *dup = NULL;
-		/* fixes977 — the ELEMENT this fetch is for. box->node is assigned
+		/* fixes977 - the ELEMENT this fetch is for. box->node is assigned
 		 * (box_construct.c, dom_node_ref'd) before either fetch site runs,
 		 * so it is readable here for both the background fetch and
 		 * box_image, and the DOM node itself survives a reconvert -- which
@@ -1208,7 +1208,7 @@ html_fetch_object(html_content *c,
 					(background ? 1 : 0))
 				continue;
 			if (box != NULL && cand->box != NULL) {
-				/* fixes977 — an entry that already has a box is
+				/* fixes977 - an entry that already has a box is
 				 * adoptable only if it is THIS SAME ELEMENT's
 				 * entry being rebuilt: same node, same slot,
 				 * same URL. That is the reconvert case, and it
@@ -1246,7 +1246,7 @@ html_fetch_object(html_content *c,
 		if (dup != NULL) {
 			int done = (content_get_status(dup->content) ==
 					CONTENT_STATUS_DONE);
-			/* fixes977 — was this entry counted in base.active?
+			/* fixes977 - was this entry counted in base.active?
 			 * html_fetch_object increments exactly when it creates
 			 * an entry WITH a box, so a box-less entry is not
 			 * counted and a boxed one already is. */
@@ -1299,7 +1299,7 @@ html_fetch_object(html_content *c,
 	object->box = box;
 	object->permitted_types = permitted_types;
 	object->background = background;
-	/* fixes975 — own the key the adoption above matches on. Ref'd for as
+	/* fixes975 - own the key the adoption above matches on. Ref'd for as
 	 * long as the entry lives; released in html_object_free_objects, which
 	 * is the single teardown every retirement path already funnels through. */
 	object->url = url;
@@ -1320,7 +1320,7 @@ html_fetch_object(html_content *c,
 		return error != NSERROR_NOMEM;
 	}
 
-	/* fixes978 — ledger, not a log line. The fixes966 per-fetch probe that
+	/* fixes978 - ledger, not a log line. The fixes966 per-fetch probe that
 	 * lived here has been answered (Stage 0b: the speculative fetch earns
 	 * its keep, keep it) and removed; see macsurf_obj_fetch_stats. */
 	g_obj_fetch_started++;

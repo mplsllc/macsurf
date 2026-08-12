@@ -1,5 +1,5 @@
 /*
- * macsurf_timebase.h — PowerPC Time Base register access.
+ * macsurf_timebase.h  -  PowerPC Time Base register access.
  *
  * The PPC Time Base (TBL/TBU) is a 64-bit counter readable from
  * user mode without any Toolbox call.  It ticks at bus_speed / 4:
@@ -31,8 +31,8 @@
 /* ------------------------------------------------------------------ */
 
 typedef struct {
-    unsigned long hi; /* TBU -- upper 32 bits */
-    unsigned long lo; /* TBL -- lower 32 bits  */
+    unsigned long hi; /* TBU - upper 32 bits */
+    unsigned long lo; /* TBL - lower 32 bits  */
 } macsurf_tb64;
 
 /* ------------------------------------------------------------------ */

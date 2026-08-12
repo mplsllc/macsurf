@@ -37,7 +37,7 @@ static char *g_fetching_url = NULL;		/* URL currently being fetched */
 
 /* Fetch completion callback. By the time DONE/ERROR fires the fetcher has
  * already stored the body to the disk cache, so we just drop the handle and
- * repaint — the next paint reads the bytes back via macos9_cache_lookup.
+ * repaint  -  the next paint reads the bytes back via macos9_cache_lookup.
  * (CONTENT_ANY has no handler for image/svg+xml, so ERROR is the normal
  * outcome; the bytes are cached regardless.) */
 static nserror

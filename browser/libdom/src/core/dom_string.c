@@ -914,10 +914,10 @@ dom_exception _dom_exception_from_lwc_error(lwc_error err)
 const char *dom_string_data(const dom_string *str)
 {
 	dom_string_internal *istr = (void *) str;
-	/* fixes490 — NULL guard. A NULL dom_string here dereferences
+	/* fixes490 - NULL guard. A NULL dom_string here dereferences
 	 * address 0: istr->type reads low memory, and if it happens to be
 	 * DOM_STRING_CDATA (== 0) the code reads data.cdata.ptr at struct
-	 * offset 4 — a low-memory global that, on this G3, points into the
+	 * offset 4 - a low-memory global that, on this G3, points into the
 	 * intern table and renders an unrelated interned string (the
 	 * "data-xf-init" attribute name) as page text. The fixes446g log
 	 * showed exactly this: ptr=3E0006B8 str=00000000. Return "" so a
@@ -933,7 +933,7 @@ const char *dom_string_data(const dom_string *str)
 		{
 			unsigned long pa_ =
 				(unsigned long)istr->data.cdata.ptr;
-			/* fixes489 (Option A) — widen the recycled-struct
+			/* fixes489 (Option A) - widen the recycled-struct
 			 * guard. The original check only rejected a
 			 * code-space pointer. A freed dom_string struct that
 			 * the scheduler reused can also leave data.cdata.ptr
@@ -960,7 +960,7 @@ const char *dom_string_data(const dom_string *str)
 		}
 		return (const char *) istr->data.cdata.ptr;
 	} else {
-		/* fixes446b: same guard as dom_string_tolower — a corrupt
+		/* fixes446b: same guard as dom_string_tolower - a corrupt
 		 * intern pointer (UAF or write-past) causes lwc_string_data
 		 * to return garbage_ptr+24, which then crashes in memcpy /
 		 * duk_push_lstring / strlen.  Return "" on bad pointer. */
@@ -989,7 +989,7 @@ const char *dom_string_data(const dom_string *str)
 size_t dom_string_byte_length(const dom_string *str)
 {
 	dom_string_internal *istr = (void *) str;
-	/* fixes490 — NULL guard, paired with dom_string_data. A NULL string
+	/* fixes490 - NULL guard, paired with dom_string_data. A NULL string
 	 * here would read low memory as the length and render garbage. */
 	if (istr == NULL)
 		return 0;
@@ -1018,7 +1018,7 @@ size_t dom_string_byte_length(const dom_string *str)
 		}
 		return istr->data.cdata.len;
 	} else {
-		/* fixes446b: paired guard — same corrupt intern crashes here
+		/* fixes446b: paired guard - same corrupt intern crashes here
 		 * via lwc_string_length reading str->len at bad_ptr+8. */
 		{
 			if (!macsurf_ptr_is_heap((const void *)istr->data.intern))

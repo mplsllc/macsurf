@@ -284,12 +284,12 @@ struct css_computed_style_i {
 	 * fixes158 extends the upper 24 bits to encode start lines and
 	 * row-span without adding new libcss properties.
 	 *
-	 *   bits  0..7  col_span    — 0=unset (treat as 1), 1..254 literal,
+	 *   bits  0..7  col_span    - 0=unset (treat as 1), 1..254 literal,
 	 *                             255 = "fill the rest of the row"
 	 *                             sentinel from `grid-column: 1 / -1`
-	 *   bits  8..15 col_start   — 0 = auto, 1..254 = explicit line
-	 *   bits 16..23 row_start   — 0 = auto, 1..254 = explicit line
-	 *   bits 24..31 row_span    — 0 = unset (treat as 1), 1..254 literal,
+	 *   bits  8..15 col_start   - 0 = auto, 1..254 = explicit line
+	 *   bits 16..23 row_start   - 0 = auto, 1..254 = explicit line
+	 *   bits 24..31 row_span    - 0 = unset (treat as 1), 1..254 literal,
 	 *                             255 = "fill" sentinel
 	 *
 	 * Backwards compat: existing CSS that emitted just a 1..255 span
@@ -429,7 +429,7 @@ struct css_computed_style_i {
 	css_color text_decoration_color;
 	int32_t text_decoration_style;
 	int32_t text_decoration_thickness;
-	/* fixes364 — horizontal stripe background. Two RGB555 colors packed
+	/* fixes364 - horizontal stripe background. Two RGB555 colors packed
 	 * into one int32: bits 0..14 = c1, bits 15..29 = c2, bit 31 = set
 	 * flag. 0 = unset (no stripe). Mapped from
 	 * `repeating-linear-gradient(to bottom, ...)` by cssh_css.c so
@@ -519,23 +519,23 @@ struct css_computed_style {
 	 * per the same struct-mid-insert gotcha as macsurf_gradient_full. */
 	int32_t *macsurf_gradient_radial;
 
-	/* fixes361b — second box-shadow packed value. Same format as
+	/* fixes361b - second box-shadow packed value. Same format as
 	 * the inner `box_shadow` slot: h<<24 | v<<16 | inset<<15 | rgb555.
 	 * 0 = unset (no second shadow). Appended at outer-struct end so
 	 * existing field offsets in stale CW8 .o files don't shift, same
 	 * discipline as macsurf_gradient_full / macsurf_gradient_radial. */
 	int32_t box_shadow_2;
-	/* fixes362 — third box-shadow packed value. Common Platinum
+	/* fixes362 - third box-shadow packed value. Common Platinum
 	 * pattern is two inset bevels + one outer drop shadow; this
 	 * holds the drop. Same packing format as the first two slots. */
 	int32_t box_shadow_3;
 
-	/* fixes365b — extended linear-gradient side-channel: diagonal angle
+	/* fixes365b - extended linear-gradient side-channel: diagonal angle
 	 * (45/135/225/315) and up to 3 colour stops with explicit positions.
 	 *
 	 * The existing 2-stop cardinal fast path (vertical / horizontal,
 	 * packed RGB565+R4G6B4 in `i.macsurf_gradient`) is left untouched;
-	 * this side-channel is only allocated when the rule needs more —
+	 * this side-channel is only allocated when the rule needs more -
 	 * either a non-cardinal angle or a third stop. NULL = use the legacy
 	 * path.
 	 *

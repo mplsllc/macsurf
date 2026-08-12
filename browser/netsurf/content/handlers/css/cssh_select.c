@@ -186,7 +186,7 @@ css_stylesheet *nscss_create_inline_style(const uint8_t *data, size_t len,
 		return NULL;
 	}
 
-	/* fixes202 — rewrite vendor-aliased property names in the
+	/* fixes202 - rewrite vendor-aliased property names in the
 	 * inline-style buffer so author CSS like
 	 *   style="transform: rotate(30deg); text-shadow: 2px 2px 3px #888"
 	 * reaches the existing vendor parsers. External stylesheets get
@@ -218,7 +218,7 @@ css_stylesheet *nscss_create_inline_style(const uint8_t *data, size_t len,
 		return NULL;
 	}
 
-	/* fixes267 — register any custom-property declarations carried by
+	/* fixes267 - register any custom-property declarations carried by
 	 * this inline style="..." attribute into the doc-global inline-
 	 * extras table. Lets a parent's `style="--header-tile: url(...)"`
 	 * resolve for descendant elements whose author CSS references
@@ -289,7 +289,7 @@ static void nscss_dom_user_data_handler(dom_node_operation operation,
  * \return Pointer to selection results (containing computed styles),
  *         or NULL on failure
  */
-/* fixes161c — one-shot cascade-entry probe. html_reformat arms this
+/* fixes161c - one-shot cascade-entry probe. html_reformat arms this
  * before kicking layout; the first nscss_get_style call after that
  * logs a stage marker (proves the cascade dispatcher was reached on
  * the post-reformat path), then the flag clears. Cross-file global
@@ -313,7 +313,7 @@ css_select_results *nscss_get_style(nscss_select_ctx *ctx, dom_node *n,
 		macsurf__cascade_probe_armed = 0;
 	}
 
-	/* Select style for node. fixes640 — bracket the per-element selector
+	/* Select style for node. fixes640 - bracket the per-element selector
 	 * match; summed across every element = honest total cascade CPU (the
 	 * old cascade-done milestone was per-stylesheet, network-bound). */
 	{
@@ -1600,7 +1600,7 @@ css_error node_is_visited(void *pw, void *node, bool *match)
 /* fixes130: shared helper. See select.c for full comments. */
 /* fixes130e: walk from target upward to node.  An element matches
  * :hover/:active/:focus if the dynamic node (target) is that element
- * itself or any descendant — equivalently, if `node` appears in
+ * itself or any descendant - equivalently, if `node` appears in
  * target's ancestor chain. */
 static bool dyn_node_matches(dom_node *node, dom_node *target)
 {
@@ -1913,7 +1913,7 @@ css_error get_libcss_node_data(void *pw, void *node, void **libcss_node_data)
 	return CSS_OK;
 }
 
-/* fixes899 (MacSurf) — release a node's cached libcss node data (the pass-1
+/* fixes899 (MacSurf) - release a node's cached libcss node data (the pass-1
  * partial computed styles + bloom) and clear the user-data slot.
  *
  * The reconvert re-cascade UAF: on the SECOND cascade every element still

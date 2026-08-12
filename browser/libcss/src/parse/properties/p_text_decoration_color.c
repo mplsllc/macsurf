@@ -14,7 +14,7 @@
  *
  * Storage in css_computed_style_i.text_decoration_color_status (int32_t):
  *   0 = INHERIT
- *   1 = CURRENTCOLOR (default — follow `color` property)
+ *   1 = CURRENTCOLOR (default - follow `color` property)
  *   2 = SET (use the css_color word)
  */
 

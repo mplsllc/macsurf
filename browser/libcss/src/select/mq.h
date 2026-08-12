@@ -153,10 +153,10 @@ static inline bool mq_match_feature(
 
 		return false;
 	} else {
-		/* fixes273 (#52) — orientation media feature. Direct text
+		/* fixes273 (#52) - orientation media feature. Direct text
 		 * comparison so we don't depend on str->orientation being
 		 * initialized (which would require strings.c to have
-		 * rebuilt alongside this header — a CW8 trap zone). */
+		 * rebuilt alongside this header - a CW8 trap zone). */
 		const char *name_data = lwc_string_data(feat->name);
 		size_t name_len = lwc_string_length(feat->name);
 		if (name_len == 11 &&

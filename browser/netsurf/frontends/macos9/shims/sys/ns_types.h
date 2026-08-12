@@ -1,5 +1,5 @@
 /*
- * MacSurf shim — shims/sys/ns_types.h
+ * MacSurf shim  -  shims/sys/ns_types.h
  *
  * Forwards to the existing frontends/macos9/sys/ns_types.h shim, which
  * provides off_t/ssize_t/mode_t/time_t via mac_types.h.

@@ -50,7 +50,7 @@ css_error css__parse_macsurf_gradient(css_language *c,
 	css_color first_color = 0;
 	css_color last_color = 0;
 	int color_count = 0;
-	/* fixes346 — track the first stop colour that differs from
+	/* fixes346 - track the first stop colour that differs from
 	 * first_color. Used downstream so `repeating-linear-gradient`
 	 * patterns like `white 0, white 1px, gray 1px, gray 2px, white 2px,
 	 * white 3px` (mactrove's Platinum titlebar pinstripe) render as a
@@ -62,7 +62,7 @@ css_error css__parse_macsurf_gradient(css_language *c,
 	bool has_second_distinct = false;
 	enum flag_value flag_value;
 	bool match = false;
-	/* fixes365b — capture the full angle (0..359), the first three stop
+	/* fixes365b - capture the full angle (0..359), the first three stop
 	 * colours, and their explicit positions. When any of these require
 	 * fidelity the legacy 2-stop fast path can't express (diagonal
 	 * angle 45/135/225/315, or a third colour, or positions other than
@@ -296,7 +296,7 @@ css_error css__parse_macsurf_gradient(css_language *c,
 		(void)rad_data; (void)rad_data_set;
 
 		/* Optional direction prefix: `to <side>` or `<angle>deg`.
-		 * Linear only — radial direction has already been consumed
+		 * Linear only - radial direction has already been consumed
 		 * above. */
 		token = parserutils_vector_peek(vector, *ctx);
 		if (!radial && token != NULL && token->type == CSS_TOKEN_IDENT) {
@@ -381,7 +381,7 @@ css_error css__parse_macsurf_gradient(css_language *c,
 					if (seen_digit) {
 						int a = (angle * sign) % 360;
 						if (a < 0) a += 360;
-						/* fixes365b — preserve full angle
+						/* fixes365b - preserve full angle
 						 * for the side-channel; legacy
 						 * cardinal collapse stays for the
 						 * fast path. */
@@ -436,20 +436,20 @@ css_error css__parse_macsurf_gradient(css_language *c,
 				has_second_distinct = true;
 			}
 			last_color = tmp_color;
-			/* fixes365b — also record the first 3 colour stops
+			/* fixes365b - also record the first 3 colour stops
 			 * into the side-channel capture array. */
 			if (color_count < 3) {
 				stop_colors[color_count] = tmp_color;
 			}
 			color_count++;
 			consumeWhitespace(vector, ctx);
-			/* fixes318 (#148) — accept (and historically ignored)
+			/* fixes318 (#148) - accept (and historically ignored)
 			 * optional stop position after each colour. CSS modern
 			 * syntax allows `c1 0%, c2 100%` or `c1 50px, c2 75%`.
 			 * The legacy 2-stop slot couldn't express stops other
 			 * than 0%/100% so positions used to drop silently.
 			 *
-			 * fixes365b — now capture percentage positions into the
+			 * fixes365b - now capture percentage positions into the
 			 * stop_positions array (percent×100 fixed). Dimension
 			 * / number positions still drop because the px→percent
 			 * resolution needs the box width at paint time and
@@ -481,7 +481,7 @@ css_error css__parse_macsurf_gradient(css_language *c,
 						break;
 					}
 				}
-				/* fixes365b review fix — accumulate digits as
+				/* fixes365b review fix - accumulate digits as
 				 * plain integer, then scale to percent×100
 				 * after the loop. Previous code multiplied by
 				 * 100 per digit, producing 50000 for "50%"
@@ -518,7 +518,7 @@ css_error css__parse_macsurf_gradient(css_language *c,
 		/* Single-stop falls back to a uniform fill (first == last). */
 		if (color_count == 1) last_color = first_color;
 
-		/* fixes346 — pinstripe / repeating pattern recovery.
+		/* fixes346 - pinstripe / repeating pattern recovery.
 		 * When the source was `repeating-linear-gradient(white 0, white
 		 * 1px, gray 1px, gray 2px, white 2px, white 3px)` (mactrove's
 		 * Platinum titlebar) the fixes318 preprocessor strips the
@@ -546,7 +546,7 @@ css_error css__parse_macsurf_gradient(css_language *c,
 		    lwc_string_data(token->idata)[0] == ')')
 			parserutils_vector_iterate(vector, ctx);
 
-		/* fixes365b — promote to the extended-linear path when the
+		/* fixes365b - promote to the extended-linear path when the
 		 * rule expresses something the legacy 2-stop cardinal slot
 		 * can't carry:
 		 *   - 3+ distinct colour stops with positions
@@ -673,7 +673,7 @@ css_error css__parse_macsurf_gradient(css_language *c,
 				CSS_PROP_MACSURF_GRADIENT, 0, set_value);
 		if (error != CSS_OK) return error;
 
-		/* fixes345 — radial-gradient bytecode is now extended with
+		/* fixes345 - radial-gradient bytecode is now extended with
 		 * a 5-slot tail: [rad_data_set_flag, sx, sy, px, py]. The
 		 * cascade reads those when set_value == 0x0100. Linear
 		 * bytecode is unchanged (2-slot c1, c2). */

@@ -45,7 +45,7 @@
 #include "macos9_deathrow.h"
 
 #ifdef __MACOS9__
-/* fixes553 — defined in content/handlers/html/box_construct.c.  Returns non-zero
+/* fixes553 - defined in content/handlers/html/box_construct.c.  Returns non-zero
  * when the content is pinned by the box walk currently on the stack (the walked
  * html_content or any sub-resource content in its object_list).  hlcache_clean
  * consults this to SKIP evicting a content the live walk still dereferences,
@@ -53,7 +53,7 @@
  * (box_image -> box_image_resolve_url -> html_fetch_object ->
  * hlcache_handle_retrieve byte-scan on a wild pointer). */
 extern int macos9_box_walk_owns_content(struct content *c);
-/* fixes559 — defined in frontends/macos9/macos9_content_registry.c.  Returns
+/* fixes559 - defined in frontends/macos9/macos9_content_registry.c.  Returns
  * non-zero while the content is registered (alive): registered at
  * content__init, deregistered as the FIRST action of content_destroy.  The
  * deferred-broadcast catch-up pump (hlcache_broadcast_catchup) re-derives its
@@ -64,7 +64,7 @@ extern int macos9_box_walk_owns_content(struct content *c);
  * list-resident content without unlinking: it validates registry membership
  * (which does NOT read the content's reusable bytes) instead of trusting the
  * weak c->handler == NULL sentinel (which does).  Same mechanism as the
- * parser-unpause guard — not a parallel one. */
+ * parser-unpause guard - not a parallel one. */
 extern int macos9_content_is_live(struct content *c);
 #else
 #define macos9_content_is_live(c) (1)
@@ -151,7 +151,7 @@ static void hlcache_broadcast_catchup(void *unused);
  * Idempotent via dr_queued (double-free impossible, ABA-safe). The node is
  * gated on its content's pending scheduled continuations (pin_key) so a
  * still-in-flight box walk can never have the node yanked from under it.
- * Teardown is a bare free() — the node owns no further resources. */
+ * Teardown is a bare free() - the node owns no further resources. */
 static void
 hlcache_node_deathrow_teardown(void *p)
 {
@@ -180,7 +180,7 @@ hlcache_handle_deferred_free(hlcache_handle *handle)
 			(handle->entry != NULL) ? handle->entry->content : NULL);
 }
 
-/* fixes600 — a nascent retrieval context is freed synchronously from the
+/* fixes600 - a nascent retrieval context is freed synchronously from the
  * retrieval-abort path when a sibling handle is released mid-completion-burst
  * (RING_REMOVE then free, inside a callback). Under tinkerdifferent's ~50
  * concurrent sub-resources that small free lands on the general free-list while
@@ -238,7 +238,7 @@ static void hlcache_clean(void *force_clean_flag)
 		 */
 
 #ifdef __MACOS9__
-		/* fixes553 — do NOT evict a content the box walk currently on the
+		/* fixes553 - do NOT evict a content the box walk currently on the
 		 * stack still references (the walked html_content, or any content in
 		 * its object_list).  Freeing it here, mid-walk, is the
 		 * convert_xml_to_box UAF: box_image -> box_image_resolve_url ->
@@ -268,7 +268,7 @@ static void hlcache_clean(void *force_clean_flag)
 		/* fixes502: null entry->content BEFORE destroy so any
 		 * hlcache_handle still pointing at this entry reads NULL
 		 * from entry->content rather than freed/reused memory.
-		 * fixes504: belt-and-suspenders guard — if c->handler is
+		 * fixes504: belt-and-suspenders guard - if c->handler is
 		 * already NULL the sentinel in content_destroy would catch
 		 * the double-destroy, but we skip the call entirely here
 		 * to avoid even entering content_destroy on freed memory. */
@@ -335,7 +335,7 @@ static void hlcache_content_callback(struct content *c, content_msg msg,
 	nserror error = NSERROR_OK;
 	hlcache_event event;
 
-	/* fixes97: dropped — fires for every broadcast forward, dominant. */
+	/* fixes97: dropped - fires for every broadcast forward, dominant. */
 
 	memset(&event, 0, sizeof(event));
 	event.type = msg;
@@ -404,7 +404,7 @@ static nserror hlcache_find_content(hlcache_retrieval_ctx *ctx,
 
 	if (entry == NULL) {
 		/* No existing entry, so need to create one */
-		/* fixes955 — calloc, NOT malloc. This is the main cache-entry
+		/* fixes955 - calloc, NOT malloc. This is the main cache-entry
 		 * creation path (every normal page load), and hlcache_entry
 		 * carries dr_queued, the flag that makes the death row
 		 * idempotent. dr_queued is never explicitly zeroed anywhere in
@@ -550,7 +550,7 @@ static nserror hlcache_migrate_ctx(hlcache_retrieval_ctx *ctx,
 		/* Ensure caller knows we need data */
 		error = NSERROR_NEED_DATA;
 	} else {
-		/* fixes245 — silenced unaccept counter. Was useful during early
+		/* fixes245 - silenced unaccept counter. Was useful during early
 		 * content-handler wiring; now zero diagnostic value to users
 		 * and was leaking to the title bar in some builds. The error
 		 * dispatch below still fires normally so NetSurf core handles
@@ -628,7 +628,7 @@ hlcache_llcache_callback(llcache_handle *handle,
 	nserror error;
 
 	/* fixes97: per-callback MS_LOGs dropped. They fired on every
-	 * llcache event for every consumer — heaviest medium-noise
+	 * llcache event for every consumer - heaviest medium-noise
 	 * contributor after llcache "fetch HEADER" / "fetch DATA". */
 
 	assert(ctx->llcache == handle);
@@ -963,11 +963,11 @@ hlcache_handle_retrieve(nsurl *url,
 /* See hlcache.h for documentation */
 nserror hlcache_handle_release(hlcache_handle *handle)
 {
-	/* fixes499g — entry guard. This release path is reached during
+	/* fixes499g - entry guard. This release path is reached during
 	 * teardown (html_script_free -> here) where the script's handle slot
 	 * may be a stale/freed pointer that was reallocated for other data.
 	 * The crash that exposed this had r30 (handle) pointing at recycled
-	 * heap holding ASCII text ("xy-q" = 0x78792D71) — dereferencing
+	 * heap holding ASCII text ("xy-q" = 0x78792D71) - dereferencing
 	 * handle->entry for the log line below then read garbage and the
 	 * writef call crashed at +0x24. Bail on a NULL handle, and on a handle
 	 * whose address is outside the malloc heap range used on this G3
@@ -1104,15 +1104,15 @@ static void hlcache_broadcast_catchup(void *unused)
 		c = entry->content;
 		if (c == NULL)
 			continue;
-		/* destroyed sentinel — skip freed/destroyed contents */
+		/* destroyed sentinel - skip freed/destroyed contents */
 		if (c->handler == NULL)
 			continue;
-		/* fixes559 — registry-membership guard.  The handler==NULL
+		/* fixes559 - registry-membership guard.  The handler==NULL
 		 * sentinel above reads c's (reusable) bytes; under heap reuse a
 		 * dangling entry->content could read non-NULL garbage and slip
 		 * through.  macos9_content_is_live consults the out-of-band
 		 * registry instead, which deregisters as content_destroy's first
-		 * action — so a freed/ABA-reused content fails here even when its
+		 * action - so a freed/ABA-reused content fails here even when its
 		 * bytes look like a live handler.  Expected never to fire given
 		 * the unlink-before-free invariant (fixes502); if it ever logs a
 		 * catch, a new free-path is leaving a list-resident entry dangling
@@ -1162,7 +1162,7 @@ bool hlcache_content_is_live(const struct content *c)
 	 * garbage and every field-based guard passes.  hlcache_clean NULLs
 	 * entry->content before content_destroy and unlinks the entry after, so
 	 * a content that is no longer reachable from content_list is provably
-	 * gone — checked here without dereferencing the suspect pointer. */
+	 * gone - checked here without dereferencing the suspect pointer. */
 	if (c == NULL || hlcache == NULL)
 		return false;
 
@@ -1193,7 +1193,7 @@ struct content *hlcache_handle_get_content(const hlcache_handle *handle)
 	 * Confirmed: dm 067CC240 = "@charset \"UTF-8\"" in MacsBug.
 	 * Legitimate hlcache_entry pointers live in 0x01000000–0x20000000;
 	 * a reused-for-source-data pointer will be in the same range, so the
-	 * range check alone is insufficient — also check entry->content for
+	 * range check alone is insufficient - also check entry->content for
 	 * the same heap range to catch the common reuse pattern. */
 	if (handle->entry != NULL) {
 		unsigned long ea = (unsigned long)(void *)handle->entry;

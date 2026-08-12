@@ -1,5 +1,5 @@
 /*
- * MacSurf — macsurf_qjs_audit.c
+ * MacSurf  -  macsurf_qjs_audit.c
  *
  * Performance counters and diagnostic emitters for the QuickJS engine.
  * Extracted from macsurf_qjs.c (2026-08-05 cleanup Phase 2).
@@ -85,7 +85,7 @@ void macsurf_qjs_emit_js_profile(void)
 		g_perf_evals, g_perf_bytes, g_perf_compile_us, g_perf_run_us,
 		g_perf_gc_us, g_perf_gc_runs, g_perf_gc_armed);
 
-	/* fixes1071 — WHERE the run time went, and whether the wrapper-helper
+	/* fixes1071  -  WHERE the run time went, and whether the wrapper-helper
 	 * cache is holding.
 	 *
 	 *   ops     estimated bytecode ops (interrupts x 10000). Divide by
@@ -96,18 +96,18 @@ void macsurf_qjs_emit_js_profile(void)
 	 *   hcomp   helper-source COMPILES. Before fixes1071 this equalled
 	 *           4 x wraps; it should now be a small constant per context.
 	 *   hbytes  helper source bytes actually compiled. If this starts
-	 *           tracking wraps again, the cache is broken -- that is the
+	 *           tracking wraps again, the cache is broken - that is the
 	 *           regression this line exists to catch. */
 	macsurf_debug_log_writef(
 		"LIFE JSWHERE branches=%ld ncalls=%ld wraps=%ld hcomp=%ld "
 		"hbytes=%ld",
 		g_qjs_interrupts * 10000L, macsurf_qjs_ncalls,
 		g_wrap_installs, g_helper_compiles, g_helper_bytes);
-	/* fixes1078 — SPLIT the JS run time three ways: per-element wrapper
+	/* fixes1078  -  SPLIT the JS run time three ways: per-element wrapper
 	 * install, time inside native bindings, and by subtraction whatever is
 	 * left (real interpretation). nativeus is the 1-in-64 sample scaled
 	 * back up, so treat it as an estimate with roughly sqrt(samples)
-	 * accuracy -- ample for deciding where seconds live. */
+	 * accuracy - ample for deciding where seconds live. */
 	macsurf_debug_log_writef(
 		"LIFE JSCOST wrapus=%ld nativeus=%ld nsamp=%ld",
 		g_wrap_us, macsurf_qjs_native_us * 64L,
@@ -116,12 +116,12 @@ void macsurf_qjs_emit_js_profile(void)
 	macsurf_qjs_native_us = 0;
 	macsurf_qjs_native_samp = 0;
 
-	/* fixes1073 (#265) — the forced-layout census.
+	/* fixes1073 (#265)  -  the forced-layout census.
 	 *
 	 *   flush     synchronous reflows script actually forced by measuring
 	 *   declined  geometry reads that could NOT reflow (unsafe window, or
 	 *             the per-navigation budget spent) and so answered
-	 *             `undefined` -- the fixes1016 fallback
+	 *             `undefined` - the fixes1016 fallback
 	 *   us        what the flushes cost, so the price of the measure/mutate
 	 *             contract is visible rather than buried in the js total
 	 *
@@ -137,24 +137,24 @@ void macsurf_qjs_emit_js_profile(void)
 		macos9_reconvert_sync_stats(&sf, &sd, &su);
 		macsurf_debug_log_writef(
 			"LIFE JSSYNC flush=%ld declined=%ld us=%ld", sf, sd, su);
-		/* fixes1095 (#265 Round C1) — and WHERE that `us` went. Round B
+		/* fixes1095 (#265 Round C1)  -  and WHERE that `us` went. Round B
 		 * measured flush=2 us=3353022, i.e. ~1.7s per synchronous
 		 * reconvert, which exhausted the 2s budget and produced 522
 		 * further declines. Cost is now the blocker, and it is NOT
 		 * cascade/layout (PERFACC has those at 2.15s for the WHOLE
-		 * navigation while two flushes alone cost 3.35s) -- it is the
+		 * navigation while two flushes alone cost 3.35s) - it is the
 		 * reconvert's own O(document) teardown and box construction.
 		 * Emitted next to JSSYNC so the two are read together. */
 		{
 			extern void html_reconvert_phase_report(void);
 			html_reconvert_phase_report();
 		}
-		/* fixes1075 — and WHY the declines happened. fixes1073's first
+		/* fixes1075  -  and WHY the declines happened. fixes1073's first
 		 * hardware log read `flush=0 declined=660` on hackaday, which
 		 * says the feature never ran but not which guard stopped it.
 		 * `notdone` dominating would mean geometry is gated out of the
-		 * entire page-load window -- i.e. exactly when scripts
-		 * initialise and measure -- and the gate, not the budget, is the
+		 * entire page-load window - i.e. exactly when scripts
+		 * initialise and measure - and the gate, not the budget, is the
 		 * next thing to fix. */
 		if (sd > 0) {
 			extern void macos9_reconvert_sync_reasons(long *nd,
@@ -168,7 +168,7 @@ void macsurf_qjs_emit_js_profile(void)
 				"inprog=%ld budget=%ld busy=%ld",
 				rnd, rac, rpa, rip, rbu, rbz);
 		}
-		{	/* fixes1077 — how many measurements, and what they cost. */
+		{	/* fixes1077  -  how many measurements, and what they cost. */
 			long gr = 0, gu = 0;
 			macsurf_qjs_geom_stats(&gr, &gu);
 			macsurf_debug_log_writef(
@@ -187,7 +187,7 @@ void macsurf_qjs_emit_js_profile(void)
 			g_geom_unstable = 0;
 		}
 		macos9_reconvert_sync_reset();
-		{	/* fixes1095 — per-navigation, like every counter here. */
+		{	/* fixes1095  -  per-navigation, like every counter here. */
 			extern void html_reconvert_phase_reset(void);
 			html_reconvert_phase_reset();
 		}
@@ -227,7 +227,7 @@ void macsurf_qjs_emit_js_profile(void)
 	}
 
 	/* Zero for the next navigation, exactly as the PERFACC accumulators do
-	 * -- every hardware log we pull covers two or more loads, and carrying
+	 * - every hardware log we pull covers two or more loads, and carrying
 	 * one page's bundles into the next page's table would misattribute the
 	 * cost to whichever site happened to be loaded second. */
 	for (i = 0; i < QJS_PERF_SLOTS; i++) {
@@ -246,18 +246,18 @@ void macsurf_qjs_emit_js_profile(void)
 }
 
 /* ---- Audit reset ---- */
-/* fixes1016 -- refill every audit budget at each new JS realm (= each
+/* fixes1016 - refill every audit budget at each new JS realm (= each
  * navigation), so page 2 and the iframes are audited too; the fixes1015
  * per-session budgets died mid-page-one and 68kmla was never covered. */
 void macsurf_qjs_audit_reset(void)
 {
-	/* fixes1022 — audit OFF by default (every line is a flushed write);
+	/* fixes1022  -  audit OFF by default (every line is a flushed write);
 	 * define MACSURF_JS_AUDIT to get the fixes1020 skeleton back.
 	 *
-	 * fixes1029 — EXCEPT the removal audit, which is on for this round.
+	 * fixes1029  -  EXCEPT the removal audit, which is on for this round.
 	 * The device's pagemap shows every DIV.entry-intro on hackaday with
-	 * kids=0 -- the article titles, bylines and excerpts are GONE from the
-	 * DOM -- while the same markup parsed in the harness has them, and the
+	 * kids=0 - the article titles, bylines and excerpts are GONE from the
+	 * DOM - while the same markup parsed in the harness has them, and the
 	 * census reports a burst of remove=56. So a script is emptying the
 	 * entries and we need its victims named. Removal-only keeps the volume
 	 * to roughly one line per removed node instead of the full audit. */
@@ -273,17 +273,17 @@ void macsurf_qjs_audit_reset(void)
 	g_evreg_audit = 0;
 	g_evmiss_audit = 0;
 	g_evfire_audit = 0;
-	/* fixes1092/fixes1136 — geometry audit OFF.  MACSURF_JS_GEOMETRY is
+	/* fixes1092/fixes1136  -  geometry audit OFF.  MACSURF_JS_GEOMETRY is
 	 * disabled (Option B) pending incremental layout; geometry reads return
 	 * undefined and the sync-flush infrastructure is dormant.  The audit
 	 * channel is harmless (it would emit zeros) but there is nothing to
 	 * audit.  Restore to 40+ when geometry is re-enabled. */
 	g_geom_audit = 0;
 #endif
-	/* fixes1039 — the WANT channel stays ON, independent of the audit.
+	/* fixes1039  -  the WANT channel stays ON, independent of the audit.
 	 *
-	 * The engine now runs hackaday's whole stack -- front page, article
-	 * page and the Jetpack comment iframe -- with ZERO exceptions. So the
+	 * The engine now runs hackaday's whole stack - front page, article
+	 * page and the Jetpack comment iframe - with ZERO exceptions. So the
 	 * remaining rendering failures are not crashes; they are the
 	 * capabilities we STUB, where the page asks a question, gets a
 	 * confident wrong answer, and quietly takes the other branch. That is
@@ -294,20 +294,20 @@ void macsurf_qjs_audit_reset(void)
 	 * `false` to all of them), every MutationObserver/ResizeObserver
 	 * .observe (no-ops), every IntersectionObserver target (always
 	 * intersecting). It fires only when a page ASKS for something stubbed,
-	 * so a page that wants nothing pays nothing -- a handful of lines
+	 * so a page that wants nothing pays nothing - a handful of lines
 	 * rather than the hundreds the full audit emits. This is the
 	 * implement-next list, written by real sites instead of by me. */
 	g_mslife_audit = 60;
-	/* fixes1030 — the three ways script can DELETE page content:
+	/* fixes1030  -  the three ways script can DELETE page content:
 	 * removeChild, textContent= and innerHTML=. All three now log their
 	 * target's identity on this shared budget, independent of
 	 * MACSURF_JS_AUDIT, because hackaday's article entries reach the box
 	 * tree ALREADY EMPTY (kids=0 at the `ready` dump) while the same
-	 * markup parsed without script keeps all four children -- and the
+	 * markup parsed without script keeps all four children - and the
 	 * removal audit cleared removeChild entirely (120 lines, every one a
 	 * Typekit font probe or a jQuery feature-detect element). The census
 	 * in the same window reports text=35, and the river has 7 entries. */
-	/* fixes1032 — OFF with the rest of the audit. These three named the
+	/* fixes1032  -  OFF with the rest of the audit. These three named the
 	 * deleter (fixes1029-1031); they cost a flushed write per mutation and
 	 * are not wanted in a baseline. */
 #ifdef MACSURF_JS_AUDIT
@@ -315,18 +315,18 @@ void macsurf_qjs_audit_reset(void)
 #else
 	g_rm_audit_budget = 0;
 #endif
-	g_pn_logged = 0; /* fixes1110 — per-navigation, not per-process */
-	qjs_want_reset(); /* R1.2 — per-page WANT dedupe set */
+	g_pn_logged = 0; /* fixes1110  -  per-navigation, not per-process */
+	qjs_want_reset(); /* R1.2  -  per-page WANT dedupe set */
 }
 
 /* ---- Page JS summary ---- */
-/* fixes1013 — COUNT WHAT ACTUALLY RAN.
+/* fixes1013  -  COUNT WHAT ACTUALLY RAN.
  *
  * "Zero JS exceptions" was being read as "JavaScript works", and it is not
  * evidence of that at all: it is equally consistent with no script executing.
  * The failure paths were LIFE-prefixed in fixes1000 but every SUCCESS
  * breadcrumb stayed WORK-prefixed, and WORK is compiled out of shipping
- * builds -- so a hardware log could show errors and could NOT show whether a
+ * builds - so a hardware log could show errors and could NOT show whether a
  * single script ever reached QuickJS. That asymmetry made the log actively
  * misleading rather than merely incomplete.
  *
@@ -392,9 +392,9 @@ void macsurf_qjs_page_js_summary(void)
 		g_js_skip_count, g_js_timeout_count,
 		has_jq, has_xf, doc_l, win_l, node_l);
 
-	/* R1.3 — the per-script census: one LIFE SCRIPT CENSUS line per
+	/* R1.3  -  the per-script census: one LIFE SCRIPT CENSUS line per
 	 * execution, in record order, then clear so the next emit starts
-	 * fresh.  Cleared HERE rather than in macsurf_qjs_audit_reset() —
+	 * fresh.  Cleared HERE rather than in macsurf_qjs_audit_reset()  - 
 	 * js_newheap (which calls audit_reset) runs per browser_window AND
 	 * per (i)frame, so an iframe created mid-parse would wipe the main
 	 * document's entries before this summary ever emitted them. */

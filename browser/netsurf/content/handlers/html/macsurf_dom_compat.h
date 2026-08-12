@@ -1,6 +1,6 @@
 /*
- * MacSurf — Mac OS 9 frontend for NetSurf
- * macsurf_dom_compat.h — CW8 CFM broken-vtable workaround for tag-type lookup.
+ * MacSurf - Mac OS 9 frontend for NetSurf
+ * macsurf_dom_compat.h - CW8 CFM broken-vtable workaround for tag-type lookup.
  *
  * This file is part of MacSurf, built on the NetSurf engine.
  * Licensed under GPL v2.

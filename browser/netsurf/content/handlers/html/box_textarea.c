@@ -25,7 +25,7 @@
 #include <dom/dom.h>
 
 #include "utils/config.h"
-/* fixes1008 (1f) — corestring_dom_input / corestring_dom_change, for the
+/* fixes1008 (1f) - corestring_dom_input / corestring_dom_change, for the
  * input/change dispatch on TEXTAREA_MSG_TEXT_MODIFIED below. */
 #include "utils/corestrings.h"
 #include "utils/log.h"
@@ -272,7 +272,7 @@ static void box_textarea_callback(void *data, struct textarea_msg *msg)
 		form_gadget_update_value(gadget,
 					 strndup(msg->data.modified.text,
 						 msg->data.modified.len));
-		/* fixes1008 (1f) — `input` and `change`.
+		/* fixes1008 (1f) - `input` and `change`.
 		 *
 		 * Neither was ever dispatched, so every form that validates as you
 		 * type, every character counter, every search-as-you-type box and

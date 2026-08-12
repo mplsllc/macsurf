@@ -46,7 +46,7 @@
 
 /* fixes517: frontend scheduler cancellation. Forward-declared here (core
  * file, Mac-only fork) rather than pulling the macos9 frontend header into
- * content core — same approach as the macsurf_debug_log_writef forward decl
+ * content core - same approach as the macsurf_debug_log_writef forward decl
  * in content_protected.h.  No-op on non-Mac syntax-check builds. */
 #ifdef __MACOS9__
 extern void macos9_schedule_cancel_owner(void *p);
@@ -83,7 +83,7 @@ const char * const content_status_name[] = {
  * content_set_ready/done(B) -> broadcast(B) -> convert_script_sync_cb ->
  * use-after-free.  A per-content flag lets B's broadcast through because B
  * != A.  This module-global flag serialises ALL content broadcasts: any
- * broadcast that begins while another is mid-walk — on any content — is
+ * broadcast that begins while another is mid-walk - on any content - is
  * deferred (its message stored on the content) and replayed on the next
  * event-loop tick via hlcache's catch-up pump.  Mirrors llcache's pairing
  * of object->notify_in_progress with the global llcache_notify_in_progress
@@ -351,7 +351,7 @@ void content_set_status(struct content *c, const char *status_message)
 /* exported interface documented in content/protected.h */
 void content_set_ready(struct content *c)
 {
-	/* destroyed sentinel — content_destroy clears handler before freeing */
+	/* destroyed sentinel - content_destroy clears handler before freeing */
 	if (c->handler == NULL) {
 		macsurf_debug_log_writef(
 			"DESTROYED CONTENT in content_set_ready content=%p",
@@ -447,7 +447,7 @@ content__reformat(struct content *c, bool background, int width, int height)
 
 
 #ifdef __MACOS9__
-/* fixes552 — writer-side deferred-destroy list.  When a box walk currently on
+/* fixes552 - writer-side deferred-destroy list.  When a box walk currently on
  * the stack still references a content (macos9_box_walk_owns_content, defined in
  * box_construct.c), freeing it now crashes the walk; queue it here and let the
  * walk drain it the instant the batch returns (macos9_content_drain_deferred),
@@ -464,7 +464,7 @@ static int macos9_defer_count = 0;
 
 void macos9_content_drain_deferred(void)
 {
-	/* fixes901 — suppress the deferred-content free-drain while a reconvert box
+	/* fixes901 - suppress the deferred-content free-drain while a reconvert box
 	 * build is in flight. The box-convert wrapper calls this between batches;
 	 * a content_destroy running in that gap on a half-rebuilt tree is the
 	 * box-node-80 reconvert crash. The frees accumulate here and drain on the
@@ -506,11 +506,11 @@ content_deathrow_teardown(void *p)
 }
 
 #ifdef __MACOS9__
-/* fixes600 — teardown for a deferred content_user free. content_remove_user is
+/* fixes600 - teardown for a deferred content_user free. content_remove_user is
  * reached from inside a content_broadcast callback (via
  * hlcache_handle_release), so freeing the content_user node synchronously there
- * — while op_depth>0 and the broadcast loop still holds it as its captured
- * `next` (or current iterator) — frees a 12/16-byte node whose size class
+ * - while op_depth>0 and the broadcast loop still holds it as its captured
+ * `next` (or current iterator) - frees a 12/16-byte node whose size class
  * aliases sched_entry/dom_string, smashing the free-list. The death-row defers
  * it to the quiescent drain (op_depth==0), matching how the spine nodes are
  * freed. */
@@ -538,7 +538,7 @@ content_destroy_now(struct content *c)
 	const struct content_handler *h;
 
 	/* fixes508: NULL guard and double-destroy sentinel must be the
-	 * absolute first operations — before any assert, log, or field
+	 * absolute first operations - before any assert, log, or field
 	 * access.  On a double-destroy c is a valid non-NULL address (just
 	 * freed/reused memory), so assert(c) passes but c->handler is NULL
 	 * (we zeroed it on the first call).  We use c->handler as the
@@ -556,10 +556,10 @@ content_destroy_now(struct content *c)
 	if (c == NULL) return;
 
 #ifdef __MACOS9__
-	/* fixes552 — WRITER-SIDE free guard, the systemic cure for the
+	/* fixes552 - WRITER-SIDE free guard, the systemic cure for the
 	 * free-during-box-walk crash family (fixes547 box->style, fixes550 parser):
 	 * if a box walk currently on the stack still references this content, do NOT
-	 * free it now — defer until the walk's batch returns and drains it.  Placed
+	 * free it now - defer until the walk's batch returns and drains it.  Placed
 	 * BEFORE the double-destroy sentinel (so the deferred re-call still sees a
 	 * live handler and actually destroys) and BEFORE the registry unregister (so
 	 * the content stays correctly live during the deferral; it is not freed yet).
@@ -601,7 +601,7 @@ content_destroy_now(struct content *c)
 	 * this soon-to-be-freed struct. */
 	macos9_content_unregister(c);
 
-	/* fixes517: UNIVERSAL anti-UAF — cancel every scheduled callback owned
+	/* fixes517: UNIVERSAL anti-UAF - cancel every scheduled callback owned
 	 * by this content BEFORE the handler destroy runs or anything is freed.
 	 * This is the systemic cure for the whole "scheduled callback fires
 	 * after its owner was freed" crash family (deferred_parser_unpause, box
@@ -1035,7 +1035,7 @@ content_remove_user(struct content *c,
 	next = user->next;
 	user->next = next->next;   /* unlink synchronously so the list is consistent */
 #ifdef __MACOS9__
-	/* fixes600 — defer the free (see content_user_deathrow_teardown). Unlinked
+	/* fixes600 - defer the free (see content_user_deathrow_teardown). Unlinked
 	 * above, so it is out of the list; the death-row frees it once no walk is on
 	 * the stack. dr_queued gates against a double-enqueue. */
 	if (!next->dr_queued) {
@@ -1088,7 +1088,7 @@ bool content_is_shareable(struct content *c)
 
 /* exported interface documented in content/protected.h */
 /*
- * fixes954 — is this message safe to REPLAY with no data?
+ * fixes954 - is this message safe to REPLAY with no data?
  *
  * The deferred-broadcast queue (see content_broadcast below) stores only the
  * message TYPE. hlcache_content_callback zero-fills the event and copies data
@@ -1138,10 +1138,10 @@ void content_broadcast(struct content *c, content_msg msg,
 		return;
 	}
 
-	/* Reentrancy guard — global + per-content (mirrors fixes459/460).
+	/* Reentrancy guard - global + per-content (mirrors fixes459/460).
 	 * A user callback invoked during ANY broadcast walk can call
-	 * content_set_ready / content_set_done — on the same content OR a
-	 * different one — which calls content_broadcast again.  Nested walks
+	 * content_set_ready / content_set_done - on the same content OR a
+	 * different one - which calls content_broadcast again.  Nested walks
 	 * find partially-invalidated state and crash (NULL GrafPort write,
 	 * __ptr_glue through a freed callback TVector, etc., all confirmed in
 	 * MacsBug stacks with content_broadcast appearing 2-3 times).
@@ -1169,7 +1169,7 @@ void content_broadcast(struct content *c, content_msg msg,
 		 * immediately-previous queued message so repeated REDRAW/STATUS
 		 * don't flood the queue, while READY-then-DONE is kept intact. */
 		if (!content_broadcast_replay_safe(msg)) {
-			/* fixes954 — cannot be replayed without its data, so it
+			/* fixes954 - cannot be replayed without its data, so it
 			 * is dropped rather than queued.  Dropping a NOTIFICATION
 			 * is survivable: the caller already applied the state
 			 * change before broadcasting, and a dropped STATUS/REDRAW
@@ -1204,14 +1204,14 @@ void content_broadcast(struct content *c, content_msg msg,
 	c->broadcast_in_progress = true;
 
 	/* fixes97: per-broadcast MS_LOG dropped. The READY transition is
-	 * useful but fires once per content load — we log content_broadcast
+	 * useful but fires once per content load - we log content_broadcast
 	 * READY only and let the rest be silent.
 	 *
-	 * fixes161c — expand READY broadcast logging into entry / per-user /
+	 * fixes161c - expand READY broadcast logging into entry / per-user /
 	 * exit so we can localize a crash that lands somewhere inside the
 	 * notify loop. Apple's post-READY crash on 2026-05-21 truncated
 	 * the log right at "content broadcast READY" with no following
-	 * gw_event entry — telling us the loop never finished. Tagging the
+	 * gw_event entry - telling us the loop never finished. Tagging the
 	 * loop bounds and each user callback gives the next log a stage
 	 * marker. The body of the loop is unchanged; only logging added. */
 	if (msg == CONTENT_MSG_READY) {
@@ -1225,7 +1225,7 @@ void content_broadcast(struct content *c, content_msg msg,
 
 		/* fixes449: zombie guard.  users=0 at READY means all hlcache
 		 * handles that referenced this content were released before it
-		 * finished converting — the browser window navigated away while
+		 * finished converting - the browser window navigated away while
 		 * the fetch was still in flight.  Firing the callback loop into
 		 * a NULL user list is harmless (the loop is a no-op), but the
 		 * content object itself is now unreachable and will linger as a
@@ -1263,7 +1263,7 @@ void content_broadcast(struct content *c, content_msg msg,
 	 * content mid-walk; hold macos9_op_depth>0 so the death-row drain
 	 * cannot fire while this broadcast loop is on the stack and free an
 	 * object the loop still iterates. This is NOT the same-frame reentrant
-	 * broadcast guard (that is broadcast_in_progress / Stage 3) — its only
+	 * broadcast guard (that is broadcast_in_progress / Stage 3) - its only
 	 * job here is to keep the drain out until the walk unwinds. */
 	macos9_op_depth++;
 	for (user = c->user_list->next; user != 0; user = next) {
@@ -1307,7 +1307,7 @@ void content_broadcast(struct content *c, content_msg msg,
 	 * and re-issue it; the recursive call's own exit-drain handles the
 	 * remainder, so order is preserved.  Re-check handler in case a
 	 * callback destroyed this content during the walk (handler == NULL,
-	 * content freed) — then discard the queue.  Deferred messages for
+	 * content freed) - then discard the queue.  Deferred messages for
 	 * OTHER contents are replayed by hlcache's catch-up pump next tick. */
 	if (c->handler == NULL) {
 		if (c->broadcast_pending_count != 0) {
@@ -1429,7 +1429,7 @@ void content_clear_selection(hlcache_handle *h)
 	CONTENT_CHECK_VOID(c);
 
 	/* fixes516: dispatch clear_selection only if the vtable slot for it
-	 * (not get_selection) is populated — a handler may implement one but
+	 * (not get_selection) is populated - a handler may implement one but
 	 * not the other, and calling a NULL fn-ptr is its own crash class. */
 	if (c->handler->clear_selection != NULL)
 		c->handler->clear_selection(c);
@@ -1630,7 +1630,7 @@ nsurl *content_get_url(struct content *c)
 {
 	CONTENT_CHECK_RETURN(c, NULL);
 
-	/* fixes1025 — a content that is not (or no longer) backed by the
+	/* fixes1025 - a content that is not (or no longer) backed by the
 	 * low-level cache has no URL, and llcache_handle_get_url dereferences
 	 * its argument without checking. Every caller here already handles a
 	 * NULL nsurl; a crash inside the accessor is never the better answer.

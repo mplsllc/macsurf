@@ -1,4 +1,4 @@
-/* macos9_image.c -- NetSurf image content handler backed by QuickTime
+/* macos9_image.c - NetSurf image content handler backed by QuickTime
  * Graphics Importers. fixes78.
  *
  * Architecture (fixes78j refactor):
@@ -47,7 +47,7 @@
 #endif
 
 /* k32ARGBPixelFormat = 'ARGB'. Defined in <ImageCompression.h> but
- * some CW8 SDKs are missing it -- provide the literal as a fallback. */
+ * some CW8 SDKs are missing it - provide the literal as a fallback. */
 #ifndef k32ARGBPixelFormat
 #define k32ARGBPixelFormat 0x41524742
 #endif
@@ -62,11 +62,11 @@ struct macos9_qt_image_content {
 	struct content base;     /* MUST be first */
 	Handle compressed;       /* raw bytes, kept alive for deferred decode */
 	void *bitmap;            /* struct macos9_bitmap (RGBA pixels) */
-	/* fixes161b — tracked decoded bytes for this content. Set when the
+	/* fixes161b  -  tracked decoded bytes for this content. Set when the
 	 * bitmap was successfully decoded; cleared on destroy. Used to
 	 * decrement macsurf__decoded_img_bytes_current symmetrically. */
 	long decoded_bytes;
-	/* fixes162 — display-size deferred decode + LRU cache.
+	/* fixes162  -  display-size deferred decode + LRU cache.
 	 *
 	 * Previously: convert() decoded the QT importer at NATURAL pixel
 	 * size and stored the bitmap once. A 1262x580 hero JPEG consumed
@@ -76,7 +76,7 @@ struct macos9_qt_image_content {
 	 * us silently skip half the images on apple.com and huffpost.com.
 	 *
 	 * Now: convert() opens the QT importer and queries natural bounds
-	 * only — no pixel decode. importer + compressed bytes are kept
+	 * only  -  no pixel decode. importer + compressed bytes are kept
 	 * alive on the qti so the FIRST redraw (when display dims are
 	 * known via data->width/height after layout has placed the image)
 	 * can decode at display size via the existing
@@ -98,7 +98,7 @@ struct macos9_qt_image_content {
 	macos9_qt_image_content *lru_prev;
 	macos9_qt_image_content *lru_next;
 	bool in_lru;
-	/* fixes259 — deferred PNG. Mirrors the QT path: at convert time we
+	/* fixes259  -  deferred PNG. Mirrors the QT path: at convert time we
 	 * only run lodepng_inspect to extract dimensions; the actual decode
 	 * (full inflate + unfilter + box-filter downscale to display size)
 	 * happens on the first redraw when the layout's display dimensions
@@ -106,7 +106,7 @@ struct macos9_qt_image_content {
 	bool is_png_deferred;
 };
 
-/* fixes162 — global decoded image memory cache.
+/* fixes162  -  global decoded image memory cache.
  *
  * 32 MB ceiling on simultaneously-decoded RGBA pixels. Backed by an
  * LRU list (macos9_qti_lru_*) that evicts the least-recently-redrawn
@@ -128,9 +128,9 @@ struct macos9_qt_image_content {
  * by changing this one define; the LRU still evicts cleanly. */
 #define MACOS9_DECODED_IMG_MAX_BYTES (32L * 1024L * 1024L)
 
-/* fixes162 — per-image hard ceiling. With display-size decode the
+/* fixes162  -  per-image hard ceiling. With display-size decode the
  * worst case is a single image filling the entire viewport.
- * fixes260 — bumped 8 MB -> 16 MB after observing mactrove's hero
+ * fixes260  -  bumped 8 MB -> 16 MB after observing mactrove's hero
  * images request 1241x1754 display (~8.7 MB) and getting skipped
  * under the 8 MB cap. 16 MB now covers ~2000x2000 displays. Pages
  * trying to decode a true 4000x3000 hero at full resolution still
@@ -140,18 +140,18 @@ struct macos9_qt_image_content {
  * the LRU. */
 #define MACOS9_IMG_MAX_DECODED_BYTES (16L * 1024L * 1024L)
 
-/* fixes931 — keep the COMPRESSED source for small images instead of freeing it
+/* fixes931  -  keep the COMPRESSED source for small images instead of freeing it
  * at convert, so a return-visit can re-decode.
  *
  * THE SQUISH. content_get_width(box->object) is the only source of an image's
  * intrinsic size, and an image with NO width/height attribute (macintoshgarden's
  * <img class="icon"> social icons) has no other size to fall back on. On the
  * first visit the GIF decodes, GraphicsImportGetNaturalBounds gives the size,
- * layout is correct -- and then llcache_handle_drop_source_data frees the bytes
+ * layout is correct - and then llcache_handle_drop_source_data frees the bytes
  * (fixes426b/162: a 1-2 MB hero JPEG must not sit in the RAM cache twice).
  *
  * On a RETURN visit the hlcache content was destroyed (hlcache_clean is eager),
- * so a fresh content is built from the surviving llcache object -- which now has
+ * so a fresh content is built from the surviving llcache object - which now has
  * ZERO bytes. The re-decode opens no importer, GetNaturalBounds never runs,
  * c->width stays 0, and the box collapses to line-height: the squish. Images
  * WITH width/height attributes are immune (REPLACE_DIM carries their size in the
@@ -160,11 +160,11 @@ struct macos9_qt_image_content {
  *
  * The memory optimisation only ever mattered for BIG images. An icon is ~1-4 KB;
  * keeping it costs nothing and makes the revisit re-decode succeed at the source
- * -- a real byte-accurate size, not a remembered guess. Anything above the
+ * - a real byte-accurate size, not a remembered guess. Anything above the
  * threshold still drops, so the hero-JPEG win is untouched. */
 #define MACOS9_IMG_KEEP_SOURCE_MAX (48L * 1024L)
 
-/* fixes162 — LRU list of all decoded macos9_qt_image_content
+/* fixes162  -  LRU list of all decoded macos9_qt_image_content
  * entries. lru_head is MRU (most recently redrawn), lru_tail is LRU
  * (oldest, eviction candidate). lru_total_bytes mirrors the sum of
  * decoded_bytes across the list and is the value compared against
@@ -214,7 +214,7 @@ macos9_qti_lru_touch(macos9_qt_image_content *q)
  * bitmap is freed. A subsequent redraw re-decodes. PNG entries are
  * not in the LRU (they're decoded once in convert at natural size)
  * but their bytes are counted in macsurf__decoded_img_bytes_current,
- * so the check is against the global counter — eviction only walks
+ * so the check is against the global counter  -  eviction only walks
  * the QT-deferred LRU but the cap is enforced over both populations.
  * Returns true if there is now room; false if even after evicting
  * every LRU entry the cap is still exceeded (PNGs alone are full,
@@ -231,7 +231,7 @@ macos9_qti_lru_make_room(long need_bytes)
 		/* fixes650 (#168): if the tail node was freed and its memory
 		 * recycled into a free-list link, it reads back mis-aligned (heap
 		 * allocations are 4-byte aligned on PPC) or with in_lru cleared.
-		 * Do NOT dereference it — sever the walk (a bounded, benign cache
+		 * Do NOT dereference it  -  sever the walk (a bounded, benign cache
 		 * flush) instead of faulting inside the LRU walker, which is where
 		 * #168 actually crashes. Alignment is checked first so the in_lru
 		 * read is only reached for an aligned pointer. */
@@ -275,7 +275,7 @@ macos9_qti_lru_make_room(long need_bytes)
 			MACOS9_DECODED_IMG_MAX_BYTES;
 }
 
-/* fixes268 (#10) — evict every decoded bitmap in the QT-deferred LRU,
+/* fixes268 (#10)  -  evict every decoded bitmap in the QT-deferred LRU,
  * resetting the global decoded-bytes counter as a side effect. Called
  * from browser_window_content_ready after the old current_content has
  * been released, so heavy-page → heavy-page navigation starts with
@@ -461,17 +461,17 @@ macos9_qt_format_has_alpha(const unsigned char *p, long n)
  * *out_bitmap is left NULL.
  *
  * For alpha-capable formats (PNG/TIFF) the temp GWorld is allocated
- * via QTNewGWorld with k32ARGBPixelFormat -- this tells the QT
+ * via QTNewGWorld with k32ARGBPixelFormat - this tells the QT
  * graphics importer that the destination pixmap has a real alpha
  * channel, so PNG/TIFF importers map the file's per-pixel alpha into
  * the high byte rather than treating it as filler.
  *
  * Opaque formats (JPEG / 24-bit BMP / GIF) still allocate via the
- * vanilla NewGWorld(32) path -- no alpha to preserve. */
+ * vanilla NewGWorld(32) path - no alpha to preserve. */
 /* #230: QuickTime's OS 9 JPEG codec returns codecBadDataErr (-8969) on JPEGs
  * that carry APP1/EXIF/XMP metadata markers (macos9lives, macintoshgarden,
- * modern camera/CMS output). Strip APP1..APP15 segments in place -- keeping
- * APP0/JFIF, the frame/scan headers and the entropy data -- so QT sees a
+ * modern camera/CMS output). Strip APP1..APP15 segments in place - keeping
+ * APP0/JFIF, the frame/scan headers and the entropy data - so QT sees a
  * clean baseline stream. Conservative: on any structural surprise it copies
  * the remainder verbatim rather than corrupting the scan. Returns the new
  * length (<= in_size); returns in_size unchanged if the buffer isn't a JPEG. */
@@ -660,7 +660,7 @@ macos9_qt_decode_to_bitmap(GraphicsImportComponent gi,
 			 * whole pixmap). If QT honors the ARGB format,
 			 * opaque source pixels will overwrite alpha with
 			 * 0xFF and source-transparent pixels will leave
-			 * alpha as 0 -- giving the byte-swap real per-
+			 * alpha as 0 - giving the byte-swap real per-
 			 * pixel alpha to read. */
 			c.red = 0;
 			c.green = 0;
@@ -749,18 +749,18 @@ macos9_qt_decode_to_bitmap(GraphicsImportComponent gi,
  * Per-pixel alpha is exposed to the plotter as a 1-bit mask built
  * alongside the RGBA bitmap: mask bit = 1 where alpha >= 128, = 0
  * where alpha < 128. The plotter uses CopyMask (a known-working classic
- * Mac transparency API) when a mask is attached -- this is more robust
+ * Mac transparency API) when a mask is attached - this is more robust
  * than the magenta-keyed transparent-mode CopyBits path which never
  * worked reliably on 32-bit pixmaps in our testing.
  *
  * The actual RGB values for source-transparent pixels are preserved
- * (not overwritten with a sentinel) -- if a future round wants 8-bit
+ * (not overwritten with a sentinel) - if a future round wants 8-bit
  * mask compositing via CopyDeepMask for anti-aliased edges, those RGB
  * values will be ready. */
 extern void macos9_bitmap_set_mask(void *bitmap, unsigned char *mask,
 		int mask_rowbytes);
 
-/* fixes259 — decode PNG at native via lodepng, then box-filter
+/* fixes259  -  decode PNG at native via lodepng, then box-filter
  * downscale to (target_w, target_h) into a single NetSurf bitmap +
  * matching 1-bit mask. If target dims match native (or upscale would
  * be needed), produces a 1:1 copy (no downscale work). Caller is
@@ -841,7 +841,7 @@ macos9_png_decode_target(const unsigned char *data, size_t size,
 	}
 
 	if (dst_w == (int)src_w && dst_h == (int)src_h) {
-		/* 1:1 — straight per-pixel copy + mask build. */
+		/* 1:1  -  straight per-pixel copy + mask build. */
 		unsigned row, col;
 		for (row = 0; row < src_h; row++) {
 			unsigned char *src_row = rgba + (long)row * src_w * 4;
@@ -915,12 +915,12 @@ macos9_png_decode_target(const unsigned char *data, size_t size,
 
 	free(rgba);
 
-	/* fixes301c — only route through the masked (CopyMask) blit when the
+	/* fixes301c  -  only route through the masked (CopyMask) blit when the
 	 * image actually has transparent pixels (alpha < 8). Fully-opaque PNGs
 	 * (e.g. 24-bit RGB screenshots) were being marked non-opaque and forced
 	 * through CopyMask, which on this hardware mangles a correct grey XRGB
 	 * source into a blue cast. Marking them opaque sends them down the plain
-	 * CopyBits srcCopy path — the same path JPEGs use, which is colour-
+	 * CopyBits srcCopy path  -  the same path JPEGs use, which is colour-
 	 * accurate. Transparent PNGs still use CopyMask (unchanged). */
 	guit->bitmap->set_opaque(bm, has_trans ? false : true);
 	macos9_bitmap_set_mask(bm, mask, mask_rowbytes);
@@ -953,7 +953,7 @@ macos9_png_decode_to_bitmap(const unsigned char *data, size_t size,
 	rgba = NULL;
 	w = 0;
 	h = 0;
-	/* fixes258 — skip CRC32 + Adler32 validation. On a 233 MHz G3,
+	/* fixes258  -  skip CRC32 + Adler32 validation. On a 233 MHz G3,
 	 * those per-byte checksums add ~5-15% to PNG decode time for no
 	 * benefit on trusted-source images. lodepng_decode32 doesn't
 	 * expose state controls, so use the full lodepng_decode API. */
@@ -965,7 +965,7 @@ macos9_png_decode_to_bitmap(const unsigned char *data, size_t size,
 	lerr = lodepng_decode(&rgba, &w, &h, &state, data, size);
 	lodepng_state_cleanup(&state);
 	if (lerr != 0 || rgba == NULL) {
-		/* fixes160b — was "%u"; minimal formatter prints %u
+		/* fixes160b  -  was "%u"; minimal formatter prints %u
 		 * literally without consuming the va_arg. Use %ld. */
 		macsurf_debug_log_writef("png decode: lodepng err=%ld",
 				(long)lerr);
@@ -1002,7 +1002,7 @@ macos9_png_decode_to_bitmap(const unsigned char *data, size_t size,
 		return NSERROR_NOMEM;
 	}
 
-	/* fixes188 — Store unpremultiplied RGBA with the actual alpha
+	/* fixes188  -  Store unpremultiplied RGBA with the actual alpha
 	 * byte preserved in the 4th slot. fixes187's premultiply was
 	 * mathematically correct for CopyMask-as-flat-blit but dimmed
 	 * anti-aliased edges to near-black, which read as "fade" on
@@ -1039,7 +1039,7 @@ macos9_png_decode_to_bitmap(const unsigned char *data, size_t size,
 
 	macos9_bitmap_set_mask(bm, mask, mask_rowbytes);
 
-	/* fixes301c — opaque PNGs take the colour-accurate CopyBits srcCopy
+	/* fixes301c  -  opaque PNGs take the colour-accurate CopyBits srcCopy
 	 * path; only transparent ones use CopyMask. See decode_target. */
 	if (guit->bitmap->set_opaque != NULL) {
 		guit->bitmap->set_opaque(bm, has_trans ? false : true);
@@ -1054,7 +1054,7 @@ macos9_png_decode_to_bitmap(const unsigned char *data, size_t size,
 	return NSERROR_OK;
 }
 
-/* fixes295f — BMP-DIB-inside-ICO direct decoder.
+/* fixes295f  -  BMP-DIB-inside-ICO direct decoder.
  *
  * Small ICO favicons (16x16, 32x32, 48x48) almost universally embed
  * BMP-DIB, not PNG.  Vista+ added PNG-inside-ICO mainly for 256x256.
@@ -1144,7 +1144,7 @@ static void *macos9_ico_decode_dib_32bpp(const unsigned char *data, long size,
 
 	/* AND-mask is appended after XOR plane for non-32bpp.  1 bit per
 	 * pixel, rounded up to whole bytes, then to 4-byte boundary per row.
-	 * 32bpp ICO carries alpha in the high byte of each pixel — no AND
+	 * 32bpp ICO carries alpha in the high byte of each pixel  -  no AND
 	 * mask plane. */
 	{
 		long and_stride = 0;
@@ -1244,7 +1244,7 @@ static void *macos9_ico_decode_dib_32bpp(const unsigned char *data, long size,
 	return bm;
 }
 
-/* fixes295d — minimal Microsoft ICO container parser.
+/* fixes295d  -  minimal Microsoft ICO container parser.
  *
  * ICO format:
  *   ICONDIR (6 bytes): reserved(2)=0, type(2)=1, count(2)
@@ -1256,7 +1256,7 @@ static void *macos9_ico_decode_dib_32bpp(const unsigned char *data, long size,
  *
  * Strategy: detect ICONDIR magic, pick the entry closest to 16x16, check
  * if its embedded data starts with PNG magic.  If so, replace
- * qti->compressed in place with just the PNG bytes — the existing PNG
+ * qti->compressed in place with just the PNG bytes  -  the existing PNG
  * handler downstream then treats it as plain PNG.  BMP-DIB-inside-ICO
  * is not handled in Phase 1d (could be added later with a small DIB
  * decoder).  Returns 1 on successful PNG extraction, 0 otherwise.
@@ -1331,7 +1331,7 @@ static int macos9_ico_extract_png(macos9_qt_image_content *qti)
 		const unsigned char *eb = src + offset;
 		if (eb[0] != 0x89 || eb[1] != 0x50 ||
 		    eb[2] != 0x4E || eb[3] != 0x47) {
-			/* Not PNG — BMP-DIB or other.  fixes295f: use %d
+			/* Not PNG  -  BMP-DIB or other.  fixes295f: use %d
 			 * since the minimal formatter doesn't support %X. */
 			macsurf_debug_log_writef(
 				"img convert: ICO entry %d not PNG (bytes %d %d %d %d)",
@@ -1384,7 +1384,7 @@ macos9_qt_image_convert(struct content *c)
 		return false;
 	}
 
-	/* fixes295d — ICO unwrap.  If the bytes are a Microsoft ICO with an
+	/* fixes295d  -  ICO unwrap.  If the bytes are a Microsoft ICO with an
 	 * embedded PNG, replace qti->compressed in place with just the PNG;
 	 * the PNG handler below takes over.  fixes295f: if the ICO embeds
 	 * BMP-DIB (the common 16x16/32x32 case), decode directly into
@@ -1444,7 +1444,7 @@ macos9_qt_image_convert(struct content *c)
 						&dec_w, &dec_h);
 					if (new_bm != NULL && dec_w > 0 && dec_h > 0) {
 						HUnlock(qti->compressed);
-						/* fixes392 — HARD-CRASH FIX. The fixes295g
+						/* fixes392  -  HARD-CRASH FIX. The fixes295g
 						 * short-circuit fired content_set_done(c)
 						 * MANUALLY here AND returned true, so NetSurf
 						 * core's content__convert fired content_set_done
@@ -1482,13 +1482,13 @@ macos9_qt_image_convert(struct content *c)
 	src_bytes = (const unsigned char *)*qti->compressed;
 
 	/* PNG magic: 89 50 4E 47 0D 0A 1A 0A. If this is a PNG, dispatch
-	 * to lodepng for real per-pixel alpha -- Path A for PNG only. */
+	 * to lodepng for real per-pixel alpha - Path A for PNG only. */
 	if (src_size >= 8 &&
 			src_bytes[0] == 0x89 && src_bytes[1] == 0x50 &&
 			src_bytes[2] == 0x4E && src_bytes[3] == 0x47) {
 		int gate_w = 0;
 		int gate_h = 0;
-		/* fixes160b — size gate. Inspect IHDR first; if the
+		/* fixes160b  -  size gate. Inspect IHDR first; if the
 		 * decoded pixel buffer would blow the partition, skip
 		 * the decode entirely and let the box layout reserve
 		 * the right amount of space for a broken-image rect. */
@@ -1513,7 +1513,7 @@ macos9_qt_image_convert(struct content *c)
 			content_broadcast_error(c, NSERROR_NOMEM, NULL);
 			return false;
 		}
-		/* fixes161b — global decoded-budget gate (PNG path). The
+		/* fixes161b  -  global decoded-budget gate (PNG path). The
 		 * per-image fixes160b gate said this image fits individually;
 		 * verify the SUM of all live decoded bitmaps + this one
 		 * stays within budget. Apple's promo strip plus the home
@@ -1545,7 +1545,7 @@ macos9_qt_image_convert(struct content *c)
 				return false;
 			}
 		}
-		/* fixes259 — defer PNG decode to redraw time, mirror the QT
+		/* fixes259  -  defer PNG decode to redraw time, mirror the QT
 		 * path (fixes162). At convert we already have the natural
 		 * dimensions from macos9_png_read_dims above; we don't decode
 		 * pixels here. qti->compressed stays alive until first redraw
@@ -1571,11 +1571,11 @@ macos9_qt_image_convert(struct content *c)
 		content_set_ready(c);
 		content_set_done(c);
 		content_set_status(c, "");
-		/* fixes426b — free llcache's raw-bytes copy now that the
+		/* fixes426b  -  free llcache's raw-bytes copy now that the
 		 * image is accepted for deferred decode. qti->compressed
 		 * holds its own copy; source_data in llcache is redundant
 		 * and keeping it ties up 1-2MB per image on the Mac heap.
-		 * fixes931 — but KEEP it for small images so a return-visit can
+		 * fixes931  -  but KEEP it for small images so a return-visit can
 		 * re-decode at the source (the squish class). */
 		if (src_size > MACOS9_IMG_KEEP_SOURCE_MAX) {
 			llcache_handle_drop_source_data(c->llcache);
@@ -1642,7 +1642,7 @@ macos9_qt_image_convert(struct content *c)
 		return false;
 	}
 
-	/* fixes162 — deferred decode. QT path stops here: importer +
+	/* fixes162  -  deferred decode. QT path stops here: importer +
 	 * compressed bytes stay alive on the qti; the actual pixel
 	 * decode happens on the FIRST redraw, sized to that paint's
 	 * data->width/height. This means a 1262x580 hero JPEG displayed
@@ -1656,7 +1656,7 @@ macos9_qt_image_convert(struct content *c)
 	 * by layout for aspect-ratio and intrinsic sizing. The actual
 	 * bitmap stored in qti->bitmap (allocated later in redraw) is
 	 * at DISPLAY size; bitmap_w / bitmap_h record those. Don't
-	 * confuse the two — natural is for layout, display is for the
+	 * confuse the two  -  natural is for layout, display is for the
 	 * GPU-bound RGBA buffer. */
 	qti->importer = importer;
 	qti->wants_alpha = wants_alpha;
@@ -1677,7 +1677,7 @@ macos9_qt_image_convert(struct content *c)
 	content_set_ready(c);
 	content_set_done(c);
 	content_set_status(c, "");
-	/* fixes931 — keep small sources so a revisit re-decodes (the squish);
+	/* fixes931  -  keep small sources so a revisit re-decodes (the squish);
 	 * still drop big ones (the 1-2 MB hero-JPEG memory win). */
 	if (src_size > MACOS9_IMG_KEEP_SOURCE_MAX) {
 		llcache_handle_drop_source_data(c->llcache);
@@ -1705,7 +1705,7 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 	nat_w = (int)c->width;
 	nat_h = (int)c->height;
 
-	/* fixes269 (#8) — above-fold bias for lazy decode. If the image's
+	/* fixes269 (#8)  -  above-fold bias for lazy decode. If the image's
 	 * destination rect is entirely outside the redraw clip rect, skip
 	 * the decode entirely. NetSurf core's box-tree walker prunes most
 	 * below-fold boxes but occasionally descends into a parent whose
@@ -1720,7 +1720,7 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 	 * The early return path is taken BEFORE the decode block, so no
 	 * bitmap memory is allocated for off-screen images. Already-decoded
 	 * bitmaps (in qti->bitmap with matching dimensions) are left alone
-	 * — they'd be evicted via the LRU when memory pressure hits.
+	 *  -  they'd be evicted via the LRU when memory pressure hits.
 	 *
 	 * `clip` is the (clip->x0, clip->y0, clip->x1, clip->y1)
 	 * rectangle. Image rect at this point is (data->x, data->y,
@@ -1743,11 +1743,11 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 		}
 	}
 
-	/* fixes265 — scale-fit-to-cap for top-level image navigation.
+	/* fixes265  -  scale-fit-to-cap for top-level image navigation.
 	 * When a user types e.g. https://example.com/photo.jpg directly in
 	 * the URL bar, browser_window_redraw passes the content's natural
 	 * width/height (not a CSS-constrained box). For a 4000x3000 JPEG
-	 * that's 48 MB of RGBA at display size — exceeds the 16 MB per-image
+	 * that's 48 MB of RGBA at display size  -  exceeds the 16 MB per-image
 	 * cap and the redraw silently returns true at the cap-check below,
 	 * rendering blank. Pre-clamp dst dims proportionally to fit within
 	 * the decoded-bytes ceiling so direct-nav images render at the
@@ -1786,12 +1786,12 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 		}
 	}
 
-	/* fixes111 — aspect-ratio guard for the replaced-element layout
+	/* fixes111  -  aspect-ratio guard for the replaced-element layout
 	 * bug. NetSurf's layout has at least one path that fails to
 	 * proportionally rescale height when CSS height was originally
 	 * auto. The pattern we catch: dst_h == nat_h (height never moved
 	 * from intrinsic) while dst_w != nat_w (width was scaled by the
-	 * layout container — typically flex's target_main_size or a
+	 * layout container  -  typically flex's target_main_size or a
 	 * max-width:100% on a wide canvas). Result on screen: mactrove's
 	 * 1058x245 logo at 1500x245 looks like a thin colored stripe,
 	 * 540x338 Dark Castle screenshot at 1700x338 looks horizontally
@@ -1813,7 +1813,7 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 				dst_h > 0) {
 			/* fixes126: symmetric mirror of fixes111 above.
 			 * NetSurf core's layout produces requests where
-			 * the OPPOSITE dim is stuck at intrinsic — width
+			 * the OPPOSITE dim is stuck at intrinsic  -  width
 			 * is unchanged from natural while height was
 			 * scaled by CSS (e.g. mactrove logo: nat 1058x245,
 			 * CSS height resolves to 92, layout passes
@@ -1834,7 +1834,7 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 		}
 	}
 
-	/* fixes162 — display-size deferred decode for QT path. If this is
+	/* fixes162  -  display-size deferred decode for QT path. If this is
 	 * a QT-deferred entry (importer kept alive in convert) and we have
 	 * no bitmap at the right display size, decode now at (dst_w, dst_h)
 	 * directly. The existing macos9_qt_decode_to_bitmap parameterizes
@@ -1847,7 +1847,7 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 	 * decode wouldn't fit even with everything evicted (single
 	 * oversize image), we skip and the plot below no-ops on bitmap
 	 * NULL. */
-	/* fixes259 — PNG-deferred decode + display-size box-filter. Mirror
+	/* fixes259  -  PNG-deferred decode + display-size box-filter. Mirror
 	 * the QT-deferred branch below. The compressed PNG bytes are kept
 	 * alive in qti->compressed since fixes259's convert path. */
 	if (qti->is_png_deferred) {
@@ -1982,7 +1982,7 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 
 			/* #230/#235: an image whose display buffer exceeds the
 			 * per-image ceiling used to SKIP (return true) and
-			 * render nothing -- so a large JPEG (e.g. 4080x3072)
+			 * render nothing - so a large JPEG (e.g. 4080x3072)
 			 * vanished entirely. Instead, halve the decode dims
 			 * until it fits the ceiling; QuickTime scales the
 			 * source into the target rect, so it renders at reduced
@@ -2053,7 +2053,7 @@ macos9_qt_image_destroy(struct content *c)
 {
 	macos9_qt_image_content *qti = (macos9_qt_image_content *)c;
 
-	/* fixes162 — symmetric LRU cleanup: unlink before freeing the
+	/* fixes162  -  symmetric LRU cleanup: unlink before freeing the
 	 * bitmap so the LRU walker can't see a stale node, then close
 	 * the kept-alive importer if the QT-deferred path was used. */
 	if (qti->in_lru) {
@@ -2067,7 +2067,7 @@ macos9_qt_image_destroy(struct content *c)
 	 * desynced from actual list membership (node still linked but flag
 	 * cleared, or head/tail still points here), guarantee that neither the
 	 * LRU globals nor any neighbour can keep referencing this node after it
-	 * is freed — that dangling reference is the root of the #168 UAF the LRU
+	 * is freed  -  that dangling reference is the root of the #168 UAF the LRU
 	 * walkers then crash on. (No-op after a normal in_lru unlink above.) */
 	if (macos9_qti_lru_head == qti) macos9_qti_lru_head = qti->lru_next;
 	if (macos9_qti_lru_tail == qti) macos9_qti_lru_tail = qti->lru_prev;
@@ -2085,7 +2085,7 @@ macos9_qt_image_destroy(struct content *c)
 			guit->bitmap->destroy(qti->bitmap);
 		}
 		qti->bitmap = NULL;
-		/* fixes161b — symmetric decrement of the global decoded-bytes
+		/* fixes161b  -  symmetric decrement of the global decoded-bytes
 		 * counter. Skipped images never incremented decoded_bytes (it
 		 * stays 0 from calloc), so this is safe to always run. */
 		if (qti->decoded_bytes > 0) {
@@ -2123,7 +2123,7 @@ macos9_qt_image_type(void)
 	return CONTENT_IMAGE;
 }
 
-/* fixes295 — Phase 1a: lazy-decode get_internal mirroring NetSurf's
+/* fixes295  -  Phase 1a: lazy-decode get_internal mirroring NetSurf's
  * image_cache_get_bitmap (content/handlers/image/image_cache.c:346).
  *
  * Pre-fixes295 this slot was NULL because our QT image handler defers
@@ -2131,7 +2131,7 @@ macos9_qt_image_type(void)
  * content_get_bitmap (content/content.c:1287) returned NULL for every
  * caller, which broke the favicon set_icon path: NetSurf can hand us an
  * hlcache_handle whose content is "done" but whose bitmap hasn't yet
- * been materialised — there's no <img> in the page that drove a redraw
+ * been materialised  -  there's no <img> in the page that drove a redraw
  * decode.
  *
  * The fix: if qti->bitmap is already set, return it (fast path).
@@ -2167,7 +2167,7 @@ macos9_qt_image_get_internal(const struct content *c, void *context)
 	nat_w = (int)c->width;
 	nat_h = (int)c->height;
 	if (nat_w <= 0 || nat_h <= 0) {
-		/* fixes933/934 — a prime "load then disappear" suspect: a content
+		/* fixes933/934  -  a prime "load then disappear" suspect: a content
 		 * whose width decoded fine on the first paint but reads 0 now paints
 		 * NOTHING, so c->width was cleared between paints (a rebuilt/zero-byte
 		 * content, e.g. after hlcache_clean eviction + source-drop). Retagged
@@ -2180,7 +2180,7 @@ macos9_qt_image_get_internal(const struct content *c, void *context)
 	}
 
 	if (qti->is_png_deferred) {
-		/* PNG path — decode from compressed bytes at natural size. */
+		/* PNG path  -  decode from compressed bytes at natural size. */
 		if (qti->compressed == NULL) return NULL;
 		new_bitmap = NULL;
 		new_w = 0;
@@ -2205,17 +2205,17 @@ macos9_qt_image_get_internal(const struct content *c, void *context)
 		return new_bitmap;
 	}
 
-	/* fixes295c — QT-path lazy decode for JPEG/GIF/BMP/TIFF/ICO.
+	/* fixes295c  -  QT-path lazy decode for JPEG/GIF/BMP/TIFF/ICO.
 	 * qti->importer was opened by macos9_qt_image_convert and stays
 	 * alive on the content; we decode at natural size into a fresh
-	 * bitmap.  No LRU integration here — favicons are tiny (16x16
+	 * bitmap.  No LRU integration here  -  favicons are tiny (16x16
 	 * = 1KB), the cache pressure is negligible. */
 	if (qti->importer != NULL) {
 		new_bitmap = NULL;
 		derr = macos9_qt_decode_to_bitmap(qti->importer,
 			nat_w, nat_h, qti->wants_alpha, &new_bitmap);
 		if (derr != NSERROR_OK || new_bitmap == NULL) {
-			/* fixes933 — WORK-gated so it survives the failures-only
+			/* fixes933  -  WORK-gated so it survives the failures-only
 			 * filter: a re-decode that fails here (importer gone, or
 			 * source dropped) is exactly a visible image vanishing. */
 			macsurf_debug_log_writef(
@@ -2246,7 +2246,7 @@ macos9_qt_image_is_opaque(struct content *c)
 	return false;
 }
 
-/* Vtable -- positional init (CW8 C89 has no designated initialisers).
+/* Vtable - positional init (CW8 C89 has no designated initialisers).
  * Field order MUST match struct content_handler in
  * content/content_protected.h. */
 static const struct content_handler macos9_qt_image_handler = {
@@ -2283,7 +2283,7 @@ static const struct content_handler macos9_qt_image_handler = {
 	NULL,                          /* textselection_redraw */
 	NULL,                          /* textselection_copy */
 	NULL,                          /* textselection_get_end */
-	macos9_qt_image_get_internal,  /* get_internal — fixes295 */
+	macos9_qt_image_get_internal,  /* get_internal  -  fixes295 */
 	macos9_qt_image_is_opaque,     /* is_opaque */
 	false                          /* no_share */
 };
@@ -2300,7 +2300,7 @@ static const char *macos9_qt_image_mime[] = {
 	"image/x-ms-bmp",
 	"image/tiff",
 	"image/x-tiff",
-	/* fixes295c — Microsoft ICO container.  Required for legacy
+	/* fixes295c  -  Microsoft ICO container.  Required for legacy
 	 * /favicon.ico endpoints (macintoshgarden, frogfind, google,
 	 * etc.).  We rely on QuickTime's Graphics Importer to decode;
 	 * if QT doesn't have the importer, content_factory still creates
@@ -2312,7 +2312,7 @@ static const char *macos9_qt_image_mime[] = {
 	"image/vnd.microsoft.icon"
 };
 
-/* fixes578b — minimal image/svg+xml content handler.
+/* fixes578b  -  minimal image/svg+xml content handler.
  *
  * It does NOT decode or render. It exists only so hlcache_handle_retrieve for
  * an external SVG sprite (FontAwesome <use href="file.svg#id">) is ACCEPTED and
@@ -2320,7 +2320,7 @@ static const char *macos9_qt_image_mime[] = {
  * The inline-SVG painter (macos9_svg_sprite.c) reads that source via
  * content_get_source_data and paints the referenced <symbol>. Without a handler
  * for image/svg+xml, hlcache aborts the fetch after type-sniff (no acceptable
- * content type) and the bytes are never delivered — exactly what the fixes577
+ * content type) and the bytes are never delivered  -  exactly what the fixes577
  * "svg_use: unresolved" log showed. Field order in the handler MUST match
  * struct content_handler (see the QT handler above). */
 typedef struct { struct content base; } macos9_svg_src_content;
@@ -2422,7 +2422,7 @@ macos9_svg_src_convert(struct content *c)
 	return true;
 }
 
-/* fixes823 (#280): REAL redraw for external SVG -- previously NULL, so
+/* fixes823 (#280): REAL redraw for external SVG - previously NULL, so
  * <img src="*.svg"> and CSS background url(*.svg) painted nothing (the
  * fixes578b handler existed only to feed sprite <use>). Paint the raw
  * source via the shared standalone painter (paths+fills, viewBox->rect). */
@@ -2522,7 +2522,7 @@ nserror image_init(void)
 		}
 	}
 
-	/* fixes578b — SVG source handler so external sprite fetches complete. */
+	/* fixes578b  -  SVG source handler so external sprite fetches complete. */
 	err = content_factory_register_handler("image/svg+xml",
 			&macos9_svg_src_handler);
 	if (err != NSERROR_OK) {

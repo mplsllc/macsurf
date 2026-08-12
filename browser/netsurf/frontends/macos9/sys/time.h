@@ -1,5 +1,5 @@
 /*
- * MacSurf stub — sys/time.h
+ * MacSurf stub  -  sys/time.h
  * Minimal C89-compatible stub for CodeWarrior 8 compilation.
  *
  * Symbols stubbed:
@@ -12,7 +12,7 @@
 #define MACOS9_SYS_TIME_H
 
 /* CW8's access path includes macos9:sys: so <time.h> finds THIS file
- * before MSL's time.h — the previous #include <time.h> was circular
+ * before MSL's time.h  -  the previous #include <time.h> was circular
  * (guarded out), so struct tm and localtime were never declared.
  * Provide the necessary declarations directly. Guards prevent conflicts
  * if MSL time.h is somehow reached via a later include. */

@@ -790,7 +790,7 @@ css_error css__stylesheet_style_destroy(css_style *style)
 
 	sheet = style->sheet;
 
-	/* Always free any attached deferred declarations up front — they are
+	/* Always free any attached deferred declarations up front - they are
 	 * never part of the cache. */
 	if (style->deferred != NULL) {
 		css__deferred_decl_list_destroy(style->deferred);

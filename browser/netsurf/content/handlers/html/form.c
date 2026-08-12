@@ -1998,7 +1998,7 @@ void form_select_menu_callback(void *client_data,
 
 
 /**
- * fixes1054 (#80) — clear same-name FORM-LESS radios, walking the box tree.
+ * fixes1054 (#80) - clear same-name FORM-LESS radios, walking the box tree.
  *
  * A radio outside any <form> has no form owner, so it is not on any
  * form->controls list and cannot be found the way the form case finds its
@@ -2052,7 +2052,7 @@ void form_radio_set(struct form_control *radio)
 	if (radio->selected)
 		return;
 
-	/* fixes1054 (#80) — a radio with NO form owner used to return here and
+	/* fixes1054 (#80) - a radio with NO form owner used to return here and
 	 * do nothing at all: it never became selected and never repainted, so
 	 * clicking one appeared completely dead while checkboxes beside it
 	 * worked (their handler does not consult the form). Radios outside a
@@ -2112,7 +2112,7 @@ void form_radio_set(struct form_control *radio)
  *
  * The original PR (#138) used POSIX <regex.h>. That header is not
  * available on CW8 / Mac OS 9, and NetSurf's utils/regex.h shim
- * stubs regexec() to REG_NOMATCH on platforms without HAVE_REGEX —
+ * stubs regexec() to REG_NOMATCH on platforms without HAVE_REGEX -
  * which would reject every pattern unconditionally (worse than not
  * validating at all).
  *
@@ -2151,7 +2151,7 @@ enum form_atom_kind {
 	FATOM_NONWORD,    /* \W */
 	FATOM_SPACE,      /* \s */
 	FATOM_NONSPACE,   /* \S */
-	FATOM_CLASS       /* [...] — class_start/class_end point into pattern */
+	FATOM_CLASS       /* [...] - class_start/class_end point into pattern */
 };
 
 struct form_atom {
@@ -2344,7 +2344,7 @@ form_match_here(const char *p, const char *p_end, const char *s)
 
 	p_after_atom = p;
 	if (!form_atom_parse(&p_after_atom, p_end, &atom)) {
-		return false;   /* unsupported syntax — conservative reject */
+		return false;   /* unsupported syntax - conservative reject */
 	}
 	if (!form_quant_parse(&p_after_atom, p_end, &min, &max)) {
 		return false;
@@ -2503,7 +2503,7 @@ form_control_value_is_empty(struct form_control *control, bool *ok)
 		/* HTML5: a required <select> is considered empty when no
 		 * option is selected, OR the selected option has an empty
 		 * value="" attribute (the canonical "-- choose --" sentinel
-		 * row pattern). num_selected alone isn't enough — single-
+		 * row pattern). num_selected alone isn't enough - single-
 		 * select always has num_selected == 1 because the first
 		 * option is auto-selected, even if its value is empty. */
 		struct form_option *o;

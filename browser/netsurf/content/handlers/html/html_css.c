@@ -459,14 +459,14 @@ bool html_css_process_link(html_content *htmlc, dom_node *node)
 	}
 	dom_string_unref(href);
 
-	/* fixes593 — the fixes561/562 URL dedup that used to sit here is
+	/* fixes593 - the fixes561/562 URL dedup that used to sit here is
 	 * REMOVED (reverting to the duktape / pre-561 behaviour).  It assumed a
 	 * <link> re-processed by the post-parse discovery re-walk was pure
 	 * waste, but that second pass re-cascades the author sheets against the
 	 * COMPLETE DOM and is load-bearing: on 68kmla the discovery re-cascade
 	 * is what lays out the grid sidebar and the secondary nav row.  Once the
 	 * dedup started matching (sheets already loaded at discovery time) it
-	 * skipped that pass — css_ok fell 5->3, c_w collapsed 1322->949, ~263
+	 * skipped that pass - css_ok fell 5->3, c_w collapsed 1322->949, ~263
 	 * boxes vanished, and the page rendered single-column with no secondary
 	 * menu.  The ~4.8s the dedup saved was buying a broken layout.  Let the
 	 * re-walked link fall through and cascade again, exactly as duktape. */
@@ -737,7 +737,7 @@ html_css_new_selection_context(html_content *c, css_select_ctx **ret_select_ctx)
 		}
 
 		if (hsheet->sheet != NULL) {
-			/* fixes161c — defensive: a slot whose content went
+			/* fixes161c - defensive: a slot whose content went
 			 * to ERROR state (truncated fetch, oversize-skip,
 			 * parse failure, 404 mid-stream) still has a
 			 * non-NULL handle pointer but no usable sheet
@@ -927,7 +927,7 @@ nserror html_css_discover_stylesheets(html_content *c)
 				if (dom_string_caseless_lwc_isequal(
 						tagname,
 						corestring_lwc_style)) {
-					/* Inline <style> — start its fetch */
+					/* Inline <style> - start its fetch */
 					if (nsoption_bool(author_level_css)) {
 						(void)html_css_register_inline_style_sync(c, node);
 						style_found++;

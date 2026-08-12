@@ -233,7 +233,7 @@ typedef struct html_content {
 	struct form_control *visible_select_menu;
 
 	/**
-	 * fixes932 — eager-fetch budget for images.
+	 * fixes932 - eager-fetch budget for images.
 	 *
 	 * fixes738 made box_image defer EVERY image to the viewport-gated lazy
 	 * queue, which only fetches on a paint. That is too aggressive at the top
@@ -375,7 +375,7 @@ nserror html_css_fetcher_add_item(dom_string *data, struct nsurl *base_url,
  * Construct an event and fire it at the DOM
  *
  */
-/* fixes1008 (1a/1d) — the JS event bridge's two host hooks.
+/* fixes1008 (1a/1d) - the JS event bridge's two host hooks.
  *
  * macsurf_qjs_event_type_live(): has ANY listener for this type been
  * registered in this realm? interaction.c consults it before building an

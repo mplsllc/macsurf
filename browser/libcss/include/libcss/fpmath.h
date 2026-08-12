@@ -67,10 +67,10 @@ css_subtract_fixed(const css_fixed x, const css_fixed y) {
  * multiply-by-constant codegen writes `a >> log2(const)` into
  * the high word instead of the correct `(a*const) >> 32`.
  * Confirmed via probe G (fixes113) showing `(long long)131072
- * * 1024LL` produces hi=128, lo=134217728 — full product
+ * * 1024LL` produces hi=128, lo=134217728 - full product
  * 549,890,031,616 instead of 134,217,728. Route the three
  * fpmath operations that rely on int64 intermediates through
- * `double` instead — PPC's FPU handles this natively, and 52
+ * `double` instead - PPC's FPU handles this natively, and 52
  * bits of mantissa comfortably covers every int32 product we
  * need. */
 static inline css_fixed

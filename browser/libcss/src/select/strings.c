@@ -177,14 +177,14 @@ css_error css_select_strings_intern(css_select_strings *str)
 	if (error != lwc_error_ok)
 		return css_error_from_lwc_error(error);
 
-	/* fixes358 (#70) — ::marker. */
+	/* fixes358 (#70) - ::marker. */
 	error = lwc_intern_string(
 			"marker", SLEN("marker"),
 			&str->marker);
 	if (error != lwc_error_ok)
 		return css_error_from_lwc_error(error);
 
-	/* fixes359 (#71) — ::placeholder and ::file-selector-button. */
+	/* fixes359 (#71) - ::placeholder and ::file-selector-button. */
 	error = lwc_intern_string(
 			"placeholder", SLEN("placeholder"),
 			&str->placeholder);
@@ -215,7 +215,7 @@ css_error css_select_strings_intern(css_select_strings *str)
 	if (error != lwc_error_ok)
 		return css_error_from_lwc_error(error);
 
-	/* fixes273 (#52) — orientation media feature + its keyword values. */
+	/* fixes273 (#52) - orientation media feature + its keyword values. */
 	error = lwc_intern_string("orientation", SLEN("orientation"),
 			&str->orientation);
 	if (error != lwc_error_ok)

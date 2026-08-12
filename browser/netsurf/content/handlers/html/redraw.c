@@ -89,18 +89,18 @@ extern void macsurf_recon_clamp(const char *field, long value);
 #include "html/macsurf_dom_compat.h"
 #include "html/layout_safe.h"
 
-/* fixes195 — inline SVG renderer lives in the macos9 frontend so it
+/* fixes195 - inline SVG renderer lives in the macos9 frontend so it
  * can use Mac-specific debugging hooks (it dispatches through the
  * portable plotter table; nothing here is Mac-only by design and the
  * file could move to content/handlers/html/ later). */
 #ifdef __MACOS9__
 #include "frontends/macos9/macos9_svg_inline.h"
-/* fixes197 — diagnostic logging hook. Declared extern here because
+/* fixes197 - diagnostic logging hook. Declared extern here because
  * the macsurf_debug.h header is in the macos9 frontend dir and the
  * include path may not reach it from this point in the tree. */
 extern void macsurf_debug_log_writef(const char *fmt, ...);
 
-/* fixes366c — diagnostic counters for the fixes365/fixes366b
+/* fixes366c - diagnostic counters for the fixes365/fixes366b
  * gradient / stripe / dot-grid log lines. Originally function-scoped
  * statics, which capped at 5 per session rather than per navigation.
  * Hoisted to file scope so macsurf_profile_reset() can zero them at
@@ -252,7 +252,7 @@ char macos9_skipbox_info[160] = {0};
  *                 direction bit; smeared to 8 bits on decode)
  *
  * Returned colours are NetSurf BGR (R in low byte). */
-/* fixes74b diagnostic counters — defined in plotters.c. */
+/* fixes74b diagnostic counters - defined in plotters.c. */
 extern long macos9_grad_set_count;
 extern long macos9_grad_radial_unpack_count;
 extern long macos9_grad_linear_unpack_count;
@@ -296,23 +296,23 @@ static void macsurf_gradient_unpack(int32_t packed_signed,
 			(uint32_t)r2);
 }
 
-/* fixes201 — gradient paint with background-size tiling.
+/* fixes201 - gradient paint with background-size tiling.
  *
  * The existing path emits one ctx->plot->rectangle call which fills
  * the entire box `r` with the gradient. When background-size is set
  * to a specific tile dimension (not auto / cover / contain), the
- * gradient should repeat at that size — that's how stipple textures
+ * gradient should repeat at that size - that's how stipple textures
  * built from sharp-stop linear-gradients (mactrove body) get their
  * pattern.
  *
  * V1 strategy: loop plot_rectangle once per tile, capped at
  * MACOS9_GRAD_TILE_MAX (4096) tiles to keep pathological inputs
- * bounded. Above the cap we fall back to a single fill — same as
+ * bounded. Above the cap we fall back to a single fill - same as
  * the unset-bg-size behaviour, so body stipple at 2x2 (~hundreds of
  * thousands of tiles) degrades but doesn't slow the page.
  *
  * V2 (deferred) would rasterise the gradient into a small bitmap
- * once and use plot_bitmap with REPEAT flags — one CopyBits per
+ * once and use plot_bitmap with REPEAT flags - one CopyBits per
  * paint, scalable to any tile size.
  */
 #define MACOS9_GRAD_TILE_MAX 4096
@@ -405,28 +405,28 @@ static nserror html_redraw_paint_gradient_tiled(
  * \return True if box has a background, false otherwise.
  */
 /**
- * fixes116 — apply CSS `object-fit` to the replaced-element draw rect.
+ * fixes116 - apply CSS `object-fit` to the replaced-element draw rect.
  *
  * Called after the cell's content_redraw_data has been populated with the
  * raw layout dimensions (cell width/height at obj_data->width/height,
  * top-left at obj_data->x/y). Mutates the rect so the image is sized
  * according to its `object-fit` value:
  *
- *   FILL       — leave the rect as-is (default; stretches to cell).
- *   CONTAIN    — scale the image down to fit the cell, preserving
+ *   FILL       - leave the rect as-is (default; stretches to cell).
+ *   CONTAIN    - scale the image down to fit the cell, preserving
  *                aspect ratio; align within the cell per object-position.
- *   COVER      — scale the image up to cover the cell, preserving
+ *   COVER      - scale the image up to cover the cell, preserving
  *                aspect ratio; align and let it overflow. QuickDraw's
- *                clipRgn — already set to the cell rect by html_redraw_box
- *                before content_redraw fires — clips the overflow.
- *   NONE       — render at intrinsic size, aligned in the cell.
- *   SCALE_DOWN — `none` or `contain`, whichever yields a smaller image.
+ *                clipRgn - already set to the cell rect by html_redraw_box
+ *                before content_redraw fires - clips the overflow.
+ *   NONE       - render at intrinsic size, aligned in the cell.
+ *   SCALE_DOWN - `none` or `contain`, whichever yields a smaller image.
  *
  * Integer math throughout: int64_t intermediates ARE NOT used (CW8 PPC
- * miscompiles them — see CLAUDE.md Known Gotchas). The 32-bit products
+ * miscompiles them - see CLAUDE.md Known Gotchas). The 32-bit products
  * here (e.g. nat_w * cell_h) cap at ~16k*16k = 256M, which fits.
  */
-/* fixes201 — object-position offset resolver.
+/* fixes201 - object-position offset resolver.
  *
  * Reads both the keyword and numeric (percent/px) storage slots; when
  * the numeric slot has bit 31 set (the parser's "numeric SET"
@@ -481,7 +481,7 @@ static int html_redraw_object_pos_offset(int axis_free, uint8_t kw_pos,
 		 *   offset = (axis_free * q86) / (64 * 100)
 		 *         = (axis_free * q86) / 6400
 		 * axis_free up to ~16000 (cell dim), q86 up to ~8191, so
-		 * the int32 product caps at 1.3e8 — fits comfortably. */
+		 * the int32 product caps at 1.3e8 - fits comfortably. */
 		(void)real_int;
 		(void)real_frac_64;
 		offset = (axis_free * q86) / 6400;
@@ -692,7 +692,7 @@ static bool html_redraw_box_has_background(struct box *box)
 				== CSS_MACSURF_GRADIENT_SET)
 			return true;
 
-		/* fixes347 — same defect class as fixes74d, but for
+		/* fixes347 - same defect class as fixes74d, but for
 		 * `background-image: url(...)`. A box whose only background
 		 * declaration is an image (no background-color, no gradient)
 		 * was returning false here, meaning html_redraw_find_bg_box
@@ -1000,7 +1000,7 @@ text_redraw(const char *utf8_text,
  * MacSurf (#252): resolve the CSS accent-color for a form-control box.
  * Returns true and writes the tint colour when accent-color is an explicit
  * colour or currentColor; returns false for auto/inherit (keep the default
- * platinum "blob" styling). Not blended — the selection blob is a solid
+ * platinum "blob" styling). Not blended - the selection blob is a solid
  * fill, so a crisp colour reads better than an antialiased one.
  */
 static bool html_redraw_accent_colour(struct box *box, colour *out)
@@ -1026,7 +1026,7 @@ static bool html_redraw_accent_colour(struct box *box, colour *out)
 
 
 /**
- * fixes1052 (#80) — should this gadget paint its BUILT-IN widget?
+ * fixes1052 (#80) - should this gadget paint its BUILT-IN widget?
  *
  * `appearance: none` means the element is drawn from its own CSS box instead
  * of the platform control. MacSurf never used the Carbon Control Manager for
@@ -1046,7 +1046,7 @@ static bool html_redraw_widget_is_native(struct box *box)
 }
 
 /**
- * fixes1052 (#80) — does this gadget get the normal CSS box painted?
+ * fixes1052 (#80) - does this gadget get the normal CSS box painted?
  *
  * Text-ish controls always did (they are drawn as a styled box already). A
  * checkbox or radio joins them ONLY under `appearance: none`: with the
@@ -1336,31 +1336,31 @@ static bool html_redraw_file(int x, int y, int width, int height,
 #ifdef __MACOS9__
 extern int macos9_get_bg_fixed_origin(int *out_x, int *out_y,
 		int *out_w, int *out_h);
-/* fixes361h — second-shadow plumbing via a frontend-side one-shot
+/* fixes361h - second-shadow plumbing via a frontend-side one-shot
  * static instead of a plot_style_t struct extension. fixes361b/g put
  * box_shadow_2_* on plot_style_t, but several NetSurf-core sites
  * declare plot_style_t locals without zero-initialising every field
- * — leaving the new fields as stack garbage and triggering phantom
+ * - leaving the new fields as stack garbage and triggering phantom
  * second-shadow paints. With the value living in a macos9-side
  * static, the plotter reads-then-clears: only the immediately
  * preceding macos9_set_box_shadow_2 call can produce a paint.
  *
- * fixes362 — same pattern for the third shadow (the outer drop in the
+ * fixes362 - same pattern for the third shadow (the outer drop in the
  * Platinum two-inset + drop convention). */
 extern void macos9_set_box_shadow_2(int32_t packed);
 extern void macos9_set_box_shadow_3(int32_t packed);
-/* fixes364 — horizontal stripe one-shot. Set right before the bg
+/* fixes364 - horizontal stripe one-shot. Set right before the bg
  * rectangle paint so the plotter overrides the default flat fill with
  * alternating-row stripes. Same read-and-clear lifecycle as the
  * box_shadow_2/3 setters. */
 extern void macos9_set_hstripe_bg(int32_t packed);
-/* fixes365c — two-layer 2x2 dot-grid background one-shot. Set right
+/* fixes365c - two-layer 2x2 dot-grid background one-shot. Set right
  * before the bg rectangle paint so the plotter overrides the flat fill
  * with a 2x2 grid of alternating 1px vertical (c1) + horizontal (c2)
  * stripes. Same read-and-clear lifecycle as the box_shadow_2/3 and
  * hstripe_bg setters. */
 extern void macos9_set_dotgrid(int32_t packed);
-/* fixes365b — diagonal / 3-stop linear-gradient one-shots. Set right
+/* fixes365b - diagonal / 3-stop linear-gradient one-shots. Set right
  * before the bg rectangle paint so the plotter routes through the
  * per-pixel interpolation branch with the author's full angle and
  * stop palette. Same read-and-clear lifecycle as the box_shadow_2/3
@@ -1376,7 +1376,7 @@ static colour html_redraw_opaque_backdrop(struct box *box, colour page_default);
 static colour html_redraw_precomposite_rgba(colour fill, colour backdrop);
 
 /**
- * fixes1048 (#280) — resolve the background TILE size from background-size.
+ * fixes1048 (#280) - resolve the background TILE size from background-size.
  *
  * Extracted so the SAME answer serves both consumers. It previously existed
  * only as an inline block next to the plot call, which ran AFTER
@@ -1471,7 +1471,7 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 		const css_unit_ctx *unit_len_ctx,
 		const struct redraw_context *ctx)
 {
-	int bg_tile_w = 0;   /* fixes1048 — resolved ONCE, used by both the */
+	int bg_tile_w = 0;   /* fixes1048 - resolved ONCE, used by both the */
 	int bg_tile_h = 0;   /* background-position math and the plot call. */
 	bool repeat_x = false;
 	bool repeat_y = false;
@@ -1655,7 +1655,7 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	                } else {
 	                        pstyle_fill_bg.box_shadow_color = 0;
 	                }
-	                /* fixes361h / 362 — extra shadows go through the
+	                /* fixes361h / 362 - extra shadows go through the
 	                 * macos9_set_box_shadow_{2,3} one-shot statics;
 	                 * plotter reads-then-clears. Avoids the stack-
 	                 * garbage class that fixes361b/g hit when
@@ -1665,14 +1665,14 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	                                background->style));
 	                macos9_set_box_shadow_3(css_computed_box_shadow_3(
 	                                background->style));
-	                /* fixes364 — alternating-row stripes from cssh_css.c
+	                /* fixes364 - alternating-row stripes from cssh_css.c
 	                 * rewrite of `repeating-linear-gradient(to bottom,
 	                 * c1, c2, ...)`. */
 	                {
 	                        int32_t hstripe_val =
 	                                css_computed_macsurf_hstripe_bg(
 	                                        background->style);
-	                        /* fixes366f — only call the setter when the
+	                        /* fixes366f - only call the setter when the
 	                         * value is set. Calling with 0 wipes any
 	                         * earlier non-zero value before the actual
 	                         * paint consumes it. Mirrors the existing
@@ -1687,7 +1687,7 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	                                macos9_set_hstripe_bg(hstripe_val);
 	                        }
 	                }
-	                /* fixes365c — 2x2 dot-grid texture from cssh_css.c
+	                /* fixes365c - 2x2 dot-grid texture from cssh_css.c
 	                 * rewrite of two-layer 1px linear-gradient pattern. */
 	                {
 	                        int32_t dotgrid_val =
@@ -1717,7 +1717,7 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	                const css_color *full_stops;
 	                macsurf_gradient_unpack(grad_col, &gc1, &gc2,
 	                                        &grad_h, &grad_r);
-	                /* fixes344b — when the rule used rgba(.../X) or
+	                /* fixes344b - when the rule used rgba(.../X) or
 	                 * `transparent` stops, libcss stored the full
 	                 * ARGB in the outer style side-channel. Pre-
 	                 * blend toward the body's background-color so
@@ -1782,7 +1782,7 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	                                  PLOT_OP_TYPE_LINEAR_GRADIENT);
 	                pstyle_fill_bg.fill_colour  = gc1;
 	                pstyle_fill_bg.fill_colour2 = gc2;
-	                /* fixes345 — plumb the radial size+position prefix
+	                /* fixes345 - plumb the radial size+position prefix
 	                 * through to the painter. radial_set=false means
 	                 * fall back to existing centered-fill behaviour. */
 	                pstyle_fill_bg.radial_set = false;
@@ -1802,7 +1802,7 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	                                pstyle_fill_bg.radial_py = (int)rad[3];
 	                        }
 	                }
-	                /* fixes365b — diagonal / 3-stop side-channel. When
+	                /* fixes365b - diagonal / 3-stop side-channel. When
 	                 * the cascade allocated the extended descriptor, push
 	                 * the angle + stops array to the plotter via the
 	                 * one-shot statics. For cardinal angles (0/90/180/270)
@@ -1918,7 +1918,7 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 			break;
 		}
 
-		/* fixes1048 (#280) — resolve the TILE size BEFORE position.
+		/* fixes1048 (#280) - resolve the TILE size BEFORE position.
 		 *
 		 * Percentage background-position aligns the SIZED image inside
 		 * the positioning area, so it needs the post-background-size
@@ -2015,7 +2015,7 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 		/* plot the background colour */
 		css_computed_background_color(background->style, &bgcol);
 
-		/* fixes306 (#41) — background-attachment: fixed for gradients.
+		/* fixes306 (#41) - background-attachment: fixed for gradients.
 		 * Anchor the gradient stops to the viewport (not the box) by
 		 * substituting the viewport rect for `r` before the paint. The
 		 * QD clipRgn still narrows the visible pixels to the box, so
@@ -2064,7 +2064,7 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 							  PLOT_OP_TYPE_LINEAR_GRADIENT);
 				pstyle_fill_bg.fill_colour  = gc1;
 				pstyle_fill_bg.fill_colour2 = gc2;
-				/* fixes365b — extended (diagonal / 3-stop). */
+				/* fixes365b - extended (diagonal / 3-stop). */
 #ifdef __MACOS9__
 				if (!grad_r) {
 					const int32_t *grad_ext =
@@ -2140,7 +2140,7 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 							  PLOT_OP_TYPE_LINEAR_GRADIENT);
 				pstyle_fill_bg.fill_colour  = gc1;
 				pstyle_fill_bg.fill_colour2 = gc2;
-				/* fixes365b — extended (diagonal / 3-stop). */
+				/* fixes365b - extended (diagonal / 3-stop). */
 #ifdef __MACOS9__
 				if (!grad_r) {
 					const int32_t *grad_ext =
@@ -2176,7 +2176,7 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 		}
 		/* and plot the image */
 		if (plot_content) {
-			/* fixes1048 — the positioning-area capture that fixes1047
+			/* fixes1048 - the positioning-area capture that fixes1047
 			 * added here is gone: the tile size is now resolved
 			 * up-front (before background-position needs it), so
 			 * nothing downstream of this overwrite has to measure the
@@ -2228,7 +2228,7 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 						background->style) ==
 						CSS_IMAGE_RENDERING_CRISP_EDGES));
 
-				/* fixes1048 (#280) — the tile size was resolved up-front by
+				/* fixes1048 (#280) - the tile size was resolved up-front by
 				 * html_redraw_bg_tile_size (before background-position,
 				 * which needs it). The block that used to live here ran
 				 * AFTER position and measured the image against ITSELF,
@@ -2407,8 +2407,8 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	                } else {
 	                        pstyle_fill_bg.box_shadow_color = 0;
 	                }
-	                /* fixes361h / 362 — extra shadows via one-shot
-	                 * statics. fixes364 — stripe pattern via same
+	                /* fixes361h / 362 - extra shadows via one-shot
+	                 * statics. fixes364 - stripe pattern via same
 	                 * pattern. */
 #ifdef __MACOS9__
 	                macos9_set_box_shadow_2(css_computed_box_shadow_2(
@@ -2418,7 +2418,7 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	                {
 	                        int32_t hstripe_val =
 	                                css_computed_macsurf_hstripe_bg(box->style);
-	                        /* fixes366f — gate setter same as bg-path. */
+	                        /* fixes366f - gate setter same as bg-path. */
 	                        if (hstripe_val != 0) {
 	                                if (hstripe_seen_b < 5) {
 	                                        macsurf_debug_log_writef(
@@ -2429,7 +2429,7 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	                                macos9_set_hstripe_bg(hstripe_val);
 	                        }
 	                }
-	                /* fixes365c — 2x2 dot-grid pattern setter. */
+	                /* fixes365c - 2x2 dot-grid pattern setter. */
 	                {
 	                        int32_t dotgrid_val =
 	                                css_computed_macsurf_dotgrid(box->style);
@@ -2461,7 +2461,7 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	                                          PLOT_OP_TYPE_LINEAR_GRADIENT);
 	                pstyle_fill_bg.fill_colour  = gc1;
 	                pstyle_fill_bg.fill_colour2 = gc2;
-	                /* fixes365b — extended (diagonal / 3-stop). */
+	                /* fixes365b - extended (diagonal / 3-stop). */
 #ifdef __MACOS9__
 	                if (!grad_r) {
 	                        const int32_t *grad_ext =
@@ -2554,7 +2554,7 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 		int32_t grad_col_late;
 		*background_colour = nscss_color_to_ns(bgcol);
 		pstyle_fill_bg.fill_colour = *background_colour;
-		/* MacSurf fixes40/47/48 — gradient overrides bg-color. */
+		/* MacSurf fixes40/47/48 - gradient overrides bg-color. */
 		if (box && box->style &&
 		    css_computed_macsurf_gradient(box->style,
 		        &grad_col_late) == CSS_MACSURF_GRADIENT_SET) {
@@ -2569,7 +2569,7 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 						  PLOT_OP_TYPE_LINEAR_GRADIENT);
 			pstyle_fill_bg.fill_colour  = gc1;
 			pstyle_fill_bg.fill_colour2 = gc2;
-			/* fixes365b — extended (diagonal / 3-stop). */
+			/* fixes365b - extended (diagonal / 3-stop). */
 #ifdef __MACOS9__
 			if (!grad_r) {
 				const int32_t *grad_ext =
@@ -2634,7 +2634,7 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 						  PLOT_OP_TYPE_LINEAR_GRADIENT);
 			pstyle_fill_bg.fill_colour  = gc1;
 			pstyle_fill_bg.fill_colour2 = gc2;
-			/* fixes365b — extended (diagonal / 3-stop). */
+			/* fixes365b - extended (diagonal / 3-stop). */
 #ifdef __MACOS9__
 			if (!grad_r) {
 				const int32_t *grad_ext =
@@ -2821,7 +2821,7 @@ html_redraw_decoration_run(const struct redraw_context *ctx,
 		return true;
 	}
 
-	/* #44: thickness > 1 — draw the (single-line) styles as `dthick`
+	/* #44: thickness > 1 - draw the (single-line) styles as `dthick`
 	 * stacked 1px lines. double/wavy carry their own vertical extent,
 	 * so thickness only stacks the solid/dotted/dashed forms. */
 	if (dthick > 1 && dstyle != CSS_TEXT_DECORATION_STYLE_DOUBLE &&
@@ -3180,7 +3180,7 @@ static bool html_redraw_text_box(const html_content *html, struct box *box,
 				marker_w < (clip->x1 - x)) {
 			plot_style_t fill_style = {
 				PLOT_OP_TYPE_NONE
-			}; /* fixes361g — zero-init ALL fields so plotters.c
+			}; /* fixes361g - zero-init ALL fields so plotters.c
 			    * doesn't read garbage in box_shadow_2_* etc. */
 			struct rect r;
 			int ell_x = clip->x1 - marker_w;
@@ -3384,7 +3384,7 @@ static bool html_redraw_multicol_rules(
 	css_color rule_color;
 	plot_style_t rule_style = {
 		PLOT_OP_TYPE_NONE
-	}; /* fixes361g — zero-init all fields to keep box_shadow_2_*
+	}; /* fixes361g - zero-init all fields to keep box_shadow_2_*
 	    * (plot_style.h extension) from leaking stack garbage into
 	    * the plotter's second-inset paint path. */
 	struct box *child;
@@ -3660,7 +3660,7 @@ static bool html_redraw_box_children(const html_content *html, struct box *box,
 		if (flow_n < (int)(sizeof(flow_buf) / sizeof(flow_buf[0]))) {
 			flow_buf[flow_n++] = c;
 		} else {
-			/* Out of all buckets — paint immediately as last resort. */
+			/* Out of all buckets - paint immediately as last resort. */
 			if (!html_redraw_box(html, c, x_off, y_off,
 					clip, scale,
 					current_background_color, ctx))
@@ -3768,7 +3768,7 @@ static bool macsurf_box_node_is_canvas(struct box *box)
 /**
  * MacSurf (#227): the backdrop a translucent (rgba) background fill
  * composites against is the nearest ancestor box with a fully-opaque
- * background-color — NOT the threaded current_background_color, which
+ * background-color - NOT the threaded current_background_color, which
  * mis-resolves to the page background through nested boxes on this fork
  * (reproduced: a plain opaque div > rgba div renders grey, not tinted).
  * Walk box->parent for the first opaque background-color; fall back to
@@ -3795,7 +3795,7 @@ static colour html_redraw_opaque_backdrop(struct box *box, colour page_default)
  * opaque `backdrop` and return the resulting OPAQUE colour, so the plotter
  * paints the right tint without depending on the global backdrop. Both are
  * NetSurf colours (0xTTBBGGRR); transparency is the high byte. Integer math
- * only (max 255*255) — CW8 safe.
+ * only (max 255*255) - CW8 safe.
  */
 static colour html_redraw_precomposite_rgba(colour fill, colour backdrop)
 {
@@ -3868,7 +3868,7 @@ bool html_redraw_box(const html_content *html, struct box *box,
 	 * Those garbage values trick the clip test into skipping real content.
 	 * Observed garbage: box->x = 30728, box->descendant_y0 = -39845888
 	 * on macos9. The original clamps used ±10000 across the board, which
-	 * worked when advanced.html was shorter — but once probe cards FF1–FF5
+	 * worked when advanced.html was shorter - but once probe cards FF1–FF5
 	 * (fixes154), C1–C5, R1–R5, V1–V4, A1–A4, ZS1–ZS6 etc. pushed total
 	 * page height past 10000 px (current c_h = 10035), the root box's
 	 * height + descendant_y1 got reset to 0 EVERY redraw, and the walker
@@ -3894,7 +3894,7 @@ bool html_redraw_box(const html_content *html, struct box *box,
 		MSURF_CLAMP(box->descendant_y0, -200000, 200000, 0);
 		MSURF_CLAMP(box->descendant_x1, -10000, 10000, box->width);
 		MSURF_CLAMP(box->descendant_y1, -200000, 200000, box->height);
-		/* Expand descendants if collapsed — happens when layout hasn't
+		/* Expand descendants if collapsed - happens when layout hasn't
 		 * fully run but the box has real text children. Skip this for
 		 * boxes that can carry an element scrollbar (overflow auto/scroll):
 		 * the inflated descendant extent would trick box_[hv]scrollbar_present
@@ -3910,7 +3910,7 @@ bool html_redraw_box(const html_content *html, struct box *box,
 			box->descendant_y1 = box->descendant_y0 + 200000;
 	}
 
-	/* fixes191c + fixes201 — position: sticky clamp (V2).
+	/* fixes191c + fixes201 - position: sticky clamp (V2).
 	 *
 	 * Sticky lays out exactly like position: relative, then at paint
 	 * time we shift the box (and all descendants, by adjusting
@@ -3928,7 +3928,7 @@ bool html_redraw_box(const html_content *html, struct box *box,
 	 *
 	 * V2 limits remaining:
 	 *   - no containing-block-bottom clamp (sticky never "lets go" at
-	 *     its parent's bottom edge — it pins to the viewport for the
+	 *     its parent's bottom edge - it pins to the viewport for the
 	 *     full document height). For sidebars/headers in modern themes
 	 *     the parent is usually tall enough that this is invisible.
 	 *   - no nested-scroll-container support (sticky always pins to
@@ -4036,13 +4036,13 @@ bool html_redraw_box(const html_content *html, struct box *box,
 		}
 	}
 
-	/* fixes610 — box-level percent translate (e.g. the off-canvas
+	/* fixes610 - box-level percent translate (e.g. the off-canvas
 	 * sidebar's transform:translateX(-100%)). A % translate resolves
 	 * against the box's OWN padding-box size, known only here at paint
 	 * time; shifting x_parent/y_parent moves the box AND its whole subtree
 	 * (same mechanism as the sticky block above). Only the percent case
-	 * (packed bit 31, emitted by the 0x0081 cascade) is handled here —
-	 * pixel translate stays on the background/text transform path — so
+	 * (packed bit 31, emitted by the 0x0081 cascade) is handled here -
+	 * pixel translate stays on the background/text transform path - so
 	 * existing transforms never double-apply. */
 	if (box->style != NULL) {
 		int32_t tfm_packed = 0;
@@ -4171,7 +4171,7 @@ bool html_redraw_box(const html_content *html, struct box *box,
 	if (clip->y1 < r.y0 || r.y1 < clip->y0 ||
 			clip->x1 < r.x0 || r.x1 < clip->x0) {
 		macos9_hrb_clip_skips++;
-		/* Do NOT return early — recurse children even when this box is
+		/* Do NOT return early - recurse children even when this box is
 		 * outside the clip rect.  With partially-initialised layout
 		 * coordinates some content lands at y=0 and would be wrongly
 		 * skipped otherwise.  Matches pre-regression fixes169 behaviour. */
@@ -4395,7 +4395,7 @@ bool html_redraw_box(const html_content *html, struct box *box,
 		struct rect b; /* border edge rectangle */
 		struct rect p; /* clipped rect */
 		bool first = true;
-		/* fixes1057 (#256) — box-decoration-break.
+		/* fixes1057 (#256) - box-decoration-break.
 		 *
 		 * An inline box that wraps is painted as several fragments, and
 		 * `first`/`last` are what make the LEFT border appear only on the
@@ -4728,7 +4728,7 @@ bool html_redraw_box(const html_content *html, struct box *box,
 		 * cell is hardware-clipped by QuickDraw on draw. */
 		html_redraw_apply_object_fit(box, &obj_data);
 
-		/* fixes1065 (#306) — is a replaced element being ASPECT-DISTORTED?
+		/* fixes1065 (#306) - is a replaced element being ASPECT-DISTORTED?
 		 *
 		 * #306 asks one question about the 68kMLA header logo (natural
 		 * 100x36, HTML width="100" height="36"): once the mobile-only
@@ -4754,7 +4754,7 @@ bool html_redraw_box(const html_content *html, struct box *box,
 				long want = (long) dh * nw;
 				long diff = got > want ? got - want : want - got;
 				if (want > 0 && diff * 20 > want) {
-					/* fixes1067 (#226) — name the BRANCH.
+					/* fixes1067 (#226) - name the BRANCH.
 					 *
 					 * fixes1065 proved distortion is real
 					 * (13x painted=9x21 from natural=64x64)
@@ -4910,7 +4910,7 @@ bool html_redraw_box(const html_content *html, struct box *box,
 			return false;
 
 	} else if (box->flags & SVG_INLINE) {
-		/* fixes195 — inline <svg> root. The SVG DOM children are
+		/* fixes195 - inline <svg> root. The SVG DOM children are
 		 * not in the box tree (skipped at box_construct time);
 		 * the macos9 SVG painter walks the DOM directly and
 		 * issues plotter calls for each shape. The padded

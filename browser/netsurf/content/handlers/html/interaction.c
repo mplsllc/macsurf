@@ -677,9 +677,9 @@ struct mouse_action_state {
  * text_box - text box
  * text_box_x - text_box
  */
-/* fixes654 — split-anchor click resolution. When an <a href>'s inline box gets
+/* fixes654 - split-anchor click resolution. When an <a href>'s inline box gets
  * split (e.g. a XenForo SVG-icon flex button: the anchor's href ends up on its
- * text box, but the sibling icon box you actually click does NOT inherit it —
+ * text box, but the sibling icon box you actually click does NOT inherit it -
  * the box_construct href-inheritance chain is broken by the flex/SVG box
  * restructuring), the DOM-order box walk in get_mouse_action_node resolves the
  * clicked box and finds no link. But the <a> is ALWAYS a DOM ancestor of what
@@ -717,21 +717,21 @@ link_box_for_ancestor(dom_node *start)
 	return found;
 }
 
-/* fixes656 — sticky-overlay hit-test precedence.
+/* fixes656 - sticky-overlay hit-test precedence.
  *
  * The renderer paints position:sticky boxes PINNED to a viewport edge
  * (redraw.c "position: sticky clamp", fixes191c/201): it lays them out like
  * position:relative, then at PAINT time shifts the box + its whole subtree by
  * adjusting x_parent/y_parent so the painted position respects top/bottom/
- * left/right. The DOM-order hit-test (box_at_point) does NOT apply that shift —
- * it uses the un-pinned layout position — so a click on a pinned cookie bar /
+ * left/right. The DOM-order hit-test (box_at_point) does NOT apply that shift -
+ * it uses the un-pinned layout position - so a click on a pinned cookie bar /
  * sticky header lands ~N px away in empty space and either misses or hits the
  * page content painted BEHIND the bar. Cookie-consent bars (68kmla) are the
  * canonical case: the Accept button is unreachable except when scrolled so far
  * that pinned≈laid-out.
  *
  * These two helpers mirror the redraw pin math to recover the PAINTED position
- * of sticky boxes for hit-testing, and — because sticky paints on top — let a
+ * of sticky boxes for hit-testing, and - because sticky paints on top - let a
  * link found inside a *displaced* sticky subtree take precedence over whatever
  * the normal walk found behind it. Scroll offset comes from the frontend
  * (set just before browser_window_mouse_click). */
@@ -759,7 +759,7 @@ compute_sticky_shift(html_content *html, struct box *box, int bx, int by,
 	viewport_h = FIXTOINT(html->unit_len_ctx.viewport_height);
 
 	/* normal_{x,y}: painted position BEFORE pin, in viewport coords
-	 * (layout doc coord minus scroll) — matches redraw's normal_x/y. */
+	 * (layout doc coord minus scroll) - matches redraw's normal_x/y. */
 	normal_x = bx - macos9_hittest_scroll_x;
 	normal_y = by - macos9_hittest_scroll_y;
 	box_w = box->width + box->padding[LEFT] + box->padding[RIGHT];
@@ -813,7 +813,7 @@ compute_sticky_shift(html_content *html, struct box *box, int bx, int by,
  * box inside a DISPLACED sticky subtree (shift != 0), measure the click's
  * distance to the box's PAINTED rect and keep the nearest within *best_d2.
  * Restricting to displaced subtrees means this only claims clicks that land on
- * a pinned overlay — normal in-flow links are untouched. The nearest-within-
+ * a pinned overlay - normal in-flow links are untouched. The nearest-within-
  * radius test also absorbs the split-anchor case (icon box sibling of the
  * href-carrying text box), via nearest-within-radius in painted coords. */
 static void
@@ -875,7 +875,7 @@ get_mouse_action_node(html_content *html,
 	memset(man, 0, sizeof(struct mouse_action_state));
 	man->result.pointer = BROWSER_POINTER_DEFAULT;
 
-	/* fixes891 — DO NOT WALK A BOX TREE THAT IS BEING REBUILT.
+	/* fixes891 - DO NOT WALK A BOX TREE THAT IS BEING REBUILT.
 	 *
 	 * This is the hover crash. On hardware:
 	 *   macos9_poll_mouse_hover -> browser_window_mouse_track ->
@@ -1051,7 +1051,7 @@ get_mouse_action_node(html_content *html,
 	 * win over any page content link the DOM-order walk found painted BEHIND
 	 * it. Search displaced sticky subtrees in PAINTED coords for the nearest
 	 * <a href> within ~48px; if found, override whatever the normal walk chose.
-	 * Runs unconditionally (NOT gated on 'no link') — that's the whole point:
+	 * Runs unconditionally (NOT gated on 'no link') - that's the whole point:
 	 * it takes precedence. Only claims clicks on actually-displaced overlays,
 	 * so ordinary pages are unaffected. */
 	{
@@ -1085,7 +1085,7 @@ get_mouse_action_node(html_content *html,
 			man->link.is_imagemap = false;
 		}
 	}
-	/* fixes1179 — click probe: log every click showing link status and box info */
+	/* fixes1179 - click probe: log every click showing link status and box info */
 	{ extern void macsurf_debug_log_writef(const char *fmt, ...);
 	macsurf_debug_log_writef("LIFE CLICK link=%s node=%p box=%p type=%d w=%d h=%d",
 		man->link.url ? "YES" : "no", (void *)man->node, (void *)man->link.box,
@@ -1094,7 +1094,7 @@ get_mouse_action_node(html_content *html,
 		man->link.box ? man->link.box->height : -1); }
 
 	/* fixes657: the fixes655 GLOBAL nearest-<a>-within-48px fallback was
-	 * removed here — it grabbed the closest link to ANY click, so clicking
+	 * removed here - it grabbed the closest link to ANY click, so clicking
 	 * empty whitespace near a link navigated to it ("clicks links when not
 	 * even over them"). The cookie-bar / overlay case it was meant to solve is
 	 * now handled correctly and in-scope by the sticky-precedence pass above
@@ -1615,7 +1615,7 @@ default_mouse_action(html_content *html,
 
 
 /**
- * fixes1064 (#114) — hand the next download the name from <a download="name">.
+ * fixes1064 (#114) - hand the next download the name from <a download="name">.
  *
  * Walks the clicked box's inline container for the sibling box that carries
  * both the same href and a DOM node -- that is the anchor element itself.
@@ -1706,7 +1706,7 @@ mouse_action_drag_none(html_content *html,
 			html->dyn_active_node = want_active;
 			changed = true;
 		}
-		/* fixes393 — DISABLED the per-hover whole-page recascade +
+		/* fixes393 - DISABLED the per-hover whole-page recascade +
 		 * reformat. On the first real page we rendered
 		 * (mbasic.facebook.com, 160 boxes) this fired a full
 		 * html_recascade_tree (~85 boxes restyled) AND a full reformat
@@ -1797,7 +1797,7 @@ mouse_action_drag_none(html_content *html,
 	/* fire dom click event */
 	if (mouse & BROWSER_MOUSE_CLICK_1) {
 		int js_default_prevented = 0;
-		/* fixes889 — CLICK/RECONVERT CORRELATION.
+		/* fixes889 - CLICK/RECONVERT CORRELATION.
 		 *
 		 * The hardware click crash is
 		 *   html_mouse_action -> get_mouse_action_node ->
@@ -1827,7 +1827,7 @@ mouse_action_drag_none(html_content *html,
 					? "  <-- MISMATCH: clicking a tree the last reconvert did not install"
 					: "");
 		}
-		/* fixes1008 (1f) — THE REST OF THE MOUSE EVENTS.
+		/* fixes1008 (1f) - THE REST OF THE MOUSE EVENTS.
 		 *
 		 * Only click/submit/keydown were ever dispatched, so a page that
 		 * opens a menu on mousedown, validates on mouseup, or shows a
@@ -1857,11 +1857,11 @@ mouse_action_drag_none(html_content *html,
 			}
 		}
 
-		/* fixes989 — this IS the dispatch, and its return value IS the
+		/* fixes989 - this IS the dispatch, and its return value IS the
 		 * preventDefault answer: fire_dom_event returns false when the
 		 * event was cancelled. Now that addEventListener registers with
 		 * libdom (macsurf_qjs.c), this reaches real JS handlers. */
-		/* fixes1139 DIAG — WHY THE CLICK DID NOTHING.
+		/* fixes1139 DIAG - WHY THE CLICK DID NOTHING.
 		 *
 		 * 68kmla's "Post thread" is not a plain link: XenForo renders
 		 * <a href="..." data-xf-click="overlay"> and binds ONE delegated
@@ -1986,7 +1986,7 @@ mouse_action_drag_none(html_content *html,
 	 */
 	switch (mas.result.action) {
 	case ACTION_SUBMIT:
-		/* fixes997 (#264) — fire a real `submit` event at the FORM and
+		/* fixes997 (#264) - fire a real `submit` event at the FORM and
 		 * let a handler cancel it.
 		 *
 		 * Nothing in the tree dispatched this event at all:
@@ -2032,7 +2032,7 @@ mouse_action_drag_none(html_content *html,
 		break;
 
 	case ACTION_NAVIGATE:
-		/* fixes1063 (#114) — <a download> saves instead of navigating.
+		/* fixes1063 (#114) - <a download> saves instead of navigating.
 		 * Same call, plus the flag browser_window_navigate already
 		 * honours (browser_window.c:3604), so there is no second
 		 * download path to drift from the real one.
@@ -2046,7 +2046,7 @@ mouse_action_drag_none(html_content *html,
 		 * purely to download into it would leave an empty one behind. */
 		if (mas.link.box != NULL &&
 				(mas.link.box->flags & LINK_DOWNLOAD) != 0) {
-			/* fixes1064 (#114) — the suggested filename lives on the
+			/* fixes1064 (#114) - the suggested filename lives on the
 			 * anchor ELEMENT, and the clicked box is usually the
 			 * node-less TEXT box. The anchor's box is its SIBLING in
 			 * the same inline container (see the box-tree note in
@@ -2207,7 +2207,7 @@ bool html_keypress(struct content *c, uint32_t key)
 	 * `event.preventDefault()` then we won't handle the event when
 	 * we're not supposed to.
 	 */
-	/* fixes1008 (1f) — AT THE FOCUSED ELEMENT, and keyup/keypress too.
+	/* fixes1008 (1f) - AT THE FOCUSED ELEMENT, and keyup/keypress too.
 	 *
 	 * This is item 4 of the upstream TODO immediately above. Every keyboard
 	 * event fired at html->layout->node -- the ROOT -- so e.target was always
@@ -2256,7 +2256,7 @@ bool html_keypress(struct content *c, uint32_t key)
 		}
 	}
 #ifdef __MACOS9__
-	/* fixes160b — was "key=0x%lx". The minimal formatter in
+	/* fixes160b - was "key=0x%lx". The minimal formatter in
 	 * macsurf_debug_log only knows %d/%ld/%p/%s/%%; %lx printed
 	 * literally and ate later args' alignment. Switched to %ld. */
 	{ extern void macsurf_debug_log_writef(const char *fmt, ...);

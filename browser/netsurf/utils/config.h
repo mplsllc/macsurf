@@ -205,7 +205,7 @@ char *realpath(const char *path, char *resolved_path);
     /* Theme auto-install */
     #define WITH_THEME_INSTALL
 #elif defined(__MACOS9__)
-    /* Mac OS 9 / Carbon — cooperative multitasking, no POSIX layer */
+    /* Mac OS 9 / Carbon - cooperative multitasking, no POSIX layer */
     #define NO_IPV6 1
 #elif defined(__HAIKU__) || defined(__BEOS__)
     /* for intptr_t */

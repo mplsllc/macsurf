@@ -1,5 +1,5 @@
 /*
- * MacSurf -- macsurf_debug_log.c  (fixes149)
+ * MacSurf - macsurf_debug_log.c  (fixes149)
  *
  * File-backed diagnostic channel. Opens "MacSurf Debug.log" on the
  * Desktop at startup, appends one CR-terminated line per call, and
@@ -15,7 +15,7 @@
  *   - All variables at top of block.
  *   - No // comments.
  *   - No variadic macros, no inline.
- *   - Minimal custom printf (no MSL vsnprintf dependency -- CW8's
+ *   - Minimal custom printf (no MSL vsnprintf dependency - CW8's
  *     Carbon MSL may not link vsnprintf reliably, and the existing
  *     macsurf_debug.c rolls its own integer formatter for the same
  *     reason).
@@ -37,7 +37,7 @@
 #endif
 #endif
 
-/* fixes765 (2.0 release) — the temporary #206 SSL/TLS channel and the fixes688
+/* fixes765 (2.0 release)  -  the temporary #206 SSL/TLS channel and the fixes688
  * perf channel are OFF for release. Their investigations (macintoshgarden http
  * downgrade -> fixes739; the typing-latency perf pass -> fixes760) are done, so
  * the release log is back to failures-only. Re-enable either #define below to
@@ -45,26 +45,26 @@
 /* #define MACSURF_SSL_LOG 1 */
 /* #define MACSURF_PERF_LOG 1 */
 
-/* ============ fixes716 — NUCLEAR DIAGNOSTIC MODE (#207) ============
+/* ============ fixes716  -  NUCLEAR DIAGNOSTIC MODE (#207) ============
  * ONE switch to capture EVERYTHING, hang-proof, for root-causing the
  * blank-page bug (and anything else the machine is silently skipping).
  * It:
  *   1. Opens the fixes675 crash-only gate AND every per-category
  *      sub-gate (layout / paint / redraw / fetch), so every log line
- *      the whole app emits is kept — not just crash/NAV/DIAG lines.
+ *      the whole app emits is kept  -  not just crash/NAV/DIAG lines.
  *   2. Turns on the runtime high-frequency trace channel
  *      (macsurf_debug_log_trace_enabled) at init.
  *   3. Flushes EVERY line straight to disk (buffer flush + FlushVol),
- *      not just the first 250 — so a freeze / blank / hang leaves the
+ *      not just the first 250  -  so a freeze / blank / hang leaves the
  *      COMPLETE trace on disk with nothing stuck in the RAM buffer.
  *
  * This is a DIAGNOSTIC build, not a release: it is slow (per-line HFS
- * sync) and produces very large logs. That is the point — completeness
+ * sync) and produces very large logs. That is the point  -  completeness
  * over speed. Self-enabled in this TU, so ONLY macsurf_debug_log.c
  * needs reshipping (no full rebuild). DELETE this one define to return
  * the build to normal crash-only logging. */
 /* fixes719c: NUCLEAR OFF. It flushed every log line to disk (FlushVol per
- * line) — ~15k synced writes per browsing session — which crippled the G3/
+ * line)  -  ~15k synced writes per browsing session  -  which crippled the G3/
  * QEMU to a "frozen" crawl. It did its job (captured the blank-screen bug,
  * now fixed by fixes719). Back to crash-only logging: fast, still keeps the
  * RECON HEAP BOUNDS line + crash forensics. Re-enable only to capture a new
@@ -94,7 +94,7 @@
 #include <string.h>
 #include <stdarg.h>
 
-/* fixes366c — per-navigation reset hooks for the diagnostic
+/* fixes366c  -  per-navigation reset hooks for the diagnostic
  * counters in redraw.c and plotters.c. Both are defined
  * unconditionally in their own .c files (no MACSURF_DEBUG guard),
  * so they link cleanly in release builds even when MACSURF_DEBUG
@@ -103,13 +103,13 @@
 extern void macos9_redraw_diag_counters_reset(void);
 extern void macos9_plotter_diag_counters_reset(void);
 
-/* fixes366h — runtime gate for high-frequency trace logging. Defined
+/* fixes366h  -  runtime gate for high-frequency trace logging. Defined
  * outside the MACSURF_DEBUG guard so both debug and release builds
  * link, and so a release build's empty tracef stub still satisfies the
  * extern in macsurf_debug_log.h. Default 0 (traces suppressed). */
 int macsurf_debug_log_trace_enabled = 0;
 
-/* fixes160a — SITE diagnostic counters. Defined at the top level
+/* fixes160a  -  SITE diagnostic counters. Defined at the top level
  * (outside MACSURF_DEBUG guards) so that html.c's extern references
  * still link in release builds, even though the log itself becomes
  * a no-op. Updated cross-module by image decode (img_ok / img_fail),
@@ -123,28 +123,28 @@ long macsurf__site_box_inlinec = 0;
 long macsurf__site_box_inline = 0;
 long macsurf__site_box_text = 0;
 long macsurf__site_box_other = 0;
-/* fixes352 (#107) — last reformat duration in ms (captured in
+/* fixes352 (#107)  -  last reformat duration in ms (captured in
  * html_reformat after nsu_getmonotonic_ms). Surfaced by about:perf. */
 long macsurf__site_reformat_ms = 0;
 long macsurf__site_img_ok = 0;
 long macsurf__site_img_fail = 0;
-/* fixes160d — CSS oversize-gate counters. ok = sheet small enough,
+/* fixes160d  -  CSS oversize-gate counters. ok = sheet small enough,
  * parsed and added to cascade; skip = sheet over MACOS9_CSS_MAX_BYTES,
  * dropped before libcss saw it. */
 long macsurf__site_css_ok = 0;
 long macsurf__site_css_skip = 0;
-/* fixes268 (#9) — total CSS bytes seen across all sheets this page.
+/* fixes268 (#9)  -  total CSS bytes seen across all sheets this page.
  * Reset in html_create alongside the other site_ counters. Compared
  * against a 384 KB cap in nscss_process_data so a stack of vendor
  * sheets can't blow the libcss memory budget. */
 unsigned long macsurf__site_css_total_bytes = 0;
-/* fixes268 (#11) — blocker enum + heavy mode latch
+/* fixes268 (#11)  -  blocker enum + heavy mode latch
  * (heavy already exists as macsurf__site_heavy below).
  * Blocker values: 0=none, 1=img_budget, 2=css_budget, 3=fetch_slots,
  * 4=fonts, 5=cpu. Latched once when crossed; later overrides only if
  * higher priority. */
 long macsurf__site_blocker = 0;
-/* fixes161a — resource governor counters. rgov_skip_* are bumped by
+/* fixes161a  -  resource governor counters. rgov_skip_* are bumped by
  * macos9_http_setup whenever per-class or global active caps refuse a
  * fetch (sub-resource skipped, never reaches libcss / image content
  * handler). fetch_active_peak tracks high-water-mark of active slots
@@ -160,13 +160,13 @@ long macsurf__site_rgov_skip_other = 0;
 long macsurf__site_fetch_active_peak = 0;
 long macsurf__site_fetch_slot_fail = 0;
 long macsurf__site_heavy = 0;
-/* fixes161b — global decoded image memory budget.
+/* fixes161b  -  global decoded image memory budget.
  * decoded_img_bytes_current is a running sum of width*height*4 across
  * every live decoded bitmap. Incremented at decode time, decremented
  * in macos9_qt_image_destroy. decoded_img_bytes_peak tracks the
  * high-water mark across the page load. decoded_img_skip_budget counts
  * images we refused to decode because doing so would have exceeded
- * MACOS9_DECODED_IMG_MAX_BYTES — these surface as placeholders
+ * MACOS9_DECODED_IMG_MAX_BYTES  -  these surface as placeholders
  * alongside the per-image oversize gate. These counters are global
  * (process-wide), not per-page, so the decrement matches the increment
  * even across navigations. */
@@ -183,14 +183,14 @@ long macsurf__site_decoded_img_skip_budget = 0;
 #include <Files.h>
 #include <Folders.h>
 #include <Script.h>
-#include <Processes.h>   /* fixes641 (#197) — app-relative log location */
+#include <Processes.h>   /* fixes641 (#197)  -  app-relative log location */
 #include <DateTimeUtils.h>
 #include <OSUtils.h>
-#include <Events.h>   /* fixes233 — TickCount() for log timestamps */
-#include <Timer.h>    /* fixes366a — Microseconds() / UnsignedWide */
+#include <Events.h>   /* fixes233  -  TickCount() for log timestamps */
+#include <Timer.h>    /* fixes366a  -  Microseconds() / UnsignedWide */
 
 /*
- * CW8's Folders.h generally defines these, but be defensive -- the
+ * CW8's Folders.h generally defines these, but be defensive - the
  * prefix file pattern for MacSurf is to provide fallbacks for
  * anything CW8 might miss.
  */
@@ -234,12 +234,12 @@ static int   g_log_open = 0;
 
 #endif
 
-/* fixes261 — forward declaration so log_close / log_flush can call
+/* fixes261  -  forward declaration so log_close / log_flush can call
  * the buffer-flush helper before its definition (which lives near the
  * log_write impl that owns the buffer). */
 static void macsurf_debug_log_buffer_flush(void);
 
-/* fixes895 (reconvert-crash hunt) — narrow dev gate, self-defined HERE so the
+/* fixes895 (reconvert-crash hunt)  -  narrow dev gate, self-defined HERE so the
  * hunt is armed/disarmed by reshipping ONLY this one file (no prefix edit, no
  * full rebuild). When defined, the crash-only gate additionally keeps the
  * "WORK reconvert" (box-build window) and "WORK timer" (QuickJS realm/timer
@@ -249,16 +249,16 @@ static void macsurf_debug_log_buffer_flush(void);
  * runtime-gated by macos9_reconvert_in_progress; this macro only controls
  * whether the emitted lines reach disk.
  *
- * fixes904 — OFF now that the reconvert crash is closed (fixes900-903). This
+ * fixes904  -  OFF now that the reconvert crash is closed (fixes900-903). This
  * both returns the log to crash-basic (drops the WORK reconvert/timer flood)
- * AND -- via the guards on macsurf_reconv_pos_flush / _reconv_flush below --
+ * AND - via the guards on macsurf_reconv_pos_flush / _reconv_flush below --
  * kills the per-node FlushVol cost, which the SYNCHRONOUS reconvert (fixes903)
  * had packed into one blocking pass (~150 volume syncs per rebuild = a large
  * chunk of the "sluggish"). Re-`#define MACSURF_VERBOSE_RECONVERT 1` to re-arm
  * the whole hunt (log lines + durable ReconvPos marker) if it ever recurs. */
 /* #define MACSURF_VERBOSE_RECONVERT 1 */
 
-/* fixes895 — phase-scoped eager flush. While non-zero, macsurf_debug_log_write
+/* fixes895  -  phase-scoped eager flush. While non-zero, macsurf_debug_log_write
  * FlushVols every line it keeps, so the in-flight reconvert/timer breadcrumbs
  * are on disk in order even if the trailing 4 KB buffer is lost to a hard bomb.
  * Armed by html_reconvert (via macsurf_debug_log_reconv_flush(1)) and cleared
@@ -272,7 +272,7 @@ macsurf_debug_log_reconv_flush(int on)
 #ifdef MACSURF_VERBOSE_RECONVERT
 	g_log_reconv_flush = on ? 1 : 0;
 #else
-	(void) on;   /* fixes904 — trace off: never arm the per-line FlushVol */
+	(void) on;   /* fixes904  -  trace off: never arm the per-line FlushVol */
 #endif
 }
 
@@ -394,7 +394,7 @@ extern void macsurf_debug_set_title(const char *msg);
 
 /* fixes641 (#197): resolve the running application's own directory so the log
  * lands next to MacSurf.app, not on the boot volume's Desktop. Duplicated
- * static (same helper as macos9_disk_cache.c — the codebase already duplicates
+ * static (same helper as macos9_disk_cache.c  -  the codebase already duplicates
  * small statics like macos9_ua_for_host rather than adding a shared TU). */
 #ifdef __MACOS9__
 /* fixes647: shared MacSurfData resolver, defined in macos9_disk_cache.c.
@@ -495,7 +495,7 @@ macsurf_debug_log_init(void)
 
 	(void)SetFPos(g_log_ref, fsFromLEOF, 0);
 
-	/* fixes703 — prominent, unmistakable session header so a log that spans
+	/* fixes703  -  prominent, unmistakable session header so a log that spans
 	 * several launches (the reporter didn't clear it) is trivially segmented.
 	 * Every line is '='-led so it survives the crash-only gate (fixes697).
 	 * __DATE__/__TIME__ stamp the BUILD (distinguishes two different .sit's);
@@ -520,7 +520,7 @@ macsurf_debug_log_init(void)
 		"====================================================================");
 	macsurf_debug_log_writef("log init OK vref=%d dirID=%ld fsref=%d",
 		(int)vRefNum, (long)dirID, (int)g_log_ref);
-	/* fixes96 — explicit checkpoint: the startup banner needs to be
+	/* fixes96  -  explicit checkpoint: the startup banner needs to be
 	 * on disk if a later crash happens during the first event loop. */
 	if (g_log_vref != 0) (void)FlushVol(NULL, g_log_vref);
 	macsurf_debug_set_title("log OK");
@@ -540,7 +540,7 @@ macsurf_debug_log_close(void)
 #endif
 }
 
-/* fixes720 — read the current log back into the caller's buffer. Flushes the
+/* fixes720  -  read the current log back into the caller's buffer. Flushes the
  * buffer first, reads from the module's OWN open fork (avoids a second open on
  * a busy file), then restores the append position. Returns bytes read (out is
  * NUL-terminated); 0 if the log isn't open. Used by File > Send Debug Log to
@@ -574,7 +574,7 @@ macsurf_debug_log_read(char *out, long cap)
 #endif
 }
 
-/* fixes261 — buffered log writes. Each MS_LOG previously fired 3
+/* fixes261  -  buffered log writes. Each MS_LOG previously fired 3
  * separate FSWrite calls (timestamp, message, CR) at ~100-200 us
  * Toolbox overhead each. ~3000 lines per cold load = ~1 s of FSWrite
  * wall-clock. Buffering to 4 KB chunks collapses that to ~10 FSWrites
@@ -591,7 +591,7 @@ macsurf_debug_log_read(char *out, long cap)
 static char g_log_buf[LOG_BUF_CAP];
 static long g_log_buf_pos = 0;
 
-/* fixes704 — durable EARLY logging. The first LOG_EAGER_LINES actually-
+/* fixes704  -  durable EARLY logging. The first LOG_EAGER_LINES actually-
  * written lines of a session flush straight to disk (buffer flush +
  * FlushVol) so a freeze/hang during startup still leaves the very
  * beginning on disk. After that we fall back to the fast buffered path
@@ -612,7 +612,7 @@ macsurf_debug_log_buffer_flush(void)
 #endif
 }
 
-/* fixes675 — RELEASE crash-only logging. For the shipping 1.68 build the
+/* fixes675  -  RELEASE crash-only logging. For the shipping 1.68 build the
  * diagnostic channel keeps ONLY crash / fault / guard reports (the durable
  * post-crash forensic trace) and drops every perf / render / fetch / JS
  * diagnostic. This returns non-zero for a line worth keeping. NAV is kept as
@@ -621,7 +621,7 @@ macsurf_debug_log_buffer_flush(void)
 static int
 macsurf_log_is_crash_report(const char *m)
 {
-	/* fixes697 — the startup banner ("=== MacSurf session Y-M-D H:M:S ==="
+	/* fixes697  -  the startup banner ("=== MacSurf session Y-M-D H:M:S ==="
 	 * and the two "====" rules around it) is the marker that tells a
 	 * reporter one log spans multiple launches. It was being dropped by
 	 * this crash-only gate (matches no crash keyword). Keep any '='-led
@@ -637,11 +637,11 @@ macsurf_log_is_crash_report(const char *m)
 	if (strstr(m, "ABORT") != NULL) return 1;
 	if (strstr(m, "NOMEM") != NULL) return 1;
 	if (strstr(m, "CORRUPT") != NULL) return 1;
-	/* fixes907 -- talloc heap corruption + the reconvert double-free hunt's
+	/* fixes907 - talloc heap corruption + the reconvert double-free hunt's
 	 * tree-free breadcrumbs. A legitimate crash-forensics class, so it stays
 	 * in the permanent crash-only gate (not behind a verbose macro). */
 	if (strstr(m, "TALLOC") != NULL) return 1;
-	/* fixes911 -- coarse LIFECYCLE trail. The crash-only gate kept NAV + FAIL
+	/* fixes911 - coarse LIFECYCLE trail. The crash-only gate kept NAV + FAIL
 	 * and essentially nothing else, so a post-mortem log showed WHERE we
 	 * navigated but never what the engine was doing when it died: the
 	 * death-row drain crash arrived with an ordinary NAV as its last line.
@@ -653,13 +653,13 @@ macsurf_log_is_crash_report(const char *m)
 	 * partition-bounds diagnostic (still useful if a field user with a
 	 * high-RAM Mac reports a blank page). All the other RECON reconnaissance
 	 * (per-nav MEM/RX, the retired KEY/TAref/PAINT/OVL perf probes) and the
-	 * per-launch DIAG memory readings are dropped for release — re-enable via
+	 * per-launch DIAG memory readings are dropped for release  -  re-enable via
 	 * MACSURF_NUCLEAR_LOG / MACSURF_VERBOSE_LOG when diagnosing a new bug. */
 	if (strstr(m, "RECON HEAP BOUNDS") != NULL) return 1;
-	/* fixes769 (#232) — let the mime-recon lines through the crash-only
+	/* fixes769 (#232)  -  let the mime-recon lines through the crash-only
 	 * gate so a downloaded-instead-of-rendered page is diagnosable. */
 	if (strstr(m, "RECON MIME") != NULL) return 1;
-	/* fixes953 — the ONE bring-up line kept for release. MacSurf now runs on
+	/* fixes953  -  the ONE bring-up line kept for release. MacSurf now runs on
 	 * two operating systems, so every bug report has to say which. This is a
 	 * single line per launch reporting the host OS version; the rest of the
 	 * OS X bring-up channels (BOOT / RECON OT / RECON GDEV / PROBE) are
@@ -676,7 +676,7 @@ macsurf_log_is_crash_report(const char *m)
 #ifdef MACSURF_WORK_LOG
 	if (strstr(m, "WORK ") != NULL) return 1;
 #endif
-	/* fixes895 — the reconvert-crash hunt channel. Keep ONLY the two
+	/* fixes895  -  the reconvert-crash hunt channel. Keep ONLY the two
 	 * breadcrumb families (box-build window + QuickJS timer/realm teardown)
 	 * so both crashes are diagnosable on a shipped-style build, without the
 	 * MACSURF_WORK_LOG firehose. */
@@ -689,7 +689,7 @@ macsurf_log_is_crash_report(const char *m)
 	if (strstr(m, "exception") != NULL) return 1;
 	if (strstr(m, "crash") != NULL) return 1;
 #ifdef MACSURF_SSL_LOG
-	/* fixes677 (#206) — SSL/fetch investigation. Surface the networking
+	/* fixes677 (#206)  -  SSL/fetch investigation. Surface the networking
 	 * lines so a UA-based or TLS-based http downgrade is visible: the
 	 * request line (`https: REQ ... ua=%s`), the handshake result, the
 	 * response status, and any redirect (`https: NNN redirect -> ...`).
@@ -700,7 +700,7 @@ macsurf_log_is_crash_report(const char *m)
 	if (m[0] == 'h' && strncmp(m, "hdr", 3) == 0) return 1;
 #endif
 #ifdef MACSURF_PERF_LOG
-	/* fixes688 — perf-work channel: keep the load-complete PERFACC summary
+	/* fixes688  -  perf-work channel: keep the load-complete PERFACC summary
 	 * (tls/net/parse/cascade/layout/paint/js/reflows totals) and the [+Nus]
 	 * milestone stamps. Both are one-per-load / few-per-load, so they carry
 	 * the timing signal without the per-element volume. */
@@ -733,21 +733,21 @@ macsurf_debug_log_write(const char *msg)
 	 * MACSURF_SSL_LOG / MACSURF_PERF_LOG dev-channel pattern. It is NOT defined
 	 * in a shipped build, so WORK lines fall through to the crash-only gate
 	 * below (and survive only if they ALSO carry a genuine failure keyword).
-	 * That returns the release log to crash-basic -- the fixes765 (2.0) state
-	 * -- instead of the development flood of WORK pipeline/pump/reconvert/hover
+	 * That returns the release log to crash-basic - the fixes765 (2.0) state
+	 * - instead of the development flood of WORK pipeline/pump/reconvert/hover
 	 * lines. Define MACSURF_WORK_LOG in macsurf_prefix.h to re-arm the channel
 	 * for the next debugging cycle. */
 #ifdef MACSURF_WORK_LOG
 	if (strstr(msg, "WORK ") != NULL) goto do_write;
 #endif
 
-	/* fixes675 — crash-only gate for the release build. Keeps just the
+	/* fixes675  -  crash-only gate for the release build. Keeps just the
 	 * forensic lines; drops all perf/render/fetch diagnostics. */
 #ifndef MACSURF_VERBOSE_LOG
 	if (!macsurf_log_is_crash_report(msg)) return;
 #endif
 
-	/* fixes250 — silence the layout-engine debug spam by default.
+	/* fixes250  -  silence the layout-engine debug spam by default.
 	 * Cold mactrove loads produced ~7300 LAYOUTPHASE/MCOL/FLEXPHASE
 	 * lines per page (80% of total log volume), costing ~700-900 ms
 	 * of FSWrite overhead on real hardware. Re-enable with
@@ -760,7 +760,7 @@ macsurf_debug_log_write(const char *msg)
 	}
 #endif
 
-	/* fixes251 — silence the per-paint-element diagnostic spam. After
+	/* fixes251  -  silence the per-paint-element diagnostic spam. After
 	 * fixes250 silenced layout debug, the new top categories were
 	 * plot_rect[N] (1919/cold-load), plot_text[N] (549), svg_box (152),
 	 * slot[N] (142), GRADIENT (115), svg_shape (92). All per-element
@@ -782,7 +782,7 @@ macsurf_debug_log_write(const char *msg)
 	}
 #endif
 
-	/* fixes253 — silence redraw entry context and gui-event spam. Each
+	/* fixes253  -  silence redraw entry context and gui-event spam. Each
 	 * redraw produces three "update:" lines (bw=, redraw_ready, and
 	 * bw_redraw done); the third has the actual walker counters and
 	 * is the only one operationally useful. gw_event: fires per
@@ -798,12 +798,12 @@ macsurf_debug_log_write(const char *msg)
 	}
 	if (msg[0] == 'g' && strncmp(msg, "gw_event: e=", 12) == 0) return;
 	if (msg[0] == 'L' && strncmp(msg, "LAYOUT_CRUMB", 12) == 0) return;
-	/* fixes268 — SITE filter removed. Issues #9 and #11 require the
+	/* fixes268  -  SITE filter removed. Issues #9 and #11 require the
 	 * SITE line to surface css_total= and blocker= for verification.
 	 * SITE fires a few times per page reformat (low volume; survivable). */
 #endif
 
-	/* fixes666 — perf-cleanup pass. Earlier fix rounds left a pile of
+	/* fixes666  -  perf-cleanup pass. Earlier fix rounds left a pile of
 	 * per-element / per-fetch diagnostics that now dominate log volume on a
 	 * real page (measured: fixes614 clamp 1048x, plot_bitmap 421x, TBLCOL
 	 * 346x, img plot 306x, active fetches 289x, https_teardown 364x, svg_use
@@ -829,14 +829,14 @@ macsurf_debug_log_write(const char *msg)
 			      strncmp(msg, "https: cookies sent", 19) == 0)) return;
 	if (msg[0] == 'a' && strncmp(msg, "active fetches:", 15) == 0) return;
 	if (msg[0] == 'e' && strncmp(msg, "evloop: hb", 10) == 0) return;
-	/* fixes667 — hlcache/llcache content-lifecycle trace (~965 lines/session).
+	/* fixes667  -  hlcache/llcache content-lifecycle trace (~965 lines/session).
 	 * Left over from the box-walk UAF investigation; not needed for the reflow
 	 * bottleneck. Re-enable with MACSURF_VERBOSE_FETCH_LOG if a UAF recurs. */
 	if (msg[0] == 'h' && strncmp(msg, "hlcache", 7) == 0) return;
 	if (msg[0] == 'l' && strncmp(msg, "llcache", 7) == 0) return;
 #endif
 
-	/* fixes669 — perf-focus. Suppress the remaining non-perf diagnostic
+	/* fixes669  -  perf-focus. Suppress the remaining non-perf diagnostic
 	 * categories so the log shows ONLY what bears on load speed. KEEPS:
 	 * [+Nus] phase stamps, PERFACC, NAV/SITE, html_reformat, reformat:,
 	 * box: convert_xml, https: REQ (network fetches), and error/FAIL lines.
@@ -863,7 +863,7 @@ macsurf_debug_log_write(const char *msg)
 	if (msg[0] == 'c' && (strncmp(msg, "css: budget", 11) == 0 ||
 			      strncmp(msg, "css: convert", 12) == 0)) return;
 	if (msg[0] == 'b' && strncmp(msg, "broadcast_ready", 15) == 0) return;
-	/* fixes672 — more per-element diagnostics found still firing on big pages:
+	/* fixes672  -  more per-element diagnostics found still firing on big pages:
 	 * TBLPICK/TBLDIAG (per-table layout picks), fixes569 LEN / fixes446g DATA
 	 * (per-cdata-node bad-len probes), gw_invalidate (per-invalidate rects). */
 	if (msg[0] == 'T' && (strncmp(msg, "TBLPICK", 7) == 0 ||
@@ -873,7 +873,7 @@ macsurf_debug_log_write(const char *msg)
 	if (msg[0] == 'g' && strncmp(msg, "gw_invalidate", 13) == 0) return;
 #endif
 
-	/* fixes233 — prepend ms-since-first-log to every line so we can
+	/* fixes233  -  prepend ms-since-first-log to every line so we can
 	 * see where the wall-clock seconds actually go. TickCount is 60 Hz
 	 * on OS 9; multiply by 1000/60 = 17 (close enough) for a rough ms
 	 * approximation, or print raw ticks and let the reader divide. We
@@ -887,7 +887,7 @@ do_write:
 	mlen = strlen(msg);
 	line_total = (long)tlen + (long)mlen + 1;   /* +1 for trailing CR */
 
-	/* fixes261 — buffered append. If the line fits, copy into buffer
+	/* fixes261  -  buffered append. If the line fits, copy into buffer
 	 * (no FSWrite). If not, flush what's there and either re-buffer
 	 * or, for pathologically long lines, FSWrite straight through. */
 	if (line_total > LOG_BUF_CAP) {
@@ -920,19 +920,19 @@ do_write:
 
 #ifdef MACSURF_NUCLEAR_LOG
 	/* NUCLEAR (#207): flush EVERY line straight to disk (buffer flush +
-	 * FlushVol). A freeze / blank / hang then loses nothing — the last
+	 * FlushVol). A freeze / blank / hang then loses nothing  -  the last
 	 * line on disk is the last thing that executed. Slow by design. */
 	macsurf_debug_log_buffer_flush();
 	if (g_log_vref != 0) (void)FlushVol(NULL, g_log_vref);
 #else
 #ifdef MACSURF_DEBUG
-	/* fixes911 — DEBUG builds flush EVERY kept line straight to disk.
+	/* fixes911  -  DEBUG builds flush EVERY kept line straight to disk.
 	 *
 	 * The buffered path (fixes261) and the 250-line eager budget (fixes704)
 	 * were both tuned when this channel emitted ~3000 lines per load, where
 	 * per-line HFS sync cost seconds. The crash-only gate (fixes675/765) now
 	 * keeps ~10-300 lines for a whole SESSION, so the throughput argument is
-	 * gone -- but the cost stayed: past line 250 the tail sat in a 4 KB buffer
+	 * gone - but the cost stayed: past line 250 the tail sat in a 4 KB buffer
 	 * and a hard crash took it. That is precisely backwards, because the tail
 	 * is the only part that matters after a bomb. A real example: an unmapped-
 	 * memory exception in the death-row drain (MSL pool header smashed) left a
@@ -946,7 +946,7 @@ do_write:
 	if (g_log_vref != 0) (void)FlushVol(NULL, g_log_vref);
 	if (g_log_eager_left > 0) g_log_eager_left--;
 #else
-	/* fixes704 — flush the first LOG_EAGER_LINES lines straight to disk so a
+	/* fixes704  -  flush the first LOG_EAGER_LINES lines straight to disk so a
 	 * freeze/hang during startup still leaves the very beginning on disk.
 	 * After the budget is spent we return to the fast buffered path. */
 	if (g_log_eager_left > 0) {
@@ -954,7 +954,7 @@ do_write:
 		macsurf_debug_log_buffer_flush();
 		if (g_log_vref != 0) (void)FlushVol(NULL, g_log_vref);
 	} else if (g_log_reconv_flush) {
-		/* fixes895 — while a reconvert/timer flush is in flight, force the
+		/* fixes895  -  while a reconvert/timer flush is in flight, force the
 		 * breadcrumb to disk in order so a hard bomb loses nothing after it. */
 		macsurf_debug_log_buffer_flush();
 		if (g_log_vref != 0) (void)FlushVol(NULL, g_log_vref);
@@ -963,18 +963,18 @@ do_write:
 #endif /* MACSURF_NUCLEAR_LOG */
 
 	/*
-	 * fixes96 — per-write FlushVol REMOVED. It was synchronously
+	 * fixes96  -  per-write FlushVol REMOVED. It was synchronously
 	 * waiting for HFS to commit each line, which on real hardware
 	 * costs ~10–50 ms per call. With ~80 MS_LOG calls per page
 	 * load (most from NetSurf core's llcache / hlcache trace), that
-	 * was 1–4 seconds of disk-sync wait per nav — the chief cause
+	 * was 1–4 seconds of disk-sync wait per nav  -  the chief cause
 	 * of "second nav held back" and the residual dial-up feel.
 	 *
 	 * The log is now written through HFS's normal cache; clean
 	 * shutdown flushes via FSClose, and macsurf_debug_log_flush()
 	 * exposes an explicit checkpoint for callers who really need
 	 * durability after a critical message. On a hard crash, we may
-	 * lose up to a few KB of trailing lines — acceptable given the
+	 * lose up to a few KB of trailing lines  -  acceptable given the
 	 * stability we've reached and the massive throughput win.
 	 */
 #else
@@ -984,7 +984,7 @@ do_write:
 }
 
 /*
- * fixes96 — explicit flush. Use sparingly. Called once after init
+ * fixes96  -  explicit flush. Use sparingly. Called once after init
  * so the startup banner is on disk before any work begins.
  */
 void
@@ -1011,19 +1011,19 @@ macsurf_debug_log_writef(const char *fmt, ...)
 }
 
 /* ------------------------------------------------------------------
- * fixes895 — reconvert-crash hunt: durable single-slot "furthest
+ * fixes895  -  reconvert-crash hunt: durable single-slot "furthest
  * position reached" marker.
  *
  * The box-build window (dom_to_box -> convert_xml_to_box_inner ->
  * html_reconvert_done -> content__reformat) is where the reconvert
  * crash kills the session, and the 4 KB log buffer loses its tail on
- * a hard bomb -- so even "rc=0 was the last line" is unreliable.
+ * a hard bomb - so even "rc=0 was the last line" is unreliable.
  * macsurf_reconv_pos_set() records the current phase/node into RAM
  * (per-node, no I/O); macsurf_reconv_pos_flush() rewrites that ONE
  * line into "MacSurf ReconvPos.txt" and FlushVols it, called only at
  * batch/phase boundaries. After a bomb this file names the exact
  * function-phase, reconvert seq, furthest node index, and node tag the
- * Mac was in -- at 100-node granularity -- independent of the main log.
+ * Mac was in - at 100-node granularity - independent of the main log.
  * ------------------------------------------------------------------ */
 
 static char g_reconv_pos[256] = "reconv-pos (never set)";
@@ -1047,7 +1047,7 @@ macsurf_reconv_pos_set(const char *phase, long seq, long node_ix,
 }
 
 #ifdef __MACOS9__
-#ifdef MACSURF_VERBOSE_RECONVERT   /* fixes904 — only compiled when the hunt is armed */
+#ifdef MACSURF_VERBOSE_RECONVERT   /* fixes904  -  only compiled when the hunt is armed */
 static short g_pos_ref = 0;
 static short g_pos_vref = 0;
 static int   g_pos_open = 0;
@@ -1107,7 +1107,7 @@ macsurf_reconv_pos_open(void)
 void
 macsurf_reconv_pos_flush(void)
 {
-	/* fixes904 — trace off (MACSURF_VERBOSE_RECONVERT undefined): the whole
+	/* fixes904  -  trace off (MACSURF_VERBOSE_RECONVERT undefined): the whole
 	 * durable-marker body compiles out, so there is NO per-node FlushVol. The
 	 * synchronous reconvert (fixes903) ran ~150 of these in one blocking pass;
 	 * removing them is a real speedup, not just log hygiene. Re-arm the macro
@@ -1141,7 +1141,7 @@ macsurf_reconv_pos_flush(void)
 }
 #endif
 
-/* fixes895 — largest contiguous free block (bytes), for the H1 double-buffer
+/* fixes895  -  largest contiguous free block (bytes), for the H1 double-buffer
  * memory-exhaustion hypothesis: two full box trees + two style sets coexist as
  * the new tree nears completion, so if box_create/talloc_zero is returning NULL
  * on heavy pages this reading should approach 0 near the crash node index.
@@ -1164,7 +1164,7 @@ macsurf_free_mem(void)
 }
 #endif
 
-/* fixes366h — runtime-gated high-frequency trace. Default off so the
+/* fixes366h  -  runtime-gated high-frequency trace. Default off so the
  * per-element var()/grid diagnostics don't pollute profiling captures
  * or the crash-forensic log. Flip the flag at a debugger breakpoint
  * (or from code) to re-enable the firehose for a specific bug hunt. */
@@ -1183,13 +1183,13 @@ macsurf_debug_log_tracef(const char *fmt, ...)
 }
 
 /* ------------------------------------------------------------------
- * fixes366a — Microsecond profile timer
+ * fixes366a  -  Microsecond profile timer
  *
  * Captures a Microseconds() timestamp into g_profile_t0 (UnsignedWide:
  * UInt32 hi + UInt32 lo). Each stamp call writes one log line
  * "[+NNNNNus] LABEL" with the delta from t0 in integer microseconds.
  *
- * Delta is computed in double — CW8 PPC miscompiles long-long
+ * Delta is computed in double  -  CW8 PPC miscompiles long-long
  * subtraction (project_cw8_longlong_codegen). PPC has a hardware FPU
  * and IEEE 754's 52-bit mantissa exactly represents every UInt32 we
  * can multiply by 2^32, so no precision is lost.
@@ -1200,14 +1200,14 @@ macsurf_debug_log_tracef(const char *fmt, ...)
 
 #ifdef __MACOS9__
 static UnsignedWide g_profile_t0 = { 0, 0 };
-/* fixes1072 — the NAVIGATION wall clock, deliberately separate from
+/* fixes1072  -  the NAVIGATION wall clock, deliberately separate from
  * g_profile_t0. See macsurf_profile_nav_begin(). */
 static UnsignedWide g_nav_t0 = { 0, 0 };
 #endif
 static int g_profile_t0_set = 0;
 static int g_nav_t0_set = 0;
 
-/* fixes369 (#167) — per-load page-weight + resource-count accounting, the
+/* fixes369 (#167)  -  per-load page-weight + resource-count accounting, the
  * size dimension the timing stamps lacked. Reset at nav start with the
  * timing t0; accumulated by the fetchers; emitted at load-complete as a
  * single parseable PROFILE line that perf/scrape.py folds into
@@ -1215,7 +1215,7 @@ static int g_nav_t0_set = 0;
 static long g_profile_bytes = 0;	/* total body bytes this load   */
 static int  g_profile_resources = 0;	/* sub-resource fetches this load */
 
-/* fixes640 — TRUSTWORTHY per-load phase accumulators (microseconds).
+/* fixes640  -  TRUSTWORTHY per-load phase accumulators (microseconds).
  *
  * This replaces the fixes637/638 milestone-subtraction scheme, which produced
  * negative/garbage per-phase numbers because it subtracted NON-sequential
@@ -1238,7 +1238,7 @@ static long g_accum_js_us      = 0;	/* js_exec, summed                  */
 static long g_accum_reflows    = 0;	/* full html_reformat passes        */
 static long g_perf_ttfb_us     = -1;	/* first fetch-finished = TTFB     */
 
-/* fixes1070 — CALL COUNTS for every phase, taken for free inside the existing
+/* fixes1070  -  CALL COUNTS for every phase, taken for free inside the existing
  * accum_* adders (no new call sites, no new brackets).
  *
  * The us totals alone cannot distinguish "one expensive pass" from "500 cheap
@@ -1274,16 +1274,16 @@ macsurf_profile_reset(void)
 #else
 	g_profile_t0_set = 1;
 #endif
-	/* fixes369 — zero the page-weight + resource counters per load. */
+	/* fixes369  -  zero the page-weight + resource counters per load. */
 	g_profile_bytes = 0;
 	g_profile_resources = 0;
-	/* fixes366c — clear the redraw / plotter diag-line throttles
+	/* fixes366c  -  clear the redraw / plotter diag-line throttles
 	 * so each navigation gets a fresh window of 5 events per
 	 * pattern instead of one shared budget across the whole
 	 * session. */
 	macos9_redraw_diag_counters_reset();
 	macos9_plotter_diag_counters_reset();
-	/* fixes640 — fresh phase accumulators per load. */
+	/* fixes640  -  fresh phase accumulators per load. */
 	g_accum_tls_us     = 0;
 	g_accum_net_us     = 0;
 	g_accum_parse_us   = 0;
@@ -1293,12 +1293,12 @@ macsurf_profile_reset(void)
 	g_accum_js_us      = 0;
 	g_accum_reflows    = 0;
 	g_perf_ttfb_us     = -1;
-	/* fixes1070 — the call counts reset with the times they divide. */
+	/* fixes1070  -  the call counts reset with the times they divide. */
 	g_n_tls = 0; g_n_net = 0; g_n_parse = 0; g_n_cascade = 0;
 	g_n_layout = 0; g_n_paint = 0; g_n_js = 0;
 }
 
-/* fixes1072 — stamp the navigation wall clock. Called from the NAV: START
+/* fixes1072  -  stamp the navigation wall clock. Called from the NAV: START
  * site in browser_window.c, which is the ONE hook every navigation passes
  * through (URL bar, link click, internal redirect, back/forward, the
  * about:query error pages). macsurf_profile_reset() is not that hook: it sits
@@ -1350,7 +1350,7 @@ macsurf_profile_stamp(const char *label)
 #endif
 }
 
-/* fixes640 — the ONLY milestone we still derive is TTFB: the first
+/* fixes640  -  the ONLY milestone we still derive is TTFB: the first
  * fetch-finished after nav start. On single-burst / cache-hit loads this is
  * the main document; on a cold streaming load a tiny early sub-resource on a
  * fast host can complete first, so treat it as "time to first completed fetch"
@@ -1363,10 +1363,10 @@ macsurf_profile_note_milestone(const char *label, int delta_us_i)
 		g_perf_ttfb_us = (long)delta_us_i;
 }
 
-/* fixes640 — phase-time adders. Each brackets a choke function with
+/* fixes640  -  phase-time adders. Each brackets a choke function with
  * macos9_micros() and passes the elapsed microsecond delta. Guarded
  * non-negative (a clock hiccup or reset mid-bracket can't corrupt the sum). */
-/* fixes1070 — the count is incremented UNCONDITIONALLY, before the us>0
+/* fixes1070  -  the count is incremented UNCONDITIONALLY, before the us>0
  * guard. A phase that ran but measured 0us (sub-microsecond, or a clock
  * hiccup) still happened, and a count of 0 next to a non-zero total would be
  * a lie of exactly the kind this engine has paid for repeatedly. */
@@ -1386,7 +1386,7 @@ void macsurf_profile_note_reflow(void)      { g_accum_reflows++; }
  * the js delta, so parse = pure tokenize and total isn't inflated. */
 long macsurf_profile_get_js_us(void)        { return g_accum_js_us; }
 
-/* fixes640 — emit the honest per-phase breakdown ONCE at the load-complete
+/* fixes640  -  emit the honest per-phase breakdown ONCE at the load-complete
  * edge (see main.c poll loop). Every field is a summed microsecond total, so
  * they can be compared run-over-run; perf/scrape.py folds them straight into
  * the existing history.csv columns. `total` is the sum of the CPU phases (tls
@@ -1404,7 +1404,7 @@ macsurf_profile_emit_phases(const char *url)
 		g_accum_cascade_us + g_accum_layout_us + g_accum_paint_us +
 		g_accum_js_us;
 
-	/* fixes1070 — WALL CLOCK, and therefore the UNACCOUNTED bucket.
+	/* fixes1070  -  WALL CLOCK, and therefore the UNACCOUNTED bucket.
 	 *
 	 * This is the hole that made every prior perf conclusion provisional.
 	 * PERFACC's `total=` is the SUM OF THE INSTRUMENTED PHASES, not elapsed
@@ -1412,7 +1412,7 @@ macsurf_profile_emit_phases(const char *url)
 	 * maintainer timed at 20-30s. Connection-open waits, poll spinning,
 	 * inter-fetch gaps and every uninstrumented path land in NO bucket, so
 	 * "js is 96% of the load" has really been "js is 96% of the part we
-	 * happen to measure" -- and the unmeasured part may be the larger one.
+	 * happen to measure" - and the unmeasured part may be the larger one.
 	 *
 	 * fixes1072 CORRECTION: this originally read g_profile_t0, on the belief
 	 * that macsurf_profile_reset() runs at every nav start. It does not --
@@ -1425,19 +1425,19 @@ macsurf_profile_emit_phases(const char *url)
 	 * NAV: START site every navigation passes through.
 	 *
 	 * Sanity-check `wall` against the log's own [tick] column when a number
-	 * looks surprising -- 60 ticks per second. That cross-check is what
+	 * looks surprising - 60 ticks per second. That cross-check is what
 	 * found this.
 	 *
 	 * Read `unacct` FIRST. If it is small, the phase percentages are real
 	 * and the JS split below is where the work is. If it is large, no amount
 	 * of optimising a measured phase will move the page load, and the next
-	 * job is instrumenting whatever is eating the gap -- not tuning JS. */
+	 * job is instrumenting whatever is eating the gap - not tuning JS. */
 #ifdef __MACOS9__
 	{
 		UnsignedWide now;
 		double d;
 		Microseconds(&now);
-		/* fixes1072 — g_nav_t0 (stamped at NAV: START), NOT
+		/* fixes1072  -  g_nav_t0 (stamped at NAV: START), NOT
 		 * g_profile_t0. See macsurf_profile_nav_begin(). */
 		d = profile_us_from_wide(&now) -
 		    profile_us_from_wide(&g_nav_t0);
@@ -1467,7 +1467,7 @@ macsurf_profile_emit_phases(const char *url)
 		"LIFE PERFWALL wall=%ldus acct=%ldus unacct=%ldus unacctpct=%ld",
 		wall_us, total, unacct_us, unacct_pct);
 
-	/* fixes1070 — per-phase CALL COUNTS, so us/N is available at read time.
+	/* fixes1070  -  per-phase CALL COUNTS, so us/N is available at read time.
 	 * Emitted as its own line: the PERFACC line below is already ~160 bytes
 	 * and macsurf_debug_log_writef hard-caps output at 255, which has
 	 * silently truncated instrumentation in this codebase before. */
@@ -1476,12 +1476,12 @@ macsurf_profile_emit_phases(const char *url)
 		"paint=%ld js=%ld reflows=%ld",
 		g_n_tls, g_n_net, g_n_parse, g_n_cascade, g_n_layout,
 		g_n_paint, g_n_js, g_accum_reflows);
-	/* fixes1035 — "LIFE " PREFIX, because the gate drops everything else.
+	/* fixes1035  -  "LIFE " PREFIX, because the gate drops everything else.
 	 * The PERFACC whitelist below in macsurf_log_is_crash_report sits
 	 * inside #ifdef MACSURF_PERF_LOG, which is not defined, so this line
 	 * has been written and then discarded on every load. That is the
-	 * documented trap in CLAUDE.md -- "prefix anything that must survive
-	 * with LIFE" -- and this is the fourth instrument in this batch to hit
+	 * documented trap in CLAUDE.md - "prefix anything that must survive
+	 * with LIFE" - and this is the fourth instrument in this batch to hit
 	 * it. The prefix does not depend on any build flag. */
 	macsurf_debug_log_writef(
 		"LIFE PERFACC tls=%ldus net=%ldus ttfb=%ldus parse=%ldus cascade=%ldus "
@@ -1490,11 +1490,11 @@ macsurf_profile_emit_phases(const char *url)
 		(g_perf_ttfb_us < 0) ? -1L : g_perf_ttfb_us,
 		g_accum_parse_us, g_accum_cascade_us, g_accum_layout_us,
 		g_accum_paint_us, g_accum_js_us, g_accum_reflows, total);
-	/* fixes640b — zero the accumulators AFTER emitting so the next load
+	/* fixes640b  -  zero the accumulators AFTER emitting so the next load
 	 * starts clean regardless of navigation type (URL-bar, link click,
 	 * back/forward). This replaces the mid-load set_url reset that was
 	 * corrupting the numbers. A settle-reflow that fires after this emit
-	 * bleeds a little into the next load's layout/paint — a slight, rare
+	 * bleeds a little into the next load's layout/paint  -  a slight, rare
 	 * mis-attribution, far better than the mid-load wipe. */
 	g_accum_tls_us     = 0;
 	g_accum_net_us     = 0;
@@ -1505,10 +1505,10 @@ macsurf_profile_emit_phases(const char *url)
 	g_accum_js_us      = 0;
 	g_accum_reflows    = 0;
 	g_perf_ttfb_us     = -1;
-	/* fixes1070 — clear the counts with the times, same rationale. */
+	/* fixes1070  -  clear the counts with the times, same rationale. */
 	g_n_tls = 0; g_n_net = 0; g_n_parse = 0; g_n_cascade = 0;
 	g_n_layout = 0; g_n_paint = 0; g_n_js = 0;
-	/* fixes1072 — clear the NAV clock, not the profile clock. The emit
+	/* fixes1072  -  clear the NAV clock, not the profile clock. The emit
 	 * fires twice per load (NAV: DONE and the poll-loop latch, whichever
 	 * gets there first); the second one has no navigation of its own to
 	 * measure and must say wall=-1 rather than repeat the first's number
@@ -1519,7 +1519,7 @@ macsurf_profile_emit_phases(const char *url)
 	g_nav_t0_set = 0;
 }
 
-/* fixes369 (#167) — page-weight + resource-count accounting. */
+/* fixes369 (#167)  -  page-weight + resource-count accounting. */
 void
 macsurf_profile_add_bytes(long n)
 {
@@ -1557,7 +1557,7 @@ void macsurf_debug_log_writef(const char *fmt, ...) { (void)fmt; }
 void macsurf_debug_log_tracef(const char *fmt, ...) { (void)fmt; }
 void macsurf_profile_reset(void)
 {
-	/* fixes366c — even in release builds, call the diag-counter
+	/* fixes366c  -  even in release builds, call the diag-counter
 	 * resets so the symbols are referenced and the file-scope
 	 * statics in redraw.c / plotters.c don't pin up at 5 across
 	 * navigations if a future MACSURF_DEBUG build links the
@@ -1571,7 +1571,7 @@ void macsurf_profile_nav_begin(void) {}	/* fixes1072 */
 void macsurf_profile_add_bytes(long n) { (void)n; }
 void macsurf_profile_count_resource(void) {}
 void macsurf_profile_emit(const char *url) { (void)url; }
-/* fixes640 — release no-op stubs for the phase accumulators. */
+/* fixes640  -  release no-op stubs for the phase accumulators. */
 void macsurf_profile_accum_tls(long us)     { (void)us; }
 void macsurf_profile_accum_net(long us)     { (void)us; }
 void macsurf_profile_accum_parse(long us)   { (void)us; }
@@ -1585,7 +1585,7 @@ void macsurf_profile_emit_phases(const char *url) { (void)url; }
 
 #endif /* MACSURF_DEBUG */
 
-/* fixes173 — non-fatal assertion handler. Called by the assert()
+/* fixes173  -  non-fatal assertion handler. Called by the assert()
  * macro overridden in macsurf_prefix.h. Logs the failure but
  * does NOT abort the process. Real shipped browsers do this
  * (or NDEBUG out entirely). Without it, Apple's first unexpected
