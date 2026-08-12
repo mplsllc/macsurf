@@ -1096,6 +1096,7 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 								cpart = FindControl(p, win, &ctrl);
 							}
 						}
+						macsurf_debug_log_writef("LIFE CTRL cpart=%d ctrl=%p vscr=%p hscr=%p", (int)cpart, (void *)ctrl, (void *)(gw->vscroll), (void *)(gw->hscroll));
 						if (cpart != 0 && ctrl != NULL) {
 							if (ctrl == gw->vscroll || ctrl == gw->hscroll) {
 								macos9_window_handle_scrollbar_click(gw, ctrl, cpart, &p);
