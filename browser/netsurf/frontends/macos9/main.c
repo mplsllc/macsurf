@@ -206,7 +206,6 @@ static void macos9_init_menus(void) {
 	MenuHandle apple_menu, file_menu, edit_menu, go_menu;
 	apple_menu = NewMenu(MENU_APPLE, "\p\024");
 	AppendMenu(apple_menu, "\pAbout MacSurf...");
-	AppendMenu(apple_menu, "\pPreferences.../,");   /* item 2 — Cmd-, */
 	AppendMenu(apple_menu, "\p(-");
 	/* fixes753 (#228) — do NOT AppendResMenu('DRVR') here. Under Carbon /
 	 * CarbonLib the Menu Manager auto-populates the Apple menu with the
@@ -395,13 +394,10 @@ static void macos9_handle_menu(short menu_id, short item) {
 	}
 	switch (menu_id) {
 	case MENU_APPLE:
-		/* Item 1 = "About MacSurf...", item 2 = "Preferences..." (Cmd-,),
-		 * item 3 = separator; items 4+ are desk accessories. */
+		/* Item 1 = "About MacSurf..."; items 3+ are desk accessories. */
 		if (item == 1) {
 			extern void macos9_about_show(void);
 			macos9_about_show();
-		} else if (item == ITEM_APPLE_PREFS) {
-			macos9_prefs_show();
 		}
 		break;
 	case MENU_FILE:
@@ -409,7 +405,7 @@ static void macos9_handle_menu(short menu_id, short item) {
 		case ITEM_FILE_NEW: {
 			struct browser_window *bw = NULL;
 			nsurl *home = NULL;
-			if (nsurl_create(macos9_home_url(), &home) == NSERROR_OK) {
+			if (nsurl_create(MACSURF_HOME_URL, &home) == NSERROR_OK) {
 				/* fixes161a — mark next setup as DOCUMENT class. */
 				extern void macos9_http_mark_next_as_document(void);
 				macos9_http_mark_next_as_document();
@@ -922,13 +918,11 @@ void macos9_handle_update(const EventRecord *event) {
 
 void macos9_handle_mouse_down(const EventRecord *event) {
 #ifdef __MACOS9__
-	Point pt;
 	WindowRef win;
-	short part;
+	short part = FindWindow(event->where, &win);
+	macsurf_debug_log_writef("LIFE MOUSE part=%d win=%p",
+		(int)part, (void *)win);
 	struct gui_window *gw;
-	pt = event->where;
-	macsurf_debug_log_writef("LIFE MOUSE_DOWN at %d,%d", (int)pt.h, (int)pt.v);
-	part = FindWindow(event->where, &win);
 	/* fixes645 (#199): route clicks on the modeless download-manager
 	 * window (drag / close / select) — it is not a gui_window. */
 	if (macos9_download_mgr_is(win)) {
@@ -1612,7 +1606,7 @@ static void macos9_deferred_home_load(void *pw)
 		MS_LOG("deferred home: bw NULL, skip");
 		return;
 	}
-	if (nsurl_create(macos9_home_url(), &home) != NSERROR_OK) {
+	if (nsurl_create(MACSURF_HOME_URL, &home) != NSERROR_OK) {
 		MS_LOG("deferred home: nsurl_create failed");
 		return;
 	}
@@ -1877,17 +1871,72 @@ int main(void) {
 	}
 	netsurf_register(&macos9_table);
 	MS_LOG("BOOT netsurf_register done");
-	/* The boot baseline (formerly hardcoded below) now lives in the
-	 * DEFAULT table via macos9_prefs_set_defaults, so nsoption_write
-	 * persists only user deltas (a choice equal to the factory
-	 * default is still written and survives relaunch). Then the
-	 * "MacSurf Preferences" file (if any) loads OVER the baseline —
-	 * per-key user choices win. Both happen BEFORE netsurf_init so
-	 * fetchers/llcache see user values from the first fetch. */
-	nsoption_init(macos9_prefs_set_defaults, NULL, NULL);
+	nsoption_init(NULL, NULL, NULL);
 	MS_LOG("BOOT nsoption_init done");
-	macos9_prefs_load();
-	MS_LOG("BOOT prefs file loaded");
+	/* fixes78: image content handler (QuickTime Graphics Importers) is
+	 * now registered in macos9_image.c. Enable image fetches so <img>
+	 * elements actually trigger network fetches and decode through the
+	 * QT importer pipeline. */
+	nsoption_set_bool(foreground_images, true);
+	nsoption_set_bool(background_images, true);
+	/* Enable author CSS so inline <style>/<link> rules apply. */
+	nsoption_set_bool(author_level_css, true);
+	/* fixes319 (#115-#121) — turn on inline <script> execution. Defaults
+	 * to false in NetSurf core; without this, the JS bridge that
+	 * fixes316 wired up is dead-code from NetSurf's perspective because
+	 * html_script_exec returns early without ever calling js_exec. */
+	nsoption_set_bool(enable_javascript, true);
+	/* fixes1115b (#265) -- enable <select> dropdown menus. The core
+	 * form-control <select> handler (textarea.c / forms.c form_select_*
+	 * callbacks) is gated on this option; without it, <select> elements
+	 * render as empty rectangles and dropdowns never open. The Amiga and
+	 * framebuffer frontends set this to true (gui.c:1056, gui.c:2238
+	 * respectively); the macos9 frontend never did. One line. */
+	nsoption_set_bool(core_select_menu, true);
+	/* fixes91: raise concurrent-fetch caps. NetSurf defaults are
+	 * max_fetchers=24 / max_fetchers_per_host=5. With our HTTP fetcher's
+	 * MFS_INIT-at-setup state-machine, slots stay non-IDLE past the
+	 * point NetSurf's fetch_ring drains, so by the third user navigation
+	 * fetch_ring saturates and `fetch_dispatch_jobs` refuses to call
+	 * ops.start on new fetches. The HTTP fetcher fires anyway (poll
+	 * doesn't gate on start) but the stub fetcher needs ctx->started
+	 * and so hangs. Raise the caps so the gate never bites; the proper
+	 * fix (start-gated mfs_open) lives in macos9_http_fetcher.c. */
+	nsoption_set_int(max_fetchers, 128);
+	/* fixes232 — drop per-host cap from 16 to 4 so the HTTPS keep-alive
+	 * pool (fixes231) actually catches reuses. Previously 16 parallel
+	 * fetches per host meant every cold-page-load issued 16+ cold
+	 * handshakes before any could finish and seed the pool; subsequent
+	 * fetches in the same load missed the pool because everything was
+	 * already in flight. With 4 parallel max, only the first 4 are cold;
+	 * fetches 5-30 dequeue as 1-4 complete and pull warm connections
+	 * out of the pool. Net win: ~25 saved TLS handshakes per cold page
+	 * load (~18s of BearSSL ECDHE on a 233 MHz G3). */
+	nsoption_set_int(max_fetchers_per_host, 4);
+	/* fixes106 — capped memory_cache_size at 2 MB on a 16 MB partition
+	 * to keep the live-page working set out of cache contention.
+	 *
+	 * fixes160d — partition is now 194 MB by CW8 setting. Bump cache
+	 * to 32 MB. Modern retro setups (SSDs, Ethernet, real bandwidth)
+	 * benefit hugely from a cache that holds the current page's full
+	 * sub-resource set plus several recent pages' worth, so back-button
+	 * is instant and intra-site navigation skips re-fetch of shared
+	 * CSS / images. Apple alone burns ~2 MB on stylesheets per page —
+	 * at 32 MB the cache holds Apple + 5-6 typical pages of history
+	 * with room left over for libcss/libdom working set. */
+	/* fixes430: 32MB -> 4MB (a 22MB forum index + 32MB stale llcache on top
+	 * of the live working set exhausted the heap).
+	 * fixes460-463: dropped to 0 while chasing an llcache-reentrancy crash and
+	 * the blank-page bug.
+	 * fixes731: RESTORE to 8MB. The blank page was root-caused to the
+	 * pointer-ceiling guards (#207 / fixes719), NOT the cache, and the
+	 * llcache reentrancy guards (fixes459/460, op_depth) are still in place —
+	 * so the reason it was zeroed no longer applies. With no cache, every
+	 * navigation (and every back-button) re-fetched AND re-did the ~1s TLS
+	 * handshake for shared CSS/JS/images; an 8MB cache lets intra-site nav and
+	 * back-button skip both. Kept conservative (not 32MB) to avoid the fixes430
+	 * heap-exhaustion on heavy forum indexes and to stay safe on 64MB Macs. */
+	nsoption_set_int(memory_cache_size, 32 * 1024 * 1024);
 	MS_LOG("BOOT images enabled, author_css on, fetcher 128/16, mem cache 32MB");
 #ifdef __MACOS9__
 	macsurf_debug_log_writef("DIAG pre-netsurf_init: free=%ld maxblk=%ld",
