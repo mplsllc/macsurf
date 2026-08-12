@@ -6,18 +6,19 @@
 #include "utils/nsurl.h"
 #include "content/fetch.h"
 #include "content/fetchers.h"
-#include "content/urldb.h"	/* fixes367 (#167)  -  cookie jar: urldb_get_cookie */
-#include "macos9_useragent.h"	/* fixes368 (#167)  -  per-host UA table */
-#include "macos9_blocklist.h"	/* fixes957 (#285)  -  tracker/ad blocklist (http side) */
+#include "content/urldb.h"	/* fixes367 (#167) - cookie jar: urldb_get_cookie */
+#include "utils/nsoption.h"	/* preferences: accept_cookies / do_not_track */
+#include "macos9_useragent.h"	/* fixes368 (#167) - per-host UA table */
+#include "macos9_blocklist.h"	/* fixes957 (#285) - tracker/ad blocklist (http side) */
 #include "macsurf_debug.h"
-#include "macsurf_osver.h"	/* fixes936 (OS X tier 1)  -  macsurf_os_is_osx() */
+#include "macsurf_osver.h"	/* fixes936 (OS X tier 1) - macsurf_os_is_osx() */
 #ifdef __MACOS9__
 #include <Files.h>
 #include <Script.h>
 #include <OpenTransport.h>
 #include <OpenTptInternet.h>
 #include <Threads.h>
-/* fixes172  -  same fallback pattern macsurf_debug_log.c uses. Some
+/* fixes172 - same fallback pattern macsurf_debug_log.c uses. Some
  * CW8 SDK builds expose smSystemScript via <Script.h>, others via
  * <Resources.h>; in the rare case it isn't defined at all, 0 is
  * the documented Roman script code and FSpCreate accepts it. */
@@ -35,7 +36,7 @@ extern OTClientContextPtr macos9_ot_context;
  * dead host fails the resource ONCE (-> alt text) instead of looping. */
 extern int macos9_https_host_is_dead(const char *host, int port);
 /* fixes554: per-URL terminal-fail set (exported by the https fetcher).  A
- * resource URL that fast-failed once is terminal  -  do NOT follow a 301 onto it
+ * resource URL that fast-failed once is terminal - do NOT follow a 301 onto it
  * and do NOT scheme-fall-back to it, so the cdn.jsdelivr.net emoji storm cannot
  * be relaunched from the http side. */
 extern int macos9_https_url_is_terminal(const char *url);
@@ -49,20 +50,20 @@ extern int macos9_https_url_is_terminal(const char *url);
 #include "macos9_disk_cache.h"
 
 #define MAX_F 64
-/* fixes92  -  bigger OTRcv buffer cuts the syscall count for large bodies.
+/* fixes92 - bigger OTRcv buffer cuts the syscall count for large bodies.
  * 32 KB picks ~1 OTRcv per typical sub-resource response and ~3-4 per
  * the main HTML on MacTrove. Mac OS 9 stack frames are fine with this. */
 #define RECV_B 32768
-/* fixes92  -  pool 16 simultaneous keep-alive sockets to each origin.
+/* fixes92 - pool 16 simultaneous keep-alive sockets to each origin.
  * NetSurf may have up to 16 fetches per host in flight after fixes91's
  * max_fetchers_per_host bump; 16 here matches. */
 #define POOL_SIZE 16
 
-/* fixes91  -  new state MFS_QUEUED:
+/* fixes91 - new state MFS_QUEUED:
  * NetSurf core's fetch_dispatch_jobs() gates on max_fetchers / per-host
  * limits before calling ops.start. The HTTP fetcher previously sat in
  * MFS_INIT from setup-time and mfs_poll_one would run the OT state
- * machine regardless  -  so its slots stayed non-IDLE for fetches NetSurf
+ * machine regardless - so its slots stayed non-IDLE for fetches NetSurf
  * had never dispatched, eventually saturating the slot table. Slots
  * now start in MFS_QUEUED (no OT activity) and only transition to
  * MFS_INIT when ops.start is called, so slot accounting matches
@@ -78,13 +79,13 @@ enum mfs_state {
 	MFS_NOTIFIED
 };
 
-/* fixes98  -  chunked transfer-encoding decoder states.
- *   CS_SIZE     -  reading hex chunk-size line up to \n
- *   CS_DATA     -  copying chunk_remaining bytes as FETCH_DATA
- *   CS_CRLF     -  consuming the \r\n that terminates a chunk's data
- *   CS_TRAILER  -  after final 0-size chunk, eating trailer headers
+/* fixes98 - chunked transfer-encoding decoder states.
+ *   CS_SIZE    - reading hex chunk-size line up to \n
+ *   CS_DATA    - copying chunk_remaining bytes as FETCH_DATA
+ *   CS_CRLF    - consuming the \r\n that terminates a chunk's data
+ *   CS_TRAILER - after final 0-size chunk, eating trailer headers
  *                until an empty line
- *   CS_DONE     -  full body received; mfs_poll_one will transition the
+ *   CS_DONE    - full body received; mfs_poll_one will transition the
  *                fetch to MFS_DONE on the next pass
  */
 enum chunk_state {
@@ -95,7 +96,7 @@ enum chunk_state {
 	CS_DONE
 };
 
-/* fixes94  -  pool_key remembers which (host, port) this slot's endpoint
+/* fixes94 - pool_key remembers which (host, port) this slot's endpoint
  * was opened to. Returned to the matching bucket on close. Direct
  * origins ("frogfind.com:80") each get their own pool entries so
  * reuse only happens on identical targets. */
@@ -113,28 +114,28 @@ struct macos9_fetch_ctx {
 	int keep_alive_ok;   /* fixes91: 1 if endpoint can be reused after response */
 	int chunked;         /* fixes91: 1 if Transfer-Encoding: chunked */
 	char pool_key[POOL_KEY_LEN]; /* fixes94: host:port of this fetch's endpoint */
-	/* fixes107  -  last activity TickCount for the no-progress timeout. Set
+	/* fixes107 - last activity TickCount for the no-progress timeout. Set
 	 * when ops.start transitions QUEUED→INIT, and reset whenever OTRcv
 	 * delivers bytes. If 900 ticks (15s at 60Hz) elapse without any
 	 * progress, the poll loop forces MFS_FAIL with a "Connection timed
 	 * out" error so a silently-stalled origin surfaces as a real
 	 * fetch failure rather than a frozen URL bar. */
 	unsigned long progress_ticks;
-	/* fixes98  -  3xx auto-follow. Location header captured during header
+	/* fixes98 - 3xx auto-follow. Location header captured during header
 	 * parsing; if status is 3xx we emit FETCH_REDIRECT instead of body
 	 * delivery and NetSurf's llcache opens a fresh fetch against this
 	 * URL (relative resolution happens in llcache). */
 	char redirect_url[512];
-	/* fixes98  -  chunked decoder. Active when chunked==1. */
+	/* fixes98 - chunked decoder. Active when chunked==1. */
 	int chunk_state;            /* enum chunk_state */
 	long chunk_remaining;       /* bytes left in current chunk's data */
 	char chunk_size_buf[16];    /* hex line buffer */
 	int chunk_size_len;
 	int trailer_just_after_eol; /* tracks empty-line in CS_TRAILER */
-	/* fixes160c/fixes161a  -  resource class assigned at setup time, used
+	/* fixes160c/fixes161a - resource class assigned at setup time, used
 	 * by the resource governor to apply per-class active-fetch caps. */
 	int rclass;
-	/* fixes172  -  disk cache state.
+	/* fixes172 - disk cache state.
 	 *   cache_eligible : set to 1 by mfs_parse_headers when status 200
 	 *                    + mime is in the text/* / xhtml / json /
 	 *                    javascript whitelist.
@@ -150,7 +151,7 @@ struct macos9_fetch_ctx {
 	 *                    loop and the slot transitions straight to
 	 *                    MFS_DONE. */
 	int cache_eligible;
-	/* fixes987  -  streaming-store handle (0 = not caching this response).
+	/* fixes987 - streaming-store handle (0 = not caching this response).
 	 * Replaces cache_capture as the live path. */
 	int cache_stream;
 	char *cache_capture;
@@ -161,20 +162,20 @@ struct macos9_fetch_ctx {
 	char *cache_hit_body;
 	long cache_hit_len;
 	char cache_hit_mime[128];
-	/* fixes981  -  freshness/validator headers for the disk copy; see the
+	/* fixes981 - freshness/validator headers for the disk copy; see the
 	 * TLS fetcher for the rationale. */
 	char cache_hdrs[MACSURF_CACHE_HDRS_MAX];
 	char cache_hit_hdrs[MACSURF_CACHE_HDRS_MAX];
 	int cache_hit_status;
-	/* fixes312 (#144)  -  POST body. NULL → GET. Copy is heap-owned and
+	/* fixes312 (#144) - POST body. NULL → GET. Copy is heap-owned and
 	 * freed in mfs_close (slot-recycle path). */
 	char *post_body;
 	long post_body_len;
-	/* fixes721 (#144 file upload)  -  POST Content-Type. Empty = the default
+	/* fixes721 (#144 file upload) - POST Content-Type. Empty = the default
 	 * application/x-www-form-urlencoded; set to "multipart/form-data;
 	 * boundary=..." when the fetch carries a file (post_multipart). */
 	char post_ctype[128];
-	/* fixes835 (#167 M1)  -  captured core request headers (sanitized).
+	/* fixes835 (#167 M1) - captured core request headers (sanitized).
 	 * In-struct fixed buffer; zero-inited by the setup memset.
 	 * fixes846 (#167 S3): 512 -> 2048, see macos9_tls_fetcher.c's
 	 * caller_hdrs comment (XHR/GraphQL header sets overflow 512). */
@@ -182,17 +183,17 @@ struct macos9_fetch_ctx {
 };
 static struct macos9_fetch_ctx f_slots[MAX_F];
 
-/* fixes936 (OS X tier 1)  -  one-shot latch for the "RECON OT http done" line
+/* fixes936 (OS X tier 1) - one-shot latch for the "RECON OT http done" line
  * emitted from the MFS_DONE arm of macos9_http_poll. */
 static int g_recon_ot_http_done = 0;
 
-/* fixes172  -  body capture appender. Called from the three places
+/* fixes172 - body capture appender. Called from the three places
  * where FETCH_DATA fires (mfs_parse_headers initial-body branch,
  * mfs_poll_one plain-body branch, process_chunked_bytes CS_DATA
  * branch). Geometric growth from 4 KB up to MACSURF_CACHE_MAX_BYTES;
  * overflow latches and frees the partial buffer. */
 
-/* fixes161a  -  resource governor classes. Used by the URL classifier
+/* fixes161a - resource governor classes. Used by the URL classifier
  * and the per-class active-fetch caps. Each new fetch is classified
  * once at setup and the class is stored on the slot for cheap counting
  * during subsequent setups. */
@@ -204,13 +205,13 @@ static int g_recon_ot_http_done = 0;
 #define MACOS9_RC_OTHER    5
 #define MACOS9_RC__COUNT   6
 
-/* fixes161a  -  per-class concurrent-fetch caps. MAX_F=64 stays as the
+/* fixes161a - per-class concurrent-fetch caps. MAX_F=64 stays as the
  * hard slot array size for all fetch types; the governor refuses new
  * setups when either the class cap or the global active cap is hit,
  * so the array is rarely full in practice. Documents (priority 0) get
  * 2 active to allow back-to-back navigation. CSS gets 4 (Apple ships
  * 8-12 sheets per page after the size gate). Images stay at 8 from
- * fixes160c. Scripts get the same peer-class 4 active that CSS gets  - 
+ * fixes160c. Scripts get the same peer-class 4 active that CSS gets -
  * The JS engine is capable and anything it can't run yet we'll fill
  * in-house, so JS is not a deferable second-tier resource. Fonts get
  * 2. OTHER gets 4 for XHR/manifest/etc. Global cap of 16 keeps total
@@ -225,7 +226,7 @@ static int g_recon_ot_http_done = 0;
 #define MAX_OTHER_F   4
 #define MAX_GLOBAL_F  16
 
-/* fixes161a  -  set by macos9_http_mark_next_as_document() before a top-
+/* fixes161a - set by macos9_http_mark_next_as_document() before a top-
  * level navigation. The next setup() call consumes the flag and
  * classifies its URL as DOCUMENT regardless of suffix. Falls back to
  * URL-suffix classification when the flag is clear. */
@@ -237,7 +238,7 @@ void macos9_http_mark_next_as_document(void)
 }
 
 #ifdef __MACOS9__
-/* fixes94  -  keyed endpoint pool. We route http:// directly to the
+/* fixes94 - keyed endpoint pool. We route http:// directly to the
  * origin, so each pool entry remembers its (host, port). */
 struct ep_pool_entry {
 	EndpointRef ep;
@@ -262,7 +263,7 @@ ep_pool_take(const char *key)
 
 		/* OTLook reports any pending event without consuming
 		 * data. 0 means the endpoint is in T_DATAXFER with no
-		 * pending events  -  healthy idle, safe to reuse. */
+		 * pending events - healthy idle, safe to reuse. */
 		look = OTLook(ep);
 		if (look == 0) {
 			macsurf_debug_log_writef(
@@ -280,7 +281,7 @@ ep_pool_take(const char *key)
 		}
 		OTSndOrderlyDisconnect(ep);
 		OTCloseProvider(ep);
-		/* Restart scan from new top  -  index i may now refer to a
+		/* Restart scan from new top - index i may now refer to a
 		 * different entry after compaction. */
 		i = ep_pool_count;
 	}
@@ -326,7 +327,7 @@ ep_pool_return(const char *key, EndpointRef ep)
 static void mfs_close(struct macos9_fetch_ctx *c) {
 #ifdef __MACOS9__
 	if (c->ep) {
-		/* fixes92  -  fixes91's keep-alive was DOA. mfs_close runs from
+		/* fixes92 - fixes91's keep-alive was DOA. mfs_close runs from
 		 * macos9_http_free, by which time macos9_http_poll has already
 		 * transitioned state MFS_DONE → MFS_NOTIFIED, so the old check
 		 * `state == MFS_DONE` always failed and every endpoint got
@@ -344,7 +345,7 @@ static void mfs_close(struct macos9_fetch_ctx *c) {
 #endif
 }
 
-/* fixes368 (#167)  -  per-host UA moved to macos9_useragent.h /
+/* fixes368 (#167) - per-host UA moved to macos9_useragent.h /
  * macos9_fetch.c (macos9_user_agent_for_host); see there. */
 
 static int mfs_open(struct macos9_fetch_ctx *c) {
@@ -352,7 +353,7 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 	OSStatus e; OTConfigurationRef cfg; DNSAddress dns; TCall call;
 	char target[96];        /* host:port for OTInitDNSAddress + pool key */
 	char path_buf[1024];    /* path?query for direct-mode request line */
-	/* fixes367 (#167)  -  req enlarged 2048→8192 to hold a Cookie: header.
+	/* fixes367 (#167) - req enlarged 2048→8192 to hold a Cookie: header.
 	 * cookie_hdr is capped at 6144; 6144 + path(1024) + host(255) +
 	 * template + UA still fits 8192 with headroom. */
 	char req[8192];
@@ -375,15 +376,15 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 	path_lwc = NULL;
 	query_lwc = NULL;
 
-	/* fixes172  -  disk-cache lookup BEFORE OT setup. If we have a
+	/* fixes172 - disk-cache lookup BEFORE OT setup. If we have a
 	 * fresh body on disk for this URL, populate c->cache_hit_* and
 	 * skip everything below. mfs_poll_one's cache-hit fast path
 	 * delivers headers + body + finished in one cycle. */
 	{
 		const char *url_str = nsurl_access(c->url);
-		/* fixes312 (#144)  -  POSTs are non-idempotent; never serve
+		/* fixes312 (#144) - POSTs are non-idempotent; never serve
 		 * from cache and never cache the response. */
-		/* fixes981  -  never answer a CONDITIONAL request from disk;
+		/* fixes981 - never answer a CONDITIONAL request from disk;
 		 * see the TLS fetcher for the full rationale. Serving the same
 		 * stale bytes back to a revalidation answers nothing and the
 		 * object stays stale forever. */
@@ -393,7 +394,13 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 					"if-none-match:") &&
 				!macos9_hdr_has_ci(c->caller_hdrs,
 					"if-modified-since:") &&
-				macsurf_http_skip_next_cache == 0) {
+				macsurf_http_skip_next_cache == 0 &&
+				/* fixes1159 (#240) - a recent POST to this
+				 * origin arms a short disk-cache bypass so the
+				 * post-redirect GET serves the edited page, not
+				 * the stale pre-POST copy. See
+				 * macos9_disk_cache.c. */
+				!macos9_cache_post_bypass_active(url_str)) {
 			if (macos9_cache_lookup_hdrs(url_str,
 					&c->cache_hit_body,
 					&c->cache_hit_len,
@@ -432,7 +439,7 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 	 * HTTPS is handled natively by macTLS (macos9_tls_fetcher.c); if an
 	 * https URL ever reaches this fetcher it's a routing bug, so log
 	 * loudly and refuse. (fixes692 #153: the retired-proxy branch that
-	 * used to build a PROXY target here is gone  -  MacSurf has been
+	 * used to build a PROXY target here is gone - MacSurf has been
 	 * proxy-free since native macTLS landed.) */
 	if (scheme_len == 5 && strncmp(scheme_str, "https", 5) == 0) {
 		MS_LOG("http_fetcher: REFUSING https (should route to macTLS)");
@@ -495,13 +502,13 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 
 	/* Build the request line in origin-form (GET /foo HTTP/1.1); Host:
 	 * holds the origin hostname. (The retired proxy used absolute-form
-	 * GET http://host/foo  -  that path is gone, fixes692 #153.)
+	 * GET http://host/foo - that path is gone, fixes692 #153.)
 	 *
 	 * POST sends `Connection: close`; GET uses keep-alive and relies on
 	 * the chunked decoder (fixes98) in mfs_poll_one / process_chunked_bytes
 	 * to frame Transfer-Encoding: chunked responses so a reused socket
 	 * knows where one response ends. */
-	/* fixes169 (SAFETY_REPORT §3)  -  bound the request-line write. The
+	/* fixes169 (SAFETY_REPORT §3) - bound the request-line write. The
 	 * template constant is 86 chars; the variable part is the URL (or
 	 * path?query) plus the host. Refuse the fetch if the combined
 	 * length would exceed sizeof(req)-1 so sprintf cannot overrun the
@@ -513,12 +520,12 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		 * and Content-Type are also emitted. */
 		size_t TEMPLATE_LEN = (c->post_body != NULL) ? 160 : 86;
 		const char *method = (c->post_body != NULL) ? "POST" : "GET";
-		/* fixes721  -  Content-Type: multipart (with boundary) if a file was
+		/* fixes721 - Content-Type: multipart (with boundary) if a file was
 		 * posted, else the urlencoded default. Built into a buffer since the
 		 * multipart boundary is dynamic. */
 		char ct_hdr[192];
 		const char *post_extra_hdrs;
-		/* fixes367 (#167)  -  per-host UA + cookie jar (mirrors the HTTPS
+		/* fixes367 (#167) - per-host UA + cookie jar (mirrors the HTTPS
 		 * fetcher). host_z is a NUL-terminated copy of the host slice so
 		 * the suffix match in macos9_user_agent_for_host works; cookie_hdr holds
 		 * the stored cookies for this URL as a ready-to-splice header.
@@ -531,10 +538,10 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		size_t ua_var;
 		size_t ck_var;
 		int    verifiable;   /* fixes835 (#167 M1) */
-		char   synth[512];   /* fixes835  -  Sec-Fetch + Origin */
-		size_t xh_var;       /* fixes835  -  strlen(caller_hdrs) for the guard */
-		size_t sf_var;       /* fixes835  -  strlen(synth) for the guard */
-		/* fixes721  -  POST Content-Type: multipart (with boundary) for a
+		char   synth[512];   /* fixes835 - Sec-Fetch + Origin */
+		size_t xh_var = 0; /* fixes835 - strlen(caller_hdrs) for the guard */
+		size_t sf_var = 0; /* fixes835 - strlen(synth) for the guard */
+		/* fixes721 - POST Content-Type: multipart (with boundary) for a
 		 * file upload, else the urlencoded default. Assigned HERE, after
 		 * all declarations, so CW8 C89 (decls-before-statements) is happy. */
 		if (c->post_body == NULL) {
@@ -552,12 +559,28 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		ua = macos9_user_agent_for_host(host_z);
 		ua_var = strlen(ua);
 		cookie_hdr[0] = '\0';
-		cookie_str = (c->url != NULL) ? urldb_get_cookie(c->url, true) : NULL;
-		macos9_build_cookie_header(cookie_hdr, sizeof cookie_hdr, cookie_str);
-		if (cookie_str != NULL) free(cookie_str);
+		if (nsoption_bool(accept_cookies) && c->url != NULL) {
+			cookie_str = urldb_get_cookie(c->url, true);
+			macos9_build_cookie_header(cookie_hdr, sizeof cookie_hdr,
+				cookie_str);
+			if (cookie_str != NULL) free(cookie_str);
+		} else {
+			cookie_str = NULL;
+		}
+		/* preferences: Do Not Track. The core option exists but only
+		 * curl.c (not built) consumed it - this fetcher builds its
+		 * own request headers, so emit DNT: 1 here. Rides the
+		 * cookie slot: the request template's cookie %s is the only
+		 * optional privacy header in it, and the ck_var length
+		 * guard below is computed after this append. */
+		if (nsoption_bool(do_not_track)) {
+			size_t clen = strlen(cookie_hdr);
+			if (clen + 8 < sizeof cookie_hdr)
+				strcpy(cookie_hdr + clen, "DNT: 1\r\n");
+		}
 
 		ck_var = strlen(cookie_hdr);
-		/* fixes835 (#167 Facebook M1)  -  mirror of the HTTPS fetcher's
+		/* fixes835 (#167 Facebook M1) - mirror of the HTTPS fetcher's
 		 * Sec-Fetch + Origin synthesis, keyed on request kind; scheme is
 		 * http on this path (FB is https-only so it never reaches here, but
 		 * the metadata is browser-standard for any http site). A caller that
@@ -565,7 +588,7 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		verifiable = fetch_get_verifiable(c->parent);
 		macos9_build_sec_fetch(synth, sizeof synth, verifiable,
 		(c->post_body != NULL), "http", host_z);
-		/* fixes368a (#167)  -  one request-summary line per fetch: host, the
+		/* fixes368a (#167) - one request-summary line per fetch: host, the
 		 * chosen UA, and Cookie: header size (bytes only, never values).
 		 * Mirrors the HTTPS fetcher so the troubleshooting trace reads the
 		 * same on both paths. */
@@ -605,7 +628,7 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 					path_buf[p_len] = '\0';
 					pb_used = p_len;
 				} else {
-					/* fixes169 (SAFETY_REPORT §3)  -  bound
+					/* fixes169 (SAFETY_REPORT §3) - bound
 					 * path?query writes to path_buf. Truncate
 					 * path then query so the assembly fits in
 					 * the buffer with room for '?' and NUL. */
@@ -633,7 +656,7 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 			}
 			macsurf_debug_log_writef("mfs_open: %s (direct) %s %s",
 					method, target, path_buf);
-			/* fixes98: direct requests now use keep-alive  -  the chunked
+			/* fixes98: direct requests now use keep-alive - the chunked
 			 * decoder in mfs_poll_one / process_chunked_bytes frames
 			 * Transfer-Encoding: chunked responses correctly so we don't
 			 * need the server to close after each. Pool reuse on direct
@@ -676,15 +699,15 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 				(long)r);
 		goto fail_unref;
 	}
-	/* fixes312 (#144)  -  send POST body after headers. OTSnd is in
+	/* fixes312 (#144) - send POST body after headers. OTSnd is in
 	 * blocking mode here (OTSetNonBlocking happens below), so this is
 	 * a clean single-shot send for typical form-size payloads. Returns
 	 * bytes sent on success; we treat anything < post_body_len as a
 	 * fatal failure rather than implementing partial-resend, since a
 	 * short blocking write almost always means the endpoint is dead. */
-	/* fixes734  -  resend loop for the POST body. The old code did ONE OTSnd
+	/* fixes734 - resend loop for the POST body. The old code did ONE OTSnd
 	 * and treated any short write as fatal; that dropped large uploads (the
-	 * native "Send Debug Log"  -  a 150KB log urlencodes to ~450KB) on real
+	 * native "Send Debug Log" - a 150KB log urlencodes to ~450KB) on real
 	 * hardware, where OT legitimately short-writes a send bigger than its
 	 * send window (SheepShaver/QEMU happened to swallow it whole, masking the
 	 * bug). Advance on each positive return; on a non-positive (flow-control /
@@ -694,6 +717,14 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 		long sent = 0;
 		long want = (long)c->post_body_len;
 		long retries = 0;
+		/* fixes1159 (#240) - the POST is on the wire: refresh the
+		 * per-host disk-cache bypass window from here, so the deadline
+		 * counts from transmission rather than from when the fetch
+		 * queued (see macos9_disk_cache.c). */
+		if (c->url != NULL) {
+			const char *au = nsurl_access(c->url);
+			if (au != NULL) macos9_cache_arm_post_bypass(au);
+		}
 		for (;;) {
 			r = OTSnd(c->ep, c->post_body + sent, want - sent, 0);
 			if (r > 0) {
@@ -721,7 +752,7 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 	return 1;
 
 fail_unref:
-	/* fixes94  -  if we opened an endpoint but failed before OTSnd,
+	/* fixes94 - if we opened an endpoint but failed before OTSnd,
 	 * close it immediately so mfs_close doesn't try to pool a
 	 * half-built connection (pool_key may already be set). */
 	if (c->ep != NULL) {
@@ -741,10 +772,10 @@ fail_unref:
 #endif
 }
 
-/* fixes98  -  chunked decoder. Drives the chunk_state state machine over
+/* fixes98 - chunked decoder. Drives the chunk_state state machine over
  * a buffer of raw post-header bytes. Emits FETCH_DATA for the data
  * regions; consumes the size lines, CRLFs, and trailer headers without
- * forwarding them. Reentrant across calls  -  partial chunks are
+ * forwarding them. Reentrant across calls - partial chunks are
  * remembered in c->chunk_state / chunk_remaining / chunk_size_buf, so
  * an OTRcv that splits mid-line works correctly on the next pass.
  * When the terminating empty trailer line is seen, sets chunk_state to
@@ -777,7 +808,7 @@ process_chunked_bytes(struct macos9_fetch_ctx *c, const char *b, long len)
 					break;
 				}
 				if (ch == '\r') continue;
-				/* Drop chunk extensions after ';'  -  stay
+				/* Drop chunk extensions after ';' - stay
 				 * inside the buffer so strtol stops at the
 				 * first non-hex char anyway, but avoid
 				 * overflowing chunk_size_buf on a long ext. */
@@ -798,7 +829,7 @@ process_chunked_bytes(struct macos9_fetch_ctx *c, const char *b, long len)
 				msg.data.header_or_data.buf = (const uint8_t *)(b + pos);
 				msg.data.header_or_data.len = (size_t)deliver;
 				fetch_send_callback(&msg, c->parent);
-				/* fixes172  -  capture chunked-decoded body. */
+				/* fixes172 - capture chunked-decoded body. */
 				/* fixes987 */
 				if (c->cache_stream != 0 &&
 				    !macos9_cache_stream_data(c->cache_stream,
@@ -846,13 +877,13 @@ process_chunked_bytes(struct macos9_fetch_ctx *c, const char *b, long len)
 
 static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 	char *sep = strstr(c->h_buf, "\r\n\r\n"), *p, *cur; long cur_len; fetch_msg msg;
-	/* fixes979  -  304 Not Modified. Set once the status line is parsed;
+	/* fixes979 - 304 Not Modified. Set once the status line is parsed;
 	 * while it is on, no header is forwarded, mirroring curl.c
 	 * (fetch_curl_process_headers answers a conditional GET with
 	 * FETCH_NOTMODIFIED alone). llcache_fetch_notmodified moves the users
 	 * onto the candidate object and refreshes ITS cache data, so replaying
 	 * these headers would apply them to the object being discarded.
-	 * Set-Cookie is still captured below - only the forwarding is
+	 * Set-Cookie is still captured below -- only the forwarding is
 	 * suppressed. GET only: a 304 answering a POST is malformed, and
 	 * treating it as "your cached copy is fine" would serve the wrong
 	 * thing for a form submission. */
@@ -880,21 +911,12 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 		if(strncasecmp(p,"Content-Type:",13)==0) {
 			char *v=p+13; while(*v==' ')v++;
 			strncpy(c->mime,v,127); c->mime[127]=0;
-			/* fixes770 (#232)  -  no standalone text/plain content
-			 * handler, so a text/plain response downloads instead of
-			 * displaying. Browsers show it inline. Relabel as
-			 * text/html so it renders through the HTML pipeline
-			 * (mirrors the TLS fetcher). Substitute the forwarded
-			 * header too so NetSurf's content factory agrees. */
-			if(strncasecmp(c->mime,"text/plain",10)==0) {
-				strcpy(c->mime,"text/html");
-				p=(char*)"Content-Type: text/html; charset=utf-8";
-				macsurf_debug_log_writef(
-					"RECON MIME text/plain->text/html (http) "
-					"st=%d", c->status);
-			}
+			/* fixes770's text/plain->text/html relabel REMOVED
+			 * (#233, fixes1137): the real textplain.c handler is
+			 * wired, so text/plain goes to the content factory
+			 * as itself. */
 		}
-		/* fixes91  -  parse Content-Length so we know when the body
+		/* fixes91 - parse Content-Length so we know when the body
 		 * ends without waiting for the server to close. */
 		if(strncasecmp(p,"Content-Length:",15)==0) {
 			char *v=p+15; while(*v==' ')v++;
@@ -908,9 +930,9 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 			char *v=p+11; while(*v==' ')v++;
 			if(strncasecmp(v,"close",5)==0) c->keep_alive_ok = 0;
 		}
-		/* fixes981  -  freshness/validator headers for the disk copy. */
+		/* fixes981 - freshness/validator headers for the disk copy. */
 		macos9_cache_capture_hdr(p, c->cache_hdrs, sizeof c->cache_hdrs);
-		/* fixes98  -  capture Location: for 3xx auto-follow. */
+		/* fixes98 - capture Location: for 3xx auto-follow. */
 		if(strncasecmp(p,"Location:",9)==0) {
 			char *v=p+9; size_t lv;
 			while(*v==' '||*v=='\t')v++;
@@ -919,13 +941,16 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 			memcpy(c->redirect_url, v, lv);
 			c->redirect_url[lv] = '\0';
 		}
-		/* fixes367 (#167)  -  cookie jar: store Set-Cookie before the 3xx
+		/* fixes367 (#167) - cookie jar: store Set-Cookie before the 3xx
 		 * handling below tears the fetch down, so a login POST's 302
 		 * carries its session cookies into urldb. Mirrors curl.c. */
 		if(strncasecmp(p,"Set-Cookie:",11)==0) {
 			char *v=p+11; while(*v==' '||*v=='\t')v++;
+			/* preferences: accept_cookies master switch (the jar
+			 * is always wired, this gates what enters it). */
+			if (!nsoption_bool(accept_cookies)) continue;
 			fetch_set_cookie(c->parent, v);
-			/* fixes750 (#213)  -  a login POST that stores a Set-Cookie
+			/* fixes750 (#213) - a login POST that stores a Set-Cookie
 			 * establishes a session: force the redirect target fresh
 			 * (skip_next_cache) AND purge cached bodies once (skip 0->1
 			 * edge) so previously-visited pages don't serve their
@@ -943,7 +968,7 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 					"(login) url=%s",
 					(c->url != NULL) ? nsurl_access(c->url) : "?");
 			}
-			/* fixes367 (#167)  -  log cookie NAME only, never value. */
+			/* fixes367 (#167) - log cookie NAME only, never value. */
 			{
 				char nm[40]; int k=0;
 				while(v[k]!='\0' && v[k]!='=' && k<39){ nm[k]=v[k]; k++; }
@@ -956,13 +981,13 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 			msg.data.header_or_data.len=strlen(p); fetch_send_callback(&msg,c->parent);
 		}
 	}
-	/* fixes979  -  the 304 answer itself. Before the 3xx branch below, which
+	/* fixes979 - the 304 answer itself. Before the 3xx branch below, which
 	 * would otherwise see a 304 as a redirect the moment a server sent a
 	 * stray Location. Terminal: same teardown contract as the redirect
 	 * path (remove from queues, then free). */
 	if (notmod) {
 		struct fetch *parent_save;
-		/* fixes979b  -  "LIFE " prefix so the failures-only gate keeps it. */
+		/* fixes979b - "LIFE " prefix so the failures-only gate keeps it. */
 		macsurf_debug_log_writef("LIFE 304 not-modified url=%s",
 			(c->url != NULL) ? nsurl_access(c->url) : "?");
 		msg.type = FETCH_NOTMODIFIED;
@@ -978,10 +1003,10 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 		fetch_free(parent_save);
 		return;
 	}
-	/* fixes98  -  3xx with Location: hand the redirect target to llcache
+	/* fixes98 - 3xx with Location: hand the redirect target to llcache
 	 * via FETCH_REDIRECT and stop the body delivery. We don't bother
 	 * draining the (usually-tiny "301 Moved Permanently") body because
-	 * we're closing the socket  -  pool reuse on a 3xx isn't worth the
+	 * we're closing the socket - pool reuse on a 3xx isn't worth the
 	 * decoder complexity. */
 	if (c->status >= 300 && c->status < 400 && c->redirect_url[0] != '\0') {
 		struct fetch *parent_save;
@@ -1041,7 +1066,7 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 			c->status, c->redirect_url);
 		c->state = MFS_NOTIFIED;
 		c->keep_alive_ok = 0;
-		/* fixes103  -  remove from fetch_ring AND free. Both calls
+		/* fixes103 - remove from fetch_ring AND free. Both calls
 		 * are required (see comment in macos9_http_poll). h_buf
 		 * is freed via ops.free; no double-free. Save parent
 		 * before fetch_free destroys c. */
@@ -1050,25 +1075,25 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 		fetch_free(parent_save);
 		return;
 	}
-	/* fixes98  -  keep-alive is now compatible with chunked (the decoder
+	/* fixes98 - keep-alive is now compatible with chunked (the decoder
 	 * tells us where the body ends). Only Content-Length-less *plain*
 	 * responses force close. */
 	if (c->content_length < 0 && !c->chunked) c->keep_alive_ok = 0;
-	/* fixes98  -  init chunked decoder state. */
+	/* fixes98 - init chunked decoder state. */
 	if (c->chunked) {
 		c->chunk_state = CS_SIZE;
 		c->chunk_size_len = 0;
 		c->chunk_remaining = 0;
 	}
-	/* fixes172  -  decide cache eligibility based on the final
+	/* fixes172 - decide cache eligibility based on the final
 	 * status + MIME. cache_capture is allocated lazily on the
 	 * first body byte; cache_overflow latches if the body
 	 * outgrows MACSURF_CACHE_MAX_BYTES.
-	 * fixes312 (#144)  -  POST responses are NEVER cached. */
+	 * fixes312 (#144) - POST responses are NEVER cached. */
 	if (c->post_body == NULL &&
 	    macos9_cache_mime_eligible(c->status, c->mime)) {
 		c->cache_eligible = 1;
-		/* fixes987  -  open the cache file up front and write through. */
+		/* fixes987 - open the cache file up front and write through. */
 		if (c->url != NULL) {
 			const char *cu_ = nsurl_access(c->url);
 			if (cu_ != NULL) {
@@ -1091,7 +1116,7 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 				msg.type=FETCH_DATA; msg.data.header_or_data.buf=(const uint8_t*)(sep+4);
 				msg.data.header_or_data.len=(size_t)deliver;
 				fetch_send_callback(&msg,c->parent);
-				/* fixes172  -  also capture for the disk cache. */
+				/* fixes172 - also capture for the disk cache. */
 				/* fixes987 */
 				if (c->cache_stream != 0 &&
 				    !macos9_cache_stream_data(c->cache_stream,
@@ -1109,18 +1134,18 @@ static void mfs_parse_headers(struct macos9_fetch_ctx *c) {
 
 static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 #ifdef __MACOS9__
-	/* fixes92  -  static so we can afford a 32 KB buffer without stack
+	/* fixes92 - static so we can afford a 32 KB buffer without stack
 	 * pressure. macos9_http_poll calls mfs_poll_one sequentially in a
 	 * single-threaded loop, and OTRcv in non-blocking mode never yields,
 	 * so this is reentrancy-safe under MacSurf's cooperative model. */
 	static char b[RECV_B];
 	OTResult n; fetch_msg m;
 	int loop_count;
-	/* IDLE / NOTIFIED slots are truly inactive  -  nothing to do. */
+	/* IDLE / NOTIFIED slots are truly inactive - nothing to do. */
 	if(c->state==MFS_IDLE || c->state==MFS_NOTIFIED) return;
-	/* fixes104  -  check abort BEFORE the QUEUED early-return. Previously
+	/* fixes104 - check abort BEFORE the QUEUED early-return. Previously
 	 * an aborted-while-queued fetch (NetSurf calls ops.abort on a
-	 * fetch that hasn't yet been dispatched via ops.start  -  happens
+	 * fetch that hasn't yet been dispatched via ops.start - happens
 	 * every navigation that has pending sub-resources) was permanently
 	 * stranded: state stayed MFS_QUEUED, the outer state-check on the
 	 * old line 635 returned early, and the aborted-cleanup branch was
@@ -1131,10 +1156,10 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 	 * cleanup (fetch_remove_from_queues + fetch_free) regardless of
 	 * which state they were in when abort came in. */
 	if(c->aborted) { c->state=MFS_DONE; c->keep_alive_ok=0; return; }
-	/* fixes91  -  MFS_QUEUED means NetSurf hasn't dispatched yet (ops.start
+	/* fixes91 - MFS_QUEUED means NetSurf hasn't dispatched yet (ops.start
 	 * unfired); don't open OT until then. */
 	if(c->state==MFS_QUEUED) return;
-	/* fixes957 (#285)  -  refuse trackers / ad networks / consent platforms on
+	/* fixes957 (#285) - refuse trackers / ad networks / consent platforms on
 	 * CLEARTEXT origins too.
 	 *
 	 * fixes856 added the blocklist but wired it into the HTTPS fetcher only:
@@ -1170,7 +1195,7 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 		}
 	}
 	if(c->state==MFS_INIT) { if(mfs_open(c)) c->state=MFS_HEADERS; else c->state=MFS_FAIL; return; }
-	/* fixes172  -  cache-hit fast path. mfs_open set cache_hit=1 and
+	/* fixes172 - cache-hit fast path. mfs_open set cache_hit=1 and
 	 * populated the body buffer; we deliver headers, the body, and
 	 * finished, then transition straight to MFS_DONE without ever
 	 * touching OT. */
@@ -1181,7 +1206,7 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 		long hlen;
 		/* Synthetic Content-Type header so NetSurf core sees the
 		 * MIME type the cached file was stored with. */
-		/* fixes981  -  replay the stored freshness/validator headers
+		/* fixes981 - replay the stored freshness/validator headers
 		 * before Content-Type, so llcache builds this object's cache
 		 * data as if it had come off the network. */
 		if (c->cache_hit_hdrs[0] != '\0') {
@@ -1234,7 +1259,7 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 			if(n==kOTLookErr) {
 				OTResult l=OTLook(c->ep);
 				if(l==T_ORDREL||l==T_DISCONNECT) {
-					/* Server closed before we hit Content-Length  - 
+					/* Server closed before we hit Content-Length -
 					 * treat as done but don't pool. */
 					c->keep_alive_ok = 0;
 					c->state=MFS_DONE; return;
@@ -1243,10 +1268,10 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 			c->err="OT error"; c->state=MFS_FAIL; return;
 		}
 		if(n==0) { c->keep_alive_ok=0; c->state=MFS_DONE; return; }
-		/* fixes107  -  bytes received, reset no-progress timer. */
+		/* fixes107 - bytes received, reset no-progress timer. */
 		c->progress_ticks = (unsigned long)TickCount();
 		if(c->state==MFS_HEADERS) {
-			/* fixes169 (SAFETY_REPORT §4)  -  keep one trailing byte in
+			/* fixes169 (SAFETY_REPORT §4) - keep one trailing byte in
 			 * h_buf reserved for a NUL terminator. strstr / strlen on
 			 * h_buf must see network data terminated cleanly even when
 			 * the origin sent no CRLF-CRLF yet. */
@@ -1269,7 +1294,7 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 				if (c->chunk_state == CS_DONE) c->state = MFS_DONE;
 			} else {
 				long deliver = n;
-				/* fixes91  -  cap delivery at Content-Length so we don't bleed
+				/* fixes91 - cap delivery at Content-Length so we don't bleed
 				 * into the next pipelined response. */
 				if (c->content_length >= 0 && c->body_bytes + deliver > c->content_length)
 					deliver = c->content_length - c->body_bytes;
@@ -1277,7 +1302,7 @@ static void mfs_poll_one(struct macos9_fetch_ctx *c) {
 					m.type=FETCH_DATA; m.data.header_or_data.buf=(const uint8_t*)b;
 					m.data.header_or_data.len=(size_t)deliver;
 					fetch_send_callback(&m,c->parent);
-					/* fixes172  -  capture for disk cache. */
+					/* fixes172 - capture for disk cache. */
 					/* fixes987 */
 					if (c->cache_stream != 0 &&
 					    !macos9_cache_stream_data(
@@ -1305,22 +1330,22 @@ static void macos9_http_poll(lwc_string *s) {
 #endif
 	for(i=0;i<MAX_F;i++) {
 		struct macos9_fetch_ctx *c = &f_slots[i];
-		/* fixes104  -  only skip TRULY-inactive slots. MFS_QUEUED used
+		/* fixes104 - only skip TRULY-inactive slots. MFS_QUEUED used
 		 * to skip here but must be polled too so aborted-while-queued
 		 * fetches can transition to MFS_DONE and get cleaned up.
 		 * For non-aborted MFS_QUEUED, mfs_poll_one returns fast. */
 		if(c->state==MFS_IDLE || c->state==MFS_NOTIFIED) continue;
 #ifdef __MACOS9__
-		/* fixes107  -  15-second no-progress timeout. Only active in
+		/* fixes107 - 15-second no-progress timeout. Only active in
 		 * MFS_HEADERS / MFS_BODY, i.e. after ops.start has dispatched
 		 * and we are waiting on OTRcv. Queued slots are correctly
 		 * idle (NetSurf hasn't dispatched yet); MFS_INIT only lasts
 		 * the one cycle that calls mfs_open and is impossible to see
 		 * between polls. If progress_ticks hasn't advanced in 900
-		 * ticks (15s at 60Hz), the origin has stalled  -  fail
+		 * ticks (15s at 60Hz), the origin has stalled - fail
 		 * the slot so the URL bar comes back alive and NetSurf core
 		 * hears about the failure rather than waiting silently. */
-		/* fixes239  -  aligned with HTTPS NO_PROGRESS_TICKS (fixes235).
+		/* fixes239 - aligned with HTTPS NO_PROGRESS_TICKS (fixes235).
 		 * Was 900 ticks (15s); now 240 ticks (4s). HTTP traffic is
 		 * almost entirely retired by HTTPS but consistency keeps the
 		 * fail latency the same for any legacy http:// fetch. */
@@ -1339,7 +1364,7 @@ static void macos9_http_poll(lwc_string *s) {
 		mfs_poll_one(c);
 #endif
 		if(c->state==MFS_FAIL) {
-			/* fixes317  -  record this HTTP failure for the host
+			/* fixes317 - record this HTTP failure for the host
 			 * so a later HTTPS fail for the same host knows it
 			 * can't bounce back. */
 			extern void macsurf_scheme_mark_http_failed(const char *key);
@@ -1347,7 +1372,7 @@ static void macos9_http_poll(lwc_string *s) {
 			if (c->pool_key[0] != '\0') {
 				macsurf_scheme_mark_http_failed(c->pool_key);
 			}
-			/* fixes317  -  fall back to HTTPS when HTTP fails AND
+			/* fixes317 - fall back to HTTPS when HTTP fails AND
 			 * HTTPS hasn't already failed this navigation. Only
 			 * triggers for direct http:// URLs. The
 			 * tracker prevents the bounce loop with HSTS hosts
@@ -1360,7 +1385,7 @@ static void macos9_http_poll(lwc_string *s) {
 					fetch_msg rm;
 					int n = sprintf(c->redirect_url,
 						"https://%s", u + 7);
-					/* fixes554  -  do not scheme-fall-back onto a
+					/* fixes554 - do not scheme-fall-back onto a
 					 * URL already marked terminally failed; the
 					 * https side of the jsdelivr fast-fail loop.
 					 * Fall through to FETCH_ERROR (alt text). */
@@ -1397,7 +1422,7 @@ static void macos9_http_poll(lwc_string *s) {
 			fetch_msg m; m.type=FETCH_FINISHED;
 			c->state=MFS_NOTIFIED; fetch_send_callback(&m,c->parent);
 			macsurf_debug_log_writef("http: done body=%ld len=%ld status=%d ka=%d", c->body_bytes, c->content_length, c->status, c->keep_alive_ok);
-			/* fixes936 (OS X tier 1)  -  the plain-HTTP arm of the OT health
+			/* fixes936 (OS X tier 1) - the plain-HTTP arm of the OT health
 			 * probe, one line at the first completed HTTP fetch.
 			 *
 			 * This exists to DISAMBIGUATE two failure hypotheses that look
@@ -1407,8 +1432,8 @@ static void macos9_http_poll(lwc_string *s) {
 			 * (-> the keep-OT-over-sockets decision genuinely needs revisiting,
 			 * despite OT being documented as present through 10.4).
 			 *
-			 * There is no OSTLSDiagnostics here - this path never touches
-			 * macTLS - so the payload is the fetch's own outcome. pool_key is
+			 * There is no OSTLSDiagnostics here -- this path never touches
+			 * macTLS -- so the payload is the fetch's own outcome. pool_key is
 			 * the bounded "host:port" string; this ctx has no host field. */
 			if (!g_recon_ot_http_done) {
 				g_recon_ot_http_done = 1;
@@ -1421,21 +1446,21 @@ static void macos9_http_poll(lwc_string *s) {
 				macsurf_debug_log_flush();
 			}
 			macsurf_profile_stamp("fetch-finished");
-			/* fixes369 (#167)  -  page-weight accounting. */
+			/* fixes369 (#167) - page-weight accounting. */
 			macsurf_profile_add_bytes(c->body_bytes);
 			macsurf_profile_count_resource();
-			/* fixes172  -  write captured body to the disk cache.
+			/* fixes172 - write captured body to the disk cache.
 			 * cache_eligible is set in mfs_parse_headers when
 			 * the response is a cacheable MIME type with
 			 * status 200; cache_overflow is set if the body
 			 * exceeded MACSURF_CACHE_MAX_BYTES. */
-			/* fixes987  -  body already on disk; commit patches
+			/* fixes987 - body already on disk; commit patches
 			 * in its length, which is what makes it readable. */
 			if (c->cache_stream != 0) {
 				macos9_cache_stream_end(c->cache_stream, 1);
 				c->cache_stream = 0;
 			}
-			/* fixes99  -  pool the endpoint right now, while it is
+			/* fixes99 - pool the endpoint right now, while it is
 			 * known idle and the next fetch may already be queued. */
 #ifdef __MACOS9__
 			if (c->keep_alive_ok && !c->aborted &&
@@ -1444,7 +1469,7 @@ static void macos9_http_poll(lwc_string *s) {
 				c->ep = NULL;
 			}
 #endif
-			/* fixes103  -  release the fetcher slot completely.
+			/* fixes103 - release the fetcher slot completely.
 			 * fetch_free alone is NOT enough: it does not remove
 			 * the entry from fetch_ring, leaving a dangling
 			 * pointer that the next RING_GETSIZE walks as freed
@@ -1453,7 +1478,7 @@ static void macos9_http_poll(lwc_string *s) {
 			 * css_fetcher.c, javascript/fetcher.c, curl.c) calls
 			 * fetch_remove_from_queues FIRST, then fetch_free. Do
 			 * the same. After this point c (and c->parent) are
-			 * freed memory  -  don't touch them. */
+			 * freed memory - don't touch them. */
 			fetch_remove_from_queues(c->parent);
 			fetch_free(c->parent);
 		}
@@ -1464,13 +1489,13 @@ static bool macos9_http_initialise(lwc_string *s) { (void)s; return true; }
 static void macos9_http_finalise(lwc_string *s) { (void)s; }
 static bool macos9_http_acceptable(const struct nsurl *u) { (void)u; return true; }
 
-/* fixes161a  -  URL-suffix resource classifier. Returns a MACOS9_RC_* enum.
+/* fixes161a - URL-suffix resource classifier. Returns a MACOS9_RC_* enum.
  * Caller is responsible for handling the navigation-hint override before
  * calling this (the pending_document flag wins over suffix). Suffix is
  * inspected against the URL path portion only (everything before '?' or
  * '#'), with case-insensitive matching.
  *
- * fixes161a2  -  tightened DOC matching. Apple's /wss/fonts?families=...
+ * fixes161a2 - tightened DOC matching. Apple's /wss/fonts?families=...
  * endpoint was being misclassified as DOCUMENT under the old no-dot
  * fallback, which both gave it a DOC slot reservation and confused
  * downstream layout-aware logic. DOC class now requires either an
@@ -1546,7 +1571,7 @@ static int macos9_classify_url(struct nsurl *u) {
 		if (c2=='j' && c1=='s') return MACOS9_RC_SCRIPT;
 	}
 
-	/* fixes161a2  -  bare-domain-root → DOCUMENT, everything else → OTHER.
+	/* fixes161a2 - bare-domain-root → DOCUMENT, everything else → OTHER.
 	 * Find the start of the path (skip past "scheme://host"). If the
 	 * remaining path is empty or just "/", classify as DOC. Otherwise
 	 * the URL has a real path; without a recognized extension it falls
@@ -1615,7 +1640,7 @@ static void macos9_rgov_bump_skip(int rc) {
 		case MACOS9_RC_FONT:     macsurf__site_rgov_skip_font++; break;
 		default:                 macsurf__site_rgov_skip_other++; break;
 	}
-	/* fixes168f  -  heavy-mode latch. Trip once any one of the
+	/* fixes168f - heavy-mode latch. Trip once any one of the
 	 * thresholds is exceeded. Cleared at navigation start by
 	 * macsurf_site_navigation_reset(). Consumers read via the
 	 * accessor below; future reader-fallback and overlay-rescue
@@ -1629,7 +1654,7 @@ static void macos9_rgov_bump_skip(int rc) {
 	if (total_skipped > 30) macsurf__site_heavy = 1;
 }
 
-/* fixes168f  -  public accessor. Returns 1 once the current page has
+/* fixes168f - public accessor. Returns 1 once the current page has
  * tripped any heavy-mode threshold, 0 otherwise. Stable across calls;
  * resets only when macsurf_site_navigation_reset() is invoked. */
 int macsurf_site_is_heavy(void) {
@@ -1637,7 +1662,7 @@ int macsurf_site_is_heavy(void) {
 	return (macsurf__site_heavy != 0) ? 1 : 0;
 }
 
-/* fixes168f  -  navigation reset. Clears the per-page heavy latch and
+/* fixes168f - navigation reset. Clears the per-page heavy latch and
  * the resource-governor skip counters so the next page starts from a
  * clean slate. Wire into the navigation entry point (window.c) so
  * heavy mode is per-page, not process-cumulative. */
@@ -1657,7 +1682,7 @@ void macsurf_site_navigation_reset(void) {
 	macsurf__site_rgov_skip_script = 0;
 	macsurf__site_rgov_skip_font = 0;
 	macsurf__site_rgov_skip_other = 0;
-	/* fixes317  -  clear per-host scheme-attempt tracker so the next
+	/* fixes317 - clear per-host scheme-attempt tracker so the next
 	 * top-level navigation starts with a fresh https/http budget. */
 	macsurf_scheme_reset_all();
 }
@@ -1670,7 +1695,7 @@ static void *macos9_http_setup(struct fetch *p, struct nsurl *u, bool o, bool d,
 	int slot_index = -1;
 	(void)o;(void)d;(void)pm;
 
-	/* fixes161a  -  classify. Navigation-hint flag wins over URL suffix
+	/* fixes161a - classify. Navigation-hint flag wins over URL suffix
 	 * (top-level docs that look like /api/x or /foo.png still classify
 	 * as DOCUMENT). The flag is single-shot: consumed by the first
 	 * setup() call after the navigation. */
@@ -1691,7 +1716,7 @@ static void *macos9_http_setup(struct fetch *p, struct nsurl *u, bool o, bool d,
 		if (f_slots[i].rclass == rc) class_active++;
 	}
 
-	/* fixes161a2  -  only IMAGE class is safe to refuse via NULL. Refusing
+	/* fixes161a2 - only IMAGE class is safe to refuse via NULL. Refusing
 	 * DOC/CSS/SCRIPT/FONT/OTHER setups causes NetSurf to treat the load
 	 * as a critical fetch failure and the browser_window switches to
 	 * about:query/fetcherror. For non-IMG classes we still log a
@@ -1724,7 +1749,7 @@ static void *macos9_http_setup(struct fetch *p, struct nsurl *u, bool o, bool d,
 		}
 	}
 
-	/* Cap checks passed  -  allocate a slot from the array. */
+	/* Cap checks passed - allocate a slot from the array. */
 	for (i = 0; i < MAX_F; i++) {
 		if (f_slots[i].state == MFS_IDLE) { slot_index = i; break; }
 	}
@@ -1743,11 +1768,11 @@ static void *macos9_http_setup(struct fetch *p, struct nsurl *u, bool o, bool d,
 	f_slots[slot_index].content_length = -1;
 	f_slots[slot_index].keep_alive_ok = 1;
 	f_slots[slot_index].rclass = rc;
-	/* fixes835 (#167 M1)  -  capture core's additional request headers now
+	/* fixes835 (#167 M1) - capture core's additional request headers now
 	 * (the h[] array is only valid for this setup call). */
 	macos9_capture_extra_headers(h, f_slots[slot_index].caller_hdrs,
 		sizeof f_slots[slot_index].caller_hdrs);
-	/* fixes312 (#144)  -  capture POST body. NULL → GET (default). POST
+	/* fixes312 (#144) - capture POST body. NULL → GET (default). POST
 	 * forces keep-alive off (origin commonly closes after a POST). */
 	if (pu != NULL) {
 		size_t pu_len = strlen(pu);
@@ -1763,7 +1788,7 @@ static void *macos9_http_setup(struct fetch *p, struct nsurl *u, bool o, bool d,
 		f_slots[slot_index].post_body_len = (long)pu_len;
 		f_slots[slot_index].keep_alive_ok = 0;
 	} else if (pm != NULL) {
-		/* fixes721 (#144 file upload)  -  multipart POST: serialise the
+		/* fixes721 (#144 file upload) - multipart POST: serialise the
 		 * parts (reading file parts off disk) into a multipart/form-data
 		 * body and record the boundary in the Content-Type. */
 		extern char *macos9_build_multipart(
@@ -1782,6 +1807,18 @@ static void *macos9_http_setup(struct fetch *p, struct nsurl *u, bool o, bool d,
 			free(body);
 		}
 	}
+	/* fixes1159 (#240) - ANY POST (not just login) arms the per-host
+	 * disk-cache bypass window (see macos9_disk_cache.c), so the fetch
+	 * that follows a post-redirect - or any same-origin GET in the next
+	 * few seconds - cannot be answered from a cache that predates the
+	 * POST. A forum edit flow POSTs then 302s back to the thread page;
+	 * serving the cached pre-edit copy hides the edit and the next edit
+	 * re-derives from the stale base (data loss). Re-armed on the wire
+	 * at the body send below, so the deadline counts from transmission. */
+	if (f_slots[slot_index].post_body != NULL) {
+		const char *au = nsurl_access(f_slots[slot_index].url);
+		if (au != NULL) macos9_cache_arm_post_bypass(au);
+	}
 	/* fetch_active_peak: high-water-mark across the page load.
 	 * +1 because this allocation hasn't been counted yet. */
 	{
@@ -1798,11 +1835,11 @@ static void *macos9_http_setup(struct fetch *p, struct nsurl *u, bool o, bool d,
 }
 static bool macos9_http_start(void *ctx) {
 	struct macos9_fetch_ctx *c = (struct macos9_fetch_ctx*)ctx;
-	/* fixes91  -  transition QUEUED→INIT so mfs_poll_one will open OT. */
+	/* fixes91 - transition QUEUED→INIT so mfs_poll_one will open OT. */
 	if (c != NULL && c->state == MFS_QUEUED) {
 		c->state = MFS_INIT;
 #ifdef __MACOS9__
-		/* fixes107  -  stamp baseline for no-progress timeout. Set here
+		/* fixes107 - stamp baseline for no-progress timeout. Set here
 		 * (not at setup) so time spent queued waiting for NetSurf's
 		 * fetch_dispatch_jobs doesn't count against the 15s budget. */
 		c->progress_ticks = (unsigned long)TickCount();
@@ -1819,8 +1856,8 @@ static void macos9_http_free(void *ctx) {
 		nsurl_unref(c->url);
 		c->url = NULL;
 	}
-	/* fixes172  -  release cache state. */
-	/* fixes987  -  a stream still open at slot teardown never reached
+	/* fixes172 - release cache state. */
+	/* fixes987 - a stream still open at slot teardown never reached
 	 * FETCH_FINISHED: close and DELETE, so no truncated body survives. */
 	if (c->cache_stream != 0) {
 		macos9_cache_stream_end(c->cache_stream, 0);
@@ -1836,7 +1873,7 @@ static void macos9_http_free(void *ctx) {
 	c->cache_hit = 0;
 	c->cache_hit_mime[0] = '\0';
 	c->cache_hit_status = 0;
-	/* fixes312 (#144)  -  release captured POST body. */
+	/* fixes312 (#144) - release captured POST body. */
 	if (c->post_body) { free(c->post_body); c->post_body = NULL; }
 	c->post_body_len = 0;
 	c->state = MFS_IDLE;
@@ -1849,7 +1886,7 @@ nserror macos9_http_fetcher_register(void) {
 	ops.free=macos9_http_free; ops.poll=macos9_http_poll; ops.fdset=NULL; ops.finalise=macos9_http_finalise;
 	lwc_intern_string("http",4,&sh); lwc_intern_string("https",5,&ss);
 	/* https is handled natively by macTLS (macos9_tls_fetcher.c), so the
-	 * fetcher_add for ss is intentionally left commented out here  -  the
+	 * fetcher_add for ss is intentionally left commented out here - the
 	 * macTLS HTTPS fetcher owns the https scheme. */
 	fetcher_add(sh,&ops);
 	/* fetcher_add(ss,&ops); */

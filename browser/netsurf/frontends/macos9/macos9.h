@@ -50,7 +50,7 @@ struct rect;
 	#define __INTERNETCONFIG__
 	#endif
 
-	/* fixes59: don't suppress Aliases.h  -  let Apple's own header provide the
+	/* fixes59: don't suppress Aliases.h - let Apple's own header provide the
 	 * full AliasRecord/AliasPtr/AliasHandle definitions before Carbon.h chains
 	 * into MacWindows.h. Previous fixes (263-266, 58) pre-declared AliasHandle
 	 * to avoid Aliases.h, but every variant tripped CW8 inside MacWindows.h on
@@ -59,7 +59,7 @@ struct rect;
 	 * suppressed (fixes265), the original "AliasRecord incomplete in
 	 * InternetConfig.h" cascade can't re-emerge. */
 	#include <Aliases.h>
-	/* MacSurf does not use the Keychain  -  suppress KeychainCore.h AND
+	/* MacSurf does not use the Keychain - suppress KeychainCore.h AND
 	 * KeychainHI.h (Carbon.h:210 chain) to avoid their C89-incompatible
 	 * function prototypes (KCRef by value, etc.). */
 	#ifndef __KEYCHAINCORE__
@@ -74,7 +74,7 @@ struct rect;
 	#define __ATSLayoutTypes__
 	#endif
 	/* Power.h (via CoreServices.h:247) reports as corrupted on at least one
-	 * CW8 install  -  TWOWORDINLINE lines and TARGET_CPU_68K conditionals show
+	 * CW8 install - TWOWORDINLINE lines and TARGET_CPU_68K conditionals show
 	 * up with garbage bytes / unterminated comments. MacSurf doesn't touch
 	 * the Power Manager, so suppress the whole header. */
 	#ifndef __POWER__
@@ -101,7 +101,7 @@ struct gui_window {
 	WindowRef window;
 	ControlRef back_btn;
 	ControlRef forward_btn;
-	ControlRef stop_btn;      /* fixes724  -  Stop (X) */
+	ControlRef stop_btn;      /* fixes724 - Stop (X) */
 	ControlRef reload_btn;
 	ControlRef home_btn;
 	ControlRef vscroll;
@@ -115,13 +115,13 @@ struct gui_window {
 	int content_height;
 	Rect toolbar_rect;
 	Rect url_rect;
-	Rect loader_rect;         /* fixes726  -  animated loading spinner slot */
+	Rect loader_rect;         /* fixes726 - animated loading spinner slot */
 	Rect content_rect;
 	Rect status_rect;
 	bool needs_reformat;
 	bool reformat_in_progress;
 	char status[128];
-	/* fixes77c - offscreen GWorld used as a back buffer for the
+	/* fixes77c -- offscreen GWorld used as a back buffer for the
 	 * content paint. NULL before first allocation. content_gworld_rect
 	 * tracks the window-space bounds the GWorld was sized for so the
 	 * update handler can detect resize and reallocate. */
@@ -139,7 +139,7 @@ struct gui_window {
 	int perf_summary_emitted;
 	/* fixes645 (#188): self-tracked zoom/maximize state. CreateNewWindow
 	 * never populates the classic WStateData standard state, so we don't
-	 * rely on ZoomWindow/ZoomWindowIdeal  -  on first zoom we save the
+	 * rely on ZoomWindow/ZoomWindowIdeal - on first zoom we save the
 	 * user-state content bounds here and fill the screen; on the next
 	 * zoom we restore them. `zoomed` toggles which way the box goes. */
 	Rect zoom_saved_bounds;
@@ -157,12 +157,12 @@ struct gui_window {
 	int caret_h;
 };
 
-/* fixes645  -  download manager V2. Downloads now auto-save to a "MacSurf
- * Downloads" folder (no modal Nav save dialog  -  that was the source of
+/* fixes645 - download manager V2. Downloads now auto-save to a "MacSurf
+ * Downloads" folder (no modal Nav save dialog - that was the source of
  * the kNavInvalidSystemConfigErr / -5699 failure that made HTTPS
  * downloads silently do nothing), so several can run concurrently. Each
  * download is one node in a list the modeless manager window draws.
- * refnum < 0 means the file could not be created  -  data callbacks then
+ * refnum < 0 means the file could not be created - data callbacks then
  * short-circuit so partial writes don't crash. fsspec is kept so
  * error/abort can FSpDelete the partial file. dl_state: 0=active,
  * 1=done, 2=failed. */
@@ -191,7 +191,7 @@ extern struct gui_clipboard_table *macos9_clipboard_table;
 extern bool macos9_done;
 extern bool macos9_quitting;
 
-/* Menu IDs and item numbers  -  restored fixes307. */
+/* Menu IDs and item numbers - restored fixes307. */
 #define MENU_APPLE  128
 #define MENU_FILE   129
 #define MENU_EDIT   130
@@ -200,7 +200,7 @@ extern bool macos9_quitting;
 #define MENU_BOOKMARK 133  /* fixes351 (#48) */
 #define MENU_HISTORY  134  /* fixes694 (#47) */
 
-/* fixes707  -  hierarchical bookmark folder submenus get IDs
+/* fixes707 - hierarchical bookmark folder submenus get IDs
  * MENU_BMK_SUB_BASE .. MENU_BMK_SUB_BASE+MENU_BMK_SUB_MAX-1. Kept clear of
  * the 128-134 app menus and the toolbox's own hierarchical range. */
 #define MENU_BMK_SUB_BASE 200
@@ -220,10 +220,10 @@ extern bool macos9_quitting;
 
 #define ITEM_VIEW_SOURCE    1
 #define ITEM_VIEW_FIND      3
-/* fixes883  -  Zoom and Downloads were REAL and completely undiscoverable:
+/* fixes883 - Zoom and Downloads were REAL and completely undiscoverable:
  * page zoom worked only via unlisted Cmd -/+/0 keystrokes, and the download
  * manager window could only be reached by starting a download. Both are pure
- * exposure - no new plumbing. */
+ * exposure -- no new plumbing. */
 #define ITEM_VIEW_ZOOM_IN   5
 #define ITEM_VIEW_ZOOM_OUT  6
 #define ITEM_VIEW_ZOOM_100  7
@@ -244,7 +244,7 @@ extern bool macos9_quitting;
 #define ITEM_HIST_CLEAR_CACHE 3
 #define ITEM_HIST_FIRST       5
 
-/* fixes645 (#48)  -  bookmarks menu + persistence (macos9_chrome_extras.c
+/* fixes645 (#48) - bookmarks menu + persistence (macos9_chrome_extras.c
  * + macos9_disk_cache.c). */
 void macos9_bookmarks_init(void);
 void macos9_bookmark_menu_rebuild(void);
@@ -252,29 +252,34 @@ void macos9_bookmark_navigate(struct gui_window *g, int menu_item);
 void macos9_bookmark_submenu_navigate(struct gui_window *g, int menu_id, int item);
 long macos9_bookmarks_load(char *out_buf, long buf_cap);
 void macos9_bookmarks_save(const char *buf, long len);
-/* fixes693  -  bookmark folders + rename (used by the management UI). */
+/* fixes693 - bookmark folders + rename (used by the management UI). */
 int  macos9_bookmark_rename(int id, const char *new_label);
+int  macos9_bookmark_set_url(int id, const char *new_url);
 int  macos9_bookmark_delete(int id);
 int  macos9_bookmark_new_folder(const char *name, int parent_id);
 int  macos9_bookmark_set_parent(int id, int parent_id);
-/* fixes700 (#50)  -  modal Bookmark manager window (folders, rename, delete,
+/* fixes1162b - bookmarks Import (Netscape HTML or the native tab grammar)
+ * and Export (native tab grammar). */
+int  macos9_bookmarks_import_buffer(const char *buf, long len);
+/* fixes700 (#50) - modal Bookmark manager window (folders, rename, delete,
  * move, go). */
 void macos9_bookmark_window_show(struct gui_window *g);
-/* fixes694/698 (#47)  -  History menu + persistent, clearable history store
+/* fixes694/698 (#47) - History menu + persistent, clearable history store
  * (macos9_chrome_extras.c + macos9_disk_cache.c). */
 void macos9_history_init(void);
 void macos9_history_menu_rebuild(void);
 void macos9_history_navigate(struct gui_window *g, int menu_item);
 void macos9_history_record(struct gui_window *g, const char *title);
 void macos9_history_clear(void);
+void macos9_history_delete_entry(int index);
 long macos9_history_load(char *out_buf, long buf_cap);
 void macos9_history_save(const char *buf, long len);
-/* fixes699 (#47)  -  modal History manager window (day-grouped, clearable). */
+/* fixes699 (#47) - modal History manager window (day-grouped, clearable). */
 void macos9_history_window_show(struct gui_window *g);
-/* fixes706  -  Clear Cache menu handler (wipes disk cache + dead-host state). */
+/* fixes706 - Clear Cache menu handler (wipes disk cache + dead-host state). */
 void macos9_cache_clear_ui(void);
 
-/* fixes645 (#199)  -  modeless download-manager window (macos9_download.c),
+/* fixes645 (#199) - modeless download-manager window (macos9_download.c),
  * routed from the main event loop. */
 long macos9_download_mgr_is(WindowRef w);   /* 1 if w is the mgr window */
 void macos9_download_mgr_draw(void);
@@ -296,14 +301,14 @@ void macos9_window_request_reformat(struct gui_window *g);
 void macos9_window_invalidate_rect(struct gui_window *g, int px, int py, int pw, int ph);
 void macos9_window_invalidate_status(struct gui_window *g);
 void macos9_window_invalidate_url(struct gui_window *g);
-/* fixes294  -  Phase 0 favicon plumbing.  load fn must be called once at
+/* fixes294 - Phase 0 favicon plumbing.  load fn must be called once at
  * startup; draw fn is called from main.c's draw_url_bar after TEUpdate. */
 void macos9_window_load_default_favicon(void);
 void macos9_window_draw_favicon(struct gui_window *g);
-/* fixes297  -  toolbar button icon overlays */
+/* fixes297 - toolbar button icon overlays */
 void macos9_window_load_toolbar_icons(void);
 void macos9_window_draw_toolbar_icons(struct gui_window *g);
-/* fixes298  -  Netscape-7-style gradient background for the toolbar area */
+/* fixes298 - Netscape-7-style gradient background for the toolbar area */
 void macos9_window_draw_toolbar_bg(struct gui_window *g);
 void macos9_window_update_scrollbars(struct gui_window *g);
 void macos9_window_scroll_to(struct gui_window *g, int nx, int ny);
@@ -311,7 +316,7 @@ void macos9_window_scroll_by(struct gui_window *g, int dx, int dy);
 void macos9_window_handle_scrollbar_click(struct gui_window *g, ControlRef c, short p, void *lp);
 void macos9_window_te_activate_url(struct gui_window *g);
 void macos9_window_te_deactivate_url(struct gui_window *g);
-/* fixes763  -  address-bar suggestion dropdown */
+/* fixes763 - address-bar suggestion dropdown */
 int  macos9_urlsug_active(struct gui_window *g);
 int  macos9_urlsug_click(struct gui_window *g, Point p);
 void macos9_urlsug_hide(struct gui_window *g);
@@ -326,7 +331,7 @@ void macos9_window_home(struct gui_window *g);
 void macos9_window_update_button_states(struct gui_window *g);
 void macos9_window_update_hover(struct gui_window *g);   /* fixes725 */
 void macos9_window_resize(struct gui_window *g);
-/* fixes641  -  declared for the per-window close path in main.c (both defined
+/* fixes641 - declared for the per-window close path in main.c (both defined
  * in window.c; previously only referenced internally). */
 struct gui_window *macos9_window_list_head(void);
 void macos9_window_destroy(struct gui_window *g);
@@ -353,18 +358,18 @@ extern void macos9_schedule_cancel_owner(void *p);
  * rescheduling on every DOM mutation. */
 extern int macos9_sched_is_queued(void (*callback)(void *p), void *p);
 short macos9_font_id_from_style(const struct plot_font_style *fstyle);
-void  macos9_font_metric_probe_run(void); /* fixes144a - diagnostic probe */
-void  macos9_font_vmetric_probe_run(void); /* fixes153 - FontInfo dump */
+void  macos9_font_metric_probe_run(void); /* fixes144a -- diagnostic probe */
+void  macos9_font_vmetric_probe_run(void); /* fixes153 -- FontInfo dump */
 short macos9_face_from_style(const struct plot_font_style *fstyle);
 
 /* fixes157: font-family alias retry post-fixes156 (defensive-clamp fix).
- * Hardware-accepted on G3 2026-05-20  -  Times/Monaco/Helvetica dispatch
+ * Hardware-accepted on G3 2026-05-20 - Times/Monaco/Helvetica dispatch
  * resolved per-segment with no width-vs-paint divergence and no fixes145
  * horizontal scrambling on mixed-family inline lines. MACSURF_FONT_ALIAS_DIAG
  * flipped to 0 (silent) post-acceptance per the user's "keep gated, don't
  * strip" directive: code block in macos9_font_measure + macos9_plot_text
  * stays in place as a dormant probe handle for any future scrambling
- * regression  -  flip to 1 here to re-enable without rebuilding the
+ * regression - flip to 1 here to re-enable without rebuilding the
  * diagnostic.
  *
  * MACSURF_FONT_ALIAS_DIAG_SMART = 1 filters the firehose: log only when
@@ -377,14 +382,14 @@ short macos9_face_from_style(const struct plot_font_style *fstyle);
 size_t macos9_utf8_to_macroman(const char *u, size_t l, char *m, size_t mx);
 size_t macos9_macroman_to_utf8(const unsigned char *m, size_t l, char *u, size_t mx);
 
-/* fixes609  -  shared effective letter/word spacing, so macos9_font_measure
+/* fixes609 - shared effective letter/word spacing, so macos9_font_measure
  * (macos9_font.c) and macos9_plot_text (plotters.c) fold in the bold-smear
  * and sub-12 bitmap-gap bumps identically and their advance widths agree. */
 void macos9_run_spacing(const struct plot_font_style *fstyle,
 			short font_id, short face, short size, size_t mac_len,
 			int *out_ls, int *out_ws);
 
-/* fixes376  -  Edit menu item ordering. Must match the AppendMenu calls in
+/* fixes376 - Edit menu item ordering. Must match the AppendMenu calls in
  * main.c: Undo(1), separator(2), Cut(3), Copy(4), Paste(5). Item 2 (the
  * separator) has no selector. SELECT_ALL is a synthetic selector (not a menu
  * item) used by macos9_url_te_edit. */
@@ -394,9 +399,24 @@ void macos9_run_spacing(const struct plot_font_style *fstyle,
 #define ITEM_EDIT_PASTE       5
 #define ITEM_EDIT_SELECT_ALL  7   /* fixes743 (#214): Undo,sep,Cut,Copy,Paste,sep,SelectAll */
 
-/* fixes376  -  Cut/Copy/Paste/Select-All on the URL TextEdit field, synced with
+/* fixes376 - Cut/Copy/Paste/Select-All on the URL TextEdit field, synced with
  * the Carbon desk scrap (MacRoman, no UTF-8 conversion on this path). */
 void macos9_url_te_edit(struct gui_window *g, short edit_item);
+
+/* Preferences window: Apple menu item 2 ("Preferences...", Cmd-,).
+ * Must match the AppendMenu calls in main.c - About(1), Prefs(2),
+ * separator(3). */
+#define ITEM_APPLE_PREFS 2
+
+struct nsoption_s;
+/* Preferences (macos9_prefs.c): boot baseline + persistence + window. */
+void macos9_prefs_show(void);
+void macos9_prefs_apply_defaults(void);
+nserror macos9_prefs_set_defaults(struct nsoption_s *defs);
+void macos9_prefs_load(void);
+void macos9_prefs_save(void);
+const char *macos9_home_url(void);
+void macos9_prefs_apply_live(void);
 
 /* MACSURF_HOME_URL canonical definition is in macsurf_config.h.
  * Old frogfind default removed per fixes301. */
