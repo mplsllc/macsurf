@@ -1055,6 +1055,7 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 					short cpart;
 					gw = macos9_find_window(win);
 					if (gw) {
+						macsurf_debug_log_writef("LIFE GWOK p=%d,%d content=%d,%d,%d,%d url=%d,%d,%d,%d", (int)p.h, (int)p.v, (int)gw->content_rect.left, (int)gw->content_rect.top, (int)gw->content_rect.right, (int)gw->content_rect.bottom, (int)gw->url_rect.left, (int)gw->url_rect.top, (int)gw->url_rect.right, (int)gw->url_rect.bottom);
 						SetPortWindowPort(win);
 						GlobalToLocal(&p);
 						/* fixes298b — user-pane buttons aren't visible to
