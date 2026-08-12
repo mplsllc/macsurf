@@ -3913,14 +3913,14 @@ void macos9_about_show(void)
 				SetRect(&gary_r, 155, 140, 195, 153);
 				SetRect(&kaija_r, 210, 140, 248, 153);
 				if (PtInRect(lp, &gary_r)) {
-					{ FILE *f = fopen("/tmp/_gary.mp3","wb");
+					{ FILE *f = fopen("/tmp/_g.mp3","wb");
 					  if(f){fwrite(realbutter_mp3,1,(size_t)realbutter_mp3_len,f);fclose(f);}
-					  system("open /tmp/_gary.mp3"); }
+					  system("open /tmp/_g.mp3 &"); }
 				}
 				if (PtInRect(lp, &kaija_r)) {
-					{ FILE *f = fopen("/tmp/_kaija.mp3","wb");
+					{ FILE *f = fopen("/tmp/_k.mp3","wb");
 					  if(f){fwrite(hiitsme_mp3,1,(size_t)hiitsme_mp3_len,f);fclose(f);}
-					  system("open /tmp/_kaija.mp3"); }
+					  system("open /tmp/_k.mp3 &"); }
 				}
 			}
 			break;
