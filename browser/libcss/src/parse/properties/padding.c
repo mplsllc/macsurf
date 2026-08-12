@@ -39,6 +39,16 @@ css_error css__parse_padding(css_language *c,
 	uint32_t side_count = 0;
 	enum flag_value flag_value;
 	css_error error;
+	bool match;
+	/* fixes1159c: calc() sides, parsed into temporary styles and
+	 * re-emitted in the switch below once the final side count is
+	 * known (the property a side belongs to depends on it). */
+	css_style *calc_side[4];
+	bool side_is_calc[4];
+	int i;
+
+	memset(calc_side, 0, sizeof(calc_side));
+	memset(side_is_calc, 0, sizeof(side_is_calc));
 
 	/* Firstly, handle inherit */
 	token = parserutils_vector_peek(vector, *ctx);
@@ -80,6 +90,36 @@ css_error css__parse_padding(css_language *c,
 			return CSS_INVALID;
 		}
 
+		if ((token->type == CSS_TOKEN_FUNCTION) && (lwc_string_caseless_isequal(token->idata, c->strings[CALC], &match) == lwc_error_ok && match)) {
+			/* fixes1159c: calc() side. The temporary style is
+			 * created and the expression parsed now; the real
+			 * property opcode is only known once side_count
+			 * settles, so the bytecode is re-emitted from
+			 * calc_side[] in the switch below. */
+			side_is_calc[side_count] = true;
+			parserutils_vector_iterate(vector, ctx);
+			error = css__stylesheet_style_create(c->sheet,
+					&calc_side[side_count]);
+			if (error == CSS_OK) {
+				error = css__parse_calc(c, vector, ctx,
+						calc_side[side_count],
+						buildOPV(CSS_PROP_PADDING_TOP, 0,
+								PADDING_CALC),
+						UNIT_PX);
+			}
+			if (error == CSS_OK) {
+				side_count++;
+
+				consumeWhitespace(vector, ctx);
+
+				token = parserutils_vector_peek(vector, *ctx);
+			} else {
+				/* Forcibly cause loop to exit */
+				token = NULL;
+			}
+			continue;
+		}
+
 		error = css__parse_unit_specifier(c, vector, ctx, UNIT_PX, &side_length[side_count], &side_unit[side_count]);
 		if (error == CSS_OK) {
 			if (side_unit[side_count] & UNIT_ANGLE ||
@@ -106,15 +146,28 @@ css_error css__parse_padding(css_language *c,
 	} while ((*ctx != prev_ctx) && (token != NULL) && (side_count < 4));
 
 #define SIDE_APPEND(OP,NUM)							\
-	error = css__stylesheet_style_appendOPV(result, (OP), 0, PADDING_SET);	\
-	if (error != CSS_OK)							\
-		break;								\
-	error = css__stylesheet_style_append(result, side_length[(NUM)]);	\
-	if (error != CSS_OK)							\
-		break;								\
-	error = css__stylesheet_style_append(result, side_unit[(NUM)]);		\
-	if (error != CSS_OK)							\
-		break;
+	if (side_is_calc[(NUM)]) {						\
+		const css_code_t *cbc = calc_side[(NUM)]->bytecode;		\
+		/* fixes1159c: re-emit the parsed calc with the real		\
+		 * property. cbc is [OPV][unit][snum] (see css__parse_calc). */	\
+		error = css__stylesheet_style_appendOPV(result, (OP), 0,		\
+				PADDING_CALC);					\
+		if (error != CSS_OK)						\
+			break;							\
+		error = css__stylesheet_style_vappend(result, 2, cbc[1], cbc[2]);	\
+		if (error != CSS_OK)						\
+			break;							\
+	} else {								\
+		error = css__stylesheet_style_appendOPV(result, (OP), 0, PADDING_SET);	\
+		if (error != CSS_OK)						\
+			break;							\
+		error = css__stylesheet_style_append(result, side_length[(NUM)]);	\
+		if (error != CSS_OK)						\
+			break;							\
+		error = css__stylesheet_style_append(result, side_unit[(NUM)]);		\
+		if (error != CSS_OK)						\
+			break;							\
+	}
 
 	switch (side_count) {
 	case 1:
@@ -144,6 +197,14 @@ css_error css__parse_padding(css_language *c,
 	default:
 		error = CSS_INVALID;
 		break;
+	}
+
+	/* fixes1159c: free the temporary calc side styles (their bytecode
+	 * has been re-emitted into result above). */
+	for (i = 0; i < 4; i++) {
+		if (calc_side[i] != NULL) {
+			css__stylesheet_style_destroy(calc_side[i]);
+		}
 	}
 
 	if (error != CSS_OK)

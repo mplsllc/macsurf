@@ -41,6 +41,15 @@ css_error css__parse_margin(css_language *c,
 	bool match;
 	css_error error;
 	enum flag_value flag_value;
+	/* fixes1159c: calc() sides, parsed into temporary styles and
+	 * re-emitted in the switch below once the final side count is
+	 * known (the property a side belongs to depends on it). */
+	css_style *calc_side[4];
+	bool side_is_calc[4];
+	int i;
+
+	memset(calc_side, 0, sizeof(calc_side));
+	memset(side_is_calc, 0, sizeof(side_is_calc));
 
 	/* Firstly, handle inherit */
 	token = parserutils_vector_peek(vector, *ctx);
@@ -88,6 +97,24 @@ css_error css__parse_margin(css_language *c,
 			side_val[side_count] =  MARGIN_AUTO;
 			parserutils_vector_iterate(vector, ctx);
 			error = CSS_OK;
+		} else if ((token->type == CSS_TOKEN_FUNCTION) && (lwc_string_caseless_isequal(token->idata, c->strings[CALC], &match) == lwc_error_ok && match)) {
+			/* fixes1159c: calc() side. The temporary style is
+			 * created and the expression parsed now; the real
+			 * property opcode is only known once side_count
+			 * settles, so the bytecode is re-emitted from
+			 * calc_side[] in the switch below. */
+			side_val[side_count] = MARGIN_SET;
+			side_is_calc[side_count] = true;
+			parserutils_vector_iterate(vector, ctx);
+			error = css__stylesheet_style_create(c->sheet,
+					&calc_side[side_count]);
+			if (error == CSS_OK) {
+				error = css__parse_calc(c, vector, ctx,
+						calc_side[side_count],
+						buildOPV(CSS_PROP_MARGIN_TOP, 0,
+								BOTTOM_CALC),
+						UNIT_PX);
+			}
 		} else {
 			side_val[side_count] = MARGIN_SET;
 
@@ -116,16 +143,29 @@ css_error css__parse_margin(css_language *c,
 
 
 #define SIDE_APPEND(OP,NUM)								\
-	error = css__stylesheet_style_appendOPV(result, (OP), 0, side_val[(NUM)]);	\
-	if (error != CSS_OK)								\
-		break;									\
-	if (side_val[(NUM)] == MARGIN_SET) {						\
-		error = css__stylesheet_style_append(result, side_length[(NUM)]);	\
+	if (side_is_calc[(NUM)]) {							\
+		const css_code_t *cbc = calc_side[(NUM)]->bytecode;			\
+		/* fixes1159c: re-emit the parsed calc with the real		\
+		 * property. cbc is [OPV][unit][snum] (see css__parse_calc). */	\
+		error = css__stylesheet_style_appendOPV(result, (OP), 0,		\
+				BOTTOM_CALC);						\
 		if (error != CSS_OK)							\
 			break;								\
-		error = css__stylesheet_style_append(result, side_unit[(NUM)]);		\
+		error = css__stylesheet_style_vappend(result, 2, cbc[1], cbc[2]);	\
 		if (error != CSS_OK)							\
 			break;								\
+	} else {									\
+		error = css__stylesheet_style_appendOPV(result, (OP), 0, side_val[(NUM)]);	\
+		if (error != CSS_OK)							\
+			break;								\
+		if (side_val[(NUM)] == MARGIN_SET) {					\
+			error = css__stylesheet_style_append(result, side_length[(NUM)]);	\
+			if (error != CSS_OK)						\
+				break;							\
+			error = css__stylesheet_style_append(result, side_unit[(NUM)]);		\
+			if (error != CSS_OK)						\
+				break;							\
+		}									\
 	}
 
 	switch (side_count) {
@@ -155,6 +195,14 @@ css_error css__parse_margin(css_language *c,
 		break;
 	default:
 		error = CSS_INVALID;
+	}
+
+	/* fixes1159c: free the temporary calc side styles (their bytecode
+	 * has been re-emitted into result above). */
+	for (i = 0; i < 4; i++) {
+		if (calc_side[i] != NULL) {
+			css__stylesheet_style_destroy(calc_side[i]);
+		}
 	}
 
 	if (error != CSS_OK)
