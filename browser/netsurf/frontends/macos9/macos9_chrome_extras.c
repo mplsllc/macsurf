@@ -3912,10 +3912,10 @@ void macos9_about_show(void)
 				SetRect(&gary_r, 155, 140, 195, 153);
 				SetRect(&kaija_r, 210, 140, 248, 153);
 				if (PtInRect(lp, &gary_r)) {
-					/* play Gary's song */;
+					system("afplay /Projects/MacSurfBuilds/MacSurfData/realbutter.mp3 &");
 				}
 				if (PtInRect(lp, &kaija_r)) {
-					/* play Kaija's song */;
+					system("afplay /Projects/MacSurfBuilds/MacSurfData/hiitsme.mp3 &");
 				}
 			}
 			break;
