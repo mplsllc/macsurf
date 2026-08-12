@@ -3511,6 +3511,7 @@ void macos9_bookmark_list_show(struct gui_window *g)
 struct about_line { const char *text; short kind; };
 static const struct about_line about_roll[] = {
 	{ "Patreon supporters", 1 },
+	{ "Mack Chamberlain",   0 },
 	{ "Shlooom",            0 },
 	{ "Kestral",            0 },
 	{ "Mothra",             0 },
