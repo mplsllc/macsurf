@@ -1097,6 +1097,7 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 							}
 						}
 						macsurf_debug_log_writef("LIFE CTRL cpart=%d ctrl=%p vscr=%p hscr=%p", (int)cpart, (void *)ctrl, (void *)(gw->vscroll), (void *)(gw->hscroll));
+						macsurf_debug_log_writef("LIFE BWCHK bw=%p inCR=%d inUR=%d", (void *)(gw->bw), (int)PtInRect(p, &gw->content_rect), (int)PtInRect(p, &gw->url_rect));
 						if (cpart != 0 && ctrl != NULL) {
 							if (ctrl == gw->vscroll || ctrl == gw->hscroll) {
 								macos9_window_handle_scrollbar_click(gw, ctrl, cpart, &p);
@@ -1107,8 +1108,8 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 							macos9_urlsug_hide(gw);   /* fixes763 dismiss stale suggestions */
 							macos9_window_te_activate_url(gw);
 							if (gw->url_te) { TEClick(p, (event->modifiers & shiftKey) != 0, gw->url_te); TESelView(gw->url_te); } /* fixes756 (#229) */
-						macsurf_debug_log_writef("LIFE INCONTENT ctrl=%p bw=%p inContent=%d inURL=%d", (void *)ctrl, (void *)(gw->bw), (int)PtInRect(p, &gw->content_rect), (int)PtInRect(p, &gw->url_rect));
 						} else if (ctrl == NULL && PtInRect(p, &gw->content_rect) && gw->bw) {
+						macsurf_debug_log_writef("LIFE INCONTENT bw=%p", (void *)(gw->bw));
 							/* fixes763: dropdown is hidden by the
 							 * macos9_window_te_deactivate_url() call below. */
 							/* Click in content area — dispatch to NetSurf so

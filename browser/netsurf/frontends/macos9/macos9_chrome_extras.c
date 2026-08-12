@@ -3772,9 +3772,9 @@ static void about_draw(GWorldPtr off, WindowRef win, const Rect *content,
 		TextSize(9);
 		TextFace(normal);
 		about_fore(120, 145, 190, bri);
-		about_center("Native TLS 1.3   -   NetSurf engine", 190, 128);
+		about_center("Native TLS 1.3   -   by mplsllc", 190, 128);
 		about_fore(150, 165, 200, bri);
-		about_center("by mplsllc", 190, 143);
+		about_center("For Gary & Kaija", 190, 143);
 	}
 
 	/* 6. scrolling supporter credits roll (clipped to a viewport) */
@@ -3906,8 +3906,17 @@ void macos9_about_show(void)
 				if (TrackGoAway(win, ev.where)) done = 1;
 			} else if (part == inContent) {
 				Point lp = ev.where;
+				Rect gary_r, kaija_r;
 				GlobalToLocal(&lp);
 				if (PtInRect(lp, &okr)) done = 1;
+				SetRect(&gary_r, 155, 140, 195, 153);
+				SetRect(&kaija_r, 210, 140, 248, 153);
+				if (PtInRect(lp, &gary_r)) {
+					/* play Gary's song */;
+				}
+				if (PtInRect(lp, &kaija_r)) {
+					/* play Kaija's song */;
+				}
 			}
 			break;
 		}
