@@ -921,7 +921,8 @@ void macos9_handle_update(const EventRecord *event) {
 }
 
 void macos9_handle_mouse_down(const EventRecord *event) {
-	macsurf_debug_log_writef("LIFE MOUSE_DOWN at %d,%d", (int)event->where.h, (int)event->where.v);
+	{ Point pt = event->where;
+	macsurf_debug_log_writef("LIFE MOUSE_DOWN at %d,%d", (int)pt.h, (int)pt.v); }
 #ifdef __MACOS9__
 	WindowRef win;
 	short part = FindWindow(event->where, &win);
