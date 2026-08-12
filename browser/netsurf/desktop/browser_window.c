@@ -2264,10 +2264,10 @@ browser_window_mouse_click_internal(struct browser_window *bw,
 				    int x, int y)
 {
 	hlcache_handle *c = bw->current_content;
-	{ extern void macsurf_debug_log_writef(const char *fmt, ...);
-	macsurf_debug_log_writef("LIFE BWCLICK c=%p", (void *)c); }
 	const char *status = NULL;
 	browser_pointer_shape pointer = BROWSER_POINTER_DEFAULT;
+	{ extern void macsurf_debug_log_writef(const char *fmt, ...);
+	macsurf_debug_log_writef("LIFE BWCLICK c=%p", (void *)c); }
 
 	/* fixes501: guard against stale current_content handle.
 	 * On navigation the old hlcache_handle is released and freed, but
