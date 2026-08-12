@@ -94,6 +94,25 @@ static inline bool arena__compare_macsurf_gradient_radial(
 	return memcmp(a, b, 4 * sizeof(int32_t)) == 0;
 }
 
+/* fixes1159b: compare the calc-expression side slots. Pointer identity:
+ * within one sheet an expression interns to a single lwc_string, so
+ * equal styles match; pointers that differ only miss a dedup (safe) and
+ * never merge wrongly. */
+static inline bool arena__compare_calc_slots(
+		lwc_string * const *a,
+		lwc_string * const *b)
+{
+	uint32_t i;
+
+	for (i = 0; i < MACSURF_CALC_SLOT_COUNT; i++) {
+		if (a[i] != b[i]) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
 /* fixes365b: compare two 7-int diagonal/3-stop gradient arrays. */
 static inline bool arena__compare_macsurf_gradient_stops(
 		const int32_t *a, const int32_t *b)
@@ -175,6 +194,13 @@ static inline bool css__arena_style_is_equal(
 	if (!arena__compare_grid_tracks(
 			a->macsurf_grid_row_tracks,
 			b->macsurf_grid_row_tracks)) {
+		return false;
+	}
+
+	/* fixes1159b - calc-expression side slots. */
+	if (!arena__compare_calc_slots(
+			a->macsurf_calc_expr,
+			b->macsurf_calc_expr)) {
 		return false;
 	}
 

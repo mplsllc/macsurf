@@ -15,6 +15,10 @@ typedef union {
 	lwc_string *calc;
 } css_fixed_or_calc;
 
+/* fixes1159b: number of calc-expression side slots in
+ * css_computed_style (see macsurf_calc_expr below). */
+#define MACSURF_CALC_SLOT_COUNT 28
+
 
 struct css_computed_style_i {
 /*
@@ -539,6 +543,23 @@ struct css_computed_style {
 	 * lifetime owned by this style's destroy path. Appended at struct
 	 * end per project_libcss_struct_mid_insert_crash. */
 	int32_t *macsurf_gradient_stops;
+
+	/* fixes1159b: calc-expression side slots, one per calc-capable
+	 * length property (fixed property->slot mapping in helpers.c
+	 * css__calc_slot_for_prop). The cascade stores the SLOT NUMBER in
+	 * the property's css_fixed length field with unit CSS_UNIT_CALC;
+	 * unit.c resolves the expression from this table. Never bit-cast
+	 * an lwc_string pointer into css_fixed: css_fixed is 32 bits, so
+	 * the pointer truncates on 64-bit targets (the original fixes1159
+	 * design - ASan SEGV in the Linux harness) and misresolved on the
+	 * Mac. The slot table travels with the style through compose and
+	 * clone (computed.c) and is compared in css__arena_style_is_equal
+	 * (arena.c). The strings are owned by the sheet's string vector,
+	 * so the style holds no reference and destroy frees nothing.
+	 * Inline fixed array - zeroed by calloc, no heap management.
+	 * Appended at struct end per
+	 * project_libcss_struct_mid_insert_crash. */
+	lwc_string *macsurf_calc_expr[MACSURF_CALC_SLOT_COUNT];
 };
 
 #endif

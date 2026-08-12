@@ -81,8 +81,7 @@ harn_of = $(OBJ)/$(notdir $(1:.c=.o))
 GLUE_QJS_SRC   := build/macsurf_qjs.c build/macsurf_dom_dispatch.c \
                   build/macos9_js_fetch.c build/macsurf_qjs_audit.c
 GLUE_PLAIN_SRC := build/macos9_reconvert.c build/macos9_content_registry.c \
-                  build/misc_stub.c build/macsurf_lwc_compat.c \
-                  build/macos9_woff2.c build/macos9_brotli.c
+                  build/misc_stub.c build/macsurf_lwc_compat.c
 
 # $(sort) dedupes: dedup.sh's `core` set and EXTRA_SRC both name corestrings.c,
 # and two rules for one object is a "overriding recipe" warning at best.
@@ -192,18 +191,9 @@ check-c89:
 # false green once already, and implicit decls are their own CW8 hazard class.
 	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) $(INC) \
 		$(NS)/content/handlers/html/html.c && echo "   html.c OK"
-# fixes1137 — textplain.c joins the gate. It ships to CW8 as C89 exactly
-# like html.c (designated initializers converted to memset + member
-# assignment in textplain_init, the html_init pattern) and is edited by
-# this project now that #233 wires the real text/plain handler.
-	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) $(INC) \
-		$(NS)/content/handlers/text/textplain.c && echo "   textplain.c OK"
-# fixes1167 — the WOFF2 reconstructor + vendored Brotli decoder ship to CW8
-# as C89 exactly like html.c (WOFF2 support). They join the same gate.
-	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) $(INC) \
-		build/macos9_woff2.c && echo "   macos9_woff2.c OK"
-	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) $(INC) \
-		build/macos9_brotli.c && echo "   macos9_brotli.c OK"
+# fixes1137 — textplain.c joins the gate when the real text/plain handler
+# (#233) is in the tree. Removed with the fixes1181-1183 revert batch; re-add
+# when textplain.c is re-added.
 
 # Kept as aliases: `make link` / `make objs` are in muscle memory and in older
 # notes. They now mean the same thing as the default goal instead of being the

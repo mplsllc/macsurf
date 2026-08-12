@@ -304,6 +304,14 @@ css_error css__computed_style_clone(
 		}
 	} }
 
+	/* fixes1159b: a clone is a full resolved copy, so its calc-expression
+	 * side slots must be copied too - the length fields already carry the
+	 * slot numbers. */
+	{ size_t i;
+	for (i = 0; i < MACSURF_CALC_SLOT_COUNT; i++) {
+		clone->macsurf_calc_expr[i] = orig->macsurf_calc_expr[i];
+	} }
+
 	*clone_out = clone;
 	return CSS_OK;
 }
@@ -348,6 +356,19 @@ css_error css_computed_style_compose(
 		if (error != CSS_OK)
 			break;
 	}
+
+	/* fixes1159b: carry the calc-expression side slots into the composed
+	 * style. Specified values come from the child's table; inherited
+	 * ones from the parent's (a child that did not specify the property
+	 * has NULL in its slot). Slot numbers are fixed per property, so the
+	 * index in the copied css_fixed length field stays valid. */
+	{ uint32_t s2;
+	for (s2 = 0; s2 < MACSURF_CALC_SLOT_COUNT; s2++) {
+		composed->macsurf_calc_expr[s2] =
+				child->macsurf_calc_expr[s2] != NULL
+				? child->macsurf_calc_expr[s2]
+				: parent->macsurf_calc_expr[s2];
+	} }
 
 	/* Finally, compute absolute values for everything */
 	error = css__compute_absolute_values(parent, composed, unit_ctx);

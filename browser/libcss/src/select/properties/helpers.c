@@ -19,6 +19,47 @@
 /******************************************************************************
  * Utilities below here							      *
  ******************************************************************************/
+
+/* fixes1159b: map a calc-capable length property to its slot number in
+ * css_computed_style.macsurf_calc_expr. The five shared cascade helpers
+ * below serve many properties; the slot number makes each property's calc
+ * expression findable at resolve time (unit.c) without a pointer bit-cast.
+ * 0xFF = property has no slot (never happens: only slot-mapped properties
+ * carry CALC values, but degrade to 0px if it ever does). */
+static uint8_t css__calc_slot_for_prop(uint32_t prop)
+{
+	switch (prop) {
+	case CSS_PROP_BORDER_TOP_WIDTH:		return 0;
+	case CSS_PROP_BORDER_RIGHT_WIDTH:	return 1;
+	case CSS_PROP_BORDER_BOTTOM_WIDTH:	return 2;
+	case CSS_PROP_BORDER_LEFT_WIDTH:	return 3;
+	case CSS_PROP_COLUMN_RULE_WIDTH:	return 4;
+	case CSS_PROP_OUTLINE_WIDTH:		return 5;
+	case CSS_PROP_TOP:			return 6;
+	case CSS_PROP_RIGHT:			return 7;
+	case CSS_PROP_BOTTOM:			return 8;
+	case CSS_PROP_LEFT:			return 9;
+	case CSS_PROP_HEIGHT:			return 10;
+	case CSS_PROP_MIN_HEIGHT:		return 11;
+	case CSS_PROP_MIN_WIDTH:		return 12;
+	case CSS_PROP_MARGIN_TOP:		return 13;
+	case CSS_PROP_MARGIN_RIGHT:		return 14;
+	case CSS_PROP_MARGIN_BOTTOM:		return 15;
+	case CSS_PROP_MARGIN_LEFT:		return 16;
+	case CSS_PROP_MAX_HEIGHT:		return 17;
+	case CSS_PROP_MAX_WIDTH:		return 18;
+	case CSS_PROP_COLUMN_GAP:		return 19;
+	case CSS_PROP_COLUMN_WIDTH:		return 20;
+	case CSS_PROP_LETTER_SPACING:		return 21;
+	case CSS_PROP_WORD_SPACING:		return 22;
+	case CSS_PROP_PADDING_TOP:		return 23;
+	case CSS_PROP_PADDING_RIGHT:		return 24;
+	case CSS_PROP_PADDING_BOTTOM:		return 25;
+	case CSS_PROP_PADDING_LEFT:		return 26;
+	case CSS_PROP_TEXT_INDENT:		return 27;
+	default:				return 0xFF;
+	}
+}
 css_error css__cascade_bg_border_color(uint32_t opv, css_style *style,
 		css_select_state *state,
 		css_error (*fun)(css_computed_style *, uint8_t, css_color))
@@ -217,17 +258,27 @@ css_error css__cascade_border_width(uint32_t opv, css_style *style,
 		{
 			uint32_t snum = 0;
 			lwc_string *calc_expr = NULL;
+			uint8_t slot = css__calc_slot_for_prop(
+					getOpcode(opv));
 
 			value = CSS_BORDER_WIDTH_WIDTH;
 			advance_bytecode(style, sizeof(unit));
 			snum = *((uint32_t *) style->bytecode);
 			advance_bytecode(style, sizeof(snum));
 			css__stylesheet_string_get(style->sheet, snum, &calc_expr);
-			/* Bit-cast the interned expression pointer into the
-			 * css_fixed length slot; unit.c recovers it and
-			 * resolves the calc.  Safe on 32-bit targets. */
-			length = (css_fixed)calc_expr;
-			is_calc = true;
+			/* fixes1159b: store the expression in the style's
+			 * per-property side slot and put the SLOT NUMBER in
+			 * the length field. Bit-casting the lwc_string
+			 * pointer into css_fixed only fits on 32-bit targets
+			 * (truncates to a garbage pointer on Linux 64-bit,
+			 * misresolved to 0 on the Mac). */
+			if (calc_expr != NULL &&
+					slot < MACSURF_CALC_SLOT_COUNT) {
+				state->computed->macsurf_calc_expr[slot] =
+						calc_expr;
+				length = (css_fixed)slot;
+				is_calc = true;
+			}
 			break;
 		}
 		default:
@@ -276,17 +327,27 @@ css_error css__cascade_length_auto(uint32_t opv, css_style *style,
 		{
 			uint32_t snum = 0;
 			lwc_string *calc_expr = NULL;
+			uint8_t slot = css__calc_slot_for_prop(
+					getOpcode(opv));
 
 			value = CSS_BOTTOM_SET;
 			advance_bytecode(style, sizeof(unit));
 			snum = *((uint32_t *) style->bytecode);
 			advance_bytecode(style, sizeof(snum));
 			css__stylesheet_string_get(style->sheet, snum, &calc_expr);
-			/* Bit-cast the interned expression pointer into the
-			 * css_fixed length slot; unit.c recovers it and
-			 * resolves the calc.  Safe on 32-bit targets. */
-			length = (css_fixed)calc_expr;
-			is_calc = true;
+			/* fixes1159b: store the expression in the style's
+			 * per-property side slot and put the SLOT NUMBER in
+			 * the length field. Bit-casting the lwc_string
+			 * pointer into css_fixed only fits on 32-bit targets
+			 * (truncates to a garbage pointer on Linux 64-bit,
+			 * misresolved to 0 on the Mac). */
+			if (calc_expr != NULL &&
+					slot < MACSURF_CALC_SLOT_COUNT) {
+				state->computed->macsurf_calc_expr[slot] =
+						calc_expr;
+				length = (css_fixed)slot;
+				is_calc = true;
+			}
 			break;
 		}
 		default:
@@ -380,17 +441,27 @@ css_error css__cascade_length_normal(uint32_t opv, css_style *style,
 		{
 			uint32_t snum = 0;
 			lwc_string *calc_expr = NULL;
+			uint8_t slot = css__calc_slot_for_prop(
+					getOpcode(opv));
 
 			value = CSS_LETTER_SPACING_SET;
 			advance_bytecode(style, sizeof(unit));
 			snum = *((uint32_t *) style->bytecode);
 			advance_bytecode(style, sizeof(snum));
 			css__stylesheet_string_get(style->sheet, snum, &calc_expr);
-			/* Bit-cast the interned expression pointer into the
-			 * css_fixed length slot; unit.c recovers it and
-			 * resolves the calc.  Safe on 32-bit targets. */
-			length = (css_fixed)calc_expr;
-			is_calc = true;
+			/* fixes1159b: store the expression in the style's
+			 * per-property side slot and put the SLOT NUMBER in
+			 * the length field. Bit-casting the lwc_string
+			 * pointer into css_fixed only fits on 32-bit targets
+			 * (truncates to a garbage pointer on Linux 64-bit,
+			 * misresolved to 0 on the Mac). */
+			if (calc_expr != NULL &&
+					slot < MACSURF_CALC_SLOT_COUNT) {
+				state->computed->macsurf_calc_expr[slot] =
+						calc_expr;
+				length = (css_fixed)slot;
+				is_calc = true;
+			}
 			break;
 		}
 		default:
@@ -439,17 +510,27 @@ css_error css__cascade_length_none(uint32_t opv, css_style *style,
 		{
 			uint32_t snum = 0;
 			lwc_string *calc_expr = NULL;
+			uint8_t slot = css__calc_slot_for_prop(
+					getOpcode(opv));
 
 			value = CSS_MAX_HEIGHT_SET;
 			advance_bytecode(style, sizeof(unit));
 			snum = *((uint32_t *) style->bytecode);
 			advance_bytecode(style, sizeof(snum));
 			css__stylesheet_string_get(style->sheet, snum, &calc_expr);
-			/* Bit-cast the interned expression pointer into the
-			 * css_fixed length slot; unit.c recovers it and
-			 * resolves the calc.  Safe on 32-bit targets. */
-			length = (css_fixed)calc_expr;
-			is_calc = true;
+			/* fixes1159b: store the expression in the style's
+			 * per-property side slot and put the SLOT NUMBER in
+			 * the length field. Bit-casting the lwc_string
+			 * pointer into css_fixed only fits on 32-bit targets
+			 * (truncates to a garbage pointer on Linux 64-bit,
+			 * misresolved to 0 on the Mac). */
+			if (calc_expr != NULL &&
+					slot < MACSURF_CALC_SLOT_COUNT) {
+				state->computed->macsurf_calc_expr[slot] =
+						calc_expr;
+				length = (css_fixed)slot;
+				is_calc = true;
+			}
 			break;
 		}
 		default:
@@ -495,17 +576,27 @@ css_error css__cascade_length(uint32_t opv, css_style *style,
 		{
 			uint32_t snum = 0;
 			lwc_string *calc_expr = NULL;
+			uint8_t slot = css__calc_slot_for_prop(
+					getOpcode(opv));
 
 			value = CSS_MIN_HEIGHT_SET;
 			advance_bytecode(style, sizeof(unit));
 			snum = *((uint32_t *) style->bytecode);
 			advance_bytecode(style, sizeof(snum));
 			css__stylesheet_string_get(style->sheet, snum, &calc_expr);
-			/* Bit-cast the interned expression pointer into the
-			 * css_fixed length slot; unit.c recovers it and
-			 * resolves the calc.  Safe on 32-bit targets. */
-			length = (css_fixed)calc_expr;
-			is_calc = true;
+			/* fixes1159b: store the expression in the style's
+			 * per-property side slot and put the SLOT NUMBER in
+			 * the length field. Bit-casting the lwc_string
+			 * pointer into css_fixed only fits on 32-bit targets
+			 * (truncates to a garbage pointer on Linux 64-bit,
+			 * misresolved to 0 on the Mac). */
+			if (calc_expr != NULL &&
+					slot < MACSURF_CALC_SLOT_COUNT) {
+				state->computed->macsurf_calc_expr[slot] =
+						calc_expr;
+				length = (css_fixed)slot;
+				is_calc = true;
+			}
 			break;
 		}
 		default:

@@ -287,16 +287,23 @@ static inline css_fixed css_unit__px_per_unit(
 
 	case CSS_UNIT_CALC:
 	{
-		/* The length is a pointer to the calc expression bytecode,
-		 * interned in the sheet's string table.  It is recovered by
-		 * the cascade, which bit-casts the lwc_string pointer into
-		 * the css_fixed length slot.  (32-bit targets.) */
-		lwc_string *expr = (lwc_string *)length;
+		/* fixes1159b: the length is the SLOT NUMBER of the calc
+		 * expression in the style's side table
+		 * (css_computed_style.macsurf_calc_expr), never a bit-cast
+		 * pointer -- css_fixed is 32 bits and cannot hold an
+		 * lwc_string pointer on 64-bit targets. */
+		lwc_string *expr = NULL;
 		css_unit u = CSS_UNIT_PX;
 		css_fixed v = 0;
+		uint32_t slot = (uint32_t)length;
 
 		if (ref_style == NULL || ref_style->calc == NULL ||
-				ctx == NULL || expr == NULL) {
+				ctx == NULL || slot >= MACSURF_CALC_SLOT_COUNT) {
+			return 0;
+		}
+
+		expr = ref_style->macsurf_calc_expr[slot];
+		if (expr == NULL) {
 			return 0;
 		}
 
