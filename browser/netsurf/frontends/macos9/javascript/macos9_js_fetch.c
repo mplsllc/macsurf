@@ -5,22 +5,22 @@
  * file, JS had NO real network path: XMLHttpRequest was undefined (fixes845
  * added a logging-only shim that fails safe with status 0) and fetch() was
  * a synchronous fake thenable that always resolved {ok:false,status:0}
- * (fixes843b/845, #167 S1 census -- both confirmed via WORK-gated hardware
+ * (fixes843b/845, #167 S1 census - both confirmed via WORK-gated hardware
  * logging that real Facebook JS never received a single byte of real
  * response data). This closes that gap over content/fetch.h's fetch_start(),
  * the same raw entry point macos9_webfont.c uses to bypass the hlcache/
- * content layer -- calling fetch_start() on an https:// URL transparently
+ * content layer - calling fetch_start() on an https:// URL transparently
  * routes through macos9_tls_fetcher.c, so cookies, per-host UA, and Sec-
  * Fetch/Origin synthesis all apply automatically with zero extra plumbing
  * (macos9_tls_fetcher.c even reserves the override hook: a caller whose
  * headers[] already contains its own "Sec-Fetch-"/"Origin:" line wins over
- * the auto-synthesis -- see qjs_xhr_native_send()'s header-array build).
+ * the auto-synthesis - see qjs_xhr_native_send()'s header-array build).
  *
  * Two patterns this file mirrors deliberately, both already hardware-proven
  * elsewhere in this codebase:
  *
  *   - Fixed-size, index-addressed arena for JSValue lifetime (never a
- *     linked list) -- the same shape as macsurf_qjs.c's s_timer_arena /
+ *     linked list) - the same shape as macsurf_qjs.c's s_timer_arena /
  *     qjs_flush_timers. A linked list could be spliced into a cycle by a
  *     reentrant callback (an XHR onload starting another XHR, evicting the
  *     slot the outer walk still holds); bounded array iteration makes that
@@ -110,7 +110,6 @@ struct qjs_xhr_slot {
 	int status;
 	int redirect_hops;
 	int is_error;			/* network-level failure, not an HTTP status */
-	int beacon;			/* sendBeacon slot: no JS delivery, no ctx */
 };
 
 static struct qjs_xhr_slot s_xhr_arena[QJS_XHR_MAX];
@@ -128,7 +127,7 @@ xhr_free_req_headers(struct qjs_xhr_slot *s)
 
 /* Frees every heap allocation on a slot and marks it free. Does NOT touch
  * s->fetch (caller must fetch_abort() first if still live) or s->xhr_obj
- * (caller must JS_FreeValue() it against the right ctx first -- this
+ * (caller must JS_FreeValue() it against the right ctx first - this
  * function may run after the context is already gone, e.g. from a plain
  * reset path, so it must never touch the JSValue). */
 static void
@@ -176,7 +175,7 @@ xhr_slot_find(int id)
 
 /* Full teardown: abort any live fetch, cancel any pending scheduled
  * delivery, free the dup'd JSValue against its OWN ctx (captured at
- * send() time -- may differ from a later flush's old_ctx during a
+ * send() time - may differ from a later flush's old_ctx during a
  * mid-request navigation, which is exactly why we store it per-slot
  * rather than trusting the caller's ctx), then wipe. */
 static void
@@ -226,18 +225,18 @@ xhr_accum(char **buf, long *len, long *cap, long max_bytes, int *poisoned,
  *
  * fixes1098: every FETCH_HEADER carries a single BARE header line. Both
  * fetchers parse with find_line()/mfs_find_line(), which NUL each line's own
- * '\r' and then send len=strlen(p) -- so no '\r' and no '\n' ever reach this
+ * '\r' and then send len=strlen(p) - so no '\r' and no '\n' ever reach this
  * callback. xhr_accum() is a pure byte-append, so without re-adding a
  * terminator every header fused into ONE line beginning with the
  * "HTTP/1.1 200 OK" status line. The prelude's getResponseHeader() splits on
  * /\r\n|\n/, found exactly one line, and compared each requested name against
- * "HTTP/1.1 200 OK" -- so EVERY lookup returned null and
+ * "HTTP/1.1 200 OK" - so EVERY lookup returned null and
  * getAllResponseHeaders() returned a single mashed string.
  *
  * null is not an error: it reads as "that header was not sent", so a caller
  * silently takes its no-such-header branch. That is the LYING ANSWER shape
- * from the fixes1005->1031 batch -- pages break on confident wrong answers,
- * not on missing APIs -- which is why this is worth a named function rather
+ * from the fixes1005->1031 batch - pages break on confident wrong answers,
+ * not on missing APIs - which is why this is worth a named function rather
  * than an inline two-liner.
  *
  * CRLF is what the spec requires getAllResponseHeaders() to join with. */
@@ -255,7 +254,7 @@ xhr_accum_header_line(struct qjs_xhr_slot *s, const unsigned char *b, long l)
 /* Harness-only hook: drives the REAL accumulator above over a caller-supplied
  * sequence of bare header lines and returns the exact bytes JS would see in
  * __responseHeadersRaw. Exists so harness Test 61 tests the shipping code path
- * instead of a reimplementation of it -- a test that builds the header string
+ * instead of a reimplementation of it - a test that builds the header string
  * itself passes with or without this fix and therefore proves nothing. */
 const char *
 macos9_js_fetch_test_accum_headers(const char *const *lines, int nlines)
@@ -288,10 +287,6 @@ xhr_deliver(void *p)
 	const char *ss = NULL;
 
 	if (s == NULL || !s->used) return;
-	/* sendBeacon slots are fire-and-forget: nothing to deliver, and no
-	 * JSValue/ctx to touch (the realm may be long gone). The fetch is
-	 * over, so just release the C-side allocations. */
-	if (s->beacon) { xhr_slot_wipe(s); return; }
 	ctx = s->ctx;
 	if (ctx == NULL) { xhr_slot_release(s); return; }
 
@@ -379,7 +374,7 @@ xhr_follow_redirect(struct qjs_xhr_slot *s, const char *target)
 		return;
 	}
 
-	/* fixes961 - never follow an https -> http redirect from JS.
+	/* fixes961  -  never follow an https -> http redirect from JS.
 	 *
 	 * This is not a hypothetical. When an HTTPS fetch fails for a
 	 * non-certificate reason, hctx_fail synthesises a REAL FETCH_REDIRECT
@@ -388,7 +383,7 @@ xhr_follow_redirect(struct qjs_xhr_slot *s, const char *target)
 	 * page the user typed, but it is the wrong answer for an XHR: this
 	 * function only checked the hop cap, so a
 	 * fetch('https://site/api/session') that hit a transient TLS failure
-	 * was silently reissued over port 80 -- and the fetcher attaches
+	 * was silently reissued over port 80 - and the fetcher attaches
 	 * cookies via urldb_get_cookie on the way out, so the session token
 	 * goes across in the clear. The page's own JS never sees that it
 	 * happened.
@@ -508,7 +503,7 @@ xhr_start_fetch(struct qjs_xhr_slot *s)
 	struct fetch *out = NULL;
 
 	/* c->llcache can be NULL for a content that isn't (yet, or any
-	 * longer) fully live -- content_get_url() -> llcache_handle_get_url()
+	 * longer) fully live - content_get_url() -> llcache_handle_get_url()
 	 * dereferences it unconditionally and crashes otherwise. Same guard
 	 * as macos9_reconvert_host_allowed() (macos9_reconvert.c) uses
 	 * before its own content_get_url() call, for the same reason. Caught
@@ -525,7 +520,7 @@ xhr_start_fetch(struct qjs_xhr_slot *s)
 	 * fetch_live=0 and s->fetch=NULL (and may have re-entered this very
 	 * function via a redirect). Blindly assigning fetch_start()'s output
 	 * afterwards would resurrect a handle that's already been freed by
-	 * the fetcher -- so only store it if nothing terminal happened while
+	 * the fetcher - so only store it if nothing terminal happened while
 	 * the call was in flight. */
 	s->fetch_live = 1;
 	err = fetch_start(s->url, referer, xhr_fetch_cb, s,
@@ -570,7 +565,7 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 		return JS_NewInt32(ctx, -1);
 	}
 
-	/* fixes865 (#291) - resolve the target against the DOCUMENT BASE.
+	/* fixes865 (#291)  -  resolve the target against the DOCUMENT BASE.
 	 *
 	 * This was a bare nsurl_create(url_c), which only works for an absolute
 	 * URL.  Real pages overwhelmingly pass root-relative ones, and those came
@@ -582,7 +577,7 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 	 * form never loaded.)
 	 *
 	 * Note the redirect path in this same file already does it right --
-	 * `nsurl_join(s->url, target, &joined)` -- so relative handling existed;
+	 * `nsurl_join(s->url, target, &joined)` - so relative handling existed;
 	 * only the INITIAL send lacked it.  Same shape as the timer-vs-XHR arena
 	 * asymmetry (fixes854): the newer/second path learned the lesson, the
 	 * first one never had it.
@@ -695,114 +690,6 @@ qjs_xhr_native_abort(JSContext *ctx, JSValueConst this_val,
 	return JS_UNDEFINED;
 }
 
-/* ---- navigator.sendBeacon: fire-and-forget POST ----
- *
- * Analytics (Google Analytics, gtag, etc.) call sendBeacon on page unload
- * and the data was silently lost while it returned false. This is a real
- * POST over the SAME slot arena + fetch_start() path as XHR, but with the
- * delivery half removed: no JS callback ever fires, and the slot carries
- * no ctx affinity so a navigation (macos9_js_fetch_flush) does NOT abort
- * an in-flight beacon -- surviving unload is the entire point of the API.
- * The slot simply wipes itself when the fetch terminates (xhr_deliver's
- * beacon branch), including the redirect case (redirects ARE followed for
- * beacons; a 301/302/303 downgrades POST to GET per xhr_apply_redirect_
- * method, which is the fetch spec's behaviour). */
-static JSValue
-qjs_beacon_send(JSContext *ctx, JSValueConst this_val,
-		int argc, JSValueConst *argv)
-{
-	struct qjs_xhr_slot *s;
-	const char *url_c;
-	const char *body_c = NULL;
-	nsurl *url = NULL;
-	nserror err;
-
-	(void) this_val;
-
-	if (argc < 1) return JS_FALSE;
-
-	url_c = JS_ToCString(ctx, argv[0]);
-	if (url_c == NULL) return JS_FALSE;
-
-	/* Resolve against the document base, same as xhr's initial send
-	 * (fixes865): analytics targets are commonly root-relative. */
-	{
-		struct content *bc = qjs_get_content();
-		nsurl *base = NULL;
-		if (bc != NULL && bc->llcache != NULL) {
-			base = content_get_url(bc);	/* borrowed */
-		}
-		if (base != NULL) {
-			err = nsurl_join(base, url_c, &url);
-		} else {
-			err = nsurl_create(url_c, &url);
-		}
-	}
-	if (err != NSERROR_OK || url == NULL) {
-		JS_FreeCString(ctx, url_c);
-		return JS_FALSE;
-	}
-	/* sendBeacon only transports over http(s); any other scheme is an
-	 * invalid URL for it. */
-	{
-		const char *surl = nsurl_access(url);
-		if (surl == NULL ||
-		    (strncmp(surl, "http://", 7) != 0 &&
-		     strncmp(surl, "https://", 8) != 0)) {
-			nsurl_unref(url);
-			JS_FreeCString(ctx, url_c);
-			return JS_FALSE;
-		}
-	}
-
-	s = xhr_slot_alloc();
-	if (s == NULL) {
-		nsurl_unref(url);
-		JS_FreeCString(ctx, url_c);
-		macsurf_debug_log_writef("WORK beacon send: arena full, url=%s",
-				url_c);
-		return JS_FALSE;
-	}
-
-	s->beacon = 1;
-	s->ctx = NULL;			/* flush() skips beacons: keep flying */
-	s->xhr_obj = JS_UNDEFINED;
-	s->url = url;
-	strcpy(s->method, "POST");
-
-	if (argc > 1 && !JS_IsNull(argv[1]) && !JS_IsUndefined(argv[1])) {
-		body_c = JS_ToCString(ctx, argv[1]);
-		if (body_c != NULL) {
-			s->body_len = (long) strlen(body_c);
-			s->body = (char *) malloc((size_t) s->body_len + 1);
-			if (s->body != NULL) {
-				memcpy(s->body, body_c, (size_t) s->body_len + 1);
-			}
-			JS_FreeCString(ctx, body_c);
-		}
-	}
-
-	/* sendBeacon's default media type for a string body is text/plain.
-	 * strlen+1, not a hardcoded 24: "Content-Type: text/plain" is 25
-	 * chars, and a 24-byte malloc let strcpy write 2 bytes past the end
-	 * (caught by the harness ASan build). */
-	s->req_headers[0] = (char *) malloc(
-			strlen("Content-Type: text/plain") + 1);
-	if (s->req_headers[0] != NULL)
-		strcpy(s->req_headers[0], "Content-Type: text/plain");
-	s->req_headers[1] = NULL;
-
-	macsurf_debug_log_writef("WORK beacon send url=%s bytes=%ld",
-			url_c, (long) s->body_len);
-	JS_FreeCString(ctx, url_c);
-
-	if (xhr_start_fetch(s) != 0) {
-		xhr_slot_release(s);
-		return JS_FALSE;
-	}
-	return JS_TRUE;
-}
-
 void
 macos9_js_fetch_install(JSContext *ctx, JSValueConst global)
 {
@@ -812,10 +699,6 @@ macos9_js_fetch_install(JSContext *ctx, JSValueConst global)
 	JS_SetPropertyStr(ctx, global, "__xhrNativeAbort",
 			JS_NewCFunction(ctx, qjs_xhr_native_abort,
 					"__xhrNativeAbort", 1));
-	/* navigator.sendBeacon backend. */
-	JS_SetPropertyStr(ctx, global, "__beaconSend",
-			JS_NewCFunction(ctx, qjs_beacon_send,
-					"__beaconSend", 2));
 }
 
 void

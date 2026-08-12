@@ -4828,19 +4828,8 @@ layout_line(struct box *first,
 				used_height = d->height;
 			}
 		} else if ((d->type == BOX_INLINE) ||
-				d->type == BOX_INLINE_BLOCK ||
-				d->type == BOX_INLINE_FLEX ||
-				d->type == BOX_INLINE_GRID) {
-			/* replaced inlines, inline-blocks, inline-flex and
-			 * inline-grid: their margin boxes participate in the
-			 * line box height, exactly like an inline-block
-			 * (CSS 2.1 s10.8; CSS Inline Layout). fixes1169 --
-			 * BOX_INLINE_FLEX/BOX_INLINE_GRID were missing here,
-			 * so an inline-flex avatar contributed zero height to
-			 * its line: the flex row cross-sized to the text line
-			 * (19-21px) while the avatar (24-48px) hung below and
-			 * overlapped the next row (#226, 68kmla thread
-			 * list). */
+				d->type == BOX_INLINE_BLOCK) {
+			/* replaced inlines and inline-blocks */
 			d->x += x0;
 			d->y = *y + d->border[TOP].width + d->margin[TOP];
 			h = d->margin[TOP] + d->border[TOP].width +

@@ -1,5 +1,5 @@
 /*
- * MacSurf - macsurf_dom_dispatch.c
+ * MacSurf  -  macsurf_dom_dispatch.c
  *
  * Provides external linkage for LibDOM functions that are defined as
  * static inline in the LibDOM headers. 
@@ -13,8 +13,6 @@
 #include <dom/core/document.h>
 #include <dom/core/string.h>
 #include <dom/core/characterdata.h>
-#include <dom/core/namednodemap.h>
-#include <dom/core/attr.h>
 
 void macsurf_dom_node_ref(dom_node *node)
 {
@@ -37,7 +35,7 @@ dom_exception macsurf_dom_document_get_element_by_id(dom_document *doc,
     return dom_document_get_element_by_id(doc, id, element);
 }
 
-/* fixes382 (M1) - JS->DOM->render: the JS bridge needs the real <html>
+/* fixes382 (M1)  -  JS->DOM->render: the JS bridge needs the real <html>
  * root to expose document.documentElement/body/head as wrapped elements. */
 dom_exception macsurf_dom_document_get_document_element(dom_document *doc,
     dom_element **result)
@@ -87,7 +85,7 @@ dom_exception macsurf_dom_node_remove_child(dom_node *parent,
     return dom_node_remove_child(parent, old_child, result);
 }
 
-/* fixes385 (M4) - ordered insertion (React reconciler inserts before a
+/* fixes385 (M4)  -  ordered insertion (React reconciler inserts before a
  * reference node rather than append-only). */
 dom_exception macsurf_dom_node_insert_before(dom_node *parent,
     dom_node *new_child, dom_node *ref_child, dom_node **result)
@@ -131,7 +129,7 @@ dom_exception macsurf_dom_node_set_node_value(dom_node *node,
     return dom_node_set_node_value(node, value);
 }
 
-/* fixes319d - text-content accessors. Inline in dom/core/node.h; the
+/* fixes319d  -  text-content accessors. Inline in dom/core/node.h; the
  * JS bridge needs an external symbol it can extern-link. */
 dom_exception macsurf_dom_node_get_text_content(dom_node *node,
     dom_string **result)
@@ -151,7 +149,7 @@ dom_exception macsurf_dom_node_get_parent_node(dom_node *node,
     return dom_node_get_parent_node(node, result);
 }
 
-/* fixes867 (#293) - owner document, for the DOM-mutation failure diagnostic in
+/* fixes867 (#293)  -  owner document, for the DOM-mutation failure diagnostic in
  * macsurf_qjs.c (qjs_dom_mut_check).  Distinguishing WRONG_DOCUMENT_ERR from the
  * mutation-semaphore rejection needs to compare the child's owner against the
  * parent's, and both look identical from JS otherwise.  On the base
@@ -203,9 +201,9 @@ dom_exception macsurf_dom_document_create_element_s(dom_document *doc,
     return exc;
 }
 
-/* fixes870 (#297) - document.createElementNS() from plain JS C strings.
+/* fixes870 (#297)  -  document.createElementNS() from plain JS C strings.
  *
- * This is Preact's ONLY element factory -- its renderer never calls
+ * This is Preact's ONLY element factory - its renderer never calls
  * createElement at all:
  *     e = document.createElementNS(a, k, w.is && w)
  * so with no createElementNS, a Preact app renders NOTHING.
@@ -247,7 +245,7 @@ dom_exception macsurf_dom_document_create_element_ns_s(dom_document *doc,
     return exc;
 }
 
-/* fixes846 (#167 S3) - document.createTextNode() from a plain JS C string,
+/* fixes846 (#167 S3)  -  document.createTextNode() from a plain JS C string,
  * mirroring create_element_s above. */
 dom_exception macsurf_dom_document_create_text_node_s(dom_document *doc,
     const char *data, dom_text **text)
@@ -261,14 +259,14 @@ dom_exception macsurf_dom_document_create_text_node_s(dom_document *doc,
     return exc;
 }
 
-/* fixes846 (#167 S3) - document.createDocumentFragment(). */
+/* fixes846 (#167 S3)  -  document.createDocumentFragment(). */
 dom_exception macsurf_dom_document_create_document_fragment(dom_document *doc,
     dom_document_fragment **fragment)
 {
     return dom_document_create_document_fragment(doc, fragment);
 }
 
-/* fixes846 (#167 S3) - text/comment node data accessors (dom_characterdata
+/* fixes846 (#167 S3)  -  text/comment node data accessors (dom_characterdata
  * is the shared vtable base for dom_text/dom_comment/dom_cdatasection; the
  * cast to dom_characterdata* mirrors how dom_element_* calls elsewhere in
  * this file take a dom_node* through similarly-shaped casts). */
@@ -290,7 +288,7 @@ dom_exception macsurf_dom_characterdata_set_data_s(dom_node *node,
     return exc;
 }
 
-/* fixes878 - real cloneNode. The JS binding previously handed back the element
+/* fixes878  -  real cloneNode. The JS binding previously handed back the element
  * ITSELF, so the universal clone-and-append idiom
  *     parent.appendChild(tpl.cloneNode(true))
  * MOVED the original instead of copying it: pages rendered one relocated node
@@ -298,7 +296,7 @@ dom_exception macsurf_dom_characterdata_set_data_s(dom_node *node,
  * virtual clone, so `deep` is honoured properly.
  *
  * The result carries a ref that the caller owns (libdom's clone returns a
- * ref'd node), matching dom_node_get_first_child et al above -- the QuickJS
+ * ref'd node), matching dom_node_get_first_child et al above - the QuickJS
  * wrappers adopt that transferred ref. */
 dom_exception macsurf_dom_node_clone_node(dom_node *node, int deep,
     dom_node **result)
@@ -306,31 +304,7 @@ dom_exception macsurf_dom_node_clone_node(dom_node *node, int deep,
     return dom_node_clone_node(node, (bool) (deep != 0), result);
 }
 
-/* fixes1168 (#262) - attribute enumeration for the innerHTML serializer.
- * dom_node_get_attributes / dom_attr_get_name / dom_attr_get_value are
- * static-inline vtable dispatchers in the libdom headers; CW8 cannot link
- * them from other TUs (same reason every other accessor here is wrapped).
- * The namednodemap itself (get_length/item/unref) is a real exported
- * function in namednodemap.c and is called directly by the caller. */
-dom_exception macsurf_dom_node_get_attributes(dom_node *node,
-    dom_namednodemap **result)
-{
-    return dom_node_get_attributes(node, result);
-}
-
-dom_exception macsurf_dom_attr_get_name(dom_node *attr,
-    dom_string **name)
-{
-    return dom_attr_get_name((dom_attr *) attr, name);
-}
-
-dom_exception macsurf_dom_attr_get_value(dom_node *attr,
-    dom_string **value)
-{
-    return dom_attr_get_value((dom_attr *) attr, value);
-}
-
-/* fixes878 - node.contains(). Non-virtual in libdom (see the comment at
+/* fixes878  -  node.contains(). Non-virtual in libdom (see the comment at
  * dom/core/node.h:205), and it correctly reports true for the node itself,
  * which is what the DOM spec requires. `contains` used to be hardcoded
  * `return false`. */

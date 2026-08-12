@@ -26,13 +26,12 @@
 #include "utils/log.h"
 #include "content/fetch.h"
 #include "content/fetchers.h"
-#include "content/urldb.h"	/* fixes367 (#167) - cookie jar: urldb_get_cookie */
-#include "utils/nsoption.h"	/* preferences: accept_cookies / do_not_track */
-#include "macos9_useragent.h"	/* fixes368 (#167) - per-host UA table */
+#include "content/urldb.h"	/* fixes367 (#167)  -  cookie jar: urldb_get_cookie */
+#include "macos9_useragent.h"	/* fixes368 (#167)  -  per-host UA table */
 #include "macos9_blocklist.h"
-#include "macos9_gzip.h"	/* fixes965 - streaming Content-Encoding: gzip */	/* fixes856 (#285) - tracker/ad blocklist */
+#include "macos9_gzip.h"	/* fixes965  -  streaming Content-Encoding: gzip */	/* fixes856 (#285)  -  tracker/ad blocklist */
 #include "macsurf_debug.h"
-#include "macsurf_osver.h"	/* fixes936 (OS X tier 1) - macsurf_os_is_osx() */
+#include "macsurf_osver.h"	/* fixes936 (OS X tier 1)  -  macsurf_os_is_osx() */
 
 #include <string.h>
 #include <stdlib.h>
@@ -57,25 +56,25 @@
                                     cost: ~3.7 KB/slot static + OSTLS
                                     connection only when active, so 64
                                     slots cost ~240 KB resident at idle. */
-/* fixes372 (#167) - 4096 was too small for Facebook's response header
+/* fixes372 (#167)  -  4096 was too small for Facebook's response header
  * block. FB sends ~5.4 KB of headers to the KaiOS login surface (the
  * content-security-policy alone is ~2.2 KB, plus permissions-policy ~1 KB,
  * report-to, reporting-endpoints, and several Set-Cookie lines), and login
  * 302 responses carry even more Set-Cookies. The old 4 KB cap tripped
  * "header buffer overflow" and the whole page fell back to fetcherror.
- * fixes422 - bumped 16384→65536: 68kmla.org/bb/ sends >16 KB of headers
+ * fixes422  -  bumped 16384→65536: 68kmla.org/bb/ sends >16 KB of headers
  * (XenForo CSP + security headers grew past the old cap). Buffer is grown
  * on demand so this is only a ceiling, not a per-fetch allocation.
  * See macos9_useragent.h for the shared constant (MACSURF_HDR_BUF_MAX). */
 #define HDR_BUF_MAX  MACSURF_HDR_BUF_MAX
-/* fixes234 - bumped from 1024 to 8192. With sleep=0 in main.c we poll
+/* fixes234  -  bumped from 1024 to 8192. With sleep=0 in main.c we poll
  * ~hundreds of times per second, but at 1 KB per drain the body delivery
  * rate ceilinged at ~60 KB/s and a 59 KB mactrove home page took ~2.5 s
  * of dead pump time. 8 KB matches BearSSL's typical record size; one
  * Pump+Read cycle now drains 6-8× more decrypted body per pass.
  * See macos9_useragent.h for the shared constant (MACSURF_READ_CHUNK). */
 #define READ_CHUNK    MACSURF_READ_CHUNK
-/* fixes234 - bumped pump steps from 8 to 32. Each "step" is one BearSSL
+/* fixes234  -  bumped pump steps from 8 to 32. Each "step" is one BearSSL
  * engine state transition; on a single core G3 yielding every 8 steps
  * means we cycle through OS 9 cooperative-multitask hand-offs faster
  * than crypto can complete. 32 steps lets BearSSL process a full TLS
@@ -83,20 +82,20 @@
  * decrypt, which is the dominant cost of body delivery for ChaCha20-
  * Poly1305 on a 233 MHz G3. */
 #define PUMP_STEPS         32
-/* fixes235 - drop no-progress timeout 900 ticks (15s) -> 240 (4s). The
+/* fixes235  -  drop no-progress timeout 900 ticks (15s) -> 240 (4s). The
  * dominant cold-load timesink on a typical Drupal/Wordpress page is a
  * foreign-host stylesheet whose origin rejects our TLS ClientHello
  * fingerprint (fonts.googleapis.com is the canonical case). Pre-235 we
  * waited 15s for the fetch to time out, then NetSurf core retried it,
- * and waited another 15s for the same failure - 30+ seconds of dead
+ * and waited another 15s for the same failure  -  30+ seconds of dead
  * time on every cold load while finish_conversion blocked on the
  * missing stylesheet. On ethernet to a working origin, any sub-resource
  * that hangs >2s mid-transfer is effectively dead anyway; 4s gives us
  * comfortable headroom for the slowest legitimate hosts while killing
  * the foreign-fingerprint-reject case before NetSurf renders. */
-#define NO_PROGRESS_TICKS  240   /* 4s at 60Hz - connect/handshake stage */
+#define NO_PROGRESS_TICKS  240   /* 4s at 60Hz  -  connect/handshake stage */
 
-/* fixes718 (#207) - once the TLS handshake has completed AND the origin has
+/* fixes718 (#207)  -  once the TLS handshake has completed AND the origin has
  * begun answering (HS_HEADERS/HS_BODY), it is demonstrably alive and speaking
  * HTTPS; a stall now means "slow origin", not "dead host". A cold-cache backend
  * that fetches feeds/weather server-side legitimately takes 5-10s to produce
@@ -105,12 +104,12 @@
  * -> about:fetcherror blank page (captured on the minitower). Give a RESPONDING
  * origin 15s before we give up. The connect/handshake stage keeps the 4s window
  * so a truly dead or macTLS-incompatible host still fast-fails. */
-#define RESP_NO_PROGRESS_TICKS  900   /* 15s at 60Hz - headers/body arriving */
+#define RESP_NO_PROGRESS_TICKS  900   /* 15s at 60Hz  -  headers/body arriving */
 
-/* fixes375 (#167) - a POST gets a far longer no-progress budget. A login
+/* fixes375 (#167)  -  a POST gets a far longer no-progress budget. A login
  * POST is NOT a dead sub-resource: Facebook's no-JS login-approval ("2FA")
  * holds the HTTP response open (long-poll) after sending its TLS session
- * tickets, waiting for the user to tap "Yes, it's me" on their phone - on
+ * tickets, waiting for the user to tap "Yes, it's me" on their phone  -  on
  * a script-less surface that hold is the only way it CAN do login-approval.
  * Observed on the G3: the POST sends fully (1390B), FB returns ~380B of
  * NewSessionTickets, then goes silent for the entire 4s window and we
@@ -118,9 +117,9 @@
  * "pushes 2FA every time." GETs keep the tight 4s (a hung CSS file really
  * is dead); only a POST, which is a deliberate user action worth waiting
  * on, gets the long budget. */
-#define POST_NO_PROGRESS_TICKS  3600   /* 60s at 60Hz - login-approval hold */
+#define POST_NO_PROGRESS_TICKS  3600   /* 60s at 60Hz  -  login-approval hold */
 
-/* fixes231 - keep-alive pool. Each OSTLSConnection is ~32 KB heap
+/* fixes231  -  keep-alive pool. Each OSTLSConnection is ~32 KB heap
  * (BearSSL bidi buffer + plaintext rings + state). A 16-entry pool
  * holds ~512 KB max, well within the 16 MB partition. fixes232
  * bumped from 4 to 16 after the log showed 29 evict-FULL events on
@@ -139,13 +138,13 @@ enum hs_state {
 	HS_SEND_REQ,
 	HS_HEADERS,
 	HS_BODY,
-	HS_CACHEHIT,    /* fixes218 - serve from on-disk cache, no TLS */
+	HS_CACHEHIT,    /* fixes218  -  serve from on-disk cache, no TLS */
 	HS_DONE,
 	HS_FAIL
 };
 
 struct macos9_https_ctx {
-	/* fixes965 - non-NULL when the response carried Content-Encoding:
+	/* fixes965  -  non-NULL when the response carried Content-Encoding:
 	 * gzip. Body bytes are pushed through it and the DECOMPRESSED output
 	 * is what reaches NetSurf and the disk cache. */
 	struct macos9_gunzip *gz;
@@ -162,11 +161,11 @@ struct macos9_https_ctx {
 	int              status;
 
 	OSTLSConnection *conn;
-	/* fixes367 (#167) - enlarged 1024→8192 to hold a full Cookie:
+	/* fixes367 (#167)  -  enlarged 1024→8192 to hold a full Cookie:
 	 * request header. Logged-in Facebook sends ~1KB of session cookies
 	 * (c_user, xs, datr, sb, fr, presence, wd, …); the old 1024 buffer
 	 * would fail build_request once the jar filled.
-	 * fixes835 (#167 M1) - enlarged 8192→12288: build_request has no
+	 * fixes835 (#167 M1)  -  enlarged 8192→12288: build_request has no
 	 * pre-sprintf guard (only the post-hoc rn>=sizeof check), and the
 	 * worst case Cookie(6144)+caller_hdrs(512)+synth(512)+request-line+
 	 * host+UA+Accept lines can exceed 8192 and overrun BEFORE that check
@@ -191,19 +190,19 @@ struct macos9_https_ctx {
 	char             redirect_url[1024];
 
 	unsigned long    progress_ticks;
-	unsigned long    last_poll_tick; /* fixes548 - tick of the
+	unsigned long    last_poll_tick; /* fixes548  -  tick of the
 	                                  * previous hctx_poll for this conn; a
 	                                  * large gap means the event loop was
 	                                  * blocked (cold-startup TSM, long sync
 	                                  * op), NOT the peer stalling, so that
 	                                  * gap must not count as no-progress. */
-	UInt32           last_rx_bytes;  /* fixes414 - last OT recv-byte count
+	UInt32           last_rx_bytes;  /* fixes414  -  last OT recv-byte count
 	                                  * seen, to credit raw wire progress to
 	                                  * the no-progress watchdog. */
-	unsigned long    rxlog_ticks;    /* fixes735 - throttle for the in-flight
+	unsigned long    rxlog_ticks;    /* fixes735  -  throttle for the in-flight
 	                                  * RX-progress log (RECON RX), ~every 2s. */
 
-	/* fixes218 - disk cache. cache_eligible flips on after parse_headers
+	/* fixes218  -  disk cache. cache_eligible flips on after parse_headers
 	 * sees a 200 OK with a whitelisted MIME. cache_capture accumulates
 	 * the body bytes (raw, post-chunk-decode if applicable); on
 	 * FETCH_FINISHED we write to disk via macos9_cache_store. If a
@@ -214,7 +213,7 @@ struct macos9_https_ctx {
 	long             cache_cap_len;
 	long             cache_cap_cap;
 	int              cache_overflow;
-	/* fixes987 - streaming-store handle (0 = not caching this response).
+	/* fixes987  -  streaming-store handle (0 = not caching this response).
 	 * Replaces cache_capture as the live path; the buffer fields stay only
 	 * because hctx_clear still frees them defensively. */
 	int              cache_stream;
@@ -222,21 +221,21 @@ struct macos9_https_ctx {
 	long             cache_hit_len;
 	char             cache_hit_mime[128];
 	int              cache_hit_status;
-	/* fixes981 - freshness/validator headers: captured while parsing a
+	/* fixes981  -  freshness/validator headers: captured while parsing a
 	 * response we intend to cache, replayed verbatim on a hit so llcache
 	 * sees the same Date/Cache-Control/ETag it would have seen from the
 	 * network. */
 	char             cache_hdrs[MACSURF_CACHE_HDRS_MAX];
 	char             cache_hit_hdrs[MACSURF_CACHE_HDRS_MAX];
 
-	/* fixes228 - auto-retry on benign peer-close. CF and Google CDN
+	/* fixes228  -  auto-retry on benign peer-close. CF and Google CDN
 	 * close TLS connections aggressively after handshake; one retry
 	 * with a fresh connection usually succeeds. retries counts attempts
 	 * BEYOND the first; capped at HTTPS_MAX_RETRIES so we don't loop
 	 * forever on a genuinely-dead host. */
 	int              retries;
 
-	/* fixes231 - keep-alive pool. pool_key is "host:port" used as the
+	/* fixes231  -  keep-alive pool. pool_key is "host:port" used as the
 	 * lookup key. keep_alive_ok defaults to 1 in setup, cleared on
 	 * server "Connection: close" response header, abort, or fail.
 	 * from_pool flags that c->conn came out of the pool (currently
@@ -246,7 +245,7 @@ struct macos9_https_ctx {
 	int              keep_alive_ok;
 	int              from_pool;
 
-	/* fixes232a - NetSurf core calls ops.setup for EVERY queued fetch
+	/* fixes232a  -  NetSurf core calls ops.setup for EVERY queued fetch
 	 * up-front, but only calls ops.start for the max_fetchers_per_host
 	 * subset that fits inside the dispatch gate. Without tracking which
 	 * slots are actually dispatched, our hctx_poll opens TLS for every
@@ -255,7 +254,7 @@ struct macos9_https_ctx {
 	 * entry on it. Survives hctx_reset_for_retry. */
 	int              started;
 
-	/* fixes312 (#144) - POST body.
+	/* fixes312 (#144)  -  POST body.
 	 *   post_body / post_body_len: heap-owned copy of the urlencoded
 	 *     form payload captured at setup time. NULL → GET.
 	 *   post_body_sent: bytes written across one or more OSTLS_Write
@@ -264,10 +263,10 @@ struct macos9_https_ctx {
 	char            *post_body;
 	UInt32           post_body_len;
 	UInt32           post_body_sent;
-	/* fixes721 (#144 file upload) - POST Content-Type. Empty = urlencoded
+	/* fixes721 (#144 file upload)  -  POST Content-Type. Empty = urlencoded
 	 * default; "multipart/form-data; boundary=..." for a file upload. */
 	char             post_ctype[128];
-	/* fixes835 (#167 M1) - NetSurf core's additional request headers,
+	/* fixes835 (#167 M1)  -  NetSurf core's additional request headers,
 	 * sanitized and captured at setup (see macos9_capture_extra_headers).
 	 * In-struct fixed buffer: zero-inited by the setup memset, nothing to
 	 * free. Empty ("") splices as a no-op.
@@ -284,7 +283,7 @@ struct macos9_https_ctx {
 
 static struct macos9_https_ctx https_slots[MAX_HTTPS_F];
 
-/* fixes374 (#167) - forward decl; defined near build_request. Used by the
+/* fixes374 (#167)  -  forward decl; defined near build_request. Used by the
  * disk-cache lookup/store paths to bypass caching for Facebook hosts. */
 static int host_is_fb_asset(const char *host);
 
@@ -296,13 +295,13 @@ static int host_is_fb_asset(const char *host);
  *   1. Submit handler calls macsurf_auto_upgrade_mark(host_port).
  *   2. Fetch fires; if it fails (timeout / dead-host / peer-close),
  *      hctx_fail consults auto_upgrade_check(c->pool_key).
- *   3.5 fixes299: lookup is NON-destructive - every failed HTTPS fetch
+ *   3.5 fixes299: lookup is NON-destructive  -  every failed HTTPS fetch
  *      for a marked host falls back to HTTP, not just the first.
  *   3. If marked, emit FETCH_REDIRECT to the http:// equivalent so
  *      NetSurf core re-issues via the HTTP fetcher.
  * Mark is consumed (single-shot) so we don't redirect-loop.
  *
- * fixes249c - track host:port instead of full URL string. The mark
+ * fixes249c  -  track host:port instead of full URL string. The mark
  * was set with the raw form ("https://example.com" sans trailing slash)
  * but nsurl_access(c->url) returns the NetSurf-normalised form
  * ("https://example.com/" with slash). strcmp mismatched and the
@@ -384,7 +383,7 @@ void macsurf_auto_upgrade_mark(const char *url)
 	auto_upgrade_count++;
 }
 
-/* fixes299 / #141 - non-destructive lookup.  Retained for backward
+/* fixes299 / #141  -  non-destructive lookup.  Retained for backward
  * compatibility; not consulted by the fixes317 fallback logic which
  * always falls back to the other scheme regardless of mark state. */
 static int auto_upgrade_check(const char *key)
@@ -397,7 +396,7 @@ static int auto_upgrade_check(const char *key)
 	return 0;
 }
 
-/* ---------- fixes317 - per-host scheme-attempt tracker --------------
+/* ---------- fixes317  -  per-host scheme-attempt tracker --------------
  * Replaces the asymmetric fixes249b/249c/299 mechanism (which only
  * fell back from HTTPS→HTTP for no-scheme-typed URLs). New rule:
  *
@@ -414,7 +413,7 @@ static int auto_upgrade_check(const char *key)
  *
  * State is reset by macsurf_site_navigation_reset() so each top-level
  * navigation gets a fresh per-host budget. Sub-resource fetches and
- * embedded redirects within the same nav share the budget - exactly
+ * embedded redirects within the same nav share the budget  -  exactly
  * what we want for bounce-loop prevention. */
 #define HTTPS_SCHEME_TRACK_MAX 32
 struct macsurf__scheme_track {
@@ -514,7 +513,7 @@ static int macsurf_scheme_key_from_host_port(char *out, int cap,
 static char dead_hosts[HTTPS_DEADHOSTS][HTTPS_POOL_KEY_LEN];
 static int  dead_hosts_count = 0;
 
-/* fixes244 - parallel "has-ever-succeeded" set. Critical safety net:
+/* fixes244  -  parallel "has-ever-succeeded" set. Critical safety net:
  * a single transient timeout on a host that's been working fine all
  * session would otherwise add the host to dead_hosts and route all
  * future requests to about:fetcherror. With this list, dead_host_add
@@ -577,7 +576,7 @@ int macos9_https_host_is_dead(const char *host, int port)
  * The dead-host list (above) fast-fails a HOST, but hctx_fail still emits the
  * http scheme-fallback, the server answers 301 back to https, and the cycle
  * repeats.  On cdn.jsdelivr.net (TLS-dead for macTLS) each emoji / avatar /
- * attachment URL therefore generated several fetch attempts per page - the
+ * attachment URL therefore generated several fetch attempts per page  -  the
  * unsequenced subresource storm that manufactured the cache-pressure eviction
  * that triggered the convert_xml_to_box UAF (fixes553).
  *
@@ -602,14 +601,14 @@ static int terminal_url_check(const char *url)
 	return 0;
 }
 
-/* fixes1003 - a USER navigation is a retry, so clear both fail sets.
+/* fixes1003  -  a USER navigation is a retry, so clear both fail sets.
  *
  * The dead-host list and the terminal-URL set exist to collapse a subresource
  * storm inside ONE page load (fixes554: dozens of jsdelivr URLs each looping
  * fast-fail -> http -> 301). For that they are right. Applied to the page the
  * user actually asked for, they are a trap: hardware hit ONE transient TLS
  * timeout on 68kmla.org (215-byte ClientHello sent, 54,081 recv calls, zero
- * bytes back - the host answers fine from elsewhere), and after that the URL
+ * bytes back  -  the host answers fine from elsewhere), and after that the URL
  * was terminal and the host dead for the WHOLE SESSION. Every reload
  * fast-failed without touching the network, then fell back to http and hit
  * "redirect loop: https host unreachable". A site that would have worked on
@@ -617,7 +616,7 @@ static int terminal_url_check(const char *url)
  *
  * Clicking Go/Reload on a top-level URL is an explicit "try again", and that
  * is exactly the signal these sets lack. Clearing them there costs at most one
- * re-attempt per navigation on a genuinely dead host - which then re-populates
+ * re-attempt per navigation on a genuinely dead host  -  which then re-populates
  * the sets in the same load and collapses the storm as before. The intra-load
  * protection is unchanged; only the ACROSS-navigation memory goes.
  *
@@ -671,65 +670,12 @@ int macos9_https_url_is_terminal(const char *url)
 	return terminal_url_check(url);
 }
 
-/* fixes1160 (#183) - is this URL's path an image resource?  Suffix-based,
- * case-insensitive, checked against the path portion only (everything before
- * '?' or '#').  Mirrors the MACOS9_RC_IMAGE set in macos9_http_fetcher.c's
- * macos9_classify_url.  Used in hctx_fail to decide whether a failed first
- * HTTPS attempt should be terminally failed (per-URL alt-text, no http
- * fallback, no re-queue) instead of bounced through the wasteful
- * http -> 301 -> https round-trip: under connection pressure a working
- * host's image handshakes stall with zero bytes received, the http fallback
- * 301s right back to https, and every image pays the round-trip. */
-static int macos9_url_is_image(const char *url)
-{
-	const char *dot = NULL;
-	const char *suffix;
-	int n, i, len;
-	char c4, c3, c2, c1;
-
-	if (url == NULL) return 0;
-	n = (int)strlen(url);
-	for (i = 0; i < n; i++) {
-		if (url[i] == '?' || url[i] == '#') { n = i; break; }
-	}
-	for (i = 0; i < n; i++) {
-		if (url[i] == '.') dot = url + i;
-	}
-	if (dot == NULL) return 0;
-	suffix = dot + 1;
-	len = n - (int)(suffix - url);
-	if (len < 3 || len > 4) return 0;
-
-	if (len == 4) {
-		c4 = (char)(suffix[0] | 0x20);
-		c3 = (char)(suffix[1] | 0x20);
-		c2 = (char)(suffix[2] | 0x20);
-		c1 = (char)(suffix[3] | 0x20);
-		if (c4=='j' && c3=='p' && c2=='e' && c1=='g') return 1; /* jpeg */
-		if (c4=='w' && c3=='e' && c2=='b' && c1=='p') return 1; /* webp */
-		if (c4=='t' && c3=='i' && c2=='f' && c1=='f') return 1; /* tiff */
-		if (c4=='a' && c3=='v' && c2=='i' && c1=='f') return 1; /* avif */
-		return 0;
-	}
-	c3 = (char)(suffix[0] | 0x20);
-	c2 = (char)(suffix[1] | 0x20);
-	c1 = (char)(suffix[2] | 0x20);
-	if (c3=='j' && c2=='p' && c1=='g') return 1; /* jpg */
-	if (c3=='p' && c2=='n' && c1=='g') return 1; /* png */
-	if (c3=='g' && c2=='i' && c1=='f') return 1; /* gif */
-	if (c3=='b' && c2=='m' && c1=='p') return 1; /* bmp */
-	if (c3=='i' && c2=='c' && c1=='o') return 1; /* ico */
-	if (c3=='s' && c2=='v' && c1=='g') return 1; /* svg */
-	if (c3=='t' && c2=='i' && c1=='f') return 1; /* tif */
-	return 0;
-}
-
 static void dead_host_add(const char *key)
 {
 	int i;
 
 	if (key == NULL || key[0] == '\0') return;
-	/* fixes244 - skip blocklist if host has ever succeeded this session.
+	/* fixes244  -  skip blocklist if host has ever succeeded this session.
 	 * Transient timeouts on healthy origins (mactrove during a long
 	 * browsing session, etc.) must not poison future requests. */
 	if (success_host_check(key)) {
@@ -755,27 +701,27 @@ static void dead_host_add(const char *key)
 	macsurf_debug_log_writef("https: dead-host ADD %s count=%d",
 		key, dead_hosts_count);
 
-	/* fixes705 - persistence to disk REMOVED. The list is now purely
+	/* fixes705  -  persistence to disk REMOVED. The list is now purely
 	 * session-scoped (in-memory). It still fast-fails a genuinely-dead host
 	 * for the rest of THIS session (killing the jsdelivr subresource storm
 	 * and the per-subresource 4s NO_PROGRESS timeout), but it NEVER survives
 	 * a relaunch. The old deadhosts.txt (written into the Cache folder,
 	 * loaded at every launch, no TTL) let a single transient TLS failure on
-	 * a site's MAIN document poison that host permanently - the site then
+	 * a site's MAIN document poison that host permanently  -  the site then
 	 * fast-failed to a BLANK page before any fetch was even attempted, and
 	 * the only cure was deleting the cache. success_host_check only ever
 	 * covered same-session successes, so a host whose first-ever event was a
 	 * transient failure could never self-heal. Removing persistence (plus
 	 * macos9_https_forget_host on explicit navigation, below) closes that.
-	 * Cost: fonts.googleapis.com etc. eat one 4s timeout per session again -
+	 * Cost: fonts.googleapis.com etc. eat one 4s timeout per session again  - 
 	 * cheap next to permanently-blank sites. */
 }
 
-/* fixes705 - remove a host:port from the in-session dead list (and any
+/* fixes705  -  remove a host:port from the in-session dead list (and any
  * terminal-URL entries under it), so an EXPLICIT user navigation always gets
  * a fresh attempt even if that host fast-failed earlier this session.
  * Subresource storms don't route through here, so their in-page fast-fail
- * protection is untouched. Only ever REMOVES entries - cannot break a fetch. */
+ * protection is untouched. Only ever REMOVES entries  -  cannot break a fetch. */
 void macos9_https_forget_host_key(const char *key)
 {
 	int i, j;
@@ -862,16 +808,16 @@ struct https_pool_entry {
 static struct https_pool_entry https_pool[HTTPS_POOL_SIZE];
 static int https_pool_count = 0;
 
-/* fixes246 - pool entry TTL. Servers commonly close idle connections
+/* fixes246  -  pool entry TTL. Servers commonly close idle connections
  * after 30-60s (nginx default keepalive_timeout is 75s; CF is ~30s,
  * Apache is 5-15s, Drupal/PHP-FPM behind nginx inherits nginx). A
  * conservative TTL of 20s lets us reuse during typical click-around-
  * a-site cadence while not handing out a connection the server has
  * already silently closed. The previous "Pump 1 step then check state"
- * check at take-time caught some stale entries but not all - if the
+ * check at take-time caught some stale entries but not all  -  if the
  * server closes via TCP FIN that hasn't arrived in our notifier yet,
  * the entry looks fine on take but the next OSTLS_Write fails. */
-#define HTTPS_POOL_TTL_TICKS 4500  /* 75s at 60Hz - matches nginx default keepalive_timeout */
+#define HTTPS_POOL_TTL_TICKS 4500  /* 75s at 60Hz  -  matches nginx default keepalive_timeout */
 
 /* Try to take a usable connection out of the pool for `key`. Returns
  * NULL if no match or if the matched entry's state is no longer Open
@@ -894,7 +840,7 @@ https_pool_take(const char *key)
 		if (strcmp(https_pool[i].key, key) != 0) continue;
 		conn = https_pool[i].conn;
 
-		/* fixes246 - TTL check before any state probe. Pool entries
+		/* fixes246  -  TTL check before any state probe. Pool entries
 		 * older than HTTPS_POOL_TTL_TICKS are presumed dead because
 		 * the server has likely closed them silently. */
 		age = (unsigned long)TickCount() - https_pool[i].stored_ticks;
@@ -943,7 +889,7 @@ https_pool_return(const char *key, OSTLSConnection *conn)
 	if (conn == NULL || key == NULL || key[0] == '\0') return;
 
 	if (https_pool_count >= HTTPS_POOL_SIZE) {
-		/* Pool full - evict slot 0 (oldest by insertion order). */
+		/* Pool full  -  evict slot 0 (oldest by insertion order). */
 		OSTLSConnection *evict = https_pool[0].conn;
 		macsurf_debug_log_writef(
 			"https_pool: FULL evict key=%s for key=%s",
@@ -1006,7 +952,7 @@ static unsigned long now_ticks(void)
 #endif
 }
 
-/* fixes965 - forward declarations: the header-parse loop creates the gzip
+/* fixes965  -  forward declarations: the header-parse loop creates the gzip
  * decoder well before feed_body and its helpers are defined. */
 static void hctx_gz_emit(void *cbctx, const char *data, long len);
 static void hctx_deliver(struct macos9_https_ctx *c, const char *data, long len);
@@ -1030,7 +976,7 @@ static void hctx_clear(struct macos9_https_ctx *c)
 	if (c->cache_capture) { free(c->cache_capture); c->cache_capture = NULL; }
 	c->cache_cap_len = 0;
 	c->cache_cap_cap = 0;
-	/* fixes987 - any stream still open here never reached FETCH_FINISHED,
+	/* fixes987  -  any stream still open here never reached FETCH_FINISHED,
 	 * so it is an abort: close and DELETE. This is the single teardown
 	 * point every failure path already funnels through, which is why the
 	 * file handle can be owned across the fetch at all. */
@@ -1042,7 +988,7 @@ static void hctx_clear(struct macos9_https_ctx *c)
 	c->cache_hit_len = 0;
 	c->cache_hdrs[0] = '\0';       /* fixes981 */
 	c->cache_hit_hdrs[0] = '\0';
-	/* fixes312 (#144) - release captured POST body. */
+	/* fixes312 (#144)  -  release captured POST body. */
 	if (c->post_body) { free(c->post_body); c->post_body = NULL; }
 	c->post_body_len = 0;
 	c->post_body_sent = 0;
@@ -1055,7 +1001,7 @@ static void hctx_clear(struct macos9_https_ctx *c)
 	c->state = HS_IDLE;
 }
 
-/* fixes228 - tear down JUST the TLS connection so the slot can be
+/* fixes228  -  tear down JUST the TLS connection so the slot can be
  * retried. Keeps c->parent, c->url, c->host, c->port, c->path so the
  * next poll-loop pass can reopen with the same target. Resets header
  * + body capture state so we don't mix data from the failed attempt. */
@@ -1081,7 +1027,7 @@ static void hctx_reset_for_retry(struct macos9_https_ctx *c)
 	}
 	c->req_len = 0;
 	c->req_sent = 0;
-	/* fixes312 (#144) - keep post_body intact so the retry sends the
+	/* fixes312 (#144)  -  keep post_body intact so the retry sends the
 	 * same payload; just rewind the send counter. */
 	c->post_body_sent = 0;
 	c->status = 0;
@@ -1097,10 +1043,10 @@ static void hctx_reset_for_retry(struct macos9_https_ctx *c)
 	c->progress_ticks = now_ticks();
 }
 
-/* fixes218 - append body bytes to the per-fetch capture buffer.
+/* fixes218  -  append body bytes to the per-fetch capture buffer.
  * Same geometric-growth + overflow-latch discipline as the HTTP
 
-/* fixes369b (#167) - decode a BearSSL error code (OSTLSDiagnostics.br_err)
+/* fixes369b (#167)  -  decode a BearSSL error code (OSTLSDiagnostics.br_err)
  * to its name so a failed handshake is diagnosable from the log at a glance
  * instead of as a bare number. The Facebook page-load suspects map straight
  * to names here: X509_NOT_TRUSTED (62) = the chain's root anchor isn't in
@@ -1108,7 +1054,7 @@ static void hctx_reset_for_retry(struct macos9_https_ctx *c)
  * RSA intermediate signing FB's leaf) didn't verify; INVALID_ALGORITHM (26)
  * = a signature algorithm we don't offer/handle. BearSSL: SSL errors 0-31,
  * X.509 errors are 32+, fatal-alert ranges at 256/512. */
-/* fixes957 - what date does this Mac think it is?
+/* fixes957  -  what date does this Mac think it is?
  *
  * Written into the failure reason (below) so about:query/fetcherror can show
  * it.  This lives HERE, not in the about: fetcher, for two reasons: this TU
@@ -1118,7 +1064,7 @@ static void hctx_reset_for_retry(struct macos9_https_ctx *c)
  *
  * Mac seconds are from 1904-01-01; 1904-01-01 to 1970-01-01 is 24107 days, so
  * shift into days-since-1970 and run the standard civil-from-days conversion
- * (all long arithmetic -- no 64-bit multiply, which CW8 PPC miscompiles). */
+ * (all long arithmetic - no 64-bit multiply, which CW8 PPC miscompiles). */
 static void macos9_believed_date(char *out, size_t cap)
 {
 	long z, era, doe, yoe, y, doy, mp, d, m;
@@ -1190,20 +1136,20 @@ static const char *ostls_br_err_name(int e)
 	return "?";
 }
 
-/* fixes957 - is this BearSSL error a CERTIFICATE REJECTION (as opposed to a
+/* fixes957  -  is this BearSSL error a CERTIFICATE REJECTION (as opposed to a
  * transport/handshake failure)?
  *
  * BearSSL packs every X.509 validation error into 33..62 (32 is X509_OK; see
  * bearssl_x509.h).  A code in that band means the server DID speak TLS and
  * presented a certificate we refused: expired, not-yet-valid, self-signed,
  * hostname mismatch, untrusted root.  Everything OUTSIDE the band means we
- * never got a usable certificate at all -- no TLS on the port, a macTLS
+ * never got a usable certificate at all - no TLS on the port, a macTLS
  * incompatibility, a truncated connection.
  *
  * That distinction is the whole point.  hctx_fail's http:// fallback exists
  * for the outside-the-band case (fixes249b/317: retro HTTP-only hosts reached
  * by typing a bare hostname).  Applying it to a REJECTED CERTIFICATE is a
- * silent downgrade to cleartext -- MacSurf validating a cert, refusing it,
+ * silent downgrade to cleartext - MacSurf validating a cert, refusing it,
  * and then fetching the same page in the clear anyway.  Nothing else in the
  * browser misrepresents itself that way, and it is exactly what a packet
  * capture would expose.  So: cert rejections fail closed, everything else
@@ -1216,7 +1162,7 @@ static int cert_rejected(struct macos9_https_ctx *c, const OSTLSDiagnostics *dia
 	return (e >= 33 && e <= 62) ? 1 : 0;
 }
 
-/* fixes962 - did the PEER FAIL TO AUTHENTICATE ITSELF, as distinct from
+/* fixes962  -  did the PEER FAIL TO AUTHENTICATE ITSELF, as distinct from
  * presenting a certificate we refused?
  *
  * fixes957 keyed the no-downgrade decision on the X.509 band alone (33..62),
@@ -1231,7 +1177,7 @@ static int cert_rejected(struct macos9_https_ctx *c, const OSTLSDiagnostics *dia
  *     ostls_tls13_handshake.c:2181 and :2231.
  *
  * Under fixes957 that produced is_cert_fail == 0 and the cleartext refetch ran
- * -- against precisely the adversary the change was written to stop. Same hole
+ * - against precisely the adversary the change was written to stop. Same hole
  * for the TLS 1.2 ServerKeyExchange signature and for a tampered Finished
  * (BR_ERR_BAD_FINISHED, 24), which is a MAC failure over the whole handshake.
  *
@@ -1245,15 +1191,15 @@ static int peer_auth_failed(struct macos9_https_ctx *c,
 	if (c == NULL || c->conn == NULL || diag == NULL) return 0;
 	e = (int)diag->br_err;
 	/* 24 BAD_FINISHED, 26 INVALID_ALGORITHM, 27 BAD_SIGNATURE,
-	 * 28 WRONG_KEY_USAGE -- see macTLS/bearssl/inc/bearssl_ssl.h. */
+	 * 28 WRONG_KEY_USAGE - see macTLS/bearssl/inc/bearssl_ssl.h. */
 	return (e == 24 || e == 26 || e == 27 || e == 28) ? 1 : 0;
 }
 
-/* fixes957 - a cert rejection whose cause is PLAUSIBLY THE MAC'S CLOCK.
+/* fixes957  -  a cert rejection whose cause is PLAUSIBLY THE MAC'S CLOCK.
  * BR_ERR_X509_EXPIRED (54) covers both "expired" and "not yet valid", so it
  * is what a Mac reports whether its clock is years behind (dead PRAM battery
  * -> 1904/1956) or years ahead.  53 is TIME_UNKNOWN.  We deliberately do NOT
- * try to decide whether the clock is really wrong -- see the note on the
+ * try to decide whether the clock is really wrong - see the note on the
  * error page, which states the ambiguity and prints the believed date so the
  * user (who can see their own calendar) decides. */
 static int cert_time_class(const OSTLSDiagnostics *diag)
@@ -1268,10 +1214,10 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 {
 	struct fetch *p;
 	fetch_msg msg;
-	/* fixes718 (#207) - whether HTTPS demonstrably worked. Captured BEFORE
+	/* fixes718 (#207)  -  whether HTTPS demonstrably worked. Captured BEFORE
 	 * c->state is overwritten with HS_FAIL below. Reaching HS_HEADERS/HS_BODY
 	 * means the handshake completed and BearSSL decrypted a response, so the
-	 * origin speaks valid HTTPS and this failure is a slow/flaky stall - NOT
+	 * origin speaks valid HTTPS and this failure is a slow/flaky stall  -  NOT
 	 * an HTTPS-incompatible or dead host. When set, we must NOT fall back to
 	 * http:// (which 301s back to https, now dead-hosted -> redirect loop ->
 	 * about:fetcherror) and must NOT dead-host a working origin (which blocks
@@ -1279,14 +1225,14 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	 * HTTP-only / macTLS-incompatible hosts fail at HS_TLSING (pre-response),
 	 * so https_worked stays 0 and the existing fallback/dead-host path runs. */
 	int https_worked;
-	/* fixes957 - hoisted to function scope (was local to the diag-dump
+	/* fixes957  -  hoisted to function scope (was local to the diag-dump
 	 * block below).  The http-fallback gate now has to consult br_err to
 	 * tell a rejected certificate from a dead port, so the diagnostics are
 	 * fetched once here and reused rather than queried twice. */
 	OSTLSDiagnostics diag;
 	int is_cert_fail;
-	int is_auth_fail;   /* fixes962 - peer could not prove it owns the key */
-	int no_downgrade;   /* fixes962 - either of the above forbids cleartext */
+	int is_auth_fail;   /* fixes962  -  peer could not prove it owns the key */
+	int no_downgrade;   /* fixes962  -  either of the above forbids cleartext */
 
 	if (c->state == HS_FAIL || c->state == HS_DONE) return;
 
@@ -1301,11 +1247,11 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	https_worked = (c->state == HS_HEADERS || c->state == HS_BODY);
 	if (https_worked)
 		macsurf_debug_log_writef(
-			"https: worked-but-stalled state=%d host=%s - skip "
+			"https: worked-but-stalled state=%d host=%s  -  skip "
 			"fallback+dead-host", c->state,
 			c->host[0] ? c->host : "(unset)");
 
-	/* fixes226 - full diag dump on every fail. We need:
+	/* fixes226  -  full diag dump on every fail. We need:
 	 *  - host being fetched (so we know WHICH sites fail)
 	 *  - BearSSL error code (br_err) on handshake fails
 	 *  - OT error code (ot_err) on TCP-level fails
@@ -1319,7 +1265,7 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 		(int)c->port,
 		c->path[0] ? c->path : "(unset)");
 	if (c->conn != NULL) {
-		/* fixes227 - macsurf_debug_log_writef supports only %d %ld %p %s %%
+		/* fixes227  -  macsurf_debug_log_writef supports only %d %ld %p %s %%
 		 * (see project_macsurf_debug_log_specifiers memory). Cipher
 		 * gets printed as decimal; 0xCCA9 = 52393 (ChaCha20-Poly1305),
 		 * 0xC02B = 49195 (ECDHE-ECDSA-AES128-GCM-SHA256). */
@@ -1350,27 +1296,27 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	c->err = why;
 	c->state = HS_FAIL;
 
-	/* fixes249b - if this fetch's host was auto-upgraded from a no-scheme
+	/* fixes249b  -  if this fetch's host was auto-upgraded from a no-scheme
 	 * typing (e.g. user typed "retro.example.com" and we made it
 	 * "https://retro.example.com"), emit a FETCH_REDIRECT to the
 	 * http:// equivalent so retro HTTP-only sites still work. Consumed
 	 * (single-shot) to avoid redirect loops. Suppresses the dead-host
 	 * add for this URL so a future retry isn't fast-failed.
 	 *
-	 * fixes249c - match by c->pool_key (host:port) instead of full URL.
+	 * fixes249c  -  match by c->pool_key (host:port) instead of full URL.
 	 * The original full-URL match silently failed because NetSurf
 	 * normalises bare-host URLs to add a trailing slash, but window.c's
 	 * mark used the raw form. */
-	/* fixes314 - never emit FETCH_REDIRECT from hctx_fail if NetSurf
+	/* fixes314  -  never emit FETCH_REDIRECT from hctx_fail if NetSurf
 	 * has already aborted this fetch. ops.abort (driven by NetSurf
 	 * core fetch_abort) nulls llcache's object->fetch.fetch before
 	 * returning. If we send a synthetic redirect now, llcache_fetch_
 	 * redirect calls fetch_abort(NULL) → crash. Aborts happen on page
 	 * navigation, manual cancel, and resource-pressure cancellation;
 	 * the fallback is only meaningful when WE detected the failure
-	 * (peer-close, timeout, handshake error) - not when NetSurf gave
+	 * (peer-close, timeout, handshake error)  -  not when NetSurf gave
 	 * up on us. */
-	/* fixes317 - record this HTTPS failure for the host. Used by both
+	/* fixes317  -  record this HTTPS failure for the host. Used by both
 	 * fetchers to (a) decide whether the OTHER scheme is still worth
 	 * trying, and (b) refuse a server-side 3xx that bounces back to a
 	 * scheme we've already failed at for this host this navigation. */
@@ -1378,25 +1324,25 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 		macsurf_scheme_mark_https_failed(c->pool_key);
 	}
 
-	/* fixes317 - always fall back to HTTP when HTTPS fails, regardless
+	/* fixes317  -  always fall back to HTTP when HTTPS fails, regardless
 	 * of whether the URL was no-scheme typed (the old auto_upgrade
 	 * mark). Gated by the per-host scheme tracker so a host whose HTTP
 	 * has ALSO already failed this navigation surfaces FETCH_ERROR
 	 * instead of bouncing.
-	 * fixes835 (#167 M1) - NEVER downgrade a Facebook host to http. FB is
+	 * fixes835 (#167 M1)  -  NEVER downgrade a Facebook host to http. FB is
 	 * https-only; an http fallback would (a) get a 301 back to https and
 	 * (b) drop the Secure session cookies (xs/datr) on the http hop,
 	 * silently breaking a logged-in session ("login succeeds, session
 	 * doesn't stick"). host_is_fb_asset covers facebook.com/fbcdn.net/
 	 * fbsbx.com/cdninstagram.com on a dot boundary. A transient TLS glitch
 	 * on FB surfaces FETCH_ERROR (retryable) instead. */
-	/* fixes957 - a REJECTED CERTIFICATE never falls back to cleartext.
+	/* fixes957  -  a REJECTED CERTIFICATE never falls back to cleartext.
 	 * This is the one case where the old unconditional fallback turned a
 	 * successful security decision into a silent downgrade: BearSSL
 	 * validated the chain, refused it, and MacSurf then refetched the same
 	 * page over http:// as if nothing had happened.  Record it loudly and
 	 * let the fetch fail. */
-	/* fixes962 - a transport that failed peer authentication or certificate
+	/* fixes962  -  a transport that failed peer authentication or certificate
 	 * validation is tainted, whatever happens next. This is the caller
 	 * fixes958 added the API for: llcache_hsts_update_policy now adopts it
 	 * and stops believing a Strict-Transport-Security header that arrived
@@ -1405,7 +1351,7 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 		fetch_set_tainted_tls(c->parent, true);
 	}
 
-	/* fixes963 - macTLS reported a CLOCK failure. Two very different
+	/* fixes963  -  macTLS reported a CLOCK failure. Two very different
 	 * situations arrive here as the same code, and they need opposite
 	 * responses, so decide with the date rather than assuming.
 	 *
@@ -1416,7 +1362,7 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	 *
 	 *   - date really is pre-2000: the dead-PRAM case. The connection dies
 	 *     before any certificate is seen, so br_err is 0 and neither
-	 *     cert_rejected() nor peer_auth_failed() fires -- meaning fixes957b's
+	 *     cert_rejected() nor peer_auth_failed() fires - meaning fixes957b's
 	 *     believed-date message, which was WRITTEN for this case, never
 	 *     reached the user. Say it here instead.
 	 *
@@ -1436,7 +1382,7 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 			static char clock_why[192];
 			sprintf(clock_why,
 				"this Mac's clock reads %s, which is before "
-				"2000 -- set the date in the Date & Time control "
+				"2000 - set the date in the Date & Time control "
 				"panel, then reload", clk);
 			why = clock_why;
 			c->err = why;
@@ -1447,7 +1393,7 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 		} else {
 			macsurf_debug_log_writef(
 				"https: FAIL time-helper reported clock-bad but "
-				"date reads %s host=%s -- NOT a clock problem",
+				"date reads %s host=%s - NOT a clock problem",
 				clk[0] ? clk : "(unreadable)",
 				c->host[0] ? c->host : "(unset)");
 		}
@@ -1461,12 +1407,12 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 		static char auth_why[192];
 		sprintf(auth_why,
 			"the site could not prove it owns its certificate "
-			"(TLS %s) -- refusing to continue unencrypted",
+			"(TLS %s) - refusing to continue unencrypted",
 			ostls_br_err_name((int)diag.br_err));
 		why = auth_why;
 		c->err = why;
 		macsurf_debug_log_writef(
-			"https: peer auth INVALID br_err=%d(%s) host=%s -- "
+			"https: peer auth INVALID br_err=%d(%s) host=%s - "
 			"refusing http fallback", (int)diag.br_err,
 			ostls_br_err_name((int)diag.br_err),
 			c->host[0] ? c->host : "(unset)");
@@ -1492,8 +1438,8 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 			/* 54 covers expired AND not-yet-valid, so this fires
 			 * whether the clock is behind (dead PRAM -> 1904/1956)
 			 * or ahead.  Deliberately NOT decided here: we state the
-			 * ambiguity and print the date, and the user -- who can
-			 * see their own calendar -- settles it.  A heuristic
+			 * ambiguity and print the date, and the user - who can
+			 * see their own calendar - settles it.  A heuristic
 			 * anchored to the build date would rot as the binary
 			 * ages and would start giving clock advice for genuinely
 			 * expired certificates. */
@@ -1511,7 +1457,7 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 		c->err = why;   /* keep ctx state and the callback in step */
 
 		macsurf_debug_log_writef(
-			"https: cert INVALID br_err=%d(%s) host=%s date=%s -- "
+			"https: cert INVALID br_err=%d(%s) host=%s date=%s - "
 			"refusing http fallback", (int)diag.br_err,
 			ostls_br_err_name((int)diag.br_err),
 			c->host[0] ? c->host : "(unset)",
@@ -1519,7 +1465,7 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	}
 
 	if (c->aborted == 0 &&
-	    !https_worked &&   /* fixes718: HTTPS answered - don't fall back to http */
+	    !https_worked &&   /* fixes718: HTTPS answered  -  don't fall back to http */
 	    !no_downgrade &&   /* fixes957/962: cert or peer-auth failure fails closed */
 	    !host_is_fb_asset(c->host) &&
 	    c->url != NULL && c->pool_key[0] != '\0' &&
@@ -1530,97 +1476,61 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 			fetch_msg rm;
 			struct fetch *parent_save;
 			int n;
-			/* fixes1160 (#183) - image subresources under connection
-			 * pressure: the first HTTPS attempt stalls at the handshake
-			 * with ZERO bytes received from the peer (ot_recv_calls==0
-			 * - the burst exhausted OT endpoint capacity, not a dead
-			 * host) and the no-progress watchdog times it out. Falling
-			 * back to http here is pure waste: a host that speaks HTTPS
-			 * 301s the http request straight back to https, so every
-			 * image pays failed-TLS + http-301 + second-TLS (seconds
-			 * each - 68kmla.org's post-thread images, where the host is
-			 * in success_hosts and is therefore never dead-hosted, so
-			 * EVERY image hits this path). Terminal-fail the IMAGE URL
-			 * instead: it renders alt text, fails once, and is never
-			 * retried or scheme-bounced (the terminal set makes any core
-			 * re-issue an instant fast-fail). Deliberately NOT applied to
-			 * documents/CSS/JS (losing a stylesheet is worse than a
-			 * round-trip), and NOT applied to failures where the peer
-			 * actually sent bytes (a genuinely http-only retro host's
-			 * mixed-content image must keep the http fallback). */
-			if (macos9_url_is_image(u) &&
-			    why != NULL &&
-			    strcmp(why, "https: connection timed out") == 0 &&
-			    diag.ot_recv_calls == 0) {
-				if (terminal_url_add(u)) {
-					macsurf_debug_log_writef(
-						"image: TERMINAL FAIL url=%s - "
-						"timeout 0 peer bytes, no http "
-						"fallback (round-trip)", u);
+			/* fixes262  -  write the redirect URL into c->redirect_url
+			 * (the per-ctx field that the parse_headers 3xx path
+			 * already uses) instead of a stack buffer. NetSurf's
+			 * llcache holds the pointer past our return, so a stack
+			 * buffer goes dangling and NetSurf routes to
+			 * about:fetcherror instead of following the redirect. */
+			n = sprintf(c->redirect_url, "http://%s", u + 8);
+			if (n > 0 && (size_t)n < sizeof c->redirect_url) {
+				macsurf_debug_log_writef(
+					"https: auto-upgrade FALLBACK -> %s",
+					c->redirect_url);
+				/* fixes263  -  NetSurf's llcache_fetch_redirect
+				 * reads fetch_http_code() and rejects redirects
+				 * whose code isn't a recognized 3xx (301/302/
+				 * 303/307/308). Default is 0 → "unsupported
+				 * redirect" → NSERROR_BAD_REDIRECT → the new
+				 * fetch never starts. Set 301 (Moved
+				 * Permanently) so llcache treats this as a
+				 * normal redirect: change method to GET if
+				 * we were posting, follow the new URL. */
+				(void)fetch_set_http_code(c->parent, 301);
+				rm.type = FETCH_REDIRECT;
+				rm.data.redirect = c->redirect_url;
+				fetch_send_callback(&rm, c->parent);
+				parent_save = c->parent;
+				c->parent = NULL; /* fixes447: null before OT teardown */
+				/* fixes448: dead-host the :443 key before the HTTP
+				 * fallback fires.  Without this, the chain
+				 * HTTPS-fail -> HTTP -> server 301 -> HTTPS loops
+				 * forever because the second HTTPS attempt is not
+				 * blocked.  Cert failures (X509_NOT_TRUSTED) are
+				 * session-permanent; success_host_check still guards
+				 * against poisoning hosts that actually worked. */
+				if (c->pool_key[0] != '\0') {
+					dead_host_add(c->pool_key);
 				}
-				/* skip the fallback: fall through to the dead-host
-				 * registration + FETCH_ERROR below. */
-			} else {
-				/* fixes262 - write the redirect URL into
-				 * c->redirect_url (the per-ctx field that the
-				 * parse_headers 3xx path already uses) instead of
-				 * a stack buffer. NetSurf's llcache holds the
-				 * pointer past our return, so a stack buffer goes
-				 * dangling and NetSurf routes to
-				 * about:fetcherror instead of following the
-				 * redirect. */
-				n = sprintf(c->redirect_url, "http://%s", u + 8);
-				if (n > 0 && (size_t)n < sizeof c->redirect_url) {
-					macsurf_debug_log_writef(
-						"https: auto-upgrade FALLBACK -> %s",
-						c->redirect_url);
-					/* fixes263 - NetSurf's llcache_fetch_redirect
-					 * reads fetch_http_code() and rejects redirects
-					 * whose code isn't a recognized 3xx (301/302/
-					 * 303/307/308). Default is 0 → "unsupported
-					 * redirect" → NSERROR_BAD_REDIRECT → the new
-					 * fetch never starts. Set 301 (Moved
-					 * Permanently) so llcache treats this as a
-					 * normal redirect: change method to GET if
-					 * we were posting, follow the new URL. */
-					(void)fetch_set_http_code(c->parent, 301);
-					rm.type = FETCH_REDIRECT;
-					rm.data.redirect = c->redirect_url;
-					fetch_send_callback(&rm, c->parent);
-					parent_save = c->parent;
-					c->parent = NULL; /* fixes447: null before OT
-					                   * teardown */
-					/* fixes448: dead-host the :443 key before the
-					 * HTTP fallback fires.  Without this, the chain
-					 * HTTPS-fail -> HTTP -> server 301 -> HTTPS
-					 * loops forever because the second HTTPS attempt
-					 * is not blocked.  Cert failures
-					 * (X509_NOT_TRUSTED) are session-permanent;
-					 * success_host_check still guards against
-					 * poisoning hosts that actually worked. */
-					if (c->pool_key[0] != '\0') {
-						dead_host_add(c->pool_key);
-					}
-					hctx_clear(c);
-					fetch_remove_from_queues(parent_save);
-					fetch_free(parent_save);
-					return;
-				}
+				hctx_clear(c);
+				fetch_remove_from_queues(parent_save);
+				fetch_free(parent_save);
+				return;
 			}
 		}
 	}
 
-	/* fixes236 - register dead host so retries skip the timeout. We
+	/* fixes236  -  register dead host so retries skip the timeout. We
 	 * blocklist on timeout and on "peer closed before complete" (the
 	 * fingerprint-rejection signature). We do NOT blocklist on aborts
 	 * (NetSurf cancelling a duplicate fetch) or on transient errors
 	 * that might genuinely recover.
 	 *
-	 * fixes410 - also blocklist on "handshake/transport failed". A host
+	 * fixes410  -  also blocklist on "handshake/transport failed". A host
 	 * macTLS cannot complete a TLS handshake with (e.g. cdn.jsdelivr.net,
 	 * which a normal TLS-1.2 client reaches fine, so this is macTLS-side)
 	 * otherwise gets a fresh handshake attempt for EVERY subresource it
-	 * serves - observed as 12 back-to-back jsdelivr handshake failures
+	 * serves  -  observed as 12 back-to-back jsdelivr handshake failures
 	 * costing ~48s of dead time on a single mactrove load. Blocklisting
 	 * after the first handshake failure fails the rest FAST; the page is
 	 * missing that host's resources either way (the handshake can't
@@ -1628,16 +1538,16 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	 * retry cost. The list is per-session and fixes244 refuses to persist
 	 * any host that ever succeeded, so a transient failure self-heals
 	 * next session. */
-	/* fixes957 - a REJECTED CERTIFICATE must NOT dead-host the origin, and
+	/* fixes957  -  a REJECTED CERTIFICATE must NOT dead-host the origin, and
 	 * this is stated explicitly rather than left to fall out of the string
 	 * comparison below (the cert path now rewrites `why`, so these strcmps
-	 * would silently stop matching -- correct, but not something the next
+	 * would silently stop matching - correct, but not something the next
 	 * reader should have to deduce).
 	 *
 	 * Why it matters: the commonest cause is a wrong clock, and we now tell
 	 * the user so. If the host were dead-hosted, the user would set the date
 	 * in Date & Time, reload, and get an instant fast-fail with no network
-	 * activity at all -- making the advice we just gave them look wrong. The
+	 * activity at all - making the advice we just gave them look wrong. The
 	 * cost of not dead-hosting is that every subresource re-attempts its
 	 * handshake while the clock is broken; on a machine where nothing loads
 	 * anyway that is the right trade, and it self-corrects the moment the
@@ -1647,7 +1557,7 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	    (strcmp(why, "https: connection timed out") == 0 ||
 	     strcmp(why, "https: peer closed before complete") == 0 ||
 	     strcmp(why, "https: handshake/transport failed") == 0)) {
-		/* fixes718: !https_worked - a host that already spoke valid HTTPS
+		/* fixes718: !https_worked  -  a host that already spoke valid HTTPS
 		 * (HS_HEADERS/HS_BODY) is alive; a stall must not poison it, or an
 		 * immediate reload is blocked for the whole dead-host FIFO window. */
 		dead_host_add(c->pool_key);
@@ -1664,11 +1574,11 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	fetch_free(p);
 }
 
-/* fixes936 (OS X tier 1) - one-shot latch for the completed-fetch summary. */
+/* fixes936 (OS X tier 1)  -  one-shot latch for the completed-fetch summary. */
 static int g_recon_ot_done = 0;
 
 /*
- * fixes936 (OS X tier 1) - live Open Transport snapshot, called from the
+ * fixes936 (OS X tier 1)  -  live Open Transport snapshot, called from the
  * event-loop heartbeat in main.c (~2 s throttle) via a bare extern.
  *
  * Lives HERE, not in main.c, so OSTLSConnection stays private to this TU:
@@ -1677,7 +1587,7 @@ static int g_recon_ot_done = 0;
  *
  * WHY THIS EXISTS: the failure it detects (a notifier that never fires, so
  * ot_recv_nodata climbs while zero bytes are delivered) is precisely the case
- * where the connection NEVER reaches teardown -- so the completed-fetch
+ * where the connection NEVER reaches teardown - so the completed-fetch
  * summary below would never print. A hang is only readable if something
  * brackets it.
  *
@@ -1710,7 +1620,7 @@ void macos9_https_recon_ot_tick(void)
 				first = i;
 			}
 		} else {
-			/* Slot left the live set -- rearm its budget for next time. */
+			/* Slot left the live set - rearm its budget for next time. */
 			tick_budget[i] = 0;
 		}
 	}
@@ -1723,7 +1633,7 @@ void macos9_https_recon_ot_tick(void)
 		memset(&od, 0, sizeof od);
 		OSTLS_GetDiagnostics(https_slots[first].conn, &od);
 		/* Lowest-index live slot, deliberately: it is deterministic AND it
-		 * converges on the interesting one -- in a hang the other slots
+		 * converges on the interesting one - in a hang the other slots
 		 * complete and go HS_IDLE, leaving the stuck connection as the only
 		 * live slot. slot=/n= make a changing pick visible rather than
 		 * looking like interleaved corruption.
@@ -1751,13 +1661,13 @@ static void hctx_finish(struct macos9_https_ctx *c)
 
 	if (c->state == HS_FAIL || c->state == HS_DONE) return;
 
-	/* fixes965 - verify the gzip trailer before calling the body complete.
+	/* fixes965  -  verify the gzip trailer before calling the body complete.
 	 *
 	 * Without this a TRUNCATED gzip response would look like a successful
 	 * short page: everything decoded so far has already been delivered
 	 * (that is what streaming means), and nothing would ever check the
 	 * CRC32/ISIZE that says whether the stream actually ended. The Linux
-	 * test covers exactly this -- a halved body must report
+	 * test covers exactly this - a halved body must report
 	 * "gzip stream truncated" rather than succeeding.
 	 *
 	 * Deliberately fails the fetch rather than salvaging: the bytes already
@@ -1781,13 +1691,13 @@ static void hctx_finish(struct macos9_https_ctx *c)
 	macsurf_debug_log_writef("https: done body=%ld status=%d",
 		c->body_bytes, c->status);
 
-	/* fixes936 (OS X tier 1) - ONE Open Transport health line per session,
+	/* fixes936 (OS X tier 1)  -  ONE Open Transport health line per session,
 	 * taken at the first HTTPS fetch that actually COMPLETES.
 	 *
 	 * Why the SUCCESS path and not the failure path: hctx_fail already dumps
 	 * the full OSTLSDiagnostics across five "FAIL diag" lines, all of which
 	 * survive the crash-only gate because they contain "FAIL". So a broken
-	 * network is already legible. The success path is the blind spot -- the
+	 * network is already legible. The success path is the blind spot - the
 	 * "https: done ..." line above matches NO whitelist keyword, so today a
 	 * working fetch and a fetch that never started produce an IDENTICAL
 	 * (empty) log. That is what this closes, and it is why the ABSENCE of
@@ -1821,12 +1731,12 @@ static void hctx_finish(struct macos9_https_ctx *c)
 		macsurf_debug_log_flush();
 	}
 	macsurf_profile_stamp("fetch-finished");
-	/* fixes369 (#167) - page-weight accounting: fold this completed
+	/* fixes369 (#167)  -  page-weight accounting: fold this completed
 	 * sub-resource's body size + 1 into the per-load totals. */
 	macsurf_profile_add_bytes(c->body_bytes);
 	macsurf_profile_count_resource();
 
-	/* fixes987 - the body is already on disk; commit patches in its
+	/* fixes987  -  the body is already on disk; commit patches in its
 	 * length, which is what makes the file readable at all. */
 	if (c->cache_stream != 0) {
 		macos9_cache_stream_end(c->cache_stream, 1);
@@ -1837,13 +1747,13 @@ static void hctx_finish(struct macos9_https_ctx *c)
 	msg.type = FETCH_FINISHED;
 	fetch_send_callback(&msg, c->parent);
 
-	/* fixes244 - mark host as "ever-succeeded" so future timeouts on
+	/* fixes244  -  mark host as "ever-succeeded" so future timeouts on
 	 * this host won't add it to the dead-host blocklist. */
 	if (c->pool_key[0] != '\0' && c->status >= 200 && c->status < 400) {
 		success_host_add(c->pool_key);
 	}
 
-	/* fixes231 - return the OSTLSConnection to the pool while it's
+	/* fixes231  -  return the OSTLSConnection to the pool while it's
 	 * still known idle. Eligibility: keep_alive_ok still set (server
 	 * didn't say "Connection: close"), not aborted, connection is
 	 * present and state is still Open. Setting c->conn = NULL after
@@ -1911,7 +1821,7 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		msg.data.header_or_data.len = strlen(p);
 		fetch_send_callback(&msg, c->parent);
 	}
-	/* fixes836 (#167 M1 diag) - Facebook response status line, WORK-gated.
+	/* fixes836 (#167 M1 diag)  -  Facebook response status line, WORK-gated.
 	 * A login POST that re-shows the form (status 200) vs a real success
 	 * (302 -> Set-Cookie c_user/xs) is the whole diagnosis for "wrong
 	 * password". */
@@ -1923,7 +1833,7 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 	macsurf_debug_log_writef("https: status=%d mime='%s' clen=%ld chunked=%d",
 		c->status, c->mime, c->content_length, c->chunked);
 
-	/* fixes313b - defer header forwarding so we can override Content-Type
+	/* fixes313b  -  defer header forwarding so we can override Content-Type
 	 * when Content-Disposition: attachment is present. NetSurf's
 	 * llcache_handle_get_header returns the FIRST matching header, so
 	 * inserting our synthetic Content-Type AFTER the server's wouldn't
@@ -1933,19 +1843,19 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		char *header_lines[64];
 		int   n_header_lines = 0;
 		int   force_download = 0;
+		int   force_html = 0;   /* fixes770 (#232) */
 		int   i;
 		static const char forced_ct[] =
 			"Content-Type: application/octet-stream";
-		/* fixes770's forced_html_ct REMOVED (#233, fixes1137): the real
-		 * textplain.c handler is wired, so text/plain is forwarded as
-		 * itself and the content factory routes it to textplain. */
+		static const char forced_html_ct[] =
+			"Content-Type: text/html; charset=utf-8";
 
 		while ((p = macos9_find_line(&cur, &cur_len)) != NULL) {
 			if (p[0] == 0) break;
 			if (n_header_lines < 64) {
 				header_lines[n_header_lines++] = p;
 			}
-			/* fixes981 - freshness/validator headers, kept for the
+			/* fixes981  -  freshness/validator headers, kept for the
 			 * disk copy. Cheap enough to run for every response;
 			 * only used if this one turns out cacheable. */
 			macos9_cache_capture_hdr(p, c->cache_hdrs,
@@ -1962,7 +1872,7 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 				char *v = p + 18; while (*v == ' ') v++;
 				if (strncasecmp(v, "chunked", 7) == 0) c->chunked = 1;
 			}
-			/* fixes965 - Content-Encoding: gzip.
+			/* fixes965  -  Content-Encoding: gzip.
 			 *
 			 * Distinct from Transfer-Encoding above and layered
 			 * INSIDE it: a response can be both chunked and gzip,
@@ -1977,7 +1887,7 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 			 * -wrapped, and guessing wrong renders binary garbage.
 			 * We do not advertise it, so a compliant server will
 			 * not send it. */
-			/* fixes965b - never attach a decoder to a response that
+			/* fixes965b  -  never attach a decoder to a response that
 			 * cannot carry a body. A 304 or 204 legitimately sends
 			 * Content-Encoding with zero bytes after it, and a 3xx
 			 * usually sends an empty (or tiny) body it does not
@@ -2001,7 +1911,7 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 					}
 				}
 			}
-			/* fixes231 - disable pool when server says close. */
+			/* fixes231  -  disable pool when server says close. */
 			if (strncasecmp(p, "Connection:", 11) == 0) {
 				char *v = p + 11; while (*v == ' ') v++;
 				if (strncasecmp(v, "close", 5) == 0) c->keep_alive_ok = 0;
@@ -2013,14 +1923,14 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 				if (lv >= sizeof(c->redirect_url)) lv = sizeof(c->redirect_url) - 1;
 				memcpy(c->redirect_url, v, lv);
 				c->redirect_url[lv] = 0;
-				/* fixes836 (#167 M1 diag) - where FB is sending us
+				/* fixes836 (#167 M1 diag)  -  where FB is sending us
 				 * after the login POST (checkpoint / 2FA / home). */
 				if (host_is_fb_asset(c->host)) {
 					macsurf_debug_log_writef(
 						"WORK fbloc %s", c->redirect_url);
 				}
 			}
-			/* fixes313b (#150) - Content-Disposition: attachment forces
+			/* fixes313b (#150)  -  Content-Disposition: attachment forces
 			 * download regardless of Content-Type. Servers commonly serve
 			 * downloads with Content-Type: text/html (CMS default) and
 			 * mark them as attachments only via this header. Detect with
@@ -2032,17 +1942,17 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 					force_download = 1;
 				}
 			}
-			/* fixes367 (#167) - cookie jar: store Set-Cookie. Handled
+			/* fixes367 (#167)  -  cookie jar: store Set-Cookie. Handled
 			 * here in the header loop (not after) so a login POST's
 			 * 302 carries its c_user/xs cookies into urldb BEFORE the
-			 * FETCH_REDIRECT below tears the fetch down - the very next
+			 * FETCH_REDIRECT below tears the fetch down  -  the very next
 			 * GET (the redirect target) then sends them back. One call
 			 * per Set-Cookie line; Facebook emits several. Mirrors
 			 * curl.c: fetch_set_cookie → urldb_set_cookie(value, url). */
 			if (strncasecmp(p, "Set-Cookie:", 11) == 0) {
 				char *v = p + 11;
 				while (*v == ' ' || *v == '\t') v++;
-				/* fixes378 (#167) - refuse Facebook's 'noscript=1'
+				/* fixes378 (#167)  -  refuse Facebook's 'noscript=1'
 				 * marker. We HAVE JavaScript (QuickJS + the fixes377
 				 * fills), so we never want FB to think otherwise:
 				 * storing noscript=1 makes every later request announce
@@ -2053,10 +1963,7 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 					macsurf_debug_log_writef(
 						"https: refused 'noscript' Set-Cookie "
 						"(we have JS) for %s", c->host);
-				} else if (nsoption_bool(accept_cookies)) {
-					/* preferences: accept_cookies master switch -
-					 * the jar is always wired, this gates what
-					 * enters it. */
+				} else {
 					fetch_set_cookie(c->parent, v);
 					/* fixes658 (#193) login cache-staleness fix. A login is a POST
 					 * whose response sets session cookies then 303/302-redirects to a
@@ -2083,7 +1990,7 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 							"https: POST set-cookie -> skip stale "
 							"cache (login) host=%s", c->host);
 					}
-					/* fixes367 (#167) - log the cookie NAME only (up
+					/* fixes367 (#167)  -  log the cookie NAME only (up
 					 * to '='), never the value, so the hardware
 					 * bring-up can confirm c_user/xs land without
 					 * leaking the secret. */
@@ -2099,7 +2006,7 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 						macsurf_debug_log_writef(
 							"https: stored cookie '%s' for %s",
 							nm, c->host);
-						/* fixes836 (#167 M1 diag) - WORK-gated
+						/* fixes836 (#167 M1 diag)  -  WORK-gated
 						 * copy for Facebook so the login Set-Cookie
 						 * (c_user/xs = success) survives the log
 						 * gate. Name only, never the value. */
@@ -2119,12 +2026,12 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 				"→ force download (mime override)");
 		}
 
-		/* fixes768 (#232) - RECON: log the resolved mime + attachment
+		/* fixes768 (#232)  -  RECON: log the resolved mime + attachment
 		 * flag for EVERY response so the failures-only gate still shows
 		 * why a page downloads. mime=(empty) => Content-Type never
 		 * parsed (no handler => download); mime=application/octet-stream
 		 * with cd=1 => Content-Disposition forced it. */
-		/* fixes768/770 (#232) - log the resolved mime only for the
+		/* fixes768/770 (#232)  -  log the resolved mime only for the
 		 * INTERESTING cases (an error status, an empty/parse-failed
 		 * mime, or a forced download), so we can see WHY a page
 		 * downloads without spamming a synced log line per image. */
@@ -2136,15 +2043,27 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 				force_download, c->status);
 		}
 
-		/* fixes770's text/plain->text/html relabel REMOVED (#233,
-		 * fixes1137): the real textplain.c handler is wired, so a
-		 * text/plain response keeps its own mime and the content
-		 * factory routes it to textplain instead of the downloader.
-		 * (hlcache's mimesniff still upgrades a body that looks like
-		 * HTML, per the WHATWG sniffing algorithm - standard browser
-		 * behaviour.) */
+		/* fixes770 (#232)  -  MacSurf has no standalone text/plain content
+		 * handler (misc_stub.c stubs textplain_init), so a text/plain
+		 * response has no handler and NetSurf routes it to the
+		 * DOWNLOADER: an HN 429 "rate limited" page, robots.txt, or a
+		 * .txt file all dump to disk instead of displaying. Browsers
+		 * show text/plain INLINE. Until the real textplain.c handler is
+		 * ported (#233), relabel text/plain as text/html so it renders
+		 * through the HTML pipeline. Prose / error pages read fine;
+		 * embedded markup is imperfect (unescaped)  -  acceptable stopgap.
+		 * Skipped when a real attachment already forced a download. */
+		if (!force_download &&
+		    strncasecmp(c->mime, "text/plain", 10) == 0) {
+			strcpy(c->mime, "text/html");
+			force_html = 1;
+			macsurf_debug_log_writef(
+				"RECON MIME text/plain->text/html (no textplain "
+				"handler) host=%s path=%s st=%d",
+				c->host, c->path, c->status);
+		}
 
-		/* fixes979 - 304 Not Modified.
+		/* fixes979  -  304 Not Modified.
 		 *
 		 * Until now NEITHER fetcher had this branch, and because of
 		 * that macos9_capture_extra_headers deliberately STRIPPED
@@ -2158,7 +2077,7 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		 *
 		 * Mirrors curl.c exactly (fetch_curl_process_headers): send
 		 * FETCH_NOTMODIFIED and stop, WITHOUT forwarding the response
-		 * headers -- llcache_fetch_notmodified moves the users onto the
+		 * headers - llcache_fetch_notmodified moves the users onto the
 		 * candidate object and refreshes its cache data itself, so a
 		 * header replay here would apply to the wrong object. GET only,
 		 * same guard as curl: a 304 answering a POST is malformed, and
@@ -2166,11 +2085,11 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		 * wrong thing for a form submission.
 		 *
 		 * Cookies from the 304 have already been captured by the parse
-		 * loop above -- that is why this sits after it rather than
+		 * loop above - that is why this sits after it rather than
 		 * beside the status line. */
 		if (c->status == 304 && c->post_body == NULL) {
 			struct fetch *parent_save;
-			/* fixes979b - "LIFE " prefix, or the failures-only gate
+			/* fixes979b  -  "LIFE " prefix, or the failures-only gate
 			 * drops it: the gate matches literal strings, and a
 			 * line that never reaches disk is worse than no line,
 			 * because it reads like instrumentation that exists. */
@@ -2193,6 +2112,9 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 			if (force_download &&
 			    strncasecmp(line, "Content-Type:", 13) == 0) {
 				line = forced_ct;
+			} else if (force_html &&
+			    strncasecmp(line, "Content-Type:", 13) == 0) {
+				line = forced_html_ct;   /* fixes770 (#232) */
 			}
 			msg.type = FETCH_HEADER;
 			msg.data.header_or_data.buf = (const uint8_t *)line;
@@ -2206,7 +2128,7 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		msg.type = FETCH_REDIRECT;
 		msg.data.redirect = c->redirect_url;
 		fetch_send_callback(&msg, c->parent);
-		/* fixes368a (#167) - log the redirect TARGET, not just "redirect".
+		/* fixes368a (#167)  -  log the redirect TARGET, not just "redirect".
 		 * The Facebook login chain is GET → POST → 302 → save-device →
 		 * home; seeing each hop's destination is how we troubleshoot a
 		 * login that stalls or loops. */
@@ -2219,22 +2141,22 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		return 2;	/* terminal */
 	}
 
-	/* fixes218 - cache eligibility decided once mime has been parsed.
-	 * fixes312 (#144) - POST responses are not cacheable: the URL alone
+	/* fixes218  -  cache eligibility decided once mime has been parsed.
+	 * fixes312 (#144)  -  POST responses are not cacheable: the URL alone
 	 * doesn't identify the response (different bodies → different
 	 * results), so caching would serve stale or wrong data on subsequent
 	 * GETs for the same URL.
-	 * fixes374 (#167) - NEVER cache Facebook. FB serves login/checkpoint
+	 * fixes374 (#167)  -  NEVER cache Facebook. FB serves login/checkpoint
 	 * pages with Cache-Control: private,no-cache,no-store; caching them
 	 * served STALE pages with dead lsd/jazoest CSRF tokens AND meant the
-	 * fresh Set-Cookie (datr/c_user/xs, device-trust) was never seen -
+	 * fresh Set-Cookie (datr/c_user/xs, device-trust) was never seen  - 
 	 * so the login looped and 2FA was demanded every time. Always go to
 	 * network for FB so tokens are fresh and cookies are captured. */
 	if (c->post_body == NULL &&
 	    !host_is_fb_asset(c->host) &&
 	    macos9_cache_mime_eligible(c->status, c->mime)) {
 		c->cache_eligible = 1;
-		/* fixes987 - open the cache file now, so the body can be
+		/* fixes987  -  open the cache file now, so the body can be
 		 * written through as it arrives. */
 		if (c->url != NULL) {
 			const char *cu_ = nsurl_access(c->url);
@@ -2248,7 +2170,7 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 	if (c->chunked) OSTLS_HTTP_ChunkDecoderInit(&c->chunk);
 
 	/* fixes644 (#198): a response with NO Content-Length and NOT chunked is
-	 * connection-close-delimited - the ONLY way to know the body ended is the
+	 * connection-close-delimited  -  the ONLY way to know the body ended is the
 	 * server closing the connection. If we leave keep_alive_ok set, our pool
 	 * logic waits for more bytes on a socket the server considers done, and
 	 * the no-progress watchdog eventually truncates the body (the salvage
@@ -2262,7 +2184,7 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 	return 1;
 }
 
-/* fixes965 - the single place body bytes reach NetSurf and the disk cache.
+/* fixes965  -  the single place body bytes reach NetSurf and the disk cache.
  *
  * Extracted from feed_body's two branches (chunked / raw), which were doing
  * the identical three steps, so that gzip has exactly one seam to sit in.
@@ -2270,8 +2192,8 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
  * these are the DECOMPRESSED bytes, which is what makes the cache correct --
  * a cached body must render identically to a fresh one, and storing the
  * compressed form would mean a cache hit replayed gzip bytes to a content
- * handler that never asked for them. (The fixes770 text/plain relabel that
- * used to sit before the cache-eligibility check is gone - fixes1137/#233.) */
+ * handler that never asked for them. Same reasoning as fixes770 relabelling
+ * text/plain before the cache-eligibility check rather than after. */
 static void hctx_deliver(struct macos9_https_ctx *c, const char *data, long len)
 {
 	fetch_msg msg;
@@ -2280,7 +2202,7 @@ static void hctx_deliver(struct macos9_https_ctx *c, const char *data, long len)
 	msg.data.header_or_data.buf = (const uint8_t *)data;
 	msg.data.header_or_data.len = (size_t)len;
 	fetch_send_callback(&msg, c->parent);
-	/* fixes987 - write through instead of accumulating. */
+	/* fixes987  -  write through instead of accumulating. */
 	if (c->cache_stream != 0) {
 		if (!macos9_cache_stream_data(c->cache_stream, data, len)) {
 			c->cache_stream = 0;   /* already closed + deleted */
@@ -2288,13 +2210,13 @@ static void hctx_deliver(struct macos9_https_ctx *c, const char *data, long len)
 	}
 }
 
-/* fixes965 - gunzip output callback. */
+/* fixes965  -  gunzip output callback. */
 static void hctx_gz_emit(void *cbctx, const char *data, long len)
 {
 	hctx_deliver((struct macos9_https_ctx *)cbctx, data, len);
 }
 
-/* fixes965 - route body bytes through the decoder when one is active.
+/* fixes965  -  route body bytes through the decoder when one is active.
  * Returns 0 on success, -1 if the gzip stream is bad (caller fails the fetch).
  *
  * NOTE the accounting split that matters: the CALLER still adds the RAW byte
@@ -2317,17 +2239,17 @@ static int hctx_body_out(struct macos9_https_ctx *c, const char *data, long len)
 	return 0;
 }
 
-/* Pump body bytes - either chunked-decoded or raw. Returns 1 if body
+/* Pump body bytes  -  either chunked-decoded or raw. Returns 1 if body
  * is complete, 0 if more bytes expected. */
 static int feed_body(struct macos9_https_ctx *c, const char *buf, long n)
 {
 	fetch_msg msg;
 	if (n <= 0) return 0;
 
-	/* fixes368e (#167) - one-shot: on the FIRST body bytes (body_bytes==0)
+	/* fixes368e (#167)  -  one-shot: on the FIRST body bytes (body_bytes==0)
 	 * scan for the HTML <title> and log it, so the trace says WHICH page
-	 * came back - "Log in to Facebook" vs "Facebook" (logged in) vs
-	 * "Security check" (checkpoint) vs an error - not just its size. The
+	 * came back  -  "Log in to Facebook" vs "Facebook" (logged in) vs
+	 * "Security check" (checkpoint) vs an error  -  not just its size. The
 	 * <title> lives in <head> so it's in the first chunk. Titles aren't
 	 * secrets. Bounded scan; safe on chunk-framed bytes (substring search). */
 	if (c->body_bytes == 0) {
@@ -2353,19 +2275,19 @@ static int feed_body(struct macos9_https_ctx *c, const char *buf, long n)
 		}
 	}
 
-	/* fixes320 - robust chunked detection by body framing. Some responses
+	/* fixes320  -  robust chunked detection by body framing. Some responses
 	 * (observed: 68kmla.org's soft-404 served for /favicon.ico, which
 	 * carries a large cookie/header block) send Transfer-Encoding: chunked
 	 * that the header scan missed AND no Content-Length. Per RFC 7230
 	 * §3.3.3 an HTTP/1.1 keep-alive response with no Content-Length is
-	 * REQUIRED to be chunked - there is no other way to delimit it - and we
+	 * REQUIRED to be chunked  -  there is no other way to delimit it  -  and we
 	 * always send Connection: keep-alive, so the peer never closes. Without
 	 * recognizing the framing the fetch stalls until the no-progress
 	 * timeout and the raw "<hex>\r\n" chunk-size line leaks into the body.
 	 *
 	 * Sniff the first body bytes once (body_bytes == 0, nothing delivered
 	 * yet): a hex run immediately followed by CRLF (or a ';' chunk-ext)
-	 * is chunk framing - switch to the decoder. Safe because no real
+	 * is chunk framing  -  switch to the decoder. Safe because no real
 	 * no-Content-Length payload begins that way: HTML starts '<', CSS
 	 * '@'/'.'/'/', PNG 0x89, JPEG 0xFF, GIF 'G'. */
 	if (!c->chunked && c->content_length < 0 && c->body_bytes == 0) {
@@ -2387,7 +2309,7 @@ static int feed_body(struct macos9_https_ctx *c, const char *buf, long n)
 			OSTLS_HTTP_ChunkDecoderInit(&c->chunk);
 			macsurf_debug_log_writef(
 				"https: chunk-framing sniffed (clen<0, TE missed) "
-				"- enabling decoder");
+				" -  enabling decoder");
 		}
 	}
 
@@ -2438,15 +2360,15 @@ static int feed_body(struct macos9_https_ctx *c, const char *buf, long n)
 	}
 }
 
-/* fixes368 (#167) - per-host UA moved to macos9_useragent.h /
+/* fixes368 (#167)  -  per-host UA moved to macos9_useragent.h /
  * macos9_fetch.c (macos9_user_agent_for_host) so both fetchers share one
  * source of truth and the override table is extensible. */
 
-/* fixes368c (#167) - extract cookie NAMES (never values) from a urldb
+/* fixes368c (#167)  -  extract cookie NAMES (never values) from a urldb
  * cookie string "n1=v1; n2=v2; ..." into a space-separated "n1 n2 ..." for
  * the diagnostic log. Lets the login chain confirm that c_user/xs actually
  * ride along on the post-login requests, not just that some bytes went out.
- * Values are dropped entirely - they are session secrets. */
+ * Values are dropped entirely  -  they are session secrets. */
 static void cookie_names_only(const char *src, char *dst, int dstcap)
 {
 	int dp;
@@ -2468,15 +2390,15 @@ static void cookie_names_only(const char *src, char *dst, int dstcap)
 }
 
 /* Append bytes into hdr_buf growing as needed. */
-/* fixes231 - build the request line + headers into c->req_buf. Returns
+/* fixes231  -  build the request line + headers into c->req_buf. Returns
  * 0 on success, -1 if the formatted request didn't fit. Called from both
  * the cold-handshake path (HS_TLSING → HS_SEND_REQ) and the warm-pool
  * path (HS_QUEUED hit → HS_SEND_REQ direct). */
-/* fixes373 (#167) - Facebook serves its HTTP/1.1 responses with
+/* fixes373 (#167)  -  Facebook serves its HTTP/1.1 responses with
  * Content-Length + Connection: keep-alive, but under MacSurf's pooled-
  * connection reuse the Content-Length is not being honored (the fetch logs
  * clen=-1), so each FB sub-resource stalls to the 4s no-progress timeout and
- * its body is discarded - the login page and the login POST's Set-Cookie
+ * its body is discarded  -  the login page and the login POST's Set-Cookie
  * (c_user/xs) drown in ~30+ timeouts. For Facebook's own hosts we instead
  * request Connection: close: FB closes promptly after each response, the body
  * is close-delimited (kOSTLSEventClosed -> hctx_finish, content_length<0
@@ -2505,7 +2427,7 @@ static int host_is_fb_asset(const char *host)
 	return 0;
 }
 
-/* fixes378 (#167) - strip any persisted 'noscript=...' token out of an
+/* fixes378 (#167)  -  strip any persisted 'noscript=...' token out of an
  * outgoing Cookie: header value (in place). Neutralises a noscript=1 cookie
  * that an earlier no-JS render already stored, WITHOUT forcing the user to
  * wipe the whole jar (which would also lose datr, the device id). Rebuilds the
@@ -2537,9 +2459,9 @@ static void cookie_strip_noscript(char *s)
 	strcpy(s, out);
 }
 
-/* fixes836 (#167 M1 diag) - build a REDACTED field map of a urlencoded POST
+/* fixes836 (#167 M1 diag)  -  build a REDACTED field map of a urlencoded POST
  * body: "name=VALUELEN" per field. Values (password, email, tokens) are
- * NEVER logged - only each field's name and the byte-length of its value, so
+ * NEVER logged  -  only each field's name and the byte-length of its value, so
  * the login POST can be verified well-formed (pass present + non-empty, lsd/
  * jazoest present) without leaking secrets. Output bounded to outcap-1. */
 static void fb_body_fieldmap(const char *body, long len, char *out, size_t outcap)
@@ -2579,31 +2501,28 @@ static int build_request(struct macos9_https_ctx *c)
 	int rn;
 	const char *ua = macos9_user_agent_for_host(c->host);
 	const char *conn = host_is_fb_asset(c->host) ? "close" : "keep-alive";
-	/* fixes367 (#167) - cookie jar: pull the stored cookies for this URL
+	/* fixes367 (#167)  -  cookie jar: pull the stored cookies for this URL
 	 * and emit them as a Cookie: header. urldb_get_cookie returns a
 	 * malloc'd "name=val; name2=val2" string (include_http_only=true so
-	 * Facebook's HttpOnly session cookies - c_user/xs - are sent; this
+	 * Facebook's HttpOnly session cookies  -  c_user/xs  -  are sent; this
 	 * matches curl.c's fetcher). NULL when the jar has nothing for this
 	 * origin. Secure cookies are returned here because c->url is https. */
 	char  cookie_hdr[MACSURF_COOKIE_HDR_CAP];
 	char *cookie_str;
 	int   verifiable;      /* fixes835 (#167 M1) */
-	char  synth[512];      /* fixes835 - Sec-Fetch + Origin, built below */
-	/* preferences: accept_cookies master switch - the jar is always
-	 * wired; this gates reading it into the request. */
-	cookie_str = (nsoption_bool(accept_cookies) && c->url != NULL)
-		? urldb_get_cookie(c->url, true) : NULL;
+	char  synth[512];      /* fixes835  -  Sec-Fetch + Origin, built below */
+	cookie_str = (c->url != NULL) ? urldb_get_cookie(c->url, true) : NULL;
 	if (cookie_str != NULL) {
-		/* fixes378 - drop any stuck noscript=1 before it reaches FB. */
+		/* fixes378  -  drop any stuck noscript=1 before it reaches FB. */
 		cookie_strip_noscript(cookie_str);
-		/* fixes368c (#167) - names only, never values. */
+		/* fixes368c (#167)  -  names only, never values. */
 		{
 			char cknames[256];
 			cookie_names_only(cookie_str, cknames,
 				(int)sizeof cknames);
 			macsurf_debug_log_writef("https: cookies sent: %s",
 				cknames);
-			/* fixes838 (#167 diag) - WORK-gated copy for Facebook so
+			/* fixes838 (#167 diag)  -  WORK-gated copy for Facebook so
 			 * we can SEE which cookies go out. If 'datr' is present and
 			 * the SAME across relaunches, the device persists; if it is
 			 * absent / different every session, the jar isn't persisting
@@ -2615,18 +2534,9 @@ static int build_request(struct macos9_https_ctx *c)
 	}
 	macos9_build_cookie_header(cookie_hdr, sizeof cookie_hdr, cookie_str);
 	if (cookie_str != NULL) free(cookie_str);
-	/* preferences: Do Not Track - the core option exists but only
-	 * curl.c (not built) consumed it; this fetcher builds its own
-	 * request headers, so emit DNT: 1 here (rides the cookie slot,
-	 * which is the request template's only optional privacy header). */
-	if (nsoption_bool(do_not_track)) {
-		size_t clen = strlen(cookie_hdr);
-		if (clen + 8 < sizeof cookie_hdr)
-			strcpy(cookie_hdr + clen, "DNT: 1\r\n");
-	}
-	/* fixes368a (#167) - one request-summary line per fetch: the host, the
+	/* fixes368a (#167)  -  one request-summary line per fetch: the host, the
 	 * User-Agent we chose for it, and the Cookie: header size. The UA is the
-	 * key Facebook diagnostic - if FB serves the wrong page or 301-bounces,
+	 * key Facebook diagnostic  -  if FB serves the wrong page or 301-bounces,
 	 * this confirms whether the vintage UA or the default went out. Cookie
 	 * BYTES only, never the values (c_user/xs are session secrets). Logged
 	 * unconditionally so the very first (no-cookie) GET is covered too. */
@@ -2636,7 +2546,7 @@ static int build_request(struct macos9_https_ctx *c)
 		(long)strlen(cookie_hdr),
 		(long)((c->post_body != NULL) ? (long)c->post_body_len : 0L),
 		ua);
-	/* fixes835 (#167 Facebook M1) - synthesize the Sec-Fetch request
+	/* fixes835 (#167 Facebook M1)  -  synthesize the Sec-Fetch request
 	 * metadata a real browser sends (FB returns HTTP 400 to a modern UA
 	 * that omits these), keyed on request kind so the claimed identity is
 	 * coherent: a form POST is a same-origin document submit; a top-level
@@ -2650,7 +2560,7 @@ static int build_request(struct macos9_https_ctx *c)
 	verifiable = fetch_get_verifiable(c->parent);
 	macos9_build_sec_fetch(synth, sizeof synth, verifiable,
 		(c->post_body != NULL), "https", c->host);
-	/* fixes836 (#167 M1 diag) - dump the shape of a Facebook POST (the login
+	/* fixes836 (#167 M1 diag)  -  dump the shape of a Facebook POST (the login
 	 * submit) so we can see EXACTLY what goes on the wire when FB says "wrong
 	 * password". WORK-prefixed so it survives the failures-only log gate.
 	 * fbreq = request shape (cookie bytes, body bytes, Origin/Sec-Fetch/Referer
@@ -2674,13 +2584,13 @@ static int build_request(struct macos9_https_ctx *c)
 		macsurf_debug_log_writef("WORK fbbody %s", fmap);
 	}
 	if (c->post_body != NULL) {
-		/* fixes312 (#144) - POST. Body goes out in a second
+		/* fixes312 (#144)  -  POST. Body goes out in a second
 		 * OSTLS_Write after these headers; req_buf carries
 		 * headers only.
-		 * fixes367 (#167) - UA chosen per-host (macos9_user_agent_for_host):
+		 * fixes367 (#167)  -  UA chosen per-host (macos9_user_agent_for_host):
 		 * facebook.com gets a vintage Mozilla/4.0 Mac string to unlock
 		 * the no-JS mbasic page; everything else keeps MacSurf's UA.
-		 * fixes721 (#144 file upload) - Content-Type is multipart (with
+		 * fixes721 (#144 file upload)  -  Content-Type is multipart (with
 		 * boundary) for a file upload, else the urlencoded default. */
 		const char *ct = (c->post_ctype[0] != '\0')
 			? c->post_ctype
@@ -2768,14 +2678,14 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		return;
 	}
 
-	/* fixes237 - serve from disk cache. Mirrors the HTTP fetcher's
+	/* fixes237  -  serve from disk cache. Mirrors the HTTP fetcher's
 	 * working cache-hit pattern exactly (macos9_http_fetcher.c lines
 	 * ~895-925). The fixes218 implementation emitted an extra
 	 * "HTTP/1.1 200" header line as the first FETCH_HEADER callback,
 	 * which html_create rejected (it expects header callbacks to be
 	 * "Name: Value" tuples, not status lines). The working pattern:
 	 *
-	 *   1. fetch_set_http_code(parent, status)  - sets status internally
+	 *   1. fetch_set_http_code(parent, status)   -  sets status internally
 	 *   2. ONE FETCH_HEADER with "Content-Type: <mime>" (and nothing else)
 	 *   3. ONE FETCH_DATA with the body
 	 *   4. hctx_finish handles FETCH_FINISHED + cleanup
@@ -2791,13 +2701,13 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		c->status = c->cache_hit_status;
 		fetch_set_http_code(c->parent, c->status);
 
-		/* fixes981 - replay the stored freshness/validator headers
+		/* fixes981  -  replay the stored freshness/validator headers
 		 * FIRST, so llcache builds this object's cache data exactly as
 		 * it would from a network response: it can then decide the copy
 		 * is fresh (serve, no request), or stale-but-validatable (one
 		 * conditional request, 304, no body). Without them a disk hit
 		 * was served unconditionally forever AND could never be
-		 * revalidated -- measured as reval=14 cond=0. Each stored line
+		 * revalidated - measured as reval=14 cond=0. Each stored line
 		 * is CRLF-terminated; FETCH_HEADER wants one line at a time. */
 		if (c->cache_hit_hdrs[0] != '\0') {
 			char *hp = c->cache_hit_hdrs;
@@ -2853,7 +2763,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		OSTLSConfig cfg;
 		OSTLSConnection *pooled;
 
-		/* fixes232a - wait for NetSurf core to dispatch us via ops.start
+		/* fixes232a  -  wait for NetSurf core to dispatch us via ops.start
 		 * before we open any TLS connection. setup() fires for every
 		 * queued fetch up-front; start() respects max_fetchers_per_host.
 		 * Without this gate, parallel sub-resource page loads cold-
@@ -2861,12 +2771,12 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		 * throttle, killing the fixes231 keep-alive pool. */
 		if (!c->started) return;
 
-		/* fixes856 (#285) - refuse trackers / ad networks / consent
+		/* fixes856 (#285)  -  refuse trackers / ad networks / consent
 		 * platforms outright.  Checked FIRST: this host is never going to
 		 * contribute a pixel, so there is no reason to pay for a TLS
 		 * handshake, the bytes, or the QuickJS parse+exec of a bundle built
 		 * for a modern desktop CPU.  On hackaday.com this drops ~908 KB of
-		 * 2406 KB (~38%) - gtag/js alone is 475 KB, one request.  Marked
+		 * 2406 KB (~38%)  -  gtag/js alone is 475 KB, one request.  Marked
 		 * terminal so hctx_fail suppresses the http scheme-fallback and core
 		 * never re-queues it: one clean FETCH_ERROR per URL, exactly the
 		 * fixes554 contract.  Blocked scripts simply never run, which is what
@@ -2882,10 +2792,10 @@ static void hctx_poll(struct macos9_https_ctx *c)
 			return;
 		}
 
-		/* fixes554 - per-URL terminal fail: a resource URL that already
+		/* fixes554  -  per-URL terminal fail: a resource URL that already
 		 * fast-failed once renders alt text and is NEVER retried.  Checked
 		 * BEFORE the per-host dead_host list so it survives dead_hosts FIFO
-		 * eviction - honours "do not re-queue" when NetSurf core re-issues
+		 * eviction  -  honours "do not re-queue" when NetSurf core re-issues
 		 * the fetch after FETCH_ERROR.  hctx_fail sees the URL in the
 		 * terminal set and suppresses the http scheme-fallback, so this
 		 * does not relaunch the storm. */
@@ -2897,7 +2807,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 			return;
 		}
 
-		/* fixes236 - short-circuit hosts that already failed this
+		/* fixes236  -  short-circuit hosts that already failed this
 		 * session. NetSurf core re-issues a fresh fetch after every
 		 * FETCH_ERROR; without this check the retry pays the full
 		 * NO_PROGRESS_TICKS timeout (4s) for a host that's never going
@@ -2908,7 +2818,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 			macsurf_debug_log_writef(
 				"https: dead-host FAST-FAIL %s",
 				c->pool_key);
-			/* fixes554 - mark THIS resource URL terminally failed on
+			/* fixes554  -  mark THIS resource URL terminally failed on
 			 * the first dead-host fast-fail: render alt text once, no
 			 * http fallback, no 301 follow, no re-queue.  Per-URL, so
 			 * the cdn.jsdelivr.net emoji storm (dozens of distinct URLs
@@ -2926,7 +2836,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 			return;
 		}
 
-		/* fixes231 - try the keep-alive pool first. If we get a hit,
+		/* fixes231  -  try the keep-alive pool first. If we get a hit,
 		 * skip OSTLS_New + handshake entirely and jump straight to
 		 * sending the request on the warm connection. ~700 ms of
 		 * ECDHE keygen + cert chain validation saved per pool hit. */
@@ -2968,9 +2878,9 @@ static void hctx_poll(struct macos9_https_ctx *c)
 	/* Pump up to PUMP_STEPS atomic steps per poll tick (fixes234). */
 	ev = kOSTLSEventNone;
 	{
-		/* fixes640 - accumulate the CPU inside the TLS engine (excludes
+		/* fixes640  -  accumulate the CPU inside the TLS engine (excludes
 		 * WaitNextEvent idle between polls). Attribute by pre-pump state:
-		 * handshake crypto (X25519/ECDHE/verify - the G3's real cost) ->
+		 * handshake crypto (X25519/ECDHE/verify  -  the G3's real cost) ->
 		 * tls; record decrypt during transfer -> net. */
 		extern double macos9_micros(void);
 		extern void macsurf_profile_accum_tls(long us);
@@ -2990,12 +2900,12 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		return;
 	}
 
-	/* fixes414 - credit RAW WIRE progress to the no-progress watchdog.
+	/* fixes414  -  credit RAW WIRE progress to the no-progress watchdog.
 	 * Previously c->progress_ticks was refreshed only when OSTLS_Read handed
 	 * the fetcher a header/body byte (below), so a connection that was
-	 * actively receiving encrypted bytes -- a slow transfer, a handshake
+	 * actively receiving encrypted bytes - a slow transfer, a handshake
 	 * under contention, or a reused keep-alive still waiting on the response
-	 * -- hit NO_PROGRESS_TICKS (4s) and was killed, then retried or HTTP-
+	 * - hit NO_PROGRESS_TICKS (4s) and was killed, then retried or HTTP-
 	 * fallback re-fetched. Measured: ~23 such kills + 40 fallbacks = ~90s of
 	 * dead time on one load (the "really struggling" symptom). Refresh
 	 * whenever OT has delivered new bytes into macTLS, so the 4s timer means
@@ -3003,7 +2913,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 	 * fingerprint-reject that ACKs then sends nothing) still times out. The
 	 * recv-byte counter is cumulative across a pooled connection's life, so
 	 * the first poll after a pool reuse sees a jump and grants one fresh
-	 * window -- correct for a reused conn. */
+	 * window - correct for a reused conn. */
 	if (c->conn != NULL) {
 		OSTLSDiagnostics pdiag;
 		memset(&pdiag, 0, sizeof pdiag);
@@ -3012,7 +2922,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 			c->last_rx_bytes = pdiag.ot_recv_bytes;
 			c->progress_ticks = now_ticks();
 		}
-		/* fixes735 - throttled in-flight RX progress so a slow/stuck fetch is
+		/* fixes735  -  throttled in-flight RX progress so a slow/stuck fetch is
 		 * VISIBLE. The perf filter drops the per-poll fetch lines, leaving the
 		 * multi-second "black holes" (the 47s/135s gaps on 68kmla); the RECON
 		 * prefix survives the filter. Emitted ~every 2s while a request is in
@@ -3037,12 +2947,12 @@ static void hctx_poll(struct macos9_https_ctx *c)
 	}
 
 	if (ev == kOSTLSEventFailed) {
-		/* fixes962 - hoisted out of the logging block below so the
+		/* fixes962  -  hoisted out of the logging block below so the
 		 * no-retry check further down can reuse the same read instead of
 		 * querying a connection the retry path is about to dispose. */
 		OSTLSDiagnostics fd;
 		memset(&fd, 0, sizeof fd);
-		/* fixes701 (#206) - surface the exact macTLS failure so a hardware
+		/* fixes701 (#206)  -  surface the exact macTLS failure so a hardware
 		 * log pinpoints why a P-384/HRR handshake dies. br_err is the tls13
 		 * hs->error; hs_fail=TLS13_FAIL_* names the step (6=ECDH math,
 		 * 5=group mismatch, 7=keygen, 3=no key_share, ...); hs_state is the
@@ -3058,14 +2968,14 @@ static void hctx_poll(struct macos9_https_ctx *c)
 				(long)fd.br_state_last,
 				(int)fd.cipher_suite);
 		}
-		/* fixes962 - NEVER retry a certificate rejection or a peer
+		/* fixes962  -  NEVER retry a certificate rejection or a peer
 		 * authentication failure, and go straight to hctx_fail while
 		 * br_err is still readable.
 		 *
 		 * Two separate bugs, one fix. First: hctx_reset_for_retry
 		 * disposes the connection that HOLDS br_err, so attempt 2 begins
 		 * with br_err = 0. If hctx_fail is then reached by any other
-		 * route -- the watchdog, an OSTLS_New failure, a peer reset --
+		 * route - the watchdog, an OSTLS_New failure, a peer reset --
 		 * cert_rejected() sees 0, the cleartext fallback runs, and there
 		 * is no "cert INVALID" line to show it happened. The security
 		 * decision was being thrown away by a retry meant for flaky
@@ -3083,7 +2993,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 			hctx_fail(c, "https: handshake/transport failed");
 			return;
 		}
-		/* fixes228 - retry once on early-stage handshake failure.
+		/* fixes228  -  retry once on early-stage handshake failure.
 		 * CF / Google CDN sometimes drop the first connection but
 		 * accept the second cleanly. Only retry if no app data yet. */
 		if (c->retries < HTTPS_MAX_RETRIES &&
@@ -3100,7 +3010,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		hctx_fail(c, "https: handshake/transport failed");
 		return;
 	}
-	/* fixes230 - close-retry decision DEFERRED to after the Read block.
+	/* fixes230  -  close-retry decision DEFERRED to after the Read block.
 	 * Previously this fired here, before OSTLS_Read got a chance to drain
 	 * decrypted bytes BearSSL was already holding. nginx for small
 	 * responses (404 / 304 / redirects / short bodies) sends the full
@@ -3113,7 +3023,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 	if (c->state == HS_TLSING) {
 		if (ev == kOSTLSEventHandshakeDone ||
 		    OSTLS_GetState(c->conn) == kOSTLSStateOpen) {
-			/* fixes735 - was "https: handshake done…", which the perf
+			/* fixes735  -  was "https: handshake done…", which the perf
 			 * filter drops (it suppresses every "https: handshake*" line),
 			 * so TLS resumption status was invisible. RECON survives the
 			 * filter; resumed=1 means the abbreviated (session-ticket)
@@ -3141,7 +3051,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 				(UInt32)(c->req_len - c->req_sent),
 				&written);
 			if (e != kOSTLSAsync_OK) {
-				/* fixes461: stale pool connection - retry cold.
+				/* fixes461: stale pool connection  -  retry cold.
 				 * Server closed the idle connection while it sat
 				 * in our pool; OSTLS_Write fails immediately.
 				 * Dispose the dead conn and open a fresh one
@@ -3164,7 +3074,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 				c->req_sent += written;
 				c->progress_ticks = now_ticks();
 			} else if (OSTLS_WantWrite(c->conn)) {
-				/* fixes686 (Path B) - OT send buffer is full
+				/* fixes686 (Path B)  -  OT send buffer is full
 				 * (kOTFlowErr / nf_want_write set). The notifier
 				 * will receive T_GODATA when the buffer drains and
 				 * will clear the flag; the next hctx_poll call will
@@ -3174,7 +3084,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 					"https: flow-ctrl WANT_WRITE req_sent=%ld/%ld host=%s",
 					(long)c->req_sent, (long)c->req_len, c->host);
 			} else {
-				/* T_GODATA already cleared the flag this tick -
+				/* T_GODATA already cleared the flag this tick  - 
 				 * kick the pump once more to flush any staged TLS
 				 * record bytes before the next outer poll. */
 				OSTLSEvent xev = kOSTLSEventNone;
@@ -3182,7 +3092,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 				(void)xev;
 			}
 		}
-		/* fixes312 (#144) - POST body. After the header block is
+		/* fixes312 (#144)  -  POST body. After the header block is
 		 * fully written, stream the captured post_body before
 		 * transitioning to HS_HEADERS. */
 		if (c->req_sent >= c->req_len &&
@@ -3200,16 +3110,6 @@ static void hctx_poll(struct macos9_https_ctx *c)
 			if (written > 0) {
 				c->post_body_sent += written;
 				c->progress_ticks = now_ticks();
-				/* fixes1159 (#240) - the POST is on the wire:
-				 * refresh the per-host disk-cache bypass window
-				 * from here, so the deadline counts from
-				 * transmission rather than from when the fetch
-				 * queued (see macos9_disk_cache.c). */
-				if (c->url != NULL) {
-					const char *au = nsurl_access(c->url);
-					if (au != NULL)
-						macos9_cache_arm_post_bypass(au);
-				}
 			}
 		}
 		if (c->req_sent >= c->req_len &&
@@ -3267,20 +3167,20 @@ static void hctx_poll(struct macos9_https_ctx *c)
 			}
 		} else {
 			if (ev == kOSTLSEventClosed && c->state == HS_BODY) {
-				/* peer closed mid-body - only OK if no content-length
+				/* peer closed mid-body  -  only OK if no content-length
 				 * (HTTP/1.0 style). chunked must have seen final 0. */
 				if (c->content_length < 0 && !c->chunked) {
 					hctx_finish(c);
 					return;
 				}
-				/* fixes243 - salvage partial body. If we got some body
+				/* fixes243  -  salvage partial body. If we got some body
 				 * bytes before the peer hung up early, deliver what we
 				 * have via hctx_finish instead of routing to
 				 * about:fetcherror. NetSurf core renders truncated
 				 * HTML gracefully. Disable cache-store so a partial
 				 * body doesn't poison the disk cache.
 				 *
-				 * fixes255 - raise threshold to 512 bytes. Tiny bodies
+				 * fixes255  -  raise threshold to 512 bytes. Tiny bodies
 				 * (e.g. fonts.googleapis.com's ~200-byte JA3-reject
 				 * response) aren't useful content; they're failure
 				 * signatures. Salvaging them hides the failure from
@@ -3308,12 +3208,12 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		}
 	}
 
-	/* fixes230 - close-retry, deferred from before-pump. After the Read
+	/* fixes230  -  close-retry, deferred from before-pump. After the Read
 	 * block has had a chance to consume pending decrypted bytes, we can
 	 * decide cleanly whether this close was "peer closed without sending
 	 * a response" (retry) or "peer closed mid-body" (handled inside the
 	 * Read block above). State == HS_BODY means parse_headers succeeded
-	 * this tick or earlier - that path is owned by the in-block check.
+	 * this tick or earlier  -  that path is owned by the in-block check.
 	 * Any other not-yet-terminal state is genuine pre-body close. */
 	if (ev == kOSTLSEventClosed &&
 	    c->state != HS_BODY &&
@@ -3332,7 +3232,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		return;
 	}
 
-	/* fixes548 - credit event-loop-blocked gaps so they don't count as
+	/* fixes548  -  credit event-loop-blocked gaps so they don't count as
 	 * connection no-progress.  At cold startup the first WaitNextEvent
 	 * blocks on TSM init, so this fetcher isn't polled for seconds; the
 	 * wall-clock watchdog below would then trip on the very next poll
@@ -3340,7 +3240,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 	 * On the first drive, or after a >30-tick (0.5s) gap since the last
 	 * poll, restart the no-progress window from this poll.  Healthy polling
 	 * is ~1 tick/poll, so a large gap is loop-blocked time, not a silent
-	 * peer -- genuine peer stalls (healthy loop, no bytes) still time out. */
+	 * peer - genuine peer stalls (healthy loop, no bytes) still time out. */
 	if (c->state != HS_IDLE && c->state != HS_DONE && c->state != HS_FAIL) {
 		unsigned long pnow = now_ticks();
 		if (c->last_poll_tick == 0 || (pnow - c->last_poll_tick) > 30) {
@@ -3352,8 +3252,8 @@ static void hctx_poll(struct macos9_https_ctx *c)
 	/* No-progress timeout. */
 	if (c->state != HS_IDLE && c->state != HS_DONE && c->state != HS_FAIL) {
 		unsigned long now = now_ticks();
-		/* fixes375 - POST waits ~60s (login-approval long-poll).
-		 * fixes718 - a GET that has reached HS_HEADERS/HS_BODY has a live,
+		/* fixes375  -  POST waits ~60s (login-approval long-poll).
+		 * fixes718  -  a GET that has reached HS_HEADERS/HS_BODY has a live,
 		 * responding origin: give it 15s (RESP_NO_PROGRESS_TICKS) so a
 		 * slow-but-alive backend isn't killed. Connect/handshake stage
 		 * keeps the tight 4s so truly dead hosts still fast-fail. */
@@ -3365,13 +3265,13 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		else
 			limit = (unsigned long)NO_PROGRESS_TICKS;
 		if (now - c->progress_ticks > limit) {
-			/* fixes243 - salvage partial body on timeout too.
+			/* fixes243  -  salvage partial body on timeout too.
 			 * Servers that send some response then stall (e.g.
 			 * Google's JA3-blocked reset path) leave us with a
 			 * usable partial document. Better to render truncated
 			 * HTML than show about:fetcherror.
 			 *
-			 * fixes255 - same 512-byte threshold as the peer-close
+			 * fixes255  -  same 512-byte threshold as the peer-close
 			 * salvage. Anything smaller is a failure signature
 			 * (TLS-fingerprint reject, server error response), and
 			 * salvaging it hides the failure from the dead-host
@@ -3398,12 +3298,12 @@ static void hctx_poll(struct macos9_https_ctx *c)
 
 static bool macos9_https_initialise(lwc_string *s) { (void)s; return true; }
 static void macos9_https_finalise(lwc_string *s)   { (void)s; }
-/* fixes499d - refuse to fetch pure-analytics / never-executed bundles so
+/* fixes499d  -  refuse to fetch pure-analytics / never-executed bundles so
  * we don't pay their download cost on every page load. These are JS we
  * already SKIP in js_exec, so downloading them is wasted bandwidth+time:
  *   - googletagmanager / gtag : Google Analytics, ~366 KB, never run.
  * Returning false here makes NetSurf treat the subresource as
- * unavailable (it simply doesn't load - nothing on the page depends on
+ * unavailable (it simply doesn't load  -  nothing on the page depends on
  * it). Only matches analytics; all functional resources still fetch.
  * Kept narrow on purpose: the XF upload bundles (exif/attachment) are
  * NOT blocked here because XF's loader may probe their load state. */
@@ -3454,17 +3354,17 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 	memset(c, 0, sizeof *c);
 	c->parent = p;
 	c->url = nsurl_ref(u);
-	/* fixes835 (#167 M1) - capture core's additional request headers now
+	/* fixes835 (#167 M1)  -  capture core's additional request headers now
 	 * (the h[] array is only valid for this setup call). */
 	macos9_capture_extra_headers(h, c->caller_hdrs, sizeof c->caller_hdrs);
 	c->state = HS_QUEUED;
 	c->content_length = -1;
 	c->status = 0;
 	c->port = 443;
-	c->keep_alive_ok = 1;   /* fixes231 - default eligible; cleared on
+	c->keep_alive_ok = 1;   /* fixes231  -  default eligible; cleared on
 	                         * "Connection: close" response or any error */
 
-	/* fixes312 (#144) - capture POST body. NetSurf core owns `pu` only
+	/* fixes312 (#144)  -  capture POST body. NetSurf core owns `pu` only
 	 * for the lifetime of the fetch_start call; copy so the fetcher
 	 * can stream it later when the TLS handshake completes. */
 	if (pu != NULL) {
@@ -3480,10 +3380,10 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 		c->post_body_len = (UInt32)pu_len;
 		c->post_body_sent = 0;
 		/* POST responses are not safely poolable in the keep-alive
-		 * pool - many servers close the connection after a POST. */
+		 * pool  -  many servers close the connection after a POST. */
 		c->keep_alive_ok = 0;
 	} else if (pm != NULL) {
-		/* fixes721 (#144 file upload) - multipart POST: serialise the
+		/* fixes721 (#144 file upload)  -  multipart POST: serialise the
 		 * parts (reading file parts off disk) into a multipart/form-data
 		 * body; record the boundary in the Content-Type. */
 		extern char *macos9_build_multipart(
@@ -3502,18 +3402,6 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 		} else if (body != NULL) {
 			free(body);
 		}
-	}
-	/* fixes1159 (#240) - ANY POST (not just login) arms the per-host
-	 * disk-cache bypass window (macos9_disk_cache.c), so the fetch that
-	 * follows a post-redirect - or any same-origin GET in the next few
-	 * seconds - cannot be answered from a cache that predates the POST.
-	 * A forum edit flow POSTs then 302s back to the thread page; serving
-	 * the cached pre-edit copy hides the edit and the next edit
-	 * re-derives from the stale base (data loss). Re-armed on the wire
-	 * at the body send below, so the deadline counts from transmission. */
-	if (c->post_body != NULL) {
-		const char *au = nsurl_access(c->url);
-		if (au != NULL) macos9_cache_arm_post_bypass(au);
 	}
 
 	host_lwc = nsurl_get_component(u, NSURL_HOST);
@@ -3542,7 +3430,7 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 		lwc_string_unref(port_lwc);
 	}
 
-	/* fixes231 - build pool key. sprintf is safe: host[256] fits in
+	/* fixes231  -  build pool key. sprintf is safe: host[256] fits in
 	 * 280-byte pool_key with ":65535" + NUL spare. */
 	sprintf(c->pool_key, "%s:%d", c->host, (int)c->port);
 
@@ -3560,7 +3448,7 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 		c->path[0] = '/'; c->path[1] = 0;
 	}
 
-	/* Append ?query if present - Drupal et al. cache-bust assets with
+	/* Append ?query if present  -  Drupal et al. cache-bust assets with
 	 * query strings and respond 400 / 404 if the query is stripped. */
 	query_lwc = nsurl_get_component(u, NSURL_QUERY);
 	if (query_lwc) {
@@ -3577,7 +3465,7 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 		lwc_string_unref(query_lwc);
 	}
 
-	/* fixes237 - re-enable disk cache HIT path. fixes222 disabled this
+	/* fixes237  -  re-enable disk cache HIT path. fixes222 disabled this
 	 * because the synthetic FETCH_HEADER stream included an "HTTP/1.1
 	 * 200" status line that confused html_create. The HS_CACHEHIT
 	 * branch in hctx_poll now matches the working HTTP fetcher pattern
@@ -3587,17 +3475,17 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 	 * on a warm reload. */
 	{
 		const char *url_str = nsurl_access(u);
-		/* fixes312 (#144) - POST responses are not cacheable
+		/* fixes312 (#144)  -  POST responses are not cacheable
 		 * (non-idempotent). Skip the lookup so search forms etc.
 		 * always go to network.
-		 * fixes374 (#167) - never SERVE a cached Facebook page either:
+		 * fixes374 (#167)  -  never SERVE a cached Facebook page either:
 		 * a stale login page (dead CSRF tokens, no Set-Cookie) is what
 		 * broke login. Always hit the network for FB hosts. This also
 		 * evicts any FB pages a pre-fixes374 build already cached. */
-		/* fixes981 - a CONDITIONAL request must never be answered
+		/* fixes981  -  a CONDITIONAL request must never be answered
 		 * from our own disk copy. Once a disk hit carries real
 		 * Cache-Control/ETag (above), llcache can decide the copy is
-		 * stale and ask "has this changed?" -- and serving the same
+		 * stale and ask "has this changed?" - and serving the same
 		 * stale bytes back answers nothing, leaves the object just as
 		 * stale, and asks again on the next request. The conditional
 		 * headers ARE the signal that core already holds this body, so
@@ -3608,11 +3496,6 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 		    !host_is_fb_asset(c->host) &&
 		    !macos9_hdr_has_ci(c->caller_hdrs, "if-none-match:") &&
 		    !macos9_hdr_has_ci(c->caller_hdrs, "if-modified-since:") &&
-		    /* fixes1159 (#240) - a recent POST to this origin arms a
-		     * short disk-cache bypass (macos9_disk_cache.c), so the
-		     * post-redirect GET serves the edited page, not the stale
-		     * pre-POST copy. */
-		    !macos9_cache_post_bypass_active(url_str) &&
 		    macos9_cache_lookup_hdrs(url_str, &c->cache_hit_body,
 				&c->cache_hit_len,
 				c->cache_hit_mime,
@@ -3630,7 +3513,7 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 			macsurf_debug_log_writef(
 				"https_setup CACHE hit url=%s mime=%s len=%ld",
 				url_str, c->cache_hit_mime, c->cache_hit_len);
-			/* fixes768 (#232) - RECON: only flag a cache entry with a
+			/* fixes768 (#232)  -  RECON: only flag a cache entry with a
 			 * bad (empty) mime, which would download every time. */
 			if (c->cache_hit_mime[0] == 0) {
 				macsurf_debug_log_writef(
@@ -3651,7 +3534,7 @@ static bool macos9_https_start(void *ctx)
 {
 	struct macos9_https_ctx *c = (struct macos9_https_ctx *)ctx;
 	if (c) {
-		c->started = 1;   /* fixes232a - unblocks HS_QUEUED in hctx_poll */
+		c->started = 1;   /* fixes232a  -  unblocks HS_QUEUED in hctx_poll */
 		if (c->state == HS_QUEUED) {
 			c->progress_ticks = now_ticks();
 		}
@@ -3702,7 +3585,7 @@ nserror macos9_https_fetcher_register(void)
 {
 	struct fetcher_operation_table ops;
 	lwc_string *ss;
-	/* fixes705 - no dead-host preload from disk. The blocklist is now
+	/* fixes705  -  no dead-host preload from disk. The blocklist is now
 	 * session-only (see dead_host_add) so a stale persisted entry can no
 	 * longer blank a working site on launch. Purge any deadhosts.txt left by
 	 * an older build so already-poisoned installs self-heal on first launch. */

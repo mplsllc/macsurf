@@ -37,7 +37,7 @@
 #include <Processes.h>
 #endif
 
-/* main.c -- heap-state probes (fixes366j). */
+/* main.c - heap-state probes (fixes366j). */
 extern long macos9_heap_max_block(void);
 
 #define MACSURF_CACHE_MAGIC0 'M'
@@ -56,167 +56,10 @@ extern long macos9_heap_max_block(void);
 #define ioDirMask 0x10
 #endif
 
-/* fixes181 - Reload sets this to 1 so the next lookup short-circuits
+/* fixes181  -  Reload sets this to 1 so the next lookup short-circuits
  * to miss. Cleared after a successful store so sub-resources resume
  * normal cache behaviour. */
 int macsurf_http_skip_next_cache = 0;
-
-/* ---- fixes1159 (#240): per-host POST-staleness window ---- */
-
-/* A POST makes the same-origin disk cache suspect: the classic forum flow
- * POSTs an edit then 302-redirects back to the thread page, whose cached
- * copy predates the edit. Serving that copy hides the edit, and the next
- * edit then re-derives from the stale base (data loss). So every POST arms
- * a short "no disk cache for this origin" window: host-scoped (the redirect
- * GET to the same host must bypass), time-bounded (a few seconds - TLS
- * handshakes and server-side edit processing still fit inside), refreshed
- * on every POST send.
- *
- * Deliberately NOT the bare macsurf_http_skip_next_cache global: that
- * one-shot is Reload / URL-bar / login semantics - global across ALL hosts
- * and cleared by the first store. POST staleness needs per-origin scope
- * that also survives the POST fetch's teardown (the 302 target is a NEW
- * fetch in a NEW slot, so any state carried on the POST's own ctx would
- * be lost), so it lives here as a small fixed table shared by both
- * fetchers. */
-#define MACSURF_SKIPCACHE_WINDOW_TICKS (5 * 60) /* 5 s at 60 Hz */
-
-#define MACSURF_SKIPCACHE_ORIGINS 8
-
-struct macsurf_post_bypass {
-	unsigned long deadline;   /* TickCount() deadline; 0 = free slot */
-	char origin[64];          /* lowercased host[:non-default-port] */
-};
-static struct macsurf_post_bypass g_post_bypass[MACSURF_SKIPCACHE_ORIGINS];
-
-static unsigned long macsurf_cache_now(void)
-{
-#ifdef __MACOS9__
-	return (unsigned long)TickCount();
-#else
-	/* Non-Mac builds (Linux syntax check / harness): no TickCount, so a
-	 * monotonically increasing counter keeps the window logic alive. */
-	static unsigned long n = 0;
-	return ++n;
-#endif
-}
-
-/* Extract the origin key - "host[:port]", lowercased, scheme-default
- * port dropped - from a URL string. Returns 1 on success, 0 when the
- * URL has no usable host (about:/data:/scheme-less etc.). Keys match
- * whenever a POST and its follow-up GET are to the same origin,
- * regardless of explicit vs default port spelling. */
-static int macsurf_origin_from_url(const char *url, char *out, size_t cap)
-{
-	const char *p, *h, *e, *q;
-	size_t n;
-	int default_port;
-
-	if (url == NULL || cap == 0) return 0;
-	if (strncmp(url, "https://", 8) == 0) {
-		p = url + 8; default_port = 443;
-	} else if (strncmp(url, "http://", 7) == 0) {
-		p = url + 7; default_port = 80;
-	} else {
-		p = strstr(url, "://");
-		p = (p != NULL) ? p + 3 : url;
-		default_port = 0;
-	}
-	h = p;
-	e = h;
-	while (*e != '\0' && *e != '/' && *e != '?' && *e != '#' &&
-	       *e != ':') {
-		e++;
-	}
-	n = (size_t)(e - h);
-	if (n == 0) { out[0] = '\0'; return 0; }
-	if (n >= cap) n = cap - 1;   /* absurdly long host: truncate */
-	for (p = h; p < h + n; p++) {
-		out[p - h] = (char)((*p >= 'A' && *p <= 'Z') ?
-				(*p - 'A' + 'a') : *p);
-	}
-	out[n] = '\0';
-	/* Optional ":port" - kept only when it is not the scheme default,
-	 * so "http://h/x" and "http://h:80/x" key alike. */
-	if (e[0] == ':' && n + 8 < cap) {
-		long portv = 0;
-		size_t i;
-		q = e + 1;
-		while (*q >= '0' && *q <= '9' &&
-		       (size_t)(q - (e + 1)) < 5) {
-			q++;
-		}
-		if (q > e + 1) {
-			for (i = 0; i < (size_t)(q - (e + 1)); i++) {
-				portv = portv * 10 + (e[1 + i] - '0');
-			}
-			if (portv != (long)default_port) {
-				out[n++] = ':';
-				for (i = 0; i < (size_t)(q - (e + 1)); i++) {
-					out[n++] = e[1 + i];
-				}
-				out[n] = '\0';
-			}
-		}
-	}
-	return 1;
-}
-
-/* Arm (or refresh) the bypass window for the origin of url. Called by both
- * fetchers when a POST fetch is set up and again when the POST body hits
- * the wire, so the deadline counts from transmission, not from queuing. */
-void macos9_cache_arm_post_bypass(const char *url)
-{
-	char origin[64];
-	unsigned long deadline;
-	int i, slot = -1;
-
-	if (!macsurf_origin_from_url(url, origin, sizeof origin)) return;
-	deadline = macsurf_cache_now() + MACSURF_SKIPCACHE_WINDOW_TICKS;
-	for (i = 0; i < MACSURF_SKIPCACHE_ORIGINS; i++) {
-		if (g_post_bypass[i].deadline != 0 &&
-		    strcmp(g_post_bypass[i].origin, origin) == 0) {
-			g_post_bypass[i].deadline = deadline;
-			return;
-		}
-	}
-	for (i = 0; i < MACSURF_SKIPCACHE_ORIGINS; i++) {
-		if (g_post_bypass[i].deadline == 0) { slot = i; break; }
-	}
-	if (slot < 0) slot = 0;   /* table full: oldest slot wins */
-	strcpy(g_post_bypass[slot].origin, origin);
-	g_post_bypass[slot].deadline = deadline;
-}
-
-/* Returns 1 when an unexpired POST-bypass window covers url's origin. */
-int macos9_cache_post_bypass_active(const char *url)
-{
-	char origin[64];
-	unsigned long now;
-	int i;
-
-	if (!macsurf_origin_from_url(url, origin, sizeof origin)) return 0;
-	now = macsurf_cache_now();
-	for (i = 0; i < MACSURF_SKIPCACHE_ORIGINS; i++) {
-		if (g_post_bypass[i].deadline != 0 &&
-		    strcmp(g_post_bypass[i].origin, origin) == 0) {
-			/* Wrap-safe: the deadline is at most WINDOW ticks
-			 * ahead of the now it was computed from, so the
-			 * modular difference is <= WINDOW exactly while
-			 * inside the window (and astronomically larger
-			 * after it - 32-bit TickCount wraps every ~828 days
-			 * and a stale deadline near the wrap reads as far
-			 * in the future, which merely costs one extra
-			 * network fetch, never a wrong cache hit). */
-			if ((unsigned long)(g_post_bypass[i].deadline - now) <=
-			    (unsigned long)MACSURF_SKIPCACHE_WINDOW_TICKS) {
-				return 1;
-			}
-			g_post_bypass[i].deadline = 0;   /* expired */
-		}
-	}
-	return 0;
-}
 
 /* ---- file-local helpers ---- */
 
@@ -324,7 +167,7 @@ static OSErr ensure_subdir(short base_vref, long base_dir, const char *name,
  * needed. subfolder == NULL returns the MacSurfData folder itself.
  *
  * fixes647 (#197): consolidate everything MacSurf writes under ONE
- * "MacSurfData" folder next to the app - Cache/ and Downloads/ subfolders,
+ * "MacSurfData" folder next to the app  -  Cache/ and Downloads/ subfolders,
  * plus the Bookmarks and log files at its root. Two reasons: (1) users no
  * longer face a scatter of "MacSurf *" folders beside the app, and (2)
  * bookmarks live OUTSIDE Cache/, so clearing the cache can't delete them. */
@@ -359,7 +202,7 @@ static OSErr macsurfdata_dir_get(const char *subfolder,
 			&data_vref, &data_dir);
 	if (err != noErr) {
 		/* fixes680 (#207): DIAG. MacSurfData folder create/resolve failed
-		 * - this would also break the log if it lives here, and cascade. */
+		 *  -  this would also break the log if it lives here, and cascade. */
 		macsurf_debug_log_writef("DIAG MacSurfData FAIL err=%d", (int)err);
 		return err;
 	}
@@ -420,13 +263,13 @@ int macos9_cache_mime_eligible(int status, const char *mime)
 	if (strncmp(mime, "application/xhtml", 17) == 0) return 1;
 	if (strncmp(mime, "application/javascript", 22) == 0) return 1;
 	if (strncmp(mime, "application/json", 16) == 0) return 1;
-	/* fixes985 - images and downloadable webfonts are cacheable again.
+	/* fixes985  -  images and downloadable webfonts are cacheable again.
 	 *
 	 * fixes665 added them; fixes679 took them out again while #207 (the
 	 * blank screen) was being chased, as one of several suspects eliminated
 	 * at once. #207's real cause turned out to be somewhere else entirely --
 	 * hardcoded pointer-ceiling guards rejecting valid pointers when the
-	 * partition maps high (fixes716-719) -- so the reason for the revert has
+	 * partition maps high (fixes716-719) - so the reason for the revert has
 	 * not applied for a long time, and the cost of keeping it has now been
 	 * measured: 228 image retrievals in a nine-navigation session, none of
 	 * them able to survive a relaunch, on a 400 MHz machine over TLS.
@@ -444,7 +287,7 @@ int macos9_cache_mime_eligible(int status, const char *mime)
 	return 0;
 }
 
-/* fixes985 - total-size budget + LRU eviction, restored from fixes665 with
+/* fixes985  -  total-size budget + LRU eviction, restored from fixes665 with
  * one change that matters on this hardware.
  *
  * fixes665 swept once per 2 MB stored. A sweep is a full PBGetCatInfo walk of
@@ -456,19 +299,19 @@ int macos9_cache_mime_eligible(int status, const char *mime)
  * trims a cache left over-budget by a previous session), then each store adds
  * its own size to a running figure and a scan happens only when that figure
  * crosses the budget. Overwriting an existing entry double-counts, so the
- * running figure drifts HIGH -- deliberately the safe direction: it triggers a
+ * running figure drifts HIGH - deliberately the safe direction: it triggers a
  * scan slightly early and the scan replaces the estimate with the truth.
  *
  * The LRU key is the modification date, which is what HFS gives us for free.
  * That is approximate: a file read on every page but never rewritten ages like
  * a cold one. Writing on every read to fix it would cost a catalog update per
- * cache hit, which is a worse trade -- and an evicted entry costs one refetch,
+ * cache hit, which is a worse trade - and an evicted entry costs one refetch,
  * not correctness. Documented rather than hidden. */
 #define CACHE_TOTAL_BUDGET   (64L * 1024L * 1024L)   /* 64 MB on-disk cap */
 #define CACHE_EVICT_BATCH    64   /* oldest files trimmed per sweep */
 
 static long g_cache_total = -1;   /* -1 = unknown, forces the first scan */
-static long g_store_ticks = 0;    /* fixes986 - cumulative time IN the store */
+static long g_store_ticks = 0;    /* fixes986  -  cumulative time IN the store */
 static long g_store_n = 0;
 
 static long macos9_cache_sweep(void)
@@ -540,13 +383,13 @@ static long macos9_cache_sweep(void)
 }
 
 
-/* fixes981 - the freshness/validator headers a disk hit must carry.
+/* fixes981  -  the freshness/validator headers a disk hit must carry.
  *
  * A disk hit used to hand core ONLY a Content-Type, so llcache had no Date,
  * no Cache-Control, no ETag and no Last-Modified for it. Two consequences,
  * both measured: the cached copy was served unconditionally and indefinitely
  * (nothing could ever mark it stale), and because there was no validator it
- * could never be revalidated cheaply either -- hardware showed reval=14 with
+ * could never be revalidated cheaply either - hardware showed reval=14 with
  * cond=0, i.e. fourteen objects needed checking and not one had anything to
  * check WITH. Persisting these six lines is what lets llcache make the
  * decision instead of the disk cache making it by omission.
@@ -658,7 +501,7 @@ int macos9_cache_stream_begin(const char *url, int status, const char *mime,
 	hdr[6] = MACSURF_CACHE_MAGIC6; hdr[7] = MACSURF_CACHE_MAGIC7;
 	cache_write_be32(hdr + 8,  (unsigned long)status);
 	cache_write_be32(hdr + 12, (unsigned long)mime_len);
-	/* body length is 0 until the commit patches it -- that is the
+	/* body length is 0 until the commit patches it - that is the
 	 * integrity guard, not an oversight. */
 	cache_write_be32(hdr + 16, 0UL);
 	cache_write_be32(hdr + 20, (unsigned long)hdrs_len);
@@ -831,7 +674,7 @@ void macos9_cache_store_hdrs(const char *url, int status, const char *mime,
 	cache_write_be32(hdr + 8,  (unsigned long)status);
 	cache_write_be32(hdr + 12, (unsigned long)mime_len);
 	cache_write_be32(hdr + 16, (unsigned long)body_len);
-	/* fixes981 - was always written as 0; now the header-block length, so
+	/* fixes981  -  was always written as 0; now the header-block length, so
 	 * a file written by an older build reads back as "no headers". */
 	cache_write_be32(hdr + 20, (unsigned long)hdrs_len);
 
@@ -850,7 +693,7 @@ void macos9_cache_store_hdrs(const char *url, int status, const char *mime,
 	SetEOF(ref, (long)sizeof(hdr) + (long)mime_len + (long)hdrs_len +
 			body_len);
 	FSClose(ref);
-	/* fixes248 - FlushVol REMOVED. Same rationale as fixes96 on the
+	/* fixes248  -  FlushVol REMOVED. Same rationale as fixes96 on the
 	 * log writer: synchronous volume flush costs 10-50 ms per call on
 	 * real hardware, and with ~20 cache stores per cold mactrove load
 	 * that was 200-1000 ms of pure disk-sync wait between sub-resource
@@ -858,15 +701,15 @@ void macos9_cache_store_hdrs(const char *url, int status, const char *mime,
 	 * and the macsurf_debug_log's session-close FlushVol catches any
 	 * remaining buffered writes at app quit. Worst case if the app
 	 * crashes: a few cache files may be partially written and fail the
-	 * magic check at next lookup - which is exactly the "miss" path
+	 * magic check at next lookup  -  which is exactly the "miss" path
 	 * (refetch from network). No data corruption risk. */
 
-	/* fixes984 - "LIFE " prefix. The perf filter drops bare CACHE lines by
+	/* fixes984  -  "LIFE " prefix. The perf filter drops bare CACHE lines by
 	 * default (macsurf_debug_log.c), so this and the hit line below have
-	 * been invisible on every default build -- which is why fixes981 could
+	 * been invisible on every default build - which is why fixes981 could
 	 * not be checked from a log and had to be verified by reading the cache
 	 * files off the machine. Same trap as the 304 lines in fixes979b. */
-	/* fixes986 - how long does a store actually TAKE? The cold-load
+	/* fixes986  -  how long does a store actually TAKE? The cold-load
 	 * regression could not be attributed from the log, because the gaps
 	 * between log lines measure where the poll loop was, not what cost time:
 	 * a gap after a CACHE line is mostly the wait for the NEXT fetch. So
@@ -885,7 +728,7 @@ void macos9_cache_store_hdrs(const char *url, int status, const char *mime,
 			dt, g_store_ticks, g_store_n);
 	}
 	macsurf_http_skip_next_cache = 0;
-	/* fixes985 - remembered-total budget enforcement; see macos9_cache_sweep. */
+	/* fixes985  -  remembered-total budget enforcement; see macos9_cache_sweep. */
 	if (g_cache_total < 0) {
 		g_cache_total = macos9_cache_sweep();
 	} else {
@@ -938,11 +781,6 @@ int macos9_cache_lookup_hdrs(const char *url, char **body_out,
 
 	if (url == NULL) return 0;
 	if (macsurf_http_skip_next_cache) return 0;
-	/* fixes1159 (#240) - per-host POST window: a recent POST to this
-	 * origin means the disk copy may predate the edit; go to network.
-	 * Belt-and-braces behind the fetchers' own gate checks, so any
-	 * other lookup caller (webfont, SVG sprites) is covered too. */
-	if (macos9_cache_post_bypass_active(url)) return 0;
 
 	err = cache_dir_get(&vRef, &dirID);
 	if (err != noErr) return 0;
@@ -972,7 +810,7 @@ int macos9_cache_lookup_hdrs(const char *url, char **body_out,
 	status_v = cache_read_be32(hdr + 8);
 	mime_len = cache_read_be32(hdr + 12);
 	body_len = cache_read_be32(hdr + 16);
-	/* fixes981 - 0 in a file written before the header block existed. */
+	/* fixes981  -  0 in a file written before the header block existed. */
 	hdrs_len = cache_read_be32(hdr + 20);
 	if (mime_len > 127 || body_len == 0 ||
 			body_len > MACSURF_CACHE_MAX_BYTES ||
@@ -1033,7 +871,7 @@ int macos9_cache_lookup_hdrs(const char *url, char **body_out,
 		memcpy(hdrs_out, hdrs_buf, n);
 		hdrs_out[n] = '\0';
 	}
-	/* fixes984 - "LIFE " prefix; see the store line. hdrs=N on a HIT is the
+	/* fixes984  -  "LIFE " prefix; see the store line. hdrs=N on a HIT is the
 	 * half that was never observable: it is the proof that the persisted
 	 * freshness headers are actually being replayed to llcache, not merely
 	 * written to disk. */
@@ -1049,7 +887,7 @@ int macos9_cache_lookup_hdrs(const char *url, char **body_out,
 #endif
 }
 
-/* fixes238 - dead-host file persistence. File "deadhosts.txt" lives in
+/* fixes238  -  dead-host file persistence. File "deadhosts.txt" lives in
  * the same MacSurf Cache folder as the body cache. Plain text, one
  * "host:port" entry per line. */
 
@@ -1172,11 +1010,11 @@ void macos9_deadhost_clear(void)
 #endif
 }
 
-/* fixes750 (#213) - purge only the cached BODY files ("h_xxxxxxxx"), leaving
+/* fixes750 (#213)  -  purge only the cached BODY files ("h_xxxxxxxx"), leaving
  * deadhosts.txt (and any other non-body file) in place. Called when a login
  * POST establishes a session: every page we cached logged-OUT is now stale,
  * so drop the bodies and let later navigations refetch WITH the session
- * cookie. Preserving deadhosts.txt matters - a full clear would re-enable the
+ * cookie. Preserving deadhosts.txt matters  -  a full clear would re-enable the
  * fast-fail hosts (jsdelivr / fonts.googleapis) and restart the fetch storm
  * the perf work fixed. Returns the number of body files deleted. */
 long macos9_cache_clear_bodies(void)
@@ -1215,7 +1053,7 @@ long macos9_cache_clear_bodies(void)
 		    FSpDelete(&spec) == noErr) {
 			deleted++;             /* keep idx: list compacted */
 		} else {
-			idx++;                 /* couldn't delete - skip past it */
+			idx++;                 /* couldn't delete  -  skip past it */
 		}
 	}
 	(void)FlushVol(NULL, vRef);
@@ -1226,7 +1064,7 @@ long macos9_cache_clear_bodies(void)
 #endif
 }
 
-/* fixes706 (#Delete Cache) - empty the disk cache: delete every file in the
+/* fixes706 (#Delete Cache)  -  empty the disk cache: delete every file in the
  * MacSurfData/Cache folder (cached bodies "h_xxxxxxxx" + deadhosts.txt).
  * Bookmarks / history / cookies live at the MacSurfData ROOT, not under
  * Cache/, so they are untouched. Returns the number of files deleted. */
@@ -1241,7 +1079,7 @@ long macos9_cache_clear(void)
 	if (cache_dir_get(&vRef, &dirID) != noErr) return 0;
 
 	/* Enumerate by directory index. On a successful delete the directory
-	 * compacts, so the next entry slides into the same index - keep idx.
+	 * compacts, so the next entry slides into the same index  -  keep idx.
 	 * On a subdirectory or an undeletable entry, advance idx to skip it.
 	 * PBGetCatInfoSync returning an error means "no entry at this index" =
 	 * done. A safety cap bounds a pathological loop. */
@@ -1262,14 +1100,14 @@ long macos9_cache_clear(void)
 		if (err != noErr) break;   /* no more entries */
 
 		if ((pb.hFileInfo.ioFlAttrib & 0x10) != 0) {
-			idx++;                 /* a subdirectory - skip it */
+			idx++;                 /* a subdirectory  -  skip it */
 			continue;
 		}
 		if (FSMakeFSSpec(vRef, dirID, nm, &spec) == noErr &&
 		    FSpDelete(&spec) == noErr) {
 			deleted++;             /* keep idx: list compacted */
 		} else {
-			idx++;                 /* couldn't delete - skip past it */
+			idx++;                 /* couldn't delete  -  skip past it */
 		}
 	}
 	(void)FlushVol(NULL, vRef);
@@ -1281,11 +1119,11 @@ long macos9_cache_clear(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* fixes645 (#48) - bookmark persistence across launches.             */
+/* fixes645 (#48)  -  bookmark persistence across launches.             */
 /*                                                                    */
 /* Raw-buffer read/write of a "MacSurf Bookmarks" text file next to   */
 /* the app (or Desktop fallback), using the same FSSpec binary I/O as */
-/* the dead-host list - NOT the flaky MSL fopen path. chrome_extras.c */
+/* the dead-host list  -  NOT the flaky MSL fopen path. chrome_extras.c */
 /* owns the (de)serialization (one "URL\tlabel\n" record per line);   */
 /* these two just move the bytes. Every failure is a silent no-op.    */
 /* ------------------------------------------------------------------ */
@@ -1387,7 +1225,7 @@ void macos9_bookmarks_save(const char *buf, long len)
 }
 
 /* ------------------------------------------------------------------ */
-/* fixes698 (#47) - persistent visit HISTORY store. A "MacSurf History" */
+/* fixes698 (#47)  -  persistent visit HISTORY store. A "MacSurf History" */
 /* text file next to bookmarks in the MacSurfData root, moved by the   */
 /* same FSSpec binary I/O (NOT MSL fopen). chrome_extras.c owns the    */
 /* "ts<TAB>url<TAB>title\n" (de)serialization; these move the bytes.   */
@@ -1489,7 +1327,7 @@ void macos9_history_save(const char *buf, long len)
 #endif
 }
 
-/* fixes647 - downloads land in MacSurfData/Downloads (was the standalone
+/* fixes647  -  downloads land in MacSurfData/Downloads (was the standalone
  * "MacSurf Downloads" folder). Same shared MacSurfData root as cache and
  * bookmarks, so there's one folder next to the app, not several. */
 OSErr macos9_downloads_dir_get(short *vRef, long *dirID)
@@ -1503,10 +1341,10 @@ OSErr macos9_downloads_dir_get(short *vRef, long *dirID)
 }
 
 /* ------------------------------------------------------------------ */
-/* fixes368 (#167) - cookie-jar persistence across launches.          */
+/* fixes368 (#167)  -  cookie-jar persistence across launches.          */
 /*                                                                    */
 /* A Facebook (or any) login lives entirely in the urldb cookie jar,  */
-/* which is in-memory only - so it evaporates on quit. These two      */
+/* which is in-memory only  -  so it evaporates on quit. These two      */
 /* helpers persist it so the session survives a relaunch.             */
 /*                                                                    */
 /* We reuse NetSurf's mature cookie serializer (urldb_save_cookies /  */
@@ -1514,17 +1352,17 @@ OSErr macos9_downloads_dir_get(short *vRef, long *dirID)
 /* separated text file through stdio. It only exposes a path-based    */
 /* API, so unlike the rest of this file (FSSpec binary I/O) we hand   */
 /* it a leaf filename and let MSL resolve it against the app's        */
-/* default directory - the same place every launch, so the file       */
+/* default directory  -  the same place every launch, so the file       */
 /* round-trips. Return type is nserror (an int enum); we only log it, */
 /* so an `int` extern decl avoids dragging urldb.h + nsurl into this  */
 /* Toolbox-heavy TU.                                                  */
 /*                                                                    */
 /* Every failure is a SILENT no-op: a missing file (first run) or a   */
-/* refused fopen just leaves the jar in-memory-only - exactly the     */
+/* refused fopen just leaves the jar in-memory-only  -  exactly the     */
 /* pre-fixes368 behaviour, never a crash. If the hardware bring-up    */
 /* shows MSL fopen won't honour this path, the fallback is the FSSpec */
 /* route (serialize urldb to a buffer + FSWrite like                  */
-/* macos9_deadhost_save) - see facebook-mbasic-scope.md Step 2.       */
+/* macos9_deadhost_save)  -  see facebook-mbasic-scope.md Step 2.       */
 extern int urldb_load_cookies(const char *filename);
 extern int urldb_save_cookies(const char *filename);
 
@@ -1532,7 +1370,7 @@ extern int urldb_save_cookies(const char *filename);
  * uses MSL fopen, which resolves a bare leaf against the app dir (where the
  * cookie file used to land, next to the app). A LEADING-COLON path is HFS
  * "relative to that same default dir", so ":MacSurfData:MacSurf Cookies" drops
- * it into the MacSurfData folder instead - provided the folder exists, which
+ * it into the MacSurfData folder instead  -  provided the folder exists, which
  * macos9_cookies_ensure_dir guarantees first. */
 #define MACSURF_COOKIE_FILE ":MacSurfData:MacSurf Cookies"
 #define MACSURF_COOKIE_LEAF  "MacSurf Cookies"
@@ -1547,7 +1385,7 @@ static void macos9_cookies_ensure_dir(void)
 }
 
 #ifdef __MACOS9__
-/* fixes838 (#167) - the full HFS path builder from window.c (proven to give
+/* fixes838 (#167)  -  the full HFS path builder from window.c (proven to give
  * MSL fopen a path it honours; the file-upload multipart builder fopen()s
  * exactly such a path). */
 extern int macos9_fsspec_to_path(const FSSpec *spec, char *out, long cap);
@@ -1575,7 +1413,7 @@ static int macos9_cookie_fullpath(char *out, long cap)
 	return macos9_fsspec_to_path(&spec, out, cap);
 }
 
-/* DIAGNOSTIC (fixes838): byte size of the on-disk cookie file via FSSpec -
+/* DIAGNOSTIC (fixes838): byte size of the on-disk cookie file via FSSpec  - 
  * independent of MSL fopen, so it reports the truth even if fopen is broken.
  * -1 = file absent / unopenable. This is how we SEE whether save wrote and
  * load had something to read. */

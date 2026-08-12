@@ -1150,8 +1150,8 @@ html_proceed_to_done(html_content *html)
  * sites ship icon fonts - FontAwesome, Material Design) never render. This
  * lives in core because it needs the html content's own select ctx / media /
  * unit ctx. The macos9 frontend calls it during paint (see macos9_webfont.c)
- * and fetches the returned URL. WOFF2 (format UNKNOWN) is converted to raw
- * sfnt by the frontend (macos9_woff2.c + Brotli) before parsing. */
+ * and fetches the returned URL. WOFF2 (format UNKNOWN) is skipped - it needs
+ * Brotli, which is out of scope. */
 struct nsurl *html_macsurf_font_face_url(struct content *c, lwc_string *family)
 {
 	html_content *htmlc = (html_content *) c;
@@ -1174,19 +1174,17 @@ struct nsurl *html_macsurf_font_face_url(struct content *c, lwc_string *family)
 		int pass;
 
 		css_font_face_count_srcs(ff, &nsrc);
-		/* Tiered preference: the macos9 rasterizer parses RAW sfnt, so
-		 * prefer a "truetype"/"opentype" src (a bare .ttf/.otf) - libcss
-		 * maps both to _OPENTYPE. Fall back to WOFF2 (format UNKNOWN;
-		 * Brotli-inflated to raw sfnt by macos9_woff2.c), then an
-		 * unhinted src (magic-validated at parse time), then WOFF (zlib;
-		 * still rejected at parse - kept as a future hook).
-		 * Never pick EOT or SVG. Multi-pass so the .ttf wins even when
-		 * the CSS lists woff/woff2 first. */
-		for (pass = 0; pass < 4 && out == NULL; pass++) {
+		/* Tiered preference: the macos9 rasterizer only parses RAW sfnt
+		 * (no zlib inflate), so prefer a "truetype"/"opentype" src (a
+		 * bare .ttf/.otf) - libcss maps both to _OPENTYPE. Fall back to
+		 * an unhinted src (magic-validated at parse time), then WOFF
+		 * (zlib; presently rejected at parse - kept as a future hook).
+		 * Never pick EOT, SVG, or UNKNOWN/woff2 (Brotli, out of scope).
+		 * Two-pass so the .ttf wins even when the CSS lists woff first. */
+		for (pass = 0; pass < 3 && out == NULL; pass++) {
 			css_font_face_format want =
 				(pass == 0) ? CSS_FONT_FACE_FORMAT_OPENTYPE :
-				(pass == 1) ? CSS_FONT_FACE_FORMAT_UNKNOWN :
-				(pass == 2) ? CSS_FONT_FACE_FORMAT_UNSPECIFIED :
+				(pass == 1) ? CSS_FONT_FACE_FORMAT_UNSPECIFIED :
 				              CSS_FONT_FACE_FORMAT_WOFF;
 			for (i = 0; i < nsrc && out == NULL; i++) {
 				const css_font_face_src *src = NULL;
@@ -3574,37 +3572,7 @@ nserror html_reconvert(html_content *c)
 	 * precondition here returns, and it leaves the caller's debounce free to
 	 * retry once the context exists. The mutations are not lost -- the
 	 * initial conversion is still to come and builds the tree from the
-	 * mutated DOM.
-	 *
-	 * fixes1158 - LAZY CREATION: if the base stylesheet has already landed
-	 * (stylesheets[STYLESHEET_BASE].sheet != NULL), create the selection
-	 * context HERE - the same html_css_new_selection_context call
-	 * finish_conversion uses - so the reconvert can proceed instead of
-	 * deferring for the rest of the load (hardware: every pre-finish
-	 * reconvert on hackaday deferred, 103/103). finish_conversion's own
-	 * select_ctx != NULL guard then skips its creation + dom_to_box exactly
-	 * as it does for a stylesheet re-entry, and the tree built by this
-	 * reconvert stands. Only while the base sheet is still in flight - or
-	 * when the creation itself fails - does the NEED_DATA defer below
-	 * remain. */
-	if (c->select_ctx == NULL &&
-	    c->stylesheets != NULL &&
-	    c->stylesheets[STYLESHEET_BASE].sheet != NULL) {
-		error = html_css_new_selection_context(c, &c->select_ctx);
-		if (error != NSERROR_OK) {
-			/* creation failed (OOM etc.) - same transient defer as
-			 * every other precondition; the debounced retry tries
-			 * again once the sheet state settles. */
-			macsurf_debug_log_writef(
-				"LIFE reconvert: lazy select_ctx create failed err=%d",
-				(int) error);
-			g_html_reconvert_depth--;	/* fixes1127 */
-			return NSERROR_NEED_DATA;
-		}
-		macsurf_debug_log_writef(
-			"LIFE reconvert: select_ctx created lazily (pre-"
-			"finish_conversion), proceeding");
-	}
+	 * mutated DOM. */
 	if (c->select_ctx == NULL) {
 		macsurf_debug_log_writef(
 			"LIFE reconvert: defer - no select_ctx yet (pre-"

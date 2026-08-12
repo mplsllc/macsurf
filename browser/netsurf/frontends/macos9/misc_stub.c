@@ -1,5 +1,5 @@
 /*
- * MacSurf - misc_stub.c
+ * MacSurf  -  misc_stub.c
  * Stub implementations for NetSurf subsystems whose real .c files
  * are not yet linked into the project. Anything that has a real
  * implementation linked is removed from here to avoid duplicate
@@ -18,22 +18,22 @@ struct gui_download_window;
 struct llcache_handle;
 struct image_cache_parameters;
 
-/* fetch_poll - NetSurf core expects a fetcher polling tick.
+/* fetch_poll  -  NetSurf core expects a fetcher polling tick.
  * Our HTTP fetcher polls itself via macos9_http_fetcher_active() in
  * the event loop, so the core's fetch_poll is just a stub. */
 void fetch_poll(void *unused) { (void)unused; }
 
-/* netsurf_poll - desktop layer polling tick. No-op on Mac OS 9; our
+/* netsurf_poll  -  desktop layer polling tick. No-op on Mac OS 9; our
  * cooperative event loop drives reformat / scheduler directly. */
 void netsurf_poll(void) {}
 
-/* MSL Console support - InstallConsole / RemoveConsole /
+/* MSL Console support  -  InstallConsole / RemoveConsole /
  * WriteCharsToConsole / ReadCharsFromConsole are provided by
- * MSL_All_Carbon.Lib. Do not stub them - our stubs would shadow
+ * MSL_All_Carbon.Lib. Do not stub them  -  our stubs would shadow
  * MSL's real implementations and break __start's stdio init,
  * preventing main() from ever running. */
 
-/* image_cache_init / image_cache_fini - image content handler files
+/* image_cache_init / image_cache_fini  -  image content handler files
  * not yet linked. */
 nserror image_cache_init(const struct image_cache_parameters *p)
 {
@@ -43,19 +43,16 @@ nserror image_cache_init(const struct image_cache_parameters *p)
 
 nserror image_cache_fini(void) { return NSERROR_OK; }
 
-/* DOM namespace - NetSurf core calls dom_namespace_initialise (public).
+/* DOM namespace  -  NetSurf core calls dom_namespace_initialise (public).
  * libdom's namespace.c provides dom_namespace_finalise; the public
  * dom_namespace_initialise has no real definition we link, so stub it. */
 nserror dom_namespace_initialise(void) { return NSERROR_OK; }
 
-/* textplain_init (#233) lives in the REAL handler,
- * content/handlers/text/textplain.c - it must be in MacSurf.mcp.
- * This stub was removed (fixes1137) so the real one links without a
- * duplicate-symbol collision in CW8's flat namespace.
- * image_init lives in macos9_image.c (fixes78 -- QuickTime Graphics
- * Importers handler). */
+/* textplain handler not yet linked. image_init lives in macos9_image.c
+ * (fixes78 - QuickTime Graphics Importers handler). */
+nserror textplain_init(void) { return NSERROR_OK; }
 
-/* nsutils base64 - used only by ssl_certs.c for cert query strings.
+/* nsutils base64  -  used only by ssl_certs.c for cert query strings.
  * MacSurf handles TLS natively via macTLS, so cert-chain queries never fire.
  * Returns BAD_INPUT (NSUERROR=2). */
 int nsu_base64_encode_url(const unsigned char *input, unsigned long input_length,
@@ -65,11 +62,11 @@ int nsu_base64_encode_url(const unsigned char *input, unsigned long input_length
 	return 2;
 }
 
-/* nsutils monotonic clock - Carbon TickCount (1/60s), used for layout-cycle
+/* nsutils monotonic clock  -  Carbon TickCount (1/60s), used for layout-cycle
  * deadlines (content reformat_time + the html/object.c min_reflow_period
  * throttle).
  *
- * fixes409 - this was doubly broken and was the root cause of the "reflow
+ * fixes409  -  this was doubly broken and was the root cause of the "reflow
  * storm" (a full page relayout on nearly every subresource arrival, ~31
  * reformats per page, mactrove layout-done ~52s):
  *
@@ -105,7 +102,7 @@ int nsu_getmonotonic_ms(unsigned long long *now)
 }
 #endif
 
-/* libcss helpers that upstream libcss puts in utils.c - we don't have
+/* libcss helpers that upstream libcss puts in utils.c  -  we don't have
  * that file in our libcss source tree, so define them here. */
 #include <stdint.h>
 typedef int css_error_t_;
@@ -135,7 +132,7 @@ int css_error_from_parserutils_error(int err) {
 }
 
 /* MSL_All_Carbon.Lib provides strdup, strcasecmp, strncasecmp,
- * mkdir, stat, uname - DO NOT shadow them here.
+ * mkdir, stat, uname  -  DO NOT shadow them here.
  * Only strtof is genuinely missing. */
 #include <stdlib.h>
 
@@ -143,13 +140,13 @@ float strtof(const char *str, char **endptr) {
 	return (float)strtod(str, endptr);
 }
 
-/* strtold lives in MSL_C_Carbon.Lib - do not stub it here or the
+/* strtold lives in MSL_C_Carbon.Lib  -  do not stub it here or the
  * linker raises a "previously defined" warning and ignores the lib
  * copy. (Earlier rounds stubbed strtold when MSL_All_Carbon.Lib's
  * strtold.o reported as Invalid object code; after swapping to
  * MSL_C_Carbon.Lib the stub became redundant and conflicts.) */
 
-/* MSL_C_Carbon.Lib doesn't ship strdup / strcasecmp / strncasecmp -
+/* MSL_C_Carbon.Lib doesn't ship strdup / strcasecmp / strncasecmp  - 
  * stub them here so the swap from MSL_All_Carbon is drop-in. */
 char *strdup(const char *s) {
 	size_t n;
@@ -197,7 +194,7 @@ int strncasecmp(const char *a, const char *b, size_t n) {
  * box_shadow:    2 bits = tt (type)
  * macsurf_gradient: 2 bits = tt (type)
  *
- * We don't need to compute the "set" branch fields - callers in
+ * We don't need to compute the "set" branch fields  -  callers in
  * s_*.c only reach this via copy/compose, and 0 fall-through is safe.
  */
 struct css_computed_style_;
@@ -219,17 +216,17 @@ unsigned char get_macsurf_gradient(const void *style, int *integer)
 	return 0;
 }
 
-/* css__number_from_lwc_string - provided by libcss/src/utils/css_utils.c. */
+/* css__number_from_lwc_string  -  provided by libcss/src/utils/css_utils.c. */
 
 /* === fixes12 additions: previously-missing globals === */
 
-/* lwc_string_caseless_hash_value - moved to macsurf_lwc_compat.c
+/* lwc_string_caseless_hash_value  -  moved to macsurf_lwc_compat.c
  * (2026-08-05 cleanup).  That function was the single most critical
  * piece of code in this file: a wrong hash broke every CSS selector
  * in every parsed sheet.  It now lives in its own TU so it is
  * discoverable and auditable on its own. */
 
-/* clamp - NetSurf utility, may not be linked */
+/* clamp  -  NetSurf utility, may not be linked */
 int clamp(int v, int lo, int hi)
 {
 	if (v < lo) return lo;
@@ -238,14 +235,14 @@ int clamp(int v, int lo, int hi)
 }
 
 /* NOF_ELEMENTS is a macro defined in macsurf_prefix.h.
- * Variable definition removed - was causing html_init to call 0(html_types). */
+ * Variable definition removed  -  was causing html_init to call 0(html_types). */
 
 /* strcasestr, strndup, cnv_space2nbsp, squash_whitespace, inet_aton, vsnstrjoin
  * were once stubs here. They now live in netsurf/utils/utils.c, which is part
  * of the project. The stub copies were removed in fixes63 to resolve
  * multiply-defined link errors. */
 
-/* nsmkdir / stat - POSIX stubs. mkdir not actually meaningful on OS 9
+/* nsmkdir / stat  -  POSIX stubs. mkdir not actually meaningful on OS 9
  * without HFS plumbing; return success and let later open() decide. */
 int nsmkdir(const char *path, int mode)
 {
@@ -260,7 +257,7 @@ int stat(const char *path, struct stat *buf)
 	return -1; /* not implemented; caller falls back */
 }
 
-/* nsu_base64_encode_url - already defined at line 58 above. */
+/* nsu_base64_encode_url  -  already defined at line 58 above. */
 
 /* Console stubs for MSL_C_Carbon.Lib's __read_console / __write_console.
  * MacSurf has no console UI; the runtime needs these symbols defined. */

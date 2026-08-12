@@ -81,10 +81,14 @@ typedef struct textplain_content {
 #define TAB_WIDTH 8  /* must be power of 2 currently */
 #define TEXT_SIZE 10 * PLOT_STYLE_SCALE  /* Unscaled text size in pt */
 
-/* CW8 C89: no designated initializers (and plot_font_style_t carries a
- * `families` pointer first plus MacSurf extension fields, so positional
- * init is wrong). Zeroed static; fields assigned in textplain_init. */
-static plot_font_style_t textplain_style;
+static plot_font_style_t textplain_style = {
+	.family = PLOT_FONT_FAMILY_MONOSPACE,
+	.size = TEXT_SIZE,
+	.weight = 400,
+	.flags = FONTF_NONE,
+	.background = 0xffffff,
+	.foreground = 0x000000,
+};
 
 static int textplain_tab_width = 256;  /* try for a sensible default */
 
@@ -1618,11 +1622,30 @@ textplain_textselection_get_end(struct content *c, unsigned *end_idx)
 
 /**
  * plain text content handler table
- *
- * CW8 C89: no designated initializers - zeroed static, fields assigned in
- * textplain_init (same pattern as html_init/html_content_handler).
  */
-static content_handler textplain_content_handler;
+static const content_handler textplain_content_handler = {
+	.fini = textplain_fini,
+	.create = textplain_create,
+	.process_data = textplain_process_data,
+	.data_complete = textplain_convert,
+	.reformat = textplain_reformat,
+	.destroy = textplain_destroy,
+	.mouse_track = textplain_mouse_track,
+	.mouse_action = textplain_mouse_action,
+	.keypress = textplain_keypress,
+	.redraw = textplain_redraw,
+	.open = textplain_open,
+	.close = textplain_close,
+	.get_selection = textplain_get_selection,
+	.clone = textplain_clone,
+	.type = textplain_content_type,
+	.textsearch_find = textplain_textsearch_find,
+	.textsearch_bounds = textplain_textsearch_bounds,
+	.textselection_redraw = textplain_textselection_redraw,
+	.textselection_copy = textplain_textselection_copy,
+	.textselection_get_end = textplain_textselection_get_end,
+	.no_share = true,
+};
 
 
 /* exported interface documented in html/textplain.h */
@@ -1630,42 +1653,6 @@ nserror textplain_init(void)
 {
 	lwc_error lerror;
 	nserror error;
-
-	textplain_style.family = PLOT_FONT_FAMILY_MONOSPACE;
-	textplain_style.size = TEXT_SIZE;
-	textplain_style.weight = 400;
-	textplain_style.flags = FONTF_NONE;
-	textplain_style.background = 0xffffff;
-	textplain_style.foreground = 0x000000;
-
-	memset(&textplain_content_handler, 0,
-	       sizeof(textplain_content_handler));
-	textplain_content_handler.fini = textplain_fini;
-	textplain_content_handler.create = textplain_create;
-	textplain_content_handler.process_data = textplain_process_data;
-	textplain_content_handler.data_complete = textplain_convert;
-	textplain_content_handler.reformat = textplain_reformat;
-	textplain_content_handler.destroy = textplain_destroy;
-	textplain_content_handler.mouse_track = textplain_mouse_track;
-	textplain_content_handler.mouse_action = textplain_mouse_action;
-	textplain_content_handler.keypress = textplain_keypress;
-	textplain_content_handler.redraw = textplain_redraw;
-	textplain_content_handler.open = textplain_open;
-	textplain_content_handler.close = textplain_close;
-	textplain_content_handler.get_selection = textplain_get_selection;
-	textplain_content_handler.clone = textplain_clone;
-	textplain_content_handler.type = textplain_content_type;
-	textplain_content_handler.textsearch_find =
-		textplain_textsearch_find;
-	textplain_content_handler.textsearch_bounds =
-		textplain_textsearch_bounds;
-	textplain_content_handler.textselection_redraw =
-		textplain_textselection_redraw;
-	textplain_content_handler.textselection_copy =
-		textplain_textselection_copy;
-	textplain_content_handler.textselection_get_end =
-		textplain_textselection_get_end;
-	textplain_content_handler.no_share = true;
 
 	lerror = lwc_intern_string("Windows-1252",
 				   SLEN("Windows-1252"),

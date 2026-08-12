@@ -9,15 +9,14 @@
  *
  *   1. Resolve a CSS font-family -> @font-face src URL (via the core accessor
  *      html_macsurf_font_face_url, which owns the select ctx) and fetch +
- *      disk-cache the font file. A WOFF2 body ("wOF2" magic) is converted to a
- *      standard sfnt in place by the vendored Brotli + WOFF2 reconstructor
- *      (macos9_woff2.c) before parsing; WOFF1 stays rejected (no zlib inflate
- *      on OS 9).
+ *      disk-cache the font file. The core resolver prefers a RAW sfnt src
+ *      (.ttf / .otf, format "truetype"/"opentype") over WOFF so we never need
+ *      zlib inflate; WOFF2 (Brotli) is out of scope.
  *   2. Parse the sfnt table directory + head/maxp/hhea/hmtx/cmap/loca/glyf.
  *      cmap format 12 is required (icon fonts live in the Supplementary PUA,
  *      U+F0000+, beyond format-4's BMP range).
  *   3. macos9_webfont_advance(): glyph advance in px, so the MEASURE path can
- *      size the icon box (the async fetch is kicked here too - the first
+ *      size the icon box (the async fetch is kicked here too  -  the first
  *      layout returns -1 while the font downloads, then a reformat re-measures
  *      once it's loaded).
  *   4. macos9_webfont_render(): flatten the glyf quadratic outline and fill it
@@ -47,7 +46,6 @@
 
 #include "macos9_disk_cache.h"
 #include "macos9_webfont.h"
-#include "macos9_woff2.h"
 #include "macsurf_debug.h"
 
 extern struct gui_window *macos9_window_list_head(void);
@@ -163,11 +161,11 @@ webfont_dl_reset(struct webfont_slot *slot)
 
 /* Raw-fetch callback (content/fetch.h). We fetch the font BELOW the hlcache /
  * content layer on purpose: a CONTENT_ANY retrieve of a font MIME (no content
- * handler) makes NetSurf abort the fetch after the first read (~15 KB) - the
+ * handler) makes NetSurf abort the fetch after the first read (~15 KB)  -  the
  * whole reason the font never downloaded. fetch_start has no content layer, so
  * the fetcher runs to completion and hands us the bytes directly, which we
  * accumulate and then parse. Ownership: after FINISHED/ERROR the fetch object
- * is freed by NetSurf - just null our handle (mirrors llcache.c). */
+ * is freed by NetSurf  -  just null our handle (mirrors llcache.c). */
 static void
 webfont_fetch_cb(const fetch_msg *msg, void *pw)
 {
@@ -382,27 +380,8 @@ webfont_parse(struct webfont_slot *slot)
 
 	if (f == NULL || flen < 12)
 		return;
-	/* A WOFF2 body ("wOF2") is Brotli-inflated and reconstructed into a
-	 * standard sfnt by macos9_woff2.c; then we parse it exactly like any
-	 * raw .ttf/.otf below.  WOFF1 ("wOFF", zlib) stays rejected - there is
-	 * no zlib inflate on OS 9. */
-	if (memcmp(f, "wOF2", 4) == 0) {
-		unsigned char *ttf = NULL;
-		long ttf_len = 0;
-
-		if (!macos9_woff2_to_ttf(f, (long) flen, &ttf, &ttf_len)) {
-			free(ttf);
-			macsurf_debug_log_writef("webfont: wof2 convert failed (%ld bytes), skip", flen);
-			return;
-		}
-		macsurf_debug_log_writef("webfont: wof2 ok %ld -> %ld bytes", flen, ttf_len);
-		free(slot->data);
-		slot->data = (char *) ttf;
-		slot->len = ttf_len;
-		f = (const wf_u8 *) slot->data;
-		flen = (wf_u32) slot->len;
-	}
-	/* Accept only raw sfnt (0x00010000 TrueType, or 'OTTO'/'true'/'ttcf'). */
+	/* Accept only raw sfnt (0x00010000 TrueType, or 'OTTO'/'true'/'ttcf').
+	 * A WOFF/WOFF2 body starting 'wOFF'/'wOF2' would misparse  -  reject. */
 	{
 		wf_u32 ver = wf_rd32(f);
 		if (ver != 0x00010000UL &&
@@ -988,7 +967,7 @@ macos9_webfont_render(struct content *content, lwc_string *family,
 	}
 
 	/* Flatten every contour into the screen-space point list, then even-odd
-	 * scanline-fill it in the current fg (fixes635 - was OpenRgn/PaintRgn,
+	 * scanline-fill it in the current fg (fixes635  -  was OpenRgn/PaintRgn,
 	 * which garbled complex/large glyphs). */
 	g_pen_x = pen_x;
 	g_base_y = baseline_y;

@@ -133,12 +133,6 @@ NSOPTION_BOOL(do_not_track, false)
 /** Whether to send the referer HTTP header */
 NSOPTION_BOOL(send_referer, true)
 
-/** Whether to store and send cookies. The macos9 fetchers check this
- * before reading the jar into Cookie: and before forwarding Set-Cookie
- * into urldb (the jar itself is always wired - fixes367). NetSurf core
- * has no cookie on/off switch of its own. */
-NSOPTION_BOOL(accept_cookies, true)
-
 /** Whether to fetch foreground images */
 NSOPTION_BOOL(foreground_images, true)
 

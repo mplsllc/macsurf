@@ -2266,8 +2266,6 @@ browser_window_mouse_click_internal(struct browser_window *bw,
 	hlcache_handle *c = bw->current_content;
 	const char *status = NULL;
 	browser_pointer_shape pointer = BROWSER_POINTER_DEFAULT;
-	{ extern void macsurf_debug_log_writef(const char *fmt, ...);
-	macsurf_debug_log_writef("LIFE BWCLICK c=%p", (void *)c); }
 
 	/* fixes501: guard against stale current_content handle.
 	 * On navigation the old hlcache_handle is released and freed, but
@@ -2394,9 +2392,6 @@ browser_window_mouse_click_internal(struct browser_window *bw,
 			}
 
 			/* Pass mouse action to content */
-			{ extern void macsurf_debug_log_writef(const char *fmt, ...);
-			macsurf_debug_log_writef("LIFE CONTENT_MOUSE c=%p type=%d x=%d y=%d",
-				(void *)c, (int)content_get_type(c), x, y); }
 			content_mouse_action(c, bw, mouse, x, y);
 		}
 		break;
@@ -2942,8 +2937,6 @@ browser_window_redraw(struct browser_window *bw,
 	if (!bw->window) {
 		/* Render scrollbars */
 		int off_x, off_y;
-	{ extern void macsurf_debug_log_writef(const char *fmt, ...);
-	macsurf_debug_log_writef("LIFE SCROLLCHK scroll_x=%p scroll_y=%p", (void *)bw->scroll_x, (void *)bw->scroll_y); }
 		if (bw->scroll_x != NULL) {
 			browser_window_get_scrollbar_pos(bw, true,
 							 &off_x, &off_y);

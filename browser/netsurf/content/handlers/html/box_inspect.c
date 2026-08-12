@@ -140,21 +140,7 @@ box_contains_point(const css_unit_ctx *unit_len_ctx,
 		/* Not inside clip area */
 		return false;
 	}
-	/* fixes1180 - inline boxes have zero width because text
-	 * siblings carry the real width.  For these, the y-axis
-	 * check alone suffices - let the box fall through so its
-	 * text siblings and the split-anchor fallback can match. */
-	if (box->width == 0 && (box->type == BOX_INLINE ||
-		box->type == BOX_INLINE_BLOCK ||
-		box->type == BOX_INLINE_FLEX ||
-		box->type == BOX_INLINE_GRID)) {
-		if (y >= -box->border[TOP].width &&
-		    y < box->padding[TOP] + box->height +
-		    box->padding[BOTTOM] + box->border[BOTTOM].width) {
-			*physically = false;
-			return true;
-		}
-	} else if (x >= -box->border[LEFT].width &&
+	if (x >= -box->border[LEFT].width &&
 	    x < box->padding[LEFT] + box->width +
 	    box->padding[RIGHT] + box->border[RIGHT].width &&
 	    y >= -box->border[TOP].width &&
