@@ -1270,12 +1270,40 @@ static void html_get_dimensions(html_content *htmlc)
 	htmlc->media.orientation = (w > h) ?
 			CSS_MEDIA_ORIENTATION_LANDSCAPE :
 			CSS_MEDIA_ORIENTATION_PORTRAIT;
+#ifdef __MACOS9__
+	/* fixes1151: the unit_len_ctx viewport must be the real frontend
+	 * viewport, not the GETDIMS-derived w/h.  Mirrors the html_reformat
+	 * site (fixes1150): viewport-relative CSS units (vh, vw) and calc()
+	 * vh/vw operands must resolve against the actual front window, which
+	 * GETDIMS can miss when the content is unattached or bound to a
+	 * non-front window at select time.  media.width/height stay on the
+	 * GETDIMS w/h (fixes124: media queries must not be lied to). */
+	{
+		extern void macos9_frontend_viewport(int *vw, int *vh);
+		int vw = 0;
+		int vh = 0;
+
+		macos9_frontend_viewport(&vw, &vh);
+		if (vw > 0 && vh > 0) {
+			htmlc->unit_len_ctx.viewport_width =
+				css_unit_device2css_px(INTTOFIX(vw), device_dpi);
+			htmlc->unit_len_ctx.viewport_height =
+				css_unit_device2css_px(INTTOFIX(vh), device_dpi);
+		} else {
+			htmlc->unit_len_ctx.viewport_width  = w;
+			htmlc->unit_len_ctx.viewport_height = h;
+		}
+	}
+#else
 	htmlc->unit_len_ctx.viewport_width  = w;
 	htmlc->unit_len_ctx.viewport_height = h;
+#endif
 	htmlc->unit_len_ctx.device_dpi = device_dpi;
 	macsurf_debug_log_writef(
-		"LIFE VPORT finish: w=%d h=%d",
-		(int)FIXTOINT(w), (int)FIXTOINT(h));
+		"LIFE VPORT finish: media w=%d h=%d unit_ctx vw=%d vh=%d",
+		(int)FIXTOINT(w), (int)FIXTOINT(h),
+		(int)FIXTOINT(htmlc->unit_len_ctx.viewport_width),
+		(int)FIXTOINT(htmlc->unit_len_ctx.viewport_height));
 
 	/** \todo Change nsoption font sizes to px. */
 	f_size = FDIV(FMUL(F_96, FDIV(INTTOFIX(nsoption_int(font_size)), F_10)), F_72);
