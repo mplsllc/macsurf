@@ -40,4 +40,11 @@ css_error nscss_resolve_url(void *pw, const char *base, lwc_string *rel, lwc_str
 char *macsurf__rewrite_inline_style(const char *data, size_t in_size,
 		size_t *out_size_p);
 
+/* fixes1161c: grid-template-columns/-rows rewrite, exposed (was static)
+ * so the Linux harness can run the real preprocessing in --layout mode.
+ * Same contract as macsurf__rewrite_inline_style: fresh malloc'd buffer,
+ * caller frees, NULL if no rewrite applied. Defined in cssh_css.c. */
+char *macsurf__rewrite_grid_template_columns(const char *data, size_t size);
+char *macsurf__rewrite_grid_template_rows(const char *data, size_t size);
+
 #endif

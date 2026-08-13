@@ -43,6 +43,7 @@
 #include "content/urldb.h"
 #include "content/handlers/html/box.h"
 #include "content/handlers/html/html.h"
+#include "content/handlers/css/internal.h"	/* fixes1161c: grid-template rewrite for --layout */
 #include "content/handlers/html/private.h"		/* html_content, for layout_internal.h */
 #include "content/handlers/html/layout_internal.h"	/* fixes929 Test 32 */
 extern void macsurf_imgdims_remember(struct nsurl *url, int w, int h);
@@ -802,6 +803,29 @@ int main(int argc, char **argv)
 	if (layout_css != NULL) {
 		css_stylesheet_params ap;
 		css_stylesheet *sheet = NULL;
+		/* fixes1161c: run the real grid-template-columns/-rows
+		 * preprocessing before the author sheet is parsed. Without
+		 * this, --layout mode never sets -macsurf-grid, has_tracks
+		 * stays false in layout_grid.c, and grid tests silently
+		 * fall through to the implicit single-column path — which
+		 * looked like a row-gap bug on first read of a hardware
+		 * screenshot before this was added. */
+		const char *css_to_parse = layout_css;
+		size_t css_to_parse_len = strlen(layout_css);
+		char *gt_cols = macsurf__rewrite_grid_template_columns(
+				layout_css, css_to_parse_len);
+		if (gt_cols != NULL) {
+			css_to_parse = gt_cols;
+		}
+		{
+			char *gt_rows = macsurf__rewrite_grid_template_rows(
+					css_to_parse, css_to_parse_len);
+			if (gt_rows != NULL) {
+				if (gt_cols != NULL) free(gt_cols);
+				gt_cols = gt_rows;
+				css_to_parse = gt_rows;
+			}
+		}
 		memset(&ap, 0, sizeof(ap));
 		ap.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
 		ap.level = CSS_LEVEL_3;
@@ -817,11 +841,12 @@ int main(int argc, char **argv)
 		}
 		{
 			css_error ae = css_stylesheet_append_data(sheet,
-					(const uint8_t *)layout_css,
-					strlen(layout_css));
+					(const uint8_t *)css_to_parse,
+					css_to_parse_len);
 			css_error de = css_stylesheet_data_done(sheet);
 			fprintf(stderr, "author sheet: append=%d done=%d\n",
 					(int)ae, (int)de);
+			if (gt_cols != NULL) free(gt_cols);
 		}
 		if (css_select_ctx_append_sheet(select_ctx, sheet,
 				CSS_ORIGIN_AUTHOR, "screen") != CSS_OK) {

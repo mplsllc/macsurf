@@ -793,8 +793,13 @@ macsurf__emit_grid_tracks(const char *p, const char *end,
  * because the property name shrinks 22->14 chars; if track-list emission
  * fits we use it (fixes117), else fall back to the legacy column-count
  * rewrite (fixes115). The caller owns the returned malloc'd buffer and
- * must free it. Returns NULL on OOM. */
-static char *
+ * must free it. Returns NULL on OOM.
+ *
+ * fixes1161c: non-static (was static) so the Linux harness can run the
+ * real grid-template rewrite in --layout mode instead of skipping it --
+ * matches the existing macsurf__rewrite_inline_style precedent. No
+ * behavior change; this only affects symbol linkage. */
+char *
 macsurf__rewrite_grid_template_columns(const char *data, size_t size)
 {
 	static const char NEEDLE[] = "grid-template-columns";
@@ -896,8 +901,11 @@ macsurf__rewrite_grid_template_columns(const char *data, size_t size)
  * the prefix substitution is byte-for-byte; only the value is reformed
  * via macsurf__emit_grid_tracks (same flat-tokeniser as columns, with
  * the fixes148b3 minmax/fit-content/calc collapse). The caller owns the
- * returned malloc'd buffer and must free it. Returns NULL on OOM. */
-static char *
+ * returned malloc'd buffer and must free it. Returns NULL on OOM.
+ *
+ * fixes1161c: non-static, same reasoning as
+ * macsurf__rewrite_grid_template_columns above. */
+char *
 macsurf__rewrite_grid_template_rows(const char *data, size_t size)
 {
 	static const char NEEDLE[] = "grid-template-rows";
