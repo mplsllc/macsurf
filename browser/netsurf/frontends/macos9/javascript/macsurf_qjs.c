@@ -2010,7 +2010,6 @@ struct qjs_wrap_entry {
 static struct qjs_wrap_entry *s_wrap_buckets[QJS_WRAP_BUCKETS];
 
 /* install is defined far below; wrap (just under here) folds it in on miss. */
-static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj);
 
 static unsigned int qjs_wrap_hash(dom_node *node)
 {
@@ -2362,18 +2361,21 @@ static JSValue qjs_wrap_element(JSContext *ctx, dom_element *el)
 	JS_SetPropertyStr(ctx, obj, "__ptr",
 		JS_NewInt64(ctx, (long long)(size_t)el));
 
-	/* Install methods ONCE per node (folded in from qjs_wrap_element_full so
-	 * cache hits skip the heavy re-install). */
-	qjs_el_install_native_attrs(ctx, obj);
+	/* fixesXXXX (#211) — the whole method surface (event bridge, attributes,
+	 * textContent/innerHTML, mutation, query, classList/style/dataset,
+	 * metrics, node traversal) lives on the wrapper class proto p and on
+	 * Node.prototype, installed ONCE per realm by qjs_el_install_proto_surface
+	 * inside qjs_el_install_proto. A wrap is now identity props + a wrap-table
+	 * entry; g_wrap_installs is the audit count of the wrappers built. */
+	g_wrap_installs++;
 	return obj;
 }
 
 /* ---- getAttribute / setAttribute as QJS C functions registered on    */
-/*      the element class (called via __getAttribute / __setAttribute   */
-/*      properties set at class registration time).                     */
-/*      These retrieve the element pointer via JS_GetOpaque.            */
+/*      the wrapper class proto (qjs_el_install_proto_surface, once per */
+/*      realm, fixesXXXX #211) — the element is `this` at call time.    */
 
-/* getAttribute / setAttribute as CFunctionData: func_data[0] is the elem obj */
+/* getAttribute / setAttribute as CFunctionData: the element is `this`. */
 static JSValue qjs_el_getAttribute_data(JSContext *ctx,
 		JSValueConst this_val, int argc, JSValueConst *argv,
 		int magic, JSValueConst *func_data)
@@ -2384,7 +2386,7 @@ static JSValue qjs_el_getAttribute_data(JSContext *ctx,
 	JSValue ret;
 
 	(void)this_val; (void)magic;
-	el = (dom_element *)qjs_get_node(func_data[0]);
+	el = (dom_element *)qjs_get_node(this_val);
 	if (el == NULL || argc < 1) return JS_NULL;
 	name_cstr = JS_ToCString(ctx, argv[0]);
 	if (name_cstr == NULL) return JS_NULL;
@@ -2548,7 +2550,7 @@ static JSValue qjs_el_setAttribute_data(JSContext *ctx,
 	int attr_kind;	/* fixes926 */
 
 	(void)this_val; (void)magic;
-	el = (dom_element *)qjs_get_node(func_data[0]);
+	el = (dom_element *)qjs_get_node(this_val);
 	if (el == NULL || argc < 2) return JS_UNDEFINED;
 	name_cstr = JS_ToCString(ctx, argv[0]);
 	val_cstr  = JS_ToCString(ctx, argv[1]);
@@ -2625,9 +2627,9 @@ static void qjs_sel_parse(const char *sel, struct qjs_sel *out);
 static void qjs_collect_by_sel(JSContext *ctx, dom_node *node,
 		const struct qjs_sel *s, JSValue arr, int *count);
 /* fixes878 - node-type-dispatching wrapper, defined after the three concrete
- * wrappers.  The node-oriented traversal getters below are installed by
- * qjs_el_install_native_attrs, which sits ABOVE qjs_wrap_text_node /
- * qjs_wrap_fragment, so they reach it through this declaration. */
+ * wrappers.  The node-oriented traversal getters below live on
+ * Node.prototype via qjs_el_install_proto_surface (fixes1170, #211), so they
+ * are reachable through this declaration on every wrapper shape. */
 static JSValue qjs_wrap_any_node(JSContext *ctx, dom_node *node);
 
 /* ---- textContent read ---- */
@@ -2639,7 +2641,7 @@ static JSValue qjs_el_get_text_content_data(JSContext *ctx,
 	dom_string *ds = NULL;
 	JSValue ret;
 	(void)this_val; (void)argc; (void)argv; (void)magic;
-	el = (dom_element *)qjs_get_node(func_data[0]);
+	el = (dom_element *)qjs_get_node(this_val);
 	if (el == NULL) return JS_NewString(ctx, "");
 	if (macsurf_dom_node_get_text_content((dom_node *)el, &ds) != DOM_NO_ERR
 	    || ds == NULL) return JS_NewString(ctx, "");
@@ -2657,7 +2659,7 @@ static JSValue qjs_el_set_text_content_data(JSContext *ctx,
 	const char *s;
 	dom_string *ds;
 	(void)this_val; (void)magic;
-	el = (dom_element *)qjs_get_node(func_data[0]);
+	el = (dom_element *)qjs_get_node(this_val);
 	if (el == NULL || argc < 1) return JS_UNDEFINED;
 	s = JS_ToCString(ctx, argv[0]);
 	if (s == NULL) return JS_UNDEFINED;
@@ -2805,7 +2807,7 @@ static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
 	size_t html_len = 0;
 
 	(void) this_val; (void) magic;
-	el = (dom_element *) qjs_get_node(func_data[0]);
+	el = (dom_element *) qjs_get_node(this_val);
 	if (el == NULL || argc < 1 || g_qjs_document == NULL)
 		return JS_UNDEFINED;
 	html_src = JS_ToCStringLen(ctx, &html_len, argv[0]);
@@ -3222,7 +3224,7 @@ static int qjs_ih_serialize_element(struct qjs_ih_buf *b, dom_element *el)
 
 /* fixes1168 (#262) - __getInnerHTML: serialize the element's children to
  * markup. Mirrors __setInnerHTML (qjs_el_set_inner_html_data): a C function
- * registered on the element wrapper, resolving its node via func_data[0]. */
+ * registered on the element wrapper, resolving its node via this_val. */
 static JSValue qjs_el_get_inner_html_data(JSContext *ctx,
 		JSValueConst this_val, int argc, JSValueConst *argv,
 		int magic, JSValueConst *func_data)
@@ -3233,7 +3235,7 @@ static JSValue qjs_el_get_inner_html_data(JSContext *ctx,
 	JSValue ret;
 
 	(void) this_val; (void) argc; (void) argv; (void) magic;
-	el = (dom_element *) qjs_get_node(func_data[0]);
+	el = (dom_element *) qjs_get_node(this_val);
 	if (el == NULL) return JS_NewString(ctx, "");
 	memset(&b, 0, sizeof(b));
 	/* innerHTML is the markup of the element's DESCENDANTS only - the
@@ -3264,7 +3266,7 @@ static JSValue qjs_el_get_outer_html_data(JSContext *ctx,
 	JSValue ret;
 
 	(void) this_val; (void) argc; (void) argv; (void) magic;
-	el = (dom_element *) qjs_get_node(func_data[0]);
+	el = (dom_element *) qjs_get_node(this_val);
 	if (el == NULL) return JS_NewString(ctx, "");
 	memset(&b, 0, sizeof(b));
 	r = qjs_ih_serialize_node(&b, (dom_node *) el);
@@ -3302,7 +3304,7 @@ static JSValue qjs_el_get_parent_node_data(JSContext *ctx,
 	 * Guessing a third time is worse than asking. Capped so a page that
 	 * legitimately reads parentNode on detached nodes cannot flood. */
 	{
-		el = (dom_element *)qjs_get_node(func_data[0]);
+		el = (dom_element *)qjs_get_node(this_val);
 		if (el == NULL) {
 			if (g_pn_logged < 8) { g_pn_logged++;
 				macsurf_debug_log_write(
@@ -3361,7 +3363,7 @@ static JSValue qjs_el_get_next_sibling_data(JSContext *ctx,
 	dom_node *sib = NULL, *next = NULL;
 	dom_node_type ntype = 0;
 	(void)this_val; (void)argc; (void)argv; (void)magic;
-	el = (dom_element *)qjs_get_node(func_data[0]);
+	el = (dom_element *)qjs_get_node(this_val);
 	if (el == NULL) return JS_NULL;
 	macsurf_dom_node_get_next_sibling((dom_node *)el, &sib);
 	while (sib) {
@@ -3383,7 +3385,7 @@ static JSValue qjs_el_get_prev_sibling_data(JSContext *ctx,
 	dom_node *sib = NULL, *prev = NULL;
 	dom_node_type ntype = 0;
 	(void)this_val; (void)argc; (void)argv; (void)magic;
-	el = (dom_element *)qjs_get_node(func_data[0]);
+	el = (dom_element *)qjs_get_node(this_val);
 	if (el == NULL) return JS_NULL;
 	macsurf_dom_node_get_previous_sibling((dom_node *)el, &sib);
 	while (sib) {
@@ -3469,7 +3471,7 @@ static JSValue qjs_el_append_child_data(JSContext *ctx,
 	dom_exception exc;
 	JSValue err;
 	(void)this_val; (void)magic;
-	el = (dom_element *)qjs_get_node(func_data[0]);
+	el = (dom_element *)qjs_get_node(this_val);
 	if (el == NULL || argc < 1) return JS_NULL;
 	child_el = (dom_element *)qjs_get_node(argv[0]);
 	if (child_el == NULL) return JS_NULL;
@@ -3500,7 +3502,7 @@ static JSValue qjs_el_remove_child_data(JSContext *ctx,
 	dom_exception exc;
 	JSValue err;
 	(void)this_val; (void)magic;
-	el = (dom_element *)qjs_get_node(func_data[0]);
+	el = (dom_element *)qjs_get_node(this_val);
 	if (el == NULL || argc < 1) return JS_NULL;
 	child_el = (dom_element *)qjs_get_node(argv[0]);
 	if (child_el == NULL) return JS_NULL;
@@ -3538,7 +3540,7 @@ static JSValue qjs_el_insert_before_data(JSContext *ctx,
 	dom_exception exc;
 	JSValue err;
 	(void)this_val; (void)magic;
-	el = (dom_element *)qjs_get_node(func_data[0]);
+	el = (dom_element *)qjs_get_node(this_val);
 	if (el == NULL || argc < 1) return JS_NULL;
 	new_el = (dom_element *)qjs_get_node(argv[0]);
 	if (new_el == NULL) return JS_NULL;
@@ -3574,7 +3576,7 @@ static JSValue qjs_el_remove_attribute_data(JSContext *ctx,
 	dom_string *name_ds;
 	int rm_kind;	/* fixes926 */
 	(void)this_val; (void)magic;
-	el = (dom_element *)qjs_get_node(func_data[0]);
+	el = (dom_element *)qjs_get_node(this_val);
 	if (el == NULL || argc < 1) return JS_UNDEFINED;
 	name_cstr = JS_ToCString(ctx, argv[0]);
 	if (name_cstr == NULL) return JS_UNDEFINED;
@@ -3610,7 +3612,7 @@ static JSValue qjs_el_has_attribute_data(JSContext *ctx,
 	dom_string *name_ds;
 	int has = 0;
 	(void)this_val; (void)magic;
-	el = (dom_element *)qjs_get_node(func_data[0]);
+	el = (dom_element *)qjs_get_node(this_val);
 	if (el == NULL || argc < 1) return JS_FALSE;
 	name_cstr = JS_ToCString(ctx, argv[0]);
 	if (name_cstr == NULL) return JS_FALSE;
@@ -3645,7 +3647,7 @@ static JSValue qjs_el_get_edge_data(JSContext *ctx,
 	dom_exception exc;
 
 	(void) this_val; (void) argc; (void) argv;
-	self = qjs_get_node(func_data[0]);
+	self = qjs_get_node(this_val);
 	if (self == NULL) return JS_NULL;
 
 	switch (magic) {
@@ -3676,7 +3678,7 @@ static JSValue qjs_el_get_child_nodes_data(JSContext *ctx,
 
 	(void) this_val; (void) argc; (void) argv; (void) magic;
 	arr = JS_NewArray(ctx);
-	self = qjs_get_node(func_data[0]);
+	self = qjs_get_node(this_val);
 	if (self == NULL) return arr;
 
 	if (macsurf_dom_node_get_first_child(self, &child) != DOM_NO_ERR)
@@ -3714,7 +3716,7 @@ static JSValue qjs_el_clone_node_data(JSContext *ctx,
 	int deep = 0;
 
 	(void) this_val; (void) magic;
-	self = qjs_get_node(func_data[0]);
+	self = qjs_get_node(this_val);
 	if (self == NULL) return JS_NULL;
 	if (argc >= 1) deep = JS_ToBool(ctx, argv[0]) ? 1 : 0;
 
@@ -3737,7 +3739,7 @@ static JSValue qjs_el_contains_data(JSContext *ctx,
 	int contains = 0;
 
 	(void) this_val; (void) magic;
-	self = qjs_get_node(func_data[0]);
+	self = qjs_get_node(this_val);
 	if (self == NULL || argc < 1) return JS_FALSE;
 	other = qjs_get_node(argv[0]);
 	if (other == NULL) return JS_FALSE;
@@ -3756,7 +3758,7 @@ static JSValue qjs_el_get_children_data(JSContext *ctx,
 	dom_node_type ntype = 0;
 	int count = 0;
 	(void)this_val; (void)argc; (void)argv; (void)magic;
-	el = (dom_element *)qjs_get_node(func_data[0]);
+	el = (dom_element *)qjs_get_node(this_val);
 	arr = JS_NewArray(ctx);
 	if (el == NULL) return arr;
 	macsurf_dom_node_get_first_child((dom_node *)el, &child);
@@ -3812,7 +3814,7 @@ static JSValue qjs_el_qsa_data(JSContext *ctx,
 
 	(void)this_val; (void)magic;
 	arr = JS_NewArray(ctx);
-	el = (dom_element *)qjs_get_node(func_data[0]);
+	el = (dom_element *)qjs_get_node(this_val);
 	if (el == NULL || argc < 1) return arr;
 	sel = JS_ToCString(ctx, argv[0]);
 	if (sel == NULL) return arr;
@@ -3925,12 +3927,17 @@ static JSValue qjs_helper_fn(JSContext *ctx, const char *key,
 	return fn;
 }
 
-static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
+static void qjs_el_install_js_helpers(JSContext *ctx, JSValue proto)
 {
 	static const char *src =
-		"(function(el){"
-		/* classList */
+		"(function(){var P=this;"
+		/* classList -- lazy PER-INSTANCE factory behind a shared accessor:
+		 * the cl object captures the element (this at factory time), so it
+		 * must exist per element -- but only when first touched, and the
+		 * accessor/closure machinery is shared. */
 		"(function(){"
+		"var mk=function(){"
+		"var el=this;"
 		"var cl={"
 		"contains:function(c){"
 		"var v=el.getAttribute('class')||'';"
@@ -3954,22 +3961,24 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"replace:function(o,n){this.remove(o);this.add(n);},"
 		"toString:function(){return el.getAttribute('class')||'';}"
 		"};"
-		"Object.defineProperty(el,'classList',{get:function(){return cl;},"
+		"return cl;};"
+		"Object.defineProperty(P,'classList',{get:function(){"
+		"if(!this.__cl)this.__cl=mk.call(this);return this.__cl;},"
 		"configurable:true});"
-		"Object.defineProperty(el,'className',{"
-		"get:function(){return el.getAttribute('class')||'';},"
-		"set:function(v){el.setAttribute('class',v);},"
+		"Object.defineProperty(P,'className',{"
+		"get:function(){return this.getAttribute('class')||'';},"
+		"set:function(v){this.setAttribute('class',v);},"
 		"configurable:true});"
 		"})();"
 		/* id property */
-		"Object.defineProperty(el,'id',{"
-		"get:function(){return el.getAttribute('id')||'';},"
-		"set:function(v){el.setAttribute('id',v);},"
+		"Object.defineProperty(P,'id',{"
+		"get:function(){return this.getAttribute('id')||'';},"
+		"set:function(v){this.setAttribute('id',v);},"
 		"configurable:true});"
 		/* value property */
-		"Object.defineProperty(el,'value',{"
-		"get:function(){return el.getAttribute('value')||'';},"
-		"set:function(v){el.setAttribute('value',v);},"
+		"Object.defineProperty(P,'value',{"
+		"get:function(){return this.getAttribute('value')||'';},"
+		"set:function(v){this.setAttribute('value',v);},"
 		"configurable:true});"
 		/* fixes866 (#292) - reflect the rest of the common content
 		 * attributes.  className/id/value above were the ONLY reflected
@@ -3996,21 +4005,21 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"var _rp=['src','href','type','name','rel','target','alt','title',"
 			"'placeholder','action','method','width','height','media'];"
 		"var _i;for(_i=0;_i<_rp.length;_i++){(function(p){"
-		"Object.defineProperty(el,p,{"
-		"get:function(){return el.getAttribute(p)||'';},"
-		"set:function(v){el.setAttribute(p,String(v));},"
+		"Object.defineProperty(P,p,{"
+		"get:function(){return this.getAttribute(p)||'';},"
+		"set:function(v){this.setAttribute(p,String(v));},"
 		"configurable:true});"
 		"})(_rp[_i]);}"
 		"})();"
 		/* name property */
-		"Object.defineProperty(el,'name',{"
-		"get:function(){return el.getAttribute('name')||'';},"
-		"set:function(v){el.setAttribute('name',v);},"
+		"Object.defineProperty(P,'name',{"
+		"get:function(){return this.getAttribute('name')||'';},"
+		"set:function(v){this.setAttribute('name',v);},"
 		"configurable:true});"
 		/* type property */
-		"Object.defineProperty(el,'type',{"
-		"get:function(){return el.getAttribute('type')||'';},"
-		"set:function(v){el.setAttribute('type',v);},"
+		"Object.defineProperty(P,'type',{"
+		"get:function(){return this.getAttribute('type')||'';},"
+		"set:function(v){this.setAttribute('type',v);},"
 		"configurable:true});"
 		/* innerHTML= (fixes846, #167 S3) - real HTML fragment parse via
 		 * __setInnerHTML (dom_hubbub_fragment_parser_create), builds
@@ -4019,24 +4028,26 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		 * __getInnerHTML (qjs_el_get_inner_html_data), so .html() and
 		 * read-modify-write patterns get markup back; textContent remains
 		 * the fallback if a wrapper lacks the native helper. */
-		"Object.defineProperty(el,'innerHTML',{"
-		"get:function(){return (typeof el.__getInnerHTML==='function')"
-			"?el.__getInnerHTML():(el.textContent||'');},"
+		"Object.defineProperty(P,'innerHTML',{"
+		"get:function(){return (typeof this.__getInnerHTML==='function')"
+			"?this.__getInnerHTML():(this.textContent||'');},"
 		"set:function(v){"
-		"if(typeof el.__setInnerHTML==='function')"
-		"el.__setInnerHTML(String(v));"
-		"else el.textContent=String(v).replace(/<[^>]*>/g,'');},"
+		"if(typeof this.__setInnerHTML==='function')"
+		"this.__setInnerHTML(String(v));"
+		"else this.textContent=String(v).replace(/<[^>]*>/g,'');},"
 		"configurable:true});"
 		/* outerHTML - real markup now (fixes1168 #262): the native
 		 * serializer emits the element itself with its attributes; the
 		 * old tag-wrapping stub dropped them. */
-		"Object.defineProperty(el,'outerHTML',{"
-		"get:function(){return (typeof el.__getOuterHTML==='function')"
-			"?el.__getOuterHTML():'<'+String(el.tagName).toLowerCase()+'>'"
-			"+el.innerHTML+'</'+String(el.tagName).toLowerCase()+'>';},"
+		"Object.defineProperty(P,'outerHTML',{"
+		"get:function(){return (typeof this.__getOuterHTML==='function')"
+			"?this.__getOuterHTML():'<'+String(this.tagName).toLowerCase()+'>'"
+			"+this.innerHTML+'</'+String(this.tagName).toLowerCase()+'>';},"
 		"configurable:true});"
-		/* dataset proxy */
+		/* dataset proxy -- lazy per-instance factory (see classList note) */
 		"(function(){"
+		"var mk=function(){"
+		"var el=this;"
 		"var ds={};"
 		"var p=new Proxy(ds,{"
 		"get:function(t,k){"
@@ -4049,12 +4060,15 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"var attr='data-'+k.replace(/([A-Z])/g,'-$1').toLowerCase();"
 		"el.setAttribute(attr,v);}"
 		"t[k]=v;return true;}});"
-		"try{Object.defineProperty(el,'dataset',{get:function(){return p;},"
-		"configurable:true});}catch(e){"
-		"el.dataset=ds;}"
+		"return p;};"
+		"Object.defineProperty(P,'dataset',{get:function(){"
+		"if(!this.__ds)this.__ds=mk.call(this);return this.__ds;},"
+		"configurable:true});"
 		"})();"
-		/* style proxy */
+		/* style proxy -- lazy per-instance factory (see classList note) */
 		"(function(){"
+		"var mk=function(){"
+		"var el=this;"
 		"var sc={};"
 		"function cc(n){return n.replace(/([A-Z])/g,'-$1').toLowerCase();}"
 		"function gu(n){return n.replace(/-([a-z])/g,function(m,c){return c.toUpperCase();});}"
@@ -4088,11 +4102,13 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"get:function(){return sc[p]||'';},"
 		"set:function(v){sc[p]=v;sp.setProperty(p,v);},"
 		"configurable:true,enumerable:true});})(PS[i]);"
-		"Object.defineProperty(el,'style',{get:function(){return sp;},"
+		"return sp;};"
+		"Object.defineProperty(P,'style',{get:function(){"
+		"if(!this.__st)this.__st=mk.call(this);return this.__st;},"
 		"configurable:true});"
 		"})();"
 		/* matches - tag, #id, .class, [attr], compound */
-		"el.matches=function(sel){"
+		"P.matches=function(sel){"
 		"if(!sel||!sel.trim)return false;"
 		"sel=sel.trim();"
 		"var parts=sel.split(',');"
@@ -4101,25 +4117,25 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"var ok=true;"
 		"var rest=s;"
 		"var tagM=rest.match(/^([a-zA-Z][a-zA-Z0-9]*)/);"
-		"if(tagM){if(el.tagName!==tagM[1].toUpperCase())ok=false;"
+		"if(tagM){if(this.tagName!==tagM[1].toUpperCase())ok=false;"
 		"rest=rest.substr(tagM[1].length);}"
 		"var re=/([#.:]|\\[)[^#.:\\[\\]]*(\\])?/g;"
 		"var m;while(ok&&(m=re.exec(rest))){"
 		"var t=m[0];"
-		"if(t.charAt(0)==='#'){if(el.getAttribute('id')!==t.substr(1))ok=false;}"
-		"else if(t.charAt(0)==='.'){var v=el.getAttribute('class')||'';"
+		"if(t.charAt(0)==='#'){if(this.getAttribute('id')!==t.substr(1))ok=false;}"
+		"else if(t.charAt(0)==='.'){var v=this.getAttribute('class')||'';"
 		"if((' '+v+' ').indexOf(' '+t.substr(1)+' ')<0)ok=false;}"
 		"else if(t.charAt(0)==='['){"
 		"var inner=t.slice(1,-1);"
 		"var eqI=inner.indexOf('=');"
-		"if(eqI<0){if(!el.hasAttribute(inner.replace(/\\s/g,'')))ok=false;}"
+		"if(eqI<0){if(!this.hasAttribute(inner.replace(/\\s/g,'')))ok=false;}"
 		"else{"
 		"var op=inner.charAt(eqI-1);"
 		"var an,av,ev;"
 		"if(op==='*'||op==='~'||op==='|'||op==='^'||op==='$'){"
 		"an=inner.substr(0,eqI-1).trim();}else{an=inner.substr(0,eqI).trim();op='=';}"
 		"av=inner.substr(eqI+1).trim().replace(/^['\"]|['\"]$/g,'');"
-		"ev=el.getAttribute(an)||'';"
+		"ev=this.getAttribute(an)||'';"
 		"if(op==='='){if(ev!==av)ok=false;}"
 		"else if(op==='*'){if(ev.indexOf(av)<0)ok=false;}"
 		"else if(op==='~'){if((' '+ev+' ').indexOf(' '+av+' ')<0)ok=false;}"
@@ -4129,18 +4145,18 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"if(ok)return true;}"
 		"return false;};"
 		/* closest - walk parentNode chain */
-		"el.closest=function(sel){"
-		"var n=el;"
+		"P.closest=function(sel){"
+		"var n=this;"
 		"while(n&&n.matches){if(n.matches(sel))return n;n=n.parentNode;}"
 		"return null;};"
 		/* event handling */
 		/* fixes989 - addEventListener / removeEventListener are NATIVE
-		 * now (qjs_el_add_event_listener_data). They must not be defined
-		 * here: this helper string is evaluated AFTER the natives are
-		 * installed, so a JS definition would silently shadow them and
-		 * the libdom registration would never happen. dispatchEvent
-		 * stays JS -- the native listener callback calls it, so the
-		 * _L/_H firing logic has exactly one implementation. */
+		 * now (qjs_el_add_event_listener_data). They are installed on the
+		 * class proto BEFORE this string is evaluated, so a JS definition
+		 * here would silently shadow them and the libdom registration
+		 * would never happen. dispatchEvent stays JS-free too -- the
+		 * native listener callback calls it, so the _L/_H firing logic has
+		 * exactly one implementation. */
 		/* fixes872 (#300) - fire the addEventListener list (_L) AND the on*
 		 * handler (_H, set through the prototype accessors) exactly once each.
 		 * Both routes are real and pages use both; dispatchEvent firing only _L
@@ -4170,12 +4186,12 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		 * UI fan-out all reach us that way -- and there the pre-existing
 		 * fire-everything behaviour is the correct one. AT_TARGET runs both
 		 * kinds in registration order, matching event_target.c:285-286. */
-		"el.__msFireLocal=function(ev){"
+		"P.__msFireLocal=function(ev){"
 		"var t=ev&&ev.type||'';"
 		"var ph=(ev&&ev.eventPhase)||0;"
-		"if(el._L&&el._L[t]){"
-		"var a=el._L[t].slice();"
-		"var c=(el._LC&&el._LC[t])?el._LC[t].slice():null;"
+		"if(this._L&&this._L[t]){"
+		"var a=this._L[t].slice();"
+		"var c=(this._LC&&this._LC[t])?this._LC[t].slice():null;"
 		"var i;for(i=0;i<a.length;i++){"
 		/* stopImmediatePropagation, observed BETWEEN handlers -- see
 		 * qjs_ev_stop_immediate_data. Checked before each call so the
@@ -4185,13 +4201,13 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		"var cap=c?!!c[i]:false;"
 		"if(ph===1?!cap:cap)continue;"
 		"}"
-		"try{a[i].call(el,ev);}"
+		"try{a[i].call(this,ev);}"
 		"catch(e){try{console.error('LIFE jsevent listener threw ['+t+']: '+"
 		"((e&&e.message)||e));}catch(_){}}}}"
 		"if(ev&&ev.__msStopNow)return true;"
 		/* on* handlers are non-capture by definition, so they must never
 		 * run in the capturing phase. */
-		"if(ph!==1&&el._H&&el._H[t]){try{el._H[t].call(el,ev);}"
+		"if(ph!==1&&this._H&&this._H[t]){try{this._H[t].call(this,ev);}"
 		"catch(e){try{console.error('LIFE jsevent on'+t+' threw: '+"
 		"((e&&e.message)||e));}catch(_){}}}"
 		"return true;};"
@@ -4207,41 +4223,41 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		 * parentNode / children), so there is no second mutation path that
 		 * can drift from the real one, and each still routes through
 		 * qjs_dom_mut_check and the reconvert dirty-mark. */
-		"el.remove=function(){"
-			"var p=el.parentNode;if(p&&p.removeChild)p.removeChild(el);};"
-		"el.replaceChild=function(nw,old){"
+		"P.remove=function(){"
+			"var p=this.parentNode;if(p&&p.removeChild)p.removeChild(this);};"
+		"P.replaceChild=function(nw,old){"
 			"if(!nw||!old)return old;"
-			"el.insertBefore(nw,old);el.removeChild(old);return old;};"
-		"el.append=function(){var i;for(i=0;i<arguments.length;i++){"
+			"this.insertBefore(nw,old);this.removeChild(old);return old;};"
+		"P.append=function(){var i;for(i=0;i<arguments.length;i++){"
 			"var a=arguments[i];"
-			"el.appendChild(typeof a==='string'?"
+			"this.appendChild(typeof a==='string'?"
 				"document.createTextNode(a):a);}};"
-		"el.prepend=function(){var i,f=el.firstChild;"
+		"P.prepend=function(){var i,f=this.firstChild;"
 			"for(i=0;i<arguments.length;i++){var a=arguments[i];"
-			"el.insertBefore(typeof a==='string'?"
+			"this.insertBefore(typeof a==='string'?"
 				"document.createTextNode(a):a,f);}};"
-		"el.before=function(){var p=el.parentNode;if(!p)return;var i;"
+		"P.before=function(){var p=this.parentNode;if(!p)return;var i;"
 			"for(i=0;i<arguments.length;i++){var a=arguments[i];"
 			"p.insertBefore(typeof a==='string'?"
-				"document.createTextNode(a):a,el);}};"
-		"el.after=function(){var p=el.parentNode;if(!p)return;"
-			"var r=el.nextSibling,i;"
+				"document.createTextNode(a):a,this);}};"
+		"P.after=function(){var p=this.parentNode;if(!p)return;"
+			"var r=this.nextSibling,i;"
 			"for(i=0;i<arguments.length;i++){var a=arguments[i];"
 			"var n=(typeof a==='string')?document.createTextNode(a):a;"
 			"if(r)p.insertBefore(n,r);else p.appendChild(n);}};"
-		"el.replaceWith=function(){"
-			"el.before.apply(el,arguments);el.remove();};"
+		"P.replaceWith=function(){"
+			"this.before.apply(this,arguments);this.remove();};"
 		/* insertAdjacent* -- the four spec positions, on the real fragment
 		 * parser (so a written <script> is a real script element, same as
 		 * document.write). */
-		"el.insertAdjacentElement=function(pos,n){"
+		"P.insertAdjacentElement=function(pos,n){"
 			"if(!n)return null;pos=String(pos).toLowerCase();"
-			"if(pos==='beforebegin')el.before(n);"
-			"else if(pos==='afterbegin')el.prepend(n);"
-			"else if(pos==='beforeend')el.appendChild(n);"
-			"else if(pos==='afterend')el.after(n);"
+			"if(pos==='beforebegin')this.before(n);"
+			"else if(pos==='afterbegin')this.prepend(n);"
+			"else if(pos==='beforeend')this.appendChild(n);"
+			"else if(pos==='afterend')this.after(n);"
 			"return n;};"
-		"el.insertAdjacentHTML=function(pos,html){"
+		"P.insertAdjacentHTML=function(pos,html){"
 			"var h=document.createElement('div');"
 			"try{h.innerHTML=String(html);}catch(e){return;}"
 			"var kids=[],c=h.firstChild;"
@@ -4250,42 +4266,39 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 			"if(String(pos).toLowerCase()==='afterbegin'||"
 			   "String(pos).toLowerCase()==='beforebegin'){"
 				"for(i=kids.length-1;i>=0;i--)"
-					"el.insertAdjacentElement(pos,kids[i]);"
+					"this.insertAdjacentElement(pos,kids[i]);"
 			"}else{"
 				"for(i=0;i<kids.length;i++)"
-					"el.insertAdjacentElement(pos,kids[i]);"
+					"this.insertAdjacentElement(pos,kids[i]);"
 			"}};"
-		"el.insertAdjacentText=function(pos,t){"
-			"el.insertAdjacentElement(pos,document.createTextNode(String(t)));};"
-		/* isConnected: walk to the root and ask whether it is the document
-		 * element. Cheaper and more honest than a flag we would have to keep
-		 * in sync through every mutation. */
+		"P.insertAdjacentText=function(pos,t){"
+			"this.insertAdjacentElement(pos,document.createTextNode(String(t)));};"
 		/* attributes / getAttributeNames: reconstructed from the reflected
 		 * set plus data-*. Not a live NamedNodeMap -- callers iterate it,
 		 * which a static array serves. */
-		"el.getAttributeNames=function(){"
+		"P.getAttributeNames=function(){"
 			"var out=[],i,ks=['id','class','style','src','href','type',"
 				"'name','rel','target','alt','title','placeholder',"
 				"'action','method','width','height','media','value',"
 				"'disabled','checked','readonly','required'];"
 			"for(i=0;i<ks.length;i++)"
-				"if(el.hasAttribute&&el.hasAttribute(ks[i]))out.push(ks[i]);"
+				"if(this.hasAttribute&&this.hasAttribute(ks[i]))out.push(ks[i]);"
 			"return out;};"
-		"Object.defineProperty(el,'attributes',{configurable:true,"
-			"get:function(){var ns=el.getAttributeNames(),out=[],i;"
+		"Object.defineProperty(P,'attributes',{configurable:true,"
+			"get:function(){var ns=this.getAttributeNames(),out=[],i;"
 			"for(i=0;i<ns.length;i++)out.push({name:ns[i],"
-				"value:el.getAttribute(ns[i])});"
+				"value:this.getAttribute(ns[i])});"
 			"out.getNamedItem=function(n){var j;"
 				"for(j=0;j<out.length;j++)if(out[j].name===n)return out[j];"
 				"return null;};"
 			"return out;}});"
-		"el.compareDocumentPosition=function(o){"
-			"if(!o||o===el)return 0;"
-			"if(el.contains&&el.contains(o))return 20;"
-			"if(o.contains&&o.contains(el))return 10;"
+		"P.compareDocumentPosition=function(o){"
+			"if(!o||o===this)return 0;"
+			"if(this.contains&&this.contains(o))return 20;"
+			"if(o.contains&&o.contains(this))return 10;"
 			"return 4;};"
-		"el.isEqualNode=function(o){return o===el;};"
-		"el.isSameNode=function(o){return o===el;};"
+		"P.isEqualNode=function(o){return o===this;};"
+		"P.isSameNode=function(o){return o===this;};"
 		/* fixes1009 - ELEMENT-SCOPED getElementsBy*.
 		 *
 		 * These existed on `document` (fixes873) but NOT on elements, and
@@ -4302,22 +4315,21 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		 * matcher rather than a second subtly-different walker. Returns a
 		 * static array, not a live HTMLCollection; every caller here
 		 * indexes or iterates, which an array serves. */
-		"el.getElementsByTagName=function(t){"
-			"return el.querySelectorAll(String(t));};"
-		"el.getElementsByClassName=function(c){"
-			"return el.querySelectorAll('.'+String(c).split(/\\s+/)"
+		"P.getElementsByTagName=function(t){"
+			"return this.querySelectorAll(String(t));};"
+		"P.getElementsByClassName=function(c){"
+			"return this.querySelectorAll('.'+String(c).split(/\\s+/)"
 				".filter(function(x){return !!x;}).join('.'));};"
-		"el.getElementsByName=function(n){"
-			"return el.querySelectorAll('[name=\"'+String(n)+'\"]');};"
+		"P.getElementsByName=function(n){"
+			"return this.querySelectorAll('[name=\"'+String(n)+'\"]');};"
 		/* Cheap neighbours, same round: each is one line and each throws
 		 * rather than degrading when absent. */
-		"el.hasChildNodes=function(){return !!el.firstChild;};"
-		"el.toggleAttribute=function(n,f){"
-			"var has=!!(el.hasAttribute&&el.hasAttribute(n));"
+		"P.toggleAttribute=function(n,f){"
+			"var has=!!(this.hasAttribute&&this.hasAttribute(n));"
 			"var want=(f===undefined)?!has:!!f;"
-			"if(want)el.setAttribute(n,'');else el.removeAttribute(n);"
+			"if(want)this.setAttribute(n,'');else this.removeAttribute(n);"
 			"return want;};"
-		"el.normalize=function(){};"
+		"P.normalize=function(){};"
 		/* Form-control state. `checked` and `selected` are properties in the
 		 * DOM but attributes here, which is the honest approximation until
 		 * they are wired to struct form_control; `disabled` reflects. */
@@ -4325,19 +4337,22 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 			"'selected','multiple','autofocus'];var i;"
 			"for(i=0;i<bp.length;i++)(function(p){"
 			"var a=p.toLowerCase();"
-			"Object.defineProperty(el,p,{configurable:true,"
-			"get:function(){return !!(el.hasAttribute&&el.hasAttribute(a));},"
-			"set:function(v){if(v)el.setAttribute(a,a);"
-				"else if(el.removeAttribute)el.removeAttribute(a);}});"
+			"Object.defineProperty(P,p,{configurable:true,"
+			"get:function(){return !!(this.hasAttribute&&this.hasAttribute(a));},"
+			"set:function(v){if(v)this.setAttribute(a,a);"
+				"else if(this.removeAttribute)this.removeAttribute(a);}});"
 			"})(bp[i]);})();"
-		/* misc */
-		"el.getBoundingClientRect=function(){"
+		/* misc -- the zero stubs. The REAL metrics (getBoundingClientRect
+		 * + the 8 offset/client/scroll getters) are installed on the proto
+		 * AFTER this block by qjs_el_install_proto_surface, so they win --
+		 * same ordering as the old per-element install. */
+		"P.getBoundingClientRect=function(){"
 		"return{top:0,left:0,right:0,bottom:0,width:0,height:0,x:0,y:0};};"
-		"el.getClientRects=function(){return[this.getBoundingClientRect()];};"
-		"el.scrollIntoView=function(){};"
-		"el.scrollIntoViewIfNeeded=function(){};"
-		"el.focus=function(){};"
-		"el.blur=function(){};"
+		"P.getClientRects=function(){return[this.getBoundingClientRect()];};"
+		"P.scrollIntoView=function(){};"
+		"P.scrollIntoViewIfNeeded=function(){};"
+		"P.focus=function(){};"
+		"P.blur=function(){};"
 		/* fixes997 - el.click() synthesises a real dispatch instead of
 		 * being a no-op. Frameworks use it to trigger a control
 		 * programmatically (and the hidden-file-input pattern depends
@@ -4347,7 +4362,7 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		 * drift. Deliberately does NOT perform the default action: a
 		 * synthetic click on a link navigating would be a surprising
 		 * side effect to introduce here, and no page tested needs it. */
-		"el.click=function(){"
+		"P.click=function(){"
 		"if(this.dispatchEvent)this.dispatchEvent({type:'click',"
 		"target:this,currentTarget:this,"
 		"preventDefault:function(){},stopPropagation:function(){}});};"
@@ -4364,19 +4379,22 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 		 * back `el` itself was the worst: it made the universal
 		 * clone-and-append idiom MOVE the original.
 		 *
-		 * cloneNode/contains are now real C natives installed by
-		 * qjs_el_install_native_attrs (which calls this function, so anything
-		 * defined here would overwrite them -- hence their removal, not just
-		 * their replacement). firstChild/lastChild/nextSibling/previousSibling/
-		 * childNodes are live accessors installed in the tc_src block, which
-		 * runs AFTER this one and so has the last word. */
+		 * cloneNode/contains/firstChild/lastChild/nextSibling/previousSibling/
+		 * childNodes/hasChildNodes are NO LONGER defined here. They moved to
+		 * Node.prototype in qjs_install_node_traversal, which every wrapper
+		 * shape reaches through the fixes1127 family chain -- one install,
+		 * zero per-element closures (fixes1170, #211). */
 		"})";
-	JSValue fn, args[1];
+	JSValue fn;
+
 	fn = qjs_helper_fn(ctx, "__ms_h_el", src, "<el-helpers>");
 	if (!JS_IsException(fn)) {
-		args[0] = JS_DupValue(ctx, obj);
-		JS_Call(ctx, fn, JS_UNDEFINED, 1, args);
-		JS_FreeValue(ctx, args[0]);
+		/* `this` = the wrapper-class proto p: everything above lands on p
+		 * and is found by every wrapper through the per-tag constructor
+		 * chain (HTMLDivElement.prototype -> p -> HTMLElement.prototype ->
+		 * Element.prototype -> Node.prototype). At call time `this` is the
+		 * wrapper. */
+		JS_Call(ctx, fn, proto, 0, NULL);
 	} else {
 		JSValue ex = JS_GetException(ctx);
 		const char *msg = JS_ToCString(ctx, ex);
@@ -4387,29 +4405,41 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue obj)
 	JS_FreeValue(ctx, fn);
 }
 
-/* ---- fixes878: the node-level traversal surface, for EVERY node wrapper ----
+/* ---- fixes878/#211: the node-level traversal surface, for EVERY node wrapper ----
  *
- * Installed on elements, text/comment nodes AND fragments. That breadth is the
- * point: `box.firstChild.nextSibling` walks THROUGH a text node, so if only
- * elements carry the surface the chain dies at the first gap between tags --
- * which is most real markup, and was the first thing Test 21 caught.
+ * Installed ONCE per realm on Node.prototype -- anchored via the DOM
+ * constructor family register_browser_globals installs (Node is always one
+ * of them) -- never per wrapper. Elements, text/comment nodes AND fragments
+ * all reach it through the fixes1127 family chain:
+ *
+ *   element   : per-tag ctor proto -> class proto p -> HTMLElement.prototype
+ *               -> Element.prototype -> Node.prototype
+ *   text/comment/CDATA: Text/Comment/CharacterData.prototype
+ *               -> CharacterData.prototype -> Node.prototype
+ *   fragment  : DocumentFragment.prototype -> Node.prototype
+ *
+ * That breadth is the point: `box.firstChild.nextSibling` walks THROUGH a
+ * text node, so if only elements carry the surface the chain dies at the
+ * first gap between tags -- which is most real markup, and was the first
+ * thing Test 21 caught.
  *
  * SAFE ON ALL THREE SHAPES because every function here goes through the base
- * dom_node vtable (get_first_child / get_next_sibling / clone_node / contains),
- * which element, text and fragment all implement. This is the same rule
- * fixes846 arrived at the hard way: qjs_wrap_element reads through the ELEMENT
- * vtable (dom_element_get_tag_name), and reusing it for a fragment -- a
- * different, smaller shape -- was an ASan global-buffer-overflow. Nothing in
- * this function may touch an element-only operation.
+ * dom_node vtable (get_first_child / get_next_sibling / clone_node /
+ * contains), which element, text and fragment all implement. This is the
+ * same rule fixes846 arrived at the hard way: qjs_wrap_element reads through
+ * the ELEMENT vtable (dom_element_get_tag_name), and reusing it for a
+ * fragment -- a different, smaller shape -- was an ASan
+ * global-buffer-overflow. Nothing in this function may touch an
+ * element-only operation.
  *
- * `data[0]` holds one ref that JS_NewCFunctionData dups per closure, so it is
- * released once at the end, mirroring qjs_el_install_native_attrs. */
-static void qjs_install_node_traversal(JSContext *ctx, JSValue obj)
+ * #211: the C functions read the node from `this` (qjs_get_node(this_val));
+ * there are no per-instance func_data closures, so this install is a fixed
+ * per-realm cost instead of ~8 closures per wrapper. */
+static void qjs_install_node_traversal(JSContext *ctx, JSValue node_proto)
 {
-	JSValue data[1];
 	JSValue f;
 	static const char *nav_src =
-		"(function(el){"
+		"(function(){var P=this;"
 		/* fixes1010 - NODE-LEVEL UNIVERSALS, on EVERY wrapper shape.
 		 *
 		 * getRootNode / ownerDocument / isConnected were added to
@@ -4431,54 +4461,57 @@ static void qjs_install_node_traversal(JSContext *ctx, JSValue obj)
 		 * The lesson is general enough to state: a feature-detect makes a
 		 * PARTIAL implementation worse than none. Anything a library probes
 		 * for must exist on every shape it can then be called on, so these
-		 * live here -- the one surface element, text and fragment all get. */
-		"el.getRootNode=function(){var n=el;"
-		"while(n&&n.parentNode)n=n.parentNode;return n||el;};"
-		"Object.defineProperty(el,'ownerDocument',{configurable:true,"
+		 * live here -- the one surface element, text and fragment all get.
+		 *
+		 * #211: on Node.prototype now, so EVERY shape gets them with one
+		 * install -- the asymmetry is closed by construction. */
+		"P.getRootNode=function(){var n=this;"
+		"while(n&&n.parentNode)n=n.parentNode;return n||this;};"
+		"Object.defineProperty(P,'ownerDocument',{configurable:true,"
 		"get:function(){return typeof document!=='undefined'?document:null;}});"
-		"Object.defineProperty(el,'isConnected',{configurable:true,"
-		"get:function(){var n=el;while(n&&n.parentNode)n=n.parentNode;"
+		"Object.defineProperty(P,'isConnected',{configurable:true,"
+		"get:function(){var n=this;while(n&&n.parentNode)n=n.parentNode;"
 		"return !!(n&&(n===document||n===document.documentElement||"
 		"n.nodeType===9));}});"
-		"Object.defineProperty(el,'firstChild',{"
-		"get:function(){return el.__getFirstChild();},configurable:true});"
-		"Object.defineProperty(el,'lastChild',{"
-		"get:function(){return el.__getLastChild();},configurable:true});"
-		"Object.defineProperty(el,'nextSibling',{"
-		"get:function(){return el.__getNextSibling();},configurable:true});"
-		"Object.defineProperty(el,'previousSibling',{"
-		"get:function(){return el.__getPreviousSibling();},configurable:true});"
+		"Object.defineProperty(P,'parentNode',{"
+		"get:function(){return this.__getParentNode();},configurable:true});"
+		"Object.defineProperty(P,'firstChild',{"
+		"get:function(){return this.__getFirstChild();},configurable:true});"
+		"Object.defineProperty(P,'lastChild',{"
+		"get:function(){return this.__getLastChild();},configurable:true});"
+		"Object.defineProperty(P,'nextSibling',{"
+		"get:function(){return this.__getNextSibling();},configurable:true});"
+		"Object.defineProperty(P,'previousSibling',{"
+		"get:function(){return this.__getPreviousSibling();},configurable:true});"
 		/* snapshot array, not a live NodeList -- see qjs_el_get_child_nodes_data */
-		"Object.defineProperty(el,'childNodes',{"
-		"get:function(){return el.__getChildNodes();},configurable:true});"
-		"el.hasChildNodes=function(){return el.__getFirstChild()!==null;};"
+		"Object.defineProperty(P,'childNodes',{"
+		"get:function(){return this.__getChildNodes();},configurable:true});"
+		"P.hasChildNodes=function(){return this.__getFirstChild()!==null;};"
 		"})";
-	JSValue fn, args[1];
+	JSValue fn;
 
-	data[0] = JS_DupValue(ctx, obj);
-
-	f = JS_NewCFunctionData(ctx, qjs_el_get_edge_data, 0, 0 /*firstChild*/, 1, data);
-	JS_SetPropertyStr(ctx, obj, "__getFirstChild", f);
-	f = JS_NewCFunctionData(ctx, qjs_el_get_edge_data, 0, 1 /*lastChild*/, 1, data);
-	JS_SetPropertyStr(ctx, obj, "__getLastChild", f);
-	f = JS_NewCFunctionData(ctx, qjs_el_get_edge_data, 0, 2 /*nextSibling*/, 1, data);
-	JS_SetPropertyStr(ctx, obj, "__getNextSibling", f);
-	f = JS_NewCFunctionData(ctx, qjs_el_get_edge_data, 0, 3 /*prevSibling*/, 1, data);
-	JS_SetPropertyStr(ctx, obj, "__getPreviousSibling", f);
-	f = JS_NewCFunctionData(ctx, qjs_el_get_child_nodes_data, 0, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "__getChildNodes", f);
-	f = JS_NewCFunctionData(ctx, qjs_el_clone_node_data, 1, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "cloneNode", f);
-	f = JS_NewCFunctionData(ctx, qjs_el_contains_data, 1, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "contains", f);
-
-	JS_FreeValue(ctx, data[0]);
+	f = JS_NewCFunctionData(ctx, qjs_el_get_edge_data, 0, 0 /*firstChild*/, 0, NULL);
+	JS_SetPropertyStr(ctx, node_proto, "__getFirstChild", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_get_edge_data, 0, 1 /*lastChild*/, 0, NULL);
+	JS_SetPropertyStr(ctx, node_proto, "__getLastChild", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_get_edge_data, 0, 2 /*nextSibling*/, 0, NULL);
+	JS_SetPropertyStr(ctx, node_proto, "__getNextSibling", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_get_edge_data, 0, 3 /*prevSibling*/, 0, NULL);
+	JS_SetPropertyStr(ctx, node_proto, "__getPreviousSibling", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_get_child_nodes_data, 0, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, node_proto, "__getChildNodes", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_get_parent_node_data, 0, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, node_proto, "__getParentNode", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_clone_node_data, 1, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, node_proto, "cloneNode", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_contains_data, 1, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, node_proto, "contains", f);
 
 	fn = qjs_helper_fn(ctx, "__ms_h_nav", nav_src, "<node-nav>");
 	if (!JS_IsException(fn)) {
-		args[0] = JS_DupValue(ctx, obj);
-		JS_Call(ctx, fn, JS_UNDEFINED, 1, args);
-		JS_FreeValue(ctx, args[0]);
+		/* `this` = Node.prototype: everything above lands once per realm
+		 * and is found by every wrapper shape through the family chain. */
+		JS_Call(ctx, fn, node_proto, 0, NULL);
 	}
 	JS_FreeValue(ctx, fn);
 }
@@ -5063,7 +5096,7 @@ static JSValue qjs_el_get_rect(JSContext *ctx, JSValueConst this_val,
 	(void)this_val; (void)argc; (void)argv; (void)magic;
 
 	qjs_geometry_flush();	/* fixes1073 (#265) */
-	b = qjs_box_for(func_data[0]);
+	b = qjs_box_for(this_val);
 	if (b != NULL) {
 		qjs_box_origin(b, &x, &y);
 		/* Border-box, matching getBoundingClientRect: content plus padding
@@ -5092,7 +5125,7 @@ static JSValue qjs_el_get_rect(JSContext *ctx, JSValueConst this_val,
 		char rb[64];
 		sprintf(rb, "x=%d y=%d w=%d h=%d%s", x, y, w, h,
 				(b == NULL) ? " (no box)" : "");
-		qjs_geom_audit("getRect", func_data[0], rb);
+		qjs_geom_audit("getRect", this_val, rb);
 	}
 
 	r = JS_NewObject(ctx);
@@ -5153,12 +5186,12 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 	qjs_geometry_flush();	/* fixes1073 (#265) */
 	if (!qjs_geometry_settled()) {
 		g_geom_undef++;			/* fixes1087 */
-		qjs_geom_audit(qjs_metric_name(magic), func_data[0],
+		qjs_geom_audit(qjs_metric_name(magic), this_val,
 				"undefined (unsettled)");
 		return JS_UNDEFINED;
 	}
 
-	b = qjs_box_for(func_data[0]);
+	b = qjs_box_for(this_val);
 	if (b == NULL) {
 		/* fixes1016 - no box while a mutation awaits its reconvert is
 		 * NOT "hidden", it is "not measured yet": a real browser reflows
@@ -5171,7 +5204,7 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 		extern int macos9_reconvert_pending_for(void *cv);
 		if (macos9_reconvert_pending_for(g_qjs_content)) {
 			g_geom_undef++;		/* fixes1087 */
-			qjs_geom_audit(qjs_metric_name(magic), func_data[0],
+			qjs_geom_audit(qjs_metric_name(magic), this_val,
 					"undefined (mutation pending)");
 			return JS_UNDEFINED;
 		}
@@ -5193,12 +5226,12 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 		 * this change fabricating a value in the unsettled window. */
 		if (g_qjs_content->status != CONTENT_STATUS_DONE) {
 			g_geom_undef++;
-			qjs_geom_audit(qjs_metric_name(magic), func_data[0],
+			qjs_geom_audit(qjs_metric_name(magic), this_val,
 					"undefined (no box, not DONE)");
 			return JS_UNDEFINED;
 		}
 		g_geom_zero++;			/* fixes1087 - the dangerous one */
-		qjs_geom_audit(qjs_metric_name(magic), func_data[0],
+		qjs_geom_audit(qjs_metric_name(magic), this_val,
 				"0 (no box)");
 		return JS_NewInt32(ctx, 0);
 	}
@@ -5255,7 +5288,7 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 	{	/* fixes1015 */
 		char rb[24];
 		sprintf(rb, "%d", v);
-		qjs_geom_audit(qjs_metric_name(magic), func_data[0], rb);
+		qjs_geom_audit(qjs_metric_name(magic), this_val, rb);
 	}
 	return JS_NewInt32(ctx, v);
 }
@@ -5971,7 +6004,7 @@ static JSValue qjs_el_reg_event_data(JSContext *ctx,
 	dom_node *node;
 	const char *type_c;
 	(void)this_val; (void)magic;
-	node = qjs_get_node(func_data[0]);
+	node = qjs_get_node(this_val);
 	if (node == NULL || argc < 1) return JS_UNDEFINED;
 	type_c = JS_ToCString(ctx, argv[0]);
 	if (type_c == NULL) return JS_UNDEFINED;
@@ -6056,16 +6089,16 @@ static JSValue qjs_el_dispatch_event_data(JSContext *ctx,
 	bool bubbles = true, cancelable = true;
 	(void)this_val; (void)magic;
 
-	node = qjs_get_node(func_data[0]);
+	node = qjs_get_node(this_val);
 	if (node == NULL || argc < 1 || !JS_IsObject(argv[0])) {
 		return JS_NewBool(ctx, 1);
 	}
 
 	/* Re-entrant (we are inside qjs_dom_listener_cb): fire locally. */
 	if (g_qjs_in_dispatch) {
-		local = JS_GetPropertyStr(ctx, func_data[0], "__msFireLocal");
+		local = JS_GetPropertyStr(ctx, this_val, "__msFireLocal");
 		if (JS_IsFunction(ctx, local)) {
-			JSValue r = JS_Call(ctx, local, func_data[0], 1, argv);
+			JSValue r = JS_Call(ctx, local, this_val, 1, argv);
 			JS_FreeValue(ctx, local);
 			if (JS_IsException(r)) return r;
 			JS_FreeValue(ctx, r);
@@ -6127,7 +6160,7 @@ static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
 	char key[160];
 	(void)this_val; (void)magic;
 
-	node = qjs_get_node(func_data[0]);
+	node = qjs_get_node(this_val);
 	if (node == NULL || argc < 2 || !JS_IsFunction(ctx, argv[1])) {
 		return JS_UNDEFINED;
 	}
@@ -6147,11 +6180,11 @@ static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
 	}
 
 	/* JS-side registry, unchanged shape: el._L[type] is an array of fns. */
-	L = JS_GetPropertyStr(ctx, func_data[0], "_L");
+	L = JS_GetPropertyStr(ctx, this_val, "_L");
 	if (!JS_IsObject(L)) {
 		JS_FreeValue(ctx, L);
 		L = JS_NewObject(ctx);
-		JS_SetPropertyStr(ctx, func_data[0], "_L", JS_DupValue(ctx, L));
+		JS_SetPropertyStr(ctx, this_val, "_L", JS_DupValue(ctx, L));
 	}
 	arr = JS_GetPropertyStr(ctx, L, type_c);
 	if (JS_IsUndefined(arr) || JS_IsNull(arr)) {
@@ -6175,11 +6208,11 @@ static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
 	 * __msFireLocal must fire only the listeners belonging to the phase
 	 * libdom is currently in, and until now it had no way to tell them
 	 * apart. removeEventListener splices this in lockstep with _L. */
-	C = JS_GetPropertyStr(ctx, func_data[0], "_LC");
+	C = JS_GetPropertyStr(ctx, this_val, "_LC");
 	if (!JS_IsObject(C)) {
 		JS_FreeValue(ctx, C);
 		C = JS_NewObject(ctx);
-		JS_SetPropertyStr(ctx, func_data[0], "_LC", JS_DupValue(ctx, C));
+		JS_SetPropertyStr(ctx, this_val, "_LC", JS_DupValue(ctx, C));
 	}
 	carr = JS_GetPropertyStr(ctx, C, type_c);
 	if (JS_IsUndefined(carr) || JS_IsNull(carr)) {
@@ -6207,11 +6240,11 @@ static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
 		strcpy(key, type_c);
 		/* octal escape, not \x01: a hex escape would swallow the letter */
 		strcat(key, capture ? "\001C" : "\001B");
-		R = JS_GetPropertyStr(ctx, func_data[0], "_LR");
+		R = JS_GetPropertyStr(ctx, this_val, "_LR");
 		if (!JS_IsObject(R)) {
 			JS_FreeValue(ctx, R);
 			R = JS_NewObject(ctx);
-			JS_SetPropertyStr(ctx, func_data[0], "_LR",
+			JS_SetPropertyStr(ctx, this_val, "_LR",
 					JS_DupValue(ctx, R));
 		}
 		seen = JS_GetPropertyStr(ctx, R, key);
@@ -6277,7 +6310,7 @@ static JSValue qjs_el_remove_event_listener_data(JSContext *ctx,
 	type_c = JS_ToCString(ctx, argv[0]);
 	if (type_c == NULL) return JS_UNDEFINED;
 
-	L = JS_GetPropertyStr(ctx, func_data[0], "_L");
+	L = JS_GetPropertyStr(ctx, this_val, "_L");
 	if (JS_IsObject(L)) {
 		arr = JS_GetPropertyStr(ctx, L, type_c);
 		if (JS_IsObject(arr)) {
@@ -6309,7 +6342,7 @@ static JSValue qjs_el_remove_event_listener_data(JSContext *ctx,
 					 * make every later listener dispatch in the
 					 * wrong phase, which is a subtler version of
 					 * the bug this whole change fixes. */
-					qjs_lc_splice_at(ctx, func_data[0],
+					qjs_lc_splice_at(ctx, this_val,
 							type_c, i);
 					break;
 				}
@@ -6448,235 +6481,11 @@ void macsurf_qjs_bind_inline_handlers(struct dom_node *node)
 	}
 }
 
-static void qjs_el_install_native_attrs(JSContext *ctx, JSValue obj)
-{
-	JSValue data[1];
-	JSValue f;
-	data[0] = JS_DupValue(ctx, obj);
-
-	/* fixes989 - the event bridge. Installed BEFORE the JS helper string is
-	 * evaluated at the end of this function, and deliberately not defined
-	 * there, so nothing shadows them. */
-	f = JS_NewCFunctionData(ctx, qjs_el_add_event_listener_data, 3, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "addEventListener", f);
-	f = JS_NewCFunctionData(ctx, qjs_el_remove_event_listener_data, 2, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "removeEventListener", f);
-	/* fixes1008 (1e) - native dispatchEvent, so synthetic events bubble.
-	 * Installed BEFORE the JS helper string is evaluated; that string now
-	 * defines __msFireLocal instead of dispatchEvent, so nothing shadows
-	 * this. */
-	f = JS_NewCFunctionData(ctx, qjs_el_dispatch_event_data, 1, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "dispatchEvent", f);
-	/* fixes996 - the on* setter (a JS accessor) calls this to register. */
-	f = JS_NewCFunctionData(ctx, qjs_el_reg_event_data, 1, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "__msRegEvent", f);
-
-	/* Core DOM methods */
-	f = JS_NewCFunctionData(ctx, qjs_el_getAttribute_data, 1, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "getAttribute", f);
-	f = JS_NewCFunctionData(ctx, qjs_el_setAttribute_data, 2, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "setAttribute", f);
-	f = JS_NewCFunctionData(ctx, qjs_el_remove_attribute_data, 1, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "removeAttribute", f);
-	f = JS_NewCFunctionData(ctx, qjs_el_has_attribute_data, 1, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "hasAttribute", f);
-
-	/* textContent */
-	f = JS_NewCFunctionData(ctx, qjs_el_get_text_content_data, 0, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "__getTextContent", f);
-	f = JS_NewCFunctionData(ctx, qjs_el_set_text_content_data, 1, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "__setTextContent", f);
-	/* fixes846 (#167 S3) - real innerHTML= via HTML fragment parsing. */
-	f = JS_NewCFunctionData(ctx, qjs_el_set_inner_html_data, 1, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "__setInnerHTML", f);
-	/* fixes1168 (#262) - real innerHTML read-back: the JS getter calls this
-	 * to serialize the child tree to markup (see qjs_el_get_inner_html_data). */
-	f = JS_NewCFunctionData(ctx, qjs_el_get_inner_html_data, 0, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "__getInnerHTML", f);
-	/* fixes1168 (#262) - real outerHTML read-back: same serializer over the
-	 * element itself (tag + attributes + children). */
-	f = JS_NewCFunctionData(ctx, qjs_el_get_outer_html_data, 0, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "__getOuterHTML", f);
-
-	/* Traversal */
-	f = JS_NewCFunctionData(ctx, qjs_el_get_parent_node_data, 0, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "__getParentNode", f);
-	f = JS_NewCFunctionData(ctx, qjs_el_get_next_sibling_data, 0, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "__getNextElementSibling", f);
-	f = JS_NewCFunctionData(ctx, qjs_el_get_prev_sibling_data, 0, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "__getPreviousElementSibling", f);
-	f = JS_NewCFunctionData(ctx, qjs_el_get_children_data, 0, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "__getChildren", f);
-
-	/* Mutation */
-	f = JS_NewCFunctionData(ctx, qjs_el_append_child_data, 1, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "appendChild", f);
-	f = JS_NewCFunctionData(ctx, qjs_el_remove_child_data, 1, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "removeChild", f);
-	f = JS_NewCFunctionData(ctx, qjs_el_insert_before_data, 2, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "insertBefore", f);
-
-	/* Scoped query */
-	f = JS_NewCFunctionData(ctx, qjs_el_qsa_data, 1, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "querySelectorAll", f);
-	f = JS_NewCFunctionData(ctx, qjs_el_qs_data, 1, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "querySelector", f);
-
-	JS_FreeValue(ctx, data[0]);
-
-	/* JS-side helpers: classList, style, dataset, matches, closest, etc. */
-	/* fixes1071/1078 - see qjs_helper_fn. Bracket the whole per-element
-	 * helper install: this is the cost the prototype migration would
-	 * remove. */
-	{
-		extern double macos9_micros(void);
-		double wt0 = macos9_micros();
-		g_wrap_installs++;
-		qjs_el_install_js_helpers(ctx, obj);
-		g_wrap_us += (long)(macos9_micros() - wt0);
-	}
-
-	/* Wire textContent as a property using the C getter/setter helpers */
-	{
-		static const char *tc_src =
-			"(function(el){"
-			"Object.defineProperty(el,'textContent',{"
-			"get:function(){return el.__getTextContent();},"
-			"set:function(v){el.__setTextContent(String(v));},"
-			"configurable:true});"
-			"Object.defineProperty(el,'parentNode',{"
-			"get:function(){return el.__getParentNode();},"
-			"configurable:true});"
-			"Object.defineProperty(el,'nextElementSibling',{"
-			"get:function(){return el.__getNextElementSibling();},"
-			"configurable:true});"
-			"Object.defineProperty(el,'previousElementSibling',{"
-			"get:function(){return el.__getPreviousElementSibling();},"
-			"configurable:true});"
-			"Object.defineProperty(el,'children',{"
-			"get:function(){return el.__getChildren();},"
-			"configurable:true});"
-			/* fixes1031 - firstElementChild / lastElementChild /
-			 * childElementCount. nextElementSibling and
-			 * previousElementSibling were here; their two siblings were
-			 * not, and jQuery's wrapAll walks firstElementChild:
-			 *
-			 *   wrap.map(function(){ var e=this;
-			 *       while (e.firstElementChild) e=e.firstElementChild;
-			 *       return e; }).append(this);
-			 *
-			 * so wrapInner() -- and therefore the dotdotdot truncation
-			 * plugin hackaday runs over every article entry -- lost the
-			 * content it was re-parenting. Derived from `children` so
-			 * they cannot disagree with it. */
-			"Object.defineProperty(el,'firstElementChild',{"
-			"get:function(){var c=el.__getChildren();"
-				"return (c&&c.length)?c[0]:null;},"
-			"configurable:true});"
-			"Object.defineProperty(el,'lastElementChild',{"
-			"get:function(){var c=el.__getChildren();"
-				"return (c&&c.length)?c[c.length-1]:null;},"
-			"configurable:true});"
-			"Object.defineProperty(el,'childElementCount',{"
-			"get:function(){var c=el.__getChildren();"
-				"return (c&&c.length)?c.length:0;},"
-			"configurable:true});"
-			"})";
-		JSValue fn2, args2[1];
-		fn2 = qjs_helper_fn(ctx, "__ms_h_props", tc_src, "<el-props>");
-		if (!JS_IsException(fn2)) {
-			args2[0] = JS_DupValue(ctx, obj);
-			JS_Call(ctx, fn2, JS_UNDEFINED, 1, args2);
-			JS_FreeValue(ctx, args2[0]);
-		}
-		JS_FreeValue(ctx, fn2);
-	}
-
-	/* fixes1011 (Phase 3) - REAL layout metrics, replacing the zero stubs.
-	 *
-	 * Installed AFTER the JS helper string, which defines the zero-returning
-	 * getBoundingClientRect -- these must win, and the ordering is the only
-	 * thing that makes them win. */
-	{
-		JSValue d2[1];
-		JSValue g;
-		d2[0] = JS_DupValue(ctx, obj);
-
-		g = JS_NewCFunctionData(ctx, qjs_el_get_rect, 0, 0, 1, d2);
-		JS_SetPropertyStr(ctx, obj, "getBoundingClientRect", g);
-
-		/* Each metric is a getter, because page code reads them as
-		 * properties (el.offsetWidth), never as calls. */
-		{
-			static const struct { const char *name; int magic; } mm[] = {
-				{ "offsetWidth",  QJS_M_OFFW },
-				{ "offsetHeight", QJS_M_OFFH },
-				{ "clientWidth",  QJS_M_CLIW },
-				{ "clientHeight", QJS_M_CLIH },
-				{ "offsetTop",    QJS_M_OFFT },
-				{ "offsetLeft",   QJS_M_OFFL },
-				{ "scrollWidth",  QJS_M_SCRW },
-				{ "scrollHeight", QJS_M_SCRH }
-			};
-			size_t i;
-			for (i = 0; i < sizeof mm / sizeof mm[0]; i++) {
-				JSAtom a = JS_NewAtom(ctx, mm[i].name);
-				JSValue fn = JS_NewCFunctionData(ctx, qjs_el_metric,
-						0, mm[i].magic, 1, d2);
-				JS_DefinePropertyGetSet(ctx, obj, a, fn, JS_UNDEFINED,
-						JS_PROP_CONFIGURABLE);
-				JS_FreeAtom(ctx, a);
-			}
-		}
-		JS_FreeValue(ctx, d2[0]);
-	}
-	{
-		/* getClientRects wraps the single rect; scrollTop/Left are the
-		 * window's scroll for now (per-element scrollers are not modelled),
-		 * and the SETTER really moves the view rather than recording a
-		 * number, which is what a "scroll to top" button needs. */
-		static const char *lay_src =
-			"(function(el){"
-			"el.getClientRects=function(){"
-				"return [el.getBoundingClientRect()];};"
-			"Object.defineProperty(el,'scrollTop',{configurable:true,"
-				"get:function(){return (typeof window!=='undefined')?"
-					"(window.scrollY||0):0;},"
-				"set:function(v){if(typeof window!=='undefined'&&"
-					"window.scrollTo)window.scrollTo(window.scrollX||0,v|0);}});"
-			"Object.defineProperty(el,'scrollLeft',{configurable:true,"
-				"get:function(){return (typeof window!=='undefined')?"
-					"(window.scrollX||0):0;},"
-				"set:function(v){if(typeof window!=='undefined'&&"
-					"window.scrollTo)window.scrollTo(v|0,window.scrollY||0);}});"
-			"Object.defineProperty(el,'offsetParent',{configurable:true,"
-				"get:function(){var p=el.parentNode;"
-				"while(p&&p.nodeType===1){"
-					"if(p===document.body)return p;p=p.parentNode;}"
-				"return (typeof document!=='undefined')?document.body:null;}});"
-			"el.scrollIntoView=function(){"
-				"var r=el.getBoundingClientRect();"
-				"if(typeof window!=='undefined'&&window.scrollTo)"
-					"window.scrollTo(window.scrollX||0,"
-						"(window.scrollY||0)+r.top);};"
-			"})";
-		JSValue fn3, a3[1];
-		fn3 = qjs_helper_fn(ctx, "__ms_h_lay", lay_src, "<el-layout>");
-		if (!JS_IsException(fn3)) {
-			a3[0] = JS_DupValue(ctx, obj);
-			JS_Call(ctx, fn3, JS_UNDEFINED, 1, a3);
-			JS_FreeValue(ctx, a3[0]);
-		}
-		JS_FreeValue(ctx, fn3);
-	}
-
-	/* fixes878 - last, so nothing above can clobber it. */
-	qjs_install_node_traversal(ctx, obj);
-}
-
-/* Full wrap: identical to qjs_wrap_element now - method install is folded into
- * wrap's miss path so it runs exactly once per node and cache hits skip it.
- * Kept as a named entry point for the traversal/mutation call sites. */
+/* Full wrap: identical to qjs_wrap_element now - the method surface lives on
+ * the class proto / Node.prototype (qjs_el_install_proto_surface, once per
+ * realm), so a wrap is identity props + a wrap-table entry and cache hits
+ * skip it entirely. Kept as a named entry point for the traversal/mutation
+ * call sites. */
 static JSValue qjs_wrap_element_full(JSContext *ctx, dom_element *el)
 {
 	return qjs_wrap_element(ctx, el);
@@ -6702,7 +6511,7 @@ static JSValue qjs_text_get_data_data(JSContext *ctx, JSValueConst this_val,
 	const char *s = "";
 	JSValue ret;
 	(void) this_val; (void) argc; (void) argv; (void) magic;
-	n = qjs_get_node(func_data[0]);
+	n = qjs_get_node(this_val);
 	if (n == NULL) return JS_NewString(ctx, "");
 	if (macsurf_dom_characterdata_get_data(n, &ds) == DOM_NO_ERR
 	    && ds != NULL) {
@@ -6719,7 +6528,7 @@ static JSValue qjs_text_set_data_data(JSContext *ctx, JSValueConst this_val,
 	dom_node *n;
 	const char *v;
 	(void) this_val; (void) magic;
-	n = qjs_get_node(func_data[0]);
+	n = qjs_get_node(this_val);
 	if (n == NULL || argc < 1) return JS_UNDEFINED;
 	v = JS_ToCString(ctx, argv[0]);
 	if (v == NULL) return JS_UNDEFINED;
@@ -6749,8 +6558,6 @@ static JSValue qjs_wrap_text_node(JSContext *ctx, dom_text *tn)
 	struct qjs_wrap_entry *hit;
 	dom_node *owner_doc;
 	JSValue obj;
-	JSValue data[1];
-	JSValue f;
 
 	if (tn == NULL) return JS_NULL;
 
@@ -6804,64 +6611,16 @@ static JSValue qjs_wrap_text_node(JSContext *ctx, dom_text *tn)
 	JS_SetPropertyStr(ctx, obj, "__ptr",
 		JS_NewInt64(ctx, (long long) (size_t) tn));
 
-	/* fixes846 perf - nodeValue/data/textContent/parentNode are wired as
-	 * REAL C getter/setter pairs (JS_DefinePropertyGetSet), not an
-	 * Object.defineProperty(...) block run through JS_Eval on every
-	 * single wrap. A reconciler-heavy page (React) calls createTextNode
-	 * per leaf text update; re-lexing/parsing a JS source string on every
-	 * one of those calls is a real, avoidable per-node cost that the
-	 * element-wrapper path (qjs_el_install_native_attrs) also pays today
-	 * -- fixed here for the new text-node path since it's freshly
-	 * written; that pre-existing element-side cost is unchanged by this
-	 * fix and is a good target for its own round if profiling confirms
-	 * it matters. */
-	data[0] = JS_DupValue(ctx, obj);
-	{
-		JSAtom atom;
-		JSValue getter, setter;
-
-		getter = JS_NewCFunctionData(ctx, qjs_text_get_data_data,
-				0, 0, 1, data);
-		setter = JS_NewCFunctionData(ctx, qjs_text_set_data_data,
-				1, 0, 1, data);
-
-		atom = JS_NewAtom(ctx, "nodeValue");
-		JS_DefinePropertyGetSet(ctx, obj, atom,
-				JS_DupValue(ctx, getter), JS_DupValue(ctx, setter),
-				JS_PROP_CONFIGURABLE);
-		JS_FreeAtom(ctx, atom);
-
-		atom = JS_NewAtom(ctx, "data");
-		JS_DefinePropertyGetSet(ctx, obj, atom,
-				JS_DupValue(ctx, getter), JS_DupValue(ctx, setter),
-				JS_PROP_CONFIGURABLE);
-		JS_FreeAtom(ctx, atom);
-
-		atom = JS_NewAtom(ctx, "textContent");
-		JS_DefinePropertyGetSet(ctx, obj, atom, getter, setter,
-				JS_PROP_CONFIGURABLE);
-		JS_FreeAtom(ctx, atom);
-	}
-	{
-		JSAtom atom = JS_NewAtom(ctx, "parentNode");
-		JSValue getter = JS_NewCFunctionData(ctx,
-				qjs_el_get_parent_node_data, 0, 0, 1, data);
-		JS_DefinePropertyGetSet(ctx, obj, atom, getter, JS_UNDEFINED,
-				JS_PROP_CONFIGURABLE);
-		JS_FreeAtom(ctx, atom);
-	}
+	/* fixes1170 (#211) - nodeValue/data/textContent live on
+	 * CharacterData.prototype and parentNode + the node-level traversal
+	 * surface on Node.prototype (qjs_el_install_proto_surface, once per
+	 * realm), so a text/comment/CDATA wrapper is now just identity props +
+	 * the appendChild no-op below -- zero per-node closures. The family
+	 * proto set above chains Text/Comment/CharacterData -> CharacterData ->
+	 * Node, which is what makes those reachable. */
 	JS_SetPropertyStr(ctx, obj, "appendChild",
 		JS_NewCFunction(ctx, qjs_text_append_child_noop,
 				"appendChild", 1));
-	JS_FreeValue(ctx, data[0]);
-
-	/* fixes878 - text/comment nodes get the SAME node-level traversal surface
-	 * as elements. This is not optional decoration: firstChild lands on the
-	 * text between tags, so `box.firstChild.nextSibling` walks THROUGH a text
-	 * node. Without it that chain dies at the first gap in real markup -- the
-	 * first thing Test 21 caught. Base dom_node vtable ops only, so it is safe
-	 * on this shape (see the qjs_install_node_traversal note). */
-	qjs_install_node_traversal(ctx, obj);
 
 	return obj;
 }
@@ -6958,8 +6717,6 @@ static JSValue qjs_wrap_fragment(JSContext *ctx, dom_document_fragment *frag)
 	JS_SetPropertyStr(ctx, obj, "__getTextContent", f);
 	f = JS_NewCFunctionData(ctx, qjs_el_set_text_content_data, 1, 0, 1, data);
 	JS_SetPropertyStr(ctx, obj, "__setTextContent", f);
-	f = JS_NewCFunctionData(ctx, qjs_el_get_parent_node_data, 0, 0, 1, data);
-	JS_SetPropertyStr(ctx, obj, "__getParentNode", f);
 	JS_FreeValue(ctx, data[0]);
 
 	{
@@ -6972,11 +6729,6 @@ static JSValue qjs_wrap_fragment(JSContext *ctx, dom_document_fragment *frag)
 				JS_PROP_CONFIGURABLE);
 		JS_FreeAtom(ctx, atom);
 
-		atom = JS_NewAtom(ctx, "parentNode");
-		getter = JS_GetPropertyStr(ctx, obj, "__getParentNode");
-		JS_DefinePropertyGetSet(ctx, obj, atom, getter, JS_UNDEFINED,
-				JS_PROP_CONFIGURABLE);
-		JS_FreeAtom(ctx, atom);
 
 		atom = JS_NewAtom(ctx, "textContent");
 		JS_DefinePropertyGetSet(ctx, obj, atom,
@@ -6986,11 +6738,10 @@ static JSValue qjs_wrap_fragment(JSContext *ctx, dom_document_fragment *frag)
 		JS_FreeAtom(ctx, atom);
 	}
 
-	/* fixes878 - fragments need the node surface too: the whole point of a
-	 * DocumentFragment is to build a subtree and then walk or move its
-	 * children. Base dom_node vtable ops only, which is exactly why this is
-	 * safe on the fragment's smaller shape (fixes846). */
-	qjs_install_node_traversal(ctx, obj);
+	/* fixes1170 (#211) - parentNode + the node-level traversal surface are on
+	 * Node.prototype (qjs_el_install_proto_surface), reached through the
+	 * DocumentFragment family proto set below; the per-instance closures
+	 * are gone. */
 
 	/* fixes1127 -- real family prototype: a fragment answers instanceof
 	 * DocumentFragment/Node, never HTMLElement (same lying-answer reasoning
@@ -8119,6 +7870,285 @@ static JSValue qjs_get_head(JSContext *ctx, JSValueConst this_val,
  * Set per CONTEXT (class protos are per-context in QuickJS), from
  * qjs_dom_install, which already runs once per realm before anything is wrapped.
  */
+/* ---- fixesXXXX (#211): the heavyweight element surface, ONCE per realm ----
+ *
+ * Everything qjs_el_install_native_attrs used to install per wrapper -- the
+ * event bridge, the attribute/textContent/innerHTML backends, the mutation
+ * and query natives, and the JS helper surface (classList, style proxy,
+ * dataset proxy, matches, closest, ...) -- now lands on the wrapper CLASS
+ * proto p (owned by JS_SetClassProto) and, for the node-level traversal
+ * surface, on Node.prototype. Every wrapper reaches them through its per-tag
+ * constructor prototype chain, and the C functions read the element from
+ * `this` (qjs_get_node(this_val)) instead of per-instance func_data
+ * closures -- zero closures per node on this path.
+ *
+ * ORDERING CONSTRAINT, preserved from the old per-element install:
+ *   1. natives FIRST (the JS helper string must not shadow them),
+ *   2. then the JS helper string (its zero stubs are fine, they are
+ *      overridden by...),
+ *   3. then tc_src,
+ *   4. then the REAL metrics (which must beat the zero stubs the JS string
+ *      defines -- the ordering is the only thing that makes them win),
+ *   5. then lay_src,
+ *   6. then the node surface (Node.prototype + CharacterData.prototype),
+ *      last so nothing above can clobber it.
+ *
+ * Called from qjs_el_install_proto right after JS_SetClassProto, which runs
+ * once per realm (second call bails) before anything is wrapped, so every
+ * wrapper -- elements, text/comment/CDATA, fragments -- is born into a
+ * complete surface.
+ */
+static void qjs_el_install_proto_surface(JSContext *ctx, JSValue proto)
+{
+	JSValue f;
+	JSValue g;
+	JSValue node_proto;
+	JSValue cd_proto;
+	JSValue fn2;
+	size_t i;
+
+	/* fixes989 — the event bridge. Installed BEFORE the JS helper string is
+	 * evaluated at the end of this function, and deliberately not defined
+	 * there, so nothing shadows them. */
+	f = JS_NewCFunctionData(ctx, qjs_el_add_event_listener_data, 3, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "addEventListener", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_remove_event_listener_data, 2, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "removeEventListener", f);
+	/* fixes1008 (1e) — native dispatchEvent, so synthetic events bubble.
+	 * Installed BEFORE the JS helper string is evaluated; that string now
+	 * defines __msFireLocal instead of dispatchEvent, so nothing shadows
+	 * this. */
+	f = JS_NewCFunctionData(ctx, qjs_el_dispatch_event_data, 1, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "dispatchEvent", f);
+	/* fixes996 — the on* setter (a JS accessor) calls this to register. */
+	f = JS_NewCFunctionData(ctx, qjs_el_reg_event_data, 1, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "__msRegEvent", f);
+
+	/* Core DOM methods */
+	f = JS_NewCFunctionData(ctx, qjs_el_getAttribute_data, 1, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "getAttribute", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_setAttribute_data, 2, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "setAttribute", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_remove_attribute_data, 1, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "removeAttribute", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_has_attribute_data, 1, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "hasAttribute", f);
+
+	/* textContent */
+	f = JS_NewCFunctionData(ctx, qjs_el_get_text_content_data, 0, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "__getTextContent", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_set_text_content_data, 1, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "__setTextContent", f);
+	/* fixes846 (#167 S3) — real innerHTML= via HTML fragment parsing. */
+	f = JS_NewCFunctionData(ctx, qjs_el_set_inner_html_data, 1, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "__setInnerHTML", f);
+	/* fixes1168 (#262) — real innerHTML read-back: the JS getter calls this
+	 * to serialize the child tree to markup (see qjs_el_get_inner_html_data). */
+	f = JS_NewCFunctionData(ctx, qjs_el_get_inner_html_data, 0, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "__getInnerHTML", f);
+	/* fixes1168 (#262) — real outerHTML read-back: same serializer over the
+	 * element itself (tag + attributes + children). */
+	f = JS_NewCFunctionData(ctx, qjs_el_get_outer_html_data, 0, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "__getOuterHTML", f);
+
+	/* Traversal */
+	f = JS_NewCFunctionData(ctx, qjs_el_get_parent_node_data, 0, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "__getParentNode", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_get_next_sibling_data, 0, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "__getNextElementSibling", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_get_prev_sibling_data, 0, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "__getPreviousElementSibling", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_get_children_data, 0, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "__getChildren", f);
+
+	/* Mutation */
+	f = JS_NewCFunctionData(ctx, qjs_el_append_child_data, 1, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "appendChild", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_remove_child_data, 1, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "removeChild", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_insert_before_data, 2, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "insertBefore", f);
+
+	/* Scoped query */
+	f = JS_NewCFunctionData(ctx, qjs_el_qsa_data, 1, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "querySelectorAll", f);
+	f = JS_NewCFunctionData(ctx, qjs_el_qs_data, 1, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "querySelector", f);
+
+	/* JS-side helpers: classList, style, dataset, matches, closest, etc. */
+	qjs_el_install_js_helpers(ctx, proto);
+
+	/* Wire textContent as a property using the C getter/setter helpers */
+	{
+		static const char *tc_src =
+			"(function(){var P=this;"
+			"Object.defineProperty(P,'textContent',{"
+			"get:function(){return this.__getTextContent();},"
+			"set:function(v){this.__setTextContent(String(v));},"
+			"configurable:true});"
+			"Object.defineProperty(P,'parentNode',{"
+			"get:function(){return this.__getParentNode();},"
+			"configurable:true});"
+			"Object.defineProperty(P,'nextElementSibling',{"
+			"get:function(){return this.__getNextElementSibling();},"
+			"configurable:true});"
+			"Object.defineProperty(P,'previousElementSibling',{"
+			"get:function(){return this.__getPreviousElementSibling();},"
+			"configurable:true});"
+			"Object.defineProperty(P,'children',{"
+			"get:function(){return this.__getChildren();},"
+			"configurable:true});"
+			/* fixes1031 — firstElementChild / lastElementChild /
+			 * childElementCount. nextElementSibling and
+			 * previousElementSibling were here; their two siblings were
+			 * not, and jQuery's wrapAll walks firstElementChild:
+			 *
+			 *   wrap.map(function(){ var e=this;
+			 *       while (e.firstElementChild) e=e.firstElementChild;
+			 *       return e; }).append(this);
+			 *
+			 * so wrapInner() -- and therefore the dotdotdot truncation
+			 * plugin hackaday runs over every article entry -- lost the
+			 * content it was re-parenting. Derived from `children` so
+			 * they cannot disagree with it. */
+			"Object.defineProperty(P,'firstElementChild',{"
+			"get:function(){var c=this.__getChildren();"
+				"return (c&&c.length)?c[0]:null;},"
+			"configurable:true});"
+			"Object.defineProperty(P,'lastElementChild',{"
+			"get:function(){var c=this.__getChildren();"
+				"return (c&&c.length)?c[c.length-1]:null;},"
+			"configurable:true});"
+			"Object.defineProperty(P,'childElementCount',{"
+			"get:function(){var c=this.__getChildren();"
+				"return (c&&c.length)?c.length:0;},"
+			"configurable:true});"
+			"})";
+		fn2 = qjs_helper_fn(ctx, "__ms_h_props", tc_src, "<el-props>");
+		if (!JS_IsException(fn2)) {
+			JS_Call(ctx, fn2, proto, 0, NULL);
+		}
+		JS_FreeValue(ctx, fn2);
+	}
+
+	/* fixes1011 (Phase 3) — REAL layout metrics, replacing the zero stubs.
+	 *
+	 * Installed AFTER the JS helper string, which defines the zero-returning
+	 * getBoundingClientRect -- these must win, and the ordering is the only
+	 * thing that makes them win. */
+	g = JS_NewCFunctionData(ctx, qjs_el_get_rect, 0, 0, 0, NULL);
+	JS_SetPropertyStr(ctx, proto, "getBoundingClientRect", g);
+
+	/* Each metric is a getter, because page code reads them as
+	 * properties (el.offsetWidth), never as calls. */
+	{
+		static const struct { const char *name; int magic; } mm[] = {
+			{ "offsetWidth",  QJS_M_OFFW },
+			{ "offsetHeight", QJS_M_OFFH },
+			{ "clientWidth",  QJS_M_CLIW },
+			{ "clientHeight", QJS_M_CLIH },
+			{ "offsetTop",    QJS_M_OFFT },
+			{ "offsetLeft",   QJS_M_OFFL },
+			{ "scrollWidth",  QJS_M_SCRW },
+			{ "scrollHeight", QJS_M_SCRH }
+		};
+		JSAtom a;
+		JSValue fn;
+		for (i = 0; i < sizeof mm / sizeof mm[0]; i++) {
+			a = JS_NewAtom(ctx, mm[i].name);
+			fn = JS_NewCFunctionData(ctx, qjs_el_metric,
+					0, mm[i].magic, 0, NULL);
+			JS_DefinePropertyGetSet(ctx, proto, a, fn, JS_UNDEFINED,
+					JS_PROP_CONFIGURABLE);
+			JS_FreeAtom(ctx, a);
+		}
+	}
+	{
+		/* getClientRects wraps the single rect; scrollTop/Left are the
+		 * window's scroll for now (per-element scrollers are not modelled),
+		 * and the SETTER really moves the view rather than recording a
+		 * number, which is what a "scroll to top" button needs. */
+		static const char *lay_src =
+			"(function(){var P=this;"
+			"P.getClientRects=function(){"
+				"return [this.getBoundingClientRect()];};"
+			"Object.defineProperty(P,'scrollTop',{configurable:true,"
+				"get:function(){return (typeof window!=='undefined')?"
+					"(window.scrollY||0):0;},"
+				"set:function(v){if(typeof window!=='undefined'&&"
+					"window.scrollTo)window.scrollTo(window.scrollX||0,v|0);}});"
+			"Object.defineProperty(P,'scrollLeft',{configurable:true,"
+				"get:function(){return (typeof window!=='undefined')?"
+					"(window.scrollX||0):0;},"
+				"set:function(v){if(typeof window!=='undefined'&&"
+					"window.scrollTo)window.scrollTo(v|0,window.scrollY||0);}});"
+			"Object.defineProperty(P,'offsetParent',{configurable:true,"
+				"get:function(){var p=this.parentNode;"
+				"while(p&&p.nodeType===1){"
+					"if(p===document.body)return p;p=p.parentNode;}"
+				"return (typeof document!=='undefined')?document.body:null;}});"
+			"P.scrollIntoView=function(){"
+				"var r=this.getBoundingClientRect();"
+				"if(typeof window!=='undefined'&&window.scrollTo)"
+					"window.scrollTo(window.scrollX||0,"
+						"(window.scrollY||0)+r.top);};"
+			"})";
+		fn2 = qjs_helper_fn(ctx, "__ms_h_lay", lay_src, "<el-layout>");
+		if (!JS_IsException(fn2)) {
+			JS_Call(ctx, fn2, proto, 0, NULL);
+		}
+		JS_FreeValue(ctx, fn2);
+	}
+
+	/* fixes878/#211 — the node-level surface: elements, text/comment AND
+	 * fragments all reach Node.prototype through the fixes1127 family chain,
+	 * so a single install covers every wrapper shape. Elements still answer
+	 * parentNode/textContent from p above (closer in the chain, same
+	 * __get* backends), so only the truly node-level names are redefined
+	 * here. */
+	node_proto = qjs_ctor_proto_by_name(ctx, "Node");
+	if (JS_IsObject(node_proto)) {
+		qjs_install_node_traversal(ctx, node_proto);
+		JS_FreeValue(ctx, node_proto);
+	}
+
+	/* CharacterData surface — nodeValue/data/textContent getter/setter pairs
+	 * for text/comment/CDATA wrappers. They share the shape and all reach
+	 * CharacterData.prototype through the family chain, so one install with
+	 * zero closures covers every one (the old per-instance pairs in
+	 * qjs_wrap_text_node were the #211 cost on this path). */
+	cd_proto = qjs_ctor_proto_by_name(ctx, "CharacterData");
+	if (JS_IsObject(cd_proto)) {
+		JSValue getter;
+		JSValue setter;
+		JSAtom atom;
+
+		getter = JS_NewCFunctionData(ctx, qjs_text_get_data_data,
+				0, 0, 0, NULL);
+		setter = JS_NewCFunctionData(ctx, qjs_text_set_data_data,
+				1, 0, 0, NULL);
+
+		atom = JS_NewAtom(ctx, "nodeValue");
+		JS_DefinePropertyGetSet(ctx, cd_proto, atom,
+				JS_DupValue(ctx, getter), JS_DupValue(ctx, setter),
+				JS_PROP_CONFIGURABLE);
+		JS_FreeAtom(ctx, atom);
+
+		atom = JS_NewAtom(ctx, "data");
+		JS_DefinePropertyGetSet(ctx, cd_proto, atom,
+				JS_DupValue(ctx, getter), JS_DupValue(ctx, setter),
+				JS_PROP_CONFIGURABLE);
+		JS_FreeAtom(ctx, atom);
+
+		atom = JS_NewAtom(ctx, "textContent");
+		JS_DefinePropertyGetSet(ctx, cd_proto, atom, getter, setter,
+				JS_PROP_CONFIGURABLE);
+		JS_FreeAtom(ctx, atom);
+
+		JS_FreeValue(ctx, cd_proto);
+	}
+}
+
 static void qjs_el_install_proto(JSContext *ctx)
 {
 	static const char s_proto_src[] =
@@ -8208,6 +8238,20 @@ static void qjs_el_install_proto(JSContext *ctx)
 	}
 	/* JS_SetClassProto takes ownership; do not free proto after this. */
 	JS_SetClassProto(ctx, s_el_class_id, proto);
+
+	/* fixesXXXX (#211) — the heavyweight element surface, ONCE per realm.
+	 * qjs_el_install_native_attrs used to run this whole install per wrapper
+	 * (~80 closures + 2 ES6 Proxies + ~90 defineProperty calls per unique DOM
+	 * node); it now lives on the class proto and Node.prototype, installed
+	 * exactly once here before anything is wrapped. Timed into wrapus so the
+	 * JSCOST audit line shows the one-time cost instead of a per-element one. */
+	{
+		extern double macos9_micros(void);
+		double wt0;
+		wt0 = macos9_micros();
+		qjs_el_install_proto_surface(ctx, proto);
+		g_wrap_us += (long)(macos9_micros() - wt0);
+	}
 }
 
 static void qjs_dom_install(JSContext *ctx)
