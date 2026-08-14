@@ -1889,7 +1889,14 @@ int main(void) {
 	MS_LOG("BOOT nsoption_init done");
 	macos9_prefs_load();
 	MS_LOG("BOOT prefs file loaded");
-	MS_LOG("BOOT images enabled, author_css on, fetcher 128/16, mem cache 32MB");
+	/* fixes1189 - the line this replaces ("images enabled, author_css on,
+	 * fetcher 128/16, mem cache 32MB") was a hardcoded claim left over
+	 * from before macos9_prefs_load existed, and stayed accurate only by
+	 * accident: a persisted prefs file loaded on the line above can
+	 * silently override every one of those. Log the REAL state instead -
+	 * every option that differs from the compiled default, or a clean
+	 * "n=0" line if none do. */
+	macos9_prefs_log_deltas();
 #ifdef __MACOS9__
 	macsurf_debug_log_writef("DIAG pre-netsurf_init: free=%ld maxblk=%ld",
 		(long)FreeMem(), (long)MaxBlock());

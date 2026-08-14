@@ -159,6 +159,79 @@ void macos9_prefs_load(void)
 		(int)rc, path);
 }
 
+/* fixes1189 - log every option that differs from the compiled-in default,
+ * right after boot loads the persisted prefs file. A stale/experimental
+ * "MacSurf Preferences" file is otherwise INDISTINGUISHABLE in the debug
+ * log from a real code regression: everything downstream (cascade, JS,
+ * image fetch) just quietly does what the option says, with no marker
+ * that the option itself isn't what the defaults say it should be. This
+ * cost a full regression investigation once (author_level_css and
+ * enable_javascript both silently OFF from a leftover test-session
+ * prefs file, restored code just doing its job of loading it) before
+ * the file was found by hand. One line per delta, LIFE-prefixed so it
+ * survives the failures-only gate; a clean "no deltas" run logs exactly
+ * one summary line so the check is a single grep either way. */
+void macos9_prefs_log_deltas(void)
+{
+	int i;
+	int n = 0;
+
+	if (nsoptions == NULL || nsoptions_default == NULL) {
+		macsurf_debug_log_writef("LIFE prefsdelta unavailable (no table)");
+		return;
+	}
+
+	for (i = 0; i < NSOPTION_LISTEND; i++) {
+		struct nsoption_s *o = &nsoptions[i];
+		struct nsoption_s *d = &nsoptions_default[i];
+
+		if (o->type != d->type) continue;
+
+		switch (o->type) {
+		case OPTION_BOOL:
+			if (o->value.b != d->value.b) {
+				macsurf_debug_log_writef(
+					"LIFE prefsdelta %s=%d default=%d",
+					o->key, (int)o->value.b, (int)d->value.b);
+				n++;
+			}
+			break;
+		case OPTION_INTEGER:
+			if (o->value.i != d->value.i) {
+				macsurf_debug_log_writef(
+					"LIFE prefsdelta %s=%d default=%d",
+					o->key, o->value.i, d->value.i);
+				n++;
+			}
+			break;
+		case OPTION_UINT:
+			if (o->value.u != d->value.u) {
+				macsurf_debug_log_writef(
+					"LIFE prefsdelta %s=%ld default=%ld",
+					o->key, (long)o->value.u, (long)d->value.u);
+				n++;
+			}
+			break;
+		case OPTION_COLOUR:
+			if (o->value.c != d->value.c) {
+				macsurf_debug_log_writef(
+					"LIFE prefsdelta %s=%ld default=%ld",
+					o->key, (long)o->value.c, (long)d->value.c);
+				n++;
+			}
+			break;
+		default:
+			/* OPTION_STRING - not compared; heap-string diffs are
+			 * lower stakes here (the regression class this guards
+			 * against is silently-disabled features, which are
+			 * bool/int switches, not string values). */
+			break;
+		}
+	}
+
+	macsurf_debug_log_writef("LIFE prefsdelta summary n=%d", n);
+}
+
 /* Persist only the user's deltas vs the default table (nsoption_write
  * emits just the CHANGED options). */
 void macos9_prefs_save(void)

@@ -415,6 +415,7 @@ void macos9_prefs_apply_defaults(void);
 nserror macos9_prefs_set_defaults(struct nsoption_s *defs);
 void macos9_prefs_load(void);
 void macos9_prefs_save(void);
+void macos9_prefs_log_deltas(void);
 const char *macos9_home_url(void);
 void macos9_prefs_apply_live(void);
 
