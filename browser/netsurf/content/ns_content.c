@@ -64,6 +64,7 @@ extern void macos9_content_unregister(struct content *c);
 #endif
 
 extern int macsurf_ptr_is_heap(const void *);
+extern int macsurf_ptr_is_valid(const void *);
 
 #define URL_FMT_SPC "%.140s"
 
@@ -665,17 +666,12 @@ content_mouse_track(hlcache_handle *h,
 	c = hlcache_handle_get_content(h);
 	if (c == NULL) return;
 	ha = (unsigned long)(void *)c->handler;
-	/* fixes719b: the old hardcoded 0x01000000..0x20000000 ceiling rejected a
-	 * VALID content_handler vtable on a high-mapped partition (0x4B..), so
-	 * every click/hover bailed -> "can't click on anything" on high-RAM Macs
-	 * (fine on the low-mapped dev iMac). c is already validated in-heap with a
-	 * non-NULL handler by the fixes719 hlcache_handle_get_content gate, and the
-	 * render path calls c->handler fine, so accept any handler inside the REAL
-	 * app partition. is_heap safely no-ops (never a wild call) on out-of-
-	 * partition garbage; log the address if it ever rejects so we can widen. */
-	if (!macsurf_ptr_is_heap((const void *)c->handler)) {
+	/* fixes1191 - see the matching comment in content_mouse_action below;
+	 * same wrong-function bug (macsurf_ptr_is_heap on a static vtable),
+	 * same fix (macsurf_ptr_is_valid). */
+	if (!macsurf_ptr_is_valid((const void *)c->handler)) {
 		macsurf_debug_log_writef(
-			"fixes719b mouse: handler out-of-partition ha=%p -- skip",
+			"LIFE fixes1191 mouse: handler invalid ha=%p -- skip",
 			(void *)ha);
 		return;
 	}
@@ -713,11 +709,27 @@ content_mouse_action(hlcache_handle *h,
 	 * (fine on the low-mapped dev iMac). c is already validated in-heap with a
 	 * non-NULL handler by the fixes719 hlcache_handle_get_content gate, and the
 	 * render path calls c->handler fine, so accept any handler inside the REAL
-	 * app partition. is_heap safely no-ops (never a wild call) on out-of-
-	 * partition garbage; log the address if it ever rejects so we can widen. */
-	if (!macsurf_ptr_is_heap((const void *)c->handler)) {
+	 * app partition.
+	 *
+	 * fixes1191 - this was macsurf_ptr_is_heap(), the STRICT malloc'd-object
+	 * test (see its doc comment in macsurf_memory.c: "for malloc'd objects...
+	 * always come from MSL malloc / NewPtr backed by the app zone"). c->handler
+	 * is a STATIC CONST content_handler vtable (e.g. &html_content_handler) -
+	 * it is never malloc'd, so it belongs to the OTHER function,
+	 * macsurf_ptr_is_valid(), documented for exactly this case: "pointers that
+	 * may legitimately live OUTSIDE the partition heap window (e.g. a static
+	 * const vtable...)". On OS 9 the mismatch was silently masked
+	 * (g_ptr_bounds_ok=1 skips the narrower OS-X-only check entirely). On OS X,
+	 * fixes956's observed-allocator-window tightening of macsurf_ptr_is_heap
+	 * made it reject a static vtable address whenever that address falls
+	 * outside the malloc'd range it happens to have observed so far -
+	 * environment/allocation-history dependent, which is why this read as an
+	 * intermittent "can't click on anything" bug rather than a clean always-on
+	 * one. is_valid safely no-ops (never a wild call) on out-of-partition
+	 * garbage; log the address if it ever rejects so we can widen. */
+	if (!macsurf_ptr_is_valid((const void *)c->handler)) {
 		macsurf_debug_log_writef(
-			"fixes719b mouse: handler out-of-partition ha=%p -- skip",
+			"LIFE fixes1191 mouse: handler invalid ha=%p -- skip",
 			(void *)ha);
 		return;
 	}
