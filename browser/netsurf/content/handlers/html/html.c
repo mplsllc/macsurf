@@ -3586,10 +3586,30 @@ nserror html_reconvert(html_content *c)
 	 * as it does for a stylesheet re-entry, and the tree built by this
 	 * reconvert stands. Only while the base sheet is still in flight - or
 	 * when the creation itself fails - does the NEED_DATA defer below
-	 * remain. */
+	 * remain.
+	 *
+	 * fixes1193 - a non-NULL sheet HANDLE only means the fetch got a
+	 * handle back, not that the sheet finished loading/parsing. The
+	 * normal (finish_conversion) path never reaches this call without
+	 * html_can_begin_conversion() having confirmed c->base.active == 0
+	 * first -- i.e. every stylesheet fetch, base and author both, has
+	 * fully settled. This lazy path was missing that check: an author
+	 * stylesheet (or even the base sheet itself) can still be mid-parse
+	 * on another poll pass when a JS-triggered reconvert races in here,
+	 * and html_css_new_selection_context reads that stylesheet's
+	 * selector hash table (css_select_ctx_append_sheet) while the async
+	 * parse is concurrently still growing/rehashing it -- a genuine
+	 * data race, not just a staleness question. Hardware crash: EXC_BAD_
+	 * ACCESS in css__selector_hash_find_by_class, called from exactly
+	 * this call chain (html_reconvert -> dom_to_box -> css_select_style),
+	 * on hackaday, which both drives this lazy path hardest (its whole
+	 * reason for existing) and loads enough author CSS for the race
+	 * window to be real. Require the same precondition the normal path
+	 * requires. */
 	if (c->select_ctx == NULL &&
 	    c->stylesheets != NULL &&
-	    c->stylesheets[STYLESHEET_BASE].sheet != NULL) {
+	    c->stylesheets[STYLESHEET_BASE].sheet != NULL &&
+	    c->base.active == 0) {
 		error = html_css_new_selection_context(c, &c->select_ctx);
 		if (error != NSERROR_OK) {
 			/* creation failed (OOM etc.) - same transient defer as

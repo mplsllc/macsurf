@@ -10,6 +10,11 @@ void *macsurf_safe_alloc(size_t n){return malloc(n);}
 void *macsurf_safe_calloc(size_t a,size_t b){return calloc(a,b);}
 void *macsurf_safe_realloc(void*p,size_t n){return realloc(p,n);}
 int macsurf_ptr_is_heap(const void*p){(void)p;return 1;}
+/* fixes1191 companion - real macos9 code uses macsurf_ptr_is_valid for
+ * static/PEF pointers (content_handler vtables); same no-op-accept stub
+ * as macsurf_ptr_is_heap above, the harness doesn't model partition
+ * bounds at all. */
+int macsurf_ptr_is_valid(const void*p){(void)p;return 1;}
 double macsurf_monotonic_ms(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return t.tv_sec*1000.0+t.tv_nsec/1e6;}
 unsigned long macsurf_get_ticks(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (unsigned long)(t.tv_sec*60+t.tv_nsec/16666666);}
 /* fixes1070 — this stub returned `unsigned long`. The REAL macos9_micros
