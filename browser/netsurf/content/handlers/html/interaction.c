@@ -1677,6 +1677,22 @@ mouse_action_drag_none(html_content *html,
 
 	res = get_mouse_action_node(html, x, y, &mas);
 	if (res != NSERROR_OK) {
+		/* fixes1190 - the "tree not walkable" skip inside
+		 * get_mouse_action_node is WORK-prefixed (fires on every hover,
+		 * would flood a LIFE line) so it is invisible in a release log.
+		 * A click specifically bailing out here means EVERY click is
+		 * silently doing nothing -- gate on BROWSER_MOUSE_CLICK_1/2 so
+		 * only a genuine click attempt logs, not the constant hover
+		 * traffic. */
+		if (mouse & (BROWSER_MOUSE_CLICK_1 | BROWSER_MOUSE_CLICK_2)) {
+			macsurf_debug_log_writef(
+				"LIFE CLICKSKIP res=%d layout=%p convert=%p "
+				"reflowing=%d -- click did nothing, tree "
+				"not walkable",
+				(int) res, (void *) html->layout,
+				(void *) html->box_conversion_context,
+				(int) html->reflowing);
+		}
 		return res;
 	}
 
@@ -1736,6 +1752,25 @@ mouse_action_drag_none(html_content *html,
 		 * old box->styles in html_recascade_tree and (b) restyle only
 		 * the affected SUBTREE, not the whole page. */
 		(void)changed;
+	}
+
+	/* fixes1190 - what get_mouse_action_node actually resolved, gated to
+	 * genuine clicks so this doesn't add hover-frequency log traffic.
+	 * Answers two open questions in one shot: whether the tree-walk
+	 * guard above is the block (CLICKSKIP, this line never reached), or
+	 * whether the walk succeeded but found no link.url / a node that
+	 * cannot carry the click event -- box->href is inherited onto a
+	 * node-less text box at construction time (box_extract_properties),
+	 * but box->node is NOT, so mas.node can land on an ancestor of the
+	 * clicked <a> rather than the <a> or a descendant of it. */
+	if (mouse & (BROWSER_MOUSE_CLICK_1 | BROWSER_MOUSE_CLICK_2)) {
+		macsurf_debug_log_writef(
+			"LIFE CLICKNODE link=%s node=%p box=%p boxtype=%d "
+			"gadget=%p iframe=%p",
+			mas.link.url ? "YES" : "no", (void *) mas.node,
+			(void *) mas.link.box,
+			mas.link.box ? (int) mas.link.box->type : -1,
+			(void *) mas.gadget.control, (void *) mas.iframe);
 	}
 
 	if (mouse & BROWSER_MOUSE_CLICK_4) {
