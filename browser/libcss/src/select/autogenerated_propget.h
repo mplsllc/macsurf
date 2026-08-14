@@ -2562,8 +2562,11 @@ static inline uint8_t get_max_width(const css_computed_style *style, css_fixed
 	if ((bits & 0x3) == CSS_MAX_WIDTH_SET) {
 		*length = style->i.max_width;
 		*unit = bits >> 2;
+	} else if ((bits & 0x3) == CSS_MAX_WIDTH_INTRINSIC) {
+		/* intrinsic-sizing round 1, see get_width for the pattern */
+		*unit = bits >> 2;
 	}
-	
+
 	return (bits & 0x3);
 }
 #undef MAX_WIDTH_INDEX
@@ -2624,8 +2627,11 @@ static inline uint8_t get_min_width(const css_computed_style *style, css_fixed
 	if ((bits & 0x3) == CSS_MIN_WIDTH_SET) {
 		*length = style->i.min_width;
 		*unit = bits >> 2;
+	} else if ((bits & 0x3) == CSS_MIN_WIDTH_INTRINSIC) {
+		/* intrinsic-sizing round 1, see get_width for the pattern */
+		*unit = bits >> 2;
 	}
-	
+
 	return (bits & 0x3);
 }
 #undef MIN_WIDTH_INDEX
@@ -3504,8 +3510,13 @@ static inline uint8_t get_width(const css_computed_style *style,
 	if ((bits & 0x3) == CSS_WIDTH_SET) {
 		*length = style->i.width;
 		*unit = bits >> 2;
+	} else if ((bits & 0x3) == CSS_WIDTH_INTRINSIC) {
+		/* intrinsic-sizing round 1: which keyword (min/max/fit-
+		 * content) lives in the same unit sub-field CSS_WIDTH_SET
+		 * uses for css_unit -- no length value to report. */
+		*unit = bits >> 2;
 	}
-	
+
 	return (bits & 0x3);
 }
 #undef WIDTH_INDEX

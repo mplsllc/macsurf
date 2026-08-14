@@ -579,7 +579,12 @@ enum op_max_height {
 enum op_max_width {
 	MAX_WIDTH_CALC			= VALUE_IS_CALC,
 	MAX_WIDTH_SET			= 0x0080,
-	MAX_WIDTH_NONE			= 0x0000
+	MAX_WIDTH_NONE			= 0x0000,
+
+	/* intrinsic-sizing round 1, see op_width above */
+	MAX_WIDTH_MIN_CONTENT		= 0x0090,
+	MAX_WIDTH_MAX_CONTENT		= 0x0091,
+	MAX_WIDTH_FIT_CONTENT		= 0x0092
 };
 
 enum op_min_height {
@@ -591,7 +596,12 @@ enum op_min_height {
 enum op_min_width {
 	MIN_WIDTH_CALC			= VALUE_IS_CALC,
 	MIN_WIDTH_SET			= 0x0080,
-	MIN_WIDTH_AUTO			= 0x0000
+	MIN_WIDTH_AUTO			= 0x0000,
+
+	/* intrinsic-sizing round 1, see op_width above */
+	MIN_WIDTH_MIN_CONTENT		= 0x0090,
+	MIN_WIDTH_MAX_CONTENT		= 0x0091,
+	MIN_WIDTH_FIT_CONTENT		= 0x0092
 };
 
 enum op_opacity {
@@ -880,7 +890,14 @@ enum op_width {
 	WIDTH_CALC			= VALUE_IS_CALC,
 	WIDTH_SET			= 0x0080,
 
-	WIDTH_AUTO			= 0x0000
+	WIDTH_AUTO			= 0x0000,
+
+	/* intrinsic-sizing round 1: distinct opcode values per keyword, no
+	 * operand bytes follow (same shape as WIDTH_AUTO) -- the kind is
+	 * baked into the opcode itself, not read from the bytecode stream. */
+	WIDTH_MIN_CONTENT		= 0x0090,
+	WIDTH_MAX_CONTENT		= 0x0091,
+	WIDTH_FIT_CONTENT		= 0x0092
 };
 
 enum op_word_spacing {

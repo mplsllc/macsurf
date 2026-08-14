@@ -83,6 +83,30 @@ css_error css__parse_max_width(css_language *c,
 				CSS_PROP_MAX_WIDTH,
 				0,MAX_WIDTH_NONE);
 
+	} else if ((token->type == CSS_TOKEN_IDENT) &&
+			(lwc_string_caseless_isequal(
+			token->idata, c->strings[MIN_CONTENT],
+			&match) == lwc_error_ok && match)) {
+		error = css__stylesheet_style_appendOPV(result,
+				CSS_PROP_MAX_WIDTH,
+				0, MAX_WIDTH_MIN_CONTENT);
+
+	} else if ((token->type == CSS_TOKEN_IDENT) &&
+			(lwc_string_caseless_isequal(
+			token->idata, c->strings[MAX_CONTENT],
+			&match) == lwc_error_ok && match)) {
+		error = css__stylesheet_style_appendOPV(result,
+				CSS_PROP_MAX_WIDTH,
+				0, MAX_WIDTH_MAX_CONTENT);
+
+	} else if ((token->type == CSS_TOKEN_IDENT) &&
+			(lwc_string_caseless_isequal(
+			token->idata, c->strings[FIT_CONTENT],
+			&match) == lwc_error_ok && match)) {
+		error = css__stylesheet_style_appendOPV(result,
+				CSS_PROP_MAX_WIDTH,
+				0, MAX_WIDTH_FIT_CONTENT);
+
 	} else if ((token->type == CSS_TOKEN_FUNCTION) && (css__calc_function(c, token) != CSS_CALC_FUNC_NONE)) {
 		error = css__parse_calc(c, vector, ctx, result, buildOPV(CSS_PROP_MAX_WIDTH, 0, MAX_WIDTH_CALC), UNIT_PX, css__calc_function(c, token));
 	} else {

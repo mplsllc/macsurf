@@ -571,6 +571,9 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("last"),
 	SMAP("force-end"),
 	SMAP("allow-end"),
+	SMAP("min-content"),
+	SMAP("max-content"),
+	SMAP("fit-content"),
 
 	/* Named colours */
 	SMAP("aliceblue"),

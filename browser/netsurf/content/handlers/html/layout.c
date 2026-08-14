@@ -1304,6 +1304,13 @@ static void layout_minmax_block_inner(
 	} else if (block->parent && (block->parent->type == BOX_FLEX)) {
 		/* box is flex item */
 		block->flags |= NEED_MIN;
+	} else if (wtype == CSS_WIDTH_INTRINSIC) {
+		/* intrinsic-sizing round 1: a box using width:min-content or
+		 * width:fit-content needs a real accumulated minimum from
+		 * its own children, regardless of box type or parent
+		 * context -- none of the checks above cover a plain block
+		 * box (the common case for this keyword). */
+		block->flags |= NEED_MIN;
 	}
 
 	if (block->gadget && (block->gadget->type == GADGET_TEXTBOX ||

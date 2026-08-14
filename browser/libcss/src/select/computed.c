@@ -1097,6 +1097,14 @@ uint8_t css_computed_width_px(
 		break;
 	case CSS_WIDTH_AUTO:
 		break;
+	case CSS_WIDTH_INTRINSIC:
+		/* intrinsic-sizing round 1: min-content/max-content/
+		 * fit-content resolve in layout.c against the box's own
+		 * min_width/max_width (from layout_minmax_block_inner),
+		 * not here -- this accessor has no box to consult. Callers
+		 * branch on the returned type same as CSS_WIDTH_AUTO and
+		 * must not read *px_out unless type == CSS_WIDTH_SET. */
+		break;
 	case CSS_WIDTH_SET:
 		switch (unit) {
 		case CSS_UNIT_CALC: /* Fall through */

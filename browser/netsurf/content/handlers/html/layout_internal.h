@@ -534,10 +534,69 @@ static inline void layout_find_dimensions(
 	unsigned int i;
 
 	if (width) {
-		if (css_computed_width_px(style, unit_len_ctx,
-				available_width, width) == CSS_WIDTH_SET) {
+		enum css_width_e wtype = css_computed_width_px(style,
+				unit_len_ctx, available_width, width);
+
+		if (wtype == CSS_WIDTH_SET) {
 			layout_handle_box_sizing(unit_len_ctx, box,
 					available_width, true, width);
+		} else if (wtype == CSS_WIDTH_INTRINSIC) {
+			/* intrinsic-sizing round 1 (css-gap-inventory #0):
+			 * min-content/max-content/fit-content resolve
+			 * against this box's OWN min_width/max_width,
+			 * already computed tree-wide by the minmax pre-pass
+			 * (layout_minmax_block, called once before any real
+			 * layout runs) -- see layout_minmax_block_inner. */
+			css_fixed unused_value = 0;
+			css_unit kind = CSS_UNIT_PX;
+			int fixed = 0;
+			float frac = 0;
+
+			(void) css_computed_width(style, &unused_value,
+					&kind);
+
+			switch ((enum css_intrinsic_kind_e) kind) {
+			case CSS_INTRINSIC_MIN_CONTENT:
+				*width = box->min_width;
+				break;
+			case CSS_INTRINSIC_MAX_CONTENT:
+				*width = box->max_width;
+				break;
+			case CSS_INTRINSIC_FIT_CONTENT:
+			default:
+				/* fit-content(available) = min(max-content,
+				 * max(min-content, available)), CSS Sizing 3
+				 * S5.2.2. An indefinite available width (-1)
+				 * has no upper bound to fit within, so it
+				 * behaves like max-content. */
+				if (available_width < 0) {
+					*width = box->max_width;
+				} else {
+					int fit = available_width;
+					if (fit < box->min_width)
+						fit = box->min_width;
+					if (fit > box->max_width)
+						fit = box->max_width;
+					*width = fit;
+				}
+				break;
+			}
+
+			/* box->min_width/max_width are MBP-inclusive (the
+			 * shrink-to-fit contribution the PARENT consumes --
+			 * see the "extra_fixed" addition in layout_minmax_
+			 * block_inner), but *width here must be the
+			 * content-box width. Subtract the same margin+
+			 * border+padding calculate_mbp_width folded in when
+			 * computing them, mirroring layout_float_find_
+			 * dimensions' AUTO-width min/max-width fallback. */
+			calculate_mbp_width(unit_len_ctx, style, LEFT,
+					true, true, true, &fixed, &frac);
+			calculate_mbp_width(unit_len_ctx, style, RIGHT,
+					true, true, true, &fixed, &frac);
+			if (fixed < 0)
+				fixed = 0;
+			*width -= fixed;
 		} else {
 			*width = AUTO;
 		}

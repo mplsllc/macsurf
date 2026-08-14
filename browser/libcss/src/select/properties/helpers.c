@@ -352,6 +352,12 @@ css_error css__cascade_length_auto(uint32_t opv, css_style *style,
 	css_fixed length = 0;
 	uint32_t unit = UNIT_PX;
 	bool is_calc = false;
+	/* intrinsic-sizing round 1: only min-width's parser ever emits
+	 * MIN_WIDTH_MIN_CONTENT/_MAX_CONTENT/_FIT_CONTENT, so these cases
+	 * are dead code for every other property sharing this helper
+	 * (height, left, right, top, bottom, margin-*). See css__cascade_
+	 * length_auto_calc in this file for the width-only sibling. */
+	bool is_intrinsic = false;
 
 	if (hasFlagValue(opv) == false) {
 		switch (getValue(opv)) {
@@ -392,20 +398,35 @@ css_error css__cascade_length_auto(uint32_t opv, css_style *style,
 			}
 			break;
 		}
+		case MIN_WIDTH_MIN_CONTENT:
+			value = CSS_MIN_WIDTH_INTRINSIC;
+			unit = CSS_INTRINSIC_MIN_CONTENT;
+			is_intrinsic = true;
+			break;
+		case MIN_WIDTH_MAX_CONTENT:
+			value = CSS_MIN_WIDTH_INTRINSIC;
+			unit = CSS_INTRINSIC_MAX_CONTENT;
+			is_intrinsic = true;
+			break;
+		case MIN_WIDTH_FIT_CONTENT:
+			value = CSS_MIN_WIDTH_INTRINSIC;
+			unit = CSS_INTRINSIC_FIT_CONTENT;
+			is_intrinsic = true;
+			break;
 		default:
 			assert(0 && "Invalid value");
 			break;
 		}
 	}
 
-	if (is_calc == false) {
-		unit = css__to_css_unit(unit);
-	} else {
+	if (is_calc) {
 		/* fixes1166: sniff the terminal bytecode operator to tell
 		 * calc()/min()/max()/clamp() apart -- the slot always holds
 		 * a valid, just-stored expression when is_calc is true. */
 		unit = css__calc_expr_unit(
 				state->computed->macsurf_calc_expr[(uint8_t)length]);
+	} else if (is_intrinsic == false) {
+		unit = css__to_css_unit(unit);
 	}
 
 	if (css__outranks_existing(getOpcode(opv), isImportant(opv), state,
@@ -448,6 +469,24 @@ css_error css__cascade_length_auto_calc(uint32_t opv, css_style *style,
 			/* fixes1166: sniff the terminal bytecode operator to
 			 * tell calc()/min()/max()/clamp() apart. */
 			unit = css__calc_expr_unit(length.calc);
+			break;
+		/* intrinsic-sizing round 1: this helper has exactly one
+		 * caller (css__cascade_width in width.c), so it's safe to
+		 * bake width-specific opcodes in here directly. No operand
+		 * bytes follow these opcodes (same shape as BOTTOM_AUTO) --
+		 * the "unit" out-value carries which intrinsic keyword via
+		 * css_intrinsic_kind_e, consumed by set_width. */
+		case WIDTH_MIN_CONTENT:
+			value = CSS_WIDTH_INTRINSIC;
+			unit = CSS_INTRINSIC_MIN_CONTENT;
+			break;
+		case WIDTH_MAX_CONTENT:
+			value = CSS_WIDTH_INTRINSIC;
+			unit = CSS_INTRINSIC_MAX_CONTENT;
+			break;
+		case WIDTH_FIT_CONTENT:
+			value = CSS_WIDTH_INTRINSIC;
+			unit = CSS_INTRINSIC_FIT_CONTENT;
 			break;
 		default:
 			assert(0 && "Invalid value");
@@ -545,6 +584,10 @@ css_error css__cascade_length_none(uint32_t opv, css_style *style,
 	css_fixed length = 0;
 	uint32_t unit = UNIT_PX;
 	bool is_calc = false;
+	/* intrinsic-sizing round 1: only max-width's parser ever emits
+	 * MAX_WIDTH_MIN_CONTENT/_MAX_CONTENT/_FIT_CONTENT, so these cases
+	 * are dead code for max-height, this helper's other caller. */
+	bool is_intrinsic = false;
 
 	if (hasFlagValue(opv) == false) {
 		switch (getValue(opv)) {
@@ -585,20 +628,35 @@ css_error css__cascade_length_none(uint32_t opv, css_style *style,
 			}
 			break;
 		}
+		case MAX_WIDTH_MIN_CONTENT:
+			value = CSS_MAX_WIDTH_INTRINSIC;
+			unit = CSS_INTRINSIC_MIN_CONTENT;
+			is_intrinsic = true;
+			break;
+		case MAX_WIDTH_MAX_CONTENT:
+			value = CSS_MAX_WIDTH_INTRINSIC;
+			unit = CSS_INTRINSIC_MAX_CONTENT;
+			is_intrinsic = true;
+			break;
+		case MAX_WIDTH_FIT_CONTENT:
+			value = CSS_MAX_WIDTH_INTRINSIC;
+			unit = CSS_INTRINSIC_FIT_CONTENT;
+			is_intrinsic = true;
+			break;
 		default:
 			assert(0 && "Invalid value");
 			break;
 		}
 	}
 
-	if (is_calc == false) {
-		unit = css__to_css_unit(unit);
-	} else {
+	if (is_calc) {
 		/* fixes1166: sniff the terminal bytecode operator to tell
 		 * calc()/min()/max()/clamp() apart -- the slot always holds
 		 * a valid, just-stored expression when is_calc is true. */
 		unit = css__calc_expr_unit(
 				state->computed->macsurf_calc_expr[(uint8_t)length]);
+	} else if (is_intrinsic == false) {
+		unit = css__to_css_unit(unit);
 	}
 
 	if (css__outranks_existing(getOpcode(opv), isImportant(opv), state,
