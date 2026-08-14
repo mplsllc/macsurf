@@ -12,18 +12,18 @@
 #include "macsurf_debug.h"
 #include "macsurf_memory.h"    /* macsurf_recon_mem() */
 #include "macsurf_timebase.h"
-#include "macsurf_osver.h"     /* fixes936 - macsurf_os_is_osx() */
+#include "macsurf_osver.h"     /* fixes936 -- macsurf_os_is_osx() */
 
 #ifdef __MACOS9__
 #include <OpenTransport.h>
 #include <OpenTptInternet.h>
 #include <Movies.h>
-#include <Processes.h>   /* fixes983 - our own FSSpec, for the icon claim */
-#include <Files.h>       /* fixes983 - FSpGetFInfo / FSpSetFInfo */
+#include <Processes.h>   /* fixes983 -- our own FSSpec, for the icon claim */
+#include <Files.h>       /* fixes983 -- FSpGetFInfo / FSpSetFInfo */
 OTClientContextPtr macos9_ot_context = NULL;
 /* macTLS expects this symbol; aliased to our OT context after init. */
 OTClientContextPtr g_ostls_ot_context = NULL;
-/* fixes656  -  last content scroll offset, published for the core sticky-overlay
+/* fixes656 - last content scroll offset, published for the core sticky-overlay
  * hit-test (interaction.c compute_sticky_shift). Set just before every
  * browser_window_mouse_click/_track so the hit-test can recover the PAINTED
  * position of position:sticky boxes (which are pinned to a viewport edge at
@@ -37,13 +37,13 @@ int macos9_hittest_scroll_y = 0;
 extern void OSTLS_LoadSeed(void);
 extern void OSTLS_SaveSeed(void);
 extern void OSTLS_StirEntropy(const void *data, unsigned long len);
-/* fixes368 (#167)  -  cookie-jar persistence (impl in macos9_disk_cache.c).
+/* fixes368 (#167) - cookie-jar persistence (impl in macos9_disk_cache.c).
  * Load after netsurf_init so a prior Facebook login is restored; save at
  * quit so this session's login survives the relaunch. Declared extern here
  * to avoid pulling macos9_disk_cache.h's includes into main.c. */
 extern void macos9_cookies_load(void);
 extern void macos9_cookies_save(void);
-/* Event-loop callbacks  -  declared here to avoid pulling internal headers
+/* Event-loop callbacks - declared here to avoid pulling internal headers
  * into main.c. Each is called from macos9_poll() once per loop pass. */
 extern bool   macos9_schedule_run(void);
 extern void   fetch_pump(void);
@@ -62,13 +62,13 @@ extern void   macos9_deathrow_drain(void);
 #ifndef activeFlag
 #define activeFlag 0x0001
 #endif
-/* fixes141  -  defensive event-class whitelist.
+/* fixes141 - defensive event-class whitelist.
  * mUpMask: required for TrackControl on push buttons and scroll bars.
  * activMask: needed for activateEvt (URL field + button hilite on focus change).
- * Wheel events are NOT in the mask  -  CarbonLib on OS 9 crashes when
+ * Wheel events are NOT in the mask - CarbonLib on OS 9 crashes when
  * it attempts to dispatch kEventMouseWheelMoved (CarbonLib: not available).
  *
- * fixes507  -  osMask and highLevelEventMask REMOVED. MacSurf's
+ * fixes507 - osMask and highLevelEventMask REMOVED. MacSurf's
  * WaitNextEvent dispatch (switch (ev.what) in main.c) only handles
  * updateEvt / mouseDown / keyDown / autoKey / activateEvt; osEvt (what=15
  * suspend/resume) and kHighLevelEvent (AppleEvents) fall to default:break,
@@ -90,11 +90,11 @@ struct netsurf_table macos9_table;
 extern const struct plotter_table macos9_plotters;
 
 #ifdef __MACOS9__
-/* fixes77c - CW8's Quickdraw.h omits the Carbon accessor prototype. The
+/* fixes77c -- CW8's Quickdraw.h omits the Carbon accessor prototype. The
  * symbol is in CarbonLib 1.0+, so an explicit declaration is enough. */
 #endif
 
-/* fixes366j - heap-state probes for per-reformat leak / fragmentation
+/* fixes366j -- heap-state probes for per-reformat leak / fragmentation
  * profiling. FreeMem() is total free bytes in the app heap; MaxBlock()
  * is the largest contiguous free block. If free shrinks monotonically
  * across reformats -> leak; if MaxBlock collapses faster than FreeMem
@@ -120,7 +120,7 @@ long macos9_heap_max_block(void)
 #endif
 }
 
-/* fixes366l - absolute Microseconds() as a double, for measuring a
+/* fixes366l -- absolute Microseconds() as a double, for measuring a
  * single layout_document pass directly (the layout-done STAMP delta is
  * misleading: it spans all the inter-reformat network/fetch work, which
  * on mactrove is dominated by TLS handshakes). Double avoids the CW8
@@ -140,7 +140,7 @@ double macos9_micros(void)
 
 static void draw_url_bar(struct gui_window *gw) {
 #ifdef __MACOS9__
-	/* fixes727  -  rounded "pill" URL field. White rounded canvas, a soft grey
+	/* fixes727 - rounded "pill" URL field. White rounded canvas, a soft grey
 	 * border at rest and a 2px orange focus ring while the field is active for
 	 * typing. Geneva 12 text, favicon at the left. The rounded corners sit on
 	 * the toolbar gradient, which draw_toolbar_bg repaints just before this. */
@@ -153,7 +153,7 @@ static void draw_url_bar(struct gui_window *gw) {
 	/* white rounded canvas */
 	RGBForeColor(&white);
 	PaintRoundRect(&u, 12, 12);
-	/* border  -  orange focus ring when active, soft grey otherwise */
+	/* border - orange focus ring when active, soft grey otherwise */
 	if (gw->url_field_active) {
 		RGBForeColor(&orange); PenSize(2, 2);
 	} else {
@@ -166,7 +166,7 @@ static void draw_url_bar(struct gui_window *gw) {
 	RGBForeColor(&black); RGBBackColor(&white);
 	TextFont(kFontIDGeneva); TextSize(12); TextFace(0);
 	if (gw->url_te != NULL) TEUpdate(&gw->url_rect, gw->url_te);
-	/* fixes294  -  favicon paints on top of the URL field's white
+	/* fixes294 - favicon paints on top of the URL field's white
 	 * background.  No-op if the default favicon failed to load. */
 	macos9_window_draw_favicon(gw);
 #endif
@@ -174,7 +174,7 @@ static void draw_url_bar(struct gui_window *gw) {
 
 static void draw_status_bar(struct gui_window *gw) {
 #ifdef __MACOS9__
-	/* fixes727  -  refined status bar: a soft light-grey fill with a 1px top
+	/* fixes727 - refined status bar: a soft light-grey fill with a 1px top
 	 * highlight/separator instead of the old boxy black FrameRect, and lighter
 	 * #555 text. Reads as a subtle chrome shelf rather than a stark box. */
 	RGBColor fill  = {0xEDED, 0xEDED, 0xEDED};   /* #EDEDED shelf */
@@ -206,12 +206,13 @@ static void macos9_init_menus(void) {
 	MenuHandle apple_menu, file_menu, edit_menu, go_menu;
 	apple_menu = NewMenu(MENU_APPLE, "\p\024");
 	AppendMenu(apple_menu, "\pAbout MacSurf...");
+	AppendMenu(apple_menu, "\pPreferences.../,");   /* item 2 - Cmd-, */
 	AppendMenu(apple_menu, "\p(-");
-	/* fixes753 (#228)  -  do NOT AppendResMenu('DRVR') here. Under Carbon /
+	/* fixes753 (#228) - do NOT AppendResMenu('DRVR') here. Under Carbon /
 	 * CarbonLib the Menu Manager auto-populates the Apple menu with the
 	 * Apple Menu Items folder AND auto-handles their selection. Adding them
 	 * ourselves produced a SECOND copy of every item (the "duplicated Apple
-	 * menu when MacSurf is frontmost" bug)  -  and the app never dispatched
+	 * menu when MacSurf is frontmost" bug) - and the app never dispatched
 	 * them anyway (the MENU_APPLE handler only acts on item 1 = About).
 	 * The system's single auto-added copy is the correct one. */
 	InsertMenu(apple_menu, 0);
@@ -244,13 +245,13 @@ static void macos9_init_menus(void) {
 	AppendMenu(go_menu, "\pHome/H");
 	InsertMenu(go_menu, 0);
 
-	/* fixes330 (#96 #45)  -  View menu with View Source + Find. */
+	/* fixes330 (#96 #45) - View menu with View Source + Find. */
 	{
 		MenuHandle view_menu = NewMenu(MENU_VIEW, "\pView");
 		AppendMenu(view_menu, "\pView Source/U");
 		AppendMenu(view_menu, "\p(-");
 		AppendMenu(view_menu, "\pFind.../F");
-		/* fixes883  -  Zoom and Downloads: both already worked, neither was
+		/* fixes883 - Zoom and Downloads: both already worked, neither was
 		 * discoverable. Page zoom was reachable only through Cmd -/+/0
 		 * keystrokes that appeared in no menu, and the download-manager
 		 * window only ever opened by starting a download. Keep the item
@@ -264,7 +265,7 @@ static void macos9_init_menus(void) {
 		InsertMenu(view_menu, 0);
 	}
 
-	/* fixes645 (#48)  -  Bookmarks menu. Item 1 = Add, item 2 = separator,
+	/* fixes645 (#48) - Bookmarks menu. Item 1 = Add, item 2 = separator,
 	 * items 3+ are the saved bookmarks themselves (filled in by
 	 * macos9_bookmarks_init below and rebuilt on each add). Selecting a
 	 * bookmark navigates the front window to it. */
@@ -276,7 +277,7 @@ static void macos9_init_menus(void) {
 		InsertMenu(bookmark_menu, 0);
 	}
 
-	/* fixes694/698 (#47)  -  History menu. Item 1 = Clear History, item 2 =
+	/* fixes694/698 (#47) - History menu. Item 1 = Clear History, item 2 =
 	 * separator, items 3+ = recent visits (most-recent first) filled in by
 	 * macos9_history_init below and rebuilt on each menu-bar click. */
 	{
@@ -290,14 +291,14 @@ static void macos9_init_menus(void) {
 
 	DrawMenuBar();
 
-	/* fixes645 (#48)  -  load persisted bookmarks and populate the menu.
+	/* fixes645 (#48) - load persisted bookmarks and populate the menu.
 	 * Must run after the menu is inserted so GetMenuHandle finds it. */
 	macos9_bookmarks_init();
 	macos9_history_init();   /* fixes694 (#47) */
 #endif
 }
 
-/* fixes720 (#207 tooling)  -  File > Send Debug Log. MacSurf has no file picker,
+/* fixes720 (#207 tooling) - File > Send Debug Log. MacSurf has no file picker,
  * so instead of the web upload form we read our OWN Desktop log and POST it
  * straight to the server (urlencoded, reusing the fixes312 POST path). One
  * click, no SimpleText/copy/paste, no picker. The server (upload.php) accepts
@@ -309,7 +310,7 @@ static void macos9_send_debug_log(struct gui_window *gw)
 	char *raw;
 	char *body;
 	long  rawlen, i, bp;
-	long  cap = 1024L * 1024L;   /* 1 MB  -  a non-nuclear log is far smaller */
+	long  cap = 1024L * 1024L;   /* 1 MB - a non-nuclear log is far smaller */
 	nsurl *url = NULL;
 	static const char hexd[] = "0123456789ABCDEF";
 	static const char pfx[] = "who=MacSurf&logtext=";
@@ -354,10 +355,10 @@ static void macos9_send_debug_log(struct gui_window *gw)
 #endif
 }
 
-/* fixes886  -  forward declaration, and it is REQUIRED here.
+/* fixes886 - forward declaration, and it is REQUIRED here.
  *
  * fixes883 defined macos9_zoom_apply just above macos9_handle_key_down (~1213),
- * but macos9_handle_menu below calls it at ~474 - EARLIER in the file. C89 then
+ * but macos9_handle_menu below calls it at ~474 -- EARLIER in the file. C89 then
  * implicitly declares it `int()` at that first call, and the real
  * `static void (struct gui_window *, float, int)` definition conflicts:
  *     Error: identifier 'macos9_zoom_apply(...)' redeclared
@@ -367,7 +368,7 @@ static void macos9_send_debug_log(struct gui_window *gw)
  *
  * The Linux pre-flight missed this twice over: gcc in C89 mode ALLOWS an
  * implicit declaration, and more importantly the check never reached this code
- * at all - main.c dies at a missing OpenTransport.h, which the check was
+ * at all -- main.c dies at a missing OpenTransport.h, which the check was
  * reporting as an unchanged error count rather than as "did not run". Both are
  * addressed in tools/retro68_check.sh. */
 static void macos9_zoom_apply(struct gui_window *gw, float amount, int absolute);
@@ -375,13 +376,13 @@ static void macos9_zoom_apply(struct gui_window *gw, float amount, int absolute)
 static void macos9_handle_menu(short menu_id, short item) {
 #ifdef __MACOS9__
 	WindowRef front;
-	struct gui_window *gw = NULL;	/* fixes369a  -  init to silence CW8
+	struct gui_window *gw = NULL;	/* fixes369a - init to silence CW8
 					 * "used before initialized" (assigned
 					 * per-case below before use). */
 	macsurf_debug_log_writef(
 		"fixes352c handle_menu: menu_id=%d item=%d",
 		(int)menu_id, (int)item);
-	/* fixes707  -  a bookmark folder submenu selection carries the submenu's
+	/* fixes707 - a bookmark folder submenu selection carries the submenu's
 	 * own ID as menu_id; route it to the folder's Nth bookmark. */
 	if (menu_id >= MENU_BMK_SUB_BASE &&
 	    menu_id < MENU_BMK_SUB_BASE + MENU_BMK_SUB_MAX) {
@@ -394,10 +395,13 @@ static void macos9_handle_menu(short menu_id, short item) {
 	}
 	switch (menu_id) {
 	case MENU_APPLE:
-		/* Item 1 = "About MacSurf..."; items 3+ are desk accessories. */
+		/* Item 1 = "About MacSurf...", item 2 = "Preferences..." (Cmd-,),
+		 * item 3 = separator; items 4+ are desk accessories. */
 		if (item == 1) {
 			extern void macos9_about_show(void);
 			macos9_about_show();
+		} else if (item == ITEM_APPLE_PREFS) {
+			macos9_prefs_show();
 		}
 		break;
 	case MENU_FILE:
@@ -405,11 +409,11 @@ static void macos9_handle_menu(short menu_id, short item) {
 		case ITEM_FILE_NEW: {
 			struct browser_window *bw = NULL;
 			nsurl *home = NULL;
-			if (nsurl_create(MACSURF_HOME_URL, &home) == NSERROR_OK) {
-				/* fixes161a  -  mark next setup as DOCUMENT class. */
+			if (nsurl_create(macos9_home_url(), &home) == NSERROR_OK) {
+				/* fixes161a - mark next setup as DOCUMENT class. */
 				extern void macos9_http_mark_next_as_document(void);
 				macos9_http_mark_next_as_document();
-				/* fixes366a  -  fresh phase clock for this navigation. */
+				/* fixes366a - fresh phase clock for this navigation. */
 				macsurf_profile_reset();
 				macsurf_profile_stamp("nav: File>New home");
 				browser_window_create(BW_CREATE_HISTORY | BW_CREATE_FOREGROUND,
@@ -418,7 +422,7 @@ static void macos9_handle_menu(short menu_id, short item) {
 			}
 		} break;
 		case ITEM_FILE_LOCATION: {
-			/* fixes109  -  Cmd+L focuses the URL bar and selects all so
+			/* fixes109 - Cmd+L focuses the URL bar and selects all so
 			 * the next keystroke replaces the existing URL. Was a
 			 * dead menu entry before this fix (menu accepted Cmd+L
 			 * via the "/L" suffix but no handler ran, so the user
@@ -436,7 +440,7 @@ static void macos9_handle_menu(short menu_id, short item) {
 		} break;
 		case ITEM_FILE_CLOSE:
 			/* fixes641 (#189): Cmd-W / File>Close closes ONLY the front
-			 * window (was a dead menu item  -  no case existed). Same
+			 * window (was a dead menu item - no case existed). Same
 			 * per-window teardown as the go-away box. */
 			front = FrontWindow();
 			gw = front ? macos9_find_window(front) : NULL;
@@ -480,7 +484,7 @@ static void macos9_handle_menu(short menu_id, short item) {
 		if (!gw) break;
 		switch (item) {
 		case ITEM_VIEW_SOURCE: {
-			/* fixes330 (#96)  -  open view-source: URL in a new
+			/* fixes330 (#96) - open view-source: URL in a new
 			 * window. The source fetcher path is wired separately
 			 * in the resource stub fetchers; for V1 we open a new
 			 * tab with view-source: prefix and a future resource
@@ -490,14 +494,14 @@ static void macos9_handle_menu(short menu_id, short item) {
 			macos9_view_source_for_window(gw);
 		} break;
 		case ITEM_VIEW_FIND: {
-			/* fixes330 (#45)  -  find-in-page via prompt for now.
+			/* fixes330 (#45) - find-in-page via prompt for now.
 			 * Future: real Carbon dialog with search controls. */
 			extern void macos9_find_in_page(struct gui_window *g);
 			macsurf_debug_log_writef(
 				"fixes352c ITEM_VIEW_FIND: gw=%p", (void *)gw);
 			macos9_find_in_page(gw);
 		} break;
-		/* fixes883  -  same helper as the Cmd -/+/0 keystrokes. */
+		/* fixes883 - same helper as the Cmd -/+/0 keystrokes. */
 		case ITEM_VIEW_ZOOM_IN:
 			macos9_zoom_apply(gw, 0.1, 0);
 			break;
@@ -508,7 +512,7 @@ static void macos9_handle_menu(short menu_id, short item) {
 			macos9_zoom_apply(gw, 1.0, 1);
 			break;
 		case ITEM_VIEW_DOWNLOADS:
-			/* fixes883  -  the manager window was previously
+			/* fixes883 - the manager window was previously
 			 * reachable only by starting a download. */
 			macos9_download_mgr_show();
 			break;
@@ -521,7 +525,7 @@ static void macos9_handle_menu(short menu_id, short item) {
 		front = FrontWindow();
 		gw = front ? macos9_find_window(front) : NULL;
 		if (gw == NULL) break;
-		/* fixes645 (#48)  -  item 1 adds the current page; items >= 3 are
+		/* fixes645 (#48) - item 1 adds the current page; items >= 3 are
 		 * saved bookmarks (item 2 is the separator, never selectable) and
 		 * navigate the front window to their URL. */
 		if (item == ITEM_BMK_ADD) {
@@ -534,7 +538,7 @@ static void macos9_handle_menu(short menu_id, short item) {
 		}
 		break;
 	case MENU_HISTORY:
-		/* fixes694/698 (#47)  -  item 1 clears history; items >= 3 are
+		/* fixes694/698 (#47) - item 1 clears history; items >= 3 are
 		 * recent-visit entries (item 2 is the separator, never selectable)
 		 * and navigate the front window. Menu refreshed on menu-bar click. */
 		front = FrontWindow();
@@ -551,7 +555,7 @@ static void macos9_handle_menu(short menu_id, short item) {
 		}
 		break;
 	case MENU_EDIT:
-		/* fixes376  -  the Edit menu was dead (items appended, no
+		/* fixes376 - the Edit menu was dead (items appended, no
 		 * dispatcher). Cmd-X/C/V reach here via MenuKey too. If the URL
 		 * field has focus, operate on its TextEdit; otherwise deliver
 		 * the NetSurf NS_KEY_* edit code to the page so in-page form
@@ -582,7 +586,7 @@ static void macos9_handle_menu(short menu_id, short item) {
 			case ITEM_EDIT_CUT:   code = 24; break; /* NS_KEY_CUT_SELECTION  */
 			case ITEM_EDIT_COPY:  code = 3;  break; /* NS_KEY_COPY_SELECTION */
 			case ITEM_EDIT_PASTE: code = 22; break; /* NS_KEY_PASTE          */
-			case ITEM_EDIT_SELECT_ALL: code = 1; break; /* NS_KEY_SELECT_ALL  -  fixes743 */
+			case ITEM_EDIT_SELECT_ALL: code = 1; break; /* NS_KEY_SELECT_ALL - fixes743 */
 			default:              code = 0;  break; /* Undo: no core key     */
 			}
 			if (code != 0) {
@@ -618,7 +622,7 @@ static void macos9_erase_content_base(const Rect *r)
 	RGBBackColor(&sv_bk);
 }
 
-/* fixes709  -  non-static so the modal manager windows (macos9_chrome_extras.c)
+/* fixes709 - non-static so the modal manager windows (macos9_chrome_extras.c)
  * can repaint background browser windows exposed while they're dragged. */
 void macos9_handle_update(const EventRecord *event) {
 #ifdef __MACOS9__
@@ -638,11 +642,11 @@ void macos9_handle_update(const EventRecord *event) {
 	if (macos9_download_mgr_is(win)) { macos9_download_mgr_draw(); return; }
 	if (!gw || macos9_quitting) return;
 	SetPortWindowPort(win); BeginUpdate(win);
-	/* fixes77f - offscreen GWorld V2.
+	/* fixes77f -- offscreen GWorld V2.
 	 *
 	 * Architecture (correcting fixes77c's failure mode):
 	 *   1. BeginUpdate has already set the window port's visRgn to the
-	 *      update region. Capture its bounding box - this is the dirty
+	 *      update region. Capture its bounding box -- this is the dirty
 	 *      area in window coords.
 	 *   2. Allocate / reuse a GWorld matching content_rect's size.
 	 *   3. SetGWorld + SetOrigin(content_rect.left, content_rect.top) so
@@ -651,7 +655,7 @@ void macos9_handle_update(const EventRecord *event) {
 	 *      (content_rect.left, content_rect.top).
 	 *   4. NO SetClip. plotters.c manages QD clip exclusively via its
 	 *      plot_clip callback. Calling SetClip here corrupts plotters.c's
-	 *      clip-tracking state machine - that was fixes77c's bug.
+	 *      clip-tracking state machine -- that was fixes77c's bug.
 	 *   5. EraseRect the dirty bbox in window coords. After SetOrigin,
 	 *      QD subtracts the origin to find pixel coords, so the erased
 	 *      pixels line up 1:1 with the pixels plotters will overwrite.
@@ -755,8 +759,8 @@ void macos9_handle_update(const EventRecord *event) {
 		 * and free one mid-walk. */
 		{ extern int macos9_op_depth; macos9_op_depth++; }
 		{
-			/* fixes640  -  accumulate paint CPU (full box-tree redraw). */
-			/* fixes759 (#212) DIAGNOSTIC  -  time this paint and count boxes
+			/* fixes640 - accumulate paint CPU (full box-tree redraw). */
+			/* fixes759 (#212) DIAGNOSTIC - time this paint and count boxes
 			 * walked. RECON KEY only measured key_press; the real per-keystroke
 			 * cost on a heavy page is THIS full-tree redraw fired on the
 			 * update event. clip = dirty rect (small when only a textarea line
@@ -803,7 +807,7 @@ void macos9_handle_update(const EventRecord *event) {
 			/* fixes825 (#212/#239): blit only the DIRTY rect, not the
 			 * whole viewport. The old code passed off_bounds (the entire
 			 * content_rect) as src+dst and relied on the dst visRgn to
-			 * clip - but classic-QD CopyBits sets up its blit loop over
+			 * clip -- but classic-QD CopyBits sets up its blit loop over
 			 * the RECT it's handed, so a full-viewport rect costs a
 			 * full-viewport blit (~20ms measured per keystroke via WORK
 			 * keylat) even when a single form field changed. The GWorld's
@@ -830,7 +834,7 @@ void macos9_handle_update(const EventRecord *event) {
 			if (gwpm != NULL) UnlockPixels(gwpm);
 			gworld_active = (Boolean)0;
 		}
-		/* fixes297h / fixes298  -  only paint chrome regions that are
+		/* fixes297h / fixes298 - only paint chrome regions that are
 		 * actually dirty.  Top chrome = toolbar+URL bar+buttons.
 		 * Bottom chrome = status bar.  Gradient bg paints first so
 		 * the URL bar and button icons sit on top of it. */
@@ -900,8 +904,8 @@ void macos9_handle_update(const EventRecord *event) {
 		}
 	}
 	EndUpdate(win);
-	macos9_urlsug_draw(gw);   /* fixes763  -  redraw dropdown atop fresh content */
-	/* fixes738  -  viewport-gated image loading. After the content is
+	macos9_urlsug_draw(gw);   /* fixes763 - redraw dropdown atop fresh content */
+	/* fixes738 - viewport-gated image loading. After the content is
 	 * composited and the box tree is stable, fetch any deferred images now
 	 * within (viewport + margin) and drop dead queue entries; off-screen
 	 * images stay queued until a later scroll/paint. Runs only when
@@ -921,8 +925,9 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 	WindowRef win;
 	short part = FindWindow(event->where, &win);
 	struct gui_window *gw;
+	macsurf_debug_log_writef("LIFE MOUSE part=%d win=%p", (int)part, (void *)win);
 	/* fixes645 (#199): route clicks on the modeless download-manager
-	 * window (drag / close / select)  -  it is not a gui_window. */
+	 * window (drag / close / select) - it is not a gui_window. */
 	if (macos9_download_mgr_is(win)) {
 		macos9_download_mgr_click(part, event->where);
 		return;
@@ -930,7 +935,7 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 	switch (part) {
 		case inMenuBar: {
 			long sel;
-			/* fixes694 (#47)  -  refresh the History menu from urldb just
+			/* fixes694 (#47) - refresh the History menu from urldb just
 			 * before the user picks from it, so it reflects the latest
 			 * visits. Cheap: a bounded top-N snapshot walk. */
 			macos9_history_menu_rebuild();
@@ -1005,7 +1010,7 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 						 * saved, so each cycle shifted the window and the
 						 * fill math looked wrong. SetWindowBounds sets the
 						 * content region to an exact global Rect in one
-						 * call  -  no move/size ambiguity. */
+						 * call - no move/size ambiguity. */
 						Rect content;
 						BitMap qd;
 						short mbar;
@@ -1050,9 +1055,10 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 					short cpart;
 					gw = macos9_find_window(win);
 					if (gw) {
+						macsurf_debug_log_writef("LIFE GWOK p=%d,%d content=%d,%d,%d,%d url=%d,%d,%d,%d", (int)p.h, (int)p.v, (int)gw->content_rect.left, (int)gw->content_rect.top, (int)gw->content_rect.right, (int)gw->content_rect.bottom, (int)gw->url_rect.left, (int)gw->url_rect.top, (int)gw->url_rect.right, (int)gw->url_rect.bottom);
 						SetPortWindowPort(win);
 						GlobalToLocal(&p);
-						/* fixes298b  -  user-pane buttons aren't visible to
+						/* fixes298b - user-pane buttons aren't visible to
 						 * FindControl (the default user-pane hit-test
 						 * returns kControlNoPart, and Carbon interprets
 						 * that as "click not in any control" → returns
@@ -1090,12 +1096,14 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 								cpart = FindControl(p, win, &ctrl);
 							}
 						}
+						macsurf_debug_log_writef("LIFE CTRL cpart=%d ctrl=%p vscr=%p hscr=%p", (int)cpart, (void *)ctrl, (void *)(gw->vscroll), (void *)(gw->hscroll));
+						macsurf_debug_log_writef("LIFE BWCHK bw=%p inCR=%d inUR=%d", (void *)(gw->bw), (int)PtInRect(p, &gw->content_rect), (int)PtInRect(p, &gw->url_rect));
 						if (cpart != 0 && ctrl != NULL) {
 							if (ctrl == gw->vscroll || ctrl == gw->hscroll) {
 								macos9_window_handle_scrollbar_click(gw, ctrl, cpart, &p);
 							}
 						} else if (ctrl == NULL && macos9_urlsug_click(gw, p)) {
-							/* fixes763  -  a suggestion row was clicked + navigated */
+							/* fixes763 - a suggestion row was clicked + navigated */
 						} else if (ctrl == NULL && PtInRect(p, &gw->url_rect)) {
 							macos9_urlsug_hide(gw);   /* fixes763 dismiss stale suggestions */
 							macos9_window_te_activate_url(gw);
@@ -1103,7 +1111,7 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 						} else if (ctrl == NULL && PtInRect(p, &gw->content_rect) && gw->bw) {
 							/* fixes763: dropdown is hidden by the
 							 * macos9_window_te_deactivate_url() call below. */
-							/* Click in content area  -  dispatch to NetSurf so
+							/* Click in content area - dispatch to NetSurf so
 							 * links navigate, forms submit, etc.  Coordinates
 							 * are translated from window-local to NetSurf
 							 * content space (= local - content origin + scroll). */
@@ -1115,6 +1123,7 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 							Point curp;
 							unsigned long last_draw_tick = 0; /* fixes747 */
 							unsigned long last_scroll_tick = 0; /* fixes749 #216 */
+							macsurf_debug_log_writef("LIFE INCONTENT bw=%p", (void *)(gw->bw));
 							macos9_window_te_deactivate_url(gw);
 							if (event->modifiers & shiftKey)
 								mods |= BROWSER_MOUSE_MOD_1;
@@ -1166,7 +1175,7 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 									browser_window_mouse_track(gw->bw,
 										BROWSER_MOUSE_DRAG_ON | BROWSER_MOUSE_HOLDING_1 | mods,
 										cx_ns, cy_ns);
-									/* fixes747  -  LIVE selection feedback. mouse_track
+									/* fixes747 - LIVE selection feedback. mouse_track
 									 * invalidates the changed selection rows, but the
 									 * StillDown loop blocks the event loop so nothing
 									 * repaints until release (selection felt frozen /
@@ -1209,14 +1218,14 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 #endif
 }
 
-/* fixes886  -  definition; the forward declaration is up with the other
+/* fixes886 - definition; the forward declaration is up with the other
  * prototypes, because macos9_handle_menu (far above) calls this.
  *
- * fixes883  -  ONE zoom implementation, shared by the Cmd -/+/0 keystrokes and
+ * fixes883 - ONE zoom implementation, shared by the Cmd -/+/0 keystrokes and
  * the new View menu items, so the two paths cannot drift apart.
  *
  * NetSurf's scale sets the layout viewport to (window / scale), so zooming OUT
- * lays the page out at a WIDER effective width - the desktop layout - then
+ * lays the page out at a WIDER effective width -- the desktop layout -- then
  * renders it scaled down to fit the physical window. On a 1024x768 Mac that
  * both shrinks-to-fit and takes the wide layout path instead of the cramped
  * narrow-column one (fixes621). */
@@ -1239,7 +1248,7 @@ void macos9_handle_key_down(const EventRecord *event) {
 		long sel;
 		/* fixes621: Cmd -/+/0 page zoom. NetSurf's scale sets the
 		 * layout viewport to (window / scale), so zooming OUT lays the
-		 * page out at a WIDER effective width - the desktop layout --
+		 * page out at a WIDER effective width -- the desktop layout --
 		 * then renders it scaled down to fit the physical window. On a
 		 * 1024x768 Mac this both shrinks-to-fit and takes the wide
 		 * layout path instead of the cramped narrow-column one.
@@ -1247,7 +1256,7 @@ void macos9_handle_key_down(const EventRecord *event) {
 		if (gw != NULL && gw->bw != NULL &&
 		    (ch == '-' || ch == '_' || ch == '=' || ch == '+' ||
 		     ch == '0')) {
-			/* fixes883  -  same helper the View > Zoom items call.
+			/* fixes883 - same helper the View > Zoom items call.
 			 * Note this intercepts BEFORE MenuKey below, so the
 			 * menu items' Cmd shortcuts land here rather than
 			 * dispatching through the menu; identical result, and
@@ -1285,7 +1294,7 @@ void macos9_handle_key_down(const EventRecord *event) {
 			int did_ac = 0;
 			SetPortWindowPort(gw->window);
 			TEKey(ch, gw->url_te);
-			/* fixes762  -  inline history autocomplete on FORWARD typing only
+			/* fixes762 - inline history autocomplete on FORWARD typing only
 			 * (skip backspace/delete/control so editing isn't fought). When a
 			 * completion is inserted it shows the URL start with the tail
 			 * selected, so don't scroll the caret (end) into view. */
@@ -1394,7 +1403,7 @@ void macos9_poll(void) {
 	EventRecord ev;
 	/* fixes937 (OS X tier 1b): one-shot proof that the event loop was
 	 * actually REACHED. Everything between InitOT and here is otherwise
-	 * invisible in a shipped build - the per-milestone MS_LOGs are now
+	 * invisible in a shipped build -- the per-milestone MS_LOGs are now
 	 * "BOOT " prefixed and whitelisted, but this is the one that separates
 	 * "died during startup" from "started, then died in the loop". */
 	{
@@ -1416,24 +1425,24 @@ void macos9_poll(void) {
 		if (hb_now - hb_last > 120) {
 			hb_last = hb_now;
 			macsurf_debug_log_writef("evloop: hb tick=%ld", (long)hb_now);
-			/* fixes953  -  the live OT snapshot that used to run here is retired.
+			/* fixes953 - the live OT snapshot that used to run here is retired.
 			 * It walked all 64 fetch slots every ~2s to catch an OS X hang that
 			 * is now fixed, and its output no longer passes the crash-only log
 			 * gate anyway. macos9_https_recon_ot_tick() is left in the fetcher
 			 * for the next investigation; nothing calls it. */
 		}
 	}
-	/* fixes234a  -  revert sleep=0 (fixes234). On Carbon CFM, sleep=0 in
+	/* fixes234a - revert sleep=0 (fixes234). On Carbon CFM, sleep=0 in
 	 * WaitNextEvent yields effectively zero quantum to the OS scheduler.
 	 * OT's notifier callbacks (which set nf_data_pending) starve, so
 	 * even though packets arrive in the network buffer, our pump can't
 	 * see them. Captured diag: pumps=570737 ot_recv_calls=553581
-	 * nodata=553495 (99.98% no-data)  -  pure busy-spin. Going back to
+	 * nodata=553495 (99.98% no-data) - pure busy-spin. Going back to
 	 * sleep=1 gives 60 Hz polling, plenty for cooperative-MT delivery
 	 * cadence. The real wins from fixes234 (READ_CHUNK=8192,
 	 * PUMP_STEPS=32) stay. */
 	if (WaitNextEvent(MACOS9_EVENT_MASK, &ev, 1, NULL)) {
-		/* macEntropy host seam: the whole EventRecord is jittery - ev.where
+		/* macEntropy host seam: the whole EventRecord is jittery -- ev.where
 		 * (mouse location), ev.when (event tick, i.e. key-press latency),
 		 * ev.what, ev.message. Fold it into the pool every real event. */
 		OSTLS_StirEntropy(&ev, sizeof ev);
@@ -1456,12 +1465,12 @@ void macos9_poll(void) {
 		 * running every loop iteration. */
 		{ macos9_op_depth++; fetch_pump(); macos9_op_depth--; }
 		macos9_windows_te_idle(); macos9_windows_process_deferred();
-		/* fixes725  -  nav-button hover highlight: track the pointer over the
+		/* fixes725 - nav-button hover highlight: track the pointer over the
 		 * front window's toolbar (cheap; only repaints on a hover change). */
 		{ WindowRef hfw = FrontWindow();
 		  struct gui_window *hfg = hfw ? macos9_find_window(hfw) : NULL;
 		  if (hfg != NULL) macos9_window_update_hover(hfg); }
-		/* fixes640  -  emit the PERFACC phase summary ONCE, at the real
+		/* fixes640 - emit the PERFACC phase summary ONCE, at the real
 		 * load-complete edge (browser_window_stop_available true->false),
 		 * so the post-first-paint reflow/settle passes are included (they
 		 * are the whole point of measuring). first-paint would emit too
@@ -1486,7 +1495,7 @@ void macos9_poll(void) {
 		}
 		macos9_poll_mouse_hover();
 		{ macos9_animation_tick(); }
-		/* fixes321 (#103)  -  drive setTimeout / setInterval. */
+		/* fixes321 (#103) - drive setTimeout / setInterval. */
 #ifdef WITH_QUICKJS
 		{ macsurf_qjs_pump_all(); }
 #endif
@@ -1500,7 +1509,7 @@ void macos9_poll(void) {
 }
 
 /*
- * macos9_poll_mouse_hover - poll mouse position once per event-loop
+ * macos9_poll_mouse_hover -- poll mouse position once per event-loop
  * pass and dispatch HOVER to NetSurf if the cursor sits inside the
  * front window's content rect. Lets NetSurf's status-bar / link-
  * highlight code update without us having to install a Carbon
@@ -1533,7 +1542,7 @@ void macos9_poll_mouse_hover(void) {
 	SetPortWindowPort(win);
 	GetMouse(&p);
 	if (p.h == last_pt.h && p.v == last_pt.v) return;
-	/* fixes239  -  debounce hover dispatch to ~10 Hz (6 ticks at 60 Hz).
+	/* fixes239 - debounce hover dispatch to ~10 Hz (6 ticks at 60 Hz).
 	 * browser_window_mouse_track walks the box tree to find the node
 	 * under the cursor on every call; firing per-pixel during mouse
 	 * movement burns 1000-box walks at 60 Hz. Node-boundary crossings
@@ -1590,7 +1599,7 @@ static void macos9_deferred_home_load(void *pw)
 	 * a non-zero delay, re-arm it after startup, or schedule it from anywhere
 	 * a window teardown could intervene, it MUST first validate bw against the
 	 * live window set (walk window_list / browser_window liveness) or be
-	 * cancelled on browser_window destroy  -  otherwise it becomes a UAF on a
+	 * cancelled on browser_window destroy - otherwise it becomes a UAF on a
 	 * freed browser_window. */
 
 	/* One free log line to confirm cause 1 in passing: compare this
@@ -1604,7 +1613,7 @@ static void macos9_deferred_home_load(void *pw)
 		MS_LOG("deferred home: bw NULL, skip");
 		return;
 	}
-	if (nsurl_create(MACSURF_HOME_URL, &home) != NSERROR_OK) {
+	if (nsurl_create(macos9_home_url(), &home) != NSERROR_OK) {
 		MS_LOG("deferred home: nsurl_create failed");
 		return;
 	}
@@ -1619,14 +1628,14 @@ static void macos9_deferred_home_load(void *pw)
 }
 
 
-/* fixes983 - claim the custom-icon bit on our own application file.
+/* fixes983 -- claim the custom-icon bit on our own application file.
  *
  * MacSurf ships one artifact with two icons: the classic ICN#/icl8 family for
  * Mac OS 9 and an 'icns' for Mac OS X (fixes982). Shipping the 'icns' was not
  * enough and the reason is this flag. Mac OS X only consults a file's
  * custom-icon resource (-16455) when kHasCustomIcon is set in its Finder
  * flags; with the flag clear it falls back to the BNDL icon family, which is
- * the OS 9 artwork - exactly what hardware showed ("it was reading the os9
+ * the OS 9 artwork -- exactly what hardware showed ("it was reading the os9
  * icon fine ... it's the same old one right now"). Measured before changing
  * anything: the built app read flags=0x0100, and setting 0x0400 by hand on
  * that same binary produced the OS X icon immediately.
@@ -1640,13 +1649,13 @@ static void macos9_deferred_home_load(void *pw)
  *
  * Write-once: returns immediately if the bit is already set, so this touches
  * the file on the first launch after an install and never again. Silent on
- * every failure - a read-only volume or a locked file simply means the icon
+ * every failure -- a read-only volume or a locked file simply means the icon
  * stays as it was, which is cosmetic and must never be a launch failure.
  *
  * Safe on Mac OS 9 ONLY because fixes983 also emits the CLASSIC icon family
  * at -16455 alongside the 'icns'. With the flag set and no classic family
  * there, OS 9's Finder would look for a custom icon, find nothing it
- * understands, and draw a generic one - trading the OS X icon for a
+ * understands, and draw a generic one -- trading the OS X icon for a
  * regression on the platform that was already right.
  */
 #ifndef kHasCustomIcon
@@ -1675,12 +1684,12 @@ static void macsurf_claim_custom_icon(void)
 		return;
 	}
 	if ((fi.fdFlags & kHasCustomIcon) != 0) {
-		return;   /* already claimed - nothing to write */
+		return;   /* already claimed -- nothing to write */
 	}
 	fi.fdFlags |= kHasCustomIcon;
 	err = FSpSetFInfo(&appSpec, &fi);
 	/* %d only: macsurf_debug_log_writef's hand-rolled formatter supports
-	 * %d/%ld/%p/%s/%% and nothing else - a %X here would print garbage. */
+	 * %d/%ld/%p/%s/%% and nothing else -- a %X here would print garbage. */
 	macsurf_debug_log_writef(
 		"LIFE icon custom-icon claimed err=%d flags=%d",
 		(int)err, (int)fi.fdFlags);
@@ -1696,7 +1705,7 @@ int main(void) {
 	macsurf_tb_calibrate();
 	macsurf_debug_log_init();
 	/* fixes936 (OS X tier 1): settle OS 9 vs Mac OS X BEFORE anything consumes
-	 * the answer. macsurf_heap_bounds_init() below is the FIRST consumer - on
+	 * the answer. macsurf_heap_bounds_init() below is the FIRST consumer -- on
 	 * OS X the Process Manager partition window it reads is fiction and must
 	 * not be allowed to narrow the pointer guards (that would re-create the
 	 * #207 blank page on purpose). Emits the one-shot "RECON OS" line, so it
@@ -1705,7 +1714,7 @@ int main(void) {
 	 * lives inside the module, so the Linux syntax check sees a no-op. */
 	macsurf_osver_init();
 	/* fixes719 (#207): capture the REAL application-partition pointer window
-	 * from the Process Manager NOW - after the log is up (so RECON HEAP
+	 * from the Process Manager NOW -- after the log is up (so RECON HEAP
 	 * BOUNDS is recorded) and before ANY string interning / URL parse /
 	 * content fetch (netsurf_init and later). Every hardcoded
 	 * 0x01000000/0x20000000/0x28000000 pointer-range guard tests against
@@ -1713,14 +1722,14 @@ int main(void) {
 	 * higher-RAM Mac) no longer makes those guards reject valid heap
 	 * pointers -> the blank-screen bug. Must stay before netsurf_init. */
 	macsurf_heap_bounds_init();
-	/* fixes366a - start the profile clock so initial-page-load timing
+	/* fixes366a -- start the profile clock so initial-page-load timing
 	 * has a t0. macsurf_profile_stamp(label) anywhere downstream will
 	 * produce a meaningful delta. The nav-time reset
 	 * (macos9_window_navigate) refreshes t0 on each URL submit. */
 	macsurf_profile_reset();
 	MS_LOG("== MacSurf start ==");
-	/* fixes711 (#207): earliest possible RECON snapshot - VM on/off +
-	 * heap/temp/purge - flushed immediately so even an early blank leaves
+	/* fixes711 (#207): earliest possible RECON snapshot -- VM on/off +
+	 * heap/temp/purge -- flushed immediately so even an early blank leaves
 	 * the baseline (and the VM state that labels this whole run) on disk. */
 	macsurf_recon_mem("boot");
 	macsurf_profile_stamp("main: log init done");
@@ -1752,7 +1761,7 @@ int main(void) {
 	 * (deprecated at 10.4, not removed), so this line is the first thing that
 	 * tells us whether the networking stack even came up on the 10.3 test
 	 * machine. NOTE: this prints on OS 9 too (it is not conditioned on
-	 * osx=) - that is expected on both platforms, not an anomaly. Shares the
+	 * osx=) -- that is expected on both platforms, not an anomaly. Shares the
 	 * "RECON OT" whitelist entry with the fetcher emitters. */
 	macsurf_debug_log_writef("RECON OT init ok=%d ctx=%p osx=%d",
 		(macos9_ot_context != NULL) ? 1 : 0,
@@ -1762,7 +1771,7 @@ int main(void) {
 	 * first HTTPS fetch after a cold boot isn't drawing on a thin pool. */
 	OSTLS_LoadSeed();
 	MS_LOG("BOOT macEntropy: seed loaded");
-	/* fixes413 - prove on-device whether the macTLS SHA-384 core (fixes411)
+	/* fixes413 -- prove on-device whether the macTLS SHA-384 core (fixes411)
 	 * is live and correct. If this logs FAIL, every Sectigo/SHA-384 cert
 	 * chain will be rejected; if it never logs at all, the macTLS library
 	 * in this binary is not the one carrying fixes411. */
@@ -1798,7 +1807,7 @@ int main(void) {
 		}
 	}
 
-	/* fixes51 - font quality upgrades, system-wide.
+	/* fixes51 -- font quality upgrades, system-wide.
 	 *
 	 * SetOutlinePreferred(true) tells QuickDraw to render text from
 	 *   TrueType outlines instead of scaling a bitmap when the
@@ -1809,7 +1818,7 @@ int main(void) {
 	 *   CarbonLib. Below 8 pt the smoothing makes small UI text
 	 *   blurry, hence the floor.
 	 *
-	 * fixes51a - SetFractEnable removed. Fractional advances make
+	 * fixes51a -- SetFractEnable removed. Fractional advances make
 	 *   DrawText consume sub-pixel widths while TextWidth (used by
 	 *   the layout-side font_width) still returns integer pixels.
 	 *   The mismatch under-allocates horizontal space per line,
@@ -1822,11 +1831,11 @@ int main(void) {
 		SetOutlinePreferred(true);
 		/* fixes68: AA floor raised from 8 to 12. AA at body sizes (8-10pt)
 		 * produces sub-pixel fuzz because there aren't enough pixels per
-		 * glyph for the antialiasing to look clean  -  net effect is blurry
+		 * glyph for the antialiasing to look clean - net effect is blurry
 		 * body text. Floor at 12 keeps body bitmap-crisp; larger sizes
 		 * (headings, page titles) still get smooth AA edges. Dial up to
 		 * 14 or 16 if body still looks fuzzy on the target hardware. */
-		/* fixes952  -  antialiasing is enabled on BOTH platforms again.
+		/* fixes952 - antialiasing is enabled on BOTH platforms again.
 		 * fixes939 skipped this on OS X on my hypothesis that classic QD
 		 * antialiasing was causing the TESetText crash. That was wrong: the
 		 * real cause was TARGET_API_MAC_CARBON never being set (fixes951),
@@ -1839,7 +1848,7 @@ int main(void) {
 
 	macos9_init_menus();
 	MS_LOG("BOOT menus installed");
-	/* fixes294  -  decode the baked-in default favicon PNG into a GWorld
+	/* fixes294 - decode the baked-in default favicon PNG into a GWorld
 	 * that lives for the life of the process.  Must happen AFTER
 	 * EnterMovies (which initialises QT but we use lodepng for this) and
 	 * AFTER menus install (purely conventional ordering, no real
@@ -1847,7 +1856,7 @@ int main(void) {
 	 * load failed. */
 	macos9_window_load_default_favicon();
 	MS_LOG("BOOT default favicon loaded");
-	/* fixes297  -  toolbar button icons.  Best-effort; any failure
+	/* fixes297 - toolbar button icons.  Best-effort; any failure
 	 * leaves the corresponding button text-only. */
 	macos9_window_load_toolbar_icons();
 	MS_LOG("BOOT toolbar icons loaded");
@@ -1869,72 +1878,17 @@ int main(void) {
 	}
 	netsurf_register(&macos9_table);
 	MS_LOG("BOOT netsurf_register done");
-	nsoption_init(NULL, NULL, NULL);
+	/* The boot baseline (formerly hardcoded below) now lives in the
+	 * DEFAULT table via macos9_prefs_set_defaults, so nsoption_write
+	 * persists only user deltas (a choice equal to the factory
+	 * default is still written and survives relaunch). Then the
+	 * "MacSurf Preferences" file (if any) loads OVER the baseline -
+	 * per-key user choices win. Both happen BEFORE netsurf_init so
+	 * fetchers/llcache see user values from the first fetch. */
+	nsoption_init(macos9_prefs_set_defaults, NULL, NULL);
 	MS_LOG("BOOT nsoption_init done");
-	/* fixes78: image content handler (QuickTime Graphics Importers) is
-	 * now registered in macos9_image.c. Enable image fetches so <img>
-	 * elements actually trigger network fetches and decode through the
-	 * QT importer pipeline. */
-	nsoption_set_bool(foreground_images, true);
-	nsoption_set_bool(background_images, true);
-	/* Enable author CSS so inline <style>/<link> rules apply. */
-	nsoption_set_bool(author_level_css, true);
-	/* fixes319 (#115-#121)  -  turn on inline <script> execution. Defaults
-	 * to false in NetSurf core; without this, the JS bridge that
-	 * fixes316 wired up is dead-code from NetSurf's perspective because
-	 * html_script_exec returns early without ever calling js_exec. */
-	nsoption_set_bool(enable_javascript, true);
-	/* fixes1115b (#265) - enable <select> dropdown menus. The core
-	 * form-control <select> handler (textarea.c / forms.c form_select_*
-	 * callbacks) is gated on this option; without it, <select> elements
-	 * render as empty rectangles and dropdowns never open. The Amiga and
-	 * framebuffer frontends set this to true (gui.c:1056, gui.c:2238
-	 * respectively); the macos9 frontend never did. One line. */
-	nsoption_set_bool(core_select_menu, true);
-	/* fixes91: raise concurrent-fetch caps. NetSurf defaults are
-	 * max_fetchers=24 / max_fetchers_per_host=5. With our HTTP fetcher's
-	 * MFS_INIT-at-setup state-machine, slots stay non-IDLE past the
-	 * point NetSurf's fetch_ring drains, so by the third user navigation
-	 * fetch_ring saturates and `fetch_dispatch_jobs` refuses to call
-	 * ops.start on new fetches. The HTTP fetcher fires anyway (poll
-	 * doesn't gate on start) but the stub fetcher needs ctx->started
-	 * and so hangs. Raise the caps so the gate never bites; the proper
-	 * fix (start-gated mfs_open) lives in macos9_http_fetcher.c. */
-	nsoption_set_int(max_fetchers, 128);
-	/* fixes232  -  drop per-host cap from 16 to 4 so the HTTPS keep-alive
-	 * pool (fixes231) actually catches reuses. Previously 16 parallel
-	 * fetches per host meant every cold-page-load issued 16+ cold
-	 * handshakes before any could finish and seed the pool; subsequent
-	 * fetches in the same load missed the pool because everything was
-	 * already in flight. With 4 parallel max, only the first 4 are cold;
-	 * fetches 5-30 dequeue as 1-4 complete and pull warm connections
-	 * out of the pool. Net win: ~25 saved TLS handshakes per cold page
-	 * load (~18s of BearSSL ECDHE on a 233 MHz G3). */
-	nsoption_set_int(max_fetchers_per_host, 4);
-	/* fixes106  -  capped memory_cache_size at 2 MB on a 16 MB partition
-	 * to keep the live-page working set out of cache contention.
-	 *
-	 * fixes160d  -  partition is now 194 MB by CW8 setting. Bump cache
-	 * to 32 MB. Modern retro setups (SSDs, Ethernet, real bandwidth)
-	 * benefit hugely from a cache that holds the current page's full
-	 * sub-resource set plus several recent pages' worth, so back-button
-	 * is instant and intra-site navigation skips re-fetch of shared
-	 * CSS / images. Apple alone burns ~2 MB on stylesheets per page  - 
-	 * at 32 MB the cache holds Apple + 5-6 typical pages of history
-	 * with room left over for libcss/libdom working set. */
-	/* fixes430: 32MB -> 4MB (a 22MB forum index + 32MB stale llcache on top
-	 * of the live working set exhausted the heap).
-	 * fixes460-463: dropped to 0 while chasing an llcache-reentrancy crash and
-	 * the blank-page bug.
-	 * fixes731: RESTORE to 8MB. The blank page was root-caused to the
-	 * pointer-ceiling guards (#207 / fixes719), NOT the cache, and the
-	 * llcache reentrancy guards (fixes459/460, op_depth) are still in place  - 
-	 * so the reason it was zeroed no longer applies. With no cache, every
-	 * navigation (and every back-button) re-fetched AND re-did the ~1s TLS
-	 * handshake for shared CSS/JS/images; an 8MB cache lets intra-site nav and
-	 * back-button skip both. Kept conservative (not 32MB) to avoid the fixes430
-	 * heap-exhaustion on heavy forum indexes and to stay safe on 64MB Macs. */
-	nsoption_set_int(memory_cache_size, 32 * 1024 * 1024);
+	macos9_prefs_load();
+	MS_LOG("BOOT prefs file loaded");
 	MS_LOG("BOOT images enabled, author_css on, fetcher 128/16, mem cache 32MB");
 #ifdef __MACOS9__
 	macsurf_debug_log_writef("DIAG pre-netsurf_init: free=%ld maxblk=%ld",
@@ -1942,7 +1896,7 @@ int main(void) {
 #endif
 	netsurf_init(NULL);
 	MS_LOG("BOOT netsurf_init done");
-	/* fixes721b  -  MacSurf loads no Messages file, so core message tokens
+	/* fixes721b - MacSurf loads no Messages file, so core message tokens
 	 * render as the raw token (e.g. an <input type=file> showed a white box
 	 * reading "Form_Drop"). Register the handful of form-gadget labels core
 	 * actually paints/statuses so they read as English. */
@@ -1965,9 +1919,9 @@ int main(void) {
 #endif
 	/* fixes711 (#207): snapshot the heap just after core init, before the
 	 * first page. Compared against RECON MEM boot this shows how much
-	 * contiguity netsurf_init consumed - the pool libcss must draw from. */
+	 * contiguity netsurf_init consumed -- the pool libcss must draw from. */
 	macsurf_recon_mem("post-init");
-	/* fixes368 (#167)  -  restore a prior session's cookie jar (Facebook
+	/* fixes368 (#167) - restore a prior session's cookie jar (Facebook
 	 * login etc.) from disk now that urldb is up. Best-effort no-op on
 	 * first run. */
 	macos9_cookies_load();
@@ -2014,7 +1968,7 @@ int main(void) {
 	macsurf_debug_log_writef("DIAG post-window: free=%ld maxblk=%ld",
 		(long)FreeMem(), (long)MaxBlock());
 #endif
-	/* fixes247  -  font probes (fixes144a / fixes153) gated behind a
+	/* fixes247 - font probes (fixes144a / fixes153) gated behind a
 	 * startup flag, default off. They were extremely useful when
 	 * diagnosing fixes144b sub-AA glyph spacing and fixes153 gui_layout
 	 * vmetric work, but now run on every launch writing ~420 lines of
@@ -2030,13 +1984,13 @@ int main(void) {
 #endif
 	while (!macos9_done) macos9_poll();
 	MS_LOG("BOOT event loop exited");
-	/* fixes368 (#167)  -  persist the cookie jar BEFORE netsurf_exit tears
+	/* fixes368 (#167) - persist the cookie jar BEFORE netsurf_exit tears
 	 * urldb down, so this session's Facebook login survives the relaunch. */
 	macos9_cookies_save();
 	MS_LOG("BOOT cookies saved");
 	macos9_quitting = (bool)1;
 #ifdef WITH_QUICKJS
-	/* fixes717 (#207 log)  -  finalise the JS heap BEFORE netsurf_exit.
+	/* fixes717 (#207 log) - finalise the JS heap BEFORE netsurf_exit.
 	 * netsurf_exit releases the hlcache handles; running js_finalise AFTER
 	 * it made QuickJS teardown call hlcache_get_url on already-freed
 	 * handles (the "wild handle" spam at shutdown). Destroy the consumer
