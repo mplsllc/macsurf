@@ -45,7 +45,11 @@ static inline uint32_t css__to_parse_unit(css_unit u)
 	case CSS_UNIT_S:    return UNIT_S;
 	case CSS_UNIT_HZ:   return UNIT_HZ;
 	case CSS_UNIT_KHZ:  return UNIT_KHZ;
-	case CSS_UNIT_CALC: assert(0);
+	case CSS_UNIT_CALC: /* Fall through */
+	case CSS_UNIT_MIN:  /* Fall through */
+	case CSS_UNIT_MAX:  /* Fall through */
+	case CSS_UNIT_CLAMP:
+		assert(0);
 	}
 
 	return 0;

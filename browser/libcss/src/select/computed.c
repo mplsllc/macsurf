@@ -1099,7 +1099,10 @@ uint8_t css_computed_width_px(
 		break;
 	case CSS_WIDTH_SET:
 		switch (unit) {
-		case CSS_UNIT_CALC:
+		case CSS_UNIT_CALC: /* Fall through */
+		case CSS_UNIT_MIN:  /* Fall through */
+		case CSS_UNIT_MAX:  /* Fall through */
+		case CSS_UNIT_CLAMP:
 			if (css_calculator_calculate(
 					style->calc, unit_ctx,
 					available_px, value.calc,
@@ -1140,7 +1143,8 @@ uint8_t css_computed_width(const css_computed_style *style,
 	length_.value = 0;
 	ret = get_width(style, &length_, unit);
 	if (ret == CSS_WIDTH_SET) {
-		if (*unit == CSS_UNIT_CALC) {
+		if (*unit == CSS_UNIT_CALC || *unit == CSS_UNIT_MIN ||
+				*unit == CSS_UNIT_MAX || *unit == CSS_UNIT_CLAMP) {
 			return CSS_WIDTH_AUTO;
 		}
 		*length = length_.value;
@@ -1615,6 +1619,38 @@ css_error css__compute_absolute_values(const css_computed_style *parent,
 	size.status = get_font_size(style,
 			&size.data.length.value,
 			&size.data.length.unit);
+
+	/* fixes1166c: a calc()/min()/max()/clamp() font-size stores a SLOT
+	 * NUMBER (see the side-slot table), not a length -- resolve it to
+	 * an absolute CSS pixel value now, before
+	 * css_unit_compute_absolute_font_size treats size.data.length.value
+	 * as a real length (e.g. multiplying a child's em against it). This
+	 * style's OWN font-size is being made absolute right here, so the
+	 * expression can only reference the (already-absolute, per
+	 * css_computed_style_compose's precondition) parent/root font-size
+	 * via ref_length -- available percentages are not meaningful for
+	 * font-size and are treated as unresolvable, matching the calc()
+	 * font-size path everywhere else in this fork. */
+	if (size.status == CSS_FONT_SIZE_DIMENSION &&
+			(size.data.length.unit == CSS_UNIT_CALC ||
+			 size.data.length.unit == CSS_UNIT_MIN ||
+			 size.data.length.unit == CSS_UNIT_MAX ||
+			 size.data.length.unit == CSS_UNIT_CLAMP)) {
+		uint32_t slot = (uint32_t)size.data.length.value;
+		lwc_string *expr = NULL;
+		css_unit ru = CSS_UNIT_PX;
+		css_fixed rv = 0;
+
+		if (style->calc != NULL && slot < MACSURF_CALC_SLOT_COUNT &&
+				(expr = style->macsurf_calc_expr[slot]) != NULL &&
+				css_calculator_calculate(style->calc, unit_ctx,
+						-1, expr, style, &ru, &rv) == CSS_OK) {
+			size.data.length.value = rv;
+		} else {
+			size.data.length.value = unit_ctx->font_size_default;
+		}
+		size.data.length.unit = CSS_UNIT_PX;
+	}
 
 	error = css_unit_compute_absolute_font_size(ref_length,
 			unit_ctx->root_style,

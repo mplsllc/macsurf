@@ -150,7 +150,8 @@ static inline css_fixed css_unit__font_size_px(
 		const css_fixed font_size_default,
 		const css_fixed font_size_minimum,
 		const css_fixed viewport_height,
-		const css_fixed viewport_width)
+		const css_fixed viewport_width,
+		const css_unit_ctx *ctx)
 {
 	css_fixed font_length = 0;
 	css_unit font_unit = CSS_UNIT_PT;
@@ -160,6 +161,42 @@ static inline css_fixed css_unit__font_size_px(
 	}
 
 	get_font_size(style, &font_length, &font_unit);
+
+	if (font_unit == CSS_UNIT_CALC || font_unit == CSS_UNIT_MIN ||
+			font_unit == CSS_UNIT_MAX || font_unit == CSS_UNIT_CLAMP) {
+		/* fixes1166c: the length is the SLOT NUMBER of the
+		 * calc-family expression in the style's side table, same
+		 * as every other calc-capable length property (see
+		 * unit.c's CSS_UNIT_CALC case above). The calculator
+		 * already returns fully-resolved CSS pixels, so skip the
+		 * pt-conversion path below entirely. */
+		lwc_string *expr = NULL;
+		css_unit u = CSS_UNIT_PX;
+		css_fixed v = 0;
+		uint32_t slot = (uint32_t)font_length;
+
+		if (style->calc == NULL || ctx == NULL ||
+				slot >= MACSURF_CALC_SLOT_COUNT) {
+			return font_size_default;
+		}
+
+		expr = style->macsurf_calc_expr[slot];
+		if (expr == NULL) {
+			return font_size_default;
+		}
+
+		if (css_calculator_calculate(style->calc, ctx, -1,
+				expr, style, &u, &v) != CSS_OK) {
+			return font_size_default;
+		}
+		font_length = v;
+
+		if (font_length < font_size_minimum) {
+			font_length = font_size_minimum;
+		}
+
+		return font_length;
+	}
 
 	if (font_unit != CSS_UNIT_PX) {
 		font_length = css_unit__absolute_len2pt(style,
@@ -226,7 +263,8 @@ static inline css_fixed css_unit__px_per_unit(
 				font_size_default,
 				font_size_minimum,
 				viewport_height,
-				viewport_width);
+				viewport_width,
+				ctx);
 
 	case CSS_UNIT_EX:
 		if (measure != NULL) {
@@ -237,7 +275,8 @@ static inline css_fixed css_unit__px_per_unit(
 				font_size_default,
 				font_size_minimum,
 				viewport_height,
-				viewport_width), FLTTOFIX(0.6));
+				viewport_width,
+				ctx), FLTTOFIX(0.6));
 
 	case CSS_UNIT_CH:
 		if (measure != NULL) {
@@ -248,7 +287,8 @@ static inline css_fixed css_unit__px_per_unit(
 				font_size_default,
 				font_size_minimum,
 				viewport_height,
-				viewport_width), FLTTOFIX(0.4));
+				viewport_width,
+				ctx), FLTTOFIX(0.4));
 
 	case CSS_UNIT_PX:
 		return F_1;
@@ -277,7 +317,8 @@ static inline css_fixed css_unit__px_per_unit(
 				font_size_default,
 				font_size_minimum,
 				viewport_height,
-				viewport_width);
+				viewport_width,
+				ctx);
 
 	case CSS_UNIT_VH:
 		return FDIV(viewport_height, F_100);
@@ -285,13 +326,22 @@ static inline css_fixed css_unit__px_per_unit(
 	case CSS_UNIT_VW:
 		return FDIV(viewport_width, F_100);
 
-	case CSS_UNIT_CALC:
+	case CSS_UNIT_CALC: /* Fall through */
+	case CSS_UNIT_MIN:  /* Fall through */
+	case CSS_UNIT_MAX:  /* Fall through */
+	case CSS_UNIT_CLAMP:
 	{
 		/* fixes1159b: the length is the SLOT NUMBER of the calc
 		 * expression in the style's side table
 		 * (css_computed_style.macsurf_calc_expr), never a bit-cast
 		 * pointer -- css_fixed is 32 bits and cannot hold an
-		 * lwc_string pointer on 64-bit targets. */
+		 * lwc_string pointer on 64-bit targets.
+		 * fixes1166: min()/max()/clamp() resolve through the same
+		 * path -- the terminal bytecode operator inside the
+		 * expression (CALC_MIN/CALC_MAX/CALC_CLAMP) selects the
+		 * actual math in css_calculator_calculate; the CSS_UNIT_*
+		 * tag here only tells the computed-style accessors this
+		 * is a calc-family value. */
 		lwc_string *expr = NULL;
 		css_unit u = CSS_UNIT_PX;
 		css_fixed v = 0;
@@ -345,7 +395,8 @@ css_fixed css_unit_len2px_mq(
 			ctx,
 			ctx->pw);
 
-	if (unit == CSS_UNIT_CALC) {
+	if (unit == CSS_UNIT_CALC || unit == CSS_UNIT_MIN ||
+			unit == CSS_UNIT_MAX || unit == CSS_UNIT_CLAMP) {
 		/* px_per_unit holds the fully resolved value in CSS
 		 * pixels; it must not be multiplied by length again. */
 		return px_per_unit;
@@ -379,7 +430,8 @@ css_fixed css_unit_len2css_px(
 			ctx,
 			ctx->pw);
 
-	if (unit == CSS_UNIT_CALC) {
+	if (unit == CSS_UNIT_CALC || unit == CSS_UNIT_MIN ||
+			unit == CSS_UNIT_MAX || unit == CSS_UNIT_CLAMP) {
 		/* px_per_unit holds the fully resolved value in CSS
 		 * pixels; it must not be multiplied by length again. */
 		return px_per_unit;
@@ -413,7 +465,8 @@ css_fixed css_unit_len2device_px(
 			ctx,
 			ctx->pw);
 
-	if (unit == CSS_UNIT_CALC) {
+	if (unit == CSS_UNIT_CALC || unit == CSS_UNIT_MIN ||
+			unit == CSS_UNIT_MAX || unit == CSS_UNIT_CLAMP) {
 		/* px_per_unit holds the fully resolved value in CSS
 		 * pixels; it must not be multiplied by length again. */
 		return css_unit_css2device_px(px_per_unit, ctx->device_dpi);

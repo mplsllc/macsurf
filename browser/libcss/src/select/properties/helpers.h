@@ -206,4 +206,10 @@ static inline css_error css__copy_computed_content_item_array(
 	return CSS_OK;
 }
 
+/* fixes1166c: exposed so font_size.c (a separate TU) can store a calc
+ * expression in the same per-property side-slot table as the shared
+ * cascade helpers, and recover its calc/min/max/clamp unit tag. */
+uint8_t css__calc_slot_for_prop(uint32_t prop);
+css_unit css__calc_expr_unit(lwc_string *expr);
+
 #endif

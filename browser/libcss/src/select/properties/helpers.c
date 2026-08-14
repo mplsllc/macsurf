@@ -26,7 +26,7 @@
  * expression findable at resolve time (unit.c) without a pointer bit-cast.
  * 0xFF = property has no slot (never happens: only slot-mapped properties
  * carry CALC values, but degrade to 0px if it ever does). */
-static uint8_t css__calc_slot_for_prop(uint32_t prop)
+uint8_t css__calc_slot_for_prop(uint32_t prop)
 {
 	switch (prop) {
 	case CSS_PROP_BORDER_TOP_WIDTH:		return 0;
@@ -58,9 +58,46 @@ static uint8_t css__calc_slot_for_prop(uint32_t prop)
 	case CSS_PROP_PADDING_LEFT:		return 26;
 	case CSS_PROP_TEXT_INDENT:		return 27;
 	case CSS_PROP_ROW_GAP:			return 28;
+	case CSS_PROP_FONT_SIZE:		return 29;
 	default:				return 0xFF;
 	}
 }
+
+/**
+ * fixes1166: recover the computed-style unit for a calc-family
+ * expression.
+ *
+ * The expression bytecode (an interned lwc string) is executed linearly
+ * and ends with CALC_FINISH; the parser emits a terminal MIN/MAX/CLAMP
+ * operator for those functions, so the last opcode before the finish
+ * marker records which function produced the expression. Everything
+ * else is a plain calc().
+ *
+ * \param[in] expr  The interned expression bytecode string.
+ * \return the computed-style unit (CSS_UNIT_MIN/MAX/CLAMP/CALC).
+ */
+css_unit css__calc_expr_unit(lwc_string *expr)
+{
+	css_code_t *codeptr = (css_code_t *)(void *)lwc_string_data(expr);
+	css_code_t last = 0;
+
+	while (*codeptr != CALC_FINISH) {
+		last = *codeptr;
+		codeptr++;
+	}
+
+	switch (last) {
+	case CALC_MIN:
+		return CSS_UNIT_MIN;
+	case CALC_MAX:
+		return CSS_UNIT_MAX;
+	case CALC_CLAMP:
+		return CSS_UNIT_CLAMP;
+	default:
+		return CSS_UNIT_CALC;
+	}
+}
+
 css_error css__cascade_bg_border_color(uint32_t opv, css_style *style,
 		css_select_state *state,
 		css_error (*fun)(css_computed_style *, uint8_t, css_color))
@@ -291,7 +328,11 @@ css_error css__cascade_border_width(uint32_t opv, css_style *style,
 	if (is_calc == false) {
 		unit = css__to_css_unit(unit);
 	} else {
-		unit = CSS_UNIT_CALC;
+		/* fixes1166: sniff the terminal bytecode operator to tell
+		 * calc()/min()/max()/clamp() apart -- the slot always holds
+		 * a valid, just-stored expression when is_calc is true. */
+		unit = css__calc_expr_unit(
+				state->computed->macsurf_calc_expr[(uint8_t)length]);
 	}
 
 	if (css__outranks_existing(getOpcode(opv), isImportant(opv), state,
@@ -360,7 +401,11 @@ css_error css__cascade_length_auto(uint32_t opv, css_style *style,
 	if (is_calc == false) {
 		unit = css__to_css_unit(unit);
 	} else {
-		unit = CSS_UNIT_CALC;
+		/* fixes1166: sniff the terminal bytecode operator to tell
+		 * calc()/min()/max()/clamp() apart -- the slot always holds
+		 * a valid, just-stored expression when is_calc is true. */
+		unit = css__calc_expr_unit(
+				state->computed->macsurf_calc_expr[(uint8_t)length]);
 	}
 
 	if (css__outranks_existing(getOpcode(opv), isImportant(opv), state,
@@ -399,8 +444,10 @@ css_error css__cascade_length_auto_calc(uint32_t opv, css_style *style,
 			advance_bytecode(style, sizeof(unit)); /* TODO: Skip unit, not sure what to do */
 			snum = *((uint32_t *) style->bytecode);
 			advance_bytecode(style, sizeof(snum));
-			unit = CSS_UNIT_CALC;
 			css__stylesheet_string_get(style->sheet, snum, &length.calc);
+			/* fixes1166: sniff the terminal bytecode operator to
+			 * tell calc()/min()/max()/clamp() apart. */
+			unit = css__calc_expr_unit(length.calc);
 			break;
 		default:
 			assert(0 && "Invalid value");
@@ -474,7 +521,11 @@ css_error css__cascade_length_normal(uint32_t opv, css_style *style,
 	if (is_calc == false) {
 		unit = css__to_css_unit(unit);
 	} else {
-		unit = CSS_UNIT_CALC;
+		/* fixes1166: sniff the terminal bytecode operator to tell
+		 * calc()/min()/max()/clamp() apart -- the slot always holds
+		 * a valid, just-stored expression when is_calc is true. */
+		unit = css__calc_expr_unit(
+				state->computed->macsurf_calc_expr[(uint8_t)length]);
 	}
 
 	if (css__outranks_existing(getOpcode(opv), isImportant(opv), state,
@@ -543,7 +594,11 @@ css_error css__cascade_length_none(uint32_t opv, css_style *style,
 	if (is_calc == false) {
 		unit = css__to_css_unit(unit);
 	} else {
-		unit = CSS_UNIT_CALC;
+		/* fixes1166: sniff the terminal bytecode operator to tell
+		 * calc()/min()/max()/clamp() apart -- the slot always holds
+		 * a valid, just-stored expression when is_calc is true. */
+		unit = css__calc_expr_unit(
+				state->computed->macsurf_calc_expr[(uint8_t)length]);
 	}
 
 	if (css__outranks_existing(getOpcode(opv), isImportant(opv), state,
@@ -609,7 +664,11 @@ css_error css__cascade_length(uint32_t opv, css_style *style,
 	if (is_calc == false) {
 		unit = css__to_css_unit(unit);
 	} else {
-		unit = CSS_UNIT_CALC;
+		/* fixes1166: sniff the terminal bytecode operator to tell
+		 * calc()/min()/max()/clamp() apart -- the slot always holds
+		 * a valid, just-stored expression when is_calc is true. */
+		unit = css__calc_expr_unit(
+				state->computed->macsurf_calc_expr[(uint8_t)length]);
 	}
 
 	/** \todo lose fun != NULL once all properties have set routines */

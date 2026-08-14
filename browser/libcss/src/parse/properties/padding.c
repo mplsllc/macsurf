@@ -90,12 +90,13 @@ css_error css__parse_padding(css_language *c,
 			return CSS_INVALID;
 		}
 
-		if ((token->type == CSS_TOKEN_FUNCTION) && (lwc_string_caseless_isequal(token->idata, c->strings[CALC], &match) == lwc_error_ok && match)) {
-			/* fixes1159c: calc() side. The temporary style is
-			 * created and the expression parsed now; the real
-			 * property opcode is only known once side_count
-			 * settles, so the bytecode is re-emitted from
-			 * calc_side[] in the switch below. */
+		if ((token->type == CSS_TOKEN_FUNCTION) && (css__calc_function(c, token) != CSS_CALC_FUNC_NONE)) {
+			/* fixes1159c: calc()/min()/max()/clamp() side. The
+			 * temporary style is created and the expression
+			 * parsed now; the real property opcode is only known
+			 * once side_count settles, so the bytecode is
+			 * re-emitted from calc_side[] in the switch below. */
+			enum css_calc_func_e func = css__calc_function(c, token);
 			side_is_calc[side_count] = true;
 			parserutils_vector_iterate(vector, ctx);
 			error = css__stylesheet_style_create(c->sheet,
@@ -105,7 +106,7 @@ css_error css__parse_padding(css_language *c,
 						calc_side[side_count],
 						buildOPV(CSS_PROP_PADDING_TOP, 0,
 								PADDING_CALC),
-						UNIT_PX);
+						UNIT_PX, func);
 			}
 			if (error == CSS_OK) {
 				side_count++;

@@ -48,6 +48,9 @@ enum calc_opcodes {
 	CALC_SUBTRACT    = '-',
 	CALC_MULTIPLY    = '*',
 	CALC_DIVIDE      = '/',
+	CALC_MIN         = 'm',
+	CALC_MAX         = 'x',
+	CALC_CLAMP       = 'c',
 	CALC_FINISH      = '='
 };
 

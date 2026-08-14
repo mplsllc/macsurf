@@ -17,8 +17,10 @@ typedef union {
 
 /* fixes1159b: number of calc-expression side slots in
  * css_computed_style (see macsurf_calc_expr below).
- * fixes1161b: +1 for row-gap (its own property since fixes1161). */
-#define MACSURF_CALC_SLOT_COUNT 29
+ * fixes1161b: +1 for row-gap (its own property since fixes1161).
+ * fixes1166c: +1 for font-size (calc()/min()/max()/clamp() -- was a
+ * stub that silently dropped the declaration entirely). */
+#define MACSURF_CALC_SLOT_COUNT 30
 
 
 struct css_computed_style_i {

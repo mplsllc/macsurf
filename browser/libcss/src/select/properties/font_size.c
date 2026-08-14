@@ -20,6 +20,7 @@ css_error css__cascade_font_size(uint32_t opv, css_style *style,
 	uint16_t value = CSS_FONT_SIZE_INHERIT;
 	css_fixed size = 0;
 	uint32_t unit = UNIT_PX;
+	bool is_calc = false;
 
 	if (hasFlagValue(opv) == false) {
 		switch (getValue(opv)) {
@@ -60,16 +61,44 @@ css_error css__cascade_font_size(uint32_t opv, css_style *style,
 			value = CSS_FONT_SIZE_SMALLER;
 			break;
 		case FONT_SIZE_CALC:
+		{
+			/* fixes1166c: font-size calc()/min()/max()/clamp()
+			 * was a stub that silently discarded the declaration
+			 * (advance past the bytecode, return CSS_OK without
+			 * calling set_font_size at all). Wire it through the
+			 * same per-property side-slot table the other
+			 * calc-capable properties use. */
+			uint32_t snum = 0;
+			lwc_string *calc_expr = NULL;
+			uint8_t slot = css__calc_slot_for_prop(
+					getOpcode(opv));
+
+			value = CSS_FONT_SIZE_DIMENSION;
 			advance_bytecode(style, sizeof(unit));
-			advance_bytecode(style, sizeof(unit)); /* TODO */
-			return CSS_OK;
+			snum = *((uint32_t *) style->bytecode);
+			advance_bytecode(style, sizeof(snum));
+			css__stylesheet_string_get(style->sheet, snum, &calc_expr);
+			if (calc_expr != NULL &&
+					slot < MACSURF_CALC_SLOT_COUNT) {
+				state->computed->macsurf_calc_expr[slot] =
+						calc_expr;
+				size = (css_fixed)slot;
+				is_calc = true;
+			}
+			break;
+		}
 		default:
 			assert(0 && "Invalid value");
 			break;
 		}
 	}
 
-	unit = css__to_css_unit(unit);
+	if (is_calc == false) {
+		unit = css__to_css_unit(unit);
+	} else {
+		unit = css__calc_expr_unit(
+				state->computed->macsurf_calc_expr[(uint8_t)size]);
+	}
 
 	if (css__outranks_existing(getOpcode(opv), isImportant(opv), state,
 			getFlagValue(opv))) {
