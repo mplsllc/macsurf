@@ -3605,11 +3605,43 @@ nserror html_reconvert(html_content *c)
 	 * on hackaday, which both drives this lazy path hardest (its whole
 	 * reason for existing) and loads enough author CSS for the race
 	 * window to be real. Require the same precondition the normal path
-	 * requires. */
+	 * requires.
+	 *
+	 * fixes1194 - MUST NOT fire while c->base.status is still LOADING.
+	 * fixes1096 (above, #265 Round C3) deliberately allows a reconvert to
+	 * run during LOADING -- for mid-parse geometry reads, which is a real
+	 * and narrow need -- reasoning that html_reconvert_done "touches NO
+	 * content status, so it cannot mis-advance the load lifecycle from
+	 * under the parser". That was true and safe as long as a LOADING-time
+	 * reconvert always deferred to NEED_DATA (no select_ctx yet, the
+	 * pre-fixes1158 100%-defer rate the fixes1158 comment above cites).
+	 * fixes1158 changed that: a LOADING-time reconvert can now actually
+	 * SUCCEED and build the page's first-ever box tree through
+	 * html_reconvert_done -- which is exactly the property fixes1096
+	 * called safe, except html_reconvert_done touching NO content status
+	 * cuts both ways: it also never calls content_set_ready (only
+	 * html_box_convert_done does, the NORMAL initial-conversion
+	 * callback). html_finish_conversion, when it eventually runs, sees
+	 * select_ctx already non-NULL and treats it as a legitimate late-
+	 * stylesheet re-entry (`if (htmlc->select_ctx != NULL) { ... return;
+	 * }`) -- skipping content_set_ready, js_fire_dom_ready, and
+	 * html_proceed_to_done PERMANENTLY, because they are only reachable
+	 * from html_box_convert_done. The page has a real, live, reconvert-
+	 * maintained box tree from then on, and the browser window is never
+	 * told it exists: hardware confirmed this directly on hackaday
+	 * (NAV: content_ready never fires; reconvert cycles keep completing
+	 * "done-ok" forever after). Restricting the lazy path to
+	 * READY/DONE restores the pre-fixes1158, fixes1096-safe behavior for
+	 * the LOADING case (always defer; the normal path builds the first
+	 * tree and fires content_set_ready correctly) while keeping
+	 * fixes1158's benefit for its real target -- a reconvert AFTER the
+	 * page is already showing, where select_ctx being created here
+	 * instead of by finish_conversion changes nothing about readiness. */
 	if (c->select_ctx == NULL &&
 	    c->stylesheets != NULL &&
 	    c->stylesheets[STYLESHEET_BASE].sheet != NULL &&
-	    c->base.active == 0) {
+	    c->base.active == 0 &&
+	    content__get_status(&c->base) != CONTENT_STATUS_LOADING) {
 		error = html_css_new_selection_context(c, &c->select_ctx);
 		if (error != NSERROR_OK) {
 			/* creation failed (OOM etc.) - same transient defer as
