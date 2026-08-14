@@ -1311,6 +1311,31 @@ static void layout_minmax_block_inner(
 		 * context -- none of the checks above cover a plain block
 		 * box (the common case for this keyword). */
 		block->flags |= NEED_MIN;
+	} else if (block->style != NULL) {
+		/* intrinsic-sizing round 1 follow-up: min-width/max-width
+		 * resolving to min-content (directly, or via fit-content's
+		 * lower bound) ALSO needs a real accumulated minimum from
+		 * children -- width itself may be SET/AUTO here, so the
+		 * check above doesn't cover it. max-content doesn't need
+		 * this: max is always accumulated accurately regardless of
+		 * NEED_MIN. */
+		css_fixed mw_value = 0;
+		css_unit mw_unit = CSS_UNIT_PX;
+		css_fixed xw_value = 0;
+		css_unit xw_unit = CSS_UNIT_PX;
+		enum css_min_width_e mwtype =
+				css_computed_min_width(block->style,
+						&mw_value, &mw_unit);
+		enum css_max_width_e xwtype =
+				css_computed_max_width(block->style,
+						&xw_value, &xw_unit);
+
+		if ((mwtype == CSS_MIN_WIDTH_INTRINSIC &&
+				mw_unit != CSS_INTRINSIC_MAX_CONTENT) ||
+				(xwtype == CSS_MAX_WIDTH_INTRINSIC &&
+				xw_unit != CSS_INTRINSIC_MAX_CONTENT)) {
+			block->flags |= NEED_MIN;
+		}
 	}
 
 	if (block->gadget && (block->gadget->type == GADGET_TEXTBOX ||
@@ -1538,6 +1563,16 @@ static void layout_minmax_block_inner(
 		css_unit unit = CSS_UNIT_PX;
 		css_fixed value = 0;
 		int width;
+		/* intrinsic-sizing round 1 follow-up: min-width/max-width as
+		 * min-content/max-content/fit-content must resolve against
+		 * this box's OWN children-derived natural min/max -- NOT
+		 * against `min`/`max` below, which an explicit `width:` may
+		 * have already overwritten a few lines down. Otherwise
+		 * `width:20px; min-width:max-content` degrades to `min-
+		 * width:20px` (a no-op) because by the time the min-width
+		 * check ran, `min` had already become 20. */
+		int natural_min = min;
+		int natural_max = max;
 
 		if (css_computed_width_px(block->style, &content->unit_len_ctx,
 				-1, &width) == CSS_WIDTH_SET) {
@@ -1555,6 +1590,18 @@ static void layout_minmax_block_inner(
 				min = val;
 				using_min_border_box = border_box;
 			}
+		} else if (min_type == CSS_MIN_WIDTH_INTRINSIC) {
+			int val = (unit == CSS_INTRINSIC_MIN_CONTENT) ?
+					natural_min : natural_max;
+
+			if (min < val) {
+				min = val;
+				using_min_border_box = border_box;
+			}
+			/* a box's max_width must never be less than its
+			 * min_width -- an explicit `width:` above may have
+			 * frozen `max` below this floor. */
+			if (max < min) max = min;
 		}
 
 		max_type = css_computed_max_width(block->style, &value, &unit);
@@ -1581,6 +1628,15 @@ static void layout_minmax_block_inner(
 						CONTENT_HTML && min > val) {
 				min = val;
 			}
+		} else if (max_type == CSS_MAX_WIDTH_INTRINSIC) {
+			int val = (unit == CSS_INTRINSIC_MIN_CONTENT) ?
+					natural_min : natural_max;
+
+			if (max > val) {
+				max = val;
+				using_max_border_box = border_box;
+			}
+			if (min > max) min = max;
 		}
 	}
 

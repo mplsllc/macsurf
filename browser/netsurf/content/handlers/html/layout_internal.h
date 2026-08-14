@@ -707,12 +707,53 @@ static inline void layout_find_dimensions(
 						style, unit_len_ctx,
 						value, unit));
 			}
+		} else if (type == CSS_MAX_WIDTH_INTRINSIC) {
+			/* intrinsic-sizing round 1 follow-up: max-width as a
+			 * constraint uses the same box->min_width/max_width
+			 * shrink-to-fit machinery as width itself -- see the
+			 * width block above for the full explanation. */
+			int fixed = 0;
+			float frac = 0;
+
+			(void) css_computed_max_width(style, &value, &unit);
+
+			switch ((enum css_intrinsic_kind_e) unit) {
+			case CSS_INTRINSIC_MIN_CONTENT:
+				*max_width = box->min_width;
+				break;
+			case CSS_INTRINSIC_MAX_CONTENT:
+				*max_width = box->max_width;
+				break;
+			case CSS_INTRINSIC_FIT_CONTENT:
+			default:
+				if (available_width < 0) {
+					*max_width = box->max_width;
+				} else {
+					int fit = available_width;
+					if (fit < box->min_width)
+						fit = box->min_width;
+					if (fit > box->max_width)
+						fit = box->max_width;
+					*max_width = fit;
+				}
+				break;
+			}
+
+			calculate_mbp_width(unit_len_ctx, style, LEFT,
+					true, true, true, &fixed, &frac);
+			calculate_mbp_width(unit_len_ctx, style, RIGHT,
+					true, true, true, &fixed, &frac);
+			if (fixed < 0)
+				fixed = 0;
+			*max_width -= fixed;
+			if (*max_width < 0)
+				*max_width = 0;
 		} else {
 			/* Inadmissible */
 			*max_width = -1;
 		}
 
-		if (*max_width != -1) {
+		if (*max_width != -1 && type == CSS_MAX_WIDTH_SET) {
 			layout_handle_box_sizing(unit_len_ctx, box,
 					available_width, true, max_width);
 		}
@@ -734,12 +775,51 @@ static inline void layout_find_dimensions(
 						style, unit_len_ctx,
 						value, unit));
 			}
+		} else if (type == CSS_MIN_WIDTH_INTRINSIC) {
+			/* intrinsic-sizing round 1 follow-up, see max_width
+			 * above for the full explanation. */
+			int fixed = 0;
+			float frac = 0;
+
+			(void) css_computed_min_width(style, &value, &unit);
+
+			switch ((enum css_intrinsic_kind_e) unit) {
+			case CSS_INTRINSIC_MIN_CONTENT:
+				*min_width = box->min_width;
+				break;
+			case CSS_INTRINSIC_MAX_CONTENT:
+				*min_width = box->max_width;
+				break;
+			case CSS_INTRINSIC_FIT_CONTENT:
+			default:
+				if (available_width < 0) {
+					*min_width = box->max_width;
+				} else {
+					int fit = available_width;
+					if (fit < box->min_width)
+						fit = box->min_width;
+					if (fit > box->max_width)
+						fit = box->max_width;
+					*min_width = fit;
+				}
+				break;
+			}
+
+			calculate_mbp_width(unit_len_ctx, style, LEFT,
+					true, true, true, &fixed, &frac);
+			calculate_mbp_width(unit_len_ctx, style, RIGHT,
+					true, true, true, &fixed, &frac);
+			if (fixed < 0)
+				fixed = 0;
+			*min_width -= fixed;
+			if (*min_width < 0)
+				*min_width = 0;
 		} else {
 			/* Inadmissible */
 			*min_width = 0;
 		}
 
-		if (*min_width != 0) {
+		if (*min_width != 0 && type == CSS_MIN_WIDTH_SET) {
 			layout_handle_box_sizing(unit_len_ctx, box,
 					available_width, true, min_width);
 		}
