@@ -1164,8 +1164,27 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 								if (!dragging) {
 									dx = cx_ns - px_ns; if (dx < 0) dx = -dx;
 									dy = cy_ns - py_ns; if (dy < 0) dy = -dy;
-									if (dx > 4 || dy > 4) {
+									/* fixes1192 - the click/drag disambiguation threshold
+									 * was 4px, tight enough that ordinary mouse/trackpad
+									 * jitter during a normal click-and-release routinely
+									 * exceeded it: the gesture silently became a
+									 * zero-length text-selection drag instead of firing
+									 * CLICK_1, so the link never navigated -- with no
+									 * error and no log line, because this path is a
+									 * legitimate, successful drag as far as the code is
+									 * concerned. A hardware log session showed 45 physical
+									 * click-downs but only 6 ever reaching CLICK_1's
+									 * link-resolution code. Widened to 8px, the more usual
+									 * browser click-slop tolerance, and logged (LIFE) so a
+									 * future session can see directly how often this
+									 * still fires instead of inferring it from a click/
+									 * navigation ratio. */
+									if (dx > 8 || dy > 8) {
 										dragging = 1;
+										macsurf_debug_log_writef(
+											"LIFE fixes1192 click->drag dx=%d dy=%d "
+											"px=%d py=%d",
+											dx, dy, px_ns, py_ns);
 										browser_window_mouse_click(gw->bw,
 											BROWSER_MOUSE_DRAG_1 | mods, px_ns, py_ns);
 									}
