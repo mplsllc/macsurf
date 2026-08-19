@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MacSurf - background-origin</title>
+<style>
+  body {
+    font-family: Helvetica, sans-serif;
+    margin: 16px;
+    color: #222;
+    background: #f0f0f0;
+  }
+  h1 { font-size: 14pt; color: #036; margin: 0 0 4px; }
+  p { font-size: 9pt; margin: 4px 0 12px; }
+  .probe {
+    width: 260px;
+    height: 120px;
+    margin: 12px 0;
+    padding: 22px;
+    border: 16px solid #369;
+    background-color: #def;
+    background-image: url("/themes/custom/platinum/images/favicon-32.png");
+    background-repeat: no-repeat;
+    background-size: 32px 32px;
+    background-position: right bottom;
+    background-clip: border-box;
+  }
+  .border { background-origin: border-box; }
+  .padding { background-origin: padding-box; }
+  .content { background-origin: content-box; }
+</style>
+</head>
+<body>
+<h1>background-origin</h1>
+<p>Each tile is right-bottom aligned. The blue border is 16px and the padding is 22px.</p>
+
+<div class="probe border"></div>
+<p>EXPECT border-box: tile touches the inside edge of the blue border.</p>
+
+<div class="probe padding"></div>
+<p>EXPECT padding-box: tile is inset 16px from the border.</p>
+
+<div class="probe content"></div>
+<p>EXPECT content-box: tile is inset another 22px from the padding-box tile.</p>
+</body>
+</html>

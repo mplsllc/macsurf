@@ -689,5 +689,9 @@ struct prop_table prop_dispatch[CSS_N_PROPERTIES] = {
 	{
 	        PROPERTY_FUNCS(justify_self),   /* #279 follow-up, not inherited */
 	        0,
+	},
+	{
+	        PROPERTY_FUNCS(background_origin),
+	        0,
 	}
 	};

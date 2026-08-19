@@ -8,7 +8,7 @@ libcss parse + cascade, our own layout, and QuickDraw painting. This page is the
 user-facing summary; the deep engineering audit lives in
 [.private/research/css-gap-inventory-2026-08-14.md](../.private/research/css-gap-inventory-2026-08-14.md).
 
-*Last updated: MacSurf 2.0.5 (2026-07-15).*
+*Last updated: development snapshot after fixes1214 (2026-08-19).*
 
 ### Legend
 
@@ -43,8 +43,8 @@ user-facing summary; the deep engineering audit lives in
 | `background-position` / `-repeat` | ✅ | |
 | `background: none` / `transparent` reset | ✅ | Shorthand reset fixed 2.0.5 (#268). |
 | `background-clip` | ◑&ast; | `border-box`/`padding-box`/`content-box` honored (2.0.5, #255); `background-clip: text` deferred. |
-| `background-origin` | ✖ | Deferred (#255). |
-| `background-attachment: fixed` | ✖ | |
+| `background-origin` | ◑&ast; | Longhand `border-box` / `padding-box` / `content-box` positions raster backgrounds independently of clipping; shorthand box keywords are deferred. |
+| `background-attachment: fixed` | ✅&ast; | Raster images and gradients stay viewport-anchored while their box scrolls. |
 
 ## Gradients
 
@@ -66,10 +66,11 @@ user-facing summary; the deep engineering audit lives in
 | `tab-size` | ✅&ast; | Tabs in `<pre>` (2.0.5, #251). |
 | `word-break` / `overflow-wrap` | ✅&ast; | break-all / break-word / anywhere (#273/#234). |
 | `text-shadow` | ✅ | |
-| `text-overflow: ellipsis` | ✖ | Clips today; ellipsis deferred. |
+| `text-overflow: ellipsis` | ✅&ast; | Paints an ellipsis over clipped single-line overflow. |
 | `text-decoration` longhands | ✅&ast; | color / style / thickness (2.0.5, #249). |
 | `caret-color` | ✅&ast; | In-page text caret (2.0.5, #252). |
-| `word-spacing` / `writing-mode` / `unicode-bidi` | ✖ | LTR only; vertical & RTL deferred (#248). |
+| `word-spacing` | ✅&ast; | Applies to inline text, including justified lines. |
+| `writing-mode` / `unicode-bidi` | ✖ | Horizontal LTR layout only; vertical writing and full bidi are deferred (#248). |
 
 ## Fonts
 
@@ -111,8 +112,9 @@ user-facing summary; the deep engineering audit lives in
 |---|:---:|---|
 | `display: grid`, `grid-template-columns/rows` | ✅ | Fixed, %, and fr tracks. |
 | `auto` tracks sized to content | ✅&ast; | Spec-order content sizing (2.0.5, #62). |
-| `gap` / `column-gap` | ✅ | Single-value; two-value `gap: A B` ◑ (row-gap shares storage). |
-| Placement / span / `grid-auto-flow` | ◑ | Round 2 in progress (#279). |
+| `gap` / `row-gap` / `column-gap` | ✅&ast; | Independent row and column gaps; two-value `gap: A B` is honored. |
+| Placement / span / `grid-auto-flow` | ◑&ast; | Numeric placement, spans, areas, and row/column/dense flow work; named lines and negative lines other than `-1` are deferred. |
+| `justify-self` | ✅&ast; | start / center / stretch per grid item (2.0.5 follow-up, #279). |
 | `subgrid` | ✖ | (#66) |
 
 ## Multiple Columns
@@ -120,7 +122,7 @@ user-facing summary; the deep engineering audit lives in
 | Feature | Support | Notes |
 |---|:---:|---|
 | `column-count` / `column-width` / `column-gap` | ✅ | Multicol V1. |
-| `column-span: all` | ✖ | Parsed, not yet applied. |
+| `column-span: all` | ✅&ast; | Spanning children break out across all columns. |
 
 ## User Interface & Box Model
 
@@ -128,8 +130,8 @@ user-facing summary; the deep engineering audit lives in
 |---|:---:|---|
 | `box-sizing` | ✅ | |
 | `resize` / `user-select` | ✖ | (#257) |
-| `appearance` / native form-control styling | ✖ | Deferred (#80). |
-| `outline` | ✖ | Focus rings deferred. |
+| `appearance: none` | ✅&ast; | Suppresses the native widget so CSS can paint the control (#80). |
+| `outline` | ✅&ast; | CSS outline color, width, and style paint outside the border box. Native focus-ring policy remains separate. |
 | `image-rendering` | ▫&ast; | Parsed/stored; QuickDraw scaling is nearest-neighbor regardless (2.0.5, #256). |
 
 ## Modern building blocks

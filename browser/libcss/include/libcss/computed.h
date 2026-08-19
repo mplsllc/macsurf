@@ -469,6 +469,9 @@ uint8_t css_computed_hanging_punctuation(
 uint8_t css_computed_background_clip(
 		const css_computed_style *style);   /* #255 */
 
+uint8_t css_computed_background_origin(
+		const css_computed_style *style);
+
 uint8_t css_computed_justify_items(
 		const css_computed_style *style);   /* #279 */
 

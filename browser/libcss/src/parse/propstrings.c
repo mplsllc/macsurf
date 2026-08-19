@@ -273,6 +273,7 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("justify-items"),   /* #279 */
 	SMAP("appearance"),   /* #80 */
 	SMAP("justify-self"),   /* #279 follow-up */
+	SMAP("background-origin"),
 	SMAP("inherit"),
 	SMAP("unset"),
 	SMAP("important"),

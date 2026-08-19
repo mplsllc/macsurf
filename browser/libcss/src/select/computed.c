@@ -989,6 +989,18 @@ uint8_t css_computed_background_clip(const css_computed_style *style)
 	return get_background_clip(style);
 }
 
+uint8_t css_computed_background_origin(const css_computed_style *style)
+{
+	int32_t value = style->i.background_origin;
+
+	if (value < CSS_BACKGROUND_ORIGIN_PADDING_BOX ||
+			value > CSS_BACKGROUND_ORIGIN_CONTENT_BOX) {
+		return CSS_BACKGROUND_ORIGIN_PADDING_BOX;
+	}
+
+	return (uint8_t)value;
+}
+
 /* #279 */
 uint8_t css_computed_justify_items(const css_computed_style *style)
 {

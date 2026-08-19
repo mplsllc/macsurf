@@ -198,7 +198,8 @@ const css_prop_handler property_handlers[LAST_PROP + 1 - FIRST_PROP] =
 	css__parse_background_clip,   /* #255 */
 	css__parse_justify_items,   /* #279 */
 	css__parse_appearance,   /* #80 */
-	css__parse_justify_self   /* #279 follow-up */
+	css__parse_justify_self,   /* #279 follow-up */
+	css__parse_background_origin
 };
 
 /** Mapping from property bytecode index to bytecode unit class mask. */
@@ -209,6 +210,7 @@ const uint32_t property_unit_mask[CSS_N_PROPERTIES] = {
 	[CSS_PROP_BACKGROUND_IMAGE]      = UNIT_MASK_BACKGROUND_IMAGE,
 	[CSS_PROP_BACKGROUND_POSITION]   = UNIT_MASK_BACKGROUND_POSITION,
 	[CSS_PROP_BACKGROUND_REPEAT]     = UNIT_MASK_BACKGROUND_REPEAT,
+	[CSS_PROP_BACKGROUND_ORIGIN]     = 0,
 	[CSS_PROP_BORDER_COLLAPSE]       = UNIT_MASK_BORDER_COLLAPSE,
 	[CSS_PROP_BORDER_SPACING]        = UNIT_MASK_BORDER_SPACING,
 	[CSS_PROP_BORDER_TOP_COLOR]      = UNIT_MASK_BORDER_SIDE_COLOR,

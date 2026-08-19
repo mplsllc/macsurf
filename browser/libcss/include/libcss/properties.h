@@ -178,6 +178,7 @@ enum css_properties_e {
 	CSS_PROP_JUSTIFY_ITEMS                  = 0x0a1,
 	CSS_PROP_APPEARANCE                     = 0x0a2,
 	CSS_PROP_JUSTIFY_SELF                   = 0x0a3,
+	CSS_PROP_BACKGROUND_ORIGIN              = 0x0a4,
 	CSS_N_PROPERTIES
 };
 
@@ -506,6 +507,13 @@ enum css_background_clip_e {
 	CSS_BACKGROUND_CLIP_BORDER_BOX		= 0x1,
 	CSS_BACKGROUND_CLIP_PADDING_BOX		= 0x2,
 	CSS_BACKGROUND_CLIP_CONTENT_BOX		= 0x3
+};
+
+enum css_background_origin_e {
+	CSS_BACKGROUND_ORIGIN_INHERIT		= 0x0,
+	CSS_BACKGROUND_ORIGIN_PADDING_BOX		= 0x1,
+	CSS_BACKGROUND_ORIGIN_BORDER_BOX		= 0x2,
+	CSS_BACKGROUND_ORIGIN_CONTENT_BOX		= 0x3
 };
 
 /* #279 - justify-items (grid inline-axis item alignment). V1 = 2-bit slot:

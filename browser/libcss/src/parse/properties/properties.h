@@ -145,6 +145,9 @@ css_error css__parse_hanging_punctuation(css_language *c,
 css_error css__parse_background_clip(css_language *c,   /* #255 */
                 const parserutils_vector *vector, int32_t *ctx,
                 css_style *result);
+css_error css__parse_background_origin(css_language *c,
+                const parserutils_vector *vector, int32_t *ctx,
+                css_style *result);
 css_error css__parse_justify_items(css_language *c,   /* #279 */
                 const parserutils_vector *vector, int32_t *ctx,
                 css_style *result);

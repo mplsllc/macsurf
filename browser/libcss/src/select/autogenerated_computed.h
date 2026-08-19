@@ -471,6 +471,10 @@ struct css_computed_style_i {
 	 * memcmp. */
 	int32_t row_gap_status;
 	css_fixed row_gap;
+	/* background-origin is a non-inherited box keyword. Keep it at the
+	 * scalar tail: the packed bits[] array is full and appending avoids
+	 * shifting existing field offsets in stale CW8 objects. */
+	int32_t background_origin;
 };
 
 struct css_computed_style {

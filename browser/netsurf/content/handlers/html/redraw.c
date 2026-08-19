@@ -1856,6 +1856,32 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 					box->padding[RIGHT];
 			height = box->padding[TOP] + box->height +
 					box->padding[BOTTOM];
+
+			/* background-origin changes the positioning area, independently
+			 * of background-clip. The existing rectangle is padding-box;
+			 * expand it for border-box or inset it for content-box before
+			 * background-size and background-position are resolved. */
+			if (background->style != NULL) {
+				uint8_t origin = css_computed_background_origin(
+						background->style);
+				if (origin == CSS_BACKGROUND_ORIGIN_BORDER_BOX) {
+					x -= box->border[LEFT].width * scale;
+					y -= box->border[TOP].width * scale;
+					width += box->border[LEFT].width +
+							box->border[RIGHT].width;
+					height += box->border[TOP].width +
+							box->border[BOTTOM].width;
+				} else if (origin == CSS_BACKGROUND_ORIGIN_CONTENT_BOX) {
+					x += box->padding[LEFT] * scale;
+					y += box->padding[TOP] * scale;
+					width -= box->padding[LEFT] +
+							box->padding[RIGHT];
+					height -= box->padding[TOP] +
+							box->padding[BOTTOM];
+					if (width < 0) width = 0;
+					if (height < 0) height = 0;
+				}
+			}
 		}
 
 		/* fixes137: background-attachment: fixed.
