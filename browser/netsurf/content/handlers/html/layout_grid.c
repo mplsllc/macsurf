@@ -529,6 +529,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 	const int32_t *raw_tracks;
 	int track_widths[MACSURF_GRID_TRACK_MAX];
 	int track_x[MACSURF_GRID_TRACK_MAX];
+	int auto_track[MACSURF_GRID_TRACK_MAX];
 	int n_tracks = 0;
 	bool has_tracks = false;
 	/* fixes150 -- row tracks (px-only V1; fr/percent degrade to
@@ -537,6 +538,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 	int row_track_h[MACSURF_GRID_TRACK_MAX];
 	int n_row_tracks = 0;
 	bool has_row_tracks = false;
+	int grid_has_placement = 0;
 	int i;
 
 	/* fixes161e - per-call GRID marker capped at first 100 calls per
@@ -561,6 +563,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 	for (i = 0; i < MACSURF_GRID_TRACK_MAX; i++) {
 		track_widths[i] = 0;
 		track_x[i] = 0;
+		auto_track[i] = 0;
 		row_track_h[i] = 0;
 	}
 
@@ -652,13 +655,8 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 		int fixed_total = 0;
 		int fr_total_q88 = 0;
 		int auto_total = 0;
-		int grid_has_placement = 0;
-		int is_auto[MACSURF_GRID_TRACK_MAX];
 		int total_gap;
 		int remaining;
-
-		for (i = 0; i < MACSURF_GRID_TRACK_MAX; i++)
-			is_auto[i] = 0;
 
 		/* fixes817 (#62): GUARD -- content-based AUTO track sizing
 		 * (Round 1) runs ONLY for pure auto-flow grids. If ANY child
@@ -718,15 +716,8 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 				track_widths[i] = -value;
 				if (value > 0) fr_total_q88 += value;
 			} else if (unit == MACSURF_GRID_TRACK_UNIT_AUTO) {
-				if (grid_has_placement) {
-					/* guarded fallback: fold auto -> 1fr
-					 * (Q8.8 1.0 = 256), pre-fixes817. */
-					track_widths[i] = -256;
-					fr_total_q88 += 256;
-				} else {
-					is_auto[i] = 1;
-					track_widths[i] = 0;
-				}
+				auto_track[i] = 1;
+				track_widths[i] = 0;
 			}
 		}
 
@@ -747,7 +738,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 			for (j = 0; j < n_tracks; j++) {
 				col_min[j] = 0;
 				col_max[j] = 0;
-				if (!is_auto[j]) continue;
+					if (!auto_track[j]) continue;
 				any_auto = 1;
 				{
 					struct box *cc;
@@ -792,7 +783,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 				if (grow > 0 && grow_room > 0) {
 					for (j = 0; j < n_tracks; j++) {
 						int room;
-						if (!is_auto[j]) continue;
+						if (!auto_track[j]) continue;
 						room = col_max[j] - col_min[j];
 						track_widths[j] += (int)(
 							((long)grow *
@@ -801,7 +792,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 					}
 				}
 				for (j = 0; j < n_tracks; j++)
-					if (is_auto[j])
+						if (auto_track[j])
 						auto_total += track_widths[j];
 			}
 		}
@@ -839,7 +830,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 				int extra_per_auto = 0;
 				int extra_remainder = 0;
 				for (i = 0; i < n_tracks; i++) {
-					if (is_auto[i]) auto_count++;
+						if (auto_track[i]) auto_count++;
 					if (track_widths[i] < 0)
 						track_widths[i] = 0;
 				}
@@ -847,7 +838,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 					extra_per_auto = remaining / auto_count;
 					extra_remainder = remaining % auto_count;
 					for (i = 0; i < n_tracks; i++) {
-						if (!is_auto[i]) continue;
+						if (!auto_track[i]) continue;
 						track_widths[i] += extra_per_auto;
 						if (extra_remainder > 0) {
 							track_widths[i]++;
@@ -1289,11 +1280,127 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 			if (slot_row + row_span - 1 > max_row_used)
 				max_row_used = slot_row + row_span - 1;
 
-			n_children++;
-			child = child->next;
-		}
+				n_children++;
+				child = child->next;
+			}
 
-		/* --- Pass 1b: layout each child into its cell width. */
+			/* fixes1213 (#279): Round 1 could size AUTO tracks from
+			 * content only while every child was in simple row-major flow.
+			 * The slots above are the authoritative resolved placement, so
+			 * use them here for explicit placement and spans as well. A
+			 * spanning item's unmet min/max contribution is shared only by
+			 * the AUTO tracks it crosses; fixed tracks remain fixed. */
+			if (grid_has_placement && has_tracks) {
+				int min_track[MACSURF_GRID_TRACK_MAX];
+				int max_track[MACSURF_GRID_TRACK_MAX];
+				int auto_count = 0;
+				int span_count = 0;
+				int used;
+				int free_space;
+				int j;
+
+				for (j = 0; j < n_tracks; j++) {
+					min_track[j] = auto_track[j] ? 0 :
+						track_widths[j];
+					max_track[j] = min_track[j];
+					if (auto_track[j]) auto_count++;
+				}
+
+				/* First satisfy min-content contributions. */
+				child = grid->children;
+				for (slot_index = 0; child != NULL &&
+						slot_index < n_children;
+						slot_index++, child = child->next) {
+					int start = slots[slot_index].col;
+					int end = start + slots[slot_index].col_span;
+					int mn = child->min_width;
+					int current = 0;
+					int eligible = 0;
+					int need;
+					int share;
+					int rem;
+
+					if (end > n_tracks) end = n_tracks;
+					if (layout_dim_is_auto_or_bad(mn) || mn < 0 ||
+							mn > LAYOUT_SAFE_MAX) mn = 0;
+					for (j = start; j < end; j++) {
+						current += min_track[j];
+						if (j > start) current += col_gap;
+						if (auto_track[j]) eligible++;
+					}
+					need = mn - current;
+					if (need <= 0 || eligible == 0) continue;
+					share = need / eligible;
+					rem = need % eligible;
+					for (j = start; j < end; j++) {
+						if (!auto_track[j]) continue;
+						min_track[j] += share;
+						if (rem-- > 0) min_track[j]++;
+					}
+					if (end - start > 1) span_count++;
+				}
+
+				/* Then grow toward max-content with the same resolved slots. */
+				for (j = 0; j < n_tracks; j++)
+					max_track[j] = min_track[j];
+				child = grid->children;
+				for (slot_index = 0; child != NULL &&
+						slot_index < n_children;
+						slot_index++, child = child->next) {
+					int start = slots[slot_index].col;
+					int end = start + slots[slot_index].col_span;
+					int mx = child->max_width;
+					int current = 0;
+					int eligible = 0;
+					int need;
+					int share;
+					int rem;
+
+					if (end > n_tracks) end = n_tracks;
+					if (layout_dim_is_auto_or_bad(mx) || mx < 0 ||
+							mx > LAYOUT_SAFE_MAX) mx = 0;
+					for (j = start; j < end; j++) {
+						current += max_track[j];
+						if (j > start) current += col_gap;
+						if (auto_track[j]) eligible++;
+					}
+					need = mx - current;
+					if (need <= 0 || eligible == 0) continue;
+					share = need / eligible;
+					rem = need % eligible;
+					for (j = start; j < end; j++) {
+						if (!auto_track[j]) continue;
+						max_track[j] += share;
+						if (rem-- > 0) max_track[j]++;
+					}
+				}
+
+				for (j = 0; j < n_tracks; j++)
+					track_widths[j] = max_track[j];
+				used = col_gap * (n_tracks - 1);
+				for (j = 0; j < n_tracks; j++)
+					used += track_widths[j];
+				free_space = container_width - used;
+				if (free_space > 0 && auto_count > 0) {
+					int share = free_space / auto_count;
+					int rem = free_space % auto_count;
+					for (j = 0; j < n_tracks; j++) {
+						if (!auto_track[j]) continue;
+						track_widths[j] += share;
+						if (rem-- > 0) track_widths[j]++;
+					}
+				}
+				used = 0;
+				for (j = 0; j < n_tracks; j++) {
+					track_x[j] = used;
+					used += track_widths[j] + col_gap;
+				}
+				macsurf_debug_log_writef(
+					"LIFE fixes1213 gridauto placed tracks=%d spans=%d",
+					auto_count, span_count);
+			}
+
+			/* --- Pass 1b: layout each child into its cell width. */
 		child = grid->children;
 		slot_index = 0;
 		while (child != NULL && slot_index < n_children) {
