@@ -1491,13 +1491,9 @@ int main(int argc, char **argv)
 	 * T.createElement() probe threw.  Runs the byte-exact file hackaday
 	 * serves, wrapped in JS try/catch so we can assert on the error TEXT.
 	 *
-	 * This does NOT yet require full jQuery init: the element wrapper's
-	 * traversal API is still hardcoded (cloneNode returns the element
-	 * itself, childNodes=[], firstChild/lastChild=null), so jQuery
-	 * legitimately throws later at
-	 * le.checkClone=xe.cloneNode(!0).cloneNode(!0).lastChild.checked.  What
-	 * must never come back is the document-identity failure.  The test
-	 * tightens itself automatically once real traversal lands. --- */
+	 * The fixture is mandatory and full jQuery initialization is required.
+	 * A missing fixture or any caught exception is a failed test; reporting a
+	 * generic "GAP" followed by PASS made unrelated regressions invisible. */
 	fprintf(stderr, "\n=== Test 7: real jQuery 3.7.1 clears the document probe ===\n");
 	{
 		FILE *jf = fopen("jquery-3.7.1.min.js", "rb");
@@ -1518,8 +1514,8 @@ int main(int argc, char **argv)
 		fprintf(stderr, "document.nodeType==9 and documentElement present\n");
 
 		if (jf == NULL) {
-			fprintf(stderr, "SKIP: jquery-3.7.1.min.js not present "
-					"(fetch it to run the real-jQuery leg)\n");
+			fprintf(stderr, "FAIL: jquery-3.7.1.min.js fixture is missing\n");
+			return 1;
 		} else {
 			char *jsrc, *wrapped;
 			long jlen;
@@ -1531,11 +1527,9 @@ int main(int argc, char **argv)
 			const char *verdict_js =
 				"globalThis.__jqOK=(typeof jQuery!=='undefined'&&"
 					"!!(jQuery.fn&&jQuery.fn.jquery));"
-				"if(/createElement/.test(globalThis.__jqErr))"
-					"throw new Error('fixes855 REGRESSED: '+globalThis.__jqErr);";
-			const char *report_js =
-				"globalThis.__jqOK?('OK jQuery '+jQuery.fn.jquery)"
-					":('GAP '+(globalThis.__jqErr||'(no error recorded)'))";
+				"if(!globalThis.__jqOK)"
+					"throw new Error('jQuery did not initialize: '+"
+					"(globalThis.__jqErr||'(no error recorded)'));";
 
 			fseek(jf, 0, SEEK_END); jlen = ftell(jf); fseek(jf, 0, SEEK_SET);
 			jsrc = (char *)malloc((size_t)jlen + 1);
@@ -1570,20 +1564,15 @@ int main(int argc, char **argv)
 				return 1;
 			}
 
-			/* Hard-fails ONLY if the fixes855 document-identity error is back. */
+			/* A caught jQuery exception is a test failure, not a PASS-with-GAP. */
 			ok = js_exec(thread, (const unsigned char *)verdict_js,
 					strlen(verdict_js), "driver-jq-verdict.js");
 			if (!ok) {
-				fprintf(stderr, "FAIL: fixes855 REGRESSED -- jQuery is back "
-						"to failing on the document handle\n");
+				fprintf(stderr, "FAIL: real jQuery did not initialize\n");
 				return 1;
 			}
-			(void)js_exec(thread, (const unsigned char *)report_js,
-					strlen(report_js), "driver-jq-report.js");
-			fprintf(stderr, "=== Test 7 PASS: jQuery clears the "
-					"document-identity probe (fixes855); any remaining "
-					"throw is the known traversal gap "
-					"(cloneNode/firstChild/lastChild/childNodes) ===\n");
+			fprintf(stderr, "=== Test 7 PASS: real jQuery initializes "
+					"after the document-identity probe ===\n");
 		}
 	}
 
