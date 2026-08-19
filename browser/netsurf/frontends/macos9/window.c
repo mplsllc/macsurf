@@ -685,6 +685,16 @@ static void set_url_te_text(struct gui_window *g, const char *u) {
 	InvalWindowRect(g->window, &g->url_rect);
 }
 
+/* fixes1198 - display-only URL bar update for history.pushState/replaceState: sets the
+ * text shown in the address field without touching navigation state (no
+ * fetch, no browser_window_navigate). Thin public wrapper over the same
+ * dedupe/geometry logic macos9_window_navigate and the set_url callback
+ * already use. */
+void macos9_window_set_url_display(struct gui_window *g, const char *u) {
+	if (!g || !u) return;
+	set_url_te_text(g, u);
+}
+
 void macos9_window_navigate(struct gui_window *g, const char *u) {
 	struct nsurl *n;
 	nserror nav_e;

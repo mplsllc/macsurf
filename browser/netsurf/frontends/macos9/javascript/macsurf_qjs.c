@@ -778,6 +778,31 @@ static JSValue qjs_history_go(JSContext *ctx, JSValueConst this_val,
 	return JS_UNDEFINED;
 }
 
+/* history.pushState/replaceState (Phase A, fixes1198) - update the
+ * displayed URL only, with no navigation/fetch. Same shape as
+ * qjs_location_set, calling macos9_window_set_url_display instead of
+ * macos9_window_navigate. Back/forward integration and popstate are not
+ * implemented yet: this does not push a session-history entry, so
+ * history.back()/forward() cannot return to a pushState URL. */
+static JSValue qjs_history_set_url_display(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	(void)this_val;
+#ifdef __MACOS9__
+	if (argc > 0) {
+		const char *url = JS_ToCString(ctx, argv[0]);
+		if (url) {
+			struct gui_window *win = macos9_window_list_head();
+			if (win != NULL) macos9_window_set_url_display(win, url);
+			JS_FreeCString(ctx, url);
+		}
+	}
+#else
+	(void)argc; (void)argv;
+#endif
+	return JS_UNDEFINED;
+}
+
 /* ------------------------------------------------------------------ */
 /* Timer subsystem                                                      */
 /* ------------------------------------------------------------------ */
@@ -10255,20 +10280,25 @@ static void register_browser_globals(JSContext *ctx)
 	qjs_set_func(ctx, history_obj, "back",    qjs_history_back,    0);
 	qjs_set_func(ctx, history_obj, "forward", qjs_history_forward, 0);
 	qjs_set_func(ctx, history_obj, "go",      qjs_history_go,      1);
+	qjs_set_func(ctx, history_obj, "__setUrlDisplay", qjs_history_set_url_display, 1);
 	JS_SetPropertyStr(ctx, history_obj, "length", JS_NewInt32(ctx, 0));
 	JS_SetPropertyStr(ctx, global, "history", history_obj);
 
+	/* pushState/replaceState Phase A (fixes1198): update the URL bar and
+	 * history.state without navigating. No session-history entry is
+	 * pushed, so history.length stays 0 and back()/forward() cannot
+	 * return to a pushState URL yet -- that (plus popstate) is Phase B. */
 	macsurf_qjs__safe_eval(ctx,
 		"(function(){"
 		"  if(typeof history==='undefined')return;"
 		"  var _state=null;"
 		"  history.pushState=history.pushState||function(s,t,u){"
 		"    _state=s;"
-		"    if(u&&typeof location!=='undefined')location.href=u;"
+		"    if(u!==undefined&&u!==null)history.__setUrlDisplay(String(u));"
 		"  };"
 		"  history.replaceState=history.replaceState||function(s,t,u){"
 		"    _state=s;"
-		"    if(u&&typeof location!=='undefined')location.href=u;"
+		"    if(u!==undefined&&u!==null)history.__setUrlDisplay(String(u));"
 		"  };"
 		"  Object.defineProperty(history,'state',{"
 		"    get:function(){return _state;},"
