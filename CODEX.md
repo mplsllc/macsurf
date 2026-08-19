@@ -45,7 +45,8 @@ unless explicitly asked.
 - Never close issues, mark a fix verified, tag `*-verified`, or update trackers as done
   from local/synthetic tests. Use: `shipped -- awaiting your verification on <reported case>`.
 - Do not edit or ship `MacSurf.mcp`. If new `.c` files are needed, list them in the handoff
-  for the user to add in CodeWarrior.
+  for the user to add in CodeWarrior. After adding them, request a normal rebuild. Do not
+  recommend "Remove Object Code" routinely; reserve it for a demonstrated stale-build issue.
 - When shipping a fix, provide only the drop plus:
   1. files to add/remove from `MacSurf.mcp`, if any
   2. access paths to add/remove from `Access Paths.xml`, if any
