@@ -4487,9 +4487,8 @@ macsurf__rewrite_at_rules(const char *data, size_t in_size,
 /* fixes274 (Bundle C, #25 + #64) - grid alignment shorthand expansion +
  * justify-items / justify-self bridge.
  *
- * libcss in this vintage does not expose justify-items / justify-self
- * accessors, and there's no `place-items` / `place-content` shorthand
- * support. fixes270 wired the four properties libcss DOES expose
+ * There is no `place-items` / `place-content` shorthand support. fixes270
+ * wired the four properties libcss DOES expose
  * (justify-content, align-content, align-items, align-self). This pass
  * extends authoring-side support by:
  *
@@ -4919,19 +4918,13 @@ macsurf__rewrite_grid_alignment(const char *data, size_t in_size,
 				tmp[tlen++] = ';';
 				tmp[tlen++] = ' ';
 			}
-			/* justify axis. justify-content AND justify-items are now
-			 * real libcss properties (justify-items added #279/fixes833
-			 * - it does the actual grid item box positioning), so emit
-			 * their declarations. justify-SELF is still unknown to libcss
-			 * (per-item override deferred): emitting it is dead weight and
-			 * a downstream stage keying off `justify-self:` corrupts the
-			 * PRECEDING align-* declaration, so for justify-self emit ONLY
-			 * the text-align shadow below. The text-align shadow is still
-			 * emitted for justify-items too (harmless: it aligns text
-			 * inside the now-content-sized item; a no-op there). */
+			/* These are now real libcss properties. Preserve every
+			 * justify-axis declaration for native grid layout, while keeping
+			 * the text-align shadow below for existing inline-content cases. */
 			if (justify_axis != NULL &&
 					(strcmp(justify_axis, "justify-content") == 0 ||
-					 strcmp(justify_axis, "justify-items") == 0)) {
+					 strcmp(justify_axis, "justify-items") == 0 ||
+					 strcmp(justify_axis, "justify-self") == 0)) {
 				memcpy(tmp + tlen, justify_axis,
 						strlen(justify_axis));
 				tlen += strlen(justify_axis);
