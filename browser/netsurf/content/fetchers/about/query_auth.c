@@ -36,6 +36,43 @@
 #include "private.h"
 #include "query_auth.h"
 
+static char *
+about_html_escape(const char *s)
+{
+	size_t len = 0;
+	const char *p;
+	char *out;
+	char *q;
+
+	if (s == NULL)
+		s = "";
+	for (p = s; *p != '\0'; p++) {
+		switch (*p) {
+		case '&': len += 5; break;
+		case '<':
+		case '>': len += 4; break;
+		case '"': len += 6; break;
+		case '\'': len += 5; break;
+		default: len++; break;
+		}
+	}
+	out = malloc(len + 1);
+	if (out == NULL)
+		return NULL;
+	q = out;
+	for (p = s; *p != '\0'; p++) {
+		switch (*p) {
+		case '&': memcpy(q, "&amp;", 5); q += 5; break;
+		case '<': memcpy(q, "&lt;", 4); q += 4; break;
+		case '>': memcpy(q, "&gt;", 4); q += 4; break;
+		case '"': memcpy(q, "&quot;", 6); q += 6; break;
+		case '\'': memcpy(q, "&#39;", 5); q += 5; break;
+		default: *q++ = *p; break;
+		}
+	}
+	*q = '\0';
+	return out;
+}
 
 /**
  * generate the description of the login query
@@ -96,6 +133,11 @@ bool fetch_about_query_auth_handler(struct fetch_about_context *ctx)
 	const char *password = "";
 	const char *title;
 	char *description = NULL;
+	char *safe_description = NULL;
+	char *safe_username = NULL;
+	char *safe_password = NULL;
+	char *safe_url_s = NULL;
+	char *safe_realm = NULL;
 	struct nsurl *siteurl = NULL;
 	const struct fetch_multipart_data *curmd; /* mutipart data iterator */
 
@@ -156,8 +198,16 @@ bool fetch_about_query_auth_handler(struct fetch_about_context *ctx)
 					     password,
 					     &description);
 	if (res == NSERROR_OK) {
-		res = fetch_about_ssenddataf(ctx, "<p>%s</p>", description);
+		safe_description = about_html_escape(description);
 		free(description);
+		description = NULL;
+		if (safe_description == NULL) {
+			res = NSERROR_NOMEM;
+			goto fetch_about_query_auth_handler_aborted;
+		}
+		res = fetch_about_ssenddataf(ctx, "<p>%s</p>", safe_description);
+		free(safe_description);
+		safe_description = NULL;
 		if (res != NSERROR_OK) {
 			goto fetch_about_query_auth_handler_aborted;
 		}
@@ -168,24 +218,38 @@ bool fetch_about_query_auth_handler(struct fetch_about_context *ctx)
 		goto fetch_about_query_auth_handler_aborted;
 	}
 
+	safe_username = about_html_escape(username);
+	if (safe_username == NULL) {
+		res = NSERROR_NOMEM;
+		goto fetch_about_query_auth_handler_aborted;
+	}
 	res = fetch_about_ssenddataf(ctx,
 			 "<tr>"
 			 "<th><label for=\"name\">%s:</label></th>"
 			 "<td><input type=\"text\" id=\"username\" "
 			 "name=\"username\" value=\"%s\"></td>"
 			 "</tr>",
-			 messages_get("Username"), username);
+			 messages_get("Username"), safe_username);
+	free(safe_username);
+	safe_username = NULL;
 	if (res != NSERROR_OK) {
 		goto fetch_about_query_auth_handler_aborted;
 	}
 
+	safe_password = about_html_escape(password);
+	if (safe_password == NULL) {
+		res = NSERROR_NOMEM;
+		goto fetch_about_query_auth_handler_aborted;
+	}
 	res = fetch_about_ssenddataf(ctx,
 			 "<tr>"
 			 "<th><label for=\"password\">%s:</label></th>"
 			 "<td><input type=\"password\" id=\"password\" "
 			 "name=\"password\" value=\"%s\"></td>"
 			 "</tr>",
-			 messages_get("Password"), password);
+			 messages_get("Password"), safe_password);
+	free(safe_password);
+	safe_password = NULL;
 	if (res != NSERROR_OK) {
 		goto fetch_about_query_auth_handler_aborted;
 	}
@@ -212,17 +276,32 @@ bool fetch_about_query_auth_handler(struct fetch_about_context *ctx)
 	if (res != NSERROR_OK) {
 		url_s = strdup("");
 	}
+	safe_url_s = about_html_escape(url_s);
+	if (safe_url_s == NULL) {
+		free(url_s);
+		res = NSERROR_NOMEM;
+		goto fetch_about_query_auth_handler_aborted;
+	}
 	res = fetch_about_ssenddataf(ctx,
 			 "<input type=\"hidden\" name=\"siteurl\" value=\"%s\">",
-			 url_s);
+			 safe_url_s);
 	free(url_s);
+	free(safe_url_s);
+	safe_url_s = NULL;
 	if (res != NSERROR_OK) {
 		goto fetch_about_query_auth_handler_aborted;
 	}
 
+	safe_realm = about_html_escape(realm);
+	if (safe_realm == NULL) {
+		res = NSERROR_NOMEM;
+		goto fetch_about_query_auth_handler_aborted;
+	}
 	res = fetch_about_ssenddataf(ctx,
 			 "<input type=\"hidden\" name=\"realm\" value=\"%s\">",
-			 realm);
+			 safe_realm);
+	free(safe_realm);
+	safe_realm = NULL;
 	if (res != NSERROR_OK) {
 		goto fetch_about_query_auth_handler_aborted;
 	}
@@ -240,6 +319,12 @@ bool fetch_about_query_auth_handler(struct fetch_about_context *ctx)
 
 fetch_about_query_auth_handler_aborted:
 
+	free(description);
+	free(safe_description);
+	free(safe_username);
+	free(safe_password);
+	free(safe_url_s);
+	free(safe_realm);
 	nsurl_unref(siteurl);
 
 	return false;
