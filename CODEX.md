@@ -118,10 +118,9 @@ Linux.
 
 From the current docs, the valuable next work tends to be:
 
-- `justify-self` as a real native libcss property, not just a `text-align` bridge.
 - `background-clip: text` and `background-origin`.
 - Grid Round 2: placement/span-aware auto sizing, `minmax()`/`fit-content()` behavior,
-  stretch defaults, FR-row distribution.
+  and FR-row distribution. `justify-self` and AUTO-track stretch shipped in fixes1208/1212.
 - `caption-side` and `list-style-position` layout consumers.
 - Intrinsic sizing keywords for height/flex/grid/table paths.
 - Reconvert crash chain before re-enabling JS DOM mutation repaint.
