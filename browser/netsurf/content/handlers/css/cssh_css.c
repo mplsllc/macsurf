@@ -482,6 +482,7 @@ macsurf__emit_one_track(char *out, size_t cap,
 	size_t i;
 	bool is_value = false;
 	bool is_auto = false;
+	bool is_minmax_marker = false;
 
 	/* Detect if the token looks like a value (starts with digit, '.',
 	 * '+' or '-'). Anything else (auto, min-content, max-content,
@@ -501,7 +502,11 @@ macsurf__emit_one_track(char *out, size_t cap,
 			tok[2] == 't' && tok[3] == 'o') {
 		is_auto = true;
 	}
-	if (!is_value && !is_auto) {
+	if (tok_len > 2 && (tok[0] == 'm' || tok[0] == 'M') &&
+			(tok[1] == 'm' || tok[1] == 'M')) {
+		is_minmax_marker = true;
+	}
+	if (!is_value && !is_auto && !is_minmax_marker) {
 		tok_to_emit = fr_fallback;
 		emit_len = 3;
 	}
@@ -739,6 +744,14 @@ macsurf__emit_grid_tracks(const char *p, const char *end,
 				  p[4] == '('))) {
 			int depth = 0;
 			int n;
+			const char *fn_start = p;
+			bool is_minmax = (end - p) >= 7 &&
+				((p[0] == 'm' || p[0] == 'M') &&
+				 (p[1] == 'i' || p[1] == 'I') &&
+				 (p[2] == 'n' || p[2] == 'N') &&
+				 (p[3] == 'm' || p[3] == 'M') &&
+				 (p[4] == 'a' || p[4] == 'A') &&
+				 (p[5] == 'x' || p[5] == 'X') && p[6] == '(');
 			while (p < end) {
 				if (*p == '(') depth++;
 				else if (*p == ')') {
@@ -747,8 +760,28 @@ macsurf__emit_grid_tracks(const char *p, const char *end,
 				}
 				p++;
 			}
-			n = macsurf__emit_one_track(out + pos, cap - pos,
-					"1fr", 3);
+			if (is_minmax) {
+				const char *q = fn_start + 7;
+				int floor_px = 0;
+				char marker[32];
+				while (q < p && (*q == ' ' || *q == '\t')) q++;
+				while (q < p && *q >= '0' && *q <= '9') {
+					floor_px = floor_px * 10 + (*q - '0');
+					q++;
+				}
+				if (floor_px > 0 && q + 1 < p &&
+						(q[0] == 'p' || q[0] == 'P') &&
+						(q[1] == 'x' || q[1] == 'X')) {
+					n = snprintf(marker, sizeof(marker), "mm%d", floor_px);
+					if (n > 0)
+						n = macsurf__emit_one_track(out + pos,
+							cap - pos, marker, (size_t)n);
+					else n = -1;
+				} else n = -1;
+			} else n = -1;
+			if (n < 0)
+				n = macsurf__emit_one_track(out + pos, cap - pos,
+						"1fr", 3);
 			if (n < 0) break;
 			pos += (size_t)n;
 			room--;

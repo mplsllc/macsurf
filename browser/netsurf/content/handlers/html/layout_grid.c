@@ -430,6 +430,7 @@ static bool layout_grid_item(
 #define MACSURF_GRID_TRACK_UNIT_PX      2
 #define MACSURF_GRID_TRACK_UNIT_PERCENT 3
 #define MACSURF_GRID_TRACK_UNIT_AUTO    4  /* fixes817 (#62): content-sized */
+#define MACSURF_GRID_TRACK_UNIT_MINMAX_FR 5 /* fixes1214: px floor + 1fr */
 
 /* fixes158: per-child placement scratch. The two-pass layout assigns
  * (col, row, col_span, row_span) in pass 1 (placement + child layout
@@ -528,6 +529,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 	css_unit gap_unit = CSS_UNIT_PX;
 	const int32_t *raw_tracks;
 	int track_widths[MACSURF_GRID_TRACK_MAX];
+	int track_base[MACSURF_GRID_TRACK_MAX];
 	int track_x[MACSURF_GRID_TRACK_MAX];
 	int auto_track[MACSURF_GRID_TRACK_MAX];
 	int n_tracks = 0;
@@ -539,6 +541,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 	int n_row_tracks = 0;
 	bool has_row_tracks = false;
 	int grid_has_placement = 0;
+	int minmax_fr_tracks = 0;
 	int i;
 
 	/* fixes161e - per-call GRID marker capped at first 100 calls per
@@ -562,6 +565,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 
 	for (i = 0; i < MACSURF_GRID_TRACK_MAX; i++) {
 		track_widths[i] = 0;
+		track_base[i] = 0;
 		track_x[i] = 0;
 		auto_track[i] = 0;
 		row_track_h[i] = 0;
@@ -718,6 +722,15 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 			} else if (unit == MACSURF_GRID_TRACK_UNIT_AUTO) {
 				auto_track[i] = 1;
 				track_widths[i] = 0;
+			} else if (unit == MACSURF_GRID_TRACK_UNIT_MINMAX_FR) {
+				/* minmax(Npx, 1fr): reserve N before sharing the
+				 * remainder among flexible tracks. */
+				if (value < 0) value = 0;
+				track_base[i] = value;
+				track_widths[i] = -256;
+				fixed_total += value;
+				fr_total_q88 += 256;
+				minmax_fr_tracks++;
 			}
 		}
 
@@ -798,6 +811,11 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 		}
 
 		if (n_tracks > 0) {
+				if (minmax_fr_tracks > 0) {
+					macsurf_debug_log_writef(
+						"LIFE fixes1214 minmax pxfr tracks=%d",
+						minmax_fr_tracks);
+				}
 			has_tracks = true;
 			cols = n_tracks;
 			total_gap = col_gap * (n_tracks - 1);
@@ -816,7 +834,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 								(long)q88) /
 								(long)fr_total_q88);
 						if (w < 1) w = 1;
-						track_widths[i] = w;
+							track_widths[i] = track_base[i] + w;
 					}
 				}
 			} else {
