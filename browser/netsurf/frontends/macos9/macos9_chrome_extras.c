@@ -37,6 +37,7 @@
 #ifdef __MACOS9__
 #include <Carbon.h>
 #include <Movies.h>
+#include <QuickTimeComponents.h>
 #endif
 
 extern struct browser_window *macos9_gw_bw(struct gui_window *g);
