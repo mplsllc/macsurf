@@ -11210,7 +11210,7 @@ static void register_browser_globals(JSContext *ctx)
 				"HTMLElement");
 			if (JS_IsFunction(ctx, html_el)) {
 				JS_SetPropertyStr(ctx, global,
-					"HTML_Element", html_el);
+					"HTML_Element", JS_DupValue(ctx, html_el));
 			}
 			JS_FreeValue(ctx, html_el);
 		}

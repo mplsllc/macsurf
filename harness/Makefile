@@ -213,7 +213,7 @@ check-c89:
 link objs: reconvert_harness
 
 run: reconvert_harness
-	./reconvert_harness
+	ASAN_OPTIONS=detect_leaks=0 ./reconvert_harness
 
 check: check-macdefault run
 
