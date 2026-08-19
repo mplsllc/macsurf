@@ -793,7 +793,11 @@ static JSValue qjs_history_set_url_display(JSContext *ctx, JSValueConst this_val
 		const char *url = JS_ToCString(ctx, argv[0]);
 		if (url) {
 			struct gui_window *win = macos9_window_list_head();
-			if (win != NULL) macos9_window_set_url_display(win, url);
+			if (win != NULL) {
+				MS_LOG("LIFE fixes1198: pushState/replaceState display-only URL update");
+				MS_LOG(url);
+				macos9_window_set_url_display(win, url);
+			}
 			JS_FreeCString(ctx, url);
 		}
 	}
@@ -8864,8 +8868,12 @@ qjs_storage_load(JSContext *ctx, JSValueConst this_val,
 	 * or nsurl_access() on it then hands macsurf_storage_fname() a garbage
 	 * or NULL url pointer it has no way to detect. */
 	c = qjs_get_content();
-	if (c == NULL || !macos9_content_is_live(c) || c->llcache == NULL)
+	if (c == NULL) return JS_NULL;
+	if (!macos9_content_is_live(c)) {
+		MS_LOG("LIFE fixes1199: storage load caught stale g_qjs_content");
 		return JS_NULL;
+	}
+	if (c->llcache == NULL) return JS_NULL;
 	url = nsurl_access(content_get_url(c));
 	if (url == NULL) return JS_NULL;
 
