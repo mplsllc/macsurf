@@ -8852,8 +8852,20 @@ qjs_storage_load(JSContext *ctx, JSValueConst this_val,
 
 	(void) this_val; (void) argc; (void) argv;
 
+	/* fixes1199 - g_qjs_content is a raw pointer with no lifetime guarantee
+	 * (same hazard qjs_geometry_settled() already guards against via
+	 * macos9_content_is_live()). During realm construction for a nested
+	 * document (js_newthread -> qjs_build_context -> register_browser_globals
+	 * -> the _Storage shim's synchronous __storageLoad() call), the new
+	 * realm's own content has not been wired via qjs_set_content() yet, so
+	 * this reads whatever content was live last -- which can already be
+	 * freed. c->llcache on a freed content can still read back non-NULL
+	 * garbage, so the old check let a dangling c through; content_get_url()
+	 * or nsurl_access() on it then hands macsurf_storage_fname() a garbage
+	 * or NULL url pointer it has no way to detect. */
 	c = qjs_get_content();
-	if (c == NULL || c->llcache == NULL) return JS_NULL;
+	if (c == NULL || !macos9_content_is_live(c) || c->llcache == NULL)
+		return JS_NULL;
 	url = nsurl_access(content_get_url(c));
 	if (url == NULL) return JS_NULL;
 
@@ -8909,8 +8921,9 @@ qjs_storage_save(JSContext *ctx, JSValueConst this_val,
 	s = JS_ToCString(ctx, argv[0]);
 	if (s == NULL) return JS_UNDEFINED;
 
+	/* fixes1199 - see the matching guard in qjs_storage_load(). */
 	c = qjs_get_content();
-	if (c == NULL || c->llcache == NULL) {
+	if (c == NULL || !macos9_content_is_live(c) || c->llcache == NULL) {
 		JS_FreeCString(ctx, s);
 		return JS_UNDEFINED;
 	}
