@@ -51,7 +51,7 @@
  *   - grid-auto-flow column/dense
  *   - subgrid
  *   - justify-self start/center/stretch (scalar-tail computed style, no
- *     bits[] growth)
+ *     bits[] growth, fixes1204)
  *   - align-items: stretch as the CSS 12.8 default (cells leave empty space
  *     when the row track exceeds content height)
  *   - fr row distribution against a definite container height
@@ -107,6 +107,67 @@ static uint8_t layout_grid_justify_effective(const struct box *grid,
 	}
 
 	return ji;
+}
+
+static const char *layout_grid_justify_name(uint8_t value)
+{
+	switch (value) {
+	case CSS_JUSTIFY_ITEMS_STRETCH:
+		return "stretch";
+	case CSS_JUSTIFY_ITEMS_START:
+		return "start";
+	case CSS_JUSTIFY_ITEMS_CENTER:
+		return "center";
+	default:
+		return "other";
+	}
+}
+
+static const char *layout_grid_justify_self_name(uint8_t value)
+{
+	switch (value) {
+	case CSS_JUSTIFY_SELF_AUTO:
+		return "auto";
+	case CSS_JUSTIFY_SELF_STRETCH:
+		return "stretch";
+	case CSS_JUSTIFY_SELF_START:
+		return "start";
+	case CSS_JUSTIFY_SELF_CENTER:
+		return "center";
+	default:
+		return "other";
+	}
+}
+
+static void layout_grid_log_justify(const char *phase,
+		const struct box *grid, const struct box *item,
+		uint8_t effective, int cell_w, int item_w, int outer_w,
+		int x_pos, int child_x)
+{
+	extern long macsurf_layout_seq;
+	static long seq = -1;
+	static int budget = 0;
+	uint8_t js = CSS_JUSTIFY_SELF_AUTO;
+
+	if (seq != macsurf_layout_seq) {
+		seq = macsurf_layout_seq;
+		budget = 24;
+	}
+	if (budget <= 0)
+		return;
+	budget--;
+
+	if (item != NULL && item->style != NULL)
+		js = css_computed_justify_self(item->style);
+
+	macsurf_debug_log_writef(
+		"LIFE fixes1204 gridjs phase=%s grid=%p item=%p "
+		"self=%s(%d) eff=%s(%d) cell=%d itemw=%d outer=%d "
+		"x0=%d x=%d",
+		phase, (void *)grid, (void *)item,
+		layout_grid_justify_self_name(js), (int)js,
+		layout_grid_justify_name(effective), (int)effective,
+		cell_w, item_w, outer_w, x_pos, child_x);
 }
 
 /* fixes168b - Grid local fallback. When a grid container hits an
@@ -245,6 +306,7 @@ static bool layout_grid_item(
 	int dummy_max_w = -1;
 	int dummy_min_h = -1;
 	int dummy_max_h = -1;
+	uint8_t effective_justify = CSS_JUSTIFY_ITEMS_STRETCH;
 
 	if (item->style != NULL) {
 		item->float_container = item->parent;
@@ -263,6 +325,10 @@ static bool layout_grid_item(
 				&dummy_max_h, &dummy_min_h,
 				item->margin, item->padding, item->border);
 		item->float_container = NULL;
+	}
+	if (item->parent != NULL) {
+		effective_justify = layout_grid_justify_effective(
+				item->parent, item);
 	}
 
 	/* fixes114 - only force cell_width if the child's CSS width is AUTO
@@ -298,10 +364,8 @@ static bool layout_grid_item(
 		 * zero regression to existing grids. Falls back to stretch if
 		 * the content width isn't sensible. */
 		if (item->parent != NULL) {
-			uint8_t ji = layout_grid_justify_effective(
-					item->parent, item);
-			if ((ji == CSS_JUSTIFY_ITEMS_START ||
-			     ji == CSS_JUSTIFY_ITEMS_CENTER) &&
+			if ((effective_justify == CSS_JUSTIFY_ITEMS_START ||
+			     effective_justify == CSS_JUSTIFY_ITEMS_CENTER) &&
 			    item->max_width > 0 &&
 			    item->max_width < item->width) {
 				item->width = item->max_width;
@@ -320,6 +384,10 @@ static bool layout_grid_item(
 	if (item->width < 0) {
 		item->width = 0;
 	}
+
+	layout_grid_log_justify("size", item->parent, item,
+			effective_justify, cell_width, item->width,
+			item->width + lh__delta_outer_width(item), 0, 0);
 
 	switch (item->type) {
 	case BOX_BLOCK:
@@ -1459,17 +1527,22 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 					uint8_t grid_ji =
 						layout_grid_justify_effective(
 							grid, child);
+					int cell_w = has_tracks ?
+						track_widths[slot_col] :
+						col_width;
+					int outer_w = child->width +
+					  lh__delta_outer_width(child);
 					if (grid_ji == CSS_JUSTIFY_ITEMS_CENTER) {
-						int cell_w = has_tracks ?
-							track_widths[slot_col] :
-							col_width;
-						int outer_w = child->width +
-						  lh__delta_outer_width(child);
 						if (cell_w > outer_w) {
 							child->x = x_pos +
 							  (cell_w - outer_w) / 2;
 						}
 					}
+					layout_grid_log_justify("place",
+							grid, child, grid_ji,
+							cell_w, child->width,
+							outer_w, x_pos,
+							child->x);
 				}
 
 				if (slot_row < 0 ||
