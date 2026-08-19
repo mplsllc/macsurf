@@ -472,6 +472,9 @@ uint8_t css_computed_background_clip(
 uint8_t css_computed_justify_items(
 		const css_computed_style *style);   /* #279 */
 
+uint8_t css_computed_justify_self(
+		const css_computed_style *style);   /* #279 follow-up */
+
 uint8_t css_computed_overflow_wrap(
 		const css_computed_style *style);
 

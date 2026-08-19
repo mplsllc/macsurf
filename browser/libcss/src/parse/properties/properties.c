@@ -197,7 +197,8 @@ const css_prop_handler property_handlers[LAST_PROP + 1 - FIRST_PROP] =
 	css__parse_hanging_punctuation,
 	css__parse_background_clip,   /* #255 */
 	css__parse_justify_items,   /* #279 */
-	css__parse_appearance   /* #80 */
+	css__parse_appearance,   /* #80 */
+	css__parse_justify_self   /* #279 follow-up */
 };
 
 /** Mapping from property bytecode index to bytecode unit class mask. */
@@ -333,6 +334,7 @@ const uint32_t property_unit_mask[CSS_N_PROPERTIES] = {
 	[CSS_PROP_TEXT_DECORATION_THICKNESS] = 0,
 	[CSS_PROP_MACSURF_HSTRIPE_BG]    = 0,
 	[CSS_PROP_MACSURF_DOTGRID]       = 0,
+	[CSS_PROP_JUSTIFY_SELF]          = 0,
 	[CSS_PROP_BREAK_AFTER]		 = UNIT_MASK_BREAK_AFTER,	[CSS_PROP_BREAK_BEFORE]          = UNIT_MASK_BREAK_BEFORE,
 	[CSS_PROP_BREAK_INSIDE]          = UNIT_MASK_BREAK_INSIDE,
 	[CSS_PROP_COLUMN_COUNT]          = UNIT_MASK_COLUMN_COUNT,

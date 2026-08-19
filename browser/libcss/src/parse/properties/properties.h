@@ -184,6 +184,9 @@ css_error css__parse_tab_size(css_language *c,
 css_error css__parse_appearance(css_language *c,
 		const parserutils_vector *vector, int32_t *ctx,
 		css_style *result);
+css_error css__parse_justify_self(css_language *c,   /* #279 follow-up */
+                const parserutils_vector *vector, int32_t *ctx,
+                css_style *result);
 css_error css__parse_image_rendering(css_language *c,
 		const parserutils_vector *vector, int32_t *ctx,
 		css_style *result);

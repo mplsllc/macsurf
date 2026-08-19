@@ -50,10 +50,8 @@
  *     fill-row sentinel; `-2`, etc. are not)
  *   - grid-auto-flow column/dense
  *   - subgrid
- *   - justify-self (BLOCKED: the bit-packed bits[16] computed-style array is
- *     full -- justify-items took the last slot, bits[15] shift 30 -- so the
- *     array must be extended to bits[17] first, which is a structural change
- *     to the arena-interning-sensitive css_computed_style_i)
+ *   - justify-self start/center/stretch (scalar-tail computed style, no
+ *     bits[] growth)
  *   - align-items: stretch as the CSS 12.8 default (cells leave empty space
  *     when the row track exceeds content height)
  *   - fr row distribution against a definite container height
@@ -84,6 +82,32 @@
 
 #include "css/utils.h"
 
+static uint8_t layout_grid_justify_effective(const struct box *grid,
+		const struct box *item)
+{
+	uint8_t ji = CSS_JUSTIFY_ITEMS_STRETCH;
+
+	if (grid != NULL && grid->style != NULL) {
+		ji = css_computed_justify_items(grid->style);
+	}
+
+	if (item != NULL && item->style != NULL) {
+		uint8_t js = css_computed_justify_self(item->style);
+		switch (js) {
+		case CSS_JUSTIFY_SELF_STRETCH:
+			return CSS_JUSTIFY_ITEMS_STRETCH;
+		case CSS_JUSTIFY_SELF_START:
+			return CSS_JUSTIFY_ITEMS_START;
+		case CSS_JUSTIFY_SELF_CENTER:
+			return CSS_JUSTIFY_ITEMS_CENTER;
+		case CSS_JUSTIFY_SELF_AUTO:
+		default:
+			break;
+		}
+	}
+
+	return ji;
+}
 
 /* fixes168b - Grid local fallback. When a grid container hits an
  * unsafe input (AUTO/INT_MIN propagated through a parent, child
@@ -273,9 +297,9 @@ static bool layout_grid_item(
 		 * value -> the default (stretch) path above is byte-identical,
 		 * zero regression to existing grids. Falls back to stretch if
 		 * the content width isn't sensible. */
-		if (item->parent != NULL && item->parent->style != NULL) {
-			uint8_t ji = css_computed_justify_items(
-					item->parent->style);
+		if (item->parent != NULL) {
+			uint8_t ji = layout_grid_justify_effective(
+					item->parent, item);
 			if ((ji == CSS_JUSTIFY_ITEMS_START ||
 			     ji == CSS_JUSTIFY_ITEMS_CENTER) &&
 			    item->max_width > 0 &&
@@ -1393,10 +1417,8 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 		 * fixes178d: honour align-items on the grid container and
 		 * align-self per child (cross-axis = vertical). V1 supports
 		 * stretch (default - no offset), flex-start, flex-end,
-		 * center, baseline (treated as flex-start). justify-* is not
-		 * shipped in V1 because libcss in this vintage does not
-		 * expose justify-items / justify-self accessors (would
-		 * require new libcss properties, which is the trap zone). */
+		 * center, baseline (treated as flex-start). justify-items and
+		 * justify-self handle the inline axis. */
 		{
 			uint8_t grid_align_items =
 				CSS_ALIGN_ITEMS_STRETCH;
@@ -1435,11 +1457,8 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 				 * is uncommon). */
 				{
 					uint8_t grid_ji =
-						CSS_JUSTIFY_ITEMS_STRETCH;
-					if (grid->style != NULL)
-						grid_ji =
-						  css_computed_justify_items(
-							grid->style);
+						layout_grid_justify_effective(
+							grid, child);
 					if (grid_ji == CSS_JUSTIFY_ITEMS_CENTER) {
 						int cell_w = has_tracks ?
 							track_widths[slot_col] :

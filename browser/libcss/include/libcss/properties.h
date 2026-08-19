@@ -177,6 +177,7 @@ enum css_properties_e {
 	CSS_PROP_BACKGROUND_CLIP                = 0x0a0,
 	CSS_PROP_JUSTIFY_ITEMS                  = 0x0a1,
 	CSS_PROP_APPEARANCE                     = 0x0a2,
+	CSS_PROP_JUSTIFY_SELF                   = 0x0a3,
 	CSS_N_PROPERTIES
 };
 
@@ -515,6 +516,16 @@ enum css_justify_items_e {
 	CSS_JUSTIFY_ITEMS_STRETCH		= 0x1,
 	CSS_JUSTIFY_ITEMS_START			= 0x2,
 	CSS_JUSTIFY_ITEMS_CENTER		= 0x3
+};
+
+/* #279 follow-up - justify-self. Scalar-tail property: the bits[] array is
+ * full, so this must not consume another packed bit slot. */
+enum css_justify_self_e {
+	CSS_JUSTIFY_SELF_INHERIT		= 0x0,
+	CSS_JUSTIFY_SELF_AUTO			= 0x1,
+	CSS_JUSTIFY_SELF_STRETCH		= 0x2,
+	CSS_JUSTIFY_SELF_START			= 0x3,
+	CSS_JUSTIFY_SELF_CENTER			= 0x4
 };
 
 enum css_overflow_wrap_e {

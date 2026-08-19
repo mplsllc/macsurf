@@ -424,6 +424,10 @@ struct css_computed_style_i {
 	 * bits[] slot -- keyword-valued so it is byte-deterministic across
 	 * cascade paths, and appending here shifts no existing field. */
 	int32_t appearance;
+	/* fixes833b (#279): justify-self. Scalar tail, not a bits[] slot:
+	 * justify-items consumed bits[15] shift 30 and the packed array is
+	 * full. Values are CSS_JUSTIFY_SELF_*; initial/unset is AUTO. */
+	int32_t justify_self;
 	/* fixes357 (#44): text-decoration extended sub-properties.
 	 *   text_decoration_color_status: CSS_TEXT_DECORATION_COLOR_*
 	 *   text_decoration_color: resolved css_color (valid when
