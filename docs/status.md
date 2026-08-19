@@ -1,7 +1,13 @@
 # MacSurf Status
 
-**Date:** 2026-07-17
-**Engine HEAD:** fixes894 (MacSurf side, `master`)
+**Date:** 2026-08-19
+**Release baseline:** fixes894 (`master`, MacSurf 2.0.5). **Active development:**
+`workflow` through fixes1211; this work is not part of a released build.
+
+**Post-release workflow status:** fixes1197–1201 and fixes1203–1209 are shipped;
+fixes1208 native grid `justify-self` is iMac hardware-verified. fixes1210/1211
+replace the About-window Unix audio launcher with in-memory QuickTime playback;
+they are pushed and dropped to the iMac, awaiting the click/play hardware test.
 **Current release:** **MacSurf 2.0.5 "HACKADAY"** (2026-07-17) — a polish release over 2.0. Headline: **hackaday.com renders at full desktop width**. The load-bearing fix underneath was browser-wide — every author `font-size` was drawing ~25% too small and CSS `em`/`rem`/`@media` width queries were computing against the wrong number, so pages came up cramped into a narrow column; MacSurf now measures type in real device pixels (#244/#287, fixes859). On top of that: a large modern-CSS pass (justified text #271, soft hyphens #272/#275, `tab-size`/typography cluster #251, box-alignment shorthands #253, logical properties #247, grid auto-track sizing #62, `caret-color`/`accent-color` #252, `background-clip` #255, `image-rendering` #256, inline-`style` rewriters #277); a much more capable on-device JavaScript engine (real `fetch()`/`XMLHttpRequest`, draining Promise chains, `document.cookie`, DOM traversal + `querySelector`, load lifecycle — #283–#302); tracker/ad-network blocking; text/plain rendering inline (#232); rgba backdrop compositing (#227); and a typing-latency dirty-rect fix (#212/#239). Full notes: [release-notes/MacSurf-2.0.5.md](release-notes/MacSurf-2.0.5.md). *(The 2.0, 1.68.1, and v1.4 narratives below are retained as history.)*
 
 **Historical (v1.4 round):** v1.4 "Open House" — **the JavaScript marathon closed.** Twenty-three GitHub issues went from open to closed across fixes319-352 — `setTimeout` / `setInterval` / `requestAnimationFrame`, `window.location` (full surface), `window.history` (`pushState` / `replaceState` / `state`), `URL` + `URLSearchParams`, `element.classList`, `element.style`, `Event` / `CustomEvent` / `MouseEvent` / `KeyboardEvent` constructors, `MutationObserver`, `DOMParser`, `FormData`, `localStorage`, `fetch`, `window.addEventListener` for `load` + `DOMContentLoaded`, `<details>` / `<summary>` click-to-toggle, `hidden` attribute. The purpose-built probe page at `mactrove.com/t.html` scored **`JS 19/19 pass, 0 fail`** on a G3 iMac. Two structural bugs caught along the way: **fixes349** repaired the IIFE per-element installer broken by fixes342's `_noresult` change (`TypeError: [object Object] not callable` on every element wrapper, the install aborted mid-stream and elements lost classList / style / matches / closest / etc); **fixes350** extended `js_fire_event` to dispatch `_winListeners` so `load` / `DOMContentLoaded` actually reach `addEventListener` listeners (was only firing the inline `on<type>` handler).
@@ -39,7 +45,7 @@ The build runs on a G3 iMac for current work, with a beige G3 Minitower (Sonnet 
 - Custom properties + `var()` resolution
 - **Type measured in real device pixels** (2.0.5, #244/#287) — author `font-size`, `em`/`rem`, and `@media` width queries all resolve at 96 dpi like a mainstream browser, so pages lay out at their designed desktop width instead of a cramped column
 - Flexbox: `justify-content`, `align-content`, `align-items`, `align-self`, `order`, `flex-direction`, `flex-wrap`, `flex-basis`, `flex-grow`, `flex-shrink`
-- **CSS Grid (V1 + V2)**: track grammar (`fr`, `repeat()`, `minmax()`), `grid-template-rows`, gaps, explicit placement (`grid-column*`, `grid-row*`, `grid-area`), `grid-template-areas` name lowering, auto-flow occupancy avoidance, **content auto-sized tracks** (2.0.5, #62), `align-items`/`align-self`, and `justify-items` (2.0.5, #279). Placement/span-aware auto sizing and `justify-self` are the open Round-2 remainder.
+- **CSS Grid (V1 + V2)**: track grammar (`fr`, `repeat()`, `minmax()`), `grid-template-rows`, gaps, explicit placement (`grid-column*`, `grid-row*`, `grid-area`), `grid-template-areas` name lowering, auto-flow occupancy avoidance, **content auto-sized tracks** (2.0.5, #62), `align-items`/`align-self`, `justify-items`, and native `justify-self` (fixes1204/1208, iMac hardware-verified). Placement/span-aware auto sizing and minmax composition remain in Grid Round 2.
 - **Box-alignment shorthands** `place-items` / `place-content` / `place-self` (2.0.5, #253) and **CSS Logical Properties** `margin-inline` / `padding-block` / `inset-*` (2.0.5, #247)
 - **Typography** (2.0.5): justified text (#271), soft hyphens `&shy;` (#272/#275), `tab-size`, `text-align-last`, `text-justify`, `word-break` (#251), `caret-color`/`accent-color` (#252), `text-decoration` color/style/thickness (#249) — several first-for-classic-Mac, not in upstream NetSurf
 - **Multi-column layout (V1)**: `column-count`, `column-width`, `column-gap`, `column-rule-*` paint (fixes179 onwards)
@@ -96,7 +102,7 @@ See [codewarrior-setup.md](codewarrior-setup.md) for the Mac-side build walkthro
 
 ## Current fix round
 
-**fixes876–894 — the 2.0.5 "HACKADAY" batch.** Post-2.0 this line landed the whole CSS-coverage push (fixes771–834), the Facebook Round 2 / JS-engine work (fixes835–875), and the revamp Phase 0/1 batch (fixes876–893), then shipped as 2.0.5. HEAD is **fixes894** (a revert of fixes884/885 — the cert-failure-no-cleartext gate broke bare-domain→http→https redirects like hackernews.com, so the http fallback the retro-http audience relies on was restored for the release, to be fixed forward). Highlights:
+**fixes876–894 — the 2.0.5 "HACKADAY" batch.** Post-2.0 this line landed the whole CSS-coverage push (fixes771–834), the Facebook Round 2 / JS-engine work (fixes835–875), and the revamp Phase 0/1 batch (fixes876–893), then shipped as 2.0.5. The release head is **fixes894** (a revert of fixes884/885 — the cert-failure-no-cleartext gate broke bare-domain→http→https redirects like hackernews.com, so the http fallback the retro-http audience relies on was restored for the release, to be fixed forward). Highlights:
 
 - **Device-pixel type (fixes859, #244/#287)** — the load-bearing fix: `css_unit_len2device_px` at 96 dpi so author `font-size`, `em`/`rem`, and `@media` queries resolve like a mainstream browser. This is what flipped Hackaday (and many sites) from a cramped column to full desktop layout.
 - **Modern-CSS pass (fixes804–834)** — typography cluster, box-alignment shorthands, logical properties, grid auto-track sizing, `justify-items`, `background-clip`, `image-rendering`, inline-`style` rewriters, rgba backdrop compositing.
@@ -127,7 +133,7 @@ Highest-value remaining work, from [research/css-gap-inventory-2026-07-13.md](re
 
 - **`appearance` + form-control styling (#80/#90)** — synthetic CSS-painted controls replacing Carbon Control Manager where `appearance:none` is set. Its own round.
 - **`min-content`/`max-content`/`fit-content` intrinsic sizing** — the structural prerequisite that unblocks `table-layout:auto` and correct flex/grid shrink-to-fit.
-- **Grid Round 2 (#279)** — placement/span-aware auto sizing, minmax composition, `justify-self` (needs the full `bits[16]` computed-style array extended first).
+- **Grid Round 2 (#279)** — placement/span-aware auto sizing, minmax composition, and §12.8 stretch. `justify-self` is complete (fixes1204/1208) and is no longer part of this queue.
 - **`background-clip: text`** for gradient headings, plus `background-origin`.
 - **Reconvert crash chain** — land the hover/scrollbar/timer fixes so JS DOM mutation can repaint safely, then re-enable reconvert.
 - **Heavy DOM-mutation SPAs** — the open JS frontier (event bubbling/dispatch bridge #264, `getComputedStyle`/`getBoundingClientRect` #265, real in-page interactivity).
@@ -142,7 +148,7 @@ Highest-value remaining work, from [research/css-gap-inventory-2026-07-13.md](re
 - **No preemptive threading.** Cooperative `WaitNextEvent` event loop only; all networking yields via `kOTSyncIdleEvent`.
 - **No Carbon mouse-wheel** — the event class was never back-ported to CarbonLib on OS 9; scroll via bar, arrows, Page Up/Down, Home/End.
 - **No subgrid.**
-- **8 grid tracks maximum** per row or column; max 256 children per grid container (excess fall back to the auto-flow path). Grid Round 2 (`justify-self`, placement/span-aware auto sizing, minmax) is the open remainder.
+- **8 grid tracks maximum** per row or column; max 256 children per grid container (excess fall back to the auto-flow path). Grid Round 2 placement/span-aware auto sizing, minmax composition, and §12.8 stretch remain open.
 - **JavaScript Date arithmetic** is anchored to a fixed 2026 baseline because Mac OS 9's `GetDateTime` returns 1904-epoch seconds with no DST handling.
 
 ---
