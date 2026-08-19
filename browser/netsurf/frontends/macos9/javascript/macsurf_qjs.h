@@ -36,6 +36,11 @@ void macsurf_qjs_pump_all(void);
 /* Safe eval used during global setup (logs error, never throws). */
 void macsurf_qjs__safe_eval(JSContext *qctx, const char *src);
 
+/* Bound a native C->JS callback with the same deadline stack used by timers. */
+double macsurf_qjs_deadline_push_ms(double budget_ms);
+void   macsurf_qjs_deadline_pop(double prev);
+double macsurf_qjs_default_timeout_ms(void);
+
 /* Timer callbacks wired to setTimeout/setInterval. */
 void macsurf_qjs_run_timers(struct jscontext *ctx);
 

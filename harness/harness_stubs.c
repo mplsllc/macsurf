@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include "utils/ns_errors.h"
 void macsurf_debug_log_init(void){}
 void macsurf_debug_log_close(void){}
 void macsurf_debug_log_write(const char *s){ if(s){fputs(s,stderr);fputc('\n',stderr);} }
@@ -52,7 +53,7 @@ bool macos9_sched_any(bool (*pred)(void (*cb)(void *), void *p, void *arg), void
  * (the earlier auto-gen stub was a 0-arg/void mismatch against the real
  * 3-arg signature -- harmless in practice since the body ignores args, but
  * fragile; this is the real signature instead). */
-void macos9_schedule(int ms, void (*cb)(void *p), void *p) { (void)ms; (void)cb; (void)p; }
+nserror macos9_schedule(int ms, void (*cb)(void *p), void *p) { (void)ms; (void)cb; (void)p; return NSERROR_OK; }
 int macos9_sched_is_queued(void (*cb)(void *p), void *p) { (void)cb; (void)p; return 0; }
 /* fixes846 (#167 S3) — macos9_js_fetch.c's xhr_slot_release() calls this on
  * every abort/teardown. No-op here for the same reason macos9_schedule is:

@@ -248,6 +248,21 @@ static void qjs_deadline_pop(double prev)
 	g_qjs_script_deadline = prev;
 }
 
+double macsurf_qjs_deadline_push_ms(double budget_ms)
+{
+	return qjs_deadline_push(budget_ms);
+}
+
+void macsurf_qjs_deadline_pop(double prev)
+{
+	qjs_deadline_pop(prev);
+}
+
+double macsurf_qjs_default_timeout_ms(void)
+{
+	return (double)QJS_SCRIPT_TIMEOUT_MS;
+}
+
 /* fixes1071 - WHERE does a slow script actually spend its time?
  *
  * The fixes1070 hardware log found ONE 72KB script (hackaday's navigation.js
@@ -3478,7 +3493,7 @@ static JSValue qjs_dom_mut_check(JSContext *ctx, const char *op,
 	if (child  != NULL) macsurf_dom_node_get_owner_document(child,  &cdoc);
 
 	macsurf_debug_log_writef(
-		"WORK dom %s FAIL exc=%d seq=%d dispatching_mutation=%d "
+		"LIFE dom %s FAIL exc=%d seq=%d dispatching_mutation=%d "
 		"childOwner=%p nodeOwner=%p parent=%p child=%p",
 		op, (int)exc, seq,
 		(int)_dom_document_dispatching_mutation(pdoc),
@@ -3791,16 +3806,22 @@ static JSValue qjs_el_get_children_data(JSContext *ctx,
 	el = (dom_element *)qjs_get_node(this_val);
 	arr = JS_NewArray(ctx);
 	if (el == NULL) return arr;
-	macsurf_dom_node_get_first_child((dom_node *)el, &child);
+	if (macsurf_dom_node_get_first_child((dom_node *)el, &child) !=
+			DOM_NO_ERR)
+		return arr;
 	while (child) {
-		macsurf_dom_node_get_node_type(child, &ntype);
+		if (macsurf_dom_node_get_node_type(child, &ntype) != DOM_NO_ERR) {
+			macsurf_dom_node_unref(child);
+			break;
+		}
+		next = NULL;
+		if (macsurf_dom_node_get_next_sibling(child, &next) != DOM_NO_ERR)
+			next = NULL;
 		if (ntype == 1) {
 			JSValue w = qjs_wrap_element_full(ctx, (dom_element *)child);
 			JS_SetPropertyUint32(ctx, arr, (unsigned int)count, w);
 			count++;
-			macsurf_dom_node_get_next_sibling(child, &next);
 		} else {
-			macsurf_dom_node_get_next_sibling(child, &next);
 			macsurf_dom_node_unref(child);
 		}
 		child = next;

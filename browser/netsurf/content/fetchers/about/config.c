@@ -102,6 +102,9 @@ bool fetch_about_config_handler(struct fetch_about_context *ctx)
 			break; /* last option */
 
 		if (elen >= (int) (sizeof buffer - slen)) {
+			if (slen == 0) {
+				goto fetch_about_config_handler_aborted;
+			}
 			/* last entry would not fit in buffer, submit buffer */
 			res = fetch_about_senddata(ctx, (const uint8_t *)buffer, slen);
 			if (res != NSERROR_OK) {

@@ -745,9 +745,10 @@ int main(int argc, char **argv)
 						"(%ld bytes)\n",
 						(long)strlen(ua_real));
 			} else {
-				fprintf(stderr, "WARNING: real default.css not "
-						"found -- layout numbers are "
+				fprintf(stderr, "FAIL: real default.css not "
+						"found -- layout numbers would be "
 						"NOT trustworthy\n");
+				return 1;
 			}
 		}
 
@@ -1538,12 +1539,22 @@ int main(int argc, char **argv)
 
 			fseek(jf, 0, SEEK_END); jlen = ftell(jf); fseek(jf, 0, SEEK_SET);
 			jsrc = (char *)malloc((size_t)jlen + 1);
+			if (jsrc == NULL) {
+				fclose(jf);
+				fprintf(stderr, "FAIL: oom reading jQuery fixture\n");
+				return 1;
+			}
 			rd = fread(jsrc, 1, (size_t)jlen, jf);
 			jsrc[rd] = '\0';
 			fclose(jf);
 
 			wn = strlen(pre) + rd + strlen(post) + 1;
 			wrapped = (char *)malloc(wn);
+			if (wrapped == NULL) {
+				free(jsrc);
+				fprintf(stderr, "FAIL: oom wrapping jQuery fixture\n");
+				return 1;
+			}
 			strcpy(wrapped, pre);
 			memcpy(wrapped + strlen(pre), jsrc, rd);
 			strcpy(wrapped + strlen(pre) + rd, post);
@@ -1569,11 +1580,12 @@ int main(int argc, char **argv)
 			}
 			(void)js_exec(thread, (const unsigned char *)report_js,
 					strlen(report_js), "driver-jq-report.js");
+			fprintf(stderr, "=== Test 7 PASS: jQuery clears the "
+					"document-identity probe (fixes855); any remaining "
+					"throw is the known traversal gap "
+					"(cloneNode/firstChild/lastChild/childNodes) ===\n");
 		}
 	}
-	fprintf(stderr, "=== Test 7 PASS: jQuery clears the document-identity probe "
-			"(fixes855); any remaining throw is the known traversal gap "
-			"(cloneNode/firstChild/lastChild/childNodes) ===\n");
 
 	/* --- Test 7b (DIAGNOSTIC): the REAL XenForo bundles, unstubbed
 	 *
@@ -4698,6 +4710,7 @@ int main(int argc, char **argv)
 		dom_element *el22 = NULL, *el23 = NULL;
 		unsigned char ok;
 		int part1_ok = 0;
+		int red_count = 0;
 
 		if (dom_string_create((const uint8_t *)"li22", 4, &id22) != DOM_NO_ERR ||
 		    dom_string_create((const uint8_t *)"li23", 4, &id23) != DOM_NO_ERR) {
@@ -4800,6 +4813,7 @@ int main(int argc, char **argv)
 			ok = js_exec(thread, (const unsigned char *)chk1b,
 					strlen(chk1b), "t38-chk1b.js");
 			if (!ok) {
+				red_count++;
 				fprintf(stderr, "  part 1b RED: target double-fire (see "
 						"assertion above) -- continuing so the round reports "
 						"every finding in one run\n");
@@ -4868,6 +4882,7 @@ int main(int argc, char **argv)
 				ok = js_exec(thread, (const unsigned char *)chk1c,
 						strlen(chk1c), "t38-chk1c.js");
 				if (!ok) {
+					red_count++;
 					fprintf(stderr, "  part 1c RED: capture mirror -- the fix "
 							"is two clauses, not one\n");
 				} else {
@@ -4948,6 +4963,7 @@ int main(int argc, char **argv)
 				ok = js_exec(thread, (const unsigned char *)chk1d,
 						strlen(chk1d), "t38-chk1d.js");
 				if (!ok) {
+					red_count++;
 					fprintf(stderr, "  part 1d RED: click/submit/keydown all "
 							"double-fire -- double form submit confirmed\n");
 				} else {
@@ -5001,6 +5017,7 @@ int main(int argc, char **argv)
 			ok = js_exec(thread, (const unsigned char *)chk2,
 					strlen(chk2), "t38-chk2.js");
 			if (!ok) {
+				red_count++;
 				fprintf(stderr,
 					"=== Test 38 FAILED AS EXPECTED (Phase 0 control) ===\n"
 					"    The positive control passed (part1_ok=%d), so the "
@@ -5010,6 +5027,8 @@ int main(int argc, char **argv)
 					"    This turns green when Phase 1b + 1c land. Until "
 					"then a red suite here is the CORRECT result.\n",
 					part1_ok);
+			}
+			if (red_count != 0) {
 				return 1;
 			}
 		}

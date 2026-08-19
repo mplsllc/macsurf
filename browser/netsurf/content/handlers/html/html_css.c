@@ -307,6 +307,9 @@ static void html_css_process_modified_styles(void *pw)
 	struct html_stylesheet *s;
 	unsigned int i;
 	bool all_done = true;
+	static html_content *retry_content = NULL;
+	static unsigned int retry_count = 0;
+	const unsigned int retry_limit = 8;
 
 	/* fixes518: dead-content guard.  Scheduled callback keyed on the
 	 * html_content; cancelled in html_close/html_destroy, but guard the
@@ -325,7 +328,27 @@ static void html_css_process_modified_styles(void *pw)
 
 	/* If we failed to process any sheet, schedule a retry */
 	if (all_done == false) {
-		guit->misc->schedule(1000, html_css_process_modified_styles, c);
+		if (retry_content != c) {
+			retry_content = c;
+			retry_count = 0;
+		}
+		retry_count++;
+		if (retry_count <= retry_limit) {
+			guit->misc->schedule(1000,
+					html_css_process_modified_styles, c);
+		} else {
+			macsurf_debug_log_writef(
+				"LIFE css modified stylesheet retry cap hit content=%p "
+				"count=%u",
+				(void *)c, retry_count);
+			for (i = 0, s = c->stylesheets;
+			     i != c->stylesheet_count; i++, s++) {
+				s->modified = false;
+			}
+		}
+	} else if (retry_content == c) {
+		retry_content = NULL;
+		retry_count = 0;
 	}
 }
 

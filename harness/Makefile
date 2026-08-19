@@ -124,7 +124,7 @@ reconvert_harness: $(ALL_OBJ)
 
 -include $(ALL_OBJ:.o=.d)
 
-.PHONY: all run clean check-macdefault
+.PHONY: all run clean check check-c89 check-macdefault
 all: reconvert_harness
 
 # fixes1023 — COMPILE THE MAC'S ACTUAL CONFIGURATION.
@@ -148,7 +148,11 @@ MACDEFAULT_STRIP := -DMACSURF_JS_GEOMETRY=1 -DMACSURF_JS_VIEW_EVENTS=1 \
 check-macdefault: check-c89
 	@echo "== compiling glue in the MAC's config (quiesce switches OFF) =="
 	@$(CC) -fsyntax-only $(filter-out $(MACDEFAULT_STRIP),$(CFLAGS)) \
-		-DWITH_QUICKJS $(INC) build/macsurf_qjs.c && echo "   OK"
+		-DWITH_QUICKJS $(INC) build/macsurf_qjs.c && echo "   macsurf_qjs.c OK"
+	@$(CC) -fsyntax-only $(filter-out $(MACDEFAULT_STRIP),$(CFLAGS)) \
+		-DWITH_QUICKJS $(INC) build/macsurf_dom_dispatch.c && echo "   macsurf_dom_dispatch.c OK"
+	@$(CC) -fsyntax-only $(filter-out $(MACDEFAULT_STRIP),$(CFLAGS)) \
+		-DWITH_QUICKJS $(INC) build/macos9_js_fetch.c && echo "   macos9_js_fetch.c OK"
 
 # fixes1071a — MIXED DECLARATIONS, the one C89 rule this harness cannot see.
 #
@@ -183,6 +187,14 @@ check-c89:
 		build/macsurf_qjs.c && echo "   macsurf_qjs.c OK"
 	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) -DWITH_QUICKJS $(INC) \
 		build/macsurf_qjs_audit.c && echo "   macsurf_qjs_audit.c OK"
+	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) -DWITH_QUICKJS $(INC) \
+		build/macsurf_dom_dispatch.c && echo "   macsurf_dom_dispatch.c OK"
+	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) -DWITH_QUICKJS $(INC) \
+		build/macos9_js_fetch.c && echo "   macos9_js_fetch.c OK"
+	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) $(INC) \
+		build/macos9_reconvert.c && echo "   macos9_reconvert.c OK"
+	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) $(INC) \
+		build/macos9_content_registry.c && echo "   macos9_content_registry.c OK"
 # fixes1093 — html.c joins the gate. It was never covered, yet it is the other
 # file this project edits constantly (the pagemap, the reconvert resize/load
 # fire, and now the slider probe all live here) and it ships to CW8 as C89
@@ -202,6 +214,8 @@ link objs: reconvert_harness
 
 run: reconvert_harness
 	./reconvert_harness
+
+check: check-macdefault run
 
 clean:
 	rm -rf $(OBJ) reconvert_harness

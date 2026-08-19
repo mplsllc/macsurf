@@ -5,6 +5,18 @@
 #include <stdlib.h>
 #include <time.h>
 #include <stdint.h>
+#include "utils/ns_errors.h"
+
+struct browser_window;
+struct gui_window;
+struct hlcache_handle;
+struct selection;
+struct textarea;
+struct textarea_setup;
+struct textarea_msg;
+typedef unsigned int textarea_flags;
+typedef void(*textarea_client_callback)(void *data, struct textarea_msg *msg);
+
 /* real allocator (harness uses libc malloc so ASan tracks) */
 void *macsurf_safe_alloc(size_t n){return malloc(n);}
 void *macsurf_safe_calloc(size_t a,size_t b){return calloc(a,b);}
@@ -39,11 +51,11 @@ double macos9_micros(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);r
 void browser_window_drop_file_at_point(void){}
 void browser_window_find_target(void){}
 void browser_window_frame_resize_start(void){}
-void browser_window_get_content(void){}
+struct hlcache_handle *browser_window_get_content(struct browser_window *bw){(void)bw;return NULL;}
 void browser_window_get_drag_type(void){}
 void browser_window_get_features(void){}
 void browser_window_get_position(void){}
-void browser_window_get_scale(void){}
+float browser_window_get_scale(struct browser_window *bw){(void)bw;return 1.0f;}
 void browser_window_history_back(void){}
 void browser_window_history_forward(void){}
 void browser_window_mouse_click(void){}
@@ -77,18 +89,18 @@ void macos9_font_measure_chars(void){}
 void macos9_grad_linear_unpack_count(void){}
 void macos9_grad_radial_unpack_count(void){}
 void macos9_grad_set_count(void){}
-void macos9_gw_bw(void){}
+struct browser_window *macos9_gw_bw(struct gui_window *g){(void)g;return NULL;}
 void macos9_heap_free_bytes(void){}
 void macos9_heap_max_block(void){}
 void macos9_hittest_scroll_x(void){}
 void macos9_hittest_scroll_y(void){}
-void macos9_window_list_head(void){}
+struct gui_window *macos9_window_list_head(void){return NULL;}
 void macsurf__decoded_img_bytes_current(void){}
 void macsurf_profile_accum_cascade(void){}
 void macsurf_profile_accum_js(void){}
 void macsurf_profile_accum_layout(void){}
 void macsurf_profile_accum_parse(void){}
-void macsurf_profile_get_js_us(void){}
+long macsurf_profile_get_js_us(void){return 0;}
 void macsurf_profile_note_reflow(void){}
 void macsurf_profile_stamp(void){}
 void macsurf__site_blocker(void){}
@@ -157,14 +169,17 @@ void selection_dragging(void){}
 void selection_dragging_start(void){}
 void selection_get_copy(void){}
 void selection_highlighted(void){}
-void selection_init(void){}
+void selection_init(struct selection *s){(void)s;}
 void selection_reinit(void){}
 void selection_select_all(void){}
 void selection_set_position(void){}
 void selection_string_append(void){}
 void selection_track(void){}
 void textarea_clear_selection(void){}
-void textarea_create(void){}
+struct textarea *textarea_create(const textarea_flags flags,
+		const struct textarea_setup *setup,
+		textarea_client_callback callback, void *data)
+{(void)flags;(void)setup;(void)callback;(void)data;return NULL;}
 void textarea_destroy(void){}
 void textarea_drop_text(void){}
 void textarea_get_selection(void){}
@@ -175,5 +190,5 @@ void textarea_scroll(void){}
 void textarea_set_caret(void){}
 void textarea_set_layout(void){}
 void textarea_set_text(void){}
-void TickCount(void){}
+unsigned long TickCount(void){return macsurf_get_ticks();}
 void UNUSED(void){}

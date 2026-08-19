@@ -212,7 +212,10 @@ xhr_accum(char **buf, long *len, long *cap, long max_bytes, int *poisoned,
 		while (ncap < *len + l) ncap *= 2;
 		if (ncap > max_bytes) ncap = max_bytes;
 		nb = (char *) realloc(*buf, (size_t) (ncap + 1));
-		if (nb == NULL) return;	/* OOM: keep what we have */
+		if (nb == NULL) {
+			*poisoned = 1;
+			return;
+		}
 		*buf = nb;
 		*cap = ncap;
 	}
@@ -281,6 +284,7 @@ xhr_deliver(void *p)
 	struct qjs_xhr_slot *s = (struct qjs_xhr_slot *) p;
 	JSContext *ctx;
 	JSValue fn, ret, exc, stk;
+	double prevdl;
 	const char *body;
 	const char *hdrs;
 	const char *url_str;
@@ -298,6 +302,12 @@ xhr_deliver(void *p)
 	body = (s->resp_buf != NULL) ? s->resp_buf : "";
 	hdrs = (s->hdr_buf != NULL) ? s->hdr_buf : "";
 	url_str = (s->url != NULL) ? nsurl_access(s->url) : "";
+	if (s->resp_poisoned || s->hdr_poisoned) {
+		s->is_error = 1;
+		macsurf_debug_log_writef(
+			"LIFE xhr poisoned response resp=%d hdr=%d bytes=%ld url=%s",
+			s->resp_poisoned, s->hdr_poisoned, s->resp_len, url_str);
+	}
 
 	JS_SetPropertyStr(ctx, s->xhr_obj, "readyState", JS_NewInt32(ctx, 4));
 	JS_SetPropertyStr(ctx, s->xhr_obj, "status",
@@ -317,7 +327,10 @@ xhr_deliver(void *p)
 
 	fn = JS_GetPropertyStr(ctx, s->xhr_obj, "__onNativeComplete");
 	if (JS_IsFunction(ctx, fn)) {
+		prevdl = macsurf_qjs_deadline_push_ms(
+				macsurf_qjs_default_timeout_ms());
 		ret = JS_Call(ctx, fn, s->xhr_obj, 0, NULL);
+		macsurf_qjs_deadline_pop(prevdl);
 		if (JS_IsException(ret)) {
 			exc = JS_GetException(ctx);
 			msg = JS_ToCString(ctx, exc);
@@ -638,9 +651,13 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 		if (body_c != NULL) {
 			s->body_len = (long) strlen(body_c);
 			s->body = (char *) malloc((size_t) s->body_len + 1);
-			if (s->body != NULL) {
-				memcpy(s->body, body_c, (size_t) s->body_len + 1);
+			if (s->body == NULL) {
+				JS_FreeCString(ctx, body_c);
+				JS_FreeCString(ctx, url_c);
+				xhr_slot_release(s);
+				return JS_NewInt32(ctx, -1);
 			}
+			memcpy(s->body, body_c, (size_t) s->body_len + 1);
 			JS_FreeCString(ctx, body_c);
 		}
 	}
@@ -650,8 +667,9 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 	if (argc > 4 && JS_IsArray(argv[4])) {
 		JSValue lenv = JS_GetPropertyStr(ctx, argv[4], "length");
 		int32_t len32 = 0;
-		JS_ToInt32(ctx, &len32, lenv);
+		if (JS_ToInt32(ctx, &len32, lenv) < 0) len32 = 0;
 		JS_FreeValue(ctx, lenv);
+		if (len32 < 0) len32 = 0;
 		if (len32 > QJS_XHR_MAX_REQ_HDRS) len32 = QJS_XHR_MAX_REQ_HDRS;
 		for (i = 0; i < len32; i++) {
 			JSValue hv = JS_GetPropertyUint32(ctx, argv[4], (uint32_t) i);
@@ -775,9 +793,13 @@ qjs_beacon_send(JSContext *ctx, JSValueConst this_val,
 		if (body_c != NULL) {
 			s->body_len = (long) strlen(body_c);
 			s->body = (char *) malloc((size_t) s->body_len + 1);
-			if (s->body != NULL) {
-				memcpy(s->body, body_c, (size_t) s->body_len + 1);
+			if (s->body == NULL) {
+				JS_FreeCString(ctx, body_c);
+				JS_FreeCString(ctx, url_c);
+				xhr_slot_release(s);
+				return JS_FALSE;
 			}
+			memcpy(s->body, body_c, (size_t) s->body_len + 1);
 			JS_FreeCString(ctx, body_c);
 		}
 	}
