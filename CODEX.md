@@ -119,8 +119,8 @@ Linux.
 From the current docs, the valuable next work tends to be:
 
 - `background-clip: text` and `background-origin`.
-- Grid Round 2: placement/span-aware auto sizing, `minmax()`/`fit-content()` behavior,
-  and FR-row distribution. `justify-self` and AUTO-track stretch shipped in fixes1208/1212.
+- Grid Round 2: `minmax()`/`fit-content()` behavior and FR-row distribution. `justify-self`,
+  AUTO-track stretch, and placement/span-aware AUTO sizing shipped in fixes1208/1212/1213.
 - `caption-side` and `list-style-position` layout consumers.
 - Intrinsic sizing keywords for height/flex/grid/table paths.
 - Reconvert crash chain before re-enabling JS DOM mutation repaint.
