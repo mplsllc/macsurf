@@ -2021,7 +2021,7 @@ static JSClassID s_el_class_id;
 struct qjs_wrap_entry {
 	dom_node  *node;       /* key; wrapper's single owned node ref     */
 	dom_node  *owner_doc;  /* keepalive; wrapper's single owned doc ref */
-	JSValue    val;        /* WEAK handle to the wrapper JS object      */
+	JSValue    val;        /* map-owned wrapper root; released on drain */
 	JSRuntime *rt;         /* fixes900 - the runtime that created this
 	                        * wrapper; the drain is PER-RUNTIME so an
 	                        * iframe heap-destroy cannot free the parent
@@ -2065,7 +2065,7 @@ static int qjs_wrap_insert(dom_node *node, dom_node *owner_doc, JSValue val,
 	if (e == NULL) return 0;
 	e->node = node;
 	e->owner_doc = owner_doc;
-	e->val = val;
+	e->val = JS_DupValueRT(rt, val);
 	e->rt = rt;             /* fixes900 - owning runtime for the per-rt drain */
 	e->next = s_wrap_buckets[h];
 	s_wrap_buckets[h] = e;
@@ -2095,9 +2095,8 @@ static void qjs_wrap_remove(dom_node *node)
  * its entry and drops node+owner_doc); this is the GUARANTEED, pure-C release
  * for any entry whose finalizer did not run (e.g. wrapper objects still in
  * obj->method reference cycles that JS_FreeContext leaves for JS_FreeRuntime):
- * drop the node ref AND the owner-document keepalive ref, THEN clear the entry.
- * Never touches e->val - the JS object may already be gone after JS_FreeContext;
- * the matching finalizer (if it runs later) finds no map entry and no-ops. */
+ * release the wrapper root, drop the node ref AND the owner-document keepalive
+ * ref, THEN clear the entry. */
 /* fixes1008 - defined further down (next to qjs_dom_register_listener, which
  * is what feeds them), used here at realm teardown. */
 static void qjs_reg_clear(void);
@@ -2130,6 +2129,8 @@ static void qjs_wrap_drain(JSRuntime *rt)
 			}
 			if (prev == NULL) s_wrap_buckets[i] = next;
 			else prev->next = next;
+			JS_SetOpaque(e->val, NULL);
+			JS_FreeValueRT(e->rt, e->val);
 			if (e->node)      macsurf_dom_node_unref(e->node);
 			if (e->owner_doc) macsurf_dom_node_unref(e->owner_doc);
 			free(e);
