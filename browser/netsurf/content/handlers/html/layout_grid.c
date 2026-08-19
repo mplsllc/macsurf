@@ -50,8 +50,8 @@
  *     fill-row sentinel; `-2`, etc. are not)
  *   - grid-auto-flow column/dense
  *   - subgrid
- *   - justify-self start/center/stretch (scalar-tail computed style, no
- *     bits[] growth, fixes1204)
+ *   - justify-self start/center/stretch (shipped as native scalar-tail
+ *     computed style, fixes1204/1208)
  *   - align-items: stretch as the CSS 12.8 default (cells leave empty space
  *     when the row track exceeds content height)
  *   - fr row distribution against a definite container height
@@ -829,13 +829,34 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 					}
 				}
 			} else {
-				/* No fr tracks, only fixed + percent.
-				 * Any leftover space stays unused at the
-				 * right of the grid -- spec behavior. */
+				/* CSS Grid 12.8: the initial `justify-content: normal`
+				 * stretches AUTO tracks to consume remaining inline space.
+				 * Our compact libcss vintage represents that initial value as
+				 * FLEX_START, so this is deliberately limited to actual AUTO
+				 * tracks; fixed/percent-only grids retain their existing unused
+				 * right-side space. */
+				int auto_count = 0;
+				int extra_per_auto = 0;
+				int extra_remainder = 0;
 				for (i = 0; i < n_tracks; i++) {
-					if (track_widths[i] < 0) {
+					if (is_auto[i]) auto_count++;
+					if (track_widths[i] < 0)
 						track_widths[i] = 0;
+				}
+				if (auto_count > 0 && remaining > 0) {
+					extra_per_auto = remaining / auto_count;
+					extra_remainder = remaining % auto_count;
+					for (i = 0; i < n_tracks; i++) {
+						if (!is_auto[i]) continue;
+						track_widths[i] += extra_per_auto;
+						if (extra_remainder > 0) {
+							track_widths[i]++;
+							extra_remainder--;
+						}
 					}
+					macsurf_debug_log_writef(
+						"LIFE fixes1212 gridauto stretch tracks=%d free=%d",
+						auto_count, remaining);
 				}
 			}
 
