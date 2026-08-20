@@ -192,6 +192,52 @@ void macsurf_qjs_emit_js_profile(void)
 			html_reconvert_phase_reset();
 		}
 	}
+
+	/* fixes1236 (#167)  -  is the event loop actually DELIVERING deferred
+	 * work on this page, not just executing synchronously during parse.
+	 *
+	 *   cap_hits  macsurf_qjs_pump_all's microtask drain hit
+	 *             QJS_MAX_JOBS_PER_PUMP and deferred the rest -- a page
+	 *             whose Promise chains are simply DEEP looks different from
+	 *             one where they never advance at all (that would show
+	 *             JSTIME timers=0 AND cap_hits=0 AND raf=0: nothing queued,
+	 *             not something queued and starved).
+	 *   raf       requestAnimationFrame callbacks actually invoked.
+	 *   rafOwn    1 if window.requestAnimationFrame is still OUR function,
+	 *             0 if some page script overwrote it with its own scheduler
+	 *             (a real Comet/lazy-load pattern) -- in that case `raf`
+	 *             undercounts by construction and should not be read as
+	 *             "rAF is dead" on its own. -1 means the identity marker
+	 *             itself was missing (register_browser_globals did not run
+	 *             for this ctx, or ran before this counter existed). */
+	{
+		JSContext *ctx = macsurf_qjs_current_ctx();
+		int raf_own = -1;
+		if (ctx != NULL) {
+			static const char raf_own_src[] =
+				"(function(){try{"
+				"return (typeof requestAnimationFrame==='function'"
+				"&&requestAnimationFrame===globalThis.__msRafOrig)"
+				"?1:0;"
+				"}catch(e){return -1;}})()";
+			JSValue r = JS_Eval(ctx, raf_own_src, strlen(raf_own_src),
+					"<jsraf>", JS_EVAL_TYPE_GLOBAL);
+			if (!JS_IsException(r)) {
+				int32_t n = 0;
+				JS_ToInt32(ctx, &n, r);
+				raf_own = (int)n;
+			} else {
+				JS_FreeValue(ctx, JS_GetException(ctx));
+			}
+			JS_FreeValue(ctx, r);
+		}
+		macsurf_debug_log_writef(
+			"LIFE JSPUMP cap_hits=%ld raf=%ld rafOwn=%d",
+			g_job_pump_cap_hits, g_raf_fires, raf_own);
+		g_job_pump_cap_hits = 0;
+		g_raf_fires = 0;
+	}
+
 	g_qjs_interrupts  = 0;
 	macsurf_qjs_ncalls = 0;
 	g_wrap_installs   = 0;
@@ -362,12 +408,22 @@ void macsurf_qjs_page_js_summary(void)
 		 * the thing that actually distinguishes "scripts ran" from
 		 * "scripts ran and the page is now interactive". */
 		{
+			/* fixes1236 (#167) - a count alone can't distinguish "one
+			 * bootstrap listener that never fires" from "one listener
+			 * that IS the whole app" -- name the event types too, on the
+			 * __msLife budget, only when there's something to name (a
+			 * page with zero listeners costs nothing extra). */
 			static const char *cnt_src =
 				"(function(){var d=0,w=0;try{"
-				"var L=document._listeners||{};for(var k in L)"
-				"d+=(L[k]&&L[k].length)||0;"
-				"var W=this._winListeners||{};for(var j in W)"
-				"w+=(W[j]&&W[j].length)||0;"
+				"var L=document._listeners||{},dk=[];for(var k in L){"
+				"var n=(L[k]&&L[k].length)||0;d+=n;"
+				"if(n)dk.push(k+':'+n);}"
+				"var W=this._winListeners||{},wk=[];for(var j in W){"
+				"var m=(W[j]&&W[j].length)||0;w+=m;"
+				"if(m)wk.push(j+':'+m);}"
+				"if((dk.length||wk.length)&&typeof __msLife==='function')"
+				"__msLife('LISTENERS doc=['+dk.join(',')+"
+				"'] win=['+wk.join(',')+']');"
 				"}catch(e){}return d*10000+w;})()";
 			JSValue r = JS_Eval(ctx, cnt_src, strlen(cnt_src),
 					"<jssum>", JS_EVAL_TYPE_GLOBAL);

@@ -19,6 +19,11 @@
 extern long   g_timer_fires;
 extern long   g_timer_us;
 
+/* fixes1236 (#167) - job-pump / rAF census, same per-nav lifecycle as the
+ * timer counters above (read+reset by macsurf_qjs_emit_js_profile). */
+extern long g_job_pump_cap_hits;
+extern long g_raf_fires;
+
 /* Interrupt/op counter */
 extern long g_qjs_interrupts;
 

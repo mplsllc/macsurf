@@ -217,6 +217,24 @@ long   g_timer_fires = 0;  /* exported for audit */
 long   g_timer_us    = 0;  /* exported for audit */
 static double g_timer_t0    = 0.0;
 
+/* fixes1236 (#167) - two more per-navigation counters, same lifecycle as
+ * g_timer_fires above (read+reset by macsurf_qjs_emit_js_profile).
+ *
+ *   g_job_pump_cap_hits  how often macsurf_qjs_pump_all's microtask drain
+ *                        (fixes868) hits QJS_MAX_JOBS_PER_PUMP and defers the
+ *                        rest to the next poll. Was WORK-gated (invisible in
+ *                        release) with no counter at all -- a page whose
+ *                        Promise chains never advance and one whose queue is
+ *                        merely deep looked identical in every prior log.
+ *   g_raf_fires          requestAnimationFrame callbacks actually INVOKED
+ *                        (counted at fire time, inside the callback -- see
+ *                        register_browser_globals), so a healthy timer queue
+ *                        that just never gets asked for rAF reads differently
+ *                        from rAF itself being dead.
+ */
+long g_job_pump_cap_hits = 0;  /* exported for audit */
+long g_raf_fires         = 0;  /* exported for audit */
+
 
 /* fixes586 - THE tinkerdifferent hard-freeze.  The deadline was armed ONLY
  * around the top-level JS_Eval in js_exec; setTimeout/setInterval callbacks
@@ -8703,6 +8721,18 @@ static JSValue qjs_ms_life(JSContext *ctx,
 	return JS_UNDEFINED;
 }
 
+/* fixes1236 (#167) - __msRafFired: called from INSIDE our own
+ * requestAnimationFrame implementation at fire time (not registration time),
+ * so g_raf_fires only counts callbacks that actually ran. See the counter's
+ * declaration for why this is separate from the timer-fire count. */
+static JSValue qjs_raf_fired(JSContext *ctx,
+	JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	(void)ctx; (void)this_val; (void)argc; (void)argv;
+	g_raf_fires++;
+	return JS_UNDEFINED;
+}
+
 static JSValue qjs_crypto_random_uuid(JSContext *ctx,
 	JSValueConst this_val, int argc, JSValueConst *argv)
 {
@@ -9094,6 +9124,7 @@ static void register_browser_globals(JSContext *ctx)
 	qjs_set_func(ctx, global, "__scrollTo",  qjs_js_scroll_to, 2);
 	qjs_set_func(ctx, global, "__gcsNative", qjs_get_computed_style, 1);
 	qjs_set_func(ctx, global, "__msLife",    qjs_ms_life, 1); /* fixes1015 */
+	qjs_set_func(ctx, global, "__msRafFired", qjs_raf_fired, 0); /* fixes1236 */
 	/* localStorage persistence backend, consumed by the _Storage shim
 	 * below (register_browser_globals runs per navigation, so the saved
 	 * map is reloaded on every realm build). */
@@ -9124,16 +9155,31 @@ static void register_browser_globals(JSContext *ctx)
 	 * plausible-but-wrong value that is worse than the missing one.
 	 *
 	 * __macsurf_monotonic_ms is the native binding installed above, so this
-	 * does not depend on `performance` (defined in a later eval block). */
+	 * does not depend on `performance` (defined in a later eval block).
+	 *
+	 * fixes1236 (#167) - __msRafFired() counts a callback actually FIRING
+	 * (inside the timeout, not at registration), and __msRafOrig stashes
+	 * this function's own identity so macsurf_qjs_emit_js_profile can later
+	 * detect whether the page overwrote window.requestAnimationFrame with
+	 * its own scheduler -- a silent override would otherwise look identical
+	 * to "rAF never gets called" in a naive fire-count alone. The fixes1149
+	 * fallback ~40 lines below this file's register_browser_globals (guarded
+	 * by `typeof g.requestAnimationFrame!=='function'`) is confirmed dead
+	 * under normal load: this definition runs first in the same realm build
+	 * and always leaves a real function installed, so the guard never trips
+	 * unless THIS eval itself failed. Left in place as a fallback for that
+	 * case, not because the two compete. */
 	macsurf_qjs__safe_eval(ctx,
 		"function requestAnimationFrame(fn){"
 			"return setTimeout(function(){"
+				"try{__msRafFired();}catch(e){}"
 				"fn(__macsurf_monotonic_ms());"
 			"},16);"
 		"}"
 		"function cancelAnimationFrame(id){"
 			"clearTimeout(id);"
-		"}");
+		"}"
+		"globalThis.__msRafOrig=requestAnimationFrame;");
 
 	/* --- window.location --- */
 	location_obj = JS_NewObject(ctx);
@@ -11093,7 +11139,14 @@ static void register_browser_globals(JSContext *ctx)
 		"if(!('domain'in g.document)){g.document.domain='';}"
 		"if(!('doctype'in g.document)){g.document.doctype=null;}"
 		"}"
-		/* fixes1149 - rAF, MouseEvent, and other globals Froala needs. */
+		/* fixes1149 - rAF, MouseEvent, and other globals Froala needs.
+		 * fixes1236 (#167) - the rAF fallback here is confirmed DEAD under
+		 * normal load: register_browser_globals installs a real
+		 * requestAnimationFrame earlier in this same function (~line 9159)
+		 * before this guarded block runs in the same pass, so
+		 * `typeof g.requestAnimationFrame!=='function'` is always false
+		 * here. Left as a genuine fallback (only fires if the earlier eval
+		 * itself failed), not because the two definitions compete. */
 		"if(typeof g.requestAnimationFrame!=='function'){"
 		"g.requestAnimationFrame=function(fn){return g.setTimeout(function(){fn(Date.now());},16);};}"
 		"if(typeof g.cancelAnimationFrame!=='function'){"
@@ -13617,9 +13670,20 @@ void macsurf_qjs_pump_all(void)
 				jobs++;
 			}
 			if (jobs >= QJS_MAX_JOBS_PER_PUMP) {
-				macsurf_debug_log_writef(
-					"WORK job pump: hit cap %d, deferring rest",
-					(int)QJS_MAX_JOBS_PER_PUMP);
+				/* fixes1236 (#167) - was WORK-gated (invisible in
+				 * release) with no counter, so a page whose microtask
+				 * queue is merely deep and one whose Promise chains
+				 * never advance at all looked identical in every prior
+				 * hardware log. First occurrence per navigation gets an
+				 * immediate LIFE line; the running total is reported
+				 * and reset in macsurf_qjs_emit_js_profile so a page
+				 * that hits the cap every tick does not flood the log. */
+				if (g_job_pump_cap_hits == 0) {
+					macsurf_debug_log_writef(
+						"LIFE job pump: hit cap %d, deferring rest",
+						(int)QJS_MAX_JOBS_PER_PUMP);
+				}
+				g_job_pump_cap_hits++;
 			}
 		}
 		h = next;
