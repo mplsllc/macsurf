@@ -3370,6 +3370,9 @@ static bool html_redraw_text_box(const html_content *html, struct box *box,
 	bool excluded = (box->object != NULL);
 	bool rendered;
 	plot_font_style_t fstyle;
+#ifdef __MACOS9__
+	nserror flush_res;
+#endif
 
 	macos9_html_redraw_text_box_calls++;
 
@@ -3383,6 +3386,15 @@ static bool html_redraw_text_box(const html_content *html, struct box *box,
 	fstyle.word_spacing += box->space_expand;
 
 #ifdef __MACOS9__
+	/* Knockout defers text callbacks until its queue is flushed. Keep this
+	 * run isolated so the frontend consumes the clip-text source while it is
+	 * active, rather than after the state has been cleared below. */
+	if (ctx->plot->flush != NULL) {
+		flush_res = ctx->plot->flush(ctx);
+		if (flush_res != NSERROR_OK) {
+			return false;
+		}
+	}
 	macos9_background_clip_text_end();
 	html_redraw_background_clip_text_begin(box, x, y, scale,
 			current_background_color, &html->unit_len_ctx);
@@ -3403,6 +3415,12 @@ static bool html_redraw_text_box(const html_content *html, struct box *box,
 			 ctx);
 
 #ifdef __MACOS9__
+	if (ctx->plot->flush != NULL) {
+		flush_res = ctx->plot->flush(ctx);
+		if (flush_res != NSERROR_OK) {
+			rendered = false;
+		}
+	}
 	macos9_background_clip_text_end();
 #endif
 
