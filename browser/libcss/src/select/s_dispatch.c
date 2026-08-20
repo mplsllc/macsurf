@@ -693,5 +693,9 @@ struct prop_table prop_dispatch[CSS_N_PROPERTIES] = {
 	{
 	        PROPERTY_FUNCS(background_origin),
 	        0,
+	},
+	{
+	        PROPERTY_FUNCS(background_blend_mode),
+	        0,
 	}
 	};

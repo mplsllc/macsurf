@@ -201,6 +201,7 @@ bool print_draw_next_page(const struct printer *printer,
 	data.repeat_x = false;
 	data.repeat_y = false;
 	data.nearest = false;  /* fixes829 (#256) */
+	data.background_blend_mode = 0;
 
 	html_redraw_printing = true;
 	html_redraw_printing_border = clip.y1;

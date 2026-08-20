@@ -3037,6 +3037,7 @@ treeview_redraw(treeview *tree,
 	data.repeat_x = false;
 	data.repeat_y = false;
 	data.nearest = false;  /* fixes829 (#256) */
+	data.background_blend_mode = 0;
 
 	if (tree->flags & TREEVIEW_SEARCHABLE) {
 		if (render_y < r.y1) {

@@ -168,6 +168,7 @@ bool image_bitmap_plot(struct bitmap *bitmap,
 		flags |= BITMAPF_REPEAT_X;
 	if (data->repeat_y)
 		flags |= BITMAPF_REPEAT_Y;
+	flags |= BITMAPF_BLEND_MODE(data->background_blend_mode);
 
 	return (ctx->plot->bitmap(ctx,
 				  bitmap,

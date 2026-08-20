@@ -693,6 +693,7 @@ bool print_document(struct gui_window *g, const char *filename)
 			data.scale = print_scale;
 			data.repeat_x = false;
 			data.repeat_y = false;
+			data.background_blend_mode = 0;
 
 			if (!content_redraw(h, &data, &clip, &ctx)) {
 				error_message = "redraw error";
@@ -958,6 +959,7 @@ const char *print_declare_fonts(struct hlcache_handle *h)
 	data.scale = 1;
 	data.repeat_x = false;
 	data.repeat_y = false;
+	data.background_blend_mode = 0;
 
 	if (!content_redraw(h, &data, &clip, &ctx)) {
 		if (print_fonts_error)
@@ -1040,4 +1042,3 @@ void print_fonts_callback(void *context,
 	print_fonts_list = fonts_list;
 	print_fonts_count++;
 }
-

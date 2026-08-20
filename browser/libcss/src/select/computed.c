@@ -1001,6 +1001,18 @@ uint8_t css_computed_background_origin(const css_computed_style *style)
 	return (uint8_t)value;
 }
 
+uint8_t css_computed_background_blend_mode(const css_computed_style *style)
+{
+	int32_t value = style->i.background_blend_mode;
+
+	if (value < CSS_BACKGROUND_BLEND_MODE_NORMAL ||
+			value > CSS_BACKGROUND_BLEND_MODE_LUMINOSITY) {
+		return CSS_BACKGROUND_BLEND_MODE_NORMAL;
+	}
+
+	return (uint8_t)value;
+}
+
 /* #279 */
 uint8_t css_computed_justify_items(const css_computed_style *style)
 {

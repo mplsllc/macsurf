@@ -69,6 +69,7 @@ PROPERTY_FUNCS(text_justify);
 PROPERTY_FUNCS(hanging_punctuation);
 PROPERTY_FUNCS(background_clip);   /* #255 */
 PROPERTY_FUNCS(background_origin);
+PROPERTY_FUNCS(background_blend_mode);
 PROPERTY_FUNCS(justify_items);   /* #279 */
 PROPERTY_FUNCS(overflow_wrap);
 PROPERTY_FUNCS(macsurf_grid_rows);

@@ -204,6 +204,7 @@ static bool rsvg_redraw(struct content *c, struct content_redraw_data *data,
 		flags |= BITMAPF_REPEAT_X;
 	if (data->repeat_y)
 		flags |= BITMAPF_REPEAT_Y;
+	flags |= BITMAPF_BLEND_MODE(data->background_blend_mode);
 
 	return (ctx->plot->bitmap(ctx,
 				  rsvgcontent->bitmap,
@@ -314,4 +315,3 @@ static const char *rsvg_types[] = {
 };
 
 CONTENT_FACTORY_REGISTER_TYPES(nsrsvg, rsvg_types, rsvg_content_handler);
-

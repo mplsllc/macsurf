@@ -503,7 +503,8 @@ static bool t66_cls_has(struct box *b, const char *cls)
 
 /* Record the FIRST box whose class list holds each token. */
 static void t66_walk(struct box *b,
-		int *row_h, int *icon_h, int *avatar_h, int *img_h)
+		int *row_h, int *icon_h, int *avatar_h, int *img_h,
+		int *blend_mode)
 {
 	if (b == NULL)
 		return;
@@ -511,12 +512,15 @@ static void t66_walk(struct box *b,
 		*row_h = b->height;
 	else if (t66_cls_has(b, "node-extra-icon") && *icon_h < 0)
 		*icon_h = b->height;
-	else if (t66_cls_has(b, "avatar") && *avatar_h < 0)
+	else if (t66_cls_has(b, "avatar") && *avatar_h < 0) {
 		*avatar_h = b->height;
+		if (b->style != NULL)
+			*blend_mode = css_computed_background_blend_mode(b->style);
+	}
 	else if (t66_cls_has(b, "avatar-u2-s") && *img_h < 0)
 		*img_h = b->height;
 	for (b = b->children; b != NULL; b = b->next)
-		t66_walk(b, row_h, icon_h, avatar_h, img_h);
+		t66_walk(b, row_h, icon_h, avatar_h, img_h, blend_mode);
 }
 
 int main(int argc, char **argv)
@@ -7896,7 +7900,8 @@ box_coords(bx, &cx, &cy);
 			".node-extra-icon { flex: 0 0 auto; padding-right: 8px; }"
 			".avatar { display: inline-flex; justify-content: center;"
 			" align-items: center; border-radius: 50%;"
-			" vertical-align: top; overflow: hidden; }"
+			" vertical-align: top; overflow: hidden;"
+			" background-blend-mode: multiply; }"
 			".avatar--s { width: 48px; height: 48px; }"
 			".avatar img { text-indent: 100%; overflow: hidden;"
 			" white-space: nowrap; word-wrap: normal; display: block;"
@@ -7915,6 +7920,7 @@ box_coords(bx, &cx, &cy);
 		void *t66_box_ctx = NULL;
 		int t66_row_h = -1, t66_icon_h = -1;
 		int t66_avatar_h = -1, t66_img_h = -1;
+		int t67_blend_mode = -1;
 		nserror t66err;
 		dom_exception t66derr;
 		css_error t66cerr;
@@ -8091,7 +8097,7 @@ box_coords(bx, &cx, &cy);
 			}
 		}
 		t66_walk(t66c.layout, &t66_row_h, &t66_icon_h,
-				&t66_avatar_h, &t66_img_h);
+				&t66_avatar_h, &t66_img_h, &t67_blend_mode);
 		fprintf(stderr, "  row h=%d icon h=%d avatar h=%d img h=%d\n",
 				t66_row_h, t66_icon_h, t66_avatar_h, t66_img_h);
 		if (t66_row_h != 48 || t66_icon_h != 48 ||
@@ -8106,9 +8112,17 @@ box_coords(bx, &cx, &cy);
 					t66_img_h);
 			return 1;
 		}
+		if (t67_blend_mode != CSS_BACKGROUND_BLEND_MODE_MULTIPLY) {
+			fprintf(stderr, "FAIL: Test 67 background-blend-mode cascade=%d "
+					"expected=%d\n", t67_blend_mode,
+					CSS_BACKGROUND_BLEND_MODE_MULTIPLY);
+			return 1;
+		}
 	}
 	fprintf(stderr, "=== Test 66 PASS: inline-flex avatar heights the "
 			"flex row (row/icon/avatar/img all 48) ===\n");
+	fprintf(stderr, "=== Test 67 PASS: background-blend-mode parsed and "
+			"cascaded to multiply ===\n");
 
 	return 0;
 }

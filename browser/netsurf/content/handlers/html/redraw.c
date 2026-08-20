@@ -258,6 +258,12 @@ extern long macos9_grad_radial_unpack_count;
 extern long macos9_grad_linear_unpack_count;
 static int macos9_clip_text_trace_seen = 0;
 
+#ifdef __MACOS9__
+extern colour macos9_background_blend_colour(colour source,
+		colour backdrop, uint8_t mode);
+extern void macos9_set_gradient_blend(uint8_t mode, colour backdrop);
+#endif
+
 static void macsurf_gradient_unpack(int32_t packed_signed,
 		colour *c1_out, colour *c2_out, bool *horizontal_out,
 		bool *radial_out)
@@ -324,6 +330,7 @@ static nserror html_redraw_paint_gradient_tiled(
 		const struct rect *r,
 		const css_computed_style *style)
 {
+	plot_style_t draw_style = *pstyle;
 	int32_t bgsz;
 	int16_t wc;
 	int16_t hc;
@@ -336,15 +343,38 @@ static nserror html_redraw_paint_gradient_tiled(
 	int ty;
 	struct rect tile_r;
 	nserror res;
+#ifdef __MACOS9__
+	uint8_t blend_mode = CSS_BACKGROUND_BLEND_MODE_NORMAL;
+	colour blend_backdrop = 0;
+	css_color css_backdrop;
+
+	if (style != NULL) {
+		blend_mode = css_computed_background_blend_mode(style);
+		css_computed_background_color(style, &css_backdrop);
+		if (blend_mode > CSS_BACKGROUND_BLEND_MODE_NORMAL &&
+				nscss_color_is_transparent(css_backdrop) == false) {
+			blend_backdrop = nscss_color_to_ns(css_backdrop);
+			draw_style.fill_colour = macos9_background_blend_colour(
+					draw_style.fill_colour, blend_backdrop, blend_mode);
+			draw_style.fill_colour2 = macos9_background_blend_colour(
+					draw_style.fill_colour2, blend_backdrop, blend_mode);
+		} else {
+			blend_mode = CSS_BACKGROUND_BLEND_MODE_NORMAL;
+		}
+	}
+#endif
 
 	if (style == NULL) {
-		return ctx->plot->rectangle(ctx, pstyle, r);
+		return ctx->plot->rectangle(ctx, &draw_style, r);
 	}
 
 	bgsz = css_computed_background_size(style);
 	if (bgsz == 0) {
 		/* unset: paint as single rect (CSS default behaviour). */
-		return ctx->plot->rectangle(ctx, pstyle, r);
+		#ifdef __MACOS9__
+		macos9_set_gradient_blend(blend_mode, blend_backdrop);
+		#endif
+		return ctx->plot->rectangle(ctx, &draw_style, r);
 	}
 
 	wc = (int16_t)((bgsz >> 16) & 0xFFFF);
@@ -352,18 +382,27 @@ static nserror html_redraw_paint_gradient_tiled(
 
 	/* cover / contain don't tile (they scale to fit). */
 	if (wc < 0 || hc < 0) {
-		return ctx->plot->rectangle(ctx, pstyle, r);
+		#ifdef __MACOS9__
+		macos9_set_gradient_blend(blend_mode, blend_backdrop);
+		#endif
+		return ctx->plot->rectangle(ctx, &draw_style, r);
 	}
 
 	/* auto on either axis → fill once. */
 	if (wc == 0 || hc == 0) {
-		return ctx->plot->rectangle(ctx, pstyle, r);
+		#ifdef __MACOS9__
+		macos9_set_gradient_blend(blend_mode, blend_backdrop);
+		#endif
+		return ctx->plot->rectangle(ctx, &draw_style, r);
 	}
 
 	tile_w = (int)wc;
 	tile_h = (int)hc;
 	if (tile_w < 1 || tile_h < 1) {
-		return ctx->plot->rectangle(ctx, pstyle, r);
+		#ifdef __MACOS9__
+		macos9_set_gradient_blend(blend_mode, blend_backdrop);
+		#endif
+		return ctx->plot->rectangle(ctx, &draw_style, r);
 	}
 
 	box_w = r->x1 - r->x0;
@@ -379,7 +418,10 @@ static nserror html_redraw_paint_gradient_tiled(
 	tile_count = ((box_w + tile_w - 1) / tile_w) *
 			((box_h + tile_h - 1) / tile_h);
 	if (tile_count > MACOS9_GRAD_TILE_MAX) {
-		return ctx->plot->rectangle(ctx, pstyle, r);
+		#ifdef __MACOS9__
+		macos9_set_gradient_blend(blend_mode, blend_backdrop);
+		#endif
+		return ctx->plot->rectangle(ctx, &draw_style, r);
 	}
 
 	for (ty = r->y0; ty < r->y1; ty += tile_h) {
@@ -390,7 +432,10 @@ static nserror html_redraw_paint_gradient_tiled(
 			tile_r.y1 = ty + tile_h;
 			if (tile_r.x1 > r->x1) tile_r.x1 = r->x1;
 			if (tile_r.y1 > r->y1) tile_r.y1 = r->y1;
-			res = ctx->plot->rectangle(ctx, pstyle, &tile_r);
+			#ifdef __MACOS9__
+			macos9_set_gradient_blend(blend_mode, blend_backdrop);
+			#endif
+			res = ctx->plot->rectangle(ctx, &draw_style, &tile_r);
 			if (res != NSERROR_OK) {
 				return res;
 			}
@@ -1375,7 +1420,8 @@ extern void macos9_background_clip_text_begin(const plot_style_t *fill,
 		const struct rect *fill_rect, struct bitmap *bitmap,
 		int bitmap_x, int bitmap_y, int bitmap_width, int bitmap_height,
 		colour bitmap_background, bitmap_flags_t bitmap_flags,
-		const int32_t *gradient_stops, uint16_t gradient_angle);
+		const int32_t *gradient_stops, uint16_t gradient_angle,
+		uint8_t blend_mode, colour blend_backdrop);
 extern void macos9_background_clip_text_end(void);
 #endif
 
@@ -2269,6 +2315,8 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 					 css_computed_image_rendering(
 						background->style) ==
 						CSS_IMAGE_RENDERING_CRISP_EDGES));
+				bg_data.background_blend_mode = background->style != NULL ?
+					css_computed_background_blend_mode(background->style) : 0;
 
 				/* fixes1048 (#280) - the tile size was resolved up-front by
 				 * html_redraw_bg_tile_size (before background-position,
@@ -2755,6 +2803,8 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 					CSS_IMAGE_RENDERING_PIXELATED ||
 				 css_computed_image_rendering(box->style) ==
 					CSS_IMAGE_RENDERING_CRISP_EDGES));
+			bg_data.background_blend_mode = box->style != NULL ?
+				css_computed_background_blend_mode(box->style) : 0;
 
 			/* fixes828 (#255/#280): honour background-size on INLINE
 			 * backgrounds too. The block path (html_redraw_background)
@@ -3195,6 +3245,8 @@ static void html_redraw_background_clip_text_begin(struct box *text_box,
 	css_unit hunit = CSS_UNIT_PX, vunit = CSS_UNIT_PX;
 	bitmap_flags_t bitmap_flags = BITMAPF_NONE;
 	colour bitmap_background = current_background_color;
+	uint8_t blend_mode = CSS_BACKGROUND_BLEND_MODE_NORMAL;
+	colour blend_backdrop = 0;
 
 	if (macos9_clip_text_trace_seen < 24) {
 		macsurf_debug_log_writef(
@@ -3269,7 +3321,13 @@ static void html_redraw_background_clip_text_begin(struct box *text_box,
 		fill.fill_type = PLOT_OP_TYPE_SOLID;
 		fill.fill_colour = nscss_color_to_ns(background_colour);
 		bitmap_background = fill.fill_colour;
+		blend_backdrop = fill.fill_colour;
 		has_fill = true;
+	}
+	blend_mode = css_computed_background_blend_mode(owner->style);
+	if (blend_mode <= CSS_BACKGROUND_BLEND_MODE_NORMAL ||
+			nscss_color_is_transparent(background_colour)) {
+		blend_mode = CSS_BACKGROUND_BLEND_MODE_NORMAL;
 	}
 
 	if (css_computed_macsurf_gradient(owner->style, &gradient) ==
@@ -3284,6 +3342,12 @@ static void html_redraw_background_clip_text_begin(struct box *text_box,
 			 PLOT_OP_TYPE_LINEAR_GRADIENT);
 		fill.fill_colour = first;
 		fill.fill_colour2 = second;
+		if (blend_mode > CSS_BACKGROUND_BLEND_MODE_NORMAL) {
+			fill.fill_colour = macos9_background_blend_colour(first,
+					blend_backdrop, blend_mode);
+			fill.fill_colour2 = macos9_background_blend_colour(second,
+					blend_backdrop, blend_mode);
+		}
 		has_fill = true;
 		if (!radial) {
 			gradient_stops = css_computed_macsurf_gradient_stops(
@@ -3300,6 +3364,7 @@ static void html_redraw_background_clip_text_begin(struct box *text_box,
 			}
 		}
 	}
+	bitmap_flags |= BITMAPF_BLEND_MODE(blend_mode);
 
 	if (owner->background != NULL) {
 		bitmap = content_get_bitmap(owner->background);
@@ -3358,7 +3423,7 @@ static void html_redraw_background_clip_text_begin(struct box *text_box,
 
 	macos9_background_clip_text_begin(&fill, &fill_rect, bitmap,
 		x, y, tile_w, tile_h, bitmap_background, bitmap_flags,
-		gradient_stops, gradient_angle);
+		gradient_stops, gradient_angle, blend_mode, blend_backdrop);
 }
 #endif
 
@@ -4994,6 +5059,7 @@ bool html_redraw_box(const html_content *html, struct box *box,
 				CSS_IMAGE_RENDERING_PIXELATED ||
 			 css_computed_image_rendering(box->style) ==
 				CSS_IMAGE_RENDERING_CRISP_EDGES));
+		obj_data.background_blend_mode = 0;
 
 		if (content_get_type(box->object) == CONTENT_HTML) {
 			obj_data.x /= scale;

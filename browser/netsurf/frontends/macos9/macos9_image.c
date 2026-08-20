@@ -2040,6 +2040,7 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 	if (data->repeat_x) flags |= BITMAPF_REPEAT_X;
 	if (data->repeat_y) flags |= BITMAPF_REPEAT_Y;
 	if (data->nearest)  flags |= BITMAPF_NEAREST;  /* fixes829 (#256) */
+	flags |= BITMAPF_BLEND_MODE(data->background_blend_mode);
 
 	return ctx->plot->bitmap(ctx, (struct bitmap *)qti->bitmap,
 			data->x, data->y,

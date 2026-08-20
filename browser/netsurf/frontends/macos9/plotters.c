@@ -46,6 +46,8 @@ static int dotgrid_paint_seen = 0;
 static int diag_paint_seen = 0;
 static int clip_text_mask_seen = 0;
 static int clip_text_state_seen = 0;
+static int blend_colour_seen = 0;
+static int blend_bitmap_seen = 0;
 /* fixes366d  -  log the snapshot values at plot_rectangle entry,
  * regardless of which branch the plotter ends up taking. Tells us
  * whether the one-shot values are reaching the plotter at all, or
@@ -60,6 +62,8 @@ void macos9_plotter_diag_counters_reset(void)
 	diag_paint_seen = 0;
 	clip_text_mask_seen = 0;
 	clip_text_state_seen = 0;
+	blend_colour_seen = 0;
+	blend_bitmap_seen = 0;
 	snapshot_seen = 0;
 }
 
@@ -285,6 +289,222 @@ macos9_colour_to_rgb(colour c, RGBColor *out)
 	out->blue  = (unsigned short)((b << 8) | b);
 }
 
+struct macos9_blend_rgb {
+	int c[3];
+};
+
+static int macos9_blend_clamp(int value)
+{
+	if (value < 0) return 0;
+	if (value > 255) return 255;
+	return value;
+}
+
+static int macos9_blend_lum(const struct macos9_blend_rgb *rgb)
+{
+	return (30 * rgb->c[0] + 59 * rgb->c[1] + 11 * rgb->c[2]) / 100;
+}
+
+static int macos9_blend_sat(const struct macos9_blend_rgb *rgb)
+{
+	int lo = rgb->c[0];
+	int hi = rgb->c[0];
+	int i;
+	for (i = 1; i < 3; i++) {
+		if (rgb->c[i] < lo) lo = rgb->c[i];
+		if (rgb->c[i] > hi) hi = rgb->c[i];
+	}
+	return hi - lo;
+}
+
+static void macos9_blend_clip_colour(struct macos9_blend_rgb *rgb)
+{
+	int lum = macos9_blend_lum(rgb);
+	int lo = rgb->c[0];
+	int hi = rgb->c[0];
+	int i;
+	for (i = 1; i < 3; i++) {
+		if (rgb->c[i] < lo) lo = rgb->c[i];
+		if (rgb->c[i] > hi) hi = rgb->c[i];
+	}
+	if (lo < 0 && lum != lo) {
+		for (i = 0; i < 3; i++)
+			rgb->c[i] = lum + ((rgb->c[i] - lum) * lum) / (lum - lo);
+	}
+	if (hi > 255 && hi != lum) {
+		for (i = 0; i < 3; i++)
+			rgb->c[i] = lum + ((rgb->c[i] - lum) * (255 - lum)) /
+					(hi - lum);
+	}
+	for (i = 0; i < 3; i++)
+		rgb->c[i] = macos9_blend_clamp(rgb->c[i]);
+}
+
+static void macos9_blend_set_lum(struct macos9_blend_rgb *rgb, int lum)
+{
+	int delta = lum - macos9_blend_lum(rgb);
+	int i;
+	for (i = 0; i < 3; i++) rgb->c[i] += delta;
+	macos9_blend_clip_colour(rgb);
+}
+
+static void macos9_blend_set_sat(struct macos9_blend_rgb *rgb, int sat)
+{
+	int lo = 0;
+	int hi = 0;
+	int mid;
+	int old_lo;
+	int old_hi;
+	int i;
+
+	for (i = 1; i < 3; i++) {
+		if (rgb->c[i] < rgb->c[lo]) lo = i;
+		if (rgb->c[i] > rgb->c[hi]) hi = i;
+	}
+	mid = 3 - lo - hi;
+	if (lo == hi) {
+		rgb->c[0] = rgb->c[1] = rgb->c[2] = 0;
+		return;
+	}
+	old_lo = rgb->c[lo];
+	old_hi = rgb->c[hi];
+	rgb->c[mid] = ((rgb->c[mid] - old_lo) * sat) /
+			(old_hi - old_lo);
+	rgb->c[hi] = sat;
+	rgb->c[lo] = 0;
+}
+
+static int macos9_blend_isqrt(int value)
+{
+	int result = 0;
+	int bit = 1 << 14;
+	while (bit > value) bit >>= 2;
+	while (bit != 0) {
+		if (value >= result + bit) {
+			value -= result + bit;
+			result = (result >> 1) + bit;
+		} else {
+			result >>= 1;
+		}
+		bit >>= 2;
+	}
+	return result;
+}
+
+static int macos9_blend_channel(int source, int backdrop, uint8_t mode)
+{
+	int d;
+	long value;
+
+	switch (mode) {
+	case CSS_BACKGROUND_BLEND_MODE_MULTIPLY:
+		return (source * backdrop + 127) / 255;
+	case CSS_BACKGROUND_BLEND_MODE_SCREEN:
+		return 255 - ((255 - source) * (255 - backdrop) + 127) / 255;
+	case CSS_BACKGROUND_BLEND_MODE_OVERLAY:
+		if (backdrop <= 127) return (2 * source * backdrop + 127) / 255;
+		return 255 - (2 * (255 - source) * (255 - backdrop) + 127) / 255;
+	case CSS_BACKGROUND_BLEND_MODE_DARKEN:
+		return source < backdrop ? source : backdrop;
+	case CSS_BACKGROUND_BLEND_MODE_LIGHTEN:
+		return source > backdrop ? source : backdrop;
+	case CSS_BACKGROUND_BLEND_MODE_COLOR_DODGE:
+		if (source >= 255) return 255;
+		value = ((long)backdrop * 255L) / (255 - source);
+		return value > 255 ? 255 : (int)value;
+	case CSS_BACKGROUND_BLEND_MODE_COLOR_BURN:
+		if (source <= 0) return 0;
+		value = ((long)(255 - backdrop) * 255L) / source;
+		if (value > 255) value = 255;
+		return 255 - (int)value;
+	case CSS_BACKGROUND_BLEND_MODE_HARD_LIGHT:
+		if (source <= 127) return (2 * source * backdrop + 127) / 255;
+		return 255 - (2 * (255 - source) * (255 - backdrop) + 127) / 255;
+	case CSS_BACKGROUND_BLEND_MODE_SOFT_LIGHT:
+		if (source <= 127) {
+			value = (long)(255 - 2 * source) * backdrop *
+					(255 - backdrop);
+			return macos9_blend_clamp(backdrop -
+					(int)(value / (255L * 255L)));
+		}
+		if (backdrop <= 63) {
+			d = (int)(((((long)16 * backdrop - 12L * 255L) *
+					backdrop) / 255L + 4L * 255L) * backdrop / 255L);
+		} else {
+			d = macos9_blend_isqrt(backdrop * 255);
+		}
+		return macos9_blend_clamp(backdrop +
+				((2 * source - 255) * (d - backdrop)) / 255);
+	case CSS_BACKGROUND_BLEND_MODE_DIFFERENCE:
+		return source > backdrop ? source - backdrop : backdrop - source;
+	case CSS_BACKGROUND_BLEND_MODE_EXCLUSION:
+		return macos9_blend_clamp(source + backdrop -
+				(2 * source * backdrop + 127) / 255);
+	default:
+		return source;
+	}
+}
+
+colour macos9_background_blend_colour(colour source, colour backdrop,
+		uint8_t mode)
+{
+	struct macos9_blend_rgb src;
+	struct macos9_blend_rgb back;
+	struct macos9_blend_rgb out;
+	unsigned int transparency;
+	unsigned int opacity;
+	int i;
+
+	if (mode <= CSS_BACKGROUND_BLEND_MODE_NORMAL ||
+			mode > CSS_BACKGROUND_BLEND_MODE_LUMINOSITY)
+		return source;
+	if (blend_colour_seen < 12) {
+		macsurf_debug_log_writef(
+			"LIFE blend colour mode=%d src=%08lx bg=%08lx",
+			(int)mode, (unsigned long)source, (unsigned long)backdrop);
+		blend_colour_seen++;
+	}
+
+	src.c[0] = (int)((source >> 0) & 0xff);
+	src.c[1] = (int)((source >> 8) & 0xff);
+	src.c[2] = (int)((source >> 16) & 0xff);
+	back.c[0] = (int)((backdrop >> 0) & 0xff);
+	back.c[1] = (int)((backdrop >> 8) & 0xff);
+	back.c[2] = (int)((backdrop >> 16) & 0xff);
+	out = src;
+
+	if (mode <= CSS_BACKGROUND_BLEND_MODE_EXCLUSION) {
+		for (i = 0; i < 3; i++)
+			out.c[i] = macos9_blend_channel(src.c[i], back.c[i], mode);
+	} else if (mode == CSS_BACKGROUND_BLEND_MODE_HUE) {
+		macos9_blend_set_sat(&out, macos9_blend_sat(&back));
+		macos9_blend_set_lum(&out, macos9_blend_lum(&back));
+	} else if (mode == CSS_BACKGROUND_BLEND_MODE_SATURATION) {
+		out = back;
+		macos9_blend_set_sat(&out, macos9_blend_sat(&src));
+		macos9_blend_set_lum(&out, macos9_blend_lum(&back));
+	} else if (mode == CSS_BACKGROUND_BLEND_MODE_COLOR) {
+		macos9_blend_set_lum(&out, macos9_blend_lum(&back));
+	} else {
+		out = back;
+		macos9_blend_set_lum(&out, macos9_blend_lum(&src));
+	}
+
+	transparency = (unsigned int)((source >> 24) & 0xff);
+	if (source == NS_TRANSPARENT) transparency = 255;
+	if (transparency != 0) {
+		opacity = 255u - transparency;
+		for (i = 0; i < 3; i++) {
+			out.c[i] = (int)(((unsigned int)out.c[i] * opacity +
+					(unsigned int)back.c[i] * transparency) / 255u);
+		}
+	}
+
+	return (colour)((unsigned long)macos9_blend_clamp(out.c[0]) |
+			((unsigned long)macos9_blend_clamp(out.c[1]) << 8) |
+			((unsigned long)macos9_blend_clamp(out.c[2]) << 16));
+}
+
 static void
 macos9_rect_from_ns(const struct rect *src, Rect *dst)
 {
@@ -420,6 +640,9 @@ void macos9_set_dotgrid(int32_t packed)
  * fixes361h+364). Storing on plot_style_t would leak stack garbage. */
 static const int32_t *macos9_gradient_stops_oneshot = NULL;
 static uint16_t macos9_gradient_angle_oneshot = 0;
+static uint8_t macos9_gradient_blend_mode_oneshot =
+		CSS_BACKGROUND_BLEND_MODE_NORMAL;
+static colour macos9_gradient_blend_backdrop_oneshot = 0;
 void macos9_set_gradient_stops(const int32_t *stops)
 {
 	macos9_gradient_stops_oneshot = stops;
@@ -427,6 +650,11 @@ void macos9_set_gradient_stops(const int32_t *stops)
 void macos9_set_gradient_angle(uint16_t angle)
 {
 	macos9_gradient_angle_oneshot = angle;
+}
+void macos9_set_gradient_blend(uint8_t mode, colour backdrop)
+{
+	macos9_gradient_blend_mode_oneshot = mode;
+	macos9_gradient_blend_backdrop_oneshot = backdrop;
 }
 
 /* #255 `background-clip:text` carries an already-resolved element
@@ -446,6 +674,8 @@ struct macos9_background_clip_text_state {
 	bitmap_flags_t bitmap_flags;
 	const int32_t *gradient_stops;
 	uint16_t gradient_angle;
+	uint8_t blend_mode;
+	colour blend_backdrop;
 };
 
 static struct macos9_background_clip_text_state macos9_background_clip_text;
@@ -454,7 +684,8 @@ void macos9_background_clip_text_begin(const plot_style_t *fill,
 		const struct rect *fill_rect, struct bitmap *bitmap,
 		int bitmap_x, int bitmap_y, int bitmap_width, int bitmap_height,
 		colour bitmap_background, bitmap_flags_t bitmap_flags,
-		const int32_t *gradient_stops, uint16_t gradient_angle)
+		const int32_t *gradient_stops, uint16_t gradient_angle,
+		uint8_t blend_mode, colour blend_backdrop)
 {
 	memset(&macos9_background_clip_text, 0,
 		sizeof(macos9_background_clip_text));
@@ -473,6 +704,8 @@ void macos9_background_clip_text_begin(const plot_style_t *fill,
 	macos9_background_clip_text.bitmap_flags = bitmap_flags;
 	macos9_background_clip_text.gradient_stops = gradient_stops;
 	macos9_background_clip_text.gradient_angle = gradient_angle;
+	macos9_background_clip_text.blend_mode = blend_mode;
+	macos9_background_clip_text.blend_backdrop = blend_backdrop;
 	macos9_background_clip_text.active = true;
 	if (clip_text_state_seen < 12) {
 		macsurf_debug_log_writef(
@@ -886,6 +1119,8 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	/* fixes365b  -  extended-linear-gradient one-shots. */
 	const int32_t *grad_stops_local;
 	uint16_t grad_angle_local;
+	uint8_t grad_blend_mode_local;
+	colour grad_blend_backdrop_local;
 
 	(void)ctx;
 
@@ -898,12 +1133,16 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 	dotgrid_local = macos9_dotgrid_oneshot; /* fixes365c */
 	grad_stops_local = macos9_gradient_stops_oneshot; /* fixes365b */
 	grad_angle_local = macos9_gradient_angle_oneshot; /* fixes365b */
+	grad_blend_mode_local = macos9_gradient_blend_mode_oneshot;
+	grad_blend_backdrop_local = macos9_gradient_blend_backdrop_oneshot;
 	macos9_box_shadow_2_oneshot = 0;
 	macos9_box_shadow_3_oneshot = 0;
 	macos9_hstripe_bg_oneshot = 0; /* fixes364 */
 	macos9_dotgrid_oneshot = 0; /* fixes365c */
 	macos9_gradient_stops_oneshot = NULL; /* fixes365b */
 	macos9_gradient_angle_oneshot = 0; /* fixes365b */
+	macos9_gradient_blend_mode_oneshot = CSS_BACKGROUND_BLEND_MODE_NORMAL;
+	macos9_gradient_blend_backdrop_oneshot = 0;
 
 	/* fixes366d/e  -  log the snapshot values regardless of branch so we
 	 * can tell whether the one-shot pipeline is reaching the plotter
@@ -1244,12 +1483,22 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 		p1_eff = grad_stops_local[2];
 		p2_eff = grad_stops_local[3];
 
-		macos9_colour_to_rgb(nscss_color_to_ns(
-				(uint32_t)grad_stops_local[4]), &cA);
-		macos9_colour_to_rgb(nscss_color_to_ns(
-				(uint32_t)grad_stops_local[5]), &cB);
-		macos9_colour_to_rgb(nscss_color_to_ns(
-				(uint32_t)grad_stops_local[6]), &cC);
+		{
+			colour ext_a = nscss_color_to_ns((uint32_t)grad_stops_local[4]);
+			colour ext_b = nscss_color_to_ns((uint32_t)grad_stops_local[5]);
+			colour ext_c = nscss_color_to_ns((uint32_t)grad_stops_local[6]);
+			if (grad_blend_mode_local > CSS_BACKGROUND_BLEND_MODE_NORMAL) {
+				ext_a = macos9_background_blend_colour(ext_a,
+						grad_blend_backdrop_local, grad_blend_mode_local);
+				ext_b = macos9_background_blend_colour(ext_b,
+						grad_blend_backdrop_local, grad_blend_mode_local);
+				ext_c = macos9_background_blend_colour(ext_c,
+						grad_blend_backdrop_local, grad_blend_mode_local);
+			}
+			macos9_colour_to_rgb(ext_a, &cA);
+			macos9_colour_to_rgb(ext_b, &cB);
+			macos9_colour_to_rgb(ext_c, &cC);
+		}
 
 		saved_clip = macos9_push_clip();
 		GetPenState(&saved_pen);
@@ -2163,6 +2412,8 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 	int pmrb = 0;
 	int prep_cached = 0;
 	int is_opaque_early = 0;
+	uint8_t blend_mode = (uint8_t)((flags & BITMAPF_BLEND_MASK) >>
+			BITMAPF_BLEND_SHIFT);
 	/* fixes829b (#256): nearest-neighbor (image-rendering:pixelated/
 	 * crisp-edges) request. Part of the prepared-GWorld cache key so a
 	 * smooth and a nearest render of the SAME bitmap at the SAME size
@@ -2170,8 +2421,15 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 	int nn = (flags & BITMAPF_NEAREST) != 0;
 
 	MS_ASSERT(bitmap != NULL, "plot_bitmap: bitmap is NULL");
-	(void)ctx; (void)bg;
+	(void)ctx;
 	if (bitmap == NULL) return NSERROR_OK;
+	if (blend_mode > CSS_BACKGROUND_BLEND_MODE_NORMAL &&
+			blend_bitmap_seen < 8) {
+		macsurf_debug_log_writef(
+			"LIFE blend bitmap mode=%d bg=%08lx size=%d,%d",
+			(int)blend_mode, (unsigned long)bg, width, height);
+		blend_bitmap_seen++;
+	}
 
 	buf = macos9_bitmap_get_buffer((void *)bitmap);
 	if (buf == NULL) return NSERROR_OK;
@@ -2216,9 +2474,12 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 	 * the box-filter downscale (the measured ~2.5s/paint prepare cost). The
 	 * cached pixmap is kept LockPixels'd for the entry's whole life. */
 	is_opaque_early = macos9_bitmap_get_opaque((void *)bitmap);
-	cached_gw = macos9_bitmap_get_prepared((void *)bitmap, width, height,
-			is_opaque_early ? true : false, nn ? true : false,
-			&psrc_w, &psrc_h, &pmask, &pmrb);
+	cached_gw = NULL;
+	if (blend_mode <= CSS_BACKGROUND_BLEND_MODE_NORMAL) {
+		cached_gw = macos9_bitmap_get_prepared((void *)bitmap, width, height,
+				is_opaque_early ? true : false, nn ? true : false,
+				&psrc_w, &psrc_h, &pmask, &pmrb);
+	}
 	if (cached_gw != NULL) {
 		PixMapHandle cpm = GetGWorldPixMap(cached_gw);
 		if (cpm != NULL) {
@@ -2281,6 +2542,18 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 			unsigned char r = src_row[col * 4 + 0];
 			unsigned char g = src_row[col * 4 + 1];
 			unsigned char b = src_row[col * 4 + 2];
+			if (blend_mode > CSS_BACKGROUND_BLEND_MODE_NORMAL) {
+				unsigned char a = src_row[col * 4 + 3];
+				colour src_colour = (colour)((unsigned long)r |
+						((unsigned long)g << 8) |
+						((unsigned long)b << 16) |
+						((unsigned long)(255u - a) << 24));
+				colour blended = macos9_background_blend_colour(
+						src_colour, bg, blend_mode);
+				r = (unsigned char)(blended & 0xff);
+				g = (unsigned char)((blended >> 8) & 0xff);
+				b = (unsigned char)((blended >> 16) & 0xff);
+			}
 			dst_row[col * 4 + 0] = 0xFF;
 			dst_row[col * 4 + 1] = r;
 			dst_row[col * 4 + 2] = g;
@@ -2766,7 +3039,7 @@ blit_done:
 		 * and we must not free/dispose them here; on decline (oversize /
 		 * budget) we fall through to the transient free + dispose below,
 		 * byte-for-byte identical to the pre-cache behaviour. */
-		if (!prep_cached) {
+		if (!prep_cached && blend_mode <= CSS_BACKGROUND_BLEND_MODE_NORMAL) {
 			int cache_sw = src_rect.right - src_rect.left;
 			int cache_sh = src_rect.bottom - src_rect.top;
 			/* fixes650b (review): if this was a DOWNSCALE of a MASKED
@@ -3002,6 +3275,8 @@ static void macos9_paint_background_clip_text(
 		if (state->gradient_stops != NULL) {
 			macos9_set_gradient_stops(state->gradient_stops);
 			macos9_set_gradient_angle(state->gradient_angle);
+			macos9_set_gradient_blend(state->blend_mode,
+					state->blend_backdrop);
 		}
 		(void)macos9_plot_rectangle(ctx, &state->fill,
 				&state->fill_rect);

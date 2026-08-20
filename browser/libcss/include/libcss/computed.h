@@ -472,6 +472,9 @@ uint8_t css_computed_background_clip(
 uint8_t css_computed_background_origin(
 		const css_computed_style *style);
 
+uint8_t css_computed_background_blend_mode(
+		const css_computed_style *style);
+
 uint8_t css_computed_justify_items(
 		const css_computed_style *style);   /* #279 */
 

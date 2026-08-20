@@ -860,6 +860,7 @@ void ro_gui_url_bar_redraw(struct url_bar *url_bar, wimp_draw *redraw)
 			data.scale = 1;
 			data.repeat_x = false;
 			data.repeat_y = false;
+			data.background_blend_mode = 0;
 
 			content_redraw(url_bar->favicon.content,
 				       &data, &clip, &ctx);
@@ -908,6 +909,7 @@ void ro_gui_url_bar_redraw(struct url_bar *url_bar, wimp_draw *redraw)
 		data.scale = 1;
 		data.repeat_x = false;
 		data.repeat_y = false;
+		data.background_blend_mode = 0;
 
 		content_redraw(hotlist_icon->c, &data, &clip, &ctx);
 	}

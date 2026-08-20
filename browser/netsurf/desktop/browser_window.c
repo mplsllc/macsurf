@@ -2915,6 +2915,7 @@ browser_window_redraw(struct browser_window *bw,
 	data.repeat_x = false;
 	data.repeat_y = false;
 	data.nearest = false;  /* fixes829 (#256) */
+	data.background_blend_mode = 0;
 
 	content_clip = *clip;
 

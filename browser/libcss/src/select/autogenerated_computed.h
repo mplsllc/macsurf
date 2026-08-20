@@ -478,6 +478,8 @@ struct css_computed_style_i {
 	/* background-clip moved from a full 2-bit slot so the CSS `text`
 	 * keyword fits alongside the three box values. */
 	int32_t background_clip;
+	/* background-blend-mode is non-inherited scalar-tail state. */
+	int32_t background_blend_mode;
 };
 
 struct css_computed_style {

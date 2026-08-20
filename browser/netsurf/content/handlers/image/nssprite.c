@@ -200,6 +200,7 @@ nssprite_redraw(struct content *c,
 	if (data->repeat_y) {
 		flags |= BITMAPF_REPEAT_Y;
 	}
+	flags |= BITMAPF_BLEND_MODE(data->background_blend_mode);
 
 	return (ctx->plot->bitmap(ctx,
 				  nssprite->bitmap,

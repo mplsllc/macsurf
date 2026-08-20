@@ -709,4 +709,8 @@ extern const uint32_t property_unit_mask[CSS_N_PROPERTIES];
 #define UNIT_MASK_ORDER                 (0)
 #define UNIT_MASK_BORDER_RADIUS         UNIT_MASK_MARGIN_SIDE
 
+css_error css__parse_background_blend_mode(css_language *c,
+		const parserutils_vector *vector, int32_t *ctx,
+		css_style *result);
+
 #endif
