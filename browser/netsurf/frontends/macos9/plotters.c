@@ -15,6 +15,7 @@
 #include "utils/ns_errors.h"
 #include "utils/log.h"
 #include "netsurf/types.h"
+#include "netsurf/css.h"
 #include "netsurf/plot_style.h"
 #include "netsurf/plotters.h"
 #include "netsurf/bitmap.h"
@@ -1233,8 +1234,9 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 		{
 			if (diag_paint_seen < 5) {
 				macsurf_debug_log_writef(
-					"plot: diag-gradient angle=%d",
-					angle_norm);
+					"LIFE gradient ext angle=%d stops=%d rect=%d,%d,%d,%d",
+					angle_norm, n_stops, (int)r.left,
+					(int)r.top, (int)r.right, (int)r.bottom);
 				diag_paint_seen++;
 			}
 		}
@@ -1242,9 +1244,12 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 		p1_eff = grad_stops_local[2];
 		p2_eff = grad_stops_local[3];
 
-		macos9_colour_to_rgb((colour)grad_stops_local[4], &cA);
-		macos9_colour_to_rgb((colour)grad_stops_local[5], &cB);
-		macos9_colour_to_rgb((colour)grad_stops_local[6], &cC);
+		macos9_colour_to_rgb(nscss_color_to_ns(
+				(uint32_t)grad_stops_local[4]), &cA);
+		macos9_colour_to_rgb(nscss_color_to_ns(
+				(uint32_t)grad_stops_local[5]), &cB);
+		macos9_colour_to_rgb(nscss_color_to_ns(
+				(uint32_t)grad_stops_local[6]), &cC);
 
 		saved_clip = macos9_push_clip();
 		GetPenState(&saved_pen);
