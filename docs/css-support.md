@@ -8,7 +8,7 @@ libcss parse + cascade, our own layout, and QuickDraw painting. This page is the
 user-facing summary; the deep engineering audit lives in
 [.private/research/css-gap-inventory-2026-08-14.md](../.private/research/css-gap-inventory-2026-08-14.md).
 
-*Last updated: development snapshot after fixes1214 (2026-08-19).*
+*Last updated: development snapshot after fixes1216 (2026-08-19).*
 
 ### Legend
 
@@ -43,7 +43,7 @@ user-facing summary; the deep engineering audit lives in
 | `background-position` / `-repeat` | ✅ | |
 | `background: none` / `transparent` reset | ✅ | Shorthand reset fixed 2.0.5 (#268). |
 | `background-clip` | ◑&ast; | `border-box`/`padding-box`/`content-box` honored (2.0.5, #255); `background-clip: text` deferred. |
-| `background-origin` | ◑&ast; | Longhand `border-box` / `padding-box` / `content-box` positions raster backgrounds independently of clipping; shorthand box keywords are deferred. |
+| `background-origin` | ◑&ast; | Longhand `border-box` / `padding-box` / `content-box` positions raster backgrounds independently of clipping; hardware-confirmed on G3 iMac (fixes1215/1216). Shorthand box keywords are deferred. |
 | `background-attachment: fixed` | ✅&ast; | Raster images and gradients stay viewport-anchored while their box scrolls. |
 
 ## Gradients
