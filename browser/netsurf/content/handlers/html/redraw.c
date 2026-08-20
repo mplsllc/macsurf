@@ -256,6 +256,7 @@ char macos9_skipbox_info[160] = {0};
 extern long macos9_grad_set_count;
 extern long macos9_grad_radial_unpack_count;
 extern long macos9_grad_linear_unpack_count;
+static int macos9_clip_text_trace_seen = 0;
 
 static void macsurf_gradient_unpack(int32_t packed_signed,
 		colour *c1_out, colour *c2_out, bool *horizontal_out,
@@ -3195,6 +3196,16 @@ static void html_redraw_background_clip_text_begin(struct box *text_box,
 	bitmap_flags_t bitmap_flags = BITMAPF_NONE;
 	colour bitmap_background = current_background_color;
 
+	if (macos9_clip_text_trace_seen < 24) {
+		macsurf_debug_log_writef(
+			"LIFE clip-text redraw box=%p type=%d style=%p clip=%d",
+			(void *)text_box, (int)(text_box ? text_box->type : -1),
+			(void *)(text_box ? text_box->style : NULL),
+			(int)(text_box && text_box->style ?
+				css_computed_background_clip(text_box->style) : -1));
+		macos9_clip_text_trace_seen++;
+	}
+
 	for (cursor = text_box; cursor != NULL; cursor = cursor->parent) {
 		if (cursor->style != NULL &&
 				css_computed_background_clip(cursor->style) ==
@@ -3210,6 +3221,10 @@ static void html_redraw_background_clip_text_begin(struct box *text_box,
 	}
 
 	if (owner == NULL || owner->style == NULL) {
+		if (macos9_clip_text_trace_seen < 24) {
+			macsurf_debug_log_writef("LIFE clip-text owner=none");
+			macos9_clip_text_trace_seen++;
+		}
 		return;
 	}
 
@@ -3332,6 +3347,13 @@ static void html_redraw_background_clip_text_begin(struct box *text_box,
 		/* Still mark the run active: transparent text with no source must not
 		 * fall through to QuickDraw's opaque foreground painter. */
 		fill.fill_type = PLOT_OP_TYPE_NONE;
+	}
+	if (macos9_clip_text_trace_seen < 24) {
+		macsurf_debug_log_writef(
+			"LIFE clip-text owner=%p fill=%d bitmap=%p tile=%d,%d",
+			(void *)owner, (int)fill.fill_type, (void *)bitmap,
+			tile_w, tile_h);
+		macos9_clip_text_trace_seen++;
 	}
 
 	macos9_background_clip_text_begin(&fill, &fill_rect, bitmap,

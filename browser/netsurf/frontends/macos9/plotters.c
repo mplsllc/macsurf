@@ -44,6 +44,7 @@ static int hstripe_paint_seen = 0;
 static int dotgrid_paint_seen = 0;
 static int diag_paint_seen = 0;
 static int clip_text_mask_seen = 0;
+static int clip_text_state_seen = 0;
 /* fixes366d  -  log the snapshot values at plot_rectangle entry,
  * regardless of which branch the plotter ends up taking. Tells us
  * whether the one-shot values are reaching the plotter at all, or
@@ -57,6 +58,7 @@ void macos9_plotter_diag_counters_reset(void)
 	dotgrid_paint_seen = 0;
 	diag_paint_seen = 0;
 	clip_text_mask_seen = 0;
+	clip_text_state_seen = 0;
 	snapshot_seen = 0;
 }
 
@@ -471,6 +473,13 @@ void macos9_background_clip_text_begin(const plot_style_t *fill,
 	macos9_background_clip_text.gradient_stops = gradient_stops;
 	macos9_background_clip_text.gradient_angle = gradient_angle;
 	macos9_background_clip_text.active = true;
+	if (clip_text_state_seen < 12) {
+		macsurf_debug_log_writef(
+			"LIFE clip-text state fill=%d bitmap=%p tile=%d,%d",
+			(int)macos9_background_clip_text.fill.fill_type,
+			(void *)bitmap, bitmap_width, bitmap_height);
+		clip_text_state_seen++;
+	}
 }
 
 void macos9_background_clip_text_end(void)
@@ -3222,6 +3231,12 @@ macos9_plot_text(const struct redraw_context *ctx,
 		}
 
 		if (macos9_background_clip_text.active) {
+			if (clip_text_state_seen < 12) {
+				macsurf_debug_log_writef(
+					"LIFE clip-text plot len=%d at=%d,%d",
+					(int)mac_len, x, y);
+				clip_text_state_seen++;
+			}
 			macos9_paint_background_clip_text(ctx, mac_buf, mac_len,
 					x, y, ls, ws, font_id, face, size);
 			/* CSS `color: transparent` is the normal companion to
