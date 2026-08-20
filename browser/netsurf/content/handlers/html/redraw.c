@@ -2220,14 +2220,14 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 			if (!repeat_x && !bg_fixed) {
 				if (r.x0 < x)
 					r.x0 = x;
-				if (r.x1 > x + width * scale)
-					r.x1 = x + width * scale;
+				if (r.x1 > x + bg_tile_w)
+					r.x1 = x + bg_tile_w;
 			}
 			if (!repeat_y && !bg_fixed) {
 				if (r.y0 < y)
 					r.y0 = y;
-				if (r.y1 > y + height * scale)
-					r.y1 = y + height * scale;
+				if (r.y1 > y + bg_tile_h)
+					r.y1 = y + bg_tile_h;
 			}
 			/* valid clipping rectangles only */
 			if ((r.x0 < r.x1) && (r.y0 < r.y1)) {
