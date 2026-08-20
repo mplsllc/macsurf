@@ -124,7 +124,10 @@ From the current docs, the valuable next work tends to be:
   `fit-content()` behavior and FR-row distribution remain separate future work.
 - `caption-side` and `list-style-position` layout consumers.
 - Intrinsic sizing keywords for height/flex/grid/table paths.
-- Reconvert crash chain before re-enabling JS DOM mutation repaint.
+- Reconvert's crash chain was root-caused and fixed (fixes896, 2026-07-17); JS DOM
+  mutation repaint has been ON since. Current reconvert work is whole-document rebuild
+  cost on every mutation (scoped/incremental cascade+layout is unbuilt) — see
+  `.private/facebook-todo.md` Phase B7 if touching this path.
 
 Confirm against current code and the newest private inventory before choosing a task.
 
