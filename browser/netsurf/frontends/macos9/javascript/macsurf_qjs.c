@@ -9536,21 +9536,42 @@ static void register_browser_globals(JSContext *ctx)
 	 * real timer arena (setTimeout), asynchronously, exactly as a browser
 	 * delivers observer records. */
 	macsurf_qjs__safe_eval(ctx,
-		/* fixes1015 - MutationObserver is a NO-OP; a page that waits on
-		 * one waits forever. Log each observe() so that failure mode is
-		 * visible instead of silent. */
-		"function _Observer(cb){this._cb=cb;}"
-		"_Observer.prototype.observe=function(t,opts){"
-			"try{__msLife('WANT Mutation/ResizeObserver.observe '"
-			"+((t&&(t.id||t.tagName))||'?')+' (NO-OP)');}catch(_){}"
-			"var self=this;"
-			"try{setTimeout(function(){try{self._cb([],self);}catch(e){}},0);}catch(e){}"
-		"};"
-		"_Observer.prototype.unobserve=function(){};"
-		"_Observer.prototype.disconnect=function(){};"
-		"_Observer.prototype.takeRecords=function(){return [];};"
-		"this.MutationObserver=_Observer;"
-		"this.PerformanceObserver=_Observer;");
+		/* fixes1015 - MutationObserver/PerformanceObserver are NO-OPS; a
+		 * page that waits on one waits forever. Log each observe() so
+		 * that failure mode is visible instead of silent.
+		 *
+		 * fixes1232 - the two globals used to share ONE constructor
+		 * (_Observer), so its log line could only say the ambiguous
+		 * "Mutation/ResizeObserver.observe" -- both because ResizeObserver
+		 * hadn't split out yet (fixes1231) and because a single shared
+		 * function object cannot tell `new MutationObserver(cb)` apart
+		 * from `new PerformanceObserver(cb)` after the fact. A hardware
+		 * capture on a still-stuck Facebook checkpoint showed exactly this
+		 * stale ambiguous line with NO matching "ResizeObserver.observe
+		 * ... (real)" anywhere in the same session -- meaning
+		 * ResizeObserver (fixes1231) was never even called here, and the
+		 * real blocker is one of these two, but the log couldn't say
+		 * which. Give each its own named constructor via a small factory
+		 * so the next capture is unambiguous. Behavior is unchanged --
+		 * still an empty-array, single deferred callback -- only the log
+		 * label is now precise. */
+		"function _mkObserver(label){"
+			"function C(cb){this._cb=cb;}"
+			"C.prototype.observe=function(t,opts){"
+				"try{__msLife('WANT '+label+'.observe '"
+				"+((t&&(t.id||t.tagName))||'?')+' (NO-OP)');}catch(_){}"
+				"var self=this;"
+				"try{setTimeout(function(){"
+					"try{self._cb([],self);}catch(e){}"
+				"},0);}catch(e){}"
+			"};"
+			"C.prototype.unobserve=function(){};"
+			"C.prototype.disconnect=function(){};"
+			"C.prototype.takeRecords=function(){return [];};"
+			"return C;"
+		"}"
+		"this.MutationObserver=_mkObserver('MutationObserver');"
+		"this.PerformanceObserver=_mkObserver('PerformanceObserver');");
 	/* fixes1231 (#167) - real-enough ResizeObserver. Hardware evidence
 	 * (2026-08-20, Facebook 2FA checkpoint): every broken checkpoint page
 	 * (recover/code, two_step_verification/two_factor,
