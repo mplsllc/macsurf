@@ -8124,5 +8124,68 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 67 PASS: background-blend-mode parsed and "
 			"cascaded to multiply ===\n");
 
+	/* --- Test 68 (fixes1231): ResizeObserver on document.documentElement/
+	 * body must actually FIRE with real size data. Hardware evidence
+	 * (2026-08-20, Facebook Bloks checkpoint pages): the old shared
+	 * no-op _Observer delivered an EMPTY entries array, so a callback
+	 * reading entries[0].contentRect got undefined and the app's
+	 * viewport-size-dependent mount never ran. Observes
+	 * document.documentElement (the pattern every hardware capture
+	 * showed -- target id/tagName logged as "HTML"), pumps the real JS
+	 * timer arena, and asserts the callback fired with a non-empty
+	 * entries array whose contentRect matches the real viewport size. */
+	fprintf(stderr, "\n=== Test 68: ResizeObserver fires with real size "
+			"data ===\n");
+	{
+		extern void macsurf_qjs_pump_all(void);
+		const char *ro_setup_js =
+			"globalThis.__roFired=0;globalThis.__roW=-1;"
+			"globalThis.__roH=-1;globalThis.__roLen=-1;"
+			"(function(){"
+			"var ro=new ResizeObserver(function(entries){"
+				"globalThis.__roFired=1;"
+				"globalThis.__roLen=entries.length;"
+				"if(entries&&entries[0]&&entries[0].contentRect){"
+					"globalThis.__roW=entries[0].contentRect.width;"
+					"globalThis.__roH=entries[0].contentRect.height;"
+				"}"
+			"});"
+			"ro.observe(document.documentElement);"
+			"})();";
+		const char *ro_check_js =
+			"if(!globalThis.__roFired)"
+				"throw new Error('ASSERT FAIL: RO callback never fired');"
+			"if(globalThis.__roLen!==1)"
+				"throw new Error('ASSERT FAIL: RO entries.length='"
+					"+globalThis.__roLen+' expected 1');"
+			"if(globalThis.__roW!==innerWidth||globalThis.__roH!==innerHeight)"
+				"throw new Error('ASSERT FAIL: RO contentRect '"
+					"+globalThis.__roW+'x'+globalThis.__roH+' != viewport '"
+					"+innerWidth+'x'+innerHeight);";
+		unsigned char ok1, ok2;
+		int pump;
+
+		ok1 = js_exec(thread, (const unsigned char *)ro_setup_js,
+				strlen(ro_setup_js), "driver-ro-setup.js");
+		if (!ok1) {
+			fprintf(stderr, "FAIL: RO setup threw\n");
+			return 1;
+		}
+		for (pump = 0; pump < 8; pump++) {
+			macsurf_qjs_pump_all();
+			harness_pump_all(1000);
+		}
+		ok2 = js_exec(thread, (const unsigned char *)ro_check_js,
+				strlen(ro_check_js), "driver-ro-check.js");
+		fprintf(stderr, "js_exec(ro check) ok=%d\n", (int)ok2);
+		if (!ok2) {
+			fprintf(stderr, "FAIL: ResizeObserver did not deliver a real "
+					"sized entry after pumping timers\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 68 PASS: ResizeObserver delivers a real "
+			"contentRect for document.documentElement ===\n");
+
 	return 0;
 }

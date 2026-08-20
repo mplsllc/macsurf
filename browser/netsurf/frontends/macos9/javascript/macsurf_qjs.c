@@ -4917,25 +4917,38 @@ static const char *qjs_css_display_name(uint8_t v)
  * the way the pre-1011 engine did (undefined / all-zero rect) -- the shape a
  * decade of pages demonstrably tolerates -- never a fabricated real-looking
  * number. When it returns 1, answers come from the real box tree. */
-/* fixes1230 (#167) - narrow geometry exception for the recover/code Bloks
- * checkpoint. Evidence, not a guess (2026-08-20 hardware log): the code-entry
- * widget is a Bloks-mounted div (DIV#<uuid>, kids=0) inside a page that
- * otherwise renders cleanly with zero JS exceptions -- the whole viewport
- * collapses to h=1 because that one container never gets children. Bloks
- * measures a container before mounting into it; MACSURF_JS_GEOMETRY's
- * default `undefined` answer (deliberate policy, see CLAUDE.md) means that
- * measurement predicate is never true, so the widget never appears. Scoped
- * to exactly the confirmed URL -- not a blanket flip of the switch, which
- * stays off everywhere else pending real incremental layout. */
+/* fixes1230 (#167) - narrow geometry exception for Facebook's Bloks
+ * checkpoint pages. Original evidence (2026-08-20 hardware log,
+ * recover/code): the code-entry widget is a Bloks-mounted div (DIV#<uuid>,
+ * kids=0) inside a page that otherwise renders cleanly with zero JS
+ * exceptions -- the whole viewport collapses to h=1 because that one
+ * container never gets children.
+ *
+ * fixes1231 correction: a FOLLOW-UP hardware log showed `LIFE JSGEOM
+ * reads=0` on every one of these pages, including ones that still failed --
+ * this scope was never actually reached, because Bloks' viewport-size check
+ * here goes through ResizeObserver, not getBoundingClientRect/offsetWidth
+ * (fixed separately, see the ResizeObserver comment below). Left in place
+ * (harmless when unreached, zero cost) and widened from the single
+ * recover/code URL to the whole confirmed family -- the SAME kids=0/h=1
+ * collapse was independently confirmed on two_step_verification/two_factor
+ * and two_step_verification/authentication too -- in case some other Bloks
+ * variant does call real geometry directly. Still not a blanket flip: every
+ * other m.facebook.com page keeps the default `undefined` policy pending
+ * real incremental layout (see CLAUDE.md). */
 static int qjs_geometry_scope_allowed(void)
 {
 	struct content *c = g_qjs_content;
 	const char *url;
+	const char *path;
 
 	if (c == NULL || c->llcache == NULL) return 0;
 	url = nsurl_access(content_get_url(c));
 	if (url == NULL) return 0;
-	return strstr(url, "://m.facebook.com/recover/code/") != NULL;
+	path = strstr(url, "://m.facebook.com/");
+	if (path == NULL) return 0;
+	return strstr(path, "/recover/") != NULL ||
+			strstr(path, "/two_step_verification/") != NULL;
 }
 
 /* fixes1073 (#265) - force layout before answering, the measure/mutate contract.
@@ -9504,13 +9517,15 @@ static void register_browser_globals(JSContext *ctx)
 	 * Moved verbatim to just after navigator is installed. See below. */
 
 	/* --- Observers --- *
-	 * MutationObserver / ResizeObserver / PerformanceObserver stay no-ops
-	 * (firing them risks feedback loops with our own reconvert/relayout).
-	 * IntersectionObserver is DIFFERENT and must actually fire: modern
-	 * feeds (Facebook) gate their content load on it -- they observe the
-	 * feed container and only request/reveal content when the observer
-	 * reports it intersecting the viewport. A no-op observer means the
-	 * "you're visible, load now" signal never arrives, so the feed JS runs
+	 * MutationObserver / PerformanceObserver stay no-ops (firing
+	 * MutationObserver risks feedback loops with our own reconvert/
+	 * relayout -- unlike Resize/Intersection it reports DOM changes, not
+	 * size/visibility, so it can't share their fix). IntersectionObserver
+	 * is DIFFERENT and must actually fire: modern feeds (Facebook) gate
+	 * their content load on it -- they observe the feed container and
+	 * only request/reveal content when the observer reports it
+	 * intersecting the viewport. A no-op observer means the "you're
+	 * visible, load now" signal never arrives, so the feed JS runs
 	 * (confirmed on hardware: ~550KB executed) but issues ZERO fetch/XHR
 	 * and never hydrates. fixes853 (#167): give IntersectionObserver a
 	 * real-enough implementation -- observe() asynchronously delivers a
@@ -9521,9 +9536,9 @@ static void register_browser_globals(JSContext *ctx)
 	 * real timer arena (setTimeout), asynchronously, exactly as a browser
 	 * delivers observer records. */
 	macsurf_qjs__safe_eval(ctx,
-		/* fixes1015 - MutationObserver/ResizeObserver are NO-OPS; a page
-		 * that waits on one waits forever. Log each observe() so that
-		 * failure mode is visible instead of silent. */
+		/* fixes1015 - MutationObserver is a NO-OP; a page that waits on
+		 * one waits forever. Log each observe() so that failure mode is
+		 * visible instead of silent. */
 		"function _Observer(cb){this._cb=cb;}"
 		"_Observer.prototype.observe=function(t,opts){"
 			"try{__msLife('WANT Mutation/ResizeObserver.observe '"
@@ -9535,8 +9550,59 @@ static void register_browser_globals(JSContext *ctx)
 		"_Observer.prototype.disconnect=function(){};"
 		"_Observer.prototype.takeRecords=function(){return [];};"
 		"this.MutationObserver=_Observer;"
-		"this.ResizeObserver=_Observer;"
 		"this.PerformanceObserver=_Observer;");
+	/* fixes1231 (#167) - real-enough ResizeObserver. Hardware evidence
+	 * (2026-08-20, Facebook 2FA checkpoint): every broken checkpoint page
+	 * (recover/code, two_step_verification/two_factor,
+	 * two_step_verification/authentication) logs exactly
+	 * "WANT Mutation/ResizeObserver.observe HTML (NO-OP)" and nothing
+	 * else geometry-related (LIFE JSGEOM reads=0 throughout -- Bloks never
+	 * calls getBoundingClientRect/offsetWidth directly here). The old
+	 * shared _Observer answered with an EMPTY entries array; a callback
+	 * that reads entries[0].contentRect got undefined and silently did
+	 * nothing, so the app never learned the viewport's size and the
+	 * size-dependent mount never ran. The observed target is always
+	 * document.documentElement/body in every capture -- a viewport-size
+	 * watcher, not a "measure my own container" one -- so this can answer
+	 * HONESTLY using window.innerWidth/innerHeight, which are real static
+	 * values already (qjs_js_viewport_w/h), not gated by
+	 * MACSURF_JS_GEOMETRY and with no measure-then-mutate hazard: the
+	 * viewport size does not change as a side effect of a script reading
+	 * it. Any OTHER target still falls back to getBoundingClientRect(),
+	 * i.e. the existing honest-undefined/zero policy, unchanged. */
+	macsurf_qjs__safe_eval(ctx,
+		"function ResizeObserver(cb){this._cb=cb;this._targets=[];}"
+		"ResizeObserver.prototype.observe=function(el){"
+			"if(!el)return;"
+			"try{__msLife('WANT ResizeObserver.observe '"
+			"+((el.id||el.tagName)||'?')+' (real)');}catch(_){}"
+			"this._targets.push(el);"
+			"var self=this;"
+			"setTimeout(function(){"
+				"if(self._targets.indexOf(el)<0)return;"
+				"var w,h,r;"
+				"if(typeof document!=='undefined'&&"
+					"(el===document.documentElement||el===document.body)){"
+					"w=innerWidth;h=innerHeight;"
+				"}else{"
+					"r=(el.getBoundingClientRect&&el.getBoundingClientRect())||"
+						"{width:0,height:0};"
+					"w=r.width;h=r.height;"
+				"}"
+				"var box={inlineSize:w,blockSize:h};"
+				"var entry={target:el,"
+					"contentRect:{x:0,y:0,top:0,left:0,"
+						"width:w,height:h,right:w,bottom:h},"
+					"borderBoxSize:[box],contentBoxSize:[box],"
+					"devicePixelContentBoxSize:[box]};"
+				"try{self._cb([entry],self);}catch(e){}"
+			"},0);"
+		"};"
+		"ResizeObserver.prototype.unobserve=function(el){"
+			"var i=this._targets.indexOf(el);if(i>=0)this._targets.splice(i,1);"
+		"};"
+		"ResizeObserver.prototype.disconnect=function(){this._targets=[];};"
+		"this.ResizeObserver=ResizeObserver;");
 	macsurf_qjs__safe_eval(ctx,
 		"function IntersectionObserver(cb,opts){"
 			"this._cb=cb;this._opts=opts||{};this._targets=[];"
