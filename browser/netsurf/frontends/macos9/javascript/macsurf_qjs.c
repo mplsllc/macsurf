@@ -8784,6 +8784,7 @@ macsurf_storage_fname(const char *url, unsigned char *fname)
 {
 	const char *hex = "0123456789abcdef";
 	const char *p;
+	const char *sep;
 	char tmp[31];
 	int i = 2;
 	int j;
@@ -8793,9 +8794,19 @@ macsurf_storage_fname(const char *url, unsigned char *fname)
 	tmp[1] = '_';
 	if (url != NULL) {
 		p = url;
-		if (strncmp(p, "https://", 8) == 0) p += 8;
-		else if (strncmp(p, "http://", 7) == 0) p += 7;
-		else if ((p = strstr(p, "://")) != NULL) p += 3;
+		if (strncmp(p, "https://", 8) == 0) {
+			p += 8;
+		} else if (strncmp(p, "http://", 7) == 0) {
+			p += 7;
+		} else {
+			/* A URL with no "://" at all (e.g. the "about:blank"
+			 * placeholder a nested realm can still carry mid-navigation)
+			 * left p NULL here -- strstr's NULL result was assigned into
+			 * p unconditionally, then the walk below dereferenced it.
+			 * Keep p at the original url in that case instead. */
+			sep = strstr(p, "://");
+			if (sep != NULL) p = sep + 3;
+		}
 		while (*p != '\0' && *p != '/' && *p != '?' && *p != '#' &&
 		       i < MACSURF_STORAGE_ORIGIN_MAX + 2) {
 			char c = *p;
