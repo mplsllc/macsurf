@@ -3486,6 +3486,18 @@ static void html_reconvert_done(html_content *c, bool success)
 		}
 	}
 #endif
+	/* fixes1235 (#167) - deliver a MutationObserver batch to any
+	 * registered observer. Unlike the resize/load hooks above, this is
+	 * NOT height-gated: a real DOM mutation just completed (that is why
+	 * reconvert ran at all), so every registered observer should hear
+	 * about it, not only ones whose consequence changed the page's
+	 * height. Fires once per completed reconvert -- see js_fire_mutation_
+	 * batch's own comment (macsurf_qjs.c) for why this cannot introduce a
+	 * new feedback-loop frequency beyond what reconvert's debounce/floor
+	 * already bounds. */
+	if (c->js_thread != NULL) {
+		js_fire_mutation_batch(c->js_thread);
+	}
 	macsurf_reconv_pos_set("reconvert-idle", (long) macsurf_reconvert_seq,
 			0, "");
 	macsurf_reconv_pos_flush();

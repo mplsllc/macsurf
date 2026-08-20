@@ -9517,44 +9517,33 @@ static void register_browser_globals(JSContext *ctx)
 	 * Moved verbatim to just after navigator is installed. See below. */
 
 	/* --- Observers --- *
-	 * MutationObserver / PerformanceObserver stay no-ops (firing
-	 * MutationObserver risks feedback loops with our own reconvert/
-	 * relayout -- unlike Resize/Intersection it reports DOM changes, not
-	 * size/visibility, so it can't share their fix). IntersectionObserver
-	 * is DIFFERENT and must actually fire: modern feeds (Facebook) gate
-	 * their content load on it -- they observe the feed container and
-	 * only request/reveal content when the observer reports it
-	 * intersecting the viewport. A no-op observer means the "you're
-	 * visible, load now" signal never arrives, so the feed JS runs
-	 * (confirmed on hardware: ~550KB executed) but issues ZERO fetch/XHR
-	 * and never hydrates. fixes853 (#167): give IntersectionObserver a
-	 * real-enough implementation -- observe() asynchronously delivers a
-	 * single isIntersecting=true entry for the target (a pragmatic
-	 * "visible on layout" first cut; geometry-accurate viewport testing is
-	 * a later refinement), which is the trigger that lets the feed request
-	 * its data through the now-real fetch/XHR (fixes846). Fires via the
-	 * real timer arena (setTimeout), asynchronously, exactly as a browser
+	 * PerformanceObserver stays a no-op. IntersectionObserver is DIFFERENT
+	 * and must actually fire: modern feeds (Facebook) gate their content
+	 * load on it -- they observe the feed container and only request/
+	 * reveal content when the observer reports it intersecting the
+	 * viewport. A no-op observer means the "you're visible, load now"
+	 * signal never arrives, so the feed JS runs (confirmed on hardware:
+	 * ~550KB executed) but issues ZERO fetch/XHR and never hydrates.
+	 * fixes853 (#167): give IntersectionObserver a real-enough
+	 * implementation -- observe() asynchronously delivers a single
+	 * isIntersecting=true entry for the target (a pragmatic "visible on
+	 * layout" first cut; geometry-accurate viewport testing is a later
+	 * refinement), which is the trigger that lets the feed request its
+	 * data through the now-real fetch/XHR (fixes846). Fires via the real
+	 * timer arena (setTimeout), asynchronously, exactly as a browser
 	 * delivers observer records. */
 	macsurf_qjs__safe_eval(ctx,
-		/* fixes1015 - MutationObserver/PerformanceObserver are NO-OPS; a
-		 * page that waits on one waits forever. Log each observe() so
-		 * that failure mode is visible instead of silent.
+		/* fixes1015 - PerformanceObserver is a NO-OP; a page that waits
+		 * on one waits forever. Log each observe() so that failure mode
+		 * is visible instead of silent.
 		 *
-		 * fixes1232 - the two globals used to share ONE constructor
-		 * (_Observer), so its log line could only say the ambiguous
-		 * "Mutation/ResizeObserver.observe" -- both because ResizeObserver
-		 * hadn't split out yet (fixes1231) and because a single shared
-		 * function object cannot tell `new MutationObserver(cb)` apart
-		 * from `new PerformanceObserver(cb)` after the fact. A hardware
-		 * capture on a still-stuck Facebook checkpoint showed exactly this
-		 * stale ambiguous line with NO matching "ResizeObserver.observe
-		 * ... (real)" anywhere in the same session -- meaning
-		 * ResizeObserver (fixes1231) was never even called here, and the
-		 * real blocker is one of these two, but the log couldn't say
-		 * which. Give each its own named constructor via a small factory
-		 * so the next capture is unambiguous. Behavior is unchanged --
-		 * still an empty-array, single deferred callback -- only the log
-		 * label is now precise. */
+		 * fixes1232 - this used to be shared with MutationObserver under
+		 * one constructor (_Observer), so its log line could only say the
+		 * ambiguous "Mutation/ResizeObserver.observe". fixes1235 gives
+		 * MutationObserver its own real implementation below; this
+		 * factory now backs PerformanceObserver alone (kept as a factory,
+		 * not simplified to a single class, in case a future no-op
+		 * observer needs to share it again). */
 		"function _mkObserver(label){"
 			"function C(cb){this._cb=cb;}"
 			"C.prototype.observe=function(t,opts){"
@@ -9570,8 +9559,76 @@ static void register_browser_globals(JSContext *ctx)
 			"C.prototype.takeRecords=function(){return [];};"
 			"return C;"
 		"}"
-		"this.MutationObserver=_mkObserver('MutationObserver');"
 		"this.PerformanceObserver=_mkObserver('PerformanceObserver');");
+	/* fixes1235 (#167) - real-enough MutationObserver. Hardware evidence
+	 * (2026-08-20): a Facebook checkpoint's approval-detection UI installs
+	 * exactly one `new MutationObserver(cb).observe(document.documentElement,
+	 * ...)` and then goes completely silent -- confirmed via the observer
+	 * shim's own argument shape (PerformanceObserver's real API never takes
+	 * a DOM node, only ours logged tagName="HTML") and via zero further log
+	 * activity of any kind for ~18s after the old no-op's one empty-array
+	 * callback. Root cause: the old shared stub delivered `[]`; a callback
+	 * reading entries[0] got undefined and had nothing to react to, so
+	 * server-driven approval never revealed itself in the DOM the app was
+	 * waiting on.
+	 *
+	 * Design (scoped, not a full spec implementation): records are
+	 * delivered from js_fire_mutation_batch (macsurf_qjs.c), called once
+	 * from html_reconvert_done AFTER a reconvert completes successfully --
+	 * the SAME fire point fixes1090's resize/load convergence hooks use.
+	 * That means delivery cannot happen more often than reconvert's own
+	 * debounce/floor already allows, and is never called from inside the
+	 * box-tree rebuild -- the feedback-loop risk the old no-op comment
+	 * warned about is bounded by construction, not by hoping the page
+	 * behaves. Phase 1 scope: every registered observer gets ONE synthetic
+	 * childList record per completed reconvert, regardless of its actual
+	 * target/subtree options -- matching the one usage pattern evidence
+	 * shows (a root-level, presumably subtree:true watcher) without
+	 * building precise per-node/subtree target matching against the
+	 * pending table's opaque dom_node pointers, which macos9_reconvert.c
+	 * cannot safely dereference (see its header comment) and would need a
+	 * new bridge through html.c to do properly. A future round can narrow
+	 * this once a non-root .observe() target shows up in evidence. */
+	macsurf_qjs__safe_eval(ctx,
+		"function MutationObserver(cb){this._cb=cb;this._targets=[];}"
+		"MutationObserver.prototype.observe=function(t,opts){"
+			"if(!t)return;"
+			"try{__msLife('WANT MutationObserver.observe '"
+			"+((t.id||t.tagName)||'?')+' (real)');}catch(_){}"
+			"this._targets.push(t);"
+			"if(!globalThis.__msMutObservers)globalThis.__msMutObservers=[];"
+			"if(globalThis.__msMutObservers.indexOf(this)<0)"
+				"globalThis.__msMutObservers.push(this);"
+		"};"
+		"MutationObserver.prototype.unobserve=function(t){"
+			"var i=this._targets.indexOf(t);if(i>=0)this._targets.splice(i,1);"
+		"};"
+		"MutationObserver.prototype.disconnect=function(){"
+			"this._targets=[];"
+			"if(globalThis.__msMutObservers){"
+				"var j=globalThis.__msMutObservers.indexOf(this);"
+				"if(j>=0)globalThis.__msMutObservers.splice(j,1);"
+			"}"
+		"};"
+		"MutationObserver.prototype.takeRecords=function(){return [];};"
+		"this.MutationObserver=MutationObserver;"
+		"globalThis.__msDeliverMutations=function(){"
+			"var list=globalThis.__msMutObservers;"
+			"if(!list||list.length===0)return;"
+			"for(var i=0;i<list.length;i++){"
+				"var ob=list[i];"
+				"if(!ob._targets||ob._targets.length===0)continue;"
+				"var recs=[];"
+				"for(var j=0;j<ob._targets.length;j++){"
+					"recs.push({type:'childList',target:ob._targets[j],"
+						"addedNodes:[],removedNodes:[],"
+						"previousSibling:null,nextSibling:null,"
+						"attributeName:null,attributeNamespace:null,"
+						"oldValue:null});"
+				"}"
+				"try{ob._cb(recs,ob);}catch(e){}"
+			"}"
+		"};");
 	/* fixes1231 (#167) - real-enough ResizeObserver. Hardware evidence
 	 * (2026-08-20, Facebook 2FA checkpoint): every broken checkpoint page
 	 * (recover/code, two_step_verification/two_factor,
@@ -13068,6 +13125,26 @@ unsigned char js_fire_event(struct jsthread *thread, const char *type,
 		}
 	}
 	return 1;
+}
+
+/* fixes1235 (#167) - see js.h for the design. Called once from
+ * html_reconvert_done, the SAME fire point fixes1090's resize/load
+ * convergence hooks already use, so this cannot introduce a new trigger
+ * frequency beyond what the reconvert debounce/floor already bounds, and
+ * cannot re-enter the box-tree rebuild (it is not called from inside one).
+ * If a delivered callback mutates the DOM, that mutation goes through the
+ * ordinary macos9_js_mark_dom_dirty_node path exactly like any other
+ * JS-driven mutation -- a normal follow-up debounced batch, not a new
+ * recursive trigger. */
+void js_fire_mutation_batch(struct jsthread *thread)
+{
+	static const char s_deliver_src[] =
+		"(function(){try{"
+		"if(typeof __msDeliverMutations==='function')"
+		"__msDeliverMutations();"
+		"}catch(e){}})();";
+	if (thread == NULL || thread->ctx == NULL) return;
+	macsurf_qjs__safe_eval(thread->ctx, s_deliver_src);
 }
 
 /* fixes652: real-build definition of interaction.c's click bridge (Gate 5).

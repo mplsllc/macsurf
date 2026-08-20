@@ -8187,5 +8187,241 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 68 PASS: ResizeObserver delivers a real "
 			"contentRect for document.documentElement ===\n");
 
+	/* --- Test 69 (fixes1235): MutationObserver fires after a real
+	 * reconvert, through the REAL html_reconvert_done path -- not a bare
+	 * timer pump like Tests 5/68. Own ISOLATED fixture (Test 66's pattern),
+	 * not the giant shared htmlc/document Tests 1-65 accumulate state on:
+	 * a first attempt reusing that shared content hit reconvert
+	 * DONE-ENTRY success=0 on its 35th cycle for reasons unrelated to this
+	 * feature (34 prior tests' worth of accumulated box-tree/registry
+	 * state), which a clean fixture sidesteps entirely, same reasoning
+	 * Test 66 already established. Registers an observer on
+	 * document.documentElement, performs a real DOM mutation via the same
+	 * C binding React would call (setAttribute -> macos9_js_mark_dom_dirty_
+	 * node), drives an ACTUAL reconvert through html_reconvert_content,
+	 * and asserts the observer's callback fired with a non-empty record
+	 * whose target is the observed element -- exercising the real new
+	 * code path (js_fire_mutation_batch, called from html_reconvert_done)
+	 * under ASan, not just the JS shim in isolation. */
+	fprintf(stderr, "\n=== Test 69: MutationObserver fires after a real "
+			"reconvert ===\n");
+	{
+		static const char *t69_html =
+			"<!DOCTYPE html><html><head></head><body>"
+			"<div id=\"root\"><p id=\"p0\">hello</p></div>"
+			"</body></html>";
+		struct html_content t69c;
+		dom_hubbub_parser *t69p = NULL;
+		dom_document *t69doc = NULL;
+		dom_node *t69root = NULL;
+		css_select_ctx *t69ctx = NULL;
+		css_stylesheet *t69ua = NULL;
+		dom_hubbub_parser_params t69params;
+		css_stylesheet_params t69sp;
+		void *t69_box_ctx = NULL;
+		struct jsheap *t69heap = NULL;
+		struct jsthread *t69thread = NULL;
+		nserror t69nerr;
+		dom_exception t69derr;
+		css_error t69cerr;
+		int rc;
+
+		memset(&t69params, 0, sizeof(t69params));
+		t69params.enc = NULL;
+		t69params.fix_enc = true;
+		t69params.enable_script = false;
+		t69params.daf = NULL;
+		t69derr = dom_hubbub_parser_create(&t69params, &t69p, &t69doc);
+		if (t69derr != DOM_HUBBUB_OK || t69p == NULL || t69doc == NULL) {
+			fprintf(stderr, "FAIL: Test 69 parser create %d\n",
+					(int)t69derr);
+			return 1;
+		}
+		t69derr = dom_hubbub_parser_parse_chunk(t69p,
+				(const uint8_t *)t69_html, strlen(t69_html));
+		if (t69derr != DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 69 parse chunk %d\n", (int)t69derr);
+			return 1;
+		}
+		t69derr = dom_hubbub_parser_completed(t69p);
+		if (t69derr != DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 69 parse done %d\n", (int)t69derr);
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t69p);
+
+		memset(&t69c, 0, sizeof(t69c));
+		t69c.base_url = g_base_url;
+		t69c.document = t69doc;
+		t69c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t69c.enable_scripting = true;
+		if (css_select_ctx_create(&t69ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 69 select_ctx\n");
+			return 1;
+		}
+		t69c.select_ctx = t69ctx;
+
+		memset(&t69sp, 0, sizeof(t69sp));
+		t69sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t69sp.level = CSS_LEVEL_3;
+		t69sp.charset = "UTF-8";
+		t69sp.url = "resource:default.css";
+		t69sp.title = "default";
+		t69sp.allow_quirks = false;
+		t69sp.inline_style = false;
+		t69sp.resolve = harness_css_resolve_url;
+		t69sp.resolve_pw = NULL;
+		t69cerr = css_stylesheet_create(&t69sp, &t69ua);
+		if (t69cerr != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 69 UA sheet\n");
+			return 1;
+		}
+		{
+			const char *ua_css =
+				"html,body,div,p{display:block}";
+			css_error ae = css_stylesheet_append_data(t69ua,
+					(const uint8_t *)ua_css, strlen(ua_css));
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 69 UA append=%d\n", (int)ae);
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t69ua);
+		}
+		if (css_select_ctx_append_sheet(t69ctx, t69ua,
+				CSS_ORIGIN_UA, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 69 UA append sheet\n");
+			return 1;
+		}
+
+		t69c.media.type = CSS_MEDIA_SCREEN;
+		t69c.media.width = INTTOFIX(993);
+		t69c.media.height = INTTOFIX(600);
+		t69c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t69c.unit_len_ctx.viewport_width = INTTOFIX(993);
+		t69c.unit_len_ctx.viewport_height = INTTOFIX(600);
+		t69c.unit_len_ctx.device_dpi = INTTOFIX(90);
+		t69c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t69c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t69c.universal) != lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 69 universal\n");
+			return 1;
+		}
+
+		t69c.base.status = CONTENT_STATUS_LOADING;
+		t69c.base.active = 0;
+		t69c.base.handler = &g_dummy_handler;
+		macos9_content_register((struct content *)&t69c);
+
+		t69derr = dom_document_get_document_element(t69doc,
+				(void *)&t69root);
+		if (t69derr != DOM_NO_ERR || t69root == NULL) {
+			fprintf(stderr, "FAIL: Test 69 doc element\n");
+			return 1;
+		}
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t69nerr = dom_to_box(t69root, &t69c, initial_build_cb,
+				&t69_box_ctx);
+		dom_node_unref(t69root);
+		if (t69nerr != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 69 dom_to_box nerr=%d\n",
+					(int)t69nerr);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 69 initial build done=%d ok=%d\n",
+					g_initial_build_done, (int)g_initial_build_ok);
+			return 1;
+		}
+		t69c.base.status = CONTENT_STATUS_DONE;
+
+		t69nerr = js_newheap(20000, &t69heap);
+		if (t69nerr != NSERROR_OK || t69heap == NULL) {
+			fprintf(stderr, "FAIL: Test 69 js_newheap nerr=%d\n",
+					(int)t69nerr);
+			return 1;
+		}
+		t69nerr = js_newthread(t69heap, NULL, (void *)&t69c, &t69thread);
+		if (t69nerr != NSERROR_OK || t69thread == NULL) {
+			fprintf(stderr, "FAIL: Test 69 js_newthread nerr=%d\n",
+					(int)t69nerr);
+			return 1;
+		}
+		t69c.js_thread = t69thread;
+		macsurf_js_set_reconvert_enabled(1);
+
+		{
+			const char *mo_setup_js =
+				"globalThis.__moFired=0;globalThis.__moLen=-1;"
+				"globalThis.__moTargetOk=0;"
+				"(function(){"
+				"var mo=new MutationObserver(function(records){"
+					"globalThis.__moFired=1;"
+					"globalThis.__moLen=records.length;"
+					"if(records&&records[0]&&"
+						"records[0].target===document.documentElement)"
+						"globalThis.__moTargetOk=1;"
+				"});"
+				"mo.observe(document.documentElement,"
+					"{childList:true,subtree:true,attributes:true});"
+				"})();";
+			const char *mo_mutate_js =
+				"document.getElementById('p0')."
+				"setAttribute('data-t69','1');";
+			const char *mo_check_js =
+				"if(!globalThis.__moFired)"
+					"throw new Error('ASSERT FAIL: MO callback never "
+						"fired');"
+				"if(globalThis.__moLen<1)"
+					"throw new Error('ASSERT FAIL: MO records.length='"
+						"+globalThis.__moLen+' expected >=1');"
+				"if(!globalThis.__moTargetOk)"
+					"throw new Error('ASSERT FAIL: MO record target was "
+						"not document.documentElement');";
+			unsigned char ok1, ok2, ok3;
+
+			ok1 = js_exec(t69thread, (const unsigned char *)mo_setup_js,
+					strlen(mo_setup_js), "driver-mo-setup.js");
+			if (!ok1) {
+				fprintf(stderr, "FAIL: MO setup threw\n");
+				return 1;
+			}
+
+			ok2 = js_exec(t69thread, (const unsigned char *)mo_mutate_js,
+					strlen(mo_mutate_js), "driver-mo-mutate.js");
+			if (!ok2) {
+				fprintf(stderr, "FAIL: MO mutate threw\n");
+				return 1;
+			}
+			harness_pump_all(100000);
+
+			t69c.reflowing = false;
+			t69c.box_conversion_context = NULL;
+			t69c.aborted = false;
+			t69c.base.active = 0;
+			rc = html_reconvert_content((struct content *)&t69c);
+			fprintf(stderr,
+					"Test 69 html_reconvert_content rc=%d (0=queued)\n",
+					rc);
+			if (rc != 0) {
+				fprintf(stderr, "FAIL: Test 69 reconvert did not queue\n");
+				return 1;
+			}
+			harness_pump_all(100000);
+
+			ok3 = js_exec(t69thread, (const unsigned char *)mo_check_js,
+					strlen(mo_check_js), "driver-mo-check.js");
+			fprintf(stderr, "js_exec(mo check) ok=%d\n", (int)ok3);
+			if (!ok3) {
+				fprintf(stderr, "FAIL: MutationObserver did not deliver "
+						"a real record after reconvert completed\n");
+				return 1;
+			}
+		}
+	}
+	fprintf(stderr, "=== Test 69 PASS: MutationObserver delivers a real "
+			"record after html_reconvert_done ===\n");
+
 	return 0;
 }

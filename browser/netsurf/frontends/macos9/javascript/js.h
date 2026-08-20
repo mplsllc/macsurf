@@ -44,6 +44,16 @@ void js_set_current_script(jsthread *thread, struct dom_node *node);
  * html_slider_probe at the ready/done/reconvert points. Implemented in
  * macsurf_qjs.c. */
 void js_fire_slider_probe(jsthread *thread, const char *when);
+/* fixes1235 (#167)  -  deliver a batch of MutationObserver records after a
+ * reconvert completes successfully. Rides the EXISTING debounce/floor
+ * reconvert already self-limits (called once from html_reconvert_done, the
+ * same fire point as the fixes1090 resize/load convergence hooks) rather
+ * than a new independent trigger, so it cannot fire more often than
+ * reconvert already does and cannot re-enter the box-tree rebuild. Phase 1
+ * scope: notifies every registered MutationObserver with a generic record
+ * (no precise target/subtree filtering yet -- see macsurf_qjs.c). Implemented
+ * in macsurf_qjs.c. */
+void js_fire_mutation_batch(jsthread *thread);
 #else
 
 #ifndef NETSURF_JAVASCRIPT_JS_H_
