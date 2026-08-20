@@ -43,6 +43,7 @@ long macos9_plot_rect_count = 0;
 static int hstripe_paint_seen = 0;
 static int dotgrid_paint_seen = 0;
 static int diag_paint_seen = 0;
+static int clip_text_mask_seen = 0;
 /* fixes366d  -  log the snapshot values at plot_rectangle entry,
  * regardless of which branch the plotter ends up taking. Tells us
  * whether the one-shot values are reaching the plotter at all, or
@@ -55,6 +56,7 @@ void macos9_plotter_diag_counters_reset(void)
 	hstripe_paint_seen = 0;
 	dotgrid_paint_seen = 0;
 	diag_paint_seen = 0;
+	clip_text_mask_seen = 0;
 	snapshot_seen = 0;
 }
 
@@ -422,6 +424,58 @@ void macos9_set_gradient_stops(const int32_t *stops)
 void macos9_set_gradient_angle(uint16_t angle)
 {
 	macos9_gradient_angle_oneshot = angle;
+}
+
+/* #255 `background-clip:text` carries an already-resolved element
+ * background from redraw.c while one text box is being plotted. The text
+ * callback rasterises the glyph run to a 1-bit QuickDraw mask, converts it
+ * to a region, then reuses the ordinary rectangle/bitmap painters inside it. */
+struct macos9_background_clip_text_state {
+	bool active;
+	plot_style_t fill;
+	struct rect fill_rect;
+	struct bitmap *bitmap;
+	int bitmap_x;
+	int bitmap_y;
+	int bitmap_width;
+	int bitmap_height;
+	colour bitmap_background;
+	bitmap_flags_t bitmap_flags;
+	const int32_t *gradient_stops;
+	uint16_t gradient_angle;
+};
+
+static struct macos9_background_clip_text_state macos9_background_clip_text;
+
+void macos9_background_clip_text_begin(const plot_style_t *fill,
+		const struct rect *fill_rect, struct bitmap *bitmap,
+		int bitmap_x, int bitmap_y, int bitmap_width, int bitmap_height,
+		colour bitmap_background, bitmap_flags_t bitmap_flags,
+		const int32_t *gradient_stops, uint16_t gradient_angle)
+{
+	memset(&macos9_background_clip_text, 0,
+		sizeof(macos9_background_clip_text));
+	if (fill != NULL) {
+		macos9_background_clip_text.fill = *fill;
+	}
+	if (fill_rect != NULL) {
+		macos9_background_clip_text.fill_rect = *fill_rect;
+	}
+	macos9_background_clip_text.bitmap = bitmap;
+	macos9_background_clip_text.bitmap_x = bitmap_x;
+	macos9_background_clip_text.bitmap_y = bitmap_y;
+	macos9_background_clip_text.bitmap_width = bitmap_width;
+	macos9_background_clip_text.bitmap_height = bitmap_height;
+	macos9_background_clip_text.bitmap_background = bitmap_background;
+	macos9_background_clip_text.bitmap_flags = bitmap_flags;
+	macos9_background_clip_text.gradient_stops = gradient_stops;
+	macos9_background_clip_text.gradient_angle = gradient_angle;
+	macos9_background_clip_text.active = true;
+}
+
+void macos9_background_clip_text_end(void)
+{
+	macos9_background_clip_text.active = false;
 }
 
 extern struct gui_window *macos9_paint_gw;
@@ -2771,6 +2825,179 @@ static unsigned long macos9_first_cp(const char *s, size_t len)
 }
 #define MACOS9_CP_IS_PUA(cp) (((cp) >= 0xE000UL && (cp) <= 0xF8FFUL) || \
 			      ((cp) >= 0xF0000UL && (cp) <= 0x10FFFDUL))
+
+static void macos9_text_draw_run(const char *text, size_t length,
+		int x, int y, int letter_spacing, int word_spacing)
+{
+	if ((letter_spacing == 0 && word_spacing == 0) || length <= 1) {
+		MoveTo((short)x, (short)y);
+		DrawText(text, 0, (short)length);
+	} else {
+		size_t i;
+		short pen_x = (short)x;
+		short char_width;
+		int gap;
+
+		for (i = 0; i < length; i++) {
+			MoveTo(pen_x, (short)y);
+			DrawText(text, (short)i, 1);
+			char_width = (short)CharWidth(text[i]);
+			gap = letter_spacing;
+			if (text[i] == ' ') gap += word_spacing;
+			pen_x = (short)(pen_x + char_width + gap);
+		}
+	}
+}
+
+static int macos9_text_run_width(const char *text, size_t length,
+		int letter_spacing, int word_spacing)
+{
+	size_t i;
+	int width = 0;
+	int gap;
+
+	for (i = 0; i < length; i++) {
+		width += (int)CharWidth(text[i]);
+		if (i + 1 < length) {
+			gap = letter_spacing;
+			if (text[i] == ' ') gap += word_spacing;
+			width += gap;
+		}
+	}
+
+	return width;
+}
+
+/* OpenRgn records vector primitives but does not reliably retain system-font
+ * glyphs on the target. Rasterise the already-selected QuickDraw text instead,
+ * then turn its black pixels into the text clipping region. */
+static bool macos9_make_text_clip(RgnHandle glyph_clip,
+		const char *text, size_t length, int x, int y,
+		int letter_spacing, int word_spacing, short font_id,
+		short face, short size)
+{
+	GWorldPtr mask_gw = NULL;
+	CGrafPtr saved_port;
+	GDHandle saved_device;
+	const BitMap *mask_bits;
+	Rect mask_rect;
+	Rect glyph_bounds;
+	RGBColor black;
+	RGBColor white;
+	OSErr err;
+	int run_width;
+	int pad;
+	int mask_width;
+	int mask_height;
+	bool made = false;
+
+	if (glyph_clip == NULL || text == NULL || length == 0)
+		return false;
+
+	run_width = macos9_text_run_width(text, length,
+			letter_spacing, word_spacing);
+	if (run_width < 1) return false;
+
+	pad = (int)size * 2 + 8;
+	if (pad < 16) pad = 16;
+	mask_width = run_width + 4;
+	mask_height = pad * 2;
+	if (mask_width > 8192 || mask_height > 8192)
+		return false;
+
+	SetRect(&mask_rect, 0, 0, (short)mask_width, (short)mask_height);
+	GetGWorld(&saved_port, &saved_device);
+	err = NewGWorld(&mask_gw, 1, &mask_rect, NULL, NULL, 0);
+	if (err != noErr || mask_gw == NULL)
+		return false;
+
+	SetGWorld(mask_gw, NULL);
+	black.red = 0;
+	black.green = 0;
+	black.blue = 0;
+	white.red = 0xffff;
+	white.green = 0xffff;
+	white.blue = 0xffff;
+	RGBForeColor(&black);
+	RGBBackColor(&white);
+	EraseRect(&mask_rect);
+	TextFont(font_id);
+	TextSize(size);
+	TextFace(face);
+	macos9_text_draw_run(text, length, 2, pad,
+			letter_spacing, word_spacing);
+	mask_bits = GetPortBitMapForCopyBits((CGrafPtr)mask_gw);
+	if (mask_bits != NULL) {
+		BitMapToRegion(glyph_clip, (BitMap *)mask_bits);
+		OffsetRgn(glyph_clip, (short)(x - 2), (short)(y - pad));
+		GetRegionBounds(glyph_clip, &glyph_bounds);
+		made = glyph_bounds.left < glyph_bounds.right &&
+				glyph_bounds.top < glyph_bounds.bottom;
+		if (clip_text_mask_seen < 12) {
+			macsurf_debug_log_writef(
+				"LIFE clip-text mask=%d,%d glyph=%d,%d,%d,%d ok=%d",
+				mask_width, mask_height, glyph_bounds.left,
+				glyph_bounds.top, glyph_bounds.right,
+				glyph_bounds.bottom, made ? 1 : 0);
+			clip_text_mask_seen++;
+		}
+	}
+
+	SetGWorld(saved_port, saved_device);
+	DisposeGWorld(mask_gw);
+	return made;
+}
+
+static void macos9_paint_background_clip_text(
+		const struct redraw_context *ctx, const char *text, size_t length,
+		int x, int y, int letter_spacing, int word_spacing,
+		short font_id, short face, short size)
+{
+	RgnHandle base_clip;
+	RgnHandle glyph_clip;
+	struct macos9_background_clip_text_state *state =
+		&macos9_background_clip_text;
+
+	if (!state->active) return;
+
+	base_clip = NewRgn();
+	glyph_clip = NewRgn();
+	if (base_clip == NULL || glyph_clip == NULL) {
+		if (base_clip != NULL) DisposeRgn(base_clip);
+		if (glyph_clip != NULL) DisposeRgn(glyph_clip);
+		return;
+	}
+
+	GetClip(base_clip);
+	if (!macos9_make_text_clip(glyph_clip, text, length, x, y,
+			letter_spacing, word_spacing, font_id, face, size)) {
+		DisposeRgn(glyph_clip);
+		DisposeRgn(base_clip);
+		return;
+	}
+	SectRgn(base_clip, glyph_clip, glyph_clip);
+	SetClip(glyph_clip);
+
+	if (state->fill.fill_type != PLOT_OP_TYPE_NONE) {
+		if (state->gradient_stops != NULL) {
+			macos9_set_gradient_stops(state->gradient_stops);
+			macos9_set_gradient_angle(state->gradient_angle);
+		}
+		(void)macos9_plot_rectangle(ctx, &state->fill,
+				&state->fill_rect);
+	}
+	if (state->bitmap != NULL && state->bitmap_width > 0 &&
+			state->bitmap_height > 0) {
+		(void)macos9_plot_bitmap(ctx, state->bitmap,
+				state->bitmap_x, state->bitmap_y,
+				state->bitmap_width, state->bitmap_height,
+				state->bitmap_background, state->bitmap_flags);
+	}
+
+	SetClip(base_clip);
+	DisposeRgn(glyph_clip);
+	DisposeRgn(base_clip);
+}
 #endif
 
 static nserror
@@ -2992,6 +3219,18 @@ macos9_plot_text(const struct redraw_context *ctx,
 			}
 			/* Restore foreground for the main pass. */
 			RGBForeColor(&rgb);
+		}
+
+		if (macos9_background_clip_text.active) {
+			macos9_paint_background_clip_text(ctx, mac_buf, mac_len,
+					x, y, ls, ws, font_id, face, size);
+			/* CSS `color: transparent` is the normal companion to
+			 * background-clip:text. QuickDraw has no transparent text fill,
+			 * so avoid its opaque foreground pass in that case. */
+			if (((fstyle->foreground >> 24) & 0xff) >= 0xfe) {
+				macos9_pop_clip(saved_clip);
+				return NSERROR_OK;
+			}
 		}
 
 		if ((ls == 0 && ws == 0) || mac_len <= 1) {

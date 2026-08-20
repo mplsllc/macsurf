@@ -35,6 +35,9 @@ css_error css__cascade_background_clip(uint32_t opv, css_style *style,
 		case CSS_BACKGROUND_CLIP_CONTENT_BOX:
 			value = CSS_BACKGROUND_CLIP_CONTENT_BOX;
 			break;
+		case CSS_BACKGROUND_CLIP_TEXT:
+			value = CSS_BACKGROUND_CLIP_TEXT;
+			break;
 		}
 	}
 

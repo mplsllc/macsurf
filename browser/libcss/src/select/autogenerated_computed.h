@@ -475,6 +475,9 @@ struct css_computed_style_i {
 	 * scalar tail: the packed bits[] array is full and appending avoids
 	 * shifting existing field offsets in stale CW8 objects. */
 	int32_t background_origin;
+	/* background-clip moved from a full 2-bit slot so the CSS `text`
+	 * keyword fits alongside the three box values. */
+	int32_t background_clip;
 };
 
 struct css_computed_style {

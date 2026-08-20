@@ -1370,6 +1370,12 @@ extern void macos9_set_dotgrid(int32_t packed);
  * holds the style ref through the entire box paint. */
 extern void macos9_set_gradient_stops(const int32_t *stops);
 extern void macos9_set_gradient_angle(uint16_t angle);
+extern void macos9_background_clip_text_begin(const plot_style_t *fill,
+		const struct rect *fill_rect, struct bitmap *bitmap,
+		int bitmap_x, int bitmap_y, int bitmap_width, int bitmap_height,
+		colour bitmap_background, bitmap_flags_t bitmap_flags,
+		const int32_t *gradient_stops, uint16_t gradient_angle);
+extern void macos9_background_clip_text_end(void);
 #endif
 
 static colour html_redraw_opaque_backdrop(struct box *box, colour page_default);
@@ -1500,6 +1506,15 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	css_unit br_unit = CSS_UNIT_PX;
 
 	pstyle_fill_bg.fill_colour = *background_colour;
+
+	/* `text` is a glyph mask, rather than a box-model clip. The normal
+	 * background pass must leave the box untouched; its text descendants
+	 * replay this same source through their QuickDraw glyph region. */
+	if (background != NULL && background->style != NULL &&
+			css_computed_background_clip(background->style) ==
+			CSS_BACKGROUND_CLIP_TEXT) {
+		return true;
+	}
 
 	/* #255 background-clip: inset the background paint rect from the
 	 * border box (default) to the padding box (subtract border widths) or
@@ -2324,6 +2339,12 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 
 	pstyle_fill_bg.fill_colour = *background_colour;
 
+	if (box != NULL && box->style != NULL &&
+			css_computed_background_clip(box->style) ==
+			CSS_BACKGROUND_CLIP_TEXT) {
+		return true;
+	}
+
 	if (box && box->style && css_computed_border_radius(box->style, &br_len, &br_unit) == CSS_BORDER_RADIUS_SET) {
 	        pstyle_fill_bg.border_radius = br_len * scale;
 	        if (pstyle_fill_bg.border_radius > 0) {
@@ -3142,12 +3163,190 @@ html_redraw_text_overflow_ellipsis_active(const struct box *box)
 	return false;
 }
 
+#ifdef __MACOS9__
+/* Set up one text run's background source. The frontend owns the temporary
+ * glyph region; this side computes the same image position and tile size used
+ * for a normal element background. */
+static void html_redraw_background_clip_text_begin(struct box *text_box,
+		int text_x, int text_y, float scale,
+		colour current_background_color,
+		const css_unit_ctx *unit_len_ctx)
+{
+	struct box *owner = NULL;
+	struct box *cursor;
+	struct bitmap *bitmap = NULL;
+	plot_style_t fill = {
+		PLOT_OP_TYPE_NONE, 0, 0,
+		PLOT_OP_TYPE_NONE, 0,
+		0, 0
+	};
+	struct rect fill_rect;
+	css_color background_colour = 0;
+	int32_t gradient = 0;
+	const int32_t *gradient_stops = NULL;
+	uint16_t gradient_angle = 0;
+	bool has_fill = false;
+	int text_doc_x, text_doc_y;
+	int owner_doc_x, owner_doc_y;
+	int x, y, width, height;
+	int tile_w = 0, tile_h = 0;
+	css_fixed hpos = 0, vpos = 0;
+	css_unit hunit = CSS_UNIT_PX, vunit = CSS_UNIT_PX;
+	bitmap_flags_t bitmap_flags = BITMAPF_NONE;
+	colour bitmap_background = current_background_color;
+
+	for (cursor = text_box; cursor != NULL; cursor = cursor->parent) {
+		if (cursor->style != NULL &&
+				css_computed_background_clip(cursor->style) ==
+				CSS_BACKGROUND_CLIP_TEXT) {
+			if (owner == NULL) {
+				owner = cursor;
+			}
+			if (cursor->type != BOX_TEXT) {
+				owner = cursor;
+				break;
+			}
+		}
+	}
+
+	if (owner == NULL || owner->style == NULL) {
+		return;
+	}
+
+	/* `text_x/y` includes every active scroll/position offset. Preserve those
+	 * while replacing the text box's document offset with its owner box's. */
+	box_coords(text_box, &text_doc_x, &text_doc_y);
+	box_coords(owner, &owner_doc_x, &owner_doc_y);
+	x = text_x - (int)((text_doc_x - owner_doc_x) * scale);
+	y = text_y - (int)((text_doc_y - owner_doc_y) * scale);
+
+	width = owner->padding[LEFT] + owner->width + owner->padding[RIGHT];
+	height = owner->padding[TOP] + owner->height + owner->padding[BOTTOM];
+	fill_rect.x0 = x - (int)(owner->border[LEFT].width * scale);
+	fill_rect.y0 = y - (int)(owner->border[TOP].width * scale);
+	fill_rect.x1 = x + (int)(width * scale) +
+		(int)(owner->border[RIGHT].width * scale);
+	fill_rect.y1 = y + (int)(height * scale) +
+		(int)(owner->border[BOTTOM].width * scale);
+
+	/* Match html_redraw_background's positioning-area selection. */
+	switch (css_computed_background_origin(owner->style)) {
+	case CSS_BACKGROUND_ORIGIN_BORDER_BOX:
+		x -= (int)(owner->border[LEFT].width * scale);
+		y -= (int)(owner->border[TOP].width * scale);
+		width += owner->border[LEFT].width + owner->border[RIGHT].width;
+		height += owner->border[TOP].width + owner->border[BOTTOM].width;
+		break;
+	case CSS_BACKGROUND_ORIGIN_CONTENT_BOX:
+		x += (int)(owner->padding[LEFT] * scale);
+		y += (int)(owner->padding[TOP] * scale);
+		width -= owner->padding[LEFT] + owner->padding[RIGHT];
+		height -= owner->padding[TOP] + owner->padding[BOTTOM];
+		if (width < 0) width = 0;
+		if (height < 0) height = 0;
+		break;
+	default:
+		break;
+	}
+
+	css_computed_background_color(owner->style, &background_colour);
+	if (nscss_color_is_transparent(background_colour) == false) {
+		fill.fill_type = PLOT_OP_TYPE_SOLID;
+		fill.fill_colour = nscss_color_to_ns(background_colour);
+		bitmap_background = fill.fill_colour;
+		has_fill = true;
+	}
+
+	if (css_computed_macsurf_gradient(owner->style, &gradient) ==
+			CSS_MACSURF_GRADIENT_SET) {
+		colour first, second;
+		bool horizontal = false;
+		bool radial = false;
+		macsurf_gradient_unpack(gradient, &first, &second,
+				&horizontal, &radial);
+		fill.fill_type = radial ? PLOT_OP_TYPE_RADIAL_GRADIENT :
+			(horizontal ? PLOT_OP_TYPE_LINEAR_GRADIENT_H :
+			 PLOT_OP_TYPE_LINEAR_GRADIENT);
+		fill.fill_colour = first;
+		fill.fill_colour2 = second;
+		has_fill = true;
+		if (!radial) {
+			gradient_stops = css_computed_macsurf_gradient_stops(
+					owner->style);
+			if (gradient_stops != NULL) {
+				int angle = (int)((uint32_t)gradient_stops[0] & 0xffffu);
+				while (angle < 0) angle += 360;
+				angle = angle % 360;
+				gradient_angle = (uint16_t)angle;
+				if (angle != 0 && angle != 90 &&
+						angle != 180 && angle != 270) {
+					fill.fill_type = PLOT_OP_TYPE_LINEAR_GRADIENT;
+				}
+			}
+		}
+	}
+
+	if (owner->background != NULL) {
+		bitmap = content_get_bitmap(owner->background);
+		if (bitmap != NULL) {
+			html_redraw_bg_tile_size(owner->style,
+					content_get_width(owner->background),
+					content_get_height(owner->background),
+					(int)ceilf(width * scale),
+					(int)ceilf(height * scale), scale,
+					&tile_w, &tile_h);
+			css_computed_background_position(owner->style,
+					&hpos, &hunit, &vpos, &vunit);
+			if (hunit == CSS_UNIT_PCT) {
+				x += ((int)ceilf(width * scale) - tile_w) *
+					FIXTOFLT(hpos) / 100.;
+			} else {
+				x += (int)(FIXTOFLT(css_unit_len2device_px(
+						owner->style, unit_len_ctx, hpos, hunit)) * scale);
+			}
+			if (vunit == CSS_UNIT_PCT) {
+				y += ((int)ceilf(height * scale) - tile_h) *
+					FIXTOFLT(vpos) / 100.;
+			} else {
+				y += (int)(FIXTOFLT(css_unit_len2device_px(
+						owner->style, unit_len_ctx, vpos, vunit)) * scale);
+			}
+
+			switch (css_computed_background_repeat(owner->style)) {
+			case CSS_BACKGROUND_REPEAT_REPEAT:
+				bitmap_flags = BITMAPF_REPEAT_X | BITMAPF_REPEAT_Y;
+				break;
+			case CSS_BACKGROUND_REPEAT_REPEAT_X:
+				bitmap_flags = BITMAPF_REPEAT_X;
+				break;
+			case CSS_BACKGROUND_REPEAT_REPEAT_Y:
+				bitmap_flags = BITMAPF_REPEAT_Y;
+				break;
+			default:
+				break;
+			}
+		}
+	}
+
+	if (!has_fill && bitmap == NULL) {
+		/* Still mark the run active: transparent text with no source must not
+		 * fall through to QuickDraw's opaque foreground painter. */
+		fill.fill_type = PLOT_OP_TYPE_NONE;
+	}
+
+	macos9_background_clip_text_begin(&fill, &fill_rect, bitmap,
+		x, y, tile_w, tile_h, bitmap_background, bitmap_flags,
+		gradient_stops, gradient_angle);
+}
+#endif
+
 static bool html_redraw_text_box(const html_content *html, struct box *box,
 		int x, int y, const struct rect *clip, float scale,
 		colour current_background_color,
 		const struct redraw_context *ctx)
 {
 	bool excluded = (box->object != NULL);
+	bool rendered;
 	plot_font_style_t fstyle;
 
 	macos9_html_redraw_text_box_calls++;
@@ -3161,7 +3360,13 @@ static bool html_redraw_text_box(const html_content *html, struct box *box,
 	 * already applies after each ASCII space. 0 for non-justified boxes. */
 	fstyle.word_spacing += box->space_expand;
 
-	if (!text_redraw(box->text,
+#ifdef __MACOS9__
+	macos9_background_clip_text_end();
+	html_redraw_background_clip_text_begin(box, x, y, scale,
+			current_background_color, &html->unit_len_ctx);
+#endif
+
+	rendered = text_redraw(box->text,
 			 box->length,
 			 box->byte_offset,
 			 box->space,
@@ -3173,7 +3378,13 @@ static bool html_redraw_text_box(const html_content *html, struct box *box,
 			 excluded,
 			 (struct content *)html,
 			 html->sel,
-			 ctx))
+			 ctx);
+
+#ifdef __MACOS9__
+	macos9_background_clip_text_end();
+#endif
+
+	if (!rendered)
 		return false;
 
 	/* fixes135c: paint-after-truncate ellipsis.

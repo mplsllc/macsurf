@@ -500,13 +500,14 @@ enum css_hanging_punctuation_e {
 	CSS_HANGING_PUNCTUATION_ALLOW_END	= 0x5
 };
 
-/* #255 - background-clip. 'text' (gradient text) deferred; box-model values
- * only. Layout/redraw insets the background paint rect to the named box. */
+/* #255 - background-clip. Layout/redraw insets box-model values to the named
+ * box and routes `text` through the frontend glyph-mask painter. */
 enum css_background_clip_e {
 	CSS_BACKGROUND_CLIP_INHERIT		= 0x0,
 	CSS_BACKGROUND_CLIP_BORDER_BOX		= 0x1,
 	CSS_BACKGROUND_CLIP_PADDING_BOX		= 0x2,
-	CSS_BACKGROUND_CLIP_CONTENT_BOX		= 0x3
+	CSS_BACKGROUND_CLIP_CONTENT_BOX		= 0x3,
+	CSS_BACKGROUND_CLIP_TEXT		= 0x4
 };
 
 enum css_background_origin_e {
