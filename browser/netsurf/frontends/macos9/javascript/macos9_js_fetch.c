@@ -322,7 +322,7 @@ xhr_deliver(void *p)
 			JS_NewString(ctx, hdrs));
 
 	macsurf_debug_log_writef(
-			"WORK xhr deliver status=%d err=%d bytes=%ld url=%s",
+			"LIFE xhr deliver status=%d err=%d bytes=%ld url=%s",
 			s->status, s->is_error, s->resp_len, url_str);
 
 	fn = JS_GetPropertyStr(ctx, s->xhr_obj, "__onNativeComplete");
@@ -630,7 +630,7 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 		nsurl_unref(url);
 		JS_FreeCString(ctx, method_c);
 		JS_FreeCString(ctx, url_c);
-		macsurf_debug_log_writef("WORK xhr send: arena full, url=%s",
+		macsurf_debug_log_writef("LIFE xhr send: arena full, url=%s",
 				url_c);
 		return JS_NewInt32(ctx, -1);
 	}
@@ -685,7 +685,7 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 		s->req_headers[len32] = NULL;
 	}
 
-	macsurf_debug_log_writef("WORK xhr send method=%s url=%s",
+	macsurf_debug_log_writef("LIFE xhr send method=%s url=%s",
 			s->method, url_c);
 	JS_FreeCString(ctx, url_c);
 

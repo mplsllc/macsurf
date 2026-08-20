@@ -8741,7 +8741,7 @@ static JSValue qjs_work_log_fetch(JSContext *ctx, JSValueConst this_val,
 	int32_t status = 0;
 	(void)this_val;
 	if (argc > 2) JS_ToInt32(ctx, &status, argv[2]);
-	macsurf_debug_log_writef("WORK fetch url=%s ok=%d status=%d",
+	macsurf_debug_log_writef("LIFE fetch url=%s ok=%d status=%d",
 			url ? url : "(null)", ok, (int)status);
 	if (url) JS_FreeCString(ctx, url);
 	return JS_UNDEFINED;
@@ -8764,7 +8764,7 @@ static JSValue qjs_work_log_xhr(JSContext *ctx, JSValueConst this_val,
 	const char *method = (argc > 1) ? JS_ToCString(ctx, argv[1]) : NULL;
 	const char *url = (argc > 2) ? JS_ToCString(ctx, argv[2]) : NULL;
 	(void)this_val;
-	macsurf_debug_log_writef("WORK xhr event=%s method=%s url=%s",
+	macsurf_debug_log_writef("LIFE xhr event=%s method=%s url=%s",
 			event ? event : "?", method ? method : "",
 			url ? url : "");
 	if (event) JS_FreeCString(ctx, event);
