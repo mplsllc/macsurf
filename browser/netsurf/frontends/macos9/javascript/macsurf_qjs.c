@@ -4917,6 +4917,27 @@ static const char *qjs_css_display_name(uint8_t v)
  * the way the pre-1011 engine did (undefined / all-zero rect) -- the shape a
  * decade of pages demonstrably tolerates -- never a fabricated real-looking
  * number. When it returns 1, answers come from the real box tree. */
+/* fixes1230 (#167) - narrow geometry exception for the recover/code Bloks
+ * checkpoint. Evidence, not a guess (2026-08-20 hardware log): the code-entry
+ * widget is a Bloks-mounted div (DIV#<uuid>, kids=0) inside a page that
+ * otherwise renders cleanly with zero JS exceptions -- the whole viewport
+ * collapses to h=1 because that one container never gets children. Bloks
+ * measures a container before mounting into it; MACSURF_JS_GEOMETRY's
+ * default `undefined` answer (deliberate policy, see CLAUDE.md) means that
+ * measurement predicate is never true, so the widget never appears. Scoped
+ * to exactly the confirmed URL -- not a blanket flip of the switch, which
+ * stays off everywhere else pending real incremental layout. */
+static int qjs_geometry_scope_allowed(void)
+{
+	struct content *c = g_qjs_content;
+	const char *url;
+
+	if (c == NULL || c->llcache == NULL) return 0;
+	url = nsurl_access(content_get_url(c));
+	if (url == NULL) return 0;
+	return strstr(url, "://m.facebook.com/recover/code/") != NULL;
+}
+
 /* fixes1073 (#265) - force layout before answering, the measure/mutate contract.
  *
  * Called at the top of every geometry entry point. If script has mutated the
@@ -4934,7 +4955,7 @@ static void qjs_geometry_flush(void)
 	extern double macos9_micros(void);
 	double t0;
 
-	if (!MACSURF_JS_GEOMETRY) return;
+	if (!MACSURF_JS_GEOMETRY && !qjs_geometry_scope_allowed()) return;
 	if (g_qjs_content == NULL) return;
 	/* fixes1077 - count and time every geometry entry. This is the number
 	 * that says whether answering is affordable; before it existed the
@@ -4991,7 +5012,7 @@ static int qjs_geometry_settled(void)
 	static void *cached_c = NULL;
 	static int cached_live = 0;
 
-	if (!MACSURF_JS_GEOMETRY) return 0;
+	if (!MACSURF_JS_GEOMETRY && !qjs_geometry_scope_allowed()) return 0;
 	if (g_qjs_content == NULL) return 0;
 	if (macsurf_reconvert_in_progress) return 0;
 
