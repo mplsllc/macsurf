@@ -12,6 +12,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <libcss/properties.h>
+
 #include "utils/ns_errors.h"
 #include "utils/log.h"
 #include "netsurf/types.h"
