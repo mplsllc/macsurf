@@ -44,6 +44,7 @@ user-facing summary; the deep engineering audit lives in
 | `background: none` / `transparent` reset | ✅ | Shorthand reset fixed 2.0.5 (#268). |
 | `background-clip` | ✅&ast; | `border-box`/`padding-box`/`content-box` honored (2.0.5, #255); `text` clips gradient and bitmap backgrounds to glyphs, hardware-confirmed on G3 iMac (fixes1218–1223). |
 | `background-origin` | ◑&ast; | Longhand `border-box` / `padding-box` / `content-box` positions raster backgrounds independently of clipping; hardware-confirmed on G3 iMac (fixes1215/1216). Shorthand box keywords are deferred. |
+| `background-blend-mode` | ✅&ast; | All 16 standard keywords parse and cascade. The supported background layer blends with `background-color` for gradients and raster images; `multiply` hardware-confirmed for both on G3 iMac (fixes1224/1225, #255). |
 | `background-attachment: fixed` | ✅&ast; | Raster images and gradients stay viewport-anchored while their box scrolls. |
 
 ## Gradients
