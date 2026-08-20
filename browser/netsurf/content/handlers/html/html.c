@@ -1569,14 +1569,35 @@ html_create_html_data(html_content *c, const http_parameter *params)
 	 * m.facebook.com so the plain-HTML login/checkpoint flow (and any
 	 * <noscript> fallback, which hubbub only parses to real DOM when
 	 * scripting is off - in_head.c:147) run as they did pre-Phase-2.
-	 * www.facebook.com (the feed, which NEEDS JS) is unaffected. */
+	 * www.facebook.com (the feed, which NEEDS JS) is unaffected.
+	 *
+	 * fixes1229 (#167) - 2026-08-20 hardware log: on m., the
+	 * /two_step_verification/authentication/ checkpoint DOES render real
+	 * HTML (pagemap: 18 sections, ~46 KB body per the finish_conversion
+	 * byte delta) but the verification dialog itself (DIV#modalDialog,
+	 * DIV#dialogSpinner) is box=0 -- a JS-toggled-visible modal that
+	 * fixes852's scripting-off gate can never reveal. On www, the SAME
+	 * checkpoint URL confirmed (curl probe + a 9-byte finish_conversion
+	 * delta on hardware, matching the curl 404's content-length exactly)
+	 * to return next to nothing on a direct navigation -- not a MacSurf
+	 * gap, a route Facebook's server won't serve outside its own SPA
+	 * router. m. is therefore the only reachable surface for this
+	 * checkpoint, and the modal's visibility is the only thing blocking
+	 * it. Narrow exception: scripting stays OFF for m.facebook.com
+	 * everywhere EXCEPT this one confirmed-JS-gated path, so the
+	 * login/checkpoint plain-HTML flow fixes852 protects everywhere else
+	 * is untouched. */
 	if (c->base_url != NULL) {
 		lwc_string *hcomp = nsurl_get_component(c->base_url, NSURL_HOST);
 		if (hcomp != NULL) {
 			const char *hs = lwc_string_data(hcomp);
 			size_t hl = lwc_string_length(hcomp);
 			if (hl == 14 && strncasecmp(hs, "m.facebook.com", 14) == 0) {
-				c->enable_scripting = false;
+				const char *full = nsurl_access(c->base_url);
+				if (full == NULL || strstr(full,
+						"/two_step_verification/") == NULL) {
+					c->enable_scripting = false;
+				}
 			}
 			lwc_string_unref(hcomp);
 		}
