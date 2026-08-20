@@ -2964,6 +2964,8 @@ static void macos9_paint_background_clip_text(
 {
 	RgnHandle base_clip;
 	RgnHandle glyph_clip;
+	Rect glyph_bounds;
+	struct rect paint_rect;
 	struct macos9_background_clip_text_state *state =
 		&macos9_background_clip_text;
 
@@ -2986,6 +2988,16 @@ static void macos9_paint_background_clip_text(
 	}
 	SectRgn(base_clip, glyph_clip, glyph_clip);
 	SetClip(glyph_clip);
+	GetRegionBounds(glyph_clip, &glyph_bounds);
+	paint_rect = state->fill_rect;
+	if (paint_rect.x0 > glyph_bounds.left)
+		paint_rect.x0 = glyph_bounds.left;
+	if (paint_rect.y0 > glyph_bounds.top)
+		paint_rect.y0 = glyph_bounds.top;
+	if (paint_rect.x1 < glyph_bounds.right)
+		paint_rect.x1 = glyph_bounds.right;
+	if (paint_rect.y1 < glyph_bounds.bottom)
+		paint_rect.y1 = glyph_bounds.bottom;
 
 	if (state->fill.fill_type != PLOT_OP_TYPE_NONE) {
 		if (state->gradient_stops != NULL) {
@@ -2993,7 +3005,7 @@ static void macos9_paint_background_clip_text(
 			macos9_set_gradient_angle(state->gradient_angle);
 		}
 		(void)macos9_plot_rectangle(ctx, &state->fill,
-				&state->fill_rect);
+				&paint_rect);
 	}
 	if (state->bitmap != NULL && state->bitmap_width > 0 &&
 			state->bitmap_height > 0) {
