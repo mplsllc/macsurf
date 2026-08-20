@@ -1370,9 +1370,12 @@ void html_finish_conversion(html_content *htmlc)
 	nserror error;
 
 	/* fixes311 -- byte-in count crosses parser-boundary here. Lets us
-	 * cross-check the http fetcher's body_bytes summary. */
+	 * cross-check the http fetcher's body_bytes summary. LIFE-prefixed so
+	 * a near-empty response (e.g. a JS-shell page with no static markup)
+	 * is distinguishable from a genuine parse failure without guessing --
+	 * this line was silently dropped on every release build before. */
 	macsurf_debug_log_writef(
-		"finish_conversion: parser_bytes=%ld head=%s",
+		"LIFE finish_conversion: parser_bytes=%ld head=%s",
 		macos9_html_bytes_processed,
 		macos9_html_head_len > 0 ? macos9_html_head : "(none)");
 

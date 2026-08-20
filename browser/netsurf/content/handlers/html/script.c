@@ -969,6 +969,17 @@ exec_inline_script(html_content *c, dom_node *node, dom_string *mimetype)
 			       (const uint8_t *)dom_string_data(script),
 			       dom_string_byte_length(script),
 			       "?inline script?");
+	} else {
+		/* Silent skip, same class as the fixes847 async/defer gap:
+		 * an inline <script> whose declared type doesn't map to
+		 * CONTENT_JS (e.g. type="application/json" data islands,
+		 * common in modern bundlers) never runs and, until now,
+		 * nothing said so. */
+		macsurf_debug_log_writef(
+			"LIFE script_exec: SKIP inline unsupported "
+			"mimetype=%s len=%ld",
+			dom_string_data(mimetype),
+			(long) dom_string_byte_length(script));
 	}
 	return DOM_HUBBUB_OK;
 }
