@@ -12615,10 +12615,25 @@ unsigned char js_exec(struct jsthread *thread,
 #endif
 	/* fixes1143 - per-script size-cap bypass for essential bundles.
 	 * Editor bundles that exceed the cap are let through; the 30s
-	 * execution deadline bounds them instead. */
+	 * execution deadline bounds them instead.
+	 *
+	 * fixes1233 (#167) - hardware evidence (2026-08-20): the logged-in
+	 * feed now renders (h=3448, 180 real sections, friend names visible)
+	 * with 11 of 51 scripts skipped for size -- Facebook's real bundles
+	 * hash their filenames per build (no stable name like
+	 * "editor-compiled.js" to match), so they never qualify for the
+	 * existing bypass and get silently dropped even though the 30s
+	 * execution deadline is perfectly able to bound them, same as the
+	 * editor bundle. Bypass by HOST instead of filename for Facebook's
+	 * asset origins -- same fbcdn.net/facebook.net set already used for
+	 * the UA table (macos9_fetch.c) -- to see what the skipped bundles
+	 * actually add (deliberately broad per the maintainer's direction:
+	 * "bypass limits just for facebook to see what happens"). */
 	{
 		static const char *const bypass[] = {
 			"editor-compiled.js",
+			"fbcdn.net",
+			"facebook.net",
 			NULL
 		};
 		int cap_bypass = 0;
