@@ -1200,6 +1200,8 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 		int32_t p0_eff, p1_eff, p2_eff;
 		int angle_norm;
 		RgnHandle saved_clip;
+		PenState saved_pen;
+		Rect pixel;
 
 		/* Decode angle (low 16 bits) and stop count (high 16 bits)
 		 * from the packed descriptor word. The parser packs both so
@@ -1245,6 +1247,8 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 		macos9_colour_to_rgb((colour)grad_stops_local[6], &cC);
 
 		saved_clip = macos9_push_clip();
+		GetPenState(&saved_pen);
+		PenNormal();
 
 		if (box_w < 1) box_w = 1;
 		if (box_h < 1) box_h = 1;
@@ -1360,13 +1364,15 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 					(((long)cLo->blue * (256L - t256) +
 					  (long)cHi->blue * t256) >> 8);
 				RGBForeColor(&cur);
-				MoveTo((short)(r.left + col),
-						(short)(r.top + row));
-				LineTo((short)(r.left + col),
-						(short)(r.top + row));
+				SetRect(&pixel, (short)(r.left + col),
+						(short)(r.top + row),
+						(short)(r.left + col + 1),
+						(short)(r.top + row + 1));
+				PaintRect(&pixel);
 			}
 		}
 
+		SetPenState(&saved_pen);
 		macos9_pop_clip(saved_clip);
 		if (pstyle->stroke_type != PLOT_OP_TYPE_NONE) {
 			macos9_colour_to_rgb(pstyle->stroke_colour, &rgb);
@@ -2964,8 +2970,6 @@ static void macos9_paint_background_clip_text(
 {
 	RgnHandle base_clip;
 	RgnHandle glyph_clip;
-	Rect glyph_bounds;
-	struct rect paint_rect;
 	struct macos9_background_clip_text_state *state =
 		&macos9_background_clip_text;
 
@@ -2988,16 +2992,6 @@ static void macos9_paint_background_clip_text(
 	}
 	SectRgn(base_clip, glyph_clip, glyph_clip);
 	SetClip(glyph_clip);
-	GetRegionBounds(glyph_clip, &glyph_bounds);
-	paint_rect = state->fill_rect;
-	if (paint_rect.x0 > glyph_bounds.left)
-		paint_rect.x0 = glyph_bounds.left;
-	if (paint_rect.y0 > glyph_bounds.top)
-		paint_rect.y0 = glyph_bounds.top;
-	if (paint_rect.x1 < glyph_bounds.right)
-		paint_rect.x1 = glyph_bounds.right;
-	if (paint_rect.y1 < glyph_bounds.bottom)
-		paint_rect.y1 = glyph_bounds.bottom;
 
 	if (state->fill.fill_type != PLOT_OP_TYPE_NONE) {
 		if (state->gradient_stops != NULL) {
@@ -3005,7 +2999,7 @@ static void macos9_paint_background_clip_text(
 			macos9_set_gradient_angle(state->gradient_angle);
 		}
 		(void)macos9_plot_rectangle(ctx, &state->fill,
-				&paint_rect);
+				&state->fill_rect);
 	}
 	if (state->bitmap != NULL && state->bitmap_width > 0 &&
 			state->bitmap_height > 0) {
