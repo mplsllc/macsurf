@@ -8424,10 +8424,29 @@ box_coords(bx, &cx, &cy);
 		 * linked in g_heap_list forever and any LATER test that calls the
 		 * bare macsurf_qjs_pump_all() (which walks every live heap, not
 		 * just its own) dereferences t69c/t69ctx through a dangling stack
-		 * pointer -- confirmed on hardware^Win-harness: an ASan
+		 * pointer -- confirmed in the harness: an ASan
 		 * stack-use-after-scope inside macos9_reconvert_flush_now, three
 		 * tests later, that had nothing to do with whatever test actually
-		 * triggered the pump. */
+		 * triggered the pump.
+		 *
+		 * fixes1245 - js_destroyheap alone was NOT enough: g_qjs_content
+		 * (macsurf_qjs.c) is a single GLOBAL raw content pointer, set by
+		 * qjs_set_content() during js_newthread/js_exec and otherwise
+		 * cleared only by macsurf_js_notify_content_freed(), which the
+		 * REAL content death-row drain calls just before freeing a
+		 * content (fixes565's whole point: no dangling g_qjs_content
+		 * after teardown). This stack-local html_content fixture never
+		 * goes through that real lifecycle, so nothing ever called it --
+		 * g_qjs_content kept pointing at &t69c after t69heap was
+		 * destroyed and the block's stack frame was gone, and a LATER
+		 * qjs_get_computed_style (Test 71, walking every heap's pending
+		 * jobs) dereferenced it. Same root cause as the heap leak just
+		 * above, different global -- both needed clearing, not just one. */
+		{
+			extern void macsurf_js_notify_content_freed(
+					struct content *c);
+			macsurf_js_notify_content_freed((struct content *)&t69c);
+		}
 		js_destroyheap(t69heap);
 	}
 	fprintf(stderr, "=== Test 69 PASS: MutationObserver delivers a real "
@@ -8685,10 +8704,17 @@ box_coords(bx, &cx, &cy);
 				return 1;
 			}
 		}
-		/* fixes1243 - same leak-prevention as Test 69 above: destroy
-		 * before t70c goes out of scope, or Test 71's plain
-		 * macsurf_qjs_pump_all() (which pumps every live heap) walks a
+		/* fixes1243/fixes1245 - same leak-prevention as Test 69 above,
+		 * both halves: destroy the heap AND clear g_qjs_content before
+		 * t70c goes out of scope, or a later test's plain
+		 * macsurf_qjs_pump_all() (which pumps every live heap and can
+		 * trigger qjs_get_computed_style -> g_qjs_content) walks a
 		 * dangling stack pointer. */
+		{
+			extern void macsurf_js_notify_content_freed(
+					struct content *c);
+			macsurf_js_notify_content_freed((struct content *)&t70c);
+		}
 		js_destroyheap(t70heap);
 	}
 	fprintf(stderr, "=== Test 70 PASS: querySelectorAll + textContent + "
@@ -8809,6 +8835,130 @@ box_coords(bx, &cx, &cy);
 	}
 	fprintf(stderr, "=== Test 71 PASS: AbortController/AbortSignal real, "
 			"fetch() honours an already-aborted signal ===\n");
+
+	fprintf(stderr, "\n=== Test 72: canvas 2D getContext -- real measureText, "
+			"honest no-op drawing (#167) ===\n");
+	{
+		/* fixes1245 - the real point of this test is measureText: proof
+		 * that it is a genuine, hardware-backed measurement (scales with
+		 * string length and font size) rather than a fabricated
+		 * constant, which would be exactly the "confidently wrong
+		 * answer" class of bug this project has hit before. Everything
+		 * else just needs to not throw. */
+		const char *canvas_js =
+			"(function(){"
+			"var c=document.createElement('canvas');"
+			"c.width=200;c.height=100;"
+			"var ctx=c.getContext('2d');"
+			"if(!ctx)throw new Error('ASSERT FAIL: getContext(2d) "
+				"returned falsy');"
+			"if(ctx.canvas!==c)"
+			"throw new Error('ASSERT FAIL: ctx.canvas !== the canvas "
+				"element');"
+			"if(ctx!==c.getContext('2d'))"
+			"throw new Error('ASSERT FAIL: getContext(2d) did not "
+				"return the SAME context on a second call');"
+			"if(c.getContext('webgl')!==null)"
+			"throw new Error('ASSERT FAIL: getContext(webgl) should "
+				"be null (honest -- genuinely unsupported), got '"
+					"+c.getContext('webgl'));"
+			/* real measurement: longer string -> bigger width, at
+			 * least roughly proportional (a fabricated constant width
+			 * would fail this outright). */
+			"var w1=ctx.measureText('a').width;"
+			"var w10=ctx.measureText('aaaaaaaaaa').width;"
+			"if(!(w1>0))"
+			"throw new Error('ASSERT FAIL: measureText(\"a\").width='"
+				"+w1+' expected >0');"
+			"if(!(w10>w1*3))"
+			"throw new Error('ASSERT FAIL: measureText(\"aaaaaaaaaa\")."
+				"width='+w10+' vs \"a\"='+w1+' -- expected roughly "
+				"10x, not a flat per-call constant');"
+			/* real measurement: bigger font -> bigger width for the
+			 * SAME text (proves the font string is actually parsed and
+			 * fed into the query, not ignored). */
+			"ctx.font='10px sans-serif';"
+			"var wSmall=ctx.measureText('hello world').width;"
+			"ctx.font='40px sans-serif';"
+			"var wBig=ctx.measureText('hello world').width;"
+			"if(!(wBig>wSmall*2))"
+			"throw new Error('ASSERT FAIL: 40px width='+wBig+' vs "
+				"10px width='+wSmall+' -- font size not honoured');"
+			/* honest no-op drawing surface: every method callable,
+			 * none throw, state properties settable. */
+			"ctx.fillStyle='#ff0000';ctx.strokeStyle='blue';"
+			"ctx.lineWidth=3;"
+			"ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(10,10);"
+			"ctx.arc(5,5,5,0,Math.PI*2);ctx.closePath();"
+			"ctx.fill();ctx.stroke();"
+			"ctx.fillRect(0,0,10,10);ctx.strokeRect(0,0,10,10);"
+			"ctx.clearRect(0,0,10,10);"
+			"ctx.save();ctx.translate(1,1);ctx.scale(2,2);ctx.restore();"
+			"ctx.fillText('hi',0,0);ctx.strokeText('hi',0,0);"
+			"ctx.drawImage(c,0,0);"
+			/* real-shaped pixel buffers. */
+			"var id=ctx.createImageData(4,3);"
+			"if(id.width!==4||id.height!==3)"
+			"throw new Error('ASSERT FAIL: createImageData(4,3) size='"
+				"+id.width+'x'+id.height);"
+			"if(!(id.data instanceof Uint8ClampedArray))"
+			"throw new Error('ASSERT FAIL: ImageData.data is not a "
+				"Uint8ClampedArray');"
+			"if(id.data.length!==4*3*4)"
+			"throw new Error('ASSERT FAIL: ImageData.data.length='"
+				"+id.data.length+' expected '+(4*3*4));"
+			"ctx.putImageData(id,0,0);"
+			"var id2=ctx.getImageData(0,0,5,5);"
+			"if(id2.width!==5||id2.height!==5)"
+			"throw new Error('ASSERT FAIL: getImageData(0,0,5,5) size='"
+				"+id2.width+'x'+id2.height);"
+			/* toDataURL must never throw/return non-string. */
+			"var durl=c.toDataURL();"
+			"if(typeof durl!=='string'||durl.indexOf('data:image/png')"
+				"!==0)"
+			"throw new Error('ASSERT FAIL: toDataURL()='+durl);"
+			"globalThis.__t72sync=1;"
+			/* toBlob: async callback, must fire with a real Blob. */
+			"globalThis.__t72blobType=null;"
+			"c.toBlob(function(b){"
+				"globalThis.__t72blobType=b&&b.type;"
+			"},'image/png');"
+			"})();"
+			"if(!globalThis.__t72sync)"
+			"throw new Error('ASSERT FAIL: t72sync flag not set');";
+		unsigned char ok;
+		int pump;
+
+		ok = js_exec(thread, (const unsigned char *)canvas_js,
+				strlen(canvas_js), "driver-t72-canvas.js");
+		fprintf(stderr, "js_exec(t72 canvas) ok=%d\n", (int)ok);
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 72 canvas 2D assertions threw\n");
+			return 1;
+		}
+		{
+			extern void macsurf_qjs_pump_all(void);
+			for (pump = 0; pump < 8; pump++) macsurf_qjs_pump_all();
+		}
+		{
+			const char *check_js =
+				"if(globalThis.__t72blobType!=='image/png')"
+				"throw new Error('ASSERT FAIL: toBlob callback type='"
+					"+globalThis.__t72blobType"
+					"+' (null means the callback never fired)');";
+			unsigned char ok2 = js_exec(thread,
+					(const unsigned char *)check_js,
+					strlen(check_js), "driver-t72-blob-check.js");
+			fprintf(stderr, "js_exec(t72 blob check) ok=%d\n", (int)ok2);
+			if (!ok2) {
+				fprintf(stderr, "FAIL: Test 72 toBlob callback did not "
+						"fire correctly\n");
+				return 1;
+			}
+		}
+	}
+	fprintf(stderr, "=== Test 72 PASS: canvas 2D real measureText, honest "
+			"no-op drawing surface ===\n");
 
 	return 0;
 }

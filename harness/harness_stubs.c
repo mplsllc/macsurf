@@ -137,3 +137,27 @@ void OSTLS_RandomBytes(void *out, unsigned long len)
  * is ever on the stack and the flush is always allowed to proceed -- which is
  * what makes Test 51 able to exercise it at all. */
 struct gui_window *macos9_paint_gw = NULL;
+
+/* fixes1245 (#167) — macos9_font.c (the real macos9_layout_table, dispatching
+ * to CarbonLib's TextWidth/CharWidth on hardware) is Mac-only and not linked
+ * into the harness, same class of gap as the paint-gw stub above. Test 72
+ * needs SOME width function behind canvas measureText to prove the native
+ * binding + font-string parsing + JS wiring all work end-to-end -- length-
+ * and size-proportional is what the test actually asserts (roughly 10x for
+ * 10x the characters, bigger for a bigger font), not hardware-accurate
+ * glyph widths, which only real CarbonLib on the Mac can give. */
+#include "netsurf/plot_style.h"
+#include "netsurf/layout.h"
+static nserror harness_font_width(const struct plot_font_style *fstyle,
+		const char *string, size_t length, int *width)
+{
+	int px = fstyle ? plot_style_fixed_to_int(fstyle->size) * 4 / 3 : 16;
+	(void)string;
+	if (px < 1) px = 1;
+	*width = (int)length * px * 6 / 10; /* ~0.6em average advance width */
+	return NSERROR_OK;
+}
+static struct gui_layout_table harness_layout_table_impl = {
+	harness_font_width, NULL, NULL
+};
+struct gui_layout_table *macos9_layout_table = &harness_layout_table_impl;

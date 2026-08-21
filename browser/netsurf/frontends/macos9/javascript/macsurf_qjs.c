@@ -27,6 +27,12 @@
 #include "macsurf_qjs_audit.h"
 #include "macsurf_timebase.h"
 #include "macos9_js_fetch.h"
+/* fixes1245 (#167) - plot_font_style_t/gui_layout_table for canvas
+ * measureText's real (not fabricated) width query. Neither was pulled in
+ * transitively by anything already included here -- checked by trying
+ * without them first, not assumed. */
+#include "netsurf/plot_style.h"
+#include "netsurf/layout.h"
 #include "content/handlers/html/private.h"
 /* fixes1011 (Phase 3) - the box tree, for the layout metrics. box.h defines
  * struct box and the LEFT/RIGHT/TOP/BOTTOM edge indices; box_inspect.h has
@@ -629,6 +635,113 @@ static JSValue qjs_monotonic_ms(JSContext *ctx, JSValueConst this_val,
 {
 	(void)this_val; (void)argc; (void)argv;
 	return JS_NewFloat64(ctx, macsurf_qjs_get_now());
+}
+
+/* ------------------------------------------------------------------ */
+/* canvas 2D measureText - real font metrics, not a fabricated width   */
+/* ------------------------------------------------------------------ */
+
+/* fixes1245 (#167) - canvas getContext('2d') was entirely absent
+ * (HTMLCanvasElement is just an empty constructor-name stub, with no
+ * getContext method anywhere), so any page code calling it threw
+ * "not a function". Confirmed real, non-critical-path usage in Facebook's
+ * own bundles: a QR-code renderer, an avatar/photo thumbnail resizer, and
+ * a font-metrics cache (CometGHLFontMetricsCache) that measures text width
+ * for layout decisions.
+ *
+ * Real pixel compositing (fillRect/drawImage/putImageData actually
+ * painting into a buffer) is a genuinely different, much larger feature --
+ * no canvas element has an offscreen GWorld or any compositing pipeline,
+ * and building one is layout-engine-scale work, not a JS-binding gap. The
+ * JS-side context (register_browser_globals) makes every drawing method a
+ * safe, honest NO-OP: a blank canvas accurately represents "nothing was
+ * drawn," the same choice this codebase already made for
+ * MACSURF_JS_GEOMETRY (undefined over a fabricated number) -- a script
+ * that draws a chart onto an invisible canvas is a real, known gap, not a
+ * silent wrong answer.
+ *
+ * measureText is the one piece worth doing for real rather than
+ * no-op-ing: a WRONG width is exactly the "confidently wrong answer"
+ * class of bug this project has hit before (fixes1031/fixes1015's
+ * matchMedia/dataset lessons), and the font-metrics-cache use is
+ * specifically a width computation feeding layout logic. This routes
+ * through macos9_layout_table->width -- the SAME real, hardware-measured
+ * function html_reformat itself uses (macos9_font.c) -- not a
+ * character-count heuristic invented here. */
+static JSValue qjs_canvas_measure_text_width(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	const char *text;
+	const char *font_css;
+	plot_font_style_t fstyle;
+	int width = 0;
+	int px = 10; /* canvas spec default font is "10px sans-serif" */
+	const char *p;
+
+	(void)this_val;
+	if (argc < 1) return JS_NewFloat64(ctx, 0.0);
+	text = JS_ToCString(ctx, argv[0]);
+	if (text == NULL) return JS_NewFloat64(ctx, 0.0);
+	font_css = (argc >= 2) ? JS_ToCString(ctx, argv[1]) : NULL;
+
+	memset(&fstyle, 0, sizeof(fstyle));
+	fstyle.families = NULL;
+	fstyle.family = PLOT_FONT_FAMILY_SANS_SERIF;
+	fstyle.weight = 400;
+	fstyle.flags = FONTF_NONE;
+
+	if (font_css != NULL) {
+		/* Crude but honest: pull the first "<digits>px" run out of the
+		 * CSS font shorthand (e.g. "bold 14px Arial, sans-serif" ->
+		 * 14). Not a full shorthand grammar parser -- canvas text
+		 * measurement tolerates an approximate size far better than a
+		 * missing/wrong one; a genuinely malformed font string just
+		 * keeps the spec default above. */
+		for (p = font_css; *p != '\0'; p++) {
+			if (*p >= '0' && *p <= '9') {
+				int val = 0;
+				const char *q = p;
+				while (*q >= '0' && *q <= '9') {
+					val = val * 10 + (*q - '0');
+					q++;
+				}
+				if (q[0] == 'p' && q[1] == 'x') {
+					px = val;
+					break;
+				}
+				p = q;
+				if (*p == '\0') break;
+				continue;
+			}
+		}
+		if (strstr(font_css, "bold") != NULL) fstyle.weight = 700;
+		if (strstr(font_css, "italic") != NULL) {
+			fstyle.flags = (plot_font_flags_t)(fstyle.flags | FONTF_ITALIC);
+		} else if (strstr(font_css, "oblique") != NULL) {
+			fstyle.flags = (plot_font_flags_t)(fstyle.flags | FONTF_OBLIQUE);
+		}
+		if (strstr(font_css, "monospace") != NULL) {
+			fstyle.family = PLOT_FONT_FAMILY_MONOSPACE;
+		} else if (strstr(font_css, "serif") != NULL &&
+				strstr(font_css, "sans-serif") == NULL) {
+			fstyle.family = PLOT_FONT_FAMILY_SERIF;
+		}
+		JS_FreeCString(ctx, font_css);
+	}
+	/* plot_font_style size is in points; canvas .font sizes are px.
+	 * 96px/in, 72pt/in. */
+	fstyle.size = plot_style_int_to_fixed((px * 3) / 4);
+
+	{
+		extern struct gui_layout_table *macos9_layout_table;
+		if (macos9_layout_table != NULL &&
+				macos9_layout_table->width != NULL) {
+			macos9_layout_table->width(&fstyle, text, strlen(text),
+					&width);
+		}
+	}
+	JS_FreeCString(ctx, text);
+	return JS_NewFloat64(ctx, (double)width);
 }
 
 /* ------------------------------------------------------------------ */
@@ -4265,6 +4378,103 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue proto)
 		"var n=this;"
 		"while(n&&n.matches){if(n.matches(sel))return n;n=n.parentNode;}"
 		"return null;};"
+		/* fixes1245 (#167) - canvas 2D context. Every drawing method is a
+		 * safe, honest no-op (see the native measureText comment above
+		 * for why real pixel compositing is out of scope); measureText
+		 * is the one real, hardware-backed value. Installed on the
+		 * shared element proto like matches/closest/dataset/style above
+		 * rather than gated to canvas tags specifically -- technically
+		 * spec puts getContext only on HTMLCanvasElement, but nothing
+		 * else in this file gates its per-tag additions that way either,
+		 * and no real page calls .getContext() on a non-canvas element. */
+		"P.getContext=function(type){"
+		"if(type!=='2d')return null;"
+		"if(!this.__ctx2d)this.__ctx2d={};"
+		"if(this.__ctx2d['2d'])return this.__ctx2d['2d'];"
+		"var noop=function(){};"
+		"var c={"
+		"canvas:this,"
+		"fillStyle:'#000000',strokeStyle:'#000000',lineWidth:1,"
+		"lineCap:'butt',lineJoin:'miter',miterLimit:10,"
+		"font:'10px sans-serif',textAlign:'start',textBaseline:'alphabetic',"
+		"direction:'ltr',"
+		"globalAlpha:1,globalCompositeOperation:'source-over',"
+		"shadowBlur:0,shadowColor:'rgba(0,0,0,0)',"
+		"shadowOffsetX:0,shadowOffsetY:0,"
+		"filter:'none',imageSmoothingEnabled:true,"
+		"lineDashOffset:0,"
+		"save:noop,restore:noop,"
+		"scale:noop,rotate:noop,translate:noop,transform:noop,"
+		"setTransform:noop,resetTransform:noop,"
+		"getTransform:function(){return{a:1,b:0,c:0,d:1,e:0,f:0,"
+			"is2D:true,isIdentity:true};},"
+		"beginPath:noop,closePath:noop,moveTo:noop,lineTo:noop,"
+		"arc:noop,arcTo:noop,ellipse:noop,rect:noop,"
+		"bezierCurveTo:noop,quadraticCurveTo:noop,"
+		"fill:noop,stroke:noop,clip:noop,"
+		"isPointInPath:function(){return false;},"
+		"isPointInStroke:function(){return false;},"
+		"fillRect:noop,strokeRect:noop,clearRect:noop,"
+		"fillText:noop,strokeText:noop,drawImage:noop,"
+		"getLineDash:function(){return [];},setLineDash:noop,"
+		"createLinearGradient:function(){"
+			"return{addColorStop:noop};},"
+		"createRadialGradient:function(){"
+			"return{addColorStop:noop};},"
+		"createConicGradient:function(){"
+			"return{addColorStop:noop};},"
+		"createPattern:function(){return null;},"
+		/* real-shaped, correctly-sized, honestly-zeroed pixel buffers --
+		 * a script that reads/writes ImageData programmatically (rather
+		 * than expecting it to visually paint) still gets correct
+		 * behaviour. */
+		"createImageData:function(w,h){"
+			"if(w&&typeof w==='object'){h=w.height;w=w.width;}"
+			"w=Math.max(0,w|0);h=Math.max(0,h|0);"
+			"return{width:w,height:h,"
+				"data:new Uint8ClampedArray(w*h*4)};},"
+		"getImageData:function(x,y,w,h){"
+			"w=Math.max(0,w|0);h=Math.max(0,h|0);"
+			"return{width:w,height:h,"
+				"data:new Uint8ClampedArray(w*h*4)};},"
+		"putImageData:noop,"
+		/* the one real value: hardware-measured text width via the same
+		 * layout engine html_reformat itself uses. */
+		"measureText:function(s){"
+			"var w=0;"
+			"try{if(typeof __canvasMeasureText==='function')"
+				"w=__canvasMeasureText(String(s),this.font);}"
+			"catch(e){}"
+			"return{width:w,"
+				"actualBoundingBoxLeft:0,actualBoundingBoxRight:w,"
+				"actualBoundingBoxAscent:0,actualBoundingBoxDescent:0,"
+				"fontBoundingBoxAscent:0,fontBoundingBoxDescent:0,"
+				"emHeightAscent:0,emHeightDescent:0,"
+				"hangingBaseline:0,alphabeticBaseline:0,"
+				"ideographicBaseline:0};},"
+		"getContextAttributes:function(){return{};}"
+		"};"
+		"this.__ctx2d['2d']=c;return c;"
+		"};"
+		/* fixes1245 - toDataURL/toBlob must never throw or return
+		 * undefined (real callers assume a string / async callback
+		 * unconditionally). No real pixels exist to encode, so both
+		 * honestly represent "blank": a well-formed, valid 1x1
+		 * transparent PNG data URI (a real, standard placeholder image
+		 * used across the web -- not a fabricated format) rather than
+		 * inventing pixel content that was never drawn. */
+		"P.toDataURL=function(){"
+		"return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
+			"CAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';"
+		"};"
+		"P.toBlob=function(cb,mimeType){"
+		"if(typeof cb!=='function')return;"
+		"try{setTimeout(function(){"
+			"var t=(mimeType&&/^image\\//.test(mimeType))?mimeType:"
+				"'image/png';"
+			"cb(new Blob([],{type:t}));"
+		"},0);}catch(e){try{cb(null);}catch(_){}}"
+		"};"
 		/* event handling */
 		/* fixes989 - addEventListener / removeEventListener are NATIVE
 		 * now (qjs_el_add_event_listener_data). They are installed on the
@@ -9434,6 +9644,8 @@ static void register_browser_globals(JSContext *ctx)
 
 	/* --- monotonic clock for performance.now() --- */
 	qjs_set_func(ctx, global, "__macsurf_monotonic_ms", qjs_monotonic_ms, 0);
+	qjs_set_func(ctx, global, "__canvasMeasureText",
+			qjs_canvas_measure_text_width, 2); /* fixes1245 */
 
 	/* fixes1011 (Phase 3) - the viewport/scroll natives the window geometry
 	 * accessors above are built on. Installed before the eval blocks that
@@ -11382,7 +11594,34 @@ static void register_browser_globals(JSContext *ctx)
 		"g.CSS={supports:function(){return false;},escape:function(s){return String(s);},"
 		"registerProperty:function(){},paintWorklet:undefined};"
 		"}"
-		"if(typeof g.queueMicrotask!=='function'){g.queueMicrotask=function(fn){soon(fn);};}"
+		/* fixes1244 (#167) - queueMicrotask was routed through `soon`
+		 * (setTimeout(fn,0)), i.e. a MACROtask -- spec requires it run at
+		 * Promise-reaction priority: before any timer, interleaved with
+		 * .then() callbacks, in the SAME turn of the event loop as
+		 * whatever scheduled it. A boot sequence using queueMicrotask to
+		 * defer init by exactly one microtask (a common React/Comet-style
+		 * idiom -- e.g. `if (ready) queueMicrotask(runInit); else
+		 * addEventListener('load', () => queueMicrotask(runInit))`)
+		 * instead had that work pushed behind every pending timer AND
+		 * reordered relative to whatever Promise chains were already
+		 * queued -- a real, observable ordering bug, not just a naming
+		 * nitpick. Promise.resolve().then(fn) is a genuine QuickJS
+		 * microtask (JS_AddIntrinsicPromise's real job queue, the same
+		 * one macsurf_qjs_pump_all drains every tick), so this now has
+		 * correct relative ordering. A throwing callback is caught and
+		 * logged directly rather than left to become an "unhandled
+		 * rejection" on a promise nothing else references -- closer to
+		 * spec (report-the-exception), and a clearer log line. */
+		"if(typeof g.queueMicrotask!=='function'){"
+		"g.queueMicrotask=function(fn){"
+		"Promise.resolve().then(function(){"
+		"try{fn();}catch(e){"
+		"try{if(typeof __msLife==='function')"
+			"__msLife('queueMicrotask threw: '+"
+				"((e&&e.message)||e));}catch(_){}"
+		"}"
+		"});"
+		"};}"
 		"if(typeof g.structuredClone!=='function'){"
 		"g.structuredClone=function(x){try{return JSON.parse(JSON.stringify(x));}catch(e){return x;}};"
 		"}"
