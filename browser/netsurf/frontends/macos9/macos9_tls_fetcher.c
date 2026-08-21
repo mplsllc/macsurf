@@ -733,8 +733,23 @@ static void dead_host_add(const char *key)
 	 * Transient timeouts on healthy origins (mactrove during a long
 	 * browsing session, etc.) must not poison future requests. */
 	if (success_host_check(key)) {
+		/* fixes1250 (#167) - was "https: ..." with no FAIL/ERROR/LIFE
+		 * keyword, so it never survived the release build's failures-
+		 * only gate unless MACSURF_SSL_LOG happened to be defined (it
+		 * is not in a shipping build). The sibling FAST-FAIL line a few
+		 * hundred lines down survives BY ACCIDENT (its text contains
+		 * "FAIL" as a substring of "FAST-FAIL"); this one and dead-host
+		 * ADD below had no such luck and were dark for this engine's
+		 * whole history. Promoted while directly answering whether the
+		 * tracker/dead-host mechanism could be involved in a real
+		 * investigation (it was not, this session -- FAST-FAIL never
+		 * appeared in any hardware log pulled tonight -- but that
+		 * absence is only trustworthy evidence because at least ONE of
+		 * the three related lines was already guaranteed visible;
+		 * these two deserved the same guarantee on their own merits,
+		 * not by accident of wording). */
 		macsurf_debug_log_writef(
-			"https: dead-host SKIP (previously succeeded) %s",
+			"LIFE https: dead-host SKIP (previously succeeded) %s",
 			key);
 		return;
 	}
@@ -752,7 +767,8 @@ static void dead_host_add(const char *key)
 	strncpy(dead_hosts[dead_hosts_count], key, HTTPS_POOL_KEY_LEN - 1);
 	dead_hosts[dead_hosts_count][HTTPS_POOL_KEY_LEN - 1] = '\0';
 	dead_hosts_count++;
-	macsurf_debug_log_writef("https: dead-host ADD %s count=%d",
+	/* fixes1250 (#167) - same promotion as dead-host SKIP above. */
+	macsurf_debug_log_writef("LIFE https: dead-host ADD %s count=%d",
 		key, dead_hosts_count);
 
 	/* fixes705 - persistence to disk REMOVED. The list is now purely
@@ -2905,8 +2921,12 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		 * canonical case). Fast-fail here saves ~5s per dead host on
 		 * retries. */
 		if (dead_host_check(c->pool_key)) {
+			/* fixes1250 (#167) - already survived the release gate,
+			 * but only because "FAST-FAIL" happens to contain "FAIL"
+			 * as a substring -- not by deliberate design. Made
+			 * explicit rather than relying on that accident. */
 			macsurf_debug_log_writef(
-				"https: dead-host FAST-FAIL %s",
+				"LIFE https: dead-host FAST-FAIL %s",
 				c->pool_key);
 			/* fixes554 - mark THIS resource URL terminally failed on
 			 * the first dead-host fast-fail: render alt text once, no
