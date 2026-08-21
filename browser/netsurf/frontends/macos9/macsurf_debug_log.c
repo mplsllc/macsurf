@@ -1000,7 +1000,18 @@ macsurf_debug_log_flush(void)
 void
 macsurf_debug_log_writef(const char *fmt, ...)
 {
-	char buf[256];
+	/* fixes1238 (#167) - 256 was silently truncating any line whose %s
+	 * argument runs long, with no ellipsis or marker: fbcdn.net's
+	 * content-hash rsrc.php URLs (the exact bundle URLs a hardware-log
+	 * investigation needs to curl and read) were cut off mid-string at
+	 * ~254 usable chars, past any closing bracket, so the truncated tail
+	 * could not even be recognised as truncated from the log alone.
+	 * fmt_vformat and macsurf_debug_log_write both already take the
+	 * buffer length as a parameter (no OTHER fixed-size assumption
+	 * downstream -- macsurf_debug_log_write's own LOG_BUF_CAP=4096 ring
+	 * buffer already handles single lines up to 4 KB, longer ones FSWrite
+	 * straight through), so this is the one place that needed to grow. */
+	char buf[1024];
 	va_list ap;
 
 	va_start(ap, fmt);
@@ -1171,7 +1182,9 @@ macsurf_free_mem(void)
 void
 macsurf_debug_log_tracef(const char *fmt, ...)
 {
-	char buf[256];
+	/* fixes1238 (#167) - same widen as macsurf_debug_log_writef above,
+	 * kept in sync so the two formatters don't silently diverge again. */
+	char buf[1024];
 	va_list ap;
 
 	if (!macsurf_debug_log_trace_enabled) return;
