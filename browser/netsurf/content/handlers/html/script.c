@@ -190,8 +190,8 @@ nserror html_script_exec(html_content *c, bool allow_defer)
 				 * js_exec, WORK-gated (this whole function had zero
 				 * log lines of any kind before this fix). */
 				macsurf_debug_log_writef(
-					"LIFE script_exec: RUN ord=%u bytes=%ld url=%s",
-					i + 1, (long) size,
+					"LIFE script_exec: RUN ord=%ld bytes=%ld url=%s",
+					(long) (i + 1), (long) size,
 					nsurl_access(
 						hlcache_handle_get_url(s->data.handle)));
 				/* fixes873 (#301) - document.currentScript must name THIS
@@ -338,7 +338,7 @@ convert_script_async_cb(hlcache_handle *script,
 		g_spipe_d_total++;
 		if (macsurf_spipe_budget_take()) {
 			macsurf_debug_log_writef(
-				"LIFE SPIPE D ord=%u url=%s", i + 1,
+				"LIFE SPIPE D ord=%ld url=%s", (long) (i + 1),
 				nsurl_access(hlcache_handle_get_url(script)));
 		}
 
@@ -352,7 +352,7 @@ convert_script_async_cb(hlcache_handle *script,
 		g_spipe_x_total++;
 		if (macsurf_spipe_budget_take()) {
 			macsurf_debug_log_writef(
-				"LIFE SPIPE X ord=%u url=%s err=%s", i + 1,
+				"LIFE SPIPE X ord=%ld url=%s err=%s", (long) (i + 1),
 				nsurl_access(hlcache_handle_get_url(script)),
 				event->data.errordata.errormsg);
 		}
@@ -436,7 +436,7 @@ convert_script_defer_cb(hlcache_handle *script,
 		g_spipe_d_total++;
 		if (macsurf_spipe_budget_take()) {
 			macsurf_debug_log_writef(
-				"LIFE SPIPE D ord=%u url=%s", i + 1,
+				"LIFE SPIPE D ord=%ld url=%s", (long) (i + 1),
 				nsurl_access(hlcache_handle_get_url(script)));
 		}
 
@@ -450,7 +450,7 @@ convert_script_defer_cb(hlcache_handle *script,
 		g_spipe_x_total++;
 		if (macsurf_spipe_budget_take()) {
 			macsurf_debug_log_writef(
-				"LIFE SPIPE X ord=%u url=%s err=%s", i + 1,
+				"LIFE SPIPE X ord=%ld url=%s err=%s", (long) (i + 1),
 				nsurl_access(hlcache_handle_get_url(script)),
 				event->data.errordata.errormsg);
 		}
@@ -635,8 +635,8 @@ deferred_parser_unpause(void *pw)
 	}
 	err = dom_hubbub_parser_pause(parent->parser, false);
 	if (err != DOM_HUBBUB_OK) {
-		macsurf_debug_log_writef("deferred_unpause: pause returned 0x%x",
-			(int)err);
+		macsurf_debug_log_writef("deferred_unpause: pause returned %ld",
+			(long)err);
 		return;
 	}
 	/* fixes558: unpause_pending was already cleared unconditionally at dispatch
@@ -769,8 +769,8 @@ convert_script_sync_cb(hlcache_handle *script,
 			/* fixes847 (#167 S1 census gap) - the sync-script sibling of
 			 * html_script_exec's RUN log below. */
 			macsurf_debug_log_writef(
-				"LIFE script_exec: RUN(sync) ord=%u bytes=%ld url=%s",
-				i + 1, (long) size,
+				"LIFE script_exec: RUN(sync) ord=%ld bytes=%ld url=%s",
+				(long) (i + 1), (long) size,
 				nsurl_access(hlcache_handle_get_url(s->data.handle)));
 			script_handler(parent->js_thread, data, size,
 				       nsurl_access(hlcache_handle_get_url(s->data.handle)));
@@ -958,8 +958,8 @@ exec_src_script(html_content *c,
 	 * still safely referenced. */
 	if (ns_error != NSERROR_OK) {
 		macsurf_debug_log_writef(
-			"LIFE SCRIPTFETCHFAIL idx=%u rc=%d src=%s",
-			c->scripts_count, (int) ns_error,
+			"LIFE SCRIPTFETCHFAIL idx=%ld rc=%d src=%s",
+			(long) c->scripts_count, (int) ns_error,
 			nsurl_access(joined));
 	}
 
@@ -988,8 +988,8 @@ exec_src_script(html_content *c,
 		g_spipe_q_total++;
 		if (macsurf_spipe_budget_take()) {
 			macsurf_debug_log_writef(
-				"LIFE SPIPE Q ord=%u type=%s url=%s",
-				c->scripts_count,
+				"LIFE SPIPE Q ord=%ld type=%s url=%s",
+				(long) c->scripts_count,
 				script_type == HTML_SCRIPT_SYNC ? "sync" :
 				script_type == HTML_SCRIPT_ASYNC ? "async" :
 					"defer",

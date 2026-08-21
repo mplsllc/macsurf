@@ -1357,8 +1357,8 @@ static int macos9_ico_extract_png(macos9_qt_image_content *qti)
 	qti->compressed = new_handle;
 
 	macsurf_debug_log_writef(
-		"img convert: ICO entry %d extracted PNG %lu bytes",
-		(int)best_idx, size);
+		"img convert: ICO entry %d extracted PNG %ld bytes",
+		(int)best_idx, (long)size);
 	return 1;
 }
 

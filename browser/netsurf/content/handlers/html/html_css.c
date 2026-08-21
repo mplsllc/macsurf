@@ -339,8 +339,8 @@ static void html_css_process_modified_styles(void *pw)
 		} else {
 			macsurf_debug_log_writef(
 				"LIFE css modified stylesheet retry cap hit content=%p "
-				"count=%u",
-				(void *)c, retry_count);
+				"count=%ld",
+				(void *)c, (long) retry_count);
 			for (i = 0, s = c->stylesheets;
 			     i != c->stylesheet_count; i++, s++) {
 				s->modified = false;

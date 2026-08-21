@@ -2159,11 +2159,11 @@ static void svg__paint_subtree(dom_node *parent,
 			}
 
 			macsurf_debug_log_writef(
-				"svg_shape: depth=%d tag=%s fill=0x%08x stroke=0x%08x",
+				"svg_shape: depth=%d tag=%s fill=%ld stroke=%ld",
 				depth,
 				(const char *)dom_string_data(tag),
-				(unsigned int)child_st.fill,
-				(unsigned int)child_st.stroke);
+				(long)(unsigned int)child_st.fill,
+				(long)(unsigned int)child_st.stroke);
 
 			if (dom_string_caseless_lwc_isequal(tag,
 					corestring_lwc_g)) {

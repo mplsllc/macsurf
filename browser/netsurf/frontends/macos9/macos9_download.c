@@ -573,8 +573,8 @@ macos9_download_data(struct gui_download_window *dw,
 	err = FSWrite(dw->refnum, &count, data);
 	if (err != noErr || count != (long)size) {
 		macsurf_debug_log_writef(
-			"download_data: FSWrite err=%d wrote=%ld of=%u",
-			(int)err, (long)count, (unsigned)size);
+			"download_data: FSWrite err=%d wrote=%ld of=%ld",
+			(int)err, (long)count, (long)size);
 		dw->aborted = 1;
 		dw->dl_state = 2;
 		dl_mgr_progress();

@@ -462,8 +462,8 @@ colour macos9_background_blend_colour(colour source, colour backdrop,
 		return source;
 	if (blend_colour_seen < 12) {
 		macsurf_debug_log_writef(
-			"LIFE blend colour mode=%d src=%08lx bg=%08lx",
-			(int)mode, (unsigned long)source, (unsigned long)backdrop);
+			"LIFE blend colour mode=%d src=%ld bg=%ld",
+			(int)mode, (long)source, (long)backdrop);
 		blend_colour_seen++;
 	}
 
@@ -2428,8 +2428,8 @@ macos9_plot_bitmap(const struct redraw_context *ctx,
 	if (blend_mode > CSS_BACKGROUND_BLEND_MODE_NORMAL &&
 			blend_bitmap_seen < 8) {
 		macsurf_debug_log_writef(
-			"LIFE blend bitmap mode=%d bg=%08lx size=%d,%d",
-			(int)blend_mode, (unsigned long)bg, width, height);
+			"LIFE blend bitmap mode=%d bg=%ld size=%d,%d",
+			(int)blend_mode, (long)bg, width, height);
 		blend_bitmap_seen++;
 	}
 

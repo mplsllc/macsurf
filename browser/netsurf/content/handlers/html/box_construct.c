@@ -1555,9 +1555,9 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 			if (tlen >= 3 && tlen <= 32 &&
 					(tag[0] == 's' || tag[0] == 'S')) {
 				macsurf_debug_log_writef(
-					"svg_box: tag=%s len=%ld match=%d box=%p flags=0x%x",
+					"svg_box: tag=%s len=%ld match=%d box=%p flags=%ld",
 					tag, (long)tlen, matched,
-					(void *)box, (unsigned int)box->flags);
+					(void *)box, (long)(unsigned int)box->flags);
 			}
 			dom_string_unref(svg_name);
 		}

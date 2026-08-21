@@ -1360,9 +1360,9 @@ static void qjs_flush_timers(JSContext *old_ctx)
 	macsurf_reconv_pos_set("qjs_flush_timers", 0, 0, "");
 	macsurf_reconv_pos_flush();
 	macsurf_debug_log_writef(
-		"WORK timer: flush START old_ctx=%p live_rt=%p live_gen=%lu",
+		"WORK timer: flush START old_ctx=%p live_rt=%p live_gen=%ld",
 		(void *) old_ctx, (void *) qjs_ctx_live_rt(old_ctx),
-		qjs_ctx_gen(old_ctx));
+		(long) qjs_ctx_gen(old_ctx));
 
 	for (i = 0; i < QJS_MAX_TIMERS; i++) {
 		/* fixes854 (#283) - THE hackaday.com crash.  This used to free every
@@ -1402,9 +1402,10 @@ static void qjs_flush_timers(JSContext *old_ctx)
 		if (s_timer_arena[i].ctx_gen == 0 ||
 		    s_timer_arena[i].ctx_gen != qjs_ctx_gen(old_ctx)) {
 			macsurf_debug_log_writef(
-				"WORK timer: ABANDON stale slot %d gen=%lu live_gen=%lu "
+				"WORK timer: ABANDON stale slot %d gen=%ld live_gen=%ld "
 				"ctx=%p (dead realm at a recycled address)",
-				i, s_timer_arena[i].ctx_gen, qjs_ctx_gen(old_ctx),
+				i, (long) s_timer_arena[i].ctx_gen,
+				(long) qjs_ctx_gen(old_ctx),
 				(void *) old_ctx);
 			/* free_vals=0: ABANDON - see the note above. */
 			timer_slot_clear(&s_timer_arena[i], 0);
@@ -1419,11 +1420,11 @@ static void qjs_flush_timers(JSContext *old_ctx)
 		 * and whether gen matched while the runtime differed. */
 		macsurf_debug_log_writef(
 			"WORK timer: FREE-ALLOWED slot=%d id=%d ctx=%p slot_rt=%p "
-			"live_rt=%p gen=%lu live_gen=%lu",
+			"live_rt=%p gen=%ld live_gen=%ld",
 			i, s_timer_arena[i].id, (void *) s_timer_arena[i].ctx,
 			(void *) s_timer_arena[i].rt,
 			(void *) qjs_ctx_live_rt(s_timer_arena[i].ctx),
-			s_timer_arena[i].ctx_gen, qjs_ctx_gen(old_ctx));
+			(long) s_timer_arena[i].ctx_gen, (long) qjs_ctx_gen(old_ctx));
 		macsurf_reconv_pos_set("timer-free", (long) s_timer_arena[i].id,
 				(long) i, "");
 		macsurf_reconv_pos_flush();
