@@ -445,6 +445,8 @@ static void harness_dump_boxes(struct box *b, int depth, int maxdepth)
 	char nm[80];
 	int x = 0, y = 0;
 	int fszq = -1;
+	css_color colorq = 0;
+	char colorbuf[16];
 	if (b == NULL || depth > maxdepth) return;
 	harness_box_brief(b, nm, sizeof nm);
 	box_coords(b, &x, &y);
@@ -455,13 +457,25 @@ static void harness_dump_boxes(struct box *b, int depth, int maxdepth)
 				CSS_FONT_SIZE_DIMENSION)
 			fszq = (int)FIXTOINT(fsq);
 	}
-	fprintf(stderr, "%*s%-34s type=%d disp=%d fs=%d x=%d y=%d w=%d h=%d\n",
+	/* fixes1261 (#167) - var()-scope harness verification. Prints the
+	 * computed `color` (0xRRGGBBAA) alongside the existing box dump
+	 * fields so a --layout run can directly show what a var(--x) custom
+	 * property actually resolved to for a given element, without adding
+	 * a whole separate query mechanism. */
+	colorbuf[0] = '-'; colorbuf[1] = '\0';
+	if (b->style != NULL) {
+		css_computed_color(b->style, &colorq);
+		sprintf(colorbuf, "#%06lX", (unsigned long)(colorq >> 8));
+	}
+	fprintf(stderr, "%*s%-34s type=%d disp=%d fs=%d x=%d y=%d w=%d h=%d "
+			"color=%s\n",
 			depth * 2, "", nm, (int)b->type,
 			(b->style != NULL) ?
 				(int)css_computed_display_static(b->style) : -1,
 			fszq, x, y,
 			(b->width  >= 1000000 || b->width  < 0) ? -1 : b->width,
-			(b->height >= 1000000 || b->height < 0) ? -1 : b->height);
+			(b->height >= 1000000 || b->height < 0) ? -1 : b->height,
+			colorbuf);
 	for (b = b->children; b != NULL; b = b->next)
 		harness_dump_boxes(b, depth + 1, maxdepth);
 }

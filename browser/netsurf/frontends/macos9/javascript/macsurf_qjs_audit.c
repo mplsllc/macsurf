@@ -419,6 +419,69 @@ void macsurf_qjs_emit_js_profile(void)
 		}
 	}
 
+	/* fixes1261 (#167) - CSS custom-property scoping: causal confirmation
+	 * only, not more proof of the engine bug itself. A local harness
+	 * test (--layout mode, two sibling divs each setting the SAME
+	 * custom property name to a different value under a different
+	 * class) already proved libcss's custom-property table is
+	 * per-stylesheet/last-writer-wins, not per-selector-scoped: both
+	 * divs came back with the LAST-declared value regardless of which
+	 * class actually matched. What's still unconfirmed is whether THAT
+	 * specific engine limitation is what makes Facebook's text
+	 * invisible, or something else is. Facebook defines
+	 * --fds-primary-text under both `.__fb-light-mode` (#1C1E21, a dark
+	 * near-black colour meant for a light background) and
+	 * `.__fb-dark-mode` (white) in the SAME inline <style> block - the
+	 * exact shape the harness test reproduces. This reads the REAL
+	 * computed (post-cascade, post-var()) color/backgroundColor via the
+	 * same getComputedStyle path real rendering uses (fixes1011,
+	 * qjs_get_computed_style -> css_computed_color /
+	 * css_computed_background_color), not a synthetic re-derivation, so
+	 * it reflects whatever the actual cascade decided for the real
+	 * page. Near-black text against a dark background here, with
+	 * __fb-dark-mode present in the class list, closes the case; if
+	 * body_color already reads white/light, the invisible text is
+	 * happening somewhere more specific than html/body and needs a
+	 * follow-up, not a broader claim from this line alone. */
+	{
+		JSContext *ctx = macsurf_qjs_current_ctx();
+		if (ctx != NULL) {
+			static const char fbcss_src[] =
+				"(function(){try{"
+				"var h=document.documentElement;"
+				"var b=document.body;"
+				"var cls=(h&&h.getAttribute)?"
+					"(h.getAttribute('class')||''):'';"
+				"var hcs=(typeof getComputedStyle==='function'&&h)?"
+					"getComputedStyle(h):null;"
+				"var bcs=(typeof getComputedStyle==='function'&&b)?"
+					"getComputedStyle(b):null;"
+				"var hbg=hcs?String(hcs.backgroundColor||''):'';"
+				"var bbg=bcs?String(bcs.backgroundColor||''):'';"
+				"var bcol=bcs?String(bcs.color||''):'';"
+				"return 'html_class=['+cls+'] html_bg='+hbg+"
+					"' body_bg='+bbg+' body_color='+bcol;"
+				"}catch(e){"
+					"return 'FBCSS eval threw: '+"
+						"((e&&e.message)||e);"
+				"}"
+				"})()";
+			JSValue r = JS_Eval(ctx, fbcss_src, strlen(fbcss_src),
+					"<jsfbcss>", JS_EVAL_TYPE_GLOBAL);
+			if (!JS_IsException(r)) {
+				const char *s = JS_ToCString(ctx, r);
+				macsurf_debug_log_writef("LIFE FBCSS %s",
+					(s != NULL) ? s : "(null)");
+				if (s != NULL) JS_FreeCString(ctx, s);
+			} else {
+				JS_FreeValue(ctx, JS_GetException(ctx));
+				macsurf_debug_log_writef(
+					"LIFE FBCSS eval exception");
+			}
+			JS_FreeValue(ctx, r);
+		}
+	}
+
 	/* fixes1239 (#167) - <script> tags the PARSER found (script.c,
 	 * html_process_script), split inline/external, independent of
 	 * whether js_exec ever ran one. Same local-extern pattern as
