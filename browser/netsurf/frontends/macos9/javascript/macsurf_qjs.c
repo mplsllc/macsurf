@@ -10116,6 +10116,31 @@ static void register_browser_globals(JSContext *ctx)
 					"if(!document._listeners)document._listeners={};"
 					"if(!document._listeners[t])document._listeners[t]=[];"
 					"document._listeners[t].push(fn);"
+					/* fixes1249 (#167) - the real Facebook bundle has
+					 * AT LEAST 5-6 distinct DOMContentLoaded listener
+					 * registration sites (a messenger health tracker, a
+					 * generic event-ready utility, React's own Suspense-
+					 * retry logic, a Comet page-load health check that
+					 * warns if #has-finished-comet-page is missing --
+					 * confirmed by reading the real bundles), but the
+					 * census shows only ONE window/document listener
+					 * ever gets registered. fixes1247 (#167) already
+					 * showed require() never fires at all -- most of
+					 * those candidates live inside __d-wrapped module
+					 * factories that never run. This identifies WHICH
+					 * ONE actually does, by fingerprinting the listener
+					 * function's own source at registration time -- a
+					 * grep-able match against the real bundle text
+					 * already on hand answers "which listener" directly
+					 * instead of guessing. Scoped to DOMContentLoaded
+					 * only (the one type this whole investigation cares
+					 * about) so this can't become a general, unbounded
+					 * function-source log. */
+					"if(t==='DOMContentLoaded'){try{"
+						"if(typeof __msLife==='function')"
+							"__msLife('docevt reg DOMContentLoaded: '+"
+								"String(fn).slice(0,180));"
+					"}catch(e){}}"
 					"document.__msRegOnce(t,opt);};"
 			"document.removeEventListener=document.removeEventListener||"
 				"function(t,fn){"
@@ -10383,6 +10408,15 @@ static void register_browser_globals(JSContext *ctx)
 		"this.addEventListener=function(t,fn,opt){"
 			"if(!this._winListeners[t])this._winListeners[t]=[];"
 			"this._winListeners[t].push(fn);"
+			/* fixes1249 (#167) - same fingerprint as document's
+			 * addEventListener (see its comment); window is the OTHER
+			 * side of the exact same "which of 5-6 candidate
+			 * DOMContentLoaded listeners actually registers" question. */
+			"if(t==='DOMContentLoaded'){try{"
+				"if(typeof __msLife==='function')"
+					"__msLife('winevt reg DOMContentLoaded: '+"
+						"String(fn).slice(0,180));"
+			"}catch(e){}}"
 			"if(typeof document!=='undefined'&&"
 			   "typeof document.__msRegOnce==='function'){"
 				"try{document.__msRegOnce(t,opt);}catch(e){}}};"
