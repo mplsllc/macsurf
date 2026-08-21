@@ -2706,9 +2706,36 @@ struct qjs_sel {
 	int approx; /* 1 = selector had syntax we ignored (tag-only fallback) */
 };
 
+/* fixes1242 (#167) - comma-separated selector LISTS, e.g.
+ * `document.querySelectorAll('button, [role="button"], [tabindex="0"]')` --
+ * confirmed live in Facebook's own bundles (12 call sites across the 18
+ * scripts one profile-page load executes, plus React's own DOM reconciler
+ * internals use the shape constantly). Previously any ',' inside a
+ * selector hit qjs_sel_parse's generic "unsupported combinator" branch,
+ * which set ->approx and discarded everything from the comma onward --
+ * `'a, b'` silently became just `'a'`.
+ *
+ * Each alternative is an independent `struct qjs_sel` (its own descendant
+ * chain); a node matches the list if it matches ANY alternative. Deliberately
+ * a SEPARATE struct/function family layered on top of the existing
+ * single-alternative qjs_sel/qjs_sel_match/qjs_collect_by_sel/
+ * qjs_find_first_by_sel rather than changing their signatures -- those three
+ * are also called internally (qjs_collect_by_sel recurses on itself, both
+ * :not() helpers reuse qjs_simple_match) and widening them would have meant
+ * auditing every recursive call site for a redundant list-of-one wrap. */
+#define QJS_SEL_MAX_LIST 8
+struct qjs_sel_list {
+	struct qjs_sel alt[QJS_SEL_MAX_LIST];
+	int n;
+	int approx; /* 1 if ANY alternative degraded, or the list overflowed */
+};
+
 static void qjs_sel_parse(const char *sel, struct qjs_sel *out);
+static void qjs_sel_list_parse(const char *sel, struct qjs_sel_list *out);
 static void qjs_collect_by_sel(JSContext *ctx, dom_node *node,
 		const struct qjs_sel *s, JSValue arr, int *count);
+static void qjs_collect_by_sel_list(JSContext *ctx, dom_node *node,
+		const struct qjs_sel_list *sl, JSValue arr, int *count);
 /* fixes878 - node-type-dispatching wrapper, defined after the three concrete
  * wrappers.  The node-oriented traversal getters below live on
  * Node.prototype via qjs_el_install_proto_surface (fixes1170, #211), so they
@@ -3897,7 +3924,7 @@ static JSValue qjs_el_qsa_data(JSContext *ctx,
 	const char *sel;
 	int count = 0;
 	JSValue arr;
-	struct qjs_sel s;
+	struct qjs_sel_list s;
 	dom_node *child = NULL;
 	dom_node *next = NULL;
 
@@ -3908,7 +3935,7 @@ static JSValue qjs_el_qsa_data(JSContext *ctx,
 	sel = JS_ToCString(ctx, argv[0]);
 	if (sel == NULL) return arr;
 
-	qjs_sel_parse(sel, &s);
+	qjs_sel_list_parse(sel, &s);
 	if (s.approx) {
 		macsurf_debug_log_writef(
 			"WORK el.qsa: APPROX selector (unsupported syntax ignored): %s",
@@ -3920,7 +3947,7 @@ static JSValue qjs_el_qsa_data(JSContext *ctx,
 	if (macsurf_dom_node_get_first_child((dom_node *)el, &child) != DOM_NO_ERR)
 		return arr;
 	while (child != NULL) {
-		qjs_collect_by_sel(ctx, child, &s, arr, &count);
+		qjs_collect_by_sel_list(ctx, child, &s, arr, &count);
 		if (macsurf_dom_node_get_next_sibling(child, &next) != DOM_NO_ERR)
 			next = NULL;
 		/* collect_by_sel refs again before wrapping, so this child's own
@@ -7539,6 +7566,134 @@ static dom_element *qjs_find_first_by_sel(dom_node *node, const struct qjs_sel *
 	return NULL;
 }
 
+/* fixes1242 (#167) - split on TOP-LEVEL commas only: not inside `[...]`
+ * (an attribute value could itself legitimately contain a comma, e.g.
+ * `[data-list="a,b"]`) and not inside a quoted attribute value even if it
+ * contains an unbalanced bracket character. Each segment is trimmed and
+ * parsed through the existing, unmodified qjs_sel_parse. */
+static void qjs_sel_list_parse(const char *sel, struct qjs_sel_list *out)
+{
+	const char *p;
+	const char *seg_start;
+	int depth = 0;
+	char quote = 0;
+
+	memset(out, 0, sizeof(*out));
+	if (sel == NULL) return;
+	p = sel;
+	seg_start = sel;
+
+	for (;;) {
+		char ch = *p;
+		if (quote != 0) {
+			if (ch == quote) quote = 0;
+			else if (ch == '\0') break;
+			p++;
+			continue;
+		}
+		if (ch == '"' || ch == '\'') {
+			quote = ch;
+			p++;
+			continue;
+		}
+		if (ch == '[') {
+			depth++;
+			p++;
+			continue;
+		}
+		if (ch == ']') {
+			if (depth > 0) depth--;
+			p++;
+			continue;
+		}
+		if ((ch == ',' && depth == 0) || ch == '\0') {
+			const char *a = seg_start;
+			const char *b = p;
+			while (a < b && (*a == ' ' || *a == '\t')) a++;
+			while (b > a && (b[-1] == ' ' || b[-1] == '\t')) b--;
+			if (b > a) {
+				if (out->n < QJS_SEL_MAX_LIST) {
+					char buf[256];
+					int len = (int)(b - a);
+					if (len > (int)sizeof(buf) - 1)
+						len = (int)sizeof(buf) - 1;
+					memcpy(buf, a, (size_t)len);
+					buf[len] = '\0';
+					qjs_sel_parse(buf, &out->alt[out->n]);
+					if (out->alt[out->n].approx) out->approx = 1;
+					out->n++;
+				} else {
+					out->approx = 1; /* more alternatives than we track */
+				}
+			}
+			seg_start = p + 1;
+			if (ch == '\0') break;
+		}
+		p++;
+	}
+}
+
+static int qjs_sel_list_match(dom_node *node, const struct qjs_sel_list *sl)
+{
+	int i;
+	for (i = 0; i < sl->n; i++) {
+		if (qjs_sel_match(node, &sl->alt[i])) return 1;
+	}
+	return 0;
+}
+
+/* Collect every match in document order, deduped by construction: each node
+ * is visited exactly once regardless of how many alternatives it satisfies,
+ * unlike collecting per-alternative and merging would be. */
+static void qjs_collect_by_sel_list(JSContext *ctx, dom_node *node,
+		const struct qjs_sel_list *sl, JSValue arr, int *count)
+{
+	dom_node *child = NULL;
+	dom_node *next  = NULL;
+
+	if (node == NULL) return;
+	if (qjs_sel_list_match(node, sl)) {
+		macsurf_dom_node_ref(node); /* qjs_wrap_element CONSUMES a ref */
+		JS_SetPropertyUint32(ctx, arr, (uint32_t)(*count),
+				qjs_wrap_element(ctx, (dom_element *)node));
+		(*count)++;
+	}
+	macsurf_dom_node_get_first_child(node, &child);
+	while (child != NULL) {
+		qjs_collect_by_sel_list(ctx, child, sl, arr, count);
+		macsurf_dom_node_get_next_sibling(child, &next);
+		macsurf_dom_node_unref(child);
+		child = next;
+	}
+}
+
+/* First match in document order across every alternative. */
+static dom_element *qjs_find_first_by_sel_list(dom_node *node,
+		const struct qjs_sel_list *sl)
+{
+	dom_node *child = NULL;
+	dom_node *next  = NULL;
+	dom_element *found = NULL;
+
+	if (node == NULL) return NULL;
+	if (qjs_sel_list_match(node, sl)) {
+		macsurf_dom_node_ref(node);
+		return (dom_element *)node;
+	}
+	macsurf_dom_node_get_first_child(node, &child);
+	while (child != NULL) {
+		found = qjs_find_first_by_sel_list(child, sl);
+		if (found != NULL) {
+			macsurf_dom_node_unref(child);
+			return found;
+		}
+		macsurf_dom_node_get_next_sibling(child, &next);
+		macsurf_dom_node_unref(child);
+		child = next;
+	}
+	return NULL;
+}
+
 static JSValue qjs_querySelectorAll(JSContext *ctx, JSValueConst this_val,
 		int argc, JSValueConst *argv)
 {
@@ -7572,8 +7727,8 @@ static JSValue qjs_querySelectorAll(JSContext *ctx, JSValueConst this_val,
 	 * The old code extracted only the tag, so `.comment-form__verbum` (Preact's
 	 * Verbum mount) returned EMPTY and `div.foo` matched every div. */
 	{
-		struct qjs_sel s;
-		qjs_sel_parse(sel, &s);
+		struct qjs_sel_list s;
+		qjs_sel_list_parse(sel, &s);
 		if (s.approx) {
 			macsurf_debug_log_writef(
 				"WORK qsa: APPROX selector (unsupported syntax "
@@ -7584,7 +7739,7 @@ static JSValue qjs_querySelectorAll(JSContext *ctx, JSValueConst this_val,
 
 		macsurf_dom_document_get_document_element(g_qjs_document, &root);
 		if (root != NULL) {
-			qjs_collect_by_sel(ctx, (dom_node *)root, &s, arr, &count);
+			qjs_collect_by_sel_list(ctx, (dom_node *)root, &s, arr, &count);
 			macsurf_dom_node_unref((dom_node *)root);
 		}
 	}
@@ -7645,11 +7800,17 @@ static JSValue qjs_querySelector(JSContext *ctx, JSValueConst this_val,
 		int argc, JSValueConst *argv)
 {
 	const char *sel;
-	char tag_lc[64];
-	int i;
 	dom_element *root = NULL;
 	dom_element *found = NULL;
 
+	/* fixes1242 (#167) - `char tag_lc[64]; int i;` removed: dead locals,
+	 * same class of leftover fixes886 already found and removed from the
+	 * sibling qjs_querySelectorAll (see its comment above) -- neither is
+	 * referenced anywhere in this function's body, and an uninitialised
+	 * `i` read this way is exactly what produced CW8's
+	 *     Warning: variable 'i' is not initialized before being used
+	 * there. Noticed only because this edit already touches the function;
+	 * unrelated to the comma-list change itself. */
 	(void)this_val;
 	if (g_qjs_document == NULL || argc < 1) return JS_NULL;
 	sel = JS_ToCString(ctx, argv[0]);
@@ -7667,10 +7828,16 @@ static JSValue qjs_querySelector(JSContext *ctx, JSValueConst this_val,
 	 * selector, so `#a .b` ("the .b inside #a") returned #a: the wrong element,
 	 * confidently. Now the fast path is taken only when the parsed selector
 	 * really is a single id-bearing compound, and the result is still run
-	 * through the full compound match so a tag/class qualifier can reject it. */
+	 * through the full compound match so a tag/class qualifier can reject it.
+	 *
+	 * fixes1242 (#167) - comma-list aware. The #id fast path only applies
+	 * when the WHOLE selector is one alternative that is itself a single
+	 * id-bearing compound (`'#a'`, `'div#a'`) -- `'#a, #b'` has two
+	 * alternatives and must fall through to the general walk so both are
+	 * considered. */
 	{
-		struct qjs_sel s;
-		qjs_sel_parse(sel, &s);
+		struct qjs_sel_list s;
+		qjs_sel_list_parse(sel, &s);
 		if (s.approx) {
 			macsurf_debug_log_writef(
 				"WORK qs: APPROX selector (unsupported syntax "
@@ -7679,15 +7846,15 @@ static JSValue qjs_querySelector(JSContext *ctx, JSValueConst this_val,
 		JS_FreeCString(ctx, sel);
 		if (s.n == 0) return JS_NULL;
 
-		if (s.n == 1 && s.c[0].id[0] != '\0') {
-			dom_string *id_ds = qjs_make_domstr(s.c[0].id);
+		if (s.n == 1 && s.alt[0].n == 1 && s.alt[0].c[0].id[0] != '\0') {
+			dom_string *id_ds = qjs_make_domstr(s.alt[0].c[0].id);
 			dom_element *el = NULL;
 			if (id_ds == NULL) return JS_NULL;
 			macsurf_dom_document_get_element_by_id(g_qjs_document,
 					id_ds, &el);
 			macsurf_dom_string_unref(id_ds);
 			if (el == NULL) return JS_NULL;
-			if (!qjs_compound_match((dom_node *)el, &s.c[0])) {
+			if (!qjs_compound_match((dom_node *)el, &s.alt[0].c[0])) {
 				macsurf_dom_node_unref((dom_node *)el);
 				return JS_NULL;
 			}
@@ -7697,7 +7864,7 @@ static JSValue qjs_querySelector(JSContext *ctx, JSValueConst this_val,
 
 		macsurf_dom_document_get_document_element(g_qjs_document, &root);
 		if (root == NULL) return JS_NULL;
-		found = qjs_find_first_by_sel((dom_node *)root, &s);
+		found = qjs_find_first_by_sel_list((dom_node *)root, &s);
 		macsurf_dom_node_unref((dom_node *)root);
 		if (found == NULL) return JS_NULL;
 		return qjs_wrap_element(ctx, found);

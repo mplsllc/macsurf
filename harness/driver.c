@@ -8424,7 +8424,8 @@ box_coords(bx, &cx, &cy);
 			"record after html_reconvert_done ===\n");
 
 	fprintf(stderr, "\n=== Test 70: querySelectorAll + textContent + :not() "
-			"read a real <script type=\"application/json\"> data island "
+			"+ comma-lists read a real "
+			"<script type=\"application/json\"> data island "
 			"(#167 Facebook SSR) ===\n");
 	{
 		/* fixes1240 - the 2026-08-20 Facebook investigation found the
@@ -8633,6 +8634,31 @@ box_coords(bx, &cx, &cy);
 				"if(kept[i].className==='skip')"
 				"throw new Error('ASSERT FAIL: p:not(.skip) "
 					"included the excluded element');"
+				/* fixes1242 (#167) - comma-separated selector LISTS,
+				 * e.g. Facebook's own
+				 * `querySelectorAll('button, [role="button"], "
+				 * "[tabindex="0"]')`. Two distinct alternatives that
+				 * each match a DIFFERENT element. */
+				"var two=document.querySelectorAll('#p0, .keep');"
+				"if(!two||two.length!==2)"
+				"throw new Error('ASSERT FAIL: qsa(#p0, .keep) found '"
+					"+(two?two.length:'null')+' expected 2');"
+				/* dedup: an element matching BOTH alternatives must
+				 * appear once, not twice -- .keep is also a <p>. */
+				"var ded=document.querySelectorAll('p, .keep');"
+				"if(!ded||ded.length!==3)"
+				"throw new Error('ASSERT FAIL: qsa(p, .keep) found '"
+					"+(ded?ded.length:'null')+' expected 3 (no dupes)');"
+				/* querySelector (singular): the #id fast path must NOT
+				 * fire for a multi-alternative list -- '#nope' alone
+				 * matches nothing, so if the fast path wrongly fired on
+				 * just the first alternative this would wrongly return
+				 * null instead of falling through to find #p0 via the
+				 * second alternative. */
+				"var one=document.querySelector('#nope, #p0');"
+				"if(!one||one.id!=='p0')"
+				"throw new Error('ASSERT FAIL: qs(#nope, #p0) = '"
+					"+(one?one.id:'null')+' expected p0');"
 				"globalThis.__t70ok=1;"
 				"})();"
 				"if(!globalThis.__t70ok)"
@@ -8644,14 +8670,14 @@ box_coords(bx, &cx, &cy);
 			fprintf(stderr, "js_exec(t70 check) ok=%d\n", (int)ok);
 			if (!ok) {
 				fprintf(stderr, "FAIL: Test 70 querySelectorAll/"
-						"textContent/:not() did not read the "
-						"JSON island correctly\n");
+						"textContent/:not()/comma-list did not "
+						"read the JSON island correctly\n");
 				return 1;
 			}
 		}
 	}
 	fprintf(stderr, "=== Test 70 PASS: querySelectorAll + textContent + "
-			":not() read a real JSON data island ===\n");
+			":not() + comma-lists read a real JSON data island ===\n");
 
 	return 0;
 }
