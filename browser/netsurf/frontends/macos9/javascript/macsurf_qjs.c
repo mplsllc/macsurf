@@ -2671,6 +2671,24 @@ struct qjs_sel_attr {
 	char val[QJS_SEL_NAME];
 };
 
+/* fixes1240 (#167) - :not(X), X a single simple selector (tag / .class /
+ * #id / one [attr] clause -- the overwhelmingly common real-world shape,
+ * e.g. Facebook's own `script[data-sjs]:not([data-processed])`). A
+ * combined/compound or multi-selector :not() (`:not(.a.b)`,
+ * `:not(a, b)`) still degrades to the existing approx/tag-only fallback,
+ * same posture as every other unsupported selector shape here. Mirrors
+ * qjs_sel_compound's own matchable fields exactly (not embedded by value
+ * to avoid a self-referential struct) so qjs_simple_match can match
+ * either one through the same code. */
+struct qjs_sel_not_target {
+	char tag[32];
+	char cls[QJS_SEL_MAX_CLASS][QJS_SEL_NAME];
+	int  ncls;
+	char id[QJS_SEL_NAME];
+	struct qjs_sel_attr attr[QJS_SEL_MAX_ATTR];
+	int  nattr;
+};
+
 struct qjs_sel_compound {
 	char tag[32];                                 /* "" = any, or lowercase */
 	char cls[QJS_SEL_MAX_CLASS][QJS_SEL_NAME];
@@ -2678,6 +2696,8 @@ struct qjs_sel_compound {
 	char id[QJS_SEL_NAME];                        /* "" = none */
 	struct qjs_sel_attr attr[QJS_SEL_MAX_ATTR];
 	int  nattr;
+	int  has_not;                                 /* fixes1240 */
+	struct qjs_sel_not_target nott;               /* fixes1240 */
 };
 
 struct qjs_sel {
@@ -7066,6 +7086,151 @@ static int qjs_attr_str(dom_element *el, const char *name, char *out, int cap)
 	return got;
 }
 
+/* fixes1240 - one `[...]` attribute clause, factored out of qjs_sel_parse's
+ * main loop so the :not(...) inner parser below can share it instead of
+ * duplicating fixes1090c's parsing rules (name/op/quoted-or-not value) a
+ * second time and risking the two silently drifting apart. `*pp` must
+ * point AT the '['; advances past the matching ']' unconditionally (same
+ * "swallow to the close bracket" recovery as the original had) even on a
+ * parse it can't represent. Returns 1 iff it recorded a usable attribute
+ * constraint into attr[]/*nattr. */
+static int qjs_sel_parse_attr1(const char **pp, struct qjs_sel_attr *attr,
+		int *nattr, int max_attr, int *approx)
+{
+	const char *p = *pp;
+	int added = 0;
+
+	p++; /* skip '[' */
+	while (*p == ' ' || *p == '\t') p++;
+	if (*nattr >= max_attr) {
+		*approx = 1;
+	} else {
+		struct qjs_sel_attr *a = &attr[*nattr];
+		int k = 0;
+		memset(a, 0, sizeof(*a));
+		while (k < QJS_SEL_NAME - 1 && *p != '\0' &&
+		       *p != ']' && *p != '=' && *p != '~' &&
+		       *p != '^' && *p != '$' && *p != '*' &&
+		       *p != ' ' && *p != '\t') {
+			a->name[k++] = *p++;
+		}
+		a->name[k] = '\0';
+		while (*p == ' ' || *p == '\t') p++;
+		if (k == 0) {
+			*approx = 1;
+		} else if (*p == ']' || *p == '\0') {
+			a->op = 0; /* bare [attr] presence */
+			(*nattr)++;
+			added = 1;
+		} else if (*p == '~' || *p == '^' || *p == '$' || *p == '*') {
+			a->op = *p++;
+			if (*p == '=') p++; else *approx = 1;
+		} else if (*p == '=') {
+			a->op = '=';
+			p++;
+		} else {
+			*approx = 1;
+			a->op = 0;
+			a->name[0] = '\0';
+		}
+		if (a->name[0] != '\0' && a->op != 0) {
+			int vk = 0;
+			char quote = 0;
+			while (*p == ' ' || *p == '\t') p++;
+			if (*p == '"' || *p == '\'') {
+				quote = *p++;
+			}
+			if (quote) {
+				while (vk < QJS_SEL_NAME - 1 &&
+				       *p != '\0' && *p != quote) {
+					a->val[vk++] = *p++;
+				}
+				if (*p == quote) p++;
+			} else {
+				while (vk < QJS_SEL_NAME - 1 &&
+				       *p != '\0' && *p != ']' &&
+				       *p != ' ' && *p != '\t') {
+					a->val[vk++] = *p++;
+				}
+			}
+			a->val[vk] = '\0';
+			(*nattr)++;
+			added = 1;
+		}
+	}
+	/* Swallow to the closing ']' (also any trailing case-flag / stray
+	 * syntax we did not parse above). */
+	while (*p != '\0' && *p != ']') p++;
+	if (*p == ']') p++;
+	*pp = p;
+	return added;
+}
+
+/* fixes1240 (#167) - :not(X) inner parser. `*pp` points AT the ':' of
+ * ":not(...)"; on success advances past the matching ')' and returns 1
+ * with c->has_not / c->nott filled in. On anything beyond a single
+ * tag/.class/#id/[attr] target (compound target, combinators, nested
+ * pseudo-classes, or a malformed/unterminated clause) leaves *pp
+ * untouched and returns 0 so the caller falls back to the existing
+ * approx/swallow-to-whitespace recovery -- same degrade posture as every
+ * other unsupported selector shape here, not a new failure mode. */
+static int qjs_sel_parse_not(const char **pp, struct qjs_sel_compound *c,
+		int *approx)
+{
+	const char *q = *pp;
+	int any = 0;
+
+	if (strncmp(q, ":not(", 5) != 0 || c->has_not) return 0;
+	q += 5;
+	while (*q != '\0' && *q != ')') {
+		if (*q == '.' || *q == '#') {
+			char kind = *q++;
+			char buf[QJS_SEL_NAME];
+			int k = 0;
+			while (k < QJS_SEL_NAME - 1 && *q != '\0' && *q != '.'
+			       && *q != '#' && *q != '[' && *q != ')') {
+				buf[k++] = *q++;
+			}
+			buf[k] = '\0';
+			if (k == 0) return 0;
+			if (kind == '.') {
+				if (c->nott.ncls >= QJS_SEL_MAX_CLASS) return 0;
+				strcpy(c->nott.cls[c->nott.ncls], buf);
+				c->nott.ncls++;
+			} else {
+				strcpy(c->nott.id, buf);
+			}
+			any = 1;
+		} else if (*q == '[') {
+			if (!qjs_sel_parse_attr1(&q, c->nott.attr,
+					&c->nott.nattr, QJS_SEL_MAX_ATTR, approx)) {
+				return 0;
+			}
+			any = 1;
+		} else if (*q == ' ' || *q == '\t' || *q == ':' || *q == '>' ||
+			   *q == ',' || *q == '+' || *q == '~') {
+			/* Compound/combinator/nested-pseudo target: beyond the
+			 * single-simple-selector scope documented above. */
+			return 0;
+		} else {
+			int k = 0;
+			while (k < 31 && *q != '\0' && *q != '.' && *q != '#'
+			       && *q != '[' && *q != ')') {
+				char ch = *q++;
+				c->nott.tag[k++] = (ch >= 'A' && ch <= 'Z')
+						? (char)(ch + 32) : ch;
+			}
+			c->nott.tag[k] = '\0';
+			if (k == 0) return 0;
+			any = 1;
+		}
+	}
+	if (!any || *q != ')') return 0;
+	c->has_not = 1;
+	*pp = q + 1;
+	return 1;
+}
+
 /* Parse a selector into compounds. Never fails; unsupported syntax degrades to
  * the tag-only approximation and sets ->approx. */
 static void qjs_sel_parse(const char *sel, struct qjs_sel *out)
@@ -7122,77 +7287,26 @@ static void qjs_sel_parse(const char *sel, struct qjs_sel *out)
 				 * ordinary images, throwing and aborting the theme's
 				 * init script before it reached the slider at all.
 				 * Parse [name], [name=val], [name~=val], [name^=val],
-				 * [name$=val], [name*=val], quoted or not. Anything
-				 * else inside the brackets (namespaces, the i/s
-				 * case-sensitivity flag, etc.) still degrades to
-				 * approx for that one attribute only. */
-				p++; /* skip '[' */
-				while (*p == ' ' || *p == '\t') p++;
-				if (c->nattr >= QJS_SEL_MAX_ATTR) {
-					out->approx = 1;
-				} else {
-					struct qjs_sel_attr *a = &c->attr[c->nattr];
-					int k = 0;
-					memset(a, 0, sizeof(*a));
-					while (k < QJS_SEL_NAME - 1 && *p != '\0' &&
-					       *p != ']' && *p != '=' && *p != '~' &&
-					       *p != '^' && *p != '$' && *p != '*' &&
-					       *p != ' ' && *p != '\t') {
-						a->name[k++] = *p++;
-					}
-					a->name[k] = '\0';
-					while (*p == ' ' || *p == '\t') p++;
-					if (k == 0) {
-						out->approx = 1;
-					} else if (*p == ']' || *p == '\0') {
-						a->op = 0; /* bare [attr] presence */
-						c->nattr++;
-						started = 1;
-					} else if (*p == '~' || *p == '^' || *p == '$' ||
-						   *p == '*') {
-						a->op = *p++;
-						if (*p == '=') p++; else out->approx = 1;
-					} else if (*p == '=') {
-						a->op = '=';
-						p++;
-					} else {
-						/* e.g. namespaced |= or |attr -- unknown,
-						 * drop just this attribute constraint. */
-						out->approx = 1;
-						a->op = 0;
-						a->name[0] = '\0';
-					}
-					if (a->name[0] != '\0' && a->op != 0) {
-						int vk = 0;
-						char quote = 0;
-						while (*p == ' ' || *p == '\t') p++;
-						if (*p == '"' || *p == '\'') {
-							quote = *p++;
-						}
-						if (quote) {
-							while (vk < QJS_SEL_NAME - 1 &&
-							       *p != '\0' && *p != quote) {
-								a->val[vk++] = *p++;
-							}
-							if (*p == quote) p++;
-						} else {
-							while (vk < QJS_SEL_NAME - 1 &&
-							       *p != '\0' && *p != ']' &&
-							       *p != ' ' && *p != '\t') {
-								a->val[vk++] = *p++;
-							}
-						}
-						a->val[vk] = '\0';
-						c->nattr++;
-						started = 1;
-					}
+				 * [name$=val], [name*=val], quoted or not -- shared
+				 * with the :not(...) inner parser (fixes1240) via
+				 * qjs_sel_parse_attr1. */
+				if (qjs_sel_parse_attr1(&p, c->attr, &c->nattr,
+						QJS_SEL_MAX_ATTR, &out->approx)) {
+					started = 1;
 				}
-				/* Swallow to the closing ']' (also any trailing
-				 * case-flag / stray syntax we did not parse above). */
-				while (*p != '\0' && *p != ']') p++;
-				if (*p == ']') p++;
-			} else if (*p == ':' || *p == '>' || *p == ','
-				   || *p == '+' || *p == '~') {
+			} else if (*p == ':') {
+				/* fixes1240 (#167) - :not(single-simple-selector), e.g.
+				 * Facebook's own script[data-sjs]:not([data-processed]).
+				 * Anything beyond that scope (compound/multi-selector
+				 * :not(), any other pseudo-class) falls through to the
+				 * same approx/swallow recovery as before. */
+				if (qjs_sel_parse_not(&p, c, &out->approx)) {
+					started = 1;
+				} else {
+					out->approx = 1;
+					while (*p != '\0' && *p != ' ' && *p != '\t') p++;
+				}
+			} else if (*p == '>' || *p == ',' || *p == '+' || *p == '~') {
 				/* Unsupported: swallow the rest of this compound and
 				 * fall back to whatever tag/class/id/attr we already
 				 * have. */
@@ -7218,17 +7332,22 @@ static void qjs_sel_parse(const char *sel, struct qjs_sel *out)
 	if (*p != '\0') out->approx = 1; /* ran out of compound slots */
 }
 
-/* Does ONE element match ONE compound? */
-static int qjs_compound_match(dom_node *node, const struct qjs_sel_compound *c)
+/* fixes1240 - tag/#id/.class/[attr] matching against an ELEMENT node,
+ * factored out of qjs_compound_match so the :not(...) exclusion (a second,
+ * independent simple selector, struct qjs_sel_not_target -- see its
+ * declaration for why it isn't the same struct) can be tested through the
+ * exact same rules instead of a second, driftable copy. Caller has already
+ * confirmed `node` is an ELEMENT_NODE. `cls` takes the same layout as
+ * either struct's `cls[QJS_SEL_MAX_CLASS][QJS_SEL_NAME]` field decayed to
+ * a pointer-to-array, which is why both call sites can pass their own
+ * `c->cls` / `c->nott.cls` directly. */
+static int qjs_simple_match(dom_node *node, const char *tag,
+		char cls[][QJS_SEL_NAME], int ncls, const char *id,
+		const struct qjs_sel_attr *attr, int nattr)
 {
-	dom_node_type ntype = 0;
 	int i;
 
-	if (node == NULL) return 0;
-	macsurf_dom_node_get_node_type(node, &ntype);
-	if (ntype != 1) return 0; /* ELEMENT_NODE only */
-
-	if (c->tag[0] != '\0' && strcmp(c->tag, "*") != 0) {
+	if (tag[0] != '\0' && strcmp(tag, "*") != 0) {
 		dom_string *tname = NULL;
 		char lc[32];
 		int k;
@@ -7246,23 +7365,23 @@ static int qjs_compound_match(dom_node *node, const struct qjs_sel_compound *c)
 			lc[k] = '\0';
 		}
 		macsurf_dom_string_unref(tname);
-		ok = (strcmp(lc, c->tag) == 0);
+		ok = (strcmp(lc, tag) == 0);
 		if (!ok) return 0;
 	}
 
-	if (c->id[0] != '\0') {
+	if (id[0] != '\0') {
 		char buf[QJS_SEL_NAME];
 		if (!qjs_attr_str((dom_element *)node, "id", buf, (int)sizeof(buf)))
 			return 0;
-		if (strcmp(buf, c->id) != 0) return 0;
+		if (strcmp(buf, id) != 0) return 0;
 	}
 
-	if (c->ncls > 0) {
+	if (ncls > 0) {
 		char buf[512];
 		if (!qjs_attr_str((dom_element *)node, "class", buf, (int)sizeof(buf)))
 			return 0;
-		for (i = 0; i < c->ncls; i++) {
-			if (!qjs_class_has(buf, c->cls[i])) return 0;
+		for (i = 0; i < ncls; i++) {
+			if (!qjs_class_has(buf, cls[i])) return 0;
 		}
 	}
 
@@ -7270,8 +7389,8 @@ static int qjs_compound_match(dom_node *node, const struct qjs_sel_compound *c)
 	 * [attr$=val] / [attr*=val]. A dropped/unparsed attribute (name
 	 * cleared by the parser) imposes no constraint, same degrade as an
 	 * overflowed class list. */
-	for (i = 0; i < c->nattr; i++) {
-		const struct qjs_sel_attr *a = &c->attr[i];
+	for (i = 0; i < nattr; i++) {
+		const struct qjs_sel_attr *a = &attr[i];
 		char buf[256];
 		size_t bl, vl;
 
@@ -7307,6 +7426,30 @@ static int qjs_compound_match(dom_node *node, const struct qjs_sel_compound *c)
 			break;
 		}
 	}
+	return 1;
+}
+
+/* Does ONE element match ONE compound? */
+static int qjs_compound_match(dom_node *node, const struct qjs_sel_compound *c)
+{
+	dom_node_type ntype = 0;
+
+	if (node == NULL) return 0;
+	macsurf_dom_node_get_node_type(node, &ntype);
+	if (ntype != 1) return 0; /* ELEMENT_NODE only */
+
+	if (!qjs_simple_match(node, c->tag, c->cls, c->ncls, c->id,
+			c->attr, c->nattr)) {
+		return 0;
+	}
+
+	/* fixes1240 (#167) - :not(X): exclude if the negated simple selector
+	 * DOES match. */
+	if (c->has_not && qjs_simple_match(node, c->nott.tag, c->nott.cls,
+			c->nott.ncls, c->nott.id, c->nott.attr, c->nott.nattr)) {
+		return 0;
+	}
+
 	return 1;
 }
 

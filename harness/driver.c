@@ -8423,5 +8423,235 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 69 PASS: MutationObserver delivers a real "
 			"record after html_reconvert_done ===\n");
 
+	fprintf(stderr, "\n=== Test 70: querySelectorAll + textContent + :not() "
+			"read a real <script type=\"application/json\"> data island "
+			"(#167 Facebook SSR) ===\n");
+	{
+		/* fixes1240 - the 2026-08-20 Facebook investigation found the
+		 * page's splash-screen reveal depends on already-running JS
+		 * reading 170 <script type="application/json"> "data island"
+		 * elements via document.querySelectorAll + .textContent (the
+		 * elements are never EXECUTED -- application/json is not a JS
+		 * mimetype in any browser, ours included, and script.c already
+		 * correctly skips them: LIFE script_exec: SKIP inline
+		 * unsupported mimetype=application/json). Both
+		 * qjs_sel_parse/qjs_collect_by_sel's attribute-selector support
+		 * (fixes1090c) and qjs_el_get_text_content_data looked complete
+		 * by inspection; this proves it end-to-end against a real
+		 * parsed DOM rather than trusting the read. */
+		static const char *t70_html =
+			"<!DOCTYPE html><html><head></head><body>"
+			"<script type=\"application/json\" data-sjs=\"1\">"
+			"{\"hello\":\"world\",\"n\":42}</script>"
+			"<script type=\"application/json\" data-sjs=\"1\" "
+			"data-processed=\"1\">{\"already\":\"done\"}</script>"
+			"<div id=\"root\"><p id=\"p0\">hello</p>"
+			"<p class=\"skip\">skip me</p>"
+			"<p class=\"keep\">keep me</p></div>"
+			"</body></html>";
+		struct html_content t70c;
+		dom_hubbub_parser *t70p = NULL;
+		dom_document *t70doc = NULL;
+		dom_node *t70root = NULL;
+		css_select_ctx *t70ctx = NULL;
+		css_stylesheet *t70ua = NULL;
+		dom_hubbub_parser_params t70params;
+		css_stylesheet_params t70sp;
+		void *t70_box_ctx = NULL;
+		struct jsheap *t70heap = NULL;
+		struct jsthread *t70thread = NULL;
+		nserror t70nerr;
+		dom_exception t70derr;
+		css_error t70cerr;
+
+		memset(&t70params, 0, sizeof(t70params));
+		t70params.enc = NULL;
+		t70params.fix_enc = true;
+		t70params.enable_script = false;
+		t70params.daf = NULL;
+		t70derr = dom_hubbub_parser_create(&t70params, &t70p, &t70doc);
+		if (t70derr != DOM_HUBBUB_OK || t70p == NULL || t70doc == NULL) {
+			fprintf(stderr, "FAIL: Test 70 parser create %d\n",
+					(int)t70derr);
+			return 1;
+		}
+		t70derr = dom_hubbub_parser_parse_chunk(t70p,
+				(const uint8_t *)t70_html, strlen(t70_html));
+		if (t70derr != DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 70 parse chunk %d\n", (int)t70derr);
+			return 1;
+		}
+		t70derr = dom_hubbub_parser_completed(t70p);
+		if (t70derr != DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 70 parse done %d\n", (int)t70derr);
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t70p);
+
+		memset(&t70c, 0, sizeof(t70c));
+		t70c.base_url = g_base_url;
+		t70c.document = t70doc;
+		t70c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t70c.enable_scripting = true;
+		if (css_select_ctx_create(&t70ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 70 select_ctx\n");
+			return 1;
+		}
+		t70c.select_ctx = t70ctx;
+
+		memset(&t70sp, 0, sizeof(t70sp));
+		t70sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t70sp.level = CSS_LEVEL_3;
+		t70sp.charset = "UTF-8";
+		t70sp.url = "resource:default.css";
+		t70sp.title = "default";
+		t70sp.allow_quirks = false;
+		t70sp.inline_style = false;
+		t70sp.resolve = harness_css_resolve_url;
+		t70sp.resolve_pw = NULL;
+		t70cerr = css_stylesheet_create(&t70sp, &t70ua);
+		if (t70cerr != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 70 UA sheet\n");
+			return 1;
+		}
+		{
+			const char *ua_css =
+				"html,body,div,p,script{display:block}";
+			css_error ae = css_stylesheet_append_data(t70ua,
+					(const uint8_t *)ua_css, strlen(ua_css));
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 70 UA append=%d\n", (int)ae);
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t70ua);
+		}
+		if (css_select_ctx_append_sheet(t70ctx, t70ua,
+				CSS_ORIGIN_UA, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 70 UA append sheet\n");
+			return 1;
+		}
+
+		t70c.media.type = CSS_MEDIA_SCREEN;
+		t70c.media.width = INTTOFIX(993);
+		t70c.media.height = INTTOFIX(600);
+		t70c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t70c.unit_len_ctx.viewport_width = INTTOFIX(993);
+		t70c.unit_len_ctx.viewport_height = INTTOFIX(600);
+		t70c.unit_len_ctx.device_dpi = INTTOFIX(90);
+		t70c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t70c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t70c.universal) != lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 70 universal\n");
+			return 1;
+		}
+
+		t70c.base.status = CONTENT_STATUS_LOADING;
+		t70c.base.active = 0;
+		t70c.base.handler = &g_dummy_handler;
+		macos9_content_register((struct content *)&t70c);
+
+		t70derr = dom_document_get_document_element(t70doc,
+				(void *)&t70root);
+		if (t70derr != DOM_NO_ERR || t70root == NULL) {
+			fprintf(stderr, "FAIL: Test 70 doc element\n");
+			return 1;
+		}
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t70nerr = dom_to_box(t70root, &t70c, initial_build_cb,
+				&t70_box_ctx);
+		dom_node_unref(t70root);
+		if (t70nerr != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 70 dom_to_box nerr=%d\n",
+					(int)t70nerr);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 70 initial build done=%d ok=%d\n",
+					g_initial_build_done, (int)g_initial_build_ok);
+			return 1;
+		}
+		t70c.base.status = CONTENT_STATUS_DONE;
+
+		t70nerr = js_newheap(20000, &t70heap);
+		if (t70nerr != NSERROR_OK || t70heap == NULL) {
+			fprintf(stderr, "FAIL: Test 70 js_newheap nerr=%d\n",
+					(int)t70nerr);
+			return 1;
+		}
+		t70nerr = js_newthread(t70heap, NULL, (void *)&t70c, &t70thread);
+		if (t70nerr != NSERROR_OK || t70thread == NULL) {
+			fprintf(stderr, "FAIL: Test 70 js_newthread nerr=%d\n",
+					(int)t70nerr);
+			return 1;
+		}
+		t70c.js_thread = t70thread;
+
+		{
+			const char *check_js =
+				"globalThis.__t70ok=0;"
+				"(function(){"
+				"var els=document.querySelectorAll("
+					"'script[type=\"application/json\"]');"
+				"if(!els||els.length!==2)"
+				"throw new Error('ASSERT FAIL: qsa[type=json] found '"
+					"+(els?els.length:'null')+' expected 2');"
+				"var byAttr=document.querySelectorAll('[data-sjs]');"
+				"if(!byAttr||byAttr.length!==2)"
+				"throw new Error('ASSERT FAIL: qsa[data-sjs] found '"
+					"+(byAttr?byAttr.length:'null')+' expected 2');"
+				"var txt=els[0].textContent;"
+				"if(typeof txt!=='string'||txt.indexOf('hello')===-1)"
+				"throw new Error('ASSERT FAIL: textContent='"
+					"+JSON.stringify(txt));"
+				"var parsed=JSON.parse(txt);"
+				"if(parsed.hello!=='world'||parsed.n!==42)"
+				"throw new Error('ASSERT FAIL: parsed wrong: '"
+					"+JSON.stringify(parsed));"
+				/* fixes1240 (#167) - the ACTUAL Facebook selector
+				 * (ServerJSPayloadListener_NEW): compound attribute
+				 * selector + :not([attr]). Must exclude the
+				 * data-processed one and keep only the real payload. */
+				"var un=document.querySelectorAll("
+					"'script[data-sjs]:not([data-processed])');"
+				"if(!un||un.length!==1)"
+				"throw new Error('ASSERT FAIL: qsa :not([data-processed]) "
+					"found '+(un?un.length:'null')+' expected 1');"
+				"if(JSON.parse(un[0].textContent).hello!=='world')"
+				"throw new Error('ASSERT FAIL: :not() selected the "
+					"WRONG script element');"
+				/* :not(.class) on a plain element, no attribute
+				 * involved -- a different code path (qjs_class_has vs
+				 * the attr matcher) through the same qjs_simple_match. */
+				"var kept=document.querySelectorAll('p:not(.skip)');"
+				"if(!kept||kept.length!==2)"
+				"throw new Error('ASSERT FAIL: p:not(.skip) found '"
+					"+(kept?kept.length:'null')+' expected 2 (p0, "
+					"p.keep)');"
+				"for(var i=0;i<kept.length;i++)"
+				"if(kept[i].className==='skip')"
+				"throw new Error('ASSERT FAIL: p:not(.skip) "
+					"included the excluded element');"
+				"globalThis.__t70ok=1;"
+				"})();"
+				"if(!globalThis.__t70ok)"
+				"throw new Error('ASSERT FAIL: t70ok flag not set');";
+			unsigned char ok;
+
+			ok = js_exec(t70thread, (const unsigned char *)check_js,
+					strlen(check_js), "driver-t70-check.js");
+			fprintf(stderr, "js_exec(t70 check) ok=%d\n", (int)ok);
+			if (!ok) {
+				fprintf(stderr, "FAIL: Test 70 querySelectorAll/"
+						"textContent/:not() did not read the "
+						"JSON island correctly\n");
+				return 1;
+			}
+		}
+	}
+	fprintf(stderr, "=== Test 70 PASS: querySelectorAll + textContent + "
+			":not() read a real JSON data island ===\n");
+
 	return 0;
 }
