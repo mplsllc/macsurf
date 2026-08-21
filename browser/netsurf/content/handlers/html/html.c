@@ -1048,11 +1048,11 @@ static void html_fbcss_report(dom_element *he, dom_node *body,
 		css_color col = 0;
 		css_computed_color(hb->style, &col);
 		sprintf(htmlcolor, "#%06lX",
-			(unsigned long) ((col >> 8) & 0xFFFFFF));
+			(unsigned long) (col & 0xFFFFFF));
 		col = 0;
 		css_computed_background_color(hb->style, &col);
 		sprintf(htmlbg, "#%06lX",
-			(unsigned long) ((col >> 8) & 0xFFFFFF));
+			(unsigned long) (col & 0xFFFFFF));
 	}
 
 	bb = (body != NULL) ? box_for_node(body) : NULL;
@@ -1060,11 +1060,11 @@ static void html_fbcss_report(dom_element *he, dom_node *body,
 		css_color col = 0;
 		css_computed_color(bb->style, &col);
 		sprintf(bodycolor, "#%06lX",
-			(unsigned long) ((col >> 8) & 0xFFFFFF));
+			(unsigned long) (col & 0xFFFFFF));
 		col = 0;
 		css_computed_background_color(bb->style, &col);
 		sprintf(bodybg, "#%06lX",
-			(unsigned long) ((col >> 8) & 0xFFFFFF));
+			(unsigned long) (col & 0xFFFFFF));
 	}
 
 	macsurf_debug_log_writef(
