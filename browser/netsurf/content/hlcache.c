@@ -555,6 +555,22 @@ static nserror hlcache_migrate_ctx(hlcache_retrieval_ctx *ctx,
 		 * and was leaking to the title bar in some builds. The error
 		 * dispatch below still fires normally so NetSurf core handles
 		 * the unacceptable-type case correctly. */
+		/* fixes1257 (#167) - re-instrumented. fixes1256's hardware round
+		 * found EVERY data: URI script fetch on Facebook (168 of them,
+		 * both text/javascript and application/x-javascript variants)
+		 * dying here with UnacceptableType, despite text/javascript
+		 * being a registered JS MIME type (macsurf_qjs.c). Logging the
+		 * actual resolved effective_type string and computed content_type
+		 * bitmask discriminates between: (a) mimesniff/http_parse_content_type
+		 * mangling the type before it gets here (string won't read
+		 * "text/javascript"), vs (b) content_factory_type_from_mime_type's
+		 * registered-handler lookup failing on an otherwise-clean string
+		 * (string reads correctly but type stays 0/CONTENT_NONE). */
+		macsurf_debug_log_writef(
+			"LIFE UNACCEPT type=%ld accepted=%ld effective=%s url=%s",
+			(long) type, (long) ctx->accepted_types,
+			(effective_type != NULL) ? lwc_string_data(effective_type) : "(null)",
+			nsurl_access(hlcache_handle_get_url(ctx->handle)));
 		/* Unacceptable type: report error */
 		if (ctx->handle->cb != NULL) {
 			hlcache_event hlevent;

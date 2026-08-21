@@ -23,6 +23,8 @@
 #include "content/fetch.h"
 #include "content/fetchers.h"
 
+#include "nsutils/base64.h"
+
 #include "macsurf_debug.h"
 
 /* ---- Embedded CSS resources ---- *
@@ -517,6 +519,22 @@ stub_body_for(const struct stub_fetch_ctx *ctx,
 				*mime_out = "text/html";
 			} else if (strncmp(ctx->path, "text/css", 8) == 0) {
 				*mime_out = "text/css";
+			/* fixes1258 (#167) - text/javascript and
+			 * application/x-javascript were missing entirely: every
+			 * JS data: script fell through to the "text/" generic
+			 * branch below (or the application/* default further
+			 * down) and got reported as text/plain, which
+			 * hlcache_type_is_acceptable rejects for a <script>
+			 * fetch (UnacceptableType) before it ever reaches
+			 * QuickJS. Checked ahead of the generic "text/" branch,
+			 * same ordering the real RFC 2397 fetcher's MIME
+			 * registration relies on. */
+			} else if (strncmp(ctx->path, "text/javascript", 15) == 0) {
+				*mime_out = "text/javascript";
+			} else if (strncmp(ctx->path, "application/javascript", 22) == 0) {
+				*mime_out = "application/javascript";
+			} else if (strncmp(ctx->path, "application/x-javascript", 24) == 0) {
+				*mime_out = "application/x-javascript";
 			} else if (strncmp(ctx->path, "text/", 5) == 0) {
 				*mime_out = "text/plain";
 			} else if (strncmp(ctx->path, "image/png", 9) == 0) {
@@ -977,7 +995,11 @@ stub_setup_data(struct fetch *parent_fetch, struct nsurl *url,
 	size_t enc_len;
 	size_t i, j;
 	size_t mime_n;
+	size_t path_len;
+	int is_base64;
 	unsigned char *body;
+	unsigned char *decoded;
+	size_t decoded_len;
 
 	(void)only_2xx; (void)downgrade_tls;
 	(void)post_urlenc; (void)post_multipart; (void)headers;
@@ -1008,8 +1030,48 @@ stub_setup_data(struct fetch *parent_fetch, struct nsurl *url,
 	memcpy(ctx->path, after_scheme, mime_n);
 	ctx->path[mime_n] = '\0';
 
+	/* fixes1258 (#167) - strip a trailing ";base64" marker the same way
+	 * the real RFC 2397 fetcher (content/fetchers/data.c) does, so
+	 * stub_body_for's MIME matching below sees a clean "text/javascript"
+	 * rather than "text/javascript;base64" - which matched no branch
+	 * there, fell through to the text/plain default, and made every one
+	 * of Facebook's ~168 base64 bootstrap-glue scripts (window.Env setup,
+	 * requireLazy(["ServerJSPayloadListener"],...)) fail hlcache's type
+	 * check with UnacceptableType before ever reaching QuickJS. */
+	is_base64 = 0;
+	path_len = strlen(ctx->path);
+	if (path_len >= 7 && strcmp(ctx->path + path_len - 7, ";base64") == 0) {
+		is_base64 = 1;
+		ctx->path[path_len - 7] = '\0';
+	}
+
 	encoded = comma + 1;
 	enc_len = strlen(encoded);
+
+	if (is_base64) {
+		/* fixes1258 (#167) - was entirely unimplemented ("V1 supports
+		 * percent-decoding of the data segment only (no base64)"), so
+		 * every base64 script got handed its own still-base64-encoded
+		 * text as if it were the literal source, with any '+' in it
+		 * further corrupted to a space by the percent-decode path
+		 * below. nsu_base64_decode_alloc is real, already linked
+		 * (content/llcache.c, fixes591), and already used elsewhere in
+		 * this build. Facebook's payloads carry no percent-escapes, so
+		 * decoding the raw post-comma text directly (rather than
+		 * url-unescaping first, which would wrongly turn a literal
+		 * '+' into a space before it reaches the decoder) matches
+		 * verified-correct behaviour. */
+		decoded = NULL;
+		decoded_len = 0;
+		if (nsu_base64_decode_alloc((const unsigned char *) encoded,
+				enc_len, &decoded, &decoded_len) != NSUERROR_OK ||
+				decoded == NULL) {
+			goto bail_min;
+		}
+		ctx->dyn_body = decoded;
+		ctx->dyn_body_len = decoded_len;
+		goto bail_min;
+	}
 
 	body = (unsigned char *)malloc(enc_len + 1);
 	if (body == NULL) goto bail_min;
