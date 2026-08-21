@@ -708,7 +708,7 @@ convert_script_sync_cb(hlcache_handle *script,
 		extern long macos9_heap_free_bytes(void);
 		extern long macos9_heap_max_block(void);
 		macsurf_debug_log_writef(
-			"sync_cb: ENTRY type=%d count=%ld free=%ld maxblk=%ld",
+			"LIFE sync_cb: ENTRY type=%d count=%ld free=%ld maxblk=%ld",
 			(int)event->type, (long)parent->scripts_count,
 			macos9_heap_free_bytes(), macos9_heap_max_block());
 	}
@@ -716,7 +716,7 @@ convert_script_sync_cb(hlcache_handle *script,
 	/* fixes535: registry-membership liveness guard FIRST (see async cb). */
 	if (macos9_content_is_live(&parent->base) == 0) {
 		macsurf_debug_log_writef(
-			"convert_script_sync_cb: parent NOT LIVE parent=%p", (void *)parent);
+			"LIFE convert_script_sync_cb: parent NOT LIVE parent=%p", (void *)parent);
 		return NSERROR_OK;
 	}
 
@@ -757,6 +757,13 @@ convert_script_sync_cb(hlcache_handle *script,
 		parent->base.active--;
 		NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
 
+		g_spipe_d_total++;
+		if (macsurf_spipe_budget_take()) {
+			macsurf_debug_log_writef(
+				"LIFE SPIPE D ord=%ld url=%s", (long) (i + 1),
+				nsurl_access(hlcache_handle_get_url(script)));
+		}
+
 		s->already_started = true;
 
 		/* attempt to execute script */
@@ -785,9 +792,16 @@ convert_script_sync_cb(hlcache_handle *script,
 
 		/* fixes581 DIAG: js_exec returned. If the log ends here (after
 		 * 'qjs: exec-return0' but before 'sync_cb: sched done'), the hang is
-		 * in macos9_schedule_unpause. */
-		macsurf_debug_log_writef("sync_cb: exec done i=%d active_sync=%d",
-			(int)i, (int)active_sync_scripts);
+		 * in macos9_schedule_unpause.
+		 * fixes1256 (#167) - both lines below were missing "LIFE " and
+		 * have been completely invisible in every release-build log this
+		 * whole session; the resume gate (active_sync_scripts==0) is the
+		 * prime suspect for the ~179 stuck sync data: URI scripts found
+		 * via fixes1254's SPIPE trace (queued, never RUN or SKIP logged),
+		 * so its actual value at the decision point needs to be visible. */
+		macsurf_debug_log_writef(
+			"LIFE sync_cb: exec done ord=%ld active_sync=%ld",
+			(long) (i + 1), (long) active_sync_scripts);
 
 		/* continue parse -- deferred to avoid re-entering the tokenizer
 		 * from inside the content_broadcast notification walk. */
@@ -795,7 +809,8 @@ convert_script_sync_cb(hlcache_handle *script,
 			macos9_schedule_unpause(parent);
 		}
 
-		macsurf_debug_log_writef("sync_cb: sched done i=%d", (int)i);
+		macsurf_debug_log_writef("LIFE sync_cb: sched done ord=%ld",
+			(long) (i + 1));
 
 		break;
 
@@ -803,6 +818,14 @@ convert_script_sync_cb(hlcache_handle *script,
 		NSLOG(netsurf, INFO, "script %s failed: %s",
 		      nsurl_access(hlcache_handle_get_url(script)),
 		      event->data.errordata.errormsg);
+
+		g_spipe_x_total++;
+		if (macsurf_spipe_budget_take()) {
+			macsurf_debug_log_writef(
+				"LIFE SPIPE X ord=%ld url=%s err=%s", (long) (i + 1),
+				nsurl_access(hlcache_handle_get_url(script)),
+				event->data.errordata.errormsg);
+		}
 
 		/* fixes515: NULL before release so a reentrant callback finds
 		 * NULL instead of a freed handle / freed callback TVector. */
@@ -817,6 +840,10 @@ convert_script_sync_cb(hlcache_handle *script,
 		if (parent->parser != NULL && active_sync_scripts == 0) {
 			macos9_schedule_unpause(parent);
 		}
+
+		macsurf_debug_log_writef(
+			"LIFE sync_cb: ERROR sched ord=%ld active_sync=%ld",
+			(long) (i + 1), (long) active_sync_scripts);
 
 		break;
 
