@@ -343,6 +343,82 @@ void macsurf_qjs_emit_js_profile(void)
 			rl_fires, rl_target_fires);
 	}
 
+	/* fixes1260 (#167) - query Facebook's OWN internal module registry
+	 * directly, rather than inferring state from our own __d/requireLazy
+	 * wrapper counters. fixes1259's hardware round proved d_target=1
+	 * (ServerJSPayloadListener DOES get __d()-called) and rl_target_calls
+	 * in the hundreds with rl_target_fires=0 (none of those lazy waiters
+	 * ever release) - but that only proves the GLOBAL __d entry point was
+	 * called, not that Facebook's internal define (t.__d -> Me()(fn,
+	 * "define "+e,{root:true})() -> ce(...), confirmed against the real
+	 * fbcdn.net bundle this engine executes, not assumed) completed
+	 * successfully. Me() resolves to TimeSlice.guard when present, which
+	 * itself resolves to ErrorGuard.guard (also confirmed against the
+	 * real bundle) - a synchronous try/catch error boundary, not a
+	 * scheduler. If ce() throws inside that boundary, the exception is
+	 * swallowed with zero console output, which would explain why nothing
+	 * has surfaced as a JS exception anywhere this whole investigation
+	 * despite something clearly failing.
+	 *
+	 * The real bundle exposes its OWN debug interface as a normal
+	 * requireLazy-able module named "__debug", with a modulesMap and a
+	 * debugUnresolvedDependencies(names) function that returns a plain,
+	 * already human-readable string per name: "X is ready" / "X is not
+	 * defined" / "X is waiting for A, B, C" (walking the real transitive
+	 * dependency chain - confirmed by reading debugUnresolvedDependencies'
+	 * actual implementation in the bundle, not guessed). One
+	 * requireLazy(["__debug"], cb) call gets a handle to it; "__debug" is
+	 * foundational so this should resolve synchronously within the same
+	 * call (same fast path already proven for "Env" in fixes1259's data),
+	 * needing no stored reference or second navigation-end callback.
+	 * Newlines are replaced with "; " since a module with several
+	 * unresolved transitive deps produces one line per name. */
+	{
+		JSContext *ctx = macsurf_qjs_current_ctx();
+		if (ctx != NULL) {
+			static const char fbstate_src[] =
+				"(function(){try{"
+				"if(typeof globalThis.requireLazy!=='function')"
+					"return 'FBSTATE requireLazy not a function';"
+				"var out=null,got=false;"
+				"globalThis.requireLazy(['__debug'],function(dbg){"
+					"got=true;"
+					"try{"
+						"out=dbg.debugUnresolvedDependencies("
+							"['ServerJSPayloadListener']);"
+						"if(typeof out==='string')"
+							"out=out.split('\\n').join('; ');"
+						"else out=String(out);"
+					"}catch(e){"
+						"out='debugUnresolvedDependencies threw: '+"
+							"((e&&e.message)||e);"
+					"}"
+				"});"
+				"if(!got)"
+					"return 'FBSTATE __debug did not resolve "
+						"synchronously';"
+				"return out;"
+				"}catch(e){"
+					"return 'FBSTATE eval threw: '+"
+						"((e&&e.message)||e);"
+				"}"
+				"})()";
+			JSValue r = JS_Eval(ctx, fbstate_src, strlen(fbstate_src),
+					"<jsfbstate>", JS_EVAL_TYPE_GLOBAL);
+			if (!JS_IsException(r)) {
+				const char *s = JS_ToCString(ctx, r);
+				macsurf_debug_log_writef("LIFE FBSTATE %s",
+					(s != NULL) ? s : "(null)");
+				if (s != NULL) JS_FreeCString(ctx, s);
+			} else {
+				JS_FreeValue(ctx, JS_GetException(ctx));
+				macsurf_debug_log_writef(
+					"LIFE FBSTATE eval exception");
+			}
+			JS_FreeValue(ctx, r);
+		}
+	}
+
 	/* fixes1239 (#167) - <script> tags the PARSER found (script.c,
 	 * html_process_script), split inline/external, independent of
 	 * whether js_exec ever ran one. Same local-extern pattern as
