@@ -9540,10 +9540,26 @@ static void register_browser_globals(JSContext *ctx)
 				"function(t,fn){"
 					"var L=document._listeners&&document._listeners[t];if(!L)return;"
 					"for(var i=0;i<L.length;i++)if(L[i]===fn){L.splice(i,1);return;}};"
+			/* fixes1236 (#167) - had ZERO diagnostics and a fully silent
+			 * catch(e){} -- a document-level listener that threw left no
+			 * trace anywhere. window.dispatchEvent (below, same fix round)
+			 * at least attempted one; document.dispatchEvent never did.
+			 * Same __msLife pattern: type=/n= scoped to lifecycle events to
+			 * bound log volume, THROW unscoped since it is inherently rare. */
 			"document.dispatchEvent=document.dispatchEvent||"
 				"function(ev){"
-					"var L=document._listeners&&document._listeners[ev&&ev.type];"
-					"if(L)L.forEach(function(f){try{f(ev);}catch(e){}});return true;};"
+					"var t=ev&&ev.type;"
+					"var L=document._listeners&&document._listeners[t];"
+					"var n=L?L.length:0;"
+					"if(t==='DOMContentLoaded'||t==='load'||"
+					   "t==='readystatechange'||t==='pageshow'){"
+						"try{if(typeof __msLife==='function')"
+							"__msLife('docevt type='+t+' n='+n);}catch(_){}}"
+					"if(L)L.forEach(function(f){try{f(ev);}catch(e){"
+						"try{if(typeof __msLife==='function')"
+							"__msLife('docevt THREW type='+t+': '+"
+								"((e&&e.message)||e));}catch(_){}"
+					"}});return true;};"
 		"}");
 
 	/* fixes879 - the "navigator extended shims" block that used to sit HERE was
@@ -9810,13 +9826,28 @@ static void register_browser_globals(JSContext *ctx)
 		 * own `if(e)` -- i.e. querySelector('#commentform') returned null.
 		 * console.error routes to MS_LOG, and the "WORK " in the text is what
 		 * gets it past the failures-only gate. */
+		/* fixes1236 (#167) - the WORK/console.error trace below NEVER
+		 * survived to a hardware log across two full Facebook sessions
+		 * (grep for "winevt" in either: zero hits) -- console.error's WORK
+		 * routing is compiled out of shipping builds entirely (fixes1015's
+		 * own rationale for __msLife existing at all), not merely filtered
+		 * by text content as the fixes863 comment above claimed. Switched
+		 * to __msLife (LIFE-prefixed, budgeted, survives by construction).
+		 * type=/n= scoped to the lifecycle event names this investigation
+		 * cares about, so a page that dispatches custom pub/sub events on
+		 * window does not burn the shared __msLife budget; a THROWN
+		 * handler is logged for ANY type since that is inherently rare. */
 		"this.dispatchEvent=function(ev){"
 			"var t=ev&&ev.type;var arr=t&&this._winListeners[t];"
 			"var n=arr?arr.length:0;"
-			"try{console.error('WORK winevt type='+t+' n='+n);}catch(_){}"
+			"if(t==='DOMContentLoaded'||t==='load'||t==='readystatechange'||"
+			   "t==='pageshow'){"
+				"try{if(typeof __msLife==='function')"
+					"__msLife('winevt type='+t+' n='+n);}catch(_){}}"
 			"if(arr)arr.forEach(function(f){try{f(ev);}catch(e){"
-				"try{console.error('WORK winevt THREW type='+t+': '+"
-					"((e&&e.message)||e));}catch(_){}"
+				"try{if(typeof __msLife==='function')"
+					"__msLife('winevt THREW type='+t+': '+"
+						"((e&&e.message)||e));}catch(_){}"
 			"}});return true;};"
 		/* fixes1011 - the REAL getComputedStyle. __gcsNative reads the
 		 * cascade + box (installed in qjs_dom_install); this wrapper adds
