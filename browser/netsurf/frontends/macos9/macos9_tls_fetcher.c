@@ -284,6 +284,12 @@ struct macos9_https_ctx {
 
 static struct macos9_https_ctx https_slots[MAX_HTTPS_F];
 
+/* fixes1253 (#167) - cumulative, session-lifetime count of ops.setup()
+ * calls that found all MAX_HTTPS_F slots occupied and returned NULL
+ * (never reset per navigation, same convention as macsurf_qjs.c's other
+ * session-cumulative counters - read as a delta between two LIFE lines). */
+long g_https_setup_fail_total = 0;
+
 /* fixes374 (#167) - forward decl; defined near build_request. Used by the
  * disk-cache lookup/store paths to bypass caching for Facebook hosts. */
 static int host_is_fb_asset(const char *host);
@@ -3499,7 +3505,24 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 		if (https_slots[i].state == HS_IDLE) { slot = i; break; }
 	}
 	if (slot < 0) {
+		/* fixes1253 (#167) - setup() (this function) claims a slot for
+		 * EVERY queued fetch up-front, before ops.start()'s
+		 * max_fetchers_per_host gate ever runs (fixes241's own comment
+		 * above MAX_HTTPS_F already said so). fixes1251/1252 raised and
+		 * proved out concurrency at the ops.start() layer, but a fetch
+		 * that fails HERE never reaches that layer at all - it never
+		 * queues, base.active never increments for it, and the script
+		 * census (skipped=0/timed_out=0/failed=0) has no counter for
+		 * this path because it's a full level below anything the JS
+		 * audit code can see. If Facebook's ~186 script tags are being
+		 * dropped here rather than throttled downstream, that fully
+		 * explains why raising max_fetchers_per_host moved nothing. */
+		g_https_setup_fail_total++;
 		MS_LOG("https_setup: NO FREE SLOTS");
+		macsurf_debug_log_writef(
+			"LIFE HTTPSLOTS FULL used=%d cap=%d total_fails=%ld url=%s",
+			MAX_HTTPS_F, MAX_HTTPS_F, g_https_setup_fail_total,
+			nsurl_access(u));
 		return NULL;
 	}
 	c = &https_slots[slot];

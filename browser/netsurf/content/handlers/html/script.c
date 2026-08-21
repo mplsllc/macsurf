@@ -894,6 +894,21 @@ exec_src_script(html_content *c,
 					   CONTENT_SCRIPT,
 					   &nscript->data.handle);
 
+	/* fixes1253 (#167) - hlcache_handle_retrieve failing here (most
+	 * commonly the HTTPS fetcher's ops.setup() finding every
+	 * MAX_HTTPS_F slot occupied, see macos9_tls_fetcher.c) is a
+	 * silent script drop that predates fetch_dispatch_jobs entirely:
+	 * base.active is never incremented, so this script never counts
+	 * toward the JS audit's skipped/timed_out/failed totals - it just
+	 * vanishes between SCRIPTTAGS (parser saw it) and JS PAGE (engine
+	 * never did). Logged here, before nsurl_unref, while joined is
+	 * still safely referenced. */
+	if (ns_error != NSERROR_OK) {
+		macsurf_debug_log_writef(
+			"LIFE SCRIPTFETCHFAIL idx=%u rc=%d src=%s",
+			c->scripts_count, (int) ns_error,
+			nsurl_access(joined));
+	}
 
 	nsurl_unref(joined);
 
