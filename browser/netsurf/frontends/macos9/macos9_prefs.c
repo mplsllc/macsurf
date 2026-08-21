@@ -81,10 +81,27 @@ void macos9_prefs_apply_defaults(void)
 	 * past the point NetSurf's fetch_ring drains, so the caps must
 	 * never bite or the stub fetcher hangs. */
 	nsoption_set_int(max_fetchers, 128);
-	/* fixes232: drop the per-host cap from 16 to 4 so the HTTPS
+	/* fixes232: dropped the per-host cap from 16 to 4 so the HTTPS
 	 * keep-alive pool (fixes231) actually catches reuses - only the
-	 * first 4 fetches per host are cold handshakes. */
-	nsoption_set_int(max_fetchers_per_host, 4);
+	 * first N fetches per host are cold handshakes.
+	 *
+	 * fixes1251 (#167) - raised 4 -> 16. fixes232's own rationale no
+	 * longer holds for the host class that needed it most: fixes373
+	 * sends "Connection: close" for every facebook.com/fbcdn.net/
+	 * fbsbx.com/cdninstagram.com fetch (host_is_fb_asset), so those
+	 * origins get ZERO keep-alive reuse regardless of this cap - every
+	 * fetch is already a cold handshake. A real Facebook page issues
+	 * ~189 external <script src> tags, ~all on static.xx.fbcdn.net; at
+	 * 4 concurrent cold handshakes the vast majority (measured: 171 of
+	 * 189 on one page) are still queued or mid-fetch when the
+	 * navigation's own JS-profile census fires - not blocked, not
+	 * skipped (skipped=0/timed_out=0/failed=0 confirmed), just
+	 * throughput-starved. MAX_HTTPS_F (macos9_tls_fetcher.c) is a
+	 * static 128-slot array sized for max_fetchers=128 already; raising
+	 * this cap uses slots already provisioned; it does not allocate new
+	 * memory. Non-FB hosts keep normal keep-alive pooling and still
+	 * benefit from fewer cold handshakes once the pool warms. */
+	nsoption_set_int(max_fetchers_per_host, 16);
 	/* fixes106/160d/430/460-463/731 - memory cache size. History:
 	 * 2MB cap on 16MB partitions; 32MB on the 194MB partition; 4MB
 	 * after heap exhaustion; 0 while chasing the blank-page bug;
