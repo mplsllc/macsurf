@@ -24,6 +24,7 @@
 
 #include <assert.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <strings.h>
 #include <stdlib.h>
@@ -989,6 +990,89 @@ void html_slider_probe(html_content *c, const char *when)
 }
 /* ====================================================================== */
 
+/* fixes1262 (#167) - direct C-side replacement for fixes1261's JS-side
+ * FBCSS query, which came back empty (html_bg=/body_bg=/body_color= all
+ * blank) because qjs_get_computed_style's box lookup (qjs_box_for) gates
+ * on qjs_geometry_settled() - a gate meant for getBoundingClientRect/
+ * offsetWidth's relayout-cost problem, but qjs_get_computed_style bundles
+ * color/backgroundColor into the SAME box lookup as the true geometry
+ * fields, so they got swept into a gate that has nothing to do with them.
+ * That was a diagnostic-timing bug, not a finding.
+ *
+ * This calls box_for_node() directly, the same function html_pagemap_line
+ * (right above) already calls successfully at this exact point in this
+ * exact function - no JS round-trip, no geometry-settle gate, reading the
+ * SAME struct box/css_computed_style the real renderer used for THIS
+ * document. he/body are already resolved by the caller; reused, not
+ * re-walked. */
+static void html_fbcss_report(dom_element *he, dom_node *body,
+		const char *when)
+{
+	struct box *hb;
+	struct box *bb;
+	char htmlcolor[10] = "-";
+	char htmlbg[10]    = "-";
+	char bodycolor[10] = "-";
+	char bodybg[10]    = "-";
+	char clsbuf[256] = "";
+
+	if (he != NULL) {
+		dom_string *class_name = NULL;
+		if (dom_string_create((const uint8_t *) "class", 5,
+				&class_name) == DOM_NO_ERR &&
+				class_name != NULL) {
+			dom_string *cls = NULL;
+			if (dom_element_get_attribute(he, class_name, &cls) ==
+					DOM_NO_ERR && cls != NULL) {
+				const char *cdata = dom_string_data(cls);
+				size_t clen = dom_string_byte_length(cls);
+				if (cdata != NULL) {
+					if (clen >= sizeof clsbuf)
+						clen = sizeof clsbuf - 1;
+					memcpy(clsbuf, cdata, clen);
+					clsbuf[clen] = '\0';
+				}
+				dom_string_unref(cls);
+			}
+			dom_string_unref(class_name);
+		}
+	}
+
+	/* fixes1262 - css_computed_color/background_color's return code is
+	 * not checked, matching qjs_get_computed_style's own already-proven
+	 * usage (macsurf_qjs.c) exactly: `color` is an inherited property,
+	 * fully resolved by the time a box has a computed style at all, so
+	 * the out-parameter is always the real answer here. */
+	hb = (he != NULL) ? box_for_node((dom_node *) he) : NULL;
+	if (hb != NULL && hb->style != NULL) {
+		css_color col = 0;
+		css_computed_color(hb->style, &col);
+		sprintf(htmlcolor, "#%06lX",
+			(unsigned long) ((col >> 8) & 0xFFFFFF));
+		col = 0;
+		css_computed_background_color(hb->style, &col);
+		sprintf(htmlbg, "#%06lX",
+			(unsigned long) ((col >> 8) & 0xFFFFFF));
+	}
+
+	bb = (body != NULL) ? box_for_node(body) : NULL;
+	if (bb != NULL && bb->style != NULL) {
+		css_color col = 0;
+		css_computed_color(bb->style, &col);
+		sprintf(bodycolor, "#%06lX",
+			(unsigned long) ((col >> 8) & 0xFFFFFF));
+		col = 0;
+		css_computed_background_color(bb->style, &col);
+		sprintf(bodybg, "#%06lX",
+			(unsigned long) ((col >> 8) & 0xFFFFFF));
+	}
+
+	macsurf_debug_log_writef(
+		"LIFE FBCSS[%s] class=[%s] html_color=%s html_bg=%s "
+		"body_color=%s body_bg=%s",
+		when, clsbuf, htmlcolor, htmlbg, bodycolor, bodybg);
+}
+
 void html_pagemap_dump(html_content *c, const char *when)
 {
 	dom_element *root = NULL;
@@ -1071,6 +1155,7 @@ void html_pagemap_dump(html_content *c, const char *when)
 		if (dom_document_get_document_element(c->document, &he)
 				== DOM_NO_ERR && he != NULL) {
 			(void) html_pagemap_line((dom_node *)he, 0, NULL);
+			html_fbcss_report(he, body, when);
 			dom_node_unref((dom_node *)he);
 		}
 	}
