@@ -153,6 +153,217 @@ void css__cp_tokens_destroy(css_cp_token *tokens, uint32_t n)
 /* Custom-property list (per stylesheet)                              */
 /* ------------------------------------------------------------------ */
 
+/* fixes1268b (#167) - the custom-property capture path takes the value
+ * tokens verbatim, so a trailing "!important" is still in the run. Detect
+ * it and report the value length excluding it (plus any whitespace
+ * between the value and the bang).
+ *
+ * \param out_n Receives the token count of the value proper.
+ * \return true if the run ended in !important.
+ */
+static bool cp_tokens_trailing_important(const css_cp_token *toks, uint32_t n,
+		uint32_t *out_n)
+{
+	uint32_t i = n;
+	bool seen_important = false;
+
+	*out_n = n;
+	if (toks == NULL || n == 0)
+		return false;
+
+	/* Walk back over trailing whitespace */
+	while (i > 0 && toks[i - 1].type == CSS_TOKEN_S)
+		i--;
+
+	/* IDENT("important") */
+	if (i == 0 || toks[i - 1].type != CSS_TOKEN_IDENT ||
+			toks[i - 1].idata == NULL)
+		return false;
+	{
+		const char *d = lwc_string_data(toks[i - 1].idata);
+		size_t len = lwc_string_length(toks[i - 1].idata);
+		size_t k;
+		static const char imp[9] = { 'i','m','p','o','r','t','a','n','t' };
+
+		if (d == NULL || len != 9)
+			return false;
+		for (k = 0; k < 9; k++) {
+			if (tolower((unsigned char) d[k]) != imp[k])
+				return false;
+		}
+	}
+	i--;
+
+	while (i > 0 && toks[i - 1].type == CSS_TOKEN_S)
+		i--;
+
+	/* CHAR('!') */
+	if (i == 0 || toks[i - 1].type != CSS_TOKEN_CHAR ||
+			toks[i - 1].idata == NULL ||
+			lwc_string_length(toks[i - 1].idata) != 1 ||
+			lwc_string_data(toks[i - 1].idata)[0] != '!')
+		return false;
+	i--;
+	seen_important = true;
+
+	/* Trim whitespace before the bang too */
+	while (i > 0 && toks[i - 1].type == CSS_TOKEN_S)
+		i--;
+
+	*out_n = i;
+	return seen_important;
+}
+
+/* ------------------------------------------------------------------ */
+/* Per-element custom-property environment (fixes1268b, #167)         */
+/* ------------------------------------------------------------------ */
+
+/* Does a definition at (origin, important, specificity) replace the one
+ * already bound? This mirrors css__outranks_existing in css_select.c for
+ * ordinary properties; custom properties cascade by exactly the same
+ * rules, so the two must agree. Kept as a separate function rather than
+ * calling that one because it decides against a css_cp_binding, not
+ * against the prop_state table it indexes by opcode. */
+static bool cp_binding_outranked(const css_cp_binding *existing,
+		uint8_t origin, uint8_t important, uint32_t specificity)
+{
+	if (existing->origin < origin) {
+		/* New origin carries more weight, except against USER,i */
+		return (existing->important == 0 ||
+				existing->origin != CSS_ORIGIN_USER);
+	}
+
+	if (existing->origin == origin) {
+		if (origin == CSS_ORIGIN_UA) {
+			/* Importance is meaningless in the UA sheet */
+			return specificity >= existing->specificity;
+		}
+		if (existing->important == 0 && important != 0)
+			return true;
+		if (existing->important != 0 && important == 0)
+			return false;
+		/* Equal importance: higher specificity wins, and equal
+		 * specificity means the later rule wins - hence >=, as
+		 * rules arrive in ascending specificity then source
+		 * order. */
+		return specificity >= existing->specificity;
+	}
+
+	/* Existing origin outweighs the new one, except for USER,i */
+	return (origin == CSS_ORIGIN_USER && important != 0);
+}
+
+css_error css__cp_env_add(css_cp_env **env, lwc_string *name,
+		const css_cp_token *tokens, uint32_t n,
+		uint32_t specificity, uint8_t origin, uint8_t important)
+{
+	css_cp_env *e;
+	uint32_t i;
+
+	if (env == NULL || name == NULL)
+		return CSS_BADPARM;
+
+	if (*env == NULL) {
+		*env = (css_cp_env *)calloc(1, sizeof(css_cp_env));
+		if (*env == NULL)
+			return CSS_NOMEM;
+	}
+	e = *env;
+
+	for (i = 0; i < e->used; i++) {
+		if (!cp_name_equal(e->items[i].entry.name, name))
+			continue;
+		if (cp_binding_outranked(&e->items[i], origin, important,
+				specificity)) {
+			e->items[i].entry.name = name;
+			e->items[i].entry.tokens = (css_cp_token *)tokens;
+			e->items[i].entry.n_tokens = n;
+			e->items[i].specificity = specificity;
+			e->items[i].origin = origin;
+			e->items[i].important = important;
+		}
+		return CSS_OK;
+	}
+
+	if (e->used == e->allocated) {
+		uint32_t newcap = (e->allocated == 0) ? 16 : e->allocated * 2;
+		css_cp_binding *ni = (css_cp_binding *)realloc(e->items,
+				newcap * sizeof(css_cp_binding));
+		if (ni == NULL)
+			return CSS_NOMEM;
+		e->items = ni;
+		e->allocated = newcap;
+	}
+
+	memset(&e->items[e->used], 0, sizeof(css_cp_binding));
+	e->items[e->used].entry.name = name;
+	e->items[e->used].entry.tokens = (css_cp_token *)tokens;
+	e->items[e->used].entry.n_tokens = n;
+	e->items[e->used].entry.next = NULL;
+	e->items[e->used].specificity = specificity;
+	e->items[e->used].origin = origin;
+	e->items[e->used].important = important;
+	e->used++;
+
+	return CSS_OK;
+}
+
+const css_cp_entry *css__cp_env_find(const css_cp_env *env, lwc_string *name)
+{
+	uint32_t i;
+
+	if (env == NULL || name == NULL)
+		return NULL;
+
+	for (i = 0; i < env->used; i++) {
+		if (cp_name_equal(env->items[i].entry.name, name))
+			return &env->items[i].entry;
+	}
+
+	return NULL;
+}
+
+void css__cp_env_destroy(css_cp_env *env)
+{
+	if (env == NULL)
+		return;
+	/* names and tokens are borrowed from the stylesheet - freeing them
+	 * here would double-free at sheet teardown. */
+	free(env->items);
+	free(env);
+}
+
+css_error css__cp_env_add_style(css_cp_env **env, const css_style *style,
+		uint32_t specificity, uint8_t origin)
+{
+	const css_cp_entry *cp;
+
+	if (style == NULL)
+		return CSS_OK;
+
+	for (cp = style->custom_props; cp != NULL; cp = cp->next) {
+		css_error error;
+		uint8_t important = 0;
+		uint32_t n = cp->n_tokens;
+
+		/* A trailing "!important" is still sitting in the captured
+		 * token run - the custom-property capture path takes the
+		 * value verbatim. Strip it here so it neither reaches
+		 * substitution nor is mistaken for part of the value. */
+		if (cp_tokens_trailing_important(cp->tokens, cp->n_tokens,
+				&n)) {
+			important = 1;
+		}
+
+		error = css__cp_env_add(env, cp->name, cp->tokens, n,
+				specificity, origin, important);
+		if (error != CSS_OK)
+			return error;
+	}
+
+	return CSS_OK;
+}
+
 /* fixes1268a (#167) - rule-scoped custom-property storage. See the block
  * comment in custom_properties.h for why the per-sheet list below is not
  * sufficient. */
@@ -775,12 +986,30 @@ extern const css_stylesheet *css__select_ctx_sheet_at(
 static const css_cp_entry *lookup_var(lwc_string *name,
 		const css_stylesheet *origin_sheet,
 		const css_select_ctx *ctx,
-		const css_stylesheet *inline_sheet)
+		const css_stylesheet *inline_sheet,
+		const css_cp_env *env)
 {
 	const css_cp_entry *found;
 	const css_cp_entry *hit;
 
 	found = NULL;
+
+	/* fixes1268b (#167) - the element's own environment first. This is
+	 * the only source that knows which selector and which @media the
+	 * definition was written under, so when it has an answer that
+	 * answer is authoritative over anything the per-sheet scan below
+	 * can offer.
+	 *
+	 * The sheet-global chain remains as a fallback for names the
+	 * environment has not seen: until 1268c an ancestor's definition is
+	 * not yet inherited, and until 1268d a definition from a rule that
+	 * cascades AFTER this one has not arrived. Removing the fallback
+	 * before those land would regress both cases. 1268e deletes it. */
+	if (env != NULL) {
+		found = css__cp_env_find(env, name);
+		if (found != NULL)
+			return found;
+	}
 
 	if (ctx != NULL) {
 		uint32_t i;
@@ -837,6 +1066,7 @@ static css_error substitute_tokens(const css_cp_token *arr, uint32_t n,
 		const css_stylesheet *origin_sheet,
 		const css_select_ctx *ctx,
 		const css_stylesheet *inline_sheet,
+		const css_cp_env *env,
 		int depth, cp_scratch *out, bool *ok)
 {
 	uint32_t i;
@@ -884,13 +1114,14 @@ static css_error substitute_tokens(const css_cp_token *arr, uint32_t n,
 			}
 
 			entry = lookup_var(name_tok->idata,
-					origin_sheet, ctx, inline_sheet);
+					origin_sheet, ctx, inline_sheet,
+					env);
 			if (entry != NULL) {
 				error = substitute_tokens(
 						entry->tokens,
 						entry->n_tokens,
 						origin_sheet, ctx,
-						inline_sheet,
+						inline_sheet, env,
 						depth + 1, out, ok);
 				if (error != CSS_OK || !*ok)
 					return error;
@@ -898,7 +1129,7 @@ static css_error substitute_tokens(const css_cp_token *arr, uint32_t n,
 				error = substitute_tokens(
 						arr + fb_s, fb_e - fb_s,
 						origin_sheet, ctx,
-						inline_sheet,
+						inline_sheet, env,
 						depth + 1, out, ok);
 				if (error != CSS_OK || !*ok)
 					return error;
@@ -1090,7 +1321,7 @@ css_error css__deferred_decl_resolve(const css_deferred_decl *dd,
 
 	error = substitute_tokens(dd->tokens, dd->n_tokens,
 			origin_sheet, ctx, state->inline_style,
-			0, &scratch, &ok);
+			state->custom_env, 0, &scratch, &ok);
 #ifdef MACSURF_DEBUG
 	{
 		extern void macsurf_debug_log_tracef(

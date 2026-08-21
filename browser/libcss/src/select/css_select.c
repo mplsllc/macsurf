@@ -1056,6 +1056,13 @@ static void css_select__finalise_selection_state(
 	lwc_string_unref(state->element.ns);
 	lwc_string_unref(state->element.name);
 
+	/* fixes1268b (#167) - bindings borrow their names and tokens from
+	 * the stylesheets, so only the array is ours to free. */
+	if (state->custom_env != NULL) {
+		css__cp_env_destroy(state->custom_env);
+		state->custom_env = NULL;
+	}
+
 	if (state->revert != NULL) {
 		{ size_t i;
 		for (i = 0; i < CSS_ORIGIN_AUTHOR; i++) {
@@ -2823,6 +2830,22 @@ css_error cascade_style(const css_style *style, css_select_state *state)
 {
 	css_style s = *style;
 	css_deferred_decl *dd;
+	css_error cperr;
+
+	/* fixes1268b (#167) - this rule's own "--name" definitions join the
+	 * element's environment BEFORE anything else in the rule runs, so a
+	 * var() in the same rule can see them.
+	 *
+	 * Everything that makes custom-property scoping correct is implicit
+	 * in being here: cascade_style is reached only for a rule that
+	 * MATCHED, and only for one whose enclosing @media applies
+	 * (mq_rule_good_for_media, called during selector matching). The
+	 * per-sheet store this replaces had neither fact available. */
+	cperr = css__cp_env_add_style(&state->custom_env, style,
+			state->current_specificity,
+			(uint8_t) state->current_origin);
+	if (cperr != CSS_OK)
+		return cperr;
 
 	while (s.used > 0) {
 		opcode_t op;

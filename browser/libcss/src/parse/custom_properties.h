@@ -192,6 +192,78 @@ const css_cp_entry *css__style_find_custom_property(
  * and css_inline_extras_clear(). */
 
 
+/* --- Per-element custom-property environment (fixes1268b, #167) --- */
+
+/*
+ * The environment is the set of custom properties in force for ONE
+ * element, built during selection by cascade_style as each matching rule
+ * contributes its rule-scoped definitions. Because a css_style only
+ * cascades when its rule matches, and rules inside a non-matching @media
+ * are already filtered out by mq_rule_good_for_media, both the selector
+ * scoping and the media scoping that the per-sheet store threw away are
+ * restored here for free.
+ *
+ * Bindings BORROW their name and tokens from the stylesheet, which
+ * outlives selection. Destroying an environment frees only its array.
+ */
+
+/**
+ * One custom property in force for the element being selected, with the
+ * cascade metadata needed to decide whether a later definition replaces
+ * it.
+ */
+typedef struct css_cp_binding {
+	css_cp_entry entry;      /**< name/tokens BORROWED; next unused */
+	uint32_t specificity;    /**< Specificity of the defining rule */
+	uint8_t origin;          /**< css_origin of the defining sheet */
+	uint8_t important;       /**< Non-zero => !important */
+	uint8_t pad[2];
+} css_cp_binding;
+
+struct css_cp_env {
+	css_cp_binding *items;
+	uint32_t used;
+	uint32_t allocated;
+};
+typedef struct css_cp_env css_cp_env;
+
+/**
+ * Offer a definition to an element's environment, applying the same
+ * origin / importance / specificity precedence as ordinary properties
+ * (see css__outranks_existing). Creates the environment on first use.
+ *
+ * name and tokens are BORROWED, not owned - they must outlive the
+ * environment, which they do, being owned by the stylesheet.
+ *
+ * \param env  Environment pointer-to-pointer; *env may be NULL.
+ * \return CSS_OK or CSS_NOMEM.
+ */
+css_error css__cp_env_add(css_cp_env **env, lwc_string *name,
+		const css_cp_token *tokens, uint32_t n,
+		uint32_t specificity, uint8_t origin, uint8_t important);
+
+/**
+ * Look up the winning definition of `name` in an element's environment.
+ *
+ * \return Borrowed entry on hit, NULL on miss.
+ */
+const css_cp_entry *css__cp_env_find(const css_cp_env *env,
+		lwc_string *name);
+
+/**
+ * Free an environment's array. Does not touch the borrowed names/tokens.
+ */
+void css__cp_env_destroy(css_cp_env *env);
+
+/**
+ * Contribute every rule-scoped definition attached to `style` to `env`,
+ * in source order, at the given cascade position. Called by cascade_style
+ * for each matching rule.
+ */
+css_error css__cp_env_add_style(css_cp_env **env,
+		const struct css_style *style,
+		uint32_t specificity, uint8_t origin);
+
 /* --- Deferred declaration list (per css_style) --- */
 
 /**

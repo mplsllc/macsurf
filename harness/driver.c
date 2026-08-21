@@ -473,7 +473,11 @@ static void harness_dump_boxes(struct box *b, int depth, int maxdepth)
 	colorbuf[0] = '-'; colorbuf[1] = '\0';
 	if (b->style != NULL) {
 		css_computed_color(b->style, &colorq);
-		sprintf(colorbuf, "#%06lX", (unsigned long)(colorq >> 8));
+		/* fixes1268b: css_color is 0xAARRGGBB - `>> 8` rotated the
+		 * alpha into red and misreported every colour in this dump
+		 * (green printed as FF0080). Mask instead. */
+		sprintf(colorbuf, "#%06lX",
+				(unsigned long)(colorq & 0x00FFFFFFUL));
 	}
 	fprintf(stderr, "%*s%-34s type=%d disp=%d fs=%d x=%d y=%d w=%d h=%d "
 			"color=%s\n",
@@ -521,6 +525,31 @@ static bool t66_cls_has(struct box *b, const char *cls)
 	}
 	dom_string_unref(key);
 	return found;
+}
+
+/* fixes1268b (#167) - Test 76 helper. Find the first box carrying `cls`
+ * and report its computed color as 0xRRGGBB, or -1 if not found. */
+static long t76_color_of(struct box *b, const char *cls)
+{
+	long r;
+
+	if (b == NULL)
+		return -1;
+	if (t66_cls_has(b, cls) && b->style != NULL) {
+		css_color c = 0;
+		css_computed_color(b->style, &c);
+		/* css_color is 0xAARRGGBB. Shifting right by 8 rotates the
+		 * alpha into the red slot (green 0xFF008000 reads back as
+		 * 0xFF0080) - the same mistake fixes1263 made in the FBCSS
+		 * report. Mask, don't shift. */
+		return (long)(c & 0x00FFFFFFUL);
+	}
+	for (b = b->children; b != NULL; b = b->next) {
+		r = t76_color_of(b, cls);
+		if (r >= 0)
+			return r;
+	}
+	return -1;
 }
 
 /* Record the FIRST box whose class list holds each token. */
@@ -9222,6 +9251,218 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 75 PASS: 3 rules retain 3 distinct --x "
 			"values, incl. the one inside @media print ===\n");
 
+	/* ---------------------------------------------------------------
+	 * fixes1268b (#167) - custom properties resolve against the
+	 * ELEMENT's environment, so selector scope and @media scope are
+	 * both honoured.
+	 *
+	 * Both cases here have their definition and their consumer on the
+	 * SAME element, which is exactly what 1268b alone can fix:
+	 * inheritance from an ancestor is 1268c, and a definition from a
+	 * rule that cascades later is 1268d.
+	 *
+	 * Each case is chosen so the OLD per-sheet last-write-wins store
+	 * gives a different, wrong answer:
+	 *   .light expects green, but the sheet-global store's last --x is
+	 *          .dark's blue, so a broken build paints it blue;
+	 *   .mq    expects white, but the sheet-global store's last --w is
+	 *          the one inside @media print (black), which must never
+	 *          apply on screen.
+	 * ------------------------------------------------------------- */
+	fprintf(stderr, "\n=== Test 76: custom properties honour selector "
+			"scope and @media scope (fixes1268b) ===\n");
+	{
+		const char *t76_html =
+			"<html><body>"
+			"<div class=\"light\">L</div>"
+			"<div class=\"dark\">D</div>"
+			"<p class=\"mq\">M</p>"
+			"</body></html>";
+		const char *t76_css =
+			".light { --x: rgb(0,128,0); color: var(--x) }"
+			".dark  { --x: rgb(0,0,255); color: var(--x) }"
+			".mq    { --w: rgb(255,255,255); color: var(--w) }"
+			"@media print { .mq { --w: rgb(0,0,0) } }";
+		struct html_content t76c;
+		dom_hubbub_parser *t76p = NULL;
+		dom_document *t76doc = NULL;
+		dom_node *t76root = NULL;
+		css_select_ctx *t76ctx = NULL;
+		css_stylesheet *t76ua = NULL;
+		css_stylesheet *t76auth = NULL;
+		dom_hubbub_parser_params t76params;
+		css_stylesheet_params t76sp;
+		void *t76_box_ctx = NULL;
+		long t76_light, t76_dark, t76_mq;
+		int t76_bad = 0;
+		nserror t76err;
+		dom_exception t76derr;
+
+		memset(&t76params, 0, sizeof(t76params));
+		t76params.fix_enc = true;
+		t76derr = dom_hubbub_parser_create(&t76params, &t76p, &t76doc);
+		if (t76derr != DOM_HUBBUB_OK || t76p == NULL) {
+			fprintf(stderr, "FAIL: Test 76 parser create %d\n",
+					(int)t76derr);
+			return 1;
+		}
+		if (dom_hubbub_parser_parse_chunk(t76p,
+				(const uint8_t *)t76_html,
+				strlen(t76_html)) != DOM_HUBBUB_OK ||
+				dom_hubbub_parser_completed(t76p) !=
+					DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 76 parse\n");
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t76p);
+
+		memset(&t76c, 0, sizeof(t76c));
+		t76c.base_url = g_base_url;
+		t76c.document = t76doc;
+		t76c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t76c.enable_scripting = false;
+		if (css_select_ctx_create(&t76ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 76 select_ctx\n");
+			return 1;
+		}
+		t76c.select_ctx = t76ctx;
+
+		memset(&t76sp, 0, sizeof(t76sp));
+		t76sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t76sp.level = CSS_LEVEL_3;
+		t76sp.charset = "UTF-8";
+		t76sp.url = "resource:default.css";
+		t76sp.title = "default";
+		t76sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t76sp, &t76ua) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 76 UA sheet\n");
+			return 1;
+		}
+		{
+			const char *ua = "html,body,div,p{display:block}";
+			(void)css_stylesheet_append_data(t76ua,
+					(const uint8_t *)ua, strlen(ua));
+			(void)css_stylesheet_data_done(t76ua);
+		}
+		if (css_select_ctx_append_sheet(t76ctx, t76ua,
+				CSS_ORIGIN_UA, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 76 UA append\n");
+			return 1;
+		}
+
+		memset(&t76sp, 0, sizeof(t76sp));
+		t76sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t76sp.level = CSS_LEVEL_3;
+		t76sp.charset = "UTF-8";
+		t76sp.url = "http://local/t76.css";
+		t76sp.title = "author";
+		t76sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t76sp, &t76auth) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 76 author sheet\n");
+			return 1;
+		}
+		{
+			css_error ae = css_stylesheet_append_data(t76auth,
+					(const uint8_t *)t76_css,
+					strlen(t76_css));
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 76 author append=%d\n",
+						(int)ae);
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t76auth);
+		}
+		if (css_select_ctx_append_sheet(t76ctx, t76auth,
+				CSS_ORIGIN_AUTHOR, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 76 author append sheet\n");
+			return 1;
+		}
+
+		/* CSS_MEDIA_SCREEN + sheets appended as "screen": without
+		 * both, the cascade silently yields initial values. */
+		t76c.media.type = CSS_MEDIA_SCREEN;
+		t76c.media.width = INTTOFIX(800);
+		t76c.media.height = INTTOFIX(600);
+		t76c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t76c.unit_len_ctx.viewport_width = INTTOFIX(800);
+		t76c.unit_len_ctx.viewport_height = INTTOFIX(600);
+		t76c.unit_len_ctx.device_dpi = INTTOFIX(90);
+		t76c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t76c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t76c.universal) !=
+				lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 76 universal\n");
+			return 1;
+		}
+		t76c.base.status = CONTENT_STATUS_LOADING;
+		t76c.base.active = 0;
+		t76c.base.handler = &g_dummy_handler;
+
+		if (dom_document_get_document_element(t76doc,
+				(void *)&t76root) != DOM_NO_ERR ||
+				t76root == NULL) {
+			fprintf(stderr, "FAIL: Test 76 doc element\n");
+			return 1;
+		}
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t76err = dom_to_box(t76root, &t76c, initial_build_cb,
+				&t76_box_ctx);
+		dom_node_unref(t76root);
+		if (t76err != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 76 dom_to_box=%d\n",
+					(int)t76err);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 76 build done=%d ok=%d\n",
+					g_initial_build_done,
+					(int)g_initial_build_ok);
+			return 1;
+		}
+
+		t76_light = t76_color_of(t76c.layout, "light");
+		t76_dark  = t76_color_of(t76c.layout, "dark");
+		t76_mq    = t76_color_of(t76c.layout, "mq");
+		fprintf(stderr, "  .light=#%06lX (want #008000)  "
+				".dark=#%06lX (want #0000FF)  "
+				".mq=#%06lX (want #FFFFFF)\n",
+				t76_light, t76_dark, t76_mq);
+
+		if (t76_light != 0x008000L) {
+			fprintf(stderr, "FAIL: Test 76 selector scoping -- "
+					".light resolved var(--x) to #%06lX, "
+					"expected #008000. #0000FF means the "
+					"per-sheet last-write-wins store "
+					"answered with .dark's definition, "
+					"which is the facebook.com "
+					"--web-wash defect exactly.\n",
+					t76_light);
+			t76_bad = 1;
+		}
+		if (t76_dark != 0x0000FFL) {
+			fprintf(stderr, "FAIL: Test 76 selector scoping -- "
+					".dark resolved var(--x) to #%06lX, "
+					"expected #0000FF\n", t76_dark);
+			t76_bad = 1;
+		}
+		if (t76_mq != 0xFFFFFFL) {
+			fprintf(stderr, "FAIL: Test 76 media scoping -- "
+					".mq resolved var(--w) to #%06lX, "
+					"expected #FFFFFF. #000000 means a "
+					"definition inside @media print "
+					"reached a screen cascade.\n",
+					t76_mq);
+			t76_bad = 1;
+		}
+		if (t76_bad)
+			return 1;
+	}
+	fprintf(stderr, "=== Test 76 PASS: selector scope and @media scope "
+			"both honoured by var() resolution ===\n");
+
 	return 0;
 }
+
 

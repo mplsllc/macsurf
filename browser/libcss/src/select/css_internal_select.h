@@ -28,6 +28,8 @@ typedef struct reject_item {
 	css_selector_type type;
 } reject_item;
 
+struct css_cp_env;
+
 typedef struct prop_state {
 	uint32_t specificity;                 /* Specificity of property in result */
 	unsigned int    set              : 1, /* Whether property is set in result */
@@ -115,6 +117,12 @@ typedef struct css_select_state {
 	struct css_node_data *node_data;	/* Data we'll store on node */
 
 	prop_state props[CSS_N_PROPERTIES][CSS_PSEUDO_ELEMENT_COUNT];
+
+	/* fixes1268b (#167) - custom properties in force for this element,
+	 * accumulated by cascade_style as each matching rule contributes
+	 * its rule-scoped definitions. NULL until the first definition
+	 * arrives. New fields go at the END of this struct. */
+	struct css_cp_env *custom_env;
 } css_select_state;
 
 static inline void advance_bytecode(css_style *style, uint32_t n_bytes)
