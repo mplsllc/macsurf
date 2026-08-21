@@ -102,6 +102,29 @@ static script_handler_t *select_script_handler(content_type ctype)
 	return NULL;
 }
 
+/* fixes1254 (#167) - per-tag lifecycle trace (LIFE SPIPE Q/D/X, ord= on
+ * RUN). Budgeted like every other per-nav diagnostic in this file
+ * (g_script_tags_seen etc.): Facebook pages carry ~190 external tags, each
+ * good for up to 3 SPIPE lines, so an unbudgeted trace could run to
+ * thousands of lines across a session. Reset alongside the other counters
+ * in html_script_tag_census_report(). Session-cumulative counters (Q/D/X
+ * event totals) are NOT budgeted - only the verbose per-event line is -
+ * so a hardware round can always tell how many events happened even past
+ * budget, from the delta between two LIFE SPIPETOTALS lines. */
+static long g_spipe_budget = 600;
+long g_spipe_q_total = 0;
+long g_spipe_d_total = 0;
+long g_spipe_x_total = 0;
+
+static int macsurf_spipe_budget_take(void)
+{
+	if (g_spipe_budget <= 0) {
+		return 0;
+	}
+	g_spipe_budget--;
+	return 1;
+}
+
 
 /* exported internal interface documented in html/html_internal.h */
 nserror html_script_exec(html_content *c, bool allow_defer)
@@ -167,8 +190,8 @@ nserror html_script_exec(html_content *c, bool allow_defer)
 				 * js_exec, WORK-gated (this whole function had zero
 				 * log lines of any kind before this fix). */
 				macsurf_debug_log_writef(
-					"LIFE script_exec: RUN bytes=%ld url=%s",
-					(long) size,
+					"LIFE script_exec: RUN ord=%u bytes=%ld url=%s",
+					i + 1, (long) size,
 					nsurl_access(
 						hlcache_handle_get_url(s->data.handle)));
 				/* fixes873 (#301) - document.currentScript must name THIS
@@ -312,12 +335,27 @@ convert_script_async_cb(hlcache_handle *script,
 		parent->base.active--;
 		NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
 
+		g_spipe_d_total++;
+		if (macsurf_spipe_budget_take()) {
+			macsurf_debug_log_writef(
+				"LIFE SPIPE D ord=%u url=%s", i + 1,
+				nsurl_access(hlcache_handle_get_url(script)));
+		}
+
 		break;
 
 	case CONTENT_MSG_ERROR:
 		NSLOG(netsurf, INFO, "script %s failed: %s",
 		      nsurl_access(hlcache_handle_get_url(script)),
 		      event->data.errordata.errormsg);
+
+		g_spipe_x_total++;
+		if (macsurf_spipe_budget_take()) {
+			macsurf_debug_log_writef(
+				"LIFE SPIPE X ord=%u url=%s err=%s", i + 1,
+				nsurl_access(hlcache_handle_get_url(script)),
+				event->data.errordata.errormsg);
+		}
 
 		/* fixes869 (#295) - fire `error` at the element so a loader waiting
 		 * on this script REJECTS rather than hanging forever.  A promise that
@@ -395,12 +433,27 @@ convert_script_defer_cb(hlcache_handle *script,
 		parent->base.active--;
 		NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
 
+		g_spipe_d_total++;
+		if (macsurf_spipe_budget_take()) {
+			macsurf_debug_log_writef(
+				"LIFE SPIPE D ord=%u url=%s", i + 1,
+				nsurl_access(hlcache_handle_get_url(script)));
+		}
+
 		break;
 
 	case CONTENT_MSG_ERROR:
 		NSLOG(netsurf, INFO, "script %s failed: %s",
 		      nsurl_access(hlcache_handle_get_url(script)),
 		      event->data.errordata.errormsg);
+
+		g_spipe_x_total++;
+		if (macsurf_spipe_budget_take()) {
+			macsurf_debug_log_writef(
+				"LIFE SPIPE X ord=%u url=%s err=%s", i + 1,
+				nsurl_access(hlcache_handle_get_url(script)),
+				event->data.errordata.errormsg);
+		}
 
 		/* fixes869 (#295) - fire `error` at the element so a loader waiting
 		 * on this script REJECTS rather than hanging forever.  A promise that
@@ -716,8 +769,8 @@ convert_script_sync_cb(hlcache_handle *script,
 			/* fixes847 (#167 S1 census gap) - the sync-script sibling of
 			 * html_script_exec's RUN log below. */
 			macsurf_debug_log_writef(
-				"LIFE script_exec: RUN(sync) bytes=%ld url=%s",
-				(long) size,
+				"LIFE script_exec: RUN(sync) ord=%u bytes=%ld url=%s",
+				i + 1, (long) size,
 				nsurl_access(hlcache_handle_get_url(s->data.handle)));
 			script_handler(parent->js_thread, data, size,
 				       nsurl_access(hlcache_handle_get_url(s->data.handle)));
@@ -924,6 +977,26 @@ exec_src_script(html_content *c,
 		c->base.active++;
 		NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
 
+		/* fixes1254 (#167) - per-tag lifecycle ordinal. c->scripts_count
+		 * is this entry's 1-based position among ALL <script> tags
+		 * (inline+external) the parser has processed so far, matching
+		 * SCRIPTTAGS's combined seen count. Paired with the D/X markers
+		 * in convert_script_{async,defer,sync}_cb and ord= on the RUN
+		 * line, this traces every tag's queued->fetch-done/error->exec
+		 * path by ordinal, answering "which of the ~186 actually run,
+		 * and where does admission/fetch/exec diverge for the rest." */
+		g_spipe_q_total++;
+		if (macsurf_spipe_budget_take()) {
+			macsurf_debug_log_writef(
+				"LIFE SPIPE Q ord=%u type=%s url=%s",
+				c->scripts_count,
+				script_type == HTML_SCRIPT_SYNC ? "sync" :
+				script_type == HTML_SCRIPT_ASYNC ? "async" :
+					"defer",
+				nsurl_access(hlcache_handle_get_url(
+					nscript->data.handle)));
+		}
+
 		switch (script_type) {
 		case HTML_SCRIPT_SYNC:
 			ret =  DOM_HUBBUB_HUBBUB_ERR | HUBBUB_PAUSED;
@@ -1028,6 +1101,17 @@ void html_script_tag_census_report(void)
 	g_script_tags_seen     = 0;
 	g_script_tags_inline   = 0;
 	g_script_tags_external = 0;
+
+	/* fixes1254 (#167) - Q/D/X totals are session-cumulative (like
+	 * JS PAGE's scripts=), so a hardware round reads them as deltas
+	 * between two SPIPETOTALS lines the same way it already reads
+	 * JS PAGE. Only the per-event verbose lines are budgeted; these
+	 * totals count every Q/D/X regardless of budget, so the delta is
+	 * always exact even once the per-event trace goes quiet. */
+	macsurf_debug_log_writef(
+		"LIFE SPIPETOTALS q=%ld d=%ld x=%ld",
+		g_spipe_q_total, g_spipe_d_total, g_spipe_x_total);
+	g_spipe_budget = 600;
 }
 
 /**
