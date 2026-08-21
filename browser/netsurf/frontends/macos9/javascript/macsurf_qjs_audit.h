@@ -79,6 +79,7 @@ extern long g_evreg_audit;
 extern long g_evmiss_audit;
 extern long g_evfire_audit;
 extern long g_mslife_audit;
+extern long g_console_err_audit;  /* fixes1246 */
 extern long g_geom_audit;
 extern int  g_pn_logged;
 

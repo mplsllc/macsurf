@@ -472,13 +472,44 @@ void macsurf_qjs__safe_eval(JSContext *qctx, const char *src)
 /* console.* native functions                                           */
 /* ------------------------------------------------------------------ */
 
+/* fixes1246 (#167) - console.error/warn were "[js:error]"/"[js:warn]"
+ * prefixed, NOT "LIFE " -- macsurf_debug_log_write's release-build gate
+ * (macsurf_log_is_crash_report) only keeps a line that either starts with
+ * '=' or "NAV", or contains an exact ALL-CAPS keyword (FAIL, ERROR,
+ * ASSERT, PANIC, UAF, INVALID, ABORT, NOMEM, CORRUPT, TALLOC) or the
+ * literal string "LIFE ". Real framework error text ("Warning: ...",
+ * "Error: ...", a React hydration-mismatch message, a component stack)
+ * essentially never matches any of those case-sensitively, so EVERY
+ * console.error/warn call on a shipped build has been going straight to
+ * the void -- the exact same invisible-diagnostic trap as fixes1234's
+ * winevt fix and fixes1237's window/document dispatchEvent fix, just one
+ * level higher: this is the PAGE's OWN primary error-reporting channel,
+ * silently dark for the whole history of this engine. React specifically
+ * reports recoverable render/hydration errors via console.error rather
+ * than an uncaught throw (by design, so one broken component does not
+ * take down the whole tree) -- which is exactly the shape that would
+ * explain "18 scripts execute with zero exceptions, the one registered
+ * listener runs clean, nothing ever throws anywhere we can already see,
+ * and yet nothing ever finishes rendering." log/info/debug stay as they
+ * were: much higher call volume from ordinary pages, lower diagnostic
+ * value per line. */
 static void qjs_console_emit(JSContext *ctx, const char *prefix,
 		int argc, JSValueConst *argv)
 {
 	int i;
-	char buf[512];
+	char buf[2048];
 	size_t pos = 0;
 	size_t plen = strlen(prefix);
+
+	/* fixes1246 - budget only the two LIFE-promoted levels (error/warn);
+	 * log/info/debug stay WORK-invisible in release exactly as before, so
+	 * they cost nothing and need no cap. Silent drop past budget, same
+	 * convention as g_mslife_audit/qjs_ms_life -- no "budget exhausted"
+	 * marker line. */
+	if (strncmp(prefix, "LIFE ", 5) == 0) {
+		if (g_console_err_audit <= 0) return;
+		g_console_err_audit--;
+	}
 
 	if (plen < sizeof buf) {
 		memcpy(buf, prefix, plen);
@@ -495,6 +526,15 @@ static void qjs_console_emit(JSContext *ctx, const char *prefix,
 		if (s) JS_FreeCString(ctx, s);
 	}
 	buf[pos] = '\0';
+	/* A React component-stack message embeds real newlines; sanitize to
+	 * spaces so it can't fragment the log's one-line-per-entry format
+	 * (same reason qjs_ms_life does this for __msLife strings). */
+	{
+		size_t k;
+		for (k = 0; k < pos; k++) {
+			if (buf[k] == '\r' || buf[k] == '\n') buf[k] = ' ';
+		}
+	}
 	MS_LOG(buf);
 }
 
@@ -508,8 +548,8 @@ static JSValue qjs_console_##name(JSContext *ctx, JSValueConst this_val, \
 }
 
 CONSOLE_FN(log,   "[js]")
-CONSOLE_FN(warn,  "[js:warn]")
-CONSOLE_FN(error, "[js:error]")
+CONSOLE_FN(warn,  "LIFE console.warn:")
+CONSOLE_FN(error, "LIFE console.error:")
 CONSOLE_FN(info,  "[js:info]")
 CONSOLE_FN(debug, "[js:debug]")
 
@@ -2689,6 +2729,14 @@ long g_evreg_audit = 250;  /* exported for audit */
 long g_evmiss_audit = 60;  /* exported for audit */
 long g_evfire_audit = 300;  /* exported for audit */
 long g_mslife_audit = 250;  /* exported for audit */
+/* fixes1246 (#167) - console.error/console.warn just went from invisible
+ * to LIFE-visible; a page's own high-frequency warning (e.g. a
+ * deprecation notice logged on every scroll/render) could otherwise flood
+ * the log the same way any other unconditional per-event line would.
+ * Generous on purpose -- this budget exists to catch a genuine diagnostic
+ * BURST (many distinct React warnings during one failed mount), not to
+ * make error reporting rare. */
+long g_console_err_audit = 200;  /* exported for audit */
 extern long g_geom_audit; /* defined below, near the metric accessors */
 /* fixes1110 -- parentNode "not attached" diagnostic budget (fixes1004,
  * tag name added fixes1109). Was a function-local `static int`, so the cap

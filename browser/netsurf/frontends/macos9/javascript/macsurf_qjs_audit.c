@@ -354,6 +354,13 @@ void macsurf_qjs_audit_reset(void)
 	 * rather than the hundreds the full audit emits. This is the
 	 * implement-next list, written by real sites instead of by me. */
 	g_mslife_audit = 60;
+	/* fixes1246 (#167) - console.error/console.warn just went LIFE-visible
+	 * (previously "[js:error]"/"[js:warn]", invisible in release). Same
+	 * always-on, independent-of-MACSURF_JS_AUDIT posture as g_mslife_audit
+	 * above: this is a page's OWN primary error-reporting channel, not a
+	 * debug-only audit feature, and React specifically uses it to report
+	 * recoverable render/hydration failures instead of an uncaught throw. */
+	g_console_err_audit = 200;
 	/* fixes1030  -  the three ways script can DELETE page content:
 	 * removeChild, textContent= and innerHTML=. All three now log their
 	 * target's identity on this shared budget, independent of

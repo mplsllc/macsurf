@@ -8960,5 +8960,65 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 72 PASS: canvas 2D real measureText, honest "
 			"no-op drawing surface ===\n");
 
+	fprintf(stderr, "\n=== Test 73: console.error/warn are LIFE-visible and "
+			"budget-capped (#167) ===\n");
+	{
+		/* fixes1246 - the harness's own macsurf_debug_log_write
+		 * (harness_stubs.c) prints unconditionally to stderr; it does not
+		 * simulate the release-build crash-only gate, so this test can't
+		 * observe THAT filtering directly. What it CAN and does verify:
+		 * the calls don't throw, and the new budget counter
+		 * (g_console_err_audit) decrements exactly once per LIFE-tagged
+		 * call and floors at 0 rather than going negative or uncapped --
+		 * the actual new logic this round added, as opposed to the
+		 * string-prefix constant, which a compile already proves correct. */
+		extern long g_console_err_audit;
+		long before = g_console_err_audit;
+		const char *js1 =
+			"console.error('Warning: something recoverable failed');"
+			"console.warn('a deprecation notice');"
+			"console.log('ordinary log, not budgeted');"
+			"console.info('ordinary info, not budgeted');";
+		unsigned char ok;
+		long after;
+		long i;
+
+		ok = js_exec(thread, (const unsigned char *)js1, strlen(js1),
+				"driver-t73-console.js");
+		fprintf(stderr, "js_exec(t73 console) ok=%d\n", (int)ok);
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 73 console.error/warn threw\n");
+			return 1;
+		}
+		after = g_console_err_audit;
+		if (before - after != 2) {
+			fprintf(stderr, "FAIL: Test 73 budget moved by %ld, "
+					"expected exactly 2 (one error + one warn; "
+					"log/info must NOT consume it)\n",
+					before - after);
+			return 1;
+		}
+		/* Drain the rest of the budget, then confirm it floors at 0 (and
+		 * that going past it still doesn't throw). */
+		for (i = 0; i < before + 10; i++) {
+			const char *js2 = "console.error('spam');";
+			ok = js_exec(thread, (const unsigned char *)js2,
+					strlen(js2), "driver-t73-spam.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: Test 73 console.error threw "
+						"on iteration %ld\n", i);
+				return 1;
+			}
+		}
+		if (g_console_err_audit != 0) {
+			fprintf(stderr, "FAIL: Test 73 budget=%ld after "
+					"over-spending, expected floored at 0\n",
+					g_console_err_audit);
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 73 PASS: console.error/warn LIFE-visible, "
+			"budget floors at 0, log/info unaffected ===\n");
+
 	return 0;
 }
