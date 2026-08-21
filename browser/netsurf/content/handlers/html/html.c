@@ -44,6 +44,7 @@
 #include "utils/ascii.h"
 #include "netsurf/content.h"
 #include "netsurf/browser_window.h"
+#include "netsurf/css.h"
 #include "netsurf/utf8.h"
 #include "netsurf/keypress.h"
 #include "netsurf/layout.h"
@@ -1073,6 +1074,78 @@ static void html_fbcss_report(dom_element *he, dom_node *body,
 		when, clsbuf, htmlcolor, htmlbg, bodycolor, bodybg);
 }
 
+/* fixes1264 (#167) - fixes1263's clean FBCSS read proved body_color=#1C1E21
+ * (Facebook's own correct light-mode --fds-primary-text) against
+ * body_bg=#1F1F22 (dark, wrong for a light-mode page) - the invisible text
+ * is correct foreground over incorrect background, not a bad --fds-*
+ * lookup for the TEXT itself. What FBCSS could not show: html_redraw_box.c
+ * has real, independent CSS 2.1 SS14.2 root/body background-propagation
+ * logic (html_redraw_find_bg_box, box_html/box_body in box_special.c) -
+ * if the root <html> box has no background, BODY's background propagates
+ * to become the page canvas fill. So body_bg=#1F1F22 could very plausibly
+ * BE why the entire canvas goes dark, but nothing yet proves which box the
+ * renderer actually selected. This reads html's and body's own
+ * background-color directly (same box_for_node() pattern as
+ * html_fbcss_report, called from the same safe point) and applies the
+ * IDENTICAL selection rule html_redraw_find_bg_box uses, so root_source/
+ * canvas_bg reflect what real paint decided, not a re-guess. Full
+ * AARRGGBB this time (css_color's native packing needs no shift/mask at
+ * all - printing it raw sidesteps the exact mistake fixes1263 had to
+ * fix). */
+static void html_fbpaint_report(dom_element *he, dom_node *body,
+		const char *when)
+{
+	struct box *hb;
+	struct box *bb;
+	css_color hcol = 0;
+	css_color bcol = 0;
+	int h_has_bg = 0;
+	int b_has_bg = 0;
+	const char *root_source = "none";
+	char htmlbgbuf[12] = "-";
+	char bodybgbuf[12] = "-";
+	char canvasbg[12] = "-";
+
+	hb = (he != NULL) ? box_for_node((dom_node *) he) : NULL;
+	if (hb != NULL && hb->style != NULL) {
+		css_computed_background_color(hb->style, &hcol);
+		h_has_bg = !nscss_color_is_transparent(hcol);
+		sprintf(htmlbgbuf, "#%08lX", (unsigned long) hcol);
+	}
+
+	bb = (body != NULL) ? box_for_node(body) : NULL;
+	if (bb != NULL && bb->style != NULL) {
+		css_computed_background_color(bb->style, &bcol);
+		b_has_bg = !nscss_color_is_transparent(bcol);
+		sprintf(bodybgbuf, "#%08lX", (unsigned long) bcol);
+	}
+
+	/* Mirrors html_redraw_find_bg_box's root-box branch exactly: root's
+	 * own background wins if non-transparent; otherwise body's
+	 * propagates; otherwise neither paints (canvas stays UA default). */
+	if (h_has_bg) {
+		root_source = "html";
+		sprintf(canvasbg, "#%08lX", (unsigned long) hcol);
+	} else if (b_has_bg) {
+		root_source = "body";
+		sprintf(canvasbg, "#%08lX", (unsigned long) bcol);
+	}
+
+	/* fixes1264 CRASH-CLASS NOTE: every value below reaches
+	 * macsurf_debug_log_writef via %s from a buffer pre-formatted with
+	 * REAL sprintf above, never via %X/%08lX directly in this call.
+	 * macsurf_debug_log.c's hand-rolled formatter only recognizes
+	 * %d/%ld/%p/%s/%% (fixes1255) - an unrecognized specifier consumes
+	 * no va_arg, so a later %s in the SAME call reads the wrong slot and
+	 * dereferences an integer as a pointer. Caught in review before this
+	 * ever reached hardware; see the fixes1255 commit for the exact
+	 * mechanism. */
+	macsurf_debug_log_writef(
+		"LIFE FBPAINT[%s] html_bg=%s body_bg=%s "
+		"root_source=%s canvas_bg=%s",
+		when, htmlbgbuf, bodybgbuf, root_source, canvasbg);
+}
+
 void html_pagemap_dump(html_content *c, const char *when)
 {
 	dom_element *root = NULL;
@@ -1156,6 +1229,7 @@ void html_pagemap_dump(html_content *c, const char *when)
 				== DOM_NO_ERR && he != NULL) {
 			(void) html_pagemap_line((dom_node *)he, 0, NULL);
 			html_fbcss_report(he, body, when);
+			html_fbpaint_report(he, body, when);
 			dom_node_unref((dom_node *)he);
 		}
 	}
