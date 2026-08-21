@@ -985,6 +985,36 @@ exec_inline_script(html_content *c, dom_node *node, dom_string *mimetype)
 }
 
 
+/* fixes1239 (#167) - <script> tags the PARSER found, split inline/external,
+ * independent of whether js_exec ever ran one. The Facebook SSR-streaming
+ * investigation needed exactly this split: the script-census in
+ * macsurf_qjs.c (macsurf_qjs_page_js_summary) only records EXECUTIONS
+ * (js_exec's own SCRIPT_CENSUS_INLINE/EXTERNAL split), so a stuck page
+ * reporting zero inline executions is ambiguous between "the parser found
+ * no inline <script> tags in this document at all" and "it found some but
+ * something upstream of js_exec (js_thread creation failure, an
+ * unsupported mimetype -- both of which return early below, before either
+ * increment site) quietly dropped them". This counts DISCOVERY at the
+ * parser callback itself, before any of those early returns, so the two
+ * cases read differently in the log. `seen` increments unconditionally at
+ * the top (covers the js_thread-missing early return too); `inline`/
+ * `external` increment at the existing src-attribute checks already made
+ * for the module and regular-script paths below -- no extra DOM query. */
+long g_script_tags_seen     = 0;
+long g_script_tags_inline   = 0;
+long g_script_tags_external = 0;
+
+void html_script_tag_census_report(void)
+{
+	macsurf_debug_log_writef(
+		"LIFE SCRIPTTAGS seen=%ld inline=%ld external=%ld",
+		g_script_tags_seen, g_script_tags_inline,
+		g_script_tags_external);
+	g_script_tags_seen     = 0;
+	g_script_tags_inline   = 0;
+	g_script_tags_external = 0;
+}
+
 /**
  * process script node parser callback
  *
@@ -997,6 +1027,8 @@ html_process_script(void *ctx, dom_node *node)
 	dom_exception exc; /* returned by libdom functions */
 	dom_string *src, *mimetype;
 	dom_hubbub_error err = DOM_HUBBUB_OK;
+
+	g_script_tags_seen++;   /* fixes1239 - every callback, no early return skips this */
 
 	/* ensure javascript context is available */
 	/* We should only ever be here if scripting was enabled for this
@@ -1038,6 +1070,7 @@ html_process_script(void *ctx, dom_node *node)
 				 * semantics via js_exec_module. */
 				dom_string *modsrc;
 				dom_exception mexc;
+				g_script_tags_inline++;   /* fixes1239 */
 				mexc = dom_node_get_text_content(
 					node, &modsrc);
 				if (mexc == DOM_NO_ERR &&
@@ -1069,6 +1102,7 @@ html_process_script(void *ctx, dom_node *node)
 			 * deferred; external module scripts get
 			 * regular-script treatment for now (still a
 			 * massive improvement over the silent drop). */
+			g_script_tags_external++;   /* fixes1239 */
 			dom_string_unref(mimetype);
 			mimetype = dom_string_ref(
 				corestring_dom_text_javascript);
@@ -1081,8 +1115,10 @@ html_process_script(void *ctx, dom_node *node)
 
 	exc = dom_element_get_attribute(node, corestring_dom_src, &src);
 	if (exc != DOM_NO_ERR || src == NULL) {
+		g_script_tags_inline++;   /* fixes1239 */
 		err = exec_inline_script(c, node, mimetype);
 	} else {
+		g_script_tags_external++;   /* fixes1239 */
 		err = exec_src_script(c, node, mimetype, src);
 		dom_string_unref(src);
 	}

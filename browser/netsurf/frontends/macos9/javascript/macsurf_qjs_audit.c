@@ -238,6 +238,16 @@ void macsurf_qjs_emit_js_profile(void)
 		g_raf_fires = 0;
 	}
 
+	/* fixes1239 (#167) - <script> tags the PARSER found (script.c,
+	 * html_process_script), split inline/external, independent of
+	 * whether js_exec ever ran one. Same local-extern pattern as
+	 * html_reconvert_phase_report above -- script.c is content/html/,
+	 * not this TU's own subsystem. */
+	{
+		extern void html_script_tag_census_report(void);
+		html_script_tag_census_report();
+	}
+
 	g_qjs_interrupts  = 0;
 	macsurf_qjs_ncalls = 0;
 	g_wrap_installs   = 0;
