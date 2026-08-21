@@ -9,6 +9,7 @@
  */
 
 #include <assert.h>
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -909,6 +910,73 @@ static css_error build_replay_vector(const css_cp_token **ptrs,
 /* Resolve a deferred declaration                                     */
 /* ------------------------------------------------------------------ */
 
+/* fixes1267 (#167) - local copy of the <body> element test. The one in
+ * select/properties/helpers.c is static to that TU; a shared symbol is not
+ * worth adding for a diagnostic. Direct byte compare, no interning and no
+ * POSIX strcasecmp (see the C89/CW8 port audit checklist). */
+static int cp__qname_is_body(const css_qname *el)
+{
+	const char *d;
+	size_t len;
+	size_t i;
+	static const char body[4] = { 'b', 'o', 'd', 'y' };
+
+	if (el == NULL || el->name == NULL)
+		return 0;
+
+	d = lwc_string_data(el->name);
+	len = lwc_string_length(el->name);
+	if (d == NULL || len != 4)
+		return 0;
+
+	for (i = 0; i < 4; i++) {
+		if (tolower((unsigned char) d[i]) != body[i])
+			return 0;
+	}
+	return 1;
+}
+
+/* fixes1267 (#167) - flatten a token run into a printable buffer. Truncates
+ * rather than allocating; diagnostics must never be able to fail the
+ * cascade. buf is always NUL-terminated. */
+static void cp__tokens_to_text(const css_cp_token *const *items, uint32_t n,
+		const css_cp_token *flat, uint32_t nflat,
+		char *buf, size_t buflen)
+{
+	size_t out = 0;
+	uint32_t i;
+
+	if (buf == NULL || buflen == 0)
+		return;
+	buf[0] = '\0';
+
+	for (i = 0; i < (items != NULL ? n : nflat); i++) {
+		const css_cp_token *t = (items != NULL) ? items[i] : &flat[i];
+		const char *d;
+		size_t len;
+		size_t k;
+
+		if (t == NULL || t->idata == NULL) {
+			d = " ";
+			len = 1;
+		} else {
+			d = lwc_string_data(t->idata);
+			len = lwc_string_length(t->idata);
+			if (d == NULL)
+				continue;
+		}
+
+		for (k = 0; k < len; k++) {
+			if (out + 1 >= buflen) {
+				buf[out] = '\0';
+				return;
+			}
+			buf[out++] = d[k];
+		}
+	}
+	buf[out] = '\0';
+}
+
 /* Linear-search for property ID matching the ident's idata. */
 static int find_property_id(css_language *c, lwc_string *name)
 {
@@ -985,6 +1053,21 @@ css_error css__deferred_decl_resolve(const css_deferred_decl *dd,
 		return CSS_OK;
 	}
 
+	if (state->element.name != NULL && cp__qname_is_body(&state->element)) {
+		char rawbuf[160];
+		char outbuf[160];
+		cp__tokens_to_text(NULL, 0, dd->tokens, dd->n_tokens,
+				rawbuf, sizeof(rawbuf));
+		cp__tokens_to_text(scratch.items, scratch.used, NULL, 0,
+				outbuf, sizeof(outbuf));
+		macsurf_debug_log_writef(
+			"LIFE FBVAR prop=%s spec=%ld raw=%s -> out=%s",
+			(dd->property != NULL) ?
+				lwc_string_data(dd->property) : "(null)",
+			(long) state->current_specificity,
+			rawbuf, outbuf);
+	}
+
 	error = build_replay_vector(scratch.items, scratch.used, &replay);
 	if (error != CSS_OK) {
 		free(scratch.items);
@@ -1055,41 +1138,53 @@ css_error css__deferred_decl_resolve(const css_deferred_decl *dd,
 			css__make_style_important(scratch_style);
 	}
 
-	/* fixes347f - apply bytecode through the normal cascade dispatch,
-	 * but temporarily bump current_specificity to MAX so the var()-
-	 * resolved write always outranks earlier writes that may have set
-	 * a placeholder value (e.g. UA background-image:none) before this
-	 * deferred declaration's rule got its turn. var() substitution is
-	 * a textual replace; the resulting value belongs to the rule that
-	 * referenced var(), so it inherits THAT rule's specificity. By
-	 * the time we reach here, the rule's cascade_style is running and
-	 * state->current_specificity is correct, but for a defensive
-	 * cover against ordering bugs we still bump and restore. */
-	{
-		uint32_t saved_specificity = state->current_specificity;
-		state->current_specificity = 0x7fffffff;
-		cascade_walker = *scratch_style;
-		while (cascade_walker.used > 0) {
-			opcode_t op;
-			css_code_t opv;
+	/* fixes1267 (#167) - apply the resolved bytecode through the normal
+	 * cascade dispatch at the REFERENCING RULE'S OWN SPECIFICITY.
+	 *
+	 * fixes347f used to bump state->current_specificity to 0x7fffffff
+	 * across this walk, as a "defensive cover" against a var()-resolved
+	 * write losing to a placeholder written earlier (the example given
+	 * was a UA `background-image: none`). That reasoning was wrong on
+	 * both counts, and the sentinel poisoned the cascade:
+	 *
+	 *  - A UA-origin placeholder is already beaten by an author-origin
+	 *    write in css__outranks_existing purely on origin, before
+	 *    specificity is ever consulted. The bump bought nothing there.
+	 *  - cascade_style() walks this rule's deferred list from inside the
+	 *    same call in which match_selector_chain() set
+	 *    state->current_specificity = selector->specificity, so the
+	 *    correct value is already in place on entry. Within the rule,
+	 *    deferred decls run after the bytecode decls at equal
+	 *    specificity, and css__outranks_existing uses >=, so source
+	 *    order still resolves them correctly.
+	 *
+	 * What the bump actually did was make EVERY var()-resolved
+	 * declaration unbeatable by any real selector (max real specificity
+	 * is far below 0x7fffffff), inverting the cascade for the whole
+	 * page. On facebook.com this is why `body { background-color:
+	 * var(...) }` (dark) outranked a plain light-mode background: the
+	 * FBBG trace showed the two competing decls from the same sheet at
+	 * spec=1 and spec=2147483647. Per CSS Variables 1 sec 3, a var()
+	 * substitution is a textual replacement whose result belongs to the
+	 * referencing declaration - it inherits that rule's specificity and
+	 * nothing more. */
+	cascade_walker = *scratch_style;
+	while (cascade_walker.used > 0) {
+		opcode_t op;
+		css_code_t opv;
 
-			opv = *cascade_walker.bytecode;
-			cascade_walker.used -= 1;
-			cascade_walker.bytecode = cascade_walker.bytecode + 1;
+		opv = *cascade_walker.bytecode;
+		cascade_walker.used -= 1;
+		cascade_walker.bytecode = cascade_walker.bytecode + 1;
 
-			op = getOpcode(opv);
+		op = getOpcode(opv);
 
-			error = prop_dispatch[op].cascade(opv,
-					&cascade_walker, state);
-			if (error != CSS_OK) {
-				state->current_specificity =
-						saved_specificity;
-				css__stylesheet_style_destroy(scratch_style);
-				parserutils_vector_destroy(replay);
-				return error;
-			}
+		error = prop_dispatch[op].cascade(opv, &cascade_walker, state);
+		if (error != CSS_OK) {
+			css__stylesheet_style_destroy(scratch_style);
+			parserutils_vector_destroy(replay);
+			return error;
 		}
-		state->current_specificity = saved_specificity;
 	}
 
 	css__stylesheet_style_destroy(scratch_style);
