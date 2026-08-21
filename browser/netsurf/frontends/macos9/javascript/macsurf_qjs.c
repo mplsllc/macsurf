@@ -7340,9 +7340,20 @@ static void qjs_sel_parse(const char *sel, struct qjs_sel *out)
  * confirmed `node` is an ELEMENT_NODE. `cls` takes the same layout as
  * either struct's `cls[QJS_SEL_MAX_CLASS][QJS_SEL_NAME]` field decayed to
  * a pointer-to-array, which is why both call sites can pass their own
- * `c->cls` / `c->nott.cls` directly. */
+ * `c->cls` / `c->nott.cls` directly.
+ *
+ * fixes1241 (#167) - `cls` MUST be `const`. Both call sites are
+ * qjs_compound_match's `const struct qjs_sel_compound *c`, so `c->cls` /
+ * `c->nott.cls` are themselves const-qualified array types
+ * (`const char[QJS_SEL_MAX_CLASS][QJS_SEL_NAME]`) -- passing that to a
+ * non-const `char cls[][QJS_SEL_NAME]` parameter silently drops the
+ * qualifier, which CW8 rejects outright ("illegal implicit conversion
+ * from 'const char[4][64]' to 'char (*)[64]'", real build error against
+ * this exact fixes1240 code) where gcc's default gnu99 mode -- what
+ * check-c89/check-macdefault actually run -- stayed silent. Harness-clean
+ * is not proof of CW8-clean for a qualifier mismatch like this one. */
 static int qjs_simple_match(dom_node *node, const char *tag,
-		char cls[][QJS_SEL_NAME], int ncls, const char *id,
+		const char cls[][QJS_SEL_NAME], int ncls, const char *id,
 		const struct qjs_sel_attr *attr, int nattr)
 {
 	int i;
