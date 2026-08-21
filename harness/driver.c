@@ -9020,5 +9020,78 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 73 PASS: console.error/warn LIFE-visible, "
 			"budget floors at 0, log/info unaffected ===\n");
 
+	fprintf(stderr, "\n=== Test 74: __onBeforeModuleFactory require-trace "
+			"survives the page's own reset and never throws (#167) ===\n");
+	{
+		/* fixes1247 - simulates the exact real-world shape confirmed in
+		 * Facebook's own bundle: the page's bootstrap does
+		 * `t.__onBeforeModuleFactory=null;` as part of its OWN init
+		 * (unconditional, no guard), then its require() dispatch calls
+		 * `t.__onBeforeModuleFactory==null||t.__onBeforeModuleFactory(l)`
+		 * for every module -- WITH NO TRY/CATCH AROUND THAT CALL. Both
+		 * properties matter: our defineProperty trap must survive the
+		 * plain-assignment reset, AND the hook itself must never throw
+		 * no matter what `l` looks like (malformed module records
+		 * included), since a throw here would abort the PAGE's own
+		 * require() call, not just this diagnostic. */
+		const char *js =
+			"(function(){"
+			/* the page's own reset attempt -- must NOT actually null
+			 * out our hook. */
+			"window.__onBeforeModuleFactory=null;"
+			"if(typeof window.__onBeforeModuleFactory!=='function')"
+			"throw new Error('ASSERT FAIL: page\\'s own \"=null\" "
+				"reset defeated the require-trace hook');"
+			/* normal calls: a watched id, an unwatched id, the same "
+			 * watched id again (dedup path). None may throw. */
+			"window.__onBeforeModuleFactory({id:'ServerJSPayloadListener_NEW'});"
+			"window.__onBeforeModuleFactory({id:'SomeUnrelatedModule'});"
+			"window.__onBeforeModuleFactory({id:'ServerJSPayloadListener_NEW'});"
+			/* malformed records: null, undefined, no .id, a non-string "
+			 * .id, and calling with no argument at all. Every one of
+			 * these must be swallowed silently, not thrown. */
+			"window.__onBeforeModuleFactory(null);"
+			"window.__onBeforeModuleFactory(undefined);"
+			"window.__onBeforeModuleFactory({});"
+			"window.__onBeforeModuleFactory({id:42});"
+			"window.__onBeforeModuleFactory({id:null});"
+			"window.__onBeforeModuleFactory();"
+			"globalThis.__t74sync=1;"
+			"})();"
+			"if(!globalThis.__t74sync)"
+			"throw new Error('ASSERT FAIL: t74sync flag not set');";
+		unsigned char ok;
+
+		ok = js_exec(thread, (const unsigned char *)js, strlen(js),
+				"driver-t74-requiretrace.js");
+		fprintf(stderr, "js_exec(t74 require-trace) ok=%d\n", (int)ok);
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 74 require-trace hook threw "
+					"(would have broken the page's own "
+					"require() in real use)\n");
+			return 1;
+		}
+		{
+			const char *js2 =
+				"var t=globalThis.__msRequireTraceTotal();"
+				"if(t!==9)"
+				"throw new Error('ASSERT FAIL: total='+t+' expected 9 "
+					"(every call counts, watched or not, "
+					"well-formed or not)');";
+			unsigned char ok2 = js_exec(thread,
+					(const unsigned char *)js2, strlen(js2),
+					"driver-t74-total-check.js");
+			fprintf(stderr, "js_exec(t74 total check) ok=%d\n",
+					(int)ok2);
+			if (!ok2) {
+				fprintf(stderr, "FAIL: Test 74 __msRequireTraceTotal() "
+						"assertion failed\n");
+				return 1;
+			}
+		}
+	}
+	fprintf(stderr, "=== Test 74 PASS: require-trace hook survives the "
+			"page's own reset, never throws on any input ===\n");
+
 	return 0;
 }

@@ -12167,6 +12167,81 @@ static void register_browser_globals(JSContext *ctx)
 		}
 	}
 
+	/* fixes1247 (#167) - Facebook's own module loader (the Comet/"cr:"
+	 * bundler runtime __d/__r bootstrap, confirmed present in the real
+	 * bundles this engine executes) exposes two OFFICIAL, INTENTIONAL
+	 * instrumentation hooks: window.__onBeforeModuleFactory /
+	 * __onAfterModuleFactory, called with the module record (.id = the
+	 * module name string) immediately before/after that module's factory
+	 * function actually RUNS. Currently null (unused) -- this is Facebook's
+	 * OWN extension point, not an undocumented internal being poked at.
+	 *
+	 * Why this exists: hours of static bundle analysis (grep across every
+	 * script this exact page executes) traced the SSR-splash-reveal chain
+	 * as far as ServerJSPayloadListener_NEW.process() and could not find a
+	 * single literal require()/call site for it anywhere in the visible
+	 * source -- strong evidence the real entry point is DATA-DRIVEN (a
+	 * route manifest of module names, iterated generically) rather than a
+	 * grep-able string. This hook answers the question directly, from real
+	 * execution, instead of more static guessing: does the page's own
+	 * module system ever actually RUN the factory for any of a small,
+	 * targeted watchlist of modules identified during that investigation.
+	 *
+	 * SAFETY: the page's own require() dispatch (`z(r)` in the real
+	 * bundle) calls `t.__onBeforeModuleFactory==null||
+	 * t.__onBeforeModuleFactory(l)` with NO try/catch around it -- if our
+	 * hook function throws, it aborts THAT MODULE'S OWN REQUIRE CALL,
+	 * which could break the page in a new and worse way than simply not
+	 * having this diagnostic. The hook body is therefore wrapped in its
+	 * own try/catch that can NEVER propagate outward, no matter what `l`
+	 * looks like.
+	 *
+	 * The page's own bootstrap does `t.__onBeforeModuleFactory=null;`
+	 * unconditionally as part of ITS OWN init (confirmed in the real
+	 * bundle) -- a plain data-property assignment would just overwrite
+	 * whatever we install beforehand. Object.defineProperty with a
+	 * get/set pair survives that: the setter silently discards whatever
+	 * the page assigns, the getter always hands back our tracer. Scoped
+	 * to a SMALL watchlist and deduped per-module (not every module --
+	 * a 13MB+ bundle set defines/requires thousands, which would flood
+	 * the log for no benefit over the specific question being asked) so
+	 * this reuses the existing __msLife budget safely rather than needing
+	 * a dedicated one. */
+	macsurf_qjs__safe_eval(ctx,
+		"(function(g){"
+		"\"use strict\";"
+		"try{"
+		"var WATCH={"
+			"ServerJSPayloadListener:1,ServerJSPayloadListener_NEW:1,"
+			"ServerJS:1,GHLServerJSParse:1,CometPrelude:1,"
+			"CometPreludeCritical:1,CometPreludeRunWhenReady:1,"
+			"CometSSRContentRevealer:1,CometSSRClientInjector:1,"
+			"CometClientRootRendererSSRUtils:1,"
+			"CometClientRootRendererUtils:1"
+		"};"
+		"var seen={};"
+		"var total=0;"
+		"var tracer=function(l){"
+			"try{"
+				"total++;"
+				"var id=(l&&l.id!=null)?String(l.id):null;"
+				"if(id&&WATCH[id]&&!seen[id]){"
+					"seen[id]=1;"
+					"if(typeof __msLife==='function')"
+						"__msLife('require: '+id);"
+				"}"
+			"}catch(e){}"
+			"return undefined;"
+		"};"
+		"Object.defineProperty(g,'__onBeforeModuleFactory',{"
+			"configurable:true,"
+			"get:function(){return tracer;},"
+			"set:function(v){}"
+		"});"
+		"g.__msRequireTraceTotal=function(){return total;};"
+		"}catch(e){}"
+		"})(this);");
+
 	/* R1.2 - the WANT probe goes in LAST: every shim block above runs its
 	 * own `typeof g.X` feature checks, and those would log their own
 	 * stubbed names into the census if the probe were live yet.  Page

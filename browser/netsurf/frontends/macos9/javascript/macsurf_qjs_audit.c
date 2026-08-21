@@ -238,6 +238,40 @@ void macsurf_qjs_emit_js_profile(void)
 		g_raf_fires = 0;
 	}
 
+	/* fixes1247 (#167) - total count from the __onBeforeModuleFactory
+	 * require-trace (macsurf_qjs.c, register_browser_globals). Read
+	 * SEPARATELY from the individual "LIFE js require: <name>" lines the
+	 * hook itself emits (via __msLife, only for a small watched-module
+	 * list) specifically to distinguish two very different failure
+	 * shapes: total=0 means the page's own module loader never called
+	 * OUR hook at all (either it does not use this require mechanism, or
+	 * the hook install itself did not take -- worth knowing on its own);
+	 * total>0 with none of the watched names ever appearing means
+	 * requiring is happening normally but never reaches any module on
+	 * this specific list. */
+	{
+		JSContext *ctx = macsurf_qjs_current_ctx();
+		long req_total = -1;
+		if (ctx != NULL) {
+			static const char req_total_src[] =
+				"(function(){try{"
+				"return (typeof globalThis.__msRequireTraceTotal"
+				"==='function')?globalThis.__msRequireTraceTotal():-1;"
+				"}catch(e){return -1;}})()";
+			JSValue r = JS_Eval(ctx, req_total_src, strlen(req_total_src),
+					"<jsreq>", JS_EVAL_TYPE_GLOBAL);
+			if (!JS_IsException(r)) {
+				int32_t n = 0;
+				JS_ToInt32(ctx, &n, r);
+				req_total = (long)n;
+			} else {
+				JS_FreeValue(ctx, JS_GetException(ctx));
+			}
+			JS_FreeValue(ctx, r);
+		}
+		macsurf_debug_log_writef("LIFE JSREQUIRE total=%ld", req_total);
+	}
+
 	/* fixes1239 (#167) - <script> tags the PARSER found (script.c,
 	 * html_process_script), split inline/external, independent of
 	 * whether js_exec ever ran one. Same local-extern pattern as
