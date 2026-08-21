@@ -8419,6 +8419,16 @@ box_coords(bx, &cx, &cy);
 				return 1;
 			}
 		}
+		/* fixes1243 - MUST destroy before t69c (this block's stack-local
+		 * html_content) goes out of scope. Without this, t69heap stays
+		 * linked in g_heap_list forever and any LATER test that calls the
+		 * bare macsurf_qjs_pump_all() (which walks every live heap, not
+		 * just its own) dereferences t69c/t69ctx through a dangling stack
+		 * pointer -- confirmed on hardware^Win-harness: an ASan
+		 * stack-use-after-scope inside macos9_reconvert_flush_now, three
+		 * tests later, that had nothing to do with whatever test actually
+		 * triggered the pump. */
+		js_destroyheap(t69heap);
 	}
 	fprintf(stderr, "=== Test 69 PASS: MutationObserver delivers a real "
 			"record after html_reconvert_done ===\n");
@@ -8675,9 +8685,130 @@ box_coords(bx, &cx, &cy);
 				return 1;
 			}
 		}
+		/* fixes1243 - same leak-prevention as Test 69 above: destroy
+		 * before t70c goes out of scope, or Test 71's plain
+		 * macsurf_qjs_pump_all() (which pumps every live heap) walks a
+		 * dangling stack pointer. */
+		js_destroyheap(t70heap);
 	}
 	fprintf(stderr, "=== Test 70 PASS: querySelectorAll + textContent + "
 			":not() + comma-lists read a real JSON data island ===\n");
+
+	fprintf(stderr, "\n=== Test 71: real AbortController/AbortSignal, wired "
+			"into fetch() (#167) ===\n");
+	{
+		/* fixes1243 - the network-dependent half (aborting a REAL
+		 * in-flight XHR mid-flight) delegates to XMLHttpRequest.abort(),
+		 * already real and already exercised (Test 3, Test 61) --
+		 * calling __xhrNativeAbort natively. What's new and needs its own
+		 * proof here is the JS-level AbortController/AbortSignal object
+		 * itself (construction, event delivery, reason propagation) and
+		 * fetch()'s handling of an ALREADY-aborted signal, which is
+		 * network-free by design (fetch must never even open the XHR) and
+		 * so is safe to assert against in a harness with no real network
+		 * mock. */
+		const char *ac_js =
+			"(function(){"
+			"var c=new AbortController();"
+			"if(!c.signal)throw new Error('ASSERT FAIL: no .signal');"
+			"if(c.signal.aborted)"
+			"throw new Error('ASSERT FAIL: aborted=true before abort()');"
+			"var fired=0,seen=null;"
+			"c.signal.addEventListener('abort',function(ev){"
+				"fired++;seen=ev;});"
+			"var oaFired=0;"
+			"c.signal.onabort=function(){oaFired++;};"
+			"c.abort('custom reason');"
+			"if(!c.signal.aborted)"
+			"throw new Error('ASSERT FAIL: aborted still false after "
+				"abort()');"
+			"if(c.signal.reason!=='custom reason')"
+			"throw new Error('ASSERT FAIL: reason='+c.signal.reason);"
+			"if(fired!==1)"
+			"throw new Error('ASSERT FAIL: abort listener fired '"
+				"+fired+' times, expected 1');"
+			"if(!seen||seen.type!=='abort'||seen.target!==c.signal)"
+			"throw new Error('ASSERT FAIL: abort event shape wrong');"
+			"if(oaFired!==1)"
+			"throw new Error('ASSERT FAIL: onabort fired '+oaFired"
+				"+' times, expected 1');"
+			"c.abort('second call');"
+			"if(fired!==1)"
+			"throw new Error('ASSERT FAIL: second abort() re-fired "
+				"the listener (fired='+fired+')');"
+			"if(c.signal.reason!=='custom reason')"
+			"throw new Error('ASSERT FAIL: second abort() overwrote "
+				"the reason: '+c.signal.reason);"
+			/* default reason shape when none given -- real code checks
+			 * err.name==='AbortError'. */
+			"var c2=new AbortController();"
+			"c2.abort();"
+			"if(!c2.signal.reason||c2.signal.reason.name!=='AbortError')"
+			"throw new Error('ASSERT FAIL: default reason.name='"
+				"+(c2.signal.reason&&c2.signal.reason.name));"
+			/* AbortSignal.abort() static. */
+			"var s=AbortSignal.abort('pre-aborted');"
+			"if(!s.aborted||s.reason!=='pre-aborted')"
+			"throw new Error('ASSERT FAIL: AbortSignal.abort() static "
+				"wrong: aborted='+s.aborted+' reason='+s.reason);"
+			"globalThis.__t71sync=1;"
+			"})();"
+			"if(!globalThis.__t71sync)"
+			"throw new Error('ASSERT FAIL: t71sync flag not set');"
+			/* fetch() with an ALREADY-aborted signal: must reject with
+			 * the signal's reason, and (by construction -- the check
+			 * runs before the XHR is ever created) never touch the
+			 * network. globalThis flags because js_exec is synchronous
+			 * but the promise settles on a later microtask pump. */
+			"globalThis.__t71fetchDone=0;globalThis.__t71fetchErr=null;"
+			"fetch('https://example.invalid/should-never-be-requested',"
+				"{signal:AbortSignal.abort('nope')})"
+			".then(function(){globalThis.__t71fetchDone=2;},"
+				"function(e){globalThis.__t71fetchDone=1;"
+					"globalThis.__t71fetchErr=e;});";
+		unsigned char ok;
+
+		ok = js_exec(thread, (const unsigned char *)ac_js,
+				strlen(ac_js), "driver-t71-ac.js");
+		fprintf(stderr, "js_exec(t71 abortcontroller) ok=%d\n", (int)ok);
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 71 AbortController/AbortSignal "
+					"assertions threw\n");
+			return 1;
+		}
+		/* fixes1243 - harness_pump_all drains the HARNESS's own mock
+		 * scheduler queue (macos9_schedule-style callbacks), not
+		 * QuickJS's promise job queue -- the .then() reaction is a
+		 * pending JOB, drained only by the real engine pump (Test 12's
+		 * pattern), same as every other Promise-based harness test. */
+		{
+			extern void macsurf_qjs_pump_all(void);
+			int pump;
+			for (pump = 0; pump < 8; pump++) macsurf_qjs_pump_all();
+		}
+		{
+			const char *check2_js =
+				"if(globalThis.__t71fetchDone!==1)"
+				"throw new Error('ASSERT FAIL: fetch(aborted signal) "
+					"settled as '+globalThis.__t71fetchDone"
+					"+' (0=never settled, 2=wrongly resolved), "
+					"expected 1 (rejected)');"
+				"if(globalThis.__t71fetchErr!=='nope')"
+				"throw new Error('ASSERT FAIL: fetch rejection reason='"
+					"+globalThis.__t71fetchErr+' expected \"nope\"');";
+			unsigned char ok2 = js_exec(thread,
+					(const unsigned char *)check2_js,
+					strlen(check2_js), "driver-t71-fetch-check.js");
+			fprintf(stderr, "js_exec(t71 fetch check) ok=%d\n", (int)ok2);
+			if (!ok2) {
+				fprintf(stderr, "FAIL: Test 71 fetch() did not reject "
+						"an already-aborted signal correctly\n");
+				return 1;
+			}
+		}
+	}
+	fprintf(stderr, "=== Test 71 PASS: AbortController/AbortSignal real, "
+			"fetch() honours an already-aborted signal ===\n");
 
 	return 0;
 }

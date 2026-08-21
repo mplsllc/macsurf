@@ -10697,6 +10697,63 @@ static void register_browser_globals(JSContext *ctx)
 		"this.Response=Response;"
 		"})();");
 
+	/* --- AbortController / AbortSignal (fixes1243, #167) ---
+	 *
+	 * Was an empty `function(){}` stub in the generic DOM-constructor-name
+	 * list (fixes1206-era): `new AbortController().signal` was undefined,
+	 * `.abort()` a no-op. 17 real call sites across the 18 scripts one
+	 * Facebook profile-page load executes; confirmed used with fetch(),
+	 * the near-universal pattern.
+	 *
+	 * Real, spec-shaped behaviour: .aborted / .reason, onabort +
+	 * addEventListener('abort', ...), AbortSignal.abort()/timeout()
+	 * statics, and fetch() below actually wires it to a REAL cancel --
+	 * XMLHttpRequest.prototype.abort() (a few lines up) already calls the
+	 * native __xhrNativeAbort, so an abort here really does stop the
+	 * in-flight network request, not just settle the JS promise. */
+	macsurf_qjs__safe_eval(ctx,
+		"(function(g){"
+		"\"use strict\";"
+		"function mkAbortErr(reason){"
+			"if(reason!==undefined&&reason!==null)return reason;"
+			"var e=new Error('The operation was aborted.');"
+			"e.name='AbortError';return e;}"
+		"function AbortSignal(){"
+			"this.aborted=false;this.reason=undefined;"
+			"this.onabort=null;this._listeners=[];}"
+		"AbortSignal.prototype.addEventListener=function(t,fn){"
+			"if(t==='abort'&&typeof fn==='function')"
+				"this._listeners.push(fn);};"
+		"AbortSignal.prototype.removeEventListener=function(t,fn){"
+			"if(t!=='abort')return;"
+			"var i=this._listeners.indexOf(fn);"
+			"if(i>=0)this._listeners.splice(i,1);};"
+		"AbortSignal.prototype.throwIfAborted=function(){"
+			"if(this.aborted)throw this.reason;};"
+		"AbortSignal.prototype._doAbort=function(reason){"
+			"if(this.aborted)return;"
+			"this.aborted=true;this.reason=mkAbortErr(reason);"
+			"var ev={type:'abort',target:this};"
+			"if(typeof this.onabort==='function'){"
+				"try{this.onabort(ev);}catch(e){}}"
+			"var L=this._listeners.slice(),i;"
+			"for(i=0;i<L.length;i++){try{L[i](ev);}catch(e){}}};"
+		"AbortSignal.abort=function(reason){"
+			"var s=new AbortSignal();"
+			"s.aborted=true;s.reason=mkAbortErr(reason);return s;};"
+		"AbortSignal.timeout=function(ms){"
+			"var s=new AbortSignal();"
+			"setTimeout(function(){"
+				"var e=new Error('The operation timed out.');"
+				"e.name='TimeoutError';s._doAbort(e);"
+			"},ms);return s;};"
+		"function AbortController(){this.signal=new AbortSignal();}"
+		"AbortController.prototype.abort=function(reason){"
+			"this.signal._doAbort(reason);};"
+		"g.AbortSignal=AbortSignal;"
+		"g.AbortController=AbortController;"
+		"})(this);");
+
 	/* --- fetch() (fixes846, Request/Headers-aware since fixes1140) --- *
 	 * A real Promise (QuickJS's native Promise is already an intrinsic --
 	 * JS_AddIntrinsicPromise, see qjs_build_context) wrapping the real
@@ -10717,7 +10774,14 @@ static void register_browser_globals(JSContext *ctx)
 				"if(opts.headers===undefined)opts.headers=rq.headers;"
 				"if(opts.body===undefined)opts.body=rq.body;"
 				"if(opts.credentials===undefined)opts.credentials=rq.credentials;"
+				"if(opts.signal===undefined)opts.signal=rq.signal;"
 			"}"
+			/* fixes1243 (#167) - already-aborted signal: never even open
+			 * the XHR, matching the spec (a fetch given a pre-aborted
+			 * signal rejects synchronously-ish, before any network
+			 * activity starts). */
+			"if(opts.signal&&opts.signal.aborted){"
+				"return Promise.reject(opts.signal.reason);}"
 			"return new Promise(function(resolve,reject){"
 				"try{"
 					"var xhr=new XMLHttpRequest();"
@@ -10730,6 +10794,15 @@ static void register_browser_globals(JSContext *ctx)
 							"for(var h in opts.headers)"
 								"xhr.setRequestHeader(h,opts.headers[h]);"
 						"}"
+					"}"
+					/* fixes1243 (#167) - abort mid-flight. xhr.abort()
+					 * calls the native __xhrNativeAbort, so this really
+					 * stops the request, not just settles the promise. */
+					"if(opts.signal){"
+						"opts.signal.addEventListener('abort',function(){"
+							"try{xhr.abort();}catch(ae){}"
+							"reject(opts.signal.reason);"
+						"});"
 					"}"
 					"xhr.onreadystatechange=function(){"
 						"if(xhr.readyState!==4)return;"
@@ -11220,7 +11293,13 @@ static void register_browser_globals(JSContext *ctx)
 		"'SVGElement','SVGSVGElement','HTMLCollection','NodeList','DOMException',"
 		"'CSSStyleDeclaration','CSSStyleSheet','CSSRule','MediaQueryList','DOMTokenList',"
 		"'NamedNodeMap','Attr','Range','XMLDocument','ShadowRoot','MutationRecord',"
-		"'DOMParser','XMLSerializer','TreeWalker','NodeIterator','AbortController','AbortSignal'];"
+		/* fixes1243 (#167) - AbortController/AbortSignal removed from this
+		 * empty-stub list: they get a real implementation below, next to
+		 * fetch(). Left in this list `new AbortController().signal` was
+		 * undefined and `controller.abort()` a no-op -- any page code that
+		 * checked `signal.aborted` or called `signal.addEventListener`
+		 * threw "cannot read property of undefined". */
+		"'DOMParser','XMLSerializer','TreeWalker','NodeIterator'];"
 		"var i;"
 		"for(i=0;i<names.length;i++){"
 		"if(typeof g[names[i]]==='undefined'){"
