@@ -2768,6 +2768,28 @@ static int hdr_append(struct macos9_https_ctx *c, const char *buf, long n)
 
 /* ---------- per-slot pump ---------- */
 
+/* fixes1252 (#167) - real concurrency visibility. fixes1251 raised
+ * max_fetchers_per_host 4->16 on the theory that fbcdn's cold-handshake-only
+ * fetches (host_is_fb_asset, fixes373) were starved at 4-concurrent; hardware
+ * result showed NO change in scripts executed per page (still ~18 of ~186).
+ * Before guessing further, count how many slots are ACTUALLY concurrently
+ * active for a given pool_key at the moment a new one starts, so the next
+ * round shows whether core's ops.start is really handing us more than 4 at
+ * once or something else caps it upstream. */
+static int https_active_count_for_host(const char *pool_key)
+{
+	int i, n = 0;
+	for (i = 0; i < MAX_HTTPS_F; i++) {
+		if (https_slots[i].state != HS_IDLE &&
+		    https_slots[i].state != HS_DONE &&
+		    https_slots[i].state != HS_FAIL &&
+		    strcmp(https_slots[i].pool_key, pool_key) == 0) {
+			n++;
+		}
+	}
+	return n;
+}
+
 static void hctx_poll(struct macos9_https_ctx *c)
 {
 	OSTLSEvent ev;
@@ -2961,6 +2983,11 @@ static void hctx_poll(struct macos9_https_ctx *c)
 			c->progress_ticks = now_ticks();
 			c->state = HS_SEND_REQ;
 			MS_LOG("https: pool reuse");
+			macsurf_debug_log_writef(
+				"LIFE FETCHCONC pool host=%s active=%d cap=%ld",
+				c->pool_key,
+				https_active_count_for_host(c->pool_key),
+				(long) nsoption_int(max_fetchers_per_host));
 			return;
 		}
 
@@ -2981,6 +3008,11 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		c->progress_ticks = now_ticks();
 		c->state = HS_TLSING;
 		MS_LOG("https: started");
+		macsurf_debug_log_writef(
+			"LIFE FETCHCONC cold host=%s active=%d cap=%ld",
+			c->pool_key,
+			https_active_count_for_host(c->pool_key),
+			(long) nsoption_int(max_fetchers_per_host));
 		macsurf_profile_stamp("tls-handshake-start");
 		return;
 	}
