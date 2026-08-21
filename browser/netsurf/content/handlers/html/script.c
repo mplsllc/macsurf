@@ -125,6 +125,48 @@ static int macsurf_spipe_budget_take(void)
 	return 1;
 }
 
+/* fixes1259 (#167) - Facebook loader observability. fixes1258 fixed the
+ * data: URI base64/MIME bug (SPIPE now shows q=d, x=0, essentially 100%
+ * script throughput), but JSREQUIRE total=0 persists even so - the
+ * fetch/exec layer is now healthy, so the remaining question is entirely
+ * inside Facebook's own module loader. This is a cheap, install-timing-
+ * independent breadcrumb: scan a script's raw source for the literal
+ * target module name BEFORE it executes, so the hardware log has
+ * confirmation the target is even present in the script graph regardless
+ * of whether the JS-side __d/requireLazy wrapper (macsurf_qjs.c) manages
+ * to intercept the real call. Size-gated to 4096 bytes - the small data:
+ * bootstrap-glue scripts that reference this name directly are all under
+ * 500 bytes; the multi-MB fbcdn.net bundles this would otherwise scan on
+ * every navigation are not where a literal name string like this shows up
+ * unminified, and scanning all of them on a slow PPC is real cost for no
+ * signal. */
+static long g_fbtarget_budget = 50;
+
+static int
+macsurf_buf_contains(const uint8_t *data, size_t size, const char *needle)
+{
+	size_t nlen = strlen(needle);
+	size_t i;
+	if (nlen == 0 || size < nlen) return 0;
+	for (i = 0; i + nlen <= size; i++) {
+		if (memcmp(data + i, needle, nlen) == 0) return 1;
+	}
+	return 0;
+}
+
+static void
+macsurf_fbtarget_scan(long ord, const uint8_t *data, size_t size)
+{
+	if (size == 0 || size > 4096) return;
+	if (g_fbtarget_budget <= 0) return;
+	if (macsurf_buf_contains(data, size, "ServerJSPayloadListener")) {
+		g_fbtarget_budget--;
+		macsurf_debug_log_writef(
+			"LIFE FBTARGET source ord=%ld has_ServerJSPayloadListener=1",
+			ord);
+	}
+}
+
 
 /* exported internal interface documented in html/html_internal.h */
 nserror html_script_exec(html_content *c, bool allow_defer)
@@ -194,6 +236,7 @@ nserror html_script_exec(html_content *c, bool allow_defer)
 					(long) (i + 1), (long) size,
 					nsurl_access(
 						hlcache_handle_get_url(s->data.handle)));
+				macsurf_fbtarget_scan((long) (i + 1), data, size);
 				/* fixes873 (#301) - document.currentScript must name THIS
 				 * script while it runs. webpack's publicPath runtime reads
 				 * it first thing and throws "Automatic publicPath is not
@@ -779,6 +822,7 @@ convert_script_sync_cb(hlcache_handle *script,
 				"LIFE script_exec: RUN(sync) ord=%ld bytes=%ld url=%s",
 				(long) (i + 1), (long) size,
 				nsurl_access(hlcache_handle_get_url(s->data.handle)));
+			macsurf_fbtarget_scan((long) (i + 1), data, size);
 			script_handler(parent->js_thread, data, size,
 				       nsurl_access(hlcache_handle_get_url(s->data.handle)));
 		} else {

@@ -12296,6 +12296,147 @@ static void register_browser_globals(JSContext *ctx)
 		"}"
 		"})(this);");
 
+	/* fixes1259 (#167) - Facebook loader observability. fixes1258 fixed
+	 * the data: URI base64/MIME bug that was silently failing ~168 of
+	 * Facebook's script tags (window.Env setup,
+	 * requireLazy(["ServerJSPayloadListener"], m=>m.process())) with
+	 * UnacceptableType. Hardware confirmed the fix: SPIPE now shows
+	 * q=d, x=0 (essentially 100% script throughput, up from ~10%). But
+	 * JSREQUIRE total=0 PERSISTS even so - the fetch/exec layer is now
+	 * healthy, so whatever is stopping Facebook's app from booting is
+	 * entirely inside its own module loader from this point on.
+	 *
+	 * requireLazy(deps, callback) does not call require() directly - it
+	 * registers callback to fire once every module in deps has been
+	 * __d()-defined, then fires it (possibly much later, possibly via a
+	 * promise/microtask this engine doesn't drive the way a real browser
+	 * does). fixes1247's require-trace is blind to this: it only sees
+	 * the ACTUAL require() dispatch, not this earlier
+	 * register-and-wait step, so it cannot tell "ServerJSPayloadListener
+	 * never got defined" apart from "it got defined but the lazy waiter
+	 * never released" apart from "the waiter fired but its own callback
+	 * threw." This wraps BOTH __d and requireLazy (not requireLazy
+	 * alone) specifically to remove that ambiguity, and wraps the
+	 * CALLBACK passed to requireLazy (not just the requireLazy call
+	 * itself) so FIRE/RETURN/THROW reflect whether the dependency
+	 * actually got released, not just whether it was asked for.
+	 *
+	 * ACTIVE delegate-through, not fixes1247's discard-and-ignore
+	 * pattern: __d/requireLazy must keep WORKING (real module
+	 * registration, real lazy resolution), only OBSERVED. The setter
+	 * stores whatever Facebook's own bootstrap assigns (its stub
+	 * queueing implementation first, confirmed present in the real
+	 * bundles: __d=function(e,t,n,r){__d_stub.push([e,t,n,r])} - then
+	 * whatever real implementation replaces it later) into a closure
+	 * variable; the getter always hands back OUR wrapper, which calls
+	 * through to whatever was most recently stored. This survives
+	 * Facebook reassigning window.__d/requireLazy any number of times,
+	 * the same property-trap technique fixes1247 already proved
+	 * effective for __onBeforeModuleFactory - installed at the same
+	 * early point in this same function, before any page script runs. */
+	macsurf_qjs__safe_eval(ctx,
+		"(function(g){"
+		"\"use strict\";"
+		"try{"
+		"var DWATCH={ServerJSPayloadListener:1};"
+		"var dTotal=0,dTarget=0;"
+		"var rlCalls=0,rlTargetCalls=0,rlFires=0,rlTargetFires=0;"
+		"var rlSeq=0;"
+		"var realD=(typeof g.__d==='function')?g.__d:null;"
+		"var realRL=(typeof g.requireLazy==='function')?g.requireLazy:null;"
+		"var budget=300;"
+		"function wrappedD(){"
+			"dTotal++;"
+			"try{"
+				"var id=(arguments[0]!=null)?String(arguments[0]):null;"
+				"if(id&&DWATCH[id]){"
+					"dTarget++;"
+					"if(budget>0&&typeof __msLife==='function'){"
+						"budget--;"
+						"__msLife('FBMOD D name='+id);"
+					"}"
+				"}"
+			"}catch(e){}"
+			"if(realD)return realD.apply(this,arguments);"
+			"return undefined;"
+		"}"
+		"function wrappedRL(){"
+			"var args=[];"
+			"var k;"
+			"for(k=0;k<arguments.length;k++)args.push(arguments[k]);"
+			"rlCalls++;"
+			"var id=++rlSeq;"
+			"var isTarget=false;"
+			"try{"
+				"var deps=args[0];"
+				"var dj=(deps&&deps.join)?deps.join(','):String(deps);"
+				"if(dj.indexOf('ServerJSPayloadListener')>=0){"
+					"isTarget=true;rlTargetCalls++;"
+				"}"
+				"if((isTarget||id<=20)&&budget>0&&"
+						"typeof __msLife==='function'){"
+					"budget--;"
+					"__msLife('FBRL CALL id='+id+' deps='+dj);"
+				"}"
+			"}catch(e){}"
+			"var origCb=args[1];"
+			"if(typeof origCb==='function'){"
+				"args[1]=function(){"
+					"rlFires++;"
+					"if(isTarget)rlTargetFires++;"
+					"try{"
+						"if((isTarget||id<=20)&&budget>0&&"
+								"typeof __msLife==='function'){"
+							"budget--;"
+							"__msLife('FBRL FIRE id='+id);"
+						"}"
+					"}catch(e){}"
+					"try{"
+						"var ret=origCb.apply(this,arguments);"
+						"try{"
+							"if((isTarget||id<=20)&&budget>0&&"
+									"typeof __msLife==='function'){"
+								"budget--;"
+								"__msLife('FBRL RETURN id='+id);"
+							"}"
+						"}catch(e2){}"
+						"return ret;"
+					"}catch(err){"
+						"try{if(typeof __msLife==='function')"
+							"__msLife('FBRL THROW id='+id+' err='+"
+								"((err&&err.message)||err));"
+						"}catch(e3){}"
+						"throw err;"
+					"}"
+				"};"
+			"}"
+			"if(realRL)return realRL.apply(this,args);"
+			"return undefined;"
+		"}"
+		"Object.defineProperty(g,'__d',{"
+			"configurable:true,"
+			"get:function(){return wrappedD;},"
+			"set:function(v){realD=v;}"
+		"});"
+		"Object.defineProperty(g,'requireLazy',{"
+			"configurable:true,"
+			"get:function(){return wrappedRL;},"
+			"set:function(v){realRL=v;}"
+		"});"
+		"g.__msFBLoader_dTotal=function(){return dTotal;};"
+		"g.__msFBLoader_dTarget=function(){return dTarget;};"
+		"g.__msFBLoader_rlCalls=function(){return rlCalls;};"
+		"g.__msFBLoader_rlTargetCalls=function(){return rlTargetCalls;};"
+		"g.__msFBLoader_rlFires=function(){return rlFires;};"
+		"g.__msFBLoader_rlTargetFires=function(){return rlTargetFires;};"
+		"}catch(e){"
+			"try{if(typeof __msLife==='function')"
+				"__msLife('FB loader trace install FAILED: '+"
+					"((e&&e.message)||e));"
+			"}catch(e2){}"
+		"}"
+		"})(this);");
+
 	/* R1.2 - the WANT probe goes in LAST: every shim block above runs its
 	 * own `typeof g.X` feature checks, and those would log their own
 	 * stubbed names into the census if the probe were live yet.  Page

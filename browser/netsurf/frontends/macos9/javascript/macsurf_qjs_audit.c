@@ -68,6 +68,45 @@ void macsurf_qjs_perf_totals(long *evals, long *compile_us, long *run_us,
 	if (gc_runs != NULL)    *gc_runs    = g_perf_gc_runs;
 }
 
+/* fixes1259 (#167) - read a zero-arg JS global function's int32 return
+ * value. Same one-shot JS_Eval pattern __msRequireTraceTotal already used
+ * (fixes1247) for exactly this purpose, generalized so the six FBLOADER
+ * counters below don't each need their own copy of this boilerplate.
+ * Returns -1 if ctx is unusable, the function is missing, or it threw. */
+static long
+qjs_read_int_global(JSContext *ctx, const char *fn_name)
+{
+	/* fn_name is interpolated twice into the template below; the longest
+	 * caller ("__msFBLoader_rlTargetCalls", 27 bytes) plus the ~102
+	 * bytes of fixed template text runs to ~156 - sized with headroom,
+	 * not tight, since this is a fixed set of literal names we control,
+	 * not user input, but sprintf here has no bounds check of its own. */
+	char src[320];
+	JSValue r;
+	long result = -1;
+
+	if (ctx == NULL || fn_name == NULL) return -1;
+	if (strlen(fn_name) > 64) return -1;
+
+	sprintf(src,
+		"(function(){try{"
+		"return (typeof globalThis.%s==='function')?"
+		"globalThis.%s():-1;"
+		"}catch(e){return -1;}})()",
+		fn_name, fn_name);
+
+	r = JS_Eval(ctx, src, strlen(src), "<jsfbldr>", JS_EVAL_TYPE_GLOBAL);
+	if (!JS_IsException(r)) {
+		int32_t n = 0;
+		JS_ToInt32(ctx, &n, r);
+		result = (long) n;
+	} else {
+		JS_FreeValue(ctx, JS_GetException(ctx));
+	}
+	JS_FreeValue(ctx, r);
+	return result;
+}
+
 /* ---- JS profile emission ---- */
 /* Emitted once per navigation from the NAV: DONE hook in browser_window.c,
  * beside the existing PERFACC / JSTIME lines. */
@@ -270,6 +309,38 @@ void macsurf_qjs_emit_js_profile(void)
 			JS_FreeValue(ctx, r);
 		}
 		macsurf_debug_log_writef("LIFE JSREQUIRE total=%ld", req_total);
+	}
+
+	/* fixes1259 (#167) - Facebook loader observability. Six counters
+	 * from the __d/requireLazy wrapper installed in macsurf_qjs.c's
+	 * register_browser_globals. Read the same way as __msRequireTraceTotal
+	 * above (a zero-arg JS function, called once per counter to keep each
+	 * read isolated - if one throws or is missing, the others still
+	 * report). See the decision table in the fixes1259 commit message:
+	 * d_target=0 means ServerJSPayloadListener never gets __d()-defined;
+	 * rl_target_calls>0 with rl_target_fires=0 means the lazy waiter
+	 * registered but never released - Facebook's own dependency-release
+	 * mechanism is the target from there. */
+	{
+		JSContext *ctx = macsurf_qjs_current_ctx();
+		long d_total = -1, d_target = -1;
+		long rl_calls = -1, rl_target_calls = -1;
+		long rl_fires = -1, rl_target_fires = -1;
+		if (ctx != NULL) {
+			d_total = qjs_read_int_global(ctx, "__msFBLoader_dTotal");
+			d_target = qjs_read_int_global(ctx, "__msFBLoader_dTarget");
+			rl_calls = qjs_read_int_global(ctx, "__msFBLoader_rlCalls");
+			rl_target_calls = qjs_read_int_global(ctx,
+				"__msFBLoader_rlTargetCalls");
+			rl_fires = qjs_read_int_global(ctx, "__msFBLoader_rlFires");
+			rl_target_fires = qjs_read_int_global(ctx,
+				"__msFBLoader_rlTargetFires");
+		}
+		macsurf_debug_log_writef(
+			"LIFE FBLOADER d_total=%ld d_target=%ld rl_calls=%ld "
+			"rl_target_calls=%ld rl_fires=%ld rl_target_fires=%ld",
+			d_total, d_target, rl_calls, rl_target_calls,
+			rl_fires, rl_target_fires);
 	}
 
 	/* fixes1239 (#167) - <script> tags the PARSER found (script.c,
