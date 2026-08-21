@@ -6,6 +6,8 @@
  */
 
 #include <assert.h>
+#include <ctype.h>
+#include <stdio.h>
 
 #include "bytecode/bytecode.h"
 #include "bytecode/opcodes.h"
@@ -15,6 +17,37 @@
 #include "utils/utils.h"
 
 #include "select/properties/helpers.h"
+#include "macsurf_debug.h"
+
+/* fixes1265 (#167) - body background-color provenance trace, helper.
+ * lwc_string_caseless_isequal needs an interned "body" string to compare
+ * against, which would mean re-interning on every single call into this
+ * shared cascade helper (background-color AND border-color route through
+ * it, for every element on the page). A direct byte compare avoids that,
+ * and avoids adding <strings.h>/strcasecmp to a library this codebase has
+ * deliberately kept free of POSIX-only headers during its C89/CW8 port
+ * (see frontends/macos9/CLAUDE.md's port audit checklist). */
+static int macsurf__qname_is_body(const css_qname *el)
+{
+	const char *d;
+	size_t len;
+	static const char body[4] = { 'b', 'o', 'd', 'y' };
+	size_t i;
+
+	if (el == NULL || el->name == NULL)
+		return 0;
+
+	d = lwc_string_data(el->name);
+	len = lwc_string_length(el->name);
+	if (d == NULL || len != 4)
+		return 0;
+
+	for (i = 0; i < 4; i++) {
+		if (tolower((unsigned char) d[i]) != body[i])
+			return 0;
+	}
+	return 1;
+}
 
 /******************************************************************************
  * Utilities below here							      *
@@ -128,9 +161,72 @@ css_error css__cascade_bg_border_color(uint32_t opv, css_style *style,
 		}
 	}
 
-	if (css__outranks_existing(getOpcode(opv), isImportant(opv), state,
-			getFlagValue(opv))) {
-		return fun(state->computed, value, color);
+	{
+		/* fixes1265 (#167) - provenance trace for <body>'s
+		 * background-color cascade specifically. fixes1264 proved
+		 * body_bg computes to #1F1F22 (dark) on a page Facebook
+		 * marks __fb-light-mode, and that this dark value correctly
+		 * propagates to the page canvas (redraw is exonerated) - the
+		 * remaining question is entirely "why does the cascade give
+		 * body THAT value." This is the actual per-declaration
+		 * decision point: called once per matching background-color
+		 * rule, in cascade order, for every element - filtered to
+		 * background-color specifically (this helper is shared with
+		 * border-color; fun distinguishes them) and to <body> only,
+		 * both cheap checks ahead of any string work, since this
+		 * runs on every element on the page otherwise.
+		 *
+		 * outranks_existing's result is captured once and reused for
+		 * both the log line and the original control flow below -
+		 * never called twice, so this cannot change behaviour.
+		 *
+		 * KNOWN LIMITATION: by the time bytecode reaches this
+		 * cascade function, custom_properties.c's deferred var()
+		 * resolution has already substituted any var(--x) reference
+		 * with its literal resolved color - this trace cannot
+		 * distinguish "declared as a literal" from "declared as
+		 * var(--fds-something) that resolved to this" for a given
+		 * DECL line. If the winning value here doesn't explain
+		 * body_bg on its own, that distinction is the next thing to
+		 * add, not a gap in this round. */
+		int outranks = css__outranks_existing(getOpcode(opv),
+				isImportant(opv), state, getFlagValue(opv));
+
+		if (fun == set_background_color &&
+				macsurf__qname_is_body(&state->element)) {
+			/* fixes1265 - %X is NOT one of the %d/%ld/%p/%s/%%
+			 * this codebase's hand-rolled macsurf_debug_log_writef
+			 * formatter supports; an unrecognized specifier
+			 * consumes no va_arg, so a LATER %s in the same call
+			 * would read the wrong slot and dereference an
+			 * integer as a pointer (the exact bug fixes1255
+			 * purged codebase-wide, nearly reintroduced twice more
+			 * tonight already). Format the color into a real-
+			 * sprintf buffer first, pass only %s. */
+			char colorbuf[12];
+			const char *sheeturl = "(null)";
+			if (state->sheet != NULL && state->sheet->url != NULL)
+				sheeturl = state->sheet->url;
+			sprintf(colorbuf, "#%08lX", (unsigned long) color);
+			macsurf_debug_log_writef(
+				"LIFE FBBG DECL value=%d color=%s "
+				"important=%d spec=%ld origin=%d "
+				"outranks=%d sheet=%s",
+				(int) value, colorbuf,
+				(int) isImportant(opv),
+				(long) state->current_specificity,
+				(int) state->current_origin,
+				outranks, sheeturl);
+			if (outranks) {
+				macsurf_debug_log_writef(
+					"LIFE FBBG WIN value=%d color=%s",
+					(int) value, colorbuf);
+			}
+		}
+
+		if (outranks) {
+			return fun(state->computed, value, color);
+		}
 	}
 
 	return CSS_OK;
