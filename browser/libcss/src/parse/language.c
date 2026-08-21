@@ -19,6 +19,12 @@
 #include "parse/parse.h"
 #include "parse/propstrings.h"
 #include "parse/custom_properties.h"
+
+/* fixes1268a (#167) - defined below, but used by the declaration-block
+ * custom-property path far earlier in this file. */
+static css_error css__style_add_custom_property_to_rule(css_language *c,
+		css_rule *rule, lwc_string *name,
+		css_cp_token *tokens, uint32_t n);
 #include "parse/properties/properties.h"
 #include "parse/properties/utils.h"
 
@@ -853,6 +859,35 @@ css_error handleDeclaration(css_language *c, const parserutils_vector *vector)
 				return error;
 
 			name_ref = lwc_string_ref(t1->idata);
+
+			/* fixes1268a (#167) - dual-write: rule-scoped copy
+			 * first (keeps the selector/@media context), then
+			 * the legacy sheet-global one that resolution still
+			 * reads until 1268b/1268e. */
+			{
+				css_cp_token *rule_tokens = NULL;
+				uint32_t rule_n = 0;
+
+				error = css__cp_tokens_from_vector(vector,
+						value_start, ctx,
+						&rule_tokens, &rule_n);
+				if (error != CSS_OK) {
+					css__cp_tokens_destroy(cp_tokens, cp_n);
+					lwc_string_unref(name_ref);
+					return error;
+				}
+
+				error = css__style_add_custom_property_to_rule(
+						c, rule,
+						lwc_string_ref(t1->idata),
+						rule_tokens, rule_n);
+				if (error != CSS_OK) {
+					css__cp_tokens_destroy(cp_tokens, cp_n);
+					lwc_string_unref(name_ref);
+					return error;
+				}
+			}
+
 			return css__sheet_add_custom_property(c->sheet,
 					name_ref, cp_tokens, cp_n);
 		}
@@ -1937,6 +1972,40 @@ css_error parseSelectorList(css_language *c, const parserutils_vector *vector,
 	return CSS_OK;
 }
 
+/* fixes1268a (#167) - attach one "--name" definition to the rule that
+ * wrote it, using the same style-carrier route the deferred var() path
+ * already uses (css__stylesheet_style_create + rule_append_style). Takes
+ * ownership of name and tokens; releases them on failure. */
+static css_error css__style_add_custom_property_to_rule(css_language *c,
+		css_rule *rule, lwc_string *name,
+		css_cp_token *tokens, uint32_t n)
+{
+	css_style *style = NULL;
+	css_error error;
+
+	error = css__stylesheet_style_create(c->sheet, &style);
+	if (error != CSS_OK) {
+		css__cp_tokens_destroy(tokens, n);
+		lwc_string_unref(name);
+		return error;
+	}
+
+	error = css__style_add_custom_property(style, name, tokens, n);
+	if (error != CSS_OK) {
+		/* ownership of name/tokens already released by the callee */
+		css__stylesheet_style_destroy(style);
+		return error;
+	}
+
+	error = css__stylesheet_rule_append_style(c->sheet, rule, style);
+	if (error != CSS_OK) {
+		css__stylesheet_style_destroy(style);
+		return error;
+	}
+
+	return CSS_OK;
+}
+
 /******************************************************************************
  * Property parsing functions						      *
  ******************************************************************************/
@@ -1973,6 +2042,36 @@ css_error parseProperty(css_language *c, const css_token *property,
 			return error;
 
 		name_ref = lwc_string_ref(property->idata);
+
+		/* fixes1268a (#167) - ALSO attach the definition to the
+		 * owning rule, so the selector and @media scope it was
+		 * written under survive to select time. The sheet-global
+		 * copy below is still what resolution reads today; 1268b
+		 * switches over and 1268e deletes it. Tokens are re-read
+		 * from the vector rather than shared, because both stores
+		 * take ownership of what they are handed. */
+		{
+			css_cp_token *rule_tokens = NULL;
+			uint32_t rule_n = 0;
+
+			error = css__cp_tokens_from_vector(vector, start_ctx,
+					*ctx, &rule_tokens, &rule_n);
+			if (error != CSS_OK) {
+				css__cp_tokens_destroy(cp_tokens, cp_n);
+				lwc_string_unref(name_ref);
+				return error;
+			}
+
+			error = css__style_add_custom_property_to_rule(c, rule,
+					lwc_string_ref(property->idata),
+					rule_tokens, rule_n);
+			if (error != CSS_OK) {
+				css__cp_tokens_destroy(cp_tokens, cp_n);
+				lwc_string_unref(name_ref);
+				return error;
+			}
+		}
+
 		return css__sheet_add_custom_property(c->sheet, name_ref,
 				cp_tokens, cp_n);
 	}

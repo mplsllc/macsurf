@@ -37,6 +37,7 @@ typedef struct css_selector css_selector;
  * Full definitions and typedefs live in parse/custom_properties.h. */
 struct css_deferred_decl;
 struct css_cp_entry;
+struct css_cp_entry;
 
 typedef struct css_style {
 	css_code_t *bytecode;	      /**< Pointer to bytecode */
@@ -47,6 +48,16 @@ typedef struct css_style {
 					* select time because they reference
 					* var(). NULL when the style has no
 					* var() dependencies. */
+	/* fixes1268a (#167) - new fields go at the END of this struct; a
+	 * mid-struct insert has crashed CW8 builds before (see the
+	 * project_libcss_struct_mid_insert_crash note). */
+	struct css_cp_entry *custom_props; /**< "--name" definitions made by
+					* THIS rule, in source order. Carries
+					* the definition's selector and media
+					* context implicitly, because the
+					* style only cascades when its rule
+					* matches. NULL when the rule defines
+					* no custom properties. */
 } css_style;
 
 typedef enum css_selector_type {

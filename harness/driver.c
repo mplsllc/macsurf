@@ -55,6 +55,14 @@ extern int macsurf_imgdims_lookup(struct nsurl *url, int *w, int *h);	/* fixes92
 #include "libcss/libcss.h"
 #include "libcss/fpmath.h"
 
+/* fixes1268a (#167) - Test 75 probes libcss's PRIVATE stylesheet layout.
+ * Those internal headers cannot be included here: libcss's propstrings.h
+ * and opcodes.h define enumerators (TOP/LEFT/RIGHT/BOTTOM, CONTENT_NONE,
+ * COLUMN_WIDTH_AUTO) that collide with netsurf's own enums already in
+ * this file. The probe therefore lives in its own translation unit,
+ * cssprobe.c, behind the plain C API below. */
+#include "cssprobe.h"
+
 #include "macos9_content_registry.h"
 
 extern int html_reconvert_content(struct content *c);
@@ -9107,5 +9115,113 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 74 PASS: require-trace hook survives the "
 			"page's own reset, never throws on any input ===\n");
 
+	/* ---------------------------------------------------------------
+	 * fixes1268a (#167) - custom-property definitions are retained
+	 * PER RULE, not collapsed into one per-sheet bucket.
+	 *
+	 * This is the storage-layer control for the 1268 series. Before
+	 * 1268a the only store was css_stylesheet::custom_properties, a
+	 * single last-write-wins list per sheet: three rules defining
+	 * "--x" left exactly ONE surviving value, so the selector and
+	 * @media scope each definition was written under were gone before
+	 * selection ever ran. That is what hands facebook.com the dark
+	 * --web-wash on a light-mode page.
+	 *
+	 * The assertion is a COUNT (three distinct retained values), not a
+	 * boolean: a boolean "did we keep any" passes on the broken build.
+	 * Pre-1268a this test finds 0 rule-scoped entries and fails.
+	 * ------------------------------------------------------------- */
+	fprintf(stderr, "\n=== Test 75: custom-property definitions are "
+			"rule-scoped, not sheet-global (fixes1268a) ===\n");
+	{
+		const char *t75_css =
+			".light { --x: green; color: black }"
+			".dark  { --x: white }"
+			"@media print { .mq { --x: black } }";
+		css_stylesheet *t75sheet = NULL;
+		css_stylesheet_params t75sp;
+		css_error t75err;
+		char t75vals[8][64];
+		int t75n = 0;
+		int t75distinct = 0;
+		int i, j;
+		int t75sheet_global = 0;
+
+		memset(&t75sp, 0, sizeof(t75sp));
+		t75sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t75sp.level = CSS_LEVEL_3;
+		t75sp.charset = "UTF-8";
+		t75sp.url = "http://local/t75.css";
+		t75sp.title = "t75";
+		t75sp.allow_quirks = false;
+		t75sp.inline_style = false;
+		t75sp.resolve = harness_css_resolve_url;
+		t75sp.resolve_pw = NULL;
+
+		if (css_stylesheet_create(&t75sp, &t75sheet) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 75 sheet create\n");
+			return 1;
+		}
+		t75err = css_stylesheet_append_data(t75sheet,
+				(const uint8_t *)t75_css, strlen(t75_css));
+		if (t75err != CSS_OK && t75err != CSS_NEEDDATA) {
+			fprintf(stderr, "FAIL: Test 75 append=%d\n",
+					(int)t75err);
+			return 1;
+		}
+		if (css_stylesheet_data_done(t75sheet) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 75 data_done\n");
+			return 1;
+		}
+
+		/* Walk every rule in the sheet, descending into @media, and
+		 * collect the rule-scoped "--x" values. */
+		t75n = cssprobe_rule_custom_props(t75sheet, "x", t75vals,
+				(int)(sizeof(t75vals) / sizeof(t75vals[0])));
+
+		for (i = 0; i < t75n; i++) {
+			int seen = 0;
+			for (j = 0; j < i; j++)
+				if (strcmp(t75vals[i], t75vals[j]) == 0)
+					seen = 1;
+			if (!seen)
+				t75distinct++;
+			fprintf(stderr, "  rule-scoped --x[%d] = '%s'\n",
+					i, t75vals[i]);
+		}
+
+		t75sheet_global = cssprobe_sheet_custom_props(t75sheet, "x");
+		fprintf(stderr, "  rule-scoped entries=%d distinct=%d, "
+				"sheet-global entries=%d\n",
+				t75n, t75distinct, t75sheet_global);
+
+		if (t75n != 3 || t75distinct != 3) {
+			fprintf(stderr, "FAIL: Test 75 -- expected 3 rule-scoped "
+					"--x definitions with 3 distinct values, "
+					"got n=%d distinct=%d. Pre-fixes1268a "
+					"this is 0/0: definitions went only to "
+					"the per-sheet last-write-wins list, "
+					"discarding the selector and @media "
+					"scope each was written under.\n",
+					t75n, t75distinct);
+			return 1;
+		}
+		if (t75sheet_global != 1) {
+			fprintf(stderr, "FAIL: Test 75 -- the legacy sheet-global "
+					"list should still hold exactly 1 "
+					"surviving --x (last-write-wins) while "
+					"1268a dual-writes; got %d. If this "
+					"changed, resolution semantics moved "
+					"before 1268b/1268e intended them to.\n",
+					t75sheet_global);
+			return 1;
+		}
+
+		css_stylesheet_destroy(t75sheet);
+	}
+	fprintf(stderr, "=== Test 75 PASS: 3 rules retain 3 distinct --x "
+			"values, incl. the one inside @media print ===\n");
+
 	return 0;
 }
+

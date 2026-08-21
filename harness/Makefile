@@ -64,7 +64,9 @@ EXTRA_SRC := $(LIBDIR)/libdom/bindings/hubbub/dom_parser.c \
 QJS_SRC   := $(QJS)/quickjs.c $(QJS)/libregexp.c $(QJS)/libunicode.c $(QJS)/dtoa.c
 GLUE_SRC  := build/macsurf_qjs.c build/macos9_reconvert.c build/macsurf_dom_dispatch.c \
              build/macos9_content_registry.c build/misc_stub.c build/macos9_js_fetch.c
-HARN_SRC  := harness_stubs.c harness_gen_stubs.c driver.c
+# fixes1268a (#167): cssprobe.c includes libcss's PRIVATE headers, whose
+# enumerators collide with netsurf's in driver.c -- it must stay its own TU.
+HARN_SRC  := harness_stubs.c harness_gen_stubs.c driver.c cssprobe.c
 
 INC += -I$(LIBDIR)/libdom/bindings/hubbub
 

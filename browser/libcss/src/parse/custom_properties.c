@@ -153,6 +153,66 @@ void css__cp_tokens_destroy(css_cp_token *tokens, uint32_t n)
 /* Custom-property list (per stylesheet)                              */
 /* ------------------------------------------------------------------ */
 
+/* fixes1268a (#167) - rule-scoped custom-property storage. See the block
+ * comment in custom_properties.h for why the per-sheet list below is not
+ * sufficient. */
+css_error css__style_add_custom_property(css_style *style,
+		lwc_string *name, css_cp_token *tokens, uint32_t n)
+{
+	css_cp_entry *entry;
+
+	if (style == NULL || name == NULL) {
+		if (tokens != NULL)
+			css__cp_tokens_destroy(tokens, n);
+		if (name != NULL)
+			lwc_string_unref(name);
+		return CSS_BADPARM;
+	}
+
+	entry = (css_cp_entry *)calloc(1, sizeof(css_cp_entry));
+	if (entry == NULL) {
+		css__cp_tokens_destroy(tokens, n);
+		lwc_string_unref(name);
+		return CSS_NOMEM;
+	}
+
+	entry->name = name;
+	entry->tokens = tokens;
+	entry->n_tokens = n;
+	entry->next = NULL;
+
+	/* Append at tail: source order within the rule is what decides the
+	 * winner, so the list must stay ordered. */
+	if (style->custom_props == NULL) {
+		style->custom_props = entry;
+	} else {
+		css_cp_entry *tail = style->custom_props;
+		while (tail->next != NULL)
+			tail = tail->next;
+		tail->next = entry;
+	}
+
+	return CSS_OK;
+}
+
+const css_cp_entry *css__style_find_custom_property(const css_style *style,
+		lwc_string *name)
+{
+	const css_cp_entry *cur;
+	const css_cp_entry *hit = NULL;
+
+	if (style == NULL || name == NULL)
+		return NULL;
+
+	/* Last match wins - keep walking rather than returning the first. */
+	for (cur = style->custom_props; cur != NULL; cur = cur->next) {
+		if (cp_name_equal(cur->name, name))
+			hit = cur;
+	}
+
+	return hit;
+}
+
 css_error css__sheet_add_custom_property(css_stylesheet *sheet,
 		lwc_string *name, css_cp_token *tokens, uint32_t n)
 {

@@ -660,6 +660,7 @@ css_error css__stylesheet_style_create(css_stylesheet *sheet, css_style **style)
 		sheet->cached_style = NULL;
 		/* Cached styles are reset on destroy; defensive clear. */
 		(*style)->deferred = NULL;
+		(*style)->custom_props = NULL;
 		return CSS_OK;
 	}
 
@@ -678,6 +679,7 @@ css_error css__stylesheet_style_create(css_stylesheet *sheet, css_style **style)
 	s->used = 0;
 	s->sheet = sheet;
 	s->deferred = NULL;
+	s->custom_props = NULL;
 
 	*style = s;
 
@@ -725,6 +727,21 @@ css_error css__stylesheet_merge_style(css_style *target, css_style *style)
 			tail->next = style->deferred;
 		}
 		style->deferred = NULL;
+	}
+
+	/* fixes1268a (#167) - same treatment for rule-scoped custom-property
+	 * definitions: append source's list at target's tail so in-rule
+	 * source order (which decides the winner) survives the merge. */
+	if (style->custom_props != NULL) {
+		if (target->custom_props == NULL) {
+			target->custom_props = style->custom_props;
+		} else {
+			css_cp_entry *cptail = target->custom_props;
+			while (cptail->next != NULL)
+				cptail = cptail->next;
+			cptail->next = style->custom_props;
+		}
+		style->custom_props = NULL;
 	}
 
 	return CSS_OK;
@@ -795,6 +812,12 @@ css_error css__stylesheet_style_destroy(css_style *style)
 	if (style->deferred != NULL) {
 		css__deferred_decl_list_destroy(style->deferred);
 		style->deferred = NULL;
+	}
+
+	/* fixes1268a (#167) - likewise never part of the style cache. */
+	if (style->custom_props != NULL) {
+		css__cp_entry_list_destroy(style->custom_props);
+		style->custom_props = NULL;
 	}
 
 	if (sheet->cached_style == NULL) {
