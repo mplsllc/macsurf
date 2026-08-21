@@ -12239,7 +12239,26 @@ static void register_browser_globals(JSContext *ctx)
 			"set:function(v){}"
 		"});"
 		"g.__msRequireTraceTotal=function(){return total;};"
-		"}catch(e){}"
+		"}catch(e){"
+			/* fixes1248 (#167) - was a bare catch(e){}: if
+			 * Object.defineProperty (or anything else in this block)
+			 * threw, that failure was completely invisible -- no log
+			 * line anywhere, not even via macsurf_qjs__safe_eval's own
+			 * exception reporting, because THIS try/catch already
+			 * absorbed it before that outer layer ever saw anything go
+			 * wrong. Hardware evidence (fixes1247's first real
+			 * multi-navigation session) showed __msRafOrig -- a
+			 * COMPLETELY UNRELATED marker set earlier in this same
+			 * register_browser_globals pass -- also reading as missing
+			 * (rafOwn=-1) starting on the exact navigation where this
+			 * block would have first run a second/third time, which is
+			 * suspicious enough to need real visibility rather than a
+			 * guess either way. */
+			"try{if(typeof __msLife==='function')"
+				"__msLife('require-trace install FAILED: '+"
+					"((e&&e.message)||e));"
+			"}catch(e2){}"
+		"}"
 		"})(this);");
 
 	/* R1.2 - the WANT probe goes in LAST: every shim block above runs its
