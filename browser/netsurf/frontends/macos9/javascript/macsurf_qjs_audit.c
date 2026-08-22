@@ -343,6 +343,79 @@ void macsurf_qjs_emit_js_profile(void)
 			rl_fires, rl_target_fires);
 	}
 
+	/* fixes1270 (#167) - independent module-graph reconstruction, as a
+	 * check against fixes1260's __debug probe rather than a replacement
+	 * for it. debugUnresolvedDependencies() is Facebook's OWN loader
+	 * self-reporting on whether ServerJSPayloadListener's deps are
+	 * ready - but that loader's readiness bookkeeping is exactly what's
+	 * suspected of being broken here, which makes asking it a slightly
+	 * circular first diagnostic. This instead walks a dependency graph
+	 * built ENTIRELY from __d() call data (macsurf_qjs.c's
+	 * __msFBGraph_walk, installed alongside the existing __d/requireLazy
+	 * wrapper), executing zero module factories and trusting zero
+	 * Facebook bookkeeping.
+	 *
+	 * Decision table for the result:
+	 *   defined=false                       - contradicts fixes1259's
+	 *                                          d_target=1; instrumentation
+	 *                                          itself would be suspect.
+	 *   direct_missing>0                    - a dependency literally
+	 *                                          named in the target's own
+	 *                                          __d() call never got
+	 *                                          defined; leaf names it.
+	 *   transitive_missing>0                - same, but deeper in the
+	 *                                          graph; leaf names the
+	 *                                          first one found.
+	 *   direct_missing=0 transitive_missing=0
+	 *     with rl_target_fires=0 (FBLOADER, above) -
+	 *          the ENTIRE observed closure was __d()-registered and the
+	 *          lazy waiter STILL never released - not a missing module
+	 *          at all, but Facebook's internal waiter/readiness
+	 *          bookkeeping failing on this engine. That reframes where
+	 *          fixes1271+ needs to look: the define/resolve transition
+	 *          itself (waiter-count decrement, dependency Map/Set
+	 *          membership, property-key equality), not fetch/exec or
+	 *          module discovery, both already proven healthy.
+	 *
+	 * `special` carries any dependency token this code found but chose
+	 * NOT to walk or classify - Facebook's loader uses forms other than
+	 * plain module-name strings (seen in the real bundle: "cr:NNNNNNN"),
+	 * and guessing at what those resolve to would be exactly the kind
+	 * of unproven claim this probe exists to avoid making. Logged
+	 * verbatim so a human can judge them instead. */
+	{
+		JSContext *ctx = macsurf_qjs_current_ctx();
+		if (ctx != NULL) {
+			static const char fbgraph_src[] =
+				"(function(){try{"
+				"if(typeof globalThis.__msFBGraph_walk!=="
+					"'function')"
+					"return '{\"error\":\"probe not "
+						"installed\"}';"
+				"return globalThis.__msFBGraph_walk("
+					"'ServerJSPayloadListener');"
+				"}catch(e){"
+					"return JSON.stringify({error:"
+						"((e&&e.message)||String(e))});"
+				"}"
+				"})()";
+			JSValue r = JS_Eval(ctx, fbgraph_src,
+					strlen(fbgraph_src), "<jsfbgraph>",
+					JS_EVAL_TYPE_GLOBAL);
+			if (!JS_IsException(r)) {
+				const char *s = JS_ToCString(ctx, r);
+				macsurf_debug_log_writef("LIFE FBGRAPH %s",
+					(s != NULL) ? s : "(null)");
+				if (s != NULL) JS_FreeCString(ctx, s);
+			} else {
+				JS_FreeValue(ctx, JS_GetException(ctx));
+				macsurf_debug_log_writef(
+					"LIFE FBGRAPH eval exception");
+			}
+			JS_FreeValue(ctx, r);
+		}
+	}
+
 	/* fixes1260 (#167) - query Facebook's OWN internal module registry
 	 * directly, rather than inferring state from our own __d/requireLazy
 	 * wrapper counters. fixes1259's hardware round proved d_target=1

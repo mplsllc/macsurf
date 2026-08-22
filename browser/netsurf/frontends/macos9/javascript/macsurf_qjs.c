@@ -12342,13 +12342,59 @@ static void register_browser_globals(JSContext *ctx)
 		"var dTotal=0,dTarget=0;"
 		"var rlCalls=0,rlTargetCalls=0,rlFires=0,rlTargetFires=0;"
 		"var rlSeq=0;"
+		/* fixes1270 (#167) - independent module-graph reconstruction.
+		 * fixes1260's __debug probe asks FACEBOOK'S OWN loader whether
+		 * ServerJSPayloadListener's dependencies are ready - but that
+		 * loader's readiness bookkeeping is exactly what's suspected of
+		 * being broken, so a self-report from it is circular evidence.
+		 * This instead builds an INDEPENDENT view from data __d() already
+		 * hands us on every call, with zero reliance on any Facebook
+		 * internal being correct: GDEFINED records every module name
+		 * that WAS __d()-called (proof of registration, not of the
+		 * loader's own resolution state), GDEPS records the literal
+		 * deps array each one was defined with, VERBATIM - a dependency
+		 * token like "cr:1234567" is stored and reported as-is, never
+		 * guessed at or normalized into an ordinary name, since walking
+		 * it as if it were one would silently misclassify a form this
+		 * code cannot prove anything about. GMAX bounds total entries
+		 * defensively (128-384MB hardware) - if a page ever defines
+		 * more than this, the graph walk below still runs correctly
+		 * against however much it collected, just incompletely. */
+		"var GMAX=20000;"
+		"var GDEFINED=Object.create(null);"
+		"var GDEPS=Object.create(null);"
+		"var GSEQ=0;"
+		"var GTARGET='ServerJSPayloadListener';"
+		"var gTargetDefineSeq=-1;"
+		"var gTargetLazyFirstSeq=-1;"
+		"var gTargetLazyLastSeq=-1;"
 		"var realD=(typeof g.__d==='function')?g.__d:null;"
 		"var realRL=(typeof g.requireLazy==='function')?g.requireLazy:null;"
 		"var budget=300;"
 		"function wrappedD(){"
 			"dTotal++;"
+			"GSEQ++;"
 			"try{"
 				"var id=(arguments[0]!=null)?String(arguments[0]):null;"
+				/* fixes1270 - unconditional, every __d() call, not
+				 * gated by DWATCH: the graph walk needs the FULL
+				 * dependency map to reconstruct the target's real
+				 * closure, not just the one watched name. */
+				"if(id&&!GDEFINED[id]&&GSEQ<=GMAX){"
+					"GDEFINED[id]=true;"
+					"var _rawDeps=arguments[1];"
+					"var _cp=[];"
+					"if(_rawDeps&&typeof _rawDeps.length==='number'){"
+						"var _di;"
+						"for(_di=0;_di<_rawDeps.length;_di++)"
+							"_cp.push(_rawDeps[_di]);"
+					"}"
+					"GDEPS[id]=_cp;"
+					"if(id===GTARGET&&gTargetDefineSeq===-1)"
+						"gTargetDefineSeq=GSEQ;"
+				"}else if(id){"
+					"GDEFINED[id]=true;"
+				"}"
 				"if(id&&DWATCH[id]){"
 					"dTarget++;"
 					"if(budget>0&&typeof __msLife==='function'){"
@@ -12372,6 +12418,14 @@ static void register_browser_globals(JSContext *ctx)
 				"var dj=(deps&&deps.join)?deps.join(','):String(deps);"
 				"if(dj.indexOf('ServerJSPayloadListener')>=0){"
 					"isTarget=true;rlTargetCalls++;"
+					/* fixes1270 - cheap chronology: was the
+					 * target __d()-defined before or after
+					 * its lazy waiters registered? Reuses
+					 * GSEQ, the same counter __d() already
+					 * advances, rather than a second budget. */
+					"if(gTargetLazyFirstSeq===-1)"
+						"gTargetLazyFirstSeq=GSEQ;"
+					"gTargetLazyLastSeq=GSEQ;"
 				"}"
 				"if((isTarget||id<=20)&&budget>0&&"
 						"typeof __msLife==='function'){"
@@ -12429,6 +12483,80 @@ static void register_browser_globals(JSContext *ctx)
 		"g.__msFBLoader_rlTargetCalls=function(){return rlTargetCalls;};"
 		"g.__msFBLoader_rlFires=function(){return rlFires;};"
 		"g.__msFBLoader_rlTargetFires=function(){return rlTargetFires;};"
+		/* fixes1270 (#167) - walk GDEPS starting at `target`, breadth-
+		 * first, WITHOUT executing a single module factory. Classifies
+		 * strictly by what was independently observed:
+		 *   - target itself never __d()-called -> defined:false, stop.
+		 *   - a direct dep of target never __d()-called -> direct_missing.
+		 *   - a deeper dep never __d()-called -> transitive_missing.
+		 *   - a dep token containing ':' (Facebook's cr:NNNN forms and
+		 *     similar) is recorded verbatim in `special` and NEITHER
+		 *     walked further NOR counted as missing - this code cannot
+		 *     prove anything about what such a token resolves to, so it
+		 *     makes no claim rather than guessing.
+		 * Returns one JSON string so the C side needs one JS_Eval / one
+		 * JS_ToCString, matching the FBSTATE pattern already used for
+		 * fixes1260's __debug probe below. */
+		"g.__msFBGraph_walk=function(target){"
+			"try{"
+				"var out={target:target,defined:false,"
+					"direct_missing:0,transitive_missing:0,"
+					"closure:0,leaf:null,special:[],"
+					"target_define_seq:gTargetDefineSeq,"
+					"target_lazy_first_seq:gTargetLazyFirstSeq,"
+					"target_lazy_last_seq:gTargetLazyLastSeq};"
+				"if(!GDEFINED[target])return JSON.stringify(out);"
+				"out.defined=true;"
+				"var visited=Object.create(null);"
+				"var depthOf=Object.create(null);"
+				"var queue=[target];"
+				"depthOf[target]=0;"
+				"var closureCount=0,directMiss=0,transMiss=0;"
+				"var leaf=null;"
+				"var special=[];"
+				"var qi=0;"
+				"while(qi<queue.length&&qi<GMAX){"
+					"var name=queue[qi++];"
+					"if(visited[name])continue;"
+					"visited[name]=true;"
+					"closureCount++;"
+					"var deps=GDEPS[name]||[];"
+					"var depth=depthOf[name];"
+					"var i;"
+					"for(i=0;i<deps.length;i++){"
+						"var d=deps[i];"
+						"if(typeof d!=='string'){"
+							"if(special.length<10)"
+								"special.push(JSON.stringify(d));"
+							"continue;"
+						"}"
+						"if(d.indexOf(':')>=0){"
+							"if(special.length<10)special.push(d);"
+							"continue;"
+						"}"
+						"if(!GDEFINED[d]){"
+							"if(!leaf)leaf=d;"
+							"if(depth===0)directMiss++;"
+							"else transMiss++;"
+							"continue;"
+						"}"
+						"if(depthOf[d]===undefined){"
+							"depthOf[d]=depth+1;"
+							"queue.push(d);"
+						"}"
+					"}"
+				"}"
+				"out.direct_missing=directMiss;"
+				"out.transitive_missing=transMiss;"
+				"out.closure=closureCount;"
+				"out.leaf=leaf;"
+				"out.special=special;"
+				"return JSON.stringify(out);"
+			"}catch(e){"
+				"return JSON.stringify({error:((e&&e.message)||"
+					"String(e))});"
+			"}"
+		"};"
 		"}catch(e){"
 			"try{if(typeof __msLife==='function')"
 				"__msLife('FB loader trace install FAILED: '+"
