@@ -343,6 +343,62 @@ void macsurf_qjs_emit_js_profile(void)
 			rl_fires, rl_target_fires);
 	}
 
+	/* fixes1271 (#167) - which literal module name is the dead waiter
+	 * actually attached to?
+	 *
+	 * fixes1270's hardware round returned FBGRAPH defined:false while
+	 * FBLOADER on the SAME navigation reported rl_target_calls=166. Not
+	 * a contradiction: rlTargetCalls tests the joined dependency string
+	 * with indexOf() (substring), while the graph target was compared by
+	 * string EQUALITY. So the waiters are attached to a name CONTAINING
+	 * "ServerJSPayloadListener" that is not equal to it - and fixes1247's
+	 * watchlist already knows one such variant, ServerJSPayloadListener_NEW.
+	 *
+	 * This line reports every variant observed on each side, with counts
+	 * and first-sighting sequence numbers, so the four cases are readable
+	 * directly rather than inferred:
+	 *   same variant in defined[] and lazy[]  - graph it (FBGRAPH below
+	 *                                            now picks it automatically)
+	 *   variant in lazy[] but not defined[]   - real missing module, and
+	 *                                            FBGRAPH's defined:false
+	 *                                            now means it about the
+	 *                                            name actually waited on
+	 *   different variants on each side       - naming/alias/conditional
+	 *                                            loader problem
+	 *   several variants                      - counts and seq order say
+	 *                                            which to chase first */
+	{
+		JSContext *ctx = macsurf_qjs_current_ctx();
+		if (ctx != NULL) {
+			static const char fbtargets_src[] =
+				"(function(){try{"
+				"if(typeof globalThis.__msFBLoader_targetLike!=="
+					"'function')"
+					"return '{\"error\":\"probe not "
+						"installed\"}';"
+				"return globalThis.__msFBLoader_targetLike();"
+				"}catch(e){"
+					"return JSON.stringify({error:"
+						"((e&&e.message)||String(e))});"
+				"}"
+				"})()";
+			JSValue r = JS_Eval(ctx, fbtargets_src,
+					strlen(fbtargets_src), "<jsfbtargets>",
+					JS_EVAL_TYPE_GLOBAL);
+			if (!JS_IsException(r)) {
+				const char *s = JS_ToCString(ctx, r);
+				macsurf_debug_log_writef("LIFE FBTARGETS %s",
+					(s != NULL) ? s : "(null)");
+				if (s != NULL) JS_FreeCString(ctx, s);
+			} else {
+				JS_FreeValue(ctx, JS_GetException(ctx));
+				macsurf_debug_log_writef(
+					"LIFE FBTARGETS eval exception");
+			}
+			JS_FreeValue(ctx, r);
+		}
+	}
+
 	/* fixes1270 (#167) - independent module-graph reconstruction, as a
 	 * check against fixes1260's __debug probe rather than a replacement
 	 * for it. debugUnresolvedDependencies() is Facebook's OWN loader
@@ -392,8 +448,12 @@ void macsurf_qjs_emit_js_profile(void)
 					"'function')"
 					"return '{\"error\":\"probe not "
 						"installed\"}';"
-				"return globalThis.__msFBGraph_walk("
-					"'ServerJSPayloadListener');"
+				/* fixes1271 - no argument: the probe picks the
+				 * variant actually observed this navigation (see
+				 * __msFBGraph_pick). Passing the literal is what
+				 * produced last round's uninformative
+				 * defined:false. */
+				"return globalThis.__msFBGraph_walk(null);"
 				"}catch(e){"
 					"return JSON.stringify({error:"
 						"((e&&e.message)||String(e))});"

@@ -12368,6 +12368,43 @@ static void register_browser_globals(JSContext *ctx)
 		"var gTargetDefineSeq=-1;"
 		"var gTargetLazyFirstSeq=-1;"
 		"var gTargetLazyLastSeq=-1;"
+		/* fixes1271 (#167) - stop assuming the exact literal name.
+		 *
+		 * fixes1270's hardware round returned FBGRAPH defined:false --
+		 * ServerJSPayloadListener was never __d()-called under that
+		 * EXACT name -- while FBLOADER on the same navigation still
+		 * showed rl_target_calls=166. Those two are not contradictory:
+		 * rlTargetCalls tests the joined deps string with indexOf(),
+		 * a SUBSTRING match, whereas DWATCH/GTARGET both test for
+		 * string equality. So the lazy waiters are attached to a name
+		 * that CONTAINS "ServerJSPayloadListener" without being equal
+		 * to it. fixes1247's own watchlist already names one such
+		 * variant, ServerJSPayloadListener_NEW, so a variant is the
+		 * expected case, not a surprise.
+		 *
+		 * These two tables record, per DISTINCT NAME, every variant
+		 * actually observed on each side, so the mismatch can never
+		 * again hide inside a single boolean bucket:
+		 *   DLIKE[name]  - times __d(name) was called, name containing
+		 *                  the substring
+		 *   RLLIKE[name] - times a requireLazy dependency equal to
+		 *                  that name was requested
+		 * plus first-sighting sequence numbers for each, so define-vs-
+		 * wait ordering is answerable per variant rather than only for
+		 * one hardcoded string.
+		 *
+		 * tlBudget is DELIBERATELY SEPARATE from `budget` above: the
+		 * shared one is consumed by FBRL CALL/FIRE lines (id<=20) and
+		 * could be exhausted before a late-registering variant is ever
+		 * seen, which is exactly the discovery this round exists to
+		 * make. Variants are few (one or two expected), so a small
+		 * dedicated allowance costs nothing and cannot be starved. */
+		"var TSUB='ServerJSPayloadListener';"
+		"var DLIKE=Object.create(null);"
+		"var RLLIKE=Object.create(null);"
+		"var DLIKESEQ=Object.create(null);"
+		"var RLLIKESEQ=Object.create(null);"
+		"var tlBudget=40;"
 		"var realD=(typeof g.__d==='function')?g.__d:null;"
 		"var realRL=(typeof g.requireLazy==='function')?g.requireLazy:null;"
 		"var budget=300;"
@@ -12395,6 +12432,22 @@ static void register_browser_globals(JSContext *ctx)
 				"}else if(id){"
 					"GDEFINED[id]=true;"
 				"}"
+				/* fixes1271 - SUBSTRING match, per distinct name.
+				 * Logged once per variant on first sighting; the
+				 * count keeps accruing silently after that. */
+				"if(id&&id.indexOf(TSUB)>=0){"
+					"if(!DLIKE[id]){"
+						"DLIKE[id]=0;"
+						"DLIKESEQ[id]=GSEQ;"
+						"if(tlBudget>0&&"
+								"typeof __msLife==='function'){"
+							"tlBudget--;"
+							"__msLife('FBMOD TARGETLIKE name='+id+"
+								"' seq='+GSEQ);"
+						"}"
+					"}"
+					"DLIKE[id]++;"
+				"}"
 				"if(id&&DWATCH[id]){"
 					"dTarget++;"
 					"if(budget>0&&typeof __msLife==='function'){"
@@ -12416,6 +12469,31 @@ static void register_browser_globals(JSContext *ctx)
 			"try{"
 				"var deps=args[0];"
 				"var dj=(deps&&deps.join)?deps.join(','):String(deps);"
+				/* fixes1271 - walk the deps ARRAY and record each
+				 * individual dependency string containing the
+				 * substring, rather than only testing the joined
+				 * blob. The joined test cannot tell WHICH literal
+				 * name the waiter is actually attached to, which is
+				 * the whole question this round answers. */
+				"if(deps&&typeof deps.length==='number'){"
+					"var _ri;"
+					"for(_ri=0;_ri<deps.length;_ri++){"
+						"var _dn=deps[_ri];"
+						"if(typeof _dn!=='string')continue;"
+						"if(_dn.indexOf(TSUB)<0)continue;"
+						"if(!RLLIKE[_dn]){"
+							"RLLIKE[_dn]=0;"
+							"RLLIKESEQ[_dn]=GSEQ;"
+							"if(tlBudget>0&&"
+									"typeof __msLife==='function'){"
+								"tlBudget--;"
+								"__msLife('FBRL TARGETLIKE id='+id+"
+									"' dep='+_dn+' seq='+GSEQ);"
+							"}"
+						"}"
+						"RLLIKE[_dn]++;"
+					"}"
+				"}"
 				"if(dj.indexOf('ServerJSPayloadListener')>=0){"
 					"isTarget=true;rlTargetCalls++;"
 					/* fixes1270 - cheap chronology: was the
@@ -12497,14 +12575,95 @@ static void register_browser_globals(JSContext *ctx)
 		 * Returns one JSON string so the C side needs one JS_Eval / one
 		 * JS_ToCString, matching the FBSTATE pattern already used for
 		 * fixes1260's __debug probe below. */
+		/* fixes1271 - report every observed variant on both sides,
+		 * with counts and first-sighting sequence, as one JSON blob.
+		 * The C side logs this verbatim (LIFE FBTARGETS) so the four
+		 * outcomes in the fixes1271 decision table can be read
+		 * directly off one line rather than inferred across several. */
+		"g.__msFBLoader_targetLike=function(){"
+			"try{"
+				"var out={sub:TSUB,defined:[],lazy:[]};"
+				"var k;"
+				"for(k in DLIKE)out.defined.push({name:k,n:DLIKE[k],"
+					"seq:DLIKESEQ[k]});"
+				"for(k in RLLIKE)out.lazy.push({name:k,n:RLLIKE[k],"
+					"seq:RLLIKESEQ[k]});"
+				"return JSON.stringify(out);"
+			"}catch(e){"
+				"return JSON.stringify({error:((e&&e.message)||"
+					"String(e))});"
+			"}"
+		"};"
+		/* fixes1271 - pick the name to graph from what was actually
+		 * OBSERVED, instead of the hardcoded literal that returned
+		 * defined:false last round. Preference order, most to least
+		 * provable:
+		 *   1. a variant seen on BOTH sides (defined AND waited on) -
+		 *      unambiguous, graph it;
+		 *   2. otherwise the most-requested lazy variant - this is the
+		 *      real missing-module case, and graphing it makes
+		 *      defined:false a MEANINGFUL result about the name the
+		 *      waiters actually use;
+		 *   3. otherwise the most-defined variant;
+		 *   4. otherwise the original literal, so behaviour never
+		 *      silently degrades to "no target at all".
+		 * Returns the chosen name so the walk can report it. */
+		"g.__msFBGraph_pick=function(){"
+			"try{"
+				"var k,best=null,bestN=-1;"
+				"for(k in RLLIKE){"
+					"if(DLIKE[k]){"
+						"if(RLLIKE[k]>bestN){best=k;bestN=RLLIKE[k];}"
+					"}"
+				"}"
+				"if(best)return best;"
+				"bestN=-1;"
+				"for(k in RLLIKE){"
+					"if(RLLIKE[k]>bestN){best=k;bestN=RLLIKE[k];}"
+				"}"
+				"if(best)return best;"
+				"bestN=-1;"
+				"for(k in DLIKE){"
+					"if(DLIKE[k]>bestN){best=k;bestN=DLIKE[k];}"
+				"}"
+				"if(best)return best;"
+				"return GTARGET;"
+			"}catch(e){return GTARGET;}"
+		"};"
 		"g.__msFBGraph_walk=function(target){"
 			"try{"
-				"var out={target:target,defined:false,"
+				/* fixes1271 - no explicit target means "use whatever
+				 * the page actually showed us"; see __msFBGraph_pick.
+				 * picked=1 records that the name was discovered rather
+				 * than supplied, so a reader never has to guess which
+				 * happened. */
+				"var picked=0;"
+				"if(!target){"
+					"target=g.__msFBGraph_pick();"
+					"picked=1;"
+				"}"
+				"var out={target:target,picked:picked,defined:false,"
 					"direct_missing:0,transitive_missing:0,"
 					"closure:0,leaf:null,special:[],"
-					"target_define_seq:gTargetDefineSeq,"
-					"target_lazy_first_seq:gTargetLazyFirstSeq,"
+					"n_defined_variants:0,n_lazy_variants:0,"
+					/* fixes1271 - the per-variant sequence if we
+					 * have one, else the legacy counter ONLY when
+					 * the target really is the legacy literal.
+					 * Falling back unconditionally reported the
+					 * define seq of a DIFFERENT name for a target
+					 * that was never defined - exactly the kind of
+					 * cross-name summary this round exists to stop
+					 * producing. -1 means "not observed". */
+					"target_define_seq:(DLIKESEQ[target]!==undefined)?"
+						"DLIKESEQ[target]:"
+						"((target===GTARGET)?gTargetDefineSeq:-1),"
+					"target_lazy_first_seq:(RLLIKESEQ[target]!==undefined)?"
+						"RLLIKESEQ[target]:"
+						"((target===GTARGET)?gTargetLazyFirstSeq:-1),"
 					"target_lazy_last_seq:gTargetLazyLastSeq};"
+				"var _vk;"
+				"for(_vk in DLIKE)out.n_defined_variants++;"
+				"for(_vk in RLLIKE)out.n_lazy_variants++;"
 				"if(!GDEFINED[target])return JSON.stringify(out);"
 				"out.defined=true;"
 				"var visited=Object.create(null);"
