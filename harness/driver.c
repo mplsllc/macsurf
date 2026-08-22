@@ -1020,6 +1020,84 @@ int main(int argc, char **argv)
 
 	macsurf_js_set_reconvert_enabled(1);
 
+	/* fixes1274 (#167) - `--js FILE...` : execute real-world scripts through
+	 * the REAL MacSurf engine (this same qjs glue, this same DOM, the same
+	 * shims and the same default switch config the Mac ships), then run a
+	 * final inline probe.
+	 *
+	 * Built because the timer audit closed off the last environment-shaped
+	 * theory: on hardware the pipeline is healthy (pumps=29343, frozen=0,
+	 * owner_skip=0, evicted=0, and the 2 timers that were created both
+	 * fired) while Facebook's requireLazy waiters still never release. Stock
+	 * qjs replays Facebook's real bundles correctly, so the divergence is
+	 * something MacSurf's environment does that bare qjs does not - and
+	 * bisecting that over hardware round trips is far slower than bisecting
+	 * it here.
+	 *
+	 * Usage:
+	 *   ./reconvert_harness --js a.js b.js ... [--probe 'JS']
+	 * Every file runs in order in one realm; --probe runs last. Exit status
+	 * is 0 only if every script executed without throwing. */
+	if (argc >= 3 && strcmp(argv[1], "--js") == 0) {
+		int ji;
+		int jfail = 0;
+		const char *probe = NULL;
+
+		for (ji = 2; ji < argc; ji++) {
+			if (strcmp(argv[ji], "--probe") == 0 && ji + 1 < argc) {
+				probe = argv[ji + 1];
+				break;
+			}
+		}
+		for (ji = 2; ji < argc; ji++) {
+			char *src;
+			unsigned char ok;
+			long t0, t1;
+			extern long macsurf_monotonic_ms(void);
+
+			if (strcmp(argv[ji], "--probe") == 0) break;
+			src = harness_slurp(argv[ji]);
+			if (src == NULL) {
+				fprintf(stderr, "FAIL: --js cannot read %s\n",
+						argv[ji]);
+				return 1;
+			}
+			t0 = macsurf_monotonic_ms();
+			ok = js_exec(thread, (const unsigned char *)src,
+					strlen(src), argv[ji]);
+			t1 = macsurf_monotonic_ms();
+			fprintf(stderr, "--js %-40s bytes=%-9lu ok=%d %ldms\n",
+					argv[ji], (unsigned long)strlen(src),
+					(int)ok, t1 - t0);
+			if (!ok) jfail = 1;
+			free(src);
+			/* let anything the script scheduled actually run, the
+			 * way the event loop would between scripts */
+			{
+				int p;
+				for (p = 0; p < 50; p++) {
+					macsurf_qjs_pump_all();
+					harness_pump_all(1000);
+				}
+			}
+		}
+		if (probe != NULL) {
+			unsigned char ok;
+			int p;
+			for (p = 0; p < 200; p++) {
+				macsurf_qjs_pump_all();
+				harness_pump_all(1000);
+			}
+			ok = js_exec(thread, (const unsigned char *)probe,
+					strlen(probe), "--probe");
+			fprintf(stderr, "--probe ok=%d\n", (int)ok);
+			if (!ok) jfail = 1;
+		}
+		fprintf(stderr, "=== --js MODE DONE (%s) ===\n",
+				jfail ? "a script threw" : "all clean");
+		return jfail;
+	}
+
 	/* --- run the real mutation path: .textContent= / .setAttribute via
 	 * the REAL macsurf_qjs.c C bindings, same functions React would call --- */
 	{
