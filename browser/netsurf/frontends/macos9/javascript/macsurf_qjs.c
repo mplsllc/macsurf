@@ -211,6 +211,29 @@ double macsurf_qjs_get_now(void);
 #define MACSURF_JS_TIMEOUT_MS 30000
 #endif
 #define QJS_SCRIPT_TIMEOUT_MS MACSURF_JS_TIMEOUT_MS
+
+/* fixes1276 (#167) - ON by default (current shipped behaviour: __d,
+ * requireLazy, and __onBeforeModuleFactory are all observed via
+ * Object.defineProperty traps installed before any page script runs).
+ *
+ * This is the clean-room A/B switch: flip to 0 for exactly one hardware
+ * build to find out whether MacSurf's own Facebook-loader instrumentation
+ * is still part of what's blocking app boot, independent of anything the
+ * instrumentation itself reports. fixes1275 already proved once that this
+ * exact instrumentation can be the bug it's trying to diagnose (a
+ * fabricated __d/requireLazy silently ate window.Env); fixes1276's
+ * self-reference guard fixed a second, independently-found bug in the same
+ * traps (a stack-overflow on ordinary `x = x || fn` reinstall). Given that
+ * history, the maintainer asked for one hardware run with ALL of it
+ * compiled out -- not just patched -- so Facebook owns __d/requireLazy/
+ * __onBeforeModuleFactory with zero MacSurf code in the way, before trusting
+ * any further counter these traps report. With this at 0, all three names
+ * are left completely untouched (no defineProperty call at all): FBRL/FBMOD/
+ * FBGRAPH/FBTARGETS/FBWAIT/require-trace logging goes silent for that run,
+ * which is the point. */
+#ifndef MACSURF_JS_FB_LOADER_TRAP
+#define MACSURF_JS_FB_LOADER_TRAP 1
+#endif
 /* fixes586 - timer/event callbacks get a shorter budget: a callback that
  * burns 8s of straight CPU is pathological, and the UI is frozen while it
  * runs.  (Top-level scripts keep the 20s budget: big bundles on a G3 are
@@ -12322,6 +12345,7 @@ static void register_browser_globals(JSContext *ctx)
 	 * the log for no benefit over the specific question being asked) so
 	 * this reuses the existing __msLife budget safely rather than needing
 	 * a dedicated one. */
+#if MACSURF_JS_FB_LOADER_TRAP
 	macsurf_qjs__safe_eval(ctx,
 		"(function(g){"
 		"\"use strict\";"
@@ -12375,6 +12399,7 @@ static void register_browser_globals(JSContext *ctx)
 			"}catch(e2){}"
 		"}"
 		"})(this);");
+#endif /* MACSURF_JS_FB_LOADER_TRAP */
 
 	/* fixes1259 (#167) - Facebook loader observability. fixes1258 fixed
 	 * the data: URI base64/MIME bug that was silently failing ~168 of
@@ -12414,6 +12439,7 @@ static void register_browser_globals(JSContext *ctx)
 	 * the same property-trap technique fixes1247 already proved
 	 * effective for __onBeforeModuleFactory - installed at the same
 	 * early point in this same function, before any page script runs. */
+#if MACSURF_JS_FB_LOADER_TRAP
 	macsurf_qjs__safe_eval(ctx,
 		"(function(g){"
 		"\"use strict\";"
@@ -12717,16 +12743,39 @@ static void register_browser_globals(JSContext *ctx)
 		 * asked truthfully. This is the same failure class as
 		 * project_js_lies_not_gaps - pages break on LYING answers, not
 		 * on missing APIs - and it was introduced by instrumentation
-		 * added to investigate the very symptom it was causing. */
+		 * added to investigate the very symptom it was causing.
+		 *
+		 * fixes1276 (#167) - SELF-REFERENCE GUARD, found while building
+		 * a permanent regression test for the fix above. The getter can
+		 * hand back `wrappedD`/`wrappedRL` itself once real{D,RL} is
+		 * non-null. Facebook's own bootstrap idiom for "install a stub
+		 * only if nothing is there yet" is exactly
+		 * `window.__d = window.__d || function(){...}` - completely
+		 * ordinary, idempotent code, and it appears once per SSR
+		 * island/prelude chunk on a real page, i.e. MANY times per
+		 * navigation, not once. The FIRST occurrence installs fine. On
+		 * the SECOND (and every later) occurrence, the read side of
+		 * `x || fn` returns our own wrapper (truthy, so `fn` is never
+		 * evaluated), and that wrapper gets written straight back
+		 * through the setter - making real{D,RL} point at wrappedX
+		 * itself. Every call after that recurses into itself and blows
+		 * the stack, reproduced locally with nothing more exotic than
+		 * two consecutive `x = x || fn` installs against a fresh trap.
+		 * A RangeError inside the try/catch this codebase wraps nearly
+		 * everything in reads from the outside as "nothing happened" -
+		 * the same silent-failure shape as the bug fixes1275 fixed, one
+		 * layer deeper. Refusing to store our own wrapper makes the
+		 * idempotent idiom what it was always supposed to be: a no-op
+		 * once the real thing is already there. */
 		"Object.defineProperty(g,'__d',{"
 			"configurable:true,"
 			"get:function(){return (realD!==null)?wrappedD:undefined;},"
-			"set:function(v){realD=v;}"
+			"set:function(v){if(v!==wrappedD)realD=v;}"
 		"});"
 		"Object.defineProperty(g,'requireLazy',{"
 			"configurable:true,"
 			"get:function(){return (realRL!==null)?wrappedRL:undefined;},"
-			"set:function(v){realRL=v;}"
+			"set:function(v){if(v!==wrappedRL)realRL=v;}"
 		"});"
 		"g.__msFBLoader_dTotal=function(){return dTotal;};"
 		"g.__msFBLoader_dTarget=function(){return dTarget;};"
@@ -12946,6 +12995,7 @@ static void register_browser_globals(JSContext *ctx)
 			"}catch(e2){}"
 		"}"
 		"})(this);");
+#endif /* MACSURF_JS_FB_LOADER_TRAP */
 
 	/* R1.2 - the WANT probe goes in LAST: every shim block above runs its
 	 * own `typeof g.X` feature checks, and those would log their own

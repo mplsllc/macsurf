@@ -10203,6 +10203,225 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 80 PASS: absence reported truthfully, "
 			"window.Env installs, assignment still delegates ===\n");
 
+	/* --- Test 81: pre-loader requireLazy call survives the stub->real
+	 * transition (#167, fixes1276) -------------------------------------
+	 *
+	 * Test 80 proved the trap stops LYING about existence. It did not
+	 * prove the trap still WORKS end to end across the one transition
+	 * that matters on the real page: Facebook installs a temporary
+	 * stub-queueing __d/requireLazy BEFORE its 323KB real loader has
+	 * downloaded, an inline SSR island calls requireLazy() against that
+	 * stub, the stub queues the call into window.__rl_stub, and only
+	 * later does the real loader arrive, install itself over __d/
+	 * requireLazy, and drain the queue. If MacSurf's wrapper ever
+	 * captured a STALE reference to the stub instead of re-reading its
+	 * realD/realRL closure vars on each call, a call queued during the
+	 * stub phase would be silently lost -- which is exactly the shape
+	 * of the still-open rl_target_fires=0 hardware symptom.
+	 *
+	 * Uses harness/fbcdn.net-loader-b25.js, the REAL 323664-byte loader bundle
+	 * recovered from a live facebook.com session's hardware log (same
+	 * file fixes1274/1275 used to prove the window.Env root cause).
+	 * The stub-queueing bootstrap itself was not separately recovered
+	 * from a saved capture, so it is not literally replayed verbatim --
+	 * but its shape is not invented: b25.js's own drain code demands
+	 * `t.__d.apply(null, t.__d_stub[Fe])` and
+	 * `_e.apply(null, t.__rl_stub[Oe])`, i.e. each queued entry must be
+	 * exactly an arguments object, which is what forces the classic
+	 * Haste/BigPipe `(queue=queue||[]).push(arguments)` idiom used
+	 * below. */
+	fprintf(stderr, "\n=== Test 81: pre-loader requireLazy call survives "
+			"the stub->real transition (fixes1276) ===\n");
+	{
+		char *b25src = harness_slurp("fbcdn.net-loader-b25.js");
+		if (b25src == NULL) {
+			fprintf(stderr, "SKIP: fbcdn.net-loader-b25.js not present\n");
+		} else {
+			/* Plain assignment, not the `x = x || fn` idiom -- this
+			 * test's realm has run 80 prior tests, so __d/requireLazy
+			 * are not necessarily untouched here the way they are on
+			 * a fresh navigation. Reinstalling defensively over an
+			 * existing wrapper is exactly what Test 82 exists to
+			 * cover; this test's job is the stub-queue -> real-loader
+			 * -> drain -> fire pipeline, so it forces a known-clean
+			 * stub directly rather than depending on ambient state. */
+			const char *setup =
+				"(function(){\"use strict\";"
+				"globalThis.__t81={fired:0};"
+				"globalThis.__d=function(){"
+					"(globalThis.__d_stub=globalThis.__d_stub||[])"
+						".push(arguments);"
+				"};"
+				"globalThis.requireLazy="
+					"function(){"
+					"(globalThis.__rl_stub=globalThis.__rl_stub||[])"
+						".push(arguments);"
+				"};"
+				"globalThis.requireLazy(['ServerJSPayloadListener'],"
+					"function(m){globalThis.__t81.fired=1;});"
+				"if(globalThis.__t81.fired!==0)"
+					"throw new Error('ASSERT FAIL: callback fired "
+						"before the target was ever defined and "
+						"before the real loader even loaded');"
+				"if(!(globalThis.__rl_stub&&"
+						"globalThis.__rl_stub.length===1))"
+					"throw new Error('ASSERT FAIL: a requireLazy "
+						"call made during the pre-loader stub "
+						"phase did not reach the stub queue -- "
+						"got __rl_stub.length='+"
+						"(globalThis.__rl_stub?"
+							"globalThis.__rl_stub.length:"
+							"'undefined')+"
+						"' -- MacSurf is not delegating through "
+						"to the assigned stub');"
+				"})();";
+			const char *post =
+				"(function(){\"use strict\";"
+				"if(typeof globalThis.__d!=='function')"
+					"throw new Error('ASSERT FAIL: real loader did "
+						"not install __d');"
+				"if(globalThis.__d_stub!==undefined)"
+					"throw new Error('ASSERT FAIL: real loader did "
+						"not drain/delete __d_stub');"
+				"if(globalThis.__rl_stub!==undefined)"
+					"throw new Error('ASSERT FAIL: real loader did "
+						"not drain/delete __rl_stub -- the "
+						"pre-loader-queued call was lost');"
+				"globalThis.__d('ServerJSPayloadListener',[],"
+					"function(global,require,requireDynamic,"
+						"requireLazy,module,exports){"
+						"exports.process=function(){};"
+					"});"
+				"if(globalThis.__t81.fired!==1)"
+					"throw new Error('ASSERT FAIL: a requireLazy "
+						"callback queued during the PRE-LOADER "
+						"stub phase never fired after its target "
+						"was defined post-loader -- this "
+						"reproduces the rl_target_fires=0 "
+						"hardware symptom locally');"
+				"})();";
+			char *b25len_src; size_t wn; unsigned char ok81a, ok81b;
+
+			ok81a = js_exec(thread, (const unsigned char *)setup,
+					strlen(setup), "driver-t81-setup.js");
+			if (!ok81a) {
+				fprintf(stderr, "FAIL: Test 81 setup -- see assertion "
+						"above\n");
+				free(b25src);
+				return 1;
+			}
+
+			ok81b = js_exec(thread, (const unsigned char *)b25src,
+					strlen(b25src), "fbcdn.net-loader-b25.js");
+			fprintf(stderr, "js_exec(fbcdn.net-loader-b25.js, %lu bytes) "
+					"ok=%d\n", (unsigned long)strlen(b25src),
+					(int)ok81b);
+			free(b25src);
+			if (!ok81b) {
+				fprintf(stderr, "FAIL: Test 81 -- the real loader "
+						"bundle threw; see the exception reported "
+						"above\n");
+				return 1;
+			}
+
+			wn = strlen(post);
+			b25len_src = (char *)malloc(wn + 1);
+			memcpy(b25len_src, post, wn + 1);
+			ok81b = js_exec(thread, (const unsigned char *)b25len_src,
+					wn, "driver-t81-post.js");
+			free(b25len_src);
+			if (!ok81b) {
+				fprintf(stderr, "FAIL: Test 81 -- see assertion "
+						"above\n");
+				return 1;
+			}
+		}
+	}
+	fprintf(stderr, "=== Test 81 PASS: a requireLazy call queued during "
+			"Facebook's pre-loader stub phase survives the stub->real "
+			"transition and fires once its target is defined, through "
+			"the current fixes1275 wrapper unmodified ===\n");
+
+	/* --- Test 82: reinstalling __d/requireLazy defensively must not
+	 * self-reference (#167, fixes1276) ----------------------------------
+	 *
+	 * Found while writing Test 81: `window.requireLazy = window.requireLazy
+	 * || function(){...}` is the completely ordinary "install a stub only
+	 * if nothing is there yet" idiom, and it plausibly runs once per
+	 * SSR island/prelude chunk on a real page -- many times per
+	 * navigation, not once. Before this fix, the SECOND such reinstall
+	 * (against a trap that has already captured a real value) read back
+	 * `wrappedRL` itself from the getter and wrote it straight through
+	 * the setter, making the wrapper its own delegate. Every call after
+	 * that recursed into itself and blew the stack -- reproduced with
+	 * nothing more than two consecutive `x = x || fn` installs against a
+	 * fresh trap, no real Facebook code involved. A RangeError inside
+	 * this codebase's near-universal try/catch reads from the outside as
+	 * "nothing happened", the same silent-failure shape fixes1275 fixed
+	 * one layer up. This asserts the fix: the FIRST real assignment must
+	 * keep winning no matter how many times the idempotent idiom repeats
+	 * afterward, for both __d and requireLazy. */
+	fprintf(stderr, "\n=== Test 82: defensive reinstall does not "
+			"self-reference (fixes1276) ===\n");
+	{
+		const char *t82 =
+			"(function(){\"use strict\";"
+			"globalThis.__t82={dCalls:0,rlCalls:0,wrongStub:0};"
+			/* first real assignment -- plain, not `x = x || fn`. By
+			 * this point in the harness the trap has already been
+			 * exercised by 81 prior tests, so it is not necessarily
+			 * virgin the way it is on a fresh navigation; this line
+			 * establishes a KNOWN baseline the same way Test 81's
+			 * setup does. It is the reinstalls below, against that
+			 * now-known-real baseline, that this test exists to
+			 * check. */
+			"globalThis.__d=function(){"
+				"globalThis.__t82.dCalls++;"
+			"};"
+			"globalThis.requireLazy=function(){"
+				"globalThis.__t82.rlCalls++;"
+			"};"
+			/* a second island's defensive reinstall, shaped exactly
+			 * like the first -- must be a no-op against the trap */
+			"globalThis.__d=globalThis.__d||function(){"
+				"globalThis.__t82.wrongStub++;"
+			"};"
+			"globalThis.requireLazy=globalThis.requireLazy||function(){"
+				"globalThis.__t82.wrongStub++;"
+			"};"
+			/* and a third, because real pages are not limited to two */
+			"globalThis.__d=globalThis.__d||function(){"
+				"globalThis.__t82.wrongStub++;"
+			"};"
+			"globalThis.requireLazy=globalThis.requireLazy||function(){"
+				"globalThis.__t82.wrongStub++;"
+			"};"
+			"globalThis.__d('probe');"
+			"globalThis.requireLazy(['probe'],function(){});"
+			"if(globalThis.__t82.dCalls!==1||globalThis.__t82.rlCalls!==1)"
+				"throw new Error('ASSERT FAIL: the FIRST real __d/"
+					"requireLazy implementation did not receive the "
+					"call -- dCalls='+globalThis.__t82.dCalls+"
+					"' rlCalls='+globalThis.__t82.rlCalls);"
+			"if(globalThis.__t82.wrongStub!==0)"
+				"throw new Error('ASSERT FAIL: a LATER defensive "
+					"reinstall\\'s stub ran instead of the first -- "
+					"the self-reference guard let a later `x = x || "
+					"fn` overwrite the real implementation');"
+			"})();";
+		unsigned char ok = js_exec(thread, (const unsigned char *)t82,
+				strlen(t82), "driver-t82.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 82 -- see assertion above (a "
+					"stack-overflow RangeError here means the "
+					"self-reference guard is missing/broken)\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 82 PASS: repeated defensive reinstall stays "
+			"a no-op once the trap holds a real implementation, for "
+			"both __d and requireLazy ===\n");
+
 	return 0;
 }
 
