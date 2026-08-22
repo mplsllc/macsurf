@@ -11485,36 +11485,49 @@ static void register_browser_globals(JSContext *ctx)
 				"return false;"
 			"};"
 		"}"
-		"if(typeof g.__d==='undefined'){"
-		"var registry={},cache={};"
-		"g.__d=function(name,deps,factory){"
-		"if(typeof name==='function'){var f=name;name=deps;deps=factory;factory=f;}"
-		"registry[name]={deps:(deps&&deps.length)?deps:[],factory:factory};"
-		"};"
-		"var _require=function(name){"
-		"if(cache.hasOwnProperty(name))return cache[name].exports;"
-		"var mod=registry[name];"
-		"if(!mod){var stub={exports:{}};cache[name]=stub;return stub.exports;}"
-		"var module={exports:{}};cache[name]=module;"
-		"try{"
-		"if(typeof mod.factory==='function'){"
-		"var args=[g,_require,_require,g.requireLazy,module,module.exports],i;"
-		"for(i=0;i<mod.deps.length;i++){try{args.push(_require(mod.deps[i]));}catch(e){args.push(undefined);}}"
-		"mod.factory.apply(g,args);"
-		"}"
-		"}catch(e){}"
-		"return module.exports;"
-		"};"
-		"g.require=g.require||_require;"
-		"g.requireDynamic=_require;"
-		"g.__r=_require;"
-		"g.requireLazy=function(names,cb){"
-		"var r=[],i;"
-		"if(names&&names.length){for(i=0;i<names.length;i++){try{r.push(_require(names[i]));}catch(e){r.push(undefined);}}}"
-		"if(typeof cb==='function'){try{cb.apply(null,r);}catch(e){}}"
-		"return r;"
-		"};"
-		"}"
+		/* fixes1275 (#167) - REMOVED: a fabricated Facebook module system.
+		 *
+		 * This block used to install g.__d, g.require, g.__r,
+		 * g.requireDynamic and g.requireLazy whenever __d was absent -
+		 * i.e. on every page, since it ran before any page script. Its
+		 * _require resolved ANY unknown module to an empty object:
+		 *
+		 *   if(!mod){var stub={exports:{}};cache[name]=stub;
+		 *            return stub.exports;}
+		 *
+		 * so requireLazy(names,cb) always invoked cb, with {} for
+		 * anything it did not have. Never an error, never a wait -
+		 * always a confident wrong answer.
+		 *
+		 * On facebook.com that destroyed the page before it started.
+		 * The real page's envjson script runs at t=961 (hardware log),
+		 * BEFORE the bootstrap that defines requireLazy at t=991:
+		 *
+		 *   window.requireLazy ? window.requireLazy(["Env"],copyVariables)
+		 *                      : (window.Env=window.Env||{},
+		 *                         copyVariables(window.Env))
+		 *
+		 * A real browser has requireLazy undefined there, takes the
+		 * ELSE branch, and installs window.Env - the page's entire
+		 * configuration. MacSurf answered "yes, I have a module
+		 * loader", took the FIRST branch, resolved "Env" to a
+		 * throwaway {}, and copied the whole config into it. window.Env
+		 * was NEVER SET, and every requireLazy the page made after that
+		 * inherited a loader that answers everything with nothing.
+		 * Reproduced end to end under stock qjs with the REAL page
+		 * scripts in their REAL order plus the real 323KB loader
+		 * bundle.
+		 *
+		 * Nothing is lost by removing it: __d / requireLazy are
+		 * Facebook-internal, and any page using them ships its own
+		 * loader in the same document (that is what the __d_stub /
+		 * __rl_stub bootstrap-and-drain pattern exists for). A page
+		 * that needs them brings them; a page that does not never asks.
+		 * A stand-in could only ever intercept a real loader's traffic
+		 * and answer it wrongly - which is precisely what happened.
+		 *
+		 * See project_js_lies_not_gaps: pages break on LYING answers,
+		 * not on missing APIs. */
 		"})(this);");
 
 	/* --- Promise combinators + documentElement/body/head fix --- */
@@ -12668,14 +12681,51 @@ static void register_browser_globals(JSContext *ctx)
 			"rlRealNull++;"
 			"return undefined;"
 		"}"
+		/* fixes1275 (#167) - DO NOT FABRICATE EXISTENCE.
+		 *
+		 * These getters used to return the wrapper unconditionally, so
+		 * `window.__d` and `window.requireLazy` appeared to already
+		 * exist from the moment this diagnostic was installed - before
+		 * any page script had run. That is a LIE about the page's own
+		 * state, and facebook.com feature-detects exactly these two
+		 * names. Verbatim from the page (recovered from the hardware
+		 * log, and confirmed to run at t=961, BEFORE the bootstrap that
+		 * defines requireLazy at t=991):
+		 *
+		 *   var dataElement=document.getElementById("envjson");
+		 *   ...
+		 *   window.requireLazy
+		 *     ? window.requireLazy(["Env"],copyVariables)
+		 *     : (window.Env=window.Env||{},copyVariables(window.Env))
+		 *
+		 * A real browser has requireLazy undefined at that point, takes
+		 * the ELSE branch, and installs window.Env - the page's entire
+		 * configuration - directly. MacSurf answered "yes, it exists",
+		 * so the page handed Env to a requireLazy that did not exist
+		 * yet, and this wrapper dropped it on the floor because realRL
+		 * was still null. window.Env was NEVER SET, and nothing that
+		 * depends on the page config could work from there on.
+		 *
+		 * Reproduced end to end under stock qjs using the REAL page
+		 * scripts in their REAL hardware order plus the real 323KB
+		 * loader bundle: Env unset, and a requireLazy call dropped.
+		 * With this change: Env set, zero drops.
+		 *
+		 * So: report `undefined` until the page has actually assigned
+		 * something, then report the wrapper. The diagnostic keeps
+		 * working; it just stops answering a question it was never
+		 * asked truthfully. This is the same failure class as
+		 * project_js_lies_not_gaps - pages break on LYING answers, not
+		 * on missing APIs - and it was introduced by instrumentation
+		 * added to investigate the very symptom it was causing. */
 		"Object.defineProperty(g,'__d',{"
 			"configurable:true,"
-			"get:function(){return wrappedD;},"
+			"get:function(){return (realD!==null)?wrappedD:undefined;},"
 			"set:function(v){realD=v;}"
 		"});"
 		"Object.defineProperty(g,'requireLazy',{"
 			"configurable:true,"
-			"get:function(){return wrappedRL;},"
+			"get:function(){return (realRL!==null)?wrappedRL:undefined;},"
 			"set:function(v){realRL=v;}"
 		"});"
 		"g.__msFBLoader_dTotal=function(){return dTotal;};"

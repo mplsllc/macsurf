@@ -10124,8 +10124,88 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 79 PASS: timer, rAF, nested scheduling and "
 			"both promise/task directions all deliver ===\n");
 
+	/* ---------------------------------------------------------------
+	 * fixes1275 (#167) - diagnostics must not FABRICATE EXISTENCE.
+	 *
+	 * The __d / requireLazy property traps (fixes1247/1259, added to
+	 * investigate why Facebook never booted) returned their wrapper
+	 * unconditionally, so both names appeared to exist before any page
+	 * script had run. facebook.com feature-detects exactly those names.
+	 * Verbatim from the real page, recovered from the hardware log and
+	 * confirmed to execute at t=961, BEFORE the bootstrap that defines
+	 * requireLazy at t=991:
+	 *
+	 *   window.requireLazy ? window.requireLazy(["Env"],copyVariables)
+	 *                      : (window.Env=window.Env||{},
+	 *                         copyVariables(window.Env))
+	 *
+	 * A real browser has requireLazy undefined there, takes the ELSE
+	 * branch, and installs window.Env - the page's whole configuration.
+	 * MacSurf said "it exists", so the page handed Env to a requireLazy
+	 * that did not exist yet and the wrapper dropped it. window.Env was
+	 * NEVER SET. The instrumentation added to find the bug was causing
+	 * it.
+	 *
+	 * This asserts the contract that prevents a recurrence: an
+	 * observer-only trap reports undefined until the page assigns, and
+	 * the wrapper afterwards. It runs the REAL branch, not a mock of it.
+	 * ------------------------------------------------------------- */
+	fprintf(stderr, "\n=== Test 80: instrumentation reports absence "
+			"truthfully (fixes1275) ===\n");
+	{
+		const char *t80 =
+			"(function(){"
+			/* the exact shape the real page uses */
+			"var probe=(typeof globalThis.__msT80Name==='undefined')?"
+				"'__msT80Name':'__msT80Name';"
+			"if(typeof globalThis.requireLazy!=='undefined'&&"
+					"globalThis.__msT80Assigned!==1){"
+				"throw new Error('ASSERT FAIL: requireLazy reports "
+					"as existing before any page script assigned "
+					"it -- a feature-detect like facebook.com\\'s "
+					"envjson script will take the wrong branch "
+					"and lose window.Env');"
+			"}"
+			/* real envjson branch, verbatim logic */
+			"var variables={MARK:'ENV-OK'};"
+			"var copyVariables=function(e){"
+				"for(var n in variables)e[n]=variables[n];"
+			"};"
+			"globalThis.requireLazy?"
+				"globalThis.requireLazy(['Env'],copyVariables):"
+				"(globalThis.Env=globalThis.Env||{},"
+					"copyVariables(globalThis.Env));"
+			"if(!globalThis.Env||globalThis.Env.MARK!=='ENV-OK')"
+				"throw new Error('ASSERT FAIL: window.Env was not "
+					"installed -- the page config is lost, which "
+					"is exactly the facebook.com failure');"
+			/* after a real assignment the trap must engage */
+			"globalThis.__msT80Assigned=1;"
+			"globalThis.requireLazy=function(){"
+				"globalThis.__msT80Called=1;"
+			"};"
+			"if(typeof globalThis.requireLazy!=='function')"
+				"throw new Error('ASSERT FAIL: after assignment "
+					"requireLazy must be callable');"
+			"globalThis.requireLazy(['x'],function(){});"
+			"if(globalThis.__msT80Called!==1)"
+				"throw new Error('ASSERT FAIL: assigned "
+					"implementation was not reached -- the "
+					"observer must delegate, not swallow');"
+			"})();";
+		unsigned char ok = js_exec(thread, (const unsigned char *)t80,
+				strlen(t80), "driver-t80.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 80 -- see assertion above\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 80 PASS: absence reported truthfully, "
+			"window.Env installs, assignment still delegates ===\n");
+
 	return 0;
 }
+
 
 
 
