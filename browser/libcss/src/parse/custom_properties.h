@@ -213,17 +213,40 @@ const css_cp_entry *css__style_find_custom_property(
  * it.
  */
 typedef struct css_cp_binding {
-	css_cp_entry entry;      /**< name/tokens BORROWED; next unused */
+	css_cp_entry entry;      /**< name/tokens; see owns_tokens */
 	uint32_t specificity;    /**< Specificity of the defining rule */
 	uint8_t origin;          /**< css_origin of the defining sheet */
 	uint8_t important;       /**< Non-zero => !important */
-	uint8_t pad[2];
+	/* fixes1268c - before finalisation tokens are borrowed from the
+	 * stylesheet; after it they are a freshly built substituted run
+	 * this binding owns and must free (each idata ref'd). */
+	uint8_t owns_tokens;
+	uint8_t pad[1];
 } css_cp_binding;
 
 struct css_cp_env {
 	css_cp_binding *items;
 	uint32_t used;
 	uint32_t allocated;
+
+	/* fixes1268c (#167) - the parent element's FINALISED environment,
+	 * or NULL at the root. Custom properties inherit, and a chain of
+	 * references costs nothing per element, where copying the parent's
+	 * bindings would cost O(properties x elements) - facebook.com
+	 * defines several hundred tokens on one ancestor.
+	 *
+	 * Reference-counted rather than borrowed: correctness must not
+	 * depend on any particular destruction order between a parent
+	 * style and a child's. */
+	struct css_cp_env *inherited;
+	uint32_t refcount;
+
+	/* Non-zero once css__cp_env_finalise has substituted every own
+	 * binding's var() references, making the bindings COMPUTED values
+	 * that children may inherit directly. Before that the bindings
+	 * hold raw, borrowed token runs. */
+	uint8_t finalised;
+	uint8_t pad2[3];
 };
 typedef struct css_cp_env css_cp_env;
 
@@ -251,9 +274,43 @@ const css_cp_entry *css__cp_env_find(const css_cp_env *env,
 		lwc_string *name);
 
 /**
- * Free an environment's array. Does not touch the borrowed names/tokens.
+ * Release a reference to an environment, freeing it (and releasing its
+ * reference to the inherited one) when the last goes.
  */
-void css__cp_env_destroy(css_cp_env *env);
+void css__cp_env_unref(css_cp_env *env);
+
+/**
+ * Take an additional reference. Returns env for convenience.
+ */
+css_cp_env *css__cp_env_ref(css_cp_env *env);
+
+/**
+ * Point a (possibly not-yet-created) environment at the parent
+ * element's finalised environment, taking a reference.
+ */
+css_error css__cp_env_set_inherited(css_cp_env **env, css_cp_env *parent);
+
+/**
+ * Substitute every own binding's var() references, turning the
+ * environment's raw token runs into COMPUTED values that children can
+ * inherit directly.
+ *
+ * This is required by CSS Variables 1: the computed value of a custom
+ * property is its specified value with variables substituted, so a
+ * child inheriting "--b: var(--a)" from its parent receives the
+ * PARENT's --a, not its own. Verified against Chrome:
+ *
+ *   .p { --a: red; --b: var(--a) }
+ *   .c { --a: blue; color: var(--b) }   =>  .c color is RED
+ *
+ * Substituting per element rather than per lookup also makes the result
+ * independent of declaration order within a rule, which Chrome also
+ * confirms (".q { --b: var(--a); --a: green }" resolves to green).
+ */
+css_error css__cp_env_finalise(css_cp_env *env,
+		const struct css_stylesheet *origin_sheet,
+		const struct css_select_ctx *ctx,
+		const struct css_stylesheet *inline_sheet);
 
 /**
  * Contribute every rule-scoped definition attached to `style` to `env`,

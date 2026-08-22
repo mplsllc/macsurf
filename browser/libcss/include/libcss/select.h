@@ -248,4 +248,48 @@ void css_inline_extras_clear(void);
 }
 #endif
 
+
+/* fixes1268c (#167) - custom-property inheritance.
+ *
+ * Custom properties inherit, so selecting an element needs the set in
+ * force on its PARENT. That cannot travel on css_computed_style: styles
+ * are interned by css__arena_intern_style, so two elements with
+ * identical computed properties share one struct, while their custom
+ * environments may differ entirely. Nor can it live on
+ * libcss_node_data, which is an opportunistic cache that
+ * css_libcss_node_data_handler destroys on any DOM change without
+ * rebuilding it.
+ *
+ * The client therefore threads it, alongside the parent style it already
+ * threads: set the parent's environment before selecting, take the
+ * element's afterwards, and hand that to the element's children.
+ *
+ * Passing NULL is always valid and means "root element".
+ */
+
+/**
+ * Set the parent element's custom-property environment for the NEXT
+ * css_select_style call on this context. The context takes a reference.
+ */
+css_error css_select_ctx_set_parent_custom_env(css_select_ctx *ctx,
+		css_custom_env *env);
+
+/**
+ * Take ownership of the environment produced by the most recent
+ * css_select_style call on this context. Returns NULL if that element
+ * had no custom properties in force. The caller must release it with
+ * css_custom_env_unref; calling this twice returns NULL the second time.
+ */
+css_custom_env *css_select_ctx_take_custom_env(css_select_ctx *ctx);
+
+/**
+ * Take an additional reference to an environment. Returns env.
+ */
+css_custom_env *css_custom_env_ref(css_custom_env *env);
+
+/**
+ * Release a reference to an environment.
+ */
+void css_custom_env_unref(css_custom_env *env);
+
 #endif

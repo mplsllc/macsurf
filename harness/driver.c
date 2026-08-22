@@ -9462,7 +9462,228 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 76 PASS: selector scope and @media scope "
 			"both honoured by var() resolution ===\n");
 
+	/* ---------------------------------------------------------------
+	 * fixes1268c (#167) - custom properties INHERIT, with the
+	 * computed-value semantics CSS Variables 1 requires.
+	 *
+	 * Cases, in fixture order:
+	 *   .child      basic inheritance from an ancestor
+	 *   .ovr        a local definition overrides the inherited one
+	 *   .isoA/.isoB sibling isolation - two subtrees, same name
+	 *   .leaf       inheritance through an intermediate element
+	 *   .other      NEGATIVE: a non-descendant must NOT see the value
+	 *               and must fall back to the var() fallback. This is
+	 *               the test that catches an accidental document-global
+	 *               carry-over, which is exactly what the old per-sheet
+	 *               store was.
+	 *   .vc         computed-value timing: the parent's "--b: var(--a)"
+	 *               is substituted AT THE PARENT, so the child gets the
+	 *               PARENT's --a even though it redefines --a itself.
+	 *               Verified against Chrome, which returns red here.
+	 * ------------------------------------------------------------- */
+	fprintf(stderr, "\n=== Test 77: custom-property inheritance and "
+			"computed-value timing (fixes1268c) ===\n");
+	{
+		const char *t77_html =
+			"<html><body>"
+			"<div class=\"parent\"><p class=\"child\">C</p>"
+			"<p class=\"ovr\">O</p></div>"
+			"<div class=\"isoA\"><p class=\"ia\">A</p></div>"
+			"<div class=\"isoB\"><p class=\"ib\">B</p></div>"
+			"<div class=\"root\"><div class=\"mid\">"
+			"<p class=\"leaf\">L</p></div></div>"
+			"<p class=\"other\">N</p>"
+			"<div class=\"vp\"><p class=\"vc\">V</p></div>"
+			"<p class=\"use scope\">U</p>"
+			"</body></html>";
+		const char *t77_css =
+			".parent { --x: rgb(255,0,0) }"
+			".child  { color: var(--x) }"
+			".ovr    { --x: rgb(0,0,255); color: var(--x) }"
+			".isoA   { --y: rgb(0,128,0) }"
+			".isoB   { --y: rgb(0,0,255) }"
+			".ia     { color: var(--y) }"
+			".ib     { color: var(--y) }"
+			".root   { --z: rgb(128,0,128) }"
+			".leaf   { color: var(--z) }"
+			".other  { color: var(--x, rgb(0,128,0)) }"
+			".vp     { --a: rgb(255,0,0); --b: var(--a) }"
+			".vc     { --a: rgb(0,0,255); color: var(--b) }"
+			/* fixes1268d - the consumer's rule cascades BEFORE
+			 * the rule that defines the property. Resolving
+			 * var() inline during cascade_style could never see
+			 * .scope; the second pass can. */
+			".use    { color: var(--w, rgb(255,0,0)) }"
+			".scope  { --w: rgb(0,0,255) }";
+		struct html_content t77c;
+		dom_hubbub_parser *t77p = NULL;
+		dom_document *t77doc = NULL;
+		dom_node *t77root = NULL;
+		css_select_ctx *t77ctx = NULL;
+		css_stylesheet *t77ua = NULL;
+		css_stylesheet *t77auth = NULL;
+		dom_hubbub_parser_params t77params;
+		css_stylesheet_params t77sp;
+		void *t77_box_ctx = NULL;
+		int t77_bad = 0;
+		int k;
+		nserror t77err;
+		static const struct {
+			const char *cls;
+			long want;
+			const char *what;
+		} t77_want[] = {
+			{ "child", 0xFF0000L, "basic inheritance" },
+			{ "ovr",   0x0000FFL, "local override" },
+			{ "ia",    0x008000L, "sibling isolation A" },
+			{ "ib",    0x0000FFL, "sibling isolation B" },
+			{ "leaf",  0x800080L, "inheritance through mid" },
+			{ "other", 0x008000L, "NEGATIVE: non-descendant "
+					"falls back" },
+			{ "vc",    0xFF0000L, "computed-value timing "
+					"(parent's --a, not child's)" },
+			{ "use",   0x0000FFL, "later rule's definition "
+					"reaches an earlier consumer" }
+		};
+
+		memset(&t77params, 0, sizeof(t77params));
+		t77params.fix_enc = true;
+		if (dom_hubbub_parser_create(&t77params, &t77p, &t77doc) !=
+				DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 77 parser create\n");
+			return 1;
+		}
+		if (dom_hubbub_parser_parse_chunk(t77p,
+				(const uint8_t *)t77_html,
+				strlen(t77_html)) != DOM_HUBBUB_OK ||
+				dom_hubbub_parser_completed(t77p) !=
+					DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 77 parse\n");
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t77p);
+
+		memset(&t77c, 0, sizeof(t77c));
+		t77c.base_url = g_base_url;
+		t77c.document = t77doc;
+		t77c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t77c.enable_scripting = false;
+		if (css_select_ctx_create(&t77ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 77 select_ctx\n");
+			return 1;
+		}
+		t77c.select_ctx = t77ctx;
+
+		memset(&t77sp, 0, sizeof(t77sp));
+		t77sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t77sp.level = CSS_LEVEL_3;
+		t77sp.charset = "UTF-8";
+		t77sp.url = "resource:default.css";
+		t77sp.title = "default";
+		t77sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t77sp, &t77ua) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 77 UA sheet\n");
+			return 1;
+		}
+		{
+			const char *ua = "html,body,div,p{display:block}";
+			(void)css_stylesheet_append_data(t77ua,
+					(const uint8_t *)ua, strlen(ua));
+			(void)css_stylesheet_data_done(t77ua);
+		}
+		(void)css_select_ctx_append_sheet(t77ctx, t77ua,
+				CSS_ORIGIN_UA, "screen");
+
+		memset(&t77sp, 0, sizeof(t77sp));
+		t77sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t77sp.level = CSS_LEVEL_3;
+		t77sp.charset = "UTF-8";
+		t77sp.url = "http://local/t77.css";
+		t77sp.title = "author";
+		t77sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t77sp, &t77auth) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 77 author sheet\n");
+			return 1;
+		}
+		{
+			css_error ae = css_stylesheet_append_data(t77auth,
+					(const uint8_t *)t77_css,
+					strlen(t77_css));
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 77 append=%d\n",
+						(int)ae);
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t77auth);
+		}
+		(void)css_select_ctx_append_sheet(t77ctx, t77auth,
+				CSS_ORIGIN_AUTHOR, "screen");
+
+		t77c.media.type = CSS_MEDIA_SCREEN;
+		t77c.media.width = INTTOFIX(800);
+		t77c.media.height = INTTOFIX(600);
+		t77c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t77c.unit_len_ctx.viewport_width = INTTOFIX(800);
+		t77c.unit_len_ctx.viewport_height = INTTOFIX(600);
+		t77c.unit_len_ctx.device_dpi = INTTOFIX(90);
+		t77c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t77c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t77c.universal) !=
+				lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 77 universal\n");
+			return 1;
+		}
+		t77c.base.status = CONTENT_STATUS_LOADING;
+		t77c.base.active = 0;
+		t77c.base.handler = &g_dummy_handler;
+
+		if (dom_document_get_document_element(t77doc,
+				(void *)&t77root) != DOM_NO_ERR ||
+				t77root == NULL) {
+			fprintf(stderr, "FAIL: Test 77 doc element\n");
+			return 1;
+		}
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t77err = dom_to_box(t77root, &t77c, initial_build_cb,
+				&t77_box_ctx);
+		dom_node_unref(t77root);
+		if (t77err != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 77 dom_to_box=%d\n",
+					(int)t77err);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 77 build\n");
+			return 1;
+		}
+
+		for (k = 0; k < (int)(sizeof(t77_want) /
+				sizeof(t77_want[0])); k++) {
+			long got = t76_color_of(t77c.layout,
+					t77_want[k].cls);
+			fprintf(stderr, "  .%-6s = #%06lX  want #%06lX  %s\n",
+					t77_want[k].cls, got,
+					t77_want[k].want, t77_want[k].what);
+			if (got != t77_want[k].want) {
+				fprintf(stderr, "FAIL: Test 77 .%s -- %s: "
+						"got #%06lX expected #%06lX\n",
+						t77_want[k].cls,
+						t77_want[k].what, got,
+						t77_want[k].want);
+				t77_bad = 1;
+			}
+		}
+		if (t77_bad)
+			return 1;
+	}
+	fprintf(stderr, "=== Test 77 PASS: inheritance, override, sibling "
+			"isolation, non-descendant isolation, and "
+			"computed-value timing ===\n");
+
 	return 0;
 }
+
 
 

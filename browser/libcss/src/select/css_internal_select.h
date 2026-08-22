@@ -30,6 +30,17 @@ typedef struct reject_item {
 
 struct css_cp_env;
 
+/* fixes1268d (#167) - one queued var()-referencing declaration. */
+typedef struct css_pending_var {
+	const struct css_deferred_decl *dd;	/* Declaration to resolve */
+	const struct css_stylesheet *sheet;	/* Sheet that owns dd */
+	struct css_computed_style *computed;	/* Style it writes into */
+	uint32_t specificity;			/* Its rule's specificity */
+	uint8_t origin;				/* Its sheet's origin */
+	uint8_t pseudo;				/* Pseudo element targeted */
+	uint8_t pad[2];
+} css_pending_var;
+
 typedef struct prop_state {
 	uint32_t specificity;                 /* Specificity of property in result */
 	unsigned int    set              : 1, /* Whether property is set in result */
@@ -63,6 +74,14 @@ struct css_node_data {
 	css_select_results partial;
 	css_bloom *bloom;
 	css_node_flags flags;
+	/* fixes1268c (#167) - the custom-property environment produced for
+	 * this node, so a sibling that shares its computed styles can share
+	 * this too. Sharing skips cascade_style entirely, which would
+	 * otherwise leave the sharer's environment holding only inherited
+	 * bindings and none of its own. Only reused when the candidate's
+	 * INHERITED environment is the same object as ours, so two nodes
+	 * under different parents never trade environments. */
+	struct css_cp_env *custom_env;
 };
 
 struct revert_data {
@@ -117,6 +136,23 @@ typedef struct css_select_state {
 	struct css_node_data *node_data;	/* Data we'll store on node */
 
 	prop_state props[CSS_N_PROPERTIES][CSS_PSEUDO_ELEMENT_COUNT];
+
+	/* fixes1268d (#167) - declarations whose value references var(),
+	 * queued during cascading and resolved in one pass afterwards. A
+	 * custom property defined by a rule that cascades LATER than the
+	 * rule referencing it must still be visible, which resolving
+	 * inline inside cascade_style could never achieve. Each entry
+	 * carries the cascade position to restore, so the resolved
+	 * declaration competes exactly where its own rule sat.
+	 *
+	 * `important` is deliberately NOT recorded: css__deferred_decl_
+	 * resolve derives it from dd->important AND from a trailing
+	 * !important surviving in the substituted tokens, and only the
+	 * post-substitution answer is authoritative. Recording it here
+	 * would create a second, staler copy. */
+	struct css_pending_var *pending;
+	uint32_t n_pending;
+	uint32_t pending_alloc;
 
 	/* fixes1268b (#167) - custom properties in force for this element,
 	 * accumulated by cascade_style as each matching rule contributes

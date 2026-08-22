@@ -212,6 +212,9 @@ struct box_construct_ctx {
 struct box_construct_props {
 	/** Style from which to inherit, or NULL if none */
 	const css_computed_style *parent_style;
+	/* fixes1268c (#167) - inherited custom properties, threaded from
+	 * the parent box exactly like parent_style above. */
+	css_custom_env *parent_custom_env;
 	/** Current link target, or NULL if none */
 	struct nsurl *href;
 	/** Current frame target, or NULL if none */
@@ -320,6 +323,8 @@ box_extract_properties(dom_node *n, struct box_construct_props *props)
 
 			if (parent_box != NULL) {
 				props->parent_style = parent_box->style;
+				props->parent_custom_env =
+						parent_box->custom_env;
 				props->href = parent_box->href;
 				props->target = parent_box->target;
 				/* fixes1063 (#114) - travels with href. */
@@ -395,7 +400,9 @@ static css_select_results *
 box_get_style(html_content *c,
 	      const css_computed_style *parent_style,
 	      const css_computed_style *root_style,
-	      dom_node *n)
+	      dom_node *n,
+	      css_custom_env *parent_custom_env,
+	      css_custom_env **out_custom_env)
 {
 	dom_string *s = NULL;
 	css_stylesheet *inline_style = NULL;
@@ -432,6 +439,10 @@ box_get_style(html_content *c,
 	ctx.universal = c->universal;
 	ctx.root_style = root_style;
 	ctx.parent_style = parent_style;
+	/* fixes1268c (#167) - inherited custom properties in, this
+	 * element's own set out. */
+	ctx.parent_custom_env = parent_custom_env;
+	ctx.produced_custom_env = NULL;
 	/* fixes130 - propagate dynamic pseudo-class state into the
 	 * select context so :hover / :active / :focus match correctly
 	 * during this cascade pass. */
@@ -442,6 +453,14 @@ box_get_style(html_content *c,
 	/* Select style for element */
 	styles = nscss_get_style(&ctx, n, &c->media, &c->unit_len_ctx,
 			inline_style);
+
+	/* Transfer the element's environment to the caller, which stores it
+	 * on the box so this element's children can inherit it. */
+	if (out_custom_env != NULL) {
+		*out_custom_env = ctx.produced_custom_env;
+	} else if (ctx.produced_custom_env != NULL) {
+		css_custom_env_unref(ctx.produced_custom_env);
+	}
 
 	/* No longer need inline style */
 	if (inline_style != NULL)
@@ -1147,6 +1166,9 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	enum css_display_e css_display;
 	struct box *box = NULL, *old_box;
 	css_select_results *styles = NULL;
+	/* fixes1268c (#167) - this element's custom-property environment,
+	 * moved onto the box below. */
+	css_custom_env *elem_custom_env = NULL;
 	lwc_string *bgimage_uri;
 	dom_exception err;
 	struct box_construct_props props;
@@ -1192,7 +1214,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	}
 
 	styles = box_get_style(ctx->content, props.parent_style, root_style,
-			ctx->n);
+			ctx->n, props.parent_custom_env, &elem_custom_env);
 	if (styles == NULL)
 		return false;
 
@@ -1234,6 +1256,9 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		dom_string_unref(s);
 	}
 
+	/* fixes1268c (#167) - the element's custom-property environment
+	 * lives on the box, which is what props.parent_custom_env reads for
+	 * each child. box_create zeroes the struct, so this must follow it. */
 	box = box_create(styles, styles->styles[CSS_PSEUDO_ELEMENT_NONE], false,
 			props.href, props.target, props.title, id,
 			ctx->bctx);
@@ -1241,6 +1266,10 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	 * href. box_special sets it on the anchor's own box below. */
 	if (box != NULL && props.download)
 		box->flags |= LINK_DOWNLOAD;
+	if (box != NULL) {
+		box->custom_env = elem_custom_env;   /* ownership moves */
+		elem_custom_env = NULL;
+	}
 	if (box == NULL) {
 		/* fixes895 - box_create/talloc_zero returned NULL. During a
 		 * reconvert this is the H1 smoking gun: the double-buffer keeps a
@@ -2721,6 +2750,11 @@ extern void macsurf_debug_log_write(const char *s);
 struct recascade_frame {
 	struct box *box;
 	const css_computed_style *parent_style;
+	/* fixes1268c (#167) - custom properties inherit, so a recascade
+	 * must re-thread them down the tree exactly as box construction
+	 * does; otherwise every var() below the root resolves against an
+	 * empty environment after the first reconvert. */
+	css_custom_env *parent_custom_env;
 };
 
 nserror
@@ -2755,12 +2789,14 @@ html_recascade_tree(html_content *c)
 	root_style = c->layout->style;
 	stack[stack_top].box = c->layout;
 	stack[stack_top].parent_style = NULL;
+	stack[stack_top].parent_custom_env = NULL;
 	stack_top++;
 
 	while (stack_top > 0 && processed < hard_cap) {
 		struct recascade_frame frame;
 		struct box *box;
 		const css_computed_style *parent_style;
+		css_custom_env *parent_custom_env;
 		const css_computed_style *old_self_style;
 		const css_computed_style *style_for_children;
 		struct box *child;
@@ -2769,6 +2805,7 @@ html_recascade_tree(html_content *c)
 		frame = stack[stack_top];
 		box = frame.box;
 		parent_style = frame.parent_style;
+		parent_custom_env = frame.parent_custom_env;
 
 		processed++;
 		if ((processed % 200) == 0) {
@@ -2785,9 +2822,19 @@ html_recascade_tree(html_content *c)
 				(box == c->layout) ? NULL : root_style;
 			const css_computed_style *use_parent =
 				(box == c->layout) ? NULL : parent_style;
+			css_custom_env *use_parent_env =
+				(box == c->layout) ? NULL : parent_custom_env;
+			css_custom_env *new_env = NULL;
 			css_select_results *new_styles = box_get_style(c,
-					use_parent, use_root, box->node);
+					use_parent, use_root, box->node,
+					use_parent_env, &new_env);
 			if (new_styles != NULL) {
+				/* fixes1268c - replace, releasing the
+				 * environment from the previous cascade. */
+				if (box->custom_env != NULL)
+					css_custom_env_unref(box->custom_env);
+				box->custom_env = new_env;
+				new_env = NULL;
 				box->styles = new_styles;
 				box->style = new_styles->styles[
 						CSS_PSEUDO_ELEMENT_NONE];
@@ -2830,6 +2877,14 @@ html_recascade_tree(html_content *c)
 			}
 			stack[stack_top].box = child;
 			stack[stack_top].parent_style = style_for_children;
+			/* fixes1268c - a box with no cascade of its own (an
+			 * anonymous or text box) passes the inherited
+			 * environment straight through, mirroring how
+			 * style_for_children falls back to parent_style. */
+			stack[stack_top].parent_custom_env =
+					(box->custom_env != NULL) ?
+						box->custom_env :
+						parent_custom_env;
 			stack_top++;
 		}
 	}

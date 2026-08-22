@@ -1048,24 +1048,20 @@ static void html_fbcss_report(dom_element *he, dom_node *body,
 	if (hb != NULL && hb->style != NULL) {
 		css_color col = 0;
 		css_computed_color(hb->style, &col);
-		sprintf(htmlcolor, "#%06lX",
-			(unsigned long) (col & 0xFFFFFF));
+		ns_color_hex(htmlcolor, (unsigned long) col);
 		col = 0;
 		css_computed_background_color(hb->style, &col);
-		sprintf(htmlbg, "#%06lX",
-			(unsigned long) (col & 0xFFFFFF));
+		ns_color_hex(htmlbg, (unsigned long) col);
 	}
 
 	bb = (body != NULL) ? box_for_node(body) : NULL;
 	if (bb != NULL && bb->style != NULL) {
 		css_color col = 0;
 		css_computed_color(bb->style, &col);
-		sprintf(bodycolor, "#%06lX",
-			(unsigned long) (col & 0xFFFFFF));
+		ns_color_hex(bodycolor, (unsigned long) col);
 		col = 0;
 		css_computed_background_color(bb->style, &col);
-		sprintf(bodybg, "#%06lX",
-			(unsigned long) (col & 0xFFFFFF));
+		ns_color_hex(bodybg, (unsigned long) col);
 	}
 
 	macsurf_debug_log_writef(
@@ -1110,14 +1106,14 @@ static void html_fbpaint_report(dom_element *he, dom_node *body,
 	if (hb != NULL && hb->style != NULL) {
 		css_computed_background_color(hb->style, &hcol);
 		h_has_bg = !nscss_color_is_transparent(hcol);
-		sprintf(htmlbgbuf, "#%08lX", (unsigned long) hcol);
+		ns_color_hex_alpha(htmlbgbuf, (unsigned long) hcol);
 	}
 
 	bb = (body != NULL) ? box_for_node(body) : NULL;
 	if (bb != NULL && bb->style != NULL) {
 		css_computed_background_color(bb->style, &bcol);
 		b_has_bg = !nscss_color_is_transparent(bcol);
-		sprintf(bodybgbuf, "#%08lX", (unsigned long) bcol);
+		ns_color_hex_alpha(bodybgbuf, (unsigned long) bcol);
 	}
 
 	/* Mirrors html_redraw_find_bg_box's root-box branch exactly: root's
@@ -1125,10 +1121,10 @@ static void html_fbpaint_report(dom_element *he, dom_node *body,
 	 * propagates; otherwise neither paints (canvas stays UA default). */
 	if (h_has_bg) {
 		root_source = "html";
-		sprintf(canvasbg, "#%08lX", (unsigned long) hcol);
+		ns_color_hex_alpha(canvasbg, (unsigned long) hcol);
 	} else if (b_has_bg) {
 		root_source = "body";
-		sprintf(canvasbg, "#%08lX", (unsigned long) bcol);
+		ns_color_hex_alpha(canvasbg, (unsigned long) bcol);
 	}
 
 	/* fixes1264 CRASH-CLASS NOTE: every value below reaches

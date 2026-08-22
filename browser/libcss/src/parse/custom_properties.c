@@ -267,6 +267,7 @@ css_error css__cp_env_add(css_cp_env **env, lwc_string *name,
 		*env = (css_cp_env *)calloc(1, sizeof(css_cp_env));
 		if (*env == NULL)
 			return CSS_NOMEM;
+		(*env)->refcount = 1;
 	}
 	e = *env;
 
@@ -310,27 +311,82 @@ css_error css__cp_env_add(css_cp_env **env, lwc_string *name,
 
 const css_cp_entry *css__cp_env_find(const css_cp_env *env, lwc_string *name)
 {
-	uint32_t i;
-
-	if (env == NULL || name == NULL)
+	if (name == NULL)
 		return NULL;
 
-	for (i = 0; i < env->used; i++) {
-		if (cp_name_equal(env->items[i].entry.name, name))
-			return &env->items[i].entry;
+	/* fixes1268c - walk the inheritance chain. The element's own
+	 * bindings shadow the parent's, which is what makes a local
+	 * redefinition override an inherited one. */
+	for (; env != NULL; env = env->inherited) {
+		uint32_t i;
+
+		for (i = 0; i < env->used; i++) {
+			if (cp_name_equal(env->items[i].entry.name, name))
+				return &env->items[i].entry;
+		}
 	}
 
 	return NULL;
 }
 
-void css__cp_env_destroy(css_cp_env *env)
+css_cp_env *css__cp_env_ref(css_cp_env *env)
+{
+	if (env != NULL)
+		env->refcount++;
+	return env;
+}
+
+void css__cp_env_unref(css_cp_env *env)
+{
+	while (env != NULL) {
+		css_cp_env *up;
+		uint32_t i;
+
+		if (env->refcount > 1) {
+			env->refcount--;
+			return;
+		}
+
+		/* Raw bindings borrow their names and tokens from the
+		 * stylesheet; finalised ones own a substituted run built
+		 * here, whose idata references must be released. */
+		for (i = 0; i < env->used; i++) {
+			if (env->items[i].owns_tokens) {
+				css__cp_tokens_destroy(
+						env->items[i].entry.tokens,
+						env->items[i].entry.n_tokens);
+			}
+		}
+
+		up = env->inherited;
+		free(env->items);
+		free(env);
+
+		/* Iterate rather than recurse: an inheritance chain is as
+		 * deep as the document tree, and OS 9 stacks are small. */
+		env = up;
+	}
+}
+
+css_error css__cp_env_set_inherited(css_cp_env **env, css_cp_env *parent)
 {
 	if (env == NULL)
-		return;
-	/* names and tokens are borrowed from the stylesheet - freeing them
-	 * here would double-free at sheet teardown. */
-	free(env->items);
-	free(env);
+		return CSS_BADPARM;
+	if (parent == NULL)
+		return CSS_OK;
+
+	if (*env == NULL) {
+		*env = (css_cp_env *)calloc(1, sizeof(css_cp_env));
+		if (*env == NULL)
+			return CSS_NOMEM;
+		(*env)->refcount = 1;
+	}
+
+	if ((*env)->inherited != NULL)
+		css__cp_env_unref((*env)->inherited);
+	(*env)->inherited = css__cp_env_ref(parent);
+
+	return CSS_OK;
 }
 
 css_error css__cp_env_add_style(css_cp_env **env, const css_style *style,
@@ -994,42 +1050,33 @@ static const css_cp_entry *lookup_var(lwc_string *name,
 
 	found = NULL;
 
-	/* fixes1268b (#167) - the element's own environment first. This is
-	 * the only source that knows which selector and which @media the
-	 * definition was written under, so when it has an answer that
-	 * answer is authoritative over anything the per-sheet scan below
-	 * can offer.
+	/* fixes1268e (#167) - the element's environment is now the ONLY
+	 * source for author-level custom properties.
 	 *
-	 * The sheet-global chain remains as a fallback for names the
-	 * environment has not seen: until 1268c an ancestor's definition is
-	 * not yet inherited, and until 1268d a definition from a rule that
-	 * cascades AFTER this one has not arrived. Removing the fallback
-	 * before those land would regress both cases. 1268e deletes it. */
+	 * The per-stylesheet last-write-wins scan that used to follow this
+	 * is gone rather than demoted to a fallback. Left in place it would
+	 * answer for any name the environment legitimately does NOT have -
+	 * i.e. precisely when the property is out of scope - handing an
+	 * element a value declared by a rule that never matched it, which
+	 * is the whole defect this series removes. A miss must stay a miss
+	 * so the var() fallback value is used.
+	 *
+	 * Correctness for the cases the fallback used to paper over now
+	 * comes from the mechanisms that replaced it: an ancestor's
+	 * definition arrives by inheritance (1268c), and a definition made
+	 * by a rule that cascades later is visible because var() resolution
+	 * runs as a second pass (1268d).
+	 *
+	 * UNUSED: origin_sheet is retained in the signature for the inline
+	 * paths below and for callers, not for a sheet-wide scan. */
 	if (env != NULL) {
 		found = css__cp_env_find(env, name);
 		if (found != NULL)
 			return found;
 	}
 
-	if (ctx != NULL) {
-		uint32_t i;
-		uint32_t count;
-
-		count = css__select_ctx_count_sheets(ctx);
-		for (i = 0; i < count; i++) {
-			const css_stylesheet *sh;
-			sh = css__select_ctx_sheet_at(ctx, i);
-			if (sh == NULL)
-				continue;
-			hit = css__sheet_find_custom_property(sh, name);
-			if (hit != NULL)
-				found = hit;
-		}
-	}
-
-	if (found == NULL) {
-		found = css__sheet_find_custom_property(origin_sheet, name);
-	}
+	UNUSED(ctx);
+	UNUSED(origin_sheet);
 
 	if (inline_sheet != NULL) {
 		hit = css__sheet_find_custom_property(inline_sheet, name);
@@ -1196,6 +1243,90 @@ static css_error build_replay_vector(const css_cp_token **ptrs,
 	return CSS_OK;
 }
 
+
+/* fixes1268c (#167) - turn an element's raw bindings into COMPUTED ones.
+ *
+ * CSS Variables 1: "the computed value of a custom property is its
+ * specified value with variables substituted". Substitution therefore
+ * happens on the element that DECLARED the property, and children
+ * inherit the already-substituted result. Verified against Chrome:
+ *
+ *   .p { --a: red; --b: var(--a) }
+ *   .c { --a: blue; color: var(--b) }    =>  .c color is RED, not blue
+ *
+ * Keeping raw tokens and substituting lazily at each consumer would give
+ * blue, because the child's own --a would shadow the parent's during the
+ * recursive lookup. That is the trap: it looks like a harmless
+ * optimisation and silently changes the semantics.
+ *
+ * Substituting per element also makes the result independent of
+ * declaration order inside a rule, which Chrome likewise confirms
+ * (".q { --b: var(--a); --a: green }" resolves to green).
+ */
+css_error css__cp_env_finalise(css_cp_env *env,
+		const css_stylesheet *origin_sheet,
+		const css_select_ctx *ctx,
+		const css_stylesheet *inline_sheet)
+{
+	uint32_t i;
+
+	if (env == NULL || env->finalised)
+		return CSS_OK;
+
+	for (i = 0; i < env->used; i++) {
+		cp_scratch scratch;
+		bool ok = true;
+		css_error error;
+		css_cp_token *flat;
+		uint32_t j;
+
+		memset(&scratch, 0, sizeof(scratch));
+
+		error = substitute_tokens(env->items[i].entry.tokens,
+				env->items[i].entry.n_tokens,
+				origin_sheet, ctx, inline_sheet, env,
+				0, &scratch, &ok);
+		if (error != CSS_OK) {
+			free(scratch.items);
+			return error;
+		}
+		if (!ok) {
+			/* Unresolvable (missing name, or a var() cycle that
+			 * hit the depth cap). Leave the raw run in place:
+			 * a consumer will fail the same way it would have,
+			 * rather than inheriting a half-substituted value. */
+			free(scratch.items);
+			continue;
+		}
+
+		flat = (css_cp_token *)calloc(
+				(scratch.used > 0) ? scratch.used : 1,
+				sizeof(css_cp_token));
+		if (flat == NULL) {
+			free(scratch.items);
+			return CSS_NOMEM;
+		}
+
+		for (j = 0; j < scratch.used; j++) {
+			flat[j] = *scratch.items[j];
+			if (flat[j].idata != NULL)
+				(void)lwc_string_ref(flat[j].idata);
+		}
+		free(scratch.items);
+
+		if (env->items[i].owns_tokens) {
+			css__cp_tokens_destroy(env->items[i].entry.tokens,
+					env->items[i].entry.n_tokens);
+		}
+		env->items[i].entry.tokens = flat;
+		env->items[i].entry.n_tokens = scratch.used;
+		env->items[i].owns_tokens = 1;
+	}
+
+	env->finalised = 1;
+
+	return CSS_OK;
+}
 
 /* ------------------------------------------------------------------ */
 /* Resolve a deferred declaration                                     */

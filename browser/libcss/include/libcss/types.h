@@ -272,6 +272,12 @@ typedef struct css_stylesheet css_stylesheet;
 
 typedef struct css_select_ctx css_select_ctx;
 
+/* fixes1268c (#167) - the set of CSS custom properties ("--name") in
+ * force for one element, including those inherited from its ancestors.
+ * Opaque; reference-counted. Produced by css_select_style, threaded from
+ * parent to child by the client, released with css_custom_env_unref. */
+typedef struct css_cp_env css_custom_env;
+
 typedef struct css_computed_style css_computed_style;
 
 typedef struct css_font_face css_font_face;

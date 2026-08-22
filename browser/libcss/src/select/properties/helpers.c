@@ -220,9 +220,15 @@ css_error css__cascade_bg_border_color(uint32_t opv, css_style *style,
 			 * sprintf buffer first, pass only %s. */
 			char colorbuf[12];
 			const char *sheeturl = "(null)";
+			/* fixes1268c - one helper for every colour
+			 * diagnostic; see utils.h. libcss does not include
+			 * netsurf headers, so declare it locally, as this
+			 * file already does for the log writer below. */
+			extern void ns_color_hex_alpha(char *buf,
+					unsigned long col);
 			if (state->sheet != NULL && state->sheet->url != NULL)
 				sheeturl = state->sheet->url;
-			sprintf(colorbuf, "#%08lX", (unsigned long) color);
+			ns_color_hex_alpha(colorbuf, (unsigned long) color);
 			macsurf_debug_log_writef(
 				"LIFE FBBG DECL value=%d color=%s "
 				"important=%d spec=%ld origin=%d "
