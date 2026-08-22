@@ -9682,8 +9682,253 @@ box_coords(bx, &cx, &cy);
 			"isolation, non-descendant isolation, and "
 			"computed-value timing ===\n");
 
+	/* ---------------------------------------------------------------
+	 * fixes1269 (#167) - style sharing must not leak custom properties,
+	 * plus the remaining var() semantics.
+	 *
+	 * The sharing concern is real and specific: sharing skips
+	 * cascade_style entirely, so a sharer contributes none of its own
+	 * definitions. Two siblings can have IDENTICAL ordinary computed
+	 * styles (both merely define a custom property) while their
+	 * descendants require different environments. Comparing only the
+	 * inherited environment cannot establish equivalence.
+	 *
+	 * What actually protects it is that sharing already demands the
+	 * same element name, the same class list in order, no id on either
+	 * node, and no attribute / sibling / pseudo-class taint - so two
+	 * shareable nodes matched the same rules and therefore carry the
+	 * same definitions. This test proves that rather than assuming it,
+	 * from both directions:
+	 *
+	 *   .a / .b   different classes, same ordinary style, must NOT
+	 *             cross-contaminate (the reported case)
+	 *   .t / .t   identical classes, genuinely shareable, WITH custom
+	 *             properties - exercises the adopt path on purpose
+	 *
+	 * The adoption COUNT is asserted too. Without it this test would
+	 * pass just as happily on a build where sharing never triggered,
+	 * which is the classic false green.
+	 * ------------------------------------------------------------- */
+	fprintf(stderr, "\n=== Test 78: style sharing keeps custom-property "
+			"environments separate; var() edge cases "
+			"(fixes1269) ===\n");
+	{
+		const char *t78_html =
+			"<html><body>"
+			"<div class=\"a\"><span class=\"as\">A</span></div>"
+			"<div class=\"b\"><span class=\"bs\">B</span></div>"
+			"<div class=\"t\"><span class=\"t1\">1</span></div>"
+			"<div class=\"t\"><span class=\"t2\">2</span></div>"
+			"<div class=\"mp\"><span class=\"mk\">M</span></div>"
+			"<span class=\"fb\">F</span>"
+			"<span class=\"nfb\">N</span>"
+			"<span class=\"cy\">C</span>"
+			"</body></html>";
+		const char *t78_css =
+			".a { --x: rgb(255,0,0) }"
+			".b { --x: rgb(0,0,255) }"
+			".a .as { color: var(--x) }"
+			".b .bs { color: var(--x) }"
+			".t { --q: rgb(0,128,0) }"
+			".t .t1 { color: var(--q) }"
+			".t .t2 { color: var(--q) }"
+			/* multi-hop computed substitution */
+			".mp { --m1: rgb(255,0,0); --m2: var(--m1);"
+			"      --m3: var(--m2) }"
+			".mk { --m1: rgb(0,0,255); color: var(--m3) }"
+			/* fallback, nested fallback */
+			".fb  { color: var(--nope, rgb(0,128,0)) }"
+			".nfb { color: var(--nope, var(--nope2, rgb(0,0,255))) }"
+			/* var() cycle: --z is invalid at computed-value time,
+			 * so the consumer takes its fallback (Chrome: green) */
+			".cy { --z: var(--w); --w: var(--z);"
+			"      color: var(--z, rgb(0,128,0)) }";
+		struct html_content t78c;
+		dom_hubbub_parser *t78p = NULL;
+		dom_document *t78doc = NULL;
+		dom_node *t78root = NULL;
+		css_select_ctx *t78ctx = NULL;
+		css_stylesheet *t78ua = NULL;
+		css_stylesheet *t78auth = NULL;
+		dom_hubbub_parser_params t78params;
+		css_stylesheet_params t78sp;
+		void *t78_box_ctx = NULL;
+		uint32_t share_before, share_after;
+		int t78_bad = 0;
+		int k;
+		nserror t78err;
+		static const struct {
+			const char *cls;
+			long want;
+			const char *what;
+		} t78_want[] = {
+			{ "as",  0xFF0000L, "sharing: .a subtree keeps red" },
+			{ "bs",  0x0000FFL, "sharing: .b subtree keeps blue" },
+			{ "t1",  0x008000L, "shareable .t sibling 1" },
+			{ "t2",  0x008000L, "shareable .t sibling 2" },
+			{ "mk",  0xFF0000L, "multi-hop: parent's --m1" },
+			{ "fb",  0x008000L, "var() fallback" },
+			{ "nfb", 0x0000FFL, "nested var() fallback" },
+			{ "cy",  0x008000L, "var() cycle is invalid -> "
+					"fallback, not black" }
+		};
+
+		memset(&t78params, 0, sizeof(t78params));
+		t78params.fix_enc = true;
+		if (dom_hubbub_parser_create(&t78params, &t78p, &t78doc) !=
+				DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 78 parser create\n");
+			return 1;
+		}
+		if (dom_hubbub_parser_parse_chunk(t78p,
+				(const uint8_t *)t78_html,
+				strlen(t78_html)) != DOM_HUBBUB_OK ||
+				dom_hubbub_parser_completed(t78p) !=
+					DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 78 parse\n");
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t78p);
+
+		memset(&t78c, 0, sizeof(t78c));
+		t78c.base_url = g_base_url;
+		t78c.document = t78doc;
+		t78c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t78c.enable_scripting = false;
+		if (css_select_ctx_create(&t78ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 78 select_ctx\n");
+			return 1;
+		}
+		t78c.select_ctx = t78ctx;
+
+		memset(&t78sp, 0, sizeof(t78sp));
+		t78sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t78sp.level = CSS_LEVEL_3;
+		t78sp.charset = "UTF-8";
+		t78sp.url = "resource:default.css";
+		t78sp.title = "default";
+		t78sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t78sp, &t78ua) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 78 UA sheet\n");
+			return 1;
+		}
+		{
+			const char *ua = "html,body,div,p{display:block}";
+			(void)css_stylesheet_append_data(t78ua,
+					(const uint8_t *)ua, strlen(ua));
+			(void)css_stylesheet_data_done(t78ua);
+		}
+		(void)css_select_ctx_append_sheet(t78ctx, t78ua,
+				CSS_ORIGIN_UA, "screen");
+
+		memset(&t78sp, 0, sizeof(t78sp));
+		t78sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t78sp.level = CSS_LEVEL_3;
+		t78sp.charset = "UTF-8";
+		t78sp.url = "http://local/t78.css";
+		t78sp.title = "author";
+		t78sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t78sp, &t78auth) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 78 author sheet\n");
+			return 1;
+		}
+		{
+			css_error ae = css_stylesheet_append_data(t78auth,
+					(const uint8_t *)t78_css,
+					strlen(t78_css));
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 78 append=%d\n",
+						(int)ae);
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t78auth);
+		}
+		(void)css_select_ctx_append_sheet(t78ctx, t78auth,
+				CSS_ORIGIN_AUTHOR, "screen");
+
+		t78c.media.type = CSS_MEDIA_SCREEN;
+		t78c.media.width = INTTOFIX(800);
+		t78c.media.height = INTTOFIX(600);
+		t78c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t78c.unit_len_ctx.viewport_width = INTTOFIX(800);
+		t78c.unit_len_ctx.viewport_height = INTTOFIX(600);
+		t78c.unit_len_ctx.device_dpi = INTTOFIX(90);
+		t78c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t78c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t78c.universal) !=
+				lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 78 universal\n");
+			return 1;
+		}
+		t78c.base.status = CONTENT_STATUS_LOADING;
+		t78c.base.active = 0;
+		t78c.base.handler = &g_dummy_handler;
+
+		if (dom_document_get_document_element(t78doc,
+				(void *)&t78root) != DOM_NO_ERR ||
+				t78root == NULL) {
+			fprintf(stderr, "FAIL: Test 78 doc element\n");
+			return 1;
+		}
+		share_before = css_select_share_adoptions();
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t78err = dom_to_box(t78root, &t78c, initial_build_cb,
+				&t78_box_ctx);
+		dom_node_unref(t78root);
+		if (t78err != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 78 dom_to_box=%d\n",
+					(int)t78err);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 78 build\n");
+			return 1;
+		}
+		share_after = css_select_share_adoptions();
+
+		for (k = 0; k < (int)(sizeof(t78_want) /
+				sizeof(t78_want[0])); k++) {
+			long got = t76_color_of(t78c.layout,
+					t78_want[k].cls);
+			fprintf(stderr, "  .%-4s = #%06lX  want #%06lX  %s\n",
+					t78_want[k].cls, got,
+					t78_want[k].want, t78_want[k].what);
+			if (got != t78_want[k].want) {
+				fprintf(stderr, "FAIL: Test 78 .%s -- %s: "
+						"got #%06lX expected #%06lX\n",
+						t78_want[k].cls,
+						t78_want[k].what, got,
+						t78_want[k].want);
+				t78_bad = 1;
+			}
+		}
+
+		fprintf(stderr, "  style-sharing adoptions during this "
+				"fixture: %lu\n",
+				(unsigned long)(share_after - share_before));
+		if (share_after == share_before) {
+			fprintf(stderr, "FAIL: Test 78 -- style sharing never "
+					"triggered, so the colours above prove "
+					"nothing about the sharing path. The "
+					"two identical .t divs exist to force "
+					"it; if eligibility rules changed, "
+					"this fixture must change with them "
+					"rather than the assertion being "
+					"dropped.\n");
+			t78_bad = 1;
+		}
+		if (t78_bad)
+			return 1;
+	}
+	fprintf(stderr, "=== Test 78 PASS: sharing preserves custom-property "
+			"scope (and really did share); multi-hop, fallback, "
+			"nested fallback and cycle all correct ===\n");
+
 	return 0;
 }
+
 
 
 

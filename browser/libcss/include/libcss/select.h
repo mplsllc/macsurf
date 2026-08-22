@@ -292,4 +292,11 @@ css_custom_env *css_custom_env_ref(css_custom_env *env);
  */
 void css_custom_env_unref(css_custom_env *env);
 
+/**
+ * fixes1269 (#167) - number of times a node adopted another node's
+ * computed styles through the style-sharing path since process start.
+ * Diagnostic; lets a test prove it actually exercised sharing.
+ */
+uint32_t css_select_share_adoptions(void);
+
 #endif

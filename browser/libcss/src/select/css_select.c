@@ -148,6 +148,7 @@ static css_error match_detail(css_select_ctx *ctx, void *node,
 		const css_selector_detail *detail, css_select_state *state,
 		bool *match, css_pseudo_element *pseudo_element);
 static css_error cascade_style(const css_style *style, css_select_state *state);
+extern uint32_t css__select_share_adoptions;
 static css_error css_select__resolve_pending_vars(css_select_state *state,
 		css_select_ctx *ctx);
 
@@ -1409,6 +1410,10 @@ css_error css_select_style(css_select_ctx *ctx, void *node,
 			state.results->styles[i] =
 					css__computed_style_ref(styles[i]);
 		}
+		/* fixes1269 (#167) - count real style-sharing adoptions so a
+		 * test can prove it exercised THIS path, rather than passing
+		 * because sharing silently never happened. */
+		css__select_share_adoptions++;
 		/* fixes1268c - sharing skips cascade_style, so adopt the
 		 * candidate's finished environment rather than leaving this
 		 * element with only its inherited bindings. Guarded above to
@@ -2987,6 +2992,13 @@ css_error cascade_style(const css_style *style, css_select_state *state)
 	for (dd = style->deferred; dd != NULL; dd = dd->next) {
 		css_pending_var *slot;
 
+		/* fixes1269 (#167) - the deferred list carries two kinds of
+		 * entry. A "--name" one is a custom-property DEFINITION,
+		 * already contributed to the environment above; only
+		 * ordinary declarations referencing var() get queued. */
+		if (css__cp_decl_is_definition(dd))
+			continue;
+
 		if (state->n_pending == state->pending_alloc) {
 			uint32_t newcap = (state->pending_alloc == 0) ?
 					16 : state->pending_alloc * 2;
@@ -3050,6 +3062,15 @@ static css_error css_select__resolve_pending_vars(css_select_state *state,
 /* code outside the select module reaches it via these hooks rather   */
 /* than by including a private header.                                */
 /* ------------------------------------------------------------------ */
+
+/* fixes1269 (#167) - style-sharing adoption counter; see the increment
+ * site in css_select_style. Diagnostic only. */
+uint32_t css__select_share_adoptions = 0;
+
+uint32_t css_select_share_adoptions(void)
+{
+	return css__select_share_adoptions;
+}
 
 /* fixes1268c (#167) - custom-property inheritance handoff. See select.h. */
 css_error css_select_ctx_set_parent_custom_env(css_select_ctx *ctx,

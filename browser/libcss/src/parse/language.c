@@ -1972,30 +1972,51 @@ css_error parseSelectorList(css_language *c, const parserutils_vector *vector,
 	return CSS_OK;
 }
 
-/* fixes1268a (#167) - attach one "--name" definition to the rule that
- * wrote it, using the same style-carrier route the deferred var() path
- * already uses (css__stylesheet_style_create + rule_append_style). Takes
- * ownership of name and tokens; releases them on failure. */
+/* fixes1269 (#167) - attach one "--name" definition to the rule that wrote
+ * it, as an entry on the rule style's DEFERRED list.
+ *
+ * fixes1268a gave css_style its own custom_props field for this. That grew
+ * sizeof(css_style), which every translation unit that allocates or copies
+ * one must agree on; where any did not, the field was read past the end of
+ * the allocation and returned adjacent stylesheet text as a pointer, which
+ * the first cascade then dereferenced - crashing on pages containing no
+ * custom properties whatsoever. The deferred list already exists, already
+ * has the create / merge / destroy semantics a definition needs, and costs
+ * no size change. Definitions are told from var() consumers by the leading
+ * "--" on the property name, which no ordinary property can have.
+ *
+ * Takes ownership of name and tokens; releases them on failure. */
 static css_error css__style_add_custom_property_to_rule(css_language *c,
 		css_rule *rule, lwc_string *name,
 		css_cp_token *tokens, uint32_t n)
 {
 	css_style *style = NULL;
+	css_deferred_decl *dd = NULL;
 	css_error error;
+
+	/* css__stylesheet_rule_append_style asserts SELECTOR or PAGE; with
+	 * assertions compiled out it would cast a css_rule_font_face to a
+	 * css_rule_selector and overwrite its font_face pointer. A "--name"
+	 * inside @font-face is meaningless anyway, so drop it rather than
+	 * corrupt the rule. */
+	if (rule == NULL || (rule->type != CSS_RULE_SELECTOR &&
+			rule->type != CSS_RULE_PAGE)) {
+		css__cp_tokens_destroy(tokens, n);
+		lwc_string_unref(name);
+		return CSS_OK;
+	}
+
+	error = css__deferred_decl_create(name, tokens, n, false, &dd);
+	if (error != CSS_OK)
+		return error;   /* callee released name/tokens */
 
 	error = css__stylesheet_style_create(c->sheet, &style);
 	if (error != CSS_OK) {
-		css__cp_tokens_destroy(tokens, n);
-		lwc_string_unref(name);
+		css__deferred_decl_list_destroy(dd);
 		return error;
 	}
 
-	error = css__style_add_custom_property(style, name, tokens, n);
-	if (error != CSS_OK) {
-		/* ownership of name/tokens already released by the callee */
-		css__stylesheet_style_destroy(style);
-		return error;
-	}
+	css__deferred_decl_attach(style, dd);
 
 	error = css__stylesheet_rule_append_style(c->sheet, rule, style);
 	if (error != CSS_OK) {

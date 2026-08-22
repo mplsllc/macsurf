@@ -73,7 +73,7 @@ static void cssprobe_walk(css_rule *rule, const char *name,
 {
 	for (; rule != NULL; rule = rule->next) {
 		css_style *st;
-		const css_cp_entry *e;
+		const css_deferred_decl *e;
 
 		/* Descend into @media: the whole point of rule-scoping is
 		 * that a definition inside a non-matching media block stays
@@ -90,10 +90,16 @@ static void cssprobe_walk(css_rule *rule, const char *name,
 		if (st == NULL)
 			continue;
 
-		for (e = st->custom_props; e != NULL; e = e->next) {
+		/* fixes1269 - definitions live on the DEFERRED list, told
+		 * apart from ordinary var() consumers by the leading "--".
+		 * They used to have a css_style field of their own; that
+		 * grew sizeof(css_style) and had to be withdrawn. */
+		for (e = st->deferred; e != NULL; e = e->next) {
 			if (*n >= max)
 				return;
-			if (!cssprobe_name_is(e->name, name))
+			if (!css__cp_decl_is_definition(e))
+				continue;
+			if (!cssprobe_name_is(e->property, name))
 				continue;
 			cssprobe_tokens_text(e->tokens, e->n_tokens,
 					vals[*n], 64);

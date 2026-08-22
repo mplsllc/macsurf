@@ -321,8 +321,15 @@ const css_cp_entry *css__cp_env_find(const css_cp_env *env, lwc_string *name)
 		uint32_t i;
 
 		for (i = 0; i < env->used; i++) {
-			if (cp_name_equal(env->items[i].entry.name, name))
-				return &env->items[i].entry;
+			if (!cp_name_equal(env->items[i].entry.name, name))
+				continue;
+			/* fixes1269 - an invalid definition reads as absent
+			 * so the consumer's var() fallback applies. It still
+			 * SHADOWS an inherited binding of the same name, per
+			 * "invalid at computed-value time". */
+			if (env->items[i].invalid)
+				return NULL;
+			return &env->items[i].entry;
 		}
 	}
 
@@ -389,95 +396,58 @@ css_error css__cp_env_set_inherited(css_cp_env **env, css_cp_env *parent)
 	return CSS_OK;
 }
 
+/* fixes1269 (#167) - a definition is a deferred entry whose property name
+ * begins with "--". No ordinary CSS property can, so the test is exact. */
+bool css__cp_decl_is_definition(const css_deferred_decl *dd)
+{
+	const char *d;
+
+	if (dd == NULL || dd->property == NULL)
+		return false;
+
+	d = lwc_string_data(dd->property);
+	if (d == NULL || lwc_string_length(dd->property) < 2)
+		return false;
+
+	return (d[0] == '-' && d[1] == '-');
+}
+
 css_error css__cp_env_add_style(css_cp_env **env, const css_style *style,
 		uint32_t specificity, uint8_t origin)
 {
-	const css_cp_entry *cp;
+	const css_deferred_decl *dd;
 
 	if (style == NULL)
 		return CSS_OK;
 
-	for (cp = style->custom_props; cp != NULL; cp = cp->next) {
+	for (dd = style->deferred; dd != NULL; dd = dd->next) {
 		css_error error;
 		uint8_t important = 0;
-		uint32_t n = cp->n_tokens;
+		uint32_t n;
+
+		if (!css__cp_decl_is_definition(dd))
+			continue;   /* an ordinary var() consumer */
+
+		n = dd->n_tokens;
 
 		/* A trailing "!important" is still sitting in the captured
 		 * token run - the custom-property capture path takes the
 		 * value verbatim. Strip it here so it neither reaches
 		 * substitution nor is mistaken for part of the value. */
-		if (cp_tokens_trailing_important(cp->tokens, cp->n_tokens,
+		if (cp_tokens_trailing_important(dd->tokens, dd->n_tokens,
 				&n)) {
 			important = 1;
 		}
+		if (dd->important)
+			important = 1;
 
-		error = css__cp_env_add(env, cp->name, cp->tokens, n,
+		error = css__cp_env_add(env, dd->property, dd->tokens, n,
 				specificity, origin, important);
 		if (error != CSS_OK)
 			return error;
 	}
 
 	return CSS_OK;
-}
-
-/* fixes1268a (#167) - rule-scoped custom-property storage. See the block
- * comment in custom_properties.h for why the per-sheet list below is not
- * sufficient. */
-css_error css__style_add_custom_property(css_style *style,
-		lwc_string *name, css_cp_token *tokens, uint32_t n)
-{
-	css_cp_entry *entry;
-
-	if (style == NULL || name == NULL) {
-		if (tokens != NULL)
-			css__cp_tokens_destroy(tokens, n);
-		if (name != NULL)
-			lwc_string_unref(name);
-		return CSS_BADPARM;
-	}
-
-	entry = (css_cp_entry *)calloc(1, sizeof(css_cp_entry));
-	if (entry == NULL) {
-		css__cp_tokens_destroy(tokens, n);
-		lwc_string_unref(name);
-		return CSS_NOMEM;
-	}
-
-	entry->name = name;
-	entry->tokens = tokens;
-	entry->n_tokens = n;
-	entry->next = NULL;
-
-	/* Append at tail: source order within the rule is what decides the
-	 * winner, so the list must stay ordered. */
-	if (style->custom_props == NULL) {
-		style->custom_props = entry;
-	} else {
-		css_cp_entry *tail = style->custom_props;
-		while (tail->next != NULL)
-			tail = tail->next;
-		tail->next = entry;
-	}
-
-	return CSS_OK;
-}
-
-const css_cp_entry *css__style_find_custom_property(const css_style *style,
-		lwc_string *name)
-{
-	const css_cp_entry *cur;
-	const css_cp_entry *hit = NULL;
-
-	if (style == NULL || name == NULL)
-		return NULL;
-
-	/* Last match wins - keep walking rather than returning the first. */
-	for (cur = style->custom_props; cur != NULL; cur = cur->next) {
-		if (cp_name_equal(cur->name, name))
-			hit = cur;
-	}
-
-	return hit;
 }
 
 css_error css__sheet_add_custom_property(css_stylesheet *sheet,
@@ -1291,11 +1261,14 @@ css_error css__cp_env_finalise(css_cp_env *env,
 			return error;
 		}
 		if (!ok) {
-			/* Unresolvable (missing name, or a var() cycle that
-			 * hit the depth cap). Leave the raw run in place:
-			 * a consumer will fail the same way it would have,
-			 * rather than inheriting a half-substituted value. */
+			/* fixes1269 - unresolvable: a missing name, or a
+			 * var() cycle that hit the depth cap. The property
+			 * is invalid at computed-value time, so mark it and
+			 * let consumers fall back. Leaving the raw run in
+			 * place would re-enter the cycle at every consumer
+			 * and drop their declarations outright. */
 			free(scratch.items);
+			env->items[i].invalid = 1;
 			continue;
 		}
 

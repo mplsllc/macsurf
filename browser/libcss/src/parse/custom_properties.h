@@ -144,7 +144,7 @@ const css_cp_entry *css__sheet_find_custom_property(
  */
 void css__cp_entry_list_destroy(css_cp_entry *head);
 
-/* fixes1268a (#167) - rule-scoped custom-property definitions.
+/* fixes1269 (#167) - rule-scoped custom-property definitions.
  *
  * css__sheet_add_custom_property above stores "--name" definitions in a
  * single per-STYLESHEET list, discarding the selector and @media context
@@ -154,43 +154,27 @@ void css__cp_entry_list_destroy(css_cp_entry *head);
  * last inside @media (prefers-color-scheme: dark)), and last-write-wins
  * across the whole sheet then hands every consumer the wrong value.
  *
- * Definitions are therefore ALSO attached to the owning rule's css_style,
- * exactly as var()-referencing declarations already are. A css_style only
- * cascades when its rule matches, and rules inside a non-matching @media
- * are already filtered by mq_rule_good_for_media during selection, so
- * both scoping dimensions come along for free.
+ * Definitions are therefore attached to the owning rule, on the css_style
+ * DEFERRED list - the same list var()-referencing declarations already
+ * use. A css_style only cascades when its rule matches, and rules inside
+ * a non-matching @media are already filtered by mq_rule_good_for_media
+ * during selection, so both scoping dimensions come along for free.
  *
- * Stage 1268a stores them and nothing more - resolution still reads the
- * sheet-global list, so behaviour is unchanged. 1268b makes the cascade
- * build a per-element environment from these; 1268e removes the
- * sheet-global list.
+ * fixes1268a used a separate css_style field for this and had to be
+ * withdrawn: it grew sizeof(css_style), and any translation unit that
+ * allocated or copied one without agreeing on the new size caused the
+ * field to be read past the end of the allocation, yielding adjacent
+ * stylesheet text as a pointer that the first cascade dereferenced.
+ * Sharing the deferred list needs no size change at all.
  */
 
 /**
- * Append a custom-property definition to a css_style's own list.
- *
- * Unlike the per-sheet variant this does NOT replace an existing entry of
- * the same name: a rule restating a name is legal, and the cascade takes
- * the last one in source order. Takes ownership of name and tokens on
- * success; destroys both on failure.
+ * Is this deferred entry a custom-property DEFINITION (property name
+ * starts with "--") rather than an ordinary declaration referencing
+ * var()? No ordinary CSS property name can start with two dashes, so the
+ * test is exact.
  */
-css_error css__style_add_custom_property(struct css_style *style,
-		lwc_string *name, css_cp_token *tokens, uint32_t n);
-
-/**
- * Look up a custom property in one css_style's own list. Returns the LAST
- * entry with a matching name (later declaration in the same rule wins).
- *
- * \return Non-NULL entry on hit, NULL on miss.
- */
-const css_cp_entry *css__style_find_custom_property(
-		const struct css_style *style, lwc_string *name);
-
-
-/* fixes267 - doc-global inline-extras custom-property table.
- * Public API declared in <libcss/select.h>: css_inline_extras_register_sheet()
- * and css_inline_extras_clear(). */
-
+bool css__cp_decl_is_definition(const struct css_deferred_decl *dd);
 
 /* --- Per-element custom-property environment (fixes1268b, #167) --- */
 
@@ -221,7 +205,18 @@ typedef struct css_cp_binding {
 	 * stylesheet; after it they are a freshly built substituted run
 	 * this binding owns and must free (each idata ref'd). */
 	uint8_t owns_tokens;
-	uint8_t pad[1];
+	/* fixes1269 (#167) - the definition could not be resolved: it
+	 * referenced a name nothing defines, or it took part in a var()
+	 * cycle. CSS Variables 1 makes such a custom property invalid at
+	 * computed-value time, so it must read as ABSENT and let consumers
+	 * take their var() fallback. Chrome agrees:
+	 *
+	 *   .cy { --x: var(--y); --y: var(--x); color: var(--x, green) }
+	 *
+	 * paints green, and --x computes to the empty string. Leaving the
+	 * raw tokens in place instead would re-enter the cycle at every
+	 * consumer and drop the declaration entirely, painting black. */
+	uint8_t invalid;
 } css_cp_binding;
 
 struct css_cp_env {
