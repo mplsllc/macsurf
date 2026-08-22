@@ -343,6 +343,70 @@ void macsurf_qjs_emit_js_profile(void)
 			rl_fires, rl_target_fires);
 	}
 
+	/* fixes1272 (#167) - the waiter-release transition, and whether
+	 * Facebook's registry even received the define.
+	 *
+	 * fixes1271 proved the target's whole 32-module closure is
+	 * registered and rl_target_fires is still 0, and the FBRL trace
+	 * showed the split precisely: requireLazy fires SYNCHRONOUSLY when
+	 * the dependency is already defined (__debug, Env - both CALL and
+	 * FIRE in the same millisecond) and never fires when the dependency
+	 * arrives later (target: 157 calls at GSEQ 0, defined at GSEQ 227,
+	 * zero fires). So the fast path works and the deferred path is dead.
+	 *
+	 * Read the fields as:
+	 *   rl_real_null > 0        - STOP: our own wrapper dropped
+	 *                              registrations while realRL was null,
+	 *                              so rl_target_fires=0 is instrumentation,
+	 *                              not a finding. Expected 0.
+	 *   released_on_define=1    - defining the target DID release waiters;
+	 *                              the failure is later than suspected.
+	 *   released_on_define=0
+	 *     with probe_sync_fire=1 - the registry HAS the module (a fresh
+	 *                              requireLazy resolves it synchronously);
+	 *                              only the deferred release step is
+	 *                              broken. Fix belongs in whatever the
+	 *                              real define does to walk pending
+	 *                              waiters.
+	 *   released_on_define=0
+	 *     with probe_sync_fire=0 - the registry never received the define
+	 *                              at all despite __d being called; the
+	 *                              __d delegation path itself is the
+	 *                              suspect.
+	 *
+	 * probe_sync_fire runs the target's factory once (see __msFBWait);
+	 * bounded, guarded, and after all other reporting. */
+	{
+		JSContext *ctx = macsurf_qjs_current_ctx();
+		if (ctx != NULL) {
+			static const char fbwait_src[] =
+				"(function(){try{"
+				"if(typeof globalThis.__msFBWait!=='function')"
+					"return '{\"error\":\"probe not "
+						"installed\"}';"
+				"return globalThis.__msFBWait();"
+				"}catch(e){"
+					"return JSON.stringify({error:"
+						"((e&&e.message)||String(e))});"
+				"}"
+				"})()";
+			JSValue r = JS_Eval(ctx, fbwait_src,
+					strlen(fbwait_src), "<jsfbwait>",
+					JS_EVAL_TYPE_GLOBAL);
+			if (!JS_IsException(r)) {
+				const char *s = JS_ToCString(ctx, r);
+				macsurf_debug_log_writef("LIFE FBWAIT %s",
+					(s != NULL) ? s : "(null)");
+				if (s != NULL) JS_FreeCString(ctx, s);
+			} else {
+				JS_FreeValue(ctx, JS_GetException(ctx));
+				macsurf_debug_log_writef(
+					"LIFE FBWAIT eval exception");
+			}
+			JS_FreeValue(ctx, r);
+		}
+	}
+
 	/* fixes1271 (#167) - which literal module name is the dead waiter
 	 * actually attached to?
 	 *

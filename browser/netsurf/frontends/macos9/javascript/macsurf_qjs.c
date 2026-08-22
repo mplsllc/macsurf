@@ -12405,12 +12405,48 @@ static void register_browser_globals(JSContext *ctx)
 		"var DLIKESEQ=Object.create(null);"
 		"var RLLIKESEQ=Object.create(null);"
 		"var tlBudget=40;"
+		/* fixes1272 (#167) - the waiter-release transition itself.
+		 *
+		 * fixes1271's hardware round closed off every "missing module"
+		 * explanation: the target's ENTIRE 32-module closure was
+		 * __d()-registered (FBGRAPH defined:true, direct_missing:0,
+		 * transitive_missing:0) and rl_target_fires was still 0. The
+		 * FBRL trace then showed exactly which half of requireLazy
+		 * works:
+		 *   __debug  CALL and FIRE in the same millisecond  (already defined)
+		 *   Env      CALL and FIRE in the same millisecond  (already defined)
+		 *   target   157 CALLs at GSEQ=0, defined at GSEQ=227, 0 FIREs
+		 * So the "dependency already satisfied" fast path fires
+		 * synchronously and correctly; the "register now, release when
+		 * the dependency arrives later" path never releases at all.
+		 *
+		 * Two hypotheses remain, and they need different fixes:
+		 *   (a) Facebook's internal registry never actually receives the
+		 *       define - our __d wrapper, or something it perturbs,
+		 *       breaks the real define, so nothing could ever release.
+		 *   (b) The registry receives it fine and only the waiter-release
+		 *       step is broken.
+		 * These counters answer (b) directly: snapshot rlTargetFires
+		 * immediately before and after delegating the target's define to
+		 * the real __d. If the define releases waiters synchronously, as
+		 * the historical loader structure suggests it should, the after
+		 * value is higher. Unchanged means the define completed without
+		 * releasing anything.
+		 *
+		 * rlRealNull guards against this instrumentation being the cause
+		 * in the first place: if requireLazy is called while realRL is
+		 * still null, our wrapper silently drops the registration and
+		 * NO release could ever happen - that would make rl_target_fires=0
+		 * our own bug rather than a finding. Expected 0. */
+		"var wDefSeen=0,wDefBeforeFires=-1,wDefAfterFires=-1,wDefName=null;"
+		"var rlRealNull=0;"
 		"var realD=(typeof g.__d==='function')?g.__d:null;"
 		"var realRL=(typeof g.requireLazy==='function')?g.requireLazy:null;"
 		"var budget=300;"
 		"function wrappedD(){"
 			"dTotal++;"
 			"GSEQ++;"
+			"var _tgtDef=0;"
 			"try{"
 				"var id=(arguments[0]!=null)?String(arguments[0]):null;"
 				/* fixes1270 - unconditional, every __d() call, not
@@ -12447,6 +12483,10 @@ static void register_browser_globals(JSContext *ctx)
 						"}"
 					"}"
 					"DLIKE[id]++;"
+					/* fixes1272 - first target-variant define only;
+					 * later ones would overwrite the snapshot that
+					 * matters. */
+					"if(!wDefSeen){_tgtDef=1;wDefName=id;}"
 				"}"
 				"if(id&&DWATCH[id]){"
 					"dTarget++;"
@@ -12456,7 +12496,19 @@ static void register_browser_globals(JSContext *ctx)
 					"}"
 				"}"
 			"}catch(e){}"
-			"if(realD)return realD.apply(this,arguments);"
+			"if(realD){"
+				/* fixes1272 - bracket the REAL define of the target
+				 * with a fires snapshot. Everything else delegates
+				 * unchanged. */
+				"if(_tgtDef){"
+					"wDefSeen=1;"
+					"wDefBeforeFires=rlTargetFires;"
+					"var _rr=realD.apply(this,arguments);"
+					"wDefAfterFires=rlTargetFires;"
+					"return _rr;"
+				"}"
+				"return realD.apply(this,arguments);"
+			"}"
 			"return undefined;"
 		"}"
 		"function wrappedRL(){"
@@ -12543,6 +12595,10 @@ static void register_browser_globals(JSContext *ctx)
 				"};"
 			"}"
 			"if(realRL)return realRL.apply(this,args);"
+			/* fixes1272 - realRL still null: this registration is
+			 * being DROPPED by us and can never fire. Expected 0;
+			 * anything else means rl_target_fires=0 is our own bug. */
+			"rlRealNull++;"
 			"return undefined;"
 		"}"
 		"Object.defineProperty(g,'__d',{"
@@ -12580,6 +12636,56 @@ static void register_browser_globals(JSContext *ctx)
 		 * The C side logs this verbatim (LIFE FBTARGETS) so the four
 		 * outcomes in the fixes1271 decision table can be read
 		 * directly off one line rather than inferred across several. */
+		/* fixes1272 (#167) - report the waiter-release evidence, and run
+		 * ONE decisive follow-up probe.
+		 *
+		 * The snapshot answers "did defining the target release its
+		 * waiters?". This probe answers the other half: "does Facebook's
+		 * own registry even KNOW the target is defined?" - by asking the
+		 * REAL requireLazy (not our wrapper, so no counters move) for the
+		 * target, at navigation end, long after it was defined. Because
+		 * the already-satisfied fast path is proven to fire
+		 * SYNCHRONOUSLY (__debug and Env both did, in the same
+		 * millisecond as their call), a synchronous fire here means the
+		 * registry has the module and ONLY deferred release is broken -
+		 * hypothesis (b). No fire means the registry never received the
+		 * define at all - hypothesis (a) - and the __d delegation path
+		 * becomes the thing to fix.
+		 *
+		 * SIDE EFFECT, stated plainly: resolving the target runs its
+		 * module factory, exactly once, inside try/catch, at navigation
+		 * end after all other reporting. That is the same factory the
+		 * page is trying to run and cannot; it is not a behaviour change
+		 * aimed at the page, but it is not nothing either, so it is
+		 * bounded to one call and its throw is captured rather than
+		 * propagated. The callback deliberately does NOT call
+		 * m.process() - obtaining the handle is the whole question. */
+		"g.__msFBWait=function(){"
+			"try{"
+				"var out={def_seen:wDefSeen,def_name:wDefName,"
+					"fires_before:wDefBeforeFires,"
+					"fires_after:wDefAfterFires,"
+					"released_on_define:(wDefSeen&&"
+						"wDefAfterFires>wDefBeforeFires)?1:0,"
+					"rl_real_null:rlRealNull,"
+					"probe_sync_fire:-1,probe_err:null};"
+				"var t=g.__msFBGraph_pick();"
+				"out.probe_target=t;"
+				"if(GDEFINED[t]&&typeof realRL==='function'){"
+					"var fired=0;"
+					"try{"
+						"realRL([t],function(){fired=1;});"
+					"}catch(e){"
+						"out.probe_err=((e&&e.message)||String(e));"
+					"}"
+					"out.probe_sync_fire=fired;"
+				"}"
+				"return JSON.stringify(out);"
+			"}catch(e){"
+				"return JSON.stringify({error:((e&&e.message)||"
+					"String(e))});"
+			"}"
+		"};"
 		"g.__msFBLoader_targetLike=function(){"
 			"try{"
 				"var out={sub:TSUB,defined:[],lazy:[]};"
