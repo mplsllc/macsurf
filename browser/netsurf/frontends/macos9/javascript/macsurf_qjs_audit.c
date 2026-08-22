@@ -25,6 +25,42 @@ void macsurf_qjs_emit_timer_profile(void)
 {
 	macsurf_debug_log_writef(
 		"LIFE JSTIME timers=%ld timer_us=%ld", g_timer_fires, g_timer_us);
+
+	/* fixes1273 (#167) - stage-by-stage timer pipeline audit.
+	 *
+	 * A real facebook.com load logged 83 SECONDS of JS with timers=0 and
+	 * raf=0. Since requestAnimationFrame is implemented as
+	 * setTimeout(fn,16), those are one fact, not two: deferred work is not
+	 * being delivered at all. That matters far beyond Facebook - it is
+	 * every site whose content arrives through a timer, a promise
+	 * continuation scheduled from a timer, or an animation frame.
+	 *
+	 * timers=0 alone only says the LAST stage never happened. These say
+	 * which one did not, by naming the gap:
+	 *   created=0                  setTimeout was never called (or refused)
+	 *   created>0, pumps=0         the event loop never pumped at all
+	 *   pumps>0, frozen~=pumps     the reconvert gate suppressed JS
+	 *   owner_skip>0 with due=0    timers live in a realm nothing pumps
+	 *   due=0 with pending>0       nothing ever reached its deadline
+	 *   due>0 but fires=0          invocation itself is being suppressed
+	 *   evicted>0                  callbacks lost to arena pressure (256)
+	 *
+	 * Counters are cumulative across the session; pending is instantaneous. */
+	{
+		long created = -1, fires = -1, due = -1, evicted = -1;
+		long owner_skip = -1, pumps = -1, frozen = -1, pending = -1;
+		extern void macsurf_qjs_timer_stats(long *, long *, long *,
+				long *, long *, long *, long *, long *);
+		macsurf_qjs_timer_stats(&created, &fires, &due, &evicted,
+				&owner_skip, &pumps, &frozen, &pending);
+		macsurf_debug_log_writef(
+			"LIFE TIMERAUD created=%ld pending=%ld pumps=%ld "
+			"frozen=%ld owner_skip=%ld due=%ld fires=%ld "
+			"evicted=%ld",
+			created, pending, pumps, frozen, owner_skip, due,
+			fires, evicted);
+	}
+
 	g_timer_fires = 0;
 	g_timer_us = 0;
 }

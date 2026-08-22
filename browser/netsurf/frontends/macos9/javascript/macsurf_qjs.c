@@ -220,6 +220,37 @@ static double g_qjs_script_deadline = 0.0;
 
 /* fixes1037 - timer-callback CPU, separate from top-level script eval. */
 long   g_timer_fires = 0;  /* exported for audit */
+/* fixes1273 (#167) - timer pipeline audit.
+ *
+ * Hardware showed 83 SECONDS of JS execution with timers=0 and raf=0 on a
+ * real facebook.com load. g_timer_fires alone cannot say WHICH boundary
+ * failed, because it only counts the very last one. rAF is implemented as
+ * setTimeout(fn,16), so raf=0 and timers=0 are the same fact, not two.
+ *
+ * These split the pipeline into its five distinct stages so exactly one
+ * can be blamed:
+ *   created     setTimeout/setInterval accepted and armed a slot
+ *   evicted     a slot was reclaimed before firing (arena pressure) - a
+ *               real, page-visible lost callback
+ *   pumps       macsurf_qjs_run_timers entered, per heap
+ *   frozen      macsurf_qjs_pump_all returned early on the reconvert gate,
+ *               i.e. JS was deliberately suppressed that pass
+ *   owner_skip  a LIVE slot was passed over because it belongs to a
+ *               different context than the heap being pumped. Large here
+ *               with due=0 would mean timers are registered against a
+ *               realm nothing ever pumps - the failure mode fixes861 fixed
+ *               once for a single-heap pump, worth being able to see
+ *               rather than assume it cannot recur.
+ *   due         a slot was both owned and expired
+ *   fires       the callback was actually invoked (g_timer_fires)
+ *
+ * A gap between any two adjacent stages names the defect outright. */
+long   g_timer_created    = 0;
+long   g_timer_evicted    = 0;
+long   g_timer_pumps      = 0;
+long   g_timer_frozen     = 0;
+long   g_timer_owner_skip = 0;
+long   g_timer_due        = 0;
 long   g_timer_us    = 0;  /* exported for audit */
 static double g_timer_t0    = 0.0;
 
@@ -1226,6 +1257,7 @@ static struct qjs_timer *timer_alloc(void)
 	/* Evicting a timer is a real, page-visible loss (a callback that will now
 	 * never run). It used to be silent, which reads as "everything is fine"
 	 * while a page quietly misbehaves. */
+	g_timer_evicted++;   /* fixes1273 */
 	macsurf_debug_log_writef(
 		"WORK timer: arena FULL (%d) -- evicting furthest-out id=%d "
 		"(expiry %ld ms out); its callback will never run",
@@ -1262,6 +1294,7 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	if (s_timer_next_id <= 0) s_timer_next_id = 1;
 
 	t->id = id;
+	g_timer_created++;   /* fixes1273 */
 	t->expiry_ms = macsurf_qjs_get_now() + delay_ms;
 	t->repeating = repeating;
 	t->interval_ms = delay_ms;
@@ -1438,6 +1471,31 @@ static void qjs_flush_timers(JSContext *old_ctx)
 	macsurf_reconv_pos_flush();
 }
 
+/* fixes1273 (#167) - timer pipeline stats for the audit emitter. `pending`
+ * is computed live here rather than tracked incrementally, because a slot
+ * can leave the arena by firing, by clearTimeout, by eviction or by
+ * navigation flush, and a counter that has to be decremented in four
+ * places is a counter that will eventually be wrong. */
+void macsurf_qjs_timer_stats(long *created, long *fires, long *due,
+		long *evicted, long *owner_skip, long *pumps, long *frozen,
+		long *pending)
+{
+	if (created != NULL)    *created    = g_timer_created;
+	if (fires != NULL)      *fires      = g_timer_fires;
+	if (due != NULL)        *due        = g_timer_due;
+	if (evicted != NULL)    *evicted    = g_timer_evicted;
+	if (owner_skip != NULL) *owner_skip = g_timer_owner_skip;
+	if (pumps != NULL)      *pumps      = g_timer_pumps;
+	if (frozen != NULL)     *frozen     = g_timer_frozen;
+	if (pending != NULL) {
+		int i;
+		long n = 0;
+		for (i = 0; i < QJS_MAX_TIMERS; i++)
+			if (s_timer_arena[i].live) n++;
+		*pending = n;
+	}
+}
+
 void macsurf_qjs_run_timers(struct jscontext *ctx)
 {
 	double now;
@@ -1460,6 +1518,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 	 * (the old intrusive-list walk could be spliced into a cycle mid-callback
 	 * -> the tinkerdifferent hard-freeze). */
 	ndue = 0;
+	g_timer_pumps++;   /* fixes1273 */
 	for (i = 0; i < QJS_MAX_TIMERS; i++) {
 		/* fixes854 (#283) - only fire timers belonging to THIS context.  The
 		 * arena is shared by every heap (one per window/iframe, each with its
@@ -1470,11 +1529,19 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		/* fixes875 (#304) - generation too: a stale slot at a recycled ctx
 		 * address would otherwise be JS_DupValue'd + JS_Call'd against the
 		 * WRONG runtime. */
-		if (qjs_timer_owned_by(&s_timer_arena[i], qctx) &&
-		    s_timer_arena[i].expiry_ms <= now) {
-			due_idx[ndue] = i;
-			due_id[ndue] = s_timer_arena[i].id;
-			ndue++;
+		if (qjs_timer_owned_by(&s_timer_arena[i], qctx)) {
+			if (s_timer_arena[i].expiry_ms <= now) {
+				due_idx[ndue] = i;
+				due_id[ndue] = s_timer_arena[i].id;
+				ndue++;
+				g_timer_due++;   /* fixes1273 */
+			}
+		} else if (s_timer_arena[i].live) {
+			/* fixes1273 - live, but belongs to another context.
+			 * Its own heap's pass fires it; counted so "registered
+			 * into a realm nobody pumps" is visible, not assumed
+			 * impossible. */
+			g_timer_owner_skip++;
 		}
 	}
 
@@ -14963,8 +15030,10 @@ void macsurf_qjs_pump_all(void)
 				s_reconv_was_active = 1;
 				s_reconv_since = now;
 			}
-			if (now - s_reconv_since < 10000.0)
+			if (now - s_reconv_since < 10000.0) {
+				g_timer_frozen++;   /* fixes1273 */
 				return;   /* frozen: no JS during the active reconvert */
+			}
 			/* stuck > 10 s -> fail-safe: unfreeze and pump. */
 			macsurf_reconvert_in_progress = 0;
 			s_reconv_was_active = 0;

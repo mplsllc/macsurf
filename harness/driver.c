@@ -9926,8 +9926,129 @@ box_coords(bx, &cx, &cy);
 			"scope (and really did share); multi-hop, fallback, "
 			"nested fallback and cycle all correct ===\n");
 
+	/* ---------------------------------------------------------------
+	 * fixes1273 (#167) - the browser event-loop contract itself.
+	 *
+	 * A real facebook.com load logged 83 SECONDS of JS execution with
+	 * timers=0 and raf=0. requestAnimationFrame is implemented as
+	 * setTimeout(fn,16), so those are ONE fact: deferred work is not
+	 * being delivered. That is not a Facebook bug - it is every site
+	 * whose content arrives via a timer, an animation frame, or a
+	 * promise continuation scheduled from one.
+	 *
+	 * The loader investigation that preceded this is now closed:
+	 * Facebook's real loader and the real 15MB bundle set were replayed
+	 * under stock qjs and BOTH the fast and deferred requireLazy paths
+	 * fired, resolving ServerJSPayloadListener with .process. The engine
+	 * and the module graph are fine. What is missing is the task layer.
+	 *
+	 * These assertions are the contract that layer must keep. They are
+	 * ordering- and chaining-sensitive on purpose: a pump that drains
+	 * only the timers present when it was entered looks healthy on the
+	 * first case and starves every later one, which is exactly the shape
+	 * that would leave a React scheduler permanently stalled.
+	 * ------------------------------------------------------------- */
+	fprintf(stderr, "\n=== Test 79: event loop delivers deferred work "
+			"(timer, rAF, nested, promise interaction) ===\n");
+	{
+		extern void macsurf_qjs_pump_all(void);
+		const char *t79_setup =
+			"globalThis.__seen=[];"
+			"setTimeout(function(){__seen.push('timeout');},0);"
+			"requestAnimationFrame(function(t){"
+				"__seen.push('raf:'+(typeof t));"
+			"});"
+			/* work scheduled FROM scheduled work - the case a
+			 * drain-what-was-there-at-entry pump starves */
+			"setTimeout(function(){"
+				"setTimeout(function(){__seen.push('nested');},0);"
+			"},0);"
+			/* microtask -> task */
+			"Promise.resolve().then(function(){"
+				"setTimeout(function(){__seen.push('micro2task');},0);"
+			"});"
+			/* task -> microtask */
+			"setTimeout(function(){"
+				"Promise.resolve().then(function(){"
+					"__seen.push('task2micro');"
+				"});"
+			"},0);"
+			"__seen.push('sync');";
+		const char *t79_check =
+			"(function(){"
+			"var need=['sync','timeout','nested','micro2task',"
+				"'task2micro'];"
+			"var i,missing=[];"
+			"for(i=0;i<need.length;i++)"
+				"if(__seen.indexOf(need[i])<0)missing.push(need[i]);"
+			"var raf=0;"
+			"for(i=0;i<__seen.length;i++)"
+				"if(String(__seen[i]).indexOf('raf:')===0)raf=1;"
+			"if(!raf)missing.push('raf');"
+			"if(__seen.indexOf('raf:number')<0&&raf)"
+				"missing.push('raf-timestamp-not-number');"
+			"if(__seen[0]!=='sync')"
+				"missing.push('sync-must-be-first(got:'+__seen[0]+')');"
+			"if(missing.length)"
+				"throw new Error('ASSERT FAIL missing/wrong: '+"
+					"missing.join(',')+' seen=['+__seen.join(',')+']');"
+			"globalThis.__t79seen=__seen.join(',');"
+			"})();";
+		unsigned char ok1, ok2;
+		int pump;
+
+		ok1 = js_exec(thread, (const unsigned char *)t79_setup,
+				strlen(t79_setup), "driver-t79-setup.js");
+		if (!ok1) {
+			fprintf(stderr, "FAIL: Test 79 setup threw\n");
+			return 1;
+		}
+		/* Pump the way the real WaitNextEvent loop does: repeatedly,
+		 * over REAL elapsed time. A fixed spin count is not enough -
+		 * requestAnimationFrame is setTimeout(fn,16), and 40 tight
+		 * iterations complete in well under 16ms of wall clock, so the
+		 * frame callback would never come due and the test would report
+		 * a broken rAF that is actually just an impatient harness.
+		 * Bounded by both time and iterations so it can never hang. */
+		{
+			extern long macsurf_monotonic_ms(void);
+			long t_start = macsurf_monotonic_ms();
+			pump = 0;
+			while (pump < 20000 &&
+				(macsurf_monotonic_ms() - t_start) < 500L) {
+				macsurf_qjs_pump_all();
+				harness_pump_all(1000);
+				pump++;
+			}
+		}
+		ok2 = js_exec(thread, (const unsigned char *)t79_check,
+				strlen(t79_check), "driver-t79-check.js");
+		if (!ok2) {
+			fprintf(stderr, "FAIL: Test 79 -- the event loop did not "
+					"deliver deferred work. This is the "
+					"hardware shape: 83s of JS with timers=0 "
+					"and raf=0 on facebook.com. Every site "
+					"that loads content via a timer, an "
+					"animation frame, or a promise "
+					"continuation scheduled from one depends "
+					"on this.\n");
+			return 1;
+		}
+		fprintf(stderr, "  order seen: ");
+		{
+			const char *dump =
+				"globalThis.__t79seen";
+			(void)dump;
+		}
+		fprintf(stderr, "(all five delivered, sync first, rAF "
+				"timestamp is a number)\n");
+	}
+	fprintf(stderr, "=== Test 79 PASS: timer, rAF, nested scheduling and "
+			"both promise/task directions all deliver ===\n");
+
 	return 0;
 }
+
 
 
 
