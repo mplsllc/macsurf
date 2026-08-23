@@ -222,10 +222,19 @@ void macsurf_qjs_emit_fb_boot(struct JSContext *ctx)
 		"if(!g.location||String(g.location.hostname||'').indexOf('facebook.com')<0)"
 			"return null;"
 		"if(typeof g.require!=='function')return 'require=missing';"
-		"var sm=g.require('CometSSRStateManager'),raw=sm&&sm.default&&sm.default.debug?"
-			"sm.default.debug():'',j=raw?JSON.parse(raw):{},h=j.readableStateHistory;"
-		"h=String(h==null?'':h);if(h.length>760)h=h.slice(h.length-760);"
-		"return 'arrived='+(j.arrivedPayloads?j.arrivedPayloads.length:-1)+"
+		/* fixes1290 (#167) - the old audit read sm.default.debug(), but the
+		 * current Facebook module does not expose its live state there.  That
+		 * made a perfectly populated LastPayloadReceived state print as three
+		 * blank fields and sent the investigation in the wrong direction.
+		 * This is Facebook's own read-only devtools store, used by its SSR
+		 * diagnostics; report the state names rather than its multi-KB JSON. */
+		"var ds=g.require('CometDevToolsSSRStateManagerDebugStore'),"
+			"j=ds&&ds.getState?ds.getState():{},a=j.arrivedPayloads||[],"
+			"sh=j.stateHistory||[],names=[];"
+		"for(var i=0;i<sh.length;i++)names.push(sh[i]&&sh[i].state||'?');"
+		"var h=names.join('>');if(h.length>500)h=h.slice(h.length-500);"
+		"return 'current='+(j.currentState||'')+' terminal='+(j.isTerminal)+"
+			"' outcome='+(j.ssrOutcome||'')+' arrived='+a.length+"
 			"' request='+(j.clientRequestID||'')+' history='+h;"
 		"}catch(e){return 'error='+String((e&&e.message)||e).slice(0,700);}})()";
 	static const char fberror_src[] =

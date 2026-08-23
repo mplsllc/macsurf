@@ -10918,5 +10918,69 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 91 PASS: releasing an in-flight object cannot "
 			"strand the document in READY ===\n");
 
+	/* --- Test 92: structuredClone preserves browser structured data (#167,
+	 * fixes1290) ----------------------------------------------------------
+	 *
+	 * Facebook's ConstUriUtils stores query parameters in a Map, clones it,
+	 * then calls delete()/set() while constructing the logged-in root router.
+	 * The former JSON-based shim returned {}, producing the hardware's exact
+	 * `TypeError: not a function` and aborting before initFizz.  Cover that
+	 * literal contract as well as the graph properties the browser API claims:
+	 * cycles, mutation isolation, Map/Set, shared typed-array backing storage,
+	 * Date/RegExp, transfers, and DataCloneError for an unsupported value. */
+	fprintf(stderr, "\n=== Test 92: structuredClone preserves Maps and object "
+			"graphs (fixes1290) ===\n");
+	{
+		const char *t92 =
+			"(function(){"
+			"function bad(m){throw new Error('ASSERT FAIL: '+m);}"
+			"var key={id:7},value={name:'profile'},"
+				"original=new Map([[key,value],['drop','tracking']]);"
+			"var copied=structuredClone(original),copiedKey=null;"
+			"if(!(copied instanceof Map))bad('Map became '+Object.prototype.toString.call(copied));"
+			"copied.forEach(function(v,k){if(k&&k.id===7)copiedKey=k;});"
+			"if(!copiedKey||copiedKey===key)bad('Map object key was not cloned');"
+			"if(copied.get(copiedKey)===value||copied.get(copiedKey).name!=='profile')"
+				"bad('Map value was not independently cloned');"
+			"copied.delete('drop');copied.set('worker_type','CLASSIC');"
+			"if(!original.has('drop')||original.has('worker_type'))bad('Map mutation leaked to source');"
+			/* This is Facebook ConstUriUtils.removeQueryParams/addQueryParam. */
+			"var query=new Map([['__cft__','x'],['keep','y']]);"
+			"var clean=structuredClone(query);clean.delete('__cft__');clean.set('new','z');"
+			"if(clean.get('keep')!=='y'||clean.get('new')!=='z'||clean.has('__cft__'))"
+				"bad('Facebook query-Map contract');"
+			"var cyclic={label:'root'};cyclic.self=cyclic;cyclic.map=original;"
+			"var cycleCopy=structuredClone(cyclic);"
+			"if(cycleCopy===cyclic||cycleCopy.self!==cycleCopy||!(cycleCopy.map instanceof Map))"
+				"bad('cyclic graph identity');"
+			"var backing=new ArrayBuffer(4),bytes=new Uint8Array(backing);"
+			"bytes[0]=17;bytes[1]=34;"
+			"var views={a:new Uint8Array(backing,0,2),b:new Uint16Array(backing,0,2)};"
+			"var viewCopy=structuredClone(views);"
+			"if(viewCopy.a.buffer===backing||viewCopy.a.buffer!==viewCopy.b.buffer||"
+				"viewCopy.a[0]!==17||viewCopy.a[1]!==34)bad('typed-array backing graph');"
+			"var extras=structuredClone({d:new Date(123),r:/ab/gi,s:new Set([1,2])});"
+			"if(!(extras.d instanceof Date)||extras.d.getTime()!==123||"
+				"!(extras.r instanceof RegExp)||extras.r.source!=='ab'||"
+				"!(extras.s instanceof Set)||!extras.s.has(2))bad('structured built-ins');"
+			"var transfer=new Uint8Array([4,5]).buffer;"
+			"var moved=structuredClone({buffer:transfer},{transfer:[transfer]});"
+			"if(transfer.byteLength!==0||new Uint8Array(moved.buffer)[1]!==5)"
+				"bad('ArrayBuffer transfer');"
+			"var threw=false;try{structuredClone(function(){});}catch(e){"
+				"threw=e&&e.name==='DataCloneError';}"
+			"if(!threw)bad('unsupported value did not throw DataCloneError');"
+			"})();";
+		unsigned char ok = js_exec(thread, (const unsigned char *)t92,
+				strlen(t92), "driver-t92-structured-clone.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 92 -- structuredClone lost a browser "
+					"data contract\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 92 PASS: Facebook query Maps and general "
+			"structured data clone independently ===\n");
+
 	return 0;
 }
