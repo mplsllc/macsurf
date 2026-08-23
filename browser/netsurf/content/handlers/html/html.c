@@ -4674,39 +4674,53 @@ static void html_reformat(struct content *c, int width, int height)
 		}
 	}
 
-	/* fixes1293 (#167, C0.1) - LOCATE THE BLANK BAND.
+	/* fixes1294 (#167, C0.2) - LOCATE THE BLANK BAND, take 2.
 	 *
-	 * Hardware, 2026-08-23: real Facebook profiles (ptricky3, kaija.prohofsky,
-	 * minnesotastatefair) all show the same defect -- a large blank band
-	 * directly under the icon-tab row, before the Details/Posts two-column
-	 * layout begins. Diagnostic ONLY: no CSS or JS theory assumed yet.
+	 * fixes1293's first hardware run (2026-08-23, all three of ptricky3/
+	 * kaija.prohofsky/minnesotastatefair) exposed two bugs in the
+	 * diagnostic itself, not new facts about Facebook:
 	 *
-	 * Builds a coarse vertical occupancy map over the first 3000px of GLOBAL
-	 * document coordinates via box_coords(), not bx->y -- Facebook's tree
-	 * nests deeply enough that local y alone would misplace a box found
-	 * mid-tree, unlike the TALL walker above whose boxes are shallow enough
-	 * near the document root for local y to work there. Content-bearing
-	 * boxes (text or a replaced object) mark occupancy; an empty run
-	 * >=150px is reported as a gap, then named: every box (not just
-	 * content-bearing ones this time) whose GLOBAL bounds intersect that
-	 * gap. That tells the next hardware read which branch to chase: a
-	 * container spanning the gap with no real descendants points at a
-	 * JS/mount gap; a container whose own height/min-height outsizes its
-	 * occupied content points at a CSS/layout gap; content occupying the
-	 * band with nothing named points at clip/visibility; nothing spanning
-	 * it at all points at margin/flow positioning.
+	 * 1. The occupancy map only covered the first 3000px of the document,
+	 *    but these pages are 22000-25000px tall -- every gap it found was
+	 *    reported as "y1=3000" because the window ran out, not because the
+	 *    empty region actually ended there. Fix: size the map to the WHOLE
+	 *    document (c->height), with the per-bucket pixel width scaled up
+	 *    so the fixed-size bucket array still covers it.
+	 * 2. Pass 2's "any box intersecting the gap, capped at 8" walk just
+	 *    re-printed the top of the ancestor chain every time (HTML -> BODY
+	 *    -> mount point -> generic wrapper divs), because EVERY ancestor of
+	 *    literally any content trivially "intersects" a gap near the top of
+	 *    a 22000px document -- it never reached anything specific. Its
+	 *    `kids=` field was also a bare boolean (children != NULL), not a
+	 *    count, so "kids=1" on every line looked like a suspicious
+	 *    single-child chain when it was just "has any children at all."
+	 *    Fix: DRILL DOWN instead of flat-searching. From the root, at each
+	 *    level look at which of the box's DIRECT children overlap the gap.
+	 *    Exactly one overlapping child -> that child is still just part of
+	 *    the ancestor spine, descend into it. Zero or multiple overlapping
+	 *    children -> stop: this is the box actually responsible for (or
+	 *    branching across) the gap. Report it (owner, with a real bounded
+	 *    child COUNT) plus every child that overlaps the gap (branch
+	 *    candidates, same fields). Reading it: owner has zero overlapping
+	 *    children but a nonzero total child count -> its real children are
+	 *    positioned outside the gap (margin/flow, or off in a part of the
+	 *    tree that never reaches these coordinates) -- not a mount gap.
+	 *    Owner has zero children at all -> genuine empty leaf -> JS/mount
+	 *    gap. Multiple overlapping children -> look at what's reported for
+	 *    each: real content-bearing ones with nothing rendered points at
+	 *    clip/visibility; empty ones with big height/min-height points at
+	 *    CSS/layout.
 	 *
-	 * Same bounded-stack (256-deep), one-shot-per-navigation, capped-output
-	 * discipline as the SPLIT/TALL walkers above -- cannot blow the OS 9
-	 * stack or flood the log. */
+	 * Same one-shot-per-navigation, bounded-depth (64), capped-output
+	 * discipline as fixes1293 -- cannot blow the OS 9 stack or flood the
+	 * log. Diagnostic only: still no CSS or JS theory assumed. */
 	if (layout != NULL && c->height > 0) {
 		static void *fbgap_dumped_c = NULL;
 		if ((void *)c != fbgap_dumped_c) {
-#define FBGAP_BUCKET_PX 10
-#define FBGAP_BUCKETS 300	/* 3000px of document, 10px/bucket */
+#define FBGAP_BUCKETS 300
 #define FBGAP_MIN_RUN_PX 150
 #define FBGAP_MAX_GAPS 3
-#define FBGAP_MAX_BOXES_PER_GAP 8
+#define FBGAP_MAX_BRANCH 12
 			unsigned char occ[FBGAP_BUCKETS];
 			struct box *stack[256];
 			int sp;
@@ -4714,6 +4728,12 @@ static void html_reformat(struct content *c, int width, int height)
 			int gap_y0[FBGAP_MAX_GAPS];
 			int gap_y1[FBGAP_MAX_GAPS];
 			int gap_count;
+			int bucket_px;
+
+			/* Cover the WHOLE document with a fixed-size bucket array
+			 * by scaling the bucket width up to fit. */
+			bucket_px = ((int)c->height / FBGAP_BUCKETS) + 1;
+			if (bucket_px < 1) bucket_px = 1;
 
 			for (i = 0; i < FBGAP_BUCKETS; i++) occ[i] = 0;
 
@@ -4729,9 +4749,8 @@ static void html_reformat(struct content *c, int width, int height)
 					int gx = 0, gy = 0;
 					int b0, b1, bi;
 					box_coords(bx, &gx, &gy);
-					b0 = gy / FBGAP_BUCKET_PX;
-					b1 = (gy + (int)bx->height) /
-							FBGAP_BUCKET_PX;
+					b0 = gy / bucket_px;
+					b1 = (gy + (int)bx->height) / bucket_px;
 					if (b0 < 0) b0 = 0;
 					if (b1 >= FBGAP_BUCKETS)
 						b1 = FBGAP_BUCKETS - 1;
@@ -4756,39 +4775,130 @@ static void html_reformat(struct content *c, int width, int height)
 				run_start = i;
 				while (i < FBGAP_BUCKETS && !occ[i]) i++;
 				run_len = i - run_start;
-				if (run_len * FBGAP_BUCKET_PX >= FBGAP_MIN_RUN_PX) {
-					gap_y0[gap_count] = run_start * FBGAP_BUCKET_PX;
-					gap_y1[gap_count] = i * FBGAP_BUCKET_PX;
+				if (run_len * bucket_px >= FBGAP_MIN_RUN_PX) {
+					gap_y0[gap_count] = run_start * bucket_px;
+					gap_y1[gap_count] = i * bucket_px;
 					macsurf_debug_log_writef(
-						"LIFE FBGAP y0=%d y1=%d h=%d",
+						"LIFE FBGAP y0=%d y1=%d h=%d bucket_px=%d",
 						gap_y0[gap_count], gap_y1[gap_count],
-						gap_y1[gap_count] - gap_y0[gap_count]);
+						gap_y1[gap_count] - gap_y0[gap_count],
+						bucket_px);
 					gap_count++;
 				}
 			}
 
-			/* Pass 2: for each gap, name the boxes whose GLOBAL bounds
-			 * intersect it -- ANY box, not just content-bearing, so an
-			 * empty container spanning the gap gets named too. */
+			/* Pass 2: for each gap, DRILL DOWN from the root through
+			 * whichever single child still covers the gap, until we
+			 * reach a box with zero or multiple overlapping children
+			 * -- the box actually responsible for the gap, not just
+			 * another link in the ancestor spine. */
 			for (i = 0; i < gap_count; i++) {
-				int named = 0;
-				sp = 0;
-				stack[sp++] = layout;
-				while (sp > 0 && named < FBGAP_MAX_BOXES_PER_GAP) {
-					struct box *bx = stack[--sp];
+				struct box *cur = layout;
+				struct box *branch[FBGAP_MAX_BRANCH];
+				int branch_n;
+				int depth;
+
+				for (depth = 0; depth < 64; depth++) {
 					struct box *ch;
+					branch_n = 0;
+					for (ch = cur->children; ch != NULL;
+							ch = ch->next) {
+						int cgx = 0, cgy = 0;
+						int cb0, cb1;
+						box_coords(ch, &cgx, &cgy);
+						cb0 = cgy;
+						cb1 = cgy + (int)ch->height;
+						if (cb1 > gap_y0[i] &&
+								cb0 < gap_y1[i]) {
+							if (branch_n < FBGAP_MAX_BRANCH)
+								branch[branch_n] = ch;
+							branch_n++;
+						}
+					}
+					if (branch_n == 1) {
+						cur = branch[0];
+						continue;
+					}
+					break;
+				}
+
+				/* Report the owner: the box the descent stopped at,
+				 * with a REAL bounded total child count (not the old
+				 * boolean) so "zero overlapping children" can be told
+				 * apart from "zero children at all". */
+				{
 					int gx = 0, gy = 0;
-					int b0, b1;
-					if (bx == NULL) continue;
-					box_coords(bx, &gx, &gy);
-					b0 = gy;
-					b1 = gy + (int)bx->height;
-					if (b1 > gap_y0[i] && b0 < gap_y1[i]) {
+					int total_kids = 0;
+					struct box *ch;
+					char nm[64];
+					const char *disp = "-";
+					const char *ht = "auto";
+					const char *mht = "auto";
+					int pos = -1;
+
+					box_coords(cur, &gx, &gy);
+					for (ch = cur->children;
+							ch != NULL && total_kids < 999;
+							ch = ch->next)
+						total_kids++;
+
+					nm[0] = '\0';
+					if (cur->node != NULL)
+						html_pagemap_brief(cur->node, nm,
+								(int)sizeof nm);
+					if (cur->style != NULL) {
+						css_fixed hv = 0, mhv = 0;
+						css_unit hu = CSS_UNIT_PX,
+							 mhu = CSS_UNIT_PX;
+						disp = (css_computed_display_static(
+								cur->style) ==
+								CSS_DISPLAY_NONE) ?
+								"NONE" : "ok";
+						if (css_computed_height(cur->style,
+								&hv, &hu) == CSS_HEIGHT_SET)
+							ht = "set";
+						if (css_computed_min_height(cur->style,
+								&mhv, &mhu) ==
+								CSS_MIN_HEIGHT_SET)
+							mht = "set";
+						pos = (int) css_computed_position(
+								cur->style);
+					}
+					macsurf_debug_log_writef(
+						"LIFE FBGAPOWNER gap=%d %s type=%d x=%d y=%d w=%d h=%d totalkids=%d overlapkids=%d txt=%d obj=%d disp=%s pos=%d ht=%s mht=%s",
+						i, nm[0] ? nm : "(no node)",
+						(int)cur->type, gx, gy,
+						(int)cur->width, (int)cur->height,
+						total_kids, branch_n,
+						cur->text != NULL,
+						cur->object != NULL,
+						disp, pos, ht, mht);
+				}
+
+				/* Report each overlapping child (branch candidates),
+				 * capped at FBGAP_MAX_BRANCH. */
+				{
+					int bi;
+					int cap = branch_n;
+					if (cap > FBGAP_MAX_BRANCH)
+						cap = FBGAP_MAX_BRANCH;
+					for (bi = 0; bi < cap; bi++) {
+						struct box *bx = branch[bi];
+						int gx = 0, gy = 0;
+						int total_kids = 0;
+						struct box *ch;
 						char nm[64];
 						const char *disp = "-";
 						const char *ht = "auto";
 						const char *mht = "auto";
 						int pos = -1;
+
+						box_coords(bx, &gx, &gy);
+						for (ch = bx->children;
+								ch != NULL && total_kids < 999;
+								ch = ch->next)
+							total_kids++;
+
 						nm[0] = '\0';
 						if (bx->node != NULL)
 							html_pagemap_brief(bx->node,
@@ -4814,27 +4924,21 @@ static void html_reformat(struct content *c, int width, int height)
 									bx->style);
 						}
 						macsurf_debug_log_writef(
-							"LIFE FBGAPBOX gap=%d %s type=%d x=%d y=%d w=%d h=%d kids=%d txt=%d obj=%d disp=%s pos=%d ht=%s mht=%s",
+							"LIFE FBGAPBRANCH gap=%d %s type=%d x=%d y=%d w=%d h=%d totalkids=%d txt=%d obj=%d disp=%s pos=%d ht=%s mht=%s",
 							i, nm[0] ? nm : "(no node)",
 							(int)bx->type, gx, gy,
 							(int)bx->width, (int)bx->height,
-							bx->children != NULL,
+							total_kids,
 							bx->text != NULL,
 							bx->object != NULL,
 							disp, pos, ht, mht);
-						named++;
 					}
-					for (ch = bx->children;
-							ch != NULL && sp < 256;
-							ch = ch->next)
-						stack[sp++] = ch;
 				}
 			}
-#undef FBGAP_BUCKET_PX
 #undef FBGAP_BUCKETS
 #undef FBGAP_MIN_RUN_PX
 #undef FBGAP_MAX_GAPS
-#undef FBGAP_MAX_BOXES_PER_GAP
+#undef FBGAP_MAX_BRANCH
 			fbgap_dumped_c = (void *)c;
 		}
 	}
