@@ -62,10 +62,16 @@ struct dom_document;
 struct dom_node;
 struct dom_element;
 struct dom_string;
+struct content;
 
 struct jsheap {
 	JSRuntime *rt;
 	JSContext *ctx;
+	/* The DOM belongs to this JS realm, never to the process.  A browser page
+	 * can have several live heaps (top document + iframes), and a navigation
+	 * replaces a heap's context before it wires the replacement document. */
+	dom_document *document;
+	struct content *content;
 	/* fixes875 (#304) - monotonic generation of `ctx`, bumped every time a new
 	 * context is built for this heap.  A JSContext* ALONE cannot identify a
 	 * realm: free one and the allocator can hand the same address straight back
@@ -109,6 +115,27 @@ struct jsheap *g_heap = NULL;  /* exported for audit */
  * js_destroyheap() unlinks.  Exists so macsurf_qjs_pump_all() can pump all of
  * them; see the note there for why pumping only g_heap froze iframes. */
 static struct jsheap *g_heap_list = NULL;
+
+/* Native DOM functions receive a JSContext.  Resolve the owning heap from
+ * that context instead of consulting the last document any other realm wired.
+ * This is deliberately a list walk: the number of live browsing contexts is
+ * small, and it keeps the ownership rule in the same registry that already
+ * establishes whether a context is live. */
+static struct jsheap *qjs_heap_for_ctx(JSContext *ctx)
+{
+	struct jsheap *h;
+	if (ctx == NULL) return NULL;
+	for (h = g_heap_list; h != NULL; h = h->next) {
+		if (h->ctx == ctx) return h;
+	}
+	return NULL;
+}
+
+static dom_document *qjs_document_for_ctx(JSContext *ctx)
+{
+	struct jsheap *h = qjs_heap_for_ctx(ctx);
+	return (h != NULL) ? h->document : NULL;
+}
 
 /* ------------------------------------------------------------------ */
 /* Interrupt handler - Cmd-. on OS 9                                   */
@@ -2128,6 +2155,8 @@ extern dom_exception macsurf_dom_node_get_owner_document(dom_node *node,
 /* fixes846 (#167 S3) - real createTextNode/createDocumentFragment/text-data. */
 extern dom_exception macsurf_dom_document_create_text_node_s(dom_document *doc,
 		const char *data, dom_text **text);
+extern dom_exception macsurf_dom_document_create_comment_s(dom_document *doc,
+		const char *data, dom_comment **comment);
 extern dom_exception macsurf_dom_document_create_document_fragment(
 		dom_document *doc, dom_document_fragment **fragment);
 extern dom_exception macsurf_dom_characterdata_get_data(dom_node *node,
@@ -2144,12 +2173,25 @@ extern dom_exception macsurf_dom_attr_get_name(dom_node *attr,
 extern dom_exception macsurf_dom_attr_get_value(dom_node *attr,
 		dom_string **value);
 
-/* ---- Global document/content pointers (set in js_newthread) ---- */
+/* ---- Host-facing current document/content pointers -----------------
+ *
+ * The frontend's scroll/resize entry points have no JSContext parameter, so
+ * they retain a host-current document.  Page-visible native DOM operations
+ * must use qjs_document_for_ctx() above; using this value for them mixes
+ * iframe/navigation realms and is not valid browser behaviour. */
 static dom_document  *g_qjs_document = NULL;
 static struct content *g_qjs_content = NULL;
 
-void qjs_set_document(dom_document *doc)  { g_qjs_document = doc; }
-void qjs_set_content(struct content *c)   { g_qjs_content  = c; }
+static void qjs_set_document(struct jsheap *heap, dom_document *doc)
+{
+	if (heap != NULL) heap->document = doc;
+	g_qjs_document = doc;
+}
+static void qjs_set_content(struct jsheap *heap, struct content *c)
+{
+	if (heap != NULL) heap->content = c;
+	g_qjs_content = c;
+}
 
 /* fixes846 (#167 S3) - macos9_js_fetch.c's only need for g_qjs_content:
  * read the page URL as a fetch_start() referer at send()-time. See this
@@ -2246,6 +2288,15 @@ static JSValue qjs_document_cookie_set(JSContext *ctx, JSValueConst this_val,
 void
 macsurf_js_notify_content_freed(struct content *c)
 {
+	struct jsheap *h;
+	/* Clear every realm wired to this content.  The old single global cleared
+	 * only whichever page had most recently won the race to wire itself. */
+	for (h = g_heap_list; h != NULL; h = h->next) {
+		if (h->content == c) {
+			h->content = NULL;
+			h->document = NULL;
+		}
+	}
 	if (g_qjs_content == c) {
 		g_qjs_content = NULL;
 		g_qjs_document = NULL;
@@ -2282,7 +2333,7 @@ static JSClassID s_el_class_id;
  *     ONCE per node, which is the precondition that makes the keepalive's
  *     balanced ref/unref sound.
  *   - Single-owner / single-release: each wrapper owns exactly ONE node ref
- *     and ONE owner-document keepalive ref (g_qjs_document captured at wrap
+ *     and ONE owner-document keepalive ref (the invoking realm's document
  *     time).  Both are released SOLELY by the finalizer or the realm drain -
  *     nothing else unrefs that node.  The keepalive holds the document alive
  *     for as long as ANY wrapper references it, so the document outlives its
@@ -2322,7 +2373,20 @@ static unsigned int qjs_wrap_hash(dom_node *node)
 	return (unsigned int)(((size_t)node >> 4) & (QJS_WRAP_BUCKETS - 1u));
 }
 
-static struct qjs_wrap_entry *qjs_wrap_lookup(dom_node *node)
+static struct qjs_wrap_entry *qjs_wrap_lookup(JSRuntime *rt, dom_node *node)
+{
+	struct qjs_wrap_entry *e = s_wrap_buckets[qjs_wrap_hash(node)];
+	while (e != NULL) {
+		if (e->rt == rt && e->node == node) return e;
+		e = e->next;
+	}
+	return NULL;
+}
+
+/* A native libdom event callback gives us a node but no JSContext.  The
+ * listener itself was registered by the owning realm, so its wrapper entry is
+ * the authority from which qjs_dom_listener_cb recovers that realm. */
+static struct qjs_wrap_entry *qjs_wrap_lookup_node(dom_node *node)
 {
 	struct qjs_wrap_entry *e = s_wrap_buckets[qjs_wrap_hash(node)];
 	while (e != NULL) {
@@ -2350,13 +2414,13 @@ static int qjs_wrap_insert(dom_node *node, dom_node *owner_doc, JSValue val,
 }
 
 /* Unlink the entry for node (does NOT drop refs - the caller does). */
-static void qjs_wrap_remove(dom_node *node)
+static void qjs_wrap_remove(JSRuntime *rt, dom_node *node)
 {
 	unsigned int h = qjs_wrap_hash(node);
 	struct qjs_wrap_entry *e = s_wrap_buckets[h];
 	struct qjs_wrap_entry *prev = NULL;
 	while (e != NULL) {
-		if (e->node == node) {
+		if (e->rt == rt && e->node == node) {
 			if (prev == NULL) s_wrap_buckets[h] = e->next;
 			else prev->next = e->next;
 			free(e);
@@ -2459,10 +2523,10 @@ static void qjs_el_finalizer(JSRuntime *rt, JSValue val)
 	 * exactly once.  The map entry is the guard: if the realm drain already
 	 * cleaned this node the entry is gone and we must NOT unref again. */
 	{
-		struct qjs_wrap_entry *e = qjs_wrap_lookup(node);
+		struct qjs_wrap_entry *e = qjs_wrap_lookup(rt, node);
 		if (e != NULL) {
 			dom_node *owner_doc = e->owner_doc;
-			qjs_wrap_remove(node);
+			qjs_wrap_remove(rt, node);
 			macsurf_dom_node_unref(node);
 			if (owner_doc) macsurf_dom_node_unref(owner_doc);
 		}
@@ -2579,7 +2643,8 @@ static void qjs_wrap_set_family_proto(JSContext *ctx, JSValue obj,
  * Ref contract (consume / single-owner / single-release): the caller passes an
  * OWNED node ref (every libdom getter returns one).
  *   - MISS: the new wrapper ADOPTS that ref as its single node ref, and takes
- *     one keepalive ref on g_qjs_document.  Methods are installed once here.
+ *     one keepalive ref on the invoking realm's document. Methods are
+ *     installed once here.
  *   - HIT:  the wrapper already owns its one node ref, so the caller's
  *     redundant ref is released here, and a NEW JS reference to the SAME object
  *     is returned (node identity holds).  The wrapper's own ref is untouched.
@@ -2599,7 +2664,7 @@ static JSValue qjs_wrap_element(JSContext *ctx, dom_element *el)
 
 	if (el == NULL) return JS_NULL;
 
-	hit = qjs_wrap_lookup(node);
+	hit = qjs_wrap_lookup(JS_GetRuntime(ctx), node);
 	if (hit != NULL) {
 		/* HIT: release the caller's transferred ref; the existing wrapper
 		 * already owns the node's single ref.  Hand back a new reference
@@ -2618,7 +2683,7 @@ static JSValue qjs_wrap_element(JSContext *ctx, dom_element *el)
 
 	/* Keepalive: own one ref on the current document so it outlives this
 	 * wrapper no matter which scope (content vs heap) tears down first. */
-	owner_doc = (dom_node *)g_qjs_document;
+	owner_doc = (dom_node *)qjs_document_for_ctx(ctx);
 	if (owner_doc) macsurf_dom_node_ref(owner_doc);
 
 	if (qjs_wrap_insert(node, owner_doc, obj, JS_GetRuntime(ctx)) == 0) {
@@ -3170,7 +3235,7 @@ static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
 
 	(void) this_val; (void) magic;
 	el = (dom_element *) qjs_get_node(this_val);
-	if (el == NULL || argc < 1 || g_qjs_document == NULL)
+	if (el == NULL || argc < 1 || qjs_document_for_ctx(ctx) == NULL)
 		return JS_UNDEFINED;
 	html_src = JS_ToCStringLen(ctx, &html_len, argv[0]);
 	if (html_src == NULL) return JS_UNDEFINED;
@@ -3180,7 +3245,8 @@ static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
 	params.fix_enc = true;
 	params.enable_script = false;
 
-	herr = dom_hubbub_fragment_parser_create(&params, g_qjs_document,
+	herr = dom_hubbub_fragment_parser_create(&params,
+			qjs_document_for_ctx(ctx),
 			&parser, &frag);
 	if (herr != DOM_HUBBUB_OK || parser == NULL || frag == NULL) {
 		JS_FreeCString(ctx, html_src);
@@ -6032,7 +6098,7 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 	if (ct == NULL) return;
 	node = (dom_node *)ct;          /* getter took a ref; we own it */
 
-	hit = qjs_wrap_lookup(node);
+	hit = qjs_wrap_lookup_node(node);
 	if (hit == NULL) {
 		/* No wrapper: this node was never touched by script, or the realm
 		 * has been rebuilt and its wrappers drained. Nothing to run.
@@ -6212,7 +6278,8 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 	 * CONSUMES one, so the miss path must NOT unref afterwards; the hit path
 	 * must. Getting this backwards is a double-unref on every dispatch. */
 	if (dom_event_get_target(evt, &tt) == DOM_NO_ERR && tt != NULL) {
-		struct qjs_wrap_entry *th = qjs_wrap_lookup((dom_node *)tt);
+		struct qjs_wrap_entry *th = qjs_wrap_lookup(JS_GetRuntime(ctx),
+				(dom_node *)tt);
 		JSValue tv;
 		if (th != NULL) {
 			tv = JS_DupValue(ctx, th->val);
@@ -6255,8 +6322,9 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 		 * workaround relies on.
 		 *
 		 * Only the document entry fans out -- element hits dispatch once. */
-		int is_doc = (g_qjs_document != NULL &&
-				node == (dom_node *)g_qjs_document);
+		dom_document *document = qjs_document_for_ctx(ctx);
+		int is_doc = (document != NULL &&
+				node == (dom_node *)document);
 		int capturing = 0;
 		JSValue global = JS_UNDEFINED;
 		if (is_doc) {
@@ -6535,7 +6603,7 @@ static JSValue qjs_doc_reg_event(JSContext *ctx, JSValueConst this_val,
 	const char *type_c;
 	int capture = 0;
 	(void)this_val;
-	if (g_qjs_document == NULL || argc < 1) return JS_UNDEFINED;
+	if (qjs_document_for_ctx(ctx) == NULL || argc < 1) return JS_UNDEFINED;
 	type_c = JS_ToCString(ctx, argv[0]);
 	if (type_c == NULL) return JS_UNDEFINED;
 	if (argc >= 2) {
@@ -6547,7 +6615,8 @@ static JSValue qjs_doc_reg_event(JSContext *ctx, JSValueConst this_val,
 			JS_FreeValue(ctx, c);
 		}
 	}
-	qjs_dom_register_listener((dom_node *)g_qjs_document, type_c, capture);
+	qjs_dom_register_listener((dom_node *)qjs_document_for_ctx(ctx), type_c,
+			capture);
 	JS_FreeCString(ctx, type_c);
 	return JS_UNDEFINED;
 }
@@ -7060,7 +7129,7 @@ static JSValue qjs_wrap_text_node(JSContext *ctx, dom_text *tn)
 
 	if (tn == NULL) return JS_NULL;
 
-	hit = qjs_wrap_lookup(node);
+	hit = qjs_wrap_lookup(JS_GetRuntime(ctx), node);
 	if (hit != NULL) {
 		macsurf_dom_node_unref(node);
 		return JS_DupValue(ctx, hit->val);
@@ -7073,7 +7142,7 @@ static JSValue qjs_wrap_text_node(JSContext *ctx, dom_text *tn)
 	}
 	JS_SetOpaque(obj, tn);
 
-	owner_doc = (dom_node *) g_qjs_document;
+	owner_doc = (dom_node *)qjs_document_for_ctx(ctx);
 	if (owner_doc) macsurf_dom_node_ref(owner_doc);
 
 	if (qjs_wrap_insert(node, owner_doc, obj, JS_GetRuntime(ctx)) == 0) {
@@ -7133,16 +7202,61 @@ static JSValue qjs_create_text_node(JSContext *ctx, JSValueConst this_val,
 	JSValue obj;
 
 	(void) this_val;
-	if (g_qjs_document == NULL || argc < 1) return JS_NULL;
+	if (qjs_document_for_ctx(ctx) == NULL || argc < 1) return JS_NULL;
 	text = JS_ToCString(ctx, argv[0]);
 	if (text == NULL) return JS_NULL;
-	if (macsurf_dom_document_create_text_node_s(g_qjs_document, text, &tn)
+	if (macsurf_dom_document_create_text_node_s(qjs_document_for_ctx(ctx),
+			text, &tn)
 	    != DOM_NO_ERR || tn == NULL) {
 		JS_FreeCString(ctx, text);
 		return JS_NULL;
 	}
 	JS_FreeCString(ctx, text);
 	obj = qjs_wrap_text_node(ctx, tn);
+	return obj;
+}
+
+/* ---- document.createComment (native) ----
+ *
+ * Comments are load-bearing DOM nodes for React: hydration boundaries and
+ * Suspense markers are identified by nodeType 8 / "#comment", not merely by
+ * their data string.  qjs_wrap_text_node already handles CharacterData node
+ * types 3, 4, and 8 and routes type 8 through Comment.prototype; this binding
+ * supplies the missing native creation half instead of fabricating a text
+ * node in JS. */
+static JSValue qjs_create_comment_node(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	const char *data;
+	dom_comment *comment = NULL;
+	dom_exception exc;
+	JSValue obj;
+	int free_data = 0;
+
+	(void) this_val;
+	if (qjs_document_for_ctx(ctx) == NULL)
+		return JS_ThrowInternalError(ctx,
+				"document.createComment has no native document");
+	if (argc > 0) {
+		data = JS_ToCString(ctx, argv[0]);
+		if (data == NULL) return JS_NULL;
+		free_data = 1;
+	} else {
+		data = "";
+	}
+	exc = macsurf_dom_document_create_comment_s(qjs_document_for_ctx(ctx),
+			data, &comment);
+	if (exc != DOM_NO_ERR || comment == NULL) {
+		if (free_data) JS_FreeCString(ctx, data);
+		return JS_ThrowInternalError(ctx,
+				"document.createComment native creation failed (%d)",
+				(int) exc);
+	}
+	if (free_data) JS_FreeCString(ctx, data);
+	obj = qjs_wrap_text_node(ctx, (dom_text *) comment);
+	if (JS_IsNull(obj))
+		return JS_ThrowInternalError(ctx,
+				"document.createComment could not wrap native node");
 	return obj;
 }
 
@@ -7174,7 +7288,7 @@ static JSValue qjs_wrap_fragment(JSContext *ctx, dom_document_fragment *frag)
 
 	if (frag == NULL) return JS_NULL;
 
-	hit = qjs_wrap_lookup(node);
+	hit = qjs_wrap_lookup(JS_GetRuntime(ctx), node);
 	if (hit != NULL) {
 		macsurf_dom_node_unref(node);
 		return JS_DupValue(ctx, hit->val);
@@ -7187,7 +7301,7 @@ static JSValue qjs_wrap_fragment(JSContext *ctx, dom_document_fragment *frag)
 	}
 	JS_SetOpaque(obj, frag);
 
-	owner_doc = (dom_node *) g_qjs_document;
+	owner_doc = (dom_node *)qjs_document_for_ctx(ctx);
 	if (owner_doc) macsurf_dom_node_ref(owner_doc);
 
 	if (qjs_wrap_insert(node, owner_doc, obj, JS_GetRuntime(ctx)) == 0) {
@@ -7308,8 +7422,9 @@ static JSValue qjs_create_document_fragment(JSContext *ctx,
 	dom_document_fragment *frag = NULL;
 
 	(void) this_val; (void) argc; (void) argv;
-	if (g_qjs_document == NULL) return JS_NULL;
-	if (macsurf_dom_document_create_document_fragment(g_qjs_document, &frag)
+	if (qjs_document_for_ctx(ctx) == NULL) return JS_NULL;
+	if (macsurf_dom_document_create_document_fragment(qjs_document_for_ctx(ctx),
+			&frag)
 	    != DOM_NO_ERR || frag == NULL) {
 		return JS_NULL;
 	}
@@ -7368,13 +7483,14 @@ static JSValue qjs_getElementById(JSContext *ctx, JSValueConst this_val,
 	dom_element *el = NULL;
 
 	(void)this_val;
-	if (g_qjs_document == NULL || argc < 1) return JS_NULL;
+	if (qjs_document_for_ctx(ctx) == NULL || argc < 1) return JS_NULL;
 	id_cstr = JS_ToCString(ctx, argv[0]);
 	if (id_cstr == NULL) return JS_NULL;
 	id_ds = qjs_make_domstr(id_cstr);
 	JS_FreeCString(ctx, id_cstr);
 	if (id_ds == NULL) return JS_NULL;
-	macsurf_dom_document_get_element_by_id(g_qjs_document, id_ds, &el);
+	macsurf_dom_document_get_element_by_id(qjs_document_for_ctx(ctx), id_ds,
+			&el);
 	macsurf_dom_string_unref(id_ds);
 	if (el == NULL) return JS_NULL;
 	return qjs_wrap_element(ctx, el);
@@ -8060,7 +8176,7 @@ static JSValue qjs_querySelectorAll(JSContext *ctx, JSValueConst this_val,
 	 * a warning suppressor with no upside. */
 	(void)this_val;
 	arr = JS_NewArray(ctx);
-	if (g_qjs_document == NULL || argc < 1) return arr;
+	if (qjs_document_for_ctx(ctx) == NULL || argc < 1) return arr;
 	sel = JS_ToCString(ctx, argv[0]);
 	if (sel == NULL) return arr;
 
@@ -8086,7 +8202,8 @@ static JSValue qjs_querySelectorAll(JSContext *ctx, JSValueConst this_val,
 		JS_FreeCString(ctx, sel);
 		if (s.n == 0) return arr;
 
-		macsurf_dom_document_get_document_element(g_qjs_document, &root);
+		macsurf_dom_document_get_document_element(qjs_document_for_ctx(ctx),
+				&root);
 		if (root != NULL) {
 			qjs_collect_by_sel_list(ctx, (dom_node *)root, &s, arr, &count);
 			macsurf_dom_node_unref((dom_node *)root);
@@ -8161,7 +8278,7 @@ static JSValue qjs_querySelector(JSContext *ctx, JSValueConst this_val,
 	 * there. Noticed only because this edit already touches the function;
 	 * unrelated to the comma-list change itself. */
 	(void)this_val;
-	if (g_qjs_document == NULL || argc < 1) return JS_NULL;
+	if (qjs_document_for_ctx(ctx) == NULL || argc < 1) return JS_NULL;
 	sel = JS_ToCString(ctx, argv[0]);
 	if (sel == NULL) return JS_NULL;
 
@@ -8199,7 +8316,7 @@ static JSValue qjs_querySelector(JSContext *ctx, JSValueConst this_val,
 			dom_string *id_ds = qjs_make_domstr(s.alt[0].c[0].id);
 			dom_element *el = NULL;
 			if (id_ds == NULL) return JS_NULL;
-			macsurf_dom_document_get_element_by_id(g_qjs_document,
+			macsurf_dom_document_get_element_by_id(qjs_document_for_ctx(ctx),
 					id_ds, &el);
 			macsurf_dom_string_unref(id_ds);
 			if (el == NULL) return JS_NULL;
@@ -8211,7 +8328,8 @@ static JSValue qjs_querySelector(JSContext *ctx, JSValueConst this_val,
 			return qjs_wrap_element(ctx, el);
 		}
 
-		macsurf_dom_document_get_document_element(g_qjs_document, &root);
+		macsurf_dom_document_get_document_element(qjs_document_for_ctx(ctx),
+				&root);
 		if (root == NULL) return JS_NULL;
 		found = qjs_find_first_by_sel_list((dom_node *)root, &s);
 		macsurf_dom_node_unref((dom_node *)root);
@@ -8454,10 +8572,11 @@ static JSValue qjs_create_element(JSContext *ctx, JSValueConst this_val,
 	JSValue obj;
 
 	(void)this_val;
-	if (g_qjs_document == NULL || argc < 1) return JS_NULL;
+	if (qjs_document_for_ctx(ctx) == NULL || argc < 1) return JS_NULL;
 	tag = JS_ToCString(ctx, argv[0]);
 	if (tag == NULL) return JS_NULL;
-	if (macsurf_dom_document_create_element_s(g_qjs_document, tag, &el)
+	if (macsurf_dom_document_create_element_s(qjs_document_for_ctx(ctx), tag,
+			&el)
 	    != DOM_NO_ERR || el == NULL) {
 		JS_FreeCString(ctx, tag);
 		return JS_NULL;
@@ -8495,7 +8614,7 @@ static JSValue qjs_create_element_ns(JSContext *ctx, JSValueConst this_val,
 	JSValue obj;
 
 	(void)this_val;
-	if (g_qjs_document == NULL || argc < 2) return JS_NULL;
+	if (qjs_document_for_ctx(ctx) == NULL || argc < 2) return JS_NULL;
 
 	if (!JS_IsNull(argv[0]) && !JS_IsUndefined(argv[0])) {
 		ns = JS_ToCString(ctx, argv[0]);
@@ -8506,7 +8625,8 @@ static JSValue qjs_create_element_ns(JSContext *ctx, JSValueConst this_val,
 		return JS_NULL;
 	}
 
-	if (macsurf_dom_document_create_element_ns_s(g_qjs_document, ns, tag, &el)
+	if (macsurf_dom_document_create_element_ns_s(qjs_document_for_ctx(ctx), ns,
+			tag, &el)
 	    != DOM_NO_ERR || el == NULL) {
 		JS_FreeCString(ctx, tag);
 		if (ns != NULL) JS_FreeCString(ctx, ns);
@@ -8527,8 +8647,8 @@ static JSValue qjs_wrap_doc_section(JSContext *ctx, int which)
 	dom_element *root = NULL;
 	JSValue result = JS_NULL;
 
-	if (g_qjs_document == NULL) return JS_NULL;
-	macsurf_dom_document_get_document_element(g_qjs_document, &root);
+	if (qjs_document_for_ctx(ctx) == NULL) return JS_NULL;
+	macsurf_dom_document_get_document_element(qjs_document_for_ctx(ctx), &root);
 	if (root == NULL) return JS_NULL;
 
 	if (which == 0) {
@@ -9031,6 +9151,7 @@ static void qjs_dom_install(JSContext *ctx)
 {
 	JSValue global = JS_GetGlobalObject(ctx);
 	JSValue doc    = JS_GetPropertyStr(ctx, global, "document");
+	dom_document *document = qjs_document_for_ctx(ctx);
 
 	/* fixes872 (#300) - before any element is wrapped in this realm. */
 	qjs_el_install_proto(ctx);
@@ -9053,6 +9174,8 @@ static void qjs_dom_install(JSContext *ctx)
 		 * same native-fast-path/JS-fallback shape as createElement above. */
 		qjs_set_func(ctx, doc, "__createTextNodeNative",
 				qjs_create_text_node, 1);
+		qjs_set_func(ctx, doc, "__createCommentNative",
+				qjs_create_comment_node, 1);
 		qjs_set_func(ctx, doc, "__createDocumentFragmentNative",
 				qjs_create_document_fragment, 0);
 		/* fixes879 - document.cookie as a REAL accessor pair over the
@@ -9100,15 +9223,14 @@ static void qjs_dom_install(JSContext *ctx)
 		 *
 		 * The NODE ref is taken, because drain unrefs e->node. owner_doc is
 		 * NULL: the document cannot be its own keepalive. */
-		if (g_qjs_document != NULL &&
-		    qjs_wrap_lookup((dom_node *)g_qjs_document) == NULL) {
-			macsurf_dom_node_ref((dom_node *)g_qjs_document);
-			if (qjs_wrap_insert((dom_node *)g_qjs_document, NULL,
+		if (document != NULL &&
+		    qjs_wrap_lookup(JS_GetRuntime(ctx), (dom_node *)document) == NULL) {
+			macsurf_dom_node_ref((dom_node *)document);
+			if (qjs_wrap_insert((dom_node *)document, NULL,
 					doc, JS_GetRuntime(ctx)) == 0) {
 				/* malloc failed: give the ref straight back so
 				 * the table and the refcount stay consistent. */
-				macsurf_dom_node_unref(
-					(dom_node *)g_qjs_document);
+				macsurf_dom_node_unref((dom_node *)document);
 			}
 		}
 
@@ -10175,8 +10297,13 @@ static void register_browser_globals(JSContext *ctx)
 			"document.getElementsByName=function(n){"
 				"return document.querySelectorAll('[name=\"'+"
 					"String(n)+'\"]');};"
+			/* fixes1283 (#167) - React's hydration boundaries are Comments,
+			 * not text nodes.  The native binding is installed by qjs_dom_install
+			 * before page scripts run; return null in the pre-document fallback
+			 * rather than falsely manufacturing the wrong node type. */
 			"document.createComment=function(t){"
-				"return document.createTextNode('');};"
+				"return document.__createCommentNative?"
+				"document.__createCommentNative(t):null;};"
 			/* fixes1010 - the same universals on `document`.
 			 *
 			 * jQuery's isAttached is ce.contains(e.ownerDocument, e), and
@@ -13965,8 +14092,8 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 		 * html_content is defined in content/handlers/html/private.h;
 		 * same access pattern as macsurf_js.c (Duktape). */
 		html_content *htmlc = (html_content *)doc_priv;
-		qjs_set_document(htmlc->document);
-		qjs_set_content((struct content *)htmlc);
+		qjs_set_document(heap, htmlc->document);
+		qjs_set_content(heap, (struct content *)htmlc);
 		/* Re-wire getElementById/querySelectorAll with real document now */
 		qjs_dom_install(heap->ctx);
 		MS_LOG("qjs: thread document wired");

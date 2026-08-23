@@ -261,6 +261,23 @@ dom_exception macsurf_dom_document_create_text_node_s(dom_document *doc,
     return exc;
 }
 
+/* A Comment is not an empty Text node.  React's hydration protocol uses
+ * comment nodeType/name boundaries, so callers must receive libdom's actual
+ * dom_comment object and preserve its CharacterData semantics. */
+dom_exception macsurf_dom_document_create_comment_s(dom_document *doc,
+    const char *data, dom_comment **comment)
+{
+    dom_string *ds = NULL;
+    dom_exception exc;
+
+    if (data == NULL) data = "";
+    dom_string_create((const uint8_t *)data, (unsigned)strlen(data), &ds);
+    if (ds == NULL) return 5; /* DOM_NO_MEMORY_ERR */
+    exc = dom_document_create_comment(doc, ds, comment);
+    dom_string_unref(ds);
+    return exc;
+}
+
 /* fixes846 (#167 S3) - document.createDocumentFragment(). */
 dom_exception macsurf_dom_document_create_document_fragment(dom_document *doc,
     dom_document_fragment **fragment)
@@ -343,4 +360,3 @@ dom_exception macsurf_dom_node_contains(dom_node *node, dom_node *other,
     *contains = c ? 1 : 0;
     return exc;
 }
-

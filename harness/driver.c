@@ -10578,5 +10578,43 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 85 PASS: immediate, channel, window message, "
 			"and reportError all deliver ===\n");
 
+	/* --- Test 86: Comment is a real CharacterData node (#167, fixes1283)
+	 *
+	 * React identifies hydration and Suspense boundaries by COMMENT_NODE.  The
+	 * old document.createComment implementation returned a Text node, which
+	 * makes the marker indistinguishable from user content and violates every
+	 * DOM traversal React performs around it. */
+	fprintf(stderr, "\n=== Test 86: document.createComment creates a native "
+			"Comment node (fixes1283) ===\n");
+	{
+		const char *t86 =
+			"(function(){"
+			"function bad(s){throw new Error('ASSERT FAIL: '+s);}"
+			"if(typeof document.__createCommentNative!=='function')"
+				"bad('native createComment binding is missing');"
+			"var c=document.createComment('react-marker'),host=document.createElement('div');"
+			"if(!c)bad('createComment returned null');"
+			"if(c.nodeType!==Node.COMMENT_NODE)bad('nodeType='+c.nodeType);"
+			"if(c.nodeName!=='#comment')bad('nodeName='+c.nodeName);"
+			"if(c.data!=='react-marker'||c.nodeValue!=='react-marker')"
+				"bad('CharacterData content is wrong');"
+			"if(!(c instanceof Comment)||!(c instanceof CharacterData)||!(c instanceof Node))"
+				"bad('Comment prototype family is wrong');"
+			"host.appendChild(c);if(host.firstChild!==c||c.parentNode!==host)"
+				"bad('native comment did not attach');"
+			"c.data='hydration-boundary';"
+			"if(c.textContent!=='hydration-boundary')bad('data setter missed native node');"
+			"})();";
+		unsigned char ok = js_exec(thread, (const unsigned char *)t86,
+				strlen(t86), "driver-t86-comment-node.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 86 -- document.createComment is not a "
+					"real Comment CharacterData node\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 86 PASS: native Comment node preserves React "
+			"hydration-marker semantics ===\n");
+
 	return 0;
 }
