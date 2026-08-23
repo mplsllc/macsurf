@@ -4825,7 +4825,16 @@ static void html_reformat(struct content *c, int width, int height)
 				/* Report the owner: the box the descent stopped at,
 				 * with a REAL bounded total child count (not the old
 				 * boolean) so "zero overlapping children" can be told
-				 * apart from "zero children at all". */
+				 * apart from "zero children at all". fixes1295 (C0.3)
+				 * adds actual height/min-height PIXEL values (not just
+				 * set/auto -- a min-height that's SET but small isn't
+				 * the same finding as one set to thousands of px) plus
+				 * flex-grow/basis/align, since both owners in the
+				 * fixes1294 hardware run were flex containers (type=14)
+				 * with mht=set and it matters whether that min-height
+				 * value is what's actually driving the box's oversized
+				 * height, or whether a flex-grow/align-items mismatch
+				 * is the real cause. */
 				{
 					int gx = 0, gy = 0;
 					int total_kids = 0;
@@ -4835,6 +4844,11 @@ static void html_reformat(struct content *c, int width, int height)
 					const char *ht = "auto";
 					const char *mht = "auto";
 					int pos = -1;
+					int htpx = -1, mhtpx = -1;
+					int grow_x100 = -1;
+					int basis_px = -1;
+					int align_items = -1, align_self = -1;
+					int flex_dir = -1;
 
 					box_coords(cur, &gx, &gy);
 					for (ch = cur->children;
@@ -4847,32 +4861,60 @@ static void html_reformat(struct content *c, int width, int height)
 						html_pagemap_brief(cur->node, nm,
 								(int)sizeof nm);
 					if (cur->style != NULL) {
-						css_fixed hv = 0, mhv = 0;
+						css_fixed hv = 0, mhv = 0, gv = 0, bv = 0;
 						css_unit hu = CSS_UNIT_PX,
-							 mhu = CSS_UNIT_PX;
+							 mhu = CSS_UNIT_PX,
+							 bu = CSS_UNIT_PX;
 						disp = (css_computed_display_static(
 								cur->style) ==
 								CSS_DISPLAY_NONE) ?
 								"NONE" : "ok";
 						if (css_computed_height(cur->style,
-								&hv, &hu) == CSS_HEIGHT_SET)
+								&hv, &hu) == CSS_HEIGHT_SET) {
 							ht = "set";
+							if (hu == CSS_UNIT_PX)
+								htpx = (int) FIXTOINT(hv);
+						}
 						if (css_computed_min_height(cur->style,
 								&mhv, &mhu) ==
-								CSS_MIN_HEIGHT_SET)
+								CSS_MIN_HEIGHT_SET) {
 							mht = "set";
+							if (mhu == CSS_UNIT_PX)
+								mhtpx = (int) FIXTOINT(mhv);
+						}
 						pos = (int) css_computed_position(
 								cur->style);
+						if (css_computed_flex_grow(cur->style,
+								&gv) == CSS_FLEX_GROW_SET)
+							grow_x100 = (int)
+								(((long)gv * 100) >>
+								 CSS_RADIX_POINT);
+						if (css_computed_flex_basis(cur->style,
+								&bv, &bu) ==
+								CSS_FLEX_BASIS_SET &&
+								bu == CSS_UNIT_PX)
+							basis_px = (int) FIXTOINT(bv);
+						align_items = (int)
+							css_computed_align_items(
+									cur->style);
+						align_self = (int)
+							css_computed_align_self(
+									cur->style);
+						flex_dir = (int)
+							css_computed_flex_direction(
+									cur->style);
 					}
 					macsurf_debug_log_writef(
-						"LIFE FBGAPOWNER gap=%d %s type=%d x=%d y=%d w=%d h=%d totalkids=%d overlapkids=%d txt=%d obj=%d disp=%s pos=%d ht=%s mht=%s",
+						"LIFE FBGAPOWNER gap=%d %s type=%d x=%d y=%d w=%d h=%d totalkids=%d overlapkids=%d txt=%d obj=%d disp=%s pos=%d ht=%s(%d) mht=%s(%d) grow=%d basis=%d align=%d/%d dir=%d",
 						i, nm[0] ? nm : "(no node)",
 						(int)cur->type, gx, gy,
 						(int)cur->width, (int)cur->height,
 						total_kids, branch_n,
 						cur->text != NULL,
 						cur->object != NULL,
-						disp, pos, ht, mht);
+						disp, pos, ht, htpx, mht, mhtpx,
+						grow_x100, basis_px,
+						align_items, align_self, flex_dir);
 				}
 
 				/* Report each overlapping child (branch candidates),
@@ -4892,6 +4934,10 @@ static void html_reformat(struct content *c, int width, int height)
 						const char *ht = "auto";
 						const char *mht = "auto";
 						int pos = -1;
+						int htpx = -1, mhtpx = -1;
+						int grow_x100 = -1;
+						int basis_px = -1;
+						int align_items = -1, align_self = -1;
 
 						box_coords(bx, &gx, &gy);
 						for (ch = bx->children;
@@ -4904,34 +4950,64 @@ static void html_reformat(struct content *c, int width, int height)
 							html_pagemap_brief(bx->node,
 									nm, (int)sizeof nm);
 						if (bx->style != NULL) {
-							css_fixed hv = 0, mhv = 0;
+							css_fixed hv = 0, mhv = 0,
+								  gv = 0, bv = 0;
 							css_unit hu = CSS_UNIT_PX,
-								 mhu = CSS_UNIT_PX;
+								 mhu = CSS_UNIT_PX,
+								 bu = CSS_UNIT_PX;
 							disp = (css_computed_display_static(
 									bx->style) ==
 									CSS_DISPLAY_NONE) ?
 									"NONE" : "ok";
 							if (css_computed_height(
 									bx->style, &hv, &hu)
-									== CSS_HEIGHT_SET)
+									== CSS_HEIGHT_SET) {
 								ht = "set";
+								if (hu == CSS_UNIT_PX)
+									htpx = (int)
+										FIXTOINT(hv);
+							}
 							if (css_computed_min_height(
 									bx->style, &mhv,
 									&mhu) ==
-									CSS_MIN_HEIGHT_SET)
+									CSS_MIN_HEIGHT_SET) {
 								mht = "set";
+								if (mhu == CSS_UNIT_PX)
+									mhtpx = (int)
+										FIXTOINT(mhv);
+							}
 							pos = (int) css_computed_position(
 									bx->style);
+							if (css_computed_flex_grow(
+									bx->style, &gv) ==
+									CSS_FLEX_GROW_SET)
+								grow_x100 = (int)
+									(((long)gv * 100) >>
+									 CSS_RADIX_POINT);
+							if (css_computed_flex_basis(
+									bx->style, &bv, &bu) ==
+									CSS_FLEX_BASIS_SET &&
+									bu == CSS_UNIT_PX)
+								basis_px = (int)
+									FIXTOINT(bv);
+							align_items = (int)
+								css_computed_align_items(
+										bx->style);
+							align_self = (int)
+								css_computed_align_self(
+										bx->style);
 						}
 						macsurf_debug_log_writef(
-							"LIFE FBGAPBRANCH gap=%d %s type=%d x=%d y=%d w=%d h=%d totalkids=%d txt=%d obj=%d disp=%s pos=%d ht=%s mht=%s",
+							"LIFE FBGAPBRANCH gap=%d %s type=%d x=%d y=%d w=%d h=%d totalkids=%d txt=%d obj=%d disp=%s pos=%d ht=%s(%d) mht=%s(%d) grow=%d basis=%d align=%d/%d",
 							i, nm[0] ? nm : "(no node)",
 							(int)bx->type, gx, gy,
 							(int)bx->width, (int)bx->height,
 							total_kids,
 							bx->text != NULL,
 							bx->object != NULL,
-							disp, pos, ht, mht);
+							disp, pos, ht, htpx, mht, mhtpx,
+							grow_x100, basis_px,
+							align_items, align_self);
 					}
 				}
 			}
