@@ -293,6 +293,12 @@ long g_https_setup_fail_total = 0;
 /* fixes374 (#167) - forward decl; defined near build_request. Used by the
  * disk-cache lookup/store paths to bypass caching for Facebook hosts. */
 static int host_is_fb_asset(const char *host);
+/* fixes1297 (#167, Track B) - forward decls; defined alongside
+ * host_is_fb_asset above. host_is_fb_dynamic() is the narrower "never
+ * cache" exclusion (facebook.com/fbsbx.com only); host_is_fb_asset() stays
+ * the blanket predicate for the non-caching call sites. */
+static int host_is_fb_dynamic(const char *host);
+static int macos9_cache_response_persistable(const struct macos9_https_ctx *c);
 
 /* ---------- auto-upgrade fallback (fixes249b) ----------
  * When the user types "example.com" with no scheme, window.c prepends
@@ -2251,10 +2257,17 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 	 * served STALE pages with dead lsd/jazoest CSRF tokens AND meant the
 	 * fresh Set-Cookie (datr/c_user/xs, device-trust) was never seen -
 	 * so the login looped and 2FA was demanded every time. Always go to
-	 * network for FB so tokens are fresh and cookies are captured. */
+	 * network for FB so tokens are fresh and cookies are captured.
+	 * fixes1297 (#167, Track B) - narrowed from host_is_fb_asset() (all
+	 * four FB-family hosts) to host_is_fb_dynamic() (facebook.com/
+	 * fbsbx.com only): fbcdn.net/cdninstagram.com serve version-hashed,
+	 * immutable static assets with none of the stale-CSRF/missed-cookie
+	 * risk above, so they may now participate in caching -- subject to
+	 * macos9_cache_response_persistable()'s own response-level checks
+	 * (no-store, private, Vary), not a blanket allow. */
 	if (c->post_body == NULL &&
-	    !host_is_fb_asset(c->host) &&
-	    macos9_cache_mime_eligible(c->status, c->mime)) {
+	    !host_is_fb_dynamic(c->host) &&
+	    macos9_cache_response_persistable(c)) {
 		c->cache_eligible = 1;
 		/* fixes987 - open the cache file now, so the body can be
 		 * written through as it arrives. */
@@ -2507,24 +2520,134 @@ static void cookie_names_only(const char *src, char *dst, int dstcap)
  * origin keeps keep-alive + connection pooling. Covers facebook.com plus the
  * asset/CDN domains the login surface pulls (fbcdn.net, fbsbx.com,
  * cdninstagram.com). */
-static int host_is_fb_asset(const char *host)
+static int host_matches_suffix_list(const char *host,
+		const char *const *suffixes, size_t n)
 {
-	static const char *const fb_suffixes[] = {
-		"facebook.com", "fbcdn.net", "fbsbx.com", "cdninstagram.com"
-	};
-	size_t hl, n, i, sl;
+	size_t hl, i, sl;
 	if (host == NULL) return 0;
 	hl = strlen(host);
-	n = sizeof(fb_suffixes) / sizeof(fb_suffixes[0]);
 	for (i = 0; i < n; i++) {
-		sl = strlen(fb_suffixes[i]);
+		sl = strlen(suffixes[i]);
 		if (hl >= sl &&
-		    strncasecmp(host + hl - sl, fb_suffixes[i], sl) == 0 &&
+		    strncasecmp(host + hl - sl, suffixes[i], sl) == 0 &&
 		    (hl == sl || host[hl - sl - 1] == '.')) {
 			return 1;
 		}
 	}
 	return 0;
+}
+
+static int host_is_fb_asset(const char *host)
+{
+	static const char *const fb_suffixes[] = {
+		"facebook.com", "fbcdn.net", "fbsbx.com", "cdninstagram.com"
+	};
+	return host_matches_suffix_list(host, fb_suffixes,
+			sizeof(fb_suffixes) / sizeof(fb_suffixes[0]));
+}
+
+/* fixes1297 (#167, Track B) - the NARROWER exclusion, used only at the two
+ * caching decision points (write-eligibility and serve-from-cache lookup),
+ * never at the connection/POST/concurrency-shaping call sites that still
+ * use host_is_fb_asset() above unchanged. fixes374's blanket exclusion was
+ * correct for login/checkpoint/session traffic (stale CSRF tokens, missed
+ * Set-Cookie) but also caught fbcdn.net's static, version-hashed asset CDN
+ * and cdninstagram.com's image CDN, which carry none of that risk. "May
+ * participate in caching" (this predicate) is not the same claim as "is
+ * cacheable" -- see macos9_cache_response_persistable() below for the
+ * response-level checks that still apply on top of this host narrowing. */
+static int host_is_fb_dynamic(const char *host)
+{
+	static const char *const fb_dynamic_suffixes[] = {
+		"facebook.com", "fbsbx.com"
+	};
+	return host_matches_suffix_list(host, fb_dynamic_suffixes,
+			sizeof(fb_dynamic_suffixes) /
+			sizeof(fb_dynamic_suffixes[0]));
+}
+
+/* fixes1297 (#167, Track B) - find the line in a CRLF-joined cache_hdrs blob
+ * (macos9_cache_capture_hdr's format, macos9_disk_cache.c) whose name
+ * matches `prefix` case-insensitively. Returns NULL if absent. */
+static const char *macsurf__cache_hdrs_find(const char *hdrs,
+		const char *prefix)
+{
+	const char *p = hdrs;
+	size_t plen = strlen(prefix);
+	if (hdrs == NULL) return NULL;
+	while (*p != '\0') {
+		if (strncasecmp(p, prefix, plen) == 0) return p;
+		p = strstr(p, "\r\n");
+		if (p == NULL) break;
+		p += 2;
+	}
+	return NULL;
+}
+
+/* True if the named header line exists and contains `needle` (case-
+ * insensitive) anywhere before its terminating CRLF. */
+static int macsurf__cache_hdrs_line_has(const char *hdrs, const char *prefix,
+		const char *needle)
+{
+	const char *line = macsurf__cache_hdrs_find(hdrs, prefix);
+	const char *eol;
+	size_t linelen;
+	char buf[256];
+	if (line == NULL) return 0;
+	eol = strstr(line, "\r\n");
+	linelen = (eol != NULL) ? (size_t)(eol - line) : strlen(line);
+	if (linelen >= sizeof(buf)) linelen = sizeof(buf) - 1;
+	memcpy(buf, line, linelen);
+	buf[linelen] = '\0';
+	{
+		size_t i;
+		size_t nlen = strlen(needle);
+		if (nlen == 0 || linelen < nlen) return 0;
+		for (i = 0; i + nlen <= linelen; i++) {
+			if (strncasecmp(buf + i, needle, nlen) == 0) return 1;
+		}
+	}
+	return 0;
+}
+
+/* True if the named header line exists and has any non-whitespace content
+ * after its "name:" prefix (used for Vary: any nonempty value disqualifies,
+ * per the #167 backlog plan -- MacSurf's disk cache keys entries by URL
+ * alone, so it can't safely honour a Vary it can't index against). */
+static int macsurf__cache_hdrs_line_nonempty(const char *hdrs,
+		const char *prefix)
+{
+	const char *line = macsurf__cache_hdrs_find(hdrs, prefix);
+	const char *v;
+	size_t plen = strlen(prefix);
+	if (line == NULL) return 0;
+	v = line + plen;
+	while (*v == ' ' || *v == '\t') v++;
+	return (*v != '\0' && *v != '\r' && *v != '\n');
+}
+
+/* fixes1297 (#167, Track B) - the single response-level persistability
+ * gate. Consolidates status/MIME eligibility (existing
+ * macos9_cache_mime_eligible) with the two new checks this track adds
+ * (no Cache-Control: no-store, private treated conservatively as
+ * non-persistable, no meaningful Vary) into one decision point, called
+ * once right before macos9_cache_stream_begin(), instead of growing the
+ * inline conjunction at the call site with another && every time a new
+ * exclusion is needed. */
+static int macos9_cache_response_persistable(const struct macos9_https_ctx *c)
+{
+	if (!macos9_cache_mime_eligible(c->status, c->mime)) return 0;
+	if (c->cache_hdrs[0] != '\0') {
+		if (macsurf__cache_hdrs_line_has(c->cache_hdrs,
+				"cache-control:", "no-store"))
+			return 0;
+		if (macsurf__cache_hdrs_line_has(c->cache_hdrs,
+				"cache-control:", "private"))
+			return 0;
+		if (macsurf__cache_hdrs_line_nonempty(c->cache_hdrs, "vary:"))
+			return 0;
+	}
+	return 1;
 }
 
 /* fixes378 (#167) - strip any persisted 'noscript=...' token out of an
@@ -3668,7 +3791,13 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 		 * fixes374 (#167) - never SERVE a cached Facebook page either:
 		 * a stale login page (dead CSRF tokens, no Set-Cookie) is what
 		 * broke login. Always hit the network for FB hosts. This also
-		 * evicts any FB pages a pre-fixes374 build already cached. */
+		 * evicts any FB pages a pre-fixes374 build already cached.
+		 * fixes1297 (#167, Track B) - narrowed to host_is_fb_dynamic()
+		 * below, same reasoning as the write-eligibility gate above:
+		 * fbcdn.net/cdninstagram.com may now be served from disk. Any
+		 * entry that made it to disk for those hosts already passed
+		 * macos9_cache_response_persistable() at write time, so nothing
+		 * extra is needed here beyond the narrower host check. */
 		/* fixes981 - a CONDITIONAL request must never be answered
 		 * from our own disk copy. Once a disk hit carries real
 		 * Cache-Control/ETag (above), llcache can decide the copy is
@@ -3680,7 +3809,7 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 		 * captured earlier in this same setup(), so it is populated. */
 		if (c->post_body == NULL &&
 		    url_str != NULL &&
-		    !host_is_fb_asset(c->host) &&
+		    !host_is_fb_dynamic(c->host) &&
 		    !macos9_hdr_has_ci(c->caller_hdrs, "if-none-match:") &&
 		    !macos9_hdr_has_ci(c->caller_hdrs, "if-modified-since:") &&
 		    /* fixes1159 (#240) - a recent POST to this origin arms a

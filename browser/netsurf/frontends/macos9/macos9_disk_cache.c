@@ -552,12 +552,19 @@ static long macos9_cache_sweep(void)
  * decision instead of the disk cache making it by omission.
  *
  * Exactly the set llcache_fetch_process_header consumes (llcache.c:793-846):
- * Age, Date, ETag, Expires, Cache-Control, Last-Modified. */
+ * Age, Date, ETag, Expires, Cache-Control, Last-Modified.
+ *
+ * fixes1297 (#167, Track B) - added Vary. Not consumed by
+ * llcache_fetch_process_header, but macos9_cache_response_persistable()
+ * (macos9_tls_fetcher.c) needs it to decide whether a response is safe to
+ * persist at all: this disk cache keys entries by URL alone, so a response
+ * with a meaningful Vary can't be persisted as a single representation
+ * without risking serving the wrong one back later. */
 void macos9_cache_capture_hdr(const char *line, char *dst, size_t cap)
 {
 	static const char *const keep[] = {
 		"age:", "date:", "etag:", "expires:",
-		"cache-control:", "last-modified:"
+		"cache-control:", "last-modified:", "vary:"
 	};
 	size_t nk = sizeof(keep) / sizeof(keep[0]);
 	size_t used;
