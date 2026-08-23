@@ -291,27 +291,16 @@ double macsurf_qjs_get_now(void);
 #endif
 #define QJS_SCRIPT_TIMEOUT_MS MACSURF_JS_TIMEOUT_MS
 
-/* fixes1276 (#167) - ON by default (current shipped behaviour: __d,
- * requireLazy, and __onBeforeModuleFactory are all observed via
- * Object.defineProperty traps installed before any page script runs).
+/* fixes1285 (#167) - OFF by default.  __d, requireLazy, and
+ * __onBeforeModuleFactory are Facebook implementation details, not browser
+ * APIs.  Earlier diagnostic traps changed their own-property shape before the
+ * page ran and swallowed the page's real __onBeforeModuleFactory=null reset.
+ * A production browser must leave those globals entirely to the page.
  *
- * This is the clean-room A/B switch: flip to 0 for exactly one hardware
- * build to find out whether MacSurf's own Facebook-loader instrumentation
- * is still part of what's blocking app boot, independent of anything the
- * instrumentation itself reports. fixes1275 already proved once that this
- * exact instrumentation can be the bug it's trying to diagnose (a
- * fabricated __d/requireLazy silently ate window.Env); fixes1276's
- * self-reference guard fixed a second, independently-found bug in the same
- * traps (a stack-overflow on ordinary `x = x || fn` reinstall). Given that
- * history, the maintainer asked for one hardware run with ALL of it
- * compiled out -- not just patched -- so Facebook owns __d/requireLazy/
- * __onBeforeModuleFactory with zero MacSurf code in the way, before trusting
- * any further counter these traps report. With this at 0, all three names
- * are left completely untouched (no defineProperty call at all): FBRL/FBMOD/
- * FBGRAPH/FBTARGETS/FBWAIT/require-trace logging goes silent for that run,
- * which is the point. */
+ * Define MACSURF_JS_FB_LOADER_TRAP=1 only for an explicitly requested local
+ * diagnostic build.  It is never the normal browser behaviour. */
 #ifndef MACSURF_JS_FB_LOADER_TRAP
-#define MACSURF_JS_FB_LOADER_TRAP 1
+#define MACSURF_JS_FB_LOADER_TRAP 0
 #endif
 /* fixes586 - timer/event callbacks get a shorter budget: a callback that
  * burns 8s of straight CPU is pathological, and the UI is frozen while it
@@ -2623,6 +2612,384 @@ static void qjs_el_finalizer(JSRuntime *rt, JSValue val)
 }
 
 static JSClassDef s_el_class = { "MacSurfElement", qjs_el_finalizer };
+
+/* Defined with the other browser-global helpers below.  Blob is registered
+ * before the DOM helper block, so retain this small declaration here. */
+static void qjs_set_func(JSContext *ctx, JSValue obj,
+		const char *name, JSCFunction *fn, int nargs);
+
+/* ---- Blob: immutable byte sequences used by browser APIs -----------------
+ *
+ * A previous compatibility block advertised a zero-byte Blob for every input.
+ * That routed feature-detecting pages into a path whose bytes did not exist.
+ * Blob is now backed by an owned byte buffer: string, Blob, ArrayBuffer, and
+ * typed-array parts are copied at construction; slice(), text(), and
+ * arrayBuffer() read those same bytes.  The request transport intentionally
+ * returns false for a Blob sendBeacon body until it gains a length-aware raw
+ * POST interface, rather than String(blob)-coercing it into false data. */
+static JSClassID s_blob_class_id;
+
+struct qjs_blob {
+	uint8_t *bytes;
+	size_t len;
+	char *type;
+};
+
+static void qjs_blob_finalizer(JSRuntime *rt, JSValue val)
+{
+	struct qjs_blob *blob = (struct qjs_blob *)JS_GetOpaque(val,
+			s_blob_class_id);
+	(void)rt;
+	if (blob == NULL) return;
+	free(blob->bytes);
+	free(blob->type);
+	free(blob);
+}
+
+static JSClassDef s_blob_class = { "Blob", qjs_blob_finalizer };
+
+static struct qjs_blob *qjs_blob_get(JSContext *ctx, JSValueConst value)
+{
+	return (struct qjs_blob *)JS_GetOpaque2(ctx, value, s_blob_class_id);
+}
+
+static char *qjs_blob_dup(const char *src, size_t len)
+{
+	char *out;
+	if (len == (size_t)-1) return NULL;
+	out = (char *)malloc(len + 1);
+	if (out == NULL) return NULL;
+	if (len != 0) memcpy(out, src, len);
+	out[len] = '\0';
+	return out;
+}
+
+static int qjs_blob_append(struct qjs_blob *blob, const uint8_t *bytes,
+		size_t len)
+{
+	uint8_t *grown;
+	size_t next;
+	if (len == 0) return 0;
+	if (len > (size_t)-1 - blob->len) return -1;
+	next = blob->len + len;
+	grown = (uint8_t *)realloc(blob->bytes, next);
+	if (grown == NULL) return -1;
+	memcpy(grown + blob->len, bytes, len);
+	blob->bytes = grown;
+	blob->len = next;
+	return 0;
+}
+
+static int qjs_blob_append_part(JSContext *ctx, struct qjs_blob *blob,
+		JSValueConst value)
+{
+	struct qjs_blob *part_blob;
+	uint8_t *bytes;
+	size_t len, byte_off, byte_len, bpe, ab_len;
+	JSValue ab;
+	const char *text;
+
+	part_blob = (struct qjs_blob *)JS_GetOpaque(value, s_blob_class_id);
+	if (part_blob != NULL)
+		return qjs_blob_append(blob, part_blob->bytes, part_blob->len);
+
+	if (JS_IsArrayBuffer(value)) {
+		bytes = JS_GetArrayBuffer(ctx, &len, value);
+		if (bytes == NULL) return 1;
+		return qjs_blob_append(blob, bytes, len);
+	}
+
+	/* The public QuickJS API identifies typed-array values without exposing
+	 * engine-private class IDs. */
+	if (JS_GetTypedArrayType(value) >= 0) {
+		ab = JS_GetTypedArrayBuffer(ctx, value, &byte_off, &byte_len, &bpe);
+		if (JS_IsException(ab)) return 1;
+		bytes = JS_GetArrayBuffer(ctx, &ab_len, ab);
+		JS_FreeValue(ctx, ab);
+		if (bytes == NULL || byte_off > ab_len ||
+				byte_len > ab_len - byte_off)
+			return 1;
+		return qjs_blob_append(blob, bytes + byte_off, byte_len);
+	}
+
+	/* Blob converts all remaining part values to a string, then takes its
+	 * UTF-8 bytes.  JS_ToCStringLen performs that conversion in the engine's
+	 * own string representation, including the non-ASCII case. */
+	text = JS_ToCStringLen(ctx, &len, value);
+	if (text == NULL) return 1;
+	if (qjs_blob_append(blob, (const uint8_t *)text, len) != 0) {
+		JS_FreeCString(ctx, text);
+		return -1;
+	}
+	JS_FreeCString(ctx, text);
+	return 0;
+}
+
+/* Return a heap type string.  Blob's MIME type is ASCII lower-case or empty;
+ * values outside printable ASCII must not be advertised as a media type. */
+static char *qjs_blob_type(JSContext *ctx, JSValueConst value)
+{
+	const char *src;
+	char *out;
+	size_t len, i;
+
+	if (JS_IsUndefined(value)) {
+		out = qjs_blob_dup("", 0);
+		if (out == NULL) JS_ThrowOutOfMemory(ctx);
+		return out;
+	}
+	src = JS_ToCStringLen(ctx, &len, value);
+	if (src == NULL) return NULL;
+	out = qjs_blob_dup(src, len);
+	JS_FreeCString(ctx, src);
+	if (out == NULL) {
+		JS_ThrowOutOfMemory(ctx);
+		return NULL;
+	}
+	for (i = 0; i < len; i++) {
+		unsigned char c = (unsigned char)out[i];
+		if (c < 0x20 || c > 0x7e) {
+			out[0] = '\0';
+			return out;
+		}
+		if (c >= 'A' && c <= 'Z') out[i] = (char)(c + ('a' - 'A'));
+	}
+	return out;
+}
+
+static JSValue qjs_blob_make(JSContext *ctx, const uint8_t *bytes,
+		size_t len, char *type)
+{
+	struct qjs_blob *blob;
+	JSValue obj;
+
+	blob = (struct qjs_blob *)calloc(1, sizeof(*blob));
+	if (blob == NULL) {
+		free(type);
+		return JS_ThrowOutOfMemory(ctx);
+	}
+	if (len != 0) {
+		blob->bytes = (uint8_t *)malloc(len);
+		if (blob->bytes == NULL) {
+			free(type);
+			free(blob);
+			return JS_ThrowOutOfMemory(ctx);
+		}
+		memcpy(blob->bytes, bytes, len);
+	}
+	blob->len = len;
+	blob->type = type;
+	obj = JS_NewObjectClass(ctx, s_blob_class_id);
+	if (JS_IsException(obj)) {
+		free(blob->bytes);
+		free(blob->type);
+		free(blob);
+		return obj;
+	}
+	JS_SetOpaque(obj, blob);
+	return obj;
+}
+
+static JSValue qjs_blob_ctor(JSContext *ctx, JSValueConst new_target,
+		int argc, JSValueConst *argv)
+{
+	struct qjs_blob work;
+	JSValue length_value, part, type_value;
+	uint32_t count, i;
+	int append_result;
+	char *type;
+
+	(void)new_target;
+	memset(&work, 0, sizeof(work));
+	if (argc > 0 && !JS_IsUndefined(argv[0])) {
+		if (!JS_IsArray(argv[0]))
+			return JS_ThrowTypeError(ctx, "Blob parts must be an array");
+		length_value = JS_GetPropertyStr(ctx, argv[0], "length");
+		if (JS_IsException(length_value)) return JS_EXCEPTION;
+		if (JS_ToUint32(ctx, &count, length_value) != 0) {
+			JS_FreeValue(ctx, length_value);
+			return JS_EXCEPTION;
+		}
+		JS_FreeValue(ctx, length_value);
+		for (i = 0; i < count; i++) {
+			part = JS_GetPropertyUint32(ctx, argv[0], i);
+			if (JS_IsException(part)) {
+				JS_FreeValue(ctx, part);
+				free(work.bytes);
+				return JS_EXCEPTION;
+			}
+			append_result = qjs_blob_append_part(ctx, &work, part);
+			JS_FreeValue(ctx, part);
+			if (append_result != 0) {
+				free(work.bytes);
+				return append_result > 0 ? JS_EXCEPTION :
+					JS_ThrowOutOfMemory(ctx);
+			}
+		}
+	}
+
+	type_value = JS_UNDEFINED;
+	if (argc > 1 && !JS_IsUndefined(argv[1]) && !JS_IsNull(argv[1])) {
+		type_value = JS_GetPropertyStr(ctx, argv[1], "type");
+		if (JS_IsException(type_value)) {
+			free(work.bytes);
+			return JS_EXCEPTION;
+		}
+	}
+	type = qjs_blob_type(ctx, type_value);
+	JS_FreeValue(ctx, type_value);
+	if (type == NULL) {
+		free(work.bytes);
+		return JS_EXCEPTION;
+	}
+	/* qjs_blob_make copies the bytes so this construction buffer can be
+	 * released immediately, just as every BlobPart is copied by the spec. */
+	part = qjs_blob_make(ctx, work.bytes, work.len, type);
+	free(work.bytes);
+	return part;
+}
+
+static JSValue qjs_blob_get_size(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	struct qjs_blob *blob = qjs_blob_get(ctx, this_val);
+	(void)argc; (void)argv;
+	if (blob == NULL) return JS_EXCEPTION;
+	return JS_NewFloat64(ctx, (double)blob->len);
+}
+
+static JSValue qjs_blob_get_type(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	struct qjs_blob *blob = qjs_blob_get(ctx, this_val);
+	(void)argc; (void)argv;
+	if (blob == NULL) return JS_EXCEPTION;
+	return JS_NewString(ctx, blob->type != NULL ? blob->type : "");
+}
+
+static JSValue qjs_blob_array_buffer(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	struct qjs_blob *blob = qjs_blob_get(ctx, this_val);
+	JSValue resolving[2], promise, bytes, result;
+	(void)argc; (void)argv;
+	if (blob == NULL) return JS_EXCEPTION;
+	promise = JS_NewPromiseCapability(ctx, resolving);
+	if (JS_IsException(promise)) return promise;
+	bytes = JS_NewArrayBufferCopy(ctx, blob->bytes != NULL ? blob->bytes :
+			(const uint8_t *)"", blob->len);
+	if (JS_IsException(bytes)) {
+		JS_FreeValue(ctx, resolving[0]);
+		JS_FreeValue(ctx, resolving[1]);
+		JS_FreeValue(ctx, promise);
+		return bytes;
+	}
+	result = JS_Call(ctx, resolving[0], JS_UNDEFINED, 1, &bytes);
+	JS_FreeValue(ctx, bytes);
+	JS_FreeValue(ctx, resolving[0]);
+	JS_FreeValue(ctx, resolving[1]);
+	JS_FreeValue(ctx, result);
+	return promise;
+}
+
+static JSValue qjs_blob_text(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	struct qjs_blob *blob = qjs_blob_get(ctx, this_val);
+	JSValue resolving[2], promise, text, result;
+	(void)argc; (void)argv;
+	if (blob == NULL) return JS_EXCEPTION;
+	promise = JS_NewPromiseCapability(ctx, resolving);
+	if (JS_IsException(promise)) return promise;
+	text = JS_NewStringLen(ctx, (const char *)(blob->bytes != NULL ?
+			blob->bytes : (const uint8_t *)""), blob->len);
+	if (JS_IsException(text)) {
+		JS_FreeValue(ctx, resolving[0]);
+		JS_FreeValue(ctx, resolving[1]);
+		JS_FreeValue(ctx, promise);
+		return text;
+	}
+	result = JS_Call(ctx, resolving[0], JS_UNDEFINED, 1, &text);
+	JS_FreeValue(ctx, text);
+	JS_FreeValue(ctx, resolving[0]);
+	JS_FreeValue(ctx, resolving[1]);
+	JS_FreeValue(ctx, result);
+	return promise;
+}
+
+static int qjs_blob_slice_index(JSContext *ctx, JSValueConst value,
+		size_t len, size_t fallback, size_t *out)
+{
+	double n;
+	if (JS_IsUndefined(value)) {
+		*out = fallback;
+		return 0;
+	}
+	if (JS_ToFloat64(ctx, &n, value) != 0) return -1;
+	if (n != n) {
+		*out = 0;
+		return 0;
+	}
+	if (n < 0) {
+		if (n <= -(double)len) *out = 0;
+		else *out = (size_t)((double)len + n);
+		return 0;
+	}
+	if (n >= (double)len) *out = len;
+	else *out = (size_t)n;
+	return 0;
+}
+
+static JSValue qjs_blob_slice(JSContext *ctx, JSValueConst this_val,
+		int argc, JSValueConst *argv)
+{
+	struct qjs_blob *blob = qjs_blob_get(ctx, this_val);
+	size_t start, end;
+	char *type;
+	if (blob == NULL) return JS_EXCEPTION;
+	if (qjs_blob_slice_index(ctx, argc > 0 ? argv[0] : JS_UNDEFINED,
+				blob->len, 0, &start) != 0 ||
+			qjs_blob_slice_index(ctx, argc > 1 ? argv[1] : JS_UNDEFINED,
+				blob->len, blob->len, &end) != 0)
+		return JS_EXCEPTION;
+	if (end < start) end = start;
+	type = qjs_blob_type(ctx, argc > 2 ? argv[2] : JS_UNDEFINED);
+	if (type == NULL) return JS_EXCEPTION;
+	return qjs_blob_make(ctx, end > start ? blob->bytes + start : NULL,
+			end - start, type);
+}
+
+static void qjs_blob_install(JSContext *ctx, JSValue global)
+{
+	JSValue proto, ctor, getter;
+	JSAtom atom;
+
+	proto = JS_NewObject(ctx);
+	if (JS_IsException(proto)) return;
+	qjs_set_func(ctx, proto, "arrayBuffer", qjs_blob_array_buffer, 0);
+	qjs_set_func(ctx, proto, "text", qjs_blob_text, 0);
+	qjs_set_func(ctx, proto, "slice", qjs_blob_slice, 3);
+	atom = JS_NewAtom(ctx, "size");
+	getter = JS_NewCFunction(ctx, qjs_blob_get_size, "get size", 0);
+	JS_DefinePropertyGetSet(ctx, proto, atom, getter, JS_UNDEFINED,
+			JS_PROP_CONFIGURABLE);
+	JS_FreeAtom(ctx, atom);
+	atom = JS_NewAtom(ctx, "type");
+	getter = JS_NewCFunction(ctx, qjs_blob_get_type, "get type", 0);
+	JS_DefinePropertyGetSet(ctx, proto, atom, getter, JS_UNDEFINED,
+			JS_PROP_CONFIGURABLE);
+	JS_FreeAtom(ctx, atom);
+	ctor = JS_NewCFunction2(ctx, qjs_blob_ctor, "Blob", 2,
+			JS_CFUNC_constructor, 0);
+	if (JS_IsException(ctor)) {
+		JS_FreeValue(ctx, proto);
+		return;
+	}
+	JS_SetConstructor(ctx, ctor, proto);
+	JS_SetClassProto(ctx, s_blob_class_id, JS_DupValue(ctx, proto));
+	JS_FreeValue(ctx, proto);
+	JS_SetPropertyStr(ctx, global, "Blob", ctor);
+}
 
 /* Look up a DOM constructor stub's .prototype by name and return it as an
  * owned JSValue (caller frees); JS_NULL when the constructor does not exist
@@ -8415,6 +8782,9 @@ static void qjs_dom_init_class(JSRuntime *rt)
 	s_el_class_id = 0;
 	JS_NewClassID(rt, &s_el_class_id);
 	JS_NewClass(rt, s_el_class_id, &s_el_class);
+	s_blob_class_id = 0;
+	JS_NewClassID(rt, &s_blob_class_id);
+	JS_NewClass(rt, s_blob_class_id, &s_blob_class);
 }
 
 /* ====================================================================== */
@@ -9959,6 +10329,10 @@ static void register_browser_globals(JSContext *ctx)
 	 * See macos9_js_fetch.c for the full design. */
 	macos9_js_fetch_install(ctx, global);
 
+	/* Blob is a real byte-owning browser object, registered before any JS
+	 * wrapper (including navigator.sendBeacon) can receive one. */
+	qjs_blob_install(ctx, global);
+
 	/* --- crypto (getRandomValues / randomUUID) - fixes717 --- */
 	crypto_obj = JS_NewObject(ctx);
 	qjs_set_func(ctx, crypto_obj, "getRandomValues",
@@ -10962,9 +11336,10 @@ static void register_browser_globals(JSContext *ctx)
 	/* --- FormData ---
 	 * Ordered [key,value,filename] triples, not a spec-perfect Map --
 	 * enough for a script that constructs/populates/reads text entries.
-	 * Blob/File are deliberately absent until byte semantics exist; callers
-	 * may still supply an arbitrary value and its optional filename. Iteration
-	 * order matches insertion order (spec). */
+	 * Blob has byte semantics; File remains absent. The current request
+	 * transport does not yet submit a Blob FormData body. Callers may still
+	 * supply an arbitrary value and its optional filename. Iteration order
+	 * matches insertion order (spec). */
 	macsurf_qjs__safe_eval(ctx,
 		"function FormData(form){"
 			"this._k=[];this._v=[];this._f=[];"
@@ -11625,6 +12000,9 @@ static void register_browser_globals(JSContext *ctx)
 			"navigator.javaEnabled=function(){return false;};"
 			"navigator.sendBeacon=function(url,data){"
 				"if(typeof url==='undefined'||url===null)return false;"
+				/* fetch_start currently accepts a NUL-terminated text body only.
+				 * Refuse a byte Blob rather than corrupting it with String(blob). */
+				"if(typeof Blob==='function'&&data instanceof Blob)return false;"
 				"var d='';"
 				"if(typeof data!=='undefined'&&data!==null){"
 					"try{d=String(data);}catch(e){return false;}"
@@ -11699,6 +12077,7 @@ static void register_browser_globals(JSContext *ctx)
 		"if(typeof g.navigator!=='undefined'&&typeof g.navigator.sendBeacon!=='function'){"
 			"g.navigator.sendBeacon=function(url,data){"
 				"if(typeof url==='undefined'||url===null)return false;"
+				"if(typeof g.Blob==='function'&&data instanceof g.Blob)return false;"
 				"var d='';"
 				"if(typeof data!=='undefined'&&data!==null){"
 					"try{d=String(data);}catch(e){return false;}"
@@ -11815,8 +12194,9 @@ static void register_browser_globals(JSContext *ctx)
 		"})(this);");
 
 	/* Do not advertise a browser subsystem until it has a real backend.
-	 * IndexedDB, Cache Storage, WebSocket, Blob/File/FileReader, object URLs,
-	 * and Notifications formerly returned synthetic success-like objects. That
+	 * IndexedDB, Cache Storage, WebSocket, File/FileReader, object URLs, and
+	 * Notifications formerly returned synthetic success-like objects. Blob is
+	 * now byte-backed above. That
 	 * makes feature detection choose a broken path. Their globals stay absent
 	 * until they can provide storage, transport, or byte semantics. */
 

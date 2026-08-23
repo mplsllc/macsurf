@@ -9167,6 +9167,12 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 73 PASS: console.error/warn LIFE-visible, "
 			"budget floors at 0, log/info unaffected ===\n");
 
+	/* Tests 74--83 cover the opt-in Facebook loader diagnostic traps.  Those
+	 * traps are intentionally not part of a production browser realm: the page
+	 * must own its loader globals. Build the harness with
+	 * -DMACSURF_JS_FB_LOADER_TRAP=1 when specifically auditing that diagnostic
+	 * instrumentation. */
+#if MACSURF_JS_FB_LOADER_TRAP
 	fprintf(stderr, "\n=== Test 74: __onBeforeModuleFactory require-trace "
 			"survives the page's own reset and never throws (#167) ===\n");
 	{
@@ -10508,6 +10514,7 @@ box_coords(bx, &cx, &cy);
 	}
 	fprintf(stderr, "=== Test 83 PASS: Node, Window, XMLHttpRequest, and "
 			"History carry the prototype graph Hyperion requires ===\n");
+#endif /* MACSURF_JS_FB_LOADER_TRAP */
 
 	/* --- Test 84: document.location is the live window Location (#167,
 	 * fixes1279) --------------------------------------------------------
@@ -10678,33 +10685,60 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 87 PASS: comment, fragment, element, and "
 			"Document traversal retain identity ===\n");
 
-	/* --- Test 88: unsupported APIs are absent, not synthetic successes (#167,
-	 * fixes1284) --------------------------------------------------------- */
-	fprintf(stderr, "\n=== Test 88: unsupported browser APIs are truthfully "
-			"absent (fixes1284) ===\n");
+	/* --- Test 88: browser capability truthfulness (#167, fixes1285) --- */
+	fprintf(stderr, "\n=== Test 88: Blob has bytes and unsupported APIs stay "
+			"absent (fixes1285) ===\n");
 	{
-		const char *t88 =
+		const char *t88_arm =
 			"(function(){"
 			"function bad(s){throw new Error('ASSERT FAIL: '+s);}"
 			"var names=['indexedDB','IDBKeyRange','caches','WebSocket',"
-			"'Blob','File','FileReader','Notification'],i,n;"
+			"'File','FileReader','Notification'],i,n;"
 			"for(i=0;i<names.length;i++){n=names[i];"
 			"if(typeof globalThis[n]!=='undefined'||n in globalThis)"
 				"bad(n+' is advertised without a real backend');}"
 			"if(typeof URL.createObjectURL!=='undefined'||"
 				"'createObjectURL' in URL||'revokeObjectURL' in URL)"
 				"bad('URL object URLs are advertised without retained bytes');"
+			"var src=new Uint8Array([33]);"
+			"var blob=new Blob(['hi',src],{type:'TEXT/PLAIN'});src[0]=63;"
+			"if(!(blob instanceof Blob)||blob.size!==3||blob.type!=='text/plain')"
+				"bad('Blob does not preserve its bytes and MIME type');"
+			"var cut=blob.slice(1,3,'TEXT/X');"
+			"if(cut.size!==2||cut.type!=='text/x')bad('Blob.slice metadata');"
+			"globalThis.__t88BlobText='';globalThis.__t88BlobBytes='';"
+			"blob.text().then(function(s){globalThis.__t88BlobText=s;});"
+			"blob.arrayBuffer().then(function(b){var v=new Uint8Array(b);"
+				"globalThis.__t88BlobBytes=v[0]+','+v[1]+','+v[2];});"
+			"if(navigator.sendBeacon('https://example.invalid/beacon',blob)!==false)"
+				"bad('sendBeacon must reject Blob until byte transport exists');"
 			"})();";
-		unsigned char ok = js_exec(thread, (const unsigned char *)t88,
-				strlen(t88), "driver-t88-honest-capabilities.js");
+		const char *t88_check =
+			"if(globalThis.__t88BlobText!=='hi!')"
+				"throw new Error('ASSERT FAIL: Blob.text lost bytes: '+globalThis.__t88BlobText);"
+			"if(globalThis.__t88BlobBytes!=='104,105,33')"
+				"throw new Error('ASSERT FAIL: Blob.arrayBuffer lost bytes: '+globalThis.__t88BlobBytes);";
+		unsigned char ok = js_exec(thread, (const unsigned char *)t88_arm,
+				strlen(t88_arm), "driver-t88-capabilities-arm.js");
 		if (!ok) {
-			fprintf(stderr, "FAIL: Test 88 -- an unsupported API still claims "
-					"availability\n");
+			fprintf(stderr, "FAIL: Test 88 -- capability surface or Blob construction "
+					"is untruthful\n");
+			return 1;
+		}
+		{
+			extern void macsurf_qjs_pump_all(void);
+			int pump;
+			for (pump = 0; pump < 8; pump++) macsurf_qjs_pump_all();
+		}
+		ok = js_exec(thread, (const unsigned char *)t88_check,
+				strlen(t88_check), "driver-t88-capabilities-check.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 88 -- Blob Promise readers lost bytes\n");
 			return 1;
 		}
 	}
-	fprintf(stderr, "=== Test 88 PASS: feature detection sees only real "
-			"browser backends ===\n");
+	fprintf(stderr, "=== Test 88 PASS: Blob owns bytes; feature detection sees "
+			"only real browser backends ===\n");
 
 	/* --- Test 89: host DOM hooks resolve their node's realm (#167,
 	 * fixes1284) ---------------------------------------------------------
@@ -10787,6 +10821,62 @@ box_coords(bx, &cx, &cy);
 	}
 	fprintf(stderr, "=== Test 89 PASS: native node hooks cannot target the "
 			"last-created realm ===\n");
+
+	/* --- Test 90: production realm leaves Facebook loader globals to the
+	 * page (#167, fixes1285) --------------------------------------------- */
+#if !MACSURF_JS_FB_LOADER_TRAP
+	fprintf(stderr, "\n=== Test 90: a fresh browser realm has no Facebook "
+			"loader globals (fixes1285) ===\n");
+	{
+		struct html_content clean_content;
+		dom_document *clean_document = NULL;
+		struct jsheap *clean_heap = NULL;
+		struct jsthread *clean_thread = NULL;
+		nserror clean_err;
+		unsigned char clean_ok;
+		extern void macsurf_js_notify_content_freed(struct content *c);
+
+		if (!harness_parse_document("<html><body></body></html>",
+				&clean_document)) {
+			fprintf(stderr, "FAIL: Test 90 -- fresh document parse\n");
+			return 1;
+		}
+		memset(&clean_content, 0, sizeof(clean_content));
+		clean_content.document = clean_document;
+		clean_content.enable_scripting = true;
+		clean_err = js_newheap(20000, &clean_heap);
+		if (clean_err == NSERROR_OK)
+			clean_err = js_newthread(clean_heap, NULL, &clean_content,
+					&clean_thread);
+		if (clean_err != NSERROR_OK || clean_thread == NULL) {
+			fprintf(stderr, "FAIL: Test 90 -- fresh realm setup err=%d\n",
+					(int)clean_err);
+			return 1;
+		}
+		clean_ok = js_exec(clean_thread, (const unsigned char *)
+			"(function(){var n=['__d','requireLazy','__onBeforeModuleFactory'],i;"
+			"for(i=0;i<n.length;i++){if(typeof globalThis[n[i]]!=='undefined'||"
+			"n[i] in globalThis)throw new Error('ASSERT FAIL: preinstalled '+n[i]);}"
+			"if(typeof Blob!=='function'||new Blob(['x']).size!==1)"
+			"throw new Error('ASSERT FAIL: byte-backed Blob missing in fresh realm');}());",
+			strlen("(function(){var n=['__d','requireLazy','__onBeforeModuleFactory'],i;"
+			"for(i=0;i<n.length;i++){if(typeof globalThis[n[i]]!=='undefined'||"
+			"n[i] in globalThis)throw new Error('ASSERT FAIL: preinstalled '+n[i]);}"
+			"if(typeof Blob!=='function'||new Blob(['x']).size!==1)"
+			"throw new Error('ASSERT FAIL: byte-backed Blob missing in fresh realm');}());"),
+			"driver-t90-clean-realm.js");
+		macsurf_js_notify_content_freed((struct content *)&clean_content);
+		js_destroyheap(clean_heap);
+		dom_node_unref((dom_node *)clean_document);
+		if (!clean_ok) {
+			fprintf(stderr, "FAIL: Test 90 -- production pre-installs a page "
+					"loader global or lacks Blob\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 90 PASS: Facebook's loader names are page-owned "
+			"in a fresh browser realm ===\n");
+#endif /* !MACSURF_JS_FB_LOADER_TRAP */
 
 	return 0;
 }
