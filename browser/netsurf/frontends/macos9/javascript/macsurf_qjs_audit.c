@@ -576,77 +576,97 @@ void macsurf_qjs_emit_js_profile(void)
 		}
 	}
 
-	/* fixes1260 (#167) - query Facebook's OWN internal module registry
-	 * directly, rather than inferring state from our own __d/requireLazy
-	 * wrapper counters. fixes1259's hardware round proved d_target=1
-	 * (ServerJSPayloadListener DOES get __d()-called) and rl_target_calls
-	 * in the hundreds with rl_target_fires=0 (none of those lazy waiters
-	 * ever release) - but that only proves the GLOBAL __d entry point was
-	 * called, not that Facebook's internal define (t.__d -> Me()(fn,
-	 * "define "+e,{root:true})() -> ce(...), confirmed against the real
-	 * fbcdn.net bundle this engine executes, not assumed) completed
-	 * successfully. Me() resolves to TimeSlice.guard when present, which
-	 * itself resolves to ErrorGuard.guard (also confirmed against the
-	 * real bundle) - a synchronous try/catch error boundary, not a
-	 * scheduler. If ce() throws inside that boundary, the exception is
-	 * swallowed with zero console output, which would explain why nothing
-	 * has surfaced as a JS exception anywhere this whole investigation
-	 * despite something clearly failing.
+	/* fixes1286 (#167) - query Facebook's OWN internal module registry
+	 * synchronously and report the app-boot boundary in one pass.
 	 *
-	 * The real bundle exposes its OWN debug interface as a normal
-	 * requireLazy-able module named "__debug", with a modulesMap and a
-	 * debugUnresolvedDependencies(names) function that returns a plain,
-	 * already human-readable string per name: "X is ready" / "X is not
-	 * defined" / "X is waiting for A, B, C" (walking the real transitive
-	 * dependency chain - confirmed by reading debugUnresolvedDependencies'
-	 * actual implementation in the bundle, not guessed). One
-	 * requireLazy(["__debug"], cb) call gets a handle to it; "__debug" is
-	 * foundational so this should resolve synchronously within the same
-	 * call (same fast path already proven for "Env" in fixes1259's data),
-	 * needing no stored reference or second navigation-end callback.
-	 * Newlines are replaced with "; " since a module with several
-	 * unresolved transitive deps produces one line per name. */
+	 * The old fixes1260 probe called requireLazy(["__debug"], ...), then
+	 * immediately tested whether its callback had fired.  On the clean
+	 * Facebook loader used since fixes1285 that callback is intentionally
+	 * scheduled, so the only result was "did not resolve synchronously" --
+	 * exactly no information about the stuck splash.  Worse, it asked the
+	 * scheduler under investigation to diagnose itself.
+	 *
+	 * Facebook installs `require` and the foundational `__debug` module
+	 * directly.  Reading those here does not need requireLazy or a task turn.
+	 * __debug.modulesMap exposes the facts needed at this boundary: defined,
+	 * dependency-ready, factory-run/finished, and captured module error.  Only
+	 * modules whose factory ALREADY finished are required below, so this audit
+	 * cannot make a dormant entry point run.  ErrorPubSub is Facebook's own
+	 * store for errors swallowed by ErrorGuard/FBLogger; reporting its tail is
+	 * the missing counterpart to QuickJS's uncaught-exception log.
+	 *
+	 * This deliberately replaces, rather than supplements, the old FBSTATE
+	 * line.  One bounded JSON record answers the full next decision: missing
+	 * dependency, scheduler never ran a ready factory, factory threw, or SSR
+	 * reached a nonterminal state. */
 	{
 		JSContext *ctx = macsurf_qjs_current_ctx();
 		if (ctx != NULL) {
-			static const char fbstate_src[] =
+			static const char fbboot_src[] =
 				"(function(){try{"
-				"if(typeof globalThis.requireLazy!=='function')"
-					"return 'FBSTATE requireLazy not a function';"
-				"var out=null,got=false;"
-				"globalThis.requireLazy(['__debug'],function(dbg){"
-					"got=true;"
-					"try{"
-						"out=dbg.debugUnresolvedDependencies("
-							"['ServerJSPayloadListener']);"
-						"if(typeof out==='string')"
-							"out=out.split('\\n').join('; ');"
-						"else out=String(out);"
-					"}catch(e){"
-						"out='debugUnresolvedDependencies threw: '+"
-							"((e&&e.message)||e);"
-					"}"
-				"});"
-				"if(!got)"
-					"return 'FBSTATE __debug did not resolve "
-						"synchronously';"
-				"return out;"
-				"}catch(e){"
-					"return 'FBSTATE eval threw: '+"
-						"((e&&e.message)||e);"
-				"}"
-				"})()";
-			JSValue r = JS_Eval(ctx, fbstate_src, strlen(fbstate_src),
-					"<jsfbstate>", JS_EVAL_TYPE_GLOBAL);
+				"var g=globalThis,out={modules:{},errors:[]};"
+				"if(typeof g.require!=='function')"
+					"return JSON.stringify({error:'require not a function'});"
+				"var dbg;try{dbg=g.require('__debug');}catch(e){"
+					"return JSON.stringify({error:'require __debug: '+"
+						"((e&&e.message)||String(e))});}"
+				"var mm=dbg&&dbg.modulesMap;"
+				"if(!mm)return JSON.stringify({error:'__debug.modulesMap missing'});"
+				"var names=['ServerJSPayloadListener','GHLServerJSParse','ServerJS',"
+					"'CometPreludeRunWhenReady','CometRootInitClient',"
+					"'CometSSRClientInjector','CometSSRStateManager',"
+					"'CometClientRootRendererSSRUtils',"
+					"'CometClientRootRendererUtils','ReactDOM','ErrorPubSub'];"
+				"function text(v,n){v=String(v==null?'':v);"
+					"return v.length>n?v.slice(0,n)+'...':v;}"
+				"function state(n){var m=mm[n],x={defined:!!m};if(!m)return x;"
+					"x.ready=!!(m.dependencies&&m.depPosition>=m.dependencies.length);"
+					"x.depPosition=m.depPosition==null?-1:m.depPosition;"
+					"x.depCount=m.dependencies?m.dependencies.length:-1;"
+					"x.used=!!m.wasUsed;x.run=!!m.factoryRun;"
+					"x.finished=!!m.factoryFinished;x.hasError=!!m.hasError;"
+					"if(m.error)x.error=text(m.error.message||m.error,240);"
+					"if(!x.ready&&dbg.debugUnresolvedDependencies)try{"
+						"x.waiting=text(dbg.debugUnresolvedDependencies([n]),320);"
+					"}catch(e){}return x;}"
+				"for(var i=0;i<names.length;i++)out.modules[names[i]]=state(names[i]);"
+				"function finished(n){return mm[n]&&mm[n].factoryFinished;}"
+				"if(finished('ErrorPubSub'))try{"
+					"var ep=g.require('ErrorPubSub'),h=ep&&ep.history||[];"
+					"out.errorCount=h.length;"
+					"for(i=Math.max(0,h.length-12);i<h.length;i++){var e=h[i]||{};"
+						"out.errors.push({type:e.type||'',project:e.project||'',"
+							"source:e.loggingSource||'',name:e.name||'',"
+							"message:text(e.message||e.messageFormat||'',320),"
+							"guards:e.guardList||[]});}"
+				"}catch(e){out.errorRead=''+((e&&e.message)||e);}"
+				"if(finished('CometClientRootRendererUtils'))try{"
+					"var ru=g.require('CometClientRootRendererUtils');"
+					"out.clientRendered=!!ru.getIsClientSideRendered();"
+				"}catch(e){out.rootRead=''+((e&&e.message)||e);}"
+				"if(finished('CometSSRClientInjector'))try{"
+					"var si=g.require('CometSSRClientInjector');"
+					"out.ssrData=si.getSSRData?si.getSSRData():null;"
+					"out.ssrPayloads=si.getArrivedPayloads?"
+						"si.getArrivedPayloads().length:-1;"
+				"}catch(e){out.ssrRead=''+((e&&e.message)||e);}"
+				"out.splash=!!document.getElementById('splash-screen');"
+				"out.finishedMarker=!!document.getElementById("
+					"'has-finished-comet-page');"
+				"return JSON.stringify(out);"
+				"}catch(e){return JSON.stringify({error:"
+					"((e&&e.message)||String(e))});}})()";
+			JSValue r = JS_Eval(ctx, fbboot_src, strlen(fbboot_src),
+					"<jsfbboot>", JS_EVAL_TYPE_GLOBAL);
 			if (!JS_IsException(r)) {
 				const char *s = JS_ToCString(ctx, r);
-				macsurf_debug_log_writef("LIFE FBSTATE %s",
+				macsurf_debug_log_writef("LIFE FBBOOT %s",
 					(s != NULL) ? s : "(null)");
 				if (s != NULL) JS_FreeCString(ctx, s);
 			} else {
 				JS_FreeValue(ctx, JS_GetException(ctx));
 				macsurf_debug_log_writef(
-					"LIFE FBSTATE eval exception");
+					"LIFE FBBOOT eval exception");
 			}
 			JS_FreeValue(ctx, r);
 		}
