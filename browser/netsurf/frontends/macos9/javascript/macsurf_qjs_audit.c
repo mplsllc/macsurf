@@ -146,77 +146,25 @@ qjs_read_int_global(JSContext *ctx, const char *fn_name)
 /* ---- JS profile emission ---- */
 /* Emitted once per navigation from the NAV: DONE hook in browser_window.c,
  * beside the existing PERFACC / JSTIME lines. */
-/* fixes1287 (#167) - emit the bounded Facebook boot-state report at the
- * window-load edge as well as the optional final profile edge.  A Facebook
- * navigation can remain READY indefinitely because a subresource never lets
- * NetSurf transition to DONE; accepting the owning context makes the report
- * independent of that lifecycle and avoids the process-global realm guess. */
-void macsurf_qjs_emit_fb_boot(struct JSContext *ctx)
+/* fixes1289 (#167) - one Facebook boot report used to be one ~3 KB JSON value.
+ * The durable logger has a deliberate 1024-byte line bound, so hardware only
+ * retained the healthy module-prefix and silently lost the decisive renderer,
+ * SSR and guarded-error suffix.  Keep every answer independently bounded and
+ * name the actual page contracts instead: did ServerJSPayloadListener consume
+ * the data-sjs islands, what state did Facebook's SSR machine reach, and what
+ * did ErrorGuard retain?  These reads do not call a page entry point or change
+ * DOM state. */
+static void
+qjs_emit_fb_value(JSContext *ctx, const char *label, const char *src)
 {
-	static const char fbboot_src[] =
-		"(function(){try{"
-		"var g=globalThis,out={modules:{},errors:[]};"
-		"if(!g.location||String(g.location.hostname||'').indexOf('facebook.com')<0)"
-			"return null;"
-		"if(typeof g.require!=='function')"
-			"return JSON.stringify({error:'require not a function'});"
-		"var dbg;try{dbg=g.require('__debug');}catch(e){"
-			"return JSON.stringify({error:'require __debug: '+"
-				"((e&&e.message)||String(e))});}"
-		"var mm=dbg&&dbg.modulesMap;"
-		"if(!mm)return JSON.stringify({error:'__debug.modulesMap missing'});"
-		"var names=['ServerJSPayloadListener','GHLServerJSParse','ServerJS',"
-			"'CometPreludeRunWhenReady','CometRootInitClient',"
-			"'CometSSRClientInjector','CometSSRStateManager',"
-			"'CometClientRootRendererSSRUtils',"
-			"'CometClientRootRendererUtils','ReactDOM','ErrorPubSub'];"
-		"function text(v,n){v=String(v==null?'':v);"
-			"return v.length>n?v.slice(0,n)+'...':v;}"
-		"function state(n){var m=mm[n],x={defined:!!m};if(!m)return x;"
-			"x.ready=!!(m.dependencies&&m.depPosition>=m.dependencies.length);"
-			"x.depPosition=m.depPosition==null?-1:m.depPosition;"
-			"x.depCount=m.dependencies?m.dependencies.length:-1;"
-			"x.used=!!m.wasUsed;x.run=!!m.factoryRun;"
-			"x.finished=!!m.factoryFinished;x.hasError=!!m.hasError;"
-			"if(m.error)x.error=text(m.error.message||m.error,240);"
-			"if(!x.ready&&dbg.debugUnresolvedDependencies)try{"
-				"x.waiting=text(dbg.debugUnresolvedDependencies([n]),320);"
-			"}catch(e){}return x;}"
-		"for(var i=0;i<names.length;i++)out.modules[names[i]]=state(names[i]);"
-		"function finished(n){return mm[n]&&mm[n].factoryFinished;}"
-		"if(finished('ErrorPubSub'))try{"
-			"var ep=g.require('ErrorPubSub'),h=ep&&ep.history||[];"
-			"out.errorCount=h.length;"
-			"for(i=Math.max(0,h.length-12);i<h.length;i++){var e=h[i]||{};"
-				"out.errors.push({type:e.type||'',project:e.project||'',"
-					"source:e.loggingSource||'',name:e.name||'',"
-					"message:text(e.message||e.messageFormat||'',320),"
-					"guards:e.guardList||[]});}"
-		"}catch(e){out.errorRead=''+((e&&e.message)||e);}"
-		"if(finished('CometClientRootRendererUtils'))try{"
-			"var ru=g.require('CometClientRootRendererUtils');"
-			"out.clientRendered=!!ru.getIsClientSideRendered();"
-		"}catch(e){out.rootRead=''+((e&&e.message)||e);}"
-		"if(finished('CometSSRClientInjector'))try{"
-			"var si=g.require('CometSSRClientInjector');"
-			"out.ssrData=si.getSSRData?si.getSSRData():null;"
-			"out.ssrPayloads=si.getArrivedPayloads?"
-				"si.getArrivedPayloads().length:-1;"
-		"}catch(e){out.ssrRead=''+((e&&e.message)||e);}"
-		"out.splash=!!document.getElementById('splash-screen');"
-		"out.finishedMarker=!!document.getElementById('has-finished-comet-page');"
-		"return JSON.stringify(out);"
-		"}catch(e){return JSON.stringify({error:"
-			"((e&&e.message)||String(e))});}})()";
 	JSValue r;
 	const char *s;
 
-	if (ctx == NULL) return;
-	r = JS_Eval(ctx, fbboot_src, strlen(fbboot_src),
-			"<jsfbboot>", JS_EVAL_TYPE_GLOBAL);
+	if (ctx == NULL || label == NULL || src == NULL) return;
+	r = JS_Eval(ctx, src, strlen(src), "<jsfbboot>", JS_EVAL_TYPE_GLOBAL);
 	if (JS_IsException(r)) {
 		JS_FreeValue(ctx, JS_GetException(ctx));
-		macsurf_debug_log_writef("LIFE FBBOOT eval exception");
+		macsurf_debug_log_writef("LIFE %s eval exception", label);
 		JS_FreeValue(ctx, r);
 		return;
 	}
@@ -225,10 +173,79 @@ void macsurf_qjs_emit_fb_boot(struct JSContext *ctx)
 		return;
 	}
 	s = JS_ToCString(ctx, r);
-	macsurf_debug_log_writef("LIFE FBBOOT %s",
+	macsurf_debug_log_writef("LIFE %s %s", label,
 			(s != NULL) ? s : "(null)");
 	if (s != NULL) JS_FreeCString(ctx, s);
 	JS_FreeValue(ctx, r);
+}
+
+/* fixes1287 (#167) - emit at the window-load edge as well as the optional
+ * final-profile edge, using the owning context rather than a process-global
+ * realm guess. */
+void macsurf_qjs_emit_fb_boot(struct JSContext *ctx)
+{
+	static const char fbpayload_src[] =
+		"(function(){try{var g=globalThis;"
+		"if(!g.location||String(g.location.hostname||'').indexOf('facebook.com')<0)"
+			"return null;"
+		"var a=document.querySelectorAll('script[data-sjs]'),p=0,d=0,ins=0,"
+			"lm=0,lb=0,first='';"
+		"for(var i=0;i<a.length;i++){var e=a[i],want=e.dataset&&e.dataset.contentLen,"
+			"got=String(e.textContent.length);"
+			"if(e instanceof HTMLScriptElement)ins++;"
+			"if(e.dataset&&e.dataset.processed)d++;else p++;"
+			"if(want==null||want===got)lm++;else{lb++;if(!first)first=want+'/'+got;}}"
+		"return 'total='+a.length+' processed='+d+' pending='+p+"
+			"' scriptInstance='+ins+' lenMatch='+lm+' lenBad='+lb+"
+			"(first?' firstBad='+first:'');"
+		"}catch(e){return 'error='+String((e&&e.message)||e).slice(0,700);}})()";
+	static const char fbroot_src[] =
+		"(function(){try{var g=globalThis;"
+		"if(!g.location||String(g.location.hostname||'').indexOf('facebook.com')<0)"
+			"return null;"
+		"if(typeof g.require!=='function')return 'require=missing';"
+		"var ru=g.require('CometClientRootRendererUtils'),"
+			"si=g.require('CometSSRClientInjector'),sd=si.getSSRData?si.getSSRData():null,"
+			"ps=si.getArrivedPayloads?si.getArrivedPayloads():[],"
+			"eid=sd&&sd.eid,root=eid?document.getElementById(eid):null,env=g.Env||{};"
+		"return 'clientRendered='+(ru.getIsClientSideRendered?"
+			"!!ru.getIsClientSideRendered():'na')+"
+			"' payloads='+ps.length+' ssrData='+(sd?'yes':'no')+"
+			"' enabled='+(sd&&sd.enabled)+' eid='+(eid||'')+"
+			"' root='+(!!root)+' rootKids='+(root&&root.childNodes?root.childNodes.length:-1)+"
+			"' stateManager='+(env.use_ssr_state_manager)+"
+			"' splash='+(!!document.getElementById('splash-screen'))+"
+			"' marker='+(!!document.getElementById('has-finished-comet-page'));"
+		"}catch(e){return 'error='+String((e&&e.message)||e).slice(0,700);}})()";
+	static const char fbstate_src[] =
+		"(function(){try{var g=globalThis;"
+		"if(!g.location||String(g.location.hostname||'').indexOf('facebook.com')<0)"
+			"return null;"
+		"if(typeof g.require!=='function')return 'require=missing';"
+		"var sm=g.require('CometSSRStateManager'),raw=sm&&sm.default&&sm.default.debug?"
+			"sm.default.debug():'',j=raw?JSON.parse(raw):{},h=j.readableStateHistory;"
+		"h=String(h==null?'':h);if(h.length>760)h=h.slice(h.length-760);"
+		"return 'arrived='+(j.arrivedPayloads?j.arrivedPayloads.length:-1)+"
+			"' request='+(j.clientRequestID||'')+' history='+h;"
+		"}catch(e){return 'error='+String((e&&e.message)||e).slice(0,700);}})()";
+	static const char fberror_src[] =
+		"(function(){try{var g=globalThis;"
+		"if(!g.location||String(g.location.hostname||'').indexOf('facebook.com')<0)"
+			"return null;"
+		"if(typeof g.require!=='function')return 'require=missing';"
+		"var ep=g.require('ErrorPubSub'),h=ep&&ep.history||[],out='count='+h.length;"
+		"for(var i=Math.max(0,h.length-3);i<h.length;i++){var e=h[i]||{},m=String("
+			"e.message||e.messageFormat||'').replace(/[\\r\\n]+/g,' ');"
+			"if(m.length>220)m=m.slice(0,220);out+=' | '+i+':'+(e.project||'')+':'"
+			"+(e.name||e.type||'')+':'+m;}"
+		"return out;"
+		"}catch(e){return 'error='+String((e&&e.message)||e).slice(0,700);}})()";
+
+	if (ctx == NULL) return;
+	qjs_emit_fb_value(ctx, "FBPAYLOAD", fbpayload_src);
+	qjs_emit_fb_value(ctx, "FBROOT", fbroot_src);
+	qjs_emit_fb_value(ctx, "FBSTATE", fbstate_src);
+	qjs_emit_fb_value(ctx, "FBERROR", fberror_src);
 }
 
 void macsurf_qjs_emit_js_profile(void);
