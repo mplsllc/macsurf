@@ -20,6 +20,10 @@
 #include <string.h>
 #include <stdbool.h>
 
+#include "quickjs.h"	/* Test 93: raw job-queue API, independent of MacSurf's
+			 * js_newthread/js_exec glue (see harness/Makefile's
+			 * -I$(QJS) -> quickjs-macos9/quickjs.h). */
+
 #include <dom/dom.h>
 #include "dom/bindings/hubbub/parser.h"
 
@@ -603,6 +607,25 @@ static void t66_walk(struct box *b,
 		*img_h = b->height;
 	for (b = b->children; b != NULL; b = b->next)
 		t66_walk(b, row_h, icon_h, avatar_h, img_h, blend_mode);
+}
+
+/* Test 93: raw QuickJS job-queue callbacks. File-scope because JS_EnqueueJob
+ * needs a real C function pointer (JSJobFunc), not a closure. */
+static int t93_a_fired = 0;
+static int t93_b_fired = 0;
+
+static JSValue t93_job_mark_a(JSContext *ctx, int argc, JSValueConst *argv)
+{
+	(void)ctx; (void)argc; (void)argv;
+	t93_a_fired++;
+	return JS_UNDEFINED;
+}
+
+static JSValue t93_job_mark_b(JSContext *ctx, int argc, JSValueConst *argv)
+{
+	(void)ctx; (void)argc; (void)argv;
+	t93_b_fired++;
+	return JS_UNDEFINED;
 }
 
 int main(int argc, char **argv)
@@ -10981,6 +11004,205 @@ box_coords(bx, &cx, &cy);
 	}
 	fprintf(stderr, "=== Test 92 PASS: Facebook query Maps and general "
 			"structured data clone independently ===\n");
+
+	/* --- Test 93 (#167, fixes1292): JS_DiscardPendingJobsForContext -- exact
+	 * job-queue API contract, independent of MacSurf's navigation glue.
+	 *
+	 * QuickJS's rt->job_list is per-RUNTIME, not per-context: JS_EnqueueJob
+	 * stores a raw JSContext* per queued job, and only JS_FreeRuntime ever
+	 * drains it -- JS_FreeContext does not touch it at all (verified
+	 * directly in both quickjs-macos9/quickjs.c and browser/libquickjs/
+	 * quickjs.c, identical). A same-runtime navigation that frees the old
+	 * JSContext while jobs queued against it are still pending leaves those
+	 * jobs holding a dangling ctx; JS_ExecutePendingJob later calls
+	 * job_func(dangling_ctx, ...) -- a genuine use-after-free, the suspected
+	 * cause of Facebook's repeat-navigation regression. This test exercises
+	 * the raw primitive directly (not through js_newthread) so its contract
+	 * is proven in isolation first: discard ONLY the named context's jobs,
+	 * return the EXACT count discarded, and leave a surviving context's own
+	 * job -- queued both before and after the discarded context's jobs --
+	 * untouched. An off-by-one, or an implementation that just clears the
+	 * whole queue, would both pass a looser test than this one. */
+	fprintf(stderr, "\n=== Test 93: JS_DiscardPendingJobsForContext exact "
+			"count + ordering contract (#167, fixes1292) ===\n");
+	{
+		JSRuntime *rt93 = JS_NewRuntime();
+		JSContext *ctxA = NULL, *ctxB = NULL;
+		int n;
+
+		if (rt93 == NULL) {
+			fprintf(stderr, "FAIL: JS_NewRuntime\n"); return 1;
+		}
+		ctxA = JS_NewContext(rt93);
+		ctxB = JS_NewContext(rt93);
+		if (ctxA == NULL || ctxB == NULL) {
+			fprintf(stderr, "FAIL: JS_NewContext\n"); return 1;
+		}
+		t93_a_fired = 0;
+		t93_b_fired = 0;
+
+		/* Enqueue A, B, A -- the exact interleaving a real same-heap
+		 * navigation with pending work can produce (page 1's jobs both
+		 * before and after whatever page 2 has already queued by the
+		 * time a discard would run). */
+		JS_EnqueueJob(ctxA, t93_job_mark_a, 0, NULL);
+		JS_EnqueueJob(ctxB, t93_job_mark_b, 0, NULL);
+		JS_EnqueueJob(ctxA, t93_job_mark_a, 0, NULL);
+
+		/* THE DISCARD. Must report exactly 2 -- both of A's jobs, no
+		 * more, no less. */
+		n = JS_DiscardPendingJobsForContext(rt93, ctxA);
+		if (n != 2) {
+			fprintf(stderr, "FAIL: Test 93 -- discarded %d jobs for A, "
+					"expected exactly 2\n", n);
+			return 1;
+		}
+		fprintf(stderr, "JS_DiscardPendingJobsForContext(A) returned "
+				"exactly 2, as expected\n");
+
+		/* A is now safe to free -- no job_list entry still points at it. */
+		JS_FreeContext(ctxA);
+
+		/* Drain what's left. Only B's single job may fire; if any of A's
+		 * survived the discard, JS_ExecutePendingJob calls job_func
+		 * against the just-freed ctxA above -- a real use-after-free
+		 * ASan traps on directly. */
+		{
+			JSContext *jctx = NULL;
+			int pumped = 0;
+			while (JS_IsJobPending(rt93) && pumped < 8) {
+				int r = JS_ExecutePendingJob(rt93, &jctx);
+				if (r < 0) {
+					fprintf(stderr,
+							"FAIL: Test 93 -- pending job threw\n");
+					return 1;
+				}
+				pumped++;
+			}
+		}
+
+		if (t93_a_fired != 0) {
+			fprintf(stderr, "FAIL: Test 93 -- a discarded A job fired "
+					"anyway (fired=%d)\n", t93_a_fired);
+			return 1;
+		}
+		if (t93_b_fired != 1) {
+			fprintf(stderr, "FAIL: Test 93 -- surviving B job did not "
+					"fire exactly once (fired=%d)\n", t93_b_fired);
+			return 1;
+		}
+
+		JS_FreeContext(ctxB);
+		JS_FreeRuntime(rt93);
+	}
+	fprintf(stderr, "=== Test 93 PASS: exact discard count, surviving "
+			"context's job still fires, no UAF ===\n");
+
+	/* --- Test 94 (#167, fixes1292): the SAME bug, proven through the real
+	 * MacSurf navigation code path (js_newthread), not just the raw
+	 * primitive. Test 93 proves JS_DiscardPendingJobsForContext's own
+	 * contract; this proves js_newthread actually calls it at the right
+	 * point in the right order relative to JS_FreeContext, using the real
+	 * compiled macsurf_qjs.c -- the same "run it through the real engine,
+	 * not a reimplementation" discipline as Test 25's realm-reset repro.
+	 * Arms 24 unpumped Promise reactions (shape diversity, same idea as
+	 * Test 25's timers, so a UAF on a queued job's argv is something ASan
+	 * can actually catch), navigates the SAME heap while they're still
+	 * pending, then pumps -- pre-fix this traps as heap-use-after-free
+	 * inside JS_ExecutePendingJob; post-fix it must run clean AND the
+	 * surviving (new) realm's own Promise job must still fire. */
+	fprintf(stderr, "\n=== Test 94: same-heap navigation discards stale "
+			"Promise jobs, no UAF (#167, fixes1292) ===\n");
+	{
+		extern void macsurf_qjs_pump_all(void);
+		extern int macsurf_qjs_test_last_jobdrop(void);
+		struct jsheap *h94 = NULL;
+		struct jsthread *t94_1 = NULL, *t94_2 = NULL;
+		int dropped;
+		const char *arm =
+			"for(var i=0;i<24;i++){(function(n){"
+				"var o={a:n,b:'x'+n,c:[n,n+1],d:{deep:{deeper:n}}};"
+				"Promise.resolve(o).then(function(v){return v.d.deep.deeper+n;});"
+			"})(i);}";
+		const char *survive_arm =
+			"window.__t94_ran=false;"
+			"Promise.resolve(1).then(function(){window.__t94_ran=true;});";
+		const char *survive_check =
+			"(function(){if(window.__t94_ran!==true)"
+			"throw new Error('ASSERT FAIL: realm 2 promise job did not run');"
+			"})();";
+		unsigned char ok;
+		int pump;
+
+		if (js_newheap(20000, &h94) != NSERROR_OK) {
+			fprintf(stderr, "FAIL: js_newheap\n"); return 1;
+		}
+		if (js_newthread(h94, NULL, (void *)&htmlc, &t94_1) != NSERROR_OK) {
+			fprintf(stderr, "FAIL: js_newthread(1)\n"); return 1;
+		}
+		ok = js_exec(t94_1, (const unsigned char *)arm, strlen(arm),
+				"driver-t94-arm.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 94 -- arm script threw\n");
+			return 1;
+		}
+		fprintf(stderr, "armed 24 unpumped Promise reactions on realm 1\n");
+
+		/* THE NAVIGATION: same heap, second js_newthread -- frees realm
+		 * 1's JSContext while its 24 jobs are still in rt->job_list. */
+		if (js_newthread(h94, NULL, (void *)&htmlc, &t94_2) != NSERROR_OK) {
+			fprintf(stderr, "FAIL: navigation js_newthread(2)\n");
+			return 1;
+		}
+		fprintf(stderr, "navigated (realm reset) with jobs pending\n");
+
+		/* THE DETERMINISTIC CHECK: js_newthread must have discarded at
+		 * least the 24 jobs `arm` queued at the point it froze heap->ctx
+		 * to the fresh context -- not "some crash didn't happen," a real,
+		 * testable count from the real glue. (>=, not ==: realm 1's own
+		 * setup/init path may legitimately queue a small amount of its
+		 * own incidental work before `arm` runs; this test's job is to
+		 * prove OUR 24 got caught, not to pin an unrelated baseline.) */
+		dropped = macsurf_qjs_test_last_jobdrop();
+		if (dropped < 24) {
+			fprintf(stderr, "FAIL: Test 94 -- js_newthread discarded only "
+					"%d stale jobs, expected at least 24\n", dropped);
+			return 1;
+		}
+		fprintf(stderr, "js_newthread discarded %d stale jobs (>= the 24 "
+				"this test armed), as expected\n", dropped);
+
+		/* Queue a job on the SURVIVING (new) context too, so pumping
+		 * proves more than "didn't crash": realm 2's own work must still
+		 * run correctly after realm 1's is discarded. */
+		ok = js_exec(t94_2, (const unsigned char *)survive_arm,
+				strlen(survive_arm), "driver-t94-survive-arm.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 94 -- survive-arm script threw\n");
+			return 1;
+		}
+
+		/* THE PUMP. Pre-fix, this is where JS_ExecutePendingJob dequeues
+		 * one of realm 1's 24 jobs and calls job_func against the freed
+		 * ctx -- ASan traps here as heap-use-after-free if the bug is
+		 * present. */
+		for (pump = 0; pump < 8; pump++) macsurf_qjs_pump_all();
+
+		ok = js_exec(t94_2, (const unsigned char *)survive_check,
+				strlen(survive_check), "driver-t94-survive-check.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 94 -- realm 2's own Promise job "
+					"did not run after realm 1's were discarded\n");
+			return 1;
+		}
+
+		js_destroythread(t94_1);
+		js_destroythread(t94_2);
+		js_destroyheap(h94);
+	}
+	fprintf(stderr, "=== Test 94 PASS: stale-realm Promise jobs discarded "
+			"on navigation, surviving realm's own jobs still run, no UAF "
+			"===\n");
 
 	return 0;
 }

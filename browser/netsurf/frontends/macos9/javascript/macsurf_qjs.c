@@ -1254,6 +1254,19 @@ static int qjs_timer_owned_by(struct qjs_timer *t, JSContext *ctx)
  * exactly what a JSContext* address fails to guarantee. */
 static unsigned long g_ctx_gen_next = 1;
 
+/* fixes1292 (#167) - test-visible record of the last js_newthread realm
+ * reset's JS_DiscardPendingJobsForContext() count. Not read anywhere in
+ * production logic (the LIFE log line is the real diagnostic); exists so
+ * harness/driver.c Test 94 can assert the glue actually fired with the
+ * expected count, deterministically, rather than relying on a crash/no-crash
+ * signal. */
+static int g_qjs_last_jobdrop_n = -1;
+
+int macsurf_qjs_test_last_jobdrop(void)
+{
+	return g_qjs_last_jobdrop_n;
+}
+
 /* fixes876 - the ONE way a timer slot is released.  Every release path in this
  * file goes through here so that `fn` and `args` can never fall out of step.
  *
@@ -14569,7 +14582,24 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 		fresh = qjs_build_context(heap, htmlc->document,
 				(struct content *)htmlc);
 		if (fresh != NULL) {
+			int dropped;
 			qjs_owner_unregister(heap->ctx);
+			/* fixes1292 (#167) - QuickJS's Promise/job queue (rt->job_list)
+			 * is per-RUNTIME, not per-context (verified directly in
+			 * quickjs.c): JS_FreeContext below never touches it, only
+			 * JS_FreeRuntime does, and that only runs at full heap teardown
+			 * (js_destroyheap), not here. Any .then() continuation the OLD
+			 * page queued and never got pumped is still sitting in
+			 * heap->rt's job_list holding this about-to-be-freed ctx --
+			 * macsurf_qjs_pump_all() would later call JS_ExecutePendingJob
+			 * against a dangling context, a genuine use-after-free. Same
+			 * load-bearing ordering as the timer/XHR flushes just above:
+			 * discard before free, not after. */
+			dropped = JS_DiscardPendingJobsForContext(heap->rt, heap->ctx);
+			g_qjs_last_jobdrop_n = dropped;
+			if (dropped > 0) {
+				macsurf_debug_log_writef("LIFE QJS JOBDROP n=%d", dropped);
+			}
 			JS_FreeContext(heap->ctx);
 			/* fixes888 (#304) - do NOT leave a freed pointer visible.
 			 *
