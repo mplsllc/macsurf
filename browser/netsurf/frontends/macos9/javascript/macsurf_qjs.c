@@ -9999,6 +9999,20 @@ static void register_browser_globals(JSContext *ctx)
 			 * where there is no URL and no correct answer but '' -- but it must
 			 * NOT clobber the real accessor, so only define it if absent. */
 			"if(!('cookie' in document))document.cookie='';"
+			/* fixes1279 (#167) - document.location is the same Location
+			 * object exposed by window.location, not merely document.URL's
+			 * initial string.  Messenger's getDocumentDomain() reads
+			 * document.location.href during MWV2Chat initialization; omitting
+			 * this standard alias made that exact expression dereference
+			 * undefined after Hyperion had already accepted the realm.
+			 *
+			 * Keep it as an accessor rather than copying location_obj: the
+			 * getter preserves identity if the window Location is ever
+			 * replaced, and the setter has the browser's PutForwards=href
+			 * behavior (document.location = url navigates). */
+			"Object.defineProperty(document,'location',{configurable:true,"
+			"get:function(){return globalThis.location;},"
+			"set:function(v){globalThis.location.href=String(v);}});"
 			"document.URL=document.URL||(typeof location!=='undefined'?location.href:'');"
 			"document.referrer='';"
 			"document.domain='';"

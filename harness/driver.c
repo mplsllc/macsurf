@@ -10491,7 +10491,41 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 83 PASS: Node, Window, XMLHttpRequest, and "
 			"History carry the prototype graph Hyperion requires ===\n");
 
+	/* --- Test 84: document.location is the live window Location (#167,
+	 * fixes1279) --------------------------------------------------------
+	 *
+	 * Facebook's Messenger initialization reaches getDocumentDomain(), whose
+	 * first operation is `document.location.href`.  The location object was
+	 * present at window.location but the document alias was absent, so the
+	 * otherwise healthy MWV2Chat path threw "cannot read property 'href' of
+	 * undefined".  Check the actual expression and the platform identity
+	 * guarantee; this deliberately does not assign, because that would turn a
+	 * regression test into a navigation. */
+	fprintf(stderr, "\n=== Test 84: document.location is window.location "
+			"(fixes1279) ===\n");
+	{
+		const char *t84 =
+			"(function(){"
+			"function bad(s){throw new Error('ASSERT FAIL: '+s);}"
+			"if(document.location!==window.location)"
+				"bad('document.location is not window.location');"
+			"if(typeof document.location.href!=='string')"
+				"bad('document.location.href is not a string');"
+			"var d=Object.getOwnPropertyDescriptor(document,'location');"
+			"if(!d||typeof d.get!=='function'||typeof d.set!=='function')"
+				"bad('document.location is not a forwarding accessor');"
+			"})();";
+		unsigned char ok = js_exec(thread, (const unsigned char *)t84,
+				strlen(t84), "driver-t84-document-location.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 84 -- document.location does not "
+					"expose the live Location object\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 84 PASS: document.location exposes the live "
+			"Location object ===\n");
+
 	return 0;
 }
-
 
