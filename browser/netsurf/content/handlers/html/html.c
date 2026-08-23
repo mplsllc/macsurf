@@ -4674,6 +4674,171 @@ static void html_reformat(struct content *c, int width, int height)
 		}
 	}
 
+	/* fixes1293 (#167, C0.1) - LOCATE THE BLANK BAND.
+	 *
+	 * Hardware, 2026-08-23: real Facebook profiles (ptricky3, kaija.prohofsky,
+	 * minnesotastatefair) all show the same defect -- a large blank band
+	 * directly under the icon-tab row, before the Details/Posts two-column
+	 * layout begins. Diagnostic ONLY: no CSS or JS theory assumed yet.
+	 *
+	 * Builds a coarse vertical occupancy map over the first 3000px of GLOBAL
+	 * document coordinates via box_coords(), not bx->y -- Facebook's tree
+	 * nests deeply enough that local y alone would misplace a box found
+	 * mid-tree, unlike the TALL walker above whose boxes are shallow enough
+	 * near the document root for local y to work there. Content-bearing
+	 * boxes (text or a replaced object) mark occupancy; an empty run
+	 * >=150px is reported as a gap, then named: every box (not just
+	 * content-bearing ones this time) whose GLOBAL bounds intersect that
+	 * gap. That tells the next hardware read which branch to chase: a
+	 * container spanning the gap with no real descendants points at a
+	 * JS/mount gap; a container whose own height/min-height outsizes its
+	 * occupied content points at a CSS/layout gap; content occupying the
+	 * band with nothing named points at clip/visibility; nothing spanning
+	 * it at all points at margin/flow positioning.
+	 *
+	 * Same bounded-stack (256-deep), one-shot-per-navigation, capped-output
+	 * discipline as the SPLIT/TALL walkers above -- cannot blow the OS 9
+	 * stack or flood the log. */
+	if (layout != NULL && c->height > 0) {
+		static void *fbgap_dumped_c = NULL;
+		if ((void *)c != fbgap_dumped_c) {
+#define FBGAP_BUCKET_PX 10
+#define FBGAP_BUCKETS 300	/* 3000px of document, 10px/bucket */
+#define FBGAP_MIN_RUN_PX 150
+#define FBGAP_MAX_GAPS 3
+#define FBGAP_MAX_BOXES_PER_GAP 8
+			unsigned char occ[FBGAP_BUCKETS];
+			struct box *stack[256];
+			int sp;
+			int i;
+			int gap_y0[FBGAP_MAX_GAPS];
+			int gap_y1[FBGAP_MAX_GAPS];
+			int gap_count;
+
+			for (i = 0; i < FBGAP_BUCKETS; i++) occ[i] = 0;
+
+			/* Pass 1: mark occupancy from content-bearing boxes'
+			 * GLOBAL bounds. */
+			sp = 0;
+			stack[sp++] = layout;
+			while (sp > 0) {
+				struct box *bx = stack[--sp];
+				struct box *ch;
+				if (bx == NULL) continue;
+				if (bx->text != NULL || bx->object != NULL) {
+					int gx = 0, gy = 0;
+					int b0, b1, bi;
+					box_coords(bx, &gx, &gy);
+					b0 = gy / FBGAP_BUCKET_PX;
+					b1 = (gy + (int)bx->height) /
+							FBGAP_BUCKET_PX;
+					if (b0 < 0) b0 = 0;
+					if (b1 >= FBGAP_BUCKETS)
+						b1 = FBGAP_BUCKETS - 1;
+					for (bi = b0; bi <= b1; bi++) {
+						if (bi >= 0 && bi < FBGAP_BUCKETS)
+							occ[bi] = 1;
+					}
+				}
+				for (ch = bx->children; ch != NULL && sp < 256;
+						ch = ch->next)
+					stack[sp++] = ch;
+			}
+
+			/* Find empty runs >= FBGAP_MIN_RUN_PX, in document order,
+			 * capped at FBGAP_MAX_GAPS. */
+			gap_count = 0;
+			i = 0;
+			while (i < FBGAP_BUCKETS && gap_count < FBGAP_MAX_GAPS) {
+				int run_start;
+				int run_len;
+				if (occ[i]) { i++; continue; }
+				run_start = i;
+				while (i < FBGAP_BUCKETS && !occ[i]) i++;
+				run_len = i - run_start;
+				if (run_len * FBGAP_BUCKET_PX >= FBGAP_MIN_RUN_PX) {
+					gap_y0[gap_count] = run_start * FBGAP_BUCKET_PX;
+					gap_y1[gap_count] = i * FBGAP_BUCKET_PX;
+					macsurf_debug_log_writef(
+						"LIFE FBGAP y0=%d y1=%d h=%d",
+						gap_y0[gap_count], gap_y1[gap_count],
+						gap_y1[gap_count] - gap_y0[gap_count]);
+					gap_count++;
+				}
+			}
+
+			/* Pass 2: for each gap, name the boxes whose GLOBAL bounds
+			 * intersect it -- ANY box, not just content-bearing, so an
+			 * empty container spanning the gap gets named too. */
+			for (i = 0; i < gap_count; i++) {
+				int named = 0;
+				sp = 0;
+				stack[sp++] = layout;
+				while (sp > 0 && named < FBGAP_MAX_BOXES_PER_GAP) {
+					struct box *bx = stack[--sp];
+					struct box *ch;
+					int gx = 0, gy = 0;
+					int b0, b1;
+					if (bx == NULL) continue;
+					box_coords(bx, &gx, &gy);
+					b0 = gy;
+					b1 = gy + (int)bx->height;
+					if (b1 > gap_y0[i] && b0 < gap_y1[i]) {
+						char nm[64];
+						const char *disp = "-";
+						const char *ht = "auto";
+						const char *mht = "auto";
+						int pos = -1;
+						nm[0] = '\0';
+						if (bx->node != NULL)
+							html_pagemap_brief(bx->node,
+									nm, (int)sizeof nm);
+						if (bx->style != NULL) {
+							css_fixed hv = 0, mhv = 0;
+							css_unit hu = CSS_UNIT_PX,
+								 mhu = CSS_UNIT_PX;
+							disp = (css_computed_display_static(
+									bx->style) ==
+									CSS_DISPLAY_NONE) ?
+									"NONE" : "ok";
+							if (css_computed_height(
+									bx->style, &hv, &hu)
+									== CSS_HEIGHT_SET)
+								ht = "set";
+							if (css_computed_min_height(
+									bx->style, &mhv,
+									&mhu) ==
+									CSS_MIN_HEIGHT_SET)
+								mht = "set";
+							pos = (int) css_computed_position(
+									bx->style);
+						}
+						macsurf_debug_log_writef(
+							"LIFE FBGAPBOX gap=%d %s type=%d x=%d y=%d w=%d h=%d kids=%d txt=%d obj=%d disp=%s pos=%d ht=%s mht=%s",
+							i, nm[0] ? nm : "(no node)",
+							(int)bx->type, gx, gy,
+							(int)bx->width, (int)bx->height,
+							bx->children != NULL,
+							bx->text != NULL,
+							bx->object != NULL,
+							disp, pos, ht, mht);
+						named++;
+					}
+					for (ch = bx->children;
+							ch != NULL && sp < 256;
+							ch = ch->next)
+						stack[sp++] = ch;
+				}
+			}
+#undef FBGAP_BUCKET_PX
+#undef FBGAP_BUCKETS
+#undef FBGAP_MIN_RUN_PX
+#undef FBGAP_MAX_GAPS
+#undef FBGAP_MAX_BOXES_PER_GAP
+			fbgap_dumped_c = (void *)c;
+		}
+	}
+
 	/* fixes160a - SITE summary line. Emits one compact, grep-friendly
 	 * line per page reformat with the box-tree counters stashed at
 	 * box_convert time plus the just-computed content dimensions and
