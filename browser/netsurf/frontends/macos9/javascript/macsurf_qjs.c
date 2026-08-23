@@ -14622,6 +14622,22 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 			 * fresh context wraps anything.  Both halves, then clear. */
 			qjs_wrap_drain(heap->rt);
 			heap->ctx = fresh;
+			/* fixes1296 (#167, A2) - macsurf_qjs_audit_reset() was called
+			 * only from js_newheap (once per window/iframe creation),
+			 * never here -- despite its own fixes1016 design comment
+			 * saying it should run "at each new JS realm (= each
+			 * navigation)". The audit/waiter budget counters
+			 * (g_mut_audit_budget, g_evreg_audit, g_evmiss_audit,
+			 * g_evfire_audit, g_mslife_audit, g_geom_audit) carried over
+			 * exhausted from nav 1 into nav 2+ in the same window, so
+			 * every past hardware log's audit output for repeat
+			 * navigations was reading a stale, thinned-out budget, not
+			 * necessarily a thinned-out page. (The separate g_perf_slot[]
+			 * perf-timing accumulators do NOT share this bug -- verified:
+			 * they have their own reset in macsurf_qjs_emit_js_profile(),
+			 * called from browser_window.c on CONTENT_MSG_DONE, once per
+			 * completed navigation already.) */
+			macsurf_qjs_audit_reset();
 			/* fixes875 (#304) - a NEW realm, so a NEW generation. This is
 			 * the reuse that bites: JS_FreeContext just above returned the
 			 * old ctx's memory to the allocator, so `fresh` (or some other
