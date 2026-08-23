@@ -11848,6 +11848,88 @@ static void register_browser_globals(JSContext *ctx)
 		"}"
 		"})(this);");
 
+	/* fixes1280 (#167) - Facebook has reached its application scheduler.
+	 *
+	 * The successful hardware run loads and evaluates every bootstrap bundle,
+	 * then asks for reportError, setImmediate, MessageChannel, and postMessage.
+	 * Those are not decorative feature-detection names: MessageChannel and
+	 * postMessage are the task turn used by modern React schedulers, while
+	 * reportError is the Window error-reporting path used when recoverable work
+	 * fails.  Leaving any of them absent turns a completed load into a quiet
+	 * non-rendering page (the current ErrorUtils "not a function" report).
+	 *
+	 * This is a working single-realm implementation, not an availability shim:
+	 * MessagePorts deliver asynchronous message events to both onmessage and
+	 * addEventListener handlers; window.postMessage applies targetOrigin before
+	 * delivering a real MessageEvent on a later task; setImmediate preserves
+	 * asynchronous ordering via the established timer arena; and reportError
+	 * dispatches a cancellable error event before reporting its uncancelled
+	 * exception.  Cross-realm port transfer is rejected explicitly -- no page
+	 * may mistake a local port for a transferable one. */
+	macsurf_qjs__safe_eval(ctx,
+		"(function(g){"
+		"function eventOf(type,init){"
+		"var e=new Event(type,{cancelable:true});init=init||{};"
+		"e.data=init.data;e.origin=init.origin||'';e.source=init.source||null;"
+		"e.ports=init.ports||[];e.error=init.error;"
+		"e.message=init.message||'';e.filename=init.filename||'';"
+		"e.lineno=init.lineno||0;e.colno=init.colno||0;return e;}"
+		"if(typeof g.MessageEvent!=='function'){"
+		"g.MessageEvent=function MessageEvent(type,init){return eventOf(type,init);};"
+		"g.MessageEvent.prototype=Event.prototype;"
+		"}"
+		"if(typeof g.setImmediate!=='function'){"
+		"g.setImmediate=function(fn){var a=Array.prototype.slice.call(arguments,1);"
+		"if(typeof fn!=='function')fn=Function(String(fn));"
+		"return g.setTimeout(function(){fn.apply(undefined,a);},0);};"
+		"g.clearImmediate=function(id){g.clearTimeout(id);};"
+		"}else if(typeof g.clearImmediate!=='function'){"
+		"g.clearImmediate=function(id){g.clearTimeout(id);};}"
+		"if(typeof g.reportError!=='function'){"
+		"g.reportError=function(error){var m=error&&error.message!=null?"
+		"String(error.message):String(error),ev=eventOf('error',{error:error,message:m});"
+		"try{if(typeof g.onerror==='function'&&g.onerror(m,'',0,0,error)===true)"
+		"ev.preventDefault();}catch(e){}"
+		"try{g.dispatchEvent(ev);}catch(e){}"
+		"if(!ev.defaultPrevented&&g.console&&typeof g.console.error==='function')"
+		"g.console.error(error);};"
+		"}"
+		"function MessagePort(){this.onmessage=null;this.onmessageerror=null;"
+		"this.__msListeners={message:[],messageerror:[]};this.__msPeer=null;"
+		"this.__msClosed=false;}"
+		"MessagePort.prototype.start=function(){};"
+		"MessagePort.prototype.close=function(){this.__msClosed=true;};"
+		"MessagePort.prototype.addEventListener=function(type,fn){"
+		"var a=this.__msListeners[type];if(typeof fn==='function'&&a&&a.indexOf(fn)<0)a.push(fn);};"
+		"MessagePort.prototype.removeEventListener=function(type,fn){"
+		"var a=this.__msListeners[type],i;if(!a)return;i=a.indexOf(fn);if(i>=0)a.splice(i,1);};"
+		"function deliver(port,ev){var a,i,copy;"
+		"if(port.__msClosed)return;try{if(typeof port.onmessage==='function')port.onmessage.call(port,ev);"
+		"a=port.__msListeners.message;copy=a.slice();for(i=0;i<copy.length;i++)copy[i].call(port,ev);"
+		"}catch(e){if(typeof g.reportError==='function')g.reportError(e);}}"
+		"function noTransfer(){var e=new Error('MessagePort transfer is not supported');"
+		"e.name='DataCloneError';throw e;}"
+		"MessagePort.prototype.postMessage=function(data,transfer){var peer=this.__msPeer;"
+		"if(transfer&&transfer.length)noTransfer();"
+		"if(!peer||this.__msClosed)return;g.setTimeout(function(){"
+		"deliver(peer,eventOf('message',{data:data,origin:'',source:null,ports:[]}));},0);};"
+		"if(typeof g.MessagePort!=='function')g.MessagePort=MessagePort;"
+		"if(typeof g.MessageChannel!=='function'){"
+		"g.MessageChannel=function MessageChannel(){this.port1=new MessagePort();this.port2=new MessagePort();"
+		"this.port1.__msPeer=this.port2;this.port2.__msPeer=this.port1;};"
+		"}"
+		"if(typeof g.postMessage!=='function'){"
+		"g.postMessage=function(data,targetOrigin,transfer){"
+		"if(arguments.length<2)throw new TypeError('postMessage requires targetOrigin');"
+		"var origin=g.location&&g.location.origin||'null';"
+		"if(targetOrigin!=='*'&&targetOrigin!==origin)return;"
+		"if(transfer&&transfer.length)noTransfer();"
+		"g.setTimeout(function(){var ev=eventOf('message',{data:data,origin:origin,source:g,ports:[]});"
+		"try{if(typeof g.onmessage==='function')g.onmessage.call(g,ev);}catch(e){g.reportError(e);}"
+		"g.dispatchEvent(ev);},0);};"
+		"}"
+		"})(this);");
+
 	/* --- CSS / ResizeObserver / PerformanceObserver / queueMicrotask /
 	 *     structuredClone / TextEncoder / TextDecoder --- */
 	macsurf_qjs__safe_eval(ctx,

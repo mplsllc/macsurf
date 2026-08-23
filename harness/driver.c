@@ -10526,6 +10526,57 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 84 PASS: document.location exposes the live "
 			"Location object ===\n");
 
+	/* --- Test 85: the application task/message surface (#167, fixes1280)
+	 *
+	 * Facebook's bundles complete, then React asks for setImmediate,
+	 * MessageChannel, postMessage, and reportError.  These drive real deferred
+	 * scheduler work; merely defining names would strand the same render tasks
+	 * one layer later.  Exercise all four through the actual timer pump. */
+	fprintf(stderr, "\n=== Test 85: task/message APIs deliver real work "
+			"(fixes1280) ===\n");
+	{
+		extern void macsurf_qjs_pump_all(void);
+		const char *t85_setup =
+			"globalThis.__t85=[];"
+			"setImmediate(function(){__t85.push('immediate');});"
+			"var c=new MessageChannel();"
+			"c.port1.onmessage=function(e){__t85.push('port:'+e.data);};"
+			"c.port1.addEventListener('message',function(e){__t85.push('listener:'+e.data);});"
+			"c.port2.postMessage('task');"
+			"addEventListener('message',function(e){if(e.data==='window')__t85.push('window:'+e.origin);});"
+			"postMessage('window','*');"
+			"addEventListener('error',function(e){if(e.message==='reported')__t85.push('error');});"
+			"reportError(new Error('reported'));";
+		const char *t85_check =
+			"(function(){var n=['immediate','port:task','listener:task','error'],i;"
+			"for(i=0;i<n.length;i++)if(__t85.indexOf(n[i])<0)"
+			"throw new Error('ASSERT FAIL missing '+n[i]+' ['+__t85.join(',')+']');"
+			"if(!__t85.some(function(x){return x.indexOf('window:')===0;}))"
+			"throw new Error('ASSERT FAIL missing window message ['+__t85.join(',')+']');"
+			"})();";
+		unsigned char ok1, ok2;
+		int pump;
+
+		ok1 = js_exec(thread, (const unsigned char *)t85_setup,
+				strlen(t85_setup), "driver-t85-task-message-setup.js");
+		if (!ok1) {
+			fprintf(stderr, "FAIL: Test 85 setup threw\n");
+			return 1;
+		}
+		for (pump = 0; pump < 100; pump++) {
+			macsurf_qjs_pump_all();
+			harness_pump_all(1000);
+		}
+		ok2 = js_exec(thread, (const unsigned char *)t85_check,
+				strlen(t85_check), "driver-t85-task-message-check.js");
+		if (!ok2) {
+			fprintf(stderr, "FAIL: Test 85 -- a scheduler task/message API "
+					"failed to deliver work\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 85 PASS: immediate, channel, window message, "
+			"and reportError all deliver ===\n");
+
 	return 0;
 }
-
