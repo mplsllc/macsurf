@@ -58,12 +58,10 @@ void macsurf_qjs_setup_globals(JSContext *qctx);
  * page gets its own first-use `LIFE WANT` lines. */
 void qjs_want_reset(void);
 
-/* Current page's struct content* (opaque here  -  macos9_js_fetch.c only
- * needs it to read the page URL as a fetch_start() referer), or NULL if
- * no page is wired in yet. See g_qjs_content's comment in macsurf_qjs.c
- * for its lifetime rules: snapshot what you need synchronously, it can
- * go NULL on the very next navigation. */
-struct content *qjs_get_content(void);
+/* The content owned by this exact invoking realm, or NULL while it has no
+ * document.  JS-visible native work must pass its JSContext; there is no
+ * process-global current-page fallback. */
+struct content *qjs_get_content_for_ctx(JSContext *ctx);
 
 /* console.log append (used by DOM bindings). */
 void macsurf_qjs_console_append(const char *line);

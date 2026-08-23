@@ -92,6 +92,7 @@ struct qjs_xhr_slot {
 	JSValue xhr_obj;		/* dup'd JS XMLHttpRequest instance */
 
 	nsurl *url;			/* current (post-redirect) target */
+	nsurl *referer;		/* owned snapshot of the invoking realm's URL */
 	char method[8];			/* upper-cased, NUL-terminated */
 	char *body;			/* owned copy of the send() body, or NULL */
 	long body_len;
@@ -135,6 +136,7 @@ static void
 xhr_slot_wipe(struct qjs_xhr_slot *s)
 {
 	if (s->url != NULL) { nsurl_unref(s->url); s->url = NULL; }
+	if (s->referer != NULL) { nsurl_unref(s->referer); s->referer = NULL; }
 	if (s->body != NULL) { free(s->body); s->body = NULL; }
 	xhr_free_req_headers(s);
 	if (s->resp_buf != NULL) { free(s->resp_buf); s->resp_buf = NULL; }
@@ -374,6 +376,17 @@ xhr_apply_redirect_method(struct qjs_xhr_slot *s, int status)
 
 static int xhr_start_fetch(struct qjs_xhr_slot *s);
 
+/* The document URL for the realm executing this native binding.  It is a
+ * borrowed URL: callers that need it beyond this synchronous operation retain
+ * it in their slot with nsurl_ref(). */
+static nsurl *
+xhr_realm_url(JSContext *ctx)
+{
+	struct content *content = qjs_get_content_for_ctx(ctx);
+	if (content == NULL || content->llcache == NULL) return NULL;
+	return content_get_url(content);
+}
+
 static void
 xhr_follow_redirect(struct qjs_xhr_slot *s, const char *target)
 {
@@ -515,21 +528,14 @@ xhr_fetch_cb(const fetch_msg *msg, void *pw)
 static int
 xhr_start_fetch(struct qjs_xhr_slot *s)
 {
-	nsurl *referer = NULL;
-	struct content *c = qjs_get_content();
+	nsurl *referer;
 	nserror err;
 	struct fetch *out = NULL;
 
-	/* c->llcache can be NULL for a content that isn't (yet, or any
-	 * longer) fully live -- content_get_url() -> llcache_handle_get_url()
-	 * dereferences it unconditionally and crashes otherwise. Same guard
-	 * as macos9_reconvert_host_allowed() (macos9_reconvert.c) uses
-	 * before its own content_get_url() call, for the same reason. Caught
-	 * by the S0 harness (its minimal test content has no llcache) before
-	 * this ever had a chance to reach real hardware. */
-	if (c != NULL && c->llcache != NULL) {
-		referer = content_get_url(c);	/* borrowed; fetch_start refs it */
-	}
+	/* The owner was captured at JS call time.  This function also runs after
+	 * redirects and after beacon navigation, when consulting a current global
+	 * realm would send the wrong referrer or dereference a dead one. */
+	referer = s->referer;
 
 	/* Every real macos9 fetcher is poll-driven and never completes inside
 	 * its own start() callback, so in production xhr_fetch_cb can't fire
@@ -568,6 +574,7 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 	const char *url_c;
 	const char *body_c = NULL;
 	nsurl *url = NULL;
+	nsurl *base;
 	nserror err;
 	int i;
 
@@ -602,22 +609,15 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 	 *
 	 * nsurl_join is RFC-3986 and passes an absolute target straight through,
 	 * so this is a strict superset of the old behaviour.  Base is the current
-	 * document's URL via the same qjs_get_content() + c->llcache NULL-guard
-	 * xhr_start_fetch() already uses for the referer (content_get_url()
+	 * document's URL from the invoking realm (content_get_url()
 	 * dereferences llcache unconditionally and crashes on a not-fully-live
 	 * content).  No base (JS with no live content) falls back to the old
 	 * create, which is right: there is nothing to resolve against. */
-	{
-		struct content *bc = qjs_get_content();
-		nsurl *base = NULL;
-		if (bc != NULL && bc->llcache != NULL) {
-			base = content_get_url(bc);	/* borrowed */
-		}
-		if (base != NULL) {
-			err = nsurl_join(base, url_c, &url);
-		} else {
-			err = nsurl_create(url_c, &url);
-		}
+	base = xhr_realm_url(ctx);
+	if (base != NULL) {
+		err = nsurl_join(base, url_c, &url);
+	} else {
+		err = nsurl_create(url_c, &url);
 	}
 	if (err != NSERROR_OK || url == NULL) {
 		JS_FreeCString(ctx, method_c);
@@ -638,6 +638,7 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 	s->ctx = ctx;
 	s->xhr_obj = JS_DupValue(ctx, argv[0]);
 	s->url = url;
+	s->referer = (base != NULL) ? nsurl_ref(base) : NULL;
 	strncpy(s->method, method_c, sizeof(s->method) - 1);
 	s->method[sizeof(s->method) - 1] = '\0';
 	for (i = 0; s->method[i]; i++) {
@@ -733,6 +734,7 @@ qjs_beacon_send(JSContext *ctx, JSValueConst this_val,
 	const char *url_c;
 	const char *body_c = NULL;
 	nsurl *url = NULL;
+	nsurl *base;
 	nserror err;
 
 	(void) this_val;
@@ -744,17 +746,11 @@ qjs_beacon_send(JSContext *ctx, JSValueConst this_val,
 
 	/* Resolve against the document base, same as xhr's initial send
 	 * (fixes865): analytics targets are commonly root-relative. */
-	{
-		struct content *bc = qjs_get_content();
-		nsurl *base = NULL;
-		if (bc != NULL && bc->llcache != NULL) {
-			base = content_get_url(bc);	/* borrowed */
-		}
-		if (base != NULL) {
-			err = nsurl_join(base, url_c, &url);
-		} else {
-			err = nsurl_create(url_c, &url);
-		}
+	base = xhr_realm_url(ctx);
+	if (base != NULL) {
+		err = nsurl_join(base, url_c, &url);
+	} else {
+		err = nsurl_create(url_c, &url);
 	}
 	if (err != NSERROR_OK || url == NULL) {
 		JS_FreeCString(ctx, url_c);
@@ -786,6 +782,7 @@ qjs_beacon_send(JSContext *ctx, JSValueConst this_val,
 	s->ctx = NULL;			/* flush() skips beacons: keep flying */
 	s->xhr_obj = JS_UNDEFINED;
 	s->url = url;
+	s->referer = (base != NULL) ? nsurl_ref(base) : NULL;
 	strcpy(s->method, "POST");
 
 	if (argc > 1 && !JS_IsNull(argv[1]) && !JS_IsUndefined(argv[1])) {

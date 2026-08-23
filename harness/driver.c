@@ -163,6 +163,37 @@ static int harness_pump_one(void)
 	return 1;
 }
 
+/* Parse a small independent document for multi-realm tests.  No layout or
+ * content registration is needed: these tests exercise JS/DOM ownership, not
+ * the box tree. */
+static int harness_parse_document(const char *html, dom_document **out)
+{
+	dom_hubbub_parser_params params;
+	dom_hubbub_parser *parser = NULL;
+	dom_document *document = NULL;
+	dom_hubbub_error err;
+
+	if (out == NULL) return 0;
+	*out = NULL;
+	memset(&params, 0, sizeof(params));
+	params.fix_enc = true;
+	params.enable_script = false;
+	err = dom_hubbub_parser_create(&params, &parser, &document);
+	if (err != DOM_HUBBUB_OK || parser == NULL || document == NULL)
+		return 0;
+	err = dom_hubbub_parser_parse_chunk(parser,
+			(const uint8_t *)html, strlen(html));
+	if (err == DOM_HUBBUB_OK)
+		err = dom_hubbub_parser_completed(parser);
+	dom_hubbub_parser_destroy(parser);
+	if (err != DOM_HUBBUB_OK) {
+		dom_node_unref((dom_node *)document);
+		return 0;
+	}
+	*out = document;
+	return 1;
+}
+
 /* ------------------------------------------------------------------ */
 /* guit + nsoptions[] -- real, correctly-typed globals (the earlier    */
 /* auto-gen stubs for these were type-mismatched landmines; see        */
@@ -8558,19 +8589,9 @@ box_coords(bx, &cx, &cy);
 		 * tests later, that had nothing to do with whatever test actually
 		 * triggered the pump.
 		 *
-		 * fixes1245 - js_destroyheap alone was NOT enough: g_qjs_content
-		 * (macsurf_qjs.c) is a single GLOBAL raw content pointer, set by
-		 * qjs_set_content() during js_newthread/js_exec and otherwise
-		 * cleared only by macsurf_js_notify_content_freed(), which the
-		 * REAL content death-row drain calls just before freeing a
-		 * content (fixes565's whole point: no dangling g_qjs_content
-		 * after teardown). This stack-local html_content fixture never
-		 * goes through that real lifecycle, so nothing ever called it --
-		 * g_qjs_content kept pointing at &t69c after t69heap was
-		 * destroyed and the block's stack frame was gone, and a LATER
-		 * qjs_get_computed_style (Test 71, walking every heap's pending
-		 * jobs) dereferenced it. Same root cause as the heap leak just
-		 * above, different global -- both needed clearing, not just one. */
+		 * Realm owner records also retain raw content pointers until the normal
+		 * death-row notification clears them. This stack-local fixture does not
+		 * go through that lifecycle, so notify before the frame ends. */
 		{
 			extern void macsurf_js_notify_content_freed(
 					struct content *c);
@@ -8833,12 +8854,8 @@ box_coords(bx, &cx, &cy);
 				return 1;
 			}
 		}
-		/* fixes1243/fixes1245 - same leak-prevention as Test 69 above,
-		 * both halves: destroy the heap AND clear g_qjs_content before
-		 * t70c goes out of scope, or a later test's plain
-		 * macsurf_qjs_pump_all() (which pumps every live heap and can
-		 * trigger qjs_get_computed_style -> g_qjs_content) walks a
-		 * dangling stack pointer. */
+		/* Same realm-owner lifetime rule as Test 69: clear this stack-local
+		 * fixture before leaving its scope. */
 		{
 			extern void macsurf_js_notify_content_freed(
 					struct content *c);
@@ -9047,10 +9064,11 @@ box_coords(bx, &cx, &cy);
 				"!==0)"
 			"throw new Error('ASSERT FAIL: toDataURL()='+durl);"
 			"globalThis.__t72sync=1;"
-			/* toBlob: async callback, must fire with a real Blob. */
-			"globalThis.__t72blobType=null;"
+			/* No Blob byte backend exists: callback reports null, not a
+			 * synthetic zero-byte Blob that claims it encoded this canvas. */
+			"globalThis.__t72blobResult='not-called';"
 			"c.toBlob(function(b){"
-				"globalThis.__t72blobType=b&&b.type;"
+				"globalThis.__t72blobResult=(b===null)?'null':'non-null';"
 			"},'image/png');"
 			"})();"
 			"if(!globalThis.__t72sync)"
@@ -9071,10 +9089,10 @@ box_coords(bx, &cx, &cy);
 		}
 		{
 			const char *check_js =
-				"if(globalThis.__t72blobType!=='image/png')"
-				"throw new Error('ASSERT FAIL: toBlob callback type='"
-					"+globalThis.__t72blobType"
-					"+' (null means the callback never fired)');";
+				"if(globalThis.__t72blobResult!=='null')"
+				"throw new Error('ASSERT FAIL: toBlob result='"
+					"+globalThis.__t72blobResult"
+					"+' (must report unavailable byte encoding as null)');";
 			unsigned char ok2 = js_exec(thread,
 					(const unsigned char *)check_js,
 					strlen(check_js), "driver-t72-blob-check.js");
@@ -10615,6 +10633,160 @@ box_coords(bx, &cx, &cy);
 	}
 	fprintf(stderr, "=== Test 86 PASS: native Comment node preserves React "
 			"hydration-marker semantics ===\n");
+
+	/* --- Test 87: node traversal keeps fragment and Document identity (#167,
+	 * fixes1284) ---------------------------------------------------------
+	 *
+	 * React's host tree crosses Comment -> DocumentFragment during insertion,
+	 * then follows parentNode through documentElement to Document.  Both edges
+	 * must return the existing native-backed JS identity; filtering parents to
+	 * Element nodes makes the tree look detached even when libdom attached it
+	 * correctly. */
+	fprintf(stderr, "\n=== Test 87: fragment and Document traversal preserve "
+			"native identity (fixes1284) ===\n");
+	{
+		const char *t87 =
+			"(function(){"
+			"function bad(s){throw new Error('ASSERT FAIL: '+s);}"
+			"var f=document.createDocumentFragment(),"
+			"c=document.createComment('marker'),"
+			"host=document.createElement('div'),de=document.documentElement;"
+			"f.appendChild(c);"
+			"if(f.firstChild!==c||f.lastChild!==c||f.childNodes.length!==1)"
+				"bad('fragment child identity');"
+			"if(c.parentNode!==f||c.getRootNode()!==f)"
+				"bad('comment fragment parent/root');"
+			"if(c.nextSibling!==null||c.previousSibling!==null)"
+				"bad('comment detached sibling edge');"
+			"host.appendChild(f);"
+			"if(host.firstChild!==c||host.lastChild!==c||c.parentNode!==host)"
+				"bad('fragment insertion did not preserve comment');"
+			"if(c.getRootNode()!==host||f.firstChild!==null||f.lastChild!==null)"
+				"bad('fragment transfer/root');"
+			"if(de.parentNode!==document||de.getRootNode()!==document)"
+				"bad('document traversal identity');"
+			"if(de.isConnected!==true)bad('documentElement disconnected');"
+			"})();";
+		unsigned char ok = js_exec(thread, (const unsigned char *)t87,
+				strlen(t87), "driver-t87-node-traversal.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 87 -- fragment/Document traversal lost "
+					"native identity\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 87 PASS: comment, fragment, element, and "
+			"Document traversal retain identity ===\n");
+
+	/* --- Test 88: unsupported APIs are absent, not synthetic successes (#167,
+	 * fixes1284) --------------------------------------------------------- */
+	fprintf(stderr, "\n=== Test 88: unsupported browser APIs are truthfully "
+			"absent (fixes1284) ===\n");
+	{
+		const char *t88 =
+			"(function(){"
+			"function bad(s){throw new Error('ASSERT FAIL: '+s);}"
+			"var names=['indexedDB','IDBKeyRange','caches','WebSocket',"
+			"'Blob','File','FileReader','Notification'],i,n;"
+			"for(i=0;i<names.length;i++){n=names[i];"
+			"if(typeof globalThis[n]!=='undefined'||n in globalThis)"
+				"bad(n+' is advertised without a real backend');}"
+			"if(typeof URL.createObjectURL!=='undefined'||"
+				"'createObjectURL' in URL||'revokeObjectURL' in URL)"
+				"bad('URL object URLs are advertised without retained bytes');"
+			"})();";
+		unsigned char ok = js_exec(thread, (const unsigned char *)t88,
+				strlen(t88), "driver-t88-honest-capabilities.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 88 -- an unsupported API still claims "
+					"availability\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 88 PASS: feature detection sees only real "
+			"browser backends ===\n");
+
+	/* --- Test 89: host DOM hooks resolve their node's realm (#167,
+	 * fixes1284) ---------------------------------------------------------
+	 *
+	 * The parser's inline-handler hook receives a native node, not a context.
+	 * Build A then B so B is the most recent heap, bind A's node after that,
+	 * and execute in A.  A last-heap lookup compiles the handler in B and the
+	 * A-side call sees no handler; resolving node -> document -> realm is the
+	 * only correct ownership path. */
+	fprintf(stderr, "\n=== Test 89: parser hooks bind in the owning realm "
+			"(fixes1284) ===\n");
+	{
+		struct html_content ca, cb;
+		dom_document *da = NULL, *db = NULL;
+		dom_element *ba = NULL;
+		dom_string *ida = NULL;
+		struct jsheap *ha = NULL, *hb = NULL;
+		struct jsthread *ta = NULL, *tb = NULL;
+		nserror e;
+		unsigned char ok;
+		extern void macsurf_qjs_bind_inline_handlers(struct dom_node *node);
+		extern void macsurf_js_notify_content_freed(struct content *c);
+
+		if (!harness_parse_document(
+				"<html><body><button id='a' onclick=\"globalThis.__t89='A'\">A</button></body></html>",
+				&da) ||
+			!harness_parse_document(
+				"<html><body><button id='b' onclick=\"globalThis.__t89='B'\">B</button></body></html>",
+				&db)) {
+			fprintf(stderr, "FAIL: Test 89 -- independent document parse\n");
+			return 1;
+		}
+		memset(&ca, 0, sizeof(ca));
+		memset(&cb, 0, sizeof(cb));
+		ca.document = da;
+		cb.document = db;
+		ca.enable_scripting = true;
+		cb.enable_scripting = true;
+		e = js_newheap(20000, &ha);
+		if (e == NSERROR_OK) e = js_newthread(ha, NULL, &ca, &ta);
+		if (e == NSERROR_OK) e = js_newheap(20000, &hb);
+		if (e == NSERROR_OK) e = js_newthread(hb, NULL, &cb, &tb);
+		if (e != NSERROR_OK || ta == NULL || tb == NULL) {
+			fprintf(stderr, "FAIL: Test 89 -- realm setup err=%d\n", (int)e);
+			return 1;
+		}
+		if (dom_string_create((const uint8_t *)"a", 1, &ida) != DOM_NO_ERR ||
+				ida == NULL || dom_document_get_element_by_id(da, ida, &ba)
+				!= DOM_NO_ERR || ba == NULL) {
+			fprintf(stderr, "FAIL: Test 89 -- A button lookup\n");
+			return 1;
+		}
+		macsurf_qjs_bind_inline_handlers((dom_node *)ba);
+		dom_string_unref(ida);
+		dom_node_unref((dom_node *)ba);
+		ok = js_exec(ta, (const unsigned char *)
+			"(function(){var b=document.getElementById('a');"
+			"if(!b||typeof b.onclick!=='function')"
+			"throw new Error('ASSERT FAIL: A handler was bound in another realm');"
+			"b.onclick({type:'click'});"
+			"if(globalThis.__t89!=='A')"
+			"throw new Error('ASSERT FAIL: handler executed outside A');})();",
+			strlen("(function(){var b=document.getElementById('a');"
+			"if(!b||typeof b.onclick!=='function')"
+			"throw new Error('ASSERT FAIL: A handler was bound in another realm');"
+			"b.onclick({type:'click'});"
+			"if(globalThis.__t89!=='A')"
+			"throw new Error('ASSERT FAIL: handler executed outside A');})();"),
+			"driver-t89-realm-owner.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 89 -- parser hook used the last realm\n");
+			return 1;
+		}
+		macsurf_js_notify_content_freed((struct content *)&ca);
+		macsurf_js_notify_content_freed((struct content *)&cb);
+		js_destroyheap(hb);
+		js_destroyheap(ha);
+		dom_node_unref((dom_node *)db);
+		dom_node_unref((dom_node *)da);
+	}
+	fprintf(stderr, "=== Test 89 PASS: native node hooks cannot target the "
+			"last-created realm ===\n");
 
 	return 0;
 }

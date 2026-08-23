@@ -116,25 +116,77 @@ struct jsheap *g_heap = NULL;  /* exported for audit */
  * them; see the note there for why pumping only g_heap froze iframes. */
 static struct jsheap *g_heap_list = NULL;
 
-/* Native DOM functions receive a JSContext.  Resolve the owning heap from
- * that context instead of consulting the last document any other realm wired.
- * This is deliberately a list walk: the number of live browsing contexts is
- * small, and it keeps the ownership rule in the same registry that already
- * establishes whether a context is live. */
-static struct jsheap *qjs_heap_for_ctx(JSContext *ctx)
+/* The authoritative ownership record for one JavaScript realm.  A heap can
+ * briefly have both an old and replacement JSContext during navigation, while
+ * global setup in the replacement synchronously calls native bindings (notably
+ * localStorage).  Deriving ownership through heap->ctx loses that distinction
+ * and turns the previous realm into the accidental owner.  Register this
+ * record immediately after JS_NewContextRaw(), before installing globals, and
+ * remove it immediately before JS_FreeContext(). */
+struct qjs_realm_owner {
+	JSContext *ctx;
+	struct jsheap *heap;
+	dom_document *document;
+	struct content *content;
+	struct qjs_realm_owner *next;
+};
+
+static struct qjs_realm_owner *g_qjs_realm_owners = NULL;
+
+static struct qjs_realm_owner *qjs_owner_for_ctx(JSContext *ctx)
 {
-	struct jsheap *h;
+	struct qjs_realm_owner *owner;
 	if (ctx == NULL) return NULL;
-	for (h = g_heap_list; h != NULL; h = h->next) {
-		if (h->ctx == ctx) return h;
+	for (owner = g_qjs_realm_owners; owner != NULL; owner = owner->next) {
+		if (owner->ctx == ctx) return owner;
 	}
 	return NULL;
 }
 
+static int qjs_owner_register(JSContext *ctx, struct jsheap *heap,
+		dom_document *document, struct content *content)
+{
+	struct qjs_realm_owner *owner;
+	if (ctx == NULL || heap == NULL || qjs_owner_for_ctx(ctx) != NULL)
+		return 0;
+	owner = calloc(1, sizeof(*owner));
+	if (owner == NULL) return 0;
+	owner->ctx = ctx;
+	owner->heap = heap;
+	owner->document = document;
+	owner->content = content;
+	owner->next = g_qjs_realm_owners;
+	g_qjs_realm_owners = owner;
+	return 1;
+}
+
+static void qjs_owner_unregister(JSContext *ctx)
+{
+	struct qjs_realm_owner **pp = &g_qjs_realm_owners;
+	while (*pp != NULL) {
+		if ((*pp)->ctx == ctx) {
+			struct qjs_realm_owner *owner = *pp;
+			*pp = owner->next;
+			free(owner);
+			return;
+		}
+		pp = &(*pp)->next;
+	}
+}
+
 static dom_document *qjs_document_for_ctx(JSContext *ctx)
 {
-	struct jsheap *h = qjs_heap_for_ctx(ctx);
-	return (h != NULL) ? h->document : NULL;
+	struct qjs_realm_owner *owner = qjs_owner_for_ctx(ctx);
+	return (owner != NULL) ? owner->document : NULL;
+}
+
+/* Exported for native bindings in other translation units.  Page-visible
+ * work must pass its invoking context; there is intentionally no process-wide
+ * "current content" fallback. */
+struct content *qjs_get_content_for_ctx(JSContext *ctx)
+{
+	struct qjs_realm_owner *owner = qjs_owner_for_ctx(ctx);
+	return (owner != NULL) ? owner->content : NULL;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2173,31 +2225,57 @@ extern dom_exception macsurf_dom_attr_get_name(dom_node *attr,
 extern dom_exception macsurf_dom_attr_get_value(dom_node *attr,
 		dom_string **value);
 
-/* ---- Host-facing current document/content pointers -----------------
+/* ---- Host-facing current document pointer --------------------------
  *
  * The frontend's scroll/resize entry points have no JSContext parameter, so
  * they retain a host-current document.  Page-visible native DOM operations
  * must use qjs_document_for_ctx() above; using this value for them mixes
  * iframe/navigation realms and is not valid browser behaviour. */
 static dom_document  *g_qjs_document = NULL;
-static struct content *g_qjs_content = NULL;
 
 static void qjs_set_document(struct jsheap *heap, dom_document *doc)
 {
-	if (heap != NULL) heap->document = doc;
+	struct qjs_realm_owner *owner;
+	if (heap != NULL) {
+		heap->document = doc;
+		owner = qjs_owner_for_ctx(heap->ctx);
+		if (owner != NULL) owner->document = doc;
+	}
 	g_qjs_document = doc;
 }
 static void qjs_set_content(struct jsheap *heap, struct content *c)
 {
-	if (heap != NULL) heap->content = c;
-	g_qjs_content = c;
+	struct qjs_realm_owner *owner;
+	if (heap != NULL) {
+		heap->content = c;
+		owner = qjs_owner_for_ctx(heap->ctx);
+		if (owner != NULL) owner->content = c;
+	}
 }
 
-/* fixes846 (#167 S3) - macos9_js_fetch.c's only need for g_qjs_content:
- * read the page URL as a fetch_start() referer at send()-time. See this
- * pointer's staleness rules two comments below; the caller must snapshot
- * whatever it needs synchronously, not hold this across an async gap. */
-struct content *qjs_get_content(void) { return g_qjs_content; }
+/* Host parser hooks do not receive a JSContext, but they do receive the
+ * native node they are binding. Resolve its owner document back to the realm
+ * record instead of compiling an iframe's inline handler in whichever heap
+ * happened to be created most recently. */
+static JSContext *qjs_ctx_for_dom_node(dom_node *node)
+{
+	dom_document *document = NULL;
+	struct qjs_realm_owner *owner;
+	JSContext *ctx = NULL;
+
+	if (node == NULL ||
+		macsurf_dom_node_get_owner_document(node, &document) != DOM_NO_ERR ||
+		document == NULL)
+		return NULL;
+	for (owner = g_qjs_realm_owners; owner != NULL; owner = owner->next) {
+		if (owner->document == document) {
+			ctx = owner->ctx;
+			break;
+		}
+	}
+	macsurf_dom_node_unref((dom_node *)document);
+	return ctx;
+}
 
 JSContext *macsurf_qjs_current_ctx(void)
 {
@@ -2215,7 +2293,7 @@ JSContext *macsurf_qjs_current_ctx(void)
  * every page even while the very request that fetched it carried the session
  * cookie.
  *
- * The URL comes from THIS realm's own content (g_qjs_content), NOT from
+ * The URL comes from THIS realm's own content, NOT from
  * macos9_window_list_head() the way location does: that returns the FIRST
  * window, which for an iframe is a different document entirely -- and cookies
  * are precisely where reading the wrong document's URL would be a security bug
@@ -2226,9 +2304,9 @@ JSContext *macsurf_qjs_current_ctx(void)
  * content that is not (yet, or any longer) fully live. Same guard as
  * xhr_start_fetch() and macos9_reconvert_host_allowed(), for the same reason;
  * the S0 harness's minimal test content has no llcache and caught it there. */
-static nsurl *qjs_cookie_doc_url(void)
+static nsurl *qjs_cookie_doc_url(JSContext *ctx)
 {
-	struct content *c = qjs_get_content();
+	struct content *c = qjs_get_content_for_ctx(ctx);
 	if (c == NULL || c->llcache == NULL) return NULL;
 	return content_get_url(c);	/* borrowed */
 }
@@ -2241,7 +2319,7 @@ static JSValue qjs_document_cookie_get(JSContext *ctx, JSValueConst this_val,
 	JSValue ret;
 
 	(void)this_val; (void)argc; (void)argv;
-	url = qjs_cookie_doc_url();
+	url = qjs_cookie_doc_url(ctx);
 	if (url == NULL) return JS_NewString(ctx, "");
 
 	/* include_http_only = FALSE. HttpOnly exists precisely to be invisible to
@@ -2263,7 +2341,7 @@ static JSValue qjs_document_cookie_set(JSContext *ctx, JSValueConst this_val,
 
 	(void)this_val;
 	if (argc < 1) return JS_UNDEFINED;
-	url = qjs_cookie_doc_url();
+	url = qjs_cookie_doc_url(ctx);
 	if (url == NULL) return JS_UNDEFINED;
 
 	hdr = JS_ToCString(ctx, argv[0]);
@@ -2279,27 +2357,28 @@ static JSValue qjs_document_cookie_set(JSContext *ctx, JSValueConst this_val,
 }
 
 /* Stage 1 death-row hook (fixes565, QuickJS port of the Duktape
- * macsurf_js_notify_content_freed): g_qjs_content is a raw content pointer,
- * independent of content_list and not reachable via any scheduled
- * continuation, so the death-row pinned-check cannot see it. The drain calls
- * this just before it frees a content; NULL our cached pointers if the content
- * going away is the one we hold, so the DOM bindings (macos9_js_mark_dom_dirty
- * and friends) never deref a freed content or a document living inside it. */
+ * macsurf_js_notify_content_freed). The owner records intentionally hold raw
+ * content pointers, so clear every matching realm immediately before its
+ * content dies; no page-visible binding can then dereference stale state. */
 void
 macsurf_js_notify_content_freed(struct content *c)
 {
 	struct jsheap *h;
-	/* Clear every realm wired to this content.  The old single global cleared
-	 * only whichever page had most recently won the race to wire itself. */
+	struct qjs_realm_owner *owner;
+	for (owner = g_qjs_realm_owners; owner != NULL; owner = owner->next) {
+		if (owner->content == c) {
+			if (g_qjs_document == owner->document)
+				g_qjs_document = NULL;
+			owner->content = NULL;
+			owner->document = NULL;
+		}
+	}
+	/* Heap fields are non-authoritative host mirrors. */
 	for (h = g_heap_list; h != NULL; h = h->next) {
 		if (h->content == c) {
 			h->content = NULL;
 			h->document = NULL;
 		}
-	}
-	if (g_qjs_content == c) {
-		g_qjs_content = NULL;
-		g_qjs_document = NULL;
 	}
 }
 
@@ -2309,6 +2388,16 @@ static dom_string *qjs_make_domstr(const char *s)
 	dom_string *ds = NULL;
 	dom_string_create((const uint8_t *)s, strlen(s), &ds);
 	return ds;
+}
+
+/* A DOM mutation belongs to the realm that invoked the binding.  Keeping the
+ * lookup in one helper prevents a future mutation surface from accidentally
+ * reviving a process-global reconvert target. */
+static void qjs_mark_dom_dirty(JSContext *ctx, void *node, int kind)
+{
+	struct content *content = qjs_get_content_for_ctx(ctx);
+	if (content != NULL)
+		macos9_js_mark_dom_dirty_node(content, node, kind);
 }
 
 /* ---- QuickJS class for element wrappers ---- */
@@ -2956,8 +3045,7 @@ static JSValue qjs_el_setAttribute_data(JSContext *ctx,
 	JS_FreeCString(ctx, val_cstr);
 	if (name_ds && val_ds) {
 		macsurf_dom_element_set_attribute(el, name_ds, val_ds);
-		if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
-				(void *) el, attr_kind);
+		qjs_mark_dom_dirty(ctx, (void *) el, attr_kind);
 	}
 	if (name_ds) macsurf_dom_string_unref(name_ds);
 	if (val_ds)  macsurf_dom_string_unref(val_ds);
@@ -3153,8 +3241,7 @@ static JSValue qjs_el_set_text_content_data(JSContext *ctx,
 			macsurf_dom_node_set_text_content((dom_node *)el, ds);
 		}
 		macsurf_dom_string_unref(ds);
-		if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
-				(void *) el, MACOS9_DOMMUT_TEXTCONTENT);
+		qjs_mark_dom_dirty(ctx, (void *) el, MACOS9_DOMMUT_TEXTCONTENT);
 	}
 	return JS_UNDEFINED;
 }
@@ -3346,8 +3433,7 @@ static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
 		macsurf_dom_node_unref(src_parent);
 	macsurf_dom_node_unref((dom_node *) frag);
 
-	if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
-			(void *) el, MACOS9_DOMMUT_INNERHTML);
+	qjs_mark_dom_dirty(ctx, (void *) el, MACOS9_DOMMUT_INNERHTML);
 	return JS_UNDEFINED;
 }
 
@@ -3712,9 +3798,8 @@ static JSValue qjs_el_get_parent_node_data(JSContext *ctx,
 		JSValueConst this_val, int argc, JSValueConst *argv,
 		int magic, JSValueConst *func_data)
 {
-	dom_element *el;
+	dom_node *node;
 	dom_node *parent = NULL;
-	dom_node_type ntype = 0;
 	(void)this_val; (void)argc; (void)argv; (void)magic;
 	/* fixes1004 - WHICH null?
 	 *
@@ -3727,59 +3812,38 @@ static JSValue qjs_el_get_parent_node_data(JSContext *ctx,
 	 *   node   the wrapper has lost its node (a lifetime bug)
 	 *   parent the append genuinely did not attach (a mutation bug)
 	 *   type   the parent is not an ELEMENT, e.g. a fragment or the
-	 *          document itself, and the ntype != 1 filter below discards a
-	 *          perfectly good parent (a filter bug)
+	 *          document itself, and an element-only wrapper would discard a
+	 *          perfectly good parent (a wrapper-filter bug)
 	 * Guessing a third time is worse than asking. Capped so a page that
 	 * legitimately reads parentNode on detached nodes cannot flood. */
 	{
-		el = (dom_element *)qjs_get_node(this_val);
-		if (el == NULL) {
+		node = qjs_get_node(this_val);
+		if (node == NULL) {
 			if (g_pn_logged < 8) { g_pn_logged++;
 				macsurf_debug_log_write(
 					"LIFE parentNode NULL why=node"); }
 			return JS_NULL;
 		}
-		macsurf_dom_node_get_parent_node((dom_node *)el, &parent);
+		macsurf_dom_node_get_parent_node(node, &parent);
 		if (parent == NULL) {
 			if (g_pn_logged < 8) {
-				/* fixes1109 (#265) -- WHICH node has no parent, and what
-				 * tag is it? el is the wrapper's underlying dom_element,
-				 * the same pointer identity appendChild's own qjs_get_node
-				 * resolves for its child argument -- if a later reconvert
-				 * or GC has freed/reused it, this pointer alone will not
-				 * prove that, but the tag name pins down WHAT was being
-				 * asked about (hiddenscroll's probe div vs something
-				 * else), which the prior bare log line could not. */
+				/* The Node prototype is shared by elements, CharacterData, and
+				 * fragments. qjs_node_brief is explicitly node-typed; calling
+				 * an Element vtable here for a detached fragment is an overflow. */
 				char tagbuf[24];
-				dom_string *tn = NULL;
 				g_pn_logged++;
-				tagbuf[0] = '\0';
-				if (macsurf_dom_element_get_tag_name(el, &tn) == DOM_NO_ERR
-						&& tn != NULL) {
-					const char *ts = dom_string_data(tn);
-					size_t i;
-					for (i = 0; i < sizeof(tagbuf) - 1 && ts[i]; i++)
-						tagbuf[i] = ts[i];
-					tagbuf[i] = '\0';
-					macsurf_dom_string_unref(tn);
-				}
+				qjs_node_brief(node, tagbuf, (int)sizeof tagbuf);
 				macsurf_debug_log_writef(
 					"LIFE parentNode NULL why=parent (not attached) "
-					"el=%p tag=%s", (void *)el, tagbuf);
+					"node=%p type=%s", (void *)node, tagbuf);
 			}
 			return JS_NULL;
 		}
-		macsurf_dom_node_get_node_type(parent, &ntype);
-		if (ntype != 1) {
-			if (g_pn_logged < 8) { g_pn_logged++;
-				macsurf_debug_log_writef(
-					"LIFE parentNode NULL why=type ntype=%d",
-					(int)ntype); }
-			macsurf_dom_node_unref(parent);
-			return JS_NULL;
-		}
 	}
-	return qjs_wrap_element_full(ctx, (dom_element *)parent);
+	/* The getter owns the ref returned by libdom. qjs_wrap_any_node consumes it
+	 * and preserves the native node family: Element, CharacterData,
+	 * DocumentFragment, or the realm's real document object. */
+	return qjs_wrap_any_node(ctx, parent);
 }
 
 /* ---- nextElementSibling ---- */
@@ -3844,9 +3908,9 @@ static JSValue qjs_el_get_prev_sibling_data(JSContext *ctx,
  *          "nothing should be listening" -- but NetSurf runs its whole script
  *          engine from that default action.  Architectural fix.
  *   WRONG_DOCUMENT_ERR + childOwner != nodeOwner
- *       -> document identity: g_qjs_document is a process-global set per
- *          js_newthread, so the last thread created wins for every realm.
- *          State fix.
+ *       -> a node escaped its realm.  The per-context owner record now makes
+ *          each DOM binding resolve its own document rather than a last-wins
+ *          process-global pointer.
  *   HIERARCHY_REQUEST_ERR
  *       -> neither.
  * Logging only the exception CODE would still need the cause inferred from a
@@ -3914,8 +3978,7 @@ static JSValue qjs_el_append_child_data(JSContext *ctx,
 		qjs_node_brief((dom_node *)child_el, cb, (int)sizeof cb);
 		qjs_mut_audit("appendChild", (dom_node *)el, "<-", cb);
 	}
-	if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
-			(void *) el, MACOS9_DOMMUT_APPENDCHILD);
+	qjs_mark_dom_dirty(ctx, (void *) el, MACOS9_DOMMUT_APPENDCHILD);
 	return JS_DupValue(ctx, argv[0]);
 }
 
@@ -3951,8 +4014,7 @@ static JSValue qjs_el_remove_child_data(JSContext *ctx,
 		qjs_node_brief((dom_node *)el, pb, (int)sizeof pb);
 		macsurf_debug_log_writef("LIFE rm %s -> %s", pb, cb);
 	}
-	if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
-			(void *) el, MACOS9_DOMMUT_REMOVECHILD);
+	qjs_mark_dom_dirty(ctx, (void *) el, MACOS9_DOMMUT_REMOVECHILD);
 	return JS_DupValue(ctx, argv[0]);
 }
 
@@ -3989,8 +4051,7 @@ static JSValue qjs_el_insert_before_data(JSContext *ctx,
 		qjs_node_brief((dom_node *)new_el, cb, (int)sizeof cb);
 		qjs_mut_audit("insertBefore", (dom_node *)el, "<-", cb);
 	}
-	if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
-			(void *) el, MACOS9_DOMMUT_INSERTBEFORE);
+	qjs_mark_dom_dirty(ctx, (void *) el, MACOS9_DOMMUT_INSERTBEFORE);
 	return JS_DupValue(ctx, argv[0]);
 }
 
@@ -4023,8 +4084,7 @@ static JSValue qjs_el_remove_attribute_data(JSContext *ctx,
 		/* fixes843b - this real DOM mutation never marked dirty, so
 		 * el.removeAttribute(...) (a common show/hide idiom) never
 		 * triggered a repaint. Match setAttribute's behaviour. */
-		if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
-				(void *) el, rm_kind);
+		qjs_mark_dom_dirty(ctx, (void *) el, rm_kind);
 		macsurf_dom_string_unref(name_ds);
 	}
 	return JS_UNDEFINED;
@@ -4661,24 +4721,17 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue proto)
 		"};"
 		"this.__ctx2d['2d']=c;return c;"
 		"};"
-		/* fixes1245 - toDataURL/toBlob must never throw or return
-		 * undefined (real callers assume a string / async callback
-		 * unconditionally). No real pixels exist to encode, so both
-		 * honestly represent "blank": a well-formed, valid 1x1
-		 * transparent PNG data URI (a real, standard placeholder image
-		 * used across the web -- not a fabricated format) rather than
-		 * inventing pixel content that was never drawn. */
+		/* toDataURL has a valid encoded fallback. There is no Blob byte store,
+		 * so toBlob reports conversion failure with null rather than minting a
+		 * zero-byte object which claims to contain the canvas. */
 		"P.toDataURL=function(){"
 		"return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
 			"CAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';"
 		"};"
 		"P.toBlob=function(cb,mimeType){"
 		"if(typeof cb!=='function')return;"
-		"try{setTimeout(function(){"
-			"var t=(mimeType&&/^image\\//.test(mimeType))?mimeType:"
-				"'image/png';"
-			"cb(new Blob([],{type:t}));"
-		"},0);}catch(e){try{cb(null);}catch(_){}}"
+		"try{setTimeout(function(){cb(null);},0);}"
+		"catch(e){try{cb(null);}catch(_){}}"
 		"};"
 		/* event handling */
 		/* fixes989 - addEventListener / removeEventListener are NATIVE
@@ -5087,14 +5140,15 @@ static void qjs_install_node_traversal(JSContext *ctx, JSValue node_proto)
 static dom_event_listener *g_qjs_dom_listener = NULL;
 
 /* The callback needs a JSContext and only has the wrapper entry's runtime.
- * Resolve it through the live-heap list rather than g_heap: with an iframe
- * there are several runtimes and g_heap is merely the newest. */
+ * Resolve it through the realm records rather than g_heap: with an iframe
+ * there are several runtimes and a replacement context can exist before its
+ * heap's current-context field is swapped. */
 static JSContext *qjs_ctx_for_runtime(JSRuntime *rt)
 {
-	struct jsheap *h;
+	struct qjs_realm_owner *owner;
 	if (rt == NULL) return NULL;
-	for (h = g_heap_list; h != NULL; h = h->next) {
-		if (h->rt == rt) return h->ctx;
+	for (owner = g_qjs_realm_owners; owner != NULL; owner = owner->next) {
+		if (JS_GetRuntime(owner->ctx) == rt) return owner->ctx;
 	}
 	return NULL;
 }
@@ -5416,9 +5470,9 @@ static const char *qjs_css_display_name(uint8_t v)
  * variant does call real geometry directly. Still not a blanket flip: every
  * other m.facebook.com page keeps the default `undefined` policy pending
  * real incremental layout (see CLAUDE.md). */
-static int qjs_geometry_scope_allowed(void)
+static int qjs_geometry_scope_allowed(JSContext *ctx)
 {
-	struct content *c = g_qjs_content;
+	struct content *c = qjs_get_content_for_ctx(ctx);
 	const char *url;
 	const char *path;
 
@@ -5441,15 +5495,16 @@ static int qjs_geometry_scope_allowed(void)
  *
  * This is the whole difference between a browser that a widget can lay itself
  * out against and one that hands back nothing and gets laid out wrong. */
-static void qjs_geometry_flush(void)
+static void qjs_geometry_flush(JSContext *ctx)
 {
 	extern int macos9_reconvert_flush_now(void *cv);
 	extern int macos9_reconvert_pending_for(void *cv);
 	extern double macos9_micros(void);
+	struct content *content = qjs_get_content_for_ctx(ctx);
 	double t0;
 
-	if (!MACSURF_JS_GEOMETRY && !qjs_geometry_scope_allowed()) return;
-	if (g_qjs_content == NULL) return;
+	if (!MACSURF_JS_GEOMETRY && !qjs_geometry_scope_allowed(ctx)) return;
+	if (content == NULL) return;
 	/* fixes1077 - count and time every geometry entry. This is the number
 	 * that says whether answering is affordable; before it existed the
 	 * 13-second cost of enabling geometry could only be inferred from the
@@ -5461,14 +5516,14 @@ static void qjs_geometry_flush(void)
 	 * settled, answer from the current box tree without paying for
 	 * another reconvert. Content-keyed so an iframe runtime's settle
 	 * cannot silence the parent's flushes. */
-	if (g_geom_settled && g_geom_settled_c == (void *) g_qjs_content)
+	if (g_geom_settled && g_geom_settled_c == (void *) content)
 		return;
 
 	/* Nothing pending: the box tree already answers for the current DOM.
 	 * Settle without even paying for the flush call. */
-	if (!macos9_reconvert_pending_for(g_qjs_content)) {
+	if (!macos9_reconvert_pending_for(content)) {
 		g_geom_settled = 1;
-		g_geom_settled_c = (void *) g_qjs_content;
+		g_geom_settled_c = (void *) content;
 		return;
 	}
 
@@ -5478,16 +5533,17 @@ static void qjs_geometry_flush(void)
 	 * leave the flag 0 so the next read retries, preserving today's
 	 * retry semantics. */
 	t0 = macos9_micros();
-	if (macos9_reconvert_flush_now((void *) g_qjs_content)) {
+	if (macos9_reconvert_flush_now((void *) content)) {
 		g_geom_settled = 1;
-		g_geom_settled_c = (void *) g_qjs_content;
+		g_geom_settled_c = (void *) content;
 	}
 	g_geom_us += (long)(macos9_micros() - t0);
 }
 
-static int qjs_geometry_settled(void)
+static int qjs_geometry_settled(JSContext *ctx)
 {
 	extern int macsurf_reconvert_in_progress;
+	struct content *content = qjs_get_content_for_ctx(ctx);
 	/* fixes1077 - CACHE THE LIVENESS SCAN.
 	 *
 	 * macos9_content_is_live() walks a 256-entry table, and this predicate
@@ -5505,15 +5561,15 @@ static int qjs_geometry_settled(void)
 	static void *cached_c = NULL;
 	static int cached_live = 0;
 
-	if (!MACSURF_JS_GEOMETRY && !qjs_geometry_scope_allowed()) return 0;
-	if (g_qjs_content == NULL) return 0;
+	if (!MACSURF_JS_GEOMETRY && !qjs_geometry_scope_allowed(ctx)) return 0;
+	if (content == NULL) return 0;
 	if (macsurf_reconvert_in_progress) return 0;
 
 	if (cached_epoch != macos9_content_registry_epoch ||
-	    cached_c != (void *)g_qjs_content) {
+	    cached_c != (void *)content) {
 		cached_epoch = macos9_content_registry_epoch;
-		cached_c = (void *)g_qjs_content;
-		cached_live = macos9_content_is_live(g_qjs_content);
+		cached_c = (void *)content;
+		cached_live = macos9_content_is_live(content);
 	}
 	if (cached_live == 0) return 0;
 
@@ -5540,11 +5596,11 @@ static int qjs_geometry_settled(void)
 	 * prevent, and the epoch cache cannot report a freed content live. */
 	{
 		extern int macsurf_html_tree_stable(struct content *c);
-		if (!macsurf_html_tree_stable(g_qjs_content)) {
+		if (!macsurf_html_tree_stable(content)) {
 			g_geom_unstable++;
 			return 0;
 		}
-		if (g_qjs_content->status == CONTENT_STATUS_DONE)
+		if (content->status == CONTENT_STATUS_DONE)
 			g_geom_at_done++;
 		else
 			g_geom_at_ready++;
@@ -5558,7 +5614,7 @@ static int qjs_geometry_settled(void)
  * degrade safely (see qjs_geometry_settled), so a stale-but-mapped box yields
  * wrong numbers rather than a fault; an unmapped one is rejected by
  * macsurf_ptr_is_heap. */
-static struct box *qjs_box_for(JSValueConst v)
+static struct box *qjs_box_for(JSContext *ctx, JSValueConst v)
 {
 	dom_node *n;
 	struct box *b;
@@ -5584,7 +5640,7 @@ static struct box *qjs_box_for(JSValueConst v)
 	 * A script measuring during teardown or mid-reconvert is not exotic: it
 	 * is what a resize handler, a scroll handler or an IntersectionObserver
 	 * callback does, and those fire exactly when the tree is churning. */
-	if (!qjs_geometry_settled()) return NULL;
+	if (!qjs_geometry_settled(ctx)) return NULL;
 
 	n = qjs_get_node(v);
 	if (n == NULL) return NULL;
@@ -5660,8 +5716,8 @@ static JSValue qjs_el_get_rect(JSContext *ctx, JSValueConst this_val,
 	int x = 0, y = 0, w = 0, h = 0;
 	(void)this_val; (void)argc; (void)argv; (void)magic;
 
-	qjs_geometry_flush();	/* fixes1073 (#265) */
-	b = qjs_box_for(this_val);
+	qjs_geometry_flush(ctx);	/* fixes1073 (#265) */
+	b = qjs_box_for(ctx, this_val);
 	if (b != NULL) {
 		qjs_box_origin(b, &x, &y);
 		/* Border-box, matching getBoundingClientRect: content plus padding
@@ -5736,6 +5792,7 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 		int argc, JSValueConst *argv, int magic, JSValueConst *func_data)
 {
 	struct box *b;
+	struct content *content;
 	int v = 0;
 	int bx = 0, by = 0, px = 0, py = 0;
 	(void)this_val; (void)argc; (void)argv;
@@ -5748,15 +5805,17 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 	 * width/height and the damage outlived the measurement. Once settled, a
 	 * missing box really does mean "not rendered" and 0 is the true answer
 	 * (jQuery :hidden relies on it). */
-	qjs_geometry_flush();	/* fixes1073 (#265) */
-	if (!qjs_geometry_settled()) {
+	qjs_geometry_flush(ctx);	/* fixes1073 (#265) */
+	if (!qjs_geometry_settled(ctx)) {
 		g_geom_undef++;			/* fixes1087 */
 		qjs_geom_audit(qjs_metric_name(magic), this_val,
 				"undefined (unsettled)");
 		return JS_UNDEFINED;
 	}
+	content = qjs_get_content_for_ctx(ctx);
+	if (content == NULL) return JS_UNDEFINED;
 
-	b = qjs_box_for(this_val);
+	b = qjs_box_for(ctx, this_val);
 	if (b == NULL) {
 		/* fixes1016 - no box while a mutation awaits its reconvert is
 		 * NOT "hidden", it is "not measured yet": a real browser reflows
@@ -5767,7 +5826,7 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 		 * it measured its just-inserted slides, got 0, and wrote it
 		 * back as inline sizes. */
 		extern int macos9_reconvert_pending_for(void *cv);
-		if (macos9_reconvert_pending_for(g_qjs_content)) {
+		if (macos9_reconvert_pending_for(content)) {
 			g_geom_undef++;		/* fixes1087 */
 			qjs_geom_audit(qjs_metric_name(magic), this_val,
 					"undefined (mutation pending)");
@@ -5789,7 +5848,7 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 		 *
 		 * Harness Test 43 asserts exactly this and caught the first cut of
 		 * this change fabricating a value in the unsettled window. */
-		if (g_qjs_content->status != CONTENT_STATUS_DONE) {
+		if (content->status != CONTENT_STATUS_DONE) {
 			g_geom_undef++;
 			qjs_geom_audit(qjs_metric_name(magic), this_val,
 					"undefined (no box, not DONE)");
@@ -5918,10 +5977,10 @@ static JSValue qjs_get_computed_style(JSContext *ctx, JSValueConst this_val,
 	struct box *b = NULL;
 	(void)this_val;
 
-	qjs_geometry_flush();	/* fixes1073 (#265) */
+	qjs_geometry_flush(ctx);	/* fixes1073 (#265) */
 	out = JS_NewObject(ctx);
 	if (argc >= 1 && JS_IsObject(argv[0])) {
-		b = qjs_box_for(argv[0]);
+		b = qjs_box_for(ctx, argv[0]);
 	}
 	/* fixes1015 - what did getComputedStyle actually answer? */
 	if (argc >= 1 && JS_IsObject(argv[0])) {
@@ -6963,8 +7022,7 @@ void macsurf_qjs_bind_inline_handlers(struct dom_node *node)
 	int i;
 	int bound = 0;
 
-	if (node == NULL || g_heap == NULL) return;
-	ctx = g_heap->ctx;
+	ctx = qjs_ctx_for_dom_node(node);
 	if (ctx == NULL) return;
 
 	for (i = 0; i < n_names; i++) {
@@ -7102,8 +7160,7 @@ static JSValue qjs_text_set_data_data(JSContext *ctx, JSValueConst this_val,
 	if (v == NULL) return JS_UNDEFINED;
 	macsurf_dom_characterdata_set_data_s(n, v);
 	JS_FreeCString(ctx, v);
-	if (g_qjs_content) macos9_js_mark_dom_dirty_node(g_qjs_content,
-			(void *) n, MACOS9_DOMMUT_CHARDATA);
+	qjs_mark_dom_dirty(ctx, (void *) n, MACOS9_DOMMUT_CHARDATA);
 	return JS_UNDEFINED;
 }
 
@@ -7395,6 +7452,20 @@ static JSValue qjs_wrap_any_node(JSContext *ctx, dom_node *node)
 	}
 
 	switch ((int) ntype) {
+	case 9: {       /* Document: return the realm's existing JS document. */
+		dom_document *document = qjs_document_for_ctx(ctx);
+		JSValue global;
+		JSValue result;
+		if (document == NULL || node != (dom_node *)document) {
+			macsurf_dom_node_unref(node);
+			return JS_NULL;
+		}
+		global = JS_GetGlobalObject(ctx);
+		result = JS_GetPropertyStr(ctx, global, "document");
+		JS_FreeValue(ctx, global);
+		macsurf_dom_node_unref(node);
+		return result;
+	}
 	case 1:		/* element */
 		return qjs_wrap_element_full(ctx, (dom_element *) node);
 	case 3:		/* text */
@@ -7404,8 +7475,8 @@ static JSValue qjs_wrap_any_node(JSContext *ctx, dom_node *node)
 	case 11:	/* DocumentFragment */
 		return qjs_wrap_fragment(ctx, (dom_document_fragment *) node);
 	default:
-		/* document (9), doctype (10), attr (2), PI (7): no wrapper of the
-		 * right shape exists, and guessing one is the fixes846 crash. */
+		/* doctype (10), attr (2), PI (7): no wrapper of the right shape
+		 * exists, and guessing one is the fixes846 crash. */
 		macsurf_dom_node_unref(node);
 		return JS_NULL;
 	}
@@ -9745,21 +9816,13 @@ qjs_storage_load(JSContext *ctx, JSValueConst this_val,
 
 	(void) this_val; (void) argc; (void) argv;
 
-	/* fixes1199 - g_qjs_content is a raw pointer with no lifetime guarantee
-	 * (same hazard qjs_geometry_settled() already guards against via
-	 * macos9_content_is_live()). During realm construction for a nested
-	 * document (js_newthread -> qjs_build_context -> register_browser_globals
-	 * -> the _Storage shim's synchronous __storageLoad() call), the new
-	 * realm's own content has not been wired via qjs_set_content() yet, so
-	 * this reads whatever content was live last -- which can already be
-	 * freed. c->llcache on a freed content can still read back non-NULL
-	 * garbage, so the old check let a dangling c through; content_get_url()
-	 * or nsurl_access() on it then hands macsurf_storage_fname() a garbage
-	 * or NULL url pointer it has no way to detect. */
-	c = qjs_get_content();
+	/* Construction-time storage must use the owner already registered for
+	 * this exact context.  The content is supplied to qjs_build_context()
+	 * before global setup, so an iframe cannot read a prior realm's origin. */
+	c = qjs_get_content_for_ctx(ctx);
 	if (c == NULL) return JS_NULL;
 	if (!macos9_content_is_live(c)) {
-		MS_LOG("LIFE fixes1199: storage load caught stale g_qjs_content");
+		MS_LOG("LIFE storage load caught stale realm content");
 		return JS_NULL;
 	}
 	if (c->llcache == NULL) return JS_NULL;
@@ -9818,8 +9881,8 @@ qjs_storage_save(JSContext *ctx, JSValueConst this_val,
 	s = JS_ToCString(ctx, argv[0]);
 	if (s == NULL) return JS_UNDEFINED;
 
-	/* fixes1199 - see the matching guard in qjs_storage_load(). */
-	c = qjs_get_content();
+	/* See qjs_storage_load(): this is the invoking realm's content. */
+	c = qjs_get_content_for_ctx(ctx);
 	if (c == NULL || !macos9_content_is_live(c) || c->llcache == NULL) {
 		JS_FreeCString(ctx, s);
 		return JS_UNDEFINED;
@@ -10898,12 +10961,10 @@ static void register_browser_globals(JSContext *ctx)
 
 	/* --- FormData ---
 	 * Ordered [key,value,filename] triples, not a spec-perfect Map --
-	 * enough for XenForo's editor-compiled.js attach path and any script
-	 * that just constructs/populates/reads one. value may be a string or
-	 * a Blob/File-like object (see the capability-detection block further
-	 * down -- Blob/File already exist there). filename is only meaningful
-	 * when value is a Blob/File; append/set's 3rd arg lets a caller name
-	 * it explicitly. Iteration order matches insertion order (spec). */
+	 * enough for a script that constructs/populates/reads text entries.
+	 * Blob/File are deliberately absent until byte semantics exist; callers
+	 * may still supply an arbitrary value and its optional filename. Iteration
+	 * order matches insertion order (spec). */
 	macsurf_qjs__safe_eval(ctx,
 		"function FormData(form){"
 			"this._k=[];this._v=[];this._f=[];"
@@ -11753,67 +11814,11 @@ static void register_browser_globals(JSContext *ctx)
 		"}"
 		"})(this);");
 
-	/* --- capability-detection stubs (WebSocket, indexedDB, Notification,
-	 *     crypto.getRandomValues, caches, Blob, File, FileReader,
-	 *     URL.createObjectURL) ---
-	 *
-	 * fixes882: MediaSource was listed here and is NOT defined by the block
-	 * below -- the name appears nowhere else in this file, so `MediaSource` is
-	 * simply undefined at runtime. The only media-adjacent things installed are
-	 * the bare HTMLVideoElement/HTMLAudioElement/HTMLMediaElement/
-	 * HTMLSourceElement constructors further down, which exist purely so
-	 * `typeof` checks do not throw. Listing a stub that was never written is
-	 * worse than listing nothing: it reads as "handled" to anyone grepping. */
-	macsurf_qjs__safe_eval(ctx,
-		"(function(g){"
-		"var rp=function(v){return g.Promise?g.Promise.resolve(v)"
-		":{then:function(cb){try{cb(v);}catch(e){}return this;},"
-		"catch:function(){return this;}};};"
-		"var soon=function(fn){if(typeof g.setTimeout==='function')g.setTimeout(fn,0);else{try{fn();}catch(e){}}};"
-		"if(typeof g.WebSocket==='undefined'){"
-		"var WS=function(url,protocols){"
-		"var self=this;self.url=url;self.readyState=0;self.protocol='';"
-		"self.binaryType='blob';self.bufferedAmount=0;self.extensions='';"
-		"self.onopen=null;self.onmessage=null;self.onclose=null;self.onerror=null;"
-		"self.send=function(){return false;};"
-		"self.close=function(){self.readyState=3;if(self.onclose){try{self.onclose({code:1000,reason:'',wasClean:true});}catch(e){}}};"
-		"self.addEventListener=function(t,f){if(t==='open')self.onopen=f;else if(t==='message')self.onmessage=f;else if(t==='close')self.onclose=f;else if(t==='error')self.onerror=f;};"
-		"self.removeEventListener=function(){};"
-		"soon(function(){self.readyState=3;if(self.onerror){try{self.onerror({type:'error'});}catch(e){}};if(self.onclose){try{self.onclose({code:1006,reason:'',wasClean:false});}catch(e){}}});"
-		"};"
-		"WS.CONNECTING=0;WS.OPEN=1;WS.CLOSING=2;WS.CLOSED=3;"
-		"g.WebSocket=WS;"
-		"}"
-		"if(typeof g.indexedDB==='undefined'){"
-		"var mkreq=function(){return{result:undefined,error:{name:'UnknownError',message:'unsupported'},onsuccess:null,onerror:null,onupgradeneeded:null,readyState:'pending'};};"
-		"g.indexedDB={"
-		"open:function(){var r=mkreq();soon(function(){r.readyState='done';if(r.onerror){try{r.onerror({target:r});}catch(e){}}});return r;},"
-		"deleteDatabase:function(){var r=mkreq();soon(function(){if(r.onsuccess){try{r.onsuccess({target:r});}catch(e){}}});return r;},"
-		"databases:function(){return rp([]);},"
-		"cmp:function(a,b){return a<b?-1:(a>b?1:0);}"
-		"};"
-		"g.IDBKeyRange={bound:function(){return{};},only:function(){return{};},lowerBound:function(){return{};},upperBound:function(){return{};}};}"
-		"if(typeof g.Notification==='undefined'){"
-		"var N=function(title,opts){this.title=title;this.body=(opts&&opts.body)||'';this.onclick=null;this.onclose=null;this.close=function(){};};"
-		"N.permission='denied';"
-		"N.requestPermission=function(cb){if(cb){try{cb('denied');}catch(e){}}return rp('denied');};"
-		"g.Notification=N;"
-		"}"
-		"if(typeof g.caches==='undefined'){"
-		"var emptyCache={match:function(){return rp(undefined);},matchAll:function(){return rp([]);},add:function(){return rp(undefined);},addAll:function(){return rp(undefined);},put:function(){return rp(undefined);},delete:function(){return rp(false);},keys:function(){return rp([]);}};"
-		"g.caches={open:function(){return rp(emptyCache);},match:function(){return rp(undefined);},has:function(){return rp(false);},delete:function(){return rp(false);},keys:function(){return rp([]);}};"
-		"}"
-		"if(typeof g.Blob==='undefined'){g.Blob=function(parts,opts){this.size=0;this.type=(opts&&opts.type)||'';this.slice=function(){return new g.Blob([]);};};}"
-		"if(typeof g.File==='undefined'){g.File=function(parts,name,opts){this.name=name||'';this.size=0;this.type=(opts&&opts.type)||'';this.lastModified=0;};}"
-		"if(typeof g.FileReader==='undefined'){"
-		"var FR=function(){var s=this;s.result=null;s.error=null;s.readyState=0;s.onload=null;s.onerror=null;s.onloadend=null;s.onprogress=null;"
-		"s.readAsText=function(){s.readyState=2;if(s.onload){try{s.onload({target:s});}catch(e){}}if(s.onloadend){try{s.onloadend({target:s});}catch(e){}}};"
-		"s.readAsDataURL=s.readAsText;s.readAsArrayBuffer=s.readAsText;s.readAsBinaryString=s.readAsText;s.abort=function(){};"
-		"s.addEventListener=function(){};s.removeEventListener=function(){};};"
-		"g.FileReader=FR;"
-		"}"
-		"if(typeof g.URL!=='undefined'&&typeof g.URL.createObjectURL!=='function'){g.URL.createObjectURL=function(){return 'blob:macsurf/0';};g.URL.revokeObjectURL=function(){};}"
-		"})(this);");
+	/* Do not advertise a browser subsystem until it has a real backend.
+	 * IndexedDB, Cache Storage, WebSocket, Blob/File/FileReader, object URLs,
+	 * and Notifications formerly returned synthetic success-like objects. That
+	 * makes feature detection choose a broken path. Their globals stay absent
+	 * until they can provide storage, transport, or byte semantics. */
 
 	/* --- DOM constructor family stubs --- */
 	macsurf_qjs__safe_eval(ctx,
@@ -13449,11 +13454,20 @@ static void qjs_promise_rejection_tracker(JSContext *ctx, JSValueConst promise,
 	if (msg) JS_FreeCString(ctx, msg);
 }
 
-static JSContext *qjs_build_context(struct jsheap *heap)
+static JSContext *qjs_build_context(struct jsheap *heap,
+		dom_document *document, struct content *content)
 {
 	JSContext *ctx;
 	ctx = JS_NewContextRaw(heap->rt);
 	if (ctx == NULL) return NULL;
+	/* This registration precedes every intrinsic/global install.  Some global
+	 * setup synchronously calls native code (__storageLoad), so wiring owner
+	 * state after qjs_build_context returns would still let it see another
+	 * realm during navigation. */
+	if (!qjs_owner_register(ctx, heap, document, content)) {
+		JS_FreeContext(ctx);
+		return NULL;
+	}
 	MS_LOG("qjs intr: raw ctx ok");
 	MS_LOG("qjs intr: BaseObjects"); JS_AddIntrinsicBaseObjects(ctx);
 	MS_LOG("qjs intr: Date");        JS_AddIntrinsicDate(ctx);
@@ -13921,7 +13935,7 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 	 * the debug log's LAST "qjs intr: X" line before a crash names the exact
 	 * intrinsic that NULL-calls.  Equivalent to JS_NewContext (which is
 	 * literally JS_NewContextRaw followed by that same chain). */
-	heap->ctx = qjs_build_context(heap);
+	heap->ctx = qjs_build_context(heap, NULL, NULL);
 	if (heap->ctx == NULL) {
 		JS_FreeRuntime(heap->rt);
 		free(heap);
@@ -13983,6 +13997,7 @@ void js_destroyheap(struct jsheap *heap)
 		macos9_js_fetch_flush(heap->ctx);
 	}
 	if (heap->ctx != NULL) {
+		qjs_owner_unregister(heap->ctx);
 		JS_FreeContext(heap->ctx);
 		/* fixes888 (#304) - same rule as js_newthread: a freed context
 		 * pointer must never stay visible on g_heap_list. This heap is not
@@ -14020,6 +14035,7 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 		struct jsthread **out_thread)
 {
 	struct jsthread *thread;
+	html_content *htmlc = NULL;
 	if (out_thread == NULL) return NSERROR_BAD_PARAMETER;
 	*out_thread = NULL;
 	if (heap == NULL || heap->ctx == NULL) return NSERROR_BAD_PARAMETER;
@@ -14036,6 +14052,7 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 	 * page's timers (frees their duped callback JSValues against the OLD
 	 * context) BEFORE freeing it, or those refs dangle and run_timers
 	 * JS_Calls into freed heap. */
+	if (doc_priv != NULL) htmlc = (html_content *)doc_priv;
 	if (doc_priv != NULL && heap->ctx != NULL) {
 		JSContext *fresh;
 		qjs_flush_timers(heap->ctx);
@@ -14045,8 +14062,10 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 		 * response that arrives after navigation would JS_Call into
 		 * freed heap from xhr_deliver(). */
 		macos9_js_fetch_flush(heap->ctx);
-		fresh = qjs_build_context(heap);
+		fresh = qjs_build_context(heap, htmlc->document,
+				(struct content *)htmlc);
 		if (fresh != NULL) {
+			qjs_owner_unregister(heap->ctx);
 			JS_FreeContext(heap->ctx);
 			/* fixes888 (#304) - do NOT leave a freed pointer visible.
 			 *
@@ -14091,7 +14110,6 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 		/* doc_priv is html_content* - extract dom_document*.
 		 * html_content is defined in content/handlers/html/private.h;
 		 * same access pattern as macsurf_js.c (Duktape). */
-		html_content *htmlc = (html_content *)doc_priv;
 		qjs_set_document(heap, htmlc->document);
 		qjs_set_content(heap, (struct content *)htmlc);
 		/* Re-wire getElementById/querySelectorAll with real document now */
