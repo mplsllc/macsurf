@@ -543,6 +543,14 @@ stub_body_for(const struct stub_fetch_ctx *ctx,
 				*mime_out = "image/jpeg";
 			} else if (strncmp(ctx->path, "image/gif", 9) == 0) {
 				*mime_out = "image/gif";
+			/* fixes1291 (#167) - image/svg+xml data: URLs (inline icon
+			 * sprites, ~93 in one hardware Facebook session) had no
+			 * branch here and fell through to the text/plain default,
+			 * so hlcache rejected every one with UnacceptableType
+			 * before the registered image/svg+xml handler
+			 * (macos9_svg_src_handler, fixes578b) ever saw them. */
+			} else if (strncmp(ctx->path, "image/svg+xml", 13) == 0) {
+				*mime_out = "image/svg+xml";
 			} else {
 				*mime_out = "text/plain";
 			}
