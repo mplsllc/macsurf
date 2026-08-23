@@ -3558,6 +3558,13 @@ static void html_reconvert_done(html_content *c, bool success)
 	macsurf_debug_log_writef("LIFE reconvert in_progress=0 seq=%ld (done-ok)",
 			(long) macsurf_reconvert_seq);
 	macsurf_debug_log_reconv_flush(0);
+	/* fixes1288 (#167) - relink can retire the final in-flight duplicate.
+	 * Its handle is gone, so no later object callback exists to notice that
+	 * active reached zero.  Complete the same READY->DONE transition here. */
+	if (c->base.active == 0 &&
+			c->base.status == CONTENT_STATUS_READY) {
+		(void) html_proceed_to_done(c);
+	}
 	html_pagemap_dump(c, "reconvert"); /* fixes1015 */
 	html_slider_probe(c, "reconvert"); /* fixes1093 */
 

@@ -4765,6 +4765,7 @@ int main(int argc, char **argv)
 			fprintf(stderr, "FAIL: Test 37 calloc handle\n"); return 1;
 		}
 		bg->next = NULL;
+		bg->active_counted = true;
 		htmlc.object_list = bg;
 		htmlc.num_objects = 1;
 		htmlc.aborted = false;
@@ -10877,6 +10878,45 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 90 PASS: Facebook's loader names are page-owned "
 			"in a fresh browser realm ===\n");
 #endif /* !MACSURF_JS_FB_LOADER_TRAP */
+
+	/* --- Test 91: retiring an in-flight object repays base.active (#167) -- */
+	fprintf(stderr, "\n=== Test 91: in-flight object retirement balances "
+			"the page load counter (fixes1288) ===\n");
+	{
+		struct content_html_object *retired;
+		struct content_html_object *saved_list = htmlc.object_list;
+		unsigned int saved_n = htmlc.num_objects;
+		unsigned int saved_active = htmlc.base.active;
+
+		retired = calloc(1, sizeof(*retired));
+		if (retired == NULL) {
+			fprintf(stderr, "FAIL: Test 91 calloc\n");
+			return 1;
+		}
+		retired->parent = (struct content *)&htmlc;
+		retired->active_counted = true;
+		htmlc.object_list = retired;
+		htmlc.num_objects = 1;
+		htmlc.base.active = 1;
+
+		(void) html_object_free_objects(&htmlc);
+		if (htmlc.base.active != 0) {
+			fprintf(stderr, "FAIL: Test 91 retired callback-less object left "
+					"active=%u; READY can never become DONE\n",
+					htmlc.base.active);
+			return 1;
+		}
+		if (htmlc.object_list != NULL) {
+			fprintf(stderr, "FAIL: Test 91 object was not retired\n");
+			return 1;
+		}
+
+		htmlc.object_list = saved_list;
+		htmlc.num_objects = saved_n;
+		htmlc.base.active = saved_active;
+	}
+	fprintf(stderr, "=== Test 91 PASS: releasing an in-flight object cannot "
+			"strand the document in READY ===\n");
 
 	return 0;
 }

@@ -127,9 +127,14 @@ struct content_html_object {
 	 * handle whose retrieval has not yet resolved has no content and
 	 * reports its URL only by walking hlcache's private retrieval ring --
 	 * i.e. exactly the in-flight case adoption exists to catch. Deliberately
-	 * LAST in the struct: only html_fetch_object allocates one of these, so
-	 * appending keeps every existing field at its current offset. */
+	 * Appended with the active ledger below: only html_fetch_object allocates
+	 * one of these, so existing field offsets remain unchanged. */
 	struct nsurl *url;
+	/** fixes1288 - true exactly while this object's fetch owns one count in
+	 * parent->active.  Reconvert can retire an in-flight duplicate and release
+	 * its callback handle; without an explicit ledger that lost callback can
+	 * never repay the count and the document remains READY forever. */
+	bool active_counted;
 };
 
 

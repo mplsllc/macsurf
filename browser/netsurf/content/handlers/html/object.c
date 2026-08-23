@@ -464,7 +464,10 @@ html_object_callback(hlcache_handle *object,
 		break;
 
 	case CONTENT_MSG_DONE:
-		c->base.active--;
+		if (o->active_counted) {
+			c->base.active--;
+			o->active_counted = false;
+		}
 		NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
 
 		html_object_done(box, object, o->background);
@@ -503,7 +506,10 @@ html_object_callback(hlcache_handle *object,
 		/* fixes515: NULL before release. */
 		safe_hlcache_handle_release(&o->content);
 
-		c->base.active--;
+		if (o->active_counted) {
+			c->base.active--;
+			o->active_counted = false;
+		}
 		NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
 
 		html_object_failed(box, c, o->background);
@@ -884,8 +890,9 @@ static bool html_replace_object(struct content_html_object *object, nsurl *url)
 
 	if (object->content != NULL) {
 		/* remove existing object */
-		if (content_get_status(object->content) != CONTENT_STATUS_DONE) {
+		if (object->active_counted) {
 			c->base.active--;
+			object->active_counted = false;
 			NSLOG(netsurf, INFO, "%d fetches active",
 			      c->base.active);
 		}
@@ -912,6 +919,7 @@ static bool html_replace_object(struct content_html_object *object, nsurl *url)
 
 		page->base.status = CONTENT_STATUS_READY;
 	}
+	object->active_counted = true;
 
 	return true;
 }
@@ -1006,8 +1014,9 @@ nserror html_object_abort_objects(html_content *htmlc)
 		default:
 			hlcache_handle_abort(object->content);
 			safe_hlcache_handle_release(&object->content); /* fixes515 */
-			if (object->box != NULL) {
+			if (object->active_counted) {
 				htmlc->base.active--;
+				object->active_counted = false;
 				NSLOG(netsurf, INFO, "%d fetches active",
 				      htmlc->base.active);
 			}
@@ -1049,6 +1058,18 @@ nserror html_object_free_objects(html_content *html)
 {
 	while (html->object_list != NULL) {
 		struct content_html_object *victim = html->object_list;
+
+		/* fixes1288 (#167) - an in-flight object normally repays this
+		 * count in html_object_callback(DONE/ERROR).  Reconvert retirement
+		 * releases the handle below, which disarms that callback; settle the
+		 * explicit ledger first or every retired in-flight duplicate leaves
+		 * the parent permanently load-active. */
+		if (victim->active_counted) {
+			html->base.active--;
+			victim->active_counted = false;
+			NSLOG(netsurf, INFO, "%d fetches active",
+			      html->base.active);
+		}
 
 		if (victim->content != NULL) {
 			NSLOG(netsurf, INFO, "object %p", victim->content);
@@ -1250,7 +1271,7 @@ html_fetch_object(html_content *c,
 			 * html_fetch_object increments exactly when it creates
 			 * an entry WITH a box, so a box-less entry is not
 			 * counted and a boxed one already is. */
-			int was_counted = (dup->box != NULL);
+			int was_counted = dup->active_counted ? 1 : 0;
 
 			if (box == NULL) {
 				/* Redundant speculative fetch. */
@@ -1272,6 +1293,7 @@ html_fetch_object(html_content *c,
 				 * html_object_callback, whose DONE/ERROR arms
 				 * both decrement. Balance it. */
 				c->base.active++;
+				dup->active_counted = true;
 			}
 			if (was_counted) {   /* fixes978 */
 				g_obj_adopt_renode++;
@@ -1334,6 +1356,7 @@ html_fetch_object(html_content *c,
 	c->num_objects++;
 	if (box != NULL) {
 		c->base.active++;
+		object->active_counted = true;
 		NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
 	}
 
