@@ -11677,6 +11677,44 @@ static void register_browser_globals(JSContext *ctx)
 	/* --- DOM constructor family stubs --- */
 	macsurf_qjs__safe_eval(ctx,
 		"(function(g){"
+		/* fixes1277 (#167) - browser objects must carry the browser's
+		 * actual inheritance graph, not merely have similarly named
+		 * globals. Facebook's Hyperion bootstrap walks that graph before
+		 * it instruments the page:
+		 *
+		 *   Node.prototype -> EventTarget.prototype
+		 *   Window.prototype -> EventTarget.prototype
+		 *   XMLHttpRequest.prototype -> EventTarget.prototype
+		 *
+		 * and then verifies that window itself inherits Window.prototype.
+		 * Our DOM constructor family had Node above Object directly, while
+		 * window and XMLHttpRequest had no EventTarget ancestry at all.
+		 * Hyperion correctly rejected that impossible shape with its own
+		 * "Invalid prototype chain" assertion, before application boot.
+		 *
+		 * These are structural API relationships, not a compatibility lie:
+		 * EventTarget is constructible and implements its defined listener
+		 * surface; Window and History are illegal constructors just as they
+		 * are in a browser. Existing native-backed window, DOM-node, and
+		 * XHR methods remain their own properties and continue to win over
+		 * the generic EventTarget fallback. This must run before the WANT
+		 * probe is installed, because that probe deliberately sits above
+		 * the real Window prototype. */
+		"if(typeof g.EventTarget==='undefined'){"
+		"g.EventTarget=function EventTarget(){this.__msEventTargetListeners={};};"
+		"g.EventTarget.prototype.addEventListener=function(t,fn){"
+		"if(typeof fn!=='function')return;"
+		"var k=String(t),m=this.__msEventTargetListeners||(this.__msEventTargetListeners={}),a=m[k]||(m[k]=[]);"
+		"if(a.indexOf(fn)<0)a.push(fn);};"
+		"g.EventTarget.prototype.removeEventListener=function(t,fn){"
+		"var m=this.__msEventTargetListeners,a=m&&m[String(t)],i;if(!a)return;"
+		"for(i=a.length-1;i>=0;i--)if(a[i]===fn)a.splice(i,1);};"
+		"g.EventTarget.prototype.dispatchEvent=function(ev){"
+		"var t=ev&&ev.type,m=this.__msEventTargetListeners,a=t&&m&&m[String(t)],i,copy;"
+		"if(!a)return true;copy=a.slice();"
+		"for(i=0;i<copy.length;i++)copy[i].call(this,ev);"
+		"return !(ev&&ev.defaultPrevented);};"
+		"}"
 		"var names=['Node','Element','CharacterData','Text','Comment','DocumentFragment',"
 		"'HTMLElement','HTMLUnknownElement','HTMLHtmlElement','HTMLHeadElement','HTMLBodyElement',"
 		"'HTMLDivElement','HTMLSpanElement','HTMLParagraphElement','HTMLAnchorElement',"
@@ -11737,6 +11775,8 @@ static void register_browser_globals(JSContext *ctx)
 		 * prototype per node shape in qjs_wrap_element /
 		 * qjs_wrap_text_node / qjs_wrap_fragment. */
 		"if(g.Node){"
+		"if(g.EventTarget&&g.EventTarget.prototype&&g.Node.prototype)"
+			"g.Node.prototype.__proto__=g.EventTarget.prototype;"
 		"if(g.Element&&g.Element.prototype)"
 			"g.Element.prototype.__proto__=g.Node.prototype;"
 		"if(g.CharacterData&&g.CharacterData.prototype)"
@@ -11768,6 +11808,22 @@ static void register_browser_globals(JSContext *ctx)
 			"g.Text.prototype.__proto__=g.CharacterData.prototype;"
 		"if(g.Comment&&g.Comment.prototype)"
 			"g.Comment.prototype.__proto__=g.CharacterData.prototype;"
+		"}"
+		"if(typeof g.Window==='undefined'){"
+		"g.Window=function Window(){throw new TypeError('Illegal constructor');};"
+		"}"
+		"if(g.Window&&g.Window.prototype&&g.EventTarget&&g.EventTarget.prototype){"
+		"try{Object.setPrototypeOf(g.Window.prototype,g.EventTarget.prototype);"
+		"Object.setPrototypeOf(g,g.Window.prototype);}catch(e){}"
+		"}"
+		"if(typeof g.History==='undefined'){"
+		"g.History=function History(){throw new TypeError('Illegal constructor');};"
+		"}"
+		"if(g.History&&g.History.prototype&&g.history){"
+		"try{Object.setPrototypeOf(g.history,g.History.prototype);}catch(e){}"
+		"}"
+		"if(g.XMLHttpRequest&&g.XMLHttpRequest.prototype&&g.EventTarget&&g.EventTarget.prototype){"
+		"try{Object.setPrototypeOf(g.XMLHttpRequest.prototype,g.EventTarget.prototype);}catch(e){}"
 		"}"
 		"})(this);");
 

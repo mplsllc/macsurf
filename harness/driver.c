@@ -10422,11 +10422,76 @@ box_coords(bx, &cx, &cy);
 			"a no-op once the trap holds a real implementation, for "
 			"both __d and requireLazy ===\n");
 
+	/* --- Test 83: Hyperion's browser-prototype validation (#167,
+	 * fixes1277) ------------------------------------------------------
+	 *
+	 * Facebook's real loader bundle installs Hyperion before the app boots.
+	 * Hyperion creates a shadow prototype for Node, Window, XMLHttpRequest,
+	 * and History, then asserts that every child target actually inherits its
+	 * parent's target prototype. MacSurf had the objects but not the standard
+	 * EventTarget ancestry, so Hyperion threw its own "Invalid prototype
+	 * chain" assertion (three times in the hardware log) before the page got
+	 * to the later app code. This is the exact ancestry predicate from the
+	 * recovered b25 loader, kept small enough to make a failed edge explicit.
+	 *
+	 * The test deliberately checks the live global too: the WANT census puts
+	 * an exotic prototype immediately above it, so merely checking
+	 * Window.prototype is a false green unless window still reaches it. */
+	fprintf(stderr, "\n=== Test 83: Facebook Hyperion sees a real browser "
+			"prototype graph (fixes1277) ===\n");
+	{
+		const char *t83 =
+			"(function(){"
+			"function bad(s){throw new Error('ASSERT FAIL: '+s);}"
+			"function shadow(ctor,parent,opts){"
+			"var target=(opts&&opts.targetPrototype)||"
+				"(ctor&&ctor.prototype);"
+			"if(!target&&opts&&opts.sampleObject)"
+				"target=Object.getPrototypeOf(opts.sampleObject);"
+			"if(!target||typeof target!=='object')"
+				"bad('no target prototype for '+(ctor&&ctor.name));"
+			"if(parent){var p=target,want=parent.targetPrototype,found=false;"
+				"while(p&&!found){found=p===want;p=Object.getPrototypeOf(p);}"
+				"if(!found)bad('Invalid prototype chain for '+"
+					"(ctor&&ctor.name));}"
+			"return{targetPrototype:target};"
+			"}"
+			"if(typeof EventTarget!=='function'||typeof Window!=='function'||"
+				"typeof History!=='function')bad('missing browser constructor');"
+			"if(!(window instanceof Window))bad('window is not a Window');"
+			"if(!(history instanceof History))bad('history is not a History');"
+			"if(!(document.head instanceof Node))bad('head is not a Node');"
+			"if(!(new XMLHttpRequest() instanceof EventTarget))"
+				"bad('XMLHttpRequest is not an EventTarget');"
+			"var et=shadow(EventTarget,null,{sampleObject:document.head});"
+			"var no=shadow(Node,et,{sampleObject:document.head});"
+			"var el=shadow(Element,no,{sampleObject:document.head});"
+			"var he=shadow(HTMLElement,el,{sampleObject:document.head});"
+			"shadow(Window,et,{targetPrototype:window});"
+			"shadow(XMLHttpRequest,et,{sampleObject:new XMLHttpRequest()});"
+			"shadow(History,null,{sampleObject:history});"
+			/* Test 81 has already loaded the recovered real Facebook loader.
+			 * Make its Hyperion feature flag true and invoke the actual module,
+			 * not only our compact copy of its predicate. */
+			"globalThis.Env=globalThis.Env||{};globalThis.Env.loadHyperion=true;"
+			"if(typeof require!=='function')bad('real loader has no require');"
+			"require('Hyperion');"
+			"globalThis.__t83ok=he.targetPrototype===HTMLElement.prototype;"
+			"if(!globalThis.__t83ok)bad('HTMLElement target changed');"
+			"})();";
+		unsigned char ok = js_exec(thread, (const unsigned char *)t83,
+				strlen(t83), "driver-t83-hyperion-protos.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 83 -- Facebook Hyperion's exact "
+					"prototype-chain check rejected the browser graph\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 83 PASS: Node, Window, XMLHttpRequest, and "
+			"History carry the prototype graph Hyperion requires ===\n");
+
 	return 0;
 }
-
-
-
 
 
 
