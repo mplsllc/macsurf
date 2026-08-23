@@ -547,52 +547,6 @@ void macsurf_qjs__safe_eval(JSContext *qctx, const char *src)
  * and yet nothing ever finishes rendering." log/info/debug stay as they
  * were: much higher call volume from ordinary pages, lower diagnostic
  * value per line. */
-/* Facebook's ErrorUtils calls console.error with a human-readable summary
- * followed by a structured error record.  JS_ToCString(record) is merely
- * "[object Object]", which hid the original TypeError's message and stack
- * precisely when the app had reached its first render.  Report the normal
- * Error fields without serialising arbitrary page objects (which can invoke
- * hostile getters or loop through cycles); if ErrorUtils nests the original
- * exception in .error, follow that one level too. */
-static void qjs_console_error_detail(JSContext *ctx, JSValueConst value,
-		const char *which, int nested)
-{
-	static const char *const fields[] = { "name", "message", "stack" };
-	int i;
-
-	if (!JS_IsObject(value)) return;
-	for (i = 0; i < (int)(sizeof(fields) / sizeof(fields[0])); i++) {
-		JSValue prop = JS_GetPropertyStr(ctx, value, fields[i]);
-		if (JS_IsException(prop)) {
-			JSValue exc = JS_GetException(ctx);
-			JS_FreeValue(ctx, exc);
-			continue;
-		}
-		if (JS_IsString(prop)) {
-			const char *s = JS_ToCString(ctx, prop);
-			if (s != NULL) {
-				macsurf_debug_log_writef("LIFE console.error %s.%s: %s",
-						which, fields[i], s);
-				JS_FreeCString(ctx, s);
-			}
-		}
-		JS_FreeValue(ctx, prop);
-	}
-	/* ErrorUtils records commonly put the caught exception in .error.  One
-	 * level is enough to expose the real call site and avoids recursively
-	 * walking page-controlled object graphs. */
-	if (!nested) {
-		JSValue inner = JS_GetPropertyStr(ctx, value, "error");
-		if (JS_IsException(inner)) {
-			JSValue exc = JS_GetException(ctx);
-			JS_FreeValue(ctx, exc);
-		} else {
-			qjs_console_error_detail(ctx, inner, "error", 1);
-			JS_FreeValue(ctx, inner);
-		}
-	}
-}
-
 static void qjs_console_emit(JSContext *ctx, const char *prefix,
 		int argc, JSValueConst *argv)
 {
@@ -624,9 +578,6 @@ static void qjs_console_emit(JSContext *ctx, const char *prefix,
 			pos += slen;
 		}
 		if (s) JS_FreeCString(ctx, s);
-		if (strncmp(prefix, "LIFE console.error:", 19) == 0 &&
-				JS_IsObject(argv[i]))
-			qjs_console_error_detail(ctx, argv[i], "record", 0);
 	}
 	buf[pos] = '\0';
 	/* A React component-stack message embeds real newlines; sanitize to
