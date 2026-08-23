@@ -11777,6 +11777,13 @@ static void register_browser_globals(JSContext *ctx)
 		"if(g.Node){"
 		"if(g.EventTarget&&g.EventTarget.prototype&&g.Node.prototype)"
 			"g.Node.prototype.__proto__=g.EventTarget.prototype;"
+		/* Attr is a Node too. Facebook Hyperion reaches this edge immediately
+		 * after validating Node -> EventTarget: it creates an Attr shadow
+		 * prototype with the Node shadow as its parent. Leaving Attr directly
+		 * below Object is the last "Invalid prototype chain" assertion from
+		 * the fixes1277 hardware run. */
+		"if(g.Attr&&g.Attr.prototype)"
+			"g.Attr.prototype.__proto__=g.Node.prototype;"
 		"if(g.Element&&g.Element.prototype)"
 			"g.Element.prototype.__proto__=g.Node.prototype;"
 		"if(g.CharacterData&&g.CharacterData.prototype)"

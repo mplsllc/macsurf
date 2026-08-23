@@ -10465,6 +10465,7 @@ box_coords(bx, &cx, &cy);
 				"bad('XMLHttpRequest is not an EventTarget');"
 			"var et=shadow(EventTarget,null,{sampleObject:document.head});"
 			"var no=shadow(Node,et,{sampleObject:document.head});"
+			"shadow(Attr,no,{nodeType:document.ATTRIBUTE_NODE});"
 			"var el=shadow(Element,no,{sampleObject:document.head});"
 			"var he=shadow(HTMLElement,el,{sampleObject:document.head});"
 			"shadow(Window,et,{targetPrototype:window});"
@@ -10492,6 +10493,5 @@ box_coords(bx, &cx, &cy);
 
 	return 0;
 }
-
 
 
