@@ -15579,6 +15579,7 @@ unsigned char js_fire_window_load(struct jsthread *thread, struct dom_document *
 	/* fixes1013 - one line per page saying whether the JS actually ran and
 	 * wired anything up. See macsurf_qjs_page_js_summary. */
 	macsurf_qjs_page_js_summary();
+	macsurf_qjs_emit_fb_boot(thread->ctx);
 	return 1;
 }
 

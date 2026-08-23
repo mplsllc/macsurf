@@ -133,6 +133,7 @@ void macsurf_qjs_wrap_stats(long *wraps, long *hcompiles, long *hbytes);
 void macsurf_qjs_perf_totals(long *evals, long *compile_us, long *run_us,
 		long *gc_us, long *gc_runs, int *gc_armed);
 void macsurf_qjs_emit_js_profile(void);
+void macsurf_qjs_emit_fb_boot(struct JSContext *ctx);
 void macsurf_qjs_audit_reset(void);
 void macsurf_qjs_page_js_summary(void);
 
