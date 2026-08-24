@@ -36,6 +36,7 @@
 extern long macsurf__decoded_img_bytes_current;
 extern void macos9_image_finish_rgba_bitmap(void *bitmap,
 		unsigned char *mask, int mask_rowbytes, bool has_transparency);
+extern void macos9_animation_register_rect(int x, int y, int w, int h);
 
 typedef struct macos9_webp_content macos9_webp_content;
 struct macos9_webp_content {
@@ -480,6 +481,12 @@ macos9_webp_redraw(struct content *c, struct content_redraw_data *data,
 		if (!macos9_webp_decode_static(webp, draw_w, draw_h)) return false;
 	}
 	if (webp->bitmap == NULL) return false;
+	/* The image callback updates pixels on its own schedule.  Keep this
+	 * rectangle in the frontend's idle repaint pump so the new frame reaches
+	 * the window even when no user input (such as scrolling) occurs. */
+	if (webp->animated && webp->animation_running) {
+		macos9_animation_register_rect(data->x, data->y, draw_w, draw_h);
+	}
 	flags = BITMAPF_NONE;
 	if (data->repeat_x) flags |= BITMAPF_REPEAT_X;
 	if (data->repeat_y) flags |= BITMAPF_REPEAT_Y;
