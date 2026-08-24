@@ -35,4 +35,33 @@ int cssprobe_rule_custom_props(struct css_stylesheet *sheet,
 int cssprobe_sheet_custom_props(struct css_stylesheet *sheet,
 		const char *name);
 
+/**
+ * fixes1299 (#167) - which calc-expression slot min-height's computed
+ * value points at, for testing that a losing calc() candidate never
+ * clobbers a winning one's slot (helpers.c split-brain fix). `style` is
+ * a css_computed_style* from css_select_style (typed void* here so this
+ * header stays includable from driver.c without pulling in
+ * libcss/computed.h's opaque-vs-real-struct ambiguity).
+ *
+ * \param style     The selected computed style to inspect.
+ * \param slot_out  Receives the calc slot index if min-height's computed
+ *                  unit is CSS_UNIT_CALC.
+ * \return true and slot_out filled if min-height is calc-valued; false
+ *         (slot_out untouched) otherwise.
+ */
+bool cssprobe_min_height_calc_slot(void *style, uint8_t *slot_out);
+
+/**
+ * fixes1299 (#167) - how many times the given calc slot has been WON
+ * (written by a confirmed-winning declaration) this process lifetime,
+ * and the specificity of the last such win. Together with
+ * cssprobe_min_height_calc_slot, this is the whole regression check:
+ * exactly one write, at the expected winning specificity, proves the
+ * losing declaration never reached the slot at all -- stronger than
+ * inspecting the slot's content, which is compiled calc bytecode, not
+ * literal CSS text.
+ */
+uint32_t cssprobe_calc_slot_write_count(uint8_t slot);
+uint32_t cssprobe_calc_slot_write_last_spec(uint8_t slot);
+
 #endif

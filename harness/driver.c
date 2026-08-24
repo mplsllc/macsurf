@@ -587,6 +587,23 @@ static long t76_color_of(struct box *b, const char *cls)
 	return -1;
 }
 
+/* fixes1299 (#167) - Test 95 helper. Find the first box carrying `cls`
+ * and report its min-height calc slot via cssprobe, or false if not
+ * found / not calc-valued. */
+static bool t95_calc_of(struct box *b, const char *cls, uint8_t *slot_out)
+{
+	if (b == NULL)
+		return false;
+	if (t66_cls_has(b, cls) && b->style != NULL) {
+		return cssprobe_min_height_calc_slot(b->style, slot_out);
+	}
+	for (b = b->children; b != NULL; b = b->next) {
+		if (t95_calc_of(b, cls, slot_out))
+			return true;
+	}
+	return false;
+}
+
 /* Record the FIRST box whose class list holds each token. */
 static void t66_walk(struct box *b,
 		int *row_h, int *icon_h, int *avatar_h, int *img_h,
@@ -11202,6 +11219,271 @@ box_coords(bx, &cx, &cy);
 	}
 	fprintf(stderr, "=== Test 94 PASS: stale-realm Promise jobs discarded "
 			"on navigation, surviving realm's own jobs still run, no UAF "
+			"===\n");
+
+	/* ---------------------------------------------------------------
+	 * fixes1299 (#167) - a LOSING calc() declaration for min-height must
+	 * not clobber the WINNING declaration's macsurf_calc_expr slot.
+	 *
+	 * Root-caused against real Facebook CSS this session: the atomic
+	 * class .xpvvgw5{min-height:calc(100vh - var(--header-height))}
+	 * rendered a ~22700px box against a ~657px real viewport. Traced to
+	 * select/properties/helpers.c's five shared calc-capable cascade
+	 * helpers (css__cascade_border_width/length_auto/length_normal/
+	 * length_none/length): each wrote
+	 * state->computed->macsurf_calc_expr[slot] UNCONDITIONALLY, before
+	 * css__outranks_existing() decided whether the declaration actually
+	 * wins. The scalar min-height value (length/unit passed to fun())
+	 * was correctly gated on the outranks check -- only the SIDE-TABLE
+	 * write was not.
+	 *
+	 * This reproduces the exact real-world mechanism, not just the
+	 * unit-level bug: a deferred var()-containing declaration is always
+	 * resolved in a FINAL pass strictly after every non-deferred
+	 * declaration has already cascaded (css_select__resolve_pending_vars
+	 * in css_select.c), regardless of the deferred declaration's own
+	 * specificity relative to those already-cascaded ones.
+	 *
+	 *   #hi  { min-height: calc(900px + 1px) }          -- ID, no var(),
+	 *                                                       cascades INLINE
+	 *   .lo  { min-height: calc(50px + var(--z)) }       -- class, HAS
+	 *                                                       var(), DEFERRED
+	 *
+	 * #hi (higher specificity) cascades first in real time (processed
+	 * later in the ascending-specificity walk than .lo, but with no
+	 * competing entry yet since .lo's declaration was only QUEUED) and
+	 * correctly wins. .lo's deferred declaration is resolved in the
+	 * final pass, restores ITS OWN lower specificity, and correctly
+	 * loses css__outranks_existing() -- fun() is correctly never called
+	 * for it. Pre-fix, its unconditional write still clobbers #hi's
+	 * already-finalized slot with "calc(50px + 1px)" (post-substitution
+	 * text) on its way to correctly losing. Post-fix, the slot keeps
+	 * #hi's "calc(900px + 1px)".
+	 *
+	 * The assertion is the winning declaration's EXACT TEXT surviving in
+	 * the slot, not just "min-height ends up SET" -- a boolean "is it
+	 * calc-valued" can't see this bug at all, since the scalar length/
+	 * unit were never wrong; only the slot's owner was. */
+	fprintf(stderr, "\n=== Test 95: losing calc() declaration cannot "
+			"clobber the winning one's slot (fixes1299) ===\n");
+	{
+		const char *t95_html =
+			"<html><body><div id=\"hi\" class=\"lo\">X</div></body></html>";
+		const char *t95_css =
+			":root { --z: 1px }"
+			"#hi { min-height: calc(900px + 1px) }"
+			".lo { min-height: calc(50px + var(--z)) }";
+		struct html_content t95c;
+		dom_hubbub_parser *t95p = NULL;
+		dom_document *t95doc = NULL;
+		dom_node *t95root = NULL;
+		css_select_ctx *t95ctx = NULL;
+		css_stylesheet *t95ua = NULL;
+		css_stylesheet *t95auth = NULL;
+		dom_hubbub_parser_params t95params;
+		css_stylesheet_params t95sp;
+		void *t95_box_ctx = NULL;
+		nserror t95err;
+		dom_exception t95derr;
+		bool t95_found;
+
+		memset(&t95params, 0, sizeof(t95params));
+		t95params.fix_enc = true;
+		t95derr = dom_hubbub_parser_create(&t95params, &t95p, &t95doc);
+		if (t95derr != DOM_HUBBUB_OK || t95p == NULL) {
+			fprintf(stderr, "FAIL: Test 95 parser create %d\n",
+					(int)t95derr);
+			return 1;
+		}
+		if (dom_hubbub_parser_parse_chunk(t95p,
+				(const uint8_t *)t95_html,
+				strlen(t95_html)) != DOM_HUBBUB_OK ||
+				dom_hubbub_parser_completed(t95p) !=
+					DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 95 parse\n");
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t95p);
+
+		memset(&t95c, 0, sizeof(t95c));
+		t95c.base_url = g_base_url;
+		t95c.document = t95doc;
+		t95c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t95c.enable_scripting = false;
+		if (css_select_ctx_create(&t95ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 95 select_ctx\n");
+			return 1;
+		}
+		t95c.select_ctx = t95ctx;
+
+		memset(&t95sp, 0, sizeof(t95sp));
+		t95sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t95sp.level = CSS_LEVEL_3;
+		t95sp.charset = "UTF-8";
+		t95sp.url = "resource:default.css";
+		t95sp.title = "default";
+		t95sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t95sp, &t95ua) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 95 UA sheet\n");
+			return 1;
+		}
+		{
+			const char *ua = "html,body,div{display:block}";
+			(void)css_stylesheet_append_data(t95ua,
+					(const uint8_t *)ua, strlen(ua));
+			(void)css_stylesheet_data_done(t95ua);
+		}
+		if (css_select_ctx_append_sheet(t95ctx, t95ua,
+				CSS_ORIGIN_UA, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 95 UA append\n");
+			return 1;
+		}
+
+		memset(&t95sp, 0, sizeof(t95sp));
+		t95sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t95sp.level = CSS_LEVEL_3;
+		t95sp.charset = "UTF-8";
+		t95sp.url = "http://local/t95.css";
+		t95sp.title = "author";
+		t95sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t95sp, &t95auth) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 95 author sheet\n");
+			return 1;
+		}
+		{
+			css_error ae = css_stylesheet_append_data(t95auth,
+					(const uint8_t *)t95_css,
+					strlen(t95_css));
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 95 author append=%d\n",
+						(int)ae);
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t95auth);
+		}
+		if (css_select_ctx_append_sheet(t95ctx, t95auth,
+				CSS_ORIGIN_AUTHOR, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 95 author append sheet\n");
+			return 1;
+		}
+
+		t95c.media.type = CSS_MEDIA_SCREEN;
+		t95c.media.width = INTTOFIX(800);
+		t95c.media.height = INTTOFIX(600);
+		t95c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t95c.unit_len_ctx.viewport_width = INTTOFIX(800);
+		t95c.unit_len_ctx.viewport_height = INTTOFIX(600);
+		t95c.unit_len_ctx.device_dpi = INTTOFIX(90);
+		t95c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t95c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t95c.universal) !=
+				lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 95 universal\n");
+			return 1;
+		}
+		t95c.base.status = CONTENT_STATUS_LOADING;
+		t95c.base.active = 0;
+		t95c.base.handler = &g_dummy_handler;
+
+		if (dom_document_get_document_element(t95doc,
+				(void *)&t95root) != DOM_NO_ERR ||
+				t95root == NULL) {
+			fprintf(stderr, "FAIL: Test 95 doc element\n");
+			return 1;
+		}
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t95err = dom_to_box(t95root, &t95c, initial_build_cb,
+				&t95_box_ctx);
+		dom_node_unref(t95root);
+		if (t95err != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 95 dom_to_box=%d\n",
+					(int)t95err);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 95 build done=%d ok=%d\n",
+					g_initial_build_done,
+					(int)g_initial_build_ok);
+			return 1;
+		}
+
+		{
+			uint8_t t95_slot = 0;
+			uint32_t t95_writes;
+			uint32_t t95_last_spec;
+			/* #hi has one ID selector: libcss packs specificity as
+			 * (a<<16)|(b<<8)|c|d with a=ID count, so a lone ID is
+			 * 0x010000 = 65536 -- directly confirmed against this
+			 * exact fixture while building this test (a raw dump of
+			 * state->current_specificity at the winning write). */
+			const uint32_t t95_expect_spec = 65536;
+
+			t95_found = t95_calc_of(t95c.layout, "lo", &t95_slot);
+			fprintf(stderr, "  min-height calc slot for #hi.lo = %s%d\n",
+					t95_found ? "" : "(not calc-valued) ",
+					t95_found ? (int)t95_slot : -1);
+
+			if (!t95_found) {
+				fprintf(stderr, "FAIL: Test 95 -- min-height was "
+						"not calc-valued at all; something "
+						"upstream of this bug broke (test "
+						"setup issue, not the bug under "
+						"test)\n");
+				return 1;
+			}
+
+			t95_writes = cssprobe_calc_slot_write_count(t95_slot);
+			t95_last_spec =
+				cssprobe_calc_slot_write_last_spec(t95_slot);
+			fprintf(stderr, "  slot=%d writes=%lu last_spec=%lu "
+					"(want writes=1 spec=%lu)\n",
+					(int)t95_slot, (unsigned long)t95_writes,
+					(unsigned long)t95_last_spec,
+					(unsigned long)t95_expect_spec);
+
+			/* THE ASSERTION: exactly ONE write to this slot, at
+			 * #hi's specificity. Pre-fix, this element's min-height
+			 * calc slot sees TWO writes -- #hi's winning inline
+			 * cascade, THEN .lo's losing deferred var()-resolution
+			 * pass unconditionally overwriting it before its own
+			 * (correctly failing) outranks check, leaving writes=2
+			 * and last_spec=.lo's lower class specificity, not
+			 * #hi's. A write COUNT, not a boolean "is it calc-
+			 * valued", is what actually distinguishes fixed from
+			 * broken here -- both states report min-height as SET/
+			 * CALC either way. */
+			if (t95_writes != 1) {
+				fprintf(stderr, "FAIL: Test 95 -- slot %d was "
+						"written %lu times, expected "
+						"exactly 1. >1 means the losing "
+						"deferred .lo declaration reached "
+						"the unconditional write this fix "
+						"removed -- the exact split-brain: "
+						"min-height correctly computes as "
+						"SET/CALC either way (the scalar "
+						"outranks check works), but the "
+						"side-table gets clobbered by "
+						"whichever declaration cascades "
+						"LAST, not whichever one WINS.\n",
+						(int)t95_slot,
+						(unsigned long)t95_writes);
+				return 1;
+			}
+			if (t95_last_spec != t95_expect_spec) {
+				fprintf(stderr, "FAIL: Test 95 -- slot %d's one "
+						"write carried specificity %lu, "
+						"expected #hi's %lu -- the wrong "
+						"declaration won\n", (int)t95_slot,
+						(unsigned long)t95_last_spec,
+						(unsigned long)t95_expect_spec);
+				return 1;
+			}
+		}
+	}
+	fprintf(stderr, "=== Test 95 PASS: losing deferred calc() declaration "
+			"did not clobber the winning declaration's calc_expr slot "
 			"===\n");
 
 	return 0;

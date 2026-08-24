@@ -19,6 +19,34 @@
 #include "select/properties/helpers.h"
 #include "macsurf_debug.h"
 
+/* fixes1299 (#167) - see the declaration comment in helpers.h. Fixed-size,
+ * zero-init at load (static storage), one array write per call -- no
+ * allocation, no logging, safe to leave compiled into the Mac build. */
+static uint32_t g_calc_slot_write_count[MACSURF_CALC_SLOT_COUNT];
+static uint32_t g_calc_slot_write_last_spec[MACSURF_CALC_SLOT_COUNT];
+
+void css__calc_slot_write_test_hook(uint8_t slot, uint32_t specificity)
+{
+	if (slot >= MACSURF_CALC_SLOT_COUNT)
+		return;
+	g_calc_slot_write_count[slot]++;
+	g_calc_slot_write_last_spec[slot] = specificity;
+}
+
+uint32_t css__calc_slot_write_test_count(uint8_t slot)
+{
+	if (slot >= MACSURF_CALC_SLOT_COUNT)
+		return 0;
+	return g_calc_slot_write_count[slot];
+}
+
+uint32_t css__calc_slot_write_test_last_spec(uint8_t slot)
+{
+	if (slot >= MACSURF_CALC_SLOT_COUNT)
+		return 0;
+	return g_calc_slot_write_last_spec[slot];
+}
+
 /* fixes1265 (#167) - body background-color provenance trace, helper.
  * lwc_string_caseless_isequal needs an interned "body" string to compare
  * against, which would mean re-interning on every single call into this
@@ -390,6 +418,8 @@ css_error css__cascade_border_width(uint32_t opv, css_style *style,
 	css_fixed length = 0;
 	uint32_t unit = UNIT_PX;
 	bool is_calc = false;
+	uint8_t calc_slot = 0;
+	lwc_string *calc_expr = NULL;
 
 	if (hasFlagValue(opv) == false) {
 		switch (getValue(opv)) {
@@ -412,7 +442,6 @@ css_error css__cascade_border_width(uint32_t opv, css_style *style,
 		case BORDER_WIDTH_CALC:
 		{
 			uint32_t snum = 0;
-			lwc_string *calc_expr = NULL;
 			uint8_t slot = css__calc_slot_for_prop(
 					getOpcode(opv));
 
@@ -426,13 +455,22 @@ css_error css__cascade_border_width(uint32_t opv, css_style *style,
 			 * the length field. Bit-casting the lwc_string
 			 * pointer into css_fixed only fits on 32-bit targets
 			 * (truncates to a garbage pointer on Linux 64-bit,
-			 * misresolved to 0 on the Mac). */
+			 * misresolved to 0 on the Mac).
+			 * fixes1299 (#167) - do NOT write macsurf_calc_expr[slot]
+			 * here. This declaration can still lose the outranks
+			 * check below; writing unconditionally clobbers an
+			 * ALREADY-WINNING declaration's slot with a losing
+			 * expression (scalar length/unit stay correct, but the
+			 * side-table silently stops matching them -- a split-
+			 * brain computed value). Stash locally, commit only
+			 * after the win is confirmed. */
 			if (calc_expr != NULL &&
 					slot < MACSURF_CALC_SLOT_COUNT) {
-				state->computed->macsurf_calc_expr[slot] =
-						calc_expr;
+				calc_slot = slot;
 				length = (css_fixed)slot;
 				is_calc = true;
+			} else {
+				calc_expr = NULL;
 			}
 			break;
 		}
@@ -446,14 +484,18 @@ css_error css__cascade_border_width(uint32_t opv, css_style *style,
 		unit = css__to_css_unit(unit);
 	} else {
 		/* fixes1166: sniff the terminal bytecode operator to tell
-		 * calc()/min()/max()/clamp() apart -- the slot always holds
-		 * a valid, just-stored expression when is_calc is true. */
-		unit = css__calc_expr_unit(
-				state->computed->macsurf_calc_expr[(uint8_t)length]);
+		 * calc()/min()/max()/clamp() apart. fixes1299: read the LOCAL
+		 * calc_expr, not the (possibly stale/foreign) slot. */
+		unit = css__calc_expr_unit(calc_expr);
 	}
 
 	if (css__outranks_existing(getOpcode(opv), isImportant(opv), state,
 			getFlagValue(opv))) {
+		if (is_calc) {
+			state->computed->macsurf_calc_expr[calc_slot] = calc_expr;
+			css__calc_slot_write_test_hook(calc_slot,
+					state->current_specificity);
+		}
 		return fun(state->computed, value, length, unit);
 	}
 
@@ -475,6 +517,8 @@ css_error css__cascade_length_auto(uint32_t opv, css_style *style,
 	 * (height, left, right, top, bottom, margin-*). See css__cascade_
 	 * length_auto_calc in this file for the width-only sibling. */
 	bool is_intrinsic = false;
+	uint8_t calc_slot = 0;
+	lwc_string *calc_expr = NULL;
 
 	if (hasFlagValue(opv) == false) {
 		switch (getValue(opv)) {
@@ -491,7 +535,6 @@ css_error css__cascade_length_auto(uint32_t opv, css_style *style,
 		case BOTTOM_CALC:
 		{
 			uint32_t snum = 0;
-			lwc_string *calc_expr = NULL;
 			uint8_t slot = css__calc_slot_for_prop(
 					getOpcode(opv));
 
@@ -505,13 +548,29 @@ css_error css__cascade_length_auto(uint32_t opv, css_style *style,
 			 * the length field. Bit-casting the lwc_string
 			 * pointer into css_fixed only fits on 32-bit targets
 			 * (truncates to a garbage pointer on Linux 64-bit,
-			 * misresolved to 0 on the Mac). */
+			 * misresolved to 0 on the Mac).
+			 * fixes1299 (#167) - THE min-height bug: do NOT write
+			 * macsurf_calc_expr[slot] here. This declaration can
+			 * still lose the outranks check below (e.g. a lower-
+			 * specificity var()-deferred min-height:calc(...) that
+			 * resolves in the FINAL deferred pass, after an already-
+			 * cascaded higher-specificity non-deferred min-height:
+			 * calc(...) already won and set this SAME slot). Writing
+			 * unconditionally clobbers the winner's slot with the
+			 * loser's expression -- scalar length/unit stay correct
+			 * (fun() correctly never called for the loser), but the
+			 * side-table silently stops matching them. Confirmed on
+			 * real Facebook CSS: .xpvvgw5{min-height:calc(100vh -
+			 * var(--header-height))} rendered a ~22700px box against
+			 * a ~657px real viewport. Stash locally, commit only
+			 * after the win is confirmed. */
 			if (calc_expr != NULL &&
 					slot < MACSURF_CALC_SLOT_COUNT) {
-				state->computed->macsurf_calc_expr[slot] =
-						calc_expr;
+				calc_slot = slot;
 				length = (css_fixed)slot;
 				is_calc = true;
+			} else {
+				calc_expr = NULL;
 			}
 			break;
 		}
@@ -538,16 +597,20 @@ css_error css__cascade_length_auto(uint32_t opv, css_style *style,
 
 	if (is_calc) {
 		/* fixes1166: sniff the terminal bytecode operator to tell
-		 * calc()/min()/max()/clamp() apart -- the slot always holds
-		 * a valid, just-stored expression when is_calc is true. */
-		unit = css__calc_expr_unit(
-				state->computed->macsurf_calc_expr[(uint8_t)length]);
+		 * calc()/min()/max()/clamp() apart. fixes1299: read the LOCAL
+		 * calc_expr, not the (possibly stale/foreign) slot. */
+		unit = css__calc_expr_unit(calc_expr);
 	} else if (is_intrinsic == false) {
 		unit = css__to_css_unit(unit);
 	}
 
 	if (css__outranks_existing(getOpcode(opv), isImportant(opv), state,
 			getFlagValue(opv))) {
+		if (is_calc) {
+			state->computed->macsurf_calc_expr[calc_slot] = calc_expr;
+			css__calc_slot_write_test_hook(calc_slot,
+					state->current_specificity);
+		}
 		return fun(state->computed, value, length, unit);
 	}
 
@@ -628,6 +691,8 @@ css_error css__cascade_length_normal(uint32_t opv, css_style *style,
 	css_fixed length = 0;
 	uint32_t unit = UNIT_PX;
 	bool is_calc = false;
+	uint8_t calc_slot = 0;
+	lwc_string *calc_expr = NULL;
 
 	if (hasFlagValue(opv) == false) {
 		switch (getValue(opv)) {
@@ -644,7 +709,6 @@ css_error css__cascade_length_normal(uint32_t opv, css_style *style,
 		case LETTER_SPACING_CALC:
 		{
 			uint32_t snum = 0;
-			lwc_string *calc_expr = NULL;
 			uint8_t slot = css__calc_slot_for_prop(
 					getOpcode(opv));
 
@@ -658,13 +722,18 @@ css_error css__cascade_length_normal(uint32_t opv, css_style *style,
 			 * the length field. Bit-casting the lwc_string
 			 * pointer into css_fixed only fits on 32-bit targets
 			 * (truncates to a garbage pointer on Linux 64-bit,
-			 * misresolved to 0 on the Mac). */
+			 * misresolved to 0 on the Mac).
+			 * fixes1299 (#167) - do NOT write macsurf_calc_expr[slot]
+			 * here; see css__cascade_length_auto's comment above for
+			 * the full split-brain explanation. Stash locally,
+			 * commit only after the win is confirmed. */
 			if (calc_expr != NULL &&
 					slot < MACSURF_CALC_SLOT_COUNT) {
-				state->computed->macsurf_calc_expr[slot] =
-						calc_expr;
+				calc_slot = slot;
 				length = (css_fixed)slot;
 				is_calc = true;
+			} else {
+				calc_expr = NULL;
 			}
 			break;
 		}
@@ -678,14 +747,18 @@ css_error css__cascade_length_normal(uint32_t opv, css_style *style,
 		unit = css__to_css_unit(unit);
 	} else {
 		/* fixes1166: sniff the terminal bytecode operator to tell
-		 * calc()/min()/max()/clamp() apart -- the slot always holds
-		 * a valid, just-stored expression when is_calc is true. */
-		unit = css__calc_expr_unit(
-				state->computed->macsurf_calc_expr[(uint8_t)length]);
+		 * calc()/min()/max()/clamp() apart. fixes1299: read the LOCAL
+		 * calc_expr, not the (possibly stale/foreign) slot. */
+		unit = css__calc_expr_unit(calc_expr);
 	}
 
 	if (css__outranks_existing(getOpcode(opv), isImportant(opv), state,
 			getFlagValue(opv))) {
+		if (is_calc) {
+			state->computed->macsurf_calc_expr[calc_slot] = calc_expr;
+			css__calc_slot_write_test_hook(calc_slot,
+					state->current_specificity);
+		}
 		return fun(state->computed, value, length, unit);
 	}
 
@@ -705,6 +778,8 @@ css_error css__cascade_length_none(uint32_t opv, css_style *style,
 	 * MAX_WIDTH_MIN_CONTENT/_MAX_CONTENT/_FIT_CONTENT, so these cases
 	 * are dead code for max-height, this helper's other caller. */
 	bool is_intrinsic = false;
+	uint8_t calc_slot = 0;
+	lwc_string *calc_expr = NULL;
 
 	if (hasFlagValue(opv) == false) {
 		switch (getValue(opv)) {
@@ -721,7 +796,6 @@ css_error css__cascade_length_none(uint32_t opv, css_style *style,
 		case MAX_HEIGHT_CALC:
 		{
 			uint32_t snum = 0;
-			lwc_string *calc_expr = NULL;
 			uint8_t slot = css__calc_slot_for_prop(
 					getOpcode(opv));
 
@@ -735,13 +809,18 @@ css_error css__cascade_length_none(uint32_t opv, css_style *style,
 			 * the length field. Bit-casting the lwc_string
 			 * pointer into css_fixed only fits on 32-bit targets
 			 * (truncates to a garbage pointer on Linux 64-bit,
-			 * misresolved to 0 on the Mac). */
+			 * misresolved to 0 on the Mac).
+			 * fixes1299 (#167) - do NOT write macsurf_calc_expr[slot]
+			 * here; see css__cascade_length_auto's comment above for
+			 * the full split-brain explanation. Stash locally,
+			 * commit only after the win is confirmed. */
 			if (calc_expr != NULL &&
 					slot < MACSURF_CALC_SLOT_COUNT) {
-				state->computed->macsurf_calc_expr[slot] =
-						calc_expr;
+				calc_slot = slot;
 				length = (css_fixed)slot;
 				is_calc = true;
+			} else {
+				calc_expr = NULL;
 			}
 			break;
 		}
@@ -768,16 +847,20 @@ css_error css__cascade_length_none(uint32_t opv, css_style *style,
 
 	if (is_calc) {
 		/* fixes1166: sniff the terminal bytecode operator to tell
-		 * calc()/min()/max()/clamp() apart -- the slot always holds
-		 * a valid, just-stored expression when is_calc is true. */
-		unit = css__calc_expr_unit(
-				state->computed->macsurf_calc_expr[(uint8_t)length]);
+		 * calc()/min()/max()/clamp() apart. fixes1299: read the LOCAL
+		 * calc_expr, not the (possibly stale/foreign) slot. */
+		unit = css__calc_expr_unit(calc_expr);
 	} else if (is_intrinsic == false) {
 		unit = css__to_css_unit(unit);
 	}
 
 	if (css__outranks_existing(getOpcode(opv), isImportant(opv), state,
 			getFlagValue(opv))) {
+		if (is_calc) {
+			state->computed->macsurf_calc_expr[calc_slot] = calc_expr;
+			css__calc_slot_write_test_hook(calc_slot,
+					state->current_specificity);
+		}
 		return fun(state->computed, value, length, unit);
 	}
 
@@ -793,6 +876,8 @@ css_error css__cascade_length(uint32_t opv, css_style *style,
 	css_fixed length = 0;
 	uint32_t unit = UNIT_PX;
 	bool is_calc = false;
+	uint8_t calc_slot = 0;
+	lwc_string *calc_expr = NULL;
 
 	if (hasFlagValue(opv) == false) {
 		switch (getValue(opv)) {
@@ -806,7 +891,6 @@ css_error css__cascade_length(uint32_t opv, css_style *style,
 		case MIN_HEIGHT_CALC:
 		{
 			uint32_t snum = 0;
-			lwc_string *calc_expr = NULL;
 			uint8_t slot = css__calc_slot_for_prop(
 					getOpcode(opv));
 
@@ -820,13 +904,18 @@ css_error css__cascade_length(uint32_t opv, css_style *style,
 			 * the length field. Bit-casting the lwc_string
 			 * pointer into css_fixed only fits on 32-bit targets
 			 * (truncates to a garbage pointer on Linux 64-bit,
-			 * misresolved to 0 on the Mac). */
+			 * misresolved to 0 on the Mac).
+			 * fixes1299 (#167) - do NOT write macsurf_calc_expr[slot]
+			 * here; see css__cascade_length_auto's comment above for
+			 * the full split-brain explanation. Stash locally,
+			 * commit only after the win is confirmed. */
 			if (calc_expr != NULL &&
 					slot < MACSURF_CALC_SLOT_COUNT) {
-				state->computed->macsurf_calc_expr[slot] =
-						calc_expr;
+				calc_slot = slot;
 				length = (css_fixed)slot;
 				is_calc = true;
+			} else {
+				calc_expr = NULL;
 			}
 			break;
 		}
@@ -840,15 +929,19 @@ css_error css__cascade_length(uint32_t opv, css_style *style,
 		unit = css__to_css_unit(unit);
 	} else {
 		/* fixes1166: sniff the terminal bytecode operator to tell
-		 * calc()/min()/max()/clamp() apart -- the slot always holds
-		 * a valid, just-stored expression when is_calc is true. */
-		unit = css__calc_expr_unit(
-				state->computed->macsurf_calc_expr[(uint8_t)length]);
+		 * calc()/min()/max()/clamp() apart. fixes1299: read the LOCAL
+		 * calc_expr, not the (possibly stale/foreign) slot. */
+		unit = css__calc_expr_unit(calc_expr);
 	}
 
 	/** \todo lose fun != NULL once all properties have set routines */
 	if (fun != NULL && css__outranks_existing(getOpcode(opv),
 			isImportant(opv), state, getFlagValue(opv))) {
+		if (is_calc) {
+			state->computed->macsurf_calc_expr[calc_slot] = calc_expr;
+			css__calc_slot_write_test_hook(calc_slot,
+					state->current_specificity);
+		}
 		return fun(state->computed, value, length, unit);
 	}
 
