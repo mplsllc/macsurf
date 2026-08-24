@@ -2274,8 +2274,21 @@ nserror macos9_svg_paint_inline(struct box *box,
 	}
 	if (c.vb_w <= 0.0f) c.vb_w = (float)w;
 	if (c.vb_h <= 0.0f) c.vb_h = (float)h;
-	c.scale_x = (float)w / c.vb_w;
-	c.scale_y = (float)h / c.vb_h;
+
+	/* preserveAspectRatio: meet/slice/none + 9 alignments, shared with
+	 * the standalone external-SVG painter via macos9_svg_compute_fit.
+	 * Replaces the old unconditional independent per-axis scale (which
+	 * was, in spec terms, always behaving as preserveAspectRatio="none"
+	 * regardless of what the SVG actually declared). */
+	{
+		dom_string *ds_par = NULL;
+		const char *par = svg__attr((dom_node *)box->node,
+				"preserveAspectRatio", &ds_par);
+		macos9_svg_compute_fit(c.box_x, c.box_y, w, h,
+				c.vb_x, c.vb_y, c.vb_w, c.vb_h, par,
+				&c.scale_x, &c.scale_y, &c.m[4], &c.m[5]);
+		if (par != NULL) dom_string_unref(ds_par);
+	}
 
 	/* fixes201  -  pre-bake the viewBox-to-screen affine matrix at
 	 * root. svg__map_x / svg__map_y apply this for every painted
@@ -2285,8 +2298,6 @@ nserror macos9_svg_paint_inline(struct box *box,
 	c.m[1] = 0.0f;
 	c.m[2] = 0.0f;
 	c.m[3] = c.scale_y;
-	c.m[4] = (float)c.box_x - c.vb_x * c.scale_x;
-	c.m[5] = (float)c.box_y - c.vb_y * c.scale_y;
 
 	/* fixes201  -  gradient pre-walk. Allocated on stack to avoid heap
 	 * pressure during paint; cap of MACOS9_SVG_MAX_GRADIENTS handles
@@ -2470,73 +2481,46 @@ static int svg__style_prop(const char *style, const char *prop,
 /* fixes1049  -  group-transform stack depth for the standalone walker. */
 #define SVG_G_DEPTH_MAX 16
 
-/* fixes1049 (#280)  -  parse the translate out of a transform="..." attribute.
+/* Compose a transform="..." attribute's raw VALUE STRING into a full
+ * affine matrix, chaining every function in the list left to right -
+ * this is svg__read_transform_attr's own loop (above, for the DOM
+ * path), minus its DOM attribute lookup, since the standalone walker
+ * already has the raw value via svg__tag_attr. svg__parse_one_transform
+ * is pure (string in, matrix out, no DOM dependency) so this composes
+ * translate/scale/rotate(+center)/matrix/skewX/skewY across nested <g>
+ * and per-shape transform= with the same math already proven on the
+ * DOM/inline-SVG path, not a second implementation of it.
  *
- * The standalone painter walked <path> tags and painted their raw `d` data,
- * ignoring transform entirely. puffy.svg (Inkscape, and this is the norm for
- * exported art) wraps its artwork in FOUR groups each carrying
- * transform="translate(-446.89148,-271.529)", so every path was drawn ~447
- * user-units right and ~272 down of where it belongs. After the viewBox fit
- * that is a visible offset, and it differs per cell because each cell has its
- * own scale - which is exactly the "not aligned the same, not centred"
- * hardware report.
- *
- * Handles translate(x[,y]) and the translation column of matrix(a,b,c,d,e,f),
- * which together cover essentially all exported SVG. Rotation/skew are NOT
- * applied - svg_ctx carries an affine m[], but the standalone walker has no
- * element tree to compose them down, so a rotated group would need the real
- * inline renderer. Returns 1 if anything was found.
+ * Supersedes the old translate-only / matrix-e,f-only standalone
+ * transform reader: a group or shape using rotate/scale/skew used to
+ * paint at the wrong position or not compose at all outside a plain
+ * translate. Writes identity into *out and returns 0 when src is
+ * NULL/empty (nothing to compose); otherwise always returns 1, even if
+ * a later function in the list fails to parse (composes what it could
+ * up to that point, matching svg__read_transform_attr's own behaviour).
  */
-static int svg__transform_translate(const char *tv, float *tx, float *ty)
+static int svg__parse_transform_attr_str(const char *src, float *out)
 {
-	const char *p;
-	size_t used = 0;
+	float chain[6];
 
-	*tx = 0.0f;
-	*ty = 0.0f;
-	if (tv == NULL)
+	svg__matrix_identity(chain);
+	if (src == NULL || *src == '\0') {
+		memcpy(out, chain, sizeof(chain));
 		return 0;
-
-	p = strstr(tv, "translate");
-	if (p != NULL) {
-		p = strchr(p, '(');
-		if (p == NULL)
-			return 0;
-		p++;
-		while (*p == ' ' || *p == '\t') p++;
-		*tx = svg__atof(p, &used);
-		if (used == 0) return 0;
-		p += used;
-		while (*p == ' ' || *p == ',' || *p == '\t') p++;
-		if (*p != '\0' && *p != ')') {
-			*ty = svg__atof(p, &used);
-			if (used == 0) *ty = 0.0f;
-		}
-		return 1;
 	}
-
-	p = strstr(tv, "matrix");
-	if (p != NULL) {
-		int k;
-		float v[6];
-		p = strchr(p, '(');
-		if (p == NULL)
-			return 0;
-		p++;
-		for (k = 0; k < 6; k++) {
-			while (*p == ' ' || *p == ',' || *p == '\t') p++;
-			if (*p == '\0' || *p == ')') break;
-			v[k] = svg__atof(p, &used);
-			if (used == 0) break;
-			p += used;
+	while (*src) {
+		float fn_mat[6];
+		size_t off = svg__parse_one_transform(src, fn_mat);
+		if (off == 0) break;
+		{
+			float tmp[6];
+			svg__matrix_mul(chain, fn_mat, tmp);
+			memcpy(chain, tmp, sizeof(chain));
 		}
-		if (k == 6) {
-			*tx = v[4];
-			*ty = v[5];
-			return 1;
-		}
+		src += off;
 	}
-	return 0;
+	memcpy(out, chain, sizeof(chain));
+	return 1;
 }
 
 /* fixes1050 (#280)  -  one numeric attribute off a raw tag. */
@@ -2562,9 +2546,13 @@ static float svg__tag_attr_float(const char *tag, const char *tend,
  * painted at all, leaving a solid dark eye. Returns the EARLIEST of the
  * shapes so document order (and therefore paint order) is preserved; drawing
  * all paths then all circles would put the highlights under the iris. */
-#define SVG_SHAPE_PATH    1
-#define SVG_SHAPE_CIRCLE  2
-#define SVG_SHAPE_ELLIPSE 3
+#define SVG_SHAPE_PATH     1
+#define SVG_SHAPE_CIRCLE   2
+#define SVG_SHAPE_ELLIPSE  3
+#define SVG_SHAPE_RECT     4
+#define SVG_SHAPE_LINE     5
+#define SVG_SHAPE_POLYGON  6
+#define SVG_SHAPE_POLYLINE 7
 
 static const char *svg__next_shape(const char *p, int *kind)
 {
@@ -2586,56 +2574,102 @@ static const char *svg__next_shape(const char *p, int *kind)
 		best = t; *kind = SVG_SHAPE_ELLIPSE;
 	}
 
+	t = strstr(p, "<rect");
+	if (t != NULL && (best == NULL || t < best)) {
+		best = t; *kind = SVG_SHAPE_RECT;
+	}
+
+	/* "<line" must be the whole element name, not the start of
+	 * "<linearGradient" (routine inside <defs> in exported SVG). */
+	t = strstr(p, "<line");
+	while (t != NULL && t[5] != '\0' && t[5] != ' ' && t[5] != '>' &&
+			t[5] != '/' && t[5] != '\t' && t[5] != '\n') {
+		t = strstr(t + 5, "<line");
+	}
+	if (t != NULL && (best == NULL || t < best)) {
+		best = t; *kind = SVG_SHAPE_LINE;
+	}
+
+	t = strstr(p, "<polygon");
+	if (t != NULL && (best == NULL || t < best)) {
+		best = t; *kind = SVG_SHAPE_POLYGON;
+	}
+
+	t = strstr(p, "<polyline");
+	if (t != NULL && (best == NULL || t < best)) {
+		best = t; *kind = SVG_SHAPE_POLYLINE;
+	}
+
 	return best;
 }
 
-nserror macos9_svg_paint_standalone(const char *src, size_t len,
-		int x, int y, int w, int h,
-		const struct redraw_context *ctx)
+/* Bounded (262144B), NUL-terminated copy + locate the root <svg ...>
+ * tag. "<svg" must be the whole element name (same boundary discipline
+ * as <line> vs <linearGradient> in svg__next_shape below) - a naive
+ * strstr would also match a hypothetical <svgFoo>-prefixed tag. Caller
+ * owns *out_buf on a true return; on false, it has already been freed
+ * and there is nothing to free. */
+bool macos9_svg_locate_root(const char *src, size_t len,
+		char **out_buf, const char **out_root,
+		const char **out_root_end)
 {
 	char *buf0;
 	const char *root;
 	const char *root_end;
-	char av[128];
-	char sv[512];   /* fixes1043  -  raw style="..." text for svg__style_prop */
-	float vb[4];
-	int have_vb = 0;
-	struct svg_ctx sc;
-	const char *p;
-	static char d_local[4096];
-	float pbuf[MACOS9_SVG_PATH_MAX];
-	int paths = 0;
 
-	if (src == NULL || len == 0 || ctx == NULL || ctx->plot == NULL ||
-			w <= 0 || h <= 0)
-		return NSERROR_BAD_PARAMETER;
+	if (src == NULL || len == 0)
+		return false;
 	if (len > 262144)
 		len = 262144;
 
-	/* Source data is not NUL-terminated; take a bounded copy. */
 	buf0 = (char *)malloc(len + 1);
 	if (buf0 == NULL)
-		return NSERROR_NOMEM;
+		return false;
 	memcpy(buf0, src, len);
 	buf0[len] = '\0';
 
 	root = strstr(buf0, "<svg");
+	while (root != NULL && root[4] != '\0' && root[4] != ' ' &&
+			root[4] != '>' && root[4] != '/' &&
+			root[4] != '\t' && root[4] != '\n') {
+		root = strstr(root + 4, "<svg");
+	}
 	if (root == NULL) {
 		free(buf0);
-		return NSERROR_INVALID;
+		return false;
 	}
 	root_end = strchr(root, '>');
 	if (root_end == NULL) {
 		free(buf0);
-		return NSERROR_INVALID;
+		return false;
 	}
 
-	/* viewBox, else width/height attrs, else the dest rect 1:1.
-	 * MSL sscanf/atof are untrusted on CW8 (this file already carries
-	 * svg__atof for exactly that reason) - parse with it. */
+	*out_buf = buf0;
+	*out_root = root;
+	*out_root_end = root_end;
+	return true;
+}
+
+/* Pure: viewBox (full float parse, 4 numbers) and width/height (each
+ * skipped if its value contains '%') off an already-located root
+ * <svg ...> tag span, recorded INDEPENDENTLY of one another - unlike
+ * the old inline logic this replaces, which only looked at width/
+ * height when viewBox was absent. A caller applying real SVG priority
+ * (explicit dimension, else viewBox aspect, else viewBox) needs both,
+ * independently. MSL sscanf/atof are untrusted on CW8 (this file
+ * already carries svg__atof for exactly that reason) - parse with it,
+ * via the same svg__tag_attr this file's other attribute reads use. */
+void macos9_svg_parse_root_dims(const char *root, const char *root_end,
+		struct macos9_svg_root_dims *out)
+{
+	char av[128];
+
+	memset(out, 0, sizeof(*out));
+
 	if (svg__tag_attr(root, root_end, "viewBox", av, sizeof(av))) {
 		const char *q = av;
 		size_t used = 0;
+		float vb[4];
 		int k;
 		int got = 0;
 		for (k = 0; k < 4; k++) {
@@ -2649,22 +2683,134 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 			q += used;
 			got++;
 		}
-		if (got == 4 && vb[2] > 0.0f && vb[3] > 0.0f)
-			have_vb = 1;
+		if (got == 4 && vb[2] > 0.0f && vb[3] > 0.0f) {
+			out->have_vb = 1;
+			out->vb_x = vb[0];
+			out->vb_y = vb[1];
+			out->vb_w = vb[2];
+			out->vb_h = vb[3];
+		}
 	}
-	if (!have_vb) {
-		float aw = 0.0f, ah = 0.0f;
+
+	if (svg__tag_attr(root, root_end, "width", av, sizeof(av)) &&
+			strchr(av, '%') == NULL) {
 		size_t used = 0;
-		if (svg__tag_attr(root, root_end, "width", av, sizeof(av)) &&
-				strchr(av, '%') == NULL)
-			aw = svg__atof(av, &used);
-		if (svg__tag_attr(root, root_end, "height", av, sizeof(av)) &&
-				strchr(av, '%') == NULL)
-			ah = svg__atof(av, &used);
+		float v = svg__atof(av, &used);
+		if (used > 0 && v > 0.0f) {
+			out->have_width = 1;
+			out->width = v;
+		}
+	}
+	if (svg__tag_attr(root, root_end, "height", av, sizeof(av)) &&
+			strchr(av, '%') == NULL) {
+		size_t used = 0;
+		float v = svg__atof(av, &used);
+		if (used > 0 && v > 0.0f) {
+			out->have_height = 1;
+			out->height = v;
+		}
+	}
+}
+
+/* preserveAspectRatio="[none|xMin/Mid/MaxYMin/Mid/Max] [meet|slice]".
+ * Pure mapping math - no attribute lookup (caller already extracted
+ * par_value from wherever it lives, a DOM node or a raw tag span; may
+ * be NULL/empty for the SVG default, xMidYMid meet) and no knowledge of
+ * clipping. "none" -> independent per-axis scale, which is what this
+ * file's DOM renderer did unconditionally before this landed, so it
+ * becomes the explicit case rather than the accidental default; every
+ * other alignment -> uniform scale by the smaller (meet) or larger
+ * (slice) ratio, then translate by the align fraction - a direct
+ * generalization of the old hardcoded-xMidYMid-meet math this
+ * replaces. */
+void macos9_svg_compute_fit(int x, int y, int w, int h,
+		float vb_x, float vb_y, float vb_w, float vb_h,
+		const char *par_value,
+		float *out_scale_x, float *out_scale_y,
+		float *out_tx, float *out_ty)
+{
+	int none = 0;
+	int slice = 0;
+	float align_x = 0.5f;
+	float align_y = 0.5f;
+
+	if (vb_w <= 0.0f) vb_w = (float)w;
+	if (vb_h <= 0.0f) vb_h = (float)h;
+
+	if (par_value != NULL) {
+		const char *p = par_value;
+		while (*p == ' ' || *p == '\t') p++;
+		if (strncmp(p, "none", 4) == 0) {
+			none = 1;
+		} else {
+			if (strncasecmp(p, "xMin", 4) == 0)
+				align_x = 0.0f;
+			else if (strncasecmp(p, "xMax", 4) == 0)
+				align_x = 1.0f;
+			if (strncasecmp(p + 4, "YMin", 4) == 0)
+				align_y = 0.0f;
+			else if (strncasecmp(p + 4, "YMax", 4) == 0)
+				align_y = 1.0f;
+		}
+		if (strstr(p, "slice") != NULL)
+			slice = 1;
+	}
+
+	if (none) {
+		*out_scale_x = (float)w / vb_w;
+		*out_scale_y = (float)h / vb_h;
+	} else {
+		float sx = (float)w / vb_w;
+		float sy = (float)h / vb_h;
+		float s = slice ? ((sx > sy) ? sx : sy)
+				: ((sx < sy) ? sx : sy);
+		*out_scale_x = s;
+		*out_scale_y = s;
+	}
+	*out_tx = (float)x + ((float)w - vb_w * (*out_scale_x)) * align_x
+			- vb_x * (*out_scale_x);
+	*out_ty = (float)y + ((float)h - vb_h * (*out_scale_y)) * align_y
+			- vb_y * (*out_scale_y);
+}
+
+nserror macos9_svg_paint_standalone(const char *src, size_t len,
+		int x, int y, int w, int h,
+		const struct rect *clip,
+		const struct redraw_context *ctx)
+{
+	char *buf0;
+	const char *root;
+	const char *root_end;
+	char av[128];
+	char sv[512];   /* raw style="..." text for svg__style_prop */
+	float vb[4];
+	struct macos9_svg_root_dims dims;
+	struct svg_ctx sc;
+	const char *p;
+	static char d_local[4096];
+	float pbuf[MACOS9_SVG_PATH_MAX];
+	int paths = 0;
+	int have_par;
+
+	if (src == NULL || len == 0 || ctx == NULL || ctx->plot == NULL ||
+			w <= 0 || h <= 0)
+		return NSERROR_BAD_PARAMETER;
+
+	if (!macos9_svg_locate_root(src, len, &buf0, &root, &root_end))
+		return NSERROR_INVALID;
+
+	/* viewBox, else width/height attrs, else the dest rect 1:1. */
+	macos9_svg_parse_root_dims(root, root_end, &dims);
+	if (dims.have_vb) {
+		vb[0] = dims.vb_x;
+		vb[1] = dims.vb_y;
+		vb[2] = dims.vb_w;
+		vb[3] = dims.vb_h;
+	} else {
 		vb[0] = 0.0f;
 		vb[1] = 0.0f;
-		vb[2] = (aw > 0.0f) ? aw : (float)w;
-		vb[3] = (ah > 0.0f) ? ah : (float)h;
+		vb[2] = dims.have_width ? dims.width : (float)w;
+		vb[3] = dims.have_height ? dims.height : (float)h;
 	}
 
 	memset(&sc, 0, sizeof(sc));
@@ -2677,58 +2823,73 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 	sc.vb_w = vb[2];
 	sc.vb_h = vb[3];
 
-	/* fixes1044 (#280)  -  preserveAspectRatio="xMidYMid meet", the SVG
-	 * DEFAULT, instead of an independent per-axis stretch.
-	 *
-	 * scale_x and scale_y were computed separately (w/vb_w and h/vb_h), so
-	 * any SVG whose viewBox aspect differs from the destination box was
-	 * distorted. puffy.svg is 1051x874 (1.20:1) painted into a square <img>,
-	 * so it was squashed ~20% horizontally relative to vertical.
-	 *
-	 * "meet" = scale uniformly by the SMALLER ratio so the whole graphic
-	 * fits, then centre the leftover (xMid/YMid). This is what every browser
-	 * does when a viewBox and a differently-shaped box meet, and it is what
-	 * the Chrome reference render of this file shows. */
-	{
-		float sx = (float)w / vb[2];
-		float sy = (float)h / vb[3];
-		float s = (sx < sy) ? sx : sy;
+	/* preserveAspectRatio: meet/slice/none + 9 alignments, shared with
+	 * the DOM renderer via macos9_svg_compute_fit - replaces the old
+	 * hardcoded xMidYMid-meet-only math. */
+	have_par = svg__tag_attr(root, root_end, "preserveAspectRatio", av,
+			sizeof(av));
+	macos9_svg_compute_fit(x, y, w, h, vb[0], vb[1], vb[2], vb[3],
+			have_par ? av : NULL,
+			&sc.scale_x, &sc.scale_y, &sc.m[4], &sc.m[5]);
+	sc.m[0] = sc.scale_x;
+	sc.m[1] = 0.0f;
+	sc.m[2] = 0.0f;
+	sc.m[3] = sc.scale_y;
 
-		sc.scale_x = s;
-		sc.scale_y = s;
-		sc.m[0] = s;
-		sc.m[1] = 0.0f;
-		sc.m[2] = 0.0f;
-		sc.m[3] = s;
-		/* centre the scaled viewBox inside the destination rect */
-		sc.m[4] = (float)x + ((float)w - vb[2] * s) * 0.5f
-				- vb[0] * s;
-		sc.m[5] = (float)y + ((float)h - vb[3] * s) * 0.5f
-				- vb[1] * s;
-
-	}
 	sc.plot_ctx = ctx;
 	sc.grads = NULL;
 	sc.base_url = NULL;
 
-	/* fixes1049 (#280)  -  walk <g>/</g> as well as <path>, carrying the
-	 * accumulated group translate. The old walk jumped straight from one
-	 * <path> to the next and never saw the enclosing groups, so every
-	 * transform="translate(...)" on them was silently discarded.
+	/* External SVG clips to its own viewport unconditionally, not only
+	 * for preserveAspectRatio="slice": real SVG's outermost element
+	 * clips to its viewport by default independent of that attribute,
+	 * and once transform= (below) can rotate/skew geometry, content can
+	 * be pushed outside the viewBox under "meet" too - a rotated group
+	 * or a path that legitimately extends past its own viewBox in user
+	 * space is ordinary, valid SVG, not an edge case. A plain <img> box
+	 * is not otherwise clipped to itself by the caller (html_redraw_box
+	 * only clips a replaced box when CSS overflow is non-visible on it,
+	 * which isn't the default), so this establishes it. Intersect with
+	 * the caller's clip/dirty rect first (never widen past what it
+	 * already expects) and restore exactly that afterward -
+	 * macos9_plot_clip SETs the whole QuickDraw clip region rather than
+	 * intersecting with whatever was active, so an unrestored narrower
+	 * clip would leak into whatever paints next. NULL clip (no ambient
+	 * region given) leaves painting unclipped, same as before. */
+	if (clip != NULL) {
+		struct rect box_clip;
+		box_clip.x0 = x;
+		box_clip.y0 = y;
+		box_clip.x1 = x + w;
+		box_clip.y1 = y + h;
+		if (box_clip.x0 < clip->x0) box_clip.x0 = clip->x0;
+		if (box_clip.y0 < clip->y0) box_clip.y0 = clip->y0;
+		if (box_clip.x1 > clip->x1) box_clip.x1 = clip->x1;
+		if (box_clip.y1 > clip->y1) box_clip.y1 = clip->y1;
+		ctx->plot->clip(ctx, &box_clip);
+	}
+
+	/* Walk <g>/</g> as well as every shape kind, carrying the
+	 * accumulated group transform as a full affine MATRIX (not just a
+	 * translate) so rotate/scale/skew/matrix on a group or a shape's
+	 * own transform= compose correctly - the same composition
+	 * (child.m = parent.m * local) already proven on the DOM/inline-SVG
+	 * path's svg__paint_subtree, via svg__parse_transform_attr_str
+	 * (a thin wrapper over the same svg__parse_one_transform that path
+	 * uses).
 	 *
-	 * gtx/gty[d] is the CUMULATIVE translate at depth d, so a nested group
-	 * adds to its parent rather than replacing it. Depth is clamped; a
-	 * document deeper than the stack keeps painting at the deepest tracked
-	 * translate rather than bailing, which degrades instead of vanishing. */
+	 * gm[d] is the CUMULATIVE matrix at depth d, seeded from whatever
+	 * sc.m already is above (the root viewBox/fit matrix) rather than
+	 * identity, so a shape with no enclosing <g> still maps through the
+	 * root fit. Depth is clamped; a document deeper than the stack
+	 * keeps painting at the deepest tracked matrix rather than bailing,
+	 * degrading instead of vanishing. */
 	{
-	float gtx[SVG_G_DEPTH_MAX];
-	float gty[SVG_G_DEPTH_MAX];
+	float gm[SVG_G_DEPTH_MAX][6];
 	int gdepth = 0;
 
-	gtx[0] = 0.0f;
-	gty[0] = 0.0f;
+	memcpy(gm[0], sc.m, sizeof(gm[0]));
 
-	/* Walk every <path> tag; paint d with the path's own fill. */
 	p = root_end;
 	while (paths < 64) {
 		const char *tag;
@@ -2738,15 +2899,14 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 		int shape_kind = 0;
 		struct svg_paint_state st;
 		plot_style_t pstyle;
-		float ptx;
-		float pty;
+		float shape_m[6];
 		int n;
 
 		tag = svg__next_shape(p, &shape_kind);
 
 		/* Consume any group open/close that comes BEFORE the next
-		 * <path>, so the translate in effect is correct when we
-		 * reach it. */
+		 * shape, so the matrix in effect is correct when we reach
+		 * it. */
 		for (;;) {
 			g_open = strstr(p, "<g");
 			/* "<g" must be the whole element name, not "<glyph" */
@@ -2757,7 +2917,7 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 			}
 			g_close = strstr(p, "</g>");
 
-			/* stop once both are past the next <path> */
+			/* stop once both are past the next shape */
 			if ((g_open == NULL || (tag != NULL && g_open > tag)) &&
 			    (g_close == NULL || (tag != NULL && g_close > tag)))
 				break;
@@ -2771,17 +2931,19 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 				p = g_close + 4;
 			} else {
 				const char *gend = strchr(g_open, '>');
-				float tx = 0.0f;
-				float ty = 0.0f;
+				float group_local[6];
 				if (gend == NULL)
 					break;
 				if (svg__tag_attr(g_open, gend, "transform",
 						av, sizeof(av)))
-					(void)svg__transform_translate(av,
-							&tx, &ty);
+					(void)svg__parse_transform_attr_str(
+							av, group_local);
+				else
+					svg__matrix_identity(group_local);
 				if (gdepth + 1 < SVG_G_DEPTH_MAX) {
-					gtx[gdepth + 1] = gtx[gdepth] + tx;
-					gty[gdepth + 1] = gty[gdepth] + ty;
+					svg__matrix_mul(gm[gdepth],
+							group_local,
+							gm[gdepth + 1]);
 					gdepth++;
 				}
 				p = gend + 1;
@@ -2801,7 +2963,7 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 		st.fill_opacity = 1.0f;
 		st.stroke_present = 0;
 		st.stroke_opacity = 1.0f;
-		st.stroke_dash = 0;   /* fixes960b (#258)  -  solid unless asked */
+		st.stroke_dash = 0;   /* solid unless asked */
 		if (svg__tag_attr(tag, tend, "fill", av, sizeof(av))) {
 			colour col;
 			int none = 0;
@@ -2813,14 +2975,8 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 			}
 		}
 
-		/* fixes1058 (#258)  -  the remaining PRESENTATION ATTRIBUTES.
-		 *
-		 * The standalone painter only ever read `fill`, so it could not
-		 * stroke AT ALL and ignored fill-opacity unless it arrived via
-		 * style=. The inline painter has honoured these for a while
-		 * (fill-opacity :770, stroke-opacity :783, fixes305); this
-		 * brings <img src="*.svg"> to the same level. Attributes first,
-		 * style= overrides below, per SVG precedence. */
+		/* the remaining PRESENTATION ATTRIBUTES: fill/fill-opacity
+		 * cover fills, these cover strokes and opacity. */
 		if (svg__tag_attr(tag, tend, "fill-opacity", av, sizeof(av))) {
 			size_t used = 0;
 			float fo = svg__atof(av, &used);
@@ -2847,11 +3003,8 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 				st.stroke_opacity = so;
 		}
 
-		/* fixes1043 (#280)  -  style="fill:..." AFTER the presentation
-		 * attribute, because per SVG a style declaration overrides it.
-		 * Without this every path from an exported SVG (which uses style=
-		 * and no fill= at all) kept the opaque-black default and the whole
-		 * image painted as a silhouette. */
+		/* style="fill:..." AFTER the presentation attribute, because
+		 * per SVG a style declaration overrides it. */
 		if (svg__tag_attr(tag, tend, "style", sv, sizeof(sv))) {
 			char pv[64];
 			if (svg__style_prop(sv, "fill", pv, sizeof(pv))) {
@@ -2872,8 +3025,6 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 				if (used > 0 && fo >= 0.0f && fo <= 1.0f)
 					st.fill_opacity = fo;
 			}
-			/* fixes1058 (#258)  -  stroke via style=, mirroring the
-			 * attribute handling above. */
 			if (svg__style_prop(sv, "stroke", pv, sizeof(pv))) {
 				colour col;
 				int none = 0;
@@ -2902,32 +3053,34 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 			}
 		}
 
-		/* fixes1049  -  group translate plus this path's own transform,
-		 * folded into the affine as a pre-translate in USER space:
-		 *   map(u + t) = m0*(u+t) + m4 = m0*u + (m0*t + m4)
-		 * so shifting m[4]/m[5] by m[0]*tx / m[3]*ty is exact. Saved
-		 * and restored around the paint so it cannot leak to the next
-		 * path. */
-		ptx = gtx[gdepth];
-		pty = gty[gdepth];
-		if (svg__tag_attr(tag, tend, "transform", av, sizeof(av))) {
-			float ttx = 0.0f;
-			float tty = 0.0f;
-			if (svg__transform_translate(av, &ttx, &tty)) {
-				ptx += ttx;
-				pty += tty;
-			}
+		/* Lines have no fill area - an unstroked <line> must not
+		 * paint a phantom filled sliver from the default
+		 * fill_present=1 above (mirrors the DOM renderer's
+		 * svg__paint_line, which gates on stroke_present alone). */
+		if (shape_kind == SVG_SHAPE_LINE && !st.stroke_present) {
+			paths++;
+			p = tend + 1;
+			continue;
 		}
 
-		/* fixes1058 (#258)  -  paint when EITHER paint is active. The gate
-		 * was fill-only, so a stroke-only shape - very common in icon
-		 * sets - drew nothing at all. */
-		if (st.fill_present || st.stroke_present) {
-			float save_m4 = sc.m[4];
-			float save_m5 = sc.m[5];
+		/* This shape's own transform= composed onto the group chain
+		 * in effect: effective = gm[gdepth] * shape_local. */
+		if (svg__tag_attr(tag, tend, "transform", av, sizeof(av))) {
+			float shape_local[6];
+			(void)svg__parse_transform_attr_str(av, shape_local);
+			svg__matrix_mul(gm[gdepth], shape_local, shape_m);
+		} else {
+			memcpy(shape_m, gm[gdepth], sizeof(shape_m));
+		}
 
-			sc.m[4] += sc.m[0] * ptx;
-			sc.m[5] += sc.m[3] * pty;
+		/* paint when EITHER paint is active. The gate was fill-only,
+		 * so a stroke-only shape - very common in icon sets - drew
+		 * nothing at all. */
+		if (st.fill_present || st.stroke_present) {
+			float save_m[6];
+
+			memcpy(save_m, sc.m, sizeof(save_m));
+			memcpy(sc.m, shape_m, sizeof(sc.m));
 			svg__init_plot_style(&pstyle, &st, &sc);
 			n = 0;
 
@@ -2945,10 +3098,11 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 					}
 					n = 0;   /* already plotted */
 				}
-			} else {
-				/* fixes1050  -  <circle> / <ellipse>. Emitted in
-				 * USER space by the shared emitter, then mapped
-				 * here, because that emitter (unlike
+			} else if (shape_kind == SVG_SHAPE_CIRCLE ||
+					shape_kind == SVG_SHAPE_ELLIPSE) {
+				/* <circle> / <ellipse>. Emitted in USER space
+				 * by the shared emitter, then mapped below,
+				 * because that emitter (unlike
 				 * svg__path_parse) does not map for you. */
 				float cx = svg__tag_attr_float(tag, tend,
 						"cx", 0.0f);
@@ -2972,6 +3126,102 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 					n = svg__emit_ellipse_path(pbuf,
 						MACOS9_SVG_PATH_MAX,
 						cx, cy, rx, ry);
+				}
+			} else if (shape_kind == SVG_SHAPE_RECT) {
+				/* Emitted the same shape as the DOM renderer's
+				 * rotated-rect fallback (svg__paint_rect):
+				 * MOVE TL, LINE TR/BR/BL, CLOSE. No rx/ry
+				 * corner rounding - svg__paint_rect doesn't
+				 * support it either, so this is real parity,
+				 * not a new gap. */
+				float rect_x = svg__tag_attr_float(tag, tend,
+						"x", 0.0f);
+				float rect_y = svg__tag_attr_float(tag, tend,
+						"y", 0.0f);
+				float rect_w = svg__tag_attr_float(tag, tend,
+						"width", 0.0f);
+				float rect_h = svg__tag_attr_float(tag, tend,
+						"height", 0.0f);
+
+				if (rect_w > 0.0f && rect_h > 0.0f) {
+					n = 0;
+					pbuf[n++] = (float)PLOTTER_PATH_MOVE;
+					pbuf[n++] = rect_x;
+					pbuf[n++] = rect_y;
+					pbuf[n++] = (float)PLOTTER_PATH_LINE;
+					pbuf[n++] = rect_x + rect_w;
+					pbuf[n++] = rect_y;
+					pbuf[n++] = (float)PLOTTER_PATH_LINE;
+					pbuf[n++] = rect_x + rect_w;
+					pbuf[n++] = rect_y + rect_h;
+					pbuf[n++] = (float)PLOTTER_PATH_LINE;
+					pbuf[n++] = rect_x;
+					pbuf[n++] = rect_y + rect_h;
+					pbuf[n++] = (float)PLOTTER_PATH_CLOSE;
+				}
+			} else if (shape_kind == SVG_SHAPE_LINE) {
+				n = 0;
+				pbuf[n++] = (float)PLOTTER_PATH_MOVE;
+				pbuf[n++] = svg__tag_attr_float(tag, tend,
+						"x1", 0.0f);
+				pbuf[n++] = svg__tag_attr_float(tag, tend,
+						"y1", 0.0f);
+				pbuf[n++] = (float)PLOTTER_PATH_LINE;
+				pbuf[n++] = svg__tag_attr_float(tag, tend,
+						"x2", 0.0f);
+				pbuf[n++] = svg__tag_attr_float(tag, tend,
+						"y2", 0.0f);
+			} else if (shape_kind == SVG_SHAPE_POLYGON ||
+					shape_kind == SVG_SHAPE_POLYLINE) {
+				/* points="x1,y1 x2,y2 ..." - same raw-string
+				 * scanner (svg__path_ws/svg__read_num) the DOM
+				 * renderer's svg__paint_poly already uses;
+				 * those two take a const char *, not a
+				 * dom_node, so they're reusable as-is. Read
+				 * into d_local (4096B) rather than the 128B
+				 * av[] - a real polygon's points list would
+				 * truncate in av[]. */
+				if (svg__tag_attr(tag, tend, "points",
+						d_local, sizeof(d_local))) {
+					const char *pp = d_local;
+					float first_x = 0.0f;
+					float first_y = 0.0f;
+					int got_first = 0;
+
+					n = 0;
+					while (*pp) {
+						float px, py;
+						pp = svg__path_ws(pp);
+						if (*pp == '\0') break;
+						pp = svg__read_num(pp, &px);
+						pp = svg__read_num(pp, &py);
+						if (n + 3 > MACOS9_SVG_PATH_MAX)
+							break;
+						if (!got_first) {
+							pbuf[n++] = (float)
+								PLOTTER_PATH_MOVE;
+							first_x = px;
+							first_y = py;
+							got_first = 1;
+						} else {
+							pbuf[n++] = (float)
+								PLOTTER_PATH_LINE;
+						}
+						pbuf[n++] = px;
+						pbuf[n++] = py;
+					}
+					if (shape_kind == SVG_SHAPE_POLYGON &&
+							got_first && n + 4 <=
+							MACOS9_SVG_PATH_MAX) {
+						pbuf[n++] = (float)
+							PLOTTER_PATH_LINE;
+						pbuf[n++] = first_x;
+						pbuf[n++] = first_y;
+						pbuf[n++] = (float)
+							PLOTTER_PATH_CLOSE;
+					}
+					if (!got_first)
+						n = 0;
 				}
 			}
 
@@ -3005,12 +3255,15 @@ nserror macos9_svg_paint_standalone(const char *src, size_t len,
 						mbuf, (unsigned int)j2, NULL);
 			}
 
-			sc.m[4] = save_m4;
-			sc.m[5] = save_m5;
+			memcpy(sc.m, save_m, sizeof(sc.m));
 		}
 		paths++;
 		p = tend + 1;
 	}
+	}
+
+	if (clip != NULL) {
+		ctx->plot->clip(ctx, clip);   /* restore the ambient redraw clip */
 	}
 
 	free(buf0);
