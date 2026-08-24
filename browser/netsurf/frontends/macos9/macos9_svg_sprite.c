@@ -73,7 +73,7 @@ sprite_fetch_cb(hlcache_handle *h, const hlcache_event *event, void *pw)
 							g_fetching_url);
 				}
 				macsurf_debug_log_writef(
-					"svg_sprite: loaded %ld bytes",
+					"LIFE SVG sprite loaded %ld bytes",
 					(long) sz);
 			}
 		}
@@ -231,7 +231,7 @@ sprite_ensure_loaded(nsurl *sprite_nsurl)
 				strcpy(g_sprite_url, surl);
 		}
 		free(body);
-		macsurf_debug_log_writef("svg_sprite: loaded %ld bytes %s",
+		macsurf_debug_log_writef("LIFE SVG sprite loaded %ld bytes %s",
 				blen, surl);
 		return (g_sprite_data != NULL) ? 1 : 0;
 	}
@@ -250,7 +250,7 @@ sprite_ensure_loaded(nsurl *sprite_nsurl)
 			g_fetching_url = (char *) malloc(strlen(surl) + 1);
 			if (g_fetching_url != NULL)
 				strcpy(g_fetching_url, surl);
-			macsurf_debug_log_writef("svg_sprite: fetch start %s",
+			macsurf_debug_log_writef("LIFE SVG sprite fetch start %s",
 					surl);
 		} else {
 			g_sprite_fetch = NULL;

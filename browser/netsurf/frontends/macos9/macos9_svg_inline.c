@@ -1714,6 +1714,12 @@ static int svg__tag_is_use(dom_string *tag)
 static void svg__paint_use(dom_node *node, const struct svg_ctx *c,
 		const struct svg_paint_state *st)
 {
+	/* The normal svg_use trace is deliberately paint-log filtered in release
+	 * builds. Keep one durable lifecycle breadcrumb for a page: it tells a
+	 * hardware log whether an external FontAwesome sprite merely waited on its
+	 * first redraw, or was actually parsed and emitted. */
+	static int reported_wait = 0;
+	static int reported_draw = 0;
 	dom_string *dh = NULL;
 	dom_string *dxh = NULL;
 	const char *href;
@@ -1801,8 +1807,19 @@ static void svg__paint_use(dom_node *node, const struct svg_ctx *c,
 			"svg_use: paths=%d n=%d vb=(%d,%d,%d,%d) box=(%d,%d,%d,%d)",
 			paths, total, (int)vb[0], (int)vb[1], (int)vb[2],
 			(int)vb[3], c->box_x, c->box_y, c->box_w, c->box_h);
+		if (!reported_draw) {
+			macsurf_debug_log_writef(
+				"LIFE SVG sprite draw href=%s paths=%d commands=%d box=%dx%d",
+				href, paths, total, c->box_w, c->box_h);
+			reported_draw = 1;
+		}
 	} else {
 		macsurf_debug_log_writef("svg_use: unresolved href=%s", href);
+		if (!reported_wait) {
+			macsurf_debug_log_writef(
+				"LIFE SVG sprite wait href=%s", href);
+			reported_wait = 1;
+		}
 	}
 
 	if (dh != NULL) dom_string_unref(dh);
