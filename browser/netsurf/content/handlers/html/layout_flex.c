@@ -2341,6 +2341,34 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 		}
 	}
 
+	/* fixes1314 (#167, 68kmla) - fixes1313 closed the flex-grow-against-
+	 * indefinite-main-size corruption (verified: no more FLEXLINE/
+	 * FLEXITEM target_main_size mismatches anywhere in the next
+	 * hardware log), but the reported "giant space" persisted. The
+	 * SAME page's pagemap dump shows a real, separate gap: #top.
+	 * p-pageWrapper (the outermost flex wrapper) reports h=10646, but
+	 * its own children only account for roughly 2650px combined
+	 * (header 48 + navSticky 70 + sectionLinks 29 + a correctly-hidden
+	 * off-canvas menu 0 + p-body 2436 + footer 67) -- and this
+	 * container never tripped FLEXLINE's own >3000 gate, so the
+	 * runaway isn't in main_size accumulation from real items this
+	 * time. Unconditional dump of every input to the final height
+	 * decision -- ctx->main_size/cross_size (pre-clamp) alongside
+	 * min_height/max_height (the clamp fixes1301's FLEXMINH already
+	 * covers, but only for column/!horizontal containers -- this
+	 * covers both directions) and the actual resulting flex->height --
+	 * gated on the FINAL height being implausible, so whichever of the
+	 * three is actually responsible names itself directly instead of
+	 * needing another guess. */
+	if (flex->height > 3000) {
+		macsurf_debug_log_writef(
+			"LIFE FLEXFINAL box=%p horizontal=%d main=%d "
+			"cross=%d min_h=%d max_h=%d final_h=%d",
+			(void *)flex, (int)ctx->horizontal,
+			(int)ctx->main_size, (int)ctx->cross_size,
+			min_height, max_height, (int)flex->height);
+	}
+
 	success = true;
 
 	/* fixes167b - note: failure paths above destroy ctx and return
