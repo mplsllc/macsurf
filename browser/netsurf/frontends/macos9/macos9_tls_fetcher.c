@@ -284,12 +284,6 @@ struct macos9_https_ctx {
 
 static struct macos9_https_ctx https_slots[MAX_HTTPS_F];
 
-/* Bounded response evidence for image-format diagnosis.  Successful image
- * responses are normally deliberately quiet; this small session cap makes a
- * hardware log show what a site actually sent without turning it into a
- * per-pixel or unbounded fetch trace. */
-static long g_https_image_mime_log_count = 0;
-
 /* fixes1253 (#167) - cumulative, session-lifetime count of ops.setup()
  * calls that found all MAX_HTTPS_F slots occupied and returned NULL
  * (never reset per navigation, same convention as macsurf_qjs.c's other
@@ -2168,13 +2162,12 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 				c->host, c->path,
 				c->mime[0] ? c->mime : "(empty)",
 				force_download, c->status);
-		} else if (strncmp(c->mime, "image/", 6) == 0 &&
-				g_https_image_mime_log_count < 80) {
-			g_https_image_mime_log_count++;
-			macsurf_debug_log_writef(
-				"IMG MIME net host=%s path=%s mime=%s st=%d",
-				c->host, c->path, c->mime, c->status);
 		}
+		/* fixes1319: the per-image success trace that used to live here
+		 * ("IMG MIME net") is gone - it never had "LIFE " in it, so it
+		 * was silently dropped by the release build's failures-only
+		 * filter anyway. object.c's macsurf_log_final_image() reports
+		 * every loaded image from one place, post-decode. */
 
 		/* fixes770's text/plain->text/html relabel REMOVED (#233,
 		 * fixes1137): the real textplain.c handler is wired, so a

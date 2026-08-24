@@ -33,6 +33,7 @@
 #include "utils/config.h"
 #include "utils/log.h"
 #include "utils/nsoption.h"
+#include "utils/nsurl.h"
 #include "netsurf/content.h"
 #include "netsurf/misc.h"
 #include "content/hlcache.h"
@@ -49,6 +50,43 @@
 #include "macos9_deathrow.h"
 
 extern int macsurf_ptr_is_heap(const void *);
+
+/* fixes1319 - the one canonical "an image finished loading" report. Lives
+ * here rather than in a fetcher because an image may be fulfilled from the
+ * on-disk cache with no network round trip at all, and this callback sees
+ * every image handler's own resolved MIME + dimensions the same way
+ * regardless (WebP, QuickTime JPEG/PNG/GIF, SVG) - after header parsing,
+ * MIME sniffing, AND decode, not just one stage of the pipeline.
+ *
+ * Replaces today's scattered probes (macos9_webp.c's "WEBP decode" line,
+ * box_special.c's "PICTURE source" line, macos9_tls_fetcher.c's "IMG MIME
+ * net" line, and this function's own earlier "IMG FINAL" line): NONE of
+ * them had "LIFE " anywhere in the message, so per this frontend's own
+ * documented gotcha (macos9/CLAUDE.md, "Diagnostics"), every one of them
+ * was silently dropped by the release build's failures-only filter -
+ * they'd have read as "the code never ran" even while working correctly.
+ * Capped per session so a large page doesn't flood the release log. */
+static long macsurf_final_image_log_count = 0;
+
+static void
+macsurf_log_final_image(hlcache_handle *object)
+{
+	lwc_string *mime;
+	struct nsurl *url;
+
+	if (object == NULL || content_get_type(object) != CONTENT_IMAGE ||
+			macsurf_final_image_log_count >= 80)
+		return;
+	mime = content_get_mime_type(object);
+	url = hlcache_handle_get_url(object);
+	macsurf_final_image_log_count++;
+	macsurf_debug_log_writef("LIFE IMG loaded mime=%s %dx%d url=%s",
+		(mime != NULL) ? lwc_string_data(mime) : "(none)",
+		content_get_width(object), content_get_height(object),
+		(url != NULL) ? nsurl_access(url) : "(no url)");
+	if (mime != NULL)
+		lwc_string_unref(mime);
+}
 
 /* break reference loop */
 static void html_object_refresh(void *p);
@@ -464,6 +502,7 @@ html_object_callback(hlcache_handle *object,
 		break;
 
 	case CONTENT_MSG_DONE:
+		macsurf_log_final_image(object);
 		if (o->active_counted) {
 			c->base.active--;
 			o->active_counted = false;

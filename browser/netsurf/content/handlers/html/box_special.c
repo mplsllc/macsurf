@@ -1501,12 +1501,9 @@ box_image_resolve_picture_url(dom_node *img, html_content *content,
 							goto done;
 						ok = box_extract_link(content, candidate_string,
 								content->base_url, out_url);
-						if (ok && *out_url != NULL) {
-							macsurf_debug_log_writef(
-								"PICTURE source type=%s url=%s",
-								(type != NULL) ? type : "(none)",
-								nsurl_access(*out_url));
-						}
+						/* fixes1319: per-source selection trace removed -
+						 * object.c's macsurf_log_final_image() reports
+						 * every loaded image from one place. */
 						goto done;
 					}
 				}
