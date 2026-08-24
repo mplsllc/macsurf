@@ -2334,34 +2334,53 @@ nserror macos9_svg_paint_inline(struct box *box,
 /* Extract attribute `name="..."` from tag text [tag..tag_end); copies the
  * value into out (NUL-terminated, capped). Returns 1 on success. The needle
  * includes the leading space so `viewBox` never matches `xviewBox`. */
+/* Whitespace-tolerant, single/double-quote attribute reader. The prior
+ * version matched only the literal 4-byte sequence " name=\"" - no
+ * whitespace around '=', double quotes only - so width='100' and
+ * width = "100" both silently failed to match, the same way an absent
+ * viewBox silently fell back to 16x16. This is a strict superset of
+ * what it matched before (same boundary requirement, same terminate-at-
+ * quote behaviour), so every existing call site (fill, stroke, style,
+ * transform, cx/cy/r/rx/ry, d, points, ...) gets more robust for free.
+ */
 static int svg__tag_attr(const char *tag, const char *tag_end,
 		const char *name, char *out, size_t cap)
 {
-	char needle[32];
-	const char *p;
-	const char *v;
-	size_t i;
-	size_t nl;
+	size_t nl = strlen(name);
+	const char *p = tag;
 
-	nl = strlen(name);
-	if (nl + 4 > sizeof(needle))
-		return 0;
-	needle[0] = ' ';
-	memcpy(needle + 1, name, nl);
-	needle[1 + nl] = '=';
-	needle[2 + nl] = '"';
-	needle[3 + nl] = '\0';
-
-	p = strstr(tag, needle);
-	if (p == NULL || p >= tag_end)
-		return 0;
-	v = p + nl + 3;
-	i = 0;
-	while (v < tag_end && *v != '"' && i < cap - 1) {
-		out[i++] = *v++;
+	while (p < tag_end) {
+		if ((*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') &&
+				p + 1 + nl <= tag_end &&
+				memcmp(p + 1, name, nl) == 0) {
+			const char *q = p + 1 + nl;
+			while (q < tag_end && (*q == ' ' || *q == '\t' ||
+					*q == '\n' || *q == '\r'))
+				q++;
+			if (q < tag_end && *q == '=') {
+				char qc;
+				size_t i;
+				q++;
+				while (q < tag_end && (*q == ' ' ||
+						*q == '\t' || *q == '\n' ||
+						*q == '\r'))
+					q++;
+				if (q < tag_end &&
+						(*q == '"' || *q == '\'')) {
+					qc = *q++;
+					i = 0;
+					while (q < tag_end && *q != qc &&
+							i < cap - 1) {
+						out[i++] = *q++;
+					}
+					out[i] = '\0';
+					return 1;
+				}
+			}
+		}
+		p++;
 	}
-	out[i] = '\0';
-	return 1;
+	return 0;
 }
 
 /* Paint a STANDALONE external SVG (an <img src="*.svg"> or a CSS
