@@ -1754,20 +1754,28 @@ static void svg__paint_use(dom_node *node, const struct svg_ctx *c,
 			sstart != NULL && send != NULL && send > sstart &&
 			vb[2] > 0.0f && vb[3] > 0.0f) {
 		/* Map the SYMBOL viewBox to this icon box (a fresh matrix; the
-		 * icon <svg>'s own viewBox usually differs or is absent). */
+		 * icon <svg>'s own viewBox usually differs or is absent).
+		 *
+		 * An external <use> has the same default fitting rule as an SVG
+		 * viewport: preserveAspectRatio="xMidYMid meet".  The old direct
+		 * per-axis scale stretched a square Font Awesome glyph into a
+		 * non-square CSS icon box (for example, 12x16).  Use the shared
+		 * standalone/inline fit helper so symbols retain their authored
+		 * aspect ratio and are centred in the remaining axis. */
 		sc = *c;
 		sc.vb_x = vb[0];
 		sc.vb_y = vb[1];
 		sc.vb_w = vb[2];
 		sc.vb_h = vb[3];
-		sc.scale_x = (float)c->box_w / vb[2];
-		sc.scale_y = (float)c->box_h / vb[3];
+		macos9_svg_compute_fit(c->box_x, c->box_y,
+				c->box_w, c->box_h,
+				vb[0], vb[1], vb[2], vb[3], NULL,
+				&sc.scale_x, &sc.scale_y,
+				&sc.m[4], &sc.m[5]);
 		sc.m[0] = sc.scale_x;
 		sc.m[1] = 0.0f;
 		sc.m[2] = 0.0f;
 		sc.m[3] = sc.scale_y;
-		sc.m[4] = (float)c->box_x - vb[0] * sc.scale_x;
-		sc.m[5] = (float)c->box_y - vb[1] * sc.scale_y;
 
 		svg__init_plot_style(&pstyle, st, &sc);
 
