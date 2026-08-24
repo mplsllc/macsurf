@@ -2834,7 +2834,7 @@ static int build_request(struct macos9_https_ctx *c)
 			"POST %s HTTP/1.1\r\n"
 			"Host: %s\r\n"
 			"User-Agent: %s\r\n"
-			"Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
+			"Accept: text/html,application/xhtml+xml,image/webp,image/*;q=0.8,*/*;q=0.7\r\n"
 			"Accept-Language: en-US,en;q=0.5\r\n"
 			"Accept-Encoding: gzip\r\n"
 			"%s"                        /* cookie_hdr  */
@@ -2851,7 +2851,7 @@ static int build_request(struct macos9_https_ctx *c)
 			"GET %s HTTP/1.1\r\n"
 			"Host: %s\r\n"
 			"User-Agent: %s\r\n"
-			"Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
+			"Accept: text/html,application/xhtml+xml,image/webp,image/*;q=0.8,*/*;q=0.7\r\n"
 			"Accept-Language: en-US,en;q=0.5\r\n"
 			"Accept-Encoding: gzip\r\n"
 			"%s"                    /* cookie_hdr  */

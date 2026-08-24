@@ -604,7 +604,15 @@ static const struct content_handler macos9_webp_handler = {
 nserror
 macos9_webp_init(void)
 {
-	return content_factory_register_handler("image/webp", &macos9_webp_handler);
+	nserror err;
+
+	err = content_factory_register_handler("image/webp", &macos9_webp_handler);
+	if (err != NSERROR_OK)
+		return err;
+	/* A few older image origins still use this non-standard alias.  Treat it
+	 * identically so a valid WebP payload does not become a download merely
+	 * because of its response header. */
+	return content_factory_register_handler("image/x-webp", &macos9_webp_handler);
 }
 
 void

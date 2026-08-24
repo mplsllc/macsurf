@@ -346,6 +346,7 @@ static const char *macos9_fetch_filetype(const char *unix_path)
 		return "text/html";
 	if (strcasecmp(ext, "css") == 0) return "text/css";
 	if (strcasecmp(ext, "png") == 0) return "image/png";
+	if (strcasecmp(ext, "webp") == 0) return "image/webp";
 	if (strcasecmp(ext, "gif") == 0) return "image/gif";
 	if (strcasecmp(ext, "txt") == 0) return "text/plain";
 	return "application/octet-stream";

@@ -1342,6 +1342,173 @@ box_image_pick_srcset(const char *srcset, void *talloc_ctx, char **out)
 	return true;
 }
 
+/* The HTML parser knows about <picture>/<source>, but the old special-element
+ * path only ever looked at the IMG's own attributes.  That silently selected
+ * the JPEG/PNG fallback on every responsive-image site, despite MacSurf now
+ * having an image/webp handler.  Keep the check deliberately narrow: select
+ * only an explicitly declared image/webp source and otherwise retain the IMG
+ * fallback exactly as before. */
+static bool
+box_image_text_is(const char *value, const char *wanted)
+{
+	char a;
+	char b;
+
+	if (value == NULL || wanted == NULL)
+		return false;
+	while (*wanted != '\0') {
+		a = *value++;
+		b = *wanted++;
+		if (a == '\0')
+			return false;
+		if (a >= 'A' && a <= 'Z')
+			a = (char)(a + ('a' - 'A'));
+		if (b >= 'A' && b <= 'Z')
+			b = (char)(b + ('a' - 'A'));
+		if (a != b)
+			return false;
+	}
+	return (*value == '\0');
+}
+
+static bool
+box_image_type_is_webp(const char *type)
+{
+	const char *p;
+	const char *webp = "image/webp";
+	char a;
+	char b;
+
+	if (type == NULL)
+		return false;
+	p = type;
+	while (ascii_is_space(*p))
+		p++;
+	while (*webp != '\0') {
+		a = *p++;
+		b = *webp++;
+		if (a >= 'A' && a <= 'Z')
+			a = (char)(a + ('a' - 'A'));
+		if (a != b)
+			return false;
+	}
+	while (ascii_is_space(*p))
+		p++;
+	return (*p == '\0' || *p == ';');
+}
+
+static bool
+box_image_node_is(dom_node *node, const char *tag)
+{
+	dom_string *name = NULL;
+	dom_exception err;
+	bool result;
+
+	err = dom_element_get_tag_name((dom_element *)node, &name);
+	if (err != DOM_NO_ERR || name == NULL)
+		return false;
+	result = box_image_text_is(dom_string_data(name), tag);
+	dom_string_unref(name);
+	return result;
+}
+
+/* If IMG is the fallback child of a PICTURE, resolve its first declared WebP
+ * SOURCE.  A source without type is intentionally not guessed: accepting it
+ * could choose AVIF (which MacSurf cannot decode) on a mixed-format page. */
+static bool
+box_image_resolve_picture_url(dom_node *img, html_content *content,
+		nsurl **out_url)
+{
+	dom_node *parent = NULL;
+	dom_node *child = NULL;
+	dom_node *next = NULL;
+	dom_string *candidate_string = NULL;
+	dom_exception err;
+	char *type = NULL;
+	char *raw = NULL;
+	char *candidate = NULL;
+	bool ok = true;
+
+	*out_url = NULL;
+	err = dom_node_get_parent_node(img, &parent);
+	if (err != DOM_NO_ERR || parent == NULL)
+		return true;
+	if (!box_image_node_is(parent, "picture"))
+		goto done;
+
+	err = dom_node_get_first_child(parent, &child);
+	if (err != DOM_NO_ERR)
+		goto done;
+
+	while (child != NULL) {
+		if (child == img)
+			break;
+		if (box_image_node_is(child, "source")) {
+			type = NULL;
+			if (!box_get_attribute(child, "type", content->bctx,
+					&type)) {
+				ok = false;
+				goto done;
+			}
+			if (box_image_type_is_webp(type)) {
+				raw = NULL;
+				if (!box_get_attribute(child, "srcset", content->bctx,
+						&raw)) {
+					ok = false;
+					goto done;
+				}
+				if (raw == NULL || raw[0] == '\0') {
+					raw = NULL;
+					if (!box_get_attribute(child, "src", content->bctx,
+							&raw)) {
+						ok = false;
+						goto done;
+					}
+				}
+				if (raw != NULL && raw[0] != '\0') {
+					if (!box_image_pick_srcset(raw, content->bctx,
+							&candidate)) {
+						ok = false;
+						goto done;
+					}
+					if (candidate == NULL)
+						candidate = raw;
+					if (candidate[0] != '\0') {
+						err = dom_string_create_interned(
+							(const uint8_t *)candidate,
+							strlen(candidate), &candidate_string);
+						if (err != DOM_NO_ERR ||
+								candidate_string == NULL)
+							goto done;
+						ok = box_extract_link(content, candidate_string,
+								content->base_url, out_url);
+						goto done;
+					}
+				}
+			}
+		}
+		err = dom_node_get_next_sibling(child, &next);
+		if (err != DOM_NO_ERR) {
+			ok = false;
+			goto done;
+		}
+		dom_node_unref(child);
+		child = next;
+		next = NULL;
+	}
+
+done:
+	if (candidate_string != NULL)
+		dom_string_unref(candidate_string);
+	if (child != NULL)
+		dom_node_unref(child);
+	if (next != NULL)
+		dom_node_unref(next);
+	if (parent != NULL)
+		dom_node_unref(parent);
+	return ok;
+}
+
 /* Choose the best image URL for the given <img>/<source>. Promotes
  * data-src / data-original / data-lazy-src / data-srcset / srcset
  * fallbacks when src is missing or looks like a placeholder. */
@@ -1356,6 +1523,10 @@ box_image_resolve_url(dom_node *n, html_content *content, nsurl **out_url)
 	bool ok;
 
 	*out_url = NULL;
+	if (!box_image_resolve_picture_url(n, content, out_url))
+		return false;
+	if (*out_url != NULL)
+		return true;
 
 	err = dom_element_get_attribute(n, corestring_dom_src, &s);
 	if (err == DOM_NO_ERR && s != NULL) {

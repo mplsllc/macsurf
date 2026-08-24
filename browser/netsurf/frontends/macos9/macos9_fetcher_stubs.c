@@ -539,6 +539,10 @@ stub_body_for(const struct stub_fetch_ctx *ctx,
 				*mime_out = "text/plain";
 			} else if (strncmp(ctx->path, "image/png", 9) == 0) {
 				*mime_out = "image/png";
+			} else if (strncmp(ctx->path, "image/webp", 10) == 0) {
+				*mime_out = "image/webp";
+			} else if (strncmp(ctx->path, "image/x-webp", 12) == 0) {
+				*mime_out = "image/x-webp";
 			} else if (strncmp(ctx->path, "image/jpeg", 10) == 0) {
 				*mime_out = "image/jpeg";
 			} else if (strncmp(ctx->path, "image/gif", 9) == 0) {
