@@ -268,15 +268,18 @@ void macsurf_qjs_emit_fb_boot(struct JSContext *ctx)
 		"(function(){try{var g=globalThis;"
 		"if(!g.location||String(g.location.hostname||'').indexOf('facebook.com')<0)"
 			"return null;"
-		"var ts=g.TimeSlice,sj=g.ScheduleJSWork,mods=null,m=null;"
+		"var ts=g.TimeSlice,sj=g.ScheduleJSWork,mods=null,m=null,d=null,w='na';"
 		"try{if(typeof g.require==='function'){"
-			"var d=g.require('__debug');"
+			"d=g.require('__debug');"
 			"mods=d&&d.getModules?d.getModules():null;"
-			"m=mods&&mods.TimeSlice;}}catch(e){}"
+			"m=mods&&mods.TimeSlice;"
+			"if(d&&d.debugUnresolvedDependencies)"
+				"w=String(d.debugUnresolvedDependencies(['TimeSlice']));}}catch(e){}"
 		"return 'global='+typeof ts+' guard='+typeof(ts&&ts.guard)+"
 			"' schedule='+typeof sj+' module='+(m?'yes':'no')+"
 			"' ready='+(m?!!m.factoryFinished:'na')+"
-			"' deps='+(m&&m.dependencies?m.dependencies.length:'na');"
+			"' deps='+(m&&m.dependencies?m.dependencies.length:'na')+"
+			"' wait='+w.replace(/[\\r\\n]+/g,' ').slice(0,360);"
 		"}catch(e){return 'error='+String((e&&e.message)||e).slice(0,700);}})()";
 
 	if (ctx == NULL) return;
