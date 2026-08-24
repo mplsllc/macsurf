@@ -551,8 +551,18 @@ static void html_pagemap_brief(dom_node *n, char *out, int cap)
 		ds = NULL;
 		exc = dom_element_get_attribute((dom_element *)n, s_class, &ds);
 		if (exc == DOM_NO_ERR && ds != NULL) {
+			/* fixes1307 (#167, C0) - was 36: real Facebook Comet
+			 * elements commonly carry 15-25+ atomic classes
+			 * averaging ~7-8 chars each, so 36 only ever showed
+			 * the first 4-5 -- every pagemap/FBGAP line for a
+			 * real Facebook box has been hiding the rest of that
+			 * box's classes, which is exactly the data needed to
+			 * check whether some OTHER class (not the one named
+			 * in a truncated log line) is the real min-height/
+			 * layout culprit. Widened to use the caller's full
+			 * remaining buffer instead of a small fixed cap. */
 			html_pagemap_append(out, cap, &pos, dom_string_data(ds),
-					36, '.', 1);
+					cap, '.', 1);
 			dom_string_unref(ds);
 		}
 	}

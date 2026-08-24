@@ -11755,5 +11755,252 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 96 PASS: .xpvvgw5's real min-height calc() "
 			"resolves to a real, viewport-scale pixel value ===\n");
 
+	/* ---------------------------------------------------------------
+	 * fixes1307 (#167, C0) - does `min-height: inherit` on a CHILD of a
+	 * calc()-valued min-height parent correctly inherit the parent's
+	 * calc EXPRESSION (via macsurf_calc_expr[slot]), or does it inherit
+	 * the raw computed unit/length pair (unit=CALC, length=slot index)
+	 * without the side-table content that slot index actually points
+	 * at meaning anything on the CHILD's own style?
+	 *
+	 * Root-caused directly from the fixes1306 hardware trace: xpvvgw5's
+	 * real child (atomic class x1t2pt76, verbatim CSS in the real
+	 * bundle: `.x1t2pt76{min-height:inherit}`) shows
+	 * item->base_size=22434 (matching the OUTER container's own final
+	 * height almost exactly) while every layout_flex_item call traced
+	 * for that exact box produced 589. base_size never came from that
+	 * box's own real height at all -- min_main (this item's OWN CSS
+	 * min-height, resolved via layout_find_dimensions inside
+	 * layout_flex_ctx__populate_item_data, clamping item->main_size
+	 * upward at layout_flex.c:606-613) is the one per-item field that
+	 * bypasses layout_flex_item entirely and reads straight off
+	 * ns_computed_min_height/css_unit_len2device_px for the CHILD's
+	 * OWN style -- exactly the `inherit` mechanism this test isolates. */
+	fprintf(stderr, "\n=== Test 98: `min-height:inherit` on a calc()-"
+			"valued parent produces a real, correct pixel value "
+			"on the child ===\n");
+	{
+		const char *t98_html =
+			"<html class=\"x1s26u81\"><body>"
+			"<div class=\"xpvvgw5\"><div class=\"x1t2pt76\">X</div>"
+			"</div></body></html>";
+		/* Verbatim from harness/fbcdn.net-css-v5.css: the
+		 * --header-height scoping rule (trimmed to the one relevant
+		 * declaration, see Test 96), the real .xpvvgw5 rule, and the
+		 * real .x1t2pt76 rule -- `min-height:inherit`, byte for byte
+		 * what ships. */
+		const char *t98_css =
+			".x1s26u81.x1s26u81,.x1s26u81.x1s26u81:root"
+			"{--header-height:0px}"
+			".xpvvgw5{min-height:calc(100vh - var(--header-height))}"
+			".x1t2pt76{min-height:inherit}";
+		struct html_content t98c;
+		dom_hubbub_parser *t98p = NULL;
+		dom_document *t98doc = NULL;
+		dom_node *t98root = NULL;
+		css_select_ctx *t98ctx = NULL;
+		css_stylesheet *t98ua = NULL;
+		css_stylesheet *t98auth = NULL;
+		dom_hubbub_parser_params t98params;
+		css_stylesheet_params t98sp;
+		void *t98_box_ctx = NULL;
+		nserror t98err;
+		dom_exception t98derr;
+		struct box *t98child;
+
+		memset(&t98params, 0, sizeof(t98params));
+		t98params.fix_enc = true;
+		t98derr = dom_hubbub_parser_create(&t98params, &t98p, &t98doc);
+		if (t98derr != DOM_HUBBUB_OK || t98p == NULL) {
+			fprintf(stderr, "FAIL: Test 98 parser create %d\n",
+					(int)t98derr);
+			return 1;
+		}
+		if (dom_hubbub_parser_parse_chunk(t98p,
+				(const uint8_t *)t98_html,
+				strlen(t98_html)) != DOM_HUBBUB_OK ||
+				dom_hubbub_parser_completed(t98p) !=
+					DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 98 parse\n");
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t98p);
+
+		memset(&t98c, 0, sizeof(t98c));
+		t98c.base_url = g_base_url;
+		t98c.document = t98doc;
+		t98c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t98c.enable_scripting = false;
+		if (css_select_ctx_create(&t98ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 98 select_ctx\n");
+			return 1;
+		}
+		t98c.select_ctx = t98ctx;
+
+		memset(&t98sp, 0, sizeof(t98sp));
+		t98sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t98sp.level = CSS_LEVEL_3;
+		t98sp.charset = "UTF-8";
+		t98sp.url = "resource:default.css";
+		t98sp.title = "default";
+		t98sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t98sp, &t98ua) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 98 UA sheet\n");
+			return 1;
+		}
+		{
+			const char *ua = "html,body,div{display:block}";
+			(void)css_stylesheet_append_data(t98ua,
+					(const uint8_t *)ua, strlen(ua));
+			(void)css_stylesheet_data_done(t98ua);
+		}
+		if (css_select_ctx_append_sheet(t98ctx, t98ua,
+				CSS_ORIGIN_UA, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 98 UA append\n");
+			return 1;
+		}
+
+		memset(&t98sp, 0, sizeof(t98sp));
+		t98sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t98sp.level = CSS_LEVEL_3;
+		t98sp.charset = "UTF-8";
+		t98sp.url = "http://local/t98.css";
+		t98sp.title = "author";
+		t98sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t98sp, &t98auth) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 98 author sheet\n");
+			return 1;
+		}
+		{
+			css_error ae = css_stylesheet_append_data(t98auth,
+					(const uint8_t *)t98_css,
+					strlen(t98_css));
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 98 author append=%d\n",
+						(int)ae);
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t98auth);
+		}
+		if (css_select_ctx_append_sheet(t98ctx, t98auth,
+				CSS_ORIGIN_AUTHOR, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 98 author append sheet\n");
+			return 1;
+		}
+
+		t98c.media.type = CSS_MEDIA_SCREEN;
+		t98c.media.width = INTTOFIX(993);
+		t98c.media.height = INTTOFIX(609);
+		t98c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t98c.unit_len_ctx.viewport_width = INTTOFIX(993);
+		t98c.unit_len_ctx.viewport_height = INTTOFIX(609);
+		t98c.unit_len_ctx.device_dpi = INTTOFIX(96);
+		t98c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t98c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t98c.universal) !=
+				lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 98 universal\n");
+			return 1;
+		}
+		t98c.base.status = CONTENT_STATUS_LOADING;
+		t98c.base.active = 0;
+		t98c.base.handler = &g_dummy_handler;
+
+		if (dom_document_get_document_element(t98doc,
+				(void *)&t98root) != DOM_NO_ERR ||
+				t98root == NULL) {
+			fprintf(stderr, "FAIL: Test 98 doc element\n");
+			return 1;
+		}
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t98err = dom_to_box(t98root, &t98c, initial_build_cb,
+				&t98_box_ctx);
+		dom_node_unref(t98root);
+		if (t98err != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 98 dom_to_box=%d\n",
+					(int)t98err);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 98 build done=%d ok=%d\n",
+					g_initial_build_done,
+					(int)g_initial_build_ok);
+			return 1;
+		}
+
+		t98child = t96_box_of_class(t98c.layout, "x1t2pt76");
+		if (t98child == NULL || t98child->style == NULL) {
+			fprintf(stderr, "FAIL: Test 98 -- .x1t2pt76 child box "
+					"not found\n");
+			return 1;
+		}
+
+		{
+			enum css_min_height_e t98type;
+			css_fixed t98value = 0;
+			css_unit t98unit = CSS_UNIT_PX;
+			int t98px;
+
+			t98type = ns_computed_min_height(t98child->style,
+					&t98value, &t98unit);
+			fprintf(stderr, "  .x1t2pt76 (inherit) min-height "
+					"type=%d unit=%d\n", (int)t98type,
+					(int)t98unit);
+			if (t98type != CSS_MIN_HEIGHT_SET) {
+				fprintf(stderr, "FAIL: Test 98 -- inherited "
+						"min-height did not compute "
+						"as SET at all (type=%d) -- "
+						"`inherit` lost the property "
+						"entirely, not just the calc "
+						"expression\n", (int)t98type);
+				return 1;
+			}
+
+			if (t98unit == CSS_UNIT_CALC) {
+				t98px = (int)FIXTOINT(css_unit_len2device_px(
+						t98child->style,
+						&t98c.unit_len_ctx,
+						t98value, t98unit));
+			} else {
+				t98px = (int)FIXTOINT(css_unit_len2device_px(
+						t98child->style,
+						&t98c.unit_len_ctx,
+						t98value, t98unit));
+			}
+			fprintf(stderr, "  .x1t2pt76 (inherit) min-height "
+					"resolves to %dpx (parent .xpvvgw5's "
+					"own calc() resolves to 600px, per "
+					"Test 96)\n", t98px);
+
+			/* THE ASSERTION: inherit must produce the SAME real
+			 * pixel value the parent's own calc() produces
+			 * (~600px, Test 96), not something wildly different.
+			 * Same generous 2x headroom as Test 96. */
+			if (t98px < 0 || t98px > 1218) {
+				fprintf(stderr, "FAIL: Test 98 -- inherited "
+						"min-height resolved to %dpx, "
+						"expected ~600px matching the "
+						"parent's own calc(). %s\n",
+						t98px,
+						t98px > 10000 ?
+						"This reproduces the real "
+						"22434px-scale symptom in "
+						"isolation -- `inherit` on a "
+						"calc()-valued property does "
+						"NOT correctly carry the "
+						"calc_expr side-table slot to "
+						"the child." :
+						"Unexpected direction of "
+						"failure -- inspect manually.");
+				return 1;
+			}
+		}
+	}
+	fprintf(stderr, "=== Test 98 PASS: inherited calc() min-height "
+			"resolves to the same real pixel value as the "
+			"parent's own ===\n");
+
 	return 0;
 }
