@@ -1952,6 +1952,15 @@ long g_js_exec_count = 0;  /* exported for audit */
 long g_js_exec_bytes = 0;  /* exported for audit */
 long g_js_exec_fail  = 0;  /* exported for audit */
 long g_js_skip_count = 0;  /* fixes1141 - scripts skipped (size cap) */
+
+/* fixes1312 (#167, A3) - cr:1126/TimeSlice repeat-navigation stall
+ * instrumentation. g_qjs_nav_seq bumps once per real navigation
+ * (js_newthread's doc_priv!=NULL path); g_qjs_current_script is set by
+ * js_exec at the top of every script run, so the FBCR __d wrapper below
+ * can report exactly which script was executing when a given module got
+ * registered, without threading the name through JS. */
+static int g_qjs_nav_seq = 0;
+static char g_qjs_current_script[192] = "";
 long g_js_timeout_count = 0;  /* fixes1141 - scripts aborted (deadline) */
 
 /* R1.3 - per-script census backing the `LIFE SCRIPT CENSUS` lines.  Written
@@ -9967,6 +9976,17 @@ static JSValue qjs_ms_life(JSContext *ctx,
 	return JS_UNDEFINED;
 }
 
+/* fixes1312 (#167, A3) - __msScript: hands back g_qjs_current_script (the
+ * name js_exec was called with for whatever script is executing right
+ * now) so a JS-side diagnostic can tag its own log lines with it, without
+ * MacSurf needing to thread the name through any JS-visible state. */
+static JSValue qjs_ms_current_script(JSContext *ctx,
+	JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	(void)this_val; (void)argc; (void)argv;
+	return JS_NewString(ctx, g_qjs_current_script);
+}
+
 /* fixes1236 (#167) - __msRafFired: called from INSIDE our own
  * requestAnimationFrame implementation at fire time (not registration time),
  * so g_raf_fires only counts callbacks that actually ran. See the counter's
@@ -10368,6 +10388,7 @@ static void register_browser_globals(JSContext *ctx)
 	qjs_set_func(ctx, global, "__scrollTo",  qjs_js_scroll_to, 2);
 	qjs_set_func(ctx, global, "__gcsNative", qjs_get_computed_style, 1);
 	qjs_set_func(ctx, global, "__msLife",    qjs_ms_life, 1); /* fixes1015 */
+	qjs_set_func(ctx, global, "__msScript",  qjs_ms_current_script, 0); /* fixes1312 */
 	qjs_set_func(ctx, global, "__msRafFired", qjs_raf_fired, 0); /* fixes1236 */
 	/* localStorage persistence backend, consumed by the _Storage shim
 	 * below (register_browser_globals runs per navigation, so the saved
@@ -13805,6 +13826,77 @@ static void register_browser_globals(JSContext *ctx)
 		"})(this);");
 #endif /* MACSURF_JS_FB_LOADER_TRAP */
 
+	/* fixes1312 (#167, A3) - cr:1126/TimeSlice repeat-navigation stall.
+	 * TimeSlice's real bundle factory (harness/fbcdn.net-loader-b25.js)
+	 * is exactly `l.default=n("cr:1126")` -- a pure re-export -- so
+	 * FBTASK's ready=false on nav2 (fixes1310/1311) means module cr:1126
+	 * itself was never __d()-registered that navigation, not a bug in
+	 * TimeSlice. This answers directly: does ANY script, on either
+	 * navigation, ever call __d() with cr:1126 (or TimeSlice) as the
+	 * name, and if so which one (g_qjs_current_script via __msScript()).
+	 *
+	 * Deliberately its OWN switch, not MACSURF_JS_FB_LOADER_TRAP: that
+	 * switch also gates fixes1247's __onBeforeModuleFactory
+	 * DISCARD-and-ignore trap (its setter is `set:function(v){}` --
+	 * silently swallows the page's own write), which has a real history
+	 * of breaking real pages (fixes1275/1276: a fabricated loader stub
+	 * ate window.Env this exact way). This wrapper is the OPPOSITE
+	 * shape, the same safe pattern fixes1259's __d/requireLazy wrapper
+	 * already proved: closure-captured real implementation, ACTIVE
+	 * delegate-through on every call, no discard, narrow watchlist,
+	 * budget-capped logging. fixes1259's own instance stays scoped to
+	 * its own already-closed investigation (ServerJSPayloadListener)
+	 * rather than being repurposed here. */
+#ifndef MACSURF_JS_CR_TRACE
+#define MACSURF_JS_CR_TRACE 0
+#endif
+#if MACSURF_JS_CR_TRACE
+	macsurf_qjs__safe_eval(ctx,
+		"(function(g){"
+		"\"use strict\";"
+		"try{"
+		"var seq=0;"
+		"var budget=60;"
+		"var realD=(typeof g.__d==='function')?g.__d:null;"
+		"function wrappedD(){"
+			"seq++;"
+			"try{"
+				"var id=(arguments[0]!=null)?String(arguments[0]):null;"
+				"if(id&&(id.indexOf('cr:')===0||id==='TimeSlice')&&"
+						"budget>0&&typeof __msLife==='function'){"
+					"budget--;"
+					"var deps=arguments[1];"
+					"var dj='[]';"
+					"if(deps&&typeof deps.length==='number'){"
+						"var i,parts=[];"
+						"for(i=0;i<deps.length;i++)"
+							"parts.push(String(deps[i]));"
+						"dj='['+parts.join(',')+']';"
+					"}"
+					"var scr='?';"
+					"try{if(typeof __msScript==='function')"
+						"scr=__msScript();}catch(e3){}"
+					"__msLife('FBCR d id='+id+' seq='+seq+"
+						"' script='+scr+' deps='+dj);"
+				"}"
+			"}catch(e){}"
+			"if(realD)return realD.apply(this,arguments);"
+			"return undefined;"
+		"}"
+		"Object.defineProperty(g,'__d',{"
+			"configurable:true,"
+			"get:function(){return wrappedD;},"
+			"set:function(v){realD=v;}"
+		"});"
+		"}catch(e){"
+			"try{if(typeof __msLife==='function')"
+				"__msLife('FBCR install FAILED: '+"
+					"((e&&e.message)||e));"
+			"}catch(e2){}"
+		"}"
+		"})(this);");
+#endif /* MACSURF_JS_CR_TRACE */
+
 	/* R1.2 - the WANT probe goes in LAST: every shim block above runs its
 	 * own `typeof g.X` feature checks, and those would log their own
 	 * stubbed names into the census if the probe were live yet.  Page
@@ -14572,6 +14664,10 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 	if (doc_priv != NULL) htmlc = (html_content *)doc_priv;
 	if (doc_priv != NULL && heap->ctx != NULL) {
 		JSContext *fresh;
+		/* fixes1312 (#167, A3) - one real navigation, one nav_seq. Read
+		 * by the "LIFE js src" line and the FBCR __d wrapper so both
+		 * can be diffed nav-by-nav. */
+		g_qjs_nav_seq++;
 		qjs_flush_timers(heap->ctx);
 		/* fixes846 (#167 S3) - same load-bearing ordering as the timer
 		 * flush above: abort every in-flight XHR and free its dup'd
@@ -15207,8 +15303,24 @@ unsigned char js_exec(struct jsthread *thread,
 		dhead[dn] = '\0';
 		g_js_exec_count++;
 		g_js_exec_bytes += (long)txtlen;
-		macsurf_debug_log_writef("LIFE js src [%s] len=%ld sum=%p head=%s",
-			name ? name : "?", (long)txtlen, (void *)dsum, dhead);
+		/* fixes1312 (#167, A3) - record which script is executing right
+		 * now (read by the FBCR __d wrapper via __msScript()) and stamp
+		 * this line with the nav sequence, so nav1's script set can be
+		 * diffed against nav2's by exact name. */
+		{
+			int i = 0;
+			const char *nm = name ? name : "?";
+			while (i < (int)sizeof(g_qjs_current_script) - 1 &&
+					nm[i] != '\0') {
+				g_qjs_current_script[i] = nm[i];
+				i++;
+			}
+			g_qjs_current_script[i] = '\0';
+		}
+		macsurf_debug_log_writef(
+			"LIFE js src [%s] len=%ld sum=%p head=%s nav=%d",
+			name ? name : "?", (long)txtlen, (void *)dsum, dhead,
+			g_qjs_nav_seq);
 	}
 
 	/* fixes648 (regression fix): restore the per-bundle XenForo ES5 stub
