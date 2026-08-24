@@ -376,6 +376,20 @@ macos9_webp_animation_callback(void *p)
 	(void)macos9_webp_advance_animation(webp, true);
 }
 
+/* Start at frame zero.  add_user can run before conversion discovers ANIM,
+ * so conversion must also use this path once the feature bits are known. */
+static void
+macos9_webp_start_animation(macos9_webp_content *webp, bool broadcast)
+{
+	if (!webp->animated || !nsoption_bool(animate_images)) return;
+	webp->animation_running = true;
+	if (webp->anim_decoder != NULL) WebPAnimDecoderReset(webp->anim_decoder);
+	webp->timestamp = 0;
+	webp->completed_loops = 0;
+	webp->frame_ready = false;
+	(void)macos9_webp_advance_animation(webp, broadcast);
+}
+
 static nserror
 macos9_webp_create(const struct content_handler *handler,
 		lwc_string *imime_type, const struct http_parameter *params,
@@ -436,6 +450,7 @@ macos9_webp_convert(struct content *c)
 	webp->base.height = (unsigned)features.height;
 	webp->animated = features.has_animation ? true : false;
 	webp->has_alpha = features.has_alpha ? true : false;
+	macos9_webp_start_animation(webp, false);
 	content_set_ready(c);
 	content_set_done(c);
 	return true;
@@ -527,13 +542,7 @@ macos9_webp_add_user(struct content *c)
 {
 	macos9_webp_content *webp = (macos9_webp_content *)c;
 	if (!webp->animated || content_count_users(c) != 1) return;
-	if (!nsoption_bool(animate_images)) return;
-	webp->animation_running = true;
-	if (webp->anim_decoder != NULL) WebPAnimDecoderReset(webp->anim_decoder);
-	webp->timestamp = 0;
-	webp->completed_loops = 0;
-	webp->frame_ready = false;
-	(void)macos9_webp_advance_animation(webp, true);
+	macos9_webp_start_animation(webp, true);
 }
 
 static void
