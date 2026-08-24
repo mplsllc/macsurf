@@ -518,6 +518,30 @@ static inline bool layout_flex__base_and_main_sizes(
 	NSLOG(flex, DEEPDEBUG, "box %p: delta_outer_main: %i",
 			b, delta_outer_main);
 
+	/* fixes1308 (#167, C0) - maintainer's own read of the fixes1306
+	 * hardware trace: item->base_size += delta_outer_main (line ~634)
+	 * runs unconditionally right after the fresh post-layout height is
+	 * taken, and delta_outer_main was invariant at 21845 across two
+	 * separate hardware runs with different real content heights (589
+	 * and 1441) -- 22434-589 and 23286-1441 both equal exactly 21845.
+	 * That means this box's own margin/padding/border is resolving to
+	 * something absurd, not the flex algorithm or calc()/inherit
+	 * (already ruled out, fixes1298-1307). Unconditional dump of the
+	 * six raw components lh__delta_outer_height sums, gated on the
+	 * total itself being implausible, to name which one field is
+	 * actually carrying the 21845. */
+	if (!ctx->horizontal && delta_outer_main > 3000) {
+		macsurf_debug_log_writef(
+			"LIFE FLEXOUTER box=%p h=%d mt=%d mb=%d pt=%d "
+			"pb=%d bt=%d bb=%d delta=%d",
+			(void *)b, (int)b->height,
+			(int)lh__non_auto_margin(b, TOP),
+			(int)lh__non_auto_margin(b, BOTTOM),
+			(int)b->padding[TOP], (int)b->padding[BOTTOM],
+			(int)b->border[TOP].width,
+			(int)b->border[BOTTOM].width, delta_outer_main);
+	}
+
 	/* fixes167b - defensive: caller passes a sanitized available_width
 	 * but min/max widths from a degenerate minmax pass can still be
 	 * AUTO or absurd. Clamp before they get folded into base_size. */
