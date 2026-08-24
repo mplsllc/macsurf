@@ -1342,85 +1342,42 @@ box_image_pick_srcset(const char *srcset, void *talloc_ctx, char **out)
 	return true;
 }
 
-/* Does the URL slice [start, end) end in ".webp", ignoring a trailing
- * query string or fragment? Case-insensitive, hand-rolled to match the
- * fold style already used by box_image_type_is_webp below rather than
- * pulling in strcasecmp/strncasecmp. */
+/* Is `type` (a <source type="..."> MIME string) something MacSurf can
+ * actually decode? NULL/empty is "no declared type" and returns true -
+ * per the HTML picture-source algorithm, a <source> with no type is NOT
+ * skipped; a real browser attempts to load it. A DECLARED type is checked
+ * against the content factory's actual registered handlers (the same
+ * authority box_special.c's own <object>/<embed> codetype/type gating
+ * already asks, above) rather than a hardcoded MIME list or a file-
+ * extension guess, so this stays correct automatically as decoders are
+ * added or removed - no per-format special case to maintain here. */
 static bool
-box_image_url_is_webp(const char *start, const char *end)
-{
-	static const char suffix[] = ".webp";
-	const size_t suffix_len = 5;
-	const char *ext_end = end;
-	const char *p;
-	const char *dot;
-	size_t i;
-
-	for (p = start; p < end; p++) {
-		if (*p == '?' || *p == '#') {
-			ext_end = p;
-			break;
-		}
-	}
-	if ((size_t)(ext_end - start) < suffix_len)
-		return false;
-	dot = ext_end - suffix_len;
-	for (i = 0; i < suffix_len; i++) {
-		char a = dot[i];
-		char b = suffix[i];
-		if (a >= 'A' && a <= 'Z')
-			a = (char)(a + ('a' - 'A'));
-		if (a != b)
-			return false;
-	}
-	return true;
-}
-
-/* Scan every candidate in a srcset value (not just the first, unlike
- * box_image_pick_srcset above) for one that explicitly ends in ".webp".
- * Mirrors box_image_resolve_picture_url's discipline: only ever act on
- * an unambiguous, explicit webp signal, never guess at a format from a
- * same-extension resolution-switching srcset. Writes a freshly-talloc'd
- * copy into *out, or *out == NULL if no candidate qualifies. */
-static bool
-box_image_pick_webp_srcset(const char *srcset, void *talloc_ctx, char **out)
+box_image_type_supported(const char *type)
 {
 	const char *p;
-	const char *url_start;
-	const char *url_end;
-	size_t url_len;
-	char *copy;
+	const char *end;
+	lwc_string *itype;
+	lwc_error lerror;
+	bool supported;
 
-	*out = NULL;
-	if (srcset == NULL) return true;
+	if (type == NULL)
+		return true;
+	p = type;
+	while (ascii_is_space(*p))
+		p++;
+	if (*p == '\0')
+		return true;
+	end = p;
+	while (*end != '\0' && *end != ';' && !ascii_is_space(*end))
+		end++;
 
-	p = srcset;
-	for (;;) {
-		while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' ||
-		       *p == ',')
-			p++;
-		if (*p == '\0') return true;
+	lerror = lwc_intern_string(p, (size_t)(end - p), &itype);
+	if (lerror != lwc_error_ok)
+		return true; /* fail open: don't block a source on an alloc hiccup */
 
-		url_start = p;
-		while (*p != '\0' && *p != ' ' && *p != '\t' && *p != '\n' &&
-		       *p != '\r' && *p != ',')
-			p++;
-		url_end = p;
-
-		if (box_image_url_is_webp(url_start, url_end)) {
-			url_len = (size_t)(url_end - url_start);
-			copy = talloc_size(talloc_ctx, url_len + 1);
-			if (copy == NULL) return false;
-			memcpy(copy, url_start, url_len);
-			copy[url_len] = '\0';
-			*out = copy;
-			return true;
-		}
-
-		/* skip the descriptor ("480w" / "2x") up to the next comma */
-		while (*p != '\0' && *p != ',')
-			p++;
-	}
+	supported = (content_factory_type_from_mime_type(itype) != CONTENT_NONE);
+	lwc_string_unref(itype);
+	return supported;
 }
 
 /* The HTML parser knows about <picture>/<source>, but the old special-element
@@ -1453,32 +1410,6 @@ box_image_text_is(const char *value, const char *wanted)
 }
 
 static bool
-box_image_type_is_webp(const char *type)
-{
-	const char *p;
-	const char *webp = "image/webp";
-	char a;
-	char b;
-
-	if (type == NULL)
-		return false;
-	p = type;
-	while (ascii_is_space(*p))
-		p++;
-	while (*webp != '\0') {
-		a = *p++;
-		b = *webp++;
-		if (a >= 'A' && a <= 'Z')
-			a = (char)(a + ('a' - 'A'));
-		if (a != b)
-			return false;
-	}
-	while (ascii_is_space(*p))
-		p++;
-	return (*p == '\0' || *p == ';');
-}
-
-static bool
 box_image_node_is(dom_node *node, const char *tag)
 {
 	dom_string *name = NULL;
@@ -1493,9 +1424,16 @@ box_image_node_is(dom_node *node, const char *tag)
 	return result;
 }
 
-/* If IMG is the fallback child of a PICTURE, resolve its first declared WebP
- * SOURCE.  A source without type is intentionally not guessed: accepting it
- * could choose AVIF (which MacSurf cannot decode) on a mixed-format page. */
+/* fixes1318: proper <picture>/<source> selection, replacing the old
+ * "only an explicit type=image/webp source, else fall through to IMG"
+ * special case. Per the HTML picture-source algorithm: walk SOURCE
+ * siblings in document order and use the first one MacSurf can actually
+ * decode - a source with NO type attribute is not skipped (a real
+ * browser attempts to load it), and a DECLARED type is accepted whenever
+ * box_image_type_supported() says the content factory has a handler for
+ * it (JPEG/PNG/GIF/BMP/TIFF/ICO/SVG/WebP today), not just image/webp
+ * specifically. A source whose declared type names a format MacSurf
+ * genuinely cannot decode (e.g. image/avif) is skipped, same as before. */
 static bool
 box_image_resolve_picture_url(dom_node *img, html_content *content,
 		nsurl **out_url)
@@ -1531,7 +1469,7 @@ box_image_resolve_picture_url(dom_node *img, html_content *content,
 				ok = false;
 				goto done;
 			}
-			if (box_image_type_is_webp(type)) {
+			if (box_image_type_supported(type)) {
 				raw = NULL;
 				if (!box_get_attribute(child, "srcset", content->bctx,
 						&raw)) {
@@ -1565,7 +1503,8 @@ box_image_resolve_picture_url(dom_node *img, html_content *content,
 								content->base_url, out_url);
 						if (ok && *out_url != NULL) {
 							macsurf_debug_log_writef(
-								"WEBP picture source=%s",
+								"PICTURE source type=%s url=%s",
+								(type != NULL) ? type : "(none)",
 								nsurl_access(*out_url));
 						}
 						goto done;
@@ -1595,9 +1534,24 @@ done:
 	return ok;
 }
 
-/* Choose the best image URL for the given <img>/<source>. Promotes
- * data-src / data-original / data-lazy-src / data-srcset / srcset
- * fallbacks when src is missing or looks like a placeholder. */
+/* Choose the best image URL for the given <img>/<source>. srcset (falling
+ * back to data-srcset) is the PREFERRED source whenever src is a real,
+ * usable pointer, not just a rescue for a missing one - fixes1318 (see
+ * box_image_resolve_url's history: fixes168b wrote src-wins-if-usable back
+ * when MacSurf's decoder only covered JPEG/PNG/GIF/BMP, so treating srcset
+ * as a last resort was a deliberate "stick to what we can decode" survival
+ * policy. Now that box_image_type_supported() (used by the <picture> path
+ * above) reflects whatever the content factory actually has registered,
+ * there is no format reason left to prefer src; this matches how srcset
+ * behaves in real browsers regardless. box_image_pick_srcset only ever
+ * takes the first candidate (no width/density matching, no format
+ * filtering) - deliberately no .webp/format string-matching here, the
+ * fetch+mimesniff pipeline decides what a candidate actually is once
+ * fetched, same as it already does for a plain src.
+ *
+ * data-src / data-original / data-lazy-src are a SEPARATE concern (lazy-
+ * load placeholder promotion, fixes168b) and keep their own precedence:
+ * only consulted when src itself is missing/empty/a placeholder. */
 static bool
 box_image_resolve_url(dom_node *n, html_content *content, nsurl **out_url)
 {
@@ -1606,8 +1560,6 @@ box_image_resolve_url(dom_node *n, html_content *content, nsurl **out_url)
 	char *src_str = NULL;
 	char *fallback = NULL;
 	char *srcset_url = NULL;
-	char *webp_raw = NULL;
-	char *webp_url = NULL;
 	bool ok;
 
 	*out_url = NULL;
@@ -1620,49 +1572,35 @@ box_image_resolve_url(dom_node *n, html_content *content, nsurl **out_url)
 	if (err == DOM_NO_ERR && s != NULL) {
 		const char *raw = dom_string_data(s);
 		if (!box_image_src_looks_placeholder(raw)) {
-			/* fixes1317: a bare <img src=".." srcset="..">, with no
-			 * <picture> wrapper, used to always win on src alone -
-			 * srcset was only ever consulted when src was missing.
-			 * That silently skipped an explicit webp candidate
-			 * sitting right next to a jpg/png src. Only override
-			 * src when a candidate unambiguously ends in .webp
-			 * (same explicit-signal-only rule as the <picture>
-			 * path); an ordinary same-format resolution-switching
-			 * srcset is untouched. */
+			char *srcset_raw = NULL;
+
 			if (!box_get_attribute(n, "data-srcset",
-					content->bctx, &webp_raw)) {
+					content->bctx, &srcset_raw)) {
 				dom_string_unref(s);
 				return false;
 			}
-			if (webp_raw != NULL && webp_raw[0] != '\0') {
-				if (!box_image_pick_webp_srcset(webp_raw,
-						content->bctx, &webp_url)) {
-					dom_string_unref(s);
-					return false;
-				}
-			}
-			if (webp_url == NULL) {
-				webp_raw = NULL;
+			if (srcset_raw == NULL || srcset_raw[0] == '\0') {
+				srcset_raw = NULL;
 				if (!box_get_attribute(n, "srcset",
-						content->bctx, &webp_raw)) {
+						content->bctx, &srcset_raw)) {
 					dom_string_unref(s);
 					return false;
 				}
-				if (webp_raw != NULL && webp_raw[0] != '\0') {
-					if (!box_image_pick_webp_srcset(webp_raw,
-							content->bctx, &webp_url)) {
-						dom_string_unref(s);
-						return false;
-					}
+			}
+			if (srcset_raw != NULL && srcset_raw[0] != '\0') {
+				if (!box_image_pick_srcset(srcset_raw,
+						content->bctx, &srcset_url)) {
+					dom_string_unref(s);
+					return false;
 				}
 			}
-			if (webp_url != NULL) {
+			if (srcset_url != NULL) {
 				dom_string *promoted = NULL;
 				dom_exception err2;
 				dom_string_unref(s);
 				err2 = dom_string_create_interned(
-						(const uint8_t *)webp_url,
-						strlen(webp_url), &promoted);
+						(const uint8_t *)srcset_url,
+						strlen(srcset_url), &promoted);
 				if (err2 != DOM_NO_ERR || promoted == NULL)
 					return true;
 				ok = box_extract_link(content, promoted,
