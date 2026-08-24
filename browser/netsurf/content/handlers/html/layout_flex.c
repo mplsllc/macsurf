@@ -1948,6 +1948,23 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 			NULL, NULL, &max_height, &min_height,
 			flex->margin, flex->padding, flex->border);
 
+	/* fixes1301 (#167, C0) - Test 96 proved .xpvvgw5's OWN min-height
+	 * calc() resolves to a sane 600px in isolation, but the real box
+	 * (which carries many more atomic classes) renders at h=22723 on
+	 * hardware with overlapkids=0 -- children too small to fill it.
+	 * Unconditional (not budget-capped like LAYOUTPHASE above) so it
+	 * survives however deep into the page this box sits: does the
+	 * REAL, fully-cascaded min-height for this exact box come back
+	 * huge (a different, legitimately-winning atomic class's calc()),
+	 * or does it stay sane and the runaway is in ctx->main_size
+	 * (content/line placement) instead? Threshold generously above any
+	 * plausible real design-token min-height. */
+	if (min_height > 3000) {
+		macsurf_debug_log_writef(
+			"LIFE FLEXMINH box=%p min_height=%d max_height=%d",
+			(void *)flex, min_height, max_height);
+	}
+
 	{
 		/* fixes176 - containing-block-width fallback.
 		 *

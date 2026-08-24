@@ -4650,7 +4650,7 @@ static void html_reformat(struct content *c, int width, int height)
 				if (bx == NULL) continue;
 				bot = (int)bx->y + (int)bx->height;
 				if (bot >= cut && bot < 1000000) {
-					char nm[64];
+					char nm[256];
 					nm[0] = '\0';
 					if (bx->node != NULL)
 						html_pagemap_brief(bx->node, nm,
@@ -4839,7 +4839,7 @@ static void html_reformat(struct content *c, int width, int height)
 					int gx = 0, gy = 0;
 					int total_kids = 0;
 					struct box *ch;
-					char nm[64];
+					char nm[256];
 					const char *disp = "-";
 					const char *ht = "auto";
 					const char *mht = "auto";
@@ -4905,8 +4905,9 @@ static void html_reformat(struct content *c, int width, int height)
 									cur->style);
 					}
 					macsurf_debug_log_writef(
-						"LIFE FBGAPOWNER gap=%d %s type=%d x=%d y=%d w=%d h=%d totalkids=%d overlapkids=%d txt=%d obj=%d disp=%s pos=%d ht=%s(%d) mht=%s(%d) grow=%d basis=%d align=%d/%d dir=%d",
-						i, nm[0] ? nm : "(no node)",
+						"LIFE FBGAPOWNER box=%p gap=%d %s type=%d x=%d y=%d w=%d h=%d totalkids=%d overlapkids=%d txt=%d obj=%d disp=%s pos=%d ht=%s(%d) mht=%s(%d) grow=%d basis=%d align=%d/%d dir=%d",
+						(void *)cur, i,
+						nm[0] ? nm : "(no node)",
 						(int)cur->type, gx, gy,
 						(int)cur->width, (int)cur->height,
 						total_kids, branch_n,
@@ -4929,7 +4930,7 @@ static void html_reformat(struct content *c, int width, int height)
 						int gx = 0, gy = 0;
 						int total_kids = 0;
 						struct box *ch;
-						char nm[64];
+						char nm[256];
 						const char *disp = "-";
 						const char *ht = "auto";
 						const char *mht = "auto";
