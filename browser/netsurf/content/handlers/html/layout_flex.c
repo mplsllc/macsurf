@@ -541,7 +541,24 @@ static inline bool layout_flex__base_and_main_sizes(
 		}
 
 	} else if (item->basis == CSS_FLEX_BASIS_AUTO) {
-		item->base_size = ctx->horizontal ? b->width : b->height;
+		/* fixes1303 (#167, C0) - for a vertical (column-direction)
+		 * item, b->height here is PRE-layout: layout_flex_item()
+		 * below is what actually lays this child out and gives it
+		 * its real height. Reading b->height now can capture
+		 * whatever was left over from a previous pass/container
+		 * (fixes1302's hardware log showed a nested flex item with
+		 * base=main=target=22389 -- exactly its own container's
+		 * eventual wrong height -- while its real post-layout height
+		 * (b_h) was 544, and nothing downstream ever corrected it,
+		 * because the refresh below only fires when base_size is
+		 * still AUTO). Defer to AUTO here too, same as the
+		 * CSS_FLEX_BASIS_CONTENT case, so the post-layout_flex_item
+		 * refresh at the bottom of this function -- already correct,
+		 * already proven correct for that case -- is what sets it,
+		 * from the FRESH height. Horizontal (row-direction) items
+		 * are unaffected: b->width there comes from the minmax
+		 * pre-pass, not from this item's own not-yet-run layout. */
+		item->base_size = ctx->horizontal ? b->width : AUTO;
 	} else {
 		item->base_size = AUTO;
 	}
