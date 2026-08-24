@@ -1342,6 +1342,87 @@ box_image_pick_srcset(const char *srcset, void *talloc_ctx, char **out)
 	return true;
 }
 
+/* Does the URL slice [start, end) end in ".webp", ignoring a trailing
+ * query string or fragment? Case-insensitive, hand-rolled to match the
+ * fold style already used by box_image_type_is_webp below rather than
+ * pulling in strcasecmp/strncasecmp. */
+static bool
+box_image_url_is_webp(const char *start, const char *end)
+{
+	static const char suffix[] = ".webp";
+	const size_t suffix_len = 5;
+	const char *ext_end = end;
+	const char *p;
+	const char *dot;
+	size_t i;
+
+	for (p = start; p < end; p++) {
+		if (*p == '?' || *p == '#') {
+			ext_end = p;
+			break;
+		}
+	}
+	if ((size_t)(ext_end - start) < suffix_len)
+		return false;
+	dot = ext_end - suffix_len;
+	for (i = 0; i < suffix_len; i++) {
+		char a = dot[i];
+		char b = suffix[i];
+		if (a >= 'A' && a <= 'Z')
+			a = (char)(a + ('a' - 'A'));
+		if (a != b)
+			return false;
+	}
+	return true;
+}
+
+/* Scan every candidate in a srcset value (not just the first, unlike
+ * box_image_pick_srcset above) for one that explicitly ends in ".webp".
+ * Mirrors box_image_resolve_picture_url's discipline: only ever act on
+ * an unambiguous, explicit webp signal, never guess at a format from a
+ * same-extension resolution-switching srcset. Writes a freshly-talloc'd
+ * copy into *out, or *out == NULL if no candidate qualifies. */
+static bool
+box_image_pick_webp_srcset(const char *srcset, void *talloc_ctx, char **out)
+{
+	const char *p;
+	const char *url_start;
+	const char *url_end;
+	size_t url_len;
+	char *copy;
+
+	*out = NULL;
+	if (srcset == NULL) return true;
+
+	p = srcset;
+	for (;;) {
+		while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' ||
+		       *p == ',')
+			p++;
+		if (*p == '\0') return true;
+
+		url_start = p;
+		while (*p != '\0' && *p != ' ' && *p != '\t' && *p != '\n' &&
+		       *p != '\r' && *p != ',')
+			p++;
+		url_end = p;
+
+		if (box_image_url_is_webp(url_start, url_end)) {
+			url_len = (size_t)(url_end - url_start);
+			copy = talloc_size(talloc_ctx, url_len + 1);
+			if (copy == NULL) return false;
+			memcpy(copy, url_start, url_len);
+			copy[url_len] = '\0';
+			*out = copy;
+			return true;
+		}
+
+		/* skip the descriptor ("480w" / "2x") up to the next comma */
+		while (*p != '\0' && *p != ',')
+			p++;
+	}
+}
+
 /* The HTML parser knows about <picture>/<source>, but the old special-element
  * path only ever looked at the IMG's own attributes.  That silently selected
  * the JPEG/PNG fallback on every responsive-image site, despite MacSurf now
@@ -1525,6 +1606,8 @@ box_image_resolve_url(dom_node *n, html_content *content, nsurl **out_url)
 	char *src_str = NULL;
 	char *fallback = NULL;
 	char *srcset_url = NULL;
+	char *webp_raw = NULL;
+	char *webp_url = NULL;
 	bool ok;
 
 	*out_url = NULL;
@@ -1537,6 +1620,56 @@ box_image_resolve_url(dom_node *n, html_content *content, nsurl **out_url)
 	if (err == DOM_NO_ERR && s != NULL) {
 		const char *raw = dom_string_data(s);
 		if (!box_image_src_looks_placeholder(raw)) {
+			/* fixes1317: a bare <img src=".." srcset="..">, with no
+			 * <picture> wrapper, used to always win on src alone -
+			 * srcset was only ever consulted when src was missing.
+			 * That silently skipped an explicit webp candidate
+			 * sitting right next to a jpg/png src. Only override
+			 * src when a candidate unambiguously ends in .webp
+			 * (same explicit-signal-only rule as the <picture>
+			 * path); an ordinary same-format resolution-switching
+			 * srcset is untouched. */
+			if (!box_get_attribute(n, "data-srcset",
+					content->bctx, &webp_raw)) {
+				dom_string_unref(s);
+				return false;
+			}
+			if (webp_raw != NULL && webp_raw[0] != '\0') {
+				if (!box_image_pick_webp_srcset(webp_raw,
+						content->bctx, &webp_url)) {
+					dom_string_unref(s);
+					return false;
+				}
+			}
+			if (webp_url == NULL) {
+				webp_raw = NULL;
+				if (!box_get_attribute(n, "srcset",
+						content->bctx, &webp_raw)) {
+					dom_string_unref(s);
+					return false;
+				}
+				if (webp_raw != NULL && webp_raw[0] != '\0') {
+					if (!box_image_pick_webp_srcset(webp_raw,
+							content->bctx, &webp_url)) {
+						dom_string_unref(s);
+						return false;
+					}
+				}
+			}
+			if (webp_url != NULL) {
+				dom_string *promoted = NULL;
+				dom_exception err2;
+				dom_string_unref(s);
+				err2 = dom_string_create_interned(
+						(const uint8_t *)webp_url,
+						strlen(webp_url), &promoted);
+				if (err2 != DOM_NO_ERR || promoted == NULL)
+					return true;
+				ok = box_extract_link(content, promoted,
+						content->base_url, out_url);
+				dom_string_unref(promoted);
+				return ok;
+			}
 			ok = box_extract_link(content, s,
 					content->base_url, out_url);
 			dom_string_unref(s);
