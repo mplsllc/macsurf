@@ -1,6 +1,6 @@
 # MacSurf
 
-MacSurf is a web browser for Classic Mac OS (9.0–9.2.2, plus Mac OS X 10.0–10.4 via the
+MacSurf is a web browser for Classic Mac OS (8.6–9.2.2, plus Mac OS X 10.0–10.4 via the
 same Carbon CFM binary), forked from NetSurf and cross-compiled from Linux, built for real
 on hardware via CodeWarrior 8. It has its own native TLS 1.3 stack (macTLS, BearSSL-based)
 for direct HTTPS with no proxy in front of it, and an on-device QuickJS (ES2023) engine for

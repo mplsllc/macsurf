@@ -204,7 +204,7 @@ Under it: text is measured in real device pixels (author `font-size` no longer d
 
 **[MacSurf 2.0.5 "HACKADAY"](https://github.com/mplsllc/macsurf/releases/latest)** (2026-07-17). See what changed in the [full release notes &rarr;](docs/release-notes/MacSurf-2.0.5.md) or the [2.0 notes &rarr;](docs/release-notes/MacSurf-2.0.md).
 
-- **[Download the .sit &rarr;](https://github.com/mplsllc/macsurf/releases/latest)**: expand with StuffIt Expander on Mac OS 9.1+ (CarbonLib 1.5+) and double-click. No installer.
+- **[Download the .sit &rarr;](https://github.com/mplsllc/macsurf/releases/latest)**: expand with StuffIt Expander on Mac OS 8.6+ through Mac OS X 10.4 (CarbonLib 1.6+) and double-click. No installer.
 - Already on a Mac OS 9 machine? Grab it from the plain-HTTP **[macsurf.org](http://macsurf.org/)**, since GitHub does not render on-device yet.
 - [All releases &rarr;](https://github.com/mplsllc/macsurf/releases)
 
