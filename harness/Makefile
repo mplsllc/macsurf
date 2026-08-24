@@ -126,8 +126,20 @@ reconvert_harness: $(ALL_OBJ)
 
 -include $(ALL_OBJ:.o=.d)
 
-.PHONY: all run clean check check-c89 check-macdefault
+.PHONY: all run clean check check-c89 check-macdefault webp-test
 all: reconvert_harness
+
+# Standalone libwebp regression.  This deliberately stays out of the large
+# NetSurf/ASan harness: it exercises the exact decoder/demux source subset and
+# its still/alpha/animation fixtures without needing Carbon bitmap stubs.
+WEBP_DIR := $(ROOT)/browser/libwebp
+WEBP_SRC := $(sort $(wildcard $(WEBP_DIR)/c/*.c))
+
+webp_codec_test: webp_codec_test.c $(WEBP_SRC)
+	$(CC) -std=c89 -O2 -U__SSE2__ -U__SSE2_MATH__ -I$(WEBP_DIR)/h $^ -o $@
+
+webp-test: webp_codec_test
+	./webp_codec_test
 
 # fixes1023 — COMPILE THE MAC'S ACTUAL CONFIGURATION.
 #

@@ -39,6 +39,7 @@
 
 #include "macsurf_debug.h"
 #include "macos9_svg_inline.h"	/* fixes823 (#280) svg-as-image */
+#include "macos9_webp.h"
 
 #include "lodepng.h"
 
@@ -325,6 +326,7 @@ macos9_purge_decoded_images(void)
 			"img purge: evicted=%ld remaining=%ld",
 			evicted, macsurf__decoded_img_bytes_current);
 	}
+	macos9_webp_purge_decoded_images();
 }
 
 static bool
@@ -760,6 +762,29 @@ macos9_qt_decode_to_bitmap(GraphicsImportComponent gi,
 extern void macos9_bitmap_set_mask(void *bitmap, unsigned char *mask,
 		int mask_rowbytes);
 
+/* Finish a decoded RGBA bitmap using MacSurf's shared QuickDraw alpha
+ * contract.  Decoders hand ownership of mask to macos9_bitmap_set_mask;
+ * fully opaque images still receive a mask allocation here, but the plotter
+ * follows the colour-accurate CopyBits path after set_opaque(true). */
+void
+macos9_image_finish_rgba_bitmap(void *bitmap, unsigned char *mask,
+		int mask_rowbytes, bool has_transparency)
+{
+	if (bitmap == NULL) {
+		if (mask != NULL) free(mask);
+		return;
+	}
+	macos9_bitmap_set_mask(bitmap, mask, mask_rowbytes);
+	if (guit != NULL && guit->bitmap != NULL &&
+		guit->bitmap->set_opaque != NULL) {
+		guit->bitmap->set_opaque(bitmap, has_transparency ? false : true);
+	}
+	if (guit != NULL && guit->bitmap != NULL &&
+		guit->bitmap->modified != NULL) {
+		guit->bitmap->modified(bitmap);
+	}
+}
+
 /* fixes259  -  decode PNG at native via lodepng, then box-filter
  * downscale to (target_w, target_h) into a single NetSurf bitmap +
  * matching 1-bit mask. If target dims match native (or upscale would
@@ -922,8 +947,8 @@ macos9_png_decode_target(const unsigned char *data, size_t size,
 	 * source into a blue cast. Marking them opaque sends them down the plain
 	 * CopyBits srcCopy path  -  the same path JPEGs use, which is colour-
 	 * accurate. Transparent PNGs still use CopyMask (unchanged). */
-	guit->bitmap->set_opaque(bm, has_trans ? false : true);
-	macos9_bitmap_set_mask(bm, mask, mask_rowbytes);
+	macos9_image_finish_rgba_bitmap(bm, mask, mask_rowbytes,
+			has_trans ? true : false);
 
 	*out_bitmap = bm;
 	return NSERROR_OK;
@@ -1037,16 +1062,10 @@ macos9_png_decode_to_bitmap(const unsigned char *data, size_t size,
 
 	free(rgba);
 
-	macos9_bitmap_set_mask(bm, mask, mask_rowbytes);
-
-	/* fixes301c  -  opaque PNGs take the colour-accurate CopyBits srcCopy
-	 * path; only transparent ones use CopyMask. See decode_target. */
-	if (guit->bitmap->set_opaque != NULL) {
-		guit->bitmap->set_opaque(bm, has_trans ? false : true);
-	}
-	if (guit->bitmap->modified != NULL) {
-		guit->bitmap->modified(bm);
-	}
+	/* Opaque PNGs take the colour-accurate CopyBits path; transparent ones
+	 * retain the CopyMask path.  Shared with the WebP decoder. */
+	macos9_image_finish_rgba_bitmap(bm, mask, mask_rowbytes,
+			has_trans ? true : false);
 
 	*out_bitmap = bm;
 	*out_w = (int)w;
@@ -2508,183 +2527,6 @@ static const struct content_handler macos9_svg_src_handler = {
 	false				/* no_share */
 };
 
-/* fixes1298 (#167, Track C1) - minimal image/webp content handler: basic
- * support only, same shape and same reasoning as macos9_svg_src_handler
- * above (fixes578b/fixes823). It does NOT decode pixels yet -- that is a
- * real VP8 (lossy intra-frame) + WebP-lossless-alpha decoder, scoped as
- * its own follow-up (see the #167 backlog plan, Track C1). What this DOES
- * do: register image/webp as an acceptable content type at all (today
- * every WebP fetch is rejected before hlcache even accepts it -- 42-80
- * per real Facebook session, hardware-confirmed), and give it its real
- * intrinsic dimensions by parsing the RIFF/VP8X container header, so
- * layout sizes the box correctly instead of collapsing to 0x0. Painting
- * nothing is the honest answer until real pixel decode lands -- fabricating
- * a placeholder color would be exactly the "confident lie" class of bug
- * this codebase has been burned by before (see
- * feedback_never_fabricate_shim_answers).
- *
- * Corpus evidence for what the decoder actually needs (16 real rejected
- * WebP resources recovered from hardware logs and parsed byte-for-byte,
- * 2026-08-23): 16/16 are VP8X extended-format containers with an ALPH
- * (alpha) chunk followed by a VP8 (lossy) color chunk -- zero animated
- * (no ANIM/ANMF), zero VP8L-only color. Every ALPH chunk uses compression
- * method 1 (WebP-lossless-entropy-coded alpha), not the trivial raw
- * method 0, so the eventual decoder needs VP8 intra decode for color PLUS
- * the WebP lossless entropy decoder (Huffman/LZ77/color-cache) for the
- * alpha plane -- narrower than a full libwebp port (no animation demux,
- * no full VP8L RGB decode), but not as narrow as "VP8 only" either. */
-typedef struct { struct content base; } macos9_webp_src_content;
-
-static nserror
-macos9_webp_src_create(const struct content_handler *handler,
-		lwc_string *imime_type, const struct http_parameter *params,
-		struct llcache_handle *llcache, const char *fallback_charset,
-		bool quirks, struct content **c)
-{
-	macos9_webp_src_content *s;
-	nserror err;
-
-	s = (macos9_webp_src_content *)calloc(1, sizeof(macos9_webp_src_content));
-	if (s == NULL) {
-		return NSERROR_NOMEM;
-	}
-	err = content__init(&s->base, handler, imime_type, params, llcache,
-			fallback_charset, quirks);
-	if (err != NSERROR_OK) {
-		free(s);
-		return err;
-	}
-	*c = (struct content *)s;
-	return NSERROR_OK;
-}
-
-static bool
-macos9_webp_src_process(struct content *c, const char *data, unsigned int size)
-{
-	(void)c;
-	(void)data;
-	(void)size;
-	/* The framework retains the raw source; read it on data_complete. */
-	return true;
-}
-
-/* fixes1298 - RIFF/VP8X container header parse for intrinsic dimensions.
- * Only the extended (VP8X) container is parsed -- that is 16/16 of the
- * real corpus this was scoped against. A bare VP8/VP8L file (no VP8X)
- * falls back to the same 16x16 default the SVG handler uses when it
- * can't determine real dimensions; parsing bit-packed VP8/VP8L bitstream
- * headers blind, with no real such fixture to verify against, is exactly
- * the kind of unverified guess this codebase's testing discipline avoids. */
-static bool
-macos9_webp_src_dims(const uint8_t *src, size_t sz, int *out_w, int *out_h)
-{
-	if (src == NULL || sz < 30) return false;
-	if (memcmp(src, "RIFF", 4) != 0 || memcmp(src + 8, "WEBP", 4) != 0)
-		return false;
-	if (memcmp(src + 12, "VP8X", 4) != 0)
-		return false;
-	/* VP8X chunk data starts at offset 20 (12 + 8-byte chunk header):
-	 * 1 byte flags, 3 bytes reserved, 3 bytes width-1 LE, 3 bytes
-	 * height-1 LE. */
-	*out_w = 1 + (src[24] | (src[25] << 8) | (src[26] << 16));
-	*out_h = 1 + (src[27] | (src[28] << 8) | (src[29] << 16));
-	return (*out_w > 0 && *out_h > 0);
-}
-
-static bool
-macos9_webp_src_convert(struct content *c)
-{
-	size_t sz = 0;
-	const uint8_t *src = content__get_source_data(c, &sz);
-	int w = 0;
-	int h = 0;
-
-	if (!macos9_webp_src_dims(src, sz, &w, &h)) {
-		w = 16;
-		h = 16;
-	}
-	c->width = w;
-	c->height = h;
-
-	content_set_ready(c);
-	content_set_done(c);
-	return true;
-}
-
-static bool
-macos9_webp_src_redraw(struct content *c, struct content_redraw_data *data,
-		const struct rect *clip, const struct redraw_context *ctx)
-{
-	/* No pixel decoder yet -- paint nothing rather than a fabricated
-	 * placeholder. The box is correctly sized (macos9_webp_src_convert
-	 * above), so layout/reflow around it is honest even though its own
-	 * area stays blank until Track C1's decoder lands. */
-	(void)c;
-	(void)data;
-	(void)clip;
-	(void)ctx;
-	return true;
-}
-
-static void
-macos9_webp_src_destroy(struct content *c)
-{
-	(void)c;
-}
-
-static nserror
-macos9_webp_src_clone(const struct content *old, struct content **newc)
-{
-	(void)old;
-	(void)newc;
-	return NSERROR_CLONE_FAILED;
-}
-
-static content_type
-macos9_webp_src_type(void)
-{
-	return CONTENT_IMAGE;
-}
-
-static const struct content_handler macos9_webp_src_handler = {
-	NULL,				/* fini */
-	macos9_webp_src_create,	/* create */
-	macos9_webp_src_process,	/* process_data */
-	macos9_webp_src_convert,	/* data_complete */
-	NULL,				/* reformat */
-	macos9_webp_src_destroy,	/* destroy */
-	NULL,				/* stop */
-	NULL,				/* mouse_track */
-	NULL,				/* mouse_action */
-	NULL,				/* keypress */
-	macos9_webp_src_redraw,	/* redraw */
-	NULL,				/* open */
-	NULL,				/* close */
-	NULL,				/* clear_selection */
-	NULL,				/* get_selection */
-	NULL,				/* get_contextual_content */
-	NULL,				/* scroll_at_point */
-	NULL,				/* drop_file_at_point */
-	NULL,				/* debug_dump */
-	NULL,				/* debug */
-	macos9_webp_src_clone,		/* clone */
-	NULL,				/* matches_quirks */
-	NULL,				/* get_encoding */
-	macos9_webp_src_type,		/* type */
-	NULL,				/* add_user */
-	NULL,				/* remove_user */
-	NULL,				/* exec */
-	NULL,				/* saw_insecure_objects */
-	NULL,				/* textsearch_find */
-	NULL,				/* textsearch_bounds */
-	NULL,				/* textselection_redraw */
-	NULL,				/* textselection_copy */
-	NULL,				/* textselection_get_end */
-	NULL,				/* get_internal */
-	NULL,				/* is_opaque */
-	false				/* no_share */
-};
-
 nserror image_init(void)
 {
 	nserror err;
@@ -2712,11 +2554,7 @@ nserror image_init(void)
 		return err;
 	}
 
-	/* fixes1298 (#167, Track C1) - basic image/webp support: accepted,
-	 * correctly sized, no pixels yet. See the handler's own comment
-	 * above for the corpus evidence behind this scoping. */
-	err = content_factory_register_handler("image/webp",
-			&macos9_webp_src_handler);
+	err = macos9_webp_init();
 	if (err != NSERROR_OK) {
 		return err;
 	}
