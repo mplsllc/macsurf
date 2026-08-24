@@ -1261,8 +1261,38 @@ static bool layout_flex__resolve_line(
 	bool grow;
 	size_t i;
 
+	/* fixes1313 (#167, 68kmla regression) - CSS Flexbox SS9.7: flexible
+	 * lengths only ever resolve against a DEFINITE main size. An
+	 * indefinite container (most commonly an auto-height column flex --
+	 * completely ordinary CSS, a container whose height is meant to be
+	 * determined BY its children) has no "free space" concept at all;
+	 * every item's used main size is simply its hypothetical (base)
+	 * size, full stop -- flex-grow/flex-shrink do not apply.
+	 *
+	 * The previous `available_main = INT_MAX` fallback said the
+	 * opposite: "indefinite" became "unlimited room to grow into", so
+	 * any item with a nonzero flex-grow absorbed practically all of
+	 * INT_MAX as free space. Hardware evidence (68kmla.org/bb/, a
+	 * XenForo forum, unrelated to any Facebook-specific CSS): a nested
+	 * flex item's target_main_size came back at 2107582 against a real
+	 * base_size of 10431 -- base_size (via FMUL/FDIV, both already
+	 * proven correct for positive operands; this bug never goes near
+	 * css_add_fixed/css_subtract_fixed, fixes1309's fix, at all) times
+	 * a "remaining free main" that was really INT_MAX in disguise.
+	 *
+	 * Fix: when the container's own available main size is genuinely
+	 * indefinite, skip grow/shrink resolution entirely and freeze every
+	 * item at its base_size, matching how a definite-but-already-fully-
+	 * used line already freezes a zero-grow/zero-shrink item. Every
+	 * other call site of this function -- any container with a real,
+	 * definite available_main -- is completely unaffected. */
 	if (available_main == AUTO) {
-		available_main = INT_MAX;
+		for (i = line->first; i < item_count; i++) {
+			struct flex_item_data *item = &ctx->item.data[i];
+			item->target_main_size = item->base_size;
+			layout_flex__item_freeze(line, item);
+		}
+		return true;
 	}
 
 	grow = (line->main_size < available_main);
