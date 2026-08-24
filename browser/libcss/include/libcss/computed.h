@@ -392,6 +392,10 @@ uint8_t css_computed_color(
 		const css_computed_style *style,
 		css_color *color);
 
+/* SVG fill V1. Returns CSS_FILL_*; color is valid for CSS_FILL_COLOR. */
+uint8_t css_computed_fill(const css_computed_style *style,
+		css_color *color);
+
 uint8_t css_computed_list_style_image(
 		const css_computed_style *style,
 		lwc_string **url);

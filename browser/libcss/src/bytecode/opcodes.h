@@ -958,6 +958,13 @@ enum op_text_decoration_color {
 	TEXT_DECORATION_COLOR_SET		= 0x0080
 };
 
+/* SVG fill V1 OPV values. */
+enum op_fill {
+	FILL_NONE                  = 0x0000,
+	FILL_CURRENT_COLOR         = 0x0001,
+	FILL_SET                   = 0x0080
+};
+
 /* fixes357 (#44): text-decoration-style OPV values. */
 enum op_text_decoration_style {
 	TEXT_DECORATION_STYLE_SOLID	= 0x0000,

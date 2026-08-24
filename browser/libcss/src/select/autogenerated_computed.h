@@ -480,6 +480,9 @@ struct css_computed_style_i {
 	int32_t background_clip;
 	/* background-blend-mode is non-inherited scalar-tail state. */
 	int32_t background_blend_mode;
+	/* SVG fill V1. Append-only, self-aligning storage. */
+	int32_t fill_status;
+	css_color fill_color;
 };
 
 struct css_computed_style {

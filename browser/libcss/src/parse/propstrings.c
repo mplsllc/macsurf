@@ -275,6 +275,7 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("justify-self"),   /* #279 follow-up */
 	SMAP("background-origin"),
 	SMAP("background-blend-mode"),
+	SMAP("fill"),
 	SMAP("inherit"),
 	SMAP("unset"),
 	SMAP("important"),

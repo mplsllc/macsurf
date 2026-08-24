@@ -596,6 +596,10 @@ css_error css__parse_z_index(css_language *c,
 /** Mapping from property bytecode index to bytecode unit class mask. */
 extern const uint32_t property_unit_mask[CSS_N_PROPERTIES];
 
+css_error css__parse_fill(css_language *c,
+		const parserutils_vector *vector, int32_t *ctx,
+		css_style *result);
+
 #define UNIT_MASK_AZIMUTH               (UNIT_ANGLE)
 #define UNIT_MASK_BACKGROUND_ATTACHMENT (0)
 #define UNIT_MASK_BACKGROUND_COLOR      (0)

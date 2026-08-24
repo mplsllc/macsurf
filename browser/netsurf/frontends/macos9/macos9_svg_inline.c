@@ -42,6 +42,7 @@
 #include "utils/ns_errors.h"
 #include "netsurf/plotters.h"
 #include "netsurf/plot_style.h"
+#include "css/utils.h"
 #include "content/handlers/html/box.h"
 
 /* ----------------------------------------------------------------- */
@@ -71,6 +72,8 @@
 /* ----------------------------------------------------------------- */
 
 struct svg_paint_state {
+	/* CSS/SVG currentColor, distinct from the current fill paint. */
+	colour current_color;
 	/* current fill / stroke colours (NetSurf colour format:
 	 * 0xAABBGGRR with top byte 0 = opaque, 0x01 = transparent). */
 	colour fill;
@@ -2337,6 +2340,7 @@ nserror macos9_svg_paint_inline(struct box *box,
 
 		/* Initial paint state. SVG defaults: fill = black,
 		 * stroke = none. */
+		st.current_color = 0xFF000000;
 		st.fill = 0xFF000000;
 		st.stroke = 0xFF000000;
 		st.fill_present = 1;
@@ -2345,6 +2349,27 @@ nserror macos9_svg_paint_inline(struct box *box,
 		st.fill_opacity = 1.0f;
 		st.stroke_opacity = 1.0f;
 		st.stroke_dash = 0;   /* fixes960b (#258)  -  solid unless asked */
+
+		/* Inline SVG participates in the containing document's CSS
+		 * cascade. Seed currentColor from the SVG root's computed color,
+		 * then apply its separately computed SVG fill. This deliberately
+		 * does not replace SVG's black initial fill with text color. */
+		if (box->style != NULL) {
+			css_color csscol;
+			uint8_t fill_type;
+			css_computed_color(box->style, &csscol);
+			st.current_color = nscss_color_to_ns(csscol);
+			fill_type = css_computed_fill(box->style, &csscol);
+			if (fill_type == CSS_FILL_NONE) {
+				st.fill_present = 0;
+			} else if (fill_type == CSS_FILL_CURRENT_COLOR) {
+				st.fill = st.current_color;
+				st.fill_present = 1;
+			} else if (fill_type == CSS_FILL_COLOR) {
+				st.fill = nscss_color_to_ns(csscol);
+				st.fill_present = 1;
+			}
+		}
 
 		/* Read style attributes set on the <svg> itself. */
 		svg__update_style((dom_node *)box->node, &st, c.grads);

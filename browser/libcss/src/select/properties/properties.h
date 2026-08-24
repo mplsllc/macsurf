@@ -202,6 +202,7 @@ PROPERTY_FUNCS(width);
 PROPERTY_FUNCS(word_spacing);
 PROPERTY_FUNCS(writing_mode);
 PROPERTY_FUNCS(z_index);
+PROPERTY_FUNCS(fill);
 
 #undef PROPERTY_FUNCS
 

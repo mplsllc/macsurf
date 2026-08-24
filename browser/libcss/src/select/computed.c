@@ -726,6 +726,20 @@ uint8_t css_computed_text_decoration_color(
 	return (uint8_t)s;
 }
 
+uint8_t css_computed_fill(const css_computed_style *style, css_color *color)
+{
+	int32_t s = style->i.fill_status;
+	css_color c = style->i.fill_color;
+	if (s < CSS_FILL_NONE || s > CSS_FILL_COLOR) {
+		if (color != NULL) *color = 0xff000000;
+		return CSS_FILL_COLOR;
+	}
+	if (color != NULL) {
+		*color = (s == CSS_FILL_COLOR) ? c : 0;
+	}
+	return (uint8_t)s;
+}
+
 uint8_t css_computed_text_decoration_style(
 		const css_computed_style *style)
 {

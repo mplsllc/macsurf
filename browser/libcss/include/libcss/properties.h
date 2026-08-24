@@ -180,6 +180,7 @@ enum css_properties_e {
 	CSS_PROP_JUSTIFY_SELF                   = 0x0a3,
 	CSS_PROP_BACKGROUND_ORIGIN              = 0x0a4,
 	CSS_PROP_BACKGROUND_BLEND_MODE          = 0x0a5,
+	CSS_PROP_FILL                           = 0x0a6,
 	CSS_N_PROPERTIES
 };
 
@@ -245,6 +246,14 @@ enum css_text_decoration_color_e {
 	CSS_TEXT_DECORATION_COLOR_INHERIT       = 0x0,
 	CSS_TEXT_DECORATION_COLOR_CURRENT_COLOR = 0x1,
 	CSS_TEXT_DECORATION_COLOR_COLOR         = 0x2
+};
+
+/* SVG fill V1. Inherited; initial = black. */
+enum css_fill_e {
+	CSS_FILL_INHERIT                       = 0x0,
+	CSS_FILL_NONE                          = 0x1,
+	CSS_FILL_CURRENT_COLOR                 = 0x2,
+	CSS_FILL_COLOR                         = 0x3
 };
 
 /* fixes357 (#44): text-decoration-style. Not inherited; initial = solid. */
