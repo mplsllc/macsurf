@@ -249,12 +249,42 @@ void macsurf_qjs_emit_fb_boot(struct JSContext *ctx)
 			"+(e.name||e.type||'')+':'+m;}"
 		"return out;"
 		"}catch(e){return 'error='+String((e&&e.message)||e).slice(0,700);}})()";
+	/* fixes1310 (#167, A3) - the real loader's Me() chooses its execution
+	 * wrapper at every __d()/requireLazy call:
+	 *
+	 *   t.TimeSlice && t.TimeSlice.guard ? t.TimeSlice.guard : Ne
+	 *
+	 * Test 81 proved the synchronous Ne path against the real recovered
+	 * loader bundle, but it deliberately never required the TimeSlice module.
+	 * That leaves the real-page scheduling branch untested, which matters for
+	 * the still-open repeat-navigation regression.  Report the state that
+	 * selects that branch at both existing FB boot audit edges (window load
+	 * and NAV:DONE), without requiring TimeSlice or calling TimeSlice.guard()
+	 * or ScheduleJSWork: this is an observation, not another source of page
+	 * behaviour.  __debug.getModules() is Facebook's own existing diagnostic
+	 * view and lets the hardware read distinguish "global missing" from
+	 * "module absent/not yet ready". */
+	static const char fbtasks_src[] =
+		"(function(){try{var g=globalThis;"
+		"if(!g.location||String(g.location.hostname||'').indexOf('facebook.com')<0)"
+			"return null;"
+		"var ts=g.TimeSlice,sj=g.ScheduleJSWork,mods=null,m=null;"
+		"try{if(typeof g.require==='function'){"
+			"var d=g.require('__debug');"
+			"mods=d&&d.getModules?d.getModules():null;"
+			"m=mods&&mods.TimeSlice;}}catch(e){}"
+		"return 'global='+typeof ts+' guard='+typeof(ts&&ts.guard)+"
+			"' schedule='+typeof sj+' module='+(m?'yes':'no')+"
+			"' ready='+(m?!!m.factoryFinished:'na')+"
+			"' deps='+(m&&m.dependencies?m.dependencies.length:'na');"
+		"}catch(e){return 'error='+String((e&&e.message)||e).slice(0,700);}})()";
 
 	if (ctx == NULL) return;
 	qjs_emit_fb_value(ctx, "FBPAYLOAD", fbpayload_src);
 	qjs_emit_fb_value(ctx, "FBROOT", fbroot_src);
 	qjs_emit_fb_value(ctx, "FBSTATE", fbstate_src);
 	qjs_emit_fb_value(ctx, "FBERROR", fberror_src);
+	qjs_emit_fb_value(ctx, "FBTASK", fbtasks_src);
 }
 
 void macsurf_qjs_emit_js_profile(void);
