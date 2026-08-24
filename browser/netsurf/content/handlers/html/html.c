@@ -622,9 +622,17 @@ static int html_pagemap_line(dom_node *n, int depth, int *susp_out)
 	 * container squashed to less than a text line. The walk uses it to
 	 * keep descending PAST the normal depth cap, straight into e.g. the
 	 * 22px-tall slider, where the ordinary dump kept stopping one level
-	 * above the answer. */
+	 * above the answer.
+	 * fixes1305 (#167, C0) -- the SAME "broken" question can point the
+	 * other way: a container implausibly TALL for its child count
+	 * (matches the FLEXLINE/FLEXMINH >3000px threshold already used for
+	 * the xpvvgw5 investigation) is exactly as suspicious as one
+	 * squashed to nothing, and the original check had no way to flag
+	 * it -- the walk would stop at the normal depth cap one level above
+	 * a box like that too. */
 	if (susp_out != NULL)
-		*susp_out = (b == NULL || h == 0 || (h < 30 && kids > 0));
+		*susp_out = (b == NULL || h == 0 || (h < 30 && kids > 0) ||
+				(h > 3000 && kids <= 2));
 	return kids;
 }
 
@@ -646,8 +654,19 @@ static void html_pagemap_walk(dom_node *n, int depth)
 
 	if (macsurf_pagemap_line_budget <= 0) return;
 	if (dom_node_get_node_name(n, &nm) == DOM_NO_ERR && nm != NULL) {
+		/* fixes1305 (#167, C0) - LINK/META never produce a box and
+		 * carry no rendered content, but Facebook's Comet injects
+		 * dozens of resource-hint LINKs directly into <body> (not
+		 * just <head>). Before this, a real hardware pagemap[done]
+		 * dump for facebook.com/ptricky3 spent its entire 130-line
+		 * budget on 129 back-to-back "LINK kids=0 box=0 h=0" lines
+		 * and never printed a single real body section -- the dump
+		 * has been silently useless for any Facebook page since it
+		 * shipped. Skip both, same as script/style. */
 		int skip = (strcasecmp(dom_string_data(nm), "script") == 0 ||
-				strcasecmp(dom_string_data(nm), "style") == 0);
+				strcasecmp(dom_string_data(nm), "style") == 0 ||
+				strcasecmp(dom_string_data(nm), "link") == 0 ||
+				strcasecmp(dom_string_data(nm), "meta") == 0);
 		dom_string_unref(nm);
 		if (skip) return;
 	}
@@ -1176,7 +1195,15 @@ void html_pagemap_dump(html_content *c, const char *when)
 	if (macsurf_pagemap_dumps >= MACSURF_PAGEMAP_MAX_DUMPS) return;
 	macsurf_pagemap_dumps++;
 	nav_dumps++;
-	macsurf_pagemap_line_budget = 130;
+	/* fixes1305 (#167, C0) - 130 was sized for a probe on a specific
+	 * shallow hero container (fixes1016/1093), never for a whole real
+	 * Facebook page: even with LINK/META now skipped, Comet's real DOM
+	 * is thousands of elements deep in a way this budget can't reach
+	 * past the first section or two of. Raised for the current
+	 * whole-page-story investigation (#167 C0); OS X 10.3 test target
+	 * has real headroom for this, unlike the OS 9 hardware floor this
+	 * number originally had to respect. */
+	macsurf_pagemap_line_budget = 600;
 
 	/* find <body>: documentElement's first element child named BODY */
 	if (dom_document_get_document_element(c->document, &root) != DOM_NO_ERR
@@ -1242,8 +1269,19 @@ void html_pagemap_dump(html_content *c, const char *when)
 		dom_node_unref(ch);
 		ch = nx;
 	}
-	macsurf_debug_log_writef("LIFE pagemap[%s] ---- end (%d sections)",
-			when, shown);
+	/* fixes1305 (#167, C0) - "sections" only ever counted top-level body
+	 * children VISITED (shown++ above), not lines actually printed --
+	 * with the budget exhausted deep inside child #1, every dump ever
+	 * emitted read as "328 sections" regardless of whether 3 lines or
+	 * 3000 actually made it out. State the truncation explicitly so a
+	 * dump can be trusted (or distrusted) at a glance instead of by
+	 * counting what's missing. */
+	macsurf_debug_log_writef(
+		"LIFE pagemap[%s] ---- end (%d sections visited, "
+		"budget %s, %d remaining)",
+		when, shown,
+		(macsurf_pagemap_line_budget <= 0) ? "EXHAUSTED" : "ok",
+		macsurf_pagemap_line_budget);
 	dom_node_unref(body);
 }
 /* ====================================================================== */
