@@ -604,6 +604,26 @@ static bool t95_calc_of(struct box *b, const char *cls, uint8_t *slot_out)
 	return false;
 }
 
+/* fixes1300 (#167) - Test 96 helper. Find and return the first box
+ * carrying `cls`, or NULL. Unlike t95_calc_of, hands back the box itself
+ * so the caller can read whichever computed properties it needs directly
+ * (min-height here), not just the one cssprobe accessor. */
+static struct box *t96_box_of_class(struct box *b, const char *cls)
+{
+	struct box *found;
+
+	if (b == NULL)
+		return NULL;
+	if (t66_cls_has(b, cls) && b->style != NULL)
+		return b;
+	for (b = b->children; b != NULL; b = b->next) {
+		found = t96_box_of_class(b, cls);
+		if (found != NULL)
+			return found;
+	}
+	return NULL;
+}
+
 /* Record the FIRST box whose class list holds each token. */
 static void t66_walk(struct box *b,
 		int *row_h, int *icon_h, int *avatar_h, int *img_h,
@@ -11485,6 +11505,255 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "=== Test 95 PASS: losing deferred calc() declaration "
 			"did not clobber the winning declaration's calc_expr slot "
 			"===\n");
+
+	/* ---------------------------------------------------------------
+	 * fixes1300 (#167) - what does MacSurf's own consumer code actually
+	 * resolve .xpvvgw5's real min-height calc() to, under the real
+	 * hardware viewport (993x609, from the fixes1299 hardware log's
+	 * "LIFE VPORT finish ... unit_ctx vw=993 vh=609")?
+	 *
+	 * fixes1299 fixed WHICH declaration's calc_expr survives a cascade
+	 * conflict; it says nothing about whether that surviving expression
+	 * then EVALUATES correctly. The hardware log pulled after fixes1299
+	 * shipped still shows .xpvvgw5 at h=22723/23136, unchanged -- so this
+	 * test exercises the evaluation path directly: real rule text
+	 * (verbatim from harness/fbcdn.net-css-v5.css), real selector-scoped
+	 * custom property, real viewport, real consumer call
+	 * (ns_computed_min_height + css_unit_len2device_px, the exact two
+	 * calls layout_internal.h:855/862 makes), no synthetic shortcuts.
+	 *
+	 * --header-height is defined in the real bundle only inside
+	 *   .x1s26u81.x1s26u81,.x1s26u81.x1s26u81:root{...--header-height:0px...}
+	 * -- StyleX's doubled-class specificity-boost idiom, gating the
+	 * whole design-token block behind :root ALSO carrying class
+	 * x1s26u81. This fixture gives that its best chance: <html
+	 * class="x1s26u81">. If --header-height resolves (0px) and 100vh
+	 * evaluates against the real 609px viewport, calc(100vh -
+	 * var(--header-height)) should land near 600px, not 22723px. */
+	fprintf(stderr, "\n=== Test 96: real .xpvvgw5 min-height calc() "
+			"resolves to a real viewport-scale pixel value ===\n");
+	{
+		const char *t96_html =
+			"<html class=\"x1s26u81\"><body>"
+			"<div class=\"xpvvgw5\">X</div>"
+			"</body></html>";
+		/* Verbatim from harness/fbcdn.net-css-v5.css: the selector and
+		 * the two min-height declarations on .xpvvgw5 are copied
+		 * character-for-character; the custom-property block is
+		 * trimmed to just --header-height (the real block carries ~200
+		 * unrelated design tokens on the same selector). */
+		const char *t96_css =
+			".x1s26u81.x1s26u81,.x1s26u81.x1s26u81:root"
+			"{--header-height:0px}"
+			".xpvvgw5{min-height:calc(100vh - var(--header-height));"
+			"min-height:calc(100dvh - var(--header-height))}";
+		struct html_content t96c;
+		dom_hubbub_parser *t96p = NULL;
+		dom_document *t96doc = NULL;
+		dom_node *t96root = NULL;
+		css_select_ctx *t96ctx = NULL;
+		css_stylesheet *t96ua = NULL;
+		css_stylesheet *t96auth = NULL;
+		dom_hubbub_parser_params t96params;
+		css_stylesheet_params t96sp;
+		void *t96_box_ctx = NULL;
+		nserror t96err;
+		dom_exception t96derr;
+		struct box *t96box;
+
+		memset(&t96params, 0, sizeof(t96params));
+		t96params.fix_enc = true;
+		t96derr = dom_hubbub_parser_create(&t96params, &t96p, &t96doc);
+		if (t96derr != DOM_HUBBUB_OK || t96p == NULL) {
+			fprintf(stderr, "FAIL: Test 96 parser create %d\n",
+					(int)t96derr);
+			return 1;
+		}
+		if (dom_hubbub_parser_parse_chunk(t96p,
+				(const uint8_t *)t96_html,
+				strlen(t96_html)) != DOM_HUBBUB_OK ||
+				dom_hubbub_parser_completed(t96p) !=
+					DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 96 parse\n");
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t96p);
+
+		memset(&t96c, 0, sizeof(t96c));
+		t96c.base_url = g_base_url;
+		t96c.document = t96doc;
+		t96c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t96c.enable_scripting = false;
+		if (css_select_ctx_create(&t96ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 96 select_ctx\n");
+			return 1;
+		}
+		t96c.select_ctx = t96ctx;
+
+		memset(&t96sp, 0, sizeof(t96sp));
+		t96sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t96sp.level = CSS_LEVEL_3;
+		t96sp.charset = "UTF-8";
+		t96sp.url = "resource:default.css";
+		t96sp.title = "default";
+		t96sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t96sp, &t96ua) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 96 UA sheet\n");
+			return 1;
+		}
+		{
+			const char *ua = "html,body,div{display:block}";
+			(void)css_stylesheet_append_data(t96ua,
+					(const uint8_t *)ua, strlen(ua));
+			(void)css_stylesheet_data_done(t96ua);
+		}
+		if (css_select_ctx_append_sheet(t96ctx, t96ua,
+				CSS_ORIGIN_UA, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 96 UA append\n");
+			return 1;
+		}
+
+		memset(&t96sp, 0, sizeof(t96sp));
+		t96sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t96sp.level = CSS_LEVEL_3;
+		t96sp.charset = "UTF-8";
+		t96sp.url = "http://local/t96.css";
+		t96sp.title = "author";
+		t96sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t96sp, &t96auth) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 96 author sheet\n");
+			return 1;
+		}
+		{
+			css_error ae = css_stylesheet_append_data(t96auth,
+					(const uint8_t *)t96_css,
+					strlen(t96_css));
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 96 author append=%d\n",
+						(int)ae);
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t96auth);
+		}
+		if (css_select_ctx_append_sheet(t96ctx, t96auth,
+				CSS_ORIGIN_AUTHOR, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 96 author append sheet\n");
+			return 1;
+		}
+
+		/* Real hardware viewport from the fixes1299 log's
+		 * "LIFE VPORT finish" line, not the 800x600 harness default. */
+		t96c.media.type = CSS_MEDIA_SCREEN;
+		t96c.media.width = INTTOFIX(993);
+		t96c.media.height = INTTOFIX(609);
+		t96c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t96c.unit_len_ctx.viewport_width = INTTOFIX(993);
+		t96c.unit_len_ctx.viewport_height = INTTOFIX(609);
+		t96c.unit_len_ctx.device_dpi = INTTOFIX(96);
+		t96c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t96c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t96c.universal) !=
+				lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 96 universal\n");
+			return 1;
+		}
+		t96c.base.status = CONTENT_STATUS_LOADING;
+		t96c.base.active = 0;
+		t96c.base.handler = &g_dummy_handler;
+
+		if (dom_document_get_document_element(t96doc,
+				(void *)&t96root) != DOM_NO_ERR ||
+				t96root == NULL) {
+			fprintf(stderr, "FAIL: Test 96 doc element\n");
+			return 1;
+		}
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t96err = dom_to_box(t96root, &t96c, initial_build_cb,
+				&t96_box_ctx);
+		dom_node_unref(t96root);
+		if (t96err != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 96 dom_to_box=%d\n",
+					(int)t96err);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 96 build done=%d ok=%d\n",
+					g_initial_build_done,
+					(int)g_initial_build_ok);
+			return 1;
+		}
+
+		t96box = t96_box_of_class(t96c.layout, "xpvvgw5");
+		if (t96box == NULL || t96box->style == NULL) {
+			fprintf(stderr, "FAIL: Test 96 -- .xpvvgw5 box not "
+					"found\n");
+			return 1;
+		}
+
+		{
+			enum css_min_height_e t96type;
+			css_fixed t96value = 0;
+			css_unit t96unit = CSS_UNIT_PX;
+			int t96px;
+
+			t96type = ns_computed_min_height(t96box->style,
+					&t96value, &t96unit);
+			if (t96type != CSS_MIN_HEIGHT_SET) {
+				fprintf(stderr, "FAIL: Test 96 -- min-height did "
+						"not compute as SET at all "
+						"(type=%d) -- the calc() "
+						"declaration was lost before "
+						"reaching the box, not "
+						"mis-evaluated\n", (int)t96type);
+				return 1;
+			}
+			if (t96unit != CSS_UNIT_CALC) {
+				fprintf(stderr, "FAIL: Test 96 -- min-height "
+						"unit=%d, expected CSS_UNIT_CALC "
+						"(%d) -- not exercising the calc "
+						"path this test targets\n",
+						(int)t96unit,
+						(int)CSS_UNIT_CALC);
+				return 1;
+			}
+
+			/* The exact call layout_internal.h:862 makes. */
+			t96px = (int)FIXTOINT(css_unit_len2device_px(
+					t96box->style, &t96c.unit_len_ctx,
+					t96value, t96unit));
+			fprintf(stderr, "  .xpvvgw5 min-height calc() resolves "
+					"to %dpx (real viewport 993x609, real "
+					"--header-height:0px)\n", t96px);
+
+			/* Real symptom was h=22723-23136 against a 609px real
+			 * viewport -- roughly 37-38x too tall. A correct
+			 * evaluation of calc(100vh - 0px) against a 609px
+			 * viewport must land at or under the viewport height
+			 * itself; give generous headroom (2x) over 609 so this
+			 * isn't a hair-trigger pixel-rounding assertion, while
+			 * still being nowhere near 22723. */
+			if (t96px < 0 || t96px > 1218) {
+				fprintf(stderr, "FAIL: Test 96 -- resolved %dpx, "
+						"expected roughly 600px "
+						"(100vh - 0px against a 609px "
+						"viewport). %s\n", t96px,
+						t96px > 10000 ?
+						"This reproduces the real "
+						"22723px symptom in isolation "
+						"-- the bug is in the "
+						"evaluation path itself, not "
+						"page-specific DOM/class "
+						"structure." :
+						"Unexpected direction of "
+						"failure -- inspect manually.");
+				return 1;
+			}
+		}
+	}
+	fprintf(stderr, "=== Test 96 PASS: .xpvvgw5's real min-height calc() "
+			"resolves to a real, viewport-scale pixel value ===\n");
 
 	return 0;
 }
