@@ -22,6 +22,7 @@
 #include "content/content_factory.h"
 #include "desktop/gui_internal.h"
 #include "desktop/gui_table.h"
+#include "utils/nsurl.h"
 
 #include "macsurf_debug.h"
 #include "macos9_webp.h"
@@ -429,6 +430,7 @@ macos9_webp_convert(struct content *c)
 	size_t source_size;
 	WebPBitstreamFeatures features;
 	VP8StatusCode status;
+	nsurl *url;
 	source = content__get_source_data(c, &source_size);
 	if (source == NULL || source_size == 0) return false;
 	status = WebPGetFeatures(source, source_size, &features);
@@ -451,6 +453,11 @@ macos9_webp_convert(struct content *c)
 	webp->base.height = (unsigned)features.height;
 	webp->animated = features.has_animation ? true : false;
 	webp->has_alpha = features.has_alpha ? true : false;
+	url = content_get_url(c);
+	macsurf_debug_log_writef("WEBP decode url=%s size=%dx%d anim=%d alpha=%d",
+		(url != NULL) ? nsurl_access(url) : "(no url)",
+		features.width, features.height,
+		webp->animated ? 1 : 0, webp->has_alpha ? 1 : 0);
 	macos9_webp_start_animation(webp, false);
 	content_set_ready(c);
 	content_set_done(c);

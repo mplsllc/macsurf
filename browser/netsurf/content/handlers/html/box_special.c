@@ -1482,6 +1482,11 @@ box_image_resolve_picture_url(dom_node *img, html_content *content,
 							goto done;
 						ok = box_extract_link(content, candidate_string,
 								content->base_url, out_url);
+						if (ok && *out_url != NULL) {
+							macsurf_debug_log_writef(
+								"WEBP picture source=%s",
+								nsurl_access(*out_url));
+						}
 						goto done;
 					}
 				}
