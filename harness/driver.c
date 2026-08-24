@@ -12002,5 +12002,243 @@ box_coords(bx, &cx, &cy);
 			"resolves to the same real pixel value as the "
 			"parent's own ===\n");
 
+	/* ---------------------------------------------------------------
+	 * fixes1309 (#167, C0) - the FLEXOUTER hardware trace (fixes1308)
+	 * named the exact field: margin-bottom=21845px, every other outer
+	 * edge zero. The real bundle rule on the exact class carrying it:
+	 *
+	 *   .x10cihs4{margin-bottom:calc(-100vh + var(--header-height))}
+	 *
+	 * A NEGATIVE calc(). Against the real 609px viewport and
+	 * --header-height:0px this should resolve to ~-609px, not
+	 * +21845. While reading libcss/include/libcss/fpmath.h for this,
+	 * found a real, independent, sign-handling bug in css_add_fixed's
+	 * branchless overflow-saturation trick: it computes
+	 * `ux = (ux >> 31) + INT_MAX` using an ARITHMETIC (sign-extending)
+	 * shift on a SIGNED int32 -- giving -1 for a negative operand,
+	 * so `ux` becomes INT_MAX-1, not INT_MIN. The standard branchless
+	 * idiom this is built on needs an UNSIGNED (logical) shift here,
+	 * giving 0 or 1 so `ux` lands on INT_MAX or INT_MIN respectively.
+	 * css_add_fixed is shared between the CW8 double-path and the
+	 * portable int64 path (it's outside the #ifdef __MWERKS__ block),
+	 * so this reproduces identically on Linux -- test the REAL rule
+	 * text directly rather than a synthetic add(), since css_add_fixed
+	 * is only one candidate among several fixed-point primitives this
+	 * calc's evaluation touches. */
+	fprintf(stderr, "\n=== Test 99: real .x10cihs4 negative calc() "
+			"margin-bottom resolves to a real negative pixel "
+			"value ===\n");
+	{
+		const char *t99_html =
+			"<html class=\"x1s26u81\"><body>"
+			"<div class=\"x10cihs4\">X</div>"
+			"</body></html>";
+		/* Verbatim from harness/fbcdn.net-css-v5.css. */
+		const char *t99_css =
+			".x1s26u81.x1s26u81,.x1s26u81.x1s26u81:root"
+			"{--header-height:0px}"
+			".x10cihs4{margin-bottom:"
+			"calc(-100vh + var(--header-height))}";
+		struct html_content t99c;
+		dom_hubbub_parser *t99p = NULL;
+		dom_document *t99doc = NULL;
+		dom_node *t99root = NULL;
+		css_select_ctx *t99ctx = NULL;
+		css_stylesheet *t99ua = NULL;
+		css_stylesheet *t99auth = NULL;
+		dom_hubbub_parser_params t99params;
+		css_stylesheet_params t99sp;
+		void *t99_box_ctx = NULL;
+		nserror t99err;
+		dom_exception t99derr;
+		struct box *t99box;
+
+		memset(&t99params, 0, sizeof(t99params));
+		t99params.fix_enc = true;
+		t99derr = dom_hubbub_parser_create(&t99params, &t99p, &t99doc);
+		if (t99derr != DOM_HUBBUB_OK || t99p == NULL) {
+			fprintf(stderr, "FAIL: Test 99 parser create %d\n",
+					(int)t99derr);
+			return 1;
+		}
+		if (dom_hubbub_parser_parse_chunk(t99p,
+				(const uint8_t *)t99_html,
+				strlen(t99_html)) != DOM_HUBBUB_OK ||
+				dom_hubbub_parser_completed(t99p) !=
+					DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 99 parse\n");
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t99p);
+
+		memset(&t99c, 0, sizeof(t99c));
+		t99c.base_url = g_base_url;
+		t99c.document = t99doc;
+		t99c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t99c.enable_scripting = false;
+		if (css_select_ctx_create(&t99ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 99 select_ctx\n");
+			return 1;
+		}
+		t99c.select_ctx = t99ctx;
+
+		memset(&t99sp, 0, sizeof(t99sp));
+		t99sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t99sp.level = CSS_LEVEL_3;
+		t99sp.charset = "UTF-8";
+		t99sp.url = "resource:default.css";
+		t99sp.title = "default";
+		t99sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t99sp, &t99ua) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 99 UA sheet\n");
+			return 1;
+		}
+		{
+			const char *ua = "html,body,div{display:block}";
+			(void)css_stylesheet_append_data(t99ua,
+					(const uint8_t *)ua, strlen(ua));
+			(void)css_stylesheet_data_done(t99ua);
+		}
+		if (css_select_ctx_append_sheet(t99ctx, t99ua,
+				CSS_ORIGIN_UA, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 99 UA append\n");
+			return 1;
+		}
+
+		memset(&t99sp, 0, sizeof(t99sp));
+		t99sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t99sp.level = CSS_LEVEL_3;
+		t99sp.charset = "UTF-8";
+		t99sp.url = "http://local/t99.css";
+		t99sp.title = "author";
+		t99sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t99sp, &t99auth) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 99 author sheet\n");
+			return 1;
+		}
+		{
+			css_error ae = css_stylesheet_append_data(t99auth,
+					(const uint8_t *)t99_css,
+					strlen(t99_css));
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 99 author append=%d\n",
+						(int)ae);
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t99auth);
+		}
+		if (css_select_ctx_append_sheet(t99ctx, t99auth,
+				CSS_ORIGIN_AUTHOR, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 99 author append sheet\n");
+			return 1;
+		}
+
+		t99c.media.type = CSS_MEDIA_SCREEN;
+		t99c.media.width = INTTOFIX(993);
+		t99c.media.height = INTTOFIX(609);
+		t99c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t99c.unit_len_ctx.viewport_width = INTTOFIX(993);
+		t99c.unit_len_ctx.viewport_height = INTTOFIX(609);
+		t99c.unit_len_ctx.device_dpi = INTTOFIX(96);
+		t99c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t99c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t99c.universal) !=
+				lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 99 universal\n");
+			return 1;
+		}
+		t99c.base.status = CONTENT_STATUS_LOADING;
+		t99c.base.active = 0;
+		t99c.base.handler = &g_dummy_handler;
+
+		if (dom_document_get_document_element(t99doc,
+				(void *)&t99root) != DOM_NO_ERR ||
+				t99root == NULL) {
+			fprintf(stderr, "FAIL: Test 99 doc element\n");
+			return 1;
+		}
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t99err = dom_to_box(t99root, &t99c, initial_build_cb,
+				&t99_box_ctx);
+		dom_node_unref(t99root);
+		if (t99err != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 99 dom_to_box=%d\n",
+					(int)t99err);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 99 build done=%d ok=%d\n",
+					g_initial_build_done,
+					(int)g_initial_build_ok);
+			return 1;
+		}
+
+		t99box = t96_box_of_class(t99c.layout, "x10cihs4");
+		if (t99box == NULL || t99box->style == NULL) {
+			fprintf(stderr, "FAIL: Test 99 -- .x10cihs4 box not "
+					"found\n");
+			return 1;
+		}
+
+		{
+			uint8_t t99type;
+			css_fixed t99value = 0;
+			css_unit t99unit = CSS_UNIT_PX;
+			int t99px;
+
+			t99type = css_computed_margin_bottom(t99box->style,
+					&t99value, &t99unit);
+			fprintf(stderr, "  .x10cihs4 margin-bottom type=%d "
+					"unit=%d\n", (int)t99type,
+					(int)t99unit);
+			if (t99type != CSS_MARGIN_SET) {
+				fprintf(stderr, "FAIL: Test 99 -- margin-"
+						"bottom did not compute as "
+						"SET at all (type=%d)\n",
+						(int)t99type);
+				return 1;
+			}
+
+			t99px = (int)FIXTOINT(css_unit_len2device_px(
+					t99box->style, &t99c.unit_len_ctx,
+					t99value, t99unit));
+			fprintf(stderr, "  .x10cihs4 margin-bottom resolves "
+					"to %dpx (real viewport 993x609, "
+					"expected roughly -609px)\n", t99px);
+
+			/* THE ASSERTION: a negative calc() must resolve to a
+			 * real NEGATIVE value close to -609px (100vh of a
+			 * 609px viewport, minus 0px header-height), not a
+			 * large positive garbage value. Generous band: any
+			 * negative value down to -1218 (2x viewport) is
+			 * accepted as "roughly right direction and scale";
+			 * the real bug produces +21845, a completely
+			 * different sign AND magnitude, so this is not a
+			 * hair-trigger assertion. */
+			if (t99px > 0 || t99px < -1218) {
+				fprintf(stderr, "FAIL: Test 99 -- resolved "
+						"%dpx, expected a negative "
+						"value near -609px. %s\n",
+						t99px,
+						t99px > 10000 ?
+						"This reproduces the real "
+						"21845px symptom in isolation "
+						"-- negative calc() values "
+						"are being corrupted into "
+						"large positive ones "
+						"somewhere in the fixed-point "
+						"math or calc bytecode "
+						"evaluation." :
+						"Unexpected direction of "
+						"failure -- inspect manually.");
+				return 1;
+			}
+		}
+	}
+	fprintf(stderr, "=== Test 99 PASS: negative calc() margin-bottom "
+			"resolves to a real negative pixel value ===\n");
+
 	return 0;
 }
