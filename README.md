@@ -24,7 +24,7 @@
 
 A tested build on [**macsurf.org**](https://macsurf.org), free for everyone, with real hardware testing behind it.
 
-**Next stable: August 22, 2026**
+**Next stable: TBA**
 
 </td>
 <td width="50%" valign="top" align="center">
