@@ -57,7 +57,8 @@ In-progress builds land in **Beta-Box** every week, ahead of every stable releas
   <a href="https://bsky.app/profile/macsurfos9.bsky.social" target="_blank"><img src="https://img.shields.io/badge/Bluesky-Follow-0285FF?style=for-the-badge&logo=bluesky&logoColor=white" alt="Follow on Bluesky" height="40"></a>
 </p>
 
-<p align="center"><strong>Thanks to our supporters:</strong> Shlooom, Kestral, Mothra (Patreon) &middot; kilgeist, Turuun, Rogue (Ko-Fi)</p>
+<p align="center"><strong>Thanks to our supporters:</strong> Mack Chamberlain, 
+Joseph Mulvaney, Shlooom, Kestral, Mothra (Patreon) &middot; kilgeist, Turuun, Rogue (Ko-Fi)</p>
 
 <p align="center">
   <img src="screenshots/2.0-thankyou.png" alt="The MacSurf 2.0 About box crediting supporters" width="420">
