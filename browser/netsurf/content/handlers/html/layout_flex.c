@@ -1591,14 +1591,20 @@ static bool layout_flex__collect_items_into_lines(
 				macsurf_debug_log_writef(
 					"LIFE FLEXITEM flex=%p i=%d box=%p "
 					"type=%d base=%d main=%d target=%d "
-					"b_h=%d b_w=%d",
+					"b_h=%d b_w=%d basis=%d gen=%d "
+					"cache_gen=%d cache_w=%d cache_h=%d",
 					(void *)ctx->flex, (int)li,
 					(void *)it->box,
 					it->box ? (int)it->box->type : -1,
 					it->base_size, it->main_size,
 					it->target_main_size,
 					it->box ? (int)it->box->height : -1,
-					it->box ? (int)it->box->width : -1);
+					it->box ? (int)it->box->width : -1,
+					(int)it->basis,
+					(int)macsurf_layout_pass_gen,
+					it->box ? (int)it->box->flex_layout_gen : -1,
+					it->box ? (int)it->box->flex_layout_width : -1,
+					it->box ? (int)it->box->flex_layout_height : -1);
 			}
 		}
 	}
