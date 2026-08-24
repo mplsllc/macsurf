@@ -1546,6 +1546,44 @@ static bool layout_flex__collect_items_into_lines(
 		if (ctx->main_size < line->main_size) {
 			ctx->main_size = line->main_size;
 		}
+
+		/* fixes1302 (#167, C0) - FLEXMINH (fixes1301) never fired on
+		 * hardware: the real, fully-cascaded min-height for the
+		 * runaway .xpvvgw5-class box stayed sane. So the box's own
+		 * content/line main-size math is the actual source of
+		 * h=23136, not min-height. Unconditional per-item dump, gated
+		 * on the line itself being implausibly tall, to find which
+		 * item (and which of base_size/target_main_size/main_size)
+		 * is carrying the size -- same "generous threshold, real
+		 * numbers, no synthetic repro" approach as FLEXMINH, since
+		 * this is real content whose exact composition isn't in any
+		 * fixture. */
+		if (line->main_size > 3000) {
+			size_t li;
+			size_t li_max = line->first + line->count;
+			if (li_max > line->first + 20)
+				li_max = line->first + 20;
+			macsurf_debug_log_writef(
+				"LIFE FLEXLINE flex=%p line_main=%d "
+				"line_used=%d count=%d horizontal=%d",
+				(void *)ctx->flex, line->main_size,
+				line->used_main_size, (int)line->count,
+				(int)ctx->horizontal);
+			for (li = line->first; li < li_max; li++) {
+				struct flex_item_data *it = &ctx->item.data[li];
+				macsurf_debug_log_writef(
+					"LIFE FLEXITEM flex=%p i=%d box=%p "
+					"type=%d base=%d main=%d target=%d "
+					"b_h=%d b_w=%d",
+					(void *)ctx->flex, (int)li,
+					(void *)it->box,
+					it->box ? (int)it->box->type : -1,
+					it->base_size, it->main_size,
+					it->target_main_size,
+					it->box ? (int)it->box->height : -1,
+					it->box ? (int)it->box->width : -1);
+			}
+		}
 	}
 
 	return true;
