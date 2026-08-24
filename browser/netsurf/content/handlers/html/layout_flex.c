@@ -1591,6 +1591,67 @@ static bool layout_flex__place_line_items_main(
 
 			cross_size = box_size_cross + lh__delta_outer_cross(
 					ctx->flex, b);
+
+			/* fixes1315 (#167, 68kmla) - reviewer-designed probe.
+			 * cross_size is box_size_cross (b->height, for a row/
+			 * horizontal flex) PLUS lh__delta_outer_cross -- the
+			 * same lh__delta_outer_height() family that exposed
+			 * fixes1309's 21845px Facebook corruption, so the
+			 * margin/padding/border contribution needs to be
+			 * visible individually, not folded into one number.
+			 * This runs BEFORE layout_flex__place_line_items_cross
+			 * (stretch/align-self), which can still mutate
+			 * box_size_cross and re-layout the item --
+			 * FLEXCROSSFINAL below is the same item's state AFTER
+			 * that phase, diffable directly instead of inferred
+			 * from the final pagemap. */
+			if (cross_size > 3000) {
+				char t1315_flex_id[80];
+				char t1315_item_id[80];
+				int t1315_line_before = line->cross_size;
+
+				if (ctx->flex->node != NULL) {
+					html_pagemap_brief(ctx->flex->node,
+							t1315_flex_id,
+							(int)sizeof t1315_flex_id);
+				} else {
+					t1315_flex_id[0] = '\0';
+				}
+				if (b->node != NULL) {
+					html_pagemap_brief(b->node,
+							t1315_item_id,
+							(int)sizeof t1315_item_id);
+				} else {
+					t1315_item_id[0] = '\0';
+				}
+				macsurf_debug_log_writef(
+					"LIFE FLEXCROSS flex=[%s] item=[%s] "
+					"box=%p horiz=%d h=%d mt=%d mb=%d "
+					"pt=%d pb=%d bt=%d bb=%d outer=%d "
+					"candidate=%d line_before=%d "
+					"line_after=%d align=%d css_h=%d "
+					"gen=%d cache_gen=%d cache_h=%d",
+					t1315_flex_id, t1315_item_id,
+					(void *)b, (int)ctx->horizontal,
+					(int)b->height,
+					(int)lh__non_auto_margin(b, TOP),
+					(int)lh__non_auto_margin(b, BOTTOM),
+					(int)b->padding[TOP],
+					(int)b->padding[BOTTOM],
+					(int)b->border[TOP].width,
+					(int)b->border[BOTTOM].width,
+					cross_size - box_size_cross,
+					cross_size,
+					t1315_line_before,
+					(t1315_line_before < cross_size) ?
+						cross_size : t1315_line_before,
+					(int)lh__box_align_self(ctx->flex, b),
+					(b->style != NULL) ? 1 : 0,
+					(int)macsurf_layout_pass_gen,
+					(int)b->flex_layout_gen,
+					(int)b->flex_layout_height);
+			}
+
 			if (line->cross_size < cross_size) {
 				line->cross_size = cross_size;
 			}
@@ -1770,6 +1831,38 @@ static void layout_flex__place_line_items_cross(struct flex_ctx *ctx,
 					lh__non_auto_margin(b, cross_start) +
 					b->border[cross_start].width;
 			break;
+		}
+
+		/* fixes1315 (#167, 68kmla) - reviewer-designed probe, second
+		 * half. This is the SAME item's state after stretch/align-
+		 * self has had its chance to mutate box_size_cross and
+		 * re-layout it (line->cross_size itself is never
+		 * recomputed after this point -- it was already saved
+		 * before this function ran). Gated on the SAVED line cross-
+		 * size (what FLEXCROSS already flagged as suspicious), not
+		 * on this item's own current size, so every item on a
+		 * flagged line reports here even if stretch shrank it back
+		 * down -- exactly the comparison needed to tell "stale
+		 * snapshot, corrected too late" apart from "the container's
+		 * own outer-delta arithmetic is wrong" apart from "the real
+		 * mutation happens even later than this invocation". */
+		if (line->cross_size > 3000) {
+			char t1315_item_id[80];
+			int t1315_h = *box_size_cross;
+			int t1315_outer = lh__delta_outer_cross(ctx->flex, b);
+
+			if (b->node != NULL) {
+				html_pagemap_brief(b->node, t1315_item_id,
+						(int)sizeof t1315_item_id);
+			} else {
+				t1315_item_id[0] = '\0';
+			}
+			macsurf_debug_log_writef(
+				"LIFE FLEXCROSSFINAL item=[%s] box=%p h=%d "
+				"outer=%d candidate=%d saved_line_cross=%d",
+				t1315_item_id, (void *)b, t1315_h,
+				t1315_outer, t1315_h + t1315_outer,
+				line->cross_size);
 		}
 	}
 }

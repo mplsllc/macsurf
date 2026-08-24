@@ -517,8 +517,11 @@ static void html_pagemap_append(char *out, int cap, int *pos,
 	out[*pos] = '\0';
 }
 
-/* "TAG#id.class" (truncated). Element nodes only; caller checks the type. */
-static void html_pagemap_brief(dom_node *n, char *out, int cap)
+/* "TAG#id.class" (truncated). Element nodes only; caller checks the type.
+ * fixes1315 (#167, 68kmla) - exported (was static) so layout_flex.c's own
+ * diagnostics can report a box's real identity instead of a bare pointer,
+ * the same lookup fixes1305/1307 already proved for the pagemap dump. */
+void html_pagemap_brief(dom_node *n, char *out, int cap)
 {
 	static dom_string *s_id = NULL;
 	static dom_string *s_class = NULL;

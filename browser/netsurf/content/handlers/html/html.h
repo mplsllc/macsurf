@@ -267,4 +267,12 @@ struct content_html_object *html_get_objects(struct hlcache_handle *h,
 bool html_get_id_offset(struct hlcache_handle *h, lwc_string *frag_id,
 		int *x, int *y);
 
+/**
+ * fixes1315 (#167) - "TAG#id.class" identity string for a DOM element node,
+ * truncated to `cap`. Lets a diagnostic outside html.c (e.g. layout_flex.c)
+ * report which real element a box is, instead of a bare pointer. Element
+ * nodes only -- caller checks the node type first.
+ */
+void html_pagemap_brief(struct dom_node *n, char *out, int cap);
+
 #endif
