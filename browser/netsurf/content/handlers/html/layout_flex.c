@@ -407,6 +407,35 @@ static bool layout_flex_item(
 	 * height too is exactly what makes that stretch re-layout still fire.
 	 * Flex/grid items are block-formatting-context roots, so a skipped
 	 * re-layout has no float-escape side effect on ancestors. */
+	/* fixes1306 (#167, C0) - the FLEXITEM diagnostic (fixes1302/1304)
+	 * shows a nested flex item's base_size (captured right after THIS
+	 * function returns, per fixes1303) disagreeing with that SAME
+	 * box's memoized flex_layout_height moments later inside the SAME
+	 * parent's layout_flex_inner call -- e.g. base=23286 but
+	 * cache_h=1441, both supposedly read from this one box after this
+	 * one function. That should be impossible if layout_flex_item runs
+	 * (for this box, this pass) exactly once before the read. Log every
+	 * call for nested flex/inline-flex items specifically (not every
+	 * box on the page -- bounded to the exact shape of the bug) so the
+	 * next hardware run shows definitively whether it's called more
+	 * than once per pass, memo-hit or not, and what height each call
+	 * sees. */
+	if (b->type == BOX_FLEX || b->type == BOX_INLINE_FLEX) {
+		macsurf_debug_log_writef(
+			"LIFE FLEXITEMCALL box=%p avail_w=%d b_w=%d b_h=%d "
+			"gen=%d cache_gen=%d cache_w=%d cache_h=%d "
+			"memo_hit=%d",
+			(void *)b, available_width, (int)b->width,
+			(int)b->height, (int)macsurf_layout_pass_gen,
+			(int)b->flex_layout_gen, (int)b->flex_layout_width,
+			(int)b->flex_layout_height,
+			(macsurf_flex_layout_cache_enabled &&
+				b->flex_layout_gen == macsurf_layout_pass_gen &&
+				b->flex_layout_width == available_width &&
+				b->flex_layout_width == b->width &&
+				b->flex_layout_height == b->height) ? 1 : 0);
+	}
+
 	if (macsurf_flex_layout_cache_enabled &&
 			b->flex_layout_gen == macsurf_layout_pass_gen &&
 			b->flex_layout_width == available_width &&
