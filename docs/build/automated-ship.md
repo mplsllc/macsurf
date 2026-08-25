@@ -282,12 +282,26 @@ Notes that cost time to work out:
   `POSIX file`, `alias`, and bare strings all fail with `-1700`.
 - `Remove Files` takes a **list** and accepts a `file` spec directly — no index
   lookup needed. **Verified: `filecount` drops by one per call.**
-- **`Add Files` does NOT work over AppleScript here, despite being in the
+- **`Add Files` does NOT work over AppleScript on Tiger, despite being in the
   dictionary.** Verified 2026-08-25: it returns `0` (noErr) and changes nothing
-  — `filecount` stays put and the project file on disk is not rewritten. Tried
-  and failed: `file "HFS:path"`, `alias "HFS:path"`, a resolved
-  `(POSIX file "...") as alias`, each with and without `To Segment 1`. **Add
-  files by hand in the IDE.** Removal is scriptable; addition is not.
+  — `filecount` stays put, index `count+1` still errors, and the project file on
+  disk is not rewritten. Tried and failed: `file "HFS:path"`, `alias "HFS:path"`,
+  a resolved `(POSIX file "...") as alias`, each with and without `To Segment 1`;
+  a file never previously in the project; and the newer `CWIE`/`ADDF`
+  (`add new project file with data … to project …`), which gives `-10001`.
+  The HFS path was confirmed correct by round-tripping
+  `(POSIX file "...") as alias` back to a string.
+
+  **Cause: this is a 10.4 regression in file *addition*, not a scripting
+  problem.** The maintainer independently reports that **drag-and-drop into the
+  project also stopped working after moving from 10.3 to 10.4** — `Project > Add`
+  is the only route that works. Addition through the Finder/AppleEvent path is
+  broken at the OS level on Tiger; `Remove Files` does not use that path, which
+  is why removal remains fully scriptable.
+
+  **So: removal is scriptable, addition is a manual `Project > Add`.** Plan
+  bisects accordingly — prefer orderings that remove files rather than ones that
+  need them added back.
   (This entry previously claimed Add worked. It was written from the dictionary
   entry existing, not from a tested call — the exact "assert the effect, not the
   absence of an error" mistake this document warns about elsewhere. A `0` return
