@@ -81,6 +81,7 @@ long macos9_html_bytes_processed = 0;
  * per-reformat cost (ms_after-ms_before, already in the SITE line) be read
  * against the count.  See project_mactrove_reflow_storm. */
 static long macos9_html_reformat_seq = 0;
+
 /* fixes848 (#167 perf investigation) - wall-clock span of box construction
  * + per-element CSS cascade (dom_to_box is an incremental, self-rescheduling
  * walk, so its own synchronous return does NOT mean it finished -- the true
@@ -97,6 +98,57 @@ unsigned int macos9_html_head_len = 0;
 #include "html/private.h"
 #include "html/dom_event.h"
 #include "html/css.h"
+
+/* Count parsed Facebook data-sjs nodes directly from libdom at the instant
+ * hubbub reports completion. This is deliberately independent of QuickJS's
+ * querySelectorAll audit: paired with the fetcher's raw token count it tells
+ * us whether the two platforms received different HTML or lost nodes while
+ * parsing the same bytes. */
+static void html_log_facebook_parse_fingerprint(html_content *htmlc)
+{
+	const char *url;
+	dom_string *script_name = NULL;
+	dom_string *data_sjs_name = NULL;
+	dom_nodelist *scripts = NULL;
+	dom_exception exc;
+	uint32_t length = 0;
+	uint32_t i;
+	long parsed = 0;
+
+	url = nsurl_access(content_get_url((struct content *)htmlc));
+	if (url == NULL || strstr(url, "facebook.com") == NULL) return;
+	exc = dom_string_create((const uint8_t *)"script", 6, &script_name);
+	if (exc != DOM_NO_ERR || script_name == NULL) goto done;
+	exc = dom_string_create((const uint8_t *)"data-sjs", 8,
+		&data_sjs_name);
+	if (exc != DOM_NO_ERR || data_sjs_name == NULL) goto done;
+	exc = dom_document_get_elements_by_tag_name(htmlc->document,
+		script_name, &scripts);
+	if (exc != DOM_NO_ERR || scripts == NULL) goto done;
+	exc = dom_nodelist_get_length(scripts, &length);
+	if (exc != DOM_NO_ERR) goto done;
+	for (i = 0; i < length; i++) {
+		dom_node *node = NULL;
+		dom_string *value = NULL;
+		exc = dom_nodelist_item(scripts, i, &node);
+		if (exc != DOM_NO_ERR || node == NULL) continue;
+		exc = dom_element_get_attribute((dom_element *)node,
+			data_sjs_name, &value);
+		if (exc == DOM_NO_ERR && value != NULL) {
+			parsed++;
+			dom_string_unref(value);
+		}
+		dom_node_unref(node);
+	}
+	macsurf_debug_log_writef("LIFE FBDOCPARSE parsed_sjs=%ld scripts=%ld",
+		parsed, (long)length);
+	macsurf_debug_log_writef("LIFE FBDOCPARSE url=%s", url);
+
+done:
+	if (scripts != NULL) dom_nodelist_unref(scripts);
+	if (data_sjs_name != NULL) dom_string_unref(data_sjs_name);
+	if (script_name != NULL) dom_string_unref(script_name);
+}
 #include "html/object.h"
 #include "html/html_save.h"
 #include "html/interaction.h"
@@ -2385,6 +2437,7 @@ html_begin_conversion(html_content *htmlc)
 			return false;
 		}
 		htmlc->parse_completed = true;
+		html_log_facebook_parse_fingerprint(htmlc);
 	}
 
 	/* Walk DOM for <style> and <link rel=stylesheet> once parse is

@@ -184,6 +184,15 @@ struct macos9_https_ctx {
 	int              chunked;
 	long             content_length;
 	long             body_bytes;
+	/* Facebook main-document fingerprint. Updated only with bytes delivered
+	 * to NetSurf, so gzip responses are measured after decompression. */
+	UInt32           doc_fnv32;
+	long             doc_html_len;
+	long             doc_data_sjs;
+	int              doc_data_sjs_match;
+	char             req_cookie_names[160];
+	long             req_cookie_len;
+	UInt32           req_cookie_fnv32;
 
 	OSTLSChunkDecoder chunk;
 
@@ -1034,6 +1043,46 @@ static unsigned long now_ticks(void)
 #endif
 }
 
+static UInt32 fingerprint_update(UInt32 hash, const char *data, long len)
+{
+	long i;
+	for (i = 0; i < len; i++) {
+		hash ^= (UInt32)(unsigned char)data[i];
+		hash *= (UInt32)16777619UL;
+	}
+	return hash;
+}
+
+static void hctx_fingerprint_reset(struct macos9_https_ctx *c)
+{
+	c->doc_fnv32 = (UInt32)2166136261UL;
+	c->doc_html_len = 0;
+	c->doc_data_sjs = 0;
+	c->doc_data_sjs_match = 0;
+}
+
+static void hctx_fingerprint_data(struct macos9_https_ctx *c,
+		const char *data, long len)
+{
+	static const char needle[] = "data-sjs";
+	long i;
+
+	c->doc_fnv32 = fingerprint_update(c->doc_fnv32, data, len);
+	c->doc_html_len += len;
+	for (i = 0; i < len; i++) {
+		unsigned char ch = (unsigned char)data[i];
+		if (ch == (unsigned char)needle[c->doc_data_sjs_match]) {
+			c->doc_data_sjs_match++;
+			if (c->doc_data_sjs_match == 8) {
+				c->doc_data_sjs++;
+				c->doc_data_sjs_match = 0;
+			}
+		} else {
+			c->doc_data_sjs_match = (ch == (unsigned char)needle[0]) ? 1 : 0;
+		}
+	}
+}
+
 /* fixes965 - forward declarations: the header-parse loop creates the gzip
  * decoder well before feed_body and its helpers are defined. */
 static void hctx_gz_emit(void *cbctx, const char *data, long len);
@@ -1114,6 +1163,7 @@ static void hctx_reset_for_retry(struct macos9_https_ctx *c)
 	c->post_body_sent = 0;
 	c->status = 0;
 	c->body_bytes = 0;
+	hctx_fingerprint_reset(c);
 	c->content_length = -1;
 	c->chunked = 0;
 	c->mime[0] = 0;
@@ -1808,6 +1858,19 @@ static void hctx_finish(struct macos9_https_ctx *c)
 
 	macsurf_debug_log_writef("https: done body=%ld status=%d",
 		c->body_bytes, c->status);
+	/* A positive raw data-sjs count identifies Facebook's main HTML while
+	 * excluding its many JS/CSS/image fetches. Keep this sanitized: no body,
+	 * cookie values, or Set-Cookie values are emitted. */
+	if (c->doc_data_sjs > 0) {
+		macsurf_debug_log_writef(
+			"LIFE FBDOC final=https://%s%s status=%d html_len=%ld fnv32=%ld raw_sjs=%ld",
+			c->host, c->path, c->status, c->doc_html_len,
+			(long)c->doc_fnv32, c->doc_data_sjs);
+		macsurf_debug_log_writef(
+			"LIFE FBDOCMETA mime=%s clen=%ld chunked=%d gzip=%d cache=%d",
+			c->mime[0] ? c->mime : "(unset)", c->content_length,
+			c->chunked, c->gz != NULL, c->state == HS_CACHEHIT);
+	}
 
 	/* fixes936 (OS X tier 1) - ONE Open Transport health line per session,
 	 * taken at the first HTTPS fetch that actually COMPLETES.
@@ -2316,6 +2379,12 @@ static void hctx_deliver(struct macos9_https_ctx *c, const char *data, long len)
 {
 	fetch_msg msg;
 	if (len <= 0) return;
+	/* Keep the bytewise diagnostic off the hot path for scripts, images and
+	 * other large subresources. Facebook's main response is dynamic HTML. */
+	if (host_is_fb_dynamic(c->host) &&
+	    strncasecmp(c->mime, "text/html", 9) == 0) {
+		hctx_fingerprint_data(c, data, len);
+	}
 	msg.type = FETCH_DATA;
 	msg.data.header_or_data.buf = (const uint8_t *)data;
 	msg.data.header_or_data.len = (size_t)len;
@@ -2743,6 +2812,7 @@ static int build_request(struct macos9_https_ctx *c)
 	 * wired; this gates reading it into the request. */
 	cookie_str = (nsoption_bool(accept_cookies) && c->url != NULL)
 		? urldb_get_cookie(c->url, true) : NULL;
+	c->req_cookie_names[0] = '\0';
 	if (cookie_str != NULL) {
 		/* fixes378 - drop any stuck noscript=1 before it reaches FB. */
 		cookie_strip_noscript(cookie_str);
@@ -2751,6 +2821,9 @@ static int build_request(struct macos9_https_ctx *c)
 			char cknames[256];
 			cookie_names_only(cookie_str, cknames,
 				(int)sizeof cknames);
+			strncpy(c->req_cookie_names, cknames,
+				sizeof c->req_cookie_names - 1);
+			c->req_cookie_names[sizeof c->req_cookie_names - 1] = '\0';
 			macsurf_debug_log_writef("https: cookies sent: %s",
 				cknames);
 			/* fixes838 (#167 diag) - WORK-gated copy for Facebook so
@@ -2764,7 +2837,11 @@ static int build_request(struct macos9_https_ctx *c)
 		}
 	}
 	macos9_build_cookie_header(cookie_hdr, sizeof cookie_hdr, cookie_str);
+	c->req_cookie_len = (long)strlen(cookie_hdr);
+	c->req_cookie_fnv32 = fingerprint_update((UInt32)2166136261UL,
+		cookie_hdr, c->req_cookie_len);
 	if (cookie_str != NULL) free(cookie_str);
+	verifiable = fetch_get_verifiable(c->parent);
 	/* preferences: Do Not Track - the core option exists but only
 	 * curl.c (not built) consumed it; this fetcher builds its own
 	 * request headers, so emit DNT: 1 here (rides the cookie slot,
@@ -2786,6 +2863,16 @@ static int build_request(struct macos9_https_ctx *c)
 		(long)strlen(cookie_hdr),
 		(long)((c->post_body != NULL) ? (long)c->post_body_len : 0L),
 		ua);
+	if (host_is_fb_asset(c->host) && verifiable) {
+		macsurf_debug_log_writef("LIFE FBDOCREQ url=https://%s%s ua=%s",
+			c->host, c->path, ua);
+		macsurf_debug_log_writef(
+			"LIFE FBDOCREQ accept=text/html,application/xhtml+xml,image/webp,image/*;q=0.8,*/*;q=0.7 lang=en-US,en;q=0.5");
+		macsurf_debug_log_writef(
+			"LIFE FBDOCREQ cookie_names=%s cookie_len=%ld cookie_fnv32=%ld",
+			c->req_cookie_names[0] ? c->req_cookie_names : "(none)",
+			c->req_cookie_len, (long)c->req_cookie_fnv32);
+	}
 	/* fixes835 (#167 Facebook M1) - synthesize the Sec-Fetch request
 	 * metadata a real browser sends (FB returns HTTP 400 to a modern UA
 	 * that omits these), keyed on request kind so the claimed identity is
@@ -2797,7 +2884,6 @@ static int build_request(struct macos9_https_ctx *c)
 	 * Sec-Fetch set (future M3 XHR) wins. Ships globally (browser-standard).
 	 * This is the https fetcher, so Origin is always https and c->host has
 	 * no port (FB is :443). */
-	verifiable = fetch_get_verifiable(c->parent);
 	macos9_build_sec_fetch(synth, sizeof synth, verifiable,
 		(c->post_body != NULL), "https", c->host);
 	/* fixes836 (#167 M1 diag) - dump the shape of a Facebook POST (the login
@@ -3001,12 +3087,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		}
 
 		if (c->cache_hit_body != NULL && c->cache_hit_len > 0) {
-			msg.type = FETCH_DATA;
-			msg.data.header_or_data.buf =
-				(const uint8_t *)c->cache_hit_body;
-			msg.data.header_or_data.len =
-				(size_t)c->cache_hit_len;
-			fetch_send_callback(&msg, c->parent);
+			hctx_deliver(c, c->cache_hit_body, c->cache_hit_len);
 			c->body_bytes = c->cache_hit_len;
 		}
 
@@ -3655,6 +3736,7 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 	}
 	c = &https_slots[slot];
 	memset(c, 0, sizeof *c);
+	hctx_fingerprint_reset(c);
 	c->parent = p;
 	c->url = nsurl_ref(u);
 	/* fixes835 (#167 M1) - capture core's additional request headers now
