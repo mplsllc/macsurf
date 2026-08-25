@@ -280,8 +280,18 @@ Notes that cost time to work out:
 
 - **Paths are HFS-style, volume-first** (`Back40:Projects:…`), not POSIX.
   `POSIX file`, `alias`, and bare strings all fail with `-1700`.
-- `Remove Files` and `Add Files` take a **list**, and accept a `file` spec
-  directly — there is no need to look up an index.
+- `Remove Files` takes a **list** and accepts a `file` spec directly — no index
+  lookup needed. **Verified: `filecount` drops by one per call.**
+- **`Add Files` does NOT work over AppleScript here, despite being in the
+  dictionary.** Verified 2026-08-25: it returns `0` (noErr) and changes nothing
+  — `filecount` stays put and the project file on disk is not rewritten. Tried
+  and failed: `file "HFS:path"`, `alias "HFS:path"`, a resolved
+  `(POSIX file "...") as alias`, each with and without `To Segment 1`. **Add
+  files by hand in the IDE.** Removal is scriptable; addition is not.
+  (This entry previously claimed Add worked. It was written from the dictionary
+  entry existing, not from a tested call — the exact "assert the effect, not the
+  absence of an error" mistake this document warns about elsewhere. A `0` return
+  from a CodeWarrior event is not evidence the event did anything.)
 - `Get Project File <n> Segment <m>` returns a ProjectFile record (`name`,
   `file`, `Source Tree`). The `Segment` parameter is required; without it you
   get `-1701`. Do **not** loop this over all ~925 files to find something — it
