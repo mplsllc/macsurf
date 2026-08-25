@@ -157,7 +157,11 @@ That `.sit` was the **previous** binary, packaged under the new fix number. The
 sources on the Mac were correct; the project showed every file needing
 recompilation (red check marks in the IDE); nothing was built.
 
-**Before building, the app must be quit:**
+**Before building, the app must be quit.** `ship.sh` now enforces this itself:
+it detects the built app by its full process path, asks MacSurf to quit through
+AppleScript when necessary, polls for up to 30 seconds, and refuses to build if
+the process remains. It never kills the process as a fallback. For a manual
+build, use the equivalent check yourself:
 
 ```bash
 ssh imac 'ps -axww | grep -c "[M]acSurfBuilds/MacSurf"'   # must be 0
