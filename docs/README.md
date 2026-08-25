@@ -11,6 +11,7 @@ Documentation for [MacSurf](../README.md), a NetSurf-based web browser for Mac O
 ## Build & deploy
 
 - [build/automated-ship.md](build/automated-ship.md), **The automated pipeline: one command from Linux edit to running app and a `.sit` on macfiles.** Start here for the day-to-day loop.
+- [build/hardware-bisect.md](build/hardware-bisect.md), **Finding a first-bad commit on real hardware.** Reverting a tree the Mac will actually build, what to do about files added since the baseline, and what dominates the cost per point.
 - [codewarrior-setup.md](codewarrior-setup.md), Install CodeWarrior 8 and build on a real Power Mac.
 - [cross-dev-from-linux.md](cross-dev-from-linux.md), Cross-compile workflow from Linux using Retro68.
 - [deploying-proxy.md](deploying-proxy.md), Deploy the Go TLS-stripping proxy.

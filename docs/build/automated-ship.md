@@ -106,6 +106,50 @@ Three things about this that are worth knowing before you change it:
   `count documents` is `1` and `get name of document 1` returns ` MacSurfQ`
   (note the leading space in the project name — it is real).
 
+### 3.2.1 TRAP: `Run` does not rebuild while the app is running
+
+**Observed 2026-08-25, and it cost a full cycle.** If the built MacSurf is
+already running, `Run project document 1` **fronts the live process and does not
+compile anything**. Every signal the script has still reads as success:
+
+```
+=== build messages ===
+  (clean)
+  note: binary mtime unchanged -- nothing needed recompiling
+  MacSurf is running on the iMac
+=== packaging to macfiles (MacSurf is already up) ===
+  MacSurf1330.sit  (1599324 bytes)
+done.
+```
+
+That `.sit` was the **previous** binary, packaged under the new fix number. The
+sources on the Mac were correct; the project showed every file needing
+recompilation (red check marks in the IDE); nothing was built.
+
+**Before building, the app must be quit:**
+
+```bash
+ssh imac 'ps -axww | grep -c "[M]acSurfBuilds/MacSurf"'   # must be 0
+```
+
+**Never accept "clean + running" as proof of a build.** Check that the binary
+itself carries the code just shipped — its mtime, plus a marker string that
+exists only in the new tree:
+
+```bash
+ssh imac 'ls -l /Projects/MacSurfBuilds/MacSurf'
+ssh imac 'strings /Projects/MacSurfBuilds/MacSurf | grep -c FBDOCREQ'
+```
+
+This is the same failure shape as the harness false-green rule in `CLAUDE.md`:
+the check confirmed the *absence of an error* instead of the *presence of an
+effect*. "binary mtime unchanged" was being reported as a benign note; it is
+the actual alarm whenever a build was expected to do work.
+
+**Corollary:** if the IDE shows the project files red-checkmarked, the source
+state on the Mac is already right. Do not "force" a rebuild by touching mtimes
+on the Mac — the cause is elsewhere, and almost certainly this trap.
+
 ### 3.3 Error detection
 
 ```applescript
@@ -182,6 +226,59 @@ follow-up, a rebuild after a crash) never destroys the earlier artifact.
 
 ---
 
+### 3.7 Editing the project file list over AppleScript
+
+Adding or removing project files does **not** require the IDE by hand. CW8
+exposes verb-style Apple Events, and each is a single sub-second call. Verified
+2026-08-25.
+
+```applescript
+tell application "CodeWarrior IDE" to Get Segments of project document 1
+-- class:Segment, name:x, filecount:925
+
+tell application "CodeWarrior IDE" to Remove Files ¬
+    {file "Back40:Projects:MacSurfSource:libcss:src:parse:properties:p_fill.c"}
+-- filecount: 924
+```
+
+Notes that cost time to work out:
+
+- **Paths are HFS-style, volume-first** (`Back40:Projects:…`), not POSIX.
+  `POSIX file`, `alias`, and bare strings all fail with `-1700`.
+- `Remove Files` and `Add Files` take a **list**, and accept a `file` spec
+  directly — there is no need to look up an index.
+- `Get Project File <n> Segment <m>` returns a ProjectFile record (`name`,
+  `file`, `Source Tree`). The `Segment` parameter is required; without it you
+  get `-1701`. Do **not** loop this over all ~925 files to find something — it
+  takes minutes and pins the IDE in a "Caching…" pass. It is not needed for
+  add/remove.
+- `-2741`/`-2740` mean the terminology is wrong (there is no `project file`
+  *class*); `-1700` means the verb exists but the argument type is wrong;
+  `-1701` means a required parameter is missing. Those three errors are how you
+  discover the dictionary without one.
+
+**Back up the project before mutating it.** It is a single file at
+`/Projects/ MacSurfQ` — note the **leading space**, which is deliberate (it
+sorts the project to the top in the Finder) and must be quoted everywhere:
+
+```bash
+ssh imac 'ditto --rsrc "/Projects/ MacSurfQ" "/Projects/ MacSurfQ.bak-<what>-<date>"'
+```
+
+CW8 keeps the whole project in the **data fork** (both resource forks are 0
+bytes), and it saves the change out itself — the file shrinks in place.
+
+**`strings` on the project file cannot prove a file was removed.** CW retains
+residual name strings in its dependency cache, so a removed file still appears.
+`filecount` from `Get Segments` is the reliable signal, and the build is the
+definitive one.
+
+**Removing a file does not force a full rebuild.** CW tracks dependencies per
+file, so dropping one is a relink. (A full rebuild comes from touching a
+force-included prefix file such as `macsurf_prefix.h`, which is unrelated.)
+
+---
+
 ## 4. Prerequisites
 
 - **The reverse tunnel must be up on the LAN side.** The VPS has no route to
@@ -234,7 +331,8 @@ type/creator has to be inspected through the Finder via AppleScript instead.
 | `The variable r is not defined. (-2753)` | `Run`/`Make` returns no value; don't assign the result |
 | Push fails | Script stops before building — intentional |
 | Non-empty `messages` | Compile errors; nothing is packaged |
-| "binary mtime unchanged" | Nothing needed recompiling; not an error |
+| "binary mtime unchanged" | **Suspect first that MacSurf was already running and nothing was built** (§3.2.1). Only benign when no build was expected |
+| Build "clean" but binary mtime is old | The app was running; `Run` fronted it instead of compiling. Quit it and rebuild |
 | `** MacSurf did not launch` | Build linked but the app failed to start — check the crash log |
 | `** $MACFILES is not mounted` | AFP share dropped; remount on the Mac |
 | `** DropStuff produced no archive` | DropStuff didn't start or was blocked by a dialog |
