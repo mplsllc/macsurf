@@ -15471,6 +15471,19 @@ unsigned char js_exec(struct jsthread *thread,
 	 * (reading heap garbage).  THIS - not ES6, corruption, or a CW8
 	 * miscompile - is why real bundles never ran; the C-string-literal init
 	 * evals were already NUL-terminated, so they worked.  Copy + terminate. */
+	/* Facebook's logged-in shell delivers several 1.5--4.3 MB top-level
+	 * bundles.  Automatic QuickJS GC is deliberately disabled, and the
+	 * allocator rejects an over-limit request without an emergency collection.
+	 * Collect before compiling a very large bundle, while no JS frame is active,
+	 * so unreachable cycles from earlier bundles cannot consume the 96 MB
+	 * safety budget.  Do not raise that budget: on OS 9 the same load had only
+	 * an 11 MB largest contiguous block despite 63 MB total free. */
+	if (txtlen >= (1024UL * 1024UL)) {
+		macsurf_debug_log_writef("LIFE qjs pre-large GC len=%ld",
+			(long)txtlen);
+		macsurf_qjs_run_gc(thread->heap);
+	}
+
 	src = (char *)malloc(txtlen + 1);
 	if (src == NULL) {
 		macsurf_debug_log_writef("js: OOM copying src [%s len=%ld]",
