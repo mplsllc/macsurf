@@ -14754,6 +14754,14 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 			 * owner-document keepalive, then clear the map, before the
 			 * fresh context wraps anything.  Both halves, then clear. */
 			qjs_wrap_drain(heap->rt);
+			/* The runtime is intentionally reused across navigations and its
+			 * automatic collector is intentionally disarmed.  JS_FreeContext
+			 * drops ordinary references, but old-page cycles remain owned by
+			 * the runtime.  Collect here, after every old-realm root has been
+			 * detached and before exposing the fresh realm.  This is a
+			 * quiescent navigation boundary, not the unsafe mid-allocation GC
+			 * path that fixes593 disabled. */
+			macsurf_qjs_run_gc(heap);
 			heap->ctx = fresh;
 			/* fixes1296 (#167, A2) - macsurf_qjs_audit_reset() was called
 			 * only from js_newheap (once per window/iframe creation),
