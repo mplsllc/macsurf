@@ -422,6 +422,41 @@ static OSErr macos9_app_dir_get(short *vRef, long *dirID)
 	*dirID = appSpec.parID;
 	return noErr;
 }
+
+/* The compiler's __DATE__/__TIME__ below belong to this translation unit,
+ * not to the executable as a whole: an incremental CodeWarrior build can
+ * relink MacSurf after changing other files while this one remains untouched.
+ * Read the running application's HFS modification date instead. It is the
+ * timestamp of the exact executable file that opened this log. */
+static OSErr macsurf_running_app_mtime(unsigned long *mtime)
+{
+	ProcessSerialNumber psn;
+	ProcessInfoRec      info;
+	FSSpec              appSpec;
+	CInfoPBRec          pb;
+	Str63               name;
+	OSErr               err;
+
+	if (mtime == NULL) return paramErr;
+	psn.highLongOfPSN = 0;
+	psn.lowLongOfPSN = kCurrentProcess;
+	memset(&info, 0, sizeof(info));
+	info.processInfoLength = sizeof(ProcessInfoRec);
+	info.processName = NULL;
+	info.processAppSpec = &appSpec;
+	err = GetProcessInformation(&psn, &info);
+	if (err != noErr) return err;
+	memcpy(name, appSpec.name, appSpec.name[0] + 1);
+	memset(&pb, 0, sizeof(pb));
+	pb.hFileInfo.ioNamePtr = name;
+	pb.hFileInfo.ioVRefNum = appSpec.vRefNum;
+	pb.hFileInfo.ioDirID = appSpec.parID;
+	pb.hFileInfo.ioFDirIndex = 0;
+	err = PBGetCatInfoSync(&pb);
+	if (err != noErr) return err;
+	*mtime = (unsigned long)pb.hFileInfo.ioFlMdDat;
+	return noErr;
+}
 #endif
 
 void
@@ -433,6 +468,8 @@ macsurf_debug_log_init(void)
 	OSErr cerr;
 	short vRefNum;
 	long dirID;
+	unsigned long exe_mtime;
+	DateTimeRec exe_date;
 	unsigned char fname[32];
 	const char *name;
 	size_t nlen;
@@ -495,17 +532,27 @@ macsurf_debug_log_init(void)
 
 	(void)SetFPos(g_log_ref, fsFromLEOF, 0);
 
-	/* fixes703  -  prominent, unmistakable session header so a log that spans
+	/* fixes703/1334  -  prominent, unmistakable session header so a log that spans
 	 * several launches (the reporter didn't clear it) is trivially segmented.
 	 * Every line is '='-led so it survives the crash-only gate (fixes697).
-	 * __DATE__/__TIME__ stamp the BUILD (distinguishes two different .sit's);
-	 * the GetDateTime line stamps this LAUNCH. */
+	 * The first timestamp is this logger object's compiler time only; the
+	 * second is the HFS modification time of the RUNNING executable and is the
+	 * authoritative incremental-build/deploy identifier. */
 	macsurf_debug_log_write(
 		"====================================================================");
 	macsurf_debug_log_write(
 		"=====================   N E W   S E S S I O N   ====================");
 	macsurf_debug_log_writef(
-		"===  MacSurf 2.0.5   (build %s %s)", __DATE__, __TIME__);
+		"===  MacSurf 2.0.5   (logger compiled %s %s)", __DATE__, __TIME__);
+	if (macsurf_running_app_mtime(&exe_mtime) == noErr) {
+		SecondsToDate(exe_mtime, &exe_date);
+		macsurf_debug_log_writef(
+			"===  executable build %d-%d-%d %d:%d:%d",
+			(int)exe_date.year, (int)exe_date.month, (int)exe_date.day,
+			(int)exe_date.hour, (int)exe_date.minute, (int)exe_date.second);
+	} else {
+		macsurf_debug_log_write("===  executable build timestamp unavailable");
+	}
 	{
 		unsigned long secs = 0;
 		DateTimeRec dtr;

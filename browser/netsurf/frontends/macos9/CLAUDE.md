@@ -128,11 +128,10 @@ libraries are now fully ported and live under `browser/libdom`, `browser/libcss`
   filter** (the gate matches literal strings/prefixes, not a general severity level) — a
   new diagnostic without it is silently dropped from `MacSurf Debug.log` and looks like the
   code never ran.
-- **The session-banner build timestamp (`__DATE__`/`__TIME__` in `macsurf_debug_log.c`)
-  freezes to whenever THAT FILE was last compiled, not the build as a whole.** A fix round
-  that doesn't touch `macsurf_debug_log.c` leaves the banner stamped with an old
-  date/time even though every other shipped file is current. Never use the banner to judge
-  whether a fix is in the build — look for that fix's own log line instead.
+- **The session header reports two timestamps.** `logger compiled` is the old
+  `__DATE__`/`__TIME__` value for `macsurf_debug_log.c` alone and can remain old after an
+  incremental build. `executable build` is the HFS modification time of the exact MacSurf
+  file that opened the log; use that to identify the deployed build.
 - `MS_LOG` is defined in `macsurf_debug.h` (the `_init`/`_close`/`_write`/`_writef` API
   itself lives in `macsurf_debug_log.h`).
 - **The on-disk cache (`macos9_disk_cache.c`) streams a fetch body straight to disk and is
