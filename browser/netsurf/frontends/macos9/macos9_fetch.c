@@ -262,22 +262,25 @@ int macos9_host_is_tracker(const char *host)
  *
  * 9b86becd ("Select and request WebP in normal browsing") gave EVERY
  * request -- documents, XHR and images alike -- the image-flavoured
- * Accept header
- *
- *   text/html,application/xhtml+xml,image/webp,image/*;q=0.8,*/*;q=0.7
+ * Accept header: text/html, application/xhtml+xml, image/webp, then
+ * image wildcard at q=0.8 and the full wildcard demoted to q=0.7.
  *
  * Facebook negotiates its bootstrap document server-side, so advertising
- * image/webp (and demoting */* from q=0.8 to q=0.7) on the MAIN DOCUMENT
- * request can change which bundle variant the edge serves.  Real browsers
- * never do this: they send a document Accept for documents and an image
- * Accept for images.
+ * image/webp (and demoting the full wildcard from q=0.8 to q=0.7) on the
+ * MAIN DOCUMENT request can change which bundle variant the edge serves.
+ * Real browsers never do this: they send a document Accept for documents
+ * and an image Accept for images.
  *
  * So: restore the exact pre-WebP document header for everything that is
  * not positively identified as an image request, and keep an explicit
  * image/webp advertisement for the ones that are.  WebP decoding and
  * srcset/picture selection are untouched -- and the restored document
- * header still carries */*;q=0.8, so a server that sniffs rather than
- * negotiates keeps serving WebP either way. */
+ * header still carries the full wildcard at q=0.8, so a server that
+ * sniffs rather than negotiates keeps serving WebP either way.
+ *
+ * NOTE: do not paste a literal Accept value into this comment.  Those
+ * strings contain a star-slash pair, which closes the block comment
+ * early and drops the remaining prose into the token stream. */
 static int macos9_path_is_image(const char *path)
 {
 	static const char *exts[] = {
