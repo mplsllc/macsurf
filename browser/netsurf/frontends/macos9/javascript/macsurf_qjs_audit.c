@@ -249,6 +249,25 @@ void macsurf_qjs_emit_fb_boot(struct JSContext *ctx)
 			"+(e.name||e.type||'')+':'+m;}"
 		"return out;"
 		"}catch(e){return 'error='+String((e&&e.message)||e).slice(0,700);}})()";
+	/* Remembered-account diagnostic: identify the actual actionable Continue
+	 * element independently of native hit-testing. Values are structural only;
+	 * no form field values or cookie values are read. */
+	static const char fbcontinue_src[] =
+		"(function(){try{var g=globalThis;"
+		"if(!g.location||String(g.location.hostname||'').indexOf('facebook.com')<0)"
+			"return null;"
+		"var a=document.querySelectorAll('a,button,input,[role=button]'),out=[],n=0;"
+		"function q(v){return String(v||'').replace(/[\\r\\n\\t ]+/g,' ').slice(0,120)}"
+		"for(var i=0;i<a.length&&n<4;i++){var e=a[i],"
+			"t=q(e.value||e.textContent);if(t.toLowerCase().indexOf('continue')<0)continue;"
+			"var f=e.form||null,p=e.parentNode;"
+			"out.push('tag='+e.tagName+' text='+t+' type='+q(e.type)+"
+			"' role='+q(e.getAttribute&&e.getAttribute('role'))+"
+			"' href='+q(e.href)+' onclick='+(typeof e.onclick)+"
+			"' parent='+(p&&p.tagName||'')+' form='+(!!f)+"
+			"' method='+(f&&q(f.method)||'')+' action='+(f&&q(f.action)||''));n++;}"
+		"return 'matches='+n+(out.length?' | '+out.join(' | '):'');"
+		"}catch(e){return 'error='+String((e&&e.message)||e).slice(0,700);}})()";
 	/* fixes1310 (#167, A3) - the real loader's Me() chooses its execution
 	 * wrapper at every __d()/requireLazy call:
 	 *
@@ -287,6 +306,7 @@ void macsurf_qjs_emit_fb_boot(struct JSContext *ctx)
 	qjs_emit_fb_value(ctx, "FBROOT", fbroot_src);
 	qjs_emit_fb_value(ctx, "FBSTATE", fbstate_src);
 	qjs_emit_fb_value(ctx, "FBERROR", fberror_src);
+	qjs_emit_fb_value(ctx, "FBCONTINUE", fbcontinue_src);
 	qjs_emit_fb_value(ctx, "FBTASK", fbtasks_src);
 }
 

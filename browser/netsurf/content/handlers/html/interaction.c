@@ -2044,6 +2044,19 @@ mouse_action_drag_none(html_content *html,
 		 * on a page whose node we could not resolve. */
 		{
 			bool go = true;
+			const char *submit_url = nsurl_access(content_get_url(c));
+			bool fb_submit = submit_url != NULL &&
+				strstr(submit_url, "facebook.com") != NULL;
+			if (fb_submit) {
+				macsurf_debug_log_writef(
+					"LIFE FBSUBMIT action=%s method=%d control=%d",
+					(mas.gadget.control->form != NULL &&
+					 mas.gadget.control->form->action != NULL) ?
+						mas.gadget.control->form->action : "(none)",
+					(mas.gadget.control->form != NULL) ?
+						(int)mas.gadget.control->form->method : -1,
+					(int)mas.gadget.control->type);
+			}
 			if (mas.gadget.control->form != NULL &&
 			    mas.gadget.control->form->node != NULL) {
 				go = fire_generic_dom_event(
@@ -2055,6 +2068,9 @@ mouse_action_drag_none(html_content *html,
 				macsurf_debug_log_write(
 					"LIFE jsevent submit preventDefault "
 					"-- form NOT submitted");
+				if (fb_submit)
+					macsurf_debug_log_write(
+						"LIFE FBSUBMIT cancelled=1");
 				break;
 			}
 		}

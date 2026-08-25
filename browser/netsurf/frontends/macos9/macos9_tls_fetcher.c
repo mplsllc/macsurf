@@ -2006,8 +2006,9 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 	 * A login POST that re-shows the form (status 200) vs a real success
 	 * (302 -> Set-Cookie c_user/xs) is the whole diagnosis for "wrong
 	 * password". */
-	if (host_is_fb_asset(c->host)) {
-		macsurf_debug_log_writef("WORK fbresp status=%d host=%s%s",
+	if (host_is_fb_asset(c->host) &&
+	    (c->post_body != NULL || fetch_get_verifiable(c->parent))) {
+		macsurf_debug_log_writef("LIFE FBRESP status=%d host=%s%s",
 			c->status, c->host, c->path);
 	}
 	fetch_set_http_code(c->parent, c->status);
@@ -2106,9 +2107,11 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 				c->redirect_url[lv] = 0;
 				/* fixes836 (#167 M1 diag) - where FB is sending us
 				 * after the login POST (checkpoint / 2FA / home). */
-				if (host_is_fb_asset(c->host)) {
+				if (host_is_fb_asset(c->host) &&
+				    (c->post_body != NULL ||
+				     fetch_get_verifiable(c->parent))) {
 					macsurf_debug_log_writef(
-						"WORK fbloc %s", c->redirect_url);
+						"LIFE FBREDIRECT %s", c->redirect_url);
 				}
 			}
 			/* fixes313b (#150) - Content-Disposition: attachment forces
@@ -2194,9 +2197,12 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 						 * copy for Facebook so the login Set-Cookie
 						 * (c_user/xs = success) survives the log
 						 * gate. Name only, never the value. */
-						if (host_is_fb_asset(c->host)) {
+						if (host_is_fb_asset(c->host) &&
+						    (strcmp(nm, "c_user") == 0 ||
+						     strcmp(nm, "xs") == 0)) {
 							macsurf_debug_log_writef(
-								"WORK fbsc %s %s", nm, c->host);
+								"LIFE FBAUTHSET name=%s host=%s accepted=1",
+								nm, c->host);
 						}
 					}
 				}
@@ -2899,7 +2905,7 @@ static int build_request(struct macos9_https_ctx *c)
 		fb_body_fieldmap(c->post_body, (long)c->post_body_len,
 			fmap, sizeof fmap);
 		macsurf_debug_log_writef(
-			"WORK fbreq POST %s%s ckB=%ld pbB=%ld org=%d sf=%d ref=%d uatail=%s",
+			"LIFE FBPOST %s%s ckB=%ld pbB=%ld org=%d sf=%d ref=%d uatail=%s",
 			c->host, c->path,
 			(long)strlen(cookie_hdr), (long)c->post_body_len,
 			(int)(synth[0] != '\0'
@@ -2907,7 +2913,7 @@ static int build_request(struct macos9_https_ctx *c)
 			(int)(synth[0] != '\0'),
 			(int)macos9_hdr_has_ci(c->caller_hdrs, "referer:"),
 			(ual > 12) ? (ua + ual - 12) : ua);
-		macsurf_debug_log_writef("WORK fbbody %s", fmap);
+		macsurf_debug_log_writef("LIFE FBPOSTFIELDS %s", fmap);
 	}
 	if (c->post_body != NULL) {
 		/* fixes312 (#144) - POST. Body goes out in a second
