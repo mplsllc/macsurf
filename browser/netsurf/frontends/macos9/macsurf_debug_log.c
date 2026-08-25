@@ -926,7 +926,7 @@ do_write:
 	if (g_log_vref != 0) (void)FlushVol(NULL, g_log_vref);
 #else
 #ifdef MACSURF_DEBUG
-	/* fixes911  -  DEBUG builds flush EVERY kept line straight to disk.
+	/* fixes911  -  DEBUG builds write EVERY kept line immediately.
 	 *
 	 * The buffered path (fixes261) and the 250-line eager budget (fixes704)
 	 * were both tuned when this channel emitted ~3000 lines per load, where
@@ -939,11 +939,18 @@ do_write:
 	 * log whose last line was an ordinary NAV, with nothing about what the
 	 * drain was doing.
 	 *
-	 * At the gate's volume, per-line FlushVol is affordable, and a debug build
-	 * should buy durability with it. RELEASE builds keep the old budget +
-	 * buffered path below. */
+	 * fixes1328 (#167) - real OS 9 timing disproved "affordable": a 68kmla
+	 * navigation retained about 750 lines and took 31 seconds, while its
+	 * instrumented CPU/network work totalled only 5.3 seconds.  FlushVol costs
+	 * the documented 10-50 ms and synchronises the ENTIRE HFS volume; the
+	 * observed 41 ms per retained line accounts for the missing wall time.
+	 *
+	 * Keep the per-line buffer flush (FSWrite), so an application exception
+	 * leaves an up-to-date file, but do not force the whole volume to stable
+	 * media for ordinary diagnostics.  FATAL paths and explicit checkpoints
+	 * still call macsurf_debug_log_flush(), which retains FlushVol. RELEASE
+	 * builds keep the eager-budget + buffered path below. */
 	macsurf_debug_log_buffer_flush();
-	if (g_log_vref != 0) (void)FlushVol(NULL, g_log_vref);
 	if (g_log_eager_left > 0) g_log_eager_left--;
 #else
 	/* fixes704  -  flush the first LOG_EAGER_LINES lines straight to disk so a
