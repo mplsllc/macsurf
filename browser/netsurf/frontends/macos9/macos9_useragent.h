@@ -57,6 +57,11 @@ const char *macos9_user_agent_for_host(const char *host);
 /* fixes835 (#167 M1)  -  request-header helpers (shared, impl in
  * macos9_fetch.c). See that file for the drop-list contract. */
 int  macos9_hdr_has_ci(const char *hay, const char *needle);
+
+/* fixes1328 (#167) - Accept header chosen by request kind: the pre-WebP
+ * document header for documents/XHR, an image header (advertising
+ * image/webp) for image requests. See macos9_fetch.c. */
+const char *macos9_accept_for_path(const char *path);
 void macos9_capture_extra_headers(const char **h, char *dst, size_t cap);
 
 /* Shared request-header helpers (cleanup 2026-08-05, impl in macos9_fetch.c).

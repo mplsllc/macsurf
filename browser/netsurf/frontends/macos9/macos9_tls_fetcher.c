@@ -2873,7 +2873,8 @@ static int build_request(struct macos9_https_ctx *c)
 		macsurf_debug_log_writef("LIFE FBDOCREQ url=https://%s%s ua=%s",
 			c->host, c->path, ua);
 		macsurf_debug_log_writef(
-			"LIFE FBDOCREQ accept=text/html,application/xhtml+xml,image/webp,image/*;q=0.8,*/*;q=0.7 lang=en-US,en;q=0.5");
+			"LIFE FBDOCREQ accept=%s lang=en-US,en;q=0.5",
+			macos9_accept_for_path(c->path));
 		macsurf_debug_log_writef(
 			"LIFE FBDOCREQ cookie_names=%s cookie_len=%ld cookie_fnv32=%ld",
 			c->req_cookie_names[0] ? c->req_cookie_names : "(none)",
@@ -2931,7 +2932,7 @@ static int build_request(struct macos9_https_ctx *c)
 			"POST %s HTTP/1.1\r\n"
 			"Host: %s\r\n"
 			"User-Agent: %s\r\n"
-			"Accept: text/html,application/xhtml+xml,image/webp,image/*;q=0.8,*/*;q=0.7\r\n"
+			"Accept: %s\r\n"
 			"Accept-Language: en-US,en;q=0.5\r\n"
 			"Accept-Encoding: gzip\r\n"
 			"%s"                        /* cookie_hdr  */
@@ -2941,14 +2942,15 @@ static int build_request(struct macos9_https_ctx *c)
 			"Content-Length: %lu\r\n"
 			"Connection: keep-alive\r\n"
 			"\r\n",
-			c->path, c->host, ua, cookie_hdr, c->caller_hdrs, synth, ct,
+			c->path, c->host, ua, macos9_accept_for_path(c->path),
+			cookie_hdr, c->caller_hdrs, synth, ct,
 			(unsigned long)c->post_body_len);
 	} else {
 		rn = sprintf(c->req_buf,
 			"GET %s HTTP/1.1\r\n"
 			"Host: %s\r\n"
 			"User-Agent: %s\r\n"
-			"Accept: text/html,application/xhtml+xml,image/webp,image/*;q=0.8,*/*;q=0.7\r\n"
+			"Accept: %s\r\n"
 			"Accept-Language: en-US,en;q=0.5\r\n"
 			"Accept-Encoding: gzip\r\n"
 			"%s"                    /* cookie_hdr  */
@@ -2956,7 +2958,8 @@ static int build_request(struct macos9_https_ctx *c)
 			"%s"                    /* synth       (fixes835) */
 			"Connection: %s\r\n"
 			"\r\n",
-			c->path, c->host, ua, cookie_hdr, c->caller_hdrs, synth, conn);
+			c->path, c->host, ua, macos9_accept_for_path(c->path),
+			cookie_hdr, c->caller_hdrs, synth, conn);
 	}
 	if (rn <= 0 || (unsigned long)rn >= sizeof c->req_buf) return -1;
 	c->req_len = (unsigned long)rn;

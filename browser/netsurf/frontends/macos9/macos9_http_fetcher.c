@@ -668,7 +668,7 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 					"POST %s HTTP/1.1\r\n"
 					"Host: %.*s\r\n"
 					"User-Agent: %s\r\n"
-					"Accept: text/html,application/xhtml+xml,image/webp,image/*;q=0.8,*/*;q=0.7\r\n"
+					"Accept: %s\r\n"
 					"%s"              /* cookie_hdr  */
 					"%s"              /* caller_hdrs (fixes835) */
 					"%s"              /* synth       (fixes835) */
@@ -676,20 +676,20 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 					"Content-Length: %ld\r\n"
 					"Connection: close\r\n\r\n",
 					path_buf, (int)host_len, host_str,
-					ua, cookie_hdr, c->caller_hdrs, synth,
+					ua, macos9_accept_for_path(path_buf), cookie_hdr, c->caller_hdrs, synth,
 					post_extra_hdrs, c->post_body_len);
 			} else {
 				sprintf(req,
 					"GET %s HTTP/1.1\r\n"
 					"Host: %.*s\r\n"
 					"User-Agent: %s\r\n"
-					"Accept: text/html,application/xhtml+xml,image/webp,image/*;q=0.8,*/*;q=0.7\r\n"
+					"Accept: %s\r\n"
 					"%s"              /* cookie_hdr  */
 					"%s"              /* caller_hdrs (fixes835) */
 					"%s"              /* synth       (fixes835) */
 					"Connection: keep-alive\r\n\r\n",
 					path_buf, (int)host_len, host_str,
-					ua, cookie_hdr, c->caller_hdrs, synth);
+					ua, macos9_accept_for_path(path_buf), cookie_hdr, c->caller_hdrs, synth);
 			}
 		}
 	}
