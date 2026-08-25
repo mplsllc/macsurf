@@ -139,9 +139,20 @@ Any C99 header that uses `enum foo;` to forward-declare an enum will fail on CW8
 
 ---
 
-## 3. Workflow: Linux → tar → scp → Mac
+## 3. Workflow: Linux → Mac
 
-### Repo layout
+> **Current path: one command.** The whole round — push, build, launch, stuff,
+> deliver to macfiles — is `./forclaude/ship.sh <fixnum> [paths...]`, documented
+> inside-out in [build/automated-ship.md](build/automated-ship.md). It drives
+> CodeWarrior and DropStuff over SSH via AppleScript, so no step happens by hand
+> on the Mac any more.
+>
+> The tar/scp/unpack-by-hand round trip described below is the **historical**
+> route (fixes 100–151 era), retired-not-deleted. The principles under it —
+> delta-only shipments, never editing `.mcp` from Linux, the maintainer owning
+> the fix number, never blaming stale files — all still apply unchanged.
+
+### Repo layout (historical)
 
 ```
 ~/Webs/macsurf/                   primary working tree (Linux git)

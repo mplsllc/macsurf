@@ -94,6 +94,15 @@ This rule is specific to **source going to the Mac**. It does *not* apply to the
 
 ## Moving files to the Mac
 
+> **On MacSurf's own bench this is fully automated.** A single command pushes
+> the sources, builds them in CodeWarrior, launches the app, stuffs it, and
+> drops the archive on the file server — driving the Mac's GUI apps over SSH
+> with AppleScript. See [The Automated Ship Pipeline](automated-ship.md). The
+> transfer methods below are the general background you need to understand
+> *why* that pipeline is built the way it is (particularly the fork problem,
+> which is why it copies with `ditto --rsrc` and packages with StuffIt), and
+> they remain the right starting point for a different setup.
+
 So you've edited, syntax-checked, and converted line endings. Now the file has to physically reach the Power Mac. Exactly how depends on your setup — a real Mac on your bench, an emulator, a Mac on the same network — but the underlying problem is always the same, and it's worth understanding before you pick a method.
 
 ### The fork problem (read this first)
@@ -126,7 +135,10 @@ If you transfer through a method that uses **AppleDouble**, you'll see companion
 
 ## After the file lands
 
-Getting the file onto the Mac is only the first half. On the Mac side, the file gets unpacked into the source tree, and if you've added a *new* `.c` file it has to be added to the CodeWarrior project by hand — CodeWarrior does not auto-discover source files. Before rebuilding after any file change, the project needs **"Remove Object Code"** run first so CodeWarrior recompiles everything cleanly; a header-only edit in particular won't trigger a rebuild of the `.c` files that include it unless you force it. The mechanics of the Mac-side build, the project file list, and the access-path structure all live in [CodeWarrior Project Settings](CodeWarrior-Project-Settings) and [Building MacSurf](Building-MacSurf).
+Getting the file onto the Mac is only the first half. (On the automated
+pipeline, everything in this section down to the rebuild happens without you —
+but adding a *new* `.c` file to the CodeWarrior project is still manual, and
+always will be.) On the Mac side, the file gets unpacked into the source tree, and if you've added a *new* `.c` file it has to be added to the CodeWarrior project by hand — CodeWarrior does not auto-discover source files. Before rebuilding after any file change, the project needs **"Remove Object Code"** run first so CodeWarrior recompiles everything cleanly; a header-only edit in particular won't trigger a rebuild of the `.c` files that include it unless you force it. The mechanics of the Mac-side build, the project file list, and the access-path structure all live in [CodeWarrior Project Settings](CodeWarrior-Project-Settings) and [Building MacSurf](Building-MacSurf).
 
 When something behaves wrong after a transfer, resist the urge to blame the transfer. A correctly converted, correctly copied file is what it is; if the symptom looks like staleness, the real cause is almost always in the code — a missing include, a mismatched guard, a wrong field path — and that's where the time is best spent. [Diagnostics & Debugging](Diagnostics-and-Debugging) covers the file-backed log and the crash-reading techniques that find those real causes, and [Contributing & Expanding](Contributing-and-Expanding) covers the regression-audit habits that keep a change from quietly breaking something three files away.
 

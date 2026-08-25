@@ -54,6 +54,10 @@ clean_macsurf/
 flat_macsurf_sources/
 tree_macsurf/
 build/
+# ...but docs/build/ is documentation, not build output. Without this exception the
+# broad rule above silently hides new files there from git (the existing ones are
+# only tracked because they were force-added).
+!docs/build/
 for-gemini/
 
 # Misc scratch

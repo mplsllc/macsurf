@@ -95,10 +95,18 @@ commands report, the commands win; fix the prose.
   `check-macdefault` compiles the JS glue with the Mac's actual switch config (the harness
   normally forces switches ON that ship OFF). Run before any drop touching a
   `MACSURF_JS_*` switch.
-- **`./forclaude/drop-to-imac.sh <fixnum> <repo-relative-path>...`** — current delivery
-  path. Verified: CR-converts, stamps a future mtime, scp's each file to the iMac, verifies
-  size + CR/LF on the far side (LF must be 0 or CodeWarrior chokes). Never CR-convert or
-  mtime-stamp by hand.
+- **`./forclaude/ship.sh <fixnum> [repo-relative-path]...`** — the whole round in one
+  command: push → CodeWarrior build **and launch** → error check → StuffIt → `.sit` on
+  macfiles as `MacSurf<fixnum>.sit` (never overwrites; collisions get `-2`, `-3`). Drives
+  the Mac's GUI apps over SSH via AppleScript, and refuses to package if CodeWarrior
+  reports any message. With no paths it just rebuilds and relaunches. It does **not**
+  verify anything on hardware — that stays the maintainer's call. Full mechanics,
+  prerequisites and failure modes: `docs/build/automated-ship.md`.
+- **`./forclaude/drop-to-imac.sh <fixnum> <repo-relative-path>...`** — push only; what
+  `ship.sh` calls for its first step, and the right tool for getting files onto the Mac
+  without a build. Verified: CR-converts, stamps a future mtime, scp's each file to the
+  iMac, verifies size + CR/LF on the far side (LF must be 0 or CodeWarrior chokes). Never
+  CR-convert or mtime-stamp by hand.
 - **`tools/ship_fix.sh`** — retired-not-deleted fallback (tars, CR-converts, scp's to the
   OS 9 laptop route). Only ships the files you name — a probe left in an earlier round
   stays live on the target until you explicitly re-ship that file.
