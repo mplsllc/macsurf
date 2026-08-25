@@ -106,6 +106,37 @@ Three things about this that are worth knowing before you change it:
   `count documents` is `1` and `get name of document 1` returns ` MacSurfQ`
   (note the leading space in the project name — it is real).
 
+### 3.2.0 TRAP: Apple Events time out after 60s — a full rebuild exceeds it
+
+Observed 2026-08-25 on a 925-file rebuild:
+
+```
+execution error: CodeWarrior IDE got an error: AppleEvent timed out. (-1712)
+```
+
+**The build was not affected** — CodeWarrior kept compiling for many more
+minutes. What timed out was `osascript` waiting for the reply. The pipeline then
+mistook the timeout string for a compile message and refused to package, which
+is fail-safe but wrong.
+
+So the claim in §3.2 that `Run` "blocks until the build completes" holds only
+for incremental builds inside the default 60-second Apple Event timeout. Wrap
+long builds:
+
+```applescript
+with timeout of 7200 seconds
+    tell application "CodeWarrior IDE" to Run project document 1
+end timeout
+end
+```
+
+To tell a timeout apart from a real build failure, check whether CodeWarrior is
+still burning CPU before concluding anything:
+
+```bash
+ssh imac 'ps -axww -o pid,time | grep "[C]odeWarrior IDE"'   # sample twice
+```
+
 ### 3.2.1 TRAP: `Run` does not rebuild while the app is running
 
 **Observed 2026-08-25, and it cost a full cycle.** If the built MacSurf is
@@ -257,6 +288,34 @@ Notes that cost time to work out:
   `-1701` means a required parameter is missing. Those three errors are how you
   discover the dictionary without one.
 
+**The authoritative dictionary is on the Mac.** CW8's IDE carries its `aete`
+resource in its 2.1 MB resource fork; it can be pulled over SSH and read
+directly rather than guessed at:
+
+```bash
+ssh imac 'cat "/Applications (Mac OS 9)/.../CodeWarrior IDE/..namedfork/rsrc"' > cwide.rsrc
+```
+
+Verified entries, all in suite `MMPR`:
+
+| Command | Event | Direct param | Reply |
+|---|---|---|---|
+| `Make Project` | `MMPR`/`Make` | `null` | `ErrM` — "Errors that occurred while making the project"; boolean param `Errs` controls whether the message window's contents are returned to the caller |
+| `Remove Files` | `MMPR`/`RemF` | `alis` — list of files to remove | `shor` — error code for each file removed (`0` = success) |
+| `Get Project File` | `MMPR`/`GFil` | `SrcF` short — index within its segment | requires `Segm` short — the segment containing the file |
+| `Get Project Specifier` | `MMPR`/`GetP` | `null` | `alis` — file specifier for the current project |
+
+This settles the open question in §3.3 about the populated message format: the
+errors come back from the make event itself as `ErrM`, gated by `Errs`.
+
+**Credit:** the AppleEvent approach and the `MMPR`/`Make` + `Errs`/`ErrM`/`ErrT`/
+`ErrS`/`ErrL` codes were confirmed against **cmdide** by Rebecca Heineman
+(https://github.com/burgerbecky/cmdide), a command-line AppleEvent front-end to
+CodeWarrior. No code was taken from it — it is 32-bit Carbon for 10.5.8 and
+earlier, ships no binaries, and this iMac has no compiler — but it pointed
+straight at the right events. The table above was then verified against
+CodeWarrior 8's own `aete` on this machine.
+
 **Back up the project before mutating it.** It is a single file at
 `/Projects/ MacSurfQ` — note the **leading space**, which is deliberate (it
 sorts the project to the top in the Finder) and must be quoted everywhere:
@@ -326,6 +385,7 @@ type/creator has to be inspected through the Finder via AppleScript instead.
 
 | Symptom | Cause |
 |---|---|
+| `AppleEvent timed out. (-1712)` | The build exceeded the 60s Apple Event timeout and is probably STILL RUNNING. Not a failure — see §3.2.0 |
 | `execution error: … (-609)` on any `osascript` | Console session gone, or the OS was upgraded past Tiger's namespace behaviour |
 | `A descriptor type mismatch occurred. (-10001)` | AppleScript command sent without its required direct parameter |
 | `The variable r is not defined. (-2753)` | `Run`/`Make` returns no value; don't assign the result |
