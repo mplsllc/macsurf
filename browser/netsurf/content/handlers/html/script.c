@@ -834,6 +834,24 @@ convert_script_sync_cb(hlcache_handle *script,
 				nsurl_access(hlcache_handle_get_url(s->data.handle)));
 		}
 
+		/* fixes1326 (#167) - execution is the last consumer of a completed
+		 * synchronous script's fetched content.  Keeping every successful
+		 * handle until html_destroy pinned its source and cache object for the
+		 * whole parse.  Facebook emits roughly 180 tiny parser-blocking data:
+		 * scripts before its large bundles; on Mac OS 9 those retained objects
+		 * reduced the largest heap block from about 8.4 MB to 1.47 MB, then the
+		 * next multi-megabyte bundle exhausted the heap and aborted the page.
+		 *
+		 * JS can append scripts and realloc parent->scripts, so re-acquire the
+		 * slot.  already_started was set before execution, making a release-
+		 * driven callback harmless, and the callback argument is the identity
+		 * guard against releasing a replacement handle.  The error path below
+		 * already performs this same null-before-release operation here. */
+		s = &parent->scripts[i];
+		if (s->data.handle == script) {
+			safe_hlcache_handle_release(&s->data.handle);
+		}
+
 		/* fixes581 DIAG: js_exec returned. If the log ends here (after
 		 * 'qjs: exec-return0' but before 'sync_cb: sched done'), the hang is
 		 * in macos9_schedule_unpause.
