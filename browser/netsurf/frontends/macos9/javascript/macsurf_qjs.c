@@ -4366,6 +4366,60 @@ static void qjs_dom_make_trace(const char *op, JSContext *ctx,
 		qjs_dom_wrapper_ptr(wrapper));
 }
 
+/* MutationObserver must receive the actual nodes which crossed the native
+ * boundary.  In particular Facebook's bootloader watches added SCRIPT/LINK
+ * elements; a synthetic record with addedNodes=[] looks successful but loses
+ * every resource notification.  Queue only here, after libdom accepts the
+ * mutation; the JS side schedules delivery after the current script returns. */
+static JSValue qjs_mutation_added_nodes(JSContext *ctx, JSValueConst child)
+{
+	dom_node *node = qjs_get_node(child);
+	dom_node_type type = 0;
+	JSValue nodes;
+
+	if (node == NULL || macsurf_dom_node_get_node_type(node, &type) !=
+			DOM_NO_ERR || type != 11)
+		return JS_DupValue(ctx, child);
+	/* Snapshot a fragment BEFORE append/insert moves its children. */
+	nodes = JS_GetPropertyStr(ctx, child, "childNodes");
+	if (JS_IsException(nodes)) {
+		JS_FreeValue(ctx, JS_GetException(ctx));
+		return JS_NewArray(ctx);
+	}
+	return nodes;
+}
+
+static void qjs_queue_child_mutation(JSContext *ctx, const char *type,
+		JSValueConst parent, JSValueConst added, JSValueConst removed)
+{
+	JSValue global;
+	JSValue fn;
+	JSValue args[4];
+	JSValue result;
+
+	global = JS_GetGlobalObject(ctx);
+	fn = JS_GetPropertyStr(ctx, global, "__msQueueMutation");
+	if (!JS_IsFunction(ctx, fn)) {
+		JS_FreeValue(ctx, fn);
+		JS_FreeValue(ctx, global);
+		return;
+	}
+	args[0] = JS_NewString(ctx, type);
+	args[1] = JS_DupValue(ctx, parent);
+	args[2] = JS_DupValue(ctx, added);
+	args[3] = JS_DupValue(ctx, removed);
+	result = JS_Call(ctx, fn, global, 4, args);
+	if (JS_IsException(result))
+		JS_FreeValue(ctx, JS_GetException(ctx));
+	JS_FreeValue(ctx, result);
+	JS_FreeValue(ctx, args[0]);
+	JS_FreeValue(ctx, args[1]);
+	JS_FreeValue(ctx, args[2]);
+	JS_FreeValue(ctx, args[3]);
+	JS_FreeValue(ctx, fn);
+	JS_FreeValue(ctx, global);
+}
+
 static JSValue qjs_dom_mut_check(JSContext *ctx, const char *op,
 		dom_exception exc, dom_node *parent, dom_node *child)
 {
@@ -4403,6 +4457,7 @@ static JSValue qjs_el_append_child_data(JSContext *ctx,
 	dom_node *result = NULL;
 	dom_exception exc;
 	JSValue err;
+	JSValue observed_added;
 	(void)this_val; (void)magic;
 	el = (dom_element *)qjs_get_node(this_val);
 	if (argc < 1) return JS_NULL;
@@ -4414,12 +4469,19 @@ static JSValue qjs_el_append_child_data(JSContext *ctx,
 	}
 	qjs_dom_mut_trace("append", ctx, this_val, argv[0], JS_NULL,
 			(dom_node *)el, (dom_node *)child_el, NULL);
+	observed_added = qjs_mutation_added_nodes(ctx, argv[0]);
 	exc = macsurf_dom_node_append_child((dom_node *)el, (dom_node *)child_el,
 			&result);
 	if (result) macsurf_dom_node_unref(result);
 	err = qjs_dom_mut_check(ctx, "appendChild", exc, (dom_node *)el,
 			(dom_node *)child_el);
-	if (JS_IsException(err)) return err;
+	if (JS_IsException(err)) {
+		JS_FreeValue(ctx, observed_added);
+		return err;
+	}
+	qjs_queue_child_mutation(ctx, "childList", this_val, observed_added,
+			JS_UNDEFINED);
+	JS_FreeValue(ctx, observed_added);
 	{	/* fixes1015 */
 		char cb[80];
 		qjs_node_brief((dom_node *)child_el, cb, (int)sizeof cb);
@@ -4460,6 +4522,8 @@ static JSValue qjs_el_remove_child_data(JSContext *ctx,
 	err = qjs_dom_mut_check(ctx, "removeChild", exc, (dom_node *)el,
 			(dom_node *)child_el);
 	if (JS_IsException(err)) return err;
+	qjs_queue_child_mutation(ctx, "childList", this_val, JS_UNDEFINED,
+			argv[0]);
 	if (g_rm_audit_budget > 0) {	/* fixes1015/1029 */
 		char cb[80], pb[80];
 		g_rm_audit_budget--;
@@ -4482,6 +4546,7 @@ static JSValue qjs_el_insert_before_data(JSContext *ctx,
 	dom_node *result = NULL;
 	dom_exception exc;
 	JSValue err;
+	JSValue observed_added;
 	(void)this_val; (void)magic;
 	el = (dom_element *)qjs_get_node(this_val);
 	if (argc < 1) return JS_NULL;
@@ -4497,6 +4562,7 @@ static JSValue qjs_el_insert_before_data(JSContext *ctx,
 	qjs_dom_mut_trace("insert", ctx, this_val, argv[0],
 			argc >= 2 ? argv[1] : JS_NULL, (dom_node *)el,
 			(dom_node *)new_el, (dom_node *)ref_el);
+	observed_added = qjs_mutation_added_nodes(ctx, argv[0]);
 	exc = macsurf_dom_node_insert_before((dom_node *)el, (dom_node *)new_el,
 		(dom_node *)ref_el, &result);
 	if (result) macsurf_dom_node_unref(result);
@@ -4506,7 +4572,13 @@ static JSValue qjs_el_insert_before_data(JSContext *ctx,
 	 * here means a React/Preact app renders nothing, with no error. */
 	err = qjs_dom_mut_check(ctx, "insertBefore", exc, (dom_node *)el,
 			(dom_node *)new_el);
-	if (JS_IsException(err)) return err;
+	if (JS_IsException(err)) {
+		JS_FreeValue(ctx, observed_added);
+		return err;
+	}
+	qjs_queue_child_mutation(ctx, "childList", this_val, observed_added,
+			JS_UNDEFINED);
+	JS_FreeValue(ctx, observed_added);
 	{	/* fixes1015 */
 		char cb[80];
 		qjs_node_brief((dom_node *)new_el, cb, (int)sizeof cb);
@@ -9913,7 +9985,8 @@ static void qjs_dom_install(JSContext *ctx)
 			"Object.defineProperty(d,'body',{configurable:true,"
 			"get:function(){var n=d.__getBody();if(n)return n;"
 			"if(!_fbBody){try{__msLife('document.body fell back to mkfb "
-			"(no real body yet)');}catch(e){}_fbBody=mkfb('body');}"
+			"(no real body yet)');}catch(e){}_fbBody=mkfb('body');"
+			"_fbBody.__msFallbackBody=1;}"
 			"return _fbBody;}});"
 			"Object.defineProperty(d,'head',{configurable:true,"
 			"get:function(){var n=d.__getHead();if(n)return n;"
@@ -11024,36 +11097,32 @@ static void register_browser_globals(JSContext *ctx)
 	 * server-driven approval never revealed itself in the DOM the app was
 	 * waiting on.
 	 *
-	 * Design (scoped, not a full spec implementation): records are
-	 * delivered from js_fire_mutation_batch (macsurf_qjs.c), called once
-	 * from html_reconvert_done AFTER a reconvert completes successfully --
-	 * the SAME fire point fixes1090's resize/load convergence hooks use.
-	 * That means delivery cannot happen more often than reconvert's own
-	 * debounce/floor already allows, and is never called from inside the
-	 * box-tree rebuild -- the feedback-loop risk the old no-op comment
-	 * warned about is bounded by construction, not by hoping the page
-	 * behaves. Phase 1 scope: every registered observer gets ONE synthetic
-	 * childList record per completed reconvert, regardless of its actual
-	 * target/subtree options -- matching the one usage pattern evidence
-	 * shows (a root-level, presumably subtree:true watcher) without
-	 * building precise per-node/subtree target matching against the
-	 * pending table's opaque dom_node pointers, which macos9_reconvert.c
-	 * cannot safely dereference (see its header comment) and would need a
-	 * new bridge through html.c to do properly. A future round can narrow
-	 * this once a non-root .observe() target shows up in evidence. */
+	 * Records are queued by the native append/remove/insert entry points and
+	 * delivered by a zero-delay task after the mutating script returns. That
+	 * preserves the nodes which actually changed (including a fragment's moved
+	 * children), rather than inventing an empty record only after reconvert.
+	 * The old reconvert hook remains a harmless flush edge for any queued work. */
 	macsurf_qjs__safe_eval(ctx,
 		"function MutationObserver(cb){this._cb=cb;this._targets=[];}"
 		"MutationObserver.prototype.observe=function(t,opts){"
 			"if(!t)return;"
+			/* A parser-timing fallback is not a real DOM root. Facebook's
+			 * bootloader is the observed caller; observing HTML preserves the
+			 * intended whole-document subtree until body becomes available. */
+			"if(t.__msFallbackBody&&document.documentElement){"
+				"try{__msLife('MUTOBS retarget mkfb BODY -> HTML');}catch(_){}"
+				"t=document.documentElement;"
+			"}"
 			"try{__msLife('WANT MutationObserver.observe '"
 			"+((t.id||t.tagName)||'?')+' (real)');}catch(_){}"
-			"this._targets.push(t);"
+			"this._targets.push({node:t,opts:opts||{}});"
 			"if(!globalThis.__msMutObservers)globalThis.__msMutObservers=[];"
 			"if(globalThis.__msMutObservers.indexOf(this)<0)"
 				"globalThis.__msMutObservers.push(this);"
 		"};"
 		"MutationObserver.prototype.unobserve=function(t){"
-			"var i=this._targets.indexOf(t);if(i>=0)this._targets.splice(i,1);"
+			"for(var i=0;i<this._targets.length;i++)"
+				"if(this._targets[i].node===t){this._targets.splice(i,1);return;}"
 		"};"
 		"MutationObserver.prototype.disconnect=function(){"
 			"this._targets=[];"
@@ -11064,21 +11133,38 @@ static void register_browser_globals(JSContext *ctx)
 		"};"
 		"MutationObserver.prototype.takeRecords=function(){return [];};"
 		"this.MutationObserver=MutationObserver;"
+		"globalThis.__msMutPending=[];globalThis.__msMutScheduled=false;"
+		"globalThis.__msQueueMutation=function(type,target,added,removed){"
+			"var a=Array.isArray(added)?added.slice():(added?[added]:[]);"
+			"var r=Array.isArray(removed)?removed.slice():(removed?[removed]:[]);"
+			"globalThis.__msMutPending.push({type:type,target:target,"
+				"addedNodes:a,removedNodes:r,previousSibling:null,nextSibling:null,"
+				"attributeName:null,attributeNamespace:null,oldValue:null});"
+			"if(globalThis.__msMutScheduled)return;"
+			"globalThis.__msMutScheduled=true;"
+			"setTimeout(function(){globalThis.__msDeliverMutations();},0);"
+		"};"
 		"globalThis.__msDeliverMutations=function(){"
 			"var list=globalThis.__msMutObservers;"
-			"if(!list||list.length===0)return;"
+			"var pending=globalThis.__msMutPending.splice(0);"
+			"globalThis.__msMutScheduled=false;"
+			"if(!list||list.length===0||pending.length===0)return;"
 			"for(var i=0;i<list.length;i++){"
 				"var ob=list[i];"
 				"if(!ob._targets||ob._targets.length===0)continue;"
 				"var recs=[];"
-				"for(var j=0;j<ob._targets.length;j++){"
-					"recs.push({type:'childList',target:ob._targets[j],"
-						"addedNodes:[],removedNodes:[],"
-						"previousSibling:null,nextSibling:null,"
-						"attributeName:null,attributeNamespace:null,"
-						"oldValue:null});"
+				"for(var j=0;j<pending.length;j++){"
+					"var rec=pending[j],hit=false;"
+					"for(var k=0;k<ob._targets.length;k++){"
+						"var watch=ob._targets[k],root=watch.node,op=watch.opts||{};"
+						"if(rec.type==='childList'&&!op.childList)continue;"
+						"if(root===rec.target||(op.subtree&&root&&root.contains&&"
+							"root.contains(rec.target))){hit=true;break;}"
+					"}"
+					"if(hit)recs.push(rec);"
 				"}"
-				"try{ob._cb(recs,ob);}catch(e){}"
+				"if(recs.length)try{ob._cb(recs,ob);}catch(e){"
+					"try{__msLife('MUTOBS callback THREW '+((e&&e.message)||e));}catch(_){}}"
 			"}"
 		"};");
 	/* fixes1231 (#167) - real-enough ResizeObserver. Hardware evidence

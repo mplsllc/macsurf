@@ -8417,13 +8417,10 @@ box_coords(bx, &cx, &cy);
 	 * feature (34 prior tests' worth of accumulated box-tree/registry
 	 * state), which a clean fixture sidesteps entirely, same reasoning
 	 * Test 66 already established. Registers an observer on
-	 * document.documentElement, performs a real DOM mutation via the same
-	 * C binding React would call (setAttribute -> macos9_js_mark_dom_dirty_
-	 * node), drives an ACTUAL reconvert through html_reconvert_content,
-	 * and asserts the observer's callback fired with a non-empty record
-	 * whose target is the observed element -- exercising the real new
-	 * code path (js_fire_mutation_batch, called from html_reconvert_done)
-	 * under ASan, not just the JS shim in isolation. */
+	 * document.documentElement, appends a real child through the same C binding
+	 * React would call, drives an ACTUAL reconvert through html_reconvert_content,
+	 * and asserts the observer sees that real target and child. This guards the
+	 * bootloader-critical addedNodes path, not merely a synthetic callback. */
 	fprintf(stderr, "\n=== Test 69: MutationObserver fires after a real "
 			"reconvert ===\n");
 	{
@@ -8575,21 +8572,24 @@ box_coords(bx, &cx, &cy);
 		{
 			const char *mo_setup_js =
 				"globalThis.__moFired=0;globalThis.__moLen=-1;"
-				"globalThis.__moTargetOk=0;"
+				"globalThis.__moTargetOk=0;globalThis.__moAddedOk=0;"
 				"(function(){"
 				"var mo=new MutationObserver(function(records){"
 					"globalThis.__moFired=1;"
 					"globalThis.__moLen=records.length;"
 					"if(records&&records[0]&&"
-						"records[0].target===document.documentElement)"
+						"records[0].target===document.getElementById('p0'))"
 						"globalThis.__moTargetOk=1;"
+					"if(records&&records[0]&&records[0].addedNodes[0]&&"
+						"records[0].addedNodes[0].id==='t69-added')"
+						"globalThis.__moAddedOk=1;"
 				"});"
 				"mo.observe(document.documentElement,"
 					"{childList:true,subtree:true,attributes:true});"
 				"})();";
 			const char *mo_mutate_js =
-				"document.getElementById('p0')."
-				"setAttribute('data-t69','1');";
+				"(function(){var n=document.createElement('i');"
+				"n.id='t69-added';document.getElementById('p0').appendChild(n);})();";
 			const char *mo_check_js =
 				"if(!globalThis.__moFired)"
 					"throw new Error('ASSERT FAIL: MO callback never "
@@ -8599,7 +8599,10 @@ box_coords(bx, &cx, &cy);
 						"+globalThis.__moLen+' expected >=1');"
 				"if(!globalThis.__moTargetOk)"
 					"throw new Error('ASSERT FAIL: MO record target was "
-						"not document.documentElement');";
+						"not the appended-to element');"
+				"if(!globalThis.__moAddedOk)"
+					"throw new Error('ASSERT FAIL: MO addedNodes lost the "
+						"real appended child');";
 			unsigned char ok1, ok2, ok3;
 
 			ok1 = js_exec(t69thread, (const unsigned char *)mo_setup_js,
