@@ -31,44 +31,6 @@
 static int s_macsurf_dommake_budget = MACSURF_DOMMAKE_BUDGET;
 static int s_macsurf_dommut_budget = MACSURF_DOMMUT_BUDGET;
 
-/* Five-call proof at the actual libdom-dispatch boundary.  The larger
- * DOMMAKE/DOMMUT audit is intentionally still bounded and mount-aware; these
- * records are not an audit, only the prerequisite proof that its path is
- * live. */
-#define MACSURF_DOM_SENTINEL_LIMIT 5
-static int s_doms_create_element = 0;
-static int s_doms_create_element_ns = 0;
-static int s_doms_create_text = 0;
-static int s_doms_create_comment = 0;
-static int s_doms_append = 0;
-static int s_doms_remove = 0;
-static int s_doms_insert = 0;
-static int s_doms_textcontent = 0;
-static int s_doms_nodevalue = 0;
-
-static void macsurf_dom_dispatch_sentinel(const char *op, int *count,
-        void *first, void *second)
-{
-    if (count == NULL || *count >= MACSURF_DOM_SENTINEL_LIMIT) return;
-    (*count)++;
-    macsurf_debug_log_writef(
-        "LIFE DOMDISP op=%s n=%d first=%p second=%p",
-        op, *count, first, second);
-}
-
-void macsurf_dom_sentinel_reset(void)
-{
-    s_doms_create_element = 0;
-    s_doms_create_element_ns = 0;
-    s_doms_create_text = 0;
-    s_doms_create_comment = 0;
-    s_doms_append = 0;
-    s_doms_remove = 0;
-    s_doms_insert = 0;
-    s_doms_textcontent = 0;
-    s_doms_nodevalue = 0;
-}
-
 /* Return non-zero only for a REAL libdom element whose native id begins
  * "mount_".  This intentionally does not inspect a QuickJS wrapper: wrapper
  * identity/lifetime is one of the failure modes this diagnostic separates. */
@@ -314,8 +276,6 @@ dom_exception macsurf_dom_node_append_child(dom_node *parent,
     int trace;
     dom_exception exc;
 
-    macsurf_dom_dispatch_sentinel("appendChild", &s_doms_append, parent,
-            new_child);
     trace = macsurf_dom_mutation_trace_begin(parent, mount_id,
             (int)sizeof mount_id);
     if (trace)
@@ -338,8 +298,6 @@ dom_exception macsurf_dom_node_remove_child(dom_node *parent,
     int trace;
     dom_exception exc;
 
-    macsurf_dom_dispatch_sentinel("removeChild", &s_doms_remove, parent,
-            old_child);
     trace = macsurf_dom_mutation_trace_begin(parent, mount_id,
             (int)sizeof mount_id);
     if (trace)
@@ -364,8 +322,6 @@ dom_exception macsurf_dom_node_insert_before(dom_node *parent,
     int trace;
     dom_exception exc;
 
-    macsurf_dom_dispatch_sentinel("insertBefore", &s_doms_insert, parent,
-            new_child);
     trace = macsurf_dom_mutation_trace_begin(parent, mount_id,
             (int)sizeof mount_id);
     if (trace)
@@ -413,8 +369,6 @@ dom_exception macsurf_dom_node_get_node_value(dom_node *node,
 dom_exception macsurf_dom_node_set_node_value(dom_node *node,
     dom_string *value)
 {
-    macsurf_dom_dispatch_sentinel("nodeValue", &s_doms_nodevalue, node,
-            value);
     return dom_node_set_node_value(node, value);
 }
 
@@ -429,8 +383,6 @@ dom_exception macsurf_dom_node_get_text_content(dom_node *node,
 dom_exception macsurf_dom_node_set_text_content(dom_node *node,
     dom_string *content)
 {
-    macsurf_dom_dispatch_sentinel("textContent", &s_doms_textcontent, node,
-            content);
     return dom_node_set_text_content(node, content);
 }
 
@@ -490,8 +442,6 @@ dom_exception macsurf_dom_document_create_element_s(dom_document *doc,
         macsurf_dom_trace_make_element("elem", doc, tag, NULL, 5, element);
         return 5; /* DOM_NO_MEMORY_ERR */
     }
-    macsurf_dom_dispatch_sentinel("createElement", &s_doms_create_element,
-            doc, ds);
     exc = dom_document_create_element(doc, ds, element);
     dom_string_unref(ds);
     macsurf_dom_trace_make_element("elem", doc, tag, NULL, exc, element);
@@ -542,8 +492,6 @@ dom_exception macsurf_dom_document_create_element_ns_s(dom_document *doc,
             return 5;
         }
     }
-    macsurf_dom_dispatch_sentinel("createElementNS",
-            &s_doms_create_element_ns, doc, qn_s);
     exc = dom_document_create_element_ns(doc, ns_s, qn_s, element);
     if (ns_s != NULL) dom_string_unref(ns_s);
     dom_string_unref(qn_s);
@@ -564,8 +512,6 @@ dom_exception macsurf_dom_document_create_text_node_s(dom_document *doc,
                 data != NULL ? (long)strlen(data) : -1, 5, text);
         return 5; /* DOM_NO_MEMORY_ERR */
     }
-    macsurf_dom_dispatch_sentinel("createTextNode", &s_doms_create_text,
-            doc, ds);
     exc = dom_document_create_text_node(doc, ds, text);
     dom_string_unref(ds);
     macsurf_dom_trace_make_text(doc, (long)strlen(data), exc, text);
@@ -584,8 +530,6 @@ dom_exception macsurf_dom_document_create_comment_s(dom_document *doc,
     if (data == NULL) data = "";
     dom_string_create((const uint8_t *)data, (unsigned)strlen(data), &ds);
     if (ds == NULL) return 5; /* DOM_NO_MEMORY_ERR */
-    macsurf_dom_dispatch_sentinel("createComment", &s_doms_create_comment,
-            doc, ds);
     exc = dom_document_create_comment(doc, ds, comment);
     dom_string_unref(ds);
     return exc;
@@ -613,8 +557,6 @@ dom_exception macsurf_dom_characterdata_set_data_s(dom_node *node,
 {
     dom_string *ds = NULL;
     dom_exception exc;
-    macsurf_dom_dispatch_sentinel("nodeValue", &s_doms_nodevalue, node,
-            NULL);
     dom_string_create((const uint8_t *)data, (unsigned)strlen(data), &ds);
     if (ds == NULL) return 5; /* DOM_NO_MEMORY_ERR */
     exc = dom_characterdata_set_data((dom_characterdata *) node, ds);

@@ -1858,7 +1858,6 @@ extern dom_exception macsurf_dom_node_remove_child(dom_node *parent,
 extern dom_exception macsurf_dom_node_insert_before(dom_node *parent,
 		dom_node *new_child, dom_node *ref_child, dom_node **result);
 extern int           macsurf_dom_node_is_mount(dom_node *node);
-extern void          macsurf_dom_sentinel_reset(void);
 extern dom_exception macsurf_dom_element_has_attribute(dom_element *el,
 		dom_string *name, int *result);
 extern dom_exception macsurf_dom_element_remove_attribute(dom_element *el,
@@ -3538,27 +3537,6 @@ static void qjs_collect_by_sel_list(JSContext *ctx, dom_node *node,
  * are reachable through this declaration on every wrapper shape. */
 static JSValue qjs_wrap_any_node(JSContext *ctx, dom_node *node);
 
-/* Facebook's mount_* audit first has to establish which DOM implementation a
- * page actually reached.  These are deliberately independent five-call
- * sentinels: a public JS dispatcher, its native C binding, and the libdom
- * dispatcher must each speak for themselves before the larger bounded audit
- * below can mean anything. */
-#define MACSURF_QJS_DOM_SENTINEL_LIMIT 5
-static int s_qjs_doms_textcontent = 0;
-static int s_qjs_doms_nodevalue = 0;
-static int s_qjs_doms_append = 0;
-static int s_qjs_doms_remove = 0;
-static int s_qjs_doms_insert = 0;
-static int s_qjs_doms_create_element = 0;
-static int s_qjs_doms_create_element_ns = 0;
-static int s_qjs_doms_create_text = 0;
-static int s_qjs_doms_create_comment = 0;
-static int s_qjs_doms_public[7][2];
-
-static void qjs_dom_native_sentinel(JSContext *ctx, const char *op,
-		int *count, dom_node *node);
-static void qjs_dom_sentinel_reset(void);
-
 /* ---- textContent read ---- */
 static JSValue qjs_el_get_text_content_data(JSContext *ctx,
 		JSValueConst this_val, int argc, JSValueConst *argv,
@@ -3587,8 +3565,6 @@ static JSValue qjs_el_set_text_content_data(JSContext *ctx,
 	dom_string *ds;
 	(void)this_val; (void)magic;
 	el = (dom_element *)qjs_get_node(this_val);
-	qjs_dom_native_sentinel(ctx, "textContent", &s_qjs_doms_textcontent,
-			(dom_node *)el);
 	if (el == NULL || argc < 1) return JS_UNDEFINED;
 	s = JS_ToCString(ctx, argv[0]);
 	if (s == NULL) return JS_UNDEFINED;
@@ -4350,70 +4326,6 @@ static int s_dom_mut_seq = 0;
 static int s_qjs_dommut_budget = MACSURF_QJS_DOMMUT_BUDGET;
 static int s_qjs_dommake_budget = MACSURF_QJS_DOMMAKE_BUDGET;
 
-static void qjs_dom_native_sentinel(JSContext *ctx, const char *op,
-		int *count, dom_node *node)
-{
-	if (count == NULL || *count >= MACSURF_QJS_DOM_SENTINEL_LIMIT) return;
-	(*count)++;
-	macsurf_debug_log_writef(
-		"LIFE DOMS native op=%s n=%d ctx=%p node=%p",
-		op, *count, (void *)ctx, (void *)node);
-}
-
-/* Called by the installed JS public-property dispatchers.  Keep entry and
- * fallback quotas separate: native calls must not hide a later mkfb route. */
-static JSValue qjs_dom_public_sentinel(JSContext *ctx,
-		JSValueConst this_val, int argc, JSValueConst *argv)
-{
-	const char *op = NULL;
-	const char *route = NULL;
-	int oi = -1;
-	int ri = 0;
-
-	(void)this_val;
-	if (argc < 2) return JS_UNDEFINED;
-	op = JS_ToCString(ctx, argv[0]);
-	route = JS_ToCString(ctx, argv[1]);
-	if (op == NULL || route == NULL) goto done;
-	if (strcmp(op, "createElement") == 0) oi = 0;
-	else if (strcmp(op, "createElementNS") == 0) oi = 1;
-	else if (strcmp(op, "createTextNode") == 0) oi = 2;
-	else if (strcmp(op, "createComment") == 0) oi = 3;
-	else if (strcmp(op, "appendChild") == 0) oi = 4;
-	else if (strcmp(op, "removeChild") == 0) oi = 5;
-	else if (strcmp(op, "insertBefore") == 0) oi = 6;
-	if (strcmp(route, "fallback") == 0) ri = 1;
-	if (oi >= 0 && s_qjs_doms_public[oi][ri] <
-			MACSURF_QJS_DOM_SENTINEL_LIMIT) {
-		s_qjs_doms_public[oi][ri]++;
-		macsurf_debug_log_writef(
-			"LIFE DOMS public op=%s route=%s n=%d ctx=%p",
-			op, route, s_qjs_doms_public[oi][ri], (void *)ctx);
-	}
-
-done:
-	if (op != NULL) JS_FreeCString(ctx, op);
-	if (route != NULL) JS_FreeCString(ctx, route);
-	return JS_UNDEFINED;
-}
-
-/* Unlike the temporary audit budgets, sentinels must begin at call one for
- * the Facebook navigation itself, not be spent by the browser's start page. */
-static void qjs_dom_sentinel_reset(void)
-{
-	s_qjs_doms_textcontent = 0;
-	s_qjs_doms_nodevalue = 0;
-	s_qjs_doms_append = 0;
-	s_qjs_doms_remove = 0;
-	s_qjs_doms_insert = 0;
-	s_qjs_doms_create_element = 0;
-	s_qjs_doms_create_element_ns = 0;
-	s_qjs_doms_create_text = 0;
-	s_qjs_doms_create_comment = 0;
-	memset(s_qjs_doms_public, 0, sizeof(s_qjs_doms_public));
-	macsurf_dom_sentinel_reset();
-}
-
 static void *qjs_dom_wrapper_ptr(JSValueConst value)
 {
 	if (!JS_IsObject(value)) return NULL;
@@ -4426,17 +4338,21 @@ static void qjs_dom_mut_trace(const char *op, JSContext *ctx,
 		dom_node *ref)
 {
 	int mount = macsurf_dom_node_is_mount(parent);
+	char pb[80], cb[80], rb[80];
 
 	if (!mount) {
 		if (s_qjs_dommut_budget <= 0) return;
 		s_qjs_dommut_budget--;
 	}
+	qjs_node_brief(parent, pb, (int)sizeof pb);
+	qjs_node_brief(child, cb, (int)sizeof cb);
+	qjs_node_brief(ref, rb, (int)sizeof rb);
 	macsurf_debug_log_writef(
 		"LIFE DOMQJS %s ctx=%p pwrap=%p cwrap=%p rwrap=%p "
-		"parent=%p child=%p ref=%p mount=%d",
+		"parent=%p[%s] child=%p[%s] ref=%p[%s] mount=%d",
 		op, (void *)ctx, qjs_dom_wrapper_ptr(parent_value),
 		qjs_dom_wrapper_ptr(child_value), qjs_dom_wrapper_ptr(ref_value),
-		(void *)parent, (void *)child, (void *)ref, mount);
+		(void *)parent, pb, (void *)child, cb, (void *)ref, rb, mount);
 }
 
 static void qjs_dom_make_trace(const char *op, JSContext *ctx,
@@ -4489,8 +4405,6 @@ static JSValue qjs_el_append_child_data(JSContext *ctx,
 	JSValue err;
 	(void)this_val; (void)magic;
 	el = (dom_element *)qjs_get_node(this_val);
-	qjs_dom_native_sentinel(ctx, "appendChild", &s_qjs_doms_append,
-			(dom_node *)el);
 	if (argc < 1) return JS_NULL;
 	child_el = (dom_element *)qjs_get_node(argv[0]);
 	if (el == NULL || child_el == NULL) {
@@ -4527,8 +4441,6 @@ static JSValue qjs_el_remove_child_data(JSContext *ctx,
 	JSValue err;
 	(void)this_val; (void)magic;
 	el = (dom_element *)qjs_get_node(this_val);
-	qjs_dom_native_sentinel(ctx, "removeChild", &s_qjs_doms_remove,
-			(dom_node *)el);
 	if (argc < 1) return JS_NULL;
 	child_el = (dom_element *)qjs_get_node(argv[0]);
 	if (el == NULL || child_el == NULL) {
@@ -4572,8 +4484,6 @@ static JSValue qjs_el_insert_before_data(JSContext *ctx,
 	JSValue err;
 	(void)this_val; (void)magic;
 	el = (dom_element *)qjs_get_node(this_val);
-	qjs_dom_native_sentinel(ctx, "insertBefore", &s_qjs_doms_insert,
-			(dom_node *)el);
 	if (argc < 1) return JS_NULL;
 	new_el = (dom_element *)qjs_get_node(argv[0]);
 	if (el == NULL || new_el == NULL) {
@@ -7704,13 +7614,8 @@ static JSValue qjs_text_set_data_data(JSContext *ctx, JSValueConst this_val,
 {
 	dom_node *n;
 	const char *v;
-	const char *op;
-	(void) this_val;
+	(void) this_val; (void) magic;
 	n = qjs_get_node(this_val);
-	op = (magic == 2) ? "textContent" : "nodeValue";
-	qjs_dom_native_sentinel(ctx, op,
-			magic == 2 ? &s_qjs_doms_textcontent : &s_qjs_doms_nodevalue,
-			n);
 	if (n == NULL || argc < 1) return JS_UNDEFINED;
 	v = JS_ToCString(ctx, argv[0]);
 	if (v == NULL) return JS_UNDEFINED;
@@ -7817,8 +7722,6 @@ static JSValue qjs_create_text_node(JSContext *ctx, JSValueConst this_val,
 
 	(void) this_val;
 	doc = qjs_document_for_ctx(ctx);
-	qjs_dom_native_sentinel(ctx, "createTextNode", &s_qjs_doms_create_text,
-			(dom_node *)doc);
 	if (doc == NULL || argc < 1) return JS_NULL;
 	text = JS_ToCString(ctx, argv[0]);
 	if (text == NULL) return JS_NULL;
@@ -7851,8 +7754,6 @@ static JSValue qjs_create_comment_node(JSContext *ctx, JSValueConst this_val,
 	int free_data = 0;
 
 	(void) this_val;
-	qjs_dom_native_sentinel(ctx, "createComment", &s_qjs_doms_create_comment,
-			(dom_node *)qjs_document_for_ctx(ctx));
 	if (qjs_document_for_ctx(ctx) == NULL)
 		return JS_ThrowInternalError(ctx,
 				"document.createComment has no native document");
@@ -9210,8 +9111,6 @@ static JSValue qjs_create_element(JSContext *ctx, JSValueConst this_val,
 
 	(void)this_val;
 	doc = qjs_document_for_ctx(ctx);
-	qjs_dom_native_sentinel(ctx, "createElement",
-			&s_qjs_doms_create_element, (dom_node *)doc);
 	if (doc == NULL || argc < 1) return JS_NULL;
 	tag = JS_ToCString(ctx, argv[0]);
 	if (tag == NULL) return JS_NULL;
@@ -9256,8 +9155,6 @@ static JSValue qjs_create_element_ns(JSContext *ctx, JSValueConst this_val,
 
 	(void)this_val;
 	doc = qjs_document_for_ctx(ctx);
-	qjs_dom_native_sentinel(ctx, "createElementNS",
-			&s_qjs_doms_create_element_ns, (dom_node *)doc);
 	if (doc == NULL || argc < 2) return JS_NULL;
 
 	if (!JS_IsNull(argv[0]) && !JS_IsUndefined(argv[0])) {
@@ -9809,8 +9706,6 @@ static void qjs_dom_install(JSContext *ctx)
 				qjs_querySelector, 1);
 		qjs_set_func(ctx, doc, "querySelectorAll",
 				qjs_querySelectorAll, 1);
-		qjs_set_func(ctx, doc, "__msDomSentinel",
-				qjs_dom_public_sentinel, 2);
 		/* Real libdom-backed createElement (native fast path; JS wrapper
 		 * below adds a parentNode-tracking fallback for the pre-document
 		 * window). */
@@ -9897,7 +9792,6 @@ static void qjs_dom_install(JSContext *ctx)
 		{
 			static const char *sec_src =
 			"(function(d){"
-			"function ds(op,route){try{if(d.__msDomSentinel)d.__msDomSentinel(op,route);}catch(e){}}"
 			"function mkfb(tag){"
 			"var vw=(typeof innerWidth==='number'&&innerWidth)||980;"
 			"var vh=(typeof innerHeight==='number'&&innerHeight)||600;"
@@ -9959,12 +9853,12 @@ static void qjs_dom_install(JSContext *ctx)
 			"setAttribute:function(n,v){attrs[n]=String(v);},"
 			"removeAttribute:function(n){delete attrs[n];},"
 			"hasAttribute:function(n){return attrs[n]!==undefined;},"
-			"appendChild:function(c){ds('appendChild','fallback');if(c){setPN(c,this);kids.push(c);"
+			"appendChild:function(c){if(c){setPN(c,this);kids.push(c);"
 			"this.firstChild=kids[0];this.lastChild=kids[kids.length-1];}return c;},"
-			"removeChild:function(c){ds('removeChild','fallback');var i=kids.indexOf(c);if(i>=0){kids.splice(i,1);"
+			"removeChild:function(c){var i=kids.indexOf(c);if(i>=0){kids.splice(i,1);"
 			"setPN(c,null);this.firstChild=kids[0]||null;"
 			"this.lastChild=kids[kids.length-1]||null;}return c;},"
-			"insertBefore:function(c,r){ds('insertBefore','fallback');var i=kids.indexOf(r);"
+			"insertBefore:function(c,r){var i=kids.indexOf(r);"
 			"if(i<0)i=kids.length;kids.splice(i,0,c);setPN(c,this);"
 			"this.firstChild=kids[0]||null;this.lastChild=kids[kids.length-1]||null;return c;},"
 			"contains:function(){return false;},"
@@ -9992,19 +9886,19 @@ static void qjs_dom_install(JSContext *ctx)
 			"(_ct[String(tag||'').toLowerCase()]||HTMLUnknownElement);"
 			"if(_cp&&_cp.prototype){try{Object.setPrototypeOf(el,_cp.prototype);}catch(e){}}}"
 			"return el;}"
-			"d.createElement=function(tag){ds('createElement','entry');"
+			"d.createElement=function(tag){"
 			"var n=d.__createElementNative?d.__createElementNative(tag):null;"
-			"if(n)return n;ds('createElement','fallback');return mkfb(tag);};"
+			"if(n)return n;return mkfb(tag);};"
 			/* fixes870 (#297) - createElementNS, Preact's only element factory.
 			 * Same native-then-fallback shape as createElement above. `opt` is
 			 * accepted and deliberately NEVER forwarded: Preact passes
 			 * `props.is && props`, i.e. undefined OR the entire vnode props
 			 * object, so swallowing it here guarantees the native side can
 			 * never be handed an object it might try to read as a string. */
-			"d.createElementNS=function(ns,tag,opt){ds('createElementNS','entry');"
+			"d.createElementNS=function(ns,tag,opt){"
 			"var n=d.__createElementNSNative?"
 				"d.__createElementNSNative(ns,tag):null;"
-			"if(n)return n;ds('createElementNS','fallback');return mkfb(tag);};"
+			"if(n)return n;return mkfb(tag);};"
 			"if(typeof d.createDocumentFragment!=='function'||!d.__hasFrag){"
 			"d.__hasFrag=true;"
 			"d.createDocumentFragment=function(){"
@@ -10850,11 +10744,9 @@ static void register_browser_globals(JSContext *ctx)
 					"return document.implementation."
 					"createHTMLDocument('');}};"
 			"document.createTextNode=document.createTextNode||function(t){"
-				"if(document.__msDomSentinel)document.__msDomSentinel('createTextNode','entry');"
 				"var n=document.__createTextNodeNative?"
 					"document.__createTextNodeNative(String(t)):null;"
 				"if(n)return n;"
-				"if(document.__msDomSentinel)document.__msDomSentinel('createTextNode','fallback');"
 				"return {nodeValue:String(t),textContent:String(t),"
 					"appendChild:function(){return null;},data:String(t)};};"
 			/* fixes873 (#301) - getElementsByTagName/ClassName were stubs that
@@ -10962,10 +10854,8 @@ static void register_browser_globals(JSContext *ctx)
 			 * before page scripts run; return null in the pre-document fallback
 			 * rather than falsely manufacturing the wrong node type. */
 			"document.createComment=function(t){"
-				"if(document.__msDomSentinel)document.__msDomSentinel('createComment','entry');"
-				"if(document.__createCommentNative)return document.__createCommentNative(t);"
-				"if(document.__msDomSentinel)document.__msDomSentinel('createComment','fallback');"
-				"return null;};"
+				"return document.__createCommentNative?"
+				"document.__createCommentNative(t):null;};"
 			/* fixes1010 - the same universals on `document`.
 			 *
 			 * jQuery's isAttached is ce.contains(e.ownerDocument, e), and
@@ -14662,7 +14552,6 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 	struct jsheap *heap;
 	if (out_heap == NULL) return NSERROR_BAD_PARAMETER;
 	*out_heap = NULL;
-	qjs_dom_sentinel_reset();
 	macsurf_qjs_audit_reset(); /* fixes1016 - audit each page fully */
 	heap = (struct jsheap *)calloc(1, sizeof(*heap));
 	if (heap == NULL) return NSERROR_NOMEM;
@@ -14971,7 +14860,6 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 			 * called from browser_window.c on CONTENT_MSG_DONE, once per
 			 * completed navigation already.) */
 			macsurf_qjs_audit_reset();
-			qjs_dom_sentinel_reset();
 			/* fixes875 (#304) - a NEW realm, so a NEW generation. This is
 			 * the reuse that bites: JS_FreeContext just above returned the
 			 * old ctx's memory to the allocator, so `fresh` (or some other
