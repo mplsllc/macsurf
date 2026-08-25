@@ -42,6 +42,9 @@
 #include "utils/ns_errors.h"
 #include "netsurf/plotters.h"
 #include "netsurf/plot_style.h"
+#include "netsurf/content.h"
+#include "netsurf/content_type.h"
+#include "content/hlcache.h"
 #include "css/utils.h"
 #include "content/handlers/html/box.h"
 #include "content/handlers/html/box_construct.h"
@@ -60,6 +63,77 @@
 /* Maximum nesting depth for <g> recursion. SVG icons rarely exceed
  * 3-4 levels; 16 is a generous safety cap. */
 #define MACOS9_SVG_GROUP_MAX 16
+#define MACOS9_SVG_IMAGE_CACHE 16
+
+struct svg_image_entry {
+	char *url;
+	hlcache_handle *handle;
+	int ready;
+};
+
+static struct svg_image_entry svg_image_cache[MACOS9_SVG_IMAGE_CACHE];
+
+extern struct gui_window *macos9_window_list_head(void);
+
+static nserror svg__image_fetch_cb(hlcache_handle *handle,
+		const hlcache_event *event, void *pw)
+{
+	struct svg_image_entry *entry = (struct svg_image_entry *)pw;
+	struct gui_window *gw;
+
+	(void)handle;
+	if (entry == NULL) return NSERROR_OK;
+	if (event->type == CONTENT_MSG_READY ||
+			event->type == CONTENT_MSG_DONE) {
+		entry->ready = 1;
+		gw = macos9_window_list_head();
+		if (gw != NULL) macos9_window_invalidate_content(gw);
+	} else if (event->type == CONTENT_MSG_ERROR) {
+		entry->ready = -1;
+	}
+	return NSERROR_OK;
+}
+
+static struct svg_image_entry *svg__image_get(struct nsurl *base,
+		const char *href)
+{
+	struct svg_image_entry *entry = NULL;
+	nsurl *url = NULL;
+	const char *text;
+	int i;
+
+	if (base == NULL || href == NULL || href[0] == '\0') return NULL;
+	if (nsurl_join(base, href, &url) != NSERROR_OK || url == NULL)
+		return NULL;
+	text = nsurl_access(url);
+	for (i = 0; i < MACOS9_SVG_IMAGE_CACHE; i++) {
+		if (svg_image_cache[i].url != NULL &&
+				strcmp(svg_image_cache[i].url, text) == 0) {
+			entry = &svg_image_cache[i];
+			break;
+		}
+		if (entry == NULL && svg_image_cache[i].url == NULL)
+			entry = &svg_image_cache[i];
+	}
+	if (entry != NULL && entry->url == NULL) {
+		entry->url = malloc(strlen(text) + 1);
+		if (entry->url != NULL) strcpy(entry->url, text);
+		entry->ready = 0;
+		if (entry->url == NULL || hlcache_handle_retrieve(url,
+				HLCACHE_RETRIEVE_SNIFF_TYPE, NULL, NULL,
+				svg__image_fetch_cb, entry, NULL, CONTENT_IMAGE,
+				&entry->handle) != NSERROR_OK) {
+			free(entry->url);
+			entry->url = NULL;
+			entry->handle = NULL;
+			entry = NULL;
+		} else {
+			macsurf_debug_log_writef("LIFE SVG image fetch %s", text);
+		}
+	}
+	nsurl_unref(url);
+	return entry;
+}
 
 /* Bezier subdivision for ellipse approximation. SVG circles and
  * ellipses become 4 cubic Bezier arcs. The plotter then samples
@@ -1211,6 +1285,63 @@ static void svg__paint_circle(dom_node *node, const struct svg_ctx *c,
 	svg__paint_ellipse_like(node, c, st, 1);
 }
 
+static float svg__image_length(dom_node *node, const char *name,
+		float fallback, float percent_base)
+{
+	dom_string *ds = NULL;
+	const char *v = svg__attr(node, name, &ds);
+	float value = fallback;
+	if (v != NULL) {
+		size_t used = 0;
+		value = svg__atof(v, &used);
+		if (used > 0 && v[used] == '%')
+			value = value * percent_base / 100.0f;
+		dom_string_unref(ds);
+	}
+	return value;
+}
+
+static void svg__paint_image(dom_node *node, const struct svg_ctx *c)
+{
+	dom_string *dhref = NULL;
+	const char *href;
+	struct svg_image_entry *entry;
+	struct content_redraw_data data;
+	struct rect clip;
+	float sx;
+	float sy;
+	float sw;
+	float sh;
+
+	href = svg__attr(node, "href", &dhref);
+	if (href == NULL) href = svg__attr(node, "xlink:href", &dhref);
+	if (href == NULL) return;
+	entry = svg__image_get(c->base_url, href);
+	dom_string_unref(dhref);
+	if (entry == NULL || entry->ready != 1 || entry->handle == NULL)
+		return;
+
+	sx = svg__image_length(node, "x", 0.0f, c->vb_w);
+	sy = svg__image_length(node, "y", 0.0f, c->vb_h);
+	sw = svg__image_length(node, "width", c->vb_w, c->vb_w);
+	sh = svg__image_length(node, "height", c->vb_h, c->vb_h);
+	data.x = (int)svg__map_x(c, sx, sy);
+	data.y = (int)svg__map_y(c, sx, sy);
+	data.width = (int)(sw * c->scale_x + 0.5f);
+	data.height = (int)(sh * c->scale_y + 0.5f);
+	data.background_colour = NS_TRANSPARENT;
+	data.scale = 1.0f;
+	data.repeat_x = false;
+	data.repeat_y = false;
+	data.nearest = false;
+	data.background_blend_mode = 0;
+	clip.x0 = data.x;
+	clip.y0 = data.y;
+	clip.x1 = data.x + data.width;
+	clip.y1 = data.y + data.height;
+	(void)content_redraw(entry->handle, &data, &clip, c->plot_ctx);
+}
+
 static void svg__paint_ellipse(dom_node *node, const struct svg_ctx *c,
 		const struct svg_paint_state *st)
 {
@@ -1720,6 +1851,79 @@ static int svg__tag_is_paint_container(dom_string *tag)
 			strcasecmp(name, "svg") == 0 ||
 			strcasecmp(name, "symbol") == 0 ||
 			strcasecmp(name, "switch") == 0;
+}
+
+/* QuickDraw mask fallback for the common SVG avatar pattern: a masked group
+ * containing an image and a circle that defines the same visible boundary.
+ * The current painter has no off-screen alpha compositor, but an intersected
+ * QD region gives exact binary clipping for this geometry. */
+static RgnHandle svg__push_circle_mask(dom_node *group,
+		const struct svg_ctx *c)
+{
+	dom_string *mask_attr = NULL;
+	const char *mask;
+	dom_node *child = NULL;
+	RgnHandle saved = NULL;
+	RgnHandle oval = NULL;
+	Rect r;
+	int found = 0;
+
+	mask = svg__attr(group, "mask", &mask_attr);
+	if (mask == NULL || strncmp(mask, "url(", 4) != 0) {
+		if (mask_attr != NULL) dom_string_unref(mask_attr);
+		return NULL;
+	}
+	dom_string_unref(mask_attr);
+
+	if (dom_node_get_first_child(group, &child) != DOM_NO_ERR)
+		return NULL;
+	while (child != NULL) {
+		dom_node *next = NULL;
+		dom_string *tag = NULL;
+		if (dom_element_get_tag_name(child, &tag) == DOM_NO_ERR &&
+				tag != NULL && dom_string_caseless_lwc_isequal(tag,
+					corestring_lwc_circle)) {
+			float cx = svg__attr_float(child, "cx", 0.0f);
+			float cy = svg__attr_float(child, "cy", 0.0f);
+			float radius = svg__attr_float(child, "r", 0.0f);
+			if (radius > 0.0f) {
+				r.left = (short)svg__map_x(c, cx - radius, cy);
+				r.right = (short)svg__map_x(c, cx + radius, cy);
+				r.top = (short)svg__map_y(c, cx, cy - radius);
+				r.bottom = (short)svg__map_y(c, cx, cy + radius);
+				found = 1;
+			}
+		}
+		if (tag != NULL) dom_string_unref(tag);
+		dom_node_get_next_sibling(child, &next);
+		dom_node_unref(child);
+		child = next;
+		if (found) break;
+	}
+	if (!found) return NULL;
+
+	saved = NewRgn();
+	oval = NewRgn();
+	if (saved == NULL || oval == NULL) {
+		if (saved != NULL) DisposeRgn(saved);
+		if (oval != NULL) DisposeRgn(oval);
+		return NULL;
+	}
+	GetClip(saved);
+	OpenRgn();
+	PaintOval(&r);
+	CloseRgn(oval);
+	SectRgn(saved, oval, oval);
+	SetClip(oval);
+	DisposeRgn(oval);
+	return saved;
+}
+
+static void svg__pop_mask(RgnHandle saved)
+{
+	if (saved == NULL) return;
+	SetClip(saved);
+	DisposeRgn(saved);
 }
 
 /* Paint an external-sprite <use href="file.svg#id">. Resolves the symbol via
@@ -2238,9 +2442,12 @@ static void svg__paint_subtree(dom_node *parent,
 				(long)(unsigned int)child_st.stroke);
 
 			if (svg__tag_is_paint_container(tag)) {
+				RgnHandle saved_mask = svg__push_circle_mask(child,
+						use_ctx);
 				svg__paint_subtree(child, use_ctx, child_st,
 						child_style, child_custom_env,
 						depth + 1);
+				svg__pop_mask(saved_mask);
 			} else if (dom_string_caseless_lwc_isequal(tag,
 					corestring_lwc_rect)) {
 				svg__paint_rect(child, use_ctx, &child_st);
@@ -2250,6 +2457,9 @@ static void svg__paint_subtree(dom_node *parent,
 			} else if (dom_string_caseless_lwc_isequal(tag,
 					corestring_lwc_ellipse)) {
 				svg__paint_ellipse(child, use_ctx, &child_st);
+			} else if (dom_string_caseless_lwc_isequal(tag,
+					corestring_lwc_image)) {
+				svg__paint_image(child, use_ctx);
 			} else if (dom_string_caseless_lwc_isequal(tag,
 					corestring_lwc_line)) {
 				svg__paint_line(child, use_ctx, &child_st);
