@@ -5272,7 +5272,8 @@ bool html_redraw_box(const html_content *html, struct box *box,
 				width,
 				height,
 				ctx,
-				html->base_url);
+				html->base_url,
+				html);
 #endif
 
 	} else {

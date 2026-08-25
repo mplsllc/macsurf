@@ -44,6 +44,7 @@
 #include "netsurf/plot_style.h"
 #include "css/utils.h"
 #include "content/handlers/html/box.h"
+#include "content/handlers/html/box_construct.h"
 
 /* ----------------------------------------------------------------- */
 /* Constants                                                         */
@@ -176,6 +177,9 @@ struct svg_ctx {
 	/* fixes577  -  page base URL, for resolving external
 	 * <use href="file.svg#id"> sprite references. May be NULL. */
 	struct nsurl *base_url;
+	/* Owning HTML document, needed to select author CSS for SVG shape
+	 * descendants which intentionally have no layout boxes. */
+	const struct html_content *html;
 };
 
 /* fixes201  -  3x3 matrix multiply (only top two rows since the third
@@ -734,15 +738,15 @@ static void svg__update_style(dom_node *node, struct svg_paint_state *st,
 	colour col;
 	int none;
 
-	/* fill attribute */
+	/* Literal fill presentation attributes and inline declarations are
+	 * handled by libcss, where their cascade priority relative to class
+	 * rules is known. Keep the legacy paint-server approximation here:
+	 * fill:url(...) is intentionally outside the libcss fill V1. */
 	v = svg__attr(node, "fill", &ds);
 	if (v != NULL) {
 		if (svg__try_url_colour(v, grads, &col)) {
 			st->fill = col;
 			st->fill_present = 1;
-		} else if (svg__parse_colour(v, &col, &none)) {
-			st->fill = col;
-			st->fill_present = none ? 0 : 1;
 		}
 		dom_string_unref(ds);
 	}
@@ -852,10 +856,6 @@ static void svg__update_style(dom_node *node, struct svg_paint_state *st,
 							grads, &col)) {
 						st->fill = col;
 						st->fill_present = 1;
-					} else if (svg__parse_colour(val_start,
-							&col, &none)) {
-						st->fill = col;
-						st->fill_present = none ? 0 : 1;
 					}
 				} else if (kl == 6 &&
 						strncmp(key_start, "stroke", 6) == 0) {
@@ -1709,6 +1709,19 @@ static int svg__tag_is_use(dom_string *tag)
 	       (s[2] == 'e' || s[2] == 'E');
 }
 
+static int svg__tag_is_paint_container(dom_string *tag)
+{
+	const char *name;
+	if (tag == NULL) return 0;
+	name = (const char *)dom_string_data(tag);
+	if (name == NULL) return 0;
+	return strcasecmp(name, "g") == 0 ||
+			strcasecmp(name, "a") == 0 ||
+			strcasecmp(name, "svg") == 0 ||
+			strcasecmp(name, "symbol") == 0 ||
+			strcasecmp(name, "switch") == 0;
+}
+
 /* Paint an external-sprite <use href="file.svg#id">. Resolves the symbol via
  * macos9_svg_sprite (fetch+cache+mini-parse) and paints its path scaled from
  * the symbol viewBox onto this icon box. V1: single path per symbol, external
@@ -2149,6 +2162,8 @@ static int svg__read_transform_attr(dom_node *node, float *out)
 static void svg__paint_subtree(dom_node *parent,
 		const struct svg_ctx *c,
 		struct svg_paint_state st,
+		const css_computed_style *parent_style,
+		css_custom_env *parent_custom_env,
 		int depth)
 {
 	dom_node *child = NULL;
@@ -2170,8 +2185,37 @@ static void svg__paint_subtree(dom_node *parent,
 					DOM_NO_ERR && tag != NULL) {
 			struct svg_paint_state child_st = st;
 			struct svg_ctx child_ctx = *c;
+			css_select_results *child_styles = NULL;
+			const css_computed_style *child_style = parent_style;
+			css_custom_env *child_custom_env = NULL;
 			float local_xform[6];
 			const struct svg_ctx *use_ctx = c;
+
+			if (c->html != NULL && parent_style != NULL) {
+				child_styles = html_svg_get_style(c->html, child,
+						parent_style, parent_custom_env,
+						&child_custom_env);
+				if (child_styles != NULL) {
+					css_color csscol;
+					uint8_t fill_type;
+					child_style = child_styles->styles[
+							CSS_PSEUDO_ELEMENT_NONE];
+					css_computed_color(child_style, &csscol);
+					child_st.current_color =
+							nscss_color_to_ns(csscol);
+					fill_type = css_computed_fill(child_style,
+							&csscol);
+					if (fill_type == CSS_FILL_NONE) {
+						child_st.fill_present = 0;
+					} else if (fill_type == CSS_FILL_CURRENT_COLOR) {
+						child_st.fill = child_st.current_color;
+						child_st.fill_present = 1;
+					} else if (fill_type == CSS_FILL_COLOR) {
+						child_st.fill = nscss_color_to_ns(csscol);
+						child_st.fill_present = 1;
+					}
+				}
+			}
 			svg__update_style(child, &child_st, c->grads);
 
 			/* fixes201  -  compose any transform="..." on the
@@ -2193,9 +2237,9 @@ static void svg__paint_subtree(dom_node *parent,
 				(long)(unsigned int)child_st.fill,
 				(long)(unsigned int)child_st.stroke);
 
-			if (dom_string_caseless_lwc_isequal(tag,
-					corestring_lwc_g)) {
+			if (svg__tag_is_paint_container(tag)) {
 				svg__paint_subtree(child, use_ctx, child_st,
+						child_style, child_custom_env,
 						depth + 1);
 			} else if (dom_string_caseless_lwc_isequal(tag,
 					corestring_lwc_rect)) {
@@ -2227,6 +2271,11 @@ static void svg__paint_subtree(dom_node *parent,
 			/* <defs> / <linearGradient> / <radialGradient> /
 			 * unknown tags are silently skipped (gradients are
 			 * pre-walked separately). */
+
+			if (child_styles != NULL)
+				css_select_results_destroy(child_styles);
+			if (child_custom_env != NULL)
+				css_custom_env_unref(child_custom_env);
 		}
 
 		if (tag != NULL) dom_string_unref(tag);
@@ -2246,7 +2295,8 @@ static void svg__paint_subtree(dom_node *parent,
 nserror macos9_svg_paint_inline(struct box *box,
 		int x, int y, int w, int h,
 		const struct redraw_context *ctx,
-		struct nsurl *base_url)
+		struct nsurl *base_url,
+		const struct html_content *html)
 {
 	struct svg_ctx c;
 	struct svg_paint_state st;
@@ -2267,6 +2317,7 @@ nserror macos9_svg_paint_inline(struct box *box,
 	c.box_h = h;
 	c.plot_ctx = ctx;
 	c.base_url = base_url;
+	c.html = html;
 
 	/* Read width / height attributes for viewBox fallback. */
 	vb_w_default = svg__attr_float((dom_node *)box->node,
@@ -2382,7 +2433,8 @@ nserror macos9_svg_paint_inline(struct box *box,
 			(int)(c.scale_x * 1000), (int)(c.scale_y * 1000),
 			grads_local.n_gradients);
 
-		svg__paint_subtree((dom_node *)box->node, &c, st, 0);
+		svg__paint_subtree((dom_node *)box->node, &c, st,
+				box->style, box->custom_env, 0);
 	}
 	return NSERROR_OK;
 }

@@ -69,10 +69,12 @@ struct redraw_context;
  *         catastrophic state (NULL ctx, etc.).
  */
 struct nsurl;
+struct html_content;
 nserror macos9_svg_paint_inline(struct box *box,
 		int x, int y, int w, int h,
 		const struct redraw_context *ctx,
-		struct nsurl *base_url);
+		struct nsurl *base_url,
+		const struct html_content *html);
 
 /**
  * Paint a STANDALONE external SVG (img src=*.svg / CSS background

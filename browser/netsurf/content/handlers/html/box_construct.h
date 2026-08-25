@@ -106,6 +106,15 @@ nserror cancel_dom_to_box(void *box_conversion_context);
  */
 nserror html_recascade_tree(struct html_content *c);
 
+/* Select CSS for an inline-SVG descendant. SVG shape nodes deliberately do
+ * not have layout boxes, so the SVG painter uses this to run the same author
+ * cascade and custom-property inheritance as ordinary HTML elements. */
+css_select_results *html_svg_get_style(const struct html_content *c,
+		struct dom_node *node,
+		const css_computed_style *parent_style,
+		css_custom_env *parent_custom_env,
+		css_custom_env **out_custom_env);
+
 
 /**
  * Retrieve the box for a dom node, if there is one

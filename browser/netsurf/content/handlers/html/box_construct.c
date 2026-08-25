@@ -469,6 +469,17 @@ box_get_style(html_content *c,
 	return styles;
 }
 
+css_select_results *html_svg_get_style(const html_content *c, dom_node *node,
+		const css_computed_style *parent_style,
+		css_custom_env *parent_custom_env,
+		css_custom_env **out_custom_env)
+{
+	const css_computed_style *root_style =
+			(c->layout != NULL) ? c->layout->style : parent_style;
+	return box_get_style((html_content *)c, parent_style, root_style, node,
+			parent_custom_env, out_custom_env);
+}
+
 
 /*
  * fixes134b: counter table helpers.
