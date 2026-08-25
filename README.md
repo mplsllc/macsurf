@@ -29,7 +29,7 @@ A tested build on [**macsurf.org**](https://macsurf.org), free for everyone, wit
 </td>
 <td width="50%" valign="top" align="center">
 
-### ⭐ Weekly, for supporters
+### ⭐ Semi-Weekly, for supporters
 
 In-progress builds land in **Beta-Box** every week, ahead of every stable release, with dev notes along the way.
 
@@ -57,7 +57,7 @@ In-progress builds land in **Beta-Box** every week, ahead of every stable releas
   <a href="https://bsky.app/profile/macsurfos9.bsky.social" target="_blank"><img src="https://img.shields.io/badge/Bluesky-Follow-0285FF?style=for-the-badge&logo=bluesky&logoColor=white" alt="Follow on Bluesky" height="40"></a>
 </p>
 
-<p align="center"><strong>Thanks to our supporters:</strong> Mack Chamberlain, 
+<p align="center"><strong>Thanks to our supporters:</strong> Mack Chamberlain, Chris Marks,
 Joseph Mulvaney, Shlooom, Kestral, Mothra (Patreon) &middot; kilgeist, Turuun, Rogue (Ko-Fi)</p>
 
 <p align="center">
