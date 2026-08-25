@@ -176,6 +176,9 @@ void macsurf_assert_failed_(const char *expr, const char *file, int line);
 extern void *macsurf_safe_alloc(size_t size);
 extern void *macsurf_safe_calloc(size_t count, size_t size);
 extern void *macsurf_safe_realloc(void *ptr, size_t size);
+extern void *macsurf_try_alloc(size_t size);
+extern void *macsurf_try_calloc(size_t count, size_t size);
+extern void *macsurf_try_realloc(void *ptr, size_t size);
 #define malloc  macsurf_safe_alloc
 #define calloc  macsurf_safe_calloc
 #define realloc macsurf_safe_realloc

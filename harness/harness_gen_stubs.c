@@ -19,6 +19,9 @@ typedef void(*textarea_client_callback)(void *data, struct textarea_msg *msg);
 
 /* real allocator (harness uses libc malloc so ASan tracks) */
 void *macsurf_safe_alloc(size_t n){return malloc(n);}
+void *macsurf_try_alloc(size_t n){return malloc(n);}
+void *macsurf_try_calloc(size_t n,size_t s){return calloc(n,s);}
+void *macsurf_try_realloc(void *p,size_t n){return realloc(p,n);}
 void *macsurf_safe_calloc(size_t a,size_t b){return calloc(a,b);}
 void *macsurf_safe_realloc(void*p,size_t n){return realloc(p,n);}
 int macsurf_ptr_is_heap(const void*p){(void)p;return 1;}

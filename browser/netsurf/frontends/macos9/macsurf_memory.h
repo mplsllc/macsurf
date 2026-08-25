@@ -38,6 +38,14 @@ void *macsurf_safe_calloc(size_t count, size_t size);
  */
 void *macsurf_safe_realloc(void *ptr, size_t size);
 
+/* Fallible counterparts for subsystems such as QuickJS which have their own
+ * out-of-memory recovery path.  These call the underlying C allocator
+ * directly and return NULL on failure; they never display the fatal MacSurf
+ * allocation alert. */
+void *macsurf_try_alloc(size_t size);
+void *macsurf_try_calloc(size_t count, size_t size);
+void *macsurf_try_realloc(void *ptr, size_t size);
+
 /*
  * fixes711 (#207) blank-screen reconnaissance. Both emit 'RECON'
  * lines that survive the crash-only log gate.

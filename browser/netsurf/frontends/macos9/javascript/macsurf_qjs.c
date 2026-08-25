@@ -14227,37 +14227,71 @@ static void qjs_selftest(JSContext *ctx)
 }
 #endif /* MACSURF_QJS_SELFTEST */
 
-/* Bulletproof allocator wrappers for QuickJS JSMallocFunctions.
- * Call macsurf_safe_* directly -- do NOT route through the prefix
- * malloc macro to avoid any recursion risk. */
+/* Keep returned storage aligned for every type while carrying its payload
+ * size immediately before it. */
+typedef union qjs_alloc_header {
+	size_t size;
+	double align_double;
+	void *align_pointer;
+} qjs_alloc_header;
+
+/* fixes1327 (#167) - QuickJS needs a FALLIBLE allocator: NULL is how the
+ * engine raises a catchable JS out-of-memory exception.  Routing it through
+ * macsurf_safe_* instead terminated the whole application on the first
+ * fragmented allocation.  A size header also makes malloc_usable_size real;
+ * the old always-zero callback meant JS_SetMemoryLimit counted no payload and
+ * the nominal 128 MB limit was ineffective. */
 static void *qjs_safe_malloc(void *opaque, size_t size)
 {
+	qjs_alloc_header *base;
 	(void)opaque;
-	return macsurf_safe_alloc(size);
+	if (size > (size_t)-1 - sizeof(*base)) return NULL;
+	base = (qjs_alloc_header *)macsurf_try_alloc(sizeof(*base) + size);
+	if (base == NULL) return NULL;
+	base->size = size;
+	return (void *)(base + 1);
 }
 
 static void qjs_safe_free(void *opaque, void *ptr)
 {
 	(void)opaque;
-	free(ptr);
+	if (ptr != NULL) free(((qjs_alloc_header *)ptr) - 1);
 }
 
 static void *qjs_safe_realloc(void *opaque, void *ptr, size_t size)
 {
+	qjs_alloc_header *base;
 	(void)opaque;
-	return macsurf_safe_realloc(ptr, size);
+	if (ptr == NULL) return qjs_safe_malloc(opaque, size);
+	if (size == 0) {
+		qjs_safe_free(opaque, ptr);
+		return NULL;
+	}
+	if (size > (size_t)-1 - sizeof(*base)) return NULL;
+	base = (qjs_alloc_header *)macsurf_try_realloc(
+			((qjs_alloc_header *)ptr) - 1,
+			sizeof(*base) + size);
+	if (base == NULL) return NULL;
+	base->size = size;
+	return (void *)(base + 1);
 }
 
 static void *qjs_safe_calloc(void *opaque, size_t count, size_t size)
 {
+	size_t total;
+	void *ptr;
 	(void)opaque;
-	return macsurf_safe_calloc(count, size);
+	if (size != 0 && count > (size_t)-1 / size) return NULL;
+	total = count * size;
+	ptr = qjs_safe_malloc(opaque, total);
+	if (ptr != NULL) memset(ptr, 0, total);
+	return ptr;
 }
 
 static size_t qjs_safe_usable_size(const void *ptr)
 {
-	(void)ptr;
-	return 0;
+	if (ptr == NULL) return 0;
+	return (((const qjs_alloc_header *)ptr) - 1)->size;
 }
 
 /* Field order must match JSMallocFunctions (quickjs.h:470):
@@ -14504,7 +14538,10 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 	/* fixes522: bound the JS heap so a heavy/runaway script throws an OOM
 	 * exception instead of exhausting the OS partition and crashing the
 	 * machine.  Generous (partition free is ~300MB) but capped. */
-	JS_SetMemoryLimit(heap->rt, 128UL * 1024UL * 1024UL);
+	/* Real OS 9 hardware provides roughly 142 MB free at launch.  Preserve
+	 * about 46 MB for the DOM, decoded images, fetch/cache objects, and native
+	 * stack instead of allowing bytecode to consume the entire partition. */
+	JS_SetMemoryLimit(heap->rt, 96UL * 1024UL * 1024UL);
 
 	/* fixes593 - the heap-corruption freeze on heavy JS pages (tinkerdifferent:
 	 * all scripts still RUN through QuickJS, but a later malloc/free spins on a
@@ -14512,11 +14549,11 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 	 * fires once malloc_size crosses this threshold (default 256KB), i.e. ONLY
 	 * on heavy pages - exactly the tinkerdifferent-vs-68kmla split - and if any
 	 * ref is over-released, the cycle collector double-frees when it walks the
-	 * graph. Push the threshold past the 128MB memory cap so auto-GC never runs
+	 * graph. Push the threshold past the memory cap so auto-GC never runs
 	 * mid-load. Nothing about which JS runs changes; the per-navigation runtime
 	 * is torn down wholesale on nav, so uncollected cycles never accumulate.
 	 * (If this proves it, the real refcount bug gets fixed and GC re-armed.) */
-	JS_SetGCThreshold(heap->rt, (size_t)0x40000000UL);  /* 1GB > 128MB cap */
+	JS_SetGCThreshold(heap->rt, (size_t)0x40000000UL);  /* 1GB > 96MB cap */
 	/* fixes1070 - record that the collector is OFF so the perf log says so.
 	 * Set beside the call it describes: a flag that can drift from the
 	 * threshold it reports is worse than no flag. See g_perf_gc_armed. */
