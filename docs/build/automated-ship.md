@@ -99,9 +99,10 @@ Three things about this that are worth knowing before you change it:
 - **`Make project document 1` is CodeWarrior's Bring Up To Date command.** It
   must run immediately before `Run` so the current project state is compiled
   and linked before the application is launched.
-- **`Run` launches the newly updated application.** The combined AppleScript
-  call returns only after the build and launch complete, so packaging can
-  safely follow without racing an unfinished binary.
+- **`Run` follows the update immediately.** If MacSurf is already running,
+  CodeWarrior fronts that process; the binary freshness check is therefore the
+  proof that the preceding Bring Up To Date produced the archive's executable.
+  The combined AppleScript call returns before packaging begins.
 - **The direct parameter is required and specific.** Bare `Make` fails with
   `-10001` (descriptor type mismatch); `Make current project` is a syntax
   error. `Run project document 1` and `Make project document 1` both work.
@@ -142,7 +143,7 @@ still burning CPU before concluding anything:
 ssh imac 'ps -axww -o pid,time | grep "[C]odeWarrior IDE"'   # sample twice
 ```
 
-### 3.2.1 TRAP: `Run` does not rebuild while the app is running
+### 3.2.1 `Run` does not rebuild while the app is running
 
 **Observed 2026-08-25, and it cost a full cycle.** If the built MacSurf is
 already running, `Run project document 1` **fronts the live process and does not
@@ -158,19 +159,15 @@ compile anything**. Every signal the script has still reads as success:
 done.
 ```
 
-That `.sit` was the **previous** binary, packaged under the new fix number. The
-sources on the Mac were correct; the project showed every file needing
-recompilation (red check marks in the IDE); nothing was built.
+That `.sit` was the **previous** binary, packaged under the new fix number.
+The source state on the Mac was correct; the project showed every file needing
+recompilation (red check marks in the IDE); `Run` simply did not perform the
+missing build.
 
-**Before building, the app must be quit.** `ship.sh` now enforces this itself:
-it detects the built app by its full process path, asks MacSurf to quit through
-AppleScript when necessary, polls for up to 30 seconds, and refuses to build if
-the process remains. It never kills the process as a fallback. For a manual
-build, use the equivalent check yourself:
-
-```bash
-ssh imac 'ps -axww | grep -c "[M]acSurfBuilds/MacSurf"'   # must be 0
-```
+The pipeline therefore does **not** use `Run` as the build operation. It sends
+CodeWarrior's `Make project document 1` (Bring Up To Date) immediately before
+`Run`, whether or not MacSurf is already running. There is no pre-build quit
+step to block that required sequence.
 
 **Never accept "clean + running" as proof of a build.** Check that the binary
 itself carries the code just shipped — its mtime, plus a marker string that
@@ -182,13 +179,9 @@ ssh imac 'strings /Projects/MacSurfBuilds/MacSurf | grep -c FBDOCREQ'
 ```
 
 This is the same failure shape as the harness false-green rule in `CLAUDE.md`:
-the check confirmed the *absence of an error* instead of the *presence of an
-effect*. "binary mtime unchanged" was being reported as a benign note; it is
-the actual alarm whenever a build was expected to do work.
-
-**Corollary:** if the IDE shows the project files red-checkmarked, the source
-state on the Mac is already right. Do not "force" a rebuild by touching mtimes
-on the Mac — the cause is elsewhere, and almost certainly this trap.
+the check must confirm the *presence of a relink*, not just the absence of an
+error. "binary mtime unchanged" is the alarm whenever a source drop requested
+a build.
 
 ### 3.3 Error detection
 
@@ -424,8 +417,8 @@ type/creator has to be inspected through the Finder via AppleScript instead.
 | `The variable r is not defined. (-2753)` | `Run`/`Make` returns no value; don't assign the result |
 | Push fails | Script stops before building — intentional |
 | Non-empty `messages` | Compile errors; nothing is packaged |
-| "binary mtime unchanged" | **Suspect first that MacSurf was already running and nothing was built** (§3.2.1). Only benign when no build was expected |
-| Build "clean" but binary mtime is old | The app was running; `Run` fronted it instead of compiling. Quit it and rebuild |
+| "binary mtime unchanged" | Bring Up To Date did not relink the dropped sources. Nothing is packaged when a source drop requested a build |
+| Build "clean" but binary mtime is old | `Run` fronted the app, but Bring Up To Date did not produce a fresh binary |
 | `** MacSurf did not launch` | Build linked but the app failed to start — check the crash log |
 | `** $MACFILES is not mounted` | AFP share dropped; remount on the Mac |
 | `** DropStuff produced no archive` | DropStuff didn't start or was blocked by a dialog |

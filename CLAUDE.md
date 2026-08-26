@@ -107,13 +107,12 @@ commands report, the commands win; fix the prose.
   without a build. Verified: CR-converts, stamps a future mtime, scp's each file to the
   iMac, verifies size + CR/LF on the far side (LF must be 0 or CodeWarrior chokes). Never
   CR-convert or mtime-stamp by hand.
-- **Quit MacSurf before any build.** `Run` silently declines to compile while the
-  built app is running, and the pipeline then reports a clean build and packages the
-  PREVIOUS binary. Check `ssh imac 'ps -axww | grep -c "[M]acSurfBuilds/MacSurf"'` is 0,
-  and confirm the built binary carries a marker string from the tree you just shipped.
-  "binary mtime unchanged" is the alarm, not a note. See `docs/build/automated-ship.md`
-  §3.2.1; project-file adds/removes over AppleScript are §3.7; bisecting on hardware is
-  `docs/build/hardware-bisect.md`.
+- **Bring Up To Date before Run.** `Run` silently declines to compile while the built
+  app is running, so the pipeline explicitly sends CodeWarrior's Bring Up To Date command
+  immediately before `Run` rather than treating `Run` as the build. Confirm the built
+  binary changed after a source drop; "binary mtime unchanged" is the alarm, not a note.
+  See `docs/build/automated-ship.md` §3.2.1; project-file adds/removes over AppleScript
+  are §3.7; bisecting on hardware is `docs/build/hardware-bisect.md`.
 - **`tools/ship_fix.sh`** — retired-not-deleted fallback (tars, CR-converts, scp's to the
   OS 9 laptop route). Only ships the files you name — a probe left in an earlier round
   stays live on the target until you explicitly re-ship that file.
