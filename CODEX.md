@@ -73,11 +73,14 @@ Linux.
 - Harness checks live under `harness/`; use `make check-c89` and `make check-macdefault`
   before drops touching `MACSURF_JS_*` switches.
 - Never add `-w` to harness targets. It can hide the warning the gate exists to catch.
-- Current delivery path in `CLAUDE.md`: `./forclaude/drop-to-imac.sh <fixnum> <paths...>`.
-  It handles CR line endings, future mtimes, scp, and remote verification. Do not hand-roll
-  CR conversion or mtime stamping.
+- Current delivery path is `./forclaude/ship.sh <fixnum> <paths...>`. This drives the complete automated pipeline:
+  1. Calls `./forclaude/drop-to-imac.sh` (CR conversion, future mtimes, `scp`).
+  2. Sends AppleScript to quit MacSurf and polls until exit.
+  3. Sends `Update Project` to CW8 IDE (Bring Up To Date), waits 10s, then `Run project document 1`.
+  4. Aborts if `messages of project document 1` is non-empty (compile error) or if binary mtime is unchanged (relink failed).
+  5. Uses `DropStuff` via AppleScript to create `.sit`, then copies to `/Volumes/macfiles` using `ditto --rsrc` (preserves `'carb'` resource fork and Finder metadata).
 - `tools/ship_fix.sh` is a retired fallback.
-
+- **MacSurf.mcp modifications:** If files are added, they MUST be added manually via `Project > Add` in CodeWarrior. AppleScript `Add Files` is broken on Tiger (10.4). `Remove Files` works but should be done manually if adding anyway. Never edit `.mcp` directly.
 ## Subsystem Memory
 
 - Root rules and cross-cutting gotchas: `CLAUDE.md`.

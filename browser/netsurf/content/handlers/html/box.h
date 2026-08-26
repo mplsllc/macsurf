@@ -71,6 +71,7 @@ typedef enum {
 	BOX_INLINE_FLEX,
 	BOX_GRID,
 	BOX_INLINE_GRID,
+	BOX_CONTENTS,
 } box_type;
 
 

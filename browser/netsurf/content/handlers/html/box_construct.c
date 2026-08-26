@@ -258,6 +258,7 @@ static const box_type box_map[] = {
 	BOX_INLINE_FLEX,     /* CSS_DISPLAY_INLINE_FLEX */
 	BOX_GRID,            /* CSS_DISPLAY_GRID -- fixes75 */
 	BOX_INLINE_GRID,     /* CSS_DISPLAY_INLINE_GRID -- fixes75 */
+	BOX_CONTENTS,        /* CSS_DISPLAY_CONTENTS */
 };
 
 
@@ -366,6 +367,7 @@ box_extract_properties(dom_node *n, struct box_construct_props *props)
 			 * use the parent node's styling as the parent
 			 * style, above. */
 			if (b != NULL && b->type != BOX_INLINE &&
+					b->type != BOX_CONTENTS &&
 					b->type != BOX_BR) {
 				props->containing_block = b;
 
@@ -1429,7 +1431,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	counter_apply_increment(ctx, box->style);
 
 	/* Handle the :before pseudo element */
-	if (!(box->flags & IS_REPLACED)) {
+	if (!(box->flags & IS_REPLACED) && box->type != BOX_CONTENTS) {
 		box_construct_generate(ctx, ctx->n, ctx->content, box,
 				box->styles->styles[CSS_PSEUDO_ELEMENT_BEFORE]);
 	}
@@ -1606,63 +1608,65 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	if (*convert_children)
 		box->flags |= CONVERT_CHILDREN;
 
-	if (box->type == BOX_INLINE || box->type == BOX_BR ||
-			box->type == BOX_INLINE_FLEX ||
-			box->type == BOX_INLINE_BLOCK) {
-		/* Inline container must exist, as we'll have
-		 * created it above if it didn't */
-		assert(props.inline_container != NULL);
+	if (box->type != BOX_CONTENTS) {
+		if (box->type == BOX_INLINE || box->type == BOX_BR ||
+				box->type == BOX_INLINE_FLEX ||
+				box->type == BOX_INLINE_BLOCK) {
+			/* Inline container must exist, as we'll have
+			 * created it above if it didn't */
+			assert(props.inline_container != NULL);
 
-		box_add_child(props.inline_container, box);
+			box_add_child(props.inline_container, box);
 
-		/* fixes140g: ::before for inline parents fires AT
-		 * ELEMENT-OPEN TIME, right after the inline is wired
-		 * into its container. The earlier ::before call at line
-		 * ~1200 bailed because box->parent was NULL. Firing here
-		 * gives correct quote-depth nesting: outer ::before runs
-		 * before any child opens, so the inner ::before sees
-		 * depth=1 (set by outer ::before) instead of depth=0. */
-		if (!(box->flags & IS_REPLACED) && box->styles != NULL) {
-			box_construct_generate(ctx, ctx->n, ctx->content, box,
-				box->styles->styles[CSS_PSEUDO_ELEMENT_BEFORE]);
-		}
-	} else {
-		if (ns_computed_display(box->style, props.node_is_root) ==
-				CSS_DISPLAY_LIST_ITEM) {
-			/* List item: compute marker */
-			if (box_construct_marker(box, props.title, ctx,
-					props.containing_block) == false)
-				return false;
-		}
-
-		if (props.node_is_root == false &&
-				box__containing_block_is_flex(&props) == false &&
-				(css_computed_float(box->style) ==
-				CSS_FLOAT_LEFT ||
-				css_computed_float(box->style) ==
-				CSS_FLOAT_RIGHT)) {
-			/* Float: insert a float between the parent and box. */
-			struct box *flt = box_create(NULL, NULL, false,
-					props.href, props.target, props.title,
-					NULL, ctx->bctx);
-			if (flt == NULL)
-				return false;
-			if (props.download)   /* fixes1063 (#114) */
-				flt->flags |= LINK_DOWNLOAD;
-
-			if (css_computed_float(box->style) == CSS_FLOAT_LEFT)
-				flt->type = BOX_FLOAT_LEFT;
-			else
-				flt->type = BOX_FLOAT_RIGHT;
-
-			box_add_child(props.inline_container, flt);
-			box_add_child(flt, box);
+			/* fixes140g: ::before for inline parents fires AT
+			 * ELEMENT-OPEN TIME, right after the inline is wired
+			 * into its container. The earlier ::before call at line
+			 * ~1200 bailed because box->parent was NULL. Firing here
+			 * gives correct quote-depth nesting: outer ::before runs
+			 * before any child opens, so the inner ::before sees
+			 * depth=1 (set by outer ::before) instead of depth=0. */
+			if (!(box->flags & IS_REPLACED) && box->styles != NULL) {
+				box_construct_generate(ctx, ctx->n, ctx->content, box,
+					box->styles->styles[CSS_PSEUDO_ELEMENT_BEFORE]);
+			}
 		} else {
-			/* Non-floated block-level box: add to containing block
-			 * if there is one. If we're the root box, then there
-			 * won't be. */
-			if (props.containing_block != NULL)
-				box_add_child(props.containing_block, box);
+			if (ns_computed_display(box->style, props.node_is_root) ==
+					CSS_DISPLAY_LIST_ITEM) {
+				/* List item: compute marker */
+				if (box_construct_marker(box, props.title, ctx,
+						props.containing_block) == false)
+					return false;
+			}
+
+			if (props.node_is_root == false &&
+					box__containing_block_is_flex(&props) == false &&
+					(css_computed_float(box->style) ==
+					CSS_FLOAT_LEFT ||
+					css_computed_float(box->style) ==
+					CSS_FLOAT_RIGHT)) {
+				/* Float: insert a float between the parent and box. */
+				struct box *flt = box_create(NULL, NULL, false,
+						props.href, props.target, props.title,
+						NULL, ctx->bctx);
+				if (flt == NULL)
+					return false;
+				if (props.download)   /* fixes1063 (#114) */
+					flt->flags |= LINK_DOWNLOAD;
+
+				if (css_computed_float(box->style) == CSS_FLOAT_LEFT)
+					flt->type = BOX_FLOAT_LEFT;
+				else
+					flt->type = BOX_FLOAT_RIGHT;
+
+				box_add_child(props.inline_container, flt);
+				box_add_child(flt, box);
+			} else {
+				/* Non-floated block-level box: add to containing block
+				 * if there is one. If we're the root box, then there
+				 * won't be. */
+				if (props.containing_block != NULL)
+					box_add_child(props.containing_block, box);
+			}
 		}
 	}
 

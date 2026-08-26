@@ -761,7 +761,8 @@ enum css_display_e {
 	CSS_DISPLAY_FLEX			= 0x11,
 	CSS_DISPLAY_INLINE_FLEX			= 0x12,
 	CSS_DISPLAY_GRID			= 0x13,
-	CSS_DISPLAY_INLINE_GRID			= 0x14
+	CSS_DISPLAY_INLINE_GRID			= 0x14,
+	CSS_DISPLAY_CONTENTS			= 0x15
 };
 
 enum css_empty_cells_e {
