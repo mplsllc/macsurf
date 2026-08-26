@@ -8644,16 +8644,26 @@ box_coords(bx, &cx, &cy);
 			const char *mo_setup_js =
 				"globalThis.__moFired=0;globalThis.__moLen=-1;"
 				"globalThis.__moTargetOk=0;globalThis.__moAddedOk=0;"
+				"globalThis.__moInnerTargetOk=0;"
+				"globalThis.__moInnerAddedOk=0;"
+				"globalThis.__moInnerRemovedOk=0;"
 				"(function(){"
 				"var mo=new MutationObserver(function(records){"
 					"globalThis.__moFired=1;"
 					"globalThis.__moLen=records.length;"
-					"if(records&&records[0]&&"
-						"records[0].target===document.getElementById('p0'))"
+					"for(var i=0;i<records.length;i++){var r=records[i];"
+						"if(r.target!==document.getElementById('p0'))continue;"
+						"for(var a=0;a<r.addedNodes.length;a++){"
+							"if(r.addedNodes[a].id==='t69-added')"
+								"globalThis.__moAddedOk=1;"
+							"if(r.addedNodes[a].id==='t69-inner'){"
+								"globalThis.__moInnerTargetOk=1;"
+								"globalThis.__moInnerAddedOk=1;}}"
+						"for(var d=0;d<r.removedNodes.length;d++)"
+							"if(r.removedNodes[d].id==='t69-added')"
+								"globalThis.__moInnerRemovedOk=1;}"
+					"if(globalThis.__moAddedOk)"
 						"globalThis.__moTargetOk=1;"
-					"if(records&&records[0]&&records[0].addedNodes[0]&&"
-						"records[0].addedNodes[0].id==='t69-added')"
-						"globalThis.__moAddedOk=1;"
 				"});"
 				"mo.observe(document.documentElement,"
 					"{childList:true,subtree:true,attributes:true});"
@@ -8674,6 +8684,19 @@ box_coords(bx, &cx, &cy);
 				"if(!globalThis.__moAddedOk)"
 					"throw new Error('ASSERT FAIL: MO addedNodes lost the "
 						"real appended child');";
+			const char *mo_inner_mutate_js =
+				"document.getElementById('p0').innerHTML="
+				"'<b id=\"t69-inner\">innerHTML child</b>';";
+			const char *mo_inner_check_js =
+				"if(!globalThis.__moInnerTargetOk)"
+					"throw new Error('ASSERT FAIL: innerHTML MO record target "
+						"was not the replaced element');"
+				"if(!globalThis.__moInnerAddedOk)"
+					"throw new Error('ASSERT FAIL: innerHTML addedNodes lost "
+						"the parsed child');"
+				"if(!globalThis.__moInnerRemovedOk)"
+					"throw new Error('ASSERT FAIL: innerHTML removedNodes lost "
+						"the detached child');";
 			unsigned char ok1, ok2, ok3;
 
 			ok1 = js_exec(t69thread, (const unsigned char *)mo_setup_js,
@@ -8711,6 +8734,37 @@ box_coords(bx, &cx, &cy);
 			if (!ok3) {
 				fprintf(stderr, "FAIL: MutationObserver did not deliver "
 						"a real record after reconvert completed\n");
+				return 1;
+			}
+
+			ok2 = js_exec(t69thread,
+					(const unsigned char *)mo_inner_mutate_js,
+					strlen(mo_inner_mutate_js), "driver-mo-innerhtml.js");
+			if (!ok2) {
+				fprintf(stderr, "FAIL: MO innerHTML mutation threw\n");
+				return 1;
+			}
+			harness_pump_all(100000);
+
+			t69c.reflowing = false;
+			t69c.box_conversion_context = NULL;
+			t69c.aborted = false;
+			t69c.base.active = 0;
+			rc = html_reconvert_content((struct content *)&t69c);
+			if (rc != 0) {
+				fprintf(stderr, "FAIL: Test 69 innerHTML reconvert did not "
+						"queue\n");
+				return 1;
+			}
+			harness_pump_all(100000);
+
+			ok3 = js_exec(t69thread,
+					(const unsigned char *)mo_inner_check_js,
+					strlen(mo_inner_check_js),
+					"driver-mo-innerhtml-check.js");
+			if (!ok3) {
+				fprintf(stderr, "FAIL: MutationObserver did not report "
+						"innerHTML's real replacement\n");
 				return 1;
 			}
 		}

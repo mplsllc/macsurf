@@ -3675,6 +3675,12 @@ static dom_node *qjs_find_child_element_by_tag(dom_node *parent,
 	return NULL;
 }
 
+/* Defined with the other native mutation entry points below. innerHTML uses
+ * the same observer queue as appendChild/removeChild so one native DOM change
+ * has one delivery path. */
+static void qjs_queue_child_mutation(JSContext *ctx, const char *type,
+		JSValueConst parent, JSValueConst added, JSValueConst removed);
+
 /* ---- innerHTML= via real HTML fragment parsing (fixes846, #167 S3) ----
  * Previously: el.textContent = html.replace(/<[^>]*>/g,''), i.e. every tag
  * was stripped and only the text carcass assigned, so any markup-injecting
@@ -3709,6 +3715,8 @@ static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
 	dom_document_fragment *frag = NULL;
 	const char *html_src;
 	size_t html_len = 0;
+	JSValue observed_removed;
+	JSValue observed_added;
 
 	(void) this_val; (void) magic;
 	el = (dom_element *) qjs_get_node(this_val);
@@ -3743,6 +3751,19 @@ static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
 				pb, (long)html_len, vb);
 	}
 	JS_FreeCString(ctx, html_src);
+
+	/* A real innerHTML assignment is one child-list replacement, not an
+	 * invisible sequence of private remove/append operations. Snapshot the
+	 * outgoing children before mutating the native tree; Node.childNodes is a
+	 * JS array snapshot here, so it continues to name the removed nodes after
+	 * they have been detached. The matching post-move snapshot below supplies
+	 * every parsed child as addedNodes. Without these records, a framework
+	 * observing a mount point sees DOM it did not create and never hydrates. */
+	observed_removed = JS_GetPropertyStr(ctx, this_val, "childNodes");
+	if (JS_IsException(observed_removed)) {
+		JS_FreeValue(ctx, JS_GetException(ctx));
+		observed_removed = JS_NewArray(ctx);
+	}
 
 	/* Clear existing children before inserting the parsed content --
 	 * innerHTML= REPLACES content, it does not append. */
@@ -3822,6 +3843,16 @@ static JSValue qjs_el_set_inner_html_data(JSContext *ctx,
 	if (src_parent != html_el && src_parent != (dom_node *) frag)
 		macsurf_dom_node_unref(src_parent);
 	macsurf_dom_node_unref((dom_node *) frag);
+
+	observed_added = JS_GetPropertyStr(ctx, this_val, "childNodes");
+	if (JS_IsException(observed_added)) {
+		JS_FreeValue(ctx, JS_GetException(ctx));
+		observed_added = JS_NewArray(ctx);
+	}
+	qjs_queue_child_mutation(ctx, "childList", this_val, observed_added,
+			observed_removed);
+	JS_FreeValue(ctx, observed_added);
+	JS_FreeValue(ctx, observed_removed);
 
 	qjs_mark_dom_dirty(ctx, (void *) el, MACOS9_DOMMUT_INNERHTML);
 	return JS_UNDEFINED;
