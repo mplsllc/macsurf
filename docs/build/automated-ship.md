@@ -26,7 +26,7 @@ copy the archive to the macfiles share, launch the app.
 |---|------|-----------|
 | 1 | Push changed sources to the Mac | delegates to `drop-to-imac.sh` |
 | 2 | Quit MacSurf and confirm it exited | no-reply AppleScript quit event, then process polling |
-| 3 | Bring the project up to date, wait for it to finish, then launch MacSurf | AppleScript: `Make project document 1`, CPU-idle wait, then `Run project document 1` |
+| 3 | Bring the project up to date, wait 10 seconds, then launch MacSurf | AppleScript: `Make Project`, 10-second delay, then `Run project document 1` |
 | 4 | Check for compile errors | AppleScript: `messages of project document 1` |
 | 5 | Stuff the built app | AppleScript: `tell app "DropStuff" to open …` |
 | 6 | Copy the archive to macfiles | `ditto --rsrc` to the mounted AFP volume |
@@ -90,9 +90,9 @@ half-delivered set of files produces a result that means nothing.
 
 ```applescript
 tell application "CodeWarrior IDE"
-    Make project document 1 -- Bring Up To Date
+    Make Project -- Bring Up To Date
 end tell
--- Wait until the update has completed, then:
+-- Give the IDE time to begin the update, then:
 tell application "CodeWarrior IDE"
     Run project document 1
 end tell
@@ -100,19 +100,19 @@ end tell
 
 Three things about this that are worth knowing before you change it:
 
-- **`Make project document 1` is CodeWarrior's Bring Up To Date command.** It
-  must complete before `Run`; the IDE can dispatch an update asynchronously,
-  so putting both commands in one AppleScript block can launch the old app
-  before the update has linked.
+- **`Make Project` is CodeWarrior's Bring Up To Date command.** Its `MMPR`/
+  `Make` AppleEvent takes no direct parameter; `Make project document 1` is a
+  different invocation and must not be used. Give CodeWarrior a short delay
+  before `Run`; putting both commands in one AppleScript block can launch the
+  old app before the update has begun.
 - **MacSurf is stopped before this sequence.** The pipeline sends it a quit
   event without waiting for the application's reply, then polls its full
   process path. Only after the process has exited does it send Bring Up To
   Date → `Run`, ensuring the new binary can be built and launched.
-- **The direct parameter is required and specific.** Bare `Make` fails with
-  `-10001` (descriptor type mismatch); `Make current project` is a syntax
-  error. `Run project document 1` and `Make project document 1` both work.
-  `count documents` is `1` and `get name of document 1` returns ` MacSurfQ`
-  (note the leading space in the project name — it is real).
+- **The parameter shape is verb-specific.** `Make Project` takes no direct
+  parameter. `Run project document 1` requires the project document. `count
+  documents` is `1` and `get name of document 1` returns ` MacSurfQ` (note the
+  leading space in the project name — it is real).
 
 ### 3.2.0 TRAP: Apple Events time out after 60s — a full rebuild exceeds it
 
@@ -128,14 +128,13 @@ mistook the timeout string for a compile message and refused to package, which
 is fail-safe but wrong.
 
 Do not rely on the Apple Event reply as the build-completion signal. The
-pipeline waits for CodeWarrior CPU activity to settle before querying messages
-or sending `Run`. The Apple Event itself still needs a long timeout for a full
-rebuild:
+pipeline uses a 10-second gap before `Run`; the Apple Event itself still needs
+a long timeout for a full rebuild:
 
 ```applescript
 with timeout of 7200 seconds
     tell application "CodeWarrior IDE"
-        Make project document 1
+        Make Project
     end tell
 end timeout
 end
@@ -171,11 +170,11 @@ missing build.
 
 The pipeline therefore does **not** use `Run` as the build operation. It first
 asks MacSurf to quit using a no-reply AppleScript event, polls for its exit,
-then sends CodeWarrior's `Make project document 1` (Bring Up To Date), waits
-for it to complete, checks messages and binary mtime, and only then sends
-`Run`. It also gives CodeWarrior one event-loop turn after the external source
-copy so its project state sees the verified future-dated file. A synchronous
-quit request is deliberately avoided:
+then sends CodeWarrior's `Make Project` (Bring Up To Date), waits
+10 seconds, checks messages and binary mtime, and only then sends `Run`. It
+also gives CodeWarrior one event-loop turn after the external source copy so
+its project state sees the verified future-dated file. A synchronous quit
+request is deliberately avoided:
 an unresponsive application can otherwise leave `osascript` waiting forever.
 
 **Never accept "clean + running" as proof of a build.** Check that the binary
@@ -422,7 +421,7 @@ type/creator has to be inspected through the Finder via AppleScript instead.
 |---|---|
 | `AppleEvent timed out. (-1712)` | The build exceeded the 60s Apple Event timeout and is probably STILL RUNNING. Not a failure — see §3.2.0 |
 | `execution error: … (-609)` on any `osascript` | Console session gone, or the OS was upgraded past Tiger's namespace behaviour |
-| `A descriptor type mismatch occurred. (-10001)` | AppleScript command sent without its required direct parameter |
+| `A descriptor type mismatch occurred. (-10001)` | AppleScript verb/argument shape is wrong; `Make Project` takes none while `Run` needs `project document 1` |
 | `The variable r is not defined. (-2753)` | `Run`/`Make` returns no value; don't assign the result |
 | Push fails | Script stops before building — intentional |
 | Non-empty `messages` | Compile errors; nothing is packaged |
