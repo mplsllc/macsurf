@@ -14,8 +14,9 @@ on the test Mac and a versioned `.sit` on the file server:
 With no paths it rebuilds and relaunches whatever is already on the iMac, which
 is useful for re-running after a crash or confirming the tree is clean.
 
-This replaces the old manual loop: drop files, switch to the Mac, hit Make in
-the CodeWarrior IDE, watch for errors, drag the built app onto DropStuff,
+This replaces the old manual loop: drop files, switch to the Mac, choose
+Bring Up To Date in the CodeWarrior IDE, watch for errors, drag the built app
+onto DropStuff,
 copy the archive to the macfiles share, launch the app.
 
 ---
@@ -26,7 +27,7 @@ copy the archive to the macfiles share, launch the app.
 |---|------|-----------|
 | 1 | Push changed sources to the Mac | delegates to `drop-to-imac.sh` |
 | 2 | Quit MacSurf and confirm it exited | no-reply AppleScript quit event, then process polling |
-| 3 | Bring the project up to date, wait 10 seconds, then launch MacSurf | AppleScript: `Make Project`, 10-second delay, then `Run project document 1` |
+| 3 | Bring the project up to date, wait 10 seconds, then launch MacSurf | AppleScript: `Update Project`, 10-second delay, then `Run project document 1` |
 | 4 | Check for compile errors | AppleScript: `messages of project document 1` |
 | 5 | Stuff the built app | AppleScript: `tell app "DropStuff" to open …` |
 | 6 | Copy the archive to macfiles | `ditto --rsrc` to the mounted AFP volume |
@@ -90,7 +91,7 @@ half-delivered set of files produces a result that means nothing.
 
 ```applescript
 tell application "CodeWarrior IDE"
-    Make Project -- Bring Up To Date
+    Update Project
 end tell
 -- Give the IDE time to begin the update, then:
 tell application "CodeWarrior IDE"
@@ -100,16 +101,17 @@ end tell
 
 Three things about this that are worth knowing before you change it:
 
-- **`Make Project` is CodeWarrior's Bring Up To Date command.** Its `MMPR`/
-  `Make` AppleEvent takes no direct parameter; `Make project document 1` is a
-  different invocation and must not be used. Give CodeWarrior a short delay
-  before `Run`; putting both commands in one AppleScript block can launch the
-  old app before the update has begun.
+- **`Update Project` is CodeWarrior's Bring Up To Date command.** Its
+  `MMPR`/`UpdP` AppleEvent takes no direct parameter. `Make Project`
+  (`MMPR`/`Make`) is a separate Make-menu build command, so it must not
+  substitute for the update operation. Give CodeWarrior a short delay before
+  `Run`; putting both commands in one AppleScript block can launch the old app
+  before the update has begun.
 - **MacSurf is stopped before this sequence.** The pipeline sends it a quit
   event without waiting for the application's reply, then polls its full
   process path. Only after the process has exited does it send Bring Up To
   Date → `Run`, ensuring the new binary can be built and launched.
-- **The parameter shape is verb-specific.** `Make Project` takes no direct
+- **The parameter shape is verb-specific.** `Update Project` takes no direct
   parameter. `Run project document 1` requires the project document. `count
   documents` is `1` and `get name of document 1` returns ` MacSurfQ` (note the
   leading space in the project name — it is real).
@@ -134,7 +136,7 @@ a long timeout for a full rebuild:
 ```applescript
 with timeout of 7200 seconds
     tell application "CodeWarrior IDE"
-        Make Project
+        Update Project
     end tell
 end timeout
 end
@@ -170,7 +172,7 @@ missing build.
 
 The pipeline therefore does **not** use `Run` as the build operation. It first
 asks MacSurf to quit using a no-reply AppleScript event, polls for its exit,
-then sends CodeWarrior's `Make Project` (Bring Up To Date), waits
+then sends CodeWarrior's `Update Project` (Bring Up To Date), waits
 10 seconds, checks messages and binary mtime, and only then sends `Run`. It
 also gives CodeWarrior one event-loop turn after the external source copy so
 its project state sees the verified future-dated file. A synchronous quit
@@ -334,15 +336,15 @@ Verified entries, all in suite `MMPR`:
 
 | Command | Event | Direct param | Reply |
 |---|---|---|---|
-| `Make Project` | `MMPR`/`Make` | `null` | `ErrM` — "Errors that occurred while making the project"; boolean param `Errs` controls whether the message window's contents are returned to the caller |
+| `Update Project` | `MMPR`/`UpdP` | `null` | `ErrM` — "Errors that occurred while updating the project"; boolean param `Errs` controls whether the message window's contents are returned to the caller |
 | `Remove Files` | `MMPR`/`RemF` | `alis` — list of files to remove | `shor` — error code for each file removed (`0` = success) |
 | `Get Project File` | `MMPR`/`GFil` | `SrcF` short — index within its segment | requires `Segm` short — the segment containing the file |
 | `Get Project Specifier` | `MMPR`/`GetP` | `null` | `alis` — file specifier for the current project |
 
 This settles the open question in §3.3 about the populated message format: the
-errors come back from the make event itself as `ErrM`, gated by `Errs`.
+errors come back from the update event itself as `ErrM`, gated by `Errs`.
 
-**Credit:** the AppleEvent approach and the `MMPR`/`Make` + `Errs`/`ErrM`/`ErrT`/
+**Credit:** the AppleEvent approach and the `MMPR`/`UpdP` + `Errs`/`ErrM`/`ErrT`/
 `ErrS`/`ErrL` codes were confirmed against **cmdide** by Rebecca Heineman
 (https://github.com/burgerbecky/cmdide), a command-line AppleEvent front-end to
 CodeWarrior. No code was taken from it — it is 32-bit Carbon for 10.5.8 and
@@ -421,8 +423,8 @@ type/creator has to be inspected through the Finder via AppleScript instead.
 |---|---|
 | `AppleEvent timed out. (-1712)` | The build exceeded the 60s Apple Event timeout and is probably STILL RUNNING. Not a failure — see §3.2.0 |
 | `execution error: … (-609)` on any `osascript` | Console session gone, or the OS was upgraded past Tiger's namespace behaviour |
-| `A descriptor type mismatch occurred. (-10001)` | AppleScript verb/argument shape is wrong; `Make Project` takes none while `Run` needs `project document 1` |
-| `The variable r is not defined. (-2753)` | `Run`/`Make` returns no value; don't assign the result |
+| `A descriptor type mismatch occurred. (-10001)` | AppleScript verb/argument shape is wrong; `Update Project` takes none while `Run` needs `project document 1` |
+| `The variable r is not defined. (-2753)` | `Run`/`Update Project` returns no value; don't assign the result |
 | Push fails | Script stops before building — intentional |
 | Non-empty `messages` | Compile errors; nothing is packaged |
 | "binary mtime unchanged" | Bring Up To Date did not relink the dropped sources. Nothing is packaged when a source drop requested a build |
