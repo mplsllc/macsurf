@@ -8647,6 +8647,8 @@ box_coords(bx, &cx, &cy);
 				"globalThis.__moInnerTargetOk=0;"
 				"globalThis.__moInnerAddedOk=0;"
 				"globalThis.__moInnerRemovedOk=0;"
+				"globalThis.__moAttrClassOk=0;"
+				"globalThis.__moAttrDataOk=0;"
 				"(function(){"
 				"var mo=new MutationObserver(function(records){"
 					"globalThis.__moFired=1;"
@@ -8661,7 +8663,11 @@ box_coords(bx, &cx, &cy);
 								"globalThis.__moInnerAddedOk=1;}}"
 						"for(var d=0;d<r.removedNodes.length;d++)"
 							"if(r.removedNodes[d].id==='t69-added')"
-								"globalThis.__moInnerRemovedOk=1;}"
+								"globalThis.__moInnerRemovedOk=1;"
+						"if(r.type==='attributes'&&r.attributeName==='class')"
+							"globalThis.__moAttrClassOk=1;"
+						"if(r.type==='attributes'&&r.attributeName==='data-t69')"
+							"globalThis.__moAttrDataOk=1;}"
 					"if(globalThis.__moAddedOk)"
 						"globalThis.__moTargetOk=1;"
 				"});"
@@ -8697,6 +8703,15 @@ box_coords(bx, &cx, &cy);
 				"if(!globalThis.__moInnerRemovedOk)"
 					"throw new Error('ASSERT FAIL: innerHTML removedNodes lost "
 						"the detached child');";
+			const char *mo_attr_mutate_js =
+				"(function(){var p=document.getElementById('p0');"
+				"p.className='t69-observed';"
+				"p.setAttribute('data-t69','observed');})();";
+			const char *mo_attr_check_js =
+				"if(!globalThis.__moAttrClassOk)"
+					"throw new Error('ASSERT FAIL: MO did not report class');"
+				"if(!globalThis.__moAttrDataOk)"
+					"throw new Error('ASSERT FAIL: MO did not report data-t69');";
 			unsigned char ok1, ok2, ok3;
 
 			ok1 = js_exec(t69thread, (const unsigned char *)mo_setup_js,
@@ -8765,6 +8780,37 @@ box_coords(bx, &cx, &cy);
 			if (!ok3) {
 				fprintf(stderr, "FAIL: MutationObserver did not report "
 						"innerHTML's real replacement\n");
+				return 1;
+			}
+
+			ok2 = js_exec(t69thread,
+					(const unsigned char *)mo_attr_mutate_js,
+					strlen(mo_attr_mutate_js), "driver-mo-attributes.js");
+			if (!ok2) {
+				fprintf(stderr, "FAIL: MO attribute mutation threw\n");
+				return 1;
+			}
+			harness_pump_all(100000);
+
+			t69c.reflowing = false;
+			t69c.box_conversion_context = NULL;
+			t69c.aborted = false;
+			t69c.base.active = 0;
+			rc = html_reconvert_content((struct content *)&t69c);
+			if (rc != 0) {
+				fprintf(stderr, "FAIL: Test 69 attribute reconvert did not "
+						"queue\n");
+				return 1;
+			}
+			harness_pump_all(100000);
+
+			ok3 = js_exec(t69thread,
+					(const unsigned char *)mo_attr_check_js,
+					strlen(mo_attr_check_js),
+					"driver-mo-attributes-check.js");
+			if (!ok3) {
+				fprintf(stderr, "FAIL: MutationObserver did not report "
+						"attributes after a real reconvert\n");
 				return 1;
 			}
 		}

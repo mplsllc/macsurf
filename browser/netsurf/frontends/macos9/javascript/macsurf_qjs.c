@@ -3399,13 +3399,18 @@ static void qjs_mut_audit(const char *op, dom_node *target,
 }
 /* ====================================================================== */
 
+/* Defined with the other native mutation entry points below. Attribute
+ * changes use the same queued delivery path as child-list changes. */
+static void qjs_queue_attribute_mutation(JSContext *ctx,
+		JSValueConst target, const char *name, const char *old_value);
+
 static JSValue qjs_el_setAttribute_data(JSContext *ctx,
 		JSValueConst this_val, int argc, JSValueConst *argv,
 		int magic, JSValueConst *func_data)
 {
 	dom_element *el;
 	const char *name_cstr, *val_cstr;
-	dom_string *name_ds, *val_ds;
+	dom_string *name_ds, *val_ds, *old_ds;
 	int attr_kind;	/* fixes926 */
 
 	(void)this_val; (void)magic;
@@ -3420,6 +3425,7 @@ static JSValue qjs_el_setAttribute_data(JSContext *ctx,
 	}
 	name_ds = qjs_make_domstr(name_cstr);
 	val_ds  = qjs_make_domstr(val_cstr);
+	old_ds = NULL;
 	/* fixes926 - classify BEFORE the name is freed. Only class/style could
 	 * ever be answered by a recascade rather than a box rebuild; every other
 	 * attribute is baked at box construction or reaches nothing. */
@@ -3431,12 +3437,16 @@ static JSValue qjs_el_setAttribute_data(JSContext *ctx,
 	}
 	/* fixes1015 - audit WHO sets WHAT to WHAT. */
 	qjs_mut_audit("setattr", (dom_node *)el, name_cstr, val_cstr);
-	JS_FreeCString(ctx, name_cstr);
-	JS_FreeCString(ctx, val_cstr);
 	if (name_ds && val_ds) {
+		(void)macsurf_dom_element_get_attribute(el, name_ds, &old_ds);
 		macsurf_dom_element_set_attribute(el, name_ds, val_ds);
+		qjs_queue_attribute_mutation(ctx, this_val, name_cstr,
+				old_ds ? dom_string_data(old_ds) : NULL);
 		qjs_mark_dom_dirty(ctx, (void *) el, attr_kind);
 	}
+	JS_FreeCString(ctx, name_cstr);
+	JS_FreeCString(ctx, val_cstr);
+	if (old_ds) macsurf_dom_string_unref(old_ds);
 	if (name_ds) macsurf_dom_string_unref(name_ds);
 	if (val_ds)  macsurf_dom_string_unref(val_ds);
 	return JS_UNDEFINED;
@@ -4451,6 +4461,39 @@ static void qjs_queue_child_mutation(JSContext *ctx, const char *type,
 	JS_FreeValue(ctx, global);
 }
 
+static void qjs_queue_attribute_mutation(JSContext *ctx,
+		JSValueConst target, const char *name, const char *old_value)
+{
+	JSValue global;
+	JSValue fn;
+	JSValue args[6];
+	JSValue result;
+
+	global = JS_GetGlobalObject(ctx);
+	fn = JS_GetPropertyStr(ctx, global, "__msQueueMutation");
+	if (!JS_IsFunction(ctx, fn)) {
+		JS_FreeValue(ctx, fn);
+		JS_FreeValue(ctx, global);
+		return;
+	}
+	args[0] = JS_NewString(ctx, "attributes");
+	args[1] = JS_DupValue(ctx, target);
+	args[2] = JS_UNDEFINED;
+	args[3] = JS_UNDEFINED;
+	args[4] = JS_NewString(ctx, name);
+	args[5] = old_value ? JS_NewString(ctx, old_value) : JS_NULL;
+	result = JS_Call(ctx, fn, global, 6, args);
+	if (JS_IsException(result))
+		JS_FreeValue(ctx, JS_GetException(ctx));
+	JS_FreeValue(ctx, result);
+	JS_FreeValue(ctx, args[0]);
+	JS_FreeValue(ctx, args[1]);
+	JS_FreeValue(ctx, args[4]);
+	JS_FreeValue(ctx, args[5]);
+	JS_FreeValue(ctx, fn);
+	JS_FreeValue(ctx, global);
+}
+
 static JSValue qjs_dom_mut_check(JSContext *ctx, const char *op,
 		dom_exception exc, dom_node *parent, dom_node *child)
 {
@@ -4626,7 +4669,7 @@ static JSValue qjs_el_remove_attribute_data(JSContext *ctx,
 {
 	dom_element *el;
 	const char *name_cstr;
-	dom_string *name_ds;
+	dom_string *name_ds, *old_ds;
 	int rm_kind;	/* fixes926 */
 	(void)this_val; (void)magic;
 	el = (dom_element *)qjs_get_node(this_val);
@@ -4634,6 +4677,7 @@ static JSValue qjs_el_remove_attribute_data(JSContext *ctx,
 	name_cstr = JS_ToCString(ctx, argv[0]);
 	if (name_cstr == NULL) return JS_UNDEFINED;
 	name_ds = qjs_make_domstr(name_cstr);
+	old_ds = NULL;
 	/* fixes926 - classify before the free (see setAttribute). */
 	rm_kind = MACOS9_DOMMUT_REMOVEATTRIBUTE;
 	if (strcmp(name_cstr, "class") == 0) {
@@ -4642,15 +4686,21 @@ static JSValue qjs_el_remove_attribute_data(JSContext *ctx,
 		rm_kind = MACOS9_DOMMUT_SETATTR_STYLE;
 	}
 	qjs_mut_audit("rmattr", (dom_node *)el, name_cstr, NULL); /* fixes1015 */
-	JS_FreeCString(ctx, name_cstr);
 	if (name_ds) {
+		(void)macsurf_dom_element_get_attribute(el, name_ds, &old_ds);
 		macsurf_dom_element_remove_attribute(el, name_ds);
+		if (old_ds != NULL) {
+			qjs_queue_attribute_mutation(ctx, this_val, name_cstr,
+					dom_string_data(old_ds));
+		}
 		/* fixes843b - this real DOM mutation never marked dirty, so
 		 * el.removeAttribute(...) (a common show/hide idiom) never
 		 * triggered a repaint. Match setAttribute's behaviour. */
 		qjs_mark_dom_dirty(ctx, (void *) el, rm_kind);
 		macsurf_dom_string_unref(name_ds);
 	}
+	JS_FreeCString(ctx, name_cstr);
+	if (old_ds) macsurf_dom_string_unref(old_ds);
 	return JS_UNDEFINED;
 }
 
@@ -11165,12 +11215,13 @@ static void register_browser_globals(JSContext *ctx)
 		"MutationObserver.prototype.takeRecords=function(){return [];};"
 		"this.MutationObserver=MutationObserver;"
 		"globalThis.__msMutPending=[];globalThis.__msMutScheduled=false;"
-		"globalThis.__msQueueMutation=function(type,target,added,removed){"
+		"globalThis.__msQueueMutation=function(type,target,added,removed,attr,oldValue){"
 			"var a=Array.isArray(added)?added.slice():(added?[added]:[]);"
 			"var r=Array.isArray(removed)?removed.slice():(removed?[removed]:[]);"
 			"globalThis.__msMutPending.push({type:type,target:target,"
 				"addedNodes:a,removedNodes:r,previousSibling:null,nextSibling:null,"
-				"attributeName:null,attributeNamespace:null,oldValue:null});"
+				"attributeName:attr||null,attributeNamespace:null,"
+				"oldValue:oldValue===undefined?null:oldValue});"
 			"if(globalThis.__msMutScheduled)return;"
 			"globalThis.__msMutScheduled=true;"
 			"setTimeout(function(){globalThis.__msDeliverMutations();},0);"
@@ -11189,6 +11240,9 @@ static void register_browser_globals(JSContext *ctx)
 					"for(var k=0;k<ob._targets.length;k++){"
 						"var watch=ob._targets[k],root=watch.node,op=watch.opts||{};"
 						"if(rec.type==='childList'&&!op.childList)continue;"
+						"if(rec.type==='attributes'&&!op.attributes)continue;"
+						"if(rec.type==='attributes'&&op.attributeFilter&&"
+							"op.attributeFilter.indexOf(rec.attributeName)<0)continue;"
 						"if(root===rec.target||(op.subtree&&root&&root.contains&&"
 							"root.contains(rec.target))){hit=true;break;}"
 					"}"
