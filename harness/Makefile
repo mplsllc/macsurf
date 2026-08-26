@@ -30,6 +30,7 @@ ASAN   := -fsanitize=address
 CFLAGS := -O0 -g $(ASAN) -std=gnu99 -w -include stdint.h -include stdbool.h \
           -DMACSURF_JS_GEOMETRY=1 -DMACSURF_JS_VIEW_EVENTS=1 \
           -DMACSURF_JS_FIRE_LOAD=1 -DMACSURF_JS_AUDIT=1 \
+          -DMACSURF_RECONVERT_TEST_HOOK \
           -include include/macsurf_safe_alloc_decls.h
 
 # include set: harness stubs FIRST (shadow Mac headers), then netsurf, real libs, quickjs

@@ -2573,6 +2573,14 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 				return;
 			}
 			if (bce_ok == false) {
+				if (macsurf_reconvert_in_progress) {
+					macsurf_debug_log_writef(
+						"WORK reconvert #%ld: box_construct_element failed"
+						" node=%ld tag=%s",
+						(long) macsurf_reconvert_seq,
+						(long) g_reconv_node_ix,
+						reconv_node_tag(ctx->n));
+				}
 				ctx->cb(ctx->content, false);
 				dom_node_unref(ctx->n);
 				free(ctx);

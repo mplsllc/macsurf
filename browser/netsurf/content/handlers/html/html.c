@@ -2857,6 +2857,79 @@ static void html_reconvert_detach_forms(html_content *c)
 	}
 }
 
+/* Form controls are normally discovered just once after parsing. Script-made
+ * forms and controls arrive later, so a reconvert needs a fresh registry for
+ * its replacement boxes. Keep the old registry until success: its controls
+ * still belong to the retained old tree if conversion has to roll back. */
+static void html_reconvert_free_forms(struct form *forms)
+{
+	struct form *prev;
+
+	while (forms != NULL) {
+		prev = forms->prev;
+		form_free(forms);
+		forms = prev;
+	}
+}
+
+static bool html_reconvert_rebuild_forms(html_content *c)
+{
+	struct form *f;
+	nsurl *action = NULL;
+	nserror error;
+
+	if (c == NULL || c->document == NULL)
+		return false;
+
+	c->forms = html_forms_get_forms(c->encoding,
+			(dom_html_document *) c->document);
+	for (f = c->forms; f != NULL; f = f->prev) {
+		/* Keep dynamic forms subject to the same absolute-action rule as
+		 * parser-time forms. */
+		if (f->action == NULL || f->action[0] == '\0') {
+			nsurl *doc_addr = content_get_url(&c->base);
+			/* A manually constructed content (the deterministic harness) has
+			 * no document URL. Keep an empty action rather than asserting in
+			 * nsurl_access; real fetched pages always take the join below. */
+			if (c->base_url == NULL || doc_addr == NULL) {
+				free(f->action);
+				f->action = strdup("");
+				if (f->action == NULL)
+					goto failed;
+				continue;
+			}
+			error = nsurl_join(c->base_url, nsurl_access(doc_addr),
+					&action);
+		} else {
+			error = nsurl_join(c->base_url, f->action, &action);
+		}
+		if (error != NSERROR_OK || action == NULL)
+			goto failed;
+
+		free(f->action);
+		f->action = strdup(nsurl_access(action));
+		nsurl_unref(action);
+		action = NULL;
+		if (f->action == NULL)
+			goto failed;
+
+		if (f->document_charset == NULL) {
+			f->document_charset = strdup(c->encoding);
+			if (f->document_charset == NULL)
+				goto failed;
+		}
+	}
+
+	return true;
+
+failed:
+	if (action != NULL)
+		nsurl_unref(action);
+	html_reconvert_free_forms(c->forms);
+	c->forms = NULL;
+	return false;
+}
+
 /* fixes843 (#167 S2) - pin the OLD tree's text-node dom_strings across the
  * teardown+rebuild window, the same way fixes421 already defers the OLD box
  * CONTEXT to protect shared/interned CSS styles. The gap fixes421 left open:
@@ -3109,6 +3182,21 @@ void html_reconvert_phase_report(void)
  * Freed in html_reconvert_done after the new tree + reformat are live.
  * Single-window browser => one re-convert at a time; file-scope is safe. */
 static void *g_reconvert_old_bctx = NULL;
+/* A reconvert is transactional: until the new tree completes, this is the
+ * rendered tree that must return if construction fails. */
+static struct box *g_reconvert_old_layout = NULL;
+static struct content_html_iframe *g_reconvert_old_iframe = NULL;
+static struct form *g_reconvert_old_forms = NULL;
+
+#ifdef MACSURF_RECONVERT_TEST_HOOK
+/* Harness-only deterministic failure injection. */
+static int g_reconvert_test_fail_once = 0;
+
+void macsurf_reconvert_test_fail_once(void)
+{
+	g_reconvert_test_fail_once = 1;
+}
+#endif
 
 /* fixes889 - reconvert sequence + the layout pointer each one installed.
  * The click crash (box_for_node -> freed box -> illegal instruction) and a
@@ -3578,11 +3666,104 @@ static void html_reconvert_free_old(void)
 			" have handed a FREED box to box_for_node)",
 			(long) (macsurf_box_backlink_cleared - before));
 	}
+	if (g_reconvert_old_forms != NULL) {
+		html_reconvert_free_forms(g_reconvert_old_forms);
+		g_reconvert_old_forms = NULL;
+	}
+	g_reconvert_old_layout = NULL;
+	g_reconvert_old_iframe = NULL;
+}
+
+/* Restore the persistent DOM's box links after discarding a failed
+ * replacement tree. Float and marker boxes are explicit because they are not
+ * reliably reachable through children/next alone. */
+static void html_reconvert_restore_box_links(struct box *b, int depth,
+		unsigned long *rebound)
+{
+	struct box *fl;
+	void *old = NULL;
+
+	if (b == NULL || depth > 512)
+		return;
+
+	while (b != NULL) {
+		if (b->node != NULL) {
+			(void) dom_node_set_user_data(b->node,
+					corestring_dom___ns_key_box_node_data,
+					b, NULL, &old);
+			(*rebound)++;
+		}
+		if (b->gadget != NULL)
+			b->gadget->box = b;
+
+		if (b->list_marker != NULL) {
+			html_reconvert_restore_box_links(b->list_marker,
+					depth + 1, rebound);
+		}
+
+		/* A float is normally also in the regular tree, but revisiting it
+		 * is harmless and covers a detached float subtree as well. */
+		for (fl = b->float_children; fl != NULL; fl = fl->next_float) {
+			html_reconvert_restore_box_links(fl, depth + 1, rebound);
+		}
+
+		if (b->children != NULL) {
+			html_reconvert_restore_box_links(b->children,
+					depth + 1, rebound);
+		}
+		b = b->next;
+	}
+}
+
+/* A failed reconvert must preserve the last fully rendered tree. The old
+ * failure path freed it after c->layout was cleared, blanking the document. */
+static void html_reconvert_rollback(html_content *c)
+{
+	void *new_bctx;
+	unsigned long rebound = 0;
+
+	if (c == NULL)
+		return;
+
+	new_bctx = c->bctx;
+	c->bctx = NULL;
+	c->layout = NULL;
+	c->iframe = NULL;
+
+	/* The partial tree owns its boxes, styles, and partial iframe list. */
+	if (new_bctx != NULL) {
+		extern const char *macsurf_talloc_free_ctx;
+		macsurf_talloc_free_ctx = "reconvert-failed-new-tree";
+		talloc_free(new_bctx);
+		macsurf_talloc_free_ctx = "(none)";
+	}
+
+	html_reconvert_release_pinned_strings();
+	html_reconvert_free_forms(c->forms);
+	c->forms = g_reconvert_old_forms;
+	c->bctx = g_reconvert_old_bctx;
+	c->layout = g_reconvert_old_layout;
+	c->iframe = g_reconvert_old_iframe;
+	g_reconvert_old_bctx = NULL;
+	g_reconvert_old_layout = NULL;
+	g_reconvert_old_iframe = NULL;
+	g_reconvert_old_forms = NULL;
+
+	if (c->layout != NULL) {
+		c->unit_len_ctx.root_style = c->layout->style;
+		html_reconvert_restore_box_links(c->layout, 0, &rebound);
+		(void) imagemap_extract(c);
+	}
+
+	macsurf_debug_log_writef(
+		"LIFE reconvert rollback layout=%p bctx=%p links=%ld",
+		(void *) c->layout, (void *) c->bctx, (long) rebound);
 }
 
 static void html_reconvert_done(html_content *c, bool success)
 {
 	nserror err;
+	content_status saved_status;
 
 	c->box_conversion_context = NULL;
 	/* fixes895 - the box build finished (or failed); this brackets the dark
@@ -3603,14 +3784,7 @@ static void html_reconvert_done(html_content *c, bool success)
 	if ((success == false) || (c->aborted)) {
 		macsurf_debug_log_writef("WORK reconvert #%ld: FAILED/aborted",
 				(long) macsurf_reconvert_seq);
-		{	/* fixes1095 */
-			double t0 = html_reconv_now();
-			html_reconvert_relink_objects(c);
-			html_reconv_ph_add(RECONV_PH_RELINK, t0);
-			t0 = html_reconv_now();
-			html_reconvert_free_old(); /* don't leak the deferred old tree */
-			html_reconv_ph_add(RECONV_PH_FREEOLD, t0);
-		}
+		html_reconvert_rollback(c);
 		/* fixes895 - disarm the hunt: the async span is over. */
 		macsurf_reconvert_in_progress = 0;
 		macsurf_debug_log_writef("LIFE reconvert in_progress=0 seq=%ld (done-failed)",
@@ -3650,8 +3824,18 @@ static void html_reconvert_done(html_content *c, bool success)
 	macsurf_reconv_pos_flush();
 	{	/* fixes1095 - REFORMAT (cascade + layout + first paint) */
 		double t0 = html_reconv_now();
+		/* content__reformat deliberately accepts only an already-live
+		 * content. A JS geometry read may force this reconvert while the
+		 * parser is still LOADING, though. The tree is complete at this
+		 * point; borrow READY solely for the formatter assertion and restore
+		 * LOADING immediately so the fetch/load lifecycle cannot advance. */
+		saved_status = c->base.status;
+		if (saved_status == CONTENT_STATUS_LOADING)
+			c->base.status = CONTENT_STATUS_READY;
 		content__reformat(&c->base, false,
 				c->base.available_width, c->base.available_height);
+		if (saved_status == CONTENT_STATUS_LOADING)
+			c->base.status = saved_status;
 		html_reconv_ph_add(RECONV_PH_REFORMAT, t0);
 	}
 
@@ -4119,8 +4303,12 @@ nserror html_reconvert(html_content *c)
 	 * above (H1/H2/H3), so the old tree is orphaned-but-alive until then. */
 	MS_LOG("reconvert: defer old bctx free");
 	g_reconvert_old_bctx = c->bctx;
+	g_reconvert_old_layout = c->layout;
+	g_reconvert_old_iframe = c->iframe;
+	g_reconvert_old_forms = c->forms;
 	c->bctx = NULL;
 	c->layout = NULL;
+	c->forms = NULL;
 
 	/* fixes915 - THE IFRAME LIST DIES WITH THE OLD bctx. Drop it here.
 	 *
@@ -4159,7 +4347,7 @@ nserror html_reconvert(html_content *c)
 		macsurf_debug_log_writef(
 			"WORK reconvert #%ld: doc_element FAILED exc=%d",
 			(long) macsurf_reconvert_seq, (int) exc);
-		html_reconvert_free_old();
+		html_reconvert_rollback(c);
 		/* fixes895 - disarm: html_reconvert_done will never run. */
 		macsurf_reconvert_in_progress = 0;
 		macsurf_debug_log_writef("LIFE reconvert in_progress=0 seq=%ld (doc-element-failed)",
@@ -4172,6 +4360,20 @@ nserror html_reconvert(html_content *c)
 		"WORK reconvert #%ld: doc_element=%p -> dims -> dom_to_box",
 		(long) macsurf_reconvert_seq, (void *) html);
 	html_get_dimensions(c);
+	if (html_reconvert_rebuild_forms(c) == false) {
+		macsurf_debug_log_writef(
+			"WORK reconvert #%ld: form registry rebuild FAILED",
+			(long) macsurf_reconvert_seq);
+		dom_node_unref(html);
+		html_reconvert_rollback(c);
+		macsurf_reconvert_in_progress = 0;
+		macsurf_debug_log_writef(
+			"LIFE reconvert in_progress=0 seq=%ld (forms-failed)",
+			(long) macsurf_reconvert_seq);
+		macsurf_debug_log_reconv_flush(0);
+		g_html_reconvert_depth--;
+		return NSERROR_NOMEM;
+	}
 	macsurf_reconv_pos_set("pre-dom_to_box", (long) macsurf_reconvert_seq,
 			0, "");
 	macsurf_reconv_pos_flush();
@@ -4184,8 +4386,16 @@ nserror html_reconvert(html_content *c)
 			g_reconv_ph_us[RECONV_PH_FREEOLD] +
 			g_reconv_ph_us[RECONV_PH_REFORMAT];
 		long spent;
-		error = dom_to_box(html, c, html_reconvert_done,
-				&c->box_conversion_context);
+#ifdef MACSURF_RECONVERT_TEST_HOOK
+		if (g_reconvert_test_fail_once) {
+			g_reconvert_test_fail_once = 0;
+			error = NSERROR_NOMEM;
+		} else
+#endif
+		{
+			error = dom_to_box(html, c, html_reconvert_done,
+					&c->box_conversion_context);
+		}
 		spent = (long)(html_reconv_now() - t0) -
 			((g_reconv_ph_us[RECONV_PH_RELINK] +
 			  g_reconv_ph_us[RECONV_PH_FREEOLD] +
@@ -4197,7 +4407,7 @@ nserror html_reconvert(html_content *c)
 		macsurf_debug_log_writef(
 			"WORK reconvert #%ld: dom_to_box FAILED err=%d",
 			(long) macsurf_reconvert_seq, (int) error);
-		html_reconvert_free_old();   /* dom_to_box failed: _done won't run */
+		html_reconvert_rollback(c);
 		/* fixes895 - disarm: html_reconvert_done will never run. */
 		macsurf_reconvert_in_progress = 0;
 		macsurf_debug_log_writef("LIFE reconvert in_progress=0 seq=%ld (dom_to_box-failed)",

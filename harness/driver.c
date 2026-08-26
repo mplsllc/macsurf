@@ -712,6 +712,9 @@ int main(int argc, char **argv)
 		"if(el){el.textContent='LATE MUTATION during reconvert yield '+i;}"
 		"}"
 		"})();";
+	/* Defined only by the harness build. It injects a post-detach box-build
+	 * failure, so we can prove that the old rendered tree is restored. */
+	extern void macsurf_reconvert_test_fail_once(void);
 
 	if (argc >= 4 && strcmp(argv[1], "--layout") == 0) {
 		g_layout_html_path = argv[2];
@@ -1247,6 +1250,45 @@ int main(int argc, char **argv)
 
 	fprintf(stderr, "=== Test 1 PASS: no ASan trap through initial-build + "
 			"JS-mutate + reconvert + tree-walk (sequential) ===\n");
+
+	/* --- Test 1b: a failed reconvert must be transactional. Preserve tree
+	 * ownership and DOM->box identity, then fail at the point the replacement
+	 * box build would begin. */
+	{
+		struct box *old_layout = htmlc.layout;
+		void *old_bctx = htmlc.bctx;
+		dom_node *root = NULL;
+		struct box *root_box = NULL;
+		int rc;
+
+		fprintf(stderr, "\n=== Test 1b: failed reconvert restores old tree ===\n");
+		macsurf_reconvert_test_fail_once();
+		rc = html_reconvert_content((struct content *)&htmlc);
+		if (rc == 0) {
+			fprintf(stderr, "FAIL: forced reconvert failure reported success\n");
+			return 1;
+		}
+		if (htmlc.layout != old_layout || htmlc.bctx != old_bctx ||
+			htmlc.layout == NULL) {
+			fprintf(stderr, "FAIL: rollback lost the previous render tree\n");
+			return 1;
+		}
+		if (htmlc.unit_len_ctx.root_style != htmlc.layout->style) {
+			fprintf(stderr, "FAIL: rollback left root_style detached\n");
+			return 1;
+		}
+		if (dom_document_get_document_element(document, (void *)&root) !=
+				DOM_NO_ERR || root == NULL ||
+			dom_node_get_user_data(root,
+					corestring_dom___ns_key_box_node_data,
+					&root_box) != DOM_NO_ERR || root_box != old_layout) {
+			fprintf(stderr, "FAIL: rollback did not restore DOM box identity\n");
+			if (root != NULL) dom_node_unref(root);
+			return 1;
+		}
+		dom_node_unref(root);
+		fprintf(stderr, "=== Test 1b PASS: failed reconvert kept the old tree live ===\n");
+	}
 
 	/* --- Test 2: the interleaved-yield scenario. Queue ANOTHER reconvert,
 	 * pump exactly ONE batch (up to 100 nodes) of its resumable walk, THEN
@@ -3931,8 +3973,9 @@ int main(int argc, char **argv)
 	 *
 	 * build_large_doc's lists/floats/tables (fixes889/890) all exist at PARSE
 	 * time. Preact/jQuery build the mount at RUN time: createElement +
-	 * appendChild grows a NEW subtree that itself carries markers (<li>), floats
-	 * and <img> objects; innerHTML= parses a fragment into it; removeChild drops
+	 * appendChild grows a NEW subtree that itself carries markers (<li>), floats,
+	 * <img> objects, and a form control; innerHTML= parses a fragment into it;
+	 * removeChild drops
 	 * existing text nodes toward refcount 0 -- all BEFORE the reconvert. That is
 	 * the hackaday shape the reproduced HW crash fires on (log dies inside
 	 * dom_to_box, between rc=0 and DONE), and it is exactly what Tests 1/2/26
@@ -3967,6 +4010,10 @@ int main(int argc, char **argv)
 			"m.setAttribute('class','comment-form__verbum');"
 			"feed.appendChild(m);"
 			"m.innerHTML='<span>reply</span><ul><li>a</li><li>b</li></ul>';"
+			"var tf=document.createElement('form');tf.id='t29-form';"
+			"var ta=document.createElement('textarea');ta.id='t29-ta';"
+			"ta.textContent='painted after JS mutation';tf.appendChild(ta);"
+			"feed.appendChild(tf);"
 			"var p0=document.getElementById('p0');if(p0){feed.removeChild(p0);}"
 			"var p1=document.getElementById('p1');if(p1){feed.removeChild(p1);}"
 			"var p2=document.getElementById('p2');"
@@ -3976,9 +4023,12 @@ int main(int argc, char **argv)
 		int rc29;
 		dom_nodelist *all29 = NULL;
 		dom_string *star29 = NULL;
+		dom_string *tid29 = NULL;
 		uint32_t len29 = 0, k29;
 		unsigned long touched29 = 0, live29 = 0;
 		dom_node *root29 = NULL;
+		dom_element *ta29 = NULL;
+		struct box *tab29 = NULL;
 
 		ok29 = js_exec(thread, (const unsigned char *)mutate29,
 				strlen(mutate29), "driver-mutate29.js");
@@ -4000,6 +4050,27 @@ int main(int argc, char **argv)
 		harness_pump_all(100000);
 		fprintf(stderr, "t29 reconvert drained, layout=%p\n",
 				(void *)htmlc.layout);
+
+		/* The dynamic textarea is the form-registry regression: a control
+		 * added by JS must acquire a real box/gadget in the replacement tree,
+		 * not merely leave the previous tree visible on rollback. */
+		if (dom_string_create((const uint8_t *)"t29-ta", 6, &tid29) !=
+				DOM_NO_ERR || tid29 == NULL ||
+			dom_document_get_element_by_id(document, tid29, &ta29) !=
+				DOM_NO_ERR || ta29 == NULL) {
+			fprintf(stderr, "FAIL: t29 dynamic textarea missing\n");
+			if (tid29 != NULL) dom_string_unref(tid29);
+			return 1;
+		}
+		tab29 = box_for_node((dom_node *)ta29);
+		if (tab29 == NULL || tab29->gadget == NULL) {
+			fprintf(stderr, "FAIL: t29 dynamic textarea did not paint\n");
+			dom_node_unref((dom_node *)ta29);
+			dom_string_unref(tid29);
+			return 1;
+		}
+		dom_node_unref((dom_node *)ta29);
+		dom_string_unref(tid29);
 
 		/* sweep box_for_node over the rebuilt tree (the click-crash instrument) */
 		if (dom_string_create((const uint8_t *)"*", 1, &star29) != DOM_NO_ERR) {
@@ -4042,7 +4113,7 @@ int main(int argc, char **argv)
 		}
 	}
 	fprintf(stderr, "=== Test 29 PASS: reconvert over a JS-created subtree "
-			"(markers/floats/img/innerHTML/removeChild) is ASan-clean ===\n");
+		"(markers/floats/img/textarea/innerHTML/removeChild) is ASan-clean ===\n");
 
 	/* --- Test 30 (fixes900): closing an IFRAME heap must NOT free the PARENT
 	 * runtime's DOM wrappers. THE crash the whole reconvert hunt actually kept

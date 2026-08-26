@@ -590,7 +590,15 @@ box_input_text(html_content *html, struct box *box, struct dom_node *node)
 	box_add_child(inline_container, inline_box);
 	box_add_child(box, inline_container);
 
-	return box_textarea_create_textarea(html, box, node);
+	if (box_textarea_create_textarea(html, box, node) == false) {
+		macsurf_debug_log_writef(
+			"WORK form control: textarea widget creation failed"
+			" gadget_type=%d box=%p node=%p",
+			(int) box->gadget->type, (void *) box, (void *) node);
+		return false;
+	}
+
+	return true;
 }
 
 
@@ -2709,15 +2717,23 @@ static bool box_textarea(dom_node *n,
 {
 	/* Get the form_control for the DOM node */
 	box->gadget = html_forms_get_control_for_node(content->forms, n);
-	if (box->gadget == NULL)
+	if (box->gadget == NULL) {
+		macsurf_debug_log_writef(
+			"WORK form control: textarea has no gadget node=%p", (void *) n);
 		return false;
+	}
 
 	box->flags |= IS_REPLACED;
 	box->gadget->html = content;
 	box->gadget->box = box;
 
-	if (!box_input_text(content, box, n))
+	if (!box_input_text(content, box, n)) {
+		macsurf_debug_log_writef(
+			"WORK form control: textarea box setup failed"
+			" gadget_type=%d box=%p node=%p",
+			(int) box->gadget->type, (void *) box, (void *) n);
 		return false;
+	}
 
 	*convert_children = false;
 	return true;

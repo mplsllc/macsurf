@@ -3,15 +3,21 @@
  * to be on the repro path. */
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include "utils/ns_errors.h"
 
 struct browser_window;
 struct gui_window;
 struct hlcache_handle;
 struct selection;
-struct textarea;
+/* The reconvert harness reaches JS-created <textarea>s. A NULL factory made
+ * every one abort box construction, so it could only test rollback rather
+ * than the intended repaint. This tiny stand-in owns just enough state for
+ * form_free_control and box_textarea_create_textarea. */
+struct textarea { char *text; };
 struct textarea_setup;
 struct textarea_msg;
 typedef unsigned int textarea_flags;
@@ -182,8 +188,22 @@ void textarea_clear_selection(void){}
 struct textarea *textarea_create(const textarea_flags flags,
 		const struct textarea_setup *setup,
 		textarea_client_callback callback, void *data)
-{(void)flags;(void)setup;(void)callback;(void)data;return NULL;}
-void textarea_destroy(void){}
+{
+	struct textarea *ta;
+	(void)flags;
+	(void)setup;
+	(void)callback;
+	(void)data;
+	ta = calloc(1, sizeof(*ta));
+	return ta;
+}
+void textarea_destroy(struct textarea *ta)
+{
+	if (ta != NULL) {
+		free(ta->text);
+		free(ta);
+	}
+}
 void textarea_drop_text(void){}
 void textarea_get_selection(void){}
 void textarea_keypress(void){}
@@ -192,6 +212,17 @@ void textarea_redraw(void){}
 void textarea_scroll(void){}
 void textarea_set_caret(void){}
 void textarea_set_layout(void){}
-void textarea_set_text(void){}
+bool textarea_set_text(struct textarea *ta, const char *text)
+{
+	char *copy;
+	if (ta == NULL)
+		return false;
+	copy = strdup(text ? text : "");
+	if (copy == NULL)
+		return false;
+	free(ta->text);
+	ta->text = copy;
+	return true;
+}
 unsigned long TickCount(void){return macsurf_get_ticks();}
 void UNUSED(void){}
