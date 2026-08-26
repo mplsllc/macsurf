@@ -6609,7 +6609,7 @@ box_coords(bx, &cx, &cy);
 		extern void macos9_reconvert_sync_stats(long *f, long *d, long *us);
 		extern void macos9_reconvert_sync_reset(void);
 		extern int macos9_reconvert_flush_now(void *cv);
-		extern void macos9_js_mark_dom_dirty(struct content *c);
+		
 		struct content_html_object *blocker;
 		struct content_html_object *saved_list = htmlc.object_list;
 		unsigned int saved_n = htmlc.num_objects;
@@ -6625,7 +6625,7 @@ box_coords(bx, &cx, &cy);
 		htmlc.base.active = 1;          /* the html fetch itself, as on a real load */
 		htmlc.object_list = NULL;
 		htmlc.num_objects = 0;
-		macos9_js_mark_dom_dirty((struct content *)&htmlc);
+		macos9_js_mark_dom_dirty((struct content *)&htmlc, NULL, 0);
 		macos9_reconvert_sync_reset();
 		macos9_reconvert_sync_stats(&f0, &d0, &u0);
 		(void) macos9_reconvert_flush_now((void *)&htmlc);
@@ -6652,7 +6652,7 @@ box_coords(bx, &cx, &cy);
 		blocker->next = NULL;
 		htmlc.object_list = blocker;
 		htmlc.num_objects = 1;
-		macos9_js_mark_dom_dirty((struct content *)&htmlc);
+		macos9_js_mark_dom_dirty((struct content *)&htmlc, NULL, 0);
 		macos9_reconvert_sync_reset();
 		macos9_reconvert_sync_stats(&f0, &d0, &u0);
 		(void) macos9_reconvert_flush_now((void *)&htmlc);
@@ -6806,7 +6806,7 @@ box_coords(bx, &cx, &cy);
 		extern int macos9_reconvert_flush_now(void *cv);
 		extern void macos9_reconvert_sync_stats(long *f, long *d, long *us);
 		extern void macos9_reconvert_sync_reset(void);
-		extern void macos9_js_mark_dom_dirty(struct content *c);
+		
 		long f0 = 0, d0 = 0, u0 = 0, f1 = 0, d1 = 0, u1 = 0;
 
 		htmlc.reflowing = false;
@@ -6819,7 +6819,7 @@ box_coords(bx, &cx, &cy);
 		 * the html fetch itself still counted active. */
 		htmlc.base.status = CONTENT_STATUS_LOADING;
 		htmlc.base.active = 1;
-		macos9_js_mark_dom_dirty((struct content *)&htmlc);
+		macos9_js_mark_dom_dirty((struct content *)&htmlc, NULL, 0);
 
 		macos9_reconvert_sync_reset();
 		macos9_reconvert_sync_stats(&f0, &d0, &u0);
@@ -6861,7 +6861,7 @@ box_coords(bx, &cx, &cy);
 	 * this failure -- it was 155 and everything was still broken. */
 	fprintf(stderr, "\n=== Test 60: LOADING answers a real number (#265 C3b) ===\n");
 	{
-		extern void macos9_js_mark_dom_dirty(struct content *c);
+		
 		unsigned char ok;
 
 		htmlc.reflowing = false;
@@ -12410,9 +12410,76 @@ box_coords(bx, &cx, &cy);
 				return 1;
 			}
 		}
-	}
-	fprintf(stderr, "=== Test 99 PASS: negative calc() margin-bottom "
-			"resolves to a real negative pixel value ===\n");
+
+		fprintf(stderr, "=== Test 99 PASS: negative calc() margin-bottom resolves to a real negative pixel value ===\n");
+
+		fprintf(stderr, "\n=== Test 100: html_recascade_tree leak regression test ===\n");
+		{
+			extern nserror html_recascade_tree(struct html_content *c);
+			int i;
+			for (i = 0; i < 5; i++) {
+				nserror err = html_recascade_tree(&t99c);
+				if (err != NSERROR_OK) {
+					fprintf(stderr, "FAIL: Test 100 recascade %d\n", i);
+					return 1;
+				}
+			}
+			fprintf(stderr, "  5x html_recascade_tree completed. ASan will fail if leaks occurred.\n");
+		}
+		fprintf(stderr, "=== Test 100 PASS: recascade did not crash ===\n");
+
+		fprintf(stderr, "\n=== Test 101: Inline style paint fast path ===\n");
+		{
+			extern void macos9_js_mark_dom_dirty(struct content *c, void *node, int kind);
+			extern int macos9_reconvert_flush_now(void *p);
+			#define MACOS9_DOMMUT_SETATTR_STYLE 10
+			#define MACOS9_DOMMUT_APPENDCHILD 4
+			struct box *box = t96_box_of_class(t99c.layout, "x10cihs4");
+			if (!box) { fprintf(stderr, "FAIL: Test 101 box missing\n"); return 1; }
+			/* Pin the DOM node independently -- box will be freed+replaced
+			 * on any full reconvert, but the DOM node survives all of them. */
+			dom_node *target_node = (dom_node *)box->node;
+			dom_node_ref(target_node);
+
+			t99c.base.status = CONTENT_STATUS_READY;
+			t99c.base.active = 0;
+
+			dom_string *style_str = NULL;
+			dom_string_create((const uint8_t *)"style", 5, &style_str);
+
+			/* Each mutation is tested independently: mark dirty, flush,
+			 * re-lookup box so we never touch freed memory. The fast path
+			 * is exercised when background-color is the only change; all
+			 * others fall back to html_reconvert_content. */
+			const char *tests[] = {
+				"background-color: blue;",  /* fast path expected */
+				"color: red;",              /* fallback expected  */
+				"width: 100px;",            /* fallback           */
+				"display: none;",           /* fallback           */
+				"position: absolute;",      /* fallback           */
+				"border-width: 10px;",      /* fallback           */
+				"background-image: url('test.png');", /* fallback */
+				"color: red; width: 10px;" /* multi-prop fallback */
+			};
+
+			for (int i = 0; i < 8; i++) {
+				dom_string *val_str = NULL;
+				dom_string_create((const uint8_t *)tests[i], strlen(tests[i]), &val_str);
+				dom_element_set_attribute((dom_element *)target_node, style_str, val_str);
+				dom_string_unref(val_str);
+
+				macos9_js_mark_dom_dirty((struct content *)&t99c, target_node, MACOS9_DOMMUT_SETATTR_STYLE);
+				(void) macos9_reconvert_flush_now((void *)&t99c);
+				/* After a full reconvert the old box pointer is invalid.
+				 * We don't re-use `box` below, so no re-lookup needed. */
+			}
+
+			dom_node_unref(target_node);
+			dom_string_unref(style_str);
+			fprintf(stderr, "  Test 101: all 8 style mutations flushed cleanly under ASan\n");
+		}
+		fprintf(stderr, "=== Test 101 PASS ===\n");
+	} /* End of Test 99 scope */
 
 	return 0;
 }

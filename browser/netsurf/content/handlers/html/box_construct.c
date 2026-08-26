@@ -398,7 +398,7 @@ box_extract_properties(dom_node *n, struct box_construct_props *props)
  * \param  n               node in xml tree
  * \return  the new style, or NULL on memory exhaustion
  */
-static css_select_results *
+css_select_results *
 box_get_style(html_content *c,
 	      const css_computed_style *parent_style,
 	      const css_computed_style *root_style,
@@ -2854,13 +2854,38 @@ html_recascade_tree(html_content *c)
 			if (new_styles != NULL) {
 				/* fixes1268c - replace, releasing the
 				 * environment from the previous cascade. */
-				if (box->custom_env != NULL)
+				if (box->custom_env != NULL && !(box->flags & CLONE))
 					css_custom_env_unref(box->custom_env);
-				box->custom_env = new_env;
+				
+				if (!(box->flags & CLONE)) {
+					box->custom_env = new_env;
+				} else if (new_env != NULL) {
+					css_custom_env_unref(new_env);
+				}
 				new_env = NULL;
-				box->styles = new_styles;
-				box->style = new_styles->styles[
-						CSS_PSEUDO_ELEMENT_NONE];
+
+				if (box->styles != NULL && !(box->flags & CLONE)) {
+					css_select_results_destroy(box->styles);
+				}
+
+				if (box->flags & CLONE) {
+					/* Memory leak fix: do not keep newly allocated styles for a clone.
+					 * Clones share styles with their original box. */
+					css_select_results_destroy(new_styles);
+					new_styles = NULL;
+					struct box *orig = box->prev;
+					while (orig != NULL && orig->node != box->node)
+						orig = orig->prev;
+					if (orig != NULL) {
+						new_styles = orig->styles;
+					}
+				}
+
+				if (new_styles != NULL) {
+					box->styles = new_styles;
+					box->style = new_styles->styles[
+							CSS_PSEUDO_ELEMENT_NONE];
+				}
 				recascaded++;
 				if (box == c->layout) {
 					root_style = box->style;
