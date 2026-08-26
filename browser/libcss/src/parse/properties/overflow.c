@@ -83,6 +83,14 @@ css_error css__parse_overflow(css_language *c,
 		error2 = css__stylesheet_style_appendOPV(result,
 				CSS_PROP_OVERFLOW_Y, 0, OVERFLOW_AUTO);
 
+	} else if ((lwc_string_caseless_isequal(token->idata,
+			c->strings[CLIP], &match) == lwc_error_ok &&
+			match)) {
+		error1 = css__stylesheet_style_appendOPV(result,
+				CSS_PROP_OVERFLOW_X, 0, OVERFLOW_CLIP);
+		error2 = css__stylesheet_style_appendOPV(result,
+				CSS_PROP_OVERFLOW_Y, 0, OVERFLOW_CLIP);
+
 	} else {
 		error1 = CSS_INVALID;
 	}
@@ -95,4 +103,3 @@ css_error css__parse_overflow(css_language *c,
 
 	return error1;
 }
-

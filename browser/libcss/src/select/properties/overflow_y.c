@@ -35,6 +35,9 @@ css_error css__cascade_overflow_y(uint32_t opv, css_style *style,
 		case OVERFLOW_AUTO:
 			value = CSS_OVERFLOW_AUTO;
 			break;
+		case OVERFLOW_CLIP:
+			value = CSS_OVERFLOW_CLIP;
+			break;
 		}
 	}
 
@@ -78,4 +81,3 @@ css_error css__compose_overflow_y(const css_computed_style *parent,
 			type == CSS_OVERFLOW_INHERIT ? parent : child,
 			result);
 }
-

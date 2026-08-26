@@ -2429,6 +2429,9 @@ void dump_bytecode(css_style *style, char **ptr, uint32_t depth)
 				case OVERFLOW_AUTO:
 					*ptr += sprintf(*ptr, "auto");
 					break;
+				case OVERFLOW_CLIP:
+					*ptr += sprintf(*ptr, "clip");
+					break;
 				}
 				break;
 			case CSS_PROP_PAGE_BREAK_AFTER:

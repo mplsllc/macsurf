@@ -649,7 +649,8 @@ enum op_overflow {
 	OVERFLOW_VISIBLE		= 0x0000,
 	OVERFLOW_HIDDEN			= 0x0001,
 	OVERFLOW_SCROLL			= 0x0002,
-	OVERFLOW_AUTO			= 0x0003
+	OVERFLOW_AUTO			= 0x0003,
+	OVERFLOW_CLIP			= 0x0004
 };
 
 enum op_padding {

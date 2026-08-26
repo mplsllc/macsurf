@@ -3,7 +3,7 @@
  * 
  * Generated from:
  *
- * overflow_x:CSS_PROP_OVERFLOW_X IDENT:( INHERIT: INITIAL: REVERT: UNSET: VISIBLE:0,OVERFLOW_VISIBLE HIDDEN:0,OVERFLOW_HIDDEN SCROLL:0,OVERFLOW_SCROLL AUTO:0,OVERFLOW_AUTO  IDENT:)
+ * overflow_x:CSS_PROP_OVERFLOW_X IDENT:( INHERIT: INITIAL: REVERT: UNSET: VISIBLE:0,OVERFLOW_VISIBLE HIDDEN:0,OVERFLOW_HIDDEN SCROLL:0,OVERFLOW_SCROLL AUTO:0,OVERFLOW_AUTO CLIP:0,OVERFLOW_CLIP  IDENT:)
  * 
  * Licensed under the MIT License,
  *		  http://www.opensource.org/licenses/mit-license.php
@@ -99,6 +99,13 @@ css_error css__parse_overflow_x(css_language *c,
 				CSS_PROP_OVERFLOW_X,
 				0,OVERFLOW_AUTO);
 
+	} else if ((lwc_string_caseless_isequal(
+			token->idata, c->strings[CLIP],
+			&match) == lwc_error_ok && match)) {
+		error = css__stylesheet_style_appendOPV(result,
+				CSS_PROP_OVERFLOW_X,
+				0,OVERFLOW_CLIP);
+
 	} else {
 		error = CSS_INVALID;
 	}
@@ -108,4 +115,3 @@ css_error css__parse_overflow_x(css_language *c,
 	
 	return error;
 }
-

@@ -1047,7 +1047,8 @@ enum css_overflow_e {
 	CSS_OVERFLOW_VISIBLE			= 0x1,
 	CSS_OVERFLOW_HIDDEN			= 0x2,
 	CSS_OVERFLOW_SCROLL			= 0x3,
-	CSS_OVERFLOW_AUTO			= 0x4
+	CSS_OVERFLOW_AUTO			= 0x4,
+	CSS_OVERFLOW_CLIP			= 0x5
 };
 
 enum css_orphans_e {

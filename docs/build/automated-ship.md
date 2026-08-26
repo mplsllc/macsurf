@@ -26,7 +26,7 @@ copy the archive to the macfiles share, launch the app.
 |---|------|-----------|
 | 1 | Push changed sources to the Mac | delegates to `drop-to-imac.sh` |
 | 2 | Quit MacSurf and confirm it exited | no-reply AppleScript quit event, then process polling |
-| 3 | Bring the project up to date, then launch MacSurf | AppleScript: `Make project document 1`, immediately followed by `Run project document 1` |
+| 3 | Bring the project up to date, wait for it to finish, then launch MacSurf | AppleScript: `Make project document 1`, CPU-idle wait, then `Run project document 1` |
 | 4 | Check for compile errors | AppleScript: `messages of project document 1` |
 | 5 | Stuff the built app | AppleScript: `tell app "DropStuff" to open …` |
 | 6 | Copy the archive to macfiles | `ditto --rsrc` to the mounted AFP volume |
@@ -91,6 +91,9 @@ half-delivered set of files produces a result that means nothing.
 ```applescript
 tell application "CodeWarrior IDE"
     Make project document 1 -- Bring Up To Date
+end tell
+-- Wait until the update has completed, then:
+tell application "CodeWarrior IDE"
     Run project document 1
 end tell
 ```
@@ -98,8 +101,9 @@ end tell
 Three things about this that are worth knowing before you change it:
 
 - **`Make project document 1` is CodeWarrior's Bring Up To Date command.** It
-  must run immediately before `Run` so the current project state is compiled
-  and linked before the application is launched.
+  must complete before `Run`; the IDE can dispatch an update asynchronously,
+  so putting both commands in one AppleScript block can launch the old app
+  before the update has linked.
 - **MacSurf is stopped before this sequence.** The pipeline sends it a quit
   event without waiting for the application's reply, then polls its full
   process path. Only after the process has exited does it send Bring Up To
@@ -123,15 +127,15 @@ minutes. What timed out was `osascript` waiting for the reply. The pipeline then
 mistook the timeout string for a compile message and refused to package, which
 is fail-safe but wrong.
 
-So the claim in §3.2 that the Bring Up To Date → `Run` sequence "blocks until
-the build completes" holds only for incremental builds inside the default
-60-second Apple Event timeout. Wrap long builds:
+Do not rely on the Apple Event reply as the build-completion signal. The
+pipeline waits for CodeWarrior CPU activity to settle before querying messages
+or sending `Run`. The Apple Event itself still needs a long timeout for a full
+rebuild:
 
 ```applescript
 with timeout of 7200 seconds
     tell application "CodeWarrior IDE"
         Make project document 1
-        Run project document 1
     end tell
 end timeout
 end
@@ -167,8 +171,11 @@ missing build.
 
 The pipeline therefore does **not** use `Run` as the build operation. It first
 asks MacSurf to quit using a no-reply AppleScript event, polls for its exit,
-then sends CodeWarrior's `Make project document 1` (Bring Up To Date)
-immediately before `Run`. A synchronous quit request is deliberately avoided:
+then sends CodeWarrior's `Make project document 1` (Bring Up To Date), waits
+for it to complete, checks messages and binary mtime, and only then sends
+`Run`. It also gives CodeWarrior one event-loop turn after the external source
+copy so its project state sees the verified future-dated file. A synchronous
+quit request is deliberately avoided:
 an unresponsive application can otherwise leave `osascript` waiting forever.
 
 **Never accept "clean + running" as proof of a build.** Check that the binary
