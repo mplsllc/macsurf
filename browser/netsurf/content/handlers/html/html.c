@@ -690,7 +690,7 @@ static void html_color_probe_dump(struct box *box, int depth, int *count)
 		if (box->style != NULL)
 			css_computed_color(box->style, &color);
 		macsurf_debug_log_writef(
-			"COLORPROBE d=%d type=%d label=%s color=%ld style=%p",
+			"LIFE COLORPROBE d=%d type=%d label=%s color=%ld style=%p",
 			depth, (int)box->type, brief, (long)color,
 			(void *)box->style);
 		(*count)++;
@@ -712,9 +712,9 @@ static void html_color_probe_after_reformat(html_content *c)
 	parent = html_color_probe_find_parent_node((dom_node *)root);
 	dom_node_unref((dom_node *)root);
 	if (parent != NULL) {
-		macsurf_debug_log_write("COLORPROBE begin #parent");
+		macsurf_debug_log_write("LIFE COLORPROBE begin #parent");
 		html_color_probe_dump(parent, 0, &count);
-		macsurf_debug_log_writef("COLORPROBE end boxes=%d", count);
+		macsurf_debug_log_writef("LIFE COLORPROBE end boxes=%d", count);
 	}
 }
 
@@ -738,6 +738,7 @@ static int html_pagemap_line(dom_node *n, int depth, int *susp_out)
 	int kids = 0;
 	int x = 0, y = 0, w = 0, h = 0;
 	int fsz = -1;
+	int color_probe_count = 0;
 	const char *disp = "-";
 	static const char *pfx[5] = { "", "> ", ">> ", ">>> ", ">>>> " };
 
@@ -778,6 +779,12 @@ static int html_pagemap_line(dom_node *n, int depth, int *susp_out)
 			"LIFE pagemap %s%s kids=%d box=%d y=%d w=%d h=%d fs=%d disp=%s",
 			pfx[(depth < 0) ? 0 : ((depth > 4) ? 4 : depth)],
 			brief, kids, (b != NULL) ? 1 : 0, y, w, h, fsz, disp);
+	if (b != NULL && strstr(brief, "#parent") != NULL) {
+		macsurf_debug_log_write("LIFE COLORPROBE begin #parent");
+		html_color_probe_dump(b, 0, &color_probe_count);
+		macsurf_debug_log_writef("LIFE COLORPROBE end boxes=%d",
+			color_probe_count);
+	}
 	/* fixes1021 -- "this subtree looks broken": boxless, flat, or a
 	 * container squashed to less than a text line. The walk uses it to
 	 * keep descending PAST the normal depth cap, straight into e.g. the
@@ -3997,8 +4004,6 @@ static void html_reconvert_done(html_content *c, bool success)
 			c->base.status = saved_status;
 		html_reconv_ph_add(RECONV_PH_REFORMAT, t0);
 	}
-	html_color_probe_after_reformat(c);
-
 	/* fixes895 - the full cycle repainted without a crash. Disarm. */
 	macsurf_debug_log_writef(
 			"WORK reconvert #%ld: first-paint OK", (long) macsurf_reconvert_seq);
@@ -4014,6 +4019,7 @@ static void html_reconvert_done(html_content *c, bool success)
 		(void) html_proceed_to_done(c);
 	}
 	html_pagemap_dump(c, "reconvert"); /* fixes1015 */
+	html_color_probe_after_reformat(c);
 	html_slider_probe(c, "reconvert"); /* fixes1093 */
 
 	/* fixes1019 - a reconvert that CHANGED the document height fires one
