@@ -623,6 +623,101 @@ void html_pagemap_brief(dom_node *n, char *out, int cap)
 	}
 }
 
+/* Diagnostic-only inheritance probe for /Webs/macsurf-web/t.html.  This is
+ * deliberately run after a normal reformat: it records the box-tree paint
+ * state that a future inherited-color fast path would have to refresh. */
+static struct box *html_color_probe_find_parent_node(dom_node *node)
+{
+	dom_string *name = NULL;
+	dom_string *value = NULL;
+	dom_node *child = NULL;
+	dom_node *next = NULL;
+	dom_node_type type;
+	struct box *found;
+
+	if (node == NULL)
+		return NULL;
+	if (dom_node_get_node_type(node, &type) == DOM_NO_ERR &&
+			type == DOM_ELEMENT_NODE &&
+		dom_string_create((const uint8_t *)"id", 2, &name) == DOM_NO_ERR &&
+			name != NULL) {
+		if (dom_element_get_attribute((dom_element *)node, name, &value) ==
+				DOM_NO_ERR && value != NULL) {
+			if (dom_string_length(value) == 6 &&
+				memcmp(dom_string_data(value), "parent", 6) == 0) {
+				dom_string_unref(value);
+				dom_string_unref(name);
+				return box_for_node(node);
+			}
+			dom_string_unref(value);
+		}
+		dom_string_unref(name);
+	}
+	if (dom_node_get_first_child(node, &child) != DOM_NO_ERR)
+		child = NULL;
+	while (child != NULL) {
+		found = html_color_probe_find_parent_node(child);
+		if (dom_node_get_next_sibling(child, &next) != DOM_NO_ERR)
+			next = NULL;
+		dom_node_unref(child);
+		if (found != NULL)
+			return found;
+		child = next;
+	}
+
+	return NULL;
+}
+
+static void html_color_probe_dump(struct box *box, int depth, int *count)
+{
+	char brief[88];
+	css_color color = 0;
+	dom_node_type type;
+
+	while (box != NULL && *count < 48) {
+		brief[0] = '\0';
+		if (box->node != NULL &&
+			dom_node_get_node_type(box->node, &type) == DOM_NO_ERR &&
+			type == DOM_ELEMENT_NODE) {
+			html_pagemap_brief(box->node, brief, (int)sizeof brief);
+		} else if (box->node != NULL) {
+			strncpy(brief, "non-element", sizeof brief - 1);
+			brief[sizeof brief - 1] = '\0';
+		} else {
+			strncpy(brief, "anonymous", sizeof brief - 1);
+			brief[sizeof brief - 1] = '\0';
+		}
+		if (box->style != NULL)
+			css_computed_color(box->style, &color);
+		macsurf_debug_log_writef(
+			"COLORPROBE d=%d type=%d label=%s color=%ld style=%p",
+			depth, (int)box->type, brief, (long)color,
+			(void *)box->style);
+		(*count)++;
+		html_color_probe_dump(box->children, depth + 1, count);
+		box = box->next;
+	}
+}
+
+static void html_color_probe_after_reformat(html_content *c)
+{
+	dom_element *root = NULL;
+	struct box *parent;
+	int count = 0;
+
+	if (c == NULL || c->document == NULL ||
+		dom_document_get_document_element(c->document, &root) != DOM_NO_ERR ||
+		root == NULL)
+		return;
+	parent = html_color_probe_find_parent_node((dom_node *)root);
+	dom_node_unref((dom_node *)root);
+	if (parent != NULL) {
+		macsurf_debug_log_write("COLORPROBE begin #parent");
+		html_color_probe_dump(parent, 0, &count);
+		macsurf_debug_log_writef("COLORPROBE end boxes=%d", count);
+	}
+}
+
 #define HTML_PAGEMAP_SANE(v) (((v) < 0 || (v) >= 1000000) ? 0 : (v))
 
 /* fixes1017 - per-dump line budget: the walk is recursive now (three levels,
@@ -3902,6 +3997,7 @@ static void html_reconvert_done(html_content *c, bool success)
 			c->base.status = saved_status;
 		html_reconv_ph_add(RECONV_PH_REFORMAT, t0);
 	}
+	html_color_probe_after_reformat(c);
 
 	/* fixes895 - the full cycle repainted without a crash. Disarm. */
 	macsurf_debug_log_writef(
