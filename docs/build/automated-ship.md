@@ -25,7 +25,7 @@ copy the archive to the macfiles share, launch the app.
 | # | Step | Mechanism |
 |---|------|-----------|
 | 1 | Push changed sources to the Mac | delegates to `drop-to-imac.sh` |
-| 2 | Build **and** launch MacSurf | AppleScript: `Run project document 1` |
+| 2 | Bring the project up to date, then launch MacSurf | AppleScript: `Make project document 1`, immediately followed by `Run project document 1` |
 | 3 | Check for compile errors | AppleScript: `messages of project document 1` |
 | 4 | Stuff the built app | AppleScript: `tell app "DropStuff" to open …` |
 | 5 | Copy the archive to macfiles | `ditto --rsrc` to the mounted AFP volume |
@@ -85,21 +85,23 @@ for the path mapping and the `scp -O` / `-P` requirements.
 If the push fails, `ship.sh` **does not build**. Building against a
 half-delivered set of files produces a result that means nothing.
 
-### 3.2 Build and launch — one call
+### 3.2 Bring Up To Date, then launch
 
 ```applescript
-tell application "CodeWarrior IDE" to Run project document 1
+tell application "CodeWarrior IDE"
+    Make project document 1 -- Bring Up To Date
+    Run project document 1
+end tell
 ```
 
 Three things about this that are worth knowing before you change it:
 
-- **`Run` covers both build and launch.** CodeWarrior's `Run` compiles, links,
-  and then launches the resulting application — which is exactly the last step
-  of the desired workflow, so there is no separate "open the app" call.
-- **It blocks until the build completes.** Verified: the `osascript` call
-  returns only after the link finishes, and MacSurf is running by the time
-  control comes back. This is what lets packaging safely follow in sequence
-  without racing an unfinished binary.
+- **`Make project document 1` is CodeWarrior's Bring Up To Date command.** It
+  must run immediately before `Run` so the current project state is compiled
+  and linked before the application is launched.
+- **`Run` launches the newly updated application.** The combined AppleScript
+  call returns only after the build and launch complete, so packaging can
+  safely follow without racing an unfinished binary.
 - **The direct parameter is required and specific.** Bare `Make` fails with
   `-10001` (descriptor type mismatch); `Make current project` is a syntax
   error. `Run project document 1` and `Make project document 1` both work.
@@ -119,13 +121,16 @@ minutes. What timed out was `osascript` waiting for the reply. The pipeline then
 mistook the timeout string for a compile message and refused to package, which
 is fail-safe but wrong.
 
-So the claim in §3.2 that `Run` "blocks until the build completes" holds only
-for incremental builds inside the default 60-second Apple Event timeout. Wrap
-long builds:
+So the claim in §3.2 that the Bring Up To Date → `Run` sequence "blocks until
+the build completes" holds only for incremental builds inside the default
+60-second Apple Event timeout. Wrap long builds:
 
 ```applescript
 with timeout of 7200 seconds
-    tell application "CodeWarrior IDE" to Run project document 1
+    tell application "CodeWarrior IDE"
+        Make project document 1
+        Run project document 1
+    end tell
 end timeout
 end
 ```

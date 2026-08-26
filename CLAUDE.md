@@ -96,11 +96,11 @@ commands report, the commands win; fix the prose.
   normally forces switches ON that ship OFF). Run before any drop touching a
   `MACSURF_JS_*` switch.
 - **`./forclaude/ship.sh <fixnum> [repo-relative-path]...`** — the whole round in one
-  command: push → CodeWarrior build **and launch** → error check → StuffIt → `.sit` on
-  macfiles as `MacSurf<fixnum>.sit` (never overwrites; collisions get `-2`, `-3`). Drives
-  the Mac's GUI apps over SSH via AppleScript, and refuses to package if CodeWarrior
-  reports any message. With no paths it just rebuilds and relaunches. It does **not**
-  verify anything on hardware — that stays the maintainer's call. Full mechanics,
+  command: push → CodeWarrior **Bring Up To Date**, then launch → error check → StuffIt
+  → `.sit` on macfiles as `MacSurf<fixnum>.sit` (never overwrites; collisions get `-2`,
+  `-3`). Drives the Mac's GUI apps over SSH via AppleScript, and refuses to package if
+  CodeWarrior reports any message. With no paths it just rebuilds and relaunches. It does
+  **not** verify anything on hardware — that stays the maintainer's call. Full mechanics,
   prerequisites and failure modes: `docs/build/automated-ship.md`.
 - **`./forclaude/drop-to-imac.sh <fixnum> <repo-relative-path>...`** — push only; what
   `ship.sh` calls for its first step, and the right tool for getting files onto the Mac
