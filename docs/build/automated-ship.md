@@ -25,10 +25,11 @@ copy the archive to the macfiles share, launch the app.
 | # | Step | Mechanism |
 |---|------|-----------|
 | 1 | Push changed sources to the Mac | delegates to `drop-to-imac.sh` |
-| 2 | Bring the project up to date, then launch MacSurf | AppleScript: `Make project document 1`, immediately followed by `Run project document 1` |
-| 3 | Check for compile errors | AppleScript: `messages of project document 1` |
-| 4 | Stuff the built app | AppleScript: `tell app "DropStuff" to open …` |
-| 5 | Copy the archive to macfiles | `ditto --rsrc` to the mounted AFP volume |
+| 2 | Quit MacSurf and confirm it exited | no-reply AppleScript quit event, then process polling |
+| 3 | Bring the project up to date, then launch MacSurf | AppleScript: `Make project document 1`, immediately followed by `Run project document 1` |
+| 4 | Check for compile errors | AppleScript: `messages of project document 1` |
+| 5 | Stuff the built app | AppleScript: `tell app "DropStuff" to open …` |
+| 6 | Copy the archive to macfiles | `ditto --rsrc` to the mounted AFP volume |
 
 Steps 4 and 5 run *after* the app is already up, by design — the build blocks,
 the launch happens, and the packaging proceeds while MacSurf is starting.
@@ -99,10 +100,10 @@ Three things about this that are worth knowing before you change it:
 - **`Make project document 1` is CodeWarrior's Bring Up To Date command.** It
   must run immediately before `Run` so the current project state is compiled
   and linked before the application is launched.
-- **`Run` follows the update immediately.** If MacSurf is already running,
-  CodeWarrior fronts that process; the binary freshness check is therefore the
-  proof that the preceding Bring Up To Date produced the archive's executable.
-  The combined AppleScript call returns before packaging begins.
+- **MacSurf is stopped before this sequence.** The pipeline sends it a quit
+  event without waiting for the application's reply, then polls its full
+  process path. Only after the process has exited does it send Bring Up To
+  Date → `Run`, ensuring the new binary can be built and launched.
 - **The direct parameter is required and specific.** Bare `Make` fails with
   `-10001` (descriptor type mismatch); `Make current project` is a syntax
   error. `Run project document 1` and `Make project document 1` both work.
@@ -164,10 +165,11 @@ The source state on the Mac was correct; the project showed every file needing
 recompilation (red check marks in the IDE); `Run` simply did not perform the
 missing build.
 
-The pipeline therefore does **not** use `Run` as the build operation. It sends
-CodeWarrior's `Make project document 1` (Bring Up To Date) immediately before
-`Run`, whether or not MacSurf is already running. There is no pre-build quit
-step to block that required sequence.
+The pipeline therefore does **not** use `Run` as the build operation. It first
+asks MacSurf to quit using a no-reply AppleScript event, polls for its exit,
+then sends CodeWarrior's `Make project document 1` (Bring Up To Date)
+immediately before `Run`. A synchronous quit request is deliberately avoided:
+an unresponsive application can otherwise leave `osascript` waiting forever.
 
 **Never accept "clean + running" as proof of a build.** Check that the binary
 itself carries the code just shipped — its mtime, plus a marker string that
@@ -418,7 +420,7 @@ type/creator has to be inspected through the Finder via AppleScript instead.
 | Push fails | Script stops before building — intentional |
 | Non-empty `messages` | Compile errors; nothing is packaged |
 | "binary mtime unchanged" | Bring Up To Date did not relink the dropped sources. Nothing is packaged when a source drop requested a build |
-| Build "clean" but binary mtime is old | `Run` fronted the app, but Bring Up To Date did not produce a fresh binary |
+| Build "clean" but binary mtime is old | Bring Up To Date did not produce a fresh binary; it is not packaged after a source drop |
 | `** MacSurf did not launch` | Build linked but the app failed to start — check the crash log |
 | `** $MACFILES is not mounted` | AFP share dropped; remount on the Mac |
 | `** DropStuff produced no archive` | DropStuff didn't start or was blocked by a dialog |
