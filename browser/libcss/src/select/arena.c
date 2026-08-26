@@ -260,6 +260,16 @@ bool css_computed_style_is_paint_only_diff(
 
 	type = get_background_color(a, &c);
 	set_background_color(&tmp, type, c);
+	type = get_border_top_color(a, &c);
+	set_border_top_color(&tmp, type, c);
+	type = get_border_right_color(a, &c);
+	set_border_right_color(&tmp, type, c);
+	type = get_border_bottom_color(a, &c);
+	set_border_bottom_color(&tmp, type, c);
+	type = get_border_left_color(a, &c);
+	set_border_left_color(&tmp, type, c);
+	type = get_outline_color(a, &c);
+	set_outline_color(&tmp, type, c);
 
 	return css__arena_style_is_equal((struct css_computed_style *)a, &tmp);
 }

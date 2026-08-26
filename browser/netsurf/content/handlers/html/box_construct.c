@@ -2869,11 +2869,12 @@ html_recascade_tree(html_content *c)
 				}
 
 				if (box->flags & CLONE) {
+					struct box *orig;
 					/* Memory leak fix: do not keep newly allocated styles for a clone.
 					 * Clones share styles with their original box. */
 					css_select_results_destroy(new_styles);
 					new_styles = NULL;
-					struct box *orig = box->prev;
+					orig = box->prev;
 					while (orig != NULL && orig->node != box->node)
 						orig = orig->prev;
 					if (orig != NULL) {

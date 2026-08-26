@@ -3635,12 +3635,13 @@ int html_reconvert_fast_style(struct content *base_c, void *vnode)
 	css_custom_env *use_parent_env = NULL;
 	const css_computed_style *use_parent = NULL;
 	const css_computed_style *use_root = NULL;
+	extern struct gui_window *macos9_paint_gw;
+	extern int macsurf_reconvert_in_progress;
+	css_color border_color;
 
 	if (node == NULL || c == NULL) return -1;
 	if (c->select_ctx == NULL) return -1;
 	
-	extern struct gui_window *macos9_paint_gw;
-	extern int macsurf_reconvert_in_progress;
 	if (macos9_paint_gw != NULL || macsurf_reconvert_in_progress != 0 || base_c->active != 0) return -1;
 
 	box = box_for_node(node);
@@ -3669,6 +3670,16 @@ int html_reconvert_fast_style(struct content *base_c, void *vnode)
 		
 		box->styles = new_styles;
 		box->style = new_styles->styles[CSS_PSEUDO_ELEMENT_NONE];
+		/* Border painting uses the layout-time cache on the box.  Keep
+		 * that cache in sync while geometry remains unchanged. */
+		css_computed_border_top_color(box->style, &border_color);
+		box->border[TOP].c = border_color;
+		css_computed_border_right_color(box->style, &border_color);
+		box->border[RIGHT].c = border_color;
+		css_computed_border_bottom_color(box->style, &border_color);
+		box->border[BOTTOM].c = border_color;
+		css_computed_border_left_color(box->style, &border_color);
+		box->border[LEFT].c = border_color;
 		
 		html__redraw_a_box(c, box);
 		return 0;
@@ -5544,9 +5555,13 @@ void html__redraw_a_box(struct html_content *html, struct box *box)
 
 	box_coords(box, &x, &y);
 
+	x -= box->border[LEFT].width;
+	y -= box->border[TOP].width;
 	content__request_redraw((struct content *)html, x, y,
-			box->padding[LEFT] + box->width + box->padding[RIGHT],
-			box->padding[TOP] + box->height + box->padding[BOTTOM]);
+			box->border[LEFT].width + box->padding[LEFT] +
+			box->width + box->padding[RIGHT] + box->border[RIGHT].width,
+			box->border[TOP].width + box->padding[TOP] +
+			box->height + box->padding[BOTTOM] + box->border[BOTTOM].width);
 }
 
 static void html_destroy_frameset(struct content_html_frames *frameset)

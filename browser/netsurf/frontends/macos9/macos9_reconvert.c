@@ -730,6 +730,7 @@ macos9_reconvert_cb(void *p)
 	int i;
 	int busy = 0;
 	int did_one = 0;
+	extern int html_reconvert_fast_style(struct content *c, void *node);
 
 	(void) p;	/* dedup key only - value is never dereferenced */
 
@@ -822,7 +823,6 @@ macos9_reconvert_cb(void *p)
 		if (g_pending[i].multi == 0 && g_pending[i].kind == MACOS9_DOMMUT_SETATTR_STYLE && g_pending[i].node != NULL) {
 			if (c->status == CONTENT_STATUS_READY || c->status == CONTENT_STATUS_DONE) {
 				g_style_fast_attempt++;
-				extern int html_reconvert_fast_style(struct content *c, void *node);
 				if (html_reconvert_fast_style(c, g_pending[i].node) == 0) {
 					g_style_fast_commit++;
 					macos9_reconvert_slot_clear(i);
