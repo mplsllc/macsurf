@@ -3625,6 +3625,59 @@ static void html_reconvert_relink_objects(html_content *c)
 	}
 }
 
+int html_reconvert_fast_style(struct content *base_c, void *vnode)
+{
+	html_content *c = (html_content *)base_c;
+	dom_node *node = vnode;
+	struct box *box;
+	css_select_results *new_styles;
+	css_custom_env *new_env = NULL;
+	css_custom_env *use_parent_env = NULL;
+	const css_computed_style *use_parent = NULL;
+	const css_computed_style *use_root = NULL;
+
+	if (node == NULL || c == NULL) return -1;
+	if (c->select_ctx == NULL) return -1;
+	
+	extern struct gui_window *macos9_paint_gw;
+	extern int macsurf_reconvert_in_progress;
+	if (macos9_paint_gw != NULL || macsurf_reconvert_in_progress != 0 || base_c->active != 0) return -1;
+
+	box = box_for_node(node);
+	if (box == NULL || box->styles == NULL || box->style == NULL) return -1;
+
+	if (box->type == BOX_CONTENTS) return -1;
+
+	nscss_reset_node_data(node);
+
+	if (box->parent != NULL) {
+		use_parent = (box->parent == c->layout) ? NULL : box->parent->style;
+		use_parent_env = (box->parent == c->layout) ? NULL : box->parent->custom_env;
+	}
+	use_root = (box == c->layout) ? NULL : c->layout->style;
+
+	new_styles = box_get_style((html_content *)c, use_parent, use_root, node, use_parent_env, &new_env);
+	if (new_styles == NULL) return -1;
+
+	if (css_computed_style_is_paint_only_diff(box->style, new_styles->styles[CSS_PSEUDO_ELEMENT_NONE])) {
+		if (box->custom_env != NULL && !(box->flags & CLONE))
+			css_custom_env_unref(box->custom_env);
+		if (!(box->flags & CLONE)) box->custom_env = new_env;
+		else if (new_env != NULL) css_custom_env_unref(new_env);
+
+		if (box->styles != NULL && !(box->flags & CLONE)) css_select_results_destroy(box->styles);
+		
+		box->styles = new_styles;
+		box->style = new_styles->styles[CSS_PSEUDO_ELEMENT_NONE];
+		
+		html__redraw_a_box(c, box);
+		return 0;
+	}
+
+	css_select_results_destroy(new_styles);
+	if (new_env != NULL) css_custom_env_unref(new_env);
+	return -1;
+}
 
 static void html_reconvert_free_old(void)
 {

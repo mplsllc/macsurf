@@ -183,6 +183,10 @@ extern int macos9_content_token_valid(struct content *c, unsigned long token);
 static unsigned long g_mut_counts[MACOS9_DOMMUT_SETATTR_STYLE + 1];
 static unsigned long g_mut_total = 0;
 
+static long g_style_fast_attempt = 0;
+static long g_style_fast_commit = 0;
+static long g_style_fast_fallback = 0;
+
 static void macos9_reconvert_census_dump(void)
 {
 	if (g_mut_total == 0) {
@@ -209,6 +213,13 @@ static void macos9_reconvert_census_dump(void)
 		(long) g_mut_counts[MACOS9_DOMMUT_UNKNOWN],
 		(long) g_mut_counts[MACOS9_DOMMUT_SETATTR_CLASS],
 		(long) g_mut_counts[MACOS9_DOMMUT_SETATTR_STYLE]);
+	if (g_style_fast_attempt > 0) {
+		macsurf_debug_log_writef("LIFE STYLEFAST attempt=%ld commit=%ld fallback=%ld",
+			g_style_fast_attempt, g_style_fast_commit, g_style_fast_fallback);
+		g_style_fast_attempt = 0;
+		g_style_fast_commit = 0;
+		g_style_fast_fallback = 0;
+	}
 	memset(g_mut_counts, 0, sizeof(g_mut_counts));
 	g_mut_total = 0;
 }
@@ -805,6 +816,22 @@ macos9_reconvert_cb(void *p)
 				g_mut_total = 0;
 				did_one = 1;
 				continue;
+			}
+		}
+
+		if (g_pending[i].multi == 0 && g_pending[i].kind == MACOS9_DOMMUT_SETATTR_STYLE && g_pending[i].node != NULL) {
+			if (c->status == CONTENT_STATUS_READY || c->status == CONTENT_STATUS_DONE) {
+				g_style_fast_attempt++;
+				extern int html_reconvert_fast_style(struct content *c, void *node);
+				if (html_reconvert_fast_style(c, g_pending[i].node) == 0) {
+					g_style_fast_commit++;
+					macos9_reconvert_slot_clear(i);
+					did_one = 1;
+					g_mut_counts[MACOS9_DOMMUT_SETATTR_STYLE]--;
+					g_mut_total--;
+					continue;
+				}
+				g_style_fast_fallback++;
 			}
 		}
 
