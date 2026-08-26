@@ -623,101 +623,6 @@ void html_pagemap_brief(dom_node *n, char *out, int cap)
 	}
 }
 
-/* Diagnostic-only inheritance probe for /Webs/macsurf-web/t.html.  This is
- * deliberately run after a normal reformat: it records the box-tree paint
- * state that a future inherited-color fast path would have to refresh. */
-static struct box *html_color_probe_find_parent_node(dom_node *node)
-{
-	dom_string *name = NULL;
-	dom_string *value = NULL;
-	dom_node *child = NULL;
-	dom_node *next = NULL;
-	dom_node_type type;
-	struct box *found;
-
-	if (node == NULL)
-		return NULL;
-	if (dom_node_get_node_type(node, &type) == DOM_NO_ERR &&
-			type == DOM_ELEMENT_NODE &&
-		dom_string_create((const uint8_t *)"id", 2, &name) == DOM_NO_ERR &&
-			name != NULL) {
-		if (dom_element_get_attribute((dom_element *)node, name, &value) ==
-				DOM_NO_ERR && value != NULL) {
-			if (dom_string_length(value) == 6 &&
-				memcmp(dom_string_data(value), "parent", 6) == 0) {
-				dom_string_unref(value);
-				dom_string_unref(name);
-				return box_for_node(node);
-			}
-			dom_string_unref(value);
-		}
-		dom_string_unref(name);
-	}
-	if (dom_node_get_first_child(node, &child) != DOM_NO_ERR)
-		child = NULL;
-	while (child != NULL) {
-		found = html_color_probe_find_parent_node(child);
-		if (dom_node_get_next_sibling(child, &next) != DOM_NO_ERR)
-			next = NULL;
-		dom_node_unref(child);
-		if (found != NULL)
-			return found;
-		child = next;
-	}
-
-	return NULL;
-}
-
-static void html_color_probe_dump(struct box *box, int depth, int *count)
-{
-	char brief[88];
-	css_color color = 0;
-	dom_node_type type;
-
-	while (box != NULL && *count < 48) {
-		brief[0] = '\0';
-		if (box->node != NULL &&
-			dom_node_get_node_type(box->node, &type) == DOM_NO_ERR &&
-			type == DOM_ELEMENT_NODE) {
-			html_pagemap_brief(box->node, brief, (int)sizeof brief);
-		} else if (box->node != NULL) {
-			strncpy(brief, "non-element", sizeof brief - 1);
-			brief[sizeof brief - 1] = '\0';
-		} else {
-			strncpy(brief, "anonymous", sizeof brief - 1);
-			brief[sizeof brief - 1] = '\0';
-		}
-		if (box->style != NULL)
-			css_computed_color(box->style, &color);
-		macsurf_debug_log_writef(
-			"LIFE COLORPROBE d=%d type=%d label=%s color=%ld style=%p",
-			depth, (int)box->type, brief, (long)color,
-			(void *)box->style);
-		(*count)++;
-		html_color_probe_dump(box->children, depth + 1, count);
-		box = box->next;
-	}
-}
-
-static void html_color_probe_after_reformat(html_content *c)
-{
-	dom_element *root = NULL;
-	struct box *parent;
-	int count = 0;
-
-	if (c == NULL || c->document == NULL ||
-		dom_document_get_document_element(c->document, &root) != DOM_NO_ERR ||
-		root == NULL)
-		return;
-	parent = html_color_probe_find_parent_node((dom_node *)root);
-	dom_node_unref((dom_node *)root);
-	if (parent != NULL) {
-		macsurf_debug_log_write("LIFE COLORPROBE begin #parent");
-		html_color_probe_dump(parent, 0, &count);
-		macsurf_debug_log_writef("LIFE COLORPROBE end boxes=%d", count);
-	}
-}
-
 #define HTML_PAGEMAP_SANE(v) (((v) < 0 || (v) >= 1000000) ? 0 : (v))
 
 /* fixes1017 - per-dump line budget: the walk is recursive now (three levels,
@@ -738,7 +643,6 @@ static int html_pagemap_line(dom_node *n, int depth, int *susp_out)
 	int kids = 0;
 	int x = 0, y = 0, w = 0, h = 0;
 	int fsz = -1;
-	int color_probe_count = 0;
 	const char *disp = "-";
 	static const char *pfx[5] = { "", "> ", ">> ", ">>> ", ">>>> " };
 
@@ -779,12 +683,6 @@ static int html_pagemap_line(dom_node *n, int depth, int *susp_out)
 			"LIFE pagemap %s%s kids=%d box=%d y=%d w=%d h=%d fs=%d disp=%s",
 			pfx[(depth < 0) ? 0 : ((depth > 4) ? 4 : depth)],
 			brief, kids, (b != NULL) ? 1 : 0, y, w, h, fsz, disp);
-	if (b != NULL && strstr(brief, "#parent") != NULL) {
-		macsurf_debug_log_write("LIFE COLORPROBE begin #parent");
-		html_color_probe_dump(b, 0, &color_probe_count);
-		macsurf_debug_log_writef("LIFE COLORPROBE end boxes=%d",
-			color_probe_count);
-	}
 	/* fixes1021 -- "this subtree looks broken": boxless, flat, or a
 	 * container squashed to less than a text line. The walk uses it to
 	 * keep descending PAST the normal depth cap, straight into e.g. the
@@ -4019,7 +3917,6 @@ static void html_reconvert_done(html_content *c, bool success)
 		(void) html_proceed_to_done(c);
 	}
 	html_pagemap_dump(c, "reconvert"); /* fixes1015 */
-	html_color_probe_after_reformat(c);
 	html_slider_probe(c, "reconvert"); /* fixes1093 */
 
 	/* fixes1019 - a reconvert that CHANGED the document height fires one
