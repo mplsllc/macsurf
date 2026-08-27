@@ -3721,9 +3721,9 @@ html_inherited_color_discard(struct inherited_color_candidate *candidate,
 }
 
 /* Re-cascade just one already-built element-box subtree.  This is deliberately
- * more conservative than html_recascade_tree: clone boxes and boxes that fail
- * to select cause a full reconvert, because candidate ownership must remain
- * wholly private until the transaction commits. */
+ * more conservative than html_recascade_tree: boxes that fail to select cause
+ * a full reconvert, because candidate ownership must remain wholly private
+ * until the transaction commits. */
 int
 html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 {
@@ -3774,11 +3774,6 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 		box = frame.box;
 		if (box == NULL)
 			continue;
-
-		/* Clones share the owner box's results.  Do not manufacture a
-		 * second owner during a transactional pass. */
-		if (box->flags & CLONE)
-			goto done;
 
 		style_for_children = box->style;
 		env_for_children = box->custom_env;
@@ -3864,11 +3859,14 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 	for (i = 0; i < candidate_count; i++) {
 		struct box *box = candidate[i].box;
 		if (candidate[i].styles != NULL) {
-			if (box->custom_env != NULL)
+			if (box->custom_env != NULL && !(box->flags & CLONE))
 				css_custom_env_unref(box->custom_env);
-			if (box->styles != NULL)
+			if (!(box->flags & CLONE))
+				box->custom_env = candidate[i].custom_env;
+			else if (candidate[i].custom_env != NULL)
+				css_custom_env_unref(candidate[i].custom_env);
+			if (box->styles != NULL && !(box->flags & CLONE))
 				css_select_results_destroy(box->styles);
-			box->custom_env = candidate[i].custom_env;
 			box->styles = candidate[i].styles;
 		}
 		box->style = candidate[i].style;
