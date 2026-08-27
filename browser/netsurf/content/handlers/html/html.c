@@ -3852,10 +3852,15 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 					styles->styles[CSS_PSEUDO_ELEMENT_NONE]);
 			if (diff == CSS_COMPUTED_STYLE_OTHER_DIFF) {
 				dom_string *dnm = NULL;
+				const css_computed_style *ns =
+					styles->styles[CSS_PSEUDO_ELEMENT_NONE];
+				css_fixed ol, nl;
+				css_unit ou, nu;
+				uint8_t ot, nt;
+				char b0[48];
 				decline = "classifier_other";
 				decline_detail = css_computed_style_color_diff_detail(
-					box->style,
-					styles->styles[CSS_PSEUDO_ELEMENT_NONE]);
+					box->style, ns);
 				if (box->node != NULL &&
 					dom_node_get_node_name(box->node, &dnm) == DOM_NO_ERR &&
 					dnm != NULL) {
@@ -3864,6 +3869,23 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 					decline_tag[sizeof(decline_tag) - 1] = '\0';
 					dom_string_unref(dnm);
 				}
+				sprintf(b0, "%08lX/%08lX",
+					css_computed_style_debug_bits0(box->style),
+					css_computed_style_debug_bits0(ns));
+				ot = css_computed_border_top_width(box->style, &ol, &ou);
+				nt = css_computed_border_top_width(ns, &nl, &nu);
+				macsurf_debug_log_writef(
+					"LIFE INHERITEDCOLOR classifier bits0=%s "
+					"bt_top old t=%d u=%d l=%ld new t=%d u=%d l=%ld",
+					b0, (int)ot, (int)ou, (long)ol,
+					(int)nt, (int)nu, (long)nl);
+				ot = css_computed_border_left_width(box->style, &ol, &ou);
+				nt = css_computed_border_left_width(ns, &nl, &nu);
+				macsurf_debug_log_writef(
+					"LIFE INHERITEDCOLOR classifier bt_left "
+					"old t=%d u=%d l=%ld new t=%d u=%d l=%ld",
+					(int)ot, (int)ou, (long)ol,
+					(int)nt, (int)nu, (long)nl);
 				css_select_results_destroy(styles);
 				if (env != NULL) css_custom_env_unref(env);
 				goto done;
