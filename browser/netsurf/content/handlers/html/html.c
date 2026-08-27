@@ -3703,7 +3703,8 @@ struct inherited_color_candidate {
 
 struct inherited_color_frame {
 	struct box *box;
-	css_computed_style *parent_style;
+	css_computed_style *parent_style;	/* parent's post-recascade style */
+	css_computed_style *parent_style_old;	/* pointer children currently borrow */
 	css_custom_env *parent_env;
 };
 
@@ -3773,6 +3774,8 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 	stack[stack_count].box = root;
 	stack[stack_count].parent_style = (root->parent == NULL ||
 		root->parent == c->layout) ? NULL : root->parent->style;
+	/* root's parent is not part of this transaction, so old == new */
+	stack[stack_count].parent_style_old = stack[stack_count].parent_style;
 	stack[stack_count].parent_env = (root->parent == NULL ||
 		root->parent == c->layout) ? NULL : root->parent->custom_env;
 	stack_count++;
@@ -3781,6 +3784,7 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 		struct inherited_color_frame frame;
 		struct box *box;
 		css_computed_style *style_for_children;
+		css_computed_style *style_for_children_old;
 		css_custom_env *env_for_children;
 		struct box *child;
 
@@ -3789,6 +3793,11 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 		if (box == NULL)
 			continue;
 
+		/* Descendant boxes with no style of their own borrow this
+		 * pointer; track it so the anonymous-borrow test below compares
+		 * against what the child actually holds, not the recascaded
+		 * replacement. */
+		style_for_children_old = box->style;
 		style_for_children = box->style;
 		env_for_children = box->custom_env;
 		if (box->flags & CLONE) {
@@ -3826,6 +3835,15 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 			const css_computed_style *use_parent;
 			css_custom_env *use_parent_env;
 			enum css_computed_style_diff diff;
+			/* Compare this box's OWN previous cascade result against
+			 * its fresh one.  box->style itself is not a valid
+			 * baseline: an empty inline box (a zero-width <span>
+			 * whose text is a sibling, not a child) keeps box->style
+			 * pointing at its parent, while box->styles still holds
+			 * the box's own selection - comparing the two reports a
+			 * border/width difference that is purely that mismatch. */
+			const css_computed_style *own_old =
+				box->styles->styles[CSS_PSEUDO_ELEMENT_NONE];
 
 			if (candidate_count == candidate_cap) {
 				struct inherited_color_candidate *p;
@@ -3848,19 +3866,16 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 				goto done;
 			}
 
-			diff = css_computed_style_diff(box->style,
+			diff = css_computed_style_diff(own_old,
 					styles->styles[CSS_PSEUDO_ELEMENT_NONE]);
 			if (diff == CSS_COMPUTED_STYLE_OTHER_DIFF) {
 				dom_string *dnm = NULL;
 				const css_computed_style *ns =
 					styles->styles[CSS_PSEUDO_ELEMENT_NONE];
-				css_fixed ol, nl;
-				css_unit ou, nu;
-				uint8_t ot, nt;
 				char b0[48];
 				decline = "classifier_other";
 				decline_detail = css_computed_style_color_diff_detail(
-					box->style, ns);
+					own_old, ns);
 				if (box->node != NULL &&
 					dom_node_get_node_name(box->node, &dnm) == DOM_NO_ERR &&
 					dnm != NULL) {
@@ -3870,22 +3885,10 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 					dom_string_unref(dnm);
 				}
 				sprintf(b0, "%08lX/%08lX",
-					css_computed_style_debug_bits0(box->style),
+					css_computed_style_debug_bits0(own_old),
 					css_computed_style_debug_bits0(ns));
-				ot = css_computed_border_top_width(box->style, &ol, &ou);
-				nt = css_computed_border_top_width(ns, &nl, &nu);
 				macsurf_debug_log_writef(
-					"LIFE INHERITEDCOLOR classifier bits0=%s "
-					"bt_top old t=%d u=%d l=%ld new t=%d u=%d l=%ld",
-					b0, (int)ot, (int)ou, (long)ol,
-					(int)nt, (int)nu, (long)nl);
-				ot = css_computed_border_left_width(box->style, &ol, &ou);
-				nt = css_computed_border_left_width(ns, &nl, &nu);
-				macsurf_debug_log_writef(
-					"LIFE INHERITEDCOLOR classifier bt_left "
-					"old t=%d u=%d l=%ld new t=%d u=%d l=%ld",
-					(int)ot, (int)ou, (long)ol,
-					(int)nt, (int)nu, (long)nl);
+					"LIFE INHERITEDCOLOR classifier bits0=%s", b0);
 				css_select_results_destroy(styles);
 				if (env != NULL) css_custom_env_unref(env);
 				goto done;
@@ -3900,10 +3903,12 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 			candidate_count++;
 			style_for_children = styles->styles[CSS_PSEUDO_ELEMENT_NONE];
 			env_for_children = env;
-		} else if (box->style == frame.parent_style) {
+		} else if (box->style == frame.parent_style_old) {
 			/* Anonymous/text boxes borrow their parent's computed style. Keep
 			 * their pointer change in the candidate set as well: text boxes
-			 * otherwise continue to paint the old inherited foreground. */
+			 * otherwise continue to paint the old inherited foreground.
+			 * Match against the pointer the child actually holds (the
+			 * parent's pre-recascade style), not the replacement. */
 			if (candidate_count == candidate_cap) {
 				struct inherited_color_candidate *p;
 				candidate_cap *= 2;
@@ -3934,6 +3939,7 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 			}
 			stack[stack_count].box = child;
 			stack[stack_count].parent_style = style_for_children;
+			stack[stack_count].parent_style_old = style_for_children_old;
 			stack[stack_count].parent_env = env_for_children;
 			stack_count++;
 		}
