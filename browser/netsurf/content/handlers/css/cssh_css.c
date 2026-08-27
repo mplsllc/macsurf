@@ -40,6 +40,7 @@
 #include "css/internal.h"
 
 #include "macsurf_debug.h"
+#include "macsurf_gap.h"
 
 /* Define to trace import fetches */
 #undef NSCSS_IMPORT_TRACE
@@ -3766,6 +3767,14 @@ macsurf__rewrite_modern_compat(const char *data, size_t in_size,
 				}
 			}
 			changed = 1;
+			/* MacSurf Trace Phase 0 - census the specific
+			 * animation-family fallback taken (no timer playback
+			 * layer). Other DROP_PROPS entries are not gaps. */
+			if (strncmp(name, "transition", 10) == 0) {
+				macsurf_gap_hit(MS_GAP_CSS_TRANSITION_DROPPED);
+			} else if (strncmp(name, "animation", 9) == 0) {
+				macsurf_gap_hit(MS_GAP_CSS_ANIMATION_DROPPED);
+			}
 			i = end;
 		}
 	}

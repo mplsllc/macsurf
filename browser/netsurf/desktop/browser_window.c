@@ -1644,6 +1644,7 @@ browser_window_callback(hlcache_handle *c, const hlcache_event *event, void *pw)
 						const char *url);
 				extern void macsurf_qjs_emit_timer_profile(void);
 				extern void macsurf_qjs_emit_js_profile(void);
+				extern void macsurf_gap_emit_summary(void);
 				macsurf_profile_emit_phases(
 					(du != NULL) ? nsurl_access(du) : "?");
 				/* fixes1037 - split the JS total: how much of it is
@@ -1655,6 +1656,13 @@ browser_window_callback(hlcache_handle *c, const hlcache_event *event, void *pw)
 				 * with no way to see which script or which half of
 				 * the engine was responsible. */
 				macsurf_qjs_emit_js_profile();
+				/* MacSurf Trace Phase 0 - compatibility-gap
+				 * census for this navigation. Temporary
+				 * validation bridge; superseded by an on-demand
+				 * 'MSdg GET gaps' AppleEvent query later. Extern
+				 * here so NetSurf core keeps no dependency on the
+				 * macos9 frontend header. */
+				macsurf_gap_emit_summary();
 			}
 		}
 		res = browser_window_content_done(bw);

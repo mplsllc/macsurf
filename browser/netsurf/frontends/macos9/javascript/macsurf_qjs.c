@@ -23,6 +23,7 @@
 #include "utils/ns_errors.h"
 #include "macos9.h"
 #include "macsurf_debug.h"
+#include "macsurf_gap.h"
 #include "macsurf_qjs.h"
 #include "macsurf_qjs_audit.h"
 #include "macsurf_timebase.h"
@@ -6424,6 +6425,7 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 	qjs_geometry_flush(ctx);	/* fixes1073 (#265) */
 	if (!qjs_geometry_settled(ctx)) {
 		g_geom_undef++;			/* fixes1087 */
+		macsurf_gap_hit(MS_GAP_GEOMETRY_UNDEFINED);
 		qjs_geom_audit(qjs_metric_name(magic), this_val,
 				"undefined (unsettled)");
 		return JS_UNDEFINED;
@@ -6444,6 +6446,7 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 		extern int macos9_reconvert_pending_for(void *cv);
 		if (macos9_reconvert_pending_for(content)) {
 			g_geom_undef++;		/* fixes1087 */
+			macsurf_gap_hit(MS_GAP_GEOMETRY_UNDEFINED);
 			qjs_geom_audit(qjs_metric_name(magic), this_val,
 					"undefined (mutation pending)");
 			return JS_UNDEFINED;
@@ -6466,6 +6469,7 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 		 * this change fabricating a value in the unsettled window. */
 		if (content->status != CONTENT_STATUS_DONE) {
 			g_geom_undef++;
+			macsurf_gap_hit(MS_GAP_GEOMETRY_UNDEFINED);
 			qjs_geom_audit(qjs_metric_name(magic), this_val,
 					"undefined (no box, not DONE)");
 			return JS_UNDEFINED;
