@@ -249,6 +249,29 @@ static inline bool css__arena_style_is_equal(
 	return true;
 }
 
+/* Externally exported semantic comparator. Documented in computed.h.
+ * Only the inherited foreground `color` is ignored for COLOR_DIFF.  The
+ * paint-only comparator below deliberately remains broader (background,
+ * borders and outline) for the existing single-box paint path. */
+enum css_computed_style_diff
+css_computed_style_diff(const struct css_computed_style *a,
+		const struct css_computed_style *b)
+{
+	struct css_computed_style tmp = *b;
+	css_color c;
+	uint8_t type;
+
+	if (css__arena_style_is_equal((struct css_computed_style *)a, &tmp))
+		return CSS_COMPUTED_STYLE_NO_DIFF;
+
+	type = get_color(a, &c);
+	set_color(&tmp, type, c);
+	if (css__arena_style_is_equal((struct css_computed_style *)a, &tmp))
+		return CSS_COMPUTED_STYLE_COLOR_DIFF;
+
+	return CSS_COMPUTED_STYLE_OTHER_DIFF;
+}
+
 /* Externally exported fast-path comparator. Documented in computed.h */
 bool css_computed_style_is_paint_only_diff(
 		const struct css_computed_style *a,

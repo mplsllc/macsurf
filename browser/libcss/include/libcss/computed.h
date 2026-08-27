@@ -79,6 +79,17 @@ typedef struct css_computed_content_item {
 
 css_error css_computed_style_destroy(css_computed_style *style);
 
+/* Semantic difference classification for conservative incremental styling. */
+enum css_computed_style_diff {
+	CSS_COMPUTED_STYLE_NO_DIFF = 0,
+	CSS_COMPUTED_STYLE_COLOR_DIFF,
+	CSS_COMPUTED_STYLE_OTHER_DIFF
+};
+
+enum css_computed_style_diff css_computed_style_diff(
+		const css_computed_style *a,
+		const css_computed_style *b);
+
 /* Fast-path comparator for incremental styling */
 bool css_computed_style_is_paint_only_diff(
 		const css_computed_style *a,

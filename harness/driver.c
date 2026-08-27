@@ -12430,7 +12430,8 @@ box_coords(bx, &cx, &cy);
 
 		fprintf(stderr, "\n=== Test 101: Inline style paint fast path ===\n");
 		{
-			extern void macos9_js_mark_dom_dirty(struct content *c, void *node, int kind);
+			extern void macos9_js_mark_dom_dirty_node(struct content *c,
+					void *node, int kind);
 			extern int macos9_reconvert_flush_now(void *p);
 			#define MACOS9_DOMMUT_SETATTR_STYLE 10
 			#define MACOS9_DOMMUT_APPENDCHILD 4
@@ -12448,12 +12449,13 @@ box_coords(bx, &cx, &cy);
 			dom_string_create((const uint8_t *)"style", 5, &style_str);
 
 			/* Each mutation is tested independently: mark dirty, flush,
-			 * re-lookup box so we never touch freed memory. The fast path
-			 * is exercised when background-color is the only change; all
-			 * others fall back to html_reconvert_content. */
+			 * re-lookup box so we never touch freed memory. The precise
+			 * STYLE mark exercises the paint path for background-color and
+			 * the conservative inherited-colour path for color; geometry
+			 * changes still fall back to html_reconvert_content. */
 			const char *tests[] = {
 				"background-color: blue;",  /* fast path expected */
-				"color: red;",              /* fallback expected  */
+				"color: red;",              /* inherited path      */
 				"width: 100px;",            /* fallback           */
 				"display: none;",           /* fallback           */
 				"position: absolute;",      /* fallback           */
@@ -12468,7 +12470,8 @@ box_coords(bx, &cx, &cy);
 				dom_element_set_attribute((dom_element *)target_node, style_str, val_str);
 				dom_string_unref(val_str);
 
-				macos9_js_mark_dom_dirty((struct content *)&t99c, target_node, MACOS9_DOMMUT_SETATTR_STYLE);
+				macos9_js_mark_dom_dirty_node((struct content *)&t99c,
+						target_node, MACOS9_DOMMUT_SETATTR_STYLE);
 				(void) macos9_reconvert_flush_now((void *)&t99c);
 				/* After a full reconvert the old box pointer is invalid.
 				 * We don't re-use `box` below, so no re-lookup needed. */

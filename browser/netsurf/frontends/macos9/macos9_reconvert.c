@@ -186,6 +186,22 @@ static unsigned long g_mut_total = 0;
 static long g_style_fast_attempt = 0;
 static long g_style_fast_commit = 0;
 static long g_style_fast_fallback = 0;
+static long g_inherited_color_attempt = 0;
+static long g_inherited_color_commit = 0;
+static long g_inherited_color_fallback = 0;
+
+static int
+macos9_reconvert_batch_has_structural_mutation(void)
+{
+	int kind;
+	for (kind = 0; kind <= MACOS9_DOMMUT_SETATTR_STYLE; kind++) {
+		if (kind != MACOS9_DOMMUT_SETATTR_CLASS &&
+			kind != MACOS9_DOMMUT_SETATTR_STYLE &&
+			g_mut_counts[kind] != 0)
+			return 1;
+	}
+	return 0;
+}
 
 static void macos9_reconvert_census_dump(void)
 {
@@ -538,6 +554,17 @@ macos9_reconvert_sync_reasons(long *notdone, long *active, long *paint,
 void
 macos9_reconvert_sync_reset(void)
 {
+	/* Navigation summary: unlike the mutation census (per batch), these
+	 * counters are intentionally accumulated until the JS navigation reset. */
+	if (g_inherited_color_attempt != 0) {
+		macsurf_debug_log_writef(
+			"LIFE INHERITEDCOLOR attempt=%ld commit=%ld fallback=%ld",
+			g_inherited_color_attempt, g_inherited_color_commit,
+			g_inherited_color_fallback);
+	}
+	g_inherited_color_attempt = 0;
+	g_inherited_color_commit = 0;
+	g_inherited_color_fallback = 0;
 	g_sync_flushes  = 0;
 	g_sync_declined = 0;
 	g_sync_us       = 0;
@@ -731,6 +758,8 @@ macos9_reconvert_cb(void *p)
 	int busy = 0;
 	int did_one = 0;
 	extern int html_reconvert_fast_style(struct content *c, void *node);
+	extern int html_reconvert_fast_inherited_color(struct content *c,
+			void *node);
 
 	(void) p;	/* dedup key only - value is never dereferenced */
 
@@ -803,7 +832,16 @@ macos9_reconvert_cb(void *p)
 					break;
 				}
 			}
+			/* A style edit has a correctness path: either the existing
+			 * single-box paint path, the inherited-colour transaction, or
+			 * a real fallback reconvert.  Never suppress it merely because
+			 * two earlier cosmetic batches ran: a multi-style batch can
+			 * contain geometry (for example parent colour plus child width).
+			 * Keep the animation-churn cap for the unsupported precise class
+			 * case only. */
 			if (!any_structural &&
+			    g_pending[i].multi == 0 &&
+			    g_pending[i].kind == MACOS9_DOMMUT_SETATTR_CLASS &&
 			    g_consecutive_cosmetic >=
 			    RECONVERT_COSMETIC_MAX_CONSECUTIVE) {
 				macsurf_debug_log_writef(
@@ -832,6 +870,23 @@ macos9_reconvert_cb(void *p)
 					continue;
 				}
 				g_style_fast_fallback++;
+				/* A parent foreground colour can change every inheriting
+				 * descendant.  Only try this after the existing single-box
+				 * background/border/outline path declined, and never when the
+				 * batch also contains a structural mutation. */
+				if (!macos9_reconvert_batch_has_structural_mutation()) {
+					g_inherited_color_attempt++;
+					if (html_reconvert_fast_inherited_color(c,
+							g_pending[i].node) == 0) {
+						g_inherited_color_commit++;
+						macos9_reconvert_slot_clear(i);
+						did_one = 1;
+						g_mut_counts[MACOS9_DOMMUT_SETATTR_STYLE]--;
+						g_mut_total--;
+						continue;
+					}
+					g_inherited_color_fallback++;
+				}
 			}
 		}
 

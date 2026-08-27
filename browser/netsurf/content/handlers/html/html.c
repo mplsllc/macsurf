@@ -3690,6 +3690,206 @@ int html_reconvert_fast_style(struct content *base_c, void *vnode)
 	return -1;
 }
 
+/* Candidate state for the inherited-colour mutation path.  Nothing in this
+ * array is published to a box until every affected box has passed the libcss
+ * semantic classifier. */
+struct inherited_color_candidate {
+	struct box *box;
+	css_select_results *styles;
+	css_custom_env *custom_env;
+	css_computed_style *style;
+};
+
+struct inherited_color_frame {
+	struct box *box;
+	css_computed_style *parent_style;
+	css_custom_env *parent_env;
+};
+
+static void
+html_inherited_color_discard(struct inherited_color_candidate *candidate,
+		int count)
+{
+	int i;
+
+	for (i = 0; i < count; i++) {
+		if (candidate[i].styles != NULL)
+			css_select_results_destroy(candidate[i].styles);
+		if (candidate[i].custom_env != NULL)
+			css_custom_env_unref(candidate[i].custom_env);
+	}
+}
+
+/* Re-cascade just one already-built element-box subtree.  This is deliberately
+ * more conservative than html_recascade_tree: clone boxes and boxes that fail
+ * to select cause a full reconvert, because candidate ownership must remain
+ * wholly private until the transaction commits. */
+int
+html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
+{
+	html_content *c = (html_content *)base_c;
+	dom_node *node = vnode;
+	struct box *root;
+	struct inherited_color_candidate *candidate = NULL;
+	struct inherited_color_frame *stack = NULL;
+	int candidate_count = 0, candidate_cap = 0;
+	int stack_count = 0, stack_cap = 0;
+	int i;
+	int ok = 0;
+	extern struct gui_window *macos9_paint_gw;
+	extern int macsurf_reconvert_in_progress;
+
+	if (c == NULL || node == NULL || c->select_ctx == NULL ||
+		c->layout == NULL || macos9_paint_gw != NULL ||
+		macsurf_reconvert_in_progress != 0 || base_c->active != 0)
+		return -1;
+
+	root = box_for_node(node);
+	if (root == NULL || root->styles == NULL || root->style == NULL ||
+		root->type == BOX_CONTENTS)
+		return -1;
+
+	stack_cap = 32;
+	stack = malloc(sizeof(*stack) * stack_cap);
+	candidate_cap = 32;
+	candidate = malloc(sizeof(*candidate) * candidate_cap);
+	if (stack == NULL || candidate == NULL)
+		goto done;
+
+	stack[stack_count].box = root;
+	stack[stack_count].parent_style = (root->parent == NULL ||
+		root->parent == c->layout) ? NULL : root->parent->style;
+	stack[stack_count].parent_env = (root->parent == NULL ||
+		root->parent == c->layout) ? NULL : root->parent->custom_env;
+	stack_count++;
+
+	while (stack_count > 0) {
+		struct inherited_color_frame frame;
+		struct box *box;
+		css_computed_style *style_for_children;
+		css_custom_env *env_for_children;
+		struct box *child;
+
+		frame = stack[--stack_count];
+		box = frame.box;
+		if (box == NULL)
+			continue;
+
+		/* Clones share the owner box's results.  Do not manufacture a
+		 * second owner during a transactional pass. */
+		if (box->flags & CLONE)
+			goto done;
+
+		style_for_children = box->style;
+		env_for_children = box->custom_env;
+		if (box->node != NULL && box->styles != NULL) {
+			css_select_results *styles;
+			css_custom_env *env = NULL;
+			const css_computed_style *use_root;
+			const css_computed_style *use_parent;
+			css_custom_env *use_parent_env;
+			enum css_computed_style_diff diff;
+
+			if (candidate_count == candidate_cap) {
+				struct inherited_color_candidate *p;
+				candidate_cap *= 2;
+				p = realloc(candidate, sizeof(*candidate) * candidate_cap);
+				if (p == NULL)
+					goto done;
+				candidate = p;
+			}
+
+			nscss_reset_node_data(box->node);
+			use_root = (box == c->layout) ? NULL : c->layout->style;
+			use_parent = (box == c->layout) ? NULL : frame.parent_style;
+			use_parent_env = (box == c->layout) ? NULL : frame.parent_env;
+			styles = box_get_style(c, use_parent, use_root, box->node,
+					use_parent_env, &env);
+			if (styles == NULL)
+				goto done;
+
+			diff = css_computed_style_diff(box->style,
+					styles->styles[CSS_PSEUDO_ELEMENT_NONE]);
+			if (diff == CSS_COMPUTED_STYLE_OTHER_DIFF) {
+				css_select_results_destroy(styles);
+				if (env != NULL) css_custom_env_unref(env);
+				goto done;
+			}
+
+			candidate[candidate_count].box = box;
+			candidate[candidate_count].styles = styles;
+			candidate[candidate_count].custom_env = env;
+			candidate[candidate_count].style =
+				styles->styles[CSS_PSEUDO_ELEMENT_NONE];
+			candidate_count++;
+			style_for_children = styles->styles[CSS_PSEUDO_ELEMENT_NONE];
+			env_for_children = env;
+		} else if (box->style == frame.parent_style) {
+			/* Anonymous/text boxes borrow their parent's computed style. Keep
+			 * their pointer change in the candidate set as well: text boxes
+			 * otherwise continue to paint the old inherited foreground. */
+			if (candidate_count == candidate_cap) {
+				struct inherited_color_candidate *p;
+				candidate_cap *= 2;
+				p = realloc(candidate, sizeof(*candidate) * candidate_cap);
+				if (p == NULL)
+					goto done;
+				candidate = p;
+			}
+			candidate[candidate_count].box = box;
+			candidate[candidate_count].styles = NULL;
+			candidate[candidate_count].custom_env = NULL;
+			candidate[candidate_count].style = frame.parent_style;
+			candidate_count++;
+			style_for_children = frame.parent_style;
+		}
+
+		for (child = box->children; child != NULL; child = child->next) {
+			if (stack_count == stack_cap) {
+				struct inherited_color_frame *p;
+				stack_cap *= 2;
+				p = realloc(stack, sizeof(*stack) * stack_cap);
+				if (p == NULL)
+					goto done;
+				stack = p;
+			}
+			stack[stack_count].box = child;
+			stack[stack_count].parent_style = style_for_children;
+			stack[stack_count].parent_env = env_for_children;
+			stack_count++;
+		}
+	}
+
+	/* Commit phase: this is the first point live box style pointers move. */
+	for (i = 0; i < candidate_count; i++) {
+		struct box *box = candidate[i].box;
+		if (candidate[i].styles != NULL) {
+			if (box->custom_env != NULL)
+				css_custom_env_unref(box->custom_env);
+			if (box->styles != NULL)
+				css_select_results_destroy(box->styles);
+			box->custom_env = candidate[i].custom_env;
+			box->styles = candidate[i].styles;
+		}
+		box->style = candidate[i].style;
+		candidate[i].custom_env = NULL;
+		candidate[i].styles = NULL;
+	}
+
+	/* Geometry is proven unchanged.  Redraw the whole affected subtree without
+	 * conversion or layout so descendant text gets repainted too. */
+	for (i = 0; i < candidate_count; i++)
+		html__redraw_a_box(c, candidate[i].box);
+	ok = 1;
+
+done:
+	if (!ok)
+		html_inherited_color_discard(candidate, candidate_count);
+	free(candidate);
+	free(stack);
+	return ok ? 0 : -1;
+}
+
 static void html_reconvert_free_old(void)
 {
 	extern unsigned long macsurf_box_backlink_cleared;

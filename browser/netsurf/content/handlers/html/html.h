@@ -276,5 +276,6 @@ bool html_get_id_offset(struct hlcache_handle *h, lwc_string *frag_id,
 void html_pagemap_brief(struct dom_node *n, char *out, int cap);
 
 extern int html_reconvert_fast_style(struct content *c, void *node);
+extern int html_reconvert_fast_inherited_color(struct content *c, void *node);
 
 #endif
