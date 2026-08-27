@@ -3733,6 +3733,7 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 	struct box *root;
 	struct inherited_color_candidate *candidate = NULL;
 	struct inherited_color_frame *stack = NULL;
+	css_select_ctx *candidate_select_ctx = NULL;
 	int candidate_count = 0, candidate_cap = 0;
 	int stack_count = 0, stack_cap = 0;
 	int i;
@@ -3749,6 +3750,9 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 	if (root == NULL || root->styles == NULL || root->style == NULL ||
 		root->type == BOX_CONTENTS)
 		return -1;
+	if (html_css_new_selection_context(c, &candidate_select_ctx) !=
+		NSERROR_OK || candidate_select_ctx == NULL)
+		goto done;
 
 	stack_cap = 32;
 	stack = malloc(sizeof(*stack) * stack_cap);
@@ -3819,30 +3823,19 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 				candidate = p;
 			}
 
-			nscss_reset_node_data(box->node);
 			use_root = (box == c->layout) ? NULL : c->layout->style;
 			use_parent = (box == c->layout) ? NULL : frame.parent_style;
 			use_parent_env = (box == c->layout) ? NULL : frame.parent_env;
-			styles = box_get_style(c, use_parent, use_root, box->node,
-					use_parent_env, &env);
+			styles = box_get_style_with_select_ctx(c, candidate_select_ctx,
+					use_parent, use_root, box->node, use_parent_env, &env);
 			if (styles == NULL)
 				goto done;
 
 			diff = css_computed_style_diff(box->style,
 					styles->styles[CSS_PSEUDO_ELEMENT_NONE]);
 			if (diff == CSS_COMPUTED_STYLE_OTHER_DIFF) {
-				int detail = css_computed_style_color_diff_detail(
-						box->style,
-						styles->styles[CSS_PSEUDO_ELEMENT_NONE]);
-				long old_bits0 = (long)css_computed_style_debug_bits0(
-						box->style);
-				long new_bits0 = (long)css_computed_style_debug_bits0(
-						styles->styles[CSS_PSEUDO_ELEMENT_NONE]);
 				css_select_results_destroy(styles);
 				if (env != NULL) css_custom_env_unref(env);
-				macsurf_debug_log_writef(
-						"LIFE INHERITEDCOLOR other detail=%d bits=%ld/%ld",
-						detail, old_bits0, new_bits0);
 				goto done;
 			}
 
@@ -3943,6 +3936,8 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 done:
 	if (!ok)
 		html_inherited_color_discard(candidate, candidate_count);
+	if (candidate_select_ctx != NULL)
+		css_select_ctx_destroy(candidate_select_ctx);
 	free(candidate);
 	free(stack);
 	return ok ? 0 : -1;

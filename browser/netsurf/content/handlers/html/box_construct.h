@@ -113,6 +113,17 @@ css_select_results *box_get_style(struct html_content *c,
 		css_custom_env *parent_env,
 		css_custom_env **new_env);
 
+/* As box_get_style(), selecting through an explicitly supplied context.
+ * Incremental candidates use a private context so their selection cannot
+ * borrow mutable state from the live layout context. */
+css_select_results *box_get_style_with_select_ctx(struct html_content *c,
+		css_select_ctx *select_ctx,
+		const css_computed_style *parent,
+		const css_computed_style *root,
+		dom_node *node,
+		css_custom_env *parent_env,
+		css_custom_env **new_env);
+
 /* Select CSS for an inline-SVG descendant. SVG shape nodes deliberately do
  * not have layout boxes, so the SVG painter uses this to run the same author
  * cascade and custom-property inheritance as ordinary HTML elements. */

@@ -399,7 +399,7 @@ box_extract_properties(dom_node *n, struct box_construct_props *props)
  * \return  the new style, or NULL on memory exhaustion
  */
 css_select_results *
-box_get_style(html_content *c,
+box_get_style_with_select_ctx(html_content *c, css_select_ctx *select_ctx,
 	      const css_computed_style *parent_style,
 	      const css_computed_style *root_style,
 	      dom_node *n,
@@ -435,7 +435,7 @@ box_get_style(html_content *c,
 	}
 
 	/* Populate selection context */
-	ctx.ctx = c->select_ctx;
+	ctx.ctx = select_ctx;
 	ctx.quirks = (c->quirks == DOM_DOCUMENT_QUIRKS_MODE_FULL);
 	ctx.base_url = c->base_url;
 	ctx.universal = c->universal;
@@ -469,6 +469,15 @@ box_get_style(html_content *c,
 		css_stylesheet_destroy(inline_style);
 
 	return styles;
+}
+
+css_select_results *
+box_get_style(html_content *c, const css_computed_style *parent_style,
+		const css_computed_style *root_style, dom_node *n,
+		css_custom_env *parent_custom_env, css_custom_env **out_custom_env)
+{
+	return box_get_style_with_select_ctx(c, c->select_ctx, parent_style,
+			root_style, n, parent_custom_env, out_custom_env);
 }
 
 css_select_results *html_svg_get_style(const html_content *c, dom_node *node,
