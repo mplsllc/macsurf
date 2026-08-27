@@ -306,6 +306,43 @@ static inline bool css__arena_style_is_equal(
 	return true;
 }
 
+/* Diagnostic companion for css_computed_style_color_diff_detail: after
+ * neutralising the width union, return the first differing byte offset in the
+ * scalar payload, or a negative marker for a structural width mismatch, or -1
+ * when the scalar payload is byte-identical (mismatch is out-of-line). */
+static int css__computed_style_semantic_i_difference(
+		const struct css_computed_style *a,
+		const struct css_computed_style *b)
+{
+	struct css_computed_style aa = *a;
+	struct css_computed_style bb = *b;
+	css_fixed_or_calc a_width, b_width;
+	css_unit a_unit, b_unit;
+	uint8_t a_type, b_type;
+	const unsigned char *ap;
+	const unsigned char *bp;
+	unsigned int i;
+
+	a_type = get_width(a, &a_width, &a_unit);
+	b_type = get_width(b, &b_width, &b_unit);
+	if (a_type != b_type)
+		return -2;
+	if (a_type == CSS_WIDTH_SET &&
+		(a_unit != b_unit || a_width.value != b_width.value))
+		return -3;
+	if (a_type == CSS_WIDTH_INTRINSIC && a_unit != b_unit)
+		return -4;
+	aa.i.width.value = 0;
+	bb.i.width.value = 0;
+	ap = (const unsigned char *)&aa.i;
+	bp = (const unsigned char *)&bb.i;
+	for (i = 0; i < sizeof(aa.i); i++) {
+		if (ap[i] != bp[i])
+			return (int)i;
+	}
+	return -1;
+}
+
 /* Externally exported semantic comparator. Documented in computed.h.
  * Only the inherited foreground `color` is ignored for COLOR_DIFF.  The
  * paint-only comparator below deliberately remains broader (background,
@@ -327,6 +364,28 @@ css_computed_style_diff(const struct css_computed_style *a,
 		return CSS_COMPUTED_STYLE_COLOR_DIFF;
 
 	return CSS_COMPUTED_STYLE_OTHER_DIFF;
+}
+
+int css_computed_style_color_diff_detail(const struct css_computed_style *a,
+		const struct css_computed_style *b)
+{
+	struct css_computed_style tmp = *b;
+	css_color c;
+	uint8_t type;
+	int i_diff;
+
+	type = get_color(a, &c);
+	set_color(&tmp, type, c);
+	i_diff = css__computed_style_semantic_i_difference(a, &tmp);
+	if (i_diff != -1)
+		return i_diff;
+	return 1000;
+}
+
+unsigned long css_computed_style_debug_bits0(
+		const struct css_computed_style *style)
+{
+	return (unsigned long)style->i.bits[0];
 }
 
 /* Externally exported fast-path comparator. Documented in computed.h */

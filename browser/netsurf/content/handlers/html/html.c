@@ -3738,8 +3738,13 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 	int stack_count = 0, stack_cap = 0;
 	int i;
 	int ok = 0;
+	const char *decline = "commit";
+	int decline_detail = 0;
+	char decline_tag[40];
 	extern struct gui_window *macos9_paint_gw;
 	extern int macsurf_reconvert_in_progress;
+
+	decline_tag[0] = '\0';
 
 	if (c == NULL || node == NULL || c->select_ctx == NULL ||
 		c->layout == NULL || macos9_paint_gw != NULL ||
@@ -3751,15 +3756,19 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 		root->type == BOX_CONTENTS)
 		return -1;
 	if (html_css_new_selection_context(c, &candidate_select_ctx) !=
-		NSERROR_OK || candidate_select_ctx == NULL)
+		NSERROR_OK || candidate_select_ctx == NULL) {
+		decline = "new_select_ctx";
 		goto done;
+	}
 
 	stack_cap = 32;
 	stack = malloc(sizeof(*stack) * stack_cap);
 	candidate_cap = 32;
 	candidate = malloc(sizeof(*candidate) * candidate_cap);
-	if (stack == NULL || candidate == NULL)
+	if (stack == NULL || candidate == NULL) {
+		decline = "alloc";
 		goto done;
+	}
 
 	stack[stack_count].box = root;
 	stack[stack_count].parent_style = (root->parent == NULL ||
@@ -3790,14 +3799,18 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 			 * selecting a clone can observe an implementation-only difference. */
 			while (owner != NULL && owner->node != box->node)
 				owner = owner->prev;
-			if (owner == NULL)
+			if (owner == NULL) {
+				decline = "clone_no_owner";
 				goto done;
+			}
 			if (candidate_count == candidate_cap) {
 				struct inherited_color_candidate *p;
 				candidate_cap *= 2;
 				p = realloc(candidate, sizeof(*candidate) * candidate_cap);
-				if (p == NULL)
+				if (p == NULL) {
+					decline = "realloc";
 					goto done;
+				}
 				candidate = p;
 			}
 			candidate[candidate_count].box = box;
@@ -3818,8 +3831,10 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 				struct inherited_color_candidate *p;
 				candidate_cap *= 2;
 				p = realloc(candidate, sizeof(*candidate) * candidate_cap);
-				if (p == NULL)
+				if (p == NULL) {
+					decline = "realloc";
 					goto done;
+				}
 				candidate = p;
 			}
 
@@ -3828,12 +3843,27 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 			use_parent_env = (box == c->layout) ? NULL : frame.parent_env;
 			styles = box_get_style_with_select_ctx(c, candidate_select_ctx,
 					use_parent, use_root, box->node, use_parent_env, &env);
-			if (styles == NULL)
+			if (styles == NULL) {
+				decline = "styles_null";
 				goto done;
+			}
 
 			diff = css_computed_style_diff(box->style,
 					styles->styles[CSS_PSEUDO_ELEMENT_NONE]);
 			if (diff == CSS_COMPUTED_STYLE_OTHER_DIFF) {
+				dom_string *dnm = NULL;
+				decline = "classifier_other";
+				decline_detail = css_computed_style_color_diff_detail(
+					box->style,
+					styles->styles[CSS_PSEUDO_ELEMENT_NONE]);
+				if (box->node != NULL &&
+					dom_node_get_node_name(box->node, &dnm) == DOM_NO_ERR &&
+					dnm != NULL) {
+					strncpy(decline_tag, dom_string_data(dnm),
+						sizeof(decline_tag) - 1);
+					decline_tag[sizeof(decline_tag) - 1] = '\0';
+					dom_string_unref(dnm);
+				}
 				css_select_results_destroy(styles);
 				if (env != NULL) css_custom_env_unref(env);
 				goto done;
@@ -3874,8 +3904,10 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 				struct inherited_color_frame *p;
 				stack_cap *= 2;
 				p = realloc(stack, sizeof(*stack) * stack_cap);
-				if (p == NULL)
+				if (p == NULL) {
+					decline = "realloc";
 					goto done;
+				}
 				stack = p;
 			}
 			stack[stack_count].box = child;
@@ -3895,8 +3927,10 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 				candidate[j].styles != NULL)
 				break;
 		}
-		if (j == candidate_count)
+		if (j == candidate_count) {
+			decline = "clone_unresolved";
 			goto done;
+		}
 	}
 
 	/* Commit phase: this is the first point live box style pointers move. */
@@ -3934,8 +3968,14 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 	ok = 1;
 
 done:
-	if (!ok)
+	if (!ok) {
+		macsurf_debug_log_writef(
+			"LIFE INHERITEDCOLOR decline stage=%s tag=%s detail=%d "
+			"cand=%d",
+			decline, decline_tag[0] != '\0' ? decline_tag : "-",
+			decline_detail, candidate_count);
 		html_inherited_color_discard(candidate, candidate_count);
+	}
 	if (candidate_select_ctx != NULL)
 		css_select_ctx_destroy(candidate_select_ctx);
 	free(candidate);

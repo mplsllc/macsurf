@@ -90,6 +90,14 @@ enum css_computed_style_diff css_computed_style_diff(
 		const css_computed_style *a,
 		const css_computed_style *b);
 
+/* Diagnostic companion for the conservative colour classifier.
+ * Returns the first differing byte in the computed scalar payload after
+ * foreground colour is normalised, or -1 when the mismatch is in an
+ * out-of-line representation, or 1000 when the scalar payload matches. */
+int css_computed_style_color_diff_detail(const css_computed_style *a,
+		const css_computed_style *b);
+unsigned long css_computed_style_debug_bits0(const css_computed_style *style);
+
 /* Fast-path comparator for incremental styling */
 bool css_computed_style_is_paint_only_diff(
 		const css_computed_style *a,
