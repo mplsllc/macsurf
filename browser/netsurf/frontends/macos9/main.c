@@ -20,6 +20,16 @@
 #include <Movies.h>
 #include <Processes.h>   /* fixes983 -- our own FSSpec, for the icon claim */
 #include <Files.h>       /* fixes983 -- FSpGetFInfo / FSpSetFInfo */
+/* AppleEvent handling (GURL + the required suite). The AppleEvent Manager
+ * itself arrives via <Carbon.h> (macos9.h); Universal Interfaces 3.4.1 just
+ * has no URL-suite constants, so declare the two we need. Apple's kAEGetURL
+ * and kInternetEventClass are both 'GURL'. */
+#ifndef kInternetEventClass
+#define kInternetEventClass 'GURL'
+#endif
+#ifndef kAEGetURL
+#define kAEGetURL 'GURL'
+#endif
 OTClientContextPtr macos9_ot_context = NULL;
 /* macTLS expects this symbol; aliased to our OT context after init. */
 OTClientContextPtr g_ostls_ot_context = NULL;
@@ -77,9 +87,16 @@ extern void   macos9_deathrow_drain(void);
  * InitTSMAwareApplication / NewTSMDocument call, the Text Services Manager
  * has no document state and _TSMEvent crashed writing a near-zero pointer
  * (00010DE0, low-memory) during event delivery. We never consumed these
- * events; not requesting them keeps the Toolbox off that code path. */
+ * events; not requesting them keeps the Toolbox off that code path.
+ *
+ * AppleEvent support - highLevelEventMask is BACK (0x0400), and the switch
+ * now has a kHighLevelEvent case that calls AEProcessAppleEvent, so MacSurf
+ * can be driven by a 'GURL' / required-suite AppleEvent (remote test harness,
+ * and a real 'quit' handler). osMask stays OUT - suspend/resume is unrelated
+ * and keeping it out narrows the fixes507 TSM surface. If the _TSMEvent crash
+ * returns, pulling THIS bit again is the first thing to try. */
 #define MACOS9_EVENT_MASK (mDownMask | mUpMask | keyDownMask | autoKeyMask | \
-	updateMask | activMask)
+	updateMask | activMask | highLevelEventMask)
 #else
 #define MACOS9_EVENT_MASK everyEvent
 #endif
@@ -1470,6 +1487,10 @@ void macos9_poll(void) {
 			case mouseDown:   macos9_handle_mouse_down(&ev); break;
 			case keyDown: case autoKey: macos9_handle_key_down(&ev); break;
 			case activateEvt: macos9_handle_activate(&ev); break;
+			/* AppleEvents (kHighLevelEvent, what=23) all arrive here and
+			 * are dispatched by class/ID inside AEProcessAppleEvent to
+			 * whichever handler macos9_install_ae_handlers registered. */
+			case kHighLevelEvent: AEProcessAppleEvent(&ev); break;
 			default: break;
 		}
 	}
@@ -1581,6 +1602,14 @@ void macos9_poll_mouse_hover(void) {
 #endif
 }
 
+/* Set to 1 only while the startup home-page callback is actually armed (see
+ * the macos9_schedule call in main). macos9_poll dispatches the WNE event
+ * BEFORE macos9_schedule_run, so a 'GURL' AppleEvent arriving on the very
+ * first poll pass would navigate and then be overwritten by the home load in
+ * the same pass. Both the callback and the GURL handler clear this before
+ * they navigate; whichever runs first wins and the other stands down. */
+static int macos9_startup_home_pending = 0;
+
 /* fixes531: deferred initial navigation.
  *
  * Firing the home-page fetch synchronously from main() BEFORE the
@@ -1632,6 +1661,11 @@ static void macos9_deferred_home_load(void *pw)
 		MS_LOG("deferred home: bw NULL, skip");
 		return;
 	}
+	if (!macos9_startup_home_pending) {
+		MS_LOG("deferred home: superseded by GURL, skip");
+		return;
+	}
+	macos9_startup_home_pending = 0;
 	if (nsurl_create(macos9_home_url(), &home) != NSERROR_OK) {
 		MS_LOG("deferred home: nsurl_create failed");
 		return;
@@ -1645,6 +1679,159 @@ static void macos9_deferred_home_load(void *pw)
 		NULL, NULL, NULL);
 	nsurl_unref(home);
 }
+
+
+#ifdef __MACOS9__
+/* ------------------------------------------------------------------ */
+/* AppleEvent handlers                                                 */
+/*                                                                    */
+/* MacSurf had none: the Finder's 'quit' went nowhere (Shut Down would */
+/* stall), and there was no way to drive it from a script. This adds   */
+/* the classic required suite (oapp/odoc/pdoc/quit) + rapp + the URL   */
+/* suite's 'GURL', following the idiom in macIRC's ui_app.c: a bare    */
+/* file-static reach-back rather than a refCon pointer round-trip,     */
+/* handlers return through the WNE loop (AEProcessAppleEvent is called  */
+/* from the kHighLevelEvent case), never ExitToShell.                  */
+/* ------------------------------------------------------------------ */
+
+static pascal OSErr macos9_ae_get_url(const AppleEvent *ae, AppleEvent *reply,
+		long refcon)
+{
+	DescType rt;
+	Size actual = 0;
+	OSErr err;
+	char buf[2048];
+	WindowRef fw;
+	struct gui_window *g;
+
+	(void)reply;
+	(void)refcon;
+
+	err = AEGetParamPtr(ae, keyDirectObject, typeChar, &rt,
+			(Ptr)buf, (Size)(sizeof(buf) - 1), &actual);
+	if (err != noErr) {
+		macsurf_debug_log_writef("LIFE AE GURL param err=%d", (int)err);
+		return err;
+	}
+	if (actual < 0 || (unsigned long)actual > (unsigned long)(sizeof(buf) - 1)) {
+		macsurf_debug_log_writef("LIFE AE GURL reject len=%ld",
+			(long)actual);
+		return errAEEventNotHandled;
+	}
+	buf[actual] = '\0';
+	macsurf_debug_log_writef("LIFE AE GURL received len=%ld", (long)actual);
+
+	/* macos9_poll dispatches this event BEFORE macos9_schedule_run, so on a
+	 * cold launch we may beat the deferred home load - claim the slot. */
+	macos9_startup_home_pending = 0;
+
+	fw = FrontWindow();
+	g = (fw != NULL) ? macos9_find_window(fw) : NULL;
+	if (g == NULL)
+		g = macos9_window_list_head();
+	if (g == NULL)
+		g = macos9_create_initial_window();
+	if (g == NULL) {
+		macsurf_debug_log_writef("LIFE AE GURL no window");
+		return errAEEventNotHandled;
+	}
+	macsurf_debug_log_writef("LIFE AE GURL navigate url=%s", buf);
+	macos9_window_navigate(g, buf);
+	return noErr;
+}
+
+static pascal OSErr macos9_ae_quit(const AppleEvent *ae, AppleEvent *reply,
+		long refcon)
+{
+	(void)ae;
+	(void)reply;
+	(void)refcon;
+	macsurf_debug_log_writef("LIFE AE quit received");
+	macos9_done = (bool)1;
+	macos9_quitting = (bool)1;
+	return noErr;
+}
+
+static pascal OSErr macos9_ae_open_app(const AppleEvent *ae, AppleEvent *reply,
+		long refcon)
+{
+	(void)ae;
+	(void)reply;
+	(void)refcon;
+	/* The first window is already open by the time any event can arrive; the
+	 * handler must still exist or the Finder reports the app as broken. */
+	return noErr;
+}
+
+static pascal OSErr macos9_ae_reopen(const AppleEvent *ae, AppleEvent *reply,
+		long refcon)
+{
+	WindowRef fw;
+	struct gui_window *g;
+
+	(void)ae;
+	(void)reply;
+	(void)refcon;
+
+	fw = FrontWindow();
+	if (fw != NULL) {
+		ShowWindow(fw);
+		SelectWindow(fw);
+		return noErr;
+	}
+	g = macos9_window_list_head();
+	if (g != NULL && g->window != NULL) {
+		ShowWindow(g->window);
+		SelectWindow(g->window);
+		return noErr;
+	}
+	macos9_create_initial_window();
+	return noErr;
+}
+
+static pascal OSErr macos9_ae_open_docs(const AppleEvent *ae, AppleEvent *reply,
+		long refcon)
+{
+	(void)ae;
+	(void)reply;
+	(void)refcon;
+	/* MacSurf owns no document type yet. errAEEventNotHandled is honest -
+	 * noErr would tell the Finder the files opened. */
+	return errAEEventNotHandled;
+}
+
+static pascal OSErr macos9_ae_print_docs(const AppleEvent *ae, AppleEvent *reply,
+		long refcon)
+{
+	(void)ae;
+	(void)reply;
+	(void)refcon;
+	return errAEEventNotHandled;
+}
+
+static void macos9_install_ae_handlers(void)
+{
+	OSErr e_oapp, e_odoc, e_pdoc, e_quit, e_rapp, e_gurl;
+
+	e_oapp = AEInstallEventHandler(kCoreEventClass, kAEOpenApplication,
+			NewAEEventHandlerUPP(macos9_ae_open_app), 0, false);
+	e_odoc = AEInstallEventHandler(kCoreEventClass, kAEOpenDocuments,
+			NewAEEventHandlerUPP(macos9_ae_open_docs), 0, false);
+	e_pdoc = AEInstallEventHandler(kCoreEventClass, kAEPrintDocuments,
+			NewAEEventHandlerUPP(macos9_ae_print_docs), 0, false);
+	e_quit = AEInstallEventHandler(kCoreEventClass, kAEQuitApplication,
+			NewAEEventHandlerUPP(macos9_ae_quit), 0, false);
+	e_rapp = AEInstallEventHandler(kCoreEventClass, kAEReopenApplication,
+			NewAEEventHandlerUPP(macos9_ae_reopen), 0, false);
+	e_gurl = AEInstallEventHandler(kInternetEventClass, kAEGetURL,
+			NewAEEventHandlerUPP(macos9_ae_get_url), 0, false);
+
+	macsurf_debug_log_writef(
+		"LIFE AE install oapp=%d odoc=%d pdoc=%d quit=%d rapp=%d GURL=%d",
+		(int)e_oapp, (int)e_odoc, (int)e_pdoc,
+		(int)e_quit, (int)e_rapp, (int)e_gurl);
+}
+#endif /* __MACOS9__ */
 
 
 /* fixes983 -- claim the custom-icon bit on our own application file.
@@ -1867,6 +2054,8 @@ int main(void) {
 
 	macos9_init_menus();
 	MS_LOG("BOOT menus installed");
+	macos9_install_ae_handlers();   /* 'GURL' + required suite + real 'quit' */
+	MS_LOG("BOOT AppleEvent handlers installed");
 	/* fixes294 - decode the baked-in default favicon PNG into a GWorld
 	 * that lives for the life of the process.  Must happen AFTER
 	 * EnterMovies (which initialises QT but we use lodepng for this) and
@@ -1980,8 +2169,17 @@ int main(void) {
 				"launch home: clock_ms=%ld (startup, pre-loop)",
 				(long)macsurf_monotonic_ms());
 			if (bw != NULL) {
-				macos9_schedule(0, macos9_deferred_home_load, bw);
-				MS_LOG("BOOT launch: home nav scheduled (deferred)");
+				/* arm the home-load guard just before scheduling; a
+				 * GURL AppleEvent on the first poll pass clears it so
+				 * this callback stands down. */
+				macos9_startup_home_pending = 1;
+				if (macos9_schedule(0, macos9_deferred_home_load, bw)
+						!= NSERROR_OK) {
+					macos9_startup_home_pending = 0;
+					MS_LOG("BOOT launch: home nav schedule FAILED");
+				} else {
+					MS_LOG("BOOT launch: home nav scheduled (deferred)");
+				}
 			}
 		}
 		if (bw == NULL) {
