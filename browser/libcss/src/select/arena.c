@@ -154,6 +154,64 @@ static inline bool arena__compare_string_list(
 	return true;
 }
 
+static inline bool css__arena_style_is_equal(
+		struct css_computed_style *a,
+		struct css_computed_style *b);
+
+/* The arena intentionally compares a few representation fields by pointer,
+ * which is safe for interning but is not a semantic comparison across two
+ * independent inline-style parses. */
+static inline bool css__semantic_lwc_equal(lwc_string *a, lwc_string *b)
+{
+	bool match;
+
+	if (a == NULL || b == NULL)
+		return a == b;
+	return lwc_string_isequal(a, b, &match) == lwc_error_ok && match;
+}
+
+static bool css__computed_style_semantic_equal(
+		const struct css_computed_style *a,
+		const struct css_computed_style *b)
+{
+	struct css_computed_style aa = *a;
+	struct css_computed_style bb = *b;
+	css_fixed_or_calc a_width, b_width;
+	css_unit a_unit, b_unit;
+	uint8_t a_type, b_type;
+	uint32_t i;
+
+	a_type = get_width(a, &a_width, &a_unit);
+	b_type = get_width(b, &b_width, &b_unit);
+	if (a_type != b_type)
+		return false;
+	if (a_type == CSS_WIDTH_SET &&
+		(a_unit != b_unit || a_width.value != b_width.value))
+		return false;
+	if (a_type == CSS_WIDTH_INTRINSIC && a_unit != b_unit)
+		return false;
+	/* width is a union: its inactive payload is not a CSS difference. */
+	aa.i.width.value = 0;
+	bb.i.width.value = 0;
+
+	if (!css__semantic_lwc_equal(aa.i.background_image,
+			bb.i.background_image) ||
+		!css__semantic_lwc_equal(aa.i.list_style_image,
+			bb.i.list_style_image))
+		return false;
+	bb.i.background_image = aa.i.background_image;
+	bb.i.list_style_image = aa.i.list_style_image;
+
+	for (i = 0; i < MACSURF_CALC_SLOT_COUNT; i++) {
+		if (!css__semantic_lwc_equal(aa.macsurf_calc_expr[i],
+				bb.macsurf_calc_expr[i]))
+			return false;
+		bb.macsurf_calc_expr[i] = aa.macsurf_calc_expr[i];
+	}
+
+	return css__arena_style_is_equal(&aa, &bb);
+}
+
 
 static inline bool css__arena_style_is_equal(
 		struct css_computed_style *a,
@@ -261,12 +319,12 @@ css_computed_style_diff(const struct css_computed_style *a,
 	css_color c;
 	uint8_t type;
 
-	if (css__arena_style_is_equal((struct css_computed_style *)a, &tmp))
+	if (css__computed_style_semantic_equal(a, &tmp))
 		return CSS_COMPUTED_STYLE_NO_DIFF;
 
 	type = get_color(a, &c);
 	set_color(&tmp, type, c);
-	if (css__arena_style_is_equal((struct css_computed_style *)a, &tmp))
+	if (css__computed_style_semantic_equal(a, &tmp))
 		return CSS_COMPUTED_STYLE_COLOR_DIFF;
 
 	return CSS_COMPUTED_STYLE_OTHER_DIFF;

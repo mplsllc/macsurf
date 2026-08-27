@@ -3737,7 +3737,6 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 	int stack_count = 0, stack_cap = 0;
 	int i;
 	int ok = 0;
-	int decline = 0;
 	extern struct gui_window *macos9_paint_gw;
 	extern int macsurf_reconvert_in_progress;
 
@@ -3748,11 +3747,8 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 
 	root = box_for_node(node);
 	if (root == NULL || root->styles == NULL || root->style == NULL ||
-		root->type == BOX_CONTENTS) {
-		macsurf_debug_log_writef(
-			"LIFE INHERITEDCOLOR decline=root box=%p", (void *)root);
+		root->type == BOX_CONTENTS)
 		return -1;
-	}
 
 	stack_cap = 32;
 	stack = malloc(sizeof(*stack) * stack_cap);
@@ -3790,10 +3786,8 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 			 * selecting a clone can observe an implementation-only difference. */
 			while (owner != NULL && owner->node != box->node)
 				owner = owner->prev;
-			if (owner == NULL) {
-				decline = 1;
+			if (owner == NULL)
 				goto done;
-			}
 			if (candidate_count == candidate_cap) {
 				struct inherited_color_candidate *p;
 				candidate_cap *= 2;
@@ -3831,21 +3825,14 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 			use_parent_env = (box == c->layout) ? NULL : frame.parent_env;
 			styles = box_get_style(c, use_parent, use_root, box->node,
 					use_parent_env, &env);
-			if (styles == NULL) {
-				decline = 2;
+			if (styles == NULL)
 				goto done;
-			}
 
 			diff = css_computed_style_diff(box->style,
 					styles->styles[CSS_PSEUDO_ELEMENT_NONE]);
 			if (diff == CSS_COMPUTED_STYLE_OTHER_DIFF) {
 				css_select_results_destroy(styles);
 				if (env != NULL) css_custom_env_unref(env);
-				macsurf_debug_log_writef(
-					"LIFE INHERITEDCOLOR other box=%p node=%p flags=%u type=%d",
-					(void *)box, (void *)box->node,
-					(unsigned int)box->flags, (int)box->type);
-				decline = 3;
 				goto done;
 			}
 
@@ -3905,10 +3892,8 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 				candidate[j].styles != NULL)
 				break;
 		}
-		if (j == candidate_count) {
-			decline = 4;
+		if (j == candidate_count)
 			goto done;
-		}
 	}
 
 	/* Commit phase: this is the first point live box style pointers move. */
@@ -3946,12 +3931,8 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 	ok = 1;
 
 done:
-	if (!ok) {
-		if (decline != 0)
-			macsurf_debug_log_writef(
-				"LIFE INHERITEDCOLOR decline=%d", decline);
+	if (!ok)
 		html_inherited_color_discard(candidate, candidate_count);
-	}
 	free(candidate);
 	free(stack);
 	return ok ? 0 : -1;
