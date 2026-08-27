@@ -45,6 +45,7 @@
 #include "netsurf/plotters.h"
 #include "content/content.h"
 #include "content/hlcache.h"
+#include "content/macsurf_nav_seed.h"
 #include "content/urldb.h"
 #include "content/content_debug.h"
 
@@ -342,6 +343,7 @@ browser_window_download(struct browser_window *bw,
 	fetch_flags |= LLCACHE_RETRIEVE_FORCE_FETCH;
 	fetch_flags |= LLCACHE_RETRIEVE_STREAM_DATA;
 
+	macsurf_llcache_seed_nav(bw->nav_id);	/* MacSurf Trace 1a */
 	error = llcache_handle_retrieve(url, fetch_flags, nsref,
 					fetch_is_post ? post : NULL,
 					NULL, NULL, &l);
@@ -1619,7 +1621,8 @@ browser_window_callback(hlcache_handle *c, const hlcache_event *event, void *pw)
 		assert(bw->current_content == c);
 		{
 			nsurl *du = hlcache_handle_get_url(c);
-			macsurf_debug_log_writef("NAV: DONE url=%s",
+			macsurf_debug_log_writef("NAV: DONE nav=%ld url=%s",
+				(long) bw->nav_id,
 				(du != NULL) ? nsurl_access(du) : "(null)");
 			/* fixes1034 - emit the phase breakdown HERE.
 			 *
@@ -3682,6 +3685,21 @@ browser_window_navigate(struct browser_window *bw,
 		}
 	}
 
+	/* MacSurf Trace 1a: past the same-document fragment short-circuit, this
+	 * is a real network/document navigation -- allocate its id here, the one
+	 * convergence point every genuinely-new nav reaches (URL bar, GURL, JS
+	 * location, link, form, back/forward, reload, meta refresh). Internal
+	 * redirects and about:query interstitials go straight to
+	 * browser_window__navigate_internal and keep this id. */
+	{
+		static unsigned long ms_nav_id_seq;
+		ms_nav_id_seq++;
+		if (ms_nav_id_seq == 0) {
+			ms_nav_id_seq = 1;
+		}
+		bw->nav_id = ms_nav_id_seq;
+	}
+
 	browser_window_stop(bw);
 	browser_window_remove_caret(bw, false);
 	browser_window_destroy_children(bw);
@@ -3777,7 +3795,13 @@ navigate_internal_real(struct browser_window *bw,
 	if (params->parent_charset != NULL) {
 		child.charset = params->parent_charset;
 		child.quirks = params->parent_quirks;
+		child.nav_id = bw->nav_id;	/* MacSurf Trace 1a */
+		child.doc_id = 0;
 	}
+
+	/* MacSurf Trace 1a: covers the top-level (child == NULL) case; the
+	 * frame case above carries nav_id on the child context instead. */
+	macsurf_hlcache_seed_nav(bw->nav_id);
 
 	browser_window_set_status(bw, messages_get("Loading"));
 	bw->history_add = (params->flags & BW_NAVIGATE_HISTORY);
@@ -4035,7 +4059,8 @@ browser_window__navigate_internal(struct browser_window *bw,
 	/* fixes551 - start of every navigation (real pages, internal redirects,
 	 * and the about:query/* error/login/cert pages), so the NAV trace reads
 	 * START -> (ERROR why | DONE) -> content_ready switch. */
-	macsurf_debug_log_writef("NAV: START url=%s",
+	macsurf_debug_log_writef("NAV: START nav=%ld url=%s",
+		(long) bw->nav_id,
 		((params != NULL) && (params->url != NULL)) ?
 			nsurl_access(params->url) : "(null)");
 

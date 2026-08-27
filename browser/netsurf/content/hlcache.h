@@ -37,6 +37,11 @@ typedef struct hlcache_handle hlcache_handle;
 typedef struct hlcache_child_context {
  	const char *charset;		/**< Charset of parent */
  	bool quirks;			/**< Whether parent is quirky */
+	/* MacSurf Trace: navigation/document provenance carried from the parent
+	 * content to a child-resource retrieve (0 == unattributed). doc_id is
+	 * reserved for Phase 1c. */
+	unsigned long nav_id;
+	unsigned long doc_id;
 } hlcache_child_context;
 
 /** High-level cache event */

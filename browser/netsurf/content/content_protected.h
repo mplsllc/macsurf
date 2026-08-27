@@ -329,6 +329,14 @@ struct content {
 		char *string;
 		struct textsearch_context *context;
 	} textsearch;
+
+	/**
+	 * MacSurf Trace: navigation that CREATED this content object (creation
+	 * provenance, never rewritten when a later navigation reuses a shared
+	 * cache object). 0 == unattributed. Child resources inherit it via
+	 * hlcache_child_context.
+	 */
+	unsigned long nav_id;
 };
 
 extern const char * const content_type_name[];

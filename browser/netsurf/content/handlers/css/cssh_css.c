@@ -6284,6 +6284,11 @@ css_error nscss_handle_import(void *pw, css_stylesheet *parent,
 
 	/** \todo fallback charset */
 	child.charset = NULL;
+	/* MacSurf Trace 1a: @import from a CSS sheet -- the parent CSS content's
+	 * nav isn't reachable from content_css_data without container_of; leave
+	 * unattributed for now (rare path). */
+	child.nav_id = 0;
+	child.doc_id = 0;
 	error = css_stylesheet_quirks_allowed(c->sheet, &child.quirks);
 	if (error != CSS_OK) {
 		free(ctx);

@@ -271,6 +271,9 @@ content__init(struct content *c,
 	c->llcache = llcache;
 	c->mime_type = lwc_string_ref(imime_type);
 	c->handler = handler;
+	/* MacSurf Trace 1a: stamp creation provenance once, from the llcache
+	 * object's durable navigation owner. */
+	c->nav_id = llcache_handle_get_nav_id(llcache);
 
 	/* fixes533: register as live the instant the destroyed-sentinel (handler)
 	 * is set, so any scheduled callback that resolves to this content can
