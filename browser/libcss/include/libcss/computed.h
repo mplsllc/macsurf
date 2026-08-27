@@ -96,6 +96,7 @@ enum css_computed_style_diff css_computed_style_diff(
  * out-of-line representation. */
 int css_computed_style_color_diff_detail(const css_computed_style *a,
 		const css_computed_style *b);
+unsigned long css_computed_style_debug_bits0(const css_computed_style *style);
 
 /* Fast-path comparator for incremental styling */
 bool css_computed_style_is_paint_only_diff(

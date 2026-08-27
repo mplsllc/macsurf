@@ -3834,10 +3834,15 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 				int detail = css_computed_style_color_diff_detail(
 						box->style,
 						styles->styles[CSS_PSEUDO_ELEMENT_NONE]);
+				long old_bits0 = (long)css_computed_style_debug_bits0(
+						box->style);
+				long new_bits0 = (long)css_computed_style_debug_bits0(
+						styles->styles[CSS_PSEUDO_ELEMENT_NONE]);
 				css_select_results_destroy(styles);
 				if (env != NULL) css_custom_env_unref(env);
 				macsurf_debug_log_writef(
-						"LIFE INHERITEDCOLOR other detail=%d", detail);
+						"LIFE INHERITEDCOLOR other detail=%d bits=%ld/%ld",
+						detail, old_bits0, new_bits0);
 				goto done;
 			}
 

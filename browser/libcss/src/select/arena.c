@@ -379,6 +379,12 @@ int css_computed_style_color_diff_detail(const struct css_computed_style *a,
 	return 1000;
 }
 
+unsigned long css_computed_style_debug_bits0(
+		const struct css_computed_style *style)
+{
+	return (unsigned long)style->i.bits[0];
+}
+
 /* Externally exported fast-path comparator. Documented in computed.h */
 bool css_computed_style_is_paint_only_diff(
 		const struct css_computed_style *a,
