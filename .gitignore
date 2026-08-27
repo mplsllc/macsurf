@@ -16,6 +16,8 @@ docs/build/hardware-bisect.md
 docs/build/facts/STYLE-AND-RULES.md
 docs/build/facts/SCREENSHOT-TODO.md
 docs/research/
+wiki/.facts/STYLE-AND-RULES.md
+wiki/.facts/SCREENSHOT-TODO.md
 
 # Build archives & fix tars (these go to .private/archives/)
 *.zip
