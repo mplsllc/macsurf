@@ -3698,6 +3698,7 @@ struct inherited_color_candidate {
 	css_select_results *styles;
 	css_custom_env *custom_env;
 	css_computed_style *style;
+	struct box *clone_owner;
 };
 
 struct inherited_color_frame {
@@ -3777,7 +3778,31 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 
 		style_for_children = box->style;
 		env_for_children = box->custom_env;
-		if (box->node != NULL && box->styles != NULL) {
+		if (box->flags & CLONE) {
+			struct box *owner = box->prev;
+
+			/* Continuations borrow their original box's result.  Defer the
+			 * pointer update until the owner has committed; independently
+			 * selecting a clone can observe an implementation-only difference. */
+			while (owner != NULL && owner->node != box->node)
+				owner = owner->prev;
+			if (owner == NULL)
+				goto done;
+			if (candidate_count == candidate_cap) {
+				struct inherited_color_candidate *p;
+				candidate_cap *= 2;
+				p = realloc(candidate, sizeof(*candidate) * candidate_cap);
+				if (p == NULL)
+					goto done;
+				candidate = p;
+			}
+			candidate[candidate_count].box = box;
+			candidate[candidate_count].styles = NULL;
+			candidate[candidate_count].custom_env = NULL;
+			candidate[candidate_count].style = NULL;
+			candidate[candidate_count].clone_owner = owner;
+			candidate_count++;
+		} else if (box->node != NULL && box->styles != NULL) {
 			css_select_results *styles;
 			css_custom_env *env = NULL;
 			const css_computed_style *use_root;
@@ -3816,6 +3841,7 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 			candidate[candidate_count].custom_env = env;
 			candidate[candidate_count].style =
 				styles->styles[CSS_PSEUDO_ELEMENT_NONE];
+			candidate[candidate_count].clone_owner = NULL;
 			candidate_count++;
 			style_for_children = styles->styles[CSS_PSEUDO_ELEMENT_NONE];
 			env_for_children = env;
@@ -3835,6 +3861,7 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 			candidate[candidate_count].styles = NULL;
 			candidate[candidate_count].custom_env = NULL;
 			candidate[candidate_count].style = frame.parent_style;
+			candidate[candidate_count].clone_owner = NULL;
 			candidate_count++;
 			style_for_children = frame.parent_style;
 		}
@@ -3855,23 +3882,46 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 		}
 	}
 
+	/* Every deferred clone must name an owner selected in this transaction. */
+	for (i = 0; i < candidate_count; i++) {
+		int j;
+		if (candidate[i].clone_owner == NULL)
+			continue;
+		for (j = 0; j < candidate_count; j++) {
+			if (candidate[j].box == candidate[i].clone_owner &&
+				candidate[j].styles != NULL)
+				break;
+		}
+		if (j == candidate_count)
+			goto done;
+	}
+
 	/* Commit phase: this is the first point live box style pointers move. */
 	for (i = 0; i < candidate_count; i++) {
 		struct box *box = candidate[i].box;
+		if (candidate[i].clone_owner != NULL)
+			continue;
 		if (candidate[i].styles != NULL) {
-			if (box->custom_env != NULL && !(box->flags & CLONE))
+			if (box->custom_env != NULL)
 				css_custom_env_unref(box->custom_env);
-			if (!(box->flags & CLONE))
-				box->custom_env = candidate[i].custom_env;
-			else if (candidate[i].custom_env != NULL)
-				css_custom_env_unref(candidate[i].custom_env);
-			if (box->styles != NULL && !(box->flags & CLONE))
+			box->custom_env = candidate[i].custom_env;
+			if (box->styles != NULL)
 				css_select_results_destroy(box->styles);
 			box->styles = candidate[i].styles;
 		}
 		box->style = candidate[i].style;
 		candidate[i].custom_env = NULL;
 		candidate[i].styles = NULL;
+	}
+	for (i = 0; i < candidate_count; i++) {
+		int j;
+		if (candidate[i].clone_owner == NULL)
+			continue;
+		for (j = 0; candidate[j].box != candidate[i].clone_owner; j++)
+			;
+		candidate[i].box->custom_env = candidate[j].box->custom_env;
+		candidate[i].box->styles = candidate[j].box->styles;
+		candidate[i].box->style = candidate[j].box->style;
 	}
 
 	/* Geometry is proven unchanged.  Redraw the whole affected subtree without
