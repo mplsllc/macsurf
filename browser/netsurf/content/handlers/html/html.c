@@ -3841,6 +3841,10 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 			if (diff == CSS_COMPUTED_STYLE_OTHER_DIFF) {
 				css_select_results_destroy(styles);
 				if (env != NULL) css_custom_env_unref(env);
+				macsurf_debug_log_writef(
+					"LIFE INHERITEDCOLOR other box=%p node=%p flags=%u type=%d",
+					(void *)box, (void *)box->node,
+					(unsigned int)box->flags, (int)box->type);
 				decline = 3;
 				goto done;
 			}
