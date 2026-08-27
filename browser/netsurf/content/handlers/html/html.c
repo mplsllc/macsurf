@@ -3831,8 +3831,13 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 			diff = css_computed_style_diff(box->style,
 					styles->styles[CSS_PSEUDO_ELEMENT_NONE]);
 			if (diff == CSS_COMPUTED_STYLE_OTHER_DIFF) {
+				int detail = css_computed_style_color_diff_detail(
+						box->style,
+						styles->styles[CSS_PSEUDO_ELEMENT_NONE]);
 				css_select_results_destroy(styles);
 				if (env != NULL) css_custom_env_unref(env);
+				macsurf_debug_log_writef(
+						"LIFE INHERITEDCOLOR other detail=%d", detail);
 				goto done;
 			}
 
