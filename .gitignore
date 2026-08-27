@@ -2,12 +2,20 @@
 .private/
 
 # Per-user assistant state directories (local conversation transcripts,
-# session caches). The project-context files themselves (CLAUDE.md,
-# GEMINI.md) are tracked in the repo for transparency.
+# session caches) and agent context files. Kept locally, not tracked.
 .claude/
 .gemini/
 AGENTS.md
 COPILOT.md
+CLAUDE.md
+GEMINI.md
+
+# Agent process / automation docs — kept locally, not shared
+docs/build/automated-ship.md
+docs/build/hardware-bisect.md
+docs/build/facts/STYLE-AND-RULES.md
+docs/build/facts/SCREENSHOT-TODO.md
+docs/research/
 
 # Build archives & fix tars (these go to .private/archives/)
 *.zip
