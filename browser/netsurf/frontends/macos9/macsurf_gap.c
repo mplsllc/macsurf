@@ -33,7 +33,7 @@ void macsurf_gap_hit(int id)
 	}
 }
 
-void macsurf_gap_emit_summary(void)
+void macsurf_gap_emit_summary(unsigned long nav_id)
 {
 	unsigned long total = 0;
 	int unique = 0;
@@ -66,8 +66,8 @@ void macsurf_gap_emit_summary(void)
 
 	/* macsurf_debug_log_writef understands %d/%ld/%p/%s/%% only; counts are
 	 * unsigned long, cast to long (a session cannot plausibly overflow). */
-	macsurf_debug_log_writef("LIFE GAPSUMMARY unique=%d total=%ld",
-		unique, (long) total);
+	macsurf_debug_log_writef("LIFE GAPSUMMARY nav=%ld unique=%d total=%ld",
+		(long) nav_id, unique, (long) total);
 
 	limit = (unique < 6) ? unique : 6;
 	for (i = 0; i < limit; i++) {

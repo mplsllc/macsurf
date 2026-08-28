@@ -1647,7 +1647,7 @@ browser_window_callback(hlcache_handle *c, const hlcache_event *event, void *pw)
 						const char *url);
 				extern void macsurf_qjs_emit_timer_profile(void);
 				extern void macsurf_qjs_emit_js_profile(void);
-				extern void macsurf_gap_emit_summary(void);
+				extern void macsurf_gap_emit_summary(unsigned long nav_id);
 				macsurf_profile_emit_phases(
 					(du != NULL) ? nsurl_access(du) : "?");
 				/* fixes1037 - split the JS total: how much of it is
@@ -1665,7 +1665,7 @@ browser_window_callback(hlcache_handle *c, const hlcache_event *event, void *pw)
 				 * 'MSdg GET gaps' AppleEvent query later. Extern
 				 * here so NetSurf core keeps no dependency on the
 				 * macos9 frontend header. */
-				macsurf_gap_emit_summary();
+				macsurf_gap_emit_summary((unsigned long) bw->nav_id);
 			}
 		}
 		res = browser_window_content_done(bw);

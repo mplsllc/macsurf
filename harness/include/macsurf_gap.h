@@ -16,5 +16,5 @@ enum ms_gap_id {
 	MS_GAP__N
 };
 void macsurf_gap_hit(int id);
-void macsurf_gap_emit_summary(void);
+void macsurf_gap_emit_summary(unsigned long nav_id);
 #endif

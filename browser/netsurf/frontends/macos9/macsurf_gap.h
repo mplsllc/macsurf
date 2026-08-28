@@ -45,6 +45,6 @@ void macsurf_gap_hit(int id);
  *   LIFE GAPSUMMARY unique=<u> total=<t>
  *   LIFE GAPTOP id=<slug> n=<count>       (up to 6, highest first)
  * then zero the table. Emits nothing when nothing was hit. */
-void macsurf_gap_emit_summary(void);
+void macsurf_gap_emit_summary(unsigned long nav_id);
 
 #endif /* MACSURF_GAP_H */
