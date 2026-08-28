@@ -45,6 +45,7 @@
 #include "netsurf/misc.h"
 #include "desktop/gui_internal.h"
 #include "macsurf_debug.h"
+#include "macsurf_diag.h"
 
 extern int macsurf_ptr_is_heap(const void *);
 
@@ -247,8 +248,18 @@ nserror html_script_exec(html_content *c, bool allow_defer)
 				if (s->node != NULL) {
 					js_set_current_script(c->js_thread, s->node);
 				}
-				script_handler(c->js_thread, data, size,
+				{
+					struct ms_diag_scope scr;
+					int rc;
+					ms_diag_script_enter(&scr,
+						content_get_nav_id(&c->base),
+						MS_SCRIPT_CLASSIC,
+						nsurl_access(hlcache_handle_get_url(s->data.handle)));
+					rc = script_handler(c->js_thread, data, size,
 					       nsurl_access(hlcache_handle_get_url(s->data.handle)));
+					ms_diag_script_leave(&scr,
+						rc ? MS_SCR_DONE : MS_SCR_RUN_FAIL);
+				}
 				/* Re-acquire BEFORE touching s again: script_handler is JS
 				 * and can realloc c->scripts. */
 				s = &(c->scripts[i]);
@@ -823,8 +834,18 @@ convert_script_sync_cb(hlcache_handle *script,
 				(long) (i + 1), (long) size,
 				nsurl_access(hlcache_handle_get_url(s->data.handle)));
 			macsurf_fbtarget_scan((long) (i + 1), data, size);
-			script_handler(parent->js_thread, data, size,
+			{
+				struct ms_diag_scope scr;
+				int rc;
+				ms_diag_script_enter(&scr,
+					content_get_nav_id(&parent->base),
+					MS_SCRIPT_CLASSIC,
+					nsurl_access(hlcache_handle_get_url(s->data.handle)));
+				rc = script_handler(parent->js_thread, data, size,
 				       nsurl_access(hlcache_handle_get_url(s->data.handle)));
+				ms_diag_script_leave(&scr,
+					rc ? MS_SCR_DONE : MS_SCR_RUN_FAIL);
+			}
 		} else {
 			macsurf_debug_log_writef(
 				"LIFE script_exec: SKIP(sync) handler=%p "
@@ -1144,10 +1165,15 @@ exec_inline_script(html_content *c, dom_node *node, dom_string *mimetype)
 	lwc_string_unref(lwcmimetype);
 
 	if (script_handler != NULL) {
-		script_handler(c->js_thread,
+		struct ms_diag_scope scr;
+		int rc;
+		ms_diag_script_enter(&scr, content_get_nav_id(&c->base),
+			MS_SCRIPT_CLASSIC, "inline");
+		rc = script_handler(c->js_thread,
 			       (const uint8_t *)dom_string_data(script),
 			       dom_string_byte_length(script),
 			       "?inline script?");
+		ms_diag_script_leave(&scr, rc ? MS_SCR_DONE : MS_SCR_RUN_FAIL);
 	} else {
 		/* Silent skip, same class as the fixes847 async/defer gap:
 		 * an inline <script> whose declared type doesn't map to
@@ -1270,11 +1296,20 @@ html_process_script(void *ctx, dom_node *node)
 						"len=%ld",
 						(long)dom_string_byte_length(
 							modsrc));
-					js_exec_module(c->js_thread,
-						(const unsigned char *)
-							dom_string_data(modsrc),
-						dom_string_byte_length(modsrc),
-						"?inline module?");
+					{
+						struct ms_diag_scope scr;
+						int rc;
+						ms_diag_script_enter(&scr,
+							content_get_nav_id(&c->base),
+							MS_SCRIPT_MODULE, "inline-module");
+						rc = js_exec_module(c->js_thread,
+							(const unsigned char *)
+								dom_string_data(modsrc),
+							dom_string_byte_length(modsrc),
+							"?inline module?");
+						ms_diag_script_leave(&scr,
+							rc ? MS_SCR_DONE : MS_SCR_RUN_FAIL);
+					}
 					dom_string_unref(modsrc);
 				} else {
 					macsurf_debug_log_writef(

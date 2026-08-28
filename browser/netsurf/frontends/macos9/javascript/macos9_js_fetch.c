@@ -71,6 +71,7 @@
 #include "utils/nsurl.h"
 #include "content/fetch.h"
 #include "content/macsurf_nav_seed.h"
+#include "macsurf_diag.h"
 #include "content/content_protected.h"
 
 #include "macsurf_debug.h"
@@ -96,6 +97,7 @@ struct qjs_xhr_slot {
 	nsurl *referer;		/* owned snapshot of the invoking realm's URL */
 	unsigned long nav_id;		/* MacSurf Trace: owning nav, captured at send() */
 	unsigned long last_request_id;	/* previous hop's request_id, or 0 */
+	unsigned long origin_script_id;	/* MacSurf Trace 1b: script that called send() */
 	char method[8];			/* upper-cased, NUL-terminated */
 	char *body;			/* owned copy of the send() body, or NULL */
 	long body_len;
@@ -290,6 +292,7 @@ xhr_deliver(void *p)
 	JSContext *ctx;
 	JSValue fn, ret, exc, stk;
 	double prevdl;
+	struct ms_diag_scope __xtsk;	/* MacSurf Trace 1b */
 	const char *body;
 	const char *hdrs;
 	const char *url_str;
@@ -334,7 +337,10 @@ xhr_deliver(void *p)
 	if (JS_IsFunction(ctx, fn)) {
 		prevdl = macsurf_qjs_deadline_push_ms(
 				macsurf_qjs_default_timeout_ms());
+		ms_diag_task_enter(&__xtsk, MS_TASK_XHR, s->nav_id,
+			s->origin_script_id, s->last_request_id, (const char *) 0);
 		ret = JS_Call(ctx, fn, s->xhr_obj, 0, NULL);
+		ms_diag_task_leave(&__xtsk);
 		macsurf_qjs_deadline_pop(prevdl);
 		if (JS_IsException(ret)) {
 			exc = JS_GetException(ctx);
@@ -659,6 +665,7 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 	s->referer = (base != NULL) ? nsurl_ref(base) : NULL;
 	s->nav_id = xhr_realm_nav_id(ctx);	/* MacSurf Trace 1a */
 	s->last_request_id = 0;
+	s->origin_script_id = ms_diag_cur_script();	/* MacSurf Trace 1b */
 	strncpy(s->method, method_c, sizeof(s->method) - 1);
 	s->method[sizeof(s->method) - 1] = '\0';
 	for (i = 0; s->method[i]; i++) {
@@ -805,6 +812,7 @@ qjs_beacon_send(JSContext *ctx, JSValueConst this_val,
 	s->referer = (base != NULL) ? nsurl_ref(base) : NULL;
 	s->nav_id = xhr_realm_nav_id(ctx);	/* MacSurf Trace 1a */
 	s->last_request_id = 0;
+	s->origin_script_id = ms_diag_cur_script();	/* MacSurf Trace 1b */
 	strcpy(s->method, "POST");
 
 	if (argc > 1 && !JS_IsNull(argv[1]) && !JS_IsUndefined(argv[1])) {

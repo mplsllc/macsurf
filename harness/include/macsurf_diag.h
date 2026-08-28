@@ -69,4 +69,53 @@ long macsurf_diag_serialize_gaps(char *buf, long cap);
  */
 long macsurf_diag_serialize_network(char *buf, long cap);
 
+
+/* ============================ Phase 1b ==============================
+ * script_id  = one source EXECUTION attempt (not a source-file id).
+ * task_id    = one event-loop ENTRY into JS as a new causal turn.
+ * Synchronous nested work inherits the current task; ambiguous script
+ * ownership is script=0, never guessed.
+ */
+
+enum ms_script_kind  { MS_SCRIPT_CLASSIC = 0, MS_SCRIPT_MODULE };
+enum ms_script_state { MS_SCR_RUNNING = 0, MS_SCR_DONE, MS_SCR_COMPILE_FAIL,
+		       MS_SCR_RUN_FAIL, MS_SCR_SKIPPED };
+enum ms_task_kind    { MS_TASK_NONE = 0, MS_TASK_TIMER, MS_TASK_EVENT,
+		       MS_TASK_XHR, MS_TASK_MICROTASK };
+
+/* Saved outer scope; scoped push/pop, NOT bare assignment. */
+struct ms_diag_scope {
+	unsigned long prev_script;
+	unsigned long prev_task;
+	unsigned long my_id;		/* this scope's script or task id, 0 if inherited */
+};
+
+/* --- script scope: wrap the top-level eval in js_exec / js_exec_module --- */
+void ms_diag_script_enter(struct ms_diag_scope *s, unsigned long nav_id,
+	int kind, const char *name);
+void ms_diag_script_leave(struct ms_diag_scope *s, int state);
+
+/* --- task scope: wrap the JS_Call at a timer/event/xhr/microtask boundary ---
+ * Returns the allocated task id, or 0 when it INHERITED the current task
+ * (kind==MS_TASK_EVENT while a task is already live) -- caller still must call
+ * ms_diag_task_leave with the same scope. `extra` is req_id for XHR, job count
+ * for microtask, 0 otherwise; `name` is the event type for EVENT, else NULL. */
+unsigned long ms_diag_task_enter(struct ms_diag_scope *s, int kind,
+	unsigned long nav_id, unsigned long origin_script,
+	unsigned long extra, const char *name);
+void ms_diag_task_leave(struct ms_diag_scope *s);
+
+/* microtask only: after the drain, record how many jobs ran and whether the
+ * per-pump cap was hit (remainder deferred to the next task). */
+void ms_diag_task_set_jobs(struct ms_diag_scope *s, unsigned long jobs,
+	int capped);
+
+/* currently-executing causal scope (for later DOM/CSS/layout instrumentation) */
+unsigned long ms_diag_cur_script(void);
+unsigned long ms_diag_cur_task(void);
+unsigned long ms_diag_cur_nav(void);
+
+long macsurf_diag_serialize_scripts(char *buf, long cap);
+long macsurf_diag_serialize_tasks(char *buf, long cap);
+
 #endif /* MACSURF_DIAG_H */

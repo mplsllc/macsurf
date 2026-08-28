@@ -23,6 +23,7 @@
 #include "utils/ns_errors.h"
 #include "macos9.h"
 #include "macsurf_debug.h"
+#include "macsurf_diag.h"
 #include "macsurf_gap.h"
 #include "macsurf_qjs.h"
 #include "macsurf_qjs_audit.h"
@@ -1196,6 +1197,9 @@ struct qjs_timer {
 	 * generation bookkeeping is wrong -- which the hardware says it is, since
 	 * fixes875's gate passed and the free still blew up. */
 	JSRuntime *rt;
+	/* MacSurf Trace 1b: causal origin, captured at setTimeout registration. */
+	unsigned long origin_script_id;
+	unsigned long nav_id;
 };
 
 static struct qjs_timer s_timer_arena[QJS_MAX_TIMERS];
@@ -1431,6 +1435,11 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	for (i = 0; i < extra; i++)
 		t->args[i] = JS_DupValue(ctx, argv[2 + i]);
 
+	/* MacSurf Trace 1b: capture the causal origin NOW (registration time),
+	 * not at fire -- by then current_script / current_nav have moved on. */
+	t->origin_script_id = ms_diag_cur_script();
+	t->nav_id = ms_diag_cur_nav();
+
 	return JS_NewInt32(ctx, id);
 }
 
@@ -1660,6 +1669,9 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		JSValue this_obj;
 		int call_nargs;
 		int a;
+		struct ms_diag_scope __tsk;	/* MacSurf Trace 1b */
+		unsigned long __t_nav = t->nav_id;
+		unsigned long __t_scr = t->origin_script_id;
 
 		/* Revalidate: a prior callback may have cleared this timer, or
 		 * timer_alloc may have evicted+reused this slot for a different
@@ -1721,7 +1733,10 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		/* fixes876 - HTML spec calls timer callbacks with `this` = the window.
 		 * JS_UNDEFINED left strict-mode callbacks with `this === undefined`. */
 		this_obj = JS_GetGlobalObject(qctx);
+		ms_diag_task_enter(&__tsk, MS_TASK_TIMER, __t_nav, __t_scr,
+			0, (const char *) 0);
 		ret = JS_Call(qctx, fn, this_obj, call_nargs, call_args);
+		ms_diag_task_leave(&__tsk);
 		{	/* fixes1037 */
 			extern double macos9_micros(void);
 			double dt = macos9_micros() - g_timer_t0;
@@ -7015,15 +7030,30 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 			global = JS_GetGlobalObject(ctx);
 		}
 
-		if (is_doc && capturing) {
-			qjs_fire_dispatch(ctx, global, evobj, "window");
-		}
+		{
+			/* MacSurf Trace 1b: one task per real (libdom-originated)
+			 * event dispatch, covering the whole capture/target/
+			 * bubble fan-out. script=0 -- listeners belong to many
+			 * scripts. Inherits the current task if JS is already
+			 * running (ms_diag_task_enter's nested rule). */
+			struct ms_diag_scope __evtsk;
+			ms_diag_task_enter(&__evtsk, MS_TASK_EVENT,
+				ms_diag_cur_nav(), 0, 0,
+				(type_ds != (dom_string *) 0) ?
+					dom_string_data(type_ds) : (const char *) 0);
 
-		qjs_fire_dispatch(ctx, hit->val, evobj,
-				is_doc ? "document" : "element");
+			if (is_doc && capturing) {
+				qjs_fire_dispatch(ctx, global, evobj, "window");
+			}
 
-		if (is_doc && !capturing) {
-			qjs_fire_dispatch(ctx, global, evobj, "window");
+			qjs_fire_dispatch(ctx, hit->val, evobj,
+					is_doc ? "document" : "element");
+
+			if (is_doc && !capturing) {
+				qjs_fire_dispatch(ctx, global, evobj, "window");
+			}
+
+			ms_diag_task_leave(&__evtsk);
 		}
 		if (is_doc) JS_FreeValue(ctx, global);
 	}
@@ -16481,8 +16511,13 @@ void macsurf_qjs_pump_all(void)
 		 * event loop -- the same class of hang as the fixes608 timer cycle.
 		 * QJS_MAX_JOBS_PER_PUMP caps one pass; leftovers run on the next poll,
 		 * which is what a real browser's task/microtask split does anyway. */
-		if (h->rt != NULL) {
+		if (h->rt != NULL && JS_IsJobPending(h->rt)) {
 			int jobs = 0;
+			struct ms_diag_scope __mtsk;	/* MacSurf Trace 1b */
+			/* one task per drain TURN, not per Promise job -- a turn
+			 * can hold jobs from several scripts, so script=0. */
+			ms_diag_task_enter(&__mtsk, MS_TASK_MICROTASK,
+				ms_diag_cur_nav(), 0, 0, (const char *) 0);
 			while (JS_IsJobPending(h->rt) && jobs < QJS_MAX_JOBS_PER_PUMP) {
 				JSContext *jctx = NULL;
 				int r = JS_ExecutePendingJob(h->rt, &jctx);
@@ -16518,6 +16553,9 @@ void macsurf_qjs_pump_all(void)
 				}
 				g_job_pump_cap_hits++;
 			}
+			ms_diag_task_set_jobs(&__mtsk, (unsigned long) jobs,
+				jobs >= QJS_MAX_JOBS_PER_PUMP);
+			ms_diag_task_leave(&__mtsk);
 		}
 		h = next;
 	}

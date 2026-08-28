@@ -1848,6 +1848,10 @@ static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
 		n = macsurf_diag_serialize_gaps(out, (long)sizeof(out));
 	} else if (strcmp(verb, "network") == 0) {
 		n = macsurf_diag_serialize_network(out, (long)sizeof(out));
+	} else if (strcmp(verb, "scripts") == 0) {
+		n = macsurf_diag_serialize_scripts(out, (long)sizeof(out));
+	} else if (strcmp(verb, "tasks") == 0) {
+		n = macsurf_diag_serialize_tasks(out, (long)sizeof(out));
 	} else {
 		macsurf_debug_log_writef("LIFE AE MSdg unknown verb=%s", verb);
 		return errAEEventNotHandled;
