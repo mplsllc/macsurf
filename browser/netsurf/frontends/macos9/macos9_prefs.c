@@ -246,6 +246,15 @@ void macos9_prefs_log_deltas(void)
 		}
 	}
 
+	/* The three switches below decide whether a page is permitted to request
+	 * author stylesheets and ordinary image objects at all.  Emit their
+	 * effective values unconditionally so a bare/unimaged page is diagnosable
+	 * from the first boot lines, even when the general delta list is missed. */
+	macsurf_debug_log_writef(
+		"LIFE PREF render css_author=%d fg_images=%d bg_images=%d",
+		(int) nsoption_bool(author_level_css),
+		(int) nsoption_bool(foreground_images),
+		(int) nsoption_bool(background_images));
 	macsurf_debug_log_writef("LIFE prefsdelta summary n=%d", n);
 }
 
