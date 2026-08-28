@@ -1229,6 +1229,7 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 									 * event->message, so a synthetic updateEvt is safe. */
 									macos9_throttled_repaint(gw, &last_draw_tick);
 								}
+							}
 							GetMouse(&relp);
 							rx_ns = (int)relp.h - gw->content_rect.left + gw->scroll_x;
 							ry_ns = (int)relp.v - gw->content_rect.top  + gw->scroll_y;
@@ -1239,7 +1240,6 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 								MS_LOG("content: CLICK_1");
 								browser_window_mouse_click(gw->bw,
 									BROWSER_MOUSE_CLICK_1 | mods, rx_ns, ry_ns);
-							}
 							}
 							/* fixes882: this said "inline onclick handlers run
 						 * natively in the JS engine". They do not. Nothing
