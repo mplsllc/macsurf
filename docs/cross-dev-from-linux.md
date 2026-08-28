@@ -232,6 +232,15 @@ The user's build is what they say it is. If something looks like staleness, the 
 - Output capped at 255 bytes per call.
 - Gated on `MACSURF_DEBUG` in macsurf_prefix.h. The `#ifdef MACSURF_DEBUG` test happens inside the implementation; if the define is missing, every call site compiles to nothing (fixes149/150/151 silent-instrumentation regression, then fixes305a same vector).
 
+### Bare-page policy check
+
+An unstyled or image-less page is not necessarily a fetch, layout, or paint regression.
+Persisted preferences override the built-in defaults: `author_level_css=0` suppresses author
+stylesheet requests, and `foreground_images=0` / `background_images=0` suppress the
+corresponding image requests. Check the unconditional startup line
+`LIFE PREF render css_author=... fg_images=... bg_images=...` before tracing lower layers.
+`--fresh` means a fresh process/log/run, not a reset of user preferences.
+
 ### Subsystem-init audit checklist
 
 After fixes149's three rounds of silently-failing instrumentation, we adopted this checklist:
