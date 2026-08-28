@@ -3733,7 +3733,7 @@ struct inherited_color_candidate {
 struct inherited_color_frame {
 	struct box *box;
 	css_computed_style *parent_style;	/* parent's post-recascade style */
-	css_computed_style *parent_style_old;	/* pointer children currently borrow */
+	const css_computed_style *parent_style_old;	/* pointer children currently borrow */
 	css_custom_env *parent_env;
 };
 
@@ -3813,7 +3813,7 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 		struct inherited_color_frame frame;
 		struct box *box;
 		css_computed_style *style_for_children;
-		css_computed_style *style_for_children_old;
+		const css_computed_style *style_for_children_old;
 		css_custom_env *env_for_children;
 		struct box *child;
 
@@ -3825,10 +3825,17 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 		/* Descendant boxes with no style of their own borrow this
 		 * pointer; track it so the anonymous-borrow test below compares
 		 * against what the child actually holds, not the recascaded
-		 * replacement. */
-		style_for_children_old = box->style;
-		style_for_children = box->style;
-		env_for_children = box->custom_env;
+		 * replacement. Anonymous containers (style == NULL) pass through
+		 * their enclosing parent's style. */
+		if (box->style != NULL) {
+			style_for_children_old = box->style;
+			style_for_children = box->style;
+			env_for_children = box->custom_env;
+		} else {
+			style_for_children_old = frame.parent_style_old;
+			style_for_children = frame.parent_style;
+			env_for_children = frame.parent_env;
+		}
 		if (box->flags & CLONE) {
 			struct box *owner = box->prev;
 
@@ -3945,8 +3952,9 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 			candidate[candidate_count].clone_owner = NULL;
 			candidate_count++;
 			style_for_children = styles->styles[CSS_PSEUDO_ELEMENT_NONE];
+			style_for_children_old = own_old;
 			env_for_children = env;
-		} else if (box->style == frame.parent_style_old) {
+		} else if (box->style != NULL && box->style == frame.parent_style_old) {
 			/* Anonymous/text boxes borrow their parent's computed style. Keep
 			 * their pointer change in the candidate set as well: text boxes
 			 * otherwise continue to paint the old inherited foreground.
@@ -3967,6 +3975,8 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 			candidate[candidate_count].clone_owner = NULL;
 			candidate_count++;
 			style_for_children = frame.parent_style;
+			style_for_children_old = frame.parent_style_old;
+			env_for_children = frame.parent_env;
 		}
 
 		for (child = box->children; child != NULL; child = child->next) {
