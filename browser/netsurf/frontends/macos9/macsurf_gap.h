@@ -41,10 +41,18 @@ enum ms_gap_id {
  * MacSurf actually has (all cooperative). Out-of-range ids are ignored. */
 void macsurf_gap_hit(int id);
 
-/* Serialise the non-zero table to the debug log as
- *   LIFE GAPSUMMARY unique=<u> total=<t>
- *   LIFE GAPTOP id=<slug> n=<count>       (up to 6, highest first)
- * then zero the table. Emits nothing when nothing was hit. */
+/* Called at NAV: DONE. Freezes the in-progress counters into the last-nav
+ * snapshot, clears the in-progress counters, and (only if non-empty) emits the
+ * temporary LIFE GAPSUMMARY / LIFE GAPTOP bridge lines from the frozen copy. */
 void macsurf_gap_emit_summary(unsigned long nav_id);
+
+/* Frozen last-completed-navigation snapshot -- read-only, non-destructive.
+ * Backs `MSdg GET gaps` in macsurf_diag.c. */
+int           macsurf_gap_kind_count(void);        /* == MS_GAP__N */
+unsigned long macsurf_gap_last_nav(void);
+int           macsurf_gap_last_unique(void);
+unsigned long macsurf_gap_last_total(void);
+unsigned long macsurf_gap_last_count(int id);      /* 0 if id out of range */
+const char   *macsurf_gap_slug(int id);           /* "?" if id out of range */
 
 #endif /* MACSURF_GAP_H */

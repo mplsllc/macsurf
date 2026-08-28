@@ -10,6 +10,7 @@
 #include "utils/nsoption.h"
 #include "macsurf_config.h"
 #include "macsurf_debug.h"
+#include "macsurf_diag.h"
 #include "macsurf_memory.h"    /* macsurf_recon_mem() */
 #include "macsurf_timebase.h"
 #include "macsurf_osver.h"     /* fixes936 -- macsurf_os_is_osx() */
@@ -30,6 +31,12 @@
 #ifndef kAEGetURL
 #define kAEGetURL 'GURL'
 #endif
+
+/* MacSurf Trace: on-demand diagnostic query. `MSdg`/`GET ` (trailing space),
+ * direct object = a typeChar verb ("summary" / "gaps"); reply = typeChar text.
+ * See frontends/macos9/macsurf_diag.c. */
+#define kMacSurfDiagEventClass  'MSdg'
+#define kMacSurfDiagGet         'GET '
 OTClientContextPtr macos9_ot_context = NULL;
 /* macTLS expects this symbol; aliased to our OT context after init. */
 OTClientContextPtr g_ostls_ot_context = NULL;
@@ -1809,9 +1816,58 @@ static pascal OSErr macos9_ae_print_docs(const AppleEvent *ae, AppleEvent *reply
 	return errAEEventNotHandled;
 }
 
+/* MacSurf Trace: `MSdg`/`GET ` -- serialise a FROZEN diagnostic snapshot into
+ * the reply. Deliberately stupid: read the verb, pick a serialiser, emit text.
+ * No hlcache / fetch-ring / window traversal, no state mutation. Runs on the
+ * main thread from the WNE loop, same context as macos9_ae_get_url. */
+static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
+		long refcon)
+{
+	DescType rt;
+	Size actual = 0;
+	OSErr err;
+	char verb[32];
+	char out[2048];
+	long n;
+
+	(void)refcon;
+
+	err = AEGetParamPtr(ae, keyDirectObject, typeChar, &rt,
+			(Ptr)verb, (Size)(sizeof(verb) - 1), &actual);
+	if (err != noErr) {
+		return err;
+	}
+	if (actual < 0 || (unsigned long)actual > (unsigned long)(sizeof(verb) - 1)) {
+		return errAEEventNotHandled;
+	}
+	verb[actual] = '\0';
+
+	if (strcmp(verb, "summary") == 0) {
+		n = macsurf_diag_serialize_summary(out, (long)sizeof(out));
+	} else if (strcmp(verb, "gaps") == 0) {
+		n = macsurf_diag_serialize_gaps(out, (long)sizeof(out));
+	} else {
+		macsurf_debug_log_writef("LIFE AE MSdg unknown verb=%s", verb);
+		return errAEEventNotHandled;
+	}
+
+	if (n <= 0) {
+		return errAECorruptData;
+	}
+	macsurf_debug_log_writef("LIFE AE MSdg GET %s -> %ld bytes", verb, n);
+	if (reply != NULL) {
+		err = AEPutParamPtr(reply, keyDirectObject, typeChar,
+				(Ptr)out, (Size)n);
+		if (err != noErr) {
+			return err;
+		}
+	}
+	return noErr;
+}
+
 static void macos9_install_ae_handlers(void)
 {
-	OSErr e_oapp, e_odoc, e_pdoc, e_quit, e_rapp, e_gurl;
+	OSErr e_oapp, e_odoc, e_pdoc, e_quit, e_rapp, e_gurl, e_diag;
 
 	e_oapp = AEInstallEventHandler(kCoreEventClass, kAEOpenApplication,
 			NewAEEventHandlerUPP(macos9_ae_open_app), 0, false);
@@ -1825,11 +1881,13 @@ static void macos9_install_ae_handlers(void)
 			NewAEEventHandlerUPP(macos9_ae_reopen), 0, false);
 	e_gurl = AEInstallEventHandler(kInternetEventClass, kAEGetURL,
 			NewAEEventHandlerUPP(macos9_ae_get_url), 0, false);
+	e_diag = AEInstallEventHandler(kMacSurfDiagEventClass, kMacSurfDiagGet,
+			NewAEEventHandlerUPP(macos9_ae_diag), 0, false);
 
 	macsurf_debug_log_writef(
-		"LIFE AE install oapp=%d odoc=%d pdoc=%d quit=%d rapp=%d GURL=%d",
+		"LIFE AE install oapp=%d odoc=%d pdoc=%d quit=%d rapp=%d GURL=%d MSdg=%d",
 		(int)e_oapp, (int)e_odoc, (int)e_pdoc,
-		(int)e_quit, (int)e_rapp, (int)e_gurl);
+		(int)e_quit, (int)e_rapp, (int)e_gurl, (int)e_diag);
 }
 #endif /* __MACOS9__ */
 

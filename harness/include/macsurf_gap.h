@@ -17,4 +17,10 @@ enum ms_gap_id {
 };
 void macsurf_gap_hit(int id);
 void macsurf_gap_emit_summary(unsigned long nav_id);
+int           macsurf_gap_kind_count(void);
+unsigned long macsurf_gap_last_nav(void);
+int           macsurf_gap_last_unique(void);
+unsigned long macsurf_gap_last_total(void);
+unsigned long macsurf_gap_last_count(int id);
+const char   *macsurf_gap_slug(int id);
 #endif

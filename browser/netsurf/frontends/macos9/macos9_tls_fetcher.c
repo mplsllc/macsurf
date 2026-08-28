@@ -32,6 +32,7 @@
 #include "macos9_blocklist.h"
 #include "macos9_gzip.h"	/* fixes965 - streaming Content-Encoding: gzip */	/* fixes856 (#285) - tracker/ad blocklist */
 #include "macsurf_debug.h"
+#include "macsurf_diag.h"
 #include "macsurf_osver.h"	/* fixes936 (OS X tier 1) - macsurf_os_is_osx() */
 
 #include <string.h>
@@ -1737,6 +1738,7 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 
 	msg.type = FETCH_ERROR;
 	msg.data.error = why ? why : "https: fetch failed";
+	macsurf_diag_request_seen(fetch_get_nav_id(c->parent), 1);
 	fetch_send_callback(&msg, c->parent);
 
 	p = c->parent;
@@ -1933,6 +1935,8 @@ static void hctx_finish(struct macos9_https_ctx *c)
 
 	c->state = HS_DONE;
 	msg.type = FETCH_FINISHED;
+	macsurf_diag_request_seen(fetch_get_nav_id(c->parent),
+		(c->status >= 400) ? 1 : 0);
 	fetch_send_callback(&msg, c->parent);
 
 	/* fixes244 - mark host as "ever-succeeded" so future timeouts on
