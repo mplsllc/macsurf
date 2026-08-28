@@ -255,7 +255,7 @@ typedef struct html_content {
 	unsigned long doc_id;		/* one DOM-document lifetime; set at
 					 * html_begin_conversion, re-set if the
 					 * parser replaces c->document */
-	unsigned long frame_id;		/* copied from bw->frame_id when the
+	unsigned long frame_id;		/* copied from bw's frame-id accessor when the
 					 * browsing context is attached */
 	unsigned long last_layout_pass_id;	/* most recent render pass over
 						 * this document (paint join) */

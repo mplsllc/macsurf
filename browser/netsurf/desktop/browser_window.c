@@ -2010,7 +2010,13 @@ static void scheduled_reformat(void *vbw)
 /* exported interface documented in desktop/browser_private.h */
 nserror browser_window_destroy_internal(struct browser_window *bw)
 {
+	/* MacSurf Trace 1c: retire the pointer-keyed browsing-context identity
+	 * before this browser_window storage can be released or reused.  The
+	 * diagnostic side table deliberately keeps trace state out of this core
+	 * struct: frames.c owns contiguous browser_window arrays. */
+	extern void ms_diag_frame_close(void *bw);
 	assert(bw);
+	ms_diag_frame_close((void *) bw);
 
 	browser_window_destroy_children(bw);
 	browser_window_destroy_iframes(bw);
@@ -3428,14 +3434,13 @@ browser_window_initialise_common(enum browser_window_create_flags flags,
 				 const struct browser_window *existing)
 {
 	nserror err;
-	/* MacSurf Trace (1c): frame_id source. Uniquely-named, no widened
-	 * signature; implemented in frontends/macos9/macsurf_diag.c. */
-	extern unsigned long ms_diag_next_frame(void);
+	/* MacSurf Trace 1c: MacSurf-owned pointer-keyed frame identity.  Do not
+	 * add a field to struct browser_window: frames.c owns arrays of this core
+	 * type, so trace state must not change its cross-TU layout or stride. */
+	extern void ms_diag_frame_open(void *bw);
 	assert(bw);
 
-	/* MacSurf Trace: one browsing-context id per browser_window, allocated
-	 * once here and never reallocated across this frame's navigations. */
-	bw->frame_id = ms_diag_next_frame();
+	ms_diag_frame_open((void *) bw);
 
 	/* new javascript context for each window/(i)frame */
 	err = js_newheap(nsoption_int(script_timeout), &bw->jsheap);
@@ -4659,7 +4664,8 @@ browser_window_set_scale(struct browser_window *bw, float scale, bool absolute)
 /* exported interface documented in netsurf/browser_window.h */
 unsigned long browser_window_get_frame_id(struct browser_window *bw)
 {
-	return (bw == NULL) ? 0 : bw->frame_id;
+	extern unsigned long ms_diag_frame_get(const void *bw);
+	return ms_diag_frame_get((const void *) bw);
 }
 
 

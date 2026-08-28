@@ -205,8 +205,12 @@ unsigned long ms_diag_cur_batch(void);
 unsigned long ms_diag_cur_pass(void);
 unsigned long ms_diag_cur_paint(void);
 
-/* monotonic frame-id source (called from browser_window creation) */
-unsigned long ms_diag_next_frame(void);
+/* Pointer-keyed frame identity.  This deliberately lives outside
+ * struct browser_window because the core owns contiguous arrays of browser
+ * windows for frames and iframes; trace state must not change that ABI. */
+void ms_diag_frame_open(void *bw);
+unsigned long ms_diag_frame_get(const void *bw);
+void ms_diag_frame_close(void *bw);
 
 long macsurf_diag_serialize_documents(char *buf, long cap);
 long macsurf_diag_serialize_mutations(char *buf, long cap);

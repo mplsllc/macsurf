@@ -552,6 +552,21 @@ static unsigned long g_pass_seq;
 static unsigned long g_stage_seq;
 static unsigned long g_paint_seq;
 
+/* Browser-window identity is deliberately external to struct browser_window.
+ * The core owns contiguous arrays of that struct for frames/iframes, so
+ * expanding it makes the trace ABI-sensitive across all of those users.  A
+ * bounded pointer-keyed table preserves a stable id for each live browsing
+ * context without widening a core object.  128 covers every concurrently live
+ * top-level/frame context on the target; a full table rotates only diagnostic
+ * attribution, never browser state. */
+#define MS_FRAME_RING_N 128
+struct ms_diag_frame {
+	const void *bw;
+	unsigned long id;
+};
+static struct ms_diag_frame g_frame_ring[MS_FRAME_RING_N];
+static int g_frame_ring_head;
+
 /* ambient render scope (pushed by render_enter / render_slice_push) */
 static unsigned long g_cur_doc;
 static unsigned long g_cur_frame;
@@ -568,9 +583,62 @@ static unsigned long ms_next(unsigned long *seq)
 	return v;
 }
 
-unsigned long ms_diag_next_frame(void)
+void ms_diag_frame_open(void *bw)
 {
-	return ms_next(&g_frame_seq);
+	int i;
+	int free_slot = -1;
+	struct ms_diag_frame *e;
+
+	if (bw == NULL) {
+		return;
+	}
+	for (i = 0; i < MS_FRAME_RING_N; i++) {
+		if (g_frame_ring[i].bw == bw) {
+			return;
+		}
+		if (free_slot == -1 && g_frame_ring[i].bw == NULL) {
+			free_slot = i;
+		}
+	}
+	if (free_slot != -1) {
+		e = &g_frame_ring[free_slot];
+	} else {
+		e = &g_frame_ring[g_frame_ring_head];
+		g_frame_ring_head = (g_frame_ring_head + 1) % MS_FRAME_RING_N;
+	}
+	e->bw = bw;
+	e->id = ms_next(&g_frame_seq);
+}
+
+unsigned long ms_diag_frame_get(const void *bw)
+{
+	int i;
+
+	if (bw == NULL) {
+		return 0;
+	}
+	for (i = 0; i < MS_FRAME_RING_N; i++) {
+		if (g_frame_ring[i].bw == bw) {
+			return g_frame_ring[i].id;
+		}
+	}
+	return 0;
+}
+
+void ms_diag_frame_close(void *bw)
+{
+	int i;
+
+	if (bw == NULL) {
+		return;
+	}
+	for (i = 0; i < MS_FRAME_RING_N; i++) {
+		if (g_frame_ring[i].bw == bw) {
+			g_frame_ring[i].bw = NULL;
+			g_frame_ring[i].id = 0;
+			return;
+		}
+	}
 }
 
 /* --- documents --- */
