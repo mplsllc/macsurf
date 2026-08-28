@@ -926,7 +926,7 @@ static bool html_replace_object(struct content_html_object *object, nsurl *url)
 
 	child.charset = c->encoding;
 	child.quirks = c->base.quirks;
-	child.nav_id = c->base.nav_id;	/* MacSurf Trace 1a */
+	child.nav_id = content_get_nav_id(&c->base);	/* MacSurf Trace 1a */
 	child.doc_id = 0;
 
 	if (object->content != NULL) {
@@ -1205,7 +1205,7 @@ html_fetch_object(html_content *c,
 		}
 	}
 	child.quirks = c->base.quirks;
-	child.nav_id = c->base.nav_id;	/* MacSurf Trace 1a */
+	child.nav_id = content_get_nav_id(&c->base);	/* MacSurf Trace 1a */
 	child.doc_id = 0;
 
 	/* fixes975 (lifecycle Stage 1) - CREATION-TIME URL ADOPTION.

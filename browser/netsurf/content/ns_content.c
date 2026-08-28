@@ -271,9 +271,6 @@ content__init(struct content *c,
 	c->llcache = llcache;
 	c->mime_type = lwc_string_ref(imime_type);
 	c->handler = handler;
-	/* MacSurf Trace 1a: stamp creation provenance once, from the llcache
-	 * object's durable navigation owner. */
-	c->nav_id = llcache_handle_get_nav_id(llcache);
 
 	/* fixes533: register as live the instant the destroyed-sentinel (handler)
 	 * is set, so any scheduled callback that resolves to this content can
@@ -1642,10 +1639,15 @@ content__add_rfc5988_link(struct content *c,
 
 
 /* exported interface documented in content/content.h */
-/* MacSurf Trace 1a: creation-provenance navigation id (0 == unattributed). */
+/* MacSurf Trace 1a: navigation that fetched this content's llcache object
+ * (0 == unattributed, or the content is no longer cache-backed). Derived, not
+ * stored -- see the note in content_protected.h. */
 unsigned long content_get_nav_id(struct content *c)
 {
-	return (c != NULL) ? c->nav_id : 0;
+	if (c == NULL || c->llcache == NULL) {
+		return 0;
+	}
+	return llcache_handle_get_nav_id(c->llcache);
 }
 
 

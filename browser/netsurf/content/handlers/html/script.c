@@ -1025,7 +1025,7 @@ exec_src_script(html_content *c,
 	/* set up child fetch encoding and quirks */
 	child.charset = c->encoding;
 	child.quirks = c->base.quirks;
-	child.nav_id = c->base.nav_id;	/* MacSurf Trace 1a */
+	child.nav_id = content_get_nav_id(&c->base);	/* MacSurf Trace 1a */
 	child.doc_id = 0;
 
 	ns_error = hlcache_handle_retrieve(joined,

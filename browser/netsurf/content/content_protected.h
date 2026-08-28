@@ -329,15 +329,14 @@ struct content {
 		char *string;
 		struct textsearch_context *context;
 	} textsearch;
-
-	/**
-	 * MacSurf Trace: navigation that CREATED this content object (creation
-	 * provenance, never rewritten when a later navigation reuses a shared
-	 * cache object). 0 == unattributed. Child resources inherit it via
-	 * hlcache_child_context.
-	 */
-	unsigned long nav_id;
 };
+/* MacSurf Trace: NO nav_id field here on purpose -- struct content is the base
+ * of ~15 content subtypes (html_content, nscss_content, every image_content,
+ * ...), so appending a field shifts every subtype's layout and any TU that
+ * misses the rebuild reads its own fields at the wrong offset (observed:
+ * html_content->base_url off by 4 -> nsurl_join near-NULL crash). content's
+ * navigation is derived from its llcache handle instead -- see
+ * content_get_nav_id(). */
 
 extern const char * const content_type_name[];
 extern const char * const content_status_name[];

@@ -396,8 +396,8 @@ xhr_realm_url(JSContext *ctx)
 static unsigned long
 xhr_realm_nav_id(JSContext *ctx)
 {
-	struct content *content = qjs_get_content_for_ctx(ctx);
-	return (content != NULL) ? content->nav_id : 0;
+	extern unsigned long content_get_nav_id(struct content *c);
+	return content_get_nav_id(qjs_get_content_for_ctx(ctx));
 }
 
 static void
