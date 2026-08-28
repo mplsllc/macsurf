@@ -135,10 +135,17 @@ long macsurf_trace_serialize(char *buf, long cap)
 		return 0;
 	}
 	buf[0] = '\0';
+	/* one field per line -- a multi-token value on a header line gets
+	 * swallowed whole by netsummary's generic k=v parser. */
 	n = ms_trace_cat_append(buf, cap, n, "MSDIAG 1 trace\n");
-	snprintf(line, sizeof line, "armed=%d mask=%lu level=%d ring_total=%lu\n",
-		g_trace_armed_flag, (unsigned long) g_trace_mask,
-		g_trace_level, (unsigned long) g_trace_total);
+	snprintf(line, sizeof line, "armed=%d\n", g_trace_armed_flag);
+	n = ms_trace_cat_append(buf, cap, n, line);
+	snprintf(line, sizeof line, "mask=%lu\n", (unsigned long) g_trace_mask);
+	n = ms_trace_cat_append(buf, cap, n, line);
+	snprintf(line, sizeof line, "level=%d\n", g_trace_level);
+	n = ms_trace_cat_append(buf, cap, n, line);
+	snprintf(line, sizeof line, "ring_total=%lu\n",
+		(unsigned long) g_trace_total);
 	n = ms_trace_cat_append(buf, cap, n, line);
 
 	for (i = 0; i < MS_TRACE_RING_N; i++) {
