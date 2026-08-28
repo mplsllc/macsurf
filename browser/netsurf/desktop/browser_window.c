@@ -3714,7 +3714,13 @@ browser_window_navigate(struct browser_window *bw,
 	 * location, link, form, back/forward, reload, meta refresh). Internal
 	 * redirects and about:query interstitials go straight to
 	 * browser_window__navigate_internal and keep this id. */
-	{
+	if (bw->browser_window_type == BROWSER_WINDOW_IFRAME &&
+		bw->parent != NULL) {
+		/* A child document belongs to its root navigation.  Its frame and
+		 * document identities remain distinct; only the causal navigation
+		 * transaction is inherited. */
+		bw->nav_id = bw->parent->nav_id;
+	} else {
 		static unsigned long ms_nav_id_seq;
 		ms_nav_id_seq++;
 		if (ms_nav_id_seq == 0) {
