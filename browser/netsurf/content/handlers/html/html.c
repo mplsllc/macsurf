@@ -61,6 +61,7 @@
 
 #include "html/html.h"
 #include "macsurf_debug.h"
+#include "macsurf_diag.h"	/* MacSurf Trace 1c: doc_id + render-stage records */
 
 /* fixes518: frontend scheduler cancellation (forward-declared here, Mac-only
  * fork, same approach as macsurf_debug_log_writef in content_protected.h).
@@ -380,6 +381,14 @@ static void html_box_convert_done(html_content *c, bool success)
 	macos9_html_reformat_seq = 0; /* fixes560: fresh reflow-storm count per load */
 
 	c->box_conversion_context = NULL;
+
+	/* MacSurf Trace 1c: the INITIAL layout pass (opened in dom_to_box) is
+	 * complete. A reconvert closes its own pass in macos9_reconvert_cb. */
+	if (c->last_layout_pass_id != 0) {
+		ms_diag_render_close(c->last_layout_pass_id,
+			success ? MS_RRES_DONE : MS_RRES_FAIL, 0);
+		c->last_layout_pass_id = 0;
+	}
 
 	/* Clean up and report error if unsuccessful or aborted */
 	if ((success == false) || (c->aborted)) {
@@ -2178,6 +2187,13 @@ html_process_encoding_change(struct content *c,
 
 	}
 
+	/* MacSurf Trace 1c: the parser just replaced html->document. Retire the
+	 * old DOM-document id; html_begin_conversion opens a fresh one. */
+	if (html->doc_id != 0) {
+		ms_diag_document_close(html->doc_id);
+		html->doc_id = 0;
+	}
+
 	source_data = content__get_source_data(c, &source_size);
 
 	/* fixes506: don't feed a NULL/empty buffer to the parser. After
@@ -2363,6 +2379,19 @@ html_begin_conversion(html_content *htmlc)
 	dom_hubbub_error error;
 
 	MS_LOG("html begin conversion");
+
+	/* MacSurf Trace 1c: register this DOM document. Idempotent -- this
+	 * function re-enters while the parser flushes late style/script nodes;
+	 * the doc_id == 0 guard opens exactly one id per DOM lifetime.
+	 * html_process_encoding_change() clears doc_id when it replaces
+	 * htmlc->document, so a reparse gets a fresh id. */
+	if (htmlc->doc_id == 0) {
+		htmlc->frame_id = browser_window_get_frame_id(htmlc->bw);
+		htmlc->doc_id = ms_diag_document_open(
+			content_get_nav_id((struct content *) htmlc),
+			htmlc->frame_id);
+	}
+
 	/* fixes848 (#167 perf investigation) -- see html_box_convert_done's
 	 * comment; this is the matching "about to start" bracket. */
 	macsurf_debug_log_writef("WORK pipeline: begin_conversion c=%p url=%s",
@@ -3889,6 +3918,20 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 					css_computed_style_debug_bits0(ns));
 				macsurf_debug_log_writef(
 					"LIFE INHERITEDCOLOR classifier bits0=%s", b0);
+				/* MacSurf Trace 1c: the structured record. Join keys
+				 * (pass/batch/doc/task) come from the live render
+				 * scope the reconvert callback pushed; this is the
+				 * only place the bits + tag + detail are in scope. */
+				ms_diag_render_stage(MS_STAGE_INHERITED_COLOR,
+					MS_SRES_DECLINE,
+					MS_SREASON_BORDER_WIDTH_BITS_DIFFER,
+					(int) decline_detail,
+					(unsigned long)
+						css_computed_style_debug_bits0(own_old),
+					(unsigned long)
+						css_computed_style_debug_bits0(ns),
+					decline_tag[0] != '\0' ? decline_tag : "-",
+					candidate_count);
 				css_select_results_destroy(styles);
 				if (env != NULL) css_custom_env_unref(env);
 				goto done;
@@ -4002,7 +4045,28 @@ done:
 			"cand=%d",
 			decline, decline_tag[0] != '\0' ? decline_tag : "-",
 			decline_detail, candidate_count);
+		/* MacSurf Trace 1c: structured decline for reasons other than
+		 * classifier_other (which already recorded its own, richer one
+		 * with the border-width bits before jumping here). */
+		if (decline == NULL || strcmp(decline, "classifier_other") != 0) {
+			int reason_e = MS_SREASON_NONE;
+			if (decline != NULL && strcmp(decline, "structural") == 0)
+				reason_e = MS_SREASON_STRUCTURAL_IN_BATCH;
+			else if (decline != NULL &&
+				 strcmp(decline, "no_candidate") == 0)
+				reason_e = MS_SREASON_NO_CANDIDATE;
+			ms_diag_render_stage(MS_STAGE_INHERITED_COLOR,
+				MS_SRES_DECLINE, reason_e, (int) decline_detail,
+				0, 0,
+				decline_tag[0] != '\0' ? decline_tag : "-",
+				candidate_count);
+		}
 		html_inherited_color_discard(candidate, candidate_count);
+	} else {
+		ms_diag_render_stage(MS_STAGE_INHERITED_COLOR, MS_SRES_COMMIT,
+			MS_SREASON_NONE, 0, 0, 0,
+			decline_tag[0] != '\0' ? decline_tag : "-",
+			candidate_count);
 	}
 	if (candidate_select_ctx != NULL)
 		css_select_ctx_destroy(candidate_select_ctx);
@@ -5966,6 +6030,12 @@ static void html_destroy(struct content *c)
 	macsurf_debug_log_writef("html_destroy: htmlc=%p content=%p", (void*)html, (void*)c);
 	NSLOG(netsurf, INFO, "content %p", c);
 
+	/* MacSurf Trace 1c: this DOM document's lifetime ends here. */
+	if (html->doc_id != 0) {
+		ms_diag_document_close(html->doc_id);
+		html->doc_id = 0;
+	}
+
 	/* fixes502: set aborted before cancel so that if convert_xml_to_box
 	 * was already dequeued by the scheduler (cancel_dom_to_box is then a
 	 * no-op) the callback still checks aborted and returns immediately
@@ -6112,6 +6182,17 @@ html_open(struct content *c,
 
 	html->bw = bw;
 	html->page = (html_content *) page;
+
+	/* MacSurf Trace 1c: the browsing context is now known. Copy its stable
+	 * frame_id and backfill the document record (an iframe's doc is often
+	 * opened before its child browser_window attaches). */
+	if (bw != NULL) {
+		html->frame_id = browser_window_get_frame_id(bw);
+		if (html->doc_id != 0) {
+			ms_diag_document_set_frame(html->doc_id,
+				html->frame_id);
+		}
+	}
 
 	html->drag_type = HTML_DRAG_NONE;
 	html->drag_owner.no_owner = true;
@@ -6783,6 +6864,24 @@ dom_document *html_get_document(hlcache_handle *h)
 	assert(c != NULL);
 
 	return c->document;
+}
+
+/* MacSurf Trace 1c: read the document / frame id off an HTML content. Used by
+ * the frontend reconvert path, which only has `struct content *` in scope. The
+ * DOM-mutation callers only ever operate on the page's HTML document, so a
+ * NULL guard is sufficient. New uniquely-named symbols: no existing signature
+ * widened. */
+unsigned long html_content_get_doc_id(struct content *c)
+{
+	if (c == NULL)
+		return 0;
+	return ((html_content *) c)->doc_id;
+}
+unsigned long html_content_get_frame_id(struct content *c)
+{
+	if (c == NULL)
+		return 0;
+	return ((html_content *) c)->frame_id;
 }
 
 /**

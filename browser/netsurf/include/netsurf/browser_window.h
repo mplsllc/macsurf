@@ -380,6 +380,13 @@ float browser_window_get_scale(struct browser_window *bw);
 
 
 /**
+ * MacSurf Trace (Milestone 1c): the browsing-context id of a browser window.
+ * Stable across this frame's navigations; 0 if bw is NULL.
+ */
+unsigned long browser_window_get_frame_id(struct browser_window *bw);
+
+
+/**
  * Get access to any page features at the given coordinates.
  *
  * Fetches page features like content, link URLs and objects (images)

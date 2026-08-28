@@ -106,6 +106,7 @@ static unsigned long    g_walk_gen     = 0;
 #include "html/form_internal.h"
 
 #include "macsurf_debug.h"
+#include "macsurf_diag.h"	/* MacSurf Trace 1c: layout_pass provenance */
 #include "macos9_deathrow.h"
 
 /* fixes553 - extend the fixes552 writer-side free guard from the single walked
@@ -204,6 +205,13 @@ struct box_construct_ctx {
 	 * list to choose which pair of opening/closing strings to emit
 	 * for the current nesting level. */
 	int32_t quote_depth;
+
+	/** MacSurf Trace 1c: frozen causal descriptor for the INITIAL layout
+	 * pass. Filled in dom_to_box() (cold load only -- a reconvert's scope is
+	 * owned by macos9_reconvert_cb); each self-rescheduled convert_xml_to_box
+	 * slice re-establishes the ambient scope from this. pass==0 means "not an
+	 * instrumented initial pass". */
+	struct ms_diag_provenance ms_prov;
 };
 
 /**
@@ -2737,6 +2745,13 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 static void convert_xml_to_box(struct box_construct_ctx *ctx)
 {
 	struct content *c;
+	/* MacSurf Trace 1c: re-establish the ambient render scope for this
+	 * self-rescheduled slice of the COLD load walk. Copied out of ctx BEFORE
+	 * _inner runs because _inner may free ctx. A reconvert's scope is owned
+	 * by macos9_reconvert_cb, so skip when reconvert is in progress. */
+	struct ms_diag_render_scope ms_rs;
+	struct ms_diag_provenance ms_prov_local;
+	int ms_pushed = 0;
 
 	if (ctx == NULL || ctx->content == NULL) {
 		convert_xml_to_box_inner(ctx);
@@ -2746,7 +2761,17 @@ static void convert_xml_to_box(struct box_construct_ctx *ctx)
 	g_walk_content = c;
 	g_walk_gen = macos9_content_token(c);
 
+	if (!macsurf_reconvert_in_progress && ctx->ms_prov.pass != 0) {
+		ms_prov_local = ctx->ms_prov;
+		ms_diag_render_slice_push(&ms_rs, &ms_prov_local);
+		ms_pushed = 1;
+	}
+
 	convert_xml_to_box_inner(ctx);   /* may free ctx and/or reschedule */
+
+	if (ms_pushed) {
+		ms_diag_render_slice_pop(&ms_rs);
+	}
 
 	g_walk_content = NULL;
 	g_walk_gen = 0;
@@ -3011,6 +3036,22 @@ dom_to_box(dom_node *n,
 	ctx->bctx = c->bctx;
 	ctx->counters = NULL;	/* fixes134b: empty counter table */
 	ctx->quote_depth = 0;	/* fixes140a: quote nesting starts at 0 */
+
+	/* MacSurf Trace 1c: open the INITIAL layout pass here (cold load only --
+	 * a reconvert's render scope is owned by macos9_reconvert_cb, which
+	 * calls dom_to_box synchronously at line ~3046 with a scope already
+	 * pushed). ctx is malloc'd, so ms_prov must be zeroed on every path. */
+	memset(&ctx->ms_prov, 0, sizeof(ctx->ms_prov));
+	if (!macsurf_reconvert_in_progress) {
+		extern unsigned long content_get_nav_id(struct content *c);
+		ctx->ms_prov.nav = content_get_nav_id((struct content *) c);
+		ctx->ms_prov.frame = c->frame_id;
+		ctx->ms_prov.doc = c->doc_id;
+		ctx->ms_prov.script = ms_diag_cur_script();
+		ctx->ms_prov.task = ms_diag_cur_task();
+		(void) ms_diag_render_open(&ctx->ms_prov, MS_RENDER_INITIAL);
+		c->last_layout_pass_id = ctx->ms_prov.pass;
+	}
 
 	*box_conversion_context = ctx;
 

@@ -768,8 +768,15 @@ void content__request_redraw(struct content *c,
 			     int x, int y, int width, int height)
 {
 	union content_msg_data data;
+	/* MacSurf Trace 1c: bind this invalidation to the live render pass (if
+	 * any). No-op when no pass is on the stack -- caret blink, text
+	 * selection, form menus etc. request redraws with no render scope.
+	 * Uniquely-named frontend symbol; implemented in macsurf_diag.c. */
+	extern void ms_diag_paint_note(void);
 
 	CONTENT_CHECK_VOID(c);
+
+	ms_diag_paint_note();
 
 	data.redraw.x = x;
 	data.redraw.y = y;

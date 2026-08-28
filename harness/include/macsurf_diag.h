@@ -118,4 +118,98 @@ unsigned long ms_diag_cur_nav(void);
 long macsurf_diag_serialize_scripts(char *buf, long cap);
 long macsurf_diag_serialize_tasks(char *buf, long cap);
 
+
+/* ==================== Milestone 1c: Causal Render Trace ====================
+ * document_id   = one DOM-document lifetime (allocated at html_begin_conversion;
+ *                 an encoding/parser restart that replaces c->document -> new id).
+ * frame_id      = one browsing-context lifetime (allocated at browser_window
+ *                 creation; unchanged across that frame's navigations).
+ * mutation_batch_id = one per-content debounced pending-table batch.
+ * layout_pass_id    = one render/update attempt (STYLEFAST -> INHERITEDCOLOR ->
+ *                 full reconvert are STAGES of it, not separate passes).
+ * paint_pass_id = one invalidation->paint transaction requested by a render pass.
+ *
+ * R3: before any fast path the transaction holds ONE immutable descriptor; every
+ * stage record copies it via ms_diag_cur_provenance(), never piecemeal cur_*(). */
+
+enum ms_render_kind { MS_RENDER_INITIAL = 0, MS_RENDER_RECONVERT,
+		      MS_RENDER_FAST_STYLE, MS_RENDER_FAST_INHERITED };
+enum ms_stage_kind   { MS_STAGE_STYLEFAST = 0, MS_STAGE_INHERITED_COLOR };
+enum ms_stage_result { MS_SRES_COMMIT = 0, MS_SRES_FALLBACK, MS_SRES_DECLINE };
+enum ms_stage_reason { MS_SREASON_NONE = 0,
+		       MS_SREASON_CLASSIFIER_OTHER,
+		       MS_SREASON_BORDER_WIDTH_BITS_DIFFER,
+		       MS_SREASON_STRUCTURAL_IN_BATCH,
+		       MS_SREASON_NOT_READY,
+		       MS_SREASON_NO_CANDIDATE };
+enum ms_render_result { MS_RRES_RUNNING = 0, MS_RRES_DONE, MS_RRES_FALLBACK,
+			MS_RRES_FAIL, MS_RRES_QUEUED };
+
+/* The frozen causal descriptor. Fill with ms_diag_cur_provenance() or build it
+ * from a pending-table slot; pass by const pointer, never re-read cur_*(). */
+struct ms_diag_provenance {
+	unsigned long nav;
+	unsigned long frame;
+	unsigned long doc;
+	unsigned long script;
+	unsigned long task;
+	unsigned long batch;
+	unsigned long pass;
+};
+
+/* saved ambient render scope; scoped push/pop, NOT bare assignment */
+struct ms_diag_render_scope {
+	unsigned long prev_nav, prev_frame, prev_doc, prev_batch, prev_pass;
+	unsigned long my_pass;
+};
+
+/* --- documents --- */
+unsigned long ms_diag_document_open(unsigned long nav, unsigned long frame);
+void ms_diag_document_set_frame(unsigned long doc_id, unsigned long frame);
+void ms_diag_document_close(unsigned long doc_id);
+
+/* --- mutation batches (R1: keyed by document, opened per pending slot) --- */
+unsigned long ms_diag_batch_open(const struct ms_diag_provenance *prov);
+void ms_diag_batch_add(unsigned long batch_id, int mut_kind, unsigned long task);
+void ms_diag_batch_freeze(unsigned long batch_id);
+
+/* --- render transaction: synchronous reconvert path (open+push / close+pop) --- */
+unsigned long ms_diag_render_enter(struct ms_diag_render_scope *s, int kind,
+	const struct ms_diag_provenance *prov);
+void ms_diag_render_leave(struct ms_diag_render_scope *s, int result, int reason);
+
+/* --- render transaction: async initial layout (open once; push/pop per slice;
+ *     close once). prov->pass is filled in by _open. --- */
+unsigned long ms_diag_render_open(struct ms_diag_provenance *prov, int kind);
+void ms_diag_render_slice_push(struct ms_diag_render_scope *s,
+	const struct ms_diag_provenance *prov);
+void ms_diag_render_slice_pop(struct ms_diag_render_scope *s);
+void ms_diag_render_close(unsigned long pass_id, int result, int reason);
+
+/* --- one structured stage record from inside a fast path (copies cur prov) ---
+ * `detail` is a stage-specific sub-code (libcss color_diff_detail for the
+ * inherited-colour classifier); 0 when not applicable. */
+void ms_diag_render_stage(int stage_kind, int result, int reason, int detail,
+	unsigned long bits_old, unsigned long bits_new,
+	const char *tag, int candidate_count);
+
+/* --- paint: lazily bind a paint id to the live pass; bump invalidations on
+ *     repeat. No-op when no render pass is on the stack (caret blink etc.). --- */
+void ms_diag_paint_note(void);
+
+/* --- currently-executing causal scope --- */
+void ms_diag_cur_provenance(struct ms_diag_provenance *out);
+unsigned long ms_diag_cur_doc(void);
+unsigned long ms_diag_cur_frame(void);
+unsigned long ms_diag_cur_batch(void);
+unsigned long ms_diag_cur_pass(void);
+unsigned long ms_diag_cur_paint(void);
+
+/* monotonic frame-id source (called from browser_window creation) */
+unsigned long ms_diag_next_frame(void);
+
+long macsurf_diag_serialize_documents(char *buf, long cap);
+long macsurf_diag_serialize_mutations(char *buf, long cap);
+long macsurf_diag_serialize_layout(char *buf, long cap);
+
 #endif /* MACSURF_DIAG_H */

@@ -65,6 +65,7 @@ void browser_window_get_drag_type(void){}
 void browser_window_get_features(void){}
 void browser_window_get_position(void){}
 float browser_window_get_scale(struct browser_window *bw){(void)bw;return 1.0f;}
+unsigned long browser_window_get_frame_id(struct browser_window *bw){(void)bw;return 0;}
 void browser_window_history_back(void){}
 void browser_window_history_forward(void){}
 void browser_window_mouse_click(void){}

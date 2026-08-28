@@ -3428,7 +3428,14 @@ browser_window_initialise_common(enum browser_window_create_flags flags,
 				 const struct browser_window *existing)
 {
 	nserror err;
+	/* MacSurf Trace (1c): frame_id source. Uniquely-named, no widened
+	 * signature; implemented in frontends/macos9/macsurf_diag.c. */
+	extern unsigned long ms_diag_next_frame(void);
 	assert(bw);
+
+	/* MacSurf Trace: one browsing-context id per browser_window, allocated
+	 * once here and never reallocated across this frame's navigations. */
+	bw->frame_id = ms_diag_next_frame();
 
 	/* new javascript context for each window/(i)frame */
 	err = js_newheap(nsoption_int(script_timeout), &bw->jsheap);
@@ -4646,6 +4653,13 @@ browser_window_set_scale(struct browser_window *bw, float scale, bool absolute)
 	}
 
 	return res;
+}
+
+
+/* exported interface documented in netsurf/browser_window.h */
+unsigned long browser_window_get_frame_id(struct browser_window *bw)
+{
+	return (bw == NULL) ? 0 : bw->frame_id;
 }
 
 

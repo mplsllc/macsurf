@@ -249,6 +249,17 @@ typedef struct html_content {
 	 */
 	int img_eager_budget;
 
+	/* MacSurf Trace (Milestone 1c). Appended at END -- html_content is a
+	 * leaf content subtype (nothing derives from it) so this shifts no other
+	 * struct's layout, unlike a field on struct content (fixes1179). */
+	unsigned long doc_id;		/* one DOM-document lifetime; set at
+					 * html_begin_conversion, re-set if the
+					 * parser replaces c->document */
+	unsigned long frame_id;		/* copied from bw->frame_id when the
+					 * browsing context is attached */
+	unsigned long last_layout_pass_id;	/* most recent render pass over
+						 * this document (paint join) */
+
 } html_content;
 
 /**

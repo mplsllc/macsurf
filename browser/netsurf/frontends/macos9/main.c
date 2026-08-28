@@ -11,6 +11,7 @@
 #include "macsurf_config.h"
 #include "macsurf_debug.h"
 #include "macsurf_diag.h"
+#include "macsurf_trace.h"	/* MacSurf Trace 1c: universal event ring */
 #include "macsurf_memory.h"    /* macsurf_recon_mem() */
 #include "macsurf_timebase.h"
 #include "macsurf_osver.h"     /* fixes936 -- macsurf_os_is_osx() */
@@ -1827,7 +1828,10 @@ static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
 	Size actual = 0;
 	OSErr err;
 	char verb[32];
-	char out[8192];		/* `network` can list many requests */
+	/* static: `layout` / `trace` replies run to ~16 KB and the OS 9 main
+	 * stack should not carry that. The AE handler is only entered from the
+	 * cooperative event loop, one query at a time -- no reentrancy. */
+	static char out[16384];
 	long n;
 
 	(void)refcon;
@@ -1852,6 +1856,20 @@ static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
 		n = macsurf_diag_serialize_scripts(out, (long)sizeof(out));
 	} else if (strcmp(verb, "tasks") == 0) {
 		n = macsurf_diag_serialize_tasks(out, (long)sizeof(out));
+	} else if (strcmp(verb, "documents") == 0) {
+		n = macsurf_diag_serialize_documents(out, (long)sizeof(out));
+	} else if (strcmp(verb, "mutations") == 0) {
+		n = macsurf_diag_serialize_mutations(out, (long)sizeof(out));
+	} else if (strcmp(verb, "layout") == 0) {
+		n = macsurf_diag_serialize_layout(out, (long)sizeof(out));
+	} else if (strcmp(verb, "trace") == 0) {
+		n = macsurf_trace_serialize(out, (long)sizeof(out));
+	} else if (strcmp(verb, "tracestart") == 0) {
+		macsurf_trace_arm(0UL, 2);	/* all categories, level 2 */
+		n = macsurf_trace_serialize(out, (long)sizeof(out));
+	} else if (strcmp(verb, "tracestop") == 0) {
+		macsurf_trace_disarm();
+		n = macsurf_trace_serialize(out, (long)sizeof(out));
 	} else {
 		macsurf_debug_log_writef("LIFE AE MSdg unknown verb=%s", verb);
 		return errAEEventNotHandled;

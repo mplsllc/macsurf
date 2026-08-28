@@ -11,6 +11,7 @@
 
 #include "macsurf_diag.h"
 #include "macsurf_gap.h"
+#include "macsurf_trace.h"	/* Milestone 1c: mirror lifecycle to the ring */
 
 /* All writers run on the cooperative main / notifier context; no locking. */
 
@@ -471,5 +472,652 @@ long macsurf_diag_serialize_tasks(char *buf, long cap)
 		}
 		n = diag_cat(buf, cap, n, line);
 	}
+	return n;
+}
+
+/* ================= Milestone 1c: Causal Render Trace ================= */
+
+/* Mutation-kind slug table. Index order MUST match MACOS9_DOMMUT_* in
+ * macos9_reconvert.h (0=unknown .. 10=setattr_style); not included here to keep
+ * this TU independent of the frontend reconvert header. */
+#define MS_MUT_KINDS 11
+static const char *ms_mut_slug[MS_MUT_KINDS] = {
+	"unknown", "setattr", "rmattr", "text", "innerhtml", "append",
+	"remove", "insert", "chardata", "class", "style"
+};
+
+#define MS_DOC_RING_N    32
+#define MS_BATCH_RING_N  64
+#define MS_STAGE_RING_N  96
+#define MS_PASS_RING_N   64
+#define MS_PAINT_RING_N  48
+
+enum { MS_DOC_LIVE = 0, MS_DOC_DEAD = 1 };
+
+struct ms_diag_document {
+	unsigned long id;		/* 0 == empty */
+	unsigned long nav;
+	unsigned long frame;
+	short state;
+};
+struct ms_diag_mut_batch {
+	unsigned long id;		/* 0 == empty */
+	unsigned long nav, frame, doc, script, task;
+	unsigned long total;
+	unsigned long counts[MS_MUT_KINDS];
+	short mixed_tasks;
+	short frozen;
+};
+struct ms_diag_pass {
+	unsigned long id;		/* 0 == empty */
+	unsigned long nav, frame, doc, batch, task, script;
+	short kind;			/* enum ms_render_kind */
+	short result;			/* enum ms_render_result */
+	short reason;			/* enum ms_stage_reason */
+	unsigned long paint;		/* bound paint id, 0 if none */
+};
+struct ms_diag_stage {
+	unsigned long id;		/* 0 == empty */
+	unsigned long nav, doc, task, batch, pass;
+	unsigned long bits_old, bits_new;
+	short kind;			/* enum ms_stage_kind */
+	short result;			/* enum ms_stage_result */
+	short reason;			/* enum ms_stage_reason */
+	short detail;			/* stage-specific sub-code, 0 if n/a */
+	short cand;
+	char tag[16];
+};
+struct ms_diag_paint {
+	unsigned long id;		/* 0 == empty */
+	unsigned long nav, doc, pass, task;
+	unsigned long invalidations;
+	short requested;			/* 1 once a redraw was requested */
+};
+
+static struct ms_diag_document g_doc_ring[MS_DOC_RING_N];
+static int g_doc_ring_head;
+static struct ms_diag_mut_batch g_batch_ring[MS_BATCH_RING_N];
+static int g_batch_ring_head;
+static struct ms_diag_pass g_pass_ring[MS_PASS_RING_N];
+static int g_pass_ring_head;
+static struct ms_diag_stage g_stage_ring[MS_STAGE_RING_N];
+static int g_stage_ring_head;
+static struct ms_diag_paint g_paint_ring[MS_PAINT_RING_N];
+static int g_paint_ring_head;
+
+static unsigned long g_doc_seq;
+static unsigned long g_frame_seq;
+static unsigned long g_batch_seq;
+static unsigned long g_pass_seq;
+static unsigned long g_stage_seq;
+static unsigned long g_paint_seq;
+
+/* ambient render scope (pushed by render_enter / render_slice_push) */
+static unsigned long g_cur_doc;
+static unsigned long g_cur_frame;
+static unsigned long g_cur_batch;
+static unsigned long g_cur_pass;
+static unsigned long g_cur_paint;
+
+static unsigned long ms_next(unsigned long *seq)
+{
+	unsigned long v = ++(*seq);
+	if (v == 0) {
+		v = *seq = 1;
+	}
+	return v;
+}
+
+unsigned long ms_diag_next_frame(void)
+{
+	return ms_next(&g_frame_seq);
+}
+
+/* --- documents --- */
+
+unsigned long ms_diag_document_open(unsigned long nav, unsigned long frame)
+{
+	struct ms_diag_document *e = &g_doc_ring[g_doc_ring_head];
+	g_doc_ring_head = (g_doc_ring_head + 1) % MS_DOC_RING_N;
+	e->id = ms_next(&g_doc_seq);
+	e->nav = nav;
+	e->frame = frame;
+	e->state = MS_DOC_LIVE;
+	macsurf_trace_emit(MS_TC_DOC, MS_TE_DOC_CREATE, 0, 0, e->id, nav);
+	return e->id;
+}
+
+void ms_diag_document_set_frame(unsigned long doc_id, unsigned long frame)
+{
+	int i;
+	if (doc_id == 0) {
+		return;
+	}
+	for (i = 0; i < MS_DOC_RING_N; i++) {
+		if (g_doc_ring[i].id == doc_id) {
+			g_doc_ring[i].frame = frame;
+			return;
+		}
+	}
+}
+
+void ms_diag_document_close(unsigned long doc_id)
+{
+	int i;
+	if (doc_id == 0) {
+		return;
+	}
+	for (i = 0; i < MS_DOC_RING_N; i++) {
+		if (g_doc_ring[i].id == doc_id) {
+			g_doc_ring[i].state = MS_DOC_DEAD;
+			macsurf_trace_emit(MS_TC_DOC, MS_TE_DOC_DESTROY, 0, 0,
+				doc_id, 0);
+			return;
+		}
+	}
+}
+
+/* --- mutation batches --- */
+
+static struct ms_diag_mut_batch *ms_batch_find(unsigned long id)
+{
+	int i;
+	if (id == 0) {
+		return (struct ms_diag_mut_batch *) 0;
+	}
+	for (i = 0; i < MS_BATCH_RING_N; i++) {
+		if (g_batch_ring[i].id == id) {
+			return &g_batch_ring[i];
+		}
+	}
+	return (struct ms_diag_mut_batch *) 0;
+}
+
+unsigned long ms_diag_batch_open(const struct ms_diag_provenance *prov)
+{
+	struct ms_diag_mut_batch *e = &g_batch_ring[g_batch_ring_head];
+	g_batch_ring_head = (g_batch_ring_head + 1) % MS_BATCH_RING_N;
+	memset(e, 0, sizeof(*e));
+	e->id = ms_next(&g_batch_seq);
+	if (prov != (const struct ms_diag_provenance *) 0) {
+		e->nav = prov->nav;
+		e->frame = prov->frame;
+		e->doc = prov->doc;
+		e->script = prov->script;
+		e->task = prov->task;
+	}
+	macsurf_trace_emit(MS_TC_MUTATION, MS_TE_MUTATION_BEGIN, 0, 0,
+		e->id, e->doc);
+	return e->id;
+}
+
+void ms_diag_batch_add(unsigned long batch_id, int mut_kind, unsigned long task)
+{
+	struct ms_diag_mut_batch *e = ms_batch_find(batch_id);
+	if (e == (struct ms_diag_mut_batch *) 0) {
+		return;
+	}
+	if (mut_kind < 0 || mut_kind >= MS_MUT_KINDS) {
+		mut_kind = 0;	/* unknown */
+	}
+	e->counts[mut_kind]++;
+	e->total++;
+	/* R2: task ambiguity is independent of node/kind ambiguity. */
+	if (task != 0 && e->task != 0 && task != e->task) {
+		e->task = 0;
+		e->mixed_tasks = 1;
+	} else if (e->task == 0 && !e->mixed_tasks && task != 0) {
+		e->task = task;
+	}
+	macsurf_trace_emit(MS_TC_MUTATION, MS_TE_MUTATION_MERGE, 0, 0,
+		batch_id, (unsigned long) mut_kind);
+}
+
+void ms_diag_batch_freeze(unsigned long batch_id)
+{
+	struct ms_diag_mut_batch *e = ms_batch_find(batch_id);
+	if (e != (struct ms_diag_mut_batch *) 0) {
+		e->frozen = 1;
+		macsurf_trace_emit(MS_TC_MUTATION, MS_TE_MUTATION_FREEZE, 0, 0,
+			batch_id, e->total);
+	}
+}
+
+/* --- render passes --- */
+
+static struct ms_diag_pass *ms_pass_find(unsigned long id)
+{
+	int i;
+	if (id == 0) {
+		return (struct ms_diag_pass *) 0;
+	}
+	for (i = 0; i < MS_PASS_RING_N; i++) {
+		if (g_pass_ring[i].id == id) {
+			return &g_pass_ring[i];
+		}
+	}
+	return (struct ms_diag_pass *) 0;
+}
+
+static unsigned long ms_pass_alloc(const struct ms_diag_provenance *prov, int kind)
+{
+	struct ms_diag_pass *e = &g_pass_ring[g_pass_ring_head];
+	g_pass_ring_head = (g_pass_ring_head + 1) % MS_PASS_RING_N;
+	memset(e, 0, sizeof(*e));
+	e->id = ms_next(&g_pass_seq);
+	if (prov != (const struct ms_diag_provenance *) 0) {
+		e->nav = prov->nav;
+		e->frame = prov->frame;
+		e->doc = prov->doc;
+		e->batch = prov->batch;
+		e->task = prov->task;
+		e->script = prov->script;
+	}
+	e->kind = (short) kind;
+	e->result = (short) MS_RRES_RUNNING;
+	e->reason = (short) MS_SREASON_NONE;
+	macsurf_trace_emit(MS_TC_LAYOUT, MS_TE_LAYOUT_BEGIN, 0, 0,
+		e->id, (unsigned long) kind);
+	return e->id;
+}
+
+static void ms_scope_push(struct ms_diag_render_scope *s,
+	const struct ms_diag_provenance *prov, unsigned long pass)
+{
+	s->prev_nav = g_cur_nav;
+	s->prev_frame = g_cur_frame;
+	s->prev_doc = g_cur_doc;
+	s->prev_batch = g_cur_batch;
+	s->prev_pass = g_cur_pass;
+	s->my_pass = pass;
+	if (prov != (const struct ms_diag_provenance *) 0) {
+		if (prov->nav != 0) {
+			g_cur_nav = prov->nav;
+		}
+		g_cur_frame = prov->frame;
+		g_cur_doc = prov->doc;
+		g_cur_batch = prov->batch;
+	}
+	g_cur_pass = pass;
+	g_cur_paint = 0;	/* a fresh pass has not requested paint yet */
+}
+
+static void ms_scope_pop(struct ms_diag_render_scope *s)
+{
+	g_cur_nav = s->prev_nav;
+	g_cur_frame = s->prev_frame;
+	g_cur_doc = s->prev_doc;
+	g_cur_batch = s->prev_batch;
+	g_cur_pass = s->prev_pass;
+	g_cur_paint = 0;
+}
+
+unsigned long ms_diag_render_enter(struct ms_diag_render_scope *s, int kind,
+	const struct ms_diag_provenance *prov)
+{
+	unsigned long pass = ms_pass_alloc(prov, kind);
+	ms_scope_push(s, prov, pass);
+	return pass;
+}
+
+void ms_diag_render_leave(struct ms_diag_render_scope *s, int result, int reason)
+{
+	struct ms_diag_pass *e = ms_pass_find(s->my_pass);
+	if (e != (struct ms_diag_pass *) 0) {
+		e->result = (short) result;
+		if (reason != MS_SREASON_NONE) {
+			e->reason = (short) reason;
+		}
+		if (g_cur_paint != 0) {
+			e->paint = g_cur_paint;
+		}
+	}
+	macsurf_trace_emit(MS_TC_LAYOUT,
+		(result == MS_RRES_FAIL) ? MS_TE_LAYOUT_FAIL : MS_TE_LAYOUT_DONE,
+		(short) result, (short) reason, s->my_pass, 0);
+	ms_scope_pop(s);
+}
+
+unsigned long ms_diag_render_open(struct ms_diag_provenance *prov, int kind)
+{
+	unsigned long pass = ms_pass_alloc(prov, kind);
+	if (prov != (struct ms_diag_provenance *) 0) {
+		prov->pass = pass;
+	}
+	return pass;
+}
+
+void ms_diag_render_slice_push(struct ms_diag_render_scope *s,
+	const struct ms_diag_provenance *prov)
+{
+	unsigned long pass = (prov != (const struct ms_diag_provenance *) 0)
+		? prov->pass : 0;
+	ms_scope_push(s, prov, pass);
+	macsurf_trace_emit(MS_TC_LAYOUT, MS_TE_LAYOUT_ASYNC, 0, 0, pass, 0);
+}
+
+void ms_diag_render_slice_pop(struct ms_diag_render_scope *s)
+{
+	struct ms_diag_pass *e = ms_pass_find(s->my_pass);
+	if (e != (struct ms_diag_pass *) 0 && g_cur_paint != 0) {
+		e->paint = g_cur_paint;	/* remember any paint from this slice */
+	}
+	ms_scope_pop(s);
+}
+
+void ms_diag_render_close(unsigned long pass_id, int result, int reason)
+{
+	struct ms_diag_pass *e = ms_pass_find(pass_id);
+	if (e != (struct ms_diag_pass *) 0) {
+		e->result = (short) result;
+		if (reason != MS_SREASON_NONE) {
+			e->reason = (short) reason;
+		}
+	}
+	macsurf_trace_emit(MS_TC_LAYOUT,
+		(result == MS_RRES_FAIL) ? MS_TE_LAYOUT_FAIL : MS_TE_LAYOUT_DONE,
+		(short) result, (short) reason, pass_id, 0);
+}
+
+/* --- structured stage record --- */
+
+void ms_diag_render_stage(int stage_kind, int result, int reason, int detail,
+	unsigned long bits_old, unsigned long bits_new,
+	const char *tag, int candidate_count)
+{
+	struct ms_diag_stage *e = &g_stage_ring[g_stage_ring_head];
+	g_stage_ring_head = (g_stage_ring_head + 1) % MS_STAGE_RING_N;
+	memset(e, 0, sizeof(*e));
+	e->id = ms_next(&g_stage_seq);
+	e->nav = g_cur_nav;
+	e->doc = g_cur_doc;
+	e->task = g_cur_task;
+	e->batch = g_cur_batch;
+	e->pass = g_cur_pass;
+	e->bits_old = bits_old;
+	e->bits_new = bits_new;
+	e->kind = (short) stage_kind;
+	e->result = (short) result;
+	e->reason = (short) reason;
+	e->detail = (short) detail;
+	e->cand = (short) candidate_count;
+	{
+		int j = 0;
+		if (tag != (const char *) 0) {
+			while (tag[j] != '\0' && j < (int) sizeof(e->tag) - 1) {
+				char c = tag[j];
+				e->tag[j] = (c == ' ' || c == '\n' ||
+					c == '\r' || c == '=') ? '_' : c;
+				j++;
+			}
+		}
+		if (j == 0) {
+			e->tag[j++] = '-';
+		}
+		e->tag[j] = '\0';
+	}
+
+	{
+		int ev = MS_TE_STYLEFAST_DECLINE;
+		if (stage_kind == MS_STAGE_INHERITED_COLOR) {
+			ev = (result == MS_SRES_COMMIT) ? MS_TE_INHERITED_COMMIT
+				: MS_TE_INHERITED_DECLINE;
+		} else {
+			ev = (result == MS_SRES_COMMIT) ? MS_TE_STYLEFAST_COMMIT
+				: MS_TE_STYLEFAST_DECLINE;
+		}
+		macsurf_trace_emit(MS_TC_STYLE, ev, (short) result,
+			(short) reason, bits_old, bits_new);
+	}
+}
+
+/* --- paint --- */
+
+void ms_diag_paint_note(void)
+{
+	struct ms_diag_paint *e;
+	struct ms_diag_pass *p;
+
+	if (g_cur_pass == 0) {
+		return;	/* not render-driven (caret blink, selection, ...) */
+	}
+	if (g_cur_paint != 0) {
+		int i;
+		for (i = 0; i < MS_PAINT_RING_N; i++) {
+			if (g_paint_ring[i].id == g_cur_paint) {
+				g_paint_ring[i].invalidations++;
+				macsurf_trace_emit(MS_TC_PAINT,
+					MS_TE_PAINT_INVALIDATE, 0, 0,
+					g_cur_paint,
+					g_paint_ring[i].invalidations);
+				return;
+			}
+		}
+		return;
+	}
+	e = &g_paint_ring[g_paint_ring_head];
+	g_paint_ring_head = (g_paint_ring_head + 1) % MS_PAINT_RING_N;
+	memset(e, 0, sizeof(*e));
+	e->id = ms_next(&g_paint_seq);
+	e->nav = g_cur_nav;
+	e->doc = g_cur_doc;
+	e->pass = g_cur_pass;
+	e->task = g_cur_task;
+	e->invalidations = 1;
+	e->requested = 1;
+	g_cur_paint = e->id;
+	p = ms_pass_find(g_cur_pass);
+	if (p != (struct ms_diag_pass *) 0) {
+		p->paint = e->id;
+	}
+	macsurf_trace_emit(MS_TC_PAINT, MS_TE_PAINT_INVALIDATE, 0, 0,
+		e->id, 1);
+}
+
+/* --- cur scope readers --- */
+
+void ms_diag_cur_provenance(struct ms_diag_provenance *out)
+{
+	if (out == (struct ms_diag_provenance *) 0) {
+		return;
+	}
+	out->nav = g_cur_nav;
+	out->frame = g_cur_frame;
+	out->doc = g_cur_doc;
+	out->script = g_cur_script;
+	out->task = g_cur_task;
+	out->batch = g_cur_batch;
+	out->pass = g_cur_pass;
+}
+
+unsigned long ms_diag_cur_doc(void)   { return g_cur_doc; }
+unsigned long ms_diag_cur_frame(void) { return g_cur_frame; }
+unsigned long ms_diag_cur_batch(void) { return g_cur_batch; }
+unsigned long ms_diag_cur_pass(void)  { return g_cur_pass; }
+unsigned long ms_diag_cur_paint(void) { return g_cur_paint; }
+
+/* --- serialisers --- */
+
+static const char *ms_render_kind_s(int k)
+{
+	switch (k) {
+	case MS_RENDER_RECONVERT:      return "reconvert";
+	case MS_RENDER_FAST_STYLE:     return "fast_style";
+	case MS_RENDER_FAST_INHERITED: return "fast_inherited";
+	default:                       return "initial";
+	}
+}
+static const char *ms_render_result_s(int r)
+{
+	switch (r) {
+	case MS_RRES_DONE:     return "done";
+	case MS_RRES_FALLBACK: return "fallback";
+	case MS_RRES_FAIL:     return "fail";
+	case MS_RRES_QUEUED:   return "queued";
+	default:               return "running";
+	}
+}
+static const char *ms_stage_kind_s(int k)
+{
+	return (k == MS_STAGE_INHERITED_COLOR) ? "inherited_color" : "stylefast";
+}
+static const char *ms_stage_result_s(int r)
+{
+	switch (r) {
+	case MS_SRES_COMMIT:   return "commit";
+	case MS_SRES_FALLBACK: return "fallback";
+	default:               return "decline";
+	}
+}
+static const char *ms_stage_reason_s(int r)
+{
+	switch (r) {
+	case MS_SREASON_CLASSIFIER_OTHER:          return "classifier_other";
+	case MS_SREASON_BORDER_WIDTH_BITS_DIFFER:  return "border_width_bits_differ";
+	case MS_SREASON_STRUCTURAL_IN_BATCH:       return "structural_in_batch";
+	case MS_SREASON_NOT_READY:                 return "not_ready";
+	case MS_SREASON_NO_CANDIDATE:              return "no_candidate";
+	default:                                   return "none";
+	}
+}
+
+long macsurf_diag_serialize_documents(char *buf, long cap)
+{
+	char line[128];
+	long n = 0;
+	int i;
+
+	if (buf == NULL || cap < 2) {
+		return 0;
+	}
+	buf[0] = '\0';
+	n = diag_cat(buf, cap, n, "MSDIAG 1 documents\n");
+	for (i = 0; i < MS_DOC_RING_N; i++) {
+		int idx = (g_doc_ring_head - 1 - i + 2 * MS_DOC_RING_N)
+			% MS_DOC_RING_N;
+		struct ms_diag_document *e = &g_doc_ring[idx];
+		if (e->id == 0 || n >= cap - 1) {
+			continue;
+		}
+		snprintf(line, sizeof line,
+			"doc=%lu nav=%lu frame=%lu state=%s kind=html\n",
+			(unsigned long) e->id, (unsigned long) e->nav,
+			(unsigned long) e->frame,
+			(e->state == MS_DOC_DEAD) ? "dead" : "live");
+		n = diag_cat(buf, cap, n, line);
+	}
+	return n;
+}
+
+long macsurf_diag_serialize_mutations(char *buf, long cap)
+{
+	char line[224];
+	char frag[32];
+	long n = 0;
+	int i;
+	int k;
+
+	if (buf == NULL || cap < 2) {
+		return 0;
+	}
+	buf[0] = '\0';
+	n = diag_cat(buf, cap, n, "MSDIAG 1 mutations\n");
+	for (i = 0; i < MS_BATCH_RING_N; i++) {
+		int idx = (g_batch_ring_head - 1 - i + 2 * MS_BATCH_RING_N)
+			% MS_BATCH_RING_N;
+		struct ms_diag_mut_batch *e = &g_batch_ring[idx];
+		if (e->id == 0 || n >= cap - 1) {
+			continue;
+		}
+		snprintf(line, sizeof line,
+			"batch=%lu nav=%lu frame=%lu doc=%lu task=%lu script=%lu "
+			"total=%lu mixed=%d frozen=%d",
+			(unsigned long) e->id, (unsigned long) e->nav,
+			(unsigned long) e->frame, (unsigned long) e->doc,
+			(unsigned long) e->task, (unsigned long) e->script,
+			(unsigned long) e->total, (int) e->mixed_tasks,
+			(int) e->frozen);
+		n = diag_cat(buf, cap, n, line);
+		for (k = 0; k < MS_MUT_KINDS; k++) {
+			if (e->counts[k] == 0) {
+				continue;
+			}
+			snprintf(frag, sizeof frag, " %s=%lu",
+				ms_mut_slug[k], (unsigned long) e->counts[k]);
+			n = diag_cat(buf, cap, n, frag);
+		}
+		n = diag_cat(buf, cap, n, "\n");
+	}
+	return n;
+}
+
+long macsurf_diag_serialize_layout(char *buf, long cap)
+{
+	char line[256];
+	long n = 0;
+	int i;
+
+	if (buf == NULL || cap < 2) {
+		return 0;
+	}
+	buf[0] = '\0';
+	n = diag_cat(buf, cap, n, "MSDIAG 1 layout\n");
+
+	for (i = 0; i < MS_PASS_RING_N; i++) {
+		int idx = (g_pass_ring_head - 1 - i + 2 * MS_PASS_RING_N)
+			% MS_PASS_RING_N;
+		struct ms_diag_pass *e = &g_pass_ring[idx];
+		if (e->id == 0 || n >= cap - 1) {
+			continue;
+		}
+		snprintf(line, sizeof line,
+			"pass=%lu nav=%lu frame=%lu doc=%lu batch=%lu task=%lu "
+			"kind=%s result=%s reason=%s paint=%lu\n",
+			(unsigned long) e->id, (unsigned long) e->nav,
+			(unsigned long) e->frame, (unsigned long) e->doc,
+			(unsigned long) e->batch, (unsigned long) e->task,
+			ms_render_kind_s(e->kind), ms_render_result_s(e->result),
+			ms_stage_reason_s(e->reason), (unsigned long) e->paint);
+		n = diag_cat(buf, cap, n, line);
+	}
+
+	for (i = 0; i < MS_STAGE_RING_N; i++) {
+		int idx = (g_stage_ring_head - 1 - i + 2 * MS_STAGE_RING_N)
+			% MS_STAGE_RING_N;
+		struct ms_diag_stage *e = &g_stage_ring[idx];
+		if (e->id == 0 || n >= cap - 1) {
+			continue;
+		}
+		snprintf(line, sizeof line,
+			"stage=%lu pass=%lu batch=%lu doc=%lu task=%lu kind=%s "
+			"result=%s reason=%s detail=%d tag=%s cand=%d "
+			"old=%lu new=%lu\n",
+			(unsigned long) e->id, (unsigned long) e->pass,
+			(unsigned long) e->batch, (unsigned long) e->doc,
+			(unsigned long) e->task, ms_stage_kind_s(e->kind),
+			ms_stage_result_s(e->result), ms_stage_reason_s(e->reason),
+			(int) e->detail, e->tag, (int) e->cand,
+			(unsigned long) e->bits_old, (unsigned long) e->bits_new);
+		n = diag_cat(buf, cap, n, line);
+	}
+
+	for (i = 0; i < MS_PAINT_RING_N; i++) {
+		int idx = (g_paint_ring_head - 1 - i + 2 * MS_PAINT_RING_N)
+			% MS_PAINT_RING_N;
+		struct ms_diag_paint *e = &g_paint_ring[idx];
+		if (e->id == 0 || n >= cap - 1) {
+			continue;
+		}
+		snprintf(line, sizeof line,
+			"paint=%lu nav=%lu doc=%lu pass=%lu task=%lu "
+			"invalidations=%lu state=%s\n",
+			(unsigned long) e->id, (unsigned long) e->nav,
+			(unsigned long) e->doc, (unsigned long) e->pass,
+			(unsigned long) e->task,
+			(unsigned long) e->invalidations,
+			e->requested ? "requested" : "none");
+		n = diag_cat(buf, cap, n, line);
+	}
+
 	return n;
 }

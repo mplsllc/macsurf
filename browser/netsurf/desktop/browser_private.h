@@ -280,6 +280,14 @@ struct browser_window {
 	 * redirects and about:query interstitials. 0 before the first nav.
 	 */
 	unsigned long nav_id;
+
+	/**
+	 * MacSurf Trace (Milestone 1c): id of this browsing context. Allocated
+	 * once in browser_window_initialise_common() when the browser_window is
+	 * created (top-level, iframe, or frameset child); NEVER changes when this
+	 * frame navigates -- that is what distinguishes `frame` from `nav`.
+	 */
+	unsigned long frame_id;
 };
 
 
