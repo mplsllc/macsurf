@@ -70,6 +70,7 @@
 #include "utils/ns_errors.h"
 #include "utils/nsurl.h"
 #include "content/fetch.h"
+#include "content/macsurf_nav_seed.h"
 #include "content/content_protected.h"
 
 #include "macsurf_debug.h"
@@ -93,6 +94,8 @@ struct qjs_xhr_slot {
 
 	nsurl *url;			/* current (post-redirect) target */
 	nsurl *referer;		/* owned snapshot of the invoking realm's URL */
+	unsigned long nav_id;		/* MacSurf Trace: owning nav, captured at send() */
+	unsigned long last_request_id;	/* previous hop's request_id, or 0 */
 	char method[8];			/* upper-cased, NUL-terminated */
 	char *body;			/* owned copy of the send() body, or NULL */
 	long body_len;
@@ -387,6 +390,16 @@ xhr_realm_url(JSContext *ctx)
 	return content_get_url(content);
 }
 
+/* MacSurf Trace 1a: the nav owning the realm that issued this XHR. Captured
+ * once at send() so redirect hops (which run later, after realm state has
+ * moved on) stay attributed to the originating navigation. */
+static unsigned long
+xhr_realm_nav_id(JSContext *ctx)
+{
+	struct content *content = qjs_get_content_for_ctx(ctx);
+	return (content != NULL) ? content->nav_id : 0;
+}
+
 static void
 xhr_follow_redirect(struct qjs_xhr_slot *s, const char *target)
 {
@@ -547,6 +560,10 @@ xhr_start_fetch(struct qjs_xhr_slot *s)
 	 * the fetcher -- so only store it if nothing terminal happened while
 	 * the call was in flight. */
 	s->fetch_live = 1;
+	/* MacSurf Trace 1a: seed the fetch boundary from the slot's captured
+	 * owner (never a current global); each hop gets a fresh request_id and
+	 * points redirect_from at the previous one. */
+	macsurf_fetch_seed(s->nav_id, s->last_request_id);
 	err = fetch_start(s->url, referer, xhr_fetch_cb, s,
 			false /* only_2xx: XHR must see 4xx/5xx bodies too */,
 			(s->body != NULL && strcmp(s->method, "GET") != 0) ?
@@ -557,6 +574,7 @@ xhr_start_fetch(struct qjs_xhr_slot *s)
 		s->fetch_live = 0;
 		return -1;
 	}
+	s->last_request_id = fetch_get_request_id(out);
 	if (s->fetch_live) {
 		s->fetch = out;
 	}
@@ -639,6 +657,8 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 	s->xhr_obj = JS_DupValue(ctx, argv[0]);
 	s->url = url;
 	s->referer = (base != NULL) ? nsurl_ref(base) : NULL;
+	s->nav_id = xhr_realm_nav_id(ctx);	/* MacSurf Trace 1a */
+	s->last_request_id = 0;
 	strncpy(s->method, method_c, sizeof(s->method) - 1);
 	s->method[sizeof(s->method) - 1] = '\0';
 	for (i = 0; s->method[i]; i++) {
@@ -783,6 +803,8 @@ qjs_beacon_send(JSContext *ctx, JSValueConst this_val,
 	s->xhr_obj = JS_UNDEFINED;
 	s->url = url;
 	s->referer = (base != NULL) ? nsurl_ref(base) : NULL;
+	s->nav_id = xhr_realm_nav_id(ctx);	/* MacSurf Trace 1a */
+	s->last_request_id = 0;
 	strcpy(s->method, "POST");
 
 	if (argc > 1 && !JS_IsNull(argv[1]) && !JS_IsUndefined(argv[1])) {

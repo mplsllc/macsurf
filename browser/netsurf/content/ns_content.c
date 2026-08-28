@@ -1642,6 +1642,13 @@ content__add_rfc5988_link(struct content *c,
 
 
 /* exported interface documented in content/content.h */
+/* MacSurf Trace 1a: creation-provenance navigation id (0 == unattributed). */
+unsigned long content_get_nav_id(struct content *c)
+{
+	return (c != NULL) ? c->nav_id : 0;
+}
+
+
 nsurl *content_get_url(struct content *c)
 {
 	CONTENT_CHECK_RETURN(c, NULL);

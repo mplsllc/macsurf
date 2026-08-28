@@ -1390,8 +1390,12 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	 *  - cipher suite if handshake completed (0 if not)
 	 *  - pump_calls + ot_recv_bytes to see how far we got
 	 */
-	macsurf_debug_log_writef("https: FAIL state=%d status=%d body=%ld why=%s",
-		c->state, c->status, c->body_bytes, why ? why : "(null)");
+	macsurf_debug_log_writef(
+		"https: FAIL state=%d status=%d body=%ld nav=%ld req=%ld why=%s",
+		c->state, c->status, c->body_bytes,
+		(long) fetch_get_nav_id(c->parent),
+		(long) fetch_get_request_id(c->parent),
+		why ? why : "(null)");
 	macsurf_debug_log_writef("  FAIL host=%s port=%d path=%s",
 		c->host[0] ? c->host : "(unset)",
 		(int)c->port,
@@ -1850,10 +1854,13 @@ static void hctx_finish(struct macos9_https_ctx *c)
 			hctx_fail(c, "https: gzip stream incomplete");
 			return;
 		}
-		macsurf_debug_log_writef("LIFE gzip ok host=%s in=%ld out=%ld",
+		macsurf_debug_log_writef(
+			"LIFE gzip ok host=%s in=%ld out=%ld nav=%ld req=%ld",
 			c->host[0] ? c->host : "(unset)",
 			macos9_gunzip_total_in(c->gz),
-			macos9_gunzip_total_out(c->gz));
+			macos9_gunzip_total_out(c->gz),
+			(long) fetch_get_nav_id(c->parent),
+			(long) fetch_get_request_id(c->parent));
 	}
 
 	macsurf_debug_log_writef("https: done body=%ld status=%d",
@@ -2227,10 +2234,12 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		 * downloads without spamming a synced log line per image. */
 		if (force_download || c->status >= 400 || c->mime[0] == 0) {
 			macsurf_debug_log_writef(
-				"RECON MIME net host=%s path=%s mime=%s cd=%d st=%d",
+				"RECON MIME net host=%s path=%s mime=%s cd=%d st=%d nav=%ld req=%ld",
 				c->host, c->path,
 				c->mime[0] ? c->mime : "(empty)",
-				force_download, c->status);
+				force_download, c->status,
+				(long) fetch_get_nav_id(c->parent),
+				(long) fetch_get_request_id(c->parent));
 		}
 		/* fixes1319: the per-image success trace that used to live here
 		 * ("IMG MIME net") is gone - it never had "LIFE " in it, so it
@@ -3208,10 +3217,12 @@ static void hctx_poll(struct macos9_https_ctx *c)
 			c->state = HS_SEND_REQ;
 			MS_LOG("https: pool reuse");
 			macsurf_debug_log_writef(
-				"LIFE FETCHCONC pool host=%s active=%d cap=%ld",
+				"LIFE FETCHCONC pool host=%s active=%d cap=%ld nav=%ld req=%ld",
 				c->pool_key,
 				https_active_count_for_host(c->pool_key),
-				(long) nsoption_int(max_fetchers_per_host));
+				(long) nsoption_int(max_fetchers_per_host),
+				(long) fetch_get_nav_id(c->parent),
+				(long) fetch_get_request_id(c->parent));
 			return;
 		}
 
@@ -3233,10 +3244,12 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		c->state = HS_TLSING;
 		MS_LOG("https: started");
 		macsurf_debug_log_writef(
-			"LIFE FETCHCONC cold host=%s active=%d cap=%ld",
+			"LIFE FETCHCONC cold host=%s active=%d cap=%ld nav=%ld req=%ld",
 			c->pool_key,
 			https_active_count_for_host(c->pool_key),
-			(long) nsoption_int(max_fetchers_per_host));
+			(long) nsoption_int(max_fetchers_per_host),
+			(long) fetch_get_nav_id(c->parent),
+			(long) fetch_get_request_id(c->parent));
 		macsurf_profile_stamp("tls-handshake-start");
 		return;
 	}

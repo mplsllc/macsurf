@@ -697,6 +697,9 @@ const struct llcache_handle *content_get_llcache_handle(struct content *c);
  */
 struct nsurl *content_get_url(struct content *c);
 
+/** MacSurf Trace: navigation that created this content (0 == unattributed). */
+unsigned long content_get_nav_id(struct content *c);
+
 /**
  * Clone a content object in its current state.
  *
