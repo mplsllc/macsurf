@@ -1726,6 +1726,11 @@ browser_window_callback(hlcache_handle *c, const hlcache_event *event, void *pw)
 
 		if (!(event->data.background)) {
 			/* Reformatted content should be redrawn */
+			/* The Mac front end requests this redraw through window invalidation,
+			 * rather than content_request_redraw().  Record it while the render
+			 * diagnostic scope that delivered CONTENT_MSG_REFORMAT is still live. */
+			extern void ms_diag_paint_note(void);
+			ms_diag_paint_note();
 			browser_window_update(bw, false);
 		}
 		break;
