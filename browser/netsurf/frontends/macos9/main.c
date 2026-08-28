@@ -1827,7 +1827,7 @@ static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
 	Size actual = 0;
 	OSErr err;
 	char verb[32];
-	char out[2048];
+	char out[8192];		/* `network` can list many requests */
 	long n;
 
 	(void)refcon;
@@ -1846,6 +1846,8 @@ static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
 		n = macsurf_diag_serialize_summary(out, (long)sizeof(out));
 	} else if (strcmp(verb, "gaps") == 0) {
 		n = macsurf_diag_serialize_gaps(out, (long)sizeof(out));
+	} else if (strcmp(verb, "network") == 0) {
+		n = macsurf_diag_serialize_network(out, (long)sizeof(out));
 	} else {
 		macsurf_debug_log_writef("LIFE AE MSdg unknown verb=%s", verb);
 		return errAEEventNotHandled;

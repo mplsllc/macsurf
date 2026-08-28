@@ -1669,6 +1669,9 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 					(void)fetch_set_http_code(c->parent, 301);
 					rm.type = FETCH_REDIRECT;
 					rm.data.redirect = c->redirect_url;
+					macsurf_diag_request_record(c->parent,
+						MS_REQ_REDIRECT, 301,
+						MS_SCHEME_HTTPS, 0, 0);
 					fetch_send_callback(&rm, c->parent);
 					parent_save = c->parent;
 					c->parent = NULL; /* fixes447: null before OT
@@ -1738,7 +1741,8 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 
 	msg.type = FETCH_ERROR;
 	msg.data.error = why ? why : "https: fetch failed";
-	macsurf_diag_request_seen(fetch_get_nav_id(c->parent), 1);
+	macsurf_diag_request_record(c->parent, MS_REQ_FAIL, c->status,
+		MS_SCHEME_HTTPS, (unsigned long) c->body_bytes, 0);
 	fetch_send_callback(&msg, c->parent);
 
 	p = c->parent;
@@ -1935,8 +1939,8 @@ static void hctx_finish(struct macos9_https_ctx *c)
 
 	c->state = HS_DONE;
 	msg.type = FETCH_FINISHED;
-	macsurf_diag_request_seen(fetch_get_nav_id(c->parent),
-		(c->status >= 400) ? 1 : 0);
+	macsurf_diag_request_record(c->parent, MS_REQ_DONE, c->status,
+		MS_SCHEME_HTTPS, (unsigned long) c->body_bytes, 0);
 	fetch_send_callback(&msg, c->parent);
 
 	/* fixes244 - mark host as "ever-succeeded" so future timeouts on
@@ -2293,6 +2297,8 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 				"LIFE 304 not-modified host=%s path=%s",
 				c->host, c->path);
 			msg.type = FETCH_NOTMODIFIED;
+			macsurf_diag_request_record(c->parent,
+				MS_REQ_NOTMODIFIED, 304, MS_SCHEME_HTTPS, 0, 0);
 			fetch_send_callback(&msg, c->parent);
 			parent_save = c->parent;
 			hctx_clear(c);
@@ -2320,6 +2326,9 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		struct fetch *parent_save;
 		msg.type = FETCH_REDIRECT;
 		msg.data.redirect = c->redirect_url;
+		macsurf_diag_request_record(c->parent, MS_REQ_REDIRECT,
+			c->status, MS_SCHEME_HTTPS,
+			(unsigned long) c->body_bytes, 0);
 		fetch_send_callback(&msg, c->parent);
 		/* fixes368a (#167) - log the redirect TARGET, not just "redirect".
 		 * The Facebook login chain is GET → POST → 302 → save-device →
