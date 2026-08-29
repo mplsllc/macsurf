@@ -38,5 +38,6 @@ void ms_diag_css_gap_hit(int kind, const char *property, const char *name,
 
 long macsurf_diag_serialize_capabilities(char *buf, long cap);
 long macsurf_diag_serialize_css_gaps(char *buf, long cap);
+long macsurf_diag_serialize_gapreport(char *buf, long cap);
 
 #endif

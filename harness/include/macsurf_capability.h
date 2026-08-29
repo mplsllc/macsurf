@@ -14,4 +14,5 @@ void ms_diag_capability_hit(int, int, const char *, int, int);
 void ms_diag_css_gap_hit(int, const char *, const char *, const char *, int);
 long macsurf_diag_serialize_capabilities(char *, long);
 long macsurf_diag_serialize_css_gaps(char *, long);
+long macsurf_diag_serialize_gapreport(char *, long);
 #endif

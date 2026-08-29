@@ -12717,8 +12717,8 @@ box_coords(bx, &cx, &cy);
 			strstr(caps, "name=ResizeObserver result=approximate quality=1 count=1") == NULL) {
 			fprintf(stderr, "FAIL: Test 103 capability semantics/dedup/reread\n"); return 1;
 		}
-		/* Fill beyond the fixed table. The output must say what was dropped. */
-		for (i = 0; i < 80; i++) {
+		/* Fill beyond the fixed table (128 entries). The output must say what was dropped. */
+		for (i = 0; i < 140; i++) {
 			snprintf(name, sizeof(name), "feature-%d", i);
 			ms_diag_capability_hit(MS_CAP_GLOBAL, MS_CAP_GET, name,
 				MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
@@ -12737,6 +12737,26 @@ box_coords(bx, &cx, &cy);
 			fprintf(stderr, "FAIL: Test 103 CSS key/output\n"); return 1;
 		}
 		fprintf(stderr, "=== Test 103 PASS: semantic outcomes are bounded, deduplicated, and stable ===\n");
+	}
+
+	/* --- Test 104: Phase 4 gapreport census and coverage matrix -------- */
+	{
+		char report[32768], report_again[32768];
+		fprintf(stderr, "\n=== Test 104: Phase 4 gapreport census and coverage matrix ===\n");
+		(void)macsurf_diag_serialize_gapreport(report, (long)sizeof(report));
+		(void)macsurf_diag_serialize_gapreport(report_again, (long)sizeof(report_again));
+		if (strcmp(report, report_again) != 0 ||
+			strstr(report, "MSDIAG 1 gapreport") == NULL ||
+			strstr(report, "[coverage]") == NULL ||
+			strstr(report, "js_host_api=full") == NULL ||
+			strstr(report, "global_feature_get=none") == NULL ||
+			strstr(report, "[gaps]") == NULL ||
+			strstr(report, "key=js.geometry.offsetWidth result=unsupported quality=3 count=2") == NULL ||
+			strstr(report, "key=css.value.display.grid result=unsupported quality=0 count=2") == NULL ||
+			strstr(report, "key=css.property.aspect-ratio result=unsupported quality=0 count=1") == NULL) {
+			fprintf(stderr, "FAIL: Test 104 gapreport format/coverage/normalized keys\n"); return 1;
+		}
+		fprintf(stderr, "=== Test 104 PASS: gapreport produces stable normalized keys with explicit coverage ===\n");
 	}
 
 	return 0;
