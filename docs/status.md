@@ -1,8 +1,8 @@
 # MacSurf Status
 
-**Date:** 2026-08-26
+**Date:** 2026-08-29
 **Release baseline:** fixes894 (`master`, MacSurf 2.0.5). **Active development:**
-`workflow` through fixes1216; this work is not part of a released build.
+`workflow` through 567625c (Round 2A transition parser/cascade/computed-style); this work is not part of a released build.
 
 **Post-release workflow status:** fixes1197–1201 and fixes1203–1209 are shipped;
 fixes1208 native grid `justify-self` is iMac hardware-verified. fixes1210/1211
@@ -18,6 +18,9 @@ still falls back to full reconvert; and border/outline color mutations repaint
 correctly after synchronizing the box border cache. The focused probe confirms
 text, images, clickability, and geometry remain intact. Follow-on scope is
 tracked in GitHub [#320](https://github.com/mplsllc/macsurf/issues/320).
+
+**Round 2A checkpoint 2026-08-29:** current Round 2A parser/cascade/computed-style checkpoint is hardware-stable — MacSurf build 2026-8-29 12:44:22 launched 2026-8-29 12:45:55 on iMac G3, loaded https://macsurf.org/t.html?run=all, settled, build errors 0, compatibility gaps 0, dropped operations 0, network failures 0, existing crash report stale (predates build). Temporal transition presentation remains Round 2B; no visual transitions expected.
+
 **Current release:** **MacSurf 2.0.5 "HACKADAY"** (2026-07-17) — a polish release over 2.0. Headline: **hackaday.com renders at full desktop width**. The load-bearing fix underneath was browser-wide — every author `font-size` was drawing ~25% too small and CSS `em`/`rem`/`@media` width queries were computing against the wrong number, so pages came up cramped into a narrow column; MacSurf now measures type in real device pixels (#244/#287, fixes859). On top of that: a large modern-CSS pass (justified text #271, soft hyphens #272/#275, `tab-size`/typography cluster #251, box-alignment shorthands #253, logical properties #247, grid auto-track sizing #62, `caret-color`/`accent-color` #252, `background-clip` #255, `image-rendering` #256, inline-`style` rewriters #277); a much more capable on-device JavaScript engine (real `fetch()`/`XMLHttpRequest`, draining Promise chains, `document.cookie`, DOM traversal + `querySelector`, load lifecycle — #283–#302); tracker/ad-network blocking; text/plain rendering inline (#232); rgba backdrop compositing (#227); and a typing-latency dirty-rect fix (#212/#239). Full notes: [release-notes/MacSurf-2.0.5.md](release-notes/MacSurf-2.0.5.md). *(The 2.0, 1.68.1, and v1.4 narratives below are retained as history.)*
 
 **Historical (v1.4 round):** v1.4 "Open House" — **the JavaScript marathon closed.** Twenty-three GitHub issues went from open to closed across fixes319-352 — `setTimeout` / `setInterval` / `requestAnimationFrame`, `window.location` (full surface), `window.history` (`pushState` / `replaceState` / `state`), `URL` + `URLSearchParams`, `element.classList`, `element.style`, `Event` / `CustomEvent` / `MouseEvent` / `KeyboardEvent` constructors, `MutationObserver`, `DOMParser`, `FormData`, `localStorage`, `fetch`, `window.addEventListener` for `load` + `DOMContentLoaded`, `<details>` / `<summary>` click-to-toggle, `hidden` attribute. The purpose-built probe page at `mactrove.com/t.html` scored **`JS 19/19 pass, 0 fail`** on a G3 iMac. Two structural bugs caught along the way: **fixes349** repaired the IIFE per-element installer broken by fixes342's `_noresult` change (`TypeError: [object Object] not callable` on every element wrapper, the install aborted mid-stream and elements lost classList / style / matches / closest / etc); **fixes350** extended `js_fire_event` to dispatch `_winListeners` so `load` / `DOMContentLoaded` actually reach `addEventListener` listeners (was only firing the inline `on<type>` handler).
