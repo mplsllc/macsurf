@@ -56,9 +56,9 @@ bool test_macos9_transition_2b1(void)
         if (macsurf_transition_fixed_to_ticks(1024) != 60) { fprintf(stderr, "FAIL fixed 1s %d\n", macsurf_transition_fixed_to_ticks(1024)); ok=false; goto done; }
         if (macsurf_transition_fixed_to_ticks(512) != 30) { fprintf(stderr, "FAIL 0.5s\n"); ok=false; goto done; }
         if (macsurf_transition_fixed_to_ticks(256) != 15) { fprintf(stderr, "FAIL 250ms %d\n", macsurf_transition_fixed_to_ticks(256)); ok=false; goto done; }
-        if (macsurf_transition_fixed_to_ticks(102) < 5 || macsurf_transition_fixed_to_ticks(102) > 6) { fprintf(stderr, "FAIL 100ms %d\n", macsurf_transition_fixed_to_ticks(102)); ok=false; goto done; }
-        if (macsurf_transition_fixed_to_ticks(1) != 0) { fprintf(stderr, "FAIL 1ms %d\n", macsurf_transition_fixed_to_ticks(1)); ok=false; goto done; }
-        /* 0.5ms is 0 or 1, allow either */
+        if (macsurf_transition_fixed_to_ticks(102) != 6) { fprintf(stderr, "FAIL 100ms %d expected 6\n", macsurf_transition_fixed_to_ticks(102)); ok=false; goto done; }
+        if (macsurf_transition_fixed_to_ticks(1) != 0) { fprintf(stderr, "FAIL 1ms %d expected 0\n", macsurf_transition_fixed_to_ticks(1)); ok=false; goto done; }
+        /* 0.5ms also 0 or 1, allow either (same as 1ms) */
         if (macsurf_transition_fixed_to_ticks(1) < 0 || macsurf_transition_fixed_to_ticks(1) > 1) { fprintf(stderr, "FAIL 0.5ms\n"); ok=false; goto done; }
         if (macsurf_transition_fixed_to_ticks(1024000) != 60000) { fprintf(stderr, "FAIL 1000s %d\n", macsurf_transition_fixed_to_ticks(1024000)); ok=false; goto done; }
         /* large not wrap negative */

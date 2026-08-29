@@ -24,19 +24,20 @@ int macsurf_transition_fixed_to_ticks(css_fixed v)
 {
     /* v is Q22.10 seconds; 1 tick = 1/60s.
      * ticks = v *60 /1024  (seconds_fixed * ticks_per_sec)
+     * Deterministic round-to-nearest: ((frac*60 +512)>>10)
      * Overflow-safe without long long: divide-first.
      * No clamping here; caller clamps for duration if needed. */
     int is_neg = 0;
     css_fixed av;
-    int t1;
-    int t2;
+    int whole;
+    int frac;
     int ticks;
     if (v == 0) return 0;
     is_neg = (v < 0);
     av = is_neg ? -v : v;
-    t1 = (av >> 10) * 60;
-    t2 = ((av & 1023) * 60) / 1024;
-    ticks = t1 + t2;
+    whole = av >> 10;
+    frac = av & 1023;
+    ticks = whole * 60 + ((frac * 60 + 512) >> 10);
     if (is_neg) ticks = -ticks;
     return ticks;
 }
