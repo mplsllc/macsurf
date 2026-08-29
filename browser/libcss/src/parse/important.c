@@ -208,6 +208,26 @@ void css__make_style_important(css_style *style)
 					offset++; /* colour */
 				break;
 
+			case CSS_PROP_TRANSITION_PROPERTY:
+				if (value == CSS_TRANSITION_PROPERTY_SET)
+					offset += 1 + bytecode[offset] * 3;
+				break;
+
+			case CSS_PROP_TRANSITION_DURATION:
+				if (value == CSS_TRANSITION_DURATION_SET)
+					offset += 1 + bytecode[offset];
+				break;
+
+			case CSS_PROP_TRANSITION_TIMING_FUNCTION:
+				if (value == CSS_TRANSITION_TIMING_FUNCTION_SET)
+					offset += 1 + bytecode[offset] * 7;
+				break;
+
+			case CSS_PROP_TRANSITION_DELAY:
+				if (value == CSS_TRANSITION_DELAY_SET)
+					offset += 1 + bytecode[offset];
+				break;
+
 			case CSS_PROP_COLUMN_COUNT:
 				if (value == COLUMN_COUNT_SET)
 					offset++; /* colour */

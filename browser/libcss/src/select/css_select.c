@@ -1632,8 +1632,9 @@ css_error css_select_style(css_select_ctx *ctx, void *node,
 		error = css__compute_absolute_values(NULL,
 				state.results->styles[CSS_PSEUDO_ELEMENT_NONE],
 				unit_ctx);
-		if (error != CSS_OK)
+		if (error != CSS_OK) {
 			goto cleanup;
+		}
 	}
 
 	/* Intern the partial computed styles */
@@ -1643,9 +1644,8 @@ css_error css_select_style(css_select_ctx *ctx, void *node,
 			continue;
 
 		error = css__arena_intern_style(&state.results->styles[j]);
-		if (error != CSS_OK) {
+		if (error != CSS_OK)
 			goto cleanup;
-		}
 	}
 
 complete:
@@ -3334,4 +3334,3 @@ void dump_chain(const css_selector *selector)
 	} while (detail);
 }
 #endif
-

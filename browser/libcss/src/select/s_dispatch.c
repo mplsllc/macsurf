@@ -701,5 +701,21 @@ struct prop_table prop_dispatch[CSS_N_PROPERTIES] = {
 	{
 	        PROPERTY_FUNCS(fill),
 	        1,
+	},
+	{
+	        PROPERTY_FUNCS(transition_property),
+	        0,
+	},
+	{
+	        PROPERTY_FUNCS(transition_duration),
+	        0,
+	},
+	{
+	        PROPERTY_FUNCS(transition_timing_function),
+	        0,
+	},
+	{
+	        PROPERTY_FUNCS(transition_delay),
+	        0,
 	}
 	};

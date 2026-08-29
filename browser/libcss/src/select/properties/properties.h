@@ -203,6 +203,10 @@ PROPERTY_FUNCS(word_spacing);
 PROPERTY_FUNCS(writing_mode);
 PROPERTY_FUNCS(z_index);
 PROPERTY_FUNCS(fill);
+PROPERTY_FUNCS(transition_property);
+PROPERTY_FUNCS(transition_duration);
+PROPERTY_FUNCS(transition_timing_function);
+PROPERTY_FUNCS(transition_delay);
 
 #undef PROPERTY_FUNCS
 

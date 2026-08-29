@@ -3607,17 +3607,10 @@ macsurf__rewrite_modern_compat(const char *data, size_t in_size,
 		"font-variant-numeric",
 		"break-inside",
 		"outline-offset",
-		/* fixes191f -- transition/animation/keyframes-triggered props
-		 * silently dropped. MacSurf has no animation timer playback in
-		 * this round; the final static computed value still applies via
-		 * the regular cascade. The shorthand and all longhands need to
-		 * drop together so the value isn't a stray ident the parser
-		 * trips on. */
-		"transition",
-		"transition-property",
-		"transition-duration",
-		"transition-timing-function",
-		"transition-delay",
+		/* fixes191f / Group 2: transition properties PROMOTED out of DROP_PROPS.
+		 * LibCSS now has full independent cascade longhands (transition-property,
+		 * transition-duration, transition-timing-function, transition-delay) and
+		 * shorthand expansion. Animation properties remain in DROP_PROPS for Group 3. */
 		"animation",
 		"animation-name",
 		"animation-duration",

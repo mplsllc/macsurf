@@ -64,4 +64,7 @@ bool cssprobe_min_height_calc_slot(void *style, uint8_t *slot_out);
 uint32_t cssprobe_calc_slot_write_count(uint8_t slot);
 uint32_t cssprobe_calc_slot_write_last_spec(uint8_t slot);
 
+/* Group 2 / Round 2A: Comprehensive CSS Transitions Harness Tests */
+bool cssprobe_test_css_transitions(void);
+
 #endif

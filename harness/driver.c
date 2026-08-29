@@ -725,6 +725,9 @@ int main(int argc, char **argv)
 	if (argc == 2 && strcmp(argv[1], "--diag-phase2") == 0)
 		goto phase2_diag;
 
+	if (argc == 2 && strcmp(argv[1], "--cssprobe") == 0)
+		return cssprobe_test_css_transitions() ? 0 : 1;
+
 	if (argc >= 4 && strcmp(argv[1], "--layout") == 0) {
 		g_layout_html_path = argv[2];
 		g_layout_css_path  = argv[3];
@@ -12750,6 +12753,16 @@ box_coords(bx, &cx, &cy);
 			fprintf(stderr, "FAIL: Test 104 gapreport format/coverage/normalized keys\n"); return 1;
 		}
 		fprintf(stderr, "=== Test 104 PASS: gapreport produces stable normalized keys with explicit coverage ===\n");
+	}
+
+	/* --- Test 105: Group 2 / Round 2A CSS Transitions parser & cascade -- */
+	{
+		fprintf(stderr, "\n=== Test 105: Group 2 / Round 2A CSS Transitions ===\n");
+		if (!cssprobe_test_css_transitions()) {
+			fprintf(stderr, "FAIL: Test 105 CSS Transitions Round 2A\n");
+			return 1;
+		}
+		fprintf(stderr, "=== Test 105 PASS: CSS Transitions independent cascade & descriptor contract ===\n");
 	}
 
 	return 0;

@@ -124,6 +124,75 @@ static inline bool arena__compare_macsurf_gradient_stops(
 	return memcmp(a, b, 7 * sizeof(int32_t)) == 0;
 }
 
+/* Group 2 (#322): compare two transition sidecar pointers.
+ * NULL is semantically equivalent to all-initial transition values. */
+static inline bool arena__is_default_transition_data(const css_computed_transition_data *d)
+{
+	if (d == NULL) return true;
+	if (d->prop_count == 1 && d->props[0].kind == CSS_TRANS_PROP_ALL &&
+		d->duration_count == 1 && d->durations[0] == 0 &&
+		d->timing_count == 1 && d->timings[0].type == CSS_TIMING_EASE &&
+		d->delay_count == 1 && d->delays[0] == 0) {
+		return true;
+	}
+	return false;
+}
+
+static inline bool arena__compare_transition_data(
+		const css_computed_transition_data *a,
+		const css_computed_transition_data *b)
+{
+	uint8_t i;
+	if (a == b) return true;
+	if (arena__is_default_transition_data(a) && arena__is_default_transition_data(b))
+		return true;
+	if (a == NULL || b == NULL) return false;
+
+	if (a->prop_count != b->prop_count ||
+		a->duration_count != b->duration_count ||
+		a->timing_count != b->timing_count ||
+		a->delay_count != b->delay_count)
+		return false;
+
+	for (i = 0; i < a->prop_count; i++) {
+		if (a->props[i].kind != b->props[i].kind) return false;
+		if (a->props[i].kind == CSS_TRANS_PROP_KNOWN &&
+			a->props[i].prop_id != b->props[i].prop_id) return false;
+		if (a->props[i].kind == CSS_TRANS_PROP_CUSTOM_IDENT) {
+			bool match = false;
+			if (a->props[i].custom_name == b->props[i].custom_name) match = true;
+			else if (a->props[i].custom_name != NULL && b->props[i].custom_name != NULL) {
+				if (lwc_string_isequal(a->props[i].custom_name,
+					b->props[i].custom_name, &match) != lwc_error_ok || !match)
+					return false;
+			} else return false;
+		}
+	}
+
+	for (i = 0; i < a->duration_count; i++) {
+		if (a->durations[i] != b->durations[i]) return false;
+	}
+
+	for (i = 0; i < a->timing_count; i++) {
+		if (a->timings[i].type != b->timings[i].type) return false;
+		if (a->timings[i].type == CSS_TIMING_CUBIC_BEZIER) {
+			if (a->timings[i].x1 != b->timings[i].x1 ||
+				a->timings[i].y1 != b->timings[i].y1 ||
+				a->timings[i].x2 != b->timings[i].x2 ||
+				a->timings[i].y2 != b->timings[i].y2) return false;
+		} else if (a->timings[i].type == CSS_TIMING_STEPS) {
+			if (a->timings[i].step_count != b->timings[i].step_count ||
+				a->timings[i].step_pos != b->timings[i].step_pos) return false;
+		}
+	}
+
+	for (i = 0; i < a->delay_count; i++) {
+		if (a->delays[i] != b->delays[i]) return false;
+	}
+
+	return true;
+}
+
 static inline bool arena__compare_string_list(
 		lwc_string **a,
 		lwc_string **b)
@@ -300,6 +369,12 @@ static inline bool css__arena_style_is_equal(
 	if (!arena__compare_string_list(
 			a->quotes,
 			b->quotes)) {
+		return false;
+	}
+
+	if (!arena__compare_transition_data(
+			a->transition_data,
+			b->transition_data)) {
 		return false;
 	}
 

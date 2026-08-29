@@ -183,3 +183,639 @@ uint32_t cssprobe_calc_slot_write_last_spec(uint8_t slot)
 {
 	return css__calc_slot_write_test_last_spec(slot);
 }
+
+/* =========================================================================
+ * Group 2 / Round 2A: Comprehensive CSS Transitions Test Suite
+ * ========================================================================= */
+
+#include "select/select.h"
+#include "select/arena.h"
+
+/* Minimal mock select handler for direct css_select_style unit tests */
+typedef struct cssprobe_test_node {
+	lwc_string *names[3];
+	void *libcss_node_data;
+} cssprobe_test_node;
+
+static css_error test_handler_node_name(void *pw, void *node, css_qname *qname) {
+	cssprobe_test_node *test_node = (cssprobe_test_node *)node;
+	lwc_string **names = test_node->names;
+	qname->name = lwc_string_ref(names[0]);
+	qname->ns = NULL;
+	return CSS_OK;
+}
+static css_error test_handler_node_classes(void *pw, void *node, lwc_string ***classes, uint32_t *n_classes) {
+	cssprobe_test_node *test_node = (cssprobe_test_node *)node;
+	lwc_string **names = test_node->names;
+	if (names[1] != NULL) {
+		lwc_string **arr = (lwc_string **)malloc(sizeof(lwc_string *));
+		arr[0] = lwc_string_ref(names[1]);
+		*n_classes = 1;
+		*classes = arr;
+	} else {
+		*n_classes = 0;
+		*classes = NULL;
+	}
+	return CSS_OK;
+}
+static css_error test_handler_node_id(void *pw, void *node, lwc_string **id) {
+	cssprobe_test_node *test_node = (cssprobe_test_node *)node;
+	lwc_string **names = test_node->names;
+	if (names[2] != NULL) {
+		*id = lwc_string_ref(names[2]);
+	} else {
+		*id = NULL;
+	}
+	return CSS_OK;
+}
+static css_error test_handler_named_ancestor_node(void *pw, void *node, const css_qname *qname, void **ancestor) {
+	*ancestor = NULL; return CSS_OK;
+}
+static css_error test_handler_named_parent_node(void *pw, void *node, const css_qname *qname, void **parent) {
+	*parent = NULL; return CSS_OK;
+}
+static css_error test_handler_parent_node(void *pw, void *node, void **parent) {
+	*parent = NULL; return CSS_OK;
+}
+static css_error test_handler_node_is_root(void *pw, void *node, bool *match) {
+	*match = false; return CSS_OK;
+}
+static css_error test_handler_node_count_siblings(void *pw, void *node, bool same_name, bool after, int32_t *count) {
+	*count = 0; return CSS_OK;
+}
+static css_error test_handler_node_is_empty(void *pw, void *node, bool *match) {
+	*match = false; return CSS_OK;
+}
+static css_error test_handler_node_is_link(void *pw, void *node, bool *match) {
+	*match = false; return CSS_OK;
+}
+static css_error test_handler_node_is_visited(void *pw, void *node, bool *match) {
+	*match = false; return CSS_OK;
+}
+static css_error test_handler_node_is_hover(void *pw, void *node, bool *match) {
+	*match = false; return CSS_OK;
+}
+static css_error test_handler_node_is_active(void *pw, void *node, bool *match) {
+	*match = false; return CSS_OK;
+}
+static css_error test_handler_node_is_focus(void *pw, void *node, bool *match) {
+	*match = false; return CSS_OK;
+}
+static css_error test_handler_node_is_enabled(void *pw, void *node, bool *match) {
+	*match = false; return CSS_OK;
+}
+static css_error test_handler_node_is_disabled(void *pw, void *node, bool *match) {
+	*match = false; return CSS_OK;
+}
+static css_error test_handler_node_is_checked(void *pw, void *node, bool *match) {
+	*match = false; return CSS_OK;
+}
+static css_error test_handler_node_is_target(void *pw, void *node, bool *match) {
+	*match = false; return CSS_OK;
+}
+static css_error test_handler_node_is_lang(void *pw, void *node, lwc_string *lang, bool *match) {
+	*match = false; return CSS_OK;
+}
+static css_error test_handler_node_presentational_hint(void *pw, void *node, uint32_t *nhints, css_hint **hints) {
+	*nhints = 0; *hints = NULL; return CSS_OK;
+}
+static css_error test_handler_ua_default_for_property(void *pw, uint32_t property, css_hint *hint) {
+	(void)pw;
+
+	if (property == CSS_PROP_COLOR) {
+		hint->data.color = 0xff000000;
+		hint->status = CSS_COLOR_COLOR;
+	} else if (property == CSS_PROP_FONT_FAMILY) {
+		hint->data.strings = NULL;
+		hint->status = CSS_FONT_FAMILY_SANS_SERIF;
+	} else if (property == CSS_PROP_QUOTES) {
+		hint->data.strings = NULL;
+		hint->status = CSS_QUOTES_NONE;
+	} else if (property == CSS_PROP_VOICE_FAMILY) {
+		hint->data.strings = NULL;
+		hint->status = 0;
+	} else {
+		return CSS_INVALID;
+	}
+
+	return CSS_OK;
+}
+static css_error test_handler_compute_font_size(void *pw, const css_hint *parent, css_hint *size) {
+	size->status = CSS_FONT_SIZE_DIMENSION;
+	size->data.length.value = INTTOFIX(16);
+	size->data.length.unit = CSS_UNIT_PX;
+	return CSS_OK;
+}
+static css_error test_handler_named_sibling_node(void *pw, void *node, const css_qname *qname, void **sibling) {
+	*sibling = NULL; return CSS_OK;
+}
+static css_error test_handler_named_generic_sibling_node(void *pw, void *node, const css_qname *qname, void **sibling) {
+	*sibling = NULL; return CSS_OK;
+}
+static css_error test_handler_sibling_node(void *pw, void *node, void **sibling) {
+	*sibling = NULL; return CSS_OK;
+}
+static css_error test_handler_node_has_name(void *pw, void *node, const css_qname *qname, bool *match) {
+	cssprobe_test_node *test_node = (cssprobe_test_node *)node;
+	lwc_string **names = test_node->names;
+	return lwc_string_caseless_isequal(names[0], qname->name, match);
+}
+static css_error test_handler_node_has_class(void *pw, void *node, lwc_string *name, bool *match) {
+	cssprobe_test_node *test_node = (cssprobe_test_node *)node;
+	lwc_string **names = test_node->names;
+	if (names[1] == NULL) { *match = false; return CSS_OK; }
+	return lwc_string_caseless_isequal(names[1], name, match);
+}
+static css_error test_handler_node_has_id(void *pw, void *node, lwc_string *name, bool *match) {
+	cssprobe_test_node *test_node = (cssprobe_test_node *)node;
+	lwc_string **names = test_node->names;
+	if (names[2] == NULL) { *match = false; return CSS_OK; }
+	return lwc_string_caseless_isequal(names[2], name, match);
+}
+static css_error test_handler_node_has_attribute(void *pw, void *node, const css_qname *qname, bool *match) {
+	*match = false; return CSS_OK;
+}
+static css_error test_handler_node_has_attribute_equal(void *pw, void *node, const css_qname *qname, lwc_string *value, bool *match) {
+	*match = false; return CSS_OK;
+}
+static css_error test_handler_node_has_attribute_dashmatch(void *pw, void *node, const css_qname *qname, lwc_string *value, bool *match) {
+	*match = false; return CSS_OK;
+}
+static css_error test_handler_node_has_attribute_includes(void *pw, void *node, const css_qname *qname, lwc_string *value, bool *match) {
+	*match = false; return CSS_OK;
+}
+static css_error test_handler_node_has_attribute_prefix(void *pw, void *node, const css_qname *qname, lwc_string *value, bool *match) {
+	*match = false; return CSS_OK;
+}
+static css_error test_handler_node_has_attribute_suffix(void *pw, void *node, const css_qname *qname, lwc_string *value, bool *match) {
+	*match = false; return CSS_OK;
+}
+static css_error test_handler_node_has_attribute_substring(void *pw, void *node, const css_qname *qname, lwc_string *value, bool *match) {
+	*match = false; return CSS_OK;
+}
+static css_error test_handler_set_libcss_node_data(void *pw, void *node, void *libcss_node_data) {
+	cssprobe_test_node *test_node = (cssprobe_test_node *)node;
+	test_node->libcss_node_data = libcss_node_data;
+	return CSS_OK;
+}
+static css_error test_handler_get_libcss_node_data(void *pw, void *node, void **libcss_node_data) {
+	cssprobe_test_node *test_node = (cssprobe_test_node *)node;
+	*libcss_node_data = test_node->libcss_node_data;
+	return CSS_OK;
+}
+
+static css_select_handler test_select_handler = {
+	CSS_SELECT_HANDLER_VERSION_1,
+	test_handler_node_name,
+	test_handler_node_classes,
+	test_handler_node_id,
+	test_handler_named_ancestor_node,
+	test_handler_named_parent_node,
+	test_handler_named_sibling_node,
+	test_handler_named_generic_sibling_node,
+	test_handler_parent_node,
+	test_handler_sibling_node,
+	test_handler_node_has_name,
+	test_handler_node_has_class,
+	test_handler_node_has_id,
+	test_handler_node_has_attribute,
+	test_handler_node_has_attribute_equal,
+	test_handler_node_has_attribute_dashmatch,
+	test_handler_node_has_attribute_includes,
+	test_handler_node_has_attribute_prefix,
+	test_handler_node_has_attribute_suffix,
+	test_handler_node_has_attribute_substring,
+	test_handler_node_is_root,
+	test_handler_node_count_siblings,
+	test_handler_node_is_empty,
+	test_handler_node_is_link,
+	test_handler_node_is_visited,
+	test_handler_node_is_hover,
+	test_handler_node_is_active,
+	test_handler_node_is_focus,
+	test_handler_node_is_enabled,
+	test_handler_node_is_disabled,
+	test_handler_node_is_checked,
+	test_handler_node_is_target,
+	test_handler_node_is_lang,
+	test_handler_node_presentational_hint,
+	test_handler_ua_default_for_property,
+	test_handler_set_libcss_node_data,
+	test_handler_get_libcss_node_data
+};
+
+static css_error dummy_resolve(void *pw, const char *base, lwc_string *rel, lwc_string **abs) {
+	(void)pw; (void)base;
+	*abs = lwc_string_ref(rel);
+	return CSS_OK;
+}
+
+static css_stylesheet *parse_test_css(const char *css_text)
+{
+	css_stylesheet_params params;
+	css_stylesheet *sheet = NULL;
+	css_error err;
+	memset(&params, 0, sizeof(params));
+	params.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+	params.level = CSS_LEVEL_3;
+	params.charset = "UTF-8";
+	params.url = "http://test/test.css";
+	params.title = "test";
+	params.allow_quirks = false;
+	params.inline_style = false;
+	params.resolve = dummy_resolve;
+
+	err = css_stylesheet_create(&params, &sheet);
+	if (err != CSS_OK) {
+		fprintf(stderr, "FAIL: css_stylesheet_create err=%d\n", err);
+		return NULL;
+	}
+	err = css_stylesheet_append_data(sheet, (const uint8_t *)css_text, strlen(css_text));
+	if (err != CSS_OK && err != CSS_NEEDDATA) {
+		fprintf(stderr, "FAIL: append_data err=%d\n", err);
+		css_stylesheet_destroy(sheet);
+		return NULL;
+	}
+	err = css_stylesheet_data_done(sheet);
+	if (err != CSS_OK) {
+		fprintf(stderr, "FAIL: data_done err=%d\n", err);
+		css_stylesheet_destroy(sheet);
+		return NULL;
+	}
+	return sheet;
+}
+
+static css_computed_style *select_test_node(css_select_ctx *ctx, const char *tag, const char *class_name, const char *id_name)
+{
+	cssprobe_test_node node;
+	css_select_results *results = NULL;
+	css_computed_style *style = NULL;
+	css_media media;
+	css_unit_ctx unit_ctx;
+
+	memset(&node, 0, sizeof(node));
+
+	memset(&media, 0, sizeof(media));
+	media.type = CSS_MEDIA_SCREEN;
+	memset(&unit_ctx, 0, sizeof(unit_ctx));
+	unit_ctx.viewport_width = INTTOFIX(800);
+	unit_ctx.viewport_height = INTTOFIX(600);
+	unit_ctx.font_size_default = INTTOFIX(16);
+
+	lwc_intern_string(tag, strlen(tag), &node.names[0]);
+	if (class_name) lwc_intern_string(class_name, strlen(class_name), &node.names[1]);
+	if (id_name) lwc_intern_string(id_name, strlen(id_name), &node.names[2]);
+
+	if (css_select_style(ctx, (void *)&node, &unit_ctx, &media, NULL,
+			&test_select_handler, NULL, &results) == CSS_OK && results != NULL) {
+		style = results->styles[CSS_PSEUDO_ELEMENT_NONE];
+		if (style != NULL) {
+			/* clone so caller can own it */
+			css_computed_style *cloned = NULL;
+			if (css__computed_style_clone(style, &cloned) == CSS_OK) {
+				style = cloned;
+			}
+		}
+		css_select_results_destroy(results);
+	}
+
+	if (node.names[0]) lwc_string_unref(node.names[0]);
+	if (node.names[1]) lwc_string_unref(node.names[1]);
+	if (node.names[2]) lwc_string_unref(node.names[2]);
+	return style;
+}
+
+bool cssprobe_test_css_transitions(void)
+{
+	/* 1. Opcode stability check */
+	if (CSS_PROP_TRANSITION_PROPERTY != 0x0a7 ||
+		CSS_PROP_TRANSITION_DURATION != 0x0a8 ||
+		CSS_PROP_TRANSITION_TIMING_FUNCTION != 0x0a9 ||
+		CSS_PROP_TRANSITION_DELAY != 0x0aa ||
+		CSS_N_PROPERTIES != 0x0ab ||
+		CSS_PROP_FILL != 0x0a6) {
+		fprintf(stderr, "FAIL: Transition property opcodes not at expected append-only positions\n");
+		return false;
+	}
+
+	/* 2. Sidecar memory measurement */
+	{
+		size_t sidecar_sz = sizeof(css_computed_transition_data);
+		fprintf(stderr, "  [Round 2A] sizeof(css_computed_transition_data) = %zu bytes\n", sidecar_sz);
+		fprintf(stderr, "  [Round 2A] Estimated memory: 10=%zu KB, 100=%zu KB, 500=%zu KB, 1000=%zu KB\n",
+			(10 * sidecar_sz) / 1024, (100 * sidecar_sz) / 1024,
+			(500 * sidecar_sz) / 1024, (1000 * sidecar_sz) / 1024);
+	}
+
+	/* 3. Parser & Independent Cascade: basic longhands + shorthand expansion */
+	{
+		css_select_ctx *ctx = NULL;
+		css_stylesheet *sheet = NULL;
+		css_computed_style *style = NULL;
+		const char *css =
+			"div.c1 { transition-property: opacity, -macsurf-transform; transition-duration: 250ms, 1s; }\n"
+			"div.lhprop { transition-property: opacity, color; }\n"
+			"div.lhdur { transition-duration: 250ms, 1.5s; }\n"
+			"div.lhtiming { transition-timing-function: linear, ease-in; }\n"
+			"div.lhdelay { transition-delay: -100ms, 250ms; }\n"
+			"div.c2 { transition: opacity 500ms cubic-bezier(0.1, 0.2, 0.8, 0.9) 100ms; }\n"
+			"div.c3 { transition-property: none; }\n"
+			"div.c4 { transition: -macsurf-transform 1s, color 200ms ease-in; }\n"
+			"div.c5 { transition: all 300ms ease; transition-duration: 750ms; }\n"
+			"div.c6 { transition-duration: 1s; transition: opacity 200ms; }\n"
+			"div.c7 { transition: --custom-anim 400ms linear; }\n";
+
+		if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+		sheet = parse_test_css(css);
+		if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+		if (css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen") != CSS_OK) {
+			css_stylesheet_destroy(sheet);
+			css_select_ctx_destroy(ctx);
+			return false;
+		}
+
+		/* Test div.c1: independent longhands list repetition */
+		style = select_test_node(ctx, "div", "c1", NULL);
+		if (style == NULL) { fprintf(stderr, "FAIL: select div.c1\n"); return false; }
+		{
+			uint32_t count = css_computed_transition_descriptor_count(style);
+			css_effective_transition_descriptor d0, d1;
+			if (count != 2) { fprintf(stderr, "FAIL: div.c1 desc count %u != 2\n", count); return false; }
+			if (!css_computed_transition_descriptor(style, 0, &d0) ||
+				!css_computed_transition_descriptor(style, 1, &d1)) {
+				fprintf(stderr, "FAIL: div.c1 desc get\n"); return false;
+			}
+			if (d0.prop.kind != CSS_TRANS_PROP_KNOWN || d0.prop.prop_id != CSS_PROP_OPACITY) {
+				fprintf(stderr, "FAIL: div.c1 d0 prop\n"); return false;
+			}
+			if (d1.prop.kind != CSS_TRANS_PROP_KNOWN || d1.prop.prop_id != CSS_PROP_MACSURF_TRANSFORM) {
+				fprintf(stderr, "FAIL: div.c1 d1 prop\n"); return false;
+			}
+			/* 250ms = 0.25s (256 in Q22.10) */
+			if (d0.duration != 256 || d1.duration != (1 << 10)) {
+				fprintf(stderr, "FAIL: div.c1 durations %d, %d\n", d0.duration, d1.duration); return false;
+			}
+		}
+		css_computed_style_destroy(style);
+
+		/* Each longhand must survive parse, cascade, and descriptor assembly. */
+		style = select_test_node(ctx, "div", "lhprop", NULL);
+		if (style == NULL) { fprintf(stderr, "FAIL: select lhprop\n"); return false; }
+		{
+			const css_computed_transition_data *data =
+				css_computed_transition_data_get(style);
+			if (data == NULL || data->prop_count != 2 ||
+				data->props[0].kind != CSS_TRANS_PROP_KNOWN ||
+				data->props[0].prop_id != CSS_PROP_OPACITY ||
+				data->props[1].kind != CSS_TRANS_PROP_KNOWN ||
+				data->props[1].prop_id != CSS_PROP_COLOR) {
+				fprintf(stderr, "FAIL: transition-property longhand\n"); return false;
+			}
+		}
+		css_computed_style_destroy(style);
+
+		style = select_test_node(ctx, "div", "lhdur", NULL);
+		if (style == NULL) { fprintf(stderr, "FAIL: select lhdur\n"); return false; }
+		{
+			const css_computed_transition_data *data =
+				css_computed_transition_data_get(style);
+			if (data == NULL || data->duration_count != 2 ||
+				data->durations[0] != 256 || data->durations[1] != 1536) {
+				fprintf(stderr, "FAIL: transition-duration longhand\n"); return false;
+			}
+		}
+		css_computed_style_destroy(style);
+
+		style = select_test_node(ctx, "div", "lhtiming", NULL);
+		if (style == NULL) { fprintf(stderr, "FAIL: select lhtiming\n"); return false; }
+		{
+			const css_computed_transition_data *data =
+				css_computed_transition_data_get(style);
+			if (data == NULL || data->timing_count != 2 ||
+				data->timings[0].type != CSS_TIMING_LINEAR ||
+				data->timings[1].type != CSS_TIMING_EASE_IN) {
+				fprintf(stderr, "FAIL: transition-timing-function longhand\n"); return false;
+			}
+		}
+		css_computed_style_destroy(style);
+
+		style = select_test_node(ctx, "div", "lhdelay", NULL);
+		if (style == NULL) { fprintf(stderr, "FAIL: select lhdelay\n"); return false; }
+		{
+			const css_computed_transition_data *data =
+				css_computed_transition_data_get(style);
+			if (data == NULL || data->delay_count != 2 ||
+				data->delays[0] != -102 || data->delays[1] != 256) {
+				fprintf(stderr, "FAIL: transition-delay longhand\n"); return false;
+			}
+		}
+		css_computed_style_destroy(style);
+
+		/* Test div.c2: shorthand with cubic-bezier */
+		style = select_test_node(ctx, "div", "c2", NULL);
+		if (style == NULL) { fprintf(stderr, "FAIL: select div.c2\n"); return false; }
+		{
+			uint32_t count = css_computed_transition_descriptor_count(style);
+			css_effective_transition_descriptor d0;
+			if (count != 1) { fprintf(stderr, "FAIL: div.c2 desc count %u != 1\n", count); return false; }
+			if (!css_computed_transition_descriptor(style, 0, &d0)) return false;
+			if (d0.timing.type != CSS_TIMING_CUBIC_BEZIER) {
+				fprintf(stderr, "FAIL: div.c2 timing type\n"); return false;
+			}
+			/* 500ms = 0.5s = 512 in Q22.10, 100ms = 0.1s = 102 in Q22.10 */
+			if (d0.duration != 512 || d0.delay != 102) {
+				fprintf(stderr, "FAIL: div.c2 duration/delay %d, %d\n", d0.duration, d0.delay); return false;
+			}
+		}
+		css_computed_style_destroy(style);
+
+		/* Test div.c3: none */
+		style = select_test_node(ctx, "div", "c3", NULL);
+		if (style == NULL) { fprintf(stderr, "FAIL: select div.c3\n"); return false; }
+		{
+			uint32_t count = css_computed_transition_descriptor_count(style);
+			if (count != 0) { fprintf(stderr, "FAIL: div.c3 count %u != 0\n", count); return false; }
+		}
+		css_computed_style_destroy(style);
+
+		/* Test div.c5: shorthand -> later longhand override */
+		style = select_test_node(ctx, "div", "c5", NULL);
+		if (style == NULL) { fprintf(stderr, "FAIL: select div.c5\n"); return false; }
+		{
+			css_effective_transition_descriptor d0;
+			if (!css_computed_transition_descriptor(style, 0, &d0)) return false;
+			/* duration was overridden to 750ms = 768 in Q22.10 */
+			if (d0.duration != 768) {
+				fprintf(stderr, "FAIL: div.c5 duration override %d != 768\n", d0.duration); return false;
+			}
+		}
+		css_computed_style_destroy(style);
+
+		/* Test div.c6: longhand -> later shorthand reset */
+		style = select_test_node(ctx, "div", "c6", NULL);
+		if (style == NULL) { fprintf(stderr, "FAIL: select div.c6\n"); return false; }
+		{
+			css_effective_transition_descriptor d0;
+			if (!css_computed_transition_descriptor(style, 0, &d0)) return false;
+			/* duration was reset by shorthand to 200ms = 204 in Q22.10 */
+			if (d0.duration != 204) {
+				fprintf(stderr, "FAIL: div.c6 duration reset %d != 204\n", d0.duration); return false;
+			}
+		}
+		css_computed_style_destroy(style);
+
+		/* Test div.c7: custom ident preservation */
+		style = select_test_node(ctx, "div", "c7", NULL);
+		if (style == NULL) { fprintf(stderr, "FAIL: select div.c7\n"); return false; }
+		{
+			css_effective_transition_descriptor d0;
+			if (!css_computed_transition_descriptor(style, 0, &d0)) return false;
+			if (d0.prop.kind != CSS_TRANS_PROP_CUSTOM_IDENT || d0.prop.custom_name == NULL) {
+				fprintf(stderr, "FAIL: div.c7 custom ident kind\n"); return false;
+			}
+			if (strcmp(lwc_string_data(d0.prop.custom_name), "--custom-anim") != 0) {
+				fprintf(stderr, "FAIL: div.c7 custom ident name '%s'\n", lwc_string_data(d0.prop.custom_name));
+				return false;
+			}
+		}
+		css_computed_style_destroy(style);
+
+		css_stylesheet_destroy(sheet);
+		css_select_ctx_destroy(ctx);
+	}
+
+	/* 4. Arena Interning, Semantic Equality & NULL Initial Equivalence */
+	{
+		css_select_ctx *ctx = NULL;
+		css_stylesheet *sheet = NULL;
+		css_computed_style *s_initial = NULL;
+		css_computed_style *s_zero = NULL;
+		css_computed_style *s_trans1 = NULL;
+		css_computed_style *s_trans2 = NULL;
+		const char *css =
+			"div.def { color: red; }\n"
+			"div.zero { color: red; transition-duration: 0s; }\n"
+			"div.t1 { color: red; transition: opacity 1s; }\n"
+			"div.t2 { color: red; transition: opacity 1s; }\n";
+
+		if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+		sheet = parse_test_css(css);
+		if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+		css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+
+		s_initial = select_test_node(ctx, "div", "def", NULL);
+		s_zero = select_test_node(ctx, "div", "zero", NULL);
+		s_trans1 = select_test_node(ctx, "div", "t1", NULL);
+		s_trans2 = select_test_node(ctx, "div", "t2", NULL);
+
+		/* s_initial (NULL transition_data) and s_zero (transition-duration: 0s with all-initial longhands)
+		 * must compare semantically equal */
+		if (!css_computed_transition_data_equal(s_initial, s_zero)) {
+			fprintf(stderr, "FAIL: NULL vs explicit all-initial transition_data_equal\n");
+			return false;
+		}
+
+		/* s_trans1 and s_trans2 have identical transition declarations -> compare equal */
+		if (!css_computed_transition_data_equal(s_trans1, s_trans2)) {
+			fprintf(stderr, "FAIL: Identical transition styles do not compare equal\n");
+			return false;
+		}
+
+		/* s_initial and s_trans1 differ in transition -> compare unequal */
+		if (css_computed_transition_data_equal(s_initial, s_trans1)) {
+			fprintf(stderr, "FAIL: Different transition styles compared equal\n");
+			return false;
+		}
+
+		css_computed_style_destroy(s_initial);
+		css_computed_style_destroy(s_zero);
+		css_computed_style_destroy(s_trans1);
+		css_computed_style_destroy(s_trans2);
+		css_stylesheet_destroy(sheet);
+		css_select_ctx_destroy(ctx);
+	}
+
+	/* 5. !important: first prove longhands, then shorthand expansion. */
+	{
+		css_select_ctx *ctx = NULL;
+		css_stylesheet *sheet = NULL;
+		css_computed_style *style = NULL;
+		const char *css =
+			".a { transition-duration: 1s !important; }\n"
+			"#a { transition-duration: 100ms; }\n"
+			".b { transition-duration: 1s; }\n"
+			"#b { transition-duration: 100ms !important; }\n"
+			".c { transition: opacity 1s ease !important; }\n"
+			"#c { transition-duration: 100ms; }\n"
+			".d { transition: opacity 1s ease; }\n"
+			"#d { transition-duration: 100ms !important; }\n";
+
+		if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+		sheet = parse_test_css(css);
+		if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+		css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+
+		/* Case A: important longhand beats a more specific normal longhand. */
+		style = select_test_node(ctx, "div", "a", "a");
+		if (style == NULL) { fprintf(stderr, "FAIL: select case A\n"); return false; }
+		{
+			css_effective_transition_descriptor d0;
+			if (!css_computed_transition_descriptor(style, 0, &d0)) return false;
+			if (d0.duration != (1 << 10)) {
+				fprintf(stderr, "FAIL: case A duration %d != 1024\n", d0.duration);
+				return false;
+			}
+		}
+		css_computed_style_destroy(style);
+
+		/* Case B: a later important longhand beats an earlier normal longhand. */
+		style = select_test_node(ctx, "div", "b", "b");
+		if (style == NULL) { fprintf(stderr, "FAIL: select case B\n"); return false; }
+		{
+			css_effective_transition_descriptor d0;
+			if (!css_computed_transition_descriptor(style, 0, &d0)) return false;
+			if (d0.duration != 102) {
+				fprintf(stderr, "FAIL: case B duration %d != 102\n", d0.duration);
+				return false;
+			}
+		}
+		css_computed_style_destroy(style);
+
+		/* Case C: important shorthand makes every generated longhand important. */
+		style = select_test_node(ctx, "div", "c", "c");
+		if (style == NULL) { fprintf(stderr, "FAIL: select case C\n"); return false; }
+		{
+			css_effective_transition_descriptor d0;
+			if (!css_computed_transition_descriptor(style, 0, &d0) ||
+				d0.prop.kind != CSS_TRANS_PROP_KNOWN ||
+				d0.prop.prop_id != CSS_PROP_OPACITY ||
+				d0.duration != (1 << 10) ||
+				d0.timing.type != CSS_TIMING_EASE) {
+				fprintf(stderr, "FAIL: case C shorthand importance prop=%u/%u dur=%d timing=%u\n",
+					(unsigned int)d0.prop.kind, (unsigned int)d0.prop.prop_id,
+					d0.duration, (unsigned int)d0.timing.type);
+				return false;
+			}
+		}
+		css_computed_style_destroy(style);
+
+		/* Case D: important longhand replaces only shorthand duration. */
+		style = select_test_node(ctx, "div", "d", "d");
+		if (style == NULL) { fprintf(stderr, "FAIL: select case D\n"); return false; }
+		{
+			css_effective_transition_descriptor d0;
+			if (!css_computed_transition_descriptor(style, 0, &d0) ||
+				d0.prop.kind != CSS_TRANS_PROP_KNOWN ||
+				d0.prop.prop_id != CSS_PROP_OPACITY ||
+				d0.duration != 102 || d0.timing.type != CSS_TIMING_EASE) {
+				fprintf(stderr, "FAIL: case D shorthand/longhand importance\n");
+				return false;
+			}
+		}
+		css_computed_style_destroy(style);
+		css_stylesheet_destroy(sheet);
+		css_select_ctx_destroy(ctx);
+	}
+
+	return true;
+}

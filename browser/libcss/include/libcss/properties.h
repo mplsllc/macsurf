@@ -181,6 +181,10 @@ enum css_properties_e {
 	CSS_PROP_BACKGROUND_ORIGIN              = 0x0a4,
 	CSS_PROP_BACKGROUND_BLEND_MODE          = 0x0a5,
 	CSS_PROP_FILL                           = 0x0a6,
+	CSS_PROP_TRANSITION_PROPERTY            = 0x0a7,
+	CSS_PROP_TRANSITION_DURATION            = 0x0a8,
+	CSS_PROP_TRANSITION_TIMING_FUNCTION     = 0x0a9,
+	CSS_PROP_TRANSITION_DELAY               = 0x0aa,
 	CSS_N_PROPERTIES
 };
 
@@ -1239,6 +1243,26 @@ enum css_z_index_e {
 	CSS_Z_INDEX_INHERIT			= 0x0,
 	CSS_Z_INDEX_SET				= 0x1,
 	CSS_Z_INDEX_AUTO			= 0x2
+};
+
+enum css_transition_property_e {
+	CSS_TRANSITION_PROPERTY_INHERIT		= 0x0,
+	CSS_TRANSITION_PROPERTY_SET		= 0x1
+};
+
+enum css_transition_duration_e {
+	CSS_TRANSITION_DURATION_INHERIT		= 0x0,
+	CSS_TRANSITION_DURATION_SET		= 0x1
+};
+
+enum css_transition_timing_function_e {
+	CSS_TRANSITION_TIMING_FUNCTION_INHERIT	= 0x0,
+	CSS_TRANSITION_TIMING_FUNCTION_SET	= 0x1
+};
+
+enum css_transition_delay_e {
+	CSS_TRANSITION_DELAY_INHERIT		= 0x0,
+	CSS_TRANSITION_DELAY_SET		= 0x1
 };
 
 #ifdef __cplusplus
