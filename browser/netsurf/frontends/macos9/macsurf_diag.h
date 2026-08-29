@@ -161,6 +161,29 @@ void ms_diag_error_record(unsigned long op_id, unsigned long request_id,
 long macsurf_diag_serialize_operations(char *buf, long cap);
 long macsurf_diag_serialize_errors(char *buf, long cap);
 
+/* ===================== Phase 2: expected-transition contracts =====================
+ * A contract is MacSurf-owned durable state, not an inferred page outcome.
+ * Writers open a bounded entry when MacSurf has actually accepted responsibility
+ * for a next transition, then mark an explicit terminal state.  The AppleEvent
+ * serializers are read-only, so repeated `pending`/`settlement` reads are stable.
+ */
+enum ms_contract_kind {
+	MS_CONTRACT_OPERATION = 0, MS_CONTRACT_IO, MS_CONTRACT_MODULE_WAIT
+};
+enum ms_contract_state {
+	MS_CONTRACT_WAITING = 0, MS_CONTRACT_COMPLETED, MS_CONTRACT_FIRED,
+	MS_CONTRACT_SATISFIED, MS_CONTRACT_FAILED, MS_CONTRACT_CANCELLED,
+	MS_CONTRACT_DECLINED, MS_CONTRACT_EXPIRED
+};
+enum ms_contract_expected {
+	MS_EXPECT_NONE = 0, MS_EXPECT_WIRE_START, MS_EXPECT_SETTLE,
+	MS_EXPECT_CHECK, MS_EXPECT_CALLBACK, MS_EXPECT_RELEASE,
+	MS_EXPECT_CALLBACK_RETURN
+};
+
+long macsurf_diag_serialize_pending(char *buf, long cap);
+long macsurf_diag_serialize_settlement(char *buf, long cap);
+
 
 /* ==================== Milestone 1c: Causal Render Trace ====================
  * document_id   = one DOM-document lifetime (allocated at html_begin_conversion;

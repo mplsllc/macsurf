@@ -128,8 +128,11 @@ reconvert_harness: $(ALL_OBJ)
 
 -include $(ALL_OBJ:.o=.d)
 
-.PHONY: all run clean check check-c89 check-macdefault webp-test
+.PHONY: all run clean check check-c89 check-macdefault diag-phase2 webp-test
 all: reconvert_harness
+
+diag-phase2: reconvert_harness
+	ASAN_OPTIONS=detect_leaks=0 ./reconvert_harness --diag-phase2
 
 # Standalone libwebp regression.  This deliberately stays out of the large
 # NetSurf/ASan harness: it exercises the exact decoder/demux source subset and
@@ -211,6 +214,8 @@ check-c89:
 		build/macos9_reconvert.c && echo "   macos9_reconvert.c OK"
 	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) $(INC) \
 		build/macos9_content_registry.c && echo "   macos9_content_registry.c OK"
+	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) $(INC) \
+		build/macsurf_diag.c && echo "   macsurf_diag.c OK"
 # fixes1093 — html.c joins the gate. It was never covered, yet it is the other
 # file this project edits constantly (the pagemap, the reconvert resize/load
 # fire, and now the slider probe all live here) and it ships to CW8 as C89

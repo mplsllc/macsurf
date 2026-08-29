@@ -16,6 +16,13 @@
 
 /* All writers run on the cooperative main / notifier context; no locking. */
 
+/* Phase 2 contract helpers are defined below the existing trace rings, but
+ * module/observer writers occur earlier in this file. */
+static void ms_contract_module_event(unsigned long mod_id,
+	unsigned long wait_id, int event_type, int reason);
+static void ms_contract_io_event(unsigned long io_id, unsigned long target_id,
+	int event_type);
+
 /* --- per-nav summary tally (frozen at NAV: DONE) --- */
 static unsigned long g_req_cur;
 static unsigned long g_req_cur_fail;
@@ -1360,6 +1367,7 @@ void ms_diag_module_record(unsigned long mod_id, unsigned long dep_mod_id,
 	e->event_type = (unsigned char)event_type;
 	e->reason = (unsigned char)reason;
 	e->depth = (unsigned char)(depth > 255 ? 255 : depth);
+	ms_contract_module_event(mod_id, wait_id, event_type, reason);
 }
 
 void ms_diag_module_record_by_name(const char *name, const char *dep_name,
@@ -1501,6 +1509,7 @@ void ms_diag_io_record(unsigned long io_id, int ev_type, const char *target_name
 	e->intersecting = (unsigned char) (intersecting ? 1 : 0);
 	e->ratio_pct = (unsigned char) (ratio_pct > 255 ? 255 : ratio_pct);
 	e->entries = (unsigned char) (entries > 255 ? 255 : entries);
+	ms_contract_io_event(io_id, e->target_id, ev_type);
 }
 
 long macsurf_diag_serialize_io(char *buf, long cap)
@@ -1568,6 +1577,311 @@ long macsurf_diag_serialize_io(char *buf, long cap)
 		}
 		n = diag_cat(buf, cap, n, line);
 	}
+	return n;
+}
+
+/* ================= Phase 2: expected-transition contracts =================
+ * This is deliberately a fixed, side-table state machine.  It records only
+ * transitions MacSurf itself schedules or owns; it does not guess whether a
+ * page's application state is complete. */
+#define MS_CONTRACT_CAP 128
+
+struct ms_diag_contract {
+	unsigned long id, nav_id, script_id, task_id;
+	unsigned long operation_id, request_id;
+	unsigned long io_id, target_id;
+	unsigned long module_id, wait_id;
+	unsigned long callback_count;
+	unsigned char kind, operation_kind, state, expected, last_event, eligible;
+};
+
+static struct ms_diag_contract g_contracts[MS_CONTRACT_CAP];
+static int g_contract_head;
+static unsigned long g_contract_seq;
+static unsigned long g_contract_dropped_waiting;
+
+static const char *ms_op_kind_s(int v);
+static const char *ms_op_phase_s(int v);
+
+static int ms_contract_is_unresolved(const struct ms_diag_contract *c)
+{
+	return c->state == MS_CONTRACT_WAITING ||
+		(c->state == MS_CONTRACT_FIRED &&
+		 c->expected != MS_EXPECT_NONE);
+}
+
+static const char *ms_contract_state_s(int v)
+{
+	switch (v) {
+	case MS_CONTRACT_WAITING: return "waiting";
+	case MS_CONTRACT_COMPLETED: return "completed";
+	case MS_CONTRACT_FIRED: return "fired";
+	case MS_CONTRACT_SATISFIED: return "satisfied";
+	case MS_CONTRACT_FAILED: return "failed";
+	case MS_CONTRACT_CANCELLED: return "cancelled";
+	case MS_CONTRACT_DECLINED: return "declined";
+	case MS_CONTRACT_EXPIRED: return "expired";
+	default: return "unknown";
+	}
+}
+
+static const char *ms_contract_expected_s(int v)
+{
+	switch (v) {
+	case MS_EXPECT_WIRE_START: return "wire_start";
+	case MS_EXPECT_SETTLE: return "settle";
+	case MS_EXPECT_CHECK: return "check";
+	case MS_EXPECT_CALLBACK: return "callback";
+	case MS_EXPECT_RELEASE: return "release";
+	case MS_EXPECT_CALLBACK_RETURN: return "callback_return";
+	default: return "none";
+	}
+}
+
+static struct ms_diag_contract *ms_contract_open(int kind)
+{
+	struct ms_diag_contract *c = &g_contracts[g_contract_head];
+	g_contract_head = (g_contract_head + 1) % MS_CONTRACT_CAP;
+	if (c->id != 0 && ms_contract_is_unresolved(c)) {
+		g_contract_dropped_waiting++;
+	}
+	memset(c, 0, sizeof(*c));
+	c->id = ++g_contract_seq;
+	if (c->id == 0) c->id = ++g_contract_seq;
+	c->nav_id = ms_diag_cur_nav();
+	if (c->nav_id == 0) c->nav_id = g_diag_last_nav;
+	c->script_id = ms_diag_cur_script();
+	c->task_id = ms_diag_cur_task();
+	c->kind = (unsigned char)kind;
+	c->state = MS_CONTRACT_WAITING;
+	return c;
+}
+
+static struct ms_diag_contract *ms_contract_operation_find(unsigned long op_id)
+{
+	int i;
+	for (i = 0; i < MS_CONTRACT_CAP; i++)
+		if (g_contracts[i].kind == MS_CONTRACT_OPERATION &&
+			g_contracts[i].operation_id == op_id)
+			return &g_contracts[i];
+	return NULL;
+}
+
+static void ms_contract_operation_event(unsigned long op_id, int kind,
+	int phase, int result, unsigned long request_id)
+{
+	struct ms_diag_contract *c;
+	if (op_id == 0) return;
+	c = ms_contract_operation_find(op_id);
+	if (c == NULL && phase == MS_OP_ATTEMPT) {
+		c = ms_contract_open(MS_CONTRACT_OPERATION);
+		c->operation_id = op_id;
+		c->operation_kind = (unsigned char)kind;
+		c->expected = MS_EXPECT_WIRE_START;
+	}
+	if (c == NULL) return;
+	if (request_id != 0) c->request_id = request_id;
+	c->last_event = (unsigned char)phase;
+	if (phase == MS_OP_ABORT) {
+		c->state = MS_CONTRACT_CANCELLED;
+		c->expected = MS_EXPECT_NONE;
+	} else if (result == MS_OP_DECLINE) {
+		c->state = MS_CONTRACT_DECLINED;
+		c->expected = MS_EXPECT_NONE;
+	} else if (result == MS_OP_REJECT) {
+		c->state = MS_CONTRACT_FAILED;
+		c->expected = MS_EXPECT_NONE;
+	} else if (result == MS_OP_RESOLVE) {
+		c->state = MS_CONTRACT_COMPLETED;
+		c->expected = MS_EXPECT_NONE;
+	} else if (phase == MS_OP_WIRE_START && result == MS_OP_OK) {
+		c->state = MS_CONTRACT_WAITING;
+		c->expected = MS_EXPECT_SETTLE;
+	}
+}
+
+static struct ms_diag_contract *ms_contract_io_find(unsigned long io_id,
+	unsigned long target_id)
+{
+	int i;
+	for (i = 0; i < MS_CONTRACT_CAP; i++)
+		if (g_contracts[i].kind == MS_CONTRACT_IO &&
+			g_contracts[i].io_id == io_id &&
+			g_contracts[i].target_id == target_id)
+			return &g_contracts[i];
+	return NULL;
+}
+
+static void ms_contract_io_event(unsigned long io_id, unsigned long target_id,
+	int event_type)
+{
+	struct ms_diag_contract *c;
+	int i;
+	if (io_id == 0) return;
+	if (event_type == MS_IO_DISCONNECT) {
+		for (i = 0; i < MS_CONTRACT_CAP; i++) {
+			c = &g_contracts[i];
+			if (c->kind == MS_CONTRACT_IO && c->io_id == io_id &&
+				ms_contract_is_unresolved(c)) {
+				c->state = MS_CONTRACT_CANCELLED;
+				c->expected = MS_EXPECT_NONE;
+				c->last_event = (unsigned char)event_type;
+			}
+		}
+		return;
+	}
+	if (target_id == 0) return;
+	c = ms_contract_io_find(io_id, target_id);
+	if (c == NULL && event_type == MS_IO_OBSERVE) {
+		c = ms_contract_open(MS_CONTRACT_IO);
+		c->io_id = io_id;
+		c->target_id = target_id;
+		c->expected = MS_EXPECT_CHECK;
+	}
+	if (c == NULL) return;
+	c->last_event = (unsigned char)event_type;
+	if (event_type == MS_IO_QUERY) {
+		c->expected = MS_EXPECT_CHECK;
+	} else if (event_type == MS_IO_CHECK) {
+		c->expected = MS_EXPECT_CALLBACK;
+	} else if (event_type == MS_IO_CALLBACK) {
+		c->callback_count++;
+		c->state = MS_CONTRACT_FIRED;
+		c->expected = MS_EXPECT_NONE;
+	} else if (event_type == MS_IO_SKIP || event_type == MS_IO_UNOBSERVE) {
+		c->state = MS_CONTRACT_CANCELLED;
+		c->expected = MS_EXPECT_NONE;
+	}
+}
+
+static struct ms_diag_contract *ms_contract_module_find(unsigned long mod_id,
+	unsigned long wait_id)
+{
+	int i;
+	for (i = 0; i < MS_CONTRACT_CAP; i++)
+		if (g_contracts[i].kind == MS_CONTRACT_MODULE_WAIT &&
+			g_contracts[i].module_id == mod_id &&
+			g_contracts[i].wait_id == wait_id)
+			return &g_contracts[i];
+	return NULL;
+}
+
+static void ms_contract_module_event(unsigned long mod_id,
+	unsigned long wait_id, int event_type, int reason)
+{
+	struct ms_diag_contract *c;
+	int i;
+	if (mod_id == 0) return;
+	if (event_type == MS_MOD_WAIT_REGISTERED && wait_id != 0) {
+		c = ms_contract_module_find(mod_id, wait_id);
+		if (c == NULL) {
+			c = ms_contract_open(MS_CONTRACT_MODULE_WAIT);
+			c->module_id = mod_id;
+			c->wait_id = wait_id;
+		}
+		c->state = MS_CONTRACT_WAITING;
+		c->expected = MS_EXPECT_RELEASE;
+		c->last_event = (unsigned char)event_type;
+		return;
+	}
+	if (event_type == MS_MOD_DEFINE) {
+		for (i = 0; i < MS_CONTRACT_CAP; i++) {
+			c = &g_contracts[i];
+			if (c->kind == MS_CONTRACT_MODULE_WAIT &&
+				c->module_id == mod_id && ms_contract_is_unresolved(c)) {
+				c->eligible = 1;
+				c->last_event = (unsigned char)event_type;
+			}
+		}
+		return;
+	}
+	if (wait_id == 0) return;
+	for (i = 0; i < MS_CONTRACT_CAP; i++) {
+		c = &g_contracts[i];
+		if (c->kind != MS_CONTRACT_MODULE_WAIT || c->wait_id != wait_id)
+			continue;
+		c->last_event = (unsigned char)event_type;
+		if (event_type == MS_MOD_CALLBACK_BEGIN) {
+			c->state = MS_CONTRACT_FIRED;
+			c->expected = MS_EXPECT_CALLBACK_RETURN;
+		} else if (event_type == MS_MOD_CALLBACK_RETURN) {
+			c->state = MS_CONTRACT_COMPLETED;
+			c->expected = MS_EXPECT_NONE;
+		} else if (event_type == MS_MOD_FAIL && reason != MS_MOD_REASON_NONE) {
+			c->state = MS_CONTRACT_FAILED;
+			c->expected = MS_EXPECT_NONE;
+		}
+	}
+}
+
+long macsurf_diag_serialize_pending(char *buf, long cap)
+{
+	char line[224];
+	long n = 0;
+	int i;
+	if (buf == NULL || cap < 2) return 0;
+	buf[0] = '\0';
+	n = diag_cat(buf, cap, n, "MSDIAG 1 pending\n");
+	for (i = 0; i < MS_CONTRACT_CAP; i++) {
+		struct ms_diag_contract *c = &g_contracts[i];
+		if (c->id == 0 || !ms_contract_is_unresolved(c)) continue;
+		if (c->kind == MS_CONTRACT_OPERATION) {
+			snprintf(line, sizeof line,
+				"contract=%lu nav=%lu script=%lu task=%lu kind=operation op=%lu op_kind=%s state=%s expected=%s last=%s req=%lu\n",
+				c->id, c->nav_id, c->script_id, c->task_id,
+				c->operation_id, ms_op_kind_s((int)c->operation_kind),
+				ms_contract_state_s(c->state),
+				ms_contract_expected_s(c->expected),
+				ms_op_phase_s(c->last_event), c->request_id);
+		} else if (c->kind == MS_CONTRACT_IO) {
+			snprintf(line, sizeof line,
+				"contract=%lu nav=%lu script=%lu task=%lu kind=io io=%lu target=%lu state=%s expected=%s last=%s callbacks=%lu\n",
+				c->id, c->nav_id, c->script_id, c->task_id,
+				c->io_id, c->target_id,
+				ms_contract_state_s(c->state),
+				ms_contract_expected_s(c->expected),
+				ms_io_event_s(c->last_event), c->callback_count);
+		} else {
+			snprintf(line, sizeof line,
+				"contract=%lu nav=%lu script=%lu task=%lu kind=module_wait wait=%lu mod=%lu state=%s expected=%s last=%s eligible=%d\n",
+				c->id, c->nav_id, c->script_id, c->task_id,
+				c->wait_id, c->module_id,
+				ms_contract_state_s(c->state),
+				ms_contract_expected_s(c->expected),
+				ms_mod_event_s(c->last_event), (int)c->eligible);
+		}
+		n = diag_cat(buf, cap, n, line);
+	}
+	snprintf(line, sizeof line, "dropped_waiting=%lu\n",
+		(unsigned long)g_contract_dropped_waiting);
+	n = diag_cat(buf, cap, n, line);
+	return n;
+}
+
+long macsurf_diag_serialize_settlement(char *buf, long cap)
+{
+	char line[160];
+	long n = 0;
+	unsigned long unresolved = 0;
+	int i;
+	if (buf == NULL || cap < 2) return 0;
+	for (i = 0; i < MS_CONTRACT_CAP; i++)
+		if (g_contracts[i].id != 0 && ms_contract_is_unresolved(&g_contracts[i]))
+			unresolved++;
+	buf[0] = '\0';
+	n = diag_cat(buf, cap, n, "MSDIAG 1 settlement\n");
+	n = diag_cat(buf, cap, n, "network_idle=unknown\nengine_idle=unknown\nrender_idle=unknown\n");
+	snprintf(line, sizeof line, "known_unresolved=%lu\ndropped_waiting=%lu\n",
+		unresolved, (unsigned long)g_contract_dropped_waiting);
+	n = diag_cat(buf, cap, n, line);
+	if (unresolved != 0) {
+		n = diag_cat(buf, cap, n, "settled=0\nreason=unresolved_contracts\n");
+	} else if (g_contract_dropped_waiting != 0) {
+		n = diag_cat(buf, cap, n, "settled=0\nreason=contract_capacity\n");
+	} else {
+		n = diag_cat(buf, cap, n, "settled=1\nreason=no_known_unresolved_contracts\n");
+	}
+	n = diag_cat(buf, cap, n, "scope=known_browser_contracts\npage_complete=unknown\n");
 	return n;
 }
 
@@ -1714,6 +2028,7 @@ void ms_diag_operation_record(unsigned long op_id, int kind, int phase,
 	e->result = (unsigned char)result;
 	e->reason = (unsigned char)reason;
 	e->quality = (unsigned char)quality;
+	ms_contract_operation_event(op_id, kind, phase, result, request_id);
 }
 
 static unsigned long ms_diag_error_text_id(struct ms_diag_error_text *table,

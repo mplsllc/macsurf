@@ -68,6 +68,7 @@ extern int macsurf_imgdims_lookup(struct nsurl *url, int *w, int *h);	/* fixes92
 #include "cssprobe.h"
 
 #include "macos9_content_registry.h"
+#include "macsurf_diag.h"
 
 extern int html_reconvert_content(struct content *c);
 /* fixes866 (#292): the real parser hooks html.c uses, so the harness exercises
@@ -717,6 +718,11 @@ int main(int argc, char **argv)
 	/* Defined only by the harness build. It injects a post-detach box-build
 	 * failure, so we can prove that the old rendered tree is restored. */
 	extern void macsurf_reconvert_test_fail_once(void);
+	/* The full reconvert harness intentionally exercises unrelated browser
+	 * surfaces before Test 102.  Keep a focused entry point for this bounded
+	 * diagnostics-state test so it remains independently runnable. */
+	if (argc == 2 && strcmp(argv[1], "--diag-phase2") == 0)
+		goto phase2_diag;
 
 	if (argc >= 4 && strcmp(argv[1], "--layout") == 0) {
 		g_layout_html_path = argv[2];
@@ -12485,6 +12491,118 @@ box_coords(bx, &cx, &cy);
 		}
 		fprintf(stderr, "=== Test 101 PASS ===\n");
 	} /* End of Test 99 scope */
+
+	phase2_diag:
+	/* --- Test 102: Phase 2 negative-state diagnostics ------------------
+	 * Exercise the diagnostic boundary directly: these are deterministic
+	 * MacSurf-owned state transitions, not an attempt to emulate a page or
+	 * network stack in the Linux harness. */
+	{
+		char p0[4096], p1[4096], p2[4096], settle[1024], ops[4096];
+		char needle[128];
+		unsigned long op;
+		unsigned long mod;
+
+		fprintf(stderr, "\n=== Test 102: Phase 2 negative-state diagnostics ===\n");
+
+		/* A decline before wire start is terminal and leaves no pending
+		 * request contract; its structured operation still retains req=0. */
+		op = ms_diag_operation_begin(MS_OP_FETCH, MS_ANSWER_NATIVE);
+		ms_diag_operation_record(op, MS_OP_FETCH, MS_OP_ATTEMPT,
+				MS_OP_DECLINE, MS_OPR_PRE_ABORTED,
+				MS_ANSWER_NATIVE, 0);
+		(void)macsurf_diag_serialize_operations(ops, (long)sizeof(ops));
+		snprintf(needle, sizeof(needle), "op=%lu", op);
+		if (strstr(ops, needle) == NULL ||
+				strstr(ops, "reason=pre_aborted") == NULL ||
+				strstr(ops, "req=0") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 pre-wire decline missing\n");
+			return 1;
+		}
+
+		/* A wire-started operation remains visible as WAITING until its
+		 * explicit settle record, and serialisation must not mutate it. */
+		op = ms_diag_operation_begin(MS_OP_FETCH, MS_ANSWER_NATIVE);
+		ms_diag_operation_record(op, MS_OP_FETCH, MS_OP_WIRE_START,
+				MS_OP_OK, MS_OPR_NONE, MS_ANSWER_NATIVE, 8123);
+		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
+		(void)macsurf_diag_serialize_pending(p1, (long)sizeof(p1));
+		snprintf(needle, sizeof(needle), "op=%lu", op);
+		if (strcmp(p0, p1) != 0 || strstr(p0, needle) == NULL ||
+				strstr(p0, "expected=settle") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 operation pending/reread\n");
+			return 1;
+		}
+		(void)macsurf_diag_serialize_settlement(settle, (long)sizeof(settle));
+		if (strstr(settle, "settled=0\nreason=unresolved_contracts") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 unresolved settlement\n");
+			return 1;
+		}
+		ms_diag_operation_record(op, MS_OP_FETCH, MS_OP_SETTLE,
+				MS_OP_RESOLVE, MS_OPR_NONE, MS_ANSWER_NATIVE, 8123);
+		(void)macsurf_diag_serialize_pending(p2, (long)sizeof(p2));
+		if (strstr(p2, needle) != NULL) {
+			fprintf(stderr, "FAIL: Test 102 resolved operation still pending\n");
+			return 1;
+		}
+
+		/* Observe -> check -> callback is a real shim-owned contract.  The
+		 * callback is terminal for the currently scheduled check; no later
+		 * scroll reevaluation is invented by diagnostics. */
+		ms_diag_io_record(991, MS_IO_OBSERVE, ".diag-pending",
+				0, 0, 0, 0, 0, 0, 0);
+		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
+		if (strstr(p0, "kind=io io=991") == NULL ||
+				strstr(p0, "expected=check") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO observe pending\n");
+			return 1;
+		}
+		ms_diag_io_record(991, MS_IO_CHECK, ".diag-pending",
+				0, 0, 0, 0, 1, 100, 0);
+		ms_diag_io_record(991, MS_IO_CALLBACK, ".diag-pending",
+				0, 0, 0, 0, 0, 0, 1);
+		(void)macsurf_diag_serialize_pending(p1, (long)sizeof(p1));
+		if (strstr(p1, "kind=io io=991") != NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO callback still pending\n");
+			return 1;
+		}
+
+		/* A known module definition makes its lazy waiter eligible, but only
+		 * the callback release completes the contract. */
+		mod = ms_diag_module_id("diag-wait-module");
+		ms_diag_module_record(mod, 0, MS_MOD_WAIT_REGISTERED,
+				MS_MOD_REASON_NONE, 0, 761);
+		ms_diag_module_record(mod, 0, MS_MOD_DEFINE,
+				MS_MOD_REASON_NONE, 0, 0);
+		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
+		if (strstr(p0, "kind=module_wait wait=761") == NULL ||
+				strstr(p0, "eligible=1") == NULL ||
+				strstr(p0, "expected=release") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 eligible module wait\n");
+			return 1;
+		}
+		ms_diag_module_record(mod, 0, MS_MOD_CALLBACK_BEGIN,
+				MS_MOD_REASON_NONE, 0, 761);
+		(void)macsurf_diag_serialize_pending(p1, (long)sizeof(p1));
+		if (strstr(p1, "expected=callback_return") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 module callback begin\n");
+			return 1;
+		}
+		ms_diag_module_record(mod, 0, MS_MOD_CALLBACK_RETURN,
+				MS_MOD_REASON_NONE, 0, 761);
+		(void)macsurf_diag_serialize_pending(p2, (long)sizeof(p2));
+		if (strstr(p2, "kind=module_wait wait=761") != NULL) {
+			fprintf(stderr, "FAIL: Test 102 module callback still pending\n");
+			return 1;
+		}
+		(void)macsurf_diag_serialize_settlement(settle, (long)sizeof(settle));
+		if (strstr(settle, "settled=1\nreason=no_known_unresolved_contracts") == NULL ||
+				strstr(settle, "page_complete=unknown") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 conservative settled state\n");
+			return 1;
+		}
+		fprintf(stderr, "=== Test 102 PASS: contracts retain negative state and settle conservatively ===\n");
+	}
 
 	return 0;
 }

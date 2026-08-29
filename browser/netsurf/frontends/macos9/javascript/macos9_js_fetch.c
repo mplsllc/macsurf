@@ -304,7 +304,14 @@ xhr_deliver(void *p)
 	/* sendBeacon slots are fire-and-forget: nothing to deliver, and no
 	 * JSValue/ctx to touch (the realm may be long gone). The fetch is
 	 * over, so just release the C-side allocations. */
-	if (s->beacon) { xhr_slot_wipe(s); return; }
+	if (s->beacon) {
+		ms_diag_operation_record(s->operation_id, MS_OP_BEACON, MS_OP_SETTLE,
+			s->is_error ? MS_OP_REJECT : MS_OP_RESOLVE,
+			s->is_error ? MS_OPR_NETWORK_ERROR : MS_OPR_NONE,
+			MS_ANSWER_NATIVE, s->last_request_id);
+		xhr_slot_wipe(s);
+		return;
+	}
 	ctx = s->ctx;
 	if (ctx == NULL) {
 		ms_diag_operation_record(s->operation_id, MS_OP_XHR, MS_OP_DELIVER,
@@ -928,6 +935,9 @@ qjs_beacon_send(JSContext *ctx, JSValueConst this_val,
 				JS_FreeCString(ctx, body_c);
 				JS_FreeCString(ctx, url_c);
 				xhr_slot_release(s);
+				ms_diag_operation_record(operation_id, MS_OP_BEACON,
+					MS_OP_SEND_ATTEMPT, MS_OP_DECLINE,
+					MS_OPR_BODY_ALLOC, MS_ANSWER_NATIVE, 0);
 				return JS_FALSE;
 			}
 			memcpy(s->body, body_c, (size_t) s->body_len + 1);
@@ -978,6 +988,9 @@ macos9_js_fetch_flush(JSContext *old_ctx)
 	if (old_ctx == NULL) return;
 	for (i = 0; i < QJS_XHR_MAX; i++) {
 		if (s_xhr_arena[i].used && s_xhr_arena[i].ctx == old_ctx) {
+			ms_diag_operation_record(s_xhr_arena[i].operation_id, MS_OP_XHR,
+				MS_OP_ABORT, MS_OP_OK, MS_OPR_REALM_GONE,
+				MS_ANSWER_NATIVE, s_xhr_arena[i].last_request_id);
 			xhr_slot_release(&s_xhr_arena[i]);
 		}
 	}

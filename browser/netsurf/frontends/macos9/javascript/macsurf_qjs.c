@@ -14035,13 +14035,13 @@ static void register_browser_globals(JSContext *ctx)
 							"var _mi2;"
 							"for(_mi2=0;_mi2<deps.length;_mi2++){"
 								"if(deps[_mi2]){"
-									"__msModEvent(String(deps[_mi2]),null,2,0,0);" /* MS_MOD_RESOLVE */
-									"__msModEvent(String(deps[_mi2]),null,3,0,0);" /* MS_MOD_EXECUTE */
+									"__msModEvent(String(deps[_mi2]),null,2,0,0,id);" /* MS_MOD_RESOLVE */
+									"__msModEvent(String(deps[_mi2]),null,3,0,0,id);" /* MS_MOD_EXECUTE */
 								"}"
 							"}"
 						"}else if(typeof deps==='string'){"
-							"__msModEvent(deps,null,2,0,0);"
-							"__msModEvent(deps,null,3,0,0);"
+							"__msModEvent(deps,null,2,0,0,id);"
+							"__msModEvent(deps,null,3,0,0,id);"
 						"}"
 					"}"
 					"try{"
@@ -14066,7 +14066,7 @@ static void register_browser_globals(JSContext *ctx)
 					"}catch(err){"
 						"if(typeof __msModEvent==='function'&&deps){"
 							"var _edn=(typeof deps.length==='number'&&deps[0])?String(deps[0]):String(deps);"
-							"__msModEvent(_edn,null,4,3,0);" /* MS_MOD_FAIL (FACTORY_THROW=3) */
+							"__msModEvent(_edn,null,4,3,0,id);" /* MS_MOD_FAIL (FACTORY_THROW=3) */
 						"}"
 						"try{if(typeof __msLife==='function')"
 							"__msLife('FBRL THROW id='+id+' err='+"
