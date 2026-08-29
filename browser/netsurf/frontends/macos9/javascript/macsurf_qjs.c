@@ -285,7 +285,7 @@ double macsurf_qjs_get_now(void);
  * guard / retry infrastructure stays in the binary and is re-enabled by
  * flipping this one define back to 1. */
 #ifndef MACSURF_JS_GEOMETRY
-#define MACSURF_JS_GEOMETRY 0
+#define MACSURF_JS_GEOMETRY 1
 #endif
 /* fixes1141 - AUDIT ON for the hardware baseline round. Enables per-script
  * timing, failure reasons, audit budgets, and the LIFE js done ok lines.
