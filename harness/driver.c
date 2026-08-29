@@ -12499,6 +12499,7 @@ box_coords(bx, &cx, &cy);
 	 * network stack in the Linux harness. */
 	{
 		char p0[4096], p1[4096], p2[4096], settle[1024], ops[4096], timers[2048];
+		char readiness[2048];
 		char needle[128];
 		unsigned long op;
 		unsigned long mod;
@@ -12518,6 +12519,17 @@ box_coords(bx, &cx, &cy);
 				strstr(ops, "reason=pre_aborted") == NULL ||
 				strstr(ops, "req=0") == NULL) {
 			fprintf(stderr, "FAIL: Test 102 pre-wire decline missing\n");
+			return 1;
+		}
+		/* Readiness is a progress state machine, not an elapsed-load guess.
+		 * The deterministic harness clock is zero, but a real transition still
+		 * makes its progress sequence visible and reports active. */
+		(void)macsurf_diag_serialize_readiness(readiness, (long)sizeof(readiness));
+		if (strstr(readiness, "MSDIAG 1 readiness\n") == NULL ||
+				strstr(readiness, "progress_seq=0") != NULL ||
+				strstr(readiness, "state=active\n") == NULL ||
+				strstr(readiness, "capture_ready=0\n") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 readiness progress state\n");
 			return 1;
 		}
 

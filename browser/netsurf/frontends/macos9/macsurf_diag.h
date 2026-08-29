@@ -190,6 +190,10 @@ enum ms_timer_diag_state {
 long macsurf_diag_serialize_pending(char *buf, long cap);
 long macsurf_diag_serialize_settlement(char *buf, long cap);
 long macsurf_diag_serialize_timers(char *buf, long cap);
+/* `readiness` is intentionally polling-oriented: it reports whether a
+ * hardware run is still making known browser progress, is quiescing, has
+ * settled, or has stopped with known work unresolved. */
+long macsurf_diag_serialize_readiness(char *buf, long cap);
 void ms_diag_timer_arm(unsigned long timer_id, unsigned long nav_id,
 	unsigned long script_id, unsigned long task_id, unsigned long ctx_gen);
 void ms_diag_timer_state(unsigned long timer_id, int state);

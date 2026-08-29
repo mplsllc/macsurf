@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "content/fetch.h"	/* fetch_get_{nav_id,request_id,redirect_from} */
+#include "nsutils/time.h"
 #include "utils/nsoption.h"
 
 #include "macsurf_diag.h"
@@ -29,6 +30,46 @@ static unsigned long g_req_cur_fail;
 static unsigned long g_req_last;
 static unsigned long g_req_last_fail;
 static unsigned long g_diag_last_nav;
+
+/* Readiness is derived from progress MacSurf can actually observe.  It does
+ * not guess application completion from elapsed navigation time.  The low
+ * 32 bits of the monotonic millisecond clock are sufficient: unsigned
+ * subtraction keeps elapsed intervals correct across a wrap. */
+enum ms_progress_kind {
+	MS_PROGRESS_NETWORK = 0, MS_PROGRESS_SCRIPT, MS_PROGRESS_TASK,
+	MS_PROGRESS_MUTATION, MS_PROGRESS_LAYOUT, MS_PROGRESS_PAINT,
+	MS_PROGRESS_TIMER, MS_PROGRESS_IO, MS_PROGRESS_MODULE,
+	MS_PROGRESS_CONTRACT
+};
+struct ms_diag_progress {
+	unsigned long seq, last_ms;
+	unsigned long network, tasks, mutations, layout, paint;
+};
+static struct ms_diag_progress g_progress;
+struct ms_diag_readiness_sample {
+	unsigned long network, tasks, mutations, layout, paint;
+	int valid;
+};
+static struct ms_diag_readiness_sample g_readiness_sample;
+
+static unsigned long ms_diag_progress_now(void)
+{
+	nsutils_ms_t now = 0;
+	(void)nsu_getmonotonic_ms(&now);
+	return (unsigned long)now;
+}
+
+static void ms_diag_progress(int kind)
+{
+	g_progress.seq++;
+	if (g_progress.seq == 0) g_progress.seq = 1;
+	g_progress.last_ms = ms_diag_progress_now();
+	if (kind == MS_PROGRESS_NETWORK) g_progress.network++;
+	else if (kind == MS_PROGRESS_TASK) g_progress.tasks++;
+	else if (kind == MS_PROGRESS_MUTATION) g_progress.mutations++;
+	else if (kind == MS_PROGRESS_LAYOUT) g_progress.layout++;
+	else if (kind == MS_PROGRESS_PAINT) g_progress.paint++;
+}
 
 /* --- bounded session request ring (NOT a last-nav snapshot) --- */
 #define MS_DIAG_RING_N 256
@@ -67,6 +108,7 @@ void macsurf_diag_request_record(void *f, int state, int status,
 
 	g_req_ring_head = (g_req_ring_head + 1) % MS_DIAG_RING_N;
 	g_req_ring_total++;
+	ms_diag_progress(MS_PROGRESS_NETWORK);
 
 	/* per-nav summary tally: redirects are hops, not completions */
 	if (state != MS_REQ_REDIRECT) {
@@ -84,6 +126,7 @@ void macsurf_diag_nav_done(unsigned long nav_id)
 	g_diag_last_nav = nav_id;
 	g_req_cur = 0;
 	g_req_cur_fail = 0;
+	ms_diag_progress(MS_PROGRESS_NETWORK);
 }
 
 /* Bounded append: returns the new length, never writes past cap-1, always
@@ -367,6 +410,7 @@ void ms_diag_script_enter(struct ms_diag_scope *s, unsigned long nav_id,
 	if (nav_id != 0) {
 		g_cur_nav = nav_id;
 	}
+	ms_diag_progress(MS_PROGRESS_SCRIPT);
 }
 
 void ms_diag_script_leave(struct ms_diag_scope *s, int state)
@@ -380,6 +424,7 @@ void ms_diag_script_leave(struct ms_diag_scope *s, int state)
 	}
 	g_cur_script = s->prev_script;
 	g_cur_task = s->prev_task;
+	ms_diag_progress(MS_PROGRESS_SCRIPT);
 }
 
 unsigned long ms_diag_task_enter(struct ms_diag_scope *s, int kind,
@@ -419,6 +464,7 @@ unsigned long ms_diag_task_enter(struct ms_diag_scope *s, int kind,
 	if (origin_script != 0) {
 		g_cur_script = origin_script;
 	}
+	ms_diag_progress(MS_PROGRESS_TASK);
 	return s->my_id;
 }
 
@@ -426,6 +472,7 @@ void ms_diag_task_leave(struct ms_diag_scope *s)
 {
 	g_cur_script = s->prev_script;
 	g_cur_task = s->prev_task;
+	if (s->my_id != 0) ms_diag_progress(MS_PROGRESS_TASK);
 }
 
 void ms_diag_task_set_jobs(struct ms_diag_scope *s, unsigned long jobs,
@@ -439,6 +486,7 @@ void ms_diag_task_set_jobs(struct ms_diag_scope *s, unsigned long jobs,
 		if (g_task_ring[i].id == s->my_id) {
 			g_task_ring[i].extra = jobs;
 			g_task_ring[i].capped = (short) (capped ? 1 : 0);
+			if (jobs != 0) ms_diag_progress(MS_PROGRESS_TASK);
 			break;
 		}
 	}
@@ -812,6 +860,7 @@ void ms_diag_batch_add(unsigned long batch_id, int mut_kind, unsigned long task)
 	}
 	macsurf_trace_emit(MS_TC_MUTATION, MS_TE_MUTATION_MERGE, 0, 0,
 		batch_id, (unsigned long) mut_kind);
+	ms_diag_progress(MS_PROGRESS_MUTATION);
 }
 
 void ms_diag_batch_freeze(unsigned long batch_id)
@@ -821,6 +870,7 @@ void ms_diag_batch_freeze(unsigned long batch_id)
 		e->frozen = 1;
 		macsurf_trace_emit(MS_TC_MUTATION, MS_TE_MUTATION_FREEZE, 0, 0,
 			batch_id, e->total);
+		ms_diag_progress(MS_PROGRESS_MUTATION);
 	}
 }
 
@@ -916,6 +966,7 @@ void ms_diag_render_leave(struct ms_diag_render_scope *s, int result, int reason
 	macsurf_trace_emit(MS_TC_LAYOUT,
 		(result == MS_RRES_FAIL) ? MS_TE_LAYOUT_FAIL : MS_TE_LAYOUT_DONE,
 		(short) result, (short) reason, s->my_pass, 0);
+	ms_diag_progress(MS_PROGRESS_LAYOUT);
 	ms_scope_pop(s);
 }
 
@@ -958,6 +1009,7 @@ void ms_diag_render_close(unsigned long pass_id, int result, int reason)
 	macsurf_trace_emit(MS_TC_LAYOUT,
 		(result == MS_RRES_FAIL) ? MS_TE_LAYOUT_FAIL : MS_TE_LAYOUT_DONE,
 		(short) result, (short) reason, pass_id, 0);
+	ms_diag_progress(MS_PROGRESS_LAYOUT);
 }
 
 /* --- structured stage record --- */
@@ -1031,6 +1083,7 @@ void ms_diag_paint_note(void)
 					MS_TE_PAINT_INVALIDATE, 0, 0,
 					g_cur_paint,
 					g_paint_ring[i].invalidations);
+				ms_diag_progress(MS_PROGRESS_PAINT);
 				return;
 			}
 		}
@@ -1053,6 +1106,7 @@ void ms_diag_paint_note(void)
 	}
 	macsurf_trace_emit(MS_TC_PAINT, MS_TE_PAINT_INVALIDATE, 0, 0,
 		e->id, 1);
+	ms_diag_progress(MS_PROGRESS_PAINT);
 }
 
 /* --- cur scope readers --- */
@@ -1368,6 +1422,7 @@ void ms_diag_module_record(unsigned long mod_id, unsigned long dep_mod_id,
 	e->reason = (unsigned char)reason;
 	e->depth = (unsigned char)(depth > 255 ? 255 : depth);
 	ms_contract_module_event(mod_id, wait_id, event_type, reason);
+	ms_diag_progress(MS_PROGRESS_MODULE);
 }
 
 void ms_diag_module_record_by_name(const char *name, const char *dep_name,
@@ -1510,6 +1565,7 @@ void ms_diag_io_record(unsigned long io_id, int ev_type, const char *target_name
 	e->ratio_pct = (unsigned char) (ratio_pct > 255 ? 255 : ratio_pct);
 	e->entries = (unsigned char) (entries > 255 ? 255 : entries);
 	ms_contract_io_event(io_id, e->target_id, ev_type);
+	ms_diag_progress(MS_PROGRESS_IO);
 }
 
 long macsurf_diag_serialize_io(char *buf, long cap)
@@ -1663,12 +1719,16 @@ void ms_diag_timer_arm(unsigned long id, unsigned long nav, unsigned long script
 	memset(t, 0, sizeof(*t));
 	t->id = id; t->nav_id = nav; t->script_id = script;
 	t->task_id = task; t->ctx_gen = ctx_gen; t->state = MS_TIMER_ARMED;
+	ms_diag_progress(MS_PROGRESS_TIMER);
 }
 
 void ms_diag_timer_state(unsigned long id, int state)
 {
 	struct ms_diag_timer *t = ms_timer_find(id);
-	if (t != NULL) t->state = (unsigned char)state;
+	if (t != NULL) {
+		t->state = (unsigned char)state;
+		ms_diag_progress(MS_PROGRESS_TIMER);
+	}
 }
 
 static int ms_contract_is_unresolved(const struct ms_diag_contract *c)
@@ -1804,6 +1864,7 @@ void ms_diag_io_timer_bind(unsigned long io_id, const char *target_name,
 		t = ms_timer_find(timer_id);
 	}
 	if (t != NULL && t->io_refs != 65535) t->io_refs++;
+	ms_diag_progress(MS_PROGRESS_CONTRACT);
 }
 
 static void ms_contract_io_event(unsigned long io_id, unsigned long target_id,
@@ -2011,6 +2072,96 @@ long macsurf_diag_serialize_settlement(char *buf, long cap)
 	return n;
 }
 
+/* Readiness is for the hardware runner.  Unlike the other snapshots it keeps
+ * only a tiny poll cursor so the *_recent fields mean "since the previous
+ * readiness poll".  It never touches browser, script, or contract state. */
+#define MS_READY_QUIESCING_MS 3000UL
+#define MS_READY_STALLED_MS 8000UL
+
+static unsigned long ms_readiness_unresolved(int operations_only)
+{
+	unsigned long count = 0;
+	int i;
+	for (i = 0; i < MS_CONTRACT_CAP; i++) {
+		if (g_contracts[i].id == 0 ||
+			!ms_contract_is_unresolved(&g_contracts[i])) continue;
+		if (!operations_only || g_contracts[i].kind == MS_CONTRACT_OPERATION)
+			count++;
+	}
+	return count;
+}
+
+static unsigned long ms_readiness_recent(unsigned long total,
+	unsigned long *previous, int valid)
+{
+	unsigned long result = valid ? total - *previous : 0;
+	*previous = total;
+	return result;
+}
+
+long macsurf_diag_serialize_readiness(char *buf, long cap)
+{
+	char line[384];
+	long n = 0;
+	unsigned long now, idle, unresolved, network_active;
+	unsigned long network_recent, tasks_recent, mutations_recent;
+	unsigned long layout_recent, paint_recent, nav;
+	const char *state, *reason;
+	int capture_ready = 0, settled = 0;
+
+	if (buf == NULL || cap < 2) return 0;
+	now = ms_diag_progress_now();
+	idle = (g_progress.seq == 0) ? 0 : now - g_progress.last_ms;
+	unresolved = ms_readiness_unresolved(0);
+	network_active = ms_readiness_unresolved(1);
+	network_recent = ms_readiness_recent(g_progress.network,
+		&g_readiness_sample.network, g_readiness_sample.valid);
+	tasks_recent = ms_readiness_recent(g_progress.tasks,
+		&g_readiness_sample.tasks, g_readiness_sample.valid);
+	mutations_recent = ms_readiness_recent(g_progress.mutations,
+		&g_readiness_sample.mutations, g_readiness_sample.valid);
+	layout_recent = ms_readiness_recent(g_progress.layout,
+		&g_readiness_sample.layout, g_readiness_sample.valid);
+	paint_recent = ms_readiness_recent(g_progress.paint,
+		&g_readiness_sample.paint, g_readiness_sample.valid);
+	g_readiness_sample.valid = 1;
+	nav = g_cur_nav ? g_cur_nav : g_diag_last_nav;
+
+	if (g_progress.seq == 0) {
+		state = "loading";
+		reason = "awaiting_progress";
+	} else if (idle < MS_READY_QUIESCING_MS) {
+		state = "active";
+		reason = "progressing";
+	} else if (idle < MS_READY_STALLED_MS) {
+		state = "quiescing";
+		reason = "idle_grace";
+	} else if (unresolved != 0) {
+		state = "stalled";
+		reason = "unresolved_contracts";
+		capture_ready = 1;
+	} else if (g_contract_dropped_waiting != 0) {
+		state = "stalled";
+		reason = "contract_capacity";
+		capture_ready = 1;
+	} else {
+		state = "settled";
+		reason = "no_known_unresolved_contracts";
+		capture_ready = 1;
+		settled = 1;
+	}
+
+	buf[0] = '\0';
+	n = diag_cat(buf, cap, n, "MSDIAG 1 readiness\n");
+	snprintf(line, sizeof line,
+		"state=%s\nnav=%lu\nprogress_seq=%lu\nlast_progress_ms=%lu\nidle_ms=%lu\nnetwork_active=%lu\nnetwork_recent=%lu\nnetwork_scope=known_browser_operations\ntasks_recent=%lu\nmutations_recent=%lu\nlayout_recent=%lu\npaint_recent=%lu\npending_contracts=%lu\ncapture_ready=%d\nsettled=%d\nreason=%s\nscope=known_browser_progress\n",
+		state, nav, g_progress.seq, g_progress.last_ms, idle,
+		network_active, network_recent, tasks_recent, mutations_recent,
+		layout_recent, paint_recent, unresolved, capture_ready, settled, reason);
+	n = diag_cat(buf, cap, n, line);
+	return n;
+}
+
 /* ================= Browser API operation / error diagnostics =================
  * These records intentionally sit before the fetch request ring.  A declined
  * XHR must remain visible even when no struct fetch (and therefore no req id)
@@ -2155,6 +2306,7 @@ void ms_diag_operation_record(unsigned long op_id, int kind, int phase,
 	e->reason = (unsigned char)reason;
 	e->quality = (unsigned char)quality;
 	ms_contract_operation_event(op_id, kind, phase, result, request_id);
+	ms_diag_progress(MS_PROGRESS_CONTRACT);
 }
 
 static unsigned long ms_diag_error_text_id(struct ms_diag_error_text *table,
