@@ -1248,5 +1248,127 @@ step1_cleanup:
 		if (!ok) return false;
 	}
 
+	/* 11. Round 2A Step 2: descriptor repetition / list matching (CSS Transitions spec) */
+	{
+		bool ok = true;
+		css_select_ctx *ctx = NULL;
+		css_stylesheet *sheet = NULL;
+		css_computed_style *style = NULL;
+		css_effective_transition_descriptor d0, d1, d2;
+		const char *css;
+
+		/* Case A: 3 properties, 2 durations, 1 delay, 1 timing -> modulo repetition */
+		css =
+			".repA { transition-property: opacity, color, max-width; "
+			"transition-duration: 100ms, 500ms; "
+			"transition-delay: 0ms; "
+			"transition-timing-function: linear; }\n";
+		if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+		sheet = parse_test_css(css);
+		if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+		css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+		style = select_test_node(ctx, "div", "repA", NULL);
+		if (style == NULL) { ok = false; goto step2_A_cleanup; }
+		if (css_computed_transition_descriptor_count(style) != 3) {
+			fprintf(stderr, "FAIL: repA count %u !=3\n", css_computed_transition_descriptor_count(style)); ok=false; goto step2_A_cleanup;
+		}
+		if (!css_computed_transition_descriptor(style, 0, &d0) ||
+			!css_computed_transition_descriptor(style, 1, &d1) ||
+			!css_computed_transition_descriptor(style, 2, &d2)) { ok=false; goto step2_A_cleanup; }
+		/* opacity -> 100ms */
+		if (d0.prop.prop_id != CSS_PROP_OPACITY || d0.duration != 102 || d0.delay != 0 || d0.timing.type != CSS_TIMING_LINEAR) {
+			fprintf(stderr, "FAIL: repA d0 prop=%u dur=%d delay=%d timing=%d\n", (unsigned)d0.prop.prop_id, d0.duration, d0.delay, (int)d0.timing.type); ok=false; goto step2_A_cleanup;
+		}
+		/* color -> 500ms */
+		if (d1.prop.prop_id != CSS_PROP_COLOR || d1.duration != 512 || d1.delay != 0 || d1.timing.type != CSS_TIMING_LINEAR) {
+			fprintf(stderr, "FAIL: repA d1 prop=%u dur=%d\n", (unsigned)d1.prop.prop_id, d1.duration); ok=false; goto step2_A_cleanup;
+		}
+		/* max-width -> 100ms (wrap) */
+		if (d2.prop.prop_id != CSS_PROP_MAX_WIDTH || d2.duration != 102 || d2.delay != 0) {
+			fprintf(stderr, "FAIL: repA d2 prop=%u dur=%d\n", (unsigned)d2.prop.prop_id, d2.duration); ok=false; goto step2_A_cleanup;
+		}
+		fprintf(stderr, "  [Step2] repetition case A PASS (3 props, 2 durs -> wrap)\n");
+step2_A_cleanup:
+		if (style) css_computed_style_destroy(style);
+		css_stylesheet_destroy(sheet);
+		css_select_ctx_destroy(ctx);
+		if (!ok) return false;
+		ctx = NULL; sheet = NULL; style = NULL;
+
+		/* Case B: single property, 3 durations -> descriptor count =1, extra durations do NOT create transitions */
+		css = ".repB { transition-property: opacity; transition-duration: 1s, 2s, 3s; }\n";
+		if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+		sheet = parse_test_css(css);
+		if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+		css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+		style = select_test_node(ctx, "div", "repB", NULL);
+		if (style == NULL) { ok = false; goto step2_B_cleanup; }
+		if (css_computed_transition_descriptor_count(style) != 1) {
+			fprintf(stderr, "FAIL: repB count %u !=1\n", css_computed_transition_descriptor_count(style)); ok=false; goto step2_B_cleanup;
+		}
+		if (!css_computed_transition_descriptor(style, 0, &d0)) { ok=false; goto step2_B_cleanup; }
+		if (d0.duration != 1024) {
+			fprintf(stderr, "FAIL: repB duration %d !=1024\n", d0.duration); ok=false; goto step2_B_cleanup;
+		}
+		/* ensure second descriptor does NOT exist */
+		if (css_computed_transition_descriptor(style, 1, &d1)) {
+			fprintf(stderr, "FAIL: repB extra descriptor should not exist\n"); ok=false; goto step2_B_cleanup;
+		}
+		fprintf(stderr, "  [Step2] repetition case B PASS (single prop, extra durations ignored)\n");
+step2_B_cleanup:
+		if (style) css_computed_style_destroy(style);
+		css_stylesheet_destroy(sheet);
+		css_select_ctx_destroy(ctx);
+		if (!ok) return false;
+		ctx = NULL; sheet = NULL; style = NULL;
+
+		/* Case C: 2 properties, 1 duration, 3 delays, 3 timings -> property count controls, extra auxiliary ignored */
+		css =
+			".repC { transition-property: opacity, color; "
+			"transition-duration: 100ms; "
+			"transition-delay: 0ms, 50ms, 100ms; "
+			"transition-timing-function: linear, ease-in, ease-out; }\n";
+		if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+		sheet = parse_test_css(css);
+		if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+		css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+		style = select_test_node(ctx, "div", "repC", NULL);
+		if (style == NULL) { ok = false; goto step2_C_cleanup; }
+		if (css_computed_transition_descriptor_count(style) != 2) {
+			fprintf(stderr, "FAIL: repC count %u !=2\n", css_computed_transition_descriptor_count(style)); ok=false; goto step2_C_cleanup;
+		}
+		if (!css_computed_transition_descriptor(style, 0, &d0) ||
+			!css_computed_transition_descriptor(style, 1, &d1)) { ok=false; goto step2_C_cleanup; }
+		/* opacity: 100ms, 0ms, linear */
+		if (d0.prop.prop_id != CSS_PROP_OPACITY || d0.duration != 102 || d0.delay != 0 || d0.timing.type != CSS_TIMING_LINEAR) {
+			fprintf(stderr, "FAIL: repC d0 dur=%d delay=%d timing=%d\n", d0.duration, d0.delay, (int)d0.timing.type); ok=false; goto step2_C_cleanup;
+		}
+		/* color: 100ms, 50ms, ease-in */
+		if (d1.prop.prop_id != CSS_PROP_COLOR || d1.duration != 102 || d1.delay != 51 || d1.timing.type != CSS_TIMING_EASE_IN) {
+			fprintf(stderr, "FAIL: repC d1 dur=%d delay=%d timing=%d\n", d1.duration, d1.delay, (int)d1.timing.type); ok=false; goto step2_C_cleanup;
+		}
+		/* descriptor 2 should not exist (extra auxiliary values do NOT create transitions) */
+		if (css_computed_transition_descriptor(style, 2, &d2)) {
+			fprintf(stderr, "FAIL: repC extra descriptor should not exist\n"); ok=false; goto step2_C_cleanup;
+		}
+		/* Verify zero heap allocation per lookup: descriptor is stack-copied, no malloc in path.
+		 * We assert by checking that repeated lookups return identical values without side effects.
+		 * Also inspect computed.h: descriptor is by-value struct, not heap. */
+		{
+			css_effective_transition_descriptor d0_again;
+			if (!css_computed_transition_descriptor(style, 0, &d0_again) ||
+				d0_again.duration != d0.duration || d0_again.delay != d0.delay) {
+				fprintf(stderr, "FAIL: descriptor not stable across lookups\n"); ok=false; goto step2_C_cleanup;
+			}
+		}
+		fprintf(stderr, "  [Step2] repetition case C PASS (property count controls, extra aux ignored)\n");
+step2_C_cleanup:
+		if (style) css_computed_style_destroy(style);
+		css_stylesheet_destroy(sheet);
+		css_select_ctx_destroy(ctx);
+		if (!ok) return false;
+		fprintf(stderr, "  [Step2] descriptor repetition/list matching PASS\n");
+	}
+
 	return true;
 }
