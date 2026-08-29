@@ -43,6 +43,11 @@ void macsurf_diag_request_record(void *f, int state, int status,
  * in-progress request tally into the last-nav snapshot and clears it. */
 void macsurf_diag_nav_done(unsigned long nav_id);
 
+/* Starts a new readiness epoch at an accepted top-level navigation.  Older
+ * session contracts remain available to `pending`, but cannot make this new
+ * run look stalled before it has had a chance to progress. */
+void macsurf_diag_navigation_begin(void);
+
 /* On-demand serialisers for `MSdg GET summary` / `MSdg GET gaps`. Write a
  * versioned machine-oriented block (NUL-terminated) into buf and return its
  * length excluding the NUL, or 0 on bad args. Never mutate state.

@@ -12551,6 +12551,16 @@ box_coords(bx, &cx, &cy);
 			fprintf(stderr, "FAIL: Test 102 unresolved settlement\n");
 			return 1;
 		}
+		/* A new top-level run must not inherit this old session contract into
+		 * its readiness decision; `pending` still retains it for diagnosis. */
+		macsurf_diag_navigation_begin();
+		(void)macsurf_diag_serialize_readiness(readiness, (long)sizeof(readiness));
+		if (strstr(readiness, "run_epoch=1\n") == NULL ||
+				strstr(readiness, "pending_contracts=0\n") == NULL ||
+				strstr(readiness, "state=active\n") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 readiness navigation epoch\n");
+			return 1;
+		}
 		ms_diag_operation_record(op, MS_OP_FETCH, MS_OP_SETTLE,
 				MS_OP_RESOLVE, MS_OPR_NONE, MS_ANSWER_NATIVE, 8123);
 		(void)macsurf_diag_serialize_pending(p2, (long)sizeof(p2));

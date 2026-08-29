@@ -1683,6 +1683,7 @@ static void macos9_deferred_home_load(void *pw)
 	 * synchronous path did (fixes366a). */
 	macsurf_profile_reset();
 	macsurf_profile_stamp("nav: launch home (deferred)");
+	macsurf_diag_navigation_begin();
 	browser_window_navigate(bw, home, NULL, BW_NAVIGATE_HISTORY,
 		NULL, NULL, NULL);
 	nsurl_unref(home);

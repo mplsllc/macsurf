@@ -30,6 +30,7 @@ static unsigned long g_req_cur_fail;
 static unsigned long g_req_last;
 static unsigned long g_req_last_fail;
 static unsigned long g_diag_last_nav;
+static unsigned long g_readiness_epoch;
 
 /* Readiness is derived from progress MacSurf can actually observe.  It does
  * not guess application completion from elapsed navigation time.  The low
@@ -126,6 +127,14 @@ void macsurf_diag_nav_done(unsigned long nav_id)
 	g_diag_last_nav = nav_id;
 	g_req_cur = 0;
 	g_req_cur_fail = 0;
+	ms_diag_progress(MS_PROGRESS_NETWORK);
+}
+
+void macsurf_diag_navigation_begin(void)
+{
+	g_readiness_epoch++;
+	if (g_readiness_epoch == 0) g_readiness_epoch = 1;
+	memset(&g_readiness_sample, 0, sizeof(g_readiness_sample));
 	ms_diag_progress(MS_PROGRESS_NETWORK);
 }
 
@@ -1643,7 +1652,7 @@ long macsurf_diag_serialize_io(char *buf, long cap)
 #define MS_CONTRACT_CAP 128
 
 struct ms_diag_contract {
-	unsigned long id, nav_id, script_id, task_id;
+	unsigned long id, nav_id, script_id, task_id, readiness_epoch;
 	unsigned long operation_id, request_id;
 	unsigned long io_id, target_id, timer_id;
 	unsigned long module_id, wait_id;
@@ -1785,6 +1794,7 @@ static struct ms_diag_contract *ms_contract_open(int kind)
 	if (c->nav_id == 0) c->nav_id = g_diag_last_nav;
 	c->script_id = ms_diag_cur_script();
 	c->task_id = ms_diag_cur_task();
+	c->readiness_epoch = g_readiness_epoch;
 	c->kind = (unsigned char)kind;
 	c->state = MS_CONTRACT_WAITING;
 	return c;
@@ -2084,6 +2094,7 @@ static unsigned long ms_readiness_unresolved(int operations_only)
 	int i;
 	for (i = 0; i < MS_CONTRACT_CAP; i++) {
 		if (g_contracts[i].id == 0 ||
+			g_contracts[i].readiness_epoch != g_readiness_epoch ||
 			!ms_contract_is_unresolved(&g_contracts[i])) continue;
 		if (!operations_only || g_contracts[i].kind == MS_CONTRACT_OPERATION)
 			count++;
@@ -2154,8 +2165,8 @@ long macsurf_diag_serialize_readiness(char *buf, long cap)
 	buf[0] = '\0';
 	n = diag_cat(buf, cap, n, "MSDIAG 1 readiness\n");
 	snprintf(line, sizeof line,
-		"state=%s\nnav=%lu\nprogress_seq=%lu\nlast_progress_ms=%lu\nidle_ms=%lu\nnetwork_active=%lu\nnetwork_recent=%lu\nnetwork_scope=known_browser_operations\ntasks_recent=%lu\nmutations_recent=%lu\nlayout_recent=%lu\npaint_recent=%lu\npending_contracts=%lu\ncapture_ready=%d\nsettled=%d\nreason=%s\nscope=known_browser_progress\n",
-		state, nav, g_progress.seq, g_progress.last_ms, idle,
+		"state=%s\nnav=%lu\nrun_epoch=%lu\nprogress_seq=%lu\nlast_progress_ms=%lu\nidle_ms=%lu\nnetwork_active=%lu\nnetwork_recent=%lu\nnetwork_scope=known_browser_operations\ntasks_recent=%lu\nmutations_recent=%lu\nlayout_recent=%lu\npaint_recent=%lu\npending_contracts=%lu\ncapture_ready=%d\nsettled=%d\nreason=%s\nscope=known_browser_progress\n",
+		state, nav, g_readiness_epoch, g_progress.seq, g_progress.last_ms, idle,
 		network_active, network_recent, tasks_recent, mutations_recent,
 		layout_recent, paint_recent, unresolved, capture_ready, settled, reason);
 	n = diag_cat(buf, cap, n, line);
