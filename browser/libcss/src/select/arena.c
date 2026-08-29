@@ -129,7 +129,8 @@ static inline bool arena__compare_macsurf_gradient_stops(
 static inline bool arena__is_default_transition_data(const css_computed_transition_data *d)
 {
 	if (d == NULL) return true;
-	if (d->prop_count == 1 && d->props[0].kind == CSS_TRANS_PROP_ALL &&
+	if (d->inherit_flags == 0 && d->prop_count == 1 &&
+		d->props[0].kind == CSS_TRANS_PROP_ALL &&
 		d->duration_count == 1 && d->durations[0] == 0 &&
 		d->timing_count == 1 && d->timings[0].type == CSS_TIMING_EASE &&
 		d->delay_count == 1 && d->delays[0] == 0) {
@@ -148,7 +149,8 @@ static inline bool arena__compare_transition_data(
 		return true;
 	if (a == NULL || b == NULL) return false;
 
-	if (a->prop_count != b->prop_count ||
+	if (a->inherit_flags != b->inherit_flags ||
+		a->prop_count != b->prop_count ||
 		a->duration_count != b->duration_count ||
 		a->timing_count != b->timing_count ||
 		a->delay_count != b->delay_count)

@@ -85,7 +85,8 @@ static inline css_computed_transition_data *css__clone_transition_data(const css
 static inline bool css__is_default_transition_data(const css_computed_transition_data *d)
 {
 	if (d == NULL) return true;
-	if (d->prop_count == 1 && d->props[0].kind == CSS_TRANS_PROP_ALL &&
+	if (d->inherit_flags == 0 && d->prop_count == 1 &&
+		d->props[0].kind == CSS_TRANS_PROP_ALL &&
 		d->duration_count == 1 && d->durations[0] == 0 &&
 		d->timing_count == 1 && d->timings[0].type == CSS_TIMING_EASE &&
 		d->delay_count == 1 && d->delays[0] == 0) {

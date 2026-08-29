@@ -2564,7 +2564,8 @@ bool css_computed_transition_data_equal(
 		return true;
 	if (da == NULL || db == NULL) return false;
 
-	if (da->prop_count != db->prop_count ||
+	if (da->inherit_flags != db->inherit_flags ||
+		da->prop_count != db->prop_count ||
 		da->duration_count != db->duration_count ||
 		da->timing_count != db->timing_count ||
 		da->delay_count != db->delay_count)

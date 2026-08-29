@@ -919,5 +919,54 @@ bool cssprobe_test_css_transitions(void)
 		css_select_ctx_destroy(ctx);
 	}
 
+	/* 7. CSS-wide inherit preserves transition metadata until composition. */
+	{
+		css_select_ctx *ctx = NULL;
+		css_stylesheet *sheet = NULL;
+		css_computed_style *parent = NULL, *duration_child = NULL;
+		css_computed_style *shorthand_child = NULL, *composed = NULL;
+		css_effective_transition_descriptor d0;
+		css_unit_ctx unit_ctx;
+		const css_computed_transition_data *data;
+		const char *css =
+			".parent { transition: opacity 1s linear 100ms; }\n"
+			".duration-child { transition-duration: inherit; }\n"
+			".shorthand-child { transition: inherit; }\n";
+
+		memset(&unit_ctx, 0, sizeof(unit_ctx));
+		unit_ctx.viewport_width = INTTOFIX(800);
+		unit_ctx.viewport_height = INTTOFIX(600);
+		unit_ctx.font_size_default = INTTOFIX(16);
+		if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+		sheet = parse_test_css(css);
+		if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+		css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+		parent = select_test_node(ctx, "div", "parent", NULL);
+		duration_child = select_test_node(ctx, "div", "duration-child", NULL);
+		shorthand_child = select_test_node(ctx, "div", "shorthand-child", NULL);
+		if (parent == NULL || duration_child == NULL || shorthand_child == NULL ||
+			css_computed_style_compose(parent, duration_child, &unit_ctx, &composed) != CSS_OK) {
+			fprintf(stderr, "FAIL: transition inherit setup\n"); return false;
+		}
+		data = css_computed_transition_data_get(composed);
+		if (data == NULL || data->durations[0] != 1024) {
+			fprintf(stderr, "FAIL: transition-duration inherit\n"); return false;
+		}
+		css_computed_style_destroy(composed);
+		composed = NULL;
+		if (css_computed_style_compose(parent, shorthand_child, &unit_ctx, &composed) != CSS_OK ||
+			!css_computed_transition_descriptor(composed, 0, &d0) ||
+			d0.prop.prop_id != CSS_PROP_OPACITY || d0.duration != 1024 ||
+			d0.timing.type != CSS_TIMING_LINEAR || d0.delay != 102) {
+			fprintf(stderr, "FAIL: transition shorthand inherit\n"); return false;
+		}
+		css_computed_style_destroy(composed);
+		css_computed_style_destroy(parent);
+		css_computed_style_destroy(duration_child);
+		css_computed_style_destroy(shorthand_child);
+		css_stylesheet_destroy(sheet);
+		css_select_ctx_destroy(ctx);
+	}
+
 	return true;
 }
