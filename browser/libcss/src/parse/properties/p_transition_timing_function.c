@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include <libcss/computed.h>
+#include <libcss/fpmath.h>
 #include "bytecode/bytecode.h"
 #include "bytecode/opcodes.h"
 #include "parse/properties/properties.h"
@@ -95,7 +96,7 @@ css_error css__parse_transition_timing_function_item(css_language *c,
 				if (token == NULL || token->type != CSS_TOKEN_NUMBER)
 					return CSS_INVALID;
 
-				raw_vals[i] = css__number_from_lwc_string(token->idata, true, &consumed);
+				raw_vals[i] = css__number_from_lwc_string(token->idata, false, &consumed);
 				parserutils_vector_iterate(vector, ctx);
 				consumeWhitespace(vector, ctx);
 
@@ -141,7 +142,7 @@ css_error css__parse_transition_timing_function_item(css_language *c,
 
 			count_val = css__number_from_lwc_string(token->idata, true, &consumed);
 			if (count_val <= 0) return CSS_INVALID;
-			out->step_count = (uint32_t)count_val;
+			out->step_count = (uint32_t)FIXTOINT(count_val);
 			out->step_pos = 1; /* default: end / jump-end */
 			parserutils_vector_iterate(vector, ctx);
 			consumeWhitespace(vector, ctx);

@@ -1493,5 +1493,276 @@ step3_done:
 		;
 	}
 
+	/* 13. Round 2A Step 4: fractional-time boundaries */
+	{
+		bool ok = true;
+		css_select_ctx *ctx = NULL;
+		css_stylesheet *sheet = NULL;
+		css_computed_style *style = NULL;
+		const css_computed_transition_data *data;
+		struct { const char *css; css_fixed expected; } valid_durs[] = {
+			{ ".t { transition-duration: 0s; }", 0 },
+			{ ".t { transition-duration: 0ms; }", 0 },
+			{ ".t { transition-duration: 0.5ms; }", 1 }, /* clamped from 0 */
+			{ ".t { transition-duration: 1ms; }", 1 },
+			{ ".t { transition-duration: 16.5ms; }", 16 },
+			{ ".t { transition-duration: .25s; }", 256 },
+			{ ".t { transition-duration: 0.2505s; }", 257 }, /* 0.2505*1024=256.512 rounded */
+			{ ".t { transition-duration: 1.5s; }", 1536 },
+			{ ".t { transition-duration: 10.125s; }", 10368 },
+			{ NULL, 0 }
+		};
+		struct { const char *css; css_fixed expected; } valid_delays[] = {
+			{ ".t { transition-delay: -1ms; }", -1 },
+			{ ".t { transition-delay: -0.1s; }", -102 },
+			{ ".t { transition-delay: 0.5ms; }", 1 },
+			{ ".t { transition-delay: 1ms; }", 1 },
+			{ NULL, 0 }
+		};
+		int i;
+		for (i = 0; valid_durs[i].css != NULL; i++) {
+			if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+			sheet = parse_test_css(valid_durs[i].css);
+			if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+			css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+			style = select_test_node(ctx, "div", "t", NULL);
+			if (style == NULL) { fprintf(stderr, "FAIL: Step4 dur parse null i=%d css=%s\n", i, valid_durs[i].css); ok=false; goto step4_fail; }
+			data = css_computed_transition_data_get(style);
+			if (data == NULL || data->duration_count != 1 || data->durations[0] != valid_durs[i].expected) {
+				fprintf(stderr, "FAIL: Step4 dur i=%d css=%s expected %d got %d count %d\n",
+					i, valid_durs[i].css, valid_durs[i].expected,
+					data ? data->durations[0] : -9999, data ? data->duration_count : -1);
+				ok=false; goto step4_fail;
+			}
+			css_computed_style_destroy(style); style=NULL;
+			css_stylesheet_destroy(sheet); css_select_ctx_destroy(ctx); ctx=NULL; sheet=NULL;
+		}
+		for (i = 0; valid_delays[i].css != NULL; i++) {
+			if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+			sheet = parse_test_css(valid_delays[i].css);
+			if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+			css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+			style = select_test_node(ctx, "div", "t", NULL);
+			if (style == NULL) { fprintf(stderr, "FAIL: Step4 delay parse null i=%d\n", i); ok=false; goto step4_fail; }
+			data = css_computed_transition_data_get(style);
+			if (data == NULL || data->delay_count != 1 || data->delays[0] != valid_delays[i].expected) {
+				fprintf(stderr, "FAIL: Step4 delay i=%d css=%s expected %d got %d\n",
+					i, valid_delays[i].css, valid_delays[i].expected,
+					data ? data->delays[0] : -9999);
+				ok=false; goto step4_fail;
+			}
+			css_computed_style_destroy(style); style=NULL;
+			css_stylesheet_destroy(sheet); css_select_ctx_destroy(ctx); ctx=NULL; sheet=NULL;
+		}
+		/* INVALID: negative duration must be rejected, previous value intact */
+		{
+			const char *css =
+				".neg { transition-duration: 100ms; }\n"
+				".neg { transition-duration: -1ms; }\n"
+				".neg2 { transition-duration: 200ms; }\n"
+				".neg2 { transition-duration: -0.1s; }\n";
+			if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+			sheet = parse_test_css(css);
+			if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+			css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+			style = select_test_node(ctx, "div", "neg", NULL);
+			data = css_computed_transition_data_get(style);
+			if (data == NULL || data->duration_count != 1 || data->durations[0] != 102) {
+				fprintf(stderr, "FAIL: Step4 neg duration -1ms should be rejected, keep 100ms\n"); ok=false; goto step4_fail;
+			}
+			css_computed_style_destroy(style); style=NULL;
+			style = select_test_node(ctx, "div", "neg2", NULL);
+			data = css_computed_transition_data_get(style);
+			if (data == NULL || data->duration_count != 1 || data->durations[0] != 204) {
+				fprintf(stderr, "FAIL: Step4 neg duration -0.1s should be rejected\n"); ok=false; goto step4_fail;
+			}
+			css_computed_style_destroy(style); style=NULL;
+			css_stylesheet_destroy(sheet); css_select_ctx_destroy(ctx); ctx=NULL; sheet=NULL;
+		}
+		/* large values do not wrap negative */
+		{
+			const char *css =
+				".large { transition-duration: 100s; }\n"
+				".large2 { transition-duration: 1000s; }\n";
+			if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+			sheet = parse_test_css(css);
+			if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+			css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+			style = select_test_node(ctx, "div", "large", NULL);
+			data = css_computed_transition_data_get(style);
+			if (data == NULL || data->durations[0] < 0 || data->durations[0] != 102400) {
+				fprintf(stderr, "FAIL: Step4 large 100s got %d\n", data ? data->durations[0] : -999); ok=false; goto step4_fail;
+			}
+			css_computed_style_destroy(style); style=NULL;
+			style = select_test_node(ctx, "div", "large2", NULL);
+			data = css_computed_transition_data_get(style);
+			/* 1000s = 1024000, fits in 32-bit, should not wrap negative */
+			if (data == NULL || data->durations[0] < 0 || data->durations[0] != 1024000) {
+				fprintf(stderr, "FAIL: Step4 large2 1000s got %d\n", data ? data->durations[0] : -999); ok=false; goto step4_fail;
+			}
+			css_computed_style_destroy(style); style=NULL;
+			css_stylesheet_destroy(sheet); css_select_ctx_destroy(ctx); ctx=NULL; sheet=NULL;
+		}
+		fprintf(stderr, "  [Step4] fractional-time boundaries PASS\n");
+		goto step4_done;
+step4_fail:
+		if (style) css_computed_style_destroy(style);
+		if (sheet) css_stylesheet_destroy(sheet);
+		if (ctx) css_select_ctx_destroy(ctx);
+		if (!ok) return false;
+step4_done:
+		;
+	}
+
+	/* 14. Round 2A Step 5: timing-function edge cases */
+	{
+		bool ok = true;
+		css_select_ctx *ctx = NULL;
+		css_stylesheet *sheet = NULL;
+		css_computed_style *style = NULL;
+		const css_computed_transition_data *data;
+		const char *css;
+		/* keywords */
+		css = ".t { transition-timing-function: linear, ease, ease-in, ease-out, ease-in-out; }\n";
+		if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+		sheet = parse_test_css(css);
+		if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+		css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+		style = select_test_node(ctx, "div", "t", NULL);
+		if (style == NULL) { ok=false; goto step5_fail; }
+		data = css_computed_transition_data_get(style);
+		if (data == NULL || data->timing_count != 5 ||
+			data->timings[0].type != CSS_TIMING_LINEAR ||
+			data->timings[1].type != CSS_TIMING_EASE ||
+			data->timings[2].type != CSS_TIMING_EASE_IN ||
+			data->timings[3].type != CSS_TIMING_EASE_OUT ||
+			data->timings[4].type != CSS_TIMING_EASE_IN_OUT) {
+			fprintf(stderr, "FAIL: Step5 timing keywords count=%d\n", data?data->timing_count:-1); ok=false; goto step5_fail;
+		}
+		fprintf(stderr, "  [Step5] timing keywords PASS\n");
+		css_computed_style_destroy(style); style=NULL;
+		css_stylesheet_destroy(sheet); css_select_ctx_destroy(ctx); ctx=NULL; sheet=NULL;
+
+		/* cubic-bezier preserve */
+		css = ".t { transition-timing-function: cubic-bezier(0.25, 0.1, 0.25, 1); }\n";
+		if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+		sheet = parse_test_css(css);
+		if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+		css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+		style = select_test_node(ctx, "div", "t", NULL);
+		if (style == NULL) { ok=false; goto step5_fail; }
+		data = css_computed_transition_data_get(style);
+		if (data == NULL || data->timing_count != 1 || data->timings[0].type != CSS_TIMING_CUBIC_BEZIER) {
+			fprintf(stderr, "FAIL: Step5 cubic-bezier type\n"); ok=false; goto step5_fail;
+		} else {
+			int32_t x1 = data->timings[0].x1, y1 = data->timings[0].y1, x2 = data->timings[0].x2, y2 = data->timings[0].y2;
+			/* Q16.16 via Q22.10: 0.25=256<<6=16384, 0.1=102<<6=6528 (102.4 truncated), 1=65536 */
+			if (x1 != 16384 || y1 != 6528 || x2 != 16384 || y2 != 65536) {
+				fprintf(stderr, "FAIL: Step5 cubic preserve x1=%d y1=%d x2=%d y2=%d expected 16384/6528/16384/65536\n", x1,y1,x2,y2); ok=false; goto step5_fail;
+			}
+		}
+		fprintf(stderr, "  [Step5] cubic-bezier preserve PASS\n");
+		css_computed_style_destroy(style); style=NULL;
+		css_stylesheet_destroy(sheet); css_select_ctx_destroy(ctx); ctx=NULL; sheet=NULL;
+
+		/* Y overshoot should NOT be clamped */
+		css = ".t { transition-timing-function: cubic-bezier(0.25, -0.5, 0.75, 1.5); }\n";
+		if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+		sheet = parse_test_css(css);
+		if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+		css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+		style = select_test_node(ctx, "div", "t", NULL);
+		if (style == NULL) { ok=false; goto step5_fail; }
+		data = css_computed_transition_data_get(style);
+		if (data == NULL || data->timing_count != 1 || data->timings[0].type != CSS_TIMING_CUBIC_BEZIER) {
+			fprintf(stderr, "FAIL: Step5 Y overshoot not preserved as cubic\n"); ok=false; goto step5_fail;
+		} else {
+			int32_t y1 = data->timings[0].y1, y2 = data->timings[0].y2;
+			if (y1 != (int32_t)(-0.5*65536) || y2 != (int32_t)(1.5*65536)) {
+				fprintf(stderr, "FAIL: Step5 Y overshoot y1=%d y2=%d expected %d %d\n", y1,y2, (int32_t)(-0.5*65536), (int32_t)(1.5*65536)); ok=false; goto step5_fail;
+			}
+		}
+		fprintf(stderr, "  [Step5] cubic Y overshoot PASS (not clamped)\n");
+		css_computed_style_destroy(style); style=NULL;
+		css_stylesheet_destroy(sheet); css_select_ctx_destroy(ctx); ctx=NULL; sheet=NULL;
+
+		/* invalid X must be rejected, not clamped into validity */
+		{
+			const char *css_invalid =
+				".keep { transition-timing-function: linear; }\n"
+				".keep { transition-timing-function: cubic-bezier(-0.1, 0, 0.5, 1); }\n"
+				".keep2 { transition-timing-function: ease; }\n"
+				".keep2 { transition-timing-function: cubic-bezier(0.5, 0, 1.1, 1); }\n";
+			if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+			sheet = parse_test_css(css_invalid);
+			if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+			css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+			style = select_test_node(ctx, "div", "keep", NULL);
+			data = css_computed_transition_data_get(style);
+			if (data == NULL || data->timing_count != 1 || data->timings[0].type != CSS_TIMING_LINEAR) {
+				fprintf(stderr, "FAIL: Step5 invalid X -0.1 should be rejected, keep linear\n"); ok=false; goto step5_fail;
+			}
+			css_computed_style_destroy(style); style=NULL;
+			style = select_test_node(ctx, "div", "keep2", NULL);
+			data = css_computed_transition_data_get(style);
+			if (data == NULL || data->timing_count != 1 || data->timings[0].type != CSS_TIMING_EASE) {
+				fprintf(stderr, "FAIL: Step5 invalid X 1.1 should be rejected, keep ease\n"); ok=false; goto step5_fail;
+			}
+			css_computed_style_destroy(style); style=NULL;
+			css_stylesheet_destroy(sheet); css_select_ctx_destroy(ctx); ctx=NULL; sheet=NULL;
+			fprintf(stderr, "  [Step5] invalid X rejected PASS (not clamped)\n");
+		}
+
+		/* steps() status: implemented - test count+position */
+		{
+			const char *css_steps =
+				".s1 { transition-timing-function: steps(4); }\n"
+				".s2 { transition-timing-function: steps(3, start); }\n"
+				".s3 { transition-timing-function: step-start; }\n"
+				".s4 { transition-timing-function: step-end; }\n";
+			if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+			sheet = parse_test_css(css_steps);
+			if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+			css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+			style = select_test_node(ctx, "div", "s1", NULL);
+			data = css_computed_transition_data_get(style);
+			if (data == NULL || data->timing_count != 1 || data->timings[0].type != CSS_TIMING_STEPS ||
+				data->timings[0].step_count != 4 || data->timings[0].step_pos != 1) {
+				fprintf(stderr, "FAIL: Step5 steps(4) count/pos %d %d\n", data? (int)data->timings[0].step_count:-1, data? (int)data->timings[0].step_pos:-1); ok=false; goto step5_fail;
+			}
+			css_computed_style_destroy(style); style=NULL;
+			style = select_test_node(ctx, "div", "s2", NULL);
+			data = css_computed_transition_data_get(style);
+			if (data == NULL || data->timings[0].step_count != 3 || data->timings[0].step_pos != 0) {
+				fprintf(stderr, "FAIL: Step5 steps(3, start)\n"); ok=false; goto step5_fail;
+			}
+			css_computed_style_destroy(style); style=NULL;
+			style = select_test_node(ctx, "div", "s3", NULL);
+			data = css_computed_transition_data_get(style);
+			if (data == NULL || data->timings[0].type != CSS_TIMING_STEPS || data->timings[0].step_count != 1) {
+				fprintf(stderr, "FAIL: Step5 step-start\n"); ok=false; goto step5_fail;
+			}
+			css_computed_style_destroy(style); style=NULL;
+			style = select_test_node(ctx, "div", "s4", NULL);
+			data = css_computed_transition_data_get(style);
+			if (data == NULL || data->timings[0].type != CSS_TIMING_STEPS || data->timings[0].step_count != 1 || data->timings[0].step_pos != 1) {
+				fprintf(stderr, "FAIL: Step5 step-end\n"); ok=false; goto step5_fail;
+			}
+			css_computed_style_destroy(style); style=NULL;
+			css_stylesheet_destroy(sheet); css_select_ctx_destroy(ctx); ctx=NULL; sheet=NULL;
+			fprintf(stderr, "  [Step5] steps() count+position PASS\n");
+		}
+
+		fprintf(stderr, "  [Step5] timing-function edge cases PASS\n");
+		goto step5_done;
+step5_fail:
+		if (style) css_computed_style_destroy(style);
+		if (sheet) css_stylesheet_destroy(sheet);
+		if (ctx) css_select_ctx_destroy(ctx);
+		if (!ok) return false;
+step5_done:
+		;
+	}
+
 	return true;
 }
