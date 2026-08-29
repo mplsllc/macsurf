@@ -10279,6 +10279,7 @@ static JSValue qjs_ms_mod_event(JSContext *ctx,
 	int event_type = 0;
 	int reason = 0;
 	int depth = 0;
+	int32_t wait_id = 0;
 
 	(void)this_val;
 	if (argc < 3) return JS_UNDEFINED;
@@ -10292,11 +10293,15 @@ static JSValue qjs_ms_mod_event(JSContext *ctx,
 		(void)JS_ToInt32(ctx, &reason, argv[3]);
 	if (argc > 4)
 		(void)JS_ToInt32(ctx, &depth, argv[4]);
+	if (argc > 5)
+		(void)JS_ToInt32(ctx, &wait_id, argv[5]);
 
 	if (name != NULL) {
 		extern void ms_diag_module_record_by_name(const char *name,
-			const char *dep_name, int event_type, int reason, int depth);
-		ms_diag_module_record_by_name(name, dep_name, event_type, reason, depth);
+			const char *dep_name, int event_type, int reason, int depth,
+			unsigned long wait_id);
+		ms_diag_module_record_by_name(name, dep_name, event_type, reason, depth,
+			(unsigned long)wait_id);
 		JS_FreeCString(ctx, name);
 	}
 	if (dep_name != NULL)
@@ -10334,6 +10339,61 @@ static JSValue qjs_ms_io_event(JSContext *ctx,
 	if (target_name != NULL)
 		JS_FreeCString(ctx, target_name);
 
+	return JS_UNDEFINED;
+}
+
+/* Browser API attempts that occur before a native request exists.  JS returns
+ * the opaque id to its fetch/XHR shim; later native events join on it. */
+static JSValue qjs_ms_operation_begin(JSContext *ctx,
+	JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	int kind = MS_OP_FETCH;
+	(void)this_val;
+	if (argc > 0) (void)JS_ToInt32(ctx, &kind, argv[0]);
+	return JS_NewInt32(ctx, (int32_t)ms_diag_operation_begin(kind,
+		MS_ANSWER_NATIVE));
+}
+
+static JSValue qjs_ms_operation_event(JSContext *ctx,
+	JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	int32_t op = 0, kind = 0, phase = 0, result = 0, reason = 0, quality = 0;
+	int32_t req = 0;
+	(void)this_val;
+	if (argc < 6) return JS_UNDEFINED;
+	(void)JS_ToInt32(ctx, &op, argv[0]);
+	(void)JS_ToInt32(ctx, &kind, argv[1]);
+	(void)JS_ToInt32(ctx, &phase, argv[2]);
+	(void)JS_ToInt32(ctx, &result, argv[3]);
+	(void)JS_ToInt32(ctx, &reason, argv[4]);
+	(void)JS_ToInt32(ctx, &quality, argv[5]);
+	if (argc > 6) (void)JS_ToInt32(ctx, &req, argv[6]);
+	ms_diag_operation_record((unsigned long)op, kind, phase, result, reason,
+		quality, (unsigned long)req);
+	return JS_UNDEFINED;
+}
+
+static JSValue qjs_ms_error_event(JSContext *ctx,
+	JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	int32_t op = 0, req = 0, kind = 0, boundary = 0, reason = 0;
+	const char *name = NULL;
+	const char *message = NULL;
+	(void)this_val;
+	if (argc < 5) return JS_UNDEFINED;
+	(void)JS_ToInt32(ctx, &op, argv[0]);
+	(void)JS_ToInt32(ctx, &req, argv[1]);
+	(void)JS_ToInt32(ctx, &kind, argv[2]);
+	(void)JS_ToInt32(ctx, &boundary, argv[3]);
+	(void)JS_ToInt32(ctx, &reason, argv[4]);
+	if (argc > 5 && !JS_IsNull(argv[5]) && !JS_IsUndefined(argv[5]))
+		name = JS_ToCString(ctx, argv[5]);
+	if (argc > 6 && !JS_IsNull(argv[6]) && !JS_IsUndefined(argv[6]))
+		message = JS_ToCString(ctx, argv[6]);
+	ms_diag_error_record((unsigned long)op, (unsigned long)req, kind,
+		boundary, reason, name, message);
+	if (name != NULL) JS_FreeCString(ctx, name);
+	if (message != NULL) JS_FreeCString(ctx, message);
 	return JS_UNDEFINED;
 }
 
@@ -10728,8 +10788,11 @@ static void register_browser_globals(JSContext *ctx)
 	qjs_set_func(ctx, global, "__msLife",    qjs_ms_life, 1); /* fixes1015 */
 	qjs_set_func(ctx, global, "__msScript",  qjs_ms_current_script, 0); /* fixes1312 */
 	qjs_set_func(ctx, global, "__msRafFired", qjs_raf_fired, 0); /* fixes1236 */
-	qjs_set_func(ctx, global, "__msModEvent", qjs_ms_mod_event, 5); /* Module Trace v1 */
+	qjs_set_func(ctx, global, "__msModEvent", qjs_ms_mod_event, 6); /* Module Trace v2 */
 	qjs_set_func(ctx, global, "__msIOEvent",  qjs_ms_io_event, 10); /* IO Trace v1 */
+	qjs_set_func(ctx, global, "__msOperationBegin", qjs_ms_operation_begin, 1);
+	qjs_set_func(ctx, global, "__msOperationEvent", qjs_ms_operation_event, 7);
+	qjs_set_func(ctx, global, "__msErrorEvent", qjs_ms_error_event, 7);
 	/* localStorage persistence backend, consumed by the _Storage shim
 	 * below (register_browser_globals runs per navigation, so the saved
 	 * map is reloaded on every realm build). */
@@ -11864,8 +11927,8 @@ static void register_browser_globals(JSContext *ctx)
 			"this.readyState=0;this.status=0;this.statusText='';"
 			"this.responseText='';this.response='';this.responseType='';"
 			"this.responseURL='';"
-			"this._method='GET';this._url='';this._reqHeaders=[];"
-			"this._slotId=-1;this._listeners={};"
+		"this._method='GET';this._url='';this._reqHeaders=[];"
+			"this._slotId=-1;this._opId=0;this._listeners={};"
 			"if(typeof __workLogXHR==='function')__workLogXHR('new','','');"
 		"}"
 		"XMLHttpRequest.UNSENT=0;XMLHttpRequest.OPENED=1;"
@@ -11873,6 +11936,10 @@ static void register_browser_globals(JSContext *ctx)
 		"XMLHttpRequest.DONE=4;"
 		"XMLHttpRequest.prototype.open=function(method,url,async){"
 			"this._method=String(method||'GET');this._url=String(url||'');"
+			"if(!this._opId&&typeof __msOperationBegin==='function'){"
+				"this._opId=__msOperationBegin(1);"
+				"if(typeof __msOperationEvent==='function')"
+					"__msOperationEvent(this._opId,1,1,1,0,0,0);}"
 			"this._async=(async===false)?false:true;"
 			"this.readyState=1;"
 			"if(typeof __workLogXHR==='function')"
@@ -11894,6 +11961,8 @@ static void register_browser_globals(JSContext *ctx)
 		"};"
 		"XMLHttpRequest.prototype.overrideMimeType=function(){};"
 		"XMLHttpRequest.prototype.abort=function(){"
+			"if(this._opId&&typeof __msOperationEvent==='function')"
+				"__msOperationEvent(this._opId,1,5,1,12,0,0);"
 			"if(this._slotId>=0&&typeof __xhrNativeAbort==='function')"
 				"__xhrNativeAbort(this._slotId);"
 			"this._slotId=-1;this.readyState=0;this.status=0;"
@@ -11950,6 +12019,8 @@ static void register_browser_globals(JSContext *ctx)
 			"if(typeof __workLogXHR==='function')"
 				"__workLogXHR('send',this._method,this._url);"
 			"if(typeof __xhrNativeSend!=='function'){"
+				"if(this._opId&&typeof __msOperationEvent==='function')"
+					"__msOperationEvent(this._opId,1,2,2,8,3,0);"
 				"this.readyState=4;this.status=0;this._fire('readystatechange');"
 				"this._fire('error');this._fire('loadend');return;"
 			"}"
@@ -11961,9 +12032,13 @@ static void register_browser_globals(JSContext *ctx)
 				"if(!hasCT)this._reqHeaders.push('Content-Type: '+enc.contentType);"
 				"body=enc.body;"
 			"}"
+			"if(!this._opId&&typeof __msOperationBegin==='function')"
+				"this._opId=__msOperationBegin(1);"
 			"this._slotId=__xhrNativeSend(this,this._method,this._url,"
-				"(body===undefined)?null:body,this._reqHeaders,this._async);"
+				"(body===undefined)?null:body,this._reqHeaders,this._async,this._opId);"
 			"if(this._slotId<0){"
+				"if(this._opId&&typeof __msErrorEvent==='function')"
+					"__msErrorEvent(this._opId,0,1,2,8,'NetworkError','native XHR send declined');"
 				"var self=this;"
 				"setTimeout(function(){"
 					"self.readyState=4;self.status=0;"
@@ -12171,6 +12246,7 @@ static void register_browser_globals(JSContext *ctx)
 	macsurf_qjs__safe_eval(ctx,
 		"this.fetch=function(url,opts){"
 			"opts=opts||{};"
+			"var op=(typeof __msOperationBegin==='function')?__msOperationBegin(0):0;"
 			"if(url&&typeof url==='object'&&url.url!==undefined){"
 				"var rq=url;"
 				"url=rq.url;"
@@ -12185,10 +12261,15 @@ static void register_browser_globals(JSContext *ctx)
 			 * signal rejects synchronously-ish, before any network
 			 * activity starts). */
 			"if(opts.signal&&opts.signal.aborted){"
+				"if(op&&typeof __msOperationEvent==='function')"
+					"__msOperationEvent(op,0,0,2,1,0,0);"
+				"if(op&&typeof __msErrorEvent==='function')"
+					"__msErrorEvent(op,0,2,0,1,'AbortError','fetch signal already aborted');"
 				"return Promise.reject(opts.signal.reason);}"
 			"return new Promise(function(resolve,reject){"
 				"try{"
 					"var xhr=new XMLHttpRequest();"
+					"xhr._opId=op;"
 					"xhr.open(opts.method||'GET',url,true);"
 					"if(opts.headers){"
 						"if(typeof opts.headers.forEach==='function'){"
@@ -12203,9 +12284,11 @@ static void register_browser_globals(JSContext *ctx)
 					 * calls the native __xhrNativeAbort, so this really
 					 * stops the request, not just settles the promise. */
 					"if(opts.signal){"
-						"opts.signal.addEventListener('abort',function(){"
-							"try{xhr.abort();}catch(ae){}"
-							"reject(opts.signal.reason);"
+					"opts.signal.addEventListener('abort',function(){"
+						"try{xhr.abort();}catch(ae){}"
+						"if(op&&typeof __msOperationEvent==='function')"
+							"__msOperationEvent(op,0,5,1,12,0,0);"
+						"reject(opts.signal.reason);"
 						"});"
 					"}"
 					"xhr.onreadystatechange=function(){"
@@ -12213,7 +12296,12 @@ static void register_browser_globals(JSContext *ctx)
 						"var ok=xhr.status>=200&&xhr.status<300;"
 						"if(typeof __workLogFetch==='function')"
 							"__workLogFetch(String(url),ok,xhr.status);"
-						"if(xhr.status===0){reject(new Error('Network error'));return;}"
+						"if(xhr.status===0){"
+							"if(op&&typeof __msOperationEvent==='function')"
+								"__msOperationEvent(op,0,7,4,8,0,0);"
+							"if(op&&typeof __msErrorEvent==='function')"
+								"__msErrorEvent(op,0,2,7,8,'NetworkError','XHR completed with status 0');"
+							"reject(new Error('Network error'));return;}"
 						"var respText=xhr.responseText||'';"
 						/* fixes1140 - a real Response instance, so
 						 * `r instanceof Response` holds and `r.headers`
@@ -12238,10 +12326,17 @@ static void register_browser_globals(JSContext *ctx)
 							"headers:hdrs,"
 							"url:xhr.responseURL||String(url)"
 						"});"
+						"if(op&&typeof __msOperationEvent==='function')"
+							"__msOperationEvent(op,0,7,3,0,0,0);"
 						"resolve(resp);"
 					"};"
 					"xhr.send(opts.body===undefined?null:opts.body);"
-				"}catch(e){reject(e);}"
+				"}catch(e){"
+					"if(op&&typeof __msOperationEvent==='function')"
+						"__msOperationEvent(op,0,7,4,8,0,0);"
+					"if(op&&typeof __msErrorEvent==='function')"
+						"__msErrorEvent(op,0,0,7,8,(e&&e.name)||'Error',(e&&e.message)||String(e));"
+					"reject(e);}"
 			"});"
 		"};");
 
@@ -13813,7 +13908,7 @@ static void register_browser_globals(JSContext *ctx)
 						"for(_di=0;_di<_rawDeps.length;_di++){"
 							"_cp.push(_rawDeps[_di]);"
 							"if(typeof __msModEvent==='function'&&_rawDeps[_di]){"
-								"__msModEvent(String(_rawDeps[_di]),id,1,0,1);" /* MS_MOD_REQUEST (dep) */
+								"__msModEvent(String(_rawDeps[_di]),id,5,0,1,0);" /* MS_MOD_DECLARE_DEP */
 							"}"
 						"}"
 					"}"
@@ -13880,7 +13975,7 @@ static void register_browser_globals(JSContext *ctx)
 					"if(typeof deps.length==='number'){"
 						"var _mi;"
 						"for(_mi=0;_mi<deps.length;_mi++){"
-							"if(deps[_mi])__msModEvent(String(deps[_mi]),null,1,0,0);" /* MS_MOD_REQUEST */
+							"if(deps[_mi])__msModEvent(String(deps[_mi]),null,6,0,0,id);" /* MS_MOD_WAIT_REGISTERED */
 						"}"
 					"}else if(typeof deps==='string'){"
 						"__msModEvent(deps,null,1,0,0);"
@@ -13931,6 +14026,8 @@ static void register_browser_globals(JSContext *ctx)
 			"var origCb=args[1];"
 			"if(typeof origCb==='function'){"
 				"args[1]=function(){"
+					"if(typeof __msModEvent==='function'&&deps&&deps.length){"
+						"if(deps[0])__msModEvent(String(deps[0]),null,7,0,0,id);}"
 					"rlFires++;"
 					"if(isTarget)rlTargetFires++;"
 					"if(typeof __msModEvent==='function'&&deps){"
@@ -13963,6 +14060,8 @@ static void register_browser_globals(JSContext *ctx)
 								"__msLife('FBRL RETURN id='+id);"
 							"}"
 						"}catch(e2){}"
+						"if(typeof __msModEvent==='function'&&deps&&deps.length){"
+							"if(deps[0])__msModEvent(String(deps[0]),null,8,0,0,id);}"
 						"return ret;"
 					"}catch(err){"
 						"if(typeof __msModEvent==='function'&&deps){"

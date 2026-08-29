@@ -207,7 +207,9 @@ static int harness_parse_document(const char *html, dom_document **out)
 static struct gui_misc_table g_misc_table;
 struct netsurf_table *guit = NULL;
 static struct nsoption_s g_nsoptions_storage[NSOPTION_LISTEND];
+static struct nsoption_s g_nsoptions_default_storage[NSOPTION_LISTEND];
 struct nsoption_s *nsoptions = g_nsoptions_storage;
+struct nsoption_s *nsoptions_default = g_nsoptions_default_storage;
 
 /* ------------------------------------------------------------------ */
 /* Box tree completion callback for the INITIAL build.                  */

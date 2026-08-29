@@ -1272,6 +1272,7 @@ struct ms_diag_module_event {
 	unsigned long nav_id;
 	unsigned long script_id;
 	unsigned long task_id;
+	unsigned long wait_id;
 	unsigned long module_id;
 	unsigned long dep_module_id;
 	unsigned char event_type;
@@ -1295,6 +1296,10 @@ static const char *ms_mod_event_s(int t)
 	case MS_MOD_RESOLVE:  return "resolve";
 	case MS_MOD_EXECUTE:  return "execute";
 	case MS_MOD_FAIL:     return "fail";
+	case MS_MOD_DECLARE_DEP: return "declare_dep";
+	case MS_MOD_WAIT_REGISTERED: return "wait_registered";
+	case MS_MOD_CALLBACK_BEGIN: return "callback_begin";
+	case MS_MOD_CALLBACK_RETURN: return "callback_return";
 	default:              return "unknown";
 	}
 }
@@ -1333,7 +1338,7 @@ unsigned long ms_diag_module_id(const char *name)
 }
 
 void ms_diag_module_record(unsigned long mod_id, unsigned long dep_mod_id,
-	int event_type, int reason, int depth)
+	int event_type, int reason, int depth, unsigned long wait_id)
 {
 	struct ms_diag_module_event *e;
 	int idx;
@@ -1349,6 +1354,7 @@ void ms_diag_module_record(unsigned long mod_id, unsigned long dep_mod_id,
 	e->nav_id = ms_diag_cur_nav();
 	e->script_id = ms_diag_cur_script();
 	e->task_id = ms_diag_cur_task();
+	e->wait_id = wait_id;
 	e->module_id = mod_id;
 	e->dep_module_id = dep_mod_id;
 	e->event_type = (unsigned char)event_type;
@@ -1357,11 +1363,11 @@ void ms_diag_module_record(unsigned long mod_id, unsigned long dep_mod_id,
 }
 
 void ms_diag_module_record_by_name(const char *name, const char *dep_name,
-	int event_type, int reason, int depth)
+	int event_type, int reason, int depth, unsigned long wait_id)
 {
 	unsigned long mod_id = ms_diag_module_id(name);
 	unsigned long dep_mod_id = dep_name ? ms_diag_module_id(dep_name) : 0;
-	ms_diag_module_record(mod_id, dep_mod_id, event_type, reason, depth);
+	ms_diag_module_record(mod_id, dep_mod_id, event_type, reason, depth, wait_id);
 }
 
 long macsurf_diag_serialize_modules(char *buf, long cap)
@@ -1393,11 +1399,12 @@ long macsurf_diag_serialize_modules(char *buf, long cap)
 			continue;
 		}
 		snprintf(line, sizeof line,
-			"ev=%lu nav=%lu script=%lu task=%lu mod=%lu dep=%lu "
+			"ev=%lu nav=%lu script=%lu task=%lu mod=%lu dep=%lu wait=%lu "
 			"event=%s reason=%s depth=%d\n",
 			(unsigned long) e->id, (unsigned long) e->nav_id,
 			(unsigned long) e->script_id, (unsigned long) e->task_id,
 			(unsigned long) e->module_id, (unsigned long) e->dep_module_id,
+			(unsigned long) e->wait_id,
 			ms_mod_event_s(e->event_type),
 			ms_mod_reason_s(e->reason),
 			(int) e->depth);
@@ -1559,6 +1566,239 @@ long macsurf_diag_serialize_io(char *buf, long cap)
 				(unsigned long) e->io_id, (unsigned long) e->target_id,
 				ms_io_event_s(e->event_type));
 		}
+		n = diag_cat(buf, cap, n, line);
+	}
+	return n;
+}
+
+/* ================= Browser API operation / error diagnostics =================
+ * These records intentionally sit before the fetch request ring.  A declined
+ * XHR must remain visible even when no struct fetch (and therefore no req id)
+ * was ever created. */
+#define MS_OP_RING_CAP 256
+#define MS_ERR_RING_CAP 128
+#define MS_ERR_NAME_CAP 64
+#define MS_ERR_MSG_CAP 64
+#define MS_ERR_TEXT_MAX 120
+
+struct ms_diag_operation {
+	unsigned long id, nav_id, script_id, task_id, request_id;
+	unsigned char kind, phase, result, reason, quality;
+};
+struct ms_diag_error_text {
+	unsigned long id;
+	char text[MS_ERR_TEXT_MAX];
+};
+struct ms_diag_error {
+	unsigned long id, nav_id, script_id, task_id, op_id, request_id;
+	unsigned long name_id, message_id;
+	unsigned char kind, boundary, reason;
+};
+
+static struct ms_diag_operation g_op_ring[MS_OP_RING_CAP];
+static int g_op_ring_head;
+static unsigned long g_op_seq;
+static struct ms_diag_error_text g_err_names[MS_ERR_NAME_CAP];
+static struct ms_diag_error_text g_err_messages[MS_ERR_MSG_CAP];
+static int g_err_name_count, g_err_message_count;
+static unsigned long g_err_name_seq, g_err_message_seq;
+static struct ms_diag_error g_err_ring[MS_ERR_RING_CAP];
+static int g_err_ring_head;
+static unsigned long g_err_seq;
+
+static const char *ms_op_kind_s(int v)
+{
+	switch (v) {
+	case MS_OP_FETCH: return "fetch";
+	case MS_OP_XHR: return "xhr";
+	case MS_OP_BEACON: return "beacon";
+	default: return "unknown";
+	}
+}
+static const char *ms_op_phase_s(int v)
+{
+	switch (v) {
+	case MS_OP_ATTEMPT: return "attempt";
+	case MS_OP_OPEN: return "open";
+	case MS_OP_SEND_ATTEMPT: return "send";
+	case MS_OP_NATIVE_ALLOC: return "native_alloc";
+	case MS_OP_WIRE_START: return "wire_start";
+	case MS_OP_ABORT: return "abort";
+	case MS_OP_DELIVER: return "deliver";
+	case MS_OP_SETTLE: return "settle";
+	case MS_OP_NATIVE_EVENT: return "native_event";
+	default: return "unknown";
+	}
+}
+static const char *ms_op_result_s(int v)
+{
+	switch (v) {
+	case MS_OP_PENDING: return "pending";
+	case MS_OP_OK: return "ok";
+	case MS_OP_DECLINE: return "decline";
+	case MS_OP_RESOLVE: return "resolve";
+	case MS_OP_REJECT: return "reject";
+	case MS_OP_IGNORED: return "ignored";
+	default: return "unknown";
+	}
+}
+static const char *ms_op_reason_s(int v)
+{
+	switch (v) {
+	case MS_OPR_NONE: return "none";
+	case MS_OPR_PRE_ABORTED: return "pre_aborted";
+	case MS_OPR_BAD_URL: return "bad_url";
+	case MS_OPR_NO_BASE: return "no_base";
+	case MS_OPR_ARENA_FULL: return "arena_full";
+	case MS_OPR_BODY_ALLOC: return "body_alloc";
+	case MS_OPR_HEADER_LIMIT: return "header_limit";
+	case MS_OPR_FETCH_START_FAIL: return "fetch_start_fail";
+	case MS_OPR_NETWORK_ERROR: return "network_error";
+	case MS_OPR_RESPONSE_POISONED: return "response_poisoned";
+	case MS_OPR_REDIRECT_LIMIT: return "redirect_limit";
+	case MS_OPR_REDIRECT_DOWNGRADE: return "redirect_downgrade";
+	case MS_OPR_ABORTED: return "aborted";
+	case MS_OPR_REALM_GONE: return "realm_gone";
+	case MS_OPR_TIMEOUT: return "timeout";
+	case MS_OPR_AUTH: return "auth";
+	case MS_OPR_CERT: return "cert";
+	case MS_OPR_SSL_ERROR: return "ssl_error";
+	case MS_OPR_NOT_MODIFIED: return "not_modified";
+	default: return "unknown";
+	}
+}
+static const char *ms_answer_quality_s(int v)
+{
+	switch (v) {
+	case MS_ANSWER_NATIVE: return "authoritative";
+	case MS_ANSWER_APPROX: return "approximate";
+	case MS_ANSWER_FALLBACK: return "fallback";
+	case MS_ANSWER_UNSUPPORTED: return "unsupported";
+	default: return "unknown";
+	}
+}
+static const char *ms_err_kind_s(int v)
+{
+	switch (v) {
+	case MS_ERR_JS_EXCEPTION: return "js_exception";
+	case MS_ERR_API_DECLINE: return "api_decline";
+	case MS_ERR_PROMISE_REJECTION: return "promise_rejection";
+	case MS_ERR_CALLBACK_FAILURE: return "callback_failure";
+	default: return "unknown";
+	}
+}
+
+unsigned long ms_diag_operation_begin(int kind, int quality)
+{
+	unsigned long id = ++g_op_seq;
+	ms_diag_operation_record(id, kind, MS_OP_ATTEMPT, MS_OP_PENDING,
+		MS_OPR_NONE, quality, 0);
+	return id;
+}
+
+void ms_diag_operation_record(unsigned long op_id, int kind, int phase,
+	int result, int reason, int quality, unsigned long request_id)
+{
+	struct ms_diag_operation *e;
+	if (op_id == 0) return;
+	e = &g_op_ring[g_op_ring_head];
+	g_op_ring_head = (g_op_ring_head + 1) % MS_OP_RING_CAP;
+	e->id = op_id;
+	e->nav_id = ms_diag_cur_nav();
+	if (e->nav_id == 0) e->nav_id = g_diag_last_nav;
+	e->script_id = ms_diag_cur_script();
+	e->task_id = ms_diag_cur_task();
+	e->request_id = request_id;
+	e->kind = (unsigned char)kind;
+	e->phase = (unsigned char)phase;
+	e->result = (unsigned char)result;
+	e->reason = (unsigned char)reason;
+	e->quality = (unsigned char)quality;
+}
+
+static unsigned long ms_diag_error_text_id(struct ms_diag_error_text *table,
+	int *count, int cap, unsigned long *seq, const char *text)
+{
+	int i;
+	if (text == NULL || text[0] == '\0') return 0;
+	for (i = 0; i < *count; i++) {
+		if (strncmp(table[i].text, text, MS_ERR_TEXT_MAX - 1) == 0)
+			return table[i].id;
+	}
+	if (*count >= cap) return 0;
+	table[*count].id = ++*seq;
+	ms_name_copy(table[*count].text, text);
+	(*count)++;
+	return table[*count - 1].id;
+}
+
+void ms_diag_error_record(unsigned long op_id, unsigned long request_id,
+	int kind, int boundary, int reason, const char *name, const char *message)
+{
+	struct ms_diag_error *e = &g_err_ring[g_err_ring_head];
+	g_err_ring_head = (g_err_ring_head + 1) % MS_ERR_RING_CAP;
+	e->id = ++g_err_seq;
+	e->nav_id = ms_diag_cur_nav();
+	if (e->nav_id == 0) e->nav_id = g_diag_last_nav;
+	e->script_id = ms_diag_cur_script();
+	e->task_id = ms_diag_cur_task();
+	e->op_id = op_id;
+	e->request_id = request_id;
+	e->name_id = ms_diag_error_text_id(g_err_names, &g_err_name_count,
+		MS_ERR_NAME_CAP, &g_err_name_seq, name);
+	e->message_id = ms_diag_error_text_id(g_err_messages, &g_err_message_count,
+		MS_ERR_MSG_CAP, &g_err_message_seq, message);
+	e->kind = (unsigned char)kind;
+	e->boundary = (unsigned char)boundary;
+	e->reason = (unsigned char)reason;
+}
+
+long macsurf_diag_serialize_operations(char *buf, long cap)
+{
+	char line[192]; long n = 0; int i;
+	if (buf == NULL || cap < 2) return 0;
+	buf[0] = '\0';
+	n = diag_cat(buf, cap, n, "MSDIAG 1 operations\n");
+	for (i = 0; i < MS_OP_RING_CAP; i++) {
+		int idx = (g_op_ring_head - 1 - i + 2 * MS_OP_RING_CAP) % MS_OP_RING_CAP;
+		struct ms_diag_operation *e = &g_op_ring[idx];
+		if (e->id == 0) continue;
+		snprintf(line, sizeof line,
+			"op=%lu nav=%lu script=%lu task=%lu kind=%s phase=%s result=%s reason=%s quality=%s req=%lu\n",
+			e->id, e->nav_id, e->script_id, e->task_id,
+			ms_op_kind_s(e->kind), ms_op_phase_s(e->phase),
+			ms_op_result_s(e->result), ms_op_reason_s(e->reason),
+			ms_answer_quality_s(e->quality), e->request_id);
+		n = diag_cat(buf, cap, n, line);
+	}
+	return n;
+}
+
+long macsurf_diag_serialize_errors(char *buf, long cap)
+{
+	char line[192]; long n = 0; int i;
+	if (buf == NULL || cap < 2) return 0;
+	buf[0] = '\0';
+	n = diag_cat(buf, cap, n, "MSDIAG 1 errors\n");
+	for (i = 0; i < g_err_name_count; i++) {
+		snprintf(line, sizeof line, "name=%lu text=%s\n",
+			g_err_names[i].id, g_err_names[i].text);
+		n = diag_cat(buf, cap, n, line);
+	}
+	for (i = 0; i < g_err_message_count; i++) {
+		snprintf(line, sizeof line, "message=%lu text=%s\n",
+			g_err_messages[i].id, g_err_messages[i].text);
+		n = diag_cat(buf, cap, n, line);
+	}
+	for (i = 0; i < MS_ERR_RING_CAP; i++) {
+		int idx = (g_err_ring_head - 1 - i + 2 * MS_ERR_RING_CAP) % MS_ERR_RING_CAP;
+		struct ms_diag_error *e = &g_err_ring[idx];
+		if (e->id == 0) continue;
+		snprintf(line, sizeof line,
+			"err=%lu nav=%lu script=%lu task=%lu kind=%s boundary=%d reason=%s op=%lu req=%lu name=%lu message=%lu\n",
+			e->id, e->nav_id, e->script_id, e->task_id,
+			ms_err_kind_s(e->kind), (int)e->boundary, ms_op_reason_s(e->reason),
+			e->op_id, e->request_id, e->name_id, e->message_id);
 		n = diag_cat(buf, cap, n, line);
 	}
 	return n;

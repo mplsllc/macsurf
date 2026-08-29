@@ -119,6 +119,48 @@ unsigned long ms_diag_cur_nav(void);
 long macsurf_diag_serialize_scripts(char *buf, long cap);
 long macsurf_diag_serialize_tasks(char *buf, long cap);
 
+/* ================= Browser API operation / error diagnostics =================
+ * These rings describe work attempted before a struct fetch reaches the wire
+ * request ring.  `op_id` is stable across a fetch/XHR setup and its eventual
+ * native request; request_id remains zero when the operation was declined
+ * before fetch_start(). */
+enum ms_operation_kind {
+	MS_OP_FETCH = 0, MS_OP_XHR, MS_OP_BEACON
+};
+enum ms_operation_phase {
+	MS_OP_ATTEMPT = 0, MS_OP_OPEN, MS_OP_SEND_ATTEMPT, MS_OP_NATIVE_ALLOC,
+	MS_OP_WIRE_START, MS_OP_ABORT, MS_OP_DELIVER, MS_OP_SETTLE,
+	MS_OP_NATIVE_EVENT
+};
+enum ms_operation_result {
+	MS_OP_PENDING = 0, MS_OP_OK, MS_OP_DECLINE, MS_OP_RESOLVE,
+	MS_OP_REJECT, MS_OP_IGNORED
+};
+enum ms_operation_reason {
+	MS_OPR_NONE = 0, MS_OPR_PRE_ABORTED, MS_OPR_BAD_URL, MS_OPR_NO_BASE,
+	MS_OPR_ARENA_FULL, MS_OPR_BODY_ALLOC, MS_OPR_HEADER_LIMIT,
+	MS_OPR_FETCH_START_FAIL, MS_OPR_NETWORK_ERROR, MS_OPR_RESPONSE_POISONED,
+	MS_OPR_REDIRECT_LIMIT, MS_OPR_REDIRECT_DOWNGRADE, MS_OPR_ABORTED,
+	MS_OPR_REALM_GONE, MS_OPR_TIMEOUT, MS_OPR_AUTH, MS_OPR_CERT,
+	MS_OPR_SSL_ERROR, MS_OPR_NOT_MODIFIED
+};
+enum ms_answer_quality {
+	MS_ANSWER_NATIVE = 0, MS_ANSWER_APPROX, MS_ANSWER_FALLBACK,
+	MS_ANSWER_UNSUPPORTED
+};
+enum ms_error_kind {
+	MS_ERR_JS_EXCEPTION = 0, MS_ERR_API_DECLINE, MS_ERR_PROMISE_REJECTION,
+	MS_ERR_CALLBACK_FAILURE
+};
+
+unsigned long ms_diag_operation_begin(int kind, int quality);
+void ms_diag_operation_record(unsigned long op_id, int kind, int phase,
+	int result, int reason, int quality, unsigned long request_id);
+void ms_diag_error_record(unsigned long op_id, unsigned long request_id,
+	int kind, int boundary, int reason, const char *name, const char *message);
+long macsurf_diag_serialize_operations(char *buf, long cap);
+long macsurf_diag_serialize_errors(char *buf, long cap);
+
 
 /* ==================== Milestone 1c: Causal Render Trace ====================
  * document_id   = one DOM-document lifetime (allocated at html_begin_conversion;
@@ -223,7 +265,11 @@ enum ms_mod_event_type {
 	MS_MOD_REQUEST,
 	MS_MOD_RESOLVE,
 	MS_MOD_EXECUTE,
-	MS_MOD_FAIL
+	MS_MOD_FAIL,
+	MS_MOD_DECLARE_DEP,
+	MS_MOD_WAIT_REGISTERED,
+	MS_MOD_CALLBACK_BEGIN,
+	MS_MOD_CALLBACK_RETURN
 };
 
 enum ms_mod_reason {
@@ -236,9 +282,9 @@ enum ms_mod_reason {
 
 unsigned long ms_diag_module_id(const char *name);
 void ms_diag_module_record(unsigned long mod_id, unsigned long dep_mod_id,
-	int event_type, int reason, int depth);
+	int event_type, int reason, int depth, unsigned long wait_id);
 void ms_diag_module_record_by_name(const char *name, const char *dep_name,
-	int event_type, int reason, int depth);
+	int event_type, int reason, int depth, unsigned long wait_id);
 long macsurf_diag_serialize_modules(char *buf, long cap);
 
 /* ================== IntersectionObserver Trace v1 ================== */
