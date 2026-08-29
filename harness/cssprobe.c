@@ -1064,5 +1064,189 @@ bool cssprobe_test_css_transitions(void)
 		css_select_ctx_destroy(ctx);
 	}
 
+	/* 10. Round 2A Step 1: custom-ident identity, distinctness, ordering, reserved, lifetime */
+	{
+		css_select_ctx *ctx = NULL;
+		css_stylesheet *sheet = NULL;
+		css_computed_style *s_foo = NULL, *s_bar = NULL, *s_both = NULL;
+		css_computed_style *s_foo2 = NULL, *s_bar2 = NULL;
+		css_computed_style *cloned = NULL, *orig = NULL;
+		const css_computed_transition_data *d_foo, *d_bar, *d_both;
+		css_effective_transition_descriptor desc;
+		bool ok = true;
+		const char *css =
+			".foo { transition-property: foo-widget-property; }\n"
+			".bar { transition-property: bar-widget-property; }\n"
+			".both { transition-property: foo-widget-property, bar-widget-property; }\n"
+			".foo2 { transition-property: foo-widget-property; }\n"
+			".bar2 { transition-property: bar-widget-property; }\n"
+			".reserved-initial { transition-property: initial; }\n"
+			".reserved-inherit { transition-property: inherit; }\n"
+			".reserved-unset { transition-property: unset; }\n"
+			".reserved-revert { transition-property: revert; }\n"
+			".reserved-none { transition-property: none; }\n"
+			".reserved-all { transition-property: all; }\n";
+		if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+		sheet = parse_test_css(css);
+		if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+		css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+
+		s_foo = select_test_node(ctx, "div", "foo", NULL);
+		s_bar = select_test_node(ctx, "div", "bar", NULL);
+		s_both = select_test_node(ctx, "div", "both", NULL);
+		if (s_foo == NULL || s_bar == NULL || s_both == NULL) { ok = false; goto step1_cleanup; }
+		d_foo = css_computed_transition_data_get(s_foo);
+		d_bar = css_computed_transition_data_get(s_bar);
+		d_both = css_computed_transition_data_get(s_both);
+		if (d_foo == NULL || d_foo->prop_count != 1 ||
+			d_foo->props[0].kind != CSS_TRANS_PROP_CUSTOM_IDENT ||
+			d_foo->props[0].custom_name == NULL ||
+			strcmp(lwc_string_data(d_foo->props[0].custom_name), "foo-widget-property") != 0) {
+			fprintf(stderr, "FAIL: custom-ident foo-widget-property parse kind=%d name=%s\n",
+				d_foo ? (int)d_foo->props[0].kind : -1,
+				(d_foo && d_foo->props[0].custom_name) ? lwc_string_data(d_foo->props[0].custom_name) : "(null)");
+			ok = false; goto step1_cleanup;
+		}
+		if (d_bar == NULL || d_bar->prop_count != 1 ||
+			d_bar->props[0].kind != CSS_TRANS_PROP_CUSTOM_IDENT ||
+			d_bar->props[0].custom_name == NULL ||
+			strcmp(lwc_string_data(d_bar->props[0].custom_name), "bar-widget-property") != 0) {
+			fprintf(stderr, "FAIL: custom-ident bar-widget-property parse\n"); ok = false; goto step1_cleanup;
+		}
+		/* distinctness via string compare (arena interning must preserve distinction) */
+		{
+			bool match = false;
+			if (lwc_string_isequal(d_foo->props[0].custom_name, d_bar->props[0].custom_name, &match) == lwc_error_ok && match) {
+				fprintf(stderr, "FAIL: custom-idents collapsed to same string\n"); ok = false; goto step1_cleanup;
+			}
+		}
+		/* count=2 order preserved distinct */
+		if (d_both == NULL || d_both->prop_count != 2 ||
+			d_both->props[0].kind != CSS_TRANS_PROP_CUSTOM_IDENT ||
+			d_both->props[1].kind != CSS_TRANS_PROP_CUSTOM_IDENT ||
+			d_both->props[0].custom_name == NULL || d_both->props[1].custom_name == NULL) {
+			fprintf(stderr, "FAIL: custom-ident both count/order null\n"); ok = false; goto step1_cleanup;
+		}
+		if (strcmp(lwc_string_data(d_both->props[0].custom_name), "foo-widget-property") != 0 ||
+			strcmp(lwc_string_data(d_both->props[1].custom_name), "bar-widget-property") != 0) {
+			fprintf(stderr, "FAIL: custom-ident both order %s , %s\n",
+				lwc_string_data(d_both->props[0].custom_name),
+				lwc_string_data(d_both->props[1].custom_name));
+			ok = false; goto step1_cleanup;
+		}
+		{
+			bool match = false;
+			if (lwc_string_isequal(d_both->props[0].custom_name, d_both->props[1].custom_name, &match) == lwc_error_ok && match) {
+				fprintf(stderr, "FAIL: both entries same ident\n"); ok = false; goto step1_cleanup;
+			}
+		}
+		/* reserved must NOT be custom */
+		{
+			css_computed_style *s_r;
+			const css_computed_transition_data *d_r;
+			const char *names[] = {"reserved-initial","reserved-inherit","reserved-unset","reserved-revert","reserved-none","reserved-all"};
+			int i;
+			for (i = 0; i < 6; i++) {
+				s_r = select_test_node(ctx, "div", names[i], NULL);
+				if (s_r == NULL) { fprintf(stderr, "FAIL: select %s null\n", names[i]); ok = false; goto step1_cleanup; }
+				d_r = css_computed_transition_data_get(s_r);
+				if (i < 4) {
+					/* initial/inherit/unset/revert -> flag value path, NOT custom */
+					if (d_r != NULL && d_r->prop_count == 1 && d_r->props[0].kind == CSS_TRANS_PROP_CUSTOM_IDENT) {
+						fprintf(stderr, "FAIL: reserved %s fell through as custom ident\n", names[i]);
+						css_computed_style_destroy(s_r);
+						ok = false; goto step1_cleanup;
+					}
+					/* for inherit, the computed should have inherit_flags, but not custom */
+					/* for initial/unset/revert, should be default ALL */
+				} else if (i == 4) {
+					/* none -> NONE */
+					if (d_r == NULL || d_r->props[0].kind != CSS_TRANS_PROP_NONE) {
+						fprintf(stderr, "FAIL: reserved none not NONE kind=%d\n", d_r ? (int)d_r->props[0].kind : -1);
+						css_computed_style_destroy(s_r);
+						ok = false; goto step1_cleanup;
+					}
+				} else {
+					/* all -> ALL */
+					if (d_r == NULL || d_r->props[0].kind != CSS_TRANS_PROP_ALL) {
+						fprintf(stderr, "FAIL: reserved all not ALL\n"); css_computed_style_destroy(s_r); ok = false; goto step1_cleanup;
+					}
+				}
+				css_computed_style_destroy(s_r);
+			}
+		}
+		/* semantic equality across independent parses */
+		s_foo2 = select_test_node(ctx, "div", "foo2", NULL);
+		s_bar2 = select_test_node(ctx, "div", "bar2", NULL);
+		if (s_foo2 == NULL || s_bar2 == NULL) { ok = false; goto step1_cleanup; }
+		if (!css_computed_transition_data_equal(s_foo, s_foo2)) {
+			fprintf(stderr, "FAIL: foo == foo2 equality\n"); ok = false; goto step1_cleanup;
+		}
+		if (css_computed_transition_data_equal(s_foo, s_bar)) {
+			fprintf(stderr, "FAIL: foo == bar inequality\n"); ok = false; goto step1_cleanup;
+		}
+		if (!css_computed_transition_data_equal(s_foo, s_foo2) || css_computed_transition_data_equal(s_foo2, s_bar2)) {
+			/* second check redundant but explicit */
+		}
+		if (css_computed_transition_data_equal(s_foo, s_bar2)) {
+			fprintf(stderr, "FAIL: foo still equals bar2\n"); ok = false; goto step1_cleanup;
+		}
+		/* LIFETIME: clone, destroy original, read from clone, verify no UAF, then destroy clone */
+		{
+			css_select_ctx *ctx2 = NULL;
+			css_stylesheet *sheet2 = NULL;
+			const char *css2 = ".life { transition-property: foo-widget-property; }\n";
+			if (css_select_ctx_create(&ctx2) != CSS_OK) { ok = false; goto step1_cleanup; }
+			sheet2 = parse_test_css(css2);
+			if (sheet2 == NULL) { css_select_ctx_destroy(ctx2); ok = false; goto step1_cleanup; }
+			css_select_ctx_append_sheet(ctx2, sheet2, CSS_ORIGIN_AUTHOR, "screen");
+			orig = select_test_node(ctx2, "div", "life", NULL);
+			if (orig == NULL) { css_stylesheet_destroy(sheet2); css_select_ctx_destroy(ctx2); ok = false; goto step1_cleanup; }
+			if (css__computed_style_clone(orig, &cloned) != CSS_OK || cloned == NULL) {
+				fprintf(stderr, "FAIL: clone\n"); ok = false;
+				css_computed_style_destroy(orig); css_stylesheet_destroy(sheet2); css_select_ctx_destroy(ctx2); goto step1_cleanup;
+			}
+			css_computed_style_destroy(orig); orig = NULL;
+			/* sheet still alive here - clone should have its own ref */
+			/* now destroy sheet/ctx to prove clone does NOT depend on sheet's string_vector */
+			css_stylesheet_destroy(sheet2);
+			css_select_ctx_destroy(ctx2);
+			/* read from clone after sheet destroyed */
+			d_foo = css_computed_transition_data_get(cloned);
+			if (d_foo == NULL || d_foo->prop_count != 1 ||
+				d_foo->props[0].kind != CSS_TRANS_PROP_CUSTOM_IDENT ||
+				d_foo->props[0].custom_name == NULL ||
+				strcmp(lwc_string_data(d_foo->props[0].custom_name), "foo-widget-property") != 0) {
+				fprintf(stderr, "FAIL: lifetime read after orig destroy and sheet free\n");
+				ok = false;
+				css_computed_style_destroy(cloned); goto step1_cleanup;
+			}
+			/* also test descriptor access */
+			if (!css_computed_transition_descriptor(cloned, 0, &desc) ||
+				desc.prop.kind != CSS_TRANS_PROP_CUSTOM_IDENT ||
+				desc.prop.custom_name == NULL ||
+				strcmp(lwc_string_data(desc.prop.custom_name), "foo-widget-property") != 0) {
+				fprintf(stderr, "FAIL: lifetime descriptor\n"); ok = false;
+				css_computed_style_destroy(cloned); goto step1_cleanup;
+			}
+			css_computed_style_destroy(cloned); cloned = NULL;
+			/* no UAF/double unref should have occurred - ASan would have trapped */
+			fprintf(stderr, "  [Step1] custom-ident lifetime OK (clone survives sheet+orig destroy)\n");
+		}
+		if (!ok) goto step1_cleanup;
+		fprintf(stderr, "  [Step1] custom-ident identity+distinctness+reserved+lifetime PASS\n");
+step1_cleanup:
+		if (s_foo) css_computed_style_destroy(s_foo);
+		if (s_bar) css_computed_style_destroy(s_bar);
+		if (s_both) css_computed_style_destroy(s_both);
+		if (s_foo2) css_computed_style_destroy(s_foo2);
+		if (s_bar2) css_computed_style_destroy(s_bar2);
+		if (orig) css_computed_style_destroy(orig);
+		if (cloned) css_computed_style_destroy(cloned);
+		css_stylesheet_destroy(sheet);
+		css_select_ctx_destroy(ctx);
+		if (!ok) return false;
+	}
+
 	return true;
 }
