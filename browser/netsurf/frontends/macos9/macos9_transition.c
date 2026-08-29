@@ -402,9 +402,19 @@ void macsurf_transition_tick(void *p)
         /* otherwise need invalidation: for synthetic, no paint; for real, caller will handle */
     }
     if (still_active) {
+#ifdef __MACOS9__
+        /* 2B-2 opacity: paint invalidation, conservative full content */
+        {
+            struct gui_window *gw;
+            extern struct gui_window *macos9_window_list_head(void);
+            extern void macos9_window_invalidate_content(struct gui_window *g);
+            for (gw = macos9_window_list_head(); gw != NULL; gw = gw->next) {
+                macos9_window_invalidate_content(gw);
+            }
+        }
+#endif
         macos9_schedule(MACSURF_TRANSITION_TICK_MS, macsurf_transition_tick, NULL);
         g_sched_armed = true;
-        /* for paint, we would invalidate rects here */
     } else {
         g_sched_armed = false;
         macos9_schedule(-1, macsurf_transition_tick, NULL);
@@ -424,6 +434,63 @@ void macsurf_transition_node_destroy(dom_node *node)
         }
     }
     schedule_tick_if_needed();
+}
+
+bool macsurf_transition_handle_style_change(struct html_content *c, dom_node *node,
+        const css_computed_style *old_style, const css_computed_style *new_style,
+        uint32_t now)
+{
+    css_fixed op_a = 0;
+    css_fixed op_b = 0;
+    uint8_t type_a = 0;
+    uint8_t type_b = 0;
+    css_fixed delay = 0;
+    css_fixed duration = 0;
+    css_transition_timing_entry timing;
+    uint32_t count = 0;
+    int match_idx = -1;
+    css_effective_transition_descriptor desc;
+    uint32_t i;
+    (void)c;
+    if (node == NULL || old_style == NULL || new_style == NULL) return false;
+    type_a = css_computed_opacity(old_style, &op_a);
+    type_b = css_computed_opacity(new_style, &op_b);
+    if (type_a != CSS_OPACITY_SET) op_a = 1024;
+    if (type_b != CSS_OPACITY_SET) op_b = 1024;
+    if (op_a == op_b) return false;
+    count = css_computed_transition_descriptor_count(new_style);
+    if (count == 0) return false;
+    for (i = 0; i < count; i++) {
+        if (!css_computed_transition_descriptor(new_style, i, &desc)) continue;
+        if (desc.prop.kind == CSS_TRANS_PROP_ALL) {
+            match_idx = (int)i;
+        } else if (desc.prop.kind == CSS_TRANS_PROP_KNOWN && desc.prop.prop_id == CSS_PROP_OPACITY) {
+            match_idx = (int)i;
+        } else if (desc.prop.kind == CSS_TRANS_PROP_CUSTOM_IDENT) {
+            /* not opacity */
+        }
+    }
+    if (match_idx < 0) return false;
+    if (!css_computed_transition_descriptor(new_style, (uint32_t)match_idx, &desc)) return false;
+    delay = desc.delay;
+    duration = desc.duration;
+    timing = desc.timing;
+    if (duration == 0) return false;
+    /* create/replace via generic engine */
+    return macsurf_transition_create(node, CSS_PROP_OPACITY, op_a, op_b, delay, duration, timing, now, (dom_node *)old_style) ? true : false;
+}
+
+bool macsurf_transition_get_opacity(dom_node *node, css_fixed target,
+        uint32_t now, css_fixed *out)
+{
+    css_fixed presented = 0;
+    if (out == NULL) return false;
+    if (macsurf_transition_get_presented(node, CSS_PROP_OPACITY, &presented, now)) {
+        *out = presented;
+        return true;
+    }
+    *out = target;
+    return false;
 }
 
 /* test hook for harness */

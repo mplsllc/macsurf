@@ -12776,5 +12776,16 @@ box_coords(bx, &cx, &cy);
 		fprintf(stderr, "=== Test 106 PASS: Generic engine synthetic (bounded, delay, wrap) ===\n");
 	}
 
+	/* --- Test 107: Group 2 / Round 2B-2 Opacity (synthetic + presentation) -- */
+	{
+		extern bool test_macos9_transition_opacity(void);
+		fprintf(stderr, "\n=== Test 107: Group 2 / Round 2B-2 Opacity ===\n");
+		if (!test_macos9_transition_opacity()) {
+			fprintf(stderr, "FAIL: Test 107 Opacity 2B-2\n");
+			return 1;
+		}
+		fprintf(stderr, "=== Test 107 PASS: Opacity presentation (interpolation, delay, interruption) ===\n");
+	}
+
 	return 0;
 }

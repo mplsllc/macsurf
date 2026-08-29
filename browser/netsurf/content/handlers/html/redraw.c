@@ -87,6 +87,10 @@ extern void macsurf_recon_clamp(const char *field, long value);
 #include "html/private.h"
 #include "html/layout.h"
 #include "html/macsurf_dom_compat.h"
+#include "frontends/macos9/macos9_transition.h"
+#ifdef __MACOS9__
+#include <Timer.h>
+#endif
 #include "html/layout_safe.h"
 
 /* fixes195 - inline SVG renderer lives in the macos9 frontend so it
@@ -1621,6 +1625,22 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	        } else {
 	                pstyle_fill_bg.opacity = (plot_style_fixed)PLOT_STYLE_SCALE;
 	        }
+	        /* 2B-2 opacity transition presentation overlay */
+	        {
+	            css_fixed presented = 0;
+	            uint32_t now = 0;
+#ifdef __MACOS9__
+	            now = (uint32_t)TickCount();
+#endif
+	            if (background->node != NULL) {
+	                css_fixed target = 0;
+	                uint8_t ttype = css_computed_opacity(background->style, &target);
+	                if (ttype != CSS_OPACITY_SET) target = 1024;
+	                if (macsurf_transition_get_opacity(background->node, target, now, &presented)) {
+	                    pstyle_fill_bg.opacity = (plot_style_fixed)presented;
+	                }
+	            }
+	        }
 	        {
 	                int32_t anim_packed = 0;
 	                if (css_computed_macsurf_animation_opacity(
@@ -2419,6 +2439,22 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	                pstyle_fill_bg.opacity = (plot_style_fixed)op_fixed;
 	        } else {
 	                pstyle_fill_bg.opacity = (plot_style_fixed)PLOT_STYLE_SCALE;
+	        }
+	        /* 2B-2 opacity transition presentation overlay (inline) */
+	        {
+	            css_fixed presented = 0;
+	            uint32_t now = 0;
+#ifdef __MACOS9__
+	            now = (uint32_t)TickCount();
+#endif
+	            if (box->node != NULL) {
+	                css_fixed target = 0;
+	                uint8_t ttype = css_computed_opacity(box->style, &target);
+	                if (ttype != CSS_OPACITY_SET) target = 1024;
+	                if (macsurf_transition_get_opacity(box->node, target, now, &presented)) {
+	                    pstyle_fill_bg.opacity = (plot_style_fixed)presented;
+	                }
+	            }
 	        }
 	        {
 	                int32_t anim_packed_il = 0;

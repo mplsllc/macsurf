@@ -56,6 +56,14 @@ void macsurf_transition_node_destroy(dom_node *node);
 int macsurf_transition_active_count(void);
 bool macsurf_transition_scheduler_active(void);
 
+/* 2B-2 opacity: shared style-change entry point */
+struct html_content;
+bool macsurf_transition_handle_style_change(struct html_content *c, dom_node *node,
+        const css_computed_style *old_style, const css_computed_style *new_style,
+        uint32_t now);
+bool macsurf_transition_get_opacity(dom_node *node, css_fixed target,
+        uint32_t now, css_fixed *out);
+
 /* for tests: expose conversion */
 int macsurf_transition_fixed_to_ticks(css_fixed v);
 css_fixed macsurf_transition_ease_linear(css_fixed t);

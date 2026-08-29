@@ -62,6 +62,10 @@
 #include "html/html.h"
 #include "macsurf_debug.h"
 #include "macsurf_diag.h"	/* MacSurf Trace 1c: doc_id + render-stage records */
+#include "frontends/macos9/macos9_transition.h"
+#ifdef __MACOS9__
+#include <Timer.h>
+#endif
 
 /* fixes518: frontend scheduler cancellation (forward-declared here, Mac-only
  * fork, same approach as macsurf_debug_log_writef in content_protected.h).
@@ -3690,6 +3694,14 @@ int html_reconvert_fast_style(struct content *base_c, void *vnode)
 	if (new_styles == NULL) return -1;
 
 	if (css_computed_style_is_paint_only_diff(box->style, new_styles->styles[CSS_PSEUDO_ELEMENT_NONE])) {
+		/* 2B-2 opacity: A->B transition check before style replacement */
+		{
+			uint32_t now = 0;
+#ifdef __MACOS9__
+			now = (uint32_t)TickCount();
+#endif
+			macsurf_transition_handle_style_change(c, node, box->style, new_styles->styles[CSS_PSEUDO_ELEMENT_NONE], now);
+		}
 		if (box->custom_env != NULL && !(box->flags & CLONE))
 			css_custom_env_unref(box->custom_env);
 		if (!(box->flags & CLONE)) box->custom_env = new_env;

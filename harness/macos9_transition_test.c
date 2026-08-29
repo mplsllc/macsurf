@@ -307,3 +307,172 @@ done:
     macsurf_transition_reset();
     return ok;
 }
+
+bool test_macos9_transition_opacity(void)
+{
+    dom_node *n = NULL;
+    css_fixed out = 0;
+    css_transition_timing_entry timing;
+    bool ok = true;
+    uint32_t now = 0;
+    n = create_test_node();
+    if (n == NULL) { fprintf(stderr, "FAIL opacity create node\n"); return false; }
+    macsurf_transition_init();
+    timing.type = CSS_TIMING_LINEAR; timing.x1=0; timing.y1=0; timing.x2=0; timing.y2=0; timing.step_count=0; timing.step_pos=0;
+
+    /* 6. initial style -> no effect handled via handle_style_change, but synthetic: */
+    /* For direct create, initial anchor NULL should not create */
+    if (macsurf_transition_create(n, CSS_PROP_OPACITY, 0, 1024, 0, 1024, timing, 0, NULL) != 0) {
+        fprintf(stderr, "FAIL opacity initial\n"); ok=false; goto done_op;
+    }
+    /* 7. same opacity -> no effect */
+    if (macsurf_transition_create(n, CSS_PROP_OPACITY, 512, 512, 0, 1024, timing, 0, n) != 0) {
+        fprintf(stderr, "FAIL opacity same\n"); ok=false; goto done_op;
+    }
+    /* 9. explicit opacity descriptor -> effect */
+    now = 100;
+    macsurf_transition_test_now = now;
+    if (macsurf_transition_create(n, CSS_PROP_OPACITY, 0, 1024, 0, 1024, timing, now, n) == 0) {
+        fprintf(stderr, "FAIL opacity explicit create\n"); ok=false; goto done_op;
+    }
+    if (!macsurf_transition_get_presented(n, CSS_PROP_OPACITY, &out, now) || out != 0) {
+        fprintf(stderr, "FAIL opacity start %d\n", (int)out); ok=false; goto done_op;
+    }
+    /* 14. midpoint */
+    now += 30;
+    macsurf_transition_test_now = now;
+    if (!macsurf_transition_get_presented(n, CSS_PROP_OPACITY, &out, now) || out < 400 || out > 600) {
+        fprintf(stderr, "FAIL opacity midpoint %d\n", (int)out); ok=false; goto done_op;
+    }
+    /* 15. completion */
+    now += 40;
+    macsurf_transition_test_now = now;
+    if (!macsurf_transition_get_presented(n, CSS_PROP_OPACITY, &out, now) || out != 1024) {
+        fprintf(stderr, "FAIL opacity end %d\n", (int)out); ok=false; goto done_op;
+    }
+    macsurf_transition_tick(NULL);
+    if (macsurf_transition_has_active()) { fprintf(stderr, "FAIL opacity not retired\n"); ok=false; goto done_op; }
+    fprintf(stderr, "  [2B-2] opacity 0->1 linear PASS\n");
+    macsurf_transition_reset();
+    destroy_test_node(n); n = create_test_node();
+    if (n == NULL) { ok=false; goto done_op; }
+
+    /* 16. 1->0 */
+    now = 200;
+    macsurf_transition_test_now = now;
+    if (macsurf_transition_create(n, CSS_PROP_OPACITY, 1024, 0, 0, 1024, timing, now, n) == 0) { fprintf(stderr, "FAIL 1->0 create\n"); ok=false; goto done_op; }
+    now += 30;
+    macsurf_transition_test_now = now;
+    if (!macsurf_transition_get_presented(n, CSS_PROP_OPACITY, &out, now) || out < 400 || out > 600) { fprintf(stderr, "FAIL 1->0 midpoint %d\n", (int)out); ok=false; goto done_op; }
+    fprintf(stderr, "  [2B-2] opacity 1->0 PASS\n");
+    macsurf_transition_reset();
+
+    /* 11. zero duration -> no effect */
+    now = 300;
+    macsurf_transition_test_now = now;
+    if (macsurf_transition_create(n, CSS_PROP_OPACITY, 0, 1024, 0, 0, timing, now, n) != 0) { fprintf(stderr, "FAIL zero duration\n"); ok=false; goto done_op; }
+    fprintf(stderr, "  [2B-2] zero duration PASS\n");
+
+    /* 17. +delay holds start */
+    now = 400;
+    macsurf_transition_test_now = now;
+    if (macsurf_transition_create(n, CSS_PROP_OPACITY, 0, 1024, 512, 1024, timing, now, n) == 0) { fprintf(stderr, "FAIL +delay create\n"); ok=false; goto done_op; }
+    if (!macsurf_transition_get_presented(n, CSS_PROP_OPACITY, &out, now) || out != 0) { fprintf(stderr, "FAIL +delay start %d\n", (int)out); ok=false; goto done_op; }
+    now += 10;
+    macsurf_transition_test_now = now;
+    if (!macsurf_transition_get_presented(n, CSS_PROP_OPACITY, &out, now) || out != 0) { fprintf(stderr, "FAIL +delay mid %d\n", (int)out); ok=false; goto done_op; }
+    fprintf(stderr, "  [2B-2] +delay PASS\n");
+    macsurf_transition_reset();
+
+    /* 18. -delay starts progressed */
+    now = 500;
+    macsurf_transition_test_now = now;
+    if (macsurf_transition_create(n, CSS_PROP_OPACITY, 0, 1024, -256, 1024, timing, now, n) == 0) { fprintf(stderr, "FAIL -delay create\n"); ok=false; goto done_op; }
+    if (!macsurf_transition_get_presented(n, CSS_PROP_OPACITY, &out, now) || out < 200 || out > 300) { fprintf(stderr, "FAIL -delay %d\n", (int)out); ok=false; goto done_op; }
+    fprintf(stderr, "  [2B-2] -delay PASS\n");
+    macsurf_transition_reset();
+
+    /* 19. -delay >= duration completes immediately */
+    now = 600;
+    macsurf_transition_test_now = now;
+    if (macsurf_transition_create(n, CSS_PROP_OPACITY, 0, 1024, -1024, 1024, timing, now, n) != 0) { fprintf(stderr, "FAIL -delay beyond should not create\n"); ok=false; goto done_op; }
+    if (macsurf_transition_has_active()) { fprintf(stderr, "FAIL -delay beyond active\n"); ok=false; goto done_op; }
+    fprintf(stderr, "  [2B-2] -delay beyond PASS\n");
+
+    /* 20-25 timing */
+    {
+        css_transition_timing_entry t2;
+        t2.type = CSS_TIMING_EASE; t2.x1=0; t2.y1=0; t2.x2=0; t2.y2=0; t2.step_count=0; t2.step_pos=0;
+        now = 700; macsurf_transition_test_now = now;
+        if (macsurf_transition_create(n, CSS_PROP_OPACITY, 0, 1024, 0, 1024, t2, now, n)==0) { fprintf(stderr, "FAIL ease create\n"); ok=false; goto done_op; }
+        macsurf_transition_reset();
+        t2.type = CSS_TIMING_CUBIC_BEZIER; t2.x1=16384; t2.y1=6553; t2.x2=16384; t2.y2=65536;
+        now = 710; macsurf_transition_test_now = now;
+        if (macsurf_transition_create(n, CSS_PROP_OPACITY, 0, 1024, 0, 1024, t2, now, n)==0) { fprintf(stderr, "FAIL cubic create\n"); ok=false; goto done_op; }
+        macsurf_transition_reset();
+        t2.type = CSS_TIMING_STEPS; t2.step_count=4; t2.step_pos=1;
+        now = 720; macsurf_transition_test_now = now;
+        if (macsurf_transition_create(n, CSS_PROP_OPACITY, 0, 1024, 0, 1024, t2, now, n)==0) { fprintf(stderr, "FAIL steps create\n"); ok=false; goto done_op; }
+        macsurf_transition_reset();
+        fprintf(stderr, "  [2B-2] timing variations PASS\n");
+    }
+
+    /* 26. interruption */
+    now = 800;
+    macsurf_transition_test_now = now;
+    if (macsurf_transition_create(n, CSS_PROP_OPACITY, 0, 1024, 0, 1024, timing, now, n)==0) { fprintf(stderr, "FAIL interrupt create\n"); ok=false; goto done_op; }
+    now += 24; /* 40% of 60 ticks =24 */
+    macsurf_transition_test_now = now;
+    if (!macsurf_transition_get_presented(n, CSS_PROP_OPACITY, &out, now) || out < 300 || out > 500) { fprintf(stderr, "FAIL interrupt mid %d\n", (int)out); ok=false; goto done_op; }
+    {
+        css_fixed mid = out;
+        /* retarget to 0.2 = 204 */
+        if (macsurf_transition_create(n, CSS_PROP_OPACITY, mid, 204, 0, 1024, timing, now, n)==0) {
+            /* create will sample current presented as start, so pass dummy start */
+            fprintf(stderr, "FAIL interrupt retarget\n"); ok=false; goto done_op;
+        }
+        /* new start should be ~mid, not 0 or 1024 */
+        if (!macsurf_transition_get_presented(n, CSS_PROP_OPACITY, &out, now) || out < 300 || out > 500) { fprintf(stderr, "FAIL interrupt new start %d vs mid %d\n", (int)out, (int)mid); ok=false; goto done_op; }
+        /* check only one effect */
+        if (macsurf_transition_active_count() != 1) { fprintf(stderr, "FAIL interrupt count %d\n", macsurf_transition_active_count()); ok=false; goto done_op; }
+    }
+    fprintf(stderr, "  [2B-2] interruption PASS\n");
+    macsurf_transition_reset();
+
+    /* 27. teardown during delay/active */
+    now = 900;
+    macsurf_transition_test_now = now;
+    if (macsurf_transition_create(n, CSS_PROP_OPACITY, 0, 1024, 512, 1024, timing, now, n)==0) { fprintf(stderr, "FAIL teardown delay create\n"); ok=false; goto done_op; }
+    macsurf_transition_node_destroy(n);
+    if (macsurf_transition_has_active()) { fprintf(stderr, "FAIL teardown delay still active\n"); ok=false; goto done_op; }
+    /* recreate for active */
+    destroy_test_node(n); n = create_test_node();
+    now = 910;
+    macsurf_transition_test_now = now;
+    if (macsurf_transition_create(n, CSS_PROP_OPACITY, 0, 1024, 0, 1024, timing, now, n)==0) { fprintf(stderr, "FAIL teardown active create\n"); ok=false; goto done_op; }
+    now += 10;
+    macsurf_transition_test_now = now;
+    macsurf_transition_get_presented(n, CSS_PROP_OPACITY, &out, now);
+    macsurf_transition_node_destroy(n);
+    if (macsurf_transition_has_active()) { fprintf(stderr, "FAIL teardown active still\n"); ok=false; goto done_op; }
+    fprintf(stderr, "  [2B-2] teardown PASS\n");
+    macsurf_transition_reset();
+
+    /* 29. scheduler inactive */
+    if (macsurf_transition_scheduler_active()) { fprintf(stderr, "FAIL scheduler inactive\n"); ok=false; goto done_op; }
+    now = 1000;
+    macsurf_transition_test_now = now;
+    if (macsurf_transition_create(n, CSS_PROP_OPACITY, 0, 1024, 0, 1024, timing, now, n)==0) { fprintf(stderr, "FAIL scheduler create\n"); ok=false; goto done_op; }
+    if (!macsurf_transition_scheduler_active()) { fprintf(stderr, "FAIL scheduler active\n"); ok=false; goto done_op; }
+    now += 70;
+    macsurf_transition_test_now = now;
+    macsurf_transition_tick(NULL);
+    if (macsurf_transition_scheduler_active()) { fprintf(stderr, "FAIL scheduler after\n"); ok=false; goto done_op; }
+    fprintf(stderr, "  [2B-2] scheduler PASS\n");
+
+    fprintf(stderr, "  [2B-2] opacity tests PASS\n");
+done_op:
+    if (n) destroy_test_node(n);
+    macsurf_transition_reset();
+    return ok;
+}
