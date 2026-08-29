@@ -1370,5 +1370,128 @@ step2_C_cleanup:
 		fprintf(stderr, "  [Step2] descriptor repetition/list matching PASS\n");
 	}
 
+	/* 12. Round 2A Step 3: capacity/overflow (8 vs 9) */
+	{
+		bool ok = true;
+		css_select_ctx *ctx = NULL;
+		css_stylesheet *sheet = NULL;
+		css_computed_style *style = NULL;
+		const css_computed_transition_data *data;
+		const char *css8_props =
+			".cap8 { transition-property: opacity, color, max-width, max-height, width, height, background-color, transform; }\n"
+			".cap8d { transition-duration: 10ms, 20ms, 30ms, 40ms, 50ms, 60ms, 70ms, 80ms; }\n"
+			".cap8delay { transition-delay: 1ms, 2ms, 3ms, 4ms, 5ms, 6ms, 7ms, 8ms; }\n"
+			".cap8tim { transition-timing-function: linear, ease, ease-in, ease-out, ease-in-out, linear, ease, ease-in; }\n"
+			".cap8sh { transition: opacity 10ms, color 20ms, max-width 30ms, max-height 40ms, width 50ms, height 60ms, background-color 70ms, transform 80ms; }\n";
+		const char *css9_props =
+			".cap9a { transition-property: opacity; }\n"
+			".cap9b { transition-property: p1, p2, p3, p4, p5, p6, p7, p8, p9; }\n"
+			".cap9ord { transition-property: opacity; transition-property: p1, p2, p3, p4, p5, p6, p7, p8, p9; }\n";
+		/* 8 must succeed */
+		if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+		sheet = parse_test_css(css8_props);
+		if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+		css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+		style = select_test_node(ctx, "div", "cap8", NULL);
+		if (style == NULL || (data = css_computed_transition_data_get(style)) == NULL || data->prop_count != 8) {
+			fprintf(stderr, "FAIL: cap8 prop count %d !=8\n", data ? data->prop_count : -1); ok=false; goto step3_cleanup;
+		} else fprintf(stderr, "  [Step3] 8 props PASS\n");
+		css_computed_style_destroy(style); style=NULL;
+		style = select_test_node(ctx, "div", "cap8d", NULL);
+		if (style == NULL || (data = css_computed_transition_data_get(style)) == NULL || data->duration_count != 8) {
+			fprintf(stderr, "FAIL: cap8 duration count %d !=8\n", data ? data->duration_count : -1); ok=false; goto step3_cleanup;
+		} else fprintf(stderr, "  [Step3] 8 durations PASS\n");
+		css_computed_style_destroy(style); style=NULL;
+		style = select_test_node(ctx, "div", "cap8delay", NULL);
+		if (style == NULL || (data = css_computed_transition_data_get(style)) == NULL || data->delay_count != 8) {
+			fprintf(stderr, "FAIL: cap8 delay count %d !=8\n", data ? data->delay_count : -1); ok=false; goto step3_cleanup;
+		} else fprintf(stderr, "  [Step3] 8 delays PASS\n");
+		css_computed_style_destroy(style); style=NULL;
+		style = select_test_node(ctx, "div", "cap8tim", NULL);
+		if (style == NULL || (data = css_computed_transition_data_get(style)) == NULL || data->timing_count != 8) {
+			fprintf(stderr, "FAIL: cap8 timing count %d !=8\n", data ? data->timing_count : -1); ok=false; goto step3_cleanup;
+		} else fprintf(stderr, "  [Step3] 8 timings PASS\n");
+		css_computed_style_destroy(style); style=NULL;
+		style = select_test_node(ctx, "div", "cap8sh", NULL);
+		if (style == NULL || css_computed_transition_descriptor_count(style) != 8) {
+			fprintf(stderr, "FAIL: cap8 shorthand count %u !=8\n", css_computed_transition_descriptor_count(style)); ok=false; goto step3_cleanup;
+		} else fprintf(stderr, "  [Step3] 8 shorthand PASS\n");
+		css_computed_style_destroy(style); style=NULL;
+		css_stylesheet_destroy(sheet); css_select_ctx_destroy(ctx); ctx=NULL; sheet=NULL;
+		/* 9 must NOT silently truncate while claiming success -> entire declaration rejected */
+		/* Use two-rule sheet to test previous value intact */
+		{
+			const char *css9 =
+				".cap9test { transition-property: opacity; }\n"
+				".cap9test { transition-property: p1, p2, p3, p4, p5, p6, p7, p8, p9; }\n"
+				".cap9dur { transition-duration: 100ms; }\n"
+				".cap9dur { transition-duration: 10ms, 20ms, 30ms, 40ms, 50ms, 60ms, 70ms, 80ms, 90ms; }\n"
+				".cap9del { transition-delay: 10ms; }\n"
+				".cap9del { transition-delay: 1ms, 2ms, 3ms, 4ms, 5ms, 6ms, 7ms, 8ms, 9ms; }\n"
+				".cap9tim { transition-timing-function: linear; }\n"
+				".cap9tim { transition-timing-function: linear, ease, ease-in, ease-out, ease-in-out, linear, ease, ease-in, linear; }\n"
+				".cap9sh { transition: opacity 10ms linear; }\n"
+				".cap9sh { transition: opacity 10ms, color 20ms, max-width 30ms, max-height 40ms, width 50ms, height 60ms, background-color 70ms, transform 80ms, opacity 90ms; }\n";
+			if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+			sheet = parse_test_css(css9);
+			if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+			css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+			style = select_test_node(ctx, "div", "cap9test", NULL);
+			if (style == NULL) { ok=false; goto step3_cleanup2; }
+			data = css_computed_transition_data_get(style);
+			/* previous value intact: should still be opacity (1), not p1..p9 or truncated 8 */
+			if (data == NULL || data->prop_count != 1 || data->props[0].prop_id != CSS_PROP_OPACITY) {
+				fprintf(stderr, "FAIL: cap9 prop should remain opacity, got count=%d kind=%d\n",
+					data ? data->prop_count : -1, data ? (int)data->props[0].kind : -1); ok=false; goto step3_cleanup2;
+			} else fprintf(stderr, "  [Step3] 9 props rejected, previous intact PASS\n");
+			css_computed_style_destroy(style); style=NULL;
+			style = select_test_node(ctx, "div", "cap9dur", NULL);
+			data = css_computed_transition_data_get(style);
+			if (data == NULL || data->duration_count != 1 || data->durations[0] != 102) {
+				fprintf(stderr, "FAIL: cap9 dur should remain 100ms (102), got %d count %d\n",
+					data ? data->durations[0] : -999, data ? data->duration_count : -1); ok=false; goto step3_cleanup2;
+			} else fprintf(stderr, "  [Step3] 9 durations rejected PASS\n");
+			css_computed_style_destroy(style); style=NULL;
+			style = select_test_node(ctx, "div", "cap9del", NULL);
+			data = css_computed_transition_data_get(style);
+			if (data == NULL || data->delay_count != 1 || data->delays[0] != 10) {
+				fprintf(stderr, "FAIL: cap9 delay remain\n"); ok=false; goto step3_cleanup2;
+			} else fprintf(stderr, "  [Step3] 9 delays rejected PASS\n");
+			css_computed_style_destroy(style); style=NULL;
+			style = select_test_node(ctx, "div", "cap9tim", NULL);
+			data = css_computed_transition_data_get(style);
+			if (data == NULL || data->timing_count != 1 || data->timings[0].type != CSS_TIMING_LINEAR) {
+				fprintf(stderr, "FAIL: cap9 timing remain\n"); ok=false; goto step3_cleanup2;
+			} else fprintf(stderr, "  [Step3] 9 timings rejected PASS\n");
+			css_computed_style_destroy(style); style=NULL;
+			style = select_test_node(ctx, "div", "cap9sh", NULL);
+			if (style == NULL) { ok=false; goto step3_cleanup2; }
+			if (css_computed_transition_descriptor_count(style) != 1) {
+				fprintf(stderr, "FAIL: cap9 shorthand should remain 1, got %u\n", css_computed_transition_descriptor_count(style)); ok=false; goto step3_cleanup2;
+			}
+			{
+				css_effective_transition_descriptor d;
+				if (!css_computed_transition_descriptor(style, 0, &d) || d.prop.prop_id != CSS_PROP_OPACITY || d.duration != 10) {
+					fprintf(stderr, "FAIL: cap9 shorthand remain values dur=%d\n", d.duration); ok=false; goto step3_cleanup2;
+				}
+			}
+			fprintf(stderr, "  [Step3] 9 shorthand rejected PASS\n");
+step3_cleanup2:
+			if (style) css_computed_style_destroy(style);
+			css_stylesheet_destroy(sheet);
+			css_select_ctx_destroy(ctx);
+			if (!ok) return false;
+		}
+		fprintf(stderr, "  [Step3] capacity/overflow (8 vs 9) PASS\n");
+		goto step3_done;
+step3_cleanup:
+		if (style) css_computed_style_destroy(style);
+		if (sheet) css_stylesheet_destroy(sheet);
+		if (ctx) css_select_ctx_destroy(ctx);
+		if (!ok) return false;
+step3_done:
+		;
+	}
+
 	return true;
 }
