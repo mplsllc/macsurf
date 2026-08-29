@@ -874,5 +874,50 @@ bool cssprobe_test_css_transitions(void)
 		css_select_ctx_destroy(ctx);
 	}
 
+	/* 6. Longhand cascade uses normal specificity and source-order ranking. */
+	{
+		css_select_ctx *ctx = NULL;
+		css_stylesheet *sheet = NULL;
+		css_computed_style *same = NULL;
+		css_computed_style *specific = NULL;
+		css_computed_style *meta_before = NULL;
+		css_computed_style *meta_after = NULL;
+		css_fixed opacity_before = 0;
+		css_fixed opacity_after = 0;
+		const char *css =
+			".same { transition-duration: 1s; }\n"
+			".same { transition-duration: 300ms; }\n"
+			".low { transition-duration: 1s; }\n"
+			"#high { transition-duration: 100ms; }\n"
+			".meta-before { opacity: 1; transition-duration: 100ms; }\n"
+			".meta-after { opacity: 1; transition-duration: 500ms; }\n";
+
+		if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+		sheet = parse_test_css(css);
+		if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+		css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+		same = select_test_node(ctx, "div", "same", NULL);
+		specific = select_test_node(ctx, "div", "low", "high");
+		meta_before = select_test_node(ctx, "div", "meta-before", NULL);
+		meta_after = select_test_node(ctx, "div", "meta-after", NULL);
+		if (same == NULL || specific == NULL || meta_before == NULL || meta_after == NULL ||
+			css_computed_transition_data_get(same)->durations[0] != 307 ||
+			css_computed_transition_data_get(specific)->durations[0] != 102 ||
+			css_computed_transition_data_equal(meta_before, meta_after)) {
+			fprintf(stderr, "FAIL: transition cascade ranking\n"); return false;
+		}
+		css_computed_opacity(meta_before, &opacity_before);
+		css_computed_opacity(meta_after, &opacity_after);
+		if (opacity_before != opacity_after) {
+			fprintf(stderr, "FAIL: transition metadata changed opacity\n"); return false;
+		}
+		css_computed_style_destroy(same);
+		css_computed_style_destroy(specific);
+		css_computed_style_destroy(meta_before);
+		css_computed_style_destroy(meta_after);
+		css_stylesheet_destroy(sheet);
+		css_select_ctx_destroy(ctx);
+	}
+
 	return true;
 }
