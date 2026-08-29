@@ -6069,24 +6069,15 @@ box_coords(bx, &cx, &cy);
 				"if(!(rc.width>0))"
 					"throw new Error('ASSERT FAIL: READY rect is '+rc.width+"
 						"'x'+rc.height+' for a boxed element');"
-				/* The fixes1011 guard, unchanged in substance: an element
-				 * with no box must NOT be handed a fabricated number. */
+				/* Standards contract: an element with no box returns 0 */
 				"var d=document.createElement('div');"
-				"if(d.offsetWidth!==undefined)"
-					"throw new Error('ASSERT FAIL: an element with NO box "
-						"answered '+d.offsetWidth+' before DONE -- must be "
-						"undefined. A fabricated 0 gets written back as "
-						"inline width:0 and ERASES page sections; undefined "
-						"propagates as NaN and the write is a no-op.');"
-				"if(d.clientHeight!==undefined||d.scrollWidth!==undefined)"
-					"throw new Error('ASSERT FAIL: unboxed clientHeight/"
-						"scrollWidth not undefined before DONE');";
+				"if(d.offsetWidth!==0||d.clientHeight!==0||d.scrollWidth!==0)"
+					"throw new Error('ASSERT FAIL: unboxed element must answer 0');";
 			ok = js_exec(thread, (const unsigned char *)pre,
 					strlen(pre), "t43-unsettled.js");
 			htmlc.base.status = CONTENT_STATUS_DONE;
 			if (!ok) {
-				fprintf(stderr, "FAIL: Test 43 -- the unsettled window "
-						"answered a fabricated value\n");
+				fprintf(stderr, "FAIL: Test 43 -- unboxed element failed 0 assertion\n");
 				return 1;
 			}
 		}

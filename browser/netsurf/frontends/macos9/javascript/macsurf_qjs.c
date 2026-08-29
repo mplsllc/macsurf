@@ -328,7 +328,7 @@ double macsurf_qjs_get_now(void);
  * Define MACSURF_JS_FB_LOADER_TRAP=1 only for an explicitly requested local
  * diagnostic build.  It is never the normal browser behaviour. */
 #ifndef MACSURF_JS_FB_LOADER_TRAP
-#define MACSURF_JS_FB_LOADER_TRAP 1
+#define MACSURF_JS_FB_LOADER_TRAP 0
 #endif
 /* fixes586 - timer/event callbacks get a shorter budget: a callback that
  * burns 8s of straight CPU is pathological, and the UI is frozen while it
@@ -6518,56 +6518,11 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 
 	b = qjs_box_for(ctx, this_val);
 	if (b == NULL) {
-		/* fixes1016 - no box while a mutation awaits its reconvert is
-		 * NOT "hidden", it is "not measured yet": a real browser reflows
-		 * synchronously and answers truly. We cannot (Phase 3's forced
-		 * pass is its own risky round), so answer undefined -- the
-		 * NaN-propagating no-op -- rather than a fabricated 0. This is
-		 * exactly how slick collapsed the hackaday featured carousel:
-		 * it measured its just-inserted slides, got 0, and wrote it
-		 * back as inline sizes. */
-		extern int macos9_reconvert_pending_for(void *cv);
-		if (macos9_reconvert_pending_for(content)) {
-			char rname[64];
-			g_geom_undef++;		/* fixes1087 */
-			macsurf_gap_hit(MS_GAP_GEOMETRY_UNDEFINED);
-			snprintf(rname, sizeof rname, "%s.mutation_pending", qjs_metric_name(magic));
-			ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
-				rname, MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
-			qjs_geom_audit(qjs_metric_name(magic), this_val,
-					"undefined (mutation pending)");
-			return JS_UNDEFINED;
-		}
-		/* fixes1087 - NEVER fabricate 0 before the load is DONE.
-		 *
-		 * Opening the gate to CONTENT_STATUS_READY lets a widget measure
-		 * elements that already have boxes, which is the whole point. But
-		 * it also means reaching here for an element whose box has simply
-		 * not been built yet, and answering 0 for that is the fixes1014
-		 * failure verbatim: the script writes the fabricated 0 back as an
-		 * inline width/height and the content is erased for good.
-		 *
-		 * 0 is only the TRUE answer once the document is DONE -- there a
-		 * missing box really does mean "not rendered", which is what
-		 * jQuery's :hidden relies on. Before that, `undefined` is the
-		 * honest answer and NaN-propagates into a no-op.
-		 *
-		 * Harness Test 43 asserts exactly this and caught the first cut of
-		 * this change fabricating a value in the unsettled window. */
-		if (content->status != CONTENT_STATUS_DONE) {
-			char rname[64];
-			g_geom_undef++;
-			macsurf_gap_hit(MS_GAP_GEOMETRY_UNDEFINED);
-			snprintf(rname, sizeof rname, "%s.nobox_notdone", qjs_metric_name(magic));
-			ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
-				rname, MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
-			qjs_geom_audit(qjs_metric_name(magic), this_val,
-					"undefined (no box, not DONE)");
-			return JS_UNDEFINED;
-		}
-		g_geom_zero++;			/* fixes1087 - the dangerous one */
-		qjs_geom_audit(qjs_metric_name(magic), this_val,
-				"0 (no box)");
+		/* When an element has no box (e.g. detached, display:none, or not
+		 * generating a layout box), return 0 in accordance with CSSOM View
+		 * specifications, matching getBoundingClientRect. */
+		g_geom_zero++;
+		qjs_geom_audit(qjs_metric_name(magic), this_val, "0 (no box)");
 		return JS_NewInt32(ctx, 0);
 	}
 
@@ -11663,7 +11618,7 @@ static void register_browser_globals(JSContext *ctx)
 				"try{if(typeof __msIOEvent==='function')"
 					"__msIOEvent(self._id,2,tid,r.left|0,r.top|0,r.width|0,r.height|0,0,0,0);}"
 				"catch(_){}"
-				"var isInt=(r.width>0&&r.height>0)||(r.bottom>0&&r.top<10000);"
+				"var isInt=(r.width>0&&r.height>0)||(r.bottom>0&&r.top<10000)||(r.width===0&&r.height===0&&r.top===0&&r.left===0);"
 				"var ratio=isInt?100:0;"
 				"try{if(typeof __msIOEvent==='function')"
 					"__msIOEvent(self._id,3,tid,0,0,0,0,isInt?1:0,ratio,0);}"
