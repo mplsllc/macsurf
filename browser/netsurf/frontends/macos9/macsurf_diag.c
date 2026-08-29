@@ -1658,7 +1658,7 @@ struct ms_diag_contract {
 	unsigned long module_id, wait_id;
 	unsigned long callback_count;
 	unsigned char kind, operation_kind, state, expected, last_event, eligible;
-	unsigned char timer_expected;
+	unsigned char timer_expected, timer_native_state;
 };
 
 static struct ms_diag_contract g_contracts[MS_CONTRACT_CAP];
@@ -1694,6 +1694,17 @@ static const char *ms_timer_state_s(int state)
 	case MS_TIMER_OWNER_MISMATCH: return "owner_mismatch";
 	case MS_TIMER_ABANDONED: return "abandoned";
 	default: return "unknown";
+	}
+}
+
+static const char *ms_io_timer_native_state_s(int state)
+{
+	switch (state) {
+	case MS_IO_TIMER_NATIVE_ENTERED: return "entered";
+	case MS_IO_TIMER_NATIVE_BAD_CALLBACK: return "rejected_bad_callback";
+	case MS_IO_TIMER_NATIVE_NO_SLOT: return "rejected_no_slot";
+	case MS_IO_TIMER_NATIVE_ALLOCATED: return "allocated";
+	default: return "not_entered";
 	}
 }
 
@@ -1867,6 +1878,21 @@ void ms_diag_io_timer_expect(unsigned long io_id, const char *target_name)
 	ms_diag_progress(MS_PROGRESS_CONTRACT);
 }
 
+void ms_diag_io_timer_native_state(unsigned long io_id,
+	const char *target_name, int state)
+{
+	struct ms_diag_contract *c;
+	unsigned long target_id = ms_diag_io_target_id(target_name);
+	if (io_id == 0 || target_id == 0) return;
+	c = ms_contract_io_find(io_id, target_id);
+	if (c == NULL) return;
+	c->timer_native_state = (unsigned char)state;
+	if (state == MS_IO_TIMER_NATIVE_BAD_CALLBACK ||
+		state == MS_IO_TIMER_NATIVE_NO_SLOT)
+		c->timer_expected = 0;
+	ms_diag_progress(MS_PROGRESS_CONTRACT);
+}
+
 void ms_diag_io_timer_bind(unsigned long io_id, const char *target_name,
 	unsigned long timer_id)
 {
@@ -1878,6 +1904,7 @@ void ms_diag_io_timer_bind(unsigned long io_id, const char *target_name,
 	if (c == NULL) return;
 	c->timer_id = timer_id;
 	c->timer_expected = 0;
+	c->timer_native_state = MS_IO_TIMER_NATIVE_ALLOCATED;
 	t = ms_timer_find(timer_id);
 	/* setTimeout normally arms this record before returning its id. Keep the
 	 * join useful even if a bounded ordinary-timer record was already rotated:
@@ -2018,13 +2045,13 @@ long macsurf_diag_serialize_pending(char *buf, long cap)
 				(c->timer_expected ? "awaiting_native_allocation" : "unbound") :
 				ms_timer_state_s(t->state);
 			snprintf(line, sizeof line,
-				"contract=%lu nav=%lu script=%lu task=%lu kind=io io=%lu target=%lu state=%s expected=%s last=%s callbacks=%lu timer=%lu timer_state=%s\n",
+				"contract=%lu nav=%lu script=%lu task=%lu kind=io io=%lu target=%lu state=%s expected=%s last=%s callbacks=%lu timer=%lu timer_state=%s timer_native=%s\n",
 				c->id, c->nav_id, c->script_id, c->task_id,
 				c->io_id, c->target_id,
 				ms_contract_state_s(c->state),
 				ms_contract_expected_s(c->expected),
 				ms_io_event_s(c->last_event), c->callback_count, c->timer_id,
-				timer_state);
+				timer_state, ms_io_timer_native_state_s(c->timer_native_state));
 		} else {
 			snprintf(line, sizeof line,
 				"contract=%lu nav=%lu script=%lu task=%lu kind=module_wait wait=%lu mod=%lu state=%s expected=%s last=%s eligible=%d\n",

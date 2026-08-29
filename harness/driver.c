@@ -12614,10 +12614,30 @@ box_coords(bx, &cx, &cy);
 		ms_diag_io_timer_expect(993, ".diag-expect");
 		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
 		if (strstr(p0, "kind=io io=993") == NULL ||
-				strstr(p0, "timer=0 timer_state=awaiting_native_allocation") == NULL) {
+				strstr(p0, "timer=0 timer_state=awaiting_native_allocation timer_native=not_entered") == NULL) {
 			fprintf(stderr, "FAIL: Test 102 IO native allocation expectation\n");
 			return 1;
 		}
+		ms_diag_io_timer_native_state(993, ".diag-expect",
+				MS_IO_TIMER_NATIVE_ENTERED);
+		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
+		if (strstr(p0, "timer_native=entered") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO native timer entry\n");
+			return 1;
+		}
+		ms_diag_io_record(994, MS_IO_OBSERVE, ".diag-reject",
+				0, 0, 0, 0, 0, 0, 0);
+		ms_diag_io_timer_expect(994, ".diag-reject");
+		ms_diag_io_timer_native_state(994, ".diag-reject",
+				MS_IO_TIMER_NATIVE_NO_SLOT);
+		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
+		if (strstr(p0, "kind=io io=994") == NULL ||
+				strstr(p0, "timer=0 timer_state=unbound timer_native=rejected_no_slot") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO native timer rejection\n");
+			return 1;
+		}
+		ms_diag_io_record(994, MS_IO_UNOBSERVE, ".diag-reject",
+				0, 0, 0, 0, 0, 0, 0);
 		ms_diag_timer_arm(9393, 7, 8, 9, 10);
 		ms_diag_io_timer_bind(993, ".diag-expect", 9393);
 		ms_diag_io_record(992, MS_IO_CHECK, ".diag-recover",

@@ -119,6 +119,7 @@ struct jsheap *g_heap = NULL;  /* exported for audit */
 static struct jsheap *g_heap_list = NULL;
 #define QJS_IO_TIMER_TARGET_CAP 64
 #define QJS_IO_TIMER_EXPECT_CAP 64
+static unsigned long qjs_ctx_gen(JSContext *ctx);
 struct qjs_io_timer_expect {
 	JSContext *ctx;
 	unsigned long ctx_gen, io_id, seq;
@@ -127,6 +128,20 @@ struct qjs_io_timer_expect {
 static struct qjs_io_timer_expect
 	s_io_timer_expects[QJS_IO_TIMER_EXPECT_CAP];
 static unsigned long s_io_timer_expect_seq;
+
+static struct qjs_io_timer_expect *qjs_io_timer_expect_for_ctx(JSContext *ctx)
+{
+	struct qjs_io_timer_expect *expect = NULL;
+	int i;
+	unsigned long ctx_gen = qjs_ctx_gen(ctx);
+	for (i = 0; i < QJS_IO_TIMER_EXPECT_CAP; i++) {
+		struct qjs_io_timer_expect *candidate = &s_io_timer_expects[i];
+		if (candidate->ctx == ctx && candidate->ctx_gen == ctx_gen &&
+			(expect == NULL || candidate->seq < expect->seq))
+			expect = candidate;
+	}
+	return expect;
+}
 
 /* The authoritative ownership record for one JavaScript realm.  A heap can
  * briefly have both an old and replacement JSContext during navigation, while
@@ -1401,14 +1416,33 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	int id;
 	int extra;
 	int i;
+	struct qjs_io_timer_expect *expect;
 
 	(void)this_val;
-	if (argc < 1 || !JS_IsFunction(ctx, argv[0])) return JS_NewInt32(ctx, 0);
+	expect = qjs_io_timer_expect_for_ctx(ctx);
+	if (expect != NULL)
+		ms_diag_io_timer_native_state(expect->io_id, expect->target,
+			MS_IO_TIMER_NATIVE_ENTERED);
+	if (argc < 1 || !JS_IsFunction(ctx, argv[0])) {
+		if (expect != NULL) {
+			ms_diag_io_timer_native_state(expect->io_id, expect->target,
+				MS_IO_TIMER_NATIVE_BAD_CALLBACK);
+			memset(expect, 0, sizeof(*expect));
+		}
+		return JS_NewInt32(ctx, 0);
+	}
 	if (argc >= 2) JS_ToFloat64(ctx, &delay_ms, argv[1]);
 	if (delay_ms < 0.0) delay_ms = 0.0;
 
 	t = timer_alloc();
-	if (t == NULL) return JS_NewInt32(ctx, 0);
+	if (t == NULL) {
+		if (expect != NULL) {
+			ms_diag_io_timer_native_state(expect->io_id, expect->target,
+				MS_IO_TIMER_NATIVE_NO_SLOT);
+			memset(expect, 0, sizeof(*expect));
+		}
+		return JS_NewInt32(ctx, 0);
+	}
 
 	id = s_timer_next_id++;
 	if (s_timer_next_id <= 0) s_timer_next_id = 1;
@@ -1452,19 +1486,10 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	t->nav_id = ms_diag_cur_nav();
 	ms_diag_timer_arm((unsigned long)id, t->nav_id, t->origin_script_id,
 		ms_diag_cur_task(), t->ctx_gen);
-	{
-		struct qjs_io_timer_expect *expect = NULL;
-		for (i = 0; i < QJS_IO_TIMER_EXPECT_CAP; i++) {
-			struct qjs_io_timer_expect *candidate = &s_io_timer_expects[i];
-			if (candidate->ctx == ctx && candidate->ctx_gen == t->ctx_gen &&
-				(expect == NULL || candidate->seq < expect->seq))
-				expect = candidate;
-		}
-		if (expect != NULL) {
-			ms_diag_io_timer_bind(expect->io_id, expect->target,
-				(unsigned long)id);
-			memset(expect, 0, sizeof(*expect));
-		}
+	if (expect != NULL) {
+		ms_diag_io_timer_bind(expect->io_id, expect->target,
+			(unsigned long)id);
+		memset(expect, 0, sizeof(*expect));
 	}
 
 	return JS_NewInt32(ctx, id);
