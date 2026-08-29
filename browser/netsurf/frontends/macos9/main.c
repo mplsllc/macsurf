@@ -1848,6 +1848,8 @@ static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
 
 	if (strcmp(verb, "summary") == 0) {
 		n = macsurf_diag_serialize_summary(out, (long)sizeof(out));
+	} else if (strcmp(verb, "prefs") == 0) {
+		n = macsurf_diag_serialize_prefs(out, (long)sizeof(out));
 	} else if (strcmp(verb, "gaps") == 0) {
 		n = macsurf_diag_serialize_gaps(out, (long)sizeof(out));
 	} else if (strcmp(verb, "network") == 0) {
@@ -1864,6 +1866,10 @@ static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
 		n = macsurf_diag_serialize_layout(out, (long)sizeof(out));
 	} else if (strcmp(verb, "trace") == 0) {
 		n = macsurf_trace_serialize(out, (long)sizeof(out));
+	} else if (strcmp(verb, "modules") == 0) {
+		n = macsurf_diag_serialize_modules(out, (long)sizeof(out));
+	} else if (strcmp(verb, "io") == 0) {
+		n = macsurf_diag_serialize_io(out, (long)sizeof(out));
 	} else if (strcmp(verb, "tracestart") == 0) {
 		macsurf_trace_arm(0UL, 2);	/* all categories, level 2 */
 		n = macsurf_trace_serialize(out, (long)sizeof(out));

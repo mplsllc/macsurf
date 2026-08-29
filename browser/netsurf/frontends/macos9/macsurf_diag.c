@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "content/fetch.h"	/* fetch_get_{nav_id,request_id,redirect_from} */
+#include "utils/nsoption.h"
 
 #include "macsurf_diag.h"
 #include "macsurf_gap.h"
@@ -100,7 +101,7 @@ static long diag_cat(char *buf, long cap, long n, const char *s)
 
 long macsurf_diag_serialize_summary(char *buf, long cap)
 {
-	char line[96];
+	char line[128];
 	long n = 0;
 
 	if (buf == NULL || cap < 2) {
@@ -122,7 +123,72 @@ long macsurf_diag_serialize_summary(char *buf, long cap)
 	snprintf(line, sizeof line, "gaps_total=%lu\n",
 		(unsigned long) macsurf_gap_last_total());
 	n = diag_cat(buf, cap, n, line);
+	snprintf(line, sizeof line, "prefs js=%d css=%d fg_img=%d bg_img=%d anim=%d cookies=%d referer=%d dnt=%d ads=%d popups=%d\n",
+		(int)nsoption_bool(enable_javascript),
+		(int)nsoption_bool(author_level_css),
+		(int)nsoption_bool(foreground_images),
+		(int)nsoption_bool(background_images),
+		(int)nsoption_bool(animate_images),
+		(int)nsoption_bool(accept_cookies),
+		(int)nsoption_bool(send_referer),
+		(int)nsoption_bool(do_not_track),
+		(int)nsoption_bool(block_advertisements),
+		(int)nsoption_bool(disable_popups));
+	n = diag_cat(buf, cap, n, line);
 
+	return n;
+}
+
+long macsurf_diag_serialize_prefs(char *buf, long cap)
+{
+	char line[128];
+	long n = 0;
+	int i;
+
+	if (buf == NULL || cap < 2) {
+		return 0;
+	}
+	buf[0] = '\0';
+
+	n = diag_cat(buf, cap, n, "MSDIAG 1 prefs\n");
+	snprintf(line, sizeof line, "js=%d css=%d fg_img=%d bg_img=%d anim=%d cookies=%d referer=%d dnt=%d ads=%d popups=%d\n",
+		(int)nsoption_bool(enable_javascript),
+		(int)nsoption_bool(author_level_css),
+		(int)nsoption_bool(foreground_images),
+		(int)nsoption_bool(background_images),
+		(int)nsoption_bool(animate_images),
+		(int)nsoption_bool(accept_cookies),
+		(int)nsoption_bool(send_referer),
+		(int)nsoption_bool(do_not_track),
+		(int)nsoption_bool(block_advertisements),
+		(int)nsoption_bool(disable_popups));
+	n = diag_cat(buf, cap, n, line);
+
+	if (nsoptions != NULL && nsoptions_default != NULL) {
+		for (i = 0; i < NSOPTION_LISTEND; i++) {
+			struct nsoption_s *o = &nsoptions[i];
+			struct nsoption_s *d = &nsoptions_default[i];
+			if (o->type != d->type) continue;
+			switch (o->type) {
+			case OPTION_BOOL:
+				if (o->value.b != d->value.b) {
+					snprintf(line, sizeof line, "delta %s=%d default=%d\n",
+						o->key, (int)o->value.b, (int)d->value.b);
+					n = diag_cat(buf, cap, n, line);
+				}
+				break;
+			case OPTION_INTEGER:
+				if (o->value.i != d->value.i) {
+					snprintf(line, sizeof line, "delta %s=%d default=%d\n",
+						o->key, o->value.i, d->value.i);
+					n = diag_cat(buf, cap, n, line);
+				}
+				break;
+			default:
+				break;
+			}
+		}
+	}
 	return n;
 }
 
@@ -1187,5 +1253,313 @@ long macsurf_diag_serialize_layout(char *buf, long cap)
 		n = diag_cat(buf, cap, n, line);
 	}
 
+	return n;
+}
+
+/* ===================== Module Trace v1 ===================== */
+
+#define MS_MOD_NAME_CAP 256
+#define MS_MOD_RING_CAP 256
+#define MS_MOD_NAME_MAX 64
+
+struct ms_diag_module_name {
+	unsigned long id;
+	char name[MS_MOD_NAME_MAX];
+};
+
+struct ms_diag_module_event {
+	unsigned long id;
+	unsigned long nav_id;
+	unsigned long script_id;
+	unsigned long task_id;
+	unsigned long module_id;
+	unsigned long dep_module_id;
+	unsigned char event_type;
+	unsigned char reason;
+	unsigned char depth;
+};
+
+static struct ms_diag_module_name g_mod_names[MS_MOD_NAME_CAP];
+static int g_mod_name_count = 0;
+static unsigned long g_mod_name_seq = 0;
+
+static struct ms_diag_module_event g_mod_ring[MS_MOD_RING_CAP];
+static int g_mod_ring_head = 0;
+static unsigned long g_mod_event_seq = 0;
+
+static const char *ms_mod_event_s(int t)
+{
+	switch (t) {
+	case MS_MOD_DEFINE:   return "define";
+	case MS_MOD_REQUEST:  return "request";
+	case MS_MOD_RESOLVE:  return "resolve";
+	case MS_MOD_EXECUTE:  return "execute";
+	case MS_MOD_FAIL:     return "fail";
+	default:              return "unknown";
+	}
+}
+
+static const char *ms_mod_reason_s(int r)
+{
+	switch (r) {
+	case MS_MOD_REASON_NONE:          return "none";
+	case MS_MOD_REASON_MISSING:       return "missing";
+	case MS_MOD_REASON_DEP_MISSING:   return "dep_missing";
+	case MS_MOD_REASON_FACTORY_THROW: return "factory_throw";
+	case MS_MOD_REASON_CYCLE:         return "cycle";
+	default:                          return "unknown";
+	}
+}
+
+unsigned long ms_diag_module_id(const char *name)
+{
+	int i;
+	if (name == NULL || name[0] == '\0')
+		return 0;
+
+	for (i = 0; i < g_mod_name_count; i++) {
+		if (strncmp(g_mod_names[i].name, name, MS_MOD_NAME_MAX - 1) == 0)
+			return g_mod_names[i].id;
+	}
+
+	if (g_mod_name_count < MS_MOD_NAME_CAP) {
+		int idx = g_mod_name_count++;
+		g_mod_names[idx].id = ++g_mod_name_seq;
+		ms_name_copy(g_mod_names[idx].name, name);
+		return g_mod_names[idx].id;
+	}
+
+	return 0;
+}
+
+void ms_diag_module_record(unsigned long mod_id, unsigned long dep_mod_id,
+	int event_type, int reason, int depth)
+{
+	struct ms_diag_module_event *e;
+	int idx;
+
+	if (mod_id == 0)
+		return;
+
+	idx = g_mod_ring_head % MS_MOD_RING_CAP;
+	g_mod_ring_head = (g_mod_ring_head + 1) % MS_MOD_RING_CAP;
+
+	e = &g_mod_ring[idx];
+	e->id = ++g_mod_event_seq;
+	e->nav_id = ms_diag_cur_nav();
+	e->script_id = ms_diag_cur_script();
+	e->task_id = ms_diag_cur_task();
+	e->module_id = mod_id;
+	e->dep_module_id = dep_mod_id;
+	e->event_type = (unsigned char)event_type;
+	e->reason = (unsigned char)reason;
+	e->depth = (unsigned char)(depth > 255 ? 255 : depth);
+}
+
+void ms_diag_module_record_by_name(const char *name, const char *dep_name,
+	int event_type, int reason, int depth)
+{
+	unsigned long mod_id = ms_diag_module_id(name);
+	unsigned long dep_mod_id = dep_name ? ms_diag_module_id(dep_name) : 0;
+	ms_diag_module_record(mod_id, dep_mod_id, event_type, reason, depth);
+}
+
+long macsurf_diag_serialize_modules(char *buf, long cap)
+{
+	char line[160];
+	long n = 0;
+	int i;
+
+	if (buf == NULL || cap < 2) {
+		return 0;
+	}
+	buf[0] = '\0';
+	n = diag_cat(buf, cap, n, "MSDIAG 1 modules\n");
+
+	for (i = 0; i < g_mod_name_count; i++) {
+		if (n >= cap - 1)
+			break;
+		snprintf(line, sizeof line, "mod=%lu name=%s\n",
+			(unsigned long) g_mod_names[i].id,
+			g_mod_names[i].name);
+		n = diag_cat(buf, cap, n, line);
+	}
+
+	for (i = 0; i < MS_MOD_RING_CAP; i++) {
+		int idx = (g_mod_ring_head - 1 - i + 2 * MS_MOD_RING_CAP)
+			% MS_MOD_RING_CAP;
+		struct ms_diag_module_event *e = &g_mod_ring[idx];
+		if (e->id == 0 || n >= cap - 1) {
+			continue;
+		}
+		snprintf(line, sizeof line,
+			"ev=%lu nav=%lu script=%lu task=%lu mod=%lu dep=%lu "
+			"event=%s reason=%s depth=%d\n",
+			(unsigned long) e->id, (unsigned long) e->nav_id,
+			(unsigned long) e->script_id, (unsigned long) e->task_id,
+			(unsigned long) e->module_id, (unsigned long) e->dep_module_id,
+			ms_mod_event_s(e->event_type),
+			ms_mod_reason_s(e->reason),
+			(int) e->depth);
+		n = diag_cat(buf, cap, n, line);
+	}
+
+	return n;
+}
+
+/* ================== IntersectionObserver Trace v1 ================== */
+#define MS_IO_RING_CAP 128
+#define MS_IO_NAME_CAP 64
+#define MS_IO_NAME_MAX 64
+
+struct ms_diag_io_name {
+	unsigned long id;
+	char name[MS_IO_NAME_MAX];
+};
+
+struct ms_diag_io_event {
+	unsigned long id;
+	unsigned long nav_id;
+	unsigned long script_id;
+	unsigned long task_id;
+	unsigned long io_id;
+	unsigned long target_id;
+	long x, y, w, h;
+	unsigned char event_type;
+	unsigned char intersecting;
+	unsigned char ratio_pct;
+	unsigned char entries;
+};
+
+static struct ms_diag_io_name g_io_names[MS_IO_NAME_CAP];
+static int g_io_name_count = 0;
+static unsigned long g_io_name_seq = 0;
+
+static struct ms_diag_io_event g_io_ring[MS_IO_RING_CAP];
+static int g_io_ring_head = 0;
+static unsigned long g_io_event_seq = 0;
+
+static const char *ms_io_event_s(int t)
+{
+	switch (t) {
+	case MS_IO_CONSTRUCT:   return "construct";
+	case MS_IO_OBSERVE:     return "observe";
+	case MS_IO_QUERY:       return "query";
+	case MS_IO_CHECK:       return "check";
+	case MS_IO_CALLBACK:    return "callback";
+	case MS_IO_SKIP:        return "skip";
+	case MS_IO_UNOBSERVE:   return "unobserve";
+	case MS_IO_DISCONNECT:  return "disconnect";
+	default:                return "unknown";
+	}
+}
+
+unsigned long ms_diag_io_target_id(const char *name)
+{
+	int i;
+	if (name == NULL || name[0] == '\0')
+		return 0;
+
+	for (i = 0; i < g_io_name_count; i++) {
+		if (strncmp(g_io_names[i].name, name, MS_IO_NAME_MAX - 1) == 0)
+			return g_io_names[i].id;
+	}
+
+	if (g_io_name_count < MS_IO_NAME_CAP) {
+		int idx = g_io_name_count++;
+		g_io_names[idx].id = ++g_io_name_seq;
+		ms_name_copy(g_io_names[idx].name, name);
+		return g_io_names[idx].id;
+	}
+	return 0;
+}
+
+void ms_diag_io_record(unsigned long io_id, int ev_type, const char *target_name,
+	long x, long y, long w, long h, int intersecting, int ratio_pct, int entries)
+{
+	struct ms_diag_io_event *e = &g_io_ring[g_io_ring_head];
+	g_io_ring_head = (g_io_ring_head + 1) % MS_IO_RING_CAP;
+
+	e->id = ++g_io_event_seq;
+	e->nav_id = g_cur_nav ? g_cur_nav : g_diag_last_nav;
+	e->script_id = g_cur_script;
+	e->task_id = g_cur_task;
+	e->io_id = io_id;
+	e->target_id = ms_diag_io_target_id(target_name);
+	e->x = x;
+	e->y = y;
+	e->w = w;
+	e->h = h;
+	e->event_type = (unsigned char) ev_type;
+	e->intersecting = (unsigned char) (intersecting ? 1 : 0);
+	e->ratio_pct = (unsigned char) (ratio_pct > 255 ? 255 : ratio_pct);
+	e->entries = (unsigned char) (entries > 255 ? 255 : entries);
+}
+
+long macsurf_diag_serialize_io(char *buf, long cap)
+{
+	char line[160];
+	long n = 0;
+	int i;
+
+	if (buf == NULL || cap < 2) {
+		return 0;
+	}
+	buf[0] = '\0';
+	n = diag_cat(buf, cap, n, "MSDIAG 1 io\n");
+
+	for (i = 0; i < g_io_name_count; i++) {
+		if (n >= cap - 1)
+			break;
+		snprintf(line, sizeof line, "target=%lu name=%s\n",
+			(unsigned long) g_io_names[i].id,
+			g_io_names[i].name);
+		n = diag_cat(buf, cap, n, line);
+	}
+
+	for (i = 0; i < MS_IO_RING_CAP; i++) {
+		int idx = (g_io_ring_head - 1 - i + 2 * MS_IO_RING_CAP) % MS_IO_RING_CAP;
+		struct ms_diag_io_event *e = &g_io_ring[idx];
+		if (e->id == 0 || n >= cap - 1) {
+			continue;
+		}
+		if (e->event_type == MS_IO_QUERY) {
+			snprintf(line, sizeof line,
+				"ev=%lu nav=%lu script=%lu task=%lu io=%lu target=%lu "
+				"event=%s x=%ld y=%ld w=%ld h=%ld\n",
+				(unsigned long) e->id, (unsigned long) e->nav_id,
+				(unsigned long) e->script_id, (unsigned long) e->task_id,
+				(unsigned long) e->io_id, (unsigned long) e->target_id,
+				ms_io_event_s(e->event_type),
+				e->x, e->y, e->w, e->h);
+		} else if (e->event_type == MS_IO_CHECK) {
+			snprintf(line, sizeof line,
+				"ev=%lu nav=%lu script=%lu task=%lu io=%lu target=%lu "
+				"event=%s intersecting=%d ratio=%d%%\n",
+				(unsigned long) e->id, (unsigned long) e->nav_id,
+				(unsigned long) e->script_id, (unsigned long) e->task_id,
+				(unsigned long) e->io_id, (unsigned long) e->target_id,
+				ms_io_event_s(e->event_type),
+				(int) e->intersecting, (int) e->ratio_pct);
+		} else if (e->event_type == MS_IO_CALLBACK) {
+			snprintf(line, sizeof line,
+				"ev=%lu nav=%lu script=%lu task=%lu io=%lu target=%lu "
+				"event=%s entries=%d\n",
+				(unsigned long) e->id, (unsigned long) e->nav_id,
+				(unsigned long) e->script_id, (unsigned long) e->task_id,
+				(unsigned long) e->io_id, (unsigned long) e->target_id,
+				ms_io_event_s(e->event_type),
+				(int) e->entries);
+		} else {
+			snprintf(line, sizeof line,
+				"ev=%lu nav=%lu script=%lu task=%lu io=%lu target=%lu "
+				"event=%s\n",
+				(unsigned long) e->id, (unsigned long) e->nav_id,
+				(unsigned long) e->script_id, (unsigned long) e->task_id,
+				(unsigned long) e->io_id, (unsigned long) e->target_id,
+				ms_io_event_s(e->event_type));
+		}
+		n = diag_cat(buf, cap, n, line);
+	}
 	return n;
 }

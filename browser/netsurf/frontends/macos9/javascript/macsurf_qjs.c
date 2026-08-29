@@ -302,7 +302,7 @@ double macsurf_qjs_get_now(void);
  * Define MACSURF_JS_FB_LOADER_TRAP=1 only for an explicitly requested local
  * diagnostic build.  It is never the normal browser behaviour. */
 #ifndef MACSURF_JS_FB_LOADER_TRAP
-#define MACSURF_JS_FB_LOADER_TRAP 0
+#define MACSURF_JS_FB_LOADER_TRAP 1
 #endif
 /* fixes586 - timer/event callbacks get a shorter budget: a callback that
  * burns 8s of straight CPU is pathological, and the UI is frozen while it
@@ -10270,6 +10270,73 @@ static JSValue qjs_raf_fired(JSContext *ctx,
 	return JS_UNDEFINED;
 }
 
+/* Module Trace v1: native bridge for __msModEvent(name, dep_name, event_type, reason, depth) */
+static JSValue qjs_ms_mod_event(JSContext *ctx,
+	JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	const char *name = NULL;
+	const char *dep_name = NULL;
+	int event_type = 0;
+	int reason = 0;
+	int depth = 0;
+
+	(void)this_val;
+	if (argc < 3) return JS_UNDEFINED;
+
+	name = JS_ToCString(ctx, argv[0]);
+	if (argc > 1 && !JS_IsNull(argv[1]) && !JS_IsUndefined(argv[1]))
+		dep_name = JS_ToCString(ctx, argv[1]);
+
+	(void)JS_ToInt32(ctx, &event_type, argv[2]);
+	if (argc > 3)
+		(void)JS_ToInt32(ctx, &reason, argv[3]);
+	if (argc > 4)
+		(void)JS_ToInt32(ctx, &depth, argv[4]);
+
+	if (name != NULL) {
+		extern void ms_diag_module_record_by_name(const char *name,
+			const char *dep_name, int event_type, int reason, int depth);
+		ms_diag_module_record_by_name(name, dep_name, event_type, reason, depth);
+		JS_FreeCString(ctx, name);
+	}
+	if (dep_name != NULL)
+		JS_FreeCString(ctx, dep_name);
+
+	return JS_UNDEFINED;
+}
+
+/* IntersectionObserver Trace v1: native bridge for __msIOEvent(io_id, ev_type, target_name, x, y, w, h, intersecting, ratio_pct, entries) */
+static JSValue qjs_ms_io_event(JSContext *ctx,
+	JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	int io_id = 0, ev_type = 0, intersecting = 0, ratio_pct = 0, entries = 0;
+	int x = 0, y = 0, w = 0, h = 0;
+	const char *target_name = NULL;
+
+	(void)this_val;
+	if (argc < 2) return JS_UNDEFINED;
+
+	(void)JS_ToInt32(ctx, &io_id, argv[0]);
+	(void)JS_ToInt32(ctx, &ev_type, argv[1]);
+	if (argc > 2 && !JS_IsNull(argv[2]) && !JS_IsUndefined(argv[2]))
+		target_name = JS_ToCString(ctx, argv[2]);
+	if (argc > 3) (void)JS_ToInt32(ctx, &x, argv[3]);
+	if (argc > 4) (void)JS_ToInt32(ctx, &y, argv[4]);
+	if (argc > 5) (void)JS_ToInt32(ctx, &w, argv[5]);
+	if (argc > 6) (void)JS_ToInt32(ctx, &h, argv[6]);
+	if (argc > 7) (void)JS_ToInt32(ctx, &intersecting, argv[7]);
+	if (argc > 8) (void)JS_ToInt32(ctx, &ratio_pct, argv[8]);
+	if (argc > 9) (void)JS_ToInt32(ctx, &entries, argv[9]);
+
+	ms_diag_io_record((unsigned long)io_id, ev_type, target_name,
+		(long)x, (long)y, (long)w, (long)h, intersecting, ratio_pct, entries);
+
+	if (target_name != NULL)
+		JS_FreeCString(ctx, target_name);
+
+	return JS_UNDEFINED;
+}
+
 static JSValue qjs_crypto_random_uuid(JSContext *ctx,
 	JSValueConst this_val, int argc, JSValueConst *argv)
 {
@@ -10661,6 +10728,8 @@ static void register_browser_globals(JSContext *ctx)
 	qjs_set_func(ctx, global, "__msLife",    qjs_ms_life, 1); /* fixes1015 */
 	qjs_set_func(ctx, global, "__msScript",  qjs_ms_current_script, 0); /* fixes1312 */
 	qjs_set_func(ctx, global, "__msRafFired", qjs_raf_fired, 0); /* fixes1236 */
+	qjs_set_func(ctx, global, "__msModEvent", qjs_ms_mod_event, 5); /* Module Trace v1 */
+	qjs_set_func(ctx, global, "__msIOEvent",  qjs_ms_io_event, 10); /* IO Trace v1 */
 	/* localStorage persistence backend, consumed by the _Storage shim
 	 * below (register_browser_globals runs per navigation, so the saved
 	 * map is reloaded on every realm build). */
@@ -11341,35 +11410,86 @@ static void register_browser_globals(JSContext *ctx)
 		"ResizeObserver.prototype.disconnect=function(){this._targets=[];};"
 		"this.ResizeObserver=ResizeObserver;");
 	macsurf_qjs__safe_eval(ctx,
+		"var _ms_next_io_id=1;"
+		"function IntersectionObserverEntry(init){"
+			"this.time=(init&&init.time)||0;"
+			"this.target=(init&&init.target)||null;"
+			"this.rootBounds=(init&&init.rootBounds)||null;"
+			"this.boundingClientRect=(init&&init.boundingClientRect)||"
+				"{top:0,left:0,bottom:0,right:0,width:0,height:0,x:0,y:0};"
+			"this.intersectionRect=(init&&init.intersectionRect)||"
+				"this.boundingClientRect;"
+			"this.isIntersecting=(init&&init.isIntersecting!==undefined)?"
+				"init.isIntersecting:true;"
+		"}"
+		"IntersectionObserverEntry.prototype.time=0;"
+		"IntersectionObserverEntry.prototype.target=null;"
+		"IntersectionObserverEntry.prototype.rootBounds=null;"
+		"IntersectionObserverEntry.prototype.boundingClientRect=null;"
+		"IntersectionObserverEntry.prototype.intersectionRect=null;"
+		"IntersectionObserverEntry.prototype.isIntersecting=true;"
+		"IntersectionObserverEntry.prototype.intersectionRatio=1;"
+		"this.IntersectionObserverEntry=IntersectionObserverEntry;"
 		"function IntersectionObserver(cb,opts){"
+			"this._id=_ms_next_io_id++;"
 			"this._cb=cb;this._opts=opts||{};this._targets=[];"
 			"this.root=(opts&&opts.root)||null;"
 			"this.rootMargin=(opts&&opts.rootMargin)||'0px';"
 			"this.thresholds=[0];"
+			"try{if(typeof __msIOEvent==='function')"
+				"__msIOEvent(this._id,0,null,0,0,0,0,0,0,0);}"
+			"catch(_){}"
 		"}"
 		"IntersectionObserver.prototype.observe=function(el){"
 			"if(!el)return;"
-			"try{__msLife('WANT IntersectionObserver.observe '"
-			"+((el.id||el.tagName)||'?')+' (always intersecting)');}"
+			"var tid=(el.id?('#'+el.id):(el.className?('.'+String(el.className).split(' ')[0]):(el.tagName||'?')));"
+			"try{if(typeof __msIOEvent==='function')"
+				"__msIOEvent(this._id,1,tid,0,0,0,0,0,0,0);}"
 			"catch(_){}"
 			"this._targets.push(el);"
 			"var self=this;"
 			"setTimeout(function(){"
-				"if(self._targets.indexOf(el)<0)return;"
+				"if(self._targets.indexOf(el)<0){"
+					"try{if(typeof __msIOEvent==='function')"
+						"__msIOEvent(self._id,5,tid,0,0,0,0,0,0,0);}catch(_){}"
+					"return;"
+				"}"
 				"var r=(el.getBoundingClientRect&&el.getBoundingClientRect())||"
 					"{top:0,left:0,bottom:0,right:0,width:0,height:0,x:0,y:0};"
-				"var entry={target:el,isIntersecting:true,"
-					"intersectionRatio:1,boundingClientRect:r,"
+				"try{if(typeof __msIOEvent==='function')"
+					"__msIOEvent(self._id,2,tid,r.left|0,r.top|0,r.width|0,r.height|0,0,0,0);}"
+				"catch(_){}"
+				"var isInt=(r.width>0&&r.height>0)||(r.bottom>0&&r.top<10000);"
+				"var ratio=isInt?100:0;"
+				"try{if(typeof __msIOEvent==='function')"
+					"__msIOEvent(self._id,3,tid,0,0,0,0,isInt?1:0,ratio,0);}"
+				"catch(_){}"
+				"var entry=new IntersectionObserverEntry({"
+					"target:el,isIntersecting:isInt,"
+					"intersectionRatio:isInt?1:0,boundingClientRect:r,"
 					"intersectionRect:r,rootBounds:null,"
 					"time:(typeof performance!=='undefined'&&performance.now)?"
-						"performance.now():0};"
+						"performance.now():0});"
+				"try{if(typeof __msIOEvent==='function')"
+					"__msIOEvent(self._id,4,tid,0,0,0,0,0,0,1);}"
+				"catch(_){}"
 				"try{self._cb([entry],self);}catch(e){}"
 			"},0);"
 		"};"
 		"IntersectionObserver.prototype.unobserve=function(el){"
-			"var i=this._targets.indexOf(el);if(i>=0)this._targets.splice(i,1);"
+			"var i=this._targets.indexOf(el);"
+			"if(i>=0){"
+				"var tid=(el.id?('#'+el.id):(el.className?('.'+String(el.className).split(' ')[0]):(el.tagName||'?')));"
+				"try{if(typeof __msIOEvent==='function')"
+					"__msIOEvent(this._id,6,tid,0,0,0,0,0,0,0);}catch(_){}"
+				"this._targets.splice(i,1);"
+			"}"
 		"};"
-		"IntersectionObserver.prototype.disconnect=function(){this._targets=[];};"
+		"IntersectionObserver.prototype.disconnect=function(){"
+			"try{if(typeof __msIOEvent==='function')"
+				"__msIOEvent(this._id,7,null,0,0,0,0,0,0,this._targets.length);}catch(_){}"
+			"this._targets=[];"
+		"};"
 		"IntersectionObserver.prototype.takeRecords=function(){return [];};"
 		"this.IntersectionObserver=IntersectionObserver;");
 
@@ -13481,6 +13601,9 @@ static void register_browser_globals(JSContext *ctx)
 			"try{"
 				"total++;"
 				"var id=(l&&l.id!=null)?String(l.id):null;"
+				"if(id&&typeof __msModEvent==='function'){"
+					"__msModEvent(id,null,3,0,0);" /* MS_MOD_EXECUTE */
+				"}"
 				"if(id&&WATCH[id]&&!seen[id]){"
 					"seen[id]=1;"
 					"if(typeof __msLife==='function')"
@@ -13665,6 +13788,8 @@ static void register_browser_globals(JSContext *ctx)
 		"var rlRealNull=0;"
 		"var realD=(typeof g.__d==='function')?g.__d:null;"
 		"var realRL=(typeof g.requireLazy==='function')?g.requireLazy:null;"
+		"var realReq=(typeof g.require==='function')?g.require:null;"
+		"var realR=(typeof g.__r==='function')?g.__r:null;"
 		"var budget=300;"
 		"function wrappedD(){"
 			"dTotal++;"
@@ -13672,6 +13797,9 @@ static void register_browser_globals(JSContext *ctx)
 			"var _tgtDef=0;"
 			"try{"
 				"var id=(arguments[0]!=null)?String(arguments[0]):null;"
+				"if(id&&typeof __msModEvent==='function'){"
+					"__msModEvent(id,null,0,0,0);" /* MS_MOD_DEFINE */
+				"}"
 				/* fixes1270 - unconditional, every __d() call, not
 				 * gated by DWATCH: the graph walk needs the FULL
 				 * dependency map to reconstruct the target's real
@@ -13682,8 +13810,12 @@ static void register_browser_globals(JSContext *ctx)
 					"var _cp=[];"
 					"if(_rawDeps&&typeof _rawDeps.length==='number'){"
 						"var _di;"
-						"for(_di=0;_di<_rawDeps.length;_di++)"
+						"for(_di=0;_di<_rawDeps.length;_di++){"
 							"_cp.push(_rawDeps[_di]);"
+							"if(typeof __msModEvent==='function'&&_rawDeps[_di]){"
+								"__msModEvent(String(_rawDeps[_di]),id,1,0,1);" /* MS_MOD_REQUEST (dep) */
+							"}"
+						"}"
 					"}"
 					"GDEPS[id]=_cp;"
 					"if(id===GTARGET&&gTargetDefineSeq===-1)"
@@ -13744,6 +13876,16 @@ static void register_browser_globals(JSContext *ctx)
 			"try{"
 				"var deps=args[0];"
 				"var dj=(deps&&deps.join)?deps.join(','):String(deps);"
+				"if(typeof __msModEvent==='function'&&deps){"
+					"if(typeof deps.length==='number'){"
+						"var _mi;"
+						"for(_mi=0;_mi<deps.length;_mi++){"
+							"if(deps[_mi])__msModEvent(String(deps[_mi]),null,1,0,0);" /* MS_MOD_REQUEST */
+						"}"
+					"}else if(typeof deps==='string'){"
+						"__msModEvent(deps,null,1,0,0);"
+					"}"
+				"}"
 				/* fixes1271 - walk the deps ARRAY and record each
 				 * individual dependency string containing the
 				 * substring, rather than only testing the joined
@@ -13791,6 +13933,20 @@ static void register_browser_globals(JSContext *ctx)
 				"args[1]=function(){"
 					"rlFires++;"
 					"if(isTarget)rlTargetFires++;"
+					"if(typeof __msModEvent==='function'&&deps){"
+						"if(typeof deps.length==='number'){"
+							"var _mi2;"
+							"for(_mi2=0;_mi2<deps.length;_mi2++){"
+								"if(deps[_mi2]){"
+									"__msModEvent(String(deps[_mi2]),null,2,0,0);" /* MS_MOD_RESOLVE */
+									"__msModEvent(String(deps[_mi2]),null,3,0,0);" /* MS_MOD_EXECUTE */
+								"}"
+							"}"
+						"}else if(typeof deps==='string'){"
+							"__msModEvent(deps,null,2,0,0);"
+							"__msModEvent(deps,null,3,0,0);"
+						"}"
+					"}"
 					"try{"
 						"if((isTarget||id<=20)&&budget>0&&"
 								"typeof __msLife==='function'){"
@@ -13809,6 +13965,10 @@ static void register_browser_globals(JSContext *ctx)
 						"}catch(e2){}"
 						"return ret;"
 					"}catch(err){"
+						"if(typeof __msModEvent==='function'&&deps){"
+							"var _edn=(typeof deps.length==='number'&&deps[0])?String(deps[0]):String(deps);"
+							"__msModEvent(_edn,null,4,3,0);" /* MS_MOD_FAIL (FACTORY_THROW=3) */
+						"}"
 						"try{if(typeof __msLife==='function')"
 							"__msLife('FBRL THROW id='+id+' err='+"
 								"((err&&err.message)||err));"
@@ -13823,6 +13983,46 @@ static void register_browser_globals(JSContext *ctx)
 			 * anything else means rl_target_fires=0 is our own bug. */
 			"rlRealNull++;"
 			"return undefined;"
+		"}"
+		"function wrappedRequire(id){"
+			"var sid=(id!=null)?String(id):null;"
+			"if(typeof __msModEvent==='function'&&sid){"
+				"__msModEvent(sid,null,1,0,0);" /* MS_MOD_REQUEST */
+			"}"
+			"if(!realReq)return undefined;"
+			"try{"
+				"var res=realReq.apply(this,arguments);"
+				"if(typeof __msModEvent==='function'&&sid){"
+					"__msModEvent(sid,null,2,0,0);" /* MS_MOD_RESOLVE */
+				"}"
+				"return res;"
+			"}catch(err){"
+				"if(typeof __msModEvent==='function'&&sid){"
+					"var r=(err&&err.message&&err.message.indexOf('unknown module')>=0)?1:3;" /* 1=MISSING, 3=FACTORY_THROW */
+					"__msModEvent(sid,null,4,r,0);" /* MS_MOD_FAIL */
+				"}"
+				"throw err;"
+			"}"
+		"}"
+		"function wrappedR(id){"
+			"var sid=(id!=null)?String(id):null;"
+			"if(typeof __msModEvent==='function'&&sid){"
+				"__msModEvent(sid,null,1,0,0);" /* MS_MOD_REQUEST */
+			"}"
+			"if(!realR)return undefined;"
+			"try{"
+				"var res=realR.apply(this,arguments);"
+				"if(typeof __msModEvent==='function'&&sid){"
+					"__msModEvent(sid,null,2,0,0);" /* MS_MOD_RESOLVE */
+				"}"
+				"return res;"
+			"}catch(err){"
+				"if(typeof __msModEvent==='function'&&sid){"
+					"var r=(err&&err.message&&err.message.indexOf('unknown module')>=0)?1:3;"
+					"__msModEvent(sid,null,4,r,0);" /* MS_MOD_FAIL */
+				"}"
+				"throw err;"
+			"}"
 		"}"
 		/* fixes1275 (#167) - DO NOT FABRICATE EXISTENCE.
 		 *
@@ -13893,6 +14093,16 @@ static void register_browser_globals(JSContext *ctx)
 			"configurable:true,"
 			"get:function(){return (realRL!==null)?wrappedRL:undefined;},"
 			"set:function(v){if(v!==wrappedRL)realRL=v;}"
+		"});"
+		"Object.defineProperty(g,'require',{"
+			"configurable:true,"
+			"get:function(){return (realReq!==null)?wrappedRequire:undefined;},"
+			"set:function(v){if(v!==wrappedRequire)realReq=v;}"
+		"});"
+		"Object.defineProperty(g,'__r',{"
+			"configurable:true,"
+			"get:function(){return (realR!==null)?wrappedR:undefined;},"
+			"set:function(v){if(v!==wrappedR)realR=v;}"
 		"});"
 		"g.__msFBLoader_dTotal=function(){return dTotal;};"
 		"g.__msFBLoader_dTarget=function(){return dTarget;};"

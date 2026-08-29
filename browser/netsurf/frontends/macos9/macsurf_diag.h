@@ -55,6 +55,7 @@ void macsurf_diag_nav_done(unsigned long nav_id);
  *   gaps_total=<n>
  */
 long macsurf_diag_serialize_summary(char *buf, long cap);
+long macsurf_diag_serialize_prefs(char *buf, long cap);
 long macsurf_diag_serialize_gaps(char *buf, long cap);
 
 /* `MSdg GET network`: the bounded session request ring, NOT a last-nav
@@ -215,5 +216,45 @@ void ms_diag_frame_close(void *bw);
 long macsurf_diag_serialize_documents(char *buf, long cap);
 long macsurf_diag_serialize_mutations(char *buf, long cap);
 long macsurf_diag_serialize_layout(char *buf, long cap);
+
+/* ===================== Module Trace v1 ===================== */
+enum ms_mod_event_type {
+	MS_MOD_DEFINE = 0,
+	MS_MOD_REQUEST,
+	MS_MOD_RESOLVE,
+	MS_MOD_EXECUTE,
+	MS_MOD_FAIL
+};
+
+enum ms_mod_reason {
+	MS_MOD_REASON_NONE = 0,
+	MS_MOD_REASON_MISSING,
+	MS_MOD_REASON_DEP_MISSING,
+	MS_MOD_REASON_FACTORY_THROW,
+	MS_MOD_REASON_CYCLE
+};
+
+unsigned long ms_diag_module_id(const char *name);
+void ms_diag_module_record(unsigned long mod_id, unsigned long dep_mod_id,
+	int event_type, int reason, int depth);
+void ms_diag_module_record_by_name(const char *name, const char *dep_name,
+	int event_type, int reason, int depth);
+long macsurf_diag_serialize_modules(char *buf, long cap);
+
+/* ================== IntersectionObserver Trace v1 ================== */
+enum ms_io_event_type {
+	MS_IO_CONSTRUCT = 0,
+	MS_IO_OBSERVE,
+	MS_IO_QUERY,
+	MS_IO_CHECK,
+	MS_IO_CALLBACK,
+	MS_IO_SKIP,       /* timer fired but el already unobserved */
+	MS_IO_UNOBSERVE,  /* unobserve() called */
+	MS_IO_DISCONNECT  /* disconnect() called */
+};
+
+void ms_diag_io_record(unsigned long io_id, int ev_type, const char *target_name,
+	long x, long y, long w, long h, int intersecting, int ratio_pct, int entries);
+long macsurf_diag_serialize_io(char *buf, long cap);
 
 #endif /* MACSURF_DIAG_H */
