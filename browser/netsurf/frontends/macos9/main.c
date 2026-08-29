@@ -1878,6 +1878,8 @@ static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
 		n = macsurf_diag_serialize_pending(out, (long)sizeof(out));
 	} else if (strcmp(verb, "settlement") == 0) {
 		n = macsurf_diag_serialize_settlement(out, (long)sizeof(out));
+	} else if (strcmp(verb, "timers") == 0) {
+		n = macsurf_diag_serialize_timers(out, (long)sizeof(out));
 	} else if (strcmp(verb, "tracestart") == 0) {
 		macsurf_trace_arm(0UL, 2);	/* all categories, level 2 */
 		n = macsurf_trace_serialize(out, (long)sizeof(out));

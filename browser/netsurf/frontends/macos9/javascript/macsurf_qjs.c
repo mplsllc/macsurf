@@ -1367,6 +1367,7 @@ static struct qjs_timer *timer_alloc(void)
 	 * never run). It used to be silent, which reads as "everything is fine"
 	 * while a page quietly misbehaves. */
 	g_timer_evicted++;   /* fixes1273 */
+	ms_diag_timer_state((unsigned long)victim->id, MS_TIMER_EVICTED);
 	macsurf_debug_log_writef(
 		"WORK timer: arena FULL (%d) -- evicting furthest-out id=%d "
 		"(expiry %ld ms out); its callback will never run",
@@ -1439,6 +1440,8 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	 * not at fire -- by then current_script / current_nav have moved on. */
 	t->origin_script_id = ms_diag_cur_script();
 	t->nav_id = ms_diag_cur_nav();
+	ms_diag_timer_arm((unsigned long)id, t->nav_id, t->origin_script_id,
+		ms_diag_cur_task(), t->ctx_gen);
 
 	return JS_NewInt32(ctx, id);
 }
@@ -1477,6 +1480,7 @@ static JSValue qjs_cleartimeout(JSContext *ctx, JSValueConst this_val,
 			if (qjs_timer_owned_by(t, ctx) && t->id == target_id) {
 				/* owned_by() already proved t->ctx == ctx, so the
 				 * helper's free-against-t->ctx is this same ctx. */
+				ms_diag_timer_state((unsigned long)t->id, MS_TIMER_CANCELLED);
 				timer_slot_clear(t, 1);
 				break;
 			}
@@ -1555,6 +1559,8 @@ static void qjs_flush_timers(JSContext *old_ctx)
 				(long) qjs_ctx_gen(old_ctx),
 				(void *) old_ctx);
 			/* free_vals=0: ABANDON - see the note above. */
+			ms_diag_timer_state((unsigned long)s_timer_arena[i].id,
+				MS_TIMER_ABANDONED);
 			timer_slot_clear(&s_timer_arena[i], 0);
 			continue;
 		}
@@ -1576,6 +1582,8 @@ static void qjs_flush_timers(JSContext *old_ctx)
 				(long) i, "");
 		macsurf_reconv_pos_flush();
 
+		ms_diag_timer_state((unsigned long)s_timer_arena[i].id,
+			MS_TIMER_REALM_TEARDOWN);
 		timer_slot_clear(&s_timer_arena[i], 1);
 	}
 
@@ -1645,12 +1653,16 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		 * WRONG runtime. */
 		if (qjs_timer_owned_by(&s_timer_arena[i], qctx)) {
 			if (s_timer_arena[i].expiry_ms <= now) {
+				ms_diag_timer_state((unsigned long)s_timer_arena[i].id,
+					MS_TIMER_DUE);
 				due_idx[ndue] = i;
 				due_id[ndue] = s_timer_arena[i].id;
 				ndue++;
 				g_timer_due++;   /* fixes1273 */
 			}
 		} else if (s_timer_arena[i].live) {
+			ms_diag_timer_state((unsigned long)s_timer_arena[i].id,
+				MS_TIMER_OWNER_MISMATCH);
 			/* fixes1273 - live, but belongs to another context.
 			 * Its own heap's pass fires it; counted so "registered
 			 * into a realm nobody pumps" is visible, not assumed
@@ -1735,7 +1747,9 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		this_obj = JS_GetGlobalObject(qctx);
 		ms_diag_task_enter(&__tsk, MS_TASK_TIMER, __t_nav, __t_scr,
 			0, (const char *) 0);
+		ms_diag_timer_state((unsigned long)due_id[k], MS_TIMER_FIRING);
 		ret = JS_Call(qctx, fn, this_obj, call_nargs, call_args);
+		ms_diag_timer_state((unsigned long)due_id[k], MS_TIMER_FIRED);
 		ms_diag_task_leave(&__tsk);
 		{	/* fixes1037 */
 			extern double macos9_micros(void);
@@ -10342,6 +10356,26 @@ static JSValue qjs_ms_io_event(JSContext *ctx,
 	return JS_UNDEFINED;
 }
 
+/* Joins an IO observe contract to the exact setTimeout slot that will run its
+ * initial query. This is diagnostic-only; IO delivery still uses the existing
+ * JavaScript closure and timer scheduler unchanged. */
+static JSValue qjs_ms_io_timer(JSContext *ctx,
+	JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	int io_id = 0, timer_id = 0;
+	const char *target_name = NULL;
+	(void)this_val;
+	if (argc < 3) return JS_UNDEFINED;
+	(void)JS_ToInt32(ctx, &io_id, argv[0]);
+	if (!JS_IsNull(argv[1]) && !JS_IsUndefined(argv[1]))
+		target_name = JS_ToCString(ctx, argv[1]);
+	(void)JS_ToInt32(ctx, &timer_id, argv[2]);
+	ms_diag_io_timer_bind((unsigned long)io_id, target_name,
+		(unsigned long)timer_id);
+	if (target_name != NULL) JS_FreeCString(ctx, target_name);
+	return JS_UNDEFINED;
+}
+
 /* Browser API attempts that occur before a native request exists.  JS returns
  * the opaque id to its fetch/XHR shim; later native events join on it. */
 static JSValue qjs_ms_operation_begin(JSContext *ctx,
@@ -10790,6 +10824,7 @@ static void register_browser_globals(JSContext *ctx)
 	qjs_set_func(ctx, global, "__msRafFired", qjs_raf_fired, 0); /* fixes1236 */
 	qjs_set_func(ctx, global, "__msModEvent", qjs_ms_mod_event, 6); /* Module Trace v2 */
 	qjs_set_func(ctx, global, "__msIOEvent",  qjs_ms_io_event, 10); /* IO Trace v1 */
+	qjs_set_func(ctx, global, "__msIOTimer",  qjs_ms_io_timer, 3);
 	qjs_set_func(ctx, global, "__msOperationBegin", qjs_ms_operation_begin, 1);
 	qjs_set_func(ctx, global, "__msOperationEvent", qjs_ms_operation_event, 7);
 	qjs_set_func(ctx, global, "__msErrorEvent", qjs_ms_error_event, 7);
@@ -11447,7 +11482,7 @@ static void register_browser_globals(JSContext *ctx)
 			"+((el.id||el.tagName)||'?')+' (real)');}catch(_){}"
 			"this._targets.push(el);"
 			"var self=this;"
-			"setTimeout(function(){"
+			"var _io_timer=setTimeout(function(){"
 				"if(self._targets.indexOf(el)<0)return;"
 				"var w,h,r;"
 				"if(typeof document!=='undefined'&&"
@@ -11466,6 +11501,8 @@ static void register_browser_globals(JSContext *ctx)
 					"devicePixelContentBoxSize:[box]};"
 				"try{self._cb([entry],self);}catch(e){}"
 			"},0);"
+			"try{if(typeof __msIOTimer==='function')"
+				"__msIOTimer(this._id,tid,_io_timer);}catch(_){}"
 		"};"
 		"ResizeObserver.prototype.unobserve=function(el){"
 			"var i=this._targets.indexOf(el);if(i>=0)this._targets.splice(i,1);"

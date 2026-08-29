@@ -1589,7 +1589,7 @@ long macsurf_diag_serialize_io(char *buf, long cap)
 struct ms_diag_contract {
 	unsigned long id, nav_id, script_id, task_id;
 	unsigned long operation_id, request_id;
-	unsigned long io_id, target_id;
+	unsigned long io_id, target_id, timer_id;
 	unsigned long module_id, wait_id;
 	unsigned long callback_count;
 	unsigned char kind, operation_kind, state, expected, last_event, eligible;
@@ -1600,8 +1600,62 @@ static int g_contract_head;
 static unsigned long g_contract_seq;
 static unsigned long g_contract_dropped_waiting;
 
+#define MS_TIMER_DIAG_CAP 256
+struct ms_diag_timer {
+	unsigned long id, nav_id, script_id, task_id, ctx_gen;
+	unsigned short io_refs;
+	unsigned char state;
+};
+static struct ms_diag_timer g_timers[MS_TIMER_DIAG_CAP];
+static int g_timer_head;
+
 static const char *ms_op_kind_s(int v);
 static const char *ms_op_phase_s(int v);
+
+static const char *ms_timer_state_s(int state)
+{
+	switch (state) {
+	case MS_TIMER_ARMED: return "armed";
+	case MS_TIMER_DUE: return "due";
+	case MS_TIMER_FIRING: return "firing";
+	case MS_TIMER_FIRED: return "fired";
+	case MS_TIMER_CANCELLED: return "cancelled";
+	case MS_TIMER_EVICTED: return "evicted";
+	case MS_TIMER_REALM_TEARDOWN: return "realm_teardown";
+	case MS_TIMER_OWNER_MISMATCH: return "owner_mismatch";
+	case MS_TIMER_ABANDONED: return "abandoned";
+	default: return "unknown";
+	}
+}
+
+static struct ms_diag_timer *ms_timer_find(unsigned long id)
+{
+	int i;
+	for (i = 0; i < MS_TIMER_DIAG_CAP; i++)
+		if (g_timers[i].id == id) return &g_timers[i];
+	return NULL;
+}
+
+void ms_diag_timer_arm(unsigned long id, unsigned long nav, unsigned long script,
+	unsigned long task, unsigned long ctx_gen)
+{
+	struct ms_diag_timer *t;
+	if (id == 0) return;
+	t = ms_timer_find(id);
+	if (t == NULL) {
+		t = &g_timers[g_timer_head];
+		g_timer_head = (g_timer_head + 1) % MS_TIMER_DIAG_CAP;
+	}
+	memset(t, 0, sizeof(*t));
+	t->id = id; t->nav_id = nav; t->script_id = script;
+	t->task_id = task; t->ctx_gen = ctx_gen; t->state = MS_TIMER_ARMED;
+}
+
+void ms_diag_timer_state(unsigned long id, int state)
+{
+	struct ms_diag_timer *t = ms_timer_find(id);
+	if (t != NULL) t->state = (unsigned char)state;
+}
 
 static int ms_contract_is_unresolved(const struct ms_diag_contract *c)
 {
@@ -1710,6 +1764,20 @@ static struct ms_diag_contract *ms_contract_io_find(unsigned long io_id,
 			g_contracts[i].target_id == target_id)
 			return &g_contracts[i];
 	return NULL;
+}
+
+void ms_diag_io_timer_bind(unsigned long io_id, const char *target_name,
+	unsigned long timer_id)
+{
+	struct ms_diag_contract *c;
+	struct ms_diag_timer *t;
+	unsigned long target_id = ms_diag_io_target_id(target_name);
+	if (io_id == 0 || target_id == 0 || timer_id == 0) return;
+	c = ms_contract_io_find(io_id, target_id);
+	if (c == NULL) return;
+	c->timer_id = timer_id;
+	t = ms_timer_find(timer_id);
+	if (t != NULL && t->io_refs != 65535) t->io_refs++;
 }
 
 static void ms_contract_io_event(unsigned long io_id, unsigned long target_id,
@@ -1834,13 +1902,15 @@ long macsurf_diag_serialize_pending(char *buf, long cap)
 				ms_contract_expected_s(c->expected),
 				ms_op_phase_s(c->last_event), c->request_id);
 		} else if (c->kind == MS_CONTRACT_IO) {
+			struct ms_diag_timer *t = ms_timer_find(c->timer_id);
 			snprintf(line, sizeof line,
-				"contract=%lu nav=%lu script=%lu task=%lu kind=io io=%lu target=%lu state=%s expected=%s last=%s callbacks=%lu\n",
+				"contract=%lu nav=%lu script=%lu task=%lu kind=io io=%lu target=%lu state=%s expected=%s last=%s callbacks=%lu timer=%lu timer_state=%s\n",
 				c->id, c->nav_id, c->script_id, c->task_id,
 				c->io_id, c->target_id,
 				ms_contract_state_s(c->state),
 				ms_contract_expected_s(c->expected),
-				ms_io_event_s(c->last_event), c->callback_count);
+				ms_io_event_s(c->last_event), c->callback_count, c->timer_id,
+				t == NULL ? "unknown" : ms_timer_state_s(t->state));
 		} else {
 			snprintf(line, sizeof line,
 				"contract=%lu nav=%lu script=%lu task=%lu kind=module_wait wait=%lu mod=%lu state=%s expected=%s last=%s eligible=%d\n",
@@ -1855,6 +1925,26 @@ long macsurf_diag_serialize_pending(char *buf, long cap)
 	snprintf(line, sizeof line, "dropped_waiting=%lu\n",
 		(unsigned long)g_contract_dropped_waiting);
 	n = diag_cat(buf, cap, n, line);
+	return n;
+}
+
+long macsurf_diag_serialize_timers(char *buf, long cap)
+{
+	char line[192];
+	long n = 0;
+	int i;
+	if (buf == NULL || cap < 2) return 0;
+	buf[0] = '\0';
+	n = diag_cat(buf, cap, n, "MSDIAG 1 timers\n");
+	for (i = 0; i < MS_TIMER_DIAG_CAP; i++) {
+		struct ms_diag_timer *t = &g_timers[i];
+		if (t->id == 0 || t->io_refs == 0) continue;
+		snprintf(line, sizeof line,
+			"timer=%lu nav=%lu origin_script=%lu origin_task=%lu ctx_gen=%lu state=%s io_refs=%u\n",
+			t->id, t->nav_id, t->script_id, t->task_id, t->ctx_gen,
+			ms_timer_state_s(t->state), (unsigned)t->io_refs);
+		n = diag_cat(buf, cap, n, line);
+	}
 	return n;
 }
 

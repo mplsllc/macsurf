@@ -181,8 +181,20 @@ enum ms_contract_expected {
 	MS_EXPECT_CALLBACK_RETURN
 };
 
+enum ms_timer_diag_state {
+	MS_TIMER_ARMED = 0, MS_TIMER_DUE, MS_TIMER_FIRING, MS_TIMER_FIRED,
+	MS_TIMER_CANCELLED, MS_TIMER_EVICTED, MS_TIMER_REALM_TEARDOWN,
+	MS_TIMER_OWNER_MISMATCH, MS_TIMER_ABANDONED
+};
+
 long macsurf_diag_serialize_pending(char *buf, long cap);
 long macsurf_diag_serialize_settlement(char *buf, long cap);
+long macsurf_diag_serialize_timers(char *buf, long cap);
+void ms_diag_timer_arm(unsigned long timer_id, unsigned long nav_id,
+	unsigned long script_id, unsigned long task_id, unsigned long ctx_gen);
+void ms_diag_timer_state(unsigned long timer_id, int state);
+void ms_diag_io_timer_bind(unsigned long io_id, const char *target_name,
+	unsigned long timer_id);
 
 
 /* ==================== Milestone 1c: Causal Render Trace ====================

@@ -12498,7 +12498,7 @@ box_coords(bx, &cx, &cy);
 	 * MacSurf-owned state transitions, not an attempt to emulate a page or
 	 * network stack in the Linux harness. */
 	{
-		char p0[4096], p1[4096], p2[4096], settle[1024], ops[4096];
+		char p0[4096], p1[4096], p2[4096], settle[1024], ops[4096], timers[2048];
 		char needle[128];
 		unsigned long op;
 		unsigned long mod;
@@ -12551,10 +12551,20 @@ box_coords(bx, &cx, &cy);
 		 * scroll reevaluation is invented by diagnostics. */
 		ms_diag_io_record(991, MS_IO_OBSERVE, ".diag-pending",
 				0, 0, 0, 0, 0, 0, 0);
+		ms_diag_timer_arm(9191, 77, 88, 99, 3);
+		ms_diag_io_timer_bind(991, ".diag-pending", 9191);
 		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
 		if (strstr(p0, "kind=io io=991") == NULL ||
-				strstr(p0, "expected=check") == NULL) {
+				strstr(p0, "expected=check") == NULL ||
+				strstr(p0, "timer=9191 timer_state=armed") == NULL) {
 			fprintf(stderr, "FAIL: Test 102 IO observe pending\n");
+			return 1;
+		}
+		ms_diag_timer_state(9191, MS_TIMER_FIRING);
+		ms_diag_timer_state(9191, MS_TIMER_FIRED);
+		(void)macsurf_diag_serialize_timers(timers, (long)sizeof(timers));
+		if (strstr(timers, "timer=9191 nav=77 origin_script=88 origin_task=99 ctx_gen=3 state=fired") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO timer join\n");
 			return 1;
 		}
 		ms_diag_io_record(991, MS_IO_CHECK, ".diag-pending",
