@@ -1599,6 +1599,9 @@ static struct ms_diag_contract g_contracts[MS_CONTRACT_CAP];
 static int g_contract_head;
 static unsigned long g_contract_seq;
 static unsigned long g_contract_dropped_waiting;
+static unsigned long g_contract_dropped_io;
+static unsigned long g_contract_dropped_module_wait;
+static unsigned long g_contract_dropped_network;
 
 #define MS_TIMER_DIAG_CAP 256
 struct ms_diag_timer {
@@ -1709,6 +1712,11 @@ static struct ms_diag_contract *ms_contract_open(int kind)
 	g_contract_head = (g_contract_head + 1) % MS_CONTRACT_CAP;
 	if (c->id != 0 && ms_contract_is_unresolved(c)) {
 		g_contract_dropped_waiting++;
+		if (c->kind == MS_CONTRACT_IO) g_contract_dropped_io++;
+		else if (c->kind == MS_CONTRACT_MODULE_WAIT)
+			g_contract_dropped_module_wait++;
+		else if (c->kind == MS_CONTRACT_OPERATION)
+			g_contract_dropped_network++;
 	}
 	memset(c, 0, sizeof(*c));
 	c->id = ++g_contract_seq;
@@ -1940,8 +1948,13 @@ long macsurf_diag_serialize_pending(char *buf, long cap)
 		}
 		n = diag_cat(buf, cap, n, line);
 	}
-	snprintf(line, sizeof line, "dropped_waiting=%lu\n",
-		(unsigned long)g_contract_dropped_waiting);
+	snprintf(line, sizeof line,
+		"dropped_waiting=%lu\ndropped_total=%lu\ndropped_io=%lu\ndropped_module_wait=%lu\ndropped_network=%lu\n",
+		(unsigned long)g_contract_dropped_waiting,
+		(unsigned long)g_contract_dropped_waiting,
+		(unsigned long)g_contract_dropped_io,
+		(unsigned long)g_contract_dropped_module_wait,
+		(unsigned long)g_contract_dropped_network);
 	n = diag_cat(buf, cap, n, line);
 	return n;
 }
@@ -1979,8 +1992,13 @@ long macsurf_diag_serialize_settlement(char *buf, long cap)
 	buf[0] = '\0';
 	n = diag_cat(buf, cap, n, "MSDIAG 1 settlement\n");
 	n = diag_cat(buf, cap, n, "network_idle=unknown\nengine_idle=unknown\nrender_idle=unknown\n");
-	snprintf(line, sizeof line, "known_unresolved=%lu\ndropped_waiting=%lu\n",
-		unresolved, (unsigned long)g_contract_dropped_waiting);
+	snprintf(line, sizeof line,
+		"known_unresolved=%lu\ndropped_waiting=%lu\ndropped_total=%lu\ndropped_io=%lu\ndropped_module_wait=%lu\ndropped_network=%lu\n",
+		unresolved, (unsigned long)g_contract_dropped_waiting,
+		(unsigned long)g_contract_dropped_waiting,
+		(unsigned long)g_contract_dropped_io,
+		(unsigned long)g_contract_dropped_module_wait,
+		(unsigned long)g_contract_dropped_network);
 	n = diag_cat(buf, cap, n, line);
 	if (unresolved != 0) {
 		n = diag_cat(buf, cap, n, "settled=0\nreason=unresolved_contracts\n");

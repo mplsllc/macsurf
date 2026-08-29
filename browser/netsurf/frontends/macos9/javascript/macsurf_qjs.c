@@ -117,6 +117,10 @@ struct jsheap *g_heap = NULL;  /* exported for audit */
  * js_destroyheap() unlinks.  Exists so macsurf_qjs_pump_all() can pump all of
  * them; see the note there for why pumping only g_heap froze iframes. */
 static struct jsheap *g_heap_list = NULL;
+#define QJS_IO_TIMER_TARGET_CAP 64
+static JSContext *s_io_timer_expect_ctx;
+static unsigned long s_io_timer_expect_io;
+static char s_io_timer_expect_target[QJS_IO_TIMER_TARGET_CAP];
 
 /* The authoritative ownership record for one JavaScript realm.  A heap can
  * briefly have both an old and replacement JSContext during navigation, while
@@ -1442,6 +1446,13 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	t->nav_id = ms_diag_cur_nav();
 	ms_diag_timer_arm((unsigned long)id, t->nav_id, t->origin_script_id,
 		ms_diag_cur_task(), t->ctx_gen);
+	if (s_io_timer_expect_ctx == ctx) {
+		ms_diag_io_timer_bind(s_io_timer_expect_io,
+			s_io_timer_expect_target, (unsigned long)id);
+		s_io_timer_expect_ctx = NULL;
+		s_io_timer_expect_io = 0;
+		s_io_timer_expect_target[0] = '\0';
+	}
 
 	return JS_NewInt32(ctx, id);
 }
@@ -10356,22 +10367,25 @@ static JSValue qjs_ms_io_event(JSContext *ctx,
 	return JS_UNDEFINED;
 }
 
-/* Joins an IO observe contract to the exact setTimeout slot that will run its
- * initial query. This is diagnostic-only; IO delivery still uses the existing
- * JavaScript closure and timer scheduler unchanged. */
+/* The IO shim arms this one-shot expectation immediately before setTimeout.
+ * Native allocation consumes it, avoiding JS wrapper/public timer handles. */
 static JSValue qjs_ms_io_timer(JSContext *ctx,
 	JSValueConst this_val, int argc, JSValueConst *argv)
 {
-	int io_id = 0, timer_id = 0;
+	int io_id = 0, i = 0;
 	const char *target_name = NULL;
 	(void)this_val;
-	if (argc < 3) return JS_UNDEFINED;
+	if (argc < 2) return JS_UNDEFINED;
 	(void)JS_ToInt32(ctx, &io_id, argv[0]);
 	if (!JS_IsNull(argv[1]) && !JS_IsUndefined(argv[1]))
 		target_name = JS_ToCString(ctx, argv[1]);
-	(void)JS_ToInt32(ctx, &timer_id, argv[2]);
-	ms_diag_io_timer_bind((unsigned long)io_id, target_name,
-		(unsigned long)timer_id);
+	s_io_timer_expect_ctx = ctx;
+	s_io_timer_expect_io = (unsigned long)io_id;
+	if (target_name != NULL) while (target_name[i] != '\0' &&
+		i < QJS_IO_TIMER_TARGET_CAP - 1) {
+		s_io_timer_expect_target[i] = target_name[i]; i++;
+	}
+	s_io_timer_expect_target[i] = '\0';
 	if (target_name != NULL) JS_FreeCString(ctx, target_name);
 	return JS_UNDEFINED;
 }
@@ -11546,7 +11560,9 @@ static void register_browser_globals(JSContext *ctx)
 			"catch(_){}"
 			"this._targets.push(el);"
 			"var self=this;"
-			"var _io_timer=setTimeout(function(){"
+			"try{if(typeof __msIOTimer==='function')"
+				"__msIOTimer(this._id,tid);}catch(_){}"
+			"setTimeout(function(){"
 				"if(self._targets.indexOf(el)<0){"
 					"try{if(typeof __msIOEvent==='function')"
 						"__msIOEvent(self._id,5,tid,0,0,0,0,0,0,0);}catch(_){}"
@@ -11573,8 +11589,6 @@ static void register_browser_globals(JSContext *ctx)
 				"catch(_){}"
 				"try{self._cb([entry],self);}catch(e){}"
 			"},0);"
-			"try{if(typeof __msIOTimer==='function')"
-				"__msIOTimer(self._id,tid,_io_timer);}catch(_){}"
 		"};"
 		"IntersectionObserver.prototype.unobserve=function(el){"
 			"var i=this._targets.indexOf(el);"
