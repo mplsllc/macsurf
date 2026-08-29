@@ -557,7 +557,7 @@ static void html_box_convert_done(html_content *c, bool success)
  *
  * Capped at 40 dumps, one per section, so it is a handful of lines rather than
  * a firehose. Turn it off again once the hero is understood. */
-#define MACSURF_PAGEMAP 1
+/* #define MACSURF_PAGEMAP 1 */
 #define MACSURF_PAGEMAP_MAX_DUMPS 40
 
 static long macsurf_pagemap_dumps = 0;
