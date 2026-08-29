@@ -6503,10 +6503,12 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 	 * (jQuery :hidden relies on it). */
 	qjs_geometry_flush(ctx);	/* fixes1073 (#265) */
 	if (!qjs_geometry_settled(ctx)) {
+		char rname[64];
 		g_geom_undef++;			/* fixes1087 */
 		macsurf_gap_hit(MS_GAP_GEOMETRY_UNDEFINED);
+		snprintf(rname, sizeof rname, "%s.unsettled", qjs_metric_name(magic));
 		ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
-			qjs_metric_name(magic), MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
+			rname, MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
 		qjs_geom_audit(qjs_metric_name(magic), this_val,
 				"undefined (unsettled)");
 		return JS_UNDEFINED;
@@ -6526,10 +6528,12 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 		 * back as inline sizes. */
 		extern int macos9_reconvert_pending_for(void *cv);
 		if (macos9_reconvert_pending_for(content)) {
+			char rname[64];
 			g_geom_undef++;		/* fixes1087 */
 			macsurf_gap_hit(MS_GAP_GEOMETRY_UNDEFINED);
+			snprintf(rname, sizeof rname, "%s.mutation_pending", qjs_metric_name(magic));
 			ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
-				qjs_metric_name(magic), MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
+				rname, MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
 			qjs_geom_audit(qjs_metric_name(magic), this_val,
 					"undefined (mutation pending)");
 			return JS_UNDEFINED;
@@ -6551,10 +6555,12 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 		 * Harness Test 43 asserts exactly this and caught the first cut of
 		 * this change fabricating a value in the unsettled window. */
 		if (content->status != CONTENT_STATUS_DONE) {
+			char rname[64];
 			g_geom_undef++;
 			macsurf_gap_hit(MS_GAP_GEOMETRY_UNDEFINED);
+			snprintf(rname, sizeof rname, "%s.nobox_notdone", qjs_metric_name(magic));
 			ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
-				qjs_metric_name(magic), MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
+				rname, MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
 			qjs_geom_audit(qjs_metric_name(magic), this_val,
 					"undefined (no box, not DONE)");
 			return JS_UNDEFINED;
