@@ -12572,6 +12572,22 @@ box_coords(bx, &cx, &cy);
 			fprintf(stderr, "FAIL: Test 102 IO timer join\n");
 			return 1;
 		}
+		/* If ordinary history already rotated before the JS-side bind, the
+		 * contract still retains a lifecycle record for its exact timer id. */
+		ms_diag_io_record(992, MS_IO_OBSERVE, ".diag-recover",
+				0, 0, 0, 0, 0, 0, 0);
+		ms_diag_io_timer_bind(992, ".diag-recover", 9292);
+		ms_diag_timer_state(9292, MS_TIMER_FIRED);
+		(void)macsurf_diag_serialize_timers(timers, (long)sizeof(timers));
+		if (strstr(timers, "timer=9292 nav=") == NULL ||
+				strstr(timers, "state=fired") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO timer recovery\n");
+			return 1;
+		}
+		ms_diag_io_record(992, MS_IO_CHECK, ".diag-recover",
+				0, 0, 0, 0, 1, 100, 0);
+		ms_diag_io_record(992, MS_IO_CALLBACK, ".diag-recover",
+				0, 0, 0, 0, 0, 0, 1);
 		ms_diag_io_record(991, MS_IO_CHECK, ".diag-pending",
 				0, 0, 0, 0, 1, 100, 0);
 		ms_diag_io_record(991, MS_IO_CALLBACK, ".diag-pending",

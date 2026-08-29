@@ -1788,6 +1788,13 @@ void ms_diag_io_timer_bind(unsigned long io_id, const char *target_name,
 	if (c == NULL) return;
 	c->timer_id = timer_id;
 	t = ms_timer_find(timer_id);
+	/* setTimeout normally arms this record before returning its id. Keep the
+	 * join useful even if a bounded ordinary-timer record was already rotated:
+	 * subsequent due/firing/fired transitions address this recovered id. */
+	if (t == NULL) {
+		ms_diag_timer_arm(timer_id, c->nav_id, c->script_id, c->task_id, 0);
+		t = ms_timer_find(timer_id);
+	}
 	if (t != NULL && t->io_refs != 65535) t->io_refs++;
 }
 
