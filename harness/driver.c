@@ -12502,6 +12502,7 @@ box_coords(bx, &cx, &cy);
 		char needle[128];
 		unsigned long op;
 		unsigned long mod;
+		int ti;
 
 		fprintf(stderr, "\n=== Test 102: Phase 2 negative-state diagnostics ===\n");
 
@@ -12562,6 +12563,10 @@ box_coords(bx, &cx, &cy);
 		}
 		ms_diag_timer_state(9191, MS_TIMER_FIRING);
 		ms_diag_timer_state(9191, MS_TIMER_FIRED);
+		/* Long-lived pages create enough unrelated timers to wrap the bounded
+		 * table. A joined IO record must survive that rotation. */
+		for (ti = 0; ti < 300; ti++)
+			ms_diag_timer_arm((unsigned long)(10000 + ti), 1, 2, 3, 4);
 		(void)macsurf_diag_serialize_timers(timers, (long)sizeof(timers));
 		if (strstr(timers, "timer=9191 nav=77 origin_script=88 origin_task=99 ctx_gen=3 state=fired") == NULL) {
 			fprintf(stderr, "FAIL: Test 102 IO timer join\n");

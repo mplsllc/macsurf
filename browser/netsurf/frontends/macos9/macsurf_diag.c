@@ -1640,11 +1640,22 @@ void ms_diag_timer_arm(unsigned long id, unsigned long nav, unsigned long script
 	unsigned long task, unsigned long ctx_gen)
 {
 	struct ms_diag_timer *t;
+	int i, slot;
 	if (id == 0) return;
 	t = ms_timer_find(id);
 	if (t == NULL) {
-		t = &g_timers[g_timer_head];
-		g_timer_head = (g_timer_head + 1) % MS_TIMER_DIAG_CAP;
+		/* A joined IO timer is the causal record this table exists to keep.
+		 * Ordinary timer history may rotate, but never evict a joined record
+		 * merely because a long-lived page creates more timers. */
+		for (i = 0; i < MS_TIMER_DIAG_CAP; i++) {
+			slot = (g_timer_head + i) % MS_TIMER_DIAG_CAP;
+			if (g_timers[slot].io_refs == 0) {
+				t = &g_timers[slot];
+				g_timer_head = (slot + 1) % MS_TIMER_DIAG_CAP;
+				break;
+			}
+		}
+		if (t == NULL) return;
 	}
 	memset(t, 0, sizeof(*t));
 	t->id = id; t->nav_id = nav; t->script_id = script;
