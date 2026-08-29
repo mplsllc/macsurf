@@ -1020,6 +1020,7 @@ bool cssprobe_test_css_transitions(void)
 		css_computed_style *all = NULL, *none = NULL, *shorthand_none = NULL;
 		css_computed_style *invalid_none = NULL;
 		const css_computed_transition_data *data;
+		css_effective_transition_descriptor descriptor;
 		const char *css =
 			".all { transition-property: all; }\n"
 			".none { transition-property: none; }\n"
@@ -1034,13 +1035,26 @@ bool cssprobe_test_css_transitions(void)
 		shorthand_none = select_test_node(ctx, "div", "shorthand-none", NULL);
 		invalid_none = select_test_node(ctx, "div", "invalid-none", NULL);
 		if (all == NULL || none == NULL || shorthand_none == NULL || invalid_none == NULL) return false;
-		data = css_computed_transition_data_get(all);
+		if (css_computed_transition_descriptor_count(all) != 1 ||
+			!css_computed_transition_descriptor(all, 0, &descriptor) ||
+			descriptor.prop.kind != CSS_TRANS_PROP_ALL) {
+			fprintf(stderr, "FAIL: transition-property all\n"); return false;
+		}
+		if (css_computed_transition_descriptor_count(none) != 0) {
+			fprintf(stderr, "FAIL: transition-property none\n"); return false;
+		}
+		data = css_computed_transition_data_get(shorthand_none);
 		if (data == NULL || data->prop_count != 1 ||
-			data->props[0].kind != CSS_TRANS_PROP_ALL ||
-			css_computed_transition_descriptor_count(none) != 0 ||
-			css_computed_transition_descriptor_count(shorthand_none) != 0 ||
-			css_computed_transition_data_get(invalid_none) != NULL) {
-			fprintf(stderr, "FAIL: transition none/all\n"); return false;
+			data->props[0].kind != CSS_TRANS_PROP_NONE ||
+			data->duration_count != 1 || data->durations[0] != 0 ||
+			data->timing_count != 1 || data->timings[0].type != CSS_TIMING_EASE ||
+			data->delay_count != 1 || data->delays[0] != 0) {
+			fprintf(stderr, "FAIL: transition shorthand none\n"); return false;
+		}
+		if (css_computed_transition_descriptor_count(invalid_none) != 1 ||
+			!css_computed_transition_descriptor(invalid_none, 0, &descriptor) ||
+			descriptor.prop.kind != CSS_TRANS_PROP_ALL) {
+			fprintf(stderr, "FAIL: transition-property none list accepted\n"); return false;
 		}
 		css_computed_style_destroy(all);
 		css_computed_style_destroy(none);
