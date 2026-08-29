@@ -67,7 +67,7 @@ GLUE_SRC  := build/macsurf_qjs.c build/macos9_reconvert.c build/macsurf_dom_disp
              build/macos9_content_registry.c build/misc_stub.c build/macos9_js_fetch.c
 # fixes1268a (#167): cssprobe.c includes libcss's PRIVATE headers, whose
 # enumerators collide with netsurf's in driver.c -- it must stay its own TU.
-HARN_SRC  := harness_stubs.c harness_gen_stubs.c driver.c cssprobe.c
+HARN_SRC  := harness_stubs.c harness_gen_stubs.c driver.c cssprobe.c macos9_transition_test.c
 
 INC += -I$(LIBDIR)/libdom/bindings/hubbub
 
@@ -84,9 +84,10 @@ harn_of = $(OBJ)/$(notdir $(1:.c=.o))
 GLUE_QJS_SRC   := build/macsurf_qjs.c build/macsurf_dom_dispatch.c \
                   build/macos9_js_fetch.c build/macsurf_qjs_audit.c
 GLUE_PLAIN_SRC := build/macos9_reconvert.c build/macos9_content_registry.c \
-                  build/misc_stub.c build/macsurf_lwc_compat.c \
-                  build/macsurf_gap.c build/macsurf_diag.c build/macsurf_trace.c \
-                  $(NS)/frontends/macos9/macsurf_capability.c
+                   build/misc_stub.c build/macsurf_lwc_compat.c \
+                   build/macsurf_gap.c build/macsurf_diag.c build/macsurf_trace.c \
+                   $(NS)/frontends/macos9/macsurf_capability.c \
+                   $(NS)/frontends/macos9/macos9_transition.c
 
 # $(sort) dedupes: dedup.sh's `core` set and EXTRA_SRC both name corestrings.c,
 # and two rules for one object is a "overriding recipe" warning at best.

@@ -12765,5 +12765,16 @@ box_coords(bx, &cx, &cy);
 		fprintf(stderr, "=== Test 105 PASS: CSS Transitions independent cascade & descriptor contract ===\n");
 	}
 
+	/* --- Test 106: Group 2 / Round 2B-1 Generic Transition Engine (synthetic) -- */
+	{
+		extern bool test_macos9_transition_2b1(void);
+		fprintf(stderr, "\n=== Test 106: Group 2 / Round 2B-1 Generic Transition Engine ===\n");
+		if (!test_macos9_transition_2b1()) {
+			fprintf(stderr, "FAIL: Test 106 Transition Engine 2B-1\n");
+			return 1;
+		}
+		fprintf(stderr, "=== Test 106 PASS: Generic engine synthetic (bounded, delay, wrap) ===\n");
+	}
+
 	return 0;
 }
