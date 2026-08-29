@@ -12606,6 +12606,20 @@ box_coords(bx, &cx, &cy);
 			fprintf(stderr, "FAIL: Test 102 IO timer recovery\n");
 			return 1;
 		}
+		/* The JS shim can report that it has armed an expectation before the
+		 * native scheduler allocates its authoritative timer id.  Do not render
+		 * that zero id as a fictitious armed timer. */
+		ms_diag_io_record(993, MS_IO_OBSERVE, ".diag-expect",
+				0, 0, 0, 0, 0, 0, 0);
+		ms_diag_io_timer_expect(993, ".diag-expect");
+		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
+		if (strstr(p0, "kind=io io=993") == NULL ||
+				strstr(p0, "timer=0 timer_state=awaiting_native_allocation") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO native allocation expectation\n");
+			return 1;
+		}
+		ms_diag_timer_arm(9393, 7, 8, 9, 10);
+		ms_diag_io_timer_bind(993, ".diag-expect", 9393);
 		ms_diag_io_record(992, MS_IO_CHECK, ".diag-recover",
 				0, 0, 0, 0, 1, 100, 0);
 		ms_diag_io_record(992, MS_IO_CALLBACK, ".diag-recover",
@@ -12613,6 +12627,10 @@ box_coords(bx, &cx, &cy);
 		ms_diag_io_record(991, MS_IO_CHECK, ".diag-pending",
 				0, 0, 0, 0, 1, 100, 0);
 		ms_diag_io_record(991, MS_IO_CALLBACK, ".diag-pending",
+				0, 0, 0, 0, 0, 0, 1);
+		ms_diag_io_record(993, MS_IO_CHECK, ".diag-expect",
+				0, 0, 0, 0, 1, 100, 0);
+		ms_diag_io_record(993, MS_IO_CALLBACK, ".diag-expect",
 				0, 0, 0, 0, 0, 0, 1);
 		(void)macsurf_diag_serialize_pending(p1, (long)sizeof(p1));
 		if (strstr(p1, "kind=io io=991") != NULL) {

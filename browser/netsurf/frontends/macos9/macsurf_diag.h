@@ -202,6 +202,7 @@ long macsurf_diag_serialize_readiness(char *buf, long cap);
 void ms_diag_timer_arm(unsigned long timer_id, unsigned long nav_id,
 	unsigned long script_id, unsigned long task_id, unsigned long ctx_gen);
 void ms_diag_timer_state(unsigned long timer_id, int state);
+void ms_diag_io_timer_expect(unsigned long io_id, const char *target_name);
 void ms_diag_io_timer_bind(unsigned long io_id, const char *target_name,
 	unsigned long timer_id);
 

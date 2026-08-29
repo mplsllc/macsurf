@@ -118,9 +118,15 @@ struct jsheap *g_heap = NULL;  /* exported for audit */
  * them; see the note there for why pumping only g_heap froze iframes. */
 static struct jsheap *g_heap_list = NULL;
 #define QJS_IO_TIMER_TARGET_CAP 64
-static JSContext *s_io_timer_expect_ctx;
-static unsigned long s_io_timer_expect_io;
-static char s_io_timer_expect_target[QJS_IO_TIMER_TARGET_CAP];
+#define QJS_IO_TIMER_EXPECT_CAP 64
+struct qjs_io_timer_expect {
+	JSContext *ctx;
+	unsigned long ctx_gen, io_id, seq;
+	char target[QJS_IO_TIMER_TARGET_CAP];
+};
+static struct qjs_io_timer_expect
+	s_io_timer_expects[QJS_IO_TIMER_EXPECT_CAP];
+static unsigned long s_io_timer_expect_seq;
 
 /* The authoritative ownership record for one JavaScript realm.  A heap can
  * briefly have both an old and replacement JSContext during navigation, while
@@ -1446,12 +1452,19 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	t->nav_id = ms_diag_cur_nav();
 	ms_diag_timer_arm((unsigned long)id, t->nav_id, t->origin_script_id,
 		ms_diag_cur_task(), t->ctx_gen);
-	if (s_io_timer_expect_ctx == ctx) {
-		ms_diag_io_timer_bind(s_io_timer_expect_io,
-			s_io_timer_expect_target, (unsigned long)id);
-		s_io_timer_expect_ctx = NULL;
-		s_io_timer_expect_io = 0;
-		s_io_timer_expect_target[0] = '\0';
+	{
+		struct qjs_io_timer_expect *expect = NULL;
+		for (i = 0; i < QJS_IO_TIMER_EXPECT_CAP; i++) {
+			struct qjs_io_timer_expect *candidate = &s_io_timer_expects[i];
+			if (candidate->ctx == ctx && candidate->ctx_gen == t->ctx_gen &&
+				(expect == NULL || candidate->seq < expect->seq))
+				expect = candidate;
+		}
+		if (expect != NULL) {
+			ms_diag_io_timer_bind(expect->io_id, expect->target,
+				(unsigned long)id);
+			memset(expect, 0, sizeof(*expect));
+		}
 	}
 
 	return JS_NewInt32(ctx, id);
@@ -10372,20 +10385,39 @@ static JSValue qjs_ms_io_event(JSContext *ctx,
 static JSValue qjs_ms_io_timer(JSContext *ctx,
 	JSValueConst this_val, int argc, JSValueConst *argv)
 {
-	int io_id = 0, i = 0;
+	int io_id = 0, i = 0, slot = -1;
 	const char *target_name = NULL;
+	struct qjs_io_timer_expect *expect;
 	(void)this_val;
 	if (argc < 2) return JS_UNDEFINED;
 	(void)JS_ToInt32(ctx, &io_id, argv[0]);
 	if (!JS_IsNull(argv[1]) && !JS_IsUndefined(argv[1]))
 		target_name = JS_ToCString(ctx, argv[1]);
-	s_io_timer_expect_ctx = ctx;
-	s_io_timer_expect_io = (unsigned long)io_id;
+	for (i = 0; i < QJS_IO_TIMER_EXPECT_CAP; i++)
+		if (s_io_timer_expects[i].ctx == NULL) { slot = i; break; }
+	if (slot < 0) {
+		unsigned long oldest = 0;
+		slot = 0;
+		for (i = 0; i < QJS_IO_TIMER_EXPECT_CAP; i++)
+			if (oldest == 0 || s_io_timer_expects[i].seq < oldest) {
+				oldest = s_io_timer_expects[i].seq;
+				slot = i;
+			}
+	}
+	expect = &s_io_timer_expects[slot];
+	memset(expect, 0, sizeof(*expect));
+	expect->ctx = ctx;
+	expect->ctx_gen = qjs_ctx_gen(ctx);
+	expect->io_id = (unsigned long)io_id;
+	expect->seq = ++s_io_timer_expect_seq;
+	if (s_io_timer_expect_seq == 0) expect->seq = ++s_io_timer_expect_seq;
+	ms_diag_io_timer_expect(expect->io_id, target_name);
+	i = 0;
 	if (target_name != NULL) while (target_name[i] != '\0' &&
 		i < QJS_IO_TIMER_TARGET_CAP - 1) {
-		s_io_timer_expect_target[i] = target_name[i]; i++;
+		expect->target[i] = target_name[i]; i++;
 	}
-	s_io_timer_expect_target[i] = '\0';
+	expect->target[i] = '\0';
 	if (target_name != NULL) JS_FreeCString(ctx, target_name);
 	return JS_UNDEFINED;
 }

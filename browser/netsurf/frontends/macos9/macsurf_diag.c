@@ -1658,6 +1658,7 @@ struct ms_diag_contract {
 	unsigned long module_id, wait_id;
 	unsigned long callback_count;
 	unsigned char kind, operation_kind, state, expected, last_event, eligible;
+	unsigned char timer_expected;
 };
 
 static struct ms_diag_contract g_contracts[MS_CONTRACT_CAP];
@@ -1855,6 +1856,17 @@ static struct ms_diag_contract *ms_contract_io_find(unsigned long io_id,
 	return NULL;
 }
 
+void ms_diag_io_timer_expect(unsigned long io_id, const char *target_name)
+{
+	struct ms_diag_contract *c;
+	unsigned long target_id = ms_diag_io_target_id(target_name);
+	if (io_id == 0 || target_id == 0) return;
+	c = ms_contract_io_find(io_id, target_id);
+	if (c == NULL) return;
+	c->timer_expected = 1;
+	ms_diag_progress(MS_PROGRESS_CONTRACT);
+}
+
 void ms_diag_io_timer_bind(unsigned long io_id, const char *target_name,
 	unsigned long timer_id)
 {
@@ -1865,6 +1877,7 @@ void ms_diag_io_timer_bind(unsigned long io_id, const char *target_name,
 	c = ms_contract_io_find(io_id, target_id);
 	if (c == NULL) return;
 	c->timer_id = timer_id;
+	c->timer_expected = 0;
 	t = ms_timer_find(timer_id);
 	/* setTimeout normally arms this record before returning its id. Keep the
 	 * join useful even if a bounded ordinary-timer record was already rotated:
@@ -1999,7 +2012,11 @@ long macsurf_diag_serialize_pending(char *buf, long cap)
 				ms_contract_expected_s(c->expected),
 				ms_op_phase_s(c->last_event), c->request_id);
 		} else if (c->kind == MS_CONTRACT_IO) {
-			struct ms_diag_timer *t = ms_timer_find(c->timer_id);
+			struct ms_diag_timer *t = c->timer_id == 0 ? NULL :
+				ms_timer_find(c->timer_id);
+			const char *timer_state = t == NULL ?
+				(c->timer_expected ? "awaiting_native_allocation" : "unbound") :
+				ms_timer_state_s(t->state);
 			snprintf(line, sizeof line,
 				"contract=%lu nav=%lu script=%lu task=%lu kind=io io=%lu target=%lu state=%s expected=%s last=%s callbacks=%lu timer=%lu timer_state=%s\n",
 				c->id, c->nav_id, c->script_id, c->task_id,
@@ -2007,7 +2024,7 @@ long macsurf_diag_serialize_pending(char *buf, long cap)
 				ms_contract_state_s(c->state),
 				ms_contract_expected_s(c->expected),
 				ms_io_event_s(c->last_event), c->callback_count, c->timer_id,
-				t == NULL ? "unknown" : ms_timer_state_s(t->state));
+				timer_state);
 		} else {
 			snprintf(line, sizeof line,
 				"contract=%lu nav=%lu script=%lu task=%lu kind=module_wait wait=%lu mod=%lu state=%s expected=%s last=%s eligible=%d\n",
