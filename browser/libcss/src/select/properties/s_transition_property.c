@@ -58,7 +58,9 @@ css_error css__cascade_transition_property(uint32_t opv, css_style *style,
 			if (d != NULL) {
 				d->inherit_flags |= CSS_TRANS_INHERIT_PROP;
 			}
-		} else if (hasFlagValue(opv) && getFlagValue(opv) == FLAG_VALUE_INITIAL) {
+		} else if (hasFlagValue(opv) &&
+				(getFlagValue(opv) == FLAG_VALUE_INITIAL ||
+				 getFlagValue(opv) == FLAG_VALUE_UNSET)) {
 			if (state->computed->transition_data != NULL) {
 				css_computed_transition_data *d = state->computed->transition_data;
 				d->inherit_flags &= ~CSS_TRANS_INHERIT_PROP;

@@ -968,5 +968,50 @@ bool cssprobe_test_css_transitions(void)
 		css_select_ctx_destroy(ctx);
 	}
 
+	/* 8. initial and unset reset all non-inherited transition longhands. */
+	{
+		css_select_ctx *ctx = NULL;
+		css_stylesheet *sheet = NULL;
+		css_computed_style *initial = NULL, *unset = NULL;
+		const css_computed_transition_data *data;
+		const char *css =
+			".initial { transition: opacity 1s linear 100ms; transition: initial; }\n"
+			".unset { transition: opacity 1s linear 100ms; transition: unset; }\n"
+			".longhand-unset { transition-property: opacity; transition-duration: 1s; "
+			"transition-timing-function: linear; transition-delay: 100ms; "
+			"transition-property: unset; transition-duration: unset; "
+			"transition-timing-function: unset; transition-delay: unset; }\n";
+		if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+		sheet = parse_test_css(css);
+		if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+		css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+		initial = select_test_node(ctx, "div", "initial", NULL);
+		unset = select_test_node(ctx, "div", "unset", NULL);
+		if (initial == NULL || unset == NULL ||
+			!css_computed_transition_data_equal(initial, unset)) {
+			fprintf(stderr, "FAIL: transition initial/unset equality\n"); return false;
+		}
+		data = css_computed_transition_data_get(initial);
+		if (data != NULL && (data->prop_count != 1 ||
+			data->props[0].kind != CSS_TRANS_PROP_ALL ||
+			data->duration_count != 1 || data->durations[0] != 0 ||
+			data->timing_count != 1 || data->timings[0].type != CSS_TIMING_EASE ||
+			data->delay_count != 1 || data->delays[0] != 0)) {
+			fprintf(stderr, "FAIL: transition initial values\n"); return false;
+		}
+		css_computed_style_destroy(initial);
+		css_computed_style_destroy(unset);
+		initial = select_test_node(ctx, "div", "longhand-unset", NULL);
+		data = css_computed_transition_data_get(initial);
+		if (initial == NULL || data == NULL || data->prop_count != 1 ||
+			data->props[0].kind != CSS_TRANS_PROP_ALL || data->durations[0] != 0 ||
+			data->timings[0].type != CSS_TIMING_EASE || data->delays[0] != 0) {
+			fprintf(stderr, "FAIL: transition longhand unset\n"); return false;
+		}
+		css_computed_style_destroy(initial);
+		css_stylesheet_destroy(sheet);
+		css_select_ctx_destroy(ctx);
+	}
+
 	return true;
 }
