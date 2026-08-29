@@ -12739,19 +12739,21 @@ box_coords(bx, &cx, &cy);
 		fprintf(stderr, "=== Test 103 PASS: semantic outcomes are bounded, deduplicated, and stable ===\n");
 	}
 
-	/* --- Test 104: Phase 4 gapreport census and coverage matrix -------- */
+	/* --- Test 104: Phase 4 & 5.1 gapreport census and coverage matrix -- */
 	{
 		char report[32768], report_again[32768];
-		fprintf(stderr, "\n=== Test 104: Phase 4 gapreport census and coverage matrix ===\n");
+		fprintf(stderr, "\n=== Test 104: Phase 4 & 5.1 gapreport census and coverage matrix ===\n");
 		(void)macsurf_diag_serialize_gapreport(report, (long)sizeof(report));
 		(void)macsurf_diag_serialize_gapreport(report_again, (long)sizeof(report_again));
 		if (strcmp(report, report_again) != 0 ||
 			strstr(report, "MSDIAG 1 gapreport") == NULL ||
+			strstr(report, "census_lossless=0") == NULL ||
+			strstr(report, "coverage_complete=0") == NULL ||
 			strstr(report, "[coverage]") == NULL ||
 			strstr(report, "js_host_api=full") == NULL ||
 			strstr(report, "global_feature_get=unobservable reason=quickjs_global_lookup_no_safe_host_hook") == NULL ||
 			strstr(report, "[gaps]") == NULL ||
-			strstr(report, "key=js.geometry.offsetWidth result=unsupported quality=3 count=2") == NULL ||
+			strstr(report, "key=js.geometry.offsetWidth.get result=unsupported quality=3 count=2") == NULL ||
 			strstr(report, "key=css.value.display.grid result=unsupported quality=0 count=2") == NULL ||
 			strstr(report, "key=css.property.aspect-ratio result=unsupported quality=0 count=1") == NULL) {
 			fprintf(stderr, "FAIL: Test 104 gapreport format/coverage/normalized keys\n"); return 1;

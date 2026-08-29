@@ -13,11 +13,13 @@ struct ms_cap_record {
 	int used, domain, operation, result, quality;
 	unsigned long count, first_nav, first_script, first_task;
 	unsigned long last_nav, last_script, last_task;
+	unsigned long name_hash;
 	char name[MS_CAP_TEXT];
 };
 struct ms_css_record {
 	int used, kind, result;
 	unsigned long count, first_nav, last_nav;
+	unsigned long prop_hash, name_hash, val_hash;
 	char property[MS_CAP_TEXT];
 	char name[MS_CAP_TEXT];
 	char value[MS_CAP_TEXT];
@@ -28,6 +30,17 @@ static struct ms_css_record g_css[MS_CAP_RECORDS];
 static unsigned long g_cap_dropped, g_css_dropped;
 static unsigned long g_cap_drop_domain[9], g_css_drop_kind[8];
 
+static unsigned long str_hash(const char *s)
+{
+	unsigned long h = 5381;
+	int c;
+	if (s == NULL) return 0;
+	while ((c = (int)(unsigned char)*s++) != 0) {
+		h = ((h << 5) + h) + (unsigned long)c;
+	}
+	return h;
+}
+
 static void copy_text(char *out, const char *in)
 {
 	int i;
@@ -36,29 +49,25 @@ static void copy_text(char *out, const char *in)
 	out[i] = '\0';
 }
 
-static int text_equal(const char *a, const char *b)
-{
-	if (a == NULL) a = "";
-	if (b == NULL) b = "";
-	return strcmp(a, b) == 0;
-}
-
 void ms_diag_capability_hit(int domain, int operation, const char *name,
 	int result, int quality)
 {
 	int i, free_slot = -1;
+	unsigned long nh = str_hash(name);
 	struct ms_cap_record *r = NULL;
 	for (i = 0; i < MS_CAP_RECORDS; i++) {
 		if (!g_cap[i].used) { if (free_slot < 0) free_slot = i; continue; }
 		if (g_cap[i].domain == domain && g_cap[i].operation == operation &&
 			g_cap[i].result == result && g_cap[i].quality == quality &&
-			text_equal(g_cap[i].name, name)) { r = &g_cap[i]; break; }
+			g_cap[i].name_hash == nh) { r = &g_cap[i]; break; }
 	}
 	if (r == NULL && free_slot >= 0) {
 		r = &g_cap[free_slot];
 		memset(r, 0, sizeof(*r));
 		r->used = 1; r->domain = domain; r->operation = operation;
-		r->result = result; r->quality = quality; copy_text(r->name, name);
+		r->result = result; r->quality = quality;
+		r->name_hash = nh;
+		copy_text(r->name, name);
 		r->first_nav = ms_diag_cur_nav(); r->first_script = ms_diag_cur_script();
 		r->first_task = ms_diag_cur_task();
 	}
@@ -72,18 +81,22 @@ void ms_diag_css_gap_hit(int kind, const char *property, const char *name,
 	const char *value, int result)
 {
 	int i, free_slot = -1;
+	unsigned long ph = str_hash(property);
+	unsigned long nh = str_hash(name);
+	unsigned long vh = str_hash(value);
 	struct ms_css_record *r = NULL;
 	for (i = 0; i < MS_CAP_RECORDS; i++) {
 		if (!g_css[i].used) { if (free_slot < 0) free_slot = i; continue; }
 		if (g_css[i].kind == kind && g_css[i].result == result &&
-			text_equal(g_css[i].property, property) &&
-			text_equal(g_css[i].name, name) && text_equal(g_css[i].value, value)) {
+			g_css[i].prop_hash == ph && g_css[i].name_hash == nh && g_css[i].val_hash == vh) {
 			r = &g_css[i]; break;
 		}
 	}
 	if (r == NULL && free_slot >= 0) {
 		r = &g_css[free_slot]; memset(r, 0, sizeof(*r)); r->used = 1;
-		r->kind = kind; r->result = result; copy_text(r->property, property);
+		r->kind = kind; r->result = result;
+		r->prop_hash = ph; r->name_hash = nh; r->val_hash = vh;
+		copy_text(r->property, property);
 		copy_text(r->name, name); copy_text(r->value, value);
 		r->first_nav = ms_diag_cur_nav();
 	}
@@ -167,6 +180,8 @@ long macsurf_diag_serialize_gapreport(char *b, long c)
 	int i;
 	int cap_unique = 0, css_unique = 0;
 	int css_prop_gaps = 0, css_val_gaps = 0, css_sel_gaps = 0;
+	int css_pc_gaps = 0, css_pe_gaps = 0, css_at_gaps = 0;
+	int css_media_gaps = 0, cssom_gaps = 0;
 	unsigned long cap_hits = 0, css_hits = 0;
 	unsigned long nav_id = ms_diag_cur_nav();
 
@@ -177,6 +192,7 @@ long macsurf_diag_serialize_gapreport(char *b, long c)
 		if (g_cap[i].used) {
 			cap_unique++;
 			cap_hits += g_cap[i].count;
+			if (g_cap[i].domain == MS_CAP_CSSOM) cssom_gaps++;
 		}
 	}
 	for (i = 0; i < MS_CAP_RECORDS; i++) {
@@ -185,9 +201,12 @@ long macsurf_diag_serialize_gapreport(char *b, long c)
 			css_hits += g_css[i].count;
 			if (g_css[i].kind == MS_CSS_GAP_PROPERTY) css_prop_gaps++;
 			else if (g_css[i].kind == MS_CSS_GAP_VALUE) css_val_gaps++;
-			else if (g_css[i].kind == MS_CSS_GAP_SELECTOR ||
-				 g_css[i].kind == MS_CSS_GAP_PSEUDO_CLASS ||
-				 g_css[i].kind == MS_CSS_GAP_PSEUDO_ELEMENT) css_sel_gaps++;
+			else if (g_css[i].kind == MS_CSS_GAP_SELECTOR) css_sel_gaps++;
+			else if (g_css[i].kind == MS_CSS_GAP_PSEUDO_CLASS) css_pc_gaps++;
+			else if (g_css[i].kind == MS_CSS_GAP_PSEUDO_ELEMENT) css_pe_gaps++;
+			else if (g_css[i].kind == MS_CSS_GAP_CONDITION) css_media_gaps++;
+			else if (g_css[i].kind == MS_CSS_GAP_CSSOM) cssom_gaps++;
+			else css_at_gaps++;
 		}
 	}
 
@@ -197,11 +216,11 @@ long macsurf_diag_serialize_gapreport(char *b, long c)
 	snprintf(line, sizeof line, "unique_gaps=%d\ntotal_hits=%lu\ndropped=%lu\n",
 		cap_unique + css_unique, cap_hits + css_hits, g_cap_dropped + g_css_dropped);
 	n = add(b, c, n, line);
-	snprintf(line, sizeof line, "capability_gaps=%d\ncss_property_gaps=%d\ncss_value_gaps=%d\nselector_gaps=%d\n",
-		cap_unique, css_prop_gaps, css_val_gaps, css_sel_gaps);
+	snprintf(line, sizeof line, "census_lossless=%d\ncoverage_complete=%d\nblind_spots=%d\n",
+		(g_cap_dropped + g_css_dropped == 0) ? 1 : 0, 0, 2);
 	n = add(b, c, n, line);
-	snprintf(line, sizeof line, "coverage_complete=%d\nblind_spots=%d\n\n",
-		(g_cap_dropped + g_css_dropped == 0) ? 0 : 0, 2);
+	snprintf(line, sizeof line, "capability_gaps=%d\ncss_property_gaps=%d\ncss_value_gaps=%d\nselector_gaps=%d\npseudo_class_gaps=%d\npseudo_element_gaps=%d\nmedia_gaps=%d\ncssom_gaps=%d\n\n",
+		cap_unique, css_prop_gaps, css_val_gaps, css_sel_gaps, css_pc_gaps, css_pe_gaps, css_media_gaps, cssom_gaps);
 	n = add(b, c, n, line);
 
 	n = add(b, c, n, "[coverage]\n");
@@ -226,8 +245,8 @@ long macsurf_diag_serialize_gapreport(char *b, long c)
 	n = add(b, c, n, "[gaps]\n");
 	for (i = 0; i < MS_CAP_RECORDS; i++) {
 		if (g_cap[i].used) {
-			snprintf(line, sizeof line, "key=js.%s.%s result=%s quality=%d count=%lu first_nav=%lu last_nav=%lu\n",
-				cap_domain(g_cap[i].domain), g_cap[i].name,
+			snprintf(line, sizeof line, "key=js.%s.%s.%s result=%s quality=%d count=%lu first_nav=%lu last_nav=%lu\n",
+				cap_domain(g_cap[i].domain), g_cap[i].name, cap_op(g_cap[i].operation),
 				cap_result(g_cap[i].result), g_cap[i].quality,
 				g_cap[i].count, g_cap[i].first_nav, g_cap[i].last_nav);
 			n = add(b, c, n, line);
@@ -243,10 +262,18 @@ long macsurf_diag_serialize_gapreport(char *b, long c)
 				snprintf(line, sizeof line, "key=css.value.%s.%s result=%s quality=0 count=%lu first_nav=%lu last_nav=%lu\n",
 					g_css[i].property, g_css[i].value, cap_result(g_css[i].result),
 					g_css[i].count, g_css[i].first_nav, g_css[i].last_nav);
-			} else if (g_css[i].kind == MS_CSS_GAP_SELECTOR ||
-				   g_css[i].kind == MS_CSS_GAP_PSEUDO_CLASS ||
-				   g_css[i].kind == MS_CSS_GAP_PSEUDO_ELEMENT) {
+			} else if (g_css[i].kind == MS_CSS_GAP_SELECTOR) {
 				snprintf(line, sizeof line, "key=css.selector.%s result=%s quality=0 count=%lu first_nav=%lu last_nav=%lu\n",
+					g_css[i].name[0] != '\0' ? g_css[i].name : g_css[i].property,
+					cap_result(g_css[i].result),
+					g_css[i].count, g_css[i].first_nav, g_css[i].last_nav);
+			} else if (g_css[i].kind == MS_CSS_GAP_PSEUDO_CLASS) {
+				snprintf(line, sizeof line, "key=css.pseudo-class.%s result=%s quality=0 count=%lu first_nav=%lu last_nav=%lu\n",
+					g_css[i].name[0] != '\0' ? g_css[i].name : g_css[i].property,
+					cap_result(g_css[i].result),
+					g_css[i].count, g_css[i].first_nav, g_css[i].last_nav);
+			} else if (g_css[i].kind == MS_CSS_GAP_PSEUDO_ELEMENT) {
+				snprintf(line, sizeof line, "key=css.pseudo-element.%s result=%s quality=0 count=%lu first_nav=%lu last_nav=%lu\n",
 					g_css[i].name[0] != '\0' ? g_css[i].name : g_css[i].property,
 					cap_result(g_css[i].result),
 					g_css[i].count, g_css[i].first_nav, g_css[i].last_nav);
