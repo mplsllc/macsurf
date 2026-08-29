@@ -14,6 +14,7 @@ This ledger records every tested build checkpoint, the unique gap count, total h
 | **MacSurf105** | `f5c3c5a2b` | 78 | 209 | Lossless | Explicit Matrix | — | — | Phase 5 coverage audit with explicit unobservable reasons. |
 | **MacSurf106** | `7a6f3cc4d` | 78 | 209 | `census_lossless=1` | Explicit Matrix | — | — | Phase 5.1 hash-based dedup & normalized key schema (`js.<domain>.<feature>.<op>`). |
 | **MacSurf107** | `c48e111e8` | 78 | 209 | `census_lossless=1` | Explicit Matrix | — | — | Phase 6 minimal default logging (pagemap walk gated OFF by default). Authoritative baseline for Phase 7 reconciliation ([#321](https://github.com/mplsllc/macsurf/issues/321)–[#328](https://github.com/mplsllc/macsurf/issues/328)). |
+| **MacSurf108** | `396f07ef8` | 77 | 172 | `census_lossless=1` | Explicit Matrix | `js.geometry.scrollWidth.get` (fully resolved); all other 5 geometry properties progressed | None | Group 1 DOM Geometry implementation (fixes #321). `scrollWidth` completely resolved (4 -> 0); total geometry hits dropped from 57 -> 20. |
 
 ---
 
