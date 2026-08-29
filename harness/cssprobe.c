@@ -518,6 +518,10 @@ bool cssprobe_test_css_transitions(void)
 			"div.lhdur { transition-duration: 250ms, 1.5s; }\n"
 			"div.lhtiming { transition-timing-function: linear, ease-in; }\n"
 			"div.lhdelay { transition-delay: -100ms, 250ms; }\n"
+			"div.sh1 { transition: opacity 200ms ease 50ms; }\n"
+			"div.sh2 { transition: opacity 200ms ease, color 500ms linear 100ms; }\n"
+			"div.sh3 { transition: 200ms opacity; }\n"
+			"div.sh4 { transition: ease 300ms color; }\n"
 			"div.c2 { transition: opacity 500ms cubic-bezier(0.1, 0.2, 0.8, 0.9) 100ms; }\n"
 			"div.c3 { transition-property: none; }\n"
 			"div.c4 { transition: -macsurf-transform 1s, color 200ms ease-in; }\n"
@@ -607,6 +611,59 @@ bool cssprobe_test_css_transitions(void)
 			if (data == NULL || data->delay_count != 2 ||
 				data->delays[0] != -102 || data->delays[1] != 256) {
 				fprintf(stderr, "FAIL: transition-delay longhand\n"); return false;
+			}
+		}
+		css_computed_style_destroy(style);
+
+		/* Shorthand item order must not change the resulting longhands. */
+		style = select_test_node(ctx, "div", "sh1", NULL);
+		if (style == NULL) { fprintf(stderr, "FAIL: select sh1\n"); return false; }
+		{
+			css_effective_transition_descriptor d0;
+			if (!css_computed_transition_descriptor(style, 0, &d0) ||
+				d0.prop.kind != CSS_TRANS_PROP_KNOWN || d0.prop.prop_id != CSS_PROP_OPACITY ||
+				d0.duration != 204 || d0.timing.type != CSS_TIMING_EASE || d0.delay != 51) {
+				fprintf(stderr, "FAIL: transition shorthand case 1\n"); return false;
+			}
+		}
+		css_computed_style_destroy(style);
+
+		style = select_test_node(ctx, "div", "sh2", NULL);
+		if (style == NULL) { fprintf(stderr, "FAIL: select sh2\n"); return false; }
+		{
+			css_effective_transition_descriptor d0, d1;
+			if (css_computed_transition_descriptor_count(style) != 2 ||
+				!css_computed_transition_descriptor(style, 0, &d0) ||
+				!css_computed_transition_descriptor(style, 1, &d1) ||
+				d0.prop.prop_id != CSS_PROP_OPACITY || d0.duration != 204 ||
+				d0.timing.type != CSS_TIMING_EASE || d0.delay != 0 ||
+				d1.prop.prop_id != CSS_PROP_COLOR || d1.duration != 512 ||
+				d1.timing.type != CSS_TIMING_LINEAR || d1.delay != 102) {
+				fprintf(stderr, "FAIL: transition shorthand case 2\n"); return false;
+			}
+		}
+		css_computed_style_destroy(style);
+
+		style = select_test_node(ctx, "div", "sh3", NULL);
+		if (style == NULL) { fprintf(stderr, "FAIL: select sh3\n"); return false; }
+		{
+			css_effective_transition_descriptor d0;
+			if (!css_computed_transition_descriptor(style, 0, &d0) ||
+				d0.prop.prop_id != CSS_PROP_OPACITY || d0.duration != 204 ||
+				d0.timing.type != CSS_TIMING_EASE || d0.delay != 0) {
+				fprintf(stderr, "FAIL: transition shorthand case 3\n"); return false;
+			}
+		}
+		css_computed_style_destroy(style);
+
+		style = select_test_node(ctx, "div", "sh4", NULL);
+		if (style == NULL) { fprintf(stderr, "FAIL: select sh4\n"); return false; }
+		{
+			css_effective_transition_descriptor d0;
+			if (!css_computed_transition_descriptor(style, 0, &d0) ||
+				d0.prop.prop_id != CSS_PROP_COLOR || d0.duration != 307 ||
+				d0.timing.type != CSS_TIMING_EASE || d0.delay != 0) {
+				fprintf(stderr, "FAIL: transition shorthand case 4\n"); return false;
 			}
 		}
 		css_computed_style_destroy(style);

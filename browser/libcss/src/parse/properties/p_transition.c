@@ -12,6 +12,10 @@
 #include "parse/properties/properties.h"
 #include "parse/properties/utils.h"
 
+css_error css__parse_transition_timing_function_item(css_language *c,
+		const parserutils_vector *vector, int32_t *ctx,
+		css_transition_timing_entry *out);
+
 static inline bool is_token_comma(const css_token *t)
 {
 	return (t != NULL && t->type == CSS_TOKEN_CHAR && lwc_string_data(t->idata)[0] == ',');
@@ -21,6 +25,59 @@ static inline bool is_token_important_start(const css_token *t)
 {
 	return (t != NULL && t->type == CSS_TOKEN_CHAR &&
 		lwc_string_data(t->idata)[0] == '!');
+}
+
+static uint32_t transition_known_property_id(css_language *c, lwc_string *ident)
+{
+	bool match;
+
+#define TRANSITION_KNOWN(name, prop) \
+	if (lwc_string_caseless_isequal(ident, c->strings[name], &match) == lwc_error_ok && match) return prop
+	TRANSITION_KNOWN(OPACITY, CSS_PROP_OPACITY);
+	TRANSITION_KNOWN(COLOR, CSS_PROP_COLOR);
+	TRANSITION_KNOWN(MACSURF_TRANSFORM, CSS_PROP_MACSURF_TRANSFORM);
+	TRANSITION_KNOWN(BACKGROUND_COLOR, CSS_PROP_BACKGROUND_COLOR);
+	TRANSITION_KNOWN(MAX_WIDTH, CSS_PROP_MAX_WIDTH);
+	TRANSITION_KNOWN(MAX_HEIGHT, CSS_PROP_MAX_HEIGHT);
+	TRANSITION_KNOWN(WIDTH, CSS_PROP_WIDTH);
+	TRANSITION_KNOWN(HEIGHT, CSS_PROP_HEIGHT);
+#undef TRANSITION_KNOWN
+	return (uint32_t)-1;
+}
+
+static css_error parse_transition_property_item(css_language *c,
+		const css_token *token, uint8_t *kind, uint32_t *prop_id,
+		uint32_t *snumber)
+{
+	bool match;
+	css_error error;
+
+	if (token == NULL || token->type != CSS_TOKEN_IDENT)
+		return CSS_INVALID;
+	if (lwc_string_caseless_isequal(token->idata, c->strings[NONE], &match) == lwc_error_ok && match) {
+		*kind = CSS_TRANS_PROP_NONE;
+		*prop_id = 0;
+		*snumber = 0;
+		return CSS_OK;
+	}
+	if (lwc_string_caseless_isequal(token->idata, c->strings[ALL], &match) == lwc_error_ok && match) {
+		*kind = CSS_TRANS_PROP_ALL;
+		*prop_id = 0;
+		*snumber = 0;
+		return CSS_OK;
+	}
+	*prop_id = transition_known_property_id(c, token->idata);
+	if (*prop_id != (uint32_t)-1) {
+		*kind = CSS_TRANS_PROP_KNOWN;
+		*snumber = 0;
+		return CSS_OK;
+	}
+	error = css__stylesheet_string_add(c->sheet, lwc_string_ref(token->idata), snumber);
+	if (error != CSS_OK)
+		return error;
+	*kind = CSS_TRANS_PROP_CUSTOM_IDENT;
+	*prop_id = 0;
+	return CSS_OK;
 }
 
 css_error css__parse_transition(css_language *c,
@@ -147,42 +204,23 @@ css_error css__parse_transition(css_language *c,
 				/* 2. Try timing-function */
 				if (!handled && !got_timing) {
 					int32_t test_ctx = *ctx;
-					css_style *temp_timing = NULL;
-					if (css__stylesheet_style_create(c->sheet, &temp_timing) == CSS_OK) {
-						if (css__parse_transition_timing_function(c, vector, &test_ctx, temp_timing) == CSS_OK) {
-							css_code_t *bc = (css_code_t *)temp_timing->bytecode;
-							/* OPV (1), count (1), type, x1, y1, x2, y2, step_count, step_pos */
-							items[count].timing.type = (enum css_transition_timing_type)bc[2];
-							items[count].timing.x1 = (int32_t)bc[3];
-							items[count].timing.y1 = (int32_t)bc[4];
-							items[count].timing.x2 = (int32_t)bc[5];
-							items[count].timing.y2 = (int32_t)bc[6];
-							items[count].timing.step_count = (uint32_t)bc[7];
-							items[count].timing.step_pos = (uint8_t)bc[8];
+					if (css__parse_transition_timing_function_item(c, vector,
+							&test_ctx, &items[count].timing) == CSS_OK) {
 							got_timing = true;
 							handled = true;
 							*ctx = test_ctx;
 						}
-						css__stylesheet_style_destroy(temp_timing);
-					}
 				}
 
 				/* 3. Try property */
 				if (!handled && !got_prop && token->type == CSS_TOKEN_IDENT) {
-					int32_t test_ctx = *ctx;
-					css_style *temp_prop = NULL;
-					if (css__stylesheet_style_create(c->sheet, &temp_prop) == CSS_OK) {
-						if (css__parse_transition_property(c, vector, &test_ctx, temp_prop) == CSS_OK) {
-							css_code_t *bc = (css_code_t *)temp_prop->bytecode;
-							/* OPV (1), count (1), kind (1), prop_id (1), snumber (1) */
-							items[count].prop_kind = (uint8_t)bc[2];
-							items[count].prop_id = (uint32_t)bc[3];
-							items[count].snumber = (uint32_t)bc[4];
-							got_prop = true;
-							handled = true;
-							*ctx = test_ctx;
-						}
-						css__stylesheet_style_destroy(temp_prop);
+					error = parse_transition_property_item(c, token,
+							&items[count].prop_kind, &items[count].prop_id,
+							&items[count].snumber);
+					if (error == CSS_OK) {
+						got_prop = true;
+						handled = true;
+						parserutils_vector_iterate(vector, ctx);
 					}
 				}
 

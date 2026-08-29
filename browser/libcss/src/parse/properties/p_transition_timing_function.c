@@ -23,7 +23,7 @@ static int32_t flt_to_q16(double val)
 	return (int32_t)(val * 65536.0 + (val >= 0 ? 0.5 : -0.5));
 }
 
-static css_error parse_single_timing_fn(css_language *c,
+css_error css__parse_transition_timing_function_item(css_language *c,
 		const parserutils_vector *vector, int32_t *ctx,
 		css_transition_timing_entry *out)
 {
@@ -215,7 +215,8 @@ css_error css__parse_transition_timing_function(css_language *c,
 			return CSS_INVALID;
 		}
 
-		error = parse_single_timing_fn(c, vector, ctx, &timings[count]);
+		error = css__parse_transition_timing_function_item(c, vector, ctx,
+				&timings[count]);
 		if (error != CSS_OK) {
 			*ctx = orig_ctx;
 			return error;
