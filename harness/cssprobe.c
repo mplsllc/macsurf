@@ -1013,5 +1013,42 @@ bool cssprobe_test_css_transitions(void)
 		css_select_ctx_destroy(ctx);
 	}
 
+	/* 9. none and all retain their transition-property grammar semantics. */
+	{
+		css_select_ctx *ctx = NULL;
+		css_stylesheet *sheet = NULL;
+		css_computed_style *all = NULL, *none = NULL, *shorthand_none = NULL;
+		css_computed_style *invalid_none = NULL;
+		const css_computed_transition_data *data;
+		const char *css =
+			".all { transition-property: all; }\n"
+			".none { transition-property: none; }\n"
+			".shorthand-none { transition: none; }\n"
+			".invalid-none { transition-property: none, opacity; }\n";
+		if (css_select_ctx_create(&ctx) != CSS_OK) return false;
+		sheet = parse_test_css(css);
+		if (sheet == NULL) { css_select_ctx_destroy(ctx); return false; }
+		css_select_ctx_append_sheet(ctx, sheet, CSS_ORIGIN_AUTHOR, "screen");
+		all = select_test_node(ctx, "div", "all", NULL);
+		none = select_test_node(ctx, "div", "none", NULL);
+		shorthand_none = select_test_node(ctx, "div", "shorthand-none", NULL);
+		invalid_none = select_test_node(ctx, "div", "invalid-none", NULL);
+		if (all == NULL || none == NULL || shorthand_none == NULL || invalid_none == NULL) return false;
+		data = css_computed_transition_data_get(all);
+		if (data == NULL || data->prop_count != 1 ||
+			data->props[0].kind != CSS_TRANS_PROP_ALL ||
+			css_computed_transition_descriptor_count(none) != 0 ||
+			css_computed_transition_descriptor_count(shorthand_none) != 0 ||
+			css_computed_transition_data_get(invalid_none) != NULL) {
+			fprintf(stderr, "FAIL: transition none/all\n"); return false;
+		}
+		css_computed_style_destroy(all);
+		css_computed_style_destroy(none);
+		css_computed_style_destroy(shorthand_none);
+		css_computed_style_destroy(invalid_none);
+		css_stylesheet_destroy(sheet);
+		css_select_ctx_destroy(ctx);
+	}
+
 	return true;
 }
