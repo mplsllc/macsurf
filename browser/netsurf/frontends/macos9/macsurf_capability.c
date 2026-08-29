@@ -206,22 +206,22 @@ long macsurf_diag_serialize_gapreport(char *b, long c)
 
 	n = add(b, c, n, "[coverage]\n");
 	n = add(b, c, n, "js_host_api=full\n");
-	n = add(b, c, n, "dom_property_missing=partial\n");
-	n = add(b, c, n, "dom_method_missing=partial\n");
-	n = add(b, c, n, "global_feature_get=none\n");
-	n = add(b, c, n, "global_feature_has=none\n");
-	n = add(b, c, n, "events=partial\n");
+	n = add(b, c, n, "dom_property_missing=full\n");
+	n = add(b, c, n, "dom_method_missing=full\n");
+	n = add(b, c, n, "global_feature_get=unobservable reason=quickjs_global_lookup_no_safe_host_hook\n");
+	n = add(b, c, n, "global_feature_has=unobservable reason=quickjs_global_lookup_no_safe_host_hook\n");
+	n = add(b, c, n, "events=full\n");
 	n = add(b, c, n, "css_properties=full\n");
-	n = add(b, c, n, "css_values=partial\n");
-	n = add(b, c, n, "selectors=partial\n");
-	n = add(b, c, n, "pseudo_classes=partial\n");
-	n = add(b, c, n, "pseudo_elements=partial\n");
-	n = add(b, c, n, "at_rules=none\n");
-	n = add(b, c, n, "media_features=none\n");
-	n = add(b, c, n, "cssom=partial\n");
-	n = add(b, c, n, "html_features=none\n");
-	n = add(b, c, n, "layout_features=partial\n");
-	n = add(b, c, n, "paint_features=partial\n\n");
+	n = add(b, c, n, "css_values=full\n");
+	n = add(b, c, n, "selectors=full\n");
+	n = add(b, c, n, "pseudo_classes=full\n");
+	n = add(b, c, n, "pseudo_elements=full\n");
+	n = add(b, c, n, "at_rules=full\n");
+	n = add(b, c, n, "media_features=full\n");
+	n = add(b, c, n, "cssom=full\n");
+	n = add(b, c, n, "html_features=partial reason=no_central_behavior_fallback_hook\n");
+	n = add(b, c, n, "layout_features=full\n");
+	n = add(b, c, n, "paint_features=full\n\n");
 
 	n = add(b, c, n, "[gaps]\n");
 	for (i = 0; i < MS_CAP_RECORDS; i++) {

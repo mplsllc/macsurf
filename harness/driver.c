@@ -12749,7 +12749,7 @@ box_coords(bx, &cx, &cy);
 			strstr(report, "MSDIAG 1 gapreport") == NULL ||
 			strstr(report, "[coverage]") == NULL ||
 			strstr(report, "js_host_api=full") == NULL ||
-			strstr(report, "global_feature_get=none") == NULL ||
+			strstr(report, "global_feature_get=unobservable reason=quickjs_global_lookup_no_safe_host_hook") == NULL ||
 			strstr(report, "[gaps]") == NULL ||
 			strstr(report, "key=js.geometry.offsetWidth result=unsupported quality=3 count=2") == NULL ||
 			strstr(report, "key=css.value.display.grid result=unsupported quality=0 count=2") == NULL ||
