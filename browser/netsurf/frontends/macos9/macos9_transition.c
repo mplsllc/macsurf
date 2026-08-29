@@ -3,8 +3,12 @@
  * Synthetic numeric tests only; no real opacity rendering yet
  */
 
+#ifdef __MACOS9__
+#include "macos9.h"
+#else
 #include <stdlib.h>
 #include <string.h>
+#endif
 #include "macos9_transition.h"
 
 #ifdef __MACOS9__
@@ -258,9 +262,11 @@ int macsurf_transition_create(dom_node *node, uint32_t prop,
         {
             int delay_ticks = macsurf_transition_fixed_to_ticks(delay);
             int duration_ticks = macsurf_transition_fixed_to_ticks(duration);
+            long elapsed;
+            long effective;
             if (duration != 0 && duration_ticks == 0) duration_ticks = 1;
-            long elapsed = 0;
-            long effective = 0 - delay_ticks;
+            elapsed = 0;
+            effective = 0 - delay_ticks;
             if (effective < 0) e->state = MACSURF_TRANSITION_DELAY;
             else if (effective >= duration_ticks) e->state = MACSURF_TRANSITION_COMPLETE;
             else e->state = MACSURF_TRANSITION_ACTIVE;
@@ -298,8 +304,9 @@ int macsurf_transition_create(dom_node *node, uint32_t prop,
     {
         int delay_ticks = macsurf_transition_fixed_to_ticks(delay);
         int duration_ticks = macsurf_transition_fixed_to_ticks(duration);
+        long effective;
             if (duration != 0 && duration_ticks == 0) duration_ticks = 1;
-        long effective = 0 - delay_ticks;
+        effective = 0 - delay_ticks;
         if (effective < 0) e->state = MACSURF_TRANSITION_DELAY;
         else if (effective >= duration_ticks) e->state = MACSURF_TRANSITION_COMPLETE;
         else e->state = MACSURF_TRANSITION_ACTIVE;
@@ -372,23 +379,28 @@ void macsurf_transition_tick(void *p)
     int i;
     int still_active = 0;
     uint32_t now;
+#ifndef __MACOS9__
+    extern uint32_t macsurf_transition_test_now;
+#endif
     (void)p;
 #ifdef __MACOS9__
     now = (uint32_t)TickCount();
 #else
-    /* harness: use fake tick incremented by caller */
-    extern uint32_t macsurf_transition_test_now;
     now = macsurf_transition_test_now;
 #endif
     for (i = 0; i < MACSURF_TRANSITION_MAX_ACTIVE; i++) {
         if (!g_effects[i].in_use) continue;
         /* check if complete */
         {
-            uint32_t elapsed = macsurf_transition_elapsed(now, g_effects[i].start_tick);
-            int delay_ticks = macsurf_transition_fixed_to_ticks(g_effects[i].delay);
-            int duration_ticks = macsurf_transition_fixed_to_ticks(g_effects[i].duration);
+            uint32_t elapsed;
+            int delay_ticks;
+            int duration_ticks;
+            long effective;
+            elapsed = macsurf_transition_elapsed(now, g_effects[i].start_tick);
+            delay_ticks = macsurf_transition_fixed_to_ticks(g_effects[i].delay);
+            duration_ticks = macsurf_transition_fixed_to_ticks(g_effects[i].duration);
             if (g_effects[i].duration != 0 && duration_ticks == 0) duration_ticks = 1;
-            long effective = (long)elapsed - delay_ticks;
+            effective = (long)elapsed - delay_ticks;
             if (effective >= duration_ticks) {
                 /* complete: retire */
                 dom_node_unref(g_effects[i].node);
