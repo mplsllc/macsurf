@@ -22,9 +22,23 @@ static bool g_sched_armed = false;
 
 int macsurf_transition_fixed_to_ticks(css_fixed v)
 {
-    /* v is Q22.10 seconds; ticks = v *60 /1024; v small so 32-bit safe */
-    long tmp = (long)v * 60;
-    return (int)(tmp / 1024);
+    /* v is Q22.10 seconds; 1 tick = 1/60s.
+     * ticks = v *60 /1024  (seconds_fixed * ticks_per_sec)
+     * Overflow-safe without long long: divide-first.
+     * No clamping here; caller clamps for duration if needed. */
+    int is_neg = 0;
+    css_fixed av;
+    int t1;
+    int t2;
+    int ticks;
+    if (v == 0) return 0;
+    is_neg = (v < 0);
+    av = is_neg ? -v : v;
+    t1 = (av >> 10) * 60;
+    t2 = ((av & 1023) * 60) / 1024;
+    ticks = t1 + t2;
+    if (is_neg) ticks = -ticks;
+    return ticks;
 }
 
 css_fixed macsurf_transition_ease_linear(css_fixed t)
@@ -32,57 +46,95 @@ css_fixed macsurf_transition_ease_linear(css_fixed t)
     return t;
 }
 
-/* simple linear ease for synthetic; cubic solver deferred to 2B-2 */
+/* Scheduler semantics: 16ms is NOT transition time.
+ * Transition progress is derived solely from TickCount() elapsed
+ * (now - start) vs delay/duration. The scheduler merely decides
+ * when to wake and recompute presentation; paint cadence is
+ * whatever the machine sustains. */
 static css_fixed apply_timing(css_transition_timing_entry *timing, css_fixed progress)
 {
     /* progress is Q22.10 0..1024 */
+    double x;
+    double x1 = 0;
+    double y1 = 0;
+    double x2 = 0;
+    double y2 = 0;
+    double lo;
+    double hi;
+    double mid;
+    double xm;
+    double ym;
+    int iter;
     if (timing == NULL) return progress;
     if (timing->type == CSS_TIMING_LINEAR) {
         return progress;
     }
-    if (timing->type == CSS_TIMING_EASE ||
-        timing->type == CSS_TIMING_EASE_IN ||
-        timing->type == CSS_TIMING_EASE_OUT ||
-        timing->type == CSS_TIMING_EASE_IN_OUT) {
-        /* For 2B-1 synthetic, map keywords to linear to keep tests deterministic.
-         * Real cubic mapping comes in 2B-2. */
-        return progress;
-    }
-    if (timing->type == CSS_TIMING_CUBIC_BEZIER) {
-        /* Simplified: linear for now; real solver in 2B-2 */
-        return progress;
-    }
-    if (timing->type == CSS_TIMING_STEPS) {
+    if (timing->type == CSS_TIMING_EASE) {
+        x1 = 0.25; y1 = 0.1; x2 = 0.25; y2 = 1.0;
+    } else if (timing->type == CSS_TIMING_EASE_IN) {
+        x1 = 0.42; y1 = 0.0; x2 = 1.0; y2 = 1.0;
+    } else if (timing->type == CSS_TIMING_EASE_OUT) {
+        x1 = 0.0; y1 = 0.0; x2 = 0.58; y2 = 1.0;
+    } else if (timing->type == CSS_TIMING_EASE_IN_OUT) {
+        x1 = 0.42; y1 = 0.0; x2 = 0.58; y2 = 1.0;
+    } else if (timing->type == CSS_TIMING_CUBIC_BEZIER) {
+        x1 = (double)timing->x1 / 65536.0;
+        y1 = (double)timing->y1 / 65536.0;
+        x2 = (double)timing->x2 / 65536.0;
+        y2 = (double)timing->y2 / 65536.0;
+    } else if (timing->type == CSS_TIMING_STEPS) {
         int steps = (int)timing->step_count;
         int pos = (int)timing->step_pos;
-        long prog = (long)progress; /* 0..1024 */
-        long step_size = 1024 / steps;
-        long current_step;
+        long prog = (long)progress;
         if (steps <= 0) return progress;
         if (pos == 0) {
-            /* jump-start: first step at 0 */
-            current_step = (prog * steps) / 1024;
+            long current_step = (prog * steps) / 1024;
             if (current_step >= steps) current_step = steps - 1;
             return (css_fixed)((current_step * 1024) / steps);
         } else if (pos == 1) {
-            /* jump-end: first step after first interval */
-            current_step = (prog * steps) / 1024;
+            long current_step = (prog * steps) / 1024;
             if (current_step >= steps) return 1024;
             return (css_fixed)(((current_step) * 1024) / steps);
         } else if (pos == 2) {
-            /* jump-none: no step at 0 nor 1 */
-            current_step = (prog * steps) / 1024;
+            long current_step = (prog * steps) / 1024;
             if (current_step == 0) return 0;
             if (current_step >= steps) return 1024;
             return (css_fixed)(((current_step - 1) * 1024) / (steps - 1));
         } else {
-            /* jump-both */
-            current_step = (prog * steps) / 1024;
+            long current_step = (prog * steps) / 1024;
             if (current_step >= steps) return 1024;
             return (css_fixed)(((current_step + 1) * 1024) / (steps + 1));
         }
+    } else {
+        return progress;
     }
-    return progress;
+    /* cubic-bezier solver: binary search 12 iterations, bounded */
+    x = (double)progress / 1024.0;
+    if (x <= 0.0) return 0;
+    if (x >= 1.0) return 1024;
+    lo = 0.0; hi = 1.0;
+    for (iter = 0; iter < 12; iter++) {
+        mid = (lo + hi) * 0.5;
+        /* x(u) = 3*(1-u)^2*u*x1 + 3*(1-u)*u^2*x2 + u^3 */
+        {
+            double u = mid;
+            double om = 1.0 - u;
+            xm = 3.0 * om * om * u * x1 + 3.0 * om * u * u * x2 + u * u * u;
+        }
+        if (xm < x) lo = mid; else hi = mid;
+    }
+    /* y(u) at solved u */
+    {
+        double u = (lo + hi) * 0.5;
+        double om = 1.0 - u;
+        ym = 3.0 * om * om * u * y1 + 3.0 * om * u * u * y2 + u * u * u;
+    }
+    if (ym < 0.0) ym = 0.0;
+    if (ym > 1.0) {
+        /* allow overshoot for y outside 0..1 per spec? Clamp? For now allow
+         * but spec says y may be -0.5..1.5, so don't clamp overshoot. */
+    }
+    return (css_fixed)(ym * 1024.0 + 0.5);
 }
 
 void macsurf_transition_init(void)
@@ -205,6 +257,7 @@ int macsurf_transition_create(dom_node *node, uint32_t prop,
         {
             int delay_ticks = macsurf_transition_fixed_to_ticks(delay);
             int duration_ticks = macsurf_transition_fixed_to_ticks(duration);
+            if (duration != 0 && duration_ticks == 0) duration_ticks = 1;
             long elapsed = 0;
             long effective = 0 - delay_ticks;
             if (effective < 0) e->state = MACSURF_TRANSITION_DELAY;
@@ -244,6 +297,7 @@ int macsurf_transition_create(dom_node *node, uint32_t prop,
     {
         int delay_ticks = macsurf_transition_fixed_to_ticks(delay);
         int duration_ticks = macsurf_transition_fixed_to_ticks(duration);
+            if (duration != 0 && duration_ticks == 0) duration_ticks = 1;
         long effective = 0 - delay_ticks;
         if (effective < 0) e->state = MACSURF_TRANSITION_DELAY;
         else if (effective >= duration_ticks) e->state = MACSURF_TRANSITION_COMPLETE;
@@ -282,6 +336,7 @@ bool macsurf_transition_get_presented(dom_node *node, uint32_t prop,
     elapsed = macsurf_transition_elapsed(now_tick, e->start_tick);
     delay_ticks = macsurf_transition_fixed_to_ticks(e->delay);
     duration_ticks = macsurf_transition_fixed_to_ticks(e->duration);
+            if (e->duration != 0 && duration_ticks == 0) duration_ticks = 1;
     if (duration_ticks <= 0) {
         *out_value = e->target_value;
         return true;
@@ -331,6 +386,7 @@ void macsurf_transition_tick(void *p)
             uint32_t elapsed = macsurf_transition_elapsed(now, g_effects[i].start_tick);
             int delay_ticks = macsurf_transition_fixed_to_ticks(g_effects[i].delay);
             int duration_ticks = macsurf_transition_fixed_to_ticks(g_effects[i].duration);
+            if (g_effects[i].duration != 0 && duration_ticks == 0) duration_ticks = 1;
             long effective = (long)elapsed - delay_ticks;
             if (effective >= duration_ticks) {
                 /* complete: retire */

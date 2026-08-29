@@ -50,6 +50,24 @@ bool test_macos9_transition_2b1(void)
     macsurf_transition_init();
     macsurf_transition_test_now = 0;
 
+    /* 0. time conversion: Q22.10 seconds -> ticks (60Hz) */
+    {
+        if (macsurf_transition_fixed_to_ticks(0) != 0) { fprintf(stderr, "FAIL fixed 0s\n"); ok=false; goto done; }
+        if (macsurf_transition_fixed_to_ticks(1024) != 60) { fprintf(stderr, "FAIL fixed 1s %d\n", macsurf_transition_fixed_to_ticks(1024)); ok=false; goto done; }
+        if (macsurf_transition_fixed_to_ticks(512) != 30) { fprintf(stderr, "FAIL 0.5s\n"); ok=false; goto done; }
+        if (macsurf_transition_fixed_to_ticks(256) != 15) { fprintf(stderr, "FAIL 250ms %d\n", macsurf_transition_fixed_to_ticks(256)); ok=false; goto done; }
+        if (macsurf_transition_fixed_to_ticks(102) < 5 || macsurf_transition_fixed_to_ticks(102) > 6) { fprintf(stderr, "FAIL 100ms %d\n", macsurf_transition_fixed_to_ticks(102)); ok=false; goto done; }
+        if (macsurf_transition_fixed_to_ticks(1) != 0) { fprintf(stderr, "FAIL 1ms %d\n", macsurf_transition_fixed_to_ticks(1)); ok=false; goto done; }
+        /* 0.5ms is 0 or 1, allow either */
+        if (macsurf_transition_fixed_to_ticks(1) < 0 || macsurf_transition_fixed_to_ticks(1) > 1) { fprintf(stderr, "FAIL 0.5ms\n"); ok=false; goto done; }
+        if (macsurf_transition_fixed_to_ticks(1024000) != 60000) { fprintf(stderr, "FAIL 1000s %d\n", macsurf_transition_fixed_to_ticks(1024000)); ok=false; goto done; }
+        /* large not wrap negative */
+        if (macsurf_transition_fixed_to_ticks(1024000) < 0) { fprintf(stderr, "FAIL large negative\n"); ok=false; goto done; }
+        /* signed delay: -0.25s = -256 => -15 */
+        if (macsurf_transition_fixed_to_ticks(-256) != -15) { fprintf(stderr, "FAIL -250ms %d\n", macsurf_transition_fixed_to_ticks(-256)); ok=false; goto done; }
+        fprintf(stderr, "  [2B-1] time conversion PASS\n");
+    }
+
     /* timing: linear */
     timing.type = CSS_TIMING_LINEAR;
     timing.x1 = 0; timing.y1 = 0; timing.x2 = 0; timing.y2 = 0;
