@@ -25,6 +25,7 @@
 #include "macsurf_debug.h"
 #include "macsurf_diag.h"
 #include "macsurf_gap.h"
+#include "macsurf_capability.h"
 #include "macsurf_qjs.h"
 #include "macsurf_qjs_audit.h"
 #include "macsurf_timebase.h"
@@ -6504,6 +6505,8 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 	if (!qjs_geometry_settled(ctx)) {
 		g_geom_undef++;			/* fixes1087 */
 		macsurf_gap_hit(MS_GAP_GEOMETRY_UNDEFINED);
+		ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
+			qjs_metric_name(magic), MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
 		qjs_geom_audit(qjs_metric_name(magic), this_val,
 				"undefined (unsettled)");
 		return JS_UNDEFINED;
@@ -6525,6 +6528,8 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 		if (macos9_reconvert_pending_for(content)) {
 			g_geom_undef++;		/* fixes1087 */
 			macsurf_gap_hit(MS_GAP_GEOMETRY_UNDEFINED);
+			ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
+				qjs_metric_name(magic), MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
 			qjs_geom_audit(qjs_metric_name(magic), this_val,
 					"undefined (mutation pending)");
 			return JS_UNDEFINED;
@@ -6548,6 +6553,8 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 		if (content->status != CONTENT_STATUS_DONE) {
 			g_geom_undef++;
 			macsurf_gap_hit(MS_GAP_GEOMETRY_UNDEFINED);
+			ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
+				qjs_metric_name(magic), MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
 			qjs_geom_audit(qjs_metric_name(magic), this_val,
 					"undefined (no box, not DONE)");
 			return JS_UNDEFINED;
@@ -10502,6 +10509,23 @@ static JSValue qjs_ms_error_event(JSContext *ctx,
 	return JS_UNDEFINED;
 }
 
+static JSValue qjs_ms_capability(JSContext *ctx, JSValueConst this_val,
+	int argc, JSValueConst *argv)
+{
+	int domain = 0, operation = 0, result = 0, quality = 0;
+	const char *name = NULL;
+	(void)this_val;
+	if (argc < 5) return JS_UNDEFINED;
+	(void)JS_ToInt32(ctx, &domain, argv[0]);
+	(void)JS_ToInt32(ctx, &operation, argv[1]);
+	name = JS_ToCString(ctx, argv[2]);
+	(void)JS_ToInt32(ctx, &result, argv[3]);
+	(void)JS_ToInt32(ctx, &quality, argv[4]);
+	ms_diag_capability_hit(domain, operation, name, result, quality);
+	if (name != NULL) JS_FreeCString(ctx, name);
+	return JS_UNDEFINED;
+}
+
 static JSValue qjs_crypto_random_uuid(JSContext *ctx,
 	JSValueConst this_val, int argc, JSValueConst *argv)
 {
@@ -10899,6 +10923,7 @@ static void register_browser_globals(JSContext *ctx)
 	qjs_set_func(ctx, global, "__msOperationBegin", qjs_ms_operation_begin, 1);
 	qjs_set_func(ctx, global, "__msOperationEvent", qjs_ms_operation_event, 7);
 	qjs_set_func(ctx, global, "__msErrorEvent", qjs_ms_error_event, 7);
+	qjs_set_func(ctx, global, "__msCapability", qjs_ms_capability, 5);
 	/* localStorage persistence backend, consumed by the _Storage shim
 	 * below (register_browser_globals runs per navigation, so the saved
 	 * map is reloaded on every realm build). */
@@ -11427,6 +11452,7 @@ static void register_browser_globals(JSContext *ctx)
 		"function _mkObserver(label){"
 			"function C(cb){this._cb=cb;}"
 			"C.prototype.observe=function(t,opts){"
+				"try{if(typeof __msCapability==='function')__msCapability(4,2,label,2,2);}catch(_){}"
 				"try{__msLife('WANT '+label+'.observe '"
 				"+((t&&(t.id||t.tagName))||'?')+' (NO-OP)');}catch(_){}"
 				"var self=this;"
@@ -11600,6 +11626,7 @@ static void register_browser_globals(JSContext *ctx)
 		"IntersectionObserverEntry.prototype.intersectionRatio=1;"
 		"this.IntersectionObserverEntry=IntersectionObserverEntry;"
 		"function IntersectionObserver(cb,opts){"
+			"try{if(typeof __msCapability==='function')__msCapability(4,3,'IntersectionObserver',3,1);}catch(_){}"
 			"this._id=_ms_next_io_id++;"
 			"this._cb=cb;this._opts=opts||{};this._targets=[];"
 			"this.root=(opts&&opts.root)||null;"

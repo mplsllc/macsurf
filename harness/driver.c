@@ -69,6 +69,7 @@ extern int macsurf_imgdims_lookup(struct nsurl *url, int *w, int *h);	/* fixes92
 
 #include "macos9_content_registry.h"
 #include "macsurf_diag.h"
+#include "macsurf_capability.h"
 
 extern int html_reconvert_content(struct content *c);
 /* fixes866 (#292): the real parser hooks html.c uses, so the harness exercises
@@ -12693,6 +12694,49 @@ box_coords(bx, &cx, &cy);
 			return 1;
 		}
 		fprintf(stderr, "=== Test 102 PASS: contracts retain negative state and settle conservatively ===\n");
+	}
+
+	/* --- Test 103: Phase 3 capability/CSS gap aggregates --------------- */
+	{
+		char caps[16384], cssg[16384], caps_again[16384];
+		char name[32];
+		int i;
+		fprintf(stderr, "\n=== Test 103: Phase 3 capability/CSS gap aggregates ===\n");
+		ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
+			"offsetWidth", MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
+		ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
+			"offsetWidth", MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
+		ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
+			"clientWidth", MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
+		ms_diag_capability_hit(MS_CAP_OBSERVER, MS_CAP_CONSTRUCT,
+			"ResizeObserver", MS_CAP_APPROXIMATE, MS_ANSWER_APPROX);
+		(void)macsurf_diag_serialize_capabilities(caps, (long)sizeof(caps));
+		(void)macsurf_diag_serialize_capabilities(caps_again, (long)sizeof(caps_again));
+		if (strcmp(caps, caps_again) != 0 || strstr(caps, "name=offsetWidth") == NULL ||
+			strstr(caps, "name=offsetWidth result=unsupported quality=3 count=2") == NULL ||
+			strstr(caps, "name=ResizeObserver result=approximate quality=1 count=1") == NULL) {
+			fprintf(stderr, "FAIL: Test 103 capability semantics/dedup/reread\n"); return 1;
+		}
+		/* Fill beyond the fixed table. The output must say what was dropped. */
+		for (i = 0; i < 80; i++) {
+			snprintf(name, sizeof(name), "feature-%d", i);
+			ms_diag_capability_hit(MS_CAP_GLOBAL, MS_CAP_GET, name,
+				MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
+		}
+		(void)macsurf_diag_serialize_capabilities(caps, (long)sizeof(caps));
+		if (strstr(caps, "dropped=") == NULL) {
+			fprintf(stderr, "FAIL: Test 103 capability overflow\n"); return 1;
+		}
+		ms_diag_css_gap_hit(MS_CSS_GAP_VALUE, "display", "", "grid", MS_CAP_UNSUPPORTED);
+		ms_diag_css_gap_hit(MS_CSS_GAP_VALUE, "display", "", "grid", MS_CAP_UNSUPPORTED);
+		ms_diag_css_gap_hit(MS_CSS_GAP_PROPERTY, "aspect-ratio", "", "", MS_CAP_UNSUPPORTED);
+		(void)macsurf_diag_serialize_css_gaps(cssg, (long)sizeof(cssg));
+		if (strstr(cssg, "kind=value property=display name= value=grid result=unsupported count=2") == NULL ||
+			strstr(cssg, "kind=property property=aspect-ratio") == NULL ||
+			strstr(cssg, "dropped=") == NULL) {
+			fprintf(stderr, "FAIL: Test 103 CSS key/output\n"); return 1;
+		}
+		fprintf(stderr, "=== Test 103 PASS: semantic outcomes are bounded, deduplicated, and stable ===\n");
 	}
 
 	return 0;

@@ -357,5 +357,7 @@ enum ms_io_event_type {
 void ms_diag_io_record(unsigned long io_id, int ev_type, const char *target_name,
 	long x, long y, long w, long h, int intersecting, int ratio_pct, int entries);
 long macsurf_diag_serialize_io(char *buf, long cap);
+long macsurf_diag_serialize_capabilities(char *buf, long cap);
+long macsurf_diag_serialize_css_gaps(char *buf, long cap);
 
 #endif /* MACSURF_DIAG_H */

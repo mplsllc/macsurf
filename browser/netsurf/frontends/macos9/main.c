@@ -1871,6 +1871,10 @@ static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
 		n = macsurf_diag_serialize_modules(out, (long)sizeof(out));
 	} else if (strcmp(verb, "io") == 0) {
 		n = macsurf_diag_serialize_io(out, (long)sizeof(out));
+	} else if (strcmp(verb, "capabilities") == 0) {
+		n = macsurf_diag_serialize_capabilities(out, (long)sizeof(out));
+	} else if (strcmp(verb, "cssgaps") == 0) {
+		n = macsurf_diag_serialize_css_gaps(out, (long)sizeof(out));
 	} else if (strcmp(verb, "operations") == 0) {
 		n = macsurf_diag_serialize_operations(out, (long)sizeof(out));
 	} else if (strcmp(verb, "errors") == 0) {

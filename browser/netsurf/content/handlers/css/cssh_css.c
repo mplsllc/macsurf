@@ -41,6 +41,7 @@
 
 #include "macsurf_debug.h"
 #include "macsurf_gap.h"
+#include "macsurf_capability.h"
 
 /* Define to trace import fetches */
 #undef NSCSS_IMPORT_TRACE
@@ -3703,6 +3704,8 @@ macsurf__rewrite_modern_compat(const char *data, size_t in_size,
 			continue;
 		}
 		memcpy(out + i, FV_REP, FV_LEN);
+		ms_diag_css_gap_hit(MS_CSS_GAP_SELECTOR, NULL, ":focus-visible",
+			NULL, MS_CAP_FALLBACK);
 		changed = 1;
 		i += FV_LEN;
 	}
@@ -3730,6 +3733,8 @@ macsurf__rewrite_modern_compat(const char *data, size_t in_size,
 			continue;
 		}
 		memcpy(out + i, FW_REP, FW_LEN);
+		ms_diag_css_gap_hit(MS_CSS_GAP_SELECTOR, NULL, ":focus-within",
+			NULL, MS_CAP_FALLBACK);
 		changed = 1;
 		i += FW_LEN;
 	}
@@ -3744,6 +3749,8 @@ macsurf__rewrite_modern_compat(const char *data, size_t in_size,
 			size_t j;
 			size_t end;
 			size_t p;
+			char value[48];
+			int value_len;
 			if (!macsurf__match_prop_name(out, in_size, i,
 					name, nlen)) {
 				i++;
@@ -3761,6 +3768,15 @@ macsurf__rewrite_modern_compat(const char *data, size_t in_size,
 			end = j + 1;
 			while (end < in_size && out[end] != ';' &&
 					out[end] != '}') end++;
+			value_len = 0;
+			p = j + 1;
+			while (p < end && value_len < 47) {
+				if (out[p] != ' ' && out[p] != '\t' &&
+					out[p] != '\n' && out[p] != '\r')
+					value[value_len++] = out[p];
+				p++;
+			}
+			value[value_len] = '\0';
 			for (p = i; p < end; p++) {
 				if (out[p] != '\n' && out[p] != '\r') {
 					out[p] = ' ';
@@ -3772,8 +3788,15 @@ macsurf__rewrite_modern_compat(const char *data, size_t in_size,
 			 * layer). Other DROP_PROPS entries are not gaps. */
 			if (strncmp(name, "transition", 10) == 0) {
 				macsurf_gap_hit(MS_GAP_CSS_TRANSITION_DROPPED);
+				ms_diag_css_gap_hit(MS_CSS_GAP_PROPERTY, name, NULL, value,
+					MS_CAP_FALLBACK);
 			} else if (strncmp(name, "animation", 9) == 0) {
 				macsurf_gap_hit(MS_GAP_CSS_ANIMATION_DROPPED);
+				ms_diag_css_gap_hit(MS_CSS_GAP_PROPERTY, name, NULL, value,
+					MS_CAP_FALLBACK);
+			} else {
+				ms_diag_css_gap_hit(MS_CSS_GAP_PROPERTY, name, NULL, value,
+					MS_CAP_UNSUPPORTED);
 			}
 			i = end;
 		}
