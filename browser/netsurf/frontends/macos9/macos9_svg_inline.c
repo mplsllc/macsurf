@@ -30,6 +30,7 @@
 #include "frontends/macos9/macos9.h"
 #include "frontends/macos9/macos9_svg_inline.h"
 #include "frontends/macos9/macos9_svg_sprite.h"
+#include "frontends/macos9/macos9_opacity.h"
 #include "frontends/macos9/macsurf_debug_log.h"
 
 #include <stdlib.h>
@@ -1045,10 +1046,7 @@ static void svg__init_plot_style(plot_style_t *p,
 	 * plotter API.
 	 *
 	 * fixes305a: when EITHER channel is fully transparent at 0.0, set
-	 * its paint type to NONE so the shape skips paint entirely. This
-	 * sidesteps the plotter's sentinel where pstyle->opacity == 0 is
-	 * interpreted as "unset → opaque" (fixes223 trade-off). Without
-	 * this, a literal fill-opacity="0.0" rendered as solid. */
+	 * its paint type to NONE so the shape skips paint entirely. */
 	{
 		int has_fill;
 		int has_stroke;
@@ -1074,6 +1072,7 @@ static void svg__init_plot_style(plot_style_t *p,
 		if (eff > 1.0f) eff = 1.0f;
 		p->opacity = (plot_style_fixed)(eff * (float)(
 			(plot_style_fixed)1 << PLOT_STYLE_RADIX));
+		p->opacity_set = true;
 	}
 	/* transform_b identity, transform=0 (no transform). */
 	p->transform_b = 0x01000100;

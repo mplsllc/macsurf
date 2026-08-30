@@ -8,6 +8,21 @@
 #include <libcss/computed.h>
 #include <libcss/fpmath.h>
 #include "frontends/macos9/macos9_transition.h"
+#include "frontends/macos9/macos9_opacity.h"
+
+static bool test_macos9_opacity_renderer_contract(void)
+{
+    if (macos9_opacity_resolve(0, 0) != MACOS9_OPACITY_SCALE) return false;
+    if (macos9_opacity_resolve(0, 1) != 0) return false;
+    if (macos9_opacity_bucket_for(0) != MACOS9_OPACITY_SKIP) return false;
+    if (macos9_opacity_bucket_for(100) != MACOS9_OPACITY_SPARSE) return false;
+    if (macos9_opacity_bucket_for(512) != MACOS9_OPACITY_HALF) return false;
+    if (macos9_opacity_bucket_for(700) != MACOS9_OPACITY_DENSE) return false;
+    if (macos9_opacity_bucket_for(900) != MACOS9_OPACITY_SOLID) return false;
+    if (macos9_opacity_bucket_for(1024) != MACOS9_OPACITY_SOLID) return false;
+    fprintf(stderr, "  [2B-2] opacity renderer contract PASS\n");
+    return true;
+}
 
 /* helper: create a fresh DOM element to serve as stable node identity */
 static dom_node *create_test_node(void)
@@ -315,6 +330,8 @@ bool test_macos9_transition_opacity(void)
     css_transition_timing_entry timing;
     bool ok = true;
     uint32_t now = 0;
+
+    if (!test_macos9_opacity_renderer_contract()) return false;
     n = create_test_node();
     if (n == NULL) { fprintf(stderr, "FAIL opacity create node\n"); return false; }
     macsurf_transition_init();

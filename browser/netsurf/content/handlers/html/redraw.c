@@ -1620,8 +1620,9 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	         * fixes76 -- if -macsurf-animation-opacity is SET, the
 	         * animated value overrides the static one. */
 	        if (css_computed_opacity(background->style, &op_fixed) ==
-	                        CSS_OPACITY_SET) {
-	                pstyle_fill_bg.opacity = (plot_style_fixed)op_fixed;
+					CSS_OPACITY_SET) {
+				pstyle_fill_bg.opacity = (plot_style_fixed)op_fixed;
+				pstyle_fill_bg.opacity_set = true;
 	        } else {
 	                pstyle_fill_bg.opacity = (plot_style_fixed)PLOT_STYLE_SCALE;
 	        }
@@ -1637,7 +1638,8 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	                uint8_t ttype = css_computed_opacity(background->style, &target);
 	                if (ttype != CSS_OPACITY_SET) target = 1024;
 	                if (macsurf_transition_get_opacity(background->node, target, now, &presented)) {
-	                    pstyle_fill_bg.opacity = (plot_style_fixed)presented;
+				    pstyle_fill_bg.opacity = (plot_style_fixed)presented;
+				    pstyle_fill_bg.opacity_set = true;
 	                }
 	            }
 	        }
@@ -1649,7 +1651,8 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	                        int rw, rh;
 	                        pstyle_fill_bg.opacity = (plot_style_fixed)
 	                                macsurf_anim_opacity_resolve_plot_fixed(
-	                                        anim_packed);
+									anim_packed);
+					pstyle_fill_bg.opacity_set = true;
 	                        /* fixes76b -- queue a per-box rect invalidate
 	                         * so the tick refreshes only this badge, not
 	                         * the whole page. */
@@ -2435,8 +2438,9 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	        /* fixes49 -- opacity mirror for inline path.
 	         * fixes76 -- animation override (inline path). */
 	        if (css_computed_opacity(box->style, &op_fixed) ==
-	                        CSS_OPACITY_SET) {
-	                pstyle_fill_bg.opacity = (plot_style_fixed)op_fixed;
+						CSS_OPACITY_SET) {
+					pstyle_fill_bg.opacity = (plot_style_fixed)op_fixed;
+					pstyle_fill_bg.opacity_set = true;
 	        } else {
 	                pstyle_fill_bg.opacity = (plot_style_fixed)PLOT_STYLE_SCALE;
 	        }
@@ -2452,7 +2456,8 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	                uint8_t ttype = css_computed_opacity(box->style, &target);
 	                if (ttype != CSS_OPACITY_SET) target = 1024;
 	                if (macsurf_transition_get_opacity(box->node, target, now, &presented)) {
-	                    pstyle_fill_bg.opacity = (plot_style_fixed)presented;
+				    pstyle_fill_bg.opacity = (plot_style_fixed)presented;
+				    pstyle_fill_bg.opacity_set = true;
 	                }
 	            }
 	        }
@@ -2463,7 +2468,8 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	                                CSS_MACSURF_ANIMATION_OPACITY_SET) {
 	                        pstyle_fill_bg.opacity = (plot_style_fixed)
 	                                macsurf_anim_opacity_resolve_plot_fixed(
-	                                        anim_packed_il);
+									anim_packed_il);
+					pstyle_fill_bg.opacity_set = true;
 	                        /* fixes76b -- queue a per-box rect invalidate.
 	                         * `b` is the border edge rect in page coords. */
 	                        macos9_animation_register_rect(b.x0, b.y0,
