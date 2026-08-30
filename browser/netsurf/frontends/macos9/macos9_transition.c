@@ -23,6 +23,17 @@ extern nserror macos9_schedule(int t, void (*callback)(void *p), void *p);
 static struct macsurf_transition_effect g_effects[MACSURF_TRANSITION_MAX_ACTIVE];
 static int g_effect_count = 0;
 static bool g_sched_armed = false;
+#ifdef __MACOS9__
+extern void macsurf_debug_log_writef(const char *fmt, ...);
+static int g_transition_diag_budget = 96;
+#define TRANSITION_DIAG(args) \
+    do { \
+        if (g_transition_diag_budget > 0) { \
+            g_transition_diag_budget--; \
+            macsurf_debug_log_writef args; \
+        } \
+    } while (0)
+#endif
 
 int macsurf_transition_fixed_to_ticks(css_fixed v)
 {
@@ -148,6 +159,7 @@ void macsurf_transition_init(void)
     for (i = 0; i < MACSURF_TRANSITION_MAX_ACTIVE; i++) {
         g_effects[i].in_use = false;
         g_effects[i].node = NULL;
+        g_effects[i].diag_milestones = 0;
     }
     g_effect_count = 0;
     g_sched_armed = false;
@@ -162,6 +174,7 @@ void macsurf_transition_reset(void)
             g_effects[i].node = NULL;
         }
         g_effects[i].in_use = false;
+        g_effects[i].diag_milestones = 0;
     }
     g_effect_count = 0;
     g_sched_armed = false;
@@ -258,6 +271,7 @@ int macsurf_transition_create(dom_node *node, uint32_t prop,
         e->timing = timing;
         e->start_value = start_value;
         e->target_value = target_value;
+        e->diag_milestones = 0;
         /* determine initial state: check delay */
         {
             int delay_ticks = macsurf_transition_fixed_to_ticks(delay);
@@ -301,6 +315,7 @@ int macsurf_transition_create(dom_node *node, uint32_t prop,
     e->timing = timing;
     e->start_value = start_value;
     e->target_value = target_value;
+    e->diag_milestones = 0;
     {
         int delay_ticks = macsurf_transition_fixed_to_ticks(delay);
         int duration_ticks = macsurf_transition_fixed_to_ticks(duration);
@@ -402,6 +417,12 @@ void macsurf_transition_tick(void *p)
             if (g_effects[i].duration != 0 && duration_ticks == 0) duration_ticks = 1;
             effective = (long)elapsed - delay_ticks;
             if (effective >= duration_ticks) {
+#ifdef __MACOS9__
+                TRANSITION_DIAG(("LIFE 2B2 effect complete node=%p now=%ld start=%ld target=%ld active=%d",
+                    (void *)g_effects[i].node, (long)now,
+                    (long)g_effects[i].start_value,
+                    (long)g_effects[i].target_value, g_effect_count));
+#endif
                 /* complete: retire */
                 dom_node_unref(g_effects[i].node);
                 g_effects[i].node = NULL;
@@ -410,6 +431,23 @@ void macsurf_transition_tick(void *p)
                 continue;
             }
             still_active = 1;
+#ifdef __MACOS9__
+            if (g_effects[i].prop == CSS_PROP_OPACITY && duration_ticks > 0) {
+                int milestone = (int)(((long)effective * 4) / duration_ticks);
+                css_fixed presented = 0;
+                if (milestone < 0) milestone = 0;
+                if (milestone > 3) milestone = 3;
+                if ((g_effects[i].diag_milestones & (1 << milestone)) == 0 &&
+                    macsurf_transition_get_presented(g_effects[i].node,
+                        g_effects[i].prop, &presented, now)) {
+                    g_effects[i].diag_milestones |= (uint8_t)(1 << milestone);
+                    TRANSITION_DIAG(("LIFE 2B2 tick node=%p now=%ld elapsed=%ld progress=%d presented=%d active=%d invalidated=1",
+                        (void *)g_effects[i].node, (long)now,
+                        (long)elapsed, milestone * 25,
+                        (int)presented, g_effect_count));
+                }
+            }
+#endif
         }
         /* otherwise need invalidation: for synthetic, no paint; for real, caller will handle */
     }
@@ -423,6 +461,7 @@ void macsurf_transition_tick(void *p)
             for (gw = macos9_window_list_head(); gw != NULL; gw = gw->next) {
                 macos9_window_invalidate_content(gw);
             }
+            TRANSITION_DIAG(("LIFE 2B2 invalidate active=%d", g_effect_count));
         }
 #endif
         macos9_schedule(MACSURF_TRANSITION_TICK_MS, macsurf_transition_tick, NULL);
@@ -471,7 +510,13 @@ bool macsurf_transition_handle_style_change(struct html_content *c, dom_node *no
     if (type_b != CSS_OPACITY_SET) op_b = 1024;
     if (op_a == op_b) return false;
     count = css_computed_transition_descriptor_count(new_style);
-    if (count == 0) return false;
+    if (count == 0) {
+#ifdef __MACOS9__
+        TRANSITION_DIAG(("LIFE 2B2 hook node=%p old=%d new=%d desc=0 match=-1",
+            (void *)node, (int)op_a, (int)op_b));
+#endif
+        return false;
+    }
     for (i = 0; i < count; i++) {
         if (!css_computed_transition_descriptor(new_style, i, &desc)) continue;
         if (desc.prop.kind == CSS_TRANS_PROP_ALL) {
@@ -482,14 +527,30 @@ bool macsurf_transition_handle_style_change(struct html_content *c, dom_node *no
             /* not opacity */
         }
     }
-    if (match_idx < 0) return false;
+    if (match_idx < 0) {
+#ifdef __MACOS9__
+        TRANSITION_DIAG(("LIFE 2B2 hook node=%p old=%d new=%d desc=%ld match=-1",
+            (void *)node, (int)op_a, (int)op_b, (long)count));
+#endif
+        return false;
+    }
     if (!css_computed_transition_descriptor(new_style, (uint32_t)match_idx, &desc)) return false;
     delay = desc.delay;
     duration = desc.duration;
     timing = desc.timing;
     if (duration == 0) return false;
     /* create/replace via generic engine */
-    return macsurf_transition_create(node, CSS_PROP_OPACITY, op_a, op_b, delay, duration, timing, now, (dom_node *)old_style) ? true : false;
+    {
+        int created = macsurf_transition_create(node, CSS_PROP_OPACITY,
+            op_a, op_b, delay, duration, timing, now, (dom_node *)old_style);
+#ifdef __MACOS9__
+        TRANSITION_DIAG(("LIFE 2B2 hook node=%p old=%d new=%d desc=%ld match=%d dur=%d delay=%d timing=%d create=%d active=%d",
+            (void *)node, (int)op_a, (int)op_b, (long)count, match_idx,
+            (int)duration, (int)delay, (int)timing.type, created,
+            g_effect_count));
+#endif
+        return created ? true : false;
+    }
 }
 
 bool macsurf_transition_get_opacity(dom_node *node, css_fixed target,

@@ -148,6 +148,8 @@ extern void macsurf_reconvert_node_unref(void *n);
 
 static struct macos9_reconvert_pending g_pending[RECONVERT_MAX_PENDING];
 static int g_pending_overflow = 0;
+static int g_opacity_diag_mutations = 0;
+static int g_opacity_diag_paths = 0;
 
 /* MacSurf Trace 1c: last batch opened this debounce episode -- the mutcensus
  * line reports its join keys (doc/batch/task). When more than one document
@@ -373,6 +375,12 @@ macos9_reconvert_pending_add(struct content *c, void *node, int kind,
 	g_last_prov.nav = g_pending[freeslot].nav;
 	g_last_prov.frame = g_pending[freeslot].frame;
 	g_episode_batches++;
+	if (g_opacity_diag_mutations < 32) {
+		g_opacity_diag_mutations++;
+		macsurf_debug_log_writef(
+			"LIFE 2B2 mutation kind=%d node=%p batch=%ld",
+			kind, node, (long)g_pending[freeslot].batch_id);
+	}
 }
 
 /* fixes1016 - is a JS DOM mutation awaiting its reconvert for this content?
@@ -987,6 +995,11 @@ macos9_reconvert_cb(void *p)
 			if (c->status == CONTENT_STATUS_READY || c->status == CONTENT_STATUS_DONE) {
 				int fs_rc;
 				g_style_fast_attempt++;
+				if (g_opacity_diag_paths < 32) {
+					g_opacity_diag_paths++;
+					macsurf_debug_log_writef("LIFE 2B2 path=fast node=%p",
+						g_pending[i].node);
+				}
 				fs_rc = html_reconvert_fast_style(c, g_pending[i].node);
 				ms_diag_render_stage(MS_STAGE_STYLEFAST,
 					fs_rc == 0 ? MS_SRES_COMMIT : MS_SRES_FALLBACK,
@@ -1021,6 +1034,11 @@ macos9_reconvert_cb(void *p)
 					g_inherited_color_fallback++;
 				}
 			}
+		}
+		if (g_opacity_diag_paths < 32) {
+			g_opacity_diag_paths++;
+			macsurf_debug_log_writef("LIFE 2B2 path=construct node=%p",
+				g_pending[i].node);
 		}
 
 		rc = html_reconvert_content(c);	/* 0 = queued, !=0 = busy */

@@ -31,6 +31,7 @@ struct macsurf_transition_effect {
     css_fixed target_value;
     enum macsurf_transition_state state;
     bool in_use;
+    uint8_t diag_milestones;
 };
 
 /* wrap-safe elapsed: unsigned 32-bit subtraction handles TickCount wrap */
