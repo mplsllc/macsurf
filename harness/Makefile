@@ -28,6 +28,7 @@ ASAN   := -fsanitize=address
 # fixes1022: the harness tests the FULL JS surface -- the Mac build quiesces
 # these behind default-off switches until Phase 3 lands.
 CFLAGS := -O0 -g $(ASAN) -std=gnu99 -w -include stdint.h -include stdbool.h \
+	  -DHARNESS_FIXTURE_ROOT='"$(ROOT)/harness"' \
           -DMACSURF_JS_GEOMETRY=1 -DMACSURF_JS_VIEW_EVENTS=1 \
           -DMACSURF_JS_FIRE_LOAD=1 -DMACSURF_JS_AUDIT=1 \
           -DMACSURF_RECONVERT_TEST_HOOK \
@@ -143,7 +144,8 @@ WEBP_DIR := $(ROOT)/browser/libwebp
 WEBP_SRC := $(sort $(wildcard $(WEBP_DIR)/c/*.c))
 
 webp_codec_test: webp_codec_test.c $(WEBP_SRC)
-	$(CC) -std=c89 -O2 -U__SSE2__ -U__SSE2_MATH__ -I$(WEBP_DIR)/h $^ -o $@
+	$(CC) -std=c89 -O2 -DHARNESS_FIXTURE_ROOT='"$(ROOT)/harness"' \
+		-U__SSE2__ -U__SSE2_MATH__ -I$(WEBP_DIR)/h $^ -o $@
 
 webp-test: webp_codec_test
 	./webp_codec_test

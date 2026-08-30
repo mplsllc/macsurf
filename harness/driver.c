@@ -20,6 +20,8 @@
 #include <string.h>
 #include <stdbool.h>
 
+#include "harness_fixture.h"
+
 #include "quickjs.h"	/* Test 93: raw job-queue API, independent of MacSurf's
 			 * js_newthread/js_exec glue (see harness/Makefile's
 			 * -I$(QJS) -> quickjs-macos9/quickjs.h). */
@@ -449,6 +451,15 @@ static char *harness_slurp(const char *path)
 	buf[n] = '\0';
 	fclose(f);
 	return buf;
+}
+
+static char *harness_fixture_slurp(const char *name)
+{
+	char path[HARNESS_FIXTURE_PATH_MAX];
+
+	if (!harness_fixture_path(name, path, sizeof(path)))
+		return NULL;
+	return harness_slurp(path);
 }
 
 /* Identity of a box, for the dump. */
@@ -1774,7 +1785,7 @@ int main(int argc, char **argv)
 	 * generic "GAP" followed by PASS made unrelated regressions invisible. */
 	fprintf(stderr, "\n=== Test 7: real jQuery 3.7.1 clears the document probe ===\n");
 	{
-		FILE *jf = fopen("jquery-3.7.1.min.js", "rb");
+		FILE *jf = harness_fixture_open("jquery-3.7.1.min.js", "rb");
 		const char *probe_js =
 			"if(document.nodeType!==9)"
 				"throw new Error('ASSERT FAIL: document.nodeType='+document.nodeType);"
@@ -1894,7 +1905,7 @@ int main(int argc, char **argv)
 		int fi;
 
 		for (fi = 0; fi < 2; fi++) {
-			FILE *bf = fopen(xf_files[fi], "rb");
+			FILE *bf = harness_fixture_open(xf_files[fi], "rb");
 			char *raw, *wrapped;
 			long blen;
 			size_t rd, wn;
@@ -1991,7 +2002,7 @@ int main(int argc, char **argv)
 			};
 			int fi;
 			for (fi = 0; fi < 2; fi++) {
-				FILE *bf = fopen(raw_files[fi], "rb");
+				FILE *bf = harness_fixture_open(raw_files[fi], "rb");
 				char *raw;
 				long blen;
 				size_t rd;
@@ -3018,7 +3029,7 @@ int main(int argc, char **argv)
 	 * success. --- */
 	fprintf(stderr, "\n=== Test 18 (DIAGNOSTIC): the real verbum-comments.js ===\n");
 	{
-		FILE *vf = fopen("verbum-comments.js", "rb");
+		FILE *vf = harness_fixture_open("verbum-comments.js", "rb");
 		if (vf == NULL) {
 			fprintf(stderr, "SKIP: verbum-comments.js not present next to the "
 					"harness (copy it from the HAR to run this leg)\n");
@@ -6224,7 +6235,7 @@ box_coords(bx, &cx, &cy);
 	 * content survives. This is the method that ended fixes998. */
 	fprintf(stderr, "\n=== Test 45: the REAL dotdotdot plugin on an article entry ===\n");
 	{
-		FILE *bf = fopen("hackaday-bundle.js", "rb");
+		FILE *bf = harness_fixture_open("hackaday-bundle.js", "rb");
 		if (bf == NULL) {
 			fprintf(stderr, "SKIP: hackaday-bundle.js not present\n");
 		} else {
@@ -10495,7 +10506,7 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "\n=== Test 81: pre-loader requireLazy call survives "
 			"the stub->real transition (fixes1276) ===\n");
 	{
-		char *b25src = harness_slurp("fbcdn.net-loader-b25.js");
+		char *b25src = harness_fixture_slurp("fbcdn.net-loader-b25.js");
 		if (b25src == NULL) {
 			fprintf(stderr, "SKIP: fbcdn.net-loader-b25.js not present\n");
 		} else {

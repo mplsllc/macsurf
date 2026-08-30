@@ -4,6 +4,7 @@
 
 #include "macwebp_decode.h"
 #include "macwebp_demux.h"
+#include "harness_fixture.h"
 
 static unsigned char *
 read_file(const char *path, size_t *size)
@@ -104,10 +105,22 @@ main(void)
 	const unsigned char malformed[] = { 'R', 'I', 'F', 'F', 0, 0, 0, 0,
 		'W', 'E', 'B', 'P' };
 	WebPBitstreamFeatures features;
+	char static_path[HARNESS_FIXTURE_PATH_MAX];
+	char alpha_path[HARNESS_FIXTURE_PATH_MAX];
+	char animation_path[HARNESS_FIXTURE_PATH_MAX];
 	int ok;
-	ok = test_static("webp-corpus/static-vp8.webp", 0) &&
-		test_static("webp-corpus/static-alpha-vp8l.webp", 1) &&
-		test_animation("webp-corpus/animated-alpha.webp") &&
+	if (!harness_fixture_path("webp-corpus/static-vp8.webp",
+			static_path, sizeof(static_path)) ||
+		!harness_fixture_path("webp-corpus/static-alpha-vp8l.webp",
+			alpha_path, sizeof(alpha_path)) ||
+		!harness_fixture_path("webp-corpus/animated-alpha.webp",
+			animation_path, sizeof(animation_path))) {
+		fprintf(stderr, "webp codec fixture path resolution failed\n");
+		return 1;
+	}
+	ok = test_static(static_path, 0) &&
+		test_static(alpha_path, 1) &&
+		test_animation(animation_path) &&
 		WebPGetFeatures(malformed, sizeof(malformed), &features) != VP8_STATUS_OK;
 	if (!ok) {
 		fprintf(stderr, "webp codec regression failed\n");
