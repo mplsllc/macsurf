@@ -4749,6 +4749,13 @@ nserror html_reconvert(html_content *c)
 			" root_style=NULL", (long) macsurf_reconvert_seq, ncleared);
 	}
 
+	/* CSS Transitions 2B-2: full reconstruction normally replaces the box
+	 * tree wholesale, bypassing html_reconvert_fast_style's old/new style
+	 * comparison. Re-cascade the still-live old tree first so it can start
+	 * presentation effects from each genuine Style A -> Style B pair. The
+	 * normal reconstruction below still owns geometry and installs Style B. */
+	(void)html_recascade_tree(c);
+
 	/* fixes896 - pin the DOM's live text-node dom_strings across the rebuild
 	 * window. Was fixes843, which walked c->layout (the box tree) for BOX_TEXT
 	 * boxes with a node backlink that box_construct never sets -> pinned 0 ->

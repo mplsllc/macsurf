@@ -108,6 +108,10 @@ static unsigned long    g_walk_gen     = 0;
 #include "macsurf_debug.h"
 #include "macsurf_diag.h"	/* MacSurf Trace 1c: layout_pass provenance */
 #include "macos9_deathrow.h"
+#include "frontends/macos9/macos9_transition.h"
+#ifdef __MACOS9__
+#include <Timer.h>
+#endif
 
 /* fixes553 - extend the fixes552 writer-side free guard from the single walked
  * content to its ENTIRE tree.  The box walk dereferences not just the
@@ -2886,6 +2890,17 @@ html_recascade_tree(html_content *c)
 					use_parent, use_root, box->node,
 					use_parent_env, &new_env);
 			if (new_styles != NULL) {
+				uint32_t now = 0;
+				/* Start presentation effects before replacing the old
+				 * computed style. This also covers the full-reconstruction
+				 * path, which re-cascades this still-live old box tree just
+				 * before it constructs the replacement. */
+#ifdef __MACOS9__
+				now = (uint32_t)TickCount();
+#endif
+				macsurf_transition_handle_style_change(c, box->node,
+						old_self_style,
+						new_styles->styles[CSS_PSEUDO_ELEMENT_NONE], now);
 				/* fixes1268c - replace, releasing the
 				 * environment from the previous cascade. */
 				if (box->custom_env != NULL && !(box->flags & CLONE))
