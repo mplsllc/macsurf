@@ -1,12 +1,12 @@
 # MacSurf Documentation
 
-Documentation for [MacSurf](../README.md), a NetSurf-based web browser for Mac OS 9 PowerPC, paired with a TLS-stripping HTTP proxy.
+Documentation for [MacSurf](../README.md), a NetSurf-based browser for Mac OS 9 PowerPC with native HTTPS.
 
 ## Start here
 
 - [architecture.md](architecture.md), Full platform architecture: rendering modes, proxy services, template system, milestone plan.
 - [status.md](status.md), Current project status, build state, what works today.
-- [HISTORY.md](HISTORY.md), Milestone history and version timeline.
+- [masterplan.md](masterplan.md), Maintained development roadmap.
 
 ## Build & deploy
 
@@ -19,20 +19,7 @@ Documentation for [MacSurf](../README.md), a NetSurf-based web browser for Mac O
 
 ## CSS engine
 
-- [css-status.md](css-status.md), Feature-by-feature status of CSS support in MacSurf.
-- [css-capability-audit.md](css-capability-audit.md), Comprehensive CSS capability audit.
-- [css-recovery-playbook.md](css-recovery-playbook.md), Recovery patterns for CSS engine regressions.
-- [css-milestone-2026-05-13.md](css-milestone-2026-05-13.md), The CSS-applies-on-hardware milestone writeup.
-
-## Planning
-
-- [masterplan.md](masterplan.md), Master roadmap.
-- [moonshot.md](moonshot.md), Long-term vision.
-- [proxy-test-results.md](proxy-test-results.md), Proxy test results.
-
-## Story
-
-- [story.html](story.html), Narrative writeup of the project (renderable HTML).
+- [css-support.md](css-support.md), User-facing property support summary.
 
 ## Research
 

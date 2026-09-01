@@ -146,25 +146,22 @@ See the [release notes](release-notes/) for per-version history.
 
 ## What's queued next
 
-Highest-value remaining work, from [research/css-gap-inventory-2026-07-13.md](research/css-gap-inventory-2026-07-13.md) and the open JS/DOM frontier:
-
-- **`appearance` + form-control styling (#80/#90)** — synthetic CSS-painted controls replacing Carbon Control Manager where `appearance:none` is set. Its own round.
-- **`min-content`/`max-content`/`fit-content` intrinsic sizing** — the structural prerequisite that unblocks `table-layout:auto` and correct flex/grid shrink-to-fit.
-- **Grid Round 2 (#279)** — placement/span-aware auto sizing, minmax composition, and §12.8 stretch. `justify-self` is complete (fixes1204/1208) and is no longer part of this queue.
-- **Reconvert crash chain** — land the hover/scrollbar/timer fixes so JS DOM mutation can repaint safely, then re-enable reconvert.
-- **Heavy DOM-mutation SPAs** — the open JS frontier (event bubbling/dispatch bridge #264, `getComputedStyle`/`getBoundingClientRect` #265, real in-page interactivity).
+The active roadmap is [masterplan.md](masterplan.md). Current work is CSS
+Transitions #322: opacity is hardware-verified; the next bounded adapter slice
+is `color` and `background-color` only. Re-derive the newest private CSS
+inventory before scheduling work after that checkpoint.
 
 ---
 
 ## Known limitations
 
 - **Cache-hit first-paint.** A navigation first-paints the placeholder before the deferred cache-hit delivery completes, so a cached page can flash `about:` before the real content lands. Cache STORE and READ both run; the bug is at the paint-trigger timing, not the fetcher. Open.
-- **Reconvert is off in this release.** JS that mutates the DOM after load won't repaint until the hover/scrollbar/timer crash chain is landed and reconvert is re-enabled.
+- **Reconvert remains deliberately conservative.** Full-document reconstruction is the current safe mutation fallback; incremental layout is future work.
 - **Heavy DOM-mutation SPAs** — GitHub, video, React-heavy apps — don't render. Deep in-page interactivity (event bubbling/dispatch bridge #264, `getComputedStyle`/`getBoundingClientRect` #265) is still being built.
 - **No preemptive threading.** Cooperative `WaitNextEvent` event loop only; all networking yields via `kOTSyncIdleEvent`.
 - **No Carbon mouse-wheel** — the event class was never back-ported to CarbonLib on OS 9; scroll via bar, arrows, Page Up/Down, Home/End.
 - **No subgrid.**
-- **8 grid tracks maximum** per row or column; max 256 children per grid container (excess fall back to the auto-flow path). Grid Round 2 placement/span-aware auto sizing, minmax composition, and §12.8 stretch remain open.
+- **8 grid tracks maximum** per row or column; max 256 children per grid container (excess fall back to the auto-flow path). `minmax()`/`fit-content()` composition, definite-height FR rows, and stretch remain open.
 - **JavaScript Date arithmetic** is anchored to a fixed 2026 baseline because Mac OS 9's `GetDateTime` returns 1904-epoch seconds with no DST handling.
 
 ---
@@ -174,7 +171,7 @@ Highest-value remaining work, from [research/css-gap-inventory-2026-07-13.md](re
 - [architecture.md](architecture.md) — system architecture, module map, networking model
 - [release-notes/](release-notes/) — per-version release notes back to v0.1
 - [css-support.md](css-support.md) — property-by-property CSS audit
-- [research/css-gap-inventory-2026-07-13.md](research/css-gap-inventory-2026-07-13.md) — the deep CSS gap inventory (current ground truth)
+- [masterplan.md](masterplan.md) — maintained development roadmap
 - [codewarrior-setup.md](codewarrior-setup.md) — Mac-side build walkthrough
 - [cross-dev-from-linux.md](cross-dev-from-linux.md) — Linux cross-dev workflow + Retro68 syntax pre-flight
 - [resources.md](resources.md) — the `'carb'` / icon / BNDL resource pipeline
