@@ -94,7 +94,7 @@ user-facing summary; the deep engineering audit lives in
 
 | Feature | Support | Notes |
 |---|:---:|---|
-| `transition` | ✖ | Degrades to the end state (no animation). |
+| `transition` | ◑ | Temporal presentation is hardware-verified for `opacity` only (QuickDraw stipple approximation); other properties currently degrade to the end state. |
 | `animation` / `@keyframes` | ✖ | Same — final state, no motion. |
 
 ## Layout — Flexbox
