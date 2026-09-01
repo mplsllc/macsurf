@@ -10,33 +10,55 @@ the current code before starting, and land one hardware-testable slice at a
 time. `docs/status.md` records accepted checkpoints; `docs/css-support.md` is
 the user-facing capability summary.
 
-## Current focus: CSS Transitions (#322)
+## Current focus: Modern Compatibility Foundation
 
-Round 2A (native parsing, cascade, computed descriptors) and Round 2B-2
-(`opacity` temporal presentation) are hardware-verified. #322 remains open:
-only opacity is supported, using the QuickDraw stipple approximation.
+The active campaign prioritises browser contracts that cause modern pages to
+choose the wrong path or discard whole rule blocks. It replaces the former
+transition-first queue.
 
-The next bounded slice is Round 2B-3: `color` and `background-color` only.
-It must reuse the bounded transition-effect table and scheduler, preserve
-computed Style B as the target state, interpolate `css_color` endpoints in
-`0xAARRGGBB` before renderer conversion, and be host- and hardware-verified.
-Stop after those two properties; transforms, layout transitions, and CSS
-Animations (#323) are separate work.
+CSS Transitions #322 remains open at its accepted checkpoint: native parsing,
+cascade, and computed descriptors, plus opacity temporal presentation, are
+hardware-verified. Further transition adapters, CSS Animations (#323), Canvas,
+and WebGL are paused until the campaign's post-Grid compatibility census.
 
-## CSS backlog after the current transition slice
+### Round 1 — browser foundations
 
-Re-derive the inventory before reprioritising. The currently useful buckets
-are: height-family/flex-basis intrinsic keywords; Grid V2 remainder
-(`minmax()`/`fit-content()` composition, stretch, definite-height FR rows);
-and small independent layout consumers (`caption-side`, `list-style-position`).
-Do not requeue completed `justify-self`, `background-clip: text`,
-`background-origin`, or opacity work.
+1. `matchMedia` / `MediaQueryList` (#342)
+2. `:is()` / `:where()` (#163)
+3. MutationObserver (#105)
+
+### Round 2 — selectors
+
+1. `:has()` (#163)
+2. DOM `querySelector` / `querySelectorAll` selector parity (#334)
+
+### Round 3 — layout observers
+
+1. IntersectionObserver (#341)
+2. ResizeObserver (#340)
+
+### Round 4 — module loading
+
+ES module scripts and their static module graph (#343).
+
+### Round 5 — browser APIs
+
+1. Bounded Web Crypto (#337)
+2. Stylesheet CSSOM (#339)
+
+### Round 6 — layout
+
+Grid V2 remainder (#246): stretch behaviour, definite-height FR rows, named
+line/area lookup, dense flow, negative lines, and shorthand remainder.
+
+After Round 6, rerun the real-page capability census and set the next roadmap
+from observed gaps. Do not resume the deferred work opportunistically.
 
 ## Deliberately deferred
 
 Writing modes/bidi, pagination/fragmentation, SVG paint-only opacity,
-`clip-path`/mask/filter, subgrid, and CSS Animations require subsystems not
-present in this browser. They are not opportunistic CSS-property tasks.
+`clip-path`/mask/filter, and subgrid require subsystems not present in this
+browser. They are not opportunistic CSS-property tasks.
 
 ## Delivery standard
 

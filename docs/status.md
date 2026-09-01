@@ -29,6 +29,13 @@ tracked in GitHub [#320](https://github.com/mplsllc/macsurf/issues/320).
 
 **Historical (v1.4 round):** v1.4 "Open House" — **the JavaScript marathon closed.** Twenty-three GitHub issues went from open to closed across fixes319-352 — `setTimeout` / `setInterval` / `requestAnimationFrame`, `window.location` (full surface), `window.history` (`pushState` / `replaceState` / `state`), `URL` + `URLSearchParams`, `element.classList`, `element.style`, `Event` / `CustomEvent` / `MouseEvent` / `KeyboardEvent` constructors, `MutationObserver`, `DOMParser`, `FormData`, `localStorage`, `fetch`, `window.addEventListener` for `load` + `DOMContentLoaded`, `<details>` / `<summary>` click-to-toggle, `hidden` attribute. The purpose-built probe page at `mactrove.com/t.html` scored **`JS 19/19 pass, 0 fail`** on a G3 iMac. Two structural bugs caught along the way: **fixes349** repaired the IIFE per-element installer broken by fixes342's `_noresult` change (`TypeError: [object Object] not callable` on every element wrapper, the install aborted mid-stream and elements lost classList / style / matches / closest / etc); **fixes350** extended `js_fire_event` to dispatch `_winListeners` so `load` / `DOMContentLoaded` actually reach `addEventListener` listeners (was only firing the inline `on<type>` handler).
 
+Later source-level auditing found a partial implementation beneath that probe:
+native child-list and attribute paths queue real records with basic target,
+subtree, type, and attribute-filter matching. It still lacks standards-correct
+per-observer queues, option semantics, record fields, `takeRecords()`,
+character-data observation, and microtask delivery; #105 is reopened in the
+Modern Compatibility Foundation campaign.
+
 Diagnostic + power-user features also landed: **about:cache**, **about:memory**, **about:config**, **about:perf** all render real diagnostic pages (about:perf carries a live counters table including `reformat_ms` captured in `html_reformat`). **View Source** now uses `content_get_source_data` + a `data:text/html` URL — renders inline as HTML in a `<pre>` block (fixes352a fixed the underlying `data:` URL fetcher, which had been a stub returning empty body since launch, so every `data:` URL on every page now works). **Find-in-page** opens a real Carbon dialog (kDocumentWindowClass + TextEdit input + Find / Cancel buttons) routing to `browser_window_search`. **#99 root cause** turned out to be the URL-bar `strstr("://")` heuristic mangling opaque schemes (about:, data:, javascript:, mailto:, file:, resource:) to `https://about:cache` etc; replaced with a proper RFC 3986 scheme scanner that unblocks all five opaque schemes from URL-bar typing.
 
 CSS / gradient fidelity also moved in this window: **fixes348** downgraded alpha-overlay gradients to NONE so Platinum pinstripes (`rgba(...) 1px, transparent 1px`) stop rendering as harsh black-to-white bands; **fixes344b** added real alpha-aware gradient stops on an outer-struct side channel so RGBA + `transparent` no longer truncate to opaque; **fixes345** captured radial-gradient size+position prefixes; **fixes346** added pinstripe / repeating-pattern recovery so first==last across N≥3 stops swaps to the first distinct intermediate colour.
@@ -146,10 +153,12 @@ See the [release notes](release-notes/) for per-version history.
 
 ## What's queued next
 
-The active roadmap is [masterplan.md](masterplan.md). Current work is CSS
-Transitions #322: opacity is hardware-verified; the next bounded adapter slice
-is `color` and `background-color` only. Re-derive the newest private CSS
-inventory before scheduling work after that checkpoint.
+The active roadmap is [masterplan.md](masterplan.md). Current work is the
+**Modern Compatibility Foundation** campaign: first real `matchMedia` /
+`MediaQueryList`, `:is()` / `:where()`, and MutationObserver semantics; then
+selectors, layout observers, modules, bounded browser APIs, and Grid V2.
+CSS Transitions #322 remains at its hardware-verified opacity checkpoint;
+additional adapters are paused pending the post-Grid compatibility census.
 
 ---
 

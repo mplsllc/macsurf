@@ -142,7 +142,7 @@ user-facing summary; the deep engineering audit lives in
 | **CSS Custom Properties** (`var()`, `--foo`) | ✅&ast; | Native `var()` resolution at cascade time — the feature that unblocked modern themes (Drupal/XenForo). **First in the NetSurf family.** |
 | **CSS Logical Properties** | ✅&ast; | `margin/padding/border-block\|inline`, `inset-*`, logical sizing (2.0.5, #247). |
 | `:root`, attribute & structural selectors | ✅ | |
-| `:is()` / `:where()` / `:has()` | ◑ | Partial matching (#163). |
+| `:is()` / `:where()` / `:has()` | ◑ | Recognised but not semantically matched yet (#163). |
 | `@media` queries | ✅ | |
 | `@container` queries | ✖ | (#75) |
 | `clip-path` / `mask` / `filter` | ✖ | Degrade to flat rendering. |
