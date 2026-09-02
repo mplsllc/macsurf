@@ -407,6 +407,13 @@ extern int   memcmp(const void *, const void *, size_t);
 #define MACSURF_JS_FIRE_LOAD 1
 #endif
 
+/* Shared-build release profile: keep the AppleEvent diagnostics available on
+ * demand, but make the durable Debug.log channel a release stub. Remove this
+ * one define for an explicitly requested diagnostic build. */
+#ifndef MACSURF_RELEASE
+#define MACSURF_RELEASE 1
+#endif
+
 /* fixes305a: enable the file-backed diagnostic log channel by default.
  * macsurf_debug_log.c and macsurf_debug.c gate their real bodies on
  * MACSURF_DEBUG; without this define, macsurf_debug_log_init() is the
