@@ -43,6 +43,7 @@
 #include "content/handlers/html/box.h"
 #include "content/handlers/html/box_inspect.h"
 #include "content/handlers/html/box_construct.h"
+#include <libcss/select.h>
 /* fixes1013 - corestring_dom_scroll / _resize for the scroll/resize fan-out. */
 #include "utils/corestrings.h"
 #include "utils/libdom.h"
@@ -2750,6 +2751,104 @@ static void qjs_blob_finalizer(JSRuntime *rt, JSValue val)
 }
 
 static JSClassDef s_blob_class = { "Blob", qjs_blob_finalizer };
+
+/* MediaQueryList owns a parsed libcss query for its JS lifetime. This keeps
+ * matchMedia() on the exact @media parser/matcher path and avoids reparsing a
+ * query on every viewport change. */
+static JSClassID s_mql_class_id;
+
+struct qjs_mql {
+	struct css_media_query *query;
+};
+
+static void qjs_mql_finalizer(JSRuntime *rt, JSValue val)
+{
+	struct qjs_mql *mql = (struct qjs_mql *)JS_GetOpaque(val,
+			s_mql_class_id);
+	(void)rt;
+	if (mql == NULL) return;
+	css_media_query_destroy(mql->query);
+	free(mql);
+}
+
+static JSClassDef s_mql_class = { "MediaQueryList", qjs_mql_finalizer };
+
+static struct qjs_mql *qjs_mql_get(JSContext *ctx, JSValueConst value)
+{
+	return (struct qjs_mql *)JS_GetOpaque2(ctx, value, s_mql_class_id);
+}
+
+static JSValue qjs_mql_matches_native(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	struct qjs_mql *mql;
+	struct content *content;
+	html_content *htmlc;
+	bool matches = false;
+	css_error error;
+	(void)argc;
+	(void)argv;
+
+	mql = qjs_mql_get(ctx, this_val);
+	if (mql == NULL || mql->query == NULL)
+		return JS_EXCEPTION;
+	content = qjs_get_content_for_ctx(ctx);
+	if (content == NULL)
+		return JS_NewBool(ctx, false);
+	htmlc = (html_content *)content;
+	error = css_media_query_matches(mql->query, &htmlc->unit_len_ctx,
+			&htmlc->media, &matches);
+	if (error != CSS_OK)
+		return JS_NewBool(ctx, false);
+	return JS_NewBool(ctx, matches);
+}
+
+static JSValue qjs_mql_media_native(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	struct qjs_mql *mql;
+	(void)argc;
+	(void)argv;
+	mql = qjs_mql_get(ctx, this_val);
+	if (mql == NULL || mql->query == NULL)
+		return JS_EXCEPTION;
+	return JS_NewString(ctx, css_media_query_text(mql->query));
+}
+
+static JSValue qjs_match_media_native(JSContext *ctx,
+		JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	struct qjs_mql *mql;
+	const char *source = "";
+	JSValue result;
+	css_error error;
+	(void)this_val;
+
+	if (argc > 0) {
+		source = JS_ToCString(ctx, argv[0]);
+		if (source == NULL)
+			return JS_EXCEPTION;
+	}
+	mql = calloc(1, sizeof(*mql));
+	if (mql == NULL) {
+		if (argc > 0) JS_FreeCString(ctx, source);
+		return JS_ThrowOutOfMemory(ctx);
+	}
+	error = css_media_query_create(source, &mql->query);
+	if (argc > 0) JS_FreeCString(ctx, source);
+	if (error != CSS_OK) {
+		free(mql);
+		return JS_ThrowInternalError(ctx, "could not parse media query");
+	}
+	result = JS_NewObjectClass(ctx, s_mql_class_id);
+	if (JS_IsException(result)) {
+		css_media_query_destroy(mql->query);
+		free(mql);
+		return result;
+	}
+	JS_SetOpaque(result, mql);
+	return result;
+}
 
 static struct qjs_blob *qjs_blob_get(JSContext *ctx, JSValueConst value)
 {
@@ -9101,6 +9200,9 @@ static void qjs_dom_init_class(JSRuntime *rt)
 	s_blob_class_id = 0;
 	JS_NewClassID(rt, &s_blob_class_id);
 	JS_NewClass(rt, s_blob_class_id, &s_blob_class);
+	s_mql_class_id = 0;
+	JS_NewClassID(rt, &s_mql_class_id);
+	JS_NewClass(rt, s_mql_class_id, &s_mql_class);
 }
 
 /* ====================================================================== */
@@ -10871,6 +10973,9 @@ static void register_browser_globals(JSContext *ctx)
 	 * reference them. */
 	qjs_set_func(ctx, global, "__viewportW", qjs_js_viewport_w, 0);
 	qjs_set_func(ctx, global, "__viewportH", qjs_js_viewport_h, 0);
+	qjs_set_func(ctx, global, "__matchMediaNative", qjs_match_media_native, 1);
+	qjs_set_func(ctx, global, "__mqlMatches", qjs_mql_matches_native, 0);
+	qjs_set_func(ctx, global, "__mqlMedia", qjs_mql_media_native, 0);
 	qjs_set_func(ctx, global, "__scrollX",   qjs_js_scroll_x, 0);
 	qjs_set_func(ctx, global, "__scrollY",   qjs_js_scroll_y, 0);
 	qjs_set_func(ctx, global, "__scrollTo",  qjs_js_scroll_to, 2);
@@ -11753,56 +11858,6 @@ static void register_browser_globals(JSContext *ctx)
 				"inl.setProperty(p,v);};"
 			"o.cssText=(inl&&inl.cssText)||'';"
 			"return o;};"
-		/* fixes1015 - ours answers matches:false unconditionally, so any
-		 * rendering that branches on a media query silently takes the
-		 * false path. Log which queries the page actually asked. */
-		/* fixes1114b (#265) - REAL matchMedia evaluator, not hardcoded false.
-		 *
-		 * The old stub answered {matches:false} to EVERY query, which is a
-		 * lying answer: a page's (min-width:800px) check got `false` and the
-		 * page served its mobile layout on a 949px-wide window.
-		 *
-		 * Unknown queries still log via __msLife (matching the old WANT
-		 * behavior) so the hardware log tells us which queries real pages
-		 * use next. Known-query evaluation is at call time so
-		 * this.innerWidth/this.innerHeight (set a few lines below) are
-		 * already available. */
-		"this.matchMedia=function(q){"
-			"var m={matches:false,media:q||'',"
-				"addListener:function(){},removeListener:function(){},"
-				"addEventListener:function(){},removeEventListener:function(){}};"
-			"if(!q)return m;"
-			"var s=q.replace(/[\\t\\n\\r ]/g,'');"
-			"try{"
-				/* display-mode */
-				"if(s==='(display-mode:standalone)'||s==='(display-mode:fullscreen)')return m;"
-				"if(s==='(display-mode:browser)'){m.matches=true;return m;}"
-				/* prefers-color-scheme (Mac OS 9 is always light) */
-				"if(s==='(prefers-color-scheme:dark)')return m;"
-				"if(s==='(prefers-color-scheme:light)'){m.matches=true;return m;}"
-				/* max/min width (viewport is 949px) */
-				"if(s.indexOf('(max-width:')===0){var n=parseInt(s.slice(11));"
-					"m.matches=(n>0&&this.innerWidth<=n);return m;}"
-				"if(s.indexOf('(min-width:')===0){var n=parseInt(s.slice(11));"
-					"m.matches=(n>0&&this.innerWidth>=n);return m;}"
-				/* max/min height (viewport is 613px) */
-				"if(s.indexOf('(max-height:')===0){var n=parseInt(s.slice(12));"
-					"m.matches=(n>0&&this.innerHeight<=n);return m;}"
-				"if(s.indexOf('(min-height:')===0){var n=parseInt(s.slice(12));"
-					"m.matches=(n>0&&this.innerHeight>=n);return m;}"
-				/* pointer (desktop = fine) */
-				"if(s==='(pointer:fine)'){m.matches=true;return m;}"
-				/* hover (desktop = hover) */
-				"if(s==='(hover:hover)'){m.matches=true;return m;}"
-				/* prefers-reduced-motion */
-				"if(s==='(prefers-reduced-motion:reduce)')return m;"
-				"if(s==='(prefers-reduced-motion:no-preference)'){m.matches=true;return m;}"
-				/* unknown - log so we can add it */
-				"try{__msLife('WANT matchMedia \"'+q+'\" (unknown, answered false)');}catch(e){}"
-			"}catch(e){"
-				"try{__msLife('WANT matchMedia \"'+q+'\" (parse error)');}catch(e2){}"
-			"}"
-			"return m;};"
 		"this.requestIdleCallback=function(fn){return setTimeout(fn,0);};"
 		"this.cancelIdleCallback=function(id){clearTimeout(id);};"
 		/* fixes1011 - LIVE viewport + scroll, not frozen constants.
@@ -12991,6 +13046,31 @@ static void register_browser_globals(JSContext *ctx)
 		"if(g.XMLHttpRequest&&g.XMLHttpRequest.prototype&&g.EventTarget&&g.EventTarget.prototype){"
 		"try{Object.setPrototypeOf(g.XMLHttpRequest.prototype,g.EventTarget.prototype);}catch(e){}"
 		"}"
+		"})(this);");
+
+	/* Real MediaQueryList instances are native opaque objects so each retains a
+	 * parsed libcss query. The listener/event layer intentionally reuses the
+	 * browser's EventTarget implementation rather than creating another event
+	 * registry. __msMediaCheck is called only from a completed document-media
+	 * update, never by matchMedia() itself. */
+	macsurf_qjs__safe_eval(ctx,
+		"(function(g){"
+		"function MediaQueryList(){throw new TypeError('Illegal constructor');}"
+		"MediaQueryList.prototype=Object.create(g.EventTarget.prototype);"
+		"MediaQueryList.prototype.constructor=MediaQueryList;"
+		"Object.defineProperty(MediaQueryList.prototype,'matches',{get:function(){return __mqlMatches.call(this);}});"
+		"Object.defineProperty(MediaQueryList.prototype,'media',{get:function(){return __mqlMedia.call(this);}});"
+		"MediaQueryList.prototype.addListener=function(fn){this.addEventListener('change',fn);};"
+		"MediaQueryList.prototype.removeListener=function(fn){this.removeEventListener('change',fn);};"
+		"g.MediaQueryList=MediaQueryList;"
+		"g.__msMediaLists=[];"
+		"g.matchMedia=function(query){var m=__matchMediaNative(query);"
+		"Object.setPrototypeOf(m,MediaQueryList.prototype);m.__msLast=m.matches;"
+		"g.__msMediaLists.push(m);return m;};"
+		"g.__msMediaCheck=function(){var a=g.__msMediaLists.slice(),i,m,now,e;"
+		"for(i=0;i<a.length;i++){m=a[i];now=m.matches;if(now===m.__msLast)continue;"
+		"m.__msLast=now;e=new Event('change');e.matches=now;e.media=m.media;"
+		"m.dispatchEvent(e);if(typeof m.onchange==='function')m.onchange.call(m,e);}};"
 		"})(this);");
 
 	/* fixes1280 (#167) - Facebook has reached its application scheduler.
@@ -16463,6 +16543,19 @@ void js_fire_mutation_batch(struct jsthread *thread)
 		"}catch(e){}})();";
 	if (thread == NULL || thread->ctx == NULL) return;
 	macsurf_qjs__safe_eval(thread->ctx, s_deliver_src);
+}
+
+/* The document owns its MediaQueryList registry. html_reformat calls this
+ * only after it has published the new css_media values and completed layout;
+ * the JS-side check emits change events solely for lists whose truth changed. */
+void js_media_state_changed(struct jsthread *thread)
+{
+	static const char s_media_check_src[] =
+		"(function(){try{"
+		"if(typeof __msMediaCheck==='function')__msMediaCheck();"
+		"}catch(e){}})();";
+	if (thread == NULL || thread->ctx == NULL) return;
+	macsurf_qjs__safe_eval(thread->ctx, s_media_check_src);
 }
 
 /* fixes652: real-build definition of interaction.c's click bridge (Gate 5).

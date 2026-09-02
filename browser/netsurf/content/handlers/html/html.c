@@ -5913,6 +5913,14 @@ static void html_reformat(struct content *c, int width, int height)
 	htmlc->reflowing = false;
 	htmlc->had_initial_layout = true;
 
+	/* The completed layout now owns the same css_media state author CSS used.
+	 * Let MediaQueryLists compare their prior value only at this safe boundary;
+	 * a listener-induced DOM mutation will follow the ordinary reconvert path. */
+#ifdef WITH_QUICKJS
+	if (htmlc->js_thread != NULL)
+		js_media_state_changed(htmlc->js_thread);
+#endif
+
 	/* calculate next reflow time at three times what it took to reflow */
 	nsu_getmonotonic_ms(&ms_after);
 

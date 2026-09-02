@@ -54,6 +54,9 @@ void js_fire_slider_probe(jsthread *thread, const char *when);
  * (no precise target/subtree filtering yet -- see macsurf_qjs.c). Implemented
  * in macsurf_qjs.c. */
 void js_fire_mutation_batch(jsthread *thread);
+/* Re-evaluate per-document MediaQueryLists after layout has published a new
+ * css_media viewport state. Implemented by the QuickJS frontend. */
+void js_media_state_changed(jsthread *thread);
 #else
 
 #ifndef NETSURF_JAVASCRIPT_JS_H_

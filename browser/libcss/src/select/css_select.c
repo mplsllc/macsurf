@@ -16,6 +16,7 @@
 #include "bytecode/opcodes.h"
 #include "css_internal_stylesheet.h"
 #include "parse/custom_properties.h"
+#include "parse/propstrings.h"
 #include "select/arena.h"
 #include "select/calc.h"
 #include "select/computed.h"
@@ -59,6 +60,17 @@ typedef struct css_select_sheet {
 	css_origin origin;		/**< Stylesheet origin */
 	css_mq_query *media;		/**< Applicable media */
 } css_select_sheet;
+
+/* A standalone query owns the parser strings it needs for the lifetime of
+ * its parsed tree. This is deliberately separate from css_select_ctx: DOM
+ * APIs such as matchMedia() need the exact same parser/matcher without a
+ * synthetic stylesheet or selection context. */
+struct css_media_query {
+	css_mq_query *parsed;
+	lwc_string **propstrings;
+	css_select_strings strings;
+	char *text;
+};
 
 /**
  * CSS selection context
@@ -260,6 +272,91 @@ css_error css_libcss_node_data_handler(css_select_handler *handler,
 	}
 
 	return CSS_OK;
+}
+
+/* Standalone query support is deliberately independent of a stylesheet
+ * selection context. DOM APIs such as matchMedia() need the exact same
+ * parser/matcher without inventing a stylesheet. */
+css_error css_media_query_create(const char *query,
+		struct css_media_query **result)
+{
+	struct css_media_query *mq;
+	const char *source;
+	css_error error;
+
+	if (result == NULL)
+		return CSS_BADPARM;
+	*result = NULL;
+
+	/* CSSOM View treats an empty query as non-matching. libcss represents
+	 * that recovery as `not all`; use it explicitly for the one input the
+	 * parser properly rejects before its normal recovery path. */
+	source = (query != NULL && query[0] != '\0') ? query : "not all";
+	mq = calloc(1, sizeof(*mq));
+	if (mq == NULL)
+		return CSS_NOMEM;
+
+	error = css__propstrings_get(&mq->propstrings);
+	if (error != CSS_OK)
+		goto cleanup;
+
+	error = css_select_strings_intern(&mq->strings);
+	if (error != CSS_OK)
+		goto cleanup;
+
+	error = css_parse_media_query(mq->propstrings,
+			(const uint8_t *)source, strlen(source), &mq->parsed);
+	if (error != CSS_OK || mq->parsed == NULL) {
+		if (error == CSS_OK)
+			error = CSS_INVALID;
+		goto cleanup;
+	}
+
+	mq->text = strdup(source);
+	if (mq->text == NULL) {
+		error = CSS_NOMEM;
+		goto cleanup;
+	}
+	*result = mq;
+	return CSS_OK;
+
+cleanup:
+	if (mq->parsed != NULL)
+		css__mq_query_destroy(mq->parsed);
+	if (mq->strings.universal != NULL)
+		css_select_strings_unref(&mq->strings);
+	if (mq->propstrings != NULL)
+		css__propstrings_unref();
+	free(mq);
+	return error;
+}
+
+css_error css_media_query_matches(const struct css_media_query *query,
+		const css_unit_ctx *unit_ctx, const css_media *media,
+		bool *matches)
+{
+	if (query == NULL || unit_ctx == NULL || media == NULL ||
+		matches == NULL)
+		return CSS_BADPARM;
+	*matches = mq__list_match(query->parsed, unit_ctx, media,
+			&query->strings);
+	return CSS_OK;
+}
+
+const char *css_media_query_text(const struct css_media_query *query)
+{
+	return (query != NULL && query->text != NULL) ? query->text : "not all";
+}
+
+void css_media_query_destroy(struct css_media_query *query)
+{
+	if (query == NULL)
+		return;
+	css__mq_query_destroy(query->parsed);
+	css_select_strings_unref(&query->strings);
+	css__propstrings_unref();
+	free(query->text);
+	free(query);
 }
 
 /**
