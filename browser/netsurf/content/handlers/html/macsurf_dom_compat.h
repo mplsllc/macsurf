@@ -25,6 +25,10 @@
  * argument to (const dom_html_element *), so the call sites pass a mix of
  * dom_node *, const dom_node * (layout.c) and dom_event_target * (dom_event.c).
  * A concrete pointer-typed parameter would reject those under strict CW8. */
+/* Map an already-fetched tag-name string without another DOM lookup. */
+dom_exception macsurf_html_tag_name_get_type(const dom_string *tag,
+		dom_html_element_type *type);
+
 dom_exception macsurf_html_element_get_tag_type(const void *node,
 		dom_html_element_type *type);
 

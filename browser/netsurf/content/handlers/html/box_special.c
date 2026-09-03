@@ -2750,16 +2750,10 @@ bool
 convert_special_elements(dom_node *node,
 			 html_content *content,
 			 struct box *box,
-			 bool *convert_children)
+			 bool *convert_children,
+			 dom_html_element_type tag_type)
 {
-	dom_exception exc;
-	dom_html_element_type tag_type;
 	bool res;
-
-	exc = macsurf_html_element_get_tag_type(node, &tag_type);
-	if (exc != DOM_NO_ERR) {
-		tag_type = DOM_HTML_ELEMENT_TYPE__UNKNOWN;
-	}
 
 	switch (tag_type) {
 	case DOM_HTML_ELEMENT_TYPE_A:

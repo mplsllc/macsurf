@@ -22,99 +22,146 @@
 #include "html/macsurf_dom_compat.h"
 #include "macsurf_debug.h"
 
+static unsigned char
+macsurf_tag_lower(unsigned char c)
+{
+	if (c >= 'A' && c <= 'Z')
+		return (unsigned char)(c + ('a' - 'A'));
+	return c;
+}
+
+static int
+macsurf_tag_equal(const char *name, size_t len, const char *lit)
+{
+	size_t i;
+
+	if (name == NULL || lit == NULL)
+		return 0;
+	for (i = 0; i < len; i++) {
+		if (lit[i] == '\0' ||
+				macsurf_tag_lower((unsigned char)name[i]) !=
+				macsurf_tag_lower((unsigned char)lit[i]))
+			return 0;
+	}
+	return lit[len] == '\0';
+}
+
+dom_exception
+macsurf_html_tag_name_get_type(const dom_string *tag,
+		dom_html_element_type *type)
+{
+	const char *name;
+	size_t len;
+	unsigned char c0;
+	unsigned char c1;
+
+	if (type == NULL)
+		return DOM_NO_ERR;
+	*type = DOM_HTML_ELEMENT_TYPE__UNKNOWN;
+	if (tag == NULL)
+		return DOM_NO_ERR;
+
+	name = dom_string_data(tag);
+	if (name == NULL)
+		return DOM_NO_ERR;
+	len = dom_string_length(tag);
+	if (len == 0)
+		return DOM_NO_ERR;
+	c0 = macsurf_tag_lower((unsigned char)name[0]);
+	c1 = (len > 1) ? macsurf_tag_lower((unsigned char)name[1]) : 0;
+
+	switch (len) {
+	case 1:
+		if (c0 == 'a' && macsurf_tag_equal(name, len, "a"))
+			*type = DOM_HTML_ELEMENT_TYPE_A;
+		break;
+	case 2:
+		if (c0 == 'b' && macsurf_tag_equal(name, len, "br"))
+			*type = DOM_HTML_ELEMENT_TYPE_BR;
+		else if (c0 == 'l' && macsurf_tag_equal(name, len, "li"))
+			*type = DOM_HTML_ELEMENT_TYPE_LI;
+		else if (c0 == 'o' && macsurf_tag_equal(name, len, "ol"))
+			*type = DOM_HTML_ELEMENT_TYPE_OL;
+		else if (c0 == 'u' && macsurf_tag_equal(name, len, "ul"))
+			*type = DOM_HTML_ELEMENT_TYPE_UL;
+		break;
+	case 3:
+		if (c0 == 'i' && macsurf_tag_equal(name, len, "img"))
+			*type = DOM_HTML_ELEMENT_TYPE_IMG;
+		else if (c0 == 'p' && macsurf_tag_equal(name, len, "pre"))
+			*type = DOM_HTML_ELEMENT_TYPE_PRE;
+		break;
+	case 4:
+		if (c0 == 'b' && macsurf_tag_equal(name, len, "body"))
+			*type = DOM_HTML_ELEMENT_TYPE_BODY;
+		else if (c0 == 'h' && macsurf_tag_equal(name, len, "html"))
+			*type = DOM_HTML_ELEMENT_TYPE_HTML;
+		else if (c0 == 'l' && macsurf_tag_equal(name, len, "link"))
+			*type = DOM_HTML_ELEMENT_TYPE_LINK;
+		else if (c0 == 'm' && macsurf_tag_equal(name, len, "meta"))
+			*type = DOM_HTML_ELEMENT_TYPE_META;
+		break;
+	case 5:
+		if (c0 == 'e' && macsurf_tag_equal(name, len, "embed"))
+			*type = DOM_HTML_ELEMENT_TYPE_EMBED;
+		else if (c0 == 'i' && macsurf_tag_equal(name, len, "input"))
+			*type = DOM_HTML_ELEMENT_TYPE_INPUT;
+		else if (c0 == 's' && macsurf_tag_equal(name, len, "style"))
+			*type = DOM_HTML_ELEMENT_TYPE_STYLE;
+		else if (c0 == 't' && macsurf_tag_equal(name, len, "title"))
+			*type = DOM_HTML_ELEMENT_TYPE_TITLE;
+		break;
+	case 6:
+		if (c0 == 'b' && macsurf_tag_equal(name, len, "button"))
+			*type = DOM_HTML_ELEMENT_TYPE_BUTTON;
+		else if (c0 == 'c' && macsurf_tag_equal(name, len, "canvas"))
+			*type = DOM_HTML_ELEMENT_TYPE_CANVAS;
+		else if (c0 == 'i' && macsurf_tag_equal(name, len, "iframe"))
+			*type = DOM_HTML_ELEMENT_TYPE_IFRAME;
+		else if (c0 == 'o' && macsurf_tag_equal(name, len, "object"))
+			*type = DOM_HTML_ELEMENT_TYPE_OBJECT;
+		else if (c0 == 's' && c1 == 'c' &&
+				macsurf_tag_equal(name, len, "script"))
+			*type = DOM_HTML_ELEMENT_TYPE_SCRIPT;
+		else if (c0 == 's' && c1 == 'e' &&
+				macsurf_tag_equal(name, len, "select"))
+			*type = DOM_HTML_ELEMENT_TYPE_SELECT;
+		break;
+	case 8:
+		if (c0 == 'f' && macsurf_tag_equal(name, len, "frameset"))
+			*type = DOM_HTML_ELEMENT_TYPE_FRAMESET;
+		else if (c0 == 'n' && macsurf_tag_equal(name, len, "noscript"))
+			*type = DOM_HTML_ELEMENT_TYPE_NOSCRIPT;
+		else if (c0 == 't' && macsurf_tag_equal(name, len, "textarea"))
+			*type = DOM_HTML_ELEMENT_TYPE_TEXTAREA;
+		break;
+	default:
+		break;
+	}
+
+	return DOM_NO_ERR;
+}
+
 dom_exception
 macsurf_html_element_get_tag_type(const void *node, dom_html_element_type *type)
 {
 	dom_string *tag;
 	dom_exception exc;
-	const char *name;
-	dom_html_element_type t;
 	dom_element *el;
 
-	*type = DOM_HTML_ELEMENT_TYPE__UNKNOWN;
-
-	if (node == NULL) {
+	if (type == NULL)
 		return DOM_NO_ERR;
-	}
+	*type = DOM_HTML_ELEMENT_TYPE__UNKNOWN;
+	if (node == NULL)
+		return DOM_NO_ERR;
 
-	/* dom_element_get_tag_name takes a non-const dom_element *; the const
-	 * is dropped by the same explicit cast the original macro used. */
-	el = (dom_element *) node;
-
+	el = (dom_element *)node;
 	tag = NULL;
 	exc = dom_element_get_tag_name(el, &tag);
-	if (exc != DOM_NO_ERR || tag == NULL) {
-		/* leave *type = __UNKNOWN; mirror the get_tag_type error path */
+	if (exc != DOM_NO_ERR || tag == NULL)
 		return exc;
-	}
 
-	name = dom_string_data(tag);
-	t = DOM_HTML_ELEMENT_TYPE__UNKNOWN;
-
-	if (name != NULL) {
-		if (strcasecmp(name, "a") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_A;
-		else if (strcasecmp(name, "body") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_BODY;
-		else if (strcasecmp(name, "html") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_HTML;
-		else if (strcasecmp(name, "br") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_BR;
-		else if (strcasecmp(name, "button") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_BUTTON;
-		else if (strcasecmp(name, "canvas") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_CANVAS;
-		else if (strcasecmp(name, "embed") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_EMBED;
-		else if (strcasecmp(name, "frameset") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_FRAMESET;
-		else if (strcasecmp(name, "iframe") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_IFRAME;
-		else if (strcasecmp(name, "img") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_IMG;
-		else if (strcasecmp(name, "input") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_INPUT;
-		else if (strcasecmp(name, "li") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_LI;
-		else if (strcasecmp(name, "link") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_LINK;
-		else if (strcasecmp(name, "meta") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_META;
-		else if (strcasecmp(name, "noscript") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_NOSCRIPT;
-		else if (strcasecmp(name, "object") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_OBJECT;
-		else if (strcasecmp(name, "ol") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_OL;
-		else if (strcasecmp(name, "pre") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_PRE;
-		else if (strcasecmp(name, "script") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_SCRIPT;
-		else if (strcasecmp(name, "select") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_SELECT;
-		else if (strcasecmp(name, "style") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_STYLE;
-		else if (strcasecmp(name, "textarea") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_TEXTAREA;
-		else if (strcasecmp(name, "title") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_TITLE;
-		else if (strcasecmp(name, "ul") == 0)
-			t = DOM_HTML_ELEMENT_TYPE_UL;
-	}
-
-	/* Probe: log the first N resolutions so a hardware run confirms the
-	 * working slot is being exercised and the slot-75 path is gone. */
-	{
-		static long dbg_count = 0;
-		if (dbg_count < 40) {
-			dbg_count++;
-			macsurf_debug_log_writef("tagtype: %s -> %d",
-				(name != NULL) ? name : "(null)", (int) t);
-		}
-	}
-
+	exc = macsurf_html_tag_name_get_type(tag, type);
 	dom_string_unref(tag);
-
-	*type = t;
-	return DOM_NO_ERR;
+	return exc;
 }
