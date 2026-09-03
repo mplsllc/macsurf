@@ -177,13 +177,12 @@ for f in "$@"; do
 
 	# Always run the source-level declaration-order check, even when Retro68
 	# could not reach the target because its Mac headers are incomplete.
-	if ! run_decl_lint "$f"; then
-		drc=$?
-		if [ "$drc" -eq 1 ]; then
-			rc=1
-		elif [ "$rc" -eq 0 ]; then
-			rc=2
-		fi
+	run_decl_lint "$f"
+	drc=$?
+	if [ "$drc" -eq 1 ]; then
+		rc=1
+	elif [ "$drc" -ne 0 ] && [ "$rc" -eq 0 ]; then
+		rc=2
 	fi
 done
 
