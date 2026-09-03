@@ -1883,18 +1883,28 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 static void box_construct_element_after(struct box_construct_ctx *ctx,
 		dom_node *n, html_content *content)
 {
-	struct box_construct_props props;
 	struct box *box = box_for_node(n);
 
 	assert(box != NULL);
 
-	box_extract_properties(n, &props);
-
 	if (box->type == BOX_INLINE || box->type == BOX_BR) {
+		struct box_construct_props props;
 		/* Insert INLINE_END into containing block */
 		struct box *inline_end;
 		bool has_children;
 		dom_exception err;
+
+		memset(&props, 0, sizeof(props));
+		/* Inline boxes are attached to their INLINE_CONTAINER at element-open
+		 * time. Recover close-time placement directly from those box links; the
+		 * DOM ancestor walk is only a fallback for an unexpected tree shape. */
+		if (box->parent != NULL &&
+				box->parent->type == BOX_INLINE_CONTAINER) {
+			props.inline_container = box->parent;
+			props.containing_block = box->parent->parent;
+		} else {
+			box_extract_properties(n, &props);
+		}
 
 		err = dom_node_has_child_nodes(n, &has_children);
 		if (err != DOM_NO_ERR)
