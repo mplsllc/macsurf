@@ -1381,24 +1381,61 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	dom_exception err;
 	struct box_construct_props props;
 	const css_computed_style *root_style = NULL;
+	bool is_svg = false;
 
 	assert(ctx->n != NULL);
 
-	/* Skip non-rendered metadata elements unconditionally - these never
-	 * generate boxes regardless of the cascade's display value. Catches
-	 * the case where the UA stylesheet's display:none rules don't reach
-	 * the cascade and <style>/<script> content leaks into body as text. */
+	/* Classify the tag once.  The old path fetched every element's tag name
+	 * here for metadata rejection, tried up to six caseless comparisons, then
+	 * fetched the same immutable tag name again later solely to detect <svg>.
+	 * Length + first-byte dispatch leaves ordinary div/span/etc. at zero
+	 * caseless comparisons and carries the SVG result forward. */
 	{
 		dom_string *tag_name = NULL;
 		if (dom_element_get_tag_name(ctx->n, &tag_name) == DOM_NO_ERR &&
 				tag_name != NULL) {
+			const char *tag = (const char *)dom_string_data(tag_name);
+			size_t tlen = dom_string_length(tag_name);
+			unsigned char c0 = (tlen != 0) ? (unsigned char)tag[0] : 0;
 			bool skip = false;
-			if (dom_string_caseless_lwc_isequal(tag_name, corestring_lwc_style)) skip = true;
-			else if (dom_string_caseless_lwc_isequal(tag_name, corestring_lwc_title)) skip = true;
-			else if (dom_string_caseless_lwc_isequal(tag_name, corestring_lwc_meta)) skip = true;
-			else if (dom_string_caseless_lwc_isequal(tag_name, corestring_lwc_link)) skip = true;
-			else if (dom_string_caseless_lwc_isequal(tag_name, corestring_lwc_base)) skip = true;
-			else if (dom_string_caseless_lwc_isequal(tag_name, corestring_lwc_head)) skip = true;
+
+			if (c0 >= 'A' && c0 <= 'Z')
+				c0 = (unsigned char)(c0 + ('a' - 'A'));
+
+			if (tlen == 3 && c0 == 's') {
+				is_svg = dom_string_caseless_lwc_isequal(
+					tag_name, corestring_lwc_svg);
+			} else if (tlen == 4) {
+				switch (c0) {
+				case 'm':
+					skip = dom_string_caseless_lwc_isequal(
+						tag_name, corestring_lwc_meta);
+					break;
+				case 'l':
+					skip = dom_string_caseless_lwc_isequal(
+						tag_name, corestring_lwc_link);
+					break;
+				case 'b':
+					skip = dom_string_caseless_lwc_isequal(
+						tag_name, corestring_lwc_base);
+					break;
+				case 'h':
+					skip = dom_string_caseless_lwc_isequal(
+						tag_name, corestring_lwc_head);
+					break;
+				default:
+					break;
+				}
+			} else if (tlen == 5) {
+				if (c0 == 's') {
+					skip = dom_string_caseless_lwc_isequal(
+						tag_name, corestring_lwc_style);
+				} else if (c0 == 't') {
+					skip = dom_string_caseless_lwc_isequal(
+						tag_name, corestring_lwc_title);
+				}
+			}
+
 			dom_string_unref(tag_name);
 			if (skip) {
 				*convert_children = false;
@@ -1406,7 +1443,6 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 			}
 		}
 	}
-
 
 	box_extract_properties(ctx->n, &props);
 
@@ -1748,59 +1784,12 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		return true;
 	}
 
-	/* fixes195 - inline <svg> root detection.
-	 *
-	 * If this element is an SVG root, mark the box and tell the
-	 * caller not to descend into the DOM children. The shape
-	 * elements (path / rect / circle / line / etc.) stay attached
-	 * to the SVG node and are rendered at paint time by the
-	 * DOM-walker in macos9_svg_inline.c. They don't participate in
-	 * HTML layout, which matches SVG semantics (the root <svg>
-	 * draws its viewBox into a single box).
-	 *
-	 * fixes197 - diagnostic instrumentation: log every tag name
-	 * we see so we can confirm <svg> tags actually reach this
-	 * point (e.g. that Hubbub's foreign-content path isn't
-	 * stashing them in a different namespace that
-	 * dom_element_get_tag_name doesn't return as plain "svg"). */
-	{
-		dom_string *svg_name = NULL;
-		if (box != NULL &&
-				dom_element_get_tag_name(ctx->n, &svg_name) ==
-					DOM_NO_ERR && svg_name != NULL) {
-			const char *tag = (const char *)
-					dom_string_data(svg_name);
-			size_t tlen = dom_string_length(svg_name);
-			int matched = dom_string_caseless_lwc_isequal(
-					svg_name, corestring_lwc_svg);
-			if (matched) {
-				/* fixes202: mark the SVG root as a replaced
-				 * element with given dimensions. Without this,
-				 * lh__box_is_replace() returns false and the
-				 * inline layout path treats the box as non-
-				 * replaced - width collapses to 0 and height
-				 * collapses to the parent line-height, so the
-				 * macos9 SVG painter (fixes195) is invoked with
-				 * a degenerate 0xN rect and nothing renders.
-				 * fixes196's presentational-hint dispatch puts
-				 * width/height in computed style; this flag
-				 * combination makes layout actually consume
-				 * them. */
-				box->flags |= SVG_INLINE | IS_REPLACED |
-						REPLACE_DIM;
-				*convert_children = false;
-			}
-			/* Only log s-prefixed tags to keep noise down; <svg>
-			 * always falls in this bucket. */
-			if (tlen >= 3 && tlen <= 32 &&
-					(tag[0] == 's' || tag[0] == 'S')) {
-				macsurf_debug_log_writef(
-					"svg_box: tag=%s len=%ld match=%d box=%p flags=%ld",
-					tag, (long)tlen, matched,
-					(void *)box, (long)(unsigned int)box->flags);
-			}
-			dom_string_unref(svg_name);
-		}
+	/* Inline SVG classification was already done with the metadata tag lookup
+	 * above.  Avoid a second dom_element_get_tag_name + string comparison for
+	 * every constructed element. */
+	if (is_svg) {
+		box->flags |= SVG_INLINE | IS_REPLACED | REPLACE_DIM;
+		*convert_children = false;
 	}
 
 	if (*convert_children)
