@@ -38,12 +38,11 @@
 #define MACSURF_CACHE_IMAGES 1
 
 /* Single-response cap. Bigger bodies are served live, not cached.
- * fixes985: 1MB -> 2MB, now that images and webfonts are cacheable again.
- * Deliberately not fixes665's 4MB: this cap also bounds the fetcher's
- * in-RAM capture buffer, which is held whole before the store, and 2MB
- * already covers essentially every image on the web while asking half as
- * much of a 128MB machine mid-page-load. The whole-directory bound is
- * CACHE_TOTAL_BUDGET in macos9_disk_cache.c. */
+ * The current cap is 1 MB. Streaming writes remove the old whole-response
+ * capture-buffer pressure, but cache hits still read a body into one malloc'd
+ * buffer, so keep the hit-side contiguous-allocation bound conservative until
+ * cache-hit delivery is converted to bounded chunks. The whole-directory
+ * bound is CACHE_TOTAL_BUDGET in macos9_disk_cache.c. */
 #define MACSURF_CACHE_MAX_BYTES (1L * 1024L * 1024L)
 
 /* When non-zero, the next cache_lookup short-circuits to "miss" so
