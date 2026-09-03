@@ -13,31 +13,45 @@
 # noise from the incomplete header set, not defects -- CW8 has the real
 # Universal Interfaces and accepts them.
 #
-# So the usable signal is: errors reported IN THE TARGET FILE ITSELF.
-# That still catches the C89 mistakes this check exists for (declaration after
+# So the usable compiler signal is: errors reported IN THE TARGET FILE ITSELF.
+# That catches the C89 mistakes this check exists for (declaration after
 # statement, // comments, for-scope decls, designated initialisers, VLAs...).
+# The companion declorder_lint.py is also run for every target because C89 GCC
+# otherwise permits implicit function declarations that CW8 later rejects.
 #
 # Usage: tools/retro68_check.sh <file.c> [file2.c ...]
-#        tools/retro68_check.sh --selftest    # prove the check can fail
-# Exit 0 = clean, 1 = errors in the target file.
+#        tools/retro68_check.sh --selftest    # prove both gates can fail
+# Exit 0 = clean, 1 = source errors, 2 = Retro68 could not parse target.
 
 CC=/home/patrick/Retro68/toolchain/bin/powerpc-apple-macos-gcc
 ROOT=/home/patrick/Webs/macsurf
+DECL_LINT="$ROOT/tools/declorder_lint.py"
 
 if [ ! -x "$CC" ]; then
 	echo "retro68_check: toolchain missing at $CC" >&2
 	exit 2
 fi
 
-# -pedantic-errors, NOT -pedantic: plain -pedantic only WARNS on C89
-# violations (declaration-after-statement etc), which made --selftest report a
-# false green. The errors it promotes in upstream headers are filtered out by
-# check_one()'s target-file-only match.
+# Strict C89 gate. -pedantic-errors catches language extensions that plain
+# -pedantic only warns about. The explicit -Werror switches close important
+# GCC-C89 loopholes and make the intended contract obvious:
+#   - declaration-after-statement: CW8 requires declarations at block top
+#   - implicit-function-declaration / implicit-int: legal old-C but a frequent
+#     CW8 redeclaration failure and almost never intentional in MacSurf
+#   - return-type: missing/wrong returns are source defects, not warnings
+#   - vla: never permit a C99 VLA to sneak into Mac-target code
+#
 # -Wno-overlength-strings: C90 only requires compilers to SUPPORT 509-char
 # literals; it does not forbid longer ones. macsurf_qjs.c is built from very
-# large JS source strings and CW8 has always accepted them, so -pedantic-errors
-# promoting this to an error is pure noise that buries real findings.
-FLAGS="-std=c89 -pedantic-errors -Wall -Wno-unused-parameter -Wno-unused-variable
+# large JS source strings and CW8 has always accepted them, so promoting this
+# implementation-limit warning to an error would bury real findings.
+FLAGS="-std=c89 -pedantic-errors -Wall
+       -Werror=declaration-after-statement
+       -Werror=implicit-function-declaration
+       -Werror=implicit-int
+       -Werror=return-type
+       -Werror=vla
+       -Wno-unused-parameter -Wno-unused-variable
        -Wno-long-long -Wno-overlength-strings
        -Dinline= -D__MACOS9__=1 -DTARGET_API_MAC_CARBON=1
        -DWITH_QUICKJS -DNO_IPV6"
@@ -58,12 +72,7 @@ INCS="-I $ROOT/browser/libwapcaplet/include
 
 # A "fatal error" (a missing header) ABORTS the compile, so the target's own code
 # is never parsed. Reporting that as "clean", or as an unchanged error count
-# versus a baseline that hit the SAME fatal error, is a false green -- it says
-# "no new errors" while checking nothing at all. That is how fixes886's
-# macos9_zoom_apply redeclaration reached CW8: main.c dies at a missing
-# OpenTransport.h on line 17, ~450 lines before the bug.
-#
-# So: detect the abort and say DID-NOT-RUN, loudly, distinct from clean.
+# versus a baseline that hit the SAME fatal error, is a false green.
 check_one() {
 	local f="$1"
 	local base out fatal
@@ -78,26 +87,66 @@ check_one() {
 	echo "$out" | grep -E "/${base}:[0-9]+.*error:"
 }
 
+run_decl_lint() {
+	local f="$1"
+	if [ -x "$DECL_LINT" ]; then
+		"$DECL_LINT" "$f"
+		return $?
+	fi
+	if [ -f "$DECL_LINT" ]; then
+		python3 "$DECL_LINT" "$f"
+		return $?
+	fi
+	echo "retro68_check: declaration-order lint missing at $DECL_LINT" >&2
+	return 2
+}
+
 if [ "$1" = "--selftest" ]; then
-	# Negative control: a check that cannot fail is worthless (#296 lesson).
+	# Negative controls: a check that cannot fail is worthless (#296 lesson).
 	tmp=$(mktemp /tmp/retro68_selftest_XXXX.c)
 	cat > "$tmp" <<'EOF'
+static int later(void);
 int f(void)
 {
 	int a = 1;
 	a = a + 1;
 	int b = 2;   /* C89 violation: declaration after statement */
-	return a + b;
+	return a + b + undeclared_function();
+}
+static int later(void)
+{
+	return 0;
 }
 EOF
-	out=$($CC -fsyntax-only -std=c89 -pedantic-errors "$tmp" 2>&1 | grep -cE "error:")
+	out=$($CC -fsyntax-only $FLAGS "$tmp" 2>&1 | grep -cE "error:")
 	rm -f "$tmp"
-	if [ "$out" -gt 0 ]; then
-		echo "selftest PASS: check correctly rejects C89 violations ($out error(s))"
-		exit 0
+	if [ "$out" -le 0 ]; then
+		echo "selftest FAIL: Retro68 did NOT reject strict-C89 violations" >&2
+		exit 1
 	fi
-	echo "selftest FAIL: check did NOT catch a C89 violation -- do not trust it" >&2
-	exit 1
+
+	# declorder_lint has its own real-world purpose: a static function called
+	# before definition with no prototype is accepted by old C semantics but
+	# rejected later by CW8 when the real type appears.
+	tmp=$(mktemp /tmp/declorder_selftest_XXXX.c)
+	cat > "$tmp" <<'EOF'
+int f(void)
+{
+	return helper(1);
+}
+static int helper(int x)
+{
+	return x;
+}
+EOF
+	if run_decl_lint "$tmp" >/dev/null 2>&1; then
+		rm -f "$tmp"
+		echo "selftest FAIL: declaration-order lint accepted an implicit static call" >&2
+		exit 1
+	fi
+	rm -f "$tmp"
+	echo "selftest PASS: Retro68 strict-C89 + declaration-order gates reject bad source"
+	exit 0
 fi
 
 if [ $# -lt 1 ]; then
@@ -110,25 +159,32 @@ for f in "$@"; do
 	out=$(check_one "$f")
 	case "$out" in
 	__DIDNOTRUN__*)
-		# Not a pass and not a fail: the compiler never reached this file's
-		# code. Retro68's multiversal headers are a PARTIAL set (no
-		# OpenTransport.h, Aliases.h, ...), so some frontend files simply
-		# cannot be checked here. Say so instead of implying coverage.
 		echo "DID NOT RUN: $(basename "$f") -- ${out#__DIDNOTRUN__ }"
 		echo "             (compile aborted before this file's code was parsed;"
-		echo "              this check provides NO coverage for it -- CW8 is the"
-		echo "              only thing that will see these errors)"
-		rc=2
+		echo "              Retro68 provides NO compiler coverage for it -- CW8"
+		echo "              remains authoritative.)"
+		if [ "$rc" -eq 0 ]; then rc=2; fi
 		;;
 	"")
-		echo "clean: $(basename "$f")"
+		echo "strict-c89 clean: $(basename "$f")"
 		;;
 	*)
-		echo "=== ERRORS in $(basename "$f") ==="
+		echo "=== STRICT C89 ERRORS in $(basename "$f") ==="
 		echo "$out"
 		rc=1
 		;;
 	esac
+
+	# Always run the source-level declaration-order check, even when Retro68
+	# could not reach the target because its Mac headers are incomplete.
+	if ! run_decl_lint "$f"; then
+		drc=$?
+		if [ "$drc" -eq 1 ]; then
+			rc=1
+		elif [ "$rc" -eq 0 ]; then
+			rc=2
+		fi
+	fi
 done
 
 exit $rc
