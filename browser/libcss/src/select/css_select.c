@@ -1803,6 +1803,26 @@ css_error css_select_results_destroy(css_select_results *results)
 	return CSS_OK;
 }
 
+/* MacSurf reconvert fast path: duplicate the result container while sharing
+ * the immutable/interned computed styles by reference. */
+css_select_results *css_select_results_ref(const css_select_results *results)
+{
+	css_select_results *copy;
+	uint32_t i;
+
+	if (results == NULL)
+		return NULL;
+	copy = calloc(1, sizeof(*copy));
+	if (copy == NULL)
+		return NULL;
+	for (i = 0; i < CSS_PSEUDO_ELEMENT_COUNT; i++) {
+		if (results->styles[i] != NULL)
+			copy->styles[i] = css__computed_style_ref(results->styles[i]);
+	}
+	return copy;
+}
+
+
 /**
  * Search a selection context for defined font faces
  *

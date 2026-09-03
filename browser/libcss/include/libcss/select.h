@@ -227,6 +227,8 @@ css_error css_select_style(css_select_ctx *ctx, void *node,
 		css_select_handler *handler, void *pw,
 		css_select_results **result);
 css_error css_select_results_destroy(css_select_results *results);
+css_select_results *css_select_results_ref(
+		const css_select_results *results);
 
 css_error css_select_font_faces(css_select_ctx *ctx,
 		const css_media *media,

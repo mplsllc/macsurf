@@ -113,6 +113,176 @@ static unsigned long    g_walk_gen     = 0;
 #include <Timer.h>
 #endif
 
+
+/* Reconvert Style-B cache.  The old tree was just recascaded to the current
+ * DOM. Reuse those results only when the node still has the same boxed DOM
+ * parent; new and moved nodes fall back to normal selector matching. */
+#define MACSURF_RECONV_STYLE_CACHE_SLOTS 8192
+struct macsurf_reconv_style_cache_entry {
+	dom_node *node;
+	struct box *box;
+};
+static struct macsurf_reconv_style_cache_entry
+	g_reconv_style_cache[MACSURF_RECONV_STYLE_CACHE_SLOTS];
+static long g_reconv_style_cache_stored;
+static long g_reconv_style_cache_hit;
+static long g_reconv_style_cache_miss;
+static long g_reconv_style_cache_parent_skip;
+static long g_reconv_style_cache_overflow;
+
+static unsigned long
+macsurf_reconv_style_cache_hash(dom_node *node)
+{
+	return (((unsigned long) node) >> 4) &
+		(MACSURF_RECONV_STYLE_CACHE_SLOTS - 1);
+}
+
+static struct macsurf_reconv_style_cache_entry *
+macsurf_reconv_style_cache_slot(dom_node *node, int create)
+{
+	unsigned long i;
+	unsigned long start;
+
+	if (node == NULL)
+		return NULL;
+	start = macsurf_reconv_style_cache_hash(node);
+	for (i = 0; i < MACSURF_RECONV_STYLE_CACHE_SLOTS; i++) {
+		struct macsurf_reconv_style_cache_entry *e =
+			&g_reconv_style_cache[(start + i) &
+			 (MACSURF_RECONV_STYLE_CACHE_SLOTS - 1)];
+		if (e->node == node)
+			return e;
+		if (e->node == NULL)
+			return create ? e : NULL;
+	}
+	return NULL;
+}
+
+static struct box *
+macsurf_reconv_style_cache_box(dom_node *node)
+{
+	struct macsurf_reconv_style_cache_entry *e =
+		macsurf_reconv_style_cache_slot(node, 0);
+	return e != NULL ? e->box : NULL;
+}
+
+static void
+macsurf_reconv_style_cache_reset(void)
+{
+	memset(g_reconv_style_cache, 0, sizeof(g_reconv_style_cache));
+	g_reconv_style_cache_stored = 0;
+	g_reconv_style_cache_hit = 0;
+	g_reconv_style_cache_miss = 0;
+	g_reconv_style_cache_parent_skip = 0;
+	g_reconv_style_cache_overflow = 0;
+}
+
+static int
+macsurf_reconv_style_cache_parent_ok(struct box *box)
+{
+	struct box *old_parent;
+	dom_node *cur = NULL;
+	dom_node *next = NULL;
+	dom_node_type type;
+
+	if (box == NULL || box->node == NULL)
+		return 0;
+	old_parent = box->parent;
+	while (old_parent != NULL && old_parent->node == NULL)
+		old_parent = old_parent->parent;
+
+	if (old_parent != NULL &&
+		macsurf_reconv_style_cache_box(old_parent->node) != old_parent)
+		return 0;
+
+	if (dom_node_get_parent_node(box->node, &cur) != DOM_NO_ERR)
+		return 0;
+	while (cur != NULL) {
+		if (old_parent != NULL && cur == old_parent->node) {
+			dom_node_unref(cur);
+			return 1;
+		}
+		if (macsurf_reconv_style_cache_box(cur) != NULL) {
+			dom_node_unref(cur);
+			return 0;
+		}
+		type = 0;
+		if (dom_node_get_node_type(cur, &type) != DOM_NO_ERR ||
+			type == DOM_DOCUMENT_NODE) {
+			dom_node_unref(cur);
+			return old_parent == NULL;
+		}
+		next = NULL;
+		if (dom_node_get_parent_node(cur, &next) != DOM_NO_ERR) {
+			dom_node_unref(cur);
+			return 0;
+		}
+		dom_node_unref(cur);
+		cur = next;
+	}
+	return old_parent == NULL;
+}
+
+static void
+macsurf_reconv_style_cache_store(struct box *box)
+{
+	struct macsurf_reconv_style_cache_entry *e;
+
+	if (!macsurf_reconvert_in_progress || box == NULL ||
+		box->node == NULL || (box->flags & CLONE) || box->styles == NULL)
+		return;
+	if (!macsurf_reconv_style_cache_parent_ok(box)) {
+		g_reconv_style_cache_parent_skip++;
+		return;
+	}
+	e = macsurf_reconv_style_cache_slot(box->node, 1);
+	if (e == NULL) {
+		g_reconv_style_cache_overflow++;
+		return;
+	}
+	if (e->node == NULL) {
+		e->node = box->node;
+		e->box = box;
+		g_reconv_style_cache_stored++;
+	}
+}
+
+static css_select_results *
+macsurf_reconv_style_cache_take(dom_node *node, css_custom_env **out_env)
+{
+	struct box *old_box;
+	css_select_results *styles;
+
+	if (!macsurf_reconvert_in_progress || node == NULL)
+		return NULL;
+	old_box = macsurf_reconv_style_cache_box(node);
+	if (old_box == NULL || old_box->styles == NULL) {
+		g_reconv_style_cache_miss++;
+		return NULL;
+	}
+	styles = css_select_results_ref(old_box->styles);
+	if (styles == NULL) {
+		g_reconv_style_cache_miss++;
+		return NULL;
+	}
+	if (out_env != NULL && old_box->custom_env != NULL)
+		*out_env = css_custom_env_ref(old_box->custom_env);
+	g_reconv_style_cache_hit++;
+	return styles;
+}
+
+static void
+macsurf_reconv_style_cache_report(void)
+{
+	if (!macsurf_reconvert_in_progress)
+		return;
+	macsurf_debug_log_writef(
+		"LIFE RECONVSTYLE stored=%ld hit=%ld miss=%ld parent_skip=%ld overflow=%ld",
+		g_reconv_style_cache_stored, g_reconv_style_cache_hit,
+		g_reconv_style_cache_miss, g_reconv_style_cache_parent_skip,
+		g_reconv_style_cache_overflow);
+}
+
 /* fixes553 - extend the fixes552 writer-side free guard from the single walked
  * content to its ENTIRE tree.  The box walk dereferences not just the
  * html_content itself but the sub-resource contents hanging off its object_list
@@ -1247,8 +1417,11 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		root_style = ctx->root_box->style;
 	}
 
-	styles = box_get_style(ctx->content, props.parent_style, root_style,
-			ctx->n, props.parent_custom_env, &elem_custom_env);
+	styles = macsurf_reconv_style_cache_take(ctx->n, &elem_custom_env);
+	if (styles == NULL) {
+		styles = box_get_style(ctx->content, props.parent_style, root_style,
+				ctx->n, props.parent_custom_env, &elem_custom_env);
+	}
 	if (styles == NULL)
 		return false;
 
@@ -2686,6 +2859,8 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 					(long) g_reconv_node_ix, macsurf_free_mem());
 			}
 
+			macsurf_reconv_style_cache_report();
+
 			/** \todo Remove box_normalise_block */
 			if (box_normalise_block(&root, ctx->root_box,
 					ctx->content) == false) {
@@ -2831,6 +3006,7 @@ html_recascade_tree(html_content *c)
 
 	if (c == NULL || c->layout == NULL) return NSERROR_OK;
 
+	macsurf_reconv_style_cache_reset();
 	macsurf_debug_log_writef("recascade: enter layout=%p node=%p",
 			(void *)c->layout,
 			(void *)(c->layout->node));
@@ -2935,6 +3111,7 @@ html_recascade_tree(html_content *c)
 					box->styles = new_styles;
 					box->style = new_styles->styles[
 							CSS_PSEUDO_ELEMENT_NONE];
+					macsurf_reconv_style_cache_store(box);
 				}
 				recascaded++;
 				if (box == c->layout) {
