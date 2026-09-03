@@ -199,9 +199,10 @@ box_create(css_select_results *styles,
 	   lwc_string *id,
 	   void *context)
 {
-	unsigned int i;
 	struct box *box;
 
+	/* talloc_zero has already cleared every ordinary zero/NULL field.
+	 * Only initialise non-zero sentinels/defaults and caller-owned refs here. */
 	box = talloc_zero(context, struct box);
 	if (!box) {
 		return 0;
@@ -210,51 +211,19 @@ box_create(css_select_results *styles,
 	talloc_set_destructor(box, box_talloc_destructor);
 
 	box->type = BOX_INLINE;
-	box->flags = 0;
-	box->flags = style_owned ? (box->flags | STYLE_OWNED) : box->flags;
+	if (style_owned)
+		box->flags = STYLE_OWNED;
 	box->styles = styles;
 	box->style = style;
-	box->x = box->y = 0;
 	box->width = UNKNOWN_WIDTH;
-	box->height = 0;
-	box->descendant_x0 = box->descendant_y0 = 0;
-	box->descendant_x1 = box->descendant_y1 = 0;
-	for (i = 0; i != 4; i++)
-		box->margin[i] = box->padding[i] = box->border[i].width = 0;
-	box->scroll_x = box->scroll_y = NULL;
-	box->min_width = 0;
 	box->max_width = UNKNOWN_MAX_WIDTH;
-	box->byte_offset = 0;
-	box->text = NULL;
-	box->length = 0;
-	box->space = 0;
 	box->href = (href == NULL) ? NULL : nsurl_ref(href);
 	box->target = target;
 	box->title = title;
 	box->columns = 1;
 	box->rows = 1;
-	box->start_column = 0;
-	box->next = NULL;
-	box->prev = NULL;
-	box->children = NULL;
-	box->last = NULL;
-	box->parent = NULL;
-	box->inline_end = NULL;
-	box->float_children = NULL;
-	box->float_container = NULL;
-	box->next_float = NULL;
-	box->cached_place_below_level = 0;
 	box->list_value = 1;
-	box->list_marker = NULL;
-	box->col = NULL;
-	box->gadget = NULL;
-	box->usemap = NULL;
 	box->id = id;
-	box->background = NULL;
-	box->object = NULL;
-	box->object_params = NULL;
-	box->iframe = NULL;
-	box->node = NULL;
 
 	return box;
 }
