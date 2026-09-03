@@ -1,0 +1,34 @@
+name: Apply linear font-position optimization
+
+on:
+  push:
+    branches: [performance]
+    paths:
+      - '.github/workflows/perf-font-position-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: performance
+          fetch-depth: 0
+      - name: Apply source patch
+        shell: bash
+        run: |
+          python3 tools/apply_perf_font_position_once.py
+          git diff --check
+          tools/retro68_check.sh browser/netsurf/frontends/macos9/macos9_font.c || test $? -eq 2
+      - name: Commit optimization
+        shell: bash
+        run: |
+          git config user.name "OpenAI Codex"
+          git config user.email "codex@openai.com"
+          git rm .github/workflows/perf-font-position-once.yml tools/apply_perf_font_position_once.py
+          git add browser/netsurf/frontends/macos9/macos9_font.c
+          git commit -m "perf(font): make macos9_font_position linear" -m "Convert each text run once and use QuickDraw MeasureText cumulative positions instead of re-measuring every UTF-8 prefix. Preserve synthetic spacing, soft-hyphen prefix semantics, MacRoman expansion, malformed input behavior, and downloadable PUA advances."
+          git push origin HEAD:performance
