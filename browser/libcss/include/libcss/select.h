@@ -42,6 +42,9 @@ typedef struct css_select_results {
 	 * the corresponding pointer will be set to NULL
 	 */
 	css_computed_style *styles[CSS_PSEUDO_ELEMENT_COUNT];
+	/* Result-wrapper ownership count. Computed styles are immutable/interned;
+	 * sharing the wrapper avoids an allocation for reconvert Style-B reuse. */
+	uint32_t refs;
 } css_select_results;
 
 /** Opaque standalone media-query list. */
