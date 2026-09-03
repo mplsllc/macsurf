@@ -201,33 +201,13 @@ extern void macsurf_layout_breadcrumb(const char *phase, const void *box);
 static int layout_watchdog_enter(const void *box)
 {
 	(void)box;
-	/* Counters tracked so the breadcrumb / SITE log can report
-	 * peak depth and total call count for diagnostics, but the
-	 * function NEVER returns 1: there is no budget. The browser
-	 * loads whatever it is given. */
+	/* Keep the two cheap counters used by end-of-pass diagnostics and
+	 * depth accounting. fixes848b's per-100k progress probe used a long
+	 * modulo here on EVERY recursive layout entry; that investigation is
+	 * complete, and the modulo remained real release overhead even when
+	 * diagnostic logging was disabled. */
 	macsurf_layout_calls++;
 	macsurf_layout_depth++;
-	/* fixes848b (#167 perf investigation) - a hardware log on a heavy
-	 * Facebook page showed box+cascade finish in ~5s but NO LAYPROF
-	 * line at all after a minute of runtime, meaning layout_document()
-	 * itself is what's taking so long (or is genuinely stuck). Without
-	 * this, "grinding through millions of layout calls on a huge deep
-	 * tree" and "stuck in a real loop somewhere outside the layout call
-	 * graph" (font measurement, a retry loop, etc.) look IDENTICAL from
-	 * the outside - nothing else in this pass logs anything visible.
-	 * This is the single hottest entry point in layout, so the check
-	 * must be nearly free the other 99999/100000 times; only the
-	 * modulo, and only a WORK line every 100k calls. If the next
-	 * hardware log shows this count climbing steadily, it's real (if
-	 * slow) forward progress - an algorithmic complexity problem, not a
-	 * hang. If it stops climbing, that pinpoints the hang outside this
-	 * call graph entirely. */
-	if ((macsurf_layout_calls % 100000L) == 0) {
-		extern void macsurf_debug_log_writef(const char *fmt, ...);
-		macsurf_debug_log_writef(
-			"WORK layout progress: calls=%ld depth=%d",
-			macsurf_layout_calls, macsurf_layout_depth);
-	}
 	return 0;
 }
 
