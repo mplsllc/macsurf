@@ -1,0 +1,336 @@
+name: Apply reconvert style-cache optimization
+
+on:
+  push:
+    branches: [performance]
+    paths:
+      - '.github/workflows/perf-style-cache-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: performance
+          fetch-depth: 0
+      - name: Apply source changes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              s = p.read_text()
+              if s.count(old) != 1:
+                  raise SystemExit(f"{path}: expected exactly one match, got {s.count(old)}")
+              p.write_text(s.replace(old, new, 1))
+
+          # Public ref/copy helper for css_select_results.  It duplicates only
+          # the tiny result container and takes references to already-computed
+          # styles, so a reconvert can reuse Style-B without selector matching.
+          replace_once(
+              'browser/libcss/include/libcss/select.h',
+              'css_error css_select_results_destroy(css_select_results *results);\n',
+              'css_error css_select_results_destroy(css_select_results *results);\n'
+              'css_select_results *css_select_results_ref(\n'
+              '\t\tconst css_select_results *results);\n')
+
+          p = Path('browser/libcss/src/select/css_select.c')
+          s = p.read_text()
+          sig = 'css_error css_select_results_destroy(css_select_results *results)'
+          start = s.find(sig)
+          if start < 0:
+              raise SystemExit('css_select.c: destroy function not found')
+          brace = s.find('{', start)
+          depth = 0
+          end = None
+          for i in range(brace, len(s)):
+              if s[i] == '{':
+                  depth += 1
+              elif s[i] == '}':
+                  depth -= 1
+                  if depth == 0:
+                      end = i + 1
+                      break
+          if end is None:
+              raise SystemExit('css_select.c: destroy function end not found')
+          helper = r'''
+
+/* MacSurf reconvert fast path: duplicate the result container while sharing
+ * the immutable/interned computed styles by reference.  This is deliberately
+ * paired with css_select_results_destroy(), which drops those references. */
+css_select_results *css_select_results_ref(const css_select_results *results)
+{
+	css_select_results *copy;
+	uint32_t i;
+
+	if (results == NULL)
+		return NULL;
+	copy = calloc(1, sizeof(*copy));
+	if (copy == NULL)
+		return NULL;
+	for (i = 0; i < CSS_PSEUDO_ELEMENT_COUNT; i++) {
+		if (results->styles[i] != NULL)
+			copy->styles[i] = css__computed_style_ref(results->styles[i]);
+	}
+	return copy;
+}
+'''
+          if 'css_select_results *css_select_results_ref(' in s:
+              raise SystemExit('css_select.c: helper already exists')
+          s = s[:end] + helper + s[end:]
+          p.write_text(s)
+
+          p = Path('browser/netsurf/content/handlers/html/box_construct.c')
+          s = p.read_text()
+          marker = '#ifdef __MACOS9__\n#include <Timer.h>\n#endif\n'
+          if s.count(marker) != 1:
+              raise SystemExit(f'box_construct.c: include marker count={s.count(marker)}')
+          cache = r'''
+
+/* ----------------------------------------------------------------------- */
+/* Reconvert Style-B cache.
+ *
+ * A full reconvert already runs html_recascade_tree() over the still-live old
+ * box tree before dom_to_box().  That pass computes the CURRENT Style B for
+ * every surviving element, including selector effects caused by the mutated
+ * DOM.  Historically dom_to_box then selected those same unchanged elements a
+ * second time.  On the G3 the build phase is ~3.57s of a ~4.01s reconvert, so
+ * that duplicate selector work sits inside the dominant measured hotspot.
+ *
+ * Keep a fixed, allocation-free node->old-box map for results produced by the
+ * recascade.  During reconstruction, stable nodes take a new reference to the
+ * already-computed result container/styles and custom-property environment.
+ * New nodes, moved subtrees, overflow, or any ambiguity simply miss and use
+ * box_get_style() exactly as before.
+ *
+ * The cache stores BORROWED box pointers only.  fixes421 keeps the entire old
+ * tree alive until dom_to_box + html_reconvert_done complete, so every pointer
+ * is valid for the only interval in which lookups are enabled.  A new
+ * recascade always resets the table before reuse. */
+#define MACSURF_RECONV_STYLE_CACHE_SLOTS 8192
+struct macsurf_reconv_style_cache_entry {
+	dom_node *node;
+	struct box *box;
+};
+static struct macsurf_reconv_style_cache_entry
+	g_reconv_style_cache[MACSURF_RECONV_STYLE_CACHE_SLOTS];
+static long g_reconv_style_cache_stored;
+static long g_reconv_style_cache_hit;
+static long g_reconv_style_cache_miss;
+static long g_reconv_style_cache_parent_skip;
+static long g_reconv_style_cache_overflow;
+
+static unsigned long
+macsurf_reconv_style_cache_hash(dom_node *node)
+{
+	return (((unsigned long) node) >> 4) &
+		(MACSURF_RECONV_STYLE_CACHE_SLOTS - 1);
+}
+
+static struct macsurf_reconv_style_cache_entry *
+macsurf_reconv_style_cache_slot(dom_node *node, int create)
+{
+	unsigned long i;
+	unsigned long start;
+
+	if (node == NULL)
+		return NULL;
+	start = macsurf_reconv_style_cache_hash(node);
+	for (i = 0; i < MACSURF_RECONV_STYLE_CACHE_SLOTS; i++) {
+		struct macsurf_reconv_style_cache_entry *e =
+			&g_reconv_style_cache[(start + i) &
+			 (MACSURF_RECONV_STYLE_CACHE_SLOTS - 1)];
+		if (e->node == node)
+			return e;
+		if (e->node == NULL)
+			return create ? e : NULL;
+	}
+	return NULL;
+}
+
+static struct box *
+macsurf_reconv_style_cache_box(dom_node *node)
+{
+	struct macsurf_reconv_style_cache_entry *e =
+		macsurf_reconv_style_cache_slot(node, 0);
+	return e != NULL ? e->box : NULL;
+}
+
+static void
+macsurf_reconv_style_cache_reset(void)
+{
+	memset(g_reconv_style_cache, 0, sizeof(g_reconv_style_cache));
+	g_reconv_style_cache_stored = 0;
+	g_reconv_style_cache_hit = 0;
+	g_reconv_style_cache_miss = 0;
+	g_reconv_style_cache_parent_skip = 0;
+	g_reconv_style_cache_overflow = 0;
+}
+
+/* A recascaded result is reusable only if its inheritance ancestry is still
+ * the ancestry represented by the old box tree.  appendChild can MOVE an
+ * existing node; selectors would be selected against the new DOM correctly,
+ * but html_recascade_tree would have supplied the OLD parent style.  Reject
+ * that node and, because a rejected parent is absent from the cache, reject its
+ * descendants transitively as well. */
+static int
+macsurf_reconv_style_cache_parent_ok(struct box *box)
+{
+	struct box *old_parent;
+	dom_node *cur = NULL;
+	dom_node *next = NULL;
+	dom_node_type type;
+	dom_exception err;
+
+	if (box == NULL || box->node == NULL)
+		return 0;
+	old_parent = box->parent;
+	while (old_parent != NULL && old_parent->node == NULL)
+		old_parent = old_parent->parent;
+
+	/* If the old parent itself was rejected, this subtree inherits from an
+	 * untrusted Style B and therefore cannot reuse its recascade result. */
+	if (old_parent != NULL &&
+		macsurf_reconv_style_cache_box(old_parent->node) != old_parent)
+		return 0;
+
+	err = dom_node_get_parent_node(box->node, &cur);
+	if (err != DOM_NO_ERR)
+		return 0;
+	while (cur != NULL) {
+		if (old_parent != NULL && cur == old_parent->node) {
+			dom_node_unref(cur);
+			return 1;
+		}
+		/* Another valid boxed ancestor appears before the old parent: the
+		 * node was reparented, so its inherited result is not reusable. */
+		if (macsurf_reconv_style_cache_box(cur) != NULL) {
+			dom_node_unref(cur);
+			return 0;
+		}
+		type = 0;
+		if (dom_node_get_node_type(cur, &type) != DOM_NO_ERR ||
+			type == DOM_DOCUMENT_NODE) {
+			dom_node_unref(cur);
+			return old_parent == NULL;
+		}
+		next = NULL;
+		if (dom_node_get_parent_node(cur, &next) != DOM_NO_ERR) {
+			dom_node_unref(cur);
+			return 0;
+		}
+		dom_node_unref(cur);
+		cur = next;
+	}
+	return old_parent == NULL;
+}
+
+static void
+macsurf_reconv_style_cache_store(struct box *box)
+{
+	struct macsurf_reconv_style_cache_entry *e;
+
+	if (!macsurf_reconvert_in_progress || box == NULL || box->node == NULL ||
+		(box->flags & CLONE) || box->styles == NULL)
+		return;
+	if (!macsurf_reconv_style_cache_parent_ok(box)) {
+		g_reconv_style_cache_parent_skip++;
+		return;
+	}
+	e = macsurf_reconv_style_cache_slot(box->node, 1);
+	if (e == NULL) {
+		g_reconv_style_cache_overflow++;
+		return;
+	}
+	if (e->node == NULL) {
+		e->node = box->node;
+		e->box = box;
+		g_reconv_style_cache_stored++;
+	}
+}
+
+static css_select_results *
+macsurf_reconv_style_cache_take(dom_node *node, css_custom_env **out_env)
+{
+	struct box *old_box;
+	css_select_results *styles;
+
+	if (!macsurf_reconvert_in_progress || node == NULL)
+		return NULL;
+	old_box = macsurf_reconv_style_cache_box(node);
+	if (old_box == NULL || old_box->styles == NULL) {
+		g_reconv_style_cache_miss++;
+		return NULL;
+	}
+	styles = css_select_results_ref(old_box->styles);
+	if (styles == NULL) {
+		g_reconv_style_cache_miss++;
+		return NULL;
+	}
+	if (out_env != NULL && old_box->custom_env != NULL)
+		*out_env = css_custom_env_ref(old_box->custom_env);
+	g_reconv_style_cache_hit++;
+	return styles;
+}
+
+static void
+macsurf_reconv_style_cache_report(void)
+{
+	if (!macsurf_reconvert_in_progress)
+		return;
+	macsurf_debug_log_writef(
+		"LIFE RECONVSTYLE stored=%ld hit=%ld miss=%ld parent_skip=%ld overflow=%ld",
+		g_reconv_style_cache_stored, g_reconv_style_cache_hit,
+		g_reconv_style_cache_miss, g_reconv_style_cache_parent_skip,
+		g_reconv_style_cache_overflow);
+}
+/* ----------------------------------------------------------------------- */
+'''
+          s = s.replace(marker, marker + cache, 1)
+
+          old = '''\tstyles = box_get_style(ctx->content, props.parent_style, root_style,\n\t\t\tctx->n, props.parent_custom_env, &elem_custom_env);\n\tif (styles == NULL)\n\t\treturn false;\n'''
+          new = '''\tstyles = macsurf_reconv_style_cache_take(ctx->n, &elem_custom_env);\n\tif (styles == NULL) {\n\t\tstyles = box_get_style(ctx->content, props.parent_style, root_style,\n\t\t\t\tctx->n, props.parent_custom_env, &elem_custom_env);\n\t}\n\tif (styles == NULL)\n\t\treturn false;\n'''
+          if s.count(old) != 1:
+              raise SystemExit(f'box_construct.c: style select block count={s.count(old)}')
+          s = s.replace(old, new, 1)
+
+          old = 'if (c == NULL || c->layout == NULL) return NSERROR_OK;\n\n\tmacsurf_debug_log_writef("recascade: enter layout=%p node=%p",'
+          new = 'if (c == NULL || c->layout == NULL) return NSERROR_OK;\n\n\tmacsurf_reconv_style_cache_reset();\n\tmacsurf_debug_log_writef("recascade: enter layout=%p node=%p",'
+          if s.count(old) != 1:
+              raise SystemExit(f'box_construct.c: recascade reset anchor count={s.count(old)}')
+          s = s.replace(old, new, 1)
+
+          old = '''\t\t\t\tif (new_styles != NULL) {\n\t\t\t\t\tbox->styles = new_styles;\n\t\t\t\t\tbox->style = new_styles->styles[\n\t\t\t\t\t\t\tCSS_PSEUDO_ELEMENT_NONE];\n\t\t\t\t}\n\t\t\t\trecascaded++;\n'''
+          new = '''\t\t\t\tif (new_styles != NULL) {\n\t\t\t\t\tbox->styles = new_styles;\n\t\t\t\t\tbox->style = new_styles->styles[\n\t\t\t\t\t\t\tCSS_PSEUDO_ELEMENT_NONE];\n\t\t\t\t\tmacsurf_reconv_style_cache_store(box);\n\t\t\t\t}\n\t\t\t\trecascaded++;\n'''
+          if s.count(old) != 1:
+              raise SystemExit(f'box_construct.c: recascade store block count={s.count(old)}')
+          s = s.replace(old, new, 1)
+
+          old = '''\t\t\t/** \\todo Remove box_normalise_block */\n\t\t\tif (box_normalise_block(&root, ctx->root_box,\n'''
+          new = '''\t\t\tmacsurf_reconv_style_cache_report();\n\n\t\t\t/** \\todo Remove box_normalise_block */\n\t\t\tif (box_normalise_block(&root, ctx->root_box,\n'''
+          if s.count(old) != 1:
+              raise SystemExit(f'box_construct.c: report anchor count={s.count(old)}')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+
+          git diff --check
+          git diff --stat
+
+      - name: Commit optimization
+        shell: bash
+        run: |
+          git config user.name "OpenAI Codex"
+          git config user.email "codex@openai.com"
+          git rm .github/workflows/perf-style-cache-once.yml
+          git add browser/libcss/include/libcss/select.h \
+                  browser/libcss/src/select/css_select.c \
+                  browser/netsurf/content/handlers/html/box_construct.c
+          git commit -m "perf(reconvert): reuse recascaded styles during rebuild" -m "A full reconvert already computes current Style B on the live old tree before dom_to_box. Reuse those selection results for nodes whose DOM ancestry still matches the old box ancestry, while new or moved nodes fall back to normal selection. This removes redundant selector matching from the measured 3.57s build hotspot without weakening the proven double-buffered reconvert lifecycle."
+          git push origin HEAD:performance
