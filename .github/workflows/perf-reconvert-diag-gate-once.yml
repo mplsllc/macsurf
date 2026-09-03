@@ -1,0 +1,35 @@
+name: Gate reconvert hot diagnostics
+
+on:
+  push:
+    branches: [performance]
+    paths:
+      - '.github/workflows/perf-reconvert-diag-gate-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: performance
+          fetch-depth: 0
+      - name: Apply source patch
+        shell: bash
+        run: |
+          python3 tools/apply_perf_reconvert_diag_gate_once.py
+          git diff --check
+          bash tools/retro68_check.sh browser/netsurf/content/handlers/html/box_construct.c || test $? -eq 2
+      - name: Commit optimization
+        shell: bash
+        run: |
+          git config user.name "OpenAI Codex"
+          git config user.email "codex@openai.com"
+          git rm .github/workflows/perf-reconvert-diag-gate-once.yml tools/apply_perf_reconvert_diag_gate_once.py
+          git add browser/netsurf/content/handlers/html/box_construct.c browser/netsurf/frontends/macos9/macsurf_debug_log.c
+          git commit -m "perf(reconvert): compile out retired node breadcrumbs" -m "When MACSURF_VERBOSE_RECONVERT is off, remove per-node reconvert counter/marker work and RAM marker formatting. Liveness checks, atomic build behavior, rollback, and all reconvert safety guards are unchanged."
+          git pull --rebase origin performance
+          git push origin HEAD:performance
