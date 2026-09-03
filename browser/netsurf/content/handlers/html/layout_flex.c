@@ -394,7 +394,7 @@ static bool layout_flex_item(
 	 * laid out fine in 247ms).
 	 *
 	 * Correctness invariant for the skip: a box laid out is a
-	 * deterministic function of (b->width, b->style, content) -- its
+	 * deterministic function of (available_width, b->width, b->style, content) -- its
 	 * position (x/y) is assigned by the parent AFTER this returns and
 	 * doesn't feed the box's own content layout. So if, on re-entry, the
 	 * box's width AND height are byte-identical to what they were
@@ -409,7 +409,7 @@ static bool layout_flex_item(
 	 * re-layout has no float-escape side effect on ancestors. */
 	if (macsurf_flex_layout_cache_enabled &&
 			b->flex_layout_gen == macsurf_layout_pass_gen &&
-			b->flex_layout_width == available_width &&
+			b->flex_layout_available_width == available_width &&
 			b->flex_layout_width == b->width &&
 			b->flex_layout_height == b->height) {
 		return true;
@@ -461,6 +461,7 @@ static bool layout_flex_item(
 	 * failed/degraded item is left un-memoed so it is retried, not pinned. */
 	if (success) {
 		b->flex_layout_gen = macsurf_layout_pass_gen;
+		b->flex_layout_available_width = available_width;
 		b->flex_layout_width = b->width;
 		b->flex_layout_height = b->height;
 	}
