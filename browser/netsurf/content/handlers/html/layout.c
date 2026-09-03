@@ -439,6 +439,14 @@ static int layout_text_indent(
 {
 	css_fixed value = 0;
 	css_unit unit = CSS_UNIT_PX;
+	unsigned char *work;
+	unsigned char *work_p;
+	size_t col_bytes;
+	size_t excess_bytes;
+	size_t row_span_bytes;
+	size_t row_span_cell_bytes;
+	size_t xs_bytes;
+	size_t work_size;
 
 	css_computed_text_indent(style, &value, &unit);
 
@@ -2785,6 +2793,28 @@ static bool layout_multicol_context(
 }
 
 
+/* Alignment unit for the single-allocation table-layout workspace. */
+union layout_table_work_align {
+	void *p;
+	double d;
+	long l;
+};
+
+static size_t
+layout_table_work_round(size_t n)
+{
+	size_t a = sizeof(union layout_table_work_align);
+	size_t r = n % a;
+
+	if (r != 0) {
+		size_t add = a - r;
+		if (n > (size_t)-1 - add)
+			return 0;
+		n += add;
+	}
+	return n;
+}
+
 /* fixes171 - Watchdog wrapper for layout_table. */
 static bool layout_table_inner(struct box *table, int available_width,
 		html_content *content);
@@ -2862,20 +2892,46 @@ static bool layout_table_inner(
 	assert(table->children && table->children->children);
 	assert(columns);
 
-	/* allocate working buffers */
-	col = malloc(columns * sizeof col[0]);
-	excess_y = malloc(columns * sizeof excess_y[0]);
-	row_span = malloc(columns * sizeof row_span[0]);
-	row_span_cell = malloc(columns * sizeof row_span_cell[0]);
-	xs = malloc((columns + 1) * sizeof xs[0]);
-	if (!col || !xs || !row_span || !excess_y || !row_span_cell) {
-		free(col);
-		free(excess_y);
-		free(row_span);
-		free(row_span_cell);
-		free(xs);
+	/* One temporary allocation instead of five allocator round-trips per
+	 * table layout. Each segment is rounded to a max-alignment-sized unit. */
+	if (columns > (size_t)-1 / sizeof col[0] ||
+			columns > (size_t)-1 / sizeof excess_y[0] ||
+			columns > (size_t)-1 / sizeof row_span[0] ||
+			columns > (size_t)-1 / sizeof row_span_cell[0] ||
+			(size_t)columns + 1 > (size_t)-1 / sizeof xs[0])
 		return false;
-	}
+	col_bytes = layout_table_work_round((size_t)columns * sizeof col[0]);
+	excess_bytes = layout_table_work_round((size_t)columns * sizeof excess_y[0]);
+	row_span_bytes = layout_table_work_round((size_t)columns * sizeof row_span[0]);
+	row_span_cell_bytes = layout_table_work_round(
+			(size_t)columns * sizeof row_span_cell[0]);
+	xs_bytes = layout_table_work_round(((size_t)columns + 1) * sizeof xs[0]);
+	if (col_bytes == 0 || excess_bytes == 0 || row_span_bytes == 0 ||
+			row_span_cell_bytes == 0 || xs_bytes == 0)
+		return false;
+	work_size = col_bytes;
+	if (work_size > (size_t)-1 - excess_bytes) return false;
+	work_size += excess_bytes;
+	if (work_size > (size_t)-1 - row_span_bytes) return false;
+	work_size += row_span_bytes;
+	if (work_size > (size_t)-1 - row_span_cell_bytes) return false;
+	work_size += row_span_cell_bytes;
+	if (work_size > (size_t)-1 - xs_bytes) return false;
+	work_size += xs_bytes;
+
+	work = malloc(work_size);
+	if (work == NULL)
+		return false;
+	work_p = work;
+	col = (struct column *)work_p;
+	work_p += col_bytes;
+	excess_y = (int *)work_p;
+	work_p += excess_bytes;
+	row_span = (unsigned int *)work_p;
+	work_p += row_span_bytes;
+	row_span_cell = (struct box **)work_p;
+	work_p += row_span_cell_bytes;
+	xs = (int *)work_p;
 
 	memcpy(col, table->col, sizeof(col[0]) * columns);
 
@@ -3311,11 +3367,7 @@ static bool layout_table_inner(
 
 				c->height = AUTO;
 				if (!layout_block_context(c, -1, content)) {
-					free(col);
-					free(excess_y);
-					free(row_span);
-					free(row_span_cell);
-					free(xs);
+					free(work);
 					return false;
 				}
 				/* warning: c->descendant_y0 and
@@ -3463,11 +3515,7 @@ static bool layout_table_inner(
 	if (table->margin[BOTTOM] == AUTO)
 		table->margin[BOTTOM] = 0;
 
-	free(col);
-	free(excess_y);
-	free(row_span);
-	free(row_span_cell);
-	free(xs);
+	free(work);
 
 	table->width = table_width;
 	table->height = table_height;
