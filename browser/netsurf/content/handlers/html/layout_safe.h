@@ -192,29 +192,20 @@ extern void macsurf_layout_breadcrumb(const char *phase, const void *box);
 /**
  * Watchdog gate at the entry of every recursive layout function.
  *
- * Returns 1 if either the depth cap or the iteration budget has
- * been exceeded. Callers MUST bail out with the zero-height block
- * fallback in that case (do NOT call layout_watchdog_exit). On a
- * return of 0 the caller has been counted in and must pair with
- * layout_watchdog_exit() before returning.
+ * The watchdog currently has no active depth or iteration limit, so callers
+ * always proceed. Keep the call counter because end-of-pass profiling uses it;
+ * depth itself is not read by any layout decision while the cap is disabled.
  */
 static int layout_watchdog_enter(const void *box)
 {
 	(void)box;
-	/* Keep the two cheap counters used by end-of-pass diagnostics and
-	 * depth accounting. fixes848b's per-100k progress probe used a long
-	 * modulo here on EVERY recursive layout entry; that investigation is
-	 * complete, and the modulo remained real release overhead even when
-	 * diagnostic logging was disabled. */
 	macsurf_layout_calls++;
-	macsurf_layout_depth++;
 	return 0;
 }
 
 static void layout_watchdog_exit(void)
 {
-	if (macsurf_layout_depth > 0)
-		macsurf_layout_depth--;
+	/* No active depth cap: nothing to unwind. */
 }
 
 #endif /* NETSURF_HTML_LAYOUT_SAFE_H */
